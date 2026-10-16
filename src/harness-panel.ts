@@ -1707,6 +1707,29 @@ export function usageReadings(payload: unknown): UsageReadings {
   };
 }
 
+// ── token 计数的人可读单位（M532）────────────────────────────────────────────────
+
+/**
+ * token 计数 → 人可读单位串（M532，Alex 原话「token 的最小单位是 k，如果超过 1000k，就升级
+ * 成 m。让数字更加人可读好理解」）：≥1,000,000 走 `m`、≥1,000 走 `k`、不足 1,000 原值直出。
+ * 千位以下直出是这条规则唯一的一处偏离：k 档在这个区间只会更难读也更不准（999 → `0.9k`、
+ * 0 → `0k`），故「最小单位 k」只在 k 能如实表达时生效（口径原文见 openspec/specs/harness
+ * 的气泡条款，边界由 tests/unit/harness-cache-metrics.test.ts 钉死）。
+ *
+ * 小数位**截断**到 0.1 档（不四舍五入）：读数偏小不会让人误判「离上限还有距离」或「命中更多」，
+ * 同时 999,999 落在 `999.9k`、1,000,000 落在 `1m`——k 档永不出现「1000k」。末尾 `.0` 去掉
+ * （`1k` 而非 `1.0k`）。非读数（负值 / 非有限数）原样透传：本函数不是读数来源，不编造也不吞掉。
+ */
+export function formatTokenCount(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens < 0) return String(tokens);
+  if (tokens < 1_000) return String(Math.trunc(tokens));
+  const useMega = tokens >= 1_000_000;
+  // `tenths` = 0.1 档的整数个数（k 档每 100 tokens 记 0.1k、m 档每 100000 tokens 记 0.1m）——
+  // 截断点直接落在整数上：999,999 → 9999 → `999.9k`、1,000,000 → 10 → `1m`。
+  const tenths = Math.floor(tokens / (useMega ? 100_000 : 100));
+  return `${(tenths / 10).toFixed(1).replace(/\.0$/, "")}${useMega ? "m" : "k"}`;
+}
+
 /** ctx hover 气泡的一行（纯模型层产出，M526：渲染面与单测同一处——行文本在此拼装，
  *  buildCtxPop 只负责落 DOM）。`cls` = 行的样式类（沿用 buildCtxPop 既有类名）。 */
 export interface CtxPopRow {
@@ -1717,7 +1740,10 @@ export interface CtxPopRow {
 /** ctx hover 气泡行文本（M526 抽纯）：绝对值在场时用 tokens 形态（D463/D465/D466），
  *  缺键（旧载荷）降级回百分比形态（D395/D401/D452），上限值缺失（context_window 为 0）
  *  走无上限文案（D464）——MUST NOT 编造数据。`hasUsage === false`（从未发过请求）返回空行集
- *  （读数区整体隐藏是 applyUsage 的判定，这里是第二道防线）。越线时警示句（D335）追加在最后。 */
+ *  （读数区整体隐藏是 applyUsage 的判定，这里是第二道防线）。越线时警示句（D335）追加在最后。
+ *  M532：气泡内**全部** tokens 数字（D463 已用/上限、D464 已用、D465 会话累计命中、D466 本回合
+ *  命中、D455 缓存写入的两个数）过 `formatTokenCount`（k/m 单位）——只换数字形态，句法、降级
+ *  判定与整行不渲染的判定口径一行不动。 */
 export function ctxPopRows(r: UsageReadings, warnPct: number): CtxPopRow[] {
   if (r.hasUsage === false || r.ctx === null) return [];
   const rows: CtxPopRow[] = [];
@@ -1726,12 +1752,16 @@ export function ctxPopRows(r: UsageReadings, warnPct: number): CtxPopRow[] {
   if (r.inputTokens !== null && r.contextWindow !== null && r.contextWindow > 0) {
     rows.push({
       cls: "lumir-hp-ctxpop-meaning",
-      text: t("D463", { used: r.inputTokens, limit: r.contextWindow, ctx: Math.round(r.ctx) }),
+      text: t("D463", {
+        used: formatTokenCount(r.inputTokens),
+        limit: formatTokenCount(r.contextWindow),
+        ctx: Math.round(r.ctx),
+      }),
     });
   } else if (r.inputTokens !== null) {
     rows.push({
       cls: "lumir-hp-ctxpop-meaning",
-      text: t("D464", { used: r.inputTokens }),
+      text: t("D464", { used: formatTokenCount(r.inputTokens) }),
     });
   } else {
     rows.push({
@@ -1745,7 +1775,10 @@ export function ctxPopRows(r: UsageReadings, warnPct: number): CtxPopRow[] {
       cls: "lumir-hp-ctxpop-cache",
       text:
         r.cachedTokensSession !== null
-          ? t("D465", { cached: r.cachedTokensSession, cache: Math.round(r.cacheSession) })
+          ? t("D465", {
+              cached: formatTokenCount(r.cachedTokensSession),
+              cache: Math.round(r.cacheSession),
+            })
           : t("D401", { cache: Math.round(r.cacheSession) }),
     });
   }
@@ -1757,7 +1790,7 @@ export function ctxPopRows(r: UsageReadings, warnPct: number): CtxPopRow[] {
       r.cacheNote === null ? "" : ` · ${t(r.cacheNote === "cold_start" ? "D453" : "D454")}`;
     const base =
       r.cachedTokens !== null
-        ? t("D466", { cached: r.cachedTokens, turn: Math.round(r.cacheTurn) })
+        ? t("D466", { cached: formatTokenCount(r.cachedTokens), turn: Math.round(r.cacheTurn) })
         : t("D452", { turn: Math.round(r.cacheTurn) });
     rows.push({ cls: "lumir-hp-ctxpop-cache-turn", text: `${base}${note}` });
   }
@@ -1766,7 +1799,10 @@ export function ctxPopRows(r: UsageReadings, warnPct: number): CtxPopRow[] {
   if (r.cacheWrite !== null && r.cacheWrite !== 0 && r.cacheWriteSession !== null) {
     rows.push({
       cls: "lumir-hp-ctxpop-cache-write",
-      text: t("D455", { write: r.cacheWrite, total: r.cacheWriteSession }),
+      text: t("D455", {
+        write: formatTokenCount(r.cacheWrite),
+        total: formatTokenCount(r.cacheWriteSession),
+      }),
     });
   }
   if (usageOverWarn(r.ctx, warnPct)) {
