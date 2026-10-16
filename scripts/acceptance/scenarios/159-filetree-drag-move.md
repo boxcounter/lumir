@@ -190,7 +190,7 @@ steps:
     expect:
       - label: 三态之一：人话提示在场（fs_already_exists 的 message；AX toast 停留时长有限，故在本步内立即断言）
         ax: { has: "已存在同名条目" }
-      - label: 三态之二：源内容逐字节不变（sha256 对账，**单独一条**——file 断言只判第一个命中的键，见「断言口径」）
+      - label: 三态之二：源内容逐字节不变（sha256 对账，**单独一条**——与下一条 mtime 成对，见「断言口径」）
         file: { path: dragbox/drag-b-clash.md, unchangedSince: 撞名源基线 }
       - label: 三态之二（续）：源 mtime 未推进（sha256 相同只说明内容没变，「写了同一份内容」要靠这一条排掉）
         file: { path: dragbox/drag-b-clash.md, mtimeUnchangedSince: 撞名源基线 }
@@ -328,7 +328,7 @@ steps:
         file: { path: drag-root-move.md, exists: true }
       - label: 磁盘上 dragbox/drag-root-move.md 已不存在（不是复制——**这一条是落盘的强判据**）
         file: { path: dragbox/drag-root-move.md, exists: false }
-      - label: 内容逐字节不变（sha256 对账：移动不改内容，**单独一条**——file 断言只判第一个命中的键）
+      - label: 内容逐字节不变（sha256 对账：移动不改内容，**单独一条**——与下一条 mtime 成对）
         file: { path: drag-root-move.md, unchangedSince: 根落点源基线 }
       - label: mtime 未推进（`fs_move_entry` 是 rename、保 inode ⇒ 与「复制 + 重写」那一类分得开）
         file: { path: drag-root-move.md, mtimeUnchangedSince: 根落点源基线 }
@@ -479,10 +479,11 @@ teardown:
 
 ## 断言口径
 
-- **一条 `file` 断言只判一个键（多写即静默少判）**：`lib/execute.mjs` 的 file 断言按固定优先级
-  （`exists` → `changedSince` → `unchangedSince` → `mtimeUnchangedSince` → `mtimeNewerThan` →
-  `has` → `not`）**return 第一个命中的键**——同一个对象里多写的键被静默忽略。所以「sha256 + mtime
-  双对账」一律拆成两条独立断言（③⑤⑦ 的 file 判据即此，「没动」这一档因此是四行而不是两行）。
+- **「sha256 + mtime 双对账」拆成两条独立断言（写法保留，理由已更新）**：③⑤⑦ 的「没动」写成
+  四行而不是两行——每条记录一条判据，失败时 steps.md 里能直接读出是哪一半红了（内容变了 /
+  mtime 推进了）。一条 `file` 断言里写多个判据键**逐键判、逐键落一条记录**（M543 起；旧口径
+  的完整描述与来历见 README「file 断言」条的历史说明），判得全不全与拆不拆无关——拆开是
+  「一条判据一条记录」的可读性选择，不是引擎的要求。
 - **落盘判据成对写**：① 的「新路径存在」单看会被**残留**骗过（`resetVault` 只重置 vault **根下**的
   `.md`，子目录里的产物跨 run 留着），因此与「旧路径已不存在」成对断言——后者骗不过去（源文件是
   本 run 刚写的）。③⑤⑦ 的「没动」用 `unchangedSince`（sha256）**加** `mtimeUnchangedSince`

@@ -14,7 +14,11 @@
 //            HID tap 事件的 clickCount 重算，用于区分「clickState 被丢」与「WKWebView 不认合成双击」
 //   mode 5 = 拖拽（需 x2 y2）：leftMouseDown at (x,y) → 24 步 leftMouseDragged 插值到 (x2,y2) →
 //            leftMouseUp——**套件动作 `drag` 用这条**（M228：KimiCU 的 drag 工具在 WKWebView 里
-//            连文本选择都造不出来，与 dblclick 同一类注入边界；CGEvent 显式拖拽序列可用）。
+//            连文本选择都造不出来，与 dblclick 同一类注入边界）。**它的可用边界（M536 定案）**：
+//            对栏宽手柄 / 文件树拖放 / 1px 抖动点击这类 DOM 控件目标成立；**在 CM 编辑器正文上
+//            造不出任何文本选区**（裸拖 / 前置 hover / 段内短拖三变体 3/3 全败，带修饰 flag 的
+//            点击——mode 6——也不延拓选区）。编辑器侧需要选区只用双击族（mode 2，套件动作
+//            `doubleClick`）或键盘 chord（`⌘A` 本机不可行）——见 REVIEW.md 第 23 条。
 //   mode 6 = 修饰键点击（需 mods [count]）：鼠标 down/up 带**修饰键 flags** 投递——DOM 侧因此拿到
 //            `metaKey` / `ctrlKey` / `shiftKey` / `altKey` 为真的点击（与 Playwright 的
 //            `click({ modifiers })` 同形）。**套件动作 `click` 的 `target.modifiers` 用这条**：
