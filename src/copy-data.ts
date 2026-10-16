@@ -986,6 +986,7 @@ const COPY_TABLE = {
   // 思考块折叠行：chevron + 单行「思考过程 · N 秒」（原型屏 9 形态合同）。{sec} = 块首
   //  chunk 到末 chunk 的墙钟差（秒，前端计时、轮次结束定格）——时长是数据读数，模板整串
   // 走表（zh / en 两串不同模板，不走上屏列锁定）。展开态无新文案：正文是模型思考原文。
+  // 本条只服务 live 路径（有真实计时）；**恢复路径**取无时长变体 D468（见文件末条）。
   D388: {
     zh: "思考过程 · {sec} 秒",
     en: "Thinking · {sec}s",
@@ -1450,6 +1451,14 @@ const COPY_TABLE = {
   D467: {
     zh: "不能移动到自身或其子目录：{rel}",
     en: "Can't move an entry into itself or its own subdirectory: {rel}",
+  },
+  // 恢复路径的思考块折叠行（M542，Alex 2026-10-16：「重建后 thinking 过程默认是展开的，
+  // 我希望它保持收起」）：D388 的**无时长变体**——恢复路径的思考文本来自 wire 的 reasoning
+  // 回放项，而 wire 不带「思考了多久」的读数，写一个数字就是伪造读数（M398 的立意，M542
+  // 保留），故折叠行只出「思考过程」不带时长。展开态无新文案：正文是模型原文。
+  D468: {
+    zh: "思考过程",
+    en: "Thinking",
   },
 } satisfies Record<string, CopyEntry>;
 

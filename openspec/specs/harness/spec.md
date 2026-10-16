@@ -736,6 +736,11 @@ agent 消息的思考内容（provider 返回的 reasoning 文本）SHALL 在 tr
 （不渲染空块）。思考块 SHALL 默认折叠（含流式进行期间），折叠态为单行：chevron + 「思考过程 · N 秒」，
 展开态为左边线 + 次级灰正文；样式 SHALL 只取 token 层现行值，MUST NOT 引入新色值或字号。
 时长 SHALL 为该思考块从首个文本片段到末个文本片段的实际耗时，轮次结束时定格。
+**恢复重建的思考块**（快照恢复 / 会话恢复重放，`PanelMessage.reasoning` 有明文时）SHALL 走同一条
+折叠默认口径：默认折叠、点折叠行展开原文，MUST NOT 默认展开（M542，Alex 2026-10-16 现场）；其折叠行
+SHALL 取**无时长变体**「思考过程」（D468）——wire 只带 reasoning 明文、不带思考时长读数，写一个数字
+即伪造读数（与「无 ts 不显示时间读数」同口径），语言切换重渲时 SHALL 同样重取本串、MUST NOT 回落成
+带时长的 D388 形态。
 复制消息 SHALL 只含 agent 回答正文，MUST NOT 含思考内容。
 Rust core SHALL 经事件流把 reasoning 文本实时转发前端；reasoning 的跨轮回放路径
 （M306 纪律）MUST NOT 因此改动。
@@ -769,6 +774,32 @@ Rust core SHALL 经事件流把 reasoning 文本实时转发前端；reasoning �
   text↔think 交错等组合到达（含相邻工具行不被拆开、思考落在工具行之间时封板等边界）
 - **THEN** 任意组合下消息 DOM 子节点序恒等于事件到达序（不变量级断言，
   由 tests/visual/scenes/m383-harness-thinking-order.spec.ts 的序列矩阵钉死）
+
+### Requirement: 恢复渲染与默认渲染一致
+
+恢复路径（webview 重载 / 切 vault 回来的**快照恢复**、会话浮层选历史会话的**会话恢复**）
+重放出的 transcript SHALL 与默认渲染（同一份会话走 live 事件的路径）在**每一类块的默认展开 /
+收起态**上一致（M542，Alex 2026-10-16 原话：「我希望重建后的会话在 harness pane 的默认显示
+保持一致 —— 默认展开的内容（比如 AI 回复的正文）在重建后也展开，而默认不展开的内容（比如
+thinking 过程）在重建后也不展开」）：默认展开的内容（agent 回答正文、单行工具清单）恢复后同样
+展开，默认不展开的内容（思考块、两行及以上的工具清单、压缩摘要折叠件）恢复后同样不展开。
+两条恢复入口 SHALL 与快照路径共用同一份项映射与渲染件，MUST NOT 为恢复另建一套默认态。
+恢复路径与 live 路径的差异 SHALL 只落在**读数有无**（思考时长、消息时间戳），MUST NOT 落在
+展开态。**边界**：后端错误行是 live 面（面板记录只有 user / assistant / tool / compact 四类角色，
+恢复路径无对应留存记录可重建）——它不在本不变量内，也不是可折叠块。
+
+#### Scenario: 逐类块默认态与默认渲染一致
+
+- **WHEN** 从会话浮层选一份历史会话恢复（或 webview 重载后从快照重建 transcript）
+- **THEN** 恢复出的思考块默认折叠（正文不可见、折叠行 `aria-expanded=false`，点折叠行可展开
+  原文）；agent 回答正文默认可见；两行及以上的工具清单折叠为一行摘要、单行清单保持展开——
+  逐类块的默认态与同一条会话在 live 路径下相同
+
+#### Scenario: 恢复路径不伪造读数
+
+- **WHEN** 恢复路径缺某类读数（wire 不带思考时长、留存的旧记录不带消息时间戳）
+- **THEN** 该读数 SHALL 缺席而不是补零（思考折叠行取无时长变体 D468「思考过程」、无 ts 的消息
+  只显示角色）；语言切换重绘 SHALL 重取同一形态，MUST NOT 回落成带时长的模板
 
 ### Requirement: 思考程度选择
 
