@@ -205,6 +205,8 @@ function rig(entries: FsEntry[], overrides: Partial<FileTreeCallbacks> = {}): Ri
     onOpenVaultSwitcher: () => {},
     onContextMenu: () => {},
     onInlineEditSubmit: () => {},
+    // M530 新增的必填回调（拖拽移动上抛口）；本文件不验拖拽，no-op 即可。
+    onMoveEntry: () => {},
     onExpandLazyDir: () => Promise.resolve([]),
     ...overrides,
   };

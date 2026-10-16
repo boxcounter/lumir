@@ -7,6 +7,12 @@
 //（src/tree-menu.ts），本模块只负责「哪一行被右键」与**内联编辑**（重命名 / 新建共用
 // 同一形态：行名就地换成输入框，Enter 提交、Esc / 失焦取消、非法行内标红）。菜单与
 // 对话框是浮层，不进这棵树的 DOM；编辑是**行局部**的，不是模态——树的其余交互照常。
+//
+// 拖拽移动（M530）：文件/目录行可拖，落点是**目录行**（dragover 高亮 + drop 移入），
+// 不支持排序、不支持落到文件行。动作本身上抛装配层（onMoveEntry）——本模块不 import
+// ipc；落点判定与目标路径是纯函数（canMoveEntry / moveTargetPath），单测直接钉。移动成功
+// 后的树收敛与改名同纪律：不自绘补丁，唯一通道是 watcher 回响（登记 pendingMove 只为
+// 在回响里认出「这次位置变更是我自己发起的」，把目录展开态搬到新路径）。
 
 import type { FsChange } from "./bindings/FsChange";
 import type { FsEntry } from "./bindings/FsEntry";
@@ -117,6 +123,40 @@ export function relativePathOf(parentRel: string, name: string): string {
 }
 
 /**
+ * 拖拽移动的目标路径（纯函数，M530）：源条目的末段名挂到目标目录下，即后端 `fs_move_entry`
+ * to_rel 的同一公式（改名是移动的同目录特例，拼接只有这一份）。
+ */
+export function moveTargetPath(sourcePath: string, targetDirPath: string): string {
+  return relativePathOf(targetDirPath, baseName(sourcePath));
+}
+
+/**
+ * 拖拽落点判定（纯函数，M530）：源条目移入 `targetDirPath` 是否被允许。两条拒绝：
+ *  - **目标 == 源**（拖回原位——含拖回自己的直接父目录且同名）：rename 对该形态是静默
+ *    no-op，不拒绝就是一次「什么都没发生」的拖拽；
+ *  - **目标落在源的子树内**（目录拖入自身/后代）：`moveTargetPath` 以源路径为前缀即命中。
+ *
+ * 调用方（dragover / drop）判 false 时不 preventDefault——浏览器据此给出「禁放」语义，
+ * 光标与落点高亮一起答「这里不行」。判据 MUST NOT 只挡「目标 == 源」一字不差那一种：
+ * 前缀检查同时盖住自身与全部后代（`a` → `a/b` 与 `a` → `a/b/c` 同一条）。
+ */
+export function canMoveEntry(sourcePath: string, targetDirPath: string): boolean {
+  const to = moveTargetPath(sourcePath, targetDirPath);
+  if (to === sourcePath) return false;
+  return !to.startsWith(`${sourcePath}/`);
+}
+
+/** 拖拽落点的在场标记（M530）：dragover 期间的目标目录行。装卸的唯一真源在 tree.ts 的
+ *  拖拽监听里（与 tree-menu.ts 的 MENU_TARGET_CLASS 同形态：语义在场期 = 类的在场期）。 */
+export const DROP_TARGET_CLASS = "is-drop-target";
+
+/** 拖拽源的数据类型（M530）：dragstart 写入 dataTransfer 的自定义类型。本应用内的 drop
+ *  走 dragSource 闭包（dragover 阶段 dataTransfer 数据是保护模式、读不到），自定义类型
+ *  只为「数据真的进了拖拽通道」这件事在场——MUST NOT 用它做跨应用拖拽的落点（树外 drop
+ *  不在本能力的口径里）。 */
+const DRAG_MIME = "application/x-lumir-tree-path";
+
+/**
  * 附件索引的增量补丁（change vault-open-ignore-set §4.6 的**前端一半**）：一条 `fs:entry_changed`
  * 增量怎么改「vault 内可作为附件的文件路径」这份索引。**纯判定 + 就地追加**，返回更新后的数组
  * （追加是就地 `push`：大批量事件下 MUST NOT 每条都拷一遍十万级的数组）。
@@ -197,6 +237,10 @@ export interface FileTreeCallbacks {
   /** 内联编辑提交（重命名 / 新建共用同一形态）：装配层去调后端命令，结果经
    *  `endInlineEdit` 回到树上——只有装配层知道后端与 tab 联动。 */
   onInlineEditSubmit(request: InlineEditRequest): void;
+  /** 拖拽移动提交（M530）：`from` 被拖入 `to` 所在目录（`to` = `moveTargetPath(from, 目标目录)`）。
+   *  装配层调后端命令并负责失败提示（toast）；**成功的收敛与改名同纪律**——唯一通道是
+   *  watcher 回响（含目录移动时的展开态迁移，见 `endMoveEntry`），树 MUST NOT 自绘补丁。 */
+  onMoveEntry(from: string, to: string): void;
   /**
    * 惰性目录展开取数（后端 `fs_scan_dir`，change vault-open-ignore-set §4.3）：返回该目录的
    * **一层**条目（分类口径与全量枚举同源）。被 vault 自己的忽略声明挡住的目录，其子孙不在
@@ -244,6 +288,10 @@ export interface FileTree {
   beginCreate(parentRel: string, kind: "file" | "dir"): void;
   /** 编辑提交的结果回报：成功 = 退出编辑态；失败 = 留在编辑态并给原因（后端是权威）。 */
   endInlineEdit(ok: boolean, reason?: string): void;
+  /** 移动提交的结果回报（M530，镜像 endInlineEdit 的登记撤销语义）：失败 = 撤销 drop 时
+   *  登记的 from → to（磁盘上什么都没发生，留着会误吞后一批到达的真实删除）；成功 = 空
+   *  动作——登记留给 applyChanges 在回响批次里消费（目录移动时迁移展开态）。 */
+  endMoveEntry(ok: boolean): void;
   /** 正在编辑的条目路径 / 新建时的父目录；无编辑进行中为 undefined（断言口）。 */
   editingPath(): string | undefined;
 }
@@ -381,6 +429,85 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     );
   });
 
+  // ---------------------------------------------------------------------------
+  // 拖拽移动（M530）：HTML5 DnD。文件/目录行可拖，松手落在**目录行**上 = 移入该目录；
+  // 不支持排序、不支持落到文件行（dragover 不 preventDefault，浏览器给出「禁放」语义）。
+  //
+  // 监听分工：dragstart / dragend 挂在每行（createRow）——它们只与「拖的是哪一条」有关；
+  // dragover / drop / dragleave 挂在容器上，与右键同一条理由：行元素右缘到面板右缘那条带
+  // 在用户眼里仍属于这一行，落点判定复用 rowLiAt 的几何命中（含编辑行排除）。
+  // ---------------------------------------------------------------------------
+
+  /** 正在拖的树内条目（dragstart 登记、drop / dragend 清）：dragover 阶段 dataTransfer 的
+   *  数据是保护模式、读不到的，只有闭包变量答得出「现在拖的是哪一条」。 */
+  let dragSource: { path: string } | undefined;
+  /** 当前高亮的落点行（dragover 维护；在场期 ≤ 一次拖拽，最多一条）。 */
+  let dropTargetRow: HTMLElement | null = null;
+
+  function clearDropTarget(): void {
+    dropTargetRow?.classList.remove(DROP_TARGET_CLASS);
+    dropTargetRow = null;
+  }
+
+  function setDropTarget(row: HTMLElement): void {
+    if (dropTargetRow === row) return;
+    clearDropTarget();
+    dropTargetRow = row;
+    row.classList.add(DROP_TARGET_CLASS);
+  }
+
+  interface DropLanding {
+    row: HTMLElement;
+    /** 目标目录的 vault 相对路径（根为 ""）。 */
+    path: string;
+  }
+
+  /** dragover / drop 共用的落点解析：指针下的行是目录、且这次移动被 `canMoveEntry` 允许时
+   *  返回落点，否则 null（null = 禁放/无高亮，两个监听各取所需）。 */
+  function dropLandingAt(target: EventTarget | null, x: number, y: number): DropLanding | null {
+    const source = dragSource;
+    if (source === undefined) return null;
+    const li = rowLiAt(target, x, y);
+    const node = li === null ? undefined : nodes.get(li.dataset.path ?? "");
+    if (node === undefined || node.entry.kind !== "dir" || li === null) return null;
+    if (!canMoveEntry(source.path, node.entry.path)) return null;
+    const row = li.querySelector<HTMLElement>(".ft-row");
+    if (row === null) return null;
+    return { row, path: node.entry.path };
+  }
+
+  rootEl.addEventListener("dragover", (event) => {
+    const landing = dropLandingAt(event.target, event.clientX, event.clientY);
+    if (landing === null) {
+      clearDropTarget();
+      return; // 不 preventDefault：除目录行外的落点一律「禁放」
+    }
+    event.preventDefault();
+    if (event.dataTransfer !== null) event.dataTransfer.dropEffect = "move";
+    setDropTarget(landing.row);
+  });
+
+  rootEl.addEventListener("drop", (event) => {
+    const source = dragSource;
+    const landing = dropLandingAt(event.target, event.clientX, event.clientY);
+    clearDropTarget();
+    dragSource = undefined;
+    if (source === undefined || landing === null) return;
+    event.preventDefault();
+    const to = moveTargetPath(source.path, landing.path);
+    // 登记 from → to（与改名同一登记口 pendingMove）：目录被移动时展开态随它搬迁——回响批次里
+    // deleted:from 出现即按前缀迁移。失败由装配层经 endMoveEntry(false) 撤销（磁盘上什么都没
+    // 发生，留着会误吞后一批到达的真实删除）。
+    pendingMove = { from: source.path, to };
+    cb.onMoveEntry(source.path, to);
+  });
+
+  // dragleave 在行之间移动时也会从子元素冒泡上来，只有「真的离开树容器」才清高亮。
+  rootEl.addEventListener("dragleave", (event) => {
+    if (event.relatedTarget instanceof Node && rootEl.contains(event.relatedTarget)) return;
+    clearDropTarget();
+  });
+
   function sortedChildren(node: Node): Node[] {
     return [...(node.children?.values() ?? [])].sort(byTreeOrder);
   }
@@ -404,6 +531,23 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     name.textContent = baseName(node.entry.path);
     row.append(caret, name);
     row.classList.toggle("is-current", currentPath === node.entry.path);
+
+    // 拖拽源（M530）：文件 / 目录行都可拖。dataTransfer 写入自定义类型只为「数据真的进了
+    // 拖拽通道」在场；本应用内的落点判定走 dragSource 闭包（dragover 阶段 dataTransfer
+    // 是保护模式、读不到值）。effectAllowed 声明 move 语义——树内移动，不是复制。
+    row.draggable = true;
+    row.addEventListener("dragstart", (event) => {
+      if (event.dataTransfer === null) return;
+      dragSource = { path: node.entry.path };
+      event.dataTransfer.setData(DRAG_MIME, node.entry.path);
+      event.dataTransfer.effectAllowed = "move";
+    });
+    // dragend 在 drop 之后必发（成功与否都发）：这里统一清拖拽态。高亮同清高亮（drop 已
+    // 清过一次，拖出窗口、Esc 取消等路径靠这一次兜底）。
+    row.addEventListener("dragend", () => {
+      dragSource = undefined;
+      clearDropTarget();
+    });
 
     // 右键（M244）：拦下系统菜单并把「哪一行」交给装配层。**不改上下文**——这里不调
     // onOpenFile，也不动 currentPath / 标签（右键即改选中是 Finder 的语义，而本树的
@@ -675,15 +819,16 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
 
   let editing: InlineEdit | null = null;
 
-  /** 树自己发起的改名（M258）：提交那一刻登记 `from → to`（预测的新路径，与装配层 invoke 的
-   *  请求同一个公式 `relativePathOf`），用来把「这一批事件是那次改名的回响」认出来——重命名
-   *  后的目录的展开态随目录一起搬到新路径。改名失败（`endInlineEdit(false)`）即撤。
+  /** 树自己发起的**位置变更**（M258 改名；M530 起含拖拽移动——改名是同目录移动的特例，
+   *  两者回响同形：deleted:from + created:to）：提交那一刻登记 `from → to`，用来把「这一批
+   *  事件是那次位置变更的回响」认出来——位置变更后的目录的展开态随目录一起搬到新路径。
+   *  失败即撤（改名经 `endInlineEdit(false)`，移动经 `endMoveEntry(false)`）。
    *
    *  只登记**自己发起**的那一次、不做「同一批次里删了 X 又新建 Y」的通用配对：那样「删 A 建 B」
    *  在同一 debounce 窗口内到达时会被误判成改名，把 A 的展开态搬到 B 上（`expanded` 里可能
    *  正好有 A 的整棵前缀）。外部发起的改名没有登记，收敛路径与既不登记时一致（后端补出的
    *  子孙条目照常把子树建全，只是展开态不迁移——见 tests/unit/tree-rename.test.ts 的边界条）。 */
-  let pendingRename: { from: string; to: string } | undefined;
+  let pendingMove: { from: string; to: string } | undefined;
 
   /** 同缀既有条目名（撞名预检的数据源）；rename 时排除条目自己。 */
   function siblingNames(parentRel: string, exclude?: string): Set<string> {
@@ -856,11 +1001,12 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       return;
     }
     state.submitting = true;
-    // 改名提交即登记（M258）：回响批次到达时要认出「这是我自己发起的那次改名」，才能把展开态
-    // 搬到新路径。登记在提交时而不是成功返回后——回响与 invoke 的返回走两条通道，事件可能先到
-    // （失败路径由 endInlineEdit(false) 撤销登记）。
+    // 改名提交即登记（M258；登记口 M530 起改名 pendingMove，与拖拽移动共用）：回响批次到达时
+    // 要认出「这是我自己发起的那次位置变更」，才能把展开态搬到新路径。登记在提交时而不是
+    // 成功返回后——回响与 invoke 的返回走两条通道，事件可能先到（失败路径由
+    // endInlineEdit(false) 撤销登记）。
     if (state.mode === "rename") {
-      pendingRename = { from: state.path, to: relativePathOf(state.parentRel, name) };
+      pendingMove = { from: state.path, to: relativePathOf(state.parentRel, name) };
     }
     cb.onInlineEditSubmit({
       mode: state.mode,
@@ -951,10 +1097,12 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       lazyFetched.clear();
       lazyFetching.clear();
       // 整棵树换掉：编辑中的行随 DOM 一起消失，编辑态必须一起作废（否则 editing 会
-      // 指着已脱离文档的输入框，后续 beginRename 全被它挡住）。待认领的改名登记同理作废：
-      // 换 vault 后的批次与它无关（M258）。
+      // 指着已脱离文档的输入框，后续 beginRename 全被它挡住）。待认领的登记与拖拽态同理
+      // 作废：换 vault 后的批次与它们无关（M258 / M530）。
       editing = null;
-      pendingRename = undefined;
+      dragSource = undefined;
+      clearDropTarget();
+      pendingMove = undefined;
       renderAll(entries);
       mount.replaceChildren(rootEl);
     },
@@ -993,7 +1141,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       // 失败：留在编辑态并把原因写在行内（后端是权威——前端预检没拦住的那几类都经这里）。
       // 这次改名在磁盘上没有发生，撤销待认领的登记（M258）——否则下一条真事件的 deleted 可能
       // 撞上同一个旧路径，把展开态搬到一个不存在的新路径上。
-      pendingRename = undefined;
+      pendingMove = undefined;
       state.submitting = false;
       if (reason !== undefined && reason !== "") {
         state.error.textContent = reason;
@@ -1003,26 +1151,33 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       state.input.focus();
     },
 
+    endMoveEntry(ok) {
+      // 失败 = 撤销 drop 时登记的 from → to：磁盘上什么都没发生，留着登记会让后一批到达的
+      // 真实 deleted:from 把展开态误搬到不存在的新路径上（与 endInlineEdit(false) 同一条理由）。
+      if (!ok) pendingMove = undefined;
+    },
+
     applyChanges(changes) {
       // FSEvents 不保证同批内父先于子：按路径深度排序后再应用，
       // 避免子事件先于父事件到达时被"父缺失"丢弃（条目要等全量重扫才回来）。
       const sorted = [...changes].sort(
         (a, b) => a.path.split("/").length - b.path.split("/").length,
       );
-      // 改名回响到达：把展开态从旧路径搬到新路径（M258）。必须在处理 deleted 之前做——
+      // 改名回响到达：把展开态从旧路径搬到新路径（M258；M530 起含拖拽移动——改名是移动的
+      // 同目录特例，两者回响同形）。必须在处理 deleted 之前做——
       // 级联删除的 pruneExpanded(old) 会清掉旧前缀，而迁到新前缀的条目不受它影响；反过来
-      // （先删后迁）展开态就随旧子树一起没了，重命名后的目录在树里会掉一档成折叠态。
+      // （先删后迁）展开态就随旧子树一起没了，重命名/移动后的目录在树里会掉一档成折叠态。
       //
-      // 判据是「批次里有我登记过的那次改名的 deleted:from」：自己发起 → 磁盘上必定已经改完
-      // （登记只在提交后、失败即撤），搬展开态是**解释回响**而不是自绘树补丁（新行走的还是
-      // created:to 那条收敛通道）。expanded 是路径键集合，文件改名的迁移是空动作（文件不在
-      // 里面），目录改名连子孙前缀一起搬（remapPathAfterRename 的唯一一份前缀逻辑）。
+      // 判据是「批次里有我登记过的那次位置变更的 deleted:from」：自己发起 → 磁盘上必定已经
+      // 改完（登记只在提交后、失败即撤），搬展开态是**解释回响**而不是自绘树补丁（新行走的
+      // 还是 created:to 那条收敛通道）。expanded 是路径键集合，文件变更的迁移是空动作（文件
+      // 不在里面），目录变更连子孙前缀一起搬（remapPathAfterRename 的唯一一份前缀逻辑）。
       if (
-        pendingRename !== undefined &&
-        sorted.some((c) => c.kind === "deleted" && c.path === pendingRename?.from)
+        pendingMove !== undefined &&
+        sorted.some((c) => c.kind === "deleted" && c.path === pendingMove?.from)
       ) {
-        const { from, to } = pendingRename;
-        pendingRename = undefined;
+        const { from, to } = pendingMove;
+        pendingMove = undefined;
         for (const path of [...expanded]) {
           const next = remapPathAfterRename(path, from, to);
           if (next === undefined) continue;
@@ -1106,7 +1261,9 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       entryEl = undefined;
       emptyNotice = notice;
       editing = null;
-      pendingRename = undefined;
+      pendingMove = undefined;
+      dragSource = undefined;
+      clearDropTarget();
       const empty = document.createElement("div");
       empty.className = "ft-empty";
       if (notice) {

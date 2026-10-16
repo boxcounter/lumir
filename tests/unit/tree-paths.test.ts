@@ -11,6 +11,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   IGNORED_NAMES,
+  canMoveEntry,
+  moveTargetPath,
   relativePathOf,
   remapPathAfterRename,
   validateEntryName,
@@ -119,4 +121,41 @@ test("父目录 + 末段名 = 完整相对路径（M258：展开态搬家与回�
   // 反向：与 remapPathAfterRename 同一套路径语义（改名后的新路径必须能被 remap 认出来）
   const to = relativePathOf("sub", "b.md");
   assert.equal(remapPathAfterRename("sub/a.md", "sub/a.md", to), "sub/b.md");
+});
+
+// ---------------------------------------------------------------------------
+// 拖拽移动（M530）：目标路径与落点判定的纯函数一半。DOM 接线（dragover 高亮 / drop 上抛）
+// 在 tests/unit/tree-rename.test.ts；真机行为在场景 159。
+// ---------------------------------------------------------------------------
+
+test("拖拽移动的目标路径：末段名挂到目标目录下（目录移动只搬末段，不改名）", () => {
+  assert.equal(moveTargetPath("a.md", ""), "a.md");
+  assert.equal(moveTargetPath("a.md", "sub"), "sub/a.md");
+  assert.equal(moveTargetPath("sub/a.md", "notes"), "notes/a.md");
+  assert.equal(moveTargetPath("sub/deep", "notes"), "notes/deep");
+  assert.equal(moveTargetPath("sub/deep", "notes/2026"), "notes/2026/deep");
+  // 与改名共用同一拼接公式（改名 = 同目录移动的特例），两条入口不得各写一套
+  assert.equal(moveTargetPath("a.md", "sub"), relativePathOf("sub", "a.md"));
+});
+
+test("拖拽落点判定矩阵：允许与拒绝逐条有区分度", () => {
+  // 允许
+  assert.equal(canMoveEntry("a.md", "sub"), true, "文件移入目录");
+  assert.equal(canMoveEntry("a.md", "sub/deep"), true, "文件移入深层目录");
+  assert.equal(canMoveEntry("sub", "notes"), true, "目录移入别的目录");
+  assert.equal(canMoveEntry("sub/deep", "notes"), true, "深层目录移出");
+  assert.equal(canMoveEntry("sub", "subx"), true, "同前缀但不是子树（subx 不是 sub/ 下）");
+  assert.equal(canMoveEntry("sub", "subx/y"), true, "同前缀的别的子树");
+  // 拒绝：拖回原位（目标 == 源，rename 对该形态是静默 no-op）
+  assert.equal(canMoveEntry("a.md", ""), false, "文件移到自己的父目录（根）且同名");
+  assert.equal(canMoveEntry("sub/a.md", "sub"), false, "文件移回自己的直接父目录");
+  assert.equal(canMoveEntry("sub/deep/a.md", "sub/deep"), false, "深层文件移回直接父目录");
+  // 拒绝：目录拖入自身 / 自身后代
+  assert.equal(canMoveEntry("sub", "sub"), false, "目录拖到它自己那一行");
+  assert.equal(canMoveEntry("sub", "sub/deep"), false, "目录拖入直接子目录");
+  assert.equal(canMoveEntry("sub", "sub/deep/inner"), false, "目录拖入深层后代");
+  assert.equal(canMoveEntry("inbox", "inbox/deep"), false, "用户现场的嵌套形态");
+  // 反向判据：以上拒绝逐条换源路径就不再拒绝（REVIEW.md 第 1 条——判据不能等价于恒假）
+  assert.equal(canMoveEntry("sub/other.md", ""), true, "深层文件移到根是真移动，不是 no-op");
+  assert.equal(canMoveEntry("other", "sub/deep"), true, "别的目录拖入 sub 的子目录不受 sub 的禁律约束");
 });

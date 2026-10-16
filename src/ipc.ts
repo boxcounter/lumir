@@ -226,6 +226,15 @@ export function fsRenameEntry(rel: string, newName: string): Promise<string> {
   return invoke<string>("fs_rename_entry", { rel, new_name: newName });
 }
 
+/** 跨目录移动（M530，文件树拖拽移入目录的后端命令）：源与目标都是 vault 相对路径
+ *  （目标 = 目标目录 + 末段名，由树侧的 `moveTargetPath` 一处拼接）。撞名 reject
+ *  `fs_already_exists`（MUST NOT 覆盖）；目录移入自身/后代 reject `fs_move_into_self`；
+ *  目标父目录不存在 reject `fs_not_found`。返回移动后的 vault 相对路径，供打开中
+ *  session 的路径 remap 使用（与改名同一装配口径）。 */
+export function fsMoveEntry(fromRel: string, toRel: string): Promise<string> {
+  return invoke<string>("fs_move_entry", { from_rel: fromRel, to_rel: toRel });
+}
+
 /** 目录下新建空文件（§3.5）：`create_new` 原子语义，撞名 reject `fs_already_exists`。
  *  返回新建条目的 vault 相对路径（自动打开用它，不等 watcher 回响）。 */
 export function fsCreateFile(parentRel: string, name: string): Promise<string> {

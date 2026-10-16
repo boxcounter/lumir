@@ -43,6 +43,12 @@ interface FakeEvent {
   altKey?: boolean;
   shiftKey?: boolean;
   preventDefault?(): void;
+  /** 拖拽事件（M530）：dataTransfer 替身 / 指针坐标 / 事件目标 / dragleave 的 relatedTarget。 */
+  dataTransfer?: unknown;
+  clientX?: number;
+  clientY?: number;
+  target?: unknown;
+  relatedTarget?: unknown;
 }
 
 class FakeEl {
@@ -180,9 +186,12 @@ class FakeEl {
 }
 
 function installFakeDocument(): void {
-  (globalThis as unknown as Record<string, unknown>).document = {
-    createElement: (tag: string) => new FakeEl(tag),
-  };
+  const g = globalThis as unknown as Record<string, unknown>;
+  g.document = { createElement: (tag: string) => new FakeEl(tag) };
+  // 拖拽落点判定（M530）走 rowLiAt 的 `target instanceof Element`，dragleave 用
+  // `relatedTarget instanceof Node`：测试环境没有 DOM 全局，用 FakeEl 顶上。
+  g.Element = FakeEl;
+  g.Node = FakeEl;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +235,8 @@ function visiblePaths(all: readonly string[], expanded: ReadonlySet<string>): Se
 interface Rig {
   tree: FileTree;
   submitted: InlineEditRequest[];
+  /** 拖拽移动（M530）上抛给装配层的 from → to 请求。 */
+  moves: Array<{ from: string; to: string }>;
   /** 整棵树的 DOM 里已渲染的行路径（读 `.ft-item` 的 dataset.path）。 */
   renderedPaths: () => Set<string>;
   caretOpen: (path: string) => boolean | undefined;
@@ -236,18 +247,30 @@ interface Rig {
   editInputCount: () => number;
   click: (path: string) => void;
   beginRename: (path: string, newName: string) => void;
+  /** 行上 fire dragstart（登记拖拽源）。 */
+  dragStart: (path: string) => void;
+  /** 目标行上 fire dragover；返回值 = preventDefault 是否被调用（true = 可放）。 */
+  dragOver: (path: string) => boolean;
+  /** 目标行上 fire drop；返回值同上。 */
+  drop: (path: string) => boolean;
+  /** 源行上 fire dragend（拖出窗口 / Esc 取消的兜底清理路径）。 */
+  dragEnd: (path: string) => void;
+  /** 该行的落点高亮（is-drop-target）是否在场。 */
+  dropTargetRow: (path: string) => boolean;
 }
 
 function rig(entries: FsEntry[]): Rig {
   installFakeDocument();
   const mount = new FakeEl("div");
   const submitted: InlineEditRequest[] = [];
+  const moves: Array<{ from: string; to: string }> = [];
   const cb: FileTreeCallbacks = {
     onOpenFile: () => {},
     onOpenVault: () => {},
     onOpenVaultSwitcher: () => {},
     onContextMenu: () => {},
     onInlineEditSubmit: (request) => void submitted.push(request),
+    onMoveEntry: (from, to) => void moves.push({ from, to }),
     onExpandLazyDir: () => Promise.resolve([]),
   };
   const tree = createFileTree(mount as unknown as HTMLElement, cb);
@@ -257,10 +280,22 @@ function rig(entries: FsEntry[]): Rig {
   const itemOf = (path: string): FakeEl | undefined =>
     items().find((n) => n.dataset.path === path);
   const rowOf = (path: string): FakeEl | undefined => itemOf(path)?.querySelector(".ft-row") ?? undefined;
+  const rootEl = (): FakeEl => {
+    const el = mount.querySelector(".filetree");
+    assert.ok(el !== null, "树的容器必须在 mount 里");
+    return el;
+  };
+  const fakeDataTransfer = (): unknown => ({ setData: () => {}, effectAllowed: "", dropEffect: "" });
+  const rowMust = (path: string): FakeEl => {
+    const row = rowOf(path);
+    assert.ok(row !== undefined, `行 ${path} 必须在 DOM 里（父目录先展开）`);
+    return row;
+  };
 
   return {
     tree,
     submitted,
+    moves,
     renderedPaths: () => new Set(items().map((n) => n.dataset.path)),
 
     caretOpen: (path) => rowOf(path)?.querySelector(".ft-caret")?.classes.has("is-open"),
@@ -282,6 +317,40 @@ function rig(entries: FsEntry[]): Rig {
       input.value = newName;
       input.fire("keydown", keydown("Enter"));
     },
+
+    dragStart: (path) => {
+      rowMust(path).fire("dragstart", { dataTransfer: fakeDataTransfer() });
+    },
+    dragOver: (path) => {
+      let prevented = false;
+      rootEl().fire("dragover", {
+        target: rowMust(path),
+        clientX: 0,
+        clientY: 0,
+        dataTransfer: fakeDataTransfer(),
+        preventDefault: () => {
+          prevented = true;
+        },
+      });
+      return prevented;
+    },
+    drop: (path) => {
+      let prevented = false;
+      rootEl().fire("drop", {
+        target: rowMust(path),
+        clientX: 0,
+        clientY: 0,
+        dataTransfer: fakeDataTransfer(),
+        preventDefault: () => {
+          prevented = true;
+        },
+      });
+      return prevented;
+    },
+    dragEnd: (path) => {
+      rowMust(path).fire("dragend");
+    },
+    dropTargetRow: (path) => rowMust(path).classes.has("is-drop-target"),
   };
 }
 
@@ -622,4 +691,149 @@ test("回响先于提交回执到达：编辑态不残留、新路径下子树�
   // 装配层随后回报成功：编辑态已经不在，这次是空动作（不抛错、不重画）
   r.tree.endInlineEdit(true);
   assert.deepEqual([...r.renderedPaths()].sort(), ["tutorials", "tutorials/a.md"]);
+});
+
+
+// ---------------------------------------------------------------------------
+// 拖拽移动（M530）：dragover 高亮、drop 上抛、禁放面、回响收敛与失败撤销。
+// 目标路径与落点判定的纯函数矩阵在 tests/unit/tree-paths.test.ts；这里钉 DOM 接线与
+// 「移动后 watcher 回响收敛」这条与改名共用机制的不变量。真机行为在场景 159。
+// ---------------------------------------------------------------------------
+
+test("拖拽文件入目录：dragover 高亮目标目录行并允许 drop，drop 上抛 from → to", () => {
+  const r = rig([
+    entry("a.md", "file"),
+    entry("sub", "dir"),
+    entry("sub/inner.md", "file"),
+  ]);
+  r.dragStart("a.md");
+  assert.equal(r.dragOver("sub"), true, "目录行可放：dragover 被 preventDefault");
+  assert.equal(r.dropTargetRow("sub"), true, "目标目录行带落点高亮（is-drop-target）");
+  assert.equal(r.drop("sub"), true, "drop 落在目录行上被接受");
+  assert.deepEqual(r.moves, [{ from: "a.md", to: "sub/a.md" }], "上抛装配层的移动请求只有一个公式");
+  assert.equal(r.dropTargetRow("sub"), false, "drop 后高亮即清");
+  // 拖拽态已随 drop 清掉：再无 dragstart 的 dragover 是禁放、drop 不上抛
+  assert.equal(r.dragOver("sub"), false, "没有拖拽源时 dragover 不 preventDefault");
+  r.drop("sub");
+  assert.deepEqual(r.moves.length, 1, "没有拖拽源时 drop 不上抛");
+});
+
+test("禁放面：文件行、拖回原位、目录自身与自身子树都不给落点（无高亮、drop 不上抛）", () => {
+  const r = rig([
+    entry("inbox", "dir"),
+    entry("inbox/a.md", "file"),
+    entry("inbox/deep", "dir"),
+    entry("notes", "dir"),
+    entry("notes/a.md", "file"),
+  ]);
+  r.click("inbox");
+  r.click("notes");
+
+  // 文件行不可落
+  r.dragStart("notes/a.md");
+  assert.equal(r.dragOver("inbox/a.md"), false, "文件行不是落点");
+  assert.equal(r.dropTargetRow("inbox/a.md"), false, "文件行没有高亮");
+  r.drop("inbox/a.md");
+  assert.deepEqual(r.moves, [], "落在文件行上的 drop 不上抛");
+
+  // 拖回原位：inbox/a.md 的直接父目录就是 inbox，移过去 = 同名 no-op
+  r.dragStart("inbox/a.md");
+  assert.equal(r.dragOver("inbox"), false, "拖回自己的直接父目录（目标 == 源）不可放");
+
+  // 目录拖到它自己那一行、拖入自己的子目录
+  r.dragStart("inbox");
+  assert.equal(r.dragOver("inbox"), false, "目录拖到它自己那一行不可放");
+  assert.equal(r.dragOver("inbox/deep"), false, "目录拖入自己的子目录不可放（canMoveEntry 前缀拒）");
+  r.drop("inbox/deep");
+  assert.deepEqual(r.moves, [], "禁放面的 drop 一律不上抛");
+});
+
+test("dragend 兜底清理：拖出窗口（无 drop）后高亮与拖拽态都不残留", () => {
+  const r = rig([
+    entry("a.md", "file"),
+    entry("sub", "dir"),
+  ]);
+  r.dragStart("a.md");
+  assert.equal(r.dragOver("sub"), true);
+  assert.equal(r.dropTargetRow("sub"), true);
+  r.dragEnd("a.md");
+  assert.equal(r.dropTargetRow("sub"), false, "dragend 清高亮");
+  assert.equal(r.dragOver("sub"), false, "dragend 清拖拽源：随后的 dragover 是禁放");
+  r.drop("sub");
+  assert.deepEqual(r.moves, [], "dragend 之后的 drop 不上抛");
+});
+
+test("拖拽目录入目录：drop 后树一字不动（不自绘补丁），watcher 回响后子树在新路径下且展开态随迁", () => {
+  const r = rig([
+    entry("inbox", "dir"),
+    entry("inbox/a.md", "file"),
+    entry("inbox/deep", "dir"),
+    entry("inbox/deep/b.txt", "file"),
+    entry("notes", "dir"),
+  ]);
+  r.click("inbox");
+  r.click("inbox/deep");
+  r.click("notes");
+
+  r.dragStart("inbox");
+  assert.equal(r.drop("notes"), true);
+  assert.deepEqual(r.moves, [{ from: "inbox", to: "notes/inbox" }]);
+  // drop 之后、回响之前：树保持原样——唯一收敛通道是 watcher 回响（与改名同纪律）
+  assert.deepEqual(
+    [...r.renderedPaths()].sort(),
+    ["inbox", "inbox/a.md", "inbox/deep", "inbox/deep/b.txt", "notes"],
+    "提交后不自绘补丁：旧行原样在场，等回响收敛",
+  );
+
+  r.tree.applyChanges(
+    dirRenameBatch("inbox", "notes/inbox", [
+      { path: "inbox", kind: "dir" },
+      { path: "inbox/a.md", kind: "file" },
+      { path: "inbox/deep", kind: "dir" },
+      { path: "inbox/deep/b.txt", kind: "file" },
+    ]),
+  );
+  assert.deepEqual(
+    [...r.renderedPaths()].sort(),
+    ["notes", "notes/inbox", "notes/inbox/a.md", "notes/inbox/deep", "notes/inbox/deep/b.txt"],
+    "回响后整棵子树在新路径下、两层展开态都随目录搬过去",
+  );
+  assert.equal(r.caretOpen("notes/inbox"), true, "移动过的目录保持展开");
+  assert.equal(r.caretOpen("notes/inbox/deep"), true, "子孙目录的展开态按前缀随迁");
+  for (const path of r.renderedPaths()) {
+    assert.equal(
+      path === "inbox" || path.startsWith("inbox/"),
+      false,
+      `旧路径 ${path} 不得残留`,
+    );
+  }
+});
+
+test("移动失败即撤登记：endMoveEntry(false) 之后到达的同名批次不再迁移展开态", () => {
+  const r = rig([
+    entry("inbox", "dir"),
+    entry("inbox/a.md", "file"),
+    entry("notes", "dir"),
+  ]);
+  r.click("inbox");
+  r.click("notes");
+
+  r.dragStart("inbox");
+  r.drop("notes");
+  assert.deepEqual(r.moves, [{ from: "inbox", to: "notes/inbox" }]);
+  r.tree.endMoveEntry(false); // 后端拒绝（如撞名）：磁盘上什么都没发生
+
+  // 同一窗口内真实发生的只是「删 inbox + 别处新建」——登记已撤，批次按外部删+建收敛
+  r.tree.applyChanges(
+    dirRenameBatch("inbox", "notes/inbox", [
+      { path: "inbox", kind: "dir" },
+      { path: "inbox/a.md", kind: "file" },
+    ]),
+  );
+  assert.deepEqual(
+    [...r.renderedPaths()].sort(),
+    ["notes", "notes/inbox"],
+    "目录行在场、子树按折叠态不渲染（外部删除+新建的形态）",
+  );
+  assert.equal(r.caretOpen("notes/inbox"), false, "登记已撤：展开态不得迁移");
 });
