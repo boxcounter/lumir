@@ -13,6 +13,8 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //   5. **两手势互斥**：编辑器选区与 transcript 选区先后出现时，同屏至多一个浮动钮。
 //   6. **序列化结构**：发送时投递文本含 `<msg-quote role="…" at="…">`（无编号）。
 //   7. **视口注入 skip**：携带消息摘录卡时 chip 走「仅路径」形态（D373）。
+//   8. **浮动钮的落点钳制**（M531，change fix-quote-button-viewport-clamp）：选区贴 transcript
+//      可视区底缘时，钮 MUST 收进可视滚动区（不再是「落在滚动窗口之外、要再滚一段才看得见」）。
 //
 // 行为层（真机 WKWebView）归验收套件；这里钉结构、计算属性与瞬态纪律。
 //
@@ -51,7 +53,7 @@ const STATE = {
   warn_ctx_pct: 85,
 };
 
-async function stubHarness(page: Page): Promise<void> {
+async function stubHarness(page: Page, snapshot: typeof STATE = STATE): Promise<void> {
   await page.addInitScript((snapshot) => {
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
@@ -81,7 +83,7 @@ async function stubHarness(page: Page): Promise<void> {
       }
       return result;
     };
-  }, STATE);
+  }, snapshot);
 }
 
 async function openPanel(page: Page): Promise<void> {
@@ -240,4 +242,97 @@ test("序列化结构：发送投递的文本含 <msg-quote role at>（无编号
   expect(message).toContain("这里说的筛选成本具体指什么？");
   // 协议零编号。
   expect(message).not.toMatch(/<msg-quote[^>]*\b(index|idx|id|n)=/);
+});
+
+// M531（fix-quote-button-viewport-clamp）：transcript 那颗钮的落点钳制。
+//
+// 与 m345 那颗（挂 .editor-pane）同一族的缺陷，但可判的形态不同：transcript 本来就是滚动容器
+//（`.lumir-hp-transcript` 是 `.pane` 系外的独立容器，`overflow-y: auto` + 横向随之 auto），
+// 所以钮越出可视区时**不会**撑动外层，而是自己被推到滚动窗口之外、要用户再滚一段才看得见。
+// 横向 clamp 早就在（M423），缺的是 top 钳制与 left 下限（M531 补齐）——纵向那一半在这里
+// **够得到判别性落点**（transcript 的底部内边距只有 sp-2，末条消息的正文底缘几乎贴住可视底缘），
+// 而编辑器那颗受文档尾留白 + 结束标记的 ≈58px 余量保护，够不到（m345 只作不变式断言）。
+
+/** 长会话：长到 transcript 必须滚动，末条消息的正文才贴得住可视区底缘。 */
+const LONG_STATE = {
+  ...STATE,
+  messages: [
+    { role: "user", text: "先把这条读一遍。", ts: TS_USER },
+    ...Array.from({ length: 24 }, (_, i) => ({
+      role: "assistant",
+      text: `长对话第 ${i + 1} 条回答：先把结论说清楚，再补论证。`,
+      ts: TS_ASSISTANT + 10 + i,
+    })),
+  ],
+};
+
+/** transcript 那颗钮的读数（M531）：可视区坐标 = 相对 transcript 客户盒左上角（与 clientWidth /
+ *  clientHeight 同一空间，滚动窗口即「可视带」）。 */
+async function clampGeometry(page: Page) {
+  return page.evaluate(() => {
+    const transcript = document.querySelector(".lumir-hp-transcript") as HTMLElement;
+    const button = transcript.querySelector(".quote-gesture-btn") as HTMLElement;
+    const t = transcript.getBoundingClientRect();
+    const b = button.getBoundingClientRect();
+    const selection = document.getSelection();
+    const sel = selection !== null && selection.rangeCount > 0 ? selection.getRangeAt(0).getBoundingClientRect() : null;
+    return {
+      clientWidth: transcript.clientWidth,
+      clientHeight: transcript.clientHeight,
+      scrollTop: transcript.scrollTop,
+      scrollHeight: transcript.scrollHeight,
+      selectionBottom: sel === null ? null : sel.bottom - t.top,
+      selectionRight: sel === null ? null : sel.right - t.left,
+      buttonLeft: b.left - t.left,
+      buttonTop: b.top - t.top,
+      buttonRight: b.right - t.left,
+      buttonBottom: b.bottom - t.top,
+      buttonWidth: b.width,
+      buttonHeight: b.height,
+    };
+  });
+}
+
+test("钳制：选区贴 transcript 可视区底缘时，钮收进可视滚动区（不再落到滚动窗口之外）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page, LONG_STATE);
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+
+  const transcript = page.locator(".lumir-hp-transcript");
+  await expect(transcript.locator(".lumir-hp-msg-assistant").first()).toBeVisible();
+  // 会话长到要滚动（正观测：scrollHeight > clientHeight）——不成立就等于判据在静止现场上空转。
+  const scrolled = await page.evaluate(() => {
+    const el = document.querySelector(".lumir-hp-transcript") as HTMLElement;
+    el.scrollTop = el.scrollHeight;
+    return {
+      scrollTop: el.scrollTop,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    };
+  });
+  expect(scrolled.scrollHeight, "前置：transcript 必须真的可滚（否则本条判据空转）").toBeGreaterThan(
+    scrolled.clientHeight,
+  );
+  // 末条 assistant 正文：选区底缘因此贴近可视区底缘（钮的候选落点越出可视带）。
+  const lastAssistant = (await page.locator(".lumir-hp-msg-assistant .lumir-hp-body").count()) - 1;
+  await selectTextIn(page, ".lumir-hp-msg-assistant .lumir-hp-body", lastAssistant);
+
+  const btn = transcript.locator("> .quote-gesture-btn");
+  await expect(btn).toBeVisible();
+
+  const r = await clampGeometry(page);
+  // 前提：选区底缘 + 「右下 +4px」的候选落点 + 钮高**必然**越出可视带底缘（否则判据空转）。
+  expect(
+    (r.selectionBottom ?? 0) + r.buttonHeight + 4,
+    "本用例的前提是未钳制的落点会越出可视带底缘（否则这条判据空转）",
+  ).toBeGreaterThan(r.clientHeight);
+  // 钮恒在可视滚动区内（4px 留白；0.5 是亚像素取整余量）。
+  expect(r.buttonTop, "钮上缘越出可视区").toBeGreaterThanOrEqual(-0.5);
+  expect(r.buttonLeft, "钮左缘越出可视区").toBeGreaterThanOrEqual(-0.5);
+  expect(r.buttonBottom, "钮下缘越出可视区底缘（4px 留白）").toBeLessThanOrEqual(r.clientHeight - 4 + 0.5);
+  expect(r.buttonRight, "钮右缘越出可视区右缘（4px 留白）").toBeLessThanOrEqual(r.clientWidth - 4 + 0.5);
 });

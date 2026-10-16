@@ -139,6 +139,55 @@ export function resolveQuoteAnchor(
 }
 
 // ---------------------------------------------------------------------------
+// 浮动钮落位钳制（编辑器手势与 transcript 消息手势共用同一份口径）
+// ---------------------------------------------------------------------------
+
+/** 钮与可视区边缘的留白（与「选区右下 +4px」同值）。 */
+export const GESTURE_BUTTON_MARGIN = 4;
+
+/** 可视带（`clampGestureButton` 的 `band`）：与落点坐标同一空间的一个矩形。 */
+export interface GestureButtonBand {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * 浮动钮落位钳制（M531）：把「选区右下 +4px」这个候选落点钳进可视带，保证钮**整体**落在
+ * 可见区内。
+ *
+ * 为什么必须有：钮是绝对定位子元素，两条挂载链都不裁它——编辑器侧挂 `.editor-pane`（祖先链
+ * `.pane-editor` 的 `overflow: auto` 只把溢出收成**编辑器列的横向滚动**，不裁也不上报）；于是
+ * 选区包围盒越出容器时钮就落在可视区之外（Alex 现场：两个 pane 被拖着一起横滑、钮在最右侧的
+ * 视口外）。而越界是常态而不是异常：多行选区的 `getBoundingClientRect()` 是**并集盒**
+ *（right = 最宽行右缘），折行正文里贴近右缘、不折行的长行（围栏代码块 / `line_wrap: false`）
+ * 都会把它推到容器外。
+ *
+ * 不钳制的另一半代价是**量到的宽不是内容宽**：abspos 收缩盒的可用宽 = 「left 到容器右缘」，
+ * 落点贴右缘时钮被压成逐字换行的窄条（64.5×49、31×107 两形态都是实测），位置看起来「跑到最
+ * 右边去了」。所以调用方必须先拿到钮的**自然内容宽**（把落点归零量一次），再按它钳制左缘。
+ *
+ * `band` 与 `desired` 必须在同一坐标空间：编辑器侧是挂载元素内的像素（容器不滚动），
+ * transcript 侧是内容坐标（desired 已折算 scrollTop/scrollLeft，band 就是当前滚动窗口）。
+ * 容器比钮还窄时下界优先（贴左 / 上缘），宁可溢出也不反向越界。
+ */
+export function clampGestureButton(
+  desired: { left: number; top: number },
+  size: { width: number; height: number },
+  band: GestureButtonBand,
+): { left: number; top: number } {
+  const minLeft = band.left + GESTURE_BUTTON_MARGIN;
+  const minTop = band.top + GESTURE_BUTTON_MARGIN;
+  const maxLeft = Math.max(minLeft, band.left + band.width - size.width - GESTURE_BUTTON_MARGIN);
+  const maxTop = Math.max(minTop, band.top + band.height - size.height - GESTURE_BUTTON_MARGIN);
+  return {
+    left: Math.min(Math.max(desired.left, minLeft), maxLeft),
+    top: Math.min(Math.max(desired.top, minTop), maxTop),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 跳回高亮的 CM6 扩展（零常驻装饰纪律的「跳回高亮」瞬态）
 // ---------------------------------------------------------------------------
 
@@ -238,15 +287,32 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
     if (button.parentElement !== null) button.remove();
   }
 
-  /** 浮动钮定位：选区包围盒右下、相对活跃 pane 挂载元素（.editor-pane 是定位基准）。 */
+  /**
+   * 浮动钮定位：选区包围盒右下、相对活跃 pane 挂载元素（.editor-pane 是定位基准），并按
+   * `clampGestureButton` 钳进挂载容器的可视区（M531——细则与现场见该函数的注释）。
+   *
+   * 「自然内容宽」要先量：abspos 收缩盒的可用宽 = 「left 到容器右缘」，直接落位再读宽会量到
+   * 被压窄后的逐字换行宽。故先把 left 归零量一次自然尺寸，再按钳制结果落位——两次写在同一
+   * 同步块内，中间不绘制，屏幕上看不到中间态。
+   */
   function placeButton(rect: DOMRect): void {
     const mount = deps.activeMount();
     if (mount === undefined) return;
     if (button.parentElement !== mount) mount.append(button);
     const mountRect = mount.getBoundingClientRect();
-    button.style.left = `${rect.right - mountRect.left + 4}px`;
-    button.style.top = `${rect.bottom - mountRect.top + 4}px`;
     button.hidden = false;
+    button.style.left = "0px";
+    const natural = button.getBoundingClientRect();
+    const placed = clampGestureButton(
+      {
+        left: rect.right - mountRect.left + GESTURE_BUTTON_MARGIN,
+        top: rect.bottom - mountRect.top + GESTURE_BUTTON_MARGIN,
+      },
+      { width: natural.width, height: natural.height },
+      { left: 0, top: 0, width: mount.clientWidth, height: mount.clientHeight },
+    );
+    button.style.left = `${placed.left}px`;
+    button.style.top = `${placed.top}px`;
   }
 
   function onSelectionChange(): void {

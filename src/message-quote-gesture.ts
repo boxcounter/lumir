@@ -18,7 +18,7 @@
 import { onRelabel, t } from "./copy";
 import { formatMessageAt } from "./quote-card";
 import type { MessageQuoteCard } from "./quote-card";
-import { quotePrefixMatched } from "./quote-gesture";
+import { clampGestureButton, GESTURE_BUTTON_MARGIN, quotePrefixMatched } from "./quote-gesture";
 
 // ---------------------------------------------------------------------------
 // 纯逻辑层（tests/unit 零 DOM 直接驱动）
@@ -117,20 +117,33 @@ export function createMessageQuoteGesture(deps: MessageQuoteGestureDeps): { disp
   }
 
   /**
-   * 浮动钮定位：选区包围盒右下、相对 transcript 内容原点（scrollTop 折算，滚动时随内容走）。
-   * abspos 收缩盒的可用宽 = 「left 到容器右缘」——选区贴右缘时不收编的话，钮会被压成逐字换行
-   * （量到的实际宽也随之失真）。故 `width: max-content`（harness-panel.css 的 scoped 覆写）先
-   * 保证量到的是内容宽，再把 left 左移回容器内。
+   * 浮动钮定位：选区包围盒右下、相对 transcript 内容原点（scrollTop / scrollLeft 折算，滚动时
+   * 随内容走），并按 `clampGestureButton` 钳进**当前滚动窗口**（M531：补 top 钳制与 left 下限；
+   * 细则与现场见该函数注释）。
+   *
+   * 宽度那一半由 CSS 保证：abspos 收缩盒的可用宽 = 「left 到容器右缘」，选区贴右缘时不收编的
+   * 话钮会被压成逐字换行（量到的实际宽也随之失真）。故 `width: max-content`（harness-panel.css
+   * 的 scoped 覆写）先保证量到的是内容宽，这里的 clamp 直接消费它。
    */
   function placeButton(rect: DOMRect): void {
     const base = deps.transcript.getBoundingClientRect();
     if (button.parentElement !== deps.transcript) deps.transcript.append(button);
     button.hidden = false;
-    const left = rect.right - base.left + deps.transcript.scrollLeft + 4;
-    const top = rect.bottom - base.top + deps.transcript.scrollTop + 4;
-    const maxLeft = Math.max(4, deps.transcript.clientWidth - button.offsetWidth - 4);
-    button.style.left = `${Math.min(left, maxLeft)}px`;
-    button.style.top = `${top}px`;
+    const placed = clampGestureButton(
+      {
+        left: rect.right - base.left + deps.transcript.scrollLeft + GESTURE_BUTTON_MARGIN,
+        top: rect.bottom - base.top + deps.transcript.scrollTop + GESTURE_BUTTON_MARGIN,
+      },
+      { width: button.offsetWidth, height: button.offsetHeight },
+      {
+        left: deps.transcript.scrollLeft,
+        top: deps.transcript.scrollTop,
+        width: deps.transcript.clientWidth,
+        height: deps.transcript.clientHeight,
+      },
+    );
+    button.style.left = `${placed.left}px`;
+    button.style.top = `${placed.top}px`;
   }
 
   /**

@@ -65,6 +65,12 @@ steps:
     expect:
       - label: 消息体选区出钮（证明上一条负观测不是「手势全不工作」的空转）
         ax: { has: "/AXButton \\(摘录到对话\\)/" }
+      - label: 钮整体落在视口内（落点钳制的不变式；有区分度的现场在场景 160 与 m423 的「钳制」用例）
+        geom:
+          target: { role: AXButton, name: "摘录到对话" }
+          minWidth: 40
+          minHeight: 16
+          painted: { min: 60 }
       - shot: 02-消息体出钮
 
   - name: 点这颗钮，验它确实来自**消息体**（落点若漂到编辑器 pane，出的是编辑器那颗同名的钮）
@@ -128,5 +134,9 @@ transcript 里并非所有文字都能摘：思考块、工具行、批准卡、
 - **pane 宽度不可由场景确定**（已知缺口，超出本场景范围）：`pane_split_ratio` 存在 vault 会话
   文件里，跨场景继承、套件的 per-scenario reset 不清它 ⇒ 同一条 run 内不同场景看到的 pane
   宽度可以不同。坐标型场景都吃这个亏（本场景与 121 同源）。
+- **浮动钮的落点钳制（M531）**：本场景的拖选落点在 transcript 顶部锚定的正文行上，钮的候选落点
+  远在可视区内——`geom` 那条只作**不变式**（钮在视口内且尺寸未坏）。有区分度的现场：编辑器那颗钮
+  由场景 160 判（选区越出挂载容器），transcript 那颗的纵向钳制由 chromium 视觉场景
+  `tests/visual/scenes/m423-message-excerpt.spec.ts` 的「钳制」用例判（选区贴 transcript 可视区底缘）。
 - 工具行 / 批准卡 / 卡片内部三条排除分支的 DOM 判据在 chromium 视觉场景
   `tests/visual/scenes/m423-message-excerpt.spec.ts`（程序化选区，稳定可判）。

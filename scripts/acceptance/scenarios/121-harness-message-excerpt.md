@@ -43,6 +43,12 @@ steps:
     expect:
       - label: 浮动「摘录到对话」钮在场（D370；同时是选区建立的正观测）
         ax: { has: "/AXButton \\(摘录到对话\\)/" }
+      - label: 钮整体落在视口内（落点钳制的不变式；有区分度的现场在场景 160 与 m423 的「钳制」用例）
+        geom:
+          target: { role: AXButton, name: "摘录到对话" }
+          minWidth: 40
+          minHeight: 16
+          painted: { min: 60 }
       - shot: 02-浮动钮
 
   - name: 点浮动钮 → 消息摘录卡片入 composer
@@ -152,6 +158,10 @@ steps:
 - **坐标不是 bbox，是固定布局的常量**：本轮取证窗口固定 1200×800、harness pane 固定比分、
   fixture 固定；坐标漂了会以「浮动钮不在场」当场判红（不会静默选中别处通过——后面还有出处行
   「对话 · Agent」与 wire 里 `role="assistant"` 两条内容判据兜底）。
+- **浮动钮的落点钳制（M531）**：本场景的拖选落点在 transcript 顶部锚定的正文行上，钮的候选落点
+  远在可视区内——`geom` 那条只作**不变式**（钮在视口内且尺寸未坏）。有区分度的现场：编辑器那颗钮
+  由场景 160 判（选区越出挂载容器），transcript 那颗的纵向钳制由 chromium 视觉场景
+  `tests/visual/scenes/m423-message-excerpt.spec.ts` 的「钳制」用例判（选区贴 transcript 可视区底缘）。
 - **跳回三层（design §8 ④）不在本场景**：跳回命中的落点由面板设置的类名 + 滚动位置表达，
   两者都读不进 AX；跳回的**结构半**由 chromium 视觉场景
   `tests/visual/scenes/m423-message-excerpt.spec.ts` 覆盖（`.is-jump-flash` 出现→退场、
