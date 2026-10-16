@@ -373,7 +373,7 @@
 | D346 | 对话面板空态提示 | 作者 | 与当前文档对话——发送时会携带上方显示的上下文，发送前可核对。 | Chat about the current document — the context shown above is sent with your message; check it before sending. | 空 transcript 时的引导句，顺带教会「chip = 发送的上下文」这条心智模型。 |
 | D347 | 对话面板发送失败行 | 作者 | 发送失败：{reason} | Send failed: {reason} | harness_send reject 时落进 transcript 的错误行。 |
 | D348 | 对话面板错误行 | 作者 | 错误：{message} | Error: {message} | error 事件与其他异步失败（快照读取 / 批准 / 新会话）的通用错误行。 |
-| D388 | 对话思考块折叠行 | 作者 | 思考过程 · {sec} 秒 | Thinking · {sec}s | M363（change add-harness-thinking-display-and-effort 的面板半边；档位与 reasoning_chunk 事件契约 = M362 的 core 半边）：agent 消息内思考块的折叠态单行（chevron + 本句，原型屏 9 形态合同）。折叠是默认（含流式期间），展开态左边线 + 次级灰正文（模型思考原文，无新文案）。{sec} = 块首 chunk 到末 chunk 的墙钟差（秒，前端计时、轮次结束定格——时长是数据读数，模板整串走表；zh / en 两串不同模板，不走上屏列锁定）。多块按块序号序排列、无思考不渲染块（零噪声）；快照恢复的历史消息不带 reasoning（PanelMessage 无此字段），不伪造块。 |
+| D388 | 对话思考块折叠行 | 作者 | 思考过程 · {sec} 秒 | Thinking · {sec}s | M363（change add-harness-thinking-display-and-effort 的面板半边；档位与 reasoning_chunk 事件契约 = M362 的 core 半边）：agent 消息内思考块的折叠态单行（chevron + 本句，原型屏 9 形态合同）。折叠是默认（含流式期间），展开态左边线 + 次级灰正文（模型思考原文，无新文案）。{sec} = 块首 chunk 到末 chunk 的墙钟差（秒，前端计时、轮次结束定格——时长是数据读数，模板整串走表；zh / en 两串不同模板，不走上屏列锁定）。多块按块序号序排列、无思考不渲染块（零噪声）；**恢复路径的思考块走 D468**（无时长变体），本条只服务 live 路径——M398 起恢复重建的面板消息带 `reasoning` 明文（kimi 的不透明项取不到明文则缺席，不伪造块），M542 起它与 live 同口径默认折叠、折叠行取 D468。 |
 | D389 | ~~对话思考 chip（支持态悬停提示 / 读屏名）~~（M373 退场） | 作者 | 思考程度：{level}（点击切换） | Thinking effort: {level} (click to switch) | M363：composer 控制行思考 chip（位置 = 模型 chip 后、ctx 读数前）支持当前 provider + model 程度调节时的悬停提示与读屏名。可见文本 = D391 面文本（读数同 D376 口径）；点击浮层三个裸档位、当前档位带勾选（无每档释义，Alex 2026-10-06 裁决）。档位名 Low / High / Max 是专有名词（zh / en 均英文原文），作为数据读数上屏，不进编号（同 provider 名 / D386 口径）。**M373（合并选择器）退场，编号停用、不复用**——思考 chip 并入选择器 chip，支持态读屏名走 D393。 |
 | D390 | 合并选择器 effort 不支持说明 | 作者 | 当前模型不支持思考程度调节 | The current model does not support thinking effort adjustment | M363（Alex 2026-10-06 裁决点 2 原句）登记；M373 起消费点迁移到合并选择器：当前 provider + model 不支持思考程度调节时（harness_state 快照 thinking.supported = false），合并 chip 的读屏名换本句、浮层 effort 段整段禁用并挂本句作段尾说明；置灰那一格另有一条点名模型的 hover hint（D394）。能力判据的真源自 M373 起是配置 schema（`[harness].providers.<id>.models` 的逐模型 effort 声明，缺省内置 preset——M362 的 core 词元判定退役）。 |
 | D391 | ~~对话思考 chip 面文本~~（M373 退场） | 作者 | 思考：{level} | Thinking: {level} | M363：思考 chip 的可见文本，{level} = 档位读数（后端小写原词 low/high/max，上屏首字母大写 Low/High/Max）。zh 面文本用全角冒号，与 D376「模型：」同口径。档位是会话内生效的设置（不写回配置），读数随 harness_state 快照的 thinking.level；空态（无会话）快照也带正确档位与能力标记（Rust 侧 StateSnapshot::empty 同形）。**M373（合并选择器）退场，编号停用、不复用**——双 chip 合一后可见文本是「model · effort」裸读数串，档位名前不带「思考：」前缀（原型同裁决）。 |
@@ -452,10 +452,11 @@
 | D465 | harness ctx 气泡第二行（会话缓存命中率） | 作者 | 缓存命中率（会话）：{cache}% | Cache hit rate (session): {cache}% | M526：会话累计命中绝对值（`cached_tokens_session`）+ 累计命中率同句；绝对值缺键（旧载荷）时回落百分比形态 D401。**M533 精简为只出百分比**（Alex 2026-10-16 原话「气泡内容太冗余了。只需要这些信息：1. 当前上下文使用量和百分比……2. 会话的缓存命中率」——本条是对 M526 需求 2 里 cache tokens 读数的显式 supersede）：tokens 计数与回落双档一并退场，口径限定词由「（会话累计）」收敛为 Alex 原话的「（会话）」，M378 的百分比形态 D401 随之并入退场（同一口径一条串）。消费点 src/harness-panel.ts 的 ctxPopRows。 |
 | D466 | ~~harness ctx 气泡第三行（tokens 形态）~~（M533 退场） | 作者 | 本回合缓存命中：{cached} tokens · 命中率 {turn}% | Cache hits this turn: {cached} tokens · hit rate {turn}% | M526：本回合命中绝对值（`cached_tokens`）+ 命中率同句，成因句（D453/D454）照旧追加其后；绝对值缺键（旧载荷）时回落百分比形态 D452。消费点 src/harness-panel.ts 的 ctxPopRows。**M533 退场，编号停用、不复用**——本回合行整行退场（与它的百分比形态 D452、成因句 D453/D454 同批），`cached_tokens` 绝对值随之失去上屏面（留存面不动）。 |
 | D467 | 后端错误信封（按 code 渲染） | 作者 | 不能移动到自身或其子目录：{rel} | Can't move an entry into itself or its own subdirectory: {rel} | M530（file-tree「拖拽移动条目」）：`fs_move_entry` 对「目录移入自身/后代」与「移回原位（to == from，rename 语义是静默 no-op）」的显式前置拒绝（`fs_move_into_self`）。内核 rename 本来就拒绝前者（EINVAL），显式判定给出人话与专属错误码、不依赖内核行为。前端拖拽落点判定（src/tree.ts 的 `canMoveEntry`）先行拒绝，这条是命令层兜底——harness 的 `vault_move` 等不经树的调用方直接命中它。占位键 `{rel}` 与后端 `.param("rel", …)` 逐字对应。消费点 src/copy-data.ts 的 ERROR_COPY。 |
+| D468 | harness 恢复路径的思考块折叠行（无时长变体） | 作者 | 思考过程 | Thinking | M542（Alex 2026-10-16 原文：「重建后 thinking 过程默认是展开的，我希望它保持收起」）：恢复重建的 assistant 消息里思考块的折叠行文案，是 D388 的**无时长变体**——恢复路径的思考文本来自 wire 的 reasoning 回放项，wire 不带「思考了多久」的读数，写一个数字就是伪造读数（M398 的立意保留；与「无戳不显示 when」同口径）。折叠态与默认渲染一致（含点击展开回原文），只差时长读数这一项本来就取不到的信息。消费点 src/harness-panel.ts 的 `createRestoredThinking`（语言切换经 `relabelThinkingViews` 依 `data-restored` 重取本串）。 |
 
 ## 编号沿革
 
-**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D467**（M530 的拖拽移动错误信封文案；前四位 D463–D466 是 M526 的 ctx 气泡 tokens 行，再前一位 D462 是 M525 的窗口底色错误信封文案）。
+**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D468**（M542 的恢复路径思考块折叠行无时长变体；前一位 D467 是 M530 的拖拽移动错误信封文案，再前四位 D463–D466 是 M526 的 ctx 气泡 tokens 行）。
 
 **不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
 
@@ -519,6 +520,7 @@
 - M530 D467 拖拽移动：移入自身/后代错误信封（fs_move_into_self；D463–D466 由 M526 ctxcache 气泡批先占，本条取 D467）
 - M533 气泡行集精简（**未取新号**）：D465 改形为只出百分比（编号沿用）、D335 改准尾句并去掉 `{ctx}`（编号沿用）；D401、D452–D455、D466 停用
 - M540 D414 批准卡命令类副句删除（**未取新号**）：编号停用、不复用、不随行留档——Alex 原话「去掉 ask for approve 的文案……因为不提供有价值的信息」；命令类批准卡不再有副句，写类副句 D413 不变
+- M542 D468 恢复路径的思考块折叠行（D388 的无时长变体，接末位）
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 

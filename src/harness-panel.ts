@@ -5740,6 +5740,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 活会话快照的面板记录不带 reasoning（思考只在 live 事件流里）——只有恢复重建的消息
   // （M398，`PanelMessage.reasoning`）才带 reasoning 明文；两条路径的思考块都走本段渲染件，
   // 取不到明文就不建块（不伪造）。
+  // **折叠态是两条路径共用的默认**（M542，Alex 2026-10-16：恢复会话里 thinking 默认展开，
+  // 与默认渲染不一致；不变量 = 恢复渲染的各类块展开态与默认渲染一致）。恢复路径唯一缺的
+  // 读数只有**时长**（wire 只带 reasoning 明文、不带「思考了多久」），故它的折叠行走无时长
+  // 变体 D468，不写数字（M398「不伪造读数」的立意保留，时长缺席是有意的，不是缺漏）。
 
   /** 思考块的 DOM 面：元素长驻已沉淀的消息内（终态后数据引用释放，重渲只走 relabel）。 */
   interface ThinkingView {
@@ -5767,7 +5771,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return svg;
   }
 
-  /** 建思考块视图（默认折叠）。head 钮的可见文本 = D388 整串（chevron + 时长行）。 */
+  /** 建思考块视图（默认折叠）。head 钮的可见文本由调用方填：活会话 = `flushThinkingViews`
+   *  写 D388 整串（chevron + 时长），恢复路径 = `createRestoredThinking` 写 D468（无时长）。 */
   function createThinkingView(): ThinkingView {
     const el = document.createElement("div");
     el.className = "lumir-hp-think";
@@ -5866,11 +5871,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /** 思考块头随语言重渲（meta chrome，与 who/when、工具摘要同口径——已定格的 data-sec
-   *  是事实读数，重取 D388 模板即可；正文是模型原文，不随语言改写）。 */
+   *  是事实读数，重取 D388 模板即可；正文是模型原文，不随语言改写）。恢复路径的折叠行
+   *  无时长读数（`dataset.restored`，见 `createRestoredThinking`）：重取无时长的 D468，
+   *  MUST NOT 走 D388——那条模板的 `{sec}` 只能拿 0 填空，重渲会把「时长未知」变成
+   *  「思考了 0 秒」的伪造读数（M542）。 */
   function relabelThinkingViews(): void {
     for (const el of transcript.querySelectorAll<HTMLElement>(".lumir-hp-think")) {
       const text = el.querySelector(".lumir-hp-think-text");
-      if (text !== null) text.textContent = t("D388", { sec: Number(el.dataset.sec ?? "0") });
+      if (text === null) continue;
+      text.textContent =
+        el.dataset.restored === "1"
+          ? t("D468")
+          : t("D388", { sec: Number(el.dataset.sec ?? "0") });
     }
   }
 
@@ -6225,14 +6237,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
-  /** 恢复消息的思考块（M398）：复用活会话的思考块结构（`createThinkingView`），但**不渲染
-   *  含时长的折叠头**——wire 只带 reasoning 明文、不带「思考了多久」的读数，写一个数字就是
-   *  伪造读数（与「无戳不显示 when」同口径）。因此正文直接展开呈现（无折叠开关）。 */
+  /** 恢复消息的思考块（M398 结构 × M542 折叠态）：复用活会话的思考块结构
+   *  （`createThinkingView`），**默认折叠**——展开态与默认渲染一致是 M542 的不变量
+   *  （Alex 2026-10-16：「默认不展开的内容（比如 thinking 过程）在重建后也不展开」），
+   *  点折叠行展开思考原文，与活会话同一个开关。
+   *
+   *  与活会话唯一不同处是折叠行的文案：wire 只带 reasoning 明文、不带「思考了多久」的
+   *  读数，故取无时长变体 D468（M398「不伪造读数」的立意保留，时长缺席是有意的、不是缺漏；
+   *  同口径见「无戳不显示 when」）。`dataset.restored` 是 relabel 依据（语言切换重渲时
+   *  必须回到 D468——走 D388 只能拿 0 填空，等于把「时长未知」写成「思考了 0 秒」）。 */
   function createRestoredThinking(text: string): HTMLElement {
     const view = createThinkingView();
-    view.head.hidden = true;
-    view.el.classList.add("is-open");
-    view.body.hidden = false;
+    view.el.dataset.restored = "1";
+    view.text.textContent = t("D468");
     view.body.textContent = text;
     return view.el;
   }
