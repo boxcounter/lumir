@@ -4,6 +4,8 @@
 //     内存里，升级前起的会话可能仍带它）；
 //   - humanizeToolArgs / humanizeToolArgsStrict：工具行参数格的展示层提取（按工具名取
 //     关键参数；严格版取不到 → ""，宽松版回落原文，都不伪造）；
+//   - toolArgsText（M528）：参数格的**取哪一份**判据——core 的成品摘要（cli_run =
+//     `command + args` 拼接，不再是 JSON）照原样上屏，失败摘要不是参数则留空；
 //   - rejectedReasonOf / failureTextOf：恢复路径的拒绝原因与失败尾注（数据源是面板
 //     记录 text 里的工具输出 JSON 原文——summary 里那份被 core 80 字截断，不取）；
 //   - formatArgv / diffPathOf / approvalArgsText：批准载荷关键参数全文的拼取。
@@ -25,6 +27,7 @@ import {
   rejectedReasonOf,
   restoredAssistantText,
   restoredReasoningText,
+  toolArgsText,
 } from "../../src/harness-panel.ts";
 
 // ── 空正文 assistant 记录（旧快照防御） ──
@@ -115,6 +118,23 @@ test("humanizeToolArgs 宽松版：严格版取空时回落摘要原文（不吞
 test("vault_list 空 path 回落根目录「/」（列的是 vault 根，不是「没参数」）", () => {
   assert.equal(humanizeToolArgsStrict("vault_list", '{"path":""}'), "/");
   assert.equal(humanizeToolArgsStrict("vault_list", "{}"), "/");
+});
+
+test("toolArgsText（M528）：core 的成品摘要（非 JSON）照原样上屏；失败摘要不是参数 → 留空", () => {
+  // core 的 `summarize_args`（M528 起）直接给出成品人话文本：cli_run = `command + args` 拼接、
+  // 命令恒在最前。它不是 JSON，严格版会判成「没有参数」——恢复路径「已采纳」行的参数格
+  // 就此空掉（M528 修前实测：恢复后 cli_run 行只剩工具名）。这条断言钉住该格不空。
+  assert.equal(toolArgsText("cli_run", "echo TSA-ALPHA TSB-BRAVO"), "echo TSA-ALPHA TSB-BRAVO");
+  // 旧快照 / 非 cli 工具的参数摘要仍是 JSON：照旧人话化（两条路径产出同一形态）。
+  assert.equal(toolArgsText("vault_read", '{"path":"a.md"}'), "a.md");
+  assert.equal(toolArgsText("cli_run", '{"command":"rm","args":["a.md"]}'), "rm a.md");
+  // 桩环境的自定义摘要 / 截断半边：不吞信息，原文上屏。
+  assert.equal(toolArgsText("vault_search", "命中 5 篇"), "命中 5 篇");
+  assert.equal(toolArgsText("vault_read", '{"path":"harness-n…'), '{"path":"harness-n…');
+  // 失败摘要（`状态 · 错误码: 消息`）不是参数 → 留空，参数格不冒充结果行。
+  assert.equal(toolArgsText("cli_run", "denied · permission_denied: 权限规则拒绝了 cli_run"), "");
+  assert.equal(toolArgsText("cli_run", "rejected · approval_rejected: 用户拒绝了这次调用"), "");
+  assert.equal(toolArgsText("cli_run", ""), "");
 });
 
 // ── diff 头文件名（批准载荷写工具的关键参数全文） ──

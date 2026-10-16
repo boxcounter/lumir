@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "我先跑一条带长参数的 cli_run。",
+      "tool_calls": [
+        {
+          "id": "call_s1",
+          "name": "cli_run",
+          "arguments": "{\"purpose\":\"回显一串较长的验收标记\",\"args\":[\"TSA-ALPHA\",\"TSB-BRAVO\",\"TSC-CHARLIE\",\"TSD-DELTA\",\"TSE-ECHO\",\"TSF-FOXTROT\",\"TSG-GOLF\",\"TSH-HOTEL\"],\"command\":\"echo\"}"
+        }
+      ]
+    },
+    {
+      "text": "命令回显完了。下面这张表的表头第一格是空的：\n\n| | 乙 | 丙 |\n| --- | --- | --- |\n| 甲 |  | 丙 |"
+    }
+  ]
+}

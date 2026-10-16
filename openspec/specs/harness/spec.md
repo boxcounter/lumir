@@ -30,6 +30,8 @@ wire 留存 / 最小恢复口径；change `harness-composer-image-paste` 与 `ha
 
 composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（内容底色 + 边框 + focus-within 强调框）；控制行位于容器底部，自左向右为模型 chip、ctx 读数、弹性间隔、发送钮。发送钮 SHALL 为图标钮（↑ / ■ 两态 glyph），配色 SHALL 按原型中性实心取值（浅色深灰近黑 + 白 glyph、深色浅灰 + 深 glyph、eink 纯黑，经组件级变量落账，不改全局 accent 一族）；处理中（busy）态 SHALL 显示脉冲环（box-shadow 呼吸动画，环色为与按钮同族的中性 tint；eink 下环不可见、状态由 glyph 承担；prefers-reduced-motion 下不脉冲）。其可读名称与悬停提示 SHALL 沿用文案表两态文案（发送 / 停止），行为口径（Enter 发送、处理中点击停止、stopping 幂等）不变。
 
+模型输出里的 GFM 表格 SHALL 按**源码槽位矩形呈现**：每格的列位由它落在第几个与第几个分隔符之间决定，空槽占住自己的列位（补一个空 `th`/`td`），MUST NOT 让后续格子左移；格数少于 delimiter 行的行在尾部补空 cell；整表每行的格数相同，且以 delimiter 行的列数为下界。**MUST NOT 以「语法树里有没有 cell 节点」判空槽**——解析器对空单元格不产 cell 节点、只产相邻的两个分隔符，按节点缺失判空槽会把空格吃掉并把后续格子整体左移（三列渲染成两列）。某行的格数多于 delimiter 行时整表按更宽的那个列数呈现，MUST NOT 静默丢格。矩形性口径与编辑器侧 [Foundation Table Reading 质量合同](../../../docs/specs/table-reading.md) §2 同源，差异只在「多于 delimiter 行」这一侧：编辑器整块降级为源码，面板是无源码可降的只读呈现，故取「不丢格」。
+
 #### Scenario: 唤起与流式对话
 
 - **WHEN** 面板经命令唤起并发送一条提问
@@ -54,6 +56,11 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 - **WHEN** 模型输出的正文出现 `[文字](https://…)`
 - **THEN** 面板显示的链接文本是「文字」，URL 部分只作为锚的 `href` 与悬停提示，MUST NOT 作为可见文本再上屏一次
+
+#### Scenario: 表格列数守恒（空单元格占列位）
+
+- **WHEN** 模型输出的 GFM 表格里有空单元格（`| a |  | c |`、`| a || c |`，或表头首列 / 末列为空），或某一行的格数少于 delimiter 行的列数
+- **THEN** 空槽占住自己的列位（渲染为一个空 `th`/`td`）、后续格子不左移，短行在尾部补空 cell；整表每行格数相同且不低于 delimiter 行的列数，MUST NOT 出现「源码三列渲染成两列」
 
 ### Requirement: 上下文注入与可见性
 
@@ -629,7 +636,7 @@ transcript 中的消息（用户 / agent）SHALL 在 hover 时浮现复制钮，
 
 ### Requirement: 消息呈现
 
-transcript 中的用户与 agent 消息 SHALL 带角色 + 时间读数 meta 行（如「你 · 12 秒前 / Agent · 刚刚」）：角色名与时间读数同行，视觉上降档于消息正文（micro 字号、三级文字色）。用户消息 SHALL 以描边气泡呈现（内容底色 + 柔和边框 + 圆角），正文色降一档以区分于 agent 消息；agent 消息 SHALL 平铺排版（无气泡）。读数形态 SHALL 按数据来源分两档：**live**（本轮上屏打戳的消息）按「刚刚 / N 秒前 / N 分钟前 / N 小时前 / 昨天」分档；**restored**（快照恢复与会话恢复重放的消息，时间读数来自留存）按「同日窄相对 / 跨天短日期」呈现——留存在盘上，读数可以跨天甚至跨周，「昨天」对更老的消息是错读数。两档 SHALL 随时间低频刷新与随语言切换重绘（形态随消息携带、重绘不重算）。快照 / 恢复重建的消息 SHALL 以后端时间戳（`PanelMessage.ts`）显示真实读数；**会话恢复的 ts SHALL 来自留存记录的信封**（wire 项自身不带时间戳，按项在记录序里的产出时刻归属，见 design §3）；无时间戳可归的消息 SHALL 只显示角色、SHALL NOT 伪造读数。快照消息面 SHALL 保真：正文为空的 assistant 轮（模型只发工具调用、无正文）MUST NOT 落成面板记录——快照恢复 MUST NOT 出现只有角色 meta 行、正文为空的「空气泡」；工具记录（`role: tool`）SHALL 持久化摘要（`PanelMessage.summary`），成功为调用参数摘要、失败含细分状态与错误码，使 webview 重载后工具行仍有信息。
+transcript 中的用户与 agent 消息 SHALL 带角色 + 时间读数 meta 行（如「你 · 12 秒前 / Agent · 刚刚」）：角色名与时间读数同行，视觉上降档于消息正文（micro 字号、三级文字色）。用户消息 SHALL 以描边气泡呈现（内容底色 + 柔和边框 + 圆角），正文色降一档以区分于 agent 消息；agent 消息 SHALL 平铺排版（无气泡）。读数形态 SHALL 按数据来源分两档：**live**（本轮上屏打戳的消息）按「刚刚 / N 秒前 / N 分钟前 / N 小时前 / 昨天」分档；**restored**（快照恢复与会话恢复重放的消息，时间读数来自留存）按「同日窄相对 / 跨天短日期」呈现——留存在盘上，读数可以跨天甚至跨周，「昨天」对更老的消息是错读数。两档 SHALL 随时间低频刷新与随语言切换重绘（形态随消息携带、重绘不重算）。快照 / 恢复重建的消息 SHALL 以后端时间戳（`PanelMessage.ts`）显示真实读数；**会话恢复的 ts SHALL 来自留存记录的信封**（wire 项自身不带时间戳，按项在记录序里的产出时刻归属，见 design §3）；无时间戳可归的消息 SHALL 只显示角色、SHALL NOT 伪造读数。快照消息面 SHALL 保真：正文为空的 assistant 轮（模型只发工具调用、无正文）MUST NOT 落成面板记录——快照恢复 MUST NOT 出现只有角色 meta 行、正文为空的「空气泡」；工具记录（`role: tool`）SHALL 持久化摘要（`PanelMessage.summary`），成功为调用参数摘要、失败含细分状态与错误码，使 webview 重载后工具行仍有信息；成功侧的参数摘要是**单行**人话文本，`cli_run` 为「命令 + 参数」拼接且**命令本体恒在最前**（参数 JSON 原样截断时，排在命令之前的 `args` 会把它挤出可见头部，工具行只剩一串参数），含空白或引号的参数 SHALL 加引号使参数边界可辨。同一份摘要 SHALL 是 live 事件、面板持久化与恢复重建三条路径的同一份（MUST NOT 各算各的）；恢复路径读到旧快照的参数 JSON 时 SHALL 按同一形态人话化呈现。
 
 #### Scenario: 新消息带 meta 行
 
