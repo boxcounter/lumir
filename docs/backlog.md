@@ -22,10 +22,10 @@
 - **「在途停止丢掉该轮的 reasoning 回放项」是否触发 400**（M369，2026-10-07，medium）：未实测、**需真 API 才能定性**，下批排真 API 探针；在此之前 MUST NOT 当缺陷修。落点 `src-tauri/src/harness/llm.rs` 的 `parse_sse_reader` 与 `turn.rs` 的 `abort_turn`。指针 `.tower/comms/findings/20261007-worker-sts1-improve-reasoning-provider-backlog.md`。
 - **M251 的两张菜单基线（23px 真实差异）是否重建**（2026-09-27）：新高亮让菜单左上角圆角处透出的底色变化，未重建（零容差读数 `test-results/m251/baseline-review/tree-menu-menu-target/`）；基线更新是人肉裁决点。
 - **共享 `CARGO_TARGET_DIR` 与 dev-only 脚本化驱动入口**（工具链节 2/3 的长期候选）：是否立项待裁。副作用现状：跨 worktree 复用旧测试二进制曾致假绿（见「待修 findings」的同名条）。
-- **左栏文件拖拽移动：合成拖拽从未落盘，需 Alex 手拖定性（10 秒）**（M535 worker 探针，2026-10-16，high）→ 五个 drag 步全不落盘；落点算对、事件到 DOM，但应用侧 dragover 分支从未被走到（落点高亮 `--sel` 三帧取色证从未画出）。两候选：通道边界（WKWebView 不吃合成 HTML5 拖拽）或产品面（`draggable=true` 挂在 `<button class="ft-row">` 上起不了拖，真实用户也拖不动）——M530 落地至今零真机成功记录。请在日常 Lumir 里手拖一个文件进目录：拖得动 = 登记套件已知边界；拖不动 = 立项修产品。复现：`node scripts/acceptance/run.mjs 159 --keep-app`。指针 `.tower/comms/findings/20261016-worker-scenfix-bug-html5-dnd-dragover-vs.md`。
 
 ## 已裁已立项（落地由 tower 派发的 mission 承担）
 
+- **左栏文件拖拽移动 = 产品缺陷，立项修复**（2026-10-16 Alex 手拖定性）：真实手拖复现——dragstart 起了（文件浮起 + 绿色加号），但拖到目录上无任何状态（dragover 分支不走、无落点高亮），松手不落盘；与合成拖拽同签名 ⇒ 排除通道边界，定性为产品面（`draggable=true` 挂 `<button class="ft-row">` 这一形态嫌疑最大）。由 M537 落地。原 finding 指针 `.tower/comms/findings/20261016-worker-scenfix-bug-html5-dnd-dragover-vs.md`。
 - **验收套件 harness 透传面缺 `permission_mode` 键 + 72/73/74 场景期望过期**（agent-m480，2026-10-13）→ 由 M481 落地：app.mjs 透传面加 `permission_mode`、72/73/74 走 `read_only` 档复活批准流断言。归因：M407 权限模式（默认 vault_write 档库内写免闸，2026-10-09 Alex 裁决）合入后场景未回扫。指针 `.tower/comms/findings/20261013-agent-m480-improve-harness-permission-mode.md`。
 
 ## 承接残项（仍在生效的长期口径 + 未闭合尾巴）
