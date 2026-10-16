@@ -349,11 +349,12 @@ test("跳回高亮：点卡片跳回原文并瞬态高亮，~1.4s 后退场", as
   await expect(flash).toHaveCount(0, { timeout: 3_000 });
 });
 
-/** 真机验收场景 160 的前提（M531）：它按「⌃N ×11 把光标插到第 12 行、⌃⇧N 选中该行」造现场，
- *  行号与 fixture 的行结构绑定。那条通道（真机键盘注入）在 chromium 里没有断言，这里补上——
- *  fixture 的行结构一旦变（多一行 / 少一行），场景 160 会在真机上静默选错行，而本用例当场判红。
+/** 真机验收场景 160 的前提（M531）：它按「⌘A 全选 ⇒ 选区并集盒在两个方向上都越出挂载容器」
+ *  造现场，判据是 `geom`（包围盒在视口内 + 已绘制）。真机那条通道（键盘注入 + AX 包围盒）在
+ *  chromium 里没有对应断言，这里补上：前提（全选真的建出越界选区）与结论（钮被收进容器）
+ *  都判一遍——真机上「⌘A 丢键」的后果因此是**钮不在场**（红），不会静默通过。
  *  读 fixture 原文而不是抄一份：抄一份就是第二份真源（REVIEW.md 第 8 条）。 */
-test("钳制：真机场景 160 的前提在本层可复现（键盘选区 ⇒ 选区越出容器 ⇒ 钮被收进容器）", async ({ page }) => {
+test("钳制：真机场景 160 的前提在本层可复现（全选 ⇒ 选区双向越界 ⇒ 钮被收进容器）", async ({ page }) => {
   const src = readFileSync(new URL("../../../scripts/acceptance/fixtures/code-block-fullscreen.md", import.meta.url), "utf8");
   await stubTauri(page, {
     entries: [{ path: "probe160.md", kind: "file", size: src.length, mtime_ms: 0 }],
@@ -371,48 +372,45 @@ test("钳制：真机场景 160 的前提在本层可复现（键盘选区 ⇒ �
     view.focus();
   });
 
-  const read = () =>
-    page.evaluate(() => {
-      const view = (document.querySelector(".cm-content") as unknown as {
-        cmTile: { root: { view: any } };
-      }).cmTile.root.view;
-      const selection = view.state.selection.main;
-      const doc = view.state.doc;
-      const mount = document.querySelector(".editor-pane") as HTMLElement;
-      const m = mount.getBoundingClientRect();
-      const button = mount.querySelector(".quote-gesture-btn") as HTMLElement | null;
-      const b = button === null ? null : button.getBoundingClientRect();
-      const dom = document.getSelection();
-      const range = dom !== null && dom.rangeCount > 0 ? dom.getRangeAt(0).getBoundingClientRect() : null;
-      const column = document.querySelector(".pane-editor") as HTMLElement;
-      return {
-        anchorLine: doc.lineAt(selection.anchor).number,
-        headLine: doc.lineAt(selection.head).number,
-        collapsed: selection.empty,
-        selectionRight: range === null ? null : range.right - m.left,
-        clientWidth: mount.clientWidth,
-        buttonRight: b === null ? null : b.right - m.left,
-        buttonTop: b === null ? null : b.top - m.top,
-        buttonBottom: b === null ? null : b.bottom - m.top,
-        clientHeight: mount.clientHeight,
-        columnScrollWidth: column.scrollWidth,
-        columnClientWidth: column.clientWidth,
-      };
-    });
-
-  for (let i = 0; i < 11; i += 1) await page.keyboard.press("Control+n");
-  expect((await read()).anchorLine, "场景 160 的 ⌃N ×11 必须落在 fixture 的长代码行（第 12 行）").toBe(12);
-
-  await page.keyboard.press("Control+Shift+n");
+  await page.keyboard.press("Meta+a");
   await expect(page.locator(".editor-pane .quote-gesture-btn")).toBeVisible();
-  const r = await read();
-  expect(r.collapsed, "⌃⇧N 必须真的建出选区").toBe(false);
-  expect(
-    r.selectionRight,
-    "前提：选区并集盒越出挂载容器（否则场景 160 在真机上会静默选错行）",
-  ).toBeGreaterThan(r.clientWidth);
-  expect(r.buttonRight, "钮右缘越出容器右缘（4px 留白）").toBeLessThanOrEqual(r.clientWidth - 4 + 0.5);
+  const r = await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as {
+      cmTile: { root: { view: any } };
+    }).cmTile.root.view;
+    const selection = view.state.selection.main;
+    const mount = document.querySelector(".editor-pane") as HTMLElement;
+    const m = mount.getBoundingClientRect();
+    const b = (mount.querySelector(".quote-gesture-btn") as HTMLElement).getBoundingClientRect();
+    const dom = document.getSelection();
+    const range = dom !== null && dom.rangeCount > 0 ? dom.getRangeAt(0).getBoundingClientRect() : null;
+    const column = document.querySelector(".pane-editor") as HTMLElement;
+    return {
+      selectedFrom: selection.from,
+      selectedTo: selection.to,
+      docLength: view.state.doc.length,
+      selectionRight: range === null ? null : range.right - m.left,
+      selectionBottom: range === null ? null : range.bottom - m.top,
+      clientWidth: mount.clientWidth,
+      clientHeight: mount.clientHeight,
+      buttonLeft: b.left - m.left,
+      buttonTop: b.top - m.top,
+      buttonRight: b.right - m.left,
+      buttonBottom: b.bottom - m.top,
+      columnScrollWidth: column.scrollWidth,
+      columnClientWidth: column.clientWidth,
+    };
+  });
+
+  expect([r.selectedFrom, r.selectedTo], "⌘A 必须真的全选（丢键时钮不在场，本用例会在此之前判红）").toEqual([
+    0,
+    r.docLength,
+  ]);
+  expect(r.selectionRight, "前提：选区并集盒右缘越出容器（长代码行）").toBeGreaterThan(r.clientWidth);
+  expect(r.selectionBottom, "前提：选区并集盒下缘越出容器（全选横跨整篇）").toBeGreaterThan(r.clientHeight);
+  expect(r.buttonLeft, "钮左缘越出容器可视区").toBeGreaterThanOrEqual(-0.5);
   expect(r.buttonTop, "钮上缘越出容器可视区").toBeGreaterThanOrEqual(-0.5);
-  expect(r.buttonBottom, "钮下缘越出容器可视区").toBeLessThanOrEqual(r.clientHeight - 4 + 0.5);
+  expect(r.buttonRight, "钮右缘越出容器右缘（4px 留白）").toBeLessThanOrEqual(r.clientWidth - 4 + 0.5);
+  expect(r.buttonBottom, "钮下缘越出容器下缘（4px 留白）").toBeLessThanOrEqual(r.clientHeight - 4 + 0.5);
   expect(r.columnScrollWidth, "编辑器列被这颗钮撑成横向可滚").toBeLessThanOrEqual(r.columnClientWidth);
 });
