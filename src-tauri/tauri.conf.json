@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "dragDropEnabled": false,
         "title": "Lumir",
         "width": 1200,
         "height": 800,

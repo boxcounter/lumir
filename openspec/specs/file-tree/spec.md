@@ -194,6 +194,19 @@ Finder）。目标不存在或调用失败 SHALL 给人话错误提示。本操�
 把该条目**移入**目标目录。本能力只有「移入目录」这一种落点：MUST NOT 支持排序，MUST NOT
 支持落到文件行——文件行上的 dragover MUST NOT 允许 drop（浏览器「禁放」语义）。
 
+本能力的运行时前提是 `src-tauri/tauri.conf.json` 窗口配置里的
+`app.windows[0].dragDropEnabled: false`（M537 裁决，窗口级配置、逐窗生效；该文件是严格
+JSON、无注释，本条是本前提的 canonical 解释居所）：Tauri v2 默认开启的 OS 级文件
+拖放处理器在 macOS 上会吞掉一切拖过窗口的 drag——wry 的 `WryWebView` 覆写
+`NSDraggingDestination` 四方法，其 handler 恒真时返回 `NSDragOperation::Copy` 且不调 super，
+页内 HTML5 DnD 的 dragover/drop/dragenter/dragleave 因此整轮不派发，而 dragstart 不受影响
+（拖影照常、macOS 光标旁显示绿色加号、落点行无任何状态、松手不落盘，M530 真机零成功记录即此
+成因）。重开该开关（如为「Finder 拖文件入 vault」导入）MUST 先解决同一 wry 上游缺陷，否则本
+requirement 在真机上整体失效且零报错。合成边界（M537 实证）：纯
+  Playwright/CDP 鼠标在 Chromium 里发起不了 HTML5 拖（mousedown/move/up 到 DOM 而 dragstart
+  不触发）——chromium 侧测试不得依赖 HTML5 拖；本套件的真鼠标通道（swift + CGEvent）在
+  WKWebView 里可完整驱动（场景 159 修复后全 PASS 实证）。
+
 落点判定 SHALL 是纯函数（`canMoveEntry`，与目标路径拼接 `moveTargetPath` 同一处公式），
 并拒绝两类移动：目标路径 == 源路径（拖回原位；rename 语义下这是静默 no-op，MUST NOT
 被当成一次成功）与目标路径落在源的子树内（目录拖入自身/后代）。后端 `fs_move_entry`

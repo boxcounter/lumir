@@ -288,12 +288,15 @@ teardown:
 
 ## 已知边界（如实登记）
 
-- **HTML5 DnD 的合成驱动（2026-10-16 首跑读数）**：套件 `drag` 走 swift + CGEvent 真鼠标通道
-  （mode 5：down → 24 步插值 dragged → up），通道自报的落点在窗口内、前台归 Lumir。首跑里
-  **落点算对的那一步（②，落点落在目标目录行内）也没落盘**——行模型错（①）是场景侧可修的一层，
-  这一层不是；M535 修正行模型与断言形态后复跑，若仍不落盘，成因在通道或产品面（已报 tower）。
-  判「是产品缺陷还是通道假绿」的顺序：先确认 `drag 自报` 一行里 frontmost=lumir、target 落在
-  窗口内且落在**目标行**（steps.md 的 note），再按 README「重试与丢键」单步复跑排除通道 flake。
+- **HTML5 DnD 的合成驱动（M537 闭环，2026-10-16）**：首跑「落点算对也不落盘」的成因已定为
+  **产品侧**——Tauri 默认开启的 OS 级文件拖放处理器吞掉页内 dragover/drop（症状：拖影照常 +
+  光标旁绿色加号 + 落点行无状态 + 松手不落盘；修复 = tauri.conf.json 窗口级
+  `dragDropEnabled: false`，详见 README「已知边界」的 HTML5 DnD 条与
+  openspec/specs/file-tree 的「拖拽移动条目」requirement）。**不是套件通道边界**：本场景
+  `drag`（swift + CGEvent mode 5）在修复后的复跑里五条拖拽全部真实落盘、树收敛、撞名三态
+  全过（现场 `test-results/acceptance/2026-10-16/159-filetree-drag-move/`）。复跑仍红时的判读
+  顺序：先确认 `drag 自报` 一行里 frontmost=lumir、target 落在窗口内且落在**目标行**（steps.md
+  的 note），再查 `dragDropEnabled` 是否被重开，最后按 README「重试与丢键」单步复跑排除通道 flake。
 - **夹具装在自建盒子里（跨 run 残留）**：`resetVault` 只重置 vault 根下的 `.md`，本场景的夹具在
   `dragbox/` 子目录里、跨 run 会留着。这就是「落盘判据成对写」的由来（见上）；`unchangedSince`
   那几条不受残留影响（基线在本 run 内先记）。

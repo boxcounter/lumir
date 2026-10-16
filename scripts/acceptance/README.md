@@ -914,6 +914,18 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   日志的「用时 Nms」为准。真 provider 侧静默窗口（思考期零事件）的同族修复不在真机层的
   可造窗口内（mock 的 `delay_ms` 是「响应尚未开始」窗口、不可中断是合同本身），由单测
   `sse_abort_during_silence_returns_promptly` 钉住。
+- **HTML5 DnD 的产品侧根因与判读症状（M537 定案，2026-10-16）**：Tauri v2 默认开启的 OS 级文件
+  拖放处理器会吞掉页内 HTML5 拖的全部落点事件（wry 0.55.1 的 `WryWebView` 覆写
+  `NSDraggingDestination`，handler 恒真时返回 `NSDragOperation::Copy` 且不调 super）——症状 =
+  **拖影照常 + 光标旁绿色加号 + 落点行无任何状态 + 松手不落盘**；`dragstart` 不受影响，所以
+  「拖得起来但落了没反应」这个签名是产品缺陷，不是套件通道问题。修复 =
+  `src-tauri/tauri.conf.json` 窗口配置（`app.windows[0]`）的 `dragDropEnabled: false`（M537
+  裁决；产品当前无任何 OS 文件拖入消费者）。修复后本套件 `drag`（swift + CGEvent mode 5）
+  即可完整驱动 HTML5 拖——场景 159 修复后复跑全 PASS（五条拖拽全落盘，现场
+  `test-results/acceptance/2026-10-16/159-filetree-drag-move/`）。**将来若重开该开关**（如
+  Finder 拖文件入 vault），先解决同一 wry 上游洞，否则「拖了没落盘」的失败都是它，不是产品回归。
+  另注：纯 Playwright/CDP 鼠标在 Chromium 里起不了 HTML5 拖（M537 探针
+  `test-results/m537-probe/`）——那是 chromium 侧测试的边界，与本套件的真鼠标通道无关。
 - **场景维护权归实现者**：新功能 mission 的 tasks 必须带「新增/更新验收场景」一项（裁决点 3）。
 
 ## 加一个场景
