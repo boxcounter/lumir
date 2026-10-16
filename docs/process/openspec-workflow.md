@@ -33,7 +33,7 @@ openspec archive（并入 living spec） ◄── Alex 确认 ◄────�
 | 制品 | 必填 | 起草时机 | 模板 |
 |---|---|---|---|
 | `proposal.md` | 是 | 提案阶段 | [templates/proposal.md](templates/proposal.md) |
-| `tasks.md` | 是 | 提案阶段（可随实现细化） | [templates/tasks.md](templates/tasks.md) |
+| `tasks.md` | 是 | 提案阶段（可随实现细化） | [templates/tasks.md](templates/tasks.md)。改权限 / 闸语义时必含「回扫既有验收场景的闸期望」一项（见下） |
 | `design.md` | 技术复杂时；**有原型时必填**，且须含「视觉保真」一节（见下） | 提案阶段 | — |
 | `specs/<capability>/spec.md` | 是 | 提案阶段起草，实现期可修订 | 见下方 spec 增量约定 |
 
@@ -53,6 +53,14 @@ spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 
 验收口径按**观感一致**而非逐像素：原型若是独立 HTML，其字体度量、数据内容都与产品不同，逐像素在技术上不可达、追求它只会逼出假对齐。核对用**并排截图对照**（原型截图 vs 实现截图），不追求像素相等。
 
 原型已退役（`design/prototypes/` 目录随实现落地删除）而屏位原文仍有用的，从 git 历史提取——`git show <退役提交>^:<原型路径>`——把屏位要点落进本节（先例：`openspec/changes/archive/2026-10-06-move-harness-to-pane-chat-frame/design.md` §9「屏位设计合同附节」，从 `4e011d6^:design/prototypes/phase2-harness-chat/` 提取）。手感 / 审美类（拖拽节奏、动效曲线）显式标注「归 Alex 手感裁决，不进机器判据」，不留含糊。
+
+## 改权限 / 闸语义的 change：tasks 必须含回扫既有验收场景的闸期望（2026-10-16）
+
+凡改动**权限 / 批准闸语义**的 change——默认档放行矩阵、ask / allow 规则、工具白名单这类，`tasks.md` **必须含一项**「全量回扫既有验收场景里对该闸、该模式的期望，逐条改准」，只新增覆盖新语义的场景**不算**完成。
+
+失效点在现场（M407 → M480，2026-10-13）：M407（change `add-harness-permission-modes`）把默认档（`vault_write`）改为 `vault_patch` / `vault_create` / `vault_move` 自动放行，living spec 同步更新；而归档 change 的 tasks §6.7 只**新增**了场景 109/110/111，没**回改** M302/M304 时代写下的场景 72/73/74 的「写类工具默认 ask」期望（场景 96 靠显式 allow 规则绕闸、注释口径同样过期）。10-09 起 72/73/74 必红，两个批次连中被读成「写工具绕过批准闸」的安全缺陷——排查方向被这个假红带偏，最后才发现是场景期望过期。
+
+为什么单列一条：验收场景里的闸期望是写死在场景文件里的「当时的产品语义」，改闸语义时它们不会自己跟着变；而这类过期期望产生的红看起来正好像产品缺陷（安全类尤其吓人），归因成本远高于顺手回扫。与「新功能 mission 的 tasks 必须附带新增 / 更新验收场景一项」（AGENTS.md 真机验收套件节）分工：那条管**新增**场景，本条管**回扫既有**场景的过期期望——改闸 / 改语义时两条都要落。
 
 ## AI agent 的操作指令
 
