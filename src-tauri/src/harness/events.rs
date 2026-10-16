@@ -155,31 +155,38 @@ pub fn approval_request_with_purpose(
     value
 }
 
-/// `{"type":"usage","ctx_pct":NN,"cache_pct_session":NN,"cache_pct_turn":NN,
-/// "cache_write_tokens":NN,"cache_write_tokens_session":NN,"cache_note":null|"cold_start"|
-/// "block_dilution"}`（三个百分比为**原始 f64**，取整由前端一次性 `Math.round`）。
+/// `{"type":"usage", ...}`——载荷的**读数键 = [`UsageSnapshot`] 的序列化本身**（M534）。
 ///
-/// M443：载荷**整体收一个 [`UsageSnapshot`]**——事件与 `harness_state` 快照同吃一个来源，
-/// MUST NOT 各算一套（REVIEW.md 第 8 条）。键名与快照字段同名同义：`cache_pct_session` =
-/// 会话累计命中率（控制行主读数）、`cache_pct_turn` = 最近一次往返的单回合值（气泡辅读数）、
-/// `cache_write_tokens[_session]` = 本回合 / 本逻辑会话累计的缓存写入、`cache_note` = 本回合
-/// 成因标注（无则 null）。旧 `cache_pct` 键**退役**——复用旧键会留一个「读到 cache_pct 的人
-/// 以为还是单回合」的静默陷阱（design §4.1）。
+/// 键集合：M443 的六键 `ctx_pct` / `cache_pct_session` / `cache_pct_turn` /
+/// `cache_write_tokens` / `cache_write_tokens_session` / `cache_note`，加 M526 的绝对值键
+/// `input_tokens` / `cached_tokens` / `cached_tokens_session` / `context_window` /
+/// `has_usage`（三个百分比为**原始 f64**，取整由前端一次性 `Math.round`）。
 ///
-/// **M456 修正**：三个百分比原先在此**先 [`round1`] 到一位小数**，前端拿到 95.5 再
+/// **事件/快照一致性不变量（M534，合同条款见 `openspec/specs/harness`）**：本事件与
+/// `harness_state` 快照的 `usage` SHALL 携带**同一组读数键**。两者本已同吃一个
+/// [`UsageSnapshot`]（M443：MUST NOT 各算一套，REVIEW.md 第 8 条），M534 起**键集合也由它
+/// 的一份 `Serialize` 产出**——加字段即两端同改，MUST NOT 再各维护一份键清单。现场即此：
+/// 事件曾手列七键、漏掉 M526 的绝对值键，live 会话的 tokens 气泡因缺键静默回落百分比形态，
+/// 而快照路径（切 vault 回来 / 恢复）带全，同一会话两种形态。
+///
+/// 键名与快照字段同名同义：`cache_pct_session` = 会话累计命中率（控制行主读数）、
+/// `cache_pct_turn` = 最近一次往返的单回合值（气泡辅读数）、`cache_write_tokens[_session]` =
+/// 本回合 / 本逻辑会话累计的缓存写入、`cache_note` = 本回合成因标注（无则 null）。旧
+/// `cache_pct` 键**退役**——复用旧键会留一个「读到 cache_pct 的人以为还是单回合」的静默陷阱
+/// （design §4.1）。
+///
+/// **M456 修正**：三个百分比原先在此**先 `round1` 到一位小数**，前端拿到 95.5 再
 /// `Math.round` ⇒ 把 95.45% 显示成 96%（双舍入）；而**同一条读数**经 `harness_state` 快照
 /// （原始 f64、前端只舍一次）出来是 95% —— 事件面与快照面因此在 `.x5` 边界上不一致
 /// （场景 133 的次轮单回合即此）。载荷改为原样带 f64，取整只在消费端做一次。
 pub fn usage(snapshot: &UsageSnapshot) -> serde_json::Value {
-    serde_json::json!({
-        "type": "usage",
-        "ctx_pct": snapshot.ctx_pct,
-        "cache_pct_session": snapshot.cache_pct_session,
-        "cache_pct_turn": snapshot.cache_pct_turn,
-        "cache_write_tokens": snapshot.cache_write_tokens,
-        "cache_write_tokens_session": snapshot.cache_write_tokens_session,
-        "cache_note": snapshot.cache_note,
-    })
+    let mut readings = match serde_json::to_value(snapshot) {
+        Ok(serde_json::Value::Object(readings)) => readings,
+        // 不可达（全字段是标量与 Option，序列化不会失败、也不会成非对象）；落空对象不 panic。
+        _ => serde_json::Map::new(),
+    };
+    readings.insert("type".to_string(), serde_json::json!("usage"));
+    serde_json::Value::Object(readings)
 }
 
 /// `{"type":"compact","summary":"..."}`（摘要可供面板展开）。
@@ -281,6 +288,59 @@ mod tests {
         );
         // 前端一次性 Math.round ⇒ 95（真值 95.45% 的舍入结果），不是双舍入的 96。
         assert_eq!(turn.round() as i64, 95);
+    }
+
+    /// M534：`usage` 事件的读数键集合 = [`UsageSnapshot`] 的序列化键集合（**事件/快照一致性
+    /// 不变量**）——事件与 `harness_state` 快照的 `usage` 携带同一组键，加字段即两端同改。
+    ///
+    /// 区分度（REVIEW.md 第 1 条）：修前实现手列七键（`type` + M443 的六个读数键），
+    /// `input_tokens` / `cached_tokens` / `cached_tokens_session` / `context_window` /
+    /// `has_usage` 五键整体缺席；把 `usage()` 换回那份手列清单时本用例即红。现场后果：前端
+    /// `usageReadings` 读不到 `input_tokens` / `context_window`，live 会话的 tokens 气泡按 D395
+    /// 静默回落百分比形态，而同一会话走快照路径却显示绝对值。
+    #[test]
+    fn usage_payload_key_set_matches_snapshot_serialization() {
+        use crate::harness::session::CacheNote;
+
+        let snapshot = UsageSnapshot {
+            ctx_pct: 16.784423828125,
+            cache_pct_session: 59.52380952380952,
+            cache_pct_turn: 95.45454545454545,
+            cache_write_tokens: 900,
+            cache_write_tokens_session: 1900,
+            cache_note: Some(CacheNote::ColdStart),
+            input_tokens: 12786,
+            cached_tokens: 6400,
+            cached_tokens_session: 9272,
+            context_window: 131_072,
+            has_usage: true,
+        };
+        let payload = usage(&snapshot);
+        let readings = payload.as_object().unwrap();
+        let expected = serde_json::to_value(snapshot).unwrap();
+        let expected = expected.as_object().unwrap();
+
+        // ① 键集合逐一相同：快照每键都在事件里，且事件不多出第二份读数键（只有判别键 `type`）。
+        assert_eq!(
+            readings.len(),
+            expected.len() + 1,
+            "事件读数键集合与快照不等：{payload}"
+        );
+        for (key, value) in expected {
+            assert_eq!(
+                readings.get(key),
+                Some(value),
+                "事件与快照不一致（缺键或异值）：{key}：{payload}"
+            );
+        }
+        assert_eq!(payload["type"], serde_json::json!("usage"));
+
+        // ② 绝对值键在事件里是**真读数**（不是缺省零值）——live 气泡据此走 tokens 形态。
+        assert_eq!(readings["input_tokens"], serde_json::json!(12786));
+        assert_eq!(readings["cached_tokens"], serde_json::json!(6400));
+        assert_eq!(readings["cached_tokens_session"], serde_json::json!(9272));
+        assert_eq!(readings["context_window"], serde_json::json!(131_072));
+        assert_eq!(readings["has_usage"], serde_json::json!(true));
     }
 
     /// approval_request 的 argv 形状钉死为 JSON **数组**（M406 类型钉桩：前端曾按 string
