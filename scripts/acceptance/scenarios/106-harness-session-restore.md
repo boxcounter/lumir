@@ -102,6 +102,19 @@ steps:
         ax: { not: "与当前文档对话" }
       - shot: 02-恢复-transcript
 
+  - name: 等恢复后读数上屏（M526：源会话读数种子灌进新会话——ctx 1% = 1000/131072、
+      会话累计 10% = 100/1000；恢复后不再是「无读数」）
+    do: waitFor
+    waitFor:
+      has: ["1% · 10%"]
+    timeoutMs: 15000
+    expect:
+      - label: 恢复后控制行显示源会话最近一次真实读数（读数区在场、且是真值不是「0% · 0%」虚报）
+        ax: { has: "1% · 10%" }
+      - label: 新会话首行落读数种子（session_open 带 usage + cache_totals——链式恢复从种子起算）
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"session_open".*"cache_totals".*"has_usage":true.*$/' }
+      - shot: 02b-恢复-读数
+
   - name: 点 composer 建立输入焦点（选择器/恢复的点击把 DOM 焦点移走，续打字前须重新聚焦——场景 100 同法）
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }

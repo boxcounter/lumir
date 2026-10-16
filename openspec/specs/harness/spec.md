@@ -232,7 +232,7 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 - **THEN** 终态记录里不出现判定依据行（与待决副句、决策按钮一同退场），界面零残留
 
 ### Requirement: 上下文用量显示与触顶处理
-composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip 之后、发送钮之前）：context window 已用 %（最近一次请求的 input tokens ÷ 模型上下文窗口）与 cache hit %（Responses 形态下两 provider 统一走 `usage.input_tokens_details.cached_tokens`；映射表留在 provider 预设内防字段方言）。cache hit % SHALL 以**本逻辑会话累计命中率**（`Σcached_tokens ÷ Σinput_tokens`，范围为当前逻辑会话内所有带 usage 的往返；会话建立、「新会话」重置、自动压缩开新逻辑会话、从历史恢复各起一段，累计随之归零）作为控制行**主读数**，MUST NOT 以最近一次请求的单回合命中率作为控制行主读数。最近一次请求的**单回合命中率**（`cached_tokens ÷ input_tokens`）SHALL 在 hover 气泡内与主读数并列呈现；该回合处于**冷启动**（`cached_tokens` 为零）或**大块摊薄**（该回合新增 tokens 超过已缓存前缀的一半）时，气泡 SHALL 附带一句成因说明，点明两种情形均非缓存失效。缓存写入 tokens（provider usage 的 `cache_write_tokens`）SHALL 在 hover 气泡内呈现本回合与本会话累计值，字段缺失且为零时该行 SHALL NOT 渲染。用量超过警示阈值（默认 85%，可配）时读数 SHALL 高亮，指针悬停读数 SHALL 浮出说明气泡（向上展开、右缘对齐读数右缘）、移开即收起；SHALL NOT 常驻显示警示句，也 SHALL NOT 另挂 ⓘ 类可点入口（2026-10-07 去感叹号改 hover 形态，读数高亮已承担警示语义）。系统 SHALL 默认自动压缩（`auto_compact = true`）：每轮响应完成后检查，越阈值即自动把会话历史压缩为摘要、开新逻辑会话并注入摘要 + 当前编辑器上下文 + 系统上下文；自动压缩 MUST NOT 静默——面板插入可见压缩标记（摘要可展开），压缩前历史 SHALL 完整留存在旧会话 JSONL 文件（封闭不再追加），压缩摘要 SHALL 随新会话 `session_open` 留存。API 返回上下文超限错误时 SHALL 自动压缩后重试该轮一次。系统 MUST NOT 静默截断会话历史。
+composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip 之后、发送钮之前）：context window 已用 %（最近一次请求的 input tokens ÷ 模型上下文窗口）与 cache hit %（Responses 形态下两 provider 统一走 `usage.input_tokens_details.cached_tokens`；映射表留在 provider 预设内防字段方言）。cache hit % SHALL 以**本逻辑会话累计命中率**（`Σcached_tokens ÷ Σinput_tokens`；会话建立、「新会话」重置、自动压缩开新逻辑会话各起一段、累计随之归零；**从历史恢复 SHALL 以源会话留存的读数为基底继续累计**——恢复时由留存重算：`session_open` 读数种子 + 其后会话轮次 usage 扫描，压缩调用是内部汇总调用、不计入）作为控制行**主读数**，MUST NOT 以最近一次请求的单回合命中率作为控制行主读数。最近一次请求的**单回合命中率**（`cached_tokens ÷ input_tokens`）SHALL 在 hover 气泡内与主读数并列呈现；该回合处于**冷启动**（`cached_tokens` 为零）或**大块摊薄**（该回合新增 tokens 超过已缓存前缀的一半）时，气泡 SHALL 附带一句成因说明，点明两种情形均非缓存失效。缓存写入 tokens（provider usage 的 `cache_write_tokens`）SHALL 在 hover 气泡内呈现本回合与本会话累计值，字段缺失且为零时该行 SHALL NOT 渲染。**hover 气泡 SHALL 随百分比一并呈现绝对 tokens 用量**（M526）：上下文已用 tokens / 模型窗口上限 tokens 与百分比同句，缓存命中（本回合与会话累计）的 tokens 与命中率同句；数据不可得时 SHALL 降级（绝对值缺键回落百分比形态、窗口上限值为零时不显示上限与百分比），MUST NOT 编造读数。**从未发过请求的会话（快照 `has_usage=false`）读数区 SHALL NOT 渲染**（六键零值是缺省不是读数，渲染即成「0% · 0%」虚报）。用量超过警示阈值（默认 85%，可配）时读数 SHALL 高亮，指针悬停读数 SHALL 浮出说明气泡（向上展开、右缘对齐读数右缘）、移开即收起；SHALL NOT 常驻显示警示句，也 SHALL NOT 另挂 ⓘ 类可点入口（2026-10-07 去感叹号改 hover 形态，读数高亮已承担警示语义）。系统 SHALL 默认自动压缩（`auto_compact = true`）：每轮响应完成后检查，越阈值即自动把会话历史压缩为摘要、开新逻辑会话并注入摘要 + 当前编辑器上下文 + 系统上下文；自动压缩 MUST NOT 静默——面板插入可见压缩标记（摘要可展开），压缩前历史 SHALL 完整留存在旧会话 JSONL 文件（封闭不再追加），压缩摘要 SHALL 随新会话 `session_open` 留存。API 返回上下文超限错误时 SHALL 自动压缩后重试该轮一次。系统 MUST NOT 静默截断会话历史。
 
 > **已知边界（现象记录 + 根因调查进行中，非规格变更；2026-10-12 起）**：在 k3-256k 的 coding 端点（`api.kimi.com/coding/v1`，走 Responses 形状）上，Lumir 的真实会话里出现过「回报 `input_tokens` 尚不足名义窗口一半、紧接着的一次请求却被端点以 400 拒」（`Your request exceeded k3-256k model token limit: 262144`）——该会话成功的最大回报值 99,399，下一发即被拒；30 万字符的纯合成输入（剔除 reasoning 重放与 tools）同样被拒。另两点已坐实：端点**忽略**客户端 `max_output_tokens`（照收、响应回显 `null`），改 thinking 档位也不改变结论；该变体的报错**不带** `(requested: N)`，服务端算出的那个数拿不到。
 >
@@ -263,6 +263,25 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 - **WHEN** provider 的 usage 带回 `cache_write_tokens`（kimi），完成一轮对话后悬停读数
 - **THEN** 气泡内显示本回合与本会话累计的缓存写入 tokens；若 `cache_write_tokens` 为零（provider 不提供
   该字段时按 0），该行 SHALL NOT 渲染
+
+#### Scenario: 气泡呈现绝对 tokens 用量
+
+- **WHEN** 完成一轮对话后悬停读数（usage 快照带绝对值字段：input / cached tokens 与模型窗口）
+- **THEN** 气泡第一行 SHALL 同句呈现上下文已用 tokens、模型窗口上限 tokens 与百分比；第二 / 第三行
+  SHALL 同句呈现本会话累计与本回合命中的 tokens 及命中率；绝对值缺键（旧后端载荷）时各行回落百分比形态；
+  窗口上限值为零（无上限值）时第一行 SHALL NOT 显示上限与百分比、走降级文案（MUST NOT 编造读数）
+
+#### Scenario: 空会话不假读数
+
+- **WHEN** 会话尚未发出过任何请求（快照 `has_usage=false`，如「新会话」后或恢复了一个空会话）
+- **THEN** 控制行读数区 SHALL NOT 渲染（不出现「0% · 0%」）；首次带 usage 的回合完成后读数 SHALL 出现真值
+
+#### Scenario: 恢复后读数接续源会话
+
+- **WHEN** 从历史会话恢复续聊（源会话留存的记录里含带 usage 的回合）
+- **THEN** 恢复后控制行与气泡 SHALL 显示源会话最近一次真实读数（留存重算：首行读数种子 + 其后会话轮次
+  usage 扫描，压缩调用不计入）；其后的会话累计 SHALL 从源会话的累计接着算（链式恢复从各文件首行的种子
+  起算，不断档）；源会话从未发过请求时读数区保持隐藏
 
 #### Scenario: 超阈值警示收敛为悬停气泡
 
@@ -335,11 +354,11 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 #### Scenario: 从历史会话恢复续聊
 
 - **WHEN** 在会话浮层选择一个历史会话
-- **THEN** 该会话的 system 与 input（最后一条 `llm_request` 的完整请求体，并折叠其后未入请求的末尾响应，算法见 design §6.2）原样灌回内存态、不重新装配系统上下文；开新 JSONL 文件（首行 `session_open` 标 `opened_from=restore`、`restored_from`=源会话 id），旧文件封闭；其后提问按恢复的历史续写
+- **THEN** 该会话的 system 与 input（最后一条 `llm_request` 的完整请求体，并折叠其后未入请求的末尾响应，算法见 design §6.2）原样灌回内存态、不重新装配系统上下文；开新 JSONL 文件（首行 `session_open` 标 `opened_from=restore`、`restored_from`=源会话 id），旧文件封闭；其后提问按恢复的历史续写；读数随留存重算灌回新会话（控制行显示源会话最近一次真实读数），并以读数种子（`usage` + `cache_totals`）落进新文件首行，供链式恢复起算
 
 ### Requirement: 会话本地留存
 
-会话 SHALL 以 wire/input 形态落配置目录（MUST NOT 写入 vault），作为 ADR 0007 双向记录机制的一侧：每会话一个 append-only JSONL 文件（`<config_dir>/harness/sessions/<vault 稳定 id>/<session_id>.jsonl`），文件首行 SHALL 为 `session_open` 记录——含 session id、vault 根路径、provider / 模型 / 思考档位、**完整装配后 system prompt 全文**与装配清单（每个来源的路径、存在与否、字节数；不存在的来源 SHALL 同样在场）。`<vault 稳定 id>` SHALL 是 vault 注册表 id（与 `vault-sessions/<id>.json`、`reading-positions/<id>.json` 同一份身份），MUST NOT 用 vault 路径派生的消毒名（消毒名有撞名面且无长度 / 字符集保证，M309 现场）。每次发给模型的请求（含工具循环的每次迭代与压缩调用）SHALL 落一条 `llm_request` 记录（完整请求体：system + messages + 参数，**另带本次实际发送体的字节数 `request_bytes`**——按 wire 展开后的尺寸算，省掉「按字节比外推请求多大」；不具备真实 HTTP body 的 mock 档省略该键），每次响应 SHALL 落一条 `llm_response` 记录（正文 / 思考归一回放项与展示文本 / 工具调用 / usage（SHALL 含 input / cached / output 与**缓存写入 `cache_write_tokens`**——provider 不提供时按 0 记录）/ 错误；思考 MUST 落盘——**回放项归一回放形状**（`{"type":"reasoning", summary, [content], [encrypted_content]}`：kimi 的明文载体是 `summary`、deepseek 的是 `content`，各按在场项保留；`encrypted_content` 有则在场），`id` 字段 MUST NOT 进入回放项（`store:false` 下重放 `rs_*` id 属非标用法），展示文本另存）；请求侧 **在模型声明支持思考档位时**（与顶层 `reasoning.effort` 同条件——判据 `HarnessConfig::effort_supported`，读配置 schema 的 per-model `effort` 声明）SHALL 带 `include:["reasoning.encrypted_content"]`（store:false 官方回放模式的前提——让服务端在 reasoning item 里回传密文，重放时无需 id 即可还原）；未声明 effort 的模型（含 deepseek 现役形态）MUST NOT 发该字段；wire 不可推导的决策与事件（批准 / 拒绝、停止中断、LLM 错误、循环上限）SHALL 以 sidecar 记录留存——其中 **LLM 错误的 sidecar 记录 SHALL 另带 HTTP 面诊断**（非 2xx 时的 HTTP 状态码、原始响应 body——按固定上限截断防巨型 body 撑爆留存、服务端 request id 若响应头或 body 提供；不具备 HTTP 面的错误省略这些键），且**错误事件的既有形态（`type`/`code`/`message`）不变**（新诊断只进留存，不破坏既有消费方），被 wire 覆盖或失去意义的 11 类事件 kind（`user_message` / `assistant_text` / `tool_call` / `tool_result` / `usage` / `tool_denied` / `compact` / `session_reset` / `approval_overwritten` / `approval_withdrawn` / `turn_abort_requested`）SHALL NOT 再记（重复记录即第二事实源）。记录点 SHALL 与发送点同点，MUST NOT 经二次序列化产生第二事实源。验收口径 SHALL 为恢复充分性：仅凭 JSONL 能逐字节重建任意一轮发给模型的请求。
+会话 SHALL 以 wire/input 形态落配置目录（MUST NOT 写入 vault），作为 ADR 0007 双向记录机制的一侧：每会话一个 append-only JSONL 文件（`<config_dir>/harness/sessions/<vault 稳定 id>/<session_id>.jsonl`），文件首行 SHALL 为 `session_open` 记录——含 session id、vault 根路径、provider / 模型 / 思考档位、**完整装配后 system prompt 全文**与装配清单（每个来源的路径、存在与否、字节数；不存在的来源 SHALL 同样在场）、**读数种子**（M526：恢复 / 压缩开文件时在场——`usage` 读数快照 + `cache_totals` 累计四元组；链式恢复从这里起算，全新会话不落这两键）。`<vault 稳定 id>` SHALL 是 vault 注册表 id（与 `vault-sessions/<id>.json`、`reading-positions/<id>.json` 同一份身份），MUST NOT 用 vault 路径派生的消毒名（消毒名有撞名面且无长度 / 字符集保证，M309 现场）。每次发给模型的请求（含工具循环的每次迭代与压缩调用）SHALL 落一条 `llm_request` 记录（完整请求体：system + messages + 参数，**另带本次实际发送体的字节数 `request_bytes`**——按 wire 展开后的尺寸算，省掉「按字节比外推请求多大」；不具备真实 HTTP body 的 mock 档省略该键），每次响应 SHALL 落一条 `llm_response` 记录（正文 / 思考归一回放项与展示文本 / 工具调用 / usage（SHALL 含 input / cached / output 与**缓存写入 `cache_write_tokens`**——provider 不提供时按 0 记录）/ 错误；思考 MUST 落盘——**回放项归一回放形状**（`{"type":"reasoning", summary, [content], [encrypted_content]}`：kimi 的明文载体是 `summary`、deepseek 的是 `content`，各按在场项保留；`encrypted_content` 有则在场），`id` 字段 MUST NOT 进入回放项（`store:false` 下重放 `rs_*` id 属非标用法），展示文本另存）；请求侧 **在模型声明支持思考档位时**（与顶层 `reasoning.effort` 同条件——判据 `HarnessConfig::effort_supported`，读配置 schema 的 per-model `effort` 声明）SHALL 带 `include:["reasoning.encrypted_content"]`（store:false 官方回放模式的前提——让服务端在 reasoning item 里回传密文，重放时无需 id 即可还原）；未声明 effort 的模型（含 deepseek 现役形态）MUST NOT 发该字段；wire 不可推导的决策与事件（批准 / 拒绝、停止中断、LLM 错误、循环上限）SHALL 以 sidecar 记录留存——其中 **LLM 错误的 sidecar 记录 SHALL 另带 HTTP 面诊断**（非 2xx 时的 HTTP 状态码、原始响应 body——按固定上限截断防巨型 body 撑爆留存、服务端 request id 若响应头或 body 提供；不具备 HTTP 面的错误省略这些键），且**错误事件的既有形态（`type`/`code`/`message`）不变**（新诊断只进留存，不破坏既有消费方），被 wire 覆盖或失去意义的 11 类事件 kind（`user_message` / `assistant_text` / `tool_call` / `tool_result` / `usage` / `tool_denied` / `compact` / `session_reset` / `approval_overwritten` / `approval_withdrawn` / `turn_abort_requested`）SHALL NOT 再记（重复记录即第二事实源）。记录点 SHALL 与发送点同点，MUST NOT 经二次序列化产生第二事实源。验收口径 SHALL 为恢复充分性：仅凭 JSONL 能逐字节重建任意一轮发给模型的请求。
 
 会话文件的 vault 归属 SHALL 仍以首行 `session_open.vault_root` 为**唯一**判据：列举、恢复、删除三处的归属过滤口径不变，目录只作组织维度，MUST NOT 成为归属判据的第二真源（文件被手工挪动 / 拷贝不改变其归属结论）。目录名 SHALL NOT 与保留目录名 `_orphaned` 相同。`sessions/<vault 稳定 id>/<session_id>.jsonl` SHALL 是**唯一布局**：新建会话 SHALL 只落其 vault 的目录，列举 / 恢复 / 删除 SHALL 只读该目录；产品运行时 MUST NOT 含任何迁移逻辑（无启动迁移入口、无旧布局读取路径），也 MUST NOT 读平铺在 `sessions/` 根下的 `*.jsonl`——MUST NOT 保留平铺布局的双读 / 双写过渡层（本仓无外部消费者，兼容层保护对象的举证责任在建层一方；REVIEW.md「消费者是谁」）。存量平铺文件（升级前遗留）的归位 SHALL 由**仓内一次性脚本**（`scripts/` 下，手动执行一次即弃，不进产品运行时）完成：脚本按各文件首行 `session_open.vault_root`（先规范化再查注册表）移入对应 vault 目录，`vault_root` 不可解析 / 在注册表里找不到 / 目标位置已有同名文件的 SHALL 移入保留目录 `sessions/_orphaned/`，MUST NOT 删除或改写任何文件，且 MUST be 幂等（重复执行零搬运）；脚本遇单文件失败时留原地并自报，重跑脚本收敛。上一代「按 vault 聚合的业务事件流水」形态（`<config_dir>/harness/<消毒名>.jsonl`）照旧不再续写、不做迁移（运行时 / 产品侧零读者，验收套件的 JSONL 断言随实现迁移至 wire 口径；M309 孤儿先例）。写失败不阻断对话的既有纪律不变。
 

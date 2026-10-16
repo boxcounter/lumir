@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::commands::CommandError;
@@ -70,7 +70,7 @@ pub struct PanelMessage {
 /// 本回合缓存命中率的**成因标注**（M443，design §3.4）：仅针对最近一次往返，由后端一处判定
 /// （前端 MUST NOT 自行猜成因）。序列化为 snake_case 字符串（`cold_start` / `block_dilution`），
 /// 前端按值取文案（成因句落 hover 气泡，见 design §5.2）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CacheNote {
     /// 本回合 `cached_tokens == 0`：会话首个请求的典型冷启动；中途前缀缓存过期导致的零命中
@@ -85,7 +85,12 @@ pub enum CacheNote {
 /// M443 起口径拆开：`ctx_pct` 仍是最近一次请求的值，cache 侧分**会话累计**（控制行主读数）
 /// 与**单回合**（气泡辅读数）两个投影——两者是同一批计数器的两个投影，MUST NOT 各算各的
 /// （design §2 的一致性原则）。
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+///
+/// M526 起带绝对值字段（`input_tokens` / `cached_tokens[_session]` / `context_window`）：
+/// hover 气泡的 tokens 读数由此出，数据不可得时前端走降级文案、MUST NOT 编造（`context_window`
+/// 为 0 = 无上限值，前端不显示百分比与上限）。`has_usage` 是「有没有真读数」的判据——六键零值
+/// 是缺省不是读数，从未发过请求的会话据它隐藏读数区（否则即「0% · 0%」虚报）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct UsageSnapshot {
     /// 上下文窗口已用 %（最近一次 input tokens ÷ 模型窗口，窗口来自配置 schema）。
     pub ctx_pct: f64,
@@ -99,21 +104,79 @@ pub struct UsageSnapshot {
     pub cache_write_tokens_session: u64,
     /// 本回合的成因标注（无标注 = null）。
     pub cache_note: Option<CacheNote>,
+    /// 最近一次往返的 input tokens（M526，气泡「上下文已用」绝对值）。
+    pub input_tokens: u64,
+    /// 最近一次往返的 cached tokens（M526，气泡「本回合缓存命中」绝对值）。
+    pub cached_tokens: u64,
+    /// 本逻辑会话累计 cached tokens（M526，气泡「会话累计命中」绝对值）。
+    pub cached_tokens_session: u64,
+    /// `ctx_pct` 的分母（M526：当时算读数用的模型上下文窗口；0 = 无上限值，前端降级）。
+    pub context_window: u64,
+    /// 是否已有带 usage 的往返（M526：false = 从未发过请求，读数区整体隐藏）。
+    pub has_usage: bool,
 }
 
 /// 本逻辑会话的缓存计数累计器（design §3.2）：挂在 [`Session`] 上、只增不减；会话建立 /
-/// 「新会话」重置 / 自动压缩开新逻辑会话 / 从历史恢复各起一段（前两者与恢复是新建 `Session`，
-/// 压缩是 [`Session::rotate`] 的就地清零——四个节点都是既有的逻辑会话边界）。
-#[derive(Debug, Clone, Copy, Default)]
-struct CacheTotals {
+/// 「新会话」重置 / 自动压缩开新逻辑会话各起一段（前两者是新建 `Session`，压缩是
+/// [`Session::rotate`] 的就地清零）。**从历史恢复不是清零点**（M526）：以源会话留存的读数
+/// 重算值为基底继续累计——恢复与压缩因此能把 `(快照, 累计器)` 灌进新会话 / 存进新文件首行。
+///
+/// M526 起随 `session_open` 落盘（恢复/压缩时作下一文件的读数种子）并可以灌回——`pub` 是
+/// 留存重算（[`usage_from_records`]）与恢复路径的需要；累加与读数算法只在
+/// [`Self::accumulate`] / [`Self::snapshot`] 两处，MUST NOT 另写一套。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct CacheTotals {
     /// Σ input_tokens。
-    input: u64,
+    pub input: u64,
     /// Σ cached_tokens。
-    cached: u64,
+    pub cached: u64,
     /// Σ cache_write_tokens。
-    writes: u64,
+    pub writes: u64,
     /// 带 usage 的往返计数（「有没有样本」的判据；`Σinput` 可能为 0 而样本非 0）。
-    samples: u64,
+    pub samples: u64,
+}
+
+impl CacheTotals {
+    /// 累加一次往返（live 的 `record_usage` 与留存的 [`usage_from_records`] 重算共此一份）。
+    fn accumulate(&mut self, usage: &Usage) {
+        self.input += usage.input_tokens;
+        self.cached += usage.cached_tokens;
+        self.writes += usage.cache_write_tokens;
+        self.samples += 1;
+    }
+
+    /// 由累计器 + 最近一次往返算出全部读数（读数算法的唯一产出点）：
+    /// live、留存重算、恢复种子三处吃的是同一个值。
+    fn snapshot(&self, usage: &Usage, window: u64) -> UsageSnapshot {
+        let ctx_pct = if window == 0 {
+            0.0
+        } else {
+            usage.input_tokens as f64 * 100.0 / window as f64
+        };
+        let cache_pct_turn = if usage.input_tokens == 0 {
+            0.0
+        } else {
+            usage.cached_tokens as f64 * 100.0 / usage.input_tokens as f64
+        };
+        let cache_pct_session = if self.samples == 0 || self.input == 0 {
+            0.0
+        } else {
+            self.cached as f64 * 100.0 / self.input as f64
+        };
+        UsageSnapshot {
+            ctx_pct,
+            cache_pct_session,
+            cache_pct_turn,
+            cache_write_tokens: usage.cache_write_tokens,
+            cache_write_tokens_session: self.writes,
+            cache_note: cache_note(usage),
+            input_tokens: usage.input_tokens,
+            cached_tokens: usage.cached_tokens,
+            cached_tokens_session: self.cached,
+            context_window: window,
+            has_usage: self.samples > 0,
+        }
+    }
 }
 
 /// 本回合成因判定（后端唯一一处，design §3.4）：
@@ -140,6 +203,75 @@ fn cache_note(usage: &Usage) -> Option<CacheNote> {
         return Some(CacheNote::BlockDilution);
     }
     None
+}
+
+/// 从留存记录的 `usage` 块还原 [`Usage`]（恢复路径的重算输入）：`llm_response.usage` 的
+/// wire 口径四键——input / cached 必填（缺了就不是一次可计的往返），output / cache_write
+/// 缺省 0（`record_llm_response` 恒四键落盘，缺键只可能来自手工改过的文件，宽容不炸）。
+fn usage_from_json(value: &serde_json::Value) -> Option<Usage> {
+    let number = |key: &str| value[key].as_u64();
+    Some(Usage {
+        input_tokens: number("input_tokens")?,
+        cached_tokens: number("cached_tokens")?,
+        output_tokens: number("output_tokens").unwrap_or(0),
+        cache_write_tokens: number("cache_write_tokens").unwrap_or(0),
+    })
+}
+
+/// 从留存记录重算读数（恢复路径，M526）：`llm_request` / `llm_response` 严格交替成对，响应的
+/// usage 归属其前一条请求——只有**会话轮次**（请求的 system == 会话 system）计入；压缩调用是
+/// 内部汇总调用（system 是压缩指令），与 live 侧 `rotate` 清零累计的口径一致，MUST NOT 计入。
+///
+/// `seed` = 源文件 `session_open` 落账的读数与累计（[`usage_seed`] 的解析产物）——链式恢复
+/// （恢复出的会话再被恢复）时它是增量基底；旧文件无种子键 ⇒ 零值缺省。窗口取**当前**配置的
+/// 声明值：读数是投影，分母随现配置（与 live 侧每轮现算同口径）。返回的 (快照, 累计器) 同值
+/// 同源，由调用侧一并灌进新会话（[`Session::restore_usage`]）并落进新文件的首行。
+pub fn usage_from_records(
+    records: &[serde_json::Value],
+    system: &str,
+    window: u64,
+    seed: (UsageSnapshot, CacheTotals),
+) -> (UsageSnapshot, CacheTotals) {
+    let mut totals = seed.1;
+    let mut snapshot = seed.0;
+    let mut conversation_pending = false;
+    for record in records {
+        match record["kind"].as_str() {
+            Some("llm_request") => {
+                conversation_pending = record["request"]["system"].as_str() == Some(system);
+            }
+            Some("llm_response") => {
+                // 任何响应都消耗配对位（错误 / 空响应同样成对落盘）——防御形态不齐的文件。
+                let conversation = conversation_pending;
+                conversation_pending = false;
+                if !conversation {
+                    continue;
+                }
+                let Some(usage) = record.get("usage").and_then(usage_from_json) else {
+                    continue;
+                };
+                totals.accumulate(&usage);
+                snapshot = totals.snapshot(&usage, window);
+            }
+            _ => {}
+        }
+    }
+    (snapshot, totals)
+}
+
+/// `session_open` 读数种子的宽容解析（M526）：恢复/压缩开新文件时随首行落账（`usage` +
+/// `cache_totals` 两键），链式恢复从这里起算。旧文件无种子键 / 形状不符 ⇒ 零值缺省——重算
+/// 只凭记录也能回到正确读数，种子只是让「会话累计」口径跨过文件边界不断档。
+pub fn usage_seed(open: &serde_json::Value) -> (UsageSnapshot, CacheTotals) {
+    let usage = open
+        .get("usage")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default();
+    let totals = open
+        .get("cache_totals")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default();
+    (usage, totals)
 }
 
 impl StateSnapshot {
@@ -398,38 +530,20 @@ impl Session {
 
     /// 记录一次带 usage 的 LLM 往返（M443，design §3.2/§3.3）：先把本次计数累加进会话累计器，
     /// 再由此算出全部读数、存下并**返回**快照——turn 侧拿这一个返回值同时喂事件与快照两条通道
-    /// （MUST NOT 两套算法，REVIEW.md 第 8 条）。
+    /// （MUST NOT 两套算法，REVIEW.md 第 8 条）。读数算法在 [`CacheTotals::snapshot`]。
     pub fn record_usage(&mut self, usage: &Usage, window: u64) -> UsageSnapshot {
-        self.cache_totals.input += usage.input_tokens;
-        self.cache_totals.cached += usage.cached_tokens;
-        self.cache_totals.writes += usage.cache_write_tokens;
-        self.cache_totals.samples += 1;
-        let totals = self.cache_totals;
-        let ctx_pct = if window == 0 {
-            0.0
-        } else {
-            usage.input_tokens as f64 * 100.0 / window as f64
-        };
-        let cache_pct_turn = if usage.input_tokens == 0 {
-            0.0
-        } else {
-            usage.cached_tokens as f64 * 100.0 / usage.input_tokens as f64
-        };
-        let cache_pct_session = if totals.samples == 0 || totals.input == 0 {
-            0.0
-        } else {
-            totals.cached as f64 * 100.0 / totals.input as f64
-        };
-        let snapshot = UsageSnapshot {
-            ctx_pct,
-            cache_pct_session,
-            cache_pct_turn,
-            cache_write_tokens: usage.cache_write_tokens,
-            cache_write_tokens_session: totals.writes,
-            cache_note: cache_note(usage),
-        };
+        self.cache_totals.accumulate(usage);
+        let snapshot = self.cache_totals.snapshot(usage, window);
         self.usage = snapshot;
         snapshot
+    }
+
+    /// 恢复路径的读数落种（M526）：快照与累计器同值、同源自 [`usage_from_records`] 的留存重算
+    /// ——恢复后控制行/气泡显示源会话最近一次真实读数，其后的累计接着重算值继续（两条通道
+    /// 此后看到的值与留存可推导值一致，REVIEW.md 第 8 条）。
+    pub fn restore_usage(&mut self, usage: UsageSnapshot, totals: CacheTotals) {
+        self.usage = usage;
+        self.cache_totals = totals;
     }
 
     pub fn usage(&self) -> UsageSnapshot {
@@ -865,6 +979,11 @@ mod tests {
             cache_write_tokens: 6174,
             cache_write_tokens_session: 12044,
             cache_note: Some(CacheNote::BlockDilution),
+            input_tokens: 12786,
+            cached_tokens: 6400,
+            cached_tokens_session: 10300,
+            context_window: 131_072,
+            has_usage: true,
         };
         let value = serde_json::to_value(snapshot).unwrap();
         let mut keys: Vec<&str> = value
@@ -882,7 +1001,12 @@ mod tests {
                 "cache_pct_turn",
                 "cache_write_tokens",
                 "cache_write_tokens_session",
+                "cached_tokens",
+                "cached_tokens_session",
+                "context_window",
                 "ctx_pct",
+                "has_usage",
+                "input_tokens",
             ]
         );
         // 旧键退役：`cache_pct` 不再出现（复用旧键会留下「以为还是单回合」的静默陷阱）。
@@ -900,5 +1024,125 @@ mod tests {
         })
         .unwrap();
         assert!(clean["cache_note"].is_null());
+    }
+
+    // ---- M526：恢复路径的读数重算（留存 → 种子 + 记录扫描 → 新会话） ----
+
+    fn request_record(system: &str) -> serde_json::Value {
+        serde_json::json!({
+            "kind": "llm_request",
+            "request": { "system": system, "messages": [] },
+        })
+    }
+
+    fn response_record(input: u64, cached: u64, writes: u64) -> serde_json::Value {
+        serde_json::json!({
+            "kind": "llm_response",
+            "text": "答",
+            "usage": {
+                "input_tokens": input,
+                "cached_tokens": cached,
+                "output_tokens": 1,
+                "cache_write_tokens": writes,
+            },
+        })
+    }
+
+    #[test]
+    fn usage_from_records_recomputes_session_cumulative() {
+        // 两轮会话 + 一次压缩（内部调用，system 不同）+ 压缩后又一轮：压缩 usage 不计入。
+        let compact_system = "压缩指令";
+        let records = vec![
+            request_record("sys"),
+            response_record(1000, 200, 0),
+            request_record("sys"),
+            response_record(2000, 1800, 50),
+            request_record(compact_system),
+            response_record(99_999, 99_999, 99_999), // 压缩调用：MUST NOT 计入
+            request_record("sys"),
+            response_record(4000, 3900, 0),
+        ];
+        let (snapshot, totals) = usage_from_records(&records, "sys", WINDOW, Default::default());
+        // Σcached ÷ Σinput = (200 + 1800 + 3900) ÷ (1000 + 2000 + 4000)（压缩轮排除）。
+        assert!((snapshot.cache_pct_session - 5900.0 * 100.0 / 7000.0).abs() < 1e-9);
+        assert!((snapshot.cache_pct_turn - 3900.0 * 100.0 / 4000.0).abs() < 1e-9);
+        assert_eq!(snapshot.input_tokens, 4000);
+        assert_eq!(snapshot.cached_tokens, 3900);
+        assert_eq!(snapshot.cached_tokens_session, 5900);
+        assert_eq!(snapshot.cache_write_tokens_session, 50);
+        assert_eq!(snapshot.context_window, WINDOW);
+        assert!(snapshot.has_usage);
+        assert_eq!(totals.samples, 3);
+        // 与 live 侧同一算法对拍：同输入灌进会话，读数逐字段相等。
+        let mut session = test_session();
+        for u in [
+            usage(1000, 200, 0),
+            usage(2000, 1800, 50),
+            usage(4000, 3900, 0),
+        ] {
+            session.record_usage(&u, WINDOW);
+        }
+        assert_eq!(session.usage(), snapshot);
+    }
+
+    #[test]
+    fn usage_from_records_ignores_responses_without_usage() {
+        // 错误 / 空响应的 llm_response 不带 usage 块：不是一次可计的往返，跳过且消耗配对位。
+        let records = vec![
+            request_record("sys"),
+            serde_json::json!({"kind": "llm_response", "text": "", "error": "harness_empty_response"}),
+            request_record("sys"),
+            response_record(1000, 500, 0),
+        ];
+        let (snapshot, totals) = usage_from_records(&records, "sys", WINDOW, Default::default());
+        assert!(snapshot.has_usage);
+        assert_eq!(totals.samples, 1);
+        assert!((snapshot.cache_pct_session - 50.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn usage_seed_parses_and_defaults() {
+        // 落账 → 解析 round-trip：链式恢复的种子原样回来。
+        let (snapshot, totals) = {
+            let mut session = test_session();
+            session.record_usage(&usage(1000, 200, 7), WINDOW);
+            let snapshot = session.usage();
+            let totals = CacheTotals {
+                input: 1000,
+                cached: 200,
+                writes: 7,
+                samples: 1,
+            };
+            (snapshot, totals)
+        };
+        let open = serde_json::json!({
+            "kind": "session_open",
+            "usage": serde_json::to_value(snapshot).unwrap(),
+            "cache_totals": serde_json::to_value(totals).unwrap(),
+        });
+        let (usage, totals) = usage_seed(&open);
+        assert_eq!(usage, snapshot);
+        assert_eq!(totals.samples, 1);
+        // 旧文件无种子键 ⇒ 零值缺省（has_usage false：从未发过请求的会话不假读数）。
+        let (usage, totals) = usage_seed(&serde_json::json!({"kind": "session_open"}));
+        assert!(!usage.has_usage);
+        assert_eq!(totals.samples, 0);
+        // 形状不符（手工改坏的文件）同样回落缺省，不炸。
+        let (usage, _) = usage_seed(&serde_json::json!({"usage": "坏", "cache_totals": 42}));
+        assert!(!usage.has_usage);
+    }
+
+    #[test]
+    fn restore_usage_seeds_snapshot_and_totals() {
+        // 恢复落种：快照即源会话最近一次真实读数；其后的累计从种子接着算（会话累计口径跨恢复不断档）。
+        let records = vec![request_record("sys"), response_record(1000, 200, 0)];
+        let (snapshot, totals) = usage_from_records(&records, "sys", WINDOW, Default::default());
+        let mut session = test_session();
+        session.restore_usage(snapshot, totals);
+        assert_eq!(session.usage(), snapshot);
+        assert!(session.usage().has_usage);
+        let next = session.record_usage(&usage(3000, 2700, 0), WINDOW);
+        // Σ = (200 + 2700) ÷ (1000 + 3000) —— 不是只从恢复后的新回合起算。
+        assert!((next.cache_pct_session - 2900.0 * 100.0 / 4000.0).abs() < 1e-9);
     }
 }
