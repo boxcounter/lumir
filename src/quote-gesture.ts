@@ -374,9 +374,13 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
   /** 编辑器内最后选区（from/to 是记录时刻的文档偏移；点击时恢复并按恢复后的现读值捕获）。 */
   let last: { path: string; from: number; to: number } | null = null;
 
+  /**
+   * 藏钮：只置 hidden、不把节点从 DOM 摘掉（M550，理由与 message-quote-gesture 的 hideButton
+   * 注释同：AXPress 的 press 序列中途，时机门会因选区被前置坍缩而走「选区无效 ⇒ 藏钮」收口——
+   * remove() 会让 press 的 click 落不到处理器）。dispose 仍负责最终摘除。
+   */
   function hideButton(): void {
     button.hidden = true;
-    if (button.parentElement !== null) button.remove();
   }
 
   /**
@@ -488,11 +492,17 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
     afterTimingChange();
   }
 
-  // 松开即浮现；blur 兜底拖拽出窗口外松开（document 可能收不到 mouseup）。
-  function onMouseUp(): void {
+  // 松开即浮现；blur 兜底拖拽出窗口外松开（document 可能收不到 mouseup）。钮自己的 mouseup
+  // 与 mousedown 同口径不进门——否则辅助功能 press（AXPress）会先坍缩选区，这里的收口在
+  // press 的 click 落地前把钮藏起来（M550）。
+  function onMouseUp(event?: MouseEvent): void {
+    if (event !== undefined && button.contains(event.target as Node)) return;
     timing = reduceGestureTiming(timing, { kind: "mouse-up" }, Date.now());
     afterTimingChange();
   }
+
+  // blur 监听签名是 FocusEvent，包一层再调（与旧实现同语义，只是类型上分开）。
+  const onWindowBlur = (): void => onMouseUp();
 
   // 钮本身不抢选区（mousedown 防默认）：否则点击先把编辑器选区坍缩掉，「恢复最后选区」
   // 就要依赖另一条链路才能成立。
@@ -523,7 +533,7 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
   document.addEventListener("selectionchange", onSelectionChange);
   document.addEventListener("mousedown", onMouseDown);
   document.addEventListener("mouseup", onMouseUp);
-  window.addEventListener("blur", onMouseUp);
+  window.addEventListener("blur", onWindowBlur);
 
   async function jump(card: QuoteCard): Promise<void> {
     let session = deps.sessionForPath(card.file);
@@ -571,9 +581,10 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
       document.removeEventListener("selectionchange", onSelectionChange);
       document.removeEventListener("mousedown", onMouseDown);
       document.removeEventListener("mouseup", onMouseUp);
-      window.removeEventListener("blur", onMouseUp);
+      window.removeEventListener("blur", onWindowBlur);
       if (revealTimer !== null) clearTimeout(revealTimer);
       hideButton();
+      button.remove();
     },
   };
 }

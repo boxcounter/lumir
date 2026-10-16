@@ -122,9 +122,14 @@ export function createMessageQuoteGesture(deps: MessageQuoteGestureDeps): { disp
   /** transcript 内最后选区对应的卡片数据（点击时的双保险；点击本身先尝试现读选区）。 */
   let last: MessageQuoteCard | null = null;
 
+  /**
+   * 藏钮：只置 hidden、不把节点从 DOM 摘掉。M550：辅助功能 press（AXPress）的按下-抬起序列
+   * 中途会把选区坍缩掉（WebKit 的前置副作用），时机门随后走「选区无效 ⇒ hideButton」收口——
+   * 若在这里 remove()，press 的 click 永远落不到处理器（钮经辅助功能不可按下）。hidden 元素
+   * 不绘制、不进 AX 树，「拖拽中不出现」的不变量不受影响；dispose 仍负责最终摘除。
+   */
   function hideButton(): void {
     button.hidden = true;
-    if (button.parentElement !== null) button.remove();
   }
 
   /**
@@ -206,11 +211,12 @@ export function createMessageQuoteGesture(deps: MessageQuoteGestureDeps): { disp
     return { role: meta.role, at: meta.at, text };
   }
 
-  /** 现读选区末端（光标侧）矩形；无效返回 null 并清 last（原 onSelectionChange 的同口径）。 */
+  /** 现读选区末端（光标侧）矩形；无效返回 null。last 是「平时记录的最后选区」双保险，
+   *  选区被外部清掉（如 AXPress 的前置坍缩）时不清它——否则钮自己的 press 序列里 click
+   *  处理器拿到的 capture() ?? last 全 null，辅助功能按下变成空操作（M550）。 */
   function currentSelectionRect(): DOMRect | null {
     const card = capture();
     if (card === null) {
-      last = null;
       return null;
     }
     last = card;
@@ -265,11 +271,17 @@ export function createMessageQuoteGesture(deps: MessageQuoteGestureDeps): { disp
     afterTimingChange();
   }
 
-  // 松开即浮现；blur 兜底拖拽出窗口外松开（document 可能收不到 mouseup）。
-  function onMouseUp(): void {
+  // 松开即浮现；blur 兜底拖拽出窗口外松开（document 可能收不到 mouseup）。钮自己的 mouseup
+  // 与 mousedown 同口径不进门——否则辅助功能 press（AXPress）会先把选区坍缩掉，这里的
+  // 「选区无效 ⇒ 藏钮」收口会在 press 的 click 落地前把钮摘掉（M550）。
+  function onMouseUp(event?: MouseEvent): void {
+    if (event !== undefined && button.contains(event.target as Node)) return;
     timing = reduceGestureTiming(timing, { kind: "mouse-up" }, Date.now());
     afterTimingChange();
   }
+
+  // blur 监听签名是 FocusEvent，包一层再调（与旧实现同语义，只是类型上分开）。
+  const onWindowBlur = (): void => onMouseUp();
 
   // 钮本身不抢选区（mousedown 防默认）：否则点击先把 transcript 选区坍缩掉。
   button.addEventListener("mousedown", (event) => event.preventDefault());
@@ -285,16 +297,17 @@ export function createMessageQuoteGesture(deps: MessageQuoteGestureDeps): { disp
   document.addEventListener("selectionchange", onSelectionChange);
   document.addEventListener("mousedown", onMouseDown);
   document.addEventListener("mouseup", onMouseUp);
-  window.addEventListener("blur", onMouseUp);
+  window.addEventListener("blur", onWindowBlur);
 
   return {
     dispose() {
       document.removeEventListener("selectionchange", onSelectionChange);
       document.removeEventListener("mousedown", onMouseDown);
       document.removeEventListener("mouseup", onMouseUp);
-      window.removeEventListener("blur", onMouseUp);
+      window.removeEventListener("blur", onWindowBlur);
       if (revealTimer !== null) clearTimeout(revealTimer);
       hideButton();
+      button.remove();
     },
   };
 }
