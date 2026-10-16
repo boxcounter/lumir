@@ -18,7 +18,15 @@
 import { onRelabel, t } from "./copy";
 import { formatMessageAt } from "./quote-card";
 import type { MessageQuoteCard } from "./quote-card";
-import { clampGestureButton, GESTURE_BUTTON_MARGIN, quotePrefixMatched } from "./quote-gesture";
+import {
+  caretButtonAnchor,
+  caretRectOf,
+  clampGestureButton,
+  gestureTimingVisible,
+  idleGestureTiming,
+  quotePrefixMatched,
+  reduceGestureTiming,
+} from "./quote-gesture";
 
 // ---------------------------------------------------------------------------
 // 纯逻辑层（tests/unit 零 DOM 直接驱动）
@@ -91,8 +99,11 @@ export interface MessageQuoteGestureDeps {
 /**
  * transcript 消息体选区 → 浮动「摘录到对话」钮。返回句柄只含 dispose（摘监听与浮动钮；面板是
  * 单例、进程内长驻，正常路径不调）。钮复用 .quote-gesture-btn 形态与 D370 文案，只改定位基准为
- * transcript（选区右下 +4px）。点击不依赖焦点保持：mousedown preventDefault 保住选区，且平时
- * 记录最后选区作双保险。
+ * transcript（选区末端 / 光标侧右下 +4px）。点击不依赖焦点保持：mousedown preventDefault 保住
+ * 选区，且平时记录最后选区作双保险。
+ *
+ * 时机与编辑器手势同一口径（M541，状态机共用 src/quote-gesture.ts 的导出）：选区完成后才浮现——
+ * 拖拽中不出现、mouseup 即出、键盘选区静默 GESTURE_SETTLE_MS 后出、选区清空即消失。
  */
 export function createMessageQuoteGesture(deps: MessageQuoteGestureDeps): { dispose(): void } {
   const button = document.createElement("button");
@@ -117,22 +128,22 @@ export function createMessageQuoteGesture(deps: MessageQuoteGestureDeps): { disp
   }
 
   /**
-   * 浮动钮定位：选区包围盒右下、相对 transcript 内容原点（scrollTop / scrollLeft 折算，滚动时
-   * 随内容走），并按 `clampGestureButton` 钳进**当前滚动窗口**（M531：补 top 钳制与 left 下限；
-   * 细则与现场见该函数注释）。
+   * 浮动钮定位：候选落点（光标侧锚点，客户端坐标）折算成 transcript 内容坐标（scrollTop /
+   * scrollLeft 折算，滚动时随内容走），并按 `clampGestureButton` 钳进**当前滚动窗口**（M531：
+   * 补 top 钳制与 left 下限；细则与现场见该函数注释）。
    *
    * 宽度那一半由 CSS 保证：abspos 收缩盒的可用宽 = 「left 到容器右缘」，选区贴右缘时不收编的
    * 话钮会被压成逐字换行（量到的实际宽也随之失真）。故 `width: max-content`（harness-panel.css
    * 的 scoped 覆写）先保证量到的是内容宽，这里的 clamp 直接消费它。
    */
-  function placeButton(rect: DOMRect): void {
+  function placeButton(anchor: { left: number; top: number }): void {
     const base = deps.transcript.getBoundingClientRect();
     if (button.parentElement !== deps.transcript) deps.transcript.append(button);
     button.hidden = false;
     const placed = clampGestureButton(
       {
-        left: rect.right - base.left + deps.transcript.scrollLeft + GESTURE_BUTTON_MARGIN,
-        top: rect.bottom - base.top + deps.transcript.scrollTop + GESTURE_BUTTON_MARGIN,
+        left: anchor.left - base.left + deps.transcript.scrollLeft,
+        top: anchor.top - base.top + deps.transcript.scrollTop,
       },
       { width: button.offsetWidth, height: button.offsetHeight },
       {
@@ -195,16 +206,69 @@ export function createMessageQuoteGesture(deps: MessageQuoteGestureDeps): { disp
     return { role: meta.role, at: meta.at, text };
   }
 
-  function onSelectionChange(): void {
+  /** 现读选区末端（光标侧）矩形；无效返回 null 并清 last（原 onSelectionChange 的同口径）。 */
+  function currentSelectionRect(): DOMRect | null {
     const card = capture();
     if (card === null) {
       last = null;
+      return null;
+    }
+    last = card;
+    return caretRectOf(document.getSelection()!);
+  }
+
+  /** 时机门状态与键盘落定计时器（与编辑器手势共用 src/quote-gesture.ts 的纯状态机）。 */
+  let timing = idleGestureTiming;
+  let revealTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** 到点浮现：时机门 + 现读选区双判，任一不过即隐藏（数据一律取当前帧）。 */
+  function revealNow(): void {
+    revealTimer = null;
+    if (!gestureTimingVisible(timing, Date.now())) {
       hideButton();
       return;
     }
-    last = card;
-    const selection = document.getSelection()!;
-    placeButton(selection.getRangeAt(0).getBoundingClientRect());
+    const rect = currentSelectionRect();
+    if (rect === null) {
+      hideButton();
+      return;
+    }
+    placeButton(caretButtonAnchor(rect));
+  }
+
+  /** 每次时机状态变化后的统一收口：已到期直接浮现，否则藏钮并按 revealAt 排期。 */
+  function afterTimingChange(): void {
+    if (revealTimer !== null) {
+      clearTimeout(revealTimer);
+      revealTimer = null;
+    }
+    if (gestureTimingVisible(timing, Date.now())) {
+      revealNow();
+      return;
+    }
+    hideButton();
+    if (timing.revealAt !== null) {
+      revealTimer = setTimeout(revealNow, Math.max(0, timing.revealAt - Date.now()));
+    }
+  }
+
+  function onSelectionChange(): void {
+    const valid = currentSelectionRect() !== null;
+    timing = reduceGestureTiming(timing, { kind: "selection-change", valid }, Date.now());
+    afterTimingChange();
+  }
+
+  function onMouseDown(event: MouseEvent): void {
+    // 钮自己的 mousedown（preventDefault 保选区）不进入拖拽口径——否则点钮先把钮藏掉再重排。
+    if (button.contains(event.target as Node)) return;
+    timing = reduceGestureTiming(timing, { kind: "mouse-down" }, Date.now());
+    afterTimingChange();
+  }
+
+  // 松开即浮现；blur 兜底拖拽出窗口外松开（document 可能收不到 mouseup）。
+  function onMouseUp(): void {
+    timing = reduceGestureTiming(timing, { kind: "mouse-up" }, Date.now());
+    afterTimingChange();
   }
 
   // 钮本身不抢选区（mousedown 防默认）：否则点击先把 transcript 选区坍缩掉。
@@ -219,10 +283,17 @@ export function createMessageQuoteGesture(deps: MessageQuoteGestureDeps): { disp
   });
 
   document.addEventListener("selectionchange", onSelectionChange);
+  document.addEventListener("mousedown", onMouseDown);
+  document.addEventListener("mouseup", onMouseUp);
+  window.addEventListener("blur", onMouseUp);
 
   return {
     dispose() {
       document.removeEventListener("selectionchange", onSelectionChange);
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("blur", onMouseUp);
+      if (revealTimer !== null) clearTimeout(revealTimer);
       hideButton();
     },
   };
