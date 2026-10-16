@@ -22,6 +22,7 @@
 - **「在途停止丢掉该轮的 reasoning 回放项」是否触发 400**（M369，2026-10-07，medium）：未实测、**需真 API 才能定性**，下批排真 API 探针；在此之前 MUST NOT 当缺陷修。落点 `src-tauri/src/harness/llm.rs` 的 `parse_sse_reader` 与 `turn.rs` 的 `abort_turn`。指针 `.tower/comms/findings/20261007-worker-sts1-improve-reasoning-provider-backlog.md`。
 - **M251 的两张菜单基线（23px 真实差异）是否重建**（2026-09-27）：新高亮让菜单左上角圆角处透出的底色变化，未重建（零容差读数 `test-results/m251/baseline-review/tree-menu-menu-target/`）；基线更新是人肉裁决点。
 - **共享 `CARGO_TARGET_DIR` 与 dev-only 脚本化驱动入口**（工具链节 2/3 的长期候选）：是否立项待裁。副作用现状：跨 worktree 复用旧测试二进制曾致假绿（见「待修 findings」的同名条）。
+- **左栏文件拖拽移动：合成拖拽从未落盘，需 Alex 手拖定性（10 秒）**（M535 worker 探针，2026-10-16，high）→ 五个 drag 步全不落盘；落点算对、事件到 DOM，但应用侧 dragover 分支从未被走到（落点高亮 `--sel` 三帧取色证从未画出）。两候选：通道边界（WKWebView 不吃合成 HTML5 拖拽）或产品面（`draggable=true` 挂在 `<button class="ft-row">` 上起不了拖，真实用户也拖不动）——M530 落地至今零真机成功记录。请在日常 Lumir 里手拖一个文件进目录：拖得动 = 登记套件已知边界；拖不动 = 立项修产品。复现：`node scripts/acceptance/run.mjs 159 --keep-app`。指针 `.tower/comms/findings/20261016-worker-scenfix-bug-html5-dnd-dragover-vs.md`。
 
 ## 已裁已立项（落地由 tower 派发的 mission 承担）
 
@@ -39,6 +40,9 @@
 
 一条一行（主题 + 来源/日期/severity + gist + finding 指针）；叙述与读数明细见 git 历史与指针文件。
 
+- **验收套件零步骤场景静默 PASS（loader/--check 都不挡）**（worker-scenfix，2026-10-16，high）→ `steps:` 写到 front-matter 闭合 `---` 之后时整表被忽略（loadScenario 只取第一段），checkScenario 也不挡空 steps——场景 158 曾因此假绿、M529 修复当时真机未验（M535 已修场景本体）；修法 = checkScenario 挡「空 steps」+ loadScenario 对正文里顶层 `steps:`/`teardown:` 给定位提示，均静态零真机成本。指针 `.tower/comms/findings/20261016-worker-scenfix-bug-pass-loader-check-0.md`。
+- **验收套件 file 断言一条只判一个键，多写静默失效**（worker-scenfix，2026-10-16，medium）→ `execute.mjs:1089-1145` 的 if 链命中即 return，README 要求的 unchangedSince + mtimeUnchangedSince 双对账写不出（M535 在 159 场景侧拆条规避，未修根因）；修法二选一（命中键逐条判 / --check 挡多键同写）。指针 `.tower/comms/findings/20261016-worker-scenfix-bug-file-readme-sha256-mtime.md`。
+- **`src/ipc.ts:396` usage 事件联合类型欠声明 M526/M534 绝对值键**（worker-usagekeys，2026-10-16，medium）→ 类型层脱节（消费点走 `unknown` 故 CI/tsc 全绿，正是「声明了却没有跟着改」的静默面）；修法 = 补五键 + 注释指向 harness spec 的「事件/快照同键同值」不变量，改完跑 `pnpm exec tsc --noEmit`。指针 `.tower/comms/findings/20261016-worker-usagekeys-improve-src-ipc-ts-usage-m526-m534.md`。
 - **format_argv（Rust）与 formatArgv（JS）的空白字符类边际分叉**（M528 r1 P2-2，2026-10-16，low）→ Rust `char::is_whitespace` 按 Unicode White_Space、JS `\s` 额外含 U+FEFF——含 FEFF 的参数一侧加引号一侧不加，与两处 doc comment 声明的「逐字一致」相悖；实际不可达（CLI 参数无含 BOM 的现实路径），登记即可。指针 `.tower/comms/reviews/review-feat-fix-transcript-toolcall-summary-and-tabl-reviewer-m528-r1.md`。
 - **harness 浮动钮「恒在可视区」缺通用不变量条款**（M531 reviewer 建议，2026-10-16，low）→ Quote to chat 钮曾渲染到视口外（本批事项 8，M531 已修钳制）；建议 openspec/specs/harness 补一条通用条款——浮动操作钮 MUST 钳制在触发它的面板可视区内，下个动 harness spec 的 mission 顺手落。
 - **视觉门禁固定端口跨 worktree 串扰**（M530 期两次踩到，2026-10-16，medium）→ 4273 被占时复用他人 dist 属 REVIEW.md 第 13 条同形态；候选处置 = 端口按 worktree 分配 / 强制 FRESH_SERVER。
@@ -242,6 +246,7 @@
 14. **M509 探针硬知识四条**（2026-10-14，写场景前必读）：① 空 composer 的 ⇧Enter 确定性 no-op（app 侧语义，两通道实证 20/20）——「空 composer 起步按 ⇧Enter」类判据必假红；② composer 滚动后其 AXTextArea 读数退化成滑窗（前缀漂移 + 内容重复），长 composer 上逐字节 / endsWith / 行数差判据全不可信；③ composer 焦点必须真实 mousedown（AXPress 3/3 不建 DOM 焦点，CGEvent mousedown 1/1 成）——更正 M497 finding 中「AXPress 建焦点」的表述；④ KimiCU listApps 不列新起的 lumir 实例（get_app_state 按 pid 直寻址正常），长跑批留意。指针 `.tower/comms/findings/20261014-agent-m509-improve-m509-cgevent-press-key-kimicu.md`。
 15. **起跑预检须覆盖安装版 /Applications/Lumir.app，不只 dev/调试二进制**（agent-m518，2026-10-14）：起跑自检的 pgrep 模式只盯 `target/debug/lumir` 与端口时，装版实例会漏检并挡道（占用配置/窗口通道）。装版实例**空闲 ≥10 分钟且前台是别的 app 时可优雅退出（Apple Event quit）但必须在完工报告/消息里登记**；若它正处于活跃使用（前台、近期有输入），先问 tower 再动，不自行退出。
 16. **display-sleep / 锁屏类探针前先预检「立即要求密码」**（worker-flicker-a524，2026-10-15）：该机设了「显示器睡眠后立即要求密码」，`pmset displaysleepnow` 唤醒后控制台直接锁屏（`IOConsoleLocked=Yes`），探针的唤醒后步骤全被挡（第 11 条形态）、且只能等 Alex 输密码解锁。探针前 `defaults read com.apple.screensaver askForPassword` 预检：=1 则先请 Alex 临时关闭、或改走不触发锁屏的探针路径。
+17. **真机注入通道新知识四则**（M536 探针定案，2026-10-16）：① press_key 对 cmd+a 确定性丢弃（5/5，与服务健康无关，与 cmd+v 同属键码级丢弃族；同场 cmd+s/cmd+z/ctrl+e/ctrl+n 照落）——「⌘A 建选区」类判据本机不可行；② 套件自有 CGEvent 拖选（cgevent-click.swift mode 5）在 CM 编辑器造不出任何选区（3/3），shift+点击（mode 6）也不延拓——编辑器侧选区只能靠键盘 chord 或双击族（121/122 能用是因目标是 transcript 静态文本）；③ 可靠编辑器选区构造 = doubleClick 连续无分隔符长行（一词即整行，选区在 AXTextArea.value 显露为源码可正观测，场景 160 现用）；④ 老化 kimi-cu service（存活 >2 天 / CPU 十几小时）污染注入的修饰键状态（press_key 字母全大写而系统级修饰读数干净），重启 service 即恢复——跑批预检加服务龄期/CPU 检查，uppercase 型失败先按服务退化复跑再判。指针 `.tower/comms/findings/20261016-worker-reds153160-improve-m536-cmd-a-cgevent-cm-shift-kimi-cu-service-shift.md`。
 
 ## 批次报告索引
 
