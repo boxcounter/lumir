@@ -393,7 +393,13 @@ export type HarnessEvent = HarnessEventEnvelope &
     // = hover 气泡里的单回合值、`cache_write_tokens[_session]` = 本回合 / 本会话累计的缓存写入、
     // `cache_note` = 本回合成因标注（无则 null）。旧键 `cache_pct`（单回合值复用旧名）随本
     // change **退役**，事件与快照两条通道一并换键。
-    | { type: "usage"; ctx_pct: number; cache_pct_session: number; cache_pct_turn: number; cache_write_tokens: number; cache_write_tokens_session: number; cache_note: "cold_start" | "block_dilution" | null }
+    // M526 的绝对值键（`input_tokens` / `cached_tokens` / `cached_tokens_session` /
+    // `context_window` / `has_usage`——`context_window` 为 0 = 无上限值、`has_usage` 为
+    // 「有没有真读数」）是同一份载荷的另一半：**事件/快照同键同值不变量（M534）**——本成员与
+    // `harness_state` 快照的 `usage` SHALL 携带同一组读数键（两者同吃 Rust `UsageSnapshot`
+    // 的一份序列化），加字段即两端同改、MUST NOT 各列一份键清单（REVIEW.md 第 8 条）。
+    // 合同条款见 openspec/specs/harness/spec.md 的「usage 事件与状态快照同键同值」scenario。
+    | { type: "usage"; ctx_pct: number; cache_pct_session: number; cache_pct_turn: number; cache_write_tokens: number; cache_write_tokens_session: number; cache_note: "cold_start" | "block_dilution" | null; input_tokens: number; cached_tokens: number; cached_tokens_session: number; context_window: number; has_usage: boolean }
     | { type: "compact"; summary: string }
     | { type: "done" }
     | { type: "error"; code: string; message: string }
@@ -501,8 +507,10 @@ export function harnessSetThinkingEffort(effort: ThinkingEffort): Promise<void> 
  * 「切走之后才回来的」旧快照）、`messages[]`（role: "user" | "assistant" | "tool" |
  * "compact"；text / summary / name / status 字段按 role 取用；tool 消息另有 decision
  * 字段 = 批准闸决定 approved / rejected，M413——恢复后「已采纳」与「已拒绝」同样可见）、
- * `usage{ctx_pct,cache_pct_session,cache_pct_turn,cache_write_tokens,cache_write_tokens_session,cache_note}`（M443 起换键：cache 侧 = 会话累计主读数 + 单回合辅读数 +
- * 缓存写入两值 + 成因标注；旧 `cache_pct` 单回合键退役）、
+ * `usage{ctx_pct,cache_pct_session,cache_pct_turn,cache_write_tokens,cache_write_tokens_session,cache_note,input_tokens,cached_tokens,cached_tokens_session,context_window,has_usage}`（M443 起换键：cache 侧 = 会话累计主读数 + 单回合辅读数 +
+ * 缓存写入两值 + 成因标注；旧 `cache_pct` 单回合键退役。M526 的五个绝对值键与事件侧同属一份
+ * 载荷——同键同值不变量见 HarnessEvent 的 usage 成员注：两侧键集合由同一份 `UsageSnapshot`
+ * 序列化产出，改一侧即须同改另一侧）、
  * `pending_approval{id,tool,diff?,argv?,purpose?,remember?}`（argv 是**字符串数组**，M406 起与事件侧同型——
  * 此前前端按 string 读，快照恢复把数组整段丢弃；purpose / remember 是 M413 契约字段，前者
  * 供批准卡展示用途句、后者是「采纳且本会话不再问」次级动作的可见性开关）、`warn_ctx_pct`（缺省 85）、`thinking{level,supported}`
