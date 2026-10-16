@@ -231,3 +231,102 @@ test("restored 形态：同日窄相对、跨天短日期（与 sessionWhen 同�
   );
   assert.equal(whenTextOf(NOW - 3 * 86_400_000, NOW, "live"), "· 昨天", "live 档不受本改动影响");
 });
+
+// ---------------------------------------------------------------------------
+// 缺陷三：表格的矩形性（M528，Alex 2026-10-16 dogfood 反馈）
+//
+// 现场原话：「harness 里没有正确渲染表格，第一行的第一列应该是一个空白格，但渲染出来的时候
+// 第一行少了它（从原本的 3 列变成了 2 列）」。根因：@lezer/markdown 的 GFM 对**空单元格不产
+// `TableCell` 节点**，只产相邻的两个 `TableDelimiter`（实测见下各用例）——按 `TableCell` 子
+// 节点渲染等于把空格从表格里抹掉，后面的格子整体左移。
+//
+// 不变量（合同条款见 openspec/specs/harness/spec.md「表格列数守恒」）：整表**每行格数相同**，
+// 等于 delimiter 行的列数；空格占住自己的列位而不是消失。与编辑器侧的
+// docs/specs/table-reading.md §2「空格空槽与 `||` 零宽空槽都必须占据原列」同一条矩形性合同。
+// ---------------------------------------------------------------------------
+
+/** 渲染出的表格形态：每行一个数组，元素是该行的格文本（`""` = 一个空槽）。 */
+function tableShape(source: string): string[][] {
+  return render(source).findTag("tr").map((tr) => tr.children.map((cell) => cell.textContent));
+}
+
+test("表格首列空白：空槽占住列位，三列不塌成两列（Alex 现场那一格）", () => {
+  const shape = tableShape("| | b | c |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n");
+  assert.deepEqual(shape, [
+    ["", "b", "c"],
+    ["1", "2", "3"],
+  ]);
+});
+
+test("表格中列与末列空白：空槽各自占位，后续格子不左移", () => {
+  assert.deepEqual(tableShape("| a |  | c |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n"), [
+    ["a", "", "c"],
+    ["1", "2", "3"],
+  ]);
+  assert.deepEqual(tableShape("| a | b |  |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n"), [
+    ["a", "b", ""],
+    ["1", "2", "3"],
+  ]);
+  // `||` 零宽空槽与空格空槽同解（parser 对两者产同一形状的节点序列）。
+  assert.deepEqual(tableShape("| a || c |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n"), [
+    ["a", "", "c"],
+    ["1", "2", "3"],
+  ]);
+});
+
+test("无首尾 pipe 的写法同样按列位补空槽（列位判据不吃 pipe 写法）", () => {
+  assert.deepEqual(tableShape("a |  | c\n--- | --- | ---\n1 | 2 | 3\n"), [
+    ["a", "", "c"],
+    ["1", "2", "3"],
+  ]);
+});
+
+test("表体行格数少于表头：尾部按列数补齐（GFM 的 short row 补空 cell）", () => {
+  assert.deepEqual(tableShape("| a | b | c |\n| --- | --- | --- |\n| 1 | 2 |\n"), [
+    ["a", "b", "c"],
+    ["1", "2", ""],
+  ]);
+  assert.deepEqual(tableShape("| a | b | c |\n| --- | --- | --- |\n| | | |\n"), [
+    ["a", "b", "c"],
+    ["", "", ""],
+  ]);
+});
+
+test("表头格子是 th、表体是 td——空槽的格子与有内容的格子同类", () => {
+  const host = render("| | b |\n| --- | --- |\n| 1 |  |\n");
+  const rows = host.findTag("tr");
+  assert.deepEqual(
+    rows[0].children.map((cell) => cell.tagName),
+    ["th", "th"],
+  );
+  assert.deepEqual(
+    rows[1].children.map((cell) => cell.tagName),
+    ["td", "td"],
+  );
+});
+
+test("表体格数多于 delimiter 行：不吃掉 parser 已产出的格，整表按更宽的列数等宽", () => {
+  // 口径登记：GFM 对多列是 excess ignored（静默丢列）。面板在这里选**不丢**——渲染器不吞
+  // parser 已产出的 cell，同时保持「每行等宽」这条不变量（多出来的那格落在尾部空槽）。
+  assert.deepEqual(tableShape("| a | b | c |\n| --- | --- | --- |\n| 1 | 2 | 3 | 4 |\n"), [
+    ["a", "b", "c", ""],
+    ["1", "2", "3", "4"],
+  ]);
+});
+
+test("属性：任意列数与任意空槽位置下，每行格数守恒且等于表头列数", () => {
+  for (let cols = 1; cols <= 5; cols++) {
+    const align = Array.from({ length: cols }, () => "---");
+    const body = Array.from({ length: cols }, (_, i) => `b${i}`);
+    // 2^cols 种「哪几列是空槽」的组合（含全空、全实）。
+    for (let mask = 0; mask < 1 << cols; mask++) {
+      const header = Array.from({ length: cols }, (_, i) => ((mask >> i) & 1 ? `h${i}` : ""));
+      const source = `| ${header.join(" | ")} |\n| ${align.join(" | ")} |\n| ${body.join(" | ")} |\n`;
+      const shape = tableShape(source);
+      assert.deepEqual(shape, [header, body], `cols=${cols} mask=${mask.toString(2)}：${source}`);
+      for (const row of shape) {
+        assert.equal(row.length, cols, `cols=${cols} mask=${mask.toString(2)}：每行恒 ${cols} 格`);
+      }
+    }
+  }
+});

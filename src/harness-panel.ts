@@ -2178,8 +2178,14 @@ export function restoredReasoningText(record: unknown): string | null {
 
 // ---------------------------------------------------------------------------
 // 工具行摘要人话化 + argv 拼接 + 拒绝原因提取的纯函数层（M406，harness 面板改进批次）。
-// 数据口径：`started` 事件的 summary 是工具参数 JSON 原文（core 侧 `summarize_args`，
-// 80 字截断——单一真源在 src-tauri/src/harness/turn.rs，MUST NOT 前端另算一份参数）；
+// 数据口径：`started` 事件的 summary 来自 core 的 `summarize_args`
+// （src-tauri/src/harness/turn.rs 是单一真源，MUST NOT 前端另算一份参数）。它**不是**
+// 「参数 JSON 原文」一种形态——M528 起非 cli 工具与解析失败仍回落原文截断，而 cli_run
+// 的摘要是 core 拼好的**成品人话文本**（`command + args`，命令恒在最前、超长只截拼接串），
+// 因为 arguments 的键序由模型现写、原文截断会把排在 `args` 后面的 `command` 切掉。
+// 故这一层是**双形态消费方**：先按工具名做展示层提取（JSON 路径，见下），取不到就按原文
+// 上屏（正好是 core 那份成品）——两种形态都可能在，判据见 [`humanizeToolArgs`] 与
+// [`toolArgsText`]（后者是「参数格取哪一份」的取值口径）。
 // 人话化是**展示层提取**（按工具名取关键参数：cli_run=完整命令、vault_*=路径、
 // vault_search=查询词、skill_load=技能名），截断 / 非 JSON / 未知工具一律回落原文，
 // 不伪造。gated 调用的完整参数在 approval_request 载荷里（argv 数组 / diff 头文件名），
@@ -2238,9 +2244,13 @@ export function humanizeToolArgs(name: string, summary: string): string {
   return strict !== "" ? strict : summary;
 }
 
-/** 严格版人话化：只在 JSON 完整且关键参数取得到时返回值，否则 ""（调用方据此判
- *  「这份 summary 根本不是参数 JSON」——如持久化失败摘要走原文上屏、恢复路径拒绝行
- *  的 args 格留空）。 */
+/** 严格版人话化：只在 JSON 完整且关键参数取得到时返回值，否则 ""（调用方据此判「这份 summary
+ *  里取不出关键参数」——如持久化失败摘要、恢复路径拒绝行的 args 格留空）。
+ *
+ *  **`""` 不等于「它不是参数摘要」（M528 r1）**：core 的成品人话摘要（cli_run = `command + args`）
+ *  也不是 JSON，严格版照旧取空。凡「这份 summary 就是参数那一份、要把该显示的取出来」的地方，
+ *  走 [`toolArgsText`]（判据是「不是失败形状」，不是「是 JSON」）——改用严格版会让成品摘要
+ *  那一格整格空掉（r1 P1-1 的现场）。 */
 export function humanizeToolArgsStrict(name: string, summary: string): string {
   let parsed: unknown;
   try {
@@ -2250,6 +2260,22 @@ export function humanizeToolArgsStrict(name: string, summary: string): string {
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "";
   return keyArgOf(name, parsed as Record<string, unknown>) ?? "";
+}
+
+/**
+ * 工具行**参数格**的文本（M528）：这份 summary 是 core 给的参数摘要时取出该显示的那串，
+ * 不是参数（失败摘要 / 空）时返回 ""（参数格留空）。
+ *
+ * 为什么不能直接用 [`humanizeToolArgsStrict`]：M528 起 core 的 `summarize_args` 直接给出
+ * **成品**人话摘要（cli_run = `command + args` 拼接，命令恒在最前），summary 不再是 JSON——
+ * 严格版会把「不是 JSON」一律判成「没有参数」，参数格（含恢复路径的「已采纳」行）就此空掉。
+ * 故这里的判据是「**不是失败形状**」而非「是 JSON」：失败摘要（`状态 · 错误码: 消息`）不是
+ * 参数，其余一律交给 [`humanizeToolArgs`]——它先试 JSON（旧快照 / 非 cli 工具仍是 JSON），
+ * 取不到就按原文上屏（正好是 core 那份成品）。
+ */
+export function toolArgsText(name: string, summary: string): string {
+  if (summary === "" || TOOL_FAILED_SUMMARY.test(summary)) return "";
+  return humanizeToolArgs(name, summary);
 }
 
 /** unified diff 的文件名（core diff.rs 头两行 `--- a/{path}` / `+++ b/{path}`；取不到 → null）。 */
@@ -2489,6 +2515,66 @@ function buildCodeBlock(code: string, info: string): HTMLElement {
   return pre;
 }
 
+/** 一行表格行的列位分布：`cells[k]` = 第 k 列的 cell（空位 `undefined`）。 */
+interface TableRowPlan {
+  header: boolean;
+  cells: Array<MdSyntaxNode | undefined>;
+}
+
+/**
+ * GFM 表格的矩形化布局（M528）。
+ *
+ * lezer 对**空单元格不产 `TableCell` 节点**——只产相邻的两个 `TableDelimiter`。只按
+ * `TableCell` 子节点渲染就会把空格吃掉、后续列整体左移（Alex 2026-10-16 dogfood 现场：
+ * 「第一行的第一列应该是一个空白格，但渲染出来的时候第一行少了它，从原本的 3 列变成了
+ * 2 列」）。故列位按**分隔符序号**判定：一个 cell 落在**第 k 与第 k+1 个分隔符之间**即第 k 列
+ * （行首无 pipe 的写法下第一个 cell 没有前导分隔符，故扣掉那个首分隔符），空位补空 cell。
+ *
+ * 列数取 **delimiter 行的列数**（GFM 的列数以 delimiter 行为准）——它是表格里唯一不受空
+ * 单元格影响的行（`| --- | --- |` 逐格都是实槽）。短行（cell 少于该列数）按列数补齐，
+ * 与 `docs/specs/table-reading.md` §2 的同一条矩形性合同一致（「短行尾部补空列」）。
+ *
+ * 更宽的那侧不砍：某行 cell 超出 delimiter 行列数时（GFM 是 excess ignored）整表按更宽的
+ * 那个列数渲染——表格渲染不吃掉 parser 已产出的 cell，同时保持每行等宽。
+ */
+function tableRowsOf(node: MdSyntaxNode, doc: string): TableRowPlan[] {
+  const plans: TableRowPlan[] = [];
+  let delimiterCols = 0;
+  for (let child = node.firstChild; child !== null; child = child.nextSibling) {
+    if (child.name === "TableDelimiter") {
+      // delimiter 行是一个叶子节点，列数 = 其中的 `-` 串个数（比数 pipe 稳：首尾 pipe
+      // 有无都不影响；`|:---|:---:|---:|` 这类对齐写法同样是三条）。
+      delimiterCols = Math.max(delimiterCols, (textOf(doc, child).match(/-+/g) ?? []).length);
+      continue;
+    }
+    if (child.name !== "TableHeader" && child.name !== "TableRow") continue;
+    plans.push({ header: child.name === "TableHeader", cells: tableRowSlotsOf(child) });
+  }
+  const cols = Math.max(delimiterCols, 0, ...plans.map((plan) => plan.cells.length));
+  for (const plan of plans) {
+    while (plan.cells.length < cols) plan.cells.push(undefined);
+  }
+  return plans;
+}
+
+/** 单行的列位分布（[`tableRowsOf`] 的判列位一半）：分隔符序号定列位，空槽留洞。 */
+function tableRowSlotsOf(row: MdSyntaxNode): Array<MdSyntaxNode | undefined> {
+  const cells: Array<MdSyntaxNode | undefined> = [];
+  // 行首是分隔符时列位从 0 起算（第一个 cell 已经吃过一个分隔符）；无首 pipe 的写法下
+  // 第一个 cell 直接落 0 号位。两种写法下 `delimiters - leading` 都不会为负。
+  const leading = row.firstChild !== null && row.firstChild.name === "TableDelimiter" ? 1 : 0;
+  let delimiters = 0;
+  for (let child = row.firstChild; child !== null; child = child.nextSibling) {
+    if (child.name === "TableDelimiter") {
+      delimiters++;
+      continue;
+    }
+    if (child.name !== "TableCell") continue;
+    cells[delimiters - leading] = child;
+  }
+  return cells;
+}
+
 /** 块级渲染：top-level 节点 → 块元素。不认识的块按转义文本段落落地（可见但惰性）。 */
 function renderBlock(container: HTMLElement, node: MdSyntaxNode, doc: string): void {
   const heading = /^ATXHeading([1-6])$/.exec(node.name);
@@ -2554,17 +2640,14 @@ function renderBlock(container: HTMLElement, node: MdSyntaxNode, doc: string): v
       const table = document.createElement("table");
       const thead = document.createElement("thead");
       const tbody = document.createElement("tbody");
-      for (let child = node.firstChild; child !== null; child = child.nextSibling) {
-        if (child.name === "TableDelimiter") continue;
+      for (const plan of tableRowsOf(node, doc)) {
         const row = document.createElement("tr");
-        const cellTag = child.name === "TableHeader" ? "th" : "td";
-        for (let cell = child.firstChild; cell !== null; cell = cell.nextSibling) {
-          if (cell.name !== "TableCell") continue;
-          const td = document.createElement(cellTag);
-          renderInlineChildren(td, cell, doc);
-          row.append(td);
+        for (const cell of plan.cells) {
+          const cellEl = document.createElement(plan.header ? "th" : "td");
+          if (cell !== undefined) renderInlineChildren(cellEl, cell, doc);
+          row.append(cellEl);
         }
-        (child.name === "TableHeader" ? thead : tbody).append(row);
+        (plan.header ? thead : tbody).append(row);
       }
       if (thead.childElementCount > 0) table.append(thead);
       if (tbody.childElementCount > 0) table.append(tbody);
@@ -5224,13 +5307,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       row.classList.replace("is-running", failed ? "is-fail" : "is-done");
       row.replaceChildren(
         createToolIcon(failed ? "fail" : "done"),
-        // 成功：宽松人话化（截断 JSON 回落原文，有信息量）；失败：严格版（失败摘要不是
-        // 参数 JSON，严格版取空 → 参数格留空，失败全文走尾注）。
-        createToolText(
-          name,
-          failed ? humanizeToolArgsStrict(name, args) : humanizeToolArgs(name, args),
-          failed ? summary : undefined,
-        ),
+        // 参数格恒取 `started` 那份**参数摘要**（M528 r1）：`args` 与行的成败无关——失败文本
+        // 走第三参（尾注），故两侧同走参数格口径（`toolArgsText`）。旧写法在失败侧用严格版
+        // （判据「是 JSON 才取参数」），而 M528 起 core 的成品摘要不是 JSON ⇒ 失败行的参数格
+        // 整格空掉、命令本体消失（修前的可见性本来就分两半：arguments ≤80 字的调用严格版能
+        // 解析出命令、看得见；>80 字的调用原文截断后照样看不见——M528 与这处一并收口）。
+        createToolText(name, toolArgsText(name, args), failed ? summary : undefined),
       );
     } else {
       // 无 running 行（乱序 done / 桩环境）：没有更早的那份摘要可用，done 原文按形状判定。
@@ -6151,8 +6233,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *    **无详情**——留存里没有原 diff/argv，不伪造展开件。
    *  - denied / error（或缺 status 但摘要命中失败形状的旧快照）→ 失败行：尾注 = 失败
    *    全文（输出 JSON 的 code+message，summary 兜底）。
-   *  - 其余 → 成功行：参数摘要人话化（持久化 / 重建两份 summary 都是参数 JSON 时才有
-   *    参数格；失败摘要不冒充参数）。 */
+   *  - 其余 → 成功行：参数摘要人话化（`humanizeToolArgs`——持久化 / 重建两份 summary 是参数
+   *    JSON 时按工具名提取，M528 起是 core 的成品文本时原样上屏；失败摘要不冒充参数）。 */
   function appendRestoredToolRow(record: Record<string, unknown> & { name: string }): void {
     const name = record.name;
     const summary = typeof record.summary === "string" ? record.summary : "";
@@ -6165,7 +6247,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       row.className = approved ? "lumir-hp-tool-row is-done" : "lumir-hp-tool-row is-rej";
       row.append(
         createToolIcon(approved ? "done" : "fail"),
-        createToolText(name, humanizeToolArgsStrict(name, summary)),
+        // M528：core 的参数摘要已是成品人话文本（不再是 JSON），用参数格口径取值——
+        // 严格版会把成品摘要判成「没有参数」，恢复后「已采纳」行的命令就此消失。
+        createToolText(name, toolArgsText(name, summary)),
       );
       const tres = document.createElement("span");
       tres.className = "lumir-hp-tool-res";

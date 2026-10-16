@@ -4,6 +4,8 @@
 //     内存里，升级前起的会话可能仍带它）；
 //   - humanizeToolArgs / humanizeToolArgsStrict：工具行参数格的展示层提取（按工具名取
 //     关键参数；严格版取不到 → ""，宽松版回落原文，都不伪造）；
+//   - toolArgsText（M528）：参数格的**取哪一份**判据——core 的成品摘要（cli_run =
+//     `command + args` 拼接，不再是 JSON）照原样上屏，失败摘要不是参数则留空；
 //   - rejectedReasonOf / failureTextOf：恢复路径的拒绝原因与失败尾注（数据源是面板
 //     记录 text 里的工具输出 JSON 原文——summary 里那份被 core 80 字截断，不取）；
 //   - formatArgv / diffPathOf / approvalArgsText：批准载荷关键参数全文的拼取。
@@ -25,6 +27,7 @@ import {
   rejectedReasonOf,
   restoredAssistantText,
   restoredReasoningText,
+  toolArgsText,
 } from "../../src/harness-panel.ts";
 
 // ── 空正文 assistant 记录（旧快照防御） ──
@@ -115,6 +118,43 @@ test("humanizeToolArgs 宽松版：严格版取空时回落摘要原文（不吞
 test("vault_list 空 path 回落根目录「/」（列的是 vault 根，不是「没参数」）", () => {
   assert.equal(humanizeToolArgsStrict("vault_list", '{"path":""}'), "/");
   assert.equal(humanizeToolArgsStrict("vault_list", "{}"), "/");
+});
+
+test("toolArgsText（M528）：core 的成品摘要（非 JSON）照原样上屏；失败摘要不是参数 → 留空", () => {
+  // core 的 `summarize_args`（M528 起）直接给出成品人话文本：cli_run = `command + args` 拼接、
+  // 命令恒在最前。它不是 JSON，严格版会判成「没有参数」——恢复路径「已采纳」行的参数格
+  // 就此空掉（M528 修前实测：恢复后 cli_run 行只剩工具名）。这条断言钉住该格不空。
+  assert.equal(toolArgsText("cli_run", "echo TSA-ALPHA TSB-BRAVO"), "echo TSA-ALPHA TSB-BRAVO");
+  // 旧快照 / 非 cli 工具的参数摘要仍是 JSON：照旧人话化（两条路径产出同一形态）。
+  assert.equal(toolArgsText("vault_read", '{"path":"a.md"}'), "a.md");
+  assert.equal(toolArgsText("cli_run", '{"command":"rm","args":["a.md"]}'), "rm a.md");
+  // 桩环境的自定义摘要 / 截断半边：不吞信息，原文上屏。
+  assert.equal(toolArgsText("vault_search", "命中 5 篇"), "命中 5 篇");
+  assert.equal(toolArgsText("vault_read", '{"path":"harness-n…'), '{"path":"harness-n…');
+  // 失败摘要（`状态 · 错误码: 消息`）不是参数 → 留空，参数格不冒充结果行。
+  assert.equal(toolArgsText("cli_run", "denied · permission_denied: 权限规则拒绝了 cli_run"), "");
+  assert.equal(toolArgsText("cli_run", "rejected · approval_rejected: 用户拒绝了这次调用"), "");
+  assert.equal(toolArgsText("cli_run", ""), "");
+});
+
+test("失败行的参数格仍取 started 摘要（M528 r1 P1-1）：行的成败不改变参数格的数据源", () => {
+  // live 路径工具行翻终态时（`appendToolCall` 的 done 翻 running 行分支）传进参数格的是
+  // **started 那份参数摘要**，done 自带的失败摘要只走第三参（尾注）。故两态都必须走参数格
+  // 口径 `toolArgsText`——M528 起 core 的成品摘要不是 JSON，而严格版的判据是「是 JSON 才取
+  // 参数」：用它会让**执行失败的 cli_run 行**参数格整格空掉、命令本体消失（r1 P1-1 的现场；
+  // 修前该处是命令可见）。
+  const started = "rg --flag-0 --flag-1";
+  assert.equal(toolArgsText("cli_run", started), started, "失败行参数格 = started 摘要全文");
+  // 两个候选对同一个成品摘要给出不同答案 ⇒「参数格取哪个候选」是可判的，且严格版是错的那个。
+  assert.notEqual(humanizeToolArgsStrict("cli_run", started), started);
+  assert.equal(humanizeToolArgsStrict("cli_run", started), "");
+  // done 那份（失败摘要）不是参数：误喂进参数格会被判空 ⇒ 两个 datum 可区分。
+  const done = "error · exit_code: 1: 命令以非零状态退出";
+  assert.equal(toolArgsText("cli_run", done), "");
+  // 旧快照（started 摘要仍是参数 JSON）失败行的参数格照旧人话化（修前行为的兼容面）。
+  assert.equal(toolArgsText("cli_run", '{"command":"rg","args":["--flag-0"]}'), "rg --flag-0");
+  // 覆盖边界：「哪个分支传哪个 datum」是 DOM 接线，纯函数层验不到（tests/unit 零 DOM）——
+  // 本用例钉的是取值口径与两个 datum 的可区分性；接线面靠调用点注释 + 真机/视觉批次。
 });
 
 // ── diff 头文件名（批准载荷写工具的关键参数全文） ──

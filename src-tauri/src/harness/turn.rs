@@ -1292,15 +1292,57 @@ fn truncate_history_line(text: &str) -> String {
     }
 }
 
-/// 参数摘要（截断 80 字）：live `started` 事件、面板持久化（M367）与恢复重建（M398，从
-/// wire 的 function_call 项取参数）共用同一份——MUST NOT 各算各的（REVIEW.md 第 8 条）。
+/// 参数摘要：live `started` 事件、面板持久化（M367）与恢复重建（M398，从 wire 的
+/// function_call 项取参数）共用同一份——MUST NOT 各算各的（REVIEW.md 第 8 条）。
+///
+/// **命令本体恒在最前**（M528）：cli_run 的 arguments 是模型现写的 JSON，键序不定。原样按
+/// [`SUMMARY_LIMIT`] 截断时，`args` 排在 `command` 前面就会把命令本体切掉，面板上
+/// 只剩一串参数——Alex 2026-10-16 dogfood 现场：「harness 里的 cli_run 的看不到命令是什么，
+/// 只看到参数」。故先解析 JSON，用 [`tools::cli_argv`]（argv 从参数里取出的**单一真源**，
+/// 与权限判定同一份）拼成人话摘要，再对**拼接后的整串**截断：命令永远落在可见头部。
+///
+/// 回落口径：解析不出 JSON、或不是 cli 形态（argv 为空）→ 原文截断。非 cli 工具的参数
+/// schema 各有各的键（vault_* 的 path、skill_load 的 name……），这一层不猜关键参数，
+/// 由前端 [`humanizeToolArgs`] 承担（前端拿不到完整 JSON 时同样原样上屏，两侧同构）。
 pub(crate) fn summarize_args(arguments: &str) -> String {
-    const MAX: usize = 80;
-    if arguments.chars().count() > MAX {
-        format!("{}…", arguments.chars().take(MAX).collect::<String>())
-    } else {
-        arguments.to_string()
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(arguments) {
+        let argv = tools::cli_argv(&parsed);
+        if !argv.is_empty() {
+            return truncate_summary(&format_argv(&argv));
+        }
     }
+    truncate_summary(arguments)
+}
+
+/// 摘要按 [`SUMMARY_LIMIT`] 字符截断（超限补省略号）。
+fn truncate_summary(text: &str) -> String {
+    if text.chars().count() > SUMMARY_LIMIT {
+        format!("{}…", text.chars().take(SUMMARY_LIMIT).collect::<String>())
+    } else {
+        text.to_string()
+    }
+}
+
+/// argv → 单行展示串：含空白或引号的参数加双引号，内部的 `\` 与 `"` 转义（否则参数边界
+/// 无从分辨——`sh -c echo a b` 与 `sh -c "echo a b"` 是两条命令）。
+///
+/// 与前端 `formatArgv`（src/harness-panel.ts）**同一形态**，这是刻意的跨层重复：新 core 的
+/// 成品摘要（本函数）与旧快照的 JSON 摘要（前端 [`humanizeToolArgs`] 人话化）都上屏到同一个
+/// 参数格，两条路径产出必须逐字一致——改这一处就要同时改 `src/harness-panel.ts` 的那处。
+fn format_argv(argv: &[String]) -> String {
+    argv.iter()
+        .map(|arg| {
+            if arg
+                .chars()
+                .any(|c| c.is_whitespace() || c == '"' || c == '\'')
+            {
+                format!("\"{}\"", arg.replace('\\', "\\\\").replace('"', "\\\""))
+            } else {
+                arg.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// 工具终态摘要（事件 summary 字段）：细分状态 + 结果代码/消息，面板 D344 展示。
@@ -1316,15 +1358,16 @@ fn summarize_result(status: &str, output: &ToolOutput) -> String {
                 .as_str()
                 .unwrap_or("")
                 .chars()
-                .take(SUMMARY_MESSAGE_LIMIT)
+                .take(SUMMARY_LIMIT)
                 .collect::<String>()
         )
     }
 }
 
-/// 工具行摘要里 message 的字符上限。M459 起也是 deny 文案「带不带规则原文」的判据——
+/// 工具行摘要的字符上限（参数摘要 [`summarize_args`] 与终态摘要 [`summarize_result`] 的
+/// message 各截一刀，同一个长度预算）。M459 起也是 deny 文案「带不带规则原文」的判据——
 /// 同一个长度预算只能有一处声明（本常量）。
-const SUMMARY_MESSAGE_LIMIT: usize = 80;
+const SUMMARY_LIMIT: usize = 80;
 
 /// deny 规则命中的回送文案（M459，change add-approval-decision-reason）：拼上命中的**规则原文**，
 /// 让「是哪条规则拦的」不必回配置文件核对。
@@ -1335,7 +1378,7 @@ const SUMMARY_MESSAGE_LIMIT: usize = 80;
 /// 领读位置保证「规则原文」落在可见头部，被省略的是它后面的从属信息。与 tower 裁决文里给的例句
 /// 顺序（规则原文在句末）不同，属实现期口径修正，理由见 change 的评审记录。
 ///
-/// 上限口径：工具行摘要按 [`SUMMARY_MESSAGE_LIMIT`] 截断 message——拼接后超限就**退回**既有文案，
+/// 上限口径：工具行摘要按 [`SUMMARY_LIMIT`] 截断 message——拼接后超限就**退回**既有文案，
 /// MUST NOT 呈现被截断的半截规则名（那比不说更坏，见 change design §4.3）。
 fn denied_message(
     tool: &str,
@@ -1347,7 +1390,7 @@ fn denied_message(
         return plain;
     };
     let detailed = format!("命中 deny 规则 {rule}：{plain}");
-    if detailed.chars().count() <= SUMMARY_MESSAGE_LIMIT {
+    if detailed.chars().count() <= SUMMARY_LIMIT {
         detailed
     } else {
         plain
@@ -1765,9 +1808,9 @@ mod tests {
         };
         // 骨架（subject 留空）＝「命中 deny 规则 cli(x*)：权限规则拒绝了 cli_run（）」。
         let skeleton = "命中 deny 规则 cli(x*)：权限规则拒绝了 cli_run（）";
-        let subject = "s".repeat(SUMMARY_MESSAGE_LIMIT - skeleton.chars().count());
+        let subject = "s".repeat(SUMMARY_LIMIT - skeleton.chars().count());
         let detailed = format!("命中 deny 规则 cli(x*)：权限规则拒绝了 cli_run（{subject}）");
-        assert_eq!(detailed.chars().count(), SUMMARY_MESSAGE_LIMIT);
+        assert_eq!(detailed.chars().count(), SUMMARY_LIMIT);
         assert_eq!(
             denied_message("cli_run", &subject, Some(&reason)),
             detailed,
@@ -1780,6 +1823,74 @@ mod tests {
             format!("权限规则拒绝了 cli_run（{subject}）"),
             "超限退回既有文案"
         );
+    }
+
+    /// M528：参数摘要的命令本体恒在最前（Alex 2026-10-16 dogfood：「cli_run 的看不到命令
+    /// 是什么，只看到参数」）。四条判据覆盖三种形态 + 与权限判定共用 argv 真源：
+    ///   ① `command` 排在 `args` 之后（模型现写的键序，真触发条件）：摘要仍以命令领读；
+    ///   ② 拼出的整串超限：截断落在**拼接后**的串上，命令在头部故一定活下来；
+    ///   ③ 非法 JSON：回落原文截断（不伪造人话摘要）；
+    ///   ④ 非 cli 形态（无 `command`）：同样回落原文（vault_* 的键这一层不猜）。
+    #[test]
+    fn summarize_args_leads_with_the_command_and_falls_back_to_raw_text() {
+        // ① 键序 args 在前——原实现按 80 字截断时命令正好被切掉。
+        assert_eq!(
+            summarize_args(
+                r#"{"args":["--flag","value","--another","more"],"command":"kubectl","purpose":"列举"}"#
+            ),
+            "kubectl --flag value --another more",
+            "命令必须在最前（键序不影响领读位置）"
+        );
+        // 顺序变了、内容不变 ⇒ 摘要逐字不变（键序无关性是①的更强形态）。
+        assert_eq!(
+            summarize_args(r#"{"command":"kubectl","args":["--flag","value","--another","more"]}"#),
+            "kubectl --flag value --another more"
+        );
+        // 含空白 / 引号的参数加引号并与前端 formatArgv 同形态（否则参数边界无从分辨）。
+        assert_eq!(
+            summarize_args(r#"{"command":"sh","args":["-c","echo a b","q\"x"]}"#),
+            r#"sh -c "echo a b" "q\"x""#
+        );
+        // 场景 75（`scripts/acceptance/scenarios/75-harness-permissions.md`）的断言钉在这里：
+        // 它期望工具行文本匹配 `/cli_run\s*echo HNE-ALLOWED/`，命令本体必须逐字领读。
+        assert_eq!(
+            summarize_args(
+                r#"{"command":"echo","args":["HNE-ALLOWED"],"purpose":"回显一个验收标记"}"#
+            ),
+            "echo HNE-ALLOWED"
+        );
+        // 无 args（只有命令）：摘要就是命令本体，不是空串。
+        assert_eq!(summarize_args(r#"{"command":"pwd"}"#), "pwd");
+
+        // ② 超限：命令领读且完整，截断的是它后面的参数。
+        let many_args = (0..40).map(|i| format!("--flag-{i}")).collect::<Vec<_>>();
+        let long = serde_json::json!({ "args": many_args, "command": "rg" }).to_string();
+        let summary = summarize_args(&long);
+        assert!(
+            summary.starts_with("rg --flag-0"),
+            "截断后命令仍领读：{summary}"
+        );
+        assert_eq!(summary.chars().count(), SUMMARY_LIMIT + 1, "80 字 + 省略号");
+        assert!(summary.ends_with('…'));
+        // 判据的区分度：按**原文**截断时，这串 80 字前缀里只有 args（`command` 被切掉）。
+        assert!(
+            !summary.starts_with(r#"{"args":["--flag-0""#),
+            "摘要 MUST NOT 退回原文截断（那正是现场看到的「只有参数、没有命令」）"
+        );
+
+        // ③ 非法 JSON：回落原文截断。
+        let broken = format!(r#"{{"path":"{}"#, "a".repeat(120));
+        let summary = summarize_args(&broken);
+        assert!(summary.starts_with(r#"{"path":"aaaa"#));
+        assert_eq!(summary.chars().count(), SUMMARY_LIMIT + 1);
+        assert!(summary.ends_with('…'));
+
+        // ④ 非 cli 形态（合法 JSON、无 command 键）：不猜关键参数，原文截断（与既有恢复
+        //    路径的 `restored_tool_summary_reuses_summarize_args` 同口径）。
+        let path_only = format!(r#"{{"path":"{}"}}"#, "a".repeat(200));
+        assert_eq!(summarize_args(&path_only), truncate_summary(&path_only));
+        assert!(summarize_args(&path_only).ends_with('…'));
+        assert_eq!(summarize_args(r#"{"path":"a.md"}"#), r#"{"path":"a.md"}"#);
     }
 
     /// M463：`llm_error` 记录的载荷——HTTP 面三件按在场与否追加；没有 HTTP 面的错误
