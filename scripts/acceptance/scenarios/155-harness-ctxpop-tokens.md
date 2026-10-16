@@ -2,9 +2,11 @@
 # M526：ctx/cache hover 气泡的 **tokens 读数**——第一行上下文已用/上限 tokens + 百分比（D463）、
 # 第二行会话累计命中 tokens + 累计命中率（D465）、第三行本回合命中 tokens + 命中率（D466，
 # 成因句照旧追加）；本 fixture 的 cache_write_tokens 缺失按 0 记 ⇒ 缓存写入行不渲染（正观测先行）。
+# M532：气泡内 tokens 数字走 k/m 单位（≥1,000,000 → m、≥1,000 → k、千位以下原值直出）——
+# 本 fixture 的数落在 1k 档（1000 → 1k、131072 → 131k）与千位以下档（100 → 100，原值直出）。
 id: "155-harness-ctxpop-tokens"
 item: 155
-title: "Harness 气泡 tokens 读数：上下文已用/上限 tokens、cache 命中 tokens；空会话无假读数"
+title: "Harness 气泡 tokens 读数：上下文已用/上限 tokens（k/m 单位）、cache 命中 tokens；空会话无假读数"
 open: harness-note.md
 marker: "HNL-ALPHA"
 config:
@@ -51,11 +53,11 @@ steps:
     do: hover
     target: { anchor: { role: AXPopUpButton, any: "/权限模式/" }, offsetX: 24 }
     expect:
-      - label: 气泡第一行 = 上下文已用/上限 tokens + 百分比（D463：1000 / 131072 · 1%）
-        ax: { has: "/上下文：已用\\s*1000\\s*\\/\\s*131072\\s*tokens（1%）/" }
-      - label: 气泡第二行 = 本会话命中 tokens + 累计命中率（D465：100 tokens · 10%）
+      - label: 气泡第一行 = 上下文已用/上限 tokens + 百分比（D463：1000 → 1k、131072 → 131k · 1%）
+        ax: { has: "/上下文：已用\\s*1k\\s*\\/\\s*131k\\s*tokens（1%）/" }
+      - label: 气泡第二行 = 本会话命中 tokens + 累计命中率（D465：100 tokens——千位以下原值直出，不写 0.1k）
         ax: { has: "/缓存命中：本会话\\s*100\\s*tokens\\s*·\\s*累计命中率\\s*10%/" }
-      - label: 气泡第三行 = 本回合命中 tokens + 命中率（D466：100 tokens · 10%），成因句照旧追加
+      - label: 气泡第三行 = 本回合命中 tokens + 命中率（D466：100 tokens，同上千位以下直出），成因句照旧追加
         ax: { has: "/本回合缓存命中：\\s*100\\s*tokens\\s*·\\s*命中率\\s*10%/" }
       - label: 缓存写入行不渲染（本 fixture 缺 cache_write_tokens 按 0 记——判定键是本回合值；
           「读不到」负向断言的正观测 = 上面三行同一步在场，与场景 133 同口径）
@@ -85,14 +87,20 @@ Alex 原话：「ctx • cache 的 hint 里显示具体的 tokens 使用量。�
    无上限值时降级 D464）、第二行「缓存命中：本会话 {cached} tokens · 累计命中率 {cache}%」
    （D465）、第三行「本回合缓存命中：{cached} tokens · 命中率 {turn}%」（D466，成因句照旧
    追加）；绝对值缺键（旧后端载荷）时各行降级回 M378/M443 的百分比形态（D395/D401/D452）。
-3. **空会话不假读数**：从未发过请求的会话 `has_usage=false` ⇒ 读数区整体隐藏（「0% · 0%」
+3. **气泡 tokens 数字走 k/m 单位（M532）**：≥1,000,000 → `m` 档、≥1,000 → `k` 档、千位以下
+   原值直出；小数截断到 0.1 档、末尾 `.0` 去掉。本场景的 `1000 → 1k`、`131072 → 131k` 两条是
+   真机层唯一的单位形态判据（`100` 落在千位以下档，原值直出）。
+4. **空会话不假读数**：从未发过请求的会话 `has_usage=false` ⇒ 读数区整体隐藏（「0% · 0%」
    虚报口径退场）。
 
 ## 断言口径与区分度
 
 - **数值可手算**：mock 窗口回落 131072（场景 133 同口径），fixture usage = input 1000 /
   cached 100 ⇒ ctx = round(1000/131072×100) = **1%**、会话累计 = 100/1000 = **10%**——控制行与
-  气泡三行的数都能从 fixture 原文手算推出，不是事后从实现抄的读数。
+  气泡三行的数都能从 fixture 原文手算推出，不是事后从实现抄的读数；单位形态同样可手算
+  （1000 ÷ 1000 = 1 → `1k`；131072 截断到 0.1 档 = `131k`；100 < 1000 → `100`）。
+- **单位形态有区分度**：把 `formatTokenCount` 摘掉（回原始数字）本步即红（`1000` ≠ `1k`）；
+  反向，把千位以下也强行套 k（`100` → `0.1k`）本步第二 / 三行即红——两档边界都有断言守着。
 - **本回合成因标注**：input−cached = 900 > cached÷2 = 50 ⇒ `block_dilution`，D466 行尾应带
   摊薄成因句——本场景只断第三行的 tokens 主干（`/…命中率\s*10%/`），成因句的逐字断言归
   场景 132（M443 已覆盖判定与文案，这里不重复）。
@@ -110,6 +118,11 @@ Alex 原话：「ctx • cache 的 hint 里显示具体的 tokens 使用量。�
   形态真机不可造——降级文案由单测（`ctxPopRows` 的 D464 用例）覆盖。
 - **旧载荷降级形态（D395/D401/D452）不在本场景**：需要旧后端配合，真机层不可造——同由
   `ctxPopRows` 单测覆盖。
+- **k 档小数位与 m 档不在本场景**：mock 的数够不到百万级（`input_tokens` = 1000 是 fixture
+  里唯一的 k 档整数值）——`999 / 999,999 / 1,000,000` 一类的边界与 m 档样本由
+  `formatTokenCount` 的边界单测钉死（tests/unit/harness-cache-metrics.test.ts），m 档的
+  气泡行级样本由 `ctxPopRows` 的 m 档用例覆盖；视觉层的小数位形态（`112.7k` / `6.1k` /
+  截断不四舍五入）归 m347 场景的结构断言与元素像素基线。
 - 会话恢复后的读数可见性归场景 106（M526 更新版）；链式恢复的累计口径由 Rust 单测
   （`usage_from_records` / `restore_usage`）覆盖。
 

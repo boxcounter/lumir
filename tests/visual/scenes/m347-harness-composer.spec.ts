@@ -20,6 +20,9 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // 虚报口径退场，clamp 用例须先注 usage 才有读数可 hover；气泡各行进 tokens 形态（绝对值
 // `input_tokens` / `cached_tokens[_session]` / `context_window` 在场时：D463 上下文已用/上限
 // + 百分比、D465 会话累计命中、D466 本回合命中，缺键降级回 D395/D401/D452 百分比形态）。
+// **M532 起**：气泡内全部 tokens 数字走 k/m 单位（≥1,000,000 → m、≥1,000 → k、千位以下原值
+// 直出，小数截断到 0.1 档；D463 的已用/上限、D464 的已用、D465/D466 的命中、D455 的写入两值
+// 同一函数），控制行百分比读数不变。
 // M351 起按新 DOM：composer 收进 .lumir-hp-composer-box（控制行 .lumir-hp-ctl 在容器底）、
 // chip/浮层挪进 wrapper（a11y 修复）、发送钮图标化（两态 SVG glyph + aria-label 文案）。
 // M363 起控制行插入思考 chip wrapper；M373 起双 chip 合一（.lumir-hp-effwrap 退役，
@@ -375,21 +378,23 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   await expect(ctxRead).toHaveClass(/is-warn/);
   await ctxWrap.hover();
   await expect(ctxPop).toBeVisible();
-  // 第一行 = tokens 形态（M526：已用/上限 tokens + 百分比同句，取代 M378 的百分比形态 D395）。
+  // 第一行 = tokens 形态（M526：已用/上限 tokens + 百分比同句，取代 M378 的百分比形态 D395；
+  // M532：数字走 k/m 单位——112722 → 112.7k、131072 → 131k）。
   await expect(ctxPop.locator(".lumir-hp-ctxpop-meaning")).toHaveText(
-    "上下文：已用 112722 / 131072 tokens（86%）",
+    "上下文：已用 112.7k / 131k tokens（86%）",
   );
-  // 第二行 = 会话累计命中绝对值 + 累计命中率（M526 的 D465）。
+  // 第二行 = 会话累计命中绝对值 + 累计命中率（M526 的 D465；M532：10300 → 10.3k）。
   await expect(ctxPop.locator(".lumir-hp-ctxpop-cache")).toHaveText(
-    "缓存命中：本会话 10300 tokens · 累计命中率 60%",
+    "缓存命中：本会话 10.3k tokens · 累计命中率 60%",
   );
-  // 第三行 = 本回合命中绝对值 + 命中率 + 成因句（成因由后端标注，前端按值取句、用 · 接上）。
+  // 第三行 = 本回合命中绝对值 + 命中率 + 成因句（成因由后端标注，前端按值取句、用 · 接上；
+  // M532：6000 → 6k，整 0.1 档不拖 .0）。
   await expect(ctxPop.locator(".lumir-hp-ctxpop-cache-turn")).toHaveText(
-    "本回合缓存命中：6000 tokens · 命中率 50% · 本回合新增内容已超过已缓存前缀的一半，命中率被摊薄——非缓存失效。",
+    "本回合缓存命中：6k tokens · 命中率 50% · 本回合新增内容已超过已缓存前缀的一半，命中率被摊薄——非缓存失效。",
   );
-  // 第四行 = 缓存写入两值。
+  // 第四行 = 缓存写入两值（M532：6174 → 6.1k、12044 → 12k）。
   await expect(ctxPop.locator(".lumir-hp-ctxpop-cache-write")).toHaveText(
-    "缓存写入：本回合 6174 tokens · 本会话累计 12044 tokens",
+    "缓存写入：本回合 6.1k tokens · 本会话累计 12k tokens",
   );
   await expect(ctxPop.locator(".lumir-hp-ctxpop-warn")).toContainText("86%");
   await expect(ctxPop.locator(".lumir-hp-ctxpop-warn")).toContainText("85%");
@@ -421,9 +426,11 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   await expect(ctxRead).not.toHaveClass(/is-warn/);
   await ctxWrap.hover();
   await expect(ctxPop).toBeVisible();
+  // 第二档读数：78643 → 78.6k、131072 → 131k（M532）。
   await expect(ctxPop.locator(".lumir-hp-ctxpop-meaning")).toHaveText(
-    "上下文：已用 78643 / 131072 tokens（60%）",
+    "上下文：已用 78.6k / 131k tokens（60%）",
   );
+  // 本回合 cached 为 0：千位以下原值直出（M532 的边界——0 不写「0k」）。
   await expect(ctxPop.locator(".lumir-hp-ctxpop-cache-turn")).toHaveText(
     "本回合缓存命中：0 tokens · 命中率 0% · 本回合未命中缓存（会话首个请求，或前缀缓存已过期）——非异常。",
   );

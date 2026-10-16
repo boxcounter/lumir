@@ -8,7 +8,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ctxPopRows, usageReadings } from "../../src/harness-panel.ts";
+import { ctxPopRows, formatTokenCount, usageReadings } from "../../src/harness-panel.ts";
 
 test("usageReadings：完整载荷逐项映射（M526 扩至十一键）", () => {
   const readings = usageReadings({
@@ -139,6 +139,49 @@ test("usageReadings：写入为 0 时照读 0（0 是「不提供 / 确实没写
   assert.equal(readings.cacheWriteSession, 12044);
 });
 
+// ── formatTokenCount：气泡 tokens 数字的 k/m 单位（M532） ──────────────────────
+// 规则原文（Alex 2026-10-16 原话「token 的最小单位是 k，如果超过 1000k，就升级成 m。让数字更加
+// 人可读 好理解」）：≥1,000,000 走 m 档、≥1,000 走 k 档、不足 1,000 原值直出；小数位截断到
+// 0.1 档（不四舍五入），末尾 `.0` 去掉。边界由本组用例钉死（mission 点名 999 / 1000 / 999999 /
+// 1000000 与 m 档样本）——同一条规则另抄一份进 openspec/specs/harness 的气泡条款。
+
+test("formatTokenCount：千位以下原值直出（0 不写「0k」、999 不写「0.9k」）", () => {
+  assert.equal(formatTokenCount(0), "0");
+  assert.equal(formatTokenCount(1), "1");
+  assert.equal(formatTokenCount(999), "999");
+});
+
+test("formatTokenCount：1,000 起进 k 档，整 0.1 档不拖 .0", () => {
+  assert.equal(formatTokenCount(1000), "1k");
+  assert.equal(formatTokenCount(6000), "6k");
+  assert.equal(formatTokenCount(131072), "131k");
+});
+
+test("formatTokenCount：k 档小数位截断到 0.1（不四舍五入——读数不虚高）", () => {
+  assert.equal(formatTokenCount(1499), "1.4k"); // 1.499 截断；四舍五入会读成 1.5k
+  assert.equal(formatTokenCount(6100), "6.1k");
+  assert.equal(formatTokenCount(112722), "112.7k");
+});
+
+test("formatTokenCount：999,999 仍落 k 档（999.9k）——k 档永不出现「1000k」", () => {
+  assert.equal(formatTokenCount(999999), "999.9k");
+});
+
+test("formatTokenCount：1,000,000 起升级 m 档", () => {
+  assert.equal(formatTokenCount(1000000), "1m");
+  assert.equal(formatTokenCount(1050000), "1m"); // 1.05 截断到 1.0 档
+  assert.equal(formatTokenCount(1234567), "1.2m");
+  assert.equal(formatTokenCount(2000000), "2m");
+  assert.equal(formatTokenCount(12345678), "12.3m");
+});
+
+test("formatTokenCount：非读数原样透传（不编造、也不吞掉）", () => {
+  // 映射层的有限数值门已经挡掉这些；走到这里说明上游有缺口，显示原值比显示「0k」更可查。
+  assert.equal(formatTokenCount(-1), "-1");
+  assert.equal(formatTokenCount(Number.NaN), "NaN");
+  assert.equal(formatTokenCount(Number.POSITIVE_INFINITY), "Infinity");
+});
+
 // ── ctxPopRows：气泡行文本（M526 抽纯；渲染面 buildCtxPop 与单测同一处产出） ──
 
 const FULL_READINGS = {
@@ -155,25 +198,50 @@ const FULL_READINGS = {
   hasUsage: true,
 } as const;
 
-test("ctxPopRows：绝对值在场 ⇒ 四行全 tokens 形态（D463 / D465 / D466 / D455）", () => {
+test("ctxPopRows：绝对值在场 ⇒ 四行全 tokens 形态且数字走 k/m 单位（D463 / D465 / D466 / D455）", () => {
   const rows = ctxPopRows(FULL_READINGS, 85);
   assert.deepEqual(rows, [
-    { cls: "lumir-hp-ctxpop-meaning", text: "上下文：已用 12786 / 131072 tokens（10%）" },
-    { cls: "lumir-hp-ctxpop-cache", text: "缓存命中：本会话 10300 tokens · 累计命中率 89%" },
-    { cls: "lumir-hp-ctxpop-cache-turn", text: "本回合缓存命中：6400 tokens · 命中率 50%" },
-    { cls: "lumir-hp-ctxpop-cache-write", text: "缓存写入：本回合 6174 tokens · 本会话累计 12044 tokens" },
+    { cls: "lumir-hp-ctxpop-meaning", text: "上下文：已用 12.7k / 131k tokens（10%）" },
+    { cls: "lumir-hp-ctxpop-cache", text: "缓存命中：本会话 10.3k tokens · 累计命中率 89%" },
+    { cls: "lumir-hp-ctxpop-cache-turn", text: "本回合缓存命中：6.4k tokens · 命中率 50%" },
+    { cls: "lumir-hp-ctxpop-cache-write", text: "缓存写入：本回合 6.1k tokens · 本会话累计 12k tokens" },
+  ]);
+});
+
+test("ctxPopRows：m 档样本（≥1,000,000 tokens 的气泡全行）", () => {
+  // 现役 fixture 够不到百万级：m 档在真机与视觉场景里都不出现，这条用例是它唯一的行级判据。
+  const rows = ctxPopRows(
+    {
+      ...FULL_READINGS,
+      ctx: 60,
+      inputTokens: 1234567,
+      contextWindow: 2000000,
+      cachedTokens: 1100000,
+      cachedTokensSession: 1200000,
+      cacheWrite: 1000000,
+      cacheWriteSession: 1500000,
+    },
+    85,
+  );
+  assert.deepEqual(rows, [
+    { cls: "lumir-hp-ctxpop-meaning", text: "上下文：已用 1.2m / 2m tokens（60%）" },
+    { cls: "lumir-hp-ctxpop-cache", text: "缓存命中：本会话 1.2m tokens · 累计命中率 89%" },
+    { cls: "lumir-hp-ctxpop-cache-turn", text: "本回合缓存命中：1.1m tokens · 命中率 50%" },
+    { cls: "lumir-hp-ctxpop-cache-write", text: "缓存写入：本回合 1m tokens · 本会话累计 1.5m tokens" },
   ]);
 });
 
 test("ctxPopRows：无上限值（context_window 为 0）⇒ 第一行降级 D464，不编造上限与百分比", () => {
   const rows = ctxPopRows({ ...FULL_READINGS, contextWindow: 0 }, 85);
-  assert.equal(rows[0].text, "上下文：已用 12786 tokens（窗口上限未知，无百分比读数）");
+  assert.equal(rows[0].text, "上下文：已用 12.7k tokens（窗口上限未知，无百分比读数）");
   // 其余行不受影响。
   assert.equal(rows.length, 4);
-  assert.match(rows[1].text, /10300 tokens/);
+  assert.match(rows[1].text, /10.3k tokens/);
 });
 
 test("ctxPopRows：绝对值缺键（旧载荷）⇒ 各行降级回百分比形态（D395 / D401 / D452）", () => {
+  // 降级只针对「绝对值缺键」的行：写入行（D455）两值来自载荷、与绝对值键无关，照旧在场——
+  // 它的数字同样过 k/m 单位（M532）。
   const rows = ctxPopRows(
     {
       ctx: 15.2,
@@ -194,7 +262,7 @@ test("ctxPopRows：绝对值缺键（旧载荷）⇒ 各行降级回百分比形
     { cls: "lumir-hp-ctxpop-meaning", text: "上下文窗口占用：15%" },
     { cls: "lumir-hp-ctxpop-cache", text: "缓存命中率（会话累计）：20%" },
     { cls: "lumir-hp-ctxpop-cache-turn", text: "本回合缓存命中：20%" },
-    { cls: "lumir-hp-ctxpop-cache-write", text: "缓存写入：本回合 16000 tokens · 本会话累计 16000 tokens" },
+    { cls: "lumir-hp-ctxpop-cache-write", text: "缓存写入：本回合 16k tokens · 本会话累计 16k tokens" },
   ]);
 });
 
@@ -225,7 +293,7 @@ test("ctxPopRows：成因句照旧追加在第三行（tokens 形态后半句）
   );
   assert.match(
     noted[2].text,
-    /^本回合缓存命中：0 tokens · 命中率 0% · /,
+    /^本回合缓存命中：0 tokens · 命中率 0% · /, // 千位以下原值直出：0 不写「0k」
   );
   assert.ok(noted[2].text.includes("非异常"));
   // 越线：ctx 86% > 85% ⇒ D335 追加在最后（M443 追加行为保留）。

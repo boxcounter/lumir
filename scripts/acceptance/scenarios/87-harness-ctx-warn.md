@@ -56,8 +56,8 @@ steps:
     do: hover
     target: { anchor: { role: AXPopUpButton, any: "/权限模式/" }, offsetX: 24 }
     expect:
-      - label: 气泡翻出（第一行含义句 = 读数在场）
-        ax: { has: "/上下文窗口占用\\s*：\\s*90%/" }
+      - label: 气泡翻出（第一行含义句 = 读数在场；M526 起 D463 tokens 形态 + M532 起 k/m 单位）
+        ax: { has: "/上下文：已用\\s*118k\\s*\\/\\s*131k\\s*tokens（90%）/" }
       - label: 越线警示句在气泡里（D335 原文；真机层第一次读到它——此前只能判「不在场」）
         ax: { has: "/上下文已用\\s*90%\\s*，越过\\s*85%\\s*警示线/" }
       - shot: 02-hover-警示浮层
@@ -81,7 +81,9 @@ XX% hover 时显示」）。入口三代沿革：常驻警示条（M346 前）�
 - 本场景用默认阈值 85：mock 的 usage 取 118000/131072 ≈ 90.03% ⇒ 读数 90%，cached
   59000/118000 = 50.0% ⇒ 双读数「90% · 50%」（分隔符小圆点 U+00B7 与 modeline 同款——复裁决），确定越线。`auto_compact` 关掉（见
   front-matter 注释）——本场景判的是**读数与警示的呈现**，压缩行为本身在别的通道判
-  （`session.rs` 单测与 mock 的 overflow 响应）。
+  （`session.rs` 单测与 mock 的 overflow 响应）。**气泡第一行 M526 起是 tokens 形态、
+  M532 起数字走 k/m 单位**：断言由旧形态 `上下文窗口占用：90%` 改为
+  `上下文：已用 118k / 131k tokens（90%）`（同族欠账见场景 76 / 131 / 132 / 133）。
 - **真机套件此前没有 hover 动词**（runner 的 step 集只有 click/keys 等）——hover 翻浮层的正观测
   原本归 chromium 视觉层（`tests/visual/scenes/m347-harness-composer.spec.ts` 用 playwright
   hover 断言浮层显隐）。**M443 补了 `do: hover`**（通道 = 已有验证的 `cgevent-click.swift`
