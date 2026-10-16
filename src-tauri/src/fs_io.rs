@@ -1512,6 +1512,14 @@ pub struct PatchEdit {
 /// 5. **类型守卫**：image/binary 扩展名拒绝（`fs_read_only`，沿用 [`save_document`] 的
 ///    [`SAVE_REJECTED_EXTENSIONS`] 口径），判定先于任何 IO。
 ///
+/// **CAS 窗口收窄**（M545，与 [`save_document`] 同形态）：CAS 校验通过的字节与 rename 之间
+/// 原本隔着建 tmp / 写内容 / `sync_all` 的毫秒级窗口，窗口内的外部改写（尤其是编辑器常见的
+/// rename-into-place 换 inode）会被 rename 静默覆盖，且随后返回的 revision 描述的是覆盖后的
+/// 文件，调用方拿不到任何冲突信号。现把读内容**之前**取的 [`FileStatSnapshot`] 交给写核心，
+/// rename 前重取比对，不符即走既有 `document_conflict`（错误码与文案都不新增）。快照先于读
+/// 内容：快照若晚于被校验的字节，就会出现「revision 描述旧字节、快照描述新文件」的错配，
+/// rename 前的比对反而会放行一次覆盖。
+///
 /// 空 `edits`、空 `old_string` 返回 `patch_invalid`（空串没有唯一命中语义，不能滑成「插入」）。
 pub fn fs_patch_file(
     root: &Path,
@@ -1531,6 +1539,13 @@ pub fn fs_patch_file(
         );
     }
     let target = resolve_in_vault(root, rel)?;
+    // 快照先于读内容（见函数文档的 CAS 窗口收窄节）：它描述的是「被校验的那份字节所在的那
+    // 一代文件」，交给写核心在 rename 前重取比对。
+    let snapshot = stat_snapshot(&target).map_err(|e| {
+        CommandError::new("fs_read_failed", format!("无法读取 {rel}：{e}"))
+            .param("rel", rel)
+            .param("reason", e.to_string())
+    })?;
     let bytes = read_file_bytes(root, rel, ATTACHMENT_MAX_BYTES)?;
     let actual = {
         use sha2::{Digest, Sha256};
@@ -1595,10 +1610,9 @@ pub fn fs_patch_file(
         }
     }
 
-    // 局部 patch 与 `save_document` 的 CAS 校验同源，但 M470 的 rename 前窗口收窄只落在
-    // `save_document` 上：这里显式传 `None` = 维持原有无条件替换语义。不要因为「走同一个
-    // 函数」就把它读成「同一个窗口保证」——该路径的同款窗口尚未收窄（已另记 finding）。
-    write_document_atomic(&target, &content, None)?;
+    // 与 `save_document` 同形态的 CAS 窗口收窄（M545）：把读内容前取的快照交给写核心，rename
+    // 前的守卫据此比对，窗口内的外部改写走既有 `document_conflict`，不再被静默覆盖。
+    write_document_atomic(&target, &content, Some(&snapshot))?;
     file_revision(root, rel).map_err(|e| {
         CommandError::new(
             "document_write_unknown",
@@ -3375,6 +3389,117 @@ mod tests {
             !batch.iter().any(|c| c.path.contains(".lumir-")),
             "tmp ghost 不得进入事件流：{batch:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // 局部 patch 的 CAS 窗口收窄（M545，与 save_document 的 M470 同形态）
+    // -----------------------------------------------------------------------
+
+    /// 正向路径：新加的 rename 前守卫在「无外部改写」的普通 patch 上 MUST NOT 误报冲突。
+    /// 连做两次 patch（每次都拿上一次返回的 revision），两次都必须成功、内容都落盘。
+    #[test]
+    fn fs_patch_file_window_guard_does_not_false_report_on_normal_patches() {
+        let v = TempVault::with_fixture();
+        let first = file_revision(&v.0, "note.md").unwrap();
+        let after_first =
+            fs_patch_file(&v.0, "note.md", &[edit("hello", "first")], &first).unwrap();
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# first");
+        let after_second =
+            fs_patch_file(&v.0, "note.md", &[edit("first", "second")], &after_first).unwrap();
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# second");
+        assert_ne!(after_first, after_second, "每次 patch 后 revision 都应前进");
+        assert_eq!(after_second, file_revision(&v.0, "note.md").unwrap());
+    }
+
+    /// 反向路径（fs_patch_file 侧的 M470 形态收窄）：CAS 校验通过之后、rename 之前，目标被外部
+    /// 「换 inode」改写（编辑器常见的 rename-into-place）——rename 前的守卫 MUST 拦下并报
+    /// `document_conflict`，外部内容 MUST NOT 被静默覆盖，tmp 一并清理。
+    ///
+    /// **同步点**：这段窗口没法从外面「打孔」，干扰线程只能盯住本次写入必然创建的
+    /// `.big.md.lumir-<pid>` 临时文件，它一出现就换掉目标；此刻正文还没写完 + `sync_all`
+    /// （正文≈15MB ⇒ 窗口约 37ms）。实测（本机 5 次采样）干扰自身耗时 3.5–21ms，落地后窗口还剩
+    /// 21–46ms。临时文件在 CAS 读**之后**才被创建 ⇒ 换掉的必然是「已通过校验的那一代文件」，
+    /// 干扰 MUST NOT 被 CAS 那条路径挡下——判据因此额外钉住「错误不带 rel 参数（CAS 冲突那条带
+    /// `rel`，守卫这条不带）」，杜绝把 CAS 拦截误读成守卫生效的假绿。
+    ///
+    /// **有界重试**（至多三段）只兜「干扰落在 rename 之后」这一种失手：丢了竞态时干扰的 rename
+    /// 反而赢得更晚、把我们的 rename 抹掉，结果是 Ok。成功判据与第一段逐字相同，是只有守卫能
+    /// 产出的终态——旧实现（写核心显式传 `None`）无论跑多少段都产不出来。
+    #[test]
+    fn fs_patch_file_aborts_when_target_is_swapped_before_rename() {
+        use std::os::unix::fs::MetadataExt;
+        use std::sync::atomic::AtomicBool;
+        const REL: &str = "big.md";
+        let padding = "填充行：保持不动。\n".repeat(600_000);
+        let tmp_name = format!(".{REL}.lumir-{}", std::process::id());
+        let mut lost = Vec::new();
+
+        for attempt in 1..=3 {
+            let v = TempVault::new();
+            let target = v.0.join(REL);
+            std::fs::write(&target, format!("{padding}目标行：旧的\n")).unwrap();
+            let revision = file_revision(&v.0, REL).unwrap();
+
+            // 干扰件：待换上去的另一代文件（外部编辑器 save 时落的那份）
+            let intruder = v.0.join("intruder.md");
+            std::fs::write(&intruder, "# external edit\n").unwrap();
+            let intruder_ino = std::fs::metadata(&intruder).unwrap().ino();
+
+            let tmp = v.0.join(&tmp_name);
+            let watch_tmp = tmp.clone();
+            let watch_target = target.clone();
+            let swapped = Arc::new(AtomicBool::new(false));
+            let stopped = Arc::new(AtomicBool::new(false));
+            let flag = Arc::clone(&swapped);
+            let stop = Arc::clone(&stopped);
+            let watcher = std::thread::spawn(move || {
+                while !stop.load(Ordering::Acquire) {
+                    if watch_tmp.exists() {
+                        // 临时文件出现 = 已过 CAS 校验、正文正在写：把目标换成另一代文件
+                        if std::fs::rename(&intruder, &watch_target).is_ok() {
+                            flag.store(true, Ordering::Release);
+                        }
+                        return;
+                    }
+                    std::hint::spin_loop();
+                }
+            });
+
+            let result = fs_patch_file(&v.0, REL, &[edit("旧的", "新的")], &revision);
+            stopped.store(true, Ordering::Release);
+            watcher.join().unwrap();
+            let swapped = swapped.load(Ordering::Acquire);
+
+            let e = match result {
+                Ok(_) => {
+                    // 两种可能：实现里没有 rename 前的守卫（旧实现现场），或干扰三次都没命中
+                    // 窗口（同步点余量不足）。断言只在拿到守卫的那个终态时成立，两者都不放过。
+                    lost.push(attempt);
+                    continue;
+                }
+                Err(e) => e,
+            };
+            assert!(swapped, "第 {attempt} 段判冲突时干扰必须已落地");
+            assert_eq!(e.code, "document_conflict", "{e:?}");
+            assert_eq!(e.message, "文件已被外部修改，请先协调冲突");
+            assert!(
+                !e.params.contains_key("rel"),
+                "必须是 rename 前的守卫拦下的——CAS 冲突那条路径带 rel 参数：{e:?}"
+            );
+            assert_eq!(
+                read_text_file(&v.0, REL).unwrap(),
+                "# external edit\n",
+                "外部内容 MUST NOT 被静默覆盖"
+            );
+            assert_eq!(
+                std::fs::metadata(&target).unwrap().ino(),
+                intruder_ino,
+                "被换上的那一代文件必须还在（我们的 rename MUST NOT 发生过）"
+            );
+            assert!(!tmp.exists(), "被拦下时 tmp 必须清理");
+            return;
+        }
+        panic!("三段都没在 CAS 与 rename 之间被拦下（丢了竞态的是 {lost:?}）：要么写核心没有拿到快照（旧实现），要么干扰没命中窗口");
     }
 
     // -----------------------------------------------------------------------
