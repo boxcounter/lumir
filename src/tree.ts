@@ -151,8 +151,9 @@ export function canMoveEntry(sourcePath: string, targetDirPath: string): boolean
   return !to.startsWith(`${sourcePath}/`);
 }
 
-/** 拖拽落点的在场标记（M530）：dragover 期间的目标目录行。装卸的唯一真源在 tree.ts 的
- *  拖拽监听里（与 tree-menu.ts 的 MENU_TARGET_CLASS 同形态：语义在场期 = 类的在场期）。 */
+/** 拖拽落点的在场标记（M530）：dragover 期间的目标行——目录落点落在**行的行元素**上，根落点
+ *  （M538）落在 vault 名行（树头部的入口钮）上，两者同一份语义、同一个 class。装卸的唯一真源在
+ *  tree.ts 的拖拽监听里（与 tree-menu.ts 的 MENU_TARGET_CLASS 同形态：语义在场期 = 类的在场期）。 */
 export const DROP_TARGET_CLASS = "is-drop-target";
 
 /** 拖拽源的数据类型（M530）：dragstart 写入 dataTransfer 的自定义类型。本应用内的 drop
