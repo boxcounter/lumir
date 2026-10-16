@@ -17,24 +17,30 @@ steps:
     do: keys
     keys: ["ctrl+e", "return"]
   # M461（ebc259e）起这一行按文本模式进入列表编辑态、marker 被 widget 替换：AXTextArea.value 把
-  # 「1. 」（marker + 空格）序列化成 "1.\n"（不是字面 "1. "），于是**任何按出现次数回读的注入通道**
-  # （do: type 的可打印回读 / 可打印 do: keys）都会把「其实已完整落地」误判成 partial 并判红
-  # （2026-10-13 实测：目标串「1. alpha」出现 0 次）。因此把一次注入拆成三步，让每步的回读串都在
-  # 序列化后的 value 里字面在场：marker 无尾空格时不触发列表特判（src/preview/lists.ts:96 的
-  # BARE_MARKER_RE 要求 marker 后有空白），"1." 可走 type 的次数回读；触发 widget 的那个空格只能
-  # 单发盲键（do: key 不做回读）；内容 "alpha" 仍字面在场，可走 type。断言放宽为 /1\.\s*alpha/。
+  # 「1. 」（marker + 空格）序列化成带换行的 widget 文本（不是字面 "1. "），于是**按出现次数回读
+  # 目标串「1. alpha」的通道**（单步 do: type / 可打印 do: keys）都把它误判成未落地（2026-10-13
+  # 单步 do: type 实测：出现 0 次，而落盘文件正确——红的是回读不是产品）。
+  # M506（fe3e68d）因此把注入拆成「type 1. → 盲键空格 → type alpha」三步，但 2026-10-14-full 与
+  # 2026-10-16 两跑实证**该配方真的打坏了文档**：do: type 带 index 会先点 AXTextArea bbox 中心
+  # 再键入（M498 探针 3），裸 marker 行已被 widget 接管后这次点击把 caret 落进 widget 邻域，CM 的
+  # DOM 读回把随后键入的 "alpha" 算成下一行插入——落盘成 「1. \nalpha」（marker 与内容分处两行，
+  # Enter 永不续行），三步全链路红（证据 test-results/acceptance/2026-10-16/153-ordered-list-auto-mode/）。
+  # 因此 alpha 改走**不点击的通道**：可打印 do: keys 逐键直发 press_key（无 bbox 中心点击、不动
+  # caret），空格已把 caret 留在 marker 之后，逐键 insertText 经 CM 读回落在同一行（M529 探针在
+  # 「2. 」后键入 x 读回 CM-DOC "…2. x" 同形实证，test-results/m529-probe/readings.md）。
+  # 回读判据：value 里 "alpha" 基线 0 次 → 恰 1 次（widget 只替换 marker，内容字面在场）。
   # 空格那一键若丢（盲发通道无回读）则 widget 不触发、「1. alpha」不成列表项——下游断言如实红，
   # 不为它配重试（重试会把空格重复插入，反而制造「1.  alpha」这类脏文本）。
-  # 失效条件：widget 的 AX 序列化形态变化（例如不再插换行）时，这三步可还原成单步 do: type。
+  # 失效条件：widget 的 AX 序列化形态变化（例如内容也不再字面在场）时，回读判据需重取。
   - name: 输入 marker「1.」（无尾空格 ⇒ 不进列表态 ⇒ AXTextArea.value 字面保留 "1."，type 的次数回读可校验）
     do: type
     text: "1."
   - name: 补触发列表的尾空格（单发盲键：空格一落整行成裸 marker 行、marker 被 widget 替换，value 不再含字面「1. 」）
     do: key
     key: " "
-  - name: 输入内容「alpha」（此时内容字面在场，type 的次数回读可校验）
-    do: type
-    text: "alpha"
+  - name: 输入内容「alpha」（无点击通道：caret 留在空格键留下的位置，press_key 逐键落地；value 里 "alpha" 字面在场，keys 的次数回读可校验）
+    do: keys
+    keys: ["a", "l", "p", "h", "a"]
     expect:
       - label: 渲染态：光标在裸行上，「1. alpha」行进入列表编辑态（M461 起 AXTextArea.value 把 marker 序列化成 widget 文本，故按 /1\.\s*alpha/ 判）
         editor: { has: '/1\.\s*alpha/' }
@@ -106,11 +112,13 @@ lazy continuation，树驱动的渲染与续行都不认它。本 change 按文�
   探针证据 test-results/m461-probe/readings.md），**真 IME 复验留 dogfood**——若
   Alex 的中文输入法仍复现重复，按「裸 DOM 变更路径」另立项（本拦截不兜该形态，
   已登记为已知边界）。
-- **注入通道为什么拆成三步**（M461 后本场景的标定过期点，2026-10-14 重取）：M461 起「1. 」行在光标
-  驻留时按列表项渲染、marker 被 widget 替换，AXTextArea.value 把它序列化成 `1.\n`（不是字面 `1. `）。
-  于是**任何按出现次数回读的注入通道**（`do: type` 的可打印回读 / 可打印 `do: keys`）都会把「其实已
-  完整落地」误判成 partial 并判红——2026-10-13 首跑就是这样红的（`目标串「1. alpha」出现 0 次`，而
-  同一次 dump 里 DOM 静态文本 `1. alpha`、落盘文件都正确）。处置：拆成「`do: type "1."`（无尾空格时
-  不触发列表特判 ⇒ 字面在场）→ `do: key " "`（触发 widget 的那个空格只能单发盲键，`do: key` 不做
-  回读）→ `do: type "alpha"`」三步，断言放宽为 `/1\.\s*alpha/`。**失效条件**：widget 的 AX 序列化
-  形态变化（例如不再插换行）时，可还原成单步 `do: type text: "1. alpha"` + 字面断言。
+- **注入通道为什么拆成这三步**（M461 后本场景的标定过期点，2026-10-16 重取）：M461 起「1. 」行
+  在光标驻留时按列表项渲染、marker 被 widget 替换，AXTextArea.value 把它序列化成带换行的 widget
+  文本——单步注入「1. alpha」按出现次数回读必红（2026-10-13：出现 0 次而落盘正确）。但拆步有个
+  硬约束：**widget 接管后不得再用 do: type**——它带 index 会先点 AXTextArea bbox 中心（M498
+  探针 3），这次点击把 caret 落进 widget 邻域，CM 的 DOM 读回把后续键入算成下一行插入，落盘成
+  「1. \nalpha」（2026-10-14-full / 2026-10-16 连续两跑实证，M506 的三步配方即栽在此）。终版配方：
+  「`do: type "1."`（无 widget，点击无害，次数回读可校验）→ `do: key " "`（触发 widget 的空格
+  只能单发盲键）→ 可打印 `do: keys ["a","l","p","h","a"]`（press_key 逐键、**无点击不动 caret**，
+  读回校验 value 里 "alpha" 0→1 次）」。**失效条件**：widget 的 AX 序列化形态变化（例如内容也
+  不再字面在场）或 press_key 丢键族恶化时，回读判据需重取。
