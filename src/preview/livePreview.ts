@@ -36,6 +36,7 @@ import {
   revealSelection,
   touchesSource,
 } from "./reveal-gate";
+import { hiddenInlineTailCaretFilter } from "./hidden-tail-caret";
 import { docTitleForFrontmatter, docTitleTop } from "./doc-title";
 import { sampleCallback } from "../diagnostics";
 import { focusPreservingReadingPosition } from "../scroll-position-view";
@@ -665,6 +666,8 @@ export function livePreview(ctx: PreviewContext) {
     // 指针按压窗口（M259）：只影响显露判定用哪个选区，不产生任何装饰。
     pointerPressField,
     pointerPressWindow,
+    // 隐藏尾标后的指针落点修正（M539）：点击渲染内容末字之后，光标落到闭合标记之后。
+    hiddenInlineTailCaretFilter,
     frontmatterDecorations,
     mathBlockDecorations,
     mermaidBlockDecorations,
