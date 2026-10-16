@@ -424,9 +424,21 @@ impl Runtime {
                 }
             }
         }
+        // 读数重算（M526）：种子 = 源文件首行落账（链式恢复的增量基底；旧文件无键 ⇒ 零值）+
+        // 其后会话轮次 usage 的累计（压缩调用是内部汇总调用，不计入）。快照与累计器一并灌进
+        // 新会话——恢复后控制行/气泡显示源会话最近一次真实读数，后续累计接着重算值继续。
+        // 窗口取当前配置的声明值（读数是投影，分母随现配置，与 live 侧每轮现算同口径）。
+        let window = config.context_window(&config.provider, llm::active_model(config));
+        let (usage_snapshot, cache_totals) = session::usage_from_records(
+            &file.records,
+            &system,
+            window,
+            session::usage_seed(&file.session_open),
+        );
         // 续写新文件：session_open 沿用源文件的装配事实（system 全文 + assembly 清单），
         // provider / model / thinking 记**当前**配置（后续请求实际使用的身份）；
         // opened_from=restore + restored_from=源会话 id（谱系链：这份会话恢复自哪份）。
+        // 读数种子随之落账（usage + cache_totals）——这份文件再被恢复时从种子起算。
         let assembly = open
             .get("assembly")
             .cloned()
@@ -443,6 +455,8 @@ impl Runtime {
             "thinking": effort,
             "system": system,
             "assembly": assembly,
+            "usage": serde_json::to_value(usage_snapshot).unwrap_or_default(),
+            "cache_totals": serde_json::to_value(cache_totals).unwrap_or_default(),
         });
         let writer = jsonl::JsonlWriter::create(&new_id, &scope.vault_id, &open_payload)?;
         // 面板视角重建（M398）：灌回的 input 项映射成面板消息，reasoning 明文挂其后的
@@ -469,6 +483,9 @@ impl Runtime {
         for message in messages.iter().cloned() {
             new_session.push_panel(message);
         }
+        // 读数落种（M526）：恢复出的会话从源会话的最近一次真实读数接着显示/累计
+        // （快照与累计器同源自上面的重算，事件/快照两条通道此后看到的与留存可推导值一致）。
+        new_session.restore_usage(usage_snapshot, cache_totals);
         self.inner
             .sessions
             .lock()
@@ -913,7 +930,7 @@ fn ensure_session<'a>(
             &session_id,
             opened_from,
             thinking::ThinkingEffort::default(),
-            None,
+            OpenExtras::default(),
         );
         let writer = jsonl::JsonlWriter::create(&session_id, &scope.vault_id, &open)?;
         sessions.insert(
@@ -931,13 +948,26 @@ fn ensure_session<'a>(
 }
 
 /// 构造 `session_open` 首行（三处装配点共用：会话建立 / 「新会话」重置 / 自动压缩，
-/// 外加恢复的 resume）。完整装配记录 = system 全文逐字节、每来源的路径与存在与否、
-/// provider / 模型 / 思考档位、opened_from（new / reset / compact / resume；compact
-/// 时 compact_summary 在场）。
+/// 外加恢复的 resume——resume 内联自拼，不走本函数但同键集合）。完整装配记录 = system
+/// 全文逐字节、每来源的路径与存在与否、provider / 模型 / 思考档位、opened_from
+/// （new / reset / compact / resume；compact 时 compact_summary 在场）。
 ///
 /// `assembled` 是当次装配的结构化结果——调用侧 MUST 与灌给会话的 system 全文同源
 /// （同一次 `assemble_system`）；`thinking` 是该会话此刻的实际档位（首条记录前用户
 /// 可能已切档，挂起行可由 `update_pending_open` 修正）。
+///
+/// `extras`（M526 收拢）：开新文件首行随附的可选内容——compact 摘要与读数种子。读数种子
+/// `(读数快照, 累计器)` 在恢复/压缩时落进首行，这份文件再被恢复时从种子起算（链式恢复、
+/// 跨压缩边界的读数因此不断档）；两者都是「开新文件时的一次性附加面」，合成一个参数免得
+/// 装配形参膨胀。`OpenExtras::default()`（全新会话）不落这两键，恢复侧按零值缺省。
+#[derive(Default)]
+pub(crate) struct OpenExtras<'a> {
+    /// compact 摘要（`opened_from=compact` 时在场，随首行留存）。
+    pub compact_summary: Option<&'a str>,
+    /// 读数种子（恢复/压缩时在场）。
+    pub usage_seed: Option<(session::UsageSnapshot, session::CacheTotals)>,
+}
+
 pub(crate) fn session_open_payload(
     scope: &VaultScope,
     config: &HarnessConfig,
@@ -945,7 +975,7 @@ pub(crate) fn session_open_payload(
     session_id: &str,
     opened_from: &str,
     thinking: thinking::ThinkingEffort,
-    compact_summary: Option<&str>,
+    extras: OpenExtras<'_>,
 ) -> serde_json::Value {
     let mut payload = serde_json::json!({
         "kind": "session_open",
@@ -958,8 +988,12 @@ pub(crate) fn session_open_payload(
         "system": assembled.text,
         "assembly": assembled.manifest,
     });
-    if let Some(summary) = compact_summary {
+    if let Some(summary) = extras.compact_summary {
         payload["compact_summary"] = serde_json::json!(summary);
+    }
+    if let Some((usage, totals)) = extras.usage_seed {
+        payload["usage"] = serde_json::to_value(usage).unwrap_or_default();
+        payload["cache_totals"] = serde_json::to_value(totals).unwrap_or_default();
     }
     payload
 }

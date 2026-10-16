@@ -1078,6 +1078,30 @@ const COPY_TABLE = {
     zh: "缓存写入：本回合 {write} tokens · 本会话累计 {total} tokens",
     en: "Cache writes: {write} tokens this turn · {total} tokens this session",
   },
+  // hover hint 第一行的 **tokens 形态**（M526，Alex 原话「ctx • cache 的 hint 里显示具体的
+  // tokens 使用量」）：绝对值（`input_tokens` / `context_window`）在场时取代百分比形态 D395——
+  // 已用/上限 tokens 与百分比同句。窗口上限不可得（`context_window` 为 0）时走 D464 降级：
+  // 只说已用 tokens，不编造上限、不显示百分比（ctx_pct 在无上界的分母下无意义）。
+  D463: {
+    zh: "上下文：已用 {used} / {limit} tokens（{ctx}%）",
+    en: "Context: {used} / {limit} tokens used ({ctx}%)",
+  },
+  D464: {
+    zh: "上下文：已用 {used} tokens（窗口上限未知，无百分比读数）",
+    en: "Context: {used} tokens used (window limit unknown — no percentage)",
+  },
+  // hover hint 第二行的 tokens 形态（M526）：会话累计命中绝对值（`cached_tokens_session`）+
+  // 累计命中率同句；绝对值缺键（旧载荷）时回落百分比形态 D401。
+  D465: {
+    zh: "缓存命中：本会话 {cached} tokens · 累计命中率 {cache}%",
+    en: "Cache hits: {cached} tokens this session · cumulative hit rate {cache}%",
+  },
+  // hover hint 第三行的 tokens 形态（M526）：本回合命中绝对值（`cached_tokens`）+ 命中率同句，
+  // 成因句（D453/D454）照旧追加其后；绝对值缺键（旧载荷）时回落百分比形态 D452。
+  D466: {
+    zh: "本回合缓存命中：{cached} tokens · 命中率 {turn}%",
+    en: "Cache hits this turn: {cached} tokens · hit rate {turn}%",
+  },
   // 合并浮层的段标签（Provider / 模型；effort 段复用 D392）。浮层本体每段是裸列表
   // （项 = 配置值读数），段标签是它的可读身份。
   D396: {

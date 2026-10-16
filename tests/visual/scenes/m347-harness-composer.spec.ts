@@ -16,6 +16,10 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // **M443 起**：控制行 cache 读数改**会话累计**（事件键 `cache_pct_session`，旧 `cache_pct`
 // 退役）；气泡补第三行「本回合缓存命中」（`cache_pct_turn`，带成因句 D453/D454）与第四行
 // 「缓存写入」（`cache_write_tokens`，为 0 整行不渲染）。
+// **M526 起**：零态快照 `has_usage: false`（从未发过请求的会话）读数区整体隐藏——「0% · 0%」
+// 虚报口径退场，clamp 用例须先注 usage 才有读数可 hover；气泡各行进 tokens 形态（绝对值
+// `input_tokens` / `cached_tokens[_session]` / `context_window` 在场时：D463 上下文已用/上限
+// + 百分比、D465 会话累计命中、D466 本回合命中，缺键降级回 D395/D401/D452 百分比形态）。
 // M351 起按新 DOM：composer 收进 .lumir-hp-composer-box（控制行 .lumir-hp-ctl 在容器底）、
 // chip/浮层挪进 wrapper（a11y 修复）、发送钮图标化（两态 SVG glyph + aria-label 文案）。
 // M363 起控制行插入思考 chip wrapper；M373 起双 chip 合一（.lumir-hp-effwrap 退役，
@@ -84,11 +88,12 @@ async function stubHarnessComposer(page: Page): Promise<void> {
       }
       // harness_state：通用 stub 不认识这条命令（走 origInvoke 会抛 unknown_command），
       // 在链条最前拦截——零态桩与 Rust StateSnapshot::empty 同形（同 m303）+ thinking。
+      // M526：usage 带 `has_usage: false`（从未发过请求的会话）——读数区整体隐藏的判据输入。
       if (cmd === "harness_state") {
         const supported = !(curProvider === "kimi" && curModel === "k2");
         return JSON.stringify({
           messages: [],
-          usage: { ctx_pct: 0, cache_pct_session: 0 },
+          usage: { ctx_pct: 0, cache_pct_session: 0, has_usage: false },
           pending_approval: null,
           warn_ctx_pct: 85,
           thinking: { level: "high", supported },
@@ -310,25 +315,13 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   await page.locator(".lumir-hp-transcript").click();
   await expect(selPop).toBeHidden();
 
-  // ── ctx% 读数（M370 双裸读数 + M373 hover 常驻 + M378 两行带当时实际值）──
+  // ── ctx% 读数（M370 双裸读数 + M373 hover 常驻 + M378 两行带当时实际值；M526：零态快照
+  //    `has_usage: false` ⇒ 从未发过请求的会话读数区整体隐藏——「0% · 0%」虚报口径的判据）──
   const ctxRead = page.locator(".lumir-hp-ctx");
-  await expect(ctxRead).toHaveText("0% · 0%");
-  await expect(ctxRead).not.toHaveClass(/is-warn/);
   const ctxWrap = page.locator(".lumir-hp-ctxwrap");
   const ctxPop = page.locator(".lumir-hp-ctxpop");
-  // 未越线 hover → 含义句：第一行 ctx（D395）、第二行会话累计 cache（D401），无警示句。
-  // M443：stub 快照只带 `cache_pct_session`，本回合值与缓存写入两行缺键 ⇒ 不渲染（不伪造）。
-  await expect(ctxPop).toBeHidden();
-  await ctxWrap.hover();
-  await expect(ctxPop).toBeVisible();
-  await expect(ctxPop.locator(".lumir-hp-ctxpop-meaning")).toHaveText("上下文窗口占用：0%");
-  await expect(ctxPop.locator(".lumir-hp-ctxpop-cache")).toHaveText(
-    "缓存命中率（会话累计）：0%",
-  );
-  await expect(ctxPop.locator(".lumir-hp-ctxpop-cache-turn")).toHaveCount(0);
-  await expect(ctxPop.locator(".lumir-hp-ctxpop-cache-write")).toHaveCount(0);
-  await expect(ctxPop.locator(".lumir-hp-ctxpop-warn")).toHaveCount(0);
-  await page.mouse.move(10, 10);
+  await expect(ctxWrap).toBeHidden(); // 空会话不假读数：控制行不渲染「0% · 0%」
+  await expect(ctxRead).not.toHaveClass(/is-warn/);
   await expect(ctxPop).toBeHidden();
 
   // ── 发送钮两态 + 进度条/阶段指示：发送 → 停止态；停止点击 → 状态机；done → 回 idle ──
@@ -358,8 +351,8 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   await expect(page.locator(".lumir-hp-stage")).toHaveText("正在生成回复…");
   // usage 事件注入须落在**开轮窗口**（M374 轮次闸门：sent 之后、done 之前，关闭期的 usage
   // 一律丢弃）——M374 起本场景的 usage 断言都在发送后、终态前完成。
-  // usage 事件越阈值 → 高亮 + hover 泡四行（M443：D395 / D401 会话累计 / D452 本回合 + 成因句 /
-  // D455 缓存写入）+ 警示句（D335）追加在最下。
+  // usage 事件越阈值 → 高亮 + hover 泡四行（M526：绝对值在场 ⇒ D463 / D465 / D466 的 tokens
+  // 形态 + D455 缓存写入）+ 警示句（D335）追加在最下。`has_usage: true` 是真读数的门。
   await page.evaluate(() =>
     (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({
       type: "usage",
@@ -369,6 +362,11 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
       cache_write_tokens: 6174,
       cache_write_tokens_session: 12044,
       cache_note: "block_dilution",
+      input_tokens: 112722,
+      cached_tokens: 6000,
+      cached_tokens_session: 10300,
+      context_window: 131072,
+      has_usage: true,
     }),
   );
   // 控制行主读数带的是**会话累计** 60%（不是单回合 50%）——本 change 要防的「大块摊薄把
@@ -377,15 +375,17 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   await expect(ctxRead).toHaveClass(/is-warn/);
   await ctxWrap.hover();
   await expect(ctxPop).toBeVisible();
-  // 第一行带 hover 当时的 ctx 实际值（M378：不再是固定含义句）。
-  await expect(ctxPop.locator(".lumir-hp-ctxpop-meaning")).toHaveText("上下文窗口占用：86%");
-  // 第二行是会话累计（M443 改形：补「（会话累计）」限定词）。
-  await expect(ctxPop.locator(".lumir-hp-ctxpop-cache")).toHaveText(
-    "缓存命中率（会话累计）：60%",
+  // 第一行 = tokens 形态（M526：已用/上限 tokens + 百分比同句，取代 M378 的百分比形态 D395）。
+  await expect(ctxPop.locator(".lumir-hp-ctxpop-meaning")).toHaveText(
+    "上下文：已用 112722 / 131072 tokens（86%）",
   );
-  // 第三行 = 本回合值 + 成因句（成因由后端标注，前端按值取句、用 · 接上）。
+  // 第二行 = 会话累计命中绝对值 + 累计命中率（M526 的 D465）。
+  await expect(ctxPop.locator(".lumir-hp-ctxpop-cache")).toHaveText(
+    "缓存命中：本会话 10300 tokens · 累计命中率 60%",
+  );
+  // 第三行 = 本回合命中绝对值 + 命中率 + 成因句（成因由后端标注，前端按值取句、用 · 接上）。
   await expect(ctxPop.locator(".lumir-hp-ctxpop-cache-turn")).toHaveText(
-    "本回合缓存命中：50% · 本回合新增内容已超过已缓存前缀的一半，命中率被摊薄——非缓存失效。",
+    "本回合缓存命中：6000 tokens · 命中率 50% · 本回合新增内容已超过已缓存前缀的一半，命中率被摊薄——非缓存失效。",
   );
   // 第四行 = 缓存写入两值。
   await expect(ctxPop.locator(".lumir-hp-ctxpop-cache-write")).toHaveText(
@@ -410,15 +410,22 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
       cache_write_tokens: 0,
       cache_write_tokens_session: 12044,
       cache_note: "cold_start",
+      input_tokens: 78643,
+      cached_tokens: 0,
+      cached_tokens_session: 10300,
+      context_window: 131072,
+      has_usage: true,
     }),
   );
   await expect(ctxRead).toHaveText("60% · 55%");
   await expect(ctxRead).not.toHaveClass(/is-warn/);
   await ctxWrap.hover();
   await expect(ctxPop).toBeVisible();
-  await expect(ctxPop.locator(".lumir-hp-ctxpop-meaning")).toHaveText("上下文窗口占用：60%");
+  await expect(ctxPop.locator(".lumir-hp-ctxpop-meaning")).toHaveText(
+    "上下文：已用 78643 / 131072 tokens（60%）",
+  );
   await expect(ctxPop.locator(".lumir-hp-ctxpop-cache-turn")).toHaveText(
-    "本回合缓存命中：0% · 本回合未命中缓存（会话首个请求，或前缀缓存已过期）——非异常。",
+    "本回合缓存命中：0 tokens · 命中率 0% · 本回合未命中缓存（会话首个请求，或前缀缓存已过期）——非异常。",
   );
   await expect(ctxPop.locator(".lumir-hp-ctxpop-cache-write")).toHaveCount(0);
   await expect(ctxPop.locator(".lumir-hp-ctxpop-warn")).toHaveCount(0); // 警示句退场
@@ -553,6 +560,28 @@ test("ctx hover 泡边界收编：窄面板下完整可见（三主题），不�
   const ctxWrap = page.locator(".lumir-hp-ctxwrap");
   const ctxPop = page.locator(".lumir-hp-ctxpop");
 
+  // M526：零态快照 `has_usage: false` 读数区整体隐藏——先开一轮注一条带 usage 的事件让
+  // 读数在场，再验浮层收编（本测的几何对象是纯浮层边界，与读数内容无关；usage 注入须落在
+  // 开轮窗口，M374 轮次闸门同第一个用例）。**读数刻意取个位百分比**（6% · 5%）：读数件宽必须
+  // 与零态「0% · 0%」同宽（47.6px）——本测的窄板复现裕量只有约 8px，双位数读数会把
+  // unclamped 左缘推出面板左缘、让复现条件失稳（M526 探针实测：61.2px 宽即断言空转）。
+  await page.locator(".lumir-hp-composer").fill("浮层几何探针");
+  await page.locator(".lumir-hp-send").click();
+  await page.evaluate(() =>
+    (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({
+      type: "usage",
+      ctx_pct: 6,
+      cache_pct_session: 5,
+      cache_pct_turn: 50,
+      input_tokens: 7864,
+      cached_tokens: 500,
+      cached_tokens_session: 10300,
+      context_window: 131072,
+      has_usage: true,
+    }),
+  );
+  await expect(ctxWrap).toBeVisible();
+
   const measure = () =>
     page.evaluate(() => {
       const panelEl = document.querySelector(".lumir-harness");
@@ -596,6 +625,10 @@ test("ctx hover 泡边界收编：窄面板下完整可见（三主题），不�
     await expect(ctxPop).toBeHidden();
     if (i < 2) await page.locator(".modeline-theme").click();
   }
+  // 收尾本轮（done 回 idle——桩期状态机不收口的话发送钮停在停止态）。
+  await page.evaluate(() =>
+    (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({ type: "done" }),
+  );
 });
 
 test("权限浮层边界收编：窄面板下完整可见、未被祖先裁切（O1/O2）", async ({ page }) => {

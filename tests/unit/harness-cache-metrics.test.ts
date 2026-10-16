@@ -1,4 +1,5 @@
-// usage 载荷 → 读数映射的单测（M443，change harness-cache-metrics §5.3）。
+// usage 载荷 → 读数映射的单测（M443，change harness-cache-metrics §5.3；M526 扩绝对值读数
+// 与 ctxPopRows 气泡行纯模型层）。
 //
 // 这一层守的是**键名与缺省口径**：事件载荷与快照 `usage` 字段走同一个 `usageReadings`
 // （REVIEW.md 第 8 条：跨层同一条语义只应有一处产出），缺键 / 非数值一律落 null——
@@ -7,9 +8,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { usageReadings } from "../../src/harness-panel.ts";
+import { ctxPopRows, usageReadings } from "../../src/harness-panel.ts";
 
-test("usageReadings：完整载荷六项逐字映射", () => {
+test("usageReadings：完整载荷逐项映射（M526 扩至十一键）", () => {
   const readings = usageReadings({
     ctx_pct: 67.2,
     cache_pct_session: 88.5,
@@ -17,6 +18,11 @@ test("usageReadings：完整载荷六项逐字映射", () => {
     cache_write_tokens: 6174,
     cache_write_tokens_session: 12044,
     cache_note: "block_dilution",
+    input_tokens: 12786,
+    cached_tokens: 6400,
+    cached_tokens_session: 10300,
+    context_window: 131072,
+    has_usage: true,
   });
   assert.deepEqual(readings, {
     ctx: 67.2,
@@ -25,7 +31,35 @@ test("usageReadings：完整载荷六项逐字映射", () => {
     cacheNote: "block_dilution",
     cacheWrite: 6174,
     cacheWriteSession: 12044,
+    inputTokens: 12786,
+    cachedTokens: 6400,
+    cachedTokensSession: 10300,
+    contextWindow: 131072,
+    hasUsage: true,
   });
+});
+
+test("usageReadings：has_usage 只认真假两值（缺键 / 非布尔落 null，不当 false）", () => {
+  // false 是「从未发过请求」的真读数（读数区隐藏的门）；null 是「旧载荷没这键」——
+  // 两者 MUST NOT 混（混了会让旧后端的真实读数被整体隐藏）。
+  assert.equal(usageReadings({ has_usage: false }).hasUsage, false);
+  assert.equal(usageReadings({ has_usage: true }).hasUsage, true);
+  assert.equal(usageReadings({}).hasUsage, null);
+  assert.equal(usageReadings({ has_usage: "true" }).hasUsage, null);
+  assert.equal(usageReadings({ has_usage: 1 }).hasUsage, null);
+});
+
+test("usageReadings：绝对值键同样「缺键 / 非数值一律 null」", () => {
+  const junk = usageReadings({
+    input_tokens: "12786",
+    cached_tokens: Number.NaN,
+    cached_tokens_session: null,
+    context_window: {},
+  });
+  assert.equal(junk.inputTokens, null);
+  assert.equal(junk.cachedTokens, null);
+  assert.equal(junk.cachedTokensSession, null);
+  assert.equal(junk.contextWindow, null);
 });
 
 test("usageReadings：冷启动标注按值传入", () => {
@@ -54,6 +88,11 @@ test("usageReadings：缺键 / 非数值一律 null（回落单读数，不用 0
     cacheNote: null,
     cacheWrite: null,
     cacheWriteSession: null,
+    inputTokens: null,
+    cachedTokens: null,
+    cachedTokensSession: null,
+    contextWindow: null,
+    hasUsage: null,
   });
   // 字符串 / null / NaN 一类非数值不当数值读。
   const junk = usageReadings({
@@ -80,6 +119,11 @@ test("usageReadings：非对象载荷（缺 usage / 非法 JSON 形态）全落 
       cacheNote: null,
       cacheWrite: null,
       cacheWriteSession: null,
+      inputTokens: null,
+      cachedTokens: null,
+      cachedTokensSession: null,
+      contextWindow: null,
+      hasUsage: null,
     });
   }
 });
@@ -93,4 +137,107 @@ test("usageReadings：写入为 0 时照读 0（0 是「不提供 / 确实没写
   });
   assert.equal(readings.cacheWrite, 0);
   assert.equal(readings.cacheWriteSession, 12044);
+});
+
+// ── ctxPopRows：气泡行文本（M526 抽纯；渲染面 buildCtxPop 与单测同一处产出） ──
+
+const FULL_READINGS = {
+  ctx: 9.8,
+  cacheSession: 88.5,
+  cacheTurn: 50.1,
+  cacheNote: null,
+  cacheWrite: 6174,
+  cacheWriteSession: 12044,
+  inputTokens: 12786,
+  cachedTokens: 6400,
+  cachedTokensSession: 10300,
+  contextWindow: 131072,
+  hasUsage: true,
+} as const;
+
+test("ctxPopRows：绝对值在场 ⇒ 四行全 tokens 形态（D463 / D465 / D466 / D455）", () => {
+  const rows = ctxPopRows(FULL_READINGS, 85);
+  assert.deepEqual(rows, [
+    { cls: "lumir-hp-ctxpop-meaning", text: "上下文：已用 12786 / 131072 tokens（10%）" },
+    { cls: "lumir-hp-ctxpop-cache", text: "缓存命中：本会话 10300 tokens · 累计命中率 89%" },
+    { cls: "lumir-hp-ctxpop-cache-turn", text: "本回合缓存命中：6400 tokens · 命中率 50%" },
+    { cls: "lumir-hp-ctxpop-cache-write", text: "缓存写入：本回合 6174 tokens · 本会话累计 12044 tokens" },
+  ]);
+});
+
+test("ctxPopRows：无上限值（context_window 为 0）⇒ 第一行降级 D464，不编造上限与百分比", () => {
+  const rows = ctxPopRows({ ...FULL_READINGS, contextWindow: 0 }, 85);
+  assert.equal(rows[0].text, "上下文：已用 12786 tokens（窗口上限未知，无百分比读数）");
+  // 其余行不受影响。
+  assert.equal(rows.length, 4);
+  assert.match(rows[1].text, /10300 tokens/);
+});
+
+test("ctxPopRows：绝对值缺键（旧载荷）⇒ 各行降级回百分比形态（D395 / D401 / D452）", () => {
+  const rows = ctxPopRows(
+    {
+      ctx: 15.2,
+      cacheSession: 20,
+      cacheTurn: 20,
+      cacheNote: null,
+      cacheWrite: 16000,
+      cacheWriteSession: 16000,
+      inputTokens: null,
+      cachedTokens: null,
+      cachedTokensSession: null,
+      contextWindow: null,
+      hasUsage: null, // 旧载荷无 has_usage 键：维持旧行为（按 ctx 键呈现）
+    },
+    85,
+  );
+  assert.deepEqual(rows, [
+    { cls: "lumir-hp-ctxpop-meaning", text: "上下文窗口占用：15%" },
+    { cls: "lumir-hp-ctxpop-cache", text: "缓存命中率（会话累计）：20%" },
+    { cls: "lumir-hp-ctxpop-cache-turn", text: "本回合缓存命中：20%" },
+    { cls: "lumir-hp-ctxpop-cache-write", text: "缓存写入：本回合 16000 tokens · 本会话累计 16000 tokens" },
+  ]);
+});
+
+test("ctxPopRows：has_usage=false（从未发过请求）⇒ 空行集——不假读数的第二道防线", () => {
+  const rows = ctxPopRows(
+    {
+      ctx: 0,
+      cacheSession: 0,
+      cacheTurn: 0,
+      cacheNote: null,
+      cacheWrite: 0,
+      cacheWriteSession: 0,
+      inputTokens: 0,
+      cachedTokens: 0,
+      cachedTokensSession: 0,
+      contextWindow: 0,
+      hasUsage: false,
+    },
+    85,
+  );
+  assert.deepEqual(rows, []);
+});
+
+test("ctxPopRows：成因句照旧追加在第三行（tokens 形态后半句），越线时警示句追加最后", () => {
+  const noted = ctxPopRows(
+    { ...FULL_READINGS, cacheNote: "cold_start" as const, cacheTurn: 0, cachedTokens: 0 },
+    85,
+  );
+  assert.match(
+    noted[2].text,
+    /^本回合缓存命中：0 tokens · 命中率 0% · /,
+  );
+  assert.ok(noted[2].text.includes("非异常"));
+  // 越线：ctx 86% > 85% ⇒ D335 追加在最后（M443 追加行为保留）。
+  const over = ctxPopRows({ ...FULL_READINGS, ctx: 86 }, 85);
+  assert.equal(over.length, 5);
+  assert.match(over[4].text, /^上下文已用 86%，越过 85% 警示线/);
+  // 反向：未越线时没有警示行（区分度——不是恒真追加）。
+  assert.equal(ctxPopRows(FULL_READINGS, 85).length, 4);
+});
+
+test("ctxPopRows：本回合写入为 0 ⇒ 写入行不渲染（判定键是本回合值）", () => {
+  const rows = ctxPopRows({ ...FULL_READINGS, cacheWrite: 0 }, 85);
+  assert.equal(rows.some((row) => row.cls === "lumir-hp-ctxpop-cache-write"), false);
+  assert.equal(rows.length, 3);
 });

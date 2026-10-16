@@ -1191,8 +1191,15 @@ fn compact_now(
         runtime.with_session(scope, |s| s.current_context().map(str::to_string))?;
     // 新逻辑会话：重新装配系统上下文（三处装配点之一）+ 新留存文件（首行挂起
     // session_open，opened_from=compact、compact_summary 在场）。旧文件封闭不再追加。
+    //
+    // 读数种子（M526）：带压缩前的读数快照 + **清零**的累计器——与下面 `rotate` 的口径一致
+    // （累计随逻辑会话边界清零、读数快照不清零）。这份文件再被恢复时，面板先显示压缩前最近
+    // 一次真实读数，累计从压缩后的记录重起（与压缩后 live 面板的观感同一条语义）。
     let session_effort = runtime
         .with_session(scope, |s| s.thinking_effort())
+        .unwrap_or_default();
+    let usage_snapshot = runtime
+        .with_session(scope, |s| s.usage())
         .unwrap_or_default();
     let assembled = super::context::assemble_system(&scope.root);
     let session_id = jsonl::new_session_id();
@@ -1203,7 +1210,10 @@ fn compact_now(
         &session_id,
         "compact",
         session_effort,
-        Some(&summary),
+        super::OpenExtras {
+            compact_summary: Some(&summary),
+            usage_seed: Some((usage_snapshot, super::session::CacheTotals::default())),
+        },
     );
     let writer = jsonl::JsonlWriter::create(&session_id, &scope.vault_id, &open)?;
     let _ = runtime.with_session(scope, |s| {
