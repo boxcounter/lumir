@@ -1,7 +1,16 @@
 ---
 id: "159-filetree-drag-move"
 item: 159
-title: 文件树拖拽移动——拖文件入目录、拖目录入目录、撞名拒绝三态（人话提示 / 源不变 / 目标不变）、拖入自身子树与文件行均不可落
+title: 文件树拖拽移动——拖文件入目录、拖目录入目录、撞名拒绝三态（人话提示 / 源不变 / 目标不变）、拖入自身子树与文件行均不可落、拖到 vault 名行 / 列表尾部空白落根
+seed:
+  # 两个 vault 都登记（M538）：⑧ 的「列表尾部空白落根」需要一个**短列表**才能把「最后一行之下
+  # 那片空白」和嵌套源行同时放进窗口里，而验收 vault 根下 64 个 fixture 行 + 盒子一共 65+ 行
+  # （≈1600px > 窗口高），两处永远无法同屏。第二个 vault 只有 `beta.md` + 本场景自建的盒子，
+  # 三行封顶——这是唯一能在真机上走通那一档的现场。切过去的路径与场景 49/60 同一套（⌘O +
+  # 点 B 行 + 状态驱动等装载）。
+  registry:
+    - { id: acc-a, path: $vault, lastOpenedAt: 1757000002000 }
+    - { id: acc-b, path: $vault2, lastOpenedAt: 1757000001000 }
 steps:
   - name: 启动就绪（vault 入口钮在场 = 这次 AX 读取是活的）
     do: settle
@@ -27,6 +36,16 @@ steps:
   #   [3] drag-a-file.md  [4] drag-b-clash.md  [5] drag-c-notdrop.md  [6] drag-d-notdrop.md
   # 目录段在前（drag-src < drag-target），文件段在后（a-file < b-clash < c-notdrop < d-notdrop）。
   # 每个拖点都与落点行**相邻**，因此 dy 恒为 ±25；改名 / 加文件 / 改行高时这里的相邻关系会变。
+  #
+  # ⑥⑦ 的**根落点**用的是另一条几何（2026-10-16 真机读数，行高 24、首行 top=81、vault 名行
+  # @23,54 183×19，换算是 `screen = dump/0.96 + (8,40)`）：树头部（列表第一行之上）在 dump
+  # y ∈ [42, 81)，屏幕 y ∈ [83.75, 124.4)，中点 ≈ 104。
+  #   ⑦ 的源 dragbox/drag-root-clash.md 是盒内第 9 行（dump 中心 285 → 屏幕 336.9）⇒ dy = −233；
+  #   ⑥ 的源 dragbox/drag-root-move.md 是盒内第 10 行（dump 中心 309 → 屏幕 361.9）⇒ dy = −258。
+  # 两个源都在「③ 那一档的源」之下（drag-root-clash < drag-root-move），因此 ⑥ 把 drag-root-move
+  # 移走**不会**移动 ⑦ 的源行——两档谁先谁后都成立（这是刻意挑的：加行 / 移动都会漂，别改成
+  # 顺序敏感的安排）。⑥⑦ 都在既有 ①–⑤ 之后，跑它们时 drag-target 仍展开着（④ 展开的），
+  # 上面那张盒内行序表就是那一步之后的形态。
   # ---------------------------------------------------------------------------------------------
   - name: 铺拖拽夹具①：盒子里的源目录（② 的源，撞名档的落点目录里带同名文件）
     do: vaultWrite
@@ -236,6 +255,191 @@ steps:
       - label: 落点行也在
         ax: { has: '/AXButton \(dragbox\/drag-d-notdrop\.md\)/' }
 
+  # =============================================================================================
+  # ⑥⑦⑧ vault 根落点（M538）：树头部（vault 名行那一带）与列表尾部之下的空白都 = 移到 vault 根。
+  # ⑥⑦ 在验收 vault（夹具都在盒子里，行位置见 front-matter 的行序说明）；⑧ 必须换到**短列表**
+  # 的第二个 vault 才成立（那里的最后一行之下才有可见空白），理由见 front-matter 的 seed 注释。
+  # =============================================================================================
+
+  - name: 铺根落点夹具①：⑥ 的源（盒内文件段最后一行——它的行位置不受⑦的移动影响，见 front-matter）
+    do: vaultWrite
+    file: dragbox/drag-root-move.md
+    content: "# 待拖回根的占位\n\nROOT-MOVE-CONTENT-159——回到根后这几行必须逐字节不变。\n"
+    expect:
+      - label: 磁盘上有了 dragbox/drag-root-move.md
+        file: { path: dragbox/drag-root-move.md, exists: true }
+  - name: 铺根落点夹具②：⑦ 撞名档的源（盒内，名字排在 ⑥ 的源之前）
+    do: vaultWrite
+    file: dragbox/drag-root-clash.md
+    content: "# 根撞名档的源\n\nROOT-CLASH-SOURCE-159——根落点撞名被拒后必须逐字节不变。\n"
+    expect:
+      - label: 磁盘上有了 dragbox/drag-root-clash.md
+        file: { path: dragbox/drag-root-clash.md, exists: true }
+  - name: 铺根落点夹具③：⑦ 的既有同名目标（在 vault **根**下——根落点的撞名与目录落点同一档）
+    do: vaultWrite
+    file: drag-root-clash.md
+    content: "# 根下的既有同名条目\n\nROOT-CLASH-TARGET-159——拒绝后必须逐字节不变。\n"
+    expect:
+      - label: 磁盘上有了根下的 drag-root-clash.md
+        file: { path: drag-root-clash.md, exists: true }
+  - name: 等 watcher 把三件根落点夹具收敛进树
+    do: sleep
+    ms: 1500
+  - name: 根落点夹具就位（盒内两行 + 根下既有同名条目行）
+    do: settle
+    expect:
+      - label: 盒内 ⑥ 的源行在场
+        ax: { has: '/AXButton \(dragbox\/drag-root-move\.md\)/' }
+      - label: 盒内 ⑦ 的源行在场
+        ax: { has: '/AXButton \(dragbox\/drag-root-clash\.md\)/' }
+      - label: 根下的既有同名条目行在场（根级行的读屏名就是文件名本身，没有目录前缀）
+        ax: { has: '/AXButton \(drag-root-clash\.md\)/' }
+      - shot: 根落点夹具就位
+
+  - name: ⑥ 基线：源的 sha256 + mtime（移动后内容与 mtime 都该不变——rename 保 inode）
+    do: record
+    as: 根落点源基线
+    file: dragbox/drag-root-move.md
+    expect:
+      - label: 基线可读（读不到一律 FAIL）
+        file: { path: dragbox/drag-root-move.md, exists: true }
+  - name: ⑦ 根撞名基线①：源的 sha256 + mtime
+    do: record
+    as: 根撞名源基线
+    file: dragbox/drag-root-clash.md
+    expect:
+      - label: 基线可读
+        file: { path: dragbox/drag-root-clash.md, exists: true }
+  - name: ⑦ 根撞名基线②：根下既有同名目标的 sha256 + mtime
+    do: record
+    as: 根撞名目标基线
+    file: drag-root-clash.md
+    expect:
+      - label: 基线可读
+        file: { path: drag-root-clash.md, exists: true }
+
+  - name: ⑥ 拖文件到树头部落根：dragbox/drag-root-move.md（盒内最后一行）拖到 vault 名行（树头部，dy = −258）
+    do: drag
+    target: { role: AXButton, name: "^dragbox/drag-root-move\\.md$" }
+    dy: -258
+    settleMs: 1500
+    expect:
+      - label: 磁盘上根下的 drag-root-move.md 出现（移动在后端落盘）
+        file: { path: drag-root-move.md, exists: true }
+      - label: 磁盘上 dragbox/drag-root-move.md 已不存在（不是复制——**这一条是落盘的强判据**）
+        file: { path: dragbox/drag-root-move.md, exists: false }
+      - label: 内容逐字节不变（sha256 对账：移动不改内容，**单独一条**——file 断言只判第一个命中的键）
+        file: { path: drag-root-move.md, unchangedSince: 根落点源基线 }
+      - label: mtime 未推进（`fs_move_entry` 是 rename、保 inode ⇒ 与「复制 + 重写」那一类分得开）
+        file: { path: drag-root-move.md, mtimeUnchangedSince: 根落点源基线 }
+      - shot: 拖到树头部落根后
+  - name: ⑥ 的树收敛：盒内旧行消失、根下新行出现（watcher 回响是唯一收敛通道）
+    do: waitFor
+    waitFor:
+      has: ['/AXButton \(drag-root-move\.md\)/']
+      not: ['/AXButton \(dragbox\/drag-root-move\.md\)/']
+    timeoutMs: 30000
+    expect:
+      - label: 盒内旧行 dragbox/drag-root-move.md 消失
+        ax: { not: '/AXButton \(dragbox\/drag-root-move\.md\)/' }
+      - label: 根下的新行在场（`\(drag-root-move\.md\)` 的括号定位保证它不误命中盒内旧行）
+        ax: { has: '/AXButton \(drag-root-move\.md\)/' }
+
+  - name: ⑦ 根落点撞名拒绝：dragbox/drag-root-clash.md 拖到 vault 名行（根下已有同名，dy = −233）
+    do: drag
+    target: { role: AXButton, name: "^dragbox/drag-root-clash\\.md$" }
+    dy: -233
+    settleMs: 1500
+    expect:
+      - label: 三态之一：人话提示在场（fs_already_exists 的 message；AX toast 停留时长有限，故在本步内立即断言）
+        ax: { has: "已存在同名条目" }
+      - label: 三态之二：源内容逐字节不变（sha256 对账，与目录行落点的撞名档同一份判据）
+        file: { path: dragbox/drag-root-clash.md, unchangedSince: 根撞名源基线 }
+      - label: 三态之二（续）：源 mtime 未推进
+        file: { path: dragbox/drag-root-clash.md, mtimeUnchangedSince: 根撞名源基线 }
+      - label: 三态之三：根下既有同名目标内容逐字节不变
+        file: { path: drag-root-clash.md, unchangedSince: 根撞名目标基线 }
+      - label: 三态之三（续）：目标 mtime 未推进
+        file: { path: drag-root-clash.md, mtimeUnchangedSince: 根撞名目标基线 }
+      - label: 源文件仍在原处（没有被搬走）
+        file: { path: dragbox/drag-root-clash.md, exists: true }
+      - shot: 根落点撞名拒绝后
+  - name: ⑦ 的树不动：盒内源行与根下目标行都还在，也没有多出别的行
+    do: settle
+    expect:
+      - label: 盒内 drag-root-clash.md 行仍在（移动没有发生）
+        ax: { has: '/AXButton \(dragbox\/drag-root-clash\.md\)/' }
+      - label: 根下 drag-root-clash.md 行仍在（内容对账在上一步）
+        ax: { has: '/AXButton \(drag-root-clash\.md\)/' }
+
+  - name: ⑧ 切到第二个 vault（② 的短列表：只有 shortbox 与 beta.md，尾部空白才在窗口里）
+    do: key
+    key: "cmd+o"
+    expect:
+      - label: vault 列表打开且第二个 vault 的行在场
+        ax: { has: "/lumir-m102-acceptance-b/" }
+  - name: ⑧ 点第二个 vault 的行（列表浮层的行文本就是 vault 显示名）
+    do: click
+    target: { role: AXStaticText, any: "/lumir-m102-acceptance-b/" }
+  - name: ⑧ 等切到 B 的装载跑完（**状态驱动，不用 settle 猜装载时长**——与场景 49/60 同口径）
+    do: waitFor
+    waitFor:
+      has: ["vault：lumir-m102-acceptance-b（点击查看全部 vault）"]
+      not: ["AXProgressIndicator"]
+    timeoutMs: 60000
+    expect:
+      - label: 当前 vault 是 B
+        ax: { has: "vault：lumir-m102-acceptance-b（点击查看全部 vault）" }
+      - shot: B 装载完成
+  - name: ⑧ 铺 ⑧ 的源：第二个 vault 里造一个嵌套文件（`vaultSparse` 是套件唯一能写第二个 vault 的动作）
+    do: vaultSparse
+    vault: second
+    file: shortbox/keep.md
+    size: 256
+    expect:
+      - label: 第二个 vault 里有了 shortbox/keep.md（第二个 vault 的绝对路径写法是 `$vault-b`，与 secondVaultDir() 同址）
+        file: { path: $vault-b/shortbox/keep.md, exists: true }
+  - name: ⑧ 等 watcher 把 shortbox 收敛进 B 的树（状态驱动：下一步要点击这一行）
+    do: waitFor
+    waitFor:
+      has: ['/AXButton \(shortbox\)/']
+    timeoutMs: 30000
+  - name: ⑧ 展开 shortbox（嵌套行只在展开后才是树里的行）
+    do: click
+    target: { role: AXButton, name: "^shortbox$" }
+  - name: ⑧ 的夹具就位（B 的短列表：shortbox / shortbox-keep.md / beta.md）
+    do: settle
+    expect:
+      - label: shortbox 行在场
+        ax: { has: '/AXButton \(shortbox\)/' }
+      - label: ⑧ 的源行在场（嵌套行的读屏名是完整相对路径）
+        ax: { has: '/AXButton \(shortbox\/keep\.md\)/' }
+      - label: 列表最后一行（beta.md）在场——「最后一行之下那片空白」是 ⑧ 的落点区
+        ax: { has: '/AXButton \(beta\.md\)/' }
+      - shot: B 的短列表就位
+  - name: ⑧ 拖到列表尾部之下的空白落根：shortbox/keep.md 拖到列表下方那片空白（dy = +191）
+    do: drag
+    target: { role: AXButton, name: "^shortbox/keep\\.md$" }
+    dy: 191
+    settleMs: 1500
+    expect:
+      - label: 第二个 vault 根下的 keep.md 出现（移动在后端落盘）
+        file: { path: $vault-b/keep.md, exists: true }
+      - label: 旧位置 shortbox/keep.md 已不存在（不是复制——**这一条是落盘的强判据**）
+        file: { path: $vault-b/shortbox/keep.md, exists: false }
+      - shot: 拖到尾部空白落根后
+  - name: ⑧ 的树收敛：B 的盒内旧行消失、根下新行出现
+    do: waitFor
+    waitFor:
+      has: ['/AXButton \(keep\.md\)/']
+      not: ['/AXButton \(shortbox\/keep\.md\)/']
+    timeoutMs: 30000
+    expect:
+      - label: 盒内旧行 shortbox/keep.md 消失
+        ax: { not: '/AXButton \(shortbox\/keep\.md\)/' }
+      - label: 根下的新行 keep.md 在场（括号定位保证它不误命中盒内旧行）
+        ax: { has: '/AXButton \(keep\.md\)/' }
+
 teardown:
   - label: 终局磁盘状态：两次成功移动的结果在、三档拒绝都没动任何东西
     file: { path: dragbox/drag-target/drag-a-file.md, exists: true }
@@ -245,46 +449,67 @@ teardown:
     file: { path: dragbox/drag-b-clash.md, unchangedSince: 撞名源基线 }
   - label: 目标内容逐字节不变
     file: { path: dragbox/drag-target/drag-b-clash.md, unchangedSince: 撞名目标基线 }
+  - label: ⑥ 的落根结果留在根下（内容与 mtime 逐字节 / 逐毫秒不变）
+    file: { path: drag-root-move.md, unchangedSince: 根落点源基线 }
+  - label: ⑦ 根落点的撞名档两侧都没动（源）
+    file: { path: dragbox/drag-root-clash.md, unchangedSince: 根撞名源基线 }
+  - label: ⑦ 根落点的撞名档两侧都没动（根下既有目标）
+    file: { path: drag-root-clash.md, unchangedSince: 根撞名目标基线 }
+  - label: ⑧ 的落根结果留在第二个 vault 根下
+    file: { path: $vault-b/keep.md, exists: true }
 ---
 
-# 159-filetree-drag-move —— 文件树拖拽移动（M530）
+# 159-filetree-drag-move —— 文件树拖拽移动（M530；根落点 M538）
 
 ## 本场景在验什么
 
 文件树行支持 HTML5 DnD：文件 / 目录行可拖，落在**目录行**上 = 移入该目录（不支持排序、不支持落到
-文件行——`src/tree.ts` 的 dropLandingAt / canMoveEntry）。本场景走四条可达路径 + 两档拒绝：
+文件行——`src/tree.ts` 的 dropLandingAt / canMoveEntry）。**vault 根也是落点**（⑥⑦⑧，M538）：树头部
+（vault 名行那一带）与列表尾部之下的空白都表示「移动到 vault 根」，高亮统一反馈到 vault 名行。
 
 1. **拖文件入目录**：源与目标都在磁盘上原位对账（新路径出现 + 旧路径消失，判的不是复制）；
 2. **拖目录入目录**：目录带着内容（`keep.md`）一起走；
 3. **撞名拒绝三态**：人话提示（`fs_already_exists` 的 message 在场）+ 源逐字节不变 + 既有同名目标
    逐字节不变；
-4. **拖入自身子树**与**拖到文件行上**两档拒绝：磁盘原样不动 + 没有移动发生的错误提示。
+4. **拖入自身子树**与**拖到文件行上**两档拒绝：磁盘原样不动 + 没有移动发生的错误提示；
+5. **⑥ 拖到树头部落根**（验收 vault）：盒内文件拖到 vault 名行 → 落在 vault 根（新路径出现 + 旧
+   路径消失 + 内容与 mtime 都不变）；
+6. **⑦ 根落点撞名拒绝**（验收 vault）：根下已有同名条目时，拖到树头部被拒（人话提示 + 两侧都不动）；
+7. **⑧ 拖到列表尾部空白落根**（第二个 vault）：短列表里嵌套文件拖到列表下方那片空白 → 落在 vault 根。
 
 ## 断言口径
 
 - **一条 `file` 断言只判一个键（多写即静默少判）**：`lib/execute.mjs` 的 file 断言按固定优先级
   （`exists` → `changedSince` → `unchangedSince` → `mtimeUnchangedSince` → `mtimeNewerThan` →
   `has` → `not`）**return 第一个命中的键**——同一个对象里多写的键被静默忽略。所以「sha256 + mtime
-  双对账」一律拆成两条独立断言（③⑤ 的四个 file 判据即此，「没动」这一档因此是四行而不是两行）。
+  双对账」一律拆成两条独立断言（③⑤⑦ 的 file 判据即此，「没动」这一档因此是四行而不是两行）。
 - **落盘判据成对写**：① 的「新路径存在」单看会被**残留**骗过（`resetVault` 只重置 vault **根下**的
   `.md`，子目录里的产物跨 run 留着），因此与「旧路径已不存在」成对断言——后者骗不过去（源文件是
-  本 run 刚写的）。③⑤ 的「没动」用 `unchangedSince`（sha256）**加** `mtimeUnchangedSince`
-  两条（README「file 断言」条：只比 sha256 的话「写了同一份内容」会漏）。
+  本 run 刚写的）。③⑤⑦ 的「没动」用 `unchangedSince`（sha256）**加** `mtimeUnchangedSince`
+  两条（README「file 断言」条：只比 sha256 的话「写了同一份内容」会漏）。⑥⑧ 的「真的移动了」
+  同样成对：新路径在 + 旧路径不在（+ ⑥ 的 sha256 / mtime 双对账，证明是 rename 而不是复制重写）。
 - **树收敛**：菜单/列表类结果都走 `waitFor` 等 watcher 回响（唯一收敛通道，不自绘补丁）。① ② 的
   **新行**是目标目录的子行，只在 ④ 展开它之后才是树里的行——展开那一步因此同时充当 ①② 的收敛
-  正观测；中间两步只判**旧行消失**（旧行在盒内层，不依赖展开态）。
-- **拖点靠相邻性算**：`drag` 只接受 dx/dy 位移，落点 = 起点行中心 ± 行高。所有拖点都与落点行相邻
-  （见 front-matter 里的盒内行序），dy 恒为 ±25。**改夹具名 / 加行 / 改行高时必须重算**（行高 25
-  是 spec「行形态」钉死的值；通道实测有 ±1–2pt 抖动，远小于半行）。
+  正观测；中间两步只判**旧行消失**（旧行在盒内层，不依赖展开态）。⑥⑧ 的新行是**根级行**（读屏名
+  就是文件名本身），一落盘就在树里，因此这两档各配一次 `waitFor`（旧行消失 + 新行出现一起等）。
+- **拖点靠相邻性算**：`drag` 只接受 dx/dy 位移，落点 = 起点行中心 ± 行高。①–⑤ 的所有拖点都与落点
+  行相邻（见 front-matter 里的盒内行序），dy 恒为 ±25。⑥⑦⑧ 是**根落点**，落点不在任何一行上，
+  dy 由真机读数算出（front-matter 里给了换算与两个源的推导）：⑥ dy = −258、⑦ dy = −233（树头部
+  那一带 dump y ∈ [42, 81)，屏幕中点 ≈ 104）、⑧ dy = +191（第二个 vault 的最后一行之下）。
+  **改夹具名 / 加行 / 改行高时必须重算这三档**（行高 24、首行 top 81 是实测值）。
 - **断言锚定的是 AX dump 的真实行形态**：树行在 dump 里是 `- [14] AXButton (dragbox/drag-src) @16,84 …`
   ——**整行锚定写不出来**（`/^dragdir-src$/` 恒不匹配，README「第三处边界」M266 实测；本场景
   2026-10-16 的真机读数里那四条就是这样假红的）。锚定写成 `/AXButton \(完整相对路径\)/`：带括号的
   项名独占一行，且父行 `\(dragbox\/drag-src\)` 与子行 `\(dragbox\/drag-target\/drag-src\)` 因括号
-  定位而互不误命中。
-- **拒绝两档的判据结构**：拖入自身子树 / 拖到文件行这两档「什么都没发生」，磁盘原样本身**不是**
-  有区分度的判据（通道假绿也是原样）。区分度由同 run 内 ①②（同一条通道、同一批行上的合法拖拽
-  **真的移动了文件**）提供：①② 红的话，④⑤ 的「原样」不作数；④⑤ 还各配一条「没有走到后端的
-  错误提示」的负断言。
+  定位而互不误命中；⑥⑧ 的**根级行**靠同一条括号定位与「盒内旧行」分开（`\(drag-root-move\.md\)`
+  不匹配 `\(dragbox\/drag-root-move\.md\)`）。
+- **拒绝三档的判据结构**：拖入自身子树 / 拖到文件行 / 根落点撞名这三档「什么都没发生」，磁盘原样
+  本身**不是**有区分度的判据（通道假绿也是原样）。区分度由同 run 内的合法拖拽**真的移动了文件**
+  提供（①②⑥⑧ 四档，覆盖目录行与根落点两条落点形态）：它们红的话，「原样」几档不作数；三档拒绝
+  还各配一条「没有走到后端的错误提示」（前两档）或「人话提示在场」（撞名档）的正/负断言。
+- **⑧ 要换 vault**：验收 vault 根下 64 个 fixture 行 + 盒子共 65+ 行（≈1600px，超出窗口高），嵌套
+  源行与「最后一行之下的空白」永远无法同屏——⑧ 因此切到只有三行封顶的第二个 vault（`seed.registry`
+  预置两个 vault，切换链路口径与场景 49/60 相同）。
 
 ## 已知边界（如实登记）
 
@@ -300,11 +525,24 @@ teardown:
 - **夹具装在自建盒子里（跨 run 残留）**：`resetVault` 只重置 vault 根下的 `.md`，本场景的夹具在
   `dragbox/` 子目录里、跨 run 会留着。这就是「落盘判据成对写」的由来（见上）；`unchangedSince`
   那几条不受残留影响（基线在本 run 内先记）。
+- **⑧ 的第二个 vault 侧残留按「根下 .md 由 `resetSecondVault` 清掉」处理**：⑧ 的源
+  `shortbox/keep.md` 由 `vaultSparse` 每次重建（mkdirp + 截断，幂等），移动结果落在**第二个 vault
+  根下**的 `keep.md`——按 `resetSecondVault` 的口径（清根下全部 `.md` 后从 `fixtures/second-vault/`
+  重铺），它跨 run 不会留下来。**文件名不能换成非 `.md`**：那样残留的清理由就没有了，下一轮 ⑧ 会
+  撞名（`fs_already_exists`）而假红。
+- **⑧ 的源只能是最小内容文件**：套件里**唯一**能写第二个 vault 的动作是 `vaultSparse`（`vault:
+  second`），它只造「大小 = size 字节、全零」的文件，写不了正文——所以 ⑧ 只判「新路径在 + 旧路径不
+  在 + 树行迁移」，不判内容逐字节不变。**内容保真那一层由同一条后端命令的 ⑥（验收 vault，真文本
+  夹具 + sha256/mtime 双对账）承担**：⑧ 判的是落点形态（列表尾部空白），不是移动的内容语义。
 - **行序（localeCompare，目录在前）**：`drag-src < drag-target`（目录段）、`drag-a-file.md <
-  drag-b-clash.md < drag-c-notdrop.md < drag-d-notdrop.md`（文件段）；盒内行序见 front-matter 注释。
+  drag-b-clash.md < drag-c-notdrop.md < drag-d-notdrop.md < drag-root-clash.md < drag-root-move.md`
+  （文件段）；盒内行序见 front-matter 注释。⑥⑦ 的源刻意放在既有文件段**之后**（r > d），因此 ⑥ 把
+  `drag-root-move.md` 移走不会移动 ⑦ 的源行——两档谁先谁后都成立。
 - **撞名三态的判据分层**：人话提示是 AX toast（停留时长有限，所以在 drag 步骤内立即断言）+
-  源/目标各一条 sha256+mtime 双对账（磁盘终态判据，不受 toast 生命周期影响）。
+  源/目标各一条 sha256+mtime 双对账（磁盘终态判据，不受 toast 生命周期影响）。⑦ 是同一形态的
+  **根落点**版（目标在 vault 根下而不是某个目录里）。
 - **目录的 `exists: false` 不用**（M324 口径：目录旁路下恒绿，无区分度）——「旧目录消失」一律用
   目录里的**文件**路径（`drag-src/keep.md`）作判据。
-- **不判手感**：拖拽时的落点高亮（`DROP_TARGET_CLASS` 的底色）、拖影、行内 caret 提示都归 Alex
-  手感与视觉层；本场景只判磁盘终态与树行形态。
+- **不判手感，也不判「高亮落在 vault 名行上」的观感**：拖拽时的落点高亮（`DROP_TARGET_CLASS` 的
+  底色）、拖影、行内 caret 提示都归 Alex 手感与视觉层；「高亮落在 vault 名行上」这条**接线**在
+  tests/unit/tree-root-drop.test.ts 里判（本场景只判磁盘终态与树行形态——AX 层读不到底色）。

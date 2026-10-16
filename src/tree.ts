@@ -9,10 +9,12 @@
 // 对话框是浮层，不进这棵树的 DOM；编辑是**行局部**的，不是模态——树的其余交互照常。
 //
 // 拖拽移动（M530）：文件/目录行可拖，落点是**目录行**（dragover 高亮 + drop 移入），
-// 不支持排序、不支持落到文件行。动作本身上抛装配层（onMoveEntry）——本模块不 import
-// ipc；落点判定与目标路径是纯函数（canMoveEntry / moveTargetPath），单测直接钉。移动成功
-// 后的树收敛与改名同纪律：不自绘补丁，唯一通道是 watcher 回响（登记 pendingMove 只为
-// 在回响里认出「这次位置变更是我自己发起的」，把目录展开态搬到新路径）。
+// 不支持排序、不支持落到文件行。M538 起 **vault 根**也是合法落点：树头部（vault 名行那一带）
+// 与列表尾部之下的空白都表示「移动到 vault 根」，两处的高亮统一反馈到 vault 名行。动作本身
+// 上抛装配层（onMoveEntry）——本模块不 import ipc；落点判定与目标路径是纯函数
+// （canMoveEntry / moveTargetPath / rootDropBandHit），单测直接钉。移动成功后的树收敛与改名
+// 同纪律：不自绘补丁，唯一通道是 watcher 回响（登记 pendingMove 只为在回响里认出「这次位置
+// 变更是我自己发起的」，把目录展开态搬到新路径）。
 
 import type { FsChange } from "./bindings/FsChange";
 import type { FsEntry } from "./bindings/FsEntry";
@@ -139,6 +141,9 @@ export function moveTargetPath(sourcePath: string, targetDirPath: string): strin
  * 调用方（dragover / drop）判 false 时不 preventDefault——浏览器据此给出「禁放」语义，
  * 光标与落点高亮一起答「这里不行」。判据 MUST NOT 只挡「目标 == 源」一字不差那一种：
  * 前缀检查同时盖住自身与全部后代（`a` → `a/b` 与 `a` → `a/b/c` 同一条）。
+ *
+ * `targetDirPath` 取 `""` = vault 根（M538 的根落点）：本函数是那一档**唯一**的守卫，
+ * 「已经在根下」的条目（根级文件 / 目录）拖回根因此走的还是上面第一条拒绝，没有第二份判据。
  */
 export function canMoveEntry(sourcePath: string, targetDirPath: string): boolean {
   const to = moveTargetPath(sourcePath, targetDirPath);
@@ -146,8 +151,9 @@ export function canMoveEntry(sourcePath: string, targetDirPath: string): boolean
   return !to.startsWith(`${sourcePath}/`);
 }
 
-/** 拖拽落点的在场标记（M530）：dragover 期间的目标目录行。装卸的唯一真源在 tree.ts 的
- *  拖拽监听里（与 tree-menu.ts 的 MENU_TARGET_CLASS 同形态：语义在场期 = 类的在场期）。 */
+/** 拖拽落点的在场标记（M530）：dragover 期间的目标行——目录落点落在**行的行元素**上，根落点
+ *  （M538）落在 vault 名行（树头部的入口钮）上，两者同一份语义、同一个 class。装卸的唯一真源在
+ *  tree.ts 的拖拽监听里（与 tree-menu.ts 的 MENU_TARGET_CLASS 同形态：语义在场期 = 类的在场期）。 */
 export const DROP_TARGET_CLASS = "is-drop-target";
 
 /** 拖拽源的数据类型（M530）：dragstart 写入 dataTransfer 的自定义类型。本应用内的 drop
@@ -237,7 +243,8 @@ export interface FileTreeCallbacks {
   /** 内联编辑提交（重命名 / 新建共用同一形态）：装配层去调后端命令，结果经
    *  `endInlineEdit` 回到树上——只有装配层知道后端与 tab 联动。 */
   onInlineEditSubmit(request: InlineEditRequest): void;
-  /** 拖拽移动提交（M530）：`from` 被拖入 `to` 所在目录（`to` = `moveTargetPath(from, 目标目录)`）。
+  /** 拖拽移动提交（M530）：`from` 被拖入 `to` 所在目录（`to` = `moveTargetPath(from, 目标目录)`；
+   *  根落点（M538）的目标目录是 `""`，`to` 因此就是末段名本身）。
    *  装配层调后端命令并负责失败提示（toast）；**成功的收敛与改名同纪律**——唯一通道是
    *  watcher 回响（含目录移动时的展开态迁移，见 `endMoveEntry`），树 MUST NOT 自绘补丁。 */
   onMoveEntry(from: string, to: string): void;
@@ -368,6 +375,27 @@ export function rowBandHit(bands: readonly RowBand[], x: number, y: number): num
   return -1;
 }
 
+/**
+ * vault 根落点的纵带判定（M538，纯函数）：指针**不在任何一行行带上**时，vault 根是落点。
+ *
+ * 界面上两处「列表之外」都属于根落点，一条判据同时盖住（两处的高亮与目标路径完全同构，
+ * 不存在第二条分叉）：
+ *  - **列表头部之上**：y 早于第一行行带的上缘——那一带就是树头部（vault 名行所在的那一行）；
+ *  - **列表尾部之下**：y 晚于最后一行行带的下缘——列表下方那片空白。
+ *
+ * 行带**之内**（哪怕 x 落在缩进区、rowBandHit 不认）与行带**之间的缝**都不算：前者保守地
+ * 维持 M530 的既有口径（缩进区不属于任何一行），后者在真实布局里不存在（行高固定、行带连续），
+ * 出现缝隙时按「不在列表之外」处理是最保守的一侧。空列表恒为真——没有行可指时整个容器都是
+ * 「列表之外」；但那种场景没有拖拽源，判定根本走不到落点上（空态也没有 vault 名行可高亮）。
+ *
+ * 横向不设界：两处区域的纵向区间之外没有任何行，而事件只可能在树的容器内触发（监听挂在
+ * 容器上），x 因此不承担区分职责——与 rowBandHit 的「右缘不设界」同一条理由。
+ */
+export function rootDropBandHit(bands: readonly RowBand[], y: number): boolean {
+  if (bands.length === 0) return true;
+  return y < bands[0].top || y > bands[bands.length - 1].bottom;
+}
+
 export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileTree {
   // 全量模型：path → Node；根路径为 ""。展开状态独立保存，刷新不丢（spec 3.3）。
   const nodes = new Map<string, Node>();
@@ -404,10 +432,20 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
         return inside.classList.contains("is-editing") ? null : inside.closest<HTMLLIElement>(".ft-item");
       }
     }
-    const rows = [...rootEl.querySelectorAll<HTMLElement>(".ft-row:not(.is-editing)")];
-    const bands = rows.map((row) => row.getBoundingClientRect());
-    const hit = rowBandHit(bands, x, y);
+    const rows = hitRows();
+    const hit = rowBandHit(bandsOf(rows), x, y);
     return hit < 0 ? null : rows[hit].closest<HTMLLIElement>(".ft-item");
+  }
+
+  /** 参与命中的行元素，DOM 序 = 纵向序（嵌套 ul 紧跟其父行）：右键命中与拖拽落点共用这一份
+   *  读数，MUST NOT 各写一遍选择器（M538 起落点判定多了一档，选择器漂了就是两处不一致）。 */
+  function hitRows(): HTMLElement[] {
+    return [...rootEl.querySelectorAll<HTMLElement>(".ft-row:not(.is-editing)")];
+  }
+
+  /** 与 `hitRows()` 同序的行带。 */
+  function bandsOf(rows: readonly HTMLElement[]): RowBand[] {
+    return rows.map((row) => row.getBoundingClientRect());
   }
 
   // 右键监听挂在**容器**上（M251），不在每行的行元素上：行元素覆盖不到它右侧那条带。
@@ -432,6 +470,8 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
   // ---------------------------------------------------------------------------
   // 拖拽移动（M530）：HTML5 DnD。文件/目录行可拖，松手落在**目录行**上 = 移入该目录；
   // 不支持排序、不支持落到文件行（dragover 不 preventDefault，浏览器给出「禁放」语义）。
+  // M538 起 **vault 根**也是落点：树头部（vault 名行那一带）与列表尾部之下的空白都表示
+  // 「移动到 vault 根」，两处的高亮统一落在 vault 名行上（那两处没有行可以高亮）。
   //
   // 监听分工：dragstart / dragend 挂在每行（createRow）——它们只与「拖的是哪一条」有关；
   // dragover / drop / dragleave 挂在容器上，与右键同一条理由：行元素右缘到面板右缘那条带
@@ -457,19 +497,38 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
   }
 
   interface DropLanding {
+    /** 高亮的落点行：目录落点 = 那一行，根落点 = vault 名行（树头部的入口钮）。 */
     row: HTMLElement;
     /** 目标目录的 vault 相对路径（根为 ""）。 */
     path: string;
   }
 
-  /** dragover / drop 共用的落点解析：指针下的行是目录、且这次移动被 `canMoveEntry` 允许时
-   *  返回落点，否则 null（null = 禁放/无高亮，两个监听各取所需）。 */
+  /** 根落点（M538）：指针不在任何一行上、且落在「列表之外」（头部之上 / 尾部之下）时，
+   *  vault 根是落点——高亮反馈到 vault 名行（那两处没有行可高亮，统一到这一行）。
+   *
+   *  守卫是**同一份** `canMoveEntry`（目标目录 = 根）：已经在根下的条目拖回根得到
+   *  `moveTargetPath(source, "") === source`，照样禁放（不是一条「拖了等于没拖」的假成功）；
+   *  撞名不在这里判——与目录行落点同一口径，交给后端 `fs_already_exists` + toast。 */
+  function rootDropLanding(source: { path: string }, y: number): DropLanding | null {
+    const row = entryEl;
+    if (row === undefined) return null; // 未装载 vault：没有头部行可高亮，也没有根可落
+    if (!rootDropBandHit(bandsOf(hitRows()), y)) return null;
+    if (!canMoveEntry(source.path, "")) return null;
+    return { row, path: "" };
+  }
+
+  /** dragover / drop 共用的落点解析：指针下的行是目录、或指针落在「列表之外」的根落点、
+   *  且这次移动被 `canMoveEntry` 允许时返回落点，否则 null（null = 禁放/无高亮，两个监听
+   *  各取所需）。 */
   function dropLandingAt(target: EventTarget | null, x: number, y: number): DropLanding | null {
     const source = dragSource;
     if (source === undefined) return null;
     const li = rowLiAt(target, x, y);
-    const node = li === null ? undefined : nodes.get(li.dataset.path ?? "");
-    if (node === undefined || node.entry.kind !== "dir" || li === null) return null;
+    // 指针下没有行：还剩「列表之外」这一档（头部 / 尾部）。行解析成功但那一行不是目录、
+    // 或守卫拒绝时 MUST NOT 落到这里——文件行、拖回原位、拖入自身子树都是明确的「禁放」。
+    if (li === null) return rootDropLanding(source, y);
+    const node = nodes.get(li.dataset.path ?? "");
+    if (node === undefined || node.entry.kind !== "dir") return null;
     if (!canMoveEntry(source.path, node.entry.path)) return null;
     const row = li.querySelector<HTMLElement>(".ft-row");
     if (row === null) return null;
@@ -480,7 +539,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     const landing = dropLandingAt(event.target, event.clientX, event.clientY);
     if (landing === null) {
       clearDropTarget();
-      return; // 不 preventDefault：除目录行外的落点一律「禁放」
+      return; // 不 preventDefault：除目录行与 vault 根外的落点一律「禁放」
     }
     event.preventDefault();
     if (event.dataTransfer !== null) event.dataTransfer.dropEffect = "move";
