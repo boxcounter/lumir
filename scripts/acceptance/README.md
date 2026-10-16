@@ -879,6 +879,14 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   WKWebView 暴露成**无 bbox 的 AXSplitter**（节点在树、名字对、frame 为空），按节点定位不到——
   栏宽手柄用 `textareaEdge` 形态（从 AXTextArea bbox 的列缘内侧 2px 起拖）绕开。场景 38 是首个
   消费者（现场 `test-results/acceptance/<日期>/38-content-width-drag/`）。
+  **通道选型的边界（M536 定案）**：这条 CGEvent 拖拽序列（`lib/cgevent-click.swift` 的 mode 5）
+  只对**栏宽手柄 / 文件树拖放 / 1px 抖动点击**这类 DOM 控件目标成立，**在 CM 编辑器正文上造不出
+  任何文本选区**（裸拖 / 前置 hover / 段内短拖三变体 3/3 全败；带修饰 flag 的点击——mode 6——
+  也不延拓选区）。编辑器侧需要选区只用**双击族**（`do: doubleClick`）或键盘 chord（`⌘A` 在本机
+  不可行，见上文「键盘注入通道的两类不可达」）；完整归因与四条通道知识见 REVIEW.md 第 23 条与
+  `docs/backlog.md` 工具链与环境「真机注入通道新知识四则」条。**只读静态文本的选区**（transcript
+  消息体）仍走 `drag` 的 `{x,y}` 形态——M423 的对照证明它在**非编辑器**的文本上造得出真实选区
+  并触发 DOM `selectionchange`（上文动作表的 `drag` 条），与这里否掉的是两回事。
 - **harness transcript 的恢复渲染有一条判据盲区（M368 登记）**：`harness-panel.ts` 恢复路径对
   「正文为空的 assistant 记录」的跳过（旧快照防御）在真机上**造不出被验的形状**——core 侧 M367
   起不再落这类面板消息，套件 fixtures 里也没有「纯工具轮」（每条带工具调用的响应都带正文）。
