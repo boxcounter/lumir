@@ -100,11 +100,11 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 证据：AGENTS.md 硬规则「白屏陷阱」；提交 `791ff0c`（真机白屏与 watch 断流——custom-protocol feature + event ACL）。
 - 防线：下次用裸二进制起实例前先 `cargo build --features custom-protocol`（或直接用 `pnpm tauri dev`）；见到整窗白屏且无报错，先怀疑 flavour 再怀疑产品代码。
 
-**11. 真机键盘注入整批丢键，同机第二个实例显著加剧**
-- 症状：注入 `needle` 只落地 `ndl`、`a..z` 只落地 `abcdghijkl`，app 侧 keydown 探针证明被丢的键从未到达 DOM；M138 / M139 / M140 三方各自实证，第二实例常驻时复现率明显变高。
-- 根因：KimiCU 逐键 CGEvent 链路对 WKWebView 间歇丢键（成因未定位），而工具自报 `ok` 无法自证落地。
-- 证据：`docs/backlog.md:136-140`；`scripts/acceptance/README.md:177-199`。
-- 防线：跑真机场景前确认 1420 与 1430 都没有 Lumir 实例；断言走「回读 + 只在字节未变才重试」，不用重试次数当判据；失败先按丢键复跑一次再判产品缺陷（同一场景曾 M138 FAIL、M142 PASS）。
+**11. 真机键盘注入整批丢键（含键码级确定性丢弃），同机第二个实例显著加剧**
+- 症状：注入 `needle` 只落地 `ndl`、`a..z` 只落地 `abcdghijkl`，app 侧 keydown 探针证明被丢的键从未到达 DOM；M138 / M139 / M140 三方各自实证，第二实例常驻时复现率明显变高。M536（2026-10-16）补两种形态：① `⌘A` **确定性**不落地——单发 1/1、幂等三连发 3/3、重启服务后的健康态再测 1/1（累计 5/5），同场 `⌘S` / `⌘Z` / `⌃E` / `⌃N` 照落，与 `⌘V` 8/9 同属**键码级**丢弃族、与服务健康度无关；② 老化 kimi-cu service（pid 存活 >2 天、累计十几小时 CPU）污染注入的修饰键状态——`press_key` 打出的字母**全部大写**，而系统级修饰键读数干净（`CGEventSource.flagsState` 无 shift / caps）、`osascript` 重置无效，重启 service 立即恢复。
+- 根因：KimiCU 逐键 CGEvent 链路对 WKWebView 丢键，且至少两种机制并存——**键码级确定性丢弃**（哪几个键丢是固定的，工具自报 `ok` 无法自证落地）与**服务退化态**下的丢弃 / 修饰键状态污染（M509 双通道对照 84/84 全绿后主嫌转为服务退化：旧服务 37h CPU 期间全丢、重启后同场全绿；M536 的 uppercase 症状是它的又一形态）。区分口径：固定键码丢（`⌘A` 这种）重启服务不恢复，只能换通道或换判据；随机丢 / uppercase 先查服务。
+- 证据：`scripts/acceptance/README.md` 已知边界「`press_key` 的逐键注入会整批丢键」条（行号引用会随该文件增长失效，本条按条目标题定位）；`docs/backlog.md` 工具链与环境「KimiCU `press_key` 逐键注入丢键」与「同机第二个 Lumir 实例显著加剧 press_key 丢键」两条；M536 探针定案 finding `.tower/comms/findings/20261016-worker-reds153160-improve-m536-cmd-a-cgevent-cm-shift-kimi-cu-service-shift.md`（证据根 `test-results/acceptance/2026-10-16/tmp-m536-drag-probe/`）；M509 双通道对照 finding `.tower/comms/findings/20261014-agent-m509-improve-m509-cgevent-press-key-kimicu.md`。
+- 防线：跑真机场景前确认 1420 与 1430 都没有 Lumir 实例，**并查 kimi-cu 各实例的龄期与累计 CPU**（`ps -Ao pid,etime,time,command | grep -i kimi-cu`），龄期 >1 天或 CPU 异常偏高先重启 service 再跑；断言走「回读 + 只在字节未变才重试」，不用重试次数当判据；失败先按丢键复跑一次再判产品缺陷（同一场景曾 M138 FAIL、M142 PASS）；**uppercase 型失败一律先按服务退化复跑**，别当产品缺陷追；「`⌘A` 建选区」在本机不可行，需要选区的场景改走双击族（见第 23 条）。锁屏 / 息屏会让全机 AX 树退化，那条重启服务无效、只能等唤醒（`docs/backlog.md` 工具链与环境「锁屏/息屏 ⇒ 全机 AX 树退化」条）——归因时先分清是哪一族再动手。
 
 **12. 并行 worktree 的 target 纪律：磁盘水位与二进制新鲜度**
 - 症状：① 磁盘 <1G 时 ENOSPC 硬阻塞真机批次（219MiB 时 `pnpm tauri dev` 因 vite 写临时文件失败而中止）；建到一半 ENOSPC 会留下半截 target 且不回血，比不构建更糟。② 跨 worktree 共享 / 复用同一个 `CARGO_TARGET_DIR` 时，cargo 照旧拿 target 里既有产物的 fingerprint 判定本轮已是最新 ⇒ 改过源码的测试跑的是**旧二进制**、首跑**假绿**（M372：`gate.sh quick` 的 `cargo test` 绿，reviewer 独立复跑才红，两轮同一 binary hash）。
@@ -123,6 +123,12 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 根因：**未定位**。坐实的差异因子只有那一条监听（M238 的六行二分表）；机制候选照录 finding、均未坐实：tauri 2.11.5 的 `src/window/scripts/drag.js` 只在 document 的 mousedown 上按 `isDragRegion(composedPath)` 判定，**不检查 `defaultPrevented`**，按源码推不出因果；可能与 WKWebView 在「页面上存在阻止默认行为的 mousedown 监听」时的窗口激活 / 事件投递路径有关。
 - 证据：M238（2026-09-26）二分表——修复版全量（容器级 click + 容器级 mousedown）FAIL ×3、只回退 `src/tabs.ts` PASS ×1、回退 + 补容器级 click PASS ×2、再补回容器级 mousedown FAIL ×1；现场 `test-results/acceptance/2026-09-26/39-titlebar-identity/`；原卷 `.tower/comms/findings/20260926-worker-fix-pack-improve-39-mousedown-preventdefault.md`。M238 的处置即此：容器级 mousedown 未采用（容器级 click 已满足需求），原监听留在按钮上，并在 `src/tabs.ts` 就地留注释。
 - 防线：动过标题栏内元素的事件监听后，本地跑一次 `node scripts/acceptance/run.mjs 39`（这条判据只在真机层）；「阻止默认行为」不要挂在容器级元素上——需要它时挂在具体按钮上，并就地留一条指向本条的注释。
+
+**23. 编辑器侧建选区：套件自有 CGEvent 拖选在 CM 编辑器上造不出选区，可靠通道只剩双击族（M536 探针定案）**
+- 症状：套件自有 CGEvent 拖选（`lib/cgevent-click.swift` mode 5：leftMouseDown → 24 步插值 leftMouseDragged → leftMouseUp）在 CM 编辑器正文上造不出**任何**选区——裸拖 / 前置 hover mouseMoved / 段内短拖三个变体 **3/3 全败**；带修饰 flag 的 shift+点击（mode 6）也不延拓选区（正文行 / 右下 / 标题行多点实证）。危险面在于静默：选区是空的，判据照样可能过——只断言「选区后果不在场」这类负向判据在空选区上恒真。同族边界：M228「对正文文本连文本选择都造不出来」在编辑器侧重认；121/122 拖选能用是因为那条的目标是 transcript 静态文本、不是 CM 编辑器（同理 `lib/cgevent-click.swift:16-17` 的 M228 注释说「CGEvent 显式拖拽序列可用」，指的也是文件树拖放 / 1px 抖动点击这类 DOM 目标）。单次探针现场，但形态是「通道静默造不出东西 + 判据只存在于真机层」⇒ 按收录门槛的「单次但代价高」收。
+- 根因：**未定位**。坐实的是现象——合成 CGEvent 的按下-拖动-抬起与修饰键点击都被 CM 编辑器的选区层忽略；WKWebView / CM 侧成因未查。
+- 证据：M536（2026-10-16）探针定案 finding `.tower/comms/findings/20261016-worker-reds153160-improve-m536-cmd-a-cgevent-cm-shift-kimi-cu-service-shift.md`（证据根 `test-results/acceptance/2026-10-16/tmp-m536-drag-probe/`）；四则通道知识的 canonical 落点 `docs/backlog.md` 工具链与环境「真机注入通道新知识四则」条；四个变体与通道全经过写在场景 160 的注释里（`scripts/acceptance/scenarios/160-quote-button-viewport-clamp.md:19-30`）；两条原语实现 `scripts/acceptance/lib/cgevent-click.swift:15`（mode 5 拖拽）与 `:18`（mode 6 修饰键点击）；「选区显露为源码」的读数先例 `scripts/acceptance/scenarios/64-bold-selection-drawselection.md:52`。
+- 防线：编辑器侧需要选区的场景，构造只走**双击族**（`do: doubleClick`，M209 的 `kCGMouseEventClickState` 通道）或键盘 chord（`⌘A` 本机不可行，见第 11 条）；双击点落在**连续无分隔符的长串**上时一词即整行，一词选区的并集盒右缘 = 行右缘，够造「选区越出容器」这类现场（场景 160 现用）；构造完 MUST 配一条**正观测**断言——「选中的内容在 `AXTextArea.value` 里显露为源码」（如 `editor: { has: '/A{30,}/' }`），不许只断言「选区后果不在场」，否则手势落空时断言照样绿。别再拿拖选或 shift+点击当编辑器侧的选区构造手段。
 
 ## 五、等待方式（agent 运行时）
 
