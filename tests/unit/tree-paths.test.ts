@@ -159,3 +159,15 @@ test("拖拽落点判定矩阵：允许与拒绝逐条有区分度", () => {
   assert.equal(canMoveEntry("sub/other.md", ""), true, "深层文件移到根是真移动，不是 no-op");
   assert.equal(canMoveEntry("other", "sub/deep"), true, "别的目录拖入 sub 的子目录不受 sub 的禁律约束");
 });
+
+test("根落点（M538）：目标目录为空串时的守卫与目录落点同一份判据", () => {
+  // 允许：子目录/深层下的条目拖回根（目标路径 = 末段名本身）
+  assert.equal(canMoveEntry("sub/a.md", ""), true, "子目录里的文件拖回根");
+  assert.equal(canMoveEntry("sub/inner", ""), true, "子目录里的目录拖回根（移到根直下）");
+  assert.equal(canMoveEntry("a/b/c.md", ""), true, "深层文件拖回根");
+  // 拒绝：已经在根下的条目拖回根 = 拖回原位（to == from），不能算一次成功
+  assert.equal(canMoveEntry("a.md", ""), false, "根级文件拖回根是 no-op");
+  assert.equal(canMoveEntry("sub", ""), false, "根级目录拖回根是 no-op");
+  // 撞名不在这一层（客户端不查同缀既有条目）：与目录行落点同一口径，交后端 fs_already_exists。
+  assert.equal(canMoveEntry("sub/x", ""), true, "撞名由后端拒绝，客户端守卫不因此收紧");
+});
