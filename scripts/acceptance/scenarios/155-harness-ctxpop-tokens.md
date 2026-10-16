@@ -42,7 +42,9 @@ steps:
       - label: 控制行 = ctx 1%（1000/131072）· 会话累计 10%（100/1000）
         ax: { has: "1% · 10%" }
       - label: 留存 usage 块带 input/cached 原值（气泡 tokens 读数的数据源）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_response".*"input_tokens":1000.*"cached_tokens":100.*$/' }
+        # 键序：usage 块落盘字典序 cached_tokens 在 input_tokens 之前（serde_json 无 preserve_order；
+        # 场景 76 同纪律），正则键序必须与落盘序一致，否则真机必 FAIL。
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_response".*"cached_tokens":100.*"input_tokens":1000.*$/' }
       - shot: 01-首轮-控制行
 
   - name: hover 读数（锚点 = 读数左邻的权限 chip；ctx 读数在 AX 里没有 bbox，与场景 133 同锚）
