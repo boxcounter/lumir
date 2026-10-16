@@ -2,7 +2,7 @@
 
 > 状态：新增（M419，2026-10-10；M450 补 HC3；M457 修订 HC3 的写回形态与键入挂点、HC4 的行级
 > 基准光标；M462 补 HC1 第 3 条——段末断行的落点；M473 对齐三处光标口径——删除族卡片档的落点、
-> 词步的基准位、「末尾之后」的 DOM 写回）。本文档是 **harness 面板输入区（composer）的
+> 词步的基准位、「末尾之后」的 DOM 写回；M527 补 HC5——IME 组合期结构冻结）。本文档是 **harness 面板输入区（composer）的
 > 换行、视口与边界光标位**质量合同：可被测试证伪的不变量条款。渲染/交互缺陷修复的「合同先行」规则见
 > [../process/rendering-defect-contract-first.md](../process/rendering-defect-contract-first.md)——
 > 定位到本文件某一条、配不变量级属性测试，两者与修复同 PR。
@@ -206,6 +206,37 @@ caret 路径决定行为。族外的键位（⌃G、⌥G、翻屏族 ⌃V / ⌥V
 > 「段落末缘 `(i, len)`」与「后块前缘 `(i+1, 0)`」是两个不同的模型值（归一后段落末缘的退格会
 > 变成跨块合并、段末键入会插到下一段段首）。等价类服务的是**导航**（移动 / 扩选命令）。
 
+### HC5 — IME 组合期结构冻结：组合窗内 normalize 不得改写 DOM、组合期整面重渲不得运行
+
+IME **组合窗** = `compositionstart` 之后到 `compositionend + IME_CONFIRM_WINDOW_MS` 之前
+（确认窗与 M361 的确认拍拦截门同源：WKWebView 先派 compositionend 再派确认拍 Enter，组合的
+DOM 落定落在 compositionend 之后的那一段时序里）。对**任意**块序列与**任意**组合落点：
+
+1. **结构归一冻结**：组合窗内 `normalize` MUST NOT 摘除 / 重建任何 composer 子节点、MUST NOT
+   改写 DOM 选区。理由：组合期引擎自造的瞬时节点（组合文本宿主变化、空块维持的 `<br>` 等）
+   不是 quirk ④ 意义上的脏数据，是 **IME 会话的活锚点**——normalize 的折叠规则（qpara 含元素
+   子节点即折进前段）对它们照常成立，摘除即销毁锚点：组合文本被折进前一段、空段落消失，
+   随后的落字跟着错位的选区走。缺陷现场（Alex 2026-10-16）：第一行有文字 → ⇧Enter 新起
+   第二行 → 第二行起中文组合 → 选中候选后**组合文本跳回第一行、第二行消失**。
+2. **整面重渲冻结**：组合期（compositionstart → compositionend）内 `withModel` / `undo` /
+   `redo` 的整面重渲（`replaceChildren`）MUST NOT 运行——与 HC3 已知边界「compositionstart
+   的物化不走整面重渲」同一条理由（销毁组合锚点、打断 IME 会话），本条款把那一刻的纪律推广到
+   整个组合期。冻结范围的不对称是刻意的：normalize 覆盖**全窗**（含确认窗——落定可能落在
+   compositionend 之后），整面重渲只覆盖**组合期**——确认窗内组合已结束、DOM 已落定，且键路
+   入口（非 Enter 键）在 M361 状态机里本就自清窗口。
+3. **补账**：compositionend 后、确认窗过期时 MUST 补跑一次归一，把组合窗内被闸门跳过的裸节点
+   折回 `.qpara`——冻结是**延期执行**不是豁免数据层不变量；窗内新起的组合由它自己的
+   compositionend 续期（再排一次补账）。
+4. **可观测判据（可证伪）**：第一行有文字 → ⇧Enter 新起空行 → 第二行起 IME 组合 → 组合期的
+   任何 DOM 变化（含 MutationObserver 触发）之后：第二行段落 MUST 在场、组合文本 MUST NOT
+   折进第一行、DOM 选区 MUST NOT 被程序化改写；候选确认（compositionend）后第二行文本 =
+   候选文本，光标留在第二行。
+
+**已知边界（HC5）**：发送钮在组合期点击 = 提交并清空当前组合文本（与原生输入框的 commit-and-clear
+同行为）；normalize 在组合窗内对发送路径同样冻结，发送读到的就是 DOM 里的组合现状。
+组合窗内的键盘入口已被 M361 门覆盖（确认拍吞掉、其余键自清窗口），withModel 组合期闸门防的是
+鼠标路径（组合期右键粘贴 / 拖入）等不经键盘的入口。
+
 ## 证伪方式（属性测试口径）
 
 对「光标落点 × 段落文本 × 内容体量」的输入分布逐个取样：
@@ -296,6 +327,18 @@ caret 路径决定行为。族外的键位（⌃G、⌥G、翻屏族 ⌃V / ⌥V
    KimiCU 的 AX / 截图 / 输入通道、**没有 JS 求值通道**（`scripts/acceptance/lib/cu.mjs`），
    当前判不了；场景 142 用「导航后文本不变 + 导航不成撤销步」这条可观测后果替代，缺口登记在
    change 的 tasks §7 与场景 142 的已知边界节。
+11. **HC5 判据层（DOM 替身单测）**：驱动**真面板**（`createHarnessPanel` + 平台边界 DOM 替身，
+   手法同 tests/unit/harness-thinking-reset.test.ts）走完整事件序列——键入第一行 → ⇧Enter 拆段
+   → `compositionstart` → 模拟 WebKit 组合期 DOM（组合文本 + 空块维持的 `<br>` 使 qpara 出现
+   元素子节点）→ 手动触发 MutationObserver → 断言两块结构不丢、组合文本不折进第一行、选区
+   不被改写；组合期粘贴（withModel 路径）不断言丢字；`compositionend` 后越过确认窗补账归一
+   把裸节点折回 .qpara。落点：`tests/unit/harness-ime-enter.test.ts` 的「HC5」小节。
+    **反向验证口径**：把 normalize / withModel 的组合窗闸门临时改回直通，上述断言 MUST 变红
+    （组合文本折进第一行、第二块消失）——不变红即无区分度，不算覆盖。
+12. **HC5 行为层（真机验收，半自动）**：自动段只到「第一行 + ⇧Enter 两行在位」为止；IME 组合段
+    合成键进不了 TSM（m461 探针定案），**不可自动化**，候选确认路径留手动复验步骤（场景
+    `scripts/acceptance/scenarios/156-harness-composer-ime-composition-freeze.md` 的「手动复验
+    步骤」节，Alex dogfood 执行）。这正是 HC5 可观测判据（第 4 条）在真机上的完整执行。
 
 ## 实测依据（M419 现场，2026-10-10）
 
@@ -491,6 +534,37 @@ M473 一次收口三条 backlog 待修项（worker-m457 / m465 各一条 + worke
 写回用例的「末尾之后」断言 **1 条红**（旧形态给 `{kind: "boundary"}`）。三条落在不同函数、不同
 用例，不存在「一条断言替两处背书」（REVIEW.md 第 1、6 条）。
 
+## 实测依据（M527 现场，2026-10-16）：IME 组合期 normalize 折段——候选落字跳回第一行
+
+缺陷现场（Alex 原话）：「harness composer 里，当我输入一行文字，然后 Enter 新起一行后，我使用
+中文输入法并选中一个候选后，输入的内容会回到第一行，原本第二行就消失了」。
+
+**根因**（代码路径推理；真机探针暂停——装版实例在场 + IME 本就无法自动化，诊断以代码路径 +
+DOM 替身单测复现为准）：composerObserver（只有 `normalizing` 重入闸）被组合期的 childList
+变化触发 → normalize 跑在组合中途。事件序列：
+
+1. 第一行 `第一行` + ⇧Enter：`softBreakStep` → withModel → renderComposer 两块
+   `[qpara("第一行"), qpara("")]`，光标写进空 qpara2（`{block:1, offset:0}`）。
+2. `compositionstart`：非卡片前缘 ⇒ 无 DOM 写（undoHistory 压前态）。WKWebView 往 qpara2 插
+   组合文本；组合期的块内含元素子节点（空块维持的 `<br>` / 组合包装——qpara 从
+   `childElementCount 0` 变成 >0）。
+3. 该 childList 变化到达 observer → normalize：qpara2 因含元素子节点被判脏 → 摘除、
+   `paraTextOf` 读出的组合文本**折进前驱 qpara1** → 结尾 `setDomCaret` 按组合前的选区写回。
+4. 组合锚点节点被销毁、选区被程序化改写 → IME 会话错乱；选中候选后落字跟着错位选区走进
+   第一行，qpara2 已不在 = Alex 截图（m4）的两行并一行。
+
+次要嫌疑 withModel 整面重渲排除为**防线缺口而非本案真凶**：组合期内键盘入口（keydown /
+beforeinput）均已有 M361 组合期早退，withModel 无现实触发路径；修复时按 HC5 第 2 条一并补上
+组合期闸门（防鼠标路径）。
+
+**修法**（HC5）：normalize 组合窗闸门（composing ‖ 确认窗内早退）+ withModel / undo / redo
+组合期闸门 + compositionend 排期确认窗过期后的补账归一。折叠规则本身不动——缺陷在**时机**
+不在规则。
+
+**判据与证据**：DOM 替身单测（tests/unit/harness-ime-enter.test.ts「HC5」小节）断言两块结构、
+组合文本落段、选区不改写、补账归一四件事；反向验证 = 闸门改回直通后该小节 MUST 全红。真机
+候选确认路径归场景 156 手动复验（合成键进不了 TSM，m461 定案）。
+
 ## 与实现的关系
 
 - HC1 的落法由 `src/harness-panel.ts` 的纯模型层 `insertSoftBreakAtCaret` 决定（段末 / 卡片前缘
@@ -527,6 +601,11 @@ M473 一次收口三条 backlog 待修项（worker-m457 / m465 各一条 + worke
   的既有命令、composer 面走这些纯函数）；移动 / 扩选只写选区（`setDomCaret` / `setDomSelection`）
   与滚动位，**不**走整面重渲。词 / 字素簇扫描与 kill 槽的**共用**实现住在叶子模块
   `src/quote-card.ts`（编辑器侧与 composer 侧同一份）。
+- HC5 的闸门住在 `src/harness-panel.ts` 的三个出口：normalize 的组合窗早退（覆盖 withModel /
+  undo / send / composerObserver 全部 normalize 调用点）、withModel / undo / redo 的组合期早退、
+  compositionend 里经 `window.setTimeout(IME_CONFIRM_WINDOW_MS)` 排期的补账归一（窗内新组合由
+  下一次 compositionend 续期）。组合窗判据 `imeWindowActive` 复用 M361 的 `imeGateState`
+  （compositionstart/end 自跟踪 + 确认窗），不另建第二份组合状态（REVIEW.md 第 8 条）。
 - 已知边界：卡片上按 ⇧Enter 时「新行」落在卡片那一行的上方（光标所在处），不改变卡片与
   文本块的相对次序——卡片是原子块，本条不承诺它内部出现换行。
 - 已知边界（HC3，M457；M473 修订第一条）：

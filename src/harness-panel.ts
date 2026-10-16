@@ -3115,6 +3115,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   });
   /** 归一化的重入闸（normalize 自己改 DOM，触发观察器时不再递归）。 */
   let normalizing = false;
+  /** IME 组合门状态机（M361 确认拍拦截门；HC5 的组合窗判据复用它，不另建第二份组合状态）。
+   *  声明提前到这里：normalize / withModel 的组合窗闸门（HC5）要读它，早于事件挂点初始化。 */
+  let imeGateState = imeKeyGate();
   /** QC3（M344）注册的卡片跳回处理器；未注册时卡片点击无操作。 */
   let quoteJumpHandler: ((card: QuoteCard) => void) | null = null;
 
@@ -3632,13 +3635,27 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     flashMessage(target);
   }
 
+  /** IME 组合窗判据（HC5）：compositionstart 之后、compositionend + IME_CONFIRM_WINDOW_MS
+   *  之前。确认窗覆盖 WKWebView「compositionend 先于 DOM 落定/确认拍」的时序（与 M361 确认拍
+   *  拦截门同源一扇窗）。normalize 的组合窗冻结用它；整面重渲只冻组合期（imeGateState.composing，
+   *  确认窗内组合已结束、DOM 已落定——合同 HC5 第 2 条的不对称）。 */
+  function imeWindowActive(now: number = Date.now()): boolean {
+    return imeGateState.composing || imeGateState.confirmUntil > now;
+  }
+
   /**
    * 归一化（quirk ④）：顶层只允许 .qcard / .qpara 两类块——裸文本、<br>、浏览器自造的
    * div/span 一律折进相邻段落（<br> 记 \n）；收尾保证至少一个段落块。数据层因此永远干净
    * （「不接受裸 <div>/<br> 进数据层」的正面落实）。光标尽量原位保留。
+   *
+   * HC5 组合窗闸门：IME 组合窗（compositionstart → compositionend + IME_CONFIRM_WINDOW_MS）
+   * 内自造早退——组合期引擎自造的瞬时节点（组合文本宿主、空块维持的 <br>）是 IME 会话的活
+   * 锚点不是脏数据，摘除/折段会销毁锚点（Alex 2026-10-16「候选落字跳回第一行、第二行消失」）。
+   * 被跳过的归一由 compositionend 在确认窗过期后补账（那边注释）。
    */
   function normalize(): void {
     if (normalizing) return;
+    if (imeWindowActive()) return;
     normalizing = true;
     try {
       const domSelection = caretFromDom();
@@ -4093,11 +4110,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * → 算新模型 → 整面重渲。`force` 取值唯一来自 `STRUCTURAL_EDIT_FORCE`（结构性操作：卡片插入/
    * 移除、粘贴、拆段、删除族与 kill 族）——本文件不再写 force 字面量；`false` 只留给三处豁免：
    * 键入（原生文本编辑的压栈）、字符级编辑（⌃T 转置）、删除族的空转空模型写（见各自就地注释）。
+   *
+   * HC5：IME 组合期（compositionstart → compositionend）整面重渲冻结——replaceChildren 会销毁
+   * 组合锚点节点、打断 IME 会话（同 compositionstart 物化注释的理由）。键盘入口在 keydown 已有
+   * 组合期早退，这里防的是鼠标路径（组合期右键粘贴 / 拖入）；被跳过的编辑不补发（组合文本的
+   * 保全优先于一次粘贴，合同 HC5 已知边界）。
    */
   function withModel(
     op: (blocks: readonly ComposerBlock[]) => { blocks: ComposerBlock[]; caret: ComposerCaret },
     force: boolean,
   ): void {
+    if (imeGateState.composing) return;
     normalize();
     undoHistory.push(snapshot(), force);
     const result = op(readBlocksFromDom());
@@ -4107,6 +4130,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   function undo(): void {
+    if (imeGateState.composing) return; // HC5：组合期整面重渲冻结（同 withModel）
     normalize();
     const snap = undoHistory.undo(snapshot());
     if (snap === null) return;
@@ -4116,6 +4140,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   function redo(): void {
+    if (imeGateState.composing) return; // HC5：组合期整面重渲冻结（同 withModel）
     const snap = undoHistory.redo(snapshot());
     if (snap === null) return;
     renderComposer(snap.blocks, snap.caret);
@@ -4126,7 +4151,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /**
    * 兜底归一化观察器：我们的拦截覆盖了粘贴 / Enter / 删除 / 拖入，但 IME 替换、拼写纠正、
    * 未来新增路径仍可能自造结构——observer 只负责把漏网的裸块折回 .qpara（数据层不变量
-   * 双保险），不触碰卡片。
+   * 双保险），不触碰卡片。组合窗内 normalize 自早退（HC5），归一由 compositionend 补账接管。
    */
   const composerObserver = new MutationObserver(() => {
     if (normalizing) return;
@@ -6490,7 +6515,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // （WKWebView 不可靠——WebKit 先派 compositionend 再派确认 Enter 的 keydown，isComposing
   // 已是 false，单靠早退会把「选候选」误当发送；状态机口径见 imeGateKeydown）。
   // 退格 / 前删走模型（卡片按整体作用 + 自管撤销栈的确定性）。
-  let imeGateState = imeKeyGate();
+  // （imeGateState 声明在面板前部 normalizing 旁——HC5 的组合窗闸门要读它。）
   composer.addEventListener("keydown", (event: KeyboardEvent) => {
     if (event.isComposing) {
       // 浏览器自报组合期（Chromium 序的确认拍落在这里）：同样登记进门——若不登记，
@@ -6664,6 +6689,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     undoHistory.breakCluster(); // 组合整段是一个撤销步：下一拍编辑强制重新压栈。
     updateEmptyClass();
     markDraft(); // IME 落定的字符在此刻才进 DOM（组合期不排期），草稿按最终文本落盘
+    // HC5 补账：组合窗内被 normalize 闸门跳过的归一，在确认窗过期后补跑一次——组合的 DOM 落定
+    // 在 WKWebView 里落在 compositionend 之后（确认拍时序同 M361），过早归一仍会把落定的候选
+    // 文本折错段落。窗内新起的组合由它自己的 compositionend 续期（再排一次补账）。
+    window.setTimeout(() => {
+      if (!imeWindowActive()) normalize();
+    }, IME_CONFIRM_WINDOW_MS);
   });
   // 粘贴分派（quirk ① + change harness-composer-image-paste design §7）：剪贴板含
   // `image/*` 文件项 → 图优先（读 Blob → base64 → harness 侧落盘 → 光标处插图片卡片；
