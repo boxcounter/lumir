@@ -1992,10 +1992,17 @@ fn resolve_attachment_dir(root: &Path, dir_rel: &str) -> Result<PathBuf, Command
 
 /// 全 vault 按**文件名**探测既有条目，返回字典序最小的 vault 相对路径（无命中为 None）。
 ///
-/// 不用 [`scan_workspace`]：那条路径按**可见性规则**枚举（惰性档 / 用户规则的目录出一行不递归），
+/// 不用 [`scan_workspace`]：那条路径按**可见性规则**枚举（`lazy` 档 / 用户规则的目录出一行不递归），
 /// 而去重判据是「这个名字在 vault 里已经存在」，与可见性正交——用户在 `.gitignore` 里写规则
-/// 不该让同一张图被重复落盘。剪枝口径仍与枚举同源：hidden 档命中的目录整棵跳过（工具目录里的
-/// 同名文件不是本能力的产物）、符号链接目录不跟随（`file_type()` 不 follow，防循环 / 防逃逸）。
+/// 不该让同一张图被重复落盘。
+///
+/// 剪枝口径（change ignore-tiers-config 节点 1 修正）：**hidden 档与配置 `lazy` 档命中的目录
+/// 整棵跳过**——前者是工具目录（`.git` 等），后者的名字来自配置默认的构建产物族
+/// （`node_modules` / `target` / `dist`…）：本能力的产物是 `pasted-<hash>.webp` 这类内容寻址
+/// 名字，落在这些目录里的概率趋于零，而每次粘贴都遍历一遍 `node_modules` 是白付 IPC 主线程的
+/// 全盘成本。**用户规则命中的惰性目录照旧遍历**（master 的既有行为：用户声明不跟踪的目录里
+/// 仍可能有同名文件，重复落盘与可见性正交）。符号链接目录不跟随（`file_type()` 不 follow，
+/// 防循环 / 防逃逸）。
 ///
 /// 多个命中时取字典序最小者：内容寻址命名下同名即同内容，多命中只可能来自用户手工放入的
 /// 副本，字典序是既有的确定性兜底口径（design §5）。
@@ -2025,7 +2032,7 @@ fn find_vault_entry_by_name(root: &Path, policy: &IgnorePolicy, name: &str) -> O
             let Some(rel) = rel_string(root, &path) else {
                 continue;
             };
-            if policy.classify(&rel, true) == EntryClass::Hidden {
+            if policy.hidden_hit(&rel, true) || policy.lazy_hit(&rel, true) {
                 continue;
             }
             stack.push(path);
@@ -4424,6 +4431,41 @@ mod tests {
         assert_eq!(entries[0].path, "node_modules/pkg");
         assert!(entries[0].lazy, "lazy 档目录展开后的子条目仍是惰性行");
         assert!(p.is_materialized("node_modules"));
+    }
+
+    /// 粘贴查重的遍历面（change ignore-tiers-config 节点 1 修正）：`hidden` 档与配置 `lazy` 档
+    /// 命中的目录被剪（每次粘贴都遍历 `node_modules` 是白付 IPC 主线程的全盘成本），而**用户
+    /// 规则命中的惰性目录照旧遍历**（master 的既有行为，重复落盘与可见性正交）。
+    #[test]
+    fn find_vault_entry_by_name_prunes_hidden_and_lazy_tiers_but_keeps_user_rules() {
+        let v = TempVault::new();
+        let r = &v.0;
+        std::fs::create_dir_all(r.join("node_modules/pkg")).unwrap();
+        std::fs::write(r.join("node_modules/pkg/pasted-abc.webp"), "x").unwrap();
+        std::fs::create_dir_all(r.join(".git")).unwrap();
+        std::fs::write(r.join(".git/pasted-abc.webp"), "x").unwrap();
+        std::fs::create_dir_all(r.join(".local/deep")).unwrap();
+        std::fs::write(r.join(".local/deep/pasted-abc.webp"), "x").unwrap();
+        std::fs::write(r.join(".gitignore"), ".local/\n").unwrap();
+        let p = v.default_policy();
+        assert_eq!(
+            find_vault_entry_by_name(r, &p, "pasted-abc.webp").as_deref(),
+            Some(".local/deep/pasted-abc.webp"),
+            "hidden / 配置 lazy 档目录被剪，用户规则惰性目录仍遍历"
+        );
+        // 剪枝真的在起作用：把用户规则目录里的那份删掉，只剩 node_modules / .git 里的两份 ⇒ None
+        std::fs::remove_file(r.join(".local/deep/pasted-abc.webp")).unwrap();
+        assert_eq!(
+            find_vault_entry_by_name(r, &p, "pasted-abc.webp"),
+            None,
+            "只有 hidden / lazy 档目录里有该名字时视为「不存在」"
+        );
+        // 反向：root 下有一份时可被找到（遍历本身没有坏掉）
+        std::fs::write(r.join("pasted-abc.webp"), "x").unwrap();
+        assert_eq!(
+            find_vault_entry_by_name(r, &p, "pasted-abc.webp").as_deref(),
+            Some("pasted-abc.webp")
+        );
     }
 
     /// 按需枚举的边界（tasks 3.2）：越界 / 不存在 / 不是目录都给人话错误，且不读 vault 之外。

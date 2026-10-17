@@ -199,7 +199,7 @@ impl IgnorePolicy {
 | 新建目录的子树补全 | `expand_new_dir_subtrees`（[fs_io.rs:2282](../../../src-tauri/src/fs_io.rs#L2282)） | 已消费 `classify`，无需改判定；`Lazy` 目录不入队（既有行为） |
 | 名字校验 | `validate_new_name`（[fs_io.rs:886](../../../src-tauri/src/fs_io.rs#L886)） | 改为 `&IgnorePolicy` 上的方法：`hidden_hit(name)` 才拒；`lazy` / 用户规则不拒 |
 | 父目录补建 | `ensure_parent_dirs`（[fs_io.rs:1634](../../../src-tauri/src/fs_io.rs#L1634)） | 逐段只拒 `hidden_hit(segment)`；惰性档名字允许建在其内（建出来的文件随该目录惰性） |
-| 同名文件查找（`wikilink_create` 查重） | `find_vault_entry_by_name`（[fs_io.rs:1992](../../../src-tauri/src/fs_io.rs#L1992)） | 只跳过 `EntryClass::Hidden` 的目录（与今日「只跳过内置隐藏目录」同形）；惰性档目录照旧参与查重（今日用户规则惰性目录也参与），行为不变 |
+| 同名文件查找（`wikilink_create` 查重） | `find_vault_entry_by_name`（[fs_io.rs:1992](../../../src-tauri/src/fs_io.rs#L1992)） | 跳过 `hidden` 档**与配置 `lazy` 档**命中的目录；**用户规则**命中的惰性目录照旧遍历（master 行为）。理由：lazy 档默认名是构建产物 / 依赖副本，内容寻址的 `pasted-<hash>.webp` 落在其中的概率趋于零，而每次粘贴都遍历 `node_modules` 是白付 IPC 主线程的全盘成本 |
 
 ### 5.3 埋点口径（`vault_scan_ignored`）
 
@@ -277,7 +277,7 @@ impl IgnorePolicy {
 - **模式不支持**：两个键只收名字（§2.2）。`*.log` 这类需求靠逐项列名，或写进 `.gitignore`（落进用户规则，
   惰性可见）。
 - **无名字级写操作特判**（裁决点 1）：`.git` 被配置成可见后即可删 / 改名 / 移动；本 change 不提供任何名字级保护（§4）。
-- **`wikilink_create` 对惰性目标的重复文件风险不变**：本 change 对查重面只做「从旧的恒定名字表换成策略」的等价替换（仍只跳过 `EntryClass::Hidden` 的目录），
+- **`wikilink_create` 对惰性目标的重复文件风险不变**：剪枝面为 `hidden` 档 + 配置 `lazy` 档（用户规则惰性目录照旧遍历，与 master 对齐），
   不为惰性区域做「已存在但不可见」的合并逻辑（与 change `vault-open-ignore-set` 的既有边界一致）。
 - **默认行为变化是显式的**：升级后 14 个名字从不可见变惰性可见。不做兼容开关、不做首启提示
   （AGENTS.md「变更默认直接切断」）。

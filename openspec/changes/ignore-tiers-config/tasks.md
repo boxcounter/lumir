@@ -50,8 +50,8 @@
 - [x] 2.8 `validate_new_name` 改为 `&IgnorePolicy` 上的方法（只拒 `hidden_hit(name)`）；签名传播到
   `resolve_new_in_vault` / `rename_entry` / `fs_move_entry` / `create_file_entry` / `create_dir_entry` /
   `vault_create_file`；`ensure_parent_dirs` 逐段只拒 `hidden` 档。**MUST NOT 加 `.git` 或任何名字级特判。**
-- [x] 2.9 `find_vault_entry_by_name` 的目录剪枝改为「只跳过 `EntryClass::Hidden`」（与今日只跳过内置隐藏目录同形；
-  惰性档目录照旧参与查重，行为不变）；补注释。
+- [x] 2.9 `find_vault_entry_by_name` 的目录剪枝 = `hidden` 档 **或配置 `lazy` 档**命中；
+  用户规则命中的惰性目录照旧遍历（与 master 对齐）；补注释与一条区分两者的单测。
 - [x] 2.10 `src-tauri/src/logging.rs` 的 `vault_scan_ignored` 文档注释：「内置规则」改「`hidden` 档
   （含恒定临时文件模式）」，并写明惰性条目不计数。代码不变。
 - [x] 2.11 单测（`fs_io.rs` 内 mod tests）：

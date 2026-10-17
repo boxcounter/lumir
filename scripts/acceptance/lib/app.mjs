@@ -214,7 +214,7 @@ const LAZY_PROBE_MD = "# 本地教程\n\n本地教程正文：这一篇被用户
  *
  *  形状口径（M265 §一 在真实 vault 上实测的 scan-visible 规模）：**2142 文件 / 426 目录 /
  *  1341 个 md / 7.01MB md**、行长正常（~78 字符/行，含标题与 wikilink）、含一个
- *  `node_modules` 用于验证 `IGNORED_NAMES` 生效。收益：验收与读数都跑在**与 Alex 真实 vault
+ *  `node_modules` 用于验证默认 `lazy` 档（自身出惰性行、子孙不进枚举）。收益：验收与读数都跑在**与 Alex 真实 vault
  *  同形状**的合成 vault 上——M252 的稀疏单行放大器（48ms/MB）已被 M265 判为测量假象，
  *  **MUST NOT** 再拿它当规模口径。
  *
@@ -321,7 +321,7 @@ export async function generateBulkVault(spec = {}) {
     const content = kind === 0 ? "纯文本附件\n" : kind === 1 ? '{"v":1}\n' : kind === 2 ? "<svg/>\n" : "export const v = 1;\n";
     await writeFile(path.join(dir, name), content);
   }
-  // 忽略生效的探针：`node_modules` 下的 md MUST NOT 进枚举（Rust 侧 IGNORED_NAMES）。
+  // 惰性档探针：`node_modules` 自身出惰性行，其下的 md MUST NOT 进枚举（默认 lazy 档）。
   const nm = path.join(vault, "node_modules", "left-pad");
   await mkdirp(nm);
   for (let i = 0; i < ignoredMd; i += 1) {
