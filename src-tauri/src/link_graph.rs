@@ -1282,6 +1282,12 @@ mod tests {
     #[test]
     fn create_file_preserves_extension_and_never_overwrites() {
         let dir = TempVaultDir::new();
+        // 判据的前提是「拿到的是新建空目录」：复用残留目录时本断言即红（pid 回收撞名的现场）。
+        assert!(
+            std::fs::read_dir(&dir.0).unwrap().next().is_none(),
+            "临时 vault 必须是新建的空目录：{}",
+            dir.0.display()
+        );
         let mut graph = LinkGraph::new();
 
         // 保留原扩展名（含无扩展名文件）；嵌套目录自动补齐
@@ -1320,20 +1326,39 @@ mod tests {
         }
     }
 
-    /// 临时 vault 目录（进程号 + 序号，与 `fs_io` 测试模块的同名辅助同形；不清理——系统
-    /// 临时目录由 OS 回收，本仓既有口径如此）。
+    /// 临时 vault 目录：每次在系统临时目录里**独占新建**一个目录，`Drop` 时递归删除。
+    ///
+    /// 目录名 MUST 带足熵（pid + 序号 + 随机段；`rand` 已是直接依赖，零新增），且用
+    /// `create_dir` 而非 `create_dir_all`：pid 会被系统回收，只按 pid + 序号命名的目录一旦被
+    /// 上一轮异常退出残留下来，`create_dir_all` 会静默复用它，测试就带着残留文件开跑（本模块
+    /// `create_file_preserves_extension_and_never_overwrites` 曾因此间歇红）。撞名即换随机段
+    /// 重试，绝不复用既有目录；`Drop` 清理让正常退出不留残留。
     struct TempVaultDir(PathBuf);
     static DIR_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
     impl TempVaultDir {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "lumir-linkgraph-test-{}-{}",
-                std::process::id(),
-                DIR_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&path).expect("create temp vault");
-            Self(path)
+            let base = std::env::temp_dir();
+            for _ in 0..16 {
+                let path = base.join(format!(
+                    "lumir-linkgraph-test-{}-{}-{:016x}",
+                    std::process::id(),
+                    DIR_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                    rand::random::<u64>(),
+                ));
+                match std::fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(err) => panic!("create temp vault {}: {err}", path.display()),
+                }
+            }
+            panic!("create temp vault: 16 次随机目录名全部撞名");
+        }
+    }
+
+    impl Drop for TempVaultDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 
