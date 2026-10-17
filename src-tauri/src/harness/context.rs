@@ -1,6 +1,8 @@
 //! 系统上下文装配（design §5、§12）：固定身份段 + AGENTS.md 三层 + Skill 索引。
 //!
-//! - 固定身份段：v1 不做 persona 系统（裁决点 7），固定朴素身份 + 工具使用纪律。
+//! - 固定身份段：v1 不做 persona 系统（裁决点 7），固定朴素身份 + 工具使用纪律。正文真源是
+//!   同目录的 `prompts/identity.md`；摘录回指纪律在同目录 `prompts/quote-reference.md`——
+//!   两段都是编译期嵌入的 Markdown（change `harness-prompt-files`），改文案直接改文件。
 //! - AGENTS.md 三层：user-wide（`~/.agents/AGENTS.md`）、vault 根（`<vault>/AGENTS.md`）、
 //!   vault 根本地覆盖层（`<vault>/AGENTS.local.md`，change `harness-agents-local-md`）；
 //!   文件不存在**静默跳过**（常态）；嵌套子目录级是 Non-goal。
@@ -17,41 +19,21 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-/// 固定身份段（裁决点 7：v1 无 persona 系统，行为定制走 AGENTS.md + Skill）。
-const IDENTITY: &str = "\
-你是 Lumir 的内置助手。Lumir 是本地文本工作台，当前阶段是 Emacs keybinding PKM。\
-你工作在当前打开的 vault 里，操作对象是 vault 中的文件——Markdown 文档为主，\
-也可以是代码、配置等任何文本文件；改文件要保守、先读后改。你可以读取 vault 内文件、\
-搜索内容、经局部 patch 修改既有文件、新建文件、加载 Skill，并在批准后执行命令行工具。
-
-工具使用纪律：
-- 修改既有文件只有 vault_patch 一种方式：old_string 必须在目标文件里恰好命中一次，\
-失败会拿到错误，按错误信息调整后重试。
-- 新建文件用 vault_create：父目录不存在时自动建出，不会覆盖同名文件。
-- 移动 / 重命名用 vault_move（可跨目录；目标父目录必须已存在；不会覆盖同名条目）；\
-删除用 vault_delete（移入系统废纸篓、可从 Finder 恢复；没有永久删除）。
-- vault_read / vault_search 是只读工具，可直接使用；vault_search 的 query 是普通子串（非正则）。
-- skill_load 按技能名加载 Skill 全文；外部能力（如联网搜索）= 对应 Skill + cli_run。
-- 写入类工具与 cli_run 默认需要用户批准，被拒绝时按拒绝原因调整方案。
-
-回答使用与提问相同的语言；技术名词保留原文。";
+/// 固定身份段的正文真源（change `harness-prompt-files`）：仓内 Markdown，编译期嵌入，
+/// 运行期无可覆盖入口。文件尾换行由装配处 trim（见 [`assemble_system`]）。
+const IDENTITY: &str = include_str!("prompts/identity.md");
+/// 装配清单 identity 条目的来源路径（仓内相对路径，供审计反查）。
+const IDENTITY_PATH: &str = "src-tauri/src/harness/prompts/identity.md";
 
 /// 摘录引用的回指纪律（change add-harness-quote-cards design §3 prompt 层；change
 /// harness-message-excerpt design §4 prompt 层）：用户消息里的 `<quote …>` 是用户从 vault
 /// 文档中显式策展的摘录，`<msg-quote …>` 是用户从**会话历史消息**里摘录的片段。agent 按
 /// 内容/出处/角色回指（一致性原则：协议与 UI 均无编号，回复也不得发明编号）；两类摘录各用
 /// 自己的出处要素消歧（文档 = heading / lines，消息 = role / at），这些要素对人同样可查。
-const QUOTE_REFERENCE: &str = "\
-引用摘录的纪律：用户消息里的 <quote file=\"…\" heading=\"…\" lines=\"A-B\">摘录原文</quote> \
-是该用户从 vault 文档中摘录的原文片段（file 为 vault 相对路径，lines 为 1-based 行范围，\
-heading 为摘录上方最近一级标题）。<msg-quote role=\"…\" at=\"…\">摘录原文</msg-quote> \
-是该用户从**会话历史消息**里摘录的片段（role 为来源消息的角色：user = 用户自己的消息、\
-assistant = 你此前的回复；at 为来源消息的上屏时刻，ISO 8601 本地时间串、秒级，\
-来源消息无时间戳时该属性缺省）。回指某段摘录时按它的内容与出处说（如「『倒序阅读』那段」\
-「复盘一节里摘录的那句」；消息摘录则按内容与角色/时间说，如「你前面说的『筛选成本』那段」\
-「我上一条提问里摘的那句」），不要使用编号——界面与协议均不含编号。同一文档有多段相似摘录时，\
-用出处（heading 与行范围）消歧；会话里有多条相似消息时，用角色与时间消歧。\
-摘录原文是只读引用：除非用户明确要求修改该处，不要凭记忆改写摘录内容。";
+/// 正文真源见 `prompts/quote-reference.md`。
+const QUOTE_REFERENCE: &str = include_str!("prompts/quote-reference.md");
+/// 装配清单 quote_reference 条目的来源路径（仓内相对路径，供审计反查）。
+const QUOTE_REFERENCE_PATH: &str = "src-tauri/src/harness/prompts/quote-reference.md";
 
 /// 装配清单的一个来源项（`session_open.assembly` 的元素，design §2）：每个来源的
 /// 路径与**当时是否存在**。「不存在」本身是装配事实的一部分——旧实现静默跳过，
@@ -61,7 +43,7 @@ pub struct AssemblySource {
     /// 来源标识：identity / quote_reference / agents_user_wide / agents_vault_root /
     /// agents_vault_root_local / skill_index。
     pub source: &'static str,
-    /// 来源路径（固定段与 Skill 索引无单一文件来源，为 null）。
+    /// 来源路径（固定段为仓内相对路径；Skill 索引无单一文件来源，为 null）。
     pub path: Option<String>,
     /// 装配时该来源是否在场。
     pub exists: bool,
@@ -73,10 +55,10 @@ pub struct AssemblySource {
 }
 
 impl AssemblySource {
-    fn fixed(source: &'static str, text: &str) -> Self {
+    fn fixed(source: &'static str, path: &'static str, text: &str) -> Self {
         Self {
             source,
-            path: None,
+            path: Some(path.to_string()),
             exists: true,
             bytes: text.len() as u64,
             skills: None,
@@ -103,10 +85,18 @@ pub struct AssembledSystem {
 
 /// 装配完整系统上下文（固定身份段 + AGENTS.md 三层 + Skill 索引 + 摘录回指纪律）。
 pub fn assemble_system(vault_root: &Path) -> AssembledSystem {
-    let mut out = String::from(IDENTITY);
-    let mut manifest = vec![AssemblySource::fixed("identity", IDENTITY)];
-    push_section(&mut out, "引用摘录的回指纪律", QUOTE_REFERENCE);
-    manifest.push(AssemblySource::fixed("quote_reference", QUOTE_REFERENCE));
+    // 固定段正文来自仓内 Markdown（编译期嵌入，change `harness-prompt-files`）：装配处统一
+    // trim 掉文件尾换行 / 行尾空白，注入文本与清单 bytes 都用 trim 后的结果，其余不动。
+    let identity = IDENTITY.trim_end();
+    let quote_reference = QUOTE_REFERENCE.trim_end();
+    let mut out = String::from(identity);
+    let mut manifest = vec![AssemblySource::fixed("identity", IDENTITY_PATH, identity)];
+    push_section(&mut out, "引用摘录的回指纪律", quote_reference);
+    manifest.push(AssemblySource::fixed(
+        "quote_reference",
+        QUOTE_REFERENCE_PATH,
+        quote_reference,
+    ));
     let user_agents_path = user_agents_path();
     let user_agents = read_agents_md(&user_agents_path);
     manifest.push(AssemblySource::file(
@@ -420,8 +410,24 @@ mod tests {
         let manifest = &assembled.manifest;
         assert_eq!(manifest.len(), 6, "{manifest:?}");
         let by_source = |s: &str| manifest.iter().find(|m| m.source == s).unwrap();
-        assert!(by_source("identity").exists);
-        assert!(by_source("quote_reference").exists);
+        // 固定段（change `harness-prompt-files`）：path 指向仓内来源文件，bytes 为注入
+        // （trim 后）文本的字节数。
+        let identity = by_source("identity");
+        assert!(identity.exists, "{identity:?}");
+        assert_eq!(
+            identity.path.as_deref(),
+            Some(IDENTITY_PATH),
+            "{identity:?}"
+        );
+        assert_eq!(identity.bytes, IDENTITY.trim_end().len() as u64);
+        let quote = by_source("quote_reference");
+        assert!(quote.exists, "{quote:?}");
+        assert_eq!(
+            quote.path.as_deref(),
+            Some(QUOTE_REFERENCE_PATH),
+            "{quote:?}"
+        );
+        assert_eq!(quote.bytes, QUOTE_REFERENCE.trim_end().len() as u64);
         let user = by_source("agents_user_wide");
         assert!(user.path.as_deref().unwrap().ends_with(".agents/AGENTS.md"));
         assert!(user.exists && user.bytes == 10, "{user:?}"); // "user rules"
@@ -538,5 +544,71 @@ mod tests {
             .unwrap();
         assert!(!local.exists, "{local:?}");
         assert_eq!(local.bytes, 0, "{local:?}");
+    }
+
+    /// FNV-1a 64（迁移基线指纹用）。
+    fn fnv1a64(bytes: &[u8]) -> u64 {
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for byte in bytes {
+            hash ^= *byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash
+    }
+
+    /// 固定段字节指纹（change `harness-prompt-files`）：常量取自迁移前（master `81e4db01`）
+    /// `IDENTITY` / `QUOTE_REFERENCE` 字面量 trim 后的字节。**有意改 `prompts/*.md` 就是改注入
+    /// 文本**——失败信息给出实测 (hash, len)，确认是预期改动后用实测值更新此处常量；不要绕过。
+    #[test]
+    fn fixed_segments_keep_migrated_bytes() {
+        let identity = IDENTITY.trim_end();
+        let quote = QUOTE_REFERENCE.trim_end();
+        assert_eq!(
+            (
+                fnv1a64(identity.as_bytes()),
+                identity.len(),
+                fnv1a64(quote.as_bytes()),
+                quote.len(),
+            ),
+            (0xb92eb692300af983, 1345, 0x05cba54b785b843b, 1170),
+        );
+    }
+
+    /// 清单里的仓内相对路径必须真的指到嵌入的源文件（双向 grep 可达的机器判据）：
+    /// 路径常量非绝对、按 `CARGO_MANIFEST_DIR` 解析后在盘上存在，且 `trim_end()` 后与
+    /// 嵌入文本一致。文件被改名 / 挪位时 `include_str!` 会先编译失败，这里钉住路径常量不漂。
+    #[test]
+    fn fixed_segments_are_sourced_from_prompt_files() {
+        for (path, embedded) in [
+            (IDENTITY_PATH, IDENTITY),
+            (QUOTE_REFERENCE_PATH, QUOTE_REFERENCE),
+        ] {
+            assert!(
+                !path.starts_with('/') && !path.starts_with(".."),
+                "清单路径须为仓内相对路径：{path}"
+            );
+            let crate_relative = path.strip_prefix("src-tauri/").unwrap_or(path);
+            let on_disk = Path::new(env!("CARGO_MANIFEST_DIR")).join(crate_relative);
+            let file = fs::read_to_string(&on_disk).unwrap_or_else(|e| panic!("{on_disk:?}: {e}"));
+            assert_eq!(file.trim_end(), embedded.trim_end(), "{path}");
+        }
+    }
+
+    /// 固定段顺序与拼接格式（顺序是代码逻辑，change `harness-prompt-files`）：空环境里装配
+    /// 结果恰好是 identity + 摘录回指纪律两节——不随 `prompts/` 目录内容 / 枚举顺序变化，
+    /// 且文件尾换行不进入注入文本（输出不以换行结尾）。
+    #[test]
+    fn assemble_system_fixed_prefix_is_identity_then_quote_reference() {
+        let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tmpdir("home-fixed-prefix");
+        let vault = tmpdir("vault-fixed-prefix");
+        let _guard = EnvGuard::new(&home);
+        let assembled = assemble_system(&vault);
+        let expected = format!(
+            "{}\n\n===== 引用摘录的回指纪律 =====\n{}",
+            IDENTITY.trim_end(),
+            QUOTE_REFERENCE.trim_end()
+        );
+        assert_eq!(assembled.text, expected);
     }
 }
