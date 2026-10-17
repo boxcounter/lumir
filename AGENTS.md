@@ -16,7 +16,7 @@ Lumir：本地文本工作台，当前阶段定位为 Emacs keybinding PKM（[AD
 | [openspec/](openspec/) | 功能规格：living specs + change proposals（做什么）；流程见 [openspec-workflow.md](docs/process/openspec-workflow.md) |
 | [docs/specs/](docs/specs/) | 专项规格（性能测量方法学等） |
 | [docs/process/](docs/process/) | 制品流程约定 |
-| [docs/backlog.md](docs/backlog.md) | 已知 findings 与待裁决队列——**新 findings 落这里，不再积在 HANDOFF.md** |
+| [docs/backlog.md](docs/backlog.md) | 暂不修 / 待裁决的 findings 队列——新 findings 首选提议安排处理（见硬规则），这里只收暂不修的；不再积在 HANDOFF.md |
 | [REVIEW.md](REVIEW.md) | 反复踩过的坑与开工前检查清单（症状/根因/证据/防线）——**worker 动工前、reviewer 出 verdict 前必读** |
 | [scripts/acceptance/](scripts/acceptance/) | 真机验收套件（用法与场景格式见其 [README](scripts/acceptance/README.md)） |
 | [tests/visual/README.md](tests/visual/README.md) | 视觉门禁口径与基线更新纪律 |
@@ -57,11 +57,12 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 
 ## 硬规则（无其他居所）
 
-本节条目均经 Alex 裁决或在 Alex 监督下沉淀：修订、删除、降级均须 Alex 过目；诞生时间与出处靠 git 历史与 REVIEW.md 追溯，不在正文标注。**出口判据（2026-10-17 Alex 裁决）**：某条的防线被门禁脚本 / 工具完全机器化（不靠人读也能拦住）后，该条降级为指针并入相关流程文档，不再单列——降级同样须 Alex 过目。
+本节条目均经 Alex 裁决或在 Alex 监督下沉淀：修订、删除、降级均须 Alex 过目；诞生时间与出处靠 git 历史与 REVIEW.md 追溯，不在正文标注。**出口判据**：某条的防线被门禁脚本 / 工具完全机器化（不靠人读也能拦住）后，该条降级为指针并入相关流程文档，不再单列——降级同样须 Alex 过目。
 
 ### 纪律（长期有效的裁决级约束）
 
 - **HANDOFF.md 永不入 git**。
+- **findings 首选提议安排处理，不落 backlog**：发现新 finding 时，首选应对是向 Alex 提议安排处理（立项修掉），而不是默认落 backlog 排队——避免积累不必要的技术债务，有债务尽早偿还。backlog 只收「Alex 裁决暂不修 / 需等人肉节点 / 确实无法立即安排」的项。
 - **影响面升级线**：Alex 提的需求若对既有产品设定 / 逻辑 / 实现有重大影响乃至推倒重做，**先告知 Alex 并讨论，不得蛮干**。判定与举证责任在 tower / agent：规划期发现即升级；worker 实施期发现走 TowerSend 升级给 tower，由 tower 报 Alex。
 - **已裁决事项不等开工口令**：提案 / 需求一经 Alex 裁决（含「按倾向」「通过」「好」式批准），实现与后续批次由 tower 直接立项开工，**不停下来等「开始」**。只有真正缺裁决时才停：未裁的裁决点、影响面升级线（见上条）命中的事项、基线过目等人肉裁决点。
 - **基线更新是人肉裁决点**：视觉基线 `--update` 前截图须 Alex 过目，不要机械执行（[tests/visual/README.md](tests/visual/README.md)）。
