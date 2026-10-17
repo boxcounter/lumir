@@ -21,8 +21,13 @@
 
 - [x] 2.1 扩 mission scope 至 `src/style.css`：目录定位的短暂高亮必须在样式层新增一条行态规则
       （复用 `--sel` 与 eink 的 `--sel-text`，不新增 token）。scope 未扩则 §5.2 无法落地
-- [ ] 2.2 确认 `harness-path-link` 已归档（或已排进同批且顺序在前）：本 change 的 `harness` 增量是
+- [x] 2.2 确认 `harness-path-link` 已归档（或已排进同批且顺序在前）：本 change 的 `harness` 增量是
       MODIFIED，归档目标是它写入 living spec 的 requirement
+  - 归档节点确认（2026-10-17，M557）：`harness-path-link` 已先归档为
+    `openspec/changes/archive/2026-10-17-harness-path-link/`，其 delta 已并入
+    `openspec/specs/harness/spec.md`（`openspec archive` 输出 `+ 2 added`），MODIFIED 的目标
+    requirement「输出中的 vault 路径可点击」在 living spec 中在场；归档前 `validate harness-dir-link
+    --strict` 的 INFO「archive would refuse this delta … not found」随之消失。
 
 ## 3. 识别层（`src/harness-path-link.ts`）
 
@@ -93,3 +98,10 @@
 - [x] 8.3 文档回改：tasks 勾选状态、覆盖声明与实际 PASS 证据逐条对齐（REVIEW.md『覆盖声明超出真实验证』条）
       —— 7.3 已按 run-1 / run-2 的真实结果登记；162 的「卡片目录路径」登记为「真机只验链接化
       （计数），点击分发由正文点击 + 单测覆盖」；高亮节奏仍归 Alex 手感裁决
+- [x] 8.4 归档节点对账（2026-10-17，M557）：`harness-path-link` 已先归档，`validate harness-dir-link
+      --strict` 从「MODIFIED … not found」转为 valid。归档期按 CLI 的场景守卫（MODIFIED 整块替换，
+      拒绝丢弃 living spec 既有场景名）把 4 条场景名恢复为 living spec 的既有写法——正文不动，改名
+      只为保住场景标识符（`正文里的 vault 路径点开为新标签` / `不存在的路径与目录保持纯文本` /
+      `工具卡片路径可点` / `跳转不覆盖阅读位置（CL-2）`）；其中「不存在的路径与目录保持纯文本」的 WHEN
+      补上「也不命中文件树的目录模型」——原措辞「不在文件索引里」在目录可点后会与 requirement 正文
+      自相矛盾（目录本就不在文件索引里）。

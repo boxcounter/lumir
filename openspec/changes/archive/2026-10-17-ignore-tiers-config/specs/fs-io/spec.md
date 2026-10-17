@@ -1,7 +1,7 @@
 # fs-io 增量规格
 
 > 起草注记（非规格正文）：本 delta 四条 MODIFIED，基线是 living spec
-> [openspec/specs/fs-io/spec.md](../../../../specs/fs-io/spec.md) 的「全类型递归枚举」「watch 增量事件流」
+> [openspec/specs/fs-io/spec.md](../../../../../specs/fs-io/spec.md) 的「全类型递归枚举」「watch 增量事件流」
 > 「按需枚举目录」「文件级操作（删除 / 重命名 / 新建 / 定位）」。本次修订把忽略规则表的**名字来源**
 > 从代码常量改为「配置默认值 + 用户覆盖」：`hidden`（不显示）与 `lazy`（惰性可见）两档的名字由
 > `config.json` 的 `[vault]` 表给出，缺省即代码内置默认（2 + 14 = 既有 16 名）；保存临时文件模式恒定

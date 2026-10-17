@@ -62,7 +62,7 @@ hidden 档（配置名字 + 恒定临时文件模式） → lazy 档（配置名
 
 ### 2.2 名字的合法性（逐项校验）
 
-服务端校验在 `validate_vault`（[config.rs:1255](../../../src-tauri/src/config.rs#L1255)），与 `rule_files`
+服务端校验在 `validate_vault`（[config.rs:1255](../../../../src-tauri/src/config.rs#L1255)），与 `rule_files`
 逐项校验同形——**非法项丢弃 + 各自一条人话 warning，其余项照常生效**（ADR 0002 第 5 条）：
 
 | 输入 | 判定 | warning 口径（人话） |
@@ -87,7 +87,7 @@ hidden 档（配置名字 + 恒定临时文件模式） → lazy 档（配置名
 
 ### 2.3 生效时点与读取点
 
-- 读取点只有一个：`commands::prepare_vault_open`（[commands.rs:456-459](../../../src-tauri/src/commands.rs#L456)）
+- 读取点只有一个：`commands::prepare_vault_open`（[commands.rs:456-459](../../../../src-tauri/src/commands.rs#L456)）
   在构造 `IgnorePolicy` 时现场读一次 `config::load()`，把三个字段一起传下去。`config::load()` 本身就是
   「按需读盘」，不引入启动期缓存。
 - 生效时点与 `rule_files` 一致：**本次会话不变，下次装载该 vault 生效**。不新增「重扫 / 重编」通道。
@@ -128,7 +128,7 @@ hidden 档（配置名字 + 恒定临时文件模式） → lazy 档（配置名
 - **枚举代价不变**：惰性条目只出一行、不递归。change `vault-open-ignore-set` 的主动枚举量收窄
   （1,658 文件 / 2,395 条目 ⇒ scan 14.0ms + graph 51.7ms）继续成立。
 - **索引代价不变**：惰性条目仍不进链接索引与附件索引（`build_graph` 按 `lazy` 跳过，
-  [commands.rs:326](../../../src-tauri/src/commands.rs#L326)）。
+  [commands.rs:326](../../../../src-tauri/src/commands.rs#L326)）。
 - **可见条目数增加**：每个出现这些名字的目录多一行，量级是一行 / 目录，与既有条目总数相比可忽略。
 - **前端不需要新逻辑**：树的惰性行、按需展开、`lazy` 事件标记全部是既有能力（`src/tree.ts` 的
   `lazyFetched` / `onExpandLazyDir`），本 change 只是让后端把更多条目标成 `lazy`。
@@ -193,20 +193,20 @@ impl IgnorePolicy {
 
 | 使用点 | 位置 | 变化 |
 |---|---|---|
-| 全量枚举 | `scan_workspace_at`（[fs_io.rs:629](../../../src-tauri/src/fs_io.rs#L629)） | `classify` 的四层判定；`ignored` 计数只数 `Hidden` |
-| 按需枚举 | `scan_dir`（[fs_io.rs:675](../../../src-tauri/src/fs_io.rs#L675)） | 同一份 `classify`；`lazy = policy.classify == Lazy` |
-| watch 判定 | `watch_verdict`（[fs_io.rs:527](../../../src-tauri/src/fs_io.rs#L527)） | 见 §6 |
-| 新建目录的子树补全 | `expand_new_dir_subtrees`（[fs_io.rs:2282](../../../src-tauri/src/fs_io.rs#L2282)） | 已消费 `classify`，无需改判定；`Lazy` 目录不入队（既有行为） |
-| 名字校验 | `validate_new_name`（[fs_io.rs:886](../../../src-tauri/src/fs_io.rs#L886)） | 改为 `&IgnorePolicy` 上的方法：`hidden_hit(name)` 才拒；`lazy` / 用户规则不拒 |
-| 父目录补建 | `ensure_parent_dirs`（[fs_io.rs:1634](../../../src-tauri/src/fs_io.rs#L1634)） | 逐段只拒 `hidden_hit(segment)`；惰性档名字允许建在其内（建出来的文件随该目录惰性） |
-| 同名文件查找（`wikilink_create` 查重） | `find_vault_entry_by_name`（[fs_io.rs:1992](../../../src-tauri/src/fs_io.rs#L1992)） | 跳过 `hidden` 档**与配置 `lazy` 档**命中的目录；**用户规则**命中的惰性目录照旧遍历（master 行为）。理由：lazy 档默认名是构建产物 / 依赖副本，内容寻址的 `pasted-<hash>.webp` 落在其中的概率趋于零，而每次粘贴都遍历 `node_modules` 是白付 IPC 主线程的全盘成本 |
+| 全量枚举 | `scan_workspace_at`（[fs_io.rs:629](../../../../src-tauri/src/fs_io.rs#L629)） | `classify` 的四层判定；`ignored` 计数只数 `Hidden` |
+| 按需枚举 | `scan_dir`（[fs_io.rs:675](../../../../src-tauri/src/fs_io.rs#L675)） | 同一份 `classify`；`lazy = policy.classify == Lazy` |
+| watch 判定 | `watch_verdict`（[fs_io.rs:527](../../../../src-tauri/src/fs_io.rs#L527)） | 见 §6 |
+| 新建目录的子树补全 | `expand_new_dir_subtrees`（[fs_io.rs:2282](../../../../src-tauri/src/fs_io.rs#L2282)） | 已消费 `classify`，无需改判定；`Lazy` 目录不入队（既有行为） |
+| 名字校验 | `validate_new_name`（[fs_io.rs:886](../../../../src-tauri/src/fs_io.rs#L886)） | 改为 `&IgnorePolicy` 上的方法：`hidden_hit(name)` 才拒；`lazy` / 用户规则不拒 |
+| 父目录补建 | `ensure_parent_dirs`（[fs_io.rs:1634](../../../../src-tauri/src/fs_io.rs#L1634)） | 逐段只拒 `hidden_hit(segment)`；惰性档名字允许建在其内（建出来的文件随该目录惰性） |
+| 同名文件查找（`wikilink_create` 查重） | `find_vault_entry_by_name`（[fs_io.rs:1992](../../../../src-tauri/src/fs_io.rs#L1992)） | 跳过 `hidden` 档**与配置 `lazy` 档**命中的目录；**用户规则**命中的惰性目录照旧遍历（master 行为）。理由：lazy 档默认名是构建产物 / 依赖副本，内容寻址的 `pasted-<hash>.webp` 落在其中的概率趋于零，而每次粘贴都遍历 `node_modules` 是白付 IPC 主线程的全盘成本 |
 
 ### 5.3 埋点口径（`vault_scan_ignored`）
 
 - 计数点是 `scan_workspace_at` 的收口：`EntryClass::Hidden` 每命中一次 +1。
 - 新语义下它回答的问题从「被内置规则剪掉多少」变成「被 `hidden` 档（含临时文件模式）剪掉多少」。
   惰性条目有行、看得见，不属于「我的文件不见了」的诊断对象，因此**不计数**。
-- 事件名、字段（只有 `count`）、隐私口径都不变；只改 [logging.rs:483-490](../../../src-tauri/src/logging.rs#L483)
+- 事件名、字段（只有 `count`）、隐私口径都不变；只改 [logging.rs:483-490](../../../../src-tauri/src/logging.rs#L483)
   的文档注释。**不新增事件名**。
 - 读数会变小（14 名不再计入）——这是口径随语义移动的必然结果，不是缺陷；对照时以「0 之外仍有计数」
   为正向见证（确有大目录被挡下）。
@@ -214,8 +214,8 @@ impl IgnorePolicy {
 ## 6. watch 事件的核实结论（起草期核实的耦合点）
 
 核实范围：事件从 `fs_io::watch` 的回调投递前，判定只发生在 `watch_verdict` 一处
-（[fs_io.rs:527](../../../src-tauri/src/fs_io.rs#L527)）；投递之后，`commands.rs` 的 `apply_fs_changes`
-（[commands.rs:344-395](../../../src-tauri/src/commands.rs#L344)）只消费 payload 的 `lazy` 决定索引增量，
+（[fs_io.rs:527](../../../../src-tauri/src/fs_io.rs#L527)）；投递之后，`commands.rs` 的 `apply_fs_changes`
+（[commands.rs:344-395](../../../../src-tauri/src/commands.rs#L344)）只消费 payload 的 `lazy` 决定索引增量，
 **不重算规则**。结论：
 
 1. **事件路径的判定结构不变，只是层数从二变三**：
@@ -261,7 +261,7 @@ impl IgnorePolicy {
 调用点：
 
 - `commands.rs`：`fs_rename_entry` / `fs_move_entry` / `fs_create_file` / `fs_create_dir` 改用既有
-  `state.root_and_policy()`（[commands.rs:288](../../../src-tauri/src/commands.rs#L288)）；`fs_trash_entry`
+  `state.root_and_policy()`（[commands.rs:288](../../../../src-tauri/src/commands.rs#L288)）；`fs_trash_entry`
   不涉及名字校验，签名不变。
 - `src-tauri/src/harness/tools.rs`：`vault_create` / `vault_move` 两个调用点要传策略。`ToolContext` 目前只有
   `root`，因此需要把策略带进 `ToolContext`（构造点在 `harness.rs`）。这两个文件**已按裁决扩入实现范围**（预计 3 处签名 / 构造改动）。
