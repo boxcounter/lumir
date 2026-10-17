@@ -2439,9 +2439,6 @@ export interface PathLinkRenderContext {
   open(path: string, line?: number): void;
 }
 
-/** 禁止再链接化的上下文（锚元素内部：不产嵌套可点元素）。 */
-const NO_PATH_LINKS: PathLinkRenderContext = { isLinkable: () => false, open: () => {} };
-
 /** 可点路径元素：button 而非 `<a href>`——不引入 webview 的默认导航与中键点击路径；可聚焦、
  *  Enter 触发；可见文本与 title 逐字等于模型原文（含行号后缀）。候选来自模型输出，这里只
  *  持有已通过索引校验的路径，打开动作交给装配层（面板不拼路径、不判文件系统）。 */
@@ -2567,7 +2564,8 @@ function renderInlineNode(
         el.textContent = textOf(doc, node).replace(/^<|>$/g, "");
       } else {
         // 锚内部不再产可点元素：嵌套锚在 HTML 里不合法，且这段文本已有自己的导航语义。
-        renderInlineChildren(el, node, doc, ctx === undefined ? undefined : NO_PATH_LINKS);
+        // 不传上下文（而不是传一个「永远不可点」的上下文）——省掉一次无谓的候选扫描。
+        renderInlineChildren(el, node, doc);
       }
       container.append(el);
       return;

@@ -70,8 +70,10 @@ function lineSuffixAt(text: string, at: number): { line?: number; column?: numbe
   LINE_SUFFIX.lastIndex = at;
   const match = LINE_SUFFIX.exec(text);
   if (match === null) return { end: at };
-  // 后缀之后必须是非路径字符（`a.md:12x` 不是行号引用）。
-  if (isPathCharAt(text, at + match[0].length)) return { end: at };
+  // 后缀之后必须不是 ASCII 路径延续（`a.md:12x` / `a.md:12/5` 不是行号引用）。中文紧跟
+  // 行号则是行文（「见 a.md:12 的内容」常写成「见a.md:12的内容」）——中文是候选字符，
+  // 不能拿它当「路径还在继续」的判据。
+  if (/[A-Za-z0-9_.\-/]/.test(text[at + match[0].length] ?? "")) return { end: at };
   const line = Number(match[1]);
   if (!Number.isInteger(line) || line < 1) return { end: at };
   const column = match[2] === undefined ? undefined : Number(match[2]);

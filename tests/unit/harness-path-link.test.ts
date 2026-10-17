@@ -100,11 +100,18 @@ test("畸形后缀不吞下一步文本（:0 / :12x / :12:）", () => {
 
   const glued = findPathCandidates("a.md:12x", indexOf("a.md"));
   assert.equal(glued.length, 1);
-  assert.equal(glued[0].line, undefined, "后缀后紧跟路径字符 ⇒ 不是行号引用");
+  assert.equal(glued[0].line, undefined, "后缀后紧跟 ASCII 路径字符 ⇒ 不是行号引用");
 
   const trailingColon = findPathCandidates("a.md:12:", indexOf("a.md"));
   assert.equal(trailingColon.length, 1);
   assert.equal(trailingColon[0].line, 12, "尾随冒号不影响已闭合的 :12 后缀");
+});
+
+test("行号后紧跟中文是行文边界，不是路径延续（见a.md:12的内容）", () => {
+  const found = findPathCandidates("见a.md:12的内容", indexOf("a.md"));
+  assert.equal(found.length, 1);
+  assert.equal(found[0].line, 12);
+  assert.equal(found[0].text, "a.md:12", "可点范围含行号、不含行文里的「见 / 的内容」");
 });
 
 test("绝对路径、.. 穿越、空段在结构层被拒绝（谓词恒 true 也不产候选）", () => {
