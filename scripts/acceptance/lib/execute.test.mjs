@@ -195,6 +195,53 @@ test("运行期兜底：零断言场景判 FAIL，不记绿", async () => {
   assert.equal(status, "FAIL", "零断言场景的终态必须是 FAIL");
 });
 
+test("裸串含正则转义 ⇒ 静态校验判 problem（M556：M553 的假 FAIL 形态）", () => {
+  const scenario = (steps) => ({ id: "bare-escape", item: 0, steps });
+  // 每个字段都走 matcher()：裸串按子串匹配，`\(` / `\.` / `\d` 永远命中 0 次。M553 的场景
+  // 161/162 正是在 `ax.count.pattern` 上踩到（元素都在、断言假红），故逐处覆盖。
+  const cases = [
+    ["ax.count.pattern", { expect: [{ ax: { count: { pattern: "AXButton \\(path-link-target\\.md\\)", exact: 1 } } }] }],
+    ["ax.has", { expect: [{ ax: { has: "AXStaticText \\(LIMIT\\)" } }] }],
+    ["ax.not", { expect: [{ ax: { not: "AXButton \\(停止\\)" } }] }],
+    ["ax.focused", { expect: [{ ax: { focused: "AXTextArea\\d" } }] }],
+    ["editor.has", { expect: [{ editor: { has: "keys\\.md" } }] }],
+    ["file.not", { expect: [{ file: { path: "probe.md", not: "\\[\\[wiki" } }] }],
+    ["clipboard.has", { expect: [{ clipboard: { has: "loose\\?ly" } }] }],
+    ["waitFor.has[0]", { do: "waitFor", waitFor: { has: ["AXButton \\(发送\\)"] } }],
+    ["verify.pattern", { do: "key", key: "cmd+v", verify: { pattern: "hello\\.md" } }],
+    ["verify.target.any", { do: "key", key: "cmd+v", verify: { pattern: "ok", target: { any: "AXTextArea \\(composer\\)" } } }],
+    ["do=drag 的 selection", { do: "drag", target: { x: 10, y: 10 }, dx: 5, dy: 0, selection: "AXButton \\(摘录\\)" }],
+    ["geom.target.any", { expect: [{ geom: { target: { any: "AXStaticText \\(ctx\\)" } } }] }],
+    ["target.any", { do: "click", target: { role: "AXButton", any: "AXButton \\(notes\\)" } }],
+    ["target.help", { do: "click", target: { role: "AXGroup", help: "```mermaid\\.x" } }],
+    ["target.anchor.any", { do: "hover", target: { anchor: { any: "AXStaticText \\(ctx\\)" }, offsetX: 10, offsetY: 0 } }],
+  ];
+  for (const [field, step] of cases) {
+    const problems = checkScenario(scenario([{ name: `覆盖 ${field}`, ...step }]));
+    assert.ok(
+      problems.some((p) => p.includes(field) && p.includes("正则转义") && p.includes("写成 /…/ 形态")),
+      `${field} 的裸串转义应判 problem 并提示改 /…/ 形态，实际：${JSON.stringify(problems)}`,
+    );
+  }
+});
+
+test("不误伤：/…/ 形态、裸正则源字段、字面反斜杠都不判（M556 的反向验证）", () => {
+  const scenario = (steps, extra = {}) => ({ id: "no-escape-hit", item: 0, steps, ...extra });
+  const steps = [
+    // `/…/` 形态：转义正是要写的（M553 修好后的形态）。
+    { name: "正则形态", expect: [{ ax: { count: { pattern: "/AXButton \\(path-link-target\\.md\\)/", exact: 1 } } }] },
+    // `target.name` / `marker` / `glob.pattern` 是裸正则源，不经 matcher —— `\.` 在那里是对的。
+    { name: "裸正则源定位", do: "click", target: { role: "AXButton", name: "^path-link-target\\.md$" } },
+    { name: "路径 glob", expect: [{ glob: { dir: ".", pattern: "\\.json$" } }] },
+    // 字面反斜杠：LaTeX 的 `\int`（场景 02）与 JSONL 里的 `\n` 都不是正则转义。
+    { name: "LaTeX 字面量", expect: [{ editor: { not: "\\int_0^1 x^2" } }] },
+    { name: "JSONL 转义字面量", expect: [{ file: { path: "probe.md", has: "\\n\\n" } }] },
+    // 纯子串：没有转义，照旧。
+    { name: "普通子串", expect: [{ ax: { has: "AXButton (发送)" } }] },
+  ];
+  assert.deepEqual(checkScenario(scenario(steps, { marker: "第 15 章 概览\\s*正文" })), []);
+});
+
 test("全库场景静态校验通过（--check 的真实通道）", () => {
   const out = execFileSync(process.execPath, [path.join(repoRoot(), "scripts/acceptance/run.mjs"), "--check"], {
     encoding: "utf8",

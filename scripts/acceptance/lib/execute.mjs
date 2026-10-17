@@ -61,10 +61,40 @@ const FILE_JUDGE_KEYS = [
   "exists", "changedSince", "unchangedSince", "mtimeUnchangedSince", "mtimeNewerThan", "has", "not",
 ];
 
+/** 只可能出自「以为在写正则」的转义序列（M556）：转义元字符，或 `\d` / `\w` / `\s` 这类字符组。
+ *  `\n` / `\t` 与 `\\` 不在内——裸串里它们是**字面量**（匹配 JSONL / 代码里的 `\n`、转义的反斜杠
+ *  本身），有正当写法；`\int` 这类也不是正则转义（场景 02 的 LaTeX 判据即此）。 */
+const REGEX_ESCAPE = /\\(?:[(){}[\]|.*+?^$]|[dDwWsSbB])/;
+
+/** 一个 `matcher()` 判据值的形态问题（M556）：返回命中的转义序列，无问题返回 null。
+ *
+ *  `matcher()`（本文件下方）对**不带 `/…/` 包裹**的串按**子串**匹配，只有 `/…/` 才解成正则。
+ *  裸串里写 `\(` / `\.` / `\d` 时，子串找的是「反斜杠 + 字符」两字符序列，而被匹配文本里只有
+ *  字符本身 ⇒ 永远命中 0 次：正向断言恒假红、负向断言恒绿。M553 的场景 161/162 首跑即此（AX
+ *  证明元素都在、断言假红），故 `--check` 挡住这个形态。
+ *
+ *  不在此判的两类：① `/…/` 形态（正则，转义正是要写的）；② `target.name` / `marker` /
+ *  `glob.pattern` 这些**裸正则源**字段——它们不走 `matcher()`，`\.` 在那里是对的。 */
+function barePatternEscape(value) {
+  if (typeof value !== "string" || value.length <= 1) return null;
+  if (value.startsWith("/") && value.endsWith("/")) return null;
+  return REGEX_ESCAPE.exec(value)?.[0] ?? null;
+}
+
 /** 静态校验一个场景，返回问题列表（空 = 通过）。 */
 export function checkScenario(scenario) {
   const problems = [];
   const push = (m) => problems.push(`${scenario.id}: ${m}`);
+  /** 走 `matcher()` 的判据值形态检查（M556）：`where` 是给人看的字段路径（`steps[2](名字) expect[0] ax.has`）。 */
+  const pushBare = (where, value) => {
+    const hit = barePatternEscape(value);
+    if (!hit) return;
+    push(
+      `${where} 的裸串含正则转义「${hit}」：matcher() 对不带 /…/ 的串按**子串**匹配，` +
+        "子串找的是「反斜杠 + 字符」两字符序列，永远命中 0 次（正向断言恒假红、负向断言恒绿）；" +
+        "要正则语义请写成 /…/ 形态",
+    );
+  };
   if (!scenario.id) push("缺少 id");
   if (scenario.item === undefined) push("缺少 item");
   if (scenario.open && !scenario.marker) push(`open=${scenario.open} 但没写 marker（无法判断是否打开成功）`);
@@ -346,6 +376,23 @@ export function checkScenario(scenario) {
         }
       }
     }
+    // 步骤级判据的裸串形态（M556）：`waitFor` 清单与 chord `verify.pattern` 同 `ax` 断言一样走
+    // `matcher()`；`do: drag` 的 `selection` 也是。节点定位里只有 `any` / `help` 走 `matcher()`
+    // （`target.name` 是裸正则源，`\.` 在那里是对的，别拿来判）。`verify.target` 是**嵌套的**
+    // 回读目标定位（`verifyReadValue` → `findByAny`），与步骤的 `target` 不是同一处，单独列。
+    if (step.do === "drag") pushBare(`${at} do=drag 的 selection`, step.selection);
+    if ((step.do === "key" || step.do === "keys") && isPlainTable(step.verify)) {
+      pushBare(`${at} 的 verify.pattern`, step.verify.pattern);
+      pushBare(`${at} 的 verify.target.any`, step.verify.target?.any);
+    }
+    if (step.do === "waitFor" && isPlainTable(step.waitFor)) {
+      for (const k of ["has", "not"])
+        for (const [n, s] of (Array.isArray(step.waitFor[k]) ? step.waitFor[k] : []).entries())
+          pushBare(`${at} do=waitFor 的 waitFor.${k}[${n}]`, s);
+    }
+    pushBare(`${at} 的 target.any`, step.target?.any);
+    pushBare(`${at} 的 target.help`, step.target?.help);
+    pushBare(`${at} 的 target.anchor.any`, step.target?.anchor?.any);
     for (const [j, exp] of (step.expect ?? []).entries()) {
       const kinds = Object.keys(exp).filter((k) => k !== "label");
       if (kinds.length !== 1) push(`${at} expect[${j}] 应恰好一个断言形态，实际 ${JSON.stringify(kinds)}`);
@@ -412,6 +459,8 @@ export function checkScenario(scenario) {
         const spec = exp.geom;
         if (!spec.target || (spec.target.name === undefined && spec.target.any === undefined))
           push(`${at} expect[${j}] geom 断言缺 target.name/any（节点定位）`);
+        // 几何断言的 target 是**嵌套**定位（`findByAny` → `matcher()`），与步骤级 `target` 无关。
+        pushBare(`${at} expect[${j}] geom.target.any`, spec.target?.any);
         for (const k of ["minWidth", "minHeight"])
           if (spec[k] !== undefined && (typeof spec[k] !== "number" || spec[k] <= 0))
             push(`${at} expect[${j}] geom.${k} 需要正数，实际 ${JSON.stringify(spec[k])}`);
@@ -427,6 +476,20 @@ export function checkScenario(scenario) {
           if (!["target", "minWidth", "minHeight", "painted"].includes(k))
             push(`${at} expect[${j}] geom 未知键 ${k}（拼错即静默不判）`);
         }
+      }
+      // 断言判据的裸串形态（M556）：这四处走 `matcher()`，裸串按子串匹配。不在此列的是同一
+      // 断言形态里的**逐字 / 读数 / 坐标**判据（`clipboard.exact`、file 的 sha256 与 mtime、
+      // 像素与窗口几何），它们不经过 matcher。
+      if (kinds.length === 1) {
+        const spec = exp[kinds[0]] ?? {};
+        const judged =
+          kinds[0] === "ax"
+            ? { has: spec.has, not: spec.not, focused: spec.focused, "count.pattern": spec.count?.pattern }
+            : ["editor", "file", "clipboard"].includes(kinds[0])
+              ? { has: spec.has, not: spec.not }
+              : {};
+        for (const [field, value] of Object.entries(judged))
+          pushBare(`${at} expect[${j}] ${kinds[0]}.${field}`, value);
       }
     }
   }
