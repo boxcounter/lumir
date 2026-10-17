@@ -89,7 +89,7 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 | 有机器验收的开发（做完须过 gate / 测试 / 验收场景判定）；文案 / 文档 / 数值类、机械批量活；代码库探索定位（explore） | `deepseek/deepseek-flash` |
 | 视觉机械改动：样式值替换、视觉场景断言 / 文案 / fixture 调整、基线重截执行、原型 HTML——派发前先要求把期望效果写成机器断言（断言先行） | `deepseek/deepseek-flash` |
 | 机械核验与证据复跑：mission tasks 对账、门禁输出比对、scope 越界检查、gate / 验收套件复跑、截图归档 | `deepseek/deepseek-flash` |
-| 无机器验收的判断类开发（交互手感、新功能设计、结构调整）；探针 / 探错类步骤（结果未知、需设计退路，探针通过后的照章实现段仍归 deepseek） | `Kimi For Coding/kimi-for-coding` |
+| 无机器验收的判断类开发（交互手感、新功能设计、结构调整）；探针 / 探错类步骤（结果未知、需设计退路，探针通过后的照章实现段仍归 deepseek） | `deepseek/deepseek-flash` |
 | 复杂任务、review 判断层、像素表现本身的改动（`src/style.css` 全局面、`src/preview/**` 渲染语义）——「看着对不对」是唯一判据的活 | `Kimi For Coding/k3-256k` |
 | k3 1M | **禁用** |
 
