@@ -52,7 +52,7 @@ const MERMAID_CONFIG_STATIC: Record<string, unknown> = {
 };
 
 // 色值真源是 style.css 的三组 :root[data-theme] 块，这里只读计算值、不登记
-// 任何色值（REVIEW.md 第 8 条：不留第二处真源）。theme: "base" 是 themeVariables
+// 任何色值（REVIEW.md 「同一语义两处真源」条：不留第二处真源）。theme: "base" 是 themeVariables
 // 完整生效的前提；primary/secondary/tertiary 三档派生出流程图的 mainBkg/
 // nodeBorder 等槽位，其余键覆盖连线/箭头、cluster、edge label 与 sequence 图。
 // eink 档的 token 取值本身保证「黑描边 + 白填充 + tint 退场」（--accent = #000、
@@ -272,7 +272,7 @@ export function ensureMermaidRender(source: string): MermaidRenderState {
   const pending: MermaidRenderState = { status: "pending" };
   renderCache.set(source, pending);
   // 世代号在**入队时**取（不是 settle 回调里现读）：回调执行的那一刻世代号可能已被主题切换
-  // 推进过，那时再读就永远相等、守卫形同不存在（REVIEW.md 第 1 条「看着有覆盖、实际不判」）。
+  // 推进过，那时再读就永远相等、守卫形同不存在（REVIEW.md 「断言等价于子串」条「看着有覆盖、实际不判」）。
   const generation = themeGeneration;
   void renderQueued(source).then((result) => {
     // 迟到的旧主题结果：丢弃——不写缓存、不通知 settle、**不重排队**。重渲由切换时派发的

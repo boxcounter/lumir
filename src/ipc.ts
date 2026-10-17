@@ -397,7 +397,7 @@ export type HarnessEvent = HarnessEventEnvelope &
     // `context_window` / `has_usage`——`context_window` 为 0 = 无上限值、`has_usage` 为
     // 「有没有真读数」）是同一份载荷的另一半：**事件/快照同键同值不变量（M534）**——本成员与
     // `harness_state` 快照的 `usage` SHALL 携带同一组读数键（两者同吃 Rust `UsageSnapshot`
-    // 的一份序列化），加字段即两端同改、MUST NOT 各列一份键清单（REVIEW.md 第 8 条）。
+    // 的一份序列化），加字段即两端同改、MUST NOT 各列一份键清单（REVIEW.md 「同一语义两处真源」条）。
     // 合同条款见 openspec/specs/harness/spec.md 的「usage 事件与状态快照同键同值」scenario。
     | { type: "usage"; ctx_pct: number; cache_pct_session: number; cache_pct_turn: number; cache_write_tokens: number; cache_write_tokens_session: number; cache_note: "cold_start" | "block_dilution" | null; input_tokens: number; cached_tokens: number; cached_tokens_session: number; context_window: number; has_usage: boolean }
     | { type: "compact"; summary: string }

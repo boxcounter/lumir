@@ -1,6 +1,6 @@
 // 文案取值层（M282，change ui-language-i18n）：双列文案表 + 占位插值 + 语言读取 + 重绘注册。
 //
-// 分层（REVIEW.md 第 8 条：同一语义不留两处真源）：
+// 分层（REVIEW.md 「同一语义两处真源」条：同一语义不留两处真源）：
 //   - 本模块：`t()` / `tPlural()` 的取值与插值、运行期当前语言的**读取**（真源是
 //     `<html lang>`，本模块不缓存）、`Intl` 格式化、以及长驻 chrome 的重绘注册表；
 //   - src/copy-data.ts：**唯一的文案数据**（每键 zh / en 两列，键 = 文案 deck 的 D 编号）；
@@ -88,7 +88,7 @@ export function nextLanguage(current?: Language | null): Language {
  * - 上屏列锁定条目（`lock`）无视当前语言，恒取锁定列——M257 裁定的三条标签菜单项
  *   （D149–D151）就是这样变成长驻英文的（design §4.5）；
  * - 缺参**报错**而不是留一个空槽：`{name}` 原样上屏既看不懂也查不出，正是要防的静默失败
- *   （REVIEW.md 第 1 条）；多余的参数不报错（向前兼容，调用点可以先备好参数）。
+ *   （REVIEW.md 「断言等价于子串」条）；多余的参数不报错（向前兼容，调用点可以先备好参数）。
  */
 export function t(
   key: CopyKey,

@@ -9,7 +9,7 @@ import { DEMO_VAULT, documentWrites, fileText, sessionPuts, stubTauri, type Vaul
 // 抢不到那个窗口——那边的场景因此只覆盖「保存未闭环 → 不切换」这一支（任务 4.2 的原文）。
 // 这里用真实前端 + 桩后端直连 DOM 事件，没有注入耗时，三条出口都能确定性走完，
 // 并且用桩的 `document_save` / `vault_session_put` 调用记录做**写动作**级别的判据
-// （「放弃后没写盘」这类负向断言没有观测点就会空转，REVIEW.md 第 2 条）。
+// （「放弃后没写盘」这类负向断言没有观测点就会空转，REVIEW.md 「读不到当成空」条）。
 
 const VAULT_A = "fixture-vault";
 const VAULT_B = "fixture-vault-b";

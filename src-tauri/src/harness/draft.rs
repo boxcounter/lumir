@@ -9,8 +9,7 @@
 //! 错误（design §3；附件那张丢掉的图会被误以为已投递，草稿不会）。
 //!
 //! **本模块只做搬运**：载荷是前端序列化的块模型 JSON（`{"version":1,"blocks":[…]}`），后端
-//! **不解析、不解释其结构**——(反)序列化的唯一实现点在 `src/quote-card.ts`（REVIEW.md 第 8
-//! 条：同一语义不造两处真源）。IPC 面因此是 JSON String（`harness` 模块的既有纪律：命令
+//! **不解析、不解释其结构**——(反)序列化的唯一实现点在 `src/quote-card.ts`（REVIEW.md「同一语义两处真源」条）。IPC 面因此是 JSON String（`harness` 模块的既有纪律：命令
 //! 返回值不为此新增 ts-rs 类型，见 `harness.rs` 模块头），也不产生新的 bindings 导出。
 //!
 //! **写入纪律**：tmp + rename 原子替换（与 `reading_position.rs` / `vault_session.rs` 同，

@@ -8,7 +8,7 @@
 //   ⑤ **协议零编号**——不含 index 或任何序号属性（一致性原则，Alex 2026-10-06）。
 //
 // 这里自己实现一个最小 XML 解析器（parseMessage）而不是复用被测的转义函数：round-trip 若
-// 用同一个 escape 去 unescape 就是自证，判不出转义缺失（REVIEW.md 第 1 条：断言必须有区分度）。
+// 用同一个 escape 去 unescape 就是自证，判不出转义缺失（REVIEW.md 「断言等价于子串」条：断言必须有区分度）。
 // 属性集合断言（恰为 file/heading/lines 三个键）是「零编号」的主判据——比 `!includes("index")`
 // 强：任何多出来的序号 / id 属性都会红，不依赖属性名恰好叫 index。
 //

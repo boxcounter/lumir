@@ -63,7 +63,7 @@ steps:
       - label: 焦点落在编辑器正文里（键盘注入的前置）
         ax: { focused: "AXTextArea" }
 
-  - name: 抢前台（同机别的 app 抢走前台时后台注入的 chord 会丢键——REVIEW.md 第 11 条）
+  - name: 抢前台（同机别的 app 抢走前台时后台注入的 chord 会丢键——REVIEW.md 「键盘注入丢键」条）
     do: focusWindow
     retries: 4
 

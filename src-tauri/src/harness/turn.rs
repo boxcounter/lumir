@@ -89,11 +89,11 @@ pub fn parse_context(context_json: &str) -> Result<ContextBlock, CommandError> {
 }
 
 /// 注入节的形态定义——装配（[`assemble_user_message`]）与剥离（[`strip_context_section`]）
-/// 都只从这里取，形态不在两处各写一份（REVIEW.md 第 8 条：同一语义两处真源会漂）。
+/// 都只从这里取，形态不在两处各写一份（REVIEW.md 「同一语义两处真源」条：同一语义两处真源会漂）。
 /// 节头同时是节本身的开头（[`context_section`] 产出）。
 pub const CONTEXT_SECTION_HEADER: &str = "当前编辑器上下文：";
 /// 提问与注入节之间的空行分隔。`pub(crate)`：parts 装配（`attachments::apply_context_section`）
-/// 与串装配（`assemble_user_message`）同取这一条，不在两处各写一份（REVIEW.md 第 8 条）。
+/// 与串装配（`assemble_user_message`）同取这一条，不在两处各写一份（REVIEW.md 「同一语义两处真源」条）。
 pub(crate) const CONTEXT_SECTION_SEPARATOR: &str = "\n\n";
 /// 注入节的方括号（`[当前编辑器上下文：…]`）。
 const CONTEXT_SECTION_OPEN: &str = "[";
@@ -138,7 +138,7 @@ pub struct AssembledMessage {
 
 /// 给上下文节加方括号（`[当前编辑器上下文：…]`）——装配的唯一出口：
 /// `assemble_user_message`（串装配）与 `attachments::apply_context_section`（parts 装配）
-/// 同取这一条，方括号形态不在两处各写一份（REVIEW.md 第 8 条）。
+/// 同取这一条，方括号形态不在两处各写一份（REVIEW.md 「同一语义两处真源」条）。
 pub fn bracket_context_section(section: &str) -> String {
     format!("{CONTEXT_SECTION_OPEN}{section}{CONTEXT_SECTION_CLOSE}")
 }
@@ -285,8 +285,7 @@ pub fn run_turn_for(
     // user 消息入队（LLM 侧 + 面板侧 + JSONL + 上下文节记录，压缩重注入用）。
     // 上下文节由调用侧从 ContextBlock **同一次生成**并传入（装配与存储同源，M309）——
     // 不再从拼好的 message 里重解析（正文含 `\n\n[` 时会串味）。投递 parts 与面板文本是
-    // 同一块序列的两个投影，由 attachments 模块同一组函数产出（design §4.2，REVIEW.md
-    // 第 8 条）；会话侧（input 项 / JSONL）恒为引用形态，base64 展开只在 client 发送前。
+    // 同一块序列的两个投影，由 attachments 模块同一组函数产出（design §4.2，REVIEW.md「同一语义两处真源」条）；会话侧（input 项 / JSONL）恒为引用形态，base64 展开只在 client 发送前。
     let enqueue = runtime.with_session(scope, |s| {
         let parts =
             super::attachments::apply_context_section(parts.into().0, context_section.as_deref());
@@ -423,7 +422,7 @@ pub fn run_turn_for(
         let assistant_text = output.text.clone();
         // 本轮 usage 的累计与读数（M443）：入口是 [`session::Session::record_usage`]——先累加
         // 本逻辑会话的计数、再算全部读数并返回快照。返回值同时喂快照（会话状态）与事件两条
-        // 通道：同一份算法一处产出，MUST NOT 各算一套（REVIEW.md 第 8 条）。
+        // 通道：同一份算法一处产出，MUST NOT 各算一套（REVIEW.md 「同一语义两处真源」条）。
         let turn_usage = output.usage;
         let mut usage_snapshot = None;
         let _ = runtime.with_session(scope, |s| {
@@ -666,7 +665,7 @@ fn record_llm_request(
 /// HTTP 面诊断字段的追加（M463 起）：`http_status` / `raw_body`（已截断，见
 /// `llm::ERROR_BODY_MAX_CHARS`）/ `body_truncated` / `request_id` 按在场与否追加——
 /// `llm_error` sidecar 与 `llm_response` 的错误分支**共用这一处**（记录形状单一真源，
-/// REVIEW.md 第 8 条）；网络层失败、mock 脚本化错误、流内错误没有 HTTP 面，什么都不会
+/// REVIEW.md 「同一语义两处真源」条）；网络层失败、mock 脚本化错误、流内错误没有 HTTP 面，什么都不会
 /// 追加（新键缺席 = 该错误没有 HTTP 面，**不是**空值）。
 fn append_error_diagnostics(payload: &mut serde_json::Value, error: &llm::TurnError) {
     if let Some(status) = error.http_status {
@@ -687,7 +686,7 @@ fn append_error_diagnostics(payload: &mut serde_json::Value, error: &llm::TurnEr
 /// 其余按在场与否由 [`append_error_diagnostics`] 追加。
 ///
 /// 抽成纯函数：① 单测不必起 HTTP 服务就能钉记录形状；② 记录形状只有这一处产出（免得
-/// 记录点与测试各拼一份，REVIEW.md 第 8 条）。
+/// 记录点与测试各拼一份，REVIEW.md 「同一语义两处真源」条）。
 fn llm_error_payload(error: &llm::TurnError) -> serde_json::Value {
     let mut payload = serde_json::json!({
         "kind": "llm_error",
@@ -869,7 +868,7 @@ fn handle_call(
     call: &llm::ToolCall,
 ) -> (serde_json::Value, serde_json::Value) {
     // 参数摘要：live「started」事件与面板快照（M367 持久化）共用同一份，MUST NOT 各算各的
-    // （REVIEW.md 第 8 条：同一语义两处真源）。
+    // （REVIEW.md 「同一语义两处真源」条：同一语义两处真源）。
     let args_summary = summarize_args(&call.arguments);
     sink.emit(events::tool_call(&call.name, "started", &args_summary));
     let parsed: Result<serde_json::Value, _> = serde_json::from_str(&call.arguments);
@@ -1293,7 +1292,7 @@ fn truncate_history_line(text: &str) -> String {
 }
 
 /// 参数摘要：live `started` 事件、面板持久化（M367）与恢复重建（M398，从 wire 的
-/// function_call 项取参数）共用同一份——MUST NOT 各算各的（REVIEW.md 第 8 条）。
+/// function_call 项取参数）共用同一份——MUST NOT 各算各的（REVIEW.md 「同一语义两处真源」条）。
 ///
 /// **命令本体恒在最前**（M528）：cli_run 的 arguments 是模型现写的 JSON，键序不定。原样按
 /// [`SUMMARY_LIMIT`] 截断时，`args` 排在 `command` 前面就会把命令本体切掉，面板上
@@ -1458,7 +1457,7 @@ mod tests {
     /// M353：一轮对话（含工具调用）之后，`harness_state` 快照的每条消息都带 `ts`
     /// （UNIX 秒，与 JSONL 留存同口径），随消息顺序单调不减，取值落在本轮的真实时窗内。
     ///
-    /// 判据的区分度（REVIEW.md 第 1 条）：`0` 占位、缺字段、写死常量、毫秒口径、跨天
+    /// 判据的区分度（REVIEW.md 「断言等价于子串」条）：`0` 占位、缺字段、写死常量、毫秒口径、跨天
     /// 复用的旧戳一律落在 `[before, after]` 之外。时窗两端由本测试用 std **独立**取时，
     /// 不复用被测的 `jsonl::unix_secs_now`——复用的话取时本身坏掉两边会一起错。
     #[test]
@@ -1473,7 +1472,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("lumir-harness-ts-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md 第 13 条：测试绝不写真实的 ~/.config/lumir）。
+        // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md 「测试污染真实环境」条：测试绝不写真实的 ~/.config/lumir）。
         let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
         std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
 
@@ -1548,7 +1547,7 @@ mod tests {
     /// M534 回归：live 路径（真 turn 循环发出的 `usage` 事件）与 `harness_state` 快照携带
     /// **同一组读数键与同一个值**——含 M526 的绝对值键。
     ///
-    /// 区分度（REVIEW.md 第 1 条）：修前 `events::usage` 手列七个键（`type` + M443 的六个），
+    /// 区分度（REVIEW.md 「断言等价于子串」条）：修前 `events::usage` 手列七个键（`type` + M443 的六个），
     /// 绝对值键整体缺席；前端 `usageReadings` 读不到 `input_tokens` / `context_window`，live
     /// 会话的 tokens 气泡按 D395 回落百分比形态（M534 现场：同一会话切 vault 回来走快照路径
     /// 却显示「已用 65.5k / 131k tokens」）。把 `events::usage` 换回手列清单时本用例即红。
@@ -1557,7 +1556,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("lumir-harness-usage-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md 第 13 条：测试绝不写真实的 ~/.config/lumir）。
+        // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md 「测试污染真实环境」条：测试绝不写真实的 ~/.config/lumir）。
         let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
         std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
 
@@ -1649,7 +1648,7 @@ mod tests {
             assembled.context_section.as_deref(),
             Some(expected_bracketed.as_str())
         );
-        // 区分度自证（REVIEW.md 第 1 条）：旧实现按 `split("\n\n[")` 从拼好的串重解析，
+        // 区分度自证（REVIEW.md 「断言等价于子串」条）：旧实现按 `split("\n\n[")` 从拼好的串重解析，
         // 切出的是正文里的方括号段落——与新实现返回的节不同，证明这个输入确能判出旧 bug。
         let naive_old = body.split("\n\n[").nth(1).map(|rest| format!("[{rest}"));
         assert_ne!(naive_old.as_deref(), Some(expected_bracketed.as_str()));
@@ -1677,7 +1676,7 @@ mod tests {
         let assembled =
             assemble_user_message("这句话是什么意思？", &block_with_selection("选中文本"));
         // 现场先自证是真注入（装配确实加了节），再断言剥离结果——否则「剥完 = 原样」的
-        // 断言在没有节时恒真（REVIEW.md 第 1 条）。
+        // 断言在没有节时恒真（REVIEW.md 「断言等价于子串」条）。
         assert!(assembled.text.contains(CONTEXT_SECTION_HEADER));
         assert_eq!(strip_context_section(&assembled.text), "这句话是什么意思？");
         // 无注入：原样返回，不吞任何字符。
@@ -1712,7 +1711,7 @@ mod tests {
             section,
             format!("{CONTEXT_SECTION_HEADER}\n文件：a/b.md\n视口（第 3-7 行）")
         );
-        // 区分度（REVIEW.md 第 1 条）：旧实现在无 text 时落「（无文本）」占位——本断言挡它。
+        // 区分度（REVIEW.md 「断言等价于子串」条）：旧实现在无 text 时落「（无文本）」占位——本断言挡它。
         assert!(!section.contains("（无文本）"));
         // 全文装配：提问 + 空行 + 方括号节，节里只有路径与行号。
         let assembled = assemble_user_message("看这里", &block);
@@ -1752,7 +1751,7 @@ mod tests {
             std::env::temp_dir().join(format!("lumir-harness-toolsum-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md 第 13 条：不写真实 ~/.config/lumir）。
+        // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md 「测试污染真实环境」条：不写真实 ~/.config/lumir）。
         let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
         std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
 
@@ -1834,7 +1833,7 @@ mod tests {
         // ③ M372（k3-256k `text content is empty` 的根因面）：工具轮的空正文 assistant 项
         // 不得留在 input 里——它原样进下一次请求，Kimi Code 订阅端即整条 400。修复前
         // input 的形状是 [user, assistant(""), fc1, fc2, fco1, fco2, assistant("读完了。")]，
-        // 本条对那条空正文项必 FAIL（区分度自证，REVIEW.md 第 1 条）。
+        // 本条对那条空正文项必 FAIL（区分度自证，REVIEW.md 「断言等价于子串」条）。
         let input = runtime
             .with_session(&scope, |s| s.input().to_vec())
             .expect("会话在释放后仍在");
@@ -1898,7 +1897,7 @@ mod tests {
         );
     }
 
-    /// 超限退回（REVIEW.md 第 6 条：覆盖声明要与真实验证一致）：拼接后超过工具行摘要的字符预算即
+    /// 超限退回（REVIEW.md 「覆盖声明超出真实验证」条：覆盖声明要与真实验证一致）：拼接后超过工具行摘要的字符预算即
     /// 退回 plain，MUST NOT 呈现被截断的半截规则名。边界两侧都判——恰好等于上限仍带规则原文，
     /// 多一个字符即退回。
     #[test]

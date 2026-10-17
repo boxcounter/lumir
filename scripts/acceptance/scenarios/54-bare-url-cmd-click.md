@@ -11,7 +11,7 @@ steps:
     expect:
       - label: 裸 URL 装饰上屏——URL 原文本身仍在场（它没有可隐藏的源码），尾标紧跟其后
         editor: { has: '/example\.invalid\/bare54↗/' }
-      - label: 同一份文档里 `www.` 字面保持原文——负向断言，配对正观测是上面那条（REVIEW.md 第 2 条）
+      - label: 同一份文档里 `www.` 字面保持原文——负向断言，配对正观测是上面那条（REVIEW.md 「读不到当成空」条）
         editor: { not: '/www\.example\.invalid↗/' }
       - label: "反引号包裹的 `www.` 字面本身可读（正向锚点：这一读是活的，不是空值）"
         editor: { has: "www.example.invalid" }
@@ -89,7 +89,7 @@ steps:
     # URL 区间内」，本场景按后者构造（用户的自然动作也是点到 URL 上）。
     # **⌃B 同时是这条铺垫的见证**：光标进到 URL 区间后该处装饰被撤下（显露判据 = 光标落在节点范围内），
     # 下面那条 `not: /home54↗/` 因此是「光标真的到了」的正观测——丢键会红在这条上，而不是让后面的
-    # 日志断言空过（REVIEW.md 第 2 条）。
+    # 日志断言空过（REVIEW.md 「读不到当成空」条）。
     do: keys
     keys: ["ctrl+e", "ctrl+b"]
     expect:
@@ -204,7 +204,7 @@ Alex 原话（2026-09-27）：「普通链接（不是 markdown 标准语法 [ti
 |---|---|---|
 | 装饰上屏 | **编辑器 AX 文本**（`URL↗` 紧邻形态） | 尾标是 DOM 里的 widget，AXTextArea.value 包含它（`12-links` 的 `第一条外链↗` 同款） |
 | URL 原文仍在场 | 同一条：`example.invalid/bare54` 仍是可见文本 | 这三种形态**没有可隐藏的源码**，唯一的隐藏是形态 4 的两个尖括号 |
-| 不装饰的面 | `editor: { not: …↗ }` + 同一份文档里的正观测 | REVIEW.md 第 2 条：负向断言必须配正观测，否则「查询恒 null」也绿 |
+| 不装饰的面 | `editor: { not: …↗ }` + 同一份文档里的正观测 | REVIEW.md 「读不到当成空」条：负向断言必须配正观测，否则「查询恒 null」也绿 |
 | 打开路径 | **诊断日志 `link_open`（category=external / outcome=opened）+ 日志 sha256 变化** | 真机日志**不含 URL 原文**（隐私边界），因此「开的是哪一个 URL」判不了；那条由 chromium 场景 `render-link.spec.ts` 的 `window.__openedUrls` 断言承担。真机能判的是「确实又落了一条外链打开事件」——所以第二、三次打开都先 `record` 日志基线再比 sha256 |
 | 不改文档 | 编辑器文本 `unchangedSince` + 文件 sha256 与 mtime 双比 | ADR 0003 §3 铁律：装饰层与激活路径都 MUST NOT 写文档 |
 

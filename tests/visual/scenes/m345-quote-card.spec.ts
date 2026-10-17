@@ -353,7 +353,7 @@ test("跳回高亮：点卡片跳回原文并瞬态高亮，~1.4s 后退场", as
  *  造现场，判据是 `geom`（包围盒在视口内 + 已绘制）。真机那条通道（键盘注入 + AX 包围盒）在
  *  chromium 里没有对应断言，这里补上：前提（全选真的建出越界选区）与结论（钮被收进容器）
  *  都判一遍——真机上「⌘A 丢键」的后果因此是**钮不在场**（红），不会静默通过。
- *  读 fixture 原文而不是抄一份：抄一份就是第二份真源（REVIEW.md 第 8 条）。 */
+ *  读 fixture 原文而不是抄一份：抄一份就是第二份真源（REVIEW.md 「同一语义两处真源」条）。 */
 test("钳制：真机场景 160 的前提在本层可复现（全选 ⇒ 选区双向越界 ⇒ 钮被收进容器）", async ({ page }) => {
   const src = readFileSync(new URL("../../../scripts/acceptance/fixtures/code-block-fullscreen.md", import.meta.url), "utf8");
   await stubTauri(page, {

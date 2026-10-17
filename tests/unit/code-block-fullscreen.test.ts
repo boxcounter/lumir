@@ -9,7 +9,7 @@
 //
 // 不在这一层（DOM 行为，归 tests/visual/scenes/m277-code-block-fullscreen.spec.ts 与真机场景
 // 62）：遮罩真实开合、内容几何、折行两口径的滚动几何、命中条件（caret 在块内 / 容器持焦 / code
-// 模式恒假）——最后一条要 view，无 DOM 的层里写出来只会是恒真断言（REVIEW.md 第 1 条）。
+// 模式恒假）——最后一条要 view，无 DOM 的层里写出来只会是恒真断言（REVIEW.md 「断言等价于子串」条）。
 //
 // **阅读位置不变量（关闭交还焦点 MUST NOT 拽走视口）在本层测不到**：它是浏览器在聚焦时的视口
 // 行为，chromium 结构性看不见（M274 的消融实验）。守卫分两层：视觉场景的位置断言（回归护栏）
@@ -115,7 +115,7 @@ test("已关闭后的迟到关闭是空操作；开-关-开序列成立", () => 
 
 test("状态机是共用的一份（表格全屏与代码块全屏同源）", () => {
   // 形态守卫：同一份 createOverlayState 既能驱动 HTMLElement（表格）也能驱动渲染计划
-  //（代码块）——两张浮层的关闭语义因此不可能各写一套而漂移（REVIEW.md 第 8 条）。
+  //（代码块）——两张浮层的关闭语义因此不可能各写一套而漂移（REVIEW.md 「同一语义两处真源」条）。
   const seen: string[] = [];
   const state = createOverlayState<number>({
     load: (n) => void seen.push(`load:${n}`),

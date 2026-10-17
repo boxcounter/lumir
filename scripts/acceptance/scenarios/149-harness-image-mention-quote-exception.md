@@ -24,7 +24,7 @@ steps:
     expect:
       - label: 焦点落在编辑器正文里
         ax: { focused: "AXTextArea" }
-  - name: 抢前台（后台注入的 chord 被抢前台时会丢键——REVIEW.md 第 11 条）
+  - name: 抢前台（后台注入的 chord 被抢前台时会丢键——REVIEW.md 「键盘注入丢键」条）
     do: focusWindow
     retries: 4
   - name: 光标下移到第 3 行

@@ -17,7 +17,7 @@ import { readDocument } from "./parity-checks";
 // 重建谁先谁后」那条同帧竞态。真机侧的像素判据在
 // `scripts/acceptance/scenarios/64-*.md`（本缺陷的真机通道，chromium 判据不能替代它）。
 //
-// 反向对照（断言不许恒真，REVIEW.md 第 1 条）：
+// 反向对照（断言不许恒真，REVIEW.md 「断言等价于子串」条）：
 //   ① 空选区时不许有任何 `.cm-selectionBackground`——否则「覆盖」谓词会退化成「总有一层」；
 //   ② 紧邻选区两端的字符**不得**被覆盖。
 //

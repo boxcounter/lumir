@@ -6,7 +6,7 @@
 // 语义是**上限**：窗口不够宽时中列收缩到可用宽度。token 写在 `documentElement` 上
 //（与 typography 的 `--editor-font-size` 同一条路），天然覆盖全部会话与 md/code 两种模式。
 //
-// 三处出厂默认写值的处置（与 font_size 同族，REVIEW.md 第 8 条）：Rust
+// 三处出厂默认写值的处置（与 font_size 同族，REVIEW.md 「同一语义两处真源」条）：Rust
 // `src-tauri/src/config.rs` 的 `DEFAULT_CONTENT_WIDTH` / 本文件的 `DEFAULT_CONTENT_WIDTH` /
 // `src/style.css` 的 `--layout-doc-measure` 默认值。三处同值、互指注释、各有断言钉住，
 // 改一处必须同步其余两处。

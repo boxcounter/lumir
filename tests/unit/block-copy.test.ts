@@ -3,7 +3,7 @@
 // 这一层钉的是**切片口径本身**（哪些字符落在结果里、有没有尾换行），用真 markdown 解析器与真
 // EditorState，不碰 DOM、不碰 view。触发钮的 hover 行为、剪贴板落地、文档逐字节不变归
 // chromium 视觉场景与真机场景 61（`scripts/acceptance/scenarios/61-block-copy.md`）——
-// 那些在无 DOM 的层里写出来只会是恒真断言（REVIEW.md 第 1 条的假绿形态）。
+// 那些在无 DOM 的层里写出来只会是恒真断言（REVIEW.md 「断言等价于子串」条的假绿形态）。
 //
 // 三条口径对应 delta 的正文：表格 = `Table` 节点源码切片（含表头分隔行与对齐填充）；围栏块 =
 // `CodeText` 切片（不含围栏行与语言标记）；缩进块 = 相邻 `CodeText` 拼接（剥语法缩进、保留相对

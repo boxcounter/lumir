@@ -208,7 +208,7 @@ export class CuClient {
    *  落点）。只传进来的字段，不补缺省值：KimiCU 侧「没给就是没给」，补 0 会变成另一种语义。
    *
    *  自报 `ok:false`（没检测到位移 / 已到末尾）由 `call()` 一律抛 CuError——那一刻**不许当成功**
-   *  静默放过：后面的「某行在视口内」类断言会对着没滚动的现场判红/假绿（REVIEW.md 第 2 条同族）。 */
+   *  静默放过：后面的「某行在视口内」类断言会对着没滚动的现场判红/假绿（REVIEW.md 「读不到当成空」条同族）。 */
   async scroll(pid, { index, page, dx, dy, x, y } = {}) {
     const args = { pid };
     for (const [k, v] of Object.entries({ index, page, dx, dy, x, y })) {

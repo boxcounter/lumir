@@ -7,7 +7,7 @@
 // 此前这三段住在 src/editor.ts 的 facade 里，只有 facade 的持有者（src/main.ts）能用；M280 把
 // 其余四条「以 `view.focus()` 交还焦点」的路径也收进来（src/toc.ts / src/search.ts /
 // src/preview/livePreview.ts），它们手里只有裸 EditorView——**同一个语义不许有第二份实现**
-// （REVIEW.md 第 8 条），所以抽到独立模块，facade 与它们共用同一份。
+// （REVIEW.md 「同一语义两处真源」条），所以抽到独立模块，facade 与它们共用同一份。
 //
 // 本模块 MUST NOT import src/editor.ts（facade 反向 import 它）：否则 src/search.ts 这类被
 // editor.ts 依赖的模块一 import 就成环。

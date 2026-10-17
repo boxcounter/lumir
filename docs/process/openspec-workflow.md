@@ -50,7 +50,7 @@ spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 
 
 **禁止只写「沿用既有设计系统」打发视觉层**：这句话对实现者不构成可执行口径、对 reviewer 不构成可判据——合同只写了行为，视觉层就落进无人负责的真空，实现照合同把行为做对、形态走样，评审按合同核验也抓不到（现场：harness pane，2026-10-06，Alex「粗糙、美观度为零」）。失效点在起草期：worker / reviewer 进场前合同已定稿，补记在别处都晚一步。
 
-验收口径按**观感一致**而非逐像素：原型若是独立 HTML，其字体度量、数据内容都与产品不同，逐像素在技术上不可达、追求它只会逼出假对齐。核对用**并排截图对照**（原型截图 vs 实现截图），不追求像素相等。
+验收口径按**观感一致**而非逐像素：原型若是独立 HTML，其字体度量、数据内容都与产品不同，逐像素在技术上不可达、追求它只会逼出假对齐。核对用**并排截图对照**（原型截图 vs 实现截图），不追求像素相等。**reviewer 出 verdict 前必须做这一步对照**：合同里没有的真源，实现者不会补、reviewer 按合同文字也无从核——「相对原型的偏差」只有并排截图看得见（REVIEW.md「原型只提取行为」条的两次现场）。
 
 原型已退役（`design/prototypes/` 目录随实现落地删除）而屏位原文仍有用的，从 git 历史提取——`git show <退役提交>^:<原型路径>`——把屏位要点落进本节（先例：`openspec/changes/archive/2026-10-06-move-harness-to-pane-chat-frame/design.md` §9「屏位设计合同附节」，从 `4e011d6^:design/prototypes/phase2-harness-chat/` 提取）。手感 / 审美类（拖拽节奏、动效曲线）显式标注「归 Alex 手感裁决，不进机器判据」，不留含糊。
 
@@ -80,6 +80,7 @@ spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 
 - [ ] **归档后核对新建 capability 的 Purpose**：`archive` 会为新建的 living spec 写入占位 Purpose（`TBD - created by archiving change …`），`validate --all --strict` 会因此报红——须手写替换为「这个 capability 是干什么的」，再跑一次 validate 确认全绿。
 - [ ] **backlog 卫生（2026-10-12 Alex 裁决）**：本批核销 / 裁决落地的条目**直接从 `docs/backlog.md` 删除、不留索引**（git 历史即台账；含仍在生效的长期口径时改移「承接残项」）；条目一律一行 gist + 证据指针，批次报告与全量回归总表只留指针；只记改变未来动作的信息（结论 / 待办 / 裁决点 / 复现口径）——过程性验证状态（「跑完、PASS」类）不入账（2026-10-16 Alex 裁决，口径见该文件头部「维护规则」）；顺带检查体量红线——`wc -l docs/backlog.md` 超 **300** 行即触发一次结构清理（口径见该文件头部的「维护规则」；无核销/僵尸项可清时记「已查」即过，不为压行数删活条目）。
 - [ ] **finding 落账率对账（2026-10-12 Alex 认可）**：本批 `.tower/comms/findings/` 新增文件数与 `docs/backlog.md` 新增条目数逐一核对，不等即查漏——漏落账的 finding 等于没登记。
+- [ ] **复发对账（2026-10-17 Alex 裁决）**：本批踩的坑若命中 REVIEW.md 已有条目（含已固化删除、只存于 git 历史的条目），复发 = 居所没拦住——先查防线该不该往更近的居所搬（人读 → tower 注入 → 机器门禁）或改写，不是只往该条证据里补一行现场。
 - [ ] **新条目准入与引用写法自检（2026-10-12 Alex 认可）**：本批新增的「待 Alex 裁决」条目只收**价值取舍 / 产品语义**类（答案客观可核的由 tower 直接裁并记录）；跨文件引用 backlog 条目一律用**主题关键词锚**，不用编号 / 行号。
 - [ ] **版本与打包（仅本批需要交付安装包时）**：按 `docs/process/release.md` 执行——semver 口径、bump 面（`src-tauri/tauri.conf.json` 的 `version` 为唯一真源，`package.json` / `Cargo.toml` / `Cargo.lock` 同步；视觉桩钉死 9.9.9 不跟随）、打包前置条件、产物路径与 sha256 记录惯例均以该文为 canonical（M522 落地，2026-10-15）。
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/openspec-links.sh — OpenSpec 制品内相对链接的可达性检查。
 #
-# 背景（docs/backlog.md 的 M256 节「归档不重写相对链接、目录深度 +1 无门禁」）：
+# 背景（docs/backlog.md「归档不重写相对链接、目录深度 +1 无门禁」条，git 历史）：
 # `openspec archive` 把 change 目录移进 `archive/<日期>-<id>/`（深一层）却不重写制品内的相对
 # 链接，而 `openspec validate` 不查链接可达性、docs-check.sh 此前只覆盖 docs/adr ⇒ 归档留下的
 # 死链既无机器门禁、也无人核对（M150 修 17 处、M253 修 25 处、M331 修 27 处，都是事后扫尾）。
@@ -15,9 +15,9 @@
 #   2. **行内代码跨度与围栏代码块内**的链接——markdown 渲染器不把它们渲染成链接，它们是正文里
 #      描述链接语法的示意例子（如 `attachment-display/spec.md` 里 Scenario 正文的
 #      `![截图](./assets/shot.png)`）。M155 坐实过这类误报，处置口径是「示意例子写进行内代码」
-#      （docs/backlog.md 的 M155 节）；
+#      （docs/backlog.md「示意例子写进行内代码」条，git 历史）；
 #   3. **非路径形态**的裸占位词（无目录分隔符且末段无扩展名，如 `[title](link)`、`[配置](配置)`）
-#      ——同为正文里的示意例子，docs/backlog.md 的 M155 节把 `[配置](配置)` 直接点名为要排除的形态。
+#      ——同为正文里的示意例子，backlog 同条把 `[配置](配置)` 直接点名为要排除的形态。
 #
 # 依赖：纯 bash + find/awk/sort，不引入新依赖（CI 的 docs-check.yml 直接 `bash` 调本脚本，
 # ubuntu runner 无需额外安装）。

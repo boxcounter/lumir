@@ -35,7 +35,7 @@ test("code 模式文件在视图层可编辑：键盘与 DOM 注入都真的进�
   await expect(content).toHaveAttribute("contenteditable", "true");
   await expect(content).toHaveAttribute("aria-readonly", "false");
 
-  // 键盘输入必须进文档（回读文档文本，不是只看属性——REVIEW.md 第 1 条的假可编辑形态）。
+  // 键盘输入必须进文档（回读文档文本，不是只看属性——REVIEW.md 「断言等价于子串」条的假可编辑形态）。
   await content.click();
   await page.keyboard.type("KEYED");
   await expect(content).toContainText("KEYED");

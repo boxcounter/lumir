@@ -5,7 +5,7 @@
 //   - `resolveGotoLine`：解析 + 钳制，`tests/unit/goto-line.test.ts` 直接断言；
 //   - `createGotoLinePrompt`：浮层 DOM、就地键消费、`focusout` 收起。**落点与滚动不在这里**
 //     ——它复用编辑器既有的 `revealLine`（MUST NOT 另写一套「行号 → 位置 → 滚动」的算式，
-//     REVIEW.md 第 8 条），确认路径由装配层注入的 `onJump` 承担。
+//     REVIEW.md 「同一语义两处真源」条），确认路径由装配层注入的 `onJump` 承担。
 //
 // 挂点与定位口径照 `.lumir-toc`（`src/toc.ts` 是同一形态的先例）：浮层 append 到
 // `shell.modeline`，`position: absolute; bottom: 100%` 紧贴 modeline 上沿向上展开——这是

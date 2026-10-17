@@ -196,7 +196,7 @@ spec「会话本地留存」MODIFIED 的布局条款：会话落 `<config_dir>/h
 - **A 侧先判 B 目录为空**（`glob … exact: 1`）：证明「另一 vault 不被写入」不是靠 B 的会话
   恰好没写出来，而是在 A 的整轮里根本没有第二份留存。
 - **A 侧的浮层判据是「浮层恰一行」而不是「浮层里有 pvaultalpha」**：会话名也出现在标题栏的
-  会话名钮上，`has: "pvaultalpha"` 在没有浮层时同样成立（REVIEW.md 第 1 条：判据要有区分度）；
+  会话名钮上，`has: "pvaultalpha"` 在没有浮层时同样成立（REVIEW.md 「断言等价于子串」条：判据要有区分度）；
   行数（`删除该会话` 钮个数）才只可能来自 `harness_list_sessions` 的返回。
 - **B 侧先开一个文档再开面板**：与其余 harness 场景同形（有打开文档才有上下文 chip），
   也让 B 的 pane 处在最常见的用户现场。

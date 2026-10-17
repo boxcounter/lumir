@@ -84,7 +84,7 @@ spec「composer 草稿自动保存与恢复」的无 identity 分支：**无 vau
 - **「不报错」的判据是 D456 文案不在场**：草稿保存失败的人话出口只有这一条（写失败 →
   `harness_draft_write_failed` → D456），它出现即说明命令真的被发出且失败了。配一条**正观测**
   （「上次打开的 vault 已不可用」仍在、输入区文本仍在），避免「AX 读不到 ⇒ 负向恒真」
-  （REVIEW.md 第 2 条）。
+  （REVIEW.md 「读不到当成空」条）。
 - **`glob` 复核用 `.*` 通配**：任何形态的文件（`.json` / `.json.tmp` / 别的）都算落盘。
 - **无 vault 的现场用场景 16 的失效 last_vault 构造**：`configWrite` 的 `lastVault` 参数 +
   `requireVault: false`（本步重启放宽就绪门——未打开空态下树里没有 `.md` 行），与 16 逐字同源。

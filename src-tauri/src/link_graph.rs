@@ -1215,7 +1215,7 @@ mod tests {
     #[test]
     fn frontmatter_limit_matches_ts_constant() {
         // 上限的唯一真源在 src/preview/frontmatter.ts；本常量是第二份，改动只落到一处即静默
-        // 漂移（REVIEW.md 第 8 条），故机械断言两侧相等。
+        // 漂移（REVIEW.md 「同一语义两处真源」条），故机械断言两侧相等。
         let source = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../src/preview/frontmatter.ts"

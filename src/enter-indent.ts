@@ -6,7 +6,7 @@
 // `node --experimental-strip-types` 对参数属性直接报 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`
 //（不支持会生成代码的语法）。本模块只依赖 CM 的 state / view / commands 与 markdown 语言包，
 // 没有 DOM 依赖、没有参数属性，因此单测跑的是**生产那份判定本身**，不是复刻一份
-//（REVIEW.md 第 8 条：同语义不许两处真源）。
+//（REVIEW.md 「同一语义两处真源」条：同语义不许两处真源）。
 //
 // 装配：`src/editor.ts` 的 `modeExtensions` 把它装成 `Prec.highest(keymap.of([{ key: "Enter" }]))`，
 // 只在编辑器内核里生效。**MUST NOT 进统一键位表**（`src/keys.ts` 的 KEY_BINDINGS）：
@@ -26,7 +26,7 @@
 //    item 列表的空第二项」走的是「插空行把列表变松、marker 保留」分支（`- a\n- ` → `- a\n\n- `），
 //    与裁决冲突，故这里用上游导出的工厂函数以 `{ nonTightLists: false }` 关掉该分支——其余路径
 //    （续写、有序重排、引用）与默认配置逐字节一致，仍是同一份上游实现，不是抄来的副本
-//   （REVIEW.md 第 8 条）。该委派在 `autoIndent` 检查**之前**：空项退出是列表语义的一部分，
+//   （REVIEW.md 「同一语义两处真源」条）。该委派在 `autoIndent` 检查**之前**：空项退出是列表语义的一部分，
 //    与缩进开关无关（D5a 的不对称照旧：关掉自动缩进不影响列表 / 引用续行）；
 // 2. 其余上下文：`insertNewlineAndIndent` 自动缩进——有缩进规则的语言取语法缩进
 //    （`getIndentation`），取不到时它自己回落到「光标所在行的行首空白」（md 围栏与缩进代码块、
@@ -96,7 +96,7 @@ export function enterWithAutoIndent(
 //   沿用；无序 = 同标记），光标落在新 marker 之后。
 // 两态都是**单次 dispatch**（一次 Enter = 一次撤销步）。光标在 marker 之前（行首结构
 // 前缀内）时不接管——回到行首 Enter 的默认行为（该行之前插空行），与 M399 对真实列表
-// 项的钉固同口径。判定与渲染层同源（REVIEW.md 第 8 条），MUST NOT 在此复写一份。
+// 项的钉固同口径。判定与渲染层同源（REVIEW.md 「同一语义两处真源」条），MUST NOT 在此复写一份。
 
 /** 光标所在行是裸 marker 行时的 Enter 分派；非裸行 / 只读 / 光标在 marker 前返回 false。 */
 export function enterBareMarkerLine(view: EditorView): boolean {

@@ -66,7 +66,7 @@ test("降级：元信息读不到 = 整体隐藏 + 全部空串（宽窄同口�
     const view = identityView(null, flags);
     assert.equal(view.visible, false);
     assert.equal(view.versionInModeline, false);
-    // MUST NOT 渲染假版本号：三处文本全空，不存在「占位串」这种中间态（REVIEW.md 第 2 条）
+    // MUST NOT 渲染假版本号：三处文本全空，不存在「占位串」这种中间态（REVIEW.md 「读不到当成空」条）
     assert.equal(view.name, "");
     assert.equal(view.version, "");
     assert.equal(view.modelineText, "");

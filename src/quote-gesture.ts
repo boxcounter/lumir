@@ -70,7 +70,7 @@ export function parseQuoteLines(raw: string): { start: number; end: number } | n
  *
  * 链的构造与 toc 浮层的「当前位置链」同构：按文档序扫描，遇同级或更浅标题先弹出栈里更深的
  * 条目——栈里恒是「从文档根部到当前位置」的最深链。分隔符取 toc 的 PATH_SEPARATOR
- * （单一来源，MUST NOT 在这里另写一份「›」字面量，REVIEW.md 第 8 条）。
+ * （单一来源，MUST NOT 在这里另写一份「›」字面量，REVIEW.md 「同一语义两处真源」条）。
  */
 export function quoteContextOf(
   headings: readonly QuoteHeading[],

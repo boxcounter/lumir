@@ -15,7 +15,7 @@
 // 用哪个选区来判。
 //
 // 窗口的关闭路径必须齐全——指针在窗外抬起时浏览器可能不再派发 mouseup，窗口不关会让
-// 显露永久停在被冻住的那一帧（静默失效，REVIEW.md 第 16 条同族）：抬起 / 失焦 / 文档
+// 显露永久停在被冻住的那一帧（静默失效，REVIEW.md 「标题栏 preventDefault」条同族）：抬起 / 失焦 / 文档
 // 变化三条，后者在 StateField 里兜底。
 
 import { EditorSelection, StateEffect, StateField } from "@codemirror/state";

@@ -33,7 +33,7 @@ import { stubTauri, configGets } from "./tauri-stub";
 //
 // **本批的不变量是「值逐值不变」**，所以断言分两层（缺一层就退化成假绿）：
 //   ① **值**：元素的计算色 == 归属 token 的计算值（三主题；eink 是被改写的那一档）；
-//   ② **归属**（REVIEW.md 第 1 条的防线，区分度自证）：把归属 token 临时改成一个三主题都不用的
+//   ② **归属**（REVIEW.md 「断言等价于子串」条的防线，区分度自证）：把归属 token 临时改成一个三主题都不用的
 //      探测色，元素的计算色 MUST 跟着变。**写死字面值的声明不会跟着变**——修前跑本文件时
 //      eink 用例全红在 ②、①全绿，正是「值不变、只是不再硬编码」这件事的签名。
 //
@@ -127,7 +127,7 @@ const SELECTORS: Record<string, { sel: string; prop: string; pseudo?: string }> 
   typeLabelZh: { sel: ".cm-lp-callout-type-zh", prop: "color" },
 };
 /** 元素数量**逐个钉死**（不是「读不到就跳过」）：callout 的两种**行**都在场（提示行 + 正文行
- *  都带 `cm-lp-callout-line`），故它期望 2；其余各 1。数量不符即 FAIL——REVIEW.md 第 2 条
+ *  都带 `cm-lp-callout-line`），故它期望 2；其余各 1。数量不符即 FAIL——REVIEW.md 「读不到当成空」条
  *  的「读不到 ≠ 为空」在这层的落点。 */
 const EXPECTED_COUNTS: Record<string, number> = {
   codePlate: 1,
@@ -141,7 +141,7 @@ const EXPECTED_COUNTS: Record<string, number> = {
 
 /** 页面侧：把 token 计算值 + 各表面的读数一次读齐（同一帧，避免中途状态变化）。
  *  `counts` 与读数用同一选择器：元素缺失时 count 立刻暴露（**读不到 ≠ 为空**，
- *  REVIEW.md 第 2 条），读数落在 `null` 上不许静默通过。 */
+ *  REVIEW.md 「读不到当成空」条），读数落在 `null` 上不许静默通过。 */
 function collect(page: Page): Promise<Snapshot> {
   return page.evaluate(
     ({ selectors, vars }) => {

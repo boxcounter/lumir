@@ -5,7 +5,7 @@
 // `src/preview/lists.ts` 的 `bareListMarkerLine`（纯函数，与 `listLineInfo` 同一形态），
 // Enter 行为跑的是生产键位命令体本体 `src/enter-indent.ts` 的 `enterWithAutoIndent`
 //（与 tests/unit/enter-indent.test.ts 同一假 view 手法）。两处都是生产那一份判定，
-// 不是复刻（REVIEW.md 第 8 条）。
+// 不是复刻（REVIEW.md 「同一语义两处真源」条）。
 //
 // 缺陷背景（Alex 2026-10-12 dogfood 原话）：「当我输入『1. 』（注意：有空格）……时，
 // 没有自动进入列表编辑模式，这不符合预期。」机制：空列表项按 CommonMark 不能打断
@@ -116,7 +116,7 @@ test("判定：`1)` 分隔符、行首缩进、引用前缀三形态", () => {
 test("判定：语法树已认作列表项首行的形态 MUST NOT 命中（真源唯一，不许两层抢）", () => {
   // 空行之后 / 文档首行——lezer 把「1. 」解析成 OrderedList 的空项，既有渲染与
   // M399 退出行为已覆盖；裸 marker 判定 MUST NOT 把这些行也判进来（同语义两处真源
-  // 会分叉，REVIEW.md 第 8 条）。
+  // 会分叉，REVIEW.md 「同一语义两处真源」条）。
   assert.equal(detect("1. ", 1), null, "文档首行的「1. 」已被语法树接管");
   assert.equal(detect("para\n\n1. ", 3), null, "空行后的「1. 」已被语法树接管");
   assert.equal(detect("para\n\n- ", 3), null, "空行后的「- 」已被语法树接管");

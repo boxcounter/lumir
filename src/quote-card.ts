@@ -192,7 +192,7 @@ export type DeliveryPart =
   | { kind: "image"; name: string; label: string };
 
 /**
- * 同一块序列的两个投影（design §4.2，REVIEW.md 第 8 条：同一语义 MUST 只有一处产出）：
+ * 同一块序列的两个投影（design §4.2，REVIEW.md 「同一语义两处真源」条：同一语义 MUST 只有一处产出）：
  * `panelText` 是面板/transcript/快照用的单字符串（图片块落成 `<image …/>` 占位元素），
  * `parts` 是投递给模型的 content parts。两者由**同一个函数**产出，不可能漂。
  */
@@ -314,13 +314,13 @@ export function serializeQuoteMessage(blocks: readonly ComposerBlock[]): string 
 //
 // 草稿是**存储形态**，与投递形态（`serializeQuoteMessage` 的面板文本投影）分开：投影是有损的
 // （`headingPath` 不序列化、图片缺省宽高丢），块模型才是 composer 的真模型，天然无损 round-trip。
-// 本段是「块模型 ⟺ 草稿 JSON」的**唯一实现点**（design §2 的单源纪律，REVIEW.md 第 8 条）：
+// 本段是「块模型 ⟺ 草稿 JSON」的**唯一实现点**（design §2 的单源纪律，REVIEW.md 「同一语义两处真源」条）：
 // Rust 侧只做搬运、不解析内容（`src-tauri/src/harness/draft.rs`）。
 // ---------------------------------------------------------------------------
 
 /**
  * 草稿 schema 版本（首版即终态）。版本不符按「没有草稿」处理、不尝试解释——草稿零存量，
- * 不存在旧格式消费者，不写迁移分支（REVIEW.md 第 21 条：先问「消费者是谁」）。
+ * 不存在旧格式消费者，不写迁移分支（REVIEW.md 「变更默认直接切断」条：先问「消费者是谁」）。
  */
 export const DRAFT_VERSION = 1;
 
@@ -366,7 +366,7 @@ function positiveNumber(value: unknown): number | undefined {
 /**
  * 草稿 JSON → 块序列 / 光标。**拿不到合法草稿一律返回 `null`**（空串 / 非 JSON / 版本不符 /
  * `blocks` 非数组 / 任一**已知**块类不成形），调用方据此安静回落到空的单段落输入区——
- * 判据是「是否拿到合法草稿」，不是 `text ?? ""`（REVIEW.md 第 2 条：读不到与为空不是一回事）。
+ * 判据是「是否拿到合法草稿」，不是 `text ?? ""`（REVIEW.md 「读不到当成空」条：读不到与为空不是一回事）。
  *
  * **未知块类保守保留**：`kind` 不在已知集合内的块原样返回（未来的块类落地前也不丢内容，
  * 与既有的「解析未知元素 MUST NOT 静默丢文」同口径）。已知块类则逐个校验到「能被 composer

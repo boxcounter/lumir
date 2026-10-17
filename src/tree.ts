@@ -36,7 +36,7 @@ export type DisplayKind = "dir" | "md" | "image" | "other";
  *
  * 逐项对账在 `tests/unit/tree-paths.test.ts` 的「内置名字表与 Rust 侧 BUILTIN_NAMES 逐项对账」
  * （它解析那份 Rust 源比对，漂移即红——与 `registry-drift.test.ts` 守
- * `SAVE_REJECTED_EXTENSIONS` 同一手法，REVIEW.md 第 8 条）。
+ * `SAVE_REJECTED_EXTENSIONS` 同一手法，REVIEW.md 「同一语义两处真源」条）。
  *
  * **用户规则**（vault 自己的 `.gitignore` / `.git/info/exclude`）命中的名字**不在这里**：
  * 那样名字本来就可见、可打开，只是不进索引，新建 / 改名 MUST NOT 被拒（design §3.2）。
@@ -101,7 +101,7 @@ export function validateEntryName(raw: string, siblings: ReadonlySet<string>): s
  * `from/` 子树下时换成 `to` 下对应位置；其余返回 undefined（不受影响）。
  *
  * 文件改名 = 单路径替换，目录改名 = 子树前缀替换，两条形态共用这一份判定——MUST NOT 在
- * 调用点各写一套前缀逻辑（REVIEW.md 第 8 条）。**放在这里而不是 editor.ts**：editor.ts
+ * 调用点各写一套前缀逻辑（REVIEW.md 「同一语义两处真源」条）。**放在这里而不是 editor.ts**：editor.ts
  * 顶部会拉起 CodeMirror 与预览层，单测层导入不了它（类型剥离跑不动预览层的构造器参数
  * 属性），而这条判定必须能被直接单测（tests/unit/tree-paths.test.ts）。
  */
@@ -179,7 +179,7 @@ const DRAG_MIME = "application/x-lumir-tree-path";
  *
  * **为什么住在这个模块**：它与文件树共用同一条事件流与同一份路径语义（级联删除口径必须一致），
  * 而 `src/main.ts`（真正的消费者）无法被单测层导入——它顶层 import 了 `./style.css` 并且一上手
- * 就要挂载 app。抽成纯函数放这里，是为了让这三条口径能被直接单测（REVIEW.md 第 1 条：判定落不到
+ * 就要挂载 app。抽成纯函数放这里，是为了让这三条口径能被直接单测（REVIEW.md 「断言等价于子串」条：判定落不到
  * 可复现的断言上就等于没有）。
  */
 export function patchAttachmentPaths(paths: string[], change: FsChange): string[] {
@@ -193,7 +193,7 @@ export function patchAttachmentPaths(paths: string[], change: FsChange): string[
   return paths;
 }
 
-/** 路径 → 末段（basename）。**全前端唯一一份**（REVIEW.md 第 8 条）：文件树的行名与 *  vault 名（都落在这里的侧栏头，M211 起 vault 名没有第二个展示位）、标签可见文本
+/** 路径 → 末段（basename）。**全前端唯一一份**（REVIEW.md 「同一语义两处真源」条）：文件树的行名与 *  vault 名（都落在这里的侧栏头，M211 起 vault 名没有第二个展示位）、标签可见文本
  *  （tabs.ts）、切换器列表行与守卫提示（vault-switcher.ts / main.ts）全部消费它。空末段
  *  （路径以 `/` 收尾）回落到整串，与「根目录 / 空串」这类退化输入下的既有口径一致。
  *

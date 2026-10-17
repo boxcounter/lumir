@@ -369,7 +369,7 @@ fn is_overflow(preset: &ProviderPreset, code: &str, message: &str) -> bool {
 
 /// mock 的 overflow 判定：脚本要能写出**任一家 provider** 的方言（fixture 与实现同 PR，
 /// 验的就是「认不认这条话术」），故对全部 provider 预设取**并集**。旧实现是一份硬编码的
-/// 两串列表（第二事实源，REVIEW.md 第 8 条），且漏掉了 M463 给 kimi 补的 coding 端点话术
+/// 两串列表（第二事实源，REVIEW.md 「同一语义两处真源」条），且漏掉了 M463 给 kimi 补的 coding 端点话术
 /// 「model token limit」——那条形态在 mock 驱动下因此永远判不出 overflow。
 fn is_overflow_any(code: &str, message: &str) -> bool {
     [&KIMI_PRESET, &DEEPSEEK_PRESET]
@@ -417,7 +417,7 @@ pub trait LlmClient: Send {
     /// 本轮请求是否会带 `include:["reasoning.encrypted_content"]`（M464 密文回放模式的
     /// 前提）：留存 `llm_response.reasoning_encrypted.requested` 用——与 `wire_body` 里
     /// 实际写 `include` 的条件同一份布尔（client 构建时冻结），MUST NOT 在记录侧按 config
-    /// 重算一套（REVIEW.md 第 8 条）。缺省 false = 该实现不发（mock）。
+    /// 重算一套（REVIEW.md 「同一语义两处真源」条）。缺省 false = 该实现不发（mock）。
     fn requests_encrypted_reasoning(&self) -> bool {
         false
     }
@@ -534,7 +534,7 @@ pub fn client_at(
 }
 
 /// 当前生效的模型名：ctx% 的窗口查表与思考档位能力判定都用它（**单一来源**——两处各写一份
-/// match 必然漂移，REVIEW.md 第 8 条）。mock 档没有自己的模型，沿用 kimi 侧读数
+/// match 必然漂移，REVIEW.md 「同一语义两处真源」条）。mock 档没有自己的模型，沿用 kimi 侧读数
 ///（与 [`preset`] 对 mock 回落 deepseek 预设是同一「mock 只借壳」的口径）。
 pub fn active_model(config: &HarnessConfig) -> &str {
     match config.provider {
@@ -590,7 +590,7 @@ impl LlmClient for ResponsesClient {
     /// 发送量计量（M463）：构造一次**实际会发**的 body 并回其序列化字节数（含 wire 展开后的
     /// 尺寸）——发送点记录 `llm_request.request_bytes` 用它，省掉「按字节比外推」。
     /// 与 [`Self::complete_inner`] 共用 [`Self::wire_body`]：同一份构造，MUST NOT 各拼一套
-    /// （REVIEW.md 第 8 条）。构造失败（附件缺失等）返回 None——那条路径随后以同因报错。
+    /// （REVIEW.md 「同一语义两处真源」条）。构造失败（附件缺失等）返回 None——那条路径随后以同因报错。
     fn wire_body_bytes(&self, request: &Request) -> Option<u64> {
         let body = self
             .wire_body(request)
@@ -2151,7 +2151,7 @@ data: {"delta":"第二步。"}
 
     // ---- M369：真流式（收到即转发）与在途停止 ----
     //
-    // 判据的区分度（REVIEW.md 第 1 条）：改动前 `complete` 返回时流式 sink 一个分片都收不到
+    // 判据的区分度（REVIEW.md 「断言等价于子串」条）：改动前 `complete` 返回时流式 sink 一个分片都收不到
     //（增量被攒进 `TurnOutput` 的 Vec，返回后由 `turn` 一次性补发）——下面「sink 收到的分片」
     // 类断言在旧实现上必然是空表，因此它们真的在判「即时转发」而不是「分片最终都在」。
 

@@ -14,7 +14,7 @@ import {
 //
 //   1. **整页基线抓不到标签栏**：标签栏只有约 30px 高、被横向撑满，而整页容差
 //      `maxDiffPixelRatio: 0.001`（1200×800 ≈ 960 px）能把它整个吞掉——M147/M148 两次
-//      实测（REVIEW.md 第 3 条）。所以标签栏的视觉回归**只有元素级基线能守**。
+//      实测（REVIEW.md 「容差吞掉真实变化」条）。所以标签栏的视觉回归**只有元素级基线能守**。
 //   2. **验收套件（scripts/acceptance）表达不了这些通道**：它的 `click` 动作没有修饰键、
 //      `target.count` 被 cu.mjs 丢掉（双击不可表达）、也点不到 macOS 原生菜单栏。因此
 //      「⌘-点击 / 双击的打开意图」「菜单关闭项 → tab.close」「撤销史与滚动的逐标签保留」
@@ -124,7 +124,7 @@ test("标签栏：空态隐藏、单标签常驻、无预览字形、dirty 点�
   await expect(page.locator(".tab-name")).toHaveText("alpha.md");
   // M254：单击树文件开的就是正式标签——标签标题只有一种字形（预览斜体已退场）。
   // 判据取**计算属性**而不是类名：类名没了，断言读的是用户真正看到的那一层
-  //（REVIEW.md 第 1 条——判据要能红，也不能被「class 还在但样式被别的规则盖住」骗过）。
+  //（REVIEW.md 「断言等价于子串」条——判据要能红，也不能被「class 还在但样式被别的规则盖住」骗过）。
   const singleStyle = await tabNameFontStyles(page);
   expect(singleStyle).toEqual(["normal"]);
   await expect(page.locator(".tab").first()).toHaveClass(/is-active/);
@@ -435,7 +435,7 @@ test("零标签时 ⌘W 无操作：未命名文档不是标签（reviewer r1 P2
 //   3. 溢出时横向滚动条不美观且遮挡标签（WKWebView 悬浮条压在标签下缘上）、最右标签
 //      与标题栏右端的产品标识块之间没有间距（M257，2026-09-27 dogfood）。
 // 断言一律落**矩形读数**（可视区与标签盒的包含关系），不用 class 或 scrollLeft 数值
-//（REVIEW.md 第 1 条）；「活跃标签读不到」判 FAIL，不当成「无需滚动」（第 2 条）。
+//（REVIEW.md 「断言等价于子串」条）；「活跃标签读不到」判 FAIL，不当成「无需滚动」（「读不到当成空」条）。
 // ---------------------------------------------------------------------------
 
 /** 13 个文件名足够长的 fixture：保证标签栏真的溢出（短名字的 12 个标签可能装得下）。 */
@@ -523,7 +523,7 @@ test("标签溢出：活跃标签恒完整可见（键盘直达 / 循环 / 关�
   }
   await expect(page.locator(".tab")).toHaveCount(count);
 
-  // 溢出确实发生了：否则下面的断言在「根本不用滚」的文档上恒真（REVIEW.md 第 2 条）。
+  // 溢出确实发生了：否则下面的断言在「根本不用滚」的文档上恒真（REVIEW.md 「读不到当成空」条）。
   const strip = await page.evaluate(() => {
     const el = document.querySelector(".tabstrip") as HTMLElement;
     return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth };
@@ -548,7 +548,7 @@ test("标签溢出：活跃标签恒完整可见（键盘直达 / 循环 / 关�
 
   // 反向配对的旁证：回到最左（⌘1，活跃 = 第 1 个），再把标签栏滚到最右——活跃标签必然
   // 出视口，同一判据当场判红。没有这一步，上面那串 PASS 读不出「它真的会红」
-  //（REVIEW.md 第 1 条：先造一个必须让它 FAIL 的输入）。
+  //（REVIEW.md 「断言等价于子串」条：先造一个必须让它 FAIL 的输入）。
   await page.keyboard.press("Meta+1");
   await page.evaluate(() => {
     const el = document.querySelector(".tabstrip") as HTMLElement;
@@ -603,6 +603,6 @@ test("标签溢出：活跃标签恒完整可见（键盘直达 / 循环 / 关�
 
   // 元素级基线：溢出态的整条标题栏（无滚动条 + 右缘间距 + 最右标签裁在滚动口内）。
   // 溢出形态只有元素 crop 钉得住——整页 0.001 容差（1200×800 ≈ 960px）吞得掉一条
-  // 42px 高标题栏里的滚动条（REVIEW.md 第 3 条）。
+  // 42px 高标题栏里的滚动条（REVIEW.md 「容差吞掉真实变化」条）。
   await expectScreenshot(page.locator(".titlebar"), "titlebar-overflow.png");
 });

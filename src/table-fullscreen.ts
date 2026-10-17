@@ -10,7 +10,7 @@
 //      由壳内双向滚动承载（src/style.css 的 .lumir-table-fs-panel）。
 //   2. 快照由既有 DOM **深克隆**得到。cell 内容是文档的活源码位置（line/mark 装饰，不是 replace
 //      widget），cell 里的链接 / 行内代码 / 图片都已是渲染好的 DOM；从源码切片重建第二套呈现
-//      口径会丢掉全部 inline 渲染（REVIEW.md 第 8 条的形态，两套口径必然漂移）。克隆也 MUST NOT
+//      口径会丢掉全部 inline 渲染（REVIEW.md 「同一语义两处真源」条的形态，两套口径必然漂移）。克隆也 MUST NOT
 //      改成「搬动原节点」：CM 装饰 DOM 归 CM 管，搬走会让编辑器布局与装饰状态脱节（M184 否决
 //      「搬 <img>」的同款理由）。
 //   3. 关闭路径的第三条是「再执行一次 table.toggle-fullscreen」（toggle），对位 M184 的
@@ -60,7 +60,7 @@ export type TableFullscreenSurface = OverlaySurface<HTMLElement>;
  *  把正文换掉：快照内容已不存在，调用方在重载处显式关闭，同样交还焦点），`blur` 是焦点兜底
  *  （不抢焦点）——只兜住「遮罩之上另开了面板」与「窗口失活」两件事，**不兜文档代际变化**
  *  （M286 实测证伪：重载不移动焦点，那条 blur 从不触发）。
- *  M277 起取值来源是 src/overlay-state.ts（三处浮层共用同一份状态机，REVIEW.md 第 8 条）。 */
+ *  M277 起取值来源是 src/overlay-state.ts（三处浮层共用同一份状态机，REVIEW.md 「同一语义两处真源」条）。 */
 export type TableFullscreenCloseReason = OverlayCloseReason;
 
 export type TableFullscreenState = OverlayState<HTMLElement>;

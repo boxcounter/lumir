@@ -27,7 +27,7 @@ bump 提交信息惯例：`chore(release): X.Y.Z——<本批内容>，<MINOR bu
 
 - 版本号已按上节 bump 并提交（0.7.0 打包前版本号已就绪，M512 不再 bump）。
 - 在 master、tracked 干净；打包用主仓 checkout，不用 worktree。
-- `bash scripts/gate.sh quick` 全绿。报告时**照抄 `GATE RESULT` 原文行并附退出码**，不用「X/Y PASS」复述（REVIEW.md 第 20 条：分母口径含不含 SKIP 只在脚本里定义）。
+- `bash scripts/gate.sh quick` 全绿。报告时**照抄 `GATE RESULT` 原文行并附退出码**，不用「X/Y PASS」复述（REVIEW.md 「门禁报告口径」条：分母口径含不含 SKIP 只在脚本里定义）。
 - 动过视觉相关代码（`src/style.css`、`src/preview/**`、`tests/visual/scenes/**`）的批次，另跑 `bash scripts/gate.sh visual`（AGENTS.md「视觉门禁分层」）。
 - cargo 构建位空闲（并行批次纪律见 AGENTS.md；0.7.0 打包前确认无并发 `cargo` / `rustc`）。
 

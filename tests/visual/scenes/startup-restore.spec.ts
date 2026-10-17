@@ -9,7 +9,7 @@ import { fireVaultRestoreFinished, setBackendVault, stubTauri, type VaultFixture
 // 文件行的有/无。整页截图是 chromium 近似、容差 0.001，用它判「两态同布局」既看不到文本差异，
 // 又会把新状态混进既有基线（下方第一条用例里的元素级断言才是判据）。
 //
-// 判别力已反向验证（REVIEW.md 第 1 条的防线，删断言前请重做这一步）：把 `src/main.ts` 的
+// 判别力已反向验证（REVIEW.md 「断言等价于子串」条的防线，删断言前请重做这一步）：把 `src/main.ts` 的
 // 让位门（`applyRestoreFinished` 里的 `!vaultLoaded`）与进行态分支（`status.restore_pending ?
 // RESTORING_NOTICE : …`）分别去掉后，本文件 4 条用例应有 **3 条转红**（第 1/3/4 条）；只绿不红
 // 说明断言已退化成恒真。

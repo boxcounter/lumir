@@ -856,7 +856,7 @@ function lineIndexOf(lines: readonly TextLine[], offset: number): number {
  * 末缘折走后列位随之丢失，⌃P 落到上一行行首而不是同列位）。
  *
  * M455 为 ⌃N / ⌃P 修过同族问题（当时是本函数的一处内联特判），M457 把 ⌃A / ⌃E 一并收进来，
- * M473 再把词步收进来——段内基准**只有这一处实现**（REVIEW.md 第 8 条）。
+ * M473 再把词步收进来——段内基准**只有这一处实现**（REVIEW.md 「同一语义两处真源」条）。
  *
  * 卡片边界位 / 越界位没有段内语义，仍走归一位（回落到各自的「无动作」判据）。
  */
@@ -1395,7 +1395,7 @@ export function parseQuoteMessage(text: string): ComposerBlock[] {
 // ── 图片卡片元信息行（design §3；M449 补恢复路径）────────────────────────────
 /** 图片卡片元信息行文案：**从文件名开始、无 `image ·` 类型前缀**（Alex 2026-10-10 裁决）；
  *  有尺寸显「文件名 · W×H」，无尺寸（快照从 wire 引用恢复的旧卡片，M440 可选字段）只显文件名。
- *  渲染首帧与缩略图 load 后的补记共用这一份（单一来源，REVIEW.md 第 8 条）。 */
+ *  渲染首帧与缩略图 load 后的补记共用这一份（单一来源，REVIEW.md 「同一语义两处真源」条）。 */
 export function imageCardMetaText(
   name: string,
   width: number | undefined,
@@ -1550,7 +1550,7 @@ export function permissionFullName(mode: PermissionMode): string {
 }
 
 /** 浮层里的每档一行释义（D430–D432）。M459 起也是 chip 悬停提示（D426）与批准卡判定依据行
- *  （D458）的 `{desc}` 取值——同一档的承诺只写一份（REVIEW.md 第 8 条）。 */
+ *  （D458）的 `{desc}` 取值——同一档的承诺只写一份（REVIEW.md 「同一语义两处真源」条）。 */
 export function permissionDescription(mode: PermissionMode): string {
   return t(mode === "read_only" ? "D430" : mode === "vault_write" ? "D431" : "D432");
 }
@@ -1647,8 +1647,8 @@ export function usageOverWarn(ctxPct: number, warnPct: number): boolean {
 
 // ── usage 载荷的读数映射（M443，change harness-cache-metrics §5.3）────────────────
 // 事件载荷与 `harness_state` 快照的 `usage` 字段**同一份键名与缺省口径**，只在这里映射一次
-// （REVIEW.md 第 8 条：跨层同一条语义只应有一处产出）。缺键 / 非数值一律落 `null`——
-// 「读不到」不等于「为 0」，回落单读数与气泡缺行都由消费方按 null 处理（REVIEW.md 第 2 条：
+// （REVIEW.md 「同一语义两处真源」条：跨层同一条语义只应有一处产出）。缺键 / 非数值一律落 `null`——
+// 「读不到」不等于「为 0」，回落单读数与气泡缺行都由消费方按 null 处理（REVIEW.md 「读不到当成空」条：
 // 不许把「读不到」当「为空」下结论）。
 
 /** usage 载荷映射出的读数（`null` = 该键缺失 / 非数值）。 */
@@ -1917,7 +1917,7 @@ export function sessionWhen(ts: number, now: number, lang: Language = currentLan
 export type WhenForm = "live" | "restored";
 
 /** 消息 meta 行的时间读数文本（`· ` + 读数）：首绘与 30s 刷新 / 语言切换共用这一个出口——
- *  两处各算一次会让重绘与首绘漂（REVIEW.md 第 8 条）。 */
+ *  两处各算一次会让重绘与首绘漂（REVIEW.md 「同一语义两处真源」条）。 */
 export function whenTextOf(
   at: number,
   now: number,
@@ -1958,7 +1958,7 @@ export function sessPopDecision(outcome: SessListOutcome): SessPopDecision {
 
 /**
  * 可见态 → 两个 DOM 面（`hidden` 与 `aria-expanded`）。**两面 MUST 同源派生**（单一来源，
- * REVIEW.md 第 8 条）：分开写正是 M442 的形态——`aria-expanded` 按「展开意图」翻 true，而
+ * REVIEW.md 「同一语义两处真源」条）：分开写正是 M442 的形态——`aria-expanded` 按「展开意图」翻 true，而
  * 浮层因空清单实际未揭示，属性与真实可见态脱节。M442 起 `setSessPop` 的一切跃迁都经
  * `applySessPop` 这一个写入口，两面恒相等。
  */
@@ -2152,7 +2152,7 @@ export function thinkingStateOf(snapshot: unknown): { level: string; supported: 
  * 形状（而非固定状态词清单）是有意的：core 将来加细分状态时前端不用同批改；认不出的摘要
  * （桩环境 / 视觉场景直接 fire 的自定义摘要）走「不是失败」那一支——不伪造、不吞信息。
  *
- * 这是跨层字符串耦合（REVIEW.md 第 8 条的口味，同族：前端认 core 的摘要格式）。根治办法是
+ * 这是跨层字符串耦合（REVIEW.md 「同一语义两处真源」条的口味，同族：前端认 core 的摘要格式）。根治办法是
  * core 把 live `done` 事件的 summary 也换成持久化的那份（成功 = 参数摘要），前端零判定；
  * 已作为后续项上报，未落之前先在这里判定一次，不各算一份摘要。
  */
@@ -2445,7 +2445,7 @@ function renderInlineNode(container: HTMLElement, node: MdSyntaxNode, doc: strin
     }
     case "InlineCode": {
       // 类名与编辑器行内代码同源（cm-lp-inline-code）：镜像的 preview 主题把同一颗
-      // 药丸样式带进来，面板与正文读起来是同一个东西（REVIEW.md 第 8 条：不另造第二套）。
+      // 药丸样式带进来，面板与正文读起来是同一个东西（REVIEW.md 「同一语义两处真源」条：不另造第二套）。
       const el = document.createElement("code");
       el.className = "cm-lp-inline-code";
       const codeText = node.getChild("CodeText");
@@ -2698,7 +2698,7 @@ function renderBlock(container: HTMLElement, node: MdSyntaxNode, doc: string): v
 
 /** 一段完整 Markdown → 追加渲染到容器（多块）。导出是为了让单测用最小 DOM 替身驱动**这份
  *  真渲染件**（tests/unit/harness-transcript-render.test.ts：裸 URL 上屏为锚、Link 之下的
- *  URL 不重复上屏）——纯函数层驱动不到 DOM 面，重建一份渲染器则失去判据（REVIEW.md 第 8 条）。 */
+ *  URL 不重复上屏）——纯函数层驱动不到 DOM 面，重建一份渲染器则失去判据（REVIEW.md 「同一语义两处真源」条）。 */
 export function renderMarkdownInto(container: HTMLElement, source: string): void {
   const tree = mdParser.parse(source);
   renderBlock(container, tree.topNode, source);
@@ -2771,7 +2771,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // .titlebar-action[aria-pressed="true"] 的既有条款（与原型 :1184 同方案）。
   // 本钮不需要 mousedown preventDefault：click 后经 deps.togglePane 交装配层开合（焦点移交
   // 在那一边），按钮瞬时持焦无所谓；「别抢焦点」的 preventDefault 若真需要，
-  // MUST NOT 挂容器级元素（REVIEW.md 第 16 条）。
+  // MUST NOT 挂容器级元素（REVIEW.md 「标题栏 preventDefault」条）。
   const toggleSpark = document.createElementNS(SVG_NS, "svg");
   toggleSpark.setAttribute("width", "14");
   toggleSpark.setAttribute("height", "14");
@@ -3490,7 +3490,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       actions.append(remove);
       el.append(actions);
       // 图片卡无跳回：点击（两钮除外）无操作。mousedown 拦下是不让 contenteditable=false
-      // 的卡片抢走选区/焦点（面板内元素，无标题栏拖拽问题——REVIEW.md 第 16 条只约束标题栏）。
+      // 的卡片抢走选区/焦点（面板内元素，无标题栏拖拽问题——REVIEW.md 「标题栏 preventDefault」条只约束标题栏）。
       el.addEventListener("mousedown", (event) => event.preventDefault());
       remove.addEventListener("mousedown", (event) => event.stopPropagation());
       remove.addEventListener("click", (event) => {
@@ -3555,7 +3555,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       el.append(remove);
       // 卡片点击（× 除外）= 跳回来源（quote 走 QC3 注册的编辑器处理器、msgquote 走 transcript
       // 定位）；mousedown 拦下是为不让 contenteditable=false 的卡片抢走选区/焦点（面板内元素，
-      // 无标题栏拖拽问题——REVIEW.md 第 16 条只约束标题栏容器）。
+      // 无标题栏拖拽问题——REVIEW.md 「标题栏 preventDefault」条只约束标题栏容器）。
       el.addEventListener("mousedown", (event) => event.preventDefault());
       remove.addEventListener("mousedown", (event) => event.stopPropagation());
       remove.addEventListener("click", (event) => {
@@ -4842,7 +4842,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /** usage 读数落状态（M443）：事件路径与快照路径**同一处入口**——两条通道喂进来的是同一种
    *  `UsageReadings`（键名映射见 [`usageReadings`]），一处赋值就不可能出现「事件面与快照面
-   *  读数不一致」（REVIEW.md 第 8 条）。整体覆盖是刻意的：本轮没有的键落 null，气泡对应行
+   *  读数不一致」（REVIEW.md 「同一语义两处真源」条）。整体覆盖是刻意的：本轮没有的键落 null，气泡对应行
    *  随之不渲染，不残留上一轮的值。 */
   function applyUsageReadings(readings: UsageReadings): void {
     lastUsage = readings.ctx;
@@ -7079,7 +7079,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 会话名下拉：展开/收起浮层（浮层 = 历史会话选择器，M392；「新建会话」动作项随 M406
   // 退场，新建归首行加号钮）；浮层外交互（点击其他处）收起。按钮在标题栏（drag 区）
   // 里——clickable 元素由 tauri drag.js 自动阻断拖拽，不需要 mousedown preventDefault
-  //（REVIEW.md 第 16 条）。
+  //（REVIEW.md 「标题栏 preventDefault」条）。
   sessionButton.addEventListener("click", (event) => {
     event.stopPropagation();
     setSessPop(sessPop.hidden);

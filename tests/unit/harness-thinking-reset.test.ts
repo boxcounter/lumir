@@ -10,7 +10,7 @@
 // （术语与做法同 tests/unit 其他 DOM 件的 FakeEl：只替 DOM，跑的是仓里那份真 harness-panel），
 // 覆盖「面板构造 → 新会话点击」这条路径。
 //
-// 断言口径（REVIEW.md 第 1 条）：用精确相等（chip 读屏名整串 D393 / effort 读数整串）判档位，
+// 断言口径（REVIEW.md 「断言等价于子串」条）：用精确相等（chip 读屏名整串 D393 / effort 读数整串）判档位，
 // 不用「包含 High」式的子串包含——子串断言在「chip 停在 Max」与「chip 回落 High」之间
 // 只有子串重叠、没有区分度。反向用例见文件末尾：本测试必须能对「chip 停在旧档」判红。
 // M373 起思考 chip 并入合并选择器（.lumir-hp-model · effort 读数 + 三维浮层），

@@ -9,7 +9,7 @@
 // scripts/acceptance/scenarios/24-image-lightbox.md）：遮罩与放大图的真实开合、几何口径、
 // mousedown 的 preventDefault、以及「占位不可点开」——最后一条是**结构性事实**（双击监听器
 // 只挂在终态渲染出的 <img> 上，见 src/preview/attachments.ts），在无 DOM 的层里写出来只会是
-// 一条恒真断言（REVIEW.md 第 1 条的假绿形态），故不在这里验。
+// 一条恒真断言（REVIEW.md 「断言等价于子串」条的假绿形态），故不在这里验。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

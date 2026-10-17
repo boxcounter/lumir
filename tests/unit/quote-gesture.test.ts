@@ -3,7 +3,7 @@
 // 承载（tests/unit/README.md 的同一口径），标题输入用轻量结构替身（quoteContextOf 只读
 // level/text/from 三样，与 toc 的 TocHeading 同构）。
 //
-// 断言纪律（REVIEW.md 第 1 条反向验证）：每个判据先在脑子里过一次「造什么输入它必须红」——
+// 断言纪律（REVIEW.md 「断言等价于子串」条反向验证）：每个判据先在脑子里过一次「造什么输入它必须红」——
 // 行号漂移 / 开头被改 / 摘录在首个标题前等反例都各有一条反向用例，不是只堆正向命中。
 
 import { test } from "node:test";

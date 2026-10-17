@@ -259,7 +259,7 @@ fixture 与那批探针逐条同源）。判定层（判定函数本体、委派
    但这一步会改变语法上下文——`const alpha = () => {` 后append `q` 会让缩进规则不再触发
    （实测 `getIndentation` 从 2 变 0）。因此本场景的正观测改用
    **`file: { has: '/^  $/' }`（落盘内容）+ `editor.changedSince`**，不键入任何见证字符。
-2. **负向断言一律配正观测**（REVIEW.md 第 2 条）：`Enter` 是 chord 类盲发注入（丢键时不重试），
+2. **负向断言一律配正观测**（REVIEW.md 「读不到当成空」条）：`Enter` 是 chord 类盲发注入（丢键时不重试），
    所以「文档没有缩进行」这类断言必须与 `editor: { changedSince: 基线 }` / `file.changedSince`
    同时出现——否则丢键会让整条用例静默变绿。用例 3 与 6b 的「无缩进」判据都按这条写。
 

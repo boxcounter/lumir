@@ -229,7 +229,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     }>;
     // document_save 的调用记录（M164）：只记「真的发生了保存」这个事实与内容——
     // 「放弃修改后不写盘」这类**负向**判据需要一个能看到写动作的观测点，否则只能读文件表，
-    // 而切换 vault 之后原 vault 的文件表已经不在 `current` 里，断言会空转（REVIEW.md 第 2 条）。
+    // 而切换 vault 之后原 vault 的文件表已经不在 `current` 里，断言会空转（REVIEW.md 「读不到当成空」条）。
     // **命名避开 `__saveCalls`**：那是 `save-hardening-autosave.spec.ts` 自己的**计数**（它用
     // 第二个 addInitScript 往 `window.__saveCalls` 上挂 +1 的包装），同名会让两边的类型互相踩
     // （实测：那边得到数组、`+= 1` 变成字符串拼接，`document_save` 随之报错）。
@@ -787,7 +787,7 @@ export async function remapCalls(page: Page): Promise<Array<{ id?: string; path?
  *
  *  M163 形态 A 起树头部只有一个入口（`button.ft-vault`，名称 + caret），点它开的是列表浮层
  *  而不是系统选择器；「新增」是浮层底部的行。原先直接点「切换」按钮的写法已不存在，这个
- *  封装是**唯一**的选择器落点（REVIEW.md 第 8 条：同一语义不做两处真源）。 */
+ *  封装是**唯一**的选择器落点（REVIEW.md 「同一语义两处真源」条：同一语义不做两处真源）。 */
 export async function requestAddVault(page: Page): Promise<void> {
   await page.locator(".ft-vault").click();
   await page.locator(".vault-add").click();

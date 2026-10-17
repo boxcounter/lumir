@@ -18,7 +18,7 @@
 //! **主体串**做前缀 + `*` 通配。主体串取法见 [`super::tools::permission_subject`]。
 //!
 //! cli_run 分类表（design §3）是**代码内的唯一真源**：config 规则表管「用户加减项」，不管分类
-//! （REVIEW.md 第 8 条：同一个语义不许两处各判一半）。保守默认一律归写——错误方向是「多问一次」，
+//! （REVIEW.md 「同一语义两处真源」条：同一个语义不许两处各判一半）。保守默认一律归写——错误方向是「多问一次」，
 //! 不是「误放行」。
 //!
 //! 会话内批准缓存的**模块**在 [`super::permission_cache`]（design §6）；判定只消费它的一个
@@ -59,7 +59,7 @@ pub enum Decision {
 /// 判定依据（M459，change add-approval-decision-reason）：这次调用**为什么**走到这个结论。
 /// 批准卡「判定依据」行与 deny 回送文案的共同数据源——前端只按 `kind` 取文案，MUST NOT 自行推导层级。
 ///
-/// 只列**有消费者**的层（REVIEW.md 第 9 条）：`DenyRule` 只进回送模型的错误文案（deny 不产批准卡，
+/// 只列**有消费者**的层（REVIEW.md 「声明了却没有消费者」条）：`DenyRule` 只进回送模型的错误文案（deny 不产批准卡，
 /// 见 change design §3）；其余三个变体随批准请求事件与 `harness_state` 快照两条通道到前端。
 /// 自动放行的层（allow 规则命中 / 会话内缓存命中 / 只读白名单 / vault 内写重定向）**不产出依据**
 /// ——它们没有「被拦下」的界面面。序列化形状是 internally tagged（`{"kind": …, …}`，serde 与
@@ -389,7 +389,7 @@ fn command_basename(command: &str) -> String {
 }
 
 /// 危险黑名单命中的类别（M459）：`is_dangerous` 与判定依据共用这一次判定——同一语义不许两处
-/// 各判一半（REVIEW.md 第 8 条）。
+/// 各判一半（REVIEW.md 「同一语义两处真源」条）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DangerousKind {
     /// shell 包装器类（`sh` / `bash` / `zsh` / … / `eval` / `exec`）。
@@ -940,7 +940,7 @@ fn normalize(path: &Path) -> std::path::PathBuf {
 // ---------------------------------------------------------------------------
 
 /// 首个命中的规则原文（无命中为 `None`）——M459 起 `decide` 用它的带值形态（deny 规则原文要
-/// 随依据回送）；匹配语义完全共用 [`rule_matches`]，不存在第二份匹配实现（REVIEW.md 第 8 条）。
+/// 随依据回送）；匹配语义完全共用 [`rule_matches`]，不存在第二份匹配实现（REVIEW.md 「同一语义两处真源」条）。
 fn matching_rule<'a>(rules: &'a [String], tool: &str, subject: &str) -> Option<&'a str> {
     rules
         .iter()
@@ -1413,7 +1413,7 @@ mod tests {
         assert_eq!(classify_cli(&diskutil_list), CliClass::Write);
     }
 
-    /// 反向验证（REVIEW.md 第 1 条）：把一条白名单形态的期望改坏，分类结果必须不同——
+    /// 反向验证（REVIEW.md 「断言等价于子串」条）：把一条白名单形态的期望改坏，分类结果必须不同——
     /// 确认断言有区分度（`git branch` 列表形态 vs 写形态、`sed` 有无 -i）。
     #[test]
     fn classification_assertions_have_discrimination() {
@@ -1616,7 +1616,7 @@ mod tests {
     }
 
     /// 载荷与说明逐字节钉死（含固定标记）；并做一次反向验证——改一个字符断言必红
-    /// （REVIEW.md 第 1 条：先造一个必须 FAIL 的输入）。
+    /// （REVIEW.md 「断言等价于子串」条：先造一个必须 FAIL 的输入）。
     #[test]
     fn redirect_payload_and_message_are_byte_exact() {
         let redirect = Redirect {
@@ -1786,7 +1786,7 @@ mod tests {
             ])),
             CliClass::Write
         );
-        // 反向区分（REVIEW.md 第 1 条）：修复前 `find . -exec ls {} \; -delete` 归 ReadOnly，
+        // 反向区分（REVIEW.md 「断言等价于子串」条）：修复前 `find . -exec ls {} \; -delete` 归 ReadOnly，
         // 本断言对修复前代码必红。
         assert_ne!(
             classify_cli(&argv(&["find", ".", "-exec", "ls", "{}", "\\;", "-delete"])),
@@ -1797,7 +1797,7 @@ mod tests {
             classify_cli(&argv(&["sudo", "-u", "root", "ls"])),
             CliClass::ReadOnly
         );
-        // 区分度自证（REVIEW.md 第 1 条）：旧实现（sudo/xargs 落「未知 ⇒ 写」）在本表上
+        // 区分度自证（REVIEW.md 「断言等价于子串」条）：旧实现（sudo/xargs 落「未知 ⇒ 写」）在本表上
         // 第一组全部判 Write 而非 Dangerous——本断言对旧实现必红。
         assert_ne!(
             classify_cli(&argv(&["sudo", "rm", "-rf", "/tmp/x"])),
@@ -2190,7 +2190,7 @@ mod tests {
         assert_eq!(kind("git", &["reset", "--soft"]), None);
         assert_eq!(kind("git", &["status"]), None);
         assert_eq!(kind("ls", &["-la"]), None);
-        // 单一真源（REVIEW.md 第 8 条）：`is_dangerous` 与类别判定同源。
+        // 单一真源（REVIEW.md 「同一语义两处真源」条）：`is_dangerous` 与类别判定同源。
         assert!(is_dangerous("zsh", &argv(&["-lc", "pwd"])));
         assert!(is_dangerous("git", &argv(&["reset", "--hard"])));
         assert!(!is_dangerous("git", &argv(&["reset", "--soft"])));

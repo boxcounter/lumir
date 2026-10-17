@@ -5,6 +5,6 @@
  *
  * 配置层只保形状（非空字符串、按原顺序去空白），**匹配语义**（前缀 + `*`、deny > allow >
  * 默认分层）归 harness 运行时（M302）——与 `keys` 表「形状在此、语义在外」同一分层，
- * 两边各判一半必然漂移（REVIEW.md 第 8 条）。
+ * 两边各判一半必然漂移（REVIEW.md 「同一语义两处真源」条）。
  */
 export type HarnessPermissions = { allow: Array<string>, deny: Array<string>, };

@@ -99,14 +99,14 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
       ? true
       : !requireVault && hasEmptyState;
     // 编辑器就位 = AXTextArea 可读，**或**上面那条空态引导正在覆盖它。后者是**正**判据
-    // （引导文案必须真的在 AX 里），不是「读不到就当就绪」——REVIEW.md 第 2 条禁的是后者。
+    // （引导文案必须真的在 AX 里），不是「读不到就当就绪」——REVIEW.md 「读不到当成空」条禁的是后者。
     const editorReady = ax.textarea !== null || hasEmptyVaultNotice;
     if (treeReady && editorReady) seen += 1;
     else seen = 0;
     if (seen >= 2) {
       await sleep(600);
       const final = await readAx(cu, pid);
-      // 窗口形态自检（M236，窗口配置只有一份真源，见 REVIEW.md 第 8 条）：每次启动（含 restartApp 重启）都反查一次
+      // 窗口形态自检（M236，窗口配置只有一份真源，见 REVIEW.md 「同一语义两处真源」条）：每次启动（含 restartApp 重启）都反查一次
       // 「webview 铺满整窗 = overlay 标题栏」，不让套件静默跑在非 overlay 形态上。
       assertOverlayChrome(final);
       return final;
@@ -119,7 +119,7 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
 }
 
 /**
- * 套件实例的窗口形态自检（M236，窗口配置只有一份真源，见 REVIEW.md 第 8 条）：断言 webview **铺满整窗** = 真·overlay 标题栏。
+ * 套件实例的窗口形态自检（M236，窗口配置只有一份真源，见 REVIEW.md 「同一语义两处真源」条）：断言 webview **铺满整窗** = 真·overlay 标题栏。
  *
  * 为什么需要它：套件走 `--config` 覆写窗口对象，而 tauri 的深合并对数组是**按下标整体替换**。
  * 早先覆写对象漏抄 `titleBarStyle: "Overlay"` / `hiddenTitle: true`，套件实例因此长出原生
@@ -135,7 +135,7 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
  * 取**面积最大**的 AXScrollArea（树 pane / 浮层里可能还有别的滚动区，第一个不一定是我们这层），
  * 判据是「顶边对齐且高度不短」——容差 4px，吸收亚像素与窗口装饰的舍入。
  *
- * 读不到节点 / 没有 bbox 一律报错，不静默通过（REVIEW.md 第 2 条：不可读 ≠ 没问题）。
+ * 读不到节点 / 没有 bbox 一律报错，不静默通过（REVIEW.md 「读不到当成空」条：不可读 ≠ 没问题）。
  */
 function assertOverlayChrome(ax) {
   const win = ax.nodes.find((n) => n.role === "AXWindow" && n.bbox);
@@ -147,7 +147,7 @@ function assertOverlayChrome(ax) {
   const heightGap = win.bbox.h - area.bbox.h;
   if (topGap > 4 || heightGap > 4) {
     throw new InfraError(
-      `窗口形态自检（窗口配置只有一份真源，见 REVIEW.md 第 8 条）：webview 没有铺满窗口——AXWindow ${win.bbox.w}×${win.bbox.h} @${win.bbox.y}` +
+      `窗口形态自检（窗口配置只有一份真源，见 REVIEW.md 「同一语义两处真源」条）：webview 没有铺满窗口——AXWindow ${win.bbox.w}×${win.bbox.h} @${win.bbox.y}` +
         `，最大 AXScrollArea ${area.bbox.w}×${area.bbox.h} @${area.bbox.y}（顶边差 ${topGap}、高度差 ${heightGap}）。` +
         `这是「原生标题栏回来了」的信号：套件的 --config 覆写把 app.windows[0] 整根替换、` +
         `titleBarStyle/hiddenTitle 被静默吃掉。修法见 lib/app.mjs 的 launchApp（从 tauri.conf.json 读原件再 spread）。` +

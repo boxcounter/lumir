@@ -6,7 +6,7 @@ import { fileText, stubTauri, type VaultFixture } from "./tauri-stub";
 //
 // 为什么要有这个场景：
 //   1. 菜单浮层是**新增 UI 元素**——元素级基线钉住它的形态（整页容差吞得掉一个 160×96 的
-//      浮层，REVIEW.md 第 3 条）。
+//      浮层，REVIEW.md 「容差吞掉真实变化」条）。
 //   2. 三条关闭路径 + 脏标签的逐个确认是纯 DOM 行为，真机套件（场景 50）走的右键坐标注入
 //      在本机有「取不到窗口截图」的前科（M244 / M249 / M251 同族），判定因此钉在 chromium 层，
 //      真机那一侧只补「真实 WKWebView + 真实文件系统」的差异。
@@ -370,8 +370,8 @@ test("M254：共用皮肤在 eink 档下同为选中底色 + 选中前景（标�
 // 出来；真机场景 69 只补「真实 WKWebView + 真实右键通道」的祖先展开那一段。
 //
 // 判据形态照 M238 的「活跃标签恒完整可见」（tests/visual/scenes/m149-tabs.spec.ts）：一律读**矩形
-// 包含关系**，不读 class、也不读 scrollTop 数值（REVIEW.md 第 1 条——class 断言看不出「展开对了
-// 但没滚」，数值断言则把判据钉在实现的选择上）。读不到目标行一律 FAIL，不当成「无需滚动」（第 2 条）。
+// 包含关系**，不读 class、也不读 scrollTop 数值（REVIEW.md 「断言等价于子串」条——class 断言看不出「展开对了
+// 但没滚」，数值断言则把判据钉在实现的选择上）。读不到目标行一律 FAIL，不当成「无需滚动」（「读不到当成空」条）。
 // ---------------------------------------------------------------------------
 
 /** 目标行是否**完整**落在左栏可视区（`.tree-pane` 的 padding 盒）里；读不到行 = FAIL。 */
@@ -436,7 +436,7 @@ test("M300 定位项：展开祖先、目标行滚进左栏可视区并成为当
   await expect(page.locator(".tab-name")).toHaveText(["note.md", "target.md"]);
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("note.md");
   await expect(row).toHaveCount(0);
-  // 左栏确实溢出（否则「滚进可视区」这条在装得下的树上恒真，REVIEW.md 第 2 条）
+  // 左栏确实溢出（否则「滚进可视区」这条在装得下的树上恒真，REVIEW.md 「读不到当成空」条）
   const overflow = await page.evaluate(() => {
     const pane = document.querySelector(".tree-pane") as HTMLElement;
     return { scrollHeight: pane.scrollHeight, clientHeight: pane.clientHeight };

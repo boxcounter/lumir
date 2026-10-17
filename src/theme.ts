@@ -5,7 +5,7 @@
 // 循环序，以及运行期当前值的读取面（`<html data-theme>`）。两者都能脱离 DOM 断言，
 // 因此不进装配层 src/main.ts（tests/unit/theme.test.ts 在这一层跑）。
 //
-// 分层（REVIEW.md 第 8 条：同一语义不留两处真源）：
+// 分层（REVIEW.md 「同一语义两处真源」条：同一语义不留两处真源）：
 //   - 本模块：三档顺序、循环取下一档、从根元素读当前主题，以及主题的两条可见文案；
 //   - src/main.ts 的 `applyTheme`：**唯一施加点**——写 `data-theme` 并刷新 modeline 指示钮，
 //     启动装配与运行期切换都经它，MUST NOT 出现第二处 `data-theme` 写入者；
@@ -53,6 +53,6 @@ export const THEME_INDICATOR_LABEL = (theme: UiTheme): string => t("D122", { the
  *
  * 措辞必须同时交代三件事：切换**已经生效**（不回滚）、没存进配置、重启后回到配置文件里的
  * 主题。MUST NOT 点名某个具体主题——写失败时运行期态与文件态分叉，前端说不出文件里到底是
- * 哪一档（上一档的写回也可能失败过），点名就是伪造一个读不到的读数（REVIEW.md 第 2 条）。
+ * 哪一档（上一档的写回也可能失败过），点名就是伪造一个读不到的读数（REVIEW.md 「读不到当成空」条）。
  */
 export const THEME_SAVE_FAILED_TEXT = (reason: string): string => t("D123", { reason });

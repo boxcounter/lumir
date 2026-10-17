@@ -48,7 +48,7 @@ export const CODEBLOCK_WRAP_CLASS = "cm-lp-codeblock-wrap";
 /** 折行口径的出厂默认（M180；M247 起三项）：与 Rust `EditorConfig::default()` 的 `line_wrap` /
  *  `code_block_wrap` / `code_mode_line_wrap` 是同一语义的两份写值（`src-tauri/src/config.rs` 的
  *  `impl Default for EditorConfig` 是那边的真源）。配置到达前（启动早期）按这里的值跑；
- *  两侧各有单测钉住各自的默认值，改一处必须同步另一处（REVIEW.md 第 8 条）。
+ *  两侧各有单测钉住各自的默认值，改一处必须同步另一处（REVIEW.md 「同一语义两处真源」条）。
  *
  *  第三项是**出厂分叉**的落点（M247）：md 折（`true`）/ code 不折（`false`）。它**不跟随**
  *  `DEFAULT_LINE_WRAP`——跟随会让分叉随全局默认漂移。 */
@@ -81,7 +81,7 @@ export interface WrapSpec {
  * `src/editor.ts` 的 `wrapExtensions` 据此装扩展。
  *
  * code 模式恒为 `null` 代码块层：围栏 / 缩进代码块只在 md live preview 里渲染，code 模式没有
- * 可作用的元素——装一个没有消费者的 class 就是假声明（REVIEW.md 第 9 条）。
+ * 可作用的元素——装一个没有消费者的 class 就是假声明（REVIEW.md 「声明了却没有消费者」条）。
  */
 export function wrapSpec(mode: EditorMode, settings: WrapSettings): WrapSpec {
   return {
@@ -115,7 +115,7 @@ export const codeBindingTheme = EditorView.theme({
 // 代码 token 着色规则——code 模式与围栏侧的**唯一真源**（M376，backlog M220 建条的 (a) 修法）：
 // 同一份规则对象由 codeTokenTheme（装进 code 模式编辑器，src/editor.ts 的 modeExtensions）与
 // livePreviewTheme（围栏侧，下方原位 spread）各自消费——两份 theme 各自生成自己的作用域类，
-// 规则文本逐字节同源（REVIEW.md 第 8 条：两侧 MUST NOT 各抄一份）。
+// 规则文本逐字节同源（REVIEW.md 「同一语义两处真源」条：两侧 MUST NOT 各抄一份）。
 // 色值**只**取自 tokens 文档的四个语法高亮 token（--tk-k/s/n/c）。六个 role 落四个 token：
 // property（json/yaml 的键）与 type 归 keyword 同一色——键的语义是属性名，与「命名 / 关键字」
 // 同族，新体系没有第 5 个色相可用。键与字符串值必须分色（JSON/YAML 的既有 requirement）：
@@ -146,7 +146,7 @@ export const livePreviewTheme = EditorView.theme({
   // 空段落行恒以正常行高渲染、光标可见；段距 / 块距随空行恢复行高而变大，是裁决接受的代价。
   // 选中底色 / 选中前景 / 光标色**不在这里**：这三条的真源在 `src/editor.ts` 的 baseTheme
   // （两模式共用，M285 起以 `.cm-selectionBackground` 为唯一落点）。此前本文件里重复了一份同值
-  // 声明，与 baseTheme 构成两处写入点（REVIEW.md 第 8 条），M285 一并收口。
+  // 声明，与 baseTheme 构成两处写入点（REVIEW.md 「同一语义两处真源」条），M285 一并收口。
   // 标题层级阶梯（change heading-hierarchy-ramp，稿 A 裁决 2026-09-25）：H1–H6 六级纯字号阶梯
   // 21/18/16/15/14/13，字重全档 650（字重不承担层级），零装饰（H6 的 italic 与 --text-2 退场——
   // italic 对 CJK 是伪斜体，颜色承担层级在 eink 下不成立）。字号经 token 取值：
@@ -311,7 +311,7 @@ export const livePreviewTheme = EditorView.theme({
   // 代码块要自己把折行口径覆盖回来。
   // M277 起选择器用 `:is(.cm-content, .lumir-codeblock-fs-content)`：代码块全屏浮层的内容容器
   // 也带同一个折行 class，让**同一份规则值**在两处命中（浮层 MUST NOT 另写一套折行规则——
-  // REVIEW.md 第 8 条）。浮层脱离编辑器根，靠 overlay-scope 的主题 scope 镜像让本规则的前缀
+  // REVIEW.md 「同一语义两处真源」条）。浮层脱离编辑器根，靠 overlay-scope 的主题 scope 镜像让本规则的前缀
   // （生成类）重新成立，因此这里的 `.cm-lp-codeblock-fs-content` 分支也必须是**后代选择器**。
   [`:is(.cm-content, .lumir-codeblock-fs-content).${CODEBLOCK_WRAP_CLASS} .cm-line.cm-lp-codeblock-line`]: {
     whiteSpace: "break-spaces",

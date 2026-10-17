@@ -1,10 +1,10 @@
-// 双表防漂移（REVIEW.md 第 8 条）：pane 域的四个常量在 **TS**（`src/pane-layout.ts`——运行期
+// 双表防漂移（REVIEW.md 「同一语义两处真源」条）：pane 域的四个常量在 **TS**（`src/pane-layout.ts`——运行期
 // 布局的钳制区间与上限）与 **Rust**（`src-tauri/src/vault_session.rs` 的会话 schema——落盘 / 读取
 // 时的 sanitize 边界）各有一份。任一侧漂移都不会有运行期症状：只会在某天「盘上存的比例与界面
 // 允许的区间不一致」或「schema 放行了第 3 个 pane，界面却只肯建 2 个」。
 //
 // 机制仿 `registry-drift.test.ts`：读 Rust 源文本解析那四个常量，与 TS 侧逐项比对；任一方向
-// 漂移都红。反向输入（把源串改一个数字）确认断言有区分度（REVIEW.md 第 1 条：断言必须能对
+// 漂移都红。反向输入（把源串改一个数字）确认断言有区分度（REVIEW.md 「断言等价于子串」条：断言必须能对
 // 一个「必须让它 FAIL 的输入」判红）。
 
 import { test } from "node:test";

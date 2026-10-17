@@ -117,7 +117,7 @@ test("完整性门禁：后端可能产出的 code 集合与 ERROR_COPY 一一�
   const ghost = [...table].filter((c) => !codes.has(c));
   assert.deepEqual(missing, [], `这些 code 在 ERROR_COPY 里没有条目（en 界面会掉回中文 message）`);
   assert.deepEqual(ghost, [], `ERROR_COPY 里这些 code 在后端扫不到（幽灵条目）`);
-  // 反向判据（REVIEW.md 第 1 条）：扫描确实扫到了东西，不是「两边都空所以相等」。
+  // 反向判据（REVIEW.md 「断言等价于子串」条）：扫描确实扫到了东西，不是「两边都空所以相等」。
   assert.ok(SITES.length >= 90, `构造点扫描异常（${SITES.length} 处）`);
   assert.ok(codes.size >= 45, `code 扫描异常（${codes.size} 个）`);
 });

@@ -16,7 +16,7 @@
 //!
 //! **旧形态孤儿（M309 先例）**：本布局替换了旧的 `<config_dir>/harness/<vault 消毒名>.jsonl`
 //! 聚合文件——旧文件不再续写、不做迁移（探针期可接受；留存是审计侧记录，丢弃续写不阻断
-//! 对话；REVIEW.md 第 21 条「消费者是谁」：运行时与产品侧零读者）。
+//! 对话；REVIEW.md 「变更默认直接切断」条「消费者是谁」：运行时与产品侧零读者）。
 //!
 //! 写失败不阻断对话——留存是记录侧，IO / 序列化失败只打 stderr（不变量 6），
 //! 不反过来弄坏运行时；打开（建文件）失败则走 CommandError（与既有建立纪律同口径）。
@@ -252,7 +252,7 @@ impl JsonlWriter {
     }
 
     /// 测试专用：直接指定留存路径（绕开 config_dir，零环境变量扰动——env 是进程全局，
-    /// cargo test 并行跑，改 XDG_CONFIG_HOME 会踩到别的用例；REVIEW.md 第 13 条）。
+    /// cargo test 并行跑，改 XDG_CONFIG_HOME 会踩到别的用例；REVIEW.md 「测试污染真实环境」条）。
     /// `pub(crate)`：`session::tests` 也要构造带句柄的 `Session`（M443 的累计边界用例）。
     #[cfg(test)]
     pub(crate) fn at_path(path: PathBuf, session_open: &serde_json::Value) -> Self {

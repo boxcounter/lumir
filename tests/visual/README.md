@@ -87,6 +87,10 @@ bash scripts/visual/browser-build.sh                       # 本次用的哪套�
 pnpm --dir tests/visual test
 ```
 
+**手动单跑 spec（`pnpm --dir tests/visual test`）前必须先 `pnpm build`**：webServer 是 `vite preview`，
+服务的是 dist 构建产物而不是 src 编译结果——改了 `src/` 不重建则改动不生效，反向验证会假绿
+（REVIEW.md「测试污染真实环境」条的现场）。`run.sh` 与 `gate.sh visual` 自带构建，只有手动迭代才踩。
+
 失败时 diff 制品在 `tests/visual/test-results/`（actual / expected / diff 三张图），
 CI 会将其作为 artifact 上传。
 
@@ -107,7 +111,10 @@ worktree 的 dist）：用 `LUMIR_VISUAL_PORT=<端口>` 指定独立端口隔离
    `scenes/expect-screenshot.ts`）——**不要直接调 `expect(...).toHaveScreenshot(...)`**：
    开关只在入口函数上生效，直接调会在 CI 里照跑并撞上环境不等价的红；
 3. 跑 `pnpm --dir tests/visual run update-baselines` 生成基线；
-4. 截图人工过目后连同代码一起提交。
+4. 截图人工过目后连同代码一起提交；
+5. 新增低于整页容差预算（1200×800 × 0.001 ≈ 960 像素）的 UI 元素时，「在场」守卫必须落在结构断言
+   （存在性 / 文案 / 可见性），不能指望整页像素——新增元素整体被吞的现场见
+   REVIEW.md「容差吞掉真实变化」条（M322 空 pane 引导水印，835px）。
 
 ## 更新基线
 
@@ -122,7 +129,7 @@ worktree 的 dist）：用 `LUMIR_VISUAL_PORT=<端口>` 指定独立端口隔离
 （`playwright.config.ts` 的 `tolerance`）。删掉或移动一块 UI 时，它占的像素可能正好落在
 容差之内——整页基线继续以「无差异」通过，门禁静默假绿。这不是假设：0.005 时代「删左栏 UI」
 （提交 `c9a3c20`）就这样溜过两张整页基线，直到另一次超容差失配（提交 `736b3f7`）才暴露
-（根因与防线见 [REVIEW.md](../../REVIEW.md) 第 3 条）。
+（根因与防线见 [REVIEW.md](../../REVIEW.md) 「容差吞掉真实变化」条）。
 
 删除或移动 UI 元素后，必须逐张核对该元素出现过的**所有**整页基线的时间戳是否随本次更新：
 
@@ -143,3 +150,7 @@ ls -l tests/visual/baselines/*-snapshots/              # 相关基线的时间�
 ```ts
 await expectScreenshot(page, "foo.png", { maxDiffPixelRatio: 0.01 });
 ```
+
+动容差、或加会删 / 移 UI 的场景之前，先在本地把该元素删掉跑一次，确认门禁确实 FAIL——
+容差是按「机器间抖动上限」设的，没核过「最小真实变化」的下限；0.001 在 1200×800 下约 960 像素，
+足够吞掉整片小元素的新增或删除（三处现场见 REVIEW.md「容差吞掉真实变化」条）。

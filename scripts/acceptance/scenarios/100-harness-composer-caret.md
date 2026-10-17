@@ -59,7 +59,7 @@ steps:
   - name: 发送后焦点断言——focused 节点是 AXTextArea（= composer；修前焦点留在发送钮 = AXButton，本条 FAIL）
     do: settle
     expect:
-      - label: 焦点回到输入区（composer 的 AXTextArea；REVIEW.md 第 1 条——落点断言走 focused 解析形态）
+      - label: 焦点回到输入区（composer 的 AXTextArea；REVIEW.md 「断言等价于子串」条——落点断言走 focused 解析形态）
         ax: { focused: "AXTextArea" }
       - shot: 01-发送后-焦点回-composer
 
@@ -96,7 +96,7 @@ Alex 原话：「在发送了消息后，composer 中光标位置变成最左上
 
 ## 断言口径
 
-- **落点断言走 `ax: { focused: "AXTextArea" }` 解析形态**（REVIEW.md 第 1 条），不用跨节点
+- **落点断言走 `ax: { focused: "AXTextArea" }` 解析形态**（REVIEW.md 「断言等价于子串」条），不用跨节点
   正则。composer 与编辑器都是 `AXTextArea`，单看 role 分不出谁——所以续打字那条用
   「composer 值出现 probe + 文档逐字节不变」联合锁定是 composer 而不是编辑器。
 - **`clickInNode` 是真实鼠标事件**（节点 bbox 内坐标点击）：composer 的 contenteditable

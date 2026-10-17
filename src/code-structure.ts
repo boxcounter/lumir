@@ -641,7 +641,7 @@ function collectEntries(support: StructureSupport, tree: StructureTree, text: st
 //
 // 这两个函数与语言无关：`level` 是「层级量」（code 是语法嵌套深度，md 是标题层级 1–6），`from` 是
 // 条目起点。md 的标题链与 code 的符号链是**同一个语义**（同级或更浅的条目各自另起一段，链上只留
-// 祖先），因此只有一份实现、两条来源共用——REVIEW.md 第 8 条（同一语义不留两处真源）。
+// 祖先），因此只有一份实现、两条来源共用——REVIEW.md 「同一语义两处真源」条（同一语义不留两处真源）。
 //
 // 放在本模块而不是 src/toc.ts：toc.ts 的依赖链里有 DOM 侧模块（frontmatter → 渲染 widget），
 // 进不了 tests/unit 那一层；这两条判据（当前位置归属 + 祖先链）是单测能覆盖的纯逻辑。

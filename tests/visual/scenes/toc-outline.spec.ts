@@ -9,7 +9,7 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //   1. **整页基线抓不到指示段**：位置指示段只改约 100 个像素（M148 时在 masthead，restyle
 //      后迁到 modeline），而整页容差 `maxDiffPixelRatio: 0.001`（1200×800 ≈ 960 px）把它整个
 //      吞掉了——`--update` 跑完 15 张基线逐字节零变化、普通模式也照样绿。也就是说：只靠既有
-//      整页场景，指示段与浮层的视觉回归没有任何机器防线（REVIEW.md 第 3 条同族）。
+//      整页场景，指示段与浮层的视觉回归没有任何机器防线（REVIEW.md 「容差吞掉真实变化」条同族）。
 //   2. **真机套件验不了缩进与精确光标**：AX 不暴露缩进，也不暴露选区；13-toc 只能用派生证据
 //      间接判「光标落在标题行尾」。
 // 因此这里补一条 chromium 场景：浮层元素级截图（只钉浮层自身，容差按元素盒算）+ 直接读
@@ -277,7 +277,7 @@ test("浮层总高上限：窗口高 80%（含底部提示），列表在浮层�
 
   // 60 条条目远超一屏，浮层顶到上限：读数既不超过 80%，也必须真的用满。
   // **下限才是这条断言的区分度**——旧的 `max-height: 55vh` 只约束列表、提示与内边距在
-  // 上限之外（800px 窗口下约 486px），单判「不超过 80%」会静默通过（REVIEW.md 第 1 条）。
+  // 上限之外（800px 窗口下约 486px），单判「不超过 80%」会静默通过（REVIEW.md 「断言等价于子串」条）。
   let geo = await geometry();
   expect(geo.height).toBeLessThanOrEqual(geo.viewport * 0.8 + 0.5);
   expect(geo.height).toBeGreaterThan(geo.viewport * 0.8 - 1.5);

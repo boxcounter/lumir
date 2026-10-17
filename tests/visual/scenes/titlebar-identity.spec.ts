@@ -5,7 +5,7 @@
 // 判据一律是**读数**（DOM 文本、hidden 状态、getComputedStyle、boundingBox 几何），
 // 不是「某个函数被调用过」。唯一例外是 M246 补的标识块元素级像素基线：三段文字的字形墨
 // ≪ 整页 0.001 容差的 960px 预算，「由既有整页基线的自然更新覆盖」等于没有覆盖
-// （REVIEW.md 第 3 条同族），所以形态由元素 crop 钉住；CI 的 LUMIR_VISUAL_STRUCTURAL=1
+// （REVIEW.md 「容差吞掉真实变化」条同族），所以形态由元素 crop 钉住；CI 的 LUMIR_VISUAL_STRUCTURAL=1
 // 下该断言按 pixel-skip 留痕跳过，其余全量照跑。
 //
 // 覆盖（对应 specs delta「产品名与版本号常显」四条 scenario）：
@@ -208,7 +208,7 @@ test("窄窗退让（D2 备选）：<640px 版本号退 modeline 右段尾部，
   expect(await page.locator(".modeline-version").evaluate((el) => el.textContent)).toBe(` · ${VERSION}`);
   // 拼接形态：modeline 右段整体读作「语法 · 行数 · UTF-8 · 版本号」。
   // 版本号段按 `VERSION` 常量拼进正则（M238：这里原先是写死的 `0\.0\.0`，版本一 bump 就与
-  // 上面的常量分叉成两处真源——REVIEW.md 第 8 条；点号要转义，故用 replace 而不是模板里手写）。
+  // 上面的常量分叉成两处真源——REVIEW.md 「同一语义两处真源」条；点号要转义，故用 replace 而不是模板里手写）。
   await expect(page.locator(".modeline-right")).toHaveText(
     new RegExp(`Markdown · \\d+ 行 · UTF-8 · ${VERSION.replaceAll(".", "\\.")}`),
   );

@@ -21,7 +21,7 @@ steps:
       - label: pane 里的面板在位
         ax: { has: "/AXButton \\(发送\\)/" }
 
-  - name: 抢前台（后台注入键盘整批丢键/错键会显著加剧——REVIEW.md 第 11 条）
+  - name: 抢前台（后台注入键盘整批丢键/错键会显著加剧——REVIEW.md 「键盘注入丢键」条）
     do: focusWindow
     retries: 4
 
@@ -135,4 +135,4 @@ M459（change add-approval-decision-reason）：Alex 2026-10-12 在 `vault_write
 - **不判批准闸的内部状态**：判定依据来自事件 / 快照两条通道，真机侧的可判读数就是卡上文本与
   工具行文本；层级映射的真值表在 `src-tauri/src/harness/permissions.rs` 的单测里。
 - **键盘口径同 110**：场景只发一条消息，避开 KimiCU 逐键注入在多段输入下的丢键面
-  （REVIEW.md 第 11 条）。
+  （REVIEW.md 「键盘注入丢键」条）。

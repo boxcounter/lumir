@@ -128,7 +128,7 @@ function classesOf(tokens: Array<{ text: string; cls: string }>, text: string): 
 }
 
 test("yaml 键着色不变量：任意形态的键取属性色、MUST NOT 落字面量色", () => {
-  // 输入维度扫一遍而不是只钉一个 fixture（REVIEW.md 第 1 条：单案例只能证明那个案例被修好）。
+  // 输入维度扫一遍而不是只钉一个 fixture（REVIEW.md 「断言等价于子串」条：单案例只能证明那个案例被修好）。
   // 形态取自可触及语料与 vault 语料的 `Weekly/README.md`（`dimensions:` 那张表）：顶层键、
   // 嵌套键、序列项内的键、多词键、含 `-` / `.` / `/` / `+` 的键、非 ASCII 键。
   const cases: Array<{ doc: string; keys: string[] }> = [
@@ -210,7 +210,7 @@ test("yml 与 yaml 逐 token 相同；yaml 的 atom 不外溢到 toml / json / j
 });
 
 test("yaml / toml 的着色边界：超上限、无键的纯列表、未收录语言", () => {
-  // 先给正观测：有键的 yaml 块确实产出 token（否则下面的负向断言在空集上空转，REVIEW.md 第 2 条）
+  // 先给正观测：有键的 yaml 块确实产出 token（否则下面的负向断言在空集上空转，REVIEW.md 「读不到当成空」条）
   expect(classesOf(tokenList(`k: v\n`, "yaml"), "k")).toEqual(["cm-lp-tok-property"]);
 
   // 超过单一代码块上限（64 KiB）即回落纯文本，与语言无关
@@ -275,7 +275,7 @@ test("rust 着色 parity 不变量：围栏与 code 模式对任意构造产出�
   for (const doc of cases) {
     expect([...highlightCode(doc, "rust")], JSON.stringify(doc)).toEqual(codeModeTokens(doc, "rust"));
   }
-  // 正观测（REVIEW.md 第 2 条：负向断言不得在空集上空转）：两侧都把字符 / 字节字符字面量
+  // 正观测（REVIEW.md 「读不到当成空」条：负向断言不得在空集上空转）：两侧都把字符 / 字节字符字面量
   // 染成字符串色，上面的逐 token 相等不是在「两边都不着色」上通过
   for (const [doc, literal] of [[`let c = 'a';`, "'a'"], [`let b = b'x';`, "b'x'"]] as const) {
     expect(classesOf(tokenList(doc, "rust"), literal), `${doc} 的字符字面量在围栏里未被着色`).toEqual(["cm-lp-tok-string"]);
@@ -379,7 +379,7 @@ async function coloredTokens(page: Page, lineNeedle: string, expectToken: string
 
 test("DOM：同段 yaml 在围栏（yaml）与只读 .yml / .yaml 文件（code 模式）里配色逐条相同", async ({ page }) => {
   // code 模式侧的内容直接从 fixture 的 ```yaml 围栏里取——「同一段 yaml」由构造保证，
-  // 两处各写一份会在下一次改 fixture 时静默漂移（REVIEW.md 第 8 条）。
+  // 两处各写一份会在下一次改 fixture 时静默漂移（REVIEW.md 「同一语义两处真源」条）。
   const yamlBlock = /```yaml\n([\s\S]*?)```/.exec(source)?.[1] ?? "";
   expect(yamlBlock, "fixture 里应有 ```yaml 围栏").toContain("key: north");
   await stubTauri(page, {
@@ -470,9 +470,9 @@ test("DOM：围栏 toml / yaml 的取色（键属性色、toml 的 atom 不跟�
 
   // 像素断言排在最前，顺序固定：先整页（滚到新增块所在位置）再元素级——元素截图会把目标行滚进
   // 视口，先截会改掉整页位置。放在计算色断言之前是为了让「视觉层」这一关独立可达：只改类名而不
-  // 改色值这类回归计算色断言看不出来，只有基线比得出来（REVIEW.md 第 1、3 条）。
+  // 改色值这类回归计算色断言看不出来，只有基线比得出来（REVIEW.md「断言等价于子串 / 容差吞掉真实变化」条）。
   await scrollToLine(page, "[[hooks]]");
-  // 整页这张**必须覆盖容差**（REVIEW.md 第 3 条）：实测把 yaml 的键色改回旧值（键回到字面量赭色），
+  // 整页这张**必须覆盖容差**（REVIEW.md 「容差吞掉真实变化」条）：实测把 yaml 的键色改回旧值（键回到字面量赭色），
   // 这张 1200×800 的差异是 **958 像素**，而全局 maxDiffPixelRatio 0.001 的额度是 **960 像素**——
   // 差 2 像素就静默假绿。0.0005（480 像素）留 2 倍余量，同时仍远大于本地渲染抖动（同一基线的
   // 正常 run 逐像素零差异）。元素级那张不受此问题影响（766×29，额度 22 像素、差异 92 像素）。
@@ -531,7 +531,7 @@ test("编辑态：块内输入即时着色，颜色不溢出到块外段落", as
 // 四条组合、「一元素一条规则」与「文字可达」在这层守（chromium 的 getComputedStyle + 滚动几何）；
 // 真机侧另有一套（scripts/acceptance/scenarios/*wrap*），分工见那边的场景说明。
 // 判定用**同一份文档里的短行**做单行基准，不写死行高：字体与行高来自排版基线变量，
-// 写死 28px 这类数字会在下次改基线时静默失配（REVIEW.md 第 1、8 条）。
+// 写死 28px 这类数字会在下次改基线时静默失配（REVIEW.md「断言等价于子串 / 同一语义两处真源」条）。
 // ---------------------------------------------------------------------------
 
 const WRAP_SOURCE = readFileSync(new URL("../fixtures/render-codeblock/wrap.md", import.meta.url), "utf8");
@@ -681,7 +681,7 @@ test("默认口径：代码块不折行（块内可滚、行尾可达）、正�
   expect(end.textRight - end.edgeRight, "行尾必须能滚进可视区").toBeLessThanOrEqual(1);
   // 元素级基线钉住「滚到最右」的现场（行尾可见 + 容器底板铺满）。整页基线不在这里重复拍：
   // 「四种组合」那组按口径各拍一张，其中默认口径那张与这里的整页状态逐字节相同——
-  // 同一状态两张基线是空占（REVIEW.md 第 1 条「看着有覆盖、其实不判任何东西」的同族形态）。
+  // 同一状态两张基线是空占（REVIEW.md 「断言等价于子串」条「看着有覆盖、其实不判任何东西」的同族形态）。
   await expectScreenshot(
     page.locator(".cm-lp-codeblock-scroll", { hasText: CODE_NEEDLE }).first(),
     "wrap-codeblock-scrolled-to-end.png",
@@ -841,7 +841,7 @@ async function openWrapMode(page: Page, theme: "light" | "eink", blockWrap: bool
   await page.locator('.ft-row[title="wrap.md"]').click();
   await expect(page.locator(".modeline-path")).toHaveText("wrap.md");
   // 正观测：三个代码块（两处围栏 + 引用块内嵌套那处）都已被装饰层发现——`codeBlocksIn` 是
-  // 视口有界的，装饰没到位时下面的读数会落到别的元素上，先把它挡掉（REVIEW.md 第 2 条）。
+  // 视口有界的，装饰没到位时下面的读数会落到别的元素上，先把它挡掉（REVIEW.md 「读不到当成空」条）。
   await expect(page.locator(".cm-lp-codeblock-slot")).toHaveCount(3);
 }
 
@@ -914,7 +914,7 @@ async function expectBlockGeometry(
   const g = await blockGeometry(page, needle);
   // 容差一律 0.5px（toBeCloseTo 的 precision 0）：判据要抓的是「差一档 `--sp-7` = 14px」，
   // 0.5 的余量足够吸收亚像素抖动而不放进任何真实偏移。
-  // 正观测：块外正文行确实落在测度左缘（否则下面的测度基准是空的，REVIEW.md 第 2 条）。
+  // 正观测：块外正文行确实落在测度左缘（否则下面的测度基准是空的，REVIEW.md 「读不到当成空」条）。
   expect(g.proseLeft, `${label}·正观测：块外正文行必须落在正文测度左缘`).toBeCloseTo(g.measureLeft, 0);
   // ① 块盒不内缩（M474 的形态是这里差一档 `--sp-7`）。
   expect(g.slotLeft, `${label}·① 块盒左缘 == 正文测度左缘（不得内缩）`).toBeCloseTo(g.measureLeft, 0);
@@ -960,7 +960,7 @@ test("几何：块盒与正文测度对齐、块内左侧留白一档（横滚 /
     // eink 规则⑤ 的黑框：横滚档挂在容器上、折行档挂在 slot 上（M295），都在 slot 盒上
     // ——本 mission 只加内边距，框 / 底板 / 行区带的关系一字不动，这里就把「框还在」钉一下；
     // 框色与底板 / 行区带的取值归 restyle-eink.spec.ts 的规则⑤ 用例（不在这里抄第二份，
-    // REVIEW.md 第 8 条）。
+    // REVIEW.md 「同一语义两处真源」条）。
     frames[mode.label] = mode.blockWrap ? top.slotBorderLeft : top.containerBorderLeft!;
     // 折行档的两处读数都属于同一个 slot，故只查顶层块那条即可代表本行。
   }

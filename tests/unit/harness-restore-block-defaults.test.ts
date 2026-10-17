@@ -18,7 +18,7 @@
 // 逐类块的默认态对照：正文（展开）、thinking（折叠，且**无时长读数**）、工具清单（≥2 行折叠、
 // 单行展开）——与 live 路径同一套渲染件、同一套默认。
 //
-// 断言口径（REVIEW.md 第 1 条）：用**精确相等**判读数（折叠行文本整串、aria-expanded 字面值），
+// 断言口径（REVIEW.md 「断言等价于子串」条）：用**精确相等**判读数（折叠行文本整串、aria-expanded 字面值），
 // 不用「包含」式子串。**区分度反向验证**（M542 实施期实测两轮，不在本文件里当用例跑）：① 把
 // `createRestoredThinking` 还原成修复前的展开形态 ⇒ 4 条用例里 3 条判红（工具清单那条保持绿，
 // 正是它要证明的「口径不是恢复就一律折叠」）；② 只去掉 `relabelThinkingViews` 的恢复分支 ⇒
@@ -461,7 +461,7 @@ function thinkBlock(mount: FakeEl): FakeEl {
   return blocks[0];
 }
 
-/** 折叠行的可见文本（整串判读，不做子串包含——REVIEW.md 第 1 条）。 */
+/** 折叠行的可见文本（整串判读，不做子串包含——REVIEW.md 「断言等价于子串」条）。 */
 function thinkHeadText(mount: FakeEl): string {
   return thinkBlock(mount).querySelector(".lumir-hp-think-text")?.textContent ?? "";
 }

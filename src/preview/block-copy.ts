@@ -37,7 +37,7 @@ export interface BlockCopyRange {
 /** 语法树里 caret 所在的代码块节点（围栏或缩进）；不在块内时 null。
  *
  *  判定沿用 `codeblockOnLine` 的形态（从行首首个非空白字符 `resolveInner` 后逐级上溯父
- *  节点）——同一份判据只写一处（REVIEW.md 第 8 条）。空行也在块内时同样命中：起点退回行首，
+ *  节点）——同一份判据只写一处（REVIEW.md 「同一语义两处真源」条）。空行也在块内时同样命中：起点退回行首，
  *  解析树把空行归给块的内容节点。 */
 export function codeBlockNodeAt(state: EditorState, pos: number): SyntaxNode | null {
   const doc = state.doc;

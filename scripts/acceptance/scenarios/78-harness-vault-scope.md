@@ -141,9 +141,9 @@ steps:
 
 - **空态提示是「transcript 为空」的构造性判据**：`syncEmptyHint()` 只在 transcript 没有子节点时
   把提示挂进去、有内容就摘掉。因此「提示在场」等价于「transcript 是空的」——它同时是负向断言
-  （A 的内容不在）的**正观测**：读不到 transcript 与 transcript 为空不是一回事（REVIEW.md 第 2 条）。
+  （A 的内容不在）的**正观测**：读不到 transcript 与 transcript 为空不是一回事（REVIEW.md 「读不到当成空」条）。
 - **JSONL 是「回合终点」的盘上事实**：`llm_response` 记录只在这一轮响应返回时落盘，用它把「等 45s
-  之后回答确实已经发射过」钉死，避免「负向断言在事件根本没来时空过」这一类假绿（REVIEW.md 第 1 条）。
+  之后回答确实已经发射过」钉死，避免「负向断言在事件根本没来时空过」这一类假绿（REVIEW.md 「断言等价于子串」条）。
   判据三的 `env:harness/sessions/*/*.jsonl` 是 glob（取 mtime 最新一份）：B 的会话没发过消息，JSONL 文件
   惰性创建（首次记录才建文件），因此这里命中的仍是 A 的那份留存。
 - **两串标记都是本场景独有**：`alphaonly` 只由本场景注入；`VSWITCH-A` 只由本场景的 mock fixture

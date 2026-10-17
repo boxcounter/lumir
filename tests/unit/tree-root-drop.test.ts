@@ -390,7 +390,7 @@ test("普通行不受影响：文件行仍不是落点，目录行仍照旧可�
   assert.equal(r.dragOverRow("sub/b.md"), false, "文件行不是落点");
   assert.equal(r.rowHighlighted("sub/b.md"), false, "文件行没有落点高亮");
   // 目录行：同一次拖拽里换到目录行上就该可放——它是本文件的「正控制」：没有这一条，
-  // 上面那些「禁放」断言在通道整体失灵时照样绿（REVIEW.md 第 1 条：判据要有区分度）。
+  // 上面那些「禁放」断言在通道整体失灵时照样绿（REVIEW.md 「断言等价于子串」条：判据要有区分度）。
   assert.equal(r.dragOverRow("other"), true, "目录行落点照旧可放");
   assert.equal(r.rowHighlighted("other"), true, "高亮落在目录行上");
   assert.equal(r.vaultHighlighted(), false, "目录行落点 MUST NOT 顺带点亮 vault 名行");

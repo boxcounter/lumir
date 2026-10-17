@@ -39,7 +39,7 @@ steps:
         editor: { has: "另一篇" }
       - label: 产品标识块仍在——溢出态也没把它挤出标题栏（蓝箭头缺陷位的读屏面）
         # 版本号走 $appName / $appVersion 占位符（从 tauri.conf.json 读真值），不硬编码副本
-        # （M236 口径，REVIEW.md 第 8 条）——原来这里写死 "Lumir 0.1.0"，版本一 bump 就假红。
+        # （M236 口径，REVIEW.md 「同一语义两处真源」条）——原来这里写死 "Lumir 0.1.0"，版本一 bump 就假红。
         ax: { has: "$appName $appVersion" }
 
   - name: 注入前把窗口带到前台（键盘注入的前台纪律，README「起实例前的环境纪律」）
@@ -144,7 +144,7 @@ M257（tab-overflow-english-menu）的两件事在**真实 WKWebView** 下的表
   权威判定在 chromium 层（`tests/visual/scenes/tab-menu.spec.ts`）。
 - **AX 暴露滚出视口的标签（本场景实测）**：13 个标签的精确计数在溢出态下 PASS——标签栏的
   AX 树不受滚动裁剪（与 M251 文件树「只暴露可视行」的现场不同形）。
-- **注入通道丢键**：`press_key` 对 WKWebView 间歇整批丢键（REVIEW.md 第 11 条）。激活标签
+- **注入通道丢键**：`press_key` 对 WKWebView 间歇整批丢键（REVIEW.md 「键盘注入丢键」条）。激活标签
   读数没变先按丢键复跑一次，再判产品缺陷。
 - **不做手感判定**：溢出态的观感（滚动条消失后的标签条形态、右缘间距）归 Alex，本场景只留截图。
 - **不新增像素基线**：`shot` 是给人看的证据，不做逐像素比较。

@@ -143,7 +143,7 @@ impl RuntimeExt for Fixture {
 }
 
 /// 本测试的 vault 稳定 id（会话留存目录名）：`Fixture::scope()` 与留存读取口共用同一份字面量
-/// （REVIEW.md 第 8 条：两份真源会漂）。
+/// （REVIEW.md 「同一语义两处真源」条：两份真源会漂）。
 const VAULT_ID: &str = "vault-test-1";
 
 /// 夹具的唯一一份 JSONL 留存（文件名是 `jsonl::new_session_id` 的产物，测试侧不复刻该算法）。

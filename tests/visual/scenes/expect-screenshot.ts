@@ -11,7 +11,7 @@ import { structuralOnly } from "../playwright.config";
 //
 // 置位时**不执行**对比，也不读基线：只留一行 stdout 与一条 annotation（HTML / JSON 报告里可见），
 // 供「这次 run 到底跳过了哪些像素断言」逐条核对——静默跳过与「断言通过」在报告里长得一样，
-// 是本仓反复踩过的假绿形态（REVIEW.md 第 1 条）。
+// 是本仓反复踩过的假绿形态（REVIEW.md 「断言等价于子串」条）。
 export async function expectScreenshot(
   target: Page | Locator,
   name: string,

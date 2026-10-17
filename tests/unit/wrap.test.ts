@@ -63,7 +63,7 @@ test("两模式分叉（M247）：code 模式正文行只看 codeModeLineWrap，
   assert.equal(wrapSpec("code", wrap({ codeModeLineWrap: false })).lineWrapping, false, "出厂口径下 code 模式不折行");
 
   // 判别性在这里：翻转 md 那两轴，code 模式的结论必须一字不变（实现若把 code 分支写成再读
-  // `lineWrap`，下面两条立刻红——REVIEW.md 第 1 条：单案例只能证明那个案例被修好）。
+  // `lineWrap`，下面两条立刻红——REVIEW.md 「断言等价于子串」条：单案例只能证明那个案例被修好）。
   for (const lineWrap of [true, false]) {
     for (const codeBlockWrap of [true, false]) {
       assert.equal(

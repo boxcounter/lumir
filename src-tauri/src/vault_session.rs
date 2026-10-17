@@ -211,7 +211,7 @@ fn clamp_ratio(value: f64) -> f64 {
 }
 
 /// `pub(crate)`：阅读位置（`reading_position.rs`）的键与标签列表同口径，复用这一份判定而不是
-/// 另抄一份（REVIEW.md 第 8 条：同一语义不造两处真源）。
+/// 另抄一份（REVIEW.md 「同一语义两处真源」条：同一语义不造两处真源）。
 pub(crate) fn valid_entry(entry: &str) -> bool {
     if entry.is_empty() {
         return false;

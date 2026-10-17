@@ -104,7 +104,7 @@ steps:
   因此「版本号在标题栏还是 modeline」只能靠两条互补判据定位：`has "/UTF-8 · $appVersion/"`
   （该串只可能由 modeline 右段产生）与 `has "/$appName[^\n]{0,4}$appVersion/"`
   （两者相邻 = 合体在标题栏）——两条在宽 / 窄窗下取值相反，互为反向输入。
-- **`AX 树含产品名` 这类子串断言在这里没有区分度**（REVIEW.md 第 1 条）：窗口标题是「Lumir」，
+- **`AX 树含产品名` 这类子串断言在这里没有区分度**（REVIEW.md 「断言等价于子串」条）：窗口标题是「Lumir」，
   AX dump 里 `AXApplication "Lumir"` / `AXWindow "Lumir"` / `AXWebArea (Lumir)` / 菜单项都不来自标识块，
   所以「含 Lumir」在标识块整个隐藏时照样 PASS——ACL 漏配那一轮实测正是如此（版本号四条断言全红、
   产品名断言照绿）。本场景因此改成上面两条互补判据，MUST NOT 退回 `has: "$appName"` 形态。

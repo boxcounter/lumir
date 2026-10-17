@@ -8,7 +8,7 @@
 //! 两 vault 互不可见、根下平铺残留不参与列举 / 恢复 / 删除）。
 //!
 //! 环境隔离与 harness_runtime.rs 同口径：XDG_CONFIG_HOME + HOME 指向临时目录，
-//! 多测串行（静态锁，env 是进程全局；REVIEW.md 第 13 条）。
+//! 多测串行（静态锁，env 是进程全局；REVIEW.md 「测试污染真实环境」条）。
 
 use lumir_lib::config::{HarnessConfig, HarnessPermissions, HarnessProvider};
 use lumir_lib::fs_io::IgnorePolicy;
@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// 本测试的 vault 稳定 id（会话留存目录名 = vault 注册表 id）：`Fixture::scope()` 与
-/// `sessions_dir()` 共用同一份字面量（REVIEW.md 第 8 条：两份真源会漂）。
+/// `sessions_dir()` 共用同一份字面量（REVIEW.md 「同一语义两处真源」条：两份真源会漂）。
 const VAULT_ID: &str = "vault-test-1";
 
 /// 隔离环境的测试夹具：临时 XDG_CONFIG_HOME + HOME + 合成 vault。
@@ -485,7 +485,7 @@ fn recovery_sufficiency_holds_for_tool_loop_turn() {
     check_recovery_sufficient(&path).expect("恢复充分性成立");
 }
 
-/// 反向验证（REVIEW.md 第 1 条纪律：先造一个必让它 FAIL 的输入实测一次）：
+/// 反向验证（REVIEW.md 「断言等价于子串」条纪律：先造一个必让它 FAIL 的输入实测一次）：
 /// 手改重建链上的一个字节——响应正文、reasoning 项、调用参数、输出结果、system
 /// 各改一处，断言重建校验如实变红。
 #[test]
@@ -1276,7 +1276,7 @@ fn first_user_text_strips_injected_context_section() {
     runtime.release_turn(&f.scope());
 
     // 现场自证：留存里确实是「提问 + 注入节」的全文（否则下面的剥离断言在没有节时恒真，
-    // REVIEW.md 第 1 条）。
+    // REVIEW.md 「断言等价于子串」条）。
     let files = f.session_files();
     let recorded = f.read(&files[0]);
     let recorded_text = recorded

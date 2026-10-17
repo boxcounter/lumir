@@ -480,7 +480,7 @@ test.describe("M295：行内 code 药丸的选中态可辨性", () => {
   });
 
   test("区分度自证：把药丸按回「底色一律压在带上」的修前形态后，核心判据 MUST 判红", async ({ page }) => {
-    // REVIEW.md 第 1 条：断言必须先造一个必须让它红的输入——这里造的就是 M295 修前的产品行为
+    // REVIEW.md 「断言等价于子串」条：断言必须先造一个必须让它红的输入——这里造的就是 M295 修前的产品行为
     //（药丸底色无条件压在选区带之上）。
     await openDoc(page, "light");
     await page.addStyleTag({

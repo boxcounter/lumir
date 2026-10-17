@@ -166,7 +166,7 @@ const shell = createShell(app);
 //   - 账本既做 **pane 级**操作（split / close / activate），也做**标签级**归属登记
 //    （openTab / closeTab / moveTab）。标签归属的对齐口径是 `reconcilePaneLedger`（M317 接线）：
 //     账本按**对象引用**持有各实例的 EditorSession，与实例会话表对账（同一对象、path 活读），
-//     装配层不另存第二份归属清单（REVIEW.md 第 8 条）。跨 pane 移动标签走 `moveSessionToPane`
+//     装配层不另存第二份归属清单（REVIEW.md 「同一语义两处真源」条）。跨 pane 移动标签走 `moveSessionToPane`
 //    （账本 moveTab + 源实例 closeSession + 目标实例 adoptSession，state 整体迁移不重建）；
 //   - 「哪个会话在哪个 pane」的**现查**入口仍是 `paneEntryOfSession`（按实例会话表查，与账本
 //     对账同源、互为兜底）；
@@ -263,7 +263,7 @@ function trackEachView(run: (view: EditorView) => void): void {
 
 /** wikilink 解析器的施加（applyVault 唯一调用点）：更新当前值并广播到全部 pane——
  *  新 pane 在 createPaneHandle 里读同一份 currentResolver，两处因此不漂
- *（REVIEW.md 第 8 条）。 */
+ *（REVIEW.md 「同一语义两处真源」条）。 */
 function applyWikilinkResolver(
   resolver: Parameters<EditorHandle["setWikilinkResolver"]>[0],
 ): void {
@@ -360,7 +360,7 @@ function createPaneHandle(paneId: PaneId, kind: PaneKind): PaneHandle {
   // 的同步唯一决定，root pane 与动态 pane 同一形态）。透明底盖在编辑器之上，点击它 = 点击
   // 空 pane 的正文：焦点进该 pane 的编辑器（focusin 随之翻活跃指针），用户可以直接开敲
   //（scratch）——第一个键引导即隐（emptyPaneGuideVisible 的 dirty 条件）。不加 mousedown
-  //  preventDefault（REVIEW.md 第 16 条：preventDefault 不挂容器级元素）。
+  //  preventDefault（REVIEW.md 「标题栏 preventDefault」条：preventDefault 不挂容器级元素）。
   const guideEl = document.createElement("div");
   guideEl.className = "pane-empty-guide";
   guideEl.textContent = PANE_GUIDE_LABEL();
@@ -1190,7 +1190,7 @@ async function copyBlockContent(handle: EditorHandle, range: BlockCopyRange): Pr
   const text = blockCopyText(handle.view.state, range);
   const done = range.kind === "table" ? COPIED_TABLE_TOAST() : COPIED_CODE_BLOCK_TOAST();
   // console 线索里那个块类型词与上屏同源（同一个表条目），只是日志面固定用中文取值——
-  // 诊断文本不进语言面，但**不另写一份字面量**（同一条串两处真源正是 REVIEW.md 第 8 条要防的）。
+  // 诊断文本不进语言面，但**不另写一份字面量**（同一条串两处真源正是 REVIEW.md 「同一语义两处真源」条要防的）。
   const noun = t(range.kind === "table" ? "D203" : "D204", undefined, "zh");
   try {
     await navigator.clipboard.writeText(text);
@@ -1273,7 +1273,7 @@ type ToastTone = "neutral" | "success";
 
 /** toast 的归属挂载元素（M420）：提示锚定到**发起它的 pane** 右下角，不跨 pane。
  *
- *  归属判据（收敛在装配层这一处，调用方不各判一次——REVIEW.md 第 8 条）：
+ *  归属判据（收敛在装配层这一处，调用方不各判一次——REVIEW.md 「同一语义两处真源」条）：
  *   - 默认 = **活跃 doc pane** 的挂载元素 `.editor-pane`：编辑器 / 保存 / 标签 / 大纲 /
  *     链接跟随 / 复制等提示都由「用户正在操作的那个文档 pane」发起，落它的右下角；
  *   - harness 面板发起的提示（摘录跳回失锚 D372）由调用方显式经 `harnessPaneMount()` 指定
@@ -2126,7 +2126,7 @@ const linkFollow = createLinkFollow({
 // 可见文案同在 src/theme.ts（纯逻辑，单测在那层跑），本文件只管施加与接线。
 //
 // applyTheme 是**唯一施加点**：启动装配（本文件末尾 configGet 块的最后一条）与运行期切换都经
-// 它，MUST NOT 出现第二处 `data-theme` 写入者（REVIEW.md 第 8 条）。
+// 它，MUST NOT 出现第二处 `data-theme` 写入者（REVIEW.md 「同一语义两处真源」条）。
 // ---------------------------------------------------------------------------
 
 /** 施加主题：写 `<html data-theme>`（token 层三组块按它取色，chrome / CM 主题 / 两路语法高亮 /
@@ -2204,7 +2204,7 @@ shell.modelineTheme.addEventListener("click", cycleTheme);
 // 取值一律读 `<html lang>`（src/copy.ts 的 currentLanguage），本文件**不另存一份当前语言**。
 //
 // applyLanguage 是**唯一施加点**：启动装配（本文件末尾 configGet 块内）与运行期切换都经它，
-// MUST NOT 出现第二处写 `<html lang>` 的地方（与 applyTheme 同款纪律，REVIEW.md 第 8 条）。
+// MUST NOT 出现第二处写 `<html lang>` 的地方（与 applyTheme 同款纪律，REVIEW.md 「同一语义两处真源」条）。
 // 语言的派生物比主题多得多（全部可见字符串），因此施加点还要跑一遍 `runRelabels()`：长驻
 // chrome 的模块在挂载时把串写死了，不重写就不会变（design §5.2 的不变量）。
 // ---------------------------------------------------------------------------
@@ -2311,7 +2311,7 @@ const COMPOSER_INPUT_CLASS = "lumir-hp-composer";
 
 /** 事件目标是否落在 harness composer 输入区内（M447）。`KeymapContext.isComposerEvent` 与
  *  `text` 面命令的分派包装**调同一个**助手——两条路径各写一遍判定就是第二个真源
- *（REVIEW.md 第 8 条）。面板未开 / harness pane 不在场时 composer 元素不在 DOM 里，判定
+ *（REVIEW.md 「同一语义两处真源」条）。面板未开 / harness pane 不在场时 composer 元素不在 DOM 里，判定
  *  自然为假。 */
 function isComposerTarget(event: KeyboardEvent | undefined): boolean {
   const target = event?.target;
@@ -2988,7 +2988,7 @@ void refreshVaultStatus();
 
 // 标题栏产品标识块（M236，change product-version-display）：启动时经 Tauri 内置 app 模块
 // 读一次 productName / version（真源 = tauri.conf.json，前端 MUST NOT 硬编码第二份——
-// REVIEW.md 第 8 条），写 DOM 的事全在 src/modeline.ts（含窄窗退让）。运行期不刷新
+// REVIEW.md 「同一语义两处真源」条），写 DOM 的事全在 src/modeline.ts（含窄窗退让）。运行期不刷新
 //（版本号构建期固化，没有可监听的变化源）。
 // 失败降级（ACL 漏配 / 非 Tauri 环境如 chromium 视觉桩未路由时）：标识块整体 hidden +
 // 一条 app_meta_unavailable 诊断日志——宁可不显示，MUST NOT 渲染假版本号。
@@ -3060,7 +3060,7 @@ configGet().then((snapshot) => {
   // / `off` 只管 md，code 恒常显。与 `ui.theme` 的**差别**：它没有运行期切换的落点，因此是
   // **装载时读一次、运行期 MUST NOT 回写**（同 `editor.mode` / `editor.font_size`）——本 change
   // 不提供切换它的命令 / 键位 / UI。**前端不判非法值**：取值是闭集合，合法性已由 Rust 侧
-  // validate 保证（三档之外 warning + 回落 on-demand，REVIEW.md 第 8 条）。
+  // validate 保证（三档之外 warning + 回落 on-demand，REVIEW.md 「同一语义两处真源」条）。
   editor.setMarkdownLineNumbers(snapshot.config.ui.markdown_line_numbers);
   currentMarkdownLineNumbers = snapshot.config.ui.markdown_line_numbers;
   // 主题（restyle-ui-tokens-v1 的启动真源 + M237 的运行期切换）：`[ui] theme` 是**启动真源**，
@@ -3069,7 +3069,7 @@ configGet().then((snapshot) => {
   //「运行期态 vs 配置默认」的双真源；两处都走上面那个**唯一施加点** applyTheme。与上面几步同属
   //「配置到位后施加一次」的启动装配落点区。**前端不判非法值**：取值是闭集合，合法性已由
   // Rust 侧 validate 保证（light|dark|eink 之外 warning + 回落 light），前端再判一次就是
-  // 同一条语义的第二处真源（REVIEW.md 第 8 条）。不跟随系统主题（非目标）。
+  // 同一条语义的第二处真源（REVIEW.md 「同一语义两处真源」条）。不跟随系统主题（非目标）。
   //
   // 放在本块**最后一条**是有意的：`config_get` 的拿到 `ui` 是契约（Rust 的 AppConfig 里
   // `ui` 不是 Option，序列化必带），但桩环境可能落后于契约——若断言在块首，桩缺 `ui` 时
@@ -3082,7 +3082,7 @@ configGet().then((snapshot) => {
   // applyLanguage 施加到 `<html lang>` 并由文案层按它取值；运行期由 `view.language-cycle`
   // （⌘⇧L）/ modeline 语言钮推进并回写配置文件，两处都走上面那个**唯一施加点**。
   // **前端不判非法值**：取值是闭集合（en|zh），合法性已由 Rust 侧 validate 保证
-  //（非法值 warning + 回落 en，REVIEW.md 第 8 条）。不跟随系统语言（非目标）。
+  //（非法值 warning + 回落 en，REVIEW.md 「同一语义两处真源」条）。不跟随系统语言（非目标）。
   //
   // 与 applyTheme 相邻、同属块内末尾一族（design §5.1）：桩环境缺 `ui` 表时只让语言不施加，
   // 失败面收窄到真正依赖语言的地方（文案层回落到 DEFAULT_LANGUAGE，不抛错）。

@@ -60,6 +60,6 @@ steps:
   （实测两态都如此），所以判据落在同一份文件的第二次引用上（同形态、两态都有 bbox）。第一张的
   行为由 chromium 属性测试（`tests/visual/scenes/m182-image-first-open-width.spec.ts`，同一份文件
   + `![[]]` 方言形态）覆盖。
-- **反向验证**（REVIEW.md 第 1 条的防线）：移除机制落点（`src/preview/theme.ts` 的
+- **反向验证**（REVIEW.md 「断言等价于子串」条的防线）：移除机制落点（`src/preview/theme.ts` 的
   `.cm-lp-image` `width: "100%"`）后，本场景首开步转红（实测读数 `379×77`），切回步仍绿——即
   红在「首开」而不是「切回」，正是缺陷的两个终态分支。红输出留档 `test-results/m182/`。

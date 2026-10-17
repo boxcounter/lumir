@@ -27,7 +27,7 @@ steps:
       - label: pane 里的面板在位
         ax: { has: "/AXButton \\(发送\\)/" }
 
-  - name: 抢前台（后台注入整批丢键/错键会显著加剧——REVIEW.md 第 11 条）
+  - name: 抢前台（后台注入整批丢键/错键会显著加剧——REVIEW.md 「键盘注入丢键」条）
     do: focusWindow
     retries: 4
 
@@ -99,7 +99,7 @@ steps:
         ax: { not: "-HNL-BETA 第二行，等待 patch。" }
       - shot: 02-拒绝后
 
-  - name: 抢前台（终态行的 AXPress 以窗口在前台为可靠前提——同 REVIEW.md 第 11 条现场）
+  - name: 抢前台（终态行的 AXPress 以窗口在前台为可靠前提——同 REVIEW.md 「键盘注入丢键」条现场）
     do: focusWindow
     retries: 4
 

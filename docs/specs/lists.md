@@ -95,7 +95,7 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
 ## 与实现的关系
 
 - 判定的**单一真源**是 `src/preview/lists.ts` 的 `listLineInfo`（纯函数，不碰 view、不碰坐标）；
-  `ListLayout.build()` 与单元测试共用它（REVIEW.md 第 8 条：同语义不得两处写值）。
+  `ListLayout.build()` 与单元测试共用它（REVIEW.md 「同一语义两处真源」条：同语义不得两处写值）。
 - 渲染归属不改文档语义：lazy 行在 CommonMark 意义上**仍属**该列表项（渲染层与解析层在此
   分道）。Lumir 当前无独立 reading view，因此该行不会有任何视图按 CommonMark 缩进呈现——
   这是「与 Obsidian live preview 编辑层一致」的**知情取舍**（对照口径见上文「适用范围」的

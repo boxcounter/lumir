@@ -15,7 +15,7 @@
 // 三处出厂默认写值的处置（与 M180 的 DEFAULT_LINE_WRAP 同族）：Rust `EditorConfig::default()`
 // 的 `font_size` / CSS `--editor-font-size` 的默认值 / 本文件的 `DEFAULT_FONT_SIZE`。三处语义
 // 相同、各有断言钉住（`cargo test` 的 config 单测、`tests/unit/typography.test.ts`、
-// 视觉场景的默认口径计算属性断言），改一处必须同步其余两处（REVIEW.md 第 8 条）。
+// 视觉场景的默认口径计算属性断言），改一处必须同步其余两处（REVIEW.md 「同一语义两处真源」条）。
 
 /**
  * 编辑器内容字号的出厂默认（px）。与 Rust 侧 `src-tauri/src/config.rs` 的

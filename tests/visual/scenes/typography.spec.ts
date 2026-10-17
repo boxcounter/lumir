@@ -1,7 +1,7 @@
 // 排版与字号步进场景（M195，change typography-and-zoom）。
 //
 // 判据一律是**读数**（计算属性、px 值、几何、像素哈希），不是「某个函数被调用过」：
-// 本 change 的可见结果就是字号与字体本身，读数就是它的证据面（REVIEW.md 第 1 / 11 条）。
+// 本 change 的可见结果就是字号与字体本身，读数就是它的证据面（REVIEW.md 「断言等价于子串 / 键盘注入丢键」条）。
 //
 // 覆盖：出厂口径读数（D1 裁决后的新基准：15px / 行高 1.7 / 标记 .9em）、配置生效且只作用于
 // 编辑器、非法值 / 未安装字体退化为基线、三条步进命令与上下限、重置回配置值、不落盘不碰 dirty、
@@ -231,7 +231,7 @@ async function caretGeometry(page: Page, needle: string) {
     let domRect: { top: number; bottom: number } | null = null;
     if (selection && selection.rangeCount > 0) {
       const box = selection.getRangeAt(0).cloneRange().getBoundingClientRect();
-      // 折叠选区的矩形在部分情况下退化为全零（读不到 ≠ 为空，REVIEW.md 第 2 条）：只在它
+      // 折叠选区的矩形在部分情况下退化为全零（读不到 ≠ 为空，REVIEW.md 「读不到当成空」条）：只在它
       // 真的有几何时才拿它比较。
       if (box.height > 0) domRect = { top: box.top, bottom: box.bottom };
     }
@@ -343,7 +343,7 @@ test("配置生效且只作用于编辑器（正文 / 等宽 / 字号各自取�
 });
 
 test("像素对比仪器自证：同配置的两个页面必须给出同一个内容哈希", async ({ page, context }) => {
-  // REVIEW.md 第 1 条：先证明仪器有区分度——「非法值 / 未安装字体与缺省配置逐像素相同」这两条
+  // REVIEW.md 「断言等价于子串」条：先证明仪器有区分度——「非法值 / 未安装字体与缺省配置逐像素相同」这两条
   // 判据全靠这个哈希；若哈希本身受焦点、时序等因素影响，那两条就变成恒真（或恒假）。
   await open(page);
   const twin = await context.newPage();
@@ -730,7 +730,7 @@ test("标题六级阶梯随字号步进同比随动（spec editor-live-preview�
   RAMP.forEach((row, index) => {
     expect(parseFloat(zoomed[index]), `放大到 17px 后 h${row.level} 字号`).toBeCloseTo(row.size * ratio, 2);
   });
-  // 反向判据（REVIEW.md 第 1 条）：断言必须有区分度——正文确实变了，标题若与锚下逐值相同
+  // 反向判据（REVIEW.md 「断言等价于子串」条）：断言必须有区分度——正文确实变了，标题若与锚下逐值相同
   // 就是「没随动」，这条排除「整批字号都没动」这种退化（M299 修复前正是这个形态：正文 17px、
   // 六级仍为 21/18/16/15/14/13）。
   expect(zoomed).not.toEqual(anchor);

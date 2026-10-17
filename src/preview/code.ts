@@ -60,7 +60,7 @@ type TokenTable = Record<string, Tag>;
  * javascript/typescript 的 objprop 走同一条 `cx.style + " property"` 分支，但那里字符串键
  * 本来就该是字符串色，不跟着改。
  * 只挂在下面 LANGUAGES 的 json 项上——那是 code 模式与 markdown 代码块共用的同一张表，
- * 键色两侧同源，不存在各写一份的漂移面（REVIEW.md 第 8 条）。
+ * 键色两侧同源，不存在各写一份的漂移面（REVIEW.md 「同一语义两处真源」条）。
  */
 export const JSON_TOKEN_TABLE: TokenTable = { property: tags.propertyName };
 
@@ -363,7 +363,7 @@ const INDENT_UNIT = 2;
 const MAX_HIGHLIGHT_CHARS = 64 * 1024;
 
 /** 单块着色上限的对外读数（M277 的代码块全屏复用同一条上界，MUST NOT 另立新阈值——
- *  REVIEW.md 第 8 条：同一语义一处真源）。 */
+ *  REVIEW.md 「同一语义两处真源」条：同一语义一处真源）。 */
 export const MAX_CODE_HIGHLIGHT_CHARS = MAX_HIGHLIGHT_CHARS;
 const CACHE_LIMIT = 32;
 

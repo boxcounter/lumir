@@ -339,7 +339,7 @@ pub fn expand_image_refs(
 /// （文本 part 原文 + 图片 part 的 `<image ref="…" type="…"/>` 占位行，行间 `\n`）。
 /// 投递投影与面板文本是同一块序列的两个投影——本函数是 Rust 侧的**唯一**还原口：
 /// 会话入队（panel 面）与历史恢复（`restored_panel_messages`）都经它，两侧不可能漂
-/// （REVIEW.md 第 8 条）。
+/// （REVIEW.md 「同一语义两处真源」条）。
 ///
 /// 占位元素只带 ref / type（宽度/高度在 wire 引用形态里不存在，恢复的卡片只显文件名——
 /// ImageCard.width/height 是可选字段，与解析侧宽容口径一致）。图片 part 的本地标签字段

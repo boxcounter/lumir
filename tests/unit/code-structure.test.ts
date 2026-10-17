@@ -373,7 +373,7 @@ test("顺序 = 文档顺序，落点 = 声明起点（前导缩进不在范围�
 
 test("条目跨度 `to` = 声明节点范围（声明范围是被钉住的合同，M198 变量高亮要消费它）", () => {
   // 跨度取的是**声明节点**的 from/to（不是名字的范围）：`doc.slice(from, to)` 就是该声明的原文。
-  // 这条断言是 `StructureEntry.to` 的唯一消费者（REVIEW.md 第 9 条：声明了就得有人读它）。
+  // 这条断言是 `StructureEntry.to` 的唯一消费者（REVIEW.md 「声明了却没有消费者」条：声明了就得有人读它）。
   const spans = (language: CodeLanguage, doc: string): string[] =>
     structureEntries(language, doc).map((entry) => doc.slice(entry.from, entry.to));
 

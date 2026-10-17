@@ -52,7 +52,7 @@ harness 面板）的挂载元素，MUST NOT 是跨 pane 的容器（如整个编
 
 「发起它的区域」的解析 MUST 收敛在一处（本仓即 `src/main.ts` 的 toast 归属解析）：文档动作的
 提示归**活跃 doc pane**，harness 面板动作的提示归 **harness pane**，调用方不各判一次
-（单一来源，REVIEW.md 第 8 条）。反例形态（M420 现场，Alex 2026-10-10）：toast 挂在
+（单一来源，REVIEW.md 「同一语义两处真源」条）。反例形态（M420 现场，Alex 2026-10-10）：toast 挂在
 跨 pane 的编辑器列上，单 pane 时看不出问题，分栏后编辑器列的右下角就是右 pane ——左 pane 里
 保存（`Saved!`）的提示落到右 pane（可能是 harness）上，「提示属于谁」与「它画在哪」错位。
 
@@ -73,7 +73,7 @@ reject）**为输入分布，断言浮层元素在**任一观察点**（同步�
 不以空内容可见；内容非空时 `hidden` 恰翻转一次 true→false 并保持，空内容时 `hidden` 恒 true。
 同一浮层的 **`aria-expanded` MUST 反映实际可见态**（`aria-expanded="true"` ⟺ 浮层可见），
 MUST NOT 按「展开意图」提前翻——可见态在 `hidden` 与 `aria-expanded` 两处各写一遍即同一语义
-两处真源（REVIEW.md 第 8 条），改动只落到一处就会脱节。
+两处真源（REVIEW.md 「同一语义两处真源」条），改动只落到一处就会脱节。
 
 反例形态（M442 现场，2026-10-10）：会话浮层 `setSessPop(true)` 先 `hidden = false` + 定位、
 **后**异步拉清单；清单为空时在取数 resolve 后收起。`.lumir-hp-sesspop` 是带 padding / border /

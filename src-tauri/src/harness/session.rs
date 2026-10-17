@@ -84,7 +84,7 @@ pub enum CacheNote {
 ///
 /// 本结构的**序列化**就是两条载体的读数键集合（M534）：`harness_state` 快照的 `usage` 与
 /// `harness:event` 的 `usage` 事件同吃这一份 `Serialize`（[`super::events::usage`] 另加一个
-/// 判别键 `type`）——加字段即两端同改，MUST NOT 让任一侧另列一份键清单（REVIEW.md 第 8 条；
+/// 判别键 `type`）——加字段即两端同改，MUST NOT 让任一侧另列一份键清单（REVIEW.md 「同一语义两处真源」条；
 /// 事件侧曾手列键、漏掉 M526 的绝对值键，live 气泡因此静默回落百分比形态）。
 ///
 /// M443 起口径拆开：`ctx_pct` 仍是最近一次请求的值，cache 侧分**会话累计**（控制行主读数）
@@ -535,7 +535,7 @@ impl Session {
 
     /// 记录一次带 usage 的 LLM 往返（M443，design §3.2/§3.3）：先把本次计数累加进会话累计器，
     /// 再由此算出全部读数、存下并**返回**快照——turn 侧拿这一个返回值同时喂事件与快照两条通道
-    /// （MUST NOT 两套算法，REVIEW.md 第 8 条）。读数算法在 [`CacheTotals::snapshot`]。
+    /// （MUST NOT 两套算法，REVIEW.md 「同一语义两处真源」条）。读数算法在 [`CacheTotals::snapshot`]。
     pub fn record_usage(&mut self, usage: &Usage, window: u64) -> UsageSnapshot {
         self.cache_totals.accumulate(usage);
         let snapshot = self.cache_totals.snapshot(usage, window);
@@ -545,7 +545,7 @@ impl Session {
 
     /// 恢复路径的读数落种（M526）：快照与累计器同值、同源自 [`usage_from_records`] 的留存重算
     /// ——恢复后控制行/气泡显示源会话最近一次真实读数，其后的累计接着重算值继续（两条通道
-    /// 此后看到的值与留存可推导值一致，REVIEW.md 第 8 条）。
+    /// 此后看到的值与留存可推导值一致，REVIEW.md 「同一语义两处真源」条）。
     pub fn restore_usage(&mut self, usage: UsageSnapshot, totals: CacheTotals) {
         self.usage = usage;
         self.cache_totals = totals;
@@ -565,7 +565,7 @@ impl Session {
     /// 累计器随逻辑会话边界清零（M443）——压缩后的读数从零重新起算。**读数快照不清零**：
     /// 面板此刻显示的是压缩前那一轮的读数，与既有的 ctx% 行为一致（「压缩后 usage 仍是压缩前
     /// 读数，下轮请求才更新」），且两条通道（事件 / 快照）看到的是同一个值——在这里清快照会让
-    /// 「实时面仍是旧值、重载后面变成 0」的错位出现（REVIEW.md 第 8 条同族）。
+    /// 「实时面仍是旧值、重载后面变成 0」的错位出现（REVIEW.md 「同一语义两处真源」条同族）。
     pub fn rotate(&mut self, system: String, jsonl: JsonlWriter) {
         self.system = system;
         self.jsonl = jsonl;
@@ -870,7 +870,7 @@ mod tests {
     // ---- M443：缓存读数（会话累计 / 单回合 / 成因标注 / 序列化键集合） ----
 
     /// 测试用会话：留存句柄指向一个不会写盘的临时路径（`JsonlWriter::at_path` 惰性建文件，
-    /// 本组用例只碰读数内存态，零磁盘副作用、零环境变量扰动——REVIEW.md 第 13 条）。
+    /// 本组用例只碰读数内存态，零磁盘副作用、零环境变量扰动——REVIEW.md 「测试污染真实环境」条）。
     fn test_session() -> Session {
         Session::new(
             std::path::PathBuf::from("/tmp/lumir-m443-session-test"),

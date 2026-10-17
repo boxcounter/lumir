@@ -24,7 +24,7 @@ test("循环序 = light → dark → eink → light（D1 裁决）", () => {
     walk.push(current);
   }
   assert.deepEqual(walk, ["dark", "eink", "light"], "三档一周、顺序固定");
-  // 反向判据（REVIEW.md 第 1 条）：循环不是「恒返回同一档」的空转——三档互不相同
+  // 反向判据（REVIEW.md 「断言等价于子串」条）：循环不是「恒返回同一档」的空转——三档互不相同
   assert.equal(new Set(THEME_CYCLE).size, 3, "三档互不相同");
   assert.equal(THEME_CYCLE.length, 3);
 });

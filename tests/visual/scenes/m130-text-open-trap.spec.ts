@@ -12,7 +12,7 @@ import { DEMO_VAULT, dirtyReports, documentWrites, fileText, stubTauri } from ".
 // / 冲突恢复与 md 走同一条链路（`saveDocument` + `saveBaseline` 的 editable 闸）。image / binary
 // 类不进编辑器，维持「暂不支持预览」。
 //
-// **断言口径**（REVIEW.md 第 1/2 条）：每条正向断言都配一次**必须让它 FAIL 的反向输入**——
+// **断言口径**（REVIEW.md 「断言等价于子串 / 读不到当成空」条）：每条正向断言都配一次**必须让它 FAIL 的反向输入**——
 // 打字前先断言标记文本不在文档里（旧口径下它永远不会出现），键入后断言**回读的文档文本**与
 // **落盘字节**都含它；只断言 `contenteditable` 属性在场是不够的（属性在场而 dispatch 层吞键
 // 正是「假可编辑」形态，M241 实现在 test-results/m241/ 有反向输入的实测记录）。
@@ -131,7 +131,7 @@ test("切标签序列（md → code → code → md）下投影与前台会话�
   const content = page.locator(".cm-content");
 
   // 每次切换后键入一个**只属于这一态**的标记：投影（changeFilter 的 editable 判据）
-  // 若漏同步，切过去那一态会静默吞键（REVIEW.md 第 1 条的「假可编辑」形态），本用例红。
+  // 若漏同步，切过去那一态会静默吞键（REVIEW.md 「断言等价于子串」条的「假可编辑」形态），本用例红。
   for (const [path, marker] of [
     ["readme.md", "MD1"],
     ["notes.txt", "TXT1"],

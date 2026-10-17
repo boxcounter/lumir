@@ -13,7 +13,7 @@ import { SCROLL_SETTLE_TIMEOUT } from "./poll-budgets";
 //            位置恒贴正文内容盒之下（M238 的不变量，见文件末两条用例）。
 //
 // 判据一律落**几何读数**（渲染盒宽高、线宽与栏宽的比、矩形位置）与**文本节点**，
-// 不用「class 存在」（REVIEW.md 第 1 条）；负向断言都配正观测（REVIEW.md 第 2 条）。
+// 不用「class 存在」（REVIEW.md 「断言等价于子串」条）；负向断言都配正观测（REVIEW.md 「读不到当成空」条）。
 const FIXTURES = {
   "end-marker-long.md": readFileSync(new URL("../fixtures/end-marker/long.md", import.meta.url), "utf8"),
   "end-marker-short.md": readFileSync(new URL("../fixtures/end-marker/short.md", import.meta.url), "utf8"),
@@ -338,7 +338,7 @@ test("非文档性：不被复制带出、不被文件内搜索命中、不进�
 });
 
 // ---------------------------------------------------------------------------
-// backlog #31：标记的字号基准（R2b 修复的正式门禁断言）
+// 标记的字号基准（R2b 修复的正式门禁断言；原 backlog「标记字号跟随内容字号」条）
 // ---------------------------------------------------------------------------
 
 /** 标记自己的字号读数：文字字号 + 线段计算宽（线段是 `4em`，随标记根字号解析）。 */
@@ -356,7 +356,7 @@ async function markerMetrics(page: Page) {
   });
 }
 
-test("backlog #31：标记字号跟随内容字号（基准 = --editor-font-size，不再是固定的 14px）", async ({
+test("标记字号跟随内容字号（基准 = --editor-font-size，不再是固定的 14px）", async ({
   page,
   context,
 }) => {
@@ -380,7 +380,7 @@ test("backlog #31：标记字号跟随内容字号（基准 = --editor-font-size
   await expect(marker(bigPage)).toHaveCount(1);
   const big = await markerMetrics(bigPage);
 
-  // 内容字号确实换了两档（否则下面的比值断言在「两页一样」上空转——REVIEW.md 第 2 条）
+  // 内容字号确实换了两档（否则下面的比值断言在「两页一样」上空转——REVIEW.md 「读不到当成空」条）
   expect(small.contentFontSize).toBe(15);
   expect(big.contentFontSize).toBe(24);
   expect(small.textFontSize).toBe(small.markerFontSize);
@@ -413,7 +413,7 @@ test("backlog #31：标记字号跟随内容字号（基准 = --editor-font-size
 //      双帧实测会把阅读位置恢复推离 13px，源码注释里已写「别改回双帧」）。
 //
 // 断言一律落几何读数（正文盒 / 子节点 / 标记矩形的相对关系），不读 class、不读 grid 声明
-//（REVIEW.md 第 1 条）。
+//（REVIEW.md 「断言等价于子串」条）。
 // ---------------------------------------------------------------------------
 
 /** 正文盒与它内部内容的相对关系 + 标记位置：判断「标记是否贴在正文内容盒之下」的一组读数。 */
@@ -520,7 +520,7 @@ test("M238 回归探针：正文行的尺寸口径不得由滚动容器的 class
 // 于是显示在正文右侧的空白区。机制与不变量见 `src/preview/endMarker.ts` 的文件头。
 //
 // 为什么必须用**矩阵属性测试**而不是再加一条 case：判据侧的单条用例（本文件上面那条
-// 「code 模式没有标记」）走的路径里没有在途测量，照旧绿（REVIEW.md 第 3 条同族：判据看着有
+// 「code 模式没有标记」）走的路径里没有在途测量，照旧绿（REVIEW.md 「容差吞掉真实变化」条同族：判据看着有
 // 覆盖、实际不判这一类输入）。这条测试扫的输入维度是**切换历史**：源模式 × 目标模式 × 打开
 // 方式（单击 / 双击树行——M254 起两者同义），并断言不变量本身——「元素在场 ⇔ 当前是 md 模式且判据成立」，
 // 在场时另判两条几何（与正文同列、落在正文内容盒之下）。
@@ -607,7 +607,7 @@ test("M251 属性：任意切换历史下车，标记在场恒等于「当前是
   await stub(page);
   await page.goto("/");
 
-  // 正向锚点：md 长文先把标记请上台，后面每一条「不在场」才不是恒真的空转（REVIEW.md 第 2 条）。
+  // 正向锚点：md 长文先把标记请上台，后面每一条「不在场」才不是恒真的空转（REVIEW.md 「读不到当成空」条）。
   await open(page, "end-marker-long.md");
   await settleFrames(page);
   const anchor = await readMarkerState(page);

@@ -56,7 +56,7 @@ test("打开 .ts 文件：关键字/字符串/数字 token 着色且编辑器可
   await expect.poll(() => tokenColor(page, "42")).toBe(LIGHT.number);
 
   // 输入进文档（editable-non-md-files 翻转了旧断言「输入被拒收」）：回读文档文本判据，
-  // 属性在场不等于按键能进文档（REVIEW.md 第 1 条的假可编辑形态）。
+  // 属性在场不等于按键能进文档（REVIEW.md 「断言等价于子串」条的假可编辑形态）。
   await content.click({ position: { x: 100, y: 60 } });
   await page.keyboard.type("XYZ");
   const edited = await readDocument(page);

@@ -25,7 +25,7 @@ test("出厂默认与 Rust `UiConfig` 同值（两处真源对账）", () => {
   // 区间 [760, 1200]**，**默认值即下限**），那边由单测
   // missing_ui_content_width_takes_default / out_of_range_ui_content_width_falls_back_with_warning
   // 钉住同一组值。第三处写值是 src/style.css 的 `--layout-doc-measure` 默认值（CSS 里没法被本层
-  // 断言，由视觉场景的默认口径计算属性断言钉住）。REVIEW.md 第 8 条：三处同值。
+  // 断言，由视觉场景的默认口径计算属性断言钉住）。REVIEW.md 「同一语义两处真源」条：三处同值。
   assert.equal(DEFAULT_CONTENT_WIDTH, 760, "缺配置时栏宽为 760px");
   assert.equal(CONTENT_WIDTH_MIN, 760);
   assert.equal(CONTENT_WIDTH_MAX, 1200);

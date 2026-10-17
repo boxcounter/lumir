@@ -15,7 +15,7 @@ import { defineConfig } from "vite";
 // 自己的证据目录。vite 8 自身已默认忽略 `.git/`、`node_modules/`、`test-results/`、cacheDir
 // 与**根** outDir（见 `node_modules/vite/dist/node` 内的 `resolveChokidarOptions`）；这里补的是默认面之外的
 // `.tower/`、worktree 里的嵌套 `dist/` 与 `playwright-report/`，并显式重列 test-results 让
-// 口径自解释（REVIEW.md 第 8 条：宁可重列，也不要让读者去猜默认面）。
+// 口径自解释（REVIEW.md 「同一语义两处真源」条：宁可重列，也不要让读者去猜默认面）。
 const ACCEPTANCE_WATCH_IGNORED = [
   "**/.tower/**",
   "**/test-results/**",
@@ -32,7 +32,7 @@ const acceptanceRun = process.env.LUMIR_ACCEPTANCE_PORT !== undefined;
 if (acceptanceRun) {
   // 正向见证：让「跑批期间一次 reload 都没有」这条**负向**判据有输入——app.log 里看得到忽略面
   // 确实装上了。少了这行，日志里没有 reload 既可能是修好了，也可能是这段配置根本没生效
-  // （REVIEW.md 第 1/2 条：负向断言必须先确认自己读到的不是缺失值）。
+  // （REVIEW.md 「断言等价于子串 / 读不到当成空」条：负向断言必须先确认自己读到的不是缺失值）。
   console.log(
     `[vite] 验收模式 watch-ignore 生效（LUMIR_ACCEPTANCE_PORT=${process.env.LUMIR_ACCEPTANCE_PORT}）：` +
       ACCEPTANCE_WATCH_IGNORED.join(", "),

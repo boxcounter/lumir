@@ -18,7 +18,7 @@ steps:
       - label: pane 里的面板在位
         ax: { has: "/AXButton \\(发送\\)/" }
 
-  - name: 抢前台（后台注入键盘整批丢键/错键会显著加剧——REVIEW.md 第 11 条）
+  - name: 抢前台（后台注入键盘整批丢键/错键会显著加剧——REVIEW.md 「键盘注入丢键」条）
     do: focusWindow
     retries: 4
 

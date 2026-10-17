@@ -1,7 +1,7 @@
 // M240 现状读数与打开成本探针（change table-fullscreen-view 的 tasks 1.1 / 1.3 / 2.4）。
 //
 // 这是**读数探针**，不是门禁断言：它把读数打成一行 `READINGS <json>`，由执行者落进
-// `test-results/acceptance/<日期>/table-fullscreen-before/`（证据不入 git，REVIEW.md 第 7 条）。
+// `test-results/acceptance/<日期>/table-fullscreen-before/`（证据不入 git，REVIEW.md 「证据没落盘」条）。
 // 因此它在实现前与实现后都能跑，唯一的硬断言是「从未触发时 DOM 里没有遮罩节点」
 //（spec 的「文档打开路径零新增 / 惰性建立」scenario，两态都成立）。
 //
@@ -126,7 +126,7 @@ test("打开成本读数：近 64 KiB 表的打开耗时与快照 DOM 规模", a
     const hasFeature = document.querySelectorAll(".lumir-table-fs-trigger").length > 0;
     if (!hasFeature) return { featurePresent: false };
     // 先把 caret 放进表内（命中条件 ② 的前提），否则命令级门为假、什么都没发生——
-    // 那种情形下读到的「0ms / 空快照」是假读数（REVIEW.md 第 2 条的形态）。
+    // 那种情形下读到的「0ms / 空快照」是假读数（REVIEW.md 「读不到当成空」条的形态）。
     const content = document.querySelector(".cm-content") as unknown as {
       cmTile: { root: { view: { state: { doc: { toString(): string } }; dispatch(s: unknown): void; focus(): void } } };
     };

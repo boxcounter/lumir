@@ -436,7 +436,7 @@ export function checkScenario(scenario) {
 /**
  * `$appName` / `$appVersion` 占位替换（M236）：期望值里要引用「当前构建的产品名 / 版本号」时
  * 写占位符，加载时从本仓 src-tauri/tauri.conf.json 读真值代入——场景 MUST NOT 硬编码一份
- * 版本号副本（真源唯一，REVIEW.md 第 8 条），版本 bump 后场景跟着真源走。
+ * 版本号副本（真源唯一，REVIEW.md 「同一语义两处真源」条），版本 bump 后场景跟着真源走。
  * repoRoot() 是本 checkout 的根（worktree 跑就取 worktree 的 conf），与被测构建同源。
  */
 async function appMetaTokens() {
@@ -701,7 +701,7 @@ function keysTarget(ax) {
  *   2. 不给时退到 `keysTarget(ax)`（focused 节点优先）——与 `keys` / `type` 的回读同一目标，
  *      composer / 编辑器 / 原生输入框都覆盖。
  * 节点解析不到时返回 **null**（不可读）：调用方一律判 FAIL，不把「读不到」当「为空」
- * （REVIEW.md 第 2 条）。
+ * （REVIEW.md 「读不到当成空」条）。
  */
 function verifyReadValue(ax, spec) {
   const t = spec?.target;
@@ -748,7 +748,7 @@ async function runChordVerify(cu, p, step, inject, evidence) {
   if (baselineValue === null) {
     throw new Error(
       `${tag} 的回读目标不可读（${where}）——读不到一律判 FAIL，不在不可观测的窗口里下结论` +
-        "（REVIEW.md 第 2 条）",
+        "（REVIEW.md 「读不到当成空」条）",
     );
   }
   const baseline = countOf(baselineValue);
@@ -835,8 +835,7 @@ function findByAny(nodes, { role, any, nth = 0 }) {
  * 路径读数：**文件路径的语义逐字不变**（`stat` + sha256），目录单独走一条旁路（M324）。
  *
  * 为什么必须有这条旁路：目录上 `readFile` 抛 EISDIR、被下面的 catch 吞成 `null`，于是
- * `file: { path: <目录>, exists: true }` **恒红**、`exists: false` **恒绿**——正是 REVIEW.md
- * 第 2 条那类「读不到被当成不存在」。目录只回 `{ mtimeMs, size, isDir: true }`（不读 sha256，
+ * `file: { path: <目录>, exists: true }` **恒红**、`exists: false` **恒绿**——正是 REVIEW.md「读不到当成空」条那类「读不到被当成不存在」。目录只回 `{ mtimeMs, size, isDir: true }`（不读 sha256，
  * 目录没有内容这一说），`exists` 因此拿到真值；要判「没变过」用 `mtimeUnchangedSince`，
  * sha256 类判据（`changedSince` / `unchangedSince`）在目录上**一律判 FAIL**（见文件断言分支）。
  */
@@ -946,7 +945,7 @@ export async function runScenario(ctx, scenario) {
     }
     if (expect.clipboard !== undefined) {
       // 剪贴板的断言形态（M244）：与 clipboardRead 动作共用同一个固定命令。
-      // **读不到一律 FAIL**，不许在不可观测的窗口里下结论（REVIEW.md 第 2 条：
+      // **读不到一律 FAIL**，不许在不可观测的窗口里下结论（REVIEW.md 「读不到当成空」条：
       // 「读不到」被当成「为空」时，not 类断言会退化成恒真）。
       const spec = expect.clipboard;
       const clip = readClipboard();
@@ -970,7 +969,7 @@ export async function runScenario(ctx, scenario) {
     }
     if (expect.pixel !== undefined) {
       // 像素断言（M285）：在**窗口截图**上按窗口局部点取底色。通道与边界见 lib/pixel.mjs。
-      // 取不到图 / 取不到坐标口径一律 FAIL——不许在不可观测的窗口里下结论（REVIEW.md 第 2 条：
+      // 取不到图 / 取不到坐标口径一律 FAIL——不许在不可观测的窗口里下结论（REVIEW.md 「读不到当成空」条：
       // 「读不到」被当成「空」时负向断言会退化成恒真）。
       const spec = expect.pixel;
       const ax = state.ax ?? (await readAxWithScreenshot(cu, ctx.pid));
@@ -1137,7 +1136,7 @@ export async function runScenario(ctx, scenario) {
       // 旧实现是一条 `if` 链、命中优先级最高的键就 `return`：同一个 `file` 对象里多写的键被
       // **静默忽略**。而 README 的「file 断言」条恰恰要求「不落盘」这类判据把 `unchangedSince`
       //（sha256）与 `mtimeUnchangedSince`（mtime）**成对用**——照 README 直写也只判了 sha256
-      // 那一半，「mtime 未推进」看着写了、实际没判（REVIEW.md 第 2 条：断言看着有覆盖、实际不判；
+      // 那一半，「mtime 未推进」看着写了、实际没判（REVIEW.md 「读不到当成空」条：断言看着有覆盖、实际不判；
       // finding 20261016-worker-scenfix-bug-file-readme-sha256-mtime）。修法取该 finding 的路线
       // ①（逐键判、删优先级链），不是路线②（静态只许写一个键）——README 已写下的判据口径本来
       // 就是「两个一起用」，限制写法会把口径改窄。
@@ -1151,7 +1150,7 @@ export async function runScenario(ctx, scenario) {
       //（既有单键断言的证据形状不因此变化）。
       const tag = keys.length > 1 ? (k) => `［${k}］` : () => "";
       // has / not 的内容读数：整个 expect 读一次缓存起来；读不出来一律判 FAIL，不把「读不到」
-      // 当「为空」（REVIEW.md 第 2 条）。
+      // 当「为空」（REVIEW.md 「读不到当成空」条）。
       let content;
       let contentErr;
       const readContent = async () => {
@@ -1343,7 +1342,7 @@ export async function runScenario(ctx, scenario) {
     // 场景 front-matter 的 `config:` **不在这里生效**：它由 run.mjs 在 `launchApp()` 之前
     // 折进隔离 config.json（M284）——早先在这里是「起一次 app → 写配置 → 重启」，每个声明
     // config 的场景都多付一次重启。折叠之后 app 的**首帧**就是场景声明的起点，语义更强
-    // （与窗口配置只有一份真源同一取向，见 REVIEW.md 第 8 条）。
+    // （与窗口配置只有一份真源同一取向，见 REVIEW.md 「同一语义两处真源」条）。
     if (scenario.open) {
       await openFile(cu, ctx.pid, scenario.open, { marker: scenario.marker });
       evidence.record({ kind: "note", text: `已打开 ${scenario.open}` });
@@ -2120,7 +2119,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
           }
         }
         const out = await injectDrag(from, to);
-        // 通道自报落盘（REVIEW.md 第 7 条：证据要落成可 ls 的文件，别只在终端跑过）——
+        // 通道自报落盘（REVIEW.md 「证据没落盘」条：证据要落成可 ls 的文件，别只在终端跑过）——
         // 这三个 swift 通道的动作只回一行文本，落进 steps.md 才能复盘「frontmost 是谁 / 点在哪」。
         evidence.record({ kind: "note", text: `drag 自报：${out}` });
         await sleep(step.settleMs ?? 500); // 松手后的提交（rAF 末帧 + 写盘）之间有一拍
@@ -2131,7 +2130,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // 偶发造不出选区（121 当日 4 跑 1 PASS）——选区本身 AX 读不到（README「已知边界」），
       // 可观测的下游产物由场景给 `selection` 模式（与 ax.has 同一 matcher 口径：子串或 /正则/，
       // 如选区驱动的浮动钮）。给了才启用：拖完即验，未命中重试拖选（每次重选重新解析坐标），
-      // 至多 2 次；重试耗尽仍无选区**如实判 FAIL**——不得把产品缺陷掩成绿（REVIEW.md 第 11 条
+      // 至多 2 次；重试耗尽仍无选区**如实判 FAIL**——不得把产品缺陷掩成绿（REVIEW.md 「键盘注入丢键」条
       // 同族纪律）。不给 `selection` 的步骤（53 等）行为一字不变。
       if (step.selection !== undefined) {
         const want = matcher(step.selection);
@@ -2152,7 +2151,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
             throw new Error(
               `drag 后选区未建立：正观测 ${want.show} 在 ${maxRetry + 1} 次真实拖选后仍未命中——` +
                 "真实拖选通道本次未造出选区（121 实证过的 flake 形态），如实判 FAIL，不静默放过；" +
-                "若连续复跑仍红，按产品缺陷归因（与 REVIEW.md 第 11 条同口径：先复跑一次再判）",
+                "若连续复跑仍红，按产品缺陷归因（与 REVIEW.md 「键盘注入丢键」条同口径：先复跑一次再判）",
             );
           }
           evidence.record({
@@ -2180,8 +2179,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // 的语义：本次运行的读数不算数），复跑条件 = 把前台让给 Lumir。
       //
       // **先 park 再移**：`mouseenter` 只在「hover 目标发生变化」时触发——光标恰好已在目标上
-      // 时单次 mouseMoved 不产生事件，气泡不会开，场景会得到一条与产品无关的假红（REVIEW.md
-      // 第 1 条：「先造一个必须让它 FAIL 的输入」）。park 点取窗口左上角内侧 2px（标题栏区，
+      // 时单次 mouseMoved 不产生事件，气泡不会开，场景会得到一条与产品无关的假红（REVIEW.md「断言等价于子串」条：「先造一个必须让它 FAIL 的输入」）。park 点取窗口左上角内侧 2px（标题栏区，
       // 不带 hover UI），与目标点接近时跳过 park（不值得为几像素多起一次 swift 进程）。
       const fg = await tryForeground(cu, p, { retries: step.retries ?? 4 });
       if (!fg.frontmost) {
@@ -2445,7 +2443,7 @@ async function readAxForScreenPoint(cu, pid, { retries = 3 } = {}) {
 
 /**
  * 「真鼠标事件类」动作的公共前置（M379 抽出，doubleClick 与 click 的 modifiers 分支共用——
- * 同一套坐标换算只应有一份，REVIEW.md 第 8 条）：先拿前台，再把**窗口局部点**换算成
+ * 同一套坐标换算只应有一份，REVIEW.md 「同一语义两处真源」条）：先拿前台，再把**窗口局部点**换算成
  * **Quartz 全局屏幕坐标**（swift + CGEvent 那条通道要的空间）。
  *
  * `target` 两种形态（与 doubleClick 同形）：`{role,name|any,nth}` 取节点 bbox 中心（`dx`/`dy`

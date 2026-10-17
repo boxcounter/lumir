@@ -245,7 +245,7 @@ test("行首 Enter 的命令层钉固（M399 问题 1）：换行确实发生、
 
 test("出厂默认：TS 侧常量与 Rust `EditorConfig::default()` 同值（true）", () => {
   // Rust 侧那条由 cargo test `missing_auto_indent_takes_factory_true` 钉住（键缺席 ⇒ true，
-  // 且不跟随折行键）；这里钉住 TS 侧的兜底值，两边各一份（REVIEW.md 第 8 条：同语义两处
+  // 且不跟随折行键）；这里钉住 TS 侧的兜底值，两边各一份（REVIEW.md 「同一语义两处真源」条：同语义两处
   // 真源必须都受断言约束）。改默认值必须同时改两处，任一侧红了就是漏改。
   assert.equal(DEFAULT_AUTO_INDENT, true);
 });

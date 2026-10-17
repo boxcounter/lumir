@@ -7,7 +7,7 @@
 // openspec/changes/reshape-harness-session-recording/design.md §6.1 对账。
 // 这一层是零 DOM 环境（tests/unit/README.md）：只驱动 src/harness-panel.ts 导出的纯函数；
 // 浮层行与恢复点击的 DOM 面归真机验收（change 验证节 3.7 恢复场景）。
-// 反向验证（REVIEW.md 第 1 条）：非法项丢弃 / 乱序重排 / 坏 JSON 这些用例就是「必须 FAIL
+// 反向验证（REVIEW.md 「断言等价于子串」条）：非法项丢弃 / 乱序重排 / 坏 JSON 这些用例就是「必须 FAIL
 // 的输入」——若解析吞掉坏形状或把顺序交给网络序，下列长度与顺序断言必红。
 
 import { test } from "node:test";

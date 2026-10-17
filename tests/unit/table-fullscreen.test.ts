@@ -9,7 +9,7 @@
 // 不在这一层（DOM 行为，归 tests/visual/scenes/m240-table-fullscreen.spec.ts 与
 // scripts/acceptance/scenarios/40-table-fullscreen-view.md）：遮罩与快照的真实开合、快照
 // 几何与计算样式、克隆卫生、触发钮的 hover / 定位、容器持焦命中（DOM 事实）——最后一条在
-// 无 DOM 的层里写出来只会是恒真断言（REVIEW.md 第 1 条的假绿形态），故留给视觉与真机层。
+// 无 DOM 的层里写出来只会是恒真断言（REVIEW.md 「断言等价于子串」条的假绿形态），故留给视觉与真机层。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

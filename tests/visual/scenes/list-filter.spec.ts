@@ -15,7 +15,7 @@ import { SCROLL_SETTLE_TIMEOUT } from "./poll-budgets";
 //      两个身份静默落到同一路径。那条判据按**调用参数**落在单元层（siblings 仍是完整列表），
 //      这里钉的是筛选本身的可见事实。
 //
-// 判据纪律（REVIEW.md 第 1 条）：条目集合 / 光标偏移 / 几何 / 计算属性 / 计算属性式的 ARIA
+// 判据纪律（REVIEW.md 「断言等价于子串」条）：条目集合 / 光标偏移 / 几何 / 计算属性 / 计算属性式的 ARIA
 // 归属，MUST NOT 只断言「输入框里有字」。反向验证：把筛选整段关掉（查询不参与结果集）重跑本
 // 场景必须 FAIL，读数留档 test-results/m199/visual-filter-reverse.md。
 

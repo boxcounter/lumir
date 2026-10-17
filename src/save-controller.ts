@@ -170,7 +170,7 @@ export interface SaveController {
 // M282（change ui-language-i18n 的 D6 裁决）：文案改由**前端按 code 渲染**（`errorText`，
 // 表条目 D187 / D188 / D41 / D174），本清单只剩**保存语境的差异**——同一个 `fs_not_found`
 // 在通用的文件读路径上是「文件不存在：{rel}」（D174），而在保存路径上要额外交代「修改未丢失」
-//（D47）。其余三个 code 的保存措辞与通用条目逐字相同，因此不再各写一份（REVIEW.md 第 8 条）。
+//（D47）。其余三个 code 的保存措辞与通用条目逐字相同，因此不再各写一份（REVIEW.md 「同一语义两处真源」条）。
 const SAVE_ERROR_OVERRIDES: Partial<Record<string, CopyKey>> = {
   fs_not_found: "D47",
 };

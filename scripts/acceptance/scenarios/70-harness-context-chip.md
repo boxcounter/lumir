@@ -14,7 +14,7 @@ steps:
     expect:
       - label: 焦点落在编辑器正文里（键盘注入的前置）
         ax: { focused: "AXTextArea" }
-  - name: 抢前台（后台注入的 chord 在前台被抢时会丢键——REVIEW.md 第 11 条）
+  - name: 抢前台（后台注入的 chord 在前台被抢时会丢键——REVIEW.md 「键盘注入丢键」条）
     do: focusWindow
     retries: 4
   - name: ⌃⇧N 两次把选区扩到第 3 行——**选区不再改变注入口径**（见下「改口径」注）

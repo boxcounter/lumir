@@ -8,7 +8,7 @@
 // view、不碰坐标、不碰渲染。装出来的装饰与 ⌘⏎ 的终点归 chromium 场景
 //（`tests/visual/scenes/render-link.spec.ts`）与真机场景 54。
 //
-// 负向断言一律配正观测（REVIEW.md 第 2 条）：每组「不入选」的用例旁边都有一条同文档里
+// 负向断言一律配正观测（REVIEW.md 「读不到当成空」条）：每组「不入选」的用例旁边都有一条同文档里
 // 命中成功的对照，否则「查询恒返回 null」也能让全部断言绿。
 
 import { test } from "node:test";

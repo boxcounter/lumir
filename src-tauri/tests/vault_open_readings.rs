@@ -314,7 +314,7 @@ fn vault_open_segments_on_real_shape_vault() {
         md_bytes as f64 / 1_048_576.0
     );
     assert!(md.len() > 1000, "md 数量应复刻真实形状：{}", md.len());
-    // 忽略生效的正负配对（REVIEW.md 第 2 条）：探针文件**确实在盘上**，而枚举结果里
+    // 忽略生效的正负配对（REVIEW.md 「读不到当成空」条）：探针文件**确实在盘上**，而枚举结果里
     // 没有它——只断言「没有 node_modules」在探针根本不存在时也会恒真。
     assert!(
         dir.join("node_modules/left-pad/ignored-00.md").is_file(),

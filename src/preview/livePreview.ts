@@ -448,7 +448,7 @@ const codeBlockLabel = (index: number): string => t("D212", { index });
 /**
  * 视口有界的代码块遍历（单一来源）：`codeBlockWrappers`、`codeBlockSlotWrappers` 与
  * `codeBlockAt` 全部走这一份，因此「触发钮挂在哪一块」「读屏名里的 N」与「命令命中哪一块」
- * 三处不可能漂移（REVIEW.md 第 8 条）。范围按整行取，与表格容器同口径。
+ * 三处不可能漂移（REVIEW.md 「同一语义两处真源」条）。范围按整行取，与表格容器同口径。
  */
 function codeBlocksIn(view: EditorView): CodeBlockInfo[] {
   const { from, to } = tableDiscoveryRange(view);

@@ -7,7 +7,7 @@
  *
  * **唯一消费者**：`commands::prepare_vault_open` 构造 `fs_io::IgnorePolicy` 时的那一步
  *（把清单里的 vault 相对路径逐个读成 gitignore 规则）——本字段没有第二个读点，`config_get`
- * 只是把它原样交给前端展示（REVIEW.md 第 9 条：配置项声明即被消费）。因此它的生效时点是
+ * 只是把它原样交给前端展示（REVIEW.md 「声明了却没有消费者」条：配置项声明即被消费）。因此它的生效时点是
  * **vault 装载时**（每次装载现场读一次配置，MUST NOT 用启动期缓存钉住），改动下次装载生效。
  */
 export type VaultConfig = { 

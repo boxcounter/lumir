@@ -205,7 +205,7 @@ design §6。
   input + 追加新消息」产生（新会话若是空会话，历史里不会有 `zqxalpha`）。两个标记都是**合成、只
   本场景独有**的串（不取 `more` 这类常见英文词，避免被 system 里的普通英文命中）。
 - **`restored_from` 不写死源 id**：源 session id 是运行期生成的 `s<millis>-<base36>`，断言用形态
-  正则（`"restored_from":"s[0-9a-z-]+"`），不硬编码一份副本（真源唯一，REVIEW.md 第 8 条）。
+  正则（`"restored_from":"s[0-9a-z-]+"`），不硬编码一份副本（真源唯一，REVIEW.md 「同一语义两处真源」条）。
 - **落盘类断言的时机（M535）**：harness 会话的 `JsonlWriter` 是**惰性落盘**——`session_open` 只在
   **第一条记录**写盘时才产出（`src-tauri/src/harness/jsonl.rs`），因此恢复之后、还没发新消息时，
   **新会话文件根本不存在**。这种时刻断言 `env:harness/sessions/*/*.jsonl` 上的内容，glob 会取到

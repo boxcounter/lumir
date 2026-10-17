@@ -14,7 +14,7 @@
 // 为什么与阅读位置（`src/reading-position.ts`）分开而不是复用它：那份的键是**vault 相对路径**
 // （一个 vault 一份表，键在表内），草稿是**一个 vault 一份整体内容**、按 vault 稳定 id 编址且落点
 // 由后端按当前 scope 解析（前端不持有 id）。两者的键、载荷与 flush 语义都不同，复用会把两套
-// 语义糊在一处（REVIEW.md 第 8 条：同一语义不造两处真源——反过来，不同语义也不该塞进一处）。
+// 语义糊在一处（REVIEW.md 「同一语义两处真源」条：同一语义不造两处真源——反过来，不同语义也不该塞进一处）。
 
 import type { ComposerBlock, DraftCaret } from "./quote-card";
 import { parseComposerDraft, serializeComposerDraft } from "./quote-card";

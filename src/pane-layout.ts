@@ -15,7 +15,7 @@
 //   - **编辑器管机械**：EditorView / EditorState / 装载与保存。
 //   装配层经 `reconcilePaneLedger` 把两者对齐：账本按**对象引用**持有各实例的 EditorSession
 //   （同一对象、`path` 活读），`openTab` 负责登记并按 path 判重、`closeTab` 摘除、`moveTab`
-//   跨 pane 迁移——REVIEW.md 第 8 条：同一语义不许两处真源。
+//   跨 pane 迁移——REVIEW.md 「同一语义两处真源」条：同一语义不许两处真源。
 //
 //   为什么登记走「对账」而不是「openTab 作唯一创建通道」：`createEditor` 的初始文档与 `reset()`
 //   的空文档由编辑器实例内部建出，装配层看不到那些创建点，无法把它们全改道经 `openTab`；
@@ -64,7 +64,7 @@ export function clampSplitRatio(value: number): number {
 }
 
 /** 分栏态「空 pane」的判据 = **输入闸门**（M329，Alex 2026-10-05 dogfood bug 2）：**纯函数**，
- *  三个条件缺一不可。它同时是**引导在场与输入闸门共用的同一条「空」口径**（REVIEW.md 第 8 条：
+ *  三个条件缺一不可。它同时是**引导在场与输入闸门共用的同一条「空」口径**（REVIEW.md 「同一语义两处真源」条：
  *  同一语义一处真源）——`emptyPaneGuideVisible` 在它之上只多一个「已装 vault」。
  *
  *  **只适用文档 pane**（change move-harness-to-pane-chat-frame）：harness pane 的 composer

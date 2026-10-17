@@ -72,11 +72,11 @@
 
 - **不变量级单测**：[tests/unit/image-widget.test.ts](../../tests/unit/image-widget.test.ts)——`imageReserve` 的推导在「固有宽度（窄 / 等于栏宽 / 超栏宽）× 栏宽（窄窗 / 默认 / 宽窗）」分布上断言「预留解出的盒子逐项等于上次渲染的盒子」，并单独钉住两条边界：贴满栏宽的引用（含只声明 `viewBox` 的矢量图）MUST NOT 被钉在旧宽度上（否则破 §1/§2）、窄图 MUST NOT 被拉伸；几何缓存按引用键存取、可失效、超限淘汰最旧。
 - **真机层**：[scripts/acceptance/scenarios/26-svg-scroll-stability.md](../../scripts/acceptance/scenarios/26-svg-scroll-stability.md)——合成含大尺寸 viewBox-only svg 的文档，倒序滚动，断言倒序往返后大图被完整渲染、没有卡住的加载状态、宽度仍是栏宽一档。**边界（场景 notes 已如实声明）**：这条只守用户可见**终态**——套件没有滚轮动作、读不到 `scrollTop`、断言采样间隔（一次 MCP 往返）远长于本缺陷的窗口，因此它修复前后都是绿的，判别性验证不在这一层。
-- **反向验证（REVIEW.md 第 1 条）**：判别断言必须有区分度——先造一个必须让它 FAIL 的输入再提交。判别面 =「**非用户输入引起的 scrollTop 变化**」：逐帧记录 `.cm-scroller` 的 scrollTop 时间线，同时记输入事件（wheel / 带修饰键 keydown）的时间戳；相邻两帧变化 > 8px 且不在任一输入事件的 ±40ms 邻域内即记一次。**探针阶段**（真 app + 桩后端 + 取两个时点）实测：
+- **反向验证（REVIEW.md 「断言等价于子串」条）**：判别断言必须有区分度——先造一个必须让它 FAIL 的输入再提交。判别面 =「**非用户输入引起的 scrollTop 变化**」：逐帧记录 `.cm-scroller` 的 scrollTop 时间线，同时记输入事件（wheel / 带修饰键 keydown）的时间戳；相邻两帧变化 > 8px 且不在任一输入事件的 ±40ms 邻域内即记一次。**探针阶段**（真 app + 桩后端 + 取两个时点）实测：
   - 修复前（master `7267b26`）：倒序慢滚（-60 × 30）1 次 / 最坏 **465px**；倒序快滚（-600 × 30）1 次 / 最坏 465px；**正向慢滚 0 次**（与用户「正向不触发」一致）。
   - 修复后：五种驱动（正向慢滚 / 倒序慢滚 / 倒序快滚 / 翻屏键 / 细步倒序）全部 0 次，最坏 **0px**。
   - 窄图（定尺寸 `240×80`）单独跑重建路径：0 次；同时读到 `.cm-line` 宽 764.8（栏宽，`columnOf` 的落点成立）、包装置换区宽 = 栏宽、`img` 仍是 240×80（窄图未被拉伸、M182 的两态判据面未变）。
-- **常驻属性测试（M187 最终门禁）**：[tests/visual/scenes/m187-image-scroll-stability.spec.ts](../../tests/visual/scenes/m187-image-scroll-stability.spec.ts)——把上面的探针沉淀为常驻用例（tower 裁决 a，scope 扩至 `tests/visual/**`），判据换成时序无关的逐帧判据，夹具在 `tests/visual/fixtures/m187-svg-scroll/`。两条用例各自红过（REVIEW.md 第 1 条的「先让它红」）：
+- **常驻属性测试（M187 最终门禁）**：[tests/visual/scenes/m187-image-scroll-stability.spec.ts](../../tests/visual/scenes/m187-image-scroll-stability.spec.ts)——把上面的探针沉淀为常驻用例（tower 裁决 a，scope 扩至 `tests/visual/**`），判据换成时序无关的逐帧判据，夹具在 `tests/visual/fixtures/m187-svg-scroll/`。两条用例各自红过（REVIEW.md 「断言等价于子串」条的「先让它红」）：
   - 宽图（只声明 `viewBox`）用例：master 上 FAIL，读数 `非输入位移 1 次 / 最坏 532px`；修复后 0 次 / 0px。
   - 窄图（`240×80`）用例：master 上 FAIL，读数 `1 次 / 最坏 60px`；修复后 0 次 / 0px，并断言包装盒宽度仍 = 栏宽、图片未被拉伸。
   - 自检（防判据空转）：两条用例都断言「附件读取次数 ≥ 2」（widget 真被销毁重建过）、`⌥V` 每步真的滚动了视口、焦点落在 `.cm-content` 上——观测路径没走到就 FAIL。自检当场抓到过真实问题：一次跳到底的预热会让图片整段落在渲染视口之外、重建路径根本没被走到（该版本已被改为分步预热）。

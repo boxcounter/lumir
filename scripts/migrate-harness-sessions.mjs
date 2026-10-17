@@ -13,7 +13,7 @@
 // - **幂等**：重复执行零搬运（根下没有 `*.jsonl` 时什么都不做）；单文件失败只留原地并自报，
 //   重跑脚本收敛到「根下零 `*.jsonl`」。
 // - **零环境变量扰动**：配置目录按参数注入（缺省按 XDG 规则推导），测试与验收全程对合成目录跑，
-//   不碰真实的 `~/.config/lumir`（REVIEW.md 第 13 条）。
+//   不碰真实的 `~/.config/lumir`（REVIEW.md 「测试污染真实环境」条）。
 //
 // 用法（在 app 未运行时执行一次）：
 //   node scripts/migrate-harness-sessions.mjs [config_dir]
@@ -94,7 +94,7 @@ export function loadRegistry(configDir, { normalize = defaultNormalize } = {}) {
  * `{ kind: "vault", id }` 或 `{ kind: "orphaned", reason }`。
  *
  * `normalize` 可注入——**反向验证**用（去掉规范化一步必须让需规范化的输入落入 `_orphaned`，
- * 证明这一步是承重的，REVIEW.md 第 1 条）。
+ * 证明这一步是承重的，REVIEW.md 「断言等价于子串」条）。
  */
 export function planMove(firstLine, registry, { normalize = defaultNormalize } = {}) {
   const line = String(firstLine ?? "")

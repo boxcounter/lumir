@@ -30,6 +30,8 @@ Lumir：本地文本工作台，当前阶段定位为 Emacs keybinding PKM（[AD
 
 与 CI 对应：`rust.yml` / `visual.yml` / `perf.yml` / `docs-check.yml`（PR 与 master push 强制）。本地全绿才允许提交合并请求；基线数字（测试数、场景数）以最近一次全绿输出为准，不背口头值。
 
+**门禁结果的报告口径**：照抄 `GATE RESULT` 原文行并附退出码，不用「X/Y PASS」式复述——分母含不含 SKIP 只在 `scripts/gate.sh` 里定义，复述会丢掉这个口径（SKIP 必须单列，不得并进 PASS 数）。
+
 `bindings-drift` 与提交纪律：改过 ts-rs 导出面的 change 会重导出 `src/bindings/**`，「先 `git add` / commit 这些重导出产物、再跑 `quick`」是**预期行为**——未进索引的漂移照旧报红并提示先 `git add`，已 `git add` 未 commit 只打一条 INFO，不再是一条假 FAIL（判据与来历见 `scripts/gate.sh` 头部注释）。
 
 视觉门禁**分层**（依据 [tests/visual/README.md](tests/visual/README.md)）：
@@ -55,7 +57,7 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 
 ## 硬规则（无其他居所）
 
-本节条目均经 Alex 裁决或在 Alex 监督下沉淀：修订、删除、降级均须 Alex 过目；诞生时间与出处靠 git 历史与 REVIEW.md 追溯，不在正文标注。
+本节条目均经 Alex 裁决或在 Alex 监督下沉淀：修订、删除、降级均须 Alex 过目；诞生时间与出处靠 git 历史与 REVIEW.md 追溯，不在正文标注。**出口判据（2026-10-17 Alex 裁决）**：某条的防线被门禁脚本 / 工具完全机器化（不靠人读也能拦住）后，该条降级为指针并入相关流程文档，不再单列——降级同样须 Alex 过目。
 
 ### 纪律（长期有效的裁决级约束）
 
@@ -63,9 +65,10 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 - **影响面升级线**：Alex 提的需求若对既有产品设定 / 逻辑 / 实现有重大影响乃至推倒重做，**先告知 Alex 并讨论，不得蛮干**。判定与举证责任在 tower / agent：规划期发现即升级；worker 实施期发现走 TowerSend 升级给 tower，由 tower 报 Alex。
 - **已裁决事项不等开工口令**：提案 / 需求一经 Alex 裁决（含「按倾向」「通过」「好」式批准），实现与后续批次由 tower 直接立项开工，**不停下来等「开始」**。只有真正缺裁决时才停：未裁的裁决点、影响面升级线（见上条）命中的事项、基线过目等人肉裁决点。
 - **基线更新是人肉裁决点**：视觉基线 `--update` 前截图须 Alex 过目，不要机械执行（[tests/visual/README.md](tests/visual/README.md)）。
-- **仓库信息卫生**：任何入库制品——原型 HTML、测试/视觉 fixture、视觉基线与原型截图、文档——MUST NOT 包含真实 vault 内容（真实人名、真实项目/目录/文件名、真实文档正文），一律用合成 fixture；含截图类二进制（内容以像素形式存在，只能靠重截清除）。纪律文本本身也不得引用真实字符串——检索针只活在当次会话，不落 git。提交前对改动面做一次 text 级 grep 清扫。
+- **仓库信息卫生**：任何入库制品——原型 HTML、测试/视觉 fixture、视觉基线与原型截图、文档——MUST NOT 包含真实 vault 内容（真实人名、真实项目/目录/文件名、真实文档正文），一律用合成 fixture；含截图类二进制（内容以像素形式存在，只能靠重截清除）。纪律文本本身也不得引用真实字符串——检索针只活在当次会话，不落 git。提交前对改动面做一次 text 级 grep 清扫。动过原型 HTML 必须同步重截对应截图——HTML 清了而截图没重截等于没清。
 - **原型控制面板**：交互原型 MUST 在页面内置可点击的控制面板（切屏 / 切主题等全部选项点击可达），不得要求人手改 URL query；query 参数（如 `?screen=` / `?theme=`）保留作深链，截图脚本用显式参数（如 `&panel=0`）关面板。
 - **给 Alex 的路径必须当下可开**：凡让 Alex 审阅/查看的文件，给出的路径必须在主仓 checkout 里**当下真实存在**——未合并分支 / worktree 里的文件，先复制到 `test-results/` 下（git 外），再给绝对路径 + 一条可整段运行的 `open` 命令；禁止直接给 `docs/...` 这类「分支合并后才存在」的仓内相对路径。与用户级 AGENTS.md「给我的材料零前置知识」同源，仓内钉给 tower 与所有 worker。
+- **变更默认直接切断**：见到「兼容」「迁移」「过渡」「双写」「保留旧路径」这类方案字样，先回答「消费者是谁」——零读者 / 单用户场景一律直接切断（不双写、不留过渡期；存量制品按孤儿先例「不再续写、不做迁移」处理，并在代码注释就地写明），需要迁移就一次迁干净。只有能指名具体消费者（外部用户、已发布契约、不可逆数据）才允许兼容层，且必须在提案里写出该消费者作为举证——写不出来就等于没有。
 
 ### 操作流程（机器 / 工具 / 协作通道的使用）
 
@@ -75,6 +78,7 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 - **真机复验**：`pnpm tauri dev` 起真实 app，用 KimiCU 操作（pid 用 `ps aux | grep target/debug/lumir` 找）；桌面验收 vault：`/tmp/lumir-m102-acceptance`；用户真实 vault **只读**（真实路径按信息卫生纪律不落库，需要时由 tower 在会话内提供）。**白屏陷阱**：`cargo test` 会把 `target/debug/lumir` 重编译为不带 `custom-protocol` 的 dev flavour，此后裸二进制起 app 会去加载 devUrl `http://127.0.0.1:1420` 而整窗白屏；起实例前须重新 `cargo build --features custom-protocol`（或直接用 `pnpm tauri dev`）。
 - **机器窗口申报口径**：向 Alex 申请/报告真机时段时，报的是**整个任务队列的总窗口**（含已知后续任务的构建与验证耗时），不是单项任务的耗时；执行中长出新真机任务**不停工、继续用**，但要重新向 Alex 申报新的总时长（申报是义务，停工不是——超窗继续使用是对的，只要知会）。
 - **配额全瘫 runbook**：tower 主模型与 managed worker/reviewer 同一 Kimi 配额，耗尽即全瘫。恢复：改 `~/.kimi-code/config.toml` 顶层 `default_model = "deepseek/deepseek-flash"`（或 `kimi -m deepseek/deepseek-flash` 起新会话）→ resume 原会话 → tower 从 `.tower/comms/` + `HANDOFF.md` 恢复上下文。
+- **worker 等待纪律**：等自己的后台任务一律用 `WaitFor`（挂起零 LLM 请求、完成即唤醒）或结束 turn（回复经 resume 送达）；禁止前台分钟级 `sleep` 盲等轮询。只有无事件源的外部状态（锁文件、磁盘水位）允许 ≤60s 短采样，且采样须带诊断负载。tower 每次 spawn/resume worker 时在 instructions 里显式写入本条，不靠 worker 自觉。
 
 ## 子代理模型调度
 

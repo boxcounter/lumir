@@ -433,7 +433,7 @@ export function scopeOfCommand(command: CommandId): KeyScope {
  * 的命令 MUST NOT 又带着默认绑定，否则这份清单在说谎）。
  *
  * **类型刻意写成 `readonly string[]` 而不是字面量联合**：写窄了，②就变成编译期保证、
- * 运行期断言退化成恒真（REVIEW.md 第 1 条「看着有覆盖、实际不判任何东西」）；写宽了，
+ * 运行期断言退化成恒真（REVIEW.md 「断言等价于子串」条「看着有覆盖、实际不判任何东西」）；写宽了，
  * ②才是真的在跑。需要 `CommandId` 的消费者（键位面板）自行做包含判定。
  */
 export const KEYLESS_COMMAND_IDS: readonly string[] = [
@@ -509,7 +509,7 @@ function isWidgetKeyTarget(event: KeyboardEvent): boolean {
 export const WIDGET_SCROLL_STEP_PX = 120;
 
 /** ⌘1–9 直达绑定（M149）：九条同形绑定，程序化生成而不手抄九遍——抄错一个数字的表现是
- *  「某个 ⌘N 静默不动」，正是最难发现的一类 bug（REVIEW.md 第 8 条：同语义不要两处真源，
+ *  「某个 ⌘N 静默不动」，正是最难发现的一类 bug（REVIEW.md 「同一语义两处真源」条：同语义不要两处真源，
  *  这里连一处手抄都省掉）。绑定顺序 = 标签序号，序号只出现在 TAB_GOTO_IDS 与循环下标两处，
  *  两者由同一次遍历产生，不可能错位。 */
 const TAB_GOTO_BINDINGS: readonly KeyBinding[] = TAB_GOTO_IDS.map((command, index) => ({

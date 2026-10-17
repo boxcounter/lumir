@@ -1,4 +1,4 @@
-// src/tree.ts 的增量打补丁行为（M245，backlog 32 / finding
+// src/tree.ts 的增量打补丁行为（M245，backlog「watch 增量打补丁」条 / finding
 // `20260925-worker-fix-closeout-bug-watch`）：外部新建目录（含其中文件）后，watch 增量批次
 // 必须在树里**从无到有**长出目录行——这是那条 finding 的前端回归锚点。
 //

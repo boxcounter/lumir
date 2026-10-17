@@ -937,7 +937,7 @@ export interface EditorSession {
   /**
    * 该会话是否可编辑（editable-non-md-files，裁决 D1「注册表全量文本类」）。取值 = 无文件
    * 上下文（空态 / 新建）或 `isEditablePath(path)`——判据只有
-   * `attachments.ts` 的 `isEditablePath` 一处（REVIEW.md 第 8 条）。同 `mode` 一样是**逐会话**
+   * `attachments.ts` 的 `isEditablePath` 一处（REVIEW.md 「同一语义两处真源」条）。同 `mode` 一样是**逐会话**
    * 的：`modeExtensions` 按它装视图层 editability（`editable` / `readOnly` / `aria-readonly`），
    * dispatch 层的 `changeFilter` 按它的实例级投影放行，保存链路的 `saveBaseline` 也读它
    *（save-controller.ts）。装载与激活时必须与 state / mode 一起同步（见 syncProjection）。
@@ -1092,7 +1092,7 @@ export interface EditorHandle {
    * **模块级共享单例**（见其声明处），迁移来的 state 与目标实例的重配因此共用同一批定位
    * token——目标实例随后的 `reconfigure` 照常生效。此前逐实例的 compartment 会让它被
    * `@codemirror/state` 静默丢弃，旧实现只能重建 state 并以「撤销史不随迁」为代价；重建
-   * 路径已整条退场（REVIEW.md 第 1 条：注释与实现同改）。
+   * 路径已整条退场（REVIEW.md 「断言等价于子串」条：注释与实现同改）。
    */
   adoptSession(session: EditorSession): void;
   /** 按路径标记「已与磁盘同步」：更新 cleanDoc 并清 dirty（保存成功 / 重载后）。 */
@@ -1344,7 +1344,7 @@ const baseCompartment = new Compartment();
  * **先委派上游**是这条实现的核心：上游在列表项 / 引用里返回 true（续写标记、保持层级——既有行为，
  * 唯一例外是 M399 裁决的空列表项退出：命令体改用 `nonTightLists: false` 的上游配置版，
  * 见 `src/enter-indent.ts` 文件头），在围栏 / 缩进代码块 / 段落里返回 false，委派因此**恰好**等于
- * 「只接管本来没人管的那部分」，不必自己抄一份上下文判据（REVIEW.md 第 8 条）。
+ * 「只接管本来没人管的那部分」，不必自己抄一份上下文判据（REVIEW.md 「同一语义两处真源」条）。
  *
  * code 模式没有 md 语法树、也没有上游键位，直接自动缩进（同一命令体内的分支）。
  * `Enter` **不进** `src/keys.ts` 的 KEY_BINDINGS：表内绑定表达不了「光标在围栏代码块内」这个
@@ -1742,7 +1742,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // 在 DOM 输入入口（beforeinput / EditContext / drop / paste / 输入法组合）直接拒收；
     // dispatch 层还有 changeFilter 兜底（见 sessionState），两层同判据。
     // 注意只翻这里不翻 changeFilter 会得到**假可编辑**编辑器：contenteditable 在场、
-    // 视觉断言全绿，但按键在 dispatch 层被吞（REVIEW.md 第 1 条同族陷阱）。
+    // 视觉断言全绿，但按键在 dispatch 层被吞（REVIEW.md 「断言等价于子串」条同族陷阱）。
     const editability: Extension[] = [
       EditorView.editable.of(editable),
       EditorState.readOnly.of(!editable),
@@ -1773,7 +1773,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), autoIndentKeymap];
   }
 
-  /** md 的 gutter 扩展：**在场判据的唯一来源**（REVIEW.md 第 8 条——别处 MUST NOT 自行判断）。
+  /** md 的 gutter 扩展：**在场判据的唯一来源**（REVIEW.md 「同一语义两处真源」条——别处 MUST NOT 自行判断）。
    *  `always` 恒装、`off` 恒空、`on-demand` 随输入条。`code` 模式不经过这里（恒常显）。 */
   function mdGutterExtensions(): Extension {
     const installed =
@@ -1822,7 +1822,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 兜底防线：editability 已按会话 editable 在视图层拒收输入，changeFilter 再挡住任何
       // 绕过 DOM 输入路径的程序化 dispatch（trustedLoad 标记的装载事务除外）——两处同判据。
       // 闭包读的是实例级 currentEditable——切标签时必须同步（syncProjection），否则
-      // 前台是可编辑会话而投影还停在只读，输入会被错判吞掉（REVIEW.md 第 1 条：只翻
+      // 前台是可编辑会话而投影还停在只读，输入会被错判吞掉（REVIEW.md 「断言等价于子串」条：只翻
       // 视图层会得到「contenteditable 在场但按键被吞」的假可编辑编辑器）。
       EditorState.changeFilter.of((tr) => (tr.docChanged && !currentEditable && !tr.annotation(trustedLoad) ? false : true)),
       EditorView.updateListener.of((update) => {
@@ -1939,7 +1939,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // `tests/visual/scenes/m285-selection-layer.spec.ts`（结构层）与真机场景 64（像素层）。
         // 装在**模式无关的基础层**（md 与 code 同一条路径）：`src/preview/theme.ts` 与
         // `baseTheme` 里的 `.cm-selectionBackground` 规则此前是「声明了没有消费者」的存量
-        // （REVIEW.md 第 9 条），装上之后它们才是选中底色的真源；`::selection` 那条退成
+        // （REVIEW.md 「声明了却没有消费者」条），装上之后它们才是选中底色的真源；`::selection` 那条退成
         // 原生路径的兜底（drawSelection 会把自己范围内的原生选区底色置为透明）。
         // 副作用（须知）：光标也交给 CM 画（`.cm-cursor`，原生 caret 被置为 transparent），
         // 与原生 caret 的形态略有差别；`src/table-fullscreen.ts` 的快照拒绝表里那两条选择器
@@ -2292,7 +2292,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
 
   /** 1-based 行号 → 行首落点 + 居中滚动的**唯一实现**（M281 抽出）：公共面 `revealLine`
    *  （wikilink 锚点跳转）与 goto-line 的确认路径（`jumpToLine`）共用同一份算式——MUST NOT
-   *  各写一套（REVIEW.md 第 8 条：同一语义两处真源即漂移）。越界在这里钳制（`1..doc.lines`），
+   *  各写一套（REVIEW.md 「同一语义两处真源」条：同一语义两处真源即漂移）。越界在这里钳制（`1..doc.lines`），
    *  因此调用方不必自己判界。 */
   function revealLineAt(line: number): void {
     const n = Math.max(1, Math.min(line, view.state.doc.lines));
@@ -2614,7 +2614,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     focusPreservingReadingPosition() {
       // 三段实现（取位置 → 聚焦 → 写回）在 src/scroll-position-view.ts：M280 起它不再是 facade
       // 私有物——src/toc.ts / src/search.ts / src/preview/livePreview.ts 那几条同样「以
-      // `view.focus()` 交还焦点」的路径手里只有裸 EditorView，统一走同一份实现（REVIEW.md 第 8 条）。
+      // `view.focus()` 交还焦点」的路径手里只有裸 EditorView，统一走同一份实现（REVIEW.md 「同一语义两处真源」条）。
       focusPreservingReadingPosition(view);
     },
     refreshPreview() {
@@ -2626,7 +2626,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     jumpToLine(line: number) {
       // goto-line 的确认路径（M281）：**先把焦点交还编辑器再落点**——输入条收起后若焦点还在
       // 浮层（或已经落到 body），只 dispatch 选区不会让 caret 可见，后续按键也不会落回文本
-      // 上下文。落点与滚动复用同一份 `revealLineAt`（MUST NOT 另写一套算式，REVIEW.md 第 8 条）。
+      // 上下文。落点与滚动复用同一份 `revealLineAt`（MUST NOT 另写一套算式，REVIEW.md 「同一语义两处真源」条）。
       view.focus();
       revealLineAt(line);
     },

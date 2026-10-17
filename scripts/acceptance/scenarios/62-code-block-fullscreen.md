@@ -41,7 +41,7 @@ steps:
     expect:
       - label: 焦点落在编辑器正文里（键盘注入的前置）
         ax: { focused: "AXTextArea" }
-  - name: 抢前台（同机另有一个 Lumir 实例在跑时后台注入的 chord 会丢键——REVIEW.md 第 11 条）
+  - name: 抢前台（同机另有一个 Lumir 实例在跑时后台注入的 chord 会丢键——REVIEW.md 「键盘注入丢键」条）
     do: focusWindow
     retries: 4
   - name: 负对照：在段落里执行 code-block.toggle-fullscreen（⌘J）
@@ -243,4 +243,4 @@ Alex 原话（2026-09-27）：「代码块也可以像表格那样，放大查�
   真机判据目前只能靠人肉复现。
 - **⌘J 只能发一次**：`code-block.toggle-fullscreen` 是 toggle，连发两次＝开了又关（与场景 61 的
   `block.copy` 不同——那条命令幂等，才可以用「发两次」抗丢键）。因此本场景的三条关闭路径各是一次
-  单发；丢键时断言会如实判红，按 REVIEW.md 第 11 条先复跑一次再判缺陷。
+  单发；丢键时断言会如实判红，按 REVIEW.md 「键盘注入丢键」条先复跑一次再判缺陷。

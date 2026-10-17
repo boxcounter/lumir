@@ -184,7 +184,7 @@ test("惰性：打开与光标路径都不解析（指示段不显示），⌘�
   await expectScreenshot(page.locator(".lumir-toc"), "code-outline-popover.png");
 
   // ④ 收起浮层：同一个光标位置、同一份文档，此刻指示段仍显示符号链——第 ② 步的隐藏因此确定是
-  //    「没解析」，而不是「位置在条目前」或「读不到」（REVIEW.md 第 2 条）
+  //    「没解析」，而不是「位置在条目前」或「读不到」（REVIEW.md 「读不到当成空」条）
   await page.keyboard.press("Escape");
   await expect(page.locator(".lumir-toc")).toBeHidden();
   await expect(indicator).toHaveText("Util › greet");

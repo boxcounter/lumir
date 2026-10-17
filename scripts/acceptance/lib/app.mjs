@@ -26,7 +26,7 @@ export function fixturesDir() {
 
 /** 场景 front-matter `config:` 允许的键（M284）——**单点真源**：run.mjs 的折算（在起 app 之前
  *  写进隔离 config.json）与 execute.mjs 的静态校验（`--check`）共用这一份，免得两处漂移
- *  （REVIEW.md 第 8 条）。键名即 `writeConfig()` 的同名参数，**传了才写**、缺省走应用出厂口径。 */
+ *  （REVIEW.md 「同一语义两处真源」条）。键名即 `writeConfig()` 的同名参数，**传了才写**、缺省走应用出厂口径。 */
 export const SCENARIO_CONFIG_KEYS = [
   "lineWrap",
   "codeBlockWrap",
@@ -705,14 +705,14 @@ function spawnSyncText(cmd, args) {
  * 「target WebArea did not acquire stable keyboard focus; no keys were sent」，整步的注入
  * 全部不落地，表现为一堆与产品无关的 FAIL（同一场景、同一提交，窗口在屏内时全 PASS）。
  *
- * **窗口对象必须从仓库 tauri.conf.json 读原件再叠位置**（M236，窗口配置只有一份真源，见 REVIEW.md 第 8 条）：tauri 的
+ * **窗口对象必须从仓库 tauri.conf.json 读原件再叠位置**（M236，窗口配置只有一份真源，见 REVIEW.md 「同一语义两处真源」条）：tauri 的
  * `--config` 是深合并，但**数组按下标整体替换**——`app.windows[0]` 会被这里传的对象整根替掉。
  * 早先的写法是在这里手抄 title/width/height（+注释提醒「改那边要同步这里」），结果
  * `titleBarStyle: "Overlay"` 与 `hiddenTitle: true` 被**静默**吃掉：套件实例长出原生标题栏
  * （窗口多一行、webview 让出 32pt），而这个丢配置一点报错都没有——任何「真机验证窗口级配置」
  * 的断言在套件里都验不到（M213 实测对照见 `test-results/m213/titlebar/readings.md` §4）。
  * 现在改成从 `src-tauri/tauri.conf.json` 读 `app.windows[0]` 再 spread：窗口配置只有一份真源
- * （REVIEW.md 第 8 条），新增窗口级键不会再漏。读不到就抛错，**不回落手抄一份**（静默降级回来
+ * （REVIEW.md 「同一语义两处真源」条），新增窗口级键不会再漏。读不到就抛错，**不回落手抄一份**（静默降级回来
  * 就是同一个坑）。运行期自检见 `drive.mjs` 的 assertOverlayChrome（waitAppReady 内）。
  */
 export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logFile } = {}) {
@@ -722,7 +722,7 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
   if (!baseWindow) {
     throw new Error(
       "launchApp：src-tauri/tauri.conf.json 里没有 app.windows[0]，无法构造 --config 覆写" +
-        "（拒绝在这里手抄一份窗口配置——那正是窗口配置两份真源的成因，见 REVIEW.md 第 8 条）。",
+        "（拒绝在这里手抄一份窗口配置——那正是窗口配置两份真源的成因，见 REVIEW.md 「同一语义两处真源」条）。",
     );
   }
   const config = {

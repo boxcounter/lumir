@@ -163,7 +163,7 @@ test("⌘} / ⌘{ 的 token 形态：真机事件与表内写法同 token，写 
   const prevEvent = { key: "{", code: "BracketLeft", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
   assert.equal(keyToken(nextEvent), "Cmd-}", "⌘} 的事件 token 是 `Cmd-}`（Shift 隐含在字符里）");
   assert.equal(keyToken(prevEvent), "Cmd-{", "⌘{ 的事件 token 是 `Cmd-{`");
-  // 反向断言（REVIEW.md 第 1 条）：错误形态与真机 token **必须不等**，否则这条判据没有区分度。
+  // 反向断言（REVIEW.md 「断言等价于子串」条）：错误形态与真机 token **必须不等**，否则这条判据没有区分度。
   assert.notEqual(keyToken(nextEvent), "Cmd-Shift-]", "写 `Cmd-Shift-]` 的绑定永远不命中");
   assert.notEqual(keyToken(prevEvent), "Cmd-Shift-[", "写 `Cmd-Shift-[` 的绑定永远不命中");
   // 合成事件（Playwright 的 Meta+Shift+BracketRight 给 key=\"]\" + shiftKey）归一成另一形态，
@@ -550,7 +550,7 @@ test("字号步进命令：四条默认绑定齐全、作用域派生成 global�
 });
 
 test("减号键的 token 形态：表内必须写 Cmd--，写 Cmd-Minus 永远不命中", () => {
-  // 反向断言（REVIEW.md 第 1 条）：这条判据的区分度在于——真事件的 token 与 `Cmd-Minus`
+  // 反向断言（REVIEW.md 「断言等价于子串」条）：这条判据的区分度在于——真事件的 token 与 `Cmd-Minus`
   // **必须不相等**。若有人把 `keyToken` 改成按物理键判定（或把表内写成 Cmd-Minus），
   // 下面这条 equality 会立刻红，而不是让 ⌘− 静默失效到真机上才被发现。
   const event = { key: "-", code: "Minus", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false };
@@ -903,7 +903,7 @@ test("⌥S / ⌥O / ⌥W 的 token 形态：含 Alt 按物理键 code 判定，�
   for (const { key, code, token, wrong } of realEvents) {
     assert.equal(keyToken({ ...base, key, code, altKey: true }), token, `真机事件的 token 应为 ${token}`);
     assert.equal(normalizeKey(token), token, `表内写法经归一仍是 ${token}`);
-    // 反向断言（REVIEW.md 第 1 条）：字符形态与真机 token **必须不等**，否则这条判据没有区分度。
+    // 反向断言（REVIEW.md 「断言等价于子串」条）：字符形态与真机 token **必须不等**，否则这条判据没有区分度。
     assert.notEqual(normalizeKey(wrong), token, `写 ${wrong} 的绑定永远不命中（静默失配）`);
     // 该字符形态也不在表内——不是「漏实现」，是防回潮。
     assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === normalizeKey(wrong)), undefined);

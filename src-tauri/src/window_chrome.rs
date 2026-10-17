@@ -19,7 +19,7 @@
 //! 色值真源：CSS token（src/style.css 三主题块，逐值权威文本是
 //! docs/specs/design-tokens-v1.md）。运行期同步由前端 applyTheme（src/main.ts，
 //! data-theme 唯一施加点）读 `getComputedStyle(body)` 解析值经
-//! [`window_set_background_color`] 送达——Rust 侧不存运行期色值表（REVIEW.md 第 8 条）。
+//! [`window_set_background_color`] 送达——Rust 侧不存运行期色值表（REVIEW.md 「同一语义两处真源」条）。
 //! 唯一的例外是启动路径：webview JS 运行前窗口就要有色，`[ui] theme` → RGB 的映射以
 //! [`CONTENT_BG_*`] 常量存在，由本模块测试解析 style.css / tauri.conf.json 逐值比对
 //! 钉死——改 token 忘改表 = cargo test 红。
@@ -138,7 +138,7 @@ mod tests {
     }
 
     /// 启动表（Rust 侧唯一的色值副本）必须与 CSS token 逐值一致——这是「运行期
-    /// 单一真源 + 启动例外」这条纪律的机器兜底（REVIEW.md 第 8 条）。
+    /// 单一真源 + 启动例外」这条纪律的机器兜底（REVIEW.md 「同一语义两处真源」条）。
     #[test]
     fn startup_table_matches_css_tokens() {
         assert_eq!(Some(CONTENT_BG_LIGHT), css_content_bg("light"));

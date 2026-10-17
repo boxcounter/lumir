@@ -35,7 +35,7 @@ import { decodeScreenshot, dominantColor, colorDiff, formatColor, lumaSpread } f
 //   · chrome 侧（三主题，eink 优先）：当前行的**文字色 vs 它实际压着的底色**（沿祖先链找第一个
 //     不透明底色）通道差 ≥ 40，hover 与不 hover 两种状态都算。
 //
-// 区分度自证（REVIEW.md 第 1 条）：把 token 换回修前形态（`--sel-band: var(--sel)` 且 --sel 族回原值）
+// 区分度自证（REVIEW.md 「断言等价于子串」条）：把 token 换回修前形态（`--sel-band: var(--sel)` 且 --sel 族回原值）
 // 后，每个主题**自己那条**判据 MUST 判红：light / dark 是带-vs-承载面的通道差（27 / 16 < MIN）、
 // eink 是带内的字形跨度（黑底 + 反白失效 ⇒ 0）、chrome 侧是「浅底白字」组合（eink）。
 
@@ -219,7 +219,7 @@ interface Reading {
 async function readPoints(page: Page, geo: Geo, name: string): Promise<Reading> {
   const shot = (await page.screenshot()).toString("base64");
   const img = decodeScreenshot(shot);
-  // 取不到色即抛错（「读不到」不当成「没有」——REVIEW.md 第 2 条）。采样点全部由 DOM 几何给出，
+  // 取不到色即抛错（「读不到」不当成「没有」——REVIEW.md 「读不到当成空」条）。采样点全部由 DOM 几何给出，
   // 落在图外只可能是装置坏了。
   const at = (x: number, y: number): RGB => {
     const c = dominantColor(img, Math.round(x), Math.round(y), PATCH);
@@ -458,7 +458,7 @@ test.describe("M291：选区族对比度（不变量）", () => {
     await page.waitForTimeout(300);
     await check(".vault-row.is-current .vault-row-name", "eink·浮层当前项（hover）");
 
-    // 区分度自证（REVIEW.md 第 1 条）：把**修前的脆弱形态**按回去——悬停态仍写白字。
+    // 区分度自证（REVIEW.md 「断言等价于子串」条）：把**修前的脆弱形态**按回去——悬停态仍写白字。
     // 修前这套表面正是靠逐条 `:not(:hover)` 排除条款才没落到「白字压 `--hover` 浅底」上；
     // 条款漏一处、或过渡帧落在两态之间，就是 Alex 的「白字灰底」。这条断言必须能红。
     await page.keyboard.press("Escape");
@@ -495,7 +495,7 @@ test.describe("M291：选区族对比度（不变量）", () => {
   });
 
   test("区分度自证：换回修前的 --sel 族（撞色档 + 反白）后，各主题自己那条判据 MUST 判红", async ({ page }) => {
-    // REVIEW.md 第 1 条：断言必须先造一个必须让它红的输入——这里造的就是 M291 **修前的产品行为**。
+    // REVIEW.md 「断言等价于子串」条：断言必须先造一个必须让它红的输入——这里造的就是 M291 **修前的产品行为**。
     for (const theme of THEMES) {
       await openDoc(page, theme);
       // 修前形态：light/dark 的带回到 `--sel`（撞色档），eink 回到纯黑 + 白字（反白档）。

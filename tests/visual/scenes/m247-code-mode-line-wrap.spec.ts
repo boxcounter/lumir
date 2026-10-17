@@ -8,7 +8,7 @@ import { readDocument } from "./parity-checks";
 // 为什么单独一个场景：本 change 的核心断言是「同一份配置下，两个模式的正文行取不同的折行键」
 // （md → `editor.line_wrap`，code → `editor.code_mode_line_wrap`）。既有 render-codeblock.spec.ts
 // 的折行组全是 md 口径（代码块 + 正文行两个轴），code 侧的分叉在那里无处安放；本场景把
-// **两侧放在同一个 run 里对照**，单侧的断言不足以证明「分叉」（REVIEW.md 第 1 条）。
+// **两侧放在同一个 run 里对照**，单侧的断言不足以证明「分叉」（REVIEW.md 「断言等价于子串」条）。
 //
 // 判据层：计算属性（`white-space`）+ 行盒高度换算的视觉行数 + 编辑区横向可达性。全部是结构 /
 // 计算属性断言，**不含像素断言**——因此 CI（LUMIR_VISUAL_STRUCTURAL=1）与本地跑的是同一条判据，
@@ -17,7 +17,7 @@ import { readDocument } from "./parity-checks";
 // 不折行的底线（既有 spec 条款，本 change 原样继承）：长行 MUST NOT 被裁掉且无法到达——由
 // `.cm-scroller` 的横向平移承载。下面每条「不折行」的断言都配一条可达性读数。
 
-/** md 侧对照文档：复用 M180 的折行 fixture（同一份语料，避免第二份副本漂移，REVIEW.md 第 8 条）。 */
+/** md 侧对照文档：复用 M180 的折行 fixture（同一份语料，避免第二份副本漂移，REVIEW.md 「同一语义两处真源」条）。 */
 const MD_SOURCE = readFileSync(new URL("../fixtures/render-codeblock/wrap.md", import.meta.url), "utf8");
 const MD_LONG_NEEDLE = "超长正文行";
 const MD_UNIT_NEEDLE = "正文段落";

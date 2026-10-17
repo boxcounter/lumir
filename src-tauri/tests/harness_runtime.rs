@@ -4,7 +4,7 @@
 //! JSONL 留存与会话边界。
 //!
 //! 环境隔离：XDG_CONFIG_HOME（JSONL 落点）与 HOME（Skill 发现）都指向临时目录，
-//! 不碰真实 `~/.config/lumir` 与 `~/.agents`（REVIEW.md 第 13 条）。多测串行（静态锁），
+//! 不碰真实 `~/.config/lumir` 与 `~/.agents`（REVIEW.md 「测试污染真实环境」条）。多测串行（静态锁），
 //! 因为 env 是进程全局。
 
 use lumir_lib::commands::CommandError;
@@ -459,7 +459,7 @@ fn tool_loop_roundtrip_with_fixture_file() {
 }
 
 /// 读取并解析夹具的唯一一份会话留存（`sessions/<vault 稳定 id>/<session_id>.jsonl` 布局——文件名是
-/// `jsonl::new_session_id` 的产物，测试侧不复刻生成算法，REVIEW.md 第 8 条：两份真源
+/// `jsonl::new_session_id` 的产物，测试侧不复刻生成算法，REVIEW.md 「同一语义两处真源」条：两份真源
 /// 会漂）。一个 Fixture 只有一个 vault 且大多数场景只跑一个会话，目录里恰有一份 `.jsonl`，
 /// 直接取它；多会话场景（压缩 / 重置 / 恢复）用 `harness_jsonl_files` 自取。
 fn harness_jsonl_path(fixture: &Fixture) -> PathBuf {
@@ -469,7 +469,7 @@ fn harness_jsonl_path(fixture: &Fixture) -> PathBuf {
 }
 
 /// 本测试的 vault 稳定 id（会话留存目录名）：`Fixture::scope()` 与留存读取口共用同一份字面量
-/// （REVIEW.md 第 8 条：两份真源会漂）。
+/// （REVIEW.md 「同一语义两处真源」条：两份真源会漂）。
 const VAULT_ID: &str = "vault-test-1";
 
 /// 列出夹具留存的全部会话文件（按文件名排序——session id 时间序，即建立顺序）。
@@ -2718,7 +2718,7 @@ fn cache_write_tokens_flows_to_retention_event_and_snapshot() {
 ///
 /// 区分度：压缩前一轮 input 120000 / cached 118000（98.3%），压缩后一轮 input 1000 / cached 100
 /// （10.0%）。不重置累计的话读数是 (118000+100)/(120000+1000) ≈ 97.6%——与重置后的 10% 相距 87
-/// 个点，这条判据分得开（REVIEW.md 第 1 条：先想清楚「什么输入会让它红」）。
+/// 个点，这条判据分得开（REVIEW.md 「断言等价于子串」条：先想清楚「什么输入会让它红」）。
 #[test]
 fn session_cache_reading_restarts_after_auto_compact() {
     let f = Fixture::new("cache-reset");
@@ -2790,7 +2790,7 @@ fn session_cache_reading_restarts_after_auto_compact() {
 // ---------------------------------------------------------------------------
 
 /// 危险黑名单·shell 包装器进闸时的依据：事件与快照**两条通道同值**（同一个 `Verdict` 喂两边，
-/// REVIEW.md 第 8 条）——面板批准卡的「判定依据」行据它渲染，前端不推导层级。包装器点名。
+/// REVIEW.md 「同一语义两处真源」条）——面板批准卡的「判定依据」行据它渲染，前端不推导层级。包装器点名。
 #[test]
 fn approval_reason_reaches_event_and_snapshot_alike() {
     let f = Fixture::new("approval-reason-wrapper");

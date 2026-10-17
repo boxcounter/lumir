@@ -6,7 +6,7 @@ import { DEMO_VAULT, externalWrite, fileText, fireFsEvent, fsMutations, stubTaur
 //
 // 为什么要有这个场景：
 //   1. 菜单浮层、行内联输入框、删除确认框是**三个新增 UI 元素**（tasks §5.2）——元素级基线
-//      钉住它们的形态。整页容差吞得掉一个新浮层的细节（REVIEW.md 第 3 条），所以基线按
+//      钉住它们的形态。整页容差吞得掉一个新浮层的细节（REVIEW.md 「容差吞掉真实变化」条），所以基线按
 //      元素盒给。
 //   2. 这里是「右键 → 菜单 → 动作 → tab 联动」这条链路在本机唯一能稳定跑通的通道：真机
 //      场景 47 走 KimiCU 注入，双击 / 右键类注入有不可达的前科（M184），本场景把判定钉在
@@ -214,7 +214,7 @@ test("改名打开中的 dirty 文件：tab 就地 remap、回响不误报（含
   await expect(page.locator('.ft-row[title="README.md"]')).toHaveCount(0);
   await expect(page.locator('.ft-row[title="RENAMED.md"]')).toBeVisible();
 
-  // 反向验证（REVIEW.md 第 1 条：上面的负向断言必须有区分度）：同一个 dirty 文件被**真实**
+  // 反向验证（REVIEW.md 「断言等价于子串」条：上面的负向断言必须有区分度）：同一个 dirty 文件被**真实**
   // 外部修改时，「检测到外部修改」提示必须照常出现。不出现就说明上面的负向断言恒真。
   // **必须真的改磁盘**（`externalWrite`）：改名已把磁盘 revision 基准迁到新路径（M278 r1），
   // 只 fire 事件而磁盘内容不动的话，读数与会话基准一致 ⇒ 按设计就该被当成回声丢弃。

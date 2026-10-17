@@ -14,7 +14,7 @@ import { stubTauri } from "./tauri-stub";
 //
 // 判据用「探针 token 的计算值」而不是再抄一份色值表：主题取值表的真源是
 // docs/specs/design-tokens-v1.md + restyle-theme.spec.ts，本场景要比的是**跟随关系**
-// （表面 = 当前主题的 token 计算值），两处各抄一份色值表就是两处真源（REVIEW.md 第 8 条）。
+// （表面 = 当前主题的 token 计算值），两处各抄一份色值表就是两处真源（REVIEW.md 「同一语义两处真源」条）。
 
 const DOC = "# 主题切换\n\n切换用的一段正文。\n";
 
@@ -148,7 +148,7 @@ test("⌘⇧T：三档循环一周，每档 data-theme 与代表性表面的计�
   expect(darkSurfaces.editor).toBe(darkTokens["--content-bg"]);
   expect(darkSurfaces.shell).toBe(darkTokens["--frame"]);
   expect(darkSurfaces.editorText).toBe(darkTokens["--text"]);
-  // 反向判据：跟随是**真的换了值**，不是两边都读到同一个默认值（REVIEW.md 第 1 条）
+  // 反向判据：跟随是**真的换了值**，不是两边都读到同一个默认值（REVIEW.md 「断言等价于子串」条）
   expect(darkTokens["--content-bg"]).not.toBe(lightTokens["--content-bg"]);
   expect(darkSurfaces.editor).not.toBe(lightSurfaces.editor);
 

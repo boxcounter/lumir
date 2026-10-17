@@ -218,7 +218,7 @@ test("项集按条目类型分流：文件 4 项、目录 6 项，破坏性项�
   assert.equal(file[file.length - 2], "separator", "破坏性项前必须有分隔线");
   const dir = menuItemsFor("dir");
   assert.equal(dir.filter((row) => row === "separator").length, 2);
-  // 反向输入（REVIEW.md 第 1 条：断言要有区分度）：目录项集里 MUST NOT 出现文件项集的
+  // 反向输入（REVIEW.md 「断言等价于子串」条：断言要有区分度）：目录项集里 MUST NOT 出现文件项集的
   // 全部内容，否则「分流」这条断言等价于恒真。
   assert.notDeepEqual(menuActionsFor("file"), menuActionsFor("dir"));
 });

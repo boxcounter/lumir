@@ -198,7 +198,7 @@ test("不装饰的面：无 scheme 字面 / 白名单外 scheme / frontmatter �
 
   // 无 scheme 的字面（`www.` / 裸邮箱）没有 `URL` 节点的白名单 scheme ⇒ 保持原文；
   // 白名单外的 `xmpp:` 同理。三条都在同一行里，且同一份文档里的裸 URL 是正观测
-  //（REVIEW.md 第 2 条：负向断言必须配正观测，否则「查询恒 null」也绿）。
+  //（REVIEW.md 「读不到当成空」条：负向断言必须配正观测，否则「查询恒 null」也绿）。
   expect(rendered).toContain("www.example.invalid");
   expect(rendered).toContain("someone@example.invalid");
   expect(rendered).toContain("xmpp:someone@example.invalid");

@@ -105,7 +105,7 @@ append-only JSONL（`<隔离配置>/harness/sessions/<vault 稳定 id>/<session_
   这条「来源当时不存在」是旧实现静默跳过的装配事实（design §2）；固定段（identity / quote_reference）
   `path:null, exists:true`。存在态（`exists:true` + 顺序与覆盖声明）由场景 123 覆盖——它自带两份
   合成 AGENTS 文件。**不断言 user-wide AGENTS.md**：它的路径含真实用户名，且各机可能不存在
-  （信息卫生纪律，REVIEW.md 第 17 条）。
+  （信息卫生纪律，REVIEW.md 「信息卫生」条）。
 - **每次迭代落完整 llm_request**：迭代 2 的请求历史里带迭代 1 的工具 `function_call` 与
   `function_call_output`——只有「工具循环每轮各落一条 llm_request」才成立。请求体字段齐备用一条
   整行正则判（messages / params / provider / system 同时在场，字典序：messages → model → params →

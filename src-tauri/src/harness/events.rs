@@ -12,7 +12,7 @@
 //! 切换 vault 之后仍在途的旧 vault 事件（工具循环跑在专线程上，切换不打断它）因此被丢弃，
 //! 不会串进新 vault 的面板。它是「会话标识」本身：`Runtime` 的 sessions 映射以 vault 根路径
 //! 为键（内存态一个 vault 一个活跃会话），故 vault 标识即该活跃会话的标识，不另发一个同值的
-//! `session` 字段（那会是「声明了却没有独立消费者」的死字段，REVIEW.md 第 9 条）。
+//! `session` 字段（那会是「声明了却没有独立消费者」的死字段，REVIEW.md 「声明了却没有消费者」条）。
 //!
 //! 载荷之上，本模块持有输出侧的两个 trait：[`EventSink`]（事件发射通道）与 [`StreamSink`]
 //!（M369 的流式增量转发口——解析层收到增量即转成上面的事件，而不是攒够整条响应再补发）。
@@ -128,7 +128,7 @@ pub fn approval_request(
 /// M459：`reason` = 判定依据（[`super::permissions::DecisionReason`]，哪一层让这次调用进闸）——
 /// 面板批准卡的「判定依据」行据此渲染，前端 MUST NOT 自行推导层级。缺席 = 无依据可讲（旧载荷 /
 /// 自动放行的层）。与 `PendingApprovalSnapshot.reason` **同源同形**：两者都取
-/// `gated_execute` 手上的同一个 `Verdict`（REVIEW.md 第 8 条）。
+/// `gated_execute` 手上的同一个 `Verdict`（REVIEW.md 「同一语义两处真源」条）。
 pub fn approval_request_with_purpose(
     id: &str,
     tool: &str,
@@ -164,7 +164,7 @@ pub fn approval_request_with_purpose(
 ///
 /// **事件/快照一致性不变量（M534，合同条款见 `openspec/specs/harness`）**：本事件与
 /// `harness_state` 快照的 `usage` SHALL 携带**同一组读数键**。两者本已同吃一个
-/// [`UsageSnapshot`]（M443：MUST NOT 各算一套，REVIEW.md 第 8 条），M534 起**键集合也由它
+/// [`UsageSnapshot`]（M443：MUST NOT 各算一套，REVIEW.md 「同一语义两处真源」条），M534 起**键集合也由它
 /// 的一份 `Serialize` 产出**——加字段即两端同改，MUST NOT 再各维护一份键清单。现场即此：
 /// 事件曾手列七键、漏掉 M526 的绝对值键，live 会话的 tokens 气泡因缺键静默回落百分比形态，
 /// 而快照路径（切 vault 回来 / 恢复）带全，同一会话两种形态。
@@ -251,7 +251,7 @@ mod tests {
                 "事件缺 vault 标识：{event}"
             );
         }
-        // 区分度自证（REVIEW.md 第 1 条）：未经包装的载荷**没有**这个字段——上面的断言因此
+        // 区分度自证（REVIEW.md 「断言等价于子串」条）：未经包装的载荷**没有**这个字段——上面的断言因此
         // 真的在判「包装生效」，而不是「字段本来就存在」。
         assert!(text_chunk("你好").get(VAULT_FIELD).is_none());
         // 信封字段是**加**上去的，原有字段一个不少（形状仍是九类契约本身）。
@@ -293,7 +293,7 @@ mod tests {
     /// M534：`usage` 事件的读数键集合 = [`UsageSnapshot`] 的序列化键集合（**事件/快照一致性
     /// 不变量**）——事件与 `harness_state` 快照的 `usage` 携带同一组键，加字段即两端同改。
     ///
-    /// 区分度（REVIEW.md 第 1 条）：修前实现手列七键（`type` + M443 的六个读数键），
+    /// 区分度（REVIEW.md 「断言等价于子串」条）：修前实现手列七键（`type` + M443 的六个读数键），
     /// `input_tokens` / `cached_tokens` / `cached_tokens_session` / `context_window` /
     /// `has_usage` 五键整体缺席；把 `usage()` 换回那份手列清单时本用例即红。现场后果：前端
     /// `usageReadings` 读不到 `input_tokens` / `context_window`，live 会话的 tokens 气泡按 D395

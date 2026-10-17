@@ -15,7 +15,7 @@ const isList = (node: Node) => node.name === "BulletList" || node.name === "Orde
 /** 单行的列表归属分析：行首内容列（引用前缀之后）与语法树归属。
  *
  *  `ListLayout.build()` 与本模块的单测（tests/unit/list-lazy-continuation.test.ts）共用这一份
- *  判定——同语义不得两处写值（REVIEW.md 第 8 条）。纯函数：只读解析树与行文本，不碰 view /
+ *  判定——同语义不得两处写值（REVIEW.md 「同一语义两处真源」条）。纯函数：只读解析树与行文本，不碰 view /
  *  坐标 / 装饰，判定因此与光标位置无关（合同 docs/specs/lists.md 的 L3）。 */
 export interface ListLineInfo {
   /** 行首内容列（跳过全部连续 `>` 与紧随空格后的首个非空白）；全空白行 -1。 */
@@ -72,7 +72,7 @@ export function listLineInfo(tree: Tree, doc: Text, line: Line): ListLineInfo {
  *
  *  判定是 `listLineInfo` 的**补集**而非替代：语法树已认作项首行（真列表，含空行后的
  *  `1. `、`- `、引用内 `> 1. `、列表自身的空续项）一律返回 null——那些形态既有渲染与
- *  M399 退出行为已覆盖，同语义不得两处抢（REVIEW.md 第 8 条）。排除面：setext 标题
+ *  M399 退出行为已覆盖，同语义不得两处抢（REVIEW.md 「同一语义两处真源」条）。排除面：setext 标题
  *  下线（`para\n- ` 的 `- `，与 Obsidian 同口径交给标题语义）、围栏 / 缩进代码块、
  *  HTMLBlock、表格——那些上下文里 marker 形文本不是列表。 */
 export interface BareMarkerLine {
@@ -97,7 +97,7 @@ const BARE_MARKER_RE = /^((?:>[ \t]*)*)([ \t]*)((\d{1,9})([.)])|([-+*]))([ \t]+)
 
 /** 裸 marker 文本判定（M529）：整串是「可选引用前缀 + 行首缩进 + marker + 尾随空白」、
  *  无任何内容（正则内容组为空串）——与 `bareListMarkerLine` 同一份 BARE_MARKER_RE，
- *  同语义不得两处真源（REVIEW.md 第 8 条）。用途：判定 WebKit 裸 DOM 变更重复插入的
+ *  同语义不得两处真源（REVIEW.md 「同一语义两处真源」条）。用途：判定 WebKit 裸 DOM 变更重复插入的
  *  marker 文本（逃逸形态，探针证据 test-results/m529-probe/readings.md）。纯文本形态级
  *  判定，不读语法树：围栏代码块内「整串 marker 的 DOM 插入」没有合法产生通道（键入是
  *  逐字符 insertText），不参与本判定。 */
@@ -231,7 +231,7 @@ class ListLayout {
       // - 族：`.cm-lp-list-marker` 的 fontFamily 是 `var(--editor-font-family)`（sans，
       //   定稿的标记族；src/preview/theme.ts），这里读的也是它。**这是字符串取值、不是
       //   CSS 引用**：改 token 名不会带着它走，所以非默认 `font_family` 下若两处不同源，
-      //   标记会按旧族算宽、与正文对不齐（REVIEW.md 第 8 条的第二种形态：一处是 CSS
+      //   标记会按旧族算宽、与正文对不齐（REVIEW.md 「同一语义两处真源」条的第二种形态：一处是 CSS
       //   引用、一处是 JS 取值）。
       // - 字号比值：标记字号逐级递减 13.5 / 13 / 12.5（正文锚 15px），比值表
       //   MARKER_FONT_RATIOS 与 theme.ts 的 `.cm-lp-list-marker-d1/-d2/-d3` 是同一组

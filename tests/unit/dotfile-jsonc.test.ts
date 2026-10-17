@@ -8,7 +8,7 @@
 //   3. **token 化**（highlightCode 驱动，与围栏代码块同一条路径）：gitignore 的四形态、
 //      gitattributes 的字段切分、jsonc 的注释与尾逗号。
 //
-// 反向用例先行（REVIEW.md 第 1 条）：`foo.gitignore` / `.GitIgnore` / `.secret` / `\#` /
+// 反向用例先行（REVIEW.md 「断言等价于子串」条）：`foo.gitignore` / `.GitIgnore` / `.secret` / `\#` /
 // 非行首 `!` / 非行尾 `/` 这些**必须不命中**的输入，是「断言有区分度」的自检面；没有它们，
 // 一条恒真的 `assert.ok(...)` 与真正的判据在测试输出里长得一样。
 //

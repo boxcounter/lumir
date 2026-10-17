@@ -7,7 +7,7 @@
 //   ③ 属性值与文本节点 XML 转义，round-trip 可还原；
 //   ④ **协议零编号**——属性集合恰为 {role} 或 {role, at}（一致性原则）。
 //
-// 判据纪律（REVIEW.md 第 1 条）：这里自己实现一个最小 XML 解析器（不复用被测的 escape），
+// 判据纪律（REVIEW.md 「断言等价于子串」条）：这里自己实现一个最小 XML 解析器（不复用被测的 escape），
 // 属性集合断言比 `!includes("index")` 强——任何多出来的序号 / id 属性都会红。
 
 import { test } from "node:test";

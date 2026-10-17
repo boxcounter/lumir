@@ -559,7 +559,7 @@ impl Runtime {
 }
 
 /// 会话留存归属当前 vault 的判据（恢复与列举共用一处——同一语义两处真源会漂，
-/// REVIEW.md 第 8 条）：首行 `session_open.vault_root` 必须逐字等于当前 scope 的键
+/// REVIEW.md 「同一语义两处真源」条）：首行 `session_open.vault_root` 必须逐字等于当前 scope 的键
 /// （vault 根路径）。
 fn session_belongs_to_scope(open: &serde_json::Value, scope: &VaultScope) -> bool {
     open["vault_root"].as_str() == Some(scope.key().as_str())
@@ -854,7 +854,7 @@ fn restored_panel_messages(
                     // 面板文本从 wire 项还原（design §4.4）：content 数组形态经
                     // `attachments::panel_text_of_content`——文本 part 原文 + 图片 part 的
                     // `<image …/>` 占位行，与发送时入队的面板文本**同一条还原函数**，两侧
-                    // 不可能漂（REVIEW.md 第 8 条）；图片卡片因此按原交错还原进面板。
+                    // 不可能漂（REVIEW.md 「同一语义两处真源」条）；图片卡片因此按原交错还原进面板。
                     // content 直接是字符串的旧形态走历史拼接口径。
                     let text = match item["content"].as_array() {
                         Some(content) => attachments::panel_text_of_content(content),
@@ -904,7 +904,7 @@ fn restored_panel_messages(
 /// system 全文与 assembly 清单原样灌进首行。
 ///
 /// **唯一建立路径**（M362 收拢）：`acquire_turn` 与 `set_thinking_effort` 都经这里——两处各写
-/// 一份建立逻辑必然漂移（REVIEW.md 第 8 条）。建立失败（留存文件打开失败）在插入之前返回，
+/// 一份建立逻辑必然漂移（REVIEW.md 「同一语义两处真源」条）。建立失败（留存文件打开失败）在插入之前返回，
 /// 不留下半态会话（与收拢前 `acquire_turn` 的 entry 先判后插同口径）。
 fn ensure_session<'a>(
     sessions: &'a mut HashMap<String, session::Session>,

@@ -147,7 +147,7 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
 - 豁免（书面理由）：
   - `src/vault-switcher.ts` 的 `handOffFocus()`——它不是裸 focus：走 CM 自己的
     `scrollSnapshot` / 快照 effect 通道，M186 起就有保护且真机场景 25 PASS。两套通道并存是
-    已知的「同一语义两处实现」（REVIEW.md 第 8 条），收敛进原语列为 backlog 待办。
+    已知的「同一语义两处实现」（REVIEW.md 「同一语义两处真源」条），收敛进原语列为 backlog 待办。
   - `src/main.ts` 的 `focusEditor`（同上，vault 切换器的 dep）。
   - `src/preview/livePreview.ts` 的 Tab 进容器那条（`view.focus()` 之后立刻把焦点交给容器，
     是选区同步手法而非交还焦点）、`src/preview/math.ts` 的点击进源码（指针落点即 caret，

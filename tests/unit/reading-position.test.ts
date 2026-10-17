@@ -148,7 +148,7 @@ test("pruneEntries：不在 vault 内的键即时剔除，越界形态由同一�
   const pruned = pruneEntries(entries, new Set(["a.md", "docs/c.md"]));
   assert.deepEqual(Object.keys(pruned).sort(), ["a.md", "docs/c.md"]);
   // 越界键（绝对路径 / 含 ..）不可能出现在枚举结果里，因此被同一步剔除——前端不再抄一份键
-  // 校验（REVIEW.md 第 8 条），这条断言钉的正是那个口径
+  // 校验（REVIEW.md 「同一语义两处真源」条），这条断言钉的正是那个口径
   assert.equal(pruned["/etc/passwd"], undefined);
   assert.equal(pruned["../outside.md"], undefined);
 });

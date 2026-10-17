@@ -2,7 +2,7 @@
 # scripts/docs-check.sh — 制品门禁的唯一实现（docs/adr/ 的结构与索引 + openspec 相对链接可达性）。
 # 本地 `scripts/gate.sh quick` 与 CI 的 .github/workflows/docs-check.yml 调的是同一份脚本：
 # 「本地全绿才允许提交」要求本地跑的就是 CI 跑的那条命令，两处各写一遍必然漂移
-#（M153；REVIEW.md 第 8 条：同一语义不要两处真源）。
+#（M153；REVIEW.md 「同一语义两处真源」条：同一语义不要两处真源）。
 #
 # 校验内容（口径本体见 docs/process/adr-lifecycle.md）：
 #   1. docs/adr/ 下每份 ADR 的文件结构、状态字段、日期与角色字段、必备章节
@@ -16,7 +16,7 @@
 # --strict`（CI 的 docs-check.yml 与本地 gate.sh 都调它，两者同一命令），故无需在此复制一遍。
 # 第 3 条（相对链接可达性）不同：`validate` 不查链接、归档又会把目录移深一层，是另一条判据，
 # 故落在这里——挂本脚本而非 gate.sh，是为了让本地 `gate.sh quick` 与 CI 的 docs-check.yml
-# 同时继承同一条命令（REVIEW.md 第 8 条：同一语义不要两处真源）。
+# 同时继承同一条命令（REVIEW.md 「同一语义两处真源」条：同一语义不要两处真源）。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

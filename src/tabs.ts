@@ -1,6 +1,6 @@
 // 标签（M149）：模型就是 editor 的会话列表（顺序 = 打开顺序），本模块只多维护标签栏
 // DOM。选中 / 关闭 / 切换都经内核的会话 API，这里不自己存第二份文档清单
-//（REVIEW.md 第 8 条：同一语义不要两处真源）。
+//（REVIEW.md 「同一语义两处真源」条：同一语义不要两处真源）。
 //
 // M254（两个 change 同批）：**预览标签机制退场**（change preview-tab-removal，Alex
 // 2026-09-27 反馈「第一个 TAB 名是斜体」）——单击树文件也开正式标签，「可复用标签」的
@@ -225,7 +225,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
    *  比增量 diff 简单，也天然不会漂。空态（没有任何带路径的会话）整条隐藏——它在网格里
    *  不占行高，所以空态布局与多标签之前逐像素一致（整页基线的空态对照因此不需要更新）。
    *  标签可见文本是路径末段：basename 派生全前端只有一份（`src/tree.ts` 的 baseName，
-   *  REVIEW.md 第 8 条），标签栏、文件树、侧栏头的 vault 名与切换器列表共用它。 */
+   *  REVIEW.md 「同一语义两处真源」条），标签栏、文件树、侧栏头的 vault 名与切换器列表共用它。 */
   function renderTabs(): void {
     // 双 pane 收拢后本实例的标签槽已从 DOM 摘除（onRelabel 的注册表不可退订，copy.ts
     // 不在本 mission 改动面）——对不在场的槽重绘既无意义也可能碰到已销毁的 view。

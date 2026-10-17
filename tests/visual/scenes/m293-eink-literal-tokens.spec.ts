@@ -18,7 +18,7 @@ import { stubTauri, configGets } from "./tauri-stub";
 //
 // **本批的不变量是「值逐值不变」**，所以断言分两层（缺一层就退化成假绿）：
 //   ① **值**：元素的计算色 == 归属 token 的计算值（三主题；eink 是被改写的那一档）；
-//   ② **归属**（REVIEW.md 第 1 条的防线，区分度自证）：把归属 token 临时改成一个三主题都不用的
+//   ② **归属**（REVIEW.md 「断言等价于子串」条的防线，区分度自证）：把归属 token 临时改成一个三主题都不用的
 //      探测色，元素的计算色 MUST 跟着变。**写死字面值的声明不会跟着变**——修前跑本文件时
 //      ②全红、①全绿，正是「值不变、只是不再硬编码」这件事的签名；改了字面值（比如误写成别的色）
 //      则①红。两条一起才能钉住「归位」。
@@ -108,7 +108,7 @@ interface Snapshot {
 
 /** 页面侧：把选择器集合 + 归属 token 的计算值一次读齐（同一帧，避免中途状态变化）。
  *  `count` 与 `read` 用同一个选择器：元素缺失时 count 立刻暴露（**读不到 ≠ 为空**，
- *  REVIEW.md 第 2 条），读数落在 `null` 上不许静默通过。 */
+ *  REVIEW.md 「读不到当成空」条），读数落在 `null` 上不许静默通过。 */
 function collect(page: Page, selectors: Record<string, string>): Promise<Snapshot> {
   return page.evaluate((sels) => {
     const tokenOf = (name: string): string => {
@@ -181,7 +181,7 @@ const PROBE_COLOR = "rgb(7, 8, 9)";
 /** 归属判据：把 token 临时改成探测色，元素的这条计算属性 MUST 跟着变（改回后 MUST 复原）。
  *  三次读数各自先等过渡落定——`.lumir-search-button` 带 `transition: background`，改 token 会
  *  触发一次过渡，紧接着的同步读数是**过渡起点**（实测读到旧值 `rgb(0,0,0)`），
- *  那会把「已归位」误判成「没归位」（REVIEW.md 第 1 条的反向形态：判据拿错了输入）。 */
+ *  那会把「已归位」误判成「没归位」（REVIEW.md 「断言等价于子串」条的反向形态：判据拿错了输入）。 */
 async function probeTokenFollows(page: Page, selector: string, token: string, prop: keyof BoxReading) {
   const read = () => propOf(page, selector, prop);
   const setToken = (value: string | null) =>
@@ -363,7 +363,7 @@ for (const theme of THEMES) {
 // 同一批裁决（Alex 2026-09-29）里 tower 把本 mission 的 scope 扩到 theme.ts，理由就是这一组：
 // 它们的字面值与 eink 的 `--border` 同值，行为未变，属「边框族」的收敛面。
 // 同文件里当时**不动**的两处（`backgroundColor: "#fff"` 的白底半边、callout 类型标签的
-// `color: "#000"` 前景色）不属本批两族，当时登记在 docs/backlog.md 的 M293 节；
+// `color: "#000"` 前景色）不属本批两族，当时登记在 docs/backlog.md「M293 eink 字面值归位 token」条（git 历史）；
 // **M294 已把它们收干净**（面族 → `--content-bg` / 前景 → `--text`，frontmatter 那处冗余覆盖
 // 直接删），判据在 tests/visual/scenes/m294-surface-and-foreground-literals.spec.ts。
 const CONTENT_DOC = "m293-content.md";

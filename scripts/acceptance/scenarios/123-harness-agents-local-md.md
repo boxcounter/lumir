@@ -33,7 +33,7 @@ steps:
         ax: { has: "问点什么" }
       - shot: 00-面板就位
 
-  - name: 抢前台（真鼠标点击要求窗口在前台；同机别的 app 抢走前台时会丢点击与丢键——REVIEW.md 第 11 条）
+  - name: 抢前台（真鼠标点击要求窗口在前台；同机别的 app 抢走前台时会丢点击与丢键——REVIEW.md 「键盘注入丢键」条）
     do: focusWindow
 
   - name: 真实鼠标点 composer（contenteditable 的 DOM 焦点靠真实 mousedown 建立）
@@ -98,12 +98,12 @@ Alex 原话（2026-10-10）：「Harness 增加自动加载 project-wide AGENTS.
   105（合成 vault 根无 AGENTS 指令文件）的同款断言覆盖，两景合起来才是 spec 的完整口径。
 - **顺序判据**用一条整行正则（`VAL-ROOT-AGENTS` 在前、`VAL-LOCAL-AGENTS` 在后）：JSONL 一行一
   事件，两个标记串只可能由 system prompt 全文带进来，`m` 下的 `^…$` 因此钉的是「同一条
-  `session_open` 记录里、前串先于后串」——不是「两串都出现过」（REVIEW.md 第 1 条）。
+  `session_open` 记录里、前串先于后串」——不是「两串都出现过」（REVIEW.md 「断言等价于子串」条）。
 - **路径断言不写死 `/tmp`**：app 侧的 vault 根路径可能是 `/tmp/...` 或 `/private/tmp/...`
   （注册表存 canonicalize 后的路径），故路径片段用 `[^"]*` 通配、只钉文件名与来源名
   （与场景 105 同口径）。
 - **不断言 user-wide AGENTS.md**：它的路径含真实用户名、各机可能不存在（信息卫生纪律，
-  REVIEW.md 第 17 条）。
+  REVIEW.md 「信息卫生」条）。
 - **抢前台 + 焦点正观测**：点 composer 前的 `focusWindow` 与点后的 `focused` 断言是首次真机
   跑（2026-10-10）暴露出来的：那条运行里窗口在前台被中途抢走（AX 快照里**没有任何**
   `(focused)` 节点、window_bounds 变成整屏），随后键盘注入 3 次全不落地——与产品行为无关，

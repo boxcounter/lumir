@@ -83,7 +83,7 @@ for (const item of HIGHLIGHT_CASES) {
     assert.deepEqual(actual, expected, `${item.name}（${item.rationale}）`);
     if (expected.length === 0) {
       // 0 命中的用例一律断言「源位置本身就不是变量类位置」——比「匹配集合为空」强：它同时排除了
-      // 「源取到了、只是没有别的出现」这条假绿路径（REVIEW.md 第 2 条）。
+      // 「源取到了、只是没有别的出现」这条假绿路径（REVIEW.md 「读不到当成空」条）。
       assert.equal(source, null, `${item.name}：这一处不该被认作变量类位置（${item.rationale}）`);
     } else {
       assert.notEqual(source, null, `${item.name}：应当取到源节点`);

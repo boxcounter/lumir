@@ -175,6 +175,6 @@ test("三主题共享同一套非色 token：字体阶梯 / 间距 / 圆角 / �
   const light = await read("light");
   expect(await read("dark")).toEqual(light);
   expect(await read("eink")).toEqual(light);
-  // 非色 token 不是空串（否则上面三条会在「全是空字符串」上空转，REVIEW.md 第 2 条）
+  // 非色 token 不是空串（否则上面三条会在「全是空字符串」上空转，REVIEW.md 「读不到当成空」条）
   expect(light.every((entry) => entry.split("=")[1] !== "")).toBe(true);
 });

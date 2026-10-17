@@ -138,7 +138,7 @@ for (const width of [1280, 640] as const) {
       await expect(page.locator(".cm-lp-embed-unsupported")).toHaveCount(1);
       // 两侧都判（M178）：此前这里只有 `.cm-lp-image-status, .cm-lp-image-error` 的 first 可见，
       // 而「加载中… {引用}」在图片插入前的第一帧就存在——渲染成功 / 原地变白板 / 最终报错
-      // 三者都能让它 PASS（无区分度，REVIEW.md 第 1 条）。现在一侧判成功渲染出的图片可见，
+      // 三者都能让它 PASS（无区分度，REVIEW.md 「断言等价于子串」条）。现在一侧判成功渲染出的图片可见，
       // 一侧判没有任何零高度替换区。
       await expect(page.locator(".cm-lp-image img").first()).toBeVisible();
       for (const area of await replacementAreas(page)) {
@@ -265,7 +265,7 @@ test("SVG 安全腿：脚本不执行、内嵌外链不发起请求、两处终�
   await open(page, images, "images.md", undefined, imageAssets);
   await expect(page.locator(".cm-lp-image-error")).toHaveCount(4);
 
-  // 安全腿二（先判，防「不执行」这类负向断言在空转——REVIEW.md 第 2 条）：
+  // 安全腿二（先判，防「不执行」这类负向断言在空转——REVIEW.md 「读不到当成空」条）：
   // 两处 svg 都真的渲染出来了（240×80）。
   expect(await imageReadings(page, REFS.script)).toEqual({ box: "240x80", natural: "240x80", complete: true });
   expect(await imageReadings(page, REFS.externalRef)).toEqual({ box: "240x80", natural: "240x80", complete: true });
@@ -277,7 +277,7 @@ test("SVG 安全腿：脚本不执行、内嵌外链不发起请求、两处终�
   // 外部请求的**全集**：M472 起为空——md 里那条远程引用不再尝试直连（`buildStandardImage` 直接落
   // 占位），svg 内嵌的 `https://example.invalid/lumir-svg-external-ref.png` 同样一次都没出现
   //（外链腿有区分度：内联渲染时它必然出现，见 PR 说明里的临时内联实验）。
-  // 两腿判，防「空集恒真」的空转（REVIEW.md 第 2 条）：先证请求记录器活着（页面自身从 dev server
+  // 两腿判，防「空集恒真」的空转（REVIEW.md 「读不到当成空」条）：先证请求记录器活着（页面自身从 dev server
   // 取资源，全集必然非空），再判外部子集为空。
   expect(requests.length, "请求记录器活着（否则下面的空集断言是空转）").toBeGreaterThan(0);
   const external = requests.filter((url) => !url.startsWith("http://127.0.0.1")).sort();
@@ -315,7 +315,7 @@ test("加载中状态在终态前始终可见（不留空窗）", async ({ page 
 // ---------------------------------------------------------------------------
 // M184：图片双击放大查看（change open-image-lightbox 的实现期断言组）
 // ---------------------------------------------------------------------------
-// 判据口径（REVIEW.md 第 1 / 2 条）：
+// 判据口径（REVIEW.md 「断言等价于子串 / 读不到当成空」条）：
 // - 「遮罩可见」用**几何读数**（放大图渲染盒宽高非零）与「与内联图同一图像源」判，不用 class
 //   是否存在——class 在「遮罩开着但图是 0×0」时同样成立；
 // - 「占位 / 加载态不可点开」与「同一份文档里成功渲染的图能打开」在**同一场景内配对**：只留负向
@@ -690,7 +690,7 @@ test("M184 打开遮罩不重读字节、惰性建立不预建", async ({ page }
 //
 // 判据口径与 M184 组完全同一套（几何读数 + 「与内联那张同一图像源」+ 正/负配对），不新造读数：
 // 每条断言都先给出「目标真的在场上」的正观测，再判要判的那件事——只留 src 相等这类单腿断言时，
-// 「双击没落地」或「图片是坏图」都能让它绿（REVIEW.md 第 1 / 2 条）。
+// 「双击没落地」或「图片是坏图」都能让它绿（REVIEW.md 「断言等价于子串 / 读不到当成空」条）。
 
 test("M209 方言形态（![[percent-width.svg]]）打开遮罩且图像源一致（G1①）", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
@@ -777,7 +777,7 @@ test("M209 放大层不发起外链请求、无脚本副作用（G1③）", asyn
   // M472 起远程引用不再直连，外部请求全集**本来就是空的**——原先那条「内联层确实会请求远程 URL」
   // 的对照基线随之消失。本用例的判据因此换成「请求集合在打开遮罩前后逐项相同」：任何新请求
   //（svg 内嵌的外链、内联进 DOM 的图片资源都算）都会让集合增长、当场判红，比原先只比外部子集更强。
-  // 先补正观测（REVIEW.md 第 2 条）：记录器得是活的，否则空集断言在空转。
+  // 先补正观测（REVIEW.md 「读不到当成空」条）：记录器得是活的，否则空集断言在空转。
   expect(requests.length, "请求记录器活着（否则下面的空集断言是空转）").toBeGreaterThan(0);
   expect(external(), "内联层的外链集合：远程引用不直连，为空").toEqual([]);
   const requestsBeforeOverlay = [...requests];

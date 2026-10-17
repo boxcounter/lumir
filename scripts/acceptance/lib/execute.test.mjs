@@ -5,14 +5,14 @@
 // 之外 ⇒ 整表被丢弃、场景零断言判绿」与「一条 file 断言只判优先级最高的那个键 ⇒ 多写的键静默
 // 失效」（两份 finding：`.tower/comms/findings/20261016-worker-scenfix-bug-pass-loader-check-0.md`
 // 与 `20261016-worker-scenfix-bug-file-readme-sha256-mtime.md`）。两者的症状都是「没有红」，所以
-// 只能靠**构造必须红的输入**来证明判据真的成立（REVIEW.md 第 1 条）：「同内容重写、mtime 推进」
+// 只能靠**构造必须红的输入**来证明判据真的成立（REVIEW.md 「断言等价于子串」条）：「同内容重写、mtime 推进」
 // 那个现场必须判红，且它落在哪一条记录上一眼可辨。
 //
 // 跑法（gate 不含本文件——套件自测不进常驻门禁，与 `scripts/migrate-harness-sessions.test.mjs`
 // 同例；改过 loader / 断言实现后手跑一次）：
 //   node --test scripts/acceptance/lib/execute.test.mjs
 //
-// 纪律（REVIEW.md 第 13 条）：全程对临时目录（`os.tmpdir()`）跑——不碰验收 vault、不碰用户的
+// 纪律（REVIEW.md 「测试污染真实环境」条）：全程对临时目录（`os.tmpdir()`）跑——不碰验收 vault、不碰用户的
 // `~/.config/lumir`、不写 `test-results/`。file 类断言与零断言兜底都不读 app / KimiCU，故 ctx 可桩化。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -180,7 +180,7 @@ test("缺文件时内容类判据仍判 FAIL（不把「读不到」当「为空
   assert.deepEqual(
     records.map((r) => `${r.ok ? "PASS" : "FAIL"} ${r.label}`),
     ["PASS 不该在［exists］", "FAIL 不该在［not］（文件不存在：nope.md）"],
-    "exists:false 成立，而 not 判据在缺文件时必须红（读不到不当空，REVIEW.md 第 2 条）",
+    "exists:false 成立，而 not 判据在缺文件时必须红（读不到不当空，REVIEW.md 「读不到当成空」条）",
   );
 });
 

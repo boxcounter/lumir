@@ -91,7 +91,7 @@ fn empty_matcher() -> Gitignore {
 /// 内置规则匹配器（进程内唯一，构造一次；表见 [`BUILTIN_NAMES`] 与 [`LUMIR_TMP_PATTERNS`]）。
 ///
 /// 内置表是**常量**，因此这里是它唯一的实例化点——`validate_new_name` 与 `IgnorePolicy`
-/// 共用同一份匹配器，不存在第二份名单或第二个判定实现（REVIEW.md 第 8 条）。
+/// 共用同一份匹配器，不存在第二份名单或第二个判定实现（REVIEW.md 「同一语义两处真源」条）。
 ///
 /// 它与用户规则**不是同一个对象**，而是同一类匹配器 + 判定链上先判且命中即定格（§2.2/§2.6）：
 /// 若把两者编进同一个 `Gitignore`，用户写下的 `!target/` 会按「后者胜」推翻内置规则——那正是
@@ -149,7 +149,7 @@ struct UserSource {
 /// 一份规则表 + 物化集合（change vault-open-ignore-set §2.1 / §4.4）：纯 std 类型、
 /// **不引 tauri**（ADR 0002 §7），由 `commands.rs` 在 vault 装载时构造，交给
 /// `scan_workspace` / `scan_dir` / `watch` / `expand_new_dir_subtrees` / `validate_new_name`
-/// 五个使用点——一份策略、五个使用点，MUST NOT 在下游各自再造一份判定（REVIEW.md 第 8 条）。
+/// 五个使用点——一份策略、五个使用点，MUST NOT 在下游各自再造一份判定（REVIEW.md 「同一语义两处真源」条）。
 ///
 /// 判定链固定为 §2.2 的三步：**内置先判且命中即定格 → 用户规则（最深匹配决定）→ 其余可见**。
 ///
@@ -876,7 +876,7 @@ fn join_rel(parent_rel: &str, name: &str) -> String {
 }
 
 /// 新建 / 改名的末段名校验（**唯一一份**，五个写类命令共用；内置规则复用
-/// [`builtin_matcher`] 的同一份表，不另抄一份列表——REVIEW.md 第 8 条）。
+/// [`builtin_matcher`] 的同一份表，不另抄一份列表——REVIEW.md 「同一语义两处真源」条）。
 ///
 /// 规则（design §2.3）：非空、不含 `/`、不是 `.` / `..`、不命中**内置规则**。最后那条
 /// 不是洁癖：`.git` / `target` 这类名字建/改出来不进文件树、watch 事件也被挡下，用户在界面上
@@ -1221,7 +1221,7 @@ pub fn read_text_snapshot(root: &Path, rel: &str) -> Result<(String, String), Co
 /// 两张表），本表是 Rust 侧的第二份——为的是「前端 bug 不得把内存内容写进图片/二进制路径」
 /// 这条后端防线（M130 起有，editable-non-md-files 把 md 白名单换成这张拒绝清单）。
 /// 两侧逐项对账的机器检查在 `tests/unit/registry-drift.test.ts`：它读本文件、解析本表、
-/// 与注册表求差集，任一侧漂移即红（REVIEW.md 第 8 条——同一语义两处真源、改动只落一处）。
+/// 与注册表求差集，任一侧漂移即红（REVIEW.md 「同一语义两处真源」条——同一语义两处真源、改动只落一处）。
 /// 改本表之前先改注册表。
 const SAVE_REJECTED_EXTENSIONS: [&str; 47] = [
     "7z", "app", "avi", "avif", "bmp", "class", "db", "dll", "dmg", "doc", "docx", "dylib", "exe",
@@ -1252,7 +1252,7 @@ pub(crate) enum AtomicWriteOutcome {
 }
 
 /// 原子替换写入的**失败阶段**。写核心不持有错误码族（文档 / 附件各有自己的 envelope），
-/// 只把阶段与底层错误交回调用方渲染（REVIEW.md 第 8 条：写纪律一处实现、错误文案各自持有）。
+/// 只把阶段与底层错误交回调用方渲染（REVIEW.md 「同一语义两处真源」条：写纪律一处实现、错误文案各自持有）。
 #[derive(Debug)]
 enum AtomicWriteError {
     /// 目标没有父目录（只可能来自把文件系统根当目标这种非法入参）。
@@ -1313,7 +1313,7 @@ enum RenameGuard<'a> {
 /// **全仓唯一的原子替换写核心**：同目录 `.lumir-` 临时文件 + `sync_all` + 原子 rename。
 /// 三个写入方共用这一份——`document_save` / [`fs_patch_file`]（文本）与
 /// [`write_attachment`]（二进制附件）——「整文件保存 / 局部 patch / 贴图落盘走同一套写纪律」
-/// 因此是结构性的，不是巧合（REVIEW.md 第 8 条）。三条纪律：
+/// 因此是结构性的，不是巧合（REVIEW.md 「同一语义两处真源」条）。三条纪律：
 /// - **`.lumir-` 标记**：tmp 名形如 `.{name}.lumir-{pid}`，命中忽略集（[`LUMIR_TMP_PATTERNS`]），
 ///   因此写入过程不在文件树 / watch 流里留下临时条目（`fs-io` spec 的「局部 patch 写入」把
 ///   这层口径称作写盘方的自身标记）；
@@ -3531,7 +3531,7 @@ mod tests {
     /// 父目录按 mkdir -p 语义自动补建（见 `vault_create_file_creates_parent_dirs`）。
     ///
     /// 「不建任何东西」是逐条断言的（不只看错误码）：M407 r1 P2-1 的假绿形态正是「码对、目录
-    /// 已建」——绝对路径输入曾让 `root/abs/` 被建出来（REVIEW.md 第 6 条：断言没钉住承诺的全部
+    /// 已建」——绝对路径输入曾让 `root/abs/` 被建出来（REVIEW.md 「覆盖声明超出真实验证」条：断言没钉住承诺的全部
     /// 内容）。
     #[test]
     fn vault_create_file_rejects_invalid_targets() {

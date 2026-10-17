@@ -162,7 +162,7 @@ pub const DEFAULT_RULE_FILES: [&str; 2] = [".gitignore", ".git/info/exclude"];
 ///
 /// **唯一消费者**：`commands::prepare_vault_open` 构造 `fs_io::IgnorePolicy` 时的那一步
 ///（把清单里的 vault 相对路径逐个读成 gitignore 规则）——本字段没有第二个读点，`config_get`
-/// 只是把它原样交给前端展示（REVIEW.md 第 9 条：配置项声明即被消费）。因此它的生效时点是
+/// 只是把它原样交给前端展示（REVIEW.md 「声明了却没有消费者」条：配置项声明即被消费）。因此它的生效时点是
 /// **vault 装载时**（每次装载现场读一次配置，MUST NOT 用启动期缓存钉住），改动下次装载生效。
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
@@ -269,7 +269,7 @@ impl Default for EditorConfig {
 ///
 /// 三处同语义写值：本常量（配置面的真源）、`src/typography.ts` 的 `DEFAULT_FONT_SIZE`、
 /// `src/style.css` 的 `--editor-font-size` 默认值。三者必须同值，各有断言钉住（两侧单测 +
-/// 默认口径的计算属性断言），改一处必须同步其余两处（REVIEW.md 第 8 条）。
+/// 默认口径的计算属性断言），改一处必须同步其余两处（REVIEW.md 「同一语义两处真源」条）。
 ///
 /// **M210 只改 Rust 这一处**：TS 常量与 CSS 默认值的 16→15 随 R2a（M211）落地（同一 tasks
 /// §3.4 拆成两半）。R2a 之前配置值到达前 style.css 仍是 16px；配置一到即按本常量覆盖。两半
@@ -286,7 +286,7 @@ pub const FONT_SIZE_MAX: f64 = 32.0;
 ///
 /// 三处同语义写值：本常量（配置面的真源）、`src/content-width.ts` 的
 /// `DEFAULT_CONTENT_WIDTH`、`src/style.css` 的 `--layout-doc-measure` 默认值。三者必须同值，
-/// 各有断言钉住，改一处必须同步其余两处（REVIEW.md 第 8 条）。
+/// 各有断言钉住，改一处必须同步其余两处（REVIEW.md 「同一语义两处真源」条）。
 pub const DEFAULT_CONTENT_WIDTH: f64 = 760.0;
 
 /// 栏宽合法区间（含端点，D2 落槌 [760, 1200]——**默认值即下限**，拖拽只能往宽调）：
@@ -468,7 +468,7 @@ pub enum HarnessProvider {
 /// 档位只替换判定管线**最底层**的「默认分层」（design §1：前四层——deny 规则 / vault 内写
 /// 重定向 / 危险黑名单 / allow 规则——与模式无关），不是一道独立闸门。默认档 `vault_write`：
 /// 相对既有行为只多两处差分（vault 写工具免闸、cli_run 经分类后只读白名单免闸），
-/// 不引入任何迁移或过渡层（REVIEW.md 第 21 条：旧默认分层直接替换）。
+/// 不引入任何迁移或过渡层（REVIEW.md 「变更默认直接切断」条：旧默认分层直接替换）。
 ///
 /// `read_only` 自 2026-10-09 Alex 裁决起是 **Always Ask**（Kimi Code 语义：读自动放行、一切写
 /// 逐个问）——**模式层只产出 Allow / Ask，不产出 Deny**。
@@ -649,7 +649,7 @@ impl HarnessConfig {
     /// `harness_send` 发送闸的单一判据，design §6）：生效清单精确匹配取声明值；
     /// 未列出 = 不支持（保守默认，与 `effort` 同侧）；mock 恒定支持（fixture 驱动，
     /// 验收要断言含图消息正常入队）。能力语义只有这一处产出——前端 MUST NOT 另立判定
-    /// （REVIEW.md 第 8 条）。
+    /// （REVIEW.md 「同一语义两处真源」条）。
     pub fn vision_supported(&self, provider: &HarnessProvider, model: &str) -> bool {
         match provider {
             HarnessProvider::Mock => true,
@@ -674,7 +674,7 @@ pub struct HarnessMockConfig {
 ///
 /// 配置层只保形状（非空字符串、按原顺序去空白），**匹配语义**（前缀 + `*`、deny > allow >
 /// 默认分层）归 harness 运行时（M302）——与 `keys` 表「形状在此、语义在外」同一分层，
-/// 两边各判一半必然漂移（REVIEW.md 第 8 条）。
+/// 两边各判一半必然漂移（REVIEW.md 「同一语义两处真源」条）。
 #[derive(Debug, Clone, PartialEq, Default, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct HarnessPermissions {
@@ -1021,7 +1021,7 @@ fn migrate_retired_kimi_model(value: &mut serde_json::Value) -> RetiredKimiMigra
 ///
 /// **写 config.json 的唯一落盘实现**：应用侧的写命令（`commands.rs` 的 `config_set_value` /
 /// `write_last_vault` 等）与 config 模块自己的退役值迁移都调用这里——同一语义不留两处真源
-/// （REVIEW.md 第 8 条）。调用方之一是 [`load_from`] 的迁移修补写。
+/// （REVIEW.md 「同一语义两处真源」条）。调用方之一是 [`load_from`] 的迁移修补写。
 pub(crate) fn write_json_atomic(
     path: &Path,
     value: &serde_json::Value,
@@ -2039,7 +2039,7 @@ mod tests {
         // **判别性在第二组**：显式 `line_wrap: true` 在场时它仍必须是 `false`——口径是
         // 「code 模式的缺省是本键自己的出厂值」，MUST NOT 跟随全局 `line_wrap`（跟随会让
         // 出厂分叉随用户改全局折行而失效）。只测第一组的话，把实现写成 `line_wrap` 的副本
-        // 也能绿（REVIEW.md 第 1 条）。
+        // 也能绿（REVIEW.md 「断言等价于子串」条）。
         for raw in [
             r#"{"version":1,"editor":{"mode":"code"}}"#,
             r#"{"version":1,"editor":{"mode":"code","line_wrap":true}}"#,
@@ -2095,7 +2095,7 @@ mod tests {
         // M272（change enter-auto-indent）：键缺席 = 出厂 `true`，不产生 warning。
         // **判别性在第二组**：显式把两个折行键都写成 `false` 时它仍必须是 `true`——口径是
         // 「缺省值只由本键自己的出厂值决定、不跟随任何别的键」（跟随会让出厂口径随用户改折行
-        // 而漂移）。只测第一组的话，把实现写成别的键的副本也能绿（REVIEW.md 第 1 条）。
+        // 而漂移）。只测第一组的话，把实现写成别的键的副本也能绿（REVIEW.md 「断言等价于子串」条）。
         for raw in [
             r#"{"version":1,"editor":{"mode":"code"}}"#,
             r#"{"version":1,"editor":{"mode":"code","line_wrap":false,"code_mode_line_wrap":false}}"#,

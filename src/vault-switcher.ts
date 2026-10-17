@@ -36,14 +36,14 @@ import type { VaultListEntry } from "./bindings/VaultListEntry";
 import type { VaultSession } from "./bindings/VaultSession";
 import type { EditorSession, ScrollSnapshot } from "./editor";
 // 键位 token 走 keys.ts 的同一份归一化实现：浮层就地消费 ↑↓ / ⌃N⌃P / Enter / Esc 时也要用
-// 统一口径判断按键（自写一份解析是 REVIEW.md 第 8 条那类漂移的温床）。
+// 统一口径判断按键（自写一份解析是 REVIEW.md 「同一语义两处真源」条那类漂移的温床）。
 import { keyToken } from "./keys";
 import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
 import { errorText, formatRelative, t, tPlural } from "./copy";
 // 诊断读数出口（见本文件 diagnostics）：前端唯一的日志通道，落盘在 Rust 侧。
 import { logEvent } from "./diagnostics";
 import type { ListFilter } from "./list-filter";
-// pane 数上限与比例缺省取自 pane 模块的单一来源（REVIEW.md 第 8 条）：本模块不另抄一份。
+// pane 数上限与比例缺省取自 pane 模块的单一来源（REVIEW.md 「同一语义两处真源」条）：本模块不另抄一份。
 import { DEFAULT_SPLIT_RATIO, MAX_PANES } from "./pane-layout";
 import type { ToastAction, VaultSwitchBlock } from "./save-controller";
 
@@ -181,7 +181,7 @@ export interface RestorePlan {
  *     不会把它们报成存在（探测与读取路径共用同源的 vault 内校验）→ 跳过，MUST NOT 被打开
  *     （ADR 0003 的边界不因会话文件放宽）。
  *  前端**不**另写一份「合法 vault 相对路径」的判定：那是后端 `vault_session::sanitize` 的
- *  语义（REVIEW.md 第 8 条），集合归属已经完整覆盖它。
+ *  语义（REVIEW.md 「同一语义两处真源」条），集合归属已经完整覆盖它。
  *
  *  激活项不可用（不在恢复出来的集合里）时退化为第一个可打开的条目；一个都打不开时为 null
  *  （调用方呈现空 vault 首入态）。**按 pane 算**：调用方对存储的每个 pane 各算一份。 */
@@ -1284,7 +1284,7 @@ export interface VaultLoadingIndicator {
  *   - **引用计数而非布尔**：指示覆盖「保存并切换的写盘段 + 打开目标 vault + 装载后的会话恢复」
  *     三段（M283 起第一段也计入），而它们都在同一批微任务链上——用户在一次恢复途中再切一次时
  *     两段会叠，计数保证前一段结束时不会把后一段的指示一并撤下（后一段的总时长才是用户感知的等待）。
- *   - 元素落在标题栏的拖拽区内，**不挂任何事件监听**（REVIEW.md 第 16 条：标题栏内元素的
+ *   - 元素落在标题栏的拖拽区内，**不挂任何事件监听**（REVIEW.md 「标题栏 preventDefault」条：标题栏内元素的
  *     监听会静默打断窗口拖拽，本元素没有交互面，也就不需要监听）。 */
 export function createVaultLoadingIndicator(host: HTMLElement): VaultLoadingIndicator {
   const el = document.createElement("span");

@@ -3,7 +3,7 @@
 // 一个块上一组钮，组内自左至右「复制 → 放大」，全部是 `position: absolute` 挂在块级 slot 层
 // （`position: relative`）里的 `Decoration.widget`。形态纪律（壳 / 尺寸 / 圆角 / 图标色与热态 /
 // 过渡 / 出现时机 / eink 两条规则）只在 src/style.css 的共享类 `.lumir-block-trigger` 里写一份，
-// 本文件只出常量与 DOM；各钮自己的 class 只承担**位置偏移**（REVIEW.md 第 8 条：同一语义一处
+// 本文件只出常量与 DOM；各钮自己的 class 只承担**位置偏移**（REVIEW.md 「同一语义两处真源」条：同一语义一处
 // 真源，四个消费者不各抄一遍形态）。
 //
 // 坐标系统沿用 M240 表格全屏钮的机制（src/preview/table-trigger.ts 的文件头有完整推导）：

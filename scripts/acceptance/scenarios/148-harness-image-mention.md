@@ -191,7 +191,7 @@ steps:
         file: { path: "env:harness/sessions/acc-img/*.jsonl", has: '/"image_url":"lumir-attachment:\/\/pasted-[0-9a-f]{16}\.webp"/' }
       # M523 收紧：旧口径 `not: '"text":"Image '` 是**子串**判据，用户自己段落恰以 `Image ` 开头
       # （本轮实际值 = `Image 2Image 1tag-`，见 ① 的 post-menu 通道边界）就被它判红——负断言过宽
-      # 造成的假红，且顺带把「标签行」与「用户段落」区分不开（REVIEW.md 第 1 条同族）。新口径只否
+      # 造成的假红，且顺带把「标签行」与「用户段落」区分不开（REVIEW.md 「断言等价于子串」条同族）。新口径只否
       # **恰为 `Image N` 的 text part**（`"text":"Image \d+"` 的闭合引号要求值到数字为止）。
       - label: ② 留存文本面 MUST NOT 出现标签行（恰为 `Image N` 的 text part）
         file: { path: "env:harness/sessions/acc-img/*.jsonl", not: "/\"text\":\"Image \\d+\"/" }
@@ -371,7 +371,7 @@ design §10 的真机验收面 ①②③④（⑤ 引用卡片 / 消息摘录卡
 - **② 的文本面无标签行判据（M523 收紧）**：断言留存里不存在**恰为 `Image N` 的 text part**
   （`not: /"text":"Image \d+"/`）。旧口径是子串 `not: '"text":"Image '`——它把用户自己那条以
   `Image ` 开头的段落（本轮真实值 = `Image 2Image 1tag-`）一起否掉，于是恒红（假红，非产品偏差），
-  同时「标签行 vs 用户段落」也分不开（REVIEW.md 第 1 条同族：断言看着有覆盖、实际不判形态）。
+  同时「标签行 vs 用户段落」也分不开（REVIEW.md 「断言等价于子串」条同族：断言看着有覆盖、实际不判形态）。
   新口径的闭合引号要求值到数字为止：独立标签行 `{"type":"input_text","text":"Image 1"}` 命中、
   `"text":"Image 2Image 1tag-"` 不命中。前缀素材 `tag-`（M498 起；原 `note-` 含 'e'，press_key
   确定性丢键必红——该步 post-menu+模型双边界无替代通道，素材改无 'e' 判法，同场景 137 的

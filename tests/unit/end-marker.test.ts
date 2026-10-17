@@ -42,6 +42,6 @@ test("标记的文案与 deck D114 逐字一致（deck 是可见文案的唯一�
   assert.equal(END_MARKER_TEXT, deckRow("D114").zh);
   // 中英两列同形是**有意的**（M238 起英文串；M251 起「END」）：原中文串「到底了」换成英文后，
   // 标记不再分语言——deck 两列都写这一串，而不是给中文列留一个无人消费的旧值
-  //（REVIEW.md 第 9 条：声明必须有人消费）。
+  //（REVIEW.md 「声明了却没有消费者」条：声明必须有人消费）。
   assert.equal(deckRow("D114").en, END_MARKER_TEXT);
 });

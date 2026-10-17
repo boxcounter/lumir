@@ -622,7 +622,7 @@ test("ctx hover 泡边界收编：窄面板下完整可见（三主题），不�
     const m = await measure();
     expect(m, "读不到面板 / 浮层 / 读数（判 FAIL，不当成空）").not.toBeNull();
     expect(m!.theme, "主题应逐次循环（light → dark → eink）").toBe(["light", "dark", "eink"][i]);
-    // 复现条件成立：默认锚下浮层左缘越出面板——不收编这条断言必红（REVIEW.md 第 1 条
+    // 复现条件成立：默认锚下浮层左缘越出面板——不收编这条断言必红（REVIEW.md 「断言等价于子串」条
     // 的反向验证：判据对「没有修复」必须有区分度）。
     expect(
       m!.unclampedPopLeft,
@@ -648,7 +648,7 @@ test("权限浮层边界收编：窄面板下完整可见、未被祖先裁切�
   // 右缘会被祖先裁掉（可见区域 < 包围盒 = O1 违规）。760px 视口把 harness pane 压到必溢出
   // 的宽度；断言两段：① 几何——收编后浮层完整落在面板可视边界内；② 绘制/命中——浮层内容
   // 各段端点做 elementFromPoint，落点必须仍在浮层内（chromium 对被祖先裁掉的区域不做命中，
-  // 这一条才是「真的画出来了」的判据；纯包围盒断言对被裁内容无区分度，REVIEW.md 第 5 条）。
+  // 这一条才是「真的画出来了」的判据；纯包围盒断言对被裁内容无区分度，REVIEW.md「AX 断言不反映裁切」条）。
   await page.setViewportSize({ width: 760, height: 600 });
   await stubTauri(page, VAULT);
   await stubHarnessComposer(page);
@@ -695,7 +695,7 @@ test("权限浮层边界收编：窄面板下完整可见、未被祖先裁切�
     };
   });
   expect(m, "读不到面板 / 浮层 / chip（判 FAIL，不当成空）").not.toBeNull();
-  // 复现条件成立：自然几何越出面板右缘——不收编这条断言必红（REVIEW.md 第 1 条的反向验证）。
+  // 复现条件成立：自然几何越出面板右缘——不收编这条断言必红（REVIEW.md 「断言等价于子串」条的反向验证）。
   expect(
     m!.unclampedPopRight,
     `面板宽度不足以复现溢出（unclampedRight ${m!.unclampedPopRight} ≤ panel ${m!.panelRight}），断言空转`,

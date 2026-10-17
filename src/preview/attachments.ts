@@ -14,7 +14,7 @@
 // 依赖图上位于 editor 之下（editor → attachments），注册表放这里不引环；image/binary
 // 分类与附件展示本就同源。
 //
-// **两个查询口的分工**（REVIEW.md 第 8 条：同一语义一处真源，共存时写清分工）：
+// **两个查询口的分工**（REVIEW.md 「同一语义两处真源」条：同一语义一处真源，共存时写清分工）：
 //   - `fileClassOfPath` / `codeLanguageOfPath`（path 版）= **文件打开裁决的唯一入口**。
 //     它们先按 basename 精确查文件名表（`.gitignore` / `.gitattributes` 这类名字约定），
 //     再回落到扩展名表。任何手里有路径的消费点都必须走这两个。
@@ -190,7 +190,7 @@ export function fileClassOfPath(path: string): FileClass {
  *
  *  本函数是「按文件类裁决可编辑性」的**唯一判据**：editor.ts（会话 editable 标志）、
  *  main.ts（磁盘 revision 登记门）、save-controller.ts（保存基准闸）全部同源消费它，
- *  任何一处都 MUST NOT 另写一份「哪些扩展可编辑」的集合（REVIEW.md 第 8 条——M130 的
+ *  任何一处都 MUST NOT 另写一份「哪些扩展可编辑」的集合（REVIEW.md 「同一语义两处真源」条——M130 的
  *  保存死态根因正是两套扩展名集合的差集）。 */
 export function isEditableFileClass(cls: FileClass): boolean {
   return cls === "md" || cls === "code" || cls === "text";

@@ -1,6 +1,6 @@
 // 两处列表浮层的输入筛选（change list-filter）：匹配判定、查询状态与三条共用文案的**唯一**实现。
 //
-// 为什么单独一个模块（REVIEW.md 第 8 条）：`s 开头` 这类语义一旦在两处各写一份，就会漂移成
+// 为什么单独一个模块（REVIEW.md 「同一语义两处真源」条）：`s 开头` 这类语义一旦在两处各写一份，就会漂移成
 // 「大纲是子串、vault 是前缀」。规则本体在 `openspec/specs/toc-outline` 的两条 ADDED requirement
 // （「浮层输入筛选的匹配语义」与「浮层输入筛选的交互（输入框、焦点与退出）」），`vault-workspace`
 // 引用它们；**实现也只有这一份**——两个浮层 import 同一个 `isMatch` / `filterIndices`，以及同一组

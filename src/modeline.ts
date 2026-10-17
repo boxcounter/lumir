@@ -15,7 +15,7 @@
 //   - DOM 适配层 createTitlebarIdentity()：把视图模型应用到 shell 建的五个元素上。
 //     DOM 行为（显隐、三主题计算样式）归视觉场景与真机场景 39。
 //
-// 文案唯一真源纪律（REVIEW.md 第 8 条）：产品名 / 版本号取自 tauri.conf.json（经
+// 文案唯一真源纪律（REVIEW.md 「同一语义两处真源」条）：产品名 / 版本号取自 tauri.conf.json（经
 // @tauri-apps/api/app 的 getName()/getVersion()，装配层 src/main.ts 读一次），本模块只
 // 排版不取值；分隔符「·」只有 IDENTITY_SEP 一处字面量，标题栏段与 modeline 段都从它派生。
 
@@ -27,7 +27,7 @@ export const IDENTITY_SEP = "·";
 export const IDENTITY_NARROW_PX = 640;
 
 /** 应用元信息（启动时读一次的那对值）。读取失败用 null 表达——不是空串：
- *  「读不到」MUST NOT 被当成「值为空」渲染出去（REVIEW.md 第 2 条）。 */
+ *  「读不到」MUST NOT 被当成「值为空」渲染出去（REVIEW.md 「读不到当成空」条）。 */
 export interface AppMeta {
   name: string;
   version: string;

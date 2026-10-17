@@ -98,7 +98,7 @@ null, expected a string`。前端在无上下文时给 `harness_send` 传了 nul
   `harness_send(context_json: String)` 签名不动；若将来改后端参数为 Option，本场景仍应绿（判据是
   行为后果，不是实现）。
 - **键盘注入的既有风险不在本场景新增**：`keys` 走可回读 + 有限重试（README「已知边界」），整批丢
-  键时会按错因报错——那是通道边界，复跑一次再判（REVIEW.md 第 11 条）。
+  键时会按错因报错——那是通道边界，复跑一次再判（REVIEW.md 「键盘注入丢键」条）。
 
 ## 环境与副作用
 

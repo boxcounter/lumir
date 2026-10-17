@@ -8,7 +8,7 @@
    结构 = 色彩 32 个 × 三主题块（light / dark / eink）+ 非色 token 一组（三主题共享）。
    旧名（--bg / --bg-nav / --bg-2 / --bg-3 / --bd-1..3 / --dim / --selection-ink /
    --radius / --measure / --nav-width / --font-display / --font-body / --line-height /
-   --callout-*）一律**替换、不留别名**——双名并存就是两处真源（REVIEW.md 第 8 条）。
+   --callout-*）一律**替换、不留别名**——双名并存就是两处真源（REVIEW.md 「同一语义两处真源」条）。
    ========================================================================== */
 
 :root,
@@ -1219,7 +1219,7 @@ body {
    padding 分层（底板 = 容器盒、行区带 = 容器内容盒，四周都分层），而折行档没有容器——M477 起
    slot 虽有折行档的横向内边距（见 `.cm-lp-codeblock-slot:not(:has(...))` 那条），分层却只落在
    左右两条竖带上、上下仍是同一层，照做会得到容器档之外的第三种形状；且本档 `--content-bg`
-   与纸面同值，写上去是一条零消费者的声明（REVIEW.md 第 9 条）。故本档保留 `--code-bg` 行区带
+   与纸面同值，写上去是一条零消费者的声明（REVIEW.md 「声明了却没有消费者」条）。故本档保留 `--code-bg` 行区带
    （下面基规则的 slot 底板不动、`::before` 的取值不改），只补框——与 m288 的「块底色 MUST 与
    块外正文可辨」不变量一致。
    MUST NOT 在**本档内**（`[data-theme="eink"]` 选择器里）单独为白底补内边距：那会让 eink 折行档
@@ -1262,7 +1262,7 @@ body {
    （绝对定位，不进任何流）、不进读屏树、不进任何整页基线（静止态零足迹）。可发现性缺口由命令
    入口承担，这正是双入口的分工。
    M277 起形态规则只有这一处：各钮自己的 class **只写位置偏移**，MUST NOT 再抄一份形态
-   （REVIEW.md 第 8 条）。 */
+   （REVIEW.md 「同一语义两处真源」条）。 */
 .lumir-block-trigger {
   z-index: 2;
   display: flex;
@@ -1702,7 +1702,7 @@ body {
         壳宽因此不是由内容撑开而是吃满可用宽（阅读栏默认 760px，窗口远宽于此）；
      2. 壳内是**按行重建**的内容（不是克隆），行 / token 复用文档内代码块的既有 class 与既有
         规则——主题 scope 由 src/overlay-scope.ts 镜像，MUST NOT 在此另写一套行样式或色值映射
-        （REVIEW.md 第 8 条）。
+        （REVIEW.md 「同一语义两处真源」条）。
    折行 / 横滚口径**沿用配置**（浮层内不设第二个开关）：带 `.cm-lp-codeblock-nowrap` 时内容按
    自然宽（`width: max-content`）呈现、超长行由壳横向滚动到达；带 `.cm-lp-codeblock-wrap` 时
    内容按壳宽（`width: 100%`）折行、不出现横向滚动。这两个 class 与 `.cm-content` 上那两个同名，

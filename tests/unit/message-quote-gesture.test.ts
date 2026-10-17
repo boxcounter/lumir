@@ -1,7 +1,7 @@
 // tests/unit/message-quote-gesture.test.ts — 消息摘录跳回的定位判定（change harness-message-excerpt
 // tasks 3.4）与「全文搜索摘录原文」的命中判定（design §6）。零 DOM：纯逻辑层直接驱动。
 //
-// 断言纪律（REVIEW.md 第 1 条反向验证）：每个判据都配一条「必须让它红」的反例——同秒双消息、
+// 断言纪律（REVIEW.md 「断言等价于子串」条反向验证）：每个判据都配一条「必须让它红」的反例——同秒双消息、
 // 无 at 旧消息、角色不符、空摘录等边界各有一条，不是只堆正向命中。
 
 import { test } from "node:test";

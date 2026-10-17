@@ -49,7 +49,7 @@ steps:
     expect:
       - label: 焦点落在编辑器正文里（键盘注入的前置）
         ax: { focused: "AXTextArea" }
-  - name: 抢前台（同机另有一个 Lumir 实例在跑时后台注入的 chord 会丢键——REVIEW.md 第 11 条）
+  - name: 抢前台（同机另有一个 Lumir 实例在跑时后台注入的 chord 会丢键——REVIEW.md 「键盘注入丢键」条）
     do: focusWindow
     retries: 4
   - name: 执行 block.copy（⌘J 发两次：命令幂等，同内容写两次换取一次丢键的容错）
@@ -260,6 +260,6 @@ Alex 原话（2026-09-27）：「markdown 文件里的表格和代码块支持�
 - **触发钮的鼠标路径本场景未覆盖**：套件动作表里没有 `hover` / `mouseMove`（M240 场景 40 的
   同款边界）。钮的 hover 时机、两钮共存的几何、点击后的剪贴板内容由 chromium 场景
   `tests/visual/scenes/m277-block-copy.spec.ts` 覆盖；真机侧只验命令路径。
-- **同机若有第二个 Lumir 实例在跑，chord 注入会丢键**（REVIEW.md 第 11 条）：本场景每个命令
+- **同机若有第二个 Lumir 实例在跑，chord 注入会丢键**（REVIEW.md 「键盘注入丢键」条）：本场景每个命令
   注入前都显式 `focusWindow`；仍丢键时按该条纪律**先复跑一次**再判缺陷。
 - **不改写源文件**：`editor.unchangedSince` 与磁盘 `unchangedSince` 两条独立断言（ADR 0003 §3）。

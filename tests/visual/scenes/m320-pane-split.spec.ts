@@ -15,7 +15,7 @@ import { configGets, stubTauri, type VaultFixture } from "./tauri-stub";
 //      M322 落地后本条整页基线已随引导元素更新（Alex 过目批准，见 test 2 的断言注释）。
 //
 // 为什么标题栏要元素级基线：标题栏只有约 42px 高，整页 0.001 容差（1200×800 ≈ 960px）
-// 吞得掉一条标题栏里的错位（REVIEW.md 第 3 条，M149 标签栏的同款教训——M316 把标签槽
+// 吞得掉一条标题栏里的错位（REVIEW.md 「容差吞掉真实变化」条，M149 标签栏的同款教训——M316 把标签槽
 // 从一槽变两槽，正是「元素级才守得住」的表面）。
 //
 // 分栏驱动走 [keys] 配置通道（pane.split / pane.close 默认不绑键，M316 把键位指配留给
@@ -59,7 +59,7 @@ async function expectChromeRetreat(page: Page): Promise<void> {
 }
 
 /** 双栏几何不变量：两个 pane 等宽、两个标签槽等宽（比例 0.5 缺省；读不到一律 FAIL，
- *  不当成「无需比较」——REVIEW.md 第 2 条）。 */
+ *  不当成「无需比较」——REVIEW.md 「读不到当成空」条）。 */
 async function expectSplitGeometry(page: Page): Promise<void> {
   const geo = await page.evaluate(() => {
     const panes = [...document.querySelectorAll<HTMLElement>(".editor-pane")];

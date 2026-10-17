@@ -332,7 +332,7 @@ test("路径不在模型里：不展开、不改当前行、不滚动；同一�
   assert.deepEqual(r.current(), ["top.md"], "当前行不动");
   assert.deepEqual(r.scrolled(), [], "没有任何滚动请求");
 
-  // 正向对照（REVIEW.md 第 1 条）：同一棵树上可达的路径必须给出**不同**的结果——
+  // 正向对照（REVIEW.md 「断言等价于子串」条）：同一棵树上可达的路径必须给出**不同**的结果——
   // 否则上面三条负向断言可能只是因为「这个替身根本读不到行」而恒真。
   r.tree.revealPath("a/b/x.md");
   await flush();

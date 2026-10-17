@@ -70,20 +70,20 @@ test("末段名校验矩阵：非法逐项有原因，合法逐项放行", () =>
 });
 
 test("校验矩阵的反向输入：撞名判定是真的在用 sibling 集合，不是恒假", () => {
-  // 同一个名字，siblings 为空时必须放行——否则「撞名」这条断言没有区分度（REVIEW.md 第 1 条）
+  // 同一个名字，siblings 为空时必须放行——否则「撞名」这条断言没有区分度（REVIEW.md 「断言等价于子串」条）
   assert.equal(validateEntryName("note.md", new Set()), undefined);
   assert.notEqual(validateEntryName("note.md", new Set(["note.md"])), undefined);
 });
 
 /**
- * 内置名字表与 Rust 侧 `BUILTIN_NAMES` 逐项对账（REVIEW.md 第 8 条）。
+ * 内置名字表与 Rust 侧 `BUILTIN_NAMES` 逐项对账（REVIEW.md 「同一语义两处真源」条）。
  *
  * 守的是**前端内联编辑预检**与后端内置表的同步：前端那一份只为「提交前就说清」，判定的权威
  * 始终是后端（`fs_io::validate_new_name` / 枚举 / watch 三处都用 Rust 的同一个匹配器）。
  * 临时文件模式两条（`.lumir-*` / `.*.lumir-*`）不在本表里——它们不是名字，前端预检覆盖不到，
  * 由后端在提交时拒绝并给出人话原因（`fs_name_invalid`）。
  */
-test("内置名字表与 Rust 侧 BUILTIN_NAMES 逐项对账（REVIEW.md 第 8 条）", () => {
+test("内置名字表与 Rust 侧 BUILTIN_NAMES 逐项对账（REVIEW.md 「同一语义两处真源」条）", () => {
   const decl = /pub const BUILTIN_NAMES:\s*\[&str;\s*(\d+)\]\s*=\s*\[([^\]]*)\]/.exec(FS_IO_SOURCE);
   assert.ok(decl !== null, "fs_io.rs 里找不到 BUILTIN_NAMES 的 [&str; N] 声明");
   const declared = Number(decl[1]);
@@ -155,7 +155,7 @@ test("拖拽落点判定矩阵：允许与拒绝逐条有区分度", () => {
   assert.equal(canMoveEntry("sub", "sub/deep"), false, "目录拖入直接子目录");
   assert.equal(canMoveEntry("sub", "sub/deep/inner"), false, "目录拖入深层后代");
   assert.equal(canMoveEntry("inbox", "inbox/deep"), false, "用户现场的嵌套形态");
-  // 反向判据：以上拒绝逐条换源路径就不再拒绝（REVIEW.md 第 1 条——判据不能等价于恒假）
+  // 反向判据：以上拒绝逐条换源路径就不再拒绝（REVIEW.md 「断言等价于子串」条——判据不能等价于恒假）
   assert.equal(canMoveEntry("sub/other.md", ""), true, "深层文件移到根是真移动，不是 no-op");
   assert.equal(canMoveEntry("other", "sub/deep"), true, "别的目录拖入 sub 的子目录不受 sub 的禁律约束");
 });

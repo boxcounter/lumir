@@ -5,7 +5,7 @@
 // 跑法（gate 不含本文件——一次性脚本不进常驻门禁）：
 //   node --test scripts/migrate-harness-sessions.test.mjs
 //
-// 纪律（REVIEW.md 第 13 条）：全程对合成配置目录跑，**不碰** `~/.config/lumir`；不依赖真实
+// 纪律（REVIEW.md 「测试污染真实环境」条）：全程对合成配置目录跑，**不碰** `~/.config/lumir`；不依赖真实
 // 路径拼写，vault 用测试自己建的临时目录（含一条 symlink，给「需规范化」的输入一个确定的现场）。
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -100,7 +100,7 @@ test("归位正确性：需规范化的拼写（symlink）命中的仍是同一�
 
   const registry = loadRegistry(configDir(root));
   assert.equal(registry.get(defaultNormalize(vault)), "vault-1000-1");
-  // 现场自证：两种拼写的字符串**不相等**，命中只可能来自规范化这一步（REVIEW.md 第 1 条：
+  // 现场自证：两种拼写的字符串**不相等**，命中只可能来自规范化这一步（REVIEW.md 「断言等价于子串」条：
   // 判据必须有区分度）。
   assert.notEqual(link, vault);
   assert.deepEqual(planMove(`{"payload":{"kind":"session_open","vault_root":${JSON.stringify(link)}}}`, registry), {
@@ -283,7 +283,7 @@ test("整目录归位：搬运失败留原地并自报，重跑收敛（退出�
 });
 
 // ---------------------------------------------------------------------------
-// 反向验证（REVIEW.md 第 1 条：先造一个必须让它 FAIL 的输入）
+// 反向验证（REVIEW.md 「断言等价于子串」条：先造一个必须让它 FAIL 的输入）
 // ---------------------------------------------------------------------------
 
 test("反向验证：去掉规范化一步，需规范化的输入必进孤儿桶（规范化是承重的）", (t) => {

@@ -30,7 +30,7 @@ const readDirectory = async name => {
     return { file, content: await readFile(resolved, "utf8") };
   }));
 };
-// 注册表目录名是 `vault-registry/`（M248 更名，backlog #37）。快照字段仍叫 `workspaces`
+// 注册表目录名是 `vault-registry/`（M248 更名，原 backlog「vault-registry 目录更名」条）。快照字段仍叫 `workspaces`
 // ——那是证据 schema 的既有键，历史证据（docs/design-parity-contract/evidence/**）同键。
 const registry = await readDirectory("vault-registry");
 const snapshot = {

@@ -41,7 +41,7 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 |---|---|---|
 | KimiCU 可用 | 二进制不存在即报错并给安装命令 | 驱动通道缺失时跑也是白跑 |
 | 磁盘水位 | `< 2G` 拒绝启动（可选显式绕过，见下） | 真机实例触发 cargo/vite 时 ENOSPC 硬失败（批次四实证） |
-| 同机已有 Lumir 实例 | 检出**安装版**（`*.app/Contents/MacOS/lumir`）或**残留的开发实例**（`target/debug/lumir`）即拒绝启动，消息给出 pid 与逐个 `kill` 的清除方法（退出码 2） | 在场的第二个实例与套件实例同 bundle 身份、共用同一份 AX / 前台归属，会**静默**改变「前台焦点归谁」这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 第 11 条；2026-10-13 的复跑就是在这样的现场上跑的） |
+| 同机已有 Lumir 实例 | 检出**安装版**（`*.app/Contents/MacOS/lumir`）或**残留的开发实例**（`target/debug/lumir`）即拒绝启动，消息给出 pid 与逐个 `kill` 的清除方法（退出码 2） | 在场的第二个实例与套件实例同 bundle 身份、共用同一份 AX / 前台归属，会**静默**改变「前台焦点归谁」这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 「键盘注入丢键」条；2026-10-13 的复跑就是在这样的现场上跑的） |
 | 1420 端口 | 只报告占用情况 | 全机同一时刻只能有一个 `pnpm tauri dev`（vite strictPort 1420）；本套件走独立端口，但仍先看一眼同机负载 |
 | 跑批独占锁 | 需持锁的真跑批先 `mkdir` 抢 `/tmp/lumir-acceptance-rmachine.lock`；已被别人持有时拒绝启动（退出码 2） | 合成 vault 与 dev 端口都是**全机共享**的，光靠人工约定会漏——两条跑批错开启动就能互相 `resetVault`（见下节） |
 
@@ -72,7 +72,7 @@ LaunchServices、没有启动激活）⇒ **启动零激活**：无人在场的�
 不经键位分发链路，验不到 `keys.ts`）；注入是否真的落地由场景自己的行为断言证明。副作用：跑套件
 期间 Lumir 窗口会到前台。
 
-**启动实例的窗口形态自检**（M236，修「套件覆写窗口配置丢掉 overlay 标题栏」缺口——窗口配置只有一份真源，见 REVIEW.md 第 8 条）：`waitAppReady` 每次就绪（含 `restart` 后重启）
+**启动实例的窗口形态自检**（M236，修「套件覆写窗口配置丢掉 overlay 标题栏」缺口——窗口配置只有一份真源，见 REVIEW.md 「同一语义两处真源」条）：`waitAppReady` 每次就绪（含 `restart` 后重启）
 都反查一遍「webview 铺满整窗」——`AXScrollArea` 的顶边与高度对 `AXWindow` 的差 ≤4px。不是 overlay
 就报 FAIL 并点名成因。
 
@@ -85,7 +85,7 @@ LaunchServices、没有启动激活）⇒ **启动零激活**：无人在场的�
 `test-results/m236/baseline-review/backlog366-before-after/`）。
 
 配置侧的纪律：`lib/app.mjs` 的 `launchApp` **从 `src-tauri/tauri.conf.json` 读 `app.windows[0]` 原件
-再 spread**（窗口配置只有一份真源，REVIEW.md 第 8 条），只叠 `x/y/focus`。读不到窗口对象就抛错，
+再 spread**（窗口配置只有一份真源，REVIEW.md 「同一语义两处真源」条），只叠 `x/y/focus`。读不到窗口对象就抛错，
 不回落手抄一份——回到手抄就是回到这个坑。**新增窗口级配置键时不需要改本套件**。
 
 **窗口几何的确定性：启动后钉尺寸**（M491，根因记录）：M434 起产品侧 `apply_startup_size`
@@ -123,7 +123,7 @@ LaunchServices、没有启动激活）⇒ **启动零激活**：无人在场的�
 状态为判据」的场景拿到缺文件的 vault：场景 49 的 46 标签会话种子里那 3 个非 md 文件当时还
 不存在，恢复段的「在不在 vault 内」探测如实判它们不在场并丢弃 ⇒ runner 启动恒出 43/46。
 这句此前在 `execute.mjs` 的 `runScenario` 开头（**起 app 之后**），与 `app.mjs` 的
-`resetVault` 注释里写着的「copyFixture 在本函数之后重拷」漂了位置（REVIEW.md 第 8 条同族）。
+`resetVault` 注释里写着的「copyFixture 在本函数之后重拷」漂了位置（REVIEW.md 「同一语义两处真源」条同族）。
 **排查口径留给后来者**：M513 曾把 43/46 归因于 M491 的钉窗与启动恢复窗口重叠，M516 用
 「启动后 10s 内零 AX 活动」的对照实验否掉了这个归因（同一 vault、同一 seed，照旧 43/46）；
 判「套件某一步是否扰动产品」时，先做一次把该步整体拿掉的对照，别拿时间线吻合当证据。
@@ -192,7 +192,7 @@ dev 端口是**全机共享**的，`reclaimPort()` 只在两个 app 实例同时
 `.html` / `tsconfig.json`——加固后 `app.log` 一次 `page reload` / `forcing full-reload` 都没有，
 未加固的对照跑里同一次注入必然出现（对照证据 `test-results/acceptance/m359-run-control/`、
 加固证据 `test-results/acceptance/m359-run-fixed/`，均在本地、git 外）。「一次都没有」这条负向判据
-因此有区分度，而不是「探针根本没生效」（REVIEW.md 第 1/2 条）。
+因此有区分度，而不是「探针根本没生效」（REVIEW.md 「断言等价于子串 / 读不到当成空」条）。
 
 边界：忽略面只覆盖同机写者的**产物目录**。跑批期间改写**被测 checkout 的非忽略路径**（`src/`、
 `index.html` 这类真正被服务的源码）仍会重载——那是合法 HMR，不该被忽略。第二道防线（场景中段探测到
@@ -349,8 +349,8 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标） |
 | `doubleClick` | `target`（`{role,name\|any,nth}` 或 `{x,y}`）、`dx`/`dy`、`mode`、`retries`、`settleMs` | **双击**（M209 起套件唯一的双击通道）：swift + `CGEvent` 显式设 `kCGMouseEventClickState`（详见「已知边界」）。`target` 取节点 bbox 中心、`dx`/`dy` 按其宽高比例偏移（默认 0.5）；`{x,y}` 给窗口局部坐标（遮罩这类没有 AX 节点的全屏层用）。动作内部先拿前台（**拿不到即报错**——真鼠标点击落在最上层那扇窗上），再把窗口局部点换算成 Quartz 屏幕坐标。**会移动真实光标**；目标窗口被遮挡或 KimiCU 的 AX 快照退化时按错因报错，不静默 |
 | `hover` | `target`（`{role,name\|any,nth}` / `{x,y}` / `{anchor:{role,any\|name,nth?}, offsetX, offsetY}`）、`retries`、`settleMs` | **鼠标悬停**（M443，change harness-cache-metrics）：只投 `mouseMoved`（不按鼠标键），驱动 hover 类 UI（当前消费者 = ctx 读数的含义气泡）。通道 = `cgevent-click.swift` 的 mode 0，坐标换算复用 `doubleClick` 的同一条函数，代价也一致（要 `/usr/bin/swift` + 辅助功能权限、**会移动真实光标**）。**前台是硬前提**：真鼠标事件落在该点最上层的那扇窗上，拿不到前台时动作抛 `InfraError`（整场标 INVALID、退出码 2——是环境项不是产品缺陷），复跑条件 = 把前台让给 Lumir（探针结论与两条被否决的替代路径见「已知边界」的 hover 条）。**`anchor` 形态**（M443）：以某个**有 bbox 的邻居节点**为基点，右缘中点 + `offsetX`/`offsetY` **像素**——给「在 AX 树里有节点但没有 bbox」的目标用（WKWebView 对 inline-flex 里的裸 span 不给框，ctx 读数即此例）。节点形态的 `dx`/`dy` 是 0..1 比例，与 `anchor` 的像素偏移不是一回事（同写由 `--check` 挡）。动作先 park 到窗口左上角再移到目标：`mouseenter` 只在 hover 目标**发生变化**时触发，光标恰好已在目标上时单次移动不产生事件 |
-| `drag` | `target`（`{role,name\|any,nth}` 节点须有 bbox、`{x,y}` 窗口局部坐标（M236 起，标题栏展示元素这类不一定有 AX bbox 的目标用），或 `{textareaEdge:"left"\|"right"}` 从编辑器列缘内侧起拖）、`dx`/`dy`（窗口局部点，UI 位移是**确定值**）、`allowOutOfBounds`、`retries`、`settleMs`、`selection`（M501，选区正观测，可选） | **拖拽**（M228 起，栏宽手柄这类「只能拖」的控件的唯一通道）：swift + `CGEvent` 显式投 `leftMouseDown → 插值 dragged ×24 → leftMouseUp`（与 `doubleClick` 同一通道——KimiCU 的 `drag` 工具在 WKWebView 里连文本选择都造不出来，M228 实测，见「已知边界」）。坐标换算与 `doubleClick` 同口径：先拿前台（**拿不到即报错**——真鼠标拖拽落在最上层那扇窗上），窗口局部点 + `window_bounds` 原点 → Quartz 屏幕坐标。**会移动真实光标**。起止点默认都必须在窗口内（防坐标空间错乱）；拖标题栏移动窗口时终点**故意**出窗，显式写 `allowOutOfBounds: true` 跳过终点检查。`textareaEdge` 形态存在的原因：WKWebView 把 `role=separator` 暴露成**无 bbox 的 AXSplitter**（M228 实测），栏宽手柄按节点定位不到，只能从 AXTextArea 的 bbox 边缘起拖。**只读静态文本的选区也走这一条**（M423 实证）：transcript 消息体这类文本在 AX 里是无 bbox 的 `AXStaticText`（节点定位报「找不到带 bbox 的节点」），而 `{x,y}` 真实拖拽会在它上面造出真实选区并触发 DOM `selectionchange`——KimiCU 的 `select_text` 看似更对口，但它只作用于 AX 选区层、**不产生 `selectionchange`**，驱动不了任何「选区驱动」的 UI（M423 用编辑器手势做过对照复验），故套件不引入该动词。**`selection`（M501，选区类步骤的正观测 + 有界重试）**：真实拖选偶发造不出选区（121 当日 4 跑 1 PASS 的独立 flake），选区本身 AX 读不到，可观测下游产物由本参数给出（与 `ax.has` 同一 matcher 口径：子串或 `/正则/`，如选区驱动的浮动钮 `/AXButton \(摘录到对话\)/`）。给了才启用：拖完即验，未命中重试拖选 ≤2 次（每次重选重新解析坐标）；重试耗尽仍无选区**如实判 FAIL**（不掩成绿，REVIEW.md 第 11 条同族纪律），重试次数落证据。不给的步骤（53 等）行为一字不变 |
-| `scroll` | `target`（`{role,name\|any,nth}` 滚动区节点，或 `{x,y}` 截图像素落点），或 step 上的 `page`（整页，正上负下）/ `dx` / `dy`（行式增量）/ `index`（快照节点序号） | **滚动**（M379 接入；「缺 `scroll` 动作」是 backlog「验收套件表达力缺口」条的一项——此前只有 `lib/cu.mjs` 的 MCP 封装，场景 DSL 里没有这个动作，「先滚动再把某行带进视口」类场景写不出来）。参数与 KimiCU 的 `scroll` 同形，**只透传写了的字段**（不补缺省值：KimiCU 侧「没给就是没给」）。定位方式：`target` 节点 → 取它的 index 滚那个滚动区；`target: {x,y}` → 在该截图像素点滚；`page`/`dx`/`dy` 直接透传。**`ok:false`（没检测到位移 / 已到末尾）一律报错**，不当成功静默放过——后面的「某行在视口内」类断言会对着没滚动的现场判红/假绿（REVIEW.md 第 2 条同族）。**读不到 scrollTop**：套件没有滚动位置读数（AX 不暴露），因此本动作只能证明「滚动调用生效链路通」，「滚到哪儿了」要靠视口内的可见元素间接判（见「已知边界」的滚动条） |
+| `drag` | `target`（`{role,name\|any,nth}` 节点须有 bbox、`{x,y}` 窗口局部坐标（M236 起，标题栏展示元素这类不一定有 AX bbox 的目标用），或 `{textareaEdge:"left"\|"right"}` 从编辑器列缘内侧起拖）、`dx`/`dy`（窗口局部点，UI 位移是**确定值**）、`allowOutOfBounds`、`retries`、`settleMs`、`selection`（M501，选区正观测，可选） | **拖拽**（M228 起，栏宽手柄这类「只能拖」的控件的唯一通道）：swift + `CGEvent` 显式投 `leftMouseDown → 插值 dragged ×24 → leftMouseUp`（与 `doubleClick` 同一通道——KimiCU 的 `drag` 工具在 WKWebView 里连文本选择都造不出来，M228 实测，见「已知边界」）。坐标换算与 `doubleClick` 同口径：先拿前台（**拿不到即报错**——真鼠标拖拽落在最上层那扇窗上），窗口局部点 + `window_bounds` 原点 → Quartz 屏幕坐标。**会移动真实光标**。起止点默认都必须在窗口内（防坐标空间错乱）；拖标题栏移动窗口时终点**故意**出窗，显式写 `allowOutOfBounds: true` 跳过终点检查。`textareaEdge` 形态存在的原因：WKWebView 把 `role=separator` 暴露成**无 bbox 的 AXSplitter**（M228 实测），栏宽手柄按节点定位不到，只能从 AXTextArea 的 bbox 边缘起拖。**只读静态文本的选区也走这一条**（M423 实证）：transcript 消息体这类文本在 AX 里是无 bbox 的 `AXStaticText`（节点定位报「找不到带 bbox 的节点」），而 `{x,y}` 真实拖拽会在它上面造出真实选区并触发 DOM `selectionchange`——KimiCU 的 `select_text` 看似更对口，但它只作用于 AX 选区层、**不产生 `selectionchange`**，驱动不了任何「选区驱动」的 UI（M423 用编辑器手势做过对照复验），故套件不引入该动词。**`selection`（M501，选区类步骤的正观测 + 有界重试）**：真实拖选偶发造不出选区（121 当日 4 跑 1 PASS 的独立 flake），选区本身 AX 读不到，可观测下游产物由本参数给出（与 `ax.has` 同一 matcher 口径：子串或 `/正则/`，如选区驱动的浮动钮 `/AXButton \(摘录到对话\)/`）。给了才启用：拖完即验，未命中重试拖选 ≤2 次（每次重选重新解析坐标）；重试耗尽仍无选区**如实判 FAIL**（不掩成绿，REVIEW.md 「键盘注入丢键」条同族纪律），重试次数落证据。不给的步骤（53 等）行为一字不变 |
+| `scroll` | `target`（`{role,name\|any,nth}` 滚动区节点，或 `{x,y}` 截图像素落点），或 step 上的 `page`（整页，正上负下）/ `dx` / `dy`（行式增量）/ `index`（快照节点序号） | **滚动**（M379 接入；「缺 `scroll` 动作」是 backlog「验收套件表达力缺口」条的一项——此前只有 `lib/cu.mjs` 的 MCP 封装，场景 DSL 里没有这个动作，「先滚动再把某行带进视口」类场景写不出来）。参数与 KimiCU 的 `scroll` 同形，**只透传写了的字段**（不补缺省值：KimiCU 侧「没给就是没给」）。定位方式：`target` 节点 → 取它的 index 滚那个滚动区；`target: {x,y}` → 在该截图像素点滚；`page`/`dx`/`dy` 直接透传。**`ok:false`（没检测到位移 / 已到末尾）一律报错**，不当成功静默放过——后面的「某行在视口内」类断言会对着没滚动的现场判红/假绿（REVIEW.md 「读不到当成空」条同族）。**读不到 scrollTop**：套件没有滚动位置读数（AX 不暴露），因此本动作只能证明「滚动调用生效链路通」，「滚到哪儿了」要靠视口内的可见元素间接判（见「已知边界」的滚动条） |
 | `resizeWindow` | `width`（数值，必填）、`height`（缺省保持当前）、`settleMs` | **AX 直写窗口尺寸**（M236，窄窗退让这类「精确几何」验证）：`lib/ax-window.swift` 经 Accessibility API 设 AXSize，确定值通道（不拖窗口边缘——命中区与落点都不稳）。前提是调用进程有辅助功能权限（与 CGEvent 注入同）；窗口管理器的钳制会如实反映在回读值里，断言用 `window.width` 对生效值 |
 | `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
 | `key` / `keys` | `key` / `keys: [...]`、`gapMs`、`retries`、`verify`（chord 副作用回读重试，M507） | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」）。**composer 目标的可打印序列默认不走这条**（M498 起迁 `typeInNode`）：press_key 逐键注入对 composer 丢键（字母 'e' 本机确定性丢失 + 随机连续丢键段，M497 归因定论），回读重试修不了确定性丢失。**例外：AXPress 插卡语境的素材注入，素材串不含 'e' 时可留在本动作**（M502 回退——该语境 `typeInNode` 的无 index / 带 index 两形态均不可靠，见 `typeInNode` 条「何时不迁」；82/83/85 的三个素材步即此）。**例外二（M518）：软断行之后的 composer 素材注入**（117/118/154 的 ⇧Enter 后文本）——`typeInNode` 的 AX 注入在软断行块上落点错位，故留回本动作，键串均不含 'e'（见 `typeInNode` 条的 M518 段）。**连字符写 `-` 即可**（M379；backlog「验收套件 `press_key` 键名 DSL 没有 `-` 的拼法」条）：KimiCU 的 DSL 把 `-` 当修饰键分隔符（与 `+` 同义），字面量原本没有拼法（`press_key("-")` 报 `error: empty key DSL`），套件在 `lib/cu.mjs` 侧把整串 `-` 与 `+` 分隔出的 `-` 段译为键名表里的 `minus`——因此 `keys: ["-"]` 仍走**可回读通道**，不降级成盲发。**空格写 `" "`**（M455）：空格同样没有字面量拼法（`press_key(" ")` 报 `error: empty key DSL`），`lib/cu.mjs` 把整串 `" "` 译为键名表里的 `space`，`lib/execute.mjs` 的可打印判定含空格 ⇒ `keys: [" ", …]` 也走可回读通道。**`verify`（M507，chord 的「副作用回读」重试，opt-in）**：给 `{ pattern, delta?, target? }` 时改走重试通道——注入前记 `pattern` 在回读值里的出现 N 次，落地要求恰为 N+delta（delta 缺省 1）、目标字节完全未变才重注（≤3 次）、partial/duplicated 直接判败（判据与 `type` / `keys` / `typeInNode` 同源，M143），重试与判败都落证据 note。回读目标 = `verify.target`（与 `clickInNode` 同解析、取 `node.value`），缺省走 `keysTarget`（focused 节点优先）。**只给「副作用在 AX 里可读」的 chord 挂**——⌘V 贴字这类「值里多出文本」的可以（134/150 即此）；**段末 ⇧Enter（AX 只在块之间插 `\n`、末尾空段落不产字符、几何又被 composer min-height 下限压住，1 块与 2 块 bbox 同值）、纯导航键（⌃B/⌃A/⌃P）、浮层内被列表消费的 ⌃N（overlay 游标不进 AX）都不能挂**：它们命中时目标字节不变，会被判「未落地」重注到上限后**假 FAIL**。判据与来历见 `lib/execute.mjs` 的 `runChordVerify` 注释（M507 的 dump 核查）。**不给 `verify` 的步行为一字不变**（仍按上面的判定边界盲发 / 回读） |
@@ -425,8 +425,7 @@ not: ["AXProgressIndicator"] }`）；`settle` 只在「判据明确不依赖任�
 | 已装载 vault + 空 vault 引导 | 入口按钮在 + D107 的「这个 vault 还没有打开的文件」在 AX 里 | 该 vault 还没有会话历史（**启动常态**，M163 起）：引导层盖住正文，编辑器从 AX 里消失——严格门不认它的话每个场景都会在这一步超时 |
 | 未打开 vault 的空态 | 树 pane 的空态说明行（D5）+ 打开入口，且 `ax.textarea` 在位 | `last_vault` 失效 / 无 `last_vault`；**只有** `requireVault: false` 才认 |
 
-第二行的判据是**正**观测（引导文案必须真的在 AX 里），不是「编辑器读不到就当就绪」——REVIEW.md
-第 2 条禁的是后者。`editor.*` 类断言仍严格：`AXTextArea` 不可读一律 FAIL，不会在空转的 `""` 上下结论。
+第二行的判据是**正**观测（引导文案必须真的在 AX 里），不是「编辑器读不到就当就绪」——REVIEW.md「读不到当成空」条禁的是后者。`editor.*` 类断言仍严格：`AXTextArea` 不可读一律 FAIL，不会在空转的 `""` 上下结论。
 
 ### 断言（每个 `expect` 条目一条记录）
 
@@ -438,7 +437,7 @@ not: ["AXProgressIndicator"] }`）；`settle` 只在「判据明确不依赖任�
 | `glob` | `dir`、`pattern`、`min`/`exact` | 文件名由 app 决定的产物（崩溃备份、另存副本）用 glob 断言。`pattern` 用 `new RegExp(pattern)` 在**全路径**上匹配——**别写 `^` 锚**（它锚的是绝对路径的开头，永远不命中；要锚开头写成 `"/pasted-…"` 这类不含 `^` 的片段） |
 | `bytes` | `path`（支持 glob）、`magic`（十六进制前缀）、`nameHash`（布尔） | **二进制文件的字节级断言**（M416，change paste-clipboard-image）：`file` 的 `has`/`not` 读的是 UTF-8 文本，对 WebP 这类二进制没有可观测量。`magic` 判文件首字节的十六进制前缀（WebP 容器取 `52494646` = `RIFF`）；`nameHash` 判**内容寻址命名一致性**——文件名 `pasted-<hex16>.<ext>` 里的 `<hex16>` 必须等于落盘字节 SHA-256 的前 16 位 |
 | `window` | `moved: true/false`、`width` / `height`（数值或 `{ ofWork: 比例 }`）、`tol` | 窗口几何（M236；相对判据 M437）：`moved` 对比**动作前**的 window_bounds 基线（步骤须有 `do`，位移 ≥8pt 才算动——标题栏拖拽移动窗口的判据）；`width` / `height` 各是**数值**（绝对，容差 `tol`，缺省 8pt，对窗口管理器钳制后的真实值）或 **`{ ofWork: <比例> }`**（工作区 × 比例——工作区由 `lib/ax-screen.swift` 现场读 `NSScreen.visibleFrame`，逻辑点，与 AX 的 `window_bounds` 同一空间；M437 的首启 90% / 越界钳制两条相对判据走它，不把某台机器的像素写死进场景）。一维一条读数，两维同写并成一条记录 |
-| `clipboard` | `has` / `not` / `exact` | 在**系统剪贴板文本**上匹配（M244）：与 `clipboardRead` 共用同一条固定 `osascript` 命令（含上面那条行尾归一，因此多行内容可以直接写 `exact`）；`has`/`not` 按子串或 `/…/` 正则，`exact` 逐字等于。**读不到一律 FAIL**——不许在不可观测的窗口里下结论（REVIEW.md 第 2 条：「读不到」被当成「为空」时 `not` 类断言会退化成恒真） |
+| `clipboard` | `has` / `not` / `exact` | 在**系统剪贴板文本**上匹配（M244）：与 `clipboardRead` 共用同一条固定 `osascript` 命令（含上面那条行尾归一，因此多行内容可以直接写 `exact`）；`has`/`not` 按子串或 `/…/` 正则，`exact` 逐字等于。**读不到一律 FAIL**——不许在不可观测的窗口里下结论（REVIEW.md 「读不到当成空」条：「读不到」被当成「为空」时 `not` 类断言会退化成恒真） |
 | `shot` | 名称 | 截图 + AX dump 留档 |
 | `pixel` | `same` / `differ` / `contrast`、`patch`、`tol`、`min` | 在**窗口截图**上按采样点取底色 / 对比度再比较（M285）。三种判据形态：`same` / `differ` 各是一组「采样点对」（每组至少两个点，逐对比较**主色**：`same` 要求每对都在 `tol` 内，`differ` 要求每对都超过 `min`）；`contrast` 是一组单点（要求该点采样方块内的**亮度跨度** ≥ 该点的 `min`，判「这一块里真的有字形」——主色读数看不出字色，见下节）。点写**窗口局部坐标**（与 `click` / `drag` 的 `{x,y}` 同一空间）、可带 `as` 作为证据里的名字。`patch`（缺省 7，截图像素）是采样方块边长、`tol`（缺省 8）是判「同色」的每通道容差。**`min` 一键两义**：在 `same` / `differ` 里是判「异色」的最小通道差（缺省 16）；在 `contrast` 里是亮度跨度的下限（**必填、无缺省**——它是绝对阈值，给缺省会让写错的键静默变成另一条断言，静态校验挡这一条）。每条断言把每个采样点的读数（主色 `#rrggbb` / `亮度 min..max（跨度 N）`）写进 `steps.md`。取不到截图 / 取不到坐标口径一律 FAIL |
 | `geom` | `target`、`minWidth` / `minHeight`、`painted: { min, patch? }` | **几何可见性断言**（M397，合同 `docs/specs/overlay-visibility.md` 的 O1/O2）：对浮层类节点取**几何包围盒**，断言它完整落在视口内、非退化，并以可选 `painted` 段在包围盒区域内扫描亮度跨度（`maxLumaSpread`），要求确有已绘制的字形。`target` 同 `click` 的节点口径（`{role,name\|any,nth}`，**裸正则源**）；`minWidth` / `minHeight` 是包围盒尺寸下限（缺省 1，防退化盒）；`painted.min` 是亮度跨度下限（**必填、无缺省**，绝对阈值），`painted.patch` 缺省 7。坐标空间是 mode=full 的**截图像素**（bbox 与截图尺寸同源，不与 `window_bounds` 换算）。**为什么几何之外必须有 `painted`**：WKWebView 的 AX 对**被祖先 `overflow` 裁掉**的内容照样暴露节点与未裁的包围盒，纯几何断言对着「几何上存在、实际没画出来」的现场判绿——`painted` 才是「被裁」的可判读数（M397 现场与反向验证见下节） |
@@ -457,7 +456,7 @@ not: ["AXProgressIndicator"] }`）；`settle` 只在「判据明确不依赖任�
 - 读数：采样方块里**主色**（每通道量化到 8 级、取像素最多的那一档，再对这一档取中位数）——文字笔画是
   少数派、底色是多数派，因此这条读数给的是底色，而不是「某像素恰好落在笔画上」的偶然值。
 - 判据以**同色 / 异色**两种相对关系为主，不给绝对色值：色值的真源是 token 层（`--sel` 等），场景里
-  再写一份副本就是第二份真源（REVIEW.md 第 8 条）。要判「某处是选中底色」就写「它与选区内某处的
+  再写一份副本就是第二份真源（REVIEW.md 「同一语义两处真源」条）。要判「某处是选中底色」就写「它与选区内某处的
   底色同色、与选区外某处的底色异色」。
 - **`contrast` 是唯一的绝对阈值判据**（补记于 M285 评审 r1 的 finding）：主色读数只反映**底色**、
   **看不出字色**——选中态里若字色与底色撞上（黑底黑字、白字压浅底都算），底色读数照旧是底色，只有采样
@@ -483,7 +482,7 @@ AX 照样暴露浮层项、报的还是**未裁的完整包围盒**（证据 `te
 **占位符**（M236 起）：expect 字符串里可写 `$appName` / `$appVersion`（加载时从本 checkout 的
 `src-tauri/tauri.conf.json` 读真值代入）与 `$vault`（M244：合成验收 vault 的绝对路径，随
 `LUMIR_ACCEPTANCE_VAULT` 走——剪贴板类断言要比对绝对路径时用它，场景 MUST NOT 硬编码 `/tmp`）（worktree 跑就取 worktree 的 conf，与被测构建同源）——
-场景 MUST NOT 硬编码版本号副本（真源唯一，REVIEW.md 第 8 条），版本 bump 后场景跟着真源走。
+场景 MUST NOT 硬编码版本号副本（真源唯一，REVIEW.md 「同一语义两处真源」条），版本 bump 后场景跟着真源走。
 占位符对整个 front-matter 生效（不止 expect）：`config:` 块里同样可写。M304 新增 `$fixtures`
 （套件 fixtures 目录的绝对路径）——**只读引用** fixture 原文（如 harness mock 脚本）用它，
 不要为引用而 `fixtures:` 拷进 vault：拷进去的非 `.md` 文件 resetVault 不清（M296 已知缺口），
@@ -523,7 +522,7 @@ PASS，只有锚定那条 FAIL）。要锚定这类行，把 `- [\d+] ` 前缀�
 **一次 run 的目录只含本次 run 的产物**（M379，backlog「验收套件表达力缺口」条的「场景证据目录跨 run 不清空」项）：`startScenario` 会把
 `<场景 id>/` **整个目录重建**后再落盘。此前只 `mkdirp`，同一天重复跑同一场景（迭代调试的常态）
 时序号重新计、旧文件被覆盖一半留下一半——实测同一目录里同时存在两轮的 `01-首开.txt`，复盘时
-会把上一轮的 dump 当本轮结论（REVIEW.md 第 2/7 条同族）。
+会把上一轮的 dump 当本轮结论（REVIEW.md 「读不到当成空 / 证据没落盘」条同族）。
 
 **索引是跨 run 增量合并的**（M379，backlog「待修 findings」的 M254 / M256 条）：`summary.md` / `results.json` 按场景
 id 并入——同一场景取最近一次 run 的行（表里的 `跑于` 列即那次 run 的时间），其余场景保留原行。
@@ -556,7 +555,7 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   dump 只给 role + 可访问名（+ `Value:`/`help`/`actions`），**不暴露展开态与选中态**——带
   `aria-expanded` 的钮（模型 chip、思考 chip、浮层项）与 `aria-checked` 的 `menuitemradio`
   在全仓现有 dump 里零命中（对照：这两类控件节点本身都在树里）。因此**不要拿它们做真机断言**：
-  直接断言「AX 含 `aria-expanded=false`」会把「读不到」当「false」，正是 REVIEW.md 第 2 条禁的
+  直接断言「AX 含 `aria-expanded=false`」会把「读不到」当「false」，正是 REVIEW.md 「读不到当成空」条禁的
   假绿形态。判据改落在**可观测后果**上——折叠态判「内容不显」、展开态判「内容上屏」（场景 93 的
   思考块三态即此），当前档勾选归前端单测 / 视觉层。
 - **`do: scroll` 已接进 DSL，但 KimiCU 的 scroll 在本 app 上是否产得出位移仍待复验（M379 接入，
@@ -597,8 +596,7 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
      Shift 后的字符 ⇒ `key="}"` 的事件命中 `Cmd-}`）；token 的表内形态另有 `tests/unit/keys.test.ts` 专测。
 
   **两类共通的纪律**：键盘类场景的**负向断言**必须配一条同通道可达的**正观测**（同一场景里先有一次
-  成功的注入证明通道通着，再判「没变」）；红了先按丢键复跑一次再判产品缺陷（丢键是间歇的，REVIEW.md
-  第 11 条）。
+  成功的注入证明通道通着，再判「没变」）；红了先按丢键复跑一次再判产品缺陷（丢键是间歇的，REVIEW.md「键盘注入丢键」条）。
 - **面板内的局部键只在焦点留在该面板内时命中——「面板内 Escape 收 harness pane」因此不是确定性通道（M523 定案，2026-10-15）**：harness 面板的 Escape 收起处理器挂在 `panel` 元素上（`src/harness-panel.ts:6835-6853`），靠 keydown 从**面板内的焦点**冒泡上来；焦点移到面板外（点编辑器）那拍 Escape 不再经过 panel，收起**整体失效**——M523 真机探针实测「`clickEditor` 移焦后再 Escape」→ pane 照旧开着（`test-results/acceptance/2026-10-15-m523-probe/148-harness-image-mention/`：`等 pane 收起` 15s 超时、存档位停在 `"harness_pane": true`）。**套件口径**：断言「pane 已收起」用 `⌘⇧A`（`harness.toggle`，`src/keys.ts:700`，全局绑定、与焦点无关；「pane 开着 + 焦点在 composer」这一同款现场由场景 86 守）；场景 148 的收起步因此从 Escape 换成 `⌘⇧A`，**「Escape 收 pane」这一覆盖随之从 148 撤出**（仍由场景 127 守——它的前置是「焦点留在 composer」，焦点一移出面板它就红，别当确定性通道复用）。**顺带更正一条归因（未实测坐实，只作候选登记）**：M498 记的「Escape 被 composer 消费」站不住——composer 的 keydown 没有 Escape 分支（`src/harness-panel.ts:6364-6460`），keydown 从 composer 冒泡到 panel 照常命中收起；当时那两跑的红更可能来自面板的两段式收敛（`selPop` / `permPop` / `ctxPop` 任一在场时第一拍 Escape 只收浮层，`src/harness-panel.ts:6838-6851`）。
 - **原生剪贴板命令（⌘C / ⌘V）在真机通道不落地（M345 实测，2026-10-06）**：`⌘C` 与 `⌘V` 是
   WKWebView 的原生命令（`src/keys.ts` 里没有它们，因此不经 DOM 的 keydown 链路），KimiCU 的
@@ -883,7 +881,10 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   只对**栏宽手柄 / 文件树拖放 / 1px 抖动点击**这类 DOM 控件目标成立，**在 CM 编辑器正文上造不出
   任何文本选区**（裸拖 / 前置 hover / 段内短拖三变体 3/3 全败；带修饰 flag 的点击——mode 6——
   也不延拓选区）。编辑器侧需要选区只用**双击族**（`do: doubleClick`）或键盘 chord（`⌘A` 在本机
-  不可行，见上文「键盘注入通道的两类不可达」）；完整归因与四条通道知识见 REVIEW.md 第 23 条与
+  不可行，见上文「键盘注入通道的两类不可达」）。**构造完选区 MUST 配一条正观测断言**：选中的内容
+  要在 `AXTextArea.value` 里显露为源码（如 `editor: { has: '/A{30,}/' }`，场景 160 现用此形态）——
+  只断言「选区后果不在场」这类负向判据在空选区上恒真，手势落空照样绿。完整归因与四条通道知识见
+  REVIEW.md 「编辑器选区双击族」条与
   `docs/backlog.md` 工具链与环境「真机注入通道新知识四则」条。**只读静态文本的选区**（transcript
   消息体）仍走 `drag` 的 `{x,y}` 形态——M423 的对照证明它在**非编辑器**的文本上造得出真实选区
   并触发 DOM `selectionchange`（上文动作表的 `drag` 条），与这里否掉的是两回事。

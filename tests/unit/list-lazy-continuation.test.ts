@@ -2,7 +2,7 @@
 //
 // 为什么这条判据能在本层测：判定只读「行文本 + 真 lezer 解析树」（`src/preview/lists.ts` 的
 // `listLineInfo`，纯函数，不碰 view / 坐标 / 渲染层，与 tests/unit/list-indent.test.ts 同一形态）。
-// 它同时也是 `ListLayout.build()` 的唯一判据来源（REVIEW.md 第 8 条：同语义不得两处写值）——
+// 它同时也是 `ListLayout.build()` 的唯一判据来源（REVIEW.md 「同一语义两处真源」条：同语义不得两处写值）——
 // 所以这里测的不是复刻出来的条件，而是生产那一份。
 //
 // **本层测不到**的一半是几何（文本左缘的 x 坐标）：那要 DOM + 布局，归

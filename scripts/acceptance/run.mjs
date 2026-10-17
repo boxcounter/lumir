@@ -67,7 +67,7 @@ const SUITE_LANGUAGE = "zh";
 
 /**
  * 套件钉尺寸的目标（M491）：从 `src-tauri/tauri.conf.json` 的 `app.windows[0]` 现场读——
- * 与 `launchApp` 的同一份真源（REVIEW.md 第 8 条：窗口配置只有一份真源），不在这里手抄
+ * 与 `launchApp` 的同一份真源（REVIEW.md 「同一语义两处真源」条：窗口配置只有一份真源），不在这里手抄
  * 1200×800；产品侧 apply_startup_size 把该尺寸降级为占位、首启取工作区 90%（lib.rs:242-322，
  * 见 README「窗口几何」），钉尺寸即把窗口恢复成构建配置的占位值。读不到 width/height 抛错，
  * 不回落字面量。
@@ -145,7 +145,7 @@ if (selected.length === 0) {
  *
  * 为什么落点在这里：`launchApp` 起的 `pnpm tauri dev` 原样继承本进程 env，验收实例因此拿到标记；
  * Alex 手头的 `pnpm tauri dev`（1420）不经过 runner、不带该变量，watch 行为因此不受影响。
- * 缺省值仍由 `lib/app.mjs` 的 `acceptPort()` 单点定义（REVIEW.md 第 8 条），这里只把它回写进
+ * 缺省值仍由 `lib/app.mjs` 的 `acceptPort()` 单点定义（REVIEW.md 「同一语义两处真源」条），这里只把它回写进
  * env，不抄一份字面量；放在 `--check` / `--list` 两个早退出口之后，只有真跑批才会落这一笔。
  */
 process.env.LUMIR_ACCEPTANCE_PORT ??= String(acceptPort());
@@ -293,7 +293,7 @@ function needsRmachineLock() {
 
 /**
  * 套件缺省的合成 vault（= `lib/util.mjs` 的 `vaultDir()` 在无覆写时的取值）。这里靠临时清空 env
- * 取值，不抄一份路径字面量——默认 vault 的真源只有一个（REVIEW.md 第 8 条）。
+ * 取值，不抄一份路径字面量——默认 vault 的真源只有一个（REVIEW.md 「同一语义两处真源」条）。
  */
 function defaultVaultDir() {
   const saved = process.env.LUMIR_ACCEPTANCE_VAULT;
@@ -365,7 +365,7 @@ async function preflight() {
  *     跑批争夺同一个前台归属。
  *
  * 为什么升成门禁而不是提醒：在场的第二个实例会**静默**改变「前台焦点归谁」这个所有键盘 / 鼠标
- * 动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 第 11 条：同机第二个实例显著加剧
+ * 动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 「键盘注入丢键」条：同机第二个实例显著加剧
  * 丢键）。2026-10-13 的复跑整轮前台焦点未取得（前台始终是别的 app），当时无从归因的干扰源之一
  * 就是场上的其他实例（M478）。
  *
@@ -406,7 +406,7 @@ function assertNoForeignLumir(execFileSync) {
       ...dev.map((p) => `  开发实例：pid ${p.pid}（${p.cmd}）`),
       "  为什么挡：套件实例与它们同 bundle 身份（com.lumir.app），共用同一份 AX / 前台归属——在场的",
       "  第二个实例会静默改变「前台焦点归谁」这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法",
-      "  区分的假 FAIL（REVIEW.md 第 11 条：同机第二个实例显著加剧丢键）。",
+      "  区分的假 FAIL（REVIEW.md 「键盘注入丢键」条：同机第二个实例显著加剧丢键）。",
       "  清除方法：安装版退出（⌘Q 或它的「退出」菜单）；开发实例逐个退出：",
       `    kill ${found.map((p) => p.pid).join(" ")}`,
       '  MUST NOT 用 pkill -f "target/debug/lumir" 这类模式匹配——它会连别人手头的实例一起打掉',
@@ -471,7 +471,7 @@ async function main() {
       // 探测如实判它们不在场并丢弃，runner 启动恒出 43/46。
       //
       // 此前这句在 `execute.mjs` 的 `runScenario` 开头（= 起 app **之后**），与 `app.mjs` 的
-      // `resetVault` 注释里写着的「copyFixture 在本函数之后重拷」漂了位置（REVIEW.md 第 8 条
+      // `resetVault` 注释里写着的「copyFixture 在本函数之后重拷」漂了位置（REVIEW.md 「同一语义两处真源」条
       // 同族：同一件事两处实现、口径不一致）；挪回声明的位置后，场景的首帧就是它声明的起点
       // ——与 `config:` 折叠进 `launchApp`（M284）同一取向。
       if (scenario.fixtures) for (const f of scenario.fixtures) await copyFixture(f);
@@ -495,7 +495,7 @@ async function main() {
       // 场景 front-matter 的 `config:`：**在起 app 之前**写进隔离 config.json（M284）。
       // 早先这里是裸 `writeConfig({mode:"md"})`，场景配置靠 runScenario 里的第二次写 + 一次重启
       // 生效。折叠到这里之后 app 的**首帧**就是场景声明的起点（与「窗口配置只有一份
-      // 真源」同一取向，见 REVIEW.md 第 8 条），也省掉每次约 6–8s 的重启。
+      // 真源」同一取向，见 REVIEW.md 「同一语义两处真源」条），也省掉每次约 6–8s 的重启。
       // 键的白名单是 `SCENARIO_CONFIG_KEYS`（单点真源，`--check` 用同一份挡拼错）；缺省值在场
       // 时不传（传 `undefined` 会被 writeConfig 忽略，故先滤掉）。
       await writeConfig({

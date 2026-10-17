@@ -167,7 +167,7 @@ test("规则②（code 模式侧，M376）：eink 下 code 模式 keyword 计算
   // 渲染路径（editor.ts 的 syntaxHighlighting），着色真源迁到 theme.ts 的 CSS 后两侧
   // 共用一份 `.cm-lp-tok-*` 规则，`:root[data-theme="eink"]` 限定随之在两侧同档生效。
   await openEinkCode(page);
-  // 在场判据先行（REVIEW.md 第 2 条：读不到 ≠ 为空）：code 模式的 keyword span 必须带
+  // 在场判据先行（REVIEW.md 「读不到当成空」条：读不到 ≠ 为空）：code 模式的 keyword span 必须带
   // `.cm-lp-tok-keyword` 类名——这正是「迁移到 class 表形态」的直接证据；迁移前 code 模式
   // 的 span 只带 CM 生成的匿名类，本条 locator 为零命中、用例必红（先红后绿的红半）。
   const keywords = page.locator(".cm-content .cm-lp-tok-keyword");
@@ -327,7 +327,7 @@ test("规则⑤（折行档）：eink 代码块折行时黑框改挂 slot，行�
   expect(row, "折行档：框那一列 MUST 读到框色 #000000").toContain("#000000");
   expect(row, "折行档：框内一列 MUST 读到 --code-bg 灰带（行底色在 slot 在场时让位）").toContain("#f0f0f0");
 
-  // 区分度自证（REVIEW.md 第 1 条）：把框按回修前形态（无框）后，框那条 MUST 判红。
+  // 区分度自证（REVIEW.md 「断言等价于子串」条）：把框按回修前形态（无框）后，框那条 MUST 判红。
   await page.addStyleTag({
     content: ':root[data-theme="eink"] .cm-lp-codeblock-slot:not(:has(> .cm-lp-codeblock-scroll)) { border: 0 !important; }',
   });

@@ -445,7 +445,7 @@ UA）+ Tauri 桩 + 草稿恢复预置合成块序列（三段），逐键注入�
 `{block: 1, offset: 9}` = `len-1`；② 首个反例 `[para("abc"), para("")]` 的码点边界 `0:3` 没有写回位；
 ④ 实测回到「跨段」落点），
 **③ 仍绿**——旧序列虽然丢了 `(i, len)` 这一点、内部却自洽，故 ③ 守的是另一种失效（正反向不对称 /
-折叠只落在一侧），对本缺陷**无区分度**，不计入本条的覆盖声明（REVIEW.md 第 1、6 条）。真机层：
+折叠只落在一侧），对本缺陷**无区分度**，不计入本条的覆盖声明（REVIEW.md「断言等价于子串 / 覆盖声明超出真实验证」条）。真机层：
 验收场景 154（末段空行行首 ⌃B + 键入探针串，判据是探针接在**上一行行末**而不是倒数第二个字符之后），
 修前 **FAIL**（AX 读数 `hnl-brk-cxqzkd`，与 Alex 现场逐字对应）/ 修后 **PASS**（`hnl-brk-cdxqzk`）。
 证据（git 外）：`test-results/acceptance/<日期>/154-…/`（修后绿）+ `test-results/m465-reverse-validation/`
@@ -532,7 +532,7 @@ M473 一次收口三条 backlog 待修项（worker-m457 / m465 各一条 + worke
 **反向验证（区分度，M473 实测）**：三条各自改回旧形态，`pnpm test` **各红一处、互不重叠**——
 （1）HC3 写回语义用例 + 新增的卡片前缘用例 **2 条红**；（2）词步那条用例 **1 条红**；（3）边界位
 写回用例的「末尾之后」断言 **1 条红**（旧形态给 `{kind: "boundary"}`）。三条落在不同函数、不同
-用例，不存在「一条断言替两处背书」（REVIEW.md 第 1、6 条）。
+用例，不存在「一条断言替两处背书」（REVIEW.md「断言等价于子串 / 覆盖声明超出真实验证」条）。
 
 ## 实测依据（M527 现场，2026-10-16）：IME 组合期 normalize 折段——候选落字跳回第一行
 
@@ -605,7 +605,7 @@ beforeinput）均已有 M361 组合期早退，withModel 无现实触发路径�
   undo / send / composerObserver 全部 normalize 调用点）、withModel / undo / redo 的组合期早退、
   compositionend 里经 `window.setTimeout(IME_CONFIRM_WINDOW_MS)` 排期的补账归一（窗内新组合由
   下一次 compositionend 续期）。组合窗判据 `imeWindowActive` 复用 M361 的 `imeGateState`
-  （compositionstart/end 自跟踪 + 确认窗），不另建第二份组合状态（REVIEW.md 第 8 条）。
+  （compositionstart/end 自跟踪 + 确认窗），不另建第二份组合状态（REVIEW.md 「同一语义两处真源」条）。
 - 已知边界：卡片上按 ⇧Enter 时「新行」落在卡片那一行的上方（光标所在处），不改变卡片与
   文本块的相对次序——卡片是原子块，本条不承诺它内部出现换行。
 - 已知边界（HC3，M457；M473 修订第一条）：
