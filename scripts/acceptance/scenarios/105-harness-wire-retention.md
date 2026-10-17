@@ -45,8 +45,10 @@ steps:
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"opened_from":"new","provider":"mock"' }
       - label: session_open 带完整 system prompt 全文（装配结果落盘）
         file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"session_open".*"system":".+".*$/' }
-      - label: 装配清单的固定段在场（存在来源的 path 为 null）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '"exists":true,"path":null,"source":"identity"' }
+      - label: 装配清单的固定段记录仓内来源路径（change harness-prompt-files）
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"exists":true,"path":"src-tauri/src/harness/prompts/identity.md","source":"identity"' }
+      - label: 摘录回指纪律段同样记录仓内来源路径
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"exists":true,"path":"src-tauri/src/harness/prompts/quote-reference.md","source":"quote_reference"' }
       - label: 装配清单记录「来源当时不存在」（vault 根无 AGENTS.md，exists:false 同样在场）
         file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"exists":false,"path":"[^"]*AGENTS\.md","source":"agents_vault_root".*$/' }
       - label: 本地覆盖层同理（vault 根无 AGENTS.local.md，exists:false 同样在场）
@@ -103,7 +105,9 @@ append-only JSONL（`<隔离配置>/harness/sessions/<vault 稳定 id>/<session_
 - **来源存在与否**：`agents_vault_root` 与 `agents_vault_root_local` 的 `exists:false`——合成
   vault 根既没有 `AGENTS.md` 也没有 `AGENTS.local.md`（第三层，change `harness-agents-local-md`），
   这条「来源当时不存在」是旧实现静默跳过的装配事实（design §2）；固定段（identity / quote_reference）
-  `path:null, exists:true`。存在态（`exists:true` + 顺序与覆盖声明）由场景 123 覆盖——它自带两份
+  `exists:true` 且 `path` 记录仓内来源文件（`src-tauri/src/harness/prompts/identity.md` /
+  `quote-reference.md`，change `harness-prompt-files`——固定段正文编译期从这两个文件嵌入，见 spec
+  「系统提示词固定段来源」）。存在态（`exists:true` + 顺序与覆盖声明）由场景 123 覆盖——它自带两份
   合成 AGENTS 文件。**不断言 user-wide AGENTS.md**：它的路径含真实用户名，且各机可能不存在
   （信息卫生纪律，REVIEW.md 「信息卫生」条）。
 - **每次迭代落完整 llm_request**：迭代 2 的请求历史里带迭代 1 的工具 `function_call` 与

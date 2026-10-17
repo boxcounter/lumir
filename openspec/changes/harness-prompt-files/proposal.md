@@ -5,7 +5,8 @@
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
 > 评审记录：
-> 节点 1（提案评审）：留白（待 Alex 裁决）。
+> 节点 1（提案评审）：2026-10-17 Alex 批准（tower 转达）。命名按 tower 裁决取 kebab-case：
+> 文件名 `quote-reference.md`，id ↔ 文件名的唯一差异是 `_` ↔ `-`。
 > 节点 2（归档评审）：留白（实现完成后填写）。
 >
 > 口径来源：本 change 的方案由 tower 与 Alex 讨论收敛、Alex 已裁决，本文照写，不再另设裁决点——
@@ -17,9 +18,8 @@
 > ⑥ `AssemblySource::fixed` 的 `path` 从此记录真实来源路径；
 > ⑦ 排除运行期配置目录覆盖（方案 B）、raw string 半吊子（方案 C）、工具描述抽取（后续独立 change）。
 >
-> 待 Alex 顺带确认的一处措辞（不影响方案）：裁决原文同时出现 `quote-reference.md`（布局条）与
-> `quote_reference.md ↔ "quote_reference"`（一一对应条）。本文按布局条取 `quote-reference.md`
-> （与仓内 kebab-case 文件命名一致），并规定 id ↔ 文件名的唯一差异是 `_` ↔ `-`。
+> 命名口径（tower 裁决，2026-10-17）：文件名取 kebab-case `quote-reference.md`（与仓内文件命名
+> 惯例一致），id ↔ 文件名的唯一差异是 `_` ↔ `-`——`quote_reference` ↔ `quote-reference.md`。
 
 ## Why
 
