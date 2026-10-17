@@ -2491,19 +2491,30 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    /// 无 tempfile 依赖（同 config.rs 的纪律）：pid + 序号造唯一目录，drop 时递归删除。
+    /// 无 tempfile 依赖（同 config.rs 的纪律）：在 $TMPDIR **独占新建**唯一目录，Drop 时递归删除。
+    /// 目录名带 pid + 序号 + 随机段，且用 `create_dir` 而非 `create_dir_all`：pid 会被系统回收，
+    /// crash 残留的旧目录会被 `create_dir_all` 静默复用；撞名即换随机段重试（同
+    /// `link_graph.rs` 的 `TempVaultDir`）。
     struct TempVault(PathBuf);
     static SEQ: AtomicU32 = AtomicU32::new(0);
 
     impl TempVault {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "lumir-fs-test-{}-{}",
-                std::process::id(),
-                SEQ.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&path).expect("create temp vault");
-            Self(path)
+            let base = std::env::temp_dir();
+            for _ in 0..16 {
+                let path = base.join(format!(
+                    "lumir-fs-test-{}-{}-{:016x}",
+                    std::process::id(),
+                    SEQ.fetch_add(1, Ordering::Relaxed),
+                    rand::random::<u64>(),
+                ));
+                match std::fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(err) => panic!("create temp vault {}: {err}", path.display()),
+                }
+            }
+            panic!("create temp vault: 16 次随机目录名全部撞名");
         }
         /// 造混合类型 fixture：md / 代码 / 图片字节 / 无扩展名文本 / 嵌套目录 / 忽略集。
         fn with_fixture() -> Self {
