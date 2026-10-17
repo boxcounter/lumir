@@ -108,3 +108,10 @@
 - [x] 6.2 `pnpm test`（前端单测）与 `cargo test`（Rust 单测 + 集成）全绿。
 - [x] 6.3 `scripts/gate.sh quick` 全绿；完成报告照抄 `GATE RESULT` 原文行与退出码（SKIP 单列）。
 - [x] 6.4 归档评审对账：tasks 勾选状态 / spec 增量 / 实现三者一致；未做的项就地标注放弃原因。
+  - 归档期对账（2026-10-17，M557）：四个 change 同批归档，本 change 排在 `harness-dir-link` 之后
+    （后者先合并、实现期按「`node_modules` / `target` 被内置规则挡住」写 harness 侧可点判据）。本
+    change 把这两个名字移入 `lazy` 档后，「不显示档挡住的目录不在树模型里」成为唯一正确的判据，
+    故归档时一并修正 living spec 的两处过期措辞：`harness`「输出中的 vault 路径可点击」的边界句与
+    `file-tree`「目录定位不动当前行」的可点性句（`node_modules` / `target` 出惰性行 ⇒ 在模型里 ⇒
+    可点）。实现侧对账：`tree.ts:1216` 的 `hasDir` 只问模型里有没有 `kind === "dir"` 的行，
+    `main.ts:2271` 的 `isVaultDirPath` 直连 `tree.hasDir`，与修正后的口径一致。

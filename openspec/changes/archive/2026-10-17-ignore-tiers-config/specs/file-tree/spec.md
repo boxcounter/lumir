@@ -1,7 +1,7 @@
 # file-tree 增量规格
 
 > 起草注记（非规格正文）：本 delta 三条 MODIFIED，基线是 living spec
-> [openspec/specs/file-tree/spec.md](../../../../specs/file-tree/spec.md)。变化有两点：① 树的可见集里
+> [openspec/specs/file-tree/spec.md](../../../../../specs/file-tree/spec.md)。变化有两点：① 树的可见集里
 > 「被内置规则挡住的名字不出行」改为「被 `hidden` 档挡住的名字不出行」，而 `lazy` 档（默认
 > `node_modules` / `target` / `dist` 等 14 名）与用户规则一致——出惰性行、可展开；② 内联编辑与新建的
 > 忽略集判定改由后端权威判定（前端不再维护名单副本），前端只保留形状校验与结果回显。

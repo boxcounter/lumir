@@ -19,7 +19,7 @@
 >
 > 理由：安装时把默认值快照进配置文件，会把默认名单**冻结在初装那一天**——未来版本调整默认值触达不到
 > 存量配置，用户看到的是「升级了但行为没变」，而根因埋在几年前的一份 JSON 里。配置只承载**用户的偏离**，
-> 默认值只有一个真源（代码）。这与 [config-reference.md](../../../docs/specs/config-reference.md) §3
+> 默认值只有一个真源（代码）。这与 [config-reference.md](../../../../docs/specs/config-reference.md) §3
 > 既有的写回纪律同口径：应用只做单键合并、**不写全量默认**（该节原文已写明「不推荐把全量默认写进
 > `config.json`」及其理由）。
 
@@ -31,20 +31,20 @@ Alex 原话（裁决，逐字）：
 
 现状与问题：
 
-1. **分档名单是产品硬编码**：[src-tauri/src/fs_io.rs:38](../../../src-tauri/src/fs_io.rs#L38) 的
-   `BUILTIN_NAMES` 是 16 个名字字面量，[fs_io.rs:67](../../../src-tauri/src/fs_io.rs#L67) 的
+1. **分档名单是产品硬编码**：[src-tauri/src/fs_io.rs:38](../../../../src-tauri/src/fs_io.rs#L38) 的
+   `BUILTIN_NAMES` 是 16 个名字字面量，[fs_io.rs:67](../../../../src-tauri/src/fs_io.rs#L67) 的
    `LUMIR_TMP_PATTERNS` 是两条临时文件模式。16 个名字**全部落在「不可见」一档**——它们在树里没有行、
    不进索引、watch 事件被挡下。改动其中任何一个档位都要改代码、重新构建、重新安装，自用者也拿不到
    「试一下再改回来」的路径。
-2. **配置面已有先例，语义不用另造**：[src-tauri/src/config.rs:169](../../../src-tauri/src/config.rs#L169)
+2. **配置面已有先例，语义不用另造**：[src-tauri/src/config.rs:169](../../../../src-tauri/src/config.rs#L169)
    的 `[vault]` 表已经承载 `rule_files`（用户规则的来源清单），在 vault 装载时现场读一次
-   （[commands.rs:456-459](../../../src-tauri/src/commands.rs#L456)）。本 change 把两个新键放进同一张表，
+   （[commands.rs:456-459](../../../../src-tauri/src/commands.rs#L456)）。本 change 把两个新键放进同一张表，
    沿用同一套解析、校验、warning 与生效时点，不新增配置机制。
 3. **「惰性」不是新行为**：用户规则命中的条目今天就是「树里有一行、不递归枚举、不进索引、按需展开」
-   （change `vault-open-ignore-set` 落地的 `EntryClass::Lazy`，[fs_io.rs:218](../../../src-tauri/src/fs_io.rs#L218)）。
+   （change `vault-open-ignore-set` 落地的 `EntryClass::Lazy`，[fs_io.rs:218](../../../../src-tauri/src/fs_io.rs#L218)）。
    本 change 只是把这套既有去向接到配置给出的名字上——不是发明第二种惰性。
-4. **同一份名单今天有两处真源**：[src/tree.ts:44](../../../src/tree.ts#L44) 抄了一份 16 名清单供内联编辑预检，
-   逐项对账在 [tests/unit/tree-paths.test.ts:86](../../../tests/unit/tree-paths.test.ts#L86)（解析 Rust 声明）。
+4. **同一份名单今天有两处真源**：[src/tree.ts:44](../../../../src/tree.ts#L44) 抄了一份 16 名清单供内联编辑预检，
+   逐项对账在 [tests/unit/tree-paths.test.ts:86](../../../../tests/unit/tree-paths.test.ts#L86)（解析 Rust 声明）。
    名单一旦可配置，「抄一份默认」必然要么假拒（用户把某名字移出默认，前端仍拒）要么漏拒，对账链也失去意义。
    本 change 顺手把这条重复真源切断（见 What Changes 第 7 条）。
 5. **合规基座**：ADR 0002 第 5 条「配置即数据，带 schema 校验，非法值落回默认值并给出人话错误」——
@@ -108,7 +108,7 @@ Alex 原话（裁决，逐字）：
      不投递。`.git` / `.DS_Store` / 临时文件仍然一个事件都不投递。
    - 惰性条目（无论来自哪一档）继续不进链接索引与附件索引；删除方向仍无条件移除。
 
-5. **埋点口径**：`vault_scan_ignored`（[logging.rs:490](../../../src-tauri/src/logging.rs#L490)）只统计
+5. **埋点口径**：`vault_scan_ignored`（[logging.rs:490](../../../../src-tauri/src/logging.rs#L490)）只统计
    **被 `hidden` 档（含临时文件模式）剪掉的条目数**。惰性条目有行、看得见，不属于「文件不见了」的
    诊断对象；事件名、字段与隐私口径（只有计数）都不变。
 
@@ -118,10 +118,10 @@ Alex 原话（裁决，逐字）：
    （裁决 ②）：`.git` 与其他名字同规则——它默认在 `hidden` 档，因此默认没有行、不可操作；用户把它
    配置成可见后，它就与普通条目一样可删 / 可改名 / 可移动。
 
-7. **前端内联编辑预检的重复名单退役**：[src/tree.ts:44](../../../src/tree.ts#L44) 的 `IGNORED_NAMES`、
+7. **前端内联编辑预检的重复名单退役**：[src/tree.ts:44](../../../../src/tree.ts#L44) 的 `IGNORED_NAMES`、
    对应的对账测试、以及 `validateEntryName` 里的名单判定一并删除。前端保留形状校验（非空 / 不含 `/` /
    不是 `.`/`..` / 不撞名），忽略集判定只由后端做；后端拒绝时把人话原因经既有通道回显在编辑行内
-   （[main.ts:1803](../../../src/main.ts#L1803) 的 `tree.endInlineEdit(false, errorMessage(e))` 已是现成路径）。
+   （[main.ts:1803](../../../../src/main.ts#L1803) 的 `tree.endInlineEdit(false, errorMessage(e))` 已是现成路径）。
    代价：从「按下 Enter 立刻红」变成「一次本地 IPC 往返后红」（毫秒级）。收益：名单可配置后再无第二份
    真源可漂移，`tests/unit/tree-paths.test.ts` 的对账链随之退役。
 

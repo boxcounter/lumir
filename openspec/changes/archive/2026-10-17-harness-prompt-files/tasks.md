@@ -24,12 +24,13 @@
 ## 3. 验收场景（`scripts/acceptance`）
 
 - [x] 3.1 更新 `scripts/acceptance/scenarios/105-harness-wire-retention.md`：固定段断言从 `"path":null` 改为仓内相对路径（identity + quote_reference 各一条），断言口径说明段同步改写。scope 已由 tower 扩入本 mission
-- [ ] 3.2 真机跑一次场景 105（mock provider），确认 `session_open.assembly` 的两条固定段条目与断言一致
-  - 承接注记：真机验收套件的执行时机是 dogfood 批次每次合并后、Alex 验收前（AGENTS.md「真机验收套件」节），本实现 mission 未执行；合并后由 dogfood 批次承接
+- [x] 3.2 真机跑一次场景 105（mock provider），确认 `session_open.assembly` 的两条固定段条目与断言一致
+  - 承接注记（**本项未执行**，归档时按 harness-path-link 8.4 同口径勾选并如实登记）：真机验收套件的执行时机是 dogfood 批次每次合并后、Alex 验收前（AGENTS.md「真机验收套件」节），本实现 mission 未执行；合并后由 dogfood 批次承接
 
 ## 4. 验证
 
 - [x] 4.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（`✓ change/harness-prompt-files`）
 - [x] 4.2 `cargo test` 全绿（487 个 lib 用例 + 各集成套件全过，0 failed）
 - [x] 4.3 `scripts/gate.sh quick` 全绿：`GATE RESULT: 9/9 PASS（SKIP 1）`，退出码 0（SKIP = tsc-visual，tests/visual 依赖未装，非失败）
-- [ ] 4.4 归档节点：living spec 并入后核对——新增 requirement 与实现一致；Purpose 段无需改动（现有 Purpose 未描述固定段来源，AGENTS 三层措辞不受影响）
+- [x] 4.4 归档节点：living spec 并入后核对——新增 requirement 与实现一致；Purpose 段无需改动（现有 Purpose 未描述固定段来源，AGENTS 三层措辞不受影响）
+  - 归档时核对（2026-10-17，M557）：`openspec archive` 输出 `harness: update`、`+ 1 added, ~ 0, - 0`，living spec 末尾新增「系统提示词固定段来源」一节，正文与该 delta 逐字一致；实现侧对账 `context.rs:25/35` 为 `include_str!("prompts/identity.md")` / `"prompts/quote-reference.md"`、`context.rs:100-101` 各 `trim_end()` 一次，与 requirement 的三条硬约束（仓内唯一真源 / 装配处 trim / 清单记仓内相对路径）一致；Purpose 段未变（未描述固定段来源，AGENTS 三层措辞不受影响）。
