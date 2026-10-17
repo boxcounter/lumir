@@ -78,7 +78,11 @@
 
 ## 8. 门禁与收口
 
-- [ ] 8.1 `scripts/gate.sh quick` 全绿；报告照抄 `GATE RESULT` 原文行 + 退出码
-- [ ] 8.2 动过 `src/style.css` ⇒ 另跑 `scripts/gate.sh visual`，同样照抄原文行；基线更新若需要，先经
+- [x] 8.1 `scripts/gate.sh quick` 全绿；报告照抄 `GATE RESULT` 原文行 + 退出码
+      （2026-10-17 读数：`GATE RESULT: 9/9 PASS（SKIP 1）`，退出码 0；SKIP 项 = `tsc-visual`
+      「tests/visual 依赖未装」，装依赖后由 §8.2 的 visual 档覆盖）
+- [x] 8.2 动过 `src/style.css` ⇒ 另跑 `scripts/gate.sh visual`，同样照抄原文行；基线更新若需要，先经
       Alex 过目（基线更新是人肉裁决点）
+      （2026-10-17 读数：`GATE RESULT: 12/12 PASS（SKIP 0）`，退出码 0；`visual-regression` 593s。
+      新行态类 `.ft-row.is-revealed` 在静态场景里永不在场，基线无需更新）
 - [ ] 8.3 文档回改：tasks 勾选状态、覆盖声明与实际 PASS 证据逐条对齐（REVIEW.md『覆盖声明超出真实验证』条）
