@@ -69,7 +69,7 @@ steps:
       - label: 目录点击没有打开任何文档（目标目录里的文件没有标签）
         ax: { not: "/AXRadioButton \\(keep\\.md\\)/" }
       - label: 点击前「dir-link/nested-dir」这个名字只出现在面板里（正文 + 工具卡片两个可点元素）
-        ax: { count: { pattern: "AXButton \\(dir-link/nested-dir\\)", exact: 2 } }
+        ax: { count: { pattern: "/AXButton \\(dir-link/nested-dir\\)/", exact: 2 } }
       - shot: 01-点击前的形态
 
   - name: 点击正文里的尾斜杠目录引用（同时验证归一：可见文本带斜杠、定位路径不带）
@@ -87,7 +87,7 @@ steps:
       - label: 祖先展开——同级见证文件的行出现在左栏
         ax: { has: "/AXButton \\(dir-link\\/peer\\.md\\)/" }
       - label: 目标目录的行进入左栏（同名可点元素由 2 变 3：正文 + 工具卡片 + 树行）
-        ax: { count: { pattern: "AXButton \\(dir-link/nested-dir\\)", exact: 3 } }
+        ax: { count: { pattern: "/AXButton \\(dir-link/nested-dir\\)/", exact: 3 } }
       - label: 目标目录自身没有被展开（其内容行不出现）
         ax: { not: "/AXButton \\(dir-link\\/nested-dir\\/keep\\.md\\)/" }
       - label: 没有打开文档、没有新标签（目录点击只定位）
@@ -136,7 +136,8 @@ provider 铺开目录引用的三种形态与点击后的四条行为：
   AX 里只可能来自祖先展开——这是判别性最强的正观测。
 - **同名元素计数**：点击前 `AXButton (dir-link/nested-dir)` 恰 2 个（正文链接 + 工具卡片链接），
   点击后恰 3 个（再加树行）——把「树行真的进了 DOM」钉成机器判据，同时证明卡片上的目录路径也
-  被链接化（卡片的点击分发与正文同一条代码路径，由正文那次点击覆盖）。
+  被链接化（卡片的点击分发与正文同一条代码路径，由正文那次点击覆盖）。`count.pattern` 必须写成
+  `/…/` 正则形态（裸串按子串计；带 `\(` 的裸串永远 0 次——这是 M553 首跑两次假 FAIL 的成因）。
 - **目标自身不展开**用 `keep.md` 的内容行不在 AX 里判：它是目标目录的子行，只有「展开目标」才会出现。
 - **不打开 / 不切标签**用 `AXRadioButton (keep.md)` 不存在 + `harness-note.md` 仍 `Value: true` +
   `editor.has` 原文档正文三条一起判（与场景 161 的新标签判据同口径）。

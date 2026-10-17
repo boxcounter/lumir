@@ -74,7 +74,12 @@
 - [x] 7.2 **回扫既有场景 161**：它今天断言「真实目录不产出可点元素」（`ax: { not: AXButton (path-link-dir) }`）
       与正文里的「目录不链接化」说明——本 change 会翻转该期望，必须改准（断言 + 正文），否则 161 必红
       且归因会被带偏
-- [ ] 7.3 本地真机跑 161 + 新场景，证据落 `test-results/acceptance/`（git 外），报告附可 `ls` 的路径
+- [x] 7.3 本地真机跑 161 + 新场景，证据落 `test-results/acceptance/`（git 外），报告附可 `ls` 的路径
+      （2026-10-17 机器窗口：105 PASS 25.1s；161 PASS 26.6s；162 PASS 26.2s。首跑 161/162 的两条
+      `ax.count` 断言判红，根因是 `count.pattern` 写成裸串 + 正则转义（按子串计永远 0 次），
+      AX dump 证明产品行为正确；两处已改成 `/…/` 形态并复跑 PASS。证据：
+      `/Users/boxcounter/Code/Boxcounter/lumir/test-results/acceptance/2026-10-17/`（含 NOTES.md、
+      run-1.log / run-2.log 与三个场景目录））
 
 ## 8. 门禁与收口
 
@@ -85,4 +90,6 @@
       Alex 过目（基线更新是人肉裁决点）
       （2026-10-17 读数：`GATE RESULT: 12/12 PASS（SKIP 0）`，退出码 0；`visual-regression` 593s。
       新行态类 `.ft-row.is-revealed` 在静态场景里永不在场，基线无需更新）
-- [ ] 8.3 文档回改：tasks 勾选状态、覆盖声明与实际 PASS 证据逐条对齐（REVIEW.md『覆盖声明超出真实验证』条）
+- [x] 8.3 文档回改：tasks 勾选状态、覆盖声明与实际 PASS 证据逐条对齐（REVIEW.md『覆盖声明超出真实验证』条）
+      —— 7.3 已按 run-1 / run-2 的真实结果登记；162 的「卡片目录路径」登记为「真机只验链接化
+      （计数），点击分发由正文点击 + 单测覆盖」；高亮节奏仍归 Alex 手感裁决

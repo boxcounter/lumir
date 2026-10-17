@@ -99,7 +99,7 @@ steps:
     expect:
       - label: 同一个文件只有一个标签（单标签不变量；跨 pane 时是移动而不是复制）
         ax:
-          count: { pattern: 'AXRadioButton \(path-link-target\.md\)', exact: 1 }
+          count: { pattern: '/AXRadioButton \(path-link-target\.md\)/', exact: 1 }
       - label: 它仍是前台标签
         ax: { has: '/AXRadioButton \(path-link-target\.md\) Value: true/' }
       - shot: 03-已打开不重复开
@@ -127,7 +127,9 @@ provider 把四种形态一次铺开：
   不引入 webview 默认导航），所以 AX 里是名字 = 原文的 AXButton；行号后缀逐字留在名字里。
 - **新标签用 AXRadioButton 的 `Value: true`**：标签栏项在 AX 里是 AXRadioButton，激活项带
   `Value: true`（场景 28/38/45 同口径）。「原标签仍在」一条把「新标签」与「替换当前标签」分开。
-- **单标签不变量用 `ax.count`**：同一文件点两次（先卡片、再正文）后 radio 必须恰好 1 个。
+- **单标签不变量用 `ax.count`**：同一文件点两次（先卡片、再正文）后 radio 必须恰好 1 个。计数
+  的 `pattern` 必须写成 `/…/` 正则形态（裸串按**子串**计，`\(path-link-target\.md\)` 这种带转义
+  的裸串永远命中 0 次——M553 真机跑批实测的假 FAIL，改正后 161 复跑 PASS）。
 - **反向判据用 `ax: { not: … }`**：不存在的路径 / 目录 / `..` 在渲染里没有 AXButton 形态；
   只否定 `AXButton (名字)` 这种形态，避免把正文里作为普通文本出现的同一串误判成「可点」。
 - **`vaultWrite` 之后留一拍**：外部写入没有 UI 信号，watch 增量到达前索引里没有新文件；
