@@ -25,6 +25,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatDate } from "../../src/copy.ts";
 import { renderMarkdownInto, whenTextOf } from "../../src/harness-panel.ts";
+import type { PathLinkRenderContext } from "../../src/harness-panel.ts";
 
 // ---------------------------------------------------------------------------
 // 最小 DOM 替身（只覆盖 markdown → DOM 这一小撮面）
@@ -132,12 +133,35 @@ function installFakeDom(): void {
   };
 }
 
-/** 一段 Markdown → 渲染出的 DOM 根（真渲染件 + 替身 DOM）。 */
-function render(source: string): FakeEl {
+/** 一段 Markdown → 渲染出的 DOM 根（真渲染件 + 替身 DOM）。`ctx` 缺省 = 不链接化路径。 */
+function render(source: string, ctx?: PathLinkRenderContext): FakeEl {
   installFakeDom();
   const host = new FakeEl("div");
-  renderMarkdownInto(host as unknown as HTMLElement, source);
+  renderMarkdownInto(host as unknown as HTMLElement, source, ctx);
   return host;
+}
+
+/** 触发假元素上注册的某个事件（事件对象只需满足处理器实际读到的面）。 */
+function fire(el: FakeEl, type: string, event: Record<string, unknown> = {}): void {
+  const listeners = el.listeners.get(type) ?? [];
+  assert.ok(listeners.length > 0, `元素上没有 ${type} 监听`);
+  for (const listener of listeners) listener({ preventDefault() {}, ...event });
+}
+
+/** 路径链接上下文：索引 = 给定的路径集，点击记进 `opened`。 */
+function pathCtx(...paths: string[]): {
+  ctx: PathLinkRenderContext;
+  opened: Array<[string, number | undefined]>;
+} {
+  const index = new Set(paths);
+  const opened: Array<[string, number | undefined]> = [];
+  return {
+    opened,
+    ctx: {
+      isLinkable: (path) => index.has(path),
+      open: (path, line) => opened.push([path, line]),
+    },
+  };
 }
 
 const URL_TEXT = "https://example.com/a/b?x=1";
@@ -329,4 +353,103 @@ test("属性：任意列数与任意空槽位置下，每行格数守恒且等�
       }
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// change harness-path-link：正文里的 vault 路径可点（真渲染件 + 最小 DOM 替身）
+// ---------------------------------------------------------------------------
+
+test("命中文件索引的路径产可点元素，可见文本逐字不变；点击把 path/行号交给装配层", () => {
+  const { ctx, opened } = pathCtx("notes/a.md");
+  const host = render("见 notes/a.md:12 完", ctx);
+  const links = host.find("lumir-hp-pathlink");
+  assert.equal(links.length, 1);
+  assert.equal(links[0].tagName, "button");
+  assert.equal(links[0].textContent, "notes/a.md:12", "展示文本含行号后缀，且不重写原文");
+  assert.equal(host.textContent, "见 notes/a.md:12 完", "周围文本逐字不变");
+  fire(links[0], "click");
+  assert.deepEqual(opened, [["notes/a.md", 12]]);
+});
+
+test("未命中索引的路径仍是文本节点（反向对照）", () => {
+  const { ctx } = pathCtx("notes/other.md");
+  const host = render("见 notes/a.md 完", ctx);
+  assert.equal(host.find("lumir-hp-pathlink").length, 0);
+  assert.equal(host.textContent, "见 notes/a.md 完");
+});
+
+test("中文行文紧贴路径时只链接路径本身（见路径 / 路径的）", () => {
+  const { ctx } = pathCtx("中文/笔记.md");
+  const host = render("详见中文/笔记.md的内容", ctx);
+  const links = host.find("lumir-hp-pathlink");
+  assert.equal(links.length, 1);
+  assert.equal(links[0].textContent, "中文/笔记.md");
+  assert.equal(host.textContent, "详见中文/笔记.md的内容");
+});
+
+test("行内代码里的路径可点（起草期取值 2）；围栏代码块里的同形文本不可点", () => {
+  const { ctx } = pathCtx("notes/a.md");
+  const inline = render("见 `notes/a.md` 完", ctx);
+  assert.equal(inline.find("lumir-hp-pathlink").length, 1);
+  assert.equal(inline.find("lumir-hp-pathlink")[0].textContent, "notes/a.md");
+
+  const fenced = render("```\nnotes/a.md\n```\n", ctx);
+  assert.equal(fenced.find("lumir-hp-pathlink").length, 0, "代码块优先保证复制与选择手感");
+  assert.equal(fenced.textContent, "notes/a.md");
+});
+
+test("锚内文本不产第二个可点元素（不产嵌套锚）", () => {
+  const { ctx } = pathCtx("notes/a.md");
+  const host = render("[看 notes/a.md](https://example.com)", ctx);
+  assert.equal(host.find("lumir-hp-link").length, 1);
+  assert.equal(host.find("lumir-hp-pathlink").length, 0);
+  assert.equal(host.find("lumir-hp-link")[0].textContent, "看 notes/a.md");
+});
+
+test("表格 cell / 标题 / 列表项里的路径同样在列", () => {
+  const { ctx } = pathCtx("notes/a.md");
+  const table = render("| 位置 |\n|---|\n| notes/a.md |", ctx);
+  assert.equal(table.findTag("td")[0].find("lumir-hp-pathlink").length, 1);
+
+  const heading = render("# 见 notes/a.md", ctx);
+  assert.equal(heading.find("lumir-hp-pathlink").length, 1);
+
+  const list = render("- 见 notes/a.md", ctx);
+  assert.equal(list.find("lumir-hp-pathlink").length, 1);
+});
+
+test("同一段里的多个路径按出现序产出，行号各自独立", () => {
+  const { ctx, opened } = pathCtx("a.md", "notes/b.md");
+  const host = render("先 a.md，再看 notes/b.md:3", ctx);
+  const links = host.find("lumir-hp-pathlink");
+  assert.deepEqual(
+    links.map((el) => el.textContent),
+    ["a.md", "notes/b.md:3"],
+  );
+  fire(links[1], "click");
+  assert.deepEqual(opened, [["notes/b.md", 3]]);
+});
+
+test("Enter 键与点击同一出口；无行号时 open 收到 undefined", () => {
+  const { ctx, opened } = pathCtx("a.md");
+  const host = render("见 a.md", ctx);
+  const link = host.find("lumir-hp-pathlink")[0];
+  fire(link, "keydown", { key: "Enter" });
+  assert.deepEqual(opened, [["a.md", undefined]]);
+});
+
+test("同一源两次渲染结果一致（流式尾块每帧重渲的确定性）", () => {
+  const { ctx } = pathCtx("notes/a.md", "b.md");
+  const source = "见 notes/a.md:3 与 b.md，再看 c.md 完";
+  const first = render(source, ctx);
+  const second = render(source, ctx);
+  assert.equal(first.textContent, second.textContent);
+  assert.deepEqual(
+    first.find("lumir-hp-pathlink").map((el) => el.textContent),
+    second.find("lumir-hp-pathlink").map((el) => el.textContent),
+  );
+  assert.deepEqual(
+    first.find("lumir-hp-pathlink").map((el) => el.textContent),
+    ["notes/a.md:3", "b.md"],
+  );
 });

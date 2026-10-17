@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "路径链接验收。正文里先看 path-link-target.md:12，另见 path-link-dir/keep.md。目录 path-link-dir 不是文件；缺失的 path-link-missing.md 不该可点；越界的 ../outside.md 也不该可点。",
+      "tool_calls": [
+        {
+          "id": "call_pl1",
+          "name": "vault_read",
+          "arguments": "{\"path\":\"path-link-target.md\",\"offset\":12,\"limit\":3}"
+        }
+      ]
+    },
+    {
+      "text": "目标行附近的内容读完了。"
+    }
+  ]
+}

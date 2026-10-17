@@ -1,8 +1,9 @@
 //! 系统上下文装配（design §5、§12）：固定身份段 + AGENTS.md 三层 + Skill 索引。
 //!
 //! - 固定身份段：v1 不做 persona 系统（裁决点 7），固定朴素身份 + 工具使用纪律。正文真源是
-//!   同目录的 `prompts/identity.md`；摘录回指纪律在同目录 `prompts/quote-reference.md`——
-//!   两段都是编译期嵌入的 Markdown（change `harness-prompt-files`），改文案直接改文件。
+//!   同目录的 `prompts/identity.md`；摘录回指纪律在同目录 `prompts/quote-reference.md`，路径
+//!   引用纪律在同目录 `prompts/path-reference.md`——三段都是编译期嵌入的 Markdown（change
+//!   `harness-prompt-files` / `harness-path-link`），改文案直接改文件。
 //! - AGENTS.md 三层：user-wide（`~/.agents/AGENTS.md`）、vault 根（`<vault>/AGENTS.md`）、
 //!   vault 根本地覆盖层（`<vault>/AGENTS.local.md`，change `harness-agents-local-md`）；
 //!   文件不存在**静默跳过**（常态）；嵌套子目录级是 Non-goal。
@@ -35,13 +36,22 @@ const QUOTE_REFERENCE: &str = include_str!("prompts/quote-reference.md");
 /// 装配清单 quote_reference 条目的来源路径（仓内相对路径，供审计反查）。
 const QUOTE_REFERENCE_PATH: &str = "src-tauri/src/harness/prompts/quote-reference.md";
 
+/// 路径引用的纪律（change `harness-path-link` design §7）：harness 面板把 agent 输出里的 vault
+/// 路径渲染为可点元素（命中文件索引才可点、可带行号），这段固定文案负责让模型的写法**可被
+/// 识别**——完整相对路径 + 扩展名、`:行号`、只引用工具结果里真实出现过的路径、不用 Markdown
+/// 链接语法包裹 vault 相对路径。遵从度按抽样观察验收，不进机器判据（mock provider 代表不了
+/// 真实模型）。正文真源见 `prompts/path-reference.md`。
+const PATH_REFERENCE: &str = include_str!("prompts/path-reference.md");
+/// 装配清单 path_reference 条目的来源路径（仓内相对路径，供审计反查）。
+const PATH_REFERENCE_PATH: &str = "src-tauri/src/harness/prompts/path-reference.md";
+
 /// 装配清单的一个来源项（`session_open.assembly` 的元素，design §2）：每个来源的
 /// 路径与**当时是否存在**。「不存在」本身是装配事实的一部分——旧实现静默跳过，
 /// 事后无法区分「没配」与「忘了注入」。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AssemblySource {
-    /// 来源标识：identity / quote_reference / agents_user_wide / agents_vault_root /
-    /// agents_vault_root_local / skill_index。
+    /// 来源标识：identity / quote_reference / path_reference / agents_user_wide /
+    /// agents_vault_root / agents_vault_root_local / skill_index。
     pub source: &'static str,
     /// 来源路径（固定段为仓内相对路径；Skill 索引无单一文件来源，为 null）。
     pub path: Option<String>,
@@ -83,12 +93,13 @@ pub struct AssembledSystem {
     pub manifest: Vec<AssemblySource>,
 }
 
-/// 装配完整系统上下文（固定身份段 + AGENTS.md 三层 + Skill 索引 + 摘录回指纪律）。
+/// 装配完整系统上下文（固定身份段 + AGENTS.md 三层 + Skill 索引 + 摘录回指纪律 + 路径引用纪律）。
 pub fn assemble_system(vault_root: &Path) -> AssembledSystem {
     // 固定段正文来自仓内 Markdown（编译期嵌入，change `harness-prompt-files`）：装配处统一
     // trim 掉文件尾换行 / 行尾空白，注入文本与清单 bytes 都用 trim 后的结果，其余不动。
     let identity = IDENTITY.trim_end();
     let quote_reference = QUOTE_REFERENCE.trim_end();
+    let path_reference = PATH_REFERENCE.trim_end();
     let mut out = String::from(identity);
     let mut manifest = vec![AssemblySource::fixed("identity", IDENTITY_PATH, identity)];
     push_section(&mut out, "引用摘录的回指纪律", quote_reference);
@@ -96,6 +107,14 @@ pub fn assemble_system(vault_root: &Path) -> AssembledSystem {
         "quote_reference",
         QUOTE_REFERENCE_PATH,
         quote_reference,
+    ));
+    // 路径引用纪律紧跟在摘录回指之后（change `harness-path-link` design §7）：两段都是「模型
+    // 怎么写引用」的固定纪律，排在一起；面板的路径链接识别口径以这一段为准。
+    push_section(&mut out, "路径引用的纪律", path_reference);
+    manifest.push(AssemblySource::fixed(
+        "path_reference",
+        PATH_REFERENCE_PATH,
+        path_reference,
     ));
     let user_agents_path = user_agents_path();
     let user_agents = read_agents_md(&user_agents_path);
@@ -379,6 +398,32 @@ mod tests {
     }
 
     #[test]
+    fn path_reference_covers_reference_discipline() {
+        // 路径引用纪律（change harness-path-link design §7）：让模型的写法可被面板识别——
+        // 完整相对路径 + 扩展名、`:行号`、只引用工具结果里出现过的路径、不用 Markdown 链接语法。
+        // 直接对常量断言（不经 assemble_system）——避免与 HOME 全局的环境锁纠缠。
+        assert!(
+            PATH_REFERENCE.contains("完整的 vault 相对路径"),
+            "{PATH_REFERENCE}"
+        );
+        assert!(PATH_REFERENCE.contains("扩展名"), "{PATH_REFERENCE}");
+        assert!(PATH_REFERENCE.contains(":行号"), "{PATH_REFERENCE}");
+        assert!(
+            PATH_REFERENCE.contains("只引用工具结果里真实出现过的路径"),
+            "{PATH_REFERENCE}"
+        );
+        assert!(
+            PATH_REFERENCE.contains("不要用 Markdown 链接语法"),
+            "{PATH_REFERENCE}"
+        );
+        // 目录的写法要单独说清（目录不链接化，写清是目录才不误导读者）。
+        assert!(
+            PATH_REFERENCE.contains("引用目录时说清它是目录"),
+            "{PATH_REFERENCE}"
+        );
+    }
+
+    #[test]
     fn assemble_system_skips_missing_agents_and_includes_index() {
         let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let home = tmpdir("home2");
@@ -406,9 +451,14 @@ mod tests {
         // 消息摘录同属这一固定段（M423，change harness-message-excerpt）：两种元素一处注入，
         // 两个 provider 因此同时拿到。
         assert!(system.contains("<msg-quote role=\"…\""), "{system}");
-        // 装配清单：六个来源全在场，三层 AGENTS 指令文件各记路径与存在与否，skill_index 记数量。
+        // 路径引用纪律是第三个固定段（change harness-path-link）：注入文本里可读，
+        // 判据取纪律的核心句而不是整段（文案可迭代，口径不变）。
+        assert!(system.contains("路径引用的纪律"), "{system}");
+        assert!(system.contains("完整的 vault 相对路径"), "{system}");
+        assert!(system.contains("不要用 Markdown 链接语法"), "{system}");
+        // 装配清单：七个来源全在场，三层 AGENTS 指令文件各记路径与存在与否，skill_index 记数量。
         let manifest = &assembled.manifest;
-        assert_eq!(manifest.len(), 6, "{manifest:?}");
+        assert_eq!(manifest.len(), 7, "{manifest:?}");
         let by_source = |s: &str| manifest.iter().find(|m| m.source == s).unwrap();
         // 固定段（change `harness-prompt-files`）：path 指向仓内来源文件，bytes 为注入
         // （trim 后）文本的字节数。
@@ -428,6 +478,15 @@ mod tests {
             "{quote:?}"
         );
         assert_eq!(quote.bytes, QUOTE_REFERENCE.trim_end().len() as u64);
+        // 路径引用纪律（change harness-path-link）：与摘录回指同口径——仓内来源路径 + trim 后字节数。
+        let path_ref = by_source("path_reference");
+        assert!(path_ref.exists, "{path_ref:?}");
+        assert_eq!(
+            path_ref.path.as_deref(),
+            Some(PATH_REFERENCE_PATH),
+            "{path_ref:?}"
+        );
+        assert_eq!(path_ref.bytes, PATH_REFERENCE.trim_end().len() as u64);
         let user = by_source("agents_user_wide");
         assert!(user.path.as_deref().unwrap().ends_with(".agents/AGENTS.md"));
         assert!(user.exists && user.bytes == 10, "{user:?}"); // "user rules"
@@ -450,7 +509,7 @@ mod tests {
         assert!(skills.exists && skills.bytes > 0, "{skills:?}");
 
         // 换到「空 HOME」+ 无 AGENTS.md / 无 skills 的 vault：三层与索引静默跳过，
-        // 只剩 identity + 摘录回指纪律两个固定段；清单如实记 exists:false。
+        // 只剩 identity + 摘录回指纪律 + 路径引用纪律三个固定段；清单如实记 exists:false。
         let home3 = tmpdir("home3");
         std::env::set_var("HOME", &home3);
         let vault3 = tmpdir("vault3");
@@ -459,21 +518,22 @@ mod tests {
         assert!(!system.contains("user rules"), "{system}");
         assert!(!system.contains("vault rules"), "{system}");
         assert!(system.contains("引用摘录的纪律"), "{system}");
-        assert_eq!(assembled.manifest.len(), 6);
+        assert!(system.contains("路径引用的纪律"), "{system}");
+        assert_eq!(assembled.manifest.len(), 7);
         assert!(
-            !assembled.manifest[2].exists,
+            !assembled.manifest[3].exists,
             "user-wide 缺失须记 exists:false"
         );
         assert!(
-            !assembled.manifest[3].exists,
+            !assembled.manifest[4].exists,
             "vault 根缺失须记 exists:false"
         );
         assert!(
-            !assembled.manifest[4].exists,
+            !assembled.manifest[5].exists,
             "本地覆盖层缺失须记 exists:false"
         );
-        assert_eq!(assembled.manifest[5].skills, Some(0));
-        assert!(!assembled.manifest[5].exists);
+        assert_eq!(assembled.manifest[6].skills, Some(0));
+        assert!(!assembled.manifest[6].exists);
     }
 
     /// 三层齐备（change `harness-agents-local-md` design §4-1）：三份文件内容都在文本中、
@@ -504,7 +564,7 @@ mod tests {
         let local_at = system.find("local override rules").unwrap();
         assert!(root_at < local_at, "{system}");
 
-        assert_eq!(assembled.manifest.len(), 6, "{:?}", assembled.manifest);
+        assert_eq!(assembled.manifest.len(), 7, "{:?}", assembled.manifest);
         let local = assembled
             .manifest
             .iter()
@@ -536,7 +596,7 @@ mod tests {
         assert!(system.contains("user rules"), "{system}");
         assert!(system.contains("vault rules"), "{system}");
         assert!(!system.contains("本机本地覆盖层"), "{system}");
-        assert_eq!(assembled.manifest.len(), 6);
+        assert_eq!(assembled.manifest.len(), 7);
         let local = assembled
             .manifest
             .iter()
@@ -582,6 +642,7 @@ mod tests {
         for (path, embedded) in [
             (IDENTITY_PATH, IDENTITY),
             (QUOTE_REFERENCE_PATH, QUOTE_REFERENCE),
+            (PATH_REFERENCE_PATH, PATH_REFERENCE),
         ] {
             assert!(
                 !path.starts_with('/') && !path.starts_with(".."),
@@ -595,8 +656,9 @@ mod tests {
     }
 
     /// 固定段顺序与拼接格式（顺序是代码逻辑，change `harness-prompt-files`）：空环境里装配
-    /// 结果恰好是 identity + 摘录回指纪律两节——不随 `prompts/` 目录内容 / 枚举顺序变化，
-    /// 且文件尾换行不进入注入文本（输出不以换行结尾）。
+    /// 结果恰好是 identity + 摘录回指纪律 + 路径引用纪律三节（change `harness-path-link` 把
+    /// 路径段追加在摘录段之后）——不随 `prompts/` 目录内容 / 枚举顺序变化，且文件尾换行不进入
+    /// 注入文本（输出不以换行结尾）。
     #[test]
     fn assemble_system_fixed_prefix_is_identity_then_quote_reference() {
         let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -605,9 +667,10 @@ mod tests {
         let _guard = EnvGuard::new(&home);
         let assembled = assemble_system(&vault);
         let expected = format!(
-            "{}\n\n===== 引用摘录的回指纪律 =====\n{}",
+            "{}\n\n===== 引用摘录的回指纪律 =====\n{}\n\n===== 路径引用的纪律 =====\n{}",
             IDENTITY.trim_end(),
-            QUOTE_REFERENCE.trim_end()
+            QUOTE_REFERENCE.trim_end(),
+            PATH_REFERENCE.trim_end()
         );
         assert_eq!(assembled.text, expected);
     }

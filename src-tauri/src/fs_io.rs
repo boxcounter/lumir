@@ -439,9 +439,9 @@ pub struct FsChange {
     /// 投递那一步用同一份规则表算出，下游 MUST NOT 重算（那会引出第二份规则实现）。
     ///
     /// 消费方是两处**索引增量补丁**（`commands::apply_fs_changes` 的 `graph.upsert` 与
-    /// `src/main.ts` 的 `attachmentPaths.push`）：created / modified 且 `lazy` ⇒ 不许进索引
-    ///（索引是磁盘 + 规则的纯函数，不是事件历史的函数）。**deleted 方向无条件移除**、不消费
-    /// 本字段——幂等，且绕开「被删路径 stat 不到、目录限定模式判不准类型」的歧义。
+    /// `src/main.ts` 的 `vaultFilePaths` 增量补丁（`patchAttachmentPaths`）：created / modified 且
+    /// `lazy` ⇒ 不许进索引（索引是磁盘 + 规则的纯函数，不是事件历史的函数）。**deleted 方向无条件
+    /// 移除**、不消费本字段——幂等，且绕开「被删路径 stat 不到、目录限定模式判不准类型」的歧义。
     /// 树侧的可见性不受它影响：惰性条目照样有行。
     pub lazy: bool,
 }

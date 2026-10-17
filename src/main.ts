@@ -111,6 +111,8 @@ import type { VaultListEntry } from "./bindings/VaultListEntry";
 import { extensionOf, codeLanguageOfPath, isEditablePath, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
 import { createHarnessPanel } from "./harness-panel";
+import { openPathAtLine } from "./harness-path-link";
+import { duringViewportTransition } from "./scroll-position-view";
 import { createQuoteGesture } from "./quote-gesture";
 import "./style.css";
 // 搜索 panel 的样式单列一个文件（M139）：与并行 mission 的 src/style.css 隔离，
@@ -1009,9 +1011,16 @@ const editor: EditorHandle = {
     ),
 };
 
-// 附件索引：vault 内全部文件（不含目录）的 vault 相对路径。provider 的
-// resolveByName 闭包活读它，vault 切换 / watch 增量就地更新数组，无需重注。
-let attachmentPaths: string[] = [];
+// vault 文件索引：vault 内全部文件（不含目录 / 惰性条目）的 vault 相对路径。两个消费者：
+// 附件解析（resolveByName 闭包活读它）与 harness 面板的路径链接存在性校验（经
+// setPathLinkIndex 下发；面板只认可打开的文本类文件，过滤在装配层做）。vault 切换 / watch
+// 增量就地更新数组，无需重注。
+let vaultFilePaths: string[] = [];
+/** 面板可点路径集：vault 文件索引里**可打开**的那部分（图片 / 二进制点开只会得到既有的
+ *  「暂不支持预览」，是死路，不链接化——与文件树的打开分类共用同一份注册表）。 */
+function linkableVaultPaths(paths: readonly string[]): string[] {
+  return paths.filter((path) => openKind(path) !== "binary");
+}
 /** 是否已有 vault 装载成功；onOpenVault 失败时据此决定空态还是浮条提示。 */
 let vaultLoaded = false;
 /** 已装载的 vault 根（`vaultLoaded` 为真时有效）：启动恢复有两条入口（完成信号与首次
@@ -1031,7 +1040,7 @@ let vaultName = "";
 // M316 起全部能力注入走 injectEach 注册表（现存 pane 立即施加、新 pane 重放，见其上注释）。
 injectEach((handle) =>
   handle.setAttachmentProvider({
-    resolveByName: (name) => resolveByNameUnique(attachmentPaths, name),
+    resolveByName: (name) => resolveByNameUnique(vaultFilePaths, name),
     async readDataUrl(path) {
       const base64 = await fsReadAttachment(path);
       const mime = mimeTypeOf(extensionOf(path)) ?? "application/octet-stream";
@@ -2262,6 +2271,36 @@ const harnessPanel = createHarnessPanel({
   // 面板发起的瞬态提示（消息摘录失锚 D443）走装配层的 showToast，锚 harness pane 右下角
   //（M420 合同 O4：提示锚定**发起它的 pane**）——toast 产出点单一来源，面板不自建。
   toast: (text) => void showToast(harnessPaneMount(), text),
+  // 面板里的 vault 路径点击（change harness-path-link）：唯一打开链路 + **新标签**意图；带行号
+  // 时落点走 editor.revealLine（与 TOC 同一算式），整个视口动作经转场窗口守 CL-2。下一帧复核
+  // 一次：前台仍是该文件、选区仍停在目标行首、且目标不在视口内才补发——不跟用户抢滚动
+  //（与 editor.ts 的 healCollapsedReveal 同口径）。
+  openVaultPath: (path, line) => {
+    const handle = activeEditor();
+    void openPathAtLine(
+      {
+        open: (target) => openFile(target, openKind(target), "new"),
+        reveal: (at) => handle.revealLine(at),
+        duringTransition: (run) => duringViewportTransition(run),
+        nextFrame: (run) => requestAnimationFrame(run),
+        needsRescroll: () => {
+          if (line === undefined) return false;
+          if (activeEditor() !== handle) return false; // 用户已切到别的 pane：不在后台抢滚动
+          if (handle.activeSession().path !== path) return false;
+          const view = handle.view;
+          const doc = view.state.doc;
+          const pos = doc.line(Math.max(1, Math.min(line, doc.lines))).from;
+          if (view.state.selection.main.head !== pos) return false;
+          const coords = view.coordsAtPos(pos);
+          if (coords === null) return false;
+          const rect = view.scrollDOM.getBoundingClientRect();
+          return coords.bottom > rect.bottom + 1 || coords.top < rect.top - 1;
+        },
+      },
+      path,
+      line,
+    );
+  },
 });
 
 /** 字号步进的焦点路由（M378）：焦点在 harness 面板内 → 步进面板内容字号；否则 → 步进
@@ -2863,7 +2902,8 @@ async function applyVault(
   // 附件索引只由**主动枚举**的条目建出（design §4.6）：惰性条目在树里可见、可打开，但
   // 不进索引——索引的输入必须是磁盘 + 规则的纯函数，不能取决于用户点开过哪些目录
   //（`![[img.png]]` 指向惰性目录里的图片解析为找不到是已知边界）。
-  attachmentPaths = entries.filter((e) => e.kind === "file" && !e.lazy).map((e) => e.path);
+  vaultFilePaths = entries.filter((e) => e.kind === "file" && !e.lazy).map((e) => e.path);
+  harnessPanel.setPathLinkIndex(linkableVaultPaths(vaultFilePaths));
   // 链接索引已在后端随 vault 打开建立；换世代使旧 vault 的在途 resolve
   // 回调全部作废，解析缓存与单链接降级集合整批失效（两件事在 link-follow 里成对）。
   linkFollow.resetForVault();
@@ -2912,10 +2952,12 @@ async function applyVault(
 onFsEntryChanged((changes) => {
   sampleCallback("fs_entry_changed", () => {
     for (const change of changes) {
-      // 附件索引的口径（「哪些事件能改索引」）是 `patchAttachmentPaths` 的纯函数那一份：
-      // 惰性条目不进索引、deleted 无条件移除、其余文件条目照旧。装配层只把结果写回。
-      attachmentPaths = patchAttachmentPaths(attachmentPaths, change);
+      // vault 文件索引的口径（「哪些事件能改索引」）是 `patchAttachmentPaths` 的纯函数那一份：
+      // 惰性条目不进索引、deleted 无条件移除、其余文件条目照旧。装配层只把结果写回；面板的
+      // 可点路径集随后同一批下发（同一份数组、同一个同步点，不另建集合语义）。
+      vaultFilePaths = patchAttachmentPaths(vaultFilePaths, change);
     }
+    harnessPanel.setPathLinkIndex(linkableVaultPaths(vaultFilePaths));
     // 已打开文件被外部变更（Lumir ↔ Obsidian 来回编辑的高频路径，M124）：附件索引与
     // 文件树照常吃增量，文档内容另行处置（save 控制器内分流）。M149：判据是**全部**
     // 打开中的文档而不是前台那一个——多标签下后台标签被外部改写同样要处置（旧实现只查

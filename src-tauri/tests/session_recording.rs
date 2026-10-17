@@ -382,9 +382,16 @@ fn wire_shape_records_full_session() {
             .contains("Lumir 的内置助手"),
         "{open:?}"
     );
-    // 装配清单：六个来源全在场，vault 根 AGENTS.md / AGENTS.local.md 不存在如实记 exists:false。
+    // 装配清单：七个来源全在场（path_reference 由 change harness-path-link 追加在摘录段之后），
+    // vault 根 AGENTS.md / AGENTS.local.md 不存在如实记 exists:false。
     let assembly = open["assembly"].as_array().unwrap();
-    assert_eq!(assembly.len(), 6, "{assembly:?}");
+    assert_eq!(assembly.len(), 7, "{assembly:?}");
+    assert!(
+        assembly
+            .iter()
+            .any(|s| s["source"] == "path_reference" && s["exists"] == true),
+        "{assembly:?}"
+    );
     let vault_root = assembly
         .iter()
         .find(|s| s["source"] == "agents_vault_root")

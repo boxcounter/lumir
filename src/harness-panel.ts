@@ -107,6 +107,14 @@ import { assembleHarnessContext, serializeHarnessContext } from "./harness-conte
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
 import {
+  findPathCandidates,
+  isWellFormedVaultPath,
+  parseToolArgs,
+  splitToolText,
+  toolPathTargets,
+} from "./harness-path-link";
+import type { ToolPathTarget } from "./harness-path-link";
+import {
   createMessageQuoteCard,
   createQuoteCard,
   draftUnknownBlockText,
@@ -143,6 +151,12 @@ export interface HarnessPanelDeps {
    *  消息摘录失锚（D443）经它上屏；面板**不自建** toast 产出点（toast 归属单一来源，M423
    *  按 tower 裁决从面板自持实现收回装配层）。 */
   toast(text: string): void;
+  /**
+   * 点击 vault 路径的落点（change harness-path-link）：装配层经既有唯一打开链路以「新标签」
+   * 意图打开，可选 1-based 行号落点。面板不自己开文件、不判文件系统——路径的合法性与落点
+   * 全在装配层与编辑器侧。
+   */
+  openVaultPath(path: string, line?: number): void;
 }
 
 export interface HarnessPanelHandle {
@@ -162,6 +176,12 @@ export interface HarnessPanelHandle {
   /** 装载新 vault 之后由装配层调用（M312）：把面板的会话作用域切到新 vault——丢掉旧 vault 的
    *  渲染面与本地态，并按当前 vault 重拉一次 `harness_state`。同一个 vault 重复调用是空操作。 */
   vaultChanged(root: string): void;
+  /**
+   * 下发**可点的 vault 文件路径集**（change harness-path-link）：装载 vault 时一次、watch
+   * 增量后一次。面板用它做存在性校验（路径候选只有命中它才可点）；集合内容由装配层按
+   * 「文件 + 非惰性 + 可打开（非图片/二进制）」过滤，面板不重复判定文件类型。
+   */
+  setPathLinkIndex(paths: readonly string[]): void;
   /** 双栏退让（M316 机制，HP1 修订语义）：split（harness 在场）时隐藏标题栏 toggle 钮
    *  （标题栏腾给文档标签槽与 harness 段按比分宽）；⌘⇧A 的命令路径不受影响
    *  （它走 `toggle()`，不经过这颗钮）。 */
@@ -2363,6 +2383,20 @@ export function approvalArgsText(request: {
   return "";
 }
 
+/** 工具行的路径目标（change harness-path-link）：从 summary 的结构化参数里取，解析失败
+ *  （含 80 字截断的摘要）→ 空。MUST NOT 对展示文本做路径正则——卡片上的命令 / 截断 JSON
+ *  不冒充路径。 */
+function toolPathTargetsOf(name: string, summary: string): ToolPathTarget[] {
+  return toolPathTargets(name, parseToolArgs(summary));
+}
+
+/** 批准卡的路径目标：只有 diff 头（写类工具）提供文件名；argv（cli_run）不产路径目标。 */
+function approvalPathTargets(request: { diff?: string | undefined }): ToolPathTarget[] {
+  if (request.diff === undefined) return [];
+  const path = diffPathOf(request.diff);
+  return path !== null && isWellFormedVaultPath(path) ? [{ path }] : [];
+}
+
 
 
 // ---------------------------------------------------------------------------
@@ -2397,15 +2431,72 @@ function textOf(doc: string, node: MdSyntaxNode): string {
   return doc.slice(node.from, node.to);
 }
 
+/** 路径链接化的渲染上下文（change harness-path-link）：单参透传，不引入模块级可变状态——
+ *  流式尾块每帧重渲、单测并行，模块状态会让两次渲染互相污染。
+ *  `isLinkable` 是唯一判据（命中当前 vault 的可打开文件）；`open` 由面板注入。 */
+export interface PathLinkRenderContext {
+  isLinkable(path: string): boolean;
+  open(path: string, line?: number): void;
+}
+
+/** 可点路径元素：button 而非 `<a href>`——不引入 webview 的默认导航与中键点击路径；可聚焦、
+ *  Enter 触发；可见文本与 title 逐字等于模型原文（含行号后缀）。候选来自模型输出，这里只
+ *  持有已通过索引校验的路径，打开动作交给装配层（面板不拼路径、不判文件系统）。 */
+function createPathLinkEl(
+  text: string,
+  path: string,
+  line: number | undefined,
+  ctx: PathLinkRenderContext,
+): HTMLElement {
+  const el = document.createElement("button");
+  el.type = "button";
+  el.className = "lumir-hp-pathlink";
+  el.textContent = text;
+  el.title = text;
+  el.addEventListener("click", (event) => {
+    event.preventDefault();
+    ctx.open(path, line);
+  });
+  el.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    ctx.open(path, line);
+  });
+  return el;
+}
+
+/** 纯文本落地：有上下文时按候选切段（未命中的部分仍是文本节点），否则原样一个文本节点。 */
+function appendText(container: HTMLElement, text: string, ctx?: PathLinkRenderContext): void {
+  if (ctx === undefined) {
+    container.append(document.createTextNode(text));
+    return;
+  }
+  const candidates = findPathCandidates(text, ctx.isLinkable);
+  let pos = 0;
+  for (const candidate of candidates) {
+    if (candidate.from > pos) {
+      container.append(document.createTextNode(text.slice(pos, candidate.from)));
+    }
+    container.append(createPathLinkEl(candidate.text, candidate.path, candidate.line, ctx));
+    pos = candidate.to;
+  }
+  if (pos < text.length) container.append(document.createTextNode(text.slice(pos)));
+}
+
 /** 行内渲染：有名子节点逐个交给 renderInlineNode，节点间隙是纯文本直接落地。 */
-function renderInlineChildren(container: HTMLElement, node: MdSyntaxNode, doc: string): void {
+function renderInlineChildren(
+  container: HTMLElement,
+  node: MdSyntaxNode,
+  doc: string,
+  ctx?: PathLinkRenderContext,
+): void {
   let pos = node.from;
   for (let child = node.firstChild; child !== null; child = child.nextSibling) {
-    if (child.from > pos) container.append(document.createTextNode(doc.slice(pos, child.from)));
-    renderInlineNode(container, child, doc);
+    if (child.from > pos) appendText(container, doc.slice(pos, child.from), ctx);
+    renderInlineNode(container, child, doc, ctx);
     pos = Math.max(pos, child.to);
   }
-  if (node.to > pos) container.append(document.createTextNode(doc.slice(pos, node.to)));
+  if (node.to > pos) appendText(container, doc.slice(pos, node.to), ctx);
 }
 
 /** 链接元素（三种入口共用：`Link` / `Autolink` / 裸 `URL` 节点）。href 只作展示与 title，
@@ -2423,33 +2514,44 @@ function createLinkEl(href: string): HTMLAnchorElement {
   return el;
 }
 
-function renderInlineNode(container: HTMLElement, node: MdSyntaxNode, doc: string): void {
+function renderInlineNode(
+  container: HTMLElement,
+  node: MdSyntaxNode,
+  doc: string,
+  ctx?: PathLinkRenderContext,
+): void {
   switch (node.name) {
     case "Emphasis": {
       const el = document.createElement("em");
       container.append(el);
-      renderInlineChildren(el, node, doc);
+      renderInlineChildren(el, node, doc, ctx);
       return;
     }
     case "StrongEmphasis": {
       const el = document.createElement("strong");
       container.append(el);
-      renderInlineChildren(el, node, doc);
+      renderInlineChildren(el, node, doc, ctx);
       return;
     }
     case "Strikethrough": {
       const el = document.createElement("s");
       container.append(el);
-      renderInlineChildren(el, node, doc);
+      renderInlineChildren(el, node, doc, ctx);
       return;
     }
     case "InlineCode": {
       // 类名与编辑器行内代码同源（cm-lp-inline-code）：镜像的 preview 主题把同一颗
       // 药丸样式带进来，面板与正文读起来是同一个东西（REVIEW.md 「同一语义两处真源」条：不另造第二套）。
+      // 行内代码里的路径同样链接化（change harness-path-link 起草期取值 2：agent 最常用反引号
+      // 写路径；目录与噪音仍被存在性校验挡住）。
       const el = document.createElement("code");
       el.className = "cm-lp-inline-code";
       const codeText = node.getChild("CodeText");
-      el.textContent = codeText !== null ? textOf(doc, codeText) : textOf(doc, node).replace(/^`|`$/g, "");
+      appendText(
+        el,
+        codeText !== null ? textOf(doc, codeText) : textOf(doc, node).replace(/^`|`$/g, ""),
+        ctx,
+      );
       container.append(el);
       return;
     }
@@ -2461,6 +2563,8 @@ function renderInlineNode(container: HTMLElement, node: MdSyntaxNode, doc: strin
       if (node.name === "Autolink") {
         el.textContent = textOf(doc, node).replace(/^<|>$/g, "");
       } else {
+        // 锚内部不再产可点元素：嵌套锚在 HTML 里不合法，且这段文本已有自己的导航语义。
+        // 不传上下文（而不是传一个「永远不可点」的上下文）——省掉一次无谓的候选扫描。
         renderInlineChildren(el, node, doc);
       }
       container.append(el);
@@ -2498,9 +2602,9 @@ function renderInlineNode(container: HTMLElement, node: MdSyntaxNode, doc: strin
     default: {
       if (SKIP_NODES.has(node.name)) return;
       if (node.firstChild !== null) {
-        renderInlineChildren(container, node, doc);
+        renderInlineChildren(container, node, doc, ctx);
       } else {
-        container.append(document.createTextNode(textOf(doc, node)));
+        appendText(container, textOf(doc, node), ctx);
       }
     }
   }
@@ -2587,20 +2691,26 @@ function tableRowSlotsOf(row: MdSyntaxNode): Array<MdSyntaxNode | undefined> {
   return cells;
 }
 
-/** 块级渲染：top-level 节点 → 块元素。不认识的块按转义文本段落落地（可见但惰性）。 */
-function renderBlock(container: HTMLElement, node: MdSyntaxNode, doc: string): void {
+/** 块级渲染：top-level 节点 → 块元素。不认识的块按转义文本段落落地（可见但惰性）。
+ *  `ctx` 只作用于行内文本落地；代码块（围栏 / 缩进）不经过它——代码里的路径不链接化。 */
+function renderBlock(
+  container: HTMLElement,
+  node: MdSyntaxNode,
+  doc: string,
+  ctx?: PathLinkRenderContext,
+): void {
   const heading = /^ATXHeading([1-6])$/.exec(node.name);
   if (heading !== null || node.name === "SetextHeading1" || node.name === "SetextHeading2") {
     const level = heading !== null ? heading[1] : node.name === "SetextHeading1" ? "1" : "2";
     const el = document.createElement(`h${level}`);
-    renderInlineChildren(el, node, doc);
+    renderInlineChildren(el, node, doc, ctx);
     container.append(el);
     return;
   }
   switch (node.name) {
     case "Paragraph": {
       const el = document.createElement("p");
-      renderInlineChildren(el, node, doc);
+      renderInlineChildren(el, node, doc, ctx);
       container.append(el);
       return;
     }
@@ -2618,7 +2728,7 @@ function renderBlock(container: HTMLElement, node: MdSyntaxNode, doc: string): v
             li.append(marker, document.createTextNode(" "));
             continue;
           }
-          renderBlock(li, item, doc);
+          renderBlock(li, item, doc, ctx);
         }
         el.append(li);
       }
@@ -2628,7 +2738,7 @@ function renderBlock(container: HTMLElement, node: MdSyntaxNode, doc: string): v
     case "Blockquote": {
       const el = document.createElement("blockquote");
       for (let child = node.firstChild; child !== null; child = child.nextSibling) {
-        renderBlock(el, child, doc);
+        renderBlock(el, child, doc, ctx);
       }
       container.append(el);
       return;
@@ -2656,7 +2766,7 @@ function renderBlock(container: HTMLElement, node: MdSyntaxNode, doc: string): v
         const row = document.createElement("tr");
         for (const cell of plan.cells) {
           const cellEl = document.createElement(plan.header ? "th" : "td");
-          if (cell !== undefined) renderInlineChildren(cellEl, cell, doc);
+          if (cell !== undefined) renderInlineChildren(cellEl, cell, doc, ctx);
           row.append(cellEl);
         }
         (plan.header ? thead : tbody).append(row);
@@ -2684,7 +2794,7 @@ function renderBlock(container: HTMLElement, node: MdSyntaxNode, doc: string): v
       if (node.name === "Document") {
         let child = node.firstChild;
         while (child !== null) {
-          renderBlock(container, child, doc);
+          renderBlock(container, child, doc, ctx);
           child = child.nextSibling;
         }
         return;
@@ -2698,10 +2808,17 @@ function renderBlock(container: HTMLElement, node: MdSyntaxNode, doc: string): v
 
 /** 一段完整 Markdown → 追加渲染到容器（多块）。导出是为了让单测用最小 DOM 替身驱动**这份
  *  真渲染件**（tests/unit/harness-transcript-render.test.ts：裸 URL 上屏为锚、Link 之下的
- *  URL 不重复上屏）——纯函数层驱动不到 DOM 面，重建一份渲染器则失去判据（REVIEW.md 「同一语义两处真源」条）。 */
-export function renderMarkdownInto(container: HTMLElement, source: string): void {
+ *  URL 不重复上屏、vault 路径可点）——纯函数层驱动不到 DOM 面，重建一份渲染器则失去判据
+ *  （REVIEW.md 「同一语义两处真源」条）。
+ *
+ *  `ctx` 缺省 = 不做路径链接化（单测与既有调用逐字不变）；面板内部传入自己的上下文。 */
+export function renderMarkdownInto(
+  container: HTMLElement,
+  source: string,
+  ctx?: PathLinkRenderContext,
+): void {
   const tree = mdParser.parse(source);
-  renderBlock(container, tree.topNode, source);
+  renderBlock(container, tree.topNode, source, ctx);
 }
 
 /**
@@ -2746,6 +2863,8 @@ interface PendingApproval {
    *  层级由 Rust 判定管线产出，前端只按 kind 取文案。 */
   reason?: DecisionReason | undefined;
   argsText: string;
+  /** 参数里取到的路径目标（change harness-path-link）：行内重渲 / 终态行复用，不在重渲时重解析。 */
+  targets: readonly ToolPathTarget[];
   element: HTMLElement;
   row: HTMLElement;
   wrap: HTMLElement;
@@ -3187,6 +3306,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 当前 vault 根路径（会话作用域基准：事件过滤与快照准入都用它；null = 尚未装载 vault）。
    *  由装配层在每次装载 vault 后经 `vaultChanged` 传入（src/main.ts 的 applyVault）。 */
   let currentVault: string | null = null;
+  /** 可点 vault 文件路径索引（change harness-path-link）：装配层经 `setPathLinkIndex` 下发，
+   *  渲染时同步查询（零 IPC——流式尾块每帧重渲，逐帧 IPC 会闪烁）。空集 = 不链接化（未装载 /
+   *  单测）。集合语义（文件 + 非惰性 + 可打开）由装配层按既有索引与打开分类裁定，面板只查表。 */
+  let pathLinkPaths: ReadonlySet<string> = new Set();
+  const pathLinks: PathLinkRenderContext = {
+    isLinkable: (path) => pathLinkPaths.has(path),
+    open: (path, line) => deps.openVaultPath(path, line),
+  };
   /** 快照请求的世代号：只应用**最新一次**请求的结果。挂载那一次拉取与切 vault 的那一次可能
    *  同时在飞——迟到的旧响应会把已经清空的 transcript 又灌回旧 vault 的消息，或把同一份
    *  消息追加两遍（两条都是可见的错乱）。 */
@@ -5161,7 +5288,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 工具行的三段式文本（M406 摘要人话化 + Alex 区分度精化，原型 .ttext）：工具名徽章
    *（mono，身份）+ 关键参数全文（mono accent，等宽完整显示命令 / 文件名）+ 可选尾注
    *（次级读数：等待批准 / 失败摘要等）。截断只落参数段（CSS ellipsis），尾注不截。 */
-  function createToolText(name: string, args: string, tail?: string): HTMLElement {
+  /** 工具行的参数格：`args` 是**展示文本**（人话化后的参数摘要；不重写）。
+   *  `targets` 是结构化参数里取到的路径目标（change harness-path-link）——只把命中文件索引的
+   *  目标切成可点元素，其余文本（含同一格里的命令 / 箭头 / 截断摘要）逐字落地。 */
+  function createToolText(
+    name: string,
+    args: string,
+    tail?: string,
+    targets: readonly ToolPathTarget[] = [],
+  ): HTMLElement {
     const text = document.createElement("span");
     text.className = "lumir-hp-tool-text";
     const nameEl = document.createElement("span");
@@ -5171,7 +5306,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (args !== "") {
       const argsEl = document.createElement("span");
       argsEl.className = "lumir-hp-tool-args";
-      argsEl.textContent = args;
+      if (targets.length === 0) {
+        argsEl.textContent = args;
+      } else {
+        for (const segment of splitToolText(args, targets)) {
+          if (segment.target !== undefined && pathLinks.isLinkable(segment.target.path)) {
+            argsEl.append(
+              createPathLinkEl(
+                segment.text,
+                segment.target.path,
+                segment.target.line,
+                pathLinks,
+              ),
+            );
+          } else {
+            argsEl.append(document.createTextNode(segment.text));
+          }
+        }
+      }
       text.append(document.createTextNode(" "), argsEl);
     }
     if (tail !== undefined && tail !== "") {
@@ -5307,7 +5459,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (status === "started") {
       const row = document.createElement("div");
       row.className = "lumir-hp-tool-row is-running";
-      row.append(createToolIcon("running"), createToolText(name, humanizeToolArgs(name, summary)));
+      row.append(
+        createToolIcon("running"),
+        createToolText(name, humanizeToolArgs(name, summary), undefined, toolPathTargetsOf(name, summary)),
+      );
       startedArgs.set(row, summary);
       block.el.append(row);
       block.rows.push(row);
@@ -5326,7 +5481,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // （判据「是 JSON 才取参数」），而 M528 起 core 的成品摘要不是 JSON ⇒ 失败行的参数格
         // 整格空掉、命令本体消失（修前的可见性本来就分两半：arguments ≤80 字的调用严格版能
         // 解析出命令、看得见；>80 字的调用原文截断后照样看不见——M528 与这处一并收口）。
-        createToolText(name, toolArgsText(name, args), failed ? summary : undefined),
+        createToolText(name, toolArgsText(name, args), failed ? summary : undefined, toolPathTargetsOf(name, args)),
       );
     } else {
       // 无 running 行（乱序 done / 桩环境）：没有更早的那份摘要可用，done 原文按形状判定。
@@ -5335,7 +5490,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       row.className = failed ? "lumir-hp-tool-row is-fail" : "lumir-hp-tool-row is-done";
       row.append(
         createToolIcon(failed ? "fail" : "done"),
-        createToolText(name, humanizeToolArgsStrict(name, summary), failed ? summary : undefined),
+        createToolText(
+          name,
+          humanizeToolArgsStrict(name, summary),
+          failed ? summary : undefined,
+          toolPathTargetsOf(name, summary),
+        ),
       );
       block.el.append(row);
       block.rows.push(row);
@@ -5416,10 +5576,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const basisText = approvalReasonText(pending.reason);
     if (basis !== null && basisText !== null) basis.textContent = basisText;
     // 待决行的「等待批准」尾注同口径重取（行是交互中的 UI，不是历史记录）；argsText 是
-    // 数据（命令 / 文件名），不译文。
+    // 数据（命令 / 文件名），不译文。路径目标随行重建（结构化参数 → 可点段）。
     pending.row.replaceChildren(
       createToolIcon("running"),
-      createToolText(pending.tool, pending.argsText, t("D416")),
+      createToolText(pending.tool, pending.argsText, t("D416"), pending.targets),
     );
     // vault_delete 的后果说明（D435）是 chrome 文案，随语言重取。
     const note = pending.element.querySelector(".lumir-hp-approval-note");
@@ -5478,7 +5638,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     tres.append(outcomeEl, document.createTextNode(" "), whenEl);
     row.replaceChildren(
       createToolIcon(approved ? "done" : "fail"),
-      createToolText(pending.tool, pending.argsText),
+      createToolText(pending.tool, pending.argsText, undefined, pending.targets),
       tres,
     );
 
@@ -5569,17 +5729,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     ensureStreamingMessage();
     const block = ensureToolsBlock();
     const argsText = approvalArgsText(request);
+    const pathTargets = approvalPathTargets(request);
     let row = block.running;
     if (row !== null) {
       // started 行就地升级：截断摘要换成批准载荷全文 +「等待批准」尾注。
       startedArgs.delete(row);
       row.classList.add("is-waiting");
-      row.replaceChildren(createToolIcon("running"), createToolText(request.tool, argsText, t("D416")));
+      row.replaceChildren(
+        createToolIcon("running"),
+        createToolText(request.tool, argsText, t("D416"), pathTargets),
+      );
     } else {
       // 无 running 行（快照恢复的 pending_approval / 协议外到达）：补建待决行。
       row = document.createElement("div");
       row.className = "lumir-hp-tool-row is-running is-waiting";
-      row.append(createToolIcon("running"), createToolText(request.tool, argsText, t("D416")));
+      row.append(
+        createToolIcon("running"),
+        createToolText(request.tool, argsText, t("D416"), pathTargets),
+      );
       block.el.append(row);
       block.rows.push(row);
       block.running = row;
@@ -5693,6 +5860,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       purpose: request.purpose,
       reason: request.reason,
       argsText,
+      targets: pathTargets,
       element: el,
       row,
       wrap,
@@ -5950,12 +6118,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const grown = seg.source.slice(seg.renderedFinalized, boundary);
       const finalizedEl = document.createElement("div");
       finalizedEl.className = "lumir-hp-md-final";
-      renderMarkdownInto(finalizedEl, grown);
+      renderMarkdownInto(finalizedEl, grown, pathLinks);
       seg.el.insertBefore(finalizedEl, seg.tailEl);
       seg.renderedFinalized = boundary;
     }
     seg.tailEl.replaceChildren();
-    renderMarkdownInto(seg.tailEl, seg.source.slice(seg.renderedFinalized));
+    renderMarkdownInto(seg.tailEl, seg.source.slice(seg.renderedFinalized), pathLinks);
     scrollToBottom();
   }
 
@@ -5976,7 +6144,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const el = streamingEl;
     for (const seg of textSegments) {
       seg.el.replaceChildren();
-      renderMarkdownInto(seg.el, seg.source);
+      renderMarkdownInto(seg.el, seg.source, pathLinks);
     }
     // 纯工具轮（模型零正文产出）不挂复制钮——空源复制无意义（与 appendUserMessage 同口径）。
     if (streamingText !== "") attachCopyButton(el, streamingText);
@@ -6140,7 +6308,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             pending.row.classList.replace("is-running", "is-fail");
             pending.row.replaceChildren(
               createToolIcon("fail"),
-              createToolText(pending.tool, pending.argsText, t("D383")),
+              createToolText(pending.tool, pending.argsText, t("D383"), pending.targets),
             );
           }
           for (const block of [activeTools, ...sealedToolBlocks]) {
@@ -6216,7 +6384,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         if (text !== null) {
           const body = document.createElement("div");
           body.className = "lumir-hp-body";
-          renderMarkdownInto(body, text);
+          renderMarkdownInto(body, text, pathLinks);
           el.append(body);
           attachCopyButton(el, text); // 复制源 = 模型原始输出（留存原文）
         }
@@ -6281,7 +6449,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         createToolIcon(approved ? "done" : "fail"),
         // M528：core 的参数摘要已是成品人话文本（不再是 JSON），用参数格口径取值——
         // 严格版会把成品摘要判成「没有参数」，恢复后「已采纳」行的命令就此消失。
-        createToolText(name, toolArgsText(name, summary)),
+        createToolText(name, toolArgsText(name, summary), undefined, toolPathTargetsOf(name, summary)),
       );
       const tres = document.createElement("span");
       tres.className = "lumir-hp-tool-res";
@@ -6325,7 +6493,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       : undefined;
     row.append(
       createToolIcon(failed ? "fail" : "done"),
-      createToolText(name, failed ? humanizeToolArgsStrict(name, summary) : humanizeToolArgs(name, summary), tail),
+      createToolText(
+        name,
+        failed ? humanizeToolArgsStrict(name, summary) : humanizeToolArgs(name, summary),
+        tail,
+        toolPathTargetsOf(name, summary),
+      ),
     );
     block.el.append(row);
     block.rows.push(row);
@@ -6483,6 +6656,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     refreshChip();
     fetchSnapshot();
     void restoreDraft();
+  }
+
+  /** 可点路径索引的下发（见 `pathLinkPaths` 的注释）：整表替换，一次建 Set。 */
+  function setPathLinkIndex(paths: readonly string[]): void {
+    pathLinkPaths = new Set(paths);
   }
 
   /**
@@ -7204,6 +7382,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     },
     titlebarSegment: () => seg,
     vaultChanged,
+    setPathLinkIndex,
     setChromeRetreat(on) {
       toggleButton.hidden = on;
     },

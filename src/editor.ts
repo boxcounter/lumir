@@ -2293,13 +2293,19 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   /** 1-based 行号 → 行首落点 + 居中滚动的**唯一实现**（M281 抽出）：公共面 `revealLine`
    *  （wikilink 锚点跳转）与 goto-line 的确认路径（`jumpToLine`）共用同一份算式——MUST NOT
    *  各写一套（REVIEW.md 「同一语义两处真源」条：同一语义两处真源即漂移）。越界在这里钳制（`1..doc.lines`），
-   *  因此调用方不必自己判界。 */
+   *  因此调用方不必自己判界。
+   *
+   *  **捕获让位窗口**（change harness-path-link，阅读位置合同 CL-2）：行跳转是应用自己推动
+   *  视口，滚动事件落在视口动作的中间态上，不得被阅读位置的捕获侧记录。窗口在下一帧关闭
+   *  （边界由写回落地定义，不用时长量）——与 `focusPreservingReadingPosition` 同一开窗器。 */
   function revealLineAt(line: number): void {
     const n = Math.max(1, Math.min(line, view.state.doc.lines));
     const pos = view.state.doc.line(n).from;
-    view.dispatch({
-      selection: { anchor: pos },
-      effects: EditorView.scrollIntoView(pos, { y: "center" }),
+    duringViewportTransition(() => {
+      view.dispatch({
+        selection: { anchor: pos },
+        effects: EditorView.scrollIntoView(pos, { y: "center" }),
+      });
     });
   }
 
