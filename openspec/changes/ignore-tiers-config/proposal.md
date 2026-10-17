@@ -4,7 +4,15 @@
 - 日期: 2026-10-17
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
-> **对 Alex 原话的一处修正（提案评审时请一并复核）**
+> 评审记录：
+> 节点 1（提案评审）：2026-10-17 Alex 批准（tower 转达），附三条裁决修正：
+> ① 「缺省即默认」修正**采纳**（本文即此写法，保持）；
+> ② **`.git` 恒护栏被拒绝**——删除已有提醒且只进系统回收站，重命名 / 移动是可撤销动作，产品立场是
+>    不过度保护用户；实现与文档中 MUST NOT 出现该护栏，`.git` 与普通可见条目同规则；
+> ③ 键名改为 **`hidden` / `lazy`**（原 `never_show` 更名 `hidden`），代码、schema、文档与验收场景统一。
+> 节点 2（归档评审）：留白（实现完成后填写）。
+
+> **对 Alex 原话的一处修正（已复核并采纳）**
 >
 > Alex 原话要求「一安装就会生成的配置文件里的默认配置」。本提案改为**「缺省即默认」**：
 > `config.json` 里没有这两个键 = 用代码内置默认；写了 = 覆盖该档（显式写 `[]` 也是覆盖，表示这一档没有名字）。
@@ -51,7 +59,7 @@ Alex 原话（裁决，逐字）：
    ```json
    {
      "vault": {
-       "never_show": [".git", ".DS_Store"],
+       "hidden": [".git", ".DS_Store"],
        "lazy": ["node_modules", "target", "dist", "..."]
      }
    }
@@ -64,26 +72,26 @@ Alex 原话（裁决，逐字）：
      用户给的名字解释。
    - **两个键都不含某个名字 ⇒ 该名字走用户规则 / 完全可见**：这就是「第三档」，不需要第三个键。
    - 逐项非法 ⇒ 丢该项 + 一条人话 warning，其余项照常生效（与 `rule_files` 同形）；整个字段给错类型
-     （如 `"never_show": ".git"`）⇒ 既有解析模型下的整文件回落（与 `editor.font_size` 同族，如实登记）。
-   - 同一个名字同时出现在两个键里 ⇒ **按 `never_show` 生效** + 一条 warning（不静默择一）。
+     （如 `"hidden": ".git"`）⇒ 既有解析模型下的整文件回落（与 `editor.font_size` 同族，如实登记）。
+   - 同一个名字同时出现在两个键里 ⇒ **按 `hidden` 生效** + 一条 warning（不静默择一）。
    - 生效时点与 `rule_files` 一致：vault 装载时读一次，**下次装载生效**，不做热重载。
 
 2. **默认分档（代码内置默认）**：
-   - `never_show` = `[".git", ".DS_Store"]`。理由：`.git` 是仓库对象库、删除即仓库报废（破坏性操作面）；
+   - `hidden` = `[".git", ".DS_Store"]`。理由：`.git` 是仓库对象库、删除即仓库报废（破坏性操作面）；
      `.DS_Store` 是纯系统噪声。这两个名字「不显示」比「惰性可见」更符合它们的用途。
    - `lazy` = 其余 14 名：`node_modules`、`.venv`、`venv`、`__pycache__`、`.next`、`.nuxt`、`.cache`、
      `.pnpm-store`、`.tox`、`.gradle`、`test-results`、`perf-results`、`target`、`dist`。
      它们是构建产物 / 依赖副本 / 工具链输出——按结构可推导，但不含用户正文，默认给「树里可见、
      按需展开、不进全量枚举与索引」，与既有用户规则惰性**同待遇**。
    - **保存临时文件模式恒定硬编码**：`.lumir-*` / `.*.lumir-*` 不进配置面。那是数据损坏面（应用自己的
-     保存中途文件与崩溃残留），不是「用户可调偏好」；即使把 `never_show` 写成 `[]`，它们仍被挡下。
+     保存中途文件与崩溃残留），不是「用户可调偏好」；即使把 `hidden` 写成 `[]`，它们仍被挡下。
    - **默认分档是一次有意的行为变化**：升级后首次打开 vault，14 个名字对应的目录会从「没有行」变成
      「一行惰性条目」（例如 `node_modules`、`target`、`dist`）。枚举代价不变（惰性条目本来就不递归），
      索引面不变（惰性条目仍不进索引），变化只在**可见性**——这正是 Alex 要的「看得见、点开才付费」。
 
-3. **判定顺序固定为四层**：`never_show` 档（含恒定临时文件模式）→ `lazy` 档 → 用户规则（`.gitignore` /
+3. **判定顺序固定为四层**：`hidden` 档（含恒定临时文件模式）→ `lazy` 档 → 用户规则（`.gitignore` /
    `info/exclude`）→ 可见。
-   - 前两档命中即定格：用户规则里的取反（`!target/`）`MUST NOT` 把 `never_show` 或 `lazy` 档的名字翻走
+   - 前两档命中即定格：用户规则里的取反（`!target/`）`MUST NOT` 把 `hidden` 或 `lazy` 档的名字翻走
      （惰性档被取反后若能翻成「完全可见」，就等于一行 `.gitignore` 把该名字拉进索引与全量枚举——性能
      护栏又回到用户可关的状态）。
    - **这是对 change `vault-open-ignore-set` §2.6 条款的显式修订**：原条款写「内置名单是产品硬编码、
@@ -93,7 +101,7 @@ Alex 原话（裁决，逐字）：
      两份 spec 因此不打架：`.gitignore` 语义仍只管用户规则那一层。
 
 4. **watch 增量事件流的判定按档分流**（与枚举同一份策略）：
-   - `never_show` 档：路径任一组件命中（含最后一段）⇒ 丢弃（与今日内置规则的行为逐条一致）。
+   - `hidden` 档：路径任一组件命中（含最后一段）⇒ 丢弃（与今日内置规则的行为逐条一致）。
    - `lazy` 档：与用户规则同形——祖先命中且该目录**尚未被按需展开** ⇒ 丢弃；最后一段一律投递；
      payload 的 `lazy` 标记按同一份规则表算出（`lazy` 档或用户规则命中 ⇒ true）。因此外部 `mkdir target`
      现在会产生**一行惰性条目的 created 事件**（树里多一行，与枚举结果一致），但其中的子孙事件在展开前
@@ -101,13 +109,14 @@ Alex 原话（裁决，逐字）：
    - 惰性条目（无论来自哪一档）继续不进链接索引与附件索引；删除方向仍无条件移除。
 
 5. **埋点口径**：`vault_scan_ignored`（[logging.rs:490](../../../src-tauri/src/logging.rs#L490)）只统计
-   **被 `never_show` 档（含临时文件模式）剪掉的条目数**。惰性条目有行、看得见，不属于「文件不见了」的
+   **被 `hidden` 档（含临时文件模式）剪掉的条目数**。惰性条目有行、看得见，不属于「文件不见了」的
    诊断对象；事件名、字段与隐私口径（只有计数）都不变。
 
-6. **新建 / 改名的名字校验**：末段名命中 `never_show` 档（含临时文件模式）⇒ `fs_name_invalid`（沿用既有
+6. **新建 / 改名的名字校验**：末段名命中 `hidden` 档（含临时文件模式）⇒ `fs_name_invalid`（沿用既有
    文案口径）；命中 `lazy` 档或用户规则 ⇒ `MUST NOT` 拒绝（该名字本来就可见、可打开，只是不进索引）。
-   判定改由装载时编译的同一份策略给出，不再读某个进程级常量表。
-   - **`.git` 恒护栏（裁决点 1，见下）**：即使 `.git` 被配置成可见，删除 / 重命名 / 移动它仍被拒绝。
+   判定改由装载时编译的同一份策略给出，不再读某个进程级常量表。**没有任何名字级写操作特判**
+   （裁决 ②）：`.git` 与其他名字同规则——它默认在 `hidden` 档，因此默认没有行、不可操作；用户把它
+   配置成可见后，它就与普通条目一样可删 / 可改名 / 可移动。
 
 7. **前端内联编辑预检的重复名单退役**：[src/tree.ts:44](../../../src/tree.ts#L44) 的 `IGNORED_NAMES`、
    对应的对账测试、以及 `validateEntryName` 里的名单判定一并删除。前端保留形状校验（非空 / 不含 `/` /
@@ -135,33 +144,33 @@ Alex 原话（裁决，逐字）：
 - **影响的 specs**：
   - `fs-io`：4 条 MODIFIED——「全类型递归枚举」（四层判定 + 两个配置键 + 默认分档 + 名字校验口径）、
     「watch 增量事件流」（按档分流的组件判定）、「按需枚举目录」（分类口径同源改写）、
-    「文件级操作（删除 / 重命名 / 新建 / 定位）」（忽略集名判定改口径 + `.git` 恒护栏）。
-  - `file-tree`：3 条 MODIFIED——「全类型文件树展示」（可见集含惰性档名字；`never_show` 档名字仍不出行；
+    「文件级操作（删除 / 重命名 / 新建 / 定位）」（忽略集名判定改口径；无名字级写操作特判）。
+  - `file-tree`：3 条 MODIFIED——「全类型文件树展示」（可见集含惰性档名字；`hidden` 档名字仍不出行；
     树侧仍不得有第二份名单）、「条目内联重命名」与「目录下新建」（忽略集判定改由后端权威，前端只留
     形状校验与结果回显）。
 - **影响的代码/系统**：
-  - `src-tauri/src/config.rs`：`VaultConfig` 增两个字段、两个默认常量（`DEFAULT_NEVER_SHOW` /
+  - `src-tauri/src/config.rs`：`VaultConfig` 增两个字段、两个默认常量（`DEFAULT_HIDDEN` /
     `DEFAULT_LAZY`）、`RawVaultConfig` 两个逐项校验字段、`validate_vault` 的名字校验与冲突 warning、
     单测。
   - `src-tauri/src/fs_io.rs`：`IgnorePolicy` 持两档匹配器（`load` 增参数）、`classify` 四层判定、
     `watch_verdict` 按档分流、`scan_workspace` 计数口径、`validate_new_name` / `ensure_parent_dirs` /
-    `find_vault_entry_by_name` 改走策略、`.git` 恒护栏、`BUILTIN_NAMES` 退役、单测。
+    `find_vault_entry_by_name` 改走策略、`BUILTIN_NAMES` 退役、单测。
   - `src-tauri/src/commands.rs`：`prepare_vault_open` 把三个字段一起交给 `IgnorePolicy::load`；四条文件级
     写命令取 `state.root_and_policy()` 后下传。
   - `src/bindings/VaultConfig.ts`：ts-rs 重导出（两个新字段）。
   - `src/tree.ts`：删 `IGNORED_NAMES` 与名单判定；`tests/unit/tree-paths.test.ts` 删除对账测试、调整
     校验矩阵（`target` / `node_modules` 一类惰性档名字改为「可提交」）。
   - `src-tauri/tests/vault_open_readings.rs`：`node_modules` 期望从「不进枚举」改为「一行惰性条目」。
-  - **需要扩实现范围（本 change 的实现范围未含，见 tasks 的标注）**：
+  - **实现范围（已按裁决扩入）**：
     - `src-tauri/src/harness/tools.rs`：`vault_create_file` / `fs_move_entry` 两个调用点要传策略
       （否则 harness 侧仍按旧常量校验，形成第二套语义）。
     - `scripts/acceptance/scenarios/67-vault-open-ignore-set.md`：`target` / `dist` / `test-results` /
       `node_modules` / `.venv` 的「不出现在树里」期望要改成「出现惰性行、可展开」，外部写入的幻影行
       判据同步改准。
     - `docs/specs/config-reference.md`：该文档今天**没有** `[vault]` 节（`rule_files` 都未记载，
-      全文 `grep rule_files` 零命中），本次补上 `[vault]` 三键（`rule_files` / `never_show` / `lazy`），
+      全文 `grep rule_files` 零命中），本次补上 `[vault]` 三键（`rule_files` / `hidden` / `lazy`），
       否则 Alex 无从知道键名与默认值。
-    - `src-tauri/src/logging.rs`：`vault_scan_ignored` 的文档注释一句（「内置规则」改「`never_show` 档」），
+    - `src-tauri/src/logging.rs`：`vault_scan_ignored` 的文档注释一句（「内置规则」改「`hidden` 档」），
       代码不变。
 - **关联约束**：
   - ADR 0002 第 5 条（配置即数据、schema 校验、非法值人话回落）——两个新键的校验模板；
@@ -176,9 +185,10 @@ Alex 原话（裁决，逐字）：
 
 | # | 裁决点 | 推荐 | 备选 | Alex 裁决 |
 |---|---|---|---|---|
-| 1 | `.git` 是否加「不可重命名 / 删除 / 移动」的**恒护栏**（与分档无关，即使 `.git` 被配置成可见） | **加**。`.git` 是仓库对象库：删除到废纸篓、改名、移出 vault 都会让仓库瞬间报废（历史不可见，只能靠手动回滚）。配置化让它可以变成可见行，可见就必然可操作（右键菜单 / 拖拽）；这是产品唯一能防住的数据损坏面。护栏只挡**以 `.git` 为末段名**的写操作（含新建 / 改名 / 移动的目标名），不挡读取——把 `.git` 配置成惰性后照样可以展开、打开其中的文件。 | 不加：完全交给分档，用户自己承担误操作；`.git` 默认仍不可见，只有主动配置才暴露。 | 待裁 |
+| 1 | `.git` 是否加「不可重命名 / 删除 / 移动」的**恒护栏**（与分档无关，即使 `.git` 被配置成可见） | 加 | 不加 | **拒绝护栏**（2026-10-17）。理由（Alex 原话口径）：删除已有提醒且只进系统回收站，重命名 / 移动是可撤销动作，产品立场是不过度保护用户。落点：`.git` 与普通可见条目同规则——默认在 `hidden` 档没有行；用户把它配置成可见后即可删 / 改名 / 移动，代码与制品中 MUST NOT 出现该护栏或任何名字级写操作特判。 |
 
 其余取舍（不请裁决，提案已定）：
 
 - 前端预检名单退役、忽略集判定只留后端（What Changes 第 7 条）——换取「名单可配置后不再有第二份真源」。
-- 默认分档按既定设计修正执行（`never_show` 2 名 + `lazy` 14 名）。
+- 默认分档按既定设计修正执行（`hidden` 2 名 + `lazy` 14 名）。
+- 键名按裁决取 `hidden` / `lazy`。

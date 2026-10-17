@@ -3,13 +3,16 @@
 > 起草注记（非规格正文）：本 delta 四条 MODIFIED，基线是 living spec
 > [openspec/specs/fs-io/spec.md](../../../../specs/fs-io/spec.md) 的「全类型递归枚举」「watch 增量事件流」
 > 「按需枚举目录」「文件级操作（删除 / 重命名 / 新建 / 定位）」。本次修订把忽略规则表的**名字来源**
-> 从代码常量改为「配置默认值 + 用户覆盖」：`never_show`（不显示）与 `lazy`（惰性可见）两档的名字由
+> 从代码常量改为「配置默认值 + 用户覆盖」：`hidden`（不显示）与 `lazy`（惰性可见）两档的名字由
 > `config.json` 的 `[vault]` 表给出，缺省即代码内置默认（2 + 14 = 既有 16 名）；保存临时文件模式恒定
-> 硬编码。判定顺序从「内置 → 用户规则 → 可见」变为「never_show → lazy → 用户规则 → 可见」，用户规则的
+> 硬编码。判定顺序从「内置 → 用户规则 → 可见」变为「hidden → lazy → 用户规则 → 可见」，用户规则的
 > 取反仍不能推翻前两档（对 change `vault-open-ignore-set` §2.6 条款的显式修订）。
 >
-> **待裁决条款**：`.git` 恒护栏一节与对应 scenario 按提案裁决点 1 的推荐（方案 A：加护栏）起草；
-> 若 Alex 裁方案 B（不加），实现前删除该段与 scenario，其余条款不变。
+> **已裁决（2026-10-17 节点 1）**：`.git` 恒护栏被**拒绝**——删除只进系统回收站且已有提醒，重命名 /
+> 移动是可撤销动作，产品不过度保护用户。本 delta 不含该护栏，也 MUST NOT 含任何名字级写操作特判；
+> `.git` 与普通可见条目同规则（默认在 `hidden` 档因而没有行，配置成可见后即可操作）。
+>
+> **键名**：`hidden` / `lazy`（节点 1 裁决，原 `never_show` 更名 `hidden`）。
 
 ## MODIFIED Requirements
 
@@ -19,21 +22,21 @@
 
 枚举 SHALL 由**一份规则表**决定每个条目的去向。规则表按**固定优先级**由四个来源解释：
 
-- **不显示档（`never_show`）**：名字由配置项 `vault.never_show` 给出（语义见下），并**恒定**含保存临时文件模式两条：`.lumir-*`（名字以 `.lumir-` 开头）与 `.*.lumir-*`（首个 `.` 之后另有内容再出现 `.lumir-`，覆盖 `.{目标名}.lumir-{pid}`）。两条合起来的匹配集合 SHALL 等于既有判据「`.` 开头且含 `.lumir-`」，MUST NOT 留下差异。命中 ⇒ **不可见**：该条目 SHALL NOT 出现在枚举结果里，其整棵子树 MUST NOT 被枚举，也 MUST NOT 进入 watch 事件流与索引。
+- **不显示档（`hidden`）**：名字由配置项 `vault.hidden` 给出（语义见下），并**恒定**含保存临时文件模式两条：`.lumir-*`（名字以 `.lumir-` 开头）与 `.*.lumir-*`（首个 `.` 之后另有内容再出现 `.lumir-`，覆盖 `.{目标名}.lumir-{pid}`）。两条合起来的匹配集合 SHALL 等于既有判据「`.` 开头且含 `.lumir-`」，MUST NOT 留下差异。命中 ⇒ **不可见**：该条目 SHALL NOT 出现在枚举结果里，其整棵子树 MUST NOT 被枚举，也 MUST NOT 进入 watch 事件流与索引。
 - 否则**惰性档（`lazy`）**命中 ⇒ **惰性可见**：条目 SHALL 出现在枚举结果里（惰性标记为 true；类型 / 大小 / mtime 与磁盘一致），其**子孙 MUST NOT 进入本次枚举**。
 - 否则**用户规则**（vault 自己的 VCS 忽略声明）命中 ⇒ **惰性可见**（同上）。
 - 否则 ⇒ 条目出现（惰性标记为 false），并递归其子树。
 
-**判定顺序与优先级**：`never_show` SHALL 先判、命中即定格；`lazy` 次判、命中即定格；用户规则只在两者都未命中时参与。用户规则里的取反（如 `.gitignore` 写 `!target/`）MUST NOT 把 `never_show` 或 `lazy` 档命中的条目放回可见集、也 MUST NOT 改变其去向（理由：两档表达的是产品对「按结构不是内容」名字的判断，且它们的不可见 / 不进索引同时是性能与索引确定性的护栏，允许被一行编辑推翻等于把「打开 vault 会不会卡几秒」「链接解析是否确定」交给用户配置；出口是改配置、或产品侧另做显式的「显示被忽略项」开关）。用户规则之间 SHALL 按 git 口径决定优先级：深层 `.gitignore` > 浅层 `.gitignore` > `<root>/.git/info/exclude`，同一路径上最深的匹配决定（忽略与取反都在用户规则集内解析）。
+**判定顺序与优先级**：`hidden` SHALL 先判、命中即定格；`lazy` 次判、命中即定格；用户规则只在两者都未命中时参与。用户规则里的取反（如 `.gitignore` 写 `!target/`）MUST NOT 把 `hidden` 或 `lazy` 档命中的条目放回可见集、也 MUST NOT 改变其去向（理由：两档表达的是产品对「按结构不是内容」名字的判断，且它们的不可见 / 不进索引同时是性能与索引确定性的护栏，允许被一行编辑推翻等于把「打开 vault 会不会卡几秒」「链接解析是否确定」交给用户配置；出口是改配置、或产品侧另做显式的「显示被忽略项」开关）。用户规则之间 SHALL 按 git 口径决定优先级：深层 `.gitignore` > 浅层 `.gitignore` > `<root>/.git/info/exclude`，同一路径上最深的匹配决定（忽略与取反都在用户规则集内解析）。
 
-**两档名字由配置给出**：`<config>/config.json` 的 `vault.never_show` 与 `vault.lazy`（两个**名字数组**）SHALL 决定两档的名单；缺键 / 缺节 / 配置文件不存在 ⇒ 该档取**代码内置默认**。语义：
+**两档名字由配置给出**：`<config>/config.json` 的 `vault.hidden` 与 `vault.lazy`（两个**名字数组**）SHALL 决定两档的名单；缺键 / 缺节 / 配置文件不存在 ⇒ 该档取**代码内置默认**。语义：
 
-- **缺省即默认**：某个键缺席 ⇒ 该档用代码内置默认（`never_show` = `[".git", ".DS_Store"]`，`lazy` = `["node_modules", ".venv", "venv", "__pycache__", ".next", ".nuxt", ".cache", ".pnpm-store", ".tox", ".gradle", "test-results", "perf-results", "target", "dist"]`）；键存在（含 `[]`）⇒ 该档整体按配置解释。两个键各自独立：只写一个时另一个仍取默认。MUST NOT 在安装时把默认值快照写入配置文件。
+- **缺省即默认**：某个键缺席 ⇒ 该档用代码内置默认（`hidden` = `[".git", ".DS_Store"]`，`lazy` = `["node_modules", ".venv", "venv", "__pycache__", ".next", ".nuxt", ".cache", ".pnpm-store", ".tox", ".gradle", "test-results", "perf-results", "target", "dist"]`）；键存在（含 `[]`）⇒ 该档整体按配置解释。两个键各自独立：只写一个时另一个仍取默认。MUST NOT 在安装时把默认值快照写入配置文件。
 - **两个键都不含某名字 ⇒ 该名字走用户规则 / 完全可见**：这是「第三档」的唯一表达方式，MUST NOT 为此新增第三个键或新的去向枚举值。
 - **只接受名字，不接受模式**：每一项 MUST 是单个名字——不含 `/`、不是 `.` / `..`、不含 gitignore 元字符（`*` `?` `[` `]` `!` `#` `\`）、首尾无空白。写模式（如 `*.log`）MUST 被逐项忽略并给出人话 warning，MUST NOT 被当成模式解释。
-- **逐项校验、非法项只丢自己**：非字符串 / 空串 / 上述非法形态都逐项忽略并各给一条人话 config warning；其余项 SHALL 照常生效，MUST NOT 因为一项非法而丢弃整份配置或回退整字段默认值（ADR 0002 §5）。整个字段给错类型（如 `"never_show": ".git"`）仍是既有解析模型的整文件回落，MUST NOT 发明逐字段类型容忍。
-- **跨档重名**：同一个名字同时出现在两个键里 ⇒ 按 `never_show` 生效，并给一条人话 warning。
-- **临时文件模式不在配置面内**：`.lumir-*` / `.*.lumir-*` 恒定硬编码；即使 `never_show` 为 `[]`，它们仍被挡下（数据损坏面不交给用户配置）。
+- **逐项校验、非法项只丢自己**：非字符串 / 空串 / 上述非法形态都逐项忽略并各给一条人话 config warning；其余项 SHALL 照常生效，MUST NOT 因为一项非法而丢弃整份配置或回退整字段默认值（ADR 0002 §5）。整个字段给错类型（如 `"hidden": ".git"`）仍是既有解析模型的整文件回落，MUST NOT 发明逐字段类型容忍。
+- **跨档重名**：同一个名字同时出现在两个键里 ⇒ 按 `hidden` 生效，并给一条人话 warning。
+- **临时文件模式不在配置面内**：`.lumir-*` / `.*.lumir-*` 恒定硬编码；即使 `hidden` 为 `[]`，它们仍被挡下（数据损坏面不交给用户配置）。
 - **生效时点**：配置 SHALL 在 vault 装载时读取（MUST NOT 用启动期缓存钉住它）；其改动与规则文件内容的改动同为**下一次装载**生效。
 
 **与用户规则来源的关系**：`vault.rule_files`（默认 `[".gitignore", ".git/info/exclude"]`）的语义不变——它只决定用户规则从哪些文件读，MUST NOT 影响两档名字。空列表 = 无用户规则来源（彻底：不含 `.gitignore` 时嵌套 `.gitignore` 同样不读）；文件不存在静默跳过；非法项逐项忽略 + warning；`<root>/.git/info/exclude` 仅当 `<root>/.git` 是目录时读取（是文件——linked worktree 的 gitlink——时不读，避免把 vault 边界之外的状态读进来）。MUST NOT 读全局 excludes 文件（`core.excludesFile` 在 vault 之外）。匹配 SHALL 按 gitignore 语义（取反 `!`、`/` 锚定、`**`、目录限定、注释与转义、大小写规则），并包含「祖先被排除 ⇒ 子孙全被排除」这一既有语义。规则表 SHALL 在 vault 装载时编译**一次**；规则文件自身的变更 SHALL 在**下一次装载**生效。
@@ -42,11 +45,11 @@
 
 **惰性标记的语义**：true 表示本条目的子树 / 索引面未枚举——目录的子孙不在本次结果里（展开时经「按需枚举目录」拉取一层），文件不进链接索引与附件索引。前端 SHALL 用它区分「空目录」与「惰性目录」。
 
-被 `never_show` 档隐藏与被标为惰性的条目（无论惰性来自哪一档）SHALL NOT 进入由枚举结果建出的**链接索引**与**附件索引**，其中包括用户已经按需展开过的惰性条目——索引的输入 MUST 是磁盘与规则的纯函数，MUST NOT 依赖 UI 交互历史（同一 vault 两次打开的解析结果一致，见 wikilink-resolution）。新建 / 改名的末段名命中 **`never_show` 档（含临时文件模式）** 时 SHALL 返回 `fs_name_invalid`（沿用既有行为）；命中 **`lazy` 档或用户规则** 时 MUST NOT 拒绝（该名字本来就可见、可打开，只是不进索引）。
+被 `hidden` 档隐藏与被标为惰性的条目（无论惰性来自哪一档）SHALL NOT 进入由枚举结果建出的**链接索引**与**附件索引**，其中包括用户已经按需展开过的惰性条目——索引的输入 MUST 是磁盘与规则的纯函数，MUST NOT 依赖 UI 交互历史（同一 vault 两次打开的解析结果一致，见 wikilink-resolution）。新建 / 改名的末段名命中 **`hidden` 档（含临时文件模式）** 时 SHALL 返回 `fs_name_invalid`（沿用既有行为）；命中 **`lazy` 档或用户规则** 时 MUST NOT 拒绝（该名字本来就可见、可打开，只是不进索引）。
 
-**诊断计数**：全量枚举收口处 SHALL 记录被 **`never_show` 档**（含临时文件模式）剪掉的条目数，作为既有 `vault_scan_ignored` 事件的唯一口径；惰性条目 MUST NOT 计入（它们有行、看得见，不属于「文件不见了」的诊断对象）。计数 MUST NOT 包含路径或名字原文。
+**诊断计数**：全量枚举收口处 SHALL 记录被 **`hidden` 档**（含临时文件模式）剪掉的条目数，作为既有 `vault_scan_ignored` 事件的唯一口径；惰性条目 MUST NOT 计入（它们有行、看得见，不属于「文件不见了」的诊断对象）。计数 MUST NOT 包含路径或名字原文。
 
-**已知边界（如实记录）**：两档默认名单是启发式、不完整（未列名的构建产物目录靠「用户把它写进配置或忽略声明」处理）；名字匹配不折叠大小写；配置不支持模式；被 `never_show` 档隐藏的条目静默消失（含 wikilink 解析面与附件面）；指向惰性区域的 `[[wikilink]]` 与 `![[img]]` 解析降级（它们不在索引里），且 `wikilink_create` 对它可能造出重复文件——本 change 不改该命令，记为后续候选。
+**已知边界（如实记录）**：两档默认名单是启发式、不完整（未列名的构建产物目录靠「用户把它写进配置或忽略声明」处理）；名字匹配不折叠大小写；配置不支持模式；被 `hidden` 档隐藏的条目静默消失（含 wikilink 解析面与附件面）；指向惰性区域的 `[[wikilink]]` 与 `![[img]]` 解析降级（它们不在索引里），且 `wikilink_create` 对它可能造出重复文件——本 change 不改该命令，记为后续候选。
 
 #### Scenario: 混合类型 vault 全量列出
 
@@ -130,32 +133,32 @@
 
 #### Scenario: 配置把某个名字加进不显示档
 
-- **WHEN** 用户把 `scratch` 写进 `vault.never_show`，磁盘上有 `scratch/a.md`
+- **WHEN** 用户把 `scratch` 写进 `vault.hidden`，磁盘上有 `scratch/a.md`
 - **THEN** `scratch` 及其子孙不出现在枚举结果里；且新建 / 改名为 `scratch` 返回 `fs_name_invalid`
 
 #### Scenario: 空列表表示该档没有名字
 
-- **WHEN** `vault.never_show` 被设为 `[]`，磁盘上有 `.git/` 与一个 `.note.md.lumir-123` 临时文件
+- **WHEN** `vault.hidden` 被设为 `[]`，磁盘上有 `.git/` 与一个 `.note.md.lumir-123` 临时文件
 - **THEN** `.git` 不再被该档隐藏（按用户规则 / 可见处理）；临时文件仍不出现在枚举结果里（模式恒定硬编码）
 
 #### Scenario: 同一名字同时出现在两档
 
-- **WHEN** `vault.never_show` 含 `node_modules`，`vault.lazy` 也含 `node_modules`
+- **WHEN** `vault.hidden` 含 `node_modules`，`vault.lazy` 也含 `node_modules`
 - **THEN** `node_modules` 按不显示档生效（不可见），并产生一条人话 config warning
 
 #### Scenario: 非法项逐项忽略且其余项照常生效
 
-- **WHEN** `vault.never_show` 为 `["*.log", "a/b", "", 42, ".git"]`
+- **WHEN** `vault.hidden` 为 `["*.log", "a/b", "", 42, ".git"]`
 - **THEN** 前四项被逐项忽略并各给一条人话 config warning，`.git` 照常生效；启动与装载 MUST NOT 因此失败，其余配置字段 MUST NOT 被回退默认值
 
 #### Scenario: 临时文件模式不可配置
 
-- **WHEN** 用户把 `vault.never_show` 设为 `[]` 并在 vault 里留下 `.lumir-notes.md` 与 `..lumir-1`
+- **WHEN** 用户把 `vault.hidden` 设为 `[]` 并在 vault 里留下 `.lumir-notes.md` 与 `..lumir-1`
 - **THEN** 它们仍不出现在枚举结果里，也不进入 watch 事件流（模式不在配置面内）
 
 #### Scenario: 配置改动下次装载生效
 
-- **WHEN** 用户在会话中把 `target` 从 `lazy` 挪进 `never_show`
+- **WHEN** 用户在会话中把 `target` 从 `lazy` 挪进 `hidden`
 - **THEN** 本次会话的枚举形态不变；下次装载该 vault 后 `target` 变成不可见
 
 #### Scenario: 惰性档名字可以新建与改名
@@ -168,11 +171,6 @@
 - **WHEN** 用户新建 / 改名的末段名为 `.git` 或 `.DS_Store`
 - **THEN** 返回 `fs_name_invalid`，文件系统不变
 
-#### Scenario: `.git` 恒护栏（待裁决点 1）
-
-- **WHEN** 用户把 `.git` 配置成惰性可见，然后在树里对 `.git` 行发起删除、重命名或拖拽移动；或把某条目的名字改成 `.git`
-- **THEN** 操作被拒绝并给出行内 / toast 人话原因（`fs_name_invalid`），磁盘不变；展开 `.git` 与打开其中文件仍照常可用
-
 #### Scenario: vault 根与忽略集同名不影响
 
 - **WHEN** 用户把名为 `target` 的目录作为 vault 打开，其内含 `a.md`
@@ -184,7 +182,7 @@ vault 打开期间系统 SHALL 监听文件系统变更，并经 `fs:entry_chang
 
 事件路径的判据 SHALL 按**路径组件**运行，按档分开处理：
 
-- **不显示档**（含临时文件模式）：路径的**任一组件（含最后一段）**命中 ⇒ 丢弃。该档名字是名字的纯函数（不含目录限定模式，判定既不需要 stat 也不需要条目类型），且它命中的条目**在枚举结果里没有行**——因此这一行的增删事件 MUST NOT 投递，否则树里会出现一行**枚举永远不会产生的**幻影行（前端树不做隐藏名过滤），违反「增量收敛后的模型与同一时刻的全量枚举一致」与 file-tree 的「`never_show` 档名字不出现在树里」。
+- **不显示档**（含临时文件模式）：路径的**任一组件（含最后一段）**命中 ⇒ 丢弃。该档名字是名字的纯函数（不含目录限定模式，判定既不需要 stat 也不需要条目类型），且它命中的条目**在枚举结果里没有行**——因此这一行的增删事件 MUST NOT 投递，否则树里会出现一行**枚举永远不会产生的**幻影行（前端树不做隐藏名过滤），违反「增量收敛后的模型与同一时刻的全量枚举一致」与 file-tree 的「`hidden` 档名字不出现在树里」。
 - **惰性档**：任一**祖先组件**（去掉最后一段后的每个前缀）命中、而该目录**尚未被按需枚举**（见「按需枚举目录」的物化登记）⇒ 丢弃；否则投递。**最后一段不参与「投不投递」的判定**——末段命中惰性档只意味着这一行是惰性行（枚举同样会给出这一行），投递正确；而行的出现 / 消失必须实时（否则外部删掉 `target` 后树里留一个死行）。
 - **用户规则**：与惰性档同形（祖先命中 + 未物化 ⇒ 丢弃；最后一段一律投递）。祖先组件必定是目录（前缀不可能是文件），故这两档 MUST NOT 依赖 stat。
 
@@ -303,10 +301,10 @@ vault 打开期间系统 SHALL 监听文件系统变更，并经 `fs:entry_chang
   废纸篓失败 SHALL 报错且 MUST NOT 留下部分删除状态。
 - 重命名 SHALL 只支持同目录改末段名；目标已存在 MUST NOT 覆盖。
 - 新建 SHALL 使用原子创建语义（`create_new` 或等价），撞名即拒绝。
-- 新建/改名的末段名 SHALL 校验：非空、不含 `/`、不是 `.`/`..`、不命中 **`never_show` 档（含恒定临时文件模式）**。命中 `lazy` 档或用户规则的名字 MUST NOT 被拒绝（那是可见、可打开的名字，只是不进索引）。
-- **`.git` 恒护栏（待裁决点 1）**：删除、重命名、移动的**源末段名或目标末段名**为 `.git` 时 SHALL 返回 `fs_name_invalid`，与分档无关——即使 `.git` 被配置成可见，MUST NOT 允许删除 / 改名 / 移出它，也 MUST NOT 允许把别的条目改名或移动为 `.git`。读取（展开、打开其中文件）不受限。
+- 新建/改名的末段名 SHALL 校验：非空、不含 `/`、不是 `.`/`..`、不命中 **`hidden` 档（含恒定临时文件模式）**。命中 `lazy` 档或用户规则的名字 MUST NOT 被拒绝（那是可见、可打开的名字，只是不进索引）。
+- **无名字级写操作特判**（2026-10-17 节点 1 裁决）：删除 / 重命名 / 移动 / 新建 MUST NOT 对特定名字（含 `.git`）做额外拦截——是否可操作只取决于该名字是否在可见集里。`.git` 默认在 `hidden` 档，因此默认没有行、写操作被末段名校验拒绝；用户把它配置成可见后，它就是普通条目。
 - 目标解析 SHALL 经新建变体（父目录沿用 `resolve_in_vault` 全部逃逸防护，末段名按上条校验），
-  MUST NOT 为写操作放松 vault 边界。父目录补建时 SHALL 逐段拒绝 `never_show` 档名字；`lazy` 档名字允许作为父段（建出来的条目随该目录惰性）。
+  MUST NOT 为写操作放松 vault 边界。父目录补建时 SHALL 逐段拒绝 `hidden` 档名字；`lazy` 档名字允许作为父段（建出来的条目随该目录惰性）。
 - 失败 SHALL 返回人话 `CommandError`（区分 `fs_not_found` / `fs_already_exists` /
   `fs_name_invalid` / `fs_trash_failed` 等错误码）。
 
@@ -336,7 +334,3 @@ vault 打开期间系统 SHALL 监听文件系统变更，并经 `fs:entry_chang
 - **WHEN** 新建 / 改名的末段名为 `node_modules`（缺省配置下属惰性档）
 - **THEN** 操作成功（该名字惰性可见、可打开，只是不进索引）
 
-#### Scenario: `.git` 恒护栏（待裁决点 1）
-
-- **WHEN** `.git` 被配置成惰性可见后，对其发起删除 / 重命名 / 拖拽移出 vault 根
-- **THEN** 返回 `fs_name_invalid` 且磁盘不变；读取 `.git` 内的文件不受影响
