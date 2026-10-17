@@ -414,6 +414,8 @@ test("新会话：chip 从会话档位（Max）回落默认 High，读屏名与�
     togglePane: () => {},
     toast: () => {},
     openVaultPath: () => {}, // 这些用例不点路径：桩空实现
+    isVaultDir: () => false, // 路径链接的目录判定（change harness-dir-link）：本文件不涉路径
+    revealVaultDir: () => {},
   });
 
   try {

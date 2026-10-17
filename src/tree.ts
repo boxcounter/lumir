@@ -156,6 +156,18 @@ export function canMoveEntry(sourcePath: string, targetDirPath: string): boolean
  *  tree.ts 的拖拽监听里（与 tree-menu.ts 的 MENU_TARGET_CLASS 同形态：语义在场期 = 类的在场期）。 */
 export const DROP_TARGET_CLASS = "is-drop-target";
 
+/**
+ * 目录定位的短暂高亮（M553，change harness-dir-link）：行态在场期 = 一次定位后的约 1.2 秒。
+ * 语义是「这一行刚刚被定位」，与 `is-current`（当前打开的文档）/ `is-menu-target`（菜单开着）/
+ * `is-drop-target`（一次拖拽）各自独立——目录定位不写当前行，用它表达「到了」。装卸的唯一
+ * 真源在 `createFileTree` 的目录定位实现里（与 DROP_TARGET_CLASS 同形态：语义在场期 = 类的
+ * 在场期）；样式在 `src/style.css` 的 `.ft-row.is-revealed`（底色与另两种「被点中了」的行态
+ * 同档，不引入新色值）。
+ */
+export const REVEALED_CLASS = "is-revealed";
+/** 高亮时长：约 1.2s 后由树自己摘类（归 Alex 手感裁决，不进机器判据）。 */
+export const REVEALED_MS = 1200;
+
 /** 拖拽源的数据类型（M530）：dragstart 写入 dataTransfer 的自定义类型。本应用内的 drop
  *  走 dragSource 闭包（dragover 阶段 dataTransfer 数据是保护模式、读不到），自定义类型
  *  只为「数据真的进了拖拽通道」这件事在场——MUST NOT 用它做跨应用拖拽的落点（树外 drop
@@ -281,6 +293,16 @@ export interface FileTree {
    *  把该行滚进视口、并标成当前行。路径不在模型里时是空动作（不展开、不改当前行、不滚动）；
    *  展开是异步的（惰性祖先要按需取回一层），因此本方法立即返回，落地由树自己收口。 */
   revealPath(path: string): void;
+  /**
+   * 把一个 vault 相对路径当作**目录**定位（M553，change harness-dir-link）：展开祖先链、把目录行
+   * 滚进视口、并给一次短暂高亮。与 `revealPath` 的差别只有一条——**不写当前行标记**（那是
+   * 「当前打开的文档」的语义，目录不是文档）。路径不是模型里的目录（含惰性祖先取数失败）时是
+   * 空动作：不展开、不滚动、不高亮。展开是异步的，本方法立即返回。
+   */
+  revealDir(path: string): void;
+  /** 模型里是否存在该**目录**条目（M553 的可点性判据）：只读、同步、不触发取数。上层用它决定
+   *  目录引用是否可点——与 `revealDir` 使用同一份模型，可点与可定位因此不会漂。 */
+  hasDir(path: string): boolean;
   /** 消费 fs:entry_changed 增量：局部更新，保持展开状态。 */
   applyChanges(changes: FsChange[]): void;
   /** 未打开 vault 空态；notice 为 last_vault 恢复失败等的人话提示。 */
@@ -1084,6 +1106,36 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     });
   }
 
+  /** 目录定位的高亮行与计时器（M553）：同一时刻至多一行带高亮（与 is-menu-target /
+   *  is-drop-target 的「至多一行」同形态），在场期由 `REVEALED_MS` 定义。 */
+  let revealedRow: HTMLElement | null = null;
+  let revealedTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 定位代际号（M553）：祖先链确认可能等待惰性取数，连续两次定位时只有最后一次落地——
+   *  旧请求在 await 之后发现代际过期即返回（不展开、不滚动、不高亮）。 */
+  let revealSeq = 0;
+
+  function clearRevealed(): void {
+    if (revealedTimer !== null) {
+      clearTimeout(revealedTimer);
+      revealedTimer = null;
+    }
+    revealedRow?.classList.remove(REVEALED_CLASS);
+    revealedRow = null;
+  }
+
+  /** 给 `row` 一次短暂高亮；`row === null` 时只清旧高亮（不可达 / 编辑行两处共用这个出口）。 */
+  function flashRevealed(row: HTMLElement | null): void {
+    clearRevealed();
+    if (row === null) return;
+    revealedRow = row;
+    row.classList.add(REVEALED_CLASS);
+    revealedTimer = setTimeout(() => {
+      revealedTimer = null;
+      revealedRow?.classList.remove(REVEALED_CLASS);
+      revealedRow = null;
+    }, REVEALED_MS);
+  }
+
   /**
    * 在树里定位一个路径（M300，change tab-reveal-in-tree）：消费者是标签右键菜单的定位项。
    *
@@ -1141,6 +1193,43 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     nodes.get(path)?.li?.querySelector<HTMLElement>(".ft-row")?.scrollIntoView({ block: "nearest" });
   }
 
+  /**
+   * 目录定位（M553，change harness-dir-link）：展开祖先链 + 滚进视口 + 一次短暂高亮。
+   *
+   * 与 `reveal` 的差别**只有一条**：不写 `currentPath` / 不带当前行标记——目录不是文档，
+   * 「当前行」表达的是「当前打开的文档」（multi-tabs「文件树联动与空态」），拿它标记一个目录会
+   * 污染那个语义。落地段三件事的顺序与 `reveal` 一致（先确认可达、再展开、再滚动），目标目录
+   * **自身**的展开状态不动（定位从不折叠，也不顺带展开目标）。
+   *
+   * 编辑中的行（行元素已被换成 `div.ft-row.is-editing`）只滚动、不闪：不在输入框上闪底色。
+   * 不可达（不是模型里的目录 / 惰性祖先取数失败）时是空动作，且**清掉旧高亮**——用户刚点了
+   * 另一个目录时，上一处的高亮不该继续留在屏幕上冒充「这次落点」。
+   */
+  function revealDir(path: string): void {
+    void locateDir(path);
+  }
+
+  async function locateDir(path: string): Promise<void> {
+    const seq = (revealSeq += 1);
+    const chain = await ancestorChain(path);
+    if (seq !== revealSeq) return; // 后一次定位已接管：旧请求不落地
+    const node = nodes.get(path);
+    if (chain === undefined || node === undefined || node.entry.kind !== "dir") {
+      flashRevealed(null);
+      return;
+    }
+    for (const ancestor of chain) {
+      if (!expanded.has(ancestor.entry.path)) expandNode(ancestor);
+    }
+    const row = node.li?.querySelector<HTMLElement>(".ft-row");
+    if (row === null || row === undefined) {
+      flashRevealed(null);
+      return;
+    }
+    row.scrollIntoView({ block: "nearest" });
+    flashRevealed(row.classList.contains("is-editing") ? null : row);
+  }
+
   const tree: FileTree = {
     setCurrentPath(path) {
       currentPath = path;
@@ -1150,6 +1239,17 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     revealPath(path) {
       revealPath(path);
     },
+
+    revealDir(path) {
+      revealDir(path);
+    },
+
+    hasDir(path) {
+      // 根 `""` 不是「可定位的目录行」；只认模型里 kind === dir 的条目（文件 / 缺席都不是）。
+      if (path === "") return false;
+      return nodes.get(path)?.entry.kind === "dir";
+    },
+
     setVault(root, entries) {
       vaultName = baseName(root);
       expanded.clear();
@@ -1162,6 +1262,10 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       dragSource = undefined;
       clearDropTarget();
       pendingMove = undefined;
+      // 目录定位同样作废（M553）：旧高亮随 DOM 一起消失，但在途的定位请求要让它过期——
+      // 否则慢的惰性取数返回后会在新 vault 里闪一个同名目录。
+      revealSeq += 1;
+      clearRevealed();
       renderAll(entries);
       mount.replaceChildren(rootEl);
     },
@@ -1323,6 +1427,8 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       pendingMove = undefined;
       dragSource = undefined;
       clearDropTarget();
+      revealSeq += 1;
+      clearRevealed();
       const empty = document.createElement("div");
       empty.className = "ft-empty";
       if (notice) {

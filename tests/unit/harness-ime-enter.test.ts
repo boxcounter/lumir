@@ -557,6 +557,8 @@ async function mountComposer(): Promise<{
     togglePane: () => {},
     toast: () => {},
     openVaultPath: () => {}, // 这些用例不点路径：桩空实现
+    isVaultDir: () => false, // 路径链接的目录判定（change harness-dir-link）：本文件不涉路径
+    revealVaultDir: () => {},
   });
   const mount = new FakeEl("div");
   handle.attachTo(mount as unknown as HTMLElement);

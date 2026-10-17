@@ -18,11 +18,11 @@
 // 不覆盖什么：真实的滚动几何（`block: "nearest"` 在真浏览器里「已在视口内就不动」的那一半）归
 // 视觉场景 tests/visual/scenes/tab-menu.spec.ts；真实 WKWebView + 真实右键通道归真机场景 69。
 
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import type { FsEntry } from "../../src/bindings/FsEntry.ts";
 import type { FsEntryKind } from "../../src/bindings/FsEntryKind.ts";
-import { createFileTree } from "../../src/tree.ts";
+import { createFileTree, REVEALED_CLASS, REVEALED_MS } from "../../src/tree.ts";
 import type { FileTree, FileTreeCallbacks } from "../../src/tree.ts";
 
 // ---------------------------------------------------------------------------
@@ -412,4 +412,192 @@ test("惰性取数失败后按展开路径重试同样成立（同一条通道�
   await flush();
 
   assert.deepEqual(r.visible(), ["a", "a/x.md"]);
+});
+
+// ---------------------------------------------------------------------------
+// ④ 目录定位（M553，change harness-dir-link）：祖先展开 + 滚动 + 短暂高亮，但不写当前行
+// ---------------------------------------------------------------------------
+
+/** 只放行 await 链（mock timers 接管 setTimeout，不能用 setTimeout 做 flush）。 */
+const flushImmediate = async (): Promise<void> => {
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+};
+
+test("目录定位：展开祖先 + 滚进视口 + 高亮，但不写当前行（与 revealPath 成对对照）", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const r = rig([
+      entry("a", "dir"),
+      entry("a/b", "dir"),
+      entry("a/b/x.md", "file"),
+      entry("top.md", "file"),
+    ]);
+    r.tree.setCurrentPath("top.md");
+
+    r.tree.revealDir("a/b");
+    await flushImmediate();
+
+    assert.deepEqual(r.visible(), ["a", "a/b", "top.md"], "祖先展开，目标目录自身不展开");
+    assert.deepEqual(r.current(), ["top.md"], "当前行不动（目录不是文档）");
+    assert.equal(r.rowOf("a/b").getAttribute("aria-current"), "false");
+    assert.deepEqual(r.scrolled(), [{ path: "a/b", options: { block: "nearest" } }]);
+    assert.equal(r.rowOf("a/b").classList.contains(REVEALED_CLASS), true, "目标行带短暂高亮");
+
+    // 正向对照：同一夹具上 revealPath 会改当前行——证明上一条不是「读不到当前行」。
+    r.tree.revealPath("a/b/x.md");
+    await flushImmediate();
+    assert.deepEqual(r.current(), ["a/b/x.md"]);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("高亮约 1.2s 后自行退场；窗口内再次定位同一行重启计时", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const r = rig([entry("a", "dir"), entry("a/b", "dir")]);
+    const row = (): FakeEl => r.rowOf("a/b");
+
+    r.tree.revealDir("a/b");
+    await flushImmediate();
+    assert.equal(row().classList.contains(REVEALED_CLASS), true);
+    mock.timers.tick(REVEALED_MS - 1);
+    assert.equal(row().classList.contains(REVEALED_CLASS), true, "窗口内仍在");
+    mock.timers.tick(1);
+    assert.equal(row().classList.contains(REVEALED_CLASS), false, "到点退场");
+
+    r.tree.revealDir("a/b");
+    await flushImmediate();
+    assert.equal(row().classList.contains(REVEALED_CLASS), true);
+    r.tree.revealDir("a/b");
+    await flushImmediate();
+    mock.timers.tick(REVEALED_MS - 1);
+    assert.equal(row().classList.contains(REVEALED_CLASS), true, "重启后的计时未到点");
+    mock.timers.tick(1);
+    assert.equal(row().classList.contains(REVEALED_CLASS), false);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("目录不可达：空动作（不展开、不滚动），并清掉上一处的高亮", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const r = rig([
+      entry("a", "dir"),
+      entry("a/b", "dir"),
+      entry("a/b/x.md", "file"),
+      entry("a/d", "dir"),
+      entry("a/d/y.md", "file"),
+    ]);
+    r.tree.revealDir("a/b");
+    await flushImmediate();
+    assert.equal(r.rowOf("a/b").classList.contains(REVEALED_CLASS), true);
+
+    // 目标不存在：祖先链确认失败 ⇒ 一点现场都不留；旧高亮同时退场（不冒充这次落点）。
+    r.tree.revealDir("a/d/gone");
+    await flushImmediate();
+    assert.equal(r.rowOf("a/b").classList.contains(REVEALED_CLASS), false, "旧高亮被清掉");
+    assert.equal(r.visible().includes("a/d/y.md"), false, "失败的祖先链不展开任何新目录");
+    assert.equal(
+      r.scrolled().filter((call) => call.path === "a/d/gone").length,
+      0,
+      "没有对目标请求滚动",
+    );
+
+    // 正向对照：同一棵树里可达的目录照常落地（高亮回到可达目标上）。
+    r.tree.revealDir("a/d");
+    await flushImmediate();
+    assert.equal(r.rowOf("a/d").classList.contains(REVEALED_CLASS), true);
+    assert.deepEqual(r.scrolled().at(-1), { path: "a/d", options: { block: "nearest" } });
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("连续两次定位只认最后一次：慢的惰性取数返回后不展开、不滚动、不高亮", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  let release: (() => void) | undefined;
+  try {
+    const r = rig([entry("a", "dir", true), entry("b", "dir")], {
+      onExpandLazyDir: (path) => {
+        assert.equal(path, "a");
+        return new Promise((resolve) => {
+          release = () => resolve([entry("a/x", "dir")]);
+        });
+      },
+    });
+
+    r.tree.revealDir("a/x"); // 需要先取回 a 的一层 ⇒ 挂起
+    r.tree.revealDir("b"); // 后一次：可达、立即落地
+    await flushImmediate();
+    assert.deepEqual(r.scrolled(), [{ path: "b", options: { block: "nearest" } }]);
+    assert.equal(r.rowOf("b").classList.contains(REVEALED_CLASS), true);
+
+    release?.();
+    await flushImmediate();
+    assert.deepEqual(
+      r.scrolled(),
+      [{ path: "b", options: { block: "nearest" } }],
+      "旧请求在 await 之后发现代际过期，MUST NOT 再滚动",
+    );
+    assert.deepEqual(r.visible(), ["a", "b"], "旧请求也不展开（取数只进模型，不进 DOM）");
+    assert.equal(r.rowOf("b").classList.contains(REVEALED_CLASS), true, "旧请求不抢高亮");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("内联编辑中的行：仍然滚动定位，但不闪高亮", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const r = rig([entry("a", "dir"), entry("a/b", "dir")]);
+    r.tree.revealDir("a/b"); // 先展开 a，否则 b 的行根本不在 DOM 里
+    await flushImmediate();
+    r.tree.beginRename("a/b");
+    const editing = r.rowOf("a/b");
+    assert.equal(editing.classList.contains("is-editing"), true);
+
+    r.tree.revealDir("a/b");
+    await flushImmediate();
+    assert.equal(r.rowOf("a/b").classList.contains(REVEALED_CLASS), false, "输入框不闪底色");
+    assert.deepEqual(r.scrolled().at(-1), { path: "a/b", options: { block: "nearest" } });
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("hasDir：只认模型里的目录（文件、根、缺席都不是），惰性目录自身在列", () => {
+  const r = rig([
+    entry("a", "dir"),
+    entry("a/b", "dir"),
+    entry("a/b/c.md", "file"),
+    entry("lazy", "dir", true),
+  ]);
+  assert.equal(r.tree.hasDir("a"), true);
+  assert.equal(r.tree.hasDir("a/b"), true);
+  assert.equal(r.tree.hasDir("lazy"), true, "惰性目录自身在模型里 ⇒ 可点");
+  assert.equal(r.tree.hasDir("lazy/inside"), false, "未取回的子目录不在模型里 ⇒ 不可点");
+  assert.equal(r.tree.hasDir("a/b/c.md"), false, "文件不是目录");
+  assert.equal(r.tree.hasDir("a/missing"), false);
+  assert.equal(r.tree.hasDir(""), false, "根不是可定位的目录行");
+});
+
+test("换 vault 时旧高亮随树作废", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const r = rig([entry("a", "dir")]);
+    r.tree.revealDir("a");
+    await flushImmediate();
+    const oldRow = r.rowOf("a");
+    assert.equal(oldRow.classList.contains(REVEALED_CLASS), true);
+
+    r.tree.setVault("/other", [entry("a", "dir")]);
+    assert.equal(oldRow.classList.contains(REVEALED_CLASS), false, "旧行的高亮被摘掉");
+    assert.equal(r.rowOf("a").classList.contains(REVEALED_CLASS), false, "新树的行不带高亮");
+    assert.equal(r.tree.hasDir("a"), true, "新模型照常可判定");
+  } finally {
+    mock.timers.reset();
+  }
 });

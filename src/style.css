@@ -1010,6 +1010,21 @@ body {
 .ft-row.is-drop-target {
   background: var(--sel);
 }
+/* 目录定位的短暂高亮（M553，change harness-dir-link）：harness 面板里点击一条目录引用后，目标行
+   被滚进视口并带这个 class，约 1.2s 后由 src/tree.ts 摘除（在场期的唯一真源在那边，与
+   is-menu-target / is-drop-target 同形态）。底色取选中档 --sel、不加字重——与另两种「这一行被
+   点中了」的信号强度一致；**必须排在 :hover 之后**（同特异性、后声明者胜）：定位发生时指针通常
+   停在 harness 面板里、不在左栏，但 hover 盖过它会让人以为「没定位到」。进 / 出场的淡变沿用
+   .ft-row 既有的 background 过渡（--dur-hover），不新增动效曲线。 */
+.ft-row.is-revealed {
+  background: var(--sel);
+}
+/* eink：与 is-menu-target / is-drop-target 同一条（名称与 caret 手工带上，行内没有颜色继承链）。 */
+:root[data-theme="eink"] .ft-row.is-revealed,
+:root[data-theme="eink"] .ft-row.is-revealed .ft-name,
+:root[data-theme="eink"] .ft-row.is-revealed .ft-caret {
+  color: var(--sel-text);
+}
 /* eink：拖拽落点行的前景取 --sel-text（与 is-menu-target 同一条理由）。 */
 :root[data-theme="eink"] .ft-row.is-drop-target,
 :root[data-theme="eink"] .ft-row.is-drop-target .ft-name,

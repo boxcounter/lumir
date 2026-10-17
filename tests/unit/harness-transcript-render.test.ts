@@ -148,20 +148,40 @@ function fire(el: FakeEl, type: string, event: Record<string, unknown> = {}): vo
   for (const listener of listeners) listener({ preventDefault() {}, ...event });
 }
 
-/** 路径链接上下文：索引 = 给定的路径集，点击记进 `opened`。 */
-function pathCtx(...paths: string[]): {
+/** 路径链接上下文：`files` = 文件索引，`dirs` = 目录模型（change harness-dir-link）；
+ *  文件点击记进 `opened`（含行号），目录点击记进 `revealed`。 */
+function pathCtxWith(
+  files: string[],
+  dirs: string[],
+): {
   ctx: PathLinkRenderContext;
   opened: Array<[string, number | undefined]>;
+  revealed: string[];
 } {
-  const index = new Set(paths);
+  const fileSet = new Set(files);
+  const dirSet = new Set(dirs);
   const opened: Array<[string, number | undefined]> = [];
+  const revealed: string[] = [];
   return {
     opened,
+    revealed,
     ctx: {
-      isLinkable: (path) => index.has(path),
-      open: (path, line) => opened.push([path, line]),
+      isFile: (path) => fileSet.has(path),
+      isDir: (path) => dirSet.has(path),
+      openFile: (path, line) => opened.push([path, line]),
+      revealDir: (path) => revealed.push(path),
     },
   };
+}
+
+/** 只有文件索引的上下文（既有用例的简写）。 */
+function pathCtx(...paths: string[]) {
+  return pathCtxWith(paths, []);
+}
+
+/** 只有目录模型的上下文。 */
+function dirCtx(...dirs: string[]) {
+  return pathCtxWith([], dirs);
 }
 
 const URL_TEXT = "https://example.com/a/b?x=1";
@@ -452,4 +472,54 @@ test("同一源两次渲染结果一致（流式尾块每帧重渲的确定性�
     first.find("lumir-hp-pathlink").map((el) => el.textContent),
     ["notes/a.md:3", "b.md"],
   );
+});
+
+// ---------------------------------------------------------------------------
+// change harness-dir-link：目录引用 → 左栏定位（与文件链接共用同一元素形态）
+// ---------------------------------------------------------------------------
+
+test("目录模型命中的路径产可点元素，点击走定位（不开文件）", () => {
+  const { ctx, opened, revealed } = dirCtx("projects/plans");
+  const host = render("见 projects/plans 目录", ctx);
+  const links = host.find("lumir-hp-pathlink");
+  assert.equal(links.length, 1);
+  assert.equal(links[0].textContent, "projects/plans");
+  fire(links[0], "click");
+  assert.deepEqual(revealed, ["projects/plans"], "目录点击只定位");
+  assert.deepEqual(opened, [], "目录点击 MUST NOT 打开文档");
+  fire(links[0], "keydown", { key: "Enter" });
+  assert.deepEqual(revealed, ["projects/plans", "projects/plans"], "Enter 与点击同一出口");
+});
+
+test("尾斜杠目录引用：展示文本逐字保留，定位路径去掉尾斜杠", () => {
+  const { ctx, revealed } = dirCtx("projects/plans");
+  const host = render("见 projects/plans/ 目录", ctx);
+  const links = host.find("lumir-hp-pathlink");
+  assert.equal(links.length, 1);
+  assert.equal(links[0].textContent, "projects/plans/");
+  fire(links[0], "click");
+  assert.deepEqual(revealed, ["projects/plans"]);
+});
+
+test("目录引用不消费行号后缀：只链接目录本身，:12 留作文本", () => {
+  const { ctx, revealed } = dirCtx("projects/plans");
+  const host = render("见 projects/plans:12 结束", ctx);
+  const links = host.find("lumir-hp-pathlink");
+  assert.equal(links.length, 1);
+  assert.equal(links[0].textContent, "projects/plans");
+  assert.equal(host.textContent, "见 projects/plans:12 结束");
+  fire(links[0], "click");
+  assert.deepEqual(revealed, ["projects/plans"]);
+});
+
+test("目录不在模型里时仍是文本（反向对照）；文件优先于目录的解析顺序可判", () => {
+  const missing = render("见 projects/plans 完", dirCtx("projects/other").ctx);
+  assert.equal(missing.find("lumir-hp-pathlink").length, 0);
+
+  // 同一路径同时出现在两份索引里（真实 vault 不可能）：文件先判，点击走打开。
+  const both = pathCtxWith(["docs/x"], ["docs/x"]);
+  const host = render("见 docs/x", both.ctx);
+  fire(host.find("lumir-hp-pathlink")[0], "click");
+  assert.deepEqual(both.opened, [["docs/x", undefined]]);
+  assert.deepEqual(both.revealed, []);
 });

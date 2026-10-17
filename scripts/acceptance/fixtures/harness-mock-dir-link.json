@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "目录定位验收。材料都在 dir-link/nested-dir 这个目录里；带尾斜杠的写法 dir-link/nested-dir/ 也应该可点。不存在的目录 dir-link/gone-dir 不该可点。",
+      "tool_calls": [
+        {
+          "id": "call_dl1",
+          "name": "vault_read",
+          "arguments": "{\"path\":\"dir-link/nested-dir\"}"
+        }
+      ]
+    },
+    {
+      "text": "目录引用读完了。"
+    }
+  ]
+}

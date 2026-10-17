@@ -2264,6 +2264,13 @@ shell.modelineLanguage.addEventListener("click", cycleLanguage);
 // 定义随活跃 doc pane 走（harness pane 持焦时解析到文档 pane，见 activeDocPane）。
 // `HarnessContextSource`（harness-context.ts:31）的接口形状不变，改造面全在这一处注入
 //（design §2 行 5）。
+// 文件树的就绪开关（change harness-dir-link）：面板的目录判定闭包转给 `tree.hasDir`，而 `tree`
+// 的声明与赋值都在面板构造之后（下方 `let tree!` 与 `createFileTree`）——未就绪时一律不链接化，
+// 隔开这个时序窗口。闭包本身在渲染 / 点击发生时读，不违反「装配期不读」的既有模式。
+let treeReady = false;
+function isVaultDirPath(path: string): boolean {
+  return treeReady && tree.hasDir(path);
+}
 const harnessPanel = createHarnessPanel({
   shell,
   editor,
@@ -2300,6 +2307,14 @@ const harnessPanel = createHarnessPanel({
       path,
       line,
     );
+  },
+  // 目录路径的落点（change harness-dir-link）：只做左栏定位——展开祖先、滚动、短暂高亮；
+  // 不打开文档、不切标签、不创建条目（点击语义的规格在 harness「输出中的 vault 路径可点击」，
+  // 树侧语义在 file-tree「目录定位不动当前行」）。
+  isVaultDir: (path) => isVaultDirPath(path),
+  revealVaultDir: (path) => {
+    if (!treeReady) return;
+    tree.revealDir(path);
   },
 });
 
@@ -2859,6 +2874,8 @@ tree = createFileTree(shell.treeMount, {
     }
   },
 });
+// 树已就绪：面板的目录判定从这一行起可回答（见 `treeReady` 的注释）。
+treeReady = true;
 
 /** 装载 vault 的最后防线版（空态打开 / 启动恢复）：dirty 时拦下并就地给出三条出口，出口
  *  执行时经同一个 proceed 继续装载——守卫不清除 dirty，那三条出口必须能把它带过去（否则
