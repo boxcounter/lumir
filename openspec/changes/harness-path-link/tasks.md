@@ -78,9 +78,10 @@
 
 ## 7. 真机验收场景
 
-- [x] 7.1 新增 `scripts/acceptance/scenarios/161-harness-path-link.md` + mock fixture（全合成：中文
-      文件名、目标文件含可判读的标记行、目录、不存在的路径、一条 Read 工具调用）
-- [x] 7.2 断言：中文路径 + `:行号` 点击 → 新标签打开、目标行文本出现；不存在的路径 / 目录不产可点
+- [x] 7.1 新增 `scripts/acceptance/scenarios/161-harness-path-link.md` + mock fixture（全合成：中文行文
+      里的路径、目标文件含可判读的标记行、真实目录、不存在的路径、越界路径、一条 Read 工具调用；
+      中文文件名的候选规则由单测覆盖——真机场景不为此加未验证的断言）
+- [x] 7.2 断言：正文路径 + `:行号` 点击 → 新标签打开、目标行文本出现；不存在的路径 / 目录不产可点
       元素（`ax: not` 反向验证）；工具卡片路径点击 → 新标签；截图留存行落点现场
 - [x] 7.3 回扫既有验收场景：grep 所有 fixture / 场景期望里会被本次链接化改变的文本（含 harness
       fixture 里的 vault 内路径串），逐条确认 AX 文本期望不变或改准；`node scripts/acceptance/run.mjs
