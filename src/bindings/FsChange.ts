@@ -15,7 +15,7 @@ path: string,
  */
 entry_kind: FsEntryKind | null, 
 /**
- * 惰性标记：与 [`FsEntry::lazy`] **同一处口径**（用户规则命中 ⇒ true）。后端在过滤 /
+ * 惰性标记：与 [`FsEntry::lazy`] **同一处口径**（`lazy` 档或用户规则命中 ⇒ true）。后端在过滤 /
  * 投递那一步用同一份规则表算出，下游 MUST NOT 重算（那会引出第二份规则实现）。
  *
  * 消费方是两处**索引增量补丁**（`commands::apply_fs_changes` 的 `graph.upsert` 与

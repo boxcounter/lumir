@@ -203,8 +203,8 @@ export async function resetSecondVault() {
   return vault;
 }
 
-/** 内置规则命中族探针的正文（内容不重要——它 MUST NOT 被读到；条目数才是形状的一部分）。 */
-const IGNORED_PROBE_MD = "# 构建产物探针\n\n这一条命中的是内置规则：不进枚举、不进树。\n";
+/** `lazy` 档探针的正文（这些条目惰性可见；条目数才是形状的一部分）。 */
+const IGNORED_PROBE_MD = "# 构建产物探针\n\n这一条命中的是默认 lazy 档：出惰性行、不进索引。\n";
 
 /** 用户规则命中族探针的正文：**marker 是场景的判据**（`editor.has` 到它就证明惰性文件真的能读）。
  *  改这一句要同步场景 67 的 marker 断言。 */
@@ -214,7 +214,7 @@ const LAZY_PROBE_MD = "# 本地教程\n\n本地教程正文：这一篇被用户
  *
  *  形状口径（M265 §一 在真实 vault 上实测的 scan-visible 规模）：**2142 文件 / 426 目录 /
  *  1341 个 md / 7.01MB md**、行长正常（~78 字符/行，含标题与 wikilink）、含一个
- *  `node_modules` 用于验证 `IGNORED_NAMES` 生效。收益：验收与读数都跑在**与 Alex 真实 vault
+ *  `node_modules` 用于验证默认 `lazy` 档（自身出惰性行、子孙不进枚举）。收益：验收与读数都跑在**与 Alex 真实 vault
  *  同形状**的合成 vault 上——M252 的稀疏单行放大器（48ms/MB）已被 M265 判为测量假象，
  *  **MUST NOT** 再拿它当规模口径。
  *
@@ -228,13 +228,13 @@ const LAZY_PROBE_MD = "# 本地教程\n\n本地教程正文：这一篇被用户
  *
  *  另有**两类忽略探针**（M296 / change vault-open-ignore-set §9.3，都是可选的，缺省不生成）：
  *
- *  - `ignoredDirs: { <根下目录名>: <该目录里的 md 条数> }` —— 内置规则的构建产物族探针。
- *    落在 vault **根**下（树的默认态就能判「这一行在不在」，不必先展开）；命中内置规则 ⇒
- *    这一行与它的子树都不进枚举、不进树。
+ *  - `ignoredDirs: { <根下目录名>: <该目录里的 md 条数> }` —— 构建产物族探针（默认 `lazy` 档）。
+ *    落在 vault **根**下（树的默认态就能判「这一行在不在」，不必先展开）；change
+ *    ignore-tiers-config 起命中 `lazy` 档 ⇒ 这一行出惰性条目、子树不进枚举，展开时按需取一层。
  *  - `lazyDirs: { gitignore: [...], gitignoreNegations: [...], exclude: [...] }` —— 用户规则的探针。
  *    `gitignore` / `exclude` 是写在根 `.gitignore` / 根 `.git/info/exclude` 里的目录名（各带一个
  *    `tutorial.md`）；`gitignoreNegations` 是追加到根 `.gitignore` 的取反行，用来在真机上也留一条
- *    「用户规则的取反不能推翻内置规则」的判据（§2.6：内置先判且命中即定格）。
+ *    「用户规则的取反不能推翻 `hidden` / `lazy` 两档」的判据（两档先判且命中即定格）。
  *
  *  **探针参数只在 JS 侧**：Rust 侧读数 harness（`src-tauri/tests/vault_open_readings.rs`）只复刻
  *  「真实形状」那几档，不生成忽略探针——探针只服务可见性判据，不参与任何读数口径。 */
@@ -321,14 +321,14 @@ export async function generateBulkVault(spec = {}) {
     const content = kind === 0 ? "纯文本附件\n" : kind === 1 ? '{"v":1}\n' : kind === 2 ? "<svg/>\n" : "export const v = 1;\n";
     await writeFile(path.join(dir, name), content);
   }
-  // 忽略生效的探针：`node_modules` 下的 md MUST NOT 进枚举（Rust 侧 IGNORED_NAMES）。
+  // 惰性档探针：`node_modules` 自身出惰性行，其下的 md MUST NOT 进枚举（默认 lazy 档）。
   const nm = path.join(vault, "node_modules", "left-pad");
   await mkdirp(nm);
   for (let i = 0; i < ignoredMd; i += 1) {
     await writeFile(path.join(nm, `ignored-${String(i).padStart(2, "0")}.md`), body(2_000));
   }
   // ── 两类忽略探针（可选，见函数头的说明）─────────────────────────────────────────────
-  // 内置规则命中族：根下的构建产物目录，每个目录里放 N 个 md。**条数给的是量级，不是判据**：
+  // `lazy` 档命中族：根下的构建产物目录，每个目录里放 N 个 md。**条数给的是量级，不是判据**：
   // 判据只有「这一行在不在树里」（`target` / `dist` / `test-results` 是内置表里的名字）。
   const ignoredDirs = spec.ignoredDirs ?? {};
   for (const [name, count] of Object.entries(ignoredDirs)) {
@@ -348,7 +348,7 @@ export async function generateBulkVault(spec = {}) {
       ignoreLines.push(`${name}/`);
       lazyNames.push(name);
     }
-    // 取反行追加在忽略行之后（gitignore 的口径：后行者胜）——真机上要证的正是「它对内置规则无效」。
+    // 取反行追加在忽略行之后（gitignore 的口径：后行者胜）——真机上要证的正是「它对 hidden / lazy 两档无效」。
     for (const neg of lazy.gitignoreNegations ?? []) ignoreLines.push(`!${neg}`);
     if (ignoreLines.length) {
       await writeFile(path.join(vault, ".gitignore"), `# 真机验收场景 67 的用户规则探针（套件生成）\n${ignoreLines.join("\n")}\n`);

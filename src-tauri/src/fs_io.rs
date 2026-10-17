@@ -22,41 +22,6 @@ use ts_rs::TS;
 
 use crate::commands::CommandError;
 
-/// 内置规则的名字字面量（16 条，**无尾斜杠**；change vault-open-ignore-set §2.4）。
-///
-/// **书写形式有语义**：gitignore 语义下无斜杠模式在**任意深度**匹配同名的**文件与目录** ⇒
-/// 与今日的名字等值判定逐条等价（既有 scenario「同名文件与目录一视同仁」因此保留、不改判）。
-/// 写成 `target/` 会变成「只隐藏目录、同名文件可见」——那是有意的改判，本 change 不做。
-///
-/// 这是**产品硬编码**（「按结构不是内容」：`.git` 是对象库、`node_modules` 是依赖副本、
-/// `target` 是构建产物），不在配置面内、不可被用户规则的取反推翻（§2.6），要改它得走
-/// change proposal。A3 档（`build` / `out` / `vendor`）经 Alex 2026-09-28 裁决**不纳入**：
-/// 通用英文词的误伤概率高于收窄收益（且它们若写进了 `.gitignore`，照样落进用户规则、惰性可见）。
-///
-/// 前端 `src/tree.ts` 的内联编辑预检复制了这份名字表（只为「提交前就说清」，判定职责仍在
-/// 后端），两侧逐项对账在 `tests/unit/tree-paths.test.ts`——解析的正是本声明。
-pub const BUILTIN_NAMES: [&str; 16] = [
-    // 既有三条
-    ".git",
-    ".DS_Store",
-    "node_modules",
-    // A1 生态专名（工具链固定输出名）
-    ".venv",
-    "venv",
-    "__pycache__",
-    ".next",
-    ".nuxt",
-    ".cache",
-    ".pnpm-store",
-    ".tox",
-    ".gradle",
-    "test-results",
-    "perf-results",
-    // A2 工具链常用词
-    "target",
-    "dist",
-];
-
 /// 保存临时文件模式（两条）。**必须两条**才能与既有判据「`.` 开头且含 `.lumir-`」逐条等价：
 /// - `.lumir-*` —— 名字在**开头**就是 `.lumir-`（`.lumir-notes.md` / `.lumir-` / `.lumir-1`）；
 /// - `.*.lumir-*` —— 首个 `.` 之后另有内容再出现 `.lumir-`（本 app 产生的
@@ -67,15 +32,13 @@ pub const BUILTIN_NAMES: [&str; 16] = [
 const LUMIR_TMP_PATTERNS: [&str; 2] = [".lumir-*", ".*.lumir-*"];
 
 /// 用字面量行建一个 gitignore 匹配器。根固定为 `.`：本仓的规则一律按「相对匹配器所属目录」
-/// 的路径喂进来（内置规则与用户规则同口径），`ignore` crate 对根 `.` 有专门的「不剥前缀」
+/// 的路径喂进来（两档名字与用户规则同口径），`ignore` crate 对根 `.` 有专门的「不剥前缀」
 /// 分支，正是我们要的（`Gitignore::strip` 的 `.` 特例）。
 fn build_matcher<'a>(lines: impl IntoIterator<Item = &'a str>) -> Gitignore {
     let mut builder = GitignoreBuilder::new(".");
     for line in lines {
         // 字面量由本文件持有：写错在编译期不可见，在这里以 panic 暴露（不是用户输入路径）
-        builder
-            .add_line(None, line)
-            .expect("内置规则字面量必须合法");
+        builder.add_line(None, line).expect("规则字面量必须合法");
     }
     builder.build().unwrap_or_else(|_| empty_matcher())
 }
@@ -88,48 +51,18 @@ fn empty_matcher() -> Gitignore {
         .expect("空匹配器必须可构造")
 }
 
-/// 内置规则匹配器（进程内唯一，构造一次；表见 [`BUILTIN_NAMES`] 与 [`LUMIR_TMP_PATTERNS`]）。
-///
-/// 内置表是**常量**，因此这里是它唯一的实例化点——`validate_new_name` 与 `IgnorePolicy`
-/// 共用同一份匹配器，不存在第二份名单或第二个判定实现（REVIEW.md 「同一语义两处真源」条）。
-///
-/// 它与用户规则**不是同一个对象**，而是同一类匹配器 + 判定链上先判且命中即定格（§2.2/§2.6）：
-/// 若把两者编进同一个 `Gitignore`，用户写下的 `!target/` 会按「后者胜」推翻内置规则——那正是
-/// §2.6 明令禁止的（性能护栏不能由一行编辑关掉）。
-fn builtin_matcher() -> &'static Gitignore {
-    static MATCHER: OnceLock<Gitignore> = OnceLock::new();
-    MATCHER.get_or_init(|| {
-        build_matcher(
-            BUILTIN_NAMES
-                .iter()
-                .chain(LUMIR_TMP_PATTERNS.iter())
-                .copied(),
-        )
-    })
-}
-
-/// 临时文件模式匹配器（与内置表共用 [`LUMIR_TMP_PATTERNS`] 这一份字面量）。
-/// 消费者是 ghost 惰性清除（[`remove_ghost_tmp_if_stale`]）；判定新名字是否命中内置规则
-/// 走的是 [`builtin_matcher`]，这里只回答「是不是保存 tmp 形态」。
+/// 临时文件模式匹配器（[`LUMIR_TMP_PATTERNS`] 这一份字面量）。
+/// 消费者是 ghost 惰性清除（[`remove_ghost_tmp_if_stale`]）与 `IgnorePolicy` 的 hidden 匹配器
+/// （两者共用同一份字面量，MUST NOT 各抄一份）。
 fn lumir_tmp_matcher() -> &'static Gitignore {
     static MATCHER: OnceLock<Gitignore> = OnceLock::new();
     MATCHER.get_or_init(|| build_matcher(LUMIR_TMP_PATTERNS.iter().copied()))
 }
 
-/// 名字是否命中内置规则（**末段名**判定，`validate_new_name` 与前端预检的权威）。
-///
-/// 用户规则**不参与**：用户可以照常新建 / 改名成被 `.gitignore` 匹配的名字——它本来就可见、
-/// 可打开，只是不进索引（§3.2）。
-pub fn is_builtin_name(name: &str) -> bool {
-    builtin_matcher()
-        .matched_path_or_any_parents(name, false)
-        .is_ignore()
-}
-
 /// 条目按当前规则表的去向（spec「全类型递归枚举」：**来源决定去向**）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryClass {
-    /// **内置规则**命中 ⇒ 不可见：不进枚举结果、不进 watch 事件流、不进索引，子树不枚举
+    /// **hidden 档**命中 ⇒ 不可见：不进枚举结果、不进 watch 事件流、不进索引，子树不枚举
     ///（行为与今日的硬编码名单逐条一致）。
     Hidden,
     /// **用户规则**命中 ⇒ 惰性可见：出一行（`lazy: true`）、不递归、不进索引。
@@ -146,12 +79,27 @@ struct UserSource {
     matcher: Gitignore,
 }
 
-/// 一份规则表 + 物化集合（change vault-open-ignore-set §2.1 / §4.4）：纯 std 类型、
-/// **不引 tauri**（ADR 0002 §7），由 `commands.rs` 在 vault 装载时构造，交给
-/// `scan_workspace` / `scan_dir` / `watch` / `expand_new_dir_subtrees` / `validate_new_name`
-/// 五个使用点——一份策略、五个使用点，MUST NOT 在下游各自再造一份判定（REVIEW.md 「同一语义两处真源」条）。
+/// 忽略规则表的三档来源（change ignore-tiers-config）：`hidden` / `lazy` 两档的名字由
+/// `config.json` 的 `[vault]` 表给出（缺省 = [`crate::config::DEFAULT_HIDDEN`] /
+/// [`crate::config::DEFAULT_LAZY`]），保存临时文件模式恒定硬编码，其后才是用户规则。
 ///
-/// 判定链固定为 §2.2 的三步：**内置先判且命中即定格 → 用户规则（最深匹配决定）→ 其余可见**。
+/// **名字的书写形式有语义**：无尾斜杠名字字面量在**任意深度**匹配同名的**文件与目录** ⇒
+/// 与既有名字等值判定逐条等价（「同名文件与目录一视同仁」因此保留）。写成 `target/` 会变成
+/// 「只匹配目录、同名文件不受影响」——那是有意的改判，本 change 不做。配置名字经
+/// `config::validate_tier_names` 校验（不含 gitignore 元字符），所以这里的字面量语义成立。
+///
+/// A3 档（`build` / `out` / `vendor`）经 Alex 2026-09-28 裁决**不纳入**默认：通用英文词的
+/// 误伤概率高于收窄收益（且它们若写进了 `.gitignore`，照样落进用户规则、惰性可见）。
+///
+/// 一份规则表 + 物化集合（change vault-open-ignore-set §2.1 / §4.4 + change
+/// ignore-tiers-config）：纯 std 类型、**不引 tauri**（ADR 0002 §7），由 `commands.rs` 在
+/// vault 装载时构造，交给 `scan_workspace` / `scan_dir` / `watch` /
+/// `expand_new_dir_subtrees` / `validate_new_name` / `find_vault_entry_by_name` 等使用点——
+/// 一份策略、多个使用点，MUST NOT 在下游各自再造一份判定（REVIEW.md「同一语义两处真源」条）。
+///
+/// 判定链固定为四步：**`hidden` 档先判且命中即定格 → `lazy` 档次判且命中即定格 →
+/// 用户规则（最深匹配决定）→ 其余可见**。用户规则的取反只能在自己那一层生效，翻不动前两档
+/// （性能与索引确定性的护栏，见 change `vault-open-ignore-set` design §2.6 的三条理由）。
 ///
 /// **生效时点**：装载时编译一次，随 vault 存活；规则文件与 `vault.rule_files` 的改动一律
 /// **下次装载**生效（本会话不重编，依据见 design §4.5——可见集不随规则变化，变的只是「哪些
@@ -164,6 +112,10 @@ pub struct IgnorePolicy {
 struct IgnorePolicyInner {
     /// vault 根（读嵌套 `.gitignore` 用）。
     root: PathBuf,
+    /// `hidden` 档匹配器：配置名字 + 恒定临时文件模式（`LUMIR_TMP_PATTERNS` 不入配置面）。
+    hidden: Gitignore,
+    /// `lazy` 档匹配器：配置名字。
+    lazy: Gitignore,
     /// 用户规则来源，**优先级从高到低**排列（深层 `.gitignore` > 浅层 > `info/exclude`）。
     /// 判定取「第一个给出确定结论的来源」——即 git 的「最深匹配决定」。
     sources: Mutex<Vec<UserSource>>,
@@ -178,8 +130,12 @@ struct IgnorePolicyInner {
 }
 
 impl IgnorePolicy {
-    /// 装载时构造（`commands::prepare_vault_open` 调用）：编译内置规则（进程内常量匹配器）
+    /// 装载时构造（`commands::prepare_vault_open` 调用）：编译 `hidden` / `lazy` 两档名字
     /// 与 `rule_files` 清单里的用户规则。
+    ///
+    /// 两个名字参数由 `config::VaultConfig` 给出（缺省已由 `VaultConfig::default()` 填成
+    /// [`crate::config::DEFAULT_HIDDEN`] / [`crate::config::DEFAULT_LAZY`]）；`hidden` 匹配器
+    /// 恒定并入 [`LUMIR_TMP_PATTERNS`]——保存临时文件模式不在配置面内（数据损坏面）。
     ///
     /// 清单里每一项都按**「vault 根的规则文件」**解释（§2.9 语义 2）：读的是它自己那个路径，
     /// 但模式一律**相对 vault 根**匹配——所以 `.git/info/exclude` 与根 `.gitignore` 的匹配
@@ -190,7 +146,12 @@ impl IgnorePolicy {
     /// 文件不存在 / 不是常规文件 ⇒ 静默跳过（`.git/info/exclude` 在非 git vault 里本来就不存在，
     /// 这是常态）。嵌套 `.gitignore` 不在这里读——它们由枚举 / 按需枚举递归途中逐层登记
     ///（[`Self::register_nested`]）。
-    pub fn load(root: &Path, rule_files: &[String]) -> IgnorePolicy {
+    pub fn load(
+        root: &Path,
+        rule_files: &[String],
+        hidden: &[String],
+        lazy: &[String],
+    ) -> IgnorePolicy {
         let mut sources: Vec<UserSource> = Vec::new();
         let mut nested_gitignore = false;
         for file in rule_files {
@@ -203,9 +164,18 @@ impl IgnorePolicy {
                 insert_source(&mut sources, "", matcher);
             }
         }
+        let hidden_matcher = build_matcher(
+            hidden
+                .iter()
+                .map(String::as_str)
+                .chain(LUMIR_TMP_PATTERNS.iter().copied()),
+        );
+        let lazy_matcher = build_matcher(lazy.iter().map(String::as_str));
         IgnorePolicy {
             inner: Arc::new(IgnorePolicyInner {
                 root: root.to_path_buf(),
+                hidden: hidden_matcher,
+                lazy: lazy_matcher,
                 sources: Mutex::new(sources),
                 nested_gitignore,
                 nested_seen: Mutex::new(HashSet::new()),
@@ -214,10 +184,32 @@ impl IgnorePolicy {
         }
     }
 
-    /// 判定一个条目（vault 相对路径 + 磁盘类型）的去向。判定顺序是唯一的一条链（§2.2）。
+    /// 路径是否命中 `hidden` 档（含恒定临时文件模式）：任一组件（含最后一段）命中才算。
+    ///
+    /// `matched_path_or_any_parents` 让祖先命中同样传染给子孙——与既有组件判定同形。
+    pub fn hidden_hit(&self, rel: &str, is_dir: bool) -> bool {
+        self.inner
+            .hidden
+            .matched_path_or_any_parents(rel, is_dir)
+            .is_ignore()
+    }
+
+    /// 路径是否命中 `lazy` 档：祖先命中同样传染（展开后的子孙仍是惰性行，与用户规则同口径）。
+    pub fn lazy_hit(&self, rel: &str, is_dir: bool) -> bool {
+        self.inner
+            .lazy
+            .matched_path_or_any_parents(rel, is_dir)
+            .is_ignore()
+    }
+
+    /// 判定一个条目（vault 相对路径 + 磁盘类型）的去向。判定顺序是唯一的一条链：
+    /// **hidden → lazy → 用户规则 → 可见**；前两档命中即定格，用户规则的取反翻不动它们。
     pub fn classify(&self, rel: &str, is_dir: bool) -> EntryClass {
-        if is_builtin_hidden(rel, is_dir) {
+        if self.hidden_hit(rel, is_dir) {
             return EntryClass::Hidden;
+        }
+        if self.lazy_hit(rel, is_dir) {
+            return EntryClass::Lazy;
         }
         if self.user_ignored(rel, is_dir) {
             return EntryClass::Lazy;
@@ -365,14 +357,6 @@ fn relative_to_dir<'a>(dir: &str, rel: &'a str) -> Option<&'a str> {
     rel.strip_prefix(dir)?.strip_prefix('/')
 }
 
-/// 路径是否命中内置规则（任一组件，含最后一段）。内置规则是**名字的纯函数**——不含目录限定
-/// 模式，判定既不需要 stat 也不需要条目类型。
-fn is_builtin_hidden(rel: &str, is_dir: bool) -> bool {
-    builtin_matcher()
-        .matched_path_or_any_parents(rel, is_dir)
-        .is_ignore()
-}
-
 /// 单附件大小上限（spec：建议 50MB），防止误读大文件撑破常驻内存合同。
 pub const ATTACHMENT_MAX_BYTES: u64 = 50 * 1024 * 1024;
 
@@ -399,7 +383,7 @@ pub enum FsEntryKind {
 /// `lazy`（change vault-open-ignore-set §4.3）：true 表示这一条的**子树 / 索引面未枚举**——
 /// 目录的子孙不在本次结果里（展开时经 `fs_scan_dir` 拉取一层），文件不进链接索引与附件索引。
 /// 前端靠它区分「空目录」与「惰性目录」（没有这个标记，两者在模型里长得一样）。
-/// 语义与 [`FsChange::lazy`] 同源：**用户规则命中 ⇒ 惰性**（内置规则命中的条目根本不出现）。
+/// 语义与 [`FsChange::lazy`] 同源：**`lazy` 档或用户规则命中 ⇒ 惰性**（`hidden` 档命中的条目根本不出现）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct FsEntry {
@@ -412,7 +396,7 @@ pub struct FsEntry {
     /// 修改时间（Unix 毫秒）；取不到时为 null。
     #[ts(type = "number | null")]
     pub mtime_ms: Option<i64>,
-    /// 惰性条目（用户规则命中）：可见但未主动枚举，见本结构体的注释。
+    /// 惰性条目（`lazy` 档或用户规则命中）：可见但未主动枚举，见本结构体的注释。
     pub lazy: bool,
 }
 
@@ -435,7 +419,7 @@ pub struct FsChange {
     pub path: String,
     /// 条目类型（file/dir），deleted 时为 null——前端据此知道新增节点是文件还是目录。
     pub entry_kind: Option<FsEntryKind>,
-    /// 惰性标记：与 [`FsEntry::lazy`] **同一处口径**（用户规则命中 ⇒ true）。后端在过滤 /
+    /// 惰性标记：与 [`FsEntry::lazy`] **同一处口径**（`lazy` 档或用户规则命中 ⇒ true）。后端在过滤 /
     /// 投递那一步用同一份规则表算出，下游 MUST NOT 重算（那会引出第二份规则实现）。
     ///
     /// 消费方是两处**索引增量补丁**（`commands::apply_fs_changes` 的 `graph.upsert` 与
@@ -506,21 +490,21 @@ fn rel_string(root: &Path, path: &Path) -> Option<String> {
 /// 事件路径的投递判定（§4.4 的两来源规则），返回 `(vault 相对路径, lazy 标记)`；None = 丢弃。
 ///
 /// ```text
-/// 若任一组件（含最后一段）命中内置规则                          → 丢弃
+/// 若任一组件（含最后一段）命中 hidden 档                        → 丢弃
 /// 若任一「祖先组件」命中用户规则 且 该祖先不在已按需展开集合     → 丢弃
 /// 否则                                                        → 投递
 /// ```
 ///
 /// 三条要点（逐字见 spec「watch 增量事件流」）：
-/// 1. **内置规则对全部组件照判**（含最后一段）：它是名字的纯函数、语义类型无关，命中的条目
-///    在枚举结果里**没有行** ⇒ 这一行的增删事件 MUST NOT 投递，否则树里会出现一行枚举永远
-///    不会产生的幻影行（前端 `applyChanges` 不做隐藏名过滤）。`is_dir` 未知（被删路径拿不到
-///    类型）也不影响——无斜杠模式对文件与目录一视同仁。
-/// 2. **用户规则只看祖先，最后一段一律投递**：末段是否命中并不改变「有没有行」这个事实
-///    （命中 ⇒ 惰性行；不命中 ⇒ 普通行），两种情况下投递都正确；而行的出现 / 消失必须实时
-///    （否则外部删掉 `.local` 后树里留一个死行）。前缀组件必定是目录，因此这里一次 stat 都不需要。
-/// 3. **用户规则的祖先：未物化 ⇒ 不投递**（`.tower/worktrees/**` 的 agent churn 不进 webview）；
-///    已物化 ⇒ 投递（用户展开过的地方保持实时）。
+/// 1. **`hidden` 档对全部组件照判**（含最后一段）：它是名字的纯函数、语义类型无关，命中的
+///    条目在枚举结果里**没有行** ⇒ 这一行的增删事件 MUST NOT 投递，否则树里会出现一行枚举
+///    永远不产生的幻影行（前端 `applyChanges` 不做隐藏名过滤）。`is_dir` 未知（被删路径拿不
+///    到类型）也不影响——无斜杠模式对文件与目录一视同仁。
+/// 2. **`lazy` 档与用户规则只看祖先，最后一段一律投递**：末段命中只意味着这一行是惰性行
+///    （枚举同样会给出这一行），投递正确；而行的出现 / 消失必须实时（否则外部删掉 `target`
+///    后树里留一个死行）。前缀组件必定是目录，因此这里一次 stat 都不需要。
+/// 3. **祖先未物化 ⇒ 不投递**（`.tower/worktrees/**` 的 agent churn 不进 webview）；已物化
+///    ⇒ 投递（用户展开过的地方保持实时）。物化集合对 `lazy` 档与用户规则共用。
 ///
 /// `lazy` 由这里按同一份规则表算出并随事件带给前端：投递与否由「祖先」决定，但这一条**自身**
 /// 的去向另有下游消费者（两处索引增量补丁，§4.6）——MUST NOT 让下游各自重算。
@@ -531,18 +515,21 @@ fn watch_verdict(
     is_dir: Option<bool>,
 ) -> Option<(String, bool)> {
     let rel = rel_string(root, path)?;
-    if is_builtin_hidden(&rel, is_dir.unwrap_or(false)) {
+    let is_dir = is_dir.unwrap_or(false);
+    if policy.hidden_hit(&rel, is_dir) {
         return None;
     }
     let parts: Vec<&str> = rel.split('/').collect();
     for index in 0..parts.len().saturating_sub(1) {
         let ancestor = parts[..=index].join("/");
-        if policy.user_ignored(&ancestor, true) && !policy.is_materialized(&ancestor) {
+        let lazy_ancestor =
+            policy.lazy_hit(&ancestor, true) || policy.user_ignored(&ancestor, true);
+        if lazy_ancestor && !policy.is_materialized(&ancestor) {
             return None;
         }
     }
     // 末段不参与「投不投递」的判定，但这一条自身的去向要判（惰性 ⇒ 不进索引）。
-    let lazy = policy.user_ignored(&rel, is_dir.unwrap_or(false));
+    let lazy = policy.classify(&rel, is_dir) == EntryClass::Lazy;
     Some((rel, lazy))
 }
 
@@ -561,10 +548,10 @@ pub fn scan_workspace(root: &Path, policy: &IgnorePolicy) -> Result<Vec<FsEntry>
 
 /// 枚举实现本体；`now` 可注入，使 ghost tmp 的年龄判定在测试中确定可控。
 ///
-/// 分类口径（spec「全类型递归枚举」，一处实现）：内置规则命中 ⇒ 丢弃且不递归；用户规则命中
-/// ⇒ 出一行（`lazy: true`）且不递归；其余 ⇒ 出一行（`lazy: false`）并递归。
+/// 分类口径（spec「全类型递归枚举」，一处实现）：`hidden` 档命中 ⇒ 丢弃且不递归；`lazy` 档或
+/// `lazy` 档或用户规则命中 ⇒ 出一行（`lazy: true`）且不递归；其余 ⇒ 出一行（`lazy: false`）并递归。
 ///
-/// 收口处记一条 [被内置规则剪掉的条目数](crate::logging::vault_scan_ignored)（含被剪掉的目录
+/// 收口处记一条 [被 `hidden` 档剪掉的条目数](crate::logging::vault_scan_ignored)（含被剪掉的目录
 /// 自身，不含其未枚举的子孙）——它是「我的文件不见了」时的第一诊断依据；**只有计数**，不记
 /// 路径或名字原文（隐私边界）。`fs_scan_dir` 不记这条：按需展开是高频次动作，逐次计数只会把
 /// 日志刷成噪音，而它回答不了「vault 里有什么被剪掉了」。
@@ -625,7 +612,7 @@ fn scan_workspace_at(
             let Some(rel) = rel_string(root, &path) else {
                 continue;
             };
-            match policy.classify(&rel, kind == FsEntryKind::Dir) {
+            let lazy = match policy.classify(&rel, kind == FsEntryKind::Dir) {
                 EntryClass::Hidden => {
                     // 跨进程崩溃残留的 tmp ghost 在磁盘隐形累积：枚举路径顺带清除
                     // 超龄者；在途保存的 tmp（毫秒级）与合法点文件都不受影响
@@ -635,18 +622,18 @@ fn scan_workspace_at(
                     ignored += 1;
                     continue;
                 }
-                // 用户规则命中：出一行、不递归（「祖先被排除 ⇒ 子孙全被排除」的落点）
-                EntryClass::Lazy => {}
+                // lazy 档 / 用户规则命中：出一行、不递归（祖先命中 ⇒ 子孙同样惰性）
+                EntryClass::Lazy => true,
                 EntryClass::Visible => {
                     if kind == FsEntryKind::Dir {
                         stack.push(path.clone());
                     }
+                    false
                 }
-            }
+            };
             // symlink_metadata 不跟随：symlink 条目取链接自身的元数据，
             // 避免对循环 symlink follow 时撞 ELOOP。
             let meta = std::fs::symlink_metadata(&path).ok();
-            let lazy = lazy_of(policy, &rel, kind == FsEntryKind::Dir);
             entries.push(FsEntry {
                 path: rel,
                 kind,
@@ -664,7 +651,7 @@ fn scan_workspace_at(
 }
 
 /// 按需枚举**一层**（change vault-open-ignore-set §4.3 的 `fs_scan_dir`）：
-/// 分类口径与 [`scan_workspace`] 完全同源（内置规则丢弃、用户规则命中出一行且 `lazy: true`、
+/// 分类口径与 [`scan_workspace`] 完全同源（hidden 档丢弃、lazy 档或用户规则命中出一行且 `lazy: true`、
 /// 其余出一行），但 MUST NOT 递归下钻。
 ///
 /// 目标路径走与所有读取路径同源的 vault 内校验（[`resolve_in_vault`]，MUST NOT 为按需枚举
@@ -735,18 +722,17 @@ pub fn scan_dir(
         } else {
             FsEntryKind::File
         };
-        match policy.classify(&rel, kind == FsEntryKind::Dir) {
+        let lazy = match policy.classify(&rel, kind == FsEntryKind::Dir) {
             EntryClass::Hidden => {
                 if is_lumir_tmp(&name) {
                     remove_ghost_tmp_if_stale(&path, SystemTime::now());
                 }
                 continue;
             }
-            EntryClass::Lazy => {}
-            EntryClass::Visible => {}
-        }
+            EntryClass::Lazy => true,
+            EntryClass::Visible => false,
+        };
         let meta = std::fs::symlink_metadata(&path).ok();
-        let lazy = policy.user_ignored(&rel, kind == FsEntryKind::Dir);
         entries.push(FsEntry {
             path: rel,
             kind,
@@ -765,7 +751,7 @@ pub fn scan_dir(
 /// vault 内路径的**批量存在探测**（change vault-open-ignore-set §4.11）：收一组 vault 相对
 /// 路径，返回其中确实存在的那些（保持入参顺序、去重）。
 ///
-/// 存在的理由：「装载时的枚举结果不再是 vault 内文件的全集」——被用户规则命中的惰性条目
+/// 存在的理由：「装载时的枚举结果不再是 vault 内文件的全集」——被 `lazy` 档或用户规则命中的惰性条目
 ///（含其子树里的文件）在文件树里可见、可打开，却永不进枚举结果，所以「这个路径还在不在
 /// vault 里」的判据不能只看枚举集（消费方：会话恢复的跳过计数、阅读位置的存量键修剪）。
 ///
@@ -799,11 +785,6 @@ fn rel_dir_string(root: &Path, dir: &Path) -> Option<String> {
         })
         .collect();
     Some(parts.join("/"))
-}
-
-/// 单个条目的惰性标记：用户规则命中 ⇒ true（`scan_workspace` 用；懒封装只为可读）。
-fn lazy_of(policy: &IgnorePolicy, rel: &str, is_dir: bool) -> bool {
-    policy.user_ignored(rel, is_dir)
 }
 
 /// vault 内路径约束（安全边界，不依赖调用方自觉）：
@@ -875,37 +856,40 @@ fn join_rel(parent_rel: &str, name: &str) -> String {
     }
 }
 
-/// 新建 / 改名的末段名校验（**唯一一份**，五个写类命令共用；内置规则复用
-/// [`builtin_matcher`] 的同一份表，不另抄一份列表——REVIEW.md 「同一语义两处真源」条）。
-///
-/// 规则（design §2.3）：非空、不含 `/`、不是 `.` / `..`、不命中**内置规则**。最后那条
-/// 不是洁癖：`.git` / `target` 这类名字建/改出来不进文件树、watch 事件也被挡下，用户在界面上
-/// 既看不到也删不掉——静默丢失的温床，因此在入口就拒绝。
-///
-/// **用户规则命中的名字 MUST NOT 被拒绝**（§3.2）：那样名字本来就可见、可打开，只是不进索引。
-pub fn validate_new_name(name: &str) -> Result<(), CommandError> {
-    if name.is_empty() {
-        return Err(CommandError::new("fs_name_invalid", "名称不能为空"));
+impl IgnorePolicy {
+    /// 新建 / 改名的末段名校验（**唯一一份**，五个写类命令共用；`hidden` 档复用同一份策略，
+    /// 不另抄一份列表——REVIEW.md「同一语义两处真源」条）。
+    ///
+    /// 规则：非空、不含 `/`、不是 `.` / `..`、不命中 **`hidden` 档**（含恒定临时文件模式）。
+    /// 最后那条不是洁癖：`.git` / `.DS_Store` 这类名字建/改出来不进文件树、watch 事件也被挡下，
+    /// 用户在界面上既看不到也删不掉——静默丢失的温床，因此在入口就拒绝。
+    ///
+    /// **`lazy` 档与用户规则命中的名字 MUST NOT 被拒绝**：那样名字本来就可见、可打开，只是不进索引。
+    /// **没有任何名字级特判**（2026-10-17 节点 1 裁决）：`.git` 与其他名字同规则。
+    pub fn validate_new_name(&self, name: &str) -> Result<(), CommandError> {
+        if name.is_empty() {
+            return Err(CommandError::new("fs_name_invalid", "名称不能为空"));
+        }
+        if name.contains('/') {
+            return Err(CommandError::new(
+                "fs_name_invalid",
+                format!("名称不能包含斜杠：{name}"),
+            ));
+        }
+        if name == "." || name == ".." {
+            return Err(CommandError::new(
+                "fs_name_invalid",
+                format!("{name} 不是有效的名称"),
+            ));
+        }
+        if self.hidden_hit(name, false) {
+            return Err(CommandError::new(
+                "fs_name_invalid",
+                format!("{name} 在忽略集内，建成后不会出现在文件树里"),
+            ));
+        }
+        Ok(())
     }
-    if name.contains('/') {
-        return Err(CommandError::new(
-            "fs_name_invalid",
-            format!("名称不能包含斜杠：{name}"),
-        ));
-    }
-    if name == "." || name == ".." {
-        return Err(CommandError::new(
-            "fs_name_invalid",
-            format!("{name} 不是有效的名称"),
-        ));
-    }
-    if is_builtin_name(name) {
-        return Err(CommandError::new(
-            "fs_name_invalid",
-            format!("{name} 在忽略集内，建成后不会出现在文件树里"),
-        ));
-    }
-    Ok(())
 }
 
 /// 新建 / 改名的目标解析变体（写类命令的**共用一个入口**，安全边界不分散）。
@@ -925,10 +909,11 @@ pub fn validate_new_name(name: &str) -> Result<(), CommandError> {
 ///   本批不做——[`rename_entry`] 的注释写明取舍）。
 pub fn resolve_new_in_vault(
     root: &Path,
+    policy: &IgnorePolicy,
     parent_rel: &str,
     name: &str,
 ) -> Result<PathBuf, CommandError> {
-    validate_new_name(name)?;
+    policy.validate_new_name(name)?;
     let parent = if parent_rel.is_empty() {
         root.canonicalize().map_err(|e| {
             CommandError::new(
@@ -1010,10 +995,15 @@ pub fn trash_entry(root: &Path, rel: &str) -> Result<(), CommandError> {
 /// 真要做到零窗口需要平台的原子排他改名（macOS 的 `renamex_np(RENAME_EXCL)`，其余平台各有
 /// 对应物），本批不做：那要引 libc/平台分支，收益与风险不成比例。**因此「撞名不覆盖」在
 /// rename 这条路上是「复查 + 极窄窗口」，不是原子保证**——别在别处读成更强的东西。
-pub fn rename_entry(root: &Path, rel: &str, new_name: &str) -> Result<String, CommandError> {
+pub fn rename_entry(
+    root: &Path,
+    policy: &IgnorePolicy,
+    rel: &str,
+    new_name: &str,
+) -> Result<String, CommandError> {
     let from = resolve_in_vault(root, rel)?;
     let parent_rel = parent_rel_of(rel).to_string();
-    let to = resolve_new_in_vault(root, &parent_rel, new_name)?;
+    let to = resolve_new_in_vault(root, policy, &parent_rel, new_name)?;
     // 写路径复查（见上面注释）：与 create 路径同一个错误码与同一句话，前端不必分辨来源。
     if std::fs::symlink_metadata(&to).is_ok() {
         return Err(CommandError::new(
@@ -1048,7 +1038,12 @@ pub fn rename_entry(root: &Path, rel: &str, new_name: &str) -> Result<String, Co
 /// - **移入自身/后代**：显式前置拒绝（`fs_move_into_self`）。内核 rename 本来就拒绝这种
 ///   形态（EINVAL），但给的是「移动失败」的泛化措辞——这里提前挡，信息更人话，也不依赖
 ///   内核行为。`to_rel == from_rel`（移回原位，rename 会是静默 no-op）一并拒绝。
-pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String, CommandError> {
+pub fn fs_move_entry(
+    root: &Path,
+    policy: &IgnorePolicy,
+    from_rel: &str,
+    to_rel: &str,
+) -> Result<String, CommandError> {
     if from_rel == to_rel || to_rel.starts_with(&format!("{from_rel}/")) {
         return Err(CommandError::new(
             "fs_move_into_self",
@@ -1067,7 +1062,7 @@ pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String
         }
     };
     let to_parent_rel = parent_rel_of(to_rel);
-    let to = resolve_new_in_vault(root, to_parent_rel, to_name)?;
+    let to = resolve_new_in_vault(root, policy, to_parent_rel, to_name)?;
     // 写路径复查（撞名不覆盖，见本函数文档的取舍说明）。
     if std::fs::symlink_metadata(&to).is_ok() {
         return Err(
@@ -1092,10 +1087,11 @@ pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String
 /// 返回新建条目的 vault 相对路径。
 pub fn create_file_entry(
     root: &Path,
+    policy: &IgnorePolicy,
     parent_rel: &str,
     name: &str,
 ) -> Result<String, CommandError> {
-    let target = resolve_new_in_vault(root, parent_rel, name)?;
+    let target = resolve_new_in_vault(root, policy, parent_rel, name)?;
     let path = join_rel(parent_rel, name);
     match std::fs::OpenOptions::new()
         .write(true)
@@ -1118,8 +1114,13 @@ pub fn create_file_entry(
 
 /// 在目录下新建子目录（§3.6）：与 [`create_file_entry`] 同构，`create_dir` 本身撞名即报
 /// `AlreadyExists`，原子语义等价。新建目录 MUST NOT 自动展开父目录（折叠态是用户状态）。
-pub fn create_dir_entry(root: &Path, parent_rel: &str, name: &str) -> Result<String, CommandError> {
-    let target = resolve_new_in_vault(root, parent_rel, name)?;
+pub fn create_dir_entry(
+    root: &Path,
+    policy: &IgnorePolicy,
+    parent_rel: &str,
+    name: &str,
+) -> Result<String, CommandError> {
+    let target = resolve_new_in_vault(root, policy, parent_rel, name)?;
     let path = join_rel(parent_rel, name);
     match std::fs::create_dir(&target) {
         Ok(()) => Ok(path),
@@ -1631,7 +1632,11 @@ pub fn fs_patch_file(
 /// 报 `fs_path_escape`——被拒请求在 vault 里留下一个可见空目录（M407 r1 P2-1 实证）。
 /// 再逐段下探：已存在的段 canonicalize 后必须在 vault 内（挡住符号链接逃逸），缺的段用
 /// `create_dir` 建出。
-fn ensure_parent_dirs(root: &Path, parent_rel: &str) -> Result<(), CommandError> {
+fn ensure_parent_dirs(
+    root: &Path,
+    policy: &IgnorePolicy,
+    parent_rel: &str,
+) -> Result<(), CommandError> {
     if Path::new(parent_rel).is_absolute() {
         return Err(CommandError::new(
             "fs_path_escape",
@@ -1651,7 +1656,7 @@ fn ensure_parent_dirs(root: &Path, parent_rel: &str) -> Result<(), CommandError>
             )
             .param("rel", parent_rel));
         }
-        if is_builtin_name(segment) {
+        if policy.hidden_hit(segment, false) {
             return Err(CommandError::new(
                 "fs_name_invalid",
                 format!("{segment} 在忽略集内，建在它里面的文件不会出现在文件树里"),
@@ -1728,7 +1733,12 @@ fn ensure_parent_dirs(root: &Path, parent_rel: &str) -> Result<(), CommandError>
 ///
 /// image/binary 扩展名与两个既有写入口同口径拒绝（`fs_read_only`）——文本工具创造出的
 /// `.png` 只会得到文件树里一个打不开、渲染不了的条目。
-pub fn vault_create_file(root: &Path, rel: &str, content: &str) -> Result<String, CommandError> {
+pub fn vault_create_file(
+    root: &Path,
+    policy: &IgnorePolicy,
+    rel: &str,
+    content: &str,
+) -> Result<String, CommandError> {
     if SAVE_REJECTED_EXTENSIONS.contains(&extension_of(rel).as_str()) {
         return Err(CommandError::new(
             "fs_read_only",
@@ -1745,8 +1755,8 @@ pub fn vault_create_file(root: &Path, rel: &str, content: &str) -> Result<String
         }
     };
     let parent_rel = parent_rel_of(rel);
-    ensure_parent_dirs(root, parent_rel)?;
-    let target = resolve_new_in_vault(root, parent_rel, name)?;
+    ensure_parent_dirs(root, policy, parent_rel)?;
+    let target = resolve_new_in_vault(root, policy, parent_rel, name)?;
     // O_EXCL：撞名由内核裁定（`resolve_new_in_vault` 的早失败只是人话提示，保证在这里）。
     let mut file = match std::fs::OpenOptions::new()
         .write(true)
@@ -1982,14 +1992,21 @@ fn resolve_attachment_dir(root: &Path, dir_rel: &str) -> Result<PathBuf, Command
 
 /// 全 vault 按**文件名**探测既有条目，返回字典序最小的 vault 相对路径（无命中为 None）。
 ///
-/// 不用 [`scan_workspace`]：那条路径按**可见性规则**枚举（用户规则命中的目录出一行不递归），
+/// 不用 [`scan_workspace`]：那条路径按**可见性规则**枚举（`lazy` 档 / 用户规则的目录出一行不递归），
 /// 而去重判据是「这个名字在 vault 里已经存在」，与可见性正交——用户在 `.gitignore` 里写规则
-/// 不该让同一张图被重复落盘。剪枝口径仍与枚举同源：内置规则命中的目录整棵跳过（工具目录里的
-/// 同名文件不是本能力的产物）、符号链接目录不跟随（`file_type()` 不 follow，防循环 / 防逃逸）。
+/// 不该让同一张图被重复落盘。
+///
+/// 剪枝口径（change ignore-tiers-config 节点 1 修正）：**hidden 档与配置 `lazy` 档命中的目录
+/// 整棵跳过**——前者是工具目录（`.git` 等），后者的名字来自配置默认的构建产物族
+/// （`node_modules` / `target` / `dist`…）：本能力的产物是 `pasted-<hash>.webp` 这类内容寻址
+/// 名字，落在这些目录里的概率趋于零，而每次粘贴都遍历一遍 `node_modules` 是白付 IPC 主线程的
+/// 全盘成本。**用户规则命中的惰性目录照旧遍历**（master 的既有行为：用户声明不跟踪的目录里
+/// 仍可能有同名文件，重复落盘与可见性正交）。符号链接目录不跟随（`file_type()` 不 follow，
+/// 防循环 / 防逃逸）。
 ///
 /// 多个命中时取字典序最小者：内容寻址命名下同名即同内容，多命中只可能来自用户手工放入的
 /// 副本，字典序是既有的确定性兜底口径（design §5）。
-fn find_vault_entry_by_name(root: &Path, name: &str) -> Option<String> {
+fn find_vault_entry_by_name(root: &Path, policy: &IgnorePolicy, name: &str) -> Option<String> {
     let mut best: Option<String> = None;
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -2015,7 +2032,7 @@ fn find_vault_entry_by_name(root: &Path, name: &str) -> Option<String> {
             let Some(rel) = rel_string(root, &path) else {
                 continue;
             };
-            if is_builtin_hidden(&rel, true) {
+            if policy.hidden_hit(&rel, true) || policy.lazy_hit(&rel, true) {
                 continue;
             }
             stack.push(path);
@@ -2086,6 +2103,7 @@ pub(crate) fn decode_attachment_base64(data_base64: &str) -> Result<Vec<u8>, Com
 /// 本函数零事件接线。命名与去重收进后端 ⇒ 前端一次粘贴恰好一次 invoke，不自己算 hash。
 pub fn write_attachment(
     root: &Path,
+    policy: &IgnorePolicy,
     dir_rel: &str,
     data_base64: &str,
     source_mime: &str,
@@ -2099,7 +2117,7 @@ pub fn write_attachment(
     };
     let name = format!("pasted-{}.{extension}", short_hash(&bytes));
     let dir = resolve_attachment_dir(root, dir_rel)?;
-    if let Some(existing) = find_vault_entry_by_name(root, &name) {
+    if let Some(existing) = find_vault_entry_by_name(root, policy, &name) {
         return Ok(WrittenAttachment {
             path: existing,
             name,
@@ -2111,7 +2129,7 @@ pub fn write_attachment(
         // 竞态：探测与 rename 之间目标被建出 ⇒ 按去重收敛（不覆盖、不报错），返回既有位置。
         // 只在确实存在同名**文件**时收敛——目标名被目录 / 符号链接占用时无文件可指，
         // 报错而 MUST NOT 报成功（spec「写入结果无法确认时返回错误」）。
-        AtomicWriteOutcome::TargetExists => match find_vault_entry_by_name(root, &name) {
+        AtomicWriteOutcome::TargetExists => match find_vault_entry_by_name(root, policy, &name) {
             Some(existing) => Ok(WrittenAttachment {
                 path: existing,
                 name,
@@ -2248,7 +2266,7 @@ fn refine_with_known(
             continue;
         }
         let is_dir = c.entry_kind == Some(FsEntryKind::Dir);
-        c.lazy = lazy_of(policy, &c.path, is_dir);
+        c.lazy = policy.classify(&c.path, is_dir) == EntryClass::Lazy;
         let is_new = known.insert(c.path.clone());
         c.kind = if is_new {
             FsChangeKind::Created
@@ -2278,7 +2296,7 @@ fn refine_with_known(
 ///
 /// **惰性子树不补**（§4.3）：新出现的目录若命中用户规则，本批次只带出它**这一行**
 ///（`lazy: true`），MUST NOT 带出子孙——那正是「按需枚举」的代价模型；它被展开时由
-/// `fs_scan_dir` 取回一层。命中内置规则的条目一条都不进（与枚举同口径）。
+/// `fs_scan_dir` 取回一层。命中 hidden 档的条目一条都不进（与枚举同口径）。
 fn expand_new_dir_subtrees(
     root: &Path,
     policy: &IgnorePolicy,
@@ -2320,7 +2338,7 @@ fn expand_new_dir_subtrees(
             };
             let is_dir = entry_kind == FsEntryKind::Dir;
             let lazy = match policy.classify(&rel, is_dir) {
-                EntryClass::Hidden => continue, // 内置规则命中：连行都没有，不进批次
+                EntryClass::Hidden => continue, // hidden 档命中：连行都没有，不进批次
                 EntryClass::Lazy => true,
                 EntryClass::Visible => false,
             };
@@ -2505,15 +2523,16 @@ mod tests {
     }
 
     impl TempVault {
-        /// 无用户规则来源的策略（只剩内置规则）：既有断言大多只关心内置规则。
+        /// 无用户规则来源的策略（只剩 `hidden` / `lazy` 两档默认名）：既有断言大多只关心忽略集。
         fn policy(&self) -> IgnorePolicy {
-            IgnorePolicy::load(&self.0, &[])
+            self.policy_with(&[])
         }
 
-        /// 指定用户规则来源清单的策略（`vault.rule_files` 的形状）。
+        /// 指定用户规则来源清单的策略（`vault.rule_files` 的形状），两档取代码内置默认。
         fn policy_with(&self, rule_files: &[&str]) -> IgnorePolicy {
             let list: Vec<String> = rule_files.iter().map(|s| s.to_string()).collect();
-            IgnorePolicy::load(&self.0, &list)
+            let defaults = crate::config::VaultConfig::default();
+            IgnorePolicy::load(&self.0, &list, &defaults.hidden, &defaults.lazy)
         }
 
         /// 出厂默认清单（`[".gitignore", ".git/info/exclude"]`）。
@@ -2534,10 +2553,16 @@ mod tests {
         assert!(paths.contains(&"sub"));
         assert!(paths.contains(&"sub/deep"));
         assert!(paths.contains(&"sub/deep/a.txt"));
-        // 忽略集：自身与子孙都不出现
+        // hidden 档：自身与子孙都不出现
         assert!(!paths.iter().any(|p| p.contains(".git")));
         assert!(!paths.iter().any(|p| p.contains(".DS_Store")));
-        assert!(!paths.iter().any(|p| p.contains("node_modules")));
+        // lazy 档（默认 14 名）：自身出一行惰性条目，子孙不进枚举
+        let nm = entries
+            .iter()
+            .find(|e| e.path == "node_modules")
+            .expect("node_modules 出惰性行");
+        assert!(nm.lazy && nm.kind == FsEntryKind::Dir);
+        assert!(!paths.iter().any(|p| p.starts_with("node_modules/")));
 
         let note = entries.iter().find(|e| e.path == "note.md").unwrap();
         assert_eq!(note.kind, FsEntryKind::File);
@@ -2919,6 +2944,8 @@ mod tests {
             ("outer/deep/deeper/c.md", FsEntryKind::File),
             ("outer/sib", FsEntryKind::Dir),
             ("outer/sib/d.md", FsEntryKind::File),
+            ("outer/node_modules", FsEntryKind::Dir),
+            ("outer/node_modules/pkg", FsEntryKind::Dir),
             ("outer/node_modules/pkg/index.js", FsEntryKind::File),
             ("outer/.DS_Store", FsEntryKind::File),
             ("outer/.note.md.lumir-123", FsEntryKind::File),
@@ -2933,11 +2960,11 @@ mod tests {
                     std::fs::write(&full, "x").unwrap();
                 }
             }
-            if rel.contains("node_modules")
-                || rel.contains(".DS_Store")
-                || rel.ends_with("lumir-123")
-            {
-                continue; // 忽略集命中：磁盘上有，但不得进批次（与枚举同口径）
+            if rel.contains(".DS_Store") || rel.ends_with("lumir-123") {
+                continue; // hidden 档命中：磁盘上有，但不得进批次（与枚举同口径）
+            }
+            if rel.starts_with("outer/node_modules/") {
+                continue; // lazy 档的子孙不补（祖先命中即定格）
             }
             expected.push((rel, *kind));
         }
@@ -3511,15 +3538,15 @@ mod tests {
     #[test]
     fn vault_create_file_is_exclusive_and_never_overwrites() {
         let v = TempVault::with_fixture();
-        let created = vault_create_file(&v.0, "sub/deep/b.md", "第一版").unwrap();
+        let created = vault_create_file(&v.0, &v.policy(), "sub/deep/b.md", "第一版").unwrap();
         assert_eq!(created, "sub/deep/b.md");
         assert_eq!(read_text_file(&v.0, "sub/deep/b.md").unwrap(), "第一版");
 
-        let err = vault_create_file(&v.0, "sub/deep/b.md", "第二版").unwrap_err();
+        let err = vault_create_file(&v.0, &v.policy(), "sub/deep/b.md", "第二版").unwrap_err();
         assert_eq!(err.code, "fs_already_exists");
         assert_eq!(read_text_file(&v.0, "sub/deep/b.md").unwrap(), "第一版");
 
-        let err = vault_create_file(&v.0, "note.md", "x").unwrap_err();
+        let err = vault_create_file(&v.0, &v.policy(), "note.md", "x").unwrap_err();
         assert_eq!(err.code, "fs_already_exists");
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
     }
@@ -3540,17 +3567,15 @@ mod tests {
             ("../escape.md", "fs_path_escape"),
             ("pic.png", "fs_read_only"),
             (".git/new.md", "fs_name_invalid"),
-            ("node_modules/x.md", "fs_name_invalid"),
             (".DS_Store", "fs_name_invalid"),
             ("", "fs_path_invalid"),
             ("/abs/new.md", "fs_path_escape"),
             ("/abs/deep/new.md", "fs_path_escape"),
         ] {
-            let err = vault_create_file(&v.0, rel, "x").unwrap_err();
+            let err = vault_create_file(&v.0, &v.policy(), rel, "x").unwrap_err();
             assert_eq!(err.code, code, "{rel}");
         }
         assert!(!v.0.join(".git/new.md").exists());
-        assert!(!v.0.join("node_modules/x.md").exists());
         // 绝对路径被拒时 MUST NOT 在 vault 里留下任何目录（P2-1 的回归判据）。
         assert!(!v.0.join("abs").exists(), "绝对路径输入不得建出 abs/");
         assert!(!v.0.join("deep").exists());
@@ -3561,24 +3586,24 @@ mod tests {
     #[test]
     fn vault_create_file_creates_parent_dirs() {
         let v = TempVault::new();
-        let created = vault_create_file(&v.0, "a/b/c/new.md", "内容").unwrap();
+        let created = vault_create_file(&v.0, &v.policy(), "a/b/c/new.md", "内容").unwrap();
         assert_eq!(created, "a/b/c/new.md");
         assert_eq!(read_text_file(&v.0, "a/b/c/new.md").unwrap(), "内容");
         assert!(v.0.join("a/b/c").is_dir());
 
         // 父段 `..` 逃逸：拒绝且不建任何目录。
-        let err = vault_create_file(&v.0, "x/../../escape.md", "x").unwrap_err();
+        let err = vault_create_file(&v.0, &v.policy(), "x/../../escape.md", "x").unwrap_err();
         assert_eq!(err.code, "fs_path_escape");
         assert!(!v.0.join("x").exists());
 
         // 父段含内置忽略名：拒绝且不建任何目录。
-        let err = vault_create_file(&v.0, "keep/.git/new.md", "x").unwrap_err();
+        let err = vault_create_file(&v.0, &v.policy(), "keep/.git/new.md", "x").unwrap_err();
         assert_eq!(err.code, "fs_name_invalid");
         assert!(!v.0.join("keep").exists());
 
         // 父段落在既有文件上（不是目录）：拒绝。
         std::fs::write(v.0.join("plain.md"), "x").unwrap();
-        let err = vault_create_file(&v.0, "plain.md/new.md", "x").unwrap_err();
+        let err = vault_create_file(&v.0, &v.policy(), "plain.md/new.md", "x").unwrap_err();
         assert_eq!(err.code, "fs_path_invalid");
     }
 
@@ -3594,35 +3619,35 @@ mod tests {
         std::fs::create_dir_all(v.0.join("notes")).unwrap();
 
         // 跨目录移动成立。
-        let moved = fs_move_entry(&v.0, "sub/deep/a.txt", "notes/a.txt").unwrap();
+        let moved = fs_move_entry(&v.0, &v.policy(), "sub/deep/a.txt", "notes/a.txt").unwrap();
         assert_eq!(moved, "notes/a.txt");
         assert!(!v.0.join("sub/deep/a.txt").exists());
         assert_eq!(read_text_file(&v.0, "notes/a.txt").unwrap(), "a");
 
         // 撞名不覆盖：既有目标与源都逐字节不变。
         std::fs::write(v.0.join("notes/b.txt"), "original").unwrap();
-        let err = fs_move_entry(&v.0, "note.md", "notes/b.txt").unwrap_err();
+        let err = fs_move_entry(&v.0, &v.policy(), "note.md", "notes/b.txt").unwrap_err();
         assert_eq!(err.code, "fs_already_exists");
         assert_eq!(read_text_file(&v.0, "notes/b.txt").unwrap(), "original");
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
 
         // 源逃逸 / 目标逃逸 / 目标父目录不存在。
-        let err = fs_move_entry(&v.0, "../outside.md", "notes/a.txt").unwrap_err();
+        let err = fs_move_entry(&v.0, &v.policy(), "../outside.md", "notes/a.txt").unwrap_err();
         assert_eq!(err.code, "fs_path_escape");
-        let err = fs_move_entry(&v.0, "note.md", "../escape.md").unwrap_err();
+        let err = fs_move_entry(&v.0, &v.policy(), "note.md", "../escape.md").unwrap_err();
         assert_eq!(err.code, "fs_path_escape");
-        let err = fs_move_entry(&v.0, "note.md", "missing/dir/b.md").unwrap_err();
+        let err = fs_move_entry(&v.0, &v.policy(), "note.md", "missing/dir/b.md").unwrap_err();
         assert_eq!(err.code, "fs_not_found");
         assert!(v.0.join("note.md").exists());
 
         // 移入自身/后代：显式前置拒绝（专属错误码），源目录与内容原样、目标不存在。
-        let err = fs_move_entry(&v.0, "sub", "sub/deep/inner").unwrap_err();
+        let err = fs_move_entry(&v.0, &v.policy(), "sub", "sub/deep/inner").unwrap_err();
         assert_eq!(err.code, "fs_move_into_self");
         assert!(v.0.join("sub/deep").is_dir());
         assert!(!v.0.join("sub/deep/inner").exists());
 
         // 移回原位（to == from）：拒绝，不当作静默成功的 no-op。
-        let err = fs_move_entry(&v.0, "note.md", "note.md").unwrap_err();
+        let err = fs_move_entry(&v.0, &v.policy(), "note.md", "note.md").unwrap_err();
         assert_eq!(err.code, "fs_move_into_self");
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
     }
@@ -3723,14 +3748,25 @@ mod tests {
     }
 
     #[test]
-    fn validate_new_name_rejects_dot_slash_ignored_and_accepts_normal() {
-        for bad in ["", "a/b", ".", "..", ".git", ".DS_Store", "node_modules"] {
-            let err = validate_new_name(bad).unwrap_err();
+    fn validate_new_name_rejects_shape_and_hidden_tier_and_accepts_lazy_names() {
+        let v = TempVault::new();
+        let p = v.policy();
+        for bad in ["", "a/b", ".", "..", ".git", ".DS_Store", ".lumir-notes.md"] {
+            let err = p.validate_new_name(bad).unwrap_err();
             assert_eq!(err.code, "fs_name_invalid", "case: {bad:?}");
         }
-        // 合法点文件不受内置规则牵连（`.gitignore` 不在 BUILTIN_NAMES，也不命中临时文件模式）
-        for ok in ["note.md", "笔记.md", ".gitignore", "a.txt"] {
-            assert!(validate_new_name(ok).is_ok(), "case: {ok:?}");
+        // lazy 档名字可以建（可见、可打开，只是不进索引）；合法点文件不受牵连
+        for ok in [
+            "note.md",
+            "笔记.md",
+            ".gitignore",
+            "a.txt",
+            "node_modules",
+            "target",
+            "dist",
+            ".venv",
+        ] {
+            assert!(p.validate_new_name(ok).is_ok(), "case: {ok:?}");
         }
     }
 
@@ -3740,32 +3776,32 @@ mod tests {
         let root = &v.0;
         // 父目录逃逸：绝对路径与 `..` 穿越都被 resolve_in_vault 挡住
         for parent in ["../outside", "/etc", "sub/../../etc"] {
-            let err = resolve_new_in_vault(root, parent, "x.md").unwrap_err();
+            let err = resolve_new_in_vault(root, &v.policy(), parent, "x.md").unwrap_err();
             assert_eq!(err.code, "fs_path_escape", "parent: {parent}");
         }
-        // 末段名非法：空 / 含斜杠 / 点 / 点点 / 忽略集三种
-        for name in ["", "a/b", ".", "..", ".git", ".DS_Store", "node_modules"] {
-            let err = resolve_new_in_vault(root, "", name).unwrap_err();
+        // 末段名非法：空 / 含斜杠 / 点 / 点点 / hidden 档两种
+        for name in ["", "a/b", ".", "..", ".git", ".DS_Store"] {
+            let err = resolve_new_in_vault(root, &v.policy(), "", name).unwrap_err();
             assert_eq!(err.code, "fs_name_invalid", "name: {name:?}");
         }
         // 撞名：既有文件与既有目录都要挡住
         for name in ["note.md", "sub"] {
-            let err = resolve_new_in_vault(root, "", name).unwrap_err();
+            let err = resolve_new_in_vault(root, &v.policy(), "", name).unwrap_err();
             assert_eq!(err.code, "fs_already_exists", "name: {name}");
         }
         // 父目录不存在 / 父是文件
-        let err = resolve_new_in_vault(root, "missing", "x.md").unwrap_err();
+        let err = resolve_new_in_vault(root, &v.policy(), "missing", "x.md").unwrap_err();
         assert_eq!(err.code, "fs_not_found");
-        let err = resolve_new_in_vault(root, "note.md", "x.md").unwrap_err();
+        let err = resolve_new_in_vault(root, &v.policy(), "note.md", "x.md").unwrap_err();
         assert_eq!(err.code, "fs_path_invalid");
         // 正常：根下与子目录下，返回父的规范化路径 + join(name)（目标允许不存在）
         let canon = root.canonicalize().unwrap();
         assert_eq!(
-            resolve_new_in_vault(root, "", "new.md").unwrap(),
+            resolve_new_in_vault(root, &v.policy(), "", "new.md").unwrap(),
             canon.join("new.md")
         );
         assert_eq!(
-            resolve_new_in_vault(root, "sub/deep", "new.md").unwrap(),
+            resolve_new_in_vault(root, &v.policy(), "sub/deep", "new.md").unwrap(),
             canon.join("sub/deep/new.md")
         );
     }
@@ -3775,7 +3811,7 @@ mod tests {
         let v = TempVault::with_fixture();
         let root = &v.0;
         assert_eq!(
-            rename_entry(root, "note.md", "renamed.md").unwrap(),
+            rename_entry(root, &v.policy(), "note.md", "renamed.md").unwrap(),
             "renamed.md"
         );
         assert!(!root.join("note.md").exists());
@@ -3785,18 +3821,21 @@ mod tests {
         );
         // 嵌套路径：父段由源路径派生，返回路径带父段
         assert_eq!(
-            rename_entry(root, "sub/deep/a.txt", "b.txt").unwrap(),
+            rename_entry(root, &v.policy(), "sub/deep/a.txt", "b.txt").unwrap(),
             "sub/deep/b.txt"
         );
         assert!(root.join("sub/deep/b.txt").exists());
         // 目录改名连同子孙一起走
-        assert_eq!(rename_entry(root, "sub", "sub2").unwrap(), "sub2");
+        assert_eq!(
+            rename_entry(root, &v.policy(), "sub", "sub2").unwrap(),
+            "sub2"
+        );
         assert_eq!(
             std::fs::read_to_string(root.join("sub2/deep/b.txt")).unwrap(),
             "a"
         );
         // 撞名：目标与源都逐字节不变
-        let err = rename_entry(root, "renamed.md", "main.rs").unwrap_err();
+        let err = rename_entry(root, &v.policy(), "renamed.md", "main.rs").unwrap_err();
         assert_eq!(err.code, "fs_already_exists");
         assert_eq!(
             std::fs::read_to_string(root.join("main.rs")).unwrap(),
@@ -3807,9 +3846,9 @@ mod tests {
             "# hello"
         );
         // 源不存在 / 新名非法（非法时源不动）
-        let err = rename_entry(root, "missing.md", "x.md").unwrap_err();
+        let err = rename_entry(root, &v.policy(), "missing.md", "x.md").unwrap_err();
         assert_eq!(err.code, "fs_not_found");
-        let err = rename_entry(root, "renamed.md", ".git").unwrap_err();
+        let err = rename_entry(root, &v.policy(), "renamed.md", ".git").unwrap_err();
         assert_eq!(err.code, "fs_name_invalid");
         assert!(root.join("renamed.md").exists());
     }
@@ -3828,7 +3867,7 @@ mod tests {
         let v = TempVault::with_fixture();
         let root = &v.0;
         // 目标已存在（普通文件）：报错、两边逐字节不变
-        let err = rename_entry(root, "note.md", "main.rs").unwrap_err();
+        let err = rename_entry(root, &v.policy(), "note.md", "main.rs").unwrap_err();
         assert_eq!(err.code, "fs_already_exists");
         assert!(
             err.message.contains("已存在同名条目：main.rs"),
@@ -3845,13 +3884,15 @@ mod tests {
         );
         // 目标已存在（目录）：同样挡住（rename 到目录名下会替换空目录或报 ENOTDIR，
         // 两种都不是我们要的语义）
-        let err = rename_entry(root, "note.md", "sub").unwrap_err();
+        let err = rename_entry(root, &v.policy(), "note.md", "sub").unwrap_err();
         assert_eq!(err.code, "fs_already_exists");
         assert!(root.join("sub/deep/a.txt").exists(), "既有目录不得被动");
         assert!(root.join("note.md").exists());
         // 忽略集名与非法名走的是另一条分支（保持既有语义）
         assert_eq!(
-            rename_entry(root, "note.md", ".git").unwrap_err().code,
+            rename_entry(root, &v.policy(), "note.md", ".git")
+                .unwrap_err()
+                .code,
             "fs_name_invalid"
         );
     }
@@ -3861,29 +3902,32 @@ mod tests {
         let v = TempVault::with_fixture();
         let root = &v.0;
         assert_eq!(
-            create_file_entry(root, "sub", "new.md").unwrap(),
+            create_file_entry(root, &v.policy(), "sub", "new.md").unwrap(),
             "sub/new.md"
         );
         let meta = std::fs::metadata(root.join("sub/new.md")).unwrap();
         assert!(meta.is_file());
         assert_eq!(meta.len(), 0, "新建的是空文件");
-        assert_eq!(create_dir_entry(root, "", "newdir").unwrap(), "newdir");
+        assert_eq!(
+            create_dir_entry(root, &v.policy(), "", "newdir").unwrap(),
+            "newdir"
+        );
         assert!(root.join("newdir").is_dir());
         // 撞名不覆盖：既有文件逐字节不变
-        let err = create_file_entry(root, "", "note.md").unwrap_err();
+        let err = create_file_entry(root, &v.policy(), "", "note.md").unwrap_err();
         assert_eq!(err.code, "fs_already_exists");
         assert_eq!(
             std::fs::read_to_string(root.join("note.md")).unwrap(),
             "# hello"
         );
-        let err = create_dir_entry(root, "", "sub").unwrap_err();
+        let err = create_dir_entry(root, &v.policy(), "", "sub").unwrap_err();
         assert_eq!(err.code, "fs_already_exists");
         // 忽略集名 / 逃逸父 / 父不存在
-        let err = create_file_entry(root, "", "node_modules").unwrap_err();
+        let err = create_file_entry(root, &v.policy(), "", ".git").unwrap_err();
         assert_eq!(err.code, "fs_name_invalid");
-        let err = create_dir_entry(root, "../outside", "x").unwrap_err();
+        let err = create_dir_entry(root, &v.policy(), "../outside", "x").unwrap_err();
         assert_eq!(err.code, "fs_path_escape");
-        let err = create_file_entry(root, "missing", "x.md").unwrap_err();
+        let err = create_file_entry(root, &v.policy(), "missing", "x.md").unwrap_err();
         assert_eq!(err.code, "fs_not_found");
         // 成功不是空口承诺：新建的两个条目真的在磁盘上
         assert!(root.join("sub/new.md").exists() && root.join("newdir").exists());
@@ -3930,15 +3974,17 @@ mod tests {
     // change vault-open-ignore-set：一份规则表（内置 + 用户）、按需枚举、watch 判定
     // -----------------------------------------------------------------------
 
-    /// 内置规则的**表本身**（tasks 1.1）：16 个名字逐条命中、临时文件模式两条命中，
-    /// 名字相近的（`targets` / `dist-old` / `Target`）与 A3 档（`build` / `out` / `vendor`）
-    /// 都不命中——它们是精确名字字面量，不是前缀或通配匹配。
+    /// 两档默认名单（change ignore-tiers-config §2.1）：`hidden` 档 = `.git` / `.DS_Store`，
+    /// 外加恒定临时文件模式两条；`lazy` 档 = 其余 14 名。名字匹配是**任意深度 + 大小写敏感**，
+    /// 同名文件与目录一视同仁；名字相近的（`targets` / `dist-old` / `Target`）与 A3 档
+    /// （`build` / `out` / `vendor`）两档都不命中。
     #[test]
-    fn builtin_table_matches_exactly_the_declared_names_and_tmp_patterns() {
-        for name in BUILTIN_NAMES {
-            assert!(is_builtin_name(name), "{name} 必须命中内置规则");
-            // 同名**目录**一视同仁（无尾斜杠字面量的 gitignore 语义）
-            assert!(is_builtin_hidden(name, true), "{name} 作为目录同样命中");
+    fn default_ignore_tiers_match_names_at_any_depth_and_keep_tmp_patterns_hidden() {
+        let v = TempVault::new();
+        let p = v.policy();
+        for name in [".git", ".DS_Store"] {
+            assert!(p.hidden_hit(name, false), "{name}");
+            assert!(p.hidden_hit(name, true), "{name} 作为目录同样命中");
         }
         for name in [
             ".lumir-",
@@ -3948,7 +3994,17 @@ mod tests {
             ".a.lumir-1",
             ".note.md.lumir-1",
         ] {
-            assert!(is_builtin_name(name), "临时文件模式必须命中 {name}");
+            assert!(p.hidden_hit(name, false), "临时文件模式必须命中 {name}");
+        }
+        for name in ["node_modules", "target", "dist", "test-results", ".venv"] {
+            assert!(p.lazy_hit(name, false), "{name} 在 lazy 档");
+            assert!(p.lazy_hit(name, true), "{name} 作为目录同样命中");
+            assert!(!p.hidden_hit(name, false), "{name} 不在 hidden 档");
+            // 祖先命中 ⇒ 子孙同样命中（展开后的每一层仍是惰性行）
+            assert!(
+                p.lazy_hit(&format!("a/{name}/x.md"), false),
+                "a/{name}/x.md"
+            );
         }
         for name in [
             "Target",
@@ -3956,7 +4012,7 @@ mod tests {
             "targets",
             "dist-old",
             "builds",
-            // A3 档经 Alex 2026-09-28 裁决不纳入
+            // A3 档经 Alex 2026-09-28 裁决不纳入默认
             "build",
             "out",
             "vendor",
@@ -3966,23 +4022,27 @@ mod tests {
             "a.lumir-1",
             "notes",
         ] {
-            assert!(!is_builtin_name(name), "{name} MUST NOT 命中内置规则");
+            assert!(!p.hidden_hit(name, false), "{name} MUST NOT 命中 hidden 档");
+            assert!(!p.lazy_hit(name, false), "{name} MUST NOT 命中 lazy 档");
         }
+        // 嵌套路径
+        assert!(p.hidden_hit("a/.git/config", false));
+        assert!(p.lazy_hit("a/target/x.md", false));
+        assert!(!p.hidden_hit("a/targets/x.md", false));
     }
 
-    /// 对拍测试（tasks 1.2）：同一份 corpus 同时跑「今日判据」与「新内置匹配器」，逐条断言
-    /// **完全一致、零例外**——不许有「已知差异例外」，任何不一致都是规则写少了。
-    ///
-    /// 「今日判据」的口径 = 名字等值 + `starts_with('.') && contains(".lumir-")`；名字等值那一半
-    /// 按**同一份 16 条名字表**求值（本 change 把名单从 3 条扩到 16 条是**有意的裁决**，不是
-    /// 对拍要证明的东西）——这条测试钉的是**模式语义**的等价：无斜杠字面量 ≡ 任意深度同名，
+    /// 对拍测试：hidden 档的匹配集合 = 「两个名字等值 + `.` 开头且含 `.lumir-`」这一既有
+    /// 判据的**逐条等价**（零例外）。这条钉的是**模式语义**：无斜杠名字字面量 ≡ 任意深度同名，
     /// 两条临时文件模式 ≡ 「`.` 开头且含 `.lumir-`」。临时文件模式必须**两条**：只写
     /// `.*.lumir-*` 会漏掉「以 `.lumir-` 开头」的名字（r2/r3 评审用真 `git check-ignore`
     /// 实测过 `.lumir-notes.md`）。
     #[test]
-    fn builtin_rules_are_equivalent_to_the_legacy_predicate_on_a_name_corpus() {
+    fn hidden_tier_is_equivalent_to_the_legacy_pattern_predicate() {
+        let v = TempVault::new();
+        let p = v.policy();
         fn legacy_name(name: &str) -> bool {
-            BUILTIN_NAMES.contains(&name) || (name.starts_with('.') && name.contains(".lumir-"))
+            [".git", ".DS_Store"].contains(&name)
+                || (name.starts_with('.') && name.contains(".lumir-"))
         }
         fn legacy_path(rel: &str) -> bool {
             rel.split('/').any(legacy_name)
@@ -3997,6 +4057,8 @@ mod tests {
             "out",
             "vendor",
             ".DS_Store",
+            ".git",
+            ".gitignore",
             "node_modules",
             ".venv",
             ".pnpm-store",
@@ -4022,24 +4084,27 @@ mod tests {
         ];
         for rel in corpus {
             assert_eq!(
-                is_builtin_hidden(rel, false),
+                p.hidden_hit(rel, false),
                 legacy_path(rel),
                 "corpus 差异（规则写少了或写多了）：{rel}"
             );
             assert_eq!(
-                is_builtin_hidden(rel, true),
+                p.hidden_hit(rel, true),
                 legacy_path(rel),
                 "corpus 差异（目录形态）：{rel}"
             );
         }
     }
 
-    /// 枚举侧（tasks 1.1）：内置规则命中的条目与**整棵子树**都不出现，A3 档与名字相近的
-    /// 目录照常枚举。
+    /// 枚举侧（change ignore-tiers-config）：`hidden` 档命中的条目与**整棵子树**都不出现；
+    /// `lazy` 档命中的出一行惰性条目、子孙不进枚举；A3 档与名字相近的目录照常递归枚举。
     #[test]
-    fn scan_hides_builtin_output_dirs_with_their_subtrees_and_keeps_near_names() {
+    fn scan_marks_lazy_tier_rows_and_hides_only_the_hidden_tier() {
         let v = TempVault::new();
         let r = &v.0;
+        std::fs::create_dir_all(r.join(".git/objects")).unwrap();
+        std::fs::write(r.join(".git/HEAD"), "ref").unwrap();
+        std::fs::write(r.join(".DS_Store"), [0u8; 4]).unwrap();
         std::fs::create_dir_all(r.join("target/debug")).unwrap();
         std::fs::write(r.join("target/debug/x"), "x").unwrap();
         std::fs::create_dir_all(r.join("dist")).unwrap();
@@ -4061,17 +4126,21 @@ mod tests {
         }
         let entries = scan_workspace(r, &v.policy()).expect("scan");
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
-        for hidden in [
-            "target",
-            "target/debug",
-            "target/debug/x",
-            "dist",
-            "dist/bundle.js",
-            "crfates/venv",
-            "crfates/venv/keep.md",
-            "a/b/.pnpm-store",
-        ] {
-            assert!(!paths.contains(&hidden), "{hidden} 必须不可见：{paths:?}");
+        // hidden 档：自身与子孙都不出现
+        assert!(!paths.iter().any(|p| p.contains(".git")), "{paths:?}");
+        assert!(!paths.iter().any(|p| p.contains(".DS_Store")), "{paths:?}");
+        // lazy 档：自身一行（lazy: true），子孙不进枚举
+        for lazy_dir in ["target", "dist", "crfates/venv", "a/b/.pnpm-store"] {
+            let hit = entries
+                .iter()
+                .find(|e| e.path == lazy_dir)
+                .unwrap_or_else(|| panic!("{lazy_dir} 必须出惰性行：{entries:?}"));
+            assert!(hit.lazy, "{lazy_dir}");
+            assert_eq!(hit.kind, FsEntryKind::Dir, "{lazy_dir}");
+            assert!(
+                !paths.iter().any(|p| p.starts_with(&format!("{lazy_dir}/"))),
+                "{lazy_dir} 的子孙不得进枚举：{paths:?}"
+            );
         }
         for visible in [
             "build",
@@ -4091,15 +4160,16 @@ mod tests {
                 paths.contains(&visible),
                 "{visible} 必须照常可见：{paths:?}"
             );
+            let hit = entries.iter().find(|e| e.path == visible).unwrap();
+            assert!(!hit.lazy, "{visible} 不该是惰性行");
         }
-        // 惰性标记：全是 false（没有任何用户规则来源）
-        assert!(entries.iter().all(|e| !e.lazy), "{entries:?}");
     }
 
-    /// 判定链的三步（tasks 2.2）：内置 ⇒ Hidden（**命中即定格**，用户规则的取反推不翻）、
-    /// 用户规则 ⇒ Lazy、其余 ⇒ Visible。用户规则**内部**的取反照常生效。
+    /// 判定链的四层：`hidden` ⇒ Hidden、`lazy` ⇒ Lazy、用户规则 ⇒ Lazy、其余 ⇒ Visible。
+    /// 前两档**命中即定格**——用户规则的取反（`!target/`）推不翻它们；用户规则**内部**的
+    /// 取反照常生效。
     #[test]
-    fn classify_has_three_branches_and_builtin_wins_over_user_negation() {
+    fn classify_has_four_layers_and_tiers_win_over_user_negation() {
         let v = TempVault::new();
         std::fs::write(
             v.0.join(".gitignore"),
@@ -4107,18 +4177,19 @@ mod tests {
         )
         .unwrap();
         let p = v.default_policy();
-        // 内置先判、命中即定格（`!target/` 不能把它放回可见集）
-        assert_eq!(p.classify("target", true), EntryClass::Hidden);
-        assert_eq!(p.classify("target", false), EntryClass::Hidden);
-        // 反向输入（让「先判」这条真的可证伪）：用户规则**自己也忽略**同一个内置名字
-        // ——若把用户规则提到前面判，这条会被降级成「惰性可见」，与 §2.2 的判定顺序不符。
-        let v2 = TempVault::new();
-        std::fs::write(v2.0.join(".gitignore"), "target/\n").unwrap();
-        let p2 = v2.default_policy();
+        // hidden 先判、命中即定格（`!.git/` 也不能把它放回可见集）
+        assert_eq!(p.classify(".git", true), EntryClass::Hidden);
+        assert_eq!(p.classify(".git/config", false), EntryClass::Hidden);
+        // lazy 次判、命中即定格：`!target/` 不能把它翻成 Visible，也不能翻成 Hidden
+        assert_eq!(p.classify("target", true), EntryClass::Lazy);
+        assert_eq!(p.classify("target", false), EntryClass::Lazy);
+        assert_eq!(p.classify("target/debug/x.md", false), EntryClass::Lazy);
+        // 反向输入（让「先判」可证伪）：用户规则**自己也忽略**同一个 lazy 名字——
+        // 若把用户规则提到前面判，结果仍是 Lazy，但原因是用户规则；这里再给一条
+        // 用户规则**没写**的 lazy 名（`node_modules`），它必须仍由 lazy 档给出 Lazy。
         assert_eq!(
-            p2.classify("target", true),
-            EntryClass::Hidden,
-            "用户规则不能把内置规则命中的条目降级成惰性可见"
+            p.classify("node_modules/pkg/index.js", false),
+            EntryClass::Lazy
         );
         // 用户规则命中 ⇒ 惰性可见
         assert_eq!(p.classify(".local", true), EntryClass::Lazy);
@@ -4178,7 +4249,7 @@ mod tests {
             EntryClass::Visible,
             "深层 .gitignore 的取反覆盖浅层的忽略（最深匹配决定）"
         );
-        // `.git` 是**目录**：info/exclude 被读；`.git` 自身是内置规则 ⇒ 不可见
+        // `.git` 是**目录**：info/exclude 被读；`.git` 自身在 hidden 档 ⇒ 不可见
         assert_eq!(p.classify(".git", true), EntryClass::Hidden);
     }
 
@@ -4224,7 +4295,13 @@ mod tests {
         let root = parent.0.join("vault");
         std::fs::create_dir_all(root.join("outside-dir")).unwrap();
         std::fs::write(parent.0.join(".gitignore"), "outside-dir/\n").unwrap();
-        let p = IgnorePolicy::load(&root, &[".gitignore".to_string()]);
+        let defaults = crate::config::VaultConfig::default();
+        let p = IgnorePolicy::load(
+            &root,
+            &[".gitignore".to_string()],
+            &defaults.hidden,
+            &defaults.lazy,
+        );
         assert_eq!(
             p.classify("outside-dir", true),
             EntryClass::Visible,
@@ -4256,8 +4333,8 @@ mod tests {
         );
     }
 
-    /// 空清单 = 没有用户规则来源（tasks 2.5 语义②的后端面）：只剩内置规则，配置 MUST NOT
-    /// 影响内置规则。
+    /// 空清单 = 没有用户规则来源（tasks 2.5 语义②的后端面）：只剩两档默认名字，配置 MUST NOT
+    /// 影响两档名字。
     #[test]
     fn empty_rule_list_leaves_only_builtin_rules() {
         let v = TempVault::new();
@@ -4277,8 +4354,8 @@ mod tests {
         );
         assert_eq!(
             p.classify("target", true),
-            EntryClass::Hidden,
-            "内置规则恒定生效、不在配置面内"
+            EntryClass::Lazy,
+            "两档默认仍在（rule_files 只管用户规则来源，MUST NOT 影响两档名字）"
         );
     }
 
@@ -4320,8 +4397,8 @@ mod tests {
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(
             paths,
-            vec![".local/deep", ".local/tutorial.md"],
-            "只返回一层（无子孙），且内置规则命中的 .local/target 被丢弃"
+            vec![".local/deep", ".local/target", ".local/tutorial.md"],
+            "只返回一层（无子孙）；`.local/target` 在 lazy 档里 ⇒ 照常出一行惰性条目"
         );
         let deep = entries.iter().find(|e| e.path == ".local/deep").unwrap();
         assert!(deep.lazy, "惰性子目录同样出惰性行");
@@ -4339,6 +4416,56 @@ mod tests {
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].path, "notes/a.md");
         assert!(!visible[0].lazy);
+    }
+
+    /// 展开 `lazy` 档目录时，取回的子条目**仍是惰性行**（祖先命中 ⇒ 子孙同样惰性）——
+    /// 与用户规则同待遇；分类口径必须走同一份 `classify`，不能另写一条 `user_ignored`。
+    #[test]
+    fn scan_dir_on_a_lazy_tier_dir_keeps_children_lazy() {
+        let v = TempVault::new();
+        std::fs::create_dir_all(v.0.join("node_modules/pkg")).unwrap();
+        std::fs::write(v.0.join("node_modules/pkg/index.js"), "x").unwrap();
+        let p = v.policy();
+        let entries = scan_dir(&v.0, &p, "node_modules").expect("展开 lazy 档目录");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "node_modules/pkg");
+        assert!(entries[0].lazy, "lazy 档目录展开后的子条目仍是惰性行");
+        assert!(p.is_materialized("node_modules"));
+    }
+
+    /// 粘贴查重的遍历面（change ignore-tiers-config 节点 1 修正）：`hidden` 档与配置 `lazy` 档
+    /// 命中的目录被剪（每次粘贴都遍历 `node_modules` 是白付 IPC 主线程的全盘成本），而**用户
+    /// 规则命中的惰性目录照旧遍历**（master 的既有行为，重复落盘与可见性正交）。
+    #[test]
+    fn find_vault_entry_by_name_prunes_hidden_and_lazy_tiers_but_keeps_user_rules() {
+        let v = TempVault::new();
+        let r = &v.0;
+        std::fs::create_dir_all(r.join("node_modules/pkg")).unwrap();
+        std::fs::write(r.join("node_modules/pkg/pasted-abc.webp"), "x").unwrap();
+        std::fs::create_dir_all(r.join(".git")).unwrap();
+        std::fs::write(r.join(".git/pasted-abc.webp"), "x").unwrap();
+        std::fs::create_dir_all(r.join(".local/deep")).unwrap();
+        std::fs::write(r.join(".local/deep/pasted-abc.webp"), "x").unwrap();
+        std::fs::write(r.join(".gitignore"), ".local/\n").unwrap();
+        let p = v.default_policy();
+        assert_eq!(
+            find_vault_entry_by_name(r, &p, "pasted-abc.webp").as_deref(),
+            Some(".local/deep/pasted-abc.webp"),
+            "hidden / 配置 lazy 档目录被剪，用户规则惰性目录仍遍历"
+        );
+        // 剪枝真的在起作用：把用户规则目录里的那份删掉，只剩 node_modules / .git 里的两份 ⇒ None
+        std::fs::remove_file(r.join(".local/deep/pasted-abc.webp")).unwrap();
+        assert_eq!(
+            find_vault_entry_by_name(r, &p, "pasted-abc.webp"),
+            None,
+            "只有 hidden / lazy 档目录里有该名字时视为「不存在」"
+        );
+        // 反向：root 下有一份时可被找到（遍历本身没有坏掉）
+        std::fs::write(r.join("pasted-abc.webp"), "x").unwrap();
+        assert_eq!(
+            find_vault_entry_by_name(r, &p, "pasted-abc.webp").as_deref(),
+            Some("pasted-abc.webp")
+        );
     }
 
     /// 按需枚举的边界（tasks 3.2）：越界 / 不存在 / 不是目录都给人话错误，且不读 vault 之外。
@@ -4364,13 +4491,13 @@ mod tests {
         assert!(!p.is_materialized("note.md"));
     }
 
-    /// watch 判定的六条分支（tasks 4.1）——判定本体是纯函数 [`watch_verdict`]，这里逐条钉死：
-    /// ① 未物化的用户规则目录内部变更**不**产生事件；② 物化后**产生**；③ 用户规则命中的
-    /// 条目自身的 created / deleted **总**产生（末段不判用户规则）；④ 内置规则命中的**祖先**
-    /// 下的变更不产生；⑤ 内置规则命中的**末段**同样不产生（幻影行判据）；⑥ 投递的事件带回
-    /// **正确**的 `lazy`。
+    /// watch 判定的全部分支——判定本体是纯函数 [`watch_verdict`]，这里逐条钉死：
+    /// ① 未物化的惰性目录（`lazy` 档或用户规则）内部变更**不**产生事件；② 物化后**产生**；
+    /// ③ 惰性条目自身的 created / deleted **总**产生（末段不参与「投不投递」）；④ `hidden`
+    /// 档命中的**祖先**下的变更不产生；⑤ `hidden` 档命中的**末段**同样不产生（幻影行判据）；
+    /// ⑥ 投递的事件带回**正确**的 `lazy`；⑦ 外部新建 `lazy` 档目录**自身**要投递一行。
     #[test]
-    fn watch_verdict_covers_the_six_branches() {
+    fn watch_verdict_covers_all_branches() {
         let v = TempVault::new();
         let r = &v.0;
         std::fs::create_dir_all(r.join(".local/deep")).unwrap();
@@ -4406,14 +4533,38 @@ mod tests {
             verdict("notes.md", Some(false)),
             Some(("notes.md".to_string(), false))
         );
-        // ④ 内置规则命中的**祖先**下的变更不投递
+        // ④ hidden 档命中的**祖先**下的变更不投递
+        assert_eq!(verdict(".git/config", Some(false)), None);
+        assert_eq!(verdict("a/.git/objects/x", Some(false)), None);
+        // ⑤ hidden 档命中的**末段**同样不投递（外部新建 .git / .DS_Store 的幻影行判据）
+        assert_eq!(verdict(".git", Some(true)), None, "mkdired 的目录");
+        assert_eq!(verdict("a/b/.git", Some(true)), None);
+        assert_eq!(verdict(".DS_Store", Some(false)), None);
+        // ⑦ lazy 档目录**自身**的 created 投递一行（与枚举一致），(lazy=true)
+        assert_eq!(
+            verdict("target", Some(true)),
+            Some(("target".to_string(), true)),
+            "外部新建惰性档目录 ⇒ 一行惰性条目"
+        );
+        assert_eq!(
+            verdict("a/b/target", Some(true)),
+            Some(("a/b/target".to_string(), true))
+        );
+        assert_eq!(
+            verdict("node_modules", Some(true)),
+            Some(("node_modules".to_string(), true))
+        );
+        // 未物化的 lazy 子树内部变更不投递
         assert_eq!(verdict("target/debug/x", Some(false)), None);
         assert_eq!(verdict("a/node_modules/pkg/i.js", Some(false)), None);
-        // ⑤ 内置规则命中的**末段**同样不投递（外部 `mkdir target` / `npm install` 的幻影行判据）
-        assert_eq!(verdict("target", Some(true)), None, "mkdired 的目录");
-        assert_eq!(verdict("a/b/target", Some(true)), None);
-        assert_eq!(verdict("node_modules", Some(true)), None);
-        assert_eq!(verdict("a/dist", Some(true)), None);
+        // 物化后照常投递，仍带 lazy=true（祖先链上每一层都要物化——与用户规则同口径）
+        p.mark_materialized("target");
+        p.mark_materialized("target/debug");
+        assert_eq!(
+            verdict("target/debug/x", Some(false)),
+            Some(("target/debug/x".to_string(), true))
+        );
+        p.forget_materialized("target");
         // 保存临时文件形态同样不进事件流
         assert_eq!(verdict(".note.md.lumir-1", Some(false)), None);
         assert_eq!(verdict(".lumir-notes.md", Some(false)), None);
@@ -4467,7 +4618,7 @@ mod tests {
     }
 
     /// 目录改名通道的惰性收口（tasks 4.3）：新出现的目录若命中用户规则，本批次只带出它
-    /// **这一行**，MUST NOT 带出子孙；内置规则命中的条目一条都不进。
+    /// **这一行**，MUST NOT 带出子孙；hidden 档命中的条目一条都不进。
     #[test]
     fn expand_new_dir_subtrees_stops_at_a_lazy_dir() {
         let v = TempVault::new();
@@ -4498,9 +4649,11 @@ mod tests {
             find("outer/.local/deep").is_none() && find("outer/.local/deep/x.md").is_none(),
             "惰性目录 MUST NOT 带出子孙：{batch:?}"
         );
+        let target_lazy = find("outer/target").expect("lazy 档目录自身要带一行：{batch:?}");
+        assert!(target_lazy.lazy, "带出的惰性行必须标 lazy=true");
         assert!(
-            find("outer/target").is_none(),
-            "内置规则命中的条目一条都不进批次：{batch:?}"
+            find("outer/target/bin").is_none(),
+            "lazy 档目录 MUST NOT 带出子孙：{batch:?}"
         );
     }
 
@@ -4548,17 +4701,44 @@ mod tests {
         assert!(paths_exist(&v.0, &[]).is_empty());
     }
 
-    /// 用户规则命中的名字**不**被 `validate_new_name` 拒绝（§3.2）；内置规则命中的照旧拒绝。
+    /// 名字校验只拒 `hidden` 档：`lazy` 档与用户规则命中的名字一律放行（可见、可打开，
+    /// 只是不进索引）；`.git` 没有任何特判——它在 `hidden` 档里所以被拒，配置成可见后即放行。
     #[test]
-    fn validate_new_name_ignores_user_rules_but_rejects_builtin_names() {
-        // 单段名判定不经过任何 vault 上下文：用户规则（`.gitignore`）在名字层面不参与
-        for ok in ["targets", "dist-old", "drafts", "HANDOFF.md", ".local"] {
-            assert!(validate_new_name(ok).is_ok(), "case: {ok}");
+    fn validate_new_name_rejects_only_the_hidden_tier() {
+        let v = TempVault::new();
+        let p = v.policy();
+        for ok in [
+            "targets",
+            "dist-old",
+            "drafts",
+            "HANDOFF.md",
+            ".local",
+            "target",
+            "dist",
+            ".venv",
+            ".pnpm-store",
+            "node_modules",
+        ] {
+            assert!(p.validate_new_name(ok).is_ok(), "case: {ok}");
         }
-        for bad in ["target", "dist", ".venv", ".pnpm-store", "node_modules"] {
-            let err = validate_new_name(bad).unwrap_err();
+        for bad in [".git", ".DS_Store", ".lumir-1"] {
+            let err = p.validate_new_name(bad).unwrap_err();
             assert_eq!(err.code, "fs_name_invalid", "case: {bad}");
         }
+        // 没有名字级特判：把 `.git` 从 hidden 档移出后，它就是普通名字（裁决 2026-10-17）。
+        let v2 = TempVault::new();
+        let defaults = crate::config::VaultConfig::default();
+        let hidden: Vec<String> = defaults
+            .hidden
+            .iter()
+            .filter(|name| name.as_str() != ".git")
+            .cloned()
+            .collect();
+        let p2 = IgnorePolicy::load(&v2.0, &[], &hidden, &defaults.lazy);
+        assert!(
+            p2.validate_new_name(".git").is_ok(),
+            "`.git` 不在 hidden 档时不得有专属拦截"
+        );
     }
 
     /// 两份策略的物化集合互不相干（tasks 4.2 的下半：集合随 vault 装载重建，MUST NOT 串用）。
@@ -4732,8 +4912,14 @@ mod tests {
         let v = TempVault::new();
         std::fs::create_dir(v.0.join("notes")).unwrap();
         let png = sample_png_rgba();
-        let written =
-            write_attachment(&v.0, "notes", &base64_encode(&png), "image/png").expect("落盘");
+        let written = write_attachment(
+            &v.0,
+            &v.policy(),
+            "notes",
+            &base64_encode(&png),
+            "image/png",
+        )
+        .expect("落盘");
         assert!(written.name.starts_with("pasted-"), "{}", written.name);
         assert!(written.name.ends_with(".webp"), "{}", written.name);
         assert_eq!(written.path, format!("notes/{}", written.name));
@@ -4753,7 +4939,8 @@ mod tests {
     fn write_attachment_round_trips_rgb_png_without_alpha() {
         let v = TempVault::new();
         let png = sample_png_rgb();
-        let written = write_attachment(&v.0, "", &base64_encode(&png), "image/png").expect("落盘");
+        let written = write_attachment(&v.0, &v.policy(), "", &base64_encode(&png), "image/png")
+            .expect("落盘");
         let on_disk = std::fs::read(v.0.join(&written.path)).expect("读回");
         assert_eq!(pixels_of(&on_disk), pixels_of(&png));
     }
@@ -4762,8 +4949,8 @@ mod tests {
     fn write_attachment_passes_through_already_compressed_formats() {
         let v = TempVault::new();
         let webp = transcode_png_to_webp(&sample_png_rgba()).expect("先造一份 webp");
-        let written =
-            write_attachment(&v.0, "", &base64_encode(&webp), "image/webp").expect("落盘");
+        let written = write_attachment(&v.0, &v.policy(), "", &base64_encode(&webp), "image/webp")
+            .expect("落盘");
         assert!(written.name.ends_with(".webp"));
         assert_eq!(
             std::fs::read(v.0.join(&written.path)).unwrap(),
@@ -4778,6 +4965,7 @@ mod tests {
         let v = TempVault::new();
         let err = write_attachment(
             &v.0,
+            &v.policy(),
             "",
             &base64_encode(&sample_png_rgba()),
             "image/x-unknown",
@@ -4794,7 +4982,8 @@ mod tests {
     #[test]
     fn write_attachment_rejects_invalid_base64() {
         let v = TempVault::new();
-        let err = write_attachment(&v.0, "", "not base64!!!", "image/png").unwrap_err();
+        let err =
+            write_attachment(&v.0, &v.policy(), "", "not base64!!!", "image/png").unwrap_err();
         assert_eq!(err.code, "attachment_decode_failed");
         assert_eq!(std::fs::read_dir(&v.0).unwrap().count(), 0, "不落盘");
     }
@@ -4804,7 +4993,7 @@ mod tests {
         let v = TempVault::new();
         // `len / 4 * 3 + 2` 是解码后字节数的上界：先判可以保证超限载荷不被分配。
         let huge = "A".repeat(ATTACHMENT_MAX_BYTES as usize / 3 * 4 + 8);
-        let err = write_attachment(&v.0, "", &huge, "image/png").unwrap_err();
+        let err = write_attachment(&v.0, &v.policy(), "", &huge, "image/png").unwrap_err();
         assert_eq!(err.code, "attachment_too_large");
         assert_eq!(err.params.get("limit").map(String::as_str), Some("50"));
         assert_no_lumir_tmp(&v.0);
@@ -4816,6 +5005,7 @@ mod tests {
         let v = TempVault::new();
         let err = write_attachment(
             &v.0,
+            &v.policy(),
             "missing",
             &base64_encode(&sample_png_rgba()),
             "image/png",
@@ -4831,7 +5021,7 @@ mod tests {
         let v = TempVault::new();
         let data = base64_encode(&sample_png_rgba());
         for rel in ["../outside", "/etc", "notes/../../etc"] {
-            let err = write_attachment(&v.0, rel, &data, "image/png").unwrap_err();
+            let err = write_attachment(&v.0, &v.policy(), rel, &data, "image/png").unwrap_err();
             assert_eq!(
                 err.code, "fs_path_escape",
                 "{rel} 应被拒绝：{}",
@@ -4849,6 +5039,7 @@ mod tests {
         std::os::unix::fs::symlink(&outside.0, v.0.join("link")).unwrap();
         let err = write_attachment(
             &v.0,
+            &v.policy(),
             "link",
             &base64_encode(&sample_png_rgba()),
             "image/png",
@@ -4868,9 +5059,10 @@ mod tests {
         std::fs::create_dir(v.0.join("notes")).unwrap();
         std::fs::create_dir(v.0.join("other")).unwrap();
         let data = base64_encode(&sample_png_rgba());
-        let first = write_attachment(&v.0, "notes", &data, "image/png").expect("首贴");
+        let first = write_attachment(&v.0, &v.policy(), "notes", &data, "image/png").expect("首贴");
         let before = std::fs::metadata(v.0.join(&first.path)).unwrap();
-        let second = write_attachment(&v.0, "other", &data, "image/png").expect("再贴");
+        let second =
+            write_attachment(&v.0, &v.policy(), "other", &data, "image/png").expect("再贴");
         assert_eq!(second.name, first.name);
         assert_eq!(
             second.path, first.path,
@@ -4897,10 +5089,10 @@ mod tests {
     fn write_attachment_never_overwrites_existing_name() {
         let v = TempVault::new();
         let data = base64_encode(&sample_png_rgba());
-        let first = write_attachment(&v.0, "", &data, "image/png").expect("首贴");
+        let first = write_attachment(&v.0, &v.policy(), "", &data, "image/png").expect("首贴");
         let target = v.0.join(&first.path);
         std::fs::write(&target, b"sentinel").unwrap();
-        let second = write_attachment(&v.0, "", &data, "image/png").expect("再贴");
+        let second = write_attachment(&v.0, &v.policy(), "", &data, "image/png").expect("再贴");
         assert_eq!(second.path, first.path, "按去重收敛到既有位置");
         assert_eq!(
             std::fs::read(&target).unwrap(),
@@ -4913,11 +5105,13 @@ mod tests {
     fn write_attachment_errors_when_target_name_is_occupied_by_a_non_file() {
         let v = TempVault::new();
         let png = sample_png_rgba();
-        let first = write_attachment(&v.0, "", &base64_encode(&png), "image/png").expect("首贴");
+        let first = write_attachment(&v.0, &v.policy(), "", &base64_encode(&png), "image/png")
+            .expect("首贴");
         std::fs::remove_file(v.0.join(&first.path)).unwrap();
         // 同名位置放一个**目录**：没有文件可指，写路径必须报错、MUST NOT 报成功。
         std::fs::create_dir(v.0.join(&first.name)).unwrap();
-        let err = write_attachment(&v.0, "", &base64_encode(&png), "image/png").unwrap_err();
+        let err =
+            write_attachment(&v.0, &v.policy(), "", &base64_encode(&png), "image/png").unwrap_err();
         assert_eq!(err.code, "attachment_write_failed");
         assert!(v.0.join(&first.name).is_dir(), "占位目录原样保留");
         assert_no_lumir_tmp(&v.0);
@@ -4934,8 +5128,14 @@ mod tests {
         let dir = v.0.join("ro");
         std::fs::create_dir(&dir).unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
-        let err = write_attachment(&v.0, "ro", &base64_encode(&sample_png_rgba()), "image/png")
-            .unwrap_err();
+        let err = write_attachment(
+            &v.0,
+            &v.policy(),
+            "ro",
+            &base64_encode(&sample_png_rgba()),
+            "image/png",
+        )
+        .unwrap_err();
         assert_eq!(err.code, "attachment_write_failed");
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(
@@ -4948,8 +5148,14 @@ mod tests {
     #[test]
     fn write_attachment_targets_vault_root_for_empty_dir() {
         let v = TempVault::new();
-        let written = write_attachment(&v.0, "", &base64_encode(&sample_png_rgba()), "image/png")
-            .expect("落盘");
+        let written = write_attachment(
+            &v.0,
+            &v.policy(),
+            "",
+            &base64_encode(&sample_png_rgba()),
+            "image/png",
+        )
+        .expect("落盘");
         assert!(!written.path.contains('/'), "无路径文档退 vault 根");
         assert!(v.0.join(&written.path).is_file());
     }

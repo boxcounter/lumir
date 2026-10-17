@@ -8,7 +8,12 @@ fn production_policy(root: &std::path::Path) -> fs_io::IgnorePolicy {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    fs_io::IgnorePolicy::load(root, &rule_files)
+    fs_io::IgnorePolicy::load(
+        root,
+        &rule_files,
+        &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
+        &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+    )
 }
 
 static ENV: Mutex<()> = Mutex::new(());

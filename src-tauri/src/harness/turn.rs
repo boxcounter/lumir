@@ -1481,7 +1481,15 @@ mod tests {
         std::fs::write(vault.join("a.md"), "正文\n").unwrap();
         let scope = VaultScope {
             root: vault.clone(),
-            policy: IgnorePolicy::load(&vault, &[".gitignore".to_string()]),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(
+                    &vault,
+                    &[".gitignore".to_string()],
+                    &defaults.hidden,
+                    &defaults.lazy,
+                )
+            },
             vault_id: "vault-test-1".to_string(),
         };
         let config = HarnessConfig {
@@ -1565,7 +1573,15 @@ mod tests {
         std::fs::write(vault.join("a.md"), "正文\n").unwrap();
         let scope = VaultScope {
             root: vault.clone(),
-            policy: IgnorePolicy::load(&vault, &[".gitignore".to_string()]),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(
+                    &vault,
+                    &[".gitignore".to_string()],
+                    &defaults.hidden,
+                    &defaults.lazy,
+                )
+            },
             vault_id: "vault-test-1".to_string(),
         };
         let config = HarnessConfig {
@@ -1760,7 +1776,15 @@ mod tests {
         std::fs::write(vault.join("a.md"), "正文\n").unwrap();
         let scope = VaultScope {
             root: vault.clone(),
-            policy: IgnorePolicy::load(&vault, &[".gitignore".to_string()]),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(
+                    &vault,
+                    &[".gitignore".to_string()],
+                    &defaults.hidden,
+                    &defaults.lazy,
+                )
+            },
             vault_id: "vault-test-1".to_string(),
         };
         let config = HarnessConfig {

@@ -59,7 +59,12 @@ impl Fixture {
     fn scope(&self) -> VaultScope {
         VaultScope {
             root: self.vault(),
-            policy: IgnorePolicy::load(&self.vault(), &[".gitignore".to_string()]),
+            policy: IgnorePolicy::load(
+                &self.vault(),
+                &[".gitignore".to_string()],
+                &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
+                &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+            ),
             vault_id: VAULT_ID.to_string(),
         }
     }
@@ -1046,7 +1051,12 @@ fn vault_scoping_switch_restore_and_reset() {
     std::fs::create_dir_all(&vault_b).unwrap();
     let scope_b = VaultScope {
         root: vault_b.clone(),
-        policy: IgnorePolicy::load(&vault_b, &[".gitignore".to_string()]),
+        policy: IgnorePolicy::load(
+            &vault_b,
+            &[".gitignore".to_string()],
+            &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
+            &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+        ),
         // 刻意与 A 共用同一个 vault 目录名：**归属判据是首行 vault_root、不是目录**——
         // 这一现场正是「文件被手工挪进别的 vault 目录」的形态（design §3）。
         vault_id: VAULT_ID.to_string(),

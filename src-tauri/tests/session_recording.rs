@@ -66,7 +66,12 @@ impl Fixture {
     fn scope(&self) -> VaultScope {
         VaultScope {
             root: self.vault(),
-            policy: IgnorePolicy::load(&self.vault(), &[".gitignore".to_string()]),
+            policy: IgnorePolicy::load(
+                &self.vault(),
+                &[".gitignore".to_string()],
+                &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
+                &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+            ),
             vault_id: VAULT_ID.to_string(),
         }
     }
@@ -672,7 +677,12 @@ fn resume_rebuilds_session_and_continues_in_new_file() {
     std::fs::create_dir_all(&vault_b).unwrap();
     let scope_b = VaultScope {
         root: vault_b,
-        policy: IgnorePolicy::load(&f.root.join("vault-b"), &[".gitignore".to_string()]),
+        policy: IgnorePolicy::load(
+            &f.root.join("vault-b"),
+            &[".gitignore".to_string()],
+            &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
+            &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+        ),
         // 与 A 共用同一个 vault 目录名：本用例构造的是「文件被手工挪进别的 vault 目录」的现场
         // ——归属判据是首行 vault_root、不是目录（design §3），所以这里仍须撞 mismatch。
         vault_id: VAULT_ID.to_string(),
@@ -1447,7 +1457,12 @@ fn sessions_are_partitioned_per_vault_and_flat_leftovers_are_invisible() {
     std::fs::create_dir_all(&vault_b).unwrap();
     let scope_b = VaultScope {
         root: vault_b.clone(),
-        policy: IgnorePolicy::load(&vault_b, &[".gitignore".to_string()]),
+        policy: IgnorePolicy::load(
+            &vault_b,
+            &[".gitignore".to_string()],
+            &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
+            &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+        ),
         vault_id: "vault-test-2".to_string(),
     };
     let runtime = Runtime::default();

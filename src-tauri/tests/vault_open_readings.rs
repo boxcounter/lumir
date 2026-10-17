@@ -36,7 +36,12 @@ fn production_policy(root: &std::path::Path) -> IgnorePolicy {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    IgnorePolicy::load(root, &rule_files)
+    IgnorePolicy::load(
+        root,
+        &rule_files,
+        &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
+        &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+    )
 }
 use lumir_lib::link_graph::{is_markdown, LinkGraph};
 use std::path::{Path, PathBuf};
@@ -215,7 +220,7 @@ fn ensure_shape_vault(dir: &Path) -> PathBuf {
         std::fs::write(target.join(name), body).expect("write other file");
     }
 
-    // 忽略生效的探针：node_modules 下的 md MUST NOT 进枚举（fs_io::IGNORED_NAMES）。
+    // 惰性档探针：node_modules 自身出一行惰性条目，其下的 md 不进枚举（默认 lazy 档）。
     let nm = dir.join("node_modules").join("left-pad");
     std::fs::create_dir_all(&nm).expect("create node_modules");
     for i in 0..40 {
@@ -320,9 +325,14 @@ fn vault_open_segments_on_real_shape_vault() {
         dir.join("node_modules/left-pad/ignored-00.md").is_file(),
         "忽略探针必须真的在盘上"
     );
+    let nm_row = entries
+        .iter()
+        .find(|e| e.path == "node_modules")
+        .expect("node_modules 出惰性行（默认 lazy 档）");
+    assert!(nm_row.lazy, "node_modules 必须是惰性条目");
     assert!(
-        !entries.iter().any(|e| e.path.contains("node_modules")),
-        "node_modules 下的条目 MUST NOT 出现在枚举结果里（IGNORED_NAMES）"
+        !entries.iter().any(|e| e.path.starts_with("node_modules/")),
+        "node_modules 的子孙 MUST NOT 出现在枚举结果里（惰性不递归）"
     );
 
     println!("—— 分段读数（release，每段 {RUNS} 次取中位数）——");

@@ -127,7 +127,7 @@ pub struct AppConfig {
     pub keys: HashMap<String, Option<String>>,
     /// 运行时诊断日志（add-diagnostics-logging）：事件落盘等级。
     pub log: LogConfig,
-    /// vault 行为配置（change vault-open-ignore-set 的 r6）：`[vault]` 表。
+    /// vault 行为配置（change vault-open-ignore-set 的 r6 + change ignore-tiers-config）：`[vault]` 表。
     pub vault: VaultConfig,
     /// 对话运行时配置（change add-harness-probe §11）：`[harness]` 表。消费方是 harness
     /// 运行时（M302）：会话建立时读一次 provider 参数、权限规则表与循环上限。
@@ -156,34 +156,76 @@ impl Default for AppConfig {
 /// `fs_io::IgnorePolicy` 按 git 口径定（深层 `.gitignore` > 浅层 > `info/exclude`）。
 pub const DEFAULT_RULE_FILES: [&str; 2] = [".gitignore", ".git/info/exclude"];
 
-/// `[vault]` 表（change vault-open-ignore-set 的 r6，Alex 裁决第 7 条）：决定**用户规则**
-/// 从哪些文件读——内置规则（`fs_io::BUILTIN_NAMES` 那 16 个名字 + 临时文件模式）恒定生效、
-/// **不在**配置面内，也不可被用户规则的取反推翻（§2.6）。
+/// `hidden` 档的内置默认（change ignore-tiers-config §2.1 / proposal 裁决）：命中 ⇒ 不可见。
 ///
-/// **唯一消费者**：`commands::prepare_vault_open` 构造 `fs_io::IgnorePolicy` 时的那一步
-///（把清单里的 vault 相对路径逐个读成 gitignore 规则）——本字段没有第二个读点，`config_get`
-/// 只是把它原样交给前端展示（REVIEW.md 「声明了却没有消费者」条：配置项声明即被消费）。因此它的生效时点是
-/// **vault 装载时**（每次装载现场读一次配置，MUST NOT 用启动期缓存钉住），改动下次装载生效。
+/// 只有两个名字：`.git` 是仓库对象库（噪声 + 破坏性操作面），`.DS_Store` 是纯系统噪声。
+/// 这是**配置的缺省值**，不是安装快照：`config.json` 里没写 `[vault].hidden` 时用它，写了
+/// （含 `[]`）则整档按配置解释（ADR 0002 §5 / proposal「缺省即默认」）。
+pub const DEFAULT_HIDDEN: [&str; 2] = [".git", ".DS_Store"];
+
+/// `lazy` 档的内置默认（change ignore-tiers-config §2.1）：命中 ⇒ 惰性可见（树里一行、
+/// 按需展开、不进全量枚举与索引，与用户规则惰性同待遇）。
+///
+/// 16 个内置名字去掉 `hidden` 档的两个 = 这 14 个：并集仍是既有 16 名，没有任何名字漏网
+/// （单测钉住）。`build` / `out` / `vendor` 经 Alex 2026-09-28 裁决仍不纳入。
+pub const DEFAULT_LAZY: [&str; 14] = [
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".next",
+    ".nuxt",
+    ".cache",
+    ".pnpm-store",
+    ".tox",
+    ".gradle",
+    "test-results",
+    "perf-results",
+    "target",
+    "dist",
+];
+
+/// `[vault]` 表：忽略规则表的配置面（change vault-open-ignore-set 的 r6 + change
+/// ignore-tiers-config）。
+///
+/// 三个字段都只在**唯一消费者** `commands::prepare_vault_open` 构造 `fs_io::IgnorePolicy`
+/// 时被读取；`config_get` 只是把它们原样交给前端展示（REVIEW.md「声明了却没有消费者」条）。
+/// 生效时点是 **vault 装载时**（每次装载现场读一次配置，MUST NOT 用启动期缓存钉住），
+/// 改动下次装载生效。
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct VaultConfig {
     /// 用户规则的来源清单：每个值是**vault 相对路径**，一律按「vault 根的规则文件」解释
     ///（模式相对 vault 根匹配，MUST NOT 被当成「相对该文件所在目录」的规则）。
     ///
-    /// - **空列表 = 没有用户规则来源**：只剩内置规则（= 非 git vault 的等价行为）。这是
-    ///   彻底的——列表里不含 `.gitignore` 时，递归途中的嵌套 `.gitignore` 同样不读（嵌套
+    /// - **空列表 = 没有用户规则来源**：只剩 `hidden` / `lazy` 两档（= 非 git vault 的等价行为）。
+    ///   这是彻底的——列表里不含 `.gitignore` 时，递归途中的嵌套 `.gitignore` 同样不读（嵌套
     ///   逐层读取是「`.gitignore` 这个来源」的固有语义，不是第二个配置面）。
     /// - 文件不存在 / 不是常规文件 ⇒ 静默跳过（`.git/info/exclude` 在非 git vault 里本来就
     ///   不存在，这是常态而不是异常）。
     /// - 非法项（非字符串 / 绝对路径 / 含 `..` / 空串）逐项忽略并各给一条人话 warning，
     ///   其余项照常生效——MUST NOT 因为一项非法而把整份配置（含别的字段）回退默认值。
     pub rule_files: Vec<String>,
+    /// 不显示档的名字（change ignore-tiers-config）：命中 ⇒ 不进树、不进 watch、不进索引。
+    ///
+    /// **缺省即默认**：本键缺席 ⇒ [`DEFAULT_HIDDEN`]；存在（含 `[]`）⇒ 整档按配置解释。
+    /// 值是**名字**不是模式（校验见 `validate_tier_names`）。保存临时文件模式
+    /// （`.lumir-*` / `.*.lumir-*`）恒定硬编码、不在本键内——那是数据损坏面。
+    /// 与 [`Self::lazy`] 重名时按本键生效并给 warning。
+    pub hidden: Vec<String>,
+    /// 惰性档的名字（change ignore-tiers-config）：命中 ⇒ 树里一行、按需展开、不进索引。
+    ///
+    /// 语义与缺省口径同 [`Self::hidden`]。两个键都不含某名字 ⇒ 该名字走用户规则 / 完全可见
+    /// （这就是「第三档」，没有第三个键）。
+    pub lazy: Vec<String>,
 }
 
 impl Default for VaultConfig {
     fn default() -> Self {
         Self {
             rule_files: DEFAULT_RULE_FILES.iter().map(|s| s.to_string()).collect(),
+            hidden: DEFAULT_HIDDEN.iter().map(|s| s.to_string()).collect(),
+            lazy: DEFAULT_LAZY.iter().map(|s| s.to_string()).collect(),
         }
     }
 }
@@ -720,12 +762,15 @@ struct RawConfig {
     harness: RawHarnessConfig,
 }
 
-/// `[vault]` 表的解析镜像。`rule_files` 缺席（缺节 / 缺键）→ `None` → 用默认清单；
-/// 显式 `[]` → `Some(vec![])` → 没有用户规则来源。两者语义不同，不能混为一谈。
+/// `[vault]` 表的解析镜像。三个字段都是「缺席 → `None` → 用默认；显式 `[]` → `Some(vec![])`
+/// → 该档为空」：两种语义不同，不能混为一谈。收成 `Vec<serde_json::Value>` 是为了**逐项**校验
+/// （一个坏元素只丢自己 + warning，不拖垮整份配置）；整个字段给错类型仍走整文件回落（既有模型）。
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct RawVaultConfig {
     rule_files: Option<Vec<serde_json::Value>>,
+    hidden: Option<Vec<serde_json::Value>>,
+    lazy: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1244,20 +1289,56 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
     )
 }
 
-/// `[vault]` 表的校验（change vault-open-ignore-set §2.9）：`rule_files` 缺席 ⇒ 默认清单
-/// （不告警）；显式给出 ⇒ **逐项**校验，非法项丢弃并各给一条人话 warning，其余项照常生效
-///（ADR 0002 §5：逐字段校验、非法值人话 warning、不得导致启动失败，也 MUST NOT 因为一项
-/// 非法把其余字段一起回退）。
+/// `[vault]` 表的校验（change vault-open-ignore-set §2.9 + change ignore-tiers-config §2.2）：
+/// 三个字段都是「缺席 ⇒ 默认（不告警）；显式给出 ⇒ 逐项校验」。
 ///
-/// 合法项 = 非空、相对路径、不含 `..` 组件的 vault 相对路径。「文件是否存在」不在这里判定
-/// ——那是装载时按 vault 根逐个探测的事，且「不存在」是常态（`.git/info/exclude` 在非 git
-/// vault 里就没有），MUST NOT 报错、MUST NOT 给 warning。
+/// 名字两档（`hidden` / `lazy`）的合法项 = 单个名字：非空、不含 `/`、不是 `.` / `..`、不含
+/// gitignore 元字符（`*` `?` `[` `]` `!` `#` `\`）、首尾无空白。写模式的（如 `*.log`）逐项
+/// 忽略并给人话 warning——本配置只接受名字，不猜用户意图。同一个名字同时出现在两档里 ⇒ 按
+/// `hidden` 生效并给一条 warning（不静默择一）。
+///
+/// 所有非法项都逐项丢弃并各给一条人话 warning，其余项照常生效（ADR 0002 §5：逐字段校验、
+/// 非法值人话 warning、不得导致启动失败，也 MUST NOT 因为一项非法把其余字段一起回退）。
 fn validate_vault(raw: RawVaultConfig) -> (VaultConfig, Vec<String>) {
     let defaults = VaultConfig::default();
     let mut warnings = Vec::new();
-    let Some(items) = raw.rule_files else {
-        return (defaults, warnings); // 缺节 / 缺键：与今日行为逐条一致
+
+    let rule_files = match raw.rule_files {
+        None => defaults.rule_files,
+        Some(items) => validate_rule_files(items, &mut warnings),
     };
+    let hidden = match raw.hidden {
+        None => defaults.hidden,
+        Some(items) => validate_tier_names(&items, "hidden", &mut warnings),
+    };
+    let mut lazy = match raw.lazy {
+        None => defaults.lazy,
+        Some(items) => validate_tier_names(&items, "lazy", &mut warnings),
+    };
+    for name in &hidden {
+        if lazy.contains(name) {
+            warnings.push(format!(
+                "配置项 vault.hidden 的 \"{name}\" 同时出现在 vault.lazy，按 hidden 生效"
+            ));
+        }
+    }
+    lazy.retain(|name| !hidden.contains(name));
+
+    (
+        VaultConfig {
+            rule_files,
+            hidden,
+            lazy,
+        },
+        warnings,
+    )
+}
+
+/// `rule_files` 的逐项校验（change vault-open-ignore-set §2.9）：合法项 = 非空、相对路径、
+/// 不含 `..` 组件的 vault 相对路径。「文件是否存在」不在这里判定——那是装载时按 vault 根
+/// 逐个探测的事，且「不存在」是常态（`.git/info/exclude` 在非 git vault 里就没有），
+/// MUST NOT 报错、MUST NOT 给 warning。
+fn validate_rule_files(items: Vec<serde_json::Value>, warnings: &mut Vec<String>) -> Vec<String> {
     let mut rule_files = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
         let Some(text) = item.as_str() else {
@@ -1291,7 +1372,61 @@ fn validate_vault(raw: RawVaultConfig) -> (VaultConfig, Vec<String>) {
         }
         rule_files.push(text.to_string());
     }
-    (VaultConfig { rule_files }, warnings)
+    rule_files
+}
+
+/// 忽略档名字的逐项校验（change ignore-tiers-config §2.2）：非法项丢弃 + 一条人话 warning，
+/// 其余项照常生效；同档内重名静默去重（保留首次出现的顺序）。
+fn validate_tier_names(
+    items: &[serde_json::Value],
+    key: &str,
+    warnings: &mut Vec<String>,
+) -> Vec<String> {
+    let mut names: Vec<String> = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let Some(text) = item.as_str() else {
+            warnings.push(format!(
+                "配置项 vault.{key} 的第 {} 项不是字符串，已忽略",
+                index + 1
+            ));
+            continue;
+        };
+        if text.trim().is_empty() {
+            warnings.push(format!(
+                "配置项 vault.{key} 的第 {} 项为空，已忽略",
+                index + 1
+            ));
+            continue;
+        }
+        if text != text.trim() {
+            warnings.push(format!(
+                "配置项 vault.{key} 的 \"{text}\" 首尾有空白，已忽略"
+            ));
+            continue;
+        }
+        if text.contains('/') {
+            warnings.push(format!(
+                "配置项 vault.{key} 的 \"{text}\" 含斜杠（只接受单个名字），已忽略"
+            ));
+            continue;
+        }
+        if text == "." || text == ".." {
+            warnings.push(format!(
+                "配置项 vault.{key} 的 \"{text}\" 不是有效名字，已忽略"
+            ));
+            continue;
+        }
+        if text.contains(['*', '?', '[', ']', '!', '#', '\\']) {
+            warnings.push(format!(
+                "配置项 vault.{key} 的 \"{text}\" 含通配符（本配置只接受名字，不支持模式），已忽略"
+            ));
+            continue;
+        }
+        if !names.iter().any(|seen| seen == text) {
+            names.push(text.to_string());
+        }
+    }
+    names
 }
 
 /// `[harness]` 表的校验（change add-harness-probe §11）：照 `editor` / `ui` 的模板——缺字段
@@ -2458,7 +2593,7 @@ mod tests {
         }
     }
 
-    /// 语义②：显式 `[]` ⇒ 没有用户规则来源（只剩内置规则）——与「缺键」是**两种不同的配置**，
+    /// 语义②：显式 `[]` ⇒ 没有用户规则来源（只剩两档默认名字）——与「缺键」是**两种不同的配置**，
     /// 不能混为一谈（前者是用户的显式选择，后者是没写过）。
     #[test]
     fn vault_rule_files_empty_list_means_no_user_rule_source() {
@@ -2546,6 +2681,175 @@ mod tests {
         assert_eq!(
             snap.config.vault.rule_files,
             vec![".gitignore".to_string(), "docs/.gitignore".to_string()]
+        );
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    // -----------------------------------------------------------------------
+    // `[vault]` 的忽略分档（change ignore-tiers-config §2.2）
+    // -----------------------------------------------------------------------
+
+    /// 默认分档的不变量：两档并集 = 今日的 16 名、交集为空——名单从硬编码变默认时
+    /// **不漏一个名字**（行为的唯一有意变化是 14 名从不可见变惰性可见）。
+    #[test]
+    fn default_ignore_tiers_partition_the_legacy_sixteen_names() {
+        let mut union: Vec<&str> = DEFAULT_HIDDEN
+            .iter()
+            .chain(DEFAULT_LAZY.iter())
+            .copied()
+            .collect();
+        union.sort_unstable();
+        let mut legacy = vec![
+            ".git",
+            ".DS_Store",
+            "node_modules",
+            ".venv",
+            "venv",
+            "__pycache__",
+            ".next",
+            ".nuxt",
+            ".cache",
+            ".pnpm-store",
+            ".tox",
+            ".gradle",
+            "test-results",
+            "perf-results",
+            "target",
+            "dist",
+        ];
+        legacy.sort_unstable();
+        assert_eq!(union, legacy, "两档并集必须逐项等于既有 16 名");
+        assert_eq!(union.len(), 16);
+        assert!(DEFAULT_HIDDEN
+            .iter()
+            .all(|name| !DEFAULT_LAZY.contains(name)));
+        assert_eq!(DEFAULT_HIDDEN, [".git", ".DS_Store"]);
+        // A3 档仍不纳入（Alex 2026-09-28 裁决）
+        for not_included in ["build", "out", "vendor"] {
+            assert!(
+                !union.contains(&not_included),
+                "{not_included} 不该在内置默认里"
+            );
+        }
+    }
+
+    /// 缺键 / 缺节 ⇒ 两档都取代码内置默认，且不告警；只写一个键时另一个仍默认。
+    #[test]
+    fn ignore_tiers_default_when_missing_and_stay_independent() {
+        for raw in [
+            r#"{"version":1}"#,
+            r#"{"version":1,"vault":{}}"#,
+            r#"{"version":1,"vault":{"rule_files":[]}}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(
+                snap.config.vault.hidden,
+                AppConfig::default().vault.hidden,
+                "{raw}"
+            );
+            assert_eq!(
+                snap.config.vault.lazy,
+                AppConfig::default().vault.lazy,
+                "{raw}"
+            );
+            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
+        }
+        let snap = load_from(&TempFile::new(r#"{"vault":{"hidden":["scratch"]}}"#).0);
+        assert_eq!(snap.config.vault.hidden, vec!["scratch".to_string()]);
+        assert_eq!(
+            snap.config.vault.lazy,
+            AppConfig::default().vault.lazy,
+            "lazy 仍取默认"
+        );
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    /// 显式 `[]` 是「这一档没有名字」——与缺键是两种不同的配置。
+    #[test]
+    fn ignore_tiers_empty_lists_mean_empty_tiers() {
+        let snap = load_from(&TempFile::new(r#"{"vault":{"hidden":[],"lazy":[]}}"#).0);
+        assert!(snap.config.vault.hidden.is_empty());
+        assert!(snap.config.vault.lazy.is_empty());
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    /// 只接受名字：七类非法逐项丢弃 + 各自一条人话 warning，合法项按原顺序保留；
+    /// 同档内重名静默去重。
+    #[test]
+    fn ignore_tiers_reject_non_names_one_by_one_and_keep_the_rest() {
+        let raw = r#"{"vault":{"hidden":["*.log","a/b",".","..","  pad  ","",42,".git",".DS_Store",".git"]}}"#;
+        let snap = load_from(&TempFile::new(raw).0);
+        assert_eq!(
+            snap.config.vault.hidden,
+            vec![".git".to_string(), ".DS_Store".to_string()],
+            "非法项全丢、合法项按原顺序保留、重名去重"
+        );
+        assert_eq!(snap.warnings.len(), 7, "{:?}", snap.warnings);
+        for (index, needle) in [
+            (0, "含通配符"),
+            (1, "含斜杠"),
+            (2, "不是有效名字"),
+            (3, "不是有效名字"),
+            (4, "首尾有空白"),
+            (5, "为空"),
+            (6, "不是字符串"),
+        ] {
+            assert!(
+                snap.warnings[index].contains(needle),
+                "第 {index} 条 warning 应点名 {needle}：{:?}",
+                snap.warnings
+            );
+            assert!(
+                snap.warnings[index].contains("vault.hidden"),
+                "{:?}",
+                snap.warnings
+            );
+        }
+    }
+
+    /// 同一个名字同时出现在两档 ⇒ 按 `hidden` 生效 + 一条 warning（不静默择一）。
+    #[test]
+    fn ignore_tiers_conflict_prefers_hidden() {
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"vault":{"hidden":["node_modules"],"lazy":["node_modules","target"]}}"#,
+            )
+            .0,
+        );
+        assert_eq!(snap.config.vault.hidden, vec!["node_modules".to_string()]);
+        assert_eq!(snap.config.vault.lazy, vec!["target".to_string()]);
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(
+            snap.warnings[0].contains("同时出现在 vault.lazy"),
+            "{:?}",
+            snap.warnings
+        );
+    }
+
+    /// 整个字段给错类型 ⇒ 整文件回落（既有解析模型的性质，与 `editor.font_size` 同族）。
+    #[test]
+    fn wrong_type_ignore_tier_falls_back_entire_file() {
+        for raw in [
+            r#"{"last_vault":"/tmp/vault","vault":{"hidden":".git"}}"#,
+            r#"{"last_vault":"/tmp/vault","vault":{"lazy":{"a":1}}}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(snap.config, AppConfig::default(), "{raw} 应整份落回默认");
+            assert_eq!(snap.config.last_vault, None, "{raw}");
+            assert_eq!(snap.warnings.len(), 1, "{raw}: {:?}", snap.warnings);
+        }
+    }
+
+    /// 合法两档配置不产生任何 warning。
+    #[test]
+    fn valid_ignore_tiers_are_clean() {
+        let snap = load_from(
+            &TempFile::new(r#"{"vault":{"hidden":[".git"],"lazy":["node_modules","target"]}}"#).0,
+        );
+        assert_eq!(snap.config.vault.hidden, vec![".git".to_string()]);
+        assert_eq!(
+            snap.config.vault.lazy,
+            vec!["node_modules".to_string(), "target".to_string()]
         );
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
     }
