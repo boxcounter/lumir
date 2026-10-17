@@ -10,7 +10,10 @@
 //! 环境隔离与 harness_runtime.rs 同口径：XDG_CONFIG_HOME + HOME 指向临时目录，
 //! 多测串行（静态锁，env 是进程全局；REVIEW.md 「测试污染真实环境」条）。
 
-use lumir_lib::config::{HarnessConfig, HarnessPermissions, HarnessProvider};
+use lumir_lib::config::{
+    HarnessConfig, HarnessModelSpec, HarnessPermissions, HarnessProvider, HarnessProviderConfig,
+    HarnessProviders, WireApi,
+};
 use lumir_lib::fs_io::IgnorePolicy;
 use lumir_lib::harness::events::EventSink;
 use lumir_lib::harness::jsonl;
@@ -132,6 +135,30 @@ impl EventSink for CollectSink {
 fn mock_config() -> HarnessConfig {
     HarnessConfig {
         provider: HarnessProvider::Mock,
+        ..Default::default()
+    }
+}
+
+/// chat 方言的 kimi 配置（change add-harness-chat-completions-dialect）：只用于恢复 /
+/// 留存路径的方言读数——本测试的 client 仍是注入的 mock（不发真实 HTTP）。
+fn kimi_chat_config() -> HarnessConfig {
+    HarnessConfig {
+        provider: HarnessProvider::Kimi,
+        providers: HarnessProviders {
+            kimi: HarnessProviderConfig {
+                api_key: "sk-test".into(),
+                model: "k3-256k".into(),
+                base_url: None,
+                models: vec![HarnessModelSpec {
+                    id: "k3-256k".into(),
+                    effort: true,
+                    vision: false,
+                    window: 262_144,
+                }],
+                wire_api: WireApi::ChatCompletions,
+            },
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
@@ -1562,4 +1589,123 @@ fn sessions_are_partitioned_per_vault_and_flat_leftovers_are_invisible() {
         .delete_session(&scope_a, "s1759912001-ffffff")
         .unwrap();
     assert!(flat.exists(), "跨布局删除 MUST NOT 碰根下平铺文件");
+}
+
+/// 跨方言恢复（change add-harness-chat-completions-dialect，任务 4.2/4.3）：Responses 时期
+/// 留存的会话（`session_open.wire_api = "responses"`，历史项是 Responses canonical 形态）
+/// 以 chat 方言恢复续聊——留存项不被改写，发送边界的翻译层把同一份历史逐字段译成 chat
+/// messages；恢复充分性在两种方言下各自成立（仅凭 JSONL 的 request + `wire_api` 能重建
+/// wire 体，重建两次逐字节一致 ⇒ 无隐藏状态）。
+#[test]
+fn restored_responses_session_translates_to_chat_messages() {
+    let f = Fixture::new("chat-dialect-restore");
+    f.write("a.md", "demo body\n");
+    // ① 源会话：mock 方言（首行记 responses；历史项与任何 Responses 时期真实会话同形）。
+    let mock = mock_config();
+    let runtime = Runtime::default();
+    runtime.acquire_turn(&f.scope(), &mock).unwrap();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(quote_and_thinking_script(), "chat-restore-src").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &mock,
+        QUOTE_MESSAGE.to_string(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let files = f.session_files();
+    assert_eq!(files.len(), 1);
+    let source_id = jsonl::JsonlWriter::session_id_from_path(&files[0]).unwrap();
+    assert_eq!(
+        f.read(&files[0]).session_open["wire_api"],
+        "responses",
+        "mock 档也记录缺省方言（字段不缺席）"
+    );
+
+    // ② 以 chat 方言恢复：新文件首行记录**当前**方言（恢复充分性的推导依据）。
+    let chat = kimi_chat_config();
+    let info = runtime
+        .resume_session(&f.scope(), &chat, &source_id)
+        .expect("恢复成功");
+    runtime.acquire_turn(&f.scope(), &chat).unwrap();
+    let sink2 = CollectSink::default();
+    let mut client2 = MockClient::from_str(
+        r#"{"responses":[{"text":"接着来。"}]}"#,
+        "chat-restore-cont",
+    )
+    .unwrap();
+    drive_turn(
+        &sink2,
+        &runtime,
+        &f.scope(),
+        &chat,
+        "继续".to_string(),
+        &mut client2,
+    );
+    runtime.release_turn(&f.scope());
+    let files_now = f.session_files();
+    assert_eq!(files_now.len(), 2, "恢复续写新文件：{files_now:?}");
+    let new_path = files_now
+        .iter()
+        .find(|p| {
+            jsonl::JsonlWriter::session_id_from_path(p).as_deref() == Some(info.session_id.as_str())
+        })
+        .expect("新文件即恢复返回的 session id");
+    let new_file = f.read(new_path);
+    assert_eq!(new_file.session_open["wire_api"], "chat_completions");
+    assert_eq!(new_file.session_open["provider"], "kimi");
+
+    // ③ 恢复事实回流：新请求的 messages 是源历史（Responses 形态）+ 本轮 user 项。
+    let pairs = conversation_pairs(&new_file);
+    assert_eq!(pairs.len(), 1);
+    let request = &pairs[0].0["request"];
+    let messages = request["messages"].as_array().unwrap();
+    assert_eq!(
+        messages[1]["type"], "reasoning",
+        "留存项仍是 Responses 形态（翻译在发送边界，MUST NOT 重写留存项）"
+    );
+
+    // ④ 发送边界翻译：逐字段断言（design D4 全表在真实留存量上的落点）。
+    let (chat_messages, diagnostics) =
+        llm::chat_messages(request["system"].as_str().unwrap(), messages);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(chat_messages.len(), 6, "{chat_messages:?}");
+    assert_eq!(chat_messages[0]["role"], "system");
+    assert_eq!(chat_messages[1]["role"], "user");
+    assert!(chat_messages[1]["content"]
+        .as_str()
+        .unwrap()
+        .contains("这段是什么意思？"));
+    // 工具轮：同轮正文与调用合成单条 assistant 消息（content = 正文、reasoning_content 携带、
+    // tool_calls 在内），其后紧随 tool 消息。
+    assert_eq!(chat_messages[2]["role"], "assistant");
+    assert_eq!(chat_messages[2]["content"], "先读文件。");
+    assert_eq!(chat_messages[2]["reasoning_content"], "需要先读 a.md。");
+    assert_eq!(chat_messages[2]["tool_calls"][0]["id"], "c1");
+    assert_eq!(
+        chat_messages[2]["tool_calls"][0]["function"]["name"],
+        "vault_read"
+    );
+    assert_eq!(chat_messages[3]["role"], "tool");
+    assert_eq!(chat_messages[3]["tool_call_id"], "c1");
+    assert!(chat_messages[3]["content"]
+        .as_str()
+        .unwrap()
+        .contains("demo body"));
+    // 答复轮：reasoning 折叠进 assistant 消息。
+    assert_eq!(chat_messages[4]["role"], "assistant");
+    assert_eq!(chat_messages[4]["content"], "读完了。");
+    assert_eq!(chat_messages[4]["reasoning_content"], "读完确认无误。");
+    assert_eq!(
+        chat_messages[5],
+        serde_json::json!({"role":"user","content":"继续"})
+    );
+
+    // ⑤ 恢复充分性：同一份 JSONL 重建两次逐字节一致。
+    let rebuilt =
+        serde_json::to_vec(&llm::chat_messages(request["system"].as_str().unwrap(), messages).0)
+            .unwrap();
+    assert_eq!(serde_json::to_vec(&chat_messages).unwrap(), rebuilt);
 }

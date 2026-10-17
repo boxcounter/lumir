@@ -352,6 +352,9 @@ pub fn run_turn_for(
             reasoning_block,
         };
         let output = client.complete(&request, &stream);
+        // 翻译层诊断（chat 方言的悬空 function_call 丢弃等）：翻译期事件 wire 不可推导，
+        // 按 sidecar 记录入留存（与本轮请求-响应同文件、紧贴发送点）。
+        record_wire_diagnostics(runtime, scope, client.take_wire_diagnostics());
         // 响应同样即刻落盘（与上面的 llm_request 严格成对，含失败与在途停止的半截响应——
         // 「模型当时回的是什么」是留存事实的一部分）。放在停止检查点之前：
         // 中断轮产出的半截文本同样如实记录。
@@ -695,6 +698,26 @@ fn llm_error_payload(error: &llm::TurnError) -> serde_json::Value {
     });
     append_error_diagnostics(&mut payload, error);
     payload
+}
+
+/// 翻译层诊断的 sidecar 记录（change add-harness-chat-completions-dialect）：chat 方言翻译时
+/// 丢弃的项（悬空 `function_call` 等）是 **wire 不可推导**的事件——不发出去，但会改变模型
+/// 看到的历史，必须可审计。与 approval / llm_error 同族：每轮 `complete` 之后紧贴发送点落盘；
+/// 空表（Responses / mock / 无诊断）不产生任何记录。
+fn record_wire_diagnostics(
+    runtime: &Runtime,
+    scope: &VaultScope,
+    diagnostics: Vec<llm::WireDiagnostic>,
+) {
+    for diagnostic in diagnostics {
+        let payload = serde_json::json!({
+            "kind": "wire_diagnostic",
+            "code": diagnostic.code,
+            "call_id": diagnostic.call_id,
+            "message": diagnostic.message,
+        });
+        let _ = runtime.with_session(scope, |s| s.jsonl().record(&payload));
+    }
 }
 
 /// 响应点落 `llm_response`：正文 / reasoning 回放项原文 / thinking 展示文本 / 工具调用 /
@@ -1162,6 +1185,7 @@ fn compact_now(
     let compact_bytes = client.wire_body_bytes(&compact_request);
     record_llm_request(runtime, scope, config, &compact_request, compact_bytes);
     let output = client.complete(&compact_request, &llm::DiscardStreamSink);
+    record_wire_diagnostics(runtime, scope, client.take_wire_diagnostics());
     record_llm_response(
         runtime,
         scope,

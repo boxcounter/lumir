@@ -153,6 +153,28 @@ token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定�
 
 **逐项校验的例外**（与 `harness.permissions` 同形）：地图里的非法项（名字非法 / 档位值不是 `"hidden"` 或 `"lazy"`）只丢自己并各给一条人话 warning，其余项照常生效，MUST NOT 因为一项笔误把整份配置（含 `last_vault`）回退默认。整个 `ignore` 键给错类型（如 `"ignore": "hidden"`、`"ignore": []`）仍走 §2 的整文件回落。JSON 对象的重复键由解析库按「后者覆盖」处理、不告警（一个名字不可能真的有两个档位）。
 
+### 1.5 `[harness]` 表
+
+本表只收录**改变客户端 wire 行为**的键；`[harness]` 的其余键（`provider` /
+`providers.<id>.api_key` / `model` / `base_url` / `models` / `permissions` / `permission_mode` /
+`loop_max` / `warn_ctx_pct` / `auto_compact`）的规格归
+[openspec/specs/harness/spec.md](../../openspec/specs/harness/spec.md) 的「配置节 [harness]」条
+（change `add-harness-chat-completions-dialect` 起生效），本文档不复制第二份真源。
+
+| 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
+|---|---|---|---|---|---|
+| `harness.providers.<id>.wire_api` | string 枚举 | `"responses"` | `"responses"` \| `"chat_completions"` | 每轮请求装配 client 时读一次（会话建立 / 每轮发送的配置快照）；改动下一次发送生效 | `config.rs` 的 `WireApi`、`validate_wire_api` |
+
+`wire_api` 选择该 provider 的 wire 方言：`responses` = `POST {base_url}/responses`（缺省，既有行为
+逐字节不变）；`chat_completions` = `POST {base_url}/chat/completions`。**v1 仅 kimi 实现 chat 档**：
+deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条人话 warning（v1 未实现其 chat 档）；
+`mock` 没有该键（fixture 驱动，不经过真实 HTTP body）。闭集合外取值回落 `responses` + warning，
+类型不符走整文件回落。
+
+会话留存的首行 `session_open.wire_api` 记录当次实际方言（缺省值同样在场）；恢复旧会话（无该键）按
+`responses` 解释。历史项不随方言改写——items → chat messages 的翻译发生在发送边界，因此改配置后
+恢复续聊即可切到 chat 方言（回退 = 删掉该键，见 change `add-harness-chat-completions-dialect`）。
+
 ## 2. 解析与容错口径
 
 - **未知键忽略**：新版写入的字段旧版读取不报错（向前兼容）。未知键在应用回写时**原样保留**（见 §3）。

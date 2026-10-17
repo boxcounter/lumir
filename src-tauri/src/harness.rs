@@ -452,6 +452,9 @@ impl Runtime {
             "restored_from": session_id,
             "provider": config.provider,
             "model": llm::active_model(config),
+            // wire 方言（与 [`session_open_payload`] 同一条读数）：续写文件记录当前配置的
+            // 实际方言；源会话不带该键（旧文件）不影响恢复——恢复充分性只靠本文件的键。
+            "wire_api": config.wire_api(),
             "thinking": effort,
             "system": system,
             "assembly": assembly,
@@ -984,6 +987,10 @@ pub(crate) fn session_open_payload(
         "opened_from": opened_from,
         "provider": config.provider,
         "model": llm::active_model(config),
+        // wire 方言（change add-harness-chat-completions-dialect）：恢复充分性的推导依据之一
+        // ——同一份 JSONL + 代码版本 + 该键能逐字节重建任意一轮的 wire 体。缺省值同样在场
+        //（Mock 也写 `responses`：字段不缺席，含义是「这一轮没有真实 HTTP body」）。
+        "wire_api": config.wire_api(),
         "thinking": thinking.as_str(),
         "system": assembled.text,
         "assembly": assembled.manifest,
