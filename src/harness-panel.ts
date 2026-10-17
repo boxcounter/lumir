@@ -3898,6 +3898,32 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /**
+   * HC5 补账：组合窗内被 normalize 闸门跳过的归一，在确认窗过期后补跑一次——组合的 DOM 落定
+   * 在 WKWebView 里落在 compositionend 之后（确认拍时序同 M361），过早归一仍会把落定的候选
+   * 文本折错段落。窗内新起的组合由它自己的 compositionend 续期（再排一次补账），这一链到此
+   * 为止（不跟着新组合空转）。
+   *
+   * 到期时确认窗**仍开着**就续排到窗尾：定时器与墙钟不同源（墙钟回退 / 定时器相对墙钟提前
+   * 到期），一次性定时器在那一拍重判窗仍在就把补账静默丢掉，而丢掉的补账没有第二次——游离
+   * 文本永久不折（M560 的间歇红：`'汉语' !== '汉语tail'`）。续排的延时取「窗尾剩余 + 1ms」并
+   * 封顶在 IME_CONFIRM_WINDOW_MS，墙钟大幅回退时也只是每 250ms 重判一次，不空转。
+   */
+  let imeBackfillTimer: number | undefined;
+  function scheduleImeBackfill(wait: number = IME_CONFIRM_WINDOW_MS): void {
+    window.clearTimeout(imeBackfillTimer);
+    imeBackfillTimer = window.setTimeout(() => {
+      imeBackfillTimer = undefined;
+      if (imeGateState.composing) return; // 新组合在途：由它自己的 compositionend 续排
+      if (imeWindowActive()) {
+        const remaining = imeGateState.confirmUntil - Date.now();
+        scheduleImeBackfill(Math.min(IME_CONFIRM_WINDOW_MS, Math.max(1, remaining + 1)));
+        return;
+      }
+      normalize();
+    }, wait);
+  }
+
+  /**
    * 归一化（quirk ④）：顶层只允许 .qcard / .qpara 两类块——裸文本、<br>、浏览器自造的
    * div/span 一律折进相邻段落（<br> 记 \n）；收尾保证至少一个段落块。数据层因此永远干净
    * （「不接受裸 <div>/<br> 进数据层」的正面落实）。光标尽量原位保留。
@@ -7016,12 +7042,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     undoHistory.breakCluster(); // 组合整段是一个撤销步：下一拍编辑强制重新压栈。
     updateEmptyClass();
     markDraft(); // IME 落定的字符在此刻才进 DOM（组合期不排期），草稿按最终文本落盘
-    // HC5 补账：组合窗内被 normalize 闸门跳过的归一，在确认窗过期后补跑一次——组合的 DOM 落定
-    // 在 WKWebView 里落在 compositionend 之后（确认拍时序同 M361），过早归一仍会把落定的候选
-    // 文本折错段落。窗内新起的组合由它自己的 compositionend 续期（再排一次补账）。
-    window.setTimeout(() => {
-      if (!imeWindowActive()) normalize();
-    }, IME_CONFIRM_WINDOW_MS);
+    scheduleImeBackfill(); // HC5 补账（到期早于窗尾时续排，见该函数注释）
   });
   // 粘贴分派（quirk ① + change harness-composer-image-paste design §7）：剪贴板含
   // `image/*` 文件项 → 图优先（读 Blob → base64 → harness 侧落盘 → 光标处插图片卡片；
