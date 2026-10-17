@@ -73,8 +73,8 @@
       出现过的路径、不用 Markdown 链接语法、目录说清是目录）
 - [x] 6.2 `src-tauri/src/harness/context.rs`：以固定段装配（与 `QUOTE_REFERENCE` 同构），
       `AssemblySource` 记 `path_reference` 条目；Rust 单测断言注入文本与清单条目
-- [ ] 6.3 抽样观察记录：真实 provider 若干轮的路径写法抽样，结论写入完成报告（如实标注未覆盖，不进
-      机器判据）
+- [x] 6.3 抽样观察：**未执行**（tower 2026-10-17 裁决）——真实 provider 的路径写法抽样归 Alex
+      dogfood 环节，本阶段无无人值守的真实会话可跑；如实登记为未覆盖，不进机器判据
 
 ## 7. 真机验收场景
 
@@ -90,12 +90,13 @@
 
 ## 8. 验证
 
-- [ ] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 8.2 `bash scripts/gate.sh quick` 全绿（读数照抄 `GATE RESULT` 原文行 + 退出码）
+- [x] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（23 passed / 0 failed）
+- [x] 8.2 `bash scripts/gate.sh quick` 全绿：`GATE RESULT: 10/10 PASS（SKIP 0）`，exit 0
 - [ ] 8.3 `bash scripts/gate.sh visual`（动过 `src/harness-panel.css`）：读数照抄 `GATE RESULT` 原文行
       + 退出码；本项目 scope 不含 `tests/visual`，不新增视觉场景；若既有基线因样式改动变红，基线更新
       须先经 Alex 过目（人肉裁决点）
-- [ ] 8.4 `node scripts/acceptance/run.mjs 161` 真机跑通，证据落 `test-results/acceptance/<日期>/`；
-      环境不满足导致 INVALID 时如实登记并复跑，不把无效运行写成 PASS
-- [ ] 8.5 信息卫生清扫：新增 fixture / 场景 / 文档对改动面做一次 text 级 grep，真实 vault 内容、
+- [x] 8.4 真机跑批 161 **归并后 dogfood 批次承接**（tower 2026-10-17 裁决，与 M551 场景 105 同一
+      先例）：本阶段起跑自检因同机安装版 Lumir.app 在场而拒绝（未 kill 用户实例）；场景 + `--check`
+      已随实现落地，真机 PASS 证据待 dogfood 批次产出
+- [x] 8.5 信息卫生清扫：新增 fixture / 场景 / 文档对改动面做一次 text 级 grep，真实 vault 内容、
       真实路径、真实人名零命中（合成文件名与合成路径）
