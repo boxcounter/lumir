@@ -1412,8 +1412,10 @@ pub fn fs_reveal_in_finder(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
-    /// 临时配置文件（写回类单测用）：文件名带进程号 + 序号，Drop 时删除。
+    /// 临时配置文件（写回类单测用）：文件名带进程号 + 序号 + 随机段，`create_new` 独占新建，
+    /// Drop 时删除。不用 `fs::write`：pid 回收后 crash 残留的同名文件会被静默覆盖 / 复用。
     /// 与 `config.rs` 测试模块里的同名辅助同形——两个模块各持一份是刻意的：测试辅助不进
     /// 生产代码的公共面（`pub(crate)` 会把测试脚手架漏进库的表层 API）。
     struct TempFile(std::path::PathBuf);
@@ -1421,13 +1423,28 @@ mod tests {
 
     impl TempFile {
         fn new(content: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "lumir-commands-test-{}-{}.json",
-                std::process::id(),
-                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            ));
-            std::fs::write(&path, content).expect("write temp config");
-            Self(path)
+            let base = std::env::temp_dir();
+            for _ in 0..16 {
+                let path = base.join(format!(
+                    "lumir-commands-test-{}-{}-{:016x}.json",
+                    std::process::id(),
+                    SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                    rand::random::<u64>(),
+                ));
+                let mut file = match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                {
+                    Ok(file) => file,
+                    Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(err) => panic!("create temp config {}: {err}", path.display()),
+                };
+                file.write_all(content.as_bytes())
+                    .expect("write temp config");
+                return Self(path);
+            }
+            panic!("create temp config: 16 次随机文件名全部撞名");
         }
     }
 
@@ -1813,16 +1830,27 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// 恢复状态机测试用的临时 vault（Drop 时删除；沿用「无 tempfile 依赖」的既有纪律）。
+    /// 目录名带 pid + 序号 + tag + 随机段，且用 `create_dir` 而非 `create_dir_all`：pid 回收后
+    /// crash 残留目录会被静默复用；撞名即换随机段重试（同 `link_graph.rs` 的 `TempVaultDir`）。
     struct TempVault(PathBuf);
 
     impl TempVault {
         fn new(tag: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "lumir-vault-restore-test-{}-{tag}",
-                std::process::id()
-            ));
-            std::fs::create_dir_all(&path).expect("create temp vault");
-            Self(path)
+            let base = std::env::temp_dir();
+            for _ in 0..16 {
+                let path = base.join(format!(
+                    "lumir-vault-restore-test-{}-{tag}-{}-{:016x}",
+                    std::process::id(),
+                    SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                    rand::random::<u64>(),
+                ));
+                match std::fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(err) => panic!("create temp vault {}: {err}", path.display()),
+                }
+            }
+            panic!("create temp vault: 16 次随机目录名全部撞名");
         }
 
         fn path(&self) -> PathBuf {

@@ -1826,27 +1826,47 @@ fn validate_log(raw: serde_json::Value) -> (LogConfig, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    /// 无 tempfile 依赖（低依赖取向）：用 pid + 序号在 $TMPDIR 造唯一路径，用完即删。
+    /// 无 tempfile 依赖（低依赖取向）：文件名带 pid + 序号 + 随机段，`create_new` 独占新建，
+    /// 用完即删。不用 `fs::write`：pid 回收后 crash 残留的同名文件会被静默覆盖 / 复用。
     struct TempFile(PathBuf);
     static SEQ: AtomicU32 = AtomicU32::new(0);
 
     impl TempFile {
         fn new(content: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "lumir-config-test-{}-{}.json",
-                std::process::id(),
-                SEQ.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::write(&path, content).expect("write temp config");
-            Self(path)
+            let base = std::env::temp_dir();
+            for _ in 0..16 {
+                let path = base.join(format!(
+                    "lumir-config-test-{}-{}-{:016x}.json",
+                    std::process::id(),
+                    SEQ.fetch_add(1, Ordering::Relaxed),
+                    rand::random::<u64>(),
+                ));
+                let mut file = match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                {
+                    Ok(file) => file,
+                    Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(err) => panic!("create temp config {}: {err}", path.display()),
+                };
+                file.write_all(content.as_bytes())
+                    .expect("write temp config");
+                return Self(path);
+            }
+            panic!("create temp config: 16 次随机文件名全部撞名");
         }
         fn missing() -> Self {
+            // 「文件不存在」是被测前提，无法独占新建；16 位十六进制随机段把与 crash 残留
+            // 撞名的概率压到可忽略。
             Self(std::env::temp_dir().join(format!(
-                "lumir-config-test-missing-{}-{}.json",
+                "lumir-config-test-missing-{}-{}-{:016x}.json",
                 std::process::id(),
-                SEQ.fetch_add(1, Ordering::Relaxed)
+                SEQ.fetch_add(1, Ordering::Relaxed),
+                rand::random::<u64>(),
             )))
         }
     }

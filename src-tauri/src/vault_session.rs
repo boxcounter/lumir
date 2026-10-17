@@ -287,19 +287,29 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    /// 无 tempfile 依赖（低依赖取向）：pid + 序号造唯一目录，Drop 时删除。
+    /// 无 tempfile 依赖（低依赖取向）：在 $TMPDIR **独占新建**唯一目录，Drop 时删除。
+    /// 目录名带 pid + 序号 + 随机段，且用 `create_dir` 而非 `create_dir_all`：pid 回收后
+    /// crash 残留目录会被静默复用；撞名即换随机段重试（同 `link_graph.rs` 的 `TempVaultDir`）。
     struct TempDir(PathBuf);
     static SEQ: AtomicU32 = AtomicU32::new(0);
 
     impl TempDir {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "lumir-vault-session-test-{}-{}",
-                std::process::id(),
-                SEQ.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir_all(&path).expect("create temp dir");
-            Self(path)
+            let base = std::env::temp_dir();
+            for _ in 0..16 {
+                let path = base.join(format!(
+                    "lumir-vault-session-test-{}-{}-{:016x}",
+                    std::process::id(),
+                    SEQ.fetch_add(1, Ordering::Relaxed),
+                    rand::random::<u64>(),
+                ));
+                match fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(err) => panic!("create temp dir {}: {err}", path.display()),
+                }
+            }
+            panic!("create temp dir: 16 次随机目录名全部撞名");
         }
 
         fn path(&self) -> &Path {
