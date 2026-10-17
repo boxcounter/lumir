@@ -9,7 +9,6 @@ PL-LINE-01-START
 ## 中段
 
 下面是目标行：
-
 PL-LINE-12-TARGET
 
 ## 末段
