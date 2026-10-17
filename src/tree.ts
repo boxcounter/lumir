@@ -397,6 +397,11 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
    *  时靠它去重）。**存 promise 而不是一个登记用的集合**（M300）：`revealPath` 的定位要等祖先
    *  取回一层才能继续往下走，而只回答「发过没有」的集合在那一刻只能让定位放弃。 */
   const lazyFetching = new Map<string, Promise<void>>();
+  /** 树模型的世代：`setVault` / `showEmpty` 换掉整棵树时 +1。在途的惰性取数拿它做守卫——
+   *  结果落地时若世代已变（用户切了 vault），那批条目属于旧 vault 的模型，MUST NOT 合并
+   *  （`mergeEntry` 会往全局 `nodes` 里写，混进去就是旧条目出现在新树里，`hasDir` 也会看见
+   *  孤儿目录）。与 `revealSeq` 同一手法，区别只在守卫的对象是整个模型而不是一次定位。 */
+  let modelGeneration = 0;
   let vaultName = "";
   /** 树头部的切换器入口（形态 A）：未装载 vault 时不存在（空态整块替换）。 */
   let entryEl: HTMLButtonElement | undefined;
@@ -687,6 +692,11 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
    * 重复展开 / 展开与取数并发时靠 `lazyFetching` 去重（同一目录只发一次命令）；取数回来的
    * 合并是**按路径 upsert**，不覆盖用户在同一拍里做的别的操作（模型与 DOM 都只动这一层）。
    *
+   * **世代守卫**：取数是异步的，落地时树可能已经换了（`setVault` / `showEmpty`）——那批条目
+   * 属于旧 vault 的模型，合并进去会让旧条目出现在新树里（`hasDir` 也会看见孤儿目录）。出发时
+   * 记下 `modelGeneration`，落地时对不上就整段作废：不合并、不标记已取回、也**不动登记表**
+   * （`setVault` 已把它清空，这次 delete 可能删掉新 vault 在途的同一路径取数）。
+   *
    * 返回值 = **这一次取数的完成时刻**（同一目录的后续调用拿到同一个 promise）。M300 起
    * `revealPath` 靠它等祖先落地。promise **不 reject**（失败如实返回，由 `lazyFetched` 回答
    * 「取到没有」）：调用方之一是事件回调（`expandNode` 那条 `void`），未处理的 rejection 会
@@ -697,6 +707,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     const path = node.entry.path;
     const inFlight = lazyFetching.get(path);
     if (inFlight !== undefined) return inFlight;
+    const generation = modelGeneration;
     let pending: Promise<FsEntry[]>;
     try {
       // 同步抛错的实现在这里就地收口：这一次取数当场结束、**不进登记表**（下次展开重试，
@@ -711,9 +722,12 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       try {
         entries = await pending;
       } catch {
+        // 换代后的失败同样不动登记表：那条登记早已随旧模型作废，删它只会误伤新 vault 的取数。
+        if (generation !== modelGeneration) return;
         lazyFetching.delete(path);
         return;
       }
+      if (generation !== modelGeneration) return; // 换过 vault：这批条目属于旧模型，丢弃
       lazyFetching.delete(path);
       lazyFetched.add(path);
       for (const entry of entries) mergeEntry(node, entry);
@@ -1221,6 +1235,10 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
 
     setVault(root, entries) {
       vaultName = baseName(root);
+      // 换代：在途的惰性取数（见 `fetchLazyChildren` 的世代守卫）落地时一律作废——那批条目
+      // 属于旧 vault 的模型。与下面三张表的清空是同一件事的两半：清表管「新 vault 从零登记」，
+      // 换代管「旧 vault 的迟到结果不许写进新模型」。
+      modelGeneration += 1;
       expanded.clear();
       lazyFetched.clear();
       lazyFetching.clear();
@@ -1390,6 +1408,9 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     showEmpty(notice) {
       // 空态整块替换掉整棵树，入口随之从 DOM 消失——「未装载 vault（含启动恢复进行中）
       // 时无列表入口」这条口径就落在这一句上（entryEl 一并置空，命令据此无操作）。
+      // 换代（M555）：树上已经没有展示中的模型了，在途惰性取数的迟到结果不许再往模型里合并
+      // ——与 `setVault` 同一道守卫，理由见 `fetchLazyChildren` 的世代守卫段。
+      modelGeneration += 1;
       entryEl = undefined;
       emptyNotice = notice;
       editing = null;
