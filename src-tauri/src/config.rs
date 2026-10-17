@@ -521,6 +521,43 @@ pub enum HarnessProvider {
     Mock,
 }
 
+/// harness 的 wire 方言两档（change add-harness-chat-completions-dialect，design D1）。
+/// **闭集合**：取值校验在 Rust 侧完成（与 [`HarnessProvider`] / [`PermissionMode`] 同一形态），
+/// 运行时拿到的必是两档之一。`Responses` 是缺省档——未写该键的既有配置行为逐字节不变。
+///
+/// v1 仅 kimi 实现 `ChatCompletions`；deepseek 配该档在配置校验期回落 `Responses` 并告警
+/// （design D1 的 v1 范围），因此运行时装配点可以只按 kimi 建 chat 客户端。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum WireApi {
+    /// OpenAI Responses API（缺省；`{base}/responses`）。
+    #[default]
+    Responses,
+    /// Chat Completions（`{base}/chat/completions`；k3-256k 在 coding 端点上的正路）。
+    ChatCompletions,
+}
+
+impl WireApi {
+    /// 配置字面量（config.json 的 `harness.providers.<id>.wire_api` 取值；也是校验 warning
+    /// 文案的取值表来源，避免第二处真源）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WireApi::Responses => "responses",
+            WireApi::ChatCompletions => "chat_completions",
+        }
+    }
+
+    /// 闭集合解析：未知取值返回 `None`（由 [`validate_harness_provider`] 回落默认 + 人话 warning）。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "responses" => Some(WireApi::Responses),
+            "chat_completions" => Some(WireApi::ChatCompletions),
+            _ => None,
+        }
+    }
+}
+
 /// harness 权限模式三档（change add-harness-permission-modes，design §2）。**闭集合**：取值
 /// 校验在 Rust 侧完成（与 [`HarnessProvider`] / `UiTheme` 同一形态），运行时拿到的必是三档之一。
 ///
@@ -666,6 +703,10 @@ pub struct HarnessProviderConfig {
     /// 前端提示态），绝不回落内置表。这是浮层模型段与 ctx% 窗口 / effort 能力判定的
     /// 共同数据源。
     pub models: Vec<HarnessModelSpec>,
+    /// wire 方言（change add-harness-chat-completions-dialect，design D1）：缺省
+    /// `responses`；kimi 可配 `chat_completions`。deepseek 配 chat 档在校验期回落并告警
+    /// （v1 未实现），运行时看到的 deepseek 恒为 `responses`。
+    pub wire_api: WireApi,
 }
 
 impl HarnessConfig {
@@ -701,6 +742,18 @@ impl HarnessConfig {
                 .iter()
                 .find(|spec| spec.id == model)
                 .is_some_and(|spec| spec.effort),
+        }
+    }
+
+    /// 当前 provider 的 wire 方言（change add-harness-chat-completions-dialect）：**单一来源**
+    /// ——client 装配（`llm::client_at`）与 `session_open.wire_api` 留存都读这一处，MUST NOT
+    /// 各写一份 match。mock 是 fixture 驱动档，没有 wire 面：恒 `Responses`（= 缺省值在场，
+    /// 留存字段不缺席；它的请求不经任何真实 HTTP body）。
+    pub fn wire_api(&self) -> WireApi {
+        match self.provider {
+            HarnessProvider::Kimi => self.providers.kimi.wire_api,
+            HarnessProvider::Deepseek => self.providers.deepseek.wire_api,
+            HarnessProvider::Mock => WireApi::Responses,
         }
     }
 
@@ -881,6 +934,10 @@ struct RawHarnessProviderConfig {
     /// 判定：直接结构化会让一项类型不符在 serde 解析期失败，走整文件回落。缺键 = 空清单
     /// （不回落内置表——M381 起内置 preset 已彻底删除）。
     models: Option<Vec<serde_json::Value>>,
+    /// wire 方言（change add-harness-chat-completions-dialect）：闭集合取值，缺键 ⇒ 默认
+    /// `responses` 不告警；非法值 / v1 未实现的 provider 档位在 `validate()` 里回落 + warning；
+    /// 类型不符（`"wire_api": 2`）在 serde 解析期失败 → 整文件回落（与 `permission_mode` 同路）。
+    wire_api: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1545,7 +1602,8 @@ fn validate_harness_provider(
     let section_configured = raw.api_key.is_some()
         || raw.model.is_some()
         || raw.base_url.is_some()
-        || raw.models.is_some();
+        || raw.models.is_some()
+        || raw.wire_api.is_some();
     let models = match &raw.models {
         None => Vec::new(),
         Some(items) => validate_harness_model_specs(items, provider, warnings),
@@ -1597,11 +1655,39 @@ fn validate_harness_provider(
         }
         Some(value) => Some(value.to_string()),
     };
+    let wire_api = validate_wire_api(raw.wire_api.as_deref(), provider, warnings);
     HarnessProviderConfig {
         api_key,
         model,
         base_url,
         models,
+        wire_api,
+    }
+}
+
+/// wire 方言校验（change add-harness-chat-completions-dialect，design D1）：缺键 ⇒ `responses`
+/// 不告警；闭集合外取值 / v1 未实现的 provider 档位 ⇒ 回落 `responses` + 人话 warning。
+/// 类型不符到不了这里（解析期整文件回落，见 [`RawHarnessProviderConfig`]）。
+fn validate_wire_api(raw: Option<&str>, provider: &str, warnings: &mut Vec<String>) -> WireApi {
+    let Some(value) = raw.map(str::trim) else {
+        return WireApi::default();
+    };
+    match WireApi::parse(value) {
+        // v1 仅 kimi 实现 chat 方言（design D1）：其余 provider 配该档照实告警并回落——
+        // 静默忽略会让用户以为请求已走 chat 路径。
+        Some(WireApi::ChatCompletions) if provider != "kimi" => {
+            warnings.push(format!(
+                "配置项 harness.providers.{provider}.wire_api 取值 \"chat_completions\" 当前未实现（v1 仅 kimi 支持），已回退为 responses"
+            ));
+            WireApi::Responses
+        }
+        Some(api) => api,
+        None => {
+            warnings.push(format!(
+                "配置项 harness.providers.{provider}.wire_api 取值 \"{value}\" 非法（可选：responses、chat_completions），已回退为 responses"
+            ));
+            WireApi::Responses
+        }
     }
 }
 
@@ -3722,5 +3808,99 @@ mod tests {
         );
         assert_eq!(snap.config.harness.providers.kimi.model, "first");
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    /// wire 方言（change add-harness-chat-completions-dialect，design D1）：
+    /// 缺省 `responses` 不告警；kimi 两档合法；闭集合外回落 + 人话 warning；
+    /// deepseek 配 chat 档（v1 未实现）回落 + warning；类型不符整文件回落。
+    #[test]
+    fn harness_wire_api_validation_and_fallback() {
+        // 缺键 ⇒ responses（缺省），不产生与该键相关的 warning。
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"providers":{"kimi":{"api_key":"sk-x","models":[{"id":"k3-256k","effort":true,"vision":false,"window":262144}]}}}}"#,
+            )
+            .0,
+        );
+        assert_eq!(
+            snap.config.harness.providers.kimi.wire_api,
+            WireApi::Responses
+        );
+        assert_eq!(snap.config.harness.wire_api(), WireApi::Responses);
+        assert!(
+            !snap.warnings.iter().any(|w| w.contains("wire_api")),
+            "{:?}",
+            snap.warnings
+        );
+
+        // kimi 两档都合法（显式 responses 与 chat_completions）。
+        for (raw, want) in [
+            ("responses", WireApi::Responses),
+            ("chat_completions", WireApi::ChatCompletions),
+        ] {
+            let snap = load_from(
+                &TempFile::new(&format!(
+                    r#"{{"harness":{{"provider":"kimi","providers":{{"kimi":{{"api_key":"sk-x","wire_api":"{raw}","models":[{{"id":"k3-256k","effort":true,"vision":false,"window":262144}}]}}}}}}}}"#
+                ))
+                .0,
+            );
+            assert_eq!(snap.config.harness.providers.kimi.wire_api, want, "{raw}");
+            // `wire_api()` 是消费点唯一读数：provider 为 kimi 时与字段一致。
+            assert_eq!(snap.config.harness.wire_api(), want, "{raw}");
+            assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        }
+
+        // 闭集合外取值 ⇒ 回落 responses + 人话 warning（点名键与可选值）。
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"providers":{"kimi":{"api_key":"sk-x","wire_api":"chatcompletions","models":[{"id":"k3-256k","effort":true,"vision":false,"window":262144}]}}}}"#,
+            )
+            .0,
+        );
+        assert_eq!(
+            snap.config.harness.providers.kimi.wire_api,
+            WireApi::Responses
+        );
+        assert!(
+            snap.warnings.iter().any(|w| w.contains("wire_api")
+                && w.contains("chatcompletions")
+                && w.contains("chat_completions")),
+            "{:?}",
+            snap.warnings
+        );
+
+        // deepseek 配 chat 档（v1 仅 kimi 实现）⇒ 回落 responses + 专属 warning。
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"provider":"deepseek","providers":{"deepseek":{"api_key":"sk-x","wire_api":"chat_completions","models":[{"id":"deepseek-flash","effort":true,"vision":false,"window":1048576}]}}}}"#,
+            )
+            .0,
+        );
+        assert_eq!(
+            snap.config.harness.providers.deepseek.wire_api,
+            WireApi::Responses
+        );
+        assert!(
+            snap.warnings.iter().any(|w| w.contains("deepseek")
+                && w.contains("wire_api")
+                && w.contains("当前未实现")),
+            "{:?}",
+            snap.warnings
+        );
+
+        // mock 没有该键：硬塞也不识别（未知键忽略，不进入 mock 参数面）。
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"provider":"mock","providers":{"mock":{"fixture":"/tmp/x.json"}}}}"#,
+            )
+            .0,
+        );
+        assert_eq!(snap.config.harness.wire_api(), WireApi::Responses);
+
+        // 类型不符（`"wire_api": 2`）⇒ 整文件回落（与 permission_mode 同路）。
+        let snap =
+            load_from(&TempFile::new(r#"{"harness":{"providers":{"kimi":{"wire_api":2}}}}"#).0);
+        assert_eq!(snap.config, AppConfig::default());
+        assert_eq!(snap.warnings.len(), 1);
     }
 }

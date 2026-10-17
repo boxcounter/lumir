@@ -142,7 +142,7 @@
 use std::io::BufRead;
 
 use crate::commands::CommandError;
-use crate::config::{HarnessConfig, HarnessProvider};
+use crate::config::{HarnessConfig, HarnessProvider, WireApi};
 
 use super::events::StreamSink;
 use super::thinking::{self, ThinkingEffort};
@@ -234,6 +234,22 @@ impl TurnError {
             ..Default::default()
         }
     }
+}
+
+/// 翻译层诊断（change add-harness-chat-completions-dialect）：**wire 不可推导**的翻译期事件
+/// ——翻译时丢弃了什么、为什么丢了。由调用侧在本轮 `complete` 之后经
+/// [`LlmClient::take_wire_diagnostics`] 取走并落 sidecar 记录（`kind: "wire_diagnostic"`）。
+///
+/// 首个（也是 v1 唯一）来源是 chat 方言的悬空 `function_call`（恢复边界：有调用无输出，
+/// design D4）：丢弃是唯一不必然 400 的处置，但「历史里有一条调用被静默丢掉」必须可审计。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WireDiagnostic {
+    /// 机器可读的稳定 code（`dangling_function_call` / `orphan_function_call_output`）。
+    pub code: &'static str,
+    /// 涉事调用的 call_id（无调用语义的诊断留空串）。
+    pub call_id: String,
+    /// 人读说明（进 sidecar，不进面板）。
+    pub message: String,
 }
 
 /// 错误 body 的留存上限（字符，非字节——按字符截断不会切坏 UTF-8）。巨型 body（HTML 网关页 /
@@ -336,6 +352,12 @@ const KIMI_PRESET: ProviderPreset = ProviderPreset {
         // 上面三条一条都不命中，`context_overflow` 因此恒 false，spec「超限兜底」的
         // 自动压缩+重试对该端点从不触发（回合直接终态报错）。补 "token limit" 覆盖该形态。
         "token limit",
+        // Chat Completions 方言的两条超限话术（change add-harness-chat-completions-dialect，
+        // design D7）：`total message size N exceeds limit 2097152`（2 MB 消息体上限——能达到
+        // 该体量的上下文早已超出窗口，压缩重试是正确处置）与真超窗的 401 族文案
+        // `supports only 256k context`（官方处置就是 compact 或换模型）。
+        "total message size",
+        "supports only 256k context",
     ],
 };
 
@@ -432,6 +454,13 @@ pub trait LlmClient: Send {
     fn mock_consumed(&self) -> usize {
         0
     }
+
+    /// 本轮翻译期诊断（[`WireDiagnostic`]）：翻译层丢弃了什么东西（chat 方言的悬空调用等）。
+    /// 调用侧在本轮 `complete` 之后取走并落 sidecar。缺省空表 = 该实现没有翻译层（Responses
+    /// 直接发 canonical 项）或本轮无诊断。
+    fn take_wire_diagnostics(&mut self) -> Vec<WireDiagnostic> {
+        Vec::new()
+    }
 }
 
 /// 会话级 mock 游标推进（M456）：`start` 是本轮起点、`consumed` 是本轮弹出的条数，
@@ -513,22 +542,40 @@ pub fn client_at(
             // 不再回落内置表）——client 随每轮 send 的 config 快照构建，能力标记在这
             // 一刻冻结进 client。
             let effort_supported = config.effort_supported(&config.provider, model);
-            Ok(Box::new(ResponsesClient {
-                http: reqwest::blocking::Client::builder()
-                    .timeout(std::time::Duration::from_secs(300))
-                    .build()
-                    .map_err(|e| {
-                        CommandError::new("harness_http_failed", format!("{e}"))
-                            .param("reason", e.to_string())
-                    })?,
-                endpoint: format!("{base}/responses"),
-                api_key: api_key.clone(),
-                model: model.clone(),
-                store_false: matches!(config.provider, HarnessProvider::Kimi),
-                effort_supported,
-                vault_id: vault_id.to_string(),
-                preset,
-            }))
+            // 共享一份 reqwest client 构造：两方言同一超时 / TLS 口径（只有 path 与
+            // body 形状不同）。
+            let http = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(300))
+                .build()
+                .map_err(|e| {
+                    CommandError::new("harness_http_failed", format!("{e}"))
+                        .param("reason", e.to_string())
+                })?;
+            // 方言选择（change add-harness-chat-completions-dialect，design D1）：配置显式
+            // 声明、无嗅探。`config.wire_api()` 是唯一读数（deepseek 的 chat 档在校验期已回落，
+            // 因此这里只可能是 kimi 命中 chat 分支）。
+            match config.wire_api() {
+                WireApi::ChatCompletions => Ok(Box::new(ChatCompletionsClient {
+                    http,
+                    endpoint: format!("{base}/chat/completions"),
+                    api_key: api_key.clone(),
+                    model: model.clone(),
+                    effort_supported,
+                    vault_id: vault_id.to_string(),
+                    preset,
+                    diagnostics: Vec::new(),
+                })),
+                WireApi::Responses => Ok(Box::new(ResponsesClient {
+                    http,
+                    endpoint: format!("{base}/responses"),
+                    api_key: api_key.clone(),
+                    model: model.clone(),
+                    store_false: matches!(config.provider, HarnessProvider::Kimi),
+                    effort_supported,
+                    vault_id: vault_id.to_string(),
+                    preset,
+                })),
+            }
         }
     }
 }
@@ -705,27 +752,27 @@ fn parse_sse(
     ))
 }
 
-/// SSE 分词与事件分流的读循环，与 transport 解耦（真 client 传响应体，单测传合成字节流），
-/// 协议层行为因此可用字节流直接钉死。
-///
-/// 在途停止的即时性（M374）：读端搬到独立线程、行经有界 channel，消费端按
-/// [`ABORT_POLL_INTERVAL`] 小步超时轮询——每次超时都问一次 `sink.aborted()`，因此
-/// 流停滞的静默窗口（provider 思考期数秒到十秒零事件）里点停止，亚秒级被读到即收流。
+/// SSE 分帧的公共读循环（两种方言共用，M562）：读端搬到独立线程、行经有界 channel，
+/// 消费端按 [`ABORT_POLL_INTERVAL`] 小步超时轮询——每次超时都问一次 `sink.aborted()`，
+/// 因此流停滞的静默窗口（provider 思考期数秒到十秒零事件）里点停止，亚秒级被读到即收流。
 /// 旧实现阻塞在 `reader.lines()` 上，标志只在整条事件派发后才有机会问，停止因此拖到
 /// 下一条数据到达（Alex 2026-10-07 现场「等几秒到十秒才停下来」）。收流后消费端丢弃
 /// channel，读线程下一次 `send` 失败即退出（连带 drop 掉 reqwest Response、关闭连接）；
 /// 不 join 读线程——它可能仍阻塞在下一条数据上，join 会把刚挣到的即时性又还回去
 /// （它由请求的总超时兜底回收）。
-fn parse_sse_reader<R: BufRead + Send + 'static>(
+///
+/// 每收到一条完整事件（空行分隔）调一次 `handle(event, data)`，返回 `true` 表示终态
+/// （不再读流）。事件名与 payload 的语义归各方言：Responses 用命名事件分流
+///（[`parse_sse_reader`]），chat 的帧没有事件名、只有裸 `data:`（[`parse_chat_sse_reader`]）。
+fn pump_sse<R: BufRead + Send + 'static>(
     reader: R,
-    preset: &ProviderPreset,
     sink: &dyn StreamSink,
-) -> TurnOutput {
+    mut handle: impl FnMut(&str, &str) -> bool,
+) {
     /// 停止轮询步长：消费端等不到数据时每隔多久问一次 `aborted()`。100ms ≪ 用户可感，
     /// 同时不给正常流量增加可测的开销（有数据时走快路径，从不轮询）。
     const ABORT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
-    let mut output = TurnOutput::default();
     let mut event = String::new();
     let mut data = String::new();
     let (tx, rx) = std::sync::mpsc::sync_channel::<std::io::Result<String>>(64);
@@ -753,10 +800,10 @@ fn parse_sse_reader<R: BufRead + Send + 'static>(
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         };
         if line.is_empty() {
-            dispatch_event(&event, &data, &mut output, preset, sink);
+            let terminal = handle(&event, &data);
             event.clear();
             data.clear();
-            if output.error.is_some() || terminal_state(&output) || sink.aborted() {
+            if terminal || sink.aborted() {
                 break;
             }
             continue;
@@ -773,6 +820,20 @@ fn parse_sse_reader<R: BufRead + Send + 'static>(
     }
     drop(rx);
     let _ = reader_thread;
+}
+
+/// Responses 方言的 SSE 读循环（与 transport 解耦：真 client 传响应体，单测传合成字节流），
+/// 协议层行为因此可用字节流直接钉死。
+fn parse_sse_reader<R: BufRead + Send + 'static>(
+    reader: R,
+    preset: &ProviderPreset,
+    sink: &dyn StreamSink,
+) -> TurnOutput {
+    let mut output = TurnOutput::default();
+    pump_sse(reader, sink, |event, data| {
+        dispatch_event(event, data, &mut output, preset, sink);
+        output.error.is_some() || terminal_state(&output)
+    });
     // 流结束而无终态事件：不报错，用已收内容（部分厂商截断时无 failed 事件）。
     output
 }
@@ -995,6 +1056,640 @@ fn parse_error_value(error: &serde_json::Value) -> Option<(String, String)> {
         .unwrap_or("未知错误")
         .to_string();
     Some((code, message))
+}
+
+// ---------------------------------------------------------------------------
+// Chat Completions 方言（change add-harness-chat-completions-dialect）
+// ---------------------------------------------------------------------------
+//
+// kimi 的 coding 端点在 Responses 路径上有一道**按请求体字节数**判定的前置闸
+//（实测边界 (417,231, 417,512] B；根因与证据见 design.md §1），而同一账号同模型走
+// Chat Completions 能服务到 211,055–234,656 input tokens。本客户端消费
+// `LlmClient` trait 的留口（ADR 0007 Decision 3）：会话存储形态仍是 Responses item
+//（canonical，design D3），**翻译只发生在发送边界的单一构造点**
+//（[`ChatCompletionsClient::build_wire_body`]——`wire_body_bytes` 与发送共用它，纪律同
+// Responses 侧 M463）。恢复路径因此零改动：Responses 时期留存的会话灌回后可直接以 chat
+// 方言续聊，留存项不重写。
+
+struct ChatCompletionsClient {
+    http: reqwest::blocking::Client,
+    endpoint: String,
+    api_key: String,
+    model: String,
+    /// 当前 provider + model 是否支持思考程度调节（与 [`ResponsesClient`] 同判据）：
+    /// chat 侧据此决定是否发 `thinking` 字段（design D5）。
+    effort_supported: bool,
+    /// 当前会话作用域的 vault 稳定 id：wire 展开（附件引用 → data URL）的落点解析。
+    vault_id: String,
+    preset: &'static ProviderPreset,
+    /// 最近一次发送体的翻译期诊断（[`WireDiagnostic`]），由 `complete` 填充、
+    /// [`LlmClient::take_wire_diagnostics`] 取走落 sidecar。
+    diagnostics: Vec<WireDiagnostic>,
+}
+
+impl LlmClient for ChatCompletionsClient {
+    fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput {
+        match self.complete_inner(request, sink) {
+            Ok(output) => output,
+            // 网络层失败 / 附件展开失败等**没有 HTTP 面**的错误：wire 面字段全空。
+            // 非 2xx 走 complete_inner 的 Ok(error) 分支（复用 http_error_turn_error）。
+            Err(e) => TurnOutput {
+                error: Some(TurnError::new(
+                    e.code.clone(),
+                    e.message.clone(),
+                    is_overflow(self.preset, &e.code, &e.message),
+                )),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// 发送量计量：与发送共用 [`Self::build_wire_body`]（同一份构造，MUST NOT 各拼一套）。
+    fn wire_body_bytes(&self, request: &Request) -> Option<u64> {
+        let (body, _) = self
+            .build_wire_body(request)
+            .map_err(|e| eprintln!("lumir: harness 发送量计量跳过（构造失败）：{e}"))
+            .ok()?;
+        serde_json::to_vec(&body)
+            .map_err(|e| eprintln!("lumir: harness 发送量计量跳过（序列化失败）：{e}"))
+            .ok()
+            .map(|bytes| bytes.len() as u64)
+    }
+
+    fn take_wire_diagnostics(&mut self) -> Vec<WireDiagnostic> {
+        std::mem::take(&mut self.diagnostics)
+    }
+}
+
+impl ChatCompletionsClient {
+    /// 构造实际发送体（wire 展开 + items→messages 翻译 + 参数），发送与发送量计量**共用
+    /// 这一份**（单一真源）。返回值第二项是本轮翻译期诊断（悬空调用丢弃等），只由 `complete`
+    /// 收进 client、随后落 sidecar；`wire_body_bytes` 忽略它（计量不该产生副作用）。
+    fn build_wire_body(
+        &self,
+        request: &Request,
+    ) -> Result<(serde_json::Value, Vec<WireDiagnostic>), CommandError> {
+        // wire 展开先于翻译（design D4 的 `input_image` 行）：`input_image` part 的
+        // `image_url` 此时已是 data URL。
+        let input = super::attachments::expand_image_refs(&request.input, &self.vault_id)?;
+        let (messages, diagnostics) = chat_messages(&request.system, &input);
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "messages": messages,
+            "tools": request.tools.iter().map(chat_tool_definition).collect::<Vec<_>>(),
+            "tool_choice": "auto",
+            "stream": true,
+            "stream_options": {"include_usage": true},
+        });
+        // 思考档位（design D5）：Kimi trait 形态 `thinking:{type,effort,keep}`。未声明 effort
+        // 能力的模型 MUST NOT 发该字段（与 Responses 侧 `reasoning.effort` 同纪律）。
+        if self.effort_supported {
+            body["thinking"] = serde_json::json!({
+                "type": "enabled",
+                "effort": request.effort.as_str(),
+                "keep": "all",
+            });
+        }
+        // 刻意不发（design D8 + spec 的 MUST NOT 集）：`include` / `store` / `reasoning` /
+        // `max_tokens` / `max_completion_tokens`。chat 端点的思考回放走 `reasoning_content`，
+        // 不需要 Responses 的密文回放字段。
+        Ok((body, diagnostics))
+    }
+
+    fn complete_inner(
+        &mut self,
+        request: &Request,
+        sink: &dyn StreamSink,
+    ) -> Result<TurnOutput, CommandError> {
+        let (body, diagnostics) = self.build_wire_body(request)?;
+        self.diagnostics = diagnostics;
+        let response = self
+            .http
+            .post(&self.endpoint)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .map_err(|e| {
+                CommandError::new("harness_network_failed", format!("LLM 请求发送失败：{e}"))
+                    .param("reason", e.to_string())
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            // 错误路径与 Responses 同一份（design D7）：不做方言特判。
+            let header_request_id = request_id_from_headers(response.headers());
+            let text = response.text().unwrap_or_default();
+            return Ok(TurnOutput {
+                error: Some(http_error_turn_error(
+                    self.preset,
+                    status.as_u16(),
+                    header_request_id,
+                    &text,
+                )),
+                ..Default::default()
+            });
+        }
+        Ok(parse_chat_sse(response, self.preset, sink))
+    }
+}
+
+/// Responses 形态的工具定义 `{type:"function", name, description, parameters}` → chat 形态
+/// `{type:"function", function:{name, description, parameters}}`；函数级其余字段（`strict`
+/// 等）原样保留，不维护第二张字段表。
+fn chat_tool_definition(tool: &serde_json::Value) -> serde_json::Value {
+    let mut function = tool.clone();
+    if let Some(map) = function.as_object_mut() {
+        map.remove("type");
+    }
+    serde_json::json!({ "type": "function", "function": function })
+}
+
+fn item_type(item: &serde_json::Value) -> Option<&str> {
+    item.get("type").and_then(|t| t.as_str())
+}
+
+fn string_field(value: &serde_json::Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// 内容数组 → 纯文本（`input_text` / `output_text` / `text` 各形态的 `.text` 逐段拼接）。
+/// 字符串形态原样返回（恢复旧记录时可能遇到）。
+fn content_text(content: &serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|t| t.as_str()))
+            .collect(),
+        _ => String::new(),
+    }
+}
+
+/// user 消息的 chat content：无图片时压成字符串（文本直出）；有图片时产出 content parts
+/// ——文本 part 为 `{type:"text"}`、`input_image` 为 `{type:"image_url",image_url:{url}}`
+///（design D4；此时 `image_url` 已是展开后的 data URL）。
+fn chat_user_content(content: &serde_json::Value) -> serde_json::Value {
+    let serde_json::Value::Array(parts) = content else {
+        return content.clone();
+    };
+    let has_image = parts
+        .iter()
+        .any(|part| item_type(part) == Some("input_image"));
+    if !has_image {
+        return serde_json::Value::String(content_text(content));
+    }
+    serde_json::Value::Array(
+        parts
+            .iter()
+            .map(|part| match item_type(part) {
+                Some("input_image") => serde_json::json!({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": part.get("image_url").and_then(|v| v.as_str()).unwrap_or_default(),
+                    },
+                }),
+                _ => serde_json::json!({
+                    "type": "text",
+                    "text": part.get("text").and_then(|v| v.as_str()).unwrap_or_default(),
+                }),
+            })
+            .collect(),
+    )
+}
+
+/// 孤立 `function_call_output`（无配对调用）的诊断。
+fn orphan_output_diagnostic(call_id: &str) -> WireDiagnostic {
+    WireDiagnostic {
+        code: "orphan_function_call_output",
+        call_id: call_id.to_string(),
+        message: format!(
+            "历史里的 function_call_output（{call_id}）没有配对的 function_call，chat 方言翻译时已丢弃"
+        ),
+    }
+}
+
+/// items → chat messages（design D4 的**唯一翻译点**；`wire_body` 与 `wire_body_bytes`
+/// 共用，MUST NOT 各拼一套）。
+///
+/// 输入是**展开图片引用之后**的 canonical Responses item 数组。翻译规则：
+/// - system（`Request.system`）→ 首条 `{role:"system"}`（空串不发——M372 的空文本 400）。
+/// - user 消息 → `{role:"user"}`（文本直出 / 含图时 content parts）。
+/// - reasoning 项的**明文**（[`thinking::reasoning_text`]：kimi 的 `summary` / deepseek 的
+///   `content`）→ 折叠进**其后第一条可发的 assistant 消息**的 `reasoning_content`（多段以
+///   空行拼接）；带 `tool_calls` 的 assistant 消息同样携带（该端点缺 `reasoning_content`
+///   的 tool 调用消息会 400）。
+/// - 一轮的 N 个 function_call → **单条** `{role:"assistant", tool_calls:[...]}`（同一轮若还有
+///   正文，正文并入该条的 `content`——chat 一轮只有一条 assistant 消息；无正文时 `content`
+///   为 null），其后紧随 N 条 `{role:"tool", tool_call_id}`、中间不插其它消息（design D4 的
+///   硬约束）。
+/// - 悬空 function_call（无配对 output）→ 丢弃 + 诊断；孤立 output 同理。
+///
+/// 空正文 assistant 消息不产出（M372：空文本会被端点 400；canonical 侧
+/// [`super::session::assistant_item`] 同样省略），pending reasoning 继续等下一个可发消息。
+///
+/// `pub` 是为跨方言恢复测试（`src-tauri/tests/session_recording.rs`）：纯函数、不起 HTTP。
+pub fn chat_messages(
+    system: &str,
+    items: &[serde_json::Value],
+) -> (Vec<serde_json::Value>, Vec<WireDiagnostic>) {
+    let mut messages: Vec<serde_json::Value> = Vec::new();
+    let mut diagnostics = Vec::new();
+    if !system.is_empty() {
+        messages.push(serde_json::json!({"role": "system", "content": system}));
+    }
+    // 待折叠的 reasoning 明文（design D4）：「其后第一条 assistant 消息」——中途遇到不可发
+    // 的项（空正文 assistant / user）时不清空，等真正可发的 assistant 宿主。
+    let mut pending_reasoning: Vec<String> = Vec::new();
+    // 待定去向的 assistant 正文：canonical 历史把「有正文又有调用的轮次」拆成
+    // reasoning + assistant message + function_call 项。chat 侧一轮只能是一条 assistant 消息，
+    // 且带 tool_calls 的这条 MUST 携带 reasoning_content（端点硬约束）——因此正文要先缓冲：
+    // 紧随其后有调用组就并入 tool_calls 消息（content = 正文），否则按普通 assistant 消息发。
+    let mut pending_assistant_text: Option<String> = None;
+    let mut index = 0;
+    while index < items.len() {
+        let item = &items[index];
+        match item_type(item) {
+            Some("reasoning") => {
+                if let Some(text) = thinking::reasoning_text(item) {
+                    pending_reasoning.push(text);
+                }
+                index += 1;
+            }
+            Some("function_call") => {
+                // 一轮的 N 个调用是连续项（canonical：calls 组 → outputs 组，M360）。
+                let mut calls: Vec<(String, String, String)> = Vec::new();
+                while index < items.len() && item_type(&items[index]) == Some("function_call") {
+                    let call = &items[index];
+                    calls.push((
+                        string_field(call, "call_id"),
+                        string_field(call, "name"),
+                        string_field(call, "arguments"),
+                    ));
+                    index += 1;
+                }
+                // 紧随其后的输出组；可能少于调用组（悬空调用：恢复边界，design D4）。
+                let mut outputs: Vec<(String, String)> = Vec::new();
+                while index < items.len()
+                    && item_type(&items[index]) == Some("function_call_output")
+                {
+                    let output = &items[index];
+                    outputs.push((
+                        string_field(output, "call_id"),
+                        string_field(output, "output"),
+                    ));
+                    index += 1;
+                }
+                let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+                for (call_id, name, arguments) in &calls {
+                    if !outputs.iter().any(|(output_id, _)| output_id == call_id) {
+                        // 悬空调用：chat 端点会以「tool_calls 未配对」400 拒掉整条请求；
+                        // 丢弃是唯一不必然失败的处置，留诊断供事后审计。
+                        diagnostics.push(WireDiagnostic {
+                            code: "dangling_function_call",
+                            call_id: call_id.clone(),
+                            message: format!(
+                                "历史里的 function_call（{name}）没有配对的 function_call_output，chat 方言翻译时已丢弃"
+                            ),
+                        });
+                        continue;
+                    }
+                    tool_calls.push(serde_json::json!({
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": name, "arguments": arguments},
+                    }));
+                }
+                if tool_calls.is_empty() {
+                    // 全部调用悬空：没有 assistant 宿主，但此前的正文仍是真实内容——按普通
+                    // assistant 消息收口（不能随调用一起丢）。
+                    flush_pending_assistant(
+                        &mut messages,
+                        &mut pending_assistant_text,
+                        &mut pending_reasoning,
+                    );
+                    for (output_id, _) in &outputs {
+                        diagnostics.push(orphan_output_diagnostic(output_id));
+                    }
+                    continue;
+                }
+                let hosted: Vec<String> = tool_calls
+                    .iter()
+                    .filter_map(|call| call.get("id").and_then(|v| v.as_str()))
+                    .map(str::to_string)
+                    .collect();
+                // 同轮正文并入本条（chat 一轮一条 assistant 消息）；无正文时 content 为 null。
+                let content = match pending_assistant_text.take() {
+                    Some(text) => serde_json::Value::String(text),
+                    None => serde_json::Value::Null,
+                };
+                let mut message = serde_json::json!({
+                    "role": "assistant",
+                    "content": content,
+                    "tool_calls": tool_calls,
+                });
+                if !pending_reasoning.is_empty() {
+                    message["reasoning_content"] =
+                        serde_json::Value::String(pending_reasoning.join("\n\n"));
+                    pending_reasoning.clear();
+                }
+                messages.push(message);
+                for (output_id, output) in &outputs {
+                    if hosted.iter().any(|id| id == output_id) {
+                        messages.push(serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": output_id,
+                            "content": output,
+                        }));
+                    } else {
+                        diagnostics.push(orphan_output_diagnostic(output_id));
+                    }
+                }
+            }
+            Some("function_call_output") => {
+                // 没有前置调用组的孤立输出：chat 侧没有 tool_call 可配对。
+                flush_pending_assistant(
+                    &mut messages,
+                    &mut pending_assistant_text,
+                    &mut pending_reasoning,
+                );
+                diagnostics.push(orphan_output_diagnostic(&string_field(item, "call_id")));
+                index += 1;
+            }
+            _ => {
+                match item.get("role").and_then(|r| r.as_str()) {
+                    Some("user") => {
+                        flush_pending_assistant(
+                            &mut messages,
+                            &mut pending_assistant_text,
+                            &mut pending_reasoning,
+                        );
+                        messages.push(serde_json::json!({
+                            "role": "user",
+                            "content": chat_user_content(
+                                item.get("content").unwrap_or(&serde_json::Value::Null)
+                            ),
+                        }));
+                    }
+                    Some("assistant") => {
+                        let text =
+                            content_text(item.get("content").unwrap_or(&serde_json::Value::Null));
+                        if !text.is_empty() {
+                            // 前一条待定正文先收口（非 canonical 的连续 assistant 消息也不丢）。
+                            flush_pending_assistant(
+                                &mut messages,
+                                &mut pending_assistant_text,
+                                &mut pending_reasoning,
+                            );
+                            pending_assistant_text = Some(text);
+                        }
+                    }
+                    Some("system") => {
+                        flush_pending_assistant(
+                            &mut messages,
+                            &mut pending_assistant_text,
+                            &mut pending_reasoning,
+                        );
+                        let text =
+                            content_text(item.get("content").unwrap_or(&serde_json::Value::Null));
+                        if !text.is_empty() {
+                            messages.push(serde_json::json!({"role": "system", "content": text}));
+                        }
+                    }
+                    _ => {}
+                }
+                index += 1;
+            }
+        }
+    }
+    // 末尾悬空的正文按普通 assistant 消息收口；末尾悬空的 reasoning（其后没有 assistant
+    // 消息）：无宿主可折叠，静默丢弃——中断轮的自然形态，不是错误（不产诊断，免得每轮
+    // 中断都留一条噪音）。
+    flush_pending_assistant(
+        &mut messages,
+        &mut pending_assistant_text,
+        &mut pending_reasoning,
+    );
+    (messages, diagnostics)
+}
+
+/// 收口待定的 assistant 正文（可能并入 tool_calls 消息的候选）：作为普通 assistant 消息
+/// 发出，并带上待折叠的 reasoning 明文（若有）。无待定正文时为 no-op（pending reasoning
+/// 留给下一个宿主）。
+fn flush_pending_assistant(
+    messages: &mut Vec<serde_json::Value>,
+    pending_text: &mut Option<String>,
+    pending_reasoning: &mut Vec<String>,
+) {
+    let Some(text) = pending_text.take() else {
+        return;
+    };
+    let mut message = serde_json::json!({"role": "assistant", "content": text});
+    if !pending_reasoning.is_empty() {
+        message["reasoning_content"] = serde_json::Value::String(pending_reasoning.join("\n\n"));
+        pending_reasoning.clear();
+    }
+    messages.push(message);
+}
+
+/// chat usage → 既有 [`Usage`]（design D6）：`prompt_tokens` → `input_tokens`；
+/// cached 两种字段布局都兜（顶层 `cached_tokens` / `prompt_tokens_details.cached_tokens`）；
+/// `completion_tokens` → `output_tokens`；`cache_write_tokens` 无 chat 对应 → 0（会话累计
+/// 读数口径不变——「provider 不提供按 0 记录」的既有先例）。
+fn chat_usage(usage: &serde_json::Value) -> Usage {
+    let input = usage
+        .get("prompt_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let cached = usage
+        .get("cached_tokens")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            usage
+                .get("prompt_tokens_details")
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(|v| v.as_u64())
+        })
+        .unwrap_or(0);
+    let output = usage
+        .get("completion_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    Usage {
+        input_tokens: input,
+        cached_tokens: cached,
+        output_tokens: output,
+        cache_write_tokens: 0,
+    }
+}
+
+/// chat 的 `reasoning_content` 明文 → 会话的 reasoning **回放项**（canonical Responses 形态）。
+/// 这是跨方言的桥：chat 回来的思考按 kimi 的 `summary` 载体落盘（`llm_response.reasoning`），
+/// 下次无论走 chat（[`chat_messages`] 经 [`thinking::reasoning_text`] 折回
+/// `reasoning_content`）还是 Responses，都从同一份 canonical 项回放。
+fn reasoning_replay_item(text: &str) -> Option<serde_json::Value> {
+    if text.is_empty() {
+        return None;
+    }
+    Some(normalize_reasoning_item(&serde_json::json!({
+        "type": "reasoning",
+        "summary": [{"type": "summary_text", "text": text}],
+    })))
+}
+
+/// chat SSE 的流内累积状态（content / reasoning_content 增量、tool_calls 分片、usage 帧）。
+#[derive(Default)]
+struct ChatStreamState {
+    text: String,
+    /// `reasoning_content` 全文（回放项来源）。
+    reasoning: String,
+    /// 展示专用的思考分片（与 Responses 侧的 `reasoning_deltas` 同语义）。
+    reasoning_deltas: Vec<String>,
+    /// 按 `index` 累积的 tool_calls（分片到达：id/name 一次给、arguments 流式拼接）。
+    calls: Vec<ChatCallAccum>,
+    usage: Option<Usage>,
+    error: Option<TurnError>,
+}
+
+#[derive(Default)]
+struct ChatCallAccum {
+    index: u64,
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+impl ChatStreamState {
+    /// 处理一帧 `data:`；返回 `true` 表示终态（不再读流）。
+    fn handle(&mut self, data: &str, preset: &ProviderPreset, sink: &dyn StreamSink) -> bool {
+        let data = data.trim();
+        if data.is_empty() {
+            return false;
+        }
+        if data == "[DONE]" {
+            return true;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
+            return false; // keep-alive / 非 JSON 帧
+        };
+        if let Some(error) = value.get("error").filter(|e| !e.is_null()) {
+            let (code, message) = parse_error_value(error)
+                .unwrap_or_else(|| ("harness_stream_error".into(), "流式错误".into()));
+            let context_overflow = is_overflow(preset, &code, &message);
+            self.error = Some(TurnError::new(code, message, context_overflow));
+            return true;
+        }
+        if let Some(choices) = value.get("choices").and_then(|c| c.as_array()) {
+            for choice in choices {
+                let Some(delta) = choice.get("delta") else {
+                    continue;
+                };
+                if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+                    if !content.is_empty() {
+                        self.text.push_str(content);
+                        sink.text_delta(content);
+                    }
+                }
+                // 思考增量：进展示分片通道（即时转发），同时累积全文供回放项。
+                if let Some(reasoning) = delta.get("reasoning_content").and_then(|r| r.as_str()) {
+                    if !reasoning.is_empty() {
+                        self.reasoning.push_str(reasoning);
+                        self.reasoning_deltas.push(reasoning.to_string());
+                        sink.reasoning_delta(reasoning);
+                    }
+                }
+                if let Some(tool_calls) = delta.get("tool_calls").and_then(|c| c.as_array()) {
+                    for part in tool_calls {
+                        self.accumulate_tool_call(part);
+                    }
+                }
+            }
+        }
+        // usage 帧（`stream_options.include_usage`）：末帧，拿到即终态。端点不回该帧时
+        // 该轮无读数（与既有「无 usage 不更新 meter」同纪律）。
+        if let Some(usage) = value.get("usage").filter(|u| !u.is_null()) {
+            self.usage = Some(chat_usage(usage));
+            return true;
+        }
+        false
+    }
+
+    fn accumulate_tool_call(&mut self, part: &serde_json::Value) {
+        let index = part.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+        let at = match self.calls.iter().position(|call| call.index == index) {
+            Some(at) => at,
+            None => {
+                self.calls.push(ChatCallAccum {
+                    index,
+                    ..Default::default()
+                });
+                self.calls.len() - 1
+            }
+        };
+        let slot = &mut self.calls[at];
+        // id / name 通常只在首个分片整段给出：已有值时不覆盖（防止重复分片把名字拼重），
+        // arguments 是流式片段，逐片拼接。
+        if slot.id.is_empty() {
+            if let Some(id) = part.get("id").and_then(|v| v.as_str()) {
+                slot.id = id.to_string();
+            }
+        }
+        if let Some(function) = part.get("function") {
+            if slot.name.is_empty() {
+                if let Some(name) = function.get("name").and_then(|v| v.as_str()) {
+                    slot.name = name.to_string();
+                }
+            }
+            if let Some(arguments) = function.get("arguments").and_then(|v| v.as_str()) {
+                slot.arguments.push_str(arguments);
+            }
+        }
+    }
+
+    fn finish(self) -> TurnOutput {
+        let mut calls = self.calls;
+        calls.sort_by_key(|call| call.index);
+        TurnOutput {
+            text: self.text,
+            reasoning: reasoning_replay_item(&self.reasoning),
+            reasoning_deltas: self.reasoning_deltas,
+            calls: calls
+                .into_iter()
+                .map(|call| ToolCall {
+                    call_id: call.id,
+                    name: call.name,
+                    arguments: call.arguments,
+                })
+                .collect(),
+            usage: self.usage,
+            error: self.error,
+        }
+    }
+}
+
+fn parse_chat_sse(
+    response: reqwest::blocking::Response,
+    preset: &ProviderPreset,
+    sink: &dyn StreamSink,
+) -> TurnOutput {
+    parse_chat_sse_reader(std::io::BufReader::new(response), preset, sink)
+}
+
+/// chat 方言的 SSE 读循环（与 transport 解耦，单测传合成字节流）：帧没有事件名，每条
+/// `data:` 是一条完整 JSON（`[DONE]` 为终止哨兵）。在途停止与 Responses 侧同一语义——
+/// `pump_sse` 的轮询收流，**已产出的 text / reasoning 分片保留在返回值里**。
+fn parse_chat_sse_reader<R: BufRead + Send + 'static>(
+    reader: R,
+    preset: &ProviderPreset,
+    sink: &dyn StreamSink,
+) -> TurnOutput {
+    let mut state = ChatStreamState::default();
+    pump_sse(reader, sink, |_event, data| {
+        state.handle(data, preset, sink)
+    });
+    state.finish()
 }
 
 // ---------------------------------------------------------------------------
@@ -2354,5 +3049,510 @@ data: {"response":{"output":[],"usage":{"input_tokens":10,"output_tokens":3}}}
         let output = client.complete(&request(), &stream);
         assert_eq!(output.text, "第一片。第二片。第三片。");
         assert_eq!(stream.text().len(), 3);
+    }
+
+    // ---- M562：Chat Completions 方言（items → messages 翻译 / body / SSE / usage） ----
+    //
+    // 判定层全在纯函数：翻译（[`chat_messages`]）、请求构造（`build_wire_body`）、SSE
+    // 读循环（`parse_chat_sse_reader`，合成字节流）——不起 HTTP。
+
+    fn chat_client(effort_supported: bool) -> ChatCompletionsClient {
+        ChatCompletionsClient {
+            http: reqwest::blocking::Client::new(),
+            endpoint: "https://example.invalid/chat/completions".into(),
+            api_key: "test-key".into(),
+            model: "k3-256k".into(),
+            effort_supported,
+            vault_id: "vault-test-1".into(),
+            preset: &KIMI_PRESET,
+            diagnostics: Vec::new(),
+        }
+    }
+
+    fn chat_sse_parse_with(bytes: &str, sink: &dyn StreamSink) -> TurnOutput {
+        parse_chat_sse_reader(
+            std::io::Cursor::new(bytes.as_bytes().to_vec()),
+            &KIMI_PRESET,
+            sink,
+        )
+    }
+
+    /// 翻译总表（design D4）：system 居首、user 文本直出、reasoning 折叠进其后第一条
+    /// assistant 消息。多段 reasoning 以空行拼接。
+    #[test]
+    fn chat_messages_translates_system_user_assistant_with_reasoning() {
+        let items = vec![
+            serde_json::json!({"role":"user","content":[{"type":"input_text","text":"问题"}]}),
+            serde_json::json!({"type":"reasoning","summary":[{"type":"summary_text","text":"第一段"}]}),
+            serde_json::json!({"type":"reasoning","content":[{"type":"reasoning_text","text":"第二段"}]}),
+            serde_json::json!({"role":"assistant","content":[{"type":"output_text","text":"回答"}]}),
+        ];
+        let (messages, diagnostics) = chat_messages("SYS", &items);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(messages.len(), 3);
+        assert_eq!(
+            messages[0],
+            serde_json::json!({"role":"system","content":"SYS"})
+        );
+        // 文本直出：单文本 part 压成字符串（chat 的标准形态）。
+        assert_eq!(
+            messages[1],
+            serde_json::json!({"role":"user","content":"问题"})
+        );
+        // reasoning 折叠（summary / content 两个明文载体都认）+ 多段拼接。
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["content"], "回答");
+        assert_eq!(messages[2]["reasoning_content"], "第一段\n\n第二段");
+        // 源 items 不被改写（留存项 MUST NOT 重写，design D3）。
+        assert_eq!(items[1]["summary"][0]["text"], "第一段");
+    }
+
+    /// 空 system 不发 system 消息（M372 的空文本 400 纪律）；空正文 assistant 不发消息，
+    /// pending reasoning 跨过它继续等下一个可发宿主。
+    #[test]
+    fn chat_messages_skips_empty_system_and_empty_assistant() {
+        let items = vec![
+            serde_json::json!({"type":"reasoning","summary":[{"type":"summary_text","text":"思考"}]}),
+            serde_json::json!({"role":"assistant","content":[]}),
+            serde_json::json!({"role":"assistant","content":[{"type":"output_text","text":"正文"}]}),
+        ];
+        let (messages, _) = chat_messages("", &items);
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert_eq!(messages[0]["content"], "正文");
+        assert_eq!(messages[0]["reasoning_content"], "思考");
+    }
+
+    /// 一轮 N 个调用 → 单条 assistant(tool_calls) + 紧随 N 条 tool 消息（中间无其它消息）；
+    /// 该轮 reasoning 折叠进 tool_calls 消息（该端点缺 reasoning_content 的 tool 调用 400）。
+    #[test]
+    fn chat_messages_groups_parallel_calls_then_outputs() {
+        let items = vec![
+            serde_json::json!({"role":"user","content":[{"type":"input_text","text":"读两个文件"}]}),
+            serde_json::json!({"type":"reasoning","summary":[{"type":"summary_text","text":"并行读"}]}),
+            serde_json::json!({"type":"function_call","call_id":"c1","name":"vault_read","arguments":"{\"path\":\"a.md\"}"}),
+            serde_json::json!({"type":"function_call","call_id":"c2","name":"vault_read","arguments":"{\"path\":\"b.md\"}"}),
+            serde_json::json!({"type":"function_call_output","call_id":"c1","output":"A"}),
+            serde_json::json!({"type":"function_call_output","call_id":"c2","output":"B"}),
+            serde_json::json!({"role":"assistant","content":[{"type":"output_text","text":"都读完了"}]}),
+        ];
+        let (messages, diagnostics) = chat_messages("SYS", &items);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(messages.len(), 6, "{messages:?}");
+        let calls_message = &messages[2];
+        assert_eq!(calls_message["role"], "assistant");
+        assert_eq!(calls_message["content"], serde_json::Value::Null);
+        assert_eq!(calls_message["reasoning_content"], "并行读");
+        let calls = calls_message["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 2, "一轮多个调用必须合进单条消息");
+        assert_eq!(calls[0]["id"], "c1");
+        assert_eq!(calls[0]["type"], "function");
+        assert_eq!(calls[0]["function"]["name"], "vault_read");
+        assert_eq!(calls[0]["function"]["arguments"], "{\"path\":\"a.md\"}");
+        assert_eq!(calls[1]["id"], "c2");
+        // tool 消息紧随、按输出序、中间无其它消息。
+        assert_eq!(
+            messages[3],
+            serde_json::json!({"role":"tool","tool_call_id":"c1","content":"A"})
+        );
+        assert_eq!(
+            messages[4],
+            serde_json::json!({"role":"tool","tool_call_id":"c2","content":"B"})
+        );
+    }
+
+    /// 同一轮既有正文又有调用（canonical 拆成 reasoning + assistant message + function_call）：
+    /// chat 侧必须合成**一条** assistant 消息——正文进 content、reasoning 进 reasoning_content
+    /// ——否则 tool_calls 消息缺 reasoning_content 会被端点 400（design D4 的硬约束；chat 一轮
+    /// 只能一条 assistant 消息）。
+    #[test]
+    fn chat_messages_merges_round_text_into_tool_calls_message() {
+        let items = vec![
+            serde_json::json!({"role":"user","content":[{"type":"input_text","text":"读 a.md"}]}),
+            serde_json::json!({"type":"reasoning","summary":[{"type":"summary_text","text":"先读"}]}),
+            serde_json::json!({"role":"assistant","content":[{"type":"output_text","text":"我先读一下。"}]}),
+            serde_json::json!({"type":"function_call","call_id":"c1","name":"vault_read","arguments":"{}"}),
+            serde_json::json!({"type":"function_call_output","call_id":"c1","output":"内容"}),
+            serde_json::json!({"role":"assistant","content":[{"type":"output_text","text":"读完了。"}]}),
+        ];
+        let (messages, diagnostics) = chat_messages("SYS", &items);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(messages.len(), 5, "{messages:?}");
+        let round = &messages[2];
+        assert_eq!(round["role"], "assistant");
+        assert_eq!(round["content"], "我先读一下。");
+        assert_eq!(round["reasoning_content"], "先读");
+        assert_eq!(round["tool_calls"][0]["id"], "c1");
+        // 没有出现「正文 assistant + 空 tool_calls assistant」两条并存的形状。
+        assert!(messages[3]["role"] == "tool");
+        assert_eq!(messages[4]["content"], "读完了。");
+    }
+
+    /// 悬空 function_call（有调用无输出）：丢弃 + 诊断；配对的那条照常发。孤立 output 同理。
+    #[test]
+    fn chat_messages_drops_dangling_call_and_orphan_output_with_diagnostics() {
+        let items = vec![
+            serde_json::json!({"type":"function_call","call_id":"c1","name":"vault_read","arguments":"{}"}),
+            serde_json::json!({"type":"function_call","call_id":"c2","name":"vault_search","arguments":"{}"}),
+            serde_json::json!({"type":"function_call_output","call_id":"c2","output":"命中"}),
+            serde_json::json!({"type":"function_call_output","call_id":"c_orphan","output":"无主"}),
+        ];
+        let (messages, diagnostics) = chat_messages("SYS", &items);
+        // assistant(tool_calls=[c2]) + tool(c2)。
+        assert_eq!(messages.len(), 3, "{messages:?}");
+        let calls = messages[1]["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 1, "悬空调用必须丢弃：{calls:?}");
+        assert_eq!(calls[0]["id"], "c2");
+        assert_eq!(messages[2]["tool_call_id"], "c2");
+        // 两条诊断：悬空调用 + 孤立输出（恢复边界的可审计性）。
+        let codes: Vec<&str> = diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(
+            codes,
+            vec!["dangling_function_call", "orphan_function_call_output"]
+        );
+        assert_eq!(diagnostics[0].call_id, "c1");
+        assert!(
+            diagnostics[0].message.contains("c1") || diagnostics[0].message.contains("没有配对")
+        );
+        assert_eq!(diagnostics[1].call_id, "c_orphan");
+    }
+
+    /// 全组调用都悬空时不产 assistant 消息（没有宿主），也不产 tool 消息。
+    #[test]
+    fn chat_messages_all_calls_dangling_emits_nothing() {
+        let items = vec![serde_json::json!({
+            "type":"function_call","call_id":"c1","name":"vault_read","arguments":"{}"
+        })];
+        let (messages, diagnostics) = chat_messages("", &items);
+        assert!(messages.is_empty(), "{messages:?}");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "dangling_function_call");
+    }
+
+    /// `input_image` → `image_url` content part（展开点不变：调用方已把引用换成 data URL）；
+    /// 文本 part 在含图消息里写成 `{type:"text"}`。
+    #[test]
+    fn chat_messages_translates_image_parts() {
+        let items = vec![serde_json::json!({
+            "role":"user",
+            "content":[
+                {"type":"input_text","text":"Image 1"},
+                {"type":"input_image","image_url":"data:image/webp;base64,AAAA"}
+            ]
+        })];
+        let (messages, diagnostics) = chat_messages("", &items);
+        assert!(diagnostics.is_empty());
+        let content = messages[0]["content"]
+            .as_array()
+            .expect("含图消息必须是 parts");
+        assert_eq!(content.len(), 2);
+        assert_eq!(
+            content[0],
+            serde_json::json!({"type":"text","text":"Image 1"})
+        );
+        assert_eq!(
+            content[1],
+            serde_json::json!({
+                "type":"image_url",
+                "image_url":{"url":"data:image/webp;base64,AAAA"}
+            })
+        );
+    }
+
+    /// 请求体形状（spec「发送形状」scenario + design D5/D8）：stream_options、工具定义
+    /// 嵌套形态、thinking 只在 effort 受支持时发；MUST NOT 发 include / store / reasoning /
+    /// max_tokens / max_completion_tokens。
+    #[test]
+    fn chat_wire_body_matches_design_shape() {
+        let client = chat_client(true);
+        let request = Request {
+            system: "SYS".into(),
+            input: vec![
+                serde_json::json!({"role":"user","content":[{"type":"input_text","text":"问"}]}),
+            ],
+            tools: vec![serde_json::json!({
+                "type":"function","name":"vault_read",
+                "description":"读文件","parameters":{"type":"object"}
+            })],
+            effort: ThinkingEffort::Max,
+        };
+        let (body, diagnostics) = client.build_wire_body(&request).unwrap();
+        assert!(diagnostics.is_empty());
+        assert_eq!(body["model"], "k3-256k");
+        assert_eq!(body["stream"], true);
+        assert_eq!(
+            body["stream_options"],
+            serde_json::json!({"include_usage": true})
+        );
+        assert_eq!(body["tool_choice"], "auto");
+        // Responses 形态 → chat 形态（函数级字段包进 `function`）。
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert!(body["tools"][0].get("name").is_none(), "{body}");
+        assert_eq!(body["tools"][0]["function"]["name"], "vault_read");
+        assert_eq!(
+            body["tools"][0]["function"]["parameters"],
+            serde_json::json!({"type":"object"})
+        );
+        assert_eq!(
+            body["thinking"],
+            serde_json::json!({"type":"enabled","effort":"max","keep":"all"})
+        );
+        for key in [
+            "include",
+            "store",
+            "reasoning",
+            "max_tokens",
+            "max_completion_tokens",
+        ] {
+            assert!(body.get(key).is_none(), "MUST NOT 发 {key}：{body}");
+        }
+        assert_eq!(
+            body["messages"][0],
+            serde_json::json!({"role":"system","content":"SYS"})
+        );
+    }
+
+    /// 未声明 effort 的模型 MUST NOT 发 `thinking`；压缩调用（tools 为空）照发空工具表 +
+    /// `tool_choice:"auto"`——端点接受该形态（6.4 探针 S1b 实测 200），保持 spec 的发送形状。
+    #[test]
+    fn chat_wire_body_omits_thinking_for_unsupported_model() {
+        let client = chat_client(false);
+        let request = Request {
+            system: "压缩指令".into(),
+            input: vec![
+                serde_json::json!({"role":"user","content":[{"type":"input_text","text":"历史"}]}),
+            ],
+            tools: Vec::new(),
+            effort: ThinkingEffort::High,
+        };
+        let (body, _) = client.build_wire_body(&request).unwrap();
+        assert!(body.get("thinking").is_none(), "{body}");
+        assert_eq!(body["tools"], serde_json::json!([]));
+        assert_eq!(body["tool_choice"], "auto");
+    }
+
+    /// 发送量计量与发送共用同一份构造（M463 纪律）：字节数 = 该 body 的序列化长度。
+    #[test]
+    fn chat_wire_body_bytes_matches_the_serialized_body() {
+        let client = chat_client(true);
+        let request = Request {
+            system: "SYS".into(),
+            input: vec![
+                serde_json::json!({"role":"user","content":[{"type":"input_text","text":"问"}]}),
+            ],
+            tools: Vec::new(),
+            effort: ThinkingEffort::Low,
+        };
+        let expected = serde_json::to_vec(&client.build_wire_body(&request).unwrap().0)
+            .unwrap()
+            .len() as u64;
+        assert!(expected > 0);
+        assert_eq!(client.wire_body_bytes(&request), Some(expected));
+    }
+
+    /// chat SSE：content / reasoning_content 增量即时转发，tool_calls 按 index 分片累积，
+    /// usage 帧映射（含 `prompt_tokens_details.cached_tokens` 布局）。`[DONE]` 终止。
+    #[test]
+    fn chat_sse_accumulates_deltas_calls_and_usage() {
+        let sse = r#"data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"第一"}}]}
+
+data: {"choices":[{"index":0,"delta":{"reasoning_content":"先想"}}]}
+
+data: {"choices":[{"index":0,"delta":{"reasoning_content":"再答"}}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"片。"}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"vault_read","arguments":"{\"path\":"}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a.md\"}"}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"vault_search","arguments":"{\"query\":\"q\"}"}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":1234,"completion_tokens":56,"prompt_tokens_details":{"cached_tokens":1000},"total_tokens":1290}}
+
+data: [DONE]
+
+"#;
+        let stream = TestStream::default();
+        let output = chat_sse_parse_with(sse, &stream);
+        assert_eq!(output.text, "第一片。");
+        // 即时转发：正文与思考各走各的通道，且不是读完后补发。
+        assert_eq!(stream.text(), vec!["第一".to_string(), "片。".to_string()]);
+        assert_eq!(
+            stream.reasoning(),
+            vec!["先想".to_string(), "再答".to_string()]
+        );
+        assert_eq!(output.reasoning_deltas, vec!["先想", "再答"]);
+        // 回放项：chat 的 reasoning_content 落成 canonical Responses 形状（kimi summary 载体）。
+        let reasoning = output.reasoning.expect("reasoning 回放项");
+        assert_eq!(reasoning["type"], "reasoning");
+        assert_eq!(reasoning["summary"][0]["type"], "summary_text");
+        assert_eq!(reasoning["summary"][0]["text"], "先想再答");
+        // tool_calls 按 index 排序、分片拼接。
+        let ids: Vec<&str> = output.calls.iter().map(|c| c.call_id.as_str()).collect();
+        assert_eq!(ids, vec!["call_a", "call_b"]);
+        assert_eq!(output.calls[0].name, "vault_read");
+        assert_eq!(output.calls[0].arguments, "{\"path\":\"a.md\"}");
+        assert_eq!(output.calls[1].arguments, "{\"query\":\"q\"}");
+        // usage 映射（design D6）。
+        assert_eq!(
+            output.usage,
+            Some(Usage {
+                input_tokens: 1234,
+                cached_tokens: 1000,
+                output_tokens: 56,
+                cache_write_tokens: 0,
+            })
+        );
+        assert!(output.error.is_none());
+    }
+
+    /// cached 的另一种字段布局（顶层 `cached_tokens`）同样兜住；两者都在场时顶层优先
+    ///（design D6 的 `usage.cached_tokens ?? prompt_tokens_details.cached_tokens` 顺序）。
+    #[test]
+    fn chat_usage_supports_both_cached_layouts() {
+        let top = chat_usage(&serde_json::json!({
+            "prompt_tokens": 100, "completion_tokens": 5, "cached_tokens": 40
+        }));
+        assert_eq!(top.cached_tokens, 40);
+        let both = chat_usage(&serde_json::json!({
+            "prompt_tokens": 100, "completion_tokens": 5,
+            "cached_tokens": 40,
+            "prompt_tokens_details": {"cached_tokens": 90}
+        }));
+        assert_eq!(both.cached_tokens, 40);
+        let missing = chat_usage(&serde_json::json!({
+            "prompt_tokens": 100, "completion_tokens": 5
+        }));
+        assert_eq!(missing.cached_tokens, 0);
+        assert_eq!(missing.cache_write_tokens, 0);
+        assert_eq!(missing.input_tokens, 100);
+        assert_eq!(missing.output_tokens, 5);
+    }
+
+    /// 在途停止（与 Responses 侧同语义）：sink 翻真后不再读流——已产出的分片保留、
+    /// usage 不落地（incomplete 响应语义，不是错误）。区分度：不中断时三片全在、usage 在场。
+    #[test]
+    fn chat_sse_abort_keeps_produced_content() {
+        let sse = r#"data: {"choices":[{"index":0,"delta":{"content":"第一片。"}}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"第二片。"}}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"第三片。"}}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3}}
+
+"#;
+        let stream = TestStream::abort_after_text(1);
+        let output = chat_sse_parse_with(sse, &stream);
+        assert_eq!(output.text, "第一片。", "已产出的分片保留");
+        assert_eq!(stream.text(), vec!["第一片。".to_string()]);
+        assert!(output.usage.is_none(), "收流后不再处理后续事件");
+        assert!(output.error.is_none());
+    }
+
+    /// 流内 error 帧 → TurnError；chat 的超限文案命中 `context_overflow`（design D7）。
+    #[test]
+    fn chat_sse_error_frame_maps_overflow() {
+        let sse = r#"data: {"error":{"code":"invalid_request_error","message":"Your request exceeded model token limit: 262144 (requested: 300000)"}}
+
+"#;
+        let output = chat_sse_parse_with(sse, &TestStream::default());
+        let error = output.error.expect("流内错误");
+        assert_eq!(error.code, "invalid_request_error");
+        assert!(error.context_overflow);
+        assert_eq!(error.http_status, None, "流内错误没有 HTTP 面");
+    }
+
+    /// 三条 chat 方言超限文案都判 context_overflow（`total message size` / `supports only
+    /// 256k context` 是 M562 新增）；Responses 既有文案回归不破。
+    #[test]
+    fn chat_overflow_indicators_cover_three_dialect_messages() {
+        let kimi = preset(&HarnessProvider::Kimi);
+        assert!(is_overflow(
+            kimi,
+            "invalid_request_error",
+            "Your request exceeded model token limit: 262144 (requested: 300000)"
+        ));
+        assert!(is_overflow(
+            kimi,
+            "invalid_request_error",
+            "total message size 2097153 exceeds limit 2097152"
+        ));
+        assert!(is_overflow(
+            kimi,
+            "invalid_authentication_error",
+            "This model supports only 256k context"
+        ));
+        // 既有 Responses 文案（M463 回归）。
+        assert!(is_overflow(
+            kimi,
+            "harness_http_error",
+            "Your request exceeded k3-256k model token limit: 262144"
+        ));
+        assert!(!is_overflow(kimi, "rate_limit", "slow down"));
+    }
+
+    /// 跨方言恢复（design D3，任务 4.2/4.3）：Responses 时期留存的 `llm_request.request`
+    /// 灌回后，chat 翻译逐字段正确；同一输入翻译两次逐字节一致（仅凭 JSONL 可重建
+    /// wire 体——无隐藏状态）。
+    #[test]
+    fn chat_translates_restored_responses_history_field_by_field() {
+        // 形状取自会话留存的 llm_request（首轮 → 工具轮 → 答复轮）。
+        let recorded: serde_json::Value = serde_json::from_str(
+            r#"{
+              "kind": "llm_request",
+              "request": {
+                "provider": "kimi",
+                "model": "k3-256k",
+                "system": "SYS",
+                "messages": [
+                  {"role":"user","content":[{"type":"input_text","text":"读 a.md"}]},
+                  {"type":"reasoning","summary":[{"type":"summary_text","text":"先读文件"}]},
+                  {"type":"function_call","call_id":"call_1","name":"vault_read","arguments":"{\"path\":\"a.md\"}"},
+                  {"type":"function_call_output","call_id":"call_1","output":"内容"},
+                  {"type":"reasoning","summary":[{"type":"summary_text","text":"再总结"}]},
+                  {"role":"assistant","content":[{"type":"output_text","text":"读完了"}]}
+                ],
+                "params": {"thinking": "high"}
+              }
+            }"#,
+        )
+        .unwrap();
+        let request = &recorded["request"];
+        let system = request["system"].as_str().unwrap();
+        let items = request["messages"].as_array().unwrap();
+        let (messages, diagnostics) = chat_messages(system, items);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(messages.len(), 5, "{messages:?}");
+        assert_eq!(
+            messages[0],
+            serde_json::json!({"role":"system","content":"SYS"})
+        );
+        assert_eq!(
+            messages[1],
+            serde_json::json!({"role":"user","content":"读 a.md"})
+        );
+        // 工具轮：reasoning 折叠进 tool_calls 消息。
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["content"], serde_json::Value::Null);
+        assert_eq!(messages[2]["reasoning_content"], "先读文件");
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(
+            messages[3],
+            serde_json::json!({"role":"tool","tool_call_id":"call_1","content":"内容"})
+        );
+        // 答复轮：reasoning 折叠进 assistant 消息。
+        assert_eq!(messages[4]["role"], "assistant");
+        assert_eq!(messages[4]["content"], "读完了");
+        assert_eq!(messages[4]["reasoning_content"], "再总结");
+        // 确定性（逐字节）：同一份 JSONL 输入重建两次结果一致。
+        let first = serde_json::to_vec(&messages).unwrap();
+        let second = serde_json::to_vec(&chat_messages(system, items).0).unwrap();
+        assert_eq!(first, second);
+        // 翻译不改写留存项（design D3）：源 items 仍是 Responses 形态。
+        assert_eq!(items[1]["type"], "reasoning");
+        assert_eq!(items[2]["type"], "function_call");
     }
 }
