@@ -503,6 +503,17 @@ M140 r1 评审实证：`/PAUSE-PROBE[\\s\\S]*$/` 在 `m` 下恒真（`[\s\S]*` �
 PASS，只有锚定那条 FAIL）。要锚定这类行，把 `- [\d+] ` 前缀写进模式，或索性只锚在**带括号的项名**上
 （`/AXMenuItem \(Close\)/`——另两项的项名里都不含 `(Close)` 这个子串）。
 
+**裸串里写正则转义 = 永远命中 0 次**（M556）：`\(` / `\.` / `\d` 这类序列只在 `/…/` 里解成正则；
+不带 `/…/` 时 `matcher()` 按子串搜「反斜杠 + 字符」两字符序列，而被匹配的文本里只有字符本身，
+于是正向断言恒假红、负向断言恒绿（M553 的场景 161/162 首跑即此：AX 证明元素都在、断言假红）。
+`--check` 对这个形态判 problem，覆盖**全部走 `matcher()` 的判据**：`ax` 的 `has` / `not` /
+`count.pattern` / `focused`、`editor` / `file` / `clipboard` 的 `has` / `not`、`waitFor` 清单、
+chord `verify.pattern`、`drag.selection`，以及节点定位里走 `matcher()` 的 `any` / `help`。
+**不在此判的两类**：`/…/` 形态本身（转义正是要写的），与**裸正则源**字段——`target.name` /
+`marker` / `glob.pattern` 直接把字符串交给 `new RegExp`，`\.` 在那里是对的（口径分野见「已知边界」
+的「`click` / `clickInNode` 的 `target` 与断言里的匹配器不是同一套口径」条）；`\int` / `\\` /
+JSONL 里的 `\n` 这类**字面反斜杠**同样不判。
+
 ## 证据布局（`test-results/acceptance/<日期>/`，git 外）
 
 ```
@@ -962,8 +973,10 @@ node --test scripts/acceptance/lib/execute.test.mjs
 ```
 
 纯 `node:test`、零新增依赖、不起真机（file 类断言与零断言兜底都不读 app / KimiCU，ctx 桩化即可）。
-它钉的是这一层最容易重犯的两条**静默**缺陷——「步骤表写在闭合 `---` 之外 ⇒ 整表被丢弃、零断言
-判绿」与「一条 `file` 断言只判优先级最高的键 ⇒ 多写的键静默失效（README 要求的
-`unchangedSince` + `mtimeUnchangedSince` 成对写法正好命中）」——用「必须红的输入」证明判据真的
+它钉的是这一层最容易重犯的三条**静默**缺陷——「步骤表写在闭合 `---` 之外 ⇒ 整表被丢弃、零断言
+判绿」「一条 `file` 断言只判优先级最高的键 ⇒ 多写的键静默失效（README 要求的
+`unchangedSince` + `mtimeUnchangedSince` 成对写法正好命中）」与「裸串里写正则转义 ⇒ 按子串永远
+命中 0 次」（M556，逐字段覆盖 `matcher()` 的判据面，另有一条反向用例钉住 `/…/` 形态与
+`target.name` 这类裸正则源字段不误伤）——用「必须红的输入」证明判据真的
 成立（零步骤场景被 `--check` 挡；同一份内容重写时 sha256 那条绿、mtime 那条必红）。它**不进 gate**，
 与 `scripts/migrate-harness-sessions.test.mjs` 同例（跑法写在文件头）。
