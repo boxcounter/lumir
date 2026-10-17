@@ -113,7 +113,7 @@ import {
   splitToolText,
   toolPathTargets,
 } from "./harness-path-link";
-import type { ToolPathTarget } from "./harness-path-link";
+import type { PathTargetIndex, ToolPathTarget } from "./harness-path-link";
 import {
   createMessageQuoteCard,
   createQuoteCard,
@@ -157,6 +157,17 @@ export interface HarnessPanelDeps {
    * 全在装配层与编辑器侧。
    */
   openVaultPath(path: string, line?: number): void;
+  /**
+   * 渲染期的目录判定（change harness-dir-link）：装配层把它接到文件树的只读查询上，面板
+   * 只查表、不持有目录状态。与 `openVaultPath` 并列——目录可点性与左栏定位因此使用同一份
+   * 模型（文件树），不存在「可点但定位不到」的第二份判据。
+   */
+  isVaultDir(path: string): boolean;
+  /**
+   * 目录路径的落点（change harness-dir-link）：在左栏文件树里定位（展开祖先 + 滚动 + 短暂
+   * 高亮）。**不打开文档、不切标签、不创建条目**——目录不是文档，落点归树。
+   */
+  revealVaultDir(path: string): void;
 }
 
 export interface HarnessPanelHandle {
@@ -2431,23 +2442,34 @@ function textOf(doc: string, node: MdSyntaxNode): string {
   return doc.slice(node.from, node.to);
 }
 
-/** 路径链接化的渲染上下文（change harness-path-link）：单参透传，不引入模块级可变状态——
- *  流式尾块每帧重渲、单测并行，模块状态会让两次渲染互相污染。
- *  `isLinkable` 是唯一判据（命中当前 vault 的可打开文件）；`open` 由面板注入。 */
-export interface PathLinkRenderContext {
-  isLinkable(path: string): boolean;
-  open(path: string, line?: number): void;
+/** 路径链接化的渲染上下文（change harness-path-link；目录目标见 change harness-dir-link）：
+ *  单参透传，不引入模块级可变状态——流式尾块每帧重渲、单测并行，模块状态会让两次渲染互相污染。
+ *  `isFile` / `isDir` 是**唯一判据**（文件索引 / 文件树目录模型），`openFile` / `revealDir`
+ *  是两条互不相同的落点：前者打开文档，后者只在左栏定位。 */
+export interface PathLinkRenderContext extends PathTargetIndex {
+  openFile(path: string, line?: number): void;
+  revealDir(path: string): void;
+}
+
+/** 一次点击的目标：路径 + 类型（目录不带行号）。 */
+interface PathLinkTarget {
+  path: string;
+  kind: "file" | "dir";
+  line?: number;
 }
 
 /** 可点路径元素：button 而非 `<a href>`——不引入 webview 的默认导航与中键点击路径；可聚焦、
- *  Enter 触发；可见文本与 title 逐字等于模型原文（含行号后缀）。候选来自模型输出，这里只
- *  持有已通过索引校验的路径，打开动作交给装配层（面板不拼路径、不判文件系统）。 */
+ *  Enter 触发；可见文本与 title 逐字等于模型原文（含行号后缀 / 目录引用的尾斜杠）。候选来自
+ *  模型输出，这里只持有已通过索引校验的目标，落点交给装配层（面板不拼路径、不判文件系统）。 */
 function createPathLinkEl(
   text: string,
-  path: string,
-  line: number | undefined,
+  target: PathLinkTarget,
   ctx: PathLinkRenderContext,
 ): HTMLElement {
+  const activate = (): void => {
+    if (target.kind === "dir") ctx.revealDir(target.path);
+    else ctx.openFile(target.path, target.line);
+  };
   const el = document.createElement("button");
   el.type = "button";
   el.className = "lumir-hp-pathlink";
@@ -2455,12 +2477,12 @@ function createPathLinkEl(
   el.title = text;
   el.addEventListener("click", (event) => {
     event.preventDefault();
-    ctx.open(path, line);
+    activate();
   });
   el.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
-    ctx.open(path, line);
+    activate();
   });
   return el;
 }
@@ -2471,13 +2493,13 @@ function appendText(container: HTMLElement, text: string, ctx?: PathLinkRenderCo
     container.append(document.createTextNode(text));
     return;
   }
-  const candidates = findPathCandidates(text, ctx.isLinkable);
+  const candidates = findPathCandidates(text, ctx);
   let pos = 0;
   for (const candidate of candidates) {
     if (candidate.from > pos) {
       container.append(document.createTextNode(text.slice(pos, candidate.from)));
     }
-    container.append(createPathLinkEl(candidate.text, candidate.path, candidate.line, ctx));
+    container.append(createPathLinkEl(candidate.text, candidate, ctx));
     pos = candidate.to;
   }
   if (pos < text.length) container.append(document.createTextNode(text.slice(pos)));
@@ -3308,12 +3330,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let currentVault: string | null = null;
   /** 可点 vault 文件路径索引（change harness-path-link）：装配层经 `setPathLinkIndex` 下发，
    *  渲染时同步查询（零 IPC——流式尾块每帧重渲，逐帧 IPC 会闪烁）。空集 = 不链接化（未装载 /
-   *  单测）。集合语义（文件 + 非惰性 + 可打开）由装配层按既有索引与打开分类裁定，面板只查表。 */
+   *  单测）。集合语义（文件 + 非惰性 + 可打开）由装配层按既有索引与打开分类裁定，面板只查表。
+   *  目录不走这份集合（change harness-dir-link）：`isDir` 直接问装配层注入的文件树查询——
+   *  目录可点性与左栏定位使用同一份模型，不另维护第二份索引。 */
   let pathLinkPaths: ReadonlySet<string> = new Set();
   const pathLinks: PathLinkRenderContext = {
-    isLinkable: (path) => pathLinkPaths.has(path),
-    open: (path, line) => deps.openVaultPath(path, line),
+    isFile: (path) => pathLinkPaths.has(path),
+    isDir: (path) => deps.isVaultDir(path),
+    openFile: (path, line) => deps.openVaultPath(path, line),
+    revealDir: (path) => deps.revealVaultDir(path),
   };
+  /** 工具卡片目标 → 类型（文件先、目录后，与候选层的解析顺序同一口径）。结构化参数里的路径
+   *  不做尾斜杠归一（参数是精确值）；目录参数只可能在参数恰好写成目录路径时出现。 */
+  function pathKindOf(path: string): PathLinkTarget["kind"] | null {
+    if (pathLinks.isFile(path)) return "file";
+    return pathLinks.isDir(path) ? "dir" : null;
+  }
   /** 快照请求的世代号：只应用**最新一次**请求的结果。挂载那一次拉取与切 vault 的那一次可能
    *  同时在飞——迟到的旧响应会把已经清空的 transcript 又灌回旧 vault 的消息，或把同一份
    *  消息追加两遍（两条都是可见的错乱）。 */
@@ -5289,8 +5321,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *（mono，身份）+ 关键参数全文（mono accent，等宽完整显示命令 / 文件名）+ 可选尾注
    *（次级读数：等待批准 / 失败摘要等）。截断只落参数段（CSS ellipsis），尾注不截。 */
   /** 工具行的参数格：`args` 是**展示文本**（人话化后的参数摘要；不重写）。
-   *  `targets` 是结构化参数里取到的路径目标（change harness-path-link）——只把命中文件索引的
-   *  目标切成可点元素，其余文本（含同一格里的命令 / 箭头 / 截断摘要）逐字落地。 */
+   *  `targets` 是结构化参数里取到的路径目标（change harness-path-link）——只把命中目标索引的
+   *  目标切成可点元素（文件走打开、目录走左栏定位，change harness-dir-link），其余文本（含同一
+   *  格里的命令 / 箭头 / 截断摘要）逐字落地。 */
   function createToolText(
     name: string,
     args: string,
@@ -5310,12 +5343,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         argsEl.textContent = args;
       } else {
         for (const segment of splitToolText(args, targets)) {
-          if (segment.target !== undefined && pathLinks.isLinkable(segment.target.path)) {
+          const kind = segment.target === undefined ? null : pathKindOf(segment.target.path);
+          if (segment.target !== undefined && kind !== null) {
             argsEl.append(
               createPathLinkEl(
                 segment.text,
-                segment.target.path,
-                segment.target.line,
+                { path: segment.target.path, kind, line: segment.target.line },
                 pathLinks,
               ),
             );

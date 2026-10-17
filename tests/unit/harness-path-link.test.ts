@@ -16,12 +16,21 @@ import {
   splitToolText,
   toolPathTargets,
 } from "../../src/harness-path-link.ts";
-import type { PathJumpPlan } from "../../src/harness-path-link.ts";
+import type { PathJumpPlan, PathTargetIndex } from "../../src/harness-path-link.ts";
 
-function indexOf(...paths: string[]): (path: string) => boolean {
+function fileIndex(...paths: string[]): PathTargetIndex {
   const set = new Set(paths);
-  return (path) => set.has(path);
+  return { isFile: (path) => set.has(path), isDir: () => false };
 }
+
+/** 目录模型索引（change harness-dir-link）。 */
+function dirIndex(...paths: string[]): PathTargetIndex {
+  const set = new Set(paths);
+  return { isFile: () => false, isDir: (path) => set.has(path) };
+}
+
+/** 两类都认（结构性拒绝的对照：形状不合法时谓词恒 true 也不产候选）。 */
+const anyTarget: PathTargetIndex = { isFile: () => true, isDir: () => true };
 
 // ---------------------------------------------------------------------------
 // 候选：中文、行号、边界收缩
@@ -29,38 +38,39 @@ function indexOf(...paths: string[]): (path: string) => boolean {
 
 test("命中文件索引的路径产出候选，展示文本逐字不变", () => {
   const text = "见 notes/a.md 结束";
-  const found = findPathCandidates(text, indexOf("notes/a.md"));
+  const found = findPathCandidates(text, fileIndex("notes/a.md"));
   assert.equal(found.length, 1);
   assert.equal(found[0].path, "notes/a.md");
+  assert.equal(found[0].kind, "file");
   assert.equal(found[0].line, undefined);
   assert.equal(found[0].text, "notes/a.md");
   assert.equal(text.slice(found[0].from, found[0].to), "notes/a.md");
 });
 
 test("存在性校验是唯一判据：谓词不命中 → 不产候选（反向对照）", () => {
-  assert.deepEqual(findPathCandidates("见 notes/a.md 结束", indexOf()), []);
+  assert.deepEqual(findPathCandidates("见 notes/a.md 结束", fileIndex()), []);
 });
 
 test("中文行文里的对照式斜杠不产候选（扫描里 105 次噪音的形态）", () => {
   const noise = "先把甲方案/乙方案这条过一遍";
-  assert.deepEqual(findPathCandidates(noise, () => false), [], "存在性校验是唯一判据");
+  assert.deepEqual(findPathCandidates(noise, fileIndex()), [], "存在性校验是唯一判据");
   // 反证：字符规则确实会把这个 run 当候选交出（候选宽），可点与否完全由索引判定——
   // 谓词若恰好命中同名条目，它才成为链接（design §2.3 的已接受取舍）。
-  const wide = findPathCandidates(noise, (path) => path === "甲方案/乙方案");
+  const wide = findPathCandidates(noise, fileIndex("甲方案/乙方案"));
   assert.equal(wide.length, 1);
   assert.equal(wide[0].path, "甲方案/乙方案");
 });
 
 test("紧贴中文的路径两端收缩后命中（见路径 / 路径的）", () => {
   const prefix = "详见notes/a.md";
-  const prefixHit = findPathCandidates(prefix, indexOf("notes/a.md"));
+  const prefixHit = findPathCandidates(prefix, fileIndex("notes/a.md"));
   assert.equal(prefixHit.length, 1);
   assert.equal(prefixHit[0].path, "notes/a.md");
   assert.equal(prefixHit[0].text, "notes/a.md", "可点范围不含行文里的「详见」");
   assert.equal(prefixHit[0].from, 2);
 
   const suffix = "notes/a.md的内容";
-  const suffixHit = findPathCandidates(suffix, indexOf("notes/a.md"));
+  const suffixHit = findPathCandidates(suffix, fileIndex("notes/a.md"));
   assert.equal(suffixHit.length, 1);
   assert.equal(suffixHit[0].path, "notes/a.md");
   assert.equal(suffixHit[0].to, "notes/a.md".length, "可点范围不含行文里的「的内容」");
@@ -68,7 +78,7 @@ test("紧贴中文的路径两端收缩后命中（见路径 / 路径的）", ()
 
 test("文件本身含中文时整串优先命中，不被两端收缩剥坏", () => {
   const text = "见中文/笔记.md的内容";
-  const found = findPathCandidates(text, indexOf("中文/笔记.md"));
+  const found = findPathCandidates(text, fileIndex("中文/笔记.md"));
   assert.equal(found.length, 1);
   assert.equal(found[0].path, "中文/笔记.md");
   assert.equal(found[0].text, "中文/笔记.md");
@@ -76,7 +86,7 @@ test("文件本身含中文时整串优先命中，不被两端收缩剥坏", ()
 
 test("行号后缀属于可点范围，path 不含后缀", () => {
   const text = "见notes/a.md:12。";
-  const found = findPathCandidates(text, indexOf("notes/a.md"));
+  const found = findPathCandidates(text, fileIndex("notes/a.md"));
   assert.equal(found.length, 1);
   assert.equal(found[0].path, "notes/a.md");
   assert.equal(found[0].line, 12);
@@ -85,7 +95,7 @@ test("行号后缀属于可点范围，path 不含后缀", () => {
 });
 
 test("行:列后缀解析列但不参与 path / 行", () => {
-  const found = findPathCandidates("notes/a.md:12:5 完", indexOf("notes/a.md"));
+  const found = findPathCandidates("notes/a.md:12:5 完", fileIndex("notes/a.md"));
   assert.equal(found.length, 1);
   assert.equal(found[0].line, 12);
   assert.equal(found[0].column, 5);
@@ -93,39 +103,49 @@ test("行:列后缀解析列但不参与 path / 行", () => {
 });
 
 test("畸形后缀不吞下一步文本（:0 / :12x / :12:）", () => {
-  const zero = findPathCandidates("a.md:0", indexOf("a.md"));
+  const zero = findPathCandidates("a.md:0", fileIndex("a.md"));
   assert.equal(zero.length, 1);
   assert.equal(zero[0].line, undefined);
   assert.equal(zero[0].text, "a.md", "行号 0 不合法，后缀不进入可点范围");
 
-  const glued = findPathCandidates("a.md:12x", indexOf("a.md"));
+  const glued = findPathCandidates("a.md:12x", fileIndex("a.md"));
   assert.equal(glued.length, 1);
   assert.equal(glued[0].line, undefined, "后缀后紧跟 ASCII 路径字符 ⇒ 不是行号引用");
 
-  const trailingColon = findPathCandidates("a.md:12:", indexOf("a.md"));
+  const trailingColon = findPathCandidates("a.md:12:", fileIndex("a.md"));
   assert.equal(trailingColon.length, 1);
   assert.equal(trailingColon[0].line, 12, "尾随冒号不影响已闭合的 :12 后缀");
 });
 
 test("行号后紧跟中文是行文边界，不是路径延续（见a.md:12的内容）", () => {
-  const found = findPathCandidates("见a.md:12的内容", indexOf("a.md"));
+  const found = findPathCandidates("见a.md:12的内容", fileIndex("a.md"));
   assert.equal(found.length, 1);
   assert.equal(found[0].line, 12);
   assert.equal(found[0].text, "a.md:12", "可点范围含行号、不含行文里的「见 / 的内容」");
 });
 
 test("绝对路径、.. 穿越、空段在结构层被拒绝（谓词恒 true 也不产候选）", () => {
-  for (const bad of ["/tmp/a.md", "../a.md", "a/../b.md", "a//b.md", "./a.md", "a.md/"]) {
+  for (const bad of ["/tmp/a.md", "../a.md", "a/../b.md", "a//b.md", "./a.md", "a/b//"]) {
     assert.deepEqual(
-      findPathCandidates(`看 ${bad} 完`, () => true),
+      findPathCandidates(`看 ${bad} 完`, anyTarget),
       [],
       `必须结构性拒绝：${bad}`,
     );
   }
 });
 
+test("尾斜杠是目录意图：文件索引命中也不链接化，目录索引命中才链接化", () => {
+  // `a.md/` 在文件索引里（形状上不带斜杠）——尾斜杠表示目录，MUST NOT 当成文件引用。
+  assert.deepEqual(findPathCandidates("看 a.md/ 完", fileIndex("a.md")), []);
+  const found = findPathCandidates("看 a.md/ 完", dirIndex("a.md"));
+  assert.equal(found.length, 1);
+  assert.equal(found[0].kind, "dir");
+  assert.equal(found[0].path, "a.md");
+  assert.equal(found[0].text, "a.md/", "展示文本逐字保留尾斜杠");
+});
+
 test("同一段里多个路径按出现序产出，标点与空格都是边界", () => {
-  const found = findPathCandidates("见a.md，再看notes/b.md:3 完", indexOf("a.md", "notes/b.md"));
+  const found = findPathCandidates("见a.md，再看notes/b.md:3 完", fileIndex("a.md", "notes/b.md"));
   assert.deepEqual(
     found.map((c) => ({ path: c.path, line: c.line, text: c.text })),
     [
@@ -138,13 +158,13 @@ test("同一段里多个路径按出现序产出，标点与空格都是边界",
 test("含空格的文件名不识别（候选规则本身不跨空格）", () => {
   const text = "见my notes/a.md 完";
   // 谓词只认带空格的完整文件名 ⇒ 字符规则切不出它，必须零候选（不许把尾部当路径）。
-  assert.deepEqual(findPathCandidates(text, indexOf("my notes/a.md")), []);
+  assert.deepEqual(findPathCandidates(text, fileIndex("my notes/a.md")), []);
 });
 
 test("超过 run 长度上限的无断句串不识别（已知边界）", () => {
   const long = `${"甲".repeat(MAX_CANDIDATE_RUN)}/a.md`;
   assert.ok(long.length > MAX_CANDIDATE_RUN);
-  assert.deepEqual(findPathCandidates(long, () => true), []);
+  assert.deepEqual(findPathCandidates(long, anyTarget), []);
 });
 
 test("路径形状校验的边界", () => {
@@ -153,6 +173,59 @@ test("路径形状校验的边界", () => {
   }
   for (const bad of ["", "/a.md", "~/a.md", "../a.md", "a/../b", "a//b", "a/", "./a.md", "a\\b.md"]) {
     assert.equal(isWellFormedVaultPath(bad), false, bad);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 目录候选（change harness-dir-link）：文件未命中再查目录模型
+// ---------------------------------------------------------------------------
+
+test("目录命中：kind 为 dir，路径与可点范围逐字段正确", () => {
+  const text = "整理 projects/plans 下的材料";
+  const found = findPathCandidates(text, dirIndex("projects/plans"));
+  assert.equal(found.length, 1);
+  assert.equal(found[0].kind, "dir");
+  assert.equal(found[0].path, "projects/plans");
+  assert.equal(found[0].line, undefined);
+  assert.equal(found[0].text, "projects/plans");
+  assert.equal(text.slice(found[0].from, found[0].to), "projects/plans");
+});
+
+test("中文行文紧贴目录名：两端收缩后命中目录（与文件同一条边界规则）", () => {
+  const found = findPathCandidates("详见中文目录/笔记 里的内容", dirIndex("中文目录/笔记"));
+  assert.equal(found.length, 1);
+  assert.equal(found[0].kind, "dir");
+  assert.equal(found[0].path, "中文目录/笔记");
+  assert.equal(found[0].text, "中文目录/笔记");
+});
+
+test("目录索引里没有的路径不产候选（深层惰性 / 内置忽略名的形态）", () => {
+  assert.deepEqual(findPathCandidates("见 projects/plans 完", dirIndex("projects/other")), []);
+  assert.deepEqual(findPathCandidates("见 node_modules/pkg 完", dirIndex()), []);
+});
+
+test("目录引用不消费行号后缀（与文件成对对照）", () => {
+  const dir = findPathCandidates("见 projects/plans:12 完", dirIndex("projects/plans"));
+  assert.equal(dir.length, 1);
+  assert.equal(dir[0].kind, "dir");
+  assert.equal(dir[0].line, undefined, "目录没有行上下文");
+  assert.equal(dir[0].text, "projects/plans", "可点范围止于路径本身");
+
+  const file = findPathCandidates("见 notes/a.md:12 完", fileIndex("notes/a.md"));
+  assert.equal(file[0].line, 12);
+  assert.equal(file[0].text, "notes/a.md:12");
+});
+
+test("同一路径同时命中两份索引时文件优先（解析顺序可判）", () => {
+  const both: PathTargetIndex = { isFile: () => true, isDir: () => true };
+  const found = findPathCandidates("见 notes/a.md 完", both);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].kind, "file");
+});
+
+test("目录候选同样过结构校验：../、绝对路径不因目录索引命中而放行", () => {
+  for (const bad of ["../secrets", "/etc", "a/../b", "a//b", "~/x"]) {
+    assert.deepEqual(findPathCandidates(`见 ${bad} 完`, dirIndex(bad)), [], bad);
   }
 });
 

@@ -1,7 +1,9 @@
 ---
-# change harness-path-link 的真机判据：harness 面板里 agent 输出中的 vault 路径可点击，
-# 点击以**新标签**打开（已打开时不重复开）、工具卡片的结构化路径可点、不存在的路径 / 目录 /
-# 越界路径保持纯文本。正文里的 `:行号` 落点由截图人工判读（AXTextArea.value 是整个文档文本，
+# change harness-path-link 的真机判据：harness 面板里 agent 输出中的 vault 文件路径可点击，
+# 点击以**新标签**打开（已打开时不重复开）、工具卡片的结构化路径可点、不存在的路径 / 越界路径
+# 保持纯文本。目录引用自 change harness-dir-link 起**也可点**（落点是左栏定位，行为判据在场景 162）——
+# 本场景只验「它在列」，不再断言目录是纯文本。
+# 正文里的 `:行号` 落点由截图人工判读（AXTextArea.value 是整个文档文本，
 # 套件没有 scrollTop 读数——与 CL-1 / CL-2 的同一已知边界，见正文「覆盖边界」）。
 id: "161-harness-path-link"
 item: 552
@@ -60,8 +62,9 @@ steps:
         ax: { has: '/AXButton \(path-link-target\.md\)/' }
       - label: 不存在的路径不产出可点元素（反向判据：名字里没有可点形态）
         ax: { not: '/AXButton \(path-link-missing\.md\)/' }
-      - label: 真实目录不产出可点元素
-        ax: { not: '/AXButton \(path-link-dir\)/' }
+      - label: 真实目录现在也是可点元素（change harness-dir-link 翻转了 v1 的「目录不链接化」；
+          点击落点是左栏定位，详见场景 162）
+        ax: { has: '/AXButton \(path-link-dir\)/' }
       - label: ../ 越界路径不产出可点元素
         ax: { not: '/AXButton \(\.\./outside\.md\)/' }
       - shot: 01-路径可点性
@@ -112,10 +115,11 @@ provider 把四种形态一次铺开：
 
 1. **正文 + 行号**：`path-link-target.md:12` → 可点，点击在新标签打开并落到第 12 行；
 2. **嵌套文件**：`path-link-dir/keep.md` → 运行期经 `vaultWrite` 造出的真实文件（同时用
-   `path-link-dir` 这个真实目录做「目录不链接化」的现场）；
+   `path-link-dir` 这个真实目录做「目录也可以可点」的现场——change harness-dir-link 起目录引用
+   走左栏定位，落点行为由场景 162 判）；
 3. **工具卡片**：Read 的结构化参数 `path` 可点，`offset: 12` 作落点行——卡片上只显示 path，
    行号不进入可见文本（点击时的落点行为靠单测钉：`openPathAtLine` 的编排测试）；
-4. **反向形态**：不存在的文件、真实目录、`../` 越界路径都保持纯文本。
+4. **反向形态**：不存在的文件、`../` 越界路径都保持纯文本。
 
 ## 判据为什么这样写
 

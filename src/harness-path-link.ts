@@ -2,9 +2,10 @@
 //
 // 分层纪律：本模块是**纯函数层**（无 DOM、无 IPC、无编辑器内核），面板只做接线，单测直接驱动。
 // 三条职责：
-//   1. 正文候选：从一段文本里找出「命中 vault 文件索引」的可点路径（允许中文、支持 `:行号` /
-//      `:行号:列号` 后缀）。候选宽、校验严——字符规则只负责切出 run，**是否可点由调用方给的
-//      索引判定**决定（扫描实证：中文行文里的对照式斜杠与 vault 外仓库路径都靠这一层滤掉）。
+//   1. 正文候选：从一段文本里找出「命中 vault 文件索引或目录模型」的可点路径（允许中文、支持
+//      `:行号` / `:行号:列号` 后缀；change harness-dir-link 起目录也在列，后缀只归文件）。候选宽、
+//      校验严——字符规则只负责切出 run，**是否可点由调用方给的索引判定**决定（扫描实证：中文
+//      行文里的对照式斜杠与 vault 外仓库路径都靠这一层滤掉）。
 //   2. 工具卡片：从结构化工具参数里取路径目标（Read 的 offset 作落点行；Move 两段；diff 头由
 //      面板侧的 diffPathOf 提供）——MUST NOT 对卡片上的任意文本做路径正则。
 //   3. 跳转编排：打开 → 转场窗口内落点 → 下一帧复核补发。窗口包裹在这里成为可断言的不变量
@@ -20,17 +21,33 @@ const LINE_SUFFIX = /:(\d{1,7})(?::(\d{1,7}))?/y;
 /** run 长度上限：超过即按「极长无断句中文串」处理，不识别（design §2.2 的已知边界）。 */
 export const MAX_CANDIDATE_RUN = 120;
 
+/** 可点目标的类型（change harness-dir-link）：文件打开、目录在左栏定位。 */
+export type PathTargetKind = "file" | "dir";
+
+/**
+ * 目标存在性索引（判据由调用方提供，本模块不碰文件系统 / 树模型）：
+ *  - `isFile`：vault 内可打开的**文件**集（装配层按既有口径过滤图片 / 二进制 / 惰性条目）；
+ *  - `isDir`：vault 内**目录模型**（装配层注入文件树的只读查询——目录可点性与定位能力因此
+ *    使用同一份数据，不另维护一份目录索引）。
+ */
+export interface PathTargetIndex {
+  isFile(path: string): boolean;
+  isDir(path: string): boolean;
+}
+
 export interface PathCandidate {
-  /** vault 相对路径（不含行号后缀）。 */
+  /** vault 相对路径（不含行号后缀；目录已去掉尾斜杠）。 */
   path: string;
-  /** 1-based 行号；无后缀时缺省。 */
+  /** 目标类型：文件走打开链路，目录走左栏定位。 */
+  kind: PathTargetKind;
+  /** 1-based 行号；无后缀时缺省（目录从不带行号）。 */
   line?: number;
   /** 列号（后缀第二段）；v1 只解析、不参与落点。 */
   column?: number;
   /** 可点范围（相对传入文本，含行号后缀）。 */
   from: number;
   to: number;
-  /** 可点范围的原文（展示文本逐字不变）。 */
+  /** 可点范围的原文（展示文本逐字不变，含目录引用的尾斜杠）。 */
   text: string;
 }
 
@@ -84,8 +101,22 @@ function lineSuffixAt(text: string, at: number): { line?: number; column?: numbe
   };
 }
 
+/** 单个候选切片的判定：先文件、后目录（目录允许单个尾斜杠，判定按去尾斜杠后的路径）。 */
+function resolveTarget(
+  raw: string,
+  index: PathTargetIndex,
+): { path: string; kind: PathTargetKind } | null {
+  if (!hasPathShape(raw)) return null;
+  const stripped = raw.endsWith("/") ? raw.slice(0, -1) : raw;
+  if (!isWellFormedVaultPath(stripped)) return null;
+  // 尾斜杠是**目录意图**：文件判定只认原文（`a.md/` 不是文件引用）。
+  if (stripped === raw && index.isFile(stripped)) return { path: stripped, kind: "file" };
+  if (index.isDir(stripped)) return { path: stripped, kind: "dir" };
+  return null;
+}
+
 /**
- * 在一个路径字符 run 里找命中文件索引的候选。
+ * 在一个路径字符 run 里找命中目标的候选。
  *
  * 先试整串；未命中时只从**两端**剥中文与句末点号（中文行文不空格，路径常与前后文粘连，
  * 如「见路径」「路径的」）。只从两端收缩、不在中间开刀：文件本身可以含中文，整串先命中时
@@ -95,8 +126,8 @@ function resolveRun(
   text: string,
   start: number,
   end: number,
-  isVaultFile: (path: string) => boolean,
-): { path: string; from: number; to: number } | null {
+  index: PathTargetIndex,
+): { path: string; kind: PathTargetKind; from: number; to: number } | null {
   let maxLeft = 0;
   while (start + maxLeft < end && isCjkAt(text, start + maxLeft)) maxLeft += 1;
   let maxRight = 0;
@@ -111,50 +142,52 @@ function resolveRun(
       if (right < 0 || right > maxRight) continue;
       const from = start + left;
       const to = end - right;
-      const path = text.slice(from, to);
-      if (!hasPathShape(path) || !isWellFormedVaultPath(path)) continue;
-      if (isVaultFile(path)) return { path, from, to };
+      const hit = resolveTarget(text.slice(from, to), index);
+      if (hit !== null) return { ...hit, from, to };
     }
   }
   return null;
 }
 
 /**
- * 一段文本 → 可点路径候选（按出现序）。`isVaultFile` 是存在性与可打开性的唯一判据：
- * 返回 false 的候选不产出（目录、vault 外路径、图片/二进制都在调用方那一侧滤掉）。
+ * 一段文本 → 可点路径候选（按出现序）。`index` 是存在性与可点性的唯一判据：文件必须命中
+ * 调用方的文件索引，目录必须命中调用方的目录模型；都不命中的候选不产出（vault 外路径、
+ * 内置忽略名目录、图片/二进制都在调用方那一侧滤掉）。
+ *
+ * 目录候选的可点范围**不含行号后缀**（目录没有行上下文）：`目录:12` 只链接目录本身；
+ * 文件候选的 `:行号` / `:行号:列号` 行为不变。
  */
-export function findPathCandidates(
-  text: string,
-  isVaultFile: (path: string) => boolean,
-): PathCandidate[] {
+export function findPathCandidates(text: string, index: PathTargetIndex): PathCandidate[] {
   const out: PathCandidate[] = [];
-  let index = 0;
-  while (index < text.length) {
-    if (!isPathCharAt(text, index)) {
-      index += 1;
+  let at = 0;
+  while (at < text.length) {
+    if (!isPathCharAt(text, at)) {
+      at += 1;
       continue;
     }
-    let end = index;
+    let end = at;
     while (end < text.length && isPathCharAt(text, end)) end += 1;
-    if (end - index > MAX_CANDIDATE_RUN) {
-      index = end; // 极长无断句 run：不识别（性能与可预测性）
+    if (end - at > MAX_CANDIDATE_RUN) {
+      at = end; // 极长无断句 run：不识别（性能与可预测性）
       continue;
     }
-    const hit = resolveRun(text, index, end, isVaultFile);
+    const hit = resolveRun(text, at, end, index);
     if (hit === null) {
-      index = end;
+      at = end;
       continue;
     }
-    const suffix = lineSuffixAt(text, hit.to);
+    const suffix: { line?: number; column?: number; end: number } =
+      hit.kind === "file" ? lineSuffixAt(text, hit.to) : { end: hit.to };
     out.push({
       path: hit.path,
+      kind: hit.kind,
       line: suffix.line,
       column: suffix.column,
       from: hit.from,
       to: suffix.end,
       text: text.slice(hit.from, suffix.end),
     });
-    index = suffix.end;
+    at = suffix.end;
   }
   return out;
 }
