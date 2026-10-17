@@ -378,10 +378,13 @@ export function checkScenario(scenario) {
     }
     // 步骤级判据的裸串形态（M556）：`waitFor` 清单与 chord `verify.pattern` 同 `ax` 断言一样走
     // `matcher()`；`do: drag` 的 `selection` 也是。节点定位里只有 `any` / `help` 走 `matcher()`
-    // （`target.name` 是裸正则源，`\.` 在那里是对的，别拿来判）。
+    // （`target.name` 是裸正则源，`\.` 在那里是对的，别拿来判）。`verify.target` 是**嵌套的**
+    // 回读目标定位（`verifyReadValue` → `findByAny`），与步骤的 `target` 不是同一处，单独列。
     if (step.do === "drag") pushBare(`${at} do=drag 的 selection`, step.selection);
-    if ((step.do === "key" || step.do === "keys") && isPlainTable(step.verify))
+    if ((step.do === "key" || step.do === "keys") && isPlainTable(step.verify)) {
       pushBare(`${at} 的 verify.pattern`, step.verify.pattern);
+      pushBare(`${at} 的 verify.target.any`, step.verify.target?.any);
+    }
     if (step.do === "waitFor" && isPlainTable(step.waitFor)) {
       for (const k of ["has", "not"])
         for (const [n, s] of (Array.isArray(step.waitFor[k]) ? step.waitFor[k] : []).entries())
@@ -456,6 +459,8 @@ export function checkScenario(scenario) {
         const spec = exp.geom;
         if (!spec.target || (spec.target.name === undefined && spec.target.any === undefined))
           push(`${at} expect[${j}] geom 断言缺 target.name/any（节点定位）`);
+        // 几何断言的 target 是**嵌套**定位（`findByAny` → `matcher()`），与步骤级 `target` 无关。
+        pushBare(`${at} expect[${j}] geom.target.any`, spec.target?.any);
         for (const k of ["minWidth", "minHeight"])
           if (spec[k] !== undefined && (typeof spec[k] !== "number" || spec[k] <= 0))
             push(`${at} expect[${j}] geom.${k} 需要正数，实际 ${JSON.stringify(spec[k])}`);

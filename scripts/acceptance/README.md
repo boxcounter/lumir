@@ -508,7 +508,8 @@ PASS，只有锚定那条 FAIL）。要锚定这类行，把 `- [\d+] ` 前缀�
 于是正向断言恒假红、负向断言恒绿（M553 的场景 161/162 首跑即此：AX 证明元素都在、断言假红）。
 `--check` 对这个形态判 problem，覆盖**全部走 `matcher()` 的判据**：`ax` 的 `has` / `not` /
 `count.pattern` / `focused`、`editor` / `file` / `clipboard` 的 `has` / `not`、`waitFor` 清单、
-chord `verify.pattern`、`drag.selection`，以及节点定位里走 `matcher()` 的 `any` / `help`。
+chord `verify.pattern`、`drag.selection`，以及节点定位里走 `matcher()` 的 `any` / `help`
+（含两处**嵌套**定位：chord 的 `verify.target.any` 与几何断言的 `geom.target.any`）。
 **不在此判的两类**：`/…/` 形态本身（转义正是要写的），与**裸正则源**字段——`target.name` /
 `marker` / `glob.pattern` 直接把字符串交给 `new RegExp`，`\.` 在那里是对的（口径分野见「已知边界」
 的「`click` / `clickInNode` 的 `target` 与断言里的匹配器不是同一套口径」条）；`\int` / `\\` /
