@@ -1483,12 +1483,7 @@ mod tests {
             root: vault.clone(),
             policy: {
                 let defaults = crate::config::VaultConfig::default();
-                IgnorePolicy::load(
-                    &vault,
-                    &[".gitignore".to_string()],
-                    &defaults.hidden,
-                    &defaults.lazy,
-                )
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
             },
             vault_id: "vault-test-1".to_string(),
         };
@@ -1575,12 +1570,7 @@ mod tests {
             root: vault.clone(),
             policy: {
                 let defaults = crate::config::VaultConfig::default();
-                IgnorePolicy::load(
-                    &vault,
-                    &[".gitignore".to_string()],
-                    &defaults.hidden,
-                    &defaults.lazy,
-                )
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
             },
             vault_id: "vault-test-1".to_string(),
         };
@@ -1778,12 +1768,7 @@ mod tests {
             root: vault.clone(),
             policy: {
                 let defaults = crate::config::VaultConfig::default();
-                IgnorePolicy::load(
-                    &vault,
-                    &[".gitignore".to_string()],
-                    &defaults.hidden,
-                    &defaults.lazy,
-                )
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
             },
             vault_id: "vault-test-1".to_string(),
         };

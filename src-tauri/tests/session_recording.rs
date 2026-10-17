@@ -69,8 +69,7 @@ impl Fixture {
             policy: IgnorePolicy::load(
                 &self.vault(),
                 &[".gitignore".to_string()],
-                &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
-                &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+                &lumir_lib::config::VaultConfig::default().ignore,
             ),
             vault_id: VAULT_ID.to_string(),
         }
@@ -680,8 +679,7 @@ fn resume_rebuilds_session_and_continues_in_new_file() {
         policy: IgnorePolicy::load(
             &f.root.join("vault-b"),
             &[".gitignore".to_string()],
-            &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
-            &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+            &lumir_lib::config::VaultConfig::default().ignore,
         ),
         // 与 A 共用同一个 vault 目录名：本用例构造的是「文件被手工挪进别的 vault 目录」的现场
         // ——归属判据是首行 vault_root、不是目录（design §3），所以这里仍须撞 mismatch。
@@ -1460,8 +1458,7 @@ fn sessions_are_partitioned_per_vault_and_flat_leftovers_are_invisible() {
         policy: IgnorePolicy::load(
             &vault_b,
             &[".gitignore".to_string()],
-            &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
-            &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+            &lumir_lib::config::VaultConfig::default().ignore,
         ),
         vault_id: "vault-test-2".to_string(),
     };

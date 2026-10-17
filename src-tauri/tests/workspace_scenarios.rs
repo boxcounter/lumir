@@ -11,8 +11,7 @@ fn production_policy(root: &std::path::Path) -> fs_io::IgnorePolicy {
     fs_io::IgnorePolicy::load(
         root,
         &rule_files,
-        &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
-        &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+        &lumir_lib::config::VaultConfig::default().ignore,
     )
 }
 

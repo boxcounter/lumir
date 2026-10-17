@@ -39,8 +39,7 @@ fn production_policy(root: &std::path::Path) -> IgnorePolicy {
     IgnorePolicy::load(
         root,
         &rule_files,
-        &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
-        &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+        &lumir_lib::config::VaultConfig::default().ignore,
     )
 }
 use lumir_lib::link_graph::{is_markdown, LinkGraph};

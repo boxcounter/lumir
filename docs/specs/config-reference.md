@@ -116,24 +116,42 @@ token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定�
 | 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
 |---|---|---|---|---|---|
 | `vault.rule_files` | string 数组 | `[".gitignore", ".git/info/exclude"]` | 每项是**vault 相对路径**（非空、非绝对路径、不含 `..`）；文件不存在静默跳过 | **vault 装载时**读一次；改动下次装载生效 | `config.rs` 的 `DEFAULT_RULE_FILES`、`validate_rule_files` |
-| `vault.hidden` | string 数组 | `[".git", ".DS_Store"]` | 每项是**单个名字**：不含 `/`、不是 `.` / `..`、不含 `* ? [ ] ! # \`、首尾无空白 | **vault 装载时**读一次；改动下次装载生效 | `config.rs` 的 `DEFAULT_HIDDEN`、`validate_tier_names` |
-| `vault.lazy` | string 数组 | 14 个名字（见下） | 同 `vault.hidden` | 同上 | `config.rs` 的 `DEFAULT_LAZY`、`validate_tier_names` |
+| `vault.ignore` | 对象：名字 → `"hidden"` \| `"lazy"` | 16 名（见下） | 键是**单个名字**：不含 `/`、不是 `.` / `..`、不含 `* ? [ ] ! # \`、首尾无空白；值是闭集合 `"hidden"` / `"lazy"` | **vault 装载时**读一次；改动下次装载生效 | `config.rs` 的 `DEFAULT_IGNORE`、`validate_ignore_map` |
 
-两个忽略档的语义（change `ignore-tiers-config`）：
+两个忽略档的语义（change `ignore-tiers-map`，档位语义承接 `ignore-tiers-config`）：
 
 - `hidden` 命中 ⇒ 不可见：文件树没有这一行、不进 watch 事件流、不进链接 / 附件索引，子树不枚举。
 - `lazy` 命中 ⇒ 惰性可见：树里有一行、可展开（展开时按需取一层）、不进索引，与用户规则（`.gitignore`）命中的条目同待遇。
-- 判定顺序固定为 `hidden` → `lazy` → 用户规则 → 可见；**用户规则的取反（如 `!target/`）不能推翻前两档**。
-- **缺省即默认**：键缺席（或缺整个 `[vault]` 节）⇒ 该档取代码内置默认；键存在（含 `[]`）⇒ 该档整体按配置解释。两个键各自独立。
-- **两个键都不含某名字 ⇒ 该名字走用户规则 / 完全可见**（「第三档」，没有第三个键）。
-- 同一个名字同时出现在两个键里 ⇒ 按 `hidden` 生效 + 一条 warning。
-- 只接受**名字**，不接受模式：写 `*.log` 一类逐项忽略并给人话 warning。
+- 判定顺序固定为 `hidden` → `lazy` → 用户规则 → 可见；**用户规则的取反（如 `!target/`）不能推翻两档**。
+- **档位写在名字自己的值上**：一个名字只有一个档位（对象键唯一），没有「同名冲突」这个类别。`hidden` 比 `lazy` 更严格这层关系由判定链表达，配置面不需要再写一遍。
+- **缺省即默认（粒度整图）**：`ignore` 键缺席（或缺整个 `[vault]` 节）⇒ 整图取代码内置默认；键存在（含 `{}`）⇒ 整图按配置解释。**不在图里的名字 ⇒ 该名字走用户规则 / 完全可见**（「第三档」，没有第三个键、也没有 `"visible"` 档位值）。
+- 只接受**名字**，不接受模式：写 `"*.log": "lazy"` 一类逐项忽略并给人话 warning。
 - 保存临时文件模式（`.lumir-*` / `.*.lumir-*`）**恒定硬编码、不在配置面内**（那是数据损坏面）。
-- 默认 `lazy` = `node_modules`、`.venv`、`venv`、`__pycache__`、`.next`、`.nuxt`、`.cache`、`.pnpm-store`、`.tox`、`.gradle`、`test-results`、`perf-results`、`target`、`dist`。
+- 默认地图（`hidden` 2 名 + `lazy` 14 名）：
 
-**逐项校验的例外**（与 `harness.permissions` 同形）：清单里的非法项只丢自己并各给一条人话 warning，其余项照常生效，
-MUST NOT 因为一项笔误把整份配置（含 `last_vault`）回退默认。整个字段给错类型（如 `"hidden": ".git"`）仍走
-§2 的整文件回落。
+  | 档位 | 名字 |
+  |---|---|
+  | `hidden` | `.git`、`.DS_Store` |
+  | `lazy` | `node_modules`、`.venv`、`venv`、`__pycache__`、`.next`、`.nuxt`、`.cache`、`.pnpm-store`、`.tox`、`.gradle`、`test-results`、`perf-results`、`target`、`dist` |
+
+示例：
+
+```json
+{
+  "vault": {
+    "ignore": {
+      ".git": "hidden",
+      ".DS_Store": "hidden",
+      "node_modules": "lazy",
+      "target": "lazy"
+    }
+  }
+}
+```
+
+换档 = 改这个名字自己的值（如 `"target": "hidden"`）；移出地图 = 完全可见。
+
+**逐项校验的例外**（与 `harness.permissions` 同形）：地图里的非法项（名字非法 / 档位值不是 `"hidden"` 或 `"lazy"`）只丢自己并各给一条人话 warning，其余项照常生效，MUST NOT 因为一项笔误把整份配置（含 `last_vault`）回退默认。整个 `ignore` 键给错类型（如 `"ignore": "hidden"`、`"ignore": []`）仍走 §2 的整文件回落。JSON 对象的重复键由解析库按「后者覆盖」处理、不告警（一个名字不可能真的有两个档位）。
 
 ## 2. 解析与容错口径
 

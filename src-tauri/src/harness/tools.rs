@@ -1019,12 +1019,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let defaults = crate::config::VaultConfig::default();
-        let policy = IgnorePolicy::load(
-            &root,
-            &[".gitignore".to_string()],
-            &defaults.hidden,
-            &defaults.lazy,
-        );
+        let policy = IgnorePolicy::load(&root, &[".gitignore".to_string()], &defaults.ignore);
         (root, policy)
     }
 
@@ -1076,12 +1071,7 @@ mod tests {
         std::fs::write(root.join("ignored.log"), "needle\n").unwrap();
         std::fs::write(root.join(".gitignore"), "ignored.log\n").unwrap();
         let defaults = crate::config::VaultConfig::default();
-        let policy = IgnorePolicy::load(
-            &root,
-            &[".gitignore".to_string()],
-            &defaults.hidden,
-            &defaults.lazy,
-        );
+        let policy = IgnorePolicy::load(&root, &[".gitignore".to_string()], &defaults.ignore);
         let ctx = ctx(&root, &policy, &[]);
         let out = vault_search(&serde_json::json!({"query": "needle"}), &ctx);
         let matches = out.value["matches"].as_array().unwrap();

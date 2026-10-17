@@ -333,8 +333,8 @@ steps:
 # 场景 67：忽略分档的可见性 + 打开段不冻结界面
 
 对应 change `openspec/changes/vault-open-ignore-set/`（M290 提案 / M292 实现），口径随
-change `ignore-tiers-config` 修订。本场景是它的**验收半边**：把提案里「用户能观察到什么」的
-判据落成真机可执行、可复现的断言。
+change `ignore-tiers-config` 与 `ignore-tiers-map` 修订。本场景是它的**验收半边**：把提案里
+「用户能观察到什么」的判据落成真机可执行、可复现的断言。
 
 ## 这个场景验什么
 
@@ -378,9 +378,9 @@ change `ignore-tiers-config` 修订。本场景是它的**验收半边**：把�
 - **前端装配段不在本条覆盖内**：打开段结束后的 payload 解析与树 / 索引装配仍跑在 webview 主线程
   （本 change 的已知边界）；放大器是稀疏大文件、条目数不变，因此**不覆盖**「条目数极大时装配段
   仍有一拍卡顿」。
-- **配置项 `vault.rule_files` / `vault.hidden` / `vault.lazy` 的真机语义不在本条覆盖内**：本场景走**默认**值
+- **配置项 `vault.rule_files` / `vault.ignore` 的真机语义不在本条覆盖内**：本场景走**默认**值
   （`[".gitignore", ".git/info/exclude"]`）；套件的 `config:` 白名单不为它新增键，配置项语义
-  （空列表 / 不存在跳过 / 非法项忽略 / 生效时点）由 `src-tauri` 的单测覆盖（tasks 2.5）。
+  （空列表 / 空地图 / 不存在跳过 / 非法项忽略 / 生效时点）由 `src-tauri` 的单测覆盖。
 - **本场景往验收 vault 的根写一份 `.gitignore`（用户规则探针）**：`.git` 与 `.local` /
   `.excluded-dir` 都是目录，会被下一次 `resetVault` 连根清掉；`.gitignore` 是文件，不受那次清理
   覆盖，会留到后面的场景（与既有场景 46 留下的那份同类，且残留内容是惰性的——它声明的目录届时

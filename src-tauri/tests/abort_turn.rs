@@ -62,8 +62,7 @@ impl Fixture {
             policy: IgnorePolicy::load(
                 &self.vault(),
                 &[".gitignore".to_string()],
-                &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
-                &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+                &lumir_lib::config::VaultConfig::default().ignore,
             ),
             vault_id: VAULT_ID.to_string(),
         }
