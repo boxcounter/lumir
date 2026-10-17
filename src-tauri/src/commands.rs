@@ -456,12 +456,7 @@ pub fn prepare_vault_open(
     let vault_config = config::load()
         .map(|snapshot| snapshot.config.vault)
         .unwrap_or_default();
-    let policy = fs_io::IgnorePolicy::load(
-        &root,
-        &vault_config.rule_files,
-        &vault_config.hidden,
-        &vault_config.lazy,
-    );
+    let policy = fs_io::IgnorePolicy::load(&root, &vault_config.rule_files, &vault_config.ignore);
     // 顺序：先 watch（FSEvents 流起点在此刻）再全量枚举，消除 scan→watch 的
     // 事件空窗；枚举结果随后播种进 watcher 的已知路径集（修正重放的误报 Create）。
     let app_for_watch = app.clone();
@@ -1841,10 +1836,10 @@ mod tests {
         }
     }
 
-    /// 测试用策略：默认两档（`config::VaultConfig::default()`）+ 给定用户规则清单。
+    /// 测试用策略：默认忽略地图（`config::VaultConfig::default()`）+ 给定用户规则清单。
     fn policy_with_rules(root: &Path, rule_files: &[String]) -> fs_io::IgnorePolicy {
         let defaults = config::VaultConfig::default();
-        fs_io::IgnorePolicy::load(root, rule_files, &defaults.hidden, &defaults.lazy)
+        fs_io::IgnorePolicy::load(root, rule_files, &defaults.ignore)
     }
 
     /// 已备好的打开结果（prepare 的产物）。状态机测试不关心 entries/graph/policy——提交只是

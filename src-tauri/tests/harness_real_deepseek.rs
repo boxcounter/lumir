@@ -121,8 +121,7 @@ fn real_deepseek_two_turns_tool_call_and_reasoning_replay() {
             policy: IgnorePolicy::load(
                 &root.join("vault"),
                 &[".gitignore".to_string()],
-                &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
-                &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+                &lumir_lib::config::VaultConfig::default().ignore,
             ),
             vault_id: "vault-test-1".to_string(),
         };
@@ -265,8 +264,7 @@ fn real_deepseek_multi_call_round_replays_grouped() {
             policy: IgnorePolicy::load(
                 &root.join("vault"),
                 &[".gitignore".to_string()],
-                &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
-                &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+                &lumir_lib::config::VaultConfig::default().ignore,
             ),
             vault_id: "vault-test-1".to_string(),
         };

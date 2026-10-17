@@ -14,13 +14,14 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::Match;
 use notify::{EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 use ts_rs::TS;
 
 use crate::commands::CommandError;
+use crate::config::IgnoreTier;
 
 /// 保存临时文件模式（两条）。**必须两条**才能与既有判据「`.` 开头且含 `.lumir-`」逐条等价：
 /// - `.lumir-*` —— 名字在**开头**就是 `.lumir-`（`.lumir-notes.md` / `.lumir-` / `.lumir-1`）；
@@ -79,14 +80,14 @@ struct UserSource {
     matcher: Gitignore,
 }
 
-/// 忽略规则表的三档来源（change ignore-tiers-config）：`hidden` / `lazy` 两档的名字由
-/// `config.json` 的 `[vault]` 表给出（缺省 = [`crate::config::DEFAULT_HIDDEN`] /
-/// [`crate::config::DEFAULT_LAZY`]），保存临时文件模式恒定硬编码，其后才是用户规则。
+/// 忽略规则表的三档来源（change ignore-tiers-map，语义承接 ignore-tiers-config）：`hidden` /
+/// `lazy` 两档的名字由 `config.json` 的 `[vault].ignore` 地图给出（名字 → 档位；缺省 = 代码
+/// 内置的 [`crate::config::DEFAULT_IGNORE`] 整图），保存临时文件模式恒定硬编码，其后才是用户规则。
 ///
 /// **名字的书写形式有语义**：无尾斜杠名字字面量在**任意深度**匹配同名的**文件与目录** ⇒
 /// 与既有名字等值判定逐条等价（「同名文件与目录一视同仁」因此保留）。写成 `target/` 会变成
 /// 「只匹配目录、同名文件不受影响」——那是有意的改判，本 change 不做。配置名字经
-/// `config::validate_tier_names` 校验（不含 gitignore 元字符），所以这里的字面量语义成立。
+/// `config::validate_ignore_map` 校验（不含 gitignore 元字符），所以这里的字面量语义成立。
 ///
 /// A3 档（`build` / `out` / `vendor`）经 Alex 2026-09-28 裁决**不纳入**默认：通用英文词的
 /// 误伤概率高于收窄收益（且它们若写进了 `.gitignore`，照样落进用户规则、惰性可见）。
@@ -133,9 +134,11 @@ impl IgnorePolicy {
     /// 装载时构造（`commands::prepare_vault_open` 调用）：编译 `hidden` / `lazy` 两档名字
     /// 与 `rule_files` 清单里的用户规则。
     ///
-    /// 两个名字参数由 `config::VaultConfig` 给出（缺省已由 `VaultConfig::default()` 填成
-    /// [`crate::config::DEFAULT_HIDDEN`] / [`crate::config::DEFAULT_LAZY`]）；`hidden` 匹配器
-    /// 恒定并入 [`LUMIR_TMP_PATTERNS`]——保存临时文件模式不在配置面内（数据损坏面）。
+    /// 名字来自 `config::VaultConfig::ignore`（名字 → 档位；缺省已由 `VaultConfig::default()`
+    /// 填成 [`crate::config::DEFAULT_IGNORE`] 的整图）。这里按档位把同一张地图过滤成两个匹配器
+    /// ——分区只写这一处，调用点 MUST NOT 各自再分一遍（REVIEW.md「同一语义两处真源」条）。
+    /// `hidden` 匹配器恒定并入 [`LUMIR_TMP_PATTERNS`]——保存临时文件模式不在配置面内
+    ///（数据损坏面）。
     ///
     /// 清单里每一项都按**「vault 根的规则文件」**解释（§2.9 语义 2）：读的是它自己那个路径，
     /// 但模式一律**相对 vault 根**匹配——所以 `.git/info/exclude` 与根 `.gitignore` 的匹配
@@ -149,8 +152,7 @@ impl IgnorePolicy {
     pub fn load(
         root: &Path,
         rule_files: &[String],
-        hidden: &[String],
-        lazy: &[String],
+        ignore: &BTreeMap<String, IgnoreTier>,
     ) -> IgnorePolicy {
         let mut sources: Vec<UserSource> = Vec::new();
         let mut nested_gitignore = false;
@@ -165,12 +167,18 @@ impl IgnorePolicy {
             }
         }
         let hidden_matcher = build_matcher(
-            hidden
+            ignore
                 .iter()
-                .map(String::as_str)
+                .filter(|(_, tier)| **tier == IgnoreTier::Hidden)
+                .map(|(name, _)| name.as_str())
                 .chain(LUMIR_TMP_PATTERNS.iter().copied()),
         );
-        let lazy_matcher = build_matcher(lazy.iter().map(String::as_str));
+        let lazy_matcher = build_matcher(
+            ignore
+                .iter()
+                .filter(|(_, tier)| **tier == IgnoreTier::Lazy)
+                .map(|(name, _)| name.as_str()),
+        );
         IgnorePolicy {
             inner: Arc::new(IgnorePolicyInner {
                 root: root.to_path_buf(),
@@ -2528,11 +2536,11 @@ mod tests {
             self.policy_with(&[])
         }
 
-        /// 指定用户规则来源清单的策略（`vault.rule_files` 的形状），两档取代码内置默认。
+        /// 指定用户规则来源清单的策略（`vault.rule_files` 的形状），两档取代码内置默认地图。
         fn policy_with(&self, rule_files: &[&str]) -> IgnorePolicy {
             let list: Vec<String> = rule_files.iter().map(|s| s.to_string()).collect();
             let defaults = crate::config::VaultConfig::default();
-            IgnorePolicy::load(&self.0, &list, &defaults.hidden, &defaults.lazy)
+            IgnorePolicy::load(&self.0, &list, &defaults.ignore)
         }
 
         /// 出厂默认清单（`[".gitignore", ".git/info/exclude"]`）。
@@ -4205,6 +4213,30 @@ mod tests {
         assert_eq!(p.classify("notes/today.md", false), EntryClass::Visible);
     }
 
+    /// 档位值就是判定输入（change ignore-tiers-map）：同一名字三种取值分别落到
+    /// `Hidden` / `Lazy` / `Visible`，不需要任何「同名冲突」判定。
+    #[test]
+    fn ignore_map_tier_values_drive_classification() {
+        let v = TempVault::new();
+        let mut ignore = std::collections::BTreeMap::new();
+        ignore.insert("scratch".to_string(), IgnoreTier::Hidden);
+        ignore.insert("node_modules".to_string(), IgnoreTier::Lazy);
+        let p = IgnorePolicy::load(&v.0, &[], &ignore);
+        assert_eq!(p.classify("scratch", true), EntryClass::Hidden);
+        assert_eq!(p.classify("scratch/a.md", false), EntryClass::Hidden);
+        assert_eq!(p.classify("node_modules", true), EntryClass::Lazy);
+        assert_eq!(p.classify("node_modules/pkg", true), EntryClass::Lazy);
+        // 不在图里的名字 ⇒ 第三档：完全可见（默认地图在这里被整图替换了）
+        assert_eq!(p.classify("target", true), EntryClass::Visible);
+        assert_eq!(p.classify(".git", true), EntryClass::Visible);
+        // 改一个词就换档：同一名字从 hidden 改成 lazy 只换它自己的去向
+        let mut retiered = ignore.clone();
+        retiered.insert("scratch".to_string(), IgnoreTier::Lazy);
+        let p2 = IgnorePolicy::load(&v.0, &[], &retiered);
+        assert_eq!(p2.classify("scratch", true), EntryClass::Lazy);
+        assert_eq!(p2.classify("node_modules", true), EntryClass::Lazy);
+    }
+
     /// 用户规则的来源与优先级（tasks 2.3）：`.gitignore`（含递归途中的**嵌套** `.gitignore`）
     /// 与 `.git/info/exclude` 三条来源都生效；优先级按 git 口径——深层 `.gitignore` > 浅层 >
     /// `info/exclude`，「同一路径上最深的匹配决定」。
@@ -4296,12 +4328,7 @@ mod tests {
         std::fs::create_dir_all(root.join("outside-dir")).unwrap();
         std::fs::write(parent.0.join(".gitignore"), "outside-dir/\n").unwrap();
         let defaults = crate::config::VaultConfig::default();
-        let p = IgnorePolicy::load(
-            &root,
-            &[".gitignore".to_string()],
-            &defaults.hidden,
-            &defaults.lazy,
-        );
+        let p = IgnorePolicy::load(&root, &[".gitignore".to_string()], &defaults.ignore);
         assert_eq!(
             p.classify("outside-dir", true),
             EntryClass::Visible,
@@ -4725,16 +4752,11 @@ mod tests {
             let err = p.validate_new_name(bad).unwrap_err();
             assert_eq!(err.code, "fs_name_invalid", "case: {bad}");
         }
-        // 没有名字级特判：把 `.git` 从 hidden 档移出后，它就是普通名字（裁决 2026-10-17）。
+        // 没有名字级特判：把 `.git` 从地图的 hidden 档移出后，它就是普通名字（裁决 2026-10-17）。
         let v2 = TempVault::new();
-        let defaults = crate::config::VaultConfig::default();
-        let hidden: Vec<String> = defaults
-            .hidden
-            .iter()
-            .filter(|name| name.as_str() != ".git")
-            .cloned()
-            .collect();
-        let p2 = IgnorePolicy::load(&v2.0, &[], &hidden, &defaults.lazy);
+        let mut ignore = crate::config::VaultConfig::default().ignore;
+        ignore.remove(".git");
+        let p2 = IgnorePolicy::load(&v2.0, &[], &ignore);
         assert!(
             p2.validate_new_name(".git").is_ok(),
             "`.git` 不在 hidden 档时不得有专属拦截"

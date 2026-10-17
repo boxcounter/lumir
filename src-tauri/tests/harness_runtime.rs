@@ -62,8 +62,7 @@ impl Fixture {
             policy: IgnorePolicy::load(
                 &self.vault(),
                 &[".gitignore".to_string()],
-                &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
-                &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+                &lumir_lib::config::VaultConfig::default().ignore,
             ),
             vault_id: VAULT_ID.to_string(),
         }
@@ -1054,8 +1053,7 @@ fn vault_scoping_switch_restore_and_reset() {
         policy: IgnorePolicy::load(
             &vault_b,
             &[".gitignore".to_string()],
-            &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
-            &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+            &lumir_lib::config::VaultConfig::default().ignore,
         ),
         // 刻意与 A 共用同一个 vault 目录名：**归属判据是首行 vault_root、不是目录**——
         // 这一现场正是「文件被手工挪进别的 vault 目录」的形态（design §3）。

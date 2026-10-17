@@ -29,7 +29,7 @@ keys: { [key in string]?: string | null },
  */
 log: LogConfig, 
 /**
- * vault 行为配置（change vault-open-ignore-set 的 r6 + change ignore-tiers-config）：`[vault]` 表。
+ * vault 行为配置（change vault-open-ignore-set 的 r6 + change ignore-tiers-map）：`[vault]` 表。
  */
 vault: VaultConfig, 
 /**
