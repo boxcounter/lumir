@@ -14,7 +14,7 @@
 // HC5 小节自带平台边界 DOM 替身（手法同 tests/unit/harness-thinking-reset.test.ts），
 // 驱动的是仓里那份真 createHarnessPanel。
 
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   IME_CONFIRM_WINDOW_MS,
@@ -675,5 +675,50 @@ test("HC5：compositionend 补账——确认窗过期后归一把裸节点折�
     assert.equal(second.textContent, "汉语tail", "补账把游离文本折进末段、候选文本留在第二行");
   } finally {
     handle.attachTo(null);
+  }
+});
+
+test("HC5：补账定时器早于窗尾到期时续排——游离文本不得因静默丢弃而永不归一（M560）", async () => {
+  // 生产现场（M555 间歇红 '汉语' !== '汉语tail'）：定时器与墙钟不同源，补账定时器可能在窗尾
+  // **之前**到期（负载实测：Node 的 setTimeout(250) 有 1/178 次在 Date.now() 只走 249ms 时就
+  // 到期）。旧实现是一次性定时器，到期重判 imeWindowActive() 仍真就静默丢弃、不重排——丢掉的
+  // 补账没有第二次，tail 永久不折。这里用假墙钟 + mock timers 把「到期早于窗尾」这一拍确定性地
+  // 造出来：定时器按 250ms 到期，墙钟停在原地。
+  const realNow = Date.now;
+  let fakeNow = 4_000_000;
+  Date.now = () => fakeNow;
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const { composer, handle } = await mountComposer();
+    try {
+      const { first, second } = setupTwoLines(composer);
+      composer.fire("compositionstart");
+      second.append(textNode("hanyu"));
+      second.append(new FakeEl("br"));
+      triggerObserver();
+
+      composer.fire("compositionend"); // 补账截止 = fakeNow + IME_CONFIRM_WINDOW_MS
+      second.textContent = "汉语";
+      composer.append(textNode("tail"));
+
+      // 定时器到期，墙钟仍停在窗内：这一拍 MUST NOT 提前归一（冻结口径不变），MUST NOT 丢掉补账。
+      mock.timers.tick(IME_CONFIRM_WINDOW_MS);
+      assert.equal(second.textContent, "汉语", "确认窗未过期：补账不得提前归一");
+
+      fakeNow += IME_CONFIRM_WINDOW_MS + 1; // 墙钟越过窗尾
+      mock.timers.tick(IME_CONFIRM_WINDOW_MS + 1); // 续排的补账在此到期
+      assert.equal(composer.children.length, 2, "补账归一不得破坏两块结构（折叠规则只对裸节点）");
+      assert.equal(first.textContent, "第一行");
+      assert.equal(
+        second.textContent,
+        "汉语tail",
+        "窗尾续排的补账 MUST 把游离文本折回（旧实现此处静默丢弃、永不归一）",
+      );
+    } finally {
+      handle.attachTo(null);
+    }
+  } finally {
+    mock.timers.reset();
+    Date.now = realNow;
   }
 });
