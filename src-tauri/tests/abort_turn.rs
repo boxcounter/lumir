@@ -59,7 +59,12 @@ impl Fixture {
     fn scope(&self) -> VaultScope {
         VaultScope {
             root: self.vault(),
-            policy: IgnorePolicy::load(&self.vault(), &[".gitignore".to_string()]),
+            policy: IgnorePolicy::load(
+                &self.vault(),
+                &[".gitignore".to_string()],
+                &lumir_lib::config::DEFAULT_HIDDEN.map(str::to_string),
+                &lumir_lib::config::DEFAULT_LAZY.map(str::to_string),
+            ),
             vault_id: VAULT_ID.to_string(),
         }
     }

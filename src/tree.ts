@@ -26,41 +26,6 @@ import type { TreeMenuTarget } from "./tree-menu";
 export type DisplayKind = "dir" | "md" | "image" | "other";
 
 /**
- * 内置规则名字表的前端副本（内联编辑的提示性**预检**用，不是过滤）。
- *
- * **权威是 `src-tauri/src/fs_io.rs` 的 `BUILTIN_NAMES`**（16 个名字字面量）：命中的名字建成 /
- * 改成之后不进文件树、watch 事件也被挡下，用户在界面上既看不到也删不掉。这里抄一份只为
- * 「提交前就说清」，不承担判定职责（后端仍会拒，且它才是唯一判定实现）。两类的其余部分
- * ——保存临时文件模式两条（`.lumir-*` / `.*.lumir-*`）——**不在**本表里：它们不是名字，前端
- * 预检覆盖不到，由后端在提交时拒绝并给出人话原因。
- *
- * 逐项对账在 `tests/unit/tree-paths.test.ts` 的「内置名字表与 Rust 侧 BUILTIN_NAMES 逐项对账」
- * （它解析那份 Rust 源比对，漂移即红——与 `registry-drift.test.ts` 守
- * `SAVE_REJECTED_EXTENSIONS` 同一手法，REVIEW.md 「同一语义两处真源」条）。
- *
- * **用户规则**（vault 自己的 `.gitignore` / `.git/info/exclude`）命中的名字**不在这里**：
- * 那样名字本来就可见、可打开，只是不进索引，新建 / 改名 MUST NOT 被拒（design §3.2）。
- */
-export const IGNORED_NAMES = [
-  ".git",
-  ".DS_Store",
-  "node_modules",
-  ".venv",
-  "venv",
-  "__pycache__",
-  ".next",
-  ".nuxt",
-  ".cache",
-  ".pnpm-store",
-  ".tox",
-  ".gradle",
-  "test-results",
-  "perf-results",
-  "target",
-  "dist",
-];
-
-/**
  * vault 根的绝对路径 + 树内相对路径（M244「复制完整路径」的**唯一一份**拼接，
  * design §3.3 点名：一处实现，MUST NOT 每个调用点各自拼）。裁决点 4：写进剪贴板的是
  * 绝对路径——相对路径离开 vault 上下文即失效，那不是「完整路径」的直觉语义。
@@ -79,9 +44,14 @@ export const NEW_DIR_INPUT_LABEL = (): string => t("D142");
 
 /**
  * 内联编辑的末段名校验（导出是为了让校验矩阵直接单测，不必先造一棵树）：
- * 与 `src-tauri/src/fs_io.rs` 的 `validate_new_name` 逐条同源——非空、不含 `/`、
- * 不是 `.` / `..`、不命中忽略集，另加一条**前端特有**的撞名预检（同缀既有条目）。
- * 返回 undefined = 可提交；否则是行内要显示的原因句。
+ * 只做**形状**校验——非空、不含 `/`、不是 `.` / `..`，另加一条**前端特有**的撞名预检
+ * （同缀既有条目）。返回 undefined = 可提交；否则是行内要显示的原因句。
+ *
+ * **忽略集判定不在这里**（change ignore-tiers-config 节点 1 裁决）：`hidden` / `lazy`
+ * 两档的名字可由用户在 `config.json` 里改，前端再抄一份必然漂移（假拒或漏拒）。判定只由
+ * 后端 `fs_io::IgnorePolicy::validate_new_name` 做，拒绝原因经 `tree.endInlineEdit(false,
+ * errorMessage(e))` 回显在编辑行内。措辞因此只剩形状类（D143–D145）与撞名（D147）——
+ * D146（忽略集名拒绝句）的前端触发点随本 change 退役，后端拒绝原因沿用既有句。
  *
  * 提交前会 trim（「   」这类只剩空白的名字按空处理），这是前端比后端更严的一处，
  * 方向正确：后端拒绝的东西前端不改，前端多挡的只是明显手误。
@@ -91,7 +61,6 @@ export function validateEntryName(raw: string, siblings: ReadonlySet<string>): s
   if (name.length === 0) return t("D143");
   if (name.includes("/")) return t("D144", { name });
   if (name === "." || name === "..") return t("D145", { name });
-  if (IGNORED_NAMES.includes(name)) return t("D146", { name });
   if (siblings.has(name)) return t("D147", { target: name });
   return undefined;
 }
@@ -329,7 +298,7 @@ interface Node {
   entry: FsEntry;
   /** 子节点按名称索引；文件为 null。 */
   children: Map<string, Node> | null;
-  /** 惰性目录（用户规则命中）：子孙**不在**装载时的枚举结果里，展开时经 `onExpandLazyDir`
+  /** 惰性目录（`lazy` 档或用户规则命中）：子孙**不在**装载时的枚举结果里，展开时经 `onExpandLazyDir`
    *  取回一层。它是「空目录」与「惰性目录」在模型里的唯一区分点（`src/tree.ts` 的
    *  `expandNode` 靠它决定要不要发命令）。文件恒为 false。 */
   lazy: boolean;
@@ -1383,7 +1352,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
 
         // created / modified 统一按 upsert 处理：FSEvents 对两者区分是 best-effort
         //（见 fs_io.rs 的 kind 修正注释），前端对"已存在节点的 created"必须健壮。
-        // `lazy` 由后端按同一份规则表算出（用户规则命中 ⇒ true），前端**只消费、不重算**
+        // `lazy` 由后端按同一份规则表算出（`lazy` 档或用户规则命中 ⇒ true），前端**只消费、不重算**
         //（design §4.6：下游重算会引出第二份规则实现）。它决定这一条展开时要不要走按需取数。
         if (existing) {
           existing.entry = {

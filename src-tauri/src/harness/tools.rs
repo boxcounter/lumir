@@ -629,7 +629,7 @@ fn vault_create(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
         Ok(input) => input,
         Err(output) => return output,
     };
-    match fs_io::vault_create_file(ctx.root, &input.path, &input.content) {
+    match fs_io::vault_create_file(ctx.root, ctx.policy, &input.path, &input.content) {
         Ok(path) => ToolOutput::ok(serde_json::json!({ "path": path })),
         Err(e) => ToolOutput::from_command_error(&e),
     }
@@ -646,7 +646,7 @@ fn vault_move(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
         Ok(input) => input,
         Err(output) => return output,
     };
-    match fs_io::fs_move_entry(ctx.root, &input.path, &input.new_path) {
+    match fs_io::fs_move_entry(ctx.root, ctx.policy, &input.path, &input.new_path) {
         Ok(path) => ToolOutput::ok(serde_json::json!({ "path": path })),
         Err(e) => ToolOutput::from_command_error(&e),
     }
@@ -1018,7 +1018,13 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let policy = IgnorePolicy::load(&root, &[".gitignore".to_string()]);
+        let defaults = crate::config::VaultConfig::default();
+        let policy = IgnorePolicy::load(
+            &root,
+            &[".gitignore".to_string()],
+            &defaults.hidden,
+            &defaults.lazy,
+        );
         (root, policy)
     }
 
@@ -1069,7 +1075,13 @@ mod tests {
         std::fs::write(root.join("c.md"), "Needle\n").unwrap();
         std::fs::write(root.join("ignored.log"), "needle\n").unwrap();
         std::fs::write(root.join(".gitignore"), "ignored.log\n").unwrap();
-        let policy = IgnorePolicy::load(&root, &[".gitignore".to_string()]);
+        let defaults = crate::config::VaultConfig::default();
+        let policy = IgnorePolicy::load(
+            &root,
+            &[".gitignore".to_string()],
+            &defaults.hidden,
+            &defaults.lazy,
+        );
         let ctx = ctx(&root, &policy, &[]);
         let out = vault_search(&serde_json::json!({"query": "needle"}), &ctx);
         let matches = out.value["matches"].as_array().unwrap();

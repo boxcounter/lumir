@@ -449,14 +449,19 @@ pub fn prepare_vault_open(
     }
     // Register/reconcile stable vault identity before opening.
     let workspace = crate::vault_registry::reconcile_vault(&root)?;
-    // 规则表在**装载时编译一次**（spec「全类型递归枚举」）：现场读一次配置取用户规则的来源
-    // 清单（`config::load()` 本来就是按需读盘，MUST NOT 为它引入启动期缓存——那会把
-    // 「配置改动下次装载生效」这条口径做坏）。配置读不到（配置目录不可确定）时用出厂默认
-    // 清单：打开 vault 是主结果，不该被一次配置读取失败拦停。
-    let rule_files = config::load()
-        .map(|snapshot| snapshot.config.vault.rule_files)
-        .unwrap_or_else(|_| config::VaultConfig::default().rule_files);
-    let policy = fs_io::IgnorePolicy::load(&root, &rule_files);
+    // 规则表在**装载时编译一次**（spec「全类型递归枚举」）：现场读一次配置取两档名字与
+    // 用户规则的来源清单（`config::load()` 本来就是按需读盘，MUST NOT 为它引入启动期缓存
+    // ——那会把「配置改动下次装载生效」这条口径做坏）。配置读不到（配置目录不可确定）时
+    // 用出厂默认：打开 vault 是主结果，不该被一次配置读取失败拦停。
+    let vault_config = config::load()
+        .map(|snapshot| snapshot.config.vault)
+        .unwrap_or_default();
+    let policy = fs_io::IgnorePolicy::load(
+        &root,
+        &vault_config.rule_files,
+        &vault_config.hidden,
+        &vault_config.lazy,
+    );
     // 顺序：先 watch（FSEvents 流起点在此刻）再全量枚举，消除 scan→watch 的
     // 事件空窗；枚举结果随后播种进 watcher 的已知路径集（修正重放的误报 Create）。
     let app_for_watch = app.clone();
@@ -832,7 +837,7 @@ pub fn fs_scan_workspace(
 /// 按需枚举一个目录的**一层**条目（change vault-open-ignore-set §4.3）：文件树展开惰性目录时
 /// 的唯一取数通道。惰性条目的子孙不在装载时的枚举结果里，树 MUST NOT 把它们当作空目录渲染。
 ///
-/// 分类口径与 [`fs_scan_workspace`] 完全同源（内置规则丢弃、用户规则命中出一行且 `lazy`、
+/// 分类口径与 [`fs_scan_workspace`] 完全同源（hidden 档丢弃、lazy 档或用户规则命中出一行且 `lazy`、
 /// 其余正常），且**只枚举一层**、不递归下钻。路径走与所有读取路径同源的 vault 内校验
 ///（MUST NOT 为按需枚举放松边界）；目标不存在 / 不是目录 ⇒ 人话 `CommandError`。
 ///
@@ -935,7 +940,8 @@ pub fn fs_write_attachment(
     data_base64: &str,
     source_mime: &str,
 ) -> Result<fs_io::WrittenAttachment, CommandError> {
-    fs_io::write_attachment(&state.root()?, dir_rel, data_base64, source_mime)
+    let (root, policy) = state.root_and_policy()?;
+    fs_io::write_attachment(&root, &policy, dir_rel, data_base64, source_mime)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1337,8 +1343,8 @@ pub fn fs_rename_entry(
     rel: String,
     new_name: String,
 ) -> Result<String, CommandError> {
-    let root = state.root()?;
-    fs_io::rename_entry(&root, &rel, &new_name)
+    let (root, policy) = state.root_and_policy()?;
+    fs_io::rename_entry(&root, &policy, &rel, &new_name)
 }
 
 /// 跨目录移动（M530，文件树拖拽移入目录的后端）：委托 `fs_io::fs_move_entry`——两端
@@ -1351,8 +1357,8 @@ pub fn fs_move_entry(
     from_rel: String,
     to_rel: String,
 ) -> Result<String, CommandError> {
-    let root = state.root()?;
-    fs_io::fs_move_entry(&root, &from_rel, &to_rel)
+    let (root, policy) = state.root_and_policy()?;
+    fs_io::fs_move_entry(&root, &policy, &from_rel, &to_rel)
 }
 
 /// 在目录下新建空文件（§3.5）。`create_new` 原子语义：撞名即 `fs_already_exists`，
@@ -1363,8 +1369,8 @@ pub fn fs_create_file(
     parent_rel: String,
     name: String,
 ) -> Result<String, CommandError> {
-    let root = state.root()?;
-    fs_io::create_file_entry(&root, &parent_rel, &name)
+    let (root, policy) = state.root_and_policy()?;
+    fs_io::create_file_entry(&root, &policy, &parent_rel, &name)
 }
 
 /// 在目录下新建子目录（§3.6）：与 [`fs_create_file`] 同构，新建目录不自动展开父目录。
@@ -1374,8 +1380,8 @@ pub fn fs_create_dir(
     parent_rel: String,
     name: String,
 ) -> Result<String, CommandError> {
-    let root = state.root()?;
-    fs_io::create_dir_entry(&root, &parent_rel, &name)
+    let (root, policy) = state.root_and_policy()?;
+    fs_io::create_dir_entry(&root, &policy, &parent_rel, &name)
 }
 
 /// 在系统文件管理器里定位并选中该条目（§3.4；macOS = Finder）。与 [`link_open_path`]
@@ -1835,18 +1841,24 @@ mod tests {
         }
     }
 
+    /// 测试用策略：默认两档（`config::VaultConfig::default()`）+ 给定用户规则清单。
+    fn policy_with_rules(root: &Path, rule_files: &[String]) -> fs_io::IgnorePolicy {
+        let defaults = config::VaultConfig::default();
+        fs_io::IgnorePolicy::load(root, rule_files, &defaults.hidden, &defaults.lazy)
+    }
+
     /// 已备好的打开结果（prepare 的产物）。状态机测试不关心 entries/graph/policy——提交只是
-    /// 搬移它们，因此取空（规则表用空清单：没有用户规则来源，只剩内置规则）。
+    /// 搬移它们，因此取空（规则表用空清单：没有用户规则来源，只剩两档默认名字）。
     fn prepared(vault: &TempVault) -> PreparedVaultOpen {
         let root = vault.path();
         PreparedVaultOpen {
             root: root.clone(),
             vault_id: "test-vault".into(),
             entries: vec![],
-            watcher: fs_io::watch(&root, &fs_io::IgnorePolicy::load(&root, &[]), |_| {})
+            watcher: fs_io::watch(&root, &policy_with_rules(&root, &[]), |_| {})
                 .expect("watch temp vault"),
             graph: LinkGraph::new(),
-            policy: fs_io::IgnorePolicy::load(&root, &[]),
+            policy: policy_with_rules(&root, &[]),
         }
     }
 
@@ -2081,7 +2093,7 @@ mod tests {
     /// 供索引口径与策略生命周期的断言使用。
     fn committed_state(root: &Path, rule_files: &[&str]) -> VaultState {
         let files: Vec<String> = rule_files.iter().map(|s| s.to_string()).collect();
-        let policy = fs_io::IgnorePolicy::load(root, &files);
+        let policy = policy_with_rules(root, &files);
         let entries = fs_io::scan_workspace(root, &policy).expect("scan");
         let graph = VaultState::build_graph(root, &entries);
         let state = VaultState::default();
@@ -2255,7 +2267,7 @@ mod tests {
         // 那一类条目——惰性目录的子孙根本不进枚举结果，只靠目录那一条测不出这个守卫。
         std::fs::write(root.join("HANDOFF.md"), "# h").unwrap();
         std::fs::write(root.join(".gitignore"), ".local/\nHANDOFF.md\n").unwrap();
-        let policy = fs_io::IgnorePolicy::load(root, &[".gitignore".to_string()]);
+        let policy = policy_with_rules(root, &[".gitignore".to_string()]);
         let entries = fs_io::scan_workspace(root, &policy).expect("scan");
         // 前提：惰性条目确实在 entries 里（惰性可见）——目录与文件两种形态各一条
         assert!(

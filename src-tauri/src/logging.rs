@@ -96,8 +96,8 @@ pub enum LogEventName {
     /// `outcome` 取 migrated / skipped_target_exists / failed；稳态（无旧目录）不记——
     /// 迁移一辈子只发生一次，每次启动记一条「无事可做」只会把日志刷成噪音。
     VaultRegistryMigrated,
-    /// 全量枚举收口处**被内置规则剪掉**的条目数（change vault-open-ignore-set §3.3）。
-    /// 消费方：用户报「我的文件不见了」时的第一诊断依据——内置规则是启发式的（按名字
+    /// 全量枚举收口处**被 `hidden` 档剪掉**的条目数（change vault-open-ignore-set §3.3）。
+    /// 消费方：用户报「我的文件不见了」时的第一诊断依据——`hidden` 档默认名单是启发式的（按名字
     /// 猜「这不是内容」），误伤时唯一能把它与「用户规则命中（惰性可见）」区分的读数。
     /// **只有计数，没有路径或名字原文**（本模块的隐私边界，见模块头）。
     VaultScanIgnored,
@@ -156,7 +156,7 @@ impl LogEventName {
             // 路径本身没有诊断价值，也就不进负载。
             Self::VaultRegistryMigrated => &["outcome"],
             // **只有计数**（十进制字符串）：被剪掉的是哪些条目属于用户内容，落盘即是隐私
-            // 边界之外的东西（见模块头）。要的就是「有一批条目被内置规则剪掉了」这一个事实。
+            // 边界之外的东西（见模块头）。要的就是「有一批条目被 `hidden` 档剪掉了」这一个事实。
             Self::VaultScanIgnored => &["count"],
         }
     }
@@ -480,13 +480,15 @@ fn link_open_to(sink: &Sink, category: &str, outcome: &str, scheme: Option<&str>
     emit(sink, event);
 }
 
-/// Rust 侧埋点：全量枚举收口处被**内置规则**剪掉的条目数（change vault-open-ignore-set
-/// §3.3；调用点是 `fs_io::scan_workspace_at` 的收口）。消费者见
-/// [`LogEventName::VaultScanIgnored`]；负载只有计数，MUST NOT 加路径 / 名字字段。
+/// Rust 侧埋点：全量枚举收口处被 **`hidden` 档**（含恒定临时文件模式）剪掉的条目数
+/// （change vault-open-ignore-set §3.3 + change ignore-tiers-config §5.3；调用点是
+/// `fs_io::scan_workspace_at` 的收口）。消费者见 [`LogEventName::VaultScanIgnored`]；
+/// 负载只有计数，MUST NOT 加路径 / 名字字段。
 ///
-/// 为什么是「一条读数」而不是一个 UI：内置规则误伤一个用户文件时，用户看到的是「我的文件
-/// 不见了」，而我们从界面上无法区分「被内置规则隐藏」与「本来就没有」。这条计数让
-/// `grep vault_scan_ignored` 能直接回答是哪一个。代价可忽略：vault 打开是低频用户动作。
+/// 为什么是「一条读数」而不是一个 UI：`hidden` 档误伤一个用户文件时，用户看到的是「我的文件
+/// 不见了」，而我们从界面上无法区分「被该档隐藏」与「本来就没有」。这条计数让
+/// `grep vault_scan_ignored` 能直接回答是哪一个。**惰性条目不计入**——它们有行、看得见，
+/// 不属于「文件不见了」的诊断对象。代价可忽略：vault 打开是低频用户动作。
 pub fn vault_scan_ignored(count: usize) {
     vault_scan_ignored_to(global(), count);
 }
