@@ -423,6 +423,7 @@ async function mountPanel(snapshotOf: () => unknown): Promise<{
     editor: editorDouble(),
     togglePane: () => {},
     toast: () => {},
+    openVaultPath: () => {}, // 这些用例不点路径：桩空实现
   });
   handle.attachTo(mount as unknown as HTMLElement);
   handle.vaultChanged(VAULT);

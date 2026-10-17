@@ -68,7 +68,7 @@ import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } fro
 import { onRelabel, t } from "./copy";
 import type { ListFilter } from "./list-filter";
 import { sampleCallback } from "./diagnostics";
-import { focusPreservingReadingPosition } from "./scroll-position-view";
+import { duringViewportTransition, focusPreservingReadingPosition } from "./scroll-position-view";
 // frontmatter 范围的唯一真源（tower 批准 M148 的只读复用，2026-09-17）：lezer 的 markdown
 // 解析器不认识 YAML frontmatter，首部 `---` 块里一行 `# x`（YAML 注释）会被解析成
 // ATXHeading1——不排除它就会在大纲里多出一条幽灵条目。语义只有这一份实现（editor.ts 与
@@ -671,9 +671,13 @@ class Toc implements TocHandle {
     const view = this.view();
     this.close();
     const pos = Math.min(item.jumpTo, view.state.doc.length);
-    view.dispatch({
-      selection: { anchor: pos },
-      effects: EditorView.scrollIntoView(pos, { y: "center" }),
+    // 行跳转是应用自己推动视口（change harness-path-link 与 harness 路径点击对齐捕获语义）：
+    // 经转场窗口，中间态滚动不被阅读位置捕获（CL-2；窗口边界由写回落地定义，不用时长量）。
+    duringViewportTransition(() => {
+      view.dispatch({
+        selection: { anchor: pos },
+        effects: EditorView.scrollIntoView(pos, { y: "center" }),
+      });
     });
     // 指示段立即跟上本次跳转（不等节流窗口）：光标刚被放到目标处、视口还没重测，
     // 这一拍只有光标是可信锚点（见 anchorPos 的 preferCursor）。

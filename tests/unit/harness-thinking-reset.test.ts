@@ -413,6 +413,7 @@ test("新会话：chip 从会话档位（Max）回落默认 High，读屏名与�
     editor: editorDouble(),
     togglePane: () => {},
     toast: () => {},
+    openVaultPath: () => {}, // 这些用例不点路径：桩空实现
   });
 
   try {

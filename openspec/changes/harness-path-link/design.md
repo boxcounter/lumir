@@ -157,7 +157,8 @@
 - 目标与展示文本的对应：`keyArgOf` 与路径目标共用同一张「工具 → 路径字段」表（`vault_read` /
   `vault_create` / `vault_patch` / `vault_delete` 的 `path`；`vault_move` 的 `path` 与 `new_path`；
   `vault_list` 不产目标）。展示文本不新增分隔符，`path → path` 两段各自可点。
-- Read 的落点行 = `offset`（1-based；缺省 1）；`limit` v1 不参与落点（不做区间选择）。
+- Read 的落点行 = `offset`（1-based）；**缺省不带行锚**（沿用打开链路的阅读位置恢复，
+  不无端把读者拽到篇首）；`limit` v1 不参与落点（不做区间选择）。
 - 卡片路径同样过文件索引校验（proposal 起草期取值 5），因此目录、已删除文件、未进索引的新建文件
   保持纯文本。
 - 同一套渲染函数服务 live 行、批准卡与恢复行，避免第三条渲染路径。

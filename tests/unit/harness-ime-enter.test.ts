@@ -556,6 +556,7 @@ async function mountComposer(): Promise<{
     editor: editorDouble(),
     togglePane: () => {},
     toast: () => {},
+    openVaultPath: () => {}, // 这些用例不点路径：桩空实现
   });
   const mount = new FakeEl("div");
   handle.attachTo(mount as unknown as HTMLElement);

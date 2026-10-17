@@ -458,6 +458,26 @@
   text-underline-offset: 2px;
   cursor: pointer;
 }
+/* 可点 vault 路径（change harness-path-link）：与 .lumir-hp-link 同一组色值与下划线语义，
+   但元素是 button——重置浏览器默认形态，保住正文的行内排版、复制与选区手感。不引入新
+   token / 色值 / 字号（eink / dark 由既有 token 自动覆盖）。 */
+.lumir-hp-pathlink {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  user-select: text;
+}
+.lumir-hp-pathlink:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
 .lumir-hp-task {
   font-family: var(--font-mono);
   color: var(--text-3);
