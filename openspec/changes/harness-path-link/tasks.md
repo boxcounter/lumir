@@ -68,10 +68,10 @@
 
 ## 6. 路径引用纪律（依赖 `harness-prompt-files` 合并）
 
-- [ ] 6.1 rebase 到含 `src-tauri/src/harness/prompts/` 布局的分支后，新增
+- [x] 6.1 rebase 到含 `src-tauri/src/harness/prompts/` 布局的分支后，新增
       `src-tauri/src/harness/prompts/path-reference.md`（完整相对路径 + 扩展名、`:行号`、只引用真实
       出现过的路径、不用 Markdown 链接语法、目录说清是目录）
-- [ ] 6.2 `src-tauri/src/harness/context.rs`：以固定段装配（与 `QUOTE_REFERENCE` 同构），
+- [x] 6.2 `src-tauri/src/harness/context.rs`：以固定段装配（与 `QUOTE_REFERENCE` 同构），
       `AssemblySource` 记 `path_reference` 条目；Rust 单测断言注入文本与清单条目
 - [ ] 6.3 抽样观察记录：真实 provider 若干轮的路径写法抽样，结论写入完成报告（如实标注未覆盖，不进
       机器判据）
