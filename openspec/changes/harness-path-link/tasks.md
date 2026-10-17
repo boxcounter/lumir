@@ -93,9 +93,8 @@
 
 - [x] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（23 passed / 0 failed）
 - [x] 8.2 `bash scripts/gate.sh quick` 全绿：`GATE RESULT: 10/10 PASS（SKIP 0）`，exit 0
-- [ ] 8.3 `bash scripts/gate.sh visual`（动过 `src/harness-panel.css`）：读数照抄 `GATE RESULT` 原文行
-      + 退出码；本项目 scope 不含 `tests/visual`，不新增视觉场景；若既有基线因样式改动变红，基线更新
-      须先经 Alex 过目（人肉裁决点）
+- [x] 8.3 `bash scripts/gate.sh visual` 全绿：`GATE RESULT: 12/12 PASS（SKIP 0）`，exit 0（visual-regression
+      478s，678 passed / 1 skipped）；本项目 scope 不含 `tests/visual`，未新增视觉场景；既有像素基线零更新
 - [x] 8.4 真机跑批 161 **归并后 dogfood 批次承接**（tower 2026-10-17 裁决，与 M551 场景 105 同一
       先例）：本阶段起跑自检因同机安装版 Lumir.app 在场而拒绝（未 kill 用户实例）；场景 + `--check`
       已随实现落地，真机 PASS 证据待 dogfood 批次产出
