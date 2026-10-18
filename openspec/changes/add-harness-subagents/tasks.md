@@ -118,11 +118,14 @@
 - [ ] 4.13 自动唤醒调度（`scheduler.rs`）：每父会话一个调度器（`pending` 批次 / `running` / `chain`）；
   空闲时合并窗口 `AUTO_WAKE_COALESCE_MS = 2000`（首条通知起算、不顺延）后起一个回合；正忙时排队、
   回合结束后合并为一个回合；同一时刻至多一个自动回合在飞、至多一个待起批次；通知以带 `auto_notice`
-  标记的 user 消息落进父会话历史（`llm_request` 留存即真源，不另写旁路记录）。单测：空闲唤醒、
-  两 run 忙时合并为 1 个回合、在飞时排队、用户回合撤销待起唤醒并把通知并入用户回合输入。
+  标记的 user 消息落进父会话历史（内容真源 = 随后第一条 `llm_request.messages`，不另写完成内容记录）。
+  通知上屏的同一时刻写投递标记 sidecar（`kind=notice_delivered`：`run_ids` / `wake_batch` /
+  `shown_at`），供「已上屏、未消费」窗口的恢复。单测：空闲唤醒、两 run 忙时合并为 1 个回合、
+  在飞时排队、用户回合撤销待起唤醒并把通知并入用户回合输入、上屏后退出→恢复按标记重建且不补唤醒、
+  通知已进过 `llm_request` 时标记被判陈旧不重复上屏。
 - [ ] 4.14 链式失控闸：常量 `AUTO_WAKE_CHAIN_MAX = 3`（代码常量，不进 `SubagentsConfig`）；计数在
   自动回合开始时加一，用户回合开始 / 面板「继续」/ 会话重置恢复切 vault 时清零，不持久化；触顶
-  不起回合、`auto_wake.blocked = "chain_limit"`、通知照常落库上屏；用户停止自动回合视同触顶
+  不起回合、`auto_wake.blocked = "chain_limit"`、通知照常上屏并写投递标记；用户停止自动回合视同触顶
   （`blocked = "stopped"`）。单测覆盖：链内三回合放行、第 4 次触顶、清零后恢复、停止后不再唤醒、
   aborted 不唤醒、自动回合内部触顶 `loop_max` 不改变链计数（两者正交）。
 
@@ -137,10 +140,10 @@
 - [ ] 5.4 子运行审计流水（`harness/jsonl.rs`）：`subruns/<vault 稳定 id>/<run_id>.jsonl`、`run_open` /
   `run_segment`、wire 记录与 sidecar；MUST NOT 落 `sessions/`（`rg` 断言目录常量只出现在一处装配点）。
 - [ ] 5.5 会话列举 / 恢复 / 删除三条链路不感知 `subruns/`：跑既有会话列表验收场景，确认零变化。
-- [ ] 5.6 后台结果投递与自动唤醒：收敛后写带 `auto_notice` 标记的通知消息（不另写旁路记录）+ 通知
-  上屏 + `subagent_notified`（`wake` / `wake_batch` / `chain_index`）；父会话空闲时按 §4.13 起自动
-  回合，正忙时排队合并（单测：不中途改写父会话上下文；两个 run 相继收敛只起一个回合；链触顶不起
-  回合）。
+- [ ] 5.6 后台结果投递与自动唤醒：收敛后写带 `auto_notice` 标记的通知消息（不另写完成内容记录；上屏
+  同时写投递标记）+ 通知上屏 + `subagent_notified`（`wake` / `wake_batch` / `chain_index`）；父会话
+  空闲时按 §4.13 起自动回合，正忙时排队合并（单测：不中途改写父会话上下文；两个 run 相继收敛只起
+  一个回合；链触顶不起回合；退出恢复按标记重建且不补唤醒）。
 
 ## 6. 配置、文档与 bindings
 
@@ -203,19 +206,24 @@
 - [ ] 8.16 「同回合并行 + 按序回填」：一条助手消息含两个 `task`，让第二个先完成；断言两个 run 的
   时间区间重叠、transcript 两行按调用序、两条工具结果按调用序回填。
 - [ ] 8.17 「后台运行与通知 + 自动唤醒」：`background=true`；断言立即 `status=running`、父回合正常
-  `done`、回合结束后可立即发送新消息、run 收敛后 transcript 出现带 `auto_notice` 标记的自动化通知、
-  `subagent_notified` 落盘；空闲时紧接着自动起一个父会话回合（`wake=auto_turn`、`chain_index=1`）。
+  `done`、回合结束后可立即发送新消息、run 收敛后 transcript 出现带 `auto_notice` 标记的自动化通知
+  且留存里同时有 `notice_delivered` 投递标记、`subagent_notified` 落盘；空闲时紧接着自动起一个父会话
+  回合（`wake=auto_turn`、`chain_index=1`）。
 - [ ] 8.18 「内建 explore 与覆盖」：无自定义定义时清单含 `explore` 且工具为只读三件；放同名自定义
   定义后生效的是自定义定义 + 覆盖 warning。
 - [ ] 8.19 「任务面板可见」（WKWebView AX 断言）：子运行期间任务区出现该行（agent / 状态 / 读数）；
   批准卡在行内展开并点名 agent；主 transcript 的 AX 树不含子运行工具行；停止单个 run 只停它。
 - [ ] 8.20 「忙时合并为一个回合」：用户回合进行中两个后台 run 相继收敛；断言当前回合结束后只起**一个**
   自动回合、输入含两条通知（同一 `wake_batch`）、自动回合数 = 1。
-- [ ] 8.21 「链上限与恢复」：连续三个自动回合后第 4 条后台结果收敛 ⇒ 不起回合、通知照常上屏、
-  `wake=blocked_chain`、任务区出现触顶提示行（AX 断言）且「继续」可点；用户发言后链清零，下一条后台
-  结果恢复自动唤醒；停止自动回合后同样不再唤醒（`blocked_stopped`）。
+- [ ] 8.21 「链上限与恢复」：连续三个自动回合后第 4 条后台结果收敛 ⇒ 不起回合、通知照常上屏并写
+  投递标记、`wake=blocked_chain`、任务区出现触顶提示行（AX 断言）且「继续」可点；用户发言后链清零，
+  下一条后台结果恢复自动唤醒；停止自动回合后同样不再唤醒（`blocked_stopped`）。
 - [ ] 8.22 「自动回合与 loop_max 正交」：自动回合内 mock 驱动工具往返触顶 `loop_max`，断言该回合按
   既有提示结束、链计数不变、下一条后台结果仍受链上限约束。
+- [ ] 8.23 「已上屏未消费的通知恢复」：链触顶后的通知上屏、下一次 LLM 请求前终止进程（另跑一次空闲
+  合并窗口内终止的变体）⇒ 重启后留存有 `notice_delivered` 标记、通知据标记 + `subrun` sidecar 重建
+  上屏、不自动起回合；用户发言后该通知进入请求，标记此后被忽略。反向验证：正常收尾后重启，通知不
+  重复上屏。
 
 ## 9. 验证
 
@@ -225,7 +233,7 @@
 - [ ] 9.3 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）；动过
   `src/harness-panel.ts` / `src/style.css` / `tests/visual/**` 后本地跑 `scripts/gate.sh visual`，
   基线更新前截图须 Alex 过目（AGENTS.md 基线纪律）。
-- [ ] 9.4 真机跑新增验收场景（§8.1–8.22），证据目录用绝对路径 `ls` 到；失败与跳过项逐条写明原因。
+- [ ] 9.4 真机跑新增验收场景（§8.1–8.23），证据目录用绝对路径 `ls` 到；失败与跳过项逐条写明原因。
 - [ ] 9.5 公共层对账：`rg -n "fn run_turn_for|fn run_turn" src-tauri/src` 确认循环入口唯一；
   `rg -n "cron:run" src` 确认 cron 交接载荷已按 `RunSpec` 形状（或按 §0.2 记录的顺序豁免）。
 - [ ] 9.6 观测与关停可执行性：按 proposal「观测」节给出检查命令的实际读数与执行时刻；真机重启一次

@@ -183,11 +183,20 @@ SHALL 受会话级并发上限 `max_concurrent` 约束。前台调用 SHALL 阻�
 ### Requirement: 后台完成的通知投递与自动唤醒
 
 系统 SHALL 把每个后台 run 的自终结态（completed / partial / failed）作为一条完成通知交付给父会话：
-通知 SHALL 以一条带自动化标记（`auto_notice`）的 user 角色消息写入父会话历史，该消息的留存即真源，
-MUST NOT 另写一份并行的完成记录；transcript SHALL 按该标记渲染为与用户消息可区分的自动化通知；任务
-面板对应行 SHALL 转为终态。收敛为 `aborted` 的 run SHALL NOT 触发自动唤醒（停止是用户在场的主动
-动作，会话拆除时也没有可唤醒的会话），其终态仍 SHALL 在面板与事件中如实反映。前台 `task` 的结果在
-本回合内回填，MUST NOT 产生通知或唤醒。
+通知 SHALL 以一条带自动化标记（`auto_notice`）的 user 角色消息写入父会话历史，该消息的**内容**以其
+随后进入的第一条 `llm_request.messages` 为真源，MUST NOT 另写一份并行的完成**内容**记录；transcript
+SHALL 按该标记渲染为与用户消息可区分的自动化通知；任务面板对应行 SHALL 转为终态。收敛为 `aborted`
+的 run SHALL NOT 触发自动唤醒（停止是用户在场的主动动作，会话拆除时也没有可唤醒的会话），其终态仍
+SHALL 在面板与事件中如实反映。前台 `task` 的结果在本回合内回填，MUST NOT 产生通知或唤醒。
+
+由于 user 消息只在下一次 LLM 请求发生时才进入留存，系统 SHALL 在通知**上屏的同一时刻**写一条投递
+标记 sidecar（`kind = "notice_delivered"`，字段 `run_ids`、`wake_batch`、`shown_at`），承载「已上屏、
+尚未被模型消费」的事实；该标记 MUST NOT 承载完成内容（正文真源仍为 `llm_request.messages`，run 元数据
+仍为 `subrun` sidecar）。恢复会话时：若留存里已有任一条 `llm_request.messages` 含同 `wake_batch` 的
+`auto_notice` 消息，投递标记 SHALL 被视为陈旧并忽略；否则系统 SHALL 据标记与对应 run 的 `subrun`
+sidecar 重建一条自动化通知并上屏（agent / description / 终态 / `stopped_by` / usage；MUST NOT 把摘要
+正文复制进标记，重建通知的正文 SHALL 注明摘要见审计流水与 `task` 行）。重建 MUST NOT 触发自动回合
+（恢复不是收敛事件，后台 run 在重启时已中止），该通知 SHALL 在用户下一次发言时进入模型上下文。
 
 父会话空闲时，系统 SHALL 在合并窗口（从首条通知算起 `AUTO_WAKE_COALESCE_MS = 2000` 毫秒，不因新
 通知顺延）到期后自动起**一个**父会话回合，窗口内收敛的通知 SHALL 合并为该回合的输入；父会话正忙时
@@ -200,9 +209,9 @@ MUST NOT 另写一份并行的完成记录；transcript SHALL 按该标记渲染
 回合数」：自动回合开始时加一；任何用户回合开始、任务面板「继续」、会话重置 / 恢复 / 切 vault 时清零
 （计数不持久化）。计数达到 `AUTO_WAKE_CHAIN_MAX = 3` 时，父会话快照 SHALL 暴露
 `auto_wake.blocked = "chain_limit"` 并使任务面板出现触顶提示行（不必等下一次通知被拒才提示）。起
-自动回合前若计数已达上限，系统 SHALL NOT 起回合：通知照常落库上屏，仍提供「继续」入口（点击等价
-一次用户发言——计数清零并按当前待处理通知起一个回合）；用户停止自动回合 SHALL 视同触顶
-（`blocked = "stopped"`），后续通知不再唤醒。两个常量（`AUTO_WAKE_CHAIN_MAX`、
+自动回合前若计数已达上限，系统 SHALL NOT 起回合：通知照常上屏并写投递标记（恢复后据标记重建显示），
+仍提供「继续」入口（点击等价一次用户发言——计数清零并按当前待处理通知起一个回合）；用户停止自动
+回合 SHALL 视同触顶（`blocked = "stopped"`），后续通知不再唤醒。两个常量（`AUTO_WAKE_CHAIN_MAX`、
 `AUTO_WAKE_COALESCE_MS`）SHALL 是代码常量而非配置键。该闸与 `loop_max` SHALL 正交：`loop_max`
 限制一个回合内的工具往返数，链上限限制无用户发言的回合数，两者各自停摆、互不替代。无人注视下的
 消耗上界 SHALL 为 `AUTO_WAKE_CHAIN_MAX × max_subruns_per_turn × max_tokens` 加自动回合自身的往返
@@ -228,7 +237,7 @@ MUST NOT 另写一份并行的完成记录；transcript SHALL 按该标记渲染
 #### Scenario: 链上限触顶停摆
 
 - **WHEN** 连续三个自动回合已经跑完，第 4 条后台结果收敛
-- **THEN** 不再起自动回合；通知仍作为自动化通知落库上屏；`subagent_notified.wake = blocked_chain`；
+- **THEN** 不再起自动回合；通知仍作为自动化通知上屏并写投递标记；`subagent_notified.wake = blocked_chain`；
   任务面板出现触顶提示行与「继续」入口；快照 `auto_wake.blocked = "chain_limit"`
 
 #### Scenario: 用户发言清零链计数
@@ -240,8 +249,8 @@ MUST NOT 另写一份并行的完成记录；transcript SHALL 按该标记渲染
 #### Scenario: 停止自动回合不再唤醒
 
 - **WHEN** 用户在自动回合进行中按下停止
-- **THEN** 该回合按既有停止路径结束；快照 `auto_wake.blocked = "stopped"`，后续后台结果只上屏、
-  不再起自动回合；用户下一次发言恢复
+- **THEN** 该回合按既有停止路径结束；快照 `auto_wake.blocked = "stopped"`，后续后台结果只上屏（并写
+  投递标记）、不再起自动回合；用户下一次发言恢复
 
 #### Scenario: 与 loop_max 正交
 
@@ -253,6 +262,18 @@ MUST NOT 另写一份并行的完成记录；transcript SHALL 按该标记渲染
 
 - **WHEN** 用户在任务面板上停止一个后台 run
 - **THEN** 该 run 收敛为 `aborted`，面板行转「已停止」，不产生自动回合（`wake = none_aborted`）
+
+#### Scenario: 上屏后退出、恢复仍可见
+
+- **WHEN** 一条通知已上屏、但尚未进入任何 `llm_request` 时应用退出（含链触顶后不再起回合、以及空闲
+  合并窗口内退出两种变体）
+- **THEN** 留存里有一条 `notice_delivered` 投递标记；重启恢复后据标记与 `subrun` sidecar 重建该通知
+  并上屏；MUST NOT 自动起回合；用户下一次发言的请求里含该通知，此后该标记被视为已消费、不再重复上屏
+
+#### Scenario: 已消费的标记不重复上屏
+
+- **WHEN** 正常收尾（通知已进入某条 `llm_request.messages`）后重启会话
+- **THEN** 对应的投递标记被判为陈旧并忽略，通知不重复出现；用户历史中的该通知只出现一次
 
 ### Requirement: 工具集声明与默认收紧
 
