@@ -449,13 +449,16 @@
 - [x] 9.3 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）；动过
   `src/harness-panel.ts` / `src/style.css` / `tests/visual/**` 后本地跑 `scripts/gate.sh visual`，
   基线更新前截图须 Alex 过目（AGENTS.md 基线纪律）。
-  （M590：`GATE RESULT: 10/10 PASS（SKIP 0）`、退出码 0；visual 档另跑，见完成报告。任务区在无任务时
-  整块 `hidden`，既有视觉场景的默认空态不变，因此没有基线更新申请。）
+  （M590：`GATE RESULT: 10/10 PASS（SKIP 0）`、退出码 0。visual 档另跑但**未取得可信结论**：
+  本 worktree 的视觉套件大面积 5s 超时（主题切换未生效：dark/eink 读到 light token；m303 期望
+  `对话面板` 实得 `Chat panel`），**同一 m303 spec 在 master 上复现同一失败**（环境/基线口径问题，
+  非本改动引入）。任务区在无任务时整块 `hidden`、既有场景默认空态不新增像素，故未申请基线更新。
+  详见完成报告。）
 - [x] 9.4 真机跑新增验收场景（§8.1–8.23），证据目录用绝对路径 `ls` 到；失败与跳过项逐条写明原因。
-  （M590 最终跑批：26 条新场景中 25 条 PASS；`201-subagent-panel-and-stop` 剩一条断言 FAIL——
-  「停止单个 run」的 AX 点击未触发后端 `harness_subagent_stop`（任务行的停止钮与发送钮同名
-  `停止`，真机点击落到哪一个未定），报告里已按失败项登记，不冒充已验。证据：
-  `.local/acceptance/2026-10-18/<场景>/`。）
+  （M590：新增 27 条场景，**26 条 PASS / 1 条 FAIL**（`201-subagent-panel-and-stop` 13 条断言中
+  12 条 PASS，唯一 FAIL 是「被停止的 run 收敛为 `aborted`」——AX 点击「停止」未触发后端
+  `harness_subagent_stop`（任务行停止钮与发送钮同名 `停止`，真机点击落到哪一个未定），按失败项
+  如实登记、不冒充已验。证据：`.local/acceptance/2026-10-18/<场景>/`。）
 - [x] 9.5 公共层对账：`rg -n "fn run_turn_for|fn run_turn" src-tauri/src` 确认循环入口唯一；
   `rg -n "cron:run" src` 确认 cron 交接载荷已按 `RunSpec` 形状（或按 §0.2 记录的顺序豁免）。
   （M590 实测读数：`run_turn` / `run_turn_for` 各一处（turn.rs:217 / 315，共享同一循环
