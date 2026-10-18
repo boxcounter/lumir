@@ -215,9 +215,23 @@ impl SubagentHub {
     /// 中枢自己发的（`hub.emit`）与子运行直发的（`ChildContext::parent_sink`）都取
     /// `inner.sink`，因此在**唯一的装配点**上挂诊断转发，七类 `subagent_*` 事件恰好落一条
     /// 诊断日志——完成 / 失败 / 中止 / 后台路径共用同一出口，业务分支里 MUST NOT 各写一遍。
+    ///
+    /// **幂等**：自动回合的 owned sink 取的就是本方导出（`turn::run_auto_turn_acquired` 拿
+    /// `process_wake` 从 `inner.sink` 克隆的出口再传回来），无条件再包一层会让第 i 个自动回合
+    /// 的事件经过 i 层 `DiagnosticSink`、每层各写一条诊断日志（M601 真机 203 现场：run_i 的
+    /// 每条 `subagent_*` 行出现 i 次）。同一个出口只包一层；用户回合每轮给的是新构造的裸
+    /// sink，指针不同照常替换。
     pub fn set_sink(&self, sink: Option<Arc<dyn EventSink>>) {
-        *self.inner.sink.lock().unwrap_or_else(|e| e.into_inner()) =
-            sink.map(|sink| Arc::new(DiagnosticSink(sink)) as Arc<dyn EventSink>);
+        let mut current = self.inner.sink.lock().unwrap_or_else(|e| e.into_inner());
+        let unchanged = match (current.as_ref(), sink.as_ref()) {
+            (Some(wrapped), Some(next)) => Arc::ptr_eq(wrapped, next),
+            (None, None) => true,
+            _ => false,
+        };
+        if unchanged {
+            return;
+        }
+        *current = sink.map(|sink| Arc::new(DiagnosticSink(sink)) as Arc<dyn EventSink>);
     }
 
     pub fn set_config(&self, config: &HarnessConfig) {
@@ -3753,6 +3767,127 @@ mod tests {
                 .count(),
             2,
             "同一批的两个 run 各出一条 notified，但只起一个回合"
+        );
+    }
+
+    /// 五个连续自动回合：每个 run 的 `subagent_notified` 恰一条、`chain_index` 是它进入的
+    /// 回合序号，且中枢的诊断出口**不随回合**再套一层。
+    ///
+    /// 后者是 M601 的回归锚：真机 203（`.local/acceptance/2026-10-18-m590/observability/
+    /// 203.jsonl`）里 run_i 的每条 `subagent_*` 诊断行都出现 i 次（started / progress /
+    /// finished / notified 同样重复、同 ts 相邻），原因是自动回合把中枢自己的导出（已包一层
+    /// [`DiagnosticSink`]）原样传回 [`SubagentHub::set_sink`]，无条件再包一层——第 i 个回合的
+    /// 事件经过 i 层包装，每层各写一条诊断日志。面板不受影响（每层只转发一次），所以只断言
+    /// 面板事件的用例看不见这个回归；这里同时钉住出口指针。
+    #[test]
+    fn five_chained_auto_turns_emit_one_notified_per_run() {
+        let f = Fixture::new(
+            "wake-five",
+            r#"{"responses":[
+                {"text":"回合 1"},
+                {"text":"回合 2"},
+                {"text":"回合 3"},
+                {"text":"回合 4"},
+                {"text":"回合 5"}
+            ]}"#,
+            |_| {},
+        );
+        f.research("");
+        let hub = f.hub();
+        let export = hub
+            .inner
+            .sink
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("夹具已装配出口");
+        for round in 1..=5u32 {
+            hub.on_background_finished(NoticeRun {
+                run_id: format!("r-chain-{round}"),
+                agent: "research".into(),
+                description: format!("链 {round}"),
+                status: "completed".into(),
+                stopped_by: None,
+                summary: "结论".into(),
+            });
+            hub.inner.wake.lock().unwrap().deadline =
+                Some(Instant::now() - Duration::from_millis(1));
+            process_wake(&hub.inner);
+            assert!(
+                f.wait(Duration::from_secs(4), || {
+                    hub.wake_snapshot().chain == round && !hub.inner.wake.lock().unwrap().running
+                }),
+                "第 {round} 个自动回合没跑完"
+            );
+            assert!(
+                Arc::ptr_eq(
+                    &export,
+                    &hub.inner
+                        .sink
+                        .lock()
+                        .unwrap()
+                        .clone()
+                        .expect("出口不得被清空")
+                ),
+                "自动回合给诊断出口又套了一层（第 {round} 回合），诊断日志会按回合数重复"
+            );
+        }
+        let notified = f.events("subagent_notified");
+        for round in 1..=5u32 {
+            let run_id = format!("r-chain-{round}");
+            let mine: Vec<&serde_json::Value> = notified
+                .iter()
+                .filter(|event| event["run_id"] == run_id.as_str())
+                .collect();
+            assert_eq!(mine.len(), 1, "{run_id} 的 notified 应恰一条：{mine:?}");
+            assert_eq!(mine[0]["wake"], "auto_turn");
+            assert_eq!(mine[0]["chain_index"], json!(round));
+        }
+    }
+
+    /// 出口装配的幂等只针对同一个 Arc：重复装配本方导出不再套层，换一个 sink 照常替换
+    /// （防止把「幂等」做成「首次装配后不再更新」——用户回合每轮给的是新 sink）。
+    #[test]
+    fn set_sink_is_idempotent_only_for_the_same_export() {
+        let f = Fixture::new("set-sink", r#"{"responses":[]}"#, |_| {});
+        let hub = f.hub();
+        let export = hub
+            .inner
+            .sink
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("夹具已装配出口");
+        hub.set_sink(Some(export.clone()));
+        assert!(
+            Arc::ptr_eq(
+                &export,
+                &hub.inner
+                    .sink
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .expect("出口不得被清空")
+            ),
+            "同一导出重复装配必须保持原样（不得再包一层）"
+        );
+        hub.set_sink(Some(Arc::new(CollectSink::default())));
+        assert!(
+            !Arc::ptr_eq(
+                &export,
+                &hub.inner
+                    .sink
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .expect("新 sink 已被装配")
+            ),
+            "换一个 sink 必须替换出口"
+        );
+        hub.set_sink(None);
+        assert!(
+            hub.inner.sink.lock().unwrap().is_none(),
+            "None 必须清空出口"
         );
     }
 
