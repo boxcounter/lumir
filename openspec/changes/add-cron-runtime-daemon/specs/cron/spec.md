@@ -163,8 +163,8 @@ AGENTS.md）照既有规则装配，任务 `prompt` SHALL 作为一条显式用�
 
 `session` SHALL 取 `new`（缺省）或 `dedicated`：`new` 每次触发建立新会话；`dedicated` 每任务复用
 一个专用会话并在后续触发中续写（缺状态时新建）。`model` 在场时 SHALL 作为该次会话的模型覆盖，按
-运行时 `[harness].provider` 的 `models` 声明解析；未声明时回落该 provider 默认模型并给一条 warning，
-MUST NOT 丢弃任务。
+运行时 `[harness].providers.<provider>.models` 的声明解析；未声明时回落该 provider 默认模型并给一条
+warning，MUST NOT 丢弃任务。
 
 **无人值守运行（`run-then-notify` / `silent-run`）MUST NOT 改写、重置或替换用户的交互会话**：其运行
 槽位与交互会话槽位分离，其事件 MUST NOT 渲染进用户当前会话的 transcript；运行结果仍按既有 per-vault

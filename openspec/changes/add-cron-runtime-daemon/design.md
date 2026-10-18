@@ -171,7 +171,7 @@ loop {
 | 运行交接被拒（目标 vault 不是当前 vault） | 否 | 当日下一次拉取触发重试（§6.5）；定时器不再重复尝试 |
 | 运行交接被拒（该任务上一次运行仍在进行） | 否 | 落 `cron_run_skipped(reason=busy)`；下一次拉取触发重试 |
 | 运行失败 / 因需批准而中止 | 是（已在交接时写入） | 当日不自动重试（避免无人值守下的 token 风暴）；`run-then-notify` 通知失败，`silent-run` 只落诊断 |
-| 通知权限被拒 | 否（通知链路整体不可用） | 一条人话 warning；`notify-then-run` 任务因此不可用，反扳机覆盖这类失败 |
+| 通知权限被拒 | 否（通知链路整体不可用） | 一条人话 warning；`notify-then-run` 任务因此不可用，用户可改用 `run-then-notify` / `silent-run` 或删掉该任务 |
 
 ## 6. 运行装配与会话形态
 
@@ -390,7 +390,7 @@ harness 运行时的会话按 vault 键控、每个 vault 一个活跃槽位（`
 
 若目标 vault 次日不是当前 vault：通知照常投递（`notify-then-run` 不受 §6.5 限制），点击时打开它。
 
-## 11. 诊断事件与反向扳机度量
+## 11. 诊断事件与观测口径
 
 | 事件 | 时机 | 字段（≤256 字符） |
 |---|---|---|
@@ -404,19 +404,18 @@ harness 运行时的会话按 vault 键控、每个 vault 一个活跃槽位（`
 成功 / 失败的终态**只在 `cron_run_finished` 一处产出**（由 §6.1 的回执带来），其它事件不重复判定
 （REVIEW.md「同一语义两处真源」条）。
 
-反向扳机（连续 4 周零使用）的度量口径：
+观测口径（诊断用途，不构成任何「删除能力」的判据）：
 
 ```bash
-# ① 点击发起运行（click = intent；ok=false 的失败不计入使用）
+# ① 点击发起运行（click = intent）
 rg -c '"event":"cron_click".*"ok":true' ~/.config/lumir/logs/
 # ② 运行成功（含静默运行与点击发起的运行）
 rg -c '"event":"cron_run_finished".*"ok":true' ~/.config/lumir/logs/
-#    两条读数合计为 0（或日志目录不存在）⇒ 扳机触发，按 proposal 条款删除 cron
 ```
 
-两条集合有重叠（点击发起的运行也落 `cron_run_finished`），判据只看合计是否为 0，重叠不影响结论。
-`cron_notified` 只作诊断：通知弹了四周没人点，说明它没在帮忙，不算使用。`cron_run_skipped` 不计入
-使用（事情没做）；`ok=false` 的运行不计入（失败是缺陷，先修）。
+读数用法：两条合计为 0 只说明「这条链路最近没被用过」，是判断**某条任务**要不要换档（改
+`delivery`）或删掉该任务的输入；`cron_notified` 高而 `cron_click` 长期为 0 说明该任务的提醒没在
+帮忙；`cron_run_skipped` / `ok=false` 说明链路有故障，按缺陷处理。
 
 ## 12. 测试矩阵（机器验收面）
 
@@ -482,7 +481,8 @@ rg -c '"event":"cron_run_finished".*"ok":true' ~/.config/lumir/logs/
 - **运行中退出应用**：`last_fired` 已写，当日不重跑；会话留存里能看到半截运行，诊断有记录。
 - **多机重复**：iCloud 同步的 vault 在每台 Mac 上各自判定与触发；不做跨机去重。
 - **配置不热重载**：改任务 / 策略需重启（与既有配置口径一致）。
-- **通知权限被拒 = `notify-then-run` 失效**：判定照常，但无法投递；反扳机会把「零使用」判出来。
+- **通知权限被拒 = `notify-then-run` 失效**：判定照常，但无法投递；该档任务会静默失效，用户可换
+  `run-then-notify` / `silent-run` 档或删掉该任务。
 - **任务量假设**：tick 每任务一次纯内存判定；几十条以内无感，本 change 不为此做索引。
 - **专用会话的上下文增长**：交给既有自动压缩；本 change 只支持一天一次触发，这不是主要矛盾。
 
