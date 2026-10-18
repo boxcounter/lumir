@@ -15,6 +15,7 @@
 //! 已产出内容保留在 `TurnOutput` 里由 [`abort_turn`] 收口。**事件发射一律在会话锁外**，
 //! 转发器只短暂查会话（中断标志）。
 
+use std::collections::BTreeMap;
 use std::sync::mpsc;
 
 use serde::Deserialize;
@@ -22,12 +23,12 @@ use serde::Deserialize;
 use crate::commands::CommandError;
 use crate::config::HarnessConfig;
 
-use super::approval::{ApprovalRequest, ApprovalSignal};
+use super::approval::ApprovalRequest;
 use super::events::{self, EventSink, StreamSink};
 use super::jsonl;
 use super::llm::{self, LlmClient};
-use super::permission_cache;
 use super::permissions::{self, Decision};
+use super::run::{ApprovalOutcome, BudgetVerdict, OrchestrationCall, RunContext, SessionContext};
 use super::session::{self, PanelMessage};
 use super::thinking;
 use super::tools::{self, ToolContext, ToolOutput};
@@ -239,7 +240,8 @@ pub fn run_turn(
     let mock_start = runtime
         .with_session(&scope, |s| s.mock_cursor())
         .unwrap_or(0);
-    let mut client = match llm::client_at(&config, &scope.vault_id, mock_start) {
+    // 交互路径没有调用级模型覆盖（覆盖参数供子运行 / cron 使用，design §11）。
+    let mut client = match llm::client_at(&config, &scope.vault_id, mock_start, None) {
         Ok(client) => client,
         Err(e) => {
             // 配置级失败（mock fixture 缺失 / api_key 未配）：错误事件即终态。
@@ -250,15 +252,8 @@ pub fn run_turn(
     };
     let mut title_job = None;
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        title_job = run_turn_core(
-            &sink,
-            &runtime,
-            &scope,
-            &config,
-            parts,
-            context_section,
-            client.as_mut(),
-        );
+        let mut ctx = SessionContext::new(&sink, &runtime, &scope, &config);
+        title_job = run_turn_core(&mut ctx, &config, parts, context_section, client.as_mut());
     }))
     .is_err();
     if panicked {
@@ -268,7 +263,13 @@ pub fn run_turn(
         ));
     }
     if let Some(len) = client.mock_script_len() {
-        let next = llm::wrap_cursor(mock_start, client.mock_consumed(), len);
+        // 会话游标 = 本客户端自己弹出的条数 + 子运行经 `skip` 跳过的条数（design §18）：
+        // 并行子运行预分配的区间被父跳过，父续写条目落在所有子区间之后。
+        let next = llm::wrap_cursor(
+            mock_start,
+            client.mock_consumed() + client.external_consumed(),
+            len,
+        );
         let _ = runtime.with_session(&scope, |s| s.set_mock_cursor(next));
     }
     runtime.release_turn(&scope);
@@ -309,24 +310,23 @@ pub fn run_turn_for(
     context_section: Option<String>,
     client: &mut dyn LlmClient,
 ) {
-    let _ = run_turn_core(sink, runtime, scope, config, parts, context_section, client);
+    let mut ctx = SessionContext::new(sink, runtime, scope, config);
+    let _ = run_turn_core(&mut ctx, config, parts, context_section, client);
 }
 
-/// 循环本体（client 与 sink 注入，单测直接驱动）。
+/// 循环本体（上下文与 client 注入，单测直接驱动）。
 ///
 /// 事件信封（vault 标识）由**调用侧包装好的 sink** 承担（`run_turn` 用 [`super::events::ScopedSink`]
-/// 包了一层）；本函数不自己盖，单测可以直接注入自己的收集器。
+/// 包了一层，经 `ctx.sink()` 取用）；本函数不自己盖，单测可以直接注入自己的收集器。
 ///
 /// 会话存在性由 busy 协议保证（`acquire_turn` 建会话、busy 期间 `new_session` /
-/// 切 vault 都被挡），循环中途的 `with_session` 只会 Ok，忽略其 Err 不是吞错。
+/// 切 vault 都被挡），循环中途的 `ctx.with_session` 只会 Ok，忽略其 Err 不是吞错。
 ///
 /// 返回值 = 本轮正常完成后要交给后台线程的命名任务（change add-session-auto-naming，
 /// design D1/D9）：只有走到 `done` 的轮才可能产出它；`aborted` / 错误收尾的轮恒 `None`
 /// （标题素材需要真实问答）。触发判定是纯内存的一次运算，HTTP 调用由调用方起线程。
-fn run_turn_core(
-    sink: &dyn EventSink,
-    runtime: &Runtime,
-    scope: &VaultScope,
+fn run_turn_core<C: RunContext>(
+    ctx: &mut C,
     config: &HarnessConfig,
     parts: impl Into<DeliveryInput>,
     context_section: Option<String>,
@@ -340,7 +340,7 @@ fn run_turn_core(
     // `turn_user_text`：本轮用户提问的**原文段**（剥掉自动注入的编辑器上下文节）——飘移信号的
     // 判据素材（change add-session-auto-naming，design D5：标题词元 vs 用户消息词元）。
     let mut turn_user_text = String::new();
-    let enqueue = runtime.with_session(scope, |s| {
+    let enqueue = ctx.with_session(|s| {
         let parts =
             super::attachments::apply_context_section(parts.into().0, context_section.as_deref());
         let item = super::attachments::user_item_of_parts(&parts);
@@ -364,17 +364,20 @@ fn run_turn_core(
         // 留存口径：user 消息不进 sidecar——它逐字节在下一条 llm_request.messages 里。
     });
     if let Err(e) = enqueue {
-        sink.emit(events::error(&e.code, &e.message));
+        ctx.sink().emit(events::error(&e.code, &e.message));
         return None;
     }
     // 中断标注的 base：本轮起点（user 消息已入队）——`abort_turn` 只在此后的消息里
     // 找 assistant 标注「已停止」，此前轮次的历史消息绝不误标（M348）。
-    let panel_base = runtime.with_session(scope, |s| s.panel_len()).unwrap_or(0);
+    let panel_base = ctx.with_session(|s| s.panel_len()).unwrap_or(0);
 
-    let skills = super::context::discover_skills(&scope.root);
+    // 工具执行面在回合开始时取一次快照（vault 根 / 忽略策略都是回合级事实）。
+    let root = ctx.vault_root().to_path_buf();
+    let policy = ctx.ignore_policy().clone();
+    let skills = super::context::discover_skills(&root);
     let tctx = ToolContext {
-        root: &scope.root,
-        policy: &scope.policy,
+        root: &root,
+        policy: &policy,
         skills: &skills,
     };
 
@@ -384,38 +387,41 @@ fn run_turn_core(
     // （一次响应一条 reasoning 通道），多个工具轮因此自然形成多个块，序号从前到后递增。
     let mut reasoning_block: u32 = 0;
     loop {
-        if rounds >= config.loop_max as usize {
-            loop_max_notice(sink, runtime, scope, config);
-            break;
+        // 预算闸（design §2.2）：交互路径 = 轮次上限；子运行另有 token / 时间闸。
+        match ctx.budget(rounds as u32) {
+            BudgetVerdict::Continue => {}
+            BudgetVerdict::Exhausted(reason) => {
+                ctx.on_budget_exhausted(reason);
+                break;
+            }
         }
         rounds += 1;
 
-        let request = build_request(runtime, scope);
+        let request = build_request(ctx);
         // 发送量（M463）：实际会发的 body 字节数，与发送共用 client 的同一份 body 构造
         //（wire 展开只此一份），紧贴发送点取。
         let request_bytes = client.wire_body_bytes(&request);
         // wire 留存（发送点记录，design §2）：发给 LLM 的同一个结构化请求体原样落
         // llm_request——记录点与发送点同点，无二次序列化，不存在翻译层。
-        record_llm_request(runtime, scope, config, &request, request_bytes);
+        record_llm_request(ctx, config, client, &request, request_bytes);
         // 真流式（M369）：分片在 `complete` 期间收到即转发（正文逐字上屏），中断探测也在流里
         // （`aborted()`）——流式期间点停止即收流，已产出内容留在 `output` 里。思考块序号在
         // 本轮开始时定下：一次 LLM 往返最多一个思考块，该块的所有分片共用同一序号。
+        let aborted = || ctx.aborted();
         let stream = TurnStreamSink {
-            sink,
-            runtime,
-            scope,
+            sink: ctx.sink(),
+            aborted: &aborted,
             reasoning_block,
         };
         let output = client.complete(&request, &stream);
         // 翻译层诊断（chat 方言的悬空 function_call 丢弃等）：翻译期事件 wire 不可推导，
         // 按 sidecar 记录入留存（与本轮请求-响应同文件、紧贴发送点）。
-        record_wire_diagnostics(runtime, scope, client.take_wire_diagnostics());
+        record_wire_diagnostics(ctx, client.take_wire_diagnostics());
         // 响应同样即刻落盘（与上面的 llm_request 严格成对，含失败与在途停止的半截响应——
         // 「模型当时回的是什么」是留存事实的一部分）。放在停止检查点之前：
         // 中断轮产出的半截文本同样如实记录。
         record_llm_response(
-            runtime,
-            scope,
+            ctx,
             &output,
             client.fixture_source(),
             client.requests_encrypted_reasoning(),
@@ -427,7 +433,8 @@ fn run_turn_core(
         // **之前**：只有思考、还没正文时被停止，思考块同样要在场（「已产出内容保留」对思考成立）。
         let fallback_reasoning = reasoning_fallback(&output);
         if let Some(text) = fallback_reasoning.as_deref() {
-            sink.emit(events::reasoning_chunk(text, reasoning_block));
+            ctx.sink()
+                .emit(events::reasoning_chunk(text, reasoning_block));
         }
         // 进了块序号就进位（与改动前的口径一致：有思考内容才占一块）。
         if fallback_reasoning.is_some() || !output.reasoning_deltas.is_empty() {
@@ -437,8 +444,8 @@ fn run_turn_core(
         // —— 停止检查点 ①（M348；M369 起在途停止已在流里收口，这里是「收流后」的那一道）：
         // `complete` 期间被请求停止——产出保留、不再继续。中断优先于错误/空响应判定：
         // 用户已表态「不再继续」，别再追错误行。
-        if turn_aborted(runtime, scope) {
-            abort_turn(sink, runtime, scope, panel_base, &output);
+        if ctx.aborted() {
+            abort_turn(ctx, panel_base, &output);
             return None;
         }
 
@@ -447,32 +454,26 @@ fn run_turn_core(
             if error.context_overflow && config.auto_compact && !overflow_retried {
                 overflow_retried = true;
                 rounds -= 1; // 重试同一轮，不占循环额度
-                match compact_now(sink, runtime, scope, config, client) {
+                match compact_now(ctx, config, client) {
                     Ok(()) => {
                         // 停止检查点（M374）：压缩期间点的停止在此收口——否则 `continue`
                         // 会再开一轮 LLM 往返，被取消的请求重新跑起来（迟到完成复活）。
-                        if turn_aborted(runtime, scope) {
-                            abort_turn(
-                                sink,
-                                runtime,
-                                scope,
-                                panel_base,
-                                &llm::TurnOutput::default(),
-                            );
+                        if ctx.aborted() {
+                            abort_turn(ctx, panel_base, &llm::TurnOutput::default());
                             return None;
                         }
                         continue;
                     }
                     Err(e) => {
-                        sink.emit(events::error(&e.code, &e.message));
+                        ctx.sink().emit(events::error(&e.code, &e.message));
                         return None;
                     }
                 }
             }
             let error_payload = llm_error_payload(&error);
-            let _ = runtime.with_session(scope, |s| s.jsonl().record(&error_payload));
+            ctx.persist(error_payload);
             // SSE 事件形态**不变**（前端只读 code/message）：wire 面诊断字段只进留存。
-            sink.emit(events::error(&error.code, &error.message));
+            ctx.sink().emit(events::error(&error.code, &error.message));
             return None;
         }
 
@@ -483,7 +484,7 @@ fn run_turn_core(
         // 通道：同一份算法一处产出，MUST NOT 各算一套（REVIEW.md 「同一语义两处真源」条）。
         let turn_usage = output.usage;
         let mut usage_snapshot = None;
-        let _ = runtime.with_session(scope, |s| {
+        let _ = ctx.with_session(|s| {
             for item in session::assistant_item(&assistant_text, output.reasoning.as_ref()) {
                 s.push_input(item);
             }
@@ -514,11 +515,11 @@ fn run_turn_core(
             }
         });
         if let Some(snapshot) = usage_snapshot {
-            sink.emit(events::usage(&snapshot));
+            ctx.sink().emit(events::usage(&snapshot));
         }
 
         if output.is_empty_response() {
-            sink.emit(events::error(
+            ctx.sink().emit(events::error(
                 "harness_empty_response",
                 "模型返回了空响应（无文本也无工具调用），本轮已停止",
             ));
@@ -530,18 +531,12 @@ fn run_turn_core(
             if config.auto_compact {
                 if let Some(snapshot) = usage_snapshot {
                     if snapshot.ctx_pct >= config.warn_ctx_pct {
-                        let _ = compact_now(sink, runtime, scope, config, client);
+                        let _ = compact_now(ctx, config, client);
                         // 停止检查点（M374）：压缩调用用 DiscardStreamSink（流里不问停止），
                         // 压缩期间点的停止只能在这里收口——不在此检查的话，下面的 `done`
                         // 会把已流式回复当作正常完成带进消息流，已取消的轮次「复活」。
-                        if turn_aborted(runtime, scope) {
-                            abort_turn(
-                                sink,
-                                runtime,
-                                scope,
-                                panel_base,
-                                &llm::TurnOutput::default(),
-                            );
+                        if ctx.aborted() {
+                            abort_turn(ctx, panel_base, &llm::TurnOutput::default());
                             return None;
                         }
                     }
@@ -550,57 +545,74 @@ fn run_turn_core(
             break;
         }
 
-        // —— 逐个执行工具调用（allow 直执行 / deny 回送 / ask 走批准闸）——
-        // 执行照旧逐个串行；**入 input 的顺序另算**：先攒下每条的「调用项 + 输出项」，本轮
-        // 结束（或中断收口）时一次按「全部调用项在前、全部输出项在后」压栈。理由见
-        // [`flush_call_items`]——调用与输出交错会让 provider 把第二条调用并进一条没有
-        // reasoning 的 assistant 消息，thinking 模式即 400（M360 真 API 实测）。
-        let mut pending: Vec<(serde_json::Value, serde_json::Value)> = Vec::new();
-        for call in &output.calls {
-            if turn_aborted(runtime, scope) {
-                // 中断收口前先把**已执行**调用的项入 input（与本改动前逐条压栈的效果一致，
-                // 只是顺序改成成组）；未执行的调用不留任何项，会话里不会出现悬空的
-                // function_call（provider 会以 "No tool output found for tool call" 拒下一轮）。
-                flush_call_items(runtime, scope, &pending);
-                abort_turn(
-                    sink,
-                    runtime,
-                    scope,
-                    panel_base,
-                    &llm::TurnOutput::default(),
-                );
+        // —— 执行工具调用（allow 直执行 / deny 回送 / ask 走批准闸）——
+        // 普通调用逐个串行；并行编排类调用（`task`）**启动后不排队等待**——同一助手消息里
+        // 的多个 `task` 因此并行推进（design §12.1）。**入 input 的顺序另算**：先攒下每条的
+        // 「调用项 + 输出项」，本轮结束（或中断收口）时一次按调用顺序压栈（见
+        // [`flush_call_items`] 与 [`execute_calls`]）。
+        let pending = match execute_calls(ctx, &tctx, &output.calls) {
+            Ok(pending) => pending,
+            // 中断收口前先把**已执行**调用的项入 input（与逐条压栈的效果一致，只是顺序
+            // 改成成组）；未执行的调用不留任何项，会话里不会出现悬空的 function_call。
+            Err(()) => {
+                abort_turn(ctx, panel_base, &llm::TurnOutput::default());
                 return None;
             }
-            pending.push(handle_call(sink, runtime, scope, config, &tctx, call));
-        }
-        flush_call_items(runtime, scope, &pending);
+        };
+        flush_call_items(ctx, &pending);
         // 停止检查点 ③：中断落在最后一个调用的执行期间——不在此收口的话循环会
         // 白多跑一轮 LLM 往返才在检查点 ① 被截住（「不再继续」以最早检查点为准）。
-        if turn_aborted(runtime, scope) {
-            abort_turn(
-                sink,
-                runtime,
-                scope,
-                panel_base,
-                &llm::TurnOutput::default(),
-            );
+        if ctx.aborted() {
+            abort_turn(ctx, panel_base, &llm::TurnOutput::default());
             return None;
         }
     }
-    sink.emit(events::done());
+    ctx.sink().emit(events::done());
     // 会话自动命名（change add-session-auto-naming，design D1/D9）：`done` 之后做一次**纯内存**
     // 的触发判定 + 素材装配，把任务交回调用方起后台线程——轮完成路径不等 HTTP、不持会话锁发
     // 请求（ADR 0002 §6：不进 keypress-to-paint 与轮次完成路径）。
-    super::title::job_after_turn(runtime, scope, config, &turn_user_text)
+    ctx.after_turn(&turn_user_text)
 }
 
-/// 本轮是否已被请求停止（会话在 busy 协议下必然存在；Err 按未停止处理——
-/// 该路径只在会话被并发重置时出现，重置后循环的后续 with_session 同样会 Err，
-/// 收口由错误事件路径承担）。
-fn turn_aborted(runtime: &Runtime, scope: &VaultScope) -> bool {
-    runtime
-        .with_session(scope, |s| s.abort_requested())
-        .unwrap_or(false)
+/// 一条助手消息里的全部工具调用：普通调用逐个执行，编排类调用（`task`）**先全部启动**，
+/// 再按**调用顺序**收敛，结果收进 `BTreeMap<call_index, (调用项, 输出项)>`（design §12.2
+/// 第 3 条：完成顺序不影响回填顺序）。
+///
+/// 中断（`ctx.aborted()`）在任何一次执行前收口：已执行的调用项照常入 input 后返回 `Err`，
+/// 调用侧走既有 `abort_turn`。被中断的编排句柄随 drop 收敛（生命周期归子运行引擎）。
+fn execute_calls<C: RunContext>(
+    ctx: &mut C,
+    tctx: &ToolContext,
+    calls: &[llm::ToolCall],
+) -> Result<Vec<(serde_json::Value, serde_json::Value)>, ()> {
+    let mut results: BTreeMap<usize, (serde_json::Value, serde_json::Value)> = BTreeMap::new();
+    let mut handles: Vec<(usize, Box<dyn OrchestrationCall>)> = Vec::new();
+    for (index, call) in calls.iter().enumerate() {
+        if ctx.aborted() {
+            let executed: Vec<_> = results.values().cloned().collect();
+            flush_call_items(ctx, &executed);
+            return Err(());
+        }
+        match ctx.orchestrate(call) {
+            Some(handle) => handles.push((index, handle)),
+            None => {
+                results.insert(index, handle_call(ctx, tctx, call));
+            }
+        }
+    }
+    join_in_call_order(&mut results, handles);
+    Ok(results.into_values().collect())
+}
+
+/// 编排调用的收敛与回填：句柄在 `execute_calls` 里已**启动**（`orchestrate` 立即返回），
+/// 这里逐个 `join` 只是等结果；**键是调用序号**，所以完成先后不影响回填顺序（design §12.2）。
+fn join_in_call_order(
+    results: &mut BTreeMap<usize, (serde_json::Value, serde_json::Value)>,
+    handles: Vec<(usize, Box<dyn OrchestrationCall>)>,
+) {
+    for (index, handle) in handles {
+        results.insert(index, handle.join());
+    }
 }
 
 /// 中断收口（M348，design §5「不再继续」语义）：
@@ -612,21 +624,12 @@ fn turn_aborted(runtime: &Runtime, scope: &VaultScope) -> bool {
 /// - 不再继续：调用 / 用量 / 自动压缩一律不处理；
 /// - 如实留痕：JSONL 记 `turn_aborted`，事件发 `aborted`（面板经与 done 同一出口回
 ///   idle，composer 立即可开新一轮）。
-fn abort_turn(
-    sink: &dyn EventSink,
-    runtime: &Runtime,
-    scope: &VaultScope,
-    panel_base: usize,
-    output: &llm::TurnOutput,
-) {
+fn abort_turn<C: RunContext>(ctx: &mut C, panel_base: usize, output: &llm::TurnOutput) {
     let assistant_text = output.text.clone();
     // 程序性中止（无人值守运行的批准闸，change add-cron-runtime-daemon §3.5）：终态必须带
     // 错误码，回执据此产出 `cron_run_finished(ok=false, error=approval_required)`。
-    let stop_reason = runtime
-        .with_session(scope, |s| s.take_stop_reason())
-        .ok()
-        .flatten();
-    let _ = runtime.with_session(scope, |s| {
+    let stop_reason = ctx.with_session(|s| s.take_stop_reason()).ok().flatten();
+    let _ = ctx.with_session(|s| {
         if !assistant_text.is_empty() {
             for item in session::assistant_item(&assistant_text, output.reasoning.as_ref()) {
                 s.push_input(item);
@@ -653,22 +656,22 @@ fn abort_turn(
         s.jsonl().record(&payload);
     });
     match stop_reason {
-        Some(reason) => sink.emit(events::error(reason.code, &reason.message)),
-        None => sink.emit(events::aborted()),
+        Some(reason) => ctx.sink().emit(events::error(reason.code, &reason.message)),
+        None => ctx.sink().emit(events::aborted()),
     }
 }
 
 /// 流式增量 → 面板事件的转发器（M369 真流式）：`llm` 的解析层在流中调用它。
 ///
 /// 事件形状收在这里（解析层不该知道 `text_chunk` / `reasoning_chunk` 的字段，也不该知道
-/// 「思考块序号」这个展示侧概念）；`aborted()` 直接查会话的停止标志——解析层因此不必反向
-/// 依赖 `Runtime`（`llm` 不感知会话层）。调用发生在解析线程上且**不持有任何会话锁**
+/// 「思考块序号」这个展示侧概念）；`aborted()` 直接查上下文的停止标志——解析层因此不必反向
+/// 依赖运行上下文（`llm` 不感知会话层）。调用发生在解析线程上且**不持有任何会话锁**
 ///（`complete` 全程在锁外，见模块头），`aborted()` 只短暂取一次锁。
 struct TurnStreamSink<'a> {
     /// 已盖 vault 信封的出口（`run_turn` 的 [`super::events::ScopedSink`]）。
     sink: &'a dyn EventSink,
-    runtime: &'a Runtime,
-    scope: &'a VaultScope,
+    /// 在途停止的判据（上下文注入；不持有 `&mut ctx`，流式期间只读）。
+    aborted: &'a dyn Fn() -> bool,
     /// 本轮思考块序号：一次 LLM 往返最多一块，该块的全部思考分片共用它。
     reasoning_block: u32,
 }
@@ -684,15 +687,19 @@ impl StreamSink for TurnStreamSink<'_> {
     }
 
     fn aborted(&self) -> bool {
-        turn_aborted(self.runtime, self.scope)
+        (self.aborted)()
     }
 }
 
 /// 构造 LLM 请求（系统上下文 + 全部历史 + 工具定义 + 本轮思考档位；会话历史每轮整体序列化，
 /// 克隆即可）。档位在**会话侧**（M362），这里读一次——本轮内不再变（切档位影响其后发出的消息）。
-fn build_request(runtime: &Runtime, scope: &VaultScope) -> llm::Request {
-    let (system, input, effort) = runtime
-        .with_session(scope, |s| {
+///
+/// 工具定义走 [`RunContext::tool_definitions`]：交互上下文 = 当前注册表；子运行 = 定义白名单。
+/// 这是回抽唯一改变交互路径**数据面**的点（其余是调用面），无子代理定义时与既有 8 件清单
+/// 深度相等（单测钉死）。
+fn build_request<C: RunContext>(ctx: &mut C) -> llm::Request {
+    let (system, input, effort) = ctx
+        .with_session(|s| {
             (
                 s.system().to_string(),
                 s.input().to_vec(),
@@ -703,7 +710,7 @@ fn build_request(runtime: &Runtime, scope: &VaultScope) -> llm::Request {
     llm::Request {
         system,
         input,
-        tools: tools::definitions(),
+        tools: ctx.tool_definitions(),
         effort,
     }
 }
@@ -711,18 +718,22 @@ fn build_request(runtime: &Runtime, scope: &VaultScope) -> llm::Request {
 /// 发送点落 `llm_request`：记录体就是传给 client 的同一个结构化 `Request`
 /// （provider / model / system / messages / params），发送前落盘。工具循环每次迭代
 /// 与压缩调用各自走本函数——每次 LLM 调用恰一条。
-fn record_llm_request(
-    runtime: &Runtime,
-    scope: &VaultScope,
+///
+/// `model` 取 [`LlmClient::model`]（调用级覆盖生效后的实际值），缺省回落 `active_model`：
+/// 覆盖参数与留存值只允许一处真源（REVIEW.md「同一语义两处真源」条）。
+fn record_llm_request<C: RunContext>(
+    ctx: &mut C,
     config: &HarnessConfig,
+    client: &dyn LlmClient,
     request: &llm::Request,
     request_bytes: Option<u64>,
 ) {
+    let model = client.model().unwrap_or_else(|| llm::active_model(config));
     let mut payload = serde_json::json!({
         "kind": "llm_request",
         "request": {
             "provider": config.provider,
-            "model": llm::active_model(config),
+            "model": model,
             "system": request.system,
             "messages": request.input,
             "params": { "thinking": request.effort.as_str() },
@@ -734,7 +745,7 @@ fn record_llm_request(
     if let Some(bytes) = request_bytes {
         payload["request_bytes"] = serde_json::json!(bytes);
     }
-    let _ = runtime.with_session(scope, |s| s.jsonl().record(&payload));
+    ctx.persist(payload);
 }
 
 /// HTTP 面诊断字段的追加（M463 起）：`http_status` / `raw_body`（已截断，见
@@ -776,11 +787,7 @@ fn llm_error_payload(error: &llm::TurnError) -> serde_json::Value {
 /// 丢弃的项（悬空 `function_call` 等）是 **wire 不可推导**的事件——不发出去，但会改变模型
 /// 看到的历史，必须可审计。与 approval / llm_error 同族：每轮 `complete` 之后紧贴发送点落盘；
 /// 空表（Responses / mock / 无诊断）不产生任何记录。
-fn record_wire_diagnostics(
-    runtime: &Runtime,
-    scope: &VaultScope,
-    diagnostics: Vec<llm::WireDiagnostic>,
-) {
+fn record_wire_diagnostics<C: RunContext>(ctx: &mut C, diagnostics: Vec<llm::WireDiagnostic>) {
     for diagnostic in diagnostics {
         let payload = serde_json::json!({
             "kind": "wire_diagnostic",
@@ -788,7 +795,7 @@ fn record_wire_diagnostics(
             "call_id": diagnostic.call_id,
             "message": diagnostic.message,
         });
-        let _ = runtime.with_session(scope, |s| s.jsonl().record(&payload));
+        ctx.persist(payload);
     }
 }
 
@@ -810,9 +817,8 @@ fn record_wire_diagnostics(
 /// 为真时落 `reasoning_encrypted: {requested, received}`——M464 密文回放路径是否生效的
 /// 留存读数（2026-10-14 真机溢出复盘只能事后从 reasoning 项数出 29/29 缺席，「没请求」与
 /// 「请求了没回」分不开；键缺席 = 未请求，与错误诊断键同口径）。
-fn record_llm_response(
-    runtime: &Runtime,
-    scope: &VaultScope,
+fn record_llm_response<C: RunContext>(
+    ctx: &mut C,
     output: &llm::TurnOutput,
     fixture_source: Option<&str>,
     encrypted_reasoning_requested: bool,
@@ -876,7 +882,7 @@ fn record_llm_response(
     if let Some(source) = fixture_source {
         payload["mock_fixture"] = serde_json::json!(source);
     }
-    let _ = runtime.with_session(scope, |s| s.jsonl().record(&payload));
+    ctx.persist(payload);
 }
 
 /// reasoning 回放项里是否带非空 `encrypted_content`（密文回放路径是否生效的事实判定）：
@@ -904,68 +910,21 @@ fn reasoning_fallback(output: &llm::TurnOutput) -> Option<String> {
     output.reasoning.as_ref().and_then(thinking::reasoning_text)
 }
 
-/// loop_max 终止提示（面板可见：assistant 消息 + 事件 + JSONL 记录）。
-fn loop_max_notice(
-    sink: &dyn EventSink,
-    runtime: &Runtime,
-    scope: &VaultScope,
-    config: &HarnessConfig,
-) {
-    let text = format!(
-        "已达到工具循环上限（{} 轮），本轮已停止。问题可能过大，建议开新会话后拆小提问。",
-        config.loop_max
-    );
-    let _ = runtime.with_session(scope, |s| {
-        for item in session::assistant_item(&text, None) {
-            s.push_input(item);
-        }
-        s.push_panel(PanelMessage {
-            role: "assistant".into(),
-            text: Some(text.clone()),
-            summary: None,
-            name: None,
-            status: None,
-            reasoning: None,
-            decision: None,
-            ts: jsonl::unix_secs_now(),
-        });
-        s.jsonl().record(&serde_json::json!({
-            "kind": "loop_max_reached",
-            "loop_max": config.loop_max,
-        }));
-    });
-    sink.emit(events::text_chunk(&text));
-}
-
-/// 会话内批准缓存的命名空间：`(vault 根, 会话 id)`（design §6）。会话 id 取自留存文件名——
-/// 新会话 / 切 vault / 压缩开新逻辑会话都会换命名空间，缓存随之清空；同一命名空间内才谈命中。
-/// 无会话（理论上到不了这里）返回 `None`，命中判定按「没缓存」处理。
-fn cache_namespace(runtime: &Runtime, scope: &VaultScope) -> Option<permission_cache::Namespace> {
-    runtime
-        .with_session(scope, |session| {
-            let session_id = jsonl::JsonlWriter::session_id_from_path(session.jsonl().path());
-            permission_cache::Namespace::new(scope.key(), session_id.unwrap_or_default())
-        })
-        .ok()
-}
-
 /// 单个工具调用：权限判定 → （ask 档）批准闸 → 执行 → 结果回送（事件 + 面板 + JSONL）。
 ///
 /// **不直接把消息项压进 input**：返回「调用项 + 输出项」由调用侧成组压栈（见
 /// [`flush_call_items`]）；面板与 JSONL 的记录仍在本函数内、逐条按时序落，故用户看到的
 /// 工具行顺序与执行顺序一致，不受入 input 顺序影响。
-fn handle_call(
-    sink: &dyn EventSink,
-    runtime: &Runtime,
-    scope: &VaultScope,
-    config: &HarnessConfig,
+fn handle_call<C: RunContext>(
+    ctx: &mut C,
     tctx: &ToolContext,
     call: &llm::ToolCall,
 ) -> (serde_json::Value, serde_json::Value) {
     // 参数摘要：live「started」事件与面板快照（M367 持久化）共用同一份，MUST NOT 各算各的
     // （REVIEW.md 「同一语义两处真源」条：同一语义两处真源）。
     let args_summary = summarize_args(&call.arguments);
-    sink.emit(events::tool_call(&call.name, "started", &args_summary));
+    ctx.sink()
+        .emit(events::tool_call(&call.name, "started", &args_summary));
     let parsed: Result<serde_json::Value, _> = serde_json::from_str(&call.arguments);
     let args_ok = parsed.is_ok();
     let args = parsed.unwrap_or_default();
@@ -973,21 +932,6 @@ fn handle_call(
     // 只会把循环挂死在永远等不到的批准上（工具集是闭集合，MUST NOT 扩张）。
     let known = tools::TOOL_NAMES.contains(&call.name.as_str());
     let subject = tools::permission_subject(&call.name, &args);
-    // cli_run 的分类与写目标提取以 argv 数组为输入（比主体串信息全）；非 cli_run 传 None。
-    let cli_argv = (call.name == "cli_run").then(|| tools::cli_argv(&args));
-    // 会话内批准缓存（design §6）：只在第 5 层（模式默认分层）短路——不解锁 deny / 重定向 /
-    // 黑名单三层（层序在 `permissions::decide` 里，这里只提供命中布尔）。
-    let cached = known
-        && args_ok
-        && cache_namespace(runtime, scope)
-            .is_some_and(|ns| permission_cache::is_remembered(&ns, &call.name, &subject));
-    let judge = permissions::Judge {
-        mode: config.permission_mode,
-        root: tctx.root,
-        argv: cli_argv,
-        cached,
-    };
-    let verdict = permissions::decide(&config.permissions, &call.name, &subject, &judge);
 
     // 批准闸决定（面板 decision 字段的数据源，M413）：只有 ask 档批准闸产出
     // approved / rejected；allow / deny / 重定向路径没有批准动作，字段缺席。
@@ -1000,6 +944,9 @@ fn handle_call(
         // purpose 校验在判定管线之前（design §3.4）：ask 档批准卡必须已有用途句可展示。
         output
     } else {
+        // 判定与批准缓存命中都经上下文（缓存键 / 层序在实现侧，见 `RunContext::decide`）；
+        // 只有「已知 + 参数合法 + purpose 合法」的调用才进判定（回抽前同样不判定前两档）。
+        let verdict = ctx.decide(&call.name, &subject, &args);
         match verdict.decision {
             // 模式层不产出 Deny（只读档 = Always Ask），Deny 只来自第 1 层的用户 deny 规则。
             // M459：回送文案带上命中的规则原文（「是哪条规则拦的」不必回配置文件核对）。
@@ -1014,14 +961,12 @@ fn handle_call(
             Decision::Ask => {
                 // 判定依据（M459）随批准请求进批准闸——事件与快照两条通道同取这一个值。
                 let (out, decision) = gated_execute(
-                    sink,
-                    runtime,
-                    scope,
+                    ctx,
                     tctx,
+                    subject.as_str(),
                     GatedCall {
                         call,
                         args: &args,
-                        subject: &subject,
                         reason: verdict.reason,
                     },
                 );
@@ -1049,7 +994,8 @@ fn handle_call(
     // 事件 status 只发契约内的 started|done（m303 面板按非 done 即 started 归并——
     // 发细分值会产生永不完结的「正在执行」幻影行）；细分状态放 summary（D344 展示）。
     let result_summary = summarize_result(status, &output);
-    sink.emit(events::tool_call(&call.name, "done", &result_summary));
+    ctx.sink()
+        .emit(events::tool_call(&call.name, "done", &result_summary));
     // 面板快照持久化 summary（M367）：成功 = 参数摘要（恢复后工具行显示「调用了什么工具、
     // 带了什么参数」）；失败 = 结果摘要（含细分状态与错误码）。修前 summary 恒 None，面板
     // 重载（快照恢复路径）后工具行摘要全丢。
@@ -1059,7 +1005,7 @@ fn handle_call(
         result_summary
     };
     let output_text = serde_json::to_string(&output.value).unwrap_or_default();
-    let _ = runtime.with_session(scope, |s| {
+    let _ = ctx.with_session(|s| {
         s.push_panel(PanelMessage {
             role: "tool".into(),
             text: Some(output_text.clone()),
@@ -1089,15 +1035,14 @@ fn handle_call(
 /// 报错文案指向 reasoning，真触发条件是项序（同两条调用、reasoning 整项删掉也照旧 400；
 /// 只把两组调用对改成 `fc1, fc2, fco1, fco2` 就 200）。故入 input 的顺序由本函数独占，
 /// 调用点 MUST NOT 再逐条压栈。
-fn flush_call_items(
-    runtime: &Runtime,
-    scope: &VaultScope,
+fn flush_call_items<C: RunContext>(
+    ctx: &mut C,
     pending: &[(serde_json::Value, serde_json::Value)],
 ) {
     if pending.is_empty() {
         return;
     }
-    let _ = runtime.with_session(scope, |s| {
+    let _ = ctx.with_session(|s| {
         for (call_item, _) in pending {
             s.push_input(call_item.clone());
         }
@@ -1107,44 +1052,37 @@ fn flush_call_items(
     });
 }
 
-/// 进批准闸的一次调用（[`gated_execute`] 的输入面）：工具调用本体 + 判定用的主体串 + 判定依据。
-/// 归成一组，是因为它们都描述「被闸住的这一次调用」、且主体串与判定依据同源（都出自
-/// `handle_call` 的同一轮判定）——散成三个参数只会把调用点拉长，也让闸函数的参数面失去内聚。
+/// 进批准闸的一次调用（[`gated_execute`] 的输入面）：工具调用本体 + 判定依据。
+/// 主体串单独传（批准缓存键，与判定同源）；这里只收「被闸住的这次调用」自己的两件。
 struct GatedCall<'a> {
     call: &'a llm::ToolCall,
     args: &'a serde_json::Value,
-    subject: &'a str,
     /// 判定依据（M459）：随批准请求进 `ApprovalRequest`，事件与快照两条 UI 通道都从这里取。
     reason: Option<permissions::DecisionReason>,
 }
 
-/// ask 档：生成预览 → 挂起批准 → 等决定 → 采纳执行 / 拒绝回送。
+/// ask 档：无人值守短路 → 生成预览 → 挂起批准 → 等决定 → 采纳执行 / 拒绝回送。
 ///
 /// 返回值带批准闸决定（`Some("approved")` / `Some("rejected")`）——面板工具行的
 /// decision 字段数据源；通道失效 / 本轮被停止没有决定，返回 None。
-fn gated_execute(
-    sink: &dyn EventSink,
-    runtime: &Runtime,
-    scope: &VaultScope,
+///
+/// 挂起、事件上屏与等待都在 [`RunContext::approval`] 内完成（交互上下文 = 既有批准闸；
+/// 子运行 = 透传到父会话）。无人值守策略在**预览之前**由
+/// [`RunContext::reject_unavailable`] 短路。本函数只保留与工具语义相关的三件事：
+/// 预览、执行、拒绝文案。
+fn gated_execute<C: RunContext>(
+    ctx: &mut C,
     tctx: &ToolContext,
+    subject: &str,
     gated: GatedCall<'_>,
 ) -> (ToolOutput, Option<&'static str>) {
-    // 无人值守运行槽（change add-cron-runtime-daemon §3.5）：遇到需批准的调用即中止本次运行
-    // ——不自动放行、不自动拒绝、也不无限挂起。置程序性中止原因（`approval_required`），
-    // 工具循环在下一个检查点收口，终态事件据此带错误码（而不是伪装成用户主动停止）。
-    if runtime.is_isolated() {
-        let message = "无人值守运行遇到需要批准的调用，已中止本次运行";
-        let _ = runtime.with_session(scope, |session| {
-            session.stop_with("approval_required", message);
-        });
-        return (ToolOutput::err("approval_required", message), None);
+    // 无人值守槽位（change add-cron-runtime-daemon §3.5，master 的既有顺序）：在生成预览
+    // **之前**短路——预览失败（如 patch 目标缺失 / 不唯一命中）同样中止本次运行，不得把
+    // 预览错误回送模型续跑。这是 cron 已合并的语义，公共层回抽 MUST NOT 改变它。
+    if let Some((code, message)) = ctx.reject_unavailable() {
+        return (ToolOutput::err(&code, &message), None);
     }
-    let GatedCall {
-        call,
-        args,
-        subject,
-        reason,
-    } = gated;
+    let GatedCall { call, args, reason } = gated;
     let preview = match tools::approval_preview(&call.name, args, tctx) {
         Ok(preview) => preview,
         // 预览失败（如 patch 不唯一命中）：错误直接回送模型，不进批准闸。
@@ -1162,53 +1100,39 @@ fn gated_execute(
         true,
         tx,
     );
-    let id = match runtime.park_approval(scope, request) {
-        Ok(id) => id,
-        Err(e) => return (ToolOutput::from_command_error(&e), None),
-    };
-    // purpose（design §3.4）经 events::approval_request_with_purpose 进载荷（M413 收编：
-    // 事件函数带 purpose 参数，turn 不再手工注入键）；批准卡快照的 purpose 与事件同源，
-    // 都取 preview.purpose（单一真源）。M459：判定依据同理走同一个 `reason`。
-    sink.emit(events::approval_request_with_purpose(
-        &id,
-        &call.name,
-        preview.diff.as_deref(),
-        preview.argv.as_deref(),
-        preview.purpose.as_deref(),
-        reason.as_ref(),
-    ));
-    // 未决批准项不自动超时通过：无超时地等决定（会话被重置 / vault 切换使发送端
-    // 失效时 recv 报错 → 判过期，不执行）。
-    let signal = match rx.recv() {
-        Ok(signal) => signal,
-        Err(_) => {
+    // 事件载荷（purpose / 判定依据与批准卡同源）由上下文在挂起成功后发行；无人值守槽位
+    // 在这里得到 `approval_required`（程序性中止原因已由上下文置进会话）。
+    let decision = match ctx.approval(request, rx) {
+        ApprovalOutcome::Decided(decision) => decision,
+        ApprovalOutcome::Withdrawn => {
+            // 本轮被用户停止（M348），待决项已收回——如实记 turn_aborted，循环里的停止
+            // 检查点随即收口，不继续执行也不回送模型。
+            return (
+                ToolOutput::err("turn_aborted", "本轮已停止，待批准的调用未执行"),
+                None,
+            );
+        }
+        ApprovalOutcome::Stale => {
             return (
                 ToolOutput::err(
                     "approval_stale",
                     "批准通道已关闭（会话被重置或 vault 已切换），本次调用未执行",
                 ),
                 None,
-            )
+            );
         }
-    };
-    // Withdrawn：本轮被用户停止（M348），待决项已收回——如实记 turn_aborted，
-    // 循环里的停止检查点随即收口，不继续执行也不回送模型。
-    let decision = match signal {
-        ApprovalSignal::Decided(decision) => decision,
-        ApprovalSignal::Withdrawn => {
-            return (
-                ToolOutput::err("turn_aborted", "本轮已停止，待批准的调用未执行"),
-                None,
-            )
+        ApprovalOutcome::Unavailable { code, message } => {
+            return (ToolOutput::err(&code, &message), None);
+        }
+        ApprovalOutcome::Failed(error) => {
+            return (ToolOutput::from_command_error(&error), None);
         }
     };
     if decision.approved {
         // 「采纳且本会话不再问」（design §6）：写会话内批准缓存——唯一写入点。
         // 缓存键 = (工具, 规范化主体串)，与 handle_call 判定时的取法同源（都是这里算的 subject）。
         if decision.remember {
-            if let Some(namespace) = cache_namespace(runtime, scope) {
-                permission_cache::remember(&namespace, &call.name, subject);
-            }
+            ctx.remember_approval(&call.name, subject);
         }
         // 写工具带预览基准 revision 执行：批准窗内文件被改 ⇒ fs_patch_file CAS
         // 拒掉（document_conflict 回送模型），落盘不与已批准 diff 分叉。
@@ -1233,10 +1157,8 @@ fn gated_execute(
 /// 也走 wire 留存（llm_request / llm_response 各一条，落在**旧**文件里：摘要的产出
 /// 过程是「模型当时看到了什么」的一部分）；旧文件封闭不再追加，摘要随新文件首行
 /// `session_open.compact_summary` 留存。失败不阻断对话，由调用点决定是否终态。
-fn compact_now(
-    sink: &dyn EventSink,
-    runtime: &Runtime,
-    scope: &VaultScope,
+fn compact_now<C: RunContext>(
+    ctx: &mut C,
     config: &HarnessConfig,
     client: &mut dyn LlmClient,
 ) -> Result<(), CommandError> {
@@ -1245,12 +1167,12 @@ fn compact_now(
 已经确认的决策、工具调用的关键结果（读了什么、改了什么、批准与否）、尚未完成的动作。\
 丢掉逐字过程与重复内容。用与用户相同的语言写摘要。";
 
-    let input = runtime.with_session(scope, |s| s.input().to_vec())?;
+    let input = ctx.with_session(|s| s.input().to_vec())?;
     let history = render_history(&input);
     // 压缩是一次汇总调用，不产思考块给人看；档位照会话现值传（不另造一个默认值，
     // 否则「同一个会话里两种档位」会多一处隐式状态——M362）。
-    let effort = runtime
-        .with_session(scope, |s| s.thinking_effort())
+    let effort = ctx
+        .with_session(|s| s.thinking_effort())
         .unwrap_or_default();
     // 流式 sink 用丢弃口（M369）：摘要不逐片进面板——它只在整个压缩完成后作为 `compact`
     // 事件与面板消息整段落盘；也不参与在途停止（压缩是一次汇总调用）。
@@ -1265,12 +1187,11 @@ fn compact_now(
     // 压缩调用的逐请求留存（wire 口径；落在旧文件，先于下面的文件轮换）。
     // 发送量同 llm_request 一起记（M463，与发送共用 client 的 body 构造）。
     let compact_bytes = client.wire_body_bytes(&compact_request);
-    record_llm_request(runtime, scope, config, &compact_request, compact_bytes);
+    record_llm_request(ctx, config, client, &compact_request, compact_bytes);
     let output = client.complete(&compact_request, &llm::DiscardStreamSink);
-    record_wire_diagnostics(runtime, scope, client.take_wire_diagnostics());
+    record_wire_diagnostics(ctx, client.take_wire_diagnostics());
     record_llm_response(
-        runtime,
-        scope,
+        ctx,
         &output,
         client.fixture_source(),
         client.requests_encrypted_reasoning(),
@@ -1292,75 +1213,9 @@ fn compact_now(
         }
         llm::TurnOutput { text, .. } => text,
     };
-    let context_section =
-        runtime.with_session(scope, |s| s.current_context().map(str::to_string))?;
-    // 新逻辑会话：重新装配系统上下文（三处装配点之一）+ 新留存文件（首行挂起
-    // session_open，opened_from=compact、compact_summary 在场）。旧文件封闭不再追加。
-    //
-    // 读数种子（M526）：带压缩前的读数快照 + **清零**的累计器——与下面 `rotate` 的口径一致
-    // （累计随逻辑会话边界清零、读数快照不清零）。这份文件再被恢复时，面板先显示压缩前最近
-    // 一次真实读数，累计从压缩后的记录重起（与压缩后 live 面板的观感同一条语义）。
-    let session_effort = runtime
-        .with_session(scope, |s| s.thinking_effort())
-        .unwrap_or_default();
-    let usage_snapshot = runtime
-        .with_session(scope, |s| s.usage())
-        .unwrap_or_default();
-    // 压缩前源会话的有效标题（change add-session-auto-naming，design D7 的继承点之一）：
-    // 新文件在 `session_open` 之后追加一条 `decision=inherit`——不继承的话新文件的首条用户
-    // 消息是压缩模板文字，回落口径会把那段模板当会话名（比没有标题更糟）。
-    let inherited_title = runtime
-        .with_session(scope, |s| s.title().map(str::to_string))
-        .unwrap_or(None);
-    let assembled = super::context::assemble_system(&scope.root);
-    let session_id = jsonl::new_session_id();
-    let open = super::session_open_payload(
-        scope,
-        config,
-        &assembled,
-        &session_id,
-        "compact",
-        session_effort,
-        super::OpenExtras {
-            compact_summary: Some(&summary),
-            usage_seed: Some((usage_snapshot, super::session::CacheTotals::default())),
-        },
-    );
-    let writer = jsonl::JsonlWriter::create(&session_id, &scope.vault_id, &open)?;
-    let _ = runtime.with_session(scope, |s| {
-        let mut items = vec![session::user_item(&format!(
-            "（此前会话已压缩为摘要，接着摘要继续）\n{summary}"
-        ))];
-        if let Some(section) = &context_section {
-            items.push(session::user_item(section));
-        }
-        s.replace_input(items);
-        s.push_panel(PanelMessage {
-            role: "compact".into(),
-            text: None,
-            summary: Some(summary.clone()),
-            name: None,
-            status: None,
-            reasoning: None,
-            decision: None,
-            ts: jsonl::unix_secs_now(),
-        });
-        // 文件边界即压缩留痕：压缩事件类（旧 compact kind）已废弃。
-        s.rotate(assembled.text, writer);
-        // 继承标题（design D7）：新文件 `session_open` 之后紧接 `inherit` 记录。压缩发生在轮次
-        // 进行中，但新文件此刻还没有任何请求 / 响应对，记录不会插进一对之间（不变量 7）。
-        if let Some(title) = &inherited_title {
-            s.jsonl().record(&super::title::inherit_payload(title));
-            s.set_title(Some(title.clone()));
-        }
-    });
-    sink.emit(events::compact(&summary));
-    // 继承标题也发一次 title 事件（design D11）：面板先按 compact 重置视图，再应用续用的标题
-    // ——轮换后会话名保持连续。
-    if let Some(title) = inherited_title {
-        sink.emit(events::title(&title));
-    }
-    Ok(())
+    // 会话侧收尾由上下文决定（交互 = 新留存文件 + 重装系统上下文；子运行 = 只压内存态输入）：
+    // 压缩请求本身是共享的，轮换策略是上下文事实。
+    ctx.begin_compacted_session(&summary)
 }
 
 /// 历史渲染成压缩输入文本（user/assistant message + function_call/output 项）。
@@ -2220,5 +2075,139 @@ mod tests {
             "content": [{"encrypted_content": "enc-deep"}],
         });
         assert!(reasoning_has_encrypted_content(&nested));
+    }
+
+    /// 无人值守槽 + ask 档调用 + **预览失败**：master 的顺序是在生成预览**之前**按槽位短路
+    /// （`stop_with("approval_required")` 中止），预览错误不得回送模型续跑。
+    ///
+    /// 这是 M586 回抽必须保住的既有语义：cron（M583/M584）是已合并的消费者，预览失败时
+    /// 「中止运行」与「让模型纠错续跑」是两种不同的错误口径，换口径须另立 change 显式裁决。
+    ///
+    /// 区分度（REVIEW.md「断言等价于子串」条）：断言 ① 终态是 `approval_required` 错误而不是
+    /// `done`；② mock 脚本只被弹了第一条（旧顺序下预览错误回送模型，循环会继续弹第二条并正常
+    /// 收尾）。恢复「预览前短路」之前本用例两条断言都红（已实测）。
+    #[test]
+    fn isolated_ask_call_with_failed_preview_still_aborts_the_run() {
+        let root =
+            std::env::temp_dir().join(format!("lumir-harness-isolated-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md「测试污染真实环境」条：不写真实 ~/.config/lumir）。
+        // 先取进程级 XDG 锁、再改环境（drop 逆序：XDG 复原时仍持锁）。
+        let _xdg = crate::harness::xdg_test_lock();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-test-1".to_string(),
+        };
+        let config = HarnessConfig {
+            provider: HarnessProvider::Mock,
+            // 只读档：vault_patch 进 Ask 档（默认 vault_write 会直接放行写工具，到不了批准闸）。
+            permission_mode: crate::config::PermissionMode::ReadOnly,
+            ..Default::default()
+        };
+
+        // 无人值守槽（cron）：ask 档调用 + 预览失败（目标文件不存在 ⇒ fs_not_found）。
+        let runtime = Runtime::isolated();
+        assert!(runtime.is_isolated(), "测试前提：无人值守运行时实例");
+        runtime.acquire_turn(&scope, &config).unwrap();
+        let sink = Collect::default();
+        let seen = sink.0.clone();
+        let script = r#"{"responses": [
+            {"text": "先改文件。",
+             "tool_calls": [{"id": "c1", "name": "vault_patch",
+               "arguments": "{\"path\":\"missing.md\",\"edits\":[{\"old_string\":\"a\",\"new_string\":\"b\"}]}"}]},
+            {"text": "预览错误后继续。"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "isolated-approval").unwrap();
+        run_turn_for(
+            &sink,
+            &runtime,
+            &scope,
+            &config,
+            "改一下".to_string(),
+            None,
+            &mut client,
+        );
+        runtime.release_turn(&scope);
+
+        let events = seen.lock().unwrap();
+        // ① 终态：approval_required 错误，不是 done。
+        assert!(
+            events.iter().all(|event| event["type"] != "done"),
+            "无人值守的批准闸中止不得以 done 收尾：{events:?}"
+        );
+        let error = events
+            .iter()
+            .rfind(|event| event["type"] == "error")
+            .expect("应有错误终态");
+        assert_eq!(error["code"], "approval_required", "{error}");
+        // ② 预览失败不得回送模型续跑：脚本只弹了第一条。
+        assert_eq!(
+            client.mock_consumed(),
+            1,
+            "无人值守必须在预览之前短路，不应再发下一次请求"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 同回合并行编排的回填顺序（tasks §1.7）：第二个调用**先完成**，回填仍是 0,1。
+    ///
+    /// 区分度（REVIEW.md「断言等价于子串」条）：句柄在线程里各自完成并记录完成顺序；
+    /// 断言同时钉住「完成顺序 = [1, 0]」（证明本输入确实让第二个先完成）与「回填 = [0 的结果,
+    /// 1 的结果]」（证明顺序由调用序号决定，而不是完成先后）。若把 `BTreeMap` 换成按完成
+    /// 顺序 push 的 `Vec`，第二条断言必 FAIL。
+    #[test]
+    fn parallel_orchestration_backfills_in_call_order() {
+        struct ThreadedCall {
+            handle: std::thread::JoinHandle<(serde_json::Value, serde_json::Value)>,
+        }
+
+        impl OrchestrationCall for ThreadedCall {
+            fn join(self: Box<Self>) -> (serde_json::Value, serde_json::Value) {
+                self.handle.join().expect("编排线程不得 panic")
+            }
+        }
+
+        let completion = std::sync::Arc::new(std::sync::Mutex::new(Vec::<usize>::new()));
+        let start = |index: usize, delay_ms: u64| -> (usize, Box<dyn OrchestrationCall>) {
+            let completion = completion.clone();
+            let handle = std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                completion.lock().unwrap().push(index);
+                (
+                    serde_json::json!({"type": "function_call", "call_index": index}),
+                    serde_json::json!({"type": "function_call_output", "call_index": index}),
+                )
+            });
+            (
+                index,
+                Box::new(ThreadedCall { handle }) as Box<dyn OrchestrationCall>,
+            )
+        };
+
+        // 调用 1 的延迟更短 ⇒ 它先完成；两个句柄在 join 之前都已启动。
+        let handles = vec![start(0, 80), start(1, 10)];
+        let mut results = BTreeMap::new();
+        join_in_call_order(&mut results, handles);
+
+        assert_eq!(
+            *completion.lock().unwrap(),
+            vec![1, 0],
+            "本用例的前提是第二个调用先完成"
+        );
+        let ordered: Vec<_> = results.into_values().collect();
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered[0].1["call_index"], serde_json::json!(0));
+        assert_eq!(ordered[1].1["call_index"], serde_json::json!(1));
     }
 }

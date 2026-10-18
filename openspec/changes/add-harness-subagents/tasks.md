@@ -20,34 +20,68 @@
 
 ## 0. 前置（ADR 与跨 change 对齐）
 
-- [ ] 0.1 修订 ADR 0007（Revisit 条件命中：subagent 从架构约束转为实际需求）：工具集边界原则拆为
+- [x] 0.1 修订 ADR 0007（Revisit 条件命中：subagent 从架构约束转为实际需求）：工具集边界原则拆为
   「vault 操作工具」与「编排工具」两类，清单记为 8 + 1；写清 `task` 不操作 vault、不参与「写且需
   防护」判据；**须 Alex 过目**（ADR 修订是人肉裁决点）。
-- [ ] 0.2 与评审中的 change `add-cron-runtime-daemon` 对齐：确认其运行槽位与 `cron:run` 交接载荷在
+  （已落 `docs/adr/0007-ai-positioning-probe.md`：Decision 7 拆两类 + Revisit 第三分支留痕；
+  文件 diff 随 M586 提交，供 Alex 过目。）
+- [x] 0.2 与评审中的 change `add-cron-runtime-daemon` 对齐：确认其运行槽位与 `cron:run` 交接载荷在
   实现期按 `RunSpec` 形状落地；若两 change 实现顺序对调，在 cron 的 tasks 里补一条「接入 RunSpec」，
   本 change 的公共层任务不删；确认 cron 运行与子运行共用同一个 provider 请求闸（design §12.3）。
-- [ ] 0.3 记录公共层的去留口径：公共层按实际消费者决定去留（cron / 委托），不因单一原语的变化删改；
+  **核对结论（M586，2026-10-18；M583/M584 已合入 master，实现顺序已对调）**：
+  - 交接载荷**未**按 `RunSpec` 形状落地：`cron:run` 是字段自列的 `CronRunPayload`
+    （`src-tauri/src/lib.rs:889`：`run_id` / `task` / `vault` / `prompt` / `session` /
+    `session_id` / `model` / `origin`），前端 `handleCronRun` 逐字段转给
+    `harness_cron_run`（`src/main.ts:2549`），后端复用 acquire + turn 路径。
+  - 运行槽位已具备 `SessionTarget::Unattended` 的**语义**（`Runtime::isolated()`：事件不发面板、
+    会话与交互槽位物理分离），但类型面仍是 `Runtime` 构造参数，不是 `SessionTarget` 值。
+  - 批准语义已是 `ApprovalPolicy::RejectUnavailable` 的**行为**（`gated_execute` 遇
+    `runtime.is_isolated()` 即 `stop_with("approval_required")`），待回抽后改由策略值表达。
+  - provider 请求闸**尚未存在**（cron 侧只有「同一任务至多一个在途」；不同任务可同时跑多轮，
+    当前没有 `max_concurrent + 1` 的计数信号量）。该闸随本 change §4.9 落地，cron 届时必须接入
+    同一个闸（design §12.3）。
+  - 因此按本条的条件分支：cron 侧需要一条「接入 `RunSpec` + 接入 provider 请求闸」的后续任务
+    （属 change `add-cron-runtime-daemon` 的 tasks，不在 M586 的 scope 内，已上报 tower 路由）；
+    本 change 的公共层任务不删。
+- [x] 0.3 记录公共层的去留口径：公共层按实际消费者决定去留（cron / 委托），不因单一原语的变化删改；
   写进代码注释就地说明「无兼容层、按消费者定去留」。
+  （已落 `src-tauri/src/harness/run.rs` 模块头「去留口径」段。）
 
 ## 1. 运行公共层回抽（`harness/run.rs` 新建 + `harness/turn.rs` 参数化）
 
-- [ ] 1.1 新建 `run.rs`：`RunOrigin` / `SessionTarget` / `ToolPolicy` / `RunBudget` / `ApprovalPolicy`
+- [x] 1.1 新建 `run.rs`：`RunOrigin` / `SessionTarget` / `ToolPolicy` / `RunBudget` / `ApprovalPolicy`
   （三值：Interactive / PassthroughFrom / RejectUnavailable）/ `RunOutcome` / `RunReport` / `RunSpec`
   （含 `background`）；纯 Rust、无 tauri 依赖（ADR 0002 §7）。
-- [ ] 1.2 定义 `RunContext` trait（会话、事件接收端、工具定义、权限判定、批准、预算、留存），实现
+  （实现口径：`ToolPolicy::allow` 用 `Vec<String>`——`RunSpec` 是 cron 交接载荷的形状，需可反序列化；
+  `RunBudget::deadline` 带 `serde(skip)`，跨进程恒 `None`。）
+- [x] 1.2 定义 `RunContext` trait（会话、事件接收端、工具定义、权限判定、批准、预算、留存），实现
   `SessionContext`：`turn.rs` 的 `with_session` 调用点（25 处）与 `sink.emit`（16 处）改经 `ctx`，
   语义逐字节不变。
+  （实现口径：会话以 `with_session` 闭包暴露而非 `&mut Session`——会话由 `Runtime` 的锁托管，
+  直接交出可变引用会破坏「只在读写会话那一刻持锁」；压缩的会话轮换经
+  `begin_compacted_session` 留在上下文实现里。）
 - [ ] 1.3 `build_request` 的工具定义改由 `ctx.tool_definitions()` 提供；交互上下文按当前定义快照
   生成 `task` 描述（含清单）；`enabled=false` 时输出与既有 8 件清单深度相等（单测钉死）。
-- [ ] 1.4 `llm::client_at` 增加模型覆盖参数；`LlmClient` 增加 `external_consumed()` / `skip(n)`
+  **部分完成（M586）**：`build_request` 已走 `ctx.tool_definitions()`；`enabled` 的 kill switch
+  已落（`run.rs` 的 `gate_tool_definitions` + 合成 `task` 定义的单测）。**`task` 描述本体未落**：
+  它按 design §5.1 归 `tools.rs`、清单来自 §2 的 `agents.rs`，两者都不在 M586 的 scope 内；
+  现在注册一个不可执行的第 9 件会变成「声明了却没有消费者」（REVIEW.md「值或开关声明了却没有
+  消费者」条）。由 §2/§3（M587）在同一注册点补齐，届时 `enabled=false` 的基线断言自动生效。
+- [x] 1.4 `llm::client_at` 增加模型覆盖参数；`LlmClient` 增加 `external_consumed()` / `skip(n)`
   （真 provider 恒 0 / no-op），供 mock 父子游标编排（design §18）。
-- [ ] 1.5 交互路径回归：既有 `cargo test` 零改写通过（含恢复充分性、事件形状、批准闸、循环上限）；
+  （另加 `LlmClient::model()`：发送点 `llm_request.model` 取覆盖后的实际值，避免「覆盖参数与
+  留存值两处各说各的」。）
+- [x] 1.5 交互路径回归：既有 `cargo test` 零改写通过（含恢复充分性、事件形状、批准闸、循环上限）；
   `sessions/` JSONL 形状不变；`rg -n "fn run_turn_for" src-tauri/src` 仍只有一处循环实现。
 - [ ] 1.6 真机跑一轮既有交互对话（mock 与真 provider 各一次），确认发送、工具调用、批准卡、停止、
   压缩与读数均无变化；证据路径写进完成报告。
-- [ ] 1.7 工具循环的并行编排：同一条助手消息里的多个 `task` 调用并行启动、非 `task` 调用维持逐个
+  （归 M590 验收批执行；本棒用既有 `cargo test` 全绿兜底。）
+- [x] 1.7 工具循环的并行编排：同一条助手消息里的多个 `task` 调用并行启动、非 `task` 调用维持逐个
   执行；结果收进 `BTreeMap<call_index, ToolResult>`，全部收敛后按调用顺序回填；单测断言「完成顺序
   与回填顺序无关」（让第二个调用先完成，断言结果仍是 0,1）。
+  （实现口径：`RunContext::orchestrate` 是 `task` 的启动口（交互上下文缺省恒 `None`，§3 接）；
+  `execute_calls` 先启动全部编排调用、再按调用序 join；单测 `parallel_orchestration_backfills_in_call_order`
+  用两个线程句柄钉住「完成顺序 [1,0] ⇒ 回填 [0,1]」。）
 
 ## 2. 子代理定义文件（`harness/agents.rs` 新建）
 
@@ -149,11 +183,16 @@
 
 ## 6. 配置、文档与 bindings
 
-- [ ] 6.1 `config.rs` 新增 `SubagentsConfig`（`enabled`（缺省 true）/ `max_turns` / `max_tokens` /
+- [x] 6.1 `config.rs` 新增 `SubagentsConfig`（`enabled`（缺省 true）/ `max_turns` / `max_tokens` /
   `timeout_secs` / `max_subruns_per_turn` / `max_concurrent`）与 `[harness.subagents]` 解析；类型
   不符整节回落 + warning，数值越界夹取 + warning；ts-rs 导出。
-- [ ] 6.2 单测：缺节（enabled 生效为 true）/ 空节 / 类型错 / 每键越界与合法边界；定义值夹取到配置
+  （实现口径：`subagents` 在 `RawHarnessConfig` 里收成 `serde_json::Value` 再单独解析——直接结构化
+  会把「类型不符」变成整文件回落，与「整节回落」的裁决不符。）
+- [x] 6.2 单测：缺节（enabled 生效为 true）/ 空节 / 类型错 / 每键越界与合法边界；定义值夹取到配置
   上限的警告路径；`max_concurrent` 与前四项的语义差异（并发不是预算）。
+  （定义值夹取落在 `SubagentsConfig::clamp_turns` / `clamp_tokens` / `clamp_timeout_secs`：返回
+  「夹取后值 + 是否夹取」，warning 由 §2 定义装载期按第二项产出——本棒先钉纯函数行为，警告路径随
+  定义扫描落地。）
 - [ ] 6.3 `docs/specs/config-reference.md` 新增 `[harness.subagents]` 键表：缺省值、合法域、生效时机
   （装载时读一次）、定义值夹取、**子运行用量按模型分桶且不进父会话 ctx% / cache%**、回合级最坏
   token 消耗（`max_subruns_per_turn × max_tokens`）；另写明两个**不是配置键**的常量
@@ -162,7 +201,9 @@
 - [ ] 6.4 新增 `docs/specs/subagent-definitions.md`：定义文件格式（vault / user 路径、frontmatter
   字段表含 `background`、校验与丢弃规则、优先级、热加载时机、清单与 15k 告警、内建 `explore` 与
   覆盖规则、本版本不采纳的参照系字段清单、能力边界：8 件工具任意子集 / 无 web 工具）。
-- [ ] 6.5 `src/bindings/**` 重导出进索引；`scripts/gate.sh quick` 的 bindings-drift 绿。
+- [x] 6.5 `src/bindings/**` 重导出进索引；`scripts/gate.sh quick` 的 bindings-drift 绿。
+  （`SubagentsConfig.ts` 新增、`HarnessConfig.ts` 增字段；`scripts/gate.sh quick` 退出码 0，
+  `GATE RESULT: 9/9 PASS（SKIP 1）`。）
 - [ ] 6.6 信息卫生：全部制品、原型与验收 fixture 无真实 vault 路径 / 真实内容（一律 `<vault>` /
   `<config_dir>`）；提交前对改动面做一次 text 级 grep 清扫并记录命令与零命中。
 

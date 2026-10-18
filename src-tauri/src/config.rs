@@ -529,6 +529,36 @@ pub const DEFAULT_WARN_CTX_PCT: f64 = 85.0;
 pub const WARN_CTX_PCT_MIN: f64 = 1.0;
 pub const WARN_CTX_PCT_MAX: f64 = 100.0;
 
+// `[harness.subagents]`（change add-harness-subagents design §14）：定义字段是「用户意图」，
+// 本表是「用户设定的上限」；冲突时取小（定义值夹取）。数值越界的口径与 `[harness]` 其余键
+// **不同**：这里夹取到最近边界 + warning，而不是回落默认——上限类旋钮贴着用户意图走，
+// 回落默认会把「想放宽到 100 轮」静默变成 20 轮。合法区间与缺省值逐键见 design §14。
+
+/// 子运行轮次预算的缺省值与合法区间（含端点；同时是定义字段 `max_turns` 的上限）。
+pub const DEFAULT_SUBAGENT_MAX_TURNS: u32 = 20;
+pub const SUBAGENT_MAX_TURNS_MIN: u32 = 1;
+pub const SUBAGENT_MAX_TURNS_MAX: u32 = 64;
+
+/// 子运行 token 预算的缺省值与合法区间（含端点；同时是定义字段 `max_tokens` 的上限）。
+pub const DEFAULT_SUBAGENT_MAX_TOKENS: u64 = 200_000;
+pub const SUBAGENT_MAX_TOKENS_MIN: u64 = 1;
+pub const SUBAGENT_MAX_TOKENS_MAX: u64 = 10_000_000;
+
+/// 子运行时间闸的缺省值与合法区间（秒；含端点；定义字段 `timeout_secs` 的上限）。
+pub const DEFAULT_SUBAGENT_TIMEOUT_SECS: u64 = 300;
+pub const SUBAGENT_TIMEOUT_SECS_MIN: u64 = 1;
+pub const SUBAGENT_TIMEOUT_SECS_MAX: u64 = 3600;
+
+/// 父回合委派段数上限的缺省值与合法区间（含端点）。
+pub const DEFAULT_MAX_SUBRUNS_PER_TURN: u32 = 8;
+pub const MAX_SUBRUNS_PER_TURN_MIN: u32 = 1;
+pub const MAX_SUBRUNS_PER_TURN_MAX: u32 = 64;
+
+/// 会话级并发子运行数的缺省值与合法区间（含端点）。
+pub const DEFAULT_MAX_CONCURRENT: u32 = 4;
+pub const MAX_CONCURRENT_MIN: u32 = 1;
+pub const MAX_CONCURRENT_MAX: u32 = 16;
+
 /// 已退役、需要迁移的 kimi model 值（M365）：加载时命中它即改写（M381 起改写目标 = 该
 /// provider 已声明 models 清单的首项 id——模型名一律来自配置，不内置替补值）并落盘。
 /// 只列**本仓曾经写出过**的那一个退役值——用户手填的其他型号（含将来仍有效的、
@@ -742,6 +772,66 @@ impl Default for SessionNamingConfig {
     }
 }
 
+/// `[harness.subagents]` 表（change add-harness-subagents design §14）：子代理运行的开关与上限。
+///
+/// **生效时点**：装载时读一次（改配置需重启；子代理**定义文件**与此不同，按回合扫描）。
+/// **语义分层**：`enabled` 是 kill switch；`max_turns` / `max_tokens` / `timeout_secs` 是单次
+/// 子运行的预算上限，也是定义字段的上限（冲突取小）；`max_subruns_per_turn` 是父回合的次数闸；
+/// `max_concurrent` 是会话级并发许可数（同时是 provider 请求闸的许可数 - 1）——**并发不是预算**，
+/// 它不参与任何定义的夹取。
+///
+/// 两个常量刻意**不是**配置键（design §14 末段）：自动唤醒的合并窗口与链上限是安全绳，
+/// 不是策略旋钮（常量在 `harness::scheduler`）。
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct SubagentsConfig {
+    /// 子代理总开关（出厂 `true`）：false 时 `task` 工具不注册、面板任务区不出现，定义与内建
+    /// `explore` 保留（关掉可随时打开，不需要删定义）。
+    pub enabled: bool,
+    /// 定义未写 `max_turns` 时的轮次预算；同时是定义值的上限。
+    pub max_turns: u32,
+    /// 定义未写 `max_tokens` 时的 token 预算；同时是定义值的上限。
+    pub max_tokens: u64,
+    /// 定义未写 `timeout_secs` 时的时间闸；同时是定义值的上限。
+    pub timeout_secs: u64,
+    /// 父回合委派段数上限（前台 + 后台；只计实际执行的段，被拒调用不占额度）。
+    pub max_subruns_per_turn: u32,
+    /// 会话级同时运行的子运行数上限；也是 provider 请求闸的许可数（`+1` 给父往返）。
+    pub max_concurrent: u32,
+}
+
+impl Default for SubagentsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_turns: DEFAULT_SUBAGENT_MAX_TURNS,
+            max_tokens: DEFAULT_SUBAGENT_MAX_TOKENS,
+            timeout_secs: DEFAULT_SUBAGENT_TIMEOUT_SECS,
+            max_subruns_per_turn: DEFAULT_MAX_SUBRUNS_PER_TURN,
+            max_concurrent: DEFAULT_MAX_CONCURRENT,
+        }
+    }
+}
+
+impl SubagentsConfig {
+    /// 定义值夹取到配置上限（design §14「定义字段是用户意图，配置是上限，冲突取小」）。
+    /// 返回值第二项 = 是否发生夹取——调用侧据此给一条点名 warning（定义文件里的值原样保留
+    /// 在错误信息里，便于用户改定义）。
+    pub fn clamp_turns(&self, value: u32) -> (u32, bool) {
+        (value.min(self.max_turns), value > self.max_turns)
+    }
+
+    /// 见 [`Self::clamp_turns`]。
+    pub fn clamp_tokens(&self, value: u64) -> (u64, bool) {
+        (value.min(self.max_tokens), value > self.max_tokens)
+    }
+
+    /// 见 [`Self::clamp_turns`]。
+    pub fn clamp_timeout_secs(&self, value: u64) -> (u64, bool) {
+        (value.min(self.timeout_secs), value > self.timeout_secs)
+    }
+}
+
 /// `[harness]` 表（change add-harness-probe §11）：对话运行时的配置面。
 ///
 /// **生效时点**：会话建立 / 每轮请求时由 harness 运行时读一次（M302），不热重载——与
@@ -770,6 +860,8 @@ pub struct HarnessConfig {
     /// 图片语义命名（change add-semantic-image-naming，2026-10-18 配置面重塑）：开关 +
     /// provider / model 选择。与会话自动命名（`session_naming`）同一资源域、同一解析口径。
     pub attachment_naming: AttachmentNamingConfig,
+    /// 子代理运行（change add-harness-subagents design §14）：开关 + 预算上限 + 次数 / 并发闸。
+    pub subagents: SubagentsConfig,
 }
 
 impl Default for HarnessConfig {
@@ -784,6 +876,7 @@ impl Default for HarnessConfig {
             auto_compact: true,
             session_naming: SessionNamingConfig::default(),
             attachment_naming: AttachmentNamingConfig::default(),
+            subagents: SubagentsConfig::default(),
         }
     }
 }
@@ -1400,6 +1493,24 @@ struct RawHarnessConfig {
     /// provider / model 三键。表内类型不符（`"enabled": "yes"`、`"model": 3`）或整表错形状
     /// （`"attachment_naming": "on"`）在解析期失败 → 整文件回落（与 `[harness]` 其余字段同路）。
     attachment_naming: RawAttachmentNamingConfig,
+    /// 子代理运行（change add-harness-subagents design §14）：**刻意不做结构化字段**。设计口径是
+    /// 「类型不符**整节**回落 + warning」（其余 `[harness]` 节是整文件回落）：整节回退的意义
+    /// 是「一个键写坏不拖垮 provider / 权限等其它节的配置」，直接结构化会退回整文件回落。
+    /// 形状与字段在 [`validate_subagents`] 里解析。
+    subagents: Option<serde_json::Value>,
+}
+
+/// `harness.subagents` 的解析镜像：六个字段都是「缺席 → 用默认；显式给出 → 校验 / 夹取」。
+/// 未知键按既有口径静默忽略（与 `[harness]` 其余节同路）。
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawSubagentsConfig {
+    enabled: Option<bool>,
+    max_turns: Option<u32>,
+    max_tokens: Option<u64>,
+    timeout_secs: Option<u64>,
+    max_subruns_per_turn: Option<u32>,
+    max_concurrent: Option<u32>,
 }
 
 /// `harness.session_naming` 的解析镜像：三个字段都是「缺席 → `None` → 用默认；显式给出 →
@@ -2400,6 +2511,10 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
         &mut warnings,
     );
 
+    // 子代理运行（change add-harness-subagents design §14）：独立解析 —— 类型不符只回落本节，
+    // 不拖垮其余 `[harness]` 配置（理由见 `RawHarnessConfig::subagents` 的注释）。
+    let subagents = validate_subagents(raw.subagents, &mut warnings);
+
     (
         HarnessConfig {
             provider,
@@ -2415,9 +2530,110 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
             auto_compact,
             session_naming,
             attachment_naming,
+            subagents,
         },
         warnings,
     )
+}
+
+/// `harness.subagents` 的校验（change add-harness-subagents design §14）：缺节 / 空节 ⇒ 出厂值
+/// 且不告警；**类型不符 ⇒ 整节回落 + 一条 warning**（不拖垮其余 `[harness]` 节）；
+/// 数值越界 ⇒ **夹取到最近边界 + warning**（与 `[harness]` 其余数值键的「回落默认」不同：
+/// 上限类旋钮贴着用户意图走，理由见模块内常量注释）。合法边界值原样接受。
+fn validate_subagents(
+    raw: Option<serde_json::Value>,
+    warnings: &mut Vec<String>,
+) -> SubagentsConfig {
+    let defaults = SubagentsConfig::default();
+    let Some(raw) = raw else {
+        return defaults;
+    };
+    // 非对象（字符串 / 数组 / 数字）一律整节回落：serde 允许「空序列 → 全默认结构体」，
+    // 不先挡的话 `"subagents": []` 会静默变成缺省值而不是「形状非法」。
+    if !raw.is_object() {
+        warnings.push("配置项 harness.subagents 不是对象，已整节回退为缺省值".to_string());
+        return defaults;
+    }
+    let parsed: RawSubagentsConfig = match serde_json::from_value(raw) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            warnings.push(format!(
+                "配置项 harness.subagents 形状非法（{error}），已整节回退为缺省值"
+            ));
+            return defaults;
+        }
+    };
+    SubagentsConfig {
+        enabled: parsed.enabled.unwrap_or(defaults.enabled),
+        max_turns: clamp_subagent_value(
+            "max_turns",
+            parsed.max_turns,
+            DEFAULT_SUBAGENT_MAX_TURNS,
+            SUBAGENT_MAX_TURNS_MIN,
+            SUBAGENT_MAX_TURNS_MAX,
+            warnings,
+        ),
+        max_tokens: clamp_subagent_value(
+            "max_tokens",
+            parsed.max_tokens,
+            DEFAULT_SUBAGENT_MAX_TOKENS,
+            SUBAGENT_MAX_TOKENS_MIN,
+            SUBAGENT_MAX_TOKENS_MAX,
+            warnings,
+        ),
+        timeout_secs: clamp_subagent_value(
+            "timeout_secs",
+            parsed.timeout_secs,
+            DEFAULT_SUBAGENT_TIMEOUT_SECS,
+            SUBAGENT_TIMEOUT_SECS_MIN,
+            SUBAGENT_TIMEOUT_SECS_MAX,
+            warnings,
+        ),
+        max_subruns_per_turn: clamp_subagent_value(
+            "max_subruns_per_turn",
+            parsed.max_subruns_per_turn,
+            DEFAULT_MAX_SUBRUNS_PER_TURN,
+            MAX_SUBRUNS_PER_TURN_MIN,
+            MAX_SUBRUNS_PER_TURN_MAX,
+            warnings,
+        ),
+        max_concurrent: clamp_subagent_value(
+            "max_concurrent",
+            parsed.max_concurrent,
+            DEFAULT_MAX_CONCURRENT,
+            MAX_CONCURRENT_MIN,
+            MAX_CONCURRENT_MAX,
+            warnings,
+        ),
+    }
+}
+
+/// 单个 `[harness.subagents]` 数值键的区间处理：缺席 ⇒ 缺省（不告警）；越界 ⇒ 夹取到最近
+/// 边界 + 点名 warning；合法值原样。泛型只为 u32 / u64 两个宽度共用一份口径。
+fn clamp_subagent_value<T: Copy + PartialOrd + std::fmt::Display>(
+    key: &str,
+    value: Option<T>,
+    default: T,
+    min: T,
+    max: T,
+    warnings: &mut Vec<String>,
+) -> T {
+    let Some(value) = value else {
+        return default;
+    };
+    if value < min {
+        warnings.push(format!(
+            "配置项 harness.subagents.{key} 取值 {value} 小于合法下限 {min}，已夹取为 {min}"
+        ));
+        min
+    } else if value > max {
+        warnings.push(format!(
+            "配置项 harness.subagents.{key} 取值 {value} 大于合法上限 {max}，已夹取为 {max}"
+        ));
+        max
+    } else {
+        value
+    }
 }
 
 /// `harness.session_naming` 的校验（change add-session-auto-naming，2026-10-18 配置面重塑；
@@ -4523,6 +4739,163 @@ mod tests {
         let snap = load_from(&TempFile::new(r#"{"harness":{"auto_compact":false}}"#).0);
         assert!(!snap.config.harness.auto_compact);
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    // -----------------------------------------------------------------------
+    // `[harness.subagents]`（change add-harness-subagents design §14）：缺节 / 空节 / 类型错 /
+    // 每键越界与合法边界 / 定义值夹取 / 并发不是预算。
+    // -----------------------------------------------------------------------
+
+    /// 缺节与空节都取出厂值，且不告警（缺省即默认，与 `[harness]` 其余节同路）。
+    /// `enabled` 出厂为 true 是本条的判据核心：关掉子代理必须是用户显式写入，不能靠缺省。
+    #[test]
+    fn harness_subagents_defaults_when_section_missing_or_empty() {
+        for raw in [r#"{"harness":{}}"#, r#"{"harness":{"subagents":{}}}"#] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(
+                snap.config.harness.subagents,
+                SubagentsConfig::default(),
+                "{raw}"
+            );
+            assert!(snap.config.harness.subagents.enabled, "{raw}");
+            assert_eq!(snap.config.harness.subagents.max_turns, 20, "{raw}");
+            assert_eq!(snap.config.harness.subagents.max_tokens, 200_000, "{raw}");
+            assert_eq!(snap.config.harness.subagents.timeout_secs, 300, "{raw}");
+            assert_eq!(
+                snap.config.harness.subagents.max_subruns_per_turn, 8,
+                "{raw}"
+            );
+            assert_eq!(snap.config.harness.subagents.max_concurrent, 4, "{raw}");
+            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
+        }
+    }
+
+    /// 类型不符**只回落本节**：`subagents` 里的键写坏时，`[harness]` 其余键照常生效——
+    /// 这是与「整文件回落」的关键区别（REVIEW.md「覆盖声明超出真实验证」条：断言同时钉住
+    /// 另一节的存活，否则「整节回落」与「整文件回落」在这条上不可区分）。
+    #[test]
+    fn harness_subagents_type_error_falls_back_section_only() {
+        for raw in [
+            r#"{"harness":{"loop_max":7,"subagents":{"max_turns":"20"}}}"#,
+            r#"{"harness":{"loop_max":7,"subagents":{"enabled":"yes"}}}"#,
+            r#"{"harness":{"loop_max":7,"subagents":"on"}}"#,
+            r#"{"harness":{"loop_max":7,"subagents":[]}}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(snap.config.harness.loop_max, 7, "{raw} 其余节不得被拖垮");
+            assert_eq!(
+                snap.config.harness.subagents,
+                SubagentsConfig::default(),
+                "{raw}"
+            );
+            assert_eq!(snap.warnings.len(), 1, "{raw}: {:?}", snap.warnings);
+            assert!(
+                snap.warnings[0].contains("harness.subagents"),
+                "{raw}: {:?}",
+                snap.warnings
+            );
+        }
+    }
+
+    /// 数值越界**夹取到最近边界**（不是回落默认）：每键各判上下两侧，warning 数 = 越界键数。
+    #[test]
+    fn harness_subagents_out_of_range_values_are_clamped() {
+        // 低侧：0 / 小于下限。
+        let raw = r#"{"harness":{"subagents":{"max_turns":0,"max_tokens":0,
+            "timeout_secs":0,"max_subruns_per_turn":0,"max_concurrent":0}}}"#;
+        let snap = load_from(&TempFile::new(raw).0);
+        let config = &snap.config.harness.subagents;
+        assert_eq!(config.max_turns, SUBAGENT_MAX_TURNS_MIN);
+        assert_eq!(config.max_tokens, SUBAGENT_MAX_TOKENS_MIN);
+        assert_eq!(config.timeout_secs, SUBAGENT_TIMEOUT_SECS_MIN);
+        assert_eq!(config.max_subruns_per_turn, MAX_SUBRUNS_PER_TURN_MIN);
+        assert_eq!(config.max_concurrent, MAX_CONCURRENT_MIN);
+        assert_eq!(snap.warnings.len(), 5, "{:?}", snap.warnings);
+        for key in [
+            "max_turns",
+            "max_tokens",
+            "timeout_secs",
+            "max_subruns_per_turn",
+            "max_concurrent",
+        ] {
+            assert!(
+                snap.warnings
+                    .iter()
+                    .any(|warning| warning.contains(&format!("harness.subagents.{key}"))),
+                "缺少 {key} 的 warning：{:?}",
+                snap.warnings
+            );
+        }
+
+        // 高侧：超出上限。
+        let raw = r#"{"harness":{"subagents":{"max_turns":65,"max_tokens":10000001,
+            "timeout_secs":3601,"max_subruns_per_turn":65,"max_concurrent":17}}}"#;
+        let snap = load_from(&TempFile::new(raw).0);
+        let config = &snap.config.harness.subagents;
+        assert_eq!(config.max_turns, SUBAGENT_MAX_TURNS_MAX);
+        assert_eq!(config.max_tokens, SUBAGENT_MAX_TOKENS_MAX);
+        assert_eq!(config.timeout_secs, SUBAGENT_TIMEOUT_SECS_MAX);
+        assert_eq!(config.max_subruns_per_turn, MAX_SUBRUNS_PER_TURN_MAX);
+        assert_eq!(config.max_concurrent, MAX_CONCURRENT_MAX);
+        assert_eq!(snap.warnings.len(), 5, "{:?}", snap.warnings);
+    }
+
+    /// 合法边界值原样接受、零 warning（判据是 `<=` / `>=`，不是开区间）。
+    #[test]
+    fn harness_subagents_accepts_boundary_values() {
+        let raw = r#"{"harness":{"subagents":{"max_turns":64,"max_tokens":1,
+            "timeout_secs":3600,"max_subruns_per_turn":1,"max_concurrent":16}}}"#;
+        let snap = load_from(&TempFile::new(raw).0);
+        assert_eq!(
+            snap.config.harness.subagents,
+            SubagentsConfig {
+                enabled: true,
+                max_turns: 64,
+                max_tokens: 1,
+                timeout_secs: 3600,
+                max_subruns_per_turn: 1,
+                max_concurrent: 16,
+            }
+        );
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    /// 显式 `enabled=false` 必须原样读到（kill switch 关得掉）：缺节默认 true 的反面。
+    #[test]
+    fn harness_subagents_explicit_disable_is_kept() {
+        let snap = load_from(&TempFile::new(r#"{"harness":{"subagents":{"enabled":false}}}"#).0);
+        assert!(!snap.config.harness.subagents.enabled);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    /// 定义值夹取到配置上限（design §14「冲突取小」）：返回夹取后的值与「是否发生夹取」，
+    /// 后者是定义装载期 warning 的判据（原本就小于上限的定义不得告警）。
+    /// `max_concurrent` **不是预算**：它没有夹取口，改它不影响三个预算键的夹取结果。
+    #[test]
+    fn subagents_definition_budgets_clamp_to_config_limits() {
+        let config = SubagentsConfig {
+            max_turns: 10,
+            max_tokens: 1000,
+            timeout_secs: 60,
+            ..SubagentsConfig::default()
+        };
+        assert_eq!(config.clamp_turns(20), (10, true));
+        assert_eq!(config.clamp_turns(10), (10, false));
+        assert_eq!(config.clamp_turns(5), (5, false));
+        assert_eq!(config.clamp_tokens(5000), (1000, true));
+        assert_eq!(config.clamp_tokens(1000), (1000, false));
+        assert_eq!(config.clamp_timeout_secs(120), (60, true));
+        assert_eq!(config.clamp_timeout_secs(60), (60, false));
+
+        // 并发是许可数，不是预算：把它调到最紧，三个预算键的夹取结果逐项不变。
+        let strict_concurrency = SubagentsConfig {
+            max_concurrent: 1,
+            ..config.clone()
+        };
+        assert_eq!(strict_concurrency.clamp_turns(20), (10, true));
+        assert_eq!(strict_concurrency.clamp_tokens(5000), (1000, true));
+        assert_eq!(strict_concurrency.clamp_timeout_secs(120), (60, true));
+        assert_eq!(strict_concurrency.max_concurrent, 1);
     }
 
     // -----------------------------------------------------------------------

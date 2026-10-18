@@ -30,6 +30,7 @@
 //! - [`jsonl`]：会话留存（配置目录，append-only，MUST NOT 写入 vault）
 //! - [`draft`]：composer 草稿 sidecar（配置目录 `harness/drafts/<vault 稳定 id>.json`，
 //!   按 vault 一份；MUST NOT 触碰 vault）
+//! - [`run`]：运行公共层（`RunSpec` / `RunContext`；交互槽位的 `SessionContext` 实现）
 //! - [`turn`]：工具循环编排（上下文注入、多轮往返、loop_max、自动压缩、超限重试）
 //! - [`events`]：`harness:event` 九类事件载荷（与 m303 面板共用的钉死契约）
 //! - [`thinking`]：思考程度档位／provider 能力与请求映射、reasoning 展示文本提取（M362）
@@ -44,6 +45,7 @@ pub mod jsonl;
 pub mod llm;
 pub mod permission_cache;
 pub mod permissions;
+pub mod run;
 pub mod session;
 pub mod thinking;
 pub mod title;
@@ -139,7 +141,8 @@ impl Runtime {
         runtime
     }
 
-    /// 是否无人值守运行槽：`run_turn` 据此选择静默 sink，`gated_execute` 据此中止批准闸。
+    /// 是否无人值守运行槽：`run_turn` 据此选择静默 sink；`SessionContext::approval_policy`
+    /// 据此判 `RejectUnavailable`（`gated_execute` 在生成预览之前短路中止本运行）。
     pub fn is_isolated(&self) -> bool {
         self.inner.isolated
     }
