@@ -40,7 +40,7 @@ pub fn stamp_vault(payload: &mut serde_json::Value, vault: &str) {
 
 /// 事件发射通道抽象（ADR 0007 Decision 3 留口的 UI 侧：turn 循环只面向这个 trait，
 /// 真 AppHandle 与单测收集器各自实现）。
-pub trait EventSink {
+pub trait EventSink: Send + Sync {
     fn emit(&self, payload: serde_json::Value);
 }
 /// 流式增量转发口（M369 真流式）：LLM 解析层（[`super::llm`]）每收到一个增量即回调，
@@ -138,6 +138,21 @@ pub fn approval_request_with_purpose(
     purpose: Option<&str>,
     reason: Option<&super::permissions::DecisionReason>,
 ) -> serde_json::Value {
+    approval_request_full(id, tool, diff, argv, purpose, reason, None)
+}
+
+/// 完整形态：在既有展示字段之外带**发起者**（change add-harness-subagents design §8.3）。
+/// 交互调用传 `None`（键缺席 = 父会话自己的卡，旧前端零改动）；子运行透传的请求带
+/// `source = {kind: "subrun", agent, run_id, description}`，卡片据此点名发起者。
+pub fn approval_request_full(
+    id: &str,
+    tool: &str,
+    diff: Option<&str>,
+    argv: Option<&[String]>,
+    purpose: Option<&str>,
+    reason: Option<&super::permissions::DecisionReason>,
+    source: Option<&super::approval::ApprovalSource>,
+) -> serde_json::Value {
     let mut value = serde_json::json!({"type": "approval_request", "id": id, "tool": tool});
     if let Some(diff) = diff {
         value["diff"] = serde_json::json!(diff);
@@ -153,7 +168,162 @@ pub fn approval_request_with_purpose(
             value["reason"] = encoded;
         }
     }
+    if let Some(source) = source {
+        if let Ok(encoded) = serde_json::to_value(source) {
+            value["source"] = encoded;
+        }
+    }
     value
+}
+
+// ---------------------------------------------------------------------------
+// 子运行可见面事件（change add-harness-subagents design §13 / §19）
+//
+// 这些载荷经同一个 `harness:event` 通道到达面板；事件名不在既有十类契约里，属于本 change
+// 的新增类。过程事件 MUST NOT 含 prompt、文件内容与 vault 绝对路径（design §13 末条）。
+// 诊断日志白名单（`logging.rs`）归后续 §7 批次，本批次只保证面板可见面。
+// ---------------------------------------------------------------------------
+
+/// `{"type":"subagent_started","run_id":…,"segment":…,"agent":…,"description":…,"model":…,
+///   "tools":[…],"max_turns":…,"max_tokens":…,"timeout_secs":…,"background":…}`
+#[allow(clippy::too_many_arguments)]
+pub fn subagent_started(
+    run_id: &str,
+    segment: u32,
+    parent_session: &str,
+    agent: &str,
+    description: &str,
+    model: &str,
+    tools: &[String],
+    max_turns: u32,
+    max_tokens: u64,
+    timeout_secs: u64,
+    background: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "subagent_started",
+        "run_id": run_id,
+        "segment": segment,
+        "parent_session": parent_session,
+        "agent": agent,
+        "description": description,
+        "model": model,
+        "tools": tools,
+        "max_turns": max_turns,
+        "max_tokens": max_tokens,
+        "timeout_secs": timeout_secs,
+        "background": background,
+    })
+}
+
+/// `{"type":"subagent_progress","run_id":…,"segment":…,"rounds":…,"tool_calls":…,
+///   "last_tool":…,"elapsed_ms":…}`（每轮最多一条，只给面板读数）。
+pub fn subagent_progress(
+    run_id: &str,
+    segment: u32,
+    rounds: u32,
+    tool_calls: u32,
+    last_tool: Option<&str>,
+    elapsed_ms: u64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "subagent_progress",
+        "run_id": run_id,
+        "segment": segment,
+        "rounds": rounds,
+        "tool_calls": tool_calls,
+        "last_tool": last_tool,
+        "elapsed_ms": elapsed_ms,
+    })
+}
+
+/// `{"type":"subagent_step","run_id":…,"segment":…,"tool":…,"summary":…}`（参数摘要已人话化）。
+pub fn subagent_step(run_id: &str, segment: u32, tool: &str, summary: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "subagent_step",
+        "run_id": run_id,
+        "segment": segment,
+        "tool": tool,
+        "summary": summary,
+    })
+}
+
+/// 段收尾事件（任何终态只产出一次）。字段与 design §13 的 `subagent_finished` 对齐；
+/// `stopped_by` / `audit_error` 按在场与否输出。
+#[allow(clippy::too_many_arguments)]
+pub fn subagent_finished(
+    run_id: &str,
+    segment: u32,
+    agent: &str,
+    status: &str,
+    stopped_by: Option<&str>,
+    rounds: u32,
+    model: &str,
+    input_tokens: u64,
+    cached_tokens: u64,
+    output_tokens: u64,
+    denied_calls: u32,
+    duration_ms: u64,
+    summary_chars: usize,
+    audit: Option<&str>,
+    audit_error: Option<&str>,
+) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "type": "subagent_finished",
+        "run_id": run_id,
+        "segment": segment,
+        "agent": agent,
+        "status": status,
+        "rounds": rounds,
+        "model": model,
+        "input_tokens": input_tokens,
+        "cached_tokens": cached_tokens,
+        "output_tokens": output_tokens,
+        "denied_calls": denied_calls,
+        "duration_ms": duration_ms,
+        "summary_chars": summary_chars,
+    });
+    if let Some(stopped_by) = stopped_by {
+        value["stopped_by"] = serde_json::json!(stopped_by);
+    }
+    if let Some(audit) = audit {
+        value["audit"] = serde_json::json!(audit);
+    }
+    if let Some(error) = audit_error {
+        value["audit_error"] = serde_json::json!(error);
+    }
+    value
+}
+
+/// 通知最终处理事件（design §12.6.3）：`wake ∈ auto_turn / user_turn / blocked_chain /
+/// blocked_stopped / none_aborted`，同一批用同一 `wake_batch`，`chain_index` 非自动回合为 0。
+pub fn subagent_notified(
+    run_id: &str,
+    agent: &str,
+    status: &str,
+    wake: &str,
+    wake_batch: &str,
+    chain_index: u32,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "subagent_notified",
+        "run_id": run_id,
+        "agent": agent,
+        "status": status,
+        "wake": wake,
+        "wake_batch": wake_batch,
+        "chain_index": chain_index,
+    })
+}
+
+/// 启动被拒（`reason` 闭集合：concurrency_limit / run_busy / subrun_limit / …）。
+pub fn subagent_rejected(reason: &str, agent: &str, description: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "subagent_rejected",
+        "reason": reason,
+        "agent": agent,
+        "description": description,
+    })
 }
 
 /// `{"type":"usage", ...}`——载荷的**读数键 = [`UsageSnapshot`] 的序列化本身**（M534）。

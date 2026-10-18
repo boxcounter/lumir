@@ -7,8 +7,11 @@
 //!
 //! 两边随同一个动作一起更新，MUST NOT 各自漂移——面板上看到的与模型看到的永远是同一会话。
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -19,6 +22,8 @@ use super::approval::{ApprovalDecision, ApprovalRequest, ApprovalSignal};
 use super::jsonl::JsonlWriter;
 use super::llm::{normalize_reasoning_item, Usage};
 use super::permissions::DecisionReason;
+use super::scheduler::AutoWakeSnapshot;
+use super::subagents::SubagentHub;
 use super::thinking::ThinkingEffort;
 use super::title::TitleSchedule;
 
@@ -211,6 +216,23 @@ fn cache_note(usage: &Usage) -> Option<CacheNote> {
     None
 }
 
+/// 子运行用量桶（change add-harness-subagents design §9.1）：键 = **实际使用的模型 id**，
+/// 每段收尾累加一次。父会话自己的 `ctx%` / cache% 只由父自己的往返计算，MUST NOT 掺入这里
+/// 的数字——跨模型混算的百分比没有解释力。
+///
+/// `samples` / `segments`：前者是带 usage 的往返段数（与 `CacheTotals::samples` 同口径），
+/// 后者是子运行段数（resume 的每一段各加一）。恢复重算（§5.3）是另一个批次的任务，本表
+/// 只提供 live 侧的唯一累加点 [`Session::record_subrun_usage`]。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubrunUsage {
+    pub input: u64,
+    pub cached: u64,
+    pub writes: u64,
+    pub output: u64,
+    pub samples: u64,
+    pub segments: u64,
+}
+
 /// 从留存记录的 `usage` 块还原 [`Usage`]（恢复路径的重算输入）：`llm_response.usage` 的
 /// wire 口径四键——input / cached 必填（缺了就不是一次可计的往返），output / cache_write
 /// 缺省 0（`record_llm_response` 恒四键落盘，缺键只可能来自手工改过的文件，宽容不炸）。
@@ -294,7 +316,9 @@ impl StateSnapshot {
             vault: vault.to_string(),
             messages: Vec::new(),
             usage: UsageSnapshot::default(),
-            pending_approval: None,
+            pending_approvals: Vec::new(),
+            auto_wake: AutoWakeSnapshot::default(),
+            subrun_usage: BTreeMap::new(),
             warn_ctx_pct,
             thinking: ThinkingState {
                 level: ThinkingEffort::default(),
@@ -325,8 +349,14 @@ pub struct StateSnapshot {
     pub vault: String,
     pub messages: Vec<PanelMessage>,
     pub usage: UsageSnapshot,
-    /// 当前挂起的批准请求（无则 null）。
-    pub pending_approval: Option<PendingApprovalSnapshot>,
+    /// 当前挂起的批准请求，按 ask 时间排序（change add-harness-subagents design §8.3：
+    /// 并行时多个子运行可以同时等批准）。空表即「无待批」——单槽 `pending_approval`
+    /// 字段已随本次迁移删除（快照字段一次迁净，不留旧键）。
+    pub pending_approvals: Vec<PendingApprovalSnapshot>,
+    /// 自动唤醒状态（design §12.6.3）：链计数 / 上限 / 触顶原因。面板据它渲染提示行。
+    pub auto_wake: AutoWakeSnapshot,
+    /// 子运行用量分桶（design §9.1）：键 = 模型 id。父会话读数不掺这些数字。
+    pub subrun_usage: BTreeMap<String, SubrunUsage>,
     /// 上下文用量警示阈值（面板警示条用，缺省 85）。
     pub warn_ctx_pct: f64,
     /// 思考程度档位与 provider 能力（面板思考 chip 的数据源，M362）。
@@ -360,6 +390,9 @@ pub struct PendingApprovalSnapshot {
     /// 该卡支持「采纳且本会话不再问」次级动作（design §6；批准闸请求恒 true）——
     /// 面板按钮可见性的数据源。
     pub remember: bool,
+    /// 发起者（change add-harness-subagents design §8.3）：父会话自己的调用恒 `Interactive`，
+    /// 子运行透传的请求带 agent / run_id / description。
+    pub source: super::approval::ApprovalSource,
 }
 
 impl PendingApprovalSnapshot {
@@ -372,6 +405,7 @@ impl PendingApprovalSnapshot {
             purpose: r.purpose.clone(),
             reason: r.reason.clone(),
             remember: r.remember,
+            source: r.source.clone(),
         }
     }
 }
@@ -445,8 +479,9 @@ pub struct Session {
     /// 本逻辑会话的缓存计数累计（M443；随 [`Session::rotate`] 清零，见 [`CacheTotals`]）。
     cache_totals: CacheTotals,
     busy: bool,
-    /// 挂起的批准请求（一次一个：一轮里 ask 档逐个过闸）。
-    pending: Option<ApprovalRequest>,
+    /// 挂起的批准请求列表（change add-harness-subagents design §8.3：父会话自己的调用与
+    /// 子运行透传的请求共用一个列表，按 ask 时间排序——并行时可以有多个同时在等）。
+    pending: Vec<ApprovalRequest>,
     /// 本轮被请求停止（M348）：`harness_abort` 置位、工具循环在检查点收口；
     /// `acquire_turn` 开新一轮时清零。中断语义是「不再继续」，不回滚已产出内容。
     abort_requested: bool,
@@ -472,7 +507,32 @@ pub struct Session {
     /// mock 标题队列的会话级游标（本会话已弹过的 `titles` 条数，design D12）：与 `mock_cursor`
     /// 同路——client 每次调用重建，游标存在会话上才能「依次取 initial、keep」。
     title_cursor: usize,
+    /// 会话实例令牌（change add-harness-subagents）：每次 `Session::new` 铸一个新值。
+    /// 子运行用它判「父会话是否还是当初那一个」——重置 / 恢复 / 切 vault 会丢弃并重建
+    /// 会话对象，令牌随之改变，仍在跑的后台 run 在下个检查点收敛为已中止。
+    subagent_token: u64,
+    /// 子运行中枢（延迟建立在第一次出现子代理场景时）：保留表、并发许可、自动唤醒调度
+    /// 都挂在**父会话**的生命周期上——会话对象被丢弃即整块随 `Drop` 收口。
+    subagent_hub: Option<Arc<SubagentHub>>,
+    /// 子运行用量分桶（design §9.1）：键 = 模型 id，每段收尾累加一次。
+    subrun_usage: BTreeMap<String, SubrunUsage>,
     jsonl: JsonlWriter,
+}
+
+/// 会话令牌的自增序号（进程内唯一；会话对象重建即换新令牌）。
+fn next_subagent_token() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::SeqCst)
+}
+
+/// 会话对象被丢弃（「新会话」重置 / 恢复替换 / 关闭 vault / 应用退出）时的收口：
+/// 中止所有仍在跑的子运行、清空保留表与唤醒调度（design §12.4 / §9.3）。
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(hub) = self.subagent_hub.take() {
+            hub.shutdown();
+        }
+    }
 }
 
 impl Session {
@@ -499,7 +559,7 @@ impl Session {
             usage: UsageSnapshot::default(),
             cache_totals: CacheTotals::default(),
             busy: false,
-            pending: None,
+            pending: Vec::new(),
             abort_requested: false,
             stop_reason: None,
             current_context: None,
@@ -508,8 +568,53 @@ impl Session {
             title: None,
             title_schedule: TitleSchedule::default(),
             title_cursor: 0,
+            subagent_token: next_subagent_token(),
+            subagent_hub: None,
+            subrun_usage: BTreeMap::new(),
             jsonl,
         }
+    }
+
+    /// 会话实例令牌（见字段注释）：子运行保存启动时的值，检查点比对。
+    pub fn subagent_token(&self) -> u64 {
+        self.subagent_token
+    }
+
+    /// 子运行中枢（已建立时）。
+    pub fn subagent_hub(&self) -> Option<Arc<SubagentHub>> {
+        self.subagent_hub.clone()
+    }
+
+    /// 取得或建立子运行中枢（`make` 只在首次调用时执行）。中枢随会话对象存亡，
+    /// 因此不需要在重置 / 恢复 / 切 vault 各挂一支清理钩子。
+    pub fn ensure_subagent_hub(
+        &mut self,
+        make: impl FnOnce() -> Arc<SubagentHub>,
+    ) -> Arc<SubagentHub> {
+        self.subagent_hub.get_or_insert_with(make).clone()
+    }
+
+    /// 记一段子运行用量到分桶表（design §9.1 的唯一累加口；每段收尾调一次）。
+    pub fn record_subrun_usage(&mut self, model: &str, usage: &Usage) {
+        let bucket = self.subrun_usage.entry(model.to_string()).or_default();
+        bucket.input += usage.input_tokens;
+        bucket.cached += usage.cached_tokens;
+        bucket.writes += usage.cache_write_tokens;
+        bucket.output += usage.output_tokens;
+        bucket.samples += 1;
+    }
+
+    /// 段计数（`segments` 与往返样本分开计：一段可以有零个带 usage 的往返）。
+    pub fn mark_subrun_segment(&mut self, model: &str) {
+        self.subrun_usage
+            .entry(model.to_string())
+            .or_default()
+            .segments += 1;
+    }
+
+    /// 子运行用量分桶表的只读视图。
+    pub fn subrun_usage(&self) -> &BTreeMap<String, SubrunUsage> {
+        &self.subrun_usage
     }
 
     pub fn root(&self) -> &PathBuf {
@@ -663,10 +768,17 @@ impl Session {
             vault: self.root.display().to_string(),
             messages: self.panel.clone(),
             usage: self.usage,
-            pending_approval: self
+            pending_approvals: self
                 .pending
+                .iter()
+                .map(PendingApprovalSnapshot::from_request)
+                .collect(),
+            auto_wake: self
+                .subagent_hub
                 .as_ref()
-                .map(PendingApprovalSnapshot::from_request),
+                .map(|hub| hub.wake_snapshot())
+                .unwrap_or_default(),
+            subrun_usage: self.subrun_usage.clone(),
             warn_ctx_pct,
             thinking: ThinkingState {
                 level: self.thinking_effort,
@@ -676,14 +788,10 @@ impl Session {
         }
     }
 
-    /// 挂起批准请求（工具循环线程 park 前调用）。重复挂起即覆盖：旧请求的发送端
-    /// 随对象 drop 失效，等待线程走 `approval_stale` 过期路径（不再单独留
-    /// `approval_overwritten` 事件——决策类 sidecar 只留 wire 不可推导者）。
+    /// 挂起批准请求（工具循环线程 park 前调用）。列表按 ask 时间排序（push 即时间序）：
+    /// 父会话自己的调用与多个子运行透传的请求可以同时在等，决策只回给发起者。
     pub fn park_approval(&mut self, request: ApprovalRequest) {
-        if self.pending.is_some() {
-            eprintln!("lumir: harness 批准请求被覆盖（旧请求按 approval_stale 失效）");
-        }
-        self.pending = Some(request);
+        self.pending.push(request);
     }
 
     /// `harness_approve` 的落点：按 id 找到挂起请求并把决定（含「采纳且本会话不再问」
@@ -696,18 +804,17 @@ impl Session {
         reason: Option<String>,
         remember: bool,
     ) -> Result<(), CommandError> {
-        let pending = self
+        let index = self
             .pending
-            .take()
-            .ok_or_else(|| CommandError::new("approval_not_found", "当前没有待批准的请求"))?;
-        if pending.id != request_id {
-            // id 不匹配也视为未找到（不消费请求本身）。
-            self.pending = Some(pending);
-            return Err(CommandError::new(
-                "approval_not_found",
-                format!("批准请求 {request_id} 不存在或已被处理"),
-            ));
-        }
+            .iter()
+            .position(|pending| pending.id == request_id)
+            .ok_or_else(|| {
+                CommandError::new(
+                    "approval_not_found",
+                    format!("批准请求 {request_id} 不存在或已被处理"),
+                )
+            })?;
+        let pending = self.pending.remove(index);
         let tx: Sender<ApprovalSignal> = pending.tx;
         self.jsonl.record(&serde_json::json!({
             "kind": "approval",
@@ -738,12 +845,35 @@ impl Session {
     /// 「该调用未执行」，随历史进下一条 `llm_request.messages`）。
     pub fn request_abort(&mut self) -> bool {
         self.abort_requested = true;
-        let withdrawn = self.pending.take();
-        if let Some(request) = &withdrawn {
+        let withdrawn = std::mem::take(&mut self.pending);
+        for request in &withdrawn {
             // 发失败 = 等待线程已不在，与 resolve_approval 同口径，不 panic。
             let _ = request.tx.send(ApprovalSignal::Withdrawn);
         }
-        withdrawn.is_some()
+        !withdrawn.is_empty()
+    }
+
+    /// 只收回某一个 run 的待批项（面板停止单个子运行，design §12.4）：其它 run 与父会话
+    /// 自己的待批项不受影响。返回是否确实收回了。
+    pub fn withdraw_approvals_of_run(&mut self, run_id: &str) -> bool {
+        let mut kept = Vec::with_capacity(self.pending.len());
+        let mut withdrawn = Vec::new();
+        for request in std::mem::take(&mut self.pending) {
+            let belongs = matches!(
+                &request.source,
+                super::approval::ApprovalSource::Subrun { run_id: owner, .. } if owner == run_id
+            );
+            if belongs {
+                withdrawn.push(request);
+            } else {
+                kept.push(request);
+            }
+        }
+        self.pending = kept;
+        for request in &withdrawn {
+            let _ = request.tx.send(ApprovalSignal::Withdrawn);
+        }
+        !withdrawn.is_empty()
     }
 
     pub fn abort_requested(&self) -> bool {

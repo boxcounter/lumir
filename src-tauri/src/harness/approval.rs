@@ -9,7 +9,27 @@
 
 use std::sync::mpsc::Sender;
 
+use serde::Serialize;
+
 use super::permissions::DecisionReason;
+
+/// 批准请求的发起者（change add-harness-subagents design §8.3）：父会话自己的调用是
+/// `Interactive`；子运行的调用带 agent / run_id / description，卡片据此点名发起者。
+///
+/// 形状是 internally tagged（`{"kind":"subrun","agent":…}`）——与 `ApprovalRequest.reason`
+/// 同一种线格式，前端按 `kind` 分支。序列化只在事件与快照两条 UI 通道上使用。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ApprovalSource {
+    /// 父会话自己的工具调用（既有形态）。
+    Interactive,
+    /// 子运行透传上来的批准卡。
+    Subrun {
+        agent: String,
+        run_id: String,
+        description: String,
+    },
+}
 
 /// 面板发回的采纳 / 拒绝决定。
 #[derive(Debug, Clone)]
@@ -55,6 +75,8 @@ pub struct ApprovalRequest {
     /// 该批准卡支持「采纳且本会话不再问」次级动作（design §6；批准闸挂出的请求恒 true）。
     /// 是面板动作可见性的开关——`PendingApprovalSnapshot` 原样镜像给前端。
     pub remember: bool,
+    /// 发起者（design §8.3）：交互调用是 `Interactive`，子运行透传的请求带来源三件。
+    pub source: ApprovalSource,
     /// 决定回传通道（harness_approve 发 Decided；停止本轮发 Withdrawn）。
     pub tx: Sender<ApprovalSignal>,
 }
@@ -77,12 +99,19 @@ impl ApprovalRequest {
             purpose,
             reason,
             remember,
+            source: ApprovalSource::Interactive,
             tx,
         }
     }
 
     pub fn with_id(mut self, id: String) -> Self {
         self.id = id;
+        self
+    }
+
+    /// 子运行透传的请求（design §8.3）：卡片点名发起者。
+    pub fn with_source(mut self, source: ApprovalSource) -> Self {
+        self.source = source;
         self
     }
 }

@@ -2,7 +2,8 @@
 //! 工具策略 + 预算 + 批准策略，由同一个工具循环（[`super::turn`]）执行。
 //!
 //! **去留口径（tasks §0.3）**：本层按**实际消费者**决定去留——当前消费者是交互回合
-//! （[`SessionContext`]）；cron 与委托（子运行）按各自 change 接入。不因单一原语（某条事件、
+//! （[`SessionContext`]）与委托运行（[`subagents::ChildContext`]）；cron 按自己的 change 接入。
+//! 不因单一原语（某条事件、
 //! 某个字段）的变化删改本层，也**不保留兼容层**：没有消费者、也没有已发布契约的字段直接删，
 //! 不写迁移 / 双写 / 过渡路径。cron 与子运行共用本层时，差异只落在契约值上（会话目标、批准
 //! 策略、预算），MUST NOT 各自复制一份循环。
@@ -36,6 +37,8 @@ use super::session::{self, PanelMessage};
 use super::title::TitleJob;
 use super::tools;
 use super::{Runtime, VaultScope};
+
+use super::{scheduler, subagents};
 
 /// 触发来源。仅用于诊断、事件归属与预留策略，**不用于分支循环行为**——三类来源跑同一套循环。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -220,6 +223,18 @@ pub enum ApprovalOutcome {
 /// 结果项的形状 = 既有工具调用的 `(调用项, 输出项)` 对，调用侧按调用序号回填（design §12.2）。
 pub trait OrchestrationCall: Send {
     fn join(self: Box<Self>) -> (serde_json::Value, serde_json::Value);
+
+    /// 编排结果的值（工具输出信封）：调用侧用它走统一的工具收尾（面板行 / 事件 / 结果项）。
+    /// 缺省从 [`Self::join`] 的 `function_call_output.output` 字符串还原——测试替身不需要
+    /// 单独实现。
+    fn result_value(self: Box<Self>) -> serde_json::Value {
+        let (_, output_item) = self.join();
+        output_item
+            .get("output")
+            .and_then(|value| value.as_str())
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or_default()
+    }
 }
 
 /// 工具循环对运行上下文的唯一依赖面（design §2.1）。实现方：
@@ -292,9 +307,65 @@ pub trait RunContext {
     fn begin_compacted_session(&mut self, summary: &str) -> Result<(), CommandError>;
 
     /// 若该调用属于**并行编排**（`task`），启动它并返回句柄；`None` = 按普通工具串行执行。
-    /// 交互上下文当前恒 `None`（第 9 件工具由 §3 注册）；子运行上下文永远 `None`（深度 1）。
+    /// 交互上下文实现 `task` 的启动；子运行上下文永远 `None`（深度 1）。
+    ///
+    /// 对 `task` 调用**恒返回句柄**（包括被拒 / disabled 的调用）：拒绝也要产出一条与普通
+    /// 工具同形的结果项，调用方不必为编排工具再写一条错误分支。
     fn orchestrate(&mut self, _call: &llm::ToolCall) -> Option<Box<dyn OrchestrationCall>> {
         None
+    }
+
+    /// 该运行是否允许执行这个工具（子运行的定义白名单；交互路径恒 true）。
+    /// 执行层二次校验（design §8.2）用它挡住模型幻觉出的未声明工具名。
+    fn tool_allowed(&self, _name: &str) -> bool {
+        true
+    }
+
+    /// 用户回合开始（在 user 消息入队**之前**调用）：交互上下文借此把排队中的后台完成
+    /// 通知并入本回合输入、取消待起唤醒并清零链计数（design §12.6.2）。
+    fn begin_user_turn(&mut self) {}
+
+    /// 一次 provider 请求的许可（design §12.3）：父会话自己的往返优先、子请求 FIFO。
+    /// 返回的 guard 在 `complete` 期间持有，drop 即归还。缺省 None = 不受闸约束（单测替身）。
+    fn request_permit(&self) -> Option<scheduler::RequestPermit> {
+        None
+    }
+
+    /// 一轮 LLM 往返开始（`round` 从 1 起）：子运行据此发进度事件与计轮次。
+    fn on_round(&mut self, _round: u32) {}
+
+    /// 一轮往返的用量（`usage` 已累加进会话）：子运行据此累计段预算。
+    fn on_round_usage(&mut self, _usage: &UsageDelta) {}
+
+    /// 压缩调用自己的用量：计入段预算，但**不进任何模型桶**（design §7.5）。
+    fn on_compact_usage(&mut self, _usage: &UsageDelta) {}
+
+    /// LLM 错误（上下文超限压缩重试前的原始错误也走这里）：子运行据此分 `quota` / `error`。
+    fn on_llm_error(&mut self, _error: &llm::TurnError) {}
+
+    /// 上下文超限的压缩重试成功：显式撤销上一条错误（否则子运行会把已恢复的溢出误判为终态）。
+    fn on_llm_error_recovered(&mut self) {}
+
+    /// 一次工具调用的结果（执行后）：子运行据此计 `tool_calls` 与 `denied_calls`。
+    fn on_tool_result(&mut self, _name: &str, _result: &serde_json::Value) {}
+
+    /// 一轮助手文本（可能为空）：子运行据此保留「最后一条非空助手文本」作摘要。
+    fn on_assistant_text(&mut self, _text: &str) {}
+
+    /// mock 游标进度（design §18）：`parent_consumed` = 本回合父客户端已弹条数，
+    /// `region_span` = fixture 声明的子运行区间长度，`script_len` = 脚本总条数。
+    /// 真 provider 上下文不需要它；实现方只对 mock 生效。
+    fn note_mock_progress(
+        &mut self,
+        _parent_consumed: usize,
+        _region_span: usize,
+        _script_len: Option<usize>,
+    ) {
+    }
+
+    /// 本回合由子运行预分配 / 消费的 mock 条数（父会话游标回写时叠加，design §18）。
+    fn external_mock_consumed(&self) -> usize {
+        0
     }
 }
 
@@ -302,12 +373,16 @@ pub trait RunContext {
 /// 回抽前逐字节一致。
 pub struct SessionContext<'a> {
     sink: &'a dyn EventSink,
+    /// 可跨线程持有的同一事件出口（子运行 / 自动唤醒回合在父回合结束后仍要发事件）。
+    owned_sink: Option<std::sync::Arc<dyn EventSink>>,
     runtime: &'a Runtime,
     scope: &'a VaultScope,
     config: &'a HarnessConfig,
     /// 本回合的子代理定义快照（change add-harness-subagents design §4.1：每回合开头扫描一次，
     /// 回合内不回读磁盘，不做 watcher）。
     catalog: agents::AgentCatalog,
+    /// 本会话的子运行中枢（父会话对象持有；本回合开始时把事件出口与配置快照同步进去）。
+    hub: Option<std::sync::Arc<subagents::SubagentHub>>,
 }
 
 impl<'a> SessionContext<'a> {
@@ -317,16 +392,47 @@ impl<'a> SessionContext<'a> {
         scope: &'a VaultScope,
         config: &'a HarnessConfig,
     ) -> Self {
+        Self::new_with_owned_sink(sink, None, runtime, scope, config)
+    }
+
+    /// 生产入口（`turn::run_turn`）：除借用的 sink 外，再给一份可跨线程持有的同一出口。
+    pub fn new_with_owned_sink(
+        sink: &'a dyn EventSink,
+        owned_sink: Option<std::sync::Arc<dyn EventSink>>,
+        runtime: &'a Runtime,
+        scope: &'a VaultScope,
+        config: &'a HarnessConfig,
+    ) -> Self {
         // 定义快照在回合开头取一次：磁盘改动下一回合生效；同一回合内的请求共用同一份清单，
         // 不会出现「同一回合前后定义不一致」。装载期 warning / 容量事件在扫描后落诊断日志。
         let catalog = agents::AgentCatalog::load(&scope.root, config);
         catalog.log_diagnostics();
+        // 中枢随父会话对象存亡：这里只做「取或建」并把本回合的事件出口 / 配置同步进去。
+        let hub = runtime
+            .with_session(scope, |session| {
+                let token = session.subagent_token();
+                session.ensure_subagent_hub(|| {
+                    std::sync::Arc::new(subagents::SubagentHub::new(
+                        runtime.clone(),
+                        scope.clone(),
+                        config.clone(),
+                        token,
+                    ))
+                })
+            })
+            .ok();
+        if let Some(hub) = &hub {
+            hub.set_sink(owned_sink.clone());
+            hub.set_config(config);
+        }
         Self {
             sink,
+            owned_sink,
             runtime,
             scope,
             config,
             catalog,
+            hub,
         }
     }
 
@@ -474,9 +580,18 @@ impl RunContext for SessionContext<'_> {
     }
 
     fn aborted(&self) -> bool {
-        self.runtime
+        let aborted = self
+            .runtime
             .with_session(self.scope, |session| session.abort_requested())
-            .unwrap_or(false)
+            .unwrap_or(false);
+        // 父回合停止是**广播**的（design §12.4）：本回合起的子运行在下一检查点收敛
+        // `Aborted`。只在读到停止时同步一次，正常路径零开销。
+        if aborted {
+            if let Some(hub) = &self.hub {
+                hub.broadcast_abort();
+            }
+        }
+        aborted
     }
 
     fn vault_root(&self) -> &Path {
@@ -495,6 +610,70 @@ impl RunContext for SessionContext<'_> {
 
     fn after_turn(&mut self, user_text: &str) -> Option<TitleJob> {
         super::title::job_after_turn(self.runtime, self.scope, self.config, user_text)
+    }
+
+    fn orchestrate(&mut self, call: &llm::ToolCall) -> Option<Box<dyn OrchestrationCall>> {
+        if call.name != "task" {
+            return None;
+        }
+        let hub = self.hub.clone()?;
+        Some(Box::new(subagents::start_task(
+            &hub,
+            self.config,
+            &self.catalog,
+            call,
+            self.owned_sink.clone(),
+        )))
+    }
+
+    fn begin_user_turn(&mut self) {
+        // 无人值守槽位（cron）不参与自动唤醒与链计数（design §12.6.1）。
+        if self.runtime.is_isolated() {
+            return;
+        }
+        let Some(hub) = self.hub.clone() else {
+            return;
+        };
+        if let Some(notice) = hub.begin_user_turn() {
+            let _ = self.with_session(|session| {
+                subagents::insert_notice_message(session, &notice.text, Some(&notice.batch_id))
+            });
+        }
+    }
+
+    fn request_permit(&self) -> Option<scheduler::RequestPermit> {
+        let priority = if self.runtime.is_isolated() {
+            scheduler::RequestPriority::Child
+        } else {
+            scheduler::RequestPriority::Parent
+        };
+        Some(scheduler::acquire_provider_request(
+            self.config.provider,
+            self.config.subagents.max_concurrent,
+            priority,
+        ))
+    }
+
+    fn note_mock_progress(
+        &mut self,
+        parent_consumed: usize,
+        region_span: usize,
+        script_len: Option<usize>,
+    ) {
+        if let Some(hub) = &self.hub {
+            let base = self
+                .runtime
+                .with_session(self.scope, |session| session.mock_cursor())
+                .unwrap_or(0);
+            hub.note_mock_progress(base, parent_consumed, region_span, script_len);
+        }
+    }
+
+    fn external_mock_consumed(&self) -> usize {
+        self.hub
+            .as_ref()
+            .map(|hub| hub.external_mock_consumed())
+            .unwrap_or(0)
     }
 
     fn begin_compacted_session(&mut self, summary: &str) -> Result<(), CommandError> {

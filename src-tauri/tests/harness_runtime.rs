@@ -733,9 +733,9 @@ fn ask_gate_approve_executes_and_reject_leaves_disk() {
         assert_eq!(request["tool"], "vault_delete");
         assert_eq!(request["argv"], serde_json::json!(["a.md"]));
         let id = request["id"].as_str().unwrap().to_string();
-        // 面板状态里 pending_approval 可见（harness_state 形状）。
-        let pending = runtime.snapshot(&f.scope(), &config).pending_approval;
-        assert_eq!(pending.map(|p| p.id), Some(id.clone()));
+        // 面板状态里 pending_approvals 可见（harness_state 形状；单槽 → 列表）。
+        let pending = runtime.snapshot(&f.scope(), &config).pending_approvals;
+        assert_eq!(pending.first().map(|p| p.id.clone()), Some(id.clone()));
         // 采纳 / 拒绝（拒绝带原因，随结果回送模型）。
         runtime
             .with_session(&f.scope(), |s| {
@@ -775,7 +775,7 @@ fn ask_gate_approve_executes_and_reject_leaves_disk() {
             assert!(tool.text.as_deref().unwrap().contains("approval_rejected"));
             assert!(tool.text.as_deref().unwrap().contains("先别删"));
         }
-        assert!(snapshot.pending_approval.is_none(), "批准后 pending 清空");
+        assert!(snapshot.pending_approvals.is_empty(), "批准后 pending 清空");
     }
 }
 
@@ -2366,7 +2366,9 @@ fn approval_remember_writes_cache_and_decision_visible() {
     // 快照镜像：purpose 缺席（非 cli_run）、remember 恒 true（次级动作可见性）。
     let pending = runtime
         .snapshot(&f.scope(), &config)
-        .pending_approval
+        .pending_approvals
+        .first()
+        .cloned()
         .expect("第一张卡在快照里");
     assert_eq!(pending.id, first_id);
     assert!(pending.purpose.is_none());
@@ -2859,7 +2861,9 @@ fn approval_reason_reaches_event_and_snapshot_alike() {
     // 快照面同值（同一个 Verdict 喂两条通道）。
     let pending = runtime
         .snapshot(&f.scope(), &config)
-        .pending_approval
+        .pending_approvals
+        .first()
+        .cloned()
         .expect("待决项在快照里");
     assert_eq!(pending.id, id);
     assert_eq!(

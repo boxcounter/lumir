@@ -93,15 +93,64 @@ pub struct AssembledSystem {
     pub manifest: Vec<AssemblySource>,
 }
 
+/// 委托运行的机制级约束段（change add-harness-subagents design §10）：**不写进定义文件**
+/// ——它是「子运行」这件事本身的纪律，用户定义只承载任务身份。正文固定，不随定义变化。
+const DELEGATION_CONSTRAINTS: &str = "\
+你是被父会话委派出来的子代理，这段运行有明确的边界：
+- 只做被交代的任务，不与用户直接交互；需要用户决定的调用交给批准闸透传，不能自己假设答案。
+- 不能再次委派（你没有 task 工具）。
+- 结束时直接给摘要，不寒暄：结论 + 依据 + 不确定项 + 未覆盖范围。";
+
 /// 装配完整系统上下文（固定身份段 + AGENTS.md 三层 + Skill 索引 + 摘录回指纪律 + 路径引用纪律）。
 pub fn assemble_system(vault_root: &Path) -> AssembledSystem {
     // 固定段正文来自仓内 Markdown（编译期嵌入，change `harness-prompt-files`）：装配处统一
     // trim 掉文件尾换行 / 行尾空白，注入文本与清单 bytes 都用 trim 后的结果，其余不动。
     let identity = IDENTITY.trim_end();
+    assemble_with_identity(
+        vault_root,
+        identity,
+        AssemblySource::fixed("identity", IDENTITY_PATH, identity),
+        false,
+    )
+}
+
+/// 子运行的系统上下文（change add-harness-subagents design §10）：定义正文**替换**固定身份段
+/// （空正文时退回固定身份段）；其后的 AGENTS.md 三层与 Skill 索引照常装配。委托约束段是
+/// 机制级补充，紧跟在身份段之后。
+pub fn assemble_system_for_subagent(vault_root: &Path, body: &str) -> AssembledSystem {
+    let body = body.trim();
+    let (identity, source) = if body.is_empty() {
+        (IDENTITY.trim_end(), "identity")
+    } else {
+        (body, "subagent_definition")
+    };
+    assemble_with_identity(
+        vault_root,
+        identity,
+        AssemblySource {
+            source,
+            path: None,
+            exists: true,
+            bytes: identity.len() as u64,
+            skills: None,
+        },
+        true,
+    )
+}
+
+fn assemble_with_identity(
+    vault_root: &Path,
+    identity: &str,
+    identity_source: AssemblySource,
+    delegation: bool,
+) -> AssembledSystem {
     let quote_reference = QUOTE_REFERENCE.trim_end();
     let path_reference = PATH_REFERENCE.trim_end();
     let mut out = String::from(identity);
-    let mut manifest = vec![AssemblySource::fixed("identity", IDENTITY_PATH, identity)];
+    let mut manifest = vec![identity_source];
+    if delegation {
+        push_section(&mut out, "委托运行约束", DELEGATION_CONSTRAINTS);
+    }
     push_section(&mut out, "引用摘录的回指纪律", quote_reference);
     manifest.push(AssemblySource::fixed(
         "quote_reference",
