@@ -254,6 +254,17 @@ pub trait RunContext {
     /// 本策略下的批准语义（决定「挂起等待」还是「直接拒绝」）。
     fn approval_policy(&self) -> ApprovalPolicy;
 
+    /// 无人值守策略的**预览前短路**（change add-cron-runtime-daemon §3.5 的既有顺序）：
+    /// 策略为 [`ApprovalPolicy::RejectUnavailable`] 时置程序性中止原因并返回
+    /// `(code, message)`；其余策略返回 `None`。
+    ///
+    /// 调用方 MUST 在生成批准预览**之前**问它：预览失败（如 patch 不唯一命中）同样属于
+    /// 「无人值守运行遇到需批准的调用」，必须中止运行，不得把预览错误回送模型续跑——那是
+    /// 另一种错误口径，换口径须显式裁决，不能随公共层回抽带入。
+    fn reject_unavailable(&mut self) -> Option<(String, String)> {
+        None
+    }
+
     /// 预算判定（轮次 / token / 时间；交互路径只有轮次）。
     fn budget(&self, rounds: u32) -> BudgetVerdict;
 
@@ -356,14 +367,10 @@ impl RunContext for SessionContext<'_> {
         request: ApprovalRequest,
         rx: mpsc::Receiver<ApprovalSignal>,
     ) -> ApprovalOutcome {
-        if self.approval_policy() == ApprovalPolicy::RejectUnavailable {
-            let code = "approval_required";
-            let message = "无人值守运行遇到需要批准的调用，已中止本次运行";
-            let _ = self.with_session(|session| session.stop_with(code, message));
-            return ApprovalOutcome::Unavailable {
-                code: code.to_string(),
-                message: message.to_string(),
-            };
+        // 无人值守策略的短路与代码 / 文案同出一处（`reject_unavailable`）：正常调用方已在
+        // 预览前短路（`gated_execute` 顶部），这里保留同一道判断作防御，语义与 master 等价。
+        if let Some((code, message)) = self.reject_unavailable() {
+            return ApprovalOutcome::Unavailable { code, message };
         }
         // 事件载荷的四件展示字段在请求被 park 前取出（park 取走所有权）；批准卡与事件同源。
         let tool = request.tool.clone();
@@ -397,6 +404,18 @@ impl RunContext for SessionContext<'_> {
         } else {
             ApprovalPolicy::Interactive
         }
+    }
+
+    fn reject_unavailable(&mut self) -> Option<(String, String)> {
+        if self.approval_policy() != ApprovalPolicy::RejectUnavailable {
+            return None;
+        }
+        // 程序性中止原因（`approval_required`）由会话承载：工具循环在下一个检查点收口，
+        // 终态事件带错误码，cron 回执据此产出 `run_finished(ok=false)`。
+        let code = "approval_required";
+        let message = "无人值守运行遇到需要批准的调用，已中止本次运行";
+        let _ = self.with_session(|session| session.stop_with(code, message));
+        Some((code.to_string(), message.to_string()))
     }
 
     fn budget(&self, rounds: u32) -> BudgetVerdict {

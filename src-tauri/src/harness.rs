@@ -141,7 +141,8 @@ impl Runtime {
         runtime
     }
 
-    /// 是否无人值守运行槽：`run_turn` 据此选择静默 sink，`gated_execute` 据此中止批准闸。
+    /// 是否无人值守运行槽：`run_turn` 据此选择静默 sink；`SessionContext::approval_policy`
+    /// 据此判 `RejectUnavailable`（`gated_execute` 在生成预览之前短路中止本运行）。
     pub fn is_isolated(&self) -> bool {
         self.inner.isolated
     }

@@ -1061,13 +1061,14 @@ struct GatedCall<'a> {
     reason: Option<permissions::DecisionReason>,
 }
 
-/// ask 档：生成预览 → 挂起批准 → 等决定 → 采纳执行 / 拒绝回送。
+/// ask 档：无人值守短路 → 生成预览 → 挂起批准 → 等决定 → 采纳执行 / 拒绝回送。
 ///
 /// 返回值带批准闸决定（`Some("approved")` / `Some("rejected")`）——面板工具行的
 /// decision 字段数据源；通道失效 / 本轮被停止没有决定，返回 None。
 ///
 /// 挂起、事件上屏与等待都在 [`RunContext::approval`] 内完成（交互上下文 = 既有批准闸；
-/// 子运行 = 透传到父会话；无人值守 = 直接拒绝）。本函数只保留与工具语义相关的三件事：
+/// 子运行 = 透传到父会话）。无人值守策略在**预览之前**由
+/// [`RunContext::reject_unavailable`] 短路。本函数只保留与工具语义相关的三件事：
 /// 预览、执行、拒绝文案。
 fn gated_execute<C: RunContext>(
     ctx: &mut C,
@@ -1075,6 +1076,12 @@ fn gated_execute<C: RunContext>(
     subject: &str,
     gated: GatedCall<'_>,
 ) -> (ToolOutput, Option<&'static str>) {
+    // 无人值守槽位（change add-cron-runtime-daemon §3.5，master 的既有顺序）：在生成预览
+    // **之前**短路——预览失败（如 patch 目标缺失 / 不唯一命中）同样中止本次运行，不得把
+    // 预览错误回送模型续跑。这是 cron 已合并的语义，公共层回抽 MUST NOT 改变它。
+    if let Some((code, message)) = ctx.reject_unavailable() {
+        return (ToolOutput::err(&code, &message), None);
+    }
     let GatedCall { call, args, reason } = gated;
     let preview = match tools::approval_preview(&call.name, args, tctx) {
         Ok(preview) => preview,
@@ -2068,6 +2075,89 @@ mod tests {
             "content": [{"encrypted_content": "enc-deep"}],
         });
         assert!(reasoning_has_encrypted_content(&nested));
+    }
+
+    /// 无人值守槽 + ask 档调用 + **预览失败**：master 的顺序是在生成预览**之前**按槽位短路
+    /// （`stop_with("approval_required")` 中止），预览错误不得回送模型续跑。
+    ///
+    /// 这是 M586 回抽必须保住的既有语义：cron（M583/M584）是已合并的消费者，预览失败时
+    /// 「中止运行」与「让模型纠错续跑」是两种不同的错误口径，换口径须另立 change 显式裁决。
+    ///
+    /// 区分度（REVIEW.md「断言等价于子串」条）：断言 ① 终态是 `approval_required` 错误而不是
+    /// `done`；② mock 脚本只被弹了第一条（旧顺序下预览错误回送模型，循环会继续弹第二条并正常
+    /// 收尾）。恢复「预览前短路」之前本用例两条断言都红（已实测）。
+    #[test]
+    fn isolated_ask_call_with_failed_preview_still_aborts_the_run() {
+        let root =
+            std::env::temp_dir().join(format!("lumir-harness-isolated-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md「测试污染真实环境」条：不写真实 ~/.config/lumir）。
+        // 先取进程级 XDG 锁、再改环境（drop 逆序：XDG 复原时仍持锁）。
+        let _xdg = crate::harness::xdg_test_lock();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-test-1".to_string(),
+        };
+        let config = HarnessConfig {
+            provider: HarnessProvider::Mock,
+            // 只读档：vault_patch 进 Ask 档（默认 vault_write 会直接放行写工具，到不了批准闸）。
+            permission_mode: crate::config::PermissionMode::ReadOnly,
+            ..Default::default()
+        };
+
+        // 无人值守槽（cron）：ask 档调用 + 预览失败（目标文件不存在 ⇒ fs_not_found）。
+        let runtime = Runtime::isolated();
+        assert!(runtime.is_isolated(), "测试前提：无人值守运行时实例");
+        runtime.acquire_turn(&scope, &config).unwrap();
+        let sink = Collect::default();
+        let seen = sink.0.clone();
+        let script = r#"{"responses": [
+            {"text": "先改文件。",
+             "tool_calls": [{"id": "c1", "name": "vault_patch",
+               "arguments": "{\"path\":\"missing.md\",\"edits\":[{\"old_string\":\"a\",\"new_string\":\"b\"}]}"}]},
+            {"text": "预览错误后继续。"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "isolated-approval").unwrap();
+        run_turn_for(
+            &sink,
+            &runtime,
+            &scope,
+            &config,
+            "改一下".to_string(),
+            None,
+            &mut client,
+        );
+        runtime.release_turn(&scope);
+
+        let events = seen.lock().unwrap();
+        // ① 终态：approval_required 错误，不是 done。
+        assert!(
+            events.iter().all(|event| event["type"] != "done"),
+            "无人值守的批准闸中止不得以 done 收尾：{events:?}"
+        );
+        let error = events
+            .iter()
+            .rfind(|event| event["type"] == "error")
+            .expect("应有错误终态");
+        assert_eq!(error["code"], "approval_required", "{error}");
+        // ② 预览失败不得回送模型续跑：脚本只弹了第一条。
+        assert_eq!(
+            client.mock_consumed(),
+            1,
+            "无人值守必须在预览之前短路，不应再发下一次请求"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 同回合并行编排的回填顺序（tasks §1.7）：第二个调用**先完成**，回填仍是 0,1。
