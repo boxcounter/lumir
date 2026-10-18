@@ -10,9 +10,11 @@
 > **裁决口径**：形态照 Claude Code subagents 参照系（定义即 Markdown + frontmatter、按名字委派、按
 > description 自动委派、partial 可 resume）；真源已裁决的两条不松动——工具缺省只读三件、三重闸全在。
 > 第二轮按 Alex 节点 1 阅读中的裁决改写：**并行 + 后台运行、批准卡透传、内建 `explore`、用量按模型
-> 分桶、用户可见面**（逐条原话见 proposal「裁决留痕」）。深度 1 层用「不授予 `task` 工具」表达；
-> 逐条取舍见 proposal 末尾 18 条设计取舍（其中第 7、13 条与 14–18 条已由 Alex 裁决采纳），Alex 否决项
-> 按替代方案改写后重走节点 1；实现期发现意图需变更时停下重走节点 1。
+> 分桶、用户可见面**（逐条原话见 proposal「裁决留痕」）。第三轮按节点 1 终审前的裁决改写：**后台完成
+> 自动唤醒父会话**（推翻取舍 14）+ **链式失控闸**（`AUTO_WAKE_CHAIN_MAX = 3`，取舍 19）、降级检查改由
+> cron 承载。深度 1 层用「不授予 `task` 工具」表达；逐条取舍见 proposal 末尾 19 条设计取舍（第 7、13 条
+> 与 15–18 条已采纳；第 14 条先采纳后推翻；第 19 条待裁），Alex 否决项按替代方案改写后重走节点 1；
+> 实现期发现意图需变更时停下重走节点 1。
 
 ## 0. 前置（ADR 与跨 change 对齐）
 
@@ -113,6 +115,16 @@
 - [ ] 4.12 批准透传接线：`ApprovalRequest` 增加 `source`（agent / run_id / description）；会话待批
   由单槽改列表 `pending_approvals`（快照字段一次迁净，旧字段直接删）；批准 / 拒绝 / 本会话不再问 /
   停止收回四条路径的单测；断言「持 `Runtime.sessions` 锁时不等待用户或子运行」。
+- [ ] 4.13 自动唤醒调度（`scheduler.rs`）：每父会话一个调度器（`pending` 批次 / `running` / `chain`）；
+  空闲时合并窗口 `AUTO_WAKE_COALESCE_MS = 2000`（首条通知起算、不顺延）后起一个回合；正忙时排队、
+  回合结束后合并为一个回合；同一时刻至多一个自动回合在飞、至多一个待起批次；通知以带 `auto_notice`
+  标记的 user 消息落进父会话历史（`llm_request` 留存即真源，不另写旁路记录）。单测：空闲唤醒、
+  两 run 忙时合并为 1 个回合、在飞时排队、用户回合撤销待起唤醒并把通知并入用户回合输入。
+- [ ] 4.14 链式失控闸：常量 `AUTO_WAKE_CHAIN_MAX = 3`（代码常量，不进 `SubagentsConfig`）；计数在
+  自动回合开始时加一，用户回合开始 / 面板「继续」/ 会话重置恢复切 vault 时清零，不持久化；触顶
+  不起回合、`auto_wake.blocked = "chain_limit"`、通知照常落库上屏；用户停止自动回合视同触顶
+  （`blocked = "stopped"`）。单测覆盖：链内三回合放行、第 4 次触顶、清零后恢复、停止后不再唤醒、
+  aborted 不唤醒、自动回合内部触顶 `loop_max` 不改变链计数（两者正交）。
 
 ## 5. 用量归属与留存
 
@@ -125,8 +137,10 @@
 - [ ] 5.4 子运行审计流水（`harness/jsonl.rs`）：`subruns/<vault 稳定 id>/<run_id>.jsonl`、`run_open` /
   `run_segment`、wire 记录与 sidecar；MUST NOT 落 `sessions/`（`rg` 断言目录常量只出现在一处装配点）。
 - [ ] 5.5 会话列举 / 恢复 / 删除三条链路不感知 `subruns/`：跑既有会话列表验收场景，确认零变化。
-- [ ] 5.6 后台结果投递：收敛后写 `task_result` 记录 + transcript 自动化通知 + `subagent_notified`；
-  父回合进行中则排队到回合收尾后追加（单测：不中途改写父会话上下文；空闲时不自动起回合）。
+- [ ] 5.6 后台结果投递与自动唤醒：收敛后写带 `auto_notice` 标记的通知消息（不另写旁路记录）+ 通知
+  上屏 + `subagent_notified`（`wake` / `wake_batch` / `chain_index`）；父会话空闲时按 §4.13 起自动
+  回合，正忙时排队合并（单测：不中途改写父会话上下文；两个 run 相继收敛只起一个回合；链触顶不起
+  回合）。
 
 ## 6. 配置、文档与 bindings
 
@@ -137,7 +151,9 @@
   上限的警告路径；`max_concurrent` 与前四项的语义差异（并发不是预算）。
 - [ ] 6.3 `docs/specs/config-reference.md` 新增 `[harness.subagents]` 键表：缺省值、合法域、生效时机
   （装载时读一次）、定义值夹取、**子运行用量按模型分桶且不进父会话 ctx% / cache%**、回合级最坏
-  token 消耗（`max_subruns_per_turn × max_tokens`）。
+  token 消耗（`max_subruns_per_turn × max_tokens`）；另写明两个**不是配置键**的常量
+  （`AUTO_WAKE_CHAIN_MAX = 3`、`AUTO_WAKE_COALESCE_MS = 2000`）与无人注视下的消耗上界
+  （`AUTO_WAKE_CHAIN_MAX × max_subruns_per_turn × max_tokens` + 自动回合自身往返）。
 - [ ] 6.4 新增 `docs/specs/subagent-definitions.md`：定义文件格式（vault / user 路径、frontmatter
   字段表含 `background`、校验与丢弃规则、优先级、热加载时机、清单与 15k 告警、内建 `explore` 与
   覆盖规则、本版本不采纳的参照系字段清单、能力边界：8 件工具任意子集 / 无 web 工具）。
@@ -149,7 +165,8 @@
 
 - [ ] 7.1 `logging.rs` 白名单新增 `subagent_started` / `subagent_progress` / `subagent_step` /
   `subagent_finished` / `subagent_notified` / `subagent_rejected` / `subagent_catalog_large` 与字段
-  校验用例；`status` / `stopped_by` / `reason` 为闭集合。
+  校验用例；`status` / `stopped_by` / `reason` / `wake` 为闭集合；`subagent_notified` 带
+  `wake` / `wake_batch` / `chain_index`。
 - [ ] 7.2 断言完成事件只有一个产出点（段收尾），失败 / 中止 / 后台路径同样产出一条，不静默；事件
   不含 prompt、文件内容与 vault 绝对路径。
 - [ ] 7.3 观测读数自验：跑一次 completed、一次 failed、一次 quota 收敛的子运行，给出使用计数与触顶
@@ -185,23 +202,30 @@
 - [ ] 8.15 `node scripts/acceptance/run.mjs --check` 通过（新增场景静态校验）。
 - [ ] 8.16 「同回合并行 + 按序回填」：一条助手消息含两个 `task`，让第二个先完成；断言两个 run 的
   时间区间重叠、transcript 两行按调用序、两条工具结果按调用序回填。
-- [ ] 8.17 「后台运行与通知」：`background=true`；断言立即 `status=running`、父回合正常 `done`、
-  回合结束后可立即发送新消息、run 收敛后 transcript 出现自动化通知 + `task_result` 记录 +
-  `subagent_notified`。
+- [ ] 8.17 「后台运行与通知 + 自动唤醒」：`background=true`；断言立即 `status=running`、父回合正常
+  `done`、回合结束后可立即发送新消息、run 收敛后 transcript 出现带 `auto_notice` 标记的自动化通知、
+  `subagent_notified` 落盘；空闲时紧接着自动起一个父会话回合（`wake=auto_turn`、`chain_index=1`）。
 - [ ] 8.18 「内建 explore 与覆盖」：无自定义定义时清单含 `explore` 且工具为只读三件；放同名自定义
   定义后生效的是自定义定义 + 覆盖 warning。
 - [ ] 8.19 「任务面板可见」（WKWebView AX 断言）：子运行期间任务区出现该行（agent / 状态 / 读数）；
   批准卡在行内展开并点名 agent；主 transcript 的 AX 树不含子运行工具行；停止单个 run 只停它。
+- [ ] 8.20 「忙时合并为一个回合」：用户回合进行中两个后台 run 相继收敛；断言当前回合结束后只起**一个**
+  自动回合、输入含两条通知（同一 `wake_batch`）、自动回合数 = 1。
+- [ ] 8.21 「链上限与恢复」：连续三个自动回合后第 4 条后台结果收敛 ⇒ 不起回合、通知照常上屏、
+  `wake=blocked_chain`、任务区出现触顶提示行（AX 断言）且「继续」可点；用户发言后链清零，下一条后台
+  结果恢复自动唤醒；停止自动回合后同样不再唤醒（`blocked_stopped`）。
+- [ ] 8.22 「自动回合与 loop_max 正交」：自动回合内 mock 驱动工具往返触顶 `loop_max`，断言该回合按
+  既有提示结束、链计数不变、下一条后台结果仍受链上限约束。
 
 ## 9. 验证
 
 - [ ] 9.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
-- [ ] 9.2 `cargo test` 通过（含 §1.3 / §1.7 / §2.7–2.9 / §3.2–3.5 / §4.1–4.12 / §5.3 / §5.6 /
+- [ ] 9.2 `cargo test` 通过（含 §1.3 / §1.7 / §2.7–2.9 / §3.2–3.5 / §4.1–4.14 / §5.3 / §5.6 /
   §6.2 / §7.2 新增单测）。
 - [ ] 9.3 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）；动过
   `src/harness-panel.ts` / `src/style.css` / `tests/visual/**` 后本地跑 `scripts/gate.sh visual`，
   基线更新前截图须 Alex 过目（AGENTS.md 基线纪律）。
-- [ ] 9.4 真机跑新增验收场景（§8.1–8.19），证据目录用绝对路径 `ls` 到；失败与跳过项逐条写明原因。
+- [ ] 9.4 真机跑新增验收场景（§8.1–8.22），证据目录用绝对路径 `ls` 到；失败与跳过项逐条写明原因。
 - [ ] 9.5 公共层对账：`rg -n "fn run_turn_for|fn run_turn" src-tauri/src` 确认循环入口唯一；
   `rg -n "cron:run" src` 确认 cron 交接载荷已按 `RunSpec` 形状（或按 §0.2 记录的顺序豁免）。
 - [ ] 9.6 观测与关停可执行性：按 proposal「观测」节给出检查命令的实际读数与执行时刻；真机重启一次
@@ -215,8 +239,12 @@
   运行中行提供「停止」。
 - [ ] 10.3 批准卡透传渲染：行内就地展开、点名 agent + description、待批时自动展开、标题显示待批数；
   拒绝后收敛为终态记录；父会话自己的批准卡保持不变。
-- [ ] 10.4 后台完成通知：transcript 自动化通知消息样式（与用户消息区分，左侧色条 + 「后台任务完成」
-  标签）；不进模型上下文以外的任何通道。
+- [ ] 10.4 后台完成通知与自动回合：transcript 自动化通知消息样式（与用户消息区分，左侧色条 +
+  「后台任务完成」标签；多条通知合并为一条时逐 run 列一行）；自动回合的助手回复沿用普通回合形态；
+  通知消息是模型上下文的一部分（`auto_notice` 标记的 user 消息）。
 - [ ] 10.5 子代理清单：只读折叠列表（名字 / description / 工具数 / 模型 / 来源），覆盖时标来源说明。
 - [ ] 10.6 按模型用量区：展开区给「子任务用量（按模型）」表，父会话控制行读数不变（不掺子运行）。
-- [ ] 10.7 前端单测（行状态映射、事件路由到 run、空态）+ 真机 AX 场景（§8.19）；视觉门禁按 §9.3。
+- [ ] 10.7 前端单测（行状态映射、事件路由到 run、空态）+ 真机 AX 场景（§8.19 / §8.21）；视觉门禁按 §9.3。
+- [ ] 10.8 自动回合触顶提示行：`auto_wake.blocked` 非空时任务区顶部出现提示（`chain_limit` /
+  `stopped` 两种文案 + 「继续」按钮）；提示行不冒充 run 行、不参与 run 计数；「继续」等价一次用户
+  发言（链清零并按待处理通知起回合），前端单测覆盖两种文案与点击路径。

@@ -107,6 +107,8 @@ button.trow:hover { background: var(--hover); }
 }
 .notice-head .when { font-weight: var(--fw-regular); letter-spacing: 0; color: var(--text-3); }
 .notice-body { font-size: var(--fs-meta); color: var(--text-2); }
+.notice-body .notice-line { margin-bottom: 2px; }
+.notice-body .notice-line:last-of-type { margin-bottom: var(--sp-2); }
 .notice-body .more { color: var(--text-3); }
 
 /* ============ 任务区（agent 面板内、composer 上方） ============ */
@@ -123,6 +125,17 @@ button.trow:hover { background: var(--hover); }
 .tp.is-collapsed .tp-chev { transform: rotate(0deg); }
 .tp.is-collapsed .tp-list, .tp.is-collapsed .tp-usage { display: none; }
 .tp-list { padding: 0 var(--sp-3) var(--sp-2); display: flex; flex-direction: column; gap: 1px; }
+/* 自动回合触顶提示行（不是 run 行：不参与任务计数） */
+.tp-alert {
+  display: flex; align-items: flex-start; gap: var(--sp-3); margin: 0 var(--sp-3) var(--sp-2);
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r5);
+  background: var(--accent-tint); color: var(--text-2);
+  font-size: var(--fs-label-s); line-height: var(--lh-ui);
+}
+:root[data-theme="eink"] .tp-alert { background: transparent; border-width: 1.4px; }
+.tp-alert .al-text { min-width: 0; flex: 1; }
+.tp-alert .al-text b { color: var(--text); }
+.tp-alert .mini { flex: none; margin-top: 1px; }
 
 /* 运行行 */
 .run { border-radius: var(--r5); }
@@ -355,6 +368,16 @@ const RUNS = {
       steps: [["vault_create", "20_笔记/复核记录-第41周.md"]],
       summary: "复核记录已写好，共 3 条结论；两处待你确认的措辞列在文末。" },
   ],
+  wake: [
+    { id: "r1", agent: "research", desc: "梳理这周的规范变更", status: "done", background: true,
+      rounds: 6, tokens: "96k", model: MODELS.fast, elapsed: "2m10s",
+      steps: [["vault_search", "30_规范/** · 18 个文件"], ["vault_read", "40_规范/链接规范.md"]],
+      summary: "本周 9 个变更分两类：链接写法统一相对路径；表格内换行改用标记。" },
+    { id: "r2", agent: "scribe", desc: "把结论落成笔记", status: "done", background: true,
+      rounds: 4, tokens: "38k", model: MODELS.fast, elapsed: "1m40s",
+      steps: [["vault_create", "20_笔记/变更梳理-第41周.md"]],
+      summary: "变更梳理已成文，两处待确认的措辞列在文末。" },
+  ],
   done: [
     { id: "r1", agent: "research", desc: "梳理这周的规范变更", status: "done", background: false,
       rounds: 6, tokens: "96k", model: MODELS.fast, elapsed: "1m26s",
@@ -378,6 +401,10 @@ const USAGE = [
   { model: MODELS.strong, io: "输入 44k（缓存 28k）· 输出 2.1k · 1 段" },
   { model: MODELS.inherit, io: "输入 12k（缓存 9k）· 输出 0.8k · 1 段" },
 ];
+/* 只含同一模型 run 的场景：读数与场景 fixture 对齐（不串用其它场景的桶） */
+const USAGE_SCENES = {
+  wake: [{ model: MODELS.fast, io: "输入 134k（缓存 82k）· 输出 4.6k · 2 段" }],
+};
 
 const SCENES = {
   parallel: {
@@ -394,9 +421,26 @@ const SCENES = {
   },
   background: {
     name: "后台任务与完成通知",
-    desc: "父回合已结束，后台任务仍在跑（带「后台」标记）；另一个后台任务已完成，结果以自动化通知落在对话里，回合结束后可以直接继续发消息。",
+    desc: "父回合已结束，后台任务仍在跑（带「后台」标记）；另一个后台任务已完成——通知落在对话里，并自动唤醒父会话起一个回合汇报（不用等你发言）。你可以随时发言打断流程。",
     user: "这两个不急，你先跑着，我想到别的再喊你。",
-    lead: "好，两个都放后台。写完我会把结果作为通知递回来，你可以先继续忙。",
+    lead: "好，两个都放后台。写完我会自动被唤醒、把结果汇报给你——这期间你可以先忙别的。",
+    wake: {
+      notice: ["r2"],
+      reply: "scribe 写完了：复核记录落在 20_笔记/复核记录-第41周.md，共 3 条结论，两处措辞待你确认。research 还在跑。",
+      chainIndex: 1,
+    },
+  },
+  wake: {
+    name: "自动唤醒与链上限",
+    desc: "两个后台任务在同一个合并窗口里收敛：通知合并成一条、只起一个自动回合。连续自动回合已达上限（3）后不再唤醒——通知照常上屏，任务区顶部留提示行，「继续」等价一次发言（链清零并起一个回合）。",
+    user: "这两份都不急，你先跑着。",
+    lead: "好，两个都放后台；写完我会自动汇报，不用你催。",
+    wake: {
+      notice: ["r1", "r2"],
+      reply: "两份都完了：research 梳理出 9 个变更（两类），scribe 已把结论落成笔记，两处措辞待你确认。",
+      chainIndex: 3,
+      blocked: "chain_limit",
+    },
   },
   done: {
     name: "完成态与按模型用量",
@@ -426,6 +470,7 @@ const state = {
   decisions: {},   // runId -> { approved, reason }
   stopped: new Set(),
   trows: new Set(), // transcript 里展开详情的 task 行
+  continued: false, // 自动回合触顶提示行点了「继续」
 };
 const sceneId = SCENES[q.get("scene")] ? q.get("scene") : "parallel";
 const scene = SCENES[sceneId];
@@ -566,9 +611,10 @@ function settledHTML(r) {
 
 /* ---- 按模型用量（子任务，不进父会话 ctx%） ---- */
 function usageHTML() {
+  const rows = USAGE_SCENES[sceneId] || USAGE;
   return `<div class="tp-usage">
     <h4>子任务用量（按模型）</h4>
-    ${USAGE.map(u => `<div class="usage-row"><span class="um">${u.model}</span><span class="uv">${u.io}</span></div>`).join("")}
+    ${rows.map(u => `<div class="usage-row"><span class="um">${u.model}</span><span class="uv">${u.io}</span></div>`).join("")}
   </div>`;
 }
 
@@ -607,6 +653,7 @@ function tasksHTML() {
     <button type="button" class="tp-head" data-collapse aria-expanded="${!state.collapsed}">
       ${title}<span class="tp-chev">${CHEV_SVG}</span>
     </button>
+    ${chainAlertHTML()}
     ${body}
     ${settledAll() ? usageHTML() : ""}
   </section>`;
@@ -635,22 +682,54 @@ function toolsHTML() {
 }
 
 function noticeHTML() {
-  const finished = runs.find(r => r.background && r.status === "done");
-  if (!finished) return "";
+  const w = scene.wake;
+  const fin = w && w.notice ? w.notice.map(id => runs.find(r => r.id === id)).filter(Boolean) : [];
+  if (!fin.length) return "";
+  const head = fin.length === 1
+    ? `后台任务完成 · ${fin[0].agent}`
+    : `${fin.length} 个后台任务完成 · 已合并为一条通知`;
+  const body = fin.map(r =>
+    `<div class="notice-line"><b class="mono">${r.agent}</b> ${r.summary}</div>`).join("");
   return `<div class="msg msg-notice">
-    <div class="notice-head">后台任务完成 · ${finished.agent}<span class="when">· 2 分钟前</span></div>
-    <div class="notice-body">${finished.summary} <span class="more">详情见任务面板</span></div>
+    <div class="notice-head">${head}<span class="when">· 2 分钟前</span></div>
+    <div class="notice-body">${body}<span class="more">详情见任务面板</span></div>
   </div>`;
+}
+
+/* 自动回合：通知作为输入唤起的父会话回合（普通回合，只是被机制启动） */
+function wakeReplyHTML() {
+  const w = scene.wake;
+  if (!w || !w.reply) return "";
+  const more = state.continued ? "<p>好，接着把还没汇报的后台结果处理掉。</p>" : "";
+  return `<div class="msg msg-agent msg-auto">
+    <div class="who">AGENT · 自动回合<span class="when">· 由完成通知唤醒 · 链 ${w.chainIndex} / 3</span></div>
+    <div class="body"><p>${w.reply}</p>${more}</div>
+  </div>`;
+}
+
+/* 链上限提示行：不是 run 行，不参与任务计数 */
+function chainAlertHTML() {
+  const w = scene.wake;
+  if (!w || !w.blocked) return "";
+  if (state.continued) {
+    return `<div class="tp-alert"><span class="al-text">已继续 · 链计数清零，已按待处理通知起一个回合</span></div>`;
+  }
+  const text = w.blocked === "stopped"
+    ? "<b>你停止了自动回合</b>：后续后台结果只上屏，不再自动唤醒。"
+    : "<b>自动回合已达上限（3）</b>：后续后台结果只上屏，等你发言后处理。";
+  return `<div class="tp-alert"><span class="al-text">${text}</span><button type="button" class="mini" data-continue>继续</button></div>`;
 }
 
 function transcriptHTML() {
   const toolBlock = toolsHTML();
   const notice = noticeHTML();
+  const wake = wakeReplyHTML();
   return `<div class="hp"><div class="hp-transcript">
       <div class="msg msg-user"><div class="who">你<span class="when">· 14:02</span></div><div class="body">${scene.user}</div></div>
       <div class="msg msg-agent"><div class="who">AGENT<span class="when">· 14:03</span></div>
         <div class="body"><p>${scene.lead}</p>${toolBlock}</div></div>
       ${notice}
+      ${wake}
     </div>
     ${tasksHTML()}
     ${sceneId === "off" ? "" : catHTML()}
@@ -662,7 +741,8 @@ function transcriptHTML() {
 const NOTES = {
   parallel: "<b>并行</b>：三个任务同时跑，任务区每行只留 agent + 一句话 + 一个读数；点行展开看模型、步骤与用时。状态词永不截断，description 是唯一可截断字段。",
   approval: "<b>批准透传</b>：卡片跟着发起者走（行内展开），点名 agent 与 description；标题标待批数。点「批准 / 拒绝」看卡片就地收敛、行回到运行中——拒绝只废这一次调用。",
-  background: "<b>后台</b>：回合结束后行仍常驻（带「后台」）；完成的结果是一条自动化通知（左侧色条），与用户消息视觉区分。",
+  background: "<b>后台 + 自动唤醒</b>：回合结束后行仍常驻（带「后台」）；收敛的通知（左侧色条）不只是上屏——父会话空闲时会自动起一个回合，模型据此汇报（「AGENT · 自动回合」）。多条通知在同一窗口收敛时合并为一条。",
+  wake: "<b>链上限</b>：自动回合同样是普通回合，但连续三次没有你的发言就停摆——通知照常上屏，任务区顶部留提示行；点「继续」等价你说了一句话（链清零并起一个回合）。闸是确定性计数，不靠模型自觉。",
   done: "<b>按模型分桶</b>：全部收敛后任务区收敛为一行摘要（完成数）+ 按模型用量；每个 run 的详情从 transcript 的 task 行点开（历史任务不逐行留在面板）。触顶的行标「部分结果」并给出触顶原因。",
   catalog: "<b>清单</b>：名字 / 来源 / 工具数 / 模型 / 一句话描述；覆盖内建时只显示生效的一份。v1 没有编辑界面，改定义仍是编辑文本文件。",
   off: "<b>关停</b>：任务区整块不出现（空态不占位），transcript 里也没有 task 行——工具不注册，模型看不见它。",
@@ -723,10 +803,12 @@ function bind() {
       const what = tog.dataset.toggle;
       if (what === "collapse") state.collapsed = !state.collapsed;
       if (what === "cat") state.catOpen = !state.catOpen;
-      if (what === "reset") { state.open.clear(); state.decisions = {}; state.stopped.clear(); state.trows.clear(); }
+      if (what === "reset") { state.open.clear(); state.decisions = {}; state.stopped.clear(); state.trows.clear(); state.continued = false; }
       render();
       return;
     }
+    // 「继续」= 一次用户发言：链计数清零并起一个回合（原型就地示意）
+    if (e.target.closest("[data-continue]")) { state.continued = true; render(); return; }
     if (e.target.closest("[data-cat]")) { state.catOpen = !state.catOpen; render(); return; }
     if (e.target.closest("[data-collapse]")) { state.collapsed = !state.collapsed; render(); return; }
 
