@@ -130,6 +130,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use ts_rs::TS;
 
 use crate::commands::CommandError;
@@ -1760,11 +1762,29 @@ fn migrate_retired_kimi_model(value: &mut serde_json::Value) -> RetiredKimiMigra
     }
 }
 
-/// config.json 的原子落盘：tmp 文件 + rename 原子替换，缩进写（配置要人可读可改，ADR 0002 §5）。
+/// 进程内 config.json 写锁：把「写 tmp + rename」整段串行化。启动期多个线程各自
+/// `config::load()`（`restore_outcome` / `cron_loop` / 前端 `config_get`）可能同时命中退役值
+/// 迁移，运行期还有前端回写——串行化让同进程内的写者不会互相截断 tmp、也不会让先发起的写
+/// 在更晚的写之后再 rename。
+static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// 进程内 tmp 序号：与 pid 一起保证同进程内并发写各自拿到不同的 tmp 路径。
+static CONFIG_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// config.json 的原子落盘：同目录唯一临时文件 + `sync_all` + rename 原子替换，缩进写
+/// （配置要人可读可改，ADR 0002 §5）。
 ///
 /// **写 config.json 的唯一落盘实现**：应用侧的写命令（`commands.rs` 的 `config_set_value` /
 /// `write_last_vault` 等）与 config 模块自己的退役值迁移都调用这里——同一语义不留两处真源
-/// （REVIEW.md 「同一语义两处真源」条）。调用方之一是 [`load_from`] 的迁移修补写。
+/// （REVIEW.md「同一语义两处真源」条）。调用方之一是 [`load_from`] 的迁移修补写。
+///
+/// **并发写（M592）**：旧实现的 tmp 名固定为 `config.json.tmp`，两个写者会截断 / 写同一份
+/// tmp，后 rename 的就把交错内容顶成正式配置（finding
+/// `20261018-worker-m583-bug-config-load-config-json-tmp`）。现在两层防线：
+/// - [`CONFIG_WRITE_LOCK`] 串行化同进程的写者；
+/// - tmp 名带 pid + 进程内序号 + 随机段，跨进程（多实例）也不共用路径。
+///
+/// 每次 rename 落地的都是一份完整 JSON，不存在写坏的中间态；失败即清理 tmp。
 pub(crate) fn write_json_atomic(
     path: &Path,
     value: &serde_json::Value,
@@ -1777,20 +1797,91 @@ pub(crate) fn write_json_atomic(
             )
         })?;
     }
-    let tmp = path.with_extension("json.tmp");
     let body = serde_json::to_string_pretty(value).expect("配置 Value 一定可序列化");
-    std::fs::write(&tmp, body).map_err(|e| {
-        CommandError::new(
-            "config_write_failed",
-            format!("无法写入配置 {}：{e}", tmp.display()),
-        )
-    })?;
-    std::fs::rename(&tmp, path).map_err(|e| {
-        CommandError::new(
-            "config_write_failed",
-            format!("无法落盘配置 {}：{e}", path.display()),
-        )
-    })
+    // 锁中毒只意味着某个写者 panic 过：tmp 名已唯一化，接手继续写不会碰到它的半成品，
+    // 因此取回内部 guard 继续，而不是把配置写永久变成 panic。
+    let _serialized = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    write_file_atomic(path, body.as_bytes()).map_err(|failure| failure.into_command_error(path))
+}
+
+/// 原子替换写的失败阶段：只决定错误文案（沿用既有的「写入 / 落盘」两句），错误码不随之变。
+enum AtomicWriteFailure {
+    /// 写 tmp 或 `sync_all` 失败。
+    Write {
+        tmp: PathBuf,
+        source: std::io::Error,
+    },
+    /// rename 失败（tmp 已完整写出并被清理）。
+    Rename { source: std::io::Error },
+    /// 连续 16 次生成的 tmp 名都撞上残留文件（只为把错误说清楚，不删残留）。
+    NoUniqueTmp,
+}
+
+impl AtomicWriteFailure {
+    fn into_command_error(self, path: &Path) -> CommandError {
+        match self {
+            Self::Write { tmp, source } => CommandError::new(
+                "config_write_failed",
+                format!("无法写入配置 {}：{source}", tmp.display()),
+            ),
+            Self::Rename { source } => CommandError::new(
+                "config_write_failed",
+                format!("无法落盘配置 {}：{source}", path.display()),
+            ),
+            Self::NoUniqueTmp => CommandError::new(
+                "config_write_failed",
+                format!(
+                    "无法写入配置 {}：连续 16 次生成的临时文件名都撞上了残留文件",
+                    path.display()
+                ),
+            ),
+        }
+    }
+}
+
+/// 同目录唯一 tmp + `sync_all` + rename；任何失败都先清理 tmp，不留半截文件。
+///
+/// tmp 名形如 `.config.json.lumir-{pid}-{seq}-{rand}.tmp`：同一进程的并发写由序号分开，
+/// 多实例由 pid 分开，随机段把「pid 回收后撞上崩溃残留」的概率压到可忽略——真撞上时
+/// `create_new` 报 `AlreadyExists`，换名重试（残留文件不删：它不是本次写的半成品）。
+fn write_file_atomic(path: &Path, body: &[u8]) -> Result<(), AtomicWriteFailure> {
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("config.json");
+    for _ in 0..16 {
+        let tmp = parent.join(format!(
+            ".{name}.lumir-{}-{}-{:016x}.tmp",
+            std::process::id(),
+            CONFIG_TMP_SEQ.fetch_add(1, Ordering::Relaxed),
+            rand::random::<u64>(),
+        ));
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(file) => file,
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(source) => return Err(AtomicWriteFailure::Write { tmp, source }),
+        };
+        use std::io::Write;
+        if let Err(source) = file.write_all(body).and_then(|_| file.sync_all()) {
+            drop(file);
+            let _ = std::fs::remove_file(&tmp);
+            return Err(AtomicWriteFailure::Write { tmp, source });
+        }
+        drop(file);
+        if let Err(source) = std::fs::rename(&tmp, path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(AtomicWriteFailure::Rename { source });
+        }
+        return Ok(());
+    }
+    Err(AtomicWriteFailure::NoUniqueTmp)
 }
 
 /// 逐字段校验：非法值落回该字段默认值并附人话 warning。
@@ -3183,6 +3274,50 @@ mod tests {
         }
     }
 
+    /// 独占的临时目录（M592 并发写测试要能检查目录里有没有 tmp 残留）：名字同样是
+    /// pid + 序号 + 随机段，`create_dir` 撞名重试，Drop 时整目录删除。
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let base = std::env::temp_dir();
+            for _ in 0..16 {
+                let dir = base.join(format!(
+                    "lumir-config-{tag}-{}-{}-{:016x}",
+                    std::process::id(),
+                    SEQ.fetch_add(1, Ordering::Relaxed),
+                    rand::random::<u64>(),
+                ));
+                match std::fs::create_dir(&dir) {
+                    Ok(()) => return Self(dir),
+                    Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(err) => panic!("create temp dir {}: {err}", dir.display()),
+                }
+            }
+            panic!("create temp dir: 16 次随机目录名全部撞名");
+        }
+
+        fn config_path(&self) -> PathBuf {
+            self.0.join("config.json")
+        }
+
+        /// 目录里的文件名（用于断言「不留 tmp 残留」）。
+        fn entries(&self) -> Vec<String> {
+            let mut names: Vec<String> = std::fs::read_dir(&self.0)
+                .expect("读临时目录")
+                .map(|entry| entry.expect("目录项").file_name().to_string_lossy().into())
+                .collect();
+            names.sort();
+            names
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
     fn missing_file_yields_defaults_without_warning() {
         let f = TempFile::missing();
@@ -4404,6 +4539,136 @@ mod tests {
                     .all(|w| !w.contains(RETIRED_KIMI_MODEL)),
                 "{stored}: {:?}",
                 snap.warnings
+            );
+        }
+    }
+
+    /// 旧实现的固定 tmp 名（`config.json.tmp`）不再被踩（M592）：崩溃残留的同名文件既不是
+    /// 本次写的半成品，也不该被截断复用——落盘后它原样保留，正式配置照常更新。
+    ///
+    /// 这是能确定红 / 绿的回归判据：旧实现 `path.with_extension("json.tmp")` 会截断并重写它。
+    #[test]
+    fn write_does_not_reuse_the_legacy_fixed_tmp_name() {
+        let dir = TempDir::new("legacy-tmp");
+        let path = dir.config_path();
+        let legacy = path.with_extension("json.tmp");
+        std::fs::write(&legacy, b"stale half-written config").expect("写旧 tmp 残留");
+        let value = serde_json::json!({"version": 1, "ui": {"theme": "eink"}});
+        write_json_atomic(&path, &value).expect("落盘");
+        assert_eq!(
+            std::fs::read(&legacy).expect("读旧 tmp 残留"),
+            b"stale half-written config",
+            "旧固定 tmp 名的残留不应被复用 / 截断"
+        );
+        let stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("读回配置"))
+                .expect("落盘后必须是合法 JSON");
+        assert_eq!(stored, value);
+    }
+
+    /// 并发写同一份 config.json（迁移线程与前端回写重叠的形态）：每次 rename 落地的都必须
+    /// 是某一次写入的**完整内容**，不允许两份内容交错成非法 JSON；目录里不留 tmp 残留。
+    #[test]
+    fn concurrent_writes_never_leave_a_mixed_config() {
+        let dir = TempDir::new("write-race");
+        let path = dir.config_path();
+        // 48KB 的填充字段让单次 `write_all` 跨多个系统调用——旧实现的固定 tmp 名在这条路径上
+        // 会被并发写者交错写入，落盘内容因此不再是任何一次写入的原文。
+        let payloads: Vec<serde_json::Value> = (0..8)
+            .map(|i| {
+                serde_json::json!({
+                    "version": 1,
+                    "ui": {"content_width": 600 + i},
+                    "padding": format!("{i}{}", "x".repeat(48 * 1024)),
+                })
+            })
+            .collect();
+        let path = path.as_path();
+        std::thread::scope(|scope| {
+            for value in &payloads {
+                scope.spawn(move || {
+                    for _ in 0..20 {
+                        write_json_atomic(path, value).expect("并发写必须成功");
+                    }
+                });
+            }
+        });
+        let stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).expect("读回配置"))
+                .expect("并发写后落盘的必须是完整合法 JSON");
+        assert!(
+            payloads.iter().any(|payload| payload == &stored),
+            "落盘内容必须是某一次写入的完整内容"
+        );
+        assert_eq!(
+            dir.entries(),
+            vec!["config.json".to_string()],
+            "并发写不留 tmp 残留"
+        );
+    }
+
+    /// 多线程同时命中退役值迁移（M592 的现场：`restore_outcome` / `cron_loop` / 前端
+    /// `config_get` 的 load 时间窗重叠），同时还有一个运行期回写在跑：配置不许被写坏，
+    /// 落盘内容必须是「迁移后的配置」或「回写内容」之一的完整版本，且不留 tmp 残留。
+    #[test]
+    fn concurrent_load_migrations_do_not_corrupt_config() {
+        let dir = TempDir::new("migrate-race");
+        let path = dir.config_path();
+        let padding = "x".repeat(48 * 1024);
+        let retired = format!(
+            r#"{{"version":1,"last_vault":"/tmp/vault","harness":{{"providers":{{"kimi":{{"model":"{RETIRED_KIMI_MODEL}","models":[{{"id":"my-model"}}]}}}}}},"padding":"{padding}"}}"#
+        );
+        let migrated: serde_json::Value = {
+            let mut value: serde_json::Value =
+                serde_json::from_str(&retired).expect("播种内容必须是合法 JSON");
+            value["harness"]["providers"]["kimi"]["model"] = serde_json::json!("my-model");
+            value
+        };
+        let other = serde_json::json!({
+            "version": 1,
+            "ui": {"theme": "eink"},
+            "padding": format!("y{}", "y".repeat(48 * 1024)),
+        });
+        for round in 0..20 {
+            // 播种在单线程里做：本轮所有写者都已在上轮 scope 里 join。
+            std::fs::write(&path, &retired).expect("播种退役值配置");
+            std::thread::scope(|scope| {
+                for _ in 0..4 {
+                    let path = path.as_path();
+                    scope.spawn(move || {
+                        // 读到的要么是播种原文（命中迁移并写回），要么是别人已落盘的版本；
+                        // 两种都是合法配置，模型读数只可能是迁移值或默认空串。
+                        let snap = load_from(path);
+                        let model = snap.config.harness.providers.kimi.model.as_str();
+                        assert!(
+                            model == "my-model" || model.is_empty(),
+                            "第 {round} 轮读到的模型读数异常：{model:?}"
+                        );
+                    });
+                }
+                let path = path.as_path();
+                let other = &other;
+                scope.spawn(move || {
+                    // 回写线程持续 20 次、与迁移写者长期重叠（旧实现的固定 tmp 名在这条
+                    // 路径上会被截断 / 抢删，`expect` 或末尾的完整性断言因此判红）。
+                    for _ in 0..20 {
+                        write_json_atomic(path, other).expect("并发回写必须成功");
+                    }
+                });
+            });
+            let stored_text = std::fs::read_to_string(&path).expect("读回配置");
+            let stored: serde_json::Value =
+                serde_json::from_str(&stored_text).unwrap_or_else(|e| {
+                    panic!("第 {round} 轮并发迁移与回写后配置不是合法 JSON：{e}\n{stored_text}")
+                });
+            assert!(
+                stored == migrated || stored == other,
+                "第 {round} 轮落盘内容必须是迁移版或回写版的完整内容"
+            );
+            assert_eq!(
+                dir.entries(),
+                vec!["config.json".to_string()],
+                "第 {round} 轮不留 tmp 残留"
             );
         }
     }
