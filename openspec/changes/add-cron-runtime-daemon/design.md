@@ -118,7 +118,7 @@ loop {
 |---|---|---|
 | 启动就绪后一次 | `lib.rs` setup 尾部（`ready` 之后） | 投一次 poke；线程内跑同一判定 |
 | 主窗口获得焦点 | `RunEvent::WindowEvent` 的 `WindowEvent::Focused(true)` | 投一次 poke；200ms 内重复投递合并（防抖） |
-| 目标 vault 打开成功 | 既有 vault 打开链路成功之后 | 投一次 poke（`run-then-notify` / `silent-run` 在目标 vault 未打开时会被延后，见 §6.5） |
+| 目标 vault 打开成功 | `commands::open_vault` 的提交点（两条打开命令共用）+ 启动恢复的提交点（`RestoreGuard::finish`） | 投一次 poke（`run-then-notify` / `silent-run` 在目标 vault 未打开时会被延后，见 §6.5）；不在 tick 上观察 vault 变更 |
 
 补触发语义由 §3 自动覆盖：已过点 + 当日未触发 ⇒ 触发一次；当日已触发 ⇒ 静默；未到点 ⇒ 不动作。
 **跨日不补**：00:00 后「今天」变成新日期，昨日错过的任务不补——提醒与环境准备的意义在当天。

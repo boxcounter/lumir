@@ -551,6 +551,10 @@ pub fn open_vault(
             };
             // 用户主动打开无条件提交（与拆分前等价）；让位判定只在 finish_restore。
             commit_vault_open(state, prepared);
+            // 目标 vault 打开成功即投一次拉取触发（design §4.2 第三行）：只投通道，不判定、
+            // 不做 IO。落在这两条 command（`vault_open` / `vault_open_path`）共用的提交点上，
+            // 同一语义只接线一处；remap 短路没有真的打开，不投。
+            crate::cron_poke(app, crate::cron::Trigger::VaultOpen);
             Ok(info)
         }
     }
