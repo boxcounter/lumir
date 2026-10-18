@@ -241,11 +241,17 @@
   在 `on_background_finished` / `process_wake` 全路径短路。起回合分支是**锁内原子取出**：
   acquire / spawn 失败原样放回，窗口内新到的通知留在 pending（不在成功分支清场），
   `delivered` 只在真实插入历史后写；自动回合线程 spawn 失败会 `release_turn`（不留下永久
-  busy）。单测 `continue_after_chain_limit_starts_a_turn_without_duplicating_the_notice` /
+  busy）。并发收口：触顶分支先标 delivered 再插入、插入失败再摘除；`begin_user_turn` 只
+  取走本批 pending 对应 run 的标记（在飞批次的标记留在 wake）；投递标记的批次 id 在 push
+  的同一把锁内取得（不再二次加锁，无孤儿批次）。单测
+  `continue_after_chain_limit_starts_a_turn_without_duplicating_the_notice` /
   `isolated_slot_does_not_wake_and_the_hub_is_reclaimable` /
   `acquire_failure_keeps_the_notice_for_a_later_turn` /
   `a_notice_arriving_while_the_turn_starts_is_not_lost` /
-  `auto_turn_spawn_failure_releases_the_parent_session`。）
+  `auto_turn_spawn_failure_releases_the_parent_session` /
+  `user_turn_during_blocked_insert_does_not_duplicate_the_notice` /
+  `user_turn_during_an_in_flight_turn_keeps_blocked_delivery_marks` /
+  `notice_marker_batch_matches_the_turn_that_consumes_it`。）
 - [x] 4.14 链式失控闸：常量 `AUTO_WAKE_CHAIN_MAX = 5`（代码常量，不进 `SubagentsConfig`）；计数在
   自动回合开始时加一，用户回合开始 / 面板「继续」/ 会话重置恢复切 vault 时清零，不持久化；触顶
   不起回合、`auto_wake.blocked = "chain_limit"`、通知照常上屏并写投递标记；用户停止自动回合视同触顶

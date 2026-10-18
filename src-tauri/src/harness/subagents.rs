@@ -326,11 +326,22 @@ impl SubagentHub {
                 // batch，否则该批判重信息会在提交前被清掉（并发窗口，评审 r2 P1-1 同族）。
                 (Vec::new(), HashSet::new(), None)
             } else {
-                (
-                    std::mem::take(&mut wake.pending),
-                    std::mem::take(&mut wake.delivered),
-                    wake.batch.take(),
-                )
+                let notices = std::mem::take(&mut wake.pending);
+                // 只取走**本批 pending 对应 run** 的投递标记（评审 r3 P2-1 窗口 B）：
+                // 在飞批次（已被 process_wake 取走、尚未提交）的标记留在 wake，等它
+                // 成功消费或失败放回。
+                let taken: HashSet<String> =
+                    notices.iter().map(|notice| notice.run_id.clone()).collect();
+                let mut delivered = HashSet::new();
+                wake.delivered.retain(|run_id| {
+                    if taken.contains(run_id) {
+                        delivered.insert(run_id.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+                (notices, delivered, wake.batch.take())
             }
         };
         if notices.is_empty() {
@@ -536,31 +547,26 @@ impl SubagentHub {
         if self.inner.runtime.is_isolated() {
             return;
         }
-        {
+        // 批次 id 在**同一把锁里**记下并直接传给投递标记（评审 r3 P2-2）：放锁后二次
+        // 加锁重读会被 `begin_user_turn` 抢成孤儿 id——标记的 wake_batch 永远匹配不上
+        // 通知最终进入的 llm_request，重启恢复会把已上屏通知当未消费而重建。
+        let batch = {
             let mut wake = self.inner.wake.lock().unwrap_or_else(|e| e.into_inner());
-            // 批次 id 在**没有开放批次**时铸新：起回合的取走窗口里 `pending` 为空但批次
-            // 仍在飞——窗口内新到的通知必须沿用同一 id（否则它在磁盘上的投递标记与
-            // 最终合并出的 `wake_batch` 对不上，重启恢复会重复上屏）。
+            // 没有开放批次时铸新：起回合的取走窗口里 `pending` 为空但批次仍在飞——窗口内
+            // 新到的通知必须沿用同一 id（标记与最终 `wake_batch` 一致）。
             if wake.batch.is_none() {
                 wake.batch = Some(self.new_batch_id());
             }
+            let batch = wake.batch.clone().expect("刚填过");
             wake.pending.push(notice.clone());
-        }
+            batch
+        };
+        run_after_notice_push_hook();
         // 投递标记与通知上屏同一时刻（design §12.6.4）：即使通知还在排队 / 合并窗口内，
         // 进程退出后也能据标记 + subrun sidecar 重建显示。
-        self.write_notice_marker(&notice.run_id, self.current_batch());
+        self.write_notice_marker(&notice.run_id, batch);
         self.ensure_wake_worker();
         self.notify_wake(WakeEvent::RunFinished);
-    }
-
-    fn current_batch(&self) -> String {
-        self.inner
-            .wake
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .batch
-            .clone()
-            .unwrap_or_else(|| self.new_batch_id())
     }
 
     /// 保留一段可续跑的子会话（LRU：上限 [`MAX_RETAINED_RUNS`]，只淘汰已收敛的 run）。
@@ -754,21 +760,23 @@ fn process_wake(hub: &Arc<HubInner>) {
                 newly.push(notice.clone());
             }
         }
+        // 先标 delivered 再放锁（评审 r3 P2-1 窗口 A）：insert 期间用户恰好发言时，
+        // `begin_user_turn` 会看到这些通知已上屏，不再重复并入用户回合。插入失败（会话
+        // 消失）时重新加锁摘除标记——丢失侧仍由「失败即未标」兜住。
+        for notice in &newly {
+            wake.delivered.insert(notice.run_id.clone());
+        }
         let batch = wake.batch.clone().unwrap_or_else(|| {
             let batch = hub_view.new_batch_id();
             wake.batch = Some(batch.clone());
             batch
         });
         drop(wake);
-        if !newly.is_empty()
-            && insert_notices_into_session(hub, &notice_text(&newly, &batch), &batch)
-        {
-            // 只有真的写进历史才标 delivered（评审 r2 P1-1 的同一条纪律）。
-            let mut wake = hub.wake.lock().unwrap_or_else(|e| e.into_inner());
-            for notice in &newly {
-                wake.delivered.insert(notice.run_id.clone());
-            }
-            drop(wake);
+        if newly.is_empty() {
+            return;
+        }
+        run_after_blocked_mark_hook();
+        if insert_notices_into_session(hub, &notice_text(&newly, &batch), &batch) {
             for notice in &newly {
                 hub_view.emit(events::subagent_notified(
                     &notice.run_id,
@@ -778,6 +786,11 @@ fn process_wake(hub: &Arc<HubInner>) {
                     &batch,
                     0,
                 ));
+            }
+        } else {
+            let mut wake = hub.wake.lock().unwrap_or_else(|e| e.into_inner());
+            for notice in &newly {
+                wake.delivered.remove(&notice.run_id);
             }
         }
         return;
@@ -977,6 +990,34 @@ fn run_after_wake_insert_hook() {
     }
 }
 
+/// 单测注入点：触顶分支「已标 delivered、尚未 insert」的窗口（评审 r3 P2-1 窗口 A）。
+fn run_after_blocked_mark_hook() {
+    #[cfg(test)]
+    {
+        let hook = AFTER_BLOCKED_MARK_HOOK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+}
+
+/// 单测注入点：`on_background_finished` push 之后、写投递标记之前的窗口（评审 r3 P2-2）。
+fn run_after_notice_push_hook() {
+    #[cfg(test)]
+    {
+        let hook = AFTER_NOTICE_PUSH_HOOK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+}
+
 #[cfg(test)]
 static FAIL_NEXT_WAKE_ACQUIRE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -985,6 +1026,10 @@ static FAIL_NEXT_AUTO_TURN_SPAWN: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 #[cfg(test)]
 static AFTER_WAKE_INSERT_HOOK: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
+#[cfg(test)]
+static AFTER_BLOCKED_MARK_HOOK: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
+#[cfg(test)]
+static AFTER_NOTICE_PUSH_HOOK: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
 
 /// 用户回合进行中时的空闲监视（轮次结束没有事件源；100ms 采样，单实例）。
 fn spawn_idle_watcher(hub: Arc<HubInner>) {
@@ -3901,6 +3946,210 @@ mod tests {
         }));
         assert_eq!(f.notice_inputs().len(), 2, "两条通知各上屏一次");
         assert!(hub.inner.wake.lock().unwrap().pending.is_empty());
+    }
+
+    /// 触顶分支「已标 delivered、尚未 insert」的窗口里用户发言：通知不得重复上屏
+    /// （评审 r3 P2-1 窗口 A）。
+    #[test]
+    fn user_turn_during_blocked_insert_does_not_duplicate_the_notice() {
+        let f = Fixture::new("wake-blocked-race", r#"{"responses":[]}"#, |_| {});
+        f.research("");
+        let hub = f.hub();
+        {
+            let mut wake = hub.inner.wake.lock().unwrap();
+            wake.chain = AUTO_WAKE_CHAIN_MAX;
+            wake.pending.push(NoticeRun {
+                run_id: "r-a".into(),
+                agent: "research".into(),
+                description: "触顶分支的通知".into(),
+                status: "completed".into(),
+                stopped_by: None,
+                summary: "结论".into(),
+            });
+            wake.batch = Some("wb-a".into());
+            wake.deadline = Some(Instant::now() - Duration::from_millis(1));
+        }
+        // 钩住「已标 delivered、尚未 insert」：模拟用户此刻发言——SessionContext 会把
+        // `begin_user_turn` 返回的文本插入历史。
+        let hook_hub = hub.clone();
+        *AFTER_BLOCKED_MARK_HOOK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(move || {
+            if let Some(insert) = hook_hub.begin_user_turn() {
+                insert_notices_into_session(&hook_hub.inner, &insert.text, &insert.batch_id);
+            }
+        }));
+        process_wake(&hub.inner);
+        assert_eq!(
+            f.notice_inputs().len(),
+            1,
+            "同一通知不得被触顶分支与用户回合各插一遍"
+        );
+        // 用户回合把 pending 与标记一并消费（通知已在历史里，无需再投递）。
+        assert!(hub.inner.wake.lock().unwrap().pending.is_empty());
+    }
+
+    /// 起回合在飞期间：窗口内新到一条通知 + 用户发言 + 在飞失败——用户回合只能取走
+    /// 自己并入的那条的标记，在飞批次的触顶标记必须留在 wake（评审 r3 P2-1 窗口 B）。
+    #[test]
+    fn user_turn_during_an_in_flight_turn_keeps_blocked_delivery_marks() {
+        let f = Fixture::new(
+            "wake-inflight-race",
+            r#"{"responses":[{"text":"无重复"}]}"#,
+            |_| {},
+        );
+        f.research("");
+        let hub = f.hub();
+        // ① 触顶上屏：P 进历史并标 delivered，pending 保留。
+        {
+            let mut wake = hub.inner.wake.lock().unwrap();
+            wake.chain = AUTO_WAKE_CHAIN_MAX;
+            wake.pending.push(NoticeRun {
+                run_id: "r-p".into(),
+                agent: "research".into(),
+                description: "触顶通知P".into(),
+                status: "completed".into(),
+                stopped_by: None,
+                summary: "结论".into(),
+            });
+            wake.batch = Some("wb-b".into());
+            wake.deadline = Some(Instant::now() - Duration::from_millis(1));
+        }
+        process_wake(&hub.inner);
+        assert_eq!(f.notice_inputs().len(), 1);
+        // ② 模拟「继续」：清 blocked / chain，下一次起回合会失败。
+        {
+            let mut wake = hub.inner.wake.lock().unwrap();
+            wake.blocked = None;
+            wake.chain = 0;
+            wake.force = true;
+            wake.deadline = Some(Instant::now() - Duration::from_millis(1));
+        }
+        FAIL_NEXT_AUTO_TURN_SPAWN.store(true, Ordering::SeqCst);
+        let hook_hub = hub.clone();
+        *AFTER_WAKE_INSERT_HOOK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(move || {
+            // 窗口内新到 C（pending 非空），随后用户发言。
+            hook_hub
+                .inner
+                .wake
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .pending
+                .push(NoticeRun {
+                    run_id: "r-c".into(),
+                    agent: "research".into(),
+                    description: "窗口通知C".into(),
+                    status: "completed".into(),
+                    stopped_by: None,
+                    summary: "结论".into(),
+                });
+            if let Some(insert) = hook_hub.begin_user_turn() {
+                insert_notices_into_session(&hook_hub.inner, &insert.text, &insert.batch_id);
+            }
+        }));
+        process_wake(&hub.inner);
+        {
+            let wake = hub.inner.wake.lock().unwrap();
+            assert!(
+                wake.delivered.contains("r-p"),
+                "在飞批次的 delivered 标记不得被用户回合取走"
+            );
+            assert!(wake.pending.iter().any(|notice| notice.run_id == "r-p"));
+            assert!(!wake.pending.iter().any(|notice| notice.run_id == "r-c"));
+        }
+        assert!(!f
+            .runtime
+            .with_session(&f.scope, |session| session.is_busy())
+            .unwrap());
+        // ③ 再驱动：P 已上屏，不得重复插入。
+        {
+            let mut wake = hub.inner.wake.lock().unwrap();
+            wake.force = true;
+            wake.deadline = Some(Instant::now() - Duration::from_millis(1));
+        }
+        process_wake(&hub.inner);
+        assert!(f.wait(Duration::from_secs(3), || {
+            f.runtime
+                .with_session(&f.scope, |session| {
+                    !session.is_busy()
+                        && session.input().iter().any(|item| {
+                            item["role"].as_str() == Some("assistant")
+                                && item["content"].as_array().is_some_and(|parts| {
+                                    parts
+                                        .iter()
+                                        .any(|part| part["text"].as_str() == Some("无重复"))
+                                })
+                        })
+                })
+                .unwrap_or(false)
+        }));
+        let notices = f.notice_inputs();
+        assert_eq!(
+            notices
+                .iter()
+                .filter(|text| text.contains("触顶通知P"))
+                .count(),
+            1,
+            "P 不得重复上屏：{notices:?}"
+        );
+        assert_eq!(
+            notices
+                .iter()
+                .filter(|text| text.contains("窗口通知C"))
+                .count(),
+            1,
+            "C 只进用户回合一次：{notices:?}"
+        );
+    }
+
+    /// 投递标记的批次 id 与通知最终进入的回合一致（评审 r3 P2-2）：push 与标记之间被
+    /// `begin_user_turn` 取走批次的窗口里，不得铸出孤儿 id。
+    #[test]
+    fn notice_marker_batch_matches_the_turn_that_consumes_it() {
+        let f = Fixture::new("wake-marker-batch", r#"{"responses":[]}"#, |_| {});
+        f.research("");
+        let hub = f.hub();
+        let consumed = Arc::new(Mutex::new(None::<String>));
+        let record = consumed.clone();
+        let hook_hub = hub.clone();
+        *AFTER_NOTICE_PUSH_HOOK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(move || {
+            // 间隙里用户发言：取走 pending + 批次。
+            if let Some(insert) = hook_hub.begin_user_turn() {
+                *record.lock().unwrap_or_else(|e| e.into_inner()) = Some(insert.batch_id);
+            }
+        }));
+        hub.on_background_finished(NoticeRun {
+            run_id: "r-m".into(),
+            agent: "research".into(),
+            description: "标记批次".into(),
+            status: "completed".into(),
+            stopped_by: None,
+            summary: "结论".into(),
+        });
+        let message_batch = consumed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .expect("用户回合应取走通知");
+        let path = f
+            .runtime
+            .with_session(&f.scope, |session| session.jsonl().path().to_path_buf())
+            .unwrap();
+        let content = std::fs::read_to_string(&path).expect("投递标记应已落盘");
+        let marker = content
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|record| record["payload"]["kind"] == "notice_delivered")
+            .expect("应有投递标记");
+        assert_eq!(
+            marker["payload"]["wake_batch"],
+            json!(message_batch),
+            "标记的 wake_batch 必须与通知最终进入的回合一致（不得铸孤儿批次）"
+        );
     }
 
     /// 自动回合线程 spawn 失败必须释放 acquire 占住的 busy（评审 r2 P2-1）：否则会话
