@@ -10,7 +10,7 @@
 
 - 浏览器直接打开 `index.html` = board 总览（12 变体逐行陈列，`dim` 时机行可真实 hover 体验升档）。
 - 参数轴：`?theme=light|dark|eink` × `?v=<pos>-<icon>-<timing>`（单变体帧）× `?frame=overlay`（目标态帧）。
-- 截图：`node design/prototypes/table-fs-trigger/shoot.mjs` → `test-results/m235/shots/`（42 张，证据不入 git）；
+- 截图：`node design/prototypes/table-fs-trigger/shoot.mjs` → `.local/missions/m235/shots/`（42 张，证据不入 git）；
   worktree 未装依赖时 `LUMIR_VISUAL_PKG=<主仓>/tests/visual/package.json`。
 - 标本是一条 **7 列宽表**（cell 不折行、自然宽 > 664 栏宽、局部横滚——M119 宽度合同下的真实宽表情形），
   触发钮与「横滚容器」的关系是本次形态裁决的一部分，不用窄表糊弄。

@@ -6,7 +6,7 @@
 
 > **来源与既有裁决（原文，2026-10-18）**
 >
-> 设计真源：`test-results/harness-vision.md`（git 外，2026-10-18 定稿的 harness 演进图景）
+> 设计真源：`.local/design/harness-vision.md`（git 外，2026-10-18 定稿的 harness 演进图景）
 > 的「就地增强 > 图片语义命名」节与「裁决记录」表。
 >
 > - 裁决「图片语义命名默认开关」：**默认开 + toast 撤销入口**。

@@ -13,7 +13,7 @@ CI SHALL 为 ADR 0002 第 6 条性能合同的四个数字（冷启动 <300ms、
 #### Scenario: CI 产出四项指标数值
 
 - **WHEN** 触发 `perf.yml` 工作流（`src/**`、`src-tauri/**`、`scripts/perf/**`、`tests/perf/**` 变更或手动 dispatch）
-- **THEN** 四项指标各自产出 `perf-results/<metric>.json`，含全部原始样本与 median/p95/max/min/mean，整目录作为 artifact 上传保留 30 天
+- **THEN** 四项指标各自产出 `.local/perf/<metric>.json`，含全部原始样本与 median/p95/max/min/mean，整目录作为 artifact 上传保留 30 天
 
 #### Scenario: 本地读数不对阈值
 
@@ -59,7 +59,7 @@ keypress-to-paint SHALL 定义为页面内 `keydown` 事件派发时刻到其后
 
 ### Requirement: 常驻内存测量
 
-常驻内存 SHALL 定义为 app 全进程树的 RSS 合计（含按基线差集规则归因的 `com.apple.WebKit.*` XPC 进程），「常驻」为 ready 信号后 idle 10 秒进入采样窗口，取 5 个样本，细节见 docs/specs/perf-measurement.md 第 4 节。门禁比较值 SHALL 取 max（内存是峰值敏感指标，p95 会漏掉单调爬升——这是 p95 总约定的唯一例外）。RSS 含 shared pages 重复计数、读数系统性偏高的缺陷 MUST 在 spec 中显式声明；若发现该口径把门禁阈值顶死，允许经 OpenSpec 循环修订为 phys_footprint 口径，此修订 MUST NOT 占用 ADR 0002 的一次性数字校准额度。**CI 门禁阈值（2026-09-18 M174）SHALL 为 250MB**（`tests/perf/thresholds.json` 的 `resident-memory.threshold`），依据为实测稳态（9 次 master run 9/9 超阈、读数 206.50–215.28MB，而 2026-09-05 校准实测约 110MB）；该阈值改动了 ADR 0002 §6 的数字之一，故 ADR 0002 §6 的文本修订 MUST 作为独立 follow-up 落地；落地前「ADR 合同值（200MB）」与「CI 门禁阈值（250MB）」在该项上不相等，artifact 的 `contract` 字段仍记合同值、实际门禁阈值记在 `perf-results/gate-status.json`。
+常驻内存 SHALL 定义为 app 全进程树的 RSS 合计（含按基线差集规则归因的 `com.apple.WebKit.*` XPC 进程），「常驻」为 ready 信号后 idle 10 秒进入采样窗口，取 5 个样本，细节见 docs/specs/perf-measurement.md 第 4 节。门禁比较值 SHALL 取 max（内存是峰值敏感指标，p95 会漏掉单调爬升——这是 p95 总约定的唯一例外）。RSS 含 shared pages 重复计数、读数系统性偏高的缺陷 MUST 在 spec 中显式声明；若发现该口径把门禁阈值顶死，允许经 OpenSpec 循环修订为 phys_footprint 口径，此修订 MUST NOT 占用 ADR 0002 的一次性数字校准额度。**CI 门禁阈值（2026-09-18 M174）SHALL 为 250MB**（`tests/perf/thresholds.json` 的 `resident-memory.threshold`），依据为实测稳态（9 次 master run 9/9 超阈、读数 206.50–215.28MB，而 2026-09-05 校准实测约 110MB）；该阈值改动了 ADR 0002 §6 的数字之一，故 ADR 0002 §6 的文本修订 MUST 作为独立 follow-up 落地；落地前「ADR 合同值（200MB）」与「CI 门禁阈值（250MB）」在该项上不相等，artifact 的 `contract` 字段仍记合同值、实际门禁阈值记在 `.local/perf/gate-status.json`。
 
 #### Scenario: WebKit XPC 进程归因
 
@@ -73,7 +73,7 @@ keypress-to-paint SHALL 定义为页面内 `keydown` 事件派发时刻到其后
 
 ### Requirement: 门禁模式与一次性校准
 
-阈值门禁 SHALL 以 `tests/perf/thresholds.json` 的 `enforce: true` 启用拒合，CI 门禁 SHALL 分两种模式（2026-09-05 一次性校准结论 + 2026-09-18 M174 判据修正，ADR 0002 第 6 条）：**绝对模式**（打开 1MB 文件、常驻内存）超阈即 CI 红、拒合；**相对回归模式**（冷启动、keypress-to-paint）以滚动基线比较——本次门禁值与基线值均取同一指标的 median，基线取该指标最近 10 次 master 门禁值的 median（经 `actions/cache` 持久化），回退超**该指标容忍线**即 CI 红、拒合。容忍线 SHALL 为 `max(该指标 maxRegressionPct, 窗口高侧散布 × spreadHeadroom)`（默认 40% 与 1.2，`keypress-to-paint` 为 60%）；基线历史条数不足 `minRuns`（默认 5）时该指标 SHALL 降级为 `::warning::` 不拒合，仅超 `outlierMultiplier` 倍（默认 3）的量级异常仍拒合。基线 SHALL 逐指标独立推进：判据取 `check-thresholds.mjs` 落盘的 `perf-results/gate-status.json`，该指标判 `fail` 且 `enforce: true` 时其历史不动（warn-only 档不拒合任何读数，该档下照常推进），且写回条件 MUST NOT 以「整体 run 是否全绿」为准（M174 修掉该冻结死锁）；PR 与 workflow_dispatch 只读基线。基线缺失时 SHALL 输出 `::warning::` 并跳过该项相对比较、不拒合；enforce 下任一指标本次结果文件缺失或不可读 SHALL exit 1 拒合（缺数据即红）。口径细节见 docs/specs/perf-measurement.md「相对回归门禁」一节。一次性校准额度已于 2026-09-05 使用（依据：CI 两次全量实测重指标噪声 3-4 倍、轻指标几乎一致），此后 MUST NOT 再次使用。**合同数字与门禁阈值的关系**：冷启动 <300ms、keypress-to-paint <16ms、打开 1MB 文件 <100ms 三项合同值未改动；常驻内存的门禁阈值按「常驻内存测量」一条为 250MB（ADR 0002 §6 文本修订为 follow-up）；M174 的判据修正本身不占用校准额度。M0 空壳阶段的绝对值 MUST NOT 作为达标判定，仅用于该次校准。
+阈值门禁 SHALL 以 `tests/perf/thresholds.json` 的 `enforce: true` 启用拒合，CI 门禁 SHALL 分两种模式（2026-09-05 一次性校准结论 + 2026-09-18 M174 判据修正，ADR 0002 第 6 条）：**绝对模式**（打开 1MB 文件、常驻内存）超阈即 CI 红、拒合；**相对回归模式**（冷启动、keypress-to-paint）以滚动基线比较——本次门禁值与基线值均取同一指标的 median，基线取该指标最近 10 次 master 门禁值的 median（经 `actions/cache` 持久化），回退超**该指标容忍线**即 CI 红、拒合。容忍线 SHALL 为 `max(该指标 maxRegressionPct, 窗口高侧散布 × spreadHeadroom)`（默认 40% 与 1.2，`keypress-to-paint` 为 60%）；基线历史条数不足 `minRuns`（默认 5）时该指标 SHALL 降级为 `::warning::` 不拒合，仅超 `outlierMultiplier` 倍（默认 3）的量级异常仍拒合。基线 SHALL 逐指标独立推进：判据取 `check-thresholds.mjs` 落盘的 `.local/perf/gate-status.json`，该指标判 `fail` 且 `enforce: true` 时其历史不动（warn-only 档不拒合任何读数，该档下照常推进），且写回条件 MUST NOT 以「整体 run 是否全绿」为准（M174 修掉该冻结死锁）；PR 与 workflow_dispatch 只读基线。基线缺失时 SHALL 输出 `::warning::` 并跳过该项相对比较、不拒合；enforce 下任一指标本次结果文件缺失或不可读 SHALL exit 1 拒合（缺数据即红）。口径细节见 docs/specs/perf-measurement.md「相对回归门禁」一节。一次性校准额度已于 2026-09-05 使用（依据：CI 两次全量实测重指标噪声 3-4 倍、轻指标几乎一致），此后 MUST NOT 再次使用。**合同数字与门禁阈值的关系**：冷启动 <300ms、keypress-to-paint <16ms、打开 1MB 文件 <100ms 三项合同值未改动；常驻内存的门禁阈值按「常驻内存测量」一条为 250MB（ADR 0002 §6 文本修订为 follow-up）；M174 的判据修正本身不占用校准额度。M0 空壳阶段的绝对值 MUST NOT 作为达标判定，仅用于该次校准。
 
 #### Scenario: 绝对模式超阈拒合
 

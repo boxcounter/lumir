@@ -21,7 +21,7 @@
 
 **两档名字由单键地图给出**：`<config>/config.json` 的 `vault.ignore`（一个**名字 → 档位**的对象；档位值闭集合 `"hidden"` / `"lazy"`）SHALL 决定两档的名单；缺键 / 缺节 / 配置文件不存在 ⇒ 整图取**代码内置默认**。语义：
 
-- **缺省即默认（粒度是整图）**：`vault.ignore` 缺席 ⇒ 用代码内置默认地图（`hidden`：`.git`、`.DS_Store`；`lazy`：`node_modules`、`.venv`、`venv`、`__pycache__`、`.next`、`.nuxt`、`.cache`、`.pnpm-store`、`.tox`、`.gradle`、`test-results`、`perf-results`、`target`、`dist`）；键存在（含 `{}`）⇒ 整图按配置解释。MUST NOT 在安装时把默认值快照写入配置文件。
+- **缺省即默认（粒度是整图）**：`vault.ignore` 缺席 ⇒ 用代码内置默认地图（`hidden`：`.git`、`.DS_Store`；`lazy`：`node_modules`、`.venv`、`venv`、`__pycache__`、`.next`、`.nuxt`、`.cache`、`.pnpm-store`、`.tox`、`.gradle`、`target`、`dist`）；键存在（含 `{}`）⇒ 整图按配置解释。MUST NOT 在安装时把默认值快照写入配置文件。默认地图是**通用形态**清单（构建 / 依赖 / 虚拟环境产物），MUST NOT 收纳本仓自己的产物目录名（`test-results` / `perf-results` 已于 2026-10-18 移出，理由：那是替用户猜，用户自己的目录形态应由其配置或用户规则表达）。
 - **档位只写在名字自己的值上**：一个名字只有一个档位，MUST NOT 需要「同名冲突」判定——这是单键地图的结构性质，不是一条需要实现的规则。`hidden` 比 `lazy` 更严格的含义（`hidden` 命中同时具备 `lazy` 的全部效用）由判定链表达，MUST NOT 在配置面再引入第二个表达方式。
 - **不在图里的名字 ⇒ 该名字走用户规则 / 完全可见**：这是「第三档」的唯一表达方式，MUST NOT 为此新增第三个键、新增 `"visible"` 档位值或新的去向枚举值。
 - **只接受名字，不接受模式**：每个**键** MUST 是单个名字——不含 `/`、不是 `.` / `..`、不含 gitignore 元字符（`*` `?` `[` `]` `!` `#` `\`）、首尾无空白。写模式（如 `"*.log": "lazy"`）MUST 被逐项忽略并给出人话 warning，MUST NOT 被当成模式解释。
@@ -39,7 +39,7 @@
 
 **诊断计数**：全量枚举收口处 SHALL 记录被 **`hidden` 档**（含临时文件模式）剪掉的条目数，作为既有 `vault_scan_ignored` 事件的唯一口径；惰性条目 MUST NOT 计入（它们有行、看得见，不属于「文件不见了」的诊断对象）。计数 MUST NOT 包含路径或名字原文。
 
-**已知边界（如实记录）**：内置默认地图是启发式、不完整（未列名的构建产物目录靠「用户把它写进配置或忽略声明」处理）；名字匹配不折叠大小写；配置不支持模式；JSON 对象的重复键按解析库口径「后者覆盖」，不产生 warning（单键地图里「同名冲突」这个类别结构上不存在）；被 `hidden` 档隐藏的条目静默消失（含 wikilink 解析面与附件面）；指向惰性区域的 `[[wikilink]]` 与 `![[img]]` 解析降级（它们不在索引里），且 `wikilink_create` 对它可能造出重复文件——本 change 不改该命令，记为后续候选。
+**已知边界（如实记录）**：内置默认地图是启发式、不完整（未列名的构建产物目录靠「用户把它写进配置或忽略声明」处理；本仓自己的产物目录名 `test-results` / `perf-results` 自 2026-10-18 起不再列入默认表，用户 vault 里出现同名目录时按普通目录枚举）；名字匹配不折叠大小写；配置不支持模式；JSON 对象的重复键按解析库口径「后者覆盖」，不产生 warning（单键地图里「同名冲突」这个类别结构上不存在）；被 `hidden` 档隐藏的条目静默消失（含 wikilink 解析面与附件面）；指向惰性区域的 `[[wikilink]]` 与 `![[img]]` 解析降级（它们不在索引里），且 `wikilink_create` 对它可能造出重复文件——本 change 不改该命令，记为后续候选。
 
 #### Scenario: 混合类型 vault 全量列出
 
@@ -48,8 +48,8 @@
 
 #### Scenario: 忽略集生效
 
-- **WHEN** 缺省配置下 vault 根含 `.git/` 目录、`.DS_Store` 文件、`node_modules/`、`target/`、`dist/`、`test-results/`
-- **THEN** 枚举结果不含 `.git` 与 `.DS_Store` 及其子孙；含 `node_modules`、`target`、`dist`、`test-results` 各**一行**（目录、惰性标记为 true），不递归其子孙
+- **WHEN** 缺省配置下 vault 根含 `.git/` 目录、`.DS_Store` 文件、`node_modules/`、`target/`、`dist/`
+- **THEN** 枚举结果不含 `.git` 与 `.DS_Store` 及其子孙；含 `node_modules`、`target`、`dist` 各**一行**（目录、惰性标记为 true），不递归其子孙
 
 #### Scenario: 任意深度的内置规则目录被剪枝
 
@@ -94,7 +94,7 @@
 #### Scenario: 默认配置等效于今日行为
 
 - **WHEN** `config.json` 没有 `[vault]` 节（缺键 / 缺节），vault 根有 `.gitignore`、`.git/info/exclude` 与一个嵌套 `.gitignore`
-- **THEN** 用户规则的三个来源都生效（与默认 `rule_files` 一致）；两档名字都取代码内置默认地图，16 名仍全部被规则表覆盖、无一漏网——`.git` / `.DS_Store` 不可见，其余 14 名惰性可见
+- **THEN** 用户规则的三个来源都生效（与默认 `rule_files` 一致）；两档名字都取代码内置默认地图，14 名仍全部被规则表覆盖、无一漏网——`.git` / `.DS_Store` 不可见，其余 12 名惰性可见
 
 #### Scenario: 空列表只剩内置规则
 
@@ -236,7 +236,7 @@ vault 打开期间系统 SHALL 监听文件系统变更，并经 `fs:entry_chang
 
 #### Scenario: 惰性条目的事件不改索引
 
-- **WHEN** 惰性档的 `test-results/` 被外部改写（或外部新建一个惰性档命中的 md），事件被投递到 webview
+- **WHEN** 惰性档的 `.cache/` 被外部改写（或外部新建一个惰性档命中的 md），事件被投递到 webview
 - **THEN** 链接索引与附件索引 MUST NOT 因这条事件发生变化（MUST NOT upsert / push 惰性条目）；该文件的行照常在文件树里
 
 #### Scenario: 惰性条目自身的行级事件总是投递

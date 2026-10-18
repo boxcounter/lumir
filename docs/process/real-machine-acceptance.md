@@ -16,7 +16,7 @@ AI-only 模式下（ADR 0004）「待真机验收」清单只增不减，全部�
 1. `pnpm tauri dev` 起真实 app（WKWebView，非 chromium 近似），加载桌面验收 vault `/tmp/lumir-m102-acceptance`；
 2. KimiCU（AX 树 / 截图 / 键盘注入）按场景步骤驱动；
 3. 断言分两类：**AX/内容断言**（模式切换、toast 出现、文档内容、磁盘文件落盘轮询）与**截图证据**（留档供 Alex 抽审）；
-4. 结果落 `.local/acceptance/<日期>/`（git 外，与 perf-results 同一惯例）：每场景 PASS/FAIL + 证据截图 + 失败时的 AX dump；摘要表进执行报告（tower review 或 session 汇报）。
+4. 结果落 `.local/acceptance/<日期>/`（git 外，与 perf 读数 `.local/perf/` 同一惯例）：每场景 PASS/FAIL + 证据截图 + 失败时的 AX dump；摘要表进执行报告（tower review 或 session 汇报）。
 
 **覆盖映射**（backlog「待真机验收」9 项）：
 
@@ -43,7 +43,7 @@ AI-only 模式下（ADR 0004）「待真机验收」清单只增不减，全部�
 
 ## 裁决点
 
-1. **证据是否入 git**：建议不入（截图量大、session 产物），统一落 `.local/acceptance/`，与 perf-results 同惯例（该目录已在 `.gitignore` 内）；Alex 抽审靠本地目录。备选：摘要表入 git（`docs/backlog.md` 的「待真机验收」节），截图仍留本地。
+1. **证据是否入 git**：建议不入（截图量大、session 产物），统一落 `.local/acceptance/`，与 perf 读数 `.local/perf/` 同惯例（整个 `.local/` 已在 `.gitignore` 内）；Alex 抽审靠本地目录。备选：摘要表入 git（`docs/backlog.md` 的「待真机验收」节），截图仍留本地。
 2. **执行时机**：建议 dogfood 批次每次合并后 + Alex 验收前由 agent 先跑一遍，Alex 只看 FAIL 项与手感项。
 3. **场景维护权**：新功能 mission 的 tasks 里必须附带「新增/更新验收场景」一项（随实现同 PR），否则套件会腐烂。
 

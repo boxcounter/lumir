@@ -41,7 +41,7 @@ await writeResult({
     fixture: path.relative(repoRoot(), FIXTURE),
     fixtureBytes: EXPECTED_BYTES,
     pageCache: "warm",
-    // 与文件头同一口径：这条 note 会随结果落进 perf-results/ 的 JSON，读 artifact 的人
+    // 与文件头同一口径：这条 note 会随结果落进 .local/perf/ 的 JSON，读 artifact 的人
     // 看到的就是「占位端点 + 已 enforce + 修订义务」这三件事（M153）。
     note: "占位口径且已 enforce：纯磁盘 IO + UTF-8 解码，不含解析/渲染，不代表真实打开耗时；真实打开端点落地后须重标定阈值与基线",
   },

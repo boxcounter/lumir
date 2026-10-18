@@ -329,7 +329,7 @@ export async function generateBulkVault(spec = {}) {
   }
   // ── 两类忽略探针（可选，见函数头的说明）─────────────────────────────────────────────
   // `lazy` 档命中族：根下的构建产物目录，每个目录里放 N 个 md。**条数给的是量级，不是判据**：
-  // 判据只有「这一行在不在树里」（`target` / `dist` / `test-results` 是内置表里的名字）。
+  // 判据只有「这一行在不在树里」（`target` / `dist` / `.cache` 是内置表里的名字）。
   const ignoredDirs = spec.ignoredDirs ?? {};
   for (const [name, count] of Object.entries(ignoredDirs)) {
     const dir = path.join(vault, name);

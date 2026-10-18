@@ -16,8 +16,20 @@ export function summarize(samples) {
   return { median, p95, max: sorted[n - 1], min: sorted[0], mean };
 }
 
+// 产出根：`.local/perf/`（git 外，`.local/` 已在 .gitignore 内；场景分层见 .local/README.md）。
+// `PERF_RESULTS_DIR` 覆盖能力保留（本地取数、探针复跑用）。
 export function resultsDir() {
-  return process.env.PERF_RESULTS_DIR ?? path.join(repoRoot(), "perf-results");
+  return process.env.PERF_RESULTS_DIR ?? path.join(repoRoot(), ".local/perf");
+}
+
+// 滚动基线落点：`PERF_BASELINE_FILE` > thresholds.json 的 `regression.baselineFile` > 默认。
+// 单点解析——原本两个脚本各写一份「默认值 + 环境变量」链，改路径时容易只改一处
+// （REVIEW.md「同一语义两处真源」条）。
+export function baselinePath(baselineFile) {
+  return (
+    process.env.PERF_BASELINE_FILE ??
+    path.join(repoRoot(), baselineFile ?? ".local/perf/baseline/baseline.json")
+  );
 }
 
 // 结果 schema 见 spec 总约定：metric/unit/contract/samples/统计量/meta。

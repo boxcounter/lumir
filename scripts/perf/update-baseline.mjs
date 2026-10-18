@@ -3,7 +3,7 @@
 // 超阈（M172：resident-memory 9/9 超阈）⇒ 整个 run 永不 success ⇒ 全部相对基线永久冻结，
 // 于是 keypress-to-paint 长期对着单样本基线比较、越比越红（日志「最近 1 次 master」即为证）。
 //
-// 是否推进逐指标裁决，判据取 check-thresholds.mjs 落盘的 perf-results/gate-status.json：
+// 是否推进逐指标裁决，判据取 check-thresholds.mjs 落盘的 .local/perf/gate-status.json：
 // - status=pass：本次读数经门禁裁决合格 → 追加；
 // - status=skip：本次弃权（基线缺失/窗口未满 minRuns/统计口径迁移），读数本身可读 → 追加
 //   （否则窗口永远攒不满，薄基线降级会把自己锁死）；
@@ -16,16 +16,14 @@
 // 历史以新口径重建——旧条目存的是另一种统计量，混用会让窗口 median 系统性偏离（M37）。
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { repoRoot, resultsDir } from "./lib/stats.mjs";
+import { baselinePath as resolveBaselinePath, repoRoot, resultsDir } from "./lib/stats.mjs";
 
 const thresholdsPath = path.join(repoRoot(), "tests/perf/thresholds.json");
 const { regression = {}, metrics } = JSON.parse(
   await readFile(thresholdsPath, "utf8")
 );
 const windowSize = regression.window ?? 10;
-const baselinePath =
-  process.env.PERF_BASELINE_FILE ??
-  path.join(repoRoot(), regression.baselineFile ?? "perf-results/baseline/baseline.json");
+const baselinePath = resolveBaselinePath(regression.baselineFile);
 const outDir = resultsDir();
 
 let baseline = { metrics: {} };
