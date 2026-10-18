@@ -285,10 +285,10 @@ schema 校验、非法项人话 warning + 夹取/缺省回落（ADR 0002 第 5 �
 
 1. **触顶率过高**（最近 10 段中 ≥5 段 `stopped_by` 非空）⇒ 先查任务颗粒度，再调高 `[harness.subagents]`
    的上限（定义值受它夹取）。
-2. **完成率长期偏低**（连续 4 周 `completed / started < 50%`）⇒ 走后续 change 把 `tools` 白名单限到
+2. **完成率持续偏低**（人按周检查后的判断，不设时限判据）⇒ 考虑走后续 change 把 `tools` 白名单限到
    只读三件；落地前先用 vault 的 AGENTS.md 约定「委派只做调研」。
-3. **写类委派零使用**（连续 4 周无任何 `subagent_finished` 的定义含写类 / `cli_run`）⇒ 走后续 change
-   删除写工具声明能力。
+3. **写类委派看起来没有必要**（人按周检查定义与使用情况后的判断，不设零使用判据）⇒ 考虑走后续
+   change 删除写工具声明能力。
 4. **并发压力过大**（`max_concurrent` 长期顶格且大量排队）⇒ 先降上限；仍不够则改调度（请求级公平性
    另立 change），MUST NOT 靠提高上限硬扛。
 5. **紧急关停**：`[harness.subagents].enabled = false` 后 `task` 不再注册（模型看不见）、面板任务区
