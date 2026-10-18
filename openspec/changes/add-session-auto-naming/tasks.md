@@ -27,6 +27,7 @@
   - 落点：`llm::title_client`（20s 超时走 `llm::TITLE_TIMEOUT`）+ `llm::http_client`（与会话请求共用 TLS 口径）；mock 走独立 `titles` 队列（`MockClient::titles_from_file` / `with_title_start`，弹尽返回空正文）。
 - [x] 2.6 轮完成点接线：`turn.rs` 在正常 `done` 后做纯内存触发判定并起后台线程；结果落盘前复核「同 vault / 同 session id / 会话空闲 / auto_title 仍开」，任一不满足即丢弃并打 stderr。判据：`harness::title::tests::stale_result_is_dropped_after_rotate`、`result_is_dropped_while_busy` 全绿；单测断言会话 JSONL 不因丢弃多出记录。
   - 落点：`run_turn_core` 在 `done` 之后返回 `TitleJob`（`title::job_after_turn` 在短会话锁内装配素材）；`run_turn` 在 `release_turn` **之后**起 `lumir-harness-title` 线程（先起会被自己这轮的 busy 挡掉）。
+  - 评审 r1 补正（P2-1 / P2-2）：① mock 标题游标推进挪到「同 vault / 同 session id」身份复核**之后**——轮换 / 切 vault 的旧任务一个字段都不碰，busy / 开关关闭的同会话场景照推（调用确实消费了一条脚本）；单测 `rotated_job_does_not_touch_new_session_title_cursor`。② 复核第 4 条「`auto_title` 仍开」改为**落盘时点重读当前配置**（`auto_title_now`，design D9 的语义），不再读触发时快照；单测 `auto_title_off_at_landing_discards_result`。
 
 ## 3. 留存
 

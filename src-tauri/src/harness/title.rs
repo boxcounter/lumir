@@ -674,6 +674,19 @@ enum LandOutcome {
     Dropped(&'static str),
 }
 
+/// 落盘时点重读 `auto_title`（评审 r1 P2-2，design D9 复核第 4 条「`auto_title` 仍为开」的
+/// 语义是**落盘时点**的开关状态，不是触发时快照）：用户在命名调用在途期间关掉开关，结果应丢弃。
+///
+/// 为什么直接读配置而不是 runtime 穿线：`config::load()` 是配置面的既有读取口（command 层
+/// 每次调用都走它），命名落盘一次约一条记录 / 至少隔 3 轮，读一份小 JSON 的代价可忽略；
+/// runtime 当前不持有配置、为这一条复核新装配一条通道不成比例。读不到配置（首次启动 /
+/// 配置目录不可解析）按触发时快照处理——一次读盘失败不改变判据口径。
+fn auto_title_now(fallback: bool) -> bool {
+    crate::config::load()
+        .map(|snapshot| snapshot.config.harness.auto_title)
+        .unwrap_or(fallback)
+}
+
 /// 执行一次命名任务（生产路径在后台线程上调用；单测直接驱动）。
 ///
 /// 锁纪律（design D9）：HTTP 调用全程在锁外；结果落盘前重新取锁，复核「同 vault / 同 session /
@@ -688,16 +701,9 @@ pub fn run_job_with_client(
     let evaluation = evaluate(client, &job.material, job.current_title.as_deref());
     let consumed = client.mock_consumed();
     let script_len = client.mock_script_len();
+    // 第 4 条复核的读数在锁外取（配置是文件 IO，不放在短会话锁里）。
+    let auto_title = auto_title_now(job.auto_title);
     let outcome = runtime.with_session(scope, |session| {
-        // mock 标题队列的会话级游标：弹一条推进一格（耗尽后保持「无脚本」态——不 wrap，
-        // 缺失 / 弹尽 = 空正文 = invalid，design D12）。游标先推进：即使本次结果被丢弃，
-        // 这次调用也确实消费了一条脚本。
-        if let Some(len) = script_len {
-            let next = job.mock_start.saturating_add(consumed);
-            if next <= len {
-                session.set_title_cursor(next);
-            }
-        }
         let session_id =
             JsonlWriter::session_id_from_path(session.jsonl().path()).unwrap_or_default();
         if job.vault_key != scope.key() {
@@ -706,10 +712,21 @@ pub fn run_job_with_client(
         if session_id != job.session_id {
             return LandOutcome::Dropped("会话已轮换");
         }
+        // mock 标题队列的会话级游标（评审 r1 P2-1）：**身份复核通过之后**才推进——弹一条
+        // 推进一格（耗尽后保持「无脚本」态，不 wrap；缺失 / 弹尽 = 空正文 = invalid，design
+        // D12）。放在身份复核之后是为了不污染新会话：旧任务在轮换 / 切 vault 后必须一个字段
+        // 都不碰；而 busy / 开关关闭时同会话的游标照推是对的（这次调用确实消费了一条脚本，
+        // 下一次触发应从下一条继续）。
+        if let Some(len) = script_len {
+            let next = job.mock_start.saturating_add(consumed);
+            if next <= len {
+                session.set_title_cursor(next);
+            }
+        }
         if session.is_busy() {
             return LandOutcome::Dropped("会话正忙（避免插入请求/响应之间）");
         }
-        if !job.auto_title {
+        if !auto_title {
             return LandOutcome::Dropped("自动命名已关闭");
         }
         let reason = job.trigger.reason();
@@ -792,13 +809,15 @@ pub fn run_job(sink: &dyn EventSink, runtime: &Runtime, scope: &VaultScope, job:
 /// client 装配失败（缺 api_key / 缺 fixture / 缺模型）的记录落点：与调用失败同口径——同样要
 /// 过「空闲 / 同 session / 同 vault / 开关仍在」四道复核，同样失败静默。
 fn record_client_failure(runtime: &Runtime, scope: &VaultScope, job: &TitleJob) {
+    // 第 4 条复核与调用失败同口径：读落盘时点的开关（评审 r1 P2-2），锁外取。
+    let auto_title = auto_title_now(job.auto_title);
     let _ = runtime.with_session(scope, |session| {
         let session_id =
             JsonlWriter::session_id_from_path(session.jsonl().path()).unwrap_or_default();
         if job.vault_key != scope.key()
             || session_id != job.session_id
             || session.is_busy()
-            || !job.auto_title
+            || !auto_title
         {
             session.title_schedule_mut().finish();
             return;
@@ -1684,6 +1703,108 @@ mod tests {
             .unwrap();
         assert_eq!(title, None, "轮换后的结果必须丢弃");
         assert!(!path.exists(), "旧任务不得催生新会话文件");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 评审 r1 P2-1：旧任务（会话已轮换）连 **mock 标题游标**都不许碰——游标推进挪到身份复核
+    /// 之后，轮换场景下新会话的 `title_cursor` 保持 0；busy / 开关关闭的同会话场景照推
+    ///（调用确实消费了一条脚本，下一轮从下一条继续）。
+    #[test]
+    fn rotated_job_does_not_touch_new_session_title_cursor() {
+        let root = tmpdir("cursor-stale");
+        let _xdg = crate::harness::xdg_test_lock();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+        let scope = test_scope(&root);
+        let config = mock_config(None);
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&scope, &config).unwrap();
+        runtime.release_turn(&scope);
+        let job = job_for(&runtime, &scope, &config);
+        assert_eq!(job.mock_start, 0, "旧会话的游标起点");
+
+        // 轮换：新会话的游标从 0 起步（rotate / 新建的既有口径）。
+        runtime.new_session(&scope).unwrap();
+        runtime.acquire_turn(&scope, &config).unwrap();
+        runtime.release_turn(&scope);
+        assert_eq!(
+            runtime.with_session(&scope, |s| s.title_cursor()).unwrap(),
+            0,
+            "新会话的游标起点是 0（构造性正观测）"
+        );
+
+        // 旧任务：mock 标题队列弹一条（consumed = 1 ⇒ 若在复核前推进，新会话会被写成 1）。
+        let mut client = MockClient::titles_from_str(
+            r#"{"titles":[{"text":"{\"decision\":\"rename\",\"title\":\"旧任务\"}"}]}"#,
+            "titles",
+        )
+        .unwrap();
+        let (_seen, sink) = collect_sink();
+        run_job_with_client(&sink, &runtime, &scope, job, &mut client);
+
+        assert_eq!(
+            runtime.with_session(&scope, |s| s.title_cursor()).unwrap(),
+            0,
+            "轮换后的旧任务不得推进新会话的 mock 标题游标"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 评审 r1 P2-2：design D9 复核第 4 条「`auto_title` 仍开」= **落盘时点**的开关状态。
+    /// 触发时快照为开、在途期间用户在盘上关掉开关 ⇒ 结果丢弃（不写记录、不改标题）；
+    /// 反向观测：开关恢复后同一任务正常落盘（证明丢弃来自重读的开关，不是链路坏掉）。
+    #[test]
+    fn auto_title_off_at_landing_discards_result() {
+        let root = tmpdir("landing-off");
+        let _xdg = crate::harness::xdg_test_lock();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        let xdg = root.join("xdg");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        let config_dir = xdg.join("lumir");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.json"),
+            r#"{"version":1,"harness":{"auto_title":false}}"#,
+        )
+        .unwrap();
+
+        let scope = test_scope(&root);
+        let config = mock_config(None);
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&scope, &config).unwrap();
+        runtime.release_turn(&scope);
+        let job = job_for(&runtime, &scope, &config);
+        assert!(job.auto_title, "触发时快照仍是开（关闭发生在调用在途期间）");
+
+        let (_seen, sink) = collect_sink();
+        let mut client = RecordingClient::replying(r#"{"decision":"rename","title":"不该落盘"}"#);
+        run_job_with_client(&sink, &runtime, &scope, job, &mut client);
+        let (title, path, inflight) = runtime
+            .with_session(&scope, |s| {
+                (
+                    s.title().map(str::to_string),
+                    s.jsonl().path().to_path_buf(),
+                    s.title_schedule().inflight(),
+                )
+            })
+            .unwrap();
+        assert_eq!(title, None, "落盘时点开关已关：标题不变");
+        assert!(!path.exists(), "落盘时点开关已关：不写记录、不催生文件");
+        assert!(!inflight, "丢弃时释放单飞行位（下一次触发点可接上）");
+
+        // 反向观测：开关恢复后同一任务正常落盘。
+        std::fs::write(
+            config_dir.join("config.json"),
+            r#"{"version":1,"harness":{"auto_title":true}}"#,
+        )
+        .unwrap();
+        let job = job_for(&runtime, &scope, &config);
+        let mut client = RecordingClient::replying(r#"{"decision":"rename","title":"落盘标题"}"#);
+        run_job_with_client(&sink, &runtime, &scope, job, &mut client);
+        let title = runtime
+            .with_session(&scope, |s| s.title().map(str::to_string))
+            .unwrap();
+        assert_eq!(title.as_deref(), Some("落盘标题"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
