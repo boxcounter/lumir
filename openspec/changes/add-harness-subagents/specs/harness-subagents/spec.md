@@ -4,10 +4,11 @@
 > 运行。形态参照 [Claude Code subagents](https://code.claude.com/docs/en/sub-agents)（2026-10-18 抓取）：
 > 定义即 Markdown + YAML frontmatter 文件、按名字委派、按 `description` 自动委派、部分结果可 resume。
 > 第二轮按 Alex 节点 1 裁决修订：并行 + 后台运行、批准卡透传、内建 `explore`、用量按模型分桶、
-> 任务面板可见面；逐条出处见 [proposal.md](../../proposal.md)「裁决留痕」。与参照系的逐项对照及刻意
-> 偏离见 proposal「参照系」节。运行公共层（`RunSpec` / `RunContext`）属 `harness` capability，见
-> [harness delta](../harness/spec.md)。本 capability 只管「有哪些子代理、一次委派怎么跑、怎么收敛、
-> 怎么记账、怎么留档、用户看到什么」。
+> 任务面板可见面。第三轮按节点 1 终审前的裁决修订：后台完成**自动唤醒**父会话 + 链式失控闸
+> （`AUTO_WAKE_CHAIN_MAX = 3`）；逐条出处见 [proposal.md](../../proposal.md)「裁决留痕」。与参照系的
+> 逐项对照及刻意偏离见 proposal「参照系」节。运行公共层（`RunSpec` / `RunContext`）属 `harness`
+> capability，见 [harness delta](../harness/spec.md)。本 capability 只管「有哪些子代理、一次委派怎么
+> 跑、怎么收敛、怎么记账、怎么留档、用户看到什么」。
 
 ## ADDED Requirements
 
@@ -156,10 +157,17 @@ SHALL 受会话级并发上限 `max_concurrent` 约束。前台调用 SHALL 阻�
 - **WHEN** `max_concurrent = 1`，已有一个 run 在跑，父会话再发起一个 `background=true` 的委派
 - **THEN** 回送 `concurrency_limit`，该 run 不启动、不排队；正在跑的 run 不受影响
 
-#### Scenario: 后台结果在后续回合送达
+#### Scenario: 后台结果唤醒父会话
 
-- **WHEN** 后台 run 在父回合结束之后收敛
-- **THEN** 父会话追加一条自动化通知消息与 `task_result` 记录，面板行转为终态；MUST NOT 自动发起新回合
+- **WHEN** 后台 run 在父回合结束之后收敛，且父会话空闲
+- **THEN** 父会话先追加一条自动化通知消息，随后自动起一个父会话回合（通知为该回合的输入），回合
+  结束后父会话有该回合的助手回复；通知的 `subagent_notified` 记录 `wake=auto_turn`
+
+#### Scenario: 父会话正忙时合并
+
+- **WHEN** 一个用户回合进行中两个后台 run 相继收敛
+- **THEN** 通知排队到当前回合收尾，之后只起**一个**自动回合（输入含两条通知，`wake_batch` 相同）；
+  MUST NOT 为每个 run 各起一个回合
 
 #### Scenario: 停止广播
 
@@ -171,6 +179,101 @@ SHALL 受会话级并发上限 `max_concurrent` 约束。前台调用 SHALL 阻�
 - **WHEN** 子运行的模型请求返回配额耗尽 / 限流错误
 - **THEN** 该段以 `stopped_by=quota` 返回 partial（已有文本照常回送）；MUST NOT 自动重试或换模型，
   兄弟 run 继续运行
+
+### Requirement: 后台完成的通知投递与自动唤醒
+
+系统 SHALL 把每个后台 run 的自终结态（completed / partial / failed）作为一条完成通知交付给父会话：
+通知 SHALL 以一条带自动化标记（`auto_notice`）的 user 角色消息写入父会话历史，该消息的**内容**以其
+随后进入的第一条 `llm_request.messages` 为真源，MUST NOT 另写一份并行的完成**内容**记录；transcript
+SHALL 按该标记渲染为与用户消息可区分的自动化通知；任务面板对应行 SHALL 转为终态。收敛为 `aborted`
+的 run SHALL NOT 触发自动唤醒（停止是用户在场的主动动作，会话拆除时也没有可唤醒的会话），其终态仍
+SHALL 在面板与事件中如实反映。前台 `task` 的结果在本回合内回填，MUST NOT 产生通知或唤醒。
+
+由于 user 消息只在下一次 LLM 请求发生时才进入留存，系统 SHALL 在通知**上屏的同一时刻**写一条投递
+标记 sidecar（`kind = "notice_delivered"`，字段 `run_ids`、`wake_batch`、`shown_at`），承载「已上屏、
+尚未被模型消费」的事实；该标记 MUST NOT 承载完成内容（正文真源仍为 `llm_request.messages`，run 元数据
+仍为 `subrun` sidecar）。恢复会话时：若留存里已有任一条 `llm_request.messages` 含同 `wake_batch` 的
+`auto_notice` 消息，投递标记 SHALL 被视为陈旧并忽略；否则系统 SHALL 据标记与对应 run 的 `subrun`
+sidecar 重建一条自动化通知并上屏（agent / description / 终态 / `stopped_by` / usage；MUST NOT 把摘要
+正文复制进标记，重建通知的正文 SHALL 注明摘要见审计流水与 `task` 行）。重建 MUST NOT 触发自动回合
+（恢复不是收敛事件，后台 run 在重启时已中止），该通知 SHALL 在用户下一次发言时进入模型上下文。
+
+父会话空闲时，系统 SHALL 在合并窗口（从首条通知算起 `AUTO_WAKE_COALESCE_MS = 2000` 毫秒，不因新
+通知顺延）到期后自动起**一个**父会话回合，窗口内收敛的通知 SHALL 合并为该回合的输入；父会话正忙时
+通知 SHALL 排队，在当前回合结束后合并为**一个**回合的输入。系统 MUST NOT 为同一批通知起多个回合，
+同一时刻 MUST NOT 有多个自动回合在飞。自动回合的输入 SHALL 是合并后的通知消息（固定前缀标明「不是
+用户发言」），并 SHALL 是一个普通交互回合——`loop_max`、`max_subruns_per_turn`、`max_concurrent`
+照常生效，MUST NOT 获得任何豁免；它 MUST NOT 改写当前正在进行的回合的上下文。
+
+链式失控闸 SHALL 是确定性规则，MUST NOT 依赖模型自行判断何时停止。每个父会话 SHALL 维护「连续自动
+回合数」：自动回合开始时加一；任何用户回合开始、任务面板「继续」、会话重置 / 恢复 / 切 vault 时清零
+（计数不持久化）。计数达到 `AUTO_WAKE_CHAIN_MAX = 3` 时，父会话快照 SHALL 暴露
+`auto_wake.blocked = "chain_limit"` 并使任务面板出现触顶提示行（不必等下一次通知被拒才提示）。起
+自动回合前若计数已达上限，系统 SHALL NOT 起回合：通知照常上屏并写投递标记（恢复后据标记重建显示），
+仍提供「继续」入口（点击等价一次用户发言——计数清零并按当前待处理通知起一个回合）；用户停止自动
+回合 SHALL 视同触顶（`blocked = "stopped"`），后续通知不再唤醒。两个常量（`AUTO_WAKE_CHAIN_MAX`、
+`AUTO_WAKE_COALESCE_MS`）SHALL 是代码常量而非配置键。该闸与 `loop_max` SHALL 正交：`loop_max`
+限制一个回合内的工具往返数，链上限限制无用户发言的回合数，两者各自停摆、互不替代。无人注视下的
+消耗上界 SHALL 为 `AUTO_WAKE_CHAIN_MAX × max_subruns_per_turn × max_tokens` 加自动回合自身的往返
+量级，并 SHALL 在配置文档中写明。
+
+`subagent_notified` 诊断事件 SHALL 带 `wake`（`auto_turn` / `user_turn` / `blocked_chain` /
+`blocked_stopped` / `none_aborted`）、`wake_batch`（同一批合并的通知共享）与 `chain_index`（本次自动
+回合在链中的序号，从 1 起；非自动回合为 0），且在通知**最终处理时**产出一次（被排队 / 合并的 run
+不另产 `queued` 事件）；父会话快照 SHALL 暴露 `auto_wake: {chain, max, blocked}` 供任务面板渲染提示行。
+
+#### Scenario: 空闲时自动起回合
+
+- **WHEN** 父会话空闲、无待处理通知，一个后台 run 收敛为 completed
+- **THEN** 合并窗口到期后自动起一个父会话回合，请求里含一条带 `auto_notice` 标记的 user 消息（内容为
+  完成通知）；该回合结束后父会话有助手回复；`subagent_notified.wake = auto_turn`、`chain_index = 1`
+
+#### Scenario: 忙时合并不叠回合
+
+- **WHEN** 一个用户回合进行中，两个后台 run 在同一个回合内相继收敛
+- **THEN** 两个通知排队；当前回合结束后只起一个自动回合，其输入含两条通知且 `wake_batch` 相同；
+  自动回合数恰为 1
+
+#### Scenario: 链上限触顶停摆
+
+- **WHEN** 连续三个自动回合已经跑完，第 4 条后台结果收敛
+- **THEN** 不再起自动回合；通知仍作为自动化通知上屏并写投递标记；`subagent_notified.wake = blocked_chain`；
+  任务面板出现触顶提示行与「继续」入口；快照 `auto_wake.blocked = "chain_limit"`
+
+#### Scenario: 用户发言清零链计数
+
+- **WHEN** 链已触顶后用户发送一条消息
+- **THEN** 待处理通知作为一条通知消息追加在该用户消息之前，用户回合照常执行，链计数清零；此后新的
+  后台结果收敛恢复自动唤醒
+
+#### Scenario: 停止自动回合不再唤醒
+
+- **WHEN** 用户在自动回合进行中按下停止
+- **THEN** 该回合按既有停止路径结束；快照 `auto_wake.blocked = "stopped"`，后续后台结果只上屏（并写
+  投递标记）、不再起自动回合；用户下一次发言恢复
+
+#### Scenario: 与 loop_max 正交
+
+- **WHEN** 一个自动回合内模型连续调用工具达到 `loop_max`
+- **THEN** 该回合按既有「达到循环上限」提示结束，链计数不变（链数的是回合数，不是工具往返数）；
+  下一条后台结果仍受链上限约束
+
+#### Scenario: 中止不唤醒
+
+- **WHEN** 用户在任务面板上停止一个后台 run
+- **THEN** 该 run 收敛为 `aborted`，面板行转「已停止」，不产生自动回合（`wake = none_aborted`）
+
+#### Scenario: 上屏后退出、恢复仍可见
+
+- **WHEN** 一条通知已上屏、但尚未进入任何 `llm_request` 时应用退出（含链触顶后不再起回合、以及空闲
+  合并窗口内退出两种变体）
+- **THEN** 留存里有一条 `notice_delivered` 投递标记；重启恢复后据标记与 `subrun` sidecar 重建该通知
+  并上屏；MUST NOT 自动起回合；用户下一次发言的请求里含该通知，此后该标记被视为已消费、不再重复上屏
+
+#### Scenario: 已消费的标记不重复上屏
+
+- **WHEN** 正常收尾（通知已进入某条 `llm_request.messages`）后重启会话
+- **THEN** 对应的投递标记被判为陈旧并忽略，通知不重复出现；用户历史中的该通知只出现一次
 
 ### Requirement: 工具集声明与默认收紧
 
@@ -413,8 +516,9 @@ MUST NOT 改变读数）。子运行内部的压缩调用 SHALL 计入该段 tok
 系统 SHALL 产出七个诊断事件：`subagent_started`、`subagent_progress`、`subagent_step`、
 `subagent_finished`、`subagent_notified`、`subagent_rejected`、`subagent_catalog_large`；完成事件 SHALL
 带 run id、segment、agent、终态、触顶原因、轮次、模型、三项 token 读数、被拒调用数、耗时、摘要字符数
-与审计路径。`subagent_progress` / `subagent_step` 是可见面事件，SHALL 节流产出、只带读数与人话化参数
-摘要。事件 MUST NOT 含任务 prompt 内容、文件内容与 vault 绝对路径。
+与审计路径。`subagent_notified` SHALL 带 `wake` / `wake_batch` / `chain_index`（取值与语义见「后台完成
+的通知投递与自动唤醒」）。`subagent_progress` / `subagent_step` 是可见面事件，SHALL 节流产出、只带
+读数与人话化参数摘要。事件 MUST NOT 含任务 prompt 内容、文件内容与 vault 绝对路径。
 
 #### Scenario: 审计可定位
 
@@ -471,6 +575,11 @@ SHALL 沿用既有模板：类型不符整节回落 + 人话 warning；数值越
 委派段（`subrun_limit`），只计实际进入执行的段（前台 + 后台），MUST NOT 静默跳过。`max_concurrent`
 SHALL 限制会话级同时运行的 run 数；超出时后台委派回 `concurrency_limit`，前台委派等待许可。
 
+自动唤醒的链上限（`AUTO_WAKE_CHAIN_MAX = 3`）与合并窗口（`AUTO_WAKE_COALESCE_MS = 2000`）MUST NOT
+是本节的配置键，SHALL 由代码常量表达（安全绳不是策略旋钮，见 harness-subagents「后台完成的通知投递
+与自动唤醒」）。配置文档 SHALL 写明无人注视下的消耗上界（链上限 × 单回合委派上限 × 单 run token
+预算 + 自动回合自身往返）。
+
 #### Scenario: 非法值夹取
 
 - **WHEN** `timeout_secs` 配为 `0` 或超出合法域
@@ -508,6 +617,8 @@ SHALL 限制会话级同时运行的 run 数；超出时后台委派回 `concurr
 - 任务区 SHALL 只列运行中 / 等待批准的 run。历史任务 MUST NOT 逐行常驻任务区（会与 transcript 的
   `task` 工具行形成双读数）；全部任务收敛后任务区 SHALL 收敛为一行摘要（本次会话完成 / 部分结果数）
   与按模型用量入口。每个 run 的详情（步骤、摘要、用量）SHALL 可从 transcript 的 `task` 工具行展开。
+- `auto_wake.blocked` 非空时，任务区 SHALL 出现自动回合触顶提示行（`chain_limit` 与 `stopped` 两种
+  文案），并提供「继续」入口；提示行 SHALL 与 run 行视觉区分，MUST NOT 冒充一个任务。
 - `enabled = false` 或没有任何子运行任务时，任务区 MUST NOT 出现（空态不占位）。
 
 前端 SHALL 提供只读的子代理清单（名字、description、工具数、模型、来源：内建 / vault / 用户），
