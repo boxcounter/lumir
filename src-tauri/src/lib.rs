@@ -9,6 +9,7 @@
 pub mod attachment_naming;
 pub mod commands;
 pub mod config;
+pub mod cron;
 pub mod fs_io;
 pub mod harness;
 pub mod index;
@@ -25,6 +26,12 @@ pub mod window_state;
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind};
 use tauri::{Emitter, Manager};
+
+use serde::Serialize;
+use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::Mutex;
+use std::time::Instant;
 
 /// 自定义退出菜单项 id（M101）：见 install_menu_overrides。
 #[cfg(target_os = "macos")]
@@ -55,6 +62,9 @@ const MENU_COMMAND_EVENT: &str = "app:menu_command";
 /// 启动 Tauri app。
 pub fn run() {
     let started = std::time::Instant::now();
+    // cron 守护的通道：发送端交给 `CronRuntime`（app state），接收端在 setup 尾部交给
+    // `lumir-cron` 线程。通道先建、线程后起——任何一次 poke 在消费端就位前只是排队。
+    let (cron_tx, cron_rx) = std::sync::mpsc::channel();
     tauri::Builder::default()
         // 外链打开（M144）：插件注册后 `app.opener()` 可用（Rust 侧调用不经 ACL）。
         // `open_js_links_on_click(false)`：插件默认会往 webview 注入一段脚本，把
@@ -69,6 +79,7 @@ pub fn run() {
         .manage(commands::VaultState::default())
         .manage(commands::DirtyState::default())
         .manage(harness::Runtime::default())
+        .manage(CronRuntime::new(cron_tx))
         .invoke_handler(tauri::generate_handler![
             commands::config_get,
             commands::config_set_ui_value,
@@ -175,6 +186,10 @@ pub fn run() {
             // last_vault 自动恢复移出主线程（M159）：本回调随即返回，事件循环继续跑
             // ——窗口立即可绘制。setup 内 MUST NOT 同步做 config::load / open_vault。
             start_restore(app.handle());
+            // cron 守护（change add-cron-runtime-daemon §4.1）：窗口已显示、`LUMIR_READY`
+            // 已发出之后才 spawn——线程自己装载配置与去重状态，setup 不等它，冷启动
+            // <300ms 合同零接触面。首次评估由紧随其后的 startup poke 触发。
+            start_cron(app.handle(), cron_rx);
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -218,6 +233,15 @@ pub fn run() {
             } if app.state::<commands::DirtyState>().is_dirty() => {
                 api.prevent_close();
                 let _ = app.emit("app:quit_blocked", ());
+            }
+            // 拉取兜底②（change add-cron-runtime-daemon §4.2）：主窗口获得焦点时投一次 poke，
+            // 判定与派发都在 `lumir-cron` 线程上跑。回调里只做一次带 200ms 去抖的通道发送
+            // ——不读配置、不做 IO，焦点风暴因此不会变成多次判定。
+            tauri::RunEvent::WindowEvent {
+                event: tauri::WindowEvent::Focused(true),
+                ..
+            } => {
+                app.state::<CronRuntime>().poke_focus();
             }
             // 窗口尺寸变化：只更新内存里的「最近尺寸」缓存（写盘在 `lumir-window-state`
             // 线程上防抖；位置不入档，因此**不监听 `Moved`**）。尺寸以逻辑点落盘，跨
@@ -686,6 +710,447 @@ fn restore_outcome(app: &tauri::AppHandle) -> commands::RestoreOutcome {
     }
 }
 
+// ---------------------------------------------------------------------------
+// cron 守护（change add-cron-runtime-daemon §4 / §5）
+// ---------------------------------------------------------------------------
+
+/// 运行交接事件名（design §6.1）：前端接线层收到后确保目标 vault 已打开、按会话形态建立 /
+/// 恢复会话、经既有发送通道送出 prompt，并在终态调用 [`cron_run_result`] 回执。
+const CRON_RUN_EVENT: &str = "cron:run";
+
+/// 焦点 poke 的去抖窗口（design §4.2）：切换前台的连续事件在 200ms 内只投一次。
+const FOCUS_POKE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// 在途运行失去回执的兜底窗口：`cron_run_result` 是终态的唯一来源，回执若丢失（前端重载 /
+/// webview 崩溃），该任务会被永远判 `busy`。超过这个时长仍在册的运行视为已丢失，下一次评估
+/// 清掉并落一条 warning，让任务恢复可触发——「至少一个在途运行」保护的是并发，不是永久占用。
+const INFLIGHT_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+/// `lumir-cron` 守护的进程内通道 + 焦点去抖状态（`run()` 创建、`app.manage` 持有）。
+///
+/// 投递方（事件循环回调、`cron_run_result` 命令）只做一次通道发送——不读配置、不做 IO、
+/// 不判定；判定与派发全部在 `lumir-cron` 线程上，事件循环因此不会被 cron 拖慢。
+pub struct CronRuntime {
+    inner: Mutex<CronRuntimeInner>,
+}
+
+struct CronRuntimeInner {
+    tx: Sender<CronMessage>,
+    last_focus_poke: Option<Instant>,
+}
+
+/// 投给守护线程的两类消息。
+enum CronMessage {
+    /// 拉取兜底的一次评估（带触发源）。
+    Poke(cron::Trigger),
+    /// 运行终态回执。
+    RunResult(CronRunResult),
+}
+
+/// `cron_run_result` 回执载荷（design §6.1）：运行终态的**唯一**来源。成功与否只由前端在终态
+/// 时交一次，Rust 不据事件流或字符串猜（REVIEW.md「同一语义两处真源」条）。
+struct CronRunResult {
+    run_id: String,
+    ok: bool,
+    session_id: Option<String>,
+    error: Option<String>,
+}
+
+impl CronRuntime {
+    fn new(tx: Sender<CronMessage>) -> Self {
+        Self {
+            inner: Mutex::new(CronRuntimeInner {
+                tx,
+                last_focus_poke: None,
+            }),
+        }
+    }
+
+    fn send(&self, message: CronMessage) {
+        let inner = self.inner.lock().expect("cron runtime poisoned");
+        // 线程未起 / 已退出（连接断开）：投递丢弃，业务结果不受影响。
+        let _ = inner.tx.send(message);
+    }
+
+    fn poke(&self, trigger: cron::Trigger) {
+        self.send(CronMessage::Poke(trigger));
+    }
+
+    /// 主窗口获得焦点：200ms 内的重复到达合并成一次（design §4.2 的焦点风暴口径）。
+    fn poke_focus(&self) {
+        let mut inner = self.inner.lock().expect("cron runtime poisoned");
+        let debounced = inner
+            .last_focus_poke
+            .map(|last| last.elapsed() < FOCUS_POKE_DEBOUNCE)
+            .unwrap_or(false);
+        if debounced {
+            return;
+        }
+        inner.last_focus_poke = Some(Instant::now());
+        let _ = inner.tx.send(CronMessage::Poke(cron::Trigger::Focus));
+    }
+}
+
+/// 拉取兜底的一次投递（启动就绪 / 主窗口获得焦点 / 目标 vault 打开成功共用同一个入口）。
+pub fn cron_poke(app: &tauri::AppHandle, trigger: cron::Trigger) {
+    app.state::<CronRuntime>().poke(trigger);
+}
+
+/// 运行终态回执的唯一后端入口：前端接线层的 `cron_run_result` 命令调用它。
+///
+/// 本函数只投递到 `lumir-cron` 线程——去重状态更新与 `cron_run_finished` 事件都由该线程
+/// 唯一产出（design §6.1：终态只由回执一处产出）。
+pub fn cron_run_result(
+    app: &tauri::AppHandle,
+    run_id: &str,
+    ok: bool,
+    session_id: Option<String>,
+    error: Option<String>,
+) {
+    app.state::<CronRuntime>()
+        .send(CronMessage::RunResult(CronRunResult {
+            run_id: run_id.to_string(),
+            ok,
+            session_id,
+            error,
+        }));
+}
+
+/// 守护线程的一条待评估任务：配置里的任务 + 启动时解析一次的 `at` 分钟数。
+#[derive(Debug, Clone)]
+struct ScheduledTask {
+    task: config::CronTask,
+    at_minutes: u16,
+}
+
+/// 一次在途运行的登记（`run_id` → 任务与触达策略）。
+struct InflightRun {
+    task: String,
+    delivery: config::DeliveryPolicy,
+    started: Instant,
+}
+
+/// `cron:run` 交接事件的载荷（design §6.1 的逐字段形状）。`origin` 是触发源字面量；
+/// 点击发起的运行由前端接线层用 `click`。
+#[derive(Debug, Clone, Serialize)]
+struct CronRunPayload {
+    run_id: String,
+    task: String,
+    vault: String,
+    prompt: String,
+    session: String,
+    model: Option<String>,
+    origin: String,
+}
+
+/// 起 `lumir-cron` 线程并投一次启动评估（design §4.1 / §4.2）。
+///
+/// 线程自己装载配置与去重状态（文件 IO 不在事件循环 / 主线程上）；起线程失败只降级为
+/// 「定时任务不启用」，绝不阻断启动。
+fn start_cron(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
+    let handle = app.clone();
+    match std::thread::Builder::new()
+        .name("lumir-cron".to_string())
+        .spawn(move || cron_loop(&handle, rx))
+    {
+        Ok(_) => cron_poke(app, cron::Trigger::Startup),
+        Err(error) => {
+            eprintln!("lumir: cron 守护线程启动失败，定时任务不启用：{error}");
+            logging::config_warning("cron", "守护线程启动失败，定时任务不启用");
+        }
+    }
+}
+
+/// 守护线程主循环：30s tick 或被 poke 唤醒后评估全部任务（design §4.1）。
+fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
+    let snapshot = match config::load() {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            logging::config_warning(
+                "cron",
+                &format!("配置加载失败，定时任务不启用：{}", error.message),
+            );
+            return;
+        }
+    };
+    // 装载期：被丢弃的任务项落结构化诊断（人话 warning 已随 ConfigSnapshot 交给前端）。
+    for issue in &snapshot.cron_issues {
+        logging::cron_task_invalid(&issue.task, &issue.field, &issue.reason);
+    }
+    let tasks: Vec<ScheduledTask> = snapshot
+        .config
+        .cron
+        .tasks
+        .iter()
+        .filter_map(|task| match cron::parse_at(&task.at) {
+            Ok(at_minutes) => Some(ScheduledTask {
+                task: task.clone(),
+                at_minutes,
+            }),
+            // 校验期已挡过一次；这里只防实现漂移（校验后 at 又被改坏），不静默丢。
+            Err(reason) => {
+                logging::cron_task_invalid(&task.id, "at", reason);
+                None
+            }
+        })
+        .collect();
+    // `tasks: []` ⇒ 守护空转：不触发任何任务、不报错（spec「空任务表」）。
+    if tasks.is_empty() {
+        return;
+    }
+    let state_path = match config::config_dir() {
+        Ok(dir) => cron::state_path(&dir),
+        Err(error) => {
+            logging::config_warning(
+                "cron",
+                &format!("无法确定配置目录，定时任务不启用：{}", error.message),
+            );
+            return;
+        }
+    };
+    let (state, warnings) = cron::load_state(&state_path);
+    for warning in warnings {
+        logging::config_warning("cron-state", &warning);
+    }
+    let mut runner = CronRunner {
+        app: app.clone(),
+        tasks,
+        state,
+        state_path,
+        inflight: std::collections::HashMap::new(),
+        skipped_today: std::collections::HashMap::new(),
+        last_vault: None,
+    };
+    loop {
+        match rx.recv_timeout(cron::TICK) {
+            Ok(CronMessage::Poke(trigger)) => runner.evaluate(trigger),
+            Ok(CronMessage::RunResult(result)) => runner.finish(result),
+            Err(RecvTimeoutError::Timeout) => runner.evaluate_tick(),
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
+/// 守护线程的执行侧：判定（`cron::plan`）之外的全部副作用都在这里——投通知、发交接事件、
+/// 写去重状态、落诊断事件。
+struct CronRunner {
+    app: tauri::AppHandle,
+    tasks: Vec<ScheduledTask>,
+    state: cron::CronState,
+    state_path: PathBuf,
+    /// 在途运行：`run_id` → 任务。同一任务同一时刻至多一个（design §6.6）。
+    inflight: std::collections::HashMap<String, InflightRun>,
+    /// 今日已落过 skip 的任务 → 日期（每任务每日最多一条 `cron_run_skipped`）。
+    skipped_today: std::collections::HashMap<String, String>,
+    /// 上一轮观察到的当前 vault 根：变化即视为「目标 vault 打开成功」的一次触发源
+    /// （下面 `evaluate_tick` 的口径）。
+    last_vault: Option<PathBuf>,
+}
+
+impl CronRunner {
+    /// 拉取兜底 / 启动的评估（触发源由投递方给出）。
+    fn evaluate(&mut self, trigger: cron::Trigger) {
+        let current_vault = current_vault_root(&self.app);
+        self.evaluate_with(trigger, current_vault);
+    }
+
+    /// 定时器评估：顺带把「当前 vault 变了」识别成一次 vault-open 拉取触发。
+    ///
+    /// **为什么这样接第三个触发源**：`vault_open` / `vault_open_path` 命令的成功点在
+    /// `commands.rs`（不在本次改动的文件面内），本层没有可直接挂的回调；而目标 vault 变更是
+    /// 「打开成功」的唯一可观察结果。代价：补判最多晚一个 tick（30s，与定时器自身粒度同量级），
+    /// 且该轮按拉取触发处理（允许重试当日被跳过的任务）。命令层直接 poke 的接线属后续改动。
+    fn evaluate_tick(&mut self) {
+        let current_vault = current_vault_root(&self.app);
+        let trigger = if current_vault != self.last_vault {
+            cron::Trigger::VaultOpen
+        } else {
+            cron::Trigger::Timer
+        };
+        self.evaluate_with(trigger, current_vault);
+    }
+
+    fn evaluate_with(&mut self, trigger: cron::Trigger, current_vault: Option<PathBuf>) {
+        self.last_vault = current_vault.clone();
+        let current_vault = current_vault.and_then(|path| path.to_str().map(str::to_string));
+        let now = cron::LocalNow::now();
+        self.prune_stale_inflight();
+        for index in 0..self.tasks.len() {
+            let scheduled = self.tasks[index].clone();
+            self.dispatch(&scheduled, &now, trigger, current_vault.as_deref());
+        }
+    }
+
+    /// 清掉失去回执的在途运行（[`INFLIGHT_STALE_AFTER`]）：否则一次丢失的回执会让该任务
+    /// 永久落在 `busy` 上——`busy` 保护的是并发，不该变成永久占用。
+    fn prune_stale_inflight(&mut self) {
+        let stale: Vec<String> = self
+            .inflight
+            .iter()
+            .filter(|(_, run)| run.started.elapsed() > INFLIGHT_STALE_AFTER)
+            .map(|(run_id, _)| run_id.clone())
+            .collect();
+        for run_id in stale {
+            if let Some(run) = self.inflight.remove(&run_id) {
+                logging::config_warning(
+                    "cron",
+                    &format!("任务 {} 的运行回执超时未到，已按运行丢失处理", run.task),
+                );
+            }
+        }
+    }
+
+    /// 单任务的派发：`cron::plan` 决定做什么，这里只执行。
+    fn dispatch(
+        &mut self,
+        scheduled: &ScheduledTask,
+        now: &cron::LocalNow,
+        trigger: cron::Trigger,
+        current_vault: Option<&str>,
+    ) {
+        let task = &scheduled.task;
+        let inflight = self.inflight.values().any(|run| run.task == task.id);
+        let skipped_today =
+            self.skipped_today.get(&task.id).map(String::as_str) == Some(now.date.as_str());
+        let plan = cron::plan(&cron::PlanInput {
+            task,
+            at_minutes: scheduled.at_minutes,
+            now,
+            last_fired: self.state.last_fired(&task.id),
+            current_vault,
+            inflight,
+            skipped_today,
+            trigger,
+        });
+        match plan {
+            cron::Plan::Idle => {}
+            cron::Plan::Notify => {
+                // 投递失败（通道未就绪 / 权限 / 插件错误）：不写 last_fired，下一次评估重试
+                // （design §5.4）。通道未就绪时不落事件——否则每个 tick 一条噪音。
+                if deliver_notification(&self.app, &task.id, "trigger").is_ok() {
+                    logging::cron_notified(&task.id, "trigger", trigger.as_str());
+                    self.mark_fired(&task.id, &now.date);
+                }
+            }
+            cron::Plan::Handoff => self.handoff(scheduled, trigger, now),
+            cron::Plan::Skip(reason) => self.record_skip(&task.id, &now.date, reason),
+        }
+    }
+
+    /// 发起运行交接：`cron:run` 投递成功即视为「交接被接受」，随后写 `last_fired`。
+    fn handoff(&mut self, scheduled: &ScheduledTask, trigger: cron::Trigger, now: &cron::LocalNow) {
+        let task = &scheduled.task;
+        if self.app.get_webview_window(MAIN_WINDOW_LABEL).is_none() {
+            self.record_skip(&task.id, &now.date, cron::SkipReason::NotReady);
+            return;
+        }
+        let run_id = cron::new_run_id();
+        let payload = CronRunPayload {
+            run_id: run_id.clone(),
+            task: task.id.clone(),
+            vault: task.vault.clone(),
+            prompt: task.prompt.clone(),
+            session: task.session.as_str().to_string(),
+            model: task.model.clone(),
+            origin: trigger.as_str().to_string(),
+        };
+        match self.app.emit(CRON_RUN_EVENT, payload) {
+            Ok(()) => {
+                self.inflight.insert(
+                    run_id,
+                    InflightRun {
+                        task: task.id.clone(),
+                        delivery: task.delivery,
+                        started: Instant::now(),
+                    },
+                );
+                self.mark_fired(&task.id, &now.date);
+                logging::cron_run_started(
+                    &task.id,
+                    trigger.as_str(),
+                    task.session.as_str(),
+                    task.model.as_deref(),
+                );
+            }
+            Err(_) => self.record_skip(&task.id, &now.date, cron::SkipReason::NotReady),
+        }
+    }
+
+    /// 运行终态回执：更新会话 id 并落**唯一**一条 `cron_run_finished`。
+    fn finish(&mut self, result: CronRunResult) {
+        let Some(run) = self.inflight.remove(&result.run_id) else {
+            logging::config_warning(
+                "cron",
+                &format!("收到未知 run_id（{}）的运行回执，已忽略", result.run_id),
+            );
+            return;
+        };
+        if result.session_id.is_some() {
+            self.state
+                .set_session(&run.task, result.session_id.as_deref());
+            self.persist_state();
+        }
+        // 终态的唯一产出点（design §6.1 / §11）：成功与否只来自这次回执。
+        logging::cron_run_finished(&run.task, result.ok, result.error.as_deref());
+        // `run-then-notify` 的结果通知在终态之后（design §5.2）；通知通道未就绪时这次投递
+        // 失败，但不改变终态判定，也不触发重跑（当日已写 last_fired）。
+        if run.delivery == config::DeliveryPolicy::RunThenNotify {
+            let _ = deliver_notification(&self.app, &run.task, "result");
+        }
+    }
+
+    /// 派发成功后的唯一写入口：内存先改、随后原子落盘；写失败降级为 warning（最多导致一次
+    /// 重复触发，design §8 接受）。
+    fn mark_fired(&mut self, task: &str, date: &str) {
+        self.state.mark_fired(task, date);
+        self.persist_state();
+    }
+
+    fn persist_state(&mut self) {
+        if let Err(reason) = cron::save_state(&self.state_path, &self.state) {
+            logging::config_warning(
+                "cron-state",
+                &format!("{reason}，本次触发状态未落盘（最多导致一次重复触发）"),
+            );
+        }
+    }
+
+    /// 当次不派发的诊断：每任务每日最多一条（多个拉取触发反复重试时不再重复写日志）。
+    fn record_skip(&mut self, task: &str, date: &str, reason: cron::SkipReason) {
+        if self.skipped_today.get(task).map(String::as_str) == Some(date) {
+            return;
+        }
+        self.skipped_today
+            .insert(task.to_string(), date.to_string());
+        logging::cron_run_skipped(task, reason.as_str());
+    }
+}
+
+/// 当前打开的 vault 根（未打开 / 状态不可读时为 `None`）。读的是 `VaultState` 的内存快照，
+/// 不碰磁盘；每轮评估至多一次。
+fn current_vault_root(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.state::<commands::VaultState>()
+        .root_and_policy()
+        .ok()
+        .map(|(root, _policy)| root)
+}
+
+/// 通知投递端口（design §9：副作用以回调形式注入，判定层不知道通知存在）。
+///
+/// 系统通知中心的投递与常驻点击监听依赖 `tauri-plugin-notification`，由 change 的通知链路
+/// 任务接入；在本层它返回「通道未就绪」——`notify-then-run` 因此不写 `last_fired`、下一次
+/// 评估重试（design §5.4 的投递失败口径），`run-then-notify` 的结果通知落空但终态照常记录。
+///
+/// 文案口径（design §5 / §6）：标题 = 任务 id，正文只用通用文案（到点 / 已完成 / 运行失败），
+/// MUST NOT 含 prompt、文档内容或绝对路径——通知会出现在锁屏与通知中心。
+fn deliver_notification(
+    _app: &tauri::AppHandle,
+    _task: &str,
+    _kind: &str,
+) -> Result<(), &'static str> {
+    Err("notification_channel_unavailable")
+}
+
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::{
@@ -777,5 +1242,59 @@ mod tests {
         assert_eq!(menu_command_of("Undo"), None);
         assert_eq!(menu_command_of("Close"), None);
         assert_eq!(menu_command_of(""), None);
+    }
+}
+
+#[cfg(test)]
+mod cron_runtime_tests {
+    use std::path::Path;
+
+    /// 终态唯一产出点（change add-cron-runtime-daemon §5.2）：`cron_run_finished` 只允许在
+    /// 回执处理一处调用。扫 `src-tauri/src` 下的全部 `.rs` 源码（运行期读盘、不枚举清单），
+    /// 新增第二个产出点即判红——不靠人读代码，也不把「单点」钉在某个函数的形状上。
+    ///
+    /// needle 用 `concat!` 拼出：本测试自身的源码不含完整字面量，因此不会自我命中。
+    #[test]
+    fn cron_run_finished_has_a_single_production_point() {
+        let needle = concat!("logging::", "cron_run_finished");
+        let mut hits = Vec::new();
+        collect_source_hits(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            needle,
+            &mut hits,
+        );
+        assert_eq!(
+            hits.len(),
+            1,
+            "终态只能由 cron_run_result 回执一处产出，实际命中：{hits:?}"
+        );
+        assert!(
+            hits[0].contains("/lib.rs:"),
+            "唯一的产出点应在 lib.rs 的回执处理里：{hits:?}"
+        );
+    }
+
+    fn collect_source_hits(dir: &Path, needle: &str, hits: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_source_hits(&path, needle, hits);
+                continue;
+            }
+            if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for (index, line) in text.lines().enumerate() {
+                if line.contains(needle) {
+                    hits.push(format!("{}:{}", path.display(), index + 1));
+                }
+            }
+        }
     }
 }

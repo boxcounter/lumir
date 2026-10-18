@@ -105,6 +105,25 @@ pub enum LogEventName {
     /// 跳过 / 失败各记一条**分类后的错误码** + 图片的 vault 相对路径。**不含图片字节、不含
     /// 笔记正文**（隐私边界：正文与字节只出现在模型请求里）。
     AttachmentNaming,
+    /// 定时任务的通知投递成功（change add-cron-runtime-daemon，design §11）。`kind` 取
+    /// `trigger`（「到点」）/ `result`（「已完成」）/ `failure`（「运行失败」），`trigger` 取
+    /// `timer` / `startup` / `focus` / `vault-open`。**正文不进日志**（通知正文是通用文案，
+    /// prompt 与路径属隐私边界之外）。
+    CronNotified,
+    /// 通知点击的处理完成（含失败）：`action` 取 `run`（发起运行）/ `open-session`（恢复会话），
+    /// `ok` 取 `true` / `false`，失败时另带 `error` 错误码。
+    CronClick,
+    /// 运行交接被前端接受：`session` 取 `new` / `dedicated`，`model` 只有显式覆盖时才在场。
+    CronRunStarted,
+    /// 运行到达终态（含失败 / 中止）。**成功与失败只在这里产出**——由 `cron_run_result`
+    /// 回执驱动，其它事件不重复判定（REVIEW.md「同一语义两处真源」条；单测
+    /// `cron_run_finished_has_a_single_production_point` 机制化这条边界）。
+    CronRunFinished,
+    /// 该次不派发：`reason` 取 `vault_not_current` / `busy` / `not_ready`。
+    CronRunSkipped,
+    /// 装载期丢弃了任务项：`task` = 任务 id（id 不可读时为空）、`field` = 第一处问题所在
+    /// 字段、`reason` = 人话原因。每个被丢弃的任务项一条。
+    CronTaskInvalid,
 }
 
 impl LogEventName {
@@ -123,6 +142,12 @@ impl LogEventName {
             Self::VaultRegistryMigrated => "vault_registry_migrated",
             Self::VaultScanIgnored => "vault_scan_ignored",
             Self::AttachmentNaming => "attachment_naming",
+            Self::CronNotified => "cron_notified",
+            Self::CronClick => "cron_click",
+            Self::CronRunStarted => "cron_run_started",
+            Self::CronRunFinished => "cron_run_finished",
+            Self::CronRunSkipped => "cron_run_skipped",
+            Self::CronTaskInvalid => "cron_task_invalid",
         }
     }
 
@@ -134,7 +159,9 @@ impl LogEventName {
             Self::SaveConflict
             | Self::ConfigWarning
             | Self::AppMetaUnavailable
-            | Self::SlowCallback => "warn",
+            | Self::SlowCallback
+            | Self::CronRunSkipped
+            | Self::CronTaskInvalid => "warn",
             Self::RenderError => "error",
             _ => "info",
         }
@@ -166,6 +193,19 @@ impl LogEventName {
             // 图片语义命名：只有分类后的错误码与图片路径（路径与 SaveConflict 同一口径——
             // 不是文档正文）；图片字节 / 笔记正文 / 模型输出原文一律不落。
             Self::AttachmentNaming => &["path", "code"],
+            // 通知只记「哪条任务、哪种通知、哪个触发源」——`kind` / `trigger` 都是闭集合的
+            // 小词表；通知正文（通用文案）与 prompt / 路径都不进日志。
+            Self::CronNotified => &["task", "kind", "trigger"],
+            // 点击只记结局（动作 + 成功与否 + 分类后的错误码），不记点击坐标或通知内容。
+            Self::CronClick => &["task", "ok", "action", "error"],
+            // 运行交接：会话形态与可选的模型覆盖（模型 id 是配置值，不是文档内容）。
+            Self::CronRunStarted => &["task", "trigger", "session", "model"],
+            // **终态唯一产出点**：`ok` + 可选错误码；不得再加「是否成功」的派生字段，
+            // 否则又成两处判定（REVIEW.md「同一语义两处真源」条）。
+            Self::CronRunFinished => &["task", "ok", "error"],
+            Self::CronRunSkipped => &["task", "reason"],
+            // `task` 可能为空（id 本身不可读），`field` / `reason` 是字段名与分类后的原因。
+            Self::CronTaskInvalid => &["task", "field", "reason"],
         }
     }
 }
@@ -545,6 +585,122 @@ fn slow_callback_to(sink: &Sink, name: &str, ms: &str) {
     );
 }
 
+/// Rust 侧埋点：配置面的人话 warning（`[cron]` 与 `cron-state.json` 的装载降级等）。
+/// 与前端 `log_event("config_warning", …)` 共用同一条事件与字段（`source` / `message`）：
+/// 读日志的人只用一种形状就能看到配置面出了什么问题。
+pub fn config_warning(source: &str, message: &str) {
+    config_warning_to(global(), source, message);
+}
+
+fn config_warning_to(sink: &Sink, source: &str, message: &str) {
+    emit(
+        sink,
+        Event::new(LogEventName::ConfigWarning)
+            .field("source", source)
+            .field("message", message),
+    );
+}
+
+/// Rust 侧埋点：定时任务的通知投递成功（change add-cron-runtime-daemon，design §11）。
+/// `kind` = `trigger` / `result` / `failure`，`trigger` = `timer` / `startup` / `focus` /
+/// `vault-open`。投递**失败**不落这条（失败口径是「不写 `last_fired`、下一次评估重试」），
+/// 也就不存在把失败伪装成已通知的路径。
+pub fn cron_notified(task: &str, kind: &str, trigger: &str) {
+    cron_notified_to(global(), task, kind, trigger);
+}
+
+fn cron_notified_to(sink: &Sink, task: &str, kind: &str, trigger: &str) {
+    emit(
+        sink,
+        Event::new(LogEventName::CronNotified)
+            .field("task", task)
+            .field("kind", kind)
+            .field("trigger", trigger),
+    );
+}
+
+/// Rust 侧埋点：通知点击的处理完成（含失败）。`action` = `run` / `open-session`，
+/// `error` 只在失败时在场（分类后的错误码）。
+pub fn cron_click(task: &str, ok: bool, action: &str, error: Option<&str>) {
+    cron_click_to(global(), task, ok, action, error);
+}
+
+fn cron_click_to(sink: &Sink, task: &str, ok: bool, action: &str, error: Option<&str>) {
+    let mut event = Event::new(LogEventName::CronClick)
+        .field("task", task)
+        .field("ok", ok.to_string())
+        .field("action", action);
+    if let Some(error) = error {
+        event = event.field("error", error);
+    }
+    emit(sink, event);
+}
+
+/// Rust 侧埋点：运行交接被前端接受。`session` = `new` / `dedicated`，`model` 只有显式覆盖
+/// 时才在场（缺省模型不伪造 id）。
+pub fn cron_run_started(task: &str, trigger: &str, session: &str, model: Option<&str>) {
+    cron_run_started_to(global(), task, trigger, session, model);
+}
+
+fn cron_run_started_to(sink: &Sink, task: &str, trigger: &str, session: &str, model: Option<&str>) {
+    let mut event = Event::new(LogEventName::CronRunStarted)
+        .field("task", task)
+        .field("trigger", trigger)
+        .field("session", session);
+    if let Some(model) = model {
+        event = event.field("model", model);
+    }
+    emit(sink, event);
+}
+
+/// Rust 侧埋点：运行到达终态。**这是「成功 / 失败」的唯一产出点**——由 `cron_run_result`
+/// 回执驱动，调用点只有 `lib.rs` 的回执处理一处（单测
+/// `cron_run_finished_has_a_single_production_point` 机制化这条边界：其它源码文件里出现这个
+/// 埋点即判红）。
+pub fn cron_run_finished(task: &str, ok: bool, error: Option<&str>) {
+    cron_run_finished_to(global(), task, ok, error);
+}
+
+fn cron_run_finished_to(sink: &Sink, task: &str, ok: bool, error: Option<&str>) {
+    let mut event = Event::new(LogEventName::CronRunFinished)
+        .field("task", task)
+        .field("ok", ok.to_string());
+    if let Some(error) = error {
+        event = event.field("error", error);
+    }
+    emit(sink, event);
+}
+
+/// Rust 侧埋点：该次不派发（`reason` = `vault_not_current` / `busy` / `not_ready`）。
+pub fn cron_run_skipped(task: &str, reason: &str) {
+    cron_run_skipped_to(global(), task, reason);
+}
+
+fn cron_run_skipped_to(sink: &Sink, task: &str, reason: &str) {
+    emit(
+        sink,
+        Event::new(LogEventName::CronRunSkipped)
+            .field("task", task)
+            .field("reason", reason),
+    );
+}
+
+/// Rust 侧埋点：装载期丢弃任务项。`task` 可能为空（id 本身不可读）；`field` 是第一处问题
+/// 所在字段，`reason` 是人话原因。
+pub fn cron_task_invalid(task: &str, field: &str, reason: &str) {
+    cron_task_invalid_to(global(), task, field, reason);
+}
+
+fn cron_task_invalid_to(sink: &Sink, task: &str, field: &str, reason: &str) {
+    emit(
+        sink,
+        Event::new(LogEventName::CronTaskInvalid)
+            .field("task", task)
+            .field("field", field)
+            .field("reason", reason),
+    );
+}
+
 /// 前端经 `log_event` 命令转发的入口：白名单外负载**显式拒绝**（返回错误信封），
 /// 不落盘（spec「invoke 入口 SHALL 校验事件名与字段白名单」）。
 pub fn log_frontend_event(
@@ -874,6 +1030,12 @@ mod tests {
             LogEventName::ConfigWarning,
             LogEventName::SlowCallback,
             LogEventName::VaultRegistryMigrated,
+            LogEventName::CronNotified,
+            LogEventName::CronClick,
+            LogEventName::CronRunStarted,
+            LogEventName::CronRunFinished,
+            LogEventName::CronRunSkipped,
+            LogEventName::CronTaskInvalid,
         ] {
             let text = name.as_str();
             assert!(
@@ -882,6 +1044,80 @@ mod tests {
             );
             assert!(!name.allowed_fields().is_empty(), "{text} 缺字段白名单");
         }
+    }
+
+    /// cron 六个事件的字段面（change add-cron-runtime-daemon §5.1）：每条 Rust 侧埋点各落
+    /// 一行，逐字段断言取值与等级——六条事件名与字段白名单都由本模块单一持有。
+    #[test]
+    fn cron_events_land_with_their_whitelisted_fields() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        cron_notified_to(&sink, "task-a", "trigger", "timer");
+        cron_click_to(&sink, "task-a", true, "run", None);
+        cron_click_to(&sink, "task-a", false, "open-session", Some("session_gone"));
+        cron_run_started_to(&sink, "task-a", "focus", "dedicated", Some("model-1"));
+        cron_run_finished_to(&sink, "task-a", true, None);
+        cron_run_finished_to(&sink, "task-a", false, Some("approval_required"));
+        cron_run_skipped_to(&sink, "task-a", "vault_not_current");
+        cron_task_invalid_to(&sink, "task-a", "at", "取值非法");
+        config_warning_to(&sink, "cron-state", "状态文件损坏");
+        sink.flush();
+
+        let lines = read_lines(dir.path());
+        assert_eq!(lines.len(), 9);
+        assert_eq!(lines[0]["event"], "cron_notified");
+        assert_eq!(lines[0]["level"], "info");
+        assert_eq!(lines[0]["task"], "task-a");
+        assert_eq!(lines[0]["kind"], "trigger");
+        assert_eq!(lines[0]["trigger"], "timer");
+        assert_eq!(lines[1]["event"], "cron_click");
+        assert_eq!(lines[1]["ok"], "true");
+        assert_eq!(lines[1]["action"], "run");
+        assert!(lines[1].get("error").is_none(), "成功点击不带 error");
+        assert_eq!(lines[2]["ok"], "false");
+        assert_eq!(lines[2]["action"], "open-session");
+        assert_eq!(lines[2]["error"], "session_gone");
+        assert_eq!(lines[3]["event"], "cron_run_started");
+        assert_eq!(lines[3]["session"], "dedicated");
+        assert_eq!(lines[3]["model"], "model-1");
+        assert_eq!(lines[4]["event"], "cron_run_finished");
+        assert_eq!(lines[4]["ok"], "true");
+        assert!(lines[4].get("error").is_none());
+        assert_eq!(lines[5]["ok"], "false");
+        assert_eq!(lines[5]["error"], "approval_required");
+        assert_eq!(lines[6]["event"], "cron_run_skipped");
+        assert_eq!(lines[6]["level"], "warn");
+        assert_eq!(lines[6]["reason"], "vault_not_current");
+        assert_eq!(lines[7]["event"], "cron_task_invalid");
+        assert_eq!(lines[7]["level"], "warn");
+        assert_eq!(lines[7]["field"], "at");
+        assert_eq!(lines[8]["event"], "config_warning");
+        assert_eq!(lines[8]["source"], "cron-state");
+    }
+
+    /// 反向输入：cron 事件的字段面是机制化的白名单——塞 prompt（任务载荷属隐私边界之外）
+    /// 或给终态事件再塞一个派生成功字段都会被拒，且拒绝消息不回显负载。
+    #[test]
+    fn cron_events_reject_fields_outside_the_whitelist() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        let prompt = log_frontend_event_to(
+            &sink,
+            LogEventName::CronClick,
+            fields(&[("task", "task-a"), ("prompt", "private instructions")]),
+        )
+        .unwrap_err();
+        assert_eq!(prompt.code, "log_event_rejected");
+        assert!(!prompt.message.contains("private"), "{}", prompt.message);
+        let derived = log_frontend_event_to(
+            &sink,
+            LogEventName::CronRunFinished,
+            fields(&[("task", "task-a"), ("ok", "true"), ("summary", "成功")]),
+        )
+        .unwrap_err();
+        assert_eq!(derived.code, "log_event_rejected");
+        sink.flush();
+        assert!(read_lines(dir.path()).is_empty(), "被拒负载不得落盘");
     }
 
     /// 白名单拒绝：未知字段（含把正文当负载的 content / 正文级 message）、超长值。

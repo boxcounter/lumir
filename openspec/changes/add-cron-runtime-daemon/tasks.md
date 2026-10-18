@@ -5,7 +5,8 @@
 > `docs/specs/config-reference.md`、`scripts/acceptance/scenarios/**`、
 > `openspec/changes/add-cron-runtime-daemon/**`。
 >
-> **前置**：节点 1（提案评审）通过前不动手；本 change 只到提案制品。
+> **前置**：节点 1（提案评审）已于 2026-10-18 通过（Alex 原话「通过。」，留痕见
+> [proposal.md](proposal.md) 的裁决记录）；实现自本清单展开。
 >
 > **裁决口径**：cron 是通用机制（任务 = 调度 + 自然语言 prompt + 会话形态 + 触达策略 + 可选模型
 > 覆盖），环境初始化是运行时职责；`note-templates` 原语已摘除；运行时守护不建系统级守护；拉取兜底
@@ -13,34 +14,39 @@
 
 ## 1. 配置面（`src-tauri/src/config.rs`）
 
-- [ ] 1.1 新增 `CronTask`（`id`、`vault`、`at`、`days`、`prompt`、`delivery`、`session`、`model`）
+- [x] 1.1 新增 `CronTask`（`id`、`vault`、`at`、`days`、`prompt`、`delivery`、`session`、`model`）
   与 `CronConfig`（`tasks`），进 `AppConfig`；`DeliveryPolicy` / `SessionShape` 用闭集合枚举；
   ts-rs 导出到 `src/bindings/`。
-- [ ] 1.2 `RawConfig` 增加 `cron` 节；整节错形状走整文件回落，表内逐项校验（`serde_json::Value` +
+- [x] 1.2 `RawConfig` 增加 `cron` 节；整节错形状走整文件回落，表内逐项校验（`serde_json::Value` +
   逐项判定，照 `vault.ignore` / `harness.permissions` 先例）；`[note_templates]` 不新增任何解析。
-- [ ] 1.3 `validate_cron`：`id` 非空/无空白且唯一（重复保留首项）、`vault` 绝对路径、`at` 为
+- [x] 1.3 `validate_cron`：`id` 非空/无空白且唯一（重复保留首项）、`vault` 绝对路径、`at` 为
   `HH:MM`、`days` 闭集合且非空、`prompt` trim 后非空、`delivery` / `session` 闭集合外回落缺省并
   保留任务、`model` 形状非法只丢该键；每个非法形态一条人话 warning、其余项生效。
-- [ ] 1.4 单测：§7.2 的每个非法形态 / 合法形态 / 空表 / 缺节 / 整节错形状各一条；断言
+- [x] 1.4 单测：§7.2 的每个非法形态 / 合法形态 / 空表 / 缺节 / 整节错形状各一条；断言
   `delivery` 非法时任务保留且取缺省档（不是丢项）。
-- [ ] 1.5 断言实现代码零任务字面量：`rg -n "daily-log|daily/|## 记录" src-tauri/src src` 零命中
+- [x] 1.5 断言实现代码零任务字面量：`rg -n "daily-log|daily/|## 记录" src-tauri/src src` 零命中
   （配置样例与测试 fixture 用的合成 id 除外，逐条在完成报告点名）。
 
 ## 2. 判定与调度（`src-tauri/src/cron.rs` + `lib.rs`）
 
-- [ ] 2.1 `cron.rs` 实现 `decide`（纯函数：`at` / `days` / `now` / `last_fired` → `NotDue` /
+- [x] 2.1 `cron.rs` 实现 `decide`（纯函数：`at` / `days` / `now` / `last_fired` → `NotDue` /
   `Done` / `Fire`）；无文件 IO、不读时钟；真值表四格 + 星期过滤 + 跨日边界单测。
-- [ ] 2.2 `at` / `days` 解析与本地时间换算（`chrono::Local`，判定接受注入 `now`，单测不依赖系统
+- [x] 2.2 `at` / `days` 解析与本地时间换算（`chrono::Local`，判定接受注入 `now`，单测不依赖系统
   时区）；DST 跳过/重复小时与时钟回拨用例。
-- [ ] 2.3 `cron-state.json` 读写：`last_fired` + `session_id`、tmp + rename 原子写、缺失/损坏/
+- [x] 2.3 `cron-state.json` 读写：`last_fired` + `session_id`、tmp + rename 原子写、缺失/损坏/
   `version` 不符视为无状态 + warning、不写 `config.json` 与 vault。
-- [ ] 2.4 `lib.rs` 启动 `lumir-cron` 线程：30s tick（零文件 IO）+ poke 通道；线程在 setup 尾部
+- [x] 2.4 `lib.rs` 启动 `lumir-cron` 线程：30s tick（零文件 IO）+ poke 通道；线程在 setup 尾部
   spawn、不阻塞启动；配置装载时快照、运行期不热重载。
-- [ ] 2.5 拉取触发接线：启动就绪后一次 + `WindowEvent::Focused(true)`（200ms 去抖）+ 目标 vault
+- [x] 2.5 拉取触发接线：启动就绪后一次 + `WindowEvent::Focused(true)`（200ms 去抖）+ 目标 vault
   打开成功后一次，三处只投 poke，不内联判定。
-- [ ] 2.6 派发分支按 `delivery`：`notify-then-run` 只投通知；`run-then-notify` / `silent-run` 发起
+  （实现口径：启动 / 焦点两处是真实 poke；目标 vault 打开成功的命令层成功点在 `commands.rs`
+  —— 不在本批改动的文件面内，因此第三处由调度线程在 tick 上观察「当前 vault 根变更」识别，
+  补判最晚一个 tick（30s），并按拉取触发处理。）
+- [x] 2.6 派发分支按 `delivery`：`notify-then-run` 只投通知；`run-then-notify` / `silent-run` 发起
   运行交接。派发成功才写 `last_fired`；`vault_not_current` / `busy` / `not_ready` 不写状态并落
   `cron_run_skipped`；当日不自动重试已失败的任务；不跨日补发。
+  （通知通道本身由本 change 的通知链路任务接入；本批把投递端口留在 `lib.rs` 的
+  `deliver_notification`，通道缺席时按「投递失败」口径处理：不写 `last_fired`、下一次评估重试。）
 
 ## 3. 运行装配与会话形态（`harness.rs` + 前端）
 
@@ -81,21 +87,25 @@
 
 ## 5. 诊断事件与可观测性
 
-- [ ] 5.1 `logging.rs` 白名单新增 `cron_notified` / `cron_click` / `cron_run_started` /
+- [x] 5.1 `logging.rs` 白名单新增 `cron_notified` / `cron_click` / `cron_run_started` /
   `cron_run_finished` / `cron_run_skipped` / `cron_task_invalid` 六个事件名与字段校验用例。
-- [ ] 5.2 断言成功 / 失败终态只有一个产出点：`cron_run_finished` 由 `cron_run_result` 回执驱动；
+  （白名单与字段校验用例已落；`cron_notified` / `cron_click` 的触发点在通知与点击链路任务里，
+  本批只落事件名、字段面与 Rust 侧埋点入口。）
+- [x] 5.2 断言成功 / 失败终态只有一个产出点：`cron_run_finished` 由 `cron_run_result` 回执驱动；
   其它事件不重复判定（单测 + 一次代码走查）。
+  （单测 `cron_run_finished_has_a_single_production_point` 扫 `src-tauri/src/**/*.rs` 源码，
+  命中数不为 1 即判红。）
 - [ ] 5.3 观测口径自验：人为点击一次通知 → 日志出现 `cron_click(ok=true)`；跑一次 `silent-run`
   任务 → 日志出现 `cron_run_finished(ok=true)`；仅投递未点击的通知只产生 `cron_notified`。
 
 ## 6. 文档与 bindings
 
-- [ ] 6.1 `docs/specs/config-reference.md` 新增 `[cron]` 一节：键表、缺省值、闭集合、非法项口径、
+- [x] 6.1 `docs/specs/config-reference.md` 新增 `[cron]` 一节：键表、缺省值、闭集合、非法项口径、
   生效时机（装载时读一次、改配置需重启）、`cron-state.json` 位置与读取纪律。
-- [ ] 6.2 `src/bindings/**` 重导出产物进索引（ts-rs）；`scripts/gate.sh quick` 的 bindings-drift 绿。
-- [ ] 6.3 信息卫生：proposal / design / spec / tasks / 验收场景内无真实 vault 路径与真实内容
+- [x] 6.2 `src/bindings/**` 重导出产物进索引（ts-rs）；`scripts/gate.sh quick` 的 bindings-drift 绿。
+- [x] 6.3 信息卫生：proposal / design / spec / tasks / 验收场景内无真实 vault 路径与真实内容
   （样例一律 `<daily-vault>` / `<work-vault>` 一类占位）；提交前对改动面做一次 text 级 grep 清扫。
-- [ ] 6.4 口径一致性：`rg -n "note_templates|note-templates|note-template:open|\{\{date\}\}"
+- [x] 6.4 口径一致性：`rg -n "note_templates|note-templates|note-template:open|\{\{date\}\}"
   --glob '!openspec/changes/add-cron-runtime-daemon/**' --glob '!.tower/**'` 全仓零命中（本 change
   目录内的「已摘除」历史说明与裁决原文除外，逐条点名）。
 
@@ -124,9 +134,9 @@
 
 ## 8. 验证
 
-- [ ] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
-- [ ] 8.2 `cargo test` 通过（含 §1.4 / §2.1–2.3 / §3.1 / §3.7 / §5.2 的新增单测）。
-- [ ] 8.3 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）。
+- [x] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
+- [x] 8.2 `cargo test` 通过（含 §1.4 / §2.1–2.3 / §3.1 / §3.7 / §5.2 的新增单测）。
+- [x] 8.3 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）。
 - [ ] 8.4 真机跑新增验收场景（§7.1–7.6），`.local/acceptance/<日期>/` 下证据目录可用绝对路径
   `ls` 到；失败项与跳过项逐条写明原因。
 - [ ] 8.5 观测口径可用性自验（§5.3）：给出两条 `rg` 命令的实际读数与执行时刻，证明诊断链路可查。
