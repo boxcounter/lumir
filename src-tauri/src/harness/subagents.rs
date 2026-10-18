@@ -210,8 +210,14 @@ impl SubagentHub {
     }
 
     /// 每回合同步父会话的事件出口与配置快照（`SessionContext::new` 调用）。
+    ///
+    /// 出口在这里统一包一层 [`DiagnosticSink`]（change add-harness-subagents tasks §7.1/§7.2）：
+    /// 中枢自己发的（`hub.emit`）与子运行直发的（`ChildContext::parent_sink`）都取
+    /// `inner.sink`，因此在**唯一的装配点**上挂诊断转发，七类 `subagent_*` 事件恰好落一条
+    /// 诊断日志——完成 / 失败 / 中止 / 后台路径共用同一出口，业务分支里 MUST NOT 各写一遍。
     pub fn set_sink(&self, sink: Option<Arc<dyn EventSink>>) {
-        *self.inner.sink.lock().unwrap_or_else(|e| e.into_inner()) = sink;
+        *self.inner.sink.lock().unwrap_or_else(|e| e.into_inner()) =
+            sink.map(|sink| Arc::new(DiagnosticSink(sink)) as Arc<dyn EventSink>);
     }
 
     pub fn set_config(&self, config: &HarnessConfig) {
@@ -240,6 +246,40 @@ impl SubagentHub {
         if let Some(sink) = sink {
             sink.emit(payload);
         }
+    }
+
+    /// **无段终态**的唯一产出点（tasks §7.2）：线程启动失败与段前失败共用这一条
+    /// `subagent_finished`（`status=failed`，没有轮次 / 用量 / 摘要）。段真正跑起来之后
+    /// 的终态由 `ChildContext::finish`（段收尾）产出——两处之外 MUST NOT 再构造完成事件，
+    /// 单测 `subagent_diagnostics_have_a_single_production_point` 扫源码钉住。
+    #[allow(clippy::too_many_arguments)]
+    fn emit_failed_terminal(
+        &self,
+        run_id: &str,
+        segment: u32,
+        agent: &str,
+        model: &str,
+        duration_ms: u64,
+        audit: Option<&str>,
+        audit_error: Option<&str>,
+    ) {
+        self.emit(events::subagent_finished(
+            run_id,
+            segment,
+            agent,
+            "failed",
+            None,
+            0,
+            model,
+            0,
+            0,
+            0,
+            0,
+            duration_ms,
+            0,
+            audit,
+            audit_error,
+        ));
     }
 
     fn next_approval_id(&self) -> String {
@@ -624,10 +664,13 @@ impl SubagentHub {
                     "stopped_by": stopped_by,
                     "rounds": rounds,
                     "denied_calls": denials,
+                    // 四键与 `llm_response.usage` 同形：`cache_write_tokens` 是恢复重算
+                    // `writes` 的唯一来源，缺了它 live 分桶表与恢复重算就不可能相等。
                     "usage": {
                         "input_tokens": usage.input_tokens,
                         "cached_tokens": usage.cached_tokens,
                         "output_tokens": usage.output_tokens,
+                        "cache_write_tokens": usage.cache_write_tokens,
                     },
                     "audit": audit,
                 }));
@@ -1421,6 +1464,9 @@ fn start_task_inner(
 ) -> Result<TaskHandle, ToolOutput> {
     // kill switch：`enabled=false` 时工具不注册；调用仍可能从历史 / 幻觉到达，回 `disabled`。
     if !config.subagents.enabled {
+        // 参数还没解析（拒绝码优先于参数形状校验）：agent / description 只能留空——
+        // 宁可少两个字段，也不把「参数解析失败」伪装成「开关关闭」。
+        hub.emit(events::subagent_rejected("disabled", "", ""));
         return Err(ToolOutput::err(
             "disabled",
             "子代理功能已关闭（config.json 的 [harness.subagents].enabled=false）",
@@ -1428,6 +1474,11 @@ fn start_task_inner(
     }
     let args = parse_task_args(&call.arguments)?;
     if args.prompt.trim().is_empty() {
+        hub.emit(events::subagent_rejected(
+            "empty_prompt",
+            &args.agent,
+            &args.description,
+        ));
         return Err(ToolOutput::err("empty_prompt", "task 的 prompt 不能为空"));
     }
     let Some(definition) = catalog.get(&args.agent) else {
@@ -1476,6 +1527,11 @@ fn start_task_inner(
         }
         let registry = hub.inner.registry.lock().unwrap_or_else(|e| e.into_inner());
         let Some(retained) = registry.retained.get(run_id) else {
+            hub.emit(events::subagent_rejected(
+                "run_not_resumable",
+                &args.agent,
+                &args.description,
+            ));
             return Err(ToolOutput::err(
                 "run_not_resumable",
                 format!(
@@ -1484,6 +1540,11 @@ fn start_task_inner(
             ));
         };
         if retained.agent != definition.name {
+            hub.emit(events::subagent_rejected(
+                "agent_mismatch",
+                &args.agent,
+                &args.description,
+            ));
             return Err(ToolOutput::err(
                 "agent_mismatch",
                 format!(
@@ -1718,23 +1779,15 @@ fn spawn_failed_cleanup(
         .unwrap_or_else(|e| e.into_inner())
         .active
         .remove(run_id);
-    hub.emit(events::subagent_finished(
+    hub.emit_failed_terminal(
         run_id,
         segment,
         agent,
-        "failed",
-        None,
-        0,
         model,
-        0,
-        0,
-        0,
-        0,
-        0,
         0,
         None,
         Some(&format!("子运行线程启动失败：{reason}")),
-    ));
+    );
     ToolOutput::err(
         "harness_internal_error",
         format!("无法启动子运行线程：{reason}"),
@@ -2183,23 +2236,15 @@ fn finish_failed(
         Usage::default(),
         audit.as_deref(),
     );
-    seed.hub.emit(events::subagent_finished(
+    seed.hub.emit_failed_terminal(
         &seed.run_id,
         seed.segment,
         &seed.definition.name,
-        "failed",
-        None,
-        0,
         &seed.model,
-        0,
-        0,
-        0,
-        0,
         report.duration_ms,
-        0,
         audit.as_deref(),
         report.audit_error.as_deref(),
-    ));
+    );
     if seed.background {
         // 后台启动后段前失败：父会话只收到过 `running`，失败同样要给一条完成通知。
         seed.hub.on_background_finished(NoticeRun {
@@ -2223,6 +2268,19 @@ fn finish_failed(
 // ---------------------------------------------------------------------------
 // ChildContext（§4.1）
 // ---------------------------------------------------------------------------
+
+/// 父会话事件出口的诊断包装（tasks §7.1/§7.2）：七类 `subagent_*` 面板事件在这里转一条
+/// 诊断日志，随后原样转发。包装只发生在 [`SubagentHub::set_sink`]（唯一装配点），因此
+/// 中枢自发的与子运行直发的事件共用同一个诊断产出点——完成 / 失败 / 中止 / 后台路径不各写
+/// 一遍 `logging::subagent_*`（REVIEW.md「同一语义两处真源」条）。
+struct DiagnosticSink(Arc<dyn EventSink>);
+
+impl EventSink for DiagnosticSink {
+    fn emit(&self, payload: serde_json::Value) {
+        crate::logging::subagent_event(&payload);
+        self.0.emit(payload);
+    }
+}
 
 /// 子运行的过程事件转发器：把子会话的事件**转成面板可见面**，并吞掉会污染父会话的事件
 /// （text / reasoning / usage / done / error / compact / title）。

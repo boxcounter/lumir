@@ -128,9 +128,41 @@ pub enum LogEventName {
     /// 定义的描述合计估算超过 15,000 token 时产一条。**只告警、不截断**——清单本体照常完整
     /// 注入（截断会让定义静默消失）。字段只有估算值与定义数。
     SubagentCatalogLarge,
+    /// 子运行启动（design §13）：段真正起跑时一条。`tools` 是逗号分隔的工具名清单（日志字段
+    /// 恒为字符串，数组不落盘）；不含 prompt。
+    SubagentStarted,
+    /// 子运行过程读数（design §13）：每轮至多一条（节流在生产侧），只带计数与最近工具名。
+    SubagentProgress,
+    /// 子运行步骤行（design §13）：工具名 + **人话化参数摘要**（MUST NOT 含文件内容）。
+    SubagentStep,
+    /// 子运行段收尾（design §13）：**任何终态一条**——completed / partial / failed / aborted
+    /// （失败 / 中止 / 后台路径同样产，不静默）。字段与面板事件同源（见
+    /// [`subagent_event`]），`status` / `stopped_by` 是闭集合。
+    SubagentFinished,
+    /// 后台完成通知的最终处理（design §13）：`wake` 是闭集合（`auto_turn` / `user_turn` /
+    /// `blocked_chain` / `blocked_stopped` / `none_aborted`），同一批共享 `wake_batch`，
+    /// `chain_index` 非自动回合为 0。
+    SubagentNotified,
+    /// 子运行启动被拒（design §13）：`reason` 是闭集合（见 [`SUBAGENT_REJECT_REASONS`]）。
+    SubagentRejected,
 }
 
 impl LogEventName {
+    /// 面板事件名 → 诊断事件（[`subagent_event`] 的映射面）。面板事件是 `harness:event` 的
+    /// 七类 `subagent_*`；本函数与 [`Self::as_str`] 互逆（单测逐值 round-trip）。
+    fn from_subagent_event(event: &str) -> Option<Self> {
+        match event {
+            "subagent_started" => Some(Self::SubagentStarted),
+            "subagent_progress" => Some(Self::SubagentProgress),
+            "subagent_step" => Some(Self::SubagentStep),
+            "subagent_finished" => Some(Self::SubagentFinished),
+            "subagent_notified" => Some(Self::SubagentNotified),
+            "subagent_rejected" => Some(Self::SubagentRejected),
+            "subagent_catalog_large" => Some(Self::SubagentCatalogLarge),
+            _ => None,
+        }
+    }
+
     /// 落盘用的事件名（= TS 联合类型的字面量）。
     pub fn as_str(self) -> &'static str {
         match self {
@@ -153,6 +185,12 @@ impl LogEventName {
             Self::CronRunSkipped => "cron_run_skipped",
             Self::CronTaskInvalid => "cron_task_invalid",
             Self::SubagentCatalogLarge => "subagent_catalog_large",
+            Self::SubagentStarted => "subagent_started",
+            Self::SubagentProgress => "subagent_progress",
+            Self::SubagentStep => "subagent_step",
+            Self::SubagentFinished => "subagent_finished",
+            Self::SubagentNotified => "subagent_notified",
+            Self::SubagentRejected => "subagent_rejected",
         }
     }
 
@@ -167,7 +205,8 @@ impl LogEventName {
             | Self::SlowCallback
             | Self::CronRunSkipped
             | Self::CronTaskInvalid
-            | Self::SubagentCatalogLarge => "warn",
+            | Self::SubagentCatalogLarge
+            | Self::SubagentRejected => "warn",
             Self::RenderError => "error",
             _ => "info",
         }
@@ -214,6 +253,58 @@ impl LogEventName {
             Self::CronTaskInvalid => &["task", "field", "reason"],
             // 只有估算值与定义数（都是数字，不含定义名 / 描述正文——清单正文属用户内容）。
             Self::SubagentCatalogLarge => &["estimated_tokens", "definition_count"],
+            // 子运行七事件（design §13）：字段与面板事件同名同源，`tools` 落成逗号分隔串。
+            // **prompt / 文件内容 / vault 绝对路径都不在白名单内**——这是隐私边界的机制化处
+            // （`description` 是用户手写的任务标签，`summary` 是人话化参数摘要，二者按
+            // design §13 明确允许）。
+            Self::SubagentStarted => &[
+                "run_id",
+                "segment",
+                "parent_session",
+                "agent",
+                "description",
+                "model",
+                "tools",
+                "max_turns",
+                "max_tokens",
+                "timeout_secs",
+                "background",
+            ],
+            Self::SubagentProgress => &[
+                "run_id",
+                "segment",
+                "rounds",
+                "tool_calls",
+                "last_tool",
+                "elapsed_ms",
+            ],
+            Self::SubagentStep => &["run_id", "segment", "tool", "summary"],
+            Self::SubagentFinished => &[
+                "run_id",
+                "segment",
+                "agent",
+                "status",
+                "stopped_by",
+                "rounds",
+                "model",
+                "input_tokens",
+                "cached_tokens",
+                "output_tokens",
+                "denied_calls",
+                "duration_ms",
+                "summary_chars",
+                "audit",
+                "audit_error",
+            ],
+            Self::SubagentNotified => &[
+                "run_id",
+                "agent",
+                "status",
+                "wake",
+                "wake_batch",
+                "chain_index",
+            ],
+            Self::SubagentRejected => &["reason", "agent", "description"],
         }
     }
 }
@@ -623,6 +714,131 @@ fn subagent_catalog_large_to(sink: &Sink, estimated_tokens: u64, definition_coun
             .field("estimated_tokens", estimated_tokens.to_string())
             .field("definition_count", definition_count.to_string()),
     );
+}
+
+// ---------------------------------------------------------------------------
+// 子运行诊断事件（change add-harness-subagents design §13）
+// ---------------------------------------------------------------------------
+
+/// `subagent_finished.status` 的闭集合（design §13）。生产者在
+/// `harness::subagents::SegmentReport::status()`（`completed` / `partial` / `failed` /
+/// `aborted`）；本表是诊断面的值域声明，测试期逐值断言（见 [`assert_subagent_closed_set`]）。
+pub const SUBAGENT_STATUSES: &[&str] = &["completed", "partial", "failed", "aborted"];
+
+/// `subagent_finished.stopped_by` 的闭集合。生产者是
+/// `harness::run::StopReason::as_str()`——MUST NOT 在日志侧另立第二套停止原因。
+pub const SUBAGENT_STOPPED_BY: &[&str] = &["rounds", "tokens", "time", "quota", "error"];
+
+/// `subagent_notified.wake` 的闭集合（design §12.6.3 / §13）。
+pub const SUBAGENT_WAKE: &[&str] = &[
+    "auto_turn",
+    "user_turn",
+    "blocked_chain",
+    "blocked_stopped",
+    "none_aborted",
+];
+
+/// `subagent_rejected.reason` 的闭集合（design §13；`disabled` 是 kill switch 的拒绝码）。
+/// 参数形状错误（`tool_args_invalid`）走统一工具错误信封，不是子代理语义拒绝码，不在此列。
+pub const SUBAGENT_REJECT_REASONS: &[&str] = &[
+    "disabled",
+    "agent_not_found",
+    "run_not_resumable",
+    "run_busy",
+    "agent_mismatch",
+    "subrun_limit",
+    "concurrency_limit",
+    "model_not_configured",
+    "empty_prompt",
+];
+
+/// 闭集合字段的值域（`None` = 该字段不是闭集合）。只作用于子运行事件；仅在测试构建里被
+/// [`assert_subagent_closed_set`] 消费（release 不做运行时归一，理由见该函数）。
+#[cfg(test)]
+fn subagent_closed_set(field: &str) -> Option<&'static [&'static str]> {
+    match field {
+        "status" => Some(SUBAGENT_STATUSES),
+        "stopped_by" => Some(SUBAGENT_STOPPED_BY),
+        "wake" => Some(SUBAGENT_WAKE),
+        "reason" => Some(SUBAGENT_REJECT_REASONS),
+        _ => None,
+    }
+}
+
+/// 测试期的闭集合断言：**只在测试构建里生效**——诊断通道绝不因值域不合而 panic / 改写
+/// 生产者的值（release 下原样落盘，读日志的人看到的就是实际发生的事）。
+#[cfg(test)]
+fn assert_subagent_closed_set(event: &str, field: &str, value: &str) {
+    if let Some(allowed) = subagent_closed_set(field) {
+        assert!(
+            allowed.contains(&value),
+            "诊断事件 {event} 的字段 {field} 取值 {value:?} 不在闭集合 {allowed:?}"
+        );
+    }
+}
+
+/// 诊断字段的字符串化：标量原样、数组（`tools`）逗号分隔、对象 / null 跳过（诊断面不承载
+/// 结构化负载）。与 `frontend_event` 的字符串口径一致——日志字段恒为字符串。
+fn field_text(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) => Some(text.clone()),
+        serde_json::Value::Bool(flag) => Some(flag.to_string()),
+        serde_json::Value::Number(number) => Some(number.to_string()),
+        serde_json::Value::Array(items) => {
+            let parts: Vec<String> = items.iter().filter_map(field_text).collect();
+            (!parts.is_empty()).then(|| parts.join(","))
+        }
+        _ => None,
+    }
+}
+
+/// 超长值剪到 [`MAX_VALUE_CHARS`]（隐私边界的第二道护栏，与前端通道同一上限）。
+fn clip_field_text(text: String) -> String {
+    if text.chars().count() <= MAX_VALUE_CHARS {
+        return text;
+    }
+    let mut clipped: String = text
+        .chars()
+        .take(MAX_VALUE_CHARS.saturating_sub(1))
+        .collect();
+    clipped.push('…');
+    clipped
+}
+
+/// Rust 侧埋点：把一条**面板事件**（`harness:event` 的 `subagent_*` 七类）转成诊断日志。
+///
+/// 为什么在面板事件的出口转收：diagnostic 与面板面是同一次段运行的两个投影，字段本就同名
+/// 同源（design §13 与 `harness::events` 的构造参数一一对应）。在出口转一道，段收尾就只剩
+/// **一个**诊断产出点（`harness::subagents::SubagentHub::set_sink` 的包装），失败 / 中止 /
+/// 后台路径天然共用它——MUST NOT 在每条业务路径各写一遍 `logging::subagent_*` 调用
+/// （REVIEW.md「同一语义两处真源」条）。
+///
+/// 白名单外的键（`system` / `prompt` / `messages` / `vault` 等）一律不进日志：本函数只按
+/// [`LogEventName::allowed_fields`] 逐键取值。
+pub fn subagent_event(payload: &serde_json::Value) {
+    subagent_event_to(global(), payload);
+}
+
+fn subagent_event_to(sink: &Sink, payload: &serde_json::Value) {
+    let Some(event) = payload["type"].as_str() else {
+        return;
+    };
+    let Some(name) = LogEventName::from_subagent_event(event) else {
+        return;
+    };
+    let mut entry = Event::new(name);
+    for field in name.allowed_fields() {
+        let Some(value) = payload.get(*field) else {
+            continue;
+        };
+        let Some(text) = field_text(value) else {
+            continue;
+        };
+        #[cfg(test)]
+        assert_subagent_closed_set(event, field, &text);
+        entry = entry.field(field, clip_field_text(text));
+    }
+    emit(sink, entry);
 }
 
 /// Rust 侧埋点：定时任务的通知投递成功（change add-cron-runtime-daemon，design §11）。
@@ -1060,6 +1276,13 @@ mod tests {
             LogEventName::CronRunFinished,
             LogEventName::CronRunSkipped,
             LogEventName::CronTaskInvalid,
+            LogEventName::SubagentStarted,
+            LogEventName::SubagentProgress,
+            LogEventName::SubagentStep,
+            LogEventName::SubagentFinished,
+            LogEventName::SubagentNotified,
+            LogEventName::SubagentRejected,
+            LogEventName::SubagentCatalogLarge,
         ] {
             let text = name.as_str();
             assert!(
@@ -1448,5 +1671,315 @@ mod tests {
         assert_eq!(err.code, "log_event_rejected");
         sink.flush();
         assert!(read_lines(dir.path()).is_empty(), "被拒的负载不得落盘");
+    }
+
+    // ---- 子运行七事件（change add-harness-subagents design §13 / tasks §7.1） ----
+
+    fn started_payload() -> serde_json::Value {
+        serde_json::json!({
+            "type": "subagent_started",
+            "run_id": "r-1",
+            "segment": 2,
+            "parent_session": "s1759912345678-k3x9ab",
+            "agent": "research",
+            "description": "调研缓存策略",
+            "model": "model-a",
+            "tools": ["vault_read", "vault_search"],
+            "max_turns": 20,
+            "max_tokens": 200000,
+            "timeout_secs": 300,
+            "background": true,
+            "vault": "<vault>",
+        })
+    }
+
+    /// 七个面板事件逐个转成诊断行：事件名可 grep、数组字段逗号分隔、标量字符串化，
+    /// 且 `vault`（以及任何白名单外的键）不进日志。
+    #[test]
+    fn subagent_events_round_trip_from_panel_payloads() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        subagent_event_to(&sink, &started_payload());
+        subagent_event_to(
+            &sink,
+            &serde_json::json!({
+                "type": "subagent_progress", "run_id": "r-1", "segment": 2,
+                "rounds": 3, "tool_calls": 1, "last_tool": "vault_read", "elapsed_ms": 1200,
+            }),
+        );
+        subagent_event_to(
+            &sink,
+            &serde_json::json!({
+                "type": "subagent_step", "run_id": "r-1", "segment": 2,
+                "tool": "vault_read", "summary": "读取 notes/plan.md",
+            }),
+        );
+        subagent_event_to(
+            &sink,
+            &serde_json::json!({
+                "type": "subagent_finished", "run_id": "r-1", "segment": 2,
+                "agent": "research", "status": "partial", "stopped_by": "tokens",
+                "rounds": 8, "model": "model-a", "input_tokens": 81000,
+                "cached_tokens": 62000, "output_tokens": 2400, "denied_calls": 0,
+                "duration_ms": 9000, "summary_chars": 120,
+                "audit": "harness/subruns/vault-1/r-1.jsonl",
+            }),
+        );
+        subagent_event_to(
+            &sink,
+            &serde_json::json!({
+                "type": "subagent_notified", "run_id": "r-1", "agent": "research",
+                "status": "completed", "wake": "auto_turn",
+                "wake_batch": "b-2", "chain_index": 1,
+            }),
+        );
+        subagent_event_to(
+            &sink,
+            &serde_json::json!({
+                "type": "subagent_rejected", "reason": "concurrency_limit",
+                "agent": "research", "description": "调研缓存策略",
+            }),
+        );
+        subagent_event_to(
+            &sink,
+            &serde_json::json!({
+                "type": "subagent_catalog_large",
+                "estimated_tokens": 15001, "definition_count": 12,
+            }),
+        );
+        sink.flush();
+
+        let lines = read_lines(dir.path());
+        let names: Vec<&str> = lines
+            .iter()
+            .map(|line| line["event"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "subagent_started",
+                "subagent_progress",
+                "subagent_step",
+                "subagent_finished",
+                "subagent_notified",
+                "subagent_rejected",
+                "subagent_catalog_large",
+            ]
+        );
+        // 数组 → 逗号分隔；数字 / 布尔 → 字符串；`segment` 同。
+        assert_eq!(lines[0]["tools"], "vault_read,vault_search");
+        assert_eq!(lines[0]["background"], "true");
+        assert_eq!(lines[0]["segment"], "2");
+        assert_eq!(lines[0]["max_tokens"], "200000");
+        assert!(
+            lines[0].get("vault").is_none(),
+            "信封字段（vault 绝对路径）不进诊断日志"
+        );
+        assert_eq!(lines[1]["last_tool"], "vault_read");
+        assert_eq!(lines[1]["level"], "info");
+        assert_eq!(lines[3]["status"], "partial");
+        assert_eq!(lines[3]["stopped_by"], "tokens");
+        assert_eq!(lines[3]["audit"], "harness/subruns/vault-1/r-1.jsonl");
+        assert_eq!(lines[4]["wake"], "auto_turn");
+        assert_eq!(lines[4]["wake_batch"], "b-2");
+        assert_eq!(lines[4]["chain_index"], "1");
+        assert_eq!(lines[5]["level"], "warn");
+        assert_eq!(lines[5]["reason"], "concurrency_limit");
+        assert_eq!(lines[6]["level"], "warn");
+    }
+
+    /// 缺键 / null 的字段不出场（`stopped_by` 只有 partial 段才有、`audit_error` 只在写失败时
+    /// 才有）——诊断行不伪造空值。
+    #[test]
+    fn absent_subagent_fields_are_omitted() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        subagent_event_to(
+            &sink,
+            &serde_json::json!({
+                "type": "subagent_finished", "run_id": "r-1", "segment": 1,
+                "agent": "explore", "status": "completed", "rounds": 2,
+                "model": "model-a", "input_tokens": 10, "cached_tokens": 0,
+                "output_tokens": 3, "denied_calls": 0, "duration_ms": 5,
+                "summary_chars": 1, "audit": null, "audit_error": null,
+            }),
+        );
+        sink.flush();
+        let lines = read_lines(dir.path());
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].get("stopped_by").is_none());
+        assert!(lines[0].get("audit").is_none());
+        assert!(lines[0].get("audit_error").is_none());
+    }
+
+    /// 闭集合逐值接受：`status` / `stopped_by` / `wake` / `reason` 的每个文档值都能落盘
+    /// （测试期断言见 `assert_subagent_closed_set`，这里正向钉住值域本身）。
+    #[test]
+    fn subagent_closed_sets_accept_every_documented_value() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        for status in SUBAGENT_STATUSES {
+            subagent_event_to(
+                &sink,
+                &serde_json::json!({
+                    "type": "subagent_finished", "run_id": "r", "segment": 1,
+                    "agent": "explore", "status": status, "rounds": 0, "model": "m",
+                    "input_tokens": 0, "cached_tokens": 0, "output_tokens": 0,
+                    "denied_calls": 0, "duration_ms": 0, "summary_chars": 0,
+                }),
+            );
+        }
+        for reason in SUBAGENT_STOPPED_BY {
+            subagent_event_to(
+                &sink,
+                &serde_json::json!({
+                    "type": "subagent_finished", "run_id": "r", "segment": 1,
+                    "agent": "explore", "status": "partial", "stopped_by": reason,
+                    "rounds": 0, "model": "m", "input_tokens": 0, "cached_tokens": 0,
+                    "output_tokens": 0, "denied_calls": 0, "duration_ms": 0,
+                    "summary_chars": 0,
+                }),
+            );
+        }
+        for wake in SUBAGENT_WAKE {
+            subagent_event_to(
+                &sink,
+                &serde_json::json!({
+                    "type": "subagent_notified", "run_id": "r", "agent": "explore",
+                    "status": "completed", "wake": wake, "wake_batch": "b", "chain_index": 0,
+                }),
+            );
+        }
+        for reason in SUBAGENT_REJECT_REASONS {
+            subagent_event_to(
+                &sink,
+                &serde_json::json!({
+                    "type": "subagent_rejected", "reason": reason,
+                    "agent": "explore", "description": "d",
+                }),
+            );
+        }
+        sink.flush();
+        let lines = read_lines(dir.path());
+        assert_eq!(
+            lines.len(),
+            SUBAGENT_STATUSES.len()
+                + SUBAGENT_STOPPED_BY.len()
+                + SUBAGENT_WAKE.len()
+                + SUBAGENT_REJECT_REASONS.len()
+        );
+    }
+
+    /// 反向输入（区分度）：闭集合外的值在测试构建下必须判红——把断言删掉这条用例会假绿。
+    #[test]
+    #[should_panic(expected = "不在闭集合")]
+    fn subagent_closed_set_violation_is_caught() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        subagent_event_to(
+            &sink,
+            &serde_json::json!({
+                "type": "subagent_finished", "run_id": "r", "segment": 1,
+                "agent": "explore", "status": "bogus", "rounds": 0, "model": "m",
+            }),
+        );
+    }
+
+    /// 面板事件名 ↔ 诊断事件的映射是双射；非 `subagent_*` 的事件原样放过（不落日志）。
+    #[test]
+    fn subagent_event_mapping_is_bijective() {
+        for name in [
+            LogEventName::SubagentStarted,
+            LogEventName::SubagentProgress,
+            LogEventName::SubagentStep,
+            LogEventName::SubagentFinished,
+            LogEventName::SubagentNotified,
+            LogEventName::SubagentRejected,
+            LogEventName::SubagentCatalogLarge,
+        ] {
+            assert_eq!(
+                LogEventName::from_subagent_event(name.as_str()),
+                Some(name),
+                "{} 的映射不闭合",
+                name.as_str()
+            );
+        }
+        assert_eq!(LogEventName::from_subagent_event("tool_call"), None);
+        assert_eq!(LogEventName::from_subagent_event("usage"), None);
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        subagent_event_to(&sink, &serde_json::json!({"type": "done"}));
+        sink.flush();
+        assert!(
+            read_lines(dir.path()).is_empty(),
+            "非子运行事件不落诊断日志"
+        );
+    }
+
+    /// 完成事件只有两个构造点（tasks §7.2 机制化）：段收尾（`ChildContext::finish`）与
+    /// **无段终态**（线程启动失败 / 段前失败，共用一个 `emit_failed_terminal`）。所有终态都
+    /// 显式产出一条、都由 `logging::subagent_event` 这**唯一**诊断出口落盘——
+    /// MUST NOT 在业务分支里各写一遍 `logging::subagent_*`。
+    #[test]
+    fn subagent_diagnostics_have_a_single_production_point() {
+        let mut hits = Vec::new();
+        collect_source_hits(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            concat!("logging::", "subagent_event"),
+            &mut hits,
+        );
+        assert_eq!(
+            hits.len(),
+            1,
+            "子运行诊断只允许在出口包装处产出，实际命中：{hits:?}"
+        );
+        assert!(
+            hits[0].contains("harness/subagents.rs"),
+            "唯一的诊断产出点应在 subagents.rs 的事件出口：{hits:?}"
+        );
+
+        let mut finished = Vec::new();
+        collect_source_hits(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            concat!("events::", "subagent_finished"),
+            &mut finished,
+        );
+        assert_eq!(
+            finished.len(),
+            2,
+            "完成事件只允许「段收尾」与「无段终态」两处，实际：{finished:?}"
+        );
+        assert!(
+            finished
+                .iter()
+                .all(|hit| hit.contains("harness/subagents.rs")),
+            "两处都应在 subagents.rs：{finished:?}"
+        );
+    }
+
+    /// 递归收集源码命中（`path:line` 形态）；跳过测试代码自身的 needle 靠调用侧的 `concat!`。
+    fn collect_source_hits(dir: &Path, needle: &str, hits: &mut Vec<String>) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_source_hits(&path, needle, hits);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for (index, line) in text.lines().enumerate() {
+                if line.contains(needle) && !line.trim_start().starts_with("//") {
+                    hits.push(format!("{}:{}", path.display(), index + 1));
+                }
+            }
+        }
     }
 }

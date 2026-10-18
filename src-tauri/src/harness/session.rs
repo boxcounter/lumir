@@ -220,9 +220,11 @@ fn cache_note(usage: &Usage) -> Option<CacheNote> {
 /// 每段收尾累加一次。父会话自己的 `ctx%` / cache% 只由父自己的往返计算，MUST NOT 掺入这里
 /// 的数字——跨模型混算的百分比没有解释力。
 ///
-/// `samples` / `segments`：前者是带 usage 的往返段数（与 `CacheTotals::samples` 同口径），
-/// 后者是子运行段数（resume 的每一段各加一）。恢复重算（§5.3）是另一个批次的任务，本表
-/// 只提供 live 侧的唯一累加点 [`Session::record_subrun_usage`]。
+/// `samples` / `segments`：前者是带 usage 的收尾段数（与 `CacheTotals::samples` 同口径），
+/// 后者是子运行段数（resume 的每一段各加一）。live 侧的唯一累加点是
+/// [`Session::record_subrun_usage`] / [`Session::mark_subrun_segment`]；恢复侧从父会话留存的
+/// `subrun` sidecar 重算（[`subrun_usage_from_records`]），两者吃同一个 [`Self::accumulate`]
+/// ——「live 分桶表 == 恢复重算分桶表」是这一处共享换来的，MUST NOT 两套求和。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubrunUsage {
     pub input: u64,
@@ -231,6 +233,17 @@ pub struct SubrunUsage {
     pub output: u64,
     pub samples: u64,
     pub segments: u64,
+}
+
+impl SubrunUsage {
+    /// 累加一段收尾的用量（live 记账与留存重算共此一份）。
+    fn accumulate(&mut self, usage: &Usage) {
+        self.input += usage.input_tokens;
+        self.cached += usage.cached_tokens;
+        self.writes += usage.cache_write_tokens;
+        self.output += usage.output_tokens;
+        self.samples += 1;
+    }
 }
 
 /// 从留存记录的 `usage` 块还原 [`Usage`]（恢复路径的重算输入）：`llm_response.usage` 的
@@ -249,6 +262,8 @@ fn usage_from_json(value: &serde_json::Value) -> Option<Usage> {
 /// 从留存记录重算读数（恢复路径，M526）：`llm_request` / `llm_response` 严格交替成对，响应的
 /// usage 归属其前一条请求——只有**会话轮次**（请求的 system == 会话 system）计入；压缩调用是
 /// 内部汇总调用（system 是压缩指令），与 live 侧 `rotate` 清零累计的口径一致，MUST NOT 计入。
+/// **`subrun` sidecar 也不计入这里**（它不是父会话的往返）：子运行用量走
+/// [`subrun_usage_from_records`] 按模型分桶，父会话的 ctx% / cache% 因此不被子运行稀释。
 ///
 /// `seed` = 源文件 `session_open` 落账的读数与累计（[`usage_seed`] 的解析产物）——链式恢复
 /// （恢复出的会话再被恢复）时它是增量基底；旧文件无种子键 ⇒ 零值缺省。窗口取**当前**配置的
@@ -300,6 +315,47 @@ pub fn usage_seed(open: &serde_json::Value) -> (UsageSnapshot, CacheTotals) {
         .and_then(|value| serde_json::from_value(value.clone()).ok())
         .unwrap_or_default();
     (usage, totals)
+}
+
+/// 父会话留存的 `subrun` sidecar 重算按模型分桶（change add-harness-subagents design §9.2）：
+/// 每条记录归 `model` 桶、累加其 `usage` 块并计一段。与 live 侧共用 [`SubrunUsage::accumulate`]
+/// ——求和与记录顺序无关，并行 run 的完成顺序因此不影响结果。
+///
+/// `seed` = 源文件 `session_open.subrun_usage` 的解析产物（[`subrun_usage_seed`]）：链式恢复
+/// （恢复出的会话再被恢复）与压缩边界把此前的桶带过来；全新会话无该键 ⇒ 空表。
+///
+/// 不可归桶的记录（缺 `model`）**跳过但不炸**：手工改坏的文件不该让恢复失败。父会话自己的
+/// `ctx%` / cache% 不经这里——`subrun` 记录不进 [`usage_from_records`] 的往返配对。
+pub fn subrun_usage_from_records(
+    records: &[serde_json::Value],
+    seed: BTreeMap<String, SubrunUsage>,
+) -> BTreeMap<String, SubrunUsage> {
+    let mut buckets = seed;
+    for record in records {
+        if record["kind"].as_str() != Some("subrun") {
+            continue;
+        }
+        let Some(model) = record["model"].as_str().filter(|model| !model.is_empty()) else {
+            continue;
+        };
+        let usage = match record.get("usage") {
+            Some(value) => usage_from_json(value).unwrap_or_default(),
+            // 失败段 / 段前中止：`usage` 缺省按零值计（段的「存在」仍要计进 segments）。
+            None => Usage::default(),
+        };
+        let bucket = buckets.entry(model.to_string()).or_default();
+        bucket.accumulate(&usage);
+        bucket.segments += 1;
+    }
+    buckets
+}
+
+/// `session_open.subrun_usage` 的宽容解析（链式恢复 / 压缩边界的种子）：键 = 模型 id，
+/// 值 = [`SubrunUsage`] 的序列化。缺键 / 形状不符 ⇒ 空表（重算只凭记录也能回到正确读数）。
+pub fn subrun_usage_seed(open: &serde_json::Value) -> BTreeMap<String, SubrunUsage> {
+    open.get("subrun_usage")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default()
 }
 
 impl StateSnapshot {
@@ -596,12 +652,10 @@ impl Session {
 
     /// 记一段子运行用量到分桶表（design §9.1 的唯一累加口；每段收尾调一次）。
     pub fn record_subrun_usage(&mut self, model: &str, usage: &Usage) {
-        let bucket = self.subrun_usage.entry(model.to_string()).or_default();
-        bucket.input += usage.input_tokens;
-        bucket.cached += usage.cached_tokens;
-        bucket.writes += usage.cache_write_tokens;
-        bucket.output += usage.output_tokens;
-        bucket.samples += 1;
+        self.subrun_usage
+            .entry(model.to_string())
+            .or_default()
+            .accumulate(usage);
     }
 
     /// 段计数（`segments` 与往返样本分开计：一段可以有零个带 usage 的往返）。
@@ -615,6 +669,12 @@ impl Session {
     /// 子运行用量分桶表的只读视图。
     pub fn subrun_usage(&self) -> &BTreeMap<String, SubrunUsage> {
         &self.subrun_usage
+    }
+
+    /// 恢复路径的分桶落种（design §9.2）：以留存重算值整体换入，其后的段接着它继续累加。
+    /// 与 [`Self::restore_usage`] 同一条纪律——快照 / 累计与留存可推导值一致。
+    pub fn restore_subrun_usage(&mut self, buckets: BTreeMap<String, SubrunUsage>) {
+        self.subrun_usage = buckets;
     }
 
     pub fn root(&self) -> &PathBuf {
@@ -1372,5 +1432,194 @@ mod tests {
         let next = session.record_usage(&usage(3000, 2700, 0), WINDOW);
         // Σ = (200 + 2700) ÷ (1000 + 3000) —— 不是只从恢复后的新回合起算。
         assert!((next.cache_pct_session - 2900.0 * 100.0 / 4000.0).abs() < 1e-9);
+    }
+
+    // ---- 子运行用量分桶（change add-harness-subagents §5.1–5.3） ----
+
+    fn subrun_record(
+        model: &str,
+        input: u64,
+        cached: u64,
+        writes: u64,
+        output: u64,
+        status: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "kind": "subrun",
+            "run_id": "r-1",
+            "segment": 1,
+            "agent": "research",
+            "description": "调研",
+            "model": model,
+            "status": status,
+            "stopped_by": null,
+            "rounds": 1,
+            "denied_calls": 0,
+            "usage": {
+                "input_tokens": input,
+                "cached_tokens": cached,
+                "output_tokens": output,
+                "cache_write_tokens": writes,
+            },
+        })
+    }
+
+    /// live 分桶表 == 恢复重算分桶表（tasks §5.3 的判据）：两个模型、partial、resume 的第二段、
+    /// 零用量的失败段、并行乱序完成——逐字段相等。求和与记录顺序无关因此完成顺序不影响读数。
+    #[test]
+    fn subrun_usage_from_records_matches_live_buckets() {
+        let records = vec![
+            // model-b 先完成（并行乱序），model-a 的两段是 resume 的前后两段。
+            subrun_record("model-b", 300, 100, 10, 20, "completed"),
+            subrun_record("model-a", 1000, 200, 0, 50, "partial"),
+            subrun_record("model-a", 400, 350, 5, 30, "completed"),
+            subrun_record("model-b", 0, 0, 0, 0, "failed"),
+        ];
+        let recomputed = subrun_usage_from_records(&records, Default::default());
+
+        let mut live = test_session();
+        live.record_subrun_usage(
+            "model-a",
+            &Usage {
+                input_tokens: 1000,
+                cached_tokens: 200,
+                output_tokens: 50,
+                cache_write_tokens: 0,
+            },
+        );
+        live.mark_subrun_segment("model-a");
+        live.record_subrun_usage(
+            "model-a",
+            &Usage {
+                input_tokens: 400,
+                cached_tokens: 350,
+                output_tokens: 30,
+                cache_write_tokens: 5,
+            },
+        );
+        live.mark_subrun_segment("model-a");
+        live.record_subrun_usage(
+            "model-b",
+            &Usage {
+                input_tokens: 300,
+                cached_tokens: 100,
+                output_tokens: 20,
+                cache_write_tokens: 10,
+            },
+        );
+        live.mark_subrun_segment("model-b");
+        live.record_subrun_usage("model-b", &Usage::default());
+        live.mark_subrun_segment("model-b");
+
+        assert_eq!(live.subrun_usage(), &recomputed);
+        let a = &recomputed["model-a"];
+        assert_eq!(a.input, 1400);
+        assert_eq!(a.cached, 550);
+        assert_eq!(a.writes, 5);
+        assert_eq!(a.output, 80);
+        assert_eq!(a.samples, 2);
+        assert_eq!(a.segments, 2);
+        // 零用量段仍计 segments（「这一段发生过」是事实），samples 同进一。
+        let b = &recomputed["model-b"];
+        assert_eq!(b.input, 300);
+        assert_eq!(b.samples, 2);
+        assert_eq!(b.segments, 2);
+
+        // 乱序：换一个完成顺序重算，结果逐字段相等。
+        let mut reordered: Vec<serde_json::Value> = records.clone();
+        reordered.reverse();
+        assert_eq!(
+            subrun_usage_from_records(&reordered, Default::default()),
+            recomputed
+        );
+    }
+
+    /// `subrun` 记录不影响父会话自己的读数（ctx% / cache% 只由父的往返算）。
+    #[test]
+    fn subrun_records_do_not_change_parent_readings() {
+        let mut records = vec![request_record("sys"), response_record(1000, 200, 0)];
+        records.push(subrun_record(
+            "model-a",
+            999_999,
+            999_999,
+            7,
+            999,
+            "completed",
+        ));
+        records.push(request_record("sys"));
+        records.push(response_record(2000, 1800, 5));
+        let with_subruns = usage_from_records(&records, "sys", WINDOW, Default::default());
+        // 与不含 subrun 记录的同一序列重算一致。
+        let without_subruns: Vec<serde_json::Value> = records
+            .iter()
+            .filter(|record| record["kind"] != "subrun")
+            .cloned()
+            .collect();
+        let expected = usage_from_records(&without_subruns, "sys", WINDOW, Default::default());
+        assert_eq!(with_subruns, expected);
+        // subrun 记录不会吃掉紧随请求的配对位：父会话的最近一次读数仍是自己的往返。
+        assert_eq!(with_subruns.0.input_tokens, 2000);
+        assert_eq!(with_subruns.1.samples, 2);
+    }
+
+    /// 链式恢复的种子：`session_open.subrun_usage` 落账 → 解析 round-trip；重算 = 种子 +
+    /// 新记录（压缩 / 恢复开的新文件没有旧 `subrun` sidecar，桶不能从零起算）。
+    #[test]
+    fn subrun_usage_seed_round_trips_and_chains() {
+        let mut session = test_session();
+        session.record_subrun_usage("model-a", &usage(1000, 200, 0));
+        session.mark_subrun_segment("model-a");
+        let open = serde_json::json!({
+            "kind": "session_open",
+            "subrun_usage": serde_json::to_value(session.subrun_usage()).unwrap(),
+        });
+        let seed = subrun_usage_seed(&open);
+        assert_eq!(&seed, session.subrun_usage());
+
+        // 新文件里只有压缩 / 恢复之后的新段：重算 = 种子 + 记录。
+        let records = vec![subrun_record("model-a", 500, 400, 3, 10, "completed")];
+        let recomputed = subrun_usage_from_records(&records, seed.clone());
+        assert_eq!(recomputed["model-a"].input, 1500);
+        assert_eq!(recomputed["model-a"].writes, 3);
+        assert_eq!(recomputed["model-a"].segments, 2);
+
+        // 旧文件无种子键 / 形状不符 ⇒ 空表（不炸）。
+        assert!(subrun_usage_seed(&serde_json::json!({"kind": "session_open"})).is_empty());
+        assert!(subrun_usage_seed(&serde_json::json!({"subrun_usage": "坏"})).is_empty());
+        // 手工改坏的单条记录（缺 model / usage 形状不符）跳过但不炸。
+        let broken = vec![
+            serde_json::json!({"kind": "subrun", "usage": {"input_tokens": 1}}),
+            serde_json::json!({"kind": "subrun", "model": "model-a", "usage": "坏"}),
+        ];
+        let recovered = subrun_usage_from_records(&broken, Default::default());
+        assert_eq!(recovered["model-a"].segments, 1);
+        assert_eq!(recovered["model-a"].input, 0);
+    }
+
+    /// 恢复落种：分桶表整体换入后，后续段接着累加（与 live 同一条路径）。
+    #[test]
+    fn restore_subrun_usage_seeds_buckets() {
+        let mut session = test_session();
+        let mut seed = std::collections::BTreeMap::new();
+        seed.insert(
+            "model-a".to_string(),
+            SubrunUsage {
+                input: 1000,
+                cached: 200,
+                writes: 0,
+                output: 50,
+                samples: 1,
+                segments: 1,
+            },
+        );
+        session.restore_subrun_usage(seed);
+        session.record_subrun_usage("model-a", &usage(500, 400, 3));
+        session.mark_subrun_segment("model-a");
+        let bucket = &session.subrun_usage()["model-a"];
+        assert_eq!(bucket.input, 1500);
+        assert_eq!(bucket.cached, 600);
+        assert_eq!(bucket.writes, 3);
+        assert_eq!(bucket.samples, 2);
+        assert_eq!(bucket.segments, 2);
     }
 }

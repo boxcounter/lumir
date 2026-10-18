@@ -726,6 +726,14 @@ impl RunContext for SessionContext<'_> {
             });
             // 文件边界即压缩留痕：压缩事件类（旧 compact kind）已废弃。
             session.rotate(assembled.text, writer);
+            // 子运行分桶跨过压缩边界（change add-harness-subagents design §9.2）：新文件没有
+            // 压缩前的 `subrun` sidecar，桶必须随 `session_open` 落种，否则这份会话再被恢复
+            // 时分桶会归零（live 表挂在 Session 对象上不清零，留存不可推导即两套读数）。
+            // 取值与 rotate 在同一把锁内完成——后台段收尾的 sidecar 不会插进种子与文件切换之间。
+            let buckets = serde_json::to_value(session.subrun_usage()).unwrap_or_default();
+            session
+                .jsonl()
+                .update_pending_open(|open| open["subrun_usage"] = buckets);
             // 继承标题（design D7）：新文件 `session_open` 之后紧接 `inherit` 记录。
             if let Some(title) = &inherited_title {
                 session

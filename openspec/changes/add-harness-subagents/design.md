@@ -503,15 +503,19 @@ task 调用（父循环内；同一助手消息里的多个 task 并行进入本
 ```json
 {"kind": "subrun", "run_id": "r-…", "segment": 1, "agent": "research", "description": "…",
  "model": "…", "status": "partial", "stopped_by": "tokens", "rounds": 8, "denied_calls": 0,
- "usage": {"input_tokens": 81000, "cached_tokens": 62000, "output_tokens": 2400},
+ "usage": {"input_tokens": 81000, "cached_tokens": 62000, "output_tokens": 2400,
+           "cache_write_tokens": 0},
  "audit": "harness/subruns/<vault 稳定 id>/<run_id>.jsonl"}
 ```
 
+- `usage` 四键与 `llm_response.usage` 同形：`cache_write_tokens` 是恢复重算 `writes` 的唯一
+  来源（§9.1 的桶含 `writes`，缺这个键 live 与重算就不可能逐字段相等）。
 - 属于既有 sidecar 类别（wire 不可推导的决策与事件）：子运行的往返不在父会话 wire 历史里，无法从
   `llm_request` / `llm_response` 推导。
 - **恢复重算**：`usage_from_records` 纳入 `subrun` 记录，按 `model` 归桶累加；不影响 ctx%（不是
   父会话自己的请求）。判据：live 分桶表与恢复重算的分桶表逐字段相等（单测钉住；求和与记录顺序无关，
-  并行的完成顺序不影响读数）。
+  并行的完成顺序不影响读数）。重算 = `session_open.subrun_usage` 种子 + 文件内 `subrun` 记录：
+  恢复 / 压缩开的新文件没有旧 sidecar，桶以首行种子带过去（链式恢复与压缩边界因此不断档）。
 - 审计流水：`<config_dir>/harness/subruns/<vault 稳定 id>/<run_id>.jsonl`，同一 run 的多个 segment
   追加同一文件；首段首行 `run_open`（run id / agent / 模型 / 工具集 / 预算 / 提交的 prompt），后续段
   写 `run_segment`（segment 序号 / 预算 / resume 说明）。MUST NOT 写 `sessions/`、MUST NOT 写 vault。
@@ -736,13 +740,18 @@ AUTO_WAKE_COALESCE_MS = 2000 // 空闲时的合并窗口
 | `subagent_rejected` | `reason`（含 `concurrency_limit` / `run_busy`）, `agent`, `description` |
 | `subagent_catalog_large` | `estimated_tokens`, `definition_count` |
 
-- 七事件进 `logging.rs` 白名单，字段逐个校验；`status` / `stopped_by` / `reason` 为闭集合。
+- 七事件进 `logging.rs` 白名单，字段逐个校验；`status` / `stopped_by` / `reason` / `wake` 为闭集合。
 - 事件在段收尾处产出一次，失败路径也产；`subagent_progress` / `subagent_step` 是**可见面事件**，
   MUST NOT 含任务 prompt 内容、文件内容与 vault 绝对路径。
+- **诊断落盘在面板事件的出口统一转写**（`SubagentHub::set_sink` 包装一个诊断装饰器，见
+  `logging::subagent_event`）：七类事件与面板面同源，完成 / 失败 / 中止 / 后台路径共用这一个
+  产出点；业务分支里 MUST NOT 各写一遍 `logging::subagent_*` 调用。日志字段只按白名单取
+  （`prompt` / `messages` / `vault` 等键物理上进不来）。
 
 ## 14. 配置面
 
-`[harness.subagents]`（装载时读一次，改配置需重启；定义文件与此不同，按回合扫描）：
+`[harness.subagents]`（每次发送时由命令入口 `config::load()` 重读，中枢每回合 `set_config`
+同步——改动**下一个回合**生效，不需要重启；定义文件同样按回合扫描，两者刷新节奏一致但来源不同）：
 
 | 键 | 缺省 | 合法域 | 语义 | 消费者 |
 |---|---|---|---|---|

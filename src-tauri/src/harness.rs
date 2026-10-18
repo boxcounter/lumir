@@ -569,6 +569,13 @@ impl Runtime {
             window,
             session::usage_seed(&file.session_open),
         );
+        // 子运行分桶重算（change add-harness-subagents design §9.2）：`subrun` sidecar 按模型
+        // 归桶累加，种子来自源文件首行（链式恢复 / 压缩边界的桶从这里接上）。它是「父会话之外
+        // 的用量」，MUST NOT 进上面的 ctx% / cache% 重算。
+        let subrun_buckets = session::subrun_usage_from_records(
+            &file.records,
+            session::subrun_usage_seed(&file.session_open),
+        );
         // 续写新文件：session_open 沿用源文件的装配事实（system 全文 + assembly 清单），
         // provider / model / thinking 记**当前**配置（后续请求实际使用的身份）；
         // opened_from=restore + restored_from=源会话 id（谱系链：这份会话恢复自哪份）。
@@ -594,6 +601,8 @@ impl Runtime {
             "assembly": assembly,
             "usage": serde_json::to_value(usage_snapshot).unwrap_or_default(),
             "cache_totals": serde_json::to_value(cache_totals).unwrap_or_default(),
+            // 子运行分桶种子（链式恢复用）：这份文件再被恢复时，桶从这里的值起算。
+            "subrun_usage": serde_json::to_value(&subrun_buckets).unwrap_or_default(),
         });
         let writer = jsonl::JsonlWriter::create(&new_id, &scope.vault_id, &open_payload)?;
         // 面板视角重建（M398）：灌回的 input 项映射成面板消息，reasoning 明文挂其后的
@@ -643,6 +652,8 @@ impl Runtime {
         // 读数落种（M526）：恢复出的会话从源会话的最近一次真实读数接着显示/累计
         // （快照与累计器同源自上面的重算，事件/快照两条通道此后看到的与留存可推导值一致）。
         new_session.restore_usage(usage_snapshot, cache_totals);
+        // 分桶落种与之同源（同一条「live 与留存可推导值一致」纪律）。
+        new_session.restore_subrun_usage(subrun_buckets);
         // 重建通知的投递标记复制进新文件（同一批的 run_ids / wake_batch）：这份会话若在
         // 通知进入任何 `llm_request` 之前再次被退出，下一次恢复仍能重建它。
         for notice in &restored_notices {

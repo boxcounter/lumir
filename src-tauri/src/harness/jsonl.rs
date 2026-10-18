@@ -69,12 +69,16 @@ pub fn is_valid_session_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// 会话留存根目录的纯路径投影（目录段的**唯一装配点**）：创建与测试断言共用同一份拼接，
+/// 不在别处另拼一次。
+fn sessions_root(config_dir: &Path) -> PathBuf {
+    config_dir.join("harness").join("sessions")
+}
+
 /// 会话留存**根**目录：`<config_dir>/harness/sessions`（各 vault 目录的容器；本目录自身
 /// MUST NOT 再落 `*.jsonl`——存量平铺文件由一次性脚本归位，见 `scripts/migrate-harness-sessions.mjs`）。
 pub fn sessions_dir() -> Result<PathBuf, CommandError> {
-    let dir = crate::config::config_dir()?
-        .join("harness")
-        .join("sessions");
+    let dir = sessions_root(&crate::config::config_dir()?);
     std::fs::create_dir_all(&dir).map_err(|e| {
         CommandError::new(
             "harness_jsonl_failed",
@@ -127,11 +131,17 @@ pub fn vault_sessions_dir(vault_id: &str) -> Result<PathBuf, CommandError> {
     Ok(dir)
 }
 
+/// 子运行审计根目录的纯路径投影（目录段的**唯一装配点**；与会话留存根目录并列，
+/// 两个根目录因此不可能互相嵌套）。
+fn subruns_root(config_dir: &Path) -> PathBuf {
+    config_dir.join("harness").join("subruns")
+}
+
 /// 子运行审计流水的根目录：`<config_dir>/harness/subruns`（change add-harness-subagents
 /// design §9.2）。MUST NOT 写 `sessions/`、MUST NOT 写 vault——这是审计轨迹，不是可恢复
 /// 会话；会话列举 / 恢复 / 删除链路不感知它。
 pub fn subruns_dir() -> Result<PathBuf, CommandError> {
-    let dir = crate::config::config_dir()?.join("harness").join("subruns");
+    let dir = subruns_root(&crate::config::config_dir()?);
     std::fs::create_dir_all(&dir).map_err(|e| {
         CommandError::new(
             "harness_jsonl_failed",
@@ -749,5 +759,47 @@ mod tests {
         // 有效标题只改变展示读数，不改变上面的重建材料。
         assert_eq!(effective_title(&with_titles).as_deref(), Some("新标题"));
         assert_eq!(effective_title(&plain), None);
+    }
+
+    /// 审计流水与会话留存是两个并列的根目录（change add-harness-subagents design §9.2）：
+    /// 同一 config_dir 下互不嵌套，会话列举 / 恢复 / 删除链路因此不可能读到子运行审计文件。
+    /// 目录段断言只用 `file_name` / `parent`，不另拼一次完整路径（否则会命中下一条用例的 needle）。
+    #[test]
+    fn audit_and_session_roots_are_disjoint() {
+        let base = Path::new("/tmp/lumir-config-probe");
+        let sessions = sessions_root(base);
+        let subruns = subruns_root(base);
+        assert_eq!(sessions.parent(), Some(base.join("harness").as_path()));
+        assert_eq!(subruns.parent(), Some(base.join("harness").as_path()));
+        assert_eq!(
+            sessions.file_name().and_then(|n| n.to_str()),
+            Some("sessions")
+        );
+        assert_eq!(
+            subruns.file_name().and_then(|n| n.to_str()),
+            Some("subruns")
+        );
+        assert_ne!(sessions, subruns);
+        assert!(!subruns.starts_with(&sessions));
+        assert!(!sessions.starts_with(&subruns));
+    }
+
+    /// 目录段常量只有一处装配点（tasks §5.4 的 `rg` 断言机制化）：源码里 `join("sessions")`
+    /// 与 `join("subruns")` 各恰好一次。needle 用 `concat!` 拼接，本测试自身不自我命中。
+    #[test]
+    fn directory_segments_have_one_assembly_point_each() {
+        let source = include_str!("jsonl.rs");
+        let sessions_needle = concat!(".join(", "\"sessions\")");
+        let subruns_needle = concat!(".join(", "\"subruns\")");
+        assert_eq!(
+            source.matches(sessions_needle).count(),
+            1,
+            "sessions 目录段应只在 sessions_root 一处装配"
+        );
+        assert_eq!(
+            source.matches(subruns_needle).count(),
+            1,
+            "subruns 目录段应只在 subruns_root 一处装配"
+        );
     }
 }
