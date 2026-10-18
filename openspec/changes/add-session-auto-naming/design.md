@@ -17,6 +17,7 @@
 5. 旧会话文件零改动可用：无标题记录时安静回落到既有首条用户消息口径，恢复充分性判据不变（D7）。
 6. 命名调用不进会话 wire（不落 `llm_request` / `llm_response`），不进入 ctx% / cache 读数与其累计（D8）。
 7. `session_title` 记录只在会话空闲时追加，MUST NOT 插在一对 `llm_request` / `llm_response` 之间（恢复的「折叠末尾响应」依赖相邻性，D9）。
+8. 命名调用的 provider / 模型 / wire 方言 / `api_key` / `base_url` 只由一处解析口产出（D8 的 `title_target`），MUST NOT 各处自行挑选、也 MUST NOT 混用会话 provider 与 title provider 的字段。
 
 ## 2. D1 触发时机与「轮」的口径
 
@@ -59,7 +60,7 @@
 
 **取材口径**：只取 `user` / `assistant` 消息的正文 text part；一条消息内的多个 text part 拼接、空白折叠成单空格。首轮与最近两轮重叠时去重（同一轮只出现一次）。
 
-**隐私边界**：命名调用发往**当前会话的同一 provider / 同一 base_url**，不引入新的数据接收方；素材是会话内容的子集。不做任何本地持久化之外的额外留存（调用本身不落 wire，见 D8）。
+**素材去向（隐私）**：命名调用发往 `[harness].title_provider` 指向的 provider（缺省 = 会话当前 provider），按该 provider 条目的 `base_url` / `api_key` / wire 方言走。缺省配置下不引入新的数据接收方；把 `title_provider` 显式指向另一个 provider 时，素材会发给该服务方——这是配置者的显式选择，不是默认路径（Alex 2026-10-18 裁决「这个约束没有必要。去掉它。」，见 proposal 裁决留痕）。素材无论发往哪个 provider 都只是会话内容的子集（本节的剔除与上限）；除会话留存外不做额外本地持久化（调用本身不落 wire，见 D8）。
 
 ## 4. D3 生成器契约与解析
 
@@ -158,14 +159,17 @@
 | 键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `harness.auto_title` | bool | `true` | 关闭后不发起任何命名调用 |
-| `harness.providers.<id>.title_model` | string | 空（= 用该 provider 的 `model`） | 命名调用专用模型；须在该 provider 的 `models` 清单内声明 |
+| `harness.title_provider` | string \| null | `null`（= 会话当前 provider） | 命名调用发往哪个 provider；非空须是 `providers` 表内的 id（`kimi` / `deepseek` / `mock`） |
+| `harness.providers.<id>.title_model` | string | 空（= 该 provider 的 `model`） | 命名调用专用模型；按 `title_provider` 指向的 provider 条目读取，须在**该 provider** 的 `models` 清单内声明 |
 
-校验口径：`auto_title` 类型不符 → 整文件回落（既有模板）；`title_model` 非字符串 → 整文件回落；`title_model` 非空且不在 `models` 清单内 → 一条人话 warning + 回落该 provider 的生效模型（不把未声明的模型发给 API）；mock provider 没有该键（fixture 驱动，模型选择无意义）。
+**唯一解析口**：`HarnessConfig::title_target(session_provider) -> TitleTarget { provider, model, wire_api, api_key, base_url }`。五个字段同出 `title_provider` 指向的那一个 provider 条目——`provider` = `title_provider`（缺省 / 非法值 → 会话当前 provider），`model` = 该条目的 `title_model`（命中自己的 `models` 清单）否则该条目的 `model`，`wire_api` / `api_key` / `base_url` 也取该条目。命名调用 MUST NOT 混用会话 provider 与 title provider 的字段（例如模型取 A、key 取 B）——这是不变量 8。
+
+**校验口径**：`auto_title` 类型不符 → 整文件回落（既有模板）；`title_provider` 类型不符（非字符串且非 null）→ 整文件回落；`title_provider` 非空且不在 `providers` 表内（闭集合外取值）→ 一条人话 warning + 回落 `null`（= 会话当前 provider，不阻断、不失败）；`title_model` 非字符串 → 整文件回落；某 provider 的 `title_model` 非空且不在**该 provider** 的 `models` 清单内 → 一条人话 warning + 回落该 provider 的生效模型（不把未声明的模型发给 API；逐 provider 校验，没有跨 provider 语义）。mock provider 没有 `title_model` 键（fixture 驱动，模型选择无意义）：`title_provider = mock` 时命名调用走 mock 的 `titles` 队列（D12），`model` 字段只作记录。`title_provider` 指向的 provider 的 `api_key` 为空不另设校验（与「空 `api_key` 是未配置的出厂状态、不告警」同口径）：命名调用按 D10 静默失败，会话名保持既有标题 / 回落口径。
 
 **调用形态**（便宜档的两条腿）：
 
 1. **形态最省**：单次、非 agentic；不带工具；素材只含 D2 的受限文本；输出由 prompt + 解析硬约束；独立 20 秒超时（不复用会话请求的 300 秒超时）；失败不重试。
-2. **模型可选更便宜**：配了 `title_model` 就用它；没配就用会话生效模型——此时「便宜档」由形态保证（一次调用约 1–3k input tokens、输出 < 100 tokens，相对会话本身可忽略）。
+2. **模型 / provider 可选更便宜**：`title_provider` 配了就用它指向的 provider 与其 `title_model`；都没配就与会话同 provider、用该 provider 的生效模型——此时「便宜档」由形态保证（一次调用约 1–3k input tokens、输出 < 100 tokens，相对会话本身可忽略）。
 
 **思考档**：`ThinkingEffort` 没有「关闭」档（闭集合 Low / High / Max）。命名调用在模型声明支持思考档时发 `Low`（最低成本档），未声明时不发该字段——MUST NOT 新增「关闭」枚举值（那会扩散到会话 chip 与全部 provider 映射）。
 
@@ -188,7 +192,7 @@
 
 **丢弃不重试**：被丢弃的结果不再补写（下一次触发点自然到来）；丢弃时只打 stderr（含原因）。
 
-**配置快照**：每次调用在启动时取一份配置快照（provider / api_key / title_model / models 清单），会话中途改配置从下一次调用起生效。
+**配置快照**：每次调用在启动时取一份配置快照（`title_target` 的五个字段 + `models` 清单），会话中途改配置从下一次调用起生效。
 
 ## 11. D10 失败与可观测
 
@@ -239,7 +243,7 @@
 | 调度状态机 | 首轮触发；5 轮周期；3 轮下限；初始失败后每 3 轮重试；失败算一次评估；关闭开关；单飞行跳过 |
 | 留存 | `session_title` 序列化 / 读取；last-wins；error 无 title；无记录回落；继承记录；空闲才追加 |
 | 恢复 | 标题记录在场时重建请求逐字节相等（恢复充分性回归）；标题记录不落 `llm_request`；压缩 / 恢复的新文件首条记录是 inherit |
-| 配置 | 两个新键的缺省 / 合法 / 类型不符 / title_model 未在 models 清单 |
+| 配置 | 三个新键（`auto_title` / `title_provider` / `title_model`）的缺省 / 合法 / 类型不符；`title_provider` 非法值回落 null；`title_model` 未在 models 清单回落；`title_target` 跨 provider 时五字段同出一条条目；mock 作 title provider |
 | 列表 | `SessionSummary.title` 在场 / 缺省 |
 
 **前端单测**（`tests/unit/harness-session-picker.test.ts` 等）：`SessionEntry.title` 宽容解析；显示优先级 title → firstUserText → D330；title 更新不重排 / 不改 transcript 的纯模型层断言。
@@ -254,8 +258,9 @@
 2. **keep 防抖**：`titles` 依次给 initial 与 keep；完成 5 轮（脚本可控）→ 标题不变，新增一条 `decision=keep` 记录。
 3. **旧文件安静回落**：预置一份无 `session_title` 记录的会话 JSONL → 打开历史浮层与恢复，行名 / 标题栏显示首条用户消息截断，无告警。
 4. **关闭开关**：`autoTitle: false` → 完成首轮后无 `session_title` 记录，名字为回落口径。
+5. **titleProvider 非法值回落**：会话 provider 为 mock，配 `titleProvider: "openai"`（闭集合外）→ 启动不失败，首轮后仍按 mock 的 `titles` 写出 `session_title` 记录（回落会话 provider），标题栏正常显示标题。
 
-漂移信号与合法 / 非法输出的全分支留在单测（真机场景驱动 5+ 轮成本高、判别力不增）；真机只锁「端到端能被看到」的四条。既有场景回扫：任何断言会话名等于首条消息截断的场景，若 fixture 未声明 `titles`，行为不变；新增 `titles` 只加在新场景自己的 fixture 上。
+漂移信号与合法 / 非法输出的全分支留在单测（真机场景驱动 5+ 轮成本高、判别力不增）；真机只锁「端到端能被看到」的五条。既有场景回扫：任何断言会话名等于首条消息截断的场景，若 fixture 未声明 `titles`，行为不变；新增 `titles` 只加在新场景自己的 fixture 上。
 
 ## 16. D15 风险与 revisit 条件
 
@@ -266,6 +271,7 @@
 | 改名过于频繁 | keep 默认 + 显著更好判据 + 3 轮下限 | 同一会话 20 轮内 rename ≥ 3 次 → 收紧 prompt 判据或提高下限 |
 | 命名调用成本 | 每 5 轮一次、短素材、短输出、不重试 | 会话数 × 轮数增长后仍可忽略；若不可忽略，配合更便宜的 `title_model` |
 | 恢复时末轮响应丢失（记录插入位置） | 空闲才追加（D9） + 单测钉「请求/响应相邻性」 | 出现任何恢复丢末轮响应的报告 → 检查追加时机 |
+| 跨 provider 命名把素材发给另一个服务方 | 缺省不跨（`title_provider` 缺省 = 会话 provider）；跨 provider 只在配置者显式指定时发生，素材仍是会话内容子集（D2） | 出现「命名素材不得离开某服务方」的合规要求 → 改为强制同 provider，或按策略禁止跨 provider |
 | 与未归档 change 的 spec 文本冲突 | D17 对账 + 归档前核对 living spec | 归档评审时 living spec 出现标题条款缺失 → 不归档，先修增量 |
 
 ## 17. D16 备选方案与否决理由
@@ -277,6 +283,7 @@
 - **把标题写进 `session_open`**：见 D6，append-only + 双家歧义。否决。
 - **做手动重命名 UI 代替自动命名**：把认知成本转给人，且探针期明确不做完整管理 UI。否决。
 - **自动选最便宜模型**：无价格元数据，见 D8。否决（以可选配置键替代）。
+- **命名恒发向会话当前 provider（原设计约束）**：Alex 2026-10-18 裁决「这个约束没有必要。去掉它。」——命名调用是普通辅助调用，发往哪个 provider 属配置选择，不需要在架构上锁死；缺省值已保证旧行为在默认路径上不变。否决（改为 `title_provider`，缺省 = 会话 provider）。
 
 ## 18. D17 与未归档 change 的文本对账
 
