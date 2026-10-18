@@ -39,9 +39,11 @@
   spawn、不阻塞启动；配置装载时快照、运行期不热重载。
 - [x] 2.5 拉取触发接线：启动就绪后一次 + `WindowEvent::Focused(true)`（200ms 去抖）+ 目标 vault
   打开成功后一次，三处只投 poke，不内联判定。
-  （实现口径：启动 / 焦点两处是真实 poke；目标 vault 打开成功的命令层成功点在 `commands.rs`
-  —— 不在本批改动的文件面内，因此第三处由调度线程在 tick 上观察「当前 vault 根变更」识别，
-  补判最晚一个 tick（30s），并按拉取触发处理。）
+  （实现口径：三处都是真实 poke——启动在 `start_cron`、焦点在 `WindowEvent::Focused(true)`、
+  目标 vault 打开成功在 `commands::open_vault` 的提交点（两条打开命令共用）与
+  `RestoreGuard::finish` 的恢复提交点（启动恢复也是打开成功的一次）。tick 上**不**观察 vault
+  变更：本批（M583）因命令层不在改动面而临时用 tick 观察代替第三处（补判最晚 30s），该偏差
+  已由 M591 消除。）
 - [x] 2.6 派发分支按 `delivery`：`notify-then-run` 只投通知；`run-then-notify` / `silent-run` 发起
   运行交接。派发成功才写 `last_fired`；`vault_not_current` / `busy` / `not_ready` 不写状态并落
   `cron_run_skipped`；当日不自动重试已失败的任务；不跨日补发。

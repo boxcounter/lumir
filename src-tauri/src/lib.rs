@@ -652,6 +652,12 @@ impl RestoreGuard {
             .finish_restore(self.generation, outcome);
         if let Some(id) = opened_id.filter(|_| applied) {
             crate::vault_registry::mark_opened(&id);
+            // 启动恢复也是「目标 vault 打开成功」的一次（design §4.2 第三行），与用户打开
+            // 同一条触发源：提交成功后直接 poke。恢复线程与 `lumir-cron` 线程的启动先后不
+            // 确定，启动 poke 可能早于这次提交；缺这一次，启动那一刻被 `not_ready` 延后的
+            // 无人值守任务要等到下一次焦点切换才补跑（当日已落过 skip 的任务在定时器触发下
+            // 不重试）。
+            crate::cron_poke(&self.app, crate::cron::Trigger::VaultOpen);
         }
         self.signal();
     }
@@ -982,8 +988,7 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
         inflight: std::collections::HashMap::new(),
         skipped_today: std::collections::HashMap::new(),
         clicked_today: std::collections::HashMap::new(),
-        last_vault: None,
-        last_vault_key: None,
+        cached_vault: None,
     };
     // 通知权限（design §4.3）：有有效任务时检查一次；未决定申请一次；被拒落一条 warning
     // 且不反复申请。查询失败不阻断启动（通知链路降级，判定与运行不受影响）。
@@ -993,7 +998,7 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
             Ok(CronMessage::Poke(trigger)) => runner.evaluate(trigger),
             Ok(CronMessage::RunResult(result)) => runner.finish(result),
             Ok(CronMessage::Click { task }) => runner.handle_click(&task),
-            Err(RecvTimeoutError::Timeout) => runner.evaluate_tick(),
+            Err(RecvTimeoutError::Timeout) => runner.evaluate(cron::Trigger::Timer),
             Err(RecvTimeoutError::Disconnected) => return,
         }
     }
@@ -1019,48 +1024,37 @@ struct CronRunner {
     /// 今日点击过的通知（repeat-click 幂等，design §5.1 / §4.6）：记录本次点击的日期与该次
     /// 运行的会话 id（回执带回才写）。同日第二次点击只聚焦 / 打开已有会话，不重复运行。
     clicked_today: std::collections::HashMap<String, ClickState>,
-    /// 上一轮观察到的当前 vault 根：变化即视为「目标 vault 打开成功」的一次触发源
-    /// （下面 `evaluate_tick` 的口径）。
-    last_vault: Option<PathBuf>,
-    /// 上一轮当前 vault 的**规范化**比较键（canonicalize 只在 vault 变化时做一次，tick 的
-    /// 常规路径因此仍是纯内存比较）。
-    last_vault_key: Option<PathBuf>,
+    /// 当前 vault 规范化比较键的缓存：`(原始根, 规范化键)`。`canonicalize` 只在原始根变化时
+    /// 做一次（macOS `/tmp` → `/private/tmp` 软链下，配置路径与 vault 根可能只差这一层），
+    /// 定时器 tick 的常规路径因此仍是纯内存比较（tasks.md 2.4「30s tick 零文件 IO」）。
+    ///
+    /// 它只是比较键的缓存，**不是**触发源：第三个拉取触发（目标 vault 打开成功）由打开路径
+    /// 直接 poke（`commands::open_vault` / `RestoreGuard::finish`），不在 tick 上观察。
+    cached_vault: Option<(PathBuf, PathBuf)>,
 }
 
 impl CronRunner {
-    /// 拉取兜底 / 启动的评估（触发源由投递方给出）。
+    /// 一次评估（触发源由投递方给出：定时器 / 启动 / 焦点 / 目标 vault 打开成功）。
     fn evaluate(&mut self, trigger: cron::Trigger) {
-        let current_vault = current_vault_root(&self.app);
-        self.evaluate_with(trigger, current_vault);
-    }
-
-    /// 定时器评估：顺带把「当前 vault 变了」识别成一次 vault-open 拉取触发。
-    ///
-    /// **为什么这样接第三个触发源**：`vault_open` / `vault_open_path` 命令的成功点在
-    /// `commands.rs`（不在本次改动的文件面内），本层没有可直接挂的回调；而目标 vault 变更是
-    /// 「打开成功」的唯一可观察结果。代价：补判最多晚一个 tick（30s，与定时器自身粒度同量级），
-    /// 且该轮按拉取触发处理（允许重试当日被跳过的任务）。命令层直接 poke 的接线属后续改动。
-    fn evaluate_tick(&mut self) {
-        let current_vault = current_vault_root(&self.app);
-        let trigger = if current_vault != self.last_vault {
-            cron::Trigger::VaultOpen
-        } else {
-            cron::Trigger::Timer
-        };
-        self.evaluate_with(trigger, current_vault);
-    }
-
-    fn evaluate_with(&mut self, trigger: cron::Trigger, current_vault: Option<PathBuf>) {
         // 比较键用**规范化**路径（macOS `/tmp` → `/private/tmp` 软链下，配置路径与 vault
         // 根可能只差这一层）；canonicalize 只在 vault 变化时做一次，tick 常规路径纯内存。
-        let current_key = match (&current_vault, &self.last_vault) {
-            (Some(raw), Some(previous)) if raw == previous => self.last_vault_key.clone(),
-            (Some(raw), _) => Some(std::fs::canonicalize(raw).unwrap_or_else(|_| raw.clone())),
+        let raw = current_vault_root(&self.app);
+        let key = match (&raw, &self.cached_vault) {
+            (Some(path), Some((cached_raw, cached_key))) if path == cached_raw => {
+                Some(cached_key.clone())
+            }
+            (Some(path), _) => Some(std::fs::canonicalize(path).unwrap_or_else(|_| path.clone())),
             (None, _) => None,
         };
-        self.last_vault = current_vault.clone();
-        self.last_vault_key = current_key.clone();
-        let current_vault = current_key.and_then(|path| path.to_str().map(str::to_string));
+        self.cached_vault = match (raw, key) {
+            (Some(raw), Some(key)) => Some((raw, key)),
+            _ => None,
+        };
+        let current_vault = self
+            .cached_vault
+            .as_ref()
+            .and_then(|(_, key)| key.to_str())
+            .map(str::to_string);
         let now = cron::LocalNow::now();
         self.prune_stale_inflight();
         for index in 0..self.tasks.len() {
@@ -1659,6 +1653,33 @@ mod cron_runtime_tests {
         assert!(
             hits[0].contains("/lib.rs:"),
             "唯一的产出点应在 lib.rs 的回执处理里：{hits:?}"
+        );
+    }
+
+    /// 第三个拉取触发（目标 vault 打开成功）只由**打开成功点**产出：用户打开两条命令共用的
+    /// `open_vault` 提交点 + 启动恢复提交点，各一处。定时器路径 MUST NOT 再用「观察 vault 变更」
+    /// 判一次（那是本 change 实现期的临时形态，同一语义两处判定会漂）——这条断言把它钉住：
+    /// `lib.rs` / `commands.rs` 里各只允许一处 `Trigger` 的 `VaultOpen` 变体。
+    #[test]
+    fn vault_open_trigger_has_one_production_point_per_open_path() {
+        let needle = concat!("Trigger::", "VaultOpen");
+        let mut hits = Vec::new();
+        collect_source_hits(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            needle,
+            &mut hits,
+        );
+        let in_file =
+            |file: &str| -> Vec<&String> { hits.iter().filter(|hit| hit.contains(file)).collect() };
+        assert_eq!(
+            in_file("/lib.rs:").len(),
+            1,
+            "lib.rs 只允许启动恢复提交点产出 vault-open 触发（定时器 MUST NOT 观察 vault 变更）：{hits:?}"
+        );
+        assert_eq!(
+            in_file("/commands.rs:").len(),
+            1,
+            "commands.rs 只允许 open_vault 提交点产出 vault-open 触发：{hits:?}"
         );
     }
 
