@@ -1,12 +1,18 @@
-# Proposal: Subagents（`task` 工具）——委托式 harness 运行与运行公共层回抽
+# Proposal: Subagents（`task` 工具 + 子代理定义）——委托式 harness 运行与运行公共层回抽
 
 - Change ID: add-harness-subagents
-- 日期: 2026-10-18
+- 日期: 2026-10-18（同日按 Alex 的参照系意见修订）
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
 > **裁决留痕（2026-10-18，逐字）**
 >
 > **起草授权**：「是。」——对「Subagents 提案紧随 cron 之后起草」的确认。
+>
+> **修订方向（2026-10-18，Alex 原话）**：「Subagents 已经是 Agent 产品很成熟的概念了，我们可以参考
+> 借鉴、无需自定义」。据此本稿以 Claude Code 官方 subagents 设计为参照系重写形态：子代理由
+> **Markdown + YAML frontmatter 定义文件**描述，`task` 工具按**名字**委派，主 agent 按 `description`
+> 自动委派；初稿的「每次调用内联声明工具集 / 预算」不再是主界面。参照系事实来源：
+> [Create custom subagents](https://code.claude.com/docs/en/sub-agents)（2026-10-18 抓取）。
 >
 > **定位（已裁决）**：「Subagents / Cron 定位 | harness 通用原语，不特化到任何场景」。出处：
 > `.local/design/harness-vision.md`（git 外，设计真源，下称「真源」）的「裁决记录」表。
@@ -14,9 +20,8 @@
 > **形态（真源标「已倾向」）**：「`task` 工具——入参为任务描述、prompt、模型档位、工具集、失控闸值、
 > 超时。子 agent 跑自己的工具循环，结果以摘要回主会话。」同节四项「已倾向」：派生深度限 1 层、
 > 工具集按任务声明且默认收紧（调研类默认只读）、子 agent 用量归入主会话累计读数、token / 时间 /
-> 轮次三重失控闸任一触顶即收敛返回部分结果。**本提案把这四项按「倾向」落地，逐项落法与替代方案见
-> 裁决点 3–8（派生深度 1 层作为机制不变量，不提供关闭开关，见 design §4.3）；Alex 可逐条否决，
-> 否决项按替代方案改写后重走节点 1。**
+> 轮次三重失控闸任一触顶即收敛返回部分结果。**参照系只改这些约束的落法（工具集与闸值从「调用参数」
+> 移到「定义文件」），不改约束本身**：深度仍恰好 1 层、默认仍收紧、用量仍归主会话、三重闸仍全在。
 >
 > **统一抽象（Alex 认可的次序）**：「第一个原语（cron）带最小抽象落地，第二个原语（Subagents）
 > 出现时回抽公共层。因此本提案必须正面处理『触发 → 上下文装配 → 工具循环 → 留存』公共层。」
@@ -26,276 +31,302 @@
 >
 > **调度策略（真源「调度策略」节，供节点 1 参考）**：① 能确定性计算的不花 token；② 按产物纠错成本
 > 分档（一次性产物便宜档，累积产物强档或便宜档 + 批准闸）；③ 大体量遍历拆两层；④ 吞吐与判断拆阶段。
-> 错误方向不对称：漏记可补、错记污染，写入偏保守。**这些是调用方的策略，不是机制的知识**——机制只
-> 提供参数面，策略由调用方（人或主 agent）按此原则填参。
+> 错误方向不对称：漏记可补、错记污染，写入偏保守。**这些是调用方的策略，不是机制的知识**——定义文件
+> 是策略的载体，机制只读它、校验它、执行它。
 >
 > **ADR 前置**：ADR 0007 的 Revisit 条件写明「探针能力清单需要扩张（如后台任务、subagent 从架构约束
 > 转为实际需求）→ Alex 显式裁决后修订本 ADR，不允许在 OpenSpec change 中静默扩张」。2026-10-18 的
 > 裁决已把 subagent 从「架构约束」转为「实际需求」；ADR 0007 的修订（工具集边界新增「编排工具」一类）
 > 列为本 change 的实现前置，见 Impact 与 tasks §0。
 
+## 参照系：与 Claude Code subagents 的逐项对照
+
+**vision 原设计与成熟实践收敛的部分不变，本节只处理借鉴增量。** 收敛项一句话带过：独立上下文窗口、
+只回摘要；工具集 allowlist 收紧；模型档位（调用参数 > 定义 > `inherit`）；用量计入主会话同一上限；
+轮次闸触顶返回 partial。这五条本提案照旧，不因参照系重开讨论。
+
+### 借鉴项（初稿没有、本稿采纳）
+
+| 维度 | Claude Code 的做法 | 本稿落法 |
+|---|---|---|
+| 定义形态 | Markdown + YAML frontmatter，`name` / `description` 必填，正文即 system prompt | 同形；vault 级 `<vault>/.lumir/agents/*.md`，用户级 `<config_dir>/agents/*.md` |
+| 发现与作用域 | 项目 `.claude/agents/` 从 cwd 向上递归到仓库根 + 用户 `~/.claude/agents/`；同名按距离优先级 | vault 级覆盖用户级；同一层同名取字典序第一个 + warning（比参照系的「文件系统读序」确定）。Lumir 的 vault 是单根、无「仓库根」概念，故不做向上遍历 |
+| 自动委派 | 主 agent 按 `description` 匹配委派；描述合计超 15k token 启动告警 | 采纳：清单（名字 + 描述）注入 `task` 工具描述；超阈值产 warning（token 按 `字符数 ÷ 4` 粗估） |
+| 热加载 | 磁盘改动数秒内生效（新建目录等少数情形需重启） | 采纳等价效果：**每回合开头扫描**两目录并快照，下次委派即用新定义；连「新建目录需重启」的例外都没有 |
+| 触顶语义 | `maxTurns` 触顶 → 输出标 partial，主 agent 可 resume 继续 | 采纳并扩到三闸：任一闸触顶 → `status=partial` + `resumable=true` + `run_id`；`task` 支持 `resume` |
+| 深度 | 默认 3 层、可配；到限时**收回 Agent 工具**（工具白名单即机制） | 深度固定 1 层：子运行的工具定义恒不含 `task`，不维护运行时深度计数、不提供配置项 |
+| 模型解析 | 调用参数 > frontmatter > 环境变量；`inherit` = 主会话模型 | 调用参数 > 定义 `model` > `inherit`；不做环境变量层 |
+| 部分输出 | API 中断但已有文本 → 返回部分输出并说明；什么都没产出才失败 | 采纳：`stopped_by=error` 的 partial 结果；无文本才 `failed` |
+
+### 刻意不同（视真源已裁决心与产品面为更大约束）
+
+| 维度 | Claude Code 的做法 | 本稿做法与理由 |
+|---|---|---|
+| `tools` 缺省 | 省略 = 继承子代理可用的全部工具（含 `Agent`，因此默认可嵌套） | **省略 = 只读三件**（`vault_read` / `vault_search` / `skill_load`）。真源已裁决「工具集默认收紧、写入显式声明」；全量继承等于默认放开写与 CLI，不采纳 |
+| 权限模式 | 定义可写 `permissionMode`（受主会话模式约束） | v1 不采纳：继承用户选定的会话档位。vault 里的定义文件不得改变用户设定的权限边界；要收紧用 `tools` 表达即可 |
+| 内建子代理 | 内建 Explore / Plan | 不做：本产品没有「代码库探索」这一特定场景；内建名字还会与用户定义撞名。只读三件的通用定义已覆盖同一用途 |
+| 并发 | 后台子代理、并发上限、agent teams | v1 全不做：串行、前台、无后台运行（真源首场景不需要并行；并行涉及事件交错与配额争用，留待真实数据） |
+
+### 不采纳的定义字段（逐条给理由）
+
+`disallowedTools`（本稿默认不是全量继承，deny-list 无适用面）；`permissionMode`（见上）；`skills`
+预载（Skill 索引已装配、`skill_load` 可运行时加载）；`initialPrompt`（正文承担）；`background`
+（v1 串行）；`isolation: worktree`（Lumir 不是 git 工作树产品）；`omitClaudeMd` 对应物（AGENTS.md
+三层是本产品的基础约定，始终装配）；`hooks` / `mcpServers` / `memory` / `effort` /
+`autoCompactWindow`（无对应机制或不适用）。这些字段出现在定义里时产一条 warning 并忽略，不静默吞掉。
+
 ## Why
 
 1. **主会话的上下文是最贵的一份共享资源**。调研类任务（读十份材料、逐篇摘要、跨源比对）的中间材料
    一旦进主会话历史，此后每一轮往返都要重新载入它——即使命中前缀缓存，输入 token 也不归零。子运行
    把材料关在自己的循环里，主会话只收一份摘要：主会话的上下文增长从「材料体量」变成「摘要体量」。
-   这是本能力的第一价值，也是它在首场景（创意设计调研）之外的通用价值。
-2. **模型档位是配额与质量的分配手段**。真源「调度策略」第 ④ 条（吞吐与判断拆阶段）在 Subagents 上的
-   落法就是让调用方为一次委派指定模型：抓取与逐篇摘要用便宜档，跨源综合回到主会话的强档。机制只
-   接受一个模型参数，不内置「调研该用哪档」这类判断——**机制进代码、策略进参数**。
-3. **第二个触发源出现，公共层的回抽到期**。现有会话形态本就是「触发器 + 上下文装配 + 工具循环 +
-   留存」；用户输入与 cron 是前两类触发源，委托是第三类。cron 提案已声明不在自己之前预造空壳抽象、
-   由 Subagents 兑现回抽；两个 change 目前都零代码，此刻改形状的成本最低。若再拖，cron 的运行槽位、
-   交接事件与前端处理器会按单触发源形状落地，回抽要动已写好的实现与验收场景。
-4. **失控闸是开放自动委派的前置条件**。委派循环的三个典型失控面：模型自我递归委托、单次委派烧掉整份
-   配额、子运行卡死把主回合一起挂住。不先给出三重闸（轮次 / token / 时间）与「任一触顶即收敛返回部分
-   结果」的语义，就不该把 `task` 暴露给模型。
-5. **写入偏保守有现成的落点**。真源的错误方向不对称（漏记可补、错记污染）在 Subagents 上等价于：
-   子运行默认只读，写权限必须由调用方显式声明；而声明之后仍要过既有的权限管线与批准闸，机制不因
-   「它是子 agent」而放松任何一层。v1 更进一步：子运行无法回答人工批准，ask 级调用一律拒绝回送
-   （裁决点 5）。
-6. **现在做的成本最低**。本 change 与 cron 提案都停在提案阶段，没有实现、没有验收场景、没有历史
-   配置兼容面。公共层在这一刻回抽只改设计；晚一步就要连带迁移 cron 已落地的运行交接形状。
+2. **成熟形态的核心不是「能调一个子 agent」，而是「同一类子 agent 可以被定义、复用、版本化」**。
+   初稿把工具集、模型、闸值全部塞进每次调用的参数里：模型每次都要重写一遍策略、用户无法预先约束、
+   定义无法随 vault 走。参照系把策略收进定义文件后，机制只回答「有哪些子代理、怎么跑、怎么收敛」，
+   「谁用什么工具、在什么模型上跑、花多少」成为可编辑、可版本化、可评审的文本——这与本仓「机制进
+   代码、策略进文档」是同一条原则。
+3. **自动委派是定义文件的存在理由**。如果只能显式调用，`description` 就退化成注释，模型不知道
+   自己有哪些帮手；定义文件只剩「参数包」的作用。采纳清单注入 + `description` 匹配，才能让「新场景
+   = 新定义文件、代码零改动」成立。
+4. **可 resume 的部分结果把「闸」从惩罚变成可协作的边界**。只会失败的重试代价是重跑整段材料；可
+   续跑的部分结果允许「先给 20 轮、不够再加」，配合 token / 时间闸，成本控制从「一次押注」变成
+   「分段追加」。
+5. **公共层的回抽到期**。现有会话形态本就是「触发器 + 上下文装配 + 工具循环 + 留存」；用户输入、
+   cron、委托是三类触发源。cron 提案已声明不在自己之前预造空壳抽象、由 Subagents 兑现回抽；两个
+   change 都零代码，此刻改形状成本最低。
+6. **失控闸与默认收紧是开放委派的前提**。委派循环的三个失控面：模型自我递归委托、单次委派烧掉整份
+   配额、子运行卡死把主回合挂住。三重闸 + 白名单深度的语义先立，再把 `task` 暴露给模型。
 
 ## What Changes
 
-两个 capability：**新增** `harness-subagents`（委托运行）；**修订** `harness`（新增「运行公共层」一条
-requirement，并改准「工具循环」的工具清单）。逐条对应 `specs/` 下的 delta。
+两个 capability：**新增** `harness-subagents`（定义文件 + 委托运行）；**修订** `harness`（新增「运行
+公共层」一条 requirement，并改准「工具循环」的工具清单）。逐条对应 `specs/` 下的 delta。
 
 ### A. 运行公共层：`RunSpec` + `RunContext`（`harness` capability，ADDED）
 
-1. **一份运行契约**：`RunSpec` 描述一次运行的全部输入——触发来源（用户输入 / cron / 委托）、目标
-   vault、会话目标（交互会话 / 无人值守槽位 / 子运行）、投递 parts、模型覆盖、工具白名单、预算、
-   批准策略、用量归属、事件接收端。三类触发源都产出 `RunSpec`，MUST NOT 各自定义一套交接载荷。
+1. **一份运行契约**：`RunSpec` 描述一次运行的输入——触发来源（用户输入 / cron / 委托）、目标 vault、
+   会话目标（交互会话 / 无人值守槽位 / 子运行）、投递内容、模型覆盖、工具白名单、预算、批准策略、
+   用量归属、事件接收端。三类触发源都产出 `RunSpec`，MUST NOT 各自定义一套交接载荷。
 2. **一个循环**：`run_turn_for` 的依赖面收敛为 `RunContext`（会话状态、事件 sink、工具定义、权限判定、
-   批准等待、预算检查、留存写入）。交互会话、cron 运行槽位、子运行各提供一个 `RunContext` 实现，
-   循环本体只有一份。**差异显式化为契约里的枚举值（会话目标、批准策略），不是同一个函数里的
-   `if origin == ...` 分支。**
-3. **装配与留存沿用既有实现**：系统上下文（`harness/context.rs` 三层 AGENTS + Skill 索引）、会话
-   留存（`harness/jsonl.rs` 的 wire 形态）、权限管线（`harness/permissions.rs`）不重写，只被
-   `RunSpec` 参数化（工具白名单、模型覆盖、用量归属）。
-4. **交互路径行为逐字节不变**：回抽是参数化，不是语义改动；既有「恢复充分性」测试、session JSONL
-   形状与面板事件契约是回归判据（tasks §1）。
-5. **cron 接入同一契约**：cron 的运行槽位与 `cron:run` 交接载荷改为 `RunSpec` 的序列化形状；cron
-   提案 §14 的「MUST 回抽」承诺由本 change 兑现，cron 实现（尚未开工）按此形状落地，不再二次重构。
+   批准等待、预算检查、留存写入）。交互会话、cron 运行槽位、子运行各提供一个实现，循环本体只有一份；
+   差异显式化为契约枚举值，不是同一函数里的 `if origin == ...` 分支。
+3. **装配与留存沿用既有实现**：系统上下文（三层 AGENTS + Skill 索引）、会话 wire 留存、权限管线不
+   重写，只被 `RunSpec` 参数化。交互路径行为（事件形状、JSONL 形状、批准语义）MUST 逐字节不变。
+4. **cron 接入同一契约**：cron 的运行槽位与 `cron:run` 交接载荷改为 `RunSpec` 的序列化形状；cron
+   提案 §14 的回抽承诺由本 change 兑现。
 
-### B. `task` 工具：第 9 件工具，编排类（`harness-subagents` ADDED）
+### B. 子代理定义文件（`harness-subagents` ADDED）
 
-1. **入参**：`description`（一句话标签，进进度与诊断）、`prompt`（自包含任务说明）、可选 `model`、
-   可选 `tools`、可选 `max_rounds` / `max_tokens` / `timeout_secs`。与真源「任务描述、prompt、模型
-   档位、工具集、失控闸值、超时」一一对应。
-2. **结果信封**：成功 `{"ok": true, "status": "completed" | "partial", "summary": …, "usage": …,
-   "rounds": …, "denied_calls": …, "stopped_by": …}`；失败沿用既有信封 `{"ok": false, "code": …,
-   "message": …}`。
-   部分结果不是失败（`ok=true` + `status=partial` + `stopped_by`），父 agent 可据 `stopped_by` 决定
-   缩小范围重试或自己接手。
-3. **摘要上限**：回送父会话的摘要设字符上限，超出显式标 `truncated: true` 并保头尾；MUST NOT 静默
-   截断（沿用工具集既有纪律）。
-4. **派生深度恰好 1**：子运行的工具集里 MUST NOT 出现 `task`；声明 `task` 的调用被拒并回送原因。
-   深度是机制不变量，不提供配置项。
+1. **位置与作用域**：vault 级 `<vault>/.lumir/agents/**/*.md`（随 vault 走、可入版本控制；`.` 前缀
+   沿用真源「应用私有配置」的命名惯例）+ 用户级 `<config_dir>/agents/**/*.md`（跨 vault 复用）。
+   两者递归扫描；身份只看 frontmatter 的 `name`，子目录不参与身份。
+2. **格式**：YAML frontmatter + Markdown 正文。必填 `name` / `description`；可选 `tools` / `model` /
+   `max_turns` / `max_tokens` / `timeout_secs`。正文即子运行 system prompt 的**身份段**（替换固定
+   身份段；AGENTS.md 三层与 Skill 索引仍照常装配，另加固定的「委托运行约束段」）。
+3. **优先级与冲突**：vault 级同名覆盖用户级；同一层同名取字典序第一个并产 warning。定义非法（必填
+   缺失、`tools` 含未知工具或 `task`、类型不符）时丢弃该定义并产 warning，其余定义照常生效。
+4. **自动委派**：扫描结果里每个定义的 `name` + `description` 注入 `task` 工具描述，主 agent 据此
+   自动委派；描述合计超过 15k token（按 `字符数 ÷ 4` 粗估）时产一条 warning。
+5. **热加载**：每回合开头扫描一次并快照；磁盘改动在下次委派生效，无需重启。
 
-### C. 子运行引擎：隔离、收紧、收敛
+### C. `task` 工具：第 9 件工具，编排类（`harness-subagents` ADDED）
 
-1. **上下文隔离**：子运行有独立的 system 上下文与会话输入（同一份三层 AGENTS + Skill 索引装配，空
-   历史 + 任务 prompt），MUST NOT 继承父会话的对话历史；父会话也 MUST NOT 收到子运行的过程消息，
-   只收工具结果里的摘要。
-2. **工具集收紧**：`tools` 是白名单，默认 `["vault_read", "vault_search", "skill_load"]`（只读三件）；
-   写类与 `cli_run` 必须显式声明。未声明的工具不出现在子运行的工具定义里（模型看不见，不是调用后
-   拒绝）。清单外的工具名被拒并回送原因。
-3. **三重失控闸**：轮次、token（子运行累计 input+output）、wall-clock 时间。检查点为每次 LLM 往返
-   之前与每个工具调用之前；任一触顶即停止开新往返、收敛返回已产出的部分结果。已在执行的工具调用
-   不中途打断（`cli_run` 自带 60 秒上限即其最坏粒度），因此时间闸的实际上界 = 截止时刻 + 单次工具
-   最长耗时。
-4. **批准策略**：子运行 MUST NOT 挂在人工批准上。命中 ask 档的调用一律以「无人可批准」拒绝并回送
-   给子模型，计数进结果的 `denied_calls`；deny 规则、危险黑名单、vault 内写重定向三层照常生效
-   （不因无人值守而放松）。
-5. **串行执行**：一次助手消息里的多个 `task` 调用按既有「tool_calls 逐个执行」口径串行跑；机制不做
-   并行调度（裁决点 9）。
+1. **入参**：`agent`（定义名，必填）、`prompt`（自包含任务说明，必填）、`description`（一句话标签，
+   必填）、可选 `model`（调用级覆盖，沿用参照系优先级）、可选 `resume`（续跑已有 run）。
+   工具集与闸值**不在调用参数里**——它们是定义文件的字段（参照系形态）。
+2. **结果信封**：`{"ok": true, "status": "completed" | "partial", "agent": …, "run_id": …,
+   "resumable": …, "summary": …, "usage": …, "rounds": …, "denied_calls": …, "stopped_by": …}`；
+   失败沿用 `{"ok": false, "code": …, "message": …}`。部分结果不是失败。
+3. **摘要上限**：回送摘要设字符上限，超出显式标 `truncated: true` 并保头尾，MUST NOT 静默截断。
+4. **深度恰好 1 层**：子运行的工具定义恒不含 `task`；定义文件把 `task` 写进 `tools` 属定义非法
+   （装载期丢弃 + warning）。不维护运行时深度计数、不提供深度配置项。
 
-### D. 用量归属与留存
+### D. 子运行引擎：隔离、收紧、收敛、续跑
 
-1. **用量归主会话**：子运行每次往返的 usage 折叠进父会话的累计读数（input / cached / cache write /
-   样本数），父会话控制行读数因此不再系统性低估。折叠后 cache% 是混合读数（父 + 子、可能跨模型），
-   这是「归主会话」的既定代价，在读数含义上如实说明。
-2. **可重算**：父会话 JSONL 落一条 `subrun` sidecar 记录（run id、模型、结果、usage、审计文件指针）；
-   「从历史恢复以留存重算读数」的口径不变，重算输入新增这一类记录，live 与恢复读数 MUST 相等。
-3. **子运行审计流水**：`<config_dir>/harness/subruns/<vault 稳定 id>/<run_id>.jsonl`，与父会话同 wire
-   形态、append-only、MUST NOT 写入 vault；不进 `sessions/` 目录、不进会话列表、不可恢复（裁决点 6）。
+1. **上下文隔离**：独立 system（定义正文 + 委托约束段 + 三层 AGENTS + Skill 索引）、空历史 + 任务
+   prompt；MUST NOT 继承父会话历史；父会话只收工具结果里的摘要，MUST NOT 收子运行过程消息。
+2. **工具集**：来自定义的 `tools`（allowlist）；缺省只读三件；未声明的工具不出现在子运行的工具定义
+   里。是否放行仍走既有权限管线与用户选定的权限档（两道独立闸）。
+3. **三重失控闸**：轮次 / token（累计 input+output）/ wall-clock；定义字段给值、夹取到
+   `[harness.subagents]` 的上限。检查点为每次往返前、每个工具调用前；触顶停止开新往返并返回部分结果，
+   **不追加「请总结」调用**。
+4. **可续跑（resume）**：partial 结果带 `run_id` 与 `resumable=true`；`task(resume=run_id, prompt=…)`
+   在同一子会话上继续，预算由定义重新给一段。子会话在内存里按 run id 保留（每父会话最多 4 个，LRU
+   淘汰）；不进会话列表、不可跨重启恢复。API 中断但已有文本时同样返回 partial（`stopped_by=error`）。
+5. **批准策略**：子运行 MUST NOT 挂在人工批准上；ask 级调用一律以 `approval_unavailable` 拒绝并计数，
+   且 MUST NOT 复用父会话批准缓存。deny / 危险黑名单 / vault 写重定向照常生效。
+6. **串行执行**：一次助手消息里的多个 `task` 调用按既有「tool_calls 逐个执行」口径串行跑。
 
-### E. 配置与开关（`[harness.subagents]`）
+### E. 用量归属与留存
 
-`enabled`（默认 true，kill switch）、`default_max_rounds`（20）、`default_max_tokens`（200000）、
-`default_timeout_secs`（300）、`max_subruns_per_turn`（8）。逐项 schema 校验、非法项人话 warning +
-缺省回落（ADR 0002 第 5 条）；每个键在 design §12 指明消费者。**档位名映射表不做**：模型用显式 id
-（裁决点 7）。
+1. **用量归主会话**：每个运行段（首次或 resume）结束（任何终态）时把 usage 一次性折叠进父会话累计器
+   （input / cached / cache write / 样本数）。父会话 `ctx%` 不受折叠影响；折叠后 cache% 是混合读数。
+2. **可重算**：父会话 JSONL 每段落一条 `subrun` sidecar（run id、segment、agent、模型、终态、usage、
+   审计指针）；恢复重算纳入该类记录，live 与恢复读数 MUST 相等。
+3. **子运行审计流水**：`<config_dir>/harness/subruns/<vault 稳定 id>/<run_id>.jsonl`，同一 run 的多个
+   segment 追加同一文件；不进 `sessions/`、不进会话列表、不可恢复。
 
-### F. 与 cron 的接入关系
+### F. 配置与开关（`[harness.subagents]`）
 
-两个 change 无代码硬依赖；实现顺序建议 = 本 change 的公共层先落（因为它是 cron 声明的到期点），
-cron 实现接入 `RunSpec`。若 cron 先开工，其运行槽位按 `RunSpec` 形状落地、公共层由本 change 补齐，
-**不允许 cron 另起一套交接载荷**。该顺序由 tower 在实现排期上对齐，不构成本 change 的阻塞项。
+`enabled`（kill switch）、`max_turns`（20）、`max_tokens`（200000）、`timeout_secs`（300）——三者同时是
+定义缺省值与上限；`max_subruns_per_turn`（8，按父回合计数）。逐项 schema 校验、非法项人话 warning +
+夹取/缺省回落（ADR 0002 第 5 条）；每键消费者见 design §14。
+
+### G. 与 cron 的接入关系
+
+两个 change 无代码硬依赖；建议公共层随本 change 先落，cron 实现按 `RunSpec` 接入。若 cron 先开工，
+其交接载荷直接按 `RunSpec` 形状写，公共层由本 change 补齐；**不允许两套交接形状并存**。
 
 ## Non-goals
 
-- **不做并行子 agent**：沿用既有「工具调用逐个执行」口径，多个 `task` 调用串行。并行涉及并发模型
-  请求、事件交错与配额争用，属 v2，需真实使用数据后再设计。
-- **不做递归派生**：深度硬性 1 层，不提供配置项，不在子运行工具集里放 `task`。
-- **不做子运行的可恢复会话**：审计流水留档即可，子运行不出现在会话历史列表，不进 `sessions/`。
-- **不做人工批准透传**：子运行的 ask 级调用直接拒绝（裁决点 5 的推荐面）；把批准卡透传到主会话是
-  一个独立的 UX 设计（归属哪条 transcript、批准文案、等待语义），不在 v1。
-- **不做子运行过程流式上屏**：只保留 `task` 工具卡（运行中 → 完成/失败）与摘要；过程留审计文件。
-- **不做档位名到模型 id 的映射表**：调用方传显式模型 id；档位是调用方的策略词汇。
-- **不做任务模板 / 预设工具集 / 场景枚举**：新场景 = 新调用方传新的参数组合，机制零改动。
-- **不做跨会话成本账本与配额管理**：只有单次运行的三重闸与单回合的委派次数上限，不做全局账本。
-- **不做图片 / 附件入参**：v1 的 `prompt` 只有文本；附件投递链路已有，但子运行的输入形态另需设计
-  （图片会显著改变预算与隔离语义），留档。
-- **不做子 agent 间通信 / 消息总线**：父 agent 是唯一的协调者，v1 引入总线等于引入第二套调度。
-- **不做 `task` 的自动重试**：失败或触顶由父 agent 决定是否重试；机制不自作主张。
+- **不做并行 / 后台子代理**：v1 串行、前台；没有 background、并发上限、agent teams。
+- **不做递归派生**：深度固定 1 层；`task` 不可被授予子代理；无 `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`
+  对应配置项。
+- **不做子运行的可恢复会话**：审计流水留档；内存保留只为同会话内的 resume，重启即失效；不进会话列表。
+- **不做人工批准透传**：ask 级调用直接拒绝并计数（裁决点 5）。
+- **不做子运行过程流式上屏**：只保留 `task` 工具卡（agent + description + 终态）与摘要。
+- **不采纳 `permissionMode` / `disallowedTools` / `skills` 预载 / `background` / `isolation(worktree)` /
+  `omitClaudeMd` / `hooks` / `mcpServers` / `memory` / `effort`**：理由见参照系末节。
+- **不做内建子代理（Explore / Plan）**：用户可自建同名定义；机制不内置任何定义。
+- **不做定义文件的 UI 编辑器 / 列表面板**：v1 定义即文本文件，用户直接编辑；发现结果只进工具描述与
+  诊断事件。
+- **不做跨会话成本账本与配额管理**：只有单次运行的三重闸与单回合的委派次数上限。
+- **不做附件 / 图片入参**：v1 的 `prompt` 只有文本。
+- **不做 `task` 的自动重试**：失败或触顶由父 agent 决定重试或 resume。
+- **不做环境变量层的模型覆盖**：模型解析只认调用参数 > 定义 > `inherit`。
 
 ## 反向扳机与降级路径
 
 **反向扳机（与 cron 同口径：连续 4 周零使用即删除）**：从本 change 合并之日起连续 4 周，
-`subagent_finished` 事件（含 `completed` 与 `partial`）累计为 0 ⇒ 走新 change 删除本能力：`task`
-工具、子运行引擎、`[harness.subagents]` 配置节与审计流水。运行公共层**不随之下线**——它已被 cron
-消费，删除面按届时实际消费者决定（与 cron 反向扳机的处置口径一致）。
+`subagent_finished` 事件（含 completed 与 partial）累计为 0 ⇒ 走新 change 删除本能力：`task` 工具、
+子运行引擎、定义文件扫描、`[harness.subagents]` 配置节与审计流水。运行公共层**不随之下线**（已被
+cron 消费，按届时实际消费者去留）。
 
 **降级路径（不自动调参，由人按周检查后改配置或另立 change）**：
 
-1. **触顶率过高**（最近 10 次子运行中 ≥5 次 `stopped_by` 非空）⇒ 先查任务颗粒度（父 agent 拆得太
-   粗），再调高 `default_*` 预算——调配置即可生效，机制不自适应。
-2. **完成率长期偏低**（连续 4 周 `completed / started < 50%`）⇒ 降级为只读调研专用：走一个后续
-   change 把 `tools` 白名单限到只读三件；在 change 落地前，用目标 vault 的 AGENTS.md 写死「委派
-   只做调研」的约定（策略层降级，机制不动）。
-3. **写类委派零使用**（连续 4 周无任何 `subagent_finished` 的工具集含写类/`cli_run`）⇒ 走后续 change
-   删除写工具声明能力，只留只读三件——未使用即删，降低安全面。
-4. **紧急关停**：`[harness.subagents].enabled = false` 后 `task` 工具不再注册（模型看不见），无需
-   改代码、无需重启以外的动作（配置生效时机随装载，与既有配置一致）。
+1. **触顶率过高**（最近 10 段中 ≥5 段 `stopped_by` 非空）⇒ 先查任务颗粒度，再调高 `[harness.subagents]`
+   的上限（定义值受它夹取）。
+2. **完成率长期偏低**（连续 4 周 `completed / started < 50%`）⇒ 走后续 change 把 `tools` 白名单限到
+   只读三件；落地前先用 vault 的 AGENTS.md 约定「委派只做调研」。
+3. **写类委派零使用**（连续 4 周无任何 `subagent_finished` 的定义含写类 / `cli_run`）⇒ 走后续 change
+   删除写工具声明能力。
+4. **紧急关停**：`[harness.subagents].enabled = false` 后 `task` 不再注册（模型看不见），定义文件保留
+   不动。
 
 ## 观测：怎么知道用了 / 有效 / 出问题怎么发现
 
-诊断事件（本地 JSONL，`~/.config/lumir/logs/`，不联网、不外发）三个：
+诊断事件（本地 JSONL，`~/.config/lumir/logs/`，不联网、不外发）：
 
-- `subagent_started`：run id、父会话 id、`description`、模型、工具集、三项预算值。
-- `subagent_finished`：run id、`status`（completed / partial / failed / aborted）、`stopped_by`、
-  `rounds`、`input_tokens` / `cached_tokens` / `output_tokens`、`denied_calls`、`duration_ms`、
-  `summary_chars`、审计文件路径。
-- `subagent_rejected`：`reason`（disabled / depth / subrun_limit / model_not_configured /
-  tool_not_allowed / empty_prompt）。
+- `subagent_started`：run id、segment、父会话 id、`agent`、`description`、模型、工具集、三项闸值。
+- `subagent_finished`：run id、segment、`agent`、`status`（completed / partial / failed / aborted）、
+  `stopped_by`（rounds / tokens / time / error / null）、`rounds`、三项 token 读数、`denied_calls`、
+  `duration_ms`、`summary_chars`、审计文件路径。
+- `subagent_rejected`：`reason`（disabled / agent_not_found / run_not_resumable / agent_mismatch /
+  subrun_limit / model_not_configured / empty_prompt）。
+- `subagent_catalog_large`：描述合计超过阈值时一条（含估算 token 数）。
 
 **怎么知道用了**：
 
 ```bash
-# 子运行次数（completed 与 partial 都算使用；failed 不算）
 rg -c '"event":"subagent_finished".*"status":"(completed|partial)"' ~/.config/lumir/logs/
 ```
 
-**怎么知道有效**：三个读数，均从上两个事件里直接取，不需要指标系统。
+**怎么知道有效**：三个读数——① 隔离效果：`input_tokens`（子运行吃进的材料量）对比 `summary_chars`
+（还给主会话的量），量级相当说明这次委派没省任何东西；② 完成率 `completed / started`；③ 触顶分布
+（`stopped_by` 按值计数）：集中 token / 轮次 = 预算与颗粒度不匹配，集中时间 = 范围过大。
 
-1. **隔离效果**：`subagent_finished.input_tokens`（子运行吃进去的材料量）与 `summary_chars`（还给
-   主会话的量）的对比——子运行吃了 8 万 token、只回 1 千字，隔离成立；两者量级相当则这次委派没有
-   省下任何东西，该任务不该用子 agent。
-2. **完成率**：`completed / started`。低完成率说明任务描述或预算不匹配（先查颗粒度，再查预算）。
-3. **触顶分布**：`stopped_by` 按值计数。集中在 token / 轮次档 = 预算与任务颗粒度不匹配（先查颗粒度，
-   再调默认值）；集中在时间档 = 任务范围过大或某类工具调用偏慢。
-
-**出问题怎么发现**：
-
-- 子运行失败、触顶、被拒都**有结果可看**：父会话的 `task` 工具卡落到终态，工具结果带 `code` 或
-  `stopped_by`，不出现「调用后永远转圈」的形态（时间闸保证上界）。
-- 每一次子运行都有审计流水（`subruns/<vault id>/<run_id>.jsonl`），失败可从 `subagent_finished` 的
-  指针直接定位到原始往返记录。
-- 委派次数上限触发时父会话收到明确的工具结果（`subrun_limit`），不是静默跳过。
-- 配置非法项在装载期一条人话 warning，按缺省值或夹取后的合法值生效，不因配置错误让应用启动失败。
-- 真机验收场景覆盖：只读调研、显式写工具、三重闸触顶、深度拒绝、用量折叠、开关关停（tasks §7）。
+**出问题怎么发现**：子运行失败 / 触顶 / 被拒都有终态工具结果（不出现「永远转圈」）；每段有审计流水，
+`subagent_finished` 带路径；定义装载问题（非法定义、描述超阈值、未知字段）各产一条人话 warning；
+配置非法项夹取后照常启动；真机验收覆盖定义发现、自动委派、resume、三闸、深度与开关（tasks §8）。
 
 ## Impact
 
 - **影响的 specs**：
-  - `harness-subagents`：ADDED（新 capability）——`task` 工具、工具集声明与收紧、三重失控闸、批准
-    策略、子运行上下文隔离、用量归属、留存与诊断、模型选择、配置节。
-  - `harness`：ADDED「运行公共层」一条 requirement（`RunSpec` / `RunContext` / 三类触发源接入）；
-    MODIFIED「工具循环」（工具清单由 8 件改为「8 件 vault 工具 + 1 件编排工具 `task`」，并写明子
-    运行不持有 `task`）。
+  - `harness-subagents`：ADDED（新 capability）——定义文件、`task` 工具、工具集收紧、三重闸与部分
+    结果、resume、批准策略、上下文隔离、用量归属、留存与诊断、模型选择、配置节。
+  - `harness`：ADDED「运行公共层」；MODIFIED「工具循环」（清单改为 8 件 vault 操作工具 + 1 件编排
+    工具 `task`，并写明子运行不持有它）。
 - **影响的代码/系统**（概述，细节见 design.md）：
-  - `src-tauri/src/harness/run.rs`（新）：`RunSpec` / `RunOrigin` / `SessionTarget` / `RunBudget` /
-    `ApprovalPolicy` / `RunOutcome` / `RunContext` 与循环入口。
-  - `src-tauri/src/harness/turn.rs`：把 `run_turn_for` 的依赖面从 `Runtime + VaultScope` 收敛为
-    `RunContext`；工具定义由 `RunSpec.tool_policy` 决定，不再硬编码 `tools::definitions()`。
-  - `src-tauri/src/harness/subagents.rs`（新）：子运行宿主、预算检查、收敛逻辑、结果信封、审计写入。
-  - `src-tauri/src/harness/tools.rs`：新增第 9 件工具 `task` 的定义与执行入口；工具清单常量与文件头
-    「恰好 8 个」的表述按新分类改准；白名单过滤函数。
-  - `src-tauri/src/harness/session.rs`：用量折叠入口（把一次子运行的 usage 并入父会话累计器）与
-    `subrun` sidecar 记录；恢复重算纳入该类记录。
-  - `src-tauri/src/harness/jsonl.rs`：子运行审计流水目录（`subruns/<vault 稳定 id>/`），与会话目录
-    分离。
-  - `src-tauri/src/harness/llm.rs`：`client_at` 接受模型覆盖（子运行与 cron 共用）。
+  - `src-tauri/src/harness/agents.rs`（新）：定义扫描（两目录递归）、YAML frontmatter 解析、校验、
+    优先级、清单与 token 估算。
+  - `src-tauri/src/harness/run.rs`（新）：`RunSpec` / `RunContext` / `RunOutcome` 与循环入口。
+  - `src-tauri/src/harness/turn.rs`：循环依赖面收敛为 `RunContext`；工具定义按上下文生成（`task`
+    描述含 agent 清单）。
+  - `src-tauri/src/harness/subagents.rs`（新）：子运行宿主、三重闸、收敛与 resume 保留、结果信封。
+  - `src-tauri/src/harness/tools.rs`：新增 `task` 工具；工具清单常量与文件头按「8 + 1」改准。
+  - `src-tauri/src/harness/session.rs`：用量折叠与 `subrun` sidecar；恢复重算纳入。
+  - `src-tauri/src/harness/jsonl.rs`：`subruns/<vault 稳定 id>/` 审计目录。
+  - `src-tauri/src/harness/llm.rs`：`client_at` 模型覆盖；mock 父子游标。
   - `src-tauri/src/config.rs`：`[harness.subagents]` 节 + 校验 + ts-rs 导出。
-  - `src-tauri/src/logging.rs`：三个诊断事件进白名单。
-  - `src/bindings/**`：ts-rs 重导出。
-  - `docs/specs/config-reference.md`：`[harness.subagents]` 键表与生效时机。
-  - `scripts/acceptance/scenarios/`：新增真机验收场景（tasks §7）。
+  - `src-tauri/src/logging.rs`：四个诊断事件进白名单。
+  - `src-tauri/Cargo.toml`：YAML 解析依赖（`serde_yaml` 已 deprecated；候选 `yaml-rust2` 0.13 /
+    `saphyr` 0.2，均 2026 年在维护；只解析标量 + 字符串列表子集）。
+  - `src/bindings/**`、`docs/specs/config-reference.md`、`docs/specs/subagent-definitions.md`（新，
+    定义格式参考）、`scripts/acceptance/scenarios/**`。
 - **关联约束**：
-  - ADR 0007 Revisit 条件（工具清单扩张须 Alex 显式裁决后修订 ADR）：本 change 以 2026-10-18 裁决为
-    依据，实现前置 = ADR 0007 修订（新增「编排工具」分类与 9 件工具清单）。
-  - ADR 0007 工具集边界原则（读不建工具、写要防护）：`task` 不是 vault 操作工具，是编排工具——
-    ADR 修订须把这条分类写清，避免与「写且需防护才有 vault 工具」冲突。
-  - ADR 0002 第 5 条（配置即数据 + schema 校验）：`[harness.subagents]` 按既有解析模型落地。
-  - ADR 0002 第 6 条（性能合同）：子运行只在父轮次内按需发生，不落冷启动路径；工具定义过滤在请求
-    构造时完成，不新增编辑器热路径工作。
-  - ADR 0002 第 7 条（核心模块不耦合 tauri）：`run.rs` / `subagents.rs` 的预算与收敛逻辑纯 Rust，
-    可单测。
-  - ADR 0003 第 3 条（永不改写源文件格式）：子运行的写入仍走既有工具与权限管线，不新增写入通道。
-  - `harness` living spec 的「上下文用量显示与触顶处理」：折叠口径与恢复重算的关系见 design §8，
-    实现须保 live 与恢复读数相等。
-  - REVIEW.md「值或开关声明了却没有消费者」条：`[harness.subagents]` 每个键在 design §12 指明消费者。
-  - AGENTS.md「变更默认直接切断」：本 change 不引入兼容层（`task` 是新工具、配置是新键，无存量消费
-    者）；cron 交接载荷若在实现期已存在，按 RunSpec 一次迁净，不留双形状。
-  - AGENTS.md 信息卫生：本提案与全部制品只用 `<vault>` / `<config_dir>` 一类占位，无真实路径与内容。
+  - ADR 0007 Revisit 条件：subagent 转实际需求须 Alex 显式裁决后修订 ADR；实现前置 = ADR 0007 修订
+    （新增「编排工具」分类与 9 件工具清单）。
+  - ADR 0002 第 5 条（配置即数据 + schema 校验）：`[harness.subagents]` 按既有解析模型；定义文件是
+    vault 侧的配置，校验口径同源（非法项丢弃 + 人话 warning）。
+  - ADR 0002 第 6 条（性能合同）：定义扫描只在回合开始做一次目录读，不落冷启动与 keypress 路径。
+  - ADR 0002 第 7 条（核心模块不耦合 tauri）：扫描 / 校验 / 解析纯 Rust，可单测。
+  - ADR 0003 第 3 条（永不改写源文件格式）：子运行写入仍走既有工具与权限管线，不新增写入通道。
+  - REVIEW.md「值或开关声明了却没有消费者」：`[harness.subagents]` 每键在 design §14 指明消费者。
+  - AGENTS.md「变更默认直接切断」：无兼容层（`task` 是新工具、定义目录是新面）；若 cron 交接载荷在
+    实现期已存在，一次迁净，不留双形状。
+  - AGENTS.md 信息卫生：全部制品只用 `<vault>` / `<config_dir>` 占位，无真实路径与内容。
 
 ## 节点 1 需裁决的设计取舍（逐条可否决）
 
-1. **公共层按 `RunSpec` + `RunContext` 回抽**（推荐）。抽的是「一次运行的输入契约」与「循环的依赖
-   面」，两个宿主（交互会话 / 子运行）各给一个实现；cron 的运行槽位改为 `RunSpec` 的序列化形状。
-   备选：不抽，子运行直接复用 `run_turn_for` 并在函数内按 origin 分支——那样差异长进同一个函数
-   （同函数分叉 = 假共享），vision 要避免的「两套调度」变成「一个函数两套 if」，且 cron 与 subagents
-   的预算、用量、批准策略会各自演化。见 design §3 对「不抽」的逐条反驳。
-2. **新增第 9 件工具 `task`，并把工具清单重述为「8 件 vault 工具 + 1 件编排工具」**（推荐）。这是
-   ADR 0007 Revisit 条件命中的点：须 Alex 在实现前修订 ADR 0007（新增编排工具分类），本 change 只
-   改 harness living spec 与 `tools.rs` 的表述。备选：把 `task` 做成「非工具的内部能力」（如 `/task`
-   命令）——那就不是模型可自主调用的委派，与真源「`task` 工具」形态不符。
-3. **子运行默认工具集 = 只读三件**（推荐）。调研类默认只读是「已倾向」项，本提案把默认值写死为
-   `vault_read` / `vault_search` / `skill_load`。备选：默认继承父会话工具集——等于默认放开写入，
-   与「默认收紧」相反，明确不推荐。
-4. **写入 = 工具集声明 + 权限管线双重闸，任一不放行即不写**（推荐）。声明只决定「工具是否可见」，
-   是否放行仍由既有权限管线判定；子运行不进入批准闸（见裁决点 5）。默认 `vault_write` 档下
-   `vault_patch` / `vault_create` / `vault_move` 在管线里本来就自动放行（用户已选该档），因此声明后
-   子运行可写；`vault_delete` 与 `cli_run` 写命令在该档要走批准，子运行无人可批 → 被拒并计数。
-   备选：声明即视为批准（不推荐：等于把「是否可见」偷换成「是否批准」，违反不因无人值守放松安全闸）。
-5. **子运行不进入人工批准闸：ask 级调用一律拒绝回送**（推荐）。理由：v1 首场景只读；批准卡透传涉及
-   归属、文案、等待语义与父回合阻塞，是一份独立的 UX 设计；拒绝会被计数并回送，父 agent 可据此改为
-   自己做写入或缩小范围。备选：批准卡透传到主会话并阻塞子运行——能力更强，但需要新的 UI 契约，
+1. **公共层按 `RunSpec` + `RunContext` 回抽**（推荐）。抽「一次运行的输入契约」与「循环的依赖面」，
+   交互会话 / 无人值守 / 子运行各给一个实现；cron 的运行槽位改为 `RunSpec` 序列化形状。备选：不抽、
+   在 `run_turn_for` 内按 origin 分支——差异会长进同一个函数（同函数分叉 = 假共享），预算、用量与
+   批准策略各自演化。design §3 对「不抽」逐条反驳。
+2. **新增第 9 件工具 `task`，工具清单重述为「8 件 vault 操作工具 + 1 件编排工具」**（推荐）。这是
+   ADR 0007 Revisit 条件命中的点，实现前须修订 ADR。参照系把该工具的形状定为「按名字委派」
+   （对应 Claude Code 的 Agent 工具），本稿采纳。备选：做成 `/task` 命令——不是模型可自主调用的
+   委派，与真源「`task` 工具」形态不符。
+3. **子代理定义文件 v1 就进（vault 级 + 用户级）**（推荐）。理由：① 参照系的核心是定义，只有
+   `task(prompt, tools, model…)` 的内联参数面是本仓自定义物，正是「无需自定义」要消掉的部分；② 定义
+   文件与真源「策略进 vault 文档」同构，可版本化、可评审；③ 用户级只是同一扫描器的第二个根，边际
+   成本低，且「跨 vault 复用调研 agent」是首场景的自然需求。位置：vault `<vault>/.lumir/agents/`、
+   用户 `<config_dir>/agents/`（复用既有配置根，不新建 home dotdir）。备选一：v1 只做 vault 级、
+   用户级 v2——更小，但跨 vault 复用得靠复制文件；备选二：整体推迟到 v2，v1 只做内联参数 `task`
+   ——形态会被推翻，等于先写一版自定义物再改回成熟形态，不推荐。
+4. **自动委派 + 显式点名都在 v1**（推荐）。清单（名字 + 描述）注入 `task` 工具描述，主 agent 据此
+   自动委派；用户在对话里点名任何定义即可显式调用。理由：这是定义文件的价值所在（新场景 = 新定义，
+   代码零改动）；描述合计超 15k token 时产 warning（粗估）。备选：v1 仅显式点名——更保守，但
+   `description` 退化为注释、模型不知道自己能用什么，等于保留了一半自定义形态。
+5. **子运行默认工具集 = 只读三件**（推荐）。调研类默认只读是真源「已倾向」项。这是**对参照系的
+   刻意偏离**：Claude Code 省略 `tools` 等于继承全部工具，Lumir 省略等于只读三件。备选：跟随参照系
+   全量继承——等于默认放开写与 CLI，与真源裁决冲突，不采纳。
+6. **写入 = 工具集声明 + 权限管线双重闸**（推荐）。声明只决定可见性，放行仍由权限管线与用户选定档位
+   判定；子运行不进入批准闸，且不复用父会话批准缓存。默认 `vault_write` 档下 `vault_patch` /
+   `vault_create` / `vault_move` 自动放行，声明后子运行可写；`vault_delete` 与 `cli_run` 写命令该档
+   需批准 → 子运行内被拒并计数。备选：声明即视为批准（不推荐：把「可见」偷换成「批准」）。
+7. **子运行不进入人工批准闸：ask 级调用一律拒绝回送**（推荐）。批准卡透传涉及归属、文案、等待语义
+   与父回合阻塞，是独立 UX 设计；拒绝会计数并回送，父 agent 可接手。备选：透传批准卡——能力更强，
    建议另立 change。
-6. **子运行不留可恢复会话：只留审计流水 + 父会话 `subrun` sidecar，用量一次性折叠进父会话**（推荐）。
-   审计路径 `<config_dir>/harness/subruns/<vault 稳定 id>/<run_id>.jsonl`；不进会话列表、不进
-   `sessions/`。`subrun` sidecar 同时承担两件事：父会话恢复时重算读数（live 与恢复必须相等）、把
-   子运行的终态与审计指针留在主记录里。备选一：子会话进 `sessions/`（不推荐：历史列表被临时运行
-   淹没）；备选二：完全不落盘、只留摘要（不推荐：失败与污染事故无法复盘）；备选三：用量只记在
-   子运行审计里、不折叠父读数（不推荐：真源明确「用量归主会话」，两套读数会分叉）。
-7. **模型用显式 id，不做档位名映射**（推荐）。`model` 缺省继承当前会话模型；非法 id 直接以
-   `model_not_configured` 拒绝（父 agent 可改用合法 id 重试），不静默回落——回落会掩盖调用方的成本
-   判断错误。备选：`[harness.subagents].tiers` 映射表（不推荐：多一层配置，随 provider 切换失效；
-   档位是调用方策略，应由调用方填 id）。
-8. **预算默认值与「逐次只能收紧」**：`max_rounds = 20`、`max_tokens = 200000`、
-   `timeout_secs = 300`、`max_subruns_per_turn = 8`（推荐，全部可配）。逐次传入的预算 MUST NOT 超过
-   配置缺省（超过即夹取并说明）——**配置是用户的闸，调用参数不得推翻用户设定的上限**。这些默认值是
-   经验初值，没有实测依据；上线后按触顶分布调整（见「降级路径」）。备选一：不设默认、强制每次显式
-   传三项（工具 schema 负担大，模型容易漏传）；备选二：逐次参数可任意放宽（不做：那等于把成本控制权
-   交给模型）。
-9. **v1 串行执行子运行**（推荐）。沿用既有「tool_calls 逐个执行」口径；并行留待真实使用数据。
-   备选：父回合内并行跑多个 `task` 调用——需要并发模型请求、事件交错、配额争用与部分失败聚合，
-   v1 做不扎实。
-10. **子运行过程不上屏**（推荐）。父会话只看到 `task` 工具卡的进行中/完成状态与摘要；子运行的
-    text / reasoning / tool_call 事件不转发到面板，只进审计流水。备选：折叠面板展示子运行过程——
-    需要新的面板组件与事件契约，v1 不做。
+8. **子运行不留可恢复会话：审计流水 + 父会话 `subrun` sidecar + 内存保留（供 resume）**（推荐）。
+   审计 `<config_dir>/harness/subruns/<vault id>/<run_id>.jsonl`；父会话 sidecar 承担重算与指针；
+   内存保留每父会话最多 4 个 run（LRU），重启即失效。备选一：子会话进 `sessions/`（历史列表被淹没）；
+   备选二：完全不落盘（失败无法复盘）；备选三：不保留内存、resume 只限同一回合（能力弱于参照系）。
+9. **模型解析序：调用参数 > 定义 `model` > `inherit`**（推荐，照参照系）。定义里的未知模型 id 按配置
+   约定 warning + 回落 `inherit`（定义不丢）；调用参数里的未知 id 直接 `model_not_configured`
+   （调用方是模型，静默回落会训练出错误习惯）。不做环境变量层。备选：只允许 `inherit`——放弃
+   「便宜档跑吞吐」的真源策略。
+10. **闸值在定义文件里、夹取到配置上限**（推荐）。`max_turns` / `max_tokens` / `timeout_secs` 是定义
+    字段，`[harness.subagents]` 给缺省兼上限；调用参数不开放闸值覆盖（照参照系：`maxTurns` 是定义
+    字段）。备选：保留逐次入参——与参照系不符，且模型每次都要重述策略。
+11. **触顶语义 = partial + 可 resume**（推荐，照参照系）。三闸任一触顶都产 `status=partial` +
+    `resumable=true` + `run_id`；resume 以同一子会话继续、预算重新给一段；API 中断但已有文本同样
+    partial（`stopped_by=error`）。备选：触顶即终态、重试从头开始——材料要重读一遍，成本更高。
+12. **深度限 1 层的实现口径 = 不授予 `task` 工具（白名单即机制）**（推荐，照参照系的机制、不照它的
+    默认值）。不维护运行时深度计数、不提供配置项；定义里写 `task` 属定义非法（装载期丢弃 + warning）。
+    结果与真源一致（仍恰好 1 层），只是不再用计数表达。备选：保留深度计数 + 调用期 `depth_exceeded`
+    ——多一处状态，且与「工具白名单即机制」重复表达同一约束。
+13. **v1 串行执行、过程不上屏**（推荐）。沿用「tool_calls 逐个执行」；父会话只看到 `task` 工具卡
+    （agent + description + 终态）与摘要。备选：后台 / 并行 + 折叠面板——需要并发模型请求、事件交错
+    与新的面板契约，留待真实数据。
 
-以上 10 条均为设计取舍，Alex 有拒绝面；本 proposal 不自带未裁决的阻塞项。节点 1 通过前不进入实现。
+以上 13 条均为设计取舍，Alex 有拒绝面；本 proposal 不自带未裁决的阻塞项。节点 1 通过前不进入实现。
