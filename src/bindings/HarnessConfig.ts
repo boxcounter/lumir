@@ -5,6 +5,7 @@ import type { HarnessProvider } from "./HarnessProvider";
 import type { HarnessProviders } from "./HarnessProviders";
 import type { PermissionMode } from "./PermissionMode";
 import type { SessionNamingConfig } from "./SessionNamingConfig";
+import type { SubagentsConfig } from "./SubagentsConfig";
 
 /**
  * `[harness]` 表（change add-harness-probe §11）：对话运行时的配置面。
@@ -51,4 +52,8 @@ session_naming: SessionNamingConfig,
  * 图片语义命名（change add-semantic-image-naming，2026-10-18 配置面重塑）：开关 +
  * provider / model 选择。与会话自动命名（`session_naming`）同一资源域、同一解析口径。
  */
-attachment_naming: AttachmentNamingConfig, };
+attachment_naming: AttachmentNamingConfig, 
+/**
+ * 子代理运行（change add-harness-subagents design §14）：开关 + 预算上限 + 次数 / 并发闸。
+ */
+subagents: SubagentsConfig, };

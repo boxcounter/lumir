@@ -455,6 +455,24 @@ pub trait LlmClient: Send {
         0
     }
 
+    /// mock：本会话里由**外部消费者**（子运行）消费掉的脚本条数（design §18）。父客户端的
+    /// 会话游标回写 = `mock_consumed() + external_consumed()`；真 provider 恒 0。
+    fn external_consumed(&self) -> usize {
+        0
+    }
+
+    /// mock：把脚本游标前移 `n` 条（父客户端跳过子运行预分配的连续区间，design §18 的
+    /// 「并行时按 run 预分配区段」）。真 provider no-op —— 它没有可跳的脚本。
+    fn skip(&mut self, _n: usize) {}
+
+    /// 本 client **实际发往 provider** 的模型 id（调用级覆盖生效后的值）：发送点留存
+    /// `llm_request.model` 用它，MUST NOT 另按 config 重算一份（REVIEW.md「同一语义两处
+    /// 真源」条：覆盖参数与记录值不能各说各的）。mock 没有模型维度，缺省 None ⇒ 记录侧
+    /// 沿用 [`active_model`] 的「mock 借壳」口径。
+    fn model(&self) -> Option<&str> {
+        None
+    }
+
     /// 本轮翻译期诊断（[`WireDiagnostic`]）：翻译层丢弃了什么东西（chat 方言的悬空调用等）。
     /// 调用侧在本轮 `complete` 之后取走并落 sidecar。缺省空表 = 该实现没有翻译层（Responses
     /// 直接发 canonical 项）或本轮无诊断。
@@ -494,17 +512,23 @@ fn http_client(timeout: std::time::Duration) -> Result<reqwest::blocking::Client
 /// 会话侧 input 项恒为 `lumir-attachment://` 引用，发送前在 client 内就地展开为
 /// data URL（design §4.3：真 client 与 mock 同一条展开函数）。
 pub fn client(config: &HarnessConfig, vault_id: &str) -> Result<Box<dyn LlmClient>, CommandError> {
-    client_at(config, vault_id, 0)
+    client_at(config, vault_id, 0, None)
 }
 
 /// [`client`] 的会话游标形态（M456）：`mock_start` 是**会话级 mock 游标**的起点，mock 路径
 /// 据此接着同一会话的上一轮往下弹（[`MockClient::with_start`]），真 provider 忽略它。
 /// 生产装配点只有 [`super::turn::run_turn`]；其余调用方（含真 provider 冒烟测试）走 `client`
 /// ——它们没有会话游标，语义即「从脚本头开始」。
+///
+/// `model_override`（change add-harness-subagents design §11）：调用级模型覆盖，空串 / `None`
+/// 等价于不覆盖。覆盖值必须是该 provider `models` 清单里已声明的 id——**声明校验在调用侧**
+/// （子运行 / cron），本函数只负责装配；未声明的 id 会照旧发出去并被 provider 拒绝，这是
+/// 「调用非法拒绝」与「定义非法回落 inherit」两条上层语义的分界。
 pub fn client_at(
     config: &HarnessConfig,
     vault_id: &str,
     mock_start: usize,
+    model_override: Option<&str>,
 ) -> Result<Box<dyn LlmClient>, CommandError> {
     match config.provider {
         HarnessProvider::Mock => {
@@ -519,7 +543,7 @@ pub fn client_at(
             })
         }
         HarnessProvider::Kimi | HarnessProvider::Deepseek => {
-            let (api_key, model, base_url) = match config.provider {
+            let (api_key, configured_model, base_url) = match config.provider {
                 HarnessProvider::Kimi => (
                     &config.providers.kimi.api_key,
                     &config.providers.kimi.model,
@@ -531,6 +555,12 @@ pub fn client_at(
                     config.providers.deepseek.base_url.as_deref(),
                 ),
             };
+            // 调用级覆盖只接**非空**值：空串是「未覆盖」的等价输入（上层把未配置归一为
+            // None，这里再挡一次手写空串，免得把空 model 当成显式选择）。
+            let model = model_override
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+                .unwrap_or(configured_model.as_str());
             if api_key.trim().is_empty() {
                 return Err(CommandError::new(
                     "harness_api_key_missing",
@@ -777,6 +807,11 @@ struct ResponsesClient {
 }
 
 impl LlmClient for ResponsesClient {
+    /// 实际发往 provider 的模型 id（含调用级覆盖）：发送点留存 `llm_request.model` 的唯一读数。
+    fn model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
+
     /// 与 `wire_body` 写 `include:["reasoning.encrypted_content"]` 同一份条件布尔。
     fn requests_encrypted_reasoning(&self) -> bool {
         self.effort_supported
@@ -1253,6 +1288,11 @@ struct ChatCompletionsClient {
 }
 
 impl LlmClient for ChatCompletionsClient {
+    /// 实际发往 provider 的模型 id（含调用级覆盖）：与 [`ResponsesClient`] 同一口径。
+    fn model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
+
     fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput {
         match self.complete_inner(request, sink) {
             Ok(output) => output,
@@ -1927,6 +1967,9 @@ pub struct MockClient {
     script_len: usize,
     /// 本实例已弹出的条数（会话游标按 `start + consumed` 推进，见 [`super::turn`] 的 `run_turn`）。
     consumed: usize,
+    /// 由外部消费者（子运行）以 [`LlmClient::skip`] 跳过、未由本实例弹出的条数（design §18
+    /// 的按 run 预分配区段）。父会话游标回写 = `consumed + external`，子运行吃掉多少、父就前进多少。
+    external: usize,
     /// 可读名字（JSONL 记录用）：fixture 路径。
     source: String,
     /// 每次 `complete` 收到的思考程度档位（按调用序，M362）——验收据此断言「切档位后下一轮
@@ -1977,6 +2020,7 @@ impl MockClient {
             script_len: file.responses.len(),
             script: file.responses.into(),
             consumed: 0,
+            external: 0,
             source: source.to_string(),
             received_efforts: Vec::new(),
             vault_id: String::new(),
@@ -2049,6 +2093,7 @@ impl MockClient {
             script_len: entries.len(),
             script: entries.into(),
             consumed: 0,
+            external: 0,
             source: source.to_string(),
             received_efforts: Vec::new(),
             vault_id: String::new(),
@@ -2112,6 +2157,22 @@ impl LlmClient for MockClient {
     /// 本实例累计弹出的条数（会话游标推进用）。
     fn mock_consumed(&self) -> usize {
         self.consumed
+    }
+
+    /// 子运行经 [`LlmClient::skip`] 吃掉、本实例未亲手弹出的条数（父游标回写用）。
+    fn external_consumed(&self) -> usize {
+        self.external
+    }
+
+    /// 前移脚本 `n` 条且不记进 `consumed`（那部分是子运行的区间，父自己没消费）。弹尽即停，
+    /// 不 wrap、不回头——越界由子运行的 `fixture_exhausted` 负责暴露，父侧静默跳过只会更难查。
+    fn skip(&mut self, n: usize) {
+        for _ in 0..n {
+            if self.script.pop_front().is_none() {
+                break;
+            }
+            self.external += 1;
+        }
     }
 
     fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput {
@@ -2321,6 +2382,15 @@ mod tests {
             window: 262_144,
         }];
         assert!(client(&config, "vault-test-1").is_ok());
+
+        // 调用级模型覆盖（change add-harness-subagents design §11）：覆盖值进 client、也进
+        // `model()`（发送点留存的唯一读数）；空串 / None 等价于不覆盖。
+        let overridden = client_at(&config, "vault-test-1", 0, Some("k3-256k")).unwrap();
+        assert_eq!(overridden.model(), Some("k3-256k"));
+        let blank = client_at(&config, "vault-test-1", 0, Some("   ")).unwrap();
+        assert_eq!(blank.model(), Some("k3-256k"), "空覆盖必须回落配置模型");
+        let missing = client_at(&config, "vault-test-1", 0, None).unwrap();
+        assert_eq!(missing.model(), Some("k3-256k"));
     }
 
     /// 单测用的流式 sink（M369）：记录收到的分片，并可按「已收到多少正文分片」翻真
@@ -2440,6 +2510,45 @@ mod tests {
                 .code,
             "fixture_exhausted"
         );
+    }
+
+    /// design §18：父客户端跳过子运行预分配的区间——`skip(n)` 前移脚本但**不**记成自己的
+    /// `consumed`，父会话游标按 `consumed + external_consumed` 推进；真 provider 无此概念。
+    /// 区分度：若 `skip` 记进 `consumed`，第一条断言（`mock_consumed == 0`）FAIL；若 `skip`
+    /// 没有前移脚本，父紧接着弹出的会是 responses[0]（「父第一条」）而不是 responses[1]。
+    #[test]
+    fn mock_skip_advances_script_without_counting_as_parent_consumption() {
+        let script = r#"{"responses": [
+            {"text": "父第一条"}, {"text": "子区间 1"}, {"text": "子区间 2"}, {"text": "父续写"}
+        ]}"#;
+        let mut parent = MockClient::from_str(script, "skip").unwrap();
+        // 父先弹自己的第一条。
+        assert_eq!(
+            parent.complete(&request(), &TestStream::default()).text,
+            "父第一条"
+        );
+        // 子运行吃掉中间两条（父跳过其区间）：不记成父自己的 consumed。
+        parent.skip(2);
+        assert_eq!(parent.external_consumed(), 2);
+        assert_eq!(parent.mock_consumed(), 1, "跳过的条数不是父自己消费的");
+        // 父续写从子区间之后开始弹：证明确实前移了脚本。
+        assert_eq!(
+            parent.complete(&request(), &TestStream::default()).text,
+            "父续写"
+        );
+        assert_eq!(parent.mock_consumed(), 2);
+        let next = wrap_cursor(
+            0,
+            parent.mock_consumed() + parent.external_consumed(),
+            parent.mock_script_len().unwrap(),
+        );
+        assert_eq!(next, 0, "父会话游标 = 自己弹出 + 跳过，按脚本长度取模");
+
+        // 弹尽即停：skip 不 wrap、不回头，也不 panic。
+        let mut short =
+            MockClient::from_str(r#"{"responses": [{"text": "唯一"}]}"#, "short").unwrap();
+        short.skip(5);
+        assert_eq!(short.external_consumed(), 1);
     }
 
     // ---- M443：usage 的 cache_write_tokens 解析（双路兜底 + 缺键 0） ----
