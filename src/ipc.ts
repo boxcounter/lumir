@@ -413,8 +413,8 @@ export function onMenuCommand(handler: (command: string) => void): Promise<() =>
 // Harness 对话面板（M303，change add-harness-probe）
 //
 // 命令与事件名是 tower 2026-10-02 钉死的契约（M302 运行时与 M303 面板共用，MUST NOT 改名）。
-// context_json / state 的 JSON 形状见各函数注释；事件 payload 的九类 type 见 HarnessEvent
-// （reasoning_chunk 为 M362 新增的第九类——思考文本分片）。
+// context_json / state 的 JSON 形状见各函数注释；事件 payload 的 type 集合见 HarnessEvent
+// （成员只在那里列一次——历史的「N 类」计数已随新增事件类型漂过，不再复述）。
 // 运行时（M302）与面板并行开发：解析一律宽容——缺字段按空态处理、不认识的字段忽略，
 // 形状是「我消费的键」而不是「对方发的全部键」，超集演进零改动。
 // ---------------------------------------------------------------------------
@@ -426,11 +426,11 @@ interface HarnessEventEnvelope {
   vault?: string;
 }
 
-/** harness:event 的事件载荷（十类，type 字段判别；每类都带信封字段 `vault`）。
- *  aborted 为 M348 新增的第八类（本轮被用户停止）；reasoning_chunk 为 M362 新增的
- *  第九类（思考文本分片，index 0 起、同块多个分片共用同一 index，在该轮 text_chunk
- *  之前发出）；title 为 change add-session-auto-naming 新增的第十类（会话标题即时更新）；
- *  既有九类的形状一律未动——**usage 除外**（M443 起换键，见下条注）。 */
+/** harness:event 的事件载荷（`type` 判别；每类都带信封字段 `vault`）。
+ *  aborted 为 M348 新增（本轮被用户停止）；reasoning_chunk 为 M362 新增（思考文本分片，
+ *  index 0 起、同块多个分片共用同一 index，在该轮 text_chunk 之前发出）；title 为
+ *  change add-session-auto-naming 新增（会话标题即时更新，M595 补上 IPC 白名单分支）；
+ *  较早成员的形状一律未动——**usage 除外**（M443 起换键，见下条注）。 */
 export type HarnessEvent = HarnessEventEnvelope &
   (
     | { type: "text_chunk"; text: string }
@@ -673,26 +673,23 @@ export function harnessDeleteSession(session_id: string): Promise<void> {
   return invoke<void>("harness_delete_session", { session_id });
 }
 
-/** 解析 harness:event 的载荷：宽容入口——载荷是 string 时先 JSON.parse；形状不认识的
- *  事件返回 null（调用方丢弃），绝不抛错打断后续事件。 */
-export function parseHarnessEvent(payload: unknown): HarnessEvent | null {
-  let value: unknown = payload;
-  if (typeof value === "string") {
-    try {
-      value = JSON.parse(value);
-    } catch {
-      return null;
-    }
-  }
-  if (typeof value !== "object" || value === null) return null;
-  const type = (value as { type?: unknown }).type;
-  switch (type) {
+/** harness:event 的 type 白名单（**单一真源**：`parseHarnessEvent` 不再各列一份）。
+ *
+ *  `const known: HarnessEvent["type"]` + default 里的 `uncoveredEventType(known)` 是**类型层的
+ *  穷尽性闸门**：`HarnessEvent` 联合每新增一个 type 而这里漏补 case，`known` 在 default 里就
+ *  不是 `never`，tsc 直接报错——「联合已声明、白名单漏分支」不再是一次静默丢弃（M576 引入
+ *  title 事件漏接、M590 扩白名单仍未补，同族第二次；REVIEW.md「同一语义两处真源」条）。
+ *  新增事件类型 = 联合加一行 + 这里加一行，两处由编译器对账，不靠人读。 */
+function isHarnessEventType(type: string): boolean {
+  const known = type as HarnessEvent["type"];
+  switch (known) {
     case "text_chunk":
     case "reasoning_chunk":
     case "tool_call":
     case "approval_request":
     case "usage":
     case "compact":
+    case "title":
     case "subagent_started":
     case "subagent_progress":
     case "subagent_step":
@@ -705,10 +702,33 @@ export function parseHarnessEvent(payload: unknown): HarnessEvent | null {
     case "done":
     case "error":
     case "aborted":
-      return value as HarnessEvent;
+      return true;
     default:
-      return null;
+      return uncoveredEventType(known);
   }
+}
+
+/** 类型层穷尽性断言：形参是 `never`，所以联合里还有没被 case 覆盖的成员时调用处不成立
+ *  （tsc 报错）；运行期恒返回 false——运行时来的未知 type 照旧按「不认识」丢弃。 */
+function uncoveredEventType(_uncovered: never): false {
+  return false;
+}
+
+/** 解析 harness:event 的载荷：宽容入口——载荷是 string 时先 JSON.parse；type 不在白名单里
+ *  （或形状不认识）返回 null（调用方丢弃），绝不抛错打断后续事件。 */
+export function parseHarnessEvent(payload: unknown): HarnessEvent | null {
+  let value: unknown = payload;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value !== "object" || value === null) return null;
+  const type = (value as { type?: unknown }).type;
+  if (typeof type !== "string" || !isHarnessEventType(type)) return null;
+  return value as HarnessEvent;
 }
 
 /** 订阅 harness 事件流；返回退订函数。 */
