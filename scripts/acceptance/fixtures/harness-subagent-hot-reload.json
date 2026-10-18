@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "第一轮派 research。",
+      "tool_calls": [
+        {
+          "id": "call_h1",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"第一轮任务\", \"description\": \"第一轮委派\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGH-ONE-CHILD 第一段子结论。"
+    },
+    {
+      "text": "SGH-ONE-PARENT 第一轮父总结。"
+    },
+    {
+      "text": "第二轮再派 research。",
+      "tool_calls": [
+        {
+          "id": "call_h2",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"第二轮任务\", \"description\": \"第二轮委派\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGH-TWO-CHILD 第二段子结论。"
+    },
+    {
+      "text": "SGH-TWO-PARENT 第二轮父总结。"
+    }
+  ],
+  "subrun_span": 1
+}

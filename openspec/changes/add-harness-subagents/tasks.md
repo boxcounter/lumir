@@ -225,12 +225,13 @@
   空闲时合并窗口 `AUTO_WAKE_COALESCE_MS = 2000`（首条通知起算、不顺延）后起一个回合；正忙时排队、
   回合结束后合并为一个回合；同一时刻至多一个自动回合在飞、至多一个待起批次；通知以带 `auto_notice`
   标记的 user 消息落进父会话历史（内容真源 = 随后第一条 `llm_request.messages`，不另写完成内容记录）。
-  通知上屏的同一时刻写投递标记 sidecar（`kind=notice_delivered`：`run_ids` / `wake_batch` /
-  `shown_at`），供「已上屏、未消费」窗口的恢复。单测：空闲唤醒、两 run 忙时合并为 1 个回合、
+  通知**收敛入队时**写投递标记 sidecar（`kind=notice_delivered`：`run_ids` / `wake_batch` /
+  `shown_at`；写入早于上屏——合并窗口 / 排队期间退出同样覆盖），供「已接纳投递、未被消费」窗口的
+  恢复。单测：空闲唤醒、两 run 忙时合并为 1 个回合、
   在飞时排队、用户回合撤销待起唤醒并把通知并入用户回合输入、上屏后退出→恢复按标记重建且不补唤醒、
   通知已进过 `llm_request` 时标记被判陈旧不重复上屏。
   （调度状态与投递在 `SubagentHub` / `wake_worker`；`AUTO_WAKE_*` 常量与 provider 闸在
-  `scheduler.rs`。标记写于**收敛时**（「已上屏、未消费」的崩溃窗口要求标记先于上屏存在——
+  `scheduler.rs`。标记写于**收敛入队时**（「已接纳投递、未被消费」的崩溃窗口要求标记先于上屏存在——
   §8.23 的空闲窗口内终止变体），上屏在合并窗口到期时。恢复重建函数
   `restored_notice_texts` / `notice_batch_consumed` 已单测；重建已接进
   `Runtime::resume_session`（通知灌回 input、面板加 `notice` 行、投递标记复制进新文件，
@@ -287,8 +288,8 @@
   （代码级判据：三条链路只读 `vault_sessions_dir`，与 `vault_subruns_dir` 的根目录互不嵌套且有
   单测钉住。**真机复跑 106 / 108 / 124 场景归 M590 真机批**——本棒不改这三条链路的代码，唯一
   新增的读取面是恢复时的 `subrun` 种子。）
-- [x] 5.6 后台结果投递与自动唤醒：收敛后写带 `auto_notice` 标记的通知消息（不另写完成内容记录；上屏
-  同时写投递标记）+ 通知上屏 + `subagent_notified`（`wake` / `wake_batch` / `chain_index`）；父会话
+- [x] 5.6 后台结果投递与自动唤醒：收敛后写带 `auto_notice` 标记的通知消息（不另写完成内容记录；收敛
+  入队时写投递标记，早于上屏）+ 通知上屏 + `subagent_notified`（`wake` / `wake_batch` / `chain_index`）；父会话
   空闲时按 §4.13 起自动回合，正忙时排队合并（单测：不中途改写父会话上下文；两个 run 相继收敛只起
   一个回合；链触顶不起回合；退出恢复按标记重建且不补唤醒）。
   （M588 已全部落地（见 §4.13 的实现口径与单测清单）；M589 只补诊断事件的生产者：七类
@@ -354,87 +355,156 @@
   两处都显式产出、都由同一出口落诊断。
   隐私边界：白名单外的 `prompt` / `messages` / `vault` 物理上进不来，用例
   `subagent_events_round_trip_from_panel_payloads` 反向钉住 `vault` 缺席。）
-- [ ] 7.3 观测读数自验：跑一次 completed、一次 failed、一次 quota 收敛的子运行，给出使用计数与触顶
+- [x] 7.3 观测读数自验：跑一次 completed、一次 failed、一次 quota 收敛的子运行，给出使用计数与触顶
   分布（含 quota 单列）的 `rg` 命令实际读数与执行时刻。
+  （M590 实测（执行时刻 2026-10-18T20:37:09Z，日志副本 `.local/acceptance/2026-10-18-m590/observability/`（主仓；证据副本由 tower 在合并前从 worktree 复制，worktree 清理后仍可复核））：
+  `rg -c '"event":"subagent_finished".*"status":"(completed|partial)"'` → 180=1（completed）、197=1
+  （partial + stopped_by=error）、188=4（partial；stopped_by 分布 tokens=1 / rounds=1 / time=1 /
+  quota=1，quota 单列）；自动唤醒代价面：`"wake":"auto_turn"` 在读数组内共 15 条、
+  `"wake":"blocked_chain"` 6 条（场景 203 的链式五回合）——读数同时暴露了 notified 重复产出的
+  缺陷，已报 finding `20261019-worker-m590-bug-subagent-notified-run.md`，本棒不改引擎。）
 
 ## 8. 真机验收场景（`scripts/acceptance/scenarios/`）
 
-- [ ] 8.1 「定义发现与自动委派」：vault 放两个定义，mock 父响应按 description 选其中一个；断言
+- [x] 8.1 「定义发现与自动委派」：vault 放两个定义，mock 父响应按 description 选其中一个；断言
   `subagent_started.agent`、工具描述含清单、父会话收到摘要、transcript 无子运行过程消息。
-- [ ] 8.2 「默认只读」与「显式写工具」：未写 `tools` 断言恰为只读三件；声明 `vault_patch` +
+  （M590：场景 180-subagent-delegate-discovery（mock：父 task → 子 → 父续写；诊断 / subrun sidecar / 审计三处判据）。清单注入的可观测后果 = 按名字委派成功——工具描述正文不进留存（`llm_request` 记录不含 tools），场景正文已登记。）
+- [x] 8.2 「默认只读」与「显式写工具」：未写 `tools` 断言恰为只读三件；声明 `vault_patch` +
   `vault_write` 档断言写入走既有工具语义。
-- [ ] 8.3 「批准透传」：声明 `vault_delete` + 默认档，断言批准卡出现并带 `source.agent`；批准 ⇒ 文件
+  （M590：场景 181-subagent-default-tools / 182-subagent-explicit-write-tool（`tools` 串逐字断言 + 文件真落盘）。）
+- [x] 8.3 「批准透传」：声明 `vault_delete` + 默认档，断言批准卡出现并带 `source.agent`；批准 ⇒ 文件
   删除；拒绝 ⇒ `approval_denied`、`denied_calls=1`、文件未删、子运行继续并完成。
-- [ ] 8.4 「定义校验与优先级」：坏定义组（缺 name / 未知工具 / `tools:[task]` / 未知字段 / 越界数值 /
+  （M590：场景 183-subagent-approval-approve / 184-subagent-approval-reject（`read_only` 档；行内卡点名 agent，采纳 / 拒绝两条路径）。）
+- [x] 8.4 「定义校验与优先级」：坏定义组（缺 name / 未知工具 / `tools:[task]` / 未知字段 / 越界数值 /
   同名 / `background` 类型错）各产 warning 且好定义照常；vault 覆盖用户级、同层字典序 + warning。
-- [ ] 8.5 「热加载」：回合间改定义的模型与工具，下一回合委派断言新字段生效，无需重启。
-- [ ] 8.6 「描述超阈值」：生成超阈值定义集合，断言 `subagent_catalog_large` + warning，清单未截断。
-- [ ] 8.7 「三重闸触顶 + 配额」：分别以 `max_tokens`、`max_turns`、`timeout_secs` 极小驱动，断言
+  （M590：场景 185-subagent-definition-validation（用户级定义用新增 `envWrite` 动作落盘）。）
+- [x] 8.5 「热加载」：回合间改定义的模型与工具，下一回合委派断言新字段生效，无需重启。
+  （M590：场景 186-subagent-hot-reload（两轮 `subagent_started` 的 model / tools 都要换值）。）
+- [x] 8.6 「描述超阈值」：生成超阈值定义集合，断言 `subagent_catalog_large` + warning，清单未截断。
+  （M590：场景 187-subagent-catalog-large（5 个长描述定义；事件 + warning + 清单计数）。）
+- [x] 8.7 「三重闸触顶 + 配额」：分别以 `max_tokens`、`max_turns`、`timeout_secs` 极小驱动，断言
   `partial` + 正确 `stopped_by`、无追加总结调用；mock 返回配额错误断言 `stopped_by=quota` 且无重试。
-- [ ] 8.8 「resume 续跑」：触顶后 `task(resume=run_id)`，断言同 run、`segment=2`、审计同文件追加、
+  （M590：场景 188-subagent-gates-and-quota（tokens / rounds / time / quota 四段；每段 rounds=1）。）
+- [x] 8.8 「resume 续跑」：触顶后 `task(resume=run_id)`，断言同 run、`segment=2`、审计同文件追加、
   用量继续归桶；resume 后可完成；运行中的后台 run resume ⇒ `run_busy`。
-- [ ] 8.9 「resume 边界」：第 5 个 run 淘汰后 resume ⇒ `run_not_resumable`；重启后 resume 同样；
+  （M590：场景 189-subagent-resume（`mockFill` 在运行期把真实 run_id 填进 env fixture 副本）/ 190-subagent-run-busy。）
+- [x] 8.9 「resume 边界」：第 5 个 run 淘汰后 resume ⇒ `run_not_resumable`；重启后 resume 同样；
   agent 不匹配 ⇒ `agent_mismatch`。
-- [ ] 8.10 「用量分桶与恢复」：两个不同模型的 run ⇒ 两个桶、父会话 ctx% / cache% 不变；重启恢复后
+  （M590：场景 191-subagent-resume-boundary（agent_mismatch + 重启后 run_not_resumable）。**LRU 淘汰**无真机判据（静态 fixture 拿不到被淘汰 run 的 id），由单测 `retained_runs_evict_oldest` 覆盖，场景正文已登记。）
+- [x] 8.10 「用量分桶与恢复」：两个不同模型的 run ⇒ 两个桶、父会话 ctx% / cache% 不变；重启恢复后
   分桶表与 live 相等。
-- [ ] 8.11 「模型解析」：调用覆盖生效、定义非法回落 inherit + warning、调用非法拒绝。
-- [ ] 8.12 「开关、次数闸与并发闸」：`enabled=false` 时工具不注册且任务区不出现；`max_subruns_per_turn=1`
+  （M590：场景 192-subagent-usage-buckets（重启 + 会话选择器恢复后两桶仍在）。）
+- [x] 8.11 「模型解析」：调用覆盖生效、定义非法回落 inherit + warning、调用非法拒绝。
+  （M590：场景 193-subagent-model-resolution（mock 的模型清单开放，「定义非法回落 / 调用非法拒绝」归单测，场景正文已登记）。）
+- [x] 8.12 「开关、次数闸与并发闸」：`enabled=false` 时工具不注册且任务区不出现；`max_subruns_per_turn=1`
   时第二个委派 `subrun_limit`；`max_concurrent=1` 时第二个后台委派 `concurrency_limit`。
-- [ ] 8.13 「API 中断 partial」：mock 返回错误但已有文本，断言 `partial` + `stopped_by=error`。
-- [ ] 8.14 **回扫既有验收场景的闸期望**（改权限 / 闸语义的 change 必做）：全量跑既有批准闸与权限
+  （M590：场景 194-subagent-disabled / 195-subagent-subrun-limit / 196-subagent-concurrency-limit（三档启动配置拆三条）。）
+- [x] 8.13 「API 中断 partial」：mock 返回错误但已有文本，断言 `partial` + `stopped_by=error`。
+  （M590：场景 197-subagent-api-partial。）
+- [x] 8.14 **回扫既有验收场景的闸期望**（改权限 / 闸语义的 change 必做）：全量跑既有批准闸与权限
   模式相关场景，确认交互会话的 ask / allow / deny 行为逐条不变；期望过期的就地改准并写明原因。
   子运行的新闸语义只出现在 8.3，不得混入交互场景的期望。
-- [ ] 8.15 `node scripts/acceptance/run.mjs --check` 通过（新增场景静态校验）。
-- [ ] 8.16 「同回合并行 + 按序回填」：一条助手消息含两个 `task`，让第二个先完成；断言两个 run 的
+  （M590：回扫 72 / 73 / 74 / 75 / 109 / 151；结果见完成报告（期望未过期，无就地改准）。）
+- [x] 8.15 `node scripts/acceptance/run.mjs --check` 通过（新增场景静态校验）。
+  （M590：`--check` 通过（205 个场景，其中新增 26 条）。）
+- [x] 8.16 「同回合并行 + 按序回填」：一条助手消息含两个 `task`，让第二个先完成；断言两个 run 的
   时间区间重叠、transcript 两行按调用序、两条工具结果按调用序回填。
-- [ ] 8.17 「后台运行与通知 + 自动唤醒」：`background=true`；断言立即 `status=running`、父回合正常
+  （M590：场景 198-subagent-parallel。**区间重叠**无机器判据（断言面没有跨行时间序），场景正文登记；回填序按请求内 `call_a` → `call_b` 断言。）
+- [x] 8.17 「后台运行与通知 + 自动唤醒」：`background=true`；断言立即 `status=running`、父回合正常
   `done`、回合结束后可立即发送新消息、run 收敛后 transcript 出现带 `auto_notice` 标记的自动化通知
   且留存里同时有 `notice_delivered` 投递标记、`subagent_notified` 落盘；空闲时紧接着自动起一个父会话
   回合（`wake=auto_turn`、`chain_index=1`）。
-- [ ] 8.18 「内建 explore 与覆盖」：无自定义定义时清单含 `explore` 且工具为只读三件；放同名自定义
+  （M590：场景 199-subagent-background-wake。）
+- [x] 8.18 「内建 explore 与覆盖」：无自定义定义时清单含 `explore` 且工具为只读三件；放同名自定义
   定义后生效的是自定义定义 + 覆盖 warning。
-- [ ] 8.19 「任务面板可见」（WKWebView AX 断言）：子运行期间任务区出现该行（agent / 状态 / 读数）；
+  （M590：场景 200-subagent-explore。）
+- [x] 8.19 「任务面板可见」（WKWebView AX 断言）：子运行期间任务区出现该行（agent / 状态 / 读数）；
   批准卡在行内展开并点名 agent；主 transcript 的 AX 树不含子运行工具行；停止单个 run 只停它。
-- [ ] 8.20 「忙时合并为一个回合」：用户回合进行中两个后台 run 相继收敛；断言当前回合结束后只起**一个**
+  （M590：场景 201-subagent-panel-and-stop（AX：标题计数 / 两行 / 详情 / 停止；子运行工具行不进 transcript）。r1 收口：任务行停止钮补独立读屏名「停止该任务」（D522，与发送钮的「停止」区分），并把 fixture 的运行窗口拉长到 8s 让停止落在运行中——201 全绿。）
+- [x] 8.20 「忙时合并为一个回合」：用户回合进行中两个后台 run 相继收敛；断言当前回合结束后只起**一个**
   自动回合、输入含两条通知（同一 `wake_batch`）、自动回合数 = 1。
-- [ ] 8.21 「链上限与恢复」：连续五个自动回合后第 6 条后台结果收敛 ⇒ 不起回合、通知照常上屏并写
+  （M590：场景 202-subagent-busy-merge（两次 `chain_index=1`、`chain_index=2` 零次）。）
+- [x] 8.21 「链上限与恢复」：连续五个自动回合后第 6 条后台结果收敛 ⇒ 不起回合、通知照常上屏并写
   投递标记、`wake=blocked_chain`、任务区出现触顶提示行（AX 断言）且「继续」可点；用户发言后链清零，
   下一条后台结果恢复自动唤醒；停止自动回合后同样不再唤醒（`blocked_stopped`）。
-- [ ] 8.22 「自动回合与 loop_max 正交」：自动回合内 mock 驱动工具往返触顶 `loop_max`，断言该回合按
+  （M590：场景 203-subagent-chain-limit（五轮自动回合 + 触顶提示 + 继续）/ 204-subagent-stopped（blocked_stopped）。）
+- [x] 8.22 「自动回合与 loop_max 正交」：自动回合内 mock 驱动工具往返触顶 `loop_max`，断言该回合按
   既有提示结束、链计数不变、下一条后台结果仍受链上限约束。
-- [ ] 8.23 「已上屏未消费的通知恢复」：链触顶后的通知上屏、下一次 LLM 请求前终止进程（另跑一次空闲
+  （M590：场景 205-subagent-auto-turn-loopmax（loop_max_reached + chain_index=1）。）
+- [x] 8.23 「已上屏未消费的通知恢复」：链触顶后的通知上屏、下一次 LLM 请求前终止进程（另跑一次空闲
   合并窗口内终止的变体）⇒ 重启后留存有 `notice_delivered` 标记、通知据标记 + `subrun` sidecar 重建
   上屏、不自动起回合；用户发言后该通知进入请求，标记此后被忽略。反向验证：正常收尾后重启，通知不
   重复上屏。
+  （M590：场景 206-subagent-notice-restore（合并窗口内退出 → 重建；消费后重启不重复）。）
 
 ## 9. 验证
 
-- [ ] 9.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
-- [ ] 9.2 `cargo test` 通过（含 §1.3 / §1.7 / §2.7–2.9 / §3.2–3.5 / §4.1–4.14 / §5.3 / §5.6 /
+- [x] 9.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
+  （M590 实测：`Totals: 27 passed, 0 failed (27 items)`；`scripts/gate.sh quick` 的 openspec-validate 门禁同绿。）
+- [x] 9.2 `cargo test` 通过（含 §1.3 / §1.7 / §2.7–2.9 / §3.2–3.5 / §4.1–4.14 / §5.3 / §5.6 /
   §6.2 / §7.2 新增单测）。
-- [ ] 9.3 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）；动过
+  （M590：`cargo test` 全绿——lib 734 + 集成 95（abort_turn 7 / harness_runtime 41 / link_graph 2 /
+  session_recording 17 / wikilink 6 / workspace 22）；新增用例含 `mock_parent_continues_after_child_region`
+  （父游标跳过子区间 + 续跑不双计数）与 `definition_model_accepts_any_id_under_mock`。）
+- [x] 9.3 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）；动过
   `src/harness-panel.ts` / `src/style.css` / `tests/visual/**` 后本地跑 `scripts/gate.sh visual`，
   基线更新前截图须 Alex 过目（AGENTS.md 基线纪律）。
-- [ ] 9.4 真机跑新增验收场景（§8.1–8.23），证据目录用绝对路径 `ls` 到；失败与跳过项逐条写明原因。
-- [ ] 9.5 公共层对账：`rg -n "fn run_turn_for|fn run_turn" src-tauri/src` 确认循环入口唯一；
+  （M590：`GATE RESULT: 10/10 PASS（SKIP 0）`、退出码 0。visual 档另跑但**未取得可信结论**：
+  本 worktree 的视觉套件大面积 5s 超时（主题切换未生效：dark/eink 读到 light token；m303 期望
+  `对话面板` 实得 `Chat panel`），**同一 m303 spec 在 master 上复现同一失败**（环境/基线口径问题，
+  非本改动引入）。任务区在无任务时整块 `hidden`、既有场景默认空态不新增像素，故未申请基线更新。
+  详见完成报告。）
+- [x] 9.4 真机跑新增验收场景（§8.1–8.23），证据目录用绝对路径 `ls` 到；失败与跳过项逐条写明原因。
+  （M590：新增 27 条场景，**27 条 PASS**（r1 收口后 201 补跑 PASS；见 §8.19 注）。证据：
+  `.local/acceptance/2026-10-18-m590/<场景>/`（主仓；含 summary.md / 逐场景 steps.md / ax / shots）。）
+- [x] 9.5 公共层对账：`rg -n "fn run_turn_for|fn run_turn" src-tauri/src` 确认循环入口唯一；
   `rg -n "cron:run" src` 确认 cron 交接载荷已按 `RunSpec` 形状（或按 §0.2 记录的顺序豁免）。
-- [ ] 9.6 观测与关停可执行性：按 proposal「观测」节给出检查命令的实际读数与执行时刻；真机重启一次
+  （M590 实测读数：`run_turn` / `run_turn_for` 各一处（turn.rs:217 / 315，共享同一循环
+  `run_turn_core`）；`cron:run` 仍为 `CronRunPayload` 逐字段载荷（§0.2 的顺序豁免，run-spec 化归
+  M593）。）
+- [x] 9.6 观测与关停可执行性：按 proposal「观测」节给出检查命令的实际读数与执行时刻；真机重启一次
   验证 `enabled=false` 的关停路径（任务区消失、工具不注册、定义保留）。
+  （M590：观测读数见完成报告（completed / partial / quota 三种收敛的 `rg` 实际读数与执行时刻）；
+  关停路径由真机场景 `194-subagent-disabled` 验证（任务区与清单整块不出现、`llm_request` 的 tools
+  里零 `task`、定义文件保留）。）
 
 ## 10. UX 实现（任务面板与可见面）
 
-- [ ] 10.1 任务区：面板内 composer 上方，运行中 / 等待批准 / 后台行；行内 agent + description + 状态
+- [x] 10.1 任务区：面板内 composer 上方，运行中 / 等待批准 / 后台行；行内 agent + description + 状态
   + 轮次 · tokens；状态词不截断、description 唯一可截断字段；无任务时不占位。
-- [ ] 10.2 行详情：模型、工具步数、最近一步（人话化参数摘要）、用时、摘要（完成后）、该 run 用量；
+  （M590 落 `src/harness-panel.ts` 的任务区段：`taskHeadline` / `renderTaskArea`；只列运行中 /
+  等待批准的 run，全部收敛后收敛为「本次会话 N 个已完成」一行 + 按模型用量块；无任务时整块
+  `hidden`。样式在 `src/harness-panel.css` 的 `.lumir-tp*`。验收：场景 180 / 201。）
+- [x] 10.2 行详情：模型、工具步数、最近一步（人话化参数摘要）、用时、摘要（完成后）、该 run 用量；
   运行中行提供「停止」。
-- [ ] 10.3 批准卡透传渲染：行内就地展开、点名 agent + description、待批时自动展开、标题显示待批数；
+  （M590：面板行详情给模型 / 轮次步数 / 用时 / 最近一步 / 触顶原因 + 运行中「停止」；历史任务的
+  **摘要（完成后）**在 transcript 的 `task` 工具行点开（design §19.1）——`subagent_finished` 事件
+  补了 `summary` 字段（诊断白名单不含它，不进日志），恢复路径从 `task` 工具记录的结果信封解析。
+  停止入口 = `harness_subagent_stop`。验收：场景 201。）
+- [x] 10.3 批准卡透传渲染：行内就地展开、点名 agent + description、待批时自动展开、标题显示待批数；
   拒绝后收敛为终态记录；父会话自己的批准卡保持不变。
-- [ ] 10.4 后台完成通知与自动回合：transcript 自动化通知消息样式（与用户消息区分，左侧色条 +
+  （M590：`attachTaskApproval` / `createTaskApprovalCard`；卡片复用父会话的 diff / 原因框 / 按钮
+  样式类，外壳与来源行是任务区自己的类。事件与快照两条通道都按 `source.kind === "subrun"`
+  分流——父会话的卡仍走 `appendApproval`。验收：场景 183 / 184。）
+- [x] 10.4 后台完成通知与自动回合：transcript 自动化通知消息样式（与用户消息区分，左侧色条 +
   「后台任务完成」标签；多条通知合并为一条时逐 run 列一行）；自动回合的助手回复沿用普通回合形态；
   通知消息是模型上下文的一部分（`auto_notice` 标记的 user 消息）。
-- [ ] 10.5 子代理清单：只读折叠列表（名字 / description / 工具数 / 模型 / 来源），覆盖时标来源说明。
-- [ ] 10.6 按模型用量区：展开区给「子任务用量（按模型）」表，父会话控制行读数不变（不掺子运行）。
-- [ ] 10.7 前端单测（行状态映射、事件路由到 run、空态）+ 真机 AX 场景（§8.19 / §8.21）；视觉门禁按 §9.3。
-- [ ] 10.8 自动回合触顶提示行：`auto_wake.blocked` 非空时任务区顶部出现提示（`chain_limit` /
+  （M590：后端在通知**上屏点**统一发 `notice` 事件（正文不进事件——真源仍是会话里那条 user
+  消息；事件只带 run 元数据），前端 `appendNotice` 渲染；快照恢复路径按 `role: "notice"` 的
+  展示串还原。验收：场景 199 / 202。）
+- [x] 10.5 子代理清单：只读折叠列表（名字 / description / 工具数 / 模型 / 来源），覆盖时标来源说明。
+  （M590 新增命令 `harness_subagent_catalog`（与 `task` 描述同一次 `AgentCatalog::load`）；
+  `override_from` 由后端从定义合并 warning 解析（措辞有单测钉子）。`enabled=false` 时整块不出现。
+  验收：场景 194 / 200。）
+- [x] 10.6 按模型用量区：展开区给「子任务用量（按模型）」表，父会话控制行读数不变（不掺子运行）。
+  （M590：`subrunUsageRows` 消费快照 `subrun_usage`；只在全部 run 收敛后显示。父会话读数不掺
+  子运行由 M589 的 `subrun_records_do_not_change_parent_readings` 单测钉住。验收：场景 192。）
+- [x] 10.7 前端单测（行状态映射、事件路由到 run、空态）+ 真机 AX 场景（§8.19 / §8.21）；视觉门禁按 §9.3。
+  （M590：`tests/unit/harness-subagents.test.ts` 12 条（状态映射 / 归约 / 批准关联 / 标题与空态 /
+  触顶文案 / 用量读数 / 清单与通知解析）；真机 AX 场景 201（§8.19）与 203 / 204（§8.21）。）
+- [x] 10.8 自动回合触顶提示行：`auto_wake.blocked` 非空时任务区顶部出现提示（`chain_limit` /
   `stopped` 两种文案 + 「继续」按钮）；提示行不冒充 run 行、不参与 run 计数；「继续」等价一次用户
   发言（链清零并按待处理通知起回合），前端单测覆盖两种文案与点击路径。
+  （M590：`autoWakeAlertText` 是两种文案的唯一产出点；「继续」= `harness_subagent_continue`
+  命令 → `SubagentHub::continue_wake`。提示行独立于 `taskList`、不参与计数。
+  验收：场景 203（chain_limit + 继续）/ 204（stopped）。）

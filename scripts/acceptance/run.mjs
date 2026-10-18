@@ -28,6 +28,7 @@ import {
   resetCronState,
   resetPositions,
   resetRecovery,
+  resetAgentDefinitions,
   resetHarness,
   resetLogs,
   resetRegistry,
@@ -480,6 +481,7 @@ async function main() {
       await resetSecondVault(); // 第二个合成 vault：多 vault 场景的切换目标
       await resetRecovery(); // 备份目录在隔离配置下，不清会让上一场景的备份串场
       await resetHarness(); // 对话面板 JSONL 同因：在隔离配置下，不清会跨场景串记录（M304 实证）
+      await resetAgentDefinitions(); // 用户级子代理定义同因（M590）：残留会改下一场景的清单计数 / 覆盖规则
       // 诊断日志：cron 场景用「日志里有 / 没有某事件」作判据，上一场景的事件会让负向断言假绿。
       await resetLogs();
       // 注册表与会话也在隔离配置下：前者决定列表浮层有几行、后被哪些 id 命中，后者决定装载后

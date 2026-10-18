@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "两个都放后台。",
+      "tool_calls": [
+        {
+          "id": "call_c1",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"后台一\", \"description\": \"后台一\", \"background\": true}"
+        },
+        {
+          "id": "call_c2",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"后台二\", \"description\": \"后台二\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "慢响应撑住并发许可。",
+      "delay_ms": 3000
+    },
+    {
+      "text": "SGJ-CONCURRENCY-PARENT 父会话：第二个被拒。"
+    }
+  ],
+  "subrun_span": 1
+}

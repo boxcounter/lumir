@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "并行派两个慢任务。",
+      "tool_calls": [
+        {
+          "id": "call_pa",
+          "name": "task",
+          "arguments": "{\"agent\": \"alpha\", \"prompt\": \"慢任务甲\", \"description\": \"慢任务甲\"}"
+        },
+        {
+          "id": "call_pb",
+          "name": "task",
+          "arguments": "{\"agent\": \"beta\", \"prompt\": \"慢任务乙\", \"description\": \"慢任务乙\"}"
+        }
+      ],
+      "delay_ms": 8000
+    },
+    {
+      "text": "我先读文件。",
+      "tool_calls": [
+        {
+          "id": "pa_c1",
+          "name": "vault_read",
+          "arguments": "{\"path\": \"harness-note.md\"}"
+        }
+      ],
+      "delay_ms": 8000
+    },
+    {
+      "text": "SGP-A-CHILD 慢任务甲完成。"
+    },
+    {
+      "text": "我先读文件。",
+      "tool_calls": [
+        {
+          "id": "pb_c1",
+          "name": "vault_read",
+          "arguments": "{\"path\": \"harness-note.md\"}"
+        }
+      ],
+      "delay_ms": 8000
+    },
+    {
+      "text": "SGP-B-CHILD 慢任务乙完成。"
+    },
+    {
+      "text": "SGP-PANEL-PARENT 父会话：本轮结束。"
+    }
+  ],
+  "subrun_span": 2
+}

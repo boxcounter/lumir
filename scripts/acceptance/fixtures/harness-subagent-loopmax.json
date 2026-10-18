@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "放后台。",
+      "tool_calls": [
+        {
+          "id": "call_l0",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"起点\", \"description\": \"起点\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "SGT-CHILD-0 起点完成。"
+    },
+    {
+      "text": "SGT-PARENT-0 起点父回合。"
+    },
+    {
+      "text": "自动回合第一轮。",
+      "tool_calls": [
+        {
+          "id": "auto_c1",
+          "name": "vault_read",
+          "arguments": "{\"path\": \"harness-note.md\"}"
+        }
+      ]
+    },
+    {
+      "text": "自动回合第二轮。",
+      "tool_calls": [
+        {
+          "id": "auto_c2",
+          "name": "vault_read",
+          "arguments": "{\"path\": \"harness-note.md\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGT-AUTO-END 自动回合终态。"
+    }
+  ],
+  "subrun_span": 1
+}

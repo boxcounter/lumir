@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "先读文件。",
+      "tool_calls": [
+        {
+          "id": "call_p1",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"读到一半断线\", \"description\": \"接口中断\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGK-CHILD-PARTIAL 已产出的部分。",
+      "tool_calls": [
+        {
+          "id": "child_p1",
+          "name": "vault_read",
+          "arguments": "{\"path\": \"harness-note.md\"}"
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "server_error",
+        "message": "upstream boom"
+      }
+    },
+    {
+      "text": "SGK-PARTIAL-PARENT 父会话：子代理返回部分结果。"
+    }
+  ],
+  "subrun_span": 2
+}

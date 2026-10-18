@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "先放后台。",
+      "tool_calls": [
+        {
+          "id": "call_c0",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"链起点\", \"description\": \"链起点\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "SGR-CHILD-0 起点完成。"
+    },
+    {
+      "text": "SGR-PARENT-0 起点父回合。"
+    },
+    {
+      "text": "继续放下一段。",
+      "tool_calls": [
+        {
+          "id": "call_c1",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"链 1\", \"description\": \"链 1\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "SGR-CHILD-1 链 1 完成。"
+    },
+    {
+      "text": "SGR-AUTO-1 自动回合 1。"
+    },
+    {
+      "text": "继续放下一段。",
+      "tool_calls": [
+        {
+          "id": "call_c2",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"链 2\", \"description\": \"链 2\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "SGR-CHILD-2 链 2 完成。"
+    },
+    {
+      "text": "SGR-AUTO-2 自动回合 2。"
+    },
+    {
+      "text": "继续放下一段。",
+      "tool_calls": [
+        {
+          "id": "call_c3",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"链 3\", \"description\": \"链 3\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "SGR-CHILD-3 链 3 完成。"
+    },
+    {
+      "text": "SGR-AUTO-3 自动回合 3。"
+    },
+    {
+      "text": "继续放下一段。",
+      "tool_calls": [
+        {
+          "id": "call_c4",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"链 4\", \"description\": \"链 4\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "SGR-CHILD-4 链 4 完成。"
+    },
+    {
+      "text": "SGR-AUTO-4 自动回合 4。"
+    },
+    {
+      "text": "继续放下一段。",
+      "tool_calls": [
+        {
+          "id": "call_c5",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"链 5\", \"description\": \"链 5\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "SGR-CHILD-5 链 5 完成。"
+    },
+    {
+      "text": "SGR-AUTO-5 自动回合 5。"
+    },
+    {
+      "text": "SGR-CONTINUE 继续后的回合。"
+    }
+  ],
+  "subrun_span": 1
+}

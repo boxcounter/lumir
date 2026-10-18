@@ -41,7 +41,7 @@ export const ACTIONS = new Set([
   "settle", "waitFor", "sleep", "key", "keys", "type", "typeInNode", "click", "clickNodeText", "clickInNode", "clickEditor",
   "doubleClick", "drag", "hover", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
-  "clipboardImage", "clipboardText", "note", "migrateHarnessSessions", "invalidate",
+  "clipboardImage", "clipboardText", "note", "migrateHarnessSessions", "invalidate", "envWrite", "mockFill",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes"]);
 
@@ -211,6 +211,28 @@ export function checkScenario(scenario) {
   const pm = scenario.config?.harness?.permission_mode;
   if (pm !== undefined && !["read_only", "vault_write", "full_access"].includes(pm)) {
     push(`config.harness.permission_mode 只能是 read_only/vault_write/full_access（实际 ${JSON.stringify(pm)}）——写错会静默回落 vault_write`);
+  }
+  // 子代理运行（change add-harness-subagents §14 / M590 验收批）：`config.harness.subagents`
+  // 整表直落 `[harness].subagents`——键名 / 类型写错在 Rust 侧是「整节回落 + warning」的
+  // 静默形态（场景会跑在出厂值上，8.12 的闸场景对着没有闸的界面判红）。静态层逐键挡。
+  const subagents = scenario.config?.harness?.subagents;
+  if (subagents !== undefined) {
+    if (!isPlainTable(subagents)) {
+      push(`config.harness.subagents 需要对象（{ enabled, max_turns, max_tokens, timeout_secs, max_subruns_per_turn, max_concurrent }），实际 ${JSON.stringify(subagents)}——类型不符会整节回落出厂值`);
+    } else {
+      const allowed = ["enabled", "max_turns", "max_tokens", "timeout_secs", "max_subruns_per_turn", "max_concurrent"];
+      for (const k of Object.keys(subagents)) {
+        if (!allowed.includes(k)) push(`config.harness.subagents 未知键 ${k}（拼错即静默不生效，允许：${allowed.join(" / ")}）`);
+      }
+      if (subagents.enabled !== undefined && typeof subagents.enabled !== "boolean") {
+        push(`config.harness.subagents.enabled 需要布尔值（实际 ${JSON.stringify(subagents.enabled)}）`);
+      }
+      for (const k of allowed.slice(1)) {
+        if (subagents[k] !== undefined && !(Number.isInteger(subagents[k]) && subagents[k] > 0)) {
+          push(`config.harness.subagents.${k} 需要正整数（实际 ${JSON.stringify(subagents[k])}）`);
+        }
+      }
+    }
   }
   // 会话自动命名（change add-session-auto-naming，task 5.2b）：`config.sessionNaming` 是
   // `{ enabled, provider, model }` 整表直落 `[harness].session_naming`——对象形状、子键名与
@@ -636,6 +658,11 @@ async function appMetaTokens() {
     // 走这个 token——不拷进 vault，避免在 vault 根留下非 .md 残留（resetVault 的 M296 缺口
     // 不清这类文件，场景 28/65 的「vault 里无 json/tmp 产物」断言会被串红）。
     $fixtures: fixturesDir(),
+    // 隔离配置目录下的场景工作区（M590）：`<envHome>/lumir`。给「运行期需要被改写的 fixture」
+    // 用（子运行 resume 场景的 run_id 是运行期才产生的，静态 fixture 写不出来）——场景先用
+    // `do: envWrite` 落一份模板，再由 `do: mockFill` 就地替换占位；仓库里的 fixture 原文
+    // 不被改写（场景可重复跑）。
+    $env: path.join(envHome(), "lumir"),
   };
 }
 
@@ -2469,6 +2496,53 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       await mkdirp(path.dirname(file)); // 嵌套路径（M221 场景 36 起）：目录行的 chevron 对齐需要真目录
       await writeFile(file, step.content ?? "");
       return file;
+    }
+    case "mockFill": {
+      // 运行期把 mock fixture 里的 `${run_id}` 占位替换为最近一段子运行审计的 run_id
+      // （M590）：resume 语义（§8.8 / §8.9）要求调用参数带上真实 run_id，而 mock 脚本是
+      // 静态文件——run_id 只存在于运行期（审计文件名 = `<run_id>.jsonl`，真源一处）。
+      // 落点是 `$env` 工作区下的副本（场景先用 envWrite 铺模板），仓库 fixtures 原文不动。
+      const rel = step.file;
+      if (typeof rel !== "string" || rel === "" || path.isAbsolute(rel) || rel.split(/[\\/]/).includes("..")) {
+        throw new Error(`do=mockFill 需要相对 <隔离配置>/lumir 的路径，收到 ${JSON.stringify(rel)}`);
+      }
+      const target = path.join(envHome(), "lumir", rel);
+      const runsRoot = path.join(envHome(), "lumir", "harness", "subruns");
+      const entries = [];
+      for (const vaultDirName of await readdir(runsRoot).catch(() => [])) {
+        const dir = path.join(runsRoot, vaultDirName);
+        for (const name of await readdir(dir).catch(() => [])) {
+          if (!name.endsWith(".jsonl")) continue;
+          const full = path.join(dir, name);
+          const info = await stat(full).catch(() => null);
+          if (info) entries.push({ runId: name.slice(0, -".jsonl".length), mtime: info.mtimeMs });
+        }
+      }
+      if (entries.length === 0) {
+        throw new Error("do=mockFill：找不到任何子运行审计文件（run_id 无可填入的来源）——先跑一段子运行");
+      }
+      entries.sort((a, b) => b.mtime - a.mtime);
+      const runId = entries[0].runId;
+      const text = await readFile(target, "utf8");
+      const replaced = text.split("${run_id}").join(runId);
+      if (replaced === text) {
+        throw new Error(`do=mockFill：${rel} 里没有 \${run_id} 占位（写错文件？）`);
+      }
+      await writeFile(target, replaced);
+      return `${runId} → ${rel}`;
+    }
+    case "envWrite": {
+      // 隔离配置目录下的写入（change add-harness-subagents §8.4 的现场需要：用户级子代理定义
+      // 落在 `<config_dir>/agents/`，`vaultWrite` 只能写 vault）。路径相对 `<隔离配置>/lumir`，
+      // 绝对路径与 `..` 一律拒绝——允许逃逸就等于给场景开了写用户 HOME 的口子。
+      const rel = step.file;
+      if (typeof rel !== "string" || rel === "" || path.isAbsolute(rel) || rel.split(/[\\/]/).includes("..")) {
+        throw new Error(`do=envWrite 需要相对 <隔离配置>/lumir 的路径（拒绝绝对路径与 ..），收到 ${JSON.stringify(rel)}`);
+      }
+      const target = path.join(envHome(), "lumir", rel);
+      await mkdirp(path.dirname(target));
+      await writeFile(target, step.content ?? "");
+      return target;
     }
     case "vaultAppend": {
       const file = path.join(vaultDir(), step.file);

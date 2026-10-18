@@ -143,6 +143,12 @@ export async function writeConfig({
     if (harness.loopMax !== undefined) h.loop_max = harness.loopMax;
     if (harness.warnCtxPct !== undefined) h.warn_ctx_pct = harness.warnCtxPct;
     if (harness.autoCompact !== undefined) h.auto_compact = harness.autoCompact;
+    // 子代理运行（change add-harness-subagents design §14，M590 验收批）：`subagents:
+    // { enabled, max_turns, max_tokens, timeout_secs, max_subruns_per_turn, max_concurrent }`
+    // **整表直落** `[harness].subagents`（键名与配置文件同形，子键省略即出厂缺省）。
+    // 场景需要构造的开关 / 闸值（8.12 的 enabled=false、max_subruns_per_turn=1、
+    // max_concurrent=1）只有启动口径能表达——运行期没有配置界面。
+    if (harness.subagents !== undefined) h.subagents = harness.subagents;
     // 图片语义命名（change add-semantic-image-naming，2026-10-18 配置面重塑）：三键
     // `{ enabled, provider, model }` 原样落 `harness.attachment_naming`（与会话自动命名的
     // `session_naming` 同一资源域）。传了才写——缺省即出厂（开、provider 跟随会话、
@@ -215,6 +221,18 @@ export async function resetRecovery() {
  */
 export async function resetHarness() {
   const dir = path.join(envHome(), "lumir", "harness");
+  await rm(dir, { recursive: true, force: true });
+  return dir;
+}
+
+/**
+ * 用户级子代理定义目录（change add-harness-subagents design §4.1）：`<隔离配置>/lumir/agents/`。
+ * 与 harness 留存同因——不清会让上一场景写下的用户级定义串进下一场景的清单与覆盖规则
+ * （M590 现场：187 期望「5 个自定义 + explore = 6」，读到 185 留下的用户级 research 后变 7，
+ * 清单计数断言与 `catalog_large` 的 definition_count 一起判红）。
+ */
+export async function resetAgentDefinitions() {
+  const dir = path.join(envHome(), "lumir", "agents");
   await rm(dir, { recursive: true, force: true });
   return dir;
 }

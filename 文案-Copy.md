@@ -461,9 +461,56 @@
 | D474 | 后端错误信封（按 code 渲染） | 作者 | 文件已被改名、移走或内容改变，无法撤销 | The file was renamed, moved or changed, so the rename can't be undone | M577：撤销的放弃判据命中时的人话（`attachment_undo_stale`）——文件在撤销前又被人工改名 / 移走 / 内容变化，或 vault 已切换。MUST NOT 覆盖用户当前的命名。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 | D475 | 后端错误信封（按 code 渲染） | 作者 | 暂存名已被占用，无法撤销 | The staging name is already taken, so the rename can't be undone | M577：撤销要改回的 `pasted-<hash16>.<ext>` 已被别的文件占用时的人话（`attachment_undo_occupied`）——放弃撤销，MUST NOT 覆盖既有文件。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 
+| D477 | agent 面板 · 任务区标题 | 作者 | 任务 | Tasks | M590（change add-harness-subagents §10.1）：任务区常驻标题词。没有运行中 / 等待批准的任务且本次会话没有子运行时整块不出现（空态不占位）。消费点 src/harness-panel.ts 的 `taskHeadline`。 |
+| D478 | agent 面板 · 任务区标题计数 | 作者 | {count} 个运行中 | {count} running | M590：前台运行中的 run 计数段（与后台 / 待批段同排）。消费点 `taskHeadline`。 |
+| D479 | agent 面板 · 任务区标题计数 | 作者 | {count} 个后台运行中 | {count} running in background | M590：后台运行中的 run 计数段——后台与前台分开数，避免把「回合已结束还在跑」读成前台阻塞。消费点 `taskHeadline`。 |
+| D480 | agent 面板 · 任务区标题计数 | 作者 | {count} 个等待批准 | {count} awaiting approval | M590（design §19.2）：待批数必须在折叠头可见——把阻塞决策藏在折叠区里是最坏的形态。消费点 `taskHeadline`。 |
+| D481 | agent 面板 · 任务区收敛摘要 | 作者 | 本次会话 {parts} | This session: {parts} | M590（design §19.1）：全部任务收敛后任务区收敛为一行摘要，`{parts}` 由完成数 / 部分结果数两段（D482 / D483）拼成。消费点 `taskHeadline`。 |
+| D482 | agent 面板 · 任务区收敛摘要 | 作者 | {count} 个已完成 | {count} completed | M590：收敛摘要里的完成计数段。消费点 `taskHeadline`。 |
+| D483 | agent 面板 · 任务区收敛摘要 | 作者 | {count} 个部分结果 | {count} partial | M590：收敛摘要里的部分结果计数段。消费点 `taskHeadline`。 |
+| D484 | agent 面板 · 任务行状态词 | 作者 | 运行中 | Running | M590：行状态词（运行中走脉冲点承载，词只在悬停 / 读屏名里出现）。状态词永不截断（同 M401「保住终态词」纪律）。消费点 `subrunStatusWord`。 |
+| D485 | agent 面板 · 任务行状态词 | 作者 | 已完成 | Completed | M590：终态词。消费点 `subrunStatusWord`。 |
+| D486 | agent 面板 · 任务行状态词 | 作者 | 部分结果 | Partial result | M590：触顶返回部分结果的终态词（与完成区分，读的人才知道还有活没干）。消费点 `subrunStatusWord`。 |
+| D487 | agent 面板 · 任务行状态词 | 作者 | 失败 | Failed | M590：失败终态词。消费点 `subrunStatusWord`。 |
+| D488 | agent 面板 · 任务行状态词 | 作者 | 已停止 | Stopped | M590：被面板停止 / 父回合停止的终态词。消费点 `subrunStatusWord`。 |
+| D489 | agent 面板 · 任务行标记 | 作者 | 后台 | Background | M590（design §19.3）：后台 run 的标记（回合结束后行仍常驻面板）。消费点 src/harness-panel.ts 的任务行渲染。 |
+| D490 | agent 面板 · 任务行动作 | 作者 | 停止 | Stop | M590（design §12.4 / §19.1）：运行中行内的单 run 停止入口——只停该 run，不再触发唤醒。消费点任务行渲染的停止钮。 |
+| D491 | agent 面板 · 触顶提示行动作 | 作者 | 继续 | Continue | M590（design §12.6.3）：等价一次用户发言——链清零、blocked 清空，并按待处理通知起一个回合。消费点触顶提示行。 |
+| D492 | agent 面板 · 触顶提示行 | 作者 | 自动回合已达上限（{max}）：后续后台结果只上屏，等你发言后处理。 | Automatic turns hit the limit ({max}); later background results are shown but won't wake the agent until you speak. | M590（design §12.6.3）：`auto_wake.blocked = chain_limit` 的文案，`{max}` = `AUTO_WAKE_CHAIN_MAX`（后端快照的 `auto_wake.max`，前端不写死）。提示行不冒充 run 行、不参与计数。消费点 `autoWakeAlertText`。 |
+| D493 | agent 面板 · 触顶提示行 | 作者 | 你停止了自动回合：后续后台结果只上屏，不再自动唤醒。 | You stopped the automatic turn; later background results are shown but won't wake the agent. | M590（design §12.6.3）：`blocked = stopped` 的文案——用户停止视同触顶，避免「停止」被下一条完成通知立刻推翻。消费点 `autoWakeAlertText`。 |
+| D494 | agent 面板 · 触顶提示行 | 作者 | 已继续：链计数清零，已按待处理通知起一个回合 | Resumed: the chain counter is reset and a turn started from the pending notices | M590：点「继续」后的就地结果句（同一行换成结果，不再显示按钮）。消费点 `autoWakeAlertText`。 |
+| D495 | agent 面板 · 任务行详情 | 作者 | 模型 {model} | Model {model} | M590（tasks §10.2）：行详情的模型读数（`inherit` 按原样显示，不替换成父模型名——它表达的是定义字段）。消费点行详情渲染。 |
+| D496 | agent 面板 · 任务行详情 | 作者 | {rounds} 轮 · {steps} 步 | {rounds} rounds · {steps} steps | M590：行详情的轮次与工具步数读数。消费点行详情渲染。 |
+| D497 | agent 面板 · 任务行详情 | 作者 | 用时 {duration} | Took {duration} | M590：行详情的用时读数（`{duration}` 由前端按秒 / 分 / 时格式化成短串）。消费点行详情渲染。 |
+| D498 | agent 面板 · 任务行详情 | 作者 | 触顶 {reason} | Stopped by {reason} | M590：触顶原因行，`{reason}` 取 D501–D505 之一。消费点行详情渲染。 |
+| D499 | agent 面板 · 任务行详情 | 作者 | 摘要 | Summary | M590（tasks §10.2）：完成后行详情的摘要标签。摘要正文来自 run 的通知 / 工具结果，不由前端生成。消费点行详情渲染。 |
+| D500 | agent 面板 · 任务行详情 | 作者 | 最近一步 | Latest step | M590（tasks §10.2）：行详情里「最近一步」的标签（工具名 + 人话化参数摘要）。消费点行详情渲染。 |
+| D501 | agent 面板 · 触顶原因词 | 作者 | 轮次上限 | round limit | M590（design §7）：`stopped_by = rounds` 的词。消费点 `subrunStoppedByWord`。 |
+| D502 | agent 面板 · 触顶原因词 | 作者 | token 预算 | token budget | M590：`stopped_by = tokens` 的词。消费点 `subrunStoppedByWord`。 |
+| D503 | agent 面板 · 触顶原因词 | 作者 | 时间预算 | time budget | M590：`stopped_by = time` 的词。消费点 `subrunStoppedByWord`。 |
+| D504 | agent 面板 · 触顶原因词 | 作者 | 配额不足 | quota exhausted | M590（design §7.3）：`stopped_by = quota` 的词——与接口错误分开（正确反应是等或换模型，不是重试）。消费点 `subrunStoppedByWord`。 |
+| D505 | agent 面板 · 触顶原因词 | 作者 | 接口错误 | API error | M590：`stopped_by = error` 的词。消费点 `subrunStoppedByWord`。 |
+| D506 | agent 面板 · 按模型用量区 | 作者 | 子任务用量（按模型） | Subtask usage (by model) | M590（tasks §10.6 / design §9.1）：子运行用量分桶的区标题。父会话控制行读数不掺这些数字（两处各说各的才不误导）。消费点 `subrunUsageRows` 的渲染。 |
+| D507 | agent 面板 · 按模型用量行 | 作者 | 输入 {input}（缓存 {cached}）· 输出 {output} · {segments} 段 | Input {input} (cached {cached}) · Output {output} · {segments} segments | M590：单个模型桶的读数行（`{input}` / `{cached}` / `{output}` 是格式化后的 token 数，`{segments}` = 段数）。消费点 `subrunUsageRows`。 |
+| D508 | agent 面板 · 子代理清单 | 作者 | 子代理清单 · {count} | Subagents · {count} | M590（design §19.4）：只读折叠清单的标题，`{count}` = 生效定义数。消费点清单区渲染。 |
+| D509 | agent 面板 · 子代理清单行 | 作者 | {count} 件工具 · 模型 {model} | {count} tools · Model {model} | M590：清单行的工具数与模型读数（模型缺省 = `inherit`）。消费点清单区渲染。 |
+| D510 | agent 面板 · 来源标记 | 作者 | 内建 | Built-in | M590（design §19.4）：来源标记之一（内建 `explore`）。同一词也用于 D513 的覆盖说明。消费点清单区渲染。 |
+| D511 | agent 面板 · 来源标记 | 作者 | 用户级 | User | M590：来源标记之一（`<config_dir>/agents`）。消费点清单区渲染。 |
+| D512 | agent 面板 · 来源标记 | 作者 | vault 级 | Vault | M590：来源标记之一（`<vault>/.lumir/agents`）。消费点清单区渲染。 |
+| D513 | agent 面板 · 覆盖说明 | 作者 | 覆盖了{source}的同名定义 | Overrides the same-named {source} definition | M590（design §19.4）：同名覆盖时行内注明被覆盖的层（`{source}` 取 D510–D512）。来源标由后端从定义合并的 warning 解析（`harness_subagent_catalog` 的 `override_from`），前端不推导。消费点清单区渲染。 |
+| D514 | agent 面板 · 后台完成通知 | 作者 | 后台任务完成 · {agent} | Background task finished · {agent} | M590（tasks §10.4 / design §19.3）：单条后台完成通知的头部——与用户消息视觉区分（左侧色条 + 标签）。`{agent}` = 子代理名。消费点 `noticeHeadline`。 |
+| D515 | agent 面板 · 后台完成通知 | 作者 | {count} 个后台任务完成 · 已合并为一条通知 | {count} background tasks finished · merged into one notice | M590（design §19.3）：同一合并窗口 / 同一批次的多条通知合并成一条时的头部。消费点 `noticeHeadline`。 |
+| D516 | agent 面板 · 后台完成通知 | 作者 | 详情见任务面板 | Details in the tasks panel | M590：通知正文末尾的详情指引（通知只给 agent / description / 摘要首行，细节在任务面板与审计流水）。消费点通知渲染。 |
+| D517 | agent 面板 · 子运行批准卡来源行 | 作者 | 来自 {agent}：{description} | From {agent}: {description} | M590（design §19.2）：子运行透传的批准卡点名发起者（卡片跟着发起者走，渲染在该 run 的行内）。父会话自己的批准卡不显示本行。消费点任务面板的批准卡渲染。 |
+| D518 | agent 面板 · 通知行状态 | 作者 | {status}（{reason}） | {status} ({reason}) | M590：通知行里「状态 + 触顶原因」的组合形态（`{status}` = D484–D488，`{reason}` = D501–D505）。独立成条的原因：全角括号不能拼在 TS 字面量里（`src/**` 零 CJK 门禁）。消费点 `noticeLineText`。 |
+| D519 | agent 面板 · 任务行读数 | 作者 | {rounds} 轮 · {tokens} | {rounds} rounds · {tokens} | M590（tasks §10.1「轮次 · tokens」）：收尾后有真 token 读数的行读数形态。消费点 `runReadText`。 |
+| D520 | agent 面板 · 任务行读数 | 作者 | {rounds} 轮 | {rounds} rounds | M590：运行中尚无 token 读数时的行读数形态（不给假数——tokens 只在收尾后可见）。消费点 `runReadText`。 |
+| D521 | 后端错误信封（按 code 渲染） | 作者 | 无法读取子代理清单（{reason}） | Couldn't read the subagent list ({reason}) | M590：`harness_subagent_catalog` 的序列化失败人话（正常路径不可达——只序列化本进程构造的对象）。消费点 src/copy-data.ts 的 ERROR_COPY。 |
+| D522 | agent 面板 · 任务行停止钮读屏名 | 作者 | 停止该任务 | Stop this task | M590 r1：任务行停止钮的 aria-label（可见文本仍是 D490「停止」）。面板里发送钮的读屏名也叫「停止」（D378），两钮同名时真机 AX 选择器无法稳定区分（场景 201 现场：AX 点击未触发 `harness_subagent_stop`）。消费点 `updateRunRow` 的停止钮。 |
+
 ## 编号沿革
 
-**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D475**（M577 的图片语义命名 toast 与撤销错误信封；前一位 D474，再前一位 D473 同批；D468–D472 之间的前一位是 M542 的恢复路径思考块折叠行无时长变体）。
+**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D522**（M590 的子代理任务面板文案，D477–D522 同批；D476 由并发的 M593 cron 运行契约错误信封先取，本批从 D477 起接续以避免撞号）。
 
 **不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
 
@@ -529,6 +576,7 @@
 - M540 D414 批准卡命令类副句删除（**未取新号**）：编号停用、不复用、不随行留档——Alex 原话「去掉 ask for approve 的文案……因为不提供有价值的信息」；命令类批准卡不再有副句，写类副句 D413 不变
 - M542 D468 恢复路径的思考块折叠行（D388 的无时长变体，接末位）
 - M577 D469–D475 图片语义命名：成功 toast / 撤销动作 / 部分引用未更新 / 撤销成功 + 三条撤销错误信封（接末位）
+- M590 D477–D522 子代理任务面板：任务区计数与状态词 / 行详情 / 触顶提示行 / 按模型用量 / 子代理清单与覆盖说明 / 后台完成通知（D476 由 M593 先取，本批从 D477 起）
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 

@@ -397,6 +397,7 @@ impl SubagentHub {
         }
         let batch_id = batch.unwrap_or_else(|| self.new_batch_id());
         let text = notice_text(&undelivered, &batch_id);
+        emit_notice_event(&self.inner, &undelivered, &batch_id);
         // 通知的「最终处理」事件：并入用户回合（design §12.6.3 的 `user_turn`）。
         for notice in &undelivered {
             self.emit(events::subagent_notified(
@@ -462,14 +463,6 @@ impl SubagentHub {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .reserved
-    }
-
-    fn note_resumed_mock_consumed(&self, consumed: usize) {
-        self.inner
-            .mock
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .reserved += consumed;
     }
 
     fn parent_busy(&self) -> bool {
@@ -602,8 +595,9 @@ impl SubagentHub {
             batch
         };
         run_after_notice_push_hook();
-        // 投递标记与通知上屏同一时刻（design §12.6.4）：即使通知还在排队 / 合并窗口内，
-        // 进程退出后也能据标记 + subrun sidecar 重建显示。
+        // 投递标记在**收敛入队时**写、早于上屏（design §12.6.4）：通知还在排队 / 合并窗口内、
+        // 尚未画到屏幕上时进程退出，也要能据标记 + subrun sidecar 重建显示——标记表达的是
+        // 「已接纳投递、尚未被模型消费」，不是「已经上屏」。
         self.write_notice_marker(&notice.run_id, batch);
         self.ensure_wake_worker();
         self.notify_wake(WakeEvent::RunFinished);
@@ -820,6 +814,7 @@ fn process_wake(hub: &Arc<HubInner>) {
         }
         run_after_blocked_mark_hook();
         if insert_notices_into_session(hub, &notice_text(&newly, &batch), &batch) {
+            emit_notice_event(hub, &newly, &batch);
             for notice in &newly {
                 hub_view.emit(events::subagent_notified(
                     &notice.run_id,
@@ -904,6 +899,9 @@ fn process_wake(hub: &Arc<HubInner>) {
     } else {
         insert_notices_into_session(hub, &turn_text, &batch)
     };
+    if inserted && !undelivered.is_empty() {
+        emit_notice_event(hub, &undelivered, &batch);
+    }
     if !inserted {
         // 会话在 acquire 之后消失：回滚并原样放回（未标 delivered）。
         runtime.release_turn(&hub.scope);
@@ -930,7 +928,15 @@ fn process_wake(hub: &Arc<HubInner>) {
     let scope = hub.scope.clone();
     let sink = sink.unwrap_or_else(|| Arc::new(NullSink));
     let worker_hub = hub.clone();
-    match spawn_auto_turn_thread(runtime, scope, config, sink, turn_text, worker_hub) {
+    match spawn_auto_turn_thread(
+        runtime,
+        scope,
+        config,
+        sink,
+        turn_text,
+        chain_index,
+        worker_hub,
+    ) {
         Ok(_) => {
             if !undelivered.is_empty() {
                 for notice in &undelivered {
@@ -999,6 +1005,7 @@ fn spawn_auto_turn_thread(
     config: HarnessConfig,
     sink: Arc<dyn EventSink>,
     text: String,
+    chain_index: u32,
     worker_hub: Arc<HubInner>,
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
     #[cfg(test)]
@@ -1008,6 +1015,13 @@ fn spawn_auto_turn_thread(
     std::thread::Builder::new()
         .name("lumir-subagent-auto-turn".into())
         .spawn(move || {
+            // 自动回合开始（面板事件）：面板据此打开轮次闸门——自动回合的 `text_chunk` 没有
+            // 对应的用户发送，不打开闸门就会被「轮次已关」丢弃（M590 真机 199 现场：自动回合
+            // 的回复写进了留存、界面却没有）。事件由本线程在循环前发，早于任何分片。
+            sink.emit(serde_json::json!({
+                "type": "auto_turn_started",
+                "chain_index": chain_index,
+            }));
             let _ = super::turn::run_auto_turn_acquired(runtime, scope, config, sink, text);
             let mut wake = worker_hub.wake.lock().unwrap_or_else(|e| e.into_inner());
             wake.running = false;
@@ -1116,6 +1130,38 @@ fn insert_notices_into_session(hub: &Arc<HubInner>, text: &str, batch: &str) -> 
             insert_notice_message(session, text, Some(batch));
         })
         .is_ok()
+}
+
+/// `harness:event` 的 `notice` 事件（change add-harness-subagents tasks §10.4）：面板
+/// transcript 的「后台任务完成」通知行由此上屏。**正文不是本事件的载荷**——它已经作为
+/// 一条带 `auto_notice` 标记的 user 消息进了会话（内容真源只有一处，design §12.5）；
+/// 本事件只带渲染所需的元数据（每个 run 的 agent / description / 终态 / 摘要首行）。
+///
+/// 上屏时刻与 `insert_notices_into_session` / `begin_user_turn` 的插入同点：通知在
+/// LLM 上下文里出现的那一刻，面板也要看到同一行（两条可见面同源，MUST NOT 各判一次）。
+fn emit_notice_event(hub: &HubInner, notices: &[NoticeRun], batch: &str) {
+    let sink = hub.sink.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let Some(sink) = sink else {
+        return;
+    };
+    let runs: Vec<serde_json::Value> = notices
+        .iter()
+        .map(|notice| {
+            serde_json::json!({
+                "run_id": notice.run_id,
+                "agent": notice.agent,
+                "description": notice.description,
+                "status": notice.status,
+                "stopped_by": notice.stopped_by,
+                "summary": first_line(&notice.summary),
+            })
+        })
+        .collect();
+    sink.emit(serde_json::json!({
+        "type": "notice",
+        "wake_batch": batch,
+        "runs": runs,
+    }));
 }
 
 /// 通知消息入会话（`SessionContext::begin_user_turn` 与调度器共用同一装配点）：
@@ -1628,7 +1674,7 @@ fn start_task_inner(
     } else {
         1
     };
-    let (mock_start, reserved) =
+    let (mock_start, _) =
         hub.reserve_mock_region(mock_span, retained.as_ref().map(|run| run.mock_cursor));
     let abort = Arc::new(AtomicBool::new(false));
     hub.inner
@@ -1703,7 +1749,6 @@ fn start_task_inner(
         background,
         retained,
         mock_start,
-        reserved,
         abort,
         permit: Some(permit),
         thinking_effort: hub
@@ -1858,7 +1903,6 @@ struct SegmentSeed {
     background: bool,
     retained: Option<RetainedRun>,
     mock_start: usize,
-    reserved: bool,
     abort: Arc<AtomicBool>,
     permit: Option<ConcurrencyPermit>,
     thinking_effort: ThinkingEffort,
@@ -2050,10 +2094,9 @@ fn run_segment(mut seed: SegmentSeed) -> serde_json::Value {
         .unwrap_or_else(|e| e.into_inner())
         .active
         .remove(&seed.run_id);
-    if !seed.reserved {
-        // resume 段没有新占区间：它实际消费的条数也要从父游标上跳过。
-        hub.note_resumed_mock_consumed(client.mock_consumed());
-    }
+    // resume 段没有新占区间：它消费的是**上一回合已经跳过**的旧区间条目，父游标早已在其后
+    // （M590：父客户端现在自己跳过新区间，这里再补 reserved 会让下一轮多跳一格——真机场景
+    // 189 现场：续跑后父回合弹到空条目 / fixture_exhausted）。
     if seed.background && matches!(report.outcome, super::run::RunOutcome::Aborted) {
         // 中止不投递、不唤醒，但事件如实反映（`wake = none_aborted`）。
         hub.emit(events::subagent_notified(
@@ -2570,7 +2613,10 @@ impl ChildContext {
             audit.as_deref(),
         );
         if let Some(sink) = &self.parent_sink {
-            sink.emit(events::subagent_finished(
+            // 摘要正文（tasks §10.2 的行详情数据源）：设计 §13 的事件表只列 `summary_chars`，
+            // 但面板/历史 task 行的「摘要（完成后）」需要正文——事件级带上（诊断日志的
+            // 白名单不含 summary，因此不进日志、只上面板）。来源与信封同一份 `report.summary`。
+            let mut payload = events::subagent_finished(
                 &self.run_id,
                 self.segment,
                 &self.agent_name,
@@ -2590,7 +2636,9 @@ impl ChildContext {
                     .map(|path| path.display().to_string())
                     .as_deref(),
                 report.audit_error.as_deref(),
-            ));
+            );
+            payload["summary"] = serde_json::json!(report.summary);
+            sink.emit(payload);
         }
         report
     }

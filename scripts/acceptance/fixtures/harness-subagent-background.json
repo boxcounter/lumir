@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "放到后台跑。",
+      "tool_calls": [
+        {
+          "id": "call_bg",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"后台梳理\", \"description\": \"后台梳理\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "SGN-BG-CHILD 后台结论：本周 9 个变更。"
+    },
+    {
+      "text": "SGN-BG-PARENT 父会话：后台已启动。"
+    },
+    {
+      "text": "SGN-AUTO 父会话：后台任务已完成，汇报如下。"
+    }
+  ],
+  "subrun_span": 1
+}

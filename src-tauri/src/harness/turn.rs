@@ -259,12 +259,10 @@ pub fn run_turn(
         }
     };
     let mut title_job = None;
-    let mut external_mock = 0;
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut ctx =
             SessionContext::new_with_owned_sink(&sink, Some(owned), &runtime, &scope, &config);
         title_job = run_turn_core(&mut ctx, &config, parts, context_section, client.as_mut());
-        external_mock = ctx.external_mock_consumed();
     }))
     .is_err();
     if panicked {
@@ -276,9 +274,14 @@ pub fn run_turn(
     if let Some(len) = client.mock_script_len() {
         // 会话游标 = 本客户端自己弹出的条数 + 子运行经 `skip` 跳过的条数（design §18）：
         // 并行子运行预分配的区间被父跳过，父续写条目落在所有子区间之后。
+        //
+        // **MUST NOT 再加中枢的预分配计数**（M590 真机场景 188 现场）：`skip` 已由父客户端在
+        // 每轮编排收敛后执行（见 `run_turn_core` 的 mock 区间块），`external_consumed()` 就是
+        // 它真实跳过的条数；再叠加 `external_mock_consumed()`（中枢 reserved 总量）会把同一段
+        // 区间数两遍，下一轮从更后面的条目开始弹（表现为「模型返回了空响应」）。
         let next = llm::wrap_cursor(
             mock_start,
-            client.mock_consumed() + client.external_consumed() + external_mock,
+            client.mock_consumed() + client.external_consumed(),
             len,
         );
         let _ = runtime.with_session(&scope, |s| s.set_mock_cursor(next));
@@ -659,6 +662,17 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
                 return None;
             }
         };
+        // mock：父客户端跳过子运行预分配的区间（design §18；M590 补的接线——M588 只落了
+        // `LlmClient::skip` 的方向，回合循环里没有调用点，父的下一轮会把子区间里的条目
+        // 当成自己的续写）。`external_consumed()` 是本客户端已跳过的条数，与中枢的预分配
+        // 总量之差即本轮新增的区间；`mock_script_len()` 守卫保证真 provider 恒不进入。
+        if client.mock_script_len().is_some() {
+            let reserved = ctx.external_mock_consumed();
+            let skipped = client.external_consumed();
+            if reserved > skipped {
+                client.skip(reserved - skipped);
+            }
+        }
         flush_call_items(ctx, &pending);
         // 停止检查点 ③：中断落在最后一个调用的执行期间——不在此收口的话循环会
         // 白多跑一轮 LLM 往返才在检查点 ① 被截住（「不再继续」以最早检查点为准）。
@@ -1629,7 +1643,6 @@ pub(crate) fn run_auto_turn_acquired(
             return false;
         }
     };
-    let mut external_mock = 0;
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut ctx = SessionContext::new_with_owned_sink(
             sink.as_ref(),
@@ -1644,7 +1657,6 @@ pub(crate) fn run_auto_turn_acquired(
             TurnInput::Preloaded { user_text },
             client.as_mut(),
         );
-        external_mock = ctx.external_mock_consumed();
     }))
     .is_err();
     if panicked {
@@ -1654,9 +1666,11 @@ pub(crate) fn run_auto_turn_acquired(
         ));
     }
     if let Some(len) = client.mock_script_len() {
+        // 与交互回合同一条游标算法（见 `run_turn` 同段注释）：`skip` 已记进 external_consumed，
+        // MUST NOT 再叠加中枢的 reserved 计数。
         let next = llm::wrap_cursor(
             mock_start,
-            client.mock_consumed() + client.external_consumed() + external_mock,
+            client.mock_consumed() + client.external_consumed(),
             len,
         );
         let _ = runtime.with_session(&scope, |session| session.set_mock_cursor(next));

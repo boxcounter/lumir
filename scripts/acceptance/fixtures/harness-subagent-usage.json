@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "并行派两个。",
+      "tool_calls": [
+        {
+          "id": "call_u1",
+          "name": "task",
+          "arguments": "{\"agent\": \"fast_agent\", \"prompt\": \"快模型任务\", \"description\": \"快模型段\"}"
+        },
+        {
+          "id": "call_u2",
+          "name": "task",
+          "arguments": "{\"agent\": \"strong_agent\", \"prompt\": \"强模型任务\", \"description\": \"强模型段\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGH4-FAST-CHILD 快模型完成。",
+      "usage": {
+        "input_tokens": 10000,
+        "cached_tokens": 4000,
+        "output_tokens": 500
+      }
+    },
+    {
+      "text": "SGH4-STRONG-CHILD 强模型完成。",
+      "usage": {
+        "input_tokens": 20000,
+        "cached_tokens": 8000,
+        "output_tokens": 900
+      }
+    },
+    {
+      "text": "SGF-USAGE-PARENT 父会话：两段都完成。"
+    }
+  ],
+  "subrun_span": 1
+}

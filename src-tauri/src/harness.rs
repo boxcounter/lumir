@@ -620,7 +620,8 @@ impl Runtime {
                 ))
             })
             .collect();
-        // 「已上屏、未消费」的后台完成通知（change add-harness-subagents design §12.6.4）：
+        // 「已接纳投递、未被消费」的后台完成通知（change add-harness-subagents design §12.6.4；
+        // 标记写在收敛入队时、早于上屏）：
         // 留存里的投递标记若未被任何 `llm_request.messages` 消费，就据标记 + `subrun`
         // sidecar 重建通知并上屏；它在这里直接进灌回的 input（用户下一次发言的请求里就带着
         // 它），MUST NOT 自动起回合——恢复不是收敛事件。标记同时复制进新文件，保证「重建
@@ -1548,6 +1549,130 @@ pub fn harness_state(
     })
 }
 
+/// 子代理清单快照（`harness_subagent_catalog`，change add-harness-subagents tasks §10.5）。
+/// 返回 JSON String（M302 纪律：命令返回值不为此新增 ts-rs 类型）：`{enabled, definitions[],
+/// warnings[]}`。每个定义给出名字 / 一行描述 / 工具数 / 模型（`null` = inherit）/ 是否强制后台 /
+/// 来源（`builtin` / `user` / `vault`）/ 同名覆盖的来源标（无覆盖时缺键）。
+///
+/// **扫描时机与运行侧同源**：与 `task` 描述里的清单同一次 `AgentCatalog::load`（回合级热
+/// 加载），面板显示的就是模型此刻看到的清单——两处若各扫一次，「面板说 A、工具描述说 B」
+/// 的漂移无从察觉（REVIEW.md「同一语义两处真源」条）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_subagent_catalog(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+) -> Result<String, CommandError> {
+    let scope = vault_scope(&vault)?;
+    let config = config::load()?.config.harness;
+    let catalog = agents::AgentCatalog::load(&scope.root, &config);
+    let overrides = catalog_override_sources(&catalog);
+    let definitions: Vec<serde_json::Value> = catalog
+        .definitions()
+        .iter()
+        .map(|definition| {
+            serde_json::json!({
+                "name": definition.name,
+                "description": definition.description,
+                "tools": definition.tools.len(),
+                "model": definition.model,
+                "background": definition.background,
+                "source": definition.source.as_str(),
+                "override_from": overrides.get(&definition.name),
+            })
+        })
+        .collect();
+    serde_json::to_string(&serde_json::json!({
+        "enabled": config.subagents.enabled,
+        "definitions": definitions,
+        "warnings": catalog.warnings(),
+    }))
+    .map_err(|e| {
+        CommandError::new(
+            "harness_subagent_catalog_failed",
+            format!("无法序列化子代理清单：{e}"),
+        )
+        .param("reason", e.to_string())
+    })
+}
+
+/// 把生效定义映射到「它覆盖了哪一层」（design §19.4 的行内来源说明）。
+///
+/// 被覆盖者只出现在 [`agents::AgentCatalog`] 的 warning 文案里（合并循环产
+/// `子代理定义 {name} 被 … 覆盖（原来源：{previous}）…`）——生效定义自身不保留这一信息。
+/// 因此这里解析**本进程刚产出的**同一批 warning：生产者与消费者相邻、解析对象不会跨版本；
+/// 措辞由下方单测钉住，改文案即红（不存在「悄悄解析失败 → 面板少一行」的静默）。
+fn catalog_override_sources(
+    catalog: &agents::AgentCatalog,
+) -> std::collections::BTreeMap<String, String> {
+    let user_root = config::config_dir().ok().map(|dir| dir.join("agents"));
+    let mut out = std::collections::BTreeMap::new();
+    for warning in catalog.warnings() {
+        if let Some((name, previous)) = parse_override_warning(warning) {
+            out.insert(name, override_source_label(&previous, user_root.as_deref()));
+        }
+    }
+    out
+}
+
+/// 解析一条覆盖 warning，返回 `(定义名, 原来源串)`；不是覆盖 warning 时 `None`。
+fn parse_override_warning(warning: &str) -> Option<(String, String)> {
+    let rest = warning.strip_prefix("子代理定义 ")?;
+    let (name, rest) = rest.split_once(" 被 ")?;
+    let previous = rest.split_once("（原来源：")?.1.split_once('）')?.0;
+    Some((name.to_string(), previous.to_string()))
+}
+
+/// 原来源串 → 层标：`builtin` / `user` / `vault`。内建以「内建 {name}」形态出现（
+/// `agents.rs` 的 `definition_location`），其余是文件路径——落在 `<config_dir>/agents`
+/// 之下即用户级，否则是 vault 级（判定口径与定义扫描的两个根同源）。
+fn override_source_label(previous: &str, user_root: Option<&std::path::Path>) -> String {
+    if previous.starts_with("内建 ") {
+        return "builtin".to_string();
+    }
+    if let Some(root) = user_root {
+        if std::path::Path::new(previous).starts_with(root) {
+            return "user".to_string();
+        }
+    }
+    "vault".to_string()
+}
+
+/// 面板停止单个子运行（design §12.4 / tasks §10.2 的「停止」按钮）：只停该 run，其它 run
+/// 不受影响；它的待批项收回、收敛为 `aborted`、不触发唤醒。实现体唯一在
+/// [`subagents::SubagentHub::stop_run`]，本命令只做 scope 解析与「找不到该 run」的宽容化——
+/// 与收敛事件赛跑是常态（run 刚好收尾），不当作错误。
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_subagent_stop(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+    runtime: tauri::State<'_, Runtime>,
+    run_id: String,
+) -> Result<bool, CommandError> {
+    let scope = vault_scope(&vault)?;
+    let hub = runtime
+        .with_session(&scope, |s| s.subagent_hub())
+        .ok()
+        .flatten();
+    Ok(hub.is_some_and(|hub| hub.stop_run(&run_id)))
+}
+
+/// 任务区触顶提示行的「继续」（design §12.6.3 / tasks §10.8）：等价一次用户发言——链清零、
+/// `blocked` 清空、`pending` 非空时立即按待处理通知起一个回合。实现体唯一在
+/// [`subagents::SubagentHub::continue_wake`]。
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_subagent_continue(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+    runtime: tauri::State<'_, Runtime>,
+) -> Result<(), CommandError> {
+    let scope = vault_scope(&vault)?;
+    let hub = runtime
+        .with_session(&scope, |s| s.subagent_hub())
+        .ok()
+        .flatten();
+    if let Some(hub) = hub {
+        hub.continue_wake();
+    }
+    Ok(())
+}
+
 /// 设置当前会话的思考程度档位（M362，change add-harness-thinking-display-and-effort）。
 /// 取值为闭集合 `low` / `high` / `max`（[`thinking::ThinkingEffort`]）；**会话内生效、不写回
 /// 配置**：影响其后发出的消息，新建会话（`harness_new_session`）回到默认 High。
@@ -2036,6 +2161,120 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 探针（M590 验收批）：前台 `task` 委派走完整回合循环时，父续写条目必须落在子运行
+    /// 预分配的 mock 区间**之后**（design §18）——父的下一轮从子区间之后接着弹。
+    ///
+    /// 这条用例是验收场景 8.1 / 8.16 的地基：脚本布局 = 父第 1 条（task 调用）→ 子 1 条 →
+    /// 父续写 1 条。父若没有跳过子区间，第二轮会把子运行的响应当成自己的续写（最终回答
+    /// 变成子结论），断言因此能红。
+    #[test]
+    fn mock_parent_continues_after_child_region() {
+        struct Collect(std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>);
+        impl events::EventSink for Collect {
+            fn emit(&self, payload: serde_json::Value) {
+                self.0.lock().unwrap().push(payload);
+            }
+        }
+        let _xdg = xdg_test_lock();
+        let root = std::env::temp_dir().join(format!(
+            "lumir-subagent-region-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let vault = root.join("vault");
+        std::fs::create_dir_all(vault.join(".lumir/agents")).unwrap();
+        std::fs::write(
+            vault.join(".lumir/agents/research.md"),
+            "---\nname: research\ndescription: 调研\n---\n你是调研子代理。\n",
+        )
+        .unwrap();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-subagent-region".to_string(),
+        };
+        let config = HarnessConfig {
+            provider: config::HarnessProvider::Mock,
+            ..HarnessConfig::default()
+        };
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&scope, &config).unwrap();
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = Collect(events.clone());
+        let script = r#"{"responses":[
+            {"text":"派一个任务。","tool_calls":[{"id":"c1","name":"task","arguments":"{\"agent\":\"research\",\"prompt\":\"查一查\",\"description\":\"梳理变更\"}"}]},
+            {"text":"子结论。"},
+            {"text":"父总结。"},
+            {"text":"再派一个任务。","tool_calls":[{"id":"c2","name":"task","arguments":"{\"agent\":\"research\",\"prompt\":\"再查\",\"description\":\"第二轮\"}"}]},
+            {"text":"子结论二。"},
+            {"text":"父总结二。"}
+        ],"subrun_span":1}"#;
+        let mut client = llm::MockClient::from_str(script, "subagent-region").unwrap();
+        turn::run_turn_for(
+            &sink,
+            &runtime,
+            &scope,
+            &config,
+            "派个活".to_string(),
+            None,
+            &mut client,
+        );
+        // 第二轮：新 client 从会话游标接着弹（与生产 `run_turn` 同一装配）。游标不得把子运行
+        // 预分配区间数两遍（M590 真机 188 现场：双计数后第二轮弹到空条目 ⇒「模型返回了空响应」）。
+        let cursor = runtime
+            .with_session(&scope, |session| session.mock_cursor())
+            .unwrap();
+        let mut second = llm::MockClient::from_str(script, "subagent-region")
+            .unwrap()
+            .with_start(cursor);
+        turn::run_turn_for(
+            &sink,
+            &runtime,
+            &scope,
+            &config,
+            "再来一个".to_string(),
+            None,
+            &mut second,
+        );
+        runtime.release_turn(&scope);
+        let snapshot = runtime.snapshot(&scope, &config);
+        let assistant_texts: Vec<String> = snapshot
+            .messages
+            .iter()
+            .filter(|message| message.role == "assistant")
+            .filter_map(|message| message.text.clone())
+            .collect();
+        assert!(
+            assistant_texts.iter().any(|text| text == "父总结。"),
+            "父续写条目必须被弹到（父在子区间之后接着弹）：{assistant_texts:?}"
+        );
+        assert!(
+            !assistant_texts.iter().any(|text| text == "子结论。"),
+            "子运行的响应不得被父当成本轮续写：{assistant_texts:?}"
+        );
+        assert!(
+            assistant_texts.iter().any(|text| text == "父总结二。"),
+            "第二轮必须从会话游标接着弹（双计数会让它弹到空条目）：{assistant_texts:?}"
+        );
+        // 子运行确实跑完了：分桶表里有一段读数（`run_turn_for` 不带 owned sink，事件面
+        // 在本用例里不可见——生产入口 `run_turn` 才把它接进中枢；判据取会话侧的事实）。
+        let usage = runtime
+            .with_session(&scope, |session| session.subrun_usage().clone())
+            .unwrap();
+        assert!(
+            usage.values().map(|bucket| bucket.segments).sum::<u64>() >= 1,
+            "子运行应完成一段并计入分桶：{usage:?}"
+        );
+        let _ = events;
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// 任务模型覆盖（change add-cron-runtime-daemon §3.7）：已声明 ⇒ 本次会话用该模型；
     /// 未声明 ⇒ 回落 provider 生效模型 + 一条 warning（任务不丢）；mock 没有模型维度，
     /// 覆盖被忽略且不告警。
@@ -2075,5 +2314,40 @@ mod tests {
         let (resolved, warning) = with_model_override(&mock, Some("ignored-model"));
         assert_eq!(resolved, mock);
         assert!(warning.is_none(), "mock 没有模型维度，不应告警");
+    }
+
+    /// 面板「覆盖了哪一层」的来源标：解析的是 `agents.rs` 合并循环产的同一条 warning 文案。
+    /// 这条用例是**措辞钉子**——`agents.rs` 改了覆盖 warning 的写法而这里没跟，本用例先红，
+    /// 面板不会静默少一行来源说明（REVIEW.md「同一语义两处真源」条的对策）。
+    #[test]
+    fn override_warning_is_parsed_into_layer_labels() {
+        let user_root = std::path::Path::new("/tmp/lumir-user-config/agents");
+        let samples = [
+            (
+                "子代理定义 research 被 内建 explore 覆盖（原来源：内建 research）；清单只保留生效的一份",
+                "builtin",
+            ),
+            (
+                "子代理定义 research 被 /tmp/lumir-vault/.lumir/agents/research.md 覆盖（原来源：/tmp/lumir-user-config/agents/research.md）；清单只保留生效的一份",
+                "user",
+            ),
+            (
+                "子代理定义 research 被 /tmp/other-vault/.lumir/agents/research.md 覆盖（原来源：/tmp/other-config/agents/research.md）；清单只保留生效的一份",
+                "vault",
+            ),
+        ];
+        for (warning, expected) in samples {
+            let (name, previous) =
+                parse_override_warning(warning).expect("覆盖 warning 必须可解析");
+            assert_eq!(name, "research");
+            assert_eq!(
+                override_source_label(&previous, Some(user_root)),
+                expected,
+                "warning：{warning}"
+            );
+        }
+        // 非覆盖 warning（坏定义 / 容量告警）不得被误判成覆盖。
+        assert!(parse_override_warning("子代理定义 x：缺少 name 字段").is_none());
+        assert!(parse_override_warning("子代理清单估算 15001 token，超过阈值").is_none());
     }
 }

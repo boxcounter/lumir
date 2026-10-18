@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "并行派两个。",
+      "tool_calls": [
+        {
+          "id": "call_a",
+          "name": "task",
+          "arguments": "{\"agent\": \"alpha\", \"prompt\": \"慢任务\", \"description\": \"慢段\"}"
+        },
+        {
+          "id": "call_b",
+          "name": "task",
+          "arguments": "{\"agent\": \"beta\", \"prompt\": \"快任务\", \"description\": \"快段\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGM-A-CHILD 慢段完成。",
+      "delay_ms": 900
+    },
+    {},
+    {
+      "text": "SGM-B-CHILD 快段完成。",
+      "delay_ms": 150
+    },
+    {},
+    {
+      "text": "SGM-PARALLEL-PARENT 父会话：两段都完成。"
+    }
+  ],
+  "subrun_span": 2
+}

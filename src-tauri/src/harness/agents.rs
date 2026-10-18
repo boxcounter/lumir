@@ -559,11 +559,15 @@ fn resolve_model(
     if model == "inherit" {
         return None;
     }
-    if config
-        .model_specs(&config.provider)
-        .iter()
-        .any(|spec| spec.id == model)
-    {
+    // 与调用级解析同口径（`subagents::resolve_model`）：mock 的模型清单开放，任意 id 视为
+    // 已声明——否则 mock provider 下定义里的 model 永远被回落 inherit（M590 真机场景 186
+    // 现场：两轮 `subagent_started.model` 都是 "mock"）。生产 provider 的判定不变。
+    let declared = config.provider == crate::config::HarnessProvider::Mock
+        || config
+            .model_specs(&config.provider)
+            .iter()
+            .any(|spec| spec.id == model);
+    if declared {
         Some(model.to_string())
     } else {
         warnings.push(format!(
@@ -741,6 +745,41 @@ mod tests {
         let path = root.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, content).unwrap();
+    }
+
+    /// 定义字段 `model` 的声明判定与调用级解析同口径（M590）：mock provider 的模型清单开放，
+    /// 任意 id 视为已声明（不回落 inherit、不产 warning）；生产 provider 仍按声明清单判。
+    #[test]
+    fn definition_model_accepts_any_id_under_mock() {
+        fn model_field(yaml: &str) -> YamlOwned {
+            let documents = YamlOwned::load_from_str(yaml).unwrap();
+            let mapping = documents[0].as_mapping().expect("映射");
+            mapping_get(mapping, "model").expect("model 字段").clone()
+        }
+
+        let mock_config = HarnessConfig {
+            provider: HarnessProvider::Mock,
+            ..Default::default()
+        };
+        let mut warnings = Vec::new();
+        let resolved = resolve_model(
+            Some(&model_field("model: mock-fast")),
+            &mock_config,
+            &mut warnings,
+        );
+        assert_eq!(resolved.as_deref(), Some("mock-fast"));
+        assert!(warnings.is_empty(), "mock 下不应告警：{warnings:?}");
+
+        // 生产 provider：未声明的 id 仍回落 inherit + warning（行为不变）。
+        let config = config_with_models(&["model-a"]);
+        let mut warnings = Vec::new();
+        let resolved = resolve_model(
+            Some(&model_field("model: undeclared")),
+            &config,
+            &mut warnings,
+        );
+        assert_eq!(resolved, None);
+        assert_eq!(warnings.len(), 1);
     }
 
     /// 标准测试布局：`root/vault`（vault 级）与 `root/user/agents`（用户级）。
