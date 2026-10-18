@@ -5,15 +5,22 @@
 > 实现批（M576）对账说明：§1–§4、§5.1/5.2/5.3（场景**只写不跑**，本轮无真机段）、§5.4、§6、
 > §7.1–7.4 已完成；§7.5（视觉）/ §7.6（真机跑新场景）/ §7.7（归档对账）不在本 mission 面内，
 > 原因逐条写在条内。
+>
+> **配置面重塑（2026-10-18，M579）**：Alex 裁决把 §1 的三处旧键（`harness.auto_title` /
+> `harness.title_provider` / `providers.<id>.title_model`）收成一张表
+> `harness.session_naming = { enabled, provider, model }`（proposal 裁决留痕②）。§1.1–§1.3 的
+> 正文已按**重塑后的最终形态**改准（旧形态的实现事实见条内的「重塑前」注记，不另留重复条目）；
+> §1.4 记录这次重塑本身。旧键直接切断、无兼容读取。
 
 ## 1. 配置面
 
-- [x] 1.1 `src-tauri/src/config.rs`：`[harness].auto_title`（bool，默认 `true`）、`[harness].title_provider`（string，可选；缺省 = 会话当前 provider；非空须是 `providers` 表内的 id（`kimi` / `deepseek` / `mock`），闭集合外取值 → 人话 warning + 回落缺省）与 `[harness].providers.<id>.title_model`（string，可选；按 `title_provider` 指向的 provider 条目读取，须在该 provider 的 `models` 清单内声明，未声明 → 人话 warning + 回落该 provider 的生效模型；mock 无此键）。判据：`cargo test config::tests::auto_title_defaults_and_type_fallback`、`config::tests::title_provider_invalid_falls_back_to_session_provider`、`config::tests::title_model_falls_back_when_undeclared`、`config::tests::title_model_is_absent_for_mock` 全绿。
-  - 落点：`HarnessConfig` 两键 + `HarnessProviderConfig.title_model`（mock 的 `HarnessMockConfig` 不加键）；warning 文案含键名与取值，启动不失败。
-- [x] 1.2 `HarnessConfig` 暴露唯一的命名调用解析口 `title_target(session_provider) -> TitleTarget { provider, model, wire_api, api_key, base_url }`：`provider` = `title_provider`（缺省 / 非法回落会话 provider），其余四个字段与 `model` 同出该 provider 条目；`model` = 该条目的 `title_model`（命中自己的 `models` 清单）否则该条目的 `model`。命名调用只走这一处，MUST NOT 混用会话 provider 与 title provider 的字段。判据：单测覆盖「缺省（= 会话 provider）/ 跨 provider / title_provider 非法值回落 / title_model 已声明 / 未声明 / 空串 / mock 无 title_model」七态。
-  - 落点：`config.rs` 的 `title_target` + `title_target_of`（两个网络 provider 共用一份装配）；七态判据在 `config::tests::title_target_resolves_all_five_fields_from_one_provider_entry`（含「会话 provider 的 key / base_url 一个都不许进来」的区分度断言）与 1.1 的三个测试。
-- [x] 1.3 ts-rs 重导出 `src/bindings/HarnessConfig.ts` / `HarnessProviderConfig.ts`，`git add` 重导出产物（gate 的 bindings-drift 判据）。判据：`scripts/gate.sh quick` 的 `bindings-drift` 项 PASS。
-  - 落点：`cargo test --lib export_bindings` 重导出，产物含 `auto_title` / `title_provider` / `title_model`，已 `git add`。
+- [x] 1.1 `src-tauri/src/config.rs`：`[harness].session_naming` 表（三键都可省）：`enabled`（bool，默认 `true`，关闭后不发起任何命名调用）、`provider`（string，可选；缺省 = 会话当前 provider；非空须是 `providers` 表内的 id（`kimi` / `deepseek` / `mock`），闭集合外取值 → 人话 warning + 回落 `null`）与 `model`（string，可选；须在**选定 provider** 的 `models` 清单内声明，未声明 → 人话 warning + 回落 `null`（= 该 provider 的生效模型）；mock 无模型清单，非空值归一为 `null` + warning）。旧键 `auto_title` / `title_provider` / `providers.<id>.title_model` 按未知键口径静默忽略、无兼容读取。判据：`cargo test config::tests::session_naming_defaults_and_type_fallback`、`config::tests::session_naming_provider_invalid_falls_back_to_session_provider`、`config::tests::session_naming_model_falls_back_when_undeclared`、`config::tests::session_naming_rejects_non_null_model_for_mock`、`config::tests::session_naming_legacy_keys_are_ignored` 全绿。
+  - 落点：`SessionNamingConfig`（`HarnessConfig.session_naming`）+ `validate_session_naming`（与 `validate_attachment_naming` 同形对称）；warning 文案含键名与取值，启动不失败。重塑前（M576）的三个键名与逐 provider 校验已随 M579 删除，`HarnessProviderConfig` 不再有 `title_model` 字段（`tests/session_recording.rs` 的 fixture 字面量同步删该字段）。
+- [x] 1.2 `HarnessConfig` 暴露唯一的命名调用解析口 `title_target(session_provider) -> TitleTarget { provider, model, wire_api, api_key, base_url }`：`provider` = `session_naming.provider`（缺省 / 非法回落会话 provider），其余四个字段与 `model` 同出该 provider 条目；`model` = `session_naming.model`（命中自己的 `models` 清单）否则该条目的 `model`。命名调用只走这一处，MUST NOT 混用会话 provider 与 title provider 的字段。判据：单测覆盖「缺省（= 会话 provider）/ 跨 provider / provider 非法值回落 / model 已声明 / 未声明 / 空串 / mock 无模型维度」七态。
+  - 落点：`config.rs` 的 `title_target` + `title_target_of`（两个网络 provider 共用一份装配）；七态判据在 `config::tests::title_target_resolves_all_five_fields_from_one_provider_entry`（含「会话 provider 的 key / base_url 一个都不许进来」的区分度断言）与 1.1 的五个测试。
+- [x] 1.3 ts-rs 重导出 `src/bindings/HarnessConfig.ts` / `HarnessProviderConfig.ts` / `SessionNamingConfig.ts`，`git add` 重导出产物（gate 的 bindings-drift 判据）。判据：`scripts/gate.sh quick` 的 `bindings-drift` 项 PASS。
+  - 落点：`cargo test --lib export_bindings` 重导出，产物含 `session_naming`（`enabled` / `provider` / `model`），已 `git add`；`HarnessProviderConfig` 的 `title_model` 已随字段删除而消失。
+- [x] 1.4 重塑落地（M579，2026-10-18）：`title_target` / `HarnessConfig` / 解析镜像 / 校验 / 单测全部改读新表；`docs/specs/config-reference.md` 新增 §1.7 `harness.session_naming` 并让 §1.6 与它并排同构（布局判据一条两处引用）。判据：`cargo test` 全绿、`scripts/docs-check.sh` 通过、`scripts/gate.sh quick` PASS（见 7.4）。
 
 ## 2. 标题服务（新增 `src-tauri/src/harness/title.rs`）
 
@@ -25,9 +32,9 @@
 - [x] 2.4 调度状态机：首轮触发、5 轮周期、漂移提前（≥3 轮下限）、初始失败后每 3 轮重试、失败算一次评估、单飞行跳过、关闭开关、轮换重置。判据：`harness::title::tests::schedule_*`（含 `initial_retry_after_failure`）全绿。
 - [x] 2.5 辅助调用：不带工具；目标走 1.2 的 `title_target()`（跨 provider 时用该条目的 `api_key` / `base_url` / wire 方言，不混用会话 provider 的字段）；模型声明 effort 时 `effort = Low`、未声明不发；独立 20 秒超时；不写 `llm_request` / `llm_response`；usage 不进 `UsageSnapshot` / `cache_totals`。判据：`harness::title::tests::call_shape_is_tool_free_and_low_effort`、`call_targets_title_provider`、`call_usage_does_not_reach_session_readings` 全绿。
   - 落点：`llm::title_client`（20s 超时走 `llm::TITLE_TIMEOUT`）+ `llm::http_client`（与会话请求共用 TLS 口径）；mock 走独立 `titles` 队列（`MockClient::titles_from_file` / `with_title_start`，弹尽返回空正文）。
-- [x] 2.6 轮完成点接线：`turn.rs` 在正常 `done` 后做纯内存触发判定并起后台线程；结果落盘前复核「同 vault / 同 session id / 会话空闲 / auto_title 仍开」，任一不满足即丢弃并打 stderr。判据：`harness::title::tests::stale_result_is_dropped_after_rotate`、`result_is_dropped_while_busy` 全绿；单测断言会话 JSONL 不因丢弃多出记录。
+- [x] 2.6 轮完成点接线：`turn.rs` 在正常 `done` 后做纯内存触发判定并起后台线程；结果落盘前复核「同 vault / 同 session id / 会话空闲 / `session_naming.enabled` 仍开」，任一不满足即丢弃并打 stderr。判据：`harness::title::tests::stale_result_is_dropped_after_rotate`、`result_is_dropped_while_busy` 全绿；单测断言会话 JSONL 不因丢弃多出记录。
   - 落点：`run_turn_core` 在 `done` 之后返回 `TitleJob`（`title::job_after_turn` 在短会话锁内装配素材）；`run_turn` 在 `release_turn` **之后**起 `lumir-harness-title` 线程（先起会被自己这轮的 busy 挡掉）。
-  - 评审 r1 补正（P2-1 / P2-2）：① mock 标题游标推进挪到「同 vault / 同 session id」身份复核**之后**——轮换 / 切 vault 的旧任务一个字段都不碰，busy / 开关关闭的同会话场景照推（调用确实消费了一条脚本）；单测 `rotated_job_does_not_touch_new_session_title_cursor`。② 复核第 4 条「`auto_title` 仍开」改为**落盘时点重读当前配置**（`auto_title_now`，design D9 的语义），不再读触发时快照；单测 `auto_title_off_at_landing_discards_result`。
+  - 评审 r1 补正（P2-1 / P2-2）：① mock 标题游标推进挪到「同 vault / 同 session id」身份复核**之后**——轮换 / 切 vault 的旧任务一个字段都不碰，busy / 开关关闭的同会话场景照推（调用确实消费了一条脚本）；单测 `rotated_job_does_not_touch_new_session_title_cursor`。② 复核第 4 条「开关仍开」改为**落盘时点重读当前配置**（`naming_enabled_now`，design D9 的语义），不再读触发时快照；单测 `session_naming_off_at_landing_discards_result`。
 
 ## 3. 留存
 
@@ -54,10 +61,11 @@
 
 - [x] 5.1 mock fixture 顶层可选 `titles` 数组（独立队列；缺失 / 空 / 弹尽 → 空正文 → `error/invalid`），**会话 `responses` 队列不动**。判据：`harness::llm::tests::title_script_is_separate_from_responses` 全绿，且既有 fixture 驱动场景（70–77、87–98）零改动回归。
   - 落点：`MockClient::titles_from_file` / `titles_from_str` / `with_title_start` + `title_queue` 的弹尽语义；判据在 `harness::title::tests::call_targets_title_provider` 的后半段（titles 队列长度 2 / responses 队列长度 1，同文件双队列互不影响），既有 fixture 零改动（`rg '"titles"' scripts/acceptance/fixtures` 只命中本 change 新增的三份）。
-- [x] 5.2 `scripts/acceptance/lib/app.mjs`：`SCENARIO_CONFIG_KEYS` 增 `autoTitle` / `titleProvider` / `titleModel` 并映射到配置文件 snake_case；`--check` 能挡住拼错与类型错。判据：`node scripts/acceptance/run.mjs --check` 通过。
-  - 落点：三个顶层键 → `[harness].auto_title` / `title_provider` /（`titleProvider ?? provider` 条目上的）`title_model`；`execute.mjs` 校验类型（`titleProvider` 只挡类型、不挡取值——场景 167 要写非法值验回落）、`titleModel` 需同时给出 provider。
-- [x] 5.3 新增真机验收场景（编号取落地时最大号 +1，文件名 `16x-harness-auto-title-*.md`）：①首轮命名（标题栏 + 浮层行名 + JSONL `decision=initial`）；②keep 防抖（5 轮后标题不变 + `decision=keep` 记录）；③旧文件安静回落（预置无标题记录的 JSONL，行名回落且无告警）；④关闭开关（`autoTitle: false` 时不写记录）；⑤`titleProvider` 非法值回落（会话 provider 为 mock、`titleProvider: "openai"` → 首轮后仍按 mock 的 `titles` 写出 `session_title` 记录，标题正常显示）。判据：`node scripts/acceptance/run.mjs <新编号…>` 全 PASS，证据落 `.local/acceptance/`（git 外）。
-  - 落点：场景 163 / 164 / 165 / 166 / 167（+ fixture `harness-mock-title-{initial,keep,fallback}.json`）；**本轮只写不跑**（mission 无真机段），`--check` 全绿即静态判据；真机 PASS 证据待真机批次（§7.6）。
+- [x] 5.2 `scripts/acceptance/lib/app.mjs`：`SCENARIO_CONFIG_KEYS` 增 `sessionNaming`（重塑后的目标形态）并映射到 `harness.session_naming`；`--check` 能挡住拼错与类型错。判据：`node scripts/acceptance/run.mjs --check` 通过。**（待改名：见 5.2b）**
+  - 落点（M576 原状）：顶层键 `autoTitle` / `titleProvider` / `titleModel` → `[harness].auto_title` / `title_provider` /（`titleProvider ?? provider` 条目上的）`title_model`。
+- [ ] 5.2b **重塑后验收配置键同步改名**：`scripts/acceptance/lib/app.mjs` / `execute.mjs` 的 `autoTitle` / `titleProvider` / `titleModel` 改为 `sessionNaming: { enabled, provider, model }` 直落 `harness.session_naming`；场景 164 / 167 的配置随之改准。**本 mission（M579）未做**：`scripts/acceptance/**` 不在其 scope 内（否则 merge 门禁按 scope 拒），已按 finding 提给 tower 安排后续小任务。在改名前，旧键会被静默忽略——场景 164（关闭开关）与 167（provider 非法值回落）的配置不生效，其余断言仍可跑。
+- [x] 5.3 新增真机验收场景（编号取落地时最大号 +1，文件名 `16x-harness-auto-title-*.md`）：①首轮命名（标题栏 + 浮层行名 + JSONL `decision=initial`）；②keep 防抖（5 轮后标题不变 + `decision=keep` 记录）；③旧文件安静回落（预置无标题记录的 JSONL，行名回落且无告警）；④关闭开关（`sessionNaming.enabled: false` 时不写记录）；⑤naming provider 非法值回落（会话 provider 为 mock、`sessionNaming.provider: "openai"` → 首轮后仍按 mock 的 `titles` 写出 `session_title` 记录，标题正常显示）。判据：`node scripts/acceptance/run.mjs <新编号…>` 全 PASS，证据落 `.local/acceptance/`（git 外）。
+  - 落点：场景 163 / 164 / 165 / 166 / 167（+ fixture `harness-mock-title-{initial,keep,fallback}.json`）；**本轮只写不跑**（mission 无真机段），`--check` 全绿即静态判据；真机 PASS 证据待真机批次（§7.6）。④⑤ 的配置键名以 5.2b 的改名为准（场景文件当前的旧键名在改名前不生效）。
   - 补充：②的轮数是 6 轮（初始评估在第 1 轮，周期口径「距上一次完成的评估满 5 轮」⇒ 第 6 轮触发），场景正文写明了理由。
   - 新增套件能力：`seed.harnessSessions`（预置新布局的会话留存，目录 id 取 `seed.registry` 的 id）——场景 ③ 的旧文件现场只能由磁盘状态表达。
 - [x] 5.4 全量回扫既有验收场景里「会话名 = 首条用户消息截断」的期望（`rg "会话名|新会话" scripts/acceptance/scenarios/`），逐条确认：fixture 未声明 `titles` 时行为逐字节不变；有期望变化的逐条改准（口径：openspec-workflow 的「改闸 / 改语义须回扫既有场景」）。判据：回扫清单写进实现批的完成报告，未改的场景给出「行为不变」的理由。
@@ -66,9 +74,8 @@
 
 ## 6. 文档
 
-- [x] 6.1 核对 `docs/specs/config-reference.md` §1.5 的收录口径：`auto_title` / `title_provider` / `title_model` 不改变会话 wire 行为，按该节「只收改变客户端 wire 行为的键」不收录，留一句确认（不复制第二份真源）。判据：`scripts/docs-check.sh` 通过。
-  - **核对结论（确认句）**：§1.5 的收录口径是「只收改变客户端 wire 行为的键」。这三个键都**不改变任何会话请求的 wire 形态**——自动命名调用是 wire 外辅助调用（不落 `llm_request` / `llm_response`、usage 不进会话读数），故按该节口径**不收录**，本文档不复制第二份真源；键的规格以 living spec「配置节 [harness]」条为准。
-  - 这句确认落在这里（change 制品，M576 scope 内）而**不改 `docs/specs/config-reference.md`**：`docs/specs/**` 不在本 mission 的 scope 里，越界改动会被 merge 门禁按 scope 拒掉；若后续要把确认句并进 §1.5，按一次小 docs 任务处理。
+- [x] 6.1 `docs/specs/config-reference.md` 的收录口径：会话命名三键不改变会话 wire 行为，但 **2026-10-18 配置面重塑后收录为 §1.7 `harness.session_naming`**（与 §1.6 `attachment_naming` 并排同构）。理由：重塑本身（旧键废除 + 布局判据）必须可读，否则「`title_model` 去哪了」无从查；规格正文仍以 living spec「配置节 [harness]」条为准，文档只做键位投影、不复制第二份真源。判据：`scripts/docs-check.sh` 通过。
+  - **重塑前的结论（留档）**：按 §1.5「只收改变客户端 wire 行为的键」不收录三处旧键；M579 改了形态与键位后该结论不再适用——§1.7 记的是键位与生效时机，不是 wire 语义。
 - [x] 6.2 `AGENTS.md` / `README.md` 无需改动（无新流程、无新目录约定）；判据：实现批完成报告写明「已核对，无需改动」。
 
 ## 7. 验证

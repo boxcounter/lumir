@@ -184,8 +184,8 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
 
 **布局判据**（Alex 2026-10-18 裁决）：**配置跟随资源域**——自动 LLM 行为的开关与模型选择归
 `[harness]` 域（`providers` 所在）；触发位置是 UI 事实，不是配置域。粘贴只是触发点，命名调用的
-本质是「一次自动 LLM 行为」，因此与会话自动命名（`auto_title` / `title_provider` /
-`providers.<id>.title_model`）同域、同解析口径（五字段同出一个 provider 条目，MUST NOT 混用）。
+本质是「一次自动 LLM 行为」，因此与会话自动命名（§1.7 的 `harness.session_naming`）同域、
+同解析口径（五字段同出一个 provider 条目，MUST NOT 混用）。
 
 | 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
 |---|---|---|---|---|---|
@@ -210,6 +210,43 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
   `enabled` 关掉即完全不发。
 - **不在本表内的**：命名形态（`<slug>-<hash6>.<ext>`）、slug 字符集（纯 ASCII kebab-case）、撤销窗口、
   扫描范围——这些是行为，不是偏好。
+
+### 1.7 `harness.session_naming` 表（会话自动命名）
+
+会话自动命名的开关与模型选择（change `add-session-auto-naming`；规范正文见
+[openspec/specs/harness/spec.md](../../openspec/specs/harness/spec.md) 的「会话自动命名」条，
+该条随 change 归档后进 living spec）。**位置在 `[harness]` 表内**（2026-10-18 配置面重塑：原
+`auto_title` / `title_provider` / `providers.<id>.title_model` 三处旧键已废除，按未知键口径静默
+忽略、无兼容读取——单用户、未发布）。
+
+**布局判据**（Alex 2026-10-18 裁决，与 §1.6 共用同一条）：**配置跟随资源域**——自动 LLM 行为的
+开关与模型选择归 `[harness]` 域（`providers` 所在）；触发位置（一轮对话结束）是 UI 事实，不是
+配置域。与会话附件命名（§1.6）并排同构。
+
+| 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
+|---|---|---|---|---|---|
+| `harness.session_naming.enabled` | boolean | `true` | `true` / `false` | 每次轮完成点触发判定时读一次；结果落盘前**重读**，在途期间关掉即丢弃（不写记录、不改标题） | `config.rs` 的 `SessionNamingConfig`、`validate_session_naming` |
+| `harness.session_naming.provider` | string \| null | `null` | `"kimi"` / `"deepseek"` / `"mock"`；`null` = 会话当前 provider | 每次评估取配置快照 ⇒ 改动**下一次评估**生效；闭集合外取值装载期回落 `null` + 人话 warning | `config.rs` 的 `HarnessConfig::title_target` |
+| `harness.session_naming.model` | string \| null | `null` | 非空字符串，且须在**选定 provider** 的 `harness.providers.<id>.models` 清单内声明；`null` = 该 provider 的生效模型 | 同上 | 同上 |
+
+口径：
+
+- **缺省即默认**：整表缺席 / 单键缺席 = 出厂值；`model: null` 与缺席同义。表内类型不符
+  （`"enabled": "yes"`、`"model": 3`、整表写成字符串）走整文件回落（与 `[harness]` 其余字段同路）。
+- **非法 `provider` 回落缺省**：闭集合外取值 ⇒ 回落 `null`（= 会话当前 provider）+ 一条人话 warning。
+- **非法 `model` 回落生效模型**：未在选定 provider 的清单内 ⇒ 回落 `null`（= 该 provider 的生效
+  模型）+ 一条人话 warning；空串按「未配置」归一为 `null` + warning。这一点与 §1.6 的
+  `attachment_naming.model`（只点名、值原样保留）**不同且有理由**：附件命名有资格闸（vision
+  能力不满足即不发起、保留暂存名），回落等于替用户选模型；会话命名没有资格闸，选错模型只会让
+  这次调用失败，回落生效模型是唯一可执行的诚实解。
+- **mock provider**：fixture 驱动档，没有模型清单 ⇒ `model` 只能是 `null`（非空值装载期归一为
+  `null` + warning）；命名调用走 fixture 的 `titles` 队列，留存 `model` 字段记录为空串（不伪造
+  模型 id）。
+- **隐私面**：默认（`provider: null`）素材发往会话当前 provider，不引入新的数据接收方；显式指向
+  另一个 provider 时素材会发给该服务方——这是配置者的显式选择，素材仍只是会话内容的受限子集
+  （首轮 + 最近两轮问答、剔除工具参数与结果 / 图片 / 思考文本 / 注入上下文，整份上限 3000 码点）。
+- **不在本表内的**：评估节奏（首轮 / 5 轮周期 / 漂移信号 / 3 轮下限）、keep 防抖、标题规范化、
+  留存记录形状——这些是行为，不是偏好。
 
 ## 2. 解析与容错口径
 

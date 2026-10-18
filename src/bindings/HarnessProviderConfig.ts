@@ -36,10 +36,4 @@ models: Array<HarnessModelSpec>,
  * `responses`；kimi 可配 `chat_completions`。deepseek 配 chat 档在校验期回落并告警
  * （v1 未实现），运行时看到的 deepseek 恒为 `responses`。
  */
-wire_api: WireApi, 
-/**
- * 命名调用专用模型（change add-session-auto-naming，design D8）：空串 = 用该 provider 的
- * 生效模型（`model`）；非空须在本 provider 的 `models` 清单内声明，未声明时校验期回落
- * 空串 + 人话 warning（不把未声明的模型发给 API）。
- */
-title_model: string, };
+wire_api: WireApi, };

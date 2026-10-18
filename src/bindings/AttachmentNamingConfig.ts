@@ -28,7 +28,7 @@ export type AttachmentNamingConfig = {
 enabled: boolean, 
 /**
  * 命名调用发往哪个 provider（`None` = 会话当前 provider）。闭集合外取值在校验期回落
- * `None` + 人话 warning（与 `title_provider` 同模板）。
+ * `None` + 人话 warning（与 `session_naming.provider` 同模板）。
  */
 provider: HarnessProvider | null, 
 /**
