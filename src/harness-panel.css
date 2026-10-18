@@ -1874,3 +1874,481 @@
   opacity: 0.45;
   cursor: default;
 }
+
+/* ── 子代理任务区（change add-harness-subagents tasks §10，M590；原型 design/prototypes/
+   subagents-tasks.html）────────────────────────────────────────────────────────────
+   位置：composer 之上、transcript 之下（面板内常驻段，flex: none）。只列运行中 / 等待批准的
+   run；全部收敛后收敛为一行摘要 + 按模型用量块。纪律：
+   - description 是**唯一可截断字段**；状态词与读数不截断（同 M401「保住终态词」）；
+   - 触顶提示行与 run 行视觉区分（不冒充 run 行）；
+   - eink 降级：色块退成描边 / 无色，语义只靠字形与文字。 */
+.lumir-tp {
+  flex: none;
+  border-top: 1px solid var(--border);
+  background: var(--agent-bg);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+}
+.lumir-tp[hidden] {
+  display: none;
+}
+.lumir-tp-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  margin: var(--sp-2) var(--sp-3) 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r5);
+  background: var(--accent-tint);
+  color: var(--text-2);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  line-height: var(--lh-ui);
+}
+.lumir-tp-alert[hidden] {
+  display: none;
+}
+.lumir-tp-alert-text {
+  min-width: 0;
+  flex: 1;
+}
+.lumir-tp-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-3) var(--sp-4);
+  border: none;
+  background: none;
+  color: var(--text-2);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+.lumir-tp-head[hidden] {
+  display: none;
+}
+.lumir-tp-head:hover {
+  background: var(--hover);
+}
+.lumir-tp-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.lumir-tp-chev {
+  margin-left: auto;
+  flex: none;
+  display: flex;
+  color: var(--text-3);
+  transform: rotate(90deg);
+  transition: transform var(--dur-ui) var(--ease-standard);
+}
+.lumir-tp.is-collapsed .lumir-tp-chev {
+  transform: rotate(0deg);
+}
+.lumir-tp.is-collapsed .lumir-tp-list,
+.lumir-tp.is-collapsed .lumir-tp-usage {
+  display: none;
+}
+.lumir-tp-list {
+  padding: 0 var(--sp-3) var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.lumir-tp-run {
+  border-radius: var(--r5);
+}
+.lumir-tp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  min-height: 26px;
+  padding: var(--sp-1) var(--sp-2);
+  border: none;
+  border-radius: var(--r5);
+  background: none;
+  color: var(--text-2);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+.lumir-tp-row:hover {
+  background: var(--hover);
+}
+.lumir-tp-ic-slot {
+  width: 12px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lumir-tp-ic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+.lumir-tp-run.is-running .lumir-tp-ic {
+  color: var(--run);
+}
+.lumir-tp-run.is-waiting .lumir-tp-ic,
+.lumir-tp-run.is-partial .lumir-tp-ic {
+  color: var(--pending);
+}
+.lumir-tp-run.is-done .lumir-tp-ic {
+  color: var(--ok);
+}
+.lumir-tp-run.is-failed .lumir-tp-ic,
+.lumir-tp-run.is-stopped .lumir-tp-ic {
+  color: var(--danger);
+}
+.lumir-tp-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--run);
+  animation: lumir-hp-tool-pulse var(--pulse-cycle);
+}
+:root[data-theme="eink"] .lumir-tp-pulse {
+  animation: lumir-hp-tool-pulse-eink 1.4s steps(2, jump-none) infinite;
+}
+.lumir-tp-agent {
+  flex: none;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.lumir-tp-desc {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lumir-tp-read {
+  flex: none;
+  color: var(--text-3);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  white-space: nowrap;
+}
+.lumir-tp-state {
+  color: var(--pending);
+  font-weight: var(--fw-medium);
+}
+.lumir-tp-flag {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r4);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
+.lumir-tp-flag[hidden] {
+  display: none;
+}
+.lumir-tp-body {
+  margin: var(--sp-1) var(--sp-2) var(--sp-3) 18px;
+  padding-left: var(--sp-3);
+  border-left: 1px solid var(--border-soft);
+}
+.lumir-tp-body[hidden] {
+  display: none;
+}
+.lumir-tp-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
+.lumir-tp-latest {
+  margin-bottom: var(--sp-2);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lumir-tp-latest[hidden] {
+  display: none;
+}
+.lumir-tp-label {
+  color: var(--text-3);
+}
+.lumir-tp-sum {
+  margin-bottom: var(--sp-2);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text-2);
+  line-height: var(--lh-ui);
+}
+.lumir-tp-sum[hidden] {
+  display: none;
+}
+.lumir-tp-actions {
+  margin-bottom: var(--sp-2);
+}
+.lumir-tp-actions[hidden] {
+  display: none;
+}
+.lumir-tp-mini {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r4);
+  background: none;
+  color: var(--text-2);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  cursor: pointer;
+}
+.lumir-tp-mini:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.lumir-tp-mini[hidden] {
+  display: none;
+}
+.lumir-tp-decisions {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: var(--sp-2);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text-2);
+}
+.lumir-tp-asks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+/* 子运行批准卡（行内就地展开；卡体沿用父会话的 diff / 原因框 / 按钮样式类） */
+.lumir-tp-ask {
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--content-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r6);
+}
+.lumir-tp-ask-title {
+  margin-bottom: var(--sp-2);
+  font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.lumir-tp-ask-sub {
+  display: block;
+  margin-top: 1px;
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+.lumir-tp-ask-from {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  padding: 1px 6px;
+  border-radius: var(--r4);
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+}
+:root[data-theme="eink"] .lumir-tp-alert,
+:root[data-theme="eink"] .lumir-tp-ask-from {
+  background: transparent;
+  border: 1px solid var(--border);
+}
+/* 按模型用量（全部收敛后；父会话控制行读数不掺这些数字） */
+.lumir-tp-usage {
+  padding: 0 var(--sp-4) var(--sp-3);
+}
+.lumir-tp-usage[hidden] {
+  display: none;
+}
+.lumir-tp-usage h4 {
+  margin: 0 0 var(--sp-2);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+.lumir-tp-usage-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-height: 18px;
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  color: var(--text-2);
+}
+.lumir-tp-usage-model {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.lumir-tp-usage-value {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-3);
+}
+/* 子代理清单（只读折叠列表；`enabled=false` 时整块不出现） */
+.lumir-tpc {
+  flex: none;
+  border-top: 1px solid var(--border-soft);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+}
+.lumir-tpc[hidden] {
+  display: none;
+}
+.lumir-tpc-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-4);
+  border: none;
+  background: none;
+  color: var(--text-2);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+.lumir-tpc-head:hover {
+  background: var(--hover);
+}
+.lumir-tpc-chev {
+  margin-left: auto;
+  display: flex;
+  color: var(--text-3);
+  transition: transform var(--dur-ui) var(--ease-standard);
+}
+.lumir-tpc.is-open .lumir-tpc-chev {
+  transform: rotate(90deg);
+}
+.lumir-tpc-list {
+  display: none;
+  padding: 0 var(--sp-3) var(--sp-3);
+}
+.lumir-tpc.is-open .lumir-tpc-list {
+  display: block;
+}
+.lumir-tpc-item {
+  padding: var(--sp-2);
+  border-radius: var(--r5);
+}
+.lumir-tpc-item:hover {
+  background: var(--hover);
+}
+.lumir-tpc-top {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.lumir-tpc-name {
+  font-family: var(--font-mono);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text);
+}
+.lumir-tpc-src {
+  margin-left: auto;
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r4);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
+.lumir-tpc-desc {
+  margin-top: 1px;
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+  line-height: 1.45;
+}
+.lumir-tpc-meta {
+  margin-top: 2px;
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
+.lumir-tpc-override {
+  margin-top: 2px;
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
+/* 后台完成通知（tasks §10.4）：与用户消息视觉区分（左侧色条 + 标签） */
+.lumir-hp-notice {
+  border-left: 2px solid var(--accent);
+  padding-left: var(--sp-3);
+}
+.lumir-hp-notice-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-1);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+.lumir-hp-notice-body {
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text-2);
+  line-height: var(--lh-ui);
+}
+.lumir-hp-notice-line {
+  margin-bottom: 2px;
+}
+.lumir-hp-notice-more {
+  color: var(--text-3);
+}
+:root[data-theme="eink"] .lumir-hp-notice {
+  border-left-color: var(--border);
+}
+:root[data-theme="eink"] .lumir-hp-notice-head {
+  color: var(--text);
+}
+
+/* ── transcript 的 task 工具行（change add-harness-subagents design §19.1，M590）────────
+   行在调用时创建、之后只就地更新（不因完成顺序换位）；点击就地展开该 run 的详情
+   （模型 / 轮次步数 / 最近一步 / 摘要）。行本身沿用 .lumir-hp-tool-row 的三段式布局。 */
+.lumir-hp-taskwrap {
+  display: block;
+}
+.lumir-hp-task-agent {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.lumir-hp-task-detail {
+  margin: var(--sp-1) 0 var(--sp-2) 17px;
+  padding-left: var(--sp-3);
+  border-left: 1px solid var(--border-soft);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text-2);
+  line-height: var(--lh-ui);
+}
+.lumir-hp-task-detail[hidden] {
+  display: none;
+}
+.lumir-hp-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
+.lumir-hp-task-latest {
+  margin-bottom: var(--sp-2);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lumir-hp-task-sum {
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text-2);
+}

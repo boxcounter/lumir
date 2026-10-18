@@ -31,6 +31,14 @@ import type { NamingOutcome } from "./bindings/NamingOutcome";
 import type { NamingEcho } from "./bindings/NamingEcho";
 import type { TextChangePayload } from "./bindings/TextChangePayload";
 
+/** 批准请求的发起者（change add-harness-subagents design §8.3）：Rust `ApprovalSource` 的
+ *  internally tagged 序列化（`{"kind":"interactive"}` / `{"kind":"subrun","agent":…}`）。
+ *  子运行透传的卡片渲染在任务面板该 run 的行内（「卡片跟着发起者走」），父会话自己的卡
+ *  保持原位不变。前端只按 `kind` 分支，不推导归属。 */
+export type ApprovalSource =
+  | { kind: "interactive" }
+  | { kind: "subrun"; agent: string; run_id: string; description: string };
+
 /** 判断 invoke 的 reject 值是否为 CommandError 信封。 */
 export function isCommandError(e: unknown): e is CommandError {
   return (
@@ -438,7 +446,7 @@ export type HarnessEvent = HarnessEventEnvelope &
     // 类型取 Rust 侧的 ts-rs 导出（`src/bindings/DecisionReason.ts`，单一来源）。注意该联合里的
     // `deny_rule` 变体**不会到达前端**（deny 不产批准卡，规则原文走工具行的错误文案）——
     // 前端只处理三个可上卡的 kind（见 harness-panel.ts 的 parseDecisionReason）。
-    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string; reason?: DecisionReason; remember?: boolean }
+    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string; reason?: DecisionReason; remember?: boolean; source?: ApprovalSource }
     // usage（M443，change harness-cache-metrics §4.1）：cache 侧口径拆成会话累计与单回合两个
     // 投影——`cache_pct_session` = 控制行主读数（本逻辑会话 Σcached÷Σinput）、`cache_pct_turn`
     // = hover 气泡里的单回合值、`cache_write_tokens[_session]` = 本回合 / 本会话累计的缓存写入、
@@ -456,6 +464,25 @@ export type HarnessEvent = HarnessEventEnvelope &
     // 字符串；前端只改会话名文本与 tooltip（不重渲染 transcript、不动滚动 / 焦点 / 清单
     // 顺序），压缩 / 恢复的继承标题也发一次。
     | { type: "title"; title: string }
+    // ── 子代理可见面（change add-harness-subagents design §13 / §19）───────────────
+    // 七类 `subagent_*` 是面板任务区的数据源：started / progress / step / finished 只更新
+    // 任务行（MUST NOT 进 transcript）；notified 表达「通知最终被如何处理」（wake 值）；
+    // rejected 是委派被闸拒的可见面；catalog_large 是清单容量告警。
+    // **状态 / 终态词以 `subagent_finished` 的 status 为准**（completed / partial / failed /
+    // aborted），前端只做词映射，不自行推导成功与否（REVIEW.md「同一语义两处真源」条）。
+    | { type: "subagent_started"; run_id: string; segment: number; agent: string; description: string; model: string; tools: string[]; max_turns: number; max_tokens: number; timeout_secs: number; background: boolean }
+    | { type: "subagent_progress"; run_id: string; segment: number; rounds: number; tool_calls: number; last_tool: string | null; elapsed_ms: number }
+    | { type: "subagent_step"; run_id: string; segment: number; tool: string; summary: string }
+    | { type: "subagent_finished"; run_id: string; segment: number; agent: string; status: string; stopped_by?: string; rounds: number; model: string; input_tokens: number; cached_tokens: number; output_tokens: number; denied_calls: number; duration_ms: number; summary_chars: number; summary?: string; audit?: string; audit_error?: string }
+    | { type: "subagent_notified"; run_id: string; agent: string; status: string; wake: string; wake_batch: string; chain_index: number }
+    | { type: "subagent_rejected"; reason: string; agent: string; description: string }
+    | { type: "subagent_catalog_large"; estimated_tokens: number; definition_count: number }
+    // `notice`（tasks §10.4）：后台完成通知上屏到 transcript 的那一刻。正文不进本事件——
+    // 它是会话里那条带 `auto_notice` 标记的 user 消息（内容真源一处）；本事件只带渲染元数据。
+    | { type: "notice"; wake_batch: string; runs: Array<{ run_id: string; agent: string; description: string; status: string; stopped_by?: string | null; summary: string }> }
+    // `auto_turn_started`（tasks §10.4）：自动回合开始。面板据此打开轮次闸门 / 处理中相位——
+    // 自动回合没有用户发送动作，`done` 之前的所有内容事件否则会被轮次闸门丢弃。
+    | { type: "auto_turn_started"; chain_index: number }
     | { type: "done" }
     | { type: "error"; code: string; message: string }
     | { type: "aborted" }
@@ -542,6 +569,30 @@ export function harnessAbort(): Promise<void> {
 /** 「新会话」：清空当前 vault 会话的消息历史并重新装配系统上下文。 */
 export function harnessNewSession(): Promise<void> {
   return invoke<void>("harness_new_session");
+}
+
+/**
+ * 子代理清单快照（change add-harness-subagents tasks §10.5，面板定义清单的只读数据源）：
+ * 返回 JSON String（M302 纪律，命令返回值不为此新增 ts-rs 类型）——
+ * `{enabled, definitions: [{name, description, tools, model, background, source,
+ * override_from?}], warnings}`。`enabled=false` 时面板任务区与清单整块不出现（定义照常保留）。
+ * 扫描与 `task` 工具描述里的清单同源（同一 `AgentCatalog::load` 口径）。
+ */
+export function harnessSubagentCatalog(): Promise<string> {
+  return invoke<string>("harness_subagent_catalog");
+}
+
+/** 面板停止单个子运行（tasks §10.2「停止」；design §12.4：只停该 run，它的待批项收回、
+ *  收敛为 `aborted`、不触发唤醒）。返回是否找到该 run——与收敛事件赛跑（run 刚好结束）是
+ *  常态，false 不当作错误。 */
+export function harnessSubagentStop(run_id: string): Promise<boolean> {
+  return invoke<boolean>("harness_subagent_stop", { run_id });
+}
+
+/** 任务区触顶提示行的「继续」（tasks §10.8；design §12.6.3）：等价一次用户发言——链清零、
+ *  `blocked` 清空，并按待处理通知起一个回合。 */
+export function harnessSubagentContinue(): Promise<void> {
+  return invoke<void>("harness_subagent_continue");
 }
 
 /**
@@ -638,6 +689,15 @@ export function parseHarnessEvent(payload: unknown): HarnessEvent | null {
     case "approval_request":
     case "usage":
     case "compact":
+    case "subagent_started":
+    case "subagent_progress":
+    case "subagent_step":
+    case "subagent_finished":
+    case "subagent_notified":
+    case "subagent_rejected":
+    case "subagent_catalog_large":
+    case "notice":
+    case "auto_turn_started":
     case "done":
     case "error":
     case "aborted":

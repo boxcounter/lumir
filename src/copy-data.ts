@@ -1492,6 +1492,200 @@ const COPY_TABLE = {
     zh: "暂存名已被占用，无法撤销",
     en: "The staging name is already taken, so the rename can't be undone",
   },
+  // 子代理任务面板（change add-harness-subagents tasks §10，M590）。取号从 D477 起：M593
+  // 的 cron 运行契约错误信封先占了 D476（并发分支，避免撞号）；本批是任务区 / 行详情 /
+  // 触顶提示 / 按模型用量 / 子代理清单 / 后台完成通知的可见文案。
+  //   D477–D483 任务区标题与计数（标题由「任务」+ 各计数段拼成；全部收敛后只出完成 / 部分
+  //              结果的本次会话摘要）；
+  //   D484–D488 行状态词（终态词永不截断）；D489「后台」标记；D490–D491 行内动作；
+  //   D492–D494 自动回合触顶提示行的两种文案与「已继续」；
+  //   D495–D500 行详情（模型 / 轮次步数 / 用时 / 触顶原因 / 摘要 / 最近一步）；
+  //   D501–D505 触顶原因词（stopped_by 的值域，前端只做词映射）；
+  //   D506–D507 按模型用量区；D508–D513 子代理清单（来源与覆盖说明）；
+  //   D514–D517 后台完成通知（单条 / 合并 / 详情指引 / 点名发起者）。
+  D477: {
+    zh: "任务",
+    en: "Tasks",
+  },
+  D478: {
+    zh: "{count} 个运行中",
+    en: "{count} running",
+  },
+  D479: {
+    zh: "{count} 个后台运行中",
+    en: "{count} running in background",
+  },
+  D480: {
+    zh: "{count} 个等待批准",
+    en: "{count} awaiting approval",
+  },
+  D481: {
+    zh: "本次会话 {parts}",
+    en: "This session: {parts}",
+  },
+  D482: {
+    zh: "{count} 个已完成",
+    en: "{count} completed",
+  },
+  D483: {
+    zh: "{count} 个部分结果",
+    en: "{count} partial",
+  },
+  D484: {
+    zh: "运行中",
+    en: "Running",
+  },
+  D485: {
+    zh: "已完成",
+    en: "Completed",
+  },
+  D486: {
+    zh: "部分结果",
+    en: "Partial result",
+  },
+  D487: {
+    zh: "失败",
+    en: "Failed",
+  },
+  D488: {
+    zh: "已停止",
+    en: "Stopped",
+  },
+  D489: {
+    zh: "后台",
+    en: "Background",
+  },
+  D490: {
+    zh: "停止",
+    en: "Stop",
+  },
+  D491: {
+    zh: "继续",
+    en: "Continue",
+  },
+  D492: {
+    zh: "自动回合已达上限（{max}）：后续后台结果只上屏，等你发言后处理。",
+    en: "Automatic turns hit the limit ({max}); later background results are shown but won't wake the agent until you speak.",
+  },
+  D493: {
+    zh: "你停止了自动回合：后续后台结果只上屏，不再自动唤醒。",
+    en: "You stopped the automatic turn; later background results are shown but won't wake the agent.",
+  },
+  D494: {
+    zh: "已继续：链计数清零，已按待处理通知起一个回合",
+    en: "Resumed: the chain counter is reset and a turn started from the pending notices",
+  },
+  D495: {
+    zh: "模型 {model}",
+    en: "Model {model}",
+  },
+  D496: {
+    zh: "{rounds} 轮 · {steps} 步",
+    en: "{rounds} rounds · {steps} steps",
+  },
+  D497: {
+    zh: "用时 {duration}",
+    en: "Took {duration}",
+  },
+  D498: {
+    zh: "触顶 {reason}",
+    en: "Stopped by {reason}",
+  },
+  D499: {
+    zh: "摘要",
+    en: "Summary",
+  },
+  D500: {
+    zh: "最近一步",
+    en: "Latest step",
+  },
+  D501: {
+    zh: "轮次上限",
+    en: "round limit",
+  },
+  D502: {
+    zh: "token 预算",
+    en: "token budget",
+  },
+  D503: {
+    zh: "时间预算",
+    en: "time budget",
+  },
+  D504: {
+    zh: "配额不足",
+    en: "quota exhausted",
+  },
+  D505: {
+    zh: "接口错误",
+    en: "API error",
+  },
+  D506: {
+    zh: "子任务用量（按模型）",
+    en: "Subtask usage (by model)",
+  },
+  D507: {
+    zh: "输入 {input}（缓存 {cached}）· 输出 {output} · {segments} 段",
+    en: "Input {input} (cached {cached}) · Output {output} · {segments} segments",
+  },
+  D508: {
+    zh: "子代理清单 · {count}",
+    en: "Subagents · {count}",
+  },
+  D509: {
+    zh: "{count} 件工具 · 模型 {model}",
+    en: "{count} tools · Model {model}",
+  },
+  D510: {
+    zh: "内建",
+    en: "Built-in",
+  },
+  D511: {
+    zh: "用户级",
+    en: "User",
+  },
+  D512: {
+    zh: "vault 级",
+    en: "Vault",
+  },
+  D513: {
+    zh: "覆盖了{source}的同名定义",
+    en: "Overrides the same-named {source} definition",
+  },
+  D514: {
+    zh: "后台任务完成 · {agent}",
+    en: "Background task finished · {agent}",
+  },
+  D515: {
+    zh: "{count} 个后台任务完成 · 已合并为一条通知",
+    en: "{count} background tasks finished · merged into one notice",
+  },
+  D516: {
+    zh: "详情见任务面板",
+    en: "Details in the tasks panel",
+  },
+  D517: {
+    zh: "来自 {agent}：{description}",
+    en: "From {agent}: {description}",
+  },
+  // D518–D521：任务行读数的两个组合形态（轮次 / 轮次 + tokens）、通知行的状态 + 触顶原因
+  // （原实现把全角括号拼在 TS 字面量里，被 `src/**` 零 CJK 门禁挡下——文案一律走表）、
+  // 以及清单读取失败的错误信封。
+  D518: {
+    zh: "{status}（{reason}）",
+    en: "{status} ({reason})",
+  },
+  D519: {
+    zh: "{rounds} 轮 · {tokens}",
+    en: "{rounds} rounds · {tokens}",
+  },
+  D520: {
+    zh: "{rounds} 轮",
+    en: "{rounds} rounds",
+  },
+  D521: {
+    zh: "无法读取子代理清单（{reason}）",
+    en: "Couldn't read the subagent list ({reason})",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1623,4 +1817,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   open_url_failed: "D79",
   // 窗口底色同步（M525）：只走 console 降级、永不上屏（见 D462 条目注记）。
   window_background_failed: "D462",
+  // 子代理清单快照序列化失败（M590）：正常路径不可达（只序列化本进程构造的对象），留人话
+  // 是为了不让错误码落回未知 code 的兜底。
+  harness_subagent_catalog_failed: "D521",
 };
