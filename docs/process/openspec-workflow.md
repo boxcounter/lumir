@@ -39,6 +39,22 @@ openspec archive（并入 living spec） ◄── Alex 确认 ◄────�
 
 spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 只写增量操作——`## ADDED Requirements` / `## MODIFIED Requirements` / `## REMOVED Requirements` / `## RENAMED Requirements`。每个 requirement 用 `### Requirement: <名称>` 起头，正文含 `SHALL`/`MUST`，且至少一个 `#### Scenario:`。archive 时这些增量并入 `openspec/specs/<capability>/spec.md` 成为 living spec。
 
+**MODIFIED 是整块替换，不是逐段合并**（2026-10-18 实测 + 对账门禁）：`openspec archive` 处理 MODIFIED requirement 时，用 delta 的同名块覆盖 living spec 里那一整条——delta 里少抄的段落会在归档时**静默消失**，`validate --all --strict` 与相对链接检查都看不见（现场：change `add-harness-chat-completions-dialect` 的「会话本地留存」漏抄一段 847 字符的既有正文，归档后从 `openspec/specs/harness/spec.md` 消失，事后人工恢复）。因此写 MODIFIED 的做法是**整条复制现行 requirement 正文再改**，不要只写「改动的那段」。
+
+这条判据已机器化：`scripts/openspec-archive-check.mjs`（挂在 `scripts/docs-check.sh` 里，本地 `gate.sh quick` 与 CI 的 docs-check.yml 同时继承）。对每个活跃 change 的 MODIFIED 块，它把 living requirement 的段落与 delta 同名块按逐字相等对齐：被删的段落必须在 delta 里有替代内容（改写），否则报红并给出可直接抄的声明行。确属本次删除的段落，在 delta 文件首个 `## ` 之前加一行显式认领（写在 requirement 块内会被归档原样搬进 living spec）：
+
+```
+> 归档对账声明：删除「<该段里 8 字以上的原样片段>」
+```
+
+归档之后可再对指定 change 做一次事后审计（用 git 里归档提交的前后快照核对是否真的丢了段落，已被人工恢复的只报 INFO）：
+
+```
+node scripts/openspec-archive-check.mjs --archived <change-id>
+```
+
+已知边界：同一 gap 里删一段、增一段时按位置配对判「改写」，故「删一段、原地写一段无关内容」会被当作改写放行——这类改动在 PR diff 里是可见的，不属本判据守的静默丢失面。
+
 ## 有原型时的设计合同：视觉保真必填（2026-10-06）
 
 凡有原型的 change——`design/prototypes/` 下的原型、Alex 过目定稿的原型截图、或提案期以屏幕形态定下的方向——`design.md` 的合同**必须含「视觉保真」一节**，逐屏（或逐表面）列出可直接对账的视觉口径：
@@ -76,7 +92,7 @@ spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 
 实测失效模式（M150 归档对账，2026-09-17）：**实现 PR 合并后没人跟进归档**——当时 11 个活跃 change 里 7 个已实现未归档（`add-wikilink` 积压 12 天），living spec 因此长期落后于实现，其间还出现 living spec 与实现直接矛盾（`editor-live-preview` 自称「M1 只读口径」而 md 模式早已可编辑）。防线是把它做成批次收尾的强制项：
 
 - [ ] **本批 merge 的 change 全部列入归档待办并跟踪到归档**：每个 change 在实现 PR 合并时即落一条归档跟踪记录（记在 `docs/backlog.md`；待归档属可客观核对的事项，由 tower 记账、不进「待 Alex 裁决」区），批次收尾时用 `npx --yes @fission-ai/openspec@1.12.0 list` 逐个核对——列表里出现 `✓ Complete` 却仍在活跃列表里的，就是漏跟踪的那个。
-- [ ] **归档前逐条对账**（对账口径）：tasks 勾选状态 / spec 增量 / 当前实现三者一致才归档；任务未勾但有正当理由的，先就地标注放弃原因再归档；spec 增量与实现矛盾的，**不归档**，并在 `docs/backlog.md` 说明矛盾点。
+- [ ] **归档前逐条对账**（对账口径）：tasks 勾选状态 / spec 增量 / 当前实现三者一致才归档；任务未勾但有正当理由的，先就地标注放弃原因再归档；spec 增量与实现矛盾的，**不归档**，并在 `docs/backlog.md` 说明矛盾点。其中「spec 增量没丢掉 living spec 的既有段落」由机器判据兜底（`scripts/openspec-archive-check.mjs`，随 `scripts/docs-check.sh` 在 PR 阶段就跑）；归档完成后再对该 change 跑一次 `node scripts/openspec-archive-check.mjs --archived <change-id>` 复核。
 - [ ] **归档后核对新建 capability 的 Purpose**：`archive` 会为新建的 living spec 写入占位 Purpose（`TBD - created by archiving change …`），`validate --all --strict` 会因此报红——须手写替换为「这个 capability 是干什么的」，再跑一次 validate 确认全绿。
 - [ ] **backlog 卫生（2026-10-12 Alex 裁决）**：本批核销 / 裁决落地的条目**直接从 `docs/backlog.md` 删除、不留索引**（git 历史即台账；含仍在生效的长期口径时改移「承接残项」）；条目一律一行 gist + 证据指针，批次报告与全量回归总表只留指针；只记改变未来动作的信息（结论 / 待办 / 裁决点 / 复现口径）——过程性验证状态（「跑完、PASS」类）不入账（2026-10-16 Alex 裁决，口径见该文件头部「维护规则」）；顺带检查体量红线——`wc -l docs/backlog.md` 超 **300** 行即触发一次结构清理（口径见该文件头部的「维护规则」；无核销/僵尸项可清时记「已查」即过，不为压行数删活条目）。
 - [ ] **finding 落账率对账（2026-10-12 Alex 认可）**：本批 `.tower/comms/findings/` 新增文件数与 `docs/backlog.md` 新增条目数逐一核对，不等即查漏——漏落账的 finding 等于没登记。
