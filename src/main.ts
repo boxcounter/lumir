@@ -2521,16 +2521,27 @@ const harnessPanel = createHarnessPanel({
 // 运行终态由后端经 `cron:run_finished` 投递，这里只把回执转交 `cron_run_result`——终态不在
 // 前端判定（REVIEW.md「同一语义两处真源」条）。
 
-/** `cron:run` 载荷（design §6.1 的逐字段形状 + `dedicated` 的续写会话 id）。 */
-type CronRunPayload = {
-  run_id: string;
-  task: string;
+/** `cron:run` 载荷：运行契约（`RunSpec`）+ 任务载荷（change add-harness-subagents design §2.4）。
+ *
+ * 契约字段与后端 `harness::run::RunSpec` 的序列化一一对应；任务字段（vault / prompt / 会话
+ * 形态 / 模型覆盖）是 `RunSpec` 刻意不含的任务知识。会话槽位与批准语义只读契约枚举，不读
+ * 字符串——`trigger` 只服务诊断。 */
+type RunSpecPayload = {
+  origin: { kind: "cron"; task: string; run_id: string };
+  session_target: { kind: "interactive" } | { kind: "unattended"; key: string };
+  tool_policy: { allow: string[] };
+  budget: { max_rounds: number; max_tokens: number };
+  approval_policy: { kind: "interactive" } | { kind: "reject_unavailable" };
+  background: boolean;
+};
+
+type CronRunPayload = RunSpecPayload & {
+  trigger: string;
   vault: string;
   prompt: string;
   session: "new" | "dedicated";
   session_id?: string | null;
   model?: string | null;
-  origin: string;
 };
 
 /** 确保目标 vault 已打开（无人值守运行不切换 vault，点击运行是显式意图）：走既有切换链路
@@ -2549,26 +2560,30 @@ async function ensureCronVault(root: string): Promise<void> {
 /** `cron:run` 处理器：点击发起 → 交互槽位（用户看得见）；定时 / 拉取 → 运行槽位（独立
  *  runtime，事件不进当前 transcript）。 */
 async function handleCronRun(payload: CronRunPayload): Promise<void> {
-  const slot = payload.origin === "click" ? "interactive" : "run";
+  const slot = payload.session_target.kind === "interactive" ? "interactive" : "run";
   try {
     await ensureCronVault(payload.vault);
     if (slot === "interactive") openHarnessPane();
     await invoke("harness_cron_run", {
       payload: {
-        run_id: payload.run_id,
-        task: payload.task,
+        origin: payload.origin,
+        session_target: payload.session_target,
+        tool_policy: payload.tool_policy,
+        budget: payload.budget,
+        approval_policy: payload.approval_policy,
+        background: payload.background,
+        trigger: payload.trigger,
         target_vault: payload.vault,
         prompt: payload.prompt,
         session: payload.session,
         session_id: payload.session_id ?? null,
         model: payload.model ?? null,
-        origin: payload.origin,
       },
     });
   } catch (error) {
     // 发起失败也是终态：立即回执（cron_state 不写 last_fired、不误判 busy），并给人话提示。
     void invoke("cron_run_result", {
-      run_id: payload.run_id,
+      run_id: payload.origin.run_id,
       ok: false,
       session_id: null,
       error: isCommandError(error) ? error.code : "cron_run_failed",

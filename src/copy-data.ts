@@ -1492,6 +1492,13 @@ const COPY_TABLE = {
     zh: "暂存名已被占用，无法撤销",
     en: "The staging name is already taken, so the rename can't be undone",
   },
+  // cron 运行入口的运行契约校验（M593，change add-harness-subagents design §2.4）：受理方只
+  // 接受自洽的 `RunSpec`（会话目标 ↔ 批准策略、轮次预算、cron 触发来源）。命中即整次拒绝，
+  // 不降级执行——契约与行为不一致时宁可不起跑。
+  D476: {
+    zh: "运行请求与运行契约不一致，已拒绝本次运行",
+    en: "The run request doesn't match its run contract; the run was rejected",
+  },
   // 子代理任务面板（change add-harness-subagents tasks §10，M590）。取号从 D477 起：M593
   // 的 cron 运行契约错误信封先占了 D476（并发分支，避免撞号）；本批是任务区 / 行详情 /
   // 触顶提示 / 按模型用量 / 子代理清单 / 后台完成通知的可见文案。
@@ -1772,6 +1779,8 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_parts_invalid: "D451",
   // composer 草稿（change composer-draft-persistence）：写失败的人话 warning。
   harness_draft_write_failed: "D456",
+  // cron 运行入口的运行契约校验（M593）：由 `harness_cron_run` 构造，命中即拒绝本次运行。
+  run_spec_invalid: "D476",
   document_write_failed: "D187",
   document_write_unknown: "D188",
   document_conflict: "D41",

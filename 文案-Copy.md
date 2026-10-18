@@ -460,6 +460,7 @@
 | D473 | 后端错误信封（按 code 渲染） | 作者 | 撤销窗口已过：这次改名的撤销入口已失效 | The undo window has passed for this rename | M577：撤销令牌过期 / 不可识别时的人话（`attachment_undo_unavailable`）。正常路径不会发生（toast 消隐后动作钮已不在），留着是为了让「绕过界面的调用」也有可读答复。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 | D474 | 后端错误信封（按 code 渲染） | 作者 | 文件已被改名、移走或内容改变，无法撤销 | The file was renamed, moved or changed, so the rename can't be undone | M577：撤销的放弃判据命中时的人话（`attachment_undo_stale`）——文件在撤销前又被人工改名 / 移走 / 内容变化，或 vault 已切换。MUST NOT 覆盖用户当前的命名。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 | D475 | 后端错误信封（按 code 渲染） | 作者 | 暂存名已被占用，无法撤销 | The staging name is already taken, so the rename can't be undone | M577：撤销要改回的 `pasted-<hash16>.<ext>` 已被别的文件占用时的人话（`attachment_undo_occupied`）——放弃撤销，MUST NOT 覆盖既有文件。消费点 src/copy-data.ts 的 ERROR_COPY。 |
+| D476 | 后端错误信封（按 code 渲染） | 作者 | 运行请求与运行契约不一致，已拒绝本次运行 | The run request doesn't match its run contract; the run was rejected | M593：cron 运行入口（`harness_cron_run`）只接受自洽的 `RunSpec`（会话目标 ↔ 批准策略、轮次预算、cron 触发来源）；不一致即整次拒绝，不降级执行。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 
 | D477 | agent 面板 · 任务区标题 | 作者 | 任务 | Tasks | M590（change add-harness-subagents §10.1）：任务区常驻标题词。没有运行中 / 等待批准的任务且本次会话没有子运行时整块不出现（空态不占位）。消费点 src/harness-panel.ts 的 `taskHeadline`。 |
 | D478 | agent 面板 · 任务区标题计数 | 作者 | {count} 个运行中 | {count} running | M590：前台运行中的 run 计数段（与后台 / 待批段同排）。消费点 `taskHeadline`。 |
@@ -577,6 +578,7 @@
 - M542 D468 恢复路径的思考块折叠行（D388 的无时长变体，接末位）
 - M577 D469–D475 图片语义命名：成功 toast / 撤销动作 / 部分引用未更新 / 撤销成功 + 三条撤销错误信封（接末位）
 - M590 D477–D522 子代理任务面板：任务区计数与状态词 / 行详情 / 触顶提示行 / 按模型用量 / 子代理清单与覆盖说明 / 后台完成通知（D476 由 M593 先取，本批从 D477 起）
+- M593 D476 cron 运行契约校验的错误信封（接 D475 的下一位；D477–D522 由 M590 接续，避免撞号）
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 

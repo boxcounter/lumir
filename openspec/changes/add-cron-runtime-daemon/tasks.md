@@ -56,8 +56,8 @@
   事件不渲染进当前 transcript；新增契约测试钉「运行前后交互槽位的内容与 id 不变」。
 - [x] 3.2 发送通道参数化为「显式消息文本 + 可选附件」的单一实现，运行注入 prompt 时不读写 composer
   草稿；`rg` 确认没有第二条发送实现。
-- [x] 3.3 `cron:run` 事件（`run_id` / `task` / `vault` / `prompt` / `session` / `model` / `origin`）
-  与 `cron_run_result({run_id, ok, session_id?, error?})` 命令；运行终态只由该回执一处产出。
+- [x] 3.3 `cron:run` 事件与 `cron_run_result({run_id, ok, session_id?, error?})` 命令；运行终态
+  只由该回执一处产出。（载荷形状已由 3.9 改为「`RunSpec` + 任务载荷」；字段不再自列。）
 - [x] 3.4 `src/main.ts` 装配唯一 `cron:run` 处理器：目标 vault 未打开时走既有 vault 打开链路 →
   `session=new` 新建 / `dedicated` 用状态里的 `session_id` 走既有恢复链路 → 按 `model` 覆盖 →
   经 3.2 的发送通道送出 prompt → 回执结果；不写第二套打开、装配或发送实现。
@@ -69,6 +69,16 @@
   `config_warning`，任务不丢；会话留存 `session_open` 记录的模型与选择一致。
 - [x] 3.8 回扫既有验收场景里批准闸相关的期望（权限模式与批准卡场景）：确认 3.5 只作用于运行槽位，
   交互会话的批准行为逐条不变；有期望过期的就地改准并写明原因。
+- [x] 3.9 `cron:run` 交接载荷改为「`RunSpec` + 任务载荷」（M593，兑现 change
+  `add-harness-subagents` design §2.4）：合成点是 `cron::handoff` 纯函数，定时 / 拉取运行填
+  `SessionTarget::Unattended` + `ApprovalPolicy::RejectUnavailable`，点击发起填
+  `SessionTarget::Interactive` + `ApprovalPolicy::Interactive`，`budget` 只填轮次上限。前端
+  `handleCronRun` 与 `harness_cron_run` 同一次切断消费（无兼容层、无第二套形状）。
+  **provider 请求闸**：随 change `add-harness-subagents` §4.9 落地（`harness/scheduler.rs`）。cron
+  的运行路径不另接一条线——`SessionContext::request_permit` 在每次 provider 请求（含压缩）前取
+  同一个进程内 per-provider 信号量：隔离槽位（cron 无人值守）取 `Child` 优先级、交互槽位取
+  `Parent`；许可数 = `max_concurrent + 1`（design §12.3）。M593 rebase 后已用单测
+  `isolated_cron_run_shares_the_provider_request_gate` 钉住「cron 持有的许可会挡住交互路径」。
 
 ## 4. 通知与点击链路
 

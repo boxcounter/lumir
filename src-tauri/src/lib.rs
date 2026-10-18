@@ -27,7 +27,6 @@ pub mod window_state;
 use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind};
 use tauri::{Emitter, Manager};
 
-use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Mutex;
@@ -895,20 +894,8 @@ struct InflightRun {
     started: Instant,
 }
 
-/// `cron:run` 交接事件的载荷（design §6.1 的逐字段形状）。`origin` 是触发源字面量；
-/// 点击发起的运行由前端接线层用 `click`。
-#[derive(Debug, Clone, Serialize)]
-struct CronRunPayload {
-    run_id: String,
-    task: String,
-    vault: String,
-    prompt: String,
-    session: String,
-    /// `dedicated` 档的续写会话 id（来自 `cron-state.json`）；`new` 档为 `None`。
-    session_id: Option<String>,
-    model: Option<String>,
-    origin: String,
-}
+// `cron:run` 的载荷形状是 `cron::Handoff`（RunSpec + 任务载荷，change add-harness-subagents
+// design §2.4）：合成点在 `cron::handoff` 纯函数，本接线层只做 emit。
 
 /// 起 `lumir-cron` 线程并投一次启动评估（design §4.1 / §4.2）。
 ///
@@ -986,11 +973,13 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
     for warning in warnings {
         logging::config_warning("cron-state", &warning);
     }
+    let loop_max = snapshot.config.harness.loop_max;
     let mut runner = CronRunner {
         app: app.clone(),
         tasks,
         state,
         state_path,
+        loop_max,
         inflight: std::collections::HashMap::new(),
         skipped_today: std::collections::HashMap::new(),
         clicked_today: std::collections::HashMap::new(),
@@ -1023,6 +1012,9 @@ struct CronRunner {
     tasks: Vec<ScheduledTask>,
     state: cron::CronState,
     state_path: PathBuf,
+    /// 运行交接契约里的轮次预算（`[harness].loop_max`）：装载期快照一次，与 cron 的
+    /// 「配置不热重载」口径一致。交接载荷是这次运行的唯一预算来源。
+    loop_max: u32,
     /// 在途运行：`run_id` → 任务。同一任务同一时刻至多一个（design §6.6）。
     inflight: std::collections::HashMap<String, InflightRun>,
     /// 今日已落过 skip 的任务 → 日期（每任务每日最多一条 `cron_run_skipped`）。
@@ -1146,24 +1138,20 @@ impl CronRunner {
             return;
         }
         let run_id = cron::new_run_id();
-        // `vault` 用**规范化**路径（与 `VaultState` 的当前 vault 键同一口径）：前端据此判断
-        // 「目标 vault 是否已打开」，配置里的原始路径可能只差一个软链（macOS `/tmp` →
-        // `/private/tmp`），逐字比较会误判成另一个 vault。
-        let payload = CronRunPayload {
-            run_id: run_id.clone(),
-            task: task.id.clone(),
-            vault: task.vault.clone(),
-            prompt: task.prompt.clone(),
-            session: task.session.as_str().to_string(),
+        // 载荷由 `cron::handoff` 纯函数合成（RunSpec + 任务载荷）：本接线层不字段自列。
+        // `vault` 用配置里的目标路径原值（既有线格式口径）：前端拿它与已打开的 vault 比，
+        // 未打开时走既有打开链路；判定侧的规范化比较只发生在 `plan` 的 current/target 比较上。
+        let payload = cron::handoff(&cron::HandoffInput {
+            task,
+            run_id: &run_id,
+            trigger,
+            vault: &task.vault,
+            loop_max: self.loop_max,
             session_id: match task.session {
-                config::SessionShape::Dedicated => {
-                    self.state.session_id(&task.id).map(str::to_string)
-                }
+                config::SessionShape::Dedicated => self.state.session_id(&task.id),
                 config::SessionShape::New => None,
             },
-            model: task.model.clone(),
-            origin: trigger.as_str().to_string(),
-        };
+        });
         match self.app.emit(CRON_RUN_EVENT, payload) {
             Ok(()) => {
                 self.inflight.insert(
@@ -1299,21 +1287,19 @@ impl CronRunner {
                     return;
                 }
                 let run_id = cron::new_run_id();
-                let payload = CronRunPayload {
-                    run_id: run_id.clone(),
-                    task: task.id.clone(),
-                    vault: task.vault.clone(),
-                    prompt: task.prompt.clone(),
-                    session: task.session.as_str().to_string(),
+                // 与定时派发同一个纯函数合成点：点击运行的差异只落在契约值上
+                // （`Interactive` 槽位 + 交互批准），不在载荷形状或接线层分叉。
+                let payload = cron::handoff(&cron::HandoffInput {
+                    task: &task,
+                    run_id: &run_id,
+                    trigger: cron::Trigger::Click,
+                    vault: &task.vault,
+                    loop_max: self.loop_max,
                     session_id: match task.session {
-                        config::SessionShape::Dedicated => {
-                            self.state.session_id(&task.id).map(str::to_string)
-                        }
+                        config::SessionShape::Dedicated => self.state.session_id(&task.id),
                         config::SessionShape::New => None,
                     },
-                    model: task.model.clone(),
-                    origin: "click".to_string(),
-                };
+                });
                 match self.app.emit(CRON_RUN_EVENT, payload) {
                     Ok(()) => {
                         // 点击运行也登记在途：回执（含失败）因此走同一条 finish 路径更新会话 id

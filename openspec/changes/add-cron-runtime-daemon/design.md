@@ -183,15 +183,27 @@ loop {
   按会话形态建立 / 恢复会话 → 经既有发送通道把 prompt 作为一条显式消息送出 → 回执结果。
   MUST NOT 写第二套打开、装配或发送实现。
 
-交接事件 `cron:run` 载荷：
+交接事件 `cron:run` 载荷是「运行契约（`RunSpec`）+ 任务载荷」的组合（change
+`add-harness-subagents` design §2.4）：契约字段平铺，任务载荷是 sibling 字段。`RunSpec` 刻意不含
+任务知识，因此 vault / prompt / 会话形态 / 模型覆盖仍由本 change 的任务模型表达。
 
 ```json
-{ "run_id": "…", "task": "daily-log", "vault": "/abs/path", "prompt": "…",
-  "session": "new", "session_id": null, "model": "…", "origin": "click" }
+{ "origin": { "kind": "cron", "task": "<task-id>", "run_id": "…" },
+  "session_target": { "kind": "unattended", "key": "…" },
+  "tool_policy": { "allow": ["vault_read", "…"] },
+  "budget": { "max_rounds": 50, "max_tokens": 0 },
+  "approval_policy": { "kind": "reject_unavailable" },
+  "background": false,
+  "trigger": "timer",
+  "vault": "/abs/path", "prompt": "…",
+  "session": "new", "session_id": null, "model": "…" }
 ```
 
-`session_id` 只在 `session = dedicated` 时携带（来自 `cron-state.json` 的续写会话）；`new` 档为
-`null`。运行槽位的实现落点是 `Runtime::isolated()` 的独立运行时实例（见 §6.2 的「等价形态」）。
+- `session_target` / `approval_policy`：定时与拉取运行是 `unattended` + `reject_unavailable`；
+  点击发起是 `interactive` + `interactive`（用户就在现场，批准卡照既有方式出现，§6.2）。
+- `trigger` 只服务诊断事件 `cron_run_started.trigger`；行为分支只读契约枚举，不读这个字符串。
+- `session_id` 只在 `session = dedicated` 时携带（来自 `cron-state.json` 的续写会话）；`new` 档为
+  `null`。运行槽位的实现落点是 `Runtime::isolated()` 的独立运行时实例（见 §6.2 的「等价形态」）。
 
 回执命令 `cron_run_result({ run_id, ok, session_id?, error? })`：前端在运行终态（含中止、失败、
 需批准而中止）调用一次；Rust 据此更新 `cron-state.json` 的 `session_id`、投递结果通知（按策略）、
@@ -434,7 +446,9 @@ rg -c '"event":"cron_run_finished".*"ok":true' ~/.config/lumir/logs/
 
 **契约（`lib.rs` / 前端接线层，可测的部分）**
 
-- `cron:run` 载荷形状（`run_id` / `task` / `vault` / `prompt` / `session` / `model` / `origin`）。
+- `cron:run` 载荷形状：`RunSpec` 字段（`origin` / `session_target` / `tool_policy` / `budget` /
+  `approval_policy` / `background`）+ 任务载荷（`trigger` / `vault` / `prompt` / `session` /
+  `session_id` / `model`）；契约合成点 `cron::handoff` 有单测钉线格式。
 - `cron_run_result` 回执后：状态更新、`cron_run_finished` 的 `ok` 与错误码、`run-then-notify` 只在
   终态后投递结果通知。
 - 运行槽位隔离：无人值守运行前后，交互会话槽位的内容与 id 不变。
@@ -496,7 +510,15 @@ rg -c '"event":"cron_run_finished".*"ok":true' ~/.config/lumir/logs/
 
 - **已共用**：上下文装配（`harness/context.rs`）、工具循环（`harness/turn.rs`）、发送通道与会话
   留存全部复用既有实现；cron 只是新增了一类触发源与一套触达策略，没有第二套运行实现。
+- **运行契约已接入**（M593，change `add-harness-subagents` design §2.4）：`cron:run` 交接载荷不再
+  字段自列，改由 `cron::handoff` 纯函数合成「`RunSpec` + 任务载荷」；定时 / 拉取运行是
+  `SessionTarget::Unattended` + `ApprovalPolicy::RejectUnavailable`，点击发起是
+  `SessionTarget::Interactive` + `ApprovalPolicy::Interactive`。运行循环仍是既有唯一实现。
 - **尚未抽象**：触发器层（cron 的调度 + 投递）仍是 cron 自己的；Subagents 落地时 MUST 回抽公共层
   「触发 → 装配 → 运行 → 留存」，把 cron 的触发源与 Subagents 的委托触发一起接入该层，MUST NOT
-  让 Subagents 另写一套调度。届时若 cron 的运行路径与该抽象不兼容，先改抽象再进实现——与真源
-  「动工任一原语前先落实抽象」的方向一致；本 change 不在 Subagents 之前预造空壳抽象。
+  让 Subagents 另写一套调度。provider 请求闸（每 provider 一个计数信号量、许可数
+  `max_concurrent + 1`、父请求优先、子请求 FIFO）已随 change `add-harness-subagents` §4.9 落地
+  （`harness/scheduler.rs`）；cron **自动共用**同一个闸——`SessionContext::request_permit` 在每次
+  provider 请求前取许可，隔离槽位取 `Child` 优先级、交互槽位取 `Parent`，cron 侧零新增接线。
+  届时若 cron 的运行路径与该抽象不兼容，先改抽象再进实现——与真源「动工任一原语前先落实抽象」
+  的方向一致；本 change 不在 Subagents 之前预造空壳抽象。
