@@ -353,28 +353,12 @@ pub fn vault_register(id: String, path: String) -> Result<VaultWorkspace, Comman
 }
 #[tauri::command]
 pub fn vault_remap(id: String, path: String) -> Result<VaultWorkspace, CommandError> {
-    valid_id(&id)?;
+    // last_vault 走与打开成功路径同一条合并写通道（M600）：旧实现自己 read_to_string →
+    // 写固定 `config.json.tmp` → rename，两个并发 remap 会共用同一 tmp（半截内容），与
+    // config_set_value 并发时还是无互斥的 read-modify-write（丢键）。统一通道自带 M592 的
+    // 进程内写锁与唯一 tmp 名，语义不变。
     let v = vault_register(id, path)?;
-    let path = v.path.clone();
-    let p = config::config_dir()?.join("config.json");
-    let mut x = match fs::read_to_string(&p) {
-        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|_| serde_json::json!({})),
-        Err(_) => serde_json::json!({}),
-    };
-    if !x.is_object() {
-        x = serde_json::json!({});
-    }
-    x["last_vault"] = serde_json::Value::String(path);
-    let d = config::config_dir()?;
-    fs::create_dir_all(&d).map_err(|_| CommandError::new("config_write", "无法创建配置目录"))?;
-    let tmp = p.with_extension("json.tmp");
-    fs::write(
-        &tmp,
-        serde_json::to_vec_pretty(&x)
-            .map_err(|_| CommandError::new("config_write", "无法序列化配置"))?,
-    )
-    .map_err(|_| CommandError::new("config_write", "无法写入配置"))?;
-    fs::rename(&tmp, &p).map_err(|_| CommandError::new("config_write", "无法落盘配置"))?;
+    crate::commands::write_last_vault(std::path::Path::new(&v.path))?;
     Ok(v)
 }
 
@@ -561,6 +545,19 @@ mod tests {
         }
     }
 
+    /// `XDG_CONFIG_HOME` 的进程级复原（与 harness 测试的同形助手）：断言失败 panic 也要
+    /// 把环境变量放回原值，别把临时目录留给同进程的别的用例。
+    struct XdgGuard(Option<std::ffi::OsString>);
+
+    impl Drop for XdgGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+    }
+
     /// 预置一条旧名目录下的注册项（存量机器上的形态：只有 id / path）。
     fn seed_legacy_entry(dir: &TempDir, id: &str, vault_path: &str) {
         fs::create_dir_all(dir.legacy()).expect("create legacy dir");
@@ -647,5 +644,104 @@ mod tests {
             rows[0].name, "migrated-vault",
             "显示名仍由路径派生（迁移不改注册项内容）"
         );
+    }
+
+    /// M600：并发两次 `vault_remap` 不得写出半截 config。
+    ///
+    /// 旧实现自己 `read_to_string` → 写固定 `config.json.tmp` → rename：两个 remap 同时
+    /// 落盘会截断 / 交错写同一份 tmp，正式配置可能变成非法 JSON。改造后两条都走
+    /// `commands::write_last_vault`（M592 的进程内写锁 + 唯一 tmp 名），落盘永远是某一次的
+    /// 完整版本，且 `last_vault` 之外的字段逐键保留。
+    ///
+    /// `XDG_CONFIG_HOME` 是进程全局：先取共享的 `xdg_test_lock`，测试全程不碰真实的
+    /// `~/.config/lumir`。
+    #[test]
+    fn concurrent_vault_remaps_never_leave_partial_config() {
+        let _serial = crate::harness::xdg_test_lock();
+        let dir = TempDir::new();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", dir.path());
+
+        let vault_a = dir.path().join("vault-a");
+        let vault_b = dir.path().join("vault-b");
+        fs::create_dir_all(&vault_a).expect("create vault-a");
+        fs::create_dir_all(&vault_b).expect("create vault-b");
+        let config_path = dir.path().join("lumir").join("config.json");
+        fs::create_dir_all(config_path.parent().expect("config parent"))
+            .expect("create config dir");
+        // 48KB 的填充字段让单次落盘跨多个系统调用：旧实现的固定 tmp 名在这条路径上更容易
+        // 被并发写者交错写入，落盘内容因此可能不再是任何一次写入的完整版本。
+        let padding = "x".repeat(48 * 1024);
+        fs::write(
+            &config_path,
+            serde_json::json!({
+                "version": 1,
+                "ui": {"content_width": 920},
+                "future_field": 7,
+                "padding": padding,
+            })
+            .to_string(),
+        )
+        .expect("seed config");
+
+        let expected: Vec<String> = [&vault_a, &vault_b]
+            .iter()
+            .map(|p| {
+                fs::canonicalize(p)
+                    .expect("canonicalize vault")
+                    .display()
+                    .to_string()
+            })
+            .collect();
+
+        // 多轮并发：单轮撞不进交错窗口，靠重复把旧实现的固定 tmp 竞态放大。
+        for round in 0..20 {
+            let (id_a, path_a) = ("vault-a".to_string(), vault_a.clone());
+            let (id_b, path_b) = ("vault-b".to_string(), vault_b.clone());
+            std::thread::scope(|scope| {
+                scope.spawn(move || {
+                    vault_remap(id_a, path_a.display().to_string()).expect("remap vault-a");
+                });
+                scope.spawn(move || {
+                    vault_remap(id_b, path_b.display().to_string()).expect("remap vault-b");
+                });
+            });
+
+            let text = fs::read_to_string(&config_path).expect("read config");
+            let value: serde_json::Value = serde_json::from_str(&text)
+                .unwrap_or_else(|e| panic!("第 {round} 轮 config 被写成非法 JSON：{e}\n{text}"));
+            let last = value["last_vault"]
+                .as_str()
+                .unwrap_or_else(|| panic!("第 {round} 轮 last_vault 不是字符串：{value}"));
+            assert!(
+                expected.iter().any(|path| path == last),
+                "第 {round} 轮 last_vault 必须是某次 remap 的完整路径：{last}"
+            );
+            assert_eq!(
+                value["ui"]["content_width"],
+                serde_json::json!(920),
+                "第 {round} 轮并发 remap 不得丢键"
+            );
+            assert_eq!(
+                value["future_field"],
+                serde_json::json!(7),
+                "第 {round} 轮并发 remap 不得丢键"
+            );
+            assert_eq!(
+                value["padding"].as_str().map(str::len),
+                Some(48 * 1024),
+                "第 {round} 轮并发 remap 不得截断大字段"
+            );
+            let leftovers: Vec<String> = fs::read_dir(config_path.parent().expect("config parent"))
+                .expect("read config dir")
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.ends_with(".tmp"))
+                .collect();
+            assert!(
+                leftovers.is_empty(),
+                "第 {round} 轮并发 remap 不得留下 tmp：{leftovers:?}"
+            );
+        }
     }
 }
