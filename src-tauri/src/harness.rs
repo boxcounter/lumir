@@ -1292,13 +1292,18 @@ fn start_turn(
 ///
 /// 运行终态由 `cron:run_finished` 事件交给前端接线层，再由 `cron_run_result` 命令回执——
 /// 终态只有那一个产出点（design §6.1）。
-/// `harness_cron_run` 的入参（一个对象参数：8 个字段平铺会让 command 签名超过 clippy 的
-/// 参数上限，也不利于前端按一份契约构造请求）。
+/// `harness_cron_run` 的入参（一个对象参数：字段平铺会让 command 签名超过 clippy 的参数
+/// 上限）：**运行契约（`RunSpec`）+ 任务载荷**，与 `cron:run` 的线格式同一形状。
+///
+/// `RunSpec` 按 change add-harness-subagents design §2.1 不含任务知识，所以目标 vault、prompt、
+/// 会话形态与模型覆盖是契约之外的 sibling 字段。本入口只校验并执行契约：会话槽位与批准语义
+/// 都从 `spec` 的枚举值取，不另看字符串。
 #[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub struct CronRunRequest {
-    pub run_id: String,
-    pub task: String,
+    #[serde(flatten)]
+    pub spec: run::RunSpec,
+    /// 触发源字面量：只进诊断事件 `cron_run_started.trigger`。
+    pub trigger: String,
     pub target_vault: String,
     pub prompt: String,
     pub session: String,
@@ -1306,7 +1311,6 @@ pub struct CronRunRequest {
     pub session_id: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
-    pub origin: String,
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1317,15 +1321,74 @@ pub fn harness_cron_run(
     payload: CronRunRequest,
 ) -> Result<(), CommandError> {
     let CronRunRequest {
-        run_id,
-        task,
+        spec,
+        trigger,
         target_vault,
         prompt,
         session,
         session_id,
         model,
-        origin,
     } = payload;
+    // 运行契约的入口校验（契约的消费者就在这一层）：会话目标决定槽位与批准策略，两者必须
+    // 自洽；cron 入口不接受子运行目标、后台委派或非 cron 触发来源。
+    let (run_runtime, slot_approval) = match &spec.session_target {
+        run::SessionTarget::Interactive => {
+            (runtime.inner().clone(), run::ApprovalPolicy::Interactive)
+        }
+        run::SessionTarget::Unattended { .. } => {
+            (Runtime::isolated(), run::ApprovalPolicy::RejectUnavailable)
+        }
+        run::SessionTarget::Child { .. } => {
+            return Err(CommandError::new(
+                "run_spec_invalid",
+                "cron 运行不接受子运行会话目标",
+            ));
+        }
+    };
+    if spec.approval_policy != slot_approval {
+        return Err(CommandError::new(
+            "run_spec_invalid",
+            "会话目标与批准策略不一致",
+        ));
+    }
+    if spec.background {
+        return Err(CommandError::new(
+            "run_spec_invalid",
+            "cron 运行不是后台委派",
+        ));
+    }
+    // cron 只有轮次预算（`max_tokens` / `deadline` 无人值守路径不参与判定）：带了别的闸即拒，
+    // 不让契约声明一个没有消费者的阈值。
+    if spec.budget.max_tokens != 0 || spec.budget.deadline.is_some() {
+        return Err(CommandError::new(
+            "run_spec_invalid",
+            "cron 运行只支持轮次预算",
+        ));
+    }
+    if !(config::LOOP_MAX_MIN..=config::LOOP_MAX_MAX).contains(&spec.budget.max_rounds) {
+        return Err(CommandError::new(
+            "run_spec_invalid",
+            "轮次预算超出合法区间",
+        ));
+    }
+    // 触发来源必须是 cron：`task` + `run_id` 是终态回执与去重状态的关联键。
+    let run::RunOrigin::Cron { task, run_id } = spec.origin.clone() else {
+        return Err(CommandError::new(
+            "run_spec_invalid",
+            "cron 运行只接受 cron 触发来源",
+        ));
+    };
+    if let Some(unknown) = spec
+        .tool_policy
+        .allow
+        .iter()
+        .find(|name| !tools::TOOL_NAMES.contains(&name.as_str()))
+    {
+        return Err(CommandError::new(
+            "run_spec_invalid",
+            format!("工具白名单含未知工具：{unknown}"),
+        ));
+    }
     let scope = vault_scope(&vault)?;
     // 目标 vault 必须已是当前 vault：无人值守运行不切换用户界面，点击运行由前端先走既有
     // vault 打开链路（design §6.5）。两侧都做 canonicalize——配置里的绝对路径可能是
@@ -1345,16 +1408,13 @@ pub fn harness_cron_run(
             format!("未知的会话形态：{session}"),
         )
     })?;
-    let base = config::load()?.config.harness;
+    let mut base = config::load()?.config.harness;
+    // 契约的轮次预算是本次运行的唯一预算来源（cron 装载期快照；配置对 cron 不热重载）。
+    base.loop_max = spec.budget.max_rounds;
     let (config, warning) = with_model_override(&base, model.as_deref());
     if let Some(warning) = warning {
         crate::logging::config_warning("cron", &warning);
     }
-    let run_runtime = if origin == "click" {
-        runtime.inner().clone()
-    } else {
-        Runtime::isolated()
-    };
     // 会话形态（design §6.3）：`new` 新建；`dedicated` 用状态里的 session_id 续写（缺少即新建）。
     // 续写失败（源文件缺失 / 损坏）回落新建——任务不因历史留存缺失而停摆。
     match (shape, session_id.as_deref()) {
@@ -1376,7 +1436,6 @@ pub fn harness_cron_run(
         _ => run_runtime.new_session(&scope)?,
     }
     let log_task = task.clone();
-    let log_origin = origin.clone();
     let completion_runtime = run_runtime.clone();
     let scope_for_turn = scope.clone();
     let app_for_turn = app.clone();
@@ -1417,7 +1476,7 @@ pub fn harness_cron_run(
         Some(completion),
     )?;
     // 交接被接受（acquire 成功、线程已起）才记「运行已开始」——失败路径由前端回执落终态。
-    crate::logging::cron_run_started(&log_task, &log_origin, shape.as_str(), model.as_deref());
+    crate::logging::cron_run_started(&log_task, &trigger, shape.as_str(), model.as_deref());
     Ok(())
 }
 
@@ -2349,5 +2408,145 @@ mod tests {
         // 非覆盖 warning（坏定义 / 容量告警）不得被误判成覆盖。
         assert!(parse_override_warning("子代理定义 x：缺少 name 字段").is_none());
         assert!(parse_override_warning("子代理清单估算 15001 token，超过阈值").is_none());
+    }
+
+    /// `cron:run` 的线格式与 `CronRunRequest` 同形：`RunSpec` 字段平铺 + 任务载荷。
+    /// 区分度：把 `#[serde(flatten)]` 换成嵌套 `spec` 字段、或改坏 RunSpec 的枚举线格式，
+    /// 本用例必 FAIL。
+    #[test]
+    fn cron_run_request_deserializes_the_flat_run_spec_payload() {
+        let payload = serde_json::json!({
+            "origin": {"kind": "cron", "task": "task-a", "run_id": "run-1"},
+            "session_target": {"kind": "unattended", "key": "run-1"},
+            "tool_policy": {"allow": tools::TOOL_NAMES},
+            "budget": {"max_rounds": 42, "max_tokens": 0},
+            "approval_policy": {"kind": "reject_unavailable"},
+            "background": false,
+            "trigger": "timer",
+            "target_vault": "/tmp/vault-a",
+            "prompt": "synthetic prompt",
+            "session": "new",
+            "session_id": null,
+            "model": null,
+        });
+        let request: CronRunRequest = serde_json::from_value(payload).unwrap();
+
+        assert_eq!(
+            request.spec.origin,
+            run::RunOrigin::Cron {
+                task: "task-a".to_string(),
+                run_id: "run-1".to_string(),
+            }
+        );
+        assert_eq!(
+            request.spec.session_target,
+            run::SessionTarget::Unattended {
+                key: "run-1".to_string()
+            }
+        );
+        assert_eq!(
+            request.spec.approval_policy,
+            run::ApprovalPolicy::RejectUnavailable
+        );
+        assert_eq!(request.spec.budget.max_rounds, 42);
+        assert_eq!(request.spec.budget.max_tokens, 0);
+        assert!(!request.spec.background);
+        assert_eq!(
+            request.spec.tool_policy.allow,
+            tools::TOOL_NAMES
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(request.trigger, "timer");
+        assert_eq!(request.target_vault, "/tmp/vault-a");
+        assert_eq!(request.prompt, "synthetic prompt");
+        assert_eq!(request.session, "new");
+        assert_eq!(request.session_id, None);
+        assert_eq!(request.model, None);
+    }
+
+    /// cron 的无人值守运行与交互路径共用同一个 per-provider 请求闸（change
+    /// add-harness-subagents design §12.3）：`SessionContext::request_permit` 只按
+    /// `runtime.is_isolated()` 选优先级，闸本身是进程内单例（键 = provider）。
+    ///
+    /// 区分度：若 cron 槽位没接闸（返回 `None`）或另起一个闸，持有侧不会挡住交互侧，
+    /// `waiting_parents` 恒 0，本用例必 FAIL。
+    #[test]
+    fn isolated_cron_run_shares_the_provider_request_gate() {
+        use run::RunContext as _;
+
+        struct NullSink;
+        impl events::EventSink for NullSink {
+            fn emit(&self, _payload: serde_json::Value) {}
+        }
+
+        // 选 Kimi：本仓库的调度器用例走 Deepseek、其余运行用例走 Mock，避免共享闸互相干扰。
+        let provider = config::HarnessProvider::Kimi;
+        // 许可数 = max_concurrent + 1 = 1：占住唯一许可即可观察另一侧的等待。
+        let config = HarnessConfig {
+            provider,
+            subagents: config::SubagentsConfig {
+                max_concurrent: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let root = std::env::temp_dir().join(format!(
+            "lumir-cron-gate-{}-{}",
+            std::process::id(),
+            std::line!()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let scope = VaultScope {
+            root: root.clone(),
+            policy: {
+                let defaults = config::VaultConfig::default();
+                IgnorePolicy::load(&root, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-cron-gate".to_string(),
+        };
+        let sink = NullSink;
+        let isolated = Runtime::isolated();
+        let interactive = Runtime::default();
+        let cron_ctx = run::SessionContext::new(&sink, &isolated, &scope, &config);
+        let user_ctx = run::SessionContext::new(&sink, &interactive, &scope, &config);
+
+        let held = cron_ctx
+            .request_permit()
+            .expect("cron 槽位必须受 provider 请求闸约束");
+        assert_eq!(
+            scheduler::provider_gate_state(provider).0,
+            1,
+            "cron 运行应占住共享闸的许可"
+        );
+
+        std::thread::scope(|threads| {
+            let handle = threads.spawn(move || {
+                let _permit = user_ctx
+                    .request_permit()
+                    .expect("交互槽位必须受 provider 请求闸约束");
+            });
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while scheduler::provider_gate_state(provider).1 == 0
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert_eq!(
+                scheduler::provider_gate_state(provider).1,
+                1,
+                "cron 持有的许可必须挡住交互路径（两处是同一份闸）"
+            );
+            drop(held);
+            handle.join().unwrap();
+        });
+        assert_eq!(
+            scheduler::provider_gate_state(provider),
+            (0, 0, 0),
+            "全部许可归还后闸应回到空闲"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

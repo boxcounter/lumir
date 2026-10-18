@@ -148,9 +148,13 @@ pub trait RunContext {
 
 ### 2.4 cron 的接入
 
-cron 的运行槽位与 `cron:run` 交接载荷改为 `RunSpec` 序列化：`origin=Cron`、
-`session_target=Unattended`、`approval_policy=RejectUnavailable`、`budget` 只填轮次上限。前端按
-`RunSpec` 反序列化后走同一入口；cron 的调度、通知、去重逻辑不变。**这是 cron 侧唯一改动面。**
+cron 的运行槽位与 `cron:run` 交接载荷改为「`RunSpec` + 任务载荷」的组合：`RunSpec` 字段平铺在
+载荷里（`origin=Cron`、`session_target=Unattended`、`approval_policy=RejectUnavailable`、`budget`
+只填轮次上限），任务载荷（`vault` / `prompt` / `session` / `session_id` / `model`）是 sibling 字段
+——`RunSpec` 刻意不含任务知识（§2.1），两者合成一个形状、一处合成点（cron 侧的纯函数）。
+点击发起是显式意图，契约值为 `session_target=Interactive` + `approval_policy=Interactive`（既有
+行为不变）。前端按同一形状消费并走同一入口；cron 的调度、通知、去重逻辑不变。**这是 cron 侧唯一
+改动面。**
 
 ## 3. 若「不回抽」：逐条反驳（选择回抽的理由）
 
@@ -826,7 +830,7 @@ AUTO_WAKE_COALESCE_MS = 2000 // 空闲时的合并窗口
 
 | 事项 | cron 提案现状 | 本 change 后的落法 |
 |---|---|---|
-| 运行交接载荷 | `cron:run` 事件字段自列 | `RunSpec` 序列化（字段是超集） |
+| 运行交接载荷 | `cron:run` 事件字段自列 | `RunSpec` 序列化 + 任务载荷（`RunSpec` 不含任务知识，故二者组合成一个平铺形状） |
 | 运行槽位 | 「与交互会话分离的运行槽位」 | `SessionTarget::Unattended` |
 | 批准语义 | 需批准即中止并回执失败 | `ApprovalPolicy::RejectUnavailable`，行为不变 |
 | 预算 | 无 token / 时间闸 | `RunBudget` 只填轮次上限 |

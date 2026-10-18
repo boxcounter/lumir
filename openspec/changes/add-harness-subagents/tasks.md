@@ -28,21 +28,25 @@
 - [x] 0.2 与评审中的 change `add-cron-runtime-daemon` 对齐：确认其运行槽位与 `cron:run` 交接载荷在
   实现期按 `RunSpec` 形状落地；若两 change 实现顺序对调，在 cron 的 tasks 里补一条「接入 RunSpec」，
   本 change 的公共层任务不删；确认 cron 运行与子运行共用同一个 provider 请求闸（design §12.3）。
-  **核对结论（M586，2026-10-18；M583/M584 已合入 master，实现顺序已对调）**：
-  - 交接载荷**未**按 `RunSpec` 形状落地：`cron:run` 是字段自列的 `CronRunPayload`
-    （`src-tauri/src/lib.rs:889`：`run_id` / `task` / `vault` / `prompt` / `session` /
-    `session_id` / `model` / `origin`），前端 `handleCronRun` 逐字段转给
-    `harness_cron_run`（`src/main.ts:2549`），后端复用 acquire + turn 路径。
-  - 运行槽位已具备 `SessionTarget::Unattended` 的**语义**（`Runtime::isolated()`：事件不发面板、
-    会话与交互槽位物理分离），但类型面仍是 `Runtime` 构造参数，不是 `SessionTarget` 值。
-  - 批准语义已是 `ApprovalPolicy::RejectUnavailable` 的**行为**（`gated_execute` 遇
-    `runtime.is_isolated()` 即 `stop_with("approval_required")`），待回抽后改由策略值表达。
-  - provider 请求闸**尚未存在**（cron 侧只有「同一任务至多一个在途」；不同任务可同时跑多轮，
-    当前没有 `max_concurrent + 1` 的计数信号量）。该闸随本 change §4.9 落地，cron 届时必须接入
-    同一个闸（design §12.3）。
-  - 因此按本条的条件分支：cron 侧需要一条「接入 `RunSpec` + 接入 provider 请求闸」的后续任务
-    （属 change `add-cron-runtime-daemon` 的 tasks，不在 M586 的 scope 内，已上报 tower 路由）；
-    本 change 的公共层任务不删。
+  **核对结论（M586，2026-10-18；M593 更新，2026-10-19；M583/M584 已合入 master，实现顺序已对调）**：
+  - 交接载荷**已**按「`RunSpec` + 任务载荷」落地（M593）：`cron:run` 不再字段自列，由
+    `cron::handoff` 纯函数合成（`src-tauri/src/cron.rs`）——`RunSpec` 字段（`origin` /
+    `session_target` / `tool_policy` / `budget` / `approval_policy` / `background`）平铺，任务
+    载荷（`vault` / `prompt` / `session` / `session_id` / `model` / `trigger`）是 sibling 字段。
+    前端 `handleCronRun` 只按 `session_target` 枚举选槽位（`src/main.ts`），
+    `harness_cron_run` 以 `#[serde(flatten)] spec: RunSpec` 反序列化并校验契约
+    （`src-tauri/src/harness.rs`）；后端仍复用 acquire + turn 路径。
+  - 运行槽位：`SessionTarget` 值已进入交接契约，`harness_cron_run` 按它选
+    `Runtime::isolated()`（`Unattended`）或交互 Runtime（`Interactive`）；槽位实现本身仍是
+    `Runtime` 构造参数。
+  - 批准策略：`ApprovalPolicy` 已进入契约，入口校验「`Unattended` ⇒ `RejectUnavailable`、
+    `Interactive` ⇒ `Interactive`」；运行期行为仍由 `gated_execute` 的既有短路承担。
+  - provider 请求闸已随本 change §4.9 落地（`harness/scheduler.rs`，M588）。cron 无需另写接线：
+    `SessionContext::request_permit` 在每次 provider 请求前取同一个进程内 per-provider 信号量，
+    隔离槽位取 `Child` 优先级、交互槽位取 `Parent`，许可数 = `max_concurrent + 1`。M593 rebase
+    后核实的路径：`harness_cron_run` → `start_turn` → `turn::run_turn` → `run_turn_core` →
+    `ctx.request_permit()`；新增单测 `isolated_cron_run_shares_the_provider_request_gate` 钉住
+    「cron 持有的许可挡住交互路径」。
 - [x] 0.3 记录公共层的去留口径：公共层按实际消费者决定去留（cron / 委托），不因单一原语的变化删改；
   写进代码注释就地说明「无兼容层、按消费者定去留」。
   （已落 `src-tauri/src/harness/run.rs` 模块头「去留口径」段。）

@@ -8,6 +8,9 @@
 //! - [`plan`]：判定 + 派发策略的唯一合成点（design §5）。也是纯函数——「到点后该投通知、
 //!   该发起运行、还是该落一条 skip」在进副作用之前就已决定，副作用（通知、事件、写盘）全在
 //!   `lib.rs` 的接线层。
+//! - [`handoff`]：运行交接载荷（`RunSpec` + 任务载荷）的**唯一**合成点（change
+//!   add-harness-subagents design §2.4）。同样纯函数——定时派发与点击发起共用它，接线层只把
+//!   结果 emit 出去。
 //! - `at` / `days` 解析与本地时间换算（[`chrono::Local`]；判定接受**注入**的 [`LocalNow`]，
 //!   单测不依赖系统时区）。
 //! - `cron-state.json` 的读写（原子替换、四类读取失败一律视为「无状态」）。
@@ -35,7 +38,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::{DateTime, Datelike, FixedOffset, Local, Timelike};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{CronTask, CronWeekday, DeliveryPolicy};
+use crate::config::{CronTask, CronWeekday, DeliveryPolicy, SessionShape};
+use crate::harness::run::{
+    ApprovalPolicy, RunBudget, RunOrigin, RunSpec, SessionTarget, ToolPolicy,
+};
+use crate::harness::tools::TOOL_NAMES;
 
 /// 定时器 tick 周期：30s 一次纯内存比较（design §4.1）。任务量在几十条以内无感。
 pub const TICK: Duration = Duration::from_secs(30);
@@ -62,7 +69,8 @@ pub enum Trigger {
     Focus,
     /// 目标 vault 打开成功后一次。
     VaultOpen,
-    /// 用户点击通知后发起的一次运行（`cron:run` 的 `origin=click`，design §5.1）。
+    /// 用户点击通知后发起的一次运行（`cron:run` 的 `trigger=click` + `Interactive` 槽位，
+    /// design §5.1）。
     Click,
 }
 
@@ -291,6 +299,103 @@ pub fn plan(input: &PlanInput) -> Plan {
                 Some(_) => Plan::Handoff,
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 运行交接载荷（RunSpec + 任务载荷）
+// ---------------------------------------------------------------------------
+
+/// 一次运行交接的载荷：运行契约（[`RunSpec`]）+ 任务载荷。
+///
+/// `RunSpec` 按 change `add-harness-subagents` design §2.1 刻意**不含任务知识**——目标 vault、
+/// prompt、会话形态与模型覆盖不是运行契约的一部分。因此交接载荷 = 契约 + 任务载荷；
+/// `#[serde(flatten)]` 让两者在线上是一层平铺字段（前端按 `RunSpec` 反序列化契约，另取任务
+/// 字段完成 vault / 会话装配），不存在第二套交接形状。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Handoff {
+    #[serde(flatten)]
+    pub spec: RunSpec,
+    /// 触发源字面量（`timer` / `startup` / `focus` / `vault-open` / `click`）：只服务诊断事件
+    /// `cron_run_started.trigger`。行为分支（会话槽位 / 批准策略）只读 `spec` 的枚举值，不读这个
+    /// 字符串——同一语义不在两处各判一次（REVIEW.md「同一语义两处真源」条）。
+    pub trigger: String,
+    /// 目标 vault（配置里的路径原值）：前端拿它与已打开的 vault 比，未打开时走既有打开
+    /// 链路；判定侧的规范化比较只发生在 `plan` 的 current / target 比较上。
+    pub vault: String,
+    pub prompt: String,
+    /// 会话形态 `new` / `dedicated`（`RunSpec` 不含任务知识，故留在载荷里）。
+    pub session: String,
+    /// `dedicated` 档的续写会话 id（来自 `cron-state.json`）；`new` 档为 `None`。
+    pub session_id: Option<String>,
+    pub model: Option<String>,
+}
+
+/// [`handoff`] 的输入：全部注入，函数本身不读时钟、随机数或配置。
+pub struct HandoffInput<'a> {
+    pub task: &'a CronTask,
+    /// 本轮运行 id（由调用方生成：[`new_run_id`]）。
+    pub run_id: &'a str,
+    pub trigger: Trigger,
+    /// 目标 vault（配置里的路径原值）。
+    pub vault: &'a str,
+    /// 运行时轮次上限（`[harness].loop_max`，与 `SessionContext::budget` 同一读数）。
+    pub loop_max: u32,
+    /// `cron-state.json` 里该任务的续写会话 id。
+    pub session_id: Option<&'a str>,
+}
+
+/// 运行契约与任务载荷的**唯一**合成点（change `add-harness-subagents` design §2.4）：纯函数。
+///
+/// - 定时 / 拉取运行 ⇒ `SessionTarget::Unattended` + `ApprovalPolicy::RejectUnavailable`
+///   （无人可批即中止，change `add-cron-runtime-daemon` §6.4 的既有语义）；
+/// - 点击发起（[`Trigger::Click`]）⇒ `SessionTarget::Interactive` + `ApprovalPolicy::Interactive`
+///   （点击是显式意图，批准卡照既有方式出现，design §6.2）；
+/// - `budget` 只填轮次上限（cron 没有 token / 时间闸）；`background = false`（cron 走自己的
+///   通知链路，不是委托的后台运行）。
+pub fn handoff(input: &HandoffInput<'_>) -> Handoff {
+    let click = input.trigger == Trigger::Click;
+    Handoff {
+        spec: RunSpec {
+            origin: RunOrigin::Cron {
+                task: input.task.id.clone(),
+                run_id: input.run_id.to_string(),
+            },
+            // 无人值守运行在独立 `Runtime` 实例上跑（§6.2 的「等价形态」），槽位键取本轮
+            // run_id：每次运行一个槽位，不与其它任务 / 其它轮次共用会话状态。
+            session_target: if click {
+                SessionTarget::Interactive
+            } else {
+                SessionTarget::Unattended {
+                    key: input.run_id.to_string(),
+                }
+            },
+            // cron 运行与交互路径同权：全部 8 件 vault 操作工具（编排工具 `task` 不在
+            // `TOOL_NAMES` 里，cron 也不是委派的父回合）。
+            tool_policy: ToolPolicy {
+                allow: TOOL_NAMES.iter().map(|name| (*name).to_string()).collect(),
+            },
+            budget: RunBudget {
+                max_rounds: input.loop_max,
+                max_tokens: 0,
+                deadline: None,
+            },
+            approval_policy: if click {
+                ApprovalPolicy::Interactive
+            } else {
+                ApprovalPolicy::RejectUnavailable
+            },
+            background: false,
+        },
+        trigger: input.trigger.as_str().to_string(),
+        vault: input.vault.to_string(),
+        prompt: input.task.prompt.clone(),
+        session: input.task.session.as_str().to_string(),
+        session_id: match input.task.session {
+            SessionShape::Dedicated => input.session_id.map(str::to_string),
+            SessionShape::New => None,
+        },
+        model: input.task.model.clone(),
     }
 }
 
@@ -821,6 +926,120 @@ mod tests {
             ),
             Plan::Idle
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // 运行交接载荷（RunSpec + 任务载荷）
+    // -----------------------------------------------------------------------
+
+    fn handoff_for<'a>(
+        task: &'a CronTask,
+        trigger: Trigger,
+        session_id: Option<&'a str>,
+    ) -> Handoff {
+        handoff(&HandoffInput {
+            task,
+            run_id: "run-1",
+            trigger,
+            vault: "/tmp/vault-a",
+            loop_max: 42,
+            session_id,
+        })
+    }
+
+    /// 定时 / 拉取运行：无人值守槽位 + 无人可批即拒；预算只填轮次上限。
+    #[test]
+    fn handoff_for_scheduled_runs_is_unattended_and_rejects_approvals() {
+        let task = task_with(DeliveryPolicy::RunThenNotify, CronWeekday::ALL.to_vec());
+        let payload = handoff_for(&task, Trigger::Timer, None);
+
+        assert_eq!(
+            payload.spec.origin,
+            RunOrigin::Cron {
+                task: "task-a".to_string(),
+                run_id: "run-1".to_string(),
+            }
+        );
+        assert_eq!(
+            payload.spec.session_target,
+            SessionTarget::Unattended {
+                key: "run-1".to_string()
+            }
+        );
+        assert_eq!(
+            payload.spec.approval_policy,
+            ApprovalPolicy::RejectUnavailable
+        );
+        assert_eq!(
+            payload.spec.budget,
+            RunBudget {
+                max_rounds: 42,
+                max_tokens: 0,
+                deadline: None,
+            }
+        );
+        assert!(!payload.spec.background);
+        assert_eq!(payload.trigger, "timer");
+        assert_eq!(payload.vault, "/tmp/vault-a");
+        assert_eq!(payload.prompt, "synthetic prompt");
+        assert_eq!(payload.session, "new");
+        assert_eq!(payload.session_id, None);
+        assert_eq!(payload.model, None);
+    }
+
+    /// 点击发起：交互槽位 + 交互批准；会话槽位与批准策略都由契约值表达，不另带字符串判据。
+    #[test]
+    fn handoff_for_clicked_runs_uses_the_interactive_slot() {
+        let task = task_with(DeliveryPolicy::NotifyThenRun, CronWeekday::ALL.to_vec());
+        let payload = handoff_for(&task, Trigger::Click, None);
+
+        assert_eq!(payload.spec.session_target, SessionTarget::Interactive);
+        assert_eq!(payload.spec.approval_policy, ApprovalPolicy::Interactive);
+        assert_eq!(payload.trigger, "click");
+    }
+
+    /// `dedicated` 只在其态下携带续写会话 id；`new` 档即使收到 id 也不带（避免下游误续写）。
+    #[test]
+    fn handoff_carries_session_id_only_for_dedicated_tasks() {
+        let mut task = task_with(DeliveryPolicy::SilentRun, CronWeekday::ALL.to_vec());
+        assert_eq!(
+            handoff_for(&task, Trigger::Timer, Some("session-9")).session_id,
+            None
+        );
+
+        task.session = crate::config::SessionShape::Dedicated;
+        assert_eq!(
+            handoff_for(&task, Trigger::Timer, Some("session-9")).session_id,
+            Some("session-9".to_string())
+        );
+    }
+
+    /// 线格式钉死：RunSpec 字段平铺（不嵌套 `spec`），任务载荷是 sibling 字段。
+    /// 区分度：把 `#[serde(flatten)]` 换成嵌套对象、或漏掉任务字段，本用例必 FAIL。
+    #[test]
+    fn handoff_serializes_as_a_flat_run_spec_plus_task_payload() {
+        let task = task_with(DeliveryPolicy::RunThenNotify, CronWeekday::ALL.to_vec());
+        let value = serde_json::to_value(handoff_for(&task, Trigger::Timer, None)).unwrap();
+
+        assert!(value.get("spec").is_none(), "契约字段必须平铺：{value}");
+        assert_eq!(value["origin"]["kind"], "cron");
+        assert_eq!(value["origin"]["task"], "task-a");
+        assert_eq!(value["origin"]["run_id"], "run-1");
+        assert_eq!(value["session_target"]["kind"], "unattended");
+        assert_eq!(
+            value["approval_policy"]["kind"], "reject_unavailable",
+            "无人值守运行不得把批准策略写成交互：{value}"
+        );
+        assert_eq!(value["tool_policy"]["allow"].as_array().unwrap().len(), 8);
+        assert_eq!(value["budget"]["max_rounds"], 42);
+        assert_eq!(value["budget"]["max_tokens"], 0);
+        assert_eq!(value["background"], false);
+        assert_eq!(value["trigger"], "timer");
+        assert_eq!(value["vault"], "/tmp/vault-a");
+        assert_eq!(value["prompt"], "synthetic prompt");
+        assert_eq!(value["session"], "new");
+        assert_eq!(value["session_id"], serde_json::Value::Null);
+        assert_eq!(value["model"], serde_json::Value::Null);
     }
 
     // -----------------------------------------------------------------------
