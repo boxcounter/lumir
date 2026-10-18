@@ -324,6 +324,54 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
 }
 ```
 
+### 1.9 `harness.subagents` 表（子代理运行）
+
+子代理运行的开关与预算上限（change `add-harness-subagents` design §14；行为语义真源是该
+change 的 [design §9](../../openspec/changes/add-harness-subagents/design.md)，定义文件格式见
+[subagent-definitions.md](subagent-definitions.md)）。**位置在 `[harness]` 表内**（与会话 / 附件
+自动命名同域：自动 LLM 行为的开关与上限归 `harness`）。
+
+| 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
+|---|---|---|---|---|---|
+| `harness.subagents.enabled` | boolean | `true` | `true` / `false` | 每次发送时由命令入口重读配置（中枢每回合同步）⇒ 改动**下一个回合**生效，不需要重启：`false` 时 `task` 工具不注册、面板任务区不出现，定义与内建 `explore` 保留（关掉可随时打开，不需要删定义） | `config.rs` 的 `SubagentsConfig`、`validate_subagents` |
+| `harness.subagents.max_turns` | number | `20` | 闭区间 `[1, 64]` | 同上；既是定义未写 `max_turns` 时的缺省预算，也是定义值的上限（冲突取小） | 同上 |
+| `harness.subagents.max_tokens` | number | `200000` | 闭区间 `[1, 10000000]` | 同上（token 闸） | 同上 |
+| `harness.subagents.timeout_secs` | number | `300` | 闭区间 `[1, 3600]` | 同上（时间闸；批准等待顺延，不计入） | 同上 |
+| `harness.subagents.max_subruns_per_turn` | number | `8` | 闭区间 `[1, 64]` | 同上；父回合委派段数上限（前台 + 后台；只计实际执行的段，被拒调用不占额度） | 同上 |
+| `harness.subagents.max_concurrent` | number | `4` | 闭区间 `[1, 16]` | 同上；会话级同时运行的子运行数上限，也是 provider 请求闸的许可数（`+1` 给父往返）——**并发不是预算**，不参与任何定义夹取 | 同上 |
+
+口径：
+
+- **缺省即默认**：整节缺席 / 单键缺席 = 出厂值、不告警。数值越界**夹取到最近边界 + warning**
+  （上限类旋钮贴着用户意图走：回落默认会把「想放宽到 100 轮」静默变成 20 轮，与 `[harness]`
+  其余数值键的「回落默认」不同）。
+- **类型不符整节回落**：`"subagents": "on"`、`"max_turns": "20"` 这类形状错误 ⇒ 整节回落为
+  出厂值 + 一条 warning，**不拖垮其余 `[harness]` 节**（这是 §2「整文件回落」的例外之一，
+  与会话 / 附件命名同路）。
+- **定义值夹取**：定义文件的 `max_turns` / `max_tokens` / `timeout_secs` 是用户意图，本表是
+  用户设定的上限，冲突取小并给一条点名 warning（定义里的值原样留在错误信息里，便于改定义）。
+  `max_concurrent` 不参与夹取。
+- **子运行用量按模型分桶，且不进父会话的 `ctx%` / cache%**（design §9.1）：每组
+  `(input / cached / writes / output / samples / segments)` 记在实际使用的模型 id 桶下，同一
+  模型多段相加；父会话的控制行读数只由父自己的往返计算——跨模型混算的百分比没有解释力。
+- **回合级最坏 token 消耗**：一个父回合最多发起 `max_subruns_per_turn` 段，每段至多
+  `max_tokens`，因此**单回合**的子运行用量上界是 `max_subruns_per_turn × max_tokens`
+  （不含父会话自己的往返；实际还受各段 `max_turns` / `timeout_secs` 与 provider 配额约束）。
+
+**两个不是配置键的常量**（design §12.6.3 / §14 末段：安全绳不是策略旋钮）——它们不读
+`config.json`、不出现在 `SubagentsConfig` 里，真源在 `harness/scheduler.rs`：
+
+| 常量 | 值 | 语义 |
+|---|---|---|
+| `AUTO_WAKE_CHAIN_MAX` | `5` | 自动回合链上限：链内自动回合至多 5 个，第 6 条后台结果只上屏通知、不起回合（`wake=blocked_chain`）；用户发言 / 面板「继续」/ 会话重置后链清零 |
+| `AUTO_WAKE_COALESCE_MS` | `2000` | 空闲时的通知合并窗口：首条完成通知起算 2000ms 内的同一批结果合并成一个自动回合（窗口不顺延） |
+
+**无人注视下的消耗上界**：自动回合链最多 5 个，每个自动回合内又至多
+`max_subruns_per_turn × max_tokens` 的子运行用量，因此后台派发在用户离开时可以触发的上界是
+`AUTO_WAKE_CHAIN_MAX × max_subruns_per_turn × max_tokens`，**另加**每个自动回合自身往返的
+上下文用量（成功摘要会把父会话上下文再发一次，量级取决于当时上下文，不在这条乘法里）。
+`enabled=false` 是唯一能把它归零的开关。
+
 ## 2. 解析与容错口径
 
 - **未知键忽略**：新版写入的字段旧版读取不报错（向前兼容）。未知键在应用回写时**原样保留**（见 §3）。
@@ -336,6 +384,9 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
   一条 warning（连 `last_vault` 一起丢）。这是既有解析模型的性质（不等同于逐字段回落），单测逐条钉住
   （`config.rs` 的 `wrong_type_*_falls_back_entire_file` 族）。本仓**不提供**「逐字段类型容忍」。
   `[cron]` 的 `tasks` **表内**元素是逐项校验的例外：坏一项只丢那一项（见 §1.8）。
+  `harness.subagents` 是**整节回落**的例外：该节类型不符只把它自己回落为出厂值 + warning，
+  其余 `[harness]` 键照常生效（见 §1.9）。注意这**不同于** §1.6 / §1.7 的命名表——那两节
+  沿用本条的整文件回落口径。
 - **warning 出口**：console + 诊断日志的 `config_warning` 事件（无 UI 面）。
 
 ## 3. 写回纪律：合并写，不写全量默认
@@ -366,6 +417,8 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
 | `reading-positions/` | 阅读位置：`<vault-id>.json`（按文件路径记滚动位置） | **易变状态** |
 | `cron-state.json` | 定时任务的当日去重状态：`{"version":1,"tasks":{"<task-id>":{"last_fired":"YYYY-MM-DD","session_id":"…"}}}` | **易变状态**（运行态，不是用户声明）；tmp + rename 原子写，不进 `config.json`、不进任何 vault |
 | `logs/` | 诊断日志：`YYYY-MM-DD.jsonl`（UTC 日期，每行一个 JSON 事件） | 只落本地、不外发、不进 vault |
+| `harness/sessions/` | 会话留存：`<vault-id>/<session-id>.jsonl`（首行 `session_open`，wire 记录 + sidecar） | **审计与恢复**（可恢复会话的唯一事实源） |
+| `harness/subruns/` | 子运行审计流水：`<vault-id>/<run-id>.jsonl`（首段首行 `run_open`，后续段追加 `run_segment`） | **审计轨迹**（不可恢复为会话；会话列举 / 恢复 / 删除链路不感知它，见 change `add-harness-subagents` design §9.2） |
 
 `cron-state.json` 的读取纪律（change `add-cron-runtime-daemon` design §8）：文件缺失、不可读、
 非合法 JSON、`version` 与实现不符——四类对调用方的语义**完全相同**：「没有去重状态」（最多导致

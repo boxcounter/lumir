@@ -263,19 +263,37 @@
 
 ## 5. 用量归属与留存
 
-- [ ] 5.1 按模型分桶：`Session` 增加 `SubrunUsageTable`（键 = 模型 id，值 = input / cached / writes /
+- [x] 5.1 按模型分桶：`Session` 增加 `SubrunUsageTable`（键 = 模型 id，值 = input / cached / writes /
   output / samples / segments），每段收尾累加一次；父会话自己的读数算法与键集不改。
-- [ ] 5.2 父会话 JSONL 的 `subrun` sidecar（design §9.2 字段），每段一条；失败 / 中止 / resume /
+  （M588 落 live 表与唯一累加点；M589 把累加算术收进 `SubrunUsage::accumulate`，live 与恢复
+  重算共用这一份。`writes` 来自 `cache_write_tokens`。）
+- [x] 5.2 父会话 JSONL 的 `subrun` sidecar（design §9.2 字段），每段一条；失败 / 中止 / resume /
   后台路径同样写（终态如实）。
-- [ ] 5.3 `usage_from_records` 纳入 `subrun` 记录并按模型归桶重算；单测钉「live 分桶表 == 恢复重算
+  （M588 落 sidecar；M589 补 `usage.cache_write_tokens`——缺它恢复重算的 `writes` 不可能与 live
+  相等。四键与 `llm_response.usage` 同形，design §9.2 已同步。）
+- [x] 5.3 `usage_from_records` 纳入 `subrun` 记录并按模型归桶重算；单测钉「live 分桶表 == 恢复重算
   分桶表」（含 partial、resume、失败段、并行乱序完成）。
-- [ ] 5.4 子运行审计流水（`harness/jsonl.rs`）：`subruns/<vault 稳定 id>/<run_id>.jsonl`、`run_open` /
+  （实现口径：新增 `subrun_usage_from_records(records, seed)`——不塞进 `usage_from_records` 的
+  往返配对循环（父会话 ctx% 不受影响是另一条判据）。`seed` = `session_open.subrun_usage`，
+  恢复 / 压缩开新文件时随首行落账，链式恢复与压缩边界因此不断档。单测
+  `subrun_usage_from_records_matches_live_buckets` / `subrun_records_do_not_change_parent_readings`
+  / `subrun_usage_seed_round_trips_and_chains` / `restore_subrun_usage_seeds_buckets`。）
+- [x] 5.4 子运行审计流水（`harness/jsonl.rs`）：`subruns/<vault 稳定 id>/<run_id>.jsonl`、`run_open` /
   `run_segment`、wire 记录与 sidecar；MUST NOT 落 `sessions/`（`rg` 断言目录常量只出现在一处装配点）。
-- [ ] 5.5 会话列举 / 恢复 / 删除三条链路不感知 `subruns/`：跑既有会话列表验收场景，确认零变化。
-- [ ] 5.6 后台结果投递与自动唤醒：收敛后写带 `auto_notice` 标记的通知消息（不另写完成内容记录；上屏
+  （M588 落目录与写入；M589 把两个根的目录段收进 `sessions_root` / `subruns_root` 两个纯函数，
+  单测 `directory_segments_have_one_assembly_point_each` 与 `audit_and_session_roots_are_disjoint`
+  机制化。）
+- [x] 5.5 会话列举 / 恢复 / 删除三条链路不感知 `subruns/`：跑既有会话列表验收场景，确认零变化。
+  （代码级判据：三条链路只读 `vault_sessions_dir`，与 `vault_subruns_dir` 的根目录互不嵌套且有
+  单测钉住。**真机复跑 106 / 108 / 124 场景归 M590 真机批**——本棒不改这三条链路的代码，唯一
+  新增的读取面是恢复时的 `subrun` 种子。）
+- [x] 5.6 后台结果投递与自动唤醒：收敛后写带 `auto_notice` 标记的通知消息（不另写完成内容记录；上屏
   同时写投递标记）+ 通知上屏 + `subagent_notified`（`wake` / `wake_batch` / `chain_index`）；父会话
   空闲时按 §4.13 起自动回合，正忙时排队合并（单测：不中途改写父会话上下文；两个 run 相继收敛只起
   一个回合；链触顶不起回合；退出恢复按标记重建且不补唤醒）。
+  （M588 已全部落地（见 §4.13 的实现口径与单测清单）；M589 只补诊断事件的生产者：七类
+  `subagent_*` 面板事件在出口统一转成 `logging` 诊断行，`subagent_notified` 带 `wake` /
+  `wake_batch` / `chain_index`。）
 
 ## 6. 配置、文档与 bindings
 
@@ -289,11 +307,16 @@
   （定义值夹取落在 `SubagentsConfig::clamp_turns` / `clamp_tokens` / `clamp_timeout_secs`：返回
   「夹取后值 + 是否夹取」，warning 由 §2 定义装载期按第二项产出——本棒先钉纯函数行为，警告路径随
   定义扫描落地。）
-- [ ] 6.3 `docs/specs/config-reference.md` 新增 `[harness.subagents]` 键表：缺省值、合法域、生效时机
+- [x] 6.3 `docs/specs/config-reference.md` 新增 `[harness.subagents]` 键表：缺省值、合法域、生效时机
   （装载时读一次）、定义值夹取、**子运行用量按模型分桶且不进父会话 ctx% / cache%**、回合级最坏
   token 消耗（`max_subruns_per_turn × max_tokens`）；另写明两个**不是配置键**的常量
   （`AUTO_WAKE_CHAIN_MAX = 5`、`AUTO_WAKE_COALESCE_MS = 2000`）与无人注视下的消耗上界
   （`AUTO_WAKE_CHAIN_MAX × max_subruns_per_turn × max_tokens` + 自动回合自身往返）。
+  （M589 落 §1.9；同文补 §2「整节回落」例外与 §4 配置目录布局的 `harness/sessions/`、
+  `harness/subruns/` 两行。**生效时机按实际代码改准**：`harness_send` 每次调用现场
+  `config::load()`、中枢每回合 `set_config` 同步（`harness.rs:1229` / `run.rs:427`），改动
+  **下一个回合**生效、不需要重启——任务原文与 design §14 首行的「装载时读一次、需重启」是
+  过时表述，M589 已一并改准；`config.rs` 的对应注释不在本棒 scope，另报 finding。）
 - [x] 6.4 新增 `docs/specs/subagent-definitions.md`：定义文件格式（vault / user 路径、frontmatter
   字段表含 `background`、校验与丢弃规则、优先级、热加载时机、清单与 15k 告警、内建 `explore` 与
   覆盖规则、本版本不采纳的参照系字段清单、能力边界：8 件工具任意子集 / 无 web 工具）。
@@ -302,19 +325,35 @@
 - [x] 6.5 `src/bindings/**` 重导出进索引；`scripts/gate.sh quick` 的 bindings-drift 绿。
   （`SubagentsConfig.ts` 新增、`HarnessConfig.ts` 增字段；`scripts/gate.sh quick` 退出码 0，
   `GATE RESULT: 9/9 PASS（SKIP 1）`。）
-- [ ] 6.6 信息卫生：全部制品、原型与验收 fixture 无真实 vault 路径 / 真实内容（一律 `<vault>` /
+- [x] 6.6 信息卫生：全部制品、原型与验收 fixture 无真实 vault 路径 / 真实内容（一律 `<vault>` /
   `<config_dir>`）；提交前对改动面做一次 text 级 grep 清扫并记录命令与零命中。
+  （M589 改动面：`session.rs` / `jsonl.rs` / `logging.rs` / `harness.rs` / `run.rs` /
+  `subagents.rs` / `config-reference.md` / `design.md` / `tasks.md` / `src/bindings/LogEventName.ts`。
+  用例里的路径一律合成（`vault-test-*` / `/tmp/lumir-*` / `<vault>` / `<config_dir>`）；
+  grep 命令与零命中读数见 M589 完成报告。）
 
 ## 7. 诊断与观测
 
-- [ ] 7.1 `logging.rs` 白名单新增 `subagent_started` / `subagent_progress` / `subagent_step` /
+- [x] 7.1 `logging.rs` 白名单新增 `subagent_started` / `subagent_progress` / `subagent_step` /
   `subagent_finished` / `subagent_notified` / `subagent_rejected` / `subagent_catalog_large` 与字段
   校验用例；`status` / `stopped_by` / `reason` / `wake` 为闭集合；`subagent_notified` 带
   `wake` / `wake_batch` / `chain_index`。
   **部分完成（M587）**：按 tower 的 scope 裁决先放行 `subagent_catalog_large` 一条白名单
   （`estimated_tokens` / `definition_count` + 落盘用例），其余六个事件留 §7（M589）。
-- [ ] 7.2 断言完成事件只有一个产出点（段收尾），失败 / 中止 / 后台路径同样产出一条，不静默；事件
+  **M589 完成**：六个事件进白名单；闭集合常量 `SUBAGENT_STATUSES` / `SUBAGENT_STOPPED_BY` /
+  `SUBAGENT_WAKE` / `SUBAGENT_REJECT_REASONS` 逐值有接受用例，越界值在测试构建下判红
+  （`subagent_closed_set_violation_is_caught`）。生产者的值来自 `StopReason::as_str()` 与
+  `SegmentReport::status()`，日志侧不另立一套（测试期断言，release 原样落盘）。
+- [x] 7.2 断言完成事件只有一个产出点（段收尾），失败 / 中止 / 后台路径同样产出一条，不静默；事件
   不含 prompt、文件内容与 vault 绝对路径。
+  （实现口径：诊断落盘在**面板事件出口**统一转写——`SubagentHub::set_sink` 包一层
+  `DiagnosticSink`，七类事件共用这一个产出点，完成 / 失败 / 中止 / 后台路径天然同路。
+  单测 `subagent_diagnostics_have_a_single_production_point` 扫源码钉住
+  `logging::subagent_event` 唯一调用点；`subagent_finished` 的构造点恰两处——段收尾
+  `ChildContext::finish` 与**无段终态** `emit_failed_terminal`（线程启动失败 / 段前失败共用），
+  两处都显式产出、都由同一出口落诊断。
+  隐私边界：白名单外的 `prompt` / `messages` / `vault` 物理上进不来，用例
+  `subagent_events_round_trip_from_panel_payloads` 反向钉住 `vault` 缺席。）
 - [ ] 7.3 观测读数自验：跑一次 completed、一次 failed、一次 quota 收敛的子运行，给出使用计数与触顶
   分布（含 quota 单列）的 `rg` 命令实际读数与执行时刻。
 
