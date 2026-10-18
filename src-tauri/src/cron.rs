@@ -62,6 +62,8 @@ pub enum Trigger {
     Focus,
     /// 目标 vault 打开成功后一次。
     VaultOpen,
+    /// 用户点击通知后发起的一次运行（`cron:run` 的 `origin=click`，design §5.1）。
+    Click,
 }
 
 impl Trigger {
@@ -72,13 +74,14 @@ impl Trigger {
             Trigger::Startup => "startup",
             Trigger::Focus => "focus",
             Trigger::VaultOpen => "vault-open",
+            Trigger::Click => "click",
         }
     }
 
     /// 拉取兜底（启动 / 焦点 / vault 打开）。当日被跳过的任务允许它们重试；定时器不重试
     /// （design §6.5：避免日志噪音，补跑落在下一次拉取触发）。
     pub fn is_pull(self) -> bool {
-        !matches!(self, Trigger::Timer)
+        matches!(self, Trigger::Startup | Trigger::Focus | Trigger::VaultOpen)
     }
 }
 
@@ -237,10 +240,17 @@ pub struct PlanInput<'a> {
     pub last_fired: Option<&'a str>,
     /// 当前打开的 vault 根（未打开时为 `None`）。
     pub current_vault: Option<&'a str>,
+    /// 任务目标 vault 的**规范化**路径（canonicalize 后的运行坐标，design §6.5）。配置里的
+    /// 绝对路径与 vault 根可能只差软链（macOS `/tmp` → `/private/tmp`），比较必须用同一口径。
+    pub target_vault: &'a str,
     /// 该任务是否已有在途运行。
     pub inflight: bool,
     /// 该任务今日是否已经落过一条 `cron_run_skipped`（当日去重，避免日志噪音）。
     pub skipped_today: bool,
+    /// 前端接线层是否已就绪（`cron:run` 监听器已在场）。启动早期的交接事件会在 webview 的
+    /// JS 监听器存在之前丢掉——未就绪时无人值守运行按 `not_ready` 延后，由前端就绪后的
+    /// 一次 poke 重试。
+    pub frontend_ready: bool,
     pub trigger: Trigger,
 }
 
@@ -250,7 +260,8 @@ pub struct PlanInput<'a> {
 /// 1. [`decide`] 不给 `Fire` ⇒ `Idle`；
 /// 2. 定时器遇到「今日已跳过」的任务不再尝试（补跑交给下一次拉取触发）；
 /// 3. `notify-then-run` 只投通知——点击以前没有任何模型调用；
-/// 4. `run-then-notify` / `silent-run` 要发起运行：当前没有打开 vault ⇒ `not_ready`；目标
+/// 4. `run-then-notify` / `silent-run` 要发起运行：前端接线层未就绪（`cron:run` 监听器不在场，
+///    发射会被静默丢弃）⇒ `not_ready`；当前没有打开 vault ⇒ `not_ready`；目标
 ///    vault 不是当前 vault ⇒ `vault_not_current`（不切换用户界面）；已有在途运行 ⇒ `busy`。
 pub fn plan(input: &PlanInput) -> Plan {
     let decision = decide(&CheckInput {
@@ -267,12 +278,19 @@ pub fn plan(input: &PlanInput) -> Plan {
     }
     match input.task.delivery {
         DeliveryPolicy::NotifyThenRun => Plan::Notify,
-        DeliveryPolicy::RunThenNotify | DeliveryPolicy::SilentRun => match input.current_vault {
-            None => Plan::Skip(SkipReason::NotReady),
-            Some(current) if current != input.task.vault => Plan::Skip(SkipReason::VaultNotCurrent),
-            Some(_) if input.inflight => Plan::Skip(SkipReason::Busy),
-            Some(_) => Plan::Handoff,
-        },
+        DeliveryPolicy::RunThenNotify | DeliveryPolicy::SilentRun => {
+            if !input.frontend_ready {
+                return Plan::Skip(SkipReason::NotReady);
+            }
+            match input.current_vault {
+                None => Plan::Skip(SkipReason::NotReady),
+                Some(current) if current != input.target_vault => {
+                    Plan::Skip(SkipReason::VaultNotCurrent)
+                }
+                Some(_) if input.inflight => Plan::Skip(SkipReason::Busy),
+                Some(_) => Plan::Handoff,
+            }
+        }
     }
 }
 
@@ -647,8 +665,10 @@ mod tests {
             now,
             last_fired,
             current_vault,
+            target_vault: task.vault.as_str(),
             inflight,
             skipped_today,
+            frontend_ready: true,
             trigger,
         })
     }
@@ -696,6 +716,26 @@ mod tests {
             plan_for(&task, &moment, None, None, false, false, Trigger::Timer),
             Plan::Skip(SkipReason::NotReady)
         );
+    }
+
+    #[test]
+    fn plan_waits_for_the_frontend_bridge_before_handoff() {
+        let task = task_with(DeliveryPolicy::SilentRun, CronWeekday::ALL.to_vec());
+        let moment = now(SUNDAY, 21, 0);
+        let plan = plan(&PlanInput {
+            task: &task,
+            at_minutes: 21 * 60,
+            now: &moment,
+            last_fired: None,
+            current_vault: Some("/tmp/vault-a"),
+            target_vault: "/tmp/vault-a",
+            inflight: false,
+            skipped_today: false,
+            // webview 的 `cron:run` 监听器还没装好：交接事件会被静默丢弃，因此不能派发。
+            frontend_ready: false,
+            trigger: Trigger::Startup,
+        });
+        assert_eq!(plan, Plan::Skip(SkipReason::NotReady));
     }
 
     #[test]

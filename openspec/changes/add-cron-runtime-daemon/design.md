@@ -187,8 +187,11 @@ loop {
 
 ```json
 { "run_id": "…", "task": "daily-log", "vault": "/abs/path", "prompt": "…",
-  "session": "new", "model": "…", "origin": "click" }
+  "session": "new", "session_id": null, "model": "…", "origin": "click" }
 ```
+
+`session_id` 只在 `session = dedicated` 时携带（来自 `cron-state.json` 的续写会话）；`new` 档为
+`null`。运行槽位的实现落点是 `Runtime::isolated()` 的独立运行时实例（见 §6.2 的「等价形态」）。
 
 回执命令 `cron_run_result({ run_id, ok, session_id?, error? })`：前端在运行终态（含中止、失败、
 需批准而中止）调用一次；Rust 据此更新 `cron-state.json` 的 `session_id`、投递结果通知（按策略）、

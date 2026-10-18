@@ -76,6 +76,8 @@ pub fn run() {
                 .open_js_links_on_click(false)
                 .build(),
         )
+        // 通知插件（change add-cron-runtime-daemon §4.1）：Rust 侧 API 注册，capabilities 零增量。
+        .plugin(tauri_plugin_notification::init())
         .manage(commands::VaultState::default())
         .manage(commands::DirtyState::default())
         .manage(harness::Runtime::default())
@@ -160,6 +162,13 @@ pub fn run() {
             // 寻址附件的写 / 读（落点 attachments/<vault 稳定 id>/，MUST NOT 触碰 vault）。
             harness::harness_write_image,
             harness::harness_read_image,
+            // cron 运行交接（change add-cron-runtime-daemon §3.3）：前端接线层的唯一发送入口，
+            // 与 harness_send 共用运行实现；`cron_run_result` 是运行终态的唯一回执入口。
+            harness::harness_cron_run,
+            commands::cron_run_result,
+            // 前端 cron 接线层就绪（`cron:run` 监听器已装好）：置位后补一次启动触发，
+            // 补跑启动早期因监听器不在场而被 `not_ready` 延后的无人值守运行。
+            commands::cron_bridge_ready,
             // composer 草稿（change composer-draft-persistence）：按 vault 一份的草稿读写
             // （落点 harness/drafts/<vault 稳定 id>.json，MUST NOT 触碰 vault；落点按当前
             // vault scope 解析，前端不传 vault——harness_write_image 同形态）。
@@ -186,10 +195,19 @@ pub fn run() {
             // last_vault 自动恢复移出主线程（M159）：本回调随即返回，事件循环继续跑
             // ——窗口立即可绘制。setup 内 MUST NOT 同步做 config::load / open_vault。
             start_restore(app.handle());
+            // 通知点击监听（change add-cron-runtime-daemon §4.2）：**启动时注册一次并常驻**
+            // ——平台只在「通知投递时监听器已在场」的通知上报点击，按需注册会漏。回调只投一个
+            // 工作项给 `lumir-cron` 线程，判定与副作用都在那条线程上。
+            install_notification_click(app.handle());
             // cron 守护（change add-cron-runtime-daemon §4.1）：窗口已显示、`LUMIR_READY`
             // 已发出之后才 spawn——线程自己装载配置与去重状态，setup 不等它，冷启动
             // <300ms 合同零接触面。首次评估由紧随其后的 startup poke 触发。
             start_cron(app.handle(), cron_rx);
+            // 临时探针（任务 4.7，提交前移除）：验证 dev flavour 的通知权限与投递。
+            #[cfg(debug_assertions)]
+            if std::env::var("LUMIR_NOTIFY_PROBE").is_ok() {
+                probe_notification(app.handle());
+            }
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -718,6 +736,16 @@ fn restore_outcome(app: &tauri::AppHandle) -> commands::RestoreOutcome {
 /// 恢复会话、经既有发送通道送出 prompt，并在终态调用 [`cron_run_result`] 回执。
 const CRON_RUN_EVENT: &str = "cron:run";
 
+/// 运行终态事件名（change add-cron-runtime-daemon §3.3）：前端收到后以 `cron_run_result`
+/// 回执。终态由运行线程在 `turn::run_turn` 返回时投递，事件只承载读数、不判定。
+pub(crate) const CRON_RUN_FINISHED_EVENT: &str = "cron:run_finished";
+
+/// 点击结果通知后「恢复该次运行的会话」（design §5.2）。
+const CRON_OPEN_SESSION_EVENT: &str = "cron:open_session";
+
+/// 人话提示事件（点击链路任一步失败时给用户一条可见反馈，design §4.5「MUST NOT 静默」）。
+const CRON_NOTICE_EVENT: &str = "cron:notice";
+
 /// 焦点 poke 的去抖窗口（design §4.2）：切换前台的连续事件在 200ms 内只投一次。
 const FOCUS_POKE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(200);
 
@@ -732,6 +760,9 @@ const INFLIGHT_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs
 /// 不判定；判定与派发全部在 `lumir-cron` 线程上，事件循环因此不会被 cron 拖慢。
 pub struct CronRuntime {
     inner: Mutex<CronRuntimeInner>,
+    /// 前端接线层已就绪（main.ts 的 `cron:run` 监听器已在场）：未就绪时无人值守运行按
+    /// `not_ready` 延后——启动早期的交接事件会在 webview JS 订阅之前被静默丢弃。
+    bridge_ready: std::sync::atomic::AtomicBool,
 }
 
 struct CronRuntimeInner {
@@ -739,12 +770,14 @@ struct CronRuntimeInner {
     last_focus_poke: Option<Instant>,
 }
 
-/// 投给守护线程的两类消息。
+/// 投给守护线程的三类消息。
 enum CronMessage {
     /// 拉取兜底的一次评估（带触发源）。
     Poke(cron::Trigger),
     /// 运行终态回执。
     RunResult(CronRunResult),
+    /// 用户点击了一条通知（`tap`）：按该任务的触达策略聚焦 / 打开会话 / 发起运行。
+    Click { task: String },
 }
 
 /// `cron_run_result` 回执载荷（design §6.1）：运行终态的**唯一**来源。成功与否只由前端在终态
@@ -763,7 +796,22 @@ impl CronRuntime {
                 tx,
                 last_focus_poke: None,
             }),
+            bridge_ready: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// 前端接线层就绪（`cron_bridge_ready` 命令）：置位并投一次启动触发，补跑启动早期因
+    /// 「监听器不在场」被延后的无人值守运行。
+    fn mark_bridge_ready(&self) {
+        use std::sync::atomic::Ordering;
+        if self.bridge_ready.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        self.poke(cron::Trigger::Startup);
+    }
+
+    fn is_bridge_ready(&self) -> bool {
+        self.bridge_ready.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn send(&self, message: CronMessage) {
@@ -796,6 +844,12 @@ pub fn cron_poke(app: &tauri::AppHandle, trigger: cron::Trigger) {
     app.state::<CronRuntime>().poke(trigger);
 }
 
+/// 前端接线层就绪（main.ts 装好 `cron:run` 监听器之后调用一次）：置位并补一次启动触发。
+/// 未就绪期间的无人值守派发被 `cron::plan` 以 `not_ready` 延后，这一步是补跑入口。
+pub fn cron_bridge_ready(app: &tauri::AppHandle) {
+    app.state::<CronRuntime>().mark_bridge_ready();
+}
+
 /// 运行终态回执的唯一后端入口：前端接线层的 `cron_run_result` 命令调用它。
 ///
 /// 本函数只投递到 `lumir-cron` 线程——去重状态更新与 `cron_run_finished` 事件都由该线程
@@ -816,17 +870,21 @@ pub fn cron_run_result(
         }));
 }
 
-/// 守护线程的一条待评估任务：配置里的任务 + 启动时解析一次的 `at` 分钟数。
+/// 守护线程的一条待评估任务：配置里的任务 + 启动时解析一次的 `at` 分钟数 + 规范化的目标
+/// vault 根（`canonicalize` —— macOS `/tmp` → `/private/tmp` 软链下，配置路径与 vault 根
+/// 逐字比较会假判「不是当前 vault」）。
 #[derive(Debug, Clone)]
 struct ScheduledTask {
     task: config::CronTask,
     at_minutes: u16,
+    vault_root: String,
 }
 
 /// 一次在途运行的登记（`run_id` → 任务与触达策略）。
 struct InflightRun {
     task: String,
     delivery: config::DeliveryPolicy,
+    trigger: cron::Trigger,
     started: Instant,
 }
 
@@ -839,6 +897,8 @@ struct CronRunPayload {
     vault: String,
     prompt: String,
     session: String,
+    /// `dedicated` 档的续写会话 id（来自 `cron-state.json`）；`new` 档为 `None`。
+    session_id: Option<String>,
     model: Option<String>,
     origin: String,
 }
@@ -883,10 +943,17 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
         .tasks
         .iter()
         .filter_map(|task| match cron::parse_at(&task.at) {
-            Ok(at_minutes) => Some(ScheduledTask {
-                task: task.clone(),
-                at_minutes,
-            }),
+            Ok(at_minutes) => {
+                let vault_root = std::fs::canonicalize(&task.vault)
+                    .unwrap_or_else(|_| PathBuf::from(&task.vault))
+                    .display()
+                    .to_string();
+                Some(ScheduledTask {
+                    task: task.clone(),
+                    at_minutes,
+                    vault_root,
+                })
+            }
             // 校验期已挡过一次；这里只防实现漂移（校验后 at 又被改坏），不静默丢。
             Err(reason) => {
                 logging::cron_task_invalid(&task.id, "at", reason);
@@ -919,16 +986,28 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
         state_path,
         inflight: std::collections::HashMap::new(),
         skipped_today: std::collections::HashMap::new(),
+        clicked_today: std::collections::HashMap::new(),
         last_vault: None,
+        last_vault_key: None,
     };
+    // 通知权限（design §4.3）：有有效任务时检查一次；未决定申请一次；被拒落一条 warning
+    // 且不反复申请。查询失败不阻断启动（通知链路降级，判定与运行不受影响）。
+    ensure_notification_permission(app);
     loop {
         match rx.recv_timeout(cron::TICK) {
             Ok(CronMessage::Poke(trigger)) => runner.evaluate(trigger),
             Ok(CronMessage::RunResult(result)) => runner.finish(result),
+            Ok(CronMessage::Click { task }) => runner.handle_click(&task),
             Err(RecvTimeoutError::Timeout) => runner.evaluate_tick(),
             Err(RecvTimeoutError::Disconnected) => return,
         }
     }
+}
+
+/// 一次通知点击的去重状态（repeat-click 幂等）：日期 + 该次运行回执带回的会话 id。
+struct ClickState {
+    date: String,
+    session_id: Option<String>,
 }
 
 /// 守护线程的执行侧：判定（`cron::plan`）之外的全部副作用都在这里——投通知、发交接事件、
@@ -942,9 +1021,15 @@ struct CronRunner {
     inflight: std::collections::HashMap<String, InflightRun>,
     /// 今日已落过 skip 的任务 → 日期（每任务每日最多一条 `cron_run_skipped`）。
     skipped_today: std::collections::HashMap<String, String>,
+    /// 今日点击过的通知（repeat-click 幂等，design §5.1 / §4.6）：记录本次点击的日期与该次
+    /// 运行的会话 id（回执带回才写）。同日第二次点击只聚焦 / 打开已有会话，不重复运行。
+    clicked_today: std::collections::HashMap<String, ClickState>,
     /// 上一轮观察到的当前 vault 根：变化即视为「目标 vault 打开成功」的一次触发源
     /// （下面 `evaluate_tick` 的口径）。
     last_vault: Option<PathBuf>,
+    /// 上一轮当前 vault 的**规范化**比较键（canonicalize 只在 vault 变化时做一次，tick 的
+    /// 常规路径因此仍是纯内存比较）。
+    last_vault_key: Option<PathBuf>,
 }
 
 impl CronRunner {
@@ -971,8 +1056,16 @@ impl CronRunner {
     }
 
     fn evaluate_with(&mut self, trigger: cron::Trigger, current_vault: Option<PathBuf>) {
+        // 比较键用**规范化**路径（macOS `/tmp` → `/private/tmp` 软链下，配置路径与 vault
+        // 根可能只差这一层）；canonicalize 只在 vault 变化时做一次，tick 常规路径纯内存。
+        let current_key = match (&current_vault, &self.last_vault) {
+            (Some(raw), Some(previous)) if raw == previous => self.last_vault_key.clone(),
+            (Some(raw), _) => Some(std::fs::canonicalize(raw).unwrap_or_else(|_| raw.clone())),
+            (None, _) => None,
+        };
         self.last_vault = current_vault.clone();
-        let current_vault = current_vault.and_then(|path| path.to_str().map(str::to_string));
+        self.last_vault_key = current_key.clone();
+        let current_vault = current_key.and_then(|path| path.to_str().map(str::to_string));
         let now = cron::LocalNow::now();
         self.prune_stale_inflight();
         for index in 0..self.tasks.len() {
@@ -1018,8 +1111,10 @@ impl CronRunner {
             now,
             last_fired: self.state.last_fired(&task.id),
             current_vault,
+            target_vault: &scheduled.vault_root,
             inflight,
             skipped_today,
+            frontend_ready: self.app.state::<CronRuntime>().is_bridge_ready(),
             trigger,
         });
         match plan {
@@ -1027,7 +1122,7 @@ impl CronRunner {
             cron::Plan::Notify => {
                 // 投递失败（通道未就绪 / 权限 / 插件错误）：不写 last_fired，下一次评估重试
                 // （design §5.4）。通道未就绪时不落事件——否则每个 tick 一条噪音。
-                if deliver_notification(&self.app, &task.id, "trigger").is_ok() {
+                if deliver_notification(&self.app, &task.id, "trigger", None).is_ok() {
                     logging::cron_notified(&task.id, "trigger", trigger.as_str());
                     self.mark_fired(&task.id, &now.date);
                 }
@@ -1045,12 +1140,21 @@ impl CronRunner {
             return;
         }
         let run_id = cron::new_run_id();
+        // `vault` 用**规范化**路径（与 `VaultState` 的当前 vault 键同一口径）：前端据此判断
+        // 「目标 vault 是否已打开」，配置里的原始路径可能只差一个软链（macOS `/tmp` →
+        // `/private/tmp`），逐字比较会误判成另一个 vault。
         let payload = CronRunPayload {
             run_id: run_id.clone(),
             task: task.id.clone(),
             vault: task.vault.clone(),
             prompt: task.prompt.clone(),
             session: task.session.as_str().to_string(),
+            session_id: match task.session {
+                config::SessionShape::Dedicated => {
+                    self.state.session_id(&task.id).map(str::to_string)
+                }
+                config::SessionShape::New => None,
+            },
             model: task.model.clone(),
             origin: trigger.as_str().to_string(),
         };
@@ -1061,16 +1165,13 @@ impl CronRunner {
                     InflightRun {
                         task: task.id.clone(),
                         delivery: task.delivery,
+                        trigger,
                         started: Instant::now(),
                     },
                 );
                 self.mark_fired(&task.id, &now.date);
-                logging::cron_run_started(
-                    &task.id,
-                    trigger.as_str(),
-                    task.session.as_str(),
-                    task.model.as_deref(),
-                );
+                // `cron_run_started` 的产出点在 `harness_cron_run`（运行交接被前端接受的那一刻
+                // ——design §11 的语义），这里只投事件与写去重状态，不重复落事件。
             }
             Err(_) => self.record_skip(&task.id, &now.date, cron::SkipReason::NotReady),
         }
@@ -1085,6 +1186,18 @@ impl CronRunner {
             );
             return;
         };
+        let session_id = result
+            .session_id
+            .clone()
+            .or_else(|| self.state.session_id(&run.task).map(str::to_string));
+        if let Some(clicked) = self.clicked_today.get_mut(&run.task) {
+            clicked.session_id = session_id.clone();
+        }
+        // 交接就没成功（如点击时交互会话正忙 → `harness_busy`，没有会话 id）：清掉点击去重，
+        // 让用户能再点一次；启动成功的运行保留（重复点击只打开已有会话，不重跑）。
+        if session_id.is_none() {
+            self.clicked_today.remove(&run.task);
+        }
         if result.session_id.is_some() {
             self.state
                 .set_session(&run.task, result.session_id.as_deref());
@@ -1095,7 +1208,151 @@ impl CronRunner {
         // `run-then-notify` 的结果通知在终态之后（design §5.2）；通知通道未就绪时这次投递
         // 失败，但不改变终态判定，也不触发重跑（当日已写 last_fired）。
         if run.delivery == config::DeliveryPolicy::RunThenNotify {
-            let _ = deliver_notification(&self.app, &run.task, "result");
+            let kind = if result.ok { "result" } else { "failure" };
+            match deliver_notification(&self.app, &run.task, kind, session_id.as_deref()) {
+                Ok(()) => logging::cron_notified(&run.task, kind, run.trigger.as_str()),
+                Err(error) => logging::config_warning(
+                    "cron",
+                    &format!("任务 {} 的结果通知投递失败：{error}", run.task),
+                ),
+            }
+        }
+    }
+
+    /// 通知点击（design §4.5 / §5.1 / §5.2）：`notify-then-run` 点击发起运行（同日重复点击
+    /// 只打开已有会话）；`run-then-notify` 点击恢复该次运行的会话、不重跑。任一步失败落
+    /// `cron_click(ok=false)` 并给人话提示（MUST NOT 静默）。
+    fn handle_click(&mut self, task_id: &str) {
+        let Some(scheduled) = self
+            .tasks
+            .iter()
+            .find(|scheduled| scheduled.task.id == task_id)
+            .cloned()
+        else {
+            logging::cron_click(task_id, false, "run", Some("task_unknown"));
+            return;
+        };
+        let task = scheduled.task;
+        if !focus_main_window(&self.app) {
+            logging::cron_click(&task.id, false, "run", Some("focus_failed"));
+            notice(&self.app, "无法唤起 Lumir 窗口，请从程序坞打开后重试");
+            return;
+        }
+        let now = cron::LocalNow::now();
+        match task.delivery {
+            config::DeliveryPolicy::NotifyThenRun => {
+                let clicked = self
+                    .clicked_today
+                    .get(&task.id)
+                    .filter(|clicked| clicked.date == now.date);
+                if let Some(clicked) = clicked {
+                    // 同日重复点击（design §4.6）：只聚焦并打开已有会话，不重复运行。
+                    match clicked.session_id.clone() {
+                        Some(session_id) => {
+                            self.open_session(&task, &session_id);
+                        }
+                        None => {
+                            // 第一次点击的运行还没有回执：只聚焦，不产生第二次运行。
+                            logging::cron_click(&task.id, true, "run", None);
+                        }
+                    }
+                    return;
+                }
+                self.clicked_today.insert(
+                    task.id.clone(),
+                    ClickState {
+                        date: now.date.clone(),
+                        session_id: None,
+                    },
+                );
+                // 进程重启后 clicked_today 会丢：用去重状态里的 session_id 补一道同日判据——
+                // 该会话是今天开始的 ⇒ 今天已经跑过，只打开、不重复运行（design §4.6）。
+                if let Some(session_id) = self
+                    .state
+                    .session_id(&task.id)
+                    .filter(|session_id| session_started_today(session_id, &now))
+                    .map(str::to_string)
+                {
+                    if let Some(clicked) = self.clicked_today.get_mut(&task.id) {
+                        clicked.session_id = Some(session_id.clone());
+                    }
+                    self.open_session(&task, &session_id);
+                    return;
+                }
+                let run_id = cron::new_run_id();
+                let payload = CronRunPayload {
+                    run_id: run_id.clone(),
+                    task: task.id.clone(),
+                    vault: task.vault.clone(),
+                    prompt: task.prompt.clone(),
+                    session: task.session.as_str().to_string(),
+                    session_id: match task.session {
+                        config::SessionShape::Dedicated => {
+                            self.state.session_id(&task.id).map(str::to_string)
+                        }
+                        config::SessionShape::New => None,
+                    },
+                    model: task.model.clone(),
+                    origin: "click".to_string(),
+                };
+                match self.app.emit(CRON_RUN_EVENT, payload) {
+                    Ok(()) => {
+                        // 点击运行也登记在途：回执（含失败）因此走同一条 finish 路径更新会话 id
+                        // 与 cron_run_finished，不会变成「未知 run_id」被丢弃。
+                        self.inflight.insert(
+                            run_id,
+                            InflightRun {
+                                task: task.id.clone(),
+                                delivery: task.delivery,
+                                trigger: cron::Trigger::Click,
+                                started: Instant::now(),
+                            },
+                        );
+                        logging::cron_click(&task.id, true, "run", None);
+                    }
+                    Err(error) => {
+                        logging::cron_click(&task.id, false, "run", Some("emit_failed"));
+                        notice(
+                            &self.app,
+                            &format!("任务 {} 的运行未能发起（{error}），请手动打开会话", task.id),
+                        );
+                    }
+                }
+            }
+            config::DeliveryPolicy::RunThenNotify => match self
+                .state
+                .session_id(&task.id)
+                .map(str::to_string)
+            {
+                Some(session_id) => self.open_session(&task, &session_id),
+                None => {
+                    logging::cron_click(&task.id, false, "open-session", Some("session_missing"));
+                    notice(&self.app, &format!("任务 {} 还没有可恢复的会话", task.id));
+                }
+            },
+            // `silent-run` 没有通知可点（不会走到这里）。
+            config::DeliveryPolicy::SilentRun => {
+                logging::cron_click(&task.id, false, "open-session", Some("no_notification"));
+            }
+        }
+    }
+
+    /// 「恢复该次运行的会话」：前端确保目标 vault 已打开后经既有恢复链路打开它。
+    fn open_session(&self, task: &config::CronTask, session_id: &str) {
+        let payload = serde_json::json!({
+            "task": task.id,
+            "vault": task.vault,
+            "session_id": session_id,
+        });
+        match self.app.emit(CRON_OPEN_SESSION_EVENT, payload) {
+            Ok(()) => logging::cron_click(&task.id, true, "open-session", None),
+            Err(error) => {
+                logging::cron_click(&task.id, false, "open-session", Some("emit_failed"));
+                notice(
+                    &self.app,
+                    &format!("无法打开任务 {} 的会话（{error}）", task.id),
+                );
+            }
         }
     }
 
@@ -1135,20 +1392,154 @@ fn current_vault_root(app: &tauri::AppHandle) -> Option<PathBuf> {
         .map(|(root, _policy)| root)
 }
 
-/// 通知投递端口（design §9：副作用以回调形式注入，判定层不知道通知存在）。
-///
-/// 系统通知中心的投递与常驻点击监听依赖 `tauri-plugin-notification`，由 change 的通知链路
-/// 任务接入；在本层它返回「通道未就绪」——`notify-then-run` 因此不写 `last_fired`、下一次
-/// 评估重试（design §5.4 的投递失败口径），`run-then-notify` 的结果通知落空但终态照常记录。
-///
-/// 文案口径（design §5 / §6）：标题 = 任务 id，正文只用通用文案（到点 / 已完成 / 运行失败），
-/// MUST NOT 含 prompt、文档内容或绝对路径——通知会出现在锁屏与通知中心。
+/// 通知投递端口（design §4.4 / §9）：标题 = 任务 id，正文只用通用文案（到点 / 已完成 /
+/// 运行失败），`extra` 携带任务 id（结果通知另带该次会话 id）。文案 MUST NOT 含 prompt、
+/// 文档内容或绝对路径——通知会出现在锁屏与通知中心。
 fn deliver_notification(
-    _app: &tauri::AppHandle,
-    _task: &str,
-    _kind: &str,
-) -> Result<(), &'static str> {
-    Err("notification_channel_unavailable")
+    app: &tauri::AppHandle,
+    task: &str,
+    kind: &str,
+    session_id: Option<&str>,
+) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    let body = match kind {
+        "result" => "已完成",
+        "failure" => "运行失败",
+        _ => "到点",
+    };
+    let mut builder = app
+        .notification()
+        .builder()
+        .title(task)
+        .body(body)
+        .extra("task", task);
+    if let Some(session_id) = session_id {
+        builder = builder.extra("session_id", session_id);
+    }
+    builder.show().map_err(|error| error.to_string())
+}
+
+/// 通知权限检查（design §4.3）：有有效任务时检查一次；未决定申请一次；被拒落一条人话
+/// warning 且不反复申请。查询 / 申请失败都只降级为 warning——MUST NOT 阻断启动。
+fn ensure_notification_permission(app: &tauri::AppHandle) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tauri_plugin_notification::NotificationExt;
+    static REQUESTED: AtomicBool = AtomicBool::new(false);
+    match app.notification().permission_state() {
+        Ok(tauri_plugin_notification::PermissionState::Granted) => {}
+        Ok(tauri_plugin_notification::PermissionState::Denied) => logging::config_warning(
+            "cron",
+            "通知权限被拒绝：notify-then-run 任务无法投递，可改用 run-then-notify / silent-run",
+        ),
+        Ok(_) => {
+            if !REQUESTED.swap(true, Ordering::SeqCst) {
+                if let Err(error) = app.notification().request_permission() {
+                    logging::config_warning("cron", &format!("申请通知权限失败：{error}"));
+                }
+            }
+        }
+        Err(error) => logging::config_warning(
+            "cron",
+            &format!("通知权限查询失败（不影响启动与任务判定）：{error}"),
+        ),
+    }
+}
+
+/// 通知点击监听（design §4.2）：**启动时注册一次并常驻**——平台只在「投递时监听器已在场」
+/// 的通知上上报点击。回调只投一个工作项给 `lumir-cron` 线程；非 `tap` 动作忽略并落诊断。
+fn install_notification_click(app: &tauri::AppHandle) {
+    use tauri_plugin_notification::NotificationExt;
+    let handle = app.clone();
+    let registered = app.notification().on_action(move |performed| {
+        let action = performed.action_id();
+        if action != "tap" {
+            logging::config_warning("cron", &format!("忽略非 tap 的通知动作：{action}"));
+            return;
+        }
+        let task = performed
+            .notification()
+            .and_then(|notification| {
+                notification
+                    .extra()
+                    .get("task")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| notification.title().map(str::to_string))
+            })
+            .unwrap_or_default();
+        if task.is_empty() {
+            logging::cron_click("", false, "run", Some("task_missing"));
+            return;
+        }
+        handle
+            .state::<CronRuntime>()
+            .send(CronMessage::Click { task });
+    });
+    if let Err(error) = registered {
+        logging::config_warning("cron", &format!("通知点击监听注册失败：{error}"));
+    }
+}
+
+/// 把主窗口唤起并置前（通知点击的第一步，design §4.5）。返回是否成功——失败由调用方落
+/// `cron_click(ok=false)` 并给人话提示，不静默。
+fn focus_main_window(app: &tauri::AppHandle) -> bool {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return false;
+    };
+    if window.show().is_err() {
+        return false;
+    }
+    // 未最小化时 unminimize 可能报错（平台差异）：它只是尽力而为，成败判据落在 set_focus。
+    let _ = window.unminimize();
+    window.set_focus().is_ok()
+}
+
+/// 会话 id 是否属于今天（`s<unix_millis>-<suffix>` 的格式由 `jsonl::new_session_id` 唯一产出）：
+/// 进程重启后 `clicked_today` 丢了，靠它把「今天已经跑过」与「昨天留下的 session_id」分开。
+fn session_started_today(session_id: &str, now: &cron::LocalNow) -> bool {
+    use chrono::TimeZone;
+    let millis = session_id
+        .strip_prefix('s')
+        .and_then(|rest| rest.split('-').next())
+        .and_then(|value| value.parse::<i64>().ok());
+    let Some(millis) = millis else {
+        return false;
+    };
+    chrono::Local
+        .timestamp_millis_opt(millis)
+        .single()
+        .map(|moment| moment.date_naive().to_string() == now.date)
+        .unwrap_or(false)
+}
+
+/// 人话提示（点击链路失败时的可见反馈）：前端监听 `cron:notice` 并上屏。
+fn notice(app: &tauri::AppHandle, message: &str) {
+    let _ = app.emit(CRON_NOTICE_EVENT, serde_json::json!({ "message": message }));
+}
+
+/// 临时探针（任务 4.7）：验证 dev flavour 在 macOS 上能否拿到通知权限并投递。
+fn probe_notification(app: &tauri::AppHandle) {
+    use tauri_plugin_notification::NotificationExt;
+    let permission = app.notification().permission_state();
+    eprintln!("LUMIR_NOTIFY_PROBE permission_state={permission:?}");
+    let requested = app.notification().request_permission();
+    eprintln!("LUMIR_NOTIFY_PROBE request_permission={requested:?}");
+    let registration = app.notification().on_action(|performed| {
+        eprintln!(
+            "LUMIR_NOTIFY_PROBE action={} extra={:?}",
+            performed.action_id(),
+            performed.notification().map(|n| n.extra().clone())
+        );
+    });
+    eprintln!("LUMIR_NOTIFY_PROBE on_action={registration:?}");
+    let shown = app
+        .notification()
+        .builder()
+        .title("lumir-cron-probe")
+        .body("probe")
+        .extra("task", "lumir-cron-probe")
+        .show();
+    eprintln!("LUMIR_NOTIFY_PROBE show={shown:?}");
 }
 
 #[cfg(all(test, target_os = "macos"))]

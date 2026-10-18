@@ -422,6 +422,14 @@ pub struct SessionSummary {
     pub title: Option<String>,
 }
 
+/// 程序性中止的原因（change add-cron-runtime-daemon §3.5）：`code` 进诊断事件与回执
+///（`approval_required`），`message` 是人话说明。
+#[derive(Debug, Clone)]
+pub struct StopReason {
+    pub code: &'static str,
+    pub message: String,
+}
+
 /// 一个 vault 的会话。
 pub struct Session {
     root: PathBuf,
@@ -442,6 +450,10 @@ pub struct Session {
     /// 本轮被请求停止（M348）：`harness_abort` 置位、工具循环在检查点收口；
     /// `acquire_turn` 开新一轮时清零。中断语义是「不再继续」，不回滚已产出内容。
     abort_requested: bool,
+    /// 程序性中止的原因（change add-cron-runtime-daemon §3.5）：无人值守运行遇到需批准的
+    /// 调用时以 `approval_required` 中止，终态必须如实带错误码，不能伪装成用户主动停止。
+    /// `None` = 普通中断（`aborted` 事件）。
+    stop_reason: Option<StopReason>,
     /// 最近一次提问注入的「当前编辑器上下文」节（压缩续聊时原样重注入）。
     current_context: Option<String>,
     /// 思考程度档位（M362，Alex 2026-10-06 裁决：Low / High / Max，默认 High）。
@@ -489,6 +501,7 @@ impl Session {
             busy: false,
             pending: None,
             abort_requested: false,
+            stop_reason: None,
             current_context: None,
             thinking_effort,
             mock_cursor: 0,
@@ -737,9 +750,26 @@ impl Session {
         self.abort_requested
     }
 
+    /// 程序性中止（change add-cron-runtime-daemon §3.5）：置中断标志并记录原因。与用户主动
+    /// 停止走同一条收口路径，区别只在终态事件：有原因时发 `error(code, message)`，不是
+    /// `aborted`——回执因此能带 `approval_required` 而不是笼统的「被停止」。
+    pub fn stop_with(&mut self, code: &'static str, message: &str) {
+        self.abort_requested = true;
+        self.stop_reason = Some(StopReason {
+            code,
+            message: message.to_string(),
+        });
+    }
+
+    /// 取走程序性中止原因（收口时调用一次）。
+    pub fn take_stop_reason(&mut self) -> Option<StopReason> {
+        self.stop_reason.take()
+    }
+
     /// 开新一轮时复位中断标志（`acquire_turn` 调用）：上一轮的停止请求不带进新轮。
     pub fn clear_abort(&mut self) {
         self.abort_requested = false;
+        self.stop_reason = None;
     }
 
     /// 中断收口（M348）：把**本轮**最后一条 assistant 面板消息标注为「已停止」

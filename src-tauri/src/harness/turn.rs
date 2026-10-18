@@ -224,8 +224,15 @@ pub fn run_turn(
     // 事件信封（M312）：每个 harness:event 都带 vault 根路径（= 会话标识），前端据此只渲染
     // 当前 vault 的会话。包装放在本函数——生产路径上唯一的装配点，下面十几处发射点与
     // `run_turn_for` 都不必各带一个 vault 参数。
-    let app_sink = TauriEventSink(app.clone());
-    let sink = events::ScopedSink::new(&app_sink, scope.key());
+    //
+    // 无人值守运行槽（change add-cron-runtime-daemon §6.2）：`Runtime::isolated()` 的实例
+    // **不发 `harness:event`**（其会话与交互槽位物理分离，事件 MUST NOT 渲染进用户当前
+    // transcript），只把本轮终态记进 runtime——`cron:run_finished` 据此产出回执。
+    let terminal_sink = TerminalSink {
+        runtime: runtime.clone(),
+        forward: (!runtime.is_isolated()).then(|| TauriEventSink(app.clone())),
+    };
+    let sink = events::ScopedSink::new(&terminal_sink, scope.key());
     // 会话级 mock 游标（M456）：mock client 每轮重建，游标存在会话上才能让同一会话的第二轮
     // 接着上一轮往下弹（131/133 的「两轮不同 usage」依赖它）。真 provider 的 client 两方法
     // 返回默认值，下面的回写恒 no-op。
@@ -268,6 +275,12 @@ pub fn run_turn(
     // 会话自动命名（change add-session-auto-naming，design D9）：**release_turn 之后**才起线程
     // ——结果落盘前复核「会话空闲」，先起线程会被自己这轮的 busy 挡掉。线程只做便宜档辅助调用
     // 与落盘，失败静默（用户面零可见错误）。
+    //
+    // 无人值守运行槽（change add-cron-runtime-daemon §3.1）：其会话不面向用户展示，命名调用
+    // 是纯额外 token 开销，且标题事件也无处可渲染——跳过。
+    if runtime.is_isolated() {
+        return;
+    }
     if let Some(job) = title_job {
         let title_runtime = runtime.clone();
         let title_scope = scope.clone();
@@ -607,6 +620,12 @@ fn abort_turn(
     output: &llm::TurnOutput,
 ) {
     let assistant_text = output.text.clone();
+    // 程序性中止（无人值守运行的批准闸，change add-cron-runtime-daemon §3.5）：终态必须带
+    // 错误码，回执据此产出 `cron_run_finished(ok=false, error=approval_required)`。
+    let stop_reason = runtime
+        .with_session(scope, |s| s.take_stop_reason())
+        .ok()
+        .flatten();
     let _ = runtime.with_session(scope, |s| {
         if !assistant_text.is_empty() {
             for item in session::assistant_item(&assistant_text, output.reasoning.as_ref()) {
@@ -625,11 +644,18 @@ fn abort_turn(
             // 半截正文已在响应点随 llm_response 落盘（wire 口径），这里不再记 sidecar。
         }
         s.mark_last_assistant_stopped(panel_base);
-        // 决策类 sidecar：中断是 wire 不可推导的用户决策。
-        s.jsonl()
-            .record(&serde_json::json!({"kind": "turn_aborted"}));
+        // 决策类 sidecar：中断是 wire 不可推导的用户决策。程序性中止（批准闸）带上原因，
+        // 留存与诊断两侧可区分「用户停止」与「无人值守运行被批准闸中止」。
+        let payload = match &stop_reason {
+            Some(reason) => serde_json::json!({"kind": "turn_aborted", "reason": reason.code}),
+            None => serde_json::json!({"kind": "turn_aborted"}),
+        };
+        s.jsonl().record(&payload);
     });
-    sink.emit(events::aborted());
+    match stop_reason {
+        Some(reason) => sink.emit(events::error(reason.code, &reason.message)),
+        None => sink.emit(events::aborted()),
+    }
 }
 
 /// 流式增量 → 面板事件的转发器（M369 真流式）：`llm` 的解析层在流中调用它。
@@ -1103,6 +1129,16 @@ fn gated_execute(
     tctx: &ToolContext,
     gated: GatedCall<'_>,
 ) -> (ToolOutput, Option<&'static str>) {
+    // 无人值守运行槽（change add-cron-runtime-daemon §3.5）：遇到需批准的调用即中止本次运行
+    // ——不自动放行、不自动拒绝、也不无限挂起。置程序性中止原因（`approval_required`），
+    // 工具循环在下一个检查点收口，终态事件据此带错误码（而不是伪装成用户主动停止）。
+    if runtime.is_isolated() {
+        let message = "无人值守运行遇到需要批准的调用，已中止本次运行";
+        let _ = runtime.with_session(scope, |session| {
+            session.stop_with("approval_required", message);
+        });
+        return (ToolOutput::err("approval_required", message), None);
+    }
     let GatedCall {
         call,
         args,
@@ -1490,6 +1526,39 @@ impl EventSink for TauriEventSink {
     fn emit(&self, payload: serde_json::Value) {
         use tauri::Emitter;
         let _ = self.0.emit(events::EVENT_NAME, payload);
+    }
+}
+
+/// 终态记录 sink（change add-cron-runtime-daemon §3.3 / §5.2）：把一轮的终态事件
+/// （`done` / `error` / `aborted`）记进 runtime，供运行槽位的 `cron:run_finished` 回执取用。
+///
+/// `forward` 为 `None` = 无人值守运行槽：事件**不**发往面板（其 transcript 不属于用户当前
+/// 会话）；为 `Some` 时照旧转发（交互槽位行为一字不变）。
+struct TerminalSink {
+    runtime: Runtime,
+    forward: Option<TauriEventSink>,
+}
+
+impl EventSink for TerminalSink {
+    fn emit(&self, payload: serde_json::Value) {
+        match payload["type"].as_str() {
+            Some("done") => self.runtime.record_terminal(super::TurnTerminal {
+                ok: true,
+                error: None,
+            }),
+            Some("error") => self.runtime.record_terminal(super::TurnTerminal {
+                ok: false,
+                error: Some(payload["code"].as_str().unwrap_or("error").to_string()),
+            }),
+            Some("aborted") => self.runtime.record_terminal(super::TurnTerminal {
+                ok: false,
+                error: Some("aborted".to_string()),
+            }),
+            _ => {}
+        }
+        if let Some(forward) = &self.forward {
+            forward.emit(payload);
+        }
     }
 }
 

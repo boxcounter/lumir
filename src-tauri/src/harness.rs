@@ -5,7 +5,9 @@
 //!   （design §2）：内存态一个 vault 一个活跃会话（sessions 按 vault 键控、resume 铸新 id
 //!   替换槽位），切 vault 切换、切回恢复、关 vault 丢弃、app 重启清空；盘上按 vault 分目录
 //!   留存多份历史会话 JSONL、浮层可切换 / 新建 / 恢复（M433）；webview 重载经 `harness_state`
-//!   恢复渲染。
+//!   恢复渲染。**无人值守运行例外**（change add-cron-runtime-daemon §6.2）：`run-then-notify` /
+//!   `silent-run` 在 [`Runtime::isolated`] 的独立实例上跑（运行槽位），与交互会话槽位物理分离
+//!   ——事件不发往面板，终态由 `cron:run_finished` 回执。
 //! - LLM 调用与 SSE 解析在专线程（`lumir-harness-llm`，ADR 0002 §6 热路径隔离），
 //!   keypress-to-paint 零新增。
 //! - IPC 边界走 JSON String（M302 纪律：命令返回值不为此新增 ts-rs 类型）；
@@ -95,6 +97,21 @@ struct RuntimeInner {
     pending_open: Mutex<HashMap<String, &'static str>>,
     /// 批准请求 id 的单调序号（`ap-<n>`，进程内唯一即可）。
     approval_seq: AtomicU64,
+    /// 无人值守运行槽（change add-cron-runtime-daemon §6.2）：`run-then-notify` / `silent-run`
+    /// 每次运行在**独立的 Runtime 实例**上跑——会话表与交互槽位物理分离，事件不发往面板
+    /// （transcript 因此不可能被后台运行污染），终态记录在 `terminal` 供回执使用。
+    isolated: bool,
+    /// 本轮运行的终态（仅 isolated 实例记录）：`done` / `error` / `aborted` 三类的最后一次。
+    terminal: Mutex<Option<TurnTerminal>>,
+}
+
+/// 一次运行的终态读数（`cron_run_finished` 回执的素材）：成功与否只由 turn 的终态事件决定，
+/// 不从会话字符串或摘要猜（REVIEW.md「同一语义两处真源」条）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnTerminal {
+    pub ok: bool,
+    /// 失败时的错误码（`error` 事件的 code；`aborted` 记 `aborted`）。
+    pub error: Option<String>,
 }
 
 impl Default for Runtime {
@@ -104,12 +121,60 @@ impl Default for Runtime {
                 sessions: Mutex::new(HashMap::new()),
                 pending_open: Mutex::new(HashMap::new()),
                 approval_seq: AtomicU64::new(0),
+                isolated: false,
+                terminal: Mutex::new(None),
             }),
         }
     }
 }
 
 impl Runtime {
+    /// 无人值守运行槽的运行时实例（design §6.2 的「等价的独立运行时实例」）：与交互槽位
+    /// 的会话表完全分离，`turn::run_turn` 在它上面不发 `harness:event`、只记录终态。
+    pub fn isolated() -> Self {
+        let mut runtime = Self::default();
+        if let Some(inner) = Arc::get_mut(&mut runtime.inner) {
+            inner.isolated = true;
+        }
+        runtime
+    }
+
+    /// 是否无人值守运行槽：`run_turn` 据此选择静默 sink，`gated_execute` 据此中止批准闸。
+    pub fn is_isolated(&self) -> bool {
+        self.inner.isolated
+    }
+
+    /// 记录本轮终态（`turn::run_turn` 的 sink 在 `done` / `error` / `aborted` 时调用）。
+    /// 只保留最后一次：终态事件在一轮里至多出现一次（本方法对重复调用幂等覆盖）。
+    pub fn record_terminal(&self, terminal: TurnTerminal) {
+        *self
+            .inner
+            .terminal
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(terminal);
+    }
+
+    /// 取走本轮终态（运行线程在 `run_turn` 返回后调用一次）。
+    pub fn take_terminal(&self) -> Option<TurnTerminal> {
+        self.inner
+            .terminal
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+    }
+
+    /// 当前 vault 会话的留存 session id（运行回执的 `session_id`）：取自 JSONL 文件名——
+    /// 与恢复 / 删除同一口径，不另维护第二份映射。
+    pub fn current_session_id(&self, scope: &VaultScope) -> Option<String> {
+        let mut sessions = self
+            .inner
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        sessions
+            .get_mut(&scope.key())
+            .and_then(|session| jsonl::JsonlWriter::session_id_from_path(session.jsonl().path()))
+    }
     fn next_approval_id(&self) -> String {
         format!(
             "ap-{}",
@@ -1064,13 +1129,44 @@ pub fn harness_send(
     }
     let context = turn::parse_context(&context_json)?;
     let context_section = turn::context_section(&context);
+    start_turn(
+        app,
+        runtime.inner().clone(),
+        scope,
+        config,
+        parts,
+        context_section,
+        None,
+    )
+}
+
+/// 运行发起的**单一实现**（change add-cron-runtime-daemon §3.2 / §3.4）：`harness_send` 与
+/// `harness_cron_run` 都只经它——acquire busy → 起 `lumir-harness-llm` 线程 → `turn::run_turn`。
+/// 两条入口的差别只有「哪个 runtime 实例 + 有没有终态回调」，不存在第二套发送 / 装配逻辑。
+///
+/// `completion` 在轮次结束后（`run_turn` 已释放 busy）在线程内调用一次：cron 入口用它投
+/// `cron:run_finished`，普通发送传 `None`。
+fn start_turn(
+    app: tauri::AppHandle,
+    runtime: Runtime,
+    scope: VaultScope,
+    config: HarnessConfig,
+    parts: Vec<attachments::DeliveryPart>,
+    context_section: Option<String>,
+    completion: Option<Box<dyn FnOnce() + Send>>,
+) -> Result<(), CommandError> {
     runtime.acquire_turn(&scope, &config)?;
-    let runtime_thread = runtime.inner().clone();
-    let runtime_release = runtime.inner().clone();
+    let runtime_thread = runtime.clone();
+    let runtime_release = runtime.clone();
     let scope_release = scope.clone();
     if let Err(e) = std::thread::Builder::new()
         .name("lumir-harness-llm".into())
-        .spawn(move || turn::run_turn(app, runtime_thread, scope, config, parts, context_section))
+        .spawn(move || {
+            turn::run_turn(app, runtime_thread, scope, config, parts, context_section);
+            if let Some(completion) = completion {
+                completion();
+            }
+        })
     {
         // 起线程失败：释放 busy，别把会话永远留在占用态。
         runtime_release.release_turn(&scope_release);
@@ -1080,6 +1176,181 @@ pub fn harness_send(
         );
     }
     Ok(())
+}
+
+/// `cron:run` 交接的运行入口（change add-cron-runtime-daemon §3.3 / §3.4 / §3.7）。
+///
+/// 与 `harness_send` 共用同一条运行实现（`Runtime::acquire_turn` + `turn::run_turn`），差别只在
+/// **会话槽位**：`slot = "interactive"` 用进程共享的交互运行时（点击发起，用户能看见）；
+/// `slot = "run"` 用 [`Runtime::isolated`] 的独立实例（无人值守，事件不渲染进当前 transcript）。
+///
+/// 运行终态由 `cron:run_finished` 事件交给前端接线层，再由 `cron_run_result` 命令回执——
+/// 终态只有那一个产出点（design §6.1）。
+/// `harness_cron_run` 的入参（一个对象参数：8 个字段平铺会让 command 签名超过 clippy 的
+/// 参数上限，也不利于前端按一份契约构造请求）。
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CronRunRequest {
+    pub run_id: String,
+    pub task: String,
+    pub target_vault: String,
+    pub prompt: String,
+    pub session: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    pub origin: String,
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_cron_run(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+    runtime: tauri::State<'_, Runtime>,
+    app: tauri::AppHandle,
+    payload: CronRunRequest,
+) -> Result<(), CommandError> {
+    let CronRunRequest {
+        run_id,
+        task,
+        target_vault,
+        prompt,
+        session,
+        session_id,
+        model,
+        origin,
+    } = payload;
+    let scope = vault_scope(&vault)?;
+    // 目标 vault 必须已是当前 vault：无人值守运行不切换用户界面，点击运行由前端先走既有
+    // vault 打开链路（design §6.5）。两侧都做 canonicalize——配置里的绝对路径可能是
+    // `/tmp/...` 而 vault 根是 `/private/tmp/...`（macOS 软链），逐字比较会假判不同。
+    let canonical =
+        |path: &std::path::Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let target = canonical(std::path::Path::new(&target_vault));
+    if target != canonical(&scope.root) {
+        return Err(CommandError::new(
+            "vault_not_open",
+            "目标任务属于另一个 vault；无人值守运行不会切换当前 vault",
+        ));
+    }
+    let shape = config::SessionShape::parse(&session).ok_or_else(|| {
+        CommandError::new(
+            "harness_session_invalid",
+            format!("未知的会话形态：{session}"),
+        )
+    })?;
+    let base = config::load()?.config.harness;
+    let (config, warning) = with_model_override(&base, model.as_deref());
+    if let Some(warning) = warning {
+        crate::logging::config_warning("cron", &warning);
+    }
+    let run_runtime = if origin == "click" {
+        runtime.inner().clone()
+    } else {
+        Runtime::isolated()
+    };
+    // 会话形态（design §6.3）：`new` 新建；`dedicated` 用状态里的 session_id 续写（缺少即新建）。
+    // 续写失败（源文件缺失 / 损坏）回落新建——任务不因历史留存缺失而停摆。
+    match (shape, session_id.as_deref()) {
+        (config::SessionShape::Dedicated, Some(id)) => {
+            if let Err(error) = run_runtime.resume_session(&scope, &config, id) {
+                if error.code == "harness_busy" {
+                    return Err(error);
+                }
+                crate::logging::config_warning(
+                    "cron",
+                    &format!(
+                        "专用会话 {id} 无法恢复（{}），本次改为新建会话",
+                        error.message
+                    ),
+                );
+                run_runtime.new_session(&scope)?;
+            }
+        }
+        _ => run_runtime.new_session(&scope)?,
+    }
+    let log_task = task.clone();
+    let log_origin = origin.clone();
+    let completion_runtime = run_runtime.clone();
+    let scope_for_turn = scope.clone();
+    let app_for_turn = app.clone();
+    let completion: Box<dyn FnOnce() + Send> = Box::new(move || {
+        let terminal = completion_runtime.take_terminal().unwrap_or(TurnTerminal {
+            ok: false,
+            error: Some("no_terminal".to_string()),
+        });
+        let session_id = completion_runtime.current_session_id(&scope_for_turn);
+        let payload = serde_json::json!({
+            "run_id": run_id,
+            "task": task,
+            "ok": terminal.ok,
+            "session_id": session_id,
+            "error": terminal.error,
+        });
+        use tauri::Emitter;
+        if let Err(error) = app_for_turn.emit(crate::CRON_RUN_FINISHED_EVENT, payload) {
+            crate::logging::config_warning(
+                "cron",
+                &format!("运行终态事件投递失败，回执可能丢失：{error}"),
+            );
+        }
+    });
+    let parts = vec![attachments::DeliveryPart {
+        kind: "text".to_string(),
+        text: Some(prompt),
+        name: None,
+        label: None,
+    }];
+    start_turn(
+        app,
+        run_runtime,
+        scope,
+        config,
+        parts,
+        None,
+        Some(completion),
+    )?;
+    // 交接被接受（acquire 成功、线程已起）才记「运行已开始」——失败路径由前端回执落终态。
+    crate::logging::cron_run_started(&log_task, &log_origin, shape.as_str(), model.as_deref());
+    Ok(())
+}
+
+/// 任务 `model` 覆盖的解析（change add-cron-runtime-daemon §3.7）：按运行时
+/// `[harness].providers.<provider>.models` 的声明解析；已声明 ⇒ 本次会话用该模型；
+/// 未声明 ⇒ 回落该 provider 的生效模型 + 一条 warning，任务不丢。
+///
+/// mock 是 fixture 驱动档、没有模型维度：覆盖被忽略且不告警（不伪造一个不存在的模型 id）。
+pub fn with_model_override(
+    config: &HarnessConfig,
+    model: Option<&str>,
+) -> (HarnessConfig, Option<String>) {
+    let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) else {
+        return (config.clone(), None);
+    };
+    if config.provider == config::HarnessProvider::Mock {
+        return (config.clone(), None);
+    }
+    if !config
+        .model_specs(&config.provider)
+        .iter()
+        .any(|spec| spec.id == model)
+    {
+        let fallback = llm::active_model(config).to_string();
+        return (
+            config.clone(),
+            Some(format!(
+                "任务声明的模型 {model} 未在 [harness].providers.{}.models 中声明，本次回落 {fallback}",
+                config.provider.as_str(),
+            )),
+        );
+    }
+    let mut resolved = config.clone();
+    match resolved.provider {
+        config::HarnessProvider::Kimi => resolved.providers.kimi.model = model.to_string(),
+        config::HarnessProvider::Deepseek => resolved.providers.deepseek.model = model.to_string(),
+        config::HarnessProvider::Mock => {}
+    }
+    (resolved, None)
 }
 
 /// 落盘一张 composer 粘贴的剪贴板图片（change harness-composer-image-paste design §5）：
@@ -1559,5 +1830,143 @@ mod tests {
         };
         mock_config.providers.kimi.model = "mock-model".into();
         assert!(image_gate_error(&with_image, &mock_config).is_none());
+    }
+
+    /// 进程级 XDG 复原（与 turn.rs 的测试助手同形）：drop 时把 `XDG_CONFIG_HOME` 放回原值。
+    struct XdgGuard(Option<std::ffi::OsString>);
+    impl Drop for XdgGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+    }
+
+    /// 运行槽位与交互会话槽位分离（change add-cron-runtime-daemon §3.1 的契约测试）：
+    /// 无人值守运行在独立的 runtime 实例上跑，交互槽位的会话 id、消息历史与内容**逐字节
+    /// 不变**；后台运行自己的会话 id 不同、留存照常落 per-vault 目录。
+    #[test]
+    fn run_slot_does_not_touch_the_interactive_session() {
+        let _xdg = xdg_test_lock();
+        let root = std::env::temp_dir().join(format!(
+            "lumir-cron-slot-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-cron-slot".to_string(),
+        };
+        let config = HarnessConfig {
+            provider: config::HarnessProvider::Mock,
+            ..HarnessConfig::default()
+        };
+
+        // 交互槽位：一条用户消息 + 会话 id 作为基线。
+        let interactive = Runtime::default();
+        assert!(!interactive.is_isolated());
+        interactive.acquire_turn(&scope, &config).unwrap();
+        interactive
+            .with_session(&scope, |s| {
+                s.push_input(session::user_item("interactive-question"))
+            })
+            .unwrap();
+        let interactive_id = interactive.current_session_id(&scope).expect("交互会话 id");
+        let interactive_input = interactive
+            .with_session(&scope, |s| s.input().to_vec())
+            .unwrap();
+        interactive.release_turn(&scope);
+
+        // 运行槽位：独立实例，一条后台消息。
+        let run = Runtime::isolated();
+        assert!(run.is_isolated());
+        run.acquire_turn(&scope, &config).unwrap();
+        run.with_session(&scope, |s| {
+            s.push_input(session::user_item("cron-question"))
+        })
+        .unwrap();
+        run.release_turn(&scope);
+
+        // 交互槽位逐字节不变（id / 消息历史 / 内容三重判据）。
+        assert_eq!(
+            interactive.current_session_id(&scope).as_deref(),
+            Some(interactive_id.as_str()),
+            "无人值守运行不得改写 / 替换交互会话 id"
+        );
+        assert_eq!(
+            interactive
+                .with_session(&scope, |s| s.input().to_vec())
+                .unwrap(),
+            interactive_input,
+            "无人值守运行的事件不得进入交互会话的消息历史"
+        );
+        // 运行槽位自己的会话 id 不同、内容各自独立（留存仍按 per-vault 布局落盘）。
+        let run_id = run.current_session_id(&scope).expect("运行会话 id");
+        assert_ne!(run_id, interactive_id);
+        assert!(run
+            .with_session(&scope, |s| s
+                .input()
+                .iter()
+                .any(|item| item["content"].to_string().contains("cron-question")))
+            .unwrap());
+        assert!(!interactive
+            .with_session(&scope, |s| s
+                .input()
+                .iter()
+                .any(|item| item["content"].to_string().contains("cron-question")))
+            .unwrap());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 任务模型覆盖（change add-cron-runtime-daemon §3.7）：已声明 ⇒ 本次会话用该模型；
+    /// 未声明 ⇒ 回落 provider 生效模型 + 一条 warning（任务不丢）；mock 没有模型维度，
+    /// 覆盖被忽略且不告警。
+    #[test]
+    fn model_override_resolves_declared_models_only() {
+        let mut config = HarnessConfig {
+            provider: config::HarnessProvider::Kimi,
+            ..HarnessConfig::default()
+        };
+        config.providers.kimi.model = "default-model".into();
+        config.providers.kimi.models = vec![crate::config::HarnessModelSpec {
+            id: "declared-model".into(),
+            effort: true,
+            vision: false,
+            window: 65_536,
+        }];
+
+        let (resolved, warning) = with_model_override(&config, Some("declared-model"));
+        assert_eq!(llm::active_model(&resolved), "declared-model");
+        assert!(warning.is_none(), "已声明模型不应告警：{warning:?}");
+
+        let (fallback, warning) = with_model_override(&config, Some("undeclared-model"));
+        assert_eq!(
+            llm::active_model(&fallback),
+            "default-model",
+            "未声明 ⇒ 回落 provider 生效模型"
+        );
+        assert!(
+            warning.unwrap_or_default().contains("undeclared-model"),
+            "未声明必须给一条人话 warning"
+        );
+
+        let mock = HarnessConfig {
+            provider: config::HarnessProvider::Mock,
+            ..HarnessConfig::default()
+        };
+        let (resolved, warning) = with_model_override(&mock, Some("ignored-model"));
+        assert_eq!(resolved, mock);
+        assert!(warning.is_none(), "mock 没有模型维度，不应告警");
     }
 }

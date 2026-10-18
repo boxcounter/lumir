@@ -41,7 +41,7 @@ export const ACTIONS = new Set([
   "settle", "waitFor", "sleep", "key", "keys", "type", "typeInNode", "click", "clickNodeText", "clickInNode", "clickEditor",
   "doubleClick", "drag", "hover", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
-  "clipboardImage", "clipboardText", "note", "migrateHarnessSessions",
+  "clipboardImage", "clipboardText", "note", "migrateHarnessSessions", "invalidate",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes"]);
 
@@ -58,7 +58,7 @@ function isPlainTable(v) {
  *  （删掉了旧的「按优先级只判第一个命中键」的 `if` 链——多写的键在旧实现里静默失效）。顺序只
  *  决定 steps.md 里记录的先后，不再决定「谁生效」。 */
 const FILE_JUDGE_KEYS = [
-  "exists", "changedSince", "unchangedSince", "mtimeUnchangedSince", "mtimeNewerThan", "has", "not",
+  "exists", "changedSince", "unchangedSince", "mtimeUnchangedSince", "mtimeNewerThan", "has", "not", "count",
 ];
 
 /** 只可能出自「以为在写正则」的转义序列（M556）：转义元字符，或 `\d` / `\w` / `\s` 这类字符组。
@@ -290,6 +290,26 @@ export function checkScenario(scenario) {
   // 写成非表（如列表 / 字符串）时 writeConfig 会把它当普通值铺开，静默丢掉半张表，故在此挡住。
   if (scenario.config?.editor !== undefined && !isPlainTable(scenario.config.editor))
     push(`config.editor 需要对象（[editor] 表，snake_case 键），实际 ${JSON.stringify(scenario.config.editor)}`);
+  // `config.cron`（change add-cron-runtime-daemon §7）：`{ tasks: [...] }`，逐项至少带
+  // id / vault / at / prompt 四个字段——写错形状会被后端整节回落，场景静默跑在无任务配置上。
+  if (scenario.config?.cron !== undefined) {
+    const cron = scenario.config.cron;
+    if (!isPlainTable(cron) || !Array.isArray(cron.tasks)) {
+      push(`config.cron 需要 { tasks: [...] }，实际 ${JSON.stringify(cron)}`);
+    } else {
+      cron.tasks.forEach((task, index) => {
+        if (
+          !isPlainTable(task) ||
+          typeof task.id !== "string" ||
+          typeof task.vault !== "string" ||
+          typeof task.at !== "string" ||
+          typeof task.prompt !== "string"
+        ) {
+          push(`config.cron.tasks[${index}] 需要 id / vault / at / prompt 四个字符串字段`);
+        }
+      });
+    }
+  }
   // `config.harness.attachment_naming`（change add-semantic-image-naming，2026-10-18 配置面重塑）：
   // 三键 `{ enabled, provider, model }` 写进 `harness` 表。写成非表时后端按类型不符整文件回落，
   // 场景会静默跑到默认配置上，故在此挡住。
@@ -494,6 +514,12 @@ export function checkScenario(scenario) {
       if (kinds.length !== 1) push(`${at} expect[${j}] 应恰好一个断言形态，实际 ${JSON.stringify(kinds)}`);
       else if (!EXPECT_KINDS.has(kinds[0])) push(`${at} expect[${j}] 未知断言 ${kinds[0]}`);
       else if (kinds[0] === "file" && !exp.file.path) push(`${at} expect[${j}] file 断言缺 path`);
+      else if (kinds[0] === "file" && exp.file.count !== undefined) {
+        const c = exp.file.count;
+        if (!isPlainTable(c) || typeof c.pattern !== "string" || !Number.isInteger(c.exact) || c.exact < 0)
+          push(`${at} expect[${j}] file.count 需要 { pattern: 字符串, exact: 非负整数 }，实际 ${JSON.stringify(c)}`);
+        else pushBare(`${at} expect[${j}] file.count.pattern`, c.pattern);
+      }
       else if (kinds[0] === "glob" && (!exp.glob.dir || !exp.glob.pattern)) push(`${at} expect[${j}] glob 断言缺 dir/pattern`);
       else if (kinds[0] === "bytes" && !exp.bytes.path) push(`${at} expect[${j}] bytes 断言缺 path`);
       else if (kinds[0] === "bytes" && exp.bytes.magic === undefined && exp.bytes.nameHash === undefined)
@@ -1367,6 +1393,21 @@ export async function runScenario(ctx, scenario) {
               ? { ok: true, detail: `mtime ${info.mtimeMs} > ${base}` }
               : { ok: false, reason: `（mtime 未推进：${info.mtimeMs} vs ${base}）` };
           }
+          case "count": {
+            // 行数计数（change add-cron-runtime-daemon §7.6）：日志是 JSONL 一行一事件，
+            // 「全程只有一条 cron_notified」这类判据只能按行数判，不能靠 has / not。
+            const specCount = spec.count;
+            if (content === undefined && contentErr === undefined) await readContent();
+            if (contentErr) return { ok: false, reason: contentErr };
+            const m = matcher(specCount.pattern);
+            const matches = content.split("\n").filter((line) => m.test(line)).length;
+            return matches === specCount.exact
+              ? { ok: true, detail: `${m.show} 命中 ${matches} 行` }
+              : {
+                  ok: false,
+                  reason: `（期望 ${m.show} 命中 ${specCount.exact} 行，实际 ${matches} 行）`,
+                };
+          }
           default: {
             // has / not
             if (content === undefined && contentErr === undefined) await readContent();
@@ -2106,6 +2147,11 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       evidence.record({ kind: "note", text: `剪贴板置纯文本：${JSON.stringify(step.text ?? "")}` });
       return step.text ?? "";
     }
+    // 显式「本次运行无效」（change add-cron-runtime-daemon §7.7）：某个步骤在当前环境下无法
+    // 客观判定时，用它把整场标 INVALID（退出码 2）——**不伪造 PASS**。`reason` 写进证据与
+    // 运行日志，复跑条件由场景正文说明。
+    case "invalidate":
+      throw new InfraError(`场景声明 INVALID：${step.reason ?? "该步骤当前环境无法客观判定"}`);
     // 证据型读数（`do: note`）：把文本与（可选的）某个文件的大小写进证据目录。
     // 给**不卡 PASS/FAIL 的实证场景**用（S5 的转码体积），不是断言形态。
     case "note": {

@@ -29,6 +29,7 @@ import {
   fsTrashEntry,
   fsWriteAttachment,
   documentSetDirty,
+  isCommandError,
   onAttachmentNaming,
   onFsEntryChanged,
   onMenuCommand,
@@ -49,6 +50,7 @@ import type { NamingOutcome } from "./bindings/NamingOutcome";
 import type { SemanticNameTask } from "./paste-image";
 import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getName, getVersion } from "@tauri-apps/api/app";
 import { createToc, extractHeadings } from "./toc";
 import { createImageLightbox } from "./lightbox";
@@ -2509,6 +2511,116 @@ const harnessPanel = createHarnessPanel({
     tree.revealDir(path);
   },
 });
+
+// ---------------------------------------------------------------------------
+// cron 运行桥（change add-cron-runtime-daemon §3.4 / §4.5）：`cron:run` 的**唯一**前端处理器
+// ---------------------------------------------------------------------------
+//
+// 为什么只有这一处：打开 vault / 装配会话 / 发送 prompt 都由后端同一条运行实现承担
+// （`harness_cron_run` 复用 `harness_send` 的 acquire + turn 路径），本文件不写第二套。
+// 运行终态由后端经 `cron:run_finished` 投递，这里只把回执转交 `cron_run_result`——终态不在
+// 前端判定（REVIEW.md「同一语义两处真源」条）。
+
+/** `cron:run` 载荷（design §6.1 的逐字段形状 + `dedicated` 的续写会话 id）。 */
+type CronRunPayload = {
+  run_id: string;
+  task: string;
+  vault: string;
+  prompt: string;
+  session: "new" | "dedicated";
+  session_id?: string | null;
+  model?: string | null;
+  origin: string;
+};
+
+/** 确保目标 vault 已打开（无人值守运行不切换 vault，点击运行是显式意图）：走既有切换链路
+ *  `switchToVault`（内部的 `vaultOpenPath` + 唯一装载实现 `applyVault`，含 dirty 前置门）——
+ *  本文件不出现第二条打开 / 装配通道。被 dirty 门拦下时 `loadedRoot` 不会变，按失败回执。 */
+async function ensureCronVault(root: string): Promise<void> {
+  if (loadedRoot === root) return;
+  await switchToVault(root);
+  if (loadedRoot !== root) {
+    // 复用既有错误码的上屏文案（D159「尚未打开 vault，请先选择目录」）——本文件不新增
+    // 中文串字面量（tests/unit/copy.test.ts 的迁移门禁），也不另立第二份文案表。
+    throw { code: "vault_not_open", message: "", params: {} };
+  }
+}
+
+/** `cron:run` 处理器：点击发起 → 交互槽位（用户看得见）；定时 / 拉取 → 运行槽位（独立
+ *  runtime，事件不进当前 transcript）。 */
+async function handleCronRun(payload: CronRunPayload): Promise<void> {
+  const slot = payload.origin === "click" ? "interactive" : "run";
+  try {
+    await ensureCronVault(payload.vault);
+    if (slot === "interactive") openHarnessPane();
+    await invoke("harness_cron_run", {
+      payload: {
+        run_id: payload.run_id,
+        task: payload.task,
+        target_vault: payload.vault,
+        prompt: payload.prompt,
+        session: payload.session,
+        session_id: payload.session_id ?? null,
+        model: payload.model ?? null,
+        origin: payload.origin,
+      },
+    });
+  } catch (error) {
+    // 发起失败也是终态：立即回执（cron_state 不写 last_fired、不误判 busy），并给人话提示。
+    void invoke("cron_run_result", {
+      run_id: payload.run_id,
+      ok: false,
+      session_id: null,
+      error: isCommandError(error) ? error.code : "cron_run_failed",
+    }).catch(() => {});
+    void showToast(harnessPaneMount(), errorText(error));
+  }
+}
+
+/** 结果通知点击：恢复该次运行的会话（走既有恢复链路；不重新运行）。 */
+async function handleCronOpenSession(payload: { vault: string; session_id: string }): Promise<void> {
+  try {
+    await ensureCronVault(payload.vault);
+    await invoke("harness_resume_session", { session_id: payload.session_id });
+    openHarnessPane();
+    // 面板的 `vaultChanged` 对同一 vault 是空操作；先置空再设回，等价于「重新装载该 vault
+    // 的会话面」——面板据此按恢复后的后端会话重取快照（不新增面板 API）。
+    harnessPanel.vaultChanged("");
+    harnessPanel.vaultChanged(payload.vault);
+  } catch (error) {
+    void showToast(harnessPaneMount(), errorText(error));
+  }
+}
+
+async function installCronBridge(): Promise<void> {
+  // 四条订阅都装好之后才向 Rust 报告「接线层就绪」——`listen` 是异步注册，提前置位会让启动
+  // 补跑的 `cron:run` 仍然落空。
+  await Promise.all([
+    listen<CronRunPayload>("cron:run", (event) => void handleCronRun(event.payload)).catch(() => {}),
+    listen<{ vault: string; session_id: string }>("cron:open_session", (event) =>
+      void handleCronOpenSession(event.payload),
+    ).catch(() => {}),
+    listen<{ run_id: string; ok: boolean; session_id?: string | null; error?: string | null }>(
+      "cron:run_finished",
+      (event) => {
+        void invoke("cron_run_result", {
+          run_id: event.payload.run_id,
+          ok: event.payload.ok,
+          session_id: event.payload.session_id ?? null,
+          error: event.payload.error ?? null,
+        }).catch(() => {});
+      },
+    ).catch(() => {}),
+    listen<{ message: string }>("cron:notice", (event) =>
+      void showToast(harnessPaneMount(), event.payload.message),
+    ).catch(() => {}),
+  ]);
+}
+void installCronBridge()
+  // 告诉 Rust「cron:run 监听器已在场」：启动早期的无人值守派发会因此延后到这一步之后补跑
+  // （webview JS 监听器未装好时 `app.emit` 会被静默丢弃）。
+  .then(() => invoke("cron_bridge_ready"))
+  .catch(() => {});
 
 /** 字号步进的焦点路由（M378）：焦点在 harness 面板内 → 步进面板内容字号；否则 → 步进
  *  编辑器内容字号（M195 的 editor.textScale 路径，行为与 M378 之前逐字节一致——焦点在

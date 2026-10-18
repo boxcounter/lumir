@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "cron 验收回答：任务已完成。",
+      "usage": { "input_tokens": 1000, "cached_tokens": 0, "output_tokens": 20 }
+    }
+  ]
+}
