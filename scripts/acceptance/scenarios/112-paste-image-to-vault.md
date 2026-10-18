@@ -75,9 +75,10 @@ steps:
         ax: { has: "/AXImage[^\n]*pasted-[0-9a-f]{16}\\.webp/" }
       - shot: S1-贴图入vault
 
-  # 语义命名（change add-semantic-image-naming，task 8.4）：本场景**不**声明 `attachments`，
-  # 走的是验收套件的默认配置——provider 为 kimi（默认值）、没有声明任何 models（更没有
-  # `vision: true`）⇒ 命名资格判定为「无可用 vision 模型」⇒ 不发起请求、保持暂存名、不弹 toast。
+  # 语义命名（change add-semantic-image-naming，task 8.4）：本场景**不**声明
+  # `config.harness.attachment_naming`，走的是验收套件的默认配置——provider 为 kimi（默认值）、
+  # 没有声明任何 models（更没有 `vision: true`）⇒ 命名资格判定为「无可用 vision 模型」⇒
+  # 不发起请求、保持暂存名、不弹 toast。
   # 观察窗口给足 3 秒（mock / 真 provider 都不该在这段时间里出现语义名），再按终态判一次。
   - name: 观察窗口：默认配置下不发起语义命名（保持暂存名、无命名 toast）
     do: sleep
