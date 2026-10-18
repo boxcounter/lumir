@@ -4,6 +4,17 @@
 - 日期: 2026-10-18
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
+> **裁决留痕（2026-10-18，逐字）**
+>
+> 针对设计初稿的约束「命名请求恒发向会话当前 provider 的 base_url、`title_model` 必须在同一
+> provider 的 `models` 清单内声明、不跨 provider」，Alex 裁决（原话）：「这个约束没有必要。
+> 去掉它。」
+>
+> 落法：新增 `[harness].title_provider`（缺省 null = 会话当前 provider，即旧行为仍是缺省值）；
+> 命名调用发往该 provider，模型、`api_key`、`base_url`、wire 方言同出它这一个条目——所取
+> `title_model` 须在**该 provider** 的 `models` 清单内声明。design D2 的隐私约束段一并改写为
+> 「素材发往 `title_provider` 指定的 provider」。
+
 ## Why
 
 会话在界面上只有两个身份面：标题栏 harness 段的会话名、历史会话浮层的行名。两者当前都取「首条用户消息截断约 20 字」（`openspec/specs/harness/spec.md`「会话边界」条）。这套口径有两个结构性缺陷：
@@ -19,9 +30,9 @@
 2. **周期重估与话题漂移重估**：距上次评估满 5 轮时重估；已有标题时，连续两条用户消息与当前标题的确定性词元重合度过低（话题漂移信号）可在满 3 轮后提前触发重估。
 3. **「显著更好才换」防抖**：生成器输出 `keep` / `rename` 判定，只在当前标题已失真且新标题显著更好时改名；解析失败、空标题、超长、调用失败一律保持原名。防抖保护的是「历史列表里的会话可被认出」这一目的。
 4. **留存格式加标题记录 + 旧文件安静回落**：会话 JSONL 追加 `session_title` sidecar 记录（`title` / `decision` / `reason` / `model` / `ts`），有效标题取最后一条带 `title` 的记录；自动压缩与历史恢复开新文件时继承源会话标题；本 change 之前的文件无该记录，列举 / 恢复 / 展示一律安静回落到首条用户消息口径，不做迁移、不告警（「恢复充分性（属性级）」判据不受影响）。自动命名调用是 wire 外的辅助调用，**不落 `llm_request` / `llm_response`**——落进去会让恢复的「最后一条会话请求」判据指错请求。
-5. **调度 = 便宜档**：命名调用是单次、非 agentic 的辅助调用（无工具、最低思考档、受限素材与输出、独立 20 秒超时、失败静默）。模型默认取会话生效模型；新增可选配置 `[harness].providers.<id>.title_model`，配置为便宜模型即真正落到便宜档（须在该 provider 的 `models` 清单内声明）。另加 `[harness].auto_title`（默认开）作为关闭开关。
+5. **调度 = 便宜档**：命名调用是单次、非 agentic 的辅助调用（无工具、最低思考档、受限素材与输出、独立 20 秒超时、失败静默）。新增可选配置 `[harness].title_provider` 指定命名调用发往哪个 provider（缺省 = 会话当前 provider）；模型取该 provider 的 `[harness].providers.<id>.title_model`（可选，须在该 provider 的 `models` 清单内声明），未配置时取该 provider 的生效模型——配置为便宜 provider / 便宜模型即真正落到便宜档，不跨 provider 属缺省行为而非强制约束。另加 `[harness].auto_title`（默认开）作为关闭开关。
 6. **展示优先级与即时更新**：会话名 = 有效标题 → 首条用户消息截断约 20 字 → 「新会话」；标题更新经状态快照与事件通道即时到达面板，不重载、不改 transcript、不改 session id、不重排历史清单。
-7. **mock provider 与真机验收**：mock fixture 增加可选的 `titles` 脚本（独立于对话 `responses` 队列），既有 fixture 零改动；新增真机验收场景覆盖首轮命名、keep 防抖、漂移重估、旧文件回落与关闭开关。
+7. **mock provider 与真机验收**：mock fixture 增加可选的 `titles` 脚本（独立于对话 `responses` 队列），既有 fixture 零改动；新增真机验收场景覆盖首轮命名、keep 防抖、旧文件回落、关闭开关与 `title_provider` 非法值回落（漂移重估的全分支留在单测，见 design D14）。
 
 对应 spec 增量：ADDED「会话自动命名」；MODIFIED「会话边界」「会话本地留存」「配置节 [harness]」。
 
@@ -33,12 +44,12 @@
 - **不写 vault、不改源文件**（ADR 0003）：标题只进配置目录下的会话留存，vault 内零新增 / 零修改。
 - **不给旧文件回填标题**：无记录的旧文件安静回落，不迁移、不重写（append-only 留存不回头改历史）。
 - **不改压缩摘要口径、不改思考档位语义、不改模型清单结构、不新增 provider**。
-- **不做「自动挑最便宜的模型」**：本仓无模型价格 / 档位元数据（ADR 0002 §5 config-only，M381 删除内置模型表），所以便宜档由调用形态 + 一个可选模型覆盖键保证，不内置价格表。
+- **不做「自动挑最便宜的模型」**：本仓无模型价格 / 档位元数据（ADR 0002 §5 config-only，M381 删除内置模型表），所以便宜档由调用形态 + 可选的 provider / 模型覆盖键保证，不内置价格表。
 - 不把标题写进 `session_open`（append-only 首行无法在首轮后改写，见 design D6）。
 
 ## Impact
 
 - 影响的 specs：`harness`（配置节 [harness] / 会话边界 / 会话本地留存 三条 MODIFIED，会话自动命名一条 ADDED）。
-- 影响的代码/系统：`src-tauri/src/config.rs`（`auto_title` / `title_model` 校验）、新增 `src-tauri/src/harness/title.rs`（素材装配、生成器契约、漂移信号、调度状态机）、`src-tauri/src/harness/turn.rs`（轮结束后的触发点）、`src-tauri/src/harness/session.rs` / `jsonl.rs`（`session_title` 记录与有效标题读取、轮换继承）、`src-tauri/src/harness.rs`（列举返回 title）、`src/harness-panel.ts`（显示优先级与即时更新）、`src/bindings/**`（ts-rs 重导出）；`scripts/acceptance/lib/app.mjs`（场景配置键）与新增场景 / fixtures。
+- 影响的代码/系统：`src-tauri/src/config.rs`（`auto_title` / `title_provider` / `title_model` 校验与 `title_target` 解析口）、新增 `src-tauri/src/harness/title.rs`（素材装配、生成器契约、漂移信号、调度状态机）、`src-tauri/src/harness/turn.rs`（轮结束后的触发点）、`src-tauri/src/harness/session.rs` / `jsonl.rs`（`session_title` 记录与有效标题读取、轮换继承）、`src-tauri/src/harness.rs`（列举返回 title）、`src/harness-panel.ts`（显示优先级与即时更新）、`src/bindings/**`（ts-rs 重导出）；`scripts/acceptance/lib/app.mjs`（场景配置键）与新增场景 / fixtures。
 - 关联约束：ADR 0002 §6 性能合同（命名调用异步、不进 keypress-to-paint 与轮次完成路径）；ADR 0002 §5 配置即数据（新键走既有校验模板）；ADR 0007 会话留存与恢复口径（标题记录是 sidecar，不改 wire 重建）；ADR 0003（MUST NOT 写入 vault）。
-- 迁移：无数据迁移。旧会话文件零改动；新配置键缺省即出厂行为（自动命名开、模型取会话生效模型）。
+- 迁移：无数据迁移。旧会话文件零改动；新配置键缺省即出厂行为（自动命名开、title provider 取会话当前 provider、模型取该 provider 的生效模型）。

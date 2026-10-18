@@ -4,8 +4,8 @@
 
 ## 1. 配置面
 
-- [ ] 1.1 `src-tauri/src/config.rs`：`[harness].auto_title`（bool，默认 `true`）与 `[harness].providers.<id>.title_model`（string，可选；须在该 provider 的 `models` 清单内声明，未声明 → 人话 warning + 回落生效模型；mock 无此键）。判据：`cargo test config::tests::auto_title_defaults_and_type_fallback`、`config::tests::title_model_falls_back_when_undeclared`、`config::tests::title_model_is_absent_for_mock` 全绿。
-- [ ] 1.2 `HarnessConfig` 暴露唯一的模型解析口（`title_model_for(provider) -> &str`：配置值命中 `models` 清单则用之、否则回落 `provider.model`），命名调用只走这一处。判据：单测覆盖「已声明 / 未声明 / 空串」三态。
+- [ ] 1.1 `src-tauri/src/config.rs`：`[harness].auto_title`（bool，默认 `true`）、`[harness].title_provider`（string，可选；缺省 = 会话当前 provider；非空须是 `providers` 表内的 id（`kimi` / `deepseek` / `mock`），闭集合外取值 → 人话 warning + 回落缺省）与 `[harness].providers.<id>.title_model`（string，可选；按 `title_provider` 指向的 provider 条目读取，须在该 provider 的 `models` 清单内声明，未声明 → 人话 warning + 回落该 provider 的生效模型；mock 无此键）。判据：`cargo test config::tests::auto_title_defaults_and_type_fallback`、`config::tests::title_provider_invalid_falls_back_to_session_provider`、`config::tests::title_model_falls_back_when_undeclared`、`config::tests::title_model_is_absent_for_mock` 全绿。
+- [ ] 1.2 `HarnessConfig` 暴露唯一的命名调用解析口 `title_target(session_provider) -> TitleTarget { provider, model, wire_api, api_key, base_url }`：`provider` = `title_provider`（缺省 / 非法回落会话 provider），其余四个字段与 `model` 同出该 provider 条目；`model` = 该条目的 `title_model`（命中自己的 `models` 清单）否则该条目的 `model`。命名调用只走这一处，MUST NOT 混用会话 provider 与 title provider 的字段。判据：单测覆盖「缺省（= 会话 provider）/ 跨 provider / title_provider 非法值回落 / title_model 已声明 / 未声明 / 空串 / mock 无 title_model」七态。
 - [ ] 1.3 ts-rs 重导出 `src/bindings/HarnessConfig.ts` / `HarnessProviderConfig.ts`，`git add` 重导出产物（gate 的 bindings-drift 判据）。判据：`scripts/gate.sh quick` 的 `bindings-drift` 项 PASS。
 
 ## 2. 标题服务（新增 `src-tauri/src/harness/title.rs`）
@@ -14,7 +14,7 @@
 - [ ] 2.2 生成器 prompt 常量（`harness/prompts/title.md`，`include_str!` 单点引用）+ 解析与规范化纯函数：容忍代码块 / 前后废话；非法 JSON、未知 decision、空标题、>20 码点、与当前标题相同 → `error/invalid`；剥包裹引号 / 反引号与句末标点。判据：`harness::title::tests::parse_*`（正常 / 包裹 / 非法 / 超长 / 相同 / 标点剥离 / 无当前标题的 keep 视为 invalid）全绿。
 - [ ] 2.3 漂移信号纯函数：CJK bigram + ASCII 词元 + 停用词；标题词元 ≥3、消息 ≥8 码点；`containment < 0.20` 连续两次命中；一次未命中清零、短消息不计数也不清零。判据：`harness::title::tests::drift_*`（中英文 / 短消息 / 清零 / 阈值常量）全绿。
 - [ ] 2.4 调度状态机：首轮触发、5 轮周期、漂移提前（≥3 轮下限）、初始失败后每 3 轮重试、失败算一次评估、单飞行跳过、关闭开关、轮换重置。判据：`harness::title::tests::schedule_*`（含 `initial_retry_after_failure`）全绿。
-- [ ] 2.5 辅助调用：不带工具；模型声明 effort 时 `effort = Low`、未声明不发；独立 20 秒超时；不写 `llm_request` / `llm_response`；usage 不进 `UsageSnapshot` / `cache_totals`。判据：`harness::title::tests::call_shape_is_tool_free_and_low_effort`、`call_usage_does_not_reach_session_readings` 全绿。
+- [ ] 2.5 辅助调用：不带工具；目标走 1.2 的 `title_target()`（跨 provider 时用该条目的 `api_key` / `base_url` / wire 方言，不混用会话 provider 的字段）；模型声明 effort 时 `effort = Low`、未声明不发；独立 20 秒超时；不写 `llm_request` / `llm_response`；usage 不进 `UsageSnapshot` / `cache_totals`。判据：`harness::title::tests::call_shape_is_tool_free_and_low_effort`、`call_targets_title_provider`、`call_usage_does_not_reach_session_readings` 全绿。
 - [ ] 2.6 轮完成点接线：`turn.rs` 在正常 `done` 后做纯内存触发判定并起后台线程；结果落盘前复核「同 vault / 同 session id / 会话空闲 / auto_title 仍开」，任一不满足即丢弃并打 stderr。判据：`harness::title::tests::stale_result_is_dropped_after_rotate`、`result_is_dropped_while_busy` 全绿；单测断言会话 JSONL 不因丢弃多出记录。
 
 ## 3. 留存
@@ -34,13 +34,13 @@
 ## 5. mock provider 与真机验收套件
 
 - [ ] 5.1 mock fixture 顶层可选 `titles` 数组（独立队列；缺失 / 空 / 弹尽 → 空正文 → `error/invalid`），**会话 `responses` 队列不动**。判据：`harness::llm::tests::title_script_is_separate_from_responses` 全绿，且既有 fixture 驱动场景（70–77、87–98）零改动回归。
-- [ ] 5.2 `scripts/acceptance/lib/app.mjs`：`SCENARIO_CONFIG_KEYS` 增 `autoTitle` / `titleModel` 并映射到配置文件 snake_case；`--check` 能挡住拼错与类型错。判据：`node scripts/acceptance/run.mjs --check` 通过。
-- [ ] 5.3 新增真机验收场景（编号取落地时最大号 +1，文件名 `16x-harness-auto-title-*.md`）：①首轮命名（标题栏 + 浮层行名 + JSONL `decision=initial`）；②keep 防抖（5 轮后标题不变 + `decision=keep` 记录）；③旧文件安静回落（预置无标题记录的 JSONL，行名回落且无告警）；④关闭开关（`autoTitle: false` 时不写记录）。判据：`node scripts/acceptance/run.mjs <新编号…>` 全 PASS，证据落 `.local/acceptance/`（git 外）。
+- [ ] 5.2 `scripts/acceptance/lib/app.mjs`：`SCENARIO_CONFIG_KEYS` 增 `autoTitle` / `titleProvider` / `titleModel` 并映射到配置文件 snake_case；`--check` 能挡住拼错与类型错。判据：`node scripts/acceptance/run.mjs --check` 通过。
+- [ ] 5.3 新增真机验收场景（编号取落地时最大号 +1，文件名 `16x-harness-auto-title-*.md`）：①首轮命名（标题栏 + 浮层行名 + JSONL `decision=initial`）；②keep 防抖（5 轮后标题不变 + `decision=keep` 记录）；③旧文件安静回落（预置无标题记录的 JSONL，行名回落且无告警）；④关闭开关（`autoTitle: false` 时不写记录）；⑤`titleProvider` 非法值回落（会话 provider 为 mock、`titleProvider: "openai"` → 首轮后仍按 mock 的 `titles` 写出 `session_title` 记录，标题正常显示）。判据：`node scripts/acceptance/run.mjs <新编号…>` 全 PASS，证据落 `.local/acceptance/`（git 外）。
 - [ ] 5.4 全量回扫既有验收场景里「会话名 = 首条用户消息截断」的期望（`rg "会话名|新会话" scripts/acceptance/scenarios/`），逐条确认：fixture 未声明 `titles` 时行为逐字节不变；有期望变化的逐条改准（口径：openspec-workflow 的「改闸 / 改语义须回扫既有场景」）。判据：回扫清单写进实现批的完成报告，未改的场景给出「行为不变」的理由。
 
 ## 6. 文档
 
-- [ ] 6.1 核对 `docs/specs/config-reference.md` §1.5 的收录口径：`auto_title` / `title_model` 不改变会话 wire 行为，按该节「只收改变客户端 wire 行为的键」不收录，留一句确认（不复制第二份真源）。判据：`scripts/docs-check.sh` 通过。
+- [ ] 6.1 核对 `docs/specs/config-reference.md` §1.5 的收录口径：`auto_title` / `title_provider` / `title_model` 不改变会话 wire 行为，按该节「只收改变客户端 wire 行为的键」不收录，留一句确认（不复制第二份真源）。判据：`scripts/docs-check.sh` 通过。
 - [ ] 6.2 `AGENTS.md` / `README.md` 无需改动（无新流程、无新目录约定）；判据：实现批完成报告写明「已核对，无需改动」。
 
 ## 7. 验证
