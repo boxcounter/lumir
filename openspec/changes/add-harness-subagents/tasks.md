@@ -355,8 +355,14 @@
   两处都显式产出、都由同一出口落诊断。
   隐私边界：白名单外的 `prompt` / `messages` / `vault` 物理上进不来，用例
   `subagent_events_round_trip_from_panel_payloads` 反向钉住 `vault` 缺席。）
-- [ ] 7.3 观测读数自验：跑一次 completed、一次 failed、一次 quota 收敛的子运行，给出使用计数与触顶
+- [x] 7.3 观测读数自验：跑一次 completed、一次 failed、一次 quota 收敛的子运行，给出使用计数与触顶
   分布（含 quota 单列）的 `rg` 命令实际读数与执行时刻。
+  （M590 实测（执行时刻 2026-10-18T20:37:09Z，日志副本 `.local/acceptance/2026-10-18/observability/`）：
+  `rg -c '"event":"subagent_finished".*"status":"(completed|partial)"'` → 180=1（completed）、197=1
+  （partial + stopped_by=error）、188=4（partial；stopped_by 分布 tokens=1 / rounds=1 / time=1 /
+  quota=1，quota 单列）；自动唤醒代价面：`"wake":"auto_turn"` 在读数组内共 15 条、
+  `"wake":"blocked_chain"` 6 条（场景 203 的链式五回合）——读数同时暴露了 notified 重复产出的
+  缺陷，已报 finding `20261019-worker-m590-bug-subagent-notified-run.md`，本棒不改引擎。）
 
 ## 8. 真机验收场景（`scripts/acceptance/scenarios/`）
 
