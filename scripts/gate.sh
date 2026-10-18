@@ -3,8 +3,8 @@
 # agent 自验用：worker 完成前至少跑 quick；碰 src/** 跑 visual；reviewer 合并前跑 all。
 #
 # 用法：
-#   scripts/gate.sh          # quick：fmt + clippy + cargo test + bindings 漂移 + tsc（根/视觉/单测）
-#                            #        + 单测 + docs-check + openspec validate
+#   scripts/gate.sh          # quick：fmt + clippy + cargo test + bindings 漂移 + gen/schemas 漂移
+#                            #        + tsc（根/视觉/单测）+ 单测 + docs-check + openspec validate
 #   scripts/gate.sh visual   # quick + 视觉套件隔离断言 + 视觉回归（默认 LUMIR_VISUAL_PORT=4273 隔离端口）
 #   scripts/gate.sh all      # visual + 性能合同（release 构建，首次分钟级；本地无滚动基线时
 #                            # 相对回归比较自动跳过，只 enforce 绝对阈值）
@@ -19,6 +19,13 @@
 # src/bindings/**，重导出后先跑 quick 时那些改动还没进索引——未 staged 报红并提示先 `git add`；
 # 已 `git add` 未 commit 只打 INFO、不判 FAIL。即「先 add/commit bindings，再跑 quick」是预期
 # 行为，不再是一条假 FAIL。
+#
+# gen/schemas 漂移（M598）与 bindings 同族、成因不同：tauri-build 每次 cargo 构建都会按当前依赖的
+# ACL 能力面（tauri core + 插件）重写 src-tauri/gen/schemas/*.json。依赖升级（tauri 2.12 /
+# notification 插件）后不提交，每次构建都弄脏工作区，且 schema 与真实能力面脱节。判据与
+# bindings-drift 同口径：构建重生成后工作区相对索引有差异（含未跟踪的新文件）→ FAIL 并提示
+# 先 `git add`；已 staged 未 commit 只打 INFO。CI 的新检出上不存在 staged 未 commit 态，
+# rust.yml 的同名步骤因此等价于「gen/schemas 没随依赖提交」。
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -89,6 +96,23 @@ run_gate bindings-drift bash -c '
   fi
   if [ -n "$unstaged" ]; then
     printf "FAIL 以下 bindings 漂移尚未进索引（重导出的结果没 git add），先 git add 再重跑：\n%s\n" "$unstaged"
+    exit 1
+  fi
+  exit 0
+'
+# gen/schemas 漂移检查同样须在 cargo test（构建脚本重生成）之后。判定与 bindings-drift 一致，
+# 但用 `git status --porcelain` 而非 `git diff --exit-code`：后者看不见未跟踪的新 schema 文件。
+run_gate schemas-drift bash -c '
+  status=$(git status --porcelain -- src-tauri/gen/schemas/)
+  if [ -z "$status" ]; then exit 0; fi
+  # porcelain v1：Y 为空格即已 staged，其余（含未跟踪的 ??）归未 staged。
+  staged=$(printf "%s\n" "$status" | grep -E "^[^ ?] " || true)
+  unstaged=$(printf "%s\n" "$status" | grep -vE "^[^ ?] " || true)
+  if [ -n "$staged" ]; then
+    printf "INFO gen/schemas 重生成已 git add、尚未 commit（本条门禁不判 FAIL；提交后本条即绿）：\n%s\n" "$staged"
+  fi
+  if [ -n "$unstaged" ]; then
+    printf "FAIL 以下 gen/schemas 漂移尚未进索引（cargo 构建重生成的结果没 git add），先 git add 再重跑：\n%s\n" "$unstaged"
     exit 1
   fi
   exit 0
