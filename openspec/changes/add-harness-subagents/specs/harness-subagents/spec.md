@@ -190,9 +190,11 @@ SHALL 按该标记渲染为与用户消息可区分的自动化通知；任务�
 的 run SHALL NOT 触发自动唤醒（停止是用户在场的主动动作，会话拆除时也没有可唤醒的会话），其终态仍
 SHALL 在面板与事件中如实反映。前台 `task` 的结果在本回合内回填，MUST NOT 产生通知或唤醒。
 
-由于 user 消息只在下一次 LLM 请求发生时才进入留存，系统 SHALL 在通知**上屏的同一时刻**写一条投递
-标记 sidecar（`kind = "notice_delivered"`，字段 `run_ids`、`wake_batch`、`shown_at`），承载「已上屏、
-尚未被模型消费」的事实；该标记 MUST NOT 承载完成内容（正文真源仍为 `llm_request.messages`，run 元数据
+由于 user 消息只在下一次 LLM 请求发生时才进入留存，系统 SHALL 在通知**收敛入队时**写一条投递
+标记 sidecar（`kind = "notice_delivered"`，字段 `run_ids`、`wake_batch`、`shown_at`），承载「已接纳
+投递、尚未被模型消费」的事实。标记**早于上屏**存在：空闲合并窗口内与忙时排队期间通知尚未上屏，
+进程此时退出同样要靠它恢复；因此 `shown_at` 记录的是入队时刻，MUST NOT 被读作「已画到屏幕上」的
+证据。该标记 MUST NOT 承载完成内容（正文真源仍为 `llm_request.messages`，run 元数据
 仍为 `subrun` sidecar）。恢复会话时：若留存里已有任一条 `llm_request.messages` 含同 `wake_batch` 的
 `auto_notice` 消息，投递标记 SHALL 被视为陈旧并忽略；否则系统 SHALL 据标记与对应 run 的 `subrun`
 sidecar 重建一条自动化通知并上屏（agent / description / 终态 / `stopped_by` / usage；MUST NOT 把摘要

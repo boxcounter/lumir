@@ -558,6 +558,11 @@ task 调用（父循环内；同一助手消息里的多个 task 并行进入本
 
 思考档位继承父会话，不开放为定义字段（`effort` 字段按 §4.2 走「本版本不采纳」warning）。
 
+**mock provider 的例外（两处解析同口径）**：mock 的模型清单是开放集合（fixture 驱动，无真实模型
+维度），因此调用级（`subagents::resolve_model`）与定义装载级（`agents::resolve_model`）都把它
+当作「任意 id 已声明」——否则真机上定义里的 `model` 永远被回落 `inherit`，8.5 / 8.10 / 8.11
+的热加载与分桶场景都做不出来（M590 真机 186 现场）。生产 provider 的判定不变。
+
 ## 12. 并发、后台与调度
 
 ### 12.1 执行模型
@@ -632,8 +637,9 @@ task 调用（父循环内；同一助手消息里的多个 task 并行进入本
      `llm_request.messages`——MUST NOT 另写一份完成**内容**记录（如原方案的 `task_result` 旁路
      记录）——同一语义两处真源。上屏与消费之间的窗口由一条**投递标记** sidecar 承载（§12.6.4），
      它不是内容副本；
-  3. transcript 依据标记渲染为**自动化通知**消息（样式与用户消息区分，文案「后台任务完成」），
-     同一时刻写投递标记（§12.6.4）；
+  3. transcript 依据标记渲染为**自动化通知**消息（样式与用户消息区分，文案「后台任务完成」）；
+     投递标记在通知**收敛入队时**就已写入（§12.6.4），早于上屏——合并窗口 / 忙时排队期间退出
+     也覆盖；
   4. 产 `subagent_notified` 诊断事件（`wake` / `wake_batch` / `chain_index`，见 §13）；
   5. 交唤醒调度（§12.6）决定是否起自动回合。
 - **父回合进行中**：通知排队到本回合收尾后再追加，MUST NOT 在本回合中途改写父会话上下文（否则同一
@@ -663,7 +669,7 @@ task 调用（父循环内；同一助手消息里的多个 task 并行进入本
 
 | 收敛时的父会话状态 | 行为 |
 |---|---|
-| 空闲 | 通知写进父会话历史并上屏（同一时刻写投递标记，§12.6.4）；等**合并窗口**（`AUTO_WAKE_COALESCE_MS = 2000`，从首条通知算起、不因新通知顺延）到期后起一个自动回合，窗口内收敛的其它 run 并入同一批。若 `chain` 已达上限，则不起回合（通知照常上屏、`blocked = "chain_limit"`） |
+| 空闲 | 通知写进父会话历史并上屏（收敛入队时已写投递标记，§12.6.4）；等**合并窗口**（`AUTO_WAKE_COALESCE_MS = 2000`，从首条通知算起、不因新通知顺延）到期后起一个自动回合，窗口内收敛的其它 run 并入同一批。若 `chain` 已达上限，则不起回合（通知照常上屏、`blocked = "chain_limit"`） |
 | 正忙（用户回合 / 自动回合在飞） | 通知进 `pending`；当前回合结束时把 `pending` 合并为**一条**输入并起**一个**回合——多个 run 相继收敛不叠回合 |
 | 用户回合开始 | 若 `pending` 非空：先把它作为一条通知消息追加在用户消息之前；若合并窗口内已有通知、自动回合尚未起：取消该次待起唤醒（通知已在历史里）。两种情况都不起自动回合，`chain` 清零、`blocked` 清空 |
 | 自动回合在飞时又有通知 | 进 `pending`，等该回合结束再起下一回合（这就是链的一环） |
@@ -708,25 +714,28 @@ AUTO_WAKE_COALESCE_MS = 2000 // 空闲时的合并窗口
   在链中的序号（1 起；非自动回合为 0）。父会话快照带 `auto_wake: {chain, max, blocked}`，面板据此
   渲染提示行。
 
-#### 12.6.4 投递标记与恢复（「已上屏、未消费」的窗口）
+#### 12.6.4 投递标记与恢复（「已接纳投递、未被消费」的窗口）
 
 现存的 wire 口径规定 user 消息不单独落 sidecar——它逐字节在下一条 `llm_request.messages` 里
 （`src-tauri/src/harness/turn.rs:351`；`jsonl.rs` 头注释同口径）。因此「上屏」与「被模型消费」之间
 有一个窗口：链触顶 / 用户停止后不再起回合，通知要等用户下一次发言才进请求；空闲时的 2 秒合并窗口内
 应用也可能退出。窗口内退出时通知只存在于内存，必须由一条**投递标记**兜住。
 
-- **记录**：`kind: "notice_delivered"`，与通知上屏**同一时刻**写入父会话留存（append-only、
-  wire 不可推导 → sidecar 类别），字段 = `run_ids[]`、`wake_batch`、`shown_at`。它是**显示事实**，
-  不是内容副本：通知正文的真源仍是随后某条 `llm_request.messages` 里的 `auto_notice` 消息，run 的
-  元数据在 `subrun` sidecar 里。§12.5 的禁令因此只针对**完成内容**记录，不禁止这条标记。
+- **记录**：`kind: "notice_delivered"`，在通知**收敛入队时**写入父会话留存（append-only、
+  wire 不可推导 → sidecar 类别），字段 = `run_ids[]`、`wake_batch`、`shown_at`。写入时刻**早于上屏**：
+  空闲时的合并窗口内、忙时的排队期间，通知还没画到屏幕上，进程此时退出同样必须据标记恢复——
+  因此标记表达的是「已接纳投递、尚未被模型消费」，`shown_at` 是入队时刻，MUST NOT 被读作「已上屏」的
+  证据（M590 把任务原文的「上屏同一时刻」改准为本实现语义）。它是**投递事实**，不是内容副本：
+  通知正文的真源仍是随后某条 `llm_request.messages` 里的 `auto_notice` 消息，run 的元数据在
+  `subrun` sidecar 里。§12.5 的禁令因此只针对**完成内容**记录，不禁止这条标记。
 - **恢复判定**：读留存时，若已有任一条 `llm_request.messages` 含同 `wake_batch` 的 `auto_notice`
   消息，标记即为陈旧（已被消费）→ 忽略；否则据标记 + 对应 run 的 `subrun` sidecar 重建一条自动化
   通知并上屏（agent / description / 终态 / `stopped_by` / usage）。摘要正文 MUST NOT 复制进标记：
   重建通知的正文注明「摘要见审计流水与 task 行」，不制造第三份内容真源。
 - **不补唤醒**：恢复不是收敛事件（重启时后台 run 已中止）；重建的通知只上屏，是否汇报由用户下一次
   发言决定，MUST NOT 因此起自动回合。链计数随恢复清零的口径不变（§12.6.3）。
-- **覆盖范围**：链触顶 / 用户停止后的通知、合并窗口内的通知、通知上屏后立刻退出三种情形走同一条
-  路径。
+- **覆盖范围**：链触顶 / 用户停止后的通知、合并窗口内尚未上屏的通知、通知上屏后立刻退出三种情形
+  走同一条路径（标记在收敛时已写，三者都覆盖）。
 
 ## 13. 诊断事件
 
@@ -739,8 +748,12 @@ AUTO_WAKE_COALESCE_MS = 2000 // 空闲时的合并窗口
 | `subagent_notified` | `run_id`, `agent`, `status`, `wake`（`auto_turn` / `user_turn` / `blocked_chain` / `blocked_stopped` / `none_aborted`）, `wake_batch`, `chain_index`（自动回合在链中的序号，1 起；非自动回合为 0） |
 | `subagent_rejected` | `reason`（含 `concurrency_limit` / `run_busy`）, `agent`, `description` |
 | `subagent_catalog_large` | `estimated_tokens`, `definition_count` |
+| `notice`（**面板事件，非诊断**） | `wake_batch`, `runs[]`（每个 run 的 `run_id` / `agent` / `description` / `status` / `stopped_by` / `summary` 首行） |
 
 - 七事件进 `logging.rs` 白名单，字段逐个校验；`status` / `stopped_by` / `reason` / `wake` 为闭集合。
+- `notice` 不在诊断白名单里：它只服务 transcript 的通知行渲染（§19.3），正文真源仍是会话里那条
+  `auto_notice` user 消息（事件只带元数据，MUST NOT 成为第三份内容）。`subagent_finished` 另带
+  `summary`（行详情数据源；同样不进诊断白名单——日志侧仍只取 `summary_chars`）。
 - 事件在段收尾处产出一次，失败路径也产；`subagent_progress` / `subagent_step` 是**可见面事件**，
   MUST NOT 含任务 prompt 内容、文件内容与 vault 绝对路径。
 - **诊断落盘在面板事件的出口统一转写**（`SubagentHub::set_sink` 包装一个诊断装饰器，见
@@ -805,8 +818,9 @@ AUTO_WAKE_COALESCE_MS = 2000 // 空闲时的合并窗口
 - **自动回合的委派被 `concurrency_limit` / `subrun_limit` 拒绝**：照常回工具结果，模型在回合内处理；
   不额外重试、不特别唤醒。
 - **通知已上屏、应用退出**：user 消息要到下一次 `llm_request` 才进留存（`turn.rs:351` 的现存口径），
-  因此上屏时已写投递标记（§12.6.4）；恢复时若通知未被消费，据标记 + `subrun` sidecar 重建显示，
-  MUST NOT 补唤醒。已中止的后台 run 不补投递、不补唤醒。
+  因此通知收敛入队时就已写投递标记（§12.6.4；早于上屏，合并窗口 / 排队期间退出同样覆盖）；
+  恢复时若通知未被消费，据标记 + `subrun` sidecar 重建显示，MUST NOT 补唤醒。已中止的后台 run
+  不补投递、不补唤醒。
 
 ## 16. 与 cron 提案的对接
 
@@ -883,8 +897,13 @@ mock provider 的脚本是单条线性序列（`MockClient`），父子客户端
 - 子运行的 mock 起点 = 父会话游标 + 父客户端本轮已消费条数（绝对位置）；脚本按「父第 1 条 = task
   调用 → 子运行 N 条 → 父续写」顺序编排；
 - 子运行结束后父客户端前移子运行消费的条数（`LlmClient` 增 `external_consumed()` / `skip(n)`，
-  真 provider 恒 0 / no-op）；父回合结束按既有规则回写会话游标；
-- resume 段沿用保留 run 的 mock 游标（子会话元数据里带 `mock_cursor`），继续往下弹；
+  真 provider 恒 0 / no-op）；父回合结束按既有规则回写会话游标。**实现口径（M590 补齐）**：
+  跳过动作在每轮编排收敛后由回合循环执行（`turn.rs` 的 `run_turn_core`），跳过量 = 中枢本轮新增
+  预分配总量 − 父客户端已跳过量；会话游标回写只算 `mock_consumed() + external_consumed()`，
+  MUST NOT 再叠加中枢的预分配总量（叠加会把同一段区间数两遍，下一轮弹到空条目——真机场景
+  186 / 188 / 189 现场即此）；
+- resume 段沿用保留 run 的 mock 游标（子会话元数据里带 `mock_cursor`），继续往下弹；resume 段
+  消费的是**上一回合已跳过**的旧区间条目，其消费量 MUST NOT 再计入父客户端的待跳过量；
 - **并行时按 run 预分配区段**：线性脚本不够用（多个 run 交错消费同一游标会互相吃掉条目）。父回合在
   启动 `task` 调用时按调用顺序给每个 run 分配一段连续区间（区间长度由 fixture 声明），各 run 只在自己
   区间内弹；越界即 `fixture_exhausted`（比静默错位好）。父续写条目放在所有子区间之后。
