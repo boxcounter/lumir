@@ -63,10 +63,11 @@
 - [ ] 1.3 `build_request` 的工具定义改由 `ctx.tool_definitions()` 提供；交互上下文按当前定义快照
   生成 `task` 描述（含清单）；`enabled=false` 时输出与既有 8 件清单深度相等（单测钉死）。
   **部分完成（M586）**：`build_request` 已走 `ctx.tool_definitions()`；`enabled` 的 kill switch
-  已落（`run.rs` 的 `gate_tool_definitions` + 合成 `task` 定义的单测）。**`task` 描述本体未落**：
-  它按 design §5.1 归 `tools.rs`、清单来自 §2 的 `agents.rs`，两者都不在 M586 的 scope 内；
-  现在注册一个不可执行的第 9 件会变成「声明了却没有消费者」（REVIEW.md「值或开关声明了却没有
-  消费者」条）。由 §2/§3（M587）在同一注册点补齐，届时 `enabled=false` 的基线断言自动生效。
+  已落（`run.rs` 的 `gate_tool_definitions` + 合成 `task` 定义的单测）。**M587 已补**：定义快照
+  接进 `SessionContext::tool_definitions()`，`tools::task_definition` 生成描述与清单，
+  `enabled=false` 的 8 件基线断言保持绿。**执行入口仍归 §3（M588）**——本棒只注册定义（tower
+  scope 裁决：tools.rs 只有描述与注册条件，执行严格留 M588），因此「第 9 件可执行」这条要等
+  M588 合入后才真正闭环。
 - [x] 1.4 `llm::client_at` 增加模型覆盖参数；`LlmClient` 增加 `external_consumed()` / `skip(n)`
   （真 provider 恒 0 / no-op），供 mock 父子游标编排（design §18）。
   （另加 `LlmClient::model()`：发送点 `llm_request.model` 取覆盖后的实际值，避免「覆盖参数与
@@ -85,25 +86,49 @@
 
 ## 2. 子代理定义文件（`harness/agents.rs` 新建）
 
-- [ ] 2.1 YAML 依赖选型并落地：`serde_yaml` 已 deprecated，候选 `yaml-rust2` / `saphyr`；只解析
+- [x] 2.1 YAML 依赖选型并落地：`serde_yaml` 已 deprecated，候选 `yaml-rust2` / `saphyr`；只解析
   标量 + 字符串列表子集，产出窄结构体；选型理由写进 Cargo.toml 注释与完成报告。
-- [ ] 2.2 扫描：`<vault>/.lumir/agents/**/*.md` 与 `<config_dir>/agents/**/*.md` 递归发现；目录
+  （实现口径：选 **saphyr 0.2**——yaml-rust2 的 README 自述「只做基础维护、保留稳定 API」，
+  新特性归同谱系的继任者 saphyr；本仓只在定义文件一处消费 YAML，维护方向优先于 API 冻结。
+  `default-features = false` 关掉 encoding 档（定义文件恒 UTF-8）。理由全文见 `Cargo.toml`
+  的 saphyr 依赖注释。）
+- [x] 2.2 扫描：`<vault>/.lumir/agents/**/*.md` 与 `<config_dir>/agents/**/*.md` 递归发现；目录
   不存在视为空；每回合开头扫描一次并快照（不做 watcher）。
-- [ ] 2.3 frontmatter 解析与字段校验：`name` / `description` 必填；`tools` / `model` / `max_turns` /
+  （实现口径：`AgentCatalog::load` 在 `SessionContext::new` 调用一次，同一回合的所有请求共用
+  该快照；不跟随符号链接；用户级目录取既有 `config::config_dir()`。）
+- [x] 2.3 frontmatter 解析与字段校验：`name` / `description` 必填；`tools` / `model` / `max_turns` /
   `max_tokens` / `timeout_secs` / `background` 可选；非法定义逐条丢弃 + 点名 warning；未知字段
   warning 并忽略；`tools: []` 合法；`tools` 含 `task` 或未知工具 ⇒ 丢定义。
-- [ ] 2.4 优先级：vault 覆盖用户级；同层同名取字典序第一个 + warning（确定性规则，不依赖文件系统
+  （实现口径：「丢弃」= 机制看不懂定义：frontmatter 缺失 / 未闭合 / 解析失败 / 多文档、name 或
+  description 缺失或非法、tools 不是字符串列表或含未知工具 / `task`。「保留 + 回落」= 看懂了但
+  值不可用：model 非法回落 inherit、max_* 类型非法取配置值、max_* 越界夹取、background 类型错取
+  false。warning 走 `config_warning(source="subagents")`，进程内按消息去重。）
+- [x] 2.4 优先级：vault 覆盖用户级；同层同名取字典序第一个 + warning（确定性规则，不依赖文件系统
   读序）。
-- [ ] 2.5 正文与身份段：定义正文按需读取（只在委派时装配），不进主会话上下文、不进清单。
-- [ ] 2.6 清单注入与容量告警：`name` + `description` 注入 `task` 描述；估算 token（`ceil(字符数 ÷ 4)`）
+  （实现口径：先按路径字典序收集文件再解析；同层同名在层内去重后才合并，跨层覆盖产点名两处来源
+  的 warning；内建 `explore` 参与同一套覆盖规则。）
+- [x] 2.5 正文与身份段：定义正文按需读取（只在委派时装配），不进主会话上下文、不进清单。
+  （实现口径：`AgentDefinition` 只存元数据；`body()` 在委派装配时重新读文件并剥离 frontmatter。
+  内建定义的正文随定义文本内联，磁盘定义正文不缓存。）
+- [x] 2.6 清单注入与容量告警：`name` + `description` 注入 `task` 描述；估算 token（`ceil(字符数 ÷ 4)`）
   超 15,000 时一条 warning + `subagent_catalog_large` 事件；MUST NOT 截断清单。
-- [ ] 2.7 单测：每个校验分支（缺必填 / 未知工具 / `task` / 空 tools / 未知字段 / 非法 model /
+  （实现口径：`tools::task_definition(catalog)` 渲染描述，`definitions_with_subagents` 在快照
+  非空时注册第 9 件；估算按所有生效定义**描述字符数合计**；事件白名单已加
+  `subagent_catalog_large`（`estimated_tokens` / `definition_count`）。执行入口归 §3（M588）。）
+- [x] 2.7 单测：每个校验分支（缺必填 / 未知工具 / `task` / 空 tools / 未知字段 / 非法 model /
   越界数值 / 同名 / YAML 坏格式 / `background` 类型错）各一条；扫描对坏文件不整体失败。
-- [ ] 2.8 内建 `explore`：代码内置定义（只读三件、`inherit`、三闸取配置），与磁盘定义同一条装载 /
+  （实现口径：单测在 `agents.rs` 的 `#[cfg(test)] mod tests`，另在 `run.rs` 钉「enabled=true
+  时第 9 件注册且描述含清单」；所有用例用临时目录 + `load_from_roots`，不读真实
+  `~/.config/lumir`。）
+- [x] 2.8 内建 `explore`：代码内置定义（只读三件、`inherit`、三闸取配置），与磁盘定义同一条装载 /
   校验 / 清单路径；同名自定义覆盖内建 + 覆盖 warning + 清单只一条（单测：无定义时有 explore、
   有同名定义时生效的是自定义）。
-- [ ] 2.9 `background` 字段：`true` 时调用参数无法降为前台；类型错 ⇒ 定义保留、取 `false` + warning
+  （实现口径：内建定义的 frontmatter 是一段常量文本，喂给与磁盘文件同一个 `parse_definition`；
+  来源标记 `builtin`；不落盘。）
+- [x] 2.9 `background` 字段：`true` 时调用参数无法降为前台；类型错 ⇒ 定义保留、取 `false` + warning
   （单测）。
+  （实现口径：`AgentDefinition::effective_background(call)` = 定义值 OR 调用值；调用侧解析
+  `background` 参数归 §3（M588），本棒钉住「不能降级」的纯函数语义。）
 
 ## 3. `task` 工具（`harness/tools.rs`）
 
@@ -198,9 +223,11 @@
   token 消耗（`max_subruns_per_turn × max_tokens`）；另写明两个**不是配置键**的常量
   （`AUTO_WAKE_CHAIN_MAX = 5`、`AUTO_WAKE_COALESCE_MS = 2000`）与无人注视下的消耗上界
   （`AUTO_WAKE_CHAIN_MAX × max_subruns_per_turn × max_tokens` + 自动回合自身往返）。
-- [ ] 6.4 新增 `docs/specs/subagent-definitions.md`：定义文件格式（vault / user 路径、frontmatter
+- [x] 6.4 新增 `docs/specs/subagent-definitions.md`：定义文件格式（vault / user 路径、frontmatter
   字段表含 `background`、校验与丢弃规则、优先级、热加载时机、清单与 15k 告警、内建 `explore` 与
   覆盖规则、本版本不采纳的参照系字段清单、能力边界：8 件工具任意子集 / 无 web 工具）。
+  （已落 `docs/specs/subagent-definitions.md`；真源指向 `harness/agents.rs`，路径一律
+  `<vault>` / `<config_dir>`。）
 - [x] 6.5 `src/bindings/**` 重导出进索引；`scripts/gate.sh quick` 的 bindings-drift 绿。
   （`SubagentsConfig.ts` 新增、`HarnessConfig.ts` 增字段；`scripts/gate.sh quick` 退出码 0，
   `GATE RESULT: 9/9 PASS（SKIP 1）`。）
@@ -213,6 +240,8 @@
   `subagent_finished` / `subagent_notified` / `subagent_rejected` / `subagent_catalog_large` 与字段
   校验用例；`status` / `stopped_by` / `reason` / `wake` 为闭集合；`subagent_notified` 带
   `wake` / `wake_batch` / `chain_index`。
+  **部分完成（M587）**：按 tower 的 scope 裁决先放行 `subagent_catalog_large` 一条白名单
+  （`estimated_tokens` / `definition_count` + 落盘用例），其余六个事件留 §7（M589）。
 - [ ] 7.2 断言完成事件只有一个产出点（段收尾），失败 / 中止 / 后台路径同样产出一条，不静默；事件
   不含 prompt、文件内容与 vault 绝对路径。
 - [ ] 7.3 观测读数自验：跑一次 completed、一次 failed、一次 quota 收敛的子运行，给出使用计数与触顶

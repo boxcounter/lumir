@@ -1,7 +1,9 @@
-//! 工具集（design §4）：**恰好 8 个**——vault_read / vault_search / vault_patch /
-//! vault_create / vault_move / vault_delete / skill_load / cli_run。清单外扩张须经 Alex 裁决
-//! （ADR 0007）；本次扩张（vault_move / vault_delete）即 change add-harness-permission-modes
-//! 的 Alex 节点 1 裁决。
+//! 工具集（design §4）：**8 件 vault 操作工具 + 1 件编排工具**——vault_read / vault_search /
+//! vault_patch / vault_create / vault_move / vault_delete / skill_load / cli_run，外加 `task`
+//! （子代理委派；change add-harness-subagents，ADR 0007 Decision 7 的「编排工具」一类）。
+//! `task` 不在 [`TOOL_NAMES`] 里：它不是 vault 操作、不走 `execute` 的 vault 工具注册表，也
+//! 不受「写且需防护」判据约束。清单外扩张须经 Alex 裁决（ADR 0007）；本次扩张（vault_move /
+//! vault_delete）即 change add-harness-permission-modes 的 Alex 节点 1 裁决。
 //!
 //! 执行层抽象（ADR 0007 Decision 3 留口）：「工具名 + JSON 参数 → JSON 结果」注册表——
 //! [`execute`] 就是这个形状的唯一入口，未来 headless CLI 后端翻译成同一中间表示即可。
@@ -28,6 +30,7 @@ use serde::Deserialize;
 
 use crate::fs_io::{self, IgnorePolicy, PatchEdit};
 
+use super::agents::AgentCatalog;
 use super::context::SkillEntry;
 use super::diff;
 
@@ -229,6 +232,45 @@ pub fn definitions() -> Vec<serde_json::Value> {
             }
         }),
     ]
+}
+
+/// 第 9 件工具 `task` 的定义（change add-harness-subagents design §5.1）：工具集与三闸值不在
+/// 调用参数里（它们是定义字段）；`model` / `background` 是仅有的两个调用级覆盖项。
+///
+/// 可用子代理清单来自 [`AgentCatalog::listing`]（名字 + 描述），MUST NOT 截断；超容量时由装载
+/// 期产 warning + 诊断事件，清单本体照常完整注入。执行入口归 §3（M588），本批次只注册描述。
+pub fn task_definition(catalog: &AgentCatalog) -> serde_json::Value {
+    serde_json::json!({
+        "type": "function",
+        "name": "task",
+        "description": format!(
+            "把任务委派给一个子代理：子代理有独立上下文，只把摘要返回；不能再次委派；需要批准的调用会弹给用户。可用子代理：\n{}",
+            catalog.listing()
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "agent": {"type": "string", "description": "子代理定义名（见本工具描述里的清单）"},
+                "prompt": {"type": "string", "description": "自包含的任务说明：目标、范围、输出形态（结论 + 依据 + 不确定项）"},
+                "description": {"type": "string", "description": "一句话任务标签，显示在工具行与诊断里"},
+                "model": {"type": "string", "description": "可选，调用级模型覆盖；缺省用定义里的 model，再缺省 inherit"},
+                "resume": {"type": "string", "description": "可选，run_id；在同一子代理会话上继续（通常用于续跑 partial 结果）"},
+                "background": {"type": "boolean", "description": "可选，true = 后台运行：本调用立即返回 running，结果稍后以自动化通知进入会话；定义 background: true 时强制后台"}
+            },
+            "required": ["agent", "prompt", "description"]
+        }
+    })
+}
+
+/// 注册条件：定义快照非空时追加 `task`（内建 `explore` 使清单在 `enabled=true` 时恒非空）。
+/// `[harness.subagents].enabled=false` 的关闭点仍是 `run::gate_tool_definitions`——这里不复制
+/// 一份开关判定（单一关闭点，见该函数的注释）。
+pub fn definitions_with_subagents(catalog: &AgentCatalog) -> Vec<serde_json::Value> {
+    let mut definitions = definitions();
+    if !catalog.definitions().is_empty() {
+        definitions.push(task_definition(catalog));
+    }
+    definitions
 }
 
 /// cli_run 的 argv（command + args）：分类器 / 写目标提取的输入，也是主体串的来源

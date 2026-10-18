@@ -30,11 +30,13 @@
 //! - [`jsonl`]：会话留存（配置目录，append-only，MUST NOT 写入 vault）
 //! - [`draft`]：composer 草稿 sidecar（配置目录 `harness/drafts/<vault 稳定 id>.json`，
 //!   按 vault 一份；MUST NOT 触碰 vault）
+//! - [`agents`]：子代理定义文件（两作用域扫描、frontmatter 校验、优先级、内建 `explore`、清单）
 //! - [`run`]：运行公共层（`RunSpec` / `RunContext`；交互槽位的 `SessionContext` 实现）
 //! - [`turn`]：工具循环编排（上下文注入、多轮往返、loop_max、自动压缩、超限重试）
 //! - [`events`]：`harness:event` 九类事件载荷（与 m303 面板共用的钉死契约）
 //! - [`thinking`]：思考程度档位／provider 能力与请求映射、reasoning 展示文本提取（M362）
 
+pub mod agents;
 pub mod approval;
 pub mod attachments;
 pub mod context;
