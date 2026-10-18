@@ -229,11 +229,17 @@ pub fn run_turn(
     // 无人值守运行槽（change add-cron-runtime-daemon §6.2）：`Runtime::isolated()` 的实例
     // **不发 `harness:event`**（其会话与交互槽位物理分离，事件 MUST NOT 渲染进用户当前
     // transcript），只把本轮终态记进 runtime——`cron:run_finished` 据此产出回执。
-    let terminal_sink = TerminalSink {
+    let terminal_sink = std::sync::Arc::new(TerminalSink {
         runtime: runtime.clone(),
         forward: (!runtime.is_isolated()).then(|| TauriEventSink(app.clone())),
-    };
-    let sink = events::ScopedSink::new(&terminal_sink, scope.key());
+    });
+    // 可跨线程持有的同一出口：子运行与自动唤醒回合在父回合结束后仍要发事件，借用的
+    // `&sink` 活不到那时。`ScopedSink` 只借用 inner，故这里再包一层 owned 版本。
+    let owned: std::sync::Arc<dyn EventSink> = std::sync::Arc::new(OwnedScopedSink {
+        inner: terminal_sink.clone(),
+        vault: scope.key(),
+    });
+    let sink = events::ScopedSink::new(terminal_sink.as_ref(), scope.key());
     // 会话级 mock 游标（M456）：mock client 每轮重建，游标存在会话上才能让同一会话的第二轮
     // 接着上一轮往下弹（131/133 的「两轮不同 usage」依赖它）。真 provider 的 client 两方法
     // 返回默认值，下面的回写恒 no-op。
@@ -251,9 +257,12 @@ pub fn run_turn(
         }
     };
     let mut title_job = None;
+    let mut external_mock = 0;
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut ctx = SessionContext::new(&sink, &runtime, &scope, &config);
+        let mut ctx =
+            SessionContext::new_with_owned_sink(&sink, Some(owned), &runtime, &scope, &config);
         title_job = run_turn_core(&mut ctx, &config, parts, context_section, client.as_mut());
+        external_mock = ctx.external_mock_consumed();
     }))
     .is_err();
     if panicked {
@@ -267,7 +276,7 @@ pub fn run_turn(
         // 并行子运行预分配的区间被父跳过，父续写条目落在所有子区间之后。
         let next = llm::wrap_cursor(
             mock_start,
-            client.mock_consumed() + client.external_consumed(),
+            client.mock_consumed() + client.external_consumed() + external_mock,
             len,
         );
         let _ = runtime.with_session(&scope, |s| s.set_mock_cursor(next));
@@ -332,6 +341,54 @@ fn run_turn_core<C: RunContext>(
     context_section: Option<String>,
     client: &mut dyn LlmClient,
 ) -> Option<super::title::TitleJob> {
+    run_turn_core_with_mode(
+        ctx,
+        config,
+        TurnInput::User {
+            parts: parts.into(),
+            context_section,
+        },
+        client,
+    )
+}
+
+/// 回合输入的两种形态（change add-harness-subagents design §12.6）：
+/// - `User`：普通用户回合——user 消息在这里入队；
+/// - `Preloaded`：自动唤醒回合——完成通知已经由调度器写进会话历史（input + panel），
+///   这里**不再**入队（否则同一条通知会在历史里出现两次）。
+pub(crate) enum TurnInput {
+    User {
+        parts: DeliveryInput,
+        context_section: Option<String>,
+    },
+    Preloaded {
+        /// 通知文本（标题素材；自动回合不触发自动命名）。
+        user_text: String,
+    },
+}
+
+pub(crate) fn run_turn_core_with_mode<C: RunContext>(
+    ctx: &mut C,
+    config: &HarnessConfig,
+    input: TurnInput,
+    client: &mut dyn LlmClient,
+) -> Option<super::title::TitleJob> {
+    // 用户回合开始：排队中的后台通知必须在 user 消息**之前**并入历史（design §12.6.2），
+    // 并取消待起唤醒、清零链计数。自动回合的链计数已在调度器起回合时推进。
+    let mut preloaded: Option<String> = None;
+    let mut parts: Option<DeliveryInput> = None;
+    let mut context_section: Option<String> = None;
+    match input {
+        TurnInput::User {
+            parts: user_parts,
+            context_section: user_context,
+        } => {
+            ctx.begin_user_turn();
+            parts = Some(user_parts);
+            context_section = user_context;
+        }
+        TurnInput::Preloaded { user_text } => preloaded = Some(user_text),
+    }
     // user 消息入队（LLM 侧 + 面板侧 + JSONL + 上下文节记录，压缩重注入用）。
     // 上下文节由调用侧从 ContextBlock **同一次生成**并传入（装配与存储同源，M309）——
     // 不再从拼好的 message 里重解析（正文含 `\n\n[` 时会串味）。投递 parts 与面板文本是
@@ -339,33 +396,36 @@ fn run_turn_core<C: RunContext>(
     //
     // `turn_user_text`：本轮用户提问的**原文段**（剥掉自动注入的编辑器上下文节）——飘移信号的
     // 判据素材（change add-session-auto-naming，design D5：标题词元 vs 用户消息词元）。
-    let mut turn_user_text = String::new();
-    let enqueue = ctx.with_session(|s| {
-        let parts =
-            super::attachments::apply_context_section(parts.into().0, context_section.as_deref());
-        let item = super::attachments::user_item_of_parts(&parts);
-        let panel_text = item["content"]
-            .as_array()
-            .and_then(|content| super::attachments::panel_text_of_content(content))
-            .unwrap_or_default();
-        turn_user_text = strip_context_section(&panel_text).to_string();
-        s.push_input(item);
-        s.push_panel(PanelMessage {
-            role: "user".into(),
-            text: Some(panel_text),
-            summary: None,
-            name: None,
-            status: None,
-            reasoning: None,
-            decision: None,
-            ts: jsonl::unix_secs_now(),
+    let mut turn_user_text = preloaded.clone().unwrap_or_default();
+    if let Some(parts) = parts {
+        let context_section_for_session = context_section.clone();
+        let enqueue = ctx.with_session(|s| {
+            let parts =
+                super::attachments::apply_context_section(parts.0, context_section.as_deref());
+            let item = super::attachments::user_item_of_parts(&parts);
+            let panel_text = item["content"]
+                .as_array()
+                .and_then(|content| super::attachments::panel_text_of_content(content))
+                .unwrap_or_default();
+            turn_user_text = strip_context_section(&panel_text).to_string();
+            s.push_input(item);
+            s.push_panel(PanelMessage {
+                role: "user".into(),
+                text: Some(panel_text),
+                summary: None,
+                name: None,
+                status: None,
+                reasoning: None,
+                decision: None,
+                ts: jsonl::unix_secs_now(),
+            });
+            s.set_current_context(context_section_for_session);
+            // 留存口径：user 消息不进 sidecar——它逐字节在下一条 llm_request.messages 里。
         });
-        s.set_current_context(context_section);
-        // 留存口径：user 消息不进 sidecar——它逐字节在下一条 llm_request.messages 里。
-    });
-    if let Err(e) = enqueue {
-        ctx.sink().emit(events::error(&e.code, &e.message));
-        return None;
+        if let Err(e) = enqueue {
+            ctx.sink().emit(events::error(&e.code, &e.message));
+            return None;
+        }
     }
     // 中断标注的 base：本轮起点（user 消息已入队）——`abort_turn` 只在此后的消息里
     // 找 assistant 标注「已停止」，此前轮次的历史消息绝不误标（M348）。
@@ -396,6 +456,15 @@ fn run_turn_core<C: RunContext>(
             }
         }
         rounds += 1;
+        ctx.on_round(rounds as u32);
+        // mock 游标进度（design §18）：父回合每轮把「已弹条数 + 区间长度」告诉上下文，
+        // 子运行启动时据此分配不重叠的脚本区间。真 provider 上下文不消费它。
+        let script_len = client.mock_script_len();
+        ctx.note_mock_progress(
+            client.mock_consumed(),
+            client.mock_region_span(),
+            script_len,
+        );
 
         let request = build_request(ctx);
         // 发送量（M463）：实际会发的 body 字节数，与发送共用 client 的同一份 body 构造
@@ -413,7 +482,11 @@ fn run_turn_core<C: RunContext>(
             aborted: &aborted,
             reasoning_block,
         };
+        // provider 请求闸（design §12.3）：父会话自己的往返优先、子请求 FIFO；cron 与子运行
+        // 共用同一个 per-provider 信号量。单测替身没有闸（缺省 None）。
+        let request_permit = ctx.request_permit();
         let output = client.complete(&request, &stream);
+        drop(request_permit);
         // 翻译层诊断（chat 方言的悬空 function_call 丢弃等）：翻译期事件 wire 不可推导，
         // 按 sidecar 记录入留存（与本轮请求-响应同文件、紧贴发送点）。
         record_wire_diagnostics(ctx, client.take_wire_diagnostics());
@@ -425,6 +498,13 @@ fn run_turn_core<C: RunContext>(
             &output,
             client.fixture_source(),
             client.requests_encrypted_reasoning(),
+        );
+        // 响应已弹出：这一轮若含 `task` 调用，子运行区间必须从**本轮响应之后**开始分
+        // （design §18 的按 run 预分配区段）。放在发送前取会少算本轮这条。
+        ctx.note_mock_progress(
+            client.mock_consumed(),
+            client.mock_region_span(),
+            script_len,
         );
 
         // —— 思考兜底（M369）——
@@ -450,12 +530,17 @@ fn run_turn_core<C: RunContext>(
         }
 
         // —— 错误路径：上下文超限可压缩重试一次，其余错误即终态 ——
-        if let Some(error) = output.error {
+        if let Some(error) = output.error.clone() {
+            // 子运行引擎据此分 `quota` / `error`（design §7.3）；交互上下文是 no-op。
+            ctx.on_llm_error(&error);
             if error.context_overflow && config.auto_compact && !overflow_retried {
                 overflow_retried = true;
                 rounds -= 1; // 重试同一轮，不占循环额度
                 match compact_now(ctx, config, client) {
                     Ok(()) => {
+                        // 压缩重试成功：撤销刚才那条「上下文超限」错误，否则子运行引擎会把
+                        // 已恢复的请求误判为终态（设计 §7.5 的「沿用一次重试」）。
+                        ctx.on_llm_error_recovered();
                         // 停止检查点（M374）：压缩期间点的停止在此收口——否则 `continue`
                         // 会再开一轮 LLM 往返，被取消的请求重新跑起来（迟到完成复活）。
                         if ctx.aborted() {
@@ -517,6 +602,19 @@ fn run_turn_core<C: RunContext>(
         if let Some(snapshot) = usage_snapshot {
             ctx.sink().emit(events::usage(&snapshot));
         }
+        ctx.on_assistant_text(&assistant_text);
+        if let Some(usage) = turn_usage {
+            ctx.on_round_usage(&usage.into());
+        }
+        // token / 时间闸的「往返后复查」（design §7.1）：触顶后不再执行本轮的工具调用，
+        // 用已有产出收敛。轮次闸不在此复查——交互路径的 loop_max 语义是「跑完本轮调用、
+        // 下一轮不再发请求」，行为逐字节不变。
+        if let BudgetVerdict::Exhausted(reason) = ctx.budget(rounds as u32) {
+            if reason != super::run::StopReason::Rounds {
+                ctx.on_budget_exhausted(reason);
+                break;
+            }
+        }
 
         if output.is_empty_response() {
             ctx.sink().emit(events::error(
@@ -568,6 +666,10 @@ fn run_turn_core<C: RunContext>(
         }
     }
     ctx.sink().emit(events::done());
+    // 自动唤醒回合不是用户发言：不触发会话自动命名（标题素材需要真实问答）。
+    if preloaded.is_some() {
+        return None;
+    }
     // 会话自动命名（change add-session-auto-naming，design D1/D9）：`done` 之后做一次**纯内存**
     // 的触发判定 + 素材装配，把任务交回调用方起后台线程——轮完成路径不等 HTTP、不持会话锁发
     // 请求（ADR 0002 §6：不进 keypress-to-paint 与轮次完成路径）。
@@ -586,26 +688,87 @@ fn execute_calls<C: RunContext>(
     calls: &[llm::ToolCall],
 ) -> Result<Vec<(serde_json::Value, serde_json::Value)>, ()> {
     let mut results: BTreeMap<usize, (serde_json::Value, serde_json::Value)> = BTreeMap::new();
-    let mut handles: Vec<(usize, Box<dyn OrchestrationCall>)> = Vec::new();
+    // 编排调用（`task`）：先全部**启动**，再按调用序收敛（design §12.1 / §12.2）。
+    let mut handles: Vec<TaskHandleEntry> = Vec::new();
     for (index, call) in calls.iter().enumerate() {
         if ctx.aborted() {
             let executed: Vec<_> = results.values().cloned().collect();
             flush_call_items(ctx, &executed);
             return Err(());
         }
-        match ctx.orchestrate(call) {
-            Some(handle) => handles.push((index, handle)),
-            None => {
-                results.insert(index, handle_call(ctx, tctx, call));
-            }
+        if call.name == "task" {
+            // 工具行按调用序创建：started 事件在启动时发，done 在收敛时发（`finish_call`）。
+            let args_summary = summarize_args(&call.arguments);
+            ctx.sink()
+                .emit(events::tool_call(&call.name, "started", &args_summary));
+            let handle = ctx.orchestrate(call).unwrap_or_else(|| {
+                // 注册表约定：`task` 恒有句柄（含 disabled / 参数非法）；走到这里的上下文
+                // 不认识编排工具（子运行上下文）——按「不可用」如实回送。
+                Box::new(RejectedCall::new(serde_json::json!({
+                    "ok": false,
+                    "code": "disabled",
+                    "message": "当前运行不支持子代理委派",
+                }))) as Box<dyn OrchestrationCall>
+            });
+            handles.push(TaskHandleEntry {
+                index,
+                call: call.clone(),
+                args_summary,
+                handle,
+            });
+            continue;
         }
+        let (call_item, output_item) = handle_call(ctx, tctx, call);
+        results.insert(index, (call_item, output_item));
     }
-    join_in_call_order(&mut results, handles);
+    // 句柄已全部启动：这里按**调用顺序**逐个收敛，完成先后不改变回填顺序。
+    for entry in handles {
+        let value = entry.handle.result_value();
+        let output = ToolOutput { value };
+        let item = finish_call(ctx, &entry.call, output, entry.args_summary, None);
+        results.insert(entry.index, item);
+    }
     Ok(results.into_values().collect())
 }
 
-/// 编排调用的收敛与回填：句柄在 `execute_calls` 里已**启动**（`orchestrate` 立即返回），
-/// 这里逐个 `join` 只是等结果；**键是调用序号**，所以完成先后不影响回填顺序（design §12.2）。
+/// 一个已启动的编排调用（`task`）。
+struct TaskHandleEntry {
+    index: usize,
+    call: llm::ToolCall,
+    args_summary: String,
+    handle: Box<dyn OrchestrationCall>,
+}
+
+/// 立即收敛的编排结果（拒绝 / 不可用）：句柄在创建时就有结果，join 不阻塞。
+pub(crate) struct RejectedCall {
+    value: serde_json::Value,
+}
+
+impl RejectedCall {
+    pub(crate) fn new(value: serde_json::Value) -> Self {
+        Self { value }
+    }
+}
+
+impl OrchestrationCall for RejectedCall {
+    fn join(self: Box<Self>) -> (serde_json::Value, serde_json::Value) {
+        (
+            serde_json::json!({}),
+            serde_json::json!({
+                "type": "function_call_output",
+                "output": serde_json::to_string(&self.value).unwrap_or_default(),
+            }),
+        )
+    }
+
+    fn result_value(self: Box<Self>) -> serde_json::Value {
+        self.value
+    }
+}
+
+/// 编排调用的收敛与回填（M586 的纯顺序用例直测）：**键是调用序号**，完成先后不影响
+/// 回填顺序（design §12.2 第 3 条）。
+#[cfg(test)]
 fn join_in_call_order(
     results: &mut BTreeMap<usize, (serde_json::Value, serde_json::Value)>,
     handles: Vec<(usize, Box<dyn OrchestrationCall>)>,
@@ -938,6 +1101,16 @@ fn handle_call<C: RunContext>(
     let mut gate_decision: Option<&'static str> = None;
     let output = if !known {
         ToolOutput::err("tool_unknown", format!("未知工具：{}", call.name))
+    } else if !ctx.tool_allowed(&call.name) {
+        // 执行层二次校验（design §8.2）：子运行只拿到定义白名单里的工具，未声明的调用
+        // 在模型幻觉时也可能出现——拒绝、不执行。
+        ToolOutput::err(
+            "tool_not_allowed",
+            format!(
+                "子运行无权调用工具 {}（不在本定义的 tools 白名单里）",
+                call.name
+            ),
+        )
     } else if !args_ok {
         ToolOutput::err("tool_args_invalid", "工具调用的 arguments 不是合法 JSON")
     } else if let Err(output) = tools::check_purpose(&call.name, &args) {
@@ -981,6 +1154,22 @@ fn handle_call<C: RunContext>(
         }
     };
 
+    // 子运行引擎据此计 `tool_calls` 与 `denied_calls`（交互上下文是 no-op）。
+    ctx.on_tool_result(&call.name, &output.value);
+    finish_call(ctx, call, output, args_summary, gate_decision)
+}
+
+/// 一次工具调用的收尾（普通工具与编排工具共用）：细分终态、事件、面板行、结果项。
+///
+/// 编排工具（`task`）走同一条收尾路径，区别只在结果来自子运行句柄——因此工具行顺序
+/// 永远按调用序创建、只就地更新状态（design §12.2 第 2 条）。
+fn finish_call<C: RunContext>(
+    ctx: &mut C,
+    call: &llm::ToolCall,
+    output: ToolOutput,
+    args_summary: String,
+    gate_decision: Option<&'static str>,
+) -> (serde_json::Value, serde_json::Value) {
     // 细分终态（面板快照 PanelMessage.status 用）：done / denied / rejected / error。
     let status = if output.succeeded() {
         "done"
@@ -1188,7 +1377,17 @@ fn compact_now<C: RunContext>(
     // 发送量同 llm_request 一起记（M463，与发送共用 client 的 body 构造）。
     let compact_bytes = client.wire_body_bytes(&compact_request);
     record_llm_request(ctx, config, client, &compact_request, compact_bytes);
+    // 压缩也是一次 provider 请求：走同一个请求闸（design §12.3）。
+    let compact_permit = ctx.request_permit();
     let output = client.complete(&compact_request, &llm::DiscardStreamSink);
+    drop(compact_permit);
+    // 压缩 usage 计入本段预算、但不进任何模型桶（design §7.5）。
+    if let Some(usage) = output.usage {
+        ctx.on_compact_usage(&usage.into());
+    }
+    if let Some(error) = &output.error {
+        ctx.on_llm_error(error);
+    }
     record_wire_diagnostics(ctx, client.take_wire_diagnostics());
     record_llm_response(
         ctx,
@@ -1372,6 +1571,95 @@ fn denied_message(
     } else {
         plain
     }
+}
+
+/// 可跨线程持有的作用域事件出口（与 [`super::events::ScopedSink`] 同一信封语义，但内部
+/// 持有 `Arc<dyn EventSink>`）：子运行与自动唤醒回合在父回合结束后仍要发事件。
+struct OwnedScopedSink {
+    inner: std::sync::Arc<dyn EventSink>,
+    vault: String,
+}
+
+impl EventSink for OwnedScopedSink {
+    fn emit(&self, mut payload: serde_json::Value) {
+        events::stamp_vault(&mut payload, &self.vault);
+        self.inner.emit(payload);
+    }
+}
+
+/// 自动唤醒回合（change add-harness-subagents design §12.6）：通知已由调度器写进父会话
+/// 历史（input + panel），这里只起回合——因此用 `TurnInput::Preloaded`，不再入队 user 消息。
+///
+/// 返回 `false` = 父会话忙（用户恰好发了消息），调用方把这一批通知留到下一次机会；
+/// 此时**不**推进链计数（计数由调用方在真正起回合时加）。
+#[allow(dead_code)]
+pub(crate) fn run_auto_turn(
+    runtime: Runtime,
+    scope: VaultScope,
+    config: HarnessConfig,
+    sink: std::sync::Arc<dyn EventSink>,
+    user_text: String,
+) -> bool {
+    if runtime.acquire_turn(&scope, &config).is_err() {
+        return false;
+    }
+    run_auto_turn_acquired(runtime, scope, config, sink, user_text)
+}
+
+/// 已占用父会话后的自动回合本体（调度器在「插入通知」之前就 acquire，保证通知与回合
+/// 之间不会插进一个用户回合）。
+pub(crate) fn run_auto_turn_acquired(
+    runtime: Runtime,
+    scope: VaultScope,
+    config: HarnessConfig,
+    sink: std::sync::Arc<dyn EventSink>,
+    user_text: String,
+) -> bool {
+    let mock_start = runtime
+        .with_session(&scope, |session| session.mock_cursor())
+        .unwrap_or(0);
+    let mut client = match llm::client_at(&config, &scope.vault_id, mock_start, None) {
+        Ok(client) => client,
+        Err(error) => {
+            sink.emit(events::error(&error.code, &error.message));
+            runtime.release_turn(&scope);
+            return false;
+        }
+    };
+    let mut external_mock = 0;
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut ctx = SessionContext::new_with_owned_sink(
+            sink.as_ref(),
+            Some(sink.clone()),
+            &runtime,
+            &scope,
+            &config,
+        );
+        run_turn_core_with_mode(
+            &mut ctx,
+            &config,
+            TurnInput::Preloaded { user_text },
+            client.as_mut(),
+        );
+        external_mock = ctx.external_mock_consumed();
+    }))
+    .is_err();
+    if panicked {
+        sink.emit(events::error(
+            "harness_internal_error",
+            "自动回合发生内部错误，本轮已终止",
+        ));
+    }
+    if let Some(len) = client.mock_script_len() {
+        let next = llm::wrap_cursor(
+            mock_start,
+            client.mock_consumed() + client.external_consumed() + external_mock,
+            len,
+        );
+        let _ = runtime.with_session(&scope, |session| session.set_mock_cursor(next));
+    }
+    runtime.release_turn(&scope);
+    true
 }
 
 /// AppHandle 事件发射（真机路径；payload 是 JSON 对象，m303 零改动接入）。

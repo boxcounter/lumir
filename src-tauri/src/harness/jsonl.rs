@@ -127,6 +127,37 @@ pub fn vault_sessions_dir(vault_id: &str) -> Result<PathBuf, CommandError> {
     Ok(dir)
 }
 
+/// 子运行审计流水的根目录：`<config_dir>/harness/subruns`（change add-harness-subagents
+/// design §9.2）。MUST NOT 写 `sessions/`、MUST NOT 写 vault——这是审计轨迹，不是可恢复
+/// 会话；会话列举 / 恢复 / 删除链路不感知它。
+pub fn subruns_dir() -> Result<PathBuf, CommandError> {
+    let dir = crate::config::config_dir()?.join("harness").join("subruns");
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        CommandError::new(
+            "harness_jsonl_failed",
+            format!("无法创建子运行审计目录 {}：{e}", dir.display()),
+        )
+        .param("dir", dir.display().to_string())
+        .param("reason", e.to_string())
+    })?;
+    Ok(dir)
+}
+
+/// 本 vault 的子运行审计目录 `<config_dir>/harness/subruns/<vault 稳定 id>/`（按需创建）。
+pub fn vault_subruns_dir(vault_id: &str) -> Result<PathBuf, CommandError> {
+    let name = vault_dir_name(vault_id).unwrap_or(ORPHANED_DIR_NAME);
+    let dir = subruns_dir()?.join(name);
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        CommandError::new(
+            "harness_jsonl_failed",
+            format!("无法创建子运行审计目录 {}：{e}", dir.display()),
+        )
+        .param("dir", dir.display().to_string())
+        .param("reason", e.to_string())
+    })?;
+    Ok(dir)
+}
+
 /// 一个逻辑会话的留存句柄。append-only；首行恒为 `session_open`（构造时给定，
 /// **惰性**落到第一条记录时写入——从未记录的会话不落文件）。
 pub struct JsonlWriter {
@@ -135,6 +166,10 @@ pub struct JsonlWriter {
     /// 尚未写出的 `session_open` 行（序列化后的 envelope）。第一条 `record` 时
     /// 随文件创建一并写盘，写盘后即 `None`——首行不变量由这个挂起行保证。
     pending_open: Option<String>,
+    /// 首次打开是否要求**新建**文件（`create_new`）。会话留存恒 true（防 session id 碰撞
+    /// 静默踩别人的文件）；子运行审计的后续段是同一文件追加，此时为 false（create +
+    /// append）。
+    fresh: bool,
 }
 
 impl JsonlWriter {
@@ -166,7 +201,38 @@ impl JsonlWriter {
             path,
             file: None,
             pending_open: Some(line),
+            fresh: true,
         })
+    }
+
+    /// 指定路径建一个**新**留存文件句柄（子运行审计首段：`run_open` 作首行）。
+    pub fn create_at(path: PathBuf, open: &serde_json::Value) -> Result<Self, CommandError> {
+        let line = serde_json::to_string(&serde_json::json!({
+            "ts": unix_secs_now(),
+            "payload": open,
+        }))
+        .map_err(|e| {
+            CommandError::new("harness_jsonl_failed", format!("run_open 序列化失败：{e}"))
+                .param("dir", path.display().to_string())
+                .param("reason", e.to_string())
+        })?;
+        Ok(Self {
+            path,
+            file: None,
+            pending_open: Some(line),
+            fresh: true,
+        })
+    }
+
+    /// 指定路径**追加**到既有文件（子运行审计的后续段：同一文件追加 `run_segment` 等记录）。
+    /// 文件不存在时创建；首行不变量由首段保证，这里不写 `session_open`。
+    pub fn append_at(path: PathBuf) -> Self {
+        Self {
+            path,
+            file: None,
+            pending_open: None,
+            fresh: false,
+        }
     }
 
     /// 追加一条记录。首条记录先把挂起的 `session_open` 写出。写失败只打 stderr
@@ -207,11 +273,13 @@ impl JsonlWriter {
     /// 打开（创建）留存文件。`create_new` 防 session id 碰撞时静默踩别人的文件。
     /// 失败只打 stderr 并返回 false（记录侧纪律），调用侧据此跳过本条。
     fn open_file(&mut self) -> bool {
-        match OpenOptions::new()
-            .create_new(true)
-            .append(true)
-            .open(&self.path)
-        {
+        let mut options = OpenOptions::new();
+        if self.fresh {
+            options.create_new(true);
+        } else {
+            options.create(true);
+        }
+        match options.append(true).open(&self.path) {
             Ok(file) => {
                 self.file = Some(file);
                 true
@@ -265,6 +333,7 @@ impl JsonlWriter {
             path,
             file: None,
             pending_open: Some(line),
+            fresh: true,
         }
     }
 

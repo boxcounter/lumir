@@ -330,15 +330,15 @@ fn abort_withdraws_pending_approval() {
         "approval_request 事件",
     );
     // 中断前：待决项在快照里。
-    let pending = runtime.snapshot(&f.scope(), &config).pending_approval;
-    assert!(pending.is_some(), "中断前应有待决批准项");
+    let pending = runtime.snapshot(&f.scope(), &config).pending_approvals;
+    assert!(!pending.is_empty(), "中断前应有待决批准项");
     runtime.request_abort(&f.scope()).expect("abort ok");
     worker.join().unwrap();
     runtime.release_turn(&f.scope());
 
     // 待决批准项随中断收回：快照清空，approval 卡片数据源消失。
     let snapshot = runtime.snapshot(&f.scope(), &config);
-    assert!(snapshot.pending_approval.is_none(), "待决项应随中断收回");
+    assert!(snapshot.pending_approvals.is_empty(), "待决项应随中断收回");
     // 工具结果如实记 turn_aborted（不混同 approval_rejected / approval_stale）。
     let tool = snapshot.messages.iter().find(|m| m.role == "tool").unwrap();
     assert_eq!(tool.status.as_deref(), Some("error"));

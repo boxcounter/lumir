@@ -132,51 +132,92 @@
 
 ## 3. `task` 工具（`harness/tools.rs`）
 
-- [ ] 3.1 新增第 9 件工具 `task` 的定义（design §5.1 的 schema，含 `background`）与执行入口；文件头
+- [x] 3.1 新增第 9 件工具 `task` 的定义（design §5.1 的 schema，含 `background`）与执行入口；文件头
   「恰好 8 个」改为「8 件 vault 操作工具 + 1 件编排工具」，指向 ADR 0007 修订。
-- [ ] 3.2 工具注册条件：`enabled=false` 时不注册；对该工具的调用回送 `disabled`（单测）。
-- [ ] 3.3 参数校验：`agent` 命中清单、`prompt` 非空、`resume` 合法、`background` 布尔；失败码闭集合
+  （实现口径：定义在 `tools::task_definition`；执行入口是 `subagents::start_task`，由
+  `SessionContext::orchestrate` 接线。`task` 不走 `handle_call` 的权限管线——它是编排工具、
+  不操作 vault；工具行由 `turn::execute_calls` 按调用序发 started / `finish_call` 发 done。）
+- [x] 3.2 工具注册条件：`enabled=false` 时不注册；对该工具的调用回送 `disabled`（单测）。
+  （注册关闭点仍是 `run::gate_tool_definitions` 一处；调用侧短路在 `start_task_inner`。
+  单测 `disabled_subagents_reject_the_call`。）
+- [x] 3.3 参数校验：`agent` 命中清单、`prompt` 非空、`resume` 合法、`background` 布尔；失败码闭集合
   （`agent_not_found` / `run_not_resumable` / `run_busy` / `agent_mismatch` / `subrun_limit` /
   `concurrency_limit` / `model_not_configured` / `empty_prompt`）。
-- [ ] 3.4 结果信封与摘要截断：completed / partial / running / 失败四态、`run_id` / `resumable` /
+  （另有两个**参数形状**错误沿用统一信封的 `tool_args_invalid`：`background` 非布尔、参数不是
+  合法 JSON——闭集合是「子代理语义拒绝码」，形状错误仍走既有工具参数错误族。单测
+  `task_argument_validation_uses_the_closed_error_set`。）
+- [x] 3.4 结果信封与摘要截断：completed / partial / running / 失败四态、`run_id` / `resumable` /
   `model` / `segment`、8,000 字符上限 + 头尾保留 + `truncated`、`tool_calls` 计数；单测覆盖空摘要与
   超长摘要。
-- [ ] 3.5 后台启动路径：拿不到并发许可 ⇒ `concurrency_limit`；拿到即返回 `status=running` 并把句柄
+  （截断函数 `tools::truncate_task_summary`；信封在 `subagents::report_envelope`。段号
+  `segment` 在诊断事件与审计里，信封按 design §5.2 的形状不重复带 segment。单测
+  `long_summary_is_truncated_with_a_marker` / `tools::tests::task_summary_truncation_keeps_head_and_tail`。）
+- [x] 3.5 后台启动路径：拿不到并发许可 ⇒ `concurrency_limit`；拿到即返回 `status=running` 并把句柄
   交调度器（单测：启动后父回合不等它、句柄可见）。
+  （单测 `background_start_returns_running_without_waiting` / `background_concurrency_limit_is_reported`。）
 
 ## 4. 子运行引擎与调度（`harness/subagents.rs`、`harness/scheduler.rs` 新建）
 
-- [ ] 4.1 `ChildContext`：本地 `Session::new`（不插入 `Runtime.sessions`，不碰父 busy 锁）、
+- [x] 4.1 `ChildContext`：本地 `Session::new`（不插入 `Runtime.sessions`，不碰父 busy 锁）、
   `ChildSink`（过程事件转面板事件 + 只计 tool_calls）、`permission()` 复用 `permissions::decide`、
   `approval()` 走透传通道、每 run 一线程。
-- [ ] 4.2 上下文装配：`assemble_system` 增加「定义正文替换身份段 + 委托约束段」变体；AGENTS 三层与
+  （`harness/subagents.rs`；每 run 线程名 `lumir-subagent-<run_id>`。`ChildSink` 吞掉 text /
+  reasoning / usage / done / error 等会污染父会话的事件，只转 `subagent_step` / `subagent_progress`
+  与审批卡。）
+- [x] 4.2 上下文装配：`assemble_system` 增加「定义正文替换身份段 + 委托约束段」变体；AGENTS 三层与
   Skill 索引照常；输入为空历史 + 一条 user 消息；不注入编辑器上下文（单测断言 system 与 messages）。
-- [ ] 4.3 三重闸 + 配额：预算来自定义（夹取配置上限）；检查点（往返前、工具调用前、往返后 token
+  （`context::assemble_system_for_subagent`；单测 `subagent_system_and_messages_are_isolated`。）
+- [x] 4.3 三重闸 + 配额：预算来自定义（夹取配置上限）；检查点（往返前、工具调用前、往返后 token
   复查）；时间闸按运行时长累计、审批等待顺延；provider 配额 / 限流 ⇒ `stopped_by=quota` 且不重试
   （单测覆盖四闸 + 停止 + 审批等待不计时）。
-- [ ] 4.4 错误语义：API 错误但有文本 ⇒ partial + `stopped_by=error`；无文本 ⇒ failed；不自动重试
+  （往返后复查在 `turn::run_turn_core_with_mode`（只对 tokens / time 生效，交互 loop_max 语义不变）。
+  单测 `three_budgets_stop_with_the_right_reason` / `approval_wait_does_not_count_against_the_time_budget`
+  / `api_error_and_quota_semantics`。）
+- [x] 4.4 错误语义：API 错误但有文本 ⇒ partial + `stopped_by=error`；无文本 ⇒ failed；不自动重试
   （单测）。
-- [ ] 4.5 收尾幂等：`catch_unwind` 后显式执行收尾（按模型记账、写 sidecar、事件、flush），任何终态
+  （单测同上；quota 无产出时按 failed 收口。）
+- [x] 4.5 收尾幂等：`catch_unwind` 后显式执行收尾（按模型记账、写 sidecar、事件、flush），任何终态
   只收尾一次；审计写失败不阻断（`audit_error`）。
-- [ ] 4.6 resume：内存保留（`MAX_RETAINED_RUNS = 4`，LRU、运行中不淘汰）、agent 一致性校验、模型
+  （`SegmentReport` + `ChildContext::finish` 的 `finished` 标志；单测 `finish_is_idempotent`。
+  审计目录不可用时 `audit_error` 进 `subagent_finished`，运行照常。）
+- [x] 4.6 resume：内存保留（`MAX_RETAINED_RUNS = 4`，LRU、运行中不淘汰）、agent 一致性校验、模型
   解析序、新段预算、审计同文件追加 `run_segment`、运行中 run 回 `run_busy`；父会话重置 / 恢复 / 关
   vault 清空保留并中止后台 run（单测覆盖淘汰、重启等价、定义不匹配、运行中续跑被拒）。
-- [ ] 4.7 上下文溢出与压缩边界：沿用压缩重试一次；压缩只压内存态输入、不轮转审计文件、落 `compact`
+  （保留表挂在 `Session` 的 `SubagentHub` 上，`Session::Drop → hub.shutdown()` 清空并广播中止。
+  单测 `resume_continues_the_same_subrun` / `resume_busy_and_eviction_boundaries`。）
+- [x] 4.7 上下文溢出与压缩边界：沿用压缩重试一次；压缩只压内存态输入、不轮转审计文件、落 `compact`
   sidecar；压缩 usage 计入段预算但不进任何模型桶（单测）。
-- [ ] 4.8 次数闸：`max_subruns_per_turn` 按父回合计数（前台 + 后台）、只计实际执行的段；超出回
+  （`ChildContext::begin_compacted_session` 只替换内存 input、审计同文件追加 `compact`；单测
+  `context_overflow_compacts_and_retries_once`。）
+- [x] 4.8 次数闸：`max_subruns_per_turn` 按父回合计数（前台 + 后台）、只计实际执行的段；超出回
   `subrun_limit`；被拒调用不占额度（单测）。
-- [ ] 4.9 并发调度器（`scheduler.rs`）：会话级计数信号量 `max_concurrent`（前台阻塞取、后台非阻塞
+  （`SubagentHub.turn_segments` 在用户回合 / 自动回合开始时复位；单测
+  `subrun_limit_counts_only_executed_segments`。）
+- [x] 4.9 并发调度器（`scheduler.rs`）：会话级计数信号量 `max_concurrent`（前台阻塞取、后台非阻塞
   取）+ 每 provider 请求闸（`max_concurrent + 1`，父请求优先、子请求 FIFO）；cron 运行共用该闸。
   单测：并行 N 个 run 时在飞请求数不超上限；父往返不被子 run 饿死。
-- [ ] 4.10 事件交错：`task` 工具行按调用顺序创建 / 就地更新；工具结果按调用序回填；过程事件带
+  （`scheduler::{ConcurrencyGate, ProviderGate}`；provider 闸按 provider 进程内单例，交互与
+  无人值守槽位都经同一个 `RunContext::request_permit` 取，cron 无需另接。单测
+  `provider_gate_prioritises_parent_requests`。）
+- [x] 4.10 事件交错：`task` 工具行按调用顺序创建 / 就地更新；工具结果按调用序回填；过程事件带
   `run_id` + `segment` 且同 run 有序；审计按 run 隔离（单测：交错完成顺序不改变 transcript 行序与
   结果序）。
-- [ ] 4.11 后台生命周期：跨回合运行不改 busy；父回合停止广播中止；单个 run 可从面板停止；会话重置 /
+  （`turn::execute_calls` 先全部启动、按调用序收敛；`finish_call` 是普通工具与 `task` 共用的唯一
+  收尾点。M586 的 `parallel_orchestration_backfills_in_call_order` 继续覆盖回填顺序。）
+- [x] 4.11 后台生命周期：跨回合运行不改 busy；父回合停止广播中止；单个 run 可从面板停止；会话重置 /
   恢复 / 切 vault / 退出中止并记 `aborted`（单测覆盖四条）。
-- [ ] 4.12 批准透传接线：`ApprovalRequest` 增加 `source`（agent / run_id / description）；会话待批
+  （`SubagentHub::broadcast_abort` / `stop_run`；`Session::Drop → shutdown` 覆盖重置 / 恢复 /
+  切 vault / 退出。停止单个 run 的命令层接线归 M590；本棒提供 `stop_run` 唯一实现体。单测
+  `aborted_background_run_does_not_wake`。）
+- [x] 4.12 批准透传接线：`ApprovalRequest` 增加 `source`（agent / run_id / description）；会话待批
   由单槽改列表 `pending_approvals`（快照字段一次迁净，旧字段直接删）；批准 / 拒绝 / 本会话不再问 /
   停止收回四条路径的单测；断言「持 `Runtime.sessions` 锁时不等待用户或子运行」。
-- [ ] 4.13 自动唤醒调度（`scheduler.rs`）：每父会话一个调度器（`pending` 批次 / `running` / `chain`）；
+  （`approval::ApprovalSource`；`Session.pending` 改列表，`resolve_approval` 按 id 移除、
+  `request_abort` 全部 `Withdrawn`、`withdraw_approvals_of_run` 只收单个 run。集成测试
+  `harness_runtime.rs` / `abort_turn.rs` 同步迁到 `pending_approvals`。单测
+  `approval_is_passed_through_and_denial_keeps_the_run_going` /
+  `session_lock_is_never_held_while_waiting_for_approval`。）
+- [x] 4.13 自动唤醒调度（`scheduler.rs`）：每父会话一个调度器（`pending` 批次 / `running` / `chain`）；
   空闲时合并窗口 `AUTO_WAKE_COALESCE_MS = 2000`（首条通知起算、不顺延）后起一个回合；正忙时排队、
   回合结束后合并为一个回合；同一时刻至多一个自动回合在飞、至多一个待起批次；通知以带 `auto_notice`
   标记的 user 消息落进父会话历史（内容真源 = 随后第一条 `llm_request.messages`，不另写完成内容记录）。
@@ -184,11 +225,22 @@
   `shown_at`），供「已上屏、未消费」窗口的恢复。单测：空闲唤醒、两 run 忙时合并为 1 个回合、
   在飞时排队、用户回合撤销待起唤醒并把通知并入用户回合输入、上屏后退出→恢复按标记重建且不补唤醒、
   通知已进过 `llm_request` 时标记被判陈旧不重复上屏。
-- [ ] 4.14 链式失控闸：常量 `AUTO_WAKE_CHAIN_MAX = 5`（代码常量，不进 `SubagentsConfig`）；计数在
+  （调度状态与投递在 `SubagentHub` / `wake_worker`；`AUTO_WAKE_*` 常量与 provider 闸在
+  `scheduler.rs`。标记写于**收敛时**（「已上屏、未消费」的崩溃窗口要求标记先于上屏存在——
+  §8.23 的空闲窗口内终止变体），上屏在合并窗口到期时。恢复重建函数
+  `restored_notice_texts` / `notice_batch_consumed` 已单测；重建已接进
+  `Runtime::resume_session`（通知灌回 input、面板加 `notice` 行、投递标记复制进新文件，
+  不起回合）。面板的渲染样式归 M590。单测
+  `idle_background_result_wakes_one_parent_turn` / `busy_background_results_merge_into_one_turn` /
+  `notice_markers_rebuild_only_unconsumed_batches`。）
+- [x] 4.14 链式失控闸：常量 `AUTO_WAKE_CHAIN_MAX = 5`（代码常量，不进 `SubagentsConfig`）；计数在
   自动回合开始时加一，用户回合开始 / 面板「继续」/ 会话重置恢复切 vault 时清零，不持久化；触顶
   不起回合、`auto_wake.blocked = "chain_limit"`、通知照常上屏并写投递标记；用户停止自动回合视同触顶
   （`blocked = "stopped"`）。单测覆盖：链内五回合放行、第 6 次触顶、清零后恢复、停止后不再唤醒、
   aborted 不唤醒、自动回合内部触顶 `loop_max` 不改变链计数（两者正交）。
+  （`SubagentHub::continue_wake` 是面板「继续」的实现体；会话重建由 `Session::Drop` 清空。
+  单测 `chain_limit_blocks_the_sixth_wake` / `stopping_the_auto_turn_blocks_further_wakes` /
+  `auto_turn_loop_max_does_not_touch_the_chain`。）
 
 ## 5. 用量归属与留存
 

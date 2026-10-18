@@ -32,6 +32,8 @@
 //!   按 vault 一份；MUST NOT 触碰 vault）
 //! - [`agents`]：子代理定义文件（两作用域扫描、frontmatter 校验、优先级、内建 `explore`、清单）
 //! - [`run`]：运行公共层（`RunSpec` / `RunContext`；交互槽位的 `SessionContext` 实现）
+//! - [`subagents`]：子运行引擎与中枢（`ChildContext`、三重闸、resume 保留表、后台通知与自动唤醒）
+//! - [`scheduler`]：并发与唤醒调度原语（provider 请求闸、会话级并发许可、链闸常量）
 //! - [`turn`]：工具循环编排（上下文注入、多轮往返、loop_max、自动压缩、超限重试）
 //! - [`events`]：`harness:event` 九类事件载荷（与 m303 面板共用的钉死契约）
 //! - [`thinking`]：思考程度档位／provider 能力与请求映射、reasoning 展示文本提取（M362）
@@ -48,7 +50,9 @@ pub mod llm;
 pub mod permission_cache;
 pub mod permissions;
 pub mod run;
+pub mod scheduler;
 pub mod session;
+pub mod subagents;
 pub mod thinking;
 pub mod title;
 pub mod tools;
@@ -552,8 +556,28 @@ impl Runtime {
                 ))
             })
             .collect();
-        let messages = restored_panel_messages(&restored, &restored_ts, &approvals);
+        // 「已上屏、未消费」的后台完成通知（change add-harness-subagents design §12.6.4）：
+        // 留存里的投递标记若未被任何 `llm_request.messages` 消费，就据标记 + `subrun`
+        // sidecar 重建通知并上屏；它在这里直接进灌回的 input（用户下一次发言的请求里就带着
+        // 它），MUST NOT 自动起回合——恢复不是收敛事件。标记同时复制进新文件，保证「重建
+        // 后再次退出」仍可恢复。
+        let restored_notices = subagents::restored_notices(&file.records);
         let restored_items = restored.len();
+        let mut messages = restored_panel_messages(&restored, &restored_ts, &approvals);
+        for notice in &restored_notices {
+            restored.push(session::user_item(&notice.text));
+            restored_ts.push(None);
+            messages.push(session::PanelMessage {
+                role: "notice".into(),
+                text: Some(subagents::notice_display_text(&notice.text)),
+                summary: Some(notice.wake_batch.clone()),
+                name: None,
+                status: None,
+                reasoning: None,
+                decision: None,
+                ts: jsonl::unix_secs_now(),
+            });
+        }
         let mut new_session =
             session::Session::new(scope.root.clone(), system, restored, effort, writer);
         // 会话两份视角（input / panel）随同一个动作一起成立——不重建的话恢复出的会话面板为空，
@@ -564,6 +588,16 @@ impl Runtime {
         // 读数落种（M526）：恢复出的会话从源会话的最近一次真实读数接着显示/累计
         // （快照与累计器同源自上面的重算，事件/快照两条通道此后看到的与留存可推导值一致）。
         new_session.restore_usage(usage_snapshot, cache_totals);
+        // 重建通知的投递标记复制进新文件（同一批的 run_ids / wake_batch）：这份会话若在
+        // 通知进入任何 `llm_request` 之前再次被退出，下一次恢复仍能重建它。
+        for notice in &restored_notices {
+            new_session.jsonl().record(&serde_json::json!({
+                "kind": "notice_delivered",
+                "run_ids": notice.run_ids,
+                "wake_batch": notice.wake_batch,
+                "shown_at": jsonl::unix_secs_now(),
+            }));
+        }
         // 继承标题（design D7）：新文件 `session_open` 之后紧接一条 `inherit` 记录。恢复入口只在
         // 非 busy 时可达，因此这里不违反「标题记录只在会话空闲时追加」（此处新文件还没有任何
         // 请求 / 响应对，记录也不会插进一对之间）。
@@ -1430,7 +1464,9 @@ pub fn harness_new_session(
 
 /// 当前 vault 会话快照 JSON（供 webview 重载后面板恢复渲染）。
 /// 键集合是 m303 消费形状的超集：`vault`（会话标识 = vault 根路径，M312）/ `messages[]` /
-/// `usage` / `pending_approval` / `warn_ctx_pct` / `thinking`（M362：`{level, supported}`）/
+/// `usage` / `pending_approvals`（列表，change add-harness-subagents §8.3 起替代单槽
+/// `pending_approval`）/ `auto_wake`（链计数 / 上限 / 触顶原因）/ `subrun_usage`（按模型分桶）/
+/// `warn_ctx_pct` / `thinking`（M362：`{level, supported}`）/
 /// `title`（change add-session-auto-naming：有效标题，无标题时缺键——前端回落首条用户消息口径）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn harness_state(

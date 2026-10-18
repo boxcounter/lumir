@@ -273,6 +273,24 @@ pub fn definitions_with_subagents(catalog: &AgentCatalog) -> Vec<serde_json::Val
     definitions
 }
 
+/// 子运行结果摘要的字符上限（change add-harness-subagents design §5.2：经验初值，与
+/// `cli_run` 单侧 10,000 字符同量级）。超出取头尾各一半、中间显式标 `…[截断]`。
+pub const TASK_SUMMARY_LIMIT: usize = 8_000;
+
+/// 结果信封的摘要截断：返回 `(文本, 是否截断)`。MUST NOT 静默截断——`truncated` 字段
+/// 跟着信封回给父模型。
+pub fn truncate_task_summary(text: &str) -> (String, bool) {
+    let count = text.chars().count();
+    if count <= TASK_SUMMARY_LIMIT {
+        return (text.to_string(), false);
+    }
+    let head_len = TASK_SUMMARY_LIMIT / 2;
+    let tail_len = TASK_SUMMARY_LIMIT - head_len;
+    let head: String = text.chars().take(head_len).collect();
+    let tail: String = text.chars().skip(count.saturating_sub(tail_len)).collect();
+    (format!("{head}…[截断]…{tail}"), true)
+}
+
 /// cli_run 的 argv（command + args）：分类器 / 写目标提取的输入，也是主体串的来源
 /// （单一真源——argv 只在这一处从 JSON 参数里取出，判定层与分类层不各解析一遍）。
 pub fn cli_argv(args: &serde_json::Value) -> Vec<String> {
@@ -1475,6 +1493,27 @@ mod tests {
         // 未知 shell 不猜旗标 ⇒ 回落继承 PATH。
         assert_eq!(login_shell_flags(Path::new("/opt/homebrew/bin/fish")), None);
         assert_eq!(login_shell_flags(Path::new("nu")), None);
+    }
+
+    /// 子运行摘要信封的截断（§3.4）：空串原样、恰好上限不截断、超限保留头尾并显式标记。
+    #[test]
+    fn task_summary_truncation_keeps_head_and_tail() {
+        let (empty, truncated) = truncate_task_summary("");
+        assert_eq!(empty, "");
+        assert!(!truncated);
+
+        let exact: String = "a".repeat(TASK_SUMMARY_LIMIT);
+        let (kept, truncated) = truncate_task_summary(&exact);
+        assert_eq!(kept.chars().count(), TASK_SUMMARY_LIMIT);
+        assert!(!truncated);
+
+        let long: String = "0123456789".repeat(900);
+        let (cut, truncated) = truncate_task_summary(&long);
+        assert!(truncated);
+        assert!(cut.contains("…[截断]…"));
+        assert!(cut.starts_with("0123456789"));
+        assert!(cut.ends_with("0123456789"));
+        assert!(cut.chars().count() <= TASK_SUMMARY_LIMIT + "…[截断]…".chars().count());
     }
 
     /// 受控假 shell：验证「起子进程 → 夹取标记 → 解析」完整链路。真 zsh 会读用户启动文件，

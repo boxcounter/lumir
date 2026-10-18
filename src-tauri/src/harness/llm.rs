@@ -479,6 +479,44 @@ pub trait LlmClient: Send {
     fn take_wire_diagnostics(&mut self) -> Vec<WireDiagnostic> {
         Vec::new()
     }
+
+    /// mock：一次子运行在脚本里预分配的连续区间长度（design §18「并行时按 run 预分配区段」）。
+    /// 父回合在启动 `task` 时按它前进游标，子运行只在自己的区间内弹。真 provider 无此概念，
+    /// 缺省 1（与「每条响应一个调用段」的常见 fixture 对齐）。
+    fn mock_region_span(&self) -> usize {
+        1
+    }
+}
+
+/// provider 配额耗尽 / 限流的判定（change add-harness-subagents design §7.3）：只看错误码
+/// 与文案里的稳定特征串。命中 ⇒ 该段以 `stopped_by=quota` 收敛，**不自动重试、不换模型**。
+/// 与「上下文超限」的判定同族（特征串表在这里，不在子运行引擎里）。
+pub fn is_quota_error(error: &TurnError) -> bool {
+    const NEEDLES: [&str; 6] = [
+        "quota",
+        "rate limit",
+        "rate_limit",
+        "too many requests",
+        "429",
+        "resource_exhausted",
+    ];
+    let haystack = format!("{} {}", error.code, error.message).to_lowercase();
+    NEEDLES.iter().any(|needle| haystack.contains(needle))
+}
+
+/// fixture 顶层声明的子运行区间长度（design §18；缺省 1）。子运行启动时按它分配不重叠的
+/// 脚本区间——读的是**同一份 fixture**，不在调用侧另拿一个常量。
+pub fn mock_region_span(config: &HarnessConfig) -> usize {
+    config
+        .providers
+        .mock
+        .fixture
+        .as_deref()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| value["subrun_span"].as_u64())
+        .map(|span| (span as usize).max(1))
+        .unwrap_or(1)
 }
 
 /// 会话级 mock 游标推进（M456）：`start` 是本轮起点、`consumed` 是本轮弹出的条数，
@@ -1931,6 +1969,11 @@ struct FixtureResponse {
     chunk_delay_ms: u64,
 }
 
+/// 子运行预分配区间的缺省长度（design §18；fixture 顶层 `subrun_span` 可覆盖）。
+fn default_subrun_span() -> usize {
+    1
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 struct FixtureToolCall {
     id: String,
@@ -1985,6 +2028,8 @@ pub struct MockClient {
     /// `fixture_exhausted`——缺失 / 空 / 弹尽都要落到解析侧判非法，而不是让一次性调用把
     /// 「脚本漏写」伪装成网络错误。
     empty_on_exhaust: bool,
+    /// 子运行区间的默认长度（fixture 顶层 `subrun_span`，缺省 1；design §18）。
+    subrun_span: usize,
 }
 
 impl MockClient {
@@ -2007,6 +2052,9 @@ impl MockClient {
         struct FixtureFile {
             #[serde(default)]
             responses: Vec<FixtureResponse>,
+            /// 并行子运行预分配区间长度（design §18；缺省 1）。
+            #[serde(default = "default_subrun_span")]
+            subrun_span: usize,
         }
         let file: FixtureFile = serde_json::from_str(text).map_err(|e| {
             CommandError::new(
@@ -2026,6 +2074,7 @@ impl MockClient {
             vault_id: String::new(),
             received_inputs: Vec::new(),
             empty_on_exhaust: false,
+            subrun_span: file.subrun_span.max(1),
         })
     }
 
@@ -2099,6 +2148,7 @@ impl MockClient {
             vault_id: String::new(),
             received_inputs: Vec::new(),
             empty_on_exhaust: true,
+            subrun_span: 1,
         })
     }
 
@@ -2173,6 +2223,10 @@ impl LlmClient for MockClient {
             }
             self.external += 1;
         }
+    }
+
+    fn mock_region_span(&self) -> usize {
+        self.subrun_span
     }
 
     fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput {
