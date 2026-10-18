@@ -134,5 +134,4 @@
    走便宜档，需要在配置里再加一档显式的「命名模型」默认值——那属于产品取舍。
 3. **语义名允许的字符集**：推荐允许 Unicode 字母（含中日韩字符，如 `架构总览-a3f2c4.webp`），
    空白 / 下划线折叠为 `-`，禁用路径分隔符与文件系统保留字符，长度上限 40 字符。备选：只允许
-   ASCII kebab-case（如 `architecture-overview-a3f2c4.webp`），代价是中文笔记的图片名仍是英文
-   转述、可读性打折。
+   ASCII kebab-case（如 `architecture-overview-a3f2c4.webp`），代价是中文笔记的图片名仍是英文转述、可读性打折。
