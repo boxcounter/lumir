@@ -532,6 +532,11 @@ export function createRenameEchoGuard(
           // `created:to`（走「检测到外部修改」分支）。子树前缀一并覆盖（目录改名）。
           if (within(path, pair.from)) {
             pair.sawFrom = true;
+            // `from === to` 的条目（图片语义命名的「这篇笔记被本应用改写」登记）只有一个
+            // 可匹配的路径：命中一次即视作双向满足，`settle()` 才能收走它。否则它只会在
+            // `sawTo` 恒 false 的情况下挂到 TTL 过期——窗口尾部到达的**真实**外部变更会被
+            // 一并吞掉（评审 r1 P2-3）。
+            if (pair.from === pair.to) pair.sawTo = true;
             skipped.add(path);
             break;
           }

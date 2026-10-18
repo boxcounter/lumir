@@ -748,7 +748,7 @@ test("语义命名改写引用后的基准推进：dirty 只换基准，clean �
   // clean 文档：按既有 reload 路径从磁盘重载（拿到盘上的新内容与新 revision）。
   rig.editor.open("b.md", "# B");
   rig.controller.noteOpened("b.md", "rev-1");
-  rig.controller.noteRewritten("b.md", "rev-disk-2");
+  await rig.controller.noteRewritten("b.md", "rev-disk-2");
   await flush();
   assert.deepEqual(rig.editor.reloads.at(-1), {
     path: "b.md",
@@ -761,7 +761,7 @@ test("语义命名改写引用后的基准推进：dirty 只换基准，clean �
   rig.controller.noteOpened("c.md", "rev-1");
   rig.editor.edit("c.md", "# C 改");
   const before = rig.editor.reloads.length;
-  rig.controller.noteRewritten("c.md", "rev-disk-2");
+  await rig.controller.noteRewritten("c.md", "rev-disk-2");
   await flush();
   assert.equal(rig.editor.reloads.length, before, "dirty 文档不重载");
   assert.equal(rig.editor.handle.sessionForPath("c.md")!.state.doc.toString(), "# C 改");

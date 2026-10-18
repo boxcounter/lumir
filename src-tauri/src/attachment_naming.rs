@@ -30,7 +30,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use crate::commands::{CommandError, VaultState};
-use crate::config::{self, HarnessConfig};
+use crate::config;
 use crate::fs_io::{self, IgnorePolicy};
 use crate::harness::llm::{self, LlmClient};
 use crate::harness::thinking::ThinkingEffort;
@@ -632,12 +632,14 @@ fn run_with_client(
     if final_hash != hash16 {
         return NamingOutcome::skipped(&path, CODE_FILE_CHANGED);
     }
-    // 目标名规划（撞名按 6 → 8 → 12 → 16 位扩展；同内容占用 = 放弃改名）。
-    let planned = fs_io::plan_semantic_name(root, policy, &slug, &hash16, &extension);
-    let new_name = match planned {
+    // 目标名规划（撞名按 6 → 8 → 12 → 16 位扩展）。
+    let new_name = match fs_io::plan_semantic_name(root, policy, &slug, &hash16, &extension) {
         fs_io::PlannedSemanticName::Available(name) => name,
-        fs_io::PlannedSemanticName::OccupiedBySameContent(_) => {
-            return NamingOutcome::skipped(&path, CODE_OCCUPIED)
+        // 同一内容已有语义名（并发 / 手工复制的边缘场景）：**复用既有位置**，不再产生第二个
+        // 副本（design §2「内容相同的占用……直接放弃改名并复用既有位置」，评审 r1 P2-4 的
+        // 选项「实现复用」）。暂存副本的引用改指既有文件，随后删掉暂存副本。
+        fs_io::PlannedSemanticName::OccupiedBySameContent(existing) => {
+            return reuse_existing(root, policy, &path, &existing, &name, emit)
         }
         fs_io::PlannedSemanticName::Exhausted => {
             return NamingOutcome::skipped(&path, CODE_NAME_EXHAUSTED)
@@ -681,6 +683,66 @@ fn run_with_client(
         rewritten,
         skipped,
         undo_token: Some(token),
+        code: None,
+    }
+}
+
+/// 复用既有语义名文件（design §2 的「内容相同的占用」分支，评审 r1 P2-4）：把指向**暂存副本**
+/// 的引用改指既有文件，然后删掉暂存副本——「MUST NOT 产生第二个副本」因此在这一支也成立。
+///
+/// 顺序（与改名路径同一条纪律）：先在 rename / 删除**之前**扫描引用（design §5.1 的理由同样
+/// 适用：暂存名一旦消失就不再可解析），逐篇 CAS 改写，最后删暂存副本。
+///
+/// 两条保守口径：
+/// - **有笔记没改成（`skipped` 非空）就保留暂存副本**——那些引用仍指向暂存名，删掉就是断链。
+///   副本多出来的那一份比静默断链便宜（与 design §5.4「失败不回滚改名、点名未更新数量」同侧）。
+/// - 删除失败同样保留副本，只落一条诊断；引用已经改对，功能面没有损失。
+///
+/// 结果按 `renamed` 返回（引用确实换了名字、前端要做同一套对账），但**不带撤销令牌**：撤销
+/// 只对称于「本任务把文件改了名」，而既有语义文件不是本任务改的——给它一个会把别人的名字改回
+/// 暂存名的入口是错的（设计上「撤销 = 与改名对称的反向操作」）。
+fn reuse_existing(
+    root: &Path,
+    policy: &IgnorePolicy,
+    staging_path: &str,
+    existing_path: &str,
+    staging_name: &str,
+    emit: &dyn Fn(&NamingEcho),
+) -> NamingOutcome {
+    let Some(existing_name) = existing_path.rsplit('/').next().map(str::to_string) else {
+        return NamingOutcome::skipped(staging_path, CODE_OCCUPIED);
+    };
+    let (hits, unreadable) = scan_references(root, policy, staging_path, &existing_name);
+    emit(&NamingEcho {
+        from: staging_path.to_string(),
+        to: existing_path.to_string(),
+        notes: hits.iter().map(|hit| hit.path.clone()).collect(),
+    });
+    let (rewritten, mut skipped) = apply_hits(root, &hits);
+    skipped.extend(unreadable);
+    if skipped.is_empty() {
+        // 删除直接走 std（不构造 CommandError）：这一步是收尾清理，失败只降级成诊断——
+        // 造一个永远不会上屏、也没有 ERROR_COPY 条目的错误码等于加一条幽灵协议面。
+        let removed = fs_io::resolve_in_vault(root, staging_path)
+            .ok()
+            .is_some_and(|abs| std::fs::remove_file(abs).is_ok());
+        if !removed {
+            // 引用都已改指，副本留着只是多一份同内容文件；落一条诊断即可。
+            crate::logging::attachment_naming(staging_path, "duplicate_cleanup_failed");
+        }
+    } else {
+        // 有引用没改成：保留暂存副本（断链比多一份副本糟）。
+        crate::logging::attachment_naming(staging_path, "duplicate_cleanup_deferred");
+    }
+    NamingOutcome {
+        status: NamingStatus::Renamed,
+        old_path: Some(staging_path.to_string()),
+        new_path: Some(existing_path.to_string()),
+        old_name: Some(staging_name.to_string()),
+        new_name: Some(existing_name),
+        rewritten,
+        skipped,
+        undo_token: None,
         code: None,
     }
 }
@@ -853,12 +915,6 @@ pub fn load_config() -> Result<config::ConfigSnapshot, CommandError> {
     config::load()
 }
 
-/// 一次命名的配置快照是否允许发起（命令层在投递线程之前做的最便宜的一道闸；
-/// 承重判据仍是 [`run`] 里的逐项判定）。
-pub fn enabled(harness: &HarnessConfig, semantic_naming: bool, naming_model: Option<&str>) -> bool {
-    semantic_naming && harness.attachment_naming_model(naming_model).is_some()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -911,12 +967,19 @@ mod tests {
     }
 
     /// 资格判定的四档（design §4.2 / task 4.9）：开 + 有 vision / 开 + 无 vision / 关 / mock。
+    ///
+    /// 断言的是 [`run`] 里**实际执行的展开式**（开关 && 模型资格），不另设封装函数——评审 r1
+    /// P2-1 判定过一个只有测试调用的 `enabled()` 是假闸（REVIEW.md「值或开关声明了却没有消费
+    /// 者」条），已删除；测试与 `run` 读同一组判据，也就没有第二处真源。
     #[test]
-    fn enabled_gate_covers_four_tiers() {
+    fn naming_qualification_covers_four_tiers() {
         use crate::config::{HarnessConfig, HarnessModelSpec, HarnessProvider};
+        let qualifies = |harness: &HarnessConfig, semantic_naming: bool, model: Option<&str>| {
+            semantic_naming && harness.attachment_naming_model(model).is_some()
+        };
         // 出厂 harness（kimi、空模型清单）：没有 vision 模型 ⇒ 命名不生效。
         let bare = HarnessConfig::default();
-        assert!(!enabled(&bare, true, None));
+        assert!(!qualifies(&bare, true, None));
         let mut vision = bare.clone();
         vision.providers.kimi.model = "k3-256k".to_string();
         vision.providers.kimi.models = vec![HarnessModelSpec {
@@ -925,17 +988,17 @@ mod tests {
             vision: true,
             window: 262_144,
         }];
-        assert!(enabled(&vision, true, None), "开 + 有 vision");
-        assert!(!enabled(&vision, false, None), "关");
+        assert!(qualifies(&vision, true, None), "开 + 有 vision");
+        assert!(!qualifies(&vision, false, None), "关");
         assert!(
-            !enabled(&vision, true, Some("not-declared")),
+            !qualifies(&vision, true, Some("not-declared")),
             "指定了未声明的模型 ⇒ 不发起"
         );
         let mut mock = vision.clone();
         mock.provider = HarnessProvider::Mock;
-        assert!(enabled(&mock, true, None), "mock 恒支持 vision");
+        assert!(qualifies(&mock, true, None), "mock 恒支持 vision");
         assert!(
-            !enabled(&mock, true, Some("anything")),
+            !qualifies(&mock, true, Some("anything")),
             "mock 下 naming_model 只能是 null"
         );
     }
@@ -1351,6 +1414,82 @@ mod orchestration_tests {
             v.read(&format!("notes/harness-arch-{}.webp", &hash16[..6])),
             b"other-image".to_vec()
         );
+    }
+
+    #[test]
+    fn reuses_existing_semantic_file_instead_of_keeping_a_duplicate() {
+        let v = TempVault::new();
+        let (staging_path, hash16) = stage_image(&v);
+        let bytes = v.read(&staging_path);
+        // 既有语义名文件（同一内容、另一个目录）：`harness-arch-<hash6>.webp`。
+        let existing_name = format!("harness-arch-{}.webp", &hash16[..6]);
+        let existing = format!("images/{existing_name}");
+        v.write(&existing, &bytes);
+        let staging_name = staging_path.rsplit('/').next().unwrap().to_string();
+        // 笔记里已有一条指向暂存名的引用（正常路径里粘贴刚插入的那条）。
+        v.write(
+            "notes/a.md",
+            format!("# A\n\n![[{staging_name}]]\n").as_bytes(),
+        );
+        let mut client = ScriptedClient::new("Harness Arch");
+        let policy = v.policy();
+        let echoes: std::cell::RefCell<Vec<NamingEcho>> = std::cell::RefCell::new(Vec::new());
+        let outcome = run_with_client(
+            &v.0,
+            &policy,
+            "vault-test",
+            &request_for(&staging_path),
+            &mut client,
+            &|echo| echoes.borrow_mut().push(echo.clone()),
+        );
+        // 复用既有位置：结果按 renamed 返回、没有撤销令牌（既有的名字不是本任务改的）。
+        assert_eq!(outcome.status, NamingStatus::Renamed, "{outcome:?}");
+        assert_eq!(outcome.new_path.as_deref(), Some(existing.as_str()));
+        assert_eq!(outcome.new_name.as_deref(), Some(existing_name.as_str()));
+        assert!(outcome.undo_token.is_none(), "复用不是改名，不提供撤销");
+        // 引用改指既有文件；暂存副本被删掉（vault 里该内容只剩一份）。
+        assert_eq!(
+            String::from_utf8(v.read("notes/a.md")).unwrap(),
+            format!("# A\n\n![[{existing_name}]]\n")
+        );
+        assert!(!v.0.join(&staging_path).exists(), "暂存副本已删除");
+        assert_eq!(v.read(&existing), bytes, "既有文件逐字节不变");
+        let echoes = echoes.into_inner();
+        assert_eq!(echoes.len(), 1);
+        assert_eq!(echoes[0].from, staging_path);
+        assert_eq!(echoes[0].to, existing);
+    }
+
+    #[test]
+    fn reuse_keeps_the_staging_copy_when_some_notes_cannot_be_rewritten() {
+        let v = TempVault::new();
+        let (staging_path, hash16) = stage_image(&v);
+        let bytes = v.read(&staging_path);
+        let existing = format!("images/harness-arch-{}.webp", &hash16[..6]);
+        v.write(&existing, &bytes);
+        // 一篇非 UTF-8 的 md（读取失败 ⇒ 扫描记 skipped）：引用可能在里面，副本不能删。
+        v.write("notes/broken.md", &[0xff, 0xfe, 0x00]);
+        let mut client = ScriptedClient::new("Harness Arch");
+        let policy = v.policy();
+        let outcome = run_with_client(
+            &v.0,
+            &policy,
+            "vault-test",
+            &request_for(&staging_path),
+            &mut client,
+            &|_| {},
+        );
+        assert_eq!(outcome.status, NamingStatus::Renamed);
+        assert!(
+            !outcome.skipped.is_empty(),
+            "读不出来的笔记要计数（{outcome:?}）"
+        );
+        assert!(
+            v.0.join(&staging_path).exists(),
+            "有未改写引用时保留暂存副本"
+        );
+        // 既有文件仍原样（没有覆盖）。
+        assert_eq!(v.read(&existing), bytes);
     }
 
     #[test]

@@ -434,6 +434,23 @@ test("抑制对：invoke 失败即撤（撤销后事件照常归因）", () => {
   assert.deepEqual([...guard.consume(["a.md", "b.md"])], [], "撤登记后 MUST NOT 再吞");
 });
 
+test("抑制对：from == to 的登记命中一次即消化（命中后立刻 settle 走，不吃 TTL 尾部）", () => {
+  const guard = createRenameEchoGuard({ timeoutMs: 15_000 });
+  // 语义命名的「这篇笔记被本应用改写」登记就是 from == to。
+  guard.register("notes/a.md", "notes/a.md", 15_000);
+  assert.deepEqual([...guard.consume(["notes/a.md"])], ["notes/a.md"]);
+  guard.settle();
+  // 区分度（评审 r1 P2-3）：命中一次后必须已被 settle 收走——下一批到达的真实外部变更
+  // 不得再被吞。用同一路径再喂一次，MUST NOT 命中。
+  assert.equal(guard.pending(), 0);
+  assert.deepEqual([...guard.consume(["notes/a.md"])], []);
+  // 反向：未命中过的 from == to 登记仍应在场（不是「登记即消失」）。
+  guard.register("notes/b.md", "notes/b.md", 15_000);
+  assert.equal(guard.pending(), 1);
+  guard.settle();
+  assert.equal(guard.pending(), 1, "没被事件命中过的登记要继续抑制");
+});
+
 test("抑制对：只到一半（跨批）时留到下一批，超时即清、MUST NOT 常驻", () => {
   let now = 1000;
   const guard = createRenameEchoGuard({ timeoutMs: 1000, now: () => now });

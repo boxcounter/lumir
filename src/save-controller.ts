@@ -167,8 +167,11 @@ export interface SaveController {
    * 一篇 clean 的打开文档被**本应用的其它能力**改写（图片语义改名改写引用）后的处置：
    * 盘上内容已是最终结果，按既有 reload 路径就地重载并推进 revision（用户无未保存内容可丢）。
    * 调用时若该路径已变 dirty（用户在窗口内开始输入），只推进基准、不重载——不丢用户输入。
+   *
+   * 返回 Promise：调用方（装配层的命名对账）要等基准真正推进之后再撤回声抑制——否则
+   * 「抑制已撤、基准未推进」的窗口里到达的写盘事件会被误判成外部修改。
    */
-  noteRewritten(path: string, revision: string): void;
+  noteRewritten(path: string, revision: string): Promise<void>;
   /** dirty 清除时整批撤下守卫提示（保存成功 / 重载）。 */
   clearGuardToasts(): void;
   /** 退出/关窗被 dirty 守卫拦截的提示（sticky，属守卫提示族）。 */
@@ -316,7 +319,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *
    *  **dirty 复查**：判定 clean 与真正重载之间有窗口，用户在窗口里开始输入就只推进基准、
    *  不重载——MUST NOT 吞掉这一拍里敲进去的内容。 */
-  function noteRewritten(path: string, revision: string): void {
+  async function noteRewritten(path: string, revision: string): Promise<void> {
     if (sessionOf(path) === undefined) {
       revisions.set(path, revision);
       return;
@@ -325,7 +328,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       revisions.set(path, revision);
       return;
     }
-    void reloadDocument(path);
+    await reloadDocument(path);
   }
 
   // ---------------------------------------------------------------------------

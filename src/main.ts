@@ -1696,11 +1696,35 @@ const SEMANTIC_ECHO_TIMEOUT_MS = 15_000;
 
 const semanticEcho = createRenameEchoGuard();
 
-onAttachmentNaming((echo) => {
-  semanticEcho.register(echo.from, echo.to, SEMANTIC_ECHO_TIMEOUT_MS);
-  for (const note of echo.notes) {
-    semanticEcho.register(note, note, SEMANTIC_ECHO_TIMEOUT_MS);
+/**
+ * 每次命名任务的回声抑制句柄，按 `from`（图片的旧路径）键控。
+ *
+ * 后端的 `attachment:naming` 事件在写盘**之前**到达，因此登记在这里；任务收口（结果回来 /
+ * IPC 失败 / 撤销失败）时**主动撤除**——design §5.3 的「结果返回并推进基准后撤除」那条，
+ * 评审 r1 P2-3 判定缺失。只靠 TTL 会让窗口尾部到达的真实外部变更被一并吞掉。
+ */
+const semanticEchoHandles = new Map<string, Array<() => void>>();
+
+function clearSemanticEchoes(from: string): void {
+  for (const cancel of semanticEchoHandles.get(from) ?? []) cancel();
+  semanticEchoHandles.delete(from);
+}
+
+/** 撤销失败时不知道 `from`（令牌只存在于后端），只能整批撤——撤销一次只有一个任务在途。 */
+function clearAllSemanticEchoes(): void {
+  for (const handles of semanticEchoHandles.values()) {
+    for (const cancel of handles) cancel();
   }
+  semanticEchoHandles.clear();
+}
+
+onAttachmentNaming((echo) => {
+  const handles = semanticEchoHandles.get(echo.from) ?? [];
+  handles.push(semanticEcho.register(echo.from, echo.to, SEMANTIC_ECHO_TIMEOUT_MS));
+  for (const note of echo.notes) {
+    handles.push(semanticEcho.register(note, note, SEMANTIC_ECHO_TIMEOUT_MS));
+  }
+  semanticEchoHandles.set(echo.from, handles);
 }).catch(() => {}); // 无 Tauri 后端（纯浏览器预览）时静默忽略
 
 /** 投递一次命名并消费结果（失败静默：命名是可选增强，后端已把业务失败收敛成 skipped）。 */
@@ -1709,9 +1733,13 @@ async function semanticName(task: SemanticNameTask): Promise<void> {
   try {
     outcome = await attachmentSemanticName(task);
   } catch {
+    clearSemanticEchoes(task.path);
     return;
   }
-  reconcileNaming(outcome);
+  // 对账（含基准推进）完成之后才撤除抑制：顺序反了的话，写盘事件可能落在「抑制已撤、
+  // 基准还没推进」的窗口里，被当成外部修改（dirty 文档弹假冲突）。
+  await reconcileNaming(outcome);
+  clearSemanticEchoes(task.path);
   if (outcome.status !== "renamed" || outcome.new_name === null) return;
   const name = outcome.new_name;
   const token = outcome.undo_token;
@@ -1729,10 +1757,13 @@ async function semanticUndo(token: string): Promise<void> {
   try {
     outcome = await attachmentSemanticUndo(token);
   } catch (error) {
+    clearAllSemanticEchoes();
     toast(errorText(error));
     return;
   }
-  reconcileNaming(outcome);
+  await reconcileNaming(outcome);
+  if (outcome.old_path !== null) clearSemanticEchoes(outcome.old_path);
+  else clearAllSemanticEchoes();
   if (outcome.status === "renamed" && outcome.new_name !== null) {
     toast(t("D472", { name: outcome.new_name }), [], false, "success");
   }
@@ -1747,7 +1778,7 @@ async function semanticUndo(token: string): Promise<void> {
  *   - 被跳过（并发修改 / 读失败）的笔记 → 它的 watch 事件被抑制吞掉了，这里按普通外部变更
  *     重新处置（不静默丢一条真实变更；处置内部按 revision 判回声）。
  */
-function reconcileNaming(outcome: NamingOutcome): void {
+async function reconcileNaming(outcome: NamingOutcome): Promise<void> {
   const oldPath = outcome.old_path;
   const newPath = outcome.new_path;
   if (outcome.status !== "renamed" || oldPath === null || newPath === null) return;
@@ -1755,16 +1786,20 @@ function reconcileNaming(outcome: NamingOutcome): void {
     save.noteRenamed(remap.from, remap.to);
   }
   const rewritten = new Map(outcome.rewritten.map((note) => [note.path, note.revision]));
+  // dirty：内存重算 + 基准推进（每个会话一次 IPC，await 完再收口——基准没推进就撤抑制
+  // 会让后续事件被当成外部修改）。
+  const retargets: Array<Promise<void>> = [];
   for (const session of editor.sessions()) {
     const path = session.path;
     if (path === undefined || !session.loaded || !session.editable) continue;
     if (!session.dirty) continue; // clean 分支走下面的磁盘重载
-    void retargetSession(session, oldPath, newPath, rewritten.get(path));
+    retargets.push(retargetSession(session, oldPath, newPath, rewritten.get(path)));
   }
+  await Promise.all(retargets);
   for (const note of outcome.rewritten) {
     const session = editor.sessionForPath(note.path);
     if (session === undefined || !session.loaded || session.dirty) continue;
-    save.noteRewritten(note.path, note.revision);
+    await save.noteRewritten(note.path, note.revision);
   }
   for (const path of outcome.skipped) {
     if (editor.sessionForPath(path) !== undefined) save.handleExternalChange(path, "modified");
@@ -1772,7 +1807,14 @@ function reconcileNaming(outcome: NamingOutcome): void {
   if (outcome.skipped.length > 0) toast(t("D471", { count: outcome.skipped.length }));
 }
 
-/** dirty 会话的内存对账（异步 IPC：改写点由 Rust 的 link_graph 算，前端不复制解析语义）。 */
+/**
+ * dirty 会话的内存对账（异步 IPC：改写点由 Rust 的 link_graph 算，前端不复制解析语义）。
+ *
+ * **快照复查**（评审 r1 P2-2）：IPC 往返期间事件循环会插入用户键入，按旧快照的偏移应用
+ * 改写点会改错位置甚至越界抛错。因此 apply 前比对当前文本与快照，不一致就用**当前文本**
+ * 重算一次；第二次仍不一致则放弃并落一条诊断——放弃意味着内存保留旧名、而下一次保存会把
+ * 旧名写回磁盘（后端已改过磁盘引用），所以这条分支 MUST NOT 静默。
+ */
 async function retargetSession(
   session: EditorSession,
   fromPath: string,
@@ -1781,14 +1823,25 @@ async function retargetSession(
 ): Promise<void> {
   const path = session.path;
   if (path === undefined) return;
+  let snapshot = session.state.doc.toString();
   let changes;
   try {
-    changes = await wikilinkRetargetText(session.state.doc.toString(), fromPath, toPath);
+    changes = await wikilinkRetargetText(snapshot, fromPath, toPath);
+    // IPC 在途期间会话可能被关闭 / 切走：对象已不在会话表里就放弃（不写一份孤儿文本）。
+    if (!editor.sessions().includes(session)) return;
+    if (session.state.doc.toString() !== snapshot) {
+      // 文档变过：用当前文本重算一次（改写点的坐标只对产生它的那份文本成立）。
+      snapshot = session.state.doc.toString();
+      changes = await wikilinkRetargetText(snapshot, fromPath, toPath);
+      if (!editor.sessions().includes(session)) return;
+      if (session.state.doc.toString() !== snapshot) {
+        logEvent("attachment_naming", { path, code: "memory_retarget_stale" });
+        return;
+      }
+    }
   } catch {
     return;
   }
-  // IPC 在途期间会话可能被关闭 / 切走：对象已不在会话表里就放弃（不写一份孤儿文本）。
-  if (!editor.sessions().includes(session)) return;
   if (changes.length > 0) editor.applySessionChanges(session, changes);
   if (revision !== undefined) save.noteRevisionAdvanced(path, revision);
 }
