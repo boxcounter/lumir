@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "放到后台跑。",
+      "tool_calls": [
+        {
+          "id": "call_nr",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"后台跑\", \"description\": \"后台跑\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "SGU-CHILD 后台结论。",
+      "delay_ms": 300
+    },
+    {
+      "text": "SGU-PARENT 父会话：后台已启动。"
+    }
+  ],
+  "subrun_span": 1
+}

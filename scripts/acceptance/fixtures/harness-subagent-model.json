@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "用指定模型跑。",
+      "tool_calls": [
+        {
+          "id": "call_m1",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"指定模型\", \"description\": \"模型覆盖\", \"model\": \"mock-strong\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGH5-CHILD 指定模型完成。"
+    },
+    {
+      "text": "SGF-MODEL-PARENT 父会话：完成。"
+    }
+  ],
+  "subrun_span": 1
+}

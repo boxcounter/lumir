@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "让 reader 去读一下。",
+      "tool_calls": [
+        {
+          "id": "call_t1",
+          "name": "task",
+          "arguments": "{\"agent\": \"reader\", \"prompt\": \"读 harness-note.md 并给出摘要。\", \"description\": \"只读探索\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGB-READER-CHILD 子代理读完了。",
+      "tool_calls": []
+    },
+    {
+      "text": "SGB-READER-PARENT 父会话：摘要已收到。"
+    }
+  ],
+  "subrun_span": 1
+}

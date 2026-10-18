@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "subrun_span": 1,
+  "responses": [
+    {
+      "text": "两个都放后台。",
+      "tool_calls": [
+        {
+          "id": "call_ba",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"后台一\", \"description\": \"后台一\", \"background\": true}"
+        },
+        {
+          "id": "call_bb",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"后台二\", \"description\": \"后台二\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "SGQ-A-CHILD 后台一完成。",
+      "delay_ms": 4500
+    },
+    {
+      "text": "SGQ-B-CHILD 后台二完成。",
+      "delay_ms": 4800
+    },
+    {
+      "text": "SGQ-START-PARENT 父会话：两个后台已启动。"
+    },
+    {
+      "text": "SGQ-BUSY 父会话：这一轮很慢。",
+      "delay_ms": 9000
+    },
+    {
+      "text": "SGQ-MERGED-AUTO 父会话：两条后台结果已合并处理。"
+    }
+  ]
+}

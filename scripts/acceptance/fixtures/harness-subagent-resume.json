@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "先派 research。",
+      "tool_calls": [
+        {
+          "id": "call_r1",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"跑一半停住\", \"description\": \"续跑段一\"}"
+        }
+      ]
+    },
+    {
+      "text": "半截结论。",
+      "usage": {
+        "input_tokens": 60,
+        "output_tokens": 40
+      }
+    },
+    {
+      "text": "SGH2-RESUMED-CHILD 续跑后的完整结论。"
+    },
+    {},
+    {
+      "text": "SGF-RESUME-PARENT 父会话：第一段触顶。"
+    },
+    {
+      "text": "续跑刚才那段。",
+      "tool_calls": [
+        {
+          "id": "call_r2",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"继续跑完\", \"description\": \"续跑段二\", \"resume\": \"${run_id}\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGF-RESUME2-PARENT 父会话：续跑完成。"
+    }
+  ],
+  "subrun_span": 3
+}

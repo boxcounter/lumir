@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "subrun_span": 1,
+  "responses": [
+    {
+      "text": "两个都放后台。",
+      "tool_calls": [
+        {
+          "id": "call_sa",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"先完成\", \"description\": \"先完成\", \"background\": true}"
+        },
+        {
+          "id": "call_sb",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"后完成\", \"description\": \"后完成\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "SGS-A-CHILD 先完成。",
+      "delay_ms": 200
+    },
+    {
+      "text": "SGS-B-CHILD 后完成。",
+      "delay_ms": 4000
+    },
+    {
+      "text": "SGS-PARENT 父会话：两个后台已启动。"
+    },
+    {
+      "text": "SGS-AUTO 自动回合（将被停止）。",
+      "delay_ms": 4000
+    }
+  ]
+}

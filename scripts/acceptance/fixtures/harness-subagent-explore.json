@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "用 explore 探一下。",
+      "tool_calls": [
+        {
+          "id": "call_e1",
+          "name": "task",
+          "arguments": "{\"agent\": \"explore\", \"prompt\": \"按路径枚举变更文件\", \"description\": \"按路径枚举\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGO-EXPLORE-CHILD 枚举完成。"
+    },
+    {
+      "text": "SGO-EXPLORE-PARENT 父会话：清单已收到。"
+    },
+    {
+      "text": "再探一次。",
+      "tool_calls": [
+        {
+          "id": "call_e2",
+          "name": "task",
+          "arguments": "{\"agent\": \"explore\", \"prompt\": \"再枚举一次\", \"description\": \"覆盖后枚举\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGO-EXPLORE-CHILD2 枚举完成。"
+    },
+    {
+      "text": "SGO-EXPLORE-PARENT2 父会话：第二次清单已收到。"
+    }
+  ],
+  "subrun_span": 1
+}

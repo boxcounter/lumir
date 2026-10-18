@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "SGE-CHECK 清单装载完成。"
+    }
+  ],
+  "subrun_span": 1
+}

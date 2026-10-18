@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "重启后续跑。",
+      "tool_calls": [
+        {
+          "id": "call_n3",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"重启后续跑\", \"description\": \"重启后续跑\", \"resume\": \"${run_id}\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGF-BOUNDARY3-PARENT 父会话：重启后不可续跑。"
+    }
+  ],
+  "subrun_span": 1
+}

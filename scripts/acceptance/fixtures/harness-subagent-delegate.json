@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "我先派 research 去梳理。",
+      "tool_calls": [
+        {
+          "id": "call_t1",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"梳理这周的规范变更，给出结论与依据。\", \"description\": \"梳理这周的规范变更\"}"
+        }
+      ]
+    },
+    {
+      "text": "SGA-CHILD-ONE 子代理结论：本周有 9 个变更。"
+    },
+    {
+      "text": "SGA-PARENT-ONE 父会话总结：research 已梳理完 9 个变更。"
+    }
+  ],
+  "subrun_span": 1
+}
