@@ -248,6 +248,82 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
 - **不在本表内的**：评估节奏（首轮 / 5 轮周期 / 漂移信号 / 3 轮下限）、keep 防抖、标题规范化、
   留存记录形状——这些是行为，不是偏好。
 
+### 1.8 `[cron]` 表（定时任务）
+
+通用定时任务机制（change `add-cron-runtime-daemon`；语义真源是该 change 的
+[design §7](../../openspec/changes/add-cron-runtime-daemon/design.md)，规范正文见
+[specs/cron/spec.md](../../openspec/changes/add-cron-runtime-daemon/specs/cron/spec.md)）。
+任务只声明「调度 + 自然语言 prompt + 会话形态 + 触达策略 + 可选模型覆盖」——**机制不认识任务
+要做什么**：写哪个文件、路径怎么拼、完成条件是什么，全部由 `prompt` 与目标 vault 的 `AGENTS.md`
+表达（agent 按既有装配读到那份约定）。
+
+| 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
+|---|---|---|---|---|---|
+| `cron.tasks` | 数组（每项为对象） | `[]` | 见下表；`[]` = 守护空转、零报错 | **启动装载读一次**；运行期不热重载，改任务 / 策略需重启 | `config.rs` 的 `CronConfig`、`validate_cron` |
+
+任务项的字段（`{id, vault, at, days?, prompt, delivery?, session?, model?}`）：
+
+| 字段 | 类型 | 默认 | 取值范围 | 非法处置 | 真源 |
+|---|---|---|---|---|---|
+| `id` | string | 必填 | 非空、不含空白 | 丢该项 + warning；**重复 id 保留首项**、丢后项 + warning | `validate_cron` |
+| `vault` | string | 必填 | 绝对路径 | 丢该项 + warning（**路径是否存在不在装载期判定**：装载期 stat 会拖慢启动，且外置盘可能后挂载） | 同上 |
+| `at` | string | 必填 | `HH:MM`（`00:00`–`23:59`，两位时分） | 丢该项 + warning | `cron::parse_at` |
+| `days` | string 数组 | 全周（七项） | `mon` / `tue` / `wed` / `thu` / `fri` / `sat` / `sun` 的非空数组 | 含非法值 / 空数组 / 非数组 → 丢该项 + warning | `cron::parse_weekday` |
+| `prompt` | string | 必填 | trim 后非空 | 缺失 / 空白 / 非字符串 → 丢该项 + warning（没有载荷的任务无从运行） | `validate_cron` |
+| `delivery` | string 枚举 | `"notify-then-run"` | `"notify-then-run"` \| `"run-then-notify"` \| `"silent-run"` | 闭集合外取值 → **保留任务**、回落缺省 + warning（向「不花 token」的保守方向回落） | `config.rs` 的 `DeliveryPolicy` |
+| `session` | string 枚举 | `"new"` | `"new"` \| `"dedicated"` | 闭集合外取值 → **保留任务**、回落 `new` + warning | `config.rs` 的 `SessionShape` |
+| `model` | string | 缺席 | 非空字符串 | 形状非法 → **只丢该键**、保留任务 + warning；运行期未在 `[harness].providers.<provider>.models` 声明 → 本次回落 provider 默认模型 + `config_warning`，任务不丢 | `validate_cron` + harness 运行时 |
+| 未知字段 | — | — | — | 静默忽略（既有向前兼容口径） | `RawCronConfig` |
+
+口径：
+
+- **一项任务只报第一处问题**：致命项按 `id` → `vault` → `at` → `days` → `prompt` 的顺序判，
+  命中即丢弃该任务并给一条人话 warning；`delivery` / `session` / `model` 是非致命项，回落或
+  丢键后任务照常生效。其余任务不受影响（ADR 0002 §5：非法配置不导致启动失败）。
+- **整节错形状 / `tasks` 非数组**（如 `"cron": "daily-log"`、`"tasks": "daily-log"`）走 §2 的
+  **整文件回落**（既有解析模型，不发明逐字段类型容忍）。
+- **`days` 缺省展开成全周**：生效配置里 `days` 恒为非空数组——不存在「空数组 = 全周」的二义形态
+  （空数组在装载期判非法）。
+- **判定口径**（[`cron.rs`](../../src-tauri/src/cron.rs)）：本地日期属于 `days`、本地时钟**越过**
+  `at`（不要求恰好等于）、且该任务当日尚未触发 ⇒ 触发一次；同一本地日期至多一次。判据不读
+  文件系统、不写盘。
+- **三档触达策略**：`notify-then-run` 到点只投通知，点击通知才发起运行（点击即意图，无人点头
+  不花 token，默认档）；`run-then-notify` 到点静默运行、终态后投结果通知；`silent-run` 静默运行、
+  全程不通知。三档共用同一条运行实现。
+- **通知文案通用**：标题 = 任务 `id`，正文只说「到点 / 已完成 / 运行失败」，**不含 prompt、
+  文档内容或绝对路径**（通知出现在锁屏与通知中心）。
+- **应用未运行 = 无触达**：不装系统级守护（launchd / 登录项 / 系统 cron）；应用启动就绪、主窗口
+  获得焦点、目标 vault 打开成功后各补判一次（同一判定函数）。跨日不补发。
+- **任务量假设**：每 tick 对每条任务做一次纯内存判定，几十条以内无感。
+
+示例（`vault` 为绝对路径的占位；真实路径不入库）：
+
+```json
+{
+  "cron": {
+    "tasks": [
+      {
+        "id": "nightly-review",
+        "vault": "<vault-abs-path>",
+        "at": "21:00",
+        "prompt": "按本 vault 的 AGENTS.md 约定做当天的例行检查，完成后用一句话给出结论。",
+        "delivery": "notify-then-run",
+        "session": "new"
+      },
+      {
+        "id": "weekly-consistency",
+        "vault": "<vault-abs-path>",
+        "at": "10:00",
+        "days": ["sun"],
+        "prompt": "检查指定文档之间互相引用的标题是否与目标文档的实际标题一致；把不一致项列成清单，不要直接改文件。",
+        "delivery": "run-then-notify",
+        "model": "<declared-model-id>"
+      }
+    ]
+  }
+}
+```
+
 ## 2. 解析与容错口径
 
 - **未知键忽略**：新版写入的字段旧版读取不报错（向前兼容）。未知键在应用回写时**原样保留**（见 §3）。
@@ -255,10 +331,11 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
   只回退该字段到出厂默认 + 一条人话 warning，其余字段照常生效，**不得导致启动失败**（ADR 0002 §5）。
 - **整文件回落**：整份文件不是合法 JSON，或**字段类型不符**（如 `"line_wrap": "yes"`、
   `"font_size": "15"`、`"code_mode_line_wrap": "yes"`、`"auto_indent": "yes"`、`"ui": "dark"`、
-  `"markdown_line_numbers": 2`），
+  `"markdown_line_numbers": 2`、`"cron": "daily-log"`、`"cron": {"tasks": "daily-log"}`），
   则整份配置按出厂默认解释 +
   一条 warning（连 `last_vault` 一起丢）。这是既有解析模型的性质（不等同于逐字段回落），单测逐条钉住
   （`config.rs` 的 `wrong_type_*_falls_back_entire_file` 族）。本仓**不提供**「逐字段类型容忍」。
+  `[cron]` 的 `tasks` **表内**元素是逐项校验的例外：坏一项只丢那一项（见 §1.8）。
 - **warning 出口**：console + 诊断日志的 `config_warning` 事件（无 UI 面）。
 
 ## 3. 写回纪律：合并写，不写全量默认
@@ -287,7 +364,14 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
 | `vault-registry/` | vault 注册表：`<vault-id>.json`，装 id ↔ path、治理标记、`last_opened_at` | **身份**（该 vault 是谁、在哪）；只归档不删除 |
 | `vault-sessions/` | 标签会话：`<vault-id>.json`（`tabs` / `active` / `updated_at`） | **易变状态**（上次开着哪些标签） |
 | `reading-positions/` | 阅读位置：`<vault-id>.json`（按文件路径记滚动位置） | **易变状态** |
+| `cron-state.json` | 定时任务的当日去重状态：`{"version":1,"tasks":{"<task-id>":{"last_fired":"YYYY-MM-DD","session_id":"…"}}}` | **易变状态**（运行态，不是用户声明）；tmp + rename 原子写，不进 `config.json`、不进任何 vault |
 | `logs/` | 诊断日志：`YYYY-MM-DD.jsonl`（UTC 日期，每行一个 JSON 事件） | 只落本地、不外发、不进 vault |
+
+`cron-state.json` 的读取纪律（change `add-cron-runtime-daemon` design §8）：文件缺失、不可读、
+非合法 JSON、`version` 与实现不符——四类对调用方的语义**完全相同**：「没有去重状态」（最多导致
+一次重复触发）。一律不抛错、不阻断启动；**缺失是常态不告警**，其余三类各记一条 `config_warning`
+（`source = "cron-state"`）。`last_fired` 只在派发成功时写（通知投递成功 / 运行交接被接受），
+运行失败与被跳过不写；任务从配置删掉后其记录**惰性残留**，不做启动期清理。
 
 **为什么注册表与会话刻意分存**（同一 vault 实体的两个面，`vault_session.rs` 头注释 / change
 `multi-vault-workspaces` design §2）：注册项文件是**身份**，它的读取路径对解析失败一律跳过——把易变的

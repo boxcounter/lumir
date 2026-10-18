@@ -4,4 +4,4 @@
  * v0 事件集：事件名白名单的**唯一来源**。TS 联合类型由 ts-rs 导出（`src/bindings/`），
  * 前端 import 使用——前端不另立一份事件名清单（两份清单必然漂移，M131 的教训）。
  */
-export type LogEventName = "save_conflict" | "save_external_change" | "recovery_written" | "recovery_restored" | "render_error" | "config_warning" | "slow_callback" | "link_open" | "app_meta_unavailable" | "vault_registry_migrated" | "vault_scan_ignored" | "attachment_naming";
+export type LogEventName = "save_conflict" | "save_external_change" | "recovery_written" | "recovery_restored" | "render_error" | "config_warning" | "slow_callback" | "link_open" | "app_meta_unavailable" | "vault_registry_migrated" | "vault_scan_ignored" | "attachment_naming" | "cron_notified" | "cron_click" | "cron_run_started" | "cron_run_finished" | "cron_run_skipped" | "cron_task_invalid";

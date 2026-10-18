@@ -20,6 +20,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # session id 的随机段（rand 已在依赖树内 transitive 存在，直接引用零新增编译重量）。
 rand = "0.10"
+# 本地时间换算（change add-cron-runtime-daemon，design §4.3）：定时任务的「今天」与「到点」
+# 都按**本机本地时间**判定，`chrono::Local` 是 std 之外唯一可用的偏移来源。锁文件里已有
+# chrono 0.4（transitive），本项只是把它提升为直接依赖，零新增编译重量。
+# `default-features = false`：默认档带 wasm 绑定（wasmbind → wasm-bindgen / js-sys），本仓
+# 不编 wasm；只开 clock（`Local` 的时区来源）与 std。
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # payload 类型单一来源选型：ts-rs（而非 specta / tauri-specta）。
 # 理由：单 crate、无运行时开销、bindings 由 cargo test 顺带导出（契合 rust.yml 门禁）；
 # specta 方案需同时引入 specta + tauri-specta 且强绑定其 builder，本阶段契约只是薄约定，
