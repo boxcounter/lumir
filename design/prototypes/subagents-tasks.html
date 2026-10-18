@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumir — Subagents 任务面板原型（M578）</title>
+<style>
+/* ============ tokens（逐值取自 src/style.css 现行登记值；原型自包含） ============ */
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --fs-ui: 13px; --fs-ui-s: 12.5px; --fs-meta: 12px; --fs-label-s: 11.5px; --fs-label: 11px; --fs-micro: 10.5px;
+  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600; --fw-bold: 650;
+  --lh-ui: 1.5; --lh-code: 1.55;
+  --sp-1: 2px; --sp-2: 4px; --sp-3: 6px; --sp-4: 8px; --sp-5: 10px; --sp-6: 12px;
+  --r4: 4px; --r5: 5px; --r6: 6px; --r8: 8px;
+  --dur-ui: 0.12s; --ease-standard: ease;
+  --pulse-cycle: 1.6s ease-in-out infinite;
+}
+:root, :root[data-theme="light"] {
+  --frame: #f4f4f1; --agent-bg: #f7f7f4; --content-bg: #fdfdfc; --preview-bg: #ffffff;
+  --border: #e3e2dd; --border-soft: #edece7;
+  --text: #21201a; --text-2: #6e6c61; --text-3: #a9a79b;
+  --sel: #e8e7e1; --hover: rgba(0,0,0,0.038);
+  --accent: #3a5fcd; --accent-tint: #eef1fb; --accent-fill: #3a5fcd; --accent-fill-text: #ffffff;
+  --pending: #a06e0f; --ok: #2c7a4d; --ok-tint: #e9f4ec; --danger: #bf4438; --danger-tint: #f9ecea;
+  --run: #3a5fcd; --code-bg: #f2f1ec; --shadow-raise: 0 4px 16px rgba(0,0,0,0.10);
+}
+:root[data-theme="dark"] {
+  --frame: #1a1b1d; --agent-bg: #1e1f21; --content-bg: #222326; --preview-bg: #26272b;
+  --border: rgba(255,255,255,0.095); --border-soft: rgba(255,255,255,0.055);
+  --text: #e3e2db; --text-2: #9b9a91; --text-3: #62615b;
+  --sel: rgba(255,255,255,0.075); --hover: rgba(255,255,255,0.05);
+  --accent: #8ba3ef; --accent-tint: rgba(128,152,232,0.15); --accent-fill: #647ecf; --accent-fill-text: #ffffff;
+  --pending: #d9a75c; --ok: #7cc093; --ok-tint: rgba(124,192,147,0.13);
+  --danger: #e08a80; --danger-tint: rgba(224,138,128,0.13);
+  --run: #8ba3ef; --code-bg: rgba(255,255,255,0.05); --shadow-raise: 0 4px 16px rgba(0,0,0,0.50);
+}
+:root[data-theme="eink"] {
+  --frame: #ffffff; --agent-bg: #ffffff; --content-bg: #ffffff; --preview-bg: #ffffff;
+  --border: #000000; --border-soft: #b9b9b9;
+  --text: #000000; --text-2: #3d3d3d; --text-3: #6e6e6e;
+  --sel: #b9b9b9; --hover: rgba(0,0,0,0.06);
+  --accent: #000000; --accent-tint: transparent; --accent-fill: #000000; --accent-fill-text: #ffffff;
+  --pending: #000000; --ok: #000000; --ok-tint: transparent; --danger: #000000; --danger-tint: transparent;
+  --run: #000000; --code-bg: #f0f0f0; --shadow-raise: none;
+}
+
+/* ============ base ============ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--sans); font-size: 13px; color: var(--text); background: var(--frame);
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+b { font-weight: var(--fw-semibold); }
+.mono { font-family: var(--mono); }
+
+/* ============ harness 面板（宽 348 = --layout-agent-w） ============ */
+.hp {
+  width: 348px; background: var(--agent-bg); border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden; display: flex; flex-direction: column;
+}
+.hp-transcript { padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-4); font-size: var(--fs-ui); line-height: var(--lh-ui); }
+.who {
+  display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-1);
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.05em; color: var(--text-3);
+}
+.who .when { font-weight: var(--fw-regular); letter-spacing: 0; }
+.msg-user > .body { padding: var(--sp-3) var(--sp-4); background: var(--sel); border: 1px solid var(--border-soft); border-radius: var(--r6); color: var(--text-2); }
+.msg-agent .body p { margin-bottom: var(--sp-2); }
+.msg-agent .body p:last-child { margin-bottom: 0; }
+
+/* 工具清单（.lumir-hp-tools） */
+.tools { margin-top: var(--sp-2); padding: var(--sp-2) 0; border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
+.trow { display: flex; align-items: center; gap: var(--sp-3); min-height: 24px; font-size: var(--fs-meta); color: var(--text-2); }
+button.trow { width: 100%; text-align: left; border-radius: var(--r4); }
+button.trow:hover { background: var(--hover); }
+.trow-wrap { display: block; }
+.trow-wrap .run-body { margin: var(--sp-1) 0 var(--sp-2) 17px; }
+.trow .tmore {
+  flex: none; display: inline-flex; align-items: center; gap: 2px; margin-left: var(--sp-2);
+  font-size: var(--fs-micro); color: var(--text-3); opacity: 0;
+  transition: opacity var(--dur-ui) var(--ease-standard);
+}
+.trow:hover .tmore, .trow[aria-expanded="true"] .tmore { opacity: 1; }
+.tic { width: 14px; flex: none; display: flex; align-items: center; justify-content: center; color: var(--text-3); }
+.trow.is-done .tic { color: var(--ok); }
+.trow.is-rej .tic { color: var(--danger); }
+.trow.is-waiting .tic { color: var(--pending); }
+.ttext { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tn { font-family: var(--mono); }
+.ta { font-family: var(--mono); color: var(--text); }
+.tout { color: var(--text-3); }
+.tres { flex: none; color: var(--text-3); white-space: nowrap; }
+.tres .tw { color: var(--text-2); font-weight: var(--fw-medium); }
+.pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--run); animation: pulse var(--pulse-cycle); }
+@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
+:root[data-theme="eink"] .pulse { animation: pulse-eink 1.4s steps(2, jump-none) infinite; }
+@keyframes pulse-eink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* 后台完成通知（自动化事件消息） */
+.msg-notice { border-left: 2px solid var(--accent); padding-left: var(--sp-3); }
+.notice-head {
+  display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-1);
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.04em; color: var(--accent);
+}
+.notice-head .when { font-weight: var(--fw-regular); letter-spacing: 0; color: var(--text-3); }
+.notice-body { font-size: var(--fs-meta); color: var(--text-2); }
+.notice-body .more { color: var(--text-3); }
+
+/* ============ 任务区（agent 面板内、composer 上方） ============ */
+.tp { border-top: 1px solid var(--border); background: var(--agent-bg); flex: none; }
+.tp-head {
+  display: flex; align-items: center; gap: var(--sp-3); width: 100%; padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-label-s); color: var(--text-2); text-align: left;
+}
+.tp-head:hover { background: var(--hover); }
+.tp-head .tp-title { font-weight: var(--fw-semibold); color: var(--text); }
+.tp-head .tp-count { color: var(--text-3); }
+.tp-head .tp-wait { color: var(--pending); font-weight: var(--fw-medium); }
+.tp-head .tp-chev { margin-left: auto; display: flex; color: var(--text-3); transform: rotate(90deg); transition: transform var(--dur-ui) var(--ease-standard); }
+.tp.is-collapsed .tp-chev { transform: rotate(0deg); }
+.tp.is-collapsed .tp-list, .tp.is-collapsed .tp-usage { display: none; }
+.tp-list { padding: 0 var(--sp-3) var(--sp-2); display: flex; flex-direction: column; gap: 1px; }
+
+/* 运行行 */
+.run { border-radius: var(--r5); }
+.run-row {
+  display: flex; align-items: center; gap: var(--sp-3); width: 100%; min-height: 26px;
+  padding: var(--sp-1) var(--sp-2); border-radius: var(--r5); text-align: left;
+  font-size: var(--fs-meta); color: var(--text-2);
+}
+.run-row:hover { background: var(--hover); }
+.run-ic { width: 12px; flex: none; display: flex; align-items: center; justify-content: center; color: var(--text-3); }
+.run.is-running .run-ic { color: var(--run); }
+.run.is-waiting .run-ic { color: var(--pending); }
+.run.is-done .run-ic { color: var(--ok); }
+.run.is-partial .run-ic { color: var(--pending); }
+.run.is-failed .run-ic, .run.is-stopped .run-ic { color: var(--danger); }
+.run-agent { flex: none; font-family: var(--mono); color: var(--text); }
+.run-desc { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.run-read { flex: none; color: var(--text-3); font-size: var(--fs-label-s); }
+.run-flag {
+  flex: none; padding: 0 4px; border: 1px solid var(--border); border-radius: var(--r4);
+  font-size: var(--fs-micro); color: var(--text-3);
+}
+
+/* 行详情 */
+.run-body { margin: var(--sp-1) var(--sp-2) var(--sp-3) 18px; padding-left: var(--sp-3); border-left: 1px solid var(--border-soft); }
+.run-meta { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-2); font-size: var(--fs-micro); color: var(--text-3); }
+.run-meta b { color: var(--text-2); font-weight: var(--fw-medium); }
+.steps { display: flex; flex-direction: column; gap: 1px; margin-bottom: var(--sp-2); }
+.step { display: flex; gap: var(--sp-2); font-size: var(--fs-label-s); color: var(--text-3); font-family: var(--mono); }
+.step .sa { color: var(--text-2); font-family: var(--sans); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.run-sum { font-size: var(--fs-meta); color: var(--text-2); line-height: var(--lh-ui); }
+.run-sum .label { color: var(--text-3); }
+.run-actions { margin-top: var(--sp-2); }
+.mini {
+  padding: 1px 7px; border: 1px solid var(--border); border-radius: var(--r4);
+  font-size: var(--fs-label-s); color: var(--text-2);
+}
+.mini:hover { background: var(--hover); color: var(--text); }
+
+/* 批准卡（行内就地展开；父会话自己的卡保持原位不变） */
+.ap { margin-top: var(--sp-2); padding: var(--sp-3) var(--sp-4); background: var(--content-bg); border: 1px solid var(--border); border-radius: var(--r6); }
+.ap-title { margin-bottom: var(--sp-2); font-size: var(--fs-ui); font-weight: var(--fw-semibold); }
+.ap-sub { display: block; margin-top: 1px; font-size: var(--fs-meta); font-weight: var(--fw-regular); color: var(--text-3); }
+.ap-from {
+  display: inline-flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-2);
+  padding: 1px 6px; border-radius: var(--r4); background: var(--accent-tint); color: var(--accent);
+  font-size: var(--fs-micro);
+}
+:root[data-theme="eink"] .ap-from { background: transparent; border: 1px solid var(--border); }
+.ap pre {
+  max-height: 150px; overflow: auto; margin: 0 0 var(--sp-2); padding: var(--sp-2) var(--sp-3);
+  background: var(--code-bg); border-radius: var(--r4); font-family: var(--mono);
+  font-size: var(--fs-label-s); line-height: var(--lh-code); white-space: pre;
+}
+:root[data-theme="eink"] .ap pre { background: var(--preview-bg); border: 1px solid var(--border); }
+.ap pre > div { width: max-content; min-width: 100%; }
+.d-add { background: var(--ok-tint); color: var(--ok); }
+.d-del { background: var(--danger-tint); color: var(--danger); }
+.d-hunk { color: var(--text-3); }
+.ap-reason {
+  display: block; width: 100%; margin-bottom: var(--sp-2); padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border); border-radius: var(--r4); background: var(--content-bg);
+  color: var(--text); font: inherit; font-size: var(--fs-meta); outline: none;
+}
+.ap-reason:focus { border-color: var(--accent); }
+:root[data-theme="eink"] .ap-reason:focus { border-color: var(--border); border-width: 1.6px; }
+.ap-actions { display: flex; align-items: center; gap: var(--sp-3); }
+.ap-actions button { padding: var(--sp-1) var(--sp-5); border-radius: var(--r4); font-size: var(--fs-meta); }
+.ap-actions button[data-decide="yes"] { background: var(--accent-fill); color: var(--accent-fill-text); }
+.ap-actions button[data-decide="no"] { border: 1px solid var(--border); color: var(--text-2); }
+.ap-actions button[data-decide="no"]:hover { background: var(--hover); color: var(--text); }
+.ap-remember { margin-left: auto; display: flex; align-items: center; gap: 4px; font-size: var(--fs-micro); color: var(--text-3); }
+.ap.is-approved, .ap.is-rejected { padding: var(--sp-2) var(--sp-3); }
+.ap-rec { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-meta); color: var(--text-2); }
+.ap-ic { flex: none; display: flex; color: var(--ok); }
+.ap.is-rejected .ap-ic { color: var(--danger); }
+.ap-rec-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-det { margin-top: var(--sp-2); }
+.ap-det summary { cursor: pointer; font-size: var(--fs-meta); color: var(--text-3); list-style: none; }
+.ap-det summary::-webkit-details-marker { display: none; }
+.ap-det[open] summary { margin-bottom: var(--sp-2); color: var(--text-2); }
+.term-reason { margin-top: 1px; font-size: var(--fs-meta); color: var(--text-3); }
+
+/* 按模型用量 */
+.tp-usage { padding: 0 var(--sp-4) var(--sp-3); }
+.tp-usage h4 { font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.04em; color: var(--text-3); margin-bottom: var(--sp-2); }
+.usage-row { display: flex; align-items: baseline; gap: var(--sp-2); font-size: var(--fs-label-s); color: var(--text-2); min-height: 18px; }
+.usage-row .um { font-family: var(--mono); color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-row .uv { margin-left: auto; flex: none; color: var(--text-3); }
+
+/* 子代理清单 */
+.tp-cat { border-top: 1px solid var(--border-soft); }
+.cat-head { display: flex; align-items: center; gap: var(--sp-2); width: 100%; padding: var(--sp-2) var(--sp-4); font-size: var(--fs-label-s); color: var(--text-2); text-align: left; }
+.cat-head:hover { background: var(--hover); }
+.cat-head .chev { margin-left: auto; display: flex; color: var(--text-3); transition: transform var(--dur-ui) var(--ease-standard); }
+.tp-cat.is-open .cat-head .chev { transform: rotate(90deg); }
+.cat-list { display: none; padding: 0 var(--sp-3) var(--sp-3); }
+.tp-cat.is-open .cat-list { display: block; }
+.cat-item { padding: var(--sp-2); border-radius: var(--r5); }
+.cat-item:hover { background: var(--hover); }
+.cat-top { display: flex; align-items: center; gap: var(--sp-2); }
+.cat-name { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text); }
+.cat-src { margin-left: auto; flex: none; padding: 0 4px; border: 1px solid var(--border); border-radius: var(--r4); font-size: var(--fs-micro); color: var(--text-3); }
+.cat-desc { margin-top: 1px; font-size: var(--fs-label-s); color: var(--text-3); line-height: 1.45; }
+.cat-meta { margin-top: 2px; font-size: var(--fs-micro); color: var(--text-3); }
+
+/* composer 极简复刻 */
+.hp-composer-area { flex: none; padding: var(--sp-3) var(--sp-4) var(--sp-4); border-top: 1px solid var(--border); }
+.hp-composer-box { background: var(--content-bg); border: 1px solid var(--border); border-radius: var(--r8); }
+.hp-composer { padding: var(--sp-3) var(--sp-4); min-height: 40px; font-size: var(--fs-ui); line-height: var(--lh-ui); color: var(--text-3); }
+
+/* ============ 帧与舞台 ============ */
+.stage-only { min-height: 100vh; padding: 40px 32px 96px; background: var(--frame); }
+.stage-head { max-width: 760px; margin: 0 auto 22px; }
+.stage-head h1 { font-size: 15px; font-weight: var(--fw-bold); letter-spacing: -0.004em; }
+.stage-head .sub { margin-top: 4px; font-size: var(--fs-meta); color: var(--text-2); line-height: var(--lh-ui); }
+.frames { display: flex; gap: 28px; justify-content: center; align-items: flex-start; flex-wrap: wrap; }
+.frame-tag { margin-bottom: var(--sp-3); font-size: var(--fs-meta); font-weight: var(--fw-semibold); color: var(--text-2); }
+.frame-tag .v-id { font-family: var(--mono); font-weight: var(--fw-regular); color: var(--text-3); font-size: var(--fs-label-s); }
+.note {
+  max-width: 348px; margin-top: var(--sp-3); padding: var(--sp-2) var(--sp-3);
+  border: 1px dashed var(--accent); border-radius: var(--r4); color: var(--text-2);
+  font-size: var(--fs-label-s); line-height: var(--lh-ui);
+}
+.note b { color: var(--accent); }
+:root[data-theme="eink"] .note { border-color: var(--border); }
+:root[data-theme="eink"] .note b { color: var(--text); }
+
+/* ============ 控制面板（硬规则：全部选项点击可达；panel=0 供截图隐藏） ============ */
+.cpanel {
+  position: fixed; right: 16px; bottom: 16px; z-index: 100; width: 300px;
+  background: var(--preview-bg); border: 1px solid var(--border); border-radius: var(--r8);
+  box-shadow: var(--shadow-raise); padding: 10px 12px; font-size: var(--fs-meta);
+}
+.cpanel[hidden] { display: none; }
+.cpanel h2 { font-size: var(--fs-meta); font-weight: var(--fw-bold); margin-bottom: 8px; }
+.cpanel .cp-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.cpanel .cp-label { flex: none; width: 54px; color: var(--text-3); font-size: var(--fs-label-s); }
+.cpanel .cp-btn {
+  padding: 3px 9px; border: 1px solid var(--border); border-radius: var(--r5);
+  font-size: var(--fs-label-s); color: var(--text-2);
+  transition: background var(--dur-ui) var(--ease-standard), color var(--dur-ui) var(--ease-standard);
+}
+.cpanel .cp-btn:hover { background: var(--hover); color: var(--text); }
+.cpanel .cp-btn.is-on { background: var(--accent-tint); color: var(--accent); border-color: var(--accent); }
+:root[data-theme="eink"] .cpanel .cp-btn.is-on { background: #000; color: #fff; border-color: #000; }
+.cpanel .cp-note { margin-top: 8px; font-size: var(--fs-micro); color: var(--text-3); line-height: 1.5; }
+</style>
+</head>
+<body>
+<script>
+"use strict";
+
+/* ---- 参数（query 只作深链；一切选项在控制面板点击可达） ---- */
+const q = new URLSearchParams(location.search);
+const theme = ["light", "dark", "eink"].includes(q.get("theme")) ? q.get("theme") : "light";
+document.documentElement.dataset.theme = theme;
+const panelOff = q.get("panel") === "0";     // 截图关控制面板
+
+/* ---- 合成 fixture：全部虚构，零真实 vault 内容 ---- */
+const MODELS = { fast: "mock-fast", strong: "mock-strong", inherit: "inherit" };
+
+const DEFS = [
+  { name: "explore", src: "内建", tools: 3, model: MODELS.inherit,
+    desc: "只读探索：在 vault 里搜索、按路径枚举、读取文件与 skill，产出结论与依据；不改文件、不跑命令。" },
+  { name: "research", src: "vault", tools: 4, model: MODELS.fast,
+    desc: "调研与梳理：读多份材料、跨源比对，产出结论、依据与不确定项。" },
+  { name: "scribe", src: "vault", tools: 3, model: MODELS.fast,
+    desc: "按指定结构把结论落成笔记文件；只写被点名的路径。" },
+  { name: "reviewer", src: "用户", tools: 3, model: MODELS.strong,
+    desc: "复核结论：逐条找反例、找依据缺口，只读不写。" },
+];
+
+const ASKS = {
+  r1: {
+    tool: "vault_patch", q: "要修改这个文件吗？", sub: "批准后才会落盘",
+    from: "来自 research：梳理这周的规范变更",
+    diff: [
+      ["h", "@@ 30_规范/变更梳理-第41周.md @@"],
+      [" ", "  ## 本周变更"],
+      ["-", "-- 链接写法待定"],
+      ["+", "+- 链接写法：统一用相对路径（依据：40_规范/链接规范.md §2）"],
+      ["+", "+- 表格内换行：改用 &lt;br&gt;（依据：40_规范/表格规范.md）"],
+    ],
+  },
+  r2: {
+    tool: "vault_create", q: "要新建这个文件吗？", sub: "批准后才会落盘",
+    from: "来自 scribe：把复核结论落成笔记",
+    diff: [
+      ["h", "@@ 20_笔记/复核记录-第41周.md（新建） @@"],
+      ["+", "+# 复核记录 · 第 41 周"],
+      ["+", "+"],
+      ["+", "+## 结论 1：链接写法"],
+      ["+", "+- 复核意见：依据充分，采纳"],
+    ],
+  },
+};
+
+const RUNS = {
+  parallel: [
+    { id: "r1", agent: "research", desc: "梳理这周的规范变更", status: "running", background: false,
+      rounds: 5, tokens: "82k", model: MODELS.fast, elapsed: "1m12s",
+      steps: [["vault_search", "30_规范/** · 18 个文件"], ["vault_read", "40_规范/链接规范.md"], ["vault_read", "20_笔记/设计自评.md"]] },
+    { id: "r2", agent: "reviewer", desc: "复核三处结论", status: "running", background: false,
+      rounds: 3, tokens: "41k", model: MODELS.strong, elapsed: "48s",
+      steps: [["vault_read", "30_规范/变更梳理-第41周.md"], ["vault_search", "反例 · 6 处"]] },
+    { id: "r3", agent: "explore", desc: "按路径枚举变更文件", status: "done", background: false,
+      rounds: 2, tokens: "12k", model: MODELS.inherit, elapsed: "21s",
+      steps: [["vault_search", "30_规范/**"]],
+      summary: "本周有 9 个文件变更，集中在链接与表格两类规范；结论与依据见摘要。" },
+  ],
+  approval: [
+    { id: "r1", agent: "research", desc: "梳理这周的规范变更", status: "waiting", background: false,
+      rounds: 2, tokens: "38k", model: MODELS.fast, elapsed: "44s",
+      steps: [["vault_search", "30_规范/** · 18 个文件"], ["vault_read", "40_规范/链接规范.md"]] },
+    { id: "r2", agent: "scribe", desc: "把复核结论落成笔记", status: "waiting", background: false,
+      rounds: 1, tokens: "9k", model: MODELS.fast, elapsed: "12s",
+      steps: [["vault_read", "20_笔记/设计自评.md"]] },
+    { id: "r3", agent: "explore", desc: "按路径枚举变更文件", status: "done", background: false,
+      rounds: 2, tokens: "12k", model: MODELS.inherit, elapsed: "21s",
+      steps: [["vault_search", "30_规范/**"]],
+      summary: "本周有 9 个文件变更，集中在链接与表格两类规范。" },
+  ],
+  background: [
+    { id: "r1", agent: "research", desc: "梳理这周的规范变更", status: "running", background: true,
+      rounds: 7, tokens: "120k", model: MODELS.fast, elapsed: "3m05s",
+      steps: [["vault_search", "30_规范/** · 18 个文件"], ["vault_read", "40_规范/表格规范.md"]] },
+    { id: "r2", agent: "scribe", desc: "把复核结论落成笔记", status: "done", background: true,
+      rounds: 4, tokens: "38k", model: MODELS.fast, elapsed: "1m40s",
+      steps: [["vault_create", "20_笔记/复核记录-第41周.md"]],
+      summary: "复核记录已写好，共 3 条结论；两处待你确认的措辞列在文末。" },
+  ],
+  done: [
+    { id: "r1", agent: "research", desc: "梳理这周的规范变更", status: "done", background: false,
+      rounds: 6, tokens: "96k", model: MODELS.fast, elapsed: "1m26s",
+      steps: [["vault_search", "30_规范/** · 18 个文件"], ["vault_read", "40_规范/链接规范.md"], ["vault_search", "链接语法 · 12 处"]],
+      summary: "结论：本周 9 个变更分两类——链接写法统一相对路径；表格内换行改用标记。依据与不确定项见审计。" },
+    { id: "r2", agent: "reviewer", desc: "复核三处结论", status: "partial", background: false,
+      rounds: 8, tokens: "88k", model: MODELS.strong, elapsed: "1m51s", stopped: "rounds",
+      steps: [["vault_read", "30_规范/变更梳理-第41周.md"], ["vault_read", "20_笔记/设计自评.md"]],
+      summary: "三处结论中两处有依据支撑；第三处（表格换行）只找到一处弱证据，建议补查。" },
+    { id: "r3", agent: "explore", desc: "按路径枚举变更文件", status: "done", background: false,
+      rounds: 2, tokens: "12k", model: MODELS.inherit, elapsed: "21s",
+      steps: [["vault_search", "30_规范/**"]],
+      summary: "本周有 9 个文件变更，集中在链接与表格两类规范。" },
+  ],
+  catalog: [],
+  off: [],
+};
+
+const USAGE = [
+  { model: MODELS.fast, io: "输入 118k（缓存 74k）· 输出 5.2k · 3 段" },
+  { model: MODELS.strong, io: "输入 44k（缓存 28k）· 输出 2.1k · 1 段" },
+  { model: MODELS.inherit, io: "输入 12k（缓存 9k）· 输出 0.8k · 1 段" },
+];
+
+const SCENES = {
+  parallel: {
+    name: "并行运行中",
+    desc: "同一回合三个任务并行：research 与 reviewer 在跑，explore 已完成。任务区常驻，行内只留一个读数，详情展开看步骤。",
+    user: "帮我把这周的规范变更梳理一遍，顺便复核一下我上周写的三处结论。",
+    lead: "我并行派三个任务：一个梳理变更、一个只读探路，最后一个复核结论。",
+  },
+  approval: {
+    name: "等待批准（多个待批）",
+    desc: "两个子代理同时撞上 ask 级调用：批准卡在各自的任务行里就地展开，标题标出待批数。批准 / 拒绝可现场点，拒绝只废掉这一次调用、子运行继续。",
+    user: "梳理完直接落成笔记，别只给我聊天记录。",
+    lead: "两个任务都在写文件前停下了——批准卡在任务区里等你。",
+  },
+  background: {
+    name: "后台任务与完成通知",
+    desc: "父回合已结束，后台任务仍在跑（带「后台」标记）；另一个后台任务已完成，结果以自动化通知落在对话里，回合结束后可以直接继续发消息。",
+    user: "这两个不急，你先跑着，我想到别的再喊你。",
+    lead: "好，两个都放后台。写完我会把结果作为通知递回来，你可以先继续忙。",
+  },
+  done: {
+    name: "完成态与按模型用量",
+    desc: "三个任务的终态：两个完成、一个触顶返回部分结果。展开区给该任务用量，面板底部给「子任务用量（按模型）」——不同模型的 token 不折叠成一个数。",
+    user: "梳理完顺便复核，结论有分歧就标出来。",
+    lead: "三个任务都收敛了；reviewer 在轮次上限处停下，带回部分结论。",
+  },
+  catalog: {
+    name: "子代理清单",
+    desc: "只读清单：有哪些子代理、各自能做什么、用几个工具、跑哪个模型、来自哪里（内建 / vault / 用户）。要改定义仍是编辑文本文件。",
+    user: "现在都有哪些子代理可用？",
+    lead: "库里有四个：内建 explore，加 vault 里两个、用户级一个。清单在任务区底部。",
+  },
+  off: {
+    name: "关停（enabled=false）",
+    desc: "配置里关掉 subagents 后：task 工具不注册、任务区整体不出现；定义文件与内建 explore 原样保留，重新启用即恢复。",
+    user: "这次别派子任务，你自己做着看。",
+    lead: "好，我把 subagents 关着做完这轮——工具清单里没有 task，任务区也不出现。",
+  },
+};
+
+/* ---- 原型内交互态（不写 URL） ---- */
+const state = {
+  collapsed: q.get("collapse") === "1",
+  catOpen: q.get("cat") === "1",
+  open: new Set((q.get("row") || "").split(",").filter(Boolean)),
+  decisions: {},   // runId -> { approved, reason }
+  stopped: new Set(),
+  trows: new Set(), // transcript 里展开详情的 task 行
+};
+const sceneId = SCENES[q.get("scene")] ? q.get("scene") : "parallel";
+const scene = SCENES[sceneId];
+const runs = RUNS[sceneId];
+if (sceneId === "catalog") state.catOpen = q.get("cat") !== "0";
+
+/* ---- 图标 ---- */
+const CHECK_SVG = '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.5 5 9l4.5-5.5"/></svg>';
+const CROSS_SVG = '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>';
+const CHEV_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2 7 5 3.5 8"/></svg>';
+const PAUSE_SVG = '<svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor"><rect x="3" y="2.5" width="2" height="7" rx="0.6"/><rect x="7" y="2.5" width="2" height="7" rx="0.6"/></svg>';
+const DOT = '<span class="pulse"></span>';
+
+/* ---- 文案映射（状态词的唯一产出点；前端不自行推导） ---- */
+const STATUS_WORD = {
+  running: "运行中", waiting: "等待批准", done: "已完成",
+  partial: "部分结果", failed: "失败", stopped: "已停止",
+};
+const STATUS_CLASS = {
+  running: "is-running", waiting: "is-waiting", done: "is-done",
+  partial: "is-partial", failed: "is-failed", stopped: "is-stopped",
+};
+const STOP_WORD = { rounds: "轮次上限", tokens: "token 预算", time: "时间预算", quota: "配额不足", error: "接口错误" };
+
+/* ---- 面板标题（任务区唯一读数出口；全部收敛后收敛为一行摘要） ---- */
+function liveRuns() {
+  return runs.filter(r => {
+    const st = runStatus(r);
+    return st === "running" || st === "waiting";
+  });
+}
+function headTitle() {
+  const live = liveRuns();
+  if (live.length) {
+    const waiting = live.filter(r => runStatus(r) === "waiting").length;
+    const bg = live.filter(r => runStatus(r) === "running" && r.background).length;
+    const plain = live.length - waiting - bg;
+    const parts = [];
+    if (plain) parts.push(`${plain} 个运行中`);
+    if (bg) parts.push(`${bg} 个后台运行中`);
+    const head = parts.length ? `<span class="tp-count">${parts.join(" · ")}</span>` : "";
+    return `<span class="tp-title">任务</span>${head}`
+      + (waiting ? `<span class="tp-wait">${waiting} 个等待批准</span>` : "");
+  }
+  const done = runs.filter(r => runStatus(r) === "done").length;
+  const partial = runs.filter(r => runStatus(r) === "partial").length;
+  const parts = [done ? `${done} 个已完成` : "", partial ? `${partial} 个部分结果` : ""].filter(Boolean);
+  if (!parts.length) return "";
+  return `<span class="tp-title">任务</span><span class="tp-count">本次会话 ${parts.join(" · ")}</span>`;
+}
+
+/* ---- 行状态（交互态覆盖 fixture 终态：页内批准 / 拒绝 / 停止后就地翻） ---- */
+function runStatus(r) {
+  if (state.stopped.has(r.id)) return "stopped";
+  if (state.decisions[r.id]) return "running";
+  return r.status;
+}
+
+/* ---- 任务行 ---- */
+function runRow(r) {
+  const st = runStatus(r);
+  const open = state.open.has(r.id) || (st === "waiting" && !state.decisions[r.id]);
+  const flags = r.background ? '<span class="run-flag">后台</span>' : "";
+  const read = st === "waiting" ? "" : `<span class="run-read">${r.rounds} 轮 · ${r.tokens}</span>`;
+  const ic = st === "running" ? DOT : st === "waiting" ? PAUSE_SVG
+    : st === "done" ? CHECK_SVG : st === "partial" ? PAUSE_SVG : CROSS_SVG;
+  // 运行中由脉冲点承载状态（行宽有限，优先给 description 与读数）；终态与待批保留状态词，永不截断
+  const statusWord = st === "running" ? "" : `<span class="run-read" style="flex:none">${STATUS_WORD[st]}</span>`;
+  const body = open ? runBody(r, st) : "";
+  return `<div class="run ${STATUS_CLASS[st]}" data-run-wrap="${r.id}">
+    <button type="button" class="run-row" data-row="${r.id}" aria-expanded="${open}">
+      <span class="run-ic">${ic}</span>
+      <span class="run-agent">${r.agent}</span>
+      <span class="run-desc">${r.desc}</span>
+      ${flags}${read}${statusWord}
+    </button>
+    ${body}
+  </div>`;
+}
+
+/* ---- 行详情：模型 / 步数 / 用时 / 步骤 / 摘要 / 停止 / 批准卡 ---- */
+function runBody(r, st) {
+  const meta = `<div class="run-meta"><span>模型 <b>${r.model}</b></span><span>${r.rounds} 轮 · ${r.steps.length} 步</span><span>${r.elapsed}</span>`
+    + (r.stopped ? `<span>触顶 <b>${STOP_WORD[r.stopped] || r.stopped}</b></span>` : "")
+    + `</div>`;
+  const steps = `<div class="steps">${r.steps.map(([t, a]) =>
+    `<div class="step"><span>${t}</span><span class="sa">${a}</span></div>`).join("")}</div>`;
+  const sum = r.summary
+    ? `<div class="run-sum"><span class="label">摘要</span> ${r.summary}</div>` : "";
+  const stop = (st === "running")
+    ? `<div class="run-actions"><button type="button" class="mini" data-stop="${r.id}">停止</button></div>` : "";
+  const ask = st === "waiting" ? askHTML(r) : "";
+  const settled = state.decisions[r.id] ? settledHTML(r) : "";
+  return `<div class="run-body">${meta}${steps}${sum}${stop}${ask}${settled}</div>`;
+}
+
+/* ---- 批准卡（透传：点名发起者） ---- */
+function askHTML(r) {
+  const a = ASKS[r.id];
+  if (!a) return "";
+  const rows = a.diff.map(([k, line]) => {
+    const cls = k === "+" ? "d-add" : k === "-" ? "d-del" : k === "h" ? "d-hunk" : "";
+    return `<div${cls ? ` class="${cls}"` : ""}>${line}</div>`;
+  }).join("");
+  return `<div class="ap">
+    <div class="ap-title">${a.q}<span class="ap-sub">${a.sub}</span></div>
+    <div class="ap-from">${a.from} · <span class="mono">${a.tool}</span></div>
+    <pre>${rows}</pre>
+    <input class="ap-reason" type="text" placeholder="拒绝原因（可选，会随拒绝回给子代理）">
+    <div class="ap-actions">
+      <button type="button" data-decide="yes" data-for="${r.id}">批准</button>
+      <button type="button" data-decide="no" data-for="${r.id}">拒绝</button>
+      <label class="ap-remember"><input type="checkbox"> 本会话不再问</label>
+    </div>
+  </div>`;
+}
+
+function settledHTML(r) {
+  const d = state.decisions[r.id];
+  const a = ASKS[r.id];
+  const approved = d.approved;
+  const word = approved ? "已批准" : "已拒绝";
+  const reason = !approved && d.reason ? `<div class="term-reason">原因：${d.reason}</div>` : "";
+  const rows = a.diff.map(([k, line]) => {
+    const cls = k === "+" ? "d-add" : k === "-" ? "d-del" : k === "h" ? "d-hunk" : "";
+    return `<div${cls ? ` class="${cls}"` : ""}>${line}</div>`;
+  }).join("");
+  return `<div class="ap ${approved ? "is-approved" : "is-rejected"}">
+    <div class="ap-rec">
+      <span class="ap-ic">${approved ? CHECK_SVG : CROSS_SVG}</span>
+      <span class="ap-rec-text">${a.from}</span>
+      <span class="tres"><b class="tw">${word}</b> · 刚刚</span>
+    </div>
+    ${reason}
+    <details class="ap-det"><summary>详情</summary><pre>${rows}</pre></details>
+  </div>`;
+}
+
+/* ---- 按模型用量（子任务，不进父会话 ctx%） ---- */
+function usageHTML() {
+  return `<div class="tp-usage">
+    <h4>子任务用量（按模型）</h4>
+    ${USAGE.map(u => `<div class="usage-row"><span class="um">${u.model}</span><span class="uv">${u.io}</span></div>`).join("")}
+  </div>`;
+}
+
+/* ---- 子代理清单 ---- */
+function catHTML() {
+  const open = state.catOpen;
+  return `<div class="tp-cat ${open ? "is-open" : ""}">
+    <button type="button" class="cat-head" data-cat aria-expanded="${open}">
+      子代理清单 · ${DEFS.length}<span class="chev">${CHEV_SVG}</span>
+    </button>
+    <div class="cat-list">
+      ${DEFS.map(d => `<div class="cat-item">
+        <div class="cat-top"><span class="cat-name">${d.name}</span><span class="cat-src">${d.src}</span></div>
+        <div class="cat-desc">${d.desc}</div>
+        <div class="cat-meta">${d.tools} 件工具 · 模型 ${d.model}</div>
+      </div>`).join("")}
+    </div>
+  </div>`;
+}
+
+/* ---- 任务区（只列运行中 / 等待批准；历史任务在 transcript，全部收敛后收敛为一行摘要） ---- */
+function settledAll() {
+  return runs.length > 0 && runs.every(r => {
+    const st = runStatus(r);
+    return st !== "running" && st !== "waiting";
+  });
+}
+function tasksHTML() {
+  if (!runs.length) return "";
+  const title = headTitle();
+  if (!title) return "";
+  const live = liveRuns();
+  const collapsed = state.collapsed ? "is-collapsed" : "";
+  const body = live.length ? `<div class="tp-list">${live.map(runRow).join("")}</div>` : "";
+  return `<section class="tp ${collapsed}">
+    <button type="button" class="tp-head" data-collapse aria-expanded="${!state.collapsed}">
+      ${title}<span class="tp-chev">${CHEV_SVG}</span>
+    </button>
+    ${body}
+    ${settledAll() ? usageHTML() : ""}
+  </section>`;
+}
+
+/* ---- transcript：task 工具行（历史档案；点行展开该 run 的详情） ---- */
+function toolsHTML() {
+  if (!runs.length) return "";
+  const rows = runs.map(r => {
+    const st = runStatus(r);
+    const word = st === "running" && r.background ? "后台运行" : STATUS_WORD[st];
+    const ic = st === "running" ? DOT : st === "waiting" ? PAUSE_SVG : st === "done" ? CHECK_SVG
+      : st === "partial" ? PAUSE_SVG : CROSS_SVG;
+    const open = state.trows.has(r.id);
+    return `<div class="trow-wrap">
+      <button type="button" class="trow ${STATUS_CLASS[st]}" data-trow="${r.id}" aria-expanded="${open}">
+        <span class="tic">${ic}</span>
+        <span class="ttext"><span class="tn">task</span> <span class="ta">${r.agent}</span> ${r.desc}</span>
+        <span class="tres"><b class="tw">${word}</b></span>
+        <span class="tmore">${CHEV_SVG}详情</span>
+      </button>
+      ${open ? runBody(r, st) : ""}
+    </div>`;
+  }).join("");
+  return `<div class="tools">${rows}</div>`;
+}
+
+function noticeHTML() {
+  const finished = runs.find(r => r.background && r.status === "done");
+  if (!finished) return "";
+  return `<div class="msg msg-notice">
+    <div class="notice-head">后台任务完成 · ${finished.agent}<span class="when">· 2 分钟前</span></div>
+    <div class="notice-body">${finished.summary} <span class="more">详情见任务面板</span></div>
+  </div>`;
+}
+
+function transcriptHTML() {
+  const toolBlock = toolsHTML();
+  const notice = noticeHTML();
+  return `<div class="hp"><div class="hp-transcript">
+      <div class="msg msg-user"><div class="who">你<span class="when">· 14:02</span></div><div class="body">${scene.user}</div></div>
+      <div class="msg msg-agent"><div class="who">AGENT<span class="when">· 14:03</span></div>
+        <div class="body"><p>${scene.lead}</p>${toolBlock}</div></div>
+      ${notice}
+    </div>
+    ${tasksHTML()}
+    ${sceneId === "off" ? "" : catHTML()}
+    <div class="hp-composer-area"><div class="hp-composer-box"><div class="hp-composer">输入消息，试试 / 命令…</div></div></div>
+  </div>`;
+}
+
+/* ---- 每帧的原型注 ---- */
+const NOTES = {
+  parallel: "<b>并行</b>：三个任务同时跑，任务区每行只留 agent + 一句话 + 一个读数；点行展开看模型、步骤与用时。状态词永不截断，description 是唯一可截断字段。",
+  approval: "<b>批准透传</b>：卡片跟着发起者走（行内展开），点名 agent 与 description；标题标待批数。点「批准 / 拒绝」看卡片就地收敛、行回到运行中——拒绝只废这一次调用。",
+  background: "<b>后台</b>：回合结束后行仍常驻（带「后台」）；完成的结果是一条自动化通知（左侧色条），与用户消息视觉区分。",
+  done: "<b>按模型分桶</b>：全部收敛后任务区收敛为一行摘要（完成数）+ 按模型用量；每个 run 的详情从 transcript 的 task 行点开（历史任务不逐行留在面板）。触顶的行标「部分结果」并给出触顶原因。",
+  catalog: "<b>清单</b>：名字 / 来源 / 工具数 / 模型 / 一句话描述；覆盖内建时只显示生效的一份。v1 没有编辑界面，改定义仍是编辑文本文件。",
+  off: "<b>关停</b>：任务区整块不出现（空态不占位），transcript 里也没有 task 行——工具不注册，模型看不见它。",
+};
+
+/* ---- 控制面板 ---- */
+function go(patch) {
+  const p = new URLSearchParams(location.search);
+  for (const [k, v] of Object.entries(patch)) p.set(k, v);
+  location.search = p.toString();
+}
+function cpanelHTML() {
+  const themeBtns = ["light", "dark", "eink"].map(t =>
+    `<button type="button" class="cp-btn${t === theme ? " is-on" : ""}" data-go="theme:${t}">${t}</button>`).join("");
+  const sceneBtns = Object.entries(SCENES).map(([id, s]) =>
+    `<button type="button" class="cp-btn${id === sceneId ? " is-on" : ""}" data-go="scene:${id}">${s.name}</button>`).join("");
+  const collapseBtn = `<button type="button" class="cp-btn${state.collapsed ? " is-on" : ""}" data-toggle="collapse">${state.collapsed ? "折叠" : "展开"}</button>`;
+  const catBtn = `<button type="button" class="cp-btn${state.catOpen ? " is-on" : ""}" data-toggle="cat">${state.catOpen ? "开" : "关"}</button>`;
+  const anyOpen = state.open.size > 0 || Object.keys(state.decisions).length > 0;
+  const resetBtn = anyOpen
+    ? `<button type="button" class="cp-btn" data-toggle="reset">↺ 重置详情与决定</button>` : "";
+  return `<div class="cpanel" id="cpanel" ${panelOff ? "hidden" : ""}>
+    <h2>控制面板</h2>
+    <div class="cp-row"><span class="cp-label">主题</span>${themeBtns}</div>
+    <div class="cp-row"><span class="cp-label">场景</span>${sceneBtns}</div>
+    <div class="cp-row"><span class="cp-label">任务区</span>${collapseBtn}</div>
+    <div class="cp-row"><span class="cp-label">子代理清单</span>${catBtn}</div>
+    <div class="cp-row">${resetBtn}</div>
+    <div class="cp-note">全部内容为合成 fixture（模型 id 亦为占位）。场景 / 主题写回 URL 可刷新复现；页内「展开行 / 批准 / 拒绝 / 折叠」不写 URL。截图用 ?panel=0 关本面板。原型对应 openspec change add-harness-subagents design §19。</div>
+  </div>`;
+}
+
+/* ---- 渲染 ---- */
+function render() {
+  document.body.innerHTML = `<div class="stage-only">
+    <div class="stage-head">
+      <h1>${scene.name} — Subagents / Tasks 可见面</h1>
+      <div class="sub">${scene.desc}</div>
+    </div>
+    <div class="frames">
+      <div class="frame">
+        <div class="frame-tag">agent 面板（348px）· 任务区在 composer 上方 <span class="v-id">scene=${sceneId}</span></div>
+        ${transcriptHTML()}
+        <div class="note">${NOTES[sceneId]}</div>
+      </div>
+    </div>
+  </div>${cpanelHTML()}`;
+  bind();
+}
+
+function bind() {
+  document.body.onclick = (e) => {
+    const goEl = e.target.closest("[data-go]");
+    if (goEl) { const [k, v] = goEl.dataset.go.split(":"); go({ [k]: v }); return; }
+
+    const tog = e.target.closest("[data-toggle]");
+    if (tog) {
+      const what = tog.dataset.toggle;
+      if (what === "collapse") state.collapsed = !state.collapsed;
+      if (what === "cat") state.catOpen = !state.catOpen;
+      if (what === "reset") { state.open.clear(); state.decisions = {}; state.stopped.clear(); state.trows.clear(); }
+      render();
+      return;
+    }
+    if (e.target.closest("[data-cat]")) { state.catOpen = !state.catOpen; render(); return; }
+    if (e.target.closest("[data-collapse]")) { state.collapsed = !state.collapsed; render(); return; }
+
+    const rowBtn = e.target.closest("[data-row]");
+    if (rowBtn) {
+      const id = rowBtn.dataset.row;
+      state.open.has(id) ? state.open.delete(id) : state.open.add(id);
+      render();
+      return;
+    }
+
+    const trowBtn = e.target.closest("[data-trow]");
+    if (trowBtn) {
+      const id = trowBtn.dataset.trow;
+      state.trows.has(id) ? state.trows.delete(id) : state.trows.add(id);
+      render();
+      return;
+    }
+
+    const stopBtn = e.target.closest("[data-stop]");
+    if (stopBtn) {
+      // 原型示意：停止只改本行状态（真实实现走 §12.4 的单 run 停止路径）
+      state.stopped.add(stopBtn.dataset.stop);
+      state.open.add(stopBtn.dataset.stop);
+      render();
+      return;
+    }
+
+    const dec = e.target.closest("[data-decide]");
+    if (dec) {
+      const id = dec.dataset.for;
+      const card = dec.closest(".ap");
+      const reasonEl = card ? card.querySelector(".ap-reason") : null;
+      const reason = dec.dataset.decide === "no" && reasonEl && reasonEl.value.trim()
+        ? reasonEl.value.trim() : undefined;
+      state.decisions[id] = { approved: dec.dataset.decide === "yes", reason };
+      state.open.add(id);
+      render();
+      return;
+    }
+  };
+}
+
+render();
+document.title = `${scene.name} · ${theme} — Subagents 任务面板原型（M578）`;
+</script>
+</body>
+</html>

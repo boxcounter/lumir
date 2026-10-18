@@ -2,10 +2,12 @@
 
 > 起草注记（非规格正文）：本 delta 新建 capability `harness-subagents`——子代理定义与委托式 harness
 > 运行。形态参照 [Claude Code subagents](https://code.claude.com/docs/en/sub-agents)（2026-10-18 抓取）：
-> 定义即 Markdown + YAML frontmatter 文件、按名字委派、按 `description` 自动委派、部分结果可 resume；
-> 与参照系的逐项对照及刻意偏离见 [proposal.md](../../proposal.md)「参照系」节。运行公共层
-> （`RunSpec` / `RunContext`）属 `harness` capability，见 [harness delta](../harness/spec.md)。本
-> capability 只管「有哪些子代理、一次委派怎么跑、怎么收敛、怎么记账、怎么留档」。
+> 定义即 Markdown + YAML frontmatter 文件、按名字委派、按 `description` 自动委派、部分结果可 resume。
+> 第二轮按 Alex 节点 1 裁决修订：并行 + 后台运行、批准卡透传、内建 `explore`、用量按模型分桶、
+> 任务面板可见面；逐条出处见 [proposal.md](../../proposal.md)「裁决留痕」。与参照系的逐项对照及刻意
+> 偏离见 proposal「参照系」节。运行公共层（`RunSpec` / `RunContext`）属 `harness` capability，见
+> [harness delta](../harness/spec.md)。本 capability 只管「有哪些子代理、一次委派怎么跑、怎么收敛、
+> 怎么记账、怎么留档、用户看到什么」。
 
 ## ADDED Requirements
 
@@ -18,7 +20,8 @@
 
 扫描 SHALL 递归子目录；身份 MUST 只取 frontmatter 的 `name`，子目录不参与身份。frontmatter 的必填
 字段 SHALL 为 `name`（非空、无空白、不含 `/`、≤64 字符）与 `description`（非空）；可选字段 SHALL
-为 `tools`、`model`、`max_turns`、`max_tokens`、`timeout_secs`。frontmatter 之后的 Markdown 正文
+为 `tools`、`model`、`max_turns`、`max_tokens`、`timeout_secs`、`background`。`background: true` SHALL
+表示该定义强制后台运行（调用参数无法把定义的后台降为前台）。frontmatter 之后的 Markdown 正文
 SHALL 是该子代理 system prompt 的身份段。定义文件 MUST NOT 需要改代码即可生效：每回合开头扫描一次，
 磁盘改动在下一回合的委派中生效，MUST NOT 要求重启应用。
 
@@ -29,6 +32,12 @@ MUST NOT 让扫描整体失败：frontmatter 缺失 / 未闭合 / YAML 解析失
 provider 清单时 SHALL 保留定义并回落 `inherit` + warning；`max_turns` / `max_tokens` /
 `timeout_secs` 类型非法或越界时 SHALL 取配置上限 + warning。未识别的 frontmatter 字段 SHALL 产
 warning 并忽略（文案点名该字段在本版本不采纳）。
+
+系统 SHALL 内置一个只读子代理定义 `explore`（Alex 裁决「同意」）：`tools` 为只读三件
+`vault_read` / `vault_search` / `skill_load`，`model` = `inherit`，三闸取 `[harness.subagents]`
+缺省，描述其用途为「在 vault 里搜索、按路径枚举、读取文件与 skill，产出结论与依据；不改文件、不跑
+命令」。内建定义 SHALL 与磁盘定义走同一条装载、校验与清单注入路径，MUST NOT 形成代码里的特殊分支。
+同名定义 SHALL 以用户级 / vault 级覆盖内建（覆盖时产一条人话 warning，清单里只出现生效的一份）。
 
 系统 SHALL 把每个生效定义的 `name` 与 `description` 注入 `task` 工具的描述（自动委派的依据）；
 描述合计的估算 token 数（`ceil(字符数 ÷ 4)`）超过 15,000 时 SHALL 产出一条 warning 与
@@ -44,6 +53,12 @@ warning 并忽略（文案点名该字段在本版本不采纳）。
 
 - **WHEN** 用户级与 vault 级各有一个 `name: research` 的定义
 - **THEN** 委派 `research` 使用 vault 级定义的字段与正文；用户级同名定义不生效
+
+#### Scenario: 内建 explore 可用且可被覆盖
+
+- **WHEN** vault 与用户目录里都没有定义 / 另有一个 `name: explore` 的用户级定义
+- **THEN** 前者清单里有内建 `explore`，委派它时工具定义恰为只读三件；后者生效的是用户定义并产出一条
+  覆盖 warning，清单里 `explore` 只出现一次
 
 #### Scenario: 非法定义逐条丢弃
 
@@ -64,15 +79,18 @@ warning 并忽略（文案点名该字段在本版本不采纳）。
 
 系统 SHALL 提供 `task` 工具，让父会话把任务委派给一个已定义子代理：子代理有独立上下文与自己的工具
 循环，只把结果摘要回送父会话。入参 SHALL 为 `agent`（定义名，必填）、`prompt`（自包含任务说明，
-MUST 非空）、`description`（一句话标签，必填）、可选 `model`（调用级覆盖）、可选 `resume`（run id）。
-工具集与三项闸值 MUST NOT 作为调用参数——它们只来自定义文件（定义缺省取配置）。任务内容 MUST 只由
-`prompt` 表达，机制 MUST NOT 解析 prompt、MUST NOT 内置任何任务类型、场景名或路径知识。
+MUST 非空）、`description`（一句话标签，必填）、可选 `model`（调用级覆盖）、可选 `resume`（run id）、
+可选 `background`（bool，`true` = 后台运行）。工具集与三项闸值 MUST NOT 作为调用参数——它们只来自
+定义文件（定义缺省取配置）。任务内容 MUST 只由 `prompt` 表达，机制 MUST NOT 解析 prompt、MUST NOT
+内置任何任务类型、场景名或路径知识。
 
 结果 SHALL 走工具集统一信封：完成 `{"ok": true, "status": "completed", "agent": …, "run_id": …,
-"resumable": true, "summary": …, "usage": …, "rounds": …, "denied_calls": …}`；部分结果
-`{"ok": true, "status": "partial", "stopped_by": "rounds" | "tokens" | "time" | "error", …}`；失败
-沿用 `{"ok": false, "code": …, "message": …}`。回送摘要 SHALL 有字符上限，超出 SHALL 显式标
-`truncated: true` 并保留头尾，MUST NOT 静默截断。
+"resumable": true, "model": …, "summary": …, "usage": …, "rounds": …, "denied_calls": …}`；部分结果
+`{"ok": true, "status": "partial", "stopped_by": "rounds" | "tokens" | "time" | "quota" | "error",
+…}`；后台启动成功 `{"ok": true, "status": "running", "run_id": …, "background": true, …}`；失败沿用
+`{"ok": false, "code": …, "message": …}`。回送摘要 SHALL 有字符上限，超出 SHALL 显式标
+`truncated: true` 并保留头尾，MUST NOT 静默截断。同一条助手消息里的多个 `task` 调用 SHALL 并行执行，
+工具结果 SHALL 按原调用顺序回填（见「并行、后台与调度」）。
 
 派生深度 SHALL 恰好为 1 层，实现口径为工具白名单：子运行的工具定义 MUST NOT 包含 `task`；系统
 MUST NOT 维护运行时深度计数，MUST NOT 提供深度配置项。定义把 `task` 写进 `tools` 时 SHALL 在装载期
@@ -100,12 +118,70 @@ MUST NOT 维护运行时深度计数，MUST NOT 提供深度配置项。定义�
 - **WHEN** 子运行的结论摘要超出回送字符上限
 - **THEN** 摘要保留头尾、中间标截断标记，工具结果 `truncated=true`
 
+#### Scenario: 后台调用立即返回
+
+- **WHEN** 父会话以 `background=true` 委派一个任务
+- **THEN** 工具结果立即返回 `status=running` 与 `run_id`，父回合不等待该子运行；父回合结束后用户仍可
+  发送新消息（会话不因后台任务保持占用）
+
+### Requirement: 并行、后台与调度
+
+同一条助手消息里的多个 `task` 调用 SHALL 并行执行（非 `task` 调用维持既有逐个执行口径）；每次调用
+SHALL 受会话级并发上限 `max_concurrent` 约束。前台调用 SHALL 阻塞等待本回合结果；后台调用
+（`background=true` 或定义 `background: true`）SHALL 跨越回合继续运行，不占用父会话的 busy 状态。
+后台启动在并发上限已满时 SHALL 回送 `concurrency_limit` 并 MUST NOT 排队或自动补跑；前台调用等许可。
+
+并行运行的可见与记账语义 SHALL 满足：
+
+- 每条 run 的过程事件与终态事件都带 `run_id` 与 `segment`；同一 run 内有序，跨 run 的相对顺序 MUST
+  NOT 被任何消费者依赖；
+- 父会话 transcript 的 `task` 工具行 SHALL 按调用顺序创建，状态就地更新，MUST NOT 因完成顺序重排；
+- 父请求的工具结果 SHALL 按原调用顺序回填，MUST NOT 按完成顺序；
+- 审计流水按 run 隔离（每个 run 一个文件）；
+- 用量记账是顺序无关的求和（按模型分桶），并行完成顺序 MUST NOT 改变读数。
+
+所有运行 SHALL 共享同一 provider 配额：请求级并发 SHALL 有独立上限（`max_concurrent + 1`，留一个给
+父会话自己的往返），父会话请求优先；provider 返回配额耗尽 / 限流时该段 SHALL 以 `stopped_by=quota`
+收敛，MUST NOT 自动重试或自动更换模型。父回合被停止时 SHALL 广播停止到所有在跑的 run（含本回合起的
+后台 run）；停止单个后台 run 的入口在任务面板，不影响其它 run。
+
+#### Scenario: 同回合并行
+
+- **WHEN** 一条助手消息含两个 `task` 调用
+- **THEN** 两个 run 同时运行（启动时间区间重叠），父会话按调用顺序收到两条工具结果；transcript 两行
+  按调用序排列
+
+#### Scenario: 并发上限已满
+
+- **WHEN** `max_concurrent = 1`，已有一个 run 在跑，父会话再发起一个 `background=true` 的委派
+- **THEN** 回送 `concurrency_limit`，该 run 不启动、不排队；正在跑的 run 不受影响
+
+#### Scenario: 后台结果在后续回合送达
+
+- **WHEN** 后台 run 在父回合结束之后收敛
+- **THEN** 父会话追加一条自动化通知消息与 `task_result` 记录，面板行转为终态；MUST NOT 自动发起新回合
+
+#### Scenario: 停止广播
+
+- **WHEN** 用户停止父回合，此时有 2 个前台 run 与 1 个本回合起的后台 run 在跑
+- **THEN** 三者都在下一检查点收敛为中止，挂起的批准项全部收回；MUST NOT 留下仍在发请求的 run
+
+#### Scenario: 配额耗尽不重试
+
+- **WHEN** 子运行的模型请求返回配额耗尽 / 限流错误
+- **THEN** 该段以 `stopped_by=quota` 返回 partial（已有文本照常回送）；MUST NOT 自动重试或换模型，
+  兄弟 run 继续运行
+
 ### Requirement: 工具集声明与默认收紧
 
 子运行的工具集 SHALL 来自定义的 `tools` 白名单，闭集合 SHALL 为 8 件 vault 操作工具（`vault_read` /
 `vault_search` / `vault_patch` / `vault_create` / `vault_move` / `vault_delete` / `skill_load` /
 `cli_run`）。`tools` 缺省时 SHALL 为只读三件 `vault_read` / `vault_search` / `skill_load`；写类工具
 与 `cli_run` MUST 由定义显式声明后才可见。未声明的工具 MUST NOT 出现在子运行的工具定义里。
+**缺省收紧只是缺省值，不是能力上限**：`tools` SHALL 接受上述 8 件工具的任意子集（含写类与
+`cli_run`），声明后的可见性不受额外限制。工具集里 MUST NOT 包含 web 类工具——这是 harness 本体的
+能力边界（主会话同样没有 web 工具），MUST NOT 被表述为「子代理被额外削减」；联网检索的现时方式是
+`cli_run` 调用外部 CLI（与主会话同权，受权限管线与批准闸约束）。
 
 工具是否可见（白名单）与是否放行（权限管线）SHALL 是两道独立的闸：白名单只决定子运行的工具定义，
 放行仍走既有五层权限管线与三档权限模式，MUST NOT 因「子 agent」而放松或额外收紧用户选定的档位。
@@ -139,9 +215,14 @@ token 闸另在每次往返之后按本次 usage 复查。
 时：已有助手文本 SHALL 返回 `partial` + `stopped_by=error`；没有任何产出 SHALL 返回 `failed` +
 错误码。机制 MUST NOT 自动重试。
 
-时间闸 MUST NOT 中途打断已在执行的工具调用（`cli_run` 自带 60 秒上限即其最坏粒度），故实际
-wall-clock 上界为截止时刻加单次工具最长耗时。父回合的停止请求 SHALL 在下一检查点生效：子运行收敛为
-中止，父循环走既有停止路径；子运行 MUST NOT 让父回合无限挂起。
+时间闸 MUST NOT 中途打断已在执行的工具调用（`cli_run` 自带 60 秒上限即其最坏粒度）。时间闸 SHALL
+按**运行时长**累计，等待用户批准的时间 MUST NOT 计入（等人的延迟不是模型的失控方向）；因此实际
+wall-clock 上界为「运行时长预算 + 等待批准时长 + 单次工具最长耗时」。父回合的停止请求 SHALL 在下一
+检查点生效：子运行收敛为中止，父循环走既有停止路径；子运行 MUST NOT 让父回合无限挂起。
+
+provider 返回配额耗尽 / 限流 SHALL 视为该段的收敛原因而非内部产出：`status=partial` +
+`stopped_by=quota`（无任何产出时 `failed`），MUST NOT 自动重试、MUST NOT 自动更换模型。兄弟 run
+SHALL 不受影响、继续各自的运行。
 
 #### Scenario: token 闸触顶
 
@@ -182,10 +263,12 @@ wall-clock 上界为截止时刻加单次工具最长耗时。父回合的停止
 完整历史（消息、工具结果、思考回放）。resume 的模型解析序 SHALL 为：调用参数 > 该 run 上次使用的
 模型 > 定义；预算 SHALL 是独立的新一段（来自定义、夹取配置上限），token 计数按段清零。
 
-子会话 SHALL 在内存中按 run id 保留，每父会话上限 4 个、按最久未用淘汰；保留范围 SHALL 限于父会话
-生命周期，跨应用重启 MUST NOT 恢复。对已淘汰、已失败（`failed`）、已中止（`aborted`）或跨重启的
-run 调用 resume SHALL 回送 `run_not_resumable`。resume MUST NOT 让子运行出现在会话列表、MUST NOT
-把它变成可恢复会话。
+子会话 SHALL 在内存中按 run id 保留，每父会话上限 4 个、按最久未用淘汰；**运行中的 run MUST NOT
+被淘汰**，淘汰只作用于已收敛的 run。保留范围 SHALL 限于父会话生命周期，跨应用重启 MUST NOT 恢复。
+对已淘汰、已失败（`failed`）、已中止（`aborted`）或跨重启的 run 调用 resume SHALL 回送
+`run_not_resumable`；对仍在运行的 run（后台未收敛）调用 resume SHALL 回送 `run_busy`。后台 run 收敛
+后与前台 run 适用同一保留与 resume 规则。resume MUST NOT 让子运行出现在会话列表、MUST NOT 把它变成
+可恢复会话。
 
 #### Scenario: 触顶后续跑
 
@@ -208,18 +291,48 @@ run 调用 resume SHALL 回送 `run_not_resumable`。resume MUST NOT 让子运�
 - **WHEN** `resume` 指向一个由 `agent=research` 创建的 run，但本次传 `agent=reviewer`
 - **THEN** 回送 `agent_mismatch`，不继续该子会话
 
-### Requirement: 子运行的批准策略
+#### Scenario: 运行中的 run 不可续跑
 
-子运行 MUST NOT 挂在人工批准上等待。权限管线判定为 ask 的调用 SHALL 被拒绝并回送子模型
-（`code: "approval_unavailable"`），计入工具结果的 `denied_calls`；deny 规则、危险黑名单命令与
-vault 内写重定向三层 MUST 照常生效，MUST NOT 因无人值守而放松。子运行 MUST NOT 自动批准、MUST NOT
-把批准请求透传到父会话，也 MUST NOT 复用父会话的批准缓存。定义文件 MUST NOT 携带权限模式字段来
-改变用户选定的档位（本版本不采纳 `permissionMode`）。
+- **WHEN** 一个后台 run 仍在运行时对它调用 `task(resume=run_id)`
+- **THEN** 回送 `run_busy`，不并发写同一子会话；等它收敛后再 resume 可以继续
 
-#### Scenario: 需批准的删除被拒
+### Requirement: 子运行的批准策略（透传父会话）
+
+子运行 SHALL 继承用户选定的权限档与同一条权限判定管线，MUST NOT 拥有独立权限档。判定为 ask 的调用
+SHALL 进入批准闸并把请求透传到父会话：请求 SHALL 携带来源（`kind=subrun`、`agent`、`run_id`、
+`description`），面板 SHALL 点名是哪个子代理在请求批准。批准后该次调用 SHALL 执行；拒绝（可附原因）
+SHALL 回送子模型 `approval_denied`、不执行该调用、计入 `denied_calls`，且子运行 SHALL 继续——MUST NOT
+因一次拒绝终止整个运行。
+
+会话级「本会话不再问」SHALL 写入同一份会话批准缓存（命名空间 = vault 根 + 父会话 id），对父会话与
+所有子运行同时生效；子运行 MUST NOT 拥有独立缓存或独立命名空间。多个子运行同时等待批准时，待批请求
+SHALL 并存并按 ask 时间排序，一个未决请求 MUST NOT 阻塞其它 run 的其它工作。停止回合 SHALL 收回全部
+待决请求（含子运行挂起的），等待方如实记「已停止」而非「被拒绝」。
+
+deny 规则、危险黑名单命令与 vault 内写重定向三层 MUST 照常生效并先于批准闸，MUST NOT 因透传而放松。
+定义文件 MUST NOT 携带权限模式字段来改变用户选定的档位（本版本不采纳 `permissionMode`）；子运行
+MUST NOT 自动批准。
+
+#### Scenario: 需批准的删除透传并批准
 
 - **WHEN** 定义声明 `vault_delete` 且权限档为 `vault_write`（该档删除需批准），子运行调用它
-- **THEN** 调用被拒并回送 `approval_unavailable`，文件系统不变，`denied_calls` 加一
+- **THEN** 父会话出现批准卡且带 `source.agent` / `source.run_id`；批准后文件按既有语义删除
+
+#### Scenario: 拒绝只废掉这一次调用
+
+- **WHEN** 同上场景中用户拒绝并附原因
+- **THEN** 回送子模型 `approval_denied` 与原因，文件系统不变，`denied_calls=1`；子运行继续运行并可
+  在后续轮次继续使用其它工具，最终仍可 `completed`
+
+#### Scenario: 会话记忆跨父与子生效
+
+- **WHEN** 用户在子运行的批准卡上勾「本会话不再问」并批准一次
+- **THEN** 同一会话内父会话与其它子运行的同类调用都不再弹卡（同一份会话批准缓存）
+
+#### Scenario: 多个待批并存
+
+- **WHEN** 两个并行子运行各自触发一个 ask 级调用
+- **THEN** 两张卡同时存在并按 ask 时间排序；先决定一张不影响另一张的呈现与等待
 
 #### Scenario: deny 规则照常生效
 
@@ -229,13 +342,14 @@ vault 内写重定向三层 MUST 照常生效，MUST NOT 因无人值守而放�
 ### Requirement: 子运行上下文装配与隔离
 
 子运行的 system 上下文 SHALL 由三部分组成：定义的 Markdown 正文（非空时替换固定身份段；为空时只用
-固定身份段）、固定的「委托运行约束」段（只做被交代的任务、不与用户交互、不能请求批准、不能再次
-委派、结束时直接给出摘要）、以及既有装配的三层 AGENTS.md 与 Skill 索引。任务内容 MUST 只作为一条
-user 消息进入，MUST NOT 写入 system 段。
+固定身份段）、固定的「委托运行约束」段（只做被交代的任务、不与用户交互、不能再次委派；需要用户
+决定的调用由批准闸透传给用户，不能自行假设答案；结束时直接给出摘要）、以及既有装配的三层 AGENTS.md
+与 Skill 索引。任务内容 MUST 只作为一条 user 消息进入，MUST NOT 写入 system 段。
 
-子运行的输入历史 SHALL 从空开始（resume 除外），MUST NOT 继承父会话的任何消息；父会话 MUST NOT
-收到子运行的文本、思考或工具调用过程，只收到 `task` 工具结果。子运行 MUST NOT 注入编辑器上下文；
-所需路径 SHALL 由 `prompt` 给出。定义正文 MUST NOT 进入主会话上下文。
+子运行的输入历史 SHALL 从空开始（resume 除外），MUST NOT 继承父会话的任何消息；父会话的 LLM 上下文
+MUST NOT 包含子运行的文本、思考或工具调用过程，只包含 `task` 工具结果与后台完成通知。子运行的过程
+SHALL 只进入任务面板的详情视图与诊断事件——**用户可见，但不进上下文**。子运行 MUST NOT 注入编辑器
+上下文；所需路径 SHALL 由 `prompt` 给出。定义正文 MUST NOT 进入主会话上下文。
 
 #### Scenario: 父历史不进入子运行
 
@@ -248,38 +362,45 @@ user 消息进入，MUST NOT 写入 system 段。
 - **THEN** 子运行 system 含定义正文对应的身份内容与 AGENTS.md 内容；固定身份段被正文替换；
   委托约束段仍在场
 
-#### Scenario: 过程不上屏
+#### Scenario: 过程不进主对话
 
 - **WHEN** 子运行执行多轮工具调用
-- **THEN** 父会话面板只出现 `task` 工具卡的进行中与终态（agent + description + 摘要），MUST NOT
-  出现子运行的增量文本、思考块或工具调用行
+- **THEN** 父会话 transcript 只出现 `task` 工具行的进行中与终态（agent + description + 摘要）；子运行
+  的步骤与工具行只在任务面板的展开详情里，MUST NOT 出现在 transcript 正文，MUST NOT 进入父会话的
+  LLM 历史
 
-### Requirement: 用量归属主会话与可重算
+### Requirement: 子运行用量按模型分桶记账与可重算
 
-子运行的 usage SHALL 归入父会话的累计读数：每一运行段结束（任何终态，含失败与中止）时一次性把
-`input` / `cached` / `cache_write` / `output` / 样本数折叠进父会话累计器，MUST NOT 只落在审计流水里。
-父会话的 `ctx%` MUST NOT 因折叠改变。折叠后的会话累计 cache% 是父与子的混合读数，该含义 SHALL 在
-配置文档中写明。
+子运行的 usage SHALL **按模型分桶**记账，MUST NOT 折叠进父会话的单一累计读数。每一运行段结束（任何
+终态，含失败与中止）时，系统 SHALL 把该段 usage（`input` / `cached` / `cache_write` / `output` /
+往返样本数 / 段数）累加到父会话读数面「子运行用量表」中**该段实际使用模型**的桶里，MUST NOT 只落在
+审计流水里，MUST NOT 记到别的模型的桶里。
+
+父会话的 `ctx%` 与 cache% SHALL 只由父会话自己的往返计算，MUST NOT 掺入子运行数字（跨模型混算的
+百分比没有解释力）；该口径 SHALL 在配置文档中写明。**配额口径不分桶**：所有桶都计入同一 provider
+配额，分桶只影响读数与呈现。
 
 父会话的 wire 留存 SHALL 每段落一条 `subrun` sidecar 记录（run id、segment、agent、模型、终态、
-usage、审计文件指针）；「从历史恢复以留存重算读数」的既有口径不变，重算输入 SHALL 包含该类记录，
-live 读数与恢复重算读数 MUST 逐字段相等。子运行内部的压缩调用 SHALL 计入该段 token 预算，但 MUST
-NOT 折叠进父会话读数（沿用「压缩是内部汇总调用，不计入会话读数」的既有口径）。
+usage、审计文件指针）；「从历史恢复以留存重算读数」的既有口径不变，重算输入 SHALL 包含该类记录并按
+模型归桶累加，live 分桶表与恢复重算的分桶表 MUST 逐字段相等（求和与记录顺序无关，并行的完成顺序
+MUST NOT 改变读数）。子运行内部的压缩调用 SHALL 计入该段 token 预算，但 MUST NOT 进入任何模型的桶
+（沿用「压缩是内部汇总调用，不计入会话读数」的既有口径）。
 
-#### Scenario: 子运行用量进父读数
+#### Scenario: 按模型分桶
 
-- **WHEN** 一次 `task` 运行（含 resume 段）结束
-- **THEN** 父会话累计 input / cached / output 读数增加该段的对应值
+- **WHEN** 同一会话里两个子运行分别使用模型 A 与模型 B（同一模型的 run 可多段）
+- **THEN** 子运行用量表出现 A / B 两个桶，各自累加自己的 input / output / 样本数；父会话的 `ctx%`
+  与 cache% 不变（只反映父会话自己的往返）
 
 #### Scenario: 恢复与 live 读数一致
 
-- **WHEN** 完成一次含子运行（含 partial 与 resume）的回合后关闭并恢复该会话
-- **THEN** 由留存重算的读数与 live 读数逐字段相等（`subrun` sidecar 是重算输入之一）
+- **WHEN** 完成一次含子运行（含 partial、resume、并行）的回合后关闭并恢复该会话
+- **THEN** 由留存重算的分桶表与 live 分桶表逐字段相等（`subrun` sidecar 是重算输入之一）
 
 #### Scenario: 失败与中止也记账
 
 - **WHEN** 子运行以失败或被用户停止告终
-- **THEN** 已发生的 usage 照常折叠进父会话，并落 `subrun` sidecar（终态如实记录）
+- **THEN** 已发生的 usage 照常进入该模型的桶，并落 `subrun` sidecar（终态如实记录）
 
 ### Requirement: 子运行留存与诊断
 
@@ -289,9 +410,11 @@ NOT 折叠进父会话读数（沿用「压缩是内部汇总调用，不计入�
 三条链路里，MUST NOT 作为可恢复会话存在。审计写失败 MUST NOT 阻断运行，但 SHALL 在完成事件里带出
 失败标记。
 
-系统 SHALL 产出四个诊断事件：`subagent_started`、`subagent_finished`、`subagent_rejected`、
-`subagent_catalog_large`；完成事件 SHALL 带 run id、segment、agent、终态、触顶原因、轮次、三项 token
-读数、被拒调用数、耗时、摘要字符数与审计路径。事件 MUST NOT 含任务 prompt 内容与 vault 绝对路径。
+系统 SHALL 产出七个诊断事件：`subagent_started`、`subagent_progress`、`subagent_step`、
+`subagent_finished`、`subagent_notified`、`subagent_rejected`、`subagent_catalog_large`；完成事件 SHALL
+带 run id、segment、agent、终态、触顶原因、轮次、模型、三项 token 读数、被拒调用数、耗时、摘要字符数
+与审计路径。`subagent_progress` / `subagent_step` 是可见面事件，SHALL 节流产出、只带读数与人话化参数
+摘要。事件 MUST NOT 含任务 prompt 内容、文件内容与 vault 绝对路径。
 
 #### Scenario: 审计可定位
 
@@ -333,15 +456,20 @@ resume 时调用参数 > 该 run 上次使用的模型 > 定义。调用参数�
 
 ### Requirement: 子运行配置节
 
-`config.json` SHALL 支持 `[harness.subagents]` 节：`enabled`（bool，缺省 true）、`max_turns`
+`config.json` SHALL 支持 `[harness.subagents]` 节：`enabled`（bool，缺省 **true**）、`max_turns`
 （缺省 20）、`max_tokens`（缺省 200000）、`timeout_secs`（缺省 300）、`max_subruns_per_turn`
-（缺省 8）。前四项同时是定义缺省值与定义值的上限：定义未写时取配置值，定义值超过配置值时夹取到
-配置值并产 warning。校验 SHALL 沿用既有模板：类型不符整节回落 + 人话 warning；数值越界夹取到合法域
-+ warning，MUST NOT 因此丢弃整节或让应用启动失败。
+（缺省 8）、`max_concurrent`（缺省 4，合法域 1–16，会话级同时运行的子运行数上限，前台与后台合计）。
+`max_turns` / `max_tokens` / `timeout_secs` 同时是定义缺省值与定义值的上限：定义未写时取配置值，
+定义值超过配置值时夹取到配置值并产 warning。`enabled = false` 是全局 kill switch：`task` MUST NOT
+注册、任务面板任务区 MUST NOT 出现，定义文件与内建 `explore` SHALL 原样保留（重新启用即恢复）。校验
+SHALL 沿用既有模板：类型不符整节回落 + 人话 warning；数值越界夹取到合法域 + warning，MUST NOT 因此
+丢弃整节或让应用启动失败。
 
-`enabled=false` 或没有任何生效定义时，`task` MUST NOT 注册进工具定义（模型看不见）；对该工具的调用
-SHALL 回送 `disabled` 或 `agent_not_found`。`max_subruns_per_turn` SHALL 按父回合计数并拒绝超出的
-委派段（`subrun_limit`），只计实际进入执行的段，MUST NOT 静默跳过。
+`enabled=false` 时 `task` MUST NOT 注册进工具定义（模型看不见），对该工具的调用 SHALL 回送
+`disabled` 且不启动子运行。内建 `explore` 恒存在于清单中，因此「有生效定义」在 `enabled=true` 时恒
+成立（用户可以用同名自定义定义覆盖内建）。`max_subruns_per_turn` SHALL 按父回合计数并拒绝超出的
+委派段（`subrun_limit`），只计实际进入执行的段（前台 + 后台），MUST NOT 静默跳过。`max_concurrent`
+SHALL 限制会话级同时运行的 run 数；超出时后台委派回 `concurrency_limit`，前台委派等待许可。
 
 #### Scenario: 非法值夹取
 
@@ -356,9 +484,64 @@ SHALL 回送 `disabled` 或 `agent_not_found`。`max_subruns_per_turn` SHALL 按
 #### Scenario: 关停后工具不注册
 
 - **WHEN** `[harness.subagents].enabled = false` 后重启应用
-- **THEN** 请求里的工具定义不含 `task`；若模型仍发起该调用，回送 `disabled` 且不启动子运行
+- **THEN** 请求里的工具定义不含 `task`、任务面板任务区不出现；若模型仍发起该调用，回送 `disabled`
+  且不启动子运行；定义文件与内建 `explore` 仍在盘上 / 内存里
 
 #### Scenario: 单回合委派次数上限
 
 - **WHEN** `max_subruns_per_turn = 1` 且同一条助手消息含两个 `task` 调用
 - **THEN** 第一个正常执行，第二个被拒并回送 `subrun_limit`，`subagent_rejected` 记录原因
+
+#### Scenario: 并发上限
+
+- **WHEN** `max_concurrent = 1`，一个 run 在跑时再发起 `background=true` 的委派
+- **THEN** 回送 `concurrency_limit`，第二个 run 不启动、不排队；运行中的 run 不受影响
+
+### Requirement: 任务面板与子代理可见面
+
+系统 SHALL 在 agent 面板内提供任务区（composer 上方），让用户看见本会话的子运行：
+
+- 运行中 / 等待批准 / 后台运行的 run SHALL 各占一行，行内 SHALL 至少包含 agent 名、description、
+  状态、轮次与该 run 的模型与 tokens 读数；description 是唯一可截断字段，状态词 MUST NOT 被截断。
+- 行 SHALL 可展开为详情：模型、工具步数与最近一步、用时；运行中的行 SHALL 提供「停止」动作（只停
+  该 run，不影响其它 run）。
+- 任务区 SHALL 只列运行中 / 等待批准的 run。历史任务 MUST NOT 逐行常驻任务区（会与 transcript 的
+  `task` 工具行形成双读数）；全部任务收敛后任务区 SHALL 收敛为一行摘要（本次会话完成 / 部分结果数）
+  与按模型用量入口。每个 run 的详情（步骤、摘要、用量）SHALL 可从 transcript 的 `task` 工具行展开。
+- `enabled = false` 或没有任何子运行任务时，任务区 MUST NOT 出现（空态不占位）。
+
+前端 SHALL 提供只读的子代理清单（名字、description、工具数、模型、来源：内建 / vault / 用户），
+MUST NOT 提供定义编辑界面。
+
+子运行的批准请求 SHALL 在任务面板中对应 run 的行内呈现，卡片 SHALL 点名发起者（agent 与
+description）；待批时该行 SHALL 自动展开，面板标题 SHALL 显示待批数量。拒绝后卡片 SHALL 收敛为终态
+记录，子运行继续。父会话自己的批准卡 SHALL 保持既有位置（transcript 工具行下，形态不变）。
+
+子运行过程 SHALL 只出现在任务面板详情与诊断事件，MUST NOT 出现在父会话 transcript 正文，MUST NOT
+进入父会话 LLM 历史。
+
+#### Scenario: 并行运行可见
+
+- **WHEN** 两个 `task` 并行运行
+- **THEN** 任务区出现两行，各自显示 agent、状态与轮次读数；展开任一可见其步骤流水与模型
+
+#### Scenario: 待批准自动展开
+
+- **WHEN** 一个子运行触发 ask 级调用
+- **THEN** 该行自动展开并显示批准卡（点名 agent 与 description），面板标题显示待批数量
+
+#### Scenario: 后台任务常驻
+
+- **WHEN** 父回合结束而一个后台 run 仍在跑
+- **THEN** 任务区仍显示该行（带后台标记）；它收敛后行转终态并在 transcript 追加一条自动化通知
+
+#### Scenario: 关停后不出现任务区
+
+- **WHEN** `[harness.subagents].enabled = false`
+- **THEN** 任务区整体不出现，`task` 不在工具定义里
+
+#### Scenario: 历史任务不逐行留在面板
+
+- **WHEN** 一个子运行完成后用户继续对话
+- **THEN** 任务区不再列出该 run（收敛为一行完成数摘要）；它仍可在 transcript 的 `task` 工具行里
+  点开看步骤与摘要
