@@ -13,9 +13,9 @@
 //!   3 轮重试、单飞行。纯内存。
 //!
 //! 调用与落盘在 [`run_job_with_client`]：一次便宜档辅助调用（无工具、Low 档、独立 20 秒超时），
-//! 结果落盘前在会话锁内复核四条（同 vault / 同 session / 空闲 / `auto_title` 仍开）——任一不满足
-//! 即丢弃。**命名调用是 wire 外调用**：不落 `llm_request` / `llm_response`（否则恢复的「最后一条
-//! 会话请求」判据会指错请求），usage 不进任何会话读数出口。
+//! 结果落盘前在会话锁内复核四条（同 vault / 同 session / 空闲 / `session_naming.enabled` 仍开）
+//! ——任一不满足即丢弃。**命名调用是 wire 外调用**：不落 `llm_request` / `llm_response`（否则
+//! 恢复的「最后一条会话请求」判据会指错请求），usage 不进任何会话读数出口。
 //!
 //! 与恢复正确性的关系（MUST NOT 省）：`session_title` 记录只许在**会话空闲**时追加——恢复路径
 //! 依赖 `llm_request` 的紧邻下一条记录是 `llm_response`（折叠末尾响应），插进这对之间会丢末轮
@@ -623,8 +623,8 @@ pub struct TitleJob {
     pub config: HarnessConfig,
     /// 解析好的调用目标（唯一解析口 [`HarnessConfig::title_target`] 的产物）。
     pub target: TitleTarget,
-    /// `auto_title` 快照（落盘前复核「仍为开」）。
-    pub auto_title: bool,
+    /// `session_naming.enabled` 快照（落盘前复核「仍为开」）。
+    pub naming_enabled: bool,
     /// mock 标题队列的起点（会话级游标，见 `Session::title_cursor`）。
     pub mock_start: usize,
 }
@@ -644,7 +644,7 @@ pub fn job_after_turn(
             let trigger = {
                 let current = session.title().map(str::to_string);
                 session.title_schedule_mut().on_turn_completed(
-                    config.auto_title,
+                    config.session_naming.enabled,
                     current.as_deref(),
                     user_message,
                 )?
@@ -658,7 +658,7 @@ pub fn job_after_turn(
                 current_title,
                 config: config.clone(),
                 target: config.title_target(config.provider),
-                auto_title: config.auto_title,
+                naming_enabled: config.session_naming.enabled,
                 mock_start: session.title_cursor(),
             })
         })
@@ -674,23 +674,24 @@ enum LandOutcome {
     Dropped(&'static str),
 }
 
-/// 落盘时点重读 `auto_title`（评审 r1 P2-2，design D9 复核第 4 条「`auto_title` 仍为开」的
+/// 落盘时点重读 `session_naming.enabled`（评审 r1 P2-2，design D9 复核第 4 条「开关仍为开」的
 /// 语义是**落盘时点**的开关状态，不是触发时快照）：用户在命名调用在途期间关掉开关，结果应丢弃。
 ///
 /// 为什么直接读配置而不是 runtime 穿线：`config::load()` 是配置面的既有读取口（command 层
 /// 每次调用都走它），命名落盘一次约一条记录 / 至少隔 3 轮，读一份小 JSON 的代价可忽略；
 /// runtime 当前不持有配置、为这一条复核新装配一条通道不成比例。读不到配置（首次启动 /
 /// 配置目录不可解析）按触发时快照处理——一次读盘失败不改变判据口径。
-fn auto_title_now(fallback: bool) -> bool {
+fn naming_enabled_now(fallback: bool) -> bool {
     crate::config::load()
-        .map(|snapshot| snapshot.config.harness.auto_title)
+        .map(|snapshot| snapshot.config.harness.session_naming.enabled)
         .unwrap_or(fallback)
 }
 
 /// 执行一次命名任务（生产路径在后台线程上调用；单测直接驱动）。
 ///
 /// 锁纪律（design D9）：HTTP 调用全程在锁外；结果落盘前重新取锁，复核「同 vault / 同 session /
-/// 空闲 / `auto_title` 仍开」，任一不满足即丢弃——**空闲**这条是恢复正确性的前提（不变量 7）。
+/// 空闲 / `session_naming.enabled` 仍开」，任一不满足即丢弃——**空闲**这条是恢复正确性的前提
+/// （不变量 7）。
 pub fn run_job_with_client(
     sink: &dyn EventSink,
     runtime: &Runtime,
@@ -702,7 +703,7 @@ pub fn run_job_with_client(
     let consumed = client.mock_consumed();
     let script_len = client.mock_script_len();
     // 第 4 条复核的读数在锁外取（配置是文件 IO，不放在短会话锁里）。
-    let auto_title = auto_title_now(job.auto_title);
+    let naming_enabled = naming_enabled_now(job.naming_enabled);
     let outcome = runtime.with_session(scope, |session| {
         let session_id =
             JsonlWriter::session_id_from_path(session.jsonl().path()).unwrap_or_default();
@@ -726,7 +727,7 @@ pub fn run_job_with_client(
         if session.is_busy() {
             return LandOutcome::Dropped("会话正忙（避免插入请求/响应之间）");
         }
-        if !auto_title {
+        if !naming_enabled {
             return LandOutcome::Dropped("自动命名已关闭");
         }
         let reason = job.trigger.reason();
@@ -810,14 +811,14 @@ pub fn run_job(sink: &dyn EventSink, runtime: &Runtime, scope: &VaultScope, job:
 /// 过「空闲 / 同 session / 同 vault / 开关仍在」四道复核，同样失败静默。
 fn record_client_failure(runtime: &Runtime, scope: &VaultScope, job: &TitleJob) {
     // 第 4 条复核与调用失败同口径：读落盘时点的开关（评审 r1 P2-2），锁外取。
-    let auto_title = auto_title_now(job.auto_title);
+    let naming_enabled = naming_enabled_now(job.naming_enabled);
     let _ = runtime.with_session(scope, |session| {
         let session_id =
             JsonlWriter::session_id_from_path(session.jsonl().path()).unwrap_or_default();
         if job.vault_key != scope.key()
             || session_id != job.session_id
             || session.is_busy()
-            || !auto_title
+            || !naming_enabled
         {
             session.title_schedule_mut().finish();
             return;
@@ -837,7 +838,7 @@ fn record_client_failure(runtime: &Runtime, scope: &VaultScope, job: &TitleJob) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::HarnessProvider;
+    use crate::config::{HarnessProvider, SessionNamingConfig};
     use crate::fs_io::IgnorePolicy;
     use crate::harness::events::{EventSink, StreamSink};
     use crate::harness::llm::{MockClient, Request, TurnError, Usage};
@@ -977,7 +978,7 @@ mod tests {
             current_title,
             config: config.clone(),
             target: config.title_target(config.provider),
-            auto_title: config.auto_title,
+            naming_enabled: config.session_naming.enabled,
             mock_start,
         }
     }
@@ -1467,8 +1468,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// 跨 provider：`title_provider = mock` 时会话 provider 是 kimi，命名调用仍走 mock 的
-    /// `titles` 队列（不借用会话 provider 的 key / base_url）。
+    /// 跨 provider：`session_naming.provider = mock` 时会话 provider 是 kimi，命名调用仍走
+    /// mock 的 `titles` 队列（不借用会话 provider 的 key / base_url）。
     #[test]
     fn call_targets_title_provider() {
         let root = tmpdir("target-provider");
@@ -1478,7 +1479,10 @@ mod tests {
         );
         let mut config = HarnessConfig {
             provider: HarnessProvider::Kimi,
-            title_provider: Some(HarnessProvider::Mock),
+            session_naming: SessionNamingConfig {
+                provider: Some(HarnessProvider::Mock),
+                ..SessionNamingConfig::default()
+            },
             ..HarnessConfig::default()
         };
         config.providers.kimi.api_key = "sk-session-provider".into();
@@ -1497,7 +1501,10 @@ mod tests {
         // provider 的缺失（不混用会话 provider 的 api_key）。
         let mut config = HarnessConfig {
             provider: HarnessProvider::Kimi,
-            title_provider: Some(HarnessProvider::Deepseek),
+            session_naming: SessionNamingConfig {
+                provider: Some(HarnessProvider::Deepseek),
+                ..SessionNamingConfig::default()
+            },
             ..HarnessConfig::default()
         };
         config.providers.kimi.api_key = "sk-kimi".into();
@@ -1750,11 +1757,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// 评审 r1 P2-2：design D9 复核第 4 条「`auto_title` 仍开」= **落盘时点**的开关状态。
-    /// 触发时快照为开、在途期间用户在盘上关掉开关 ⇒ 结果丢弃（不写记录、不改标题）；
+    /// 评审 r1 P2-2：design D9 复核第 4 条「`session_naming.enabled` 仍开」= **落盘时点**的
+    /// 开关状态。触发时快照为开、在途期间用户在盘上关掉开关 ⇒ 结果丢弃（不写记录、不改标题）；
     /// 反向观测：开关恢复后同一任务正常落盘（证明丢弃来自重读的开关，不是链路坏掉）。
     #[test]
-    fn auto_title_off_at_landing_discards_result() {
+    fn session_naming_off_at_landing_discards_result() {
         let root = tmpdir("landing-off");
         let _xdg = crate::harness::xdg_test_lock();
         let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
@@ -1764,7 +1771,7 @@ mod tests {
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(
             config_dir.join("config.json"),
-            r#"{"version":1,"harness":{"auto_title":false}}"#,
+            r#"{"version":1,"harness":{"session_naming":{"enabled":false}}}"#,
         )
         .unwrap();
 
@@ -1774,7 +1781,10 @@ mod tests {
         runtime.acquire_turn(&scope, &config).unwrap();
         runtime.release_turn(&scope);
         let job = job_for(&runtime, &scope, &config);
-        assert!(job.auto_title, "触发时快照仍是开（关闭发生在调用在途期间）");
+        assert!(
+            job.naming_enabled,
+            "触发时快照仍是开（关闭发生在调用在途期间）"
+        );
 
         let (_seen, sink) = collect_sink();
         let mut client = RecordingClient::replying(r#"{"decision":"rename","title":"不该落盘"}"#);
@@ -1795,7 +1805,7 @@ mod tests {
         // 反向观测：开关恢复后同一任务正常落盘。
         std::fs::write(
             config_dir.join("config.json"),
-            r#"{"version":1,"harness":{"auto_title":true}}"#,
+            r#"{"version":1,"harness":{"session_naming":{"enabled":true}}}"#,
         )
         .unwrap();
         let job = job_for(&runtime, &scope, &config);

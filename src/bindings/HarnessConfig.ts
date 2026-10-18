@@ -4,6 +4,7 @@ import type { HarnessPermissions } from "./HarnessPermissions";
 import type { HarnessProvider } from "./HarnessProvider";
 import type { HarnessProviders } from "./HarnessProviders";
 import type { PermissionMode } from "./PermissionMode";
+import type { SessionNamingConfig } from "./SessionNamingConfig";
 
 /**
  * `[harness]` 表（change add-harness-probe §11）：对话运行时的配置面。
@@ -42,18 +43,12 @@ warn_ctx_pct: number,
  */
 auto_compact: boolean, 
 /**
- * 会话自动命名开关（change add-session-auto-naming，design D8；默认 true）：false 时不
- * 发起任何命名调用、不写标题记录；既有标题记录照常展示。
+ * 会话自动命名（change add-session-auto-naming，2026-10-18 配置面重塑）：开关 +
+ * provider / model 选择。
  */
-auto_title: boolean, 
-/**
- * 命名调用发往哪个 provider（design D8）：`None` = 会话当前 provider（旧行为即缺省值）；
- * 非空须是 `providers` 表内的 id，闭集合外取值在校验期回落 `None` + 人话 warning。
- */
-title_provider: HarnessProvider | null, 
+session_naming: SessionNamingConfig, 
 /**
  * 图片语义命名（change add-semantic-image-naming，2026-10-18 配置面重塑）：开关 +
- * provider / model 选择。与会话自动命名（`auto_title` / `title_provider` /
- * `providers.<id>.title_model`）同一资源域、同一解析口径。
+ * provider / model 选择。与会话自动命名（`session_naming`）同一资源域、同一解析口径。
  */
 attachment_naming: AttachmentNamingConfig, };

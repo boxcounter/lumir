@@ -12,7 +12,7 @@
 
 生成器 SHALL 输出 `keep` / `rename` 判定（JSON：`{"decision":"keep"}` 或 `{"decision":"rename","title":"…"}`）：当前标题仍能描述当前对话时 SHALL 输出 keep（拿不准一律 keep）；仅当当前标题已失真（话题已转移或标题明显错误）且新标题显著更好时才输出 rename。系统 MUST 只在 rename 且标题通过规范化校验时替换标题：规范化后须为单行、1–20 个码点、剥除包裹引号 / 反引号与句末标点，且与当前标题不同；keep、非法 JSON、空标题、超长、调用失败或超时一律保持当前标题不变（尚无当前标题的初始生成里，keep 无可保持的对象，SHALL 按 `invalid` 处理并走初始重试路径）。命名调用的失败或「不换名」结果 MUST NOT 向用户报错、MUST NOT 弹 toast、MUST NOT 中断或阻塞对话轮次。
 
-自动命名 SHALL 默认开启（`[harness].auto_title = true`）；关闭时 MUST NOT 发起任何命名调用、MUST NOT 写标题记录，既有标题记录照常展示。命名调用 SHALL 发往 `[harness].title_provider` 指向的 provider（缺省 = 会话当前 provider），`api_key` / `base_url` / wire 方言与模型同出该 provider 条目；模型 SHALL 取该 provider 的 `[harness].providers.<id>.title_model`，未配置时取该 provider 的生效模型（此时便宜档只由调用形态保证——本仓无模型价格表，见 design D8）。
+自动命名 SHALL 默认开启（`[harness].session_naming.enabled = true`）；关闭时 MUST NOT 发起任何命名调用、MUST NOT 写标题记录，既有标题记录照常展示。命名调用 SHALL 发往 `[harness].session_naming.provider` 指向的 provider（缺省 = 会话当前 provider，即 `null`），`api_key` / `base_url` / wire 方言与模型同出该 provider 条目；模型 SHALL 取 `[harness].session_naming.model`（缺省 = 该 provider 的生效模型），非空值须在**选定 provider** 的 `models` 清单内声明，未声明时 SHALL 回落该 provider 的生效模型并给一条人话 warning（此时便宜档只由调用形态保证——本仓无模型价格表，见 design D8）。
 
 标题 SHALL 只承担会话身份的展示：标题变化 SHALL 经状态快照与事件通道到达面板并即时更新标题栏会话名与已打开的历史浮层行名，MUST NOT 修改 transcript、session id、历史排序、会话内容或 vault 内任何文件。标题的留存、继承与回落口径见「会话本地留存」与「会话边界」条。
 
@@ -48,7 +48,7 @@
 
 #### Scenario: 关闭自动命名
 
-- **WHEN** `[harness].auto_title = false` 并完成任意轮次对话
+- **WHEN** `[harness].session_naming.enabled = false` 并完成任意轮次对话
 - **THEN** 系统不发起任何命名调用、不写 `session_title` 记录；会话名按「会话边界」条的回落口径显示
 
 #### Scenario: 命名不阻塞对话
@@ -65,7 +65,7 @@
 
 ### Requirement: 配置节 [harness]
 
-`config.json` SHALL 支持 `[harness]` 节：`provider`（闭集合 `kimi` / `deepseek` / `mock`）、`providers` 表（各 provider 的 `api_key` / `model` / 可选 `base_url` / `models` 模型清单（逐项 `{id, effort, vision, window}`；config-only，不内置模型表）/ 可选 `wire_api`——闭集合 `responses` / `chat_completions`，缺省 `responses`；v1 仅 kimi 实现 chat 档，其余 provider 配置 chat 档 SHALL 回落 `responses` 并给 warning / 可选 `title_model`——命名调用专用模型，按 `title_provider` 指向的 provider 条目读取，须在该 provider 的 `models` 清单内声明，未声明时回落该 provider 的生效模型并给一条人话 warning；mock 为 `fixture` 路径且无 `title_model` 键）、`permissions`（`allow` / `deny` 规则表）、`permission_mode`（闭集合 `read_only` / `vault_write` / `full_access`，默认 `vault_write`）、`loop_max`、`warn_ctx_pct`、`auto_compact`（默认 `true`）、`auto_title`（默认 `true`）、`title_provider`（可选 provider id；缺省不写 = 命名调用发往会话当前 provider；非空须是 `providers` 表内的 id（闭集合 `kimi` / `deepseek` / `mock`），闭集合外取值 SHALL 回落缺省并给一条人话 warning）。命名调用的 provider / 模型 / wire 方言 / `api_key` / `base_url` SHALL 同出一个 provider 条目。校验 SHALL 沿用既有模板：缺字段回落默认不告警；闭集合取值非法回落默认 + 人话 warning；类型不符整文件回落（ADR 0002 §5）。运行期写回 SHALL 经泛化的 `config_set_value(section, key, value)`，`ui` 表既有行为不变。
+`config.json` SHALL 支持 `[harness]` 节：`provider`（闭集合 `kimi` / `deepseek` / `mock`）、`providers` 表（各 provider 的 `api_key` / `model` / 可选 `base_url` / `models` 模型清单（逐项 `{id, effort, vision, window}`；config-only，不内置模型表）/ 可选 `wire_api`——闭集合 `responses` / `chat_completions`，缺省 `responses`；v1 仅 kimi 实现 chat 档，其余 provider 配置 chat 档 SHALL 回落 `responses` 并给 warning；mock 为 `fixture` 路径）、`permissions`（`allow` / `deny` 规则表）、`permission_mode`（闭集合 `read_only` / `vault_write` / `full_access`，默认 `vault_write`）、`loop_max`、`warn_ctx_pct`、`auto_compact`（默认 `true`）、`session_naming` 表（会话自动命名，三键都可省：`enabled`——默认 `true`，关闭后不发起任何命名调用、不写标题记录；`provider`——可选 provider id，缺省 `null` = 命名调用发往会话当前 provider，非空须是 `providers` 表内的 id（闭集合 `kimi` / `deepseek` / `mock`），闭集合外取值 SHALL 回落 `null` 并给一条人话 warning；`model`——可选模型 id，缺省 `null` = 选定 provider 的生效模型，非空须在选定 provider 的 `models` 清单内声明，未声明 SHALL 回落 `null` 并给一条人话 warning；mock provider 无模型清单，`model` 只能为 `null`）。命名调用的 provider / 模型 / wire 方言 / `api_key` / `base_url` SHALL 同出一个 provider 条目。校验 SHALL 沿用既有模板：缺字段回落默认不告警；闭集合取值非法回落默认 + 人话 warning；类型不符整文件回落（ADR 0002 §5）。运行期写回 SHALL 经泛化的 `config_set_value(section, key, value)`，`ui` 表既有行为不变。
 
 #### Scenario: 非法 provider 回落
 
@@ -82,25 +82,30 @@
 - **WHEN** 某 provider 的 `wire_api` 为闭集合外的值
 - **THEN** 启动不失败，该 provider 的方言回落 `responses` 并产生一条人话 warning；deepseek 配置 `chat_completions` 同样回落并告警（v1 未实现其 chat 档）
 
-#### Scenario: title_model 未声明回落
+#### Scenario: session_naming.model 未声明回落
 
-- **WHEN** 某 provider 的 `title_model` 非空、但不在该 provider 的 `models` 清单内
-- **THEN** 启动不失败，命名调用回落该 provider 的生效模型并产生一条人话 warning；`title_model` 类型不符时整文件回落
+- **WHEN** `session_naming.model` 非空、但不在选定 provider 的 `models` 清单内（或 mock provider 下非空）
+- **THEN** 启动不失败，命名调用回落该 provider 的生效模型并产生一条人话 warning；`session_naming.model` 类型不符时整文件回落
 
-#### Scenario: title_provider 指向其他 provider
+#### Scenario: session_naming.provider 指向其他 provider
 
-- **WHEN** `title_provider = "deepseek"`，而会话当前 provider 为 `kimi`，且 deepseek 条目已配置 `api_key` / `base_url` 并声明了 `title_model`
-- **THEN** 命名调用按 deepseek 条目的 `api_key` / `base_url` / wire 方言发出，模型取 deepseek 的 `title_model`；会话本身的请求仍走 kimi，两类调用的 provider 不混用
+- **WHEN** `session_naming = { "provider": "deepseek", "model": "deepseek-flash" }`，而会话当前 provider 为 `kimi`，且 deepseek 条目已配置 `api_key` / `base_url` 并声明了该模型
+- **THEN** 命名调用按 deepseek 条目的 `api_key` / `base_url` / wire 方言发出，模型取 deepseek 的 `deepseek-flash`；会话本身的请求仍走 kimi，两类调用的 provider 不混用
 
-#### Scenario: 非法 title_provider 回落
+#### Scenario: 非法 session_naming.provider 回落
 
-- **WHEN** `title_provider` 为 `providers` 表外的值（如 `"openai"`），或写成非字符串值
-- **THEN** 闭集合外取值时启动不失败，命名调用回落会话当前 provider 并产生一条人话 warning；类型不符时整文件回落（ADR 0002 §5 既有模板），回落后的 `title_provider` 缺省（= 会话当前 provider）
+- **WHEN** `session_naming.provider` 为 `providers` 表外的值（如 `"openai"`），或 `session_naming` 表的 provider 写成非字符串值
+- **THEN** 闭集合外取值时启动不失败，命名调用回落会话当前 provider 并产生一条人话 warning；类型不符时整文件回落（ADR 0002 §5 既有模板），回落后的 `session_naming.provider` 缺省（`null` = 会话当前 provider）
 
-#### Scenario: auto_title 缺省与类型不符
+#### Scenario: session_naming.enabled 缺省与类型不符
 
-- **WHEN** 配置未写 `auto_title`，或写成非布尔值
-- **THEN** 未写时按默认 `true` 生效、不告警；类型不符时整文件回落（ADR 0002 §5 既有模板），回落后的 `auto_title` 为 `true`
+- **WHEN** 配置未写 `session_naming`（或未写其中的 `enabled`），或把 `enabled` 写成非布尔值
+- **THEN** 未写时按默认 `true` 生效、不告警；类型不符时整文件回落（ADR 0002 §5 既有模板），回落后的 `enabled` 为 `true`
+
+#### Scenario: 旧命名键静默忽略
+
+- **WHEN** 配置里只写了旧键 `auto_title` / `title_provider` / `providers.<id>.title_model`（未写 `session_naming`）
+- **THEN** 旧键按未知键口径静默忽略（无 warning、无兼容读取），自动命名按 `session_naming` 缺省值运行（开、provider 跟随会话、模型取生效模型）
 
 #### Scenario: 切换写回持久化
 

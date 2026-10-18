@@ -89,11 +89,14 @@
 //! 声明清单首项 id；清单为空 → 空串（不伪造，发送时由运行时给出人话错误）。能力的唯一真源
 //! 从此在 schema：llm.rs 的窗口表与 thinking.rs 的 k3 词元判定退役为这里的读取。
 //!
-//! 会话自动命名（change add-session-auto-naming，design D8）三个键：`auto_title`（bool，默认
-//! `true`，关闭后不发起任何命名调用）、`title_provider`（可选 provider id，缺省 = 会话当前
-//! provider；闭集合外取值回落缺省 + 人话 warning）与 `providers.<id>.title_model`（可选模型，
-//! 须在**该 provider** 的 `models` 清单内声明，未声明回落该 provider 的生效模型 + warning；
-//! mock 是 fixture 驱动档，没有这个键）。命名调用的五字段（provider / model / wire 方言 /
+//! 会话自动命名（change add-session-auto-naming）的配置面是 `[harness].session_naming` 表：
+//! `enabled`（bool，默认 `true`，关闭后不发起任何命名调用）、`provider`（可选 provider id，
+//! 缺省 = 会话当前 provider；闭集合外取值回落缺省 + 人话 warning）与 `model`（可选模型，
+//! 须在**选定 provider** 的 `models` 清单内声明，未声明回落该 provider 的生效模型 + warning；
+//! mock 是 fixture 驱动档，没有模型清单，该键只能是 null）。**2026-10-18 配置面重塑**：原
+//! `auto_title` / `title_provider` / `providers.<id>.title_model` 三处旧键已废除，按未知键口径
+//! 静默忽略、无兼容读取；布局判据与 `attachment_naming` 共用（配置跟随资源域，见
+//! `docs/specs/config-reference.md` §1.6）。命名调用的五字段（provider / model / wire 方言 /
 //! `api_key` / `base_url`）**只由 [`HarnessConfig::title_target`] 一处解析**——设计不变量 8：
 //! MUST NOT 混用会话 provider 与 title provider 的字段，也不许调用方各自挑一套。
 //!
@@ -531,8 +534,9 @@ pub enum HarnessProvider {
 }
 
 impl HarnessProvider {
-    /// 配置字面量（config.json 的 `harness.provider` / `harness.title_provider` 取值；也是校验
-    /// warning 文案的取值表来源，避免第二处真源）。
+    /// 配置字面量（config.json 的 `harness.provider` / `harness.session_naming.provider` /
+    /// `harness.attachment_naming.provider` 取值；也是校验 warning 文案的取值表来源，避免
+    /// 第二处真源）。
     pub fn as_str(self) -> &'static str {
         match self {
             HarnessProvider::Kimi => "kimi",
@@ -659,7 +663,7 @@ pub struct AttachmentNamingConfig {
     /// Alex 2026-10-18 显式接受）。
     pub enabled: bool,
     /// 命名调用发往哪个 provider（`None` = 会话当前 provider）。闭集合外取值在校验期回落
-    /// `None` + 人话 warning（与 `title_provider` 同模板）。
+    /// `None` + 人话 warning（与 `session_naming.provider` 同模板）。
     pub provider: Option<HarnessProvider>,
     /// 命名调用使用的模型 id（`None` = 选定 provider 的生效模型）。非空值 MUST 是该 provider
     /// 的 `models` 清单内、声明 `vision: true` 的 id；不满足时**资格不通过**（保留暂存名），
@@ -669,6 +673,46 @@ pub struct AttachmentNamingConfig {
 }
 
 impl Default for AttachmentNamingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            provider: None,
+            model: None,
+        }
+    }
+}
+
+/// `[harness].session_naming` 表（change add-session-auto-naming；2026-10-18 配置面重塑后
+/// 与会话附件命名同域同形）：会话自动命名的开关与模型选择。
+///
+/// **布局判据**（Alex 2026-10-18 裁决，已沉淀进 `docs/specs/config-reference.md` §1.6）：
+/// **配置跟随资源域**——自动 LLM 行为的开关与模型选择归 `[harness]` 域（providers 所在）；
+/// 触发位置（一轮对话结束）是 UI 事实，不是配置域。原 `auto_title` / `title_provider` /
+/// `providers.<id>.title_model` 三处旧键因此废除，按未知键口径静默忽略，无兼容读取
+/// （单用户、未发布）。
+///
+/// **缺省即默认**：整表缺席 / 单键缺席 = 出厂值；`model: null` 与缺席同义。
+/// **生效时点**：`enabled` 在每次轮完成点触发判定时读一次，并在结果落盘前重读（关掉即丢弃）；
+/// `provider` / `model` 由每次评估的配置快照取定 ⇒ 下一次评估生效。
+///
+/// 不在本表内的东西（design §1）：评估节奏（5 轮 / 漂移 / 3 轮下限）、keep 防抖、素材上限、
+/// 留存记录形状——那些是行为，不是偏好。
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct SessionNamingConfig {
+    /// 会话自动命名开关（出厂 `true`）：false 时不发起任何命名调用、不写标题记录；既有标题
+    /// 记录照常展示。默认开意味着每轮对话的受限素材（design D2）会发往选定 provider。
+    pub enabled: bool,
+    /// 命名调用发往哪个 provider（`None` = 会话当前 provider，即旧行为仍是缺省值）。闭集合外
+    /// 取值在校验期回落 `None` + 人话 warning。
+    pub provider: Option<HarnessProvider>,
+    /// 命名调用使用的模型 id（`None` = 选定 provider 的生效模型）。非空值须在选定 provider 的
+    /// `models` 清单内声明，未声明时校验期回落 `None`（= 生效模型）+ 人话 warning——不把未声明
+    /// 的模型发给 API。mock 是 fixture 驱动档、没有模型清单，该键只能是 null。
+    pub model: Option<String>,
+}
+
+impl Default for SessionNamingConfig {
     fn default() -> Self {
         Self {
             enabled: true,
@@ -700,15 +744,11 @@ pub struct HarnessConfig {
     pub warn_ctx_pct: f64,
     /// 自动压缩（默认 true）：一轮响应完成后 ctx% 越阈值即自动压缩续聊；false 退化为纯手动。
     pub auto_compact: bool,
-    /// 会话自动命名开关（change add-session-auto-naming，design D8；默认 true）：false 时不
-    /// 发起任何命名调用、不写标题记录；既有标题记录照常展示。
-    pub auto_title: bool,
-    /// 命名调用发往哪个 provider（design D8）：`None` = 会话当前 provider（旧行为即缺省值）；
-    /// 非空须是 `providers` 表内的 id，闭集合外取值在校验期回落 `None` + 人话 warning。
-    pub title_provider: Option<HarnessProvider>,
+    /// 会话自动命名（change add-session-auto-naming，2026-10-18 配置面重塑）：开关 +
+    /// provider / model 选择。
+    pub session_naming: SessionNamingConfig,
     /// 图片语义命名（change add-semantic-image-naming，2026-10-18 配置面重塑）：开关 +
-    /// provider / model 选择。与会话自动命名（`auto_title` / `title_provider` /
-    /// `providers.<id>.title_model`）同一资源域、同一解析口径。
+    /// provider / model 选择。与会话自动命名（`session_naming`）同一资源域、同一解析口径。
     pub attachment_naming: AttachmentNamingConfig,
 }
 
@@ -722,22 +762,21 @@ impl Default for HarnessConfig {
             loop_max: DEFAULT_LOOP_MAX,
             warn_ctx_pct: DEFAULT_WARN_CTX_PCT,
             auto_compact: true,
-            auto_title: true,
-            title_provider: None,
+            session_naming: SessionNamingConfig::default(),
             attachment_naming: AttachmentNamingConfig::default(),
         }
     }
 }
 
 /// 一次命名调用的完整目标（change add-session-auto-naming，design D8 的「唯一解析口」）：
-/// 五个字段**同出 `title_provider` 指向的那一个 provider 条目**——模型取 A、key 取 B 的混用
-/// 形态在设计不变量 8 里被明确禁止，故调用方只该持有本结构、不再回读配置。
+/// 五个字段**同出 `session_naming.provider` 指向的那一个 provider 条目**——模型取 A、key 取 B
+/// 的混用形态在设计不变量 8 里被明确禁止，故调用方只该持有本结构、不再回读配置。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TitleTarget {
-    /// 实际发往的 provider（= `title_provider`，缺省 / 非法回落会话当前 provider）。
+    /// 实际发往的 provider（= `session_naming.provider`，缺省 / 非法回落会话当前 provider）。
     pub provider: HarnessProvider,
     /// 本次调用实际使用的模型 id。mock 是 fixture 驱动档、没有模型维度，此处为空串（记录侧
-    /// 不伪造一个不存在的模型 id）；`title_model` 未配置时 = 该 provider 的生效模型。
+    /// 不伪造一个不存在的模型 id）；`session_naming.model` 未配置时 = 该 provider 的生效模型。
     pub model: String,
     /// wire 方言（与 `api_key` / `base_url` 同出该 provider 条目）。
     pub wire_api: WireApi,
@@ -811,10 +850,6 @@ pub struct HarnessProviderConfig {
     /// `responses`；kimi 可配 `chat_completions`。deepseek 配 chat 档在校验期回落并告警
     /// （v1 未实现），运行时看到的 deepseek 恒为 `responses`。
     pub wire_api: WireApi,
-    /// 命名调用专用模型（change add-session-auto-naming，design D8）：空串 = 用该 provider 的
-    /// 生效模型（`model`）；非空须在本 provider 的 `models` 清单内声明，未声明时校验期回落
-    /// 空串 + 人话 warning（不把未声明的模型发给 API）。
-    pub title_model: String,
 }
 
 impl HarnessConfig {
@@ -882,17 +917,18 @@ impl HarnessConfig {
     }
 
     /// 命名调用的唯一解析口（change add-session-auto-naming，design D8 / 不变量 8）：
-    /// `provider` = `title_provider`（缺省 = 会话当前 provider），其余四字段与 `model` **同出
-    /// 该 provider 条目**——MUST NOT 混用会话 provider 与 title provider 的字段。
+    /// `provider` = `session_naming.provider`（缺省 = 会话当前 provider），其余四字段与 `model`
+    /// **同出该 provider 条目**——MUST NOT 混用会话 provider 与 title provider 的字段。
     ///
-    /// `model` 读该条目的 `title_model`（空串 = 用该条目的生效模型）。mock 是 fixture 驱动档：
+    /// `model` 读 `session_naming.model`（`None` = 用该条目的生效模型）。mock 是 fixture 驱动档：
     /// 没有 `api_key` / `base_url` / 模型维度，`model` 留空串（记录侧不伪造模型 id），命名调用
     /// 走 fixture 的 `titles` 队列。
     pub fn title_target(&self, session_provider: HarnessProvider) -> TitleTarget {
-        let provider = self.title_provider.unwrap_or(session_provider);
+        let provider = self.session_naming.provider.unwrap_or(session_provider);
+        let model = self.session_naming.model.as_deref();
         match provider {
-            HarnessProvider::Kimi => title_target_of(&self.providers.kimi, provider),
-            HarnessProvider::Deepseek => title_target_of(&self.providers.deepseek, provider),
+            HarnessProvider::Kimi => title_target_of(&self.providers.kimi, provider, model),
+            HarnessProvider::Deepseek => title_target_of(&self.providers.deepseek, provider, model),
             HarnessProvider::Mock => TitleTarget {
                 provider,
                 model: String::new(),
@@ -980,15 +1016,18 @@ pub struct AttachmentNamingTarget {
 }
 
 /// 网络 provider 的 `TitleTarget` 装配（两个网络 provider 共用一份，MUST NOT 各写一遍）：
-/// 五个字段全部取自**同一个** [`HarnessProviderConfig`] 条目。
-fn title_target_of(entry: &HarnessProviderConfig, provider: HarnessProvider) -> TitleTarget {
+/// 五个字段全部取自**同一个** [`HarnessProviderConfig`] 条目；`model` 取
+/// `session_naming.model`（`None` = 该条目的生效模型，即 `entry.model`）。
+fn title_target_of(
+    entry: &HarnessProviderConfig,
+    provider: HarnessProvider,
+    model: Option<&str>,
+) -> TitleTarget {
     TitleTarget {
         provider,
-        model: if entry.title_model.is_empty() {
-            entry.model.clone()
-        } else {
-            entry.title_model.clone()
-        },
+        model: model
+            .map(str::to_string)
+            .unwrap_or_else(|| entry.model.clone()),
         wire_api: entry.wire_api,
         api_key: entry.api_key.clone(),
         base_url: entry.base_url.clone(),
@@ -1134,16 +1173,25 @@ struct RawHarnessConfig {
     loop_max: Option<u32>,
     warn_ctx_pct: Option<f64>,
     auto_compact: Option<bool>,
-    /// 会话自动命名开关（change add-session-auto-naming）：bool，缺键 ⇒ 默认 true（不告警）；
-    /// 类型不符在 serde 解析期失败 → 整文件回落（与 `auto_compact` 同路）。
-    auto_title: Option<bool>,
-    /// 命名调用发往的 provider（同上）：闭集合取值，缺键 / 空串 ⇒ 会话当前 provider（不告警）；
-    /// 闭集合外取值在本模块回落 `None` + 人话 warning；类型不符在解析期失败 → 整文件回落。
-    title_provider: Option<String>,
+    /// 会话自动命名（change add-session-auto-naming；2026-10-18 配置面重塑）：开关 +
+    /// provider / model 三键。表内类型不符（`"enabled": "yes"`、`"model": 3`）或整表错形状
+    /// （`"session_naming": "on"`）在解析期失败 → 整文件回落（与 `[harness]` 其余字段同路）。
+    session_naming: RawSessionNamingConfig,
     /// 图片语义命名（change add-semantic-image-naming，2026-10-18 配置面重塑）：开关 +
     /// provider / model 三键。表内类型不符（`"enabled": "yes"`、`"model": 3`）或整表错形状
     /// （`"attachment_naming": "on"`）在解析期失败 → 整文件回落（与 `[harness]` 其余字段同路）。
     attachment_naming: RawAttachmentNamingConfig,
+}
+
+/// `harness.session_naming` 的解析镜像：三个字段都是「缺席 → `None` → 用默认；显式给出 →
+/// 校验」。旧键 `auto_title` / `title_provider`（以及 provider 条目上的 `title_model`）不在
+/// 本结构内——按未知键口径静默忽略、无兼容读取（2026-10-18 配置面重塑）。
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawSessionNamingConfig {
+    enabled: Option<bool>,
+    provider: Option<String>,
+    model: Option<String>,
 }
 
 /// `harness.attachment_naming` 的解析镜像：三个字段都是「缺席 → `None` → 用默认；
@@ -1179,10 +1227,6 @@ struct RawHarnessProviderConfig {
     /// `responses` 不告警；非法值 / v1 未实现的 provider 档位在 `validate()` 里回落 + warning；
     /// 类型不符（`"wire_api": 2`）在 serde 解析期失败 → 整文件回落（与 `permission_mode` 同路）。
     wire_api: Option<String>,
-    /// 命名调用专用模型（change add-session-auto-naming）：缺键 / 空串 ⇒ 该 provider 的生效
-    /// 模型（不告警）；非空且未在该 provider 的 `models` 清单内 ⇒ 回落生效模型 + 人话 warning。
-    /// 类型不符在解析期失败 → 整文件回落（与 `model` 同路）。
-    title_model: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1743,8 +1787,9 @@ fn validate_ignore_name(name: &str) -> Result<(), &'static str> {
 /// 非法项逐项丢弃并各给一条 warning，其余项照常生效。空 `api_key` 是「未配置」的出厂状态，
 /// **不告警**（理由见模块头）。
 ///
-/// `attachment_naming`（图片语义命名，2026-10-18 配置面重塑）走 [`validate_attachment_naming`]：
-/// `provider` 闭集合外回落缺省、`model` 不可用只点名不回落（资格不通过即保留暂存名）。
+/// `attachment_naming`（图片语义命名）与 `session_naming`（会话自动命名）都在 2026-10-18
+/// 配置面重塑后落进 harness 域，校验各走一个函数，形态对称：
+/// [`validate_session_naming`] / [`validate_attachment_naming`]。
 fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
     let defaults = HarnessConfig::default();
     let mut warnings = Vec::new();
@@ -1756,21 +1801,6 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
             None => warnings.push(format!(
                 "配置项 harness.provider 取值 \"{raw_provider}\" 非法（可选：kimi、deepseek、mock），已回退为 kimi"
             )),
-        }
-    }
-
-    // 命名调用发往的 provider（change add-session-auto-naming）：缺键 / 空串 ⇒ 会话当前
-    // provider（不告警）；闭集合外取值 ⇒ 回落缺省 + 人话 warning（与 `harness.provider` 同模板）。
-    let mut title_provider = None;
-    if let Some(raw_title_provider) = raw.title_provider.as_deref() {
-        let value = raw_title_provider.trim();
-        if !value.is_empty() {
-            match HarnessProvider::parse(value) {
-                Some(parsed) => title_provider = Some(parsed),
-                None => warnings.push(format!(
-                    "配置项 harness.title_provider 取值 \"{value}\" 非法（可选：kimi、deepseek、mock），已回退为会话当前 provider"
-                )),
-            }
         }
     }
 
@@ -1821,11 +1851,16 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
     // bool 只有两种取值，缺字段即回落默认、不告警（与 `editor.line_wrap` 同路）；
     // 类型不符到不了这里（解析期整文件回落，单测钉住）。
     let auto_compact = raw.auto_compact.unwrap_or(defaults.auto_compact);
-    // 会话自动命名开关同路（change add-session-auto-naming）：缺键 ⇒ 默认 true、不告警。
-    let auto_title = raw.auto_title.unwrap_or(defaults.auto_title);
 
-    // 图片语义命名（change add-semantic-image-naming 的配置面重塑）：校验要对照**选定
-    // provider** 的模型清单，因此排在 providers 校验之后。
+    // 两个命名配置面（会话自动命名 / 图片语义命名，2026-10-18 配置面重塑）：校验要对照
+    // **选定 provider** 的模型清单，因此排在 providers 校验之后。
+    let session_naming = validate_session_naming(
+        raw.session_naming,
+        provider,
+        &kimi,
+        &deepseek,
+        &mut warnings,
+    );
     let attachment_naming = validate_attachment_naming(
         raw.attachment_naming,
         provider,
@@ -1847,12 +1882,92 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
             loop_max,
             warn_ctx_pct,
             auto_compact,
-            auto_title,
-            title_provider,
+            session_naming,
             attachment_naming,
         },
         warnings,
     )
+}
+
+/// `harness.session_naming` 的校验（change add-session-auto-naming，2026-10-18 配置面重塑；
+/// 与 [`validate_attachment_naming`] 同形对称）：照 `[harness]` 的模板——缺键回落默认
+/// （不告警）；`provider` 闭集合外取值回落 `None` + 一条人话 warning；类型不符到不了这里
+/// （解析期整文件回落，见 [`RawSessionNamingConfig`]）。
+///
+/// `model`：非空值须在**选定 provider** 的 `models` 清单内声明，未声明时回落 `None`（= 该
+/// provider 的生效模型）+ 人话 warning——不把未声明的模型发给 API。这一点与
+/// `attachment_naming.model` 的「只点名不回落」**不同且有理由**：附件命名有资格闸（vision
+/// 能力不满足就不发起、保留暂存名），回落等于替用户选模型；会话命名没有资格闸，选错模型
+/// 只会让调用失败，回落生效模型是唯一诚实的可执行解。空串按「未配置」归一为 `None` + warning。
+fn validate_session_naming(
+    raw: RawSessionNamingConfig,
+    session_provider: HarnessProvider,
+    kimi: &HarnessProviderConfig,
+    deepseek: &HarnessProviderConfig,
+    warnings: &mut Vec<String>,
+) -> SessionNamingConfig {
+    let defaults = SessionNamingConfig::default();
+    // bool 只有两种取值，缺键即回落默认、不告警（与 `auto_compact` 同路）；
+    // 类型不符到不了这里（解析期整文件回落，单测钉住）。
+    let enabled = raw.enabled.unwrap_or(defaults.enabled);
+
+    // provider：缺键 / 空串 ⇒ 会话当前 provider（不告警）；闭集合外 ⇒ 回落缺省 + 人话 warning
+    // （与 `harness.provider` 同模板）。
+    let mut provider = None;
+    if let Some(raw_provider) = raw.provider.as_deref() {
+        let value = raw_provider.trim();
+        if !value.is_empty() {
+            match HarnessProvider::parse(value) {
+                Some(parsed) => provider = Some(parsed),
+                None => warnings.push(format!(
+                    "配置项 harness.session_naming.provider 取值 \"{value}\" 非法（可选：kimi、deepseek、mock），已回退为会话当前 provider"
+                )),
+            }
+        }
+    }
+
+    let model = match raw.model.as_deref().map(str::trim) {
+        None => None,
+        Some("") => {
+            warnings.push(
+                "配置项 harness.session_naming.model 为空，已按 null（跟随该 provider 的生效模型）处理"
+                    .to_string(),
+            );
+            None
+        }
+        Some(value) => {
+            let target = provider.unwrap_or(session_provider);
+            match target {
+                HarnessProvider::Mock => {
+                    warnings.push(format!(
+                        "配置项 harness.session_naming.model 的值 \"{value}\" 无效：mock provider 没有模型清单，该键只能是 null；已按 null（跟随该 provider 的生效模型）处理"
+                    ));
+                    None
+                }
+                _ => {
+                    let entry = match target {
+                        HarnessProvider::Kimi => kimi,
+                        _ => deepseek,
+                    };
+                    if entry.models.iter().any(|spec| spec.id == value) {
+                        Some(value.to_string())
+                    } else {
+                        warnings.push(format!(
+                            "配置项 harness.session_naming.model 的值 \"{value}\" 不在 provider（{target_name}）的 models 清单内：命名调用已回落为 {target_name} 的生效模型；请在 harness.providers.{target_name}.models 中声明该模型",
+                            target_name = target.as_str()
+                        ));
+                        None
+                    }
+                }
+            }
+        }
+    };
+
+    SessionNamingConfig {
+        enabled,
+        provider,
+        model,
+    }
 }
 
 /// `harness.attachment_naming` 的校验（change add-semantic-image-naming，2026-10-18 配置面
@@ -1873,12 +1988,12 @@ fn validate_attachment_naming(
     warnings: &mut Vec<String>,
 ) -> AttachmentNamingConfig {
     let defaults = AttachmentNamingConfig::default();
-    // bool 只有两种取值，缺键即回落默认、不告警（与 `auto_compact` / `auto_title` 同路）；
+    // bool 只有两种取值，缺键即回落默认、不告警（与 `auto_compact` 同路）；
     // 类型不符到不了这里（解析期整文件回落，单测钉住）。
     let enabled = raw.enabled.unwrap_or(defaults.enabled);
 
     // provider：缺键 / 空串 ⇒ 会话当前 provider（不告警）；闭集合外 ⇒ 回落缺省 + 人话 warning
-    // （与 `harness.title_provider` 同模板）。
+    // （与 `harness.session_naming.provider` 同模板）。
     let mut provider = None;
     if let Some(raw_provider) = raw.provider.as_deref() {
         let value = raw_provider.trim();
@@ -1961,8 +2076,7 @@ fn validate_harness_provider(
         || raw.model.is_some()
         || raw.base_url.is_some()
         || raw.models.is_some()
-        || raw.wire_api.is_some()
-        || raw.title_model.is_some();
+        || raw.wire_api.is_some();
     let models = match &raw.models {
         None => Vec::new(),
         Some(items) => validate_harness_model_specs(items, provider, warnings),
@@ -2015,29 +2129,12 @@ fn validate_harness_provider(
         Some(value) => Some(value.to_string()),
     };
     let wire_api = validate_wire_api(raw.wire_api.as_deref(), provider, warnings);
-    // 命名调用专用模型（change add-session-auto-naming，design D8）：缺键 / 空串 = 用本
-    // provider 的生效模型（不告警）；非空须在**本 provider** 的 `models` 清单内声明——未声明
-    // 回落生效模型 + 人话 warning（不把未声明的模型发给 API，也没有跨 provider 语义）。
-    let title_model = match raw.title_model.as_deref().map(str::trim) {
-        None | Some("") => String::new(),
-        Some(value) => {
-            if models.iter().any(|spec| spec.id == value) {
-                value.to_string()
-            } else {
-                warnings.push(format!(
-                    "配置项 harness.providers.{provider}.title_model 的值 \"{value}\" 不在该 provider 的 models 清单内：命名调用已回落为 {provider} 的生效模型；请在 models 中声明该模型或修正 title_model 值"
-                ));
-                String::new()
-            }
-        }
-    };
     HarnessProviderConfig {
         api_key,
         model,
         base_url,
         models,
         wire_api,
-        title_model,
     }
 }
 
@@ -4279,7 +4376,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // 会话自动命名三键与 title_target（change add-session-auto-naming，design D8）
+    // `harness.session_naming` 与 title_target（change add-session-auto-naming；
+    // 2026-10-18 配置面重塑：从 `auto_title` / `title_provider` /
+    // `providers.<id>.title_model` 三处旧键收成一张表）
     // -----------------------------------------------------------------------
 
     /// 模型清单的一项（字段齐全，不触发 `models` 的逐项 warning）。
@@ -4287,30 +4386,44 @@ mod tests {
         format!(r#"{{"id":"{id}","effort":false,"vision":false,"window":{window}}}"#)
     }
 
-    /// `auto_title` 三态：缺键 ⇒ true（不告警）、显式 false 生效、类型不符 ⇒ 整文件回落。
+    /// `session_naming.enabled` 三态：缺键 ⇒ true（不告警）、显式 false 生效、类型不符 ⇒
+    /// 整文件回落；整表错形状同路。
     #[test]
-    fn auto_title_defaults_and_type_fallback() {
+    fn session_naming_defaults_and_type_fallback() {
         let snap = load_from(&TempFile::new(r#"{"harness":{}}"#).0);
-        assert!(snap.config.harness.auto_title);
+        assert_eq!(
+            snap.config.harness.session_naming,
+            SessionNamingConfig::default()
+        );
+        assert!(snap.config.harness.session_naming.enabled);
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
 
-        let snap = load_from(&TempFile::new(r#"{"harness":{"auto_title":false}}"#).0);
-        assert!(!snap.config.harness.auto_title);
+        let snap =
+            load_from(&TempFile::new(r#"{"harness":{"session_naming":{"enabled":false}}}"#).0);
+        assert!(!snap.config.harness.session_naming.enabled);
+        assert_eq!(snap.config.harness.session_naming.provider, None);
+        assert_eq!(snap.config.harness.session_naming.model, None);
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
 
         // 类型不符到不了 validate（解析期整文件回落）——回落后的值仍是出厂 true。
-        let snap = load_from(&TempFile::new(r#"{"harness":{"auto_title":"no"}}"#).0);
-        assert_eq!(snap.config, AppConfig::default());
-        assert!(snap.config.harness.auto_title);
-        assert_eq!(snap.warnings.len(), 1);
+        for raw in [
+            r#"{"harness":{"session_naming":{"enabled":"no"}}}"#,
+            r#"{"harness":{"session_naming":{"model":3}}}"#,
+            r#"{"harness":{"session_naming":"on"}}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(snap.config, AppConfig::default(), "{raw}");
+            assert!(snap.config.harness.session_naming.enabled, "{raw}");
+            assert_eq!(snap.warnings.len(), 1, "{raw}");
+        }
     }
 
-    /// `title_provider`：缺省 / 空串 = 会话当前 provider（不告警）；合法值进闭集合；
+    /// `session_naming.provider`：缺省 / 空串 = 会话当前 provider（不告警）；合法值进闭集合；
     /// 闭集合外取值 ⇒ 回落缺省 + 人话 warning（启动不失败）；类型不符 ⇒ 整文件回落。
     #[test]
-    fn title_provider_invalid_falls_back_to_session_provider() {
+    fn session_naming_provider_invalid_falls_back_to_session_provider() {
         let snap = load_from(&TempFile::new(r#"{"harness":{"provider":"mock"}}"#).0);
-        assert_eq!(snap.config.harness.title_provider, None);
+        assert_eq!(snap.config.harness.session_naming.provider, None);
         assert_eq!(
             snap.config
                 .harness
@@ -4322,27 +4435,35 @@ mod tests {
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
 
         let snap = load_from(
-            &TempFile::new(r#"{"harness":{"provider":"kimi","title_provider":"deepseek"}}"#).0,
+            &TempFile::new(
+                r#"{"harness":{"provider":"kimi","session_naming":{"provider":"deepseek"}}}"#,
+            )
+            .0,
         );
         assert_eq!(
-            snap.config.harness.title_provider,
+            snap.config.harness.session_naming.provider,
             Some(HarnessProvider::Deepseek)
         );
 
-        let snap = load_from(&TempFile::new(r#"{"harness":{"title_provider":""}}"#).0);
-        assert_eq!(snap.config.harness.title_provider, None);
+        let snap = load_from(&TempFile::new(r#"{"harness":{"session_naming":{"provider":""}}}"#).0);
+        assert_eq!(snap.config.harness.session_naming.provider, None);
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
 
         // 闭集合外取值：回落 None + 一条点名键与取值的 warning，其余配置照常生效。
         let snap = load_from(
-            &TempFile::new(r#"{"harness":{"provider":"mock","title_provider":"openai"}}"#).0,
+            &TempFile::new(
+                r#"{"harness":{"provider":"mock","session_naming":{"provider":"openai"}}}"#,
+            )
+            .0,
         );
         assert_eq!(snap.config.harness.provider, HarnessProvider::Mock);
-        assert_eq!(snap.config.harness.title_provider, None);
+        assert_eq!(snap.config.harness.session_naming.provider, None);
         assert!(
-            snap.warnings.iter().any(|w| w.contains("title_provider")
-                && w.contains("openai")
-                && w.contains("会话当前 provider")),
+            snap.warnings
+                .iter()
+                .any(|w| w.contains("session_naming.provider")
+                    && w.contains("openai")
+                    && w.contains("会话当前 provider")),
             "{:?}",
             snap.warnings
         );
@@ -4355,39 +4476,44 @@ mod tests {
             "非法值回落后的实际发往方 = 会话当前 provider"
         );
 
-        let snap = load_from(&TempFile::new(r#"{"harness":{"title_provider":2}}"#).0);
+        let snap = load_from(&TempFile::new(r#"{"harness":{"session_naming":{"provider":2}}}"#).0);
         assert_eq!(snap.config, AppConfig::default());
         assert_eq!(snap.warnings.len(), 1);
     }
 
-    /// `title_model`：已声明 ⇒ 原样生效；未声明 ⇒ 回落该 provider 的生效模型 + 人话 warning；
-    /// 空串 ⇒ 生效模型且不告警。
+    /// `session_naming.model`：已声明 ⇒ 原样生效；未声明 ⇒ 回落 None（= 该 provider 的生效
+    /// 模型）+ 人话 warning；空串 ⇒ None + warning（按未配置归一）。
     #[test]
-    fn title_model_falls_back_when_undeclared() {
+    fn session_naming_model_falls_back_when_undeclared() {
         let raw = format!(
-            r#"{{"harness":{{"providers":{{"kimi":{{"api_key":"sk-x","model":"k3-256k","models":[{},{}],"title_model":"kimi-cheap"}}}}}}}}"#,
+            r#"{{"harness":{{"session_naming":{{"model":"kimi-cheap"}},"providers":{{"kimi":{{"api_key":"sk-x","model":"k3-256k","models":[{},{}]}}}}}}}}"#,
             spec_json("k3-256k", 262_144),
             spec_json("kimi-cheap", 131_072),
         );
         let snap = load_from(&TempFile::new(&raw).0);
-        assert_eq!(snap.config.harness.providers.kimi.title_model, "kimi-cheap");
+        assert_eq!(
+            snap.config.harness.session_naming.model.as_deref(),
+            Some("kimi-cheap")
+        );
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
         let target = snap.config.harness.title_target(HarnessProvider::Kimi);
         assert_eq!(target.model, "kimi-cheap");
         assert_eq!(target.provider, HarnessProvider::Kimi);
         assert_eq!(target.api_key, "sk-x");
 
-        // 未在清单内：title_model 归一为空串（= 生效模型）+ warning；命名调用实际用生效模型。
+        // 未在清单内：归一为 None（= 生效模型）+ warning；命名调用实际用生效模型。
         let raw = format!(
-            r#"{{"harness":{{"providers":{{"kimi":{{"api_key":"sk-x","model":"k3-256k","models":[{}],"title_model":"gpt-cheap"}}}}}}}}"#,
+            r#"{{"harness":{{"session_naming":{{"model":"gpt-cheap"}},"providers":{{"kimi":{{"api_key":"sk-x","model":"k3-256k","models":[{}]}}}}}}}}"#,
             spec_json("k3-256k", 262_144),
         );
         let snap = load_from(&TempFile::new(&raw).0);
-        assert_eq!(snap.config.harness.providers.kimi.title_model, "");
+        assert_eq!(snap.config.harness.session_naming.model, None);
         assert!(
-            snap.warnings.iter().any(|w| w.contains("title_model")
-                && w.contains("gpt-cheap")
-                && w.contains("生效模型")),
+            snap.warnings
+                .iter()
+                .any(|w| w.contains("session_naming.model")
+                    && w.contains("gpt-cheap")
+                    && w.contains("生效模型")),
             "{:?}",
             snap.warnings
         );
@@ -4399,14 +4525,20 @@ mod tests {
             "k3-256k"
         );
 
-        // 空串 = 未配置（用生效模型，不告警）。
+        // 空串 = 未配置（归一为 None + 一条 warning，用生效模型）。
         let raw = format!(
-            r#"{{"harness":{{"providers":{{"kimi":{{"model":"k3-256k","models":[{}],"title_model":"  "}}}}}}}}"#,
+            r#"{{"harness":{{"session_naming":{{"model":"  "}},"providers":{{"kimi":{{"model":"k3-256k","models":[{}]}}}}}}}}"#,
             spec_json("k3-256k", 262_144),
         );
         let snap = load_from(&TempFile::new(&raw).0);
-        assert_eq!(snap.config.harness.providers.kimi.title_model, "");
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        assert_eq!(snap.config.harness.session_naming.model, None);
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|w| w.contains("session_naming.model") && w.contains("为空")),
+            "{:?}",
+            snap.warnings
+        );
         assert_eq!(
             snap.config
                 .harness
@@ -4416,13 +4548,14 @@ mod tests {
         );
     }
 
-    /// mock 是 fixture 驱动档：没有 `title_model` 键（硬塞也不识别），`title_target` 的模型 /
-    /// key / base_url 全空、方言恒 `responses`——五字段不向网络 provider 借用。
+    /// mock 是 fixture 驱动档：没有模型清单 ⇒ `session_naming.model` 只能是 null（非空值
+    /// 归一为 None + warning）；`title_target` 的模型 / key / base_url 全空、方言恒
+    /// `responses`——五字段不向网络 provider 借用。
     #[test]
-    fn title_model_is_absent_for_mock() {
+    fn session_naming_rejects_non_null_model_for_mock() {
         let snap = load_from(
             &TempFile::new(
-                r#"{"harness":{"provider":"mock","title_provider":"mock","providers":{"mock":{"fixture":"/tmp/x.json","title_model":"nope"}}}}"#,
+                r#"{"harness":{"provider":"mock","session_naming":{"model":"anything"},"providers":{"mock":{"fixture":"/tmp/x.json"}}}}"#,
             )
             .0,
         );
@@ -4430,7 +4563,14 @@ mod tests {
             snap.config.harness.providers.mock.fixture.as_deref(),
             Some("/tmp/x.json")
         );
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        assert_eq!(snap.config.harness.session_naming.model, None);
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|w| w.contains("session_naming.model") && w.contains("mock")),
+            "{:?}",
+            snap.warnings
+        );
         let target = snap.config.harness.title_target(HarnessProvider::Mock);
         assert_eq!(target.provider, HarnessProvider::Mock);
         assert_eq!(target.model, "", "mock 没有模型维度：不伪造模型 id");
@@ -4439,17 +4579,36 @@ mod tests {
         assert_eq!(target.wire_api, WireApi::Responses);
     }
 
+    /// 旧键按未知键口径静默忽略（2026-10-18 配置面重塑「直接切断」）：`auto_title` /
+    /// `title_provider` / `providers.<id>.title_model` 都不再生效、也不产生 warning。
+    #[test]
+    fn session_naming_legacy_keys_are_ignored() {
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"auto_title":false,"title_provider":"deepseek","providers":{"kimi":{"title_model":"kimi-cheap"}}}}"#,
+            )
+            .0,
+        );
+        assert_eq!(
+            snap.config.harness.session_naming,
+            SessionNamingConfig::default(),
+            "旧键不参与解析：开关仍出厂 true、provider / model 仍为 None"
+        );
+        assert!(snap.config.harness.session_naming.enabled);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
     /// `title_target` 的七态（任务 1.2）：缺省 = 会话 provider / 跨 provider / 非法值回落 /
-    /// `title_model` 已声明 / 未声明 / 空串 / mock。核心判据是**五字段同出一条 provider 条目**
-    /// ——跨 provider 时模型 / key / base_url / 方言一处都不许取会话 provider 的。
+    /// `session_naming.model` 已声明 / 未声明 / 空串 / mock。核心判据是**五字段同出一条
+    /// provider 条目**——跨 provider 时模型 / key / base_url / 方言一处都不许取会话 provider 的。
     #[test]
     fn title_target_resolves_all_five_fields_from_one_provider_entry() {
         let raw = format!(
-            r#"{{"harness":{{"provider":"kimi","title_provider":"deepseek","providers":{{
+            r#"{{"harness":{{"provider":"kimi","session_naming":{{"provider":"deepseek","model":"deepseek-flash"}},"providers":{{
                 "kimi":{{"api_key":"sk-kimi","model":"k3-256k","base_url":"https://kimi.example/v1",
                          "models":[{}]}},
                 "deepseek":{{"api_key":"sk-deep","model":"deepseek-v4-pro","base_url":"https://deep.example/v1",
-                            "models":[{},{}],"title_model":"deepseek-flash"}}}}}}}}"#,
+                            "models":[{},{}]}}}}}}}}"#,
             spec_json("k3-256k", 262_144),
             spec_json("deepseek-v4-pro", 1_048_576),
             spec_json("deepseek-flash", 1_048_576),
@@ -4474,9 +4633,9 @@ mod tests {
         assert_ne!(target.api_key, "sk-kimi");
         assert_ne!(target.base_url.as_deref(), Some("https://kimi.example/v1"));
 
-        // wire 方言同样随 title_provider 条目走（kimi 的 chat 档，会话 provider 是 deepseek）。
+        // wire 方言同样随 session_naming.provider 条目走（kimi 的 chat 档，会话 provider 是 deepseek）。
         let raw = format!(
-            r#"{{"harness":{{"provider":"deepseek","title_provider":"kimi","providers":{{
+            r#"{{"harness":{{"provider":"deepseek","session_naming":{{"provider":"kimi"}},"providers":{{
                 "kimi":{{"api_key":"sk-kimi","model":"k3-256k","wire_api":"chat_completions",
                          "models":[{}]}},
                 "deepseek":{{"api_key":"sk-deep","model":"deepseek-v4-pro",
@@ -4492,7 +4651,7 @@ mod tests {
         assert_eq!(target.wire_api, WireApi::ChatCompletions);
         assert_eq!(target.api_key, "sk-kimi");
 
-        // 缺省（title_provider 不写）= 会话当前 provider：五字段取会话条目。
+        // 缺省（session_naming.provider 不写）= 会话当前 provider：五字段取会话条目。
         let raw = format!(
             r#"{{"harness":{{"provider":"deepseek","providers":{{
                 "deepseek":{{"api_key":"sk-deep","model":"deepseek-v4-pro","base_url":"https://deep.example/v1",

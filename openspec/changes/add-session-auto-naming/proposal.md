@@ -15,6 +15,21 @@
 > `title_model` 须在**该 provider** 的 `models` 清单内声明。design D2 的隐私约束段一并改写为
 > 「素材发往 `title_provider` 指定的 provider」。
 >
+> **裁决留痕②：配置面重塑（2026-10-18，逐字）**
+>
+> Alex 针对上述配置形态提出：「自动重命名会话标题的配置项很古怪：1. 结构奇怪，title_provider
+> 在 harness 下，但 title_model 在 harness.providers.deepseek 之下 2. 命名恰当吗？ title_xxx？」；
+> 经讨论后批准统一形态：「好。就采纳这一版。」
+>
+> 落法：废除 `auto_title` / `title_provider` / `providers.<id>.title_model` 三处旧键，收成
+> `harness.session_naming = { enabled, provider, model }`（三键都可省；`enabled` 默认 `true`、
+> `provider` 缺省 = 会话当前 provider、`model` 缺省 = 该 provider 的生效模型）。直接切断：旧键
+> 按未知键口径静默忽略，无兼容读取。布局判据（与 `add-semantic-image-naming` 的
+> `attachment_naming` 重塑共用一条，落 `docs/specs/config-reference.md` §1.6 / §1.7）：
+> **配置跟随资源域**——自动 LLM 行为的开关与模型选择归 `[harness]` 域（`providers` 所在）；
+> 触发位置是 UI 事实，不是配置域。本条覆盖留痕①中「新增 `[harness].title_provider`」的**键位**，
+> 不改变其 provider / 模型语义（五字段同出一个 provider 条目）。
+>
 > **评审记录（节点 1：提案评审，2026-10-18，逐字）**
 >
 > Alex：「理解了，那 Change ID: add-session-auto-naming 我没有异议。」
@@ -37,9 +52,9 @@
 2. **周期重估与话题漂移重估**：距上次评估满 5 轮时重估；已有标题时，连续两条用户消息与当前标题的确定性词元重合度过低（话题漂移信号）可在满 3 轮后提前触发重估。
 3. **「显著更好才换」防抖**：生成器输出 `keep` / `rename` 判定，只在当前标题已失真且新标题显著更好时改名；解析失败、空标题、超长、调用失败一律保持原名。防抖保护的是「历史列表里的会话可被认出」这一目的。
 4. **留存格式加标题记录 + 旧文件安静回落**：会话 JSONL 追加 `session_title` sidecar 记录（`title` / `decision` / `reason` / `model` / `ts`），有效标题取最后一条带 `title` 的记录；自动压缩与历史恢复开新文件时继承源会话标题；本 change 之前的文件无该记录，列举 / 恢复 / 展示一律安静回落到首条用户消息口径，不做迁移、不告警（「恢复充分性（属性级）」判据不受影响）。自动命名调用是 wire 外的辅助调用，**不落 `llm_request` / `llm_response`**——落进去会让恢复的「最后一条会话请求」判据指错请求。
-5. **调度 = 便宜档**：命名调用是单次、非 agentic 的辅助调用（无工具、最低思考档、受限素材与输出、独立 20 秒超时、失败静默）。新增可选配置 `[harness].title_provider` 指定命名调用发往哪个 provider（缺省 = 会话当前 provider）；模型取该 provider 的 `[harness].providers.<id>.title_model`（可选，须在该 provider 的 `models` 清单内声明），未配置时取该 provider 的生效模型——配置为便宜 provider / 便宜模型即真正落到便宜档，不跨 provider 属缺省行为而非强制约束。另加 `[harness].auto_title`（默认开）作为关闭开关。
+5. **调度 = 便宜档**：命名调用是单次、非 agentic 的辅助调用（无工具、最低思考档、受限素材与输出、独立 20 秒超时、失败静默）。配置面是一张表 `[harness].session_naming = { enabled, provider, model }`（2026-10-18 重构，见裁决留痕②）：`enabled`（默认 `true`）是关闭开关；`provider`（可选，缺省 = 会话当前 provider）指定命名调用发往哪个 provider；`model`（可选，须在**选定 provider** 的 `models` 清单内声明，未声明回落生效模型 + warning）指定命名模型，缺省取该 provider 的生效模型——配置为便宜 provider / 便宜模型即真正落到便宜档，不跨 provider 属缺省行为而非强制约束。
 6. **展示优先级与即时更新**：会话名 = 有效标题 → 首条用户消息截断约 20 字 → 「新会话」；标题更新经状态快照与事件通道即时到达面板，不重载、不改 transcript、不改 session id、不重排历史清单。
-7. **mock provider 与真机验收**：mock fixture 增加可选的 `titles` 脚本（独立于对话 `responses` 队列），既有 fixture 零改动；新增真机验收场景覆盖首轮命名、keep 防抖、旧文件回落、关闭开关与 `title_provider` 非法值回落（漂移重估的全分支留在单测，见 design D14）。
+7. **mock provider 与真机验收**：mock fixture 增加可选的 `titles` 脚本（独立于对话 `responses` 队列），既有 fixture 零改动；新增真机验收场景覆盖首轮命名、keep 防抖、旧文件回落、关闭开关与 `session_naming.provider` 非法值回落（漂移重估的全分支留在单测，见 design D14）。
 
 对应 spec 增量：ADDED「会话自动命名」；MODIFIED「会话边界」「会话本地留存」「配置节 [harness]」。
 
@@ -57,6 +72,6 @@
 ## Impact
 
 - 影响的 specs：`harness`（配置节 [harness] / 会话边界 / 会话本地留存 三条 MODIFIED，会话自动命名一条 ADDED）。
-- 影响的代码/系统：`src-tauri/src/config.rs`（`auto_title` / `title_provider` / `title_model` 校验与 `title_target` 解析口）、新增 `src-tauri/src/harness/title.rs`（素材装配、生成器契约、漂移信号、调度状态机）、`src-tauri/src/harness/turn.rs`（轮结束后的触发点）、`src-tauri/src/harness/session.rs` / `jsonl.rs`（`session_title` 记录与有效标题读取、轮换继承）、`src-tauri/src/harness.rs`（列举返回 title）、`src/harness-panel.ts`（显示优先级与即时更新）、`src/bindings/**`（ts-rs 重导出）；`scripts/acceptance/lib/app.mjs`（场景配置键）与新增场景 / fixtures。
+- 影响的代码/系统：`src-tauri/src/config.rs`（`SessionNamingConfig` 的解析 / 校验与 `title_target` 解析口）、新增 `src-tauri/src/harness/title.rs`（素材装配、生成器契约、漂移信号、调度状态机）、`src-tauri/src/harness/turn.rs`（轮结束后的触发点）、`src-tauri/src/harness/session.rs` / `jsonl.rs`（`session_title` 记录与有效标题读取、轮换继承）、`src-tauri/src/harness.rs`（列举返回 title）、`src/harness-panel.ts`（显示优先级与即时更新）、`src/bindings/**`（ts-rs 重导出）；`scripts/acceptance/lib/app.mjs`（场景配置键）与新增场景 / fixtures。
 - 关联约束：ADR 0002 §6 性能合同（命名调用异步、不进 keypress-to-paint 与轮次完成路径）；ADR 0002 §5 配置即数据（新键走既有校验模板）；ADR 0007 会话留存与恢复口径（标题记录是 sidecar，不改 wire 重建）；ADR 0003（MUST NOT 写入 vault）。
-- 迁移：无数据迁移。旧会话文件零改动；新配置键缺省即出厂行为（自动命名开、title provider 取会话当前 provider、模型取该 provider 的生效模型）。
+- 迁移：无数据迁移。旧会话文件零改动；`session_naming` 缺省即出厂行为（自动命名开、provider 取会话当前 provider、模型取该 provider 的生效模型）。旧配置键 `auto_title` / `title_provider` / `providers.<id>.title_model` 按未知键口径静默忽略（直接切断，无兼容读取；单用户、未发布，配置由 tower 在合并后同步修改）。
