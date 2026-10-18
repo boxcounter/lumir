@@ -26,11 +26,13 @@ steps:
   - name: 等第 1 轮回答 + 初始标题落到标题栏
     do: waitFor
     waitFor:
-      has: ["验收回答：第1轮完成。", "/AXPopUpButton \\(生命周期排查/"]
+      has: ["验收回答：第1轮完成。", "/AXPopUpButton \\(生命周期排查\\) @/"]
     timeoutMs: 60000
     expect:
-      - label: 初始标题生效（titles 队列第 1 条：rename）
-        ax: { has: "/AXPopUpButton \\(生命周期排查/" }
+      - label: 初始标题生效（titles 队列第 1 条：rename；整串锚定 + 回落名反断言——回落名是「生命周期排查zqkeepa」，前缀断言对它也成立，M594 finding 实证该断言曾无区分度）
+        ax:
+          has: "/AXPopUpButton \\(生命周期排查\\) @/"
+          not: "/AXPopUpButton \\(生命周期排查zqkeepa\\) @/"
       - label: 初始生成落 decision=initial
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"decision":"initial"' }
 
@@ -118,8 +120,10 @@ steps:
     do: sleep
     ms: 1500
     expect:
-      - label: 标题保持不变（keep 的含义：当前标题仍能描述对话，不换名）
-        ax: { has: "/AXPopUpButton \\(生命周期排查/" }
+      - label: 标题保持不变（keep 的含义：当前标题仍能描述对话，不换名；整串锚定 + 回落名反断言，同第 1 轮）
+        ax:
+          has: "/AXPopUpButton \\(生命周期排查\\) @/"
+          not: "/AXPopUpButton \\(生命周期排查zqkeepa\\) @/"
       - label: 周期重估落 decision=keep（审计面：模型给的是 keep，不是 rename）
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"decision":"keep"' }
       - label: keep 记录的触发原因 = cadence（5 轮周期，不是漂移或初始重试）
@@ -147,9 +151,16 @@ design D1/D4 的周期口径是「距上一次**完成的评估**满 5 轮」：
 - **漂移不抢跑**：第 2–6 轮的提问都含标题文本「生命周期排查」，词元重合度接近 1.0（远高于
   0.20 阈值）⇒ 连续命中不成立 ⇒ 唯一到达的触发点是第 6 轮的 cadence。这条设计让 `reason`
   断言的判据是确定的（写错触发点即红）。
-- **标题保持可判**：`/AXPopUpButton \(生命周期排查/` 是标题栏的会话名钮（role 分流：
+- **标题保持可判**：`/AXPopUpButton \(生命周期排查\) @/` 是标题栏的会话名钮（role 分流：
   aria-haspopup → AXPopUpButton）；标题在 transcript 的用户消息里也出现，故必须锚 role，
   否则「标题是否被改名」判不出来。
+- **回落名不参与命中**（M595 收紧，M594 finding）：首条用户消息是 `生命周期排查zqkeepa`，
+  无标题时会话名钮的回落名就是它——所以前缀断言 `/AXPopUpButton \(生命周期排查/` 对回落名
+  同样成立，`title` 事件在 IPC 边界被丢弃时该断言照样 PASS（假绿现场）。现在改为**整串锚定**
+  `\) @`（AX dump 的会话名钮形态是 `AXPopUpButton (<name>) @x,y`），并补一条回落名反断言
+  `not`：标题事件丢失时正断言不命中、回落名在场时反断言命中，两个方向都判红。
+  区分度自证见 M595 的 `.local/acceptance/2026-10-19-m595/`（修前 164 PASS 而 163/167 红，
+  修后三条同绿）。
 - **keep 记录的三条**：`decision=keep`（防抖结果）、`reason=cadence`（触发点）、`title` 在场
   （keep 记录携带当时生效的标题，有效标题因此不断档）。
 - **落盘等待**：命名调用是轮完成后的后台线程，AX 面没有「keep 已落盘」的信号——固定 1.5s
