@@ -241,6 +241,12 @@ export function checkScenario(scenario) {
   // 写成非表（如列表 / 字符串）时 writeConfig 会把它当普通值铺开，静默丢掉半张表，故在此挡住。
   if (scenario.config?.editor !== undefined && !isPlainTable(scenario.config.editor))
     push(`config.editor 需要对象（[editor] 表，snake_case 键），实际 ${JSON.stringify(scenario.config.editor)}`);
+  // `config.attachments`（change add-semantic-image-naming）：同样是**整表透传**的 `[attachments]` 表，
+  // 写成非表时 writeConfig 会把它当普通值铺开、静默丢掉整张表，故在此挡住。
+  if (scenario.config?.attachments !== undefined && !isPlainTable(scenario.config.attachments))
+    push(
+      `config.attachments 需要对象（[attachments] 表：semantic_naming / naming_model），实际 ${JSON.stringify(scenario.config.attachments)}`,
+    );
   for (const [i, step] of (scenario.steps ?? []).entries()) {
     const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;
     if (!step.name) push(`${at} 缺少 name`);

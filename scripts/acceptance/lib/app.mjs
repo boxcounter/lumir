@@ -50,6 +50,10 @@ export const SCENARIO_CONFIG_KEYS = [
   // 的同名参数），给「新增的 editor 配置项」构造**启动口径**用——不必每加一个键就回来改套件。
   // 形状校验见 execute.mjs 的 checkScenario（非表即报，避免静默丢半张表）。
   "editor",
+  // `[attachments]` 表（change add-semantic-image-naming）：整表透传（与 editor 同形），供场景
+  // 构造 `semantic_naming` / `naming_model` 的启动口径；缺省不写 = 出厂（语义命名开、模型跟随
+  // 当前 provider——验收默认配置没有声明 vision 的模型，因此既有贴图场景不触发命名）。
+  "attachments",
 ];
 
 /** 写隔离 config.json。`keys` 不传时整体不写该字段（默认无覆盖）。
@@ -94,6 +98,9 @@ export async function writeConfig({
   autoTitle = undefined,
   titleProvider = undefined,
   titleModel = undefined,
+  // `[attachments]` 表（change add-semantic-image-naming）：整表透传，snake_case 键原样写进
+  // 顶层 `attachments` 对象（`semantic_naming` / `naming_model`）。传了才写——缺省即出厂。
+  attachments = undefined,
 } = {}) {
   const dir = path.join(envHome(), "lumir");
   await mkdirp(dir);
@@ -153,6 +160,7 @@ export async function writeConfig({
     h.providers[target] = { ...(h.providers[target] ?? {}), title_model: titleModel };
   }
   if (Object.keys(h).length > 0) cfg.harness = h;
+  if (attachments !== undefined) cfg.attachments = attachments;
   await writeFile(path.join(dir, "config.json"), `${JSON.stringify(cfg, null, 2)}\n`);
   return path.join(dir, "config.json");
 }

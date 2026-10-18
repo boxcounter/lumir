@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "验收回答：语义命名场景不发对话。",
+      "usage": { "input_tokens": 1000, "cached_tokens": 100, "output_tokens": 10 }
+    }
+  ],
+  "naming": [
+    {
+      "text": "Harness Arch"
+    }
+  ]
+}

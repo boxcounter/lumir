@@ -52,6 +52,10 @@ struct ParseExpect {
 #[derive(Deserialize)]
 struct LinkExpect {
     span: (usize, usize),
+    /// target path 段的词法范围（change add-semantic-image-naming 补的断言面，design §5.2）：
+    /// fixture 要求**每个** parseCase 都给出它——改写点只允许有一处产出。
+    #[serde(rename = "pathSpan")]
+    path_span: (usize, usize),
     embed: bool,
     path: String,
     #[serde(rename = "headingPath")]
@@ -140,6 +144,7 @@ fn parse_cases_all() {
         );
         for (got, want) in links.iter().zip(c.expect.links.iter()) {
             assert_eq!(got.span, want.span, "case {}: span", c.id);
+            assert_eq!(got.path_span, want.path_span, "case {}: pathSpan", c.id);
             assert_eq!(got.embed, want.embed, "case {}: embed", c.id);
             assert_eq!(got.path, want.path, "case {}: path", c.id);
             assert_eq!(

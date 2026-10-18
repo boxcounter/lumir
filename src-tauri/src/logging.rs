@@ -101,6 +101,10 @@ pub enum LogEventName {
     /// 猜「这不是内容」），误伤时唯一能把它与「用户规则命中（惰性可见）」区分的读数。
     /// **只有计数，没有路径或名字原文**（本模块的隐私边界，见模块头）。
     VaultScanIgnored,
+    /// 图片语义命名的结局（change add-semantic-image-naming，design §7）：成功不记（有 toast），
+    /// 跳过 / 失败各记一条**分类后的错误码** + 图片的 vault 相对路径。**不含图片字节、不含
+    /// 笔记正文**（隐私边界：正文与字节只出现在模型请求里）。
+    AttachmentNaming,
 }
 
 impl LogEventName {
@@ -118,6 +122,7 @@ impl LogEventName {
             Self::AppMetaUnavailable => "app_meta_unavailable",
             Self::VaultRegistryMigrated => "vault_registry_migrated",
             Self::VaultScanIgnored => "vault_scan_ignored",
+            Self::AttachmentNaming => "attachment_naming",
         }
     }
 
@@ -158,6 +163,9 @@ impl LogEventName {
             // **只有计数**（十进制字符串）：被剪掉的是哪些条目属于用户内容，落盘即是隐私
             // 边界之外的东西（见模块头）。要的就是「有一批条目被 `hidden` 档剪掉了」这一个事实。
             Self::VaultScanIgnored => &["count"],
+            // 图片语义命名：只有分类后的错误码与图片路径（路径与 SaveConflict 同一口径——
+            // 不是文档正文）；图片字节 / 笔记正文 / 模型输出原文一律不落。
+            Self::AttachmentNaming => &["path", "code"],
         }
     }
 }
@@ -415,6 +423,18 @@ fn save_conflict_to(sink: &Sink, path: &str, code: &str) {
     emit(
         sink,
         Event::new(LogEventName::SaveConflict)
+            .field("path", path)
+            .field("code", code),
+    );
+}
+
+/// Rust 侧埋点：图片语义命名的跳过 / 失败（change add-semantic-image-naming，design §7）。
+/// 成功不记（成功有 toast）；只记分类后的错误码与图片的 vault 相对路径——**不含图片字节、
+/// 不含笔记正文、不含模型输出原文**（隐私边界）。
+pub fn attachment_naming(path: &str, code: &str) {
+    emit(
+        global(),
+        Event::new(LogEventName::AttachmentNaming)
             .field("path", path)
             .field("code", code),
     );

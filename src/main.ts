@@ -14,6 +14,8 @@ import type { MarkdownLineNumbers } from "./bindings/MarkdownLineNumbers";
 import { baseName, createFileTree, openKind, patchAttachmentPaths, vaultAbsolutePath } from "./tree";
 import type { InlineEditRequest, OpenKind } from "./tree";
 import {
+  attachmentSemanticName,
+  attachmentSemanticUndo,
   configGet,
   configSetUiValue,
   errorMessage,
@@ -27,6 +29,7 @@ import {
   fsTrashEntry,
   fsWriteAttachment,
   documentSetDirty,
+  onAttachmentNaming,
   onFsEntryChanged,
   onMenuCommand,
   onQuitBlocked,
@@ -40,7 +43,10 @@ import {
   vaultRemap,
   vaultSessionGet,
   vaultSessionPut,
+  wikilinkRetargetText,
 } from "./ipc";
+import type { NamingOutcome } from "./bindings/NamingOutcome";
+import type { SemanticNameTask } from "./paste-image";
 import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
 import { invoke } from "@tauri-apps/api/core";
 import { getName, getVersion } from "@tauri-apps/api/app";
@@ -927,6 +933,13 @@ const editor: EditorHandle = {
       requestId,
     );
   },
+  // 通过属主 pane 路由（与 reloadSession / setSessionEditable 同口径）：会话的 state 与
+  // 撤销栈归它所在的实例所有，别的实例拿不到它。
+  applySessionChanges: (session, changes) => {
+    const owner = paneEntryOfSession(session)?.[1].handle;
+    if (owner === undefined || owner.kind !== "doc") return false;
+    return owner.editor.applySessionChanges(session, changes);
+  },
   remapSessionPaths: (from, to) =>
     docPanes().flatMap((pane) =>
       (pane.handle as { kind: "doc"; editor: EditorHandle }).editor.remapSessionPaths(from, to),
@@ -1130,6 +1143,11 @@ injectEach((handle) =>
 // （错误信封按 code 渲染，文案表见 `copy-data.ts` 的 `ERROR_COPY`，本文件不写第二份文案）。
 // 拦截判定 / 落盘目录推导 / 插入事务都在 `src/editor.ts` 的 paste 处理器里（能力随编辑器走），
 // 这里只给两样它看不到的东西：后端调用与提示出口。
+//
+// `semanticNamingEnabled` 是 `attachments.semantic_naming` 的**粘贴时刻读数**（design §1 的
+// 生效时点）：启动装载时喂初值（configGet 块），之后只有改配置 + 重启才变——与 `editor` /
+// `ui` 的「装载时施加」同路，不提供运行期开关命令。
+let semanticNamingEnabled = true;
 injectEach((handle) =>
   handle.setPasteImagePort({
     write: (dirRel, dataBase64, sourceMime) =>
@@ -1137,6 +1155,10 @@ injectEach((handle) =>
     toast: (error) => {
       toast(errorText(error));
     },
+    // 语义命名（change add-semantic-image-naming）：开关的粘贴时刻读数 + 投递口。两样都只是
+    // 把装配层的能力交给编辑器，判据（开关 / 本次写盘）在 `src/paste-image.ts` 的纯函数里。
+    semanticNaming: () => semanticNamingEnabled,
+    name: (task) => void semanticName(task),
   }),
 );
 
@@ -1655,6 +1677,121 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
 // ---------------------------------------------------------------------------
 
 const renameEcho = createRenameEchoGuard();
+
+// ---------------------------------------------------------------------------
+// 图片语义命名（change add-semantic-image-naming，M577）
+//
+// 链路：粘贴落盘（暂存名）→ 前端投递 `attachment_semantic_name`（不 await）→ 后端异步改名 +
+// 全 vault 引用改写 → 结果回来时对账打开中的会话 + 一条带「撤销」的 toast。
+//
+// **回声抑制为什么不能沿用「invoke 发起时登记」**：扫描之前前端不知道哪些笔记会被改写（那
+// 只有后端知道）。后端在 rename 与逐篇写盘**之前**广播 `attachment:naming`（from → to +
+// 笔记清单），前端收到即登记——与 `renameEcho` 同一守卫、同一消费点，只是登记时刻由事件驱动。
+// 写盘批次的窗口比一次菜单改名长，登记带上更宽的 TTL。
+// ---------------------------------------------------------------------------
+
+/** 语义命名写盘批次的抑制窗口（ms）：一次改名 + 逐篇 CAS 改写都在一次后台任务里完成
+ *  （模型调用已在扫描之前结束），15 秒对写盘 + FSEvents debounce 是宽裕的余量。 */
+const SEMANTIC_ECHO_TIMEOUT_MS = 15_000;
+
+const semanticEcho = createRenameEchoGuard();
+
+onAttachmentNaming((echo) => {
+  semanticEcho.register(echo.from, echo.to, SEMANTIC_ECHO_TIMEOUT_MS);
+  for (const note of echo.notes) {
+    semanticEcho.register(note, note, SEMANTIC_ECHO_TIMEOUT_MS);
+  }
+}).catch(() => {}); // 无 Tauri 后端（纯浏览器预览）时静默忽略
+
+/** 投递一次命名并消费结果（失败静默：命名是可选增强，后端已把业务失败收敛成 skipped）。 */
+async function semanticName(task: SemanticNameTask): Promise<void> {
+  let outcome: NamingOutcome;
+  try {
+    outcome = await attachmentSemanticName(task);
+  } catch {
+    return;
+  }
+  reconcileNaming(outcome);
+  if (outcome.status !== "renamed" || outcome.new_name === null) return;
+  const name = outcome.new_name;
+  const token = outcome.undo_token;
+  toast(
+    t("D469", { name }),
+    token === null ? [] : [{ label: t("D470"), run: () => void semanticUndo(token) }],
+    false,
+    "success",
+  );
+}
+
+/** 撤销一次改名（toast 动作的唯一出口；失败必须有人话提示——用户显式动作，MUST NOT 静默）。 */
+async function semanticUndo(token: string): Promise<void> {
+  let outcome: NamingOutcome;
+  try {
+    outcome = await attachmentSemanticUndo(token);
+  } catch (error) {
+    toast(errorText(error));
+    return;
+  }
+  reconcileNaming(outcome);
+  if (outcome.status === "renamed" && outcome.new_name !== null) {
+    toast(t("D472", { name: outcome.new_name }), [], false, "success");
+  }
+}
+
+/**
+ * 命名结果的对账（design §5.3 的表格）：
+ *   - 图片文件在标签中打开 → `remapSessionPaths` + `save.noteRenamed`（与文件树改名同一条链路）；
+ *   - dirty 的可编辑会话 → 用**当前内存文本**重算改写点（引用可能只存在于内存），按编辑事务
+ *     应用；该路径若也被后端改过，推进 CAS 基准（否则下次 ⌘S 假冲突）；
+ *   - clean 的已装载会话 → 按既有 reload 路径从磁盘重载（盘上已是最终内容）。
+ *   - 被跳过（并发修改 / 读失败）的笔记 → 它的 watch 事件被抑制吞掉了，这里按普通外部变更
+ *     重新处置（不静默丢一条真实变更；处置内部按 revision 判回声）。
+ */
+function reconcileNaming(outcome: NamingOutcome): void {
+  const oldPath = outcome.old_path;
+  const newPath = outcome.new_path;
+  if (outcome.status !== "renamed" || oldPath === null || newPath === null) return;
+  for (const remap of editor.remapSessionPaths(oldPath, newPath)) {
+    save.noteRenamed(remap.from, remap.to);
+  }
+  const rewritten = new Map(outcome.rewritten.map((note) => [note.path, note.revision]));
+  for (const session of editor.sessions()) {
+    const path = session.path;
+    if (path === undefined || !session.loaded || !session.editable) continue;
+    if (!session.dirty) continue; // clean 分支走下面的磁盘重载
+    void retargetSession(session, oldPath, newPath, rewritten.get(path));
+  }
+  for (const note of outcome.rewritten) {
+    const session = editor.sessionForPath(note.path);
+    if (session === undefined || !session.loaded || session.dirty) continue;
+    save.noteRewritten(note.path, note.revision);
+  }
+  for (const path of outcome.skipped) {
+    if (editor.sessionForPath(path) !== undefined) save.handleExternalChange(path, "modified");
+  }
+  if (outcome.skipped.length > 0) toast(t("D471", { count: outcome.skipped.length }));
+}
+
+/** dirty 会话的内存对账（异步 IPC：改写点由 Rust 的 link_graph 算，前端不复制解析语义）。 */
+async function retargetSession(
+  session: EditorSession,
+  fromPath: string,
+  toPath: string,
+  revision: string | undefined,
+): Promise<void> {
+  const path = session.path;
+  if (path === undefined) return;
+  let changes;
+  try {
+    changes = await wikilinkRetargetText(session.state.doc.toString(), fromPath, toPath);
+  } catch {
+    return;
+  }
+  // IPC 在途期间会话可能被关闭 / 切走：对象已不在会话表里就放弃（不写一份孤儿文本）。
+  if (!editor.sessions().includes(session)) return;
+  if (changes.length > 0) editor.applySessionChanges(session, changes);
+  if (revision !== undefined) save.noteRevisionAdvanced(path, revision);
+}
 
 const treeMenu = createTreeContextMenu({
   mount: shell.root, // 与 vault 浮层同一挂点：左栏容器 overflow:auto，挂进去会被裁掉
@@ -2984,7 +3121,13 @@ onFsEntryChanged((changes) => {
     // 「deleted:old + created:new」，不抑制就会把用户自己改的名报成外部变更（remap 之后
     // session.path 已是 new，真正命中 dirty 会话的是 `created:new` → 「检测到外部修改」）。
     // 抑制只作用在**会话链路**上：上面的附件索引与下面的树 / 链接索引照常收敛。
+    //
+    // 两套登记共用这一处消费：`renameEcho` = 菜单改名 / 拖拽移动；`semanticEcho` = 图片语义
+    // 命名的写盘批次（登记来自后端 `attachment:naming` 事件，见上方同名段）。
     const renamed = renameEcho.consume(changes.map((c) => c.path));
+    for (const path of semanticEcho.consume(changes.map((c) => c.path))) {
+      renamed.add(path);
+    }
     for (const session of editor.sessions()) {
       const path = session.path;
       if (path === undefined) continue;
@@ -2992,6 +3135,7 @@ onFsEntryChanged((changes) => {
       if (hit && !renamed.has(hit.path)) save.handleExternalChange(path, hit.kind);
     }
     renameEcho.settle();
+    semanticEcho.settle();
     // 链接索引已由后端随事件流增量更新；前端清缓存重建装饰
     linkFollow.invalidate();
     editor.refreshPreview();
@@ -3071,6 +3215,9 @@ Promise.all([getName(), getVersion()])
 configGet().then((snapshot) => {
   currentDefaultMode = snapshot.config.editor.mode;
   editor.setMode(snapshot.config.editor.mode);
+  // 图片语义命名开关（change add-semantic-image-naming，design §1）：装载时读一次，粘贴时
+  // 取快照（`semanticNamingEnabled` 是那唯一一份读数，见其声明处）。键缺席 = 出厂 true。
+  semanticNamingEnabled = snapshot.config.attachments?.semantic_naming ?? true;
   // 折行口径（M180，change line-wrap-options；M247 起三项）：配置给的是**启动时的起点**——
   // 应用运行期的翻转由两条 `view.toggle-*` 命令承担，运行期 MUST NOT 回写这里（config.json 的
   // mtime 与内容在翻转前后逐字节不变）。放在 setMode 之后：mode 决定代码块内容级 class 有没有

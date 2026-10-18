@@ -6,6 +6,7 @@
 //! 进程外 extension 隔离的可能性。本 crate 的模块均不依赖 `tauri` 类型，
 //! 唯一例外是 `run()` 里与 webview 生命周期的接线。
 
+pub mod attachment_naming;
 pub mod commands;
 pub mod config;
 pub mod fs_io;
@@ -101,6 +102,11 @@ pub fn run() {
             commands::recovery_list,
             commands::link_graph_resolve,
             commands::wikilink_create,
+            // 图片语义命名（change add-semantic-image-naming，M577）：异步改名 + 撤销 +
+            // dirty 文档的内存对账（纯函数，不写盘）。
+            commands::attachment_semantic_name,
+            commands::attachment_semantic_undo,
+            commands::wikilink_retarget_text,
             commands::create_file,
             // 文件级操作（M244，change file-tree-context-menu；M530 起含跨目录移动）：删除 /
             // 重命名 / 移动 / 新建 / 在 Finder 中显示——只作用于 vault 内路径，判定与 IO 都在

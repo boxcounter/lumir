@@ -15,6 +15,29 @@
 
 import type { EditorMode } from "./bindings/EditorMode";
 
+/** 一次写入的结果（后端 `WrittenAttachment`）：`fresh` = 本次是否新写盘（false = 去重命中）。 */
+export interface WrittenPastedImage {
+  path: string;
+  name: string;
+  fresh?: boolean;
+}
+
+/** 粘贴时刻的光标上下文快照（change add-semantic-image-naming，design §4.5）。 */
+export interface PasteContext {
+  /** 当前笔记的 vault 相对路径（无路径的新建文档为 undefined）。 */
+  notePath?: string;
+  /** 粘贴点（替换 [[前）光标前的段落文本。截断上限在 Rust 侧（唯一一份）。 */
+  before: string;
+  /** 粘贴点（替换 [[后）光标后的段落文本。 */
+  after: string;
+}
+
+/** 投递给后端的语义命名任务（`attachment_semantic_name` 的载荷）。 */
+export interface SemanticNameTask extends PasteContext {
+  /** 刚落盘的图片路径（暂存名）。 */
+  path: string;
+}
+
 /**
  * 剪贴板图片口令（装配层注入）：`write` 走 `ipc.ts` 的 `fsWriteAttachment`，`toast` 复用装配层
  * 既有的 deck 化提示出口（错误信封按 code 渲染，文案表见 `copy-data.ts` 的 `ERROR_COPY`）。
@@ -26,9 +49,13 @@ export interface PasteImagePort {
     dirRel: string,
     dataBase64: string,
     sourceMime: string,
-  ): Promise<{ path: string; name: string }>;
+  ): Promise<{ path: string; name: string; fresh?: boolean }>;
   /** 失败出口：人话 toast。MUST NOT 静默失败、MUST NOT 插引用留破图。 */
   toast(error: unknown): void;
+  /** 语义命名开关（`attachments.semantic_naming` 的粘贴时刻读数）。未注入 = 关。 */
+  semanticNaming?(): boolean;
+  /** 投递一次语义命名任务（**不 await**：粘贴事务已经完成，结果处理在装配层）。 */
+  name?(task: SemanticNameTask): void;
 }
 
 /**
@@ -109,7 +136,63 @@ export async function writePastedImage(
   port: Pick<PasteImagePort, "write">,
   dirRel: string,
   blob: Blob,
-): Promise<{ path: string; name: string }> {
+): Promise<{ path: string; name: string; fresh?: boolean }> {
   const dataBase64 = await blobToBase64(blob);
   return port.write(dirRel, dataBase64, blob.type);
+}
+
+/**
+ * 语义命名任务的投递判据（change add-semantic-image-naming，design §3 / task 6.4）：开关开、
+ * 且本次确实新写盘（去重命中 / 竞态收敛都不投递）。返回 null = 不投递。
+ *
+ * 「文件名已是语义名」不需要在这里判：`fresh = true` 只可能来自本命令刚写下的暂存名
+ * （`fs_io::write_attachment` 是唯一写入口）；再按文件名判一次就是第二份命名形态判据
+ * （REVIEW.md「同一语义两处真源」条）。
+ */
+export function semanticNameTask(
+  written: { path: string; fresh?: boolean },
+  enabled: boolean,
+  context: PasteContext,
+): SemanticNameTask | null {
+  if (!enabled || written.fresh !== true) return null;
+  return { path: written.path, ...context };
+}
+
+/**
+ * 粘贴时刻的**段落上下文**（design §4.5）：以空行为段落边界，取粘贴点所在段落里光标前 /
+ * 光标后的文本。`from` / `to` 是替换区间（无选区时二者相等）。
+ *
+ * 只做切分，**不做截断**：前 / 后各 500 字符的上限在 Rust 侧（`attachment_naming` 的
+ * `CONTEXT_CHARS`，唯一一份；提示词装配也在那一侧）。
+ */
+export function paragraphContext(
+  doc: string,
+  from: number,
+  to: number,
+): { before: string; after: string } {
+  const lineStart = (pos: number): number => {
+    const index = doc.lastIndexOf("\n", Math.max(0, pos - 1));
+    return index < 0 ? 0 : index + 1;
+  };
+  const lineEnd = (pos: number): number => {
+    const index = doc.indexOf("\n", pos);
+    return index < 0 ? doc.length : index;
+  };
+  // 向上扩：只要上一行不是空行，段落就还没到头。
+  let blockStart = lineStart(from);
+  while (blockStart > 0) {
+    const prevEnd = blockStart - 1;
+    const prevStart = lineStart(prevEnd);
+    if (doc.slice(prevStart, prevEnd).trim() === "") break;
+    blockStart = prevStart;
+  }
+  // 向下扩：只要下一行不是空行，段落就还在继续。
+  let blockEnd = lineEnd(to);
+  while (blockEnd < doc.length) {
+    const nextStart = blockEnd + 1;
+    const nextEnd = lineEnd(nextStart);
+    if (doc.slice(nextStart, nextEnd).trim() === "") break;
+    blockEnd = nextEnd;
+  }
+  return { before: doc.slice(blockStart, from), after: doc.slice(to, blockEnd) };
 }

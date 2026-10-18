@@ -1460,6 +1460,38 @@ const COPY_TABLE = {
     zh: "思考过程",
     en: "Thinking",
   },
+  // 图片语义命名（change add-semantic-image-naming，design §7）：D469 = 成功 toast（含新文件名），
+  // D470 = 该 toast 的「撤销」动作（窗口 = toast 可见期 8 秒），D471 = 部分引用未更新的点名行，
+  // D472 = 撤销成功 toast。命名失败 / 跳过**没有** toast（高频路径，静默降级即现状）。
+  D469: {
+    zh: "已命名为 {name}",
+    en: "Renamed to {name}",
+  },
+  D470: {
+    zh: "撤销",
+    en: "Undo",
+  },
+  D471: {
+    zh: "部分笔记的引用未更新（{count} 篇）",
+    en: "Some notes still reference the old name ({count})",
+  },
+  D472: {
+    zh: "已撤销命名，文件恢复为 {name}",
+    en: "Rename undone; the file is back to {name}",
+  },
+  // 撤销失败的结构化错误信封（同 change，design §6）：撤销是用户显式动作，MUST NOT 静默。
+  D473: {
+    zh: "撤销窗口已过：这次改名的撤销入口已失效",
+    en: "The undo window has passed for this rename",
+  },
+  D474: {
+    zh: "文件已被改名、移走或内容改变，无法撤销",
+    en: "The file was renamed, moved or changed, so the rename can't be undone",
+  },
+  D475: {
+    zh: "暂存名已被占用，无法撤销",
+    en: "The staging name is already taken, so the rename can't be undone",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1516,6 +1548,11 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   // 拖拽移动（M530）：目录移入自身/后代 / 移回原位的显式前置拒绝（占位键 rel 与后端逐字
   // 对应；前端拖拽判定先行，这条主要兜 harness 等不经树的调用方）。
   fs_move_into_self: "D467",
+  // 图片语义命名的撤销失败（change add-semantic-image-naming，design §6）：三个 code 都是用户
+  // 点了「撤销」之后才可能命中，必须给出人话（MUST NOT 静默）。占位键与后端逐字对应。
+  attachment_undo_unavailable: "D473",
+  attachment_undo_stale: "D474",
+  attachment_undo_occupied: "D475",
   // 剪贴板图片落盘（change paste-clipboard-image）：六个 code 都由 fs_io::write_attachment 一族
   // 构造，占位键与后端逐字对应（type / mb+limit / reason）。
   attachment_type_unsupported: "D436",

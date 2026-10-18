@@ -723,3 +723,47 @@ test("诊断埋点：外部修改命中打开中文件记一条 save_external_ch
   assert.equal(rig.backend.logEvents.length, 0, "revision 一致即自身的写入回声，不记事件");
   stopTimers(rig);
 });
+
+test("语义命名改写引用后的基准推进：dirty 只换基准，clean 就地重载", async () => {
+  const rig = createRig();
+  const saves: Array<string | undefined> = [];
+  rig.backend.handle("document_save", (args) => {
+    saves.push(args.expected_revision);
+    return "rev-op";
+  });
+  rig.backend.handle("fs_read_snapshot", (args) => ({
+    content: `盘上内容 ${args.path}`,
+    revision: "rev-disk-2",
+  }));
+
+  // dirty 文档：后端已在盘上改写（revision 从 rev-1 到 rev-op），内存改写由装配层完成——
+  // 基准推进后 ⌘S 用新 revision，不再报假 CAS 冲突。
+  rig.editor.open("a.md", "# A");
+  rig.controller.noteOpened("a.md", "rev-1");
+  rig.editor.edit("a.md", "# A 改（dirty）");
+  rig.controller.noteRevisionAdvanced("a.md", "rev-op");
+  await rig.controller.save();
+  assert.deepEqual(saves, ["rev-op"]);
+
+  // clean 文档：按既有 reload 路径从磁盘重载（拿到盘上的新内容与新 revision）。
+  rig.editor.open("b.md", "# B");
+  rig.controller.noteOpened("b.md", "rev-1");
+  rig.controller.noteRewritten("b.md", "rev-disk-2");
+  await flush();
+  assert.deepEqual(rig.editor.reloads.at(-1), {
+    path: "b.md",
+    content: "盘上内容 b.md",
+  });
+  assert.equal(rig.editor.handle.sessionForPath("b.md")!.cleanDoc, "盘上内容 b.md");
+
+  // 判定与重载之间用户开始输入（dirty）：只推进基准，MUST NOT 重载吞掉输入。
+  rig.editor.open("c.md", "# C");
+  rig.controller.noteOpened("c.md", "rev-1");
+  rig.editor.edit("c.md", "# C 改");
+  const before = rig.editor.reloads.length;
+  rig.controller.noteRewritten("c.md", "rev-disk-2");
+  await flush();
+  assert.equal(rig.editor.reloads.length, before, "dirty 文档不重载");
+  assert.equal(rig.editor.handle.sessionForPath("c.md")!.state.doc.toString(), "# C 改");
+  stopTimers(rig);
+});
