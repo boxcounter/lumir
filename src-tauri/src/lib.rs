@@ -203,11 +203,6 @@ pub fn run() {
             // 已发出之后才 spawn——线程自己装载配置与去重状态，setup 不等它，冷启动
             // <300ms 合同零接触面。首次评估由紧随其后的 startup poke 触发。
             start_cron(app.handle(), cron_rx);
-            // 临时探针（任务 4.7，提交前移除）：验证 dev flavour 的通知权限与投递。
-            #[cfg(debug_assertions)]
-            if std::env::var("LUMIR_NOTIFY_PROBE").is_ok() {
-                probe_notification(app.handle());
-            }
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -1089,6 +1084,17 @@ impl CronRunner {
                     "cron",
                     &format!("任务 {} 的运行回执超时未到，已按运行丢失处理", run.task),
                 );
+                // 回执丢失的点击运行可能从未真正发起（webview 监听器不在场时 emit 返回 Ok
+                // 但事件被丢弃）——它的 clicked_today 条目 session_id 仍是 None，不撤掉的话
+                // 当日再点只会落进「只聚焦、不运行」分支。保留有 session_id 的条目（那次运行
+                // 确实建过会话，重复运行不应发生）。
+                if self
+                    .clicked_today
+                    .get(&run.task)
+                    .is_some_and(|clicked| clicked.session_id.is_none())
+                {
+                    self.clicked_today.remove(&run.task);
+                }
             }
         }
     }
@@ -1239,6 +1245,19 @@ impl CronRunner {
             return;
         }
         let now = cron::LocalNow::now();
+        // 前端接线层未就绪时 `app.emit` 会返回 Ok 但无人接收（webview 的监听器不在场），
+        // 运行会空挂到 stale 回收、点击去重也永远等不到回执。此时不进入派发：
+        // 不插入 `clicked_today`，用户稍后重试能真正发起。
+        if !self.app.state::<CronRuntime>().is_bridge_ready() {
+            let action = if task.delivery == config::DeliveryPolicy::NotifyThenRun {
+                "run"
+            } else {
+                "open-session"
+            };
+            logging::cron_click(&task.id, false, action, Some("not_ready"));
+            notice(&self.app, "界面尚未就绪，请稍后重试");
+            return;
+        }
         match task.delivery {
             config::DeliveryPolicy::NotifyThenRun => {
                 let clicked = self
@@ -1311,6 +1330,9 @@ impl CronRunner {
                         logging::cron_click(&task.id, true, "run", None);
                     }
                     Err(error) => {
+                        // emit 本身失败（窗口 / 事件系统不可用）：刚插入的点击去重必须撤回，
+                        // 否则当日再点会命中「session_id = None ⇒ 只聚焦」分支，永远无法重试。
+                        self.clicked_today.remove(&task.id);
                         logging::cron_click(&task.id, false, "run", Some("emit_failed"));
                         notice(
                             &self.app,
@@ -1515,31 +1537,6 @@ fn session_started_today(session_id: &str, now: &cron::LocalNow) -> bool {
 /// 人话提示（点击链路失败时的可见反馈）：前端监听 `cron:notice` 并上屏。
 fn notice(app: &tauri::AppHandle, message: &str) {
     let _ = app.emit(CRON_NOTICE_EVENT, serde_json::json!({ "message": message }));
-}
-
-/// 临时探针（任务 4.7）：验证 dev flavour 在 macOS 上能否拿到通知权限并投递。
-fn probe_notification(app: &tauri::AppHandle) {
-    use tauri_plugin_notification::NotificationExt;
-    let permission = app.notification().permission_state();
-    eprintln!("LUMIR_NOTIFY_PROBE permission_state={permission:?}");
-    let requested = app.notification().request_permission();
-    eprintln!("LUMIR_NOTIFY_PROBE request_permission={requested:?}");
-    let registration = app.notification().on_action(|performed| {
-        eprintln!(
-            "LUMIR_NOTIFY_PROBE action={} extra={:?}",
-            performed.action_id(),
-            performed.notification().map(|n| n.extra().clone())
-        );
-    });
-    eprintln!("LUMIR_NOTIFY_PROBE on_action={registration:?}");
-    let shown = app
-        .notification()
-        .builder()
-        .title("lumir-cron-probe")
-        .body("probe")
-        .extra("task", "lumir-cron-probe")
-        .show();
-    eprintln!("LUMIR_NOTIFY_PROBE show={shown:?}");
 }
 
 #[cfg(all(test, target_os = "macos"))]
