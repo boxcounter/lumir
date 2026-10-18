@@ -1,102 +1,132 @@
 # Tasks: add-cron-runtime-daemon
 
-> **实现范围（预估）**：`src-tauri/src/{config,cron,note_templates,lib,commands,logging}.rs`、
-> `src-tauri/Cargo.toml`、`src/main.ts`（`note-template:open` 处理器）、`src/bindings/**`、
+> **实现范围（预估）**：`src-tauri/src/{config,cron,harness,lib,commands,logging}.rs`、
+> `src-tauri/Cargo.toml`、`src/main.ts`（`cron:run` 处理器）、`src/bindings/**`、
 > `docs/specs/config-reference.md`、`scripts/acceptance/scenarios/**`、
 > `openspec/changes/add-cron-runtime-daemon/**`。
 >
 > **前置**：节点 1（提案评审）通过前不动手；本 change 只到提案制品。
 >
-> **裁决口径**：运行时守护（不建系统级守护）+ 拉取兜底共享判定函数 + 模板独立原语；
-> 反向扳机「连续 4 周零使用即删除」见 proposal；实现期发现意图需变更时停下重走节点 1。
+> **裁决口径**：cron 是通用机制（任务 = 调度 + 自然语言 prompt + 会话形态 + 触达策略 + 可选模型
+> 覆盖），环境初始化是运行时职责；`note-templates` 原语已摘除；运行时守护不建系统级守护；拉取兜底
+> 与定时器共享判定函数。实现期发现意图需变更时停下重走节点 1。
 
 ## 1. 配置面（`src-tauri/src/config.rs`）
 
-- [ ] 1.1 新增 `NoteTemplateConfig`（`path: String`、`body: Vec<String>`、`prompt: Option<String>`）与
-  `CronTask`（`id`、`vault`、`at`、`template`、`days`）/ `CronConfig`（`tasks`），进 `AppConfig`；
+- [ ] 1.1 新增 `CronTask`（`id`、`vault`、`at`、`days`、`prompt`、`delivery`、`session`、`model`）
+  与 `CronConfig`（`tasks`），进 `AppConfig`；`DeliveryPolicy` / `SessionShape` 用闭集合枚举；
   ts-rs 导出到 `src/bindings/`。
-- [ ] 1.2 `RawConfig` 增加 `cron` / `note_templates` 两节；整节错形状走整文件回落，表内逐项校验
-  （`serde_json::Value` + 逐项判定，照 `vault.ignore` / `harness.permissions` 先例）。
-- [ ] 1.3 `validate_note_templates`：id 非空/无空白、`path` vault 相对路径、`body` 字符串数组、
-  `prompt` 类型非法只丢 prompt；未知 `{{…}}` 一条 warning 且原样保留。
-- [ ] 1.4 `validate_cron`：`id` 唯一（重复保留首项）、`vault` 绝对路径、`at` 为 `HH:MM`、
-  `template` 悬空引用丢项、`days` 闭集合且非空；每个非法形态一条人话 warning、其余项生效。
-- [ ] 1.5 单测：§5.2 / §5.3 的每个非法形态 + 合法形态 + 空表 / 缺节 / 整节错形状各一条。
+- [ ] 1.2 `RawConfig` 增加 `cron` 节；整节错形状走整文件回落，表内逐项校验（`serde_json::Value` +
+  逐项判定，照 `vault.ignore` / `harness.permissions` 先例）；`[note_templates]` 不新增任何解析。
+- [ ] 1.3 `validate_cron`：`id` 非空/无空白且唯一（重复保留首项）、`vault` 绝对路径、`at` 为
+  `HH:MM`、`days` 闭集合且非空、`prompt` trim 后非空、`delivery` / `session` 闭集合外回落缺省并
+  保留任务、`model` 形状非法只丢该键；每个非法形态一条人话 warning、其余项生效。
+- [ ] 1.4 单测：§7.2 的每个非法形态 / 合法形态 / 空表 / 缺节 / 整节错形状各一条；断言
+  `delivery` 非法时任务保留且取缺省档（不是丢项）。
+- [ ] 1.5 断言实现代码零任务字面量：`rg -n "daily-log|daily/|## 记录" src-tauri/src src` 零命中
+  （配置样例与测试 fixture 用的合成 id 除外，逐条在完成报告点名）。
 
-## 2. 模板原语（`src-tauri/src/note_templates.rs` + 入口）
+## 2. 判定与调度（`src-tauri/src/cron.rs` + `lib.rs`）
 
-- [ ] 2.1 `resolve_instance_path(vault_root, template, date)`：`{{date}}` 替换、vault 内路径边界校验
-  （复用 fs-io 的边界实现，不复制第二份）。
-- [ ] 2.2 `ensure_instance(...) -> Exists | Created`：已存在即 no-op、绝不读写字节；缺失父目录逐级创建；
-  `create_new` 写入（行 `\n` 连接 + 末尾单个 `\n`）；写失败清理本次文件并返回错误。
-- [ ] 2.3 单测：首次创建逐字节、二次调用 mtime/内容不变、父目录创建、非法路径拒绝、写失败清理。
-- [ ] 2.4 `commands.rs` 新增 `note_template_open({ template_id, vault? })`：`vault` 省略用当前 vault；
-  返回 `{ path, created }` 并触发前端 `note-template:open` 事件；完成（含失败）记 `template_open`
-  诊断事件，**不记** `cron_open`（两条来源的事件名分开，见 design §11）。
-- [ ] 2.5 `src/main.ts` 装配唯一处理器：必要时先打开目标 vault → 既有打开文件链路开标签 →
-  `prompt` 在场时用既有 `harness_draft_put` 预载草稿（不发送）。
-- [ ] 2.6 断言模板入口不读 cron 配置：`rg -n "cron" src-tauri/src/note_templates.rs` 零命中（注释除外）。
-
-## 3. cron 判定与运行时守护（`src-tauri/src/cron.rs` + `lib.rs`）
-
-- [ ] 3.1 `cron.rs` 实现 `decide`（纯函数，输入含 `now` / `notified_on` / `instance_exists`）与
-  `check`（一次 `metadata` 探测 + 调 `decide`），truth table 八格全部覆盖。
-- [ ] 3.2 `at` / `days` 解析与本地时间换算（`chrono::Local`，判定接受注入 `now`，单测不依赖系统时区）；
-  跨日、DST 跳过/重复小时的用例。
-- [ ] 3.3 `cron-state.json` 读写：tmp + rename 原子写、缺失/损坏/version 不符视为无状态 + warning、
-  不写 `config.json` 与 vault。
-- [ ] 3.4 `lib.rs` 启动 `lumir-cron` 线程：30s tick（零文件 IO）+ poke 通道；线程在 setup 尾部
+- [ ] 2.1 `cron.rs` 实现 `decide`（纯函数：`at` / `days` / `now` / `last_fired` → `NotDue` /
+  `Done` / `Fire`）；无文件 IO、不读时钟；真值表四格 + 星期过滤 + 跨日边界单测。
+- [ ] 2.2 `at` / `days` 解析与本地时间换算（`chrono::Local`，判定接受注入 `now`，单测不依赖系统
+  时区）；DST 跳过/重复小时与时钟回拨用例。
+- [ ] 2.3 `cron-state.json` 读写：`last_fired` + `session_id`、tmp + rename 原子写、缺失/损坏/
+  `version` 不符视为无状态 + warning、不写 `config.json` 与 vault。
+- [ ] 2.4 `lib.rs` 启动 `lumir-cron` 线程：30s tick（零文件 IO）+ poke 通道；线程在 setup 尾部
   spawn、不阻塞启动；配置装载时快照、运行期不热重载。
-- [ ] 3.5 拉取触发接线：启动就绪后一次 + `WindowEvent::Focused(true)`（200ms 去抖），两处只投 poke，
-  不内联判定。
-- [ ] 3.6 日志白名单新增 `cron_notified` / `cron_open`（仅通知点击链路）/ `template_open`（仅模板独立
-  入口）/ `cron_task_invalid` 四个事件名（含字段校验用例；断言独立入口不产生 `cron_open`）。
+- [ ] 2.5 拉取触发接线：启动就绪后一次 + `WindowEvent::Focused(true)`（200ms 去抖）+ 目标 vault
+  打开成功后一次，三处只投 poke，不内联判定。
+- [ ] 2.6 派发分支按 `delivery`：`notify-then-run` 只投通知；`run-then-notify` / `silent-run` 发起
+  运行交接。派发成功才写 `last_fired`；`vault_not_current` / `busy` / `not_ready` 不写状态并落
+  `cron_run_skipped`；当日不自动重试已失败的任务；不跨日补发。
 
-## 4. 通知与点击链路（独立功能点）
+## 3. 运行装配与会话形态（`harness.rs` + 前端）
+
+- [ ] 3.1 运行槽位与交互会话槽位分离：无人值守运行 MUST NOT 改写 / 重置 / 替换用户当前会话，其
+  事件不渲染进当前 transcript；新增契约测试钉「运行前后交互槽位的内容与 id 不变」。
+- [ ] 3.2 发送通道参数化为「显式消息文本 + 可选附件」的单一实现，运行注入 prompt 时不读写 composer
+  草稿；`rg` 确认没有第二条发送实现。
+- [ ] 3.3 `cron:run` 事件（`run_id` / `task` / `vault` / `prompt` / `session` / `model` / `origin`）
+  与 `cron_run_result({run_id, ok, session_id?, error?})` 命令；运行终态只由该回执一处产出。
+- [ ] 3.4 `src/main.ts` 装配唯一 `cron:run` 处理器：目标 vault 未打开时走既有 vault 打开链路 →
+  `session=new` 新建 / `dedicated` 用状态里的 `session_id` 走既有恢复链路 → 按 `model` 覆盖 →
+  经 3.2 的发送通道送出 prompt → 回执结果；不写第二套打开、装配或发送实现。
+- [ ] 3.5 无人值守运行的批准闸：遇到需批准调用即以 `approval_required` 中止并回执失败（`silent-run`
+  只落诊断）；不自动放行、不自动拒绝、不无限挂起。
+- [ ] 3.6 并发：同一任务同一时刻至多一个在途运行；点击发起运行时若该 vault 会话正忙，给出人话提示
+  不排队；`dedicated` 续写不被并发触发。
+- [ ] 3.7 模型解析：`model` 按运行时 `[harness].providers.<provider>.models` 解析；未声明回落默认 +
+  `config_warning`，任务不丢；会话留存 `session_open` 记录的模型与选择一致。
+- [ ] 3.8 回扫既有验收场景里批准闸相关的期望（权限模式与批准卡场景）：确认 3.5 只作用于运行槽位，
+  交互会话的批准行为逐条不变；有期望过期的就地改准并写明原因。
+
+## 4. 通知与点击链路
 
 - [ ] 4.1 依赖：`tauri-plugin-notification = "2.6"`（桌面点击回调自 2.6.0 起）与 `chrono`；插件用
-  Rust 侧 API 注册，capabilities 零增量（核对 `src-tauri/capabilities/default.json` 未新增条目）。
+  Rust 侧 API 注册，`src-tauri/capabilities/default.json` 零增量（逐条核对）。
 - [ ] 4.2 启动时注册常驻 `on_action` 监听（`actionId == "tap"`），回调只投递工作项到 `lumir-cron`
   线程；非 `tap` 动作忽略并落诊断。
-- [ ] 4.3 权限：有有效任务时检查、未决定申请一次、被拒一条 warning 且不反复申请；权限查询失败不阻断启动。
-- [ ] 4.4 投递：标题 = 任务可读名、正文 = 目标文件名未建；`extra` 携带 `{"task": id}`；正文不含文档内容
-  与绝对路径；投递成功才写去重状态。
-- [ ] 4.5 点击后四步：聚焦（show/unminimize/set_focus）→ `ensure_instance` → 发 `note-template:open`
-  → 前端预载草稿；目标 vault 未打开时先走既有 vault 打开链路。
-- [ ] 4.6 失败路径：vault 不可达 / 路径不可写 / webview 已销毁各落一条 `cron_open(ok=false)` 诊断，
-  能给的人话提示不静默；重复点击幂等。
-- [ ] 4.7 **实现期第一验证项**：确认 `pnpm tauri dev` 的 dev flavour 在 macOS 上能拿到通知权限并投递；
-  不可用则改用打包 `.app` 实例验证，并在完成报告写明 flavour。两者都不可用即停下上报，不跳过通知验证。
+- [ ] 4.3 权限：有有效任务时检查、未决定申请一次、被拒一条 warning 且不反复申请；权限查询失败不
+  阻断启动。
+- [ ] 4.4 投递：标题 = 任务 `id`，正文 = 通用文案（到点 / 已完成 / 运行失败）；`extra` 携带
+  `{"task": id}`（结果通知另带该次 `session_id`）；正文不含 prompt、文档内容与绝对路径。
+- [ ] 4.5 点击链路：`notify-then-run` → 聚焦（show/unminimize/set_focus）→ 必要时打开目标 vault →
+  发起运行；`run-then-notify` → 聚焦 → 恢复该次会话；失败各落 `cron_click(ok=false)` + 人话提示。
+- [ ] 4.6 重复点击幂等：当日已有运行会话时只聚焦并打开该会话，不重复运行、不产生第二次模型请求。
+- [ ] 4.7 **实现期第一验证项**：确认 `pnpm tauri dev` 的 dev flavour 在 macOS 上能拿到通知权限并
+  投递；不可用则改用打包 `.app` 实例验证，并在完成报告写明 flavour。两者都不可用即停下上报，不
+  跳过通知验证。
 
-## 5. 文档与 bindings
+## 5. 诊断事件与可观测性
 
-- [ ] 5.1 `docs/specs/config-reference.md` 新增 `[note_templates]` / `[cron]` 两节：键表、默认值、
-  生效时机（装载时读一次、改配置需重启）、非法项口径、去重状态文件位置与读取纪律。
-- [ ] 5.2 `src/bindings/**` 重导出产物进索引（ts-rs）；`scripts/gate.sh quick` 的 bindings-drift 绿。
-- [ ] 5.3 proposal / design / spec 内不出现真实 vault 路径（`rg` 真实路径零命中；样例路径为占位符）。
+- [ ] 5.1 `logging.rs` 白名单新增 `cron_notified` / `cron_click` / `cron_run_started` /
+  `cron_run_finished` / `cron_run_skipped` / `cron_task_invalid` 六个事件名与字段校验用例。
+- [ ] 5.2 断言成功 / 失败终态只有一个产出点：`cron_run_finished` 由 `cron_run_result` 回执驱动；
+  其它事件不重复判定（单测 + 一次代码走查）。
+- [ ] 5.3 观测口径自验：人为点击一次通知 → 日志出现 `cron_click(ok=true)`；跑一次 `silent-run`
+  任务 → 日志出现 `cron_run_finished(ok=true)`；仅投递未点击的通知只产生 `cron_notified`。
 
-## 6. 真机验收场景（`scripts/acceptance/scenarios/`）
+## 6. 文档与 bindings
 
-- [ ] 6.1 新增场景「cron 到点通知 + 点击建环境」：隔离 `XDG_CONFIG_HOME` 写模板与任务
-  （`at` = 下一分钟）；断言到点前后目标文件均不存在（判定不写盘）→ `cron-state.json` 出现今日记录 →
-  `shot` 留通知横幅证据 → 经 KimiCU 对通知横幅按截图坐标点击（目标为系统通知中心进程；实现期先核实
-  该点击通道可操作，见 6.5）→ `ax` 断言窗口前台与目标标签打开 →
-  `file` 断言实例内容（日期 frontmatter + 小节）→ 再次点击后 mtime 不变。
-- [ ] 6.2 新增场景「启动补判」：`at` = 今日已过、清状态、起 app → 今日 `last_notified` 在场 + 横幅截图；
-  `restart` 后不再产生第二条。
-- [ ] 6.3 新增场景「已满足不通知」：seed 今日实例、`at` 已过 → 状态文件无今日记录、无新横幅、文件不变。
-- [ ] 6.4 新增场景「模板独立入口」：只有模板、无 cron 任务 → 首次调用创建并开标签、二次调用不写盘。
-- [ ] 6.5 通知点击的验证边界写进场景注释：横幅属系统通知中心进程、不在 Lumir 的 AX 树里；主判据为
-  「按截图坐标点击 → 应用内可断言」；横幅位置不稳定时降级为通知中心点击并留截图；无法自动化时标
-  INVALID，不伪造 PASS。dev flavour 通知不可用时改用打包实例并写明 flavour。
-- [ ] 6.6 `node scripts/acceptance/run.mjs --check` 通过（新增场景静态校验）。
+- [ ] 6.1 `docs/specs/config-reference.md` 新增 `[cron]` 一节：键表、缺省值、闭集合、非法项口径、
+  生效时机（装载时读一次、改配置需重启）、`cron-state.json` 位置与读取纪律。
+- [ ] 6.2 `src/bindings/**` 重导出产物进索引（ts-rs）；`scripts/gate.sh quick` 的 bindings-drift 绿。
+- [ ] 6.3 信息卫生：proposal / design / spec / tasks / 验收场景内无真实 vault 路径与真实内容
+  （样例一律 `<daily-vault>` / `<work-vault>` 一类占位）；提交前对改动面做一次 text 级 grep 清扫。
+- [ ] 6.4 口径一致性：`rg -n "note_templates|note-templates|note-template:open|\{\{date\}\}"
+  --glob '!openspec/changes/add-cron-runtime-daemon/**' --glob '!.tower/**'` 全仓零命中（本 change
+  目录内的「已摘除」历史说明与裁决原文除外，逐条点名）。
 
-## 7. 验证
+## 7. 真机验收场景（`scripts/acceptance/scenarios/`）
 
-- [ ] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
-- [ ] 7.2 `cargo test` 通过（含 §1.5 / §2.3 / §3.1 / 3.2 / 3.3 的新增单测）。
-- [ ] 7.3 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）。
-- [ ] 7.4 真机跑新增验收场景（§6.1–6.4），`.local/acceptance/<日期>/` 下证据目录可用绝对路径 `ls` 到。
-- [ ] 7.5 反向扳机观测可用性自验：人为点击一次通知、并调用一次模板独立入口，日志里分别能 grep 到
-  `cron_notified` + `cron_open` 与 `template_open`（且独立入口不产生 `cron_open`）——证明 proposal
-  的两条度量口径（cron 只计点击链路、模板独立调用方另计）可执行。
+- [ ] 7.1 新增场景「cron 到点通知」：隔离 `XDG_CONFIG_HOME` 写一条 `notify-then-run` 任务
+  （`at` = 下一分钟）与 mock provider；断言到点前后目标 vault 零写入、`cron-state.json` 出现今日
+  `last_fired`、`shot` 留通知横幅证据、日志**无** `cron_run_started`（未点击不花 token）。
+- [ ] 7.2 新增场景「点击发起运行」：接 7.1，经 KimiCU 按截图坐标点击横幅本体；断言 `cron_click
+  (ok=true, action=run)`、`cron_run_started`、`cron_run_finished(ok=true)`、面板出现任务 prompt 与
+  回答、会话 JSONL 落在目标 vault 目录。
+- [ ] 7.3 新增场景「run-then-notify」：同一任务改 `delivery=run-then-notify`（`at` = 下一分钟）；
+  断言到点**无**「到点」通知、无点击即出现 `cron_run_started`、终态后有结果通知横幅与
+  `cron_notified(kind=result)`、点击后会话被恢复（`cron_click(action=open-session)`）且不重跑。
+- [ ] 7.4 新增场景「silent-run」：`delivery=silent-run`、`at` = 今日已过、清状态；断言运行发生
+  （`cron_run_started` / `cron_run_finished(ok=true)`）、日志**零** `cron_notified`、会话留存可经
+  既有会话历史列出。
+- [ ] 7.5 新增场景「配置非法项丢弃 warning」：两条任务，一条 `at="25:00"`、一条合法；断言启动成功、
+  一条 `cron_task_invalid(field=at)` 与人话 warning、合法任务照常触发、非法任务零 `cron_run_started`。
+- [ ] 7.6 新增场景「当日去重」：`at` = 今日已过 + `notify-then-run`、清状态；通知一次后 `restart`
+  并多次切前台；断言全程只有一条 `cron_notified(kind=trigger)`、`last_fired` 保持今日、无第二条横幅。
+- [ ] 7.7 通知点击的验证边界写进场景注释：横幅属系统通知中心进程、不在 Lumir 的 AX 树里；主判据
+  为「按截图坐标点击 → 应用内可断言」；横幅位置不稳定时降级为通知中心点击并留截图；无法自动化时
+  标 INVALID，不伪造 PASS；dev flavour 通知不可用时改用打包实例并写明 flavour。
+- [ ] 7.8 `node scripts/acceptance/run.mjs --check` 通过（新增场景静态校验）。
+
+## 8. 验证
+
+- [ ] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
+- [ ] 8.2 `cargo test` 通过（含 §1.4 / §2.1–2.3 / §3.1 / §3.7 / §5.2 的新增单测）。
+- [ ] 8.3 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）。
+- [ ] 8.4 真机跑新增验收场景（§7.1–7.6），`.local/acceptance/<日期>/` 下证据目录可用绝对路径
+  `ls` 到；失败项与跳过项逐条写明原因。
+- [ ] 8.5 观测口径可用性自验（§5.3）：给出两条 `rg` 命令的实际读数与执行时刻，证明诊断链路可查。

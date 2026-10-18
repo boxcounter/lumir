@@ -1,183 +1,300 @@
 # cron 增量规格
 
-> 起草注记（非规格正文）：本 delta 新建 capability `cron`。设计见 [design.md](../../design.md)，
-> 裁决背景见 [proposal.md](../../proposal.md)。本 capability 只负责「按时把未满足的条件变成一次
-> 可点击的系统通知，并在点击后进入环境」；环境怎么建、怎么打开归
-> [note-templates 增量](../note-templates/spec.md)，两者只以「任务引用模板 id」单向耦合。
-> 系统级守护（launchd 等）明确不在本 capability 内（留档与升级触发条件见 proposal）。
+> 起草注记（非规格正文）：本 delta 新建 capability `cron`（通用定时任务机制）。设计见
+> [design.md](../../design.md)，裁决背景见 [proposal.md](../../proposal.md)。本 capability 只负责
+> 「什么时候叫醒谁、叫醒后怎么收尾」：调度、触达策略、运行交接与去重状态。任务「做什么」由任务的
+> 自然语言 prompt 表达，环境初始化与上下文装配是运行时职责（目标 vault 的 AGENTS.md 由既有装配
+> 注入，agent 按 prompt 执行）——机制 MUST NOT 内置任何具体任务的知识。原稿的 `note-templates`
+> capability 已按 2026-10-18 重构裁决摘除，本 capability 不引用它。系统级守护（launchd 等）明确
+> 不在本 capability 内（留档与升级触发条件见 proposal）。
 
 ## ADDED Requirements
 
+### Requirement: 通用定时任务机制
+
+系统 SHALL 提供通用定时任务机制：任务只以 `{id, vault, at, days?, prompt, delivery?, session?,
+model?}` 声明「身份 + 目标 vault + 调度 + 自然语言载荷 + 会话形态 + 触达策略 + 可选模型覆盖」。
+机制 MUST NOT 内置任何具体任务知识——MUST NOT 解析或生成笔记路径、MUST NOT 探测「该建的文件是否
+已存在」、MUST NOT 提供占位符替换或模板实例化、MUST NOT 提供类型化动作枚举或条件表达式，实现代码
+里 MUST NOT 出现任何任务 id、样例路径或样例小节标题的字面量。
+
+任务「做什么」SHALL 全部由 `prompt` 表达；环境初始化与上下文装配 SHALL 是运行时职责：运行沿用既有
+harness 会话装配（目标 vault 根 AGENTS.md 与既有三层指令上下文），由 agent 按 prompt 与 vault 约定
+执行。新增、替换或删除任务 SHALL 只改配置与 vault 文档，MUST NOT 需要改机制代码。
+
+#### Scenario: 换一类任务不改代码
+
+- **WHEN** 用户删掉 daily log 任务，改成一条「检查 vault 里特定文档之间引用一致性」的任务（只改
+  `config.json` 的 `[cron].tasks` 与对应 vault 的约定文档）
+- **THEN** 机制按同一套调度、触达与运行路径处理新任务，运行内容由新 prompt 表达；无任何代码改动
+
+#### Scenario: 删除唯一任务后机制仍可用
+
+- **WHEN** 所有任务被删除（`"tasks": []`）后重新加入一条形状相同、内容不同的任务
+- **THEN** 守护空转期间零报错；新任务照常按判定函数触发，机制不残留任何被删任务的专属行为
+
+#### Scenario: 实现代码不含任务字面量
+
+- **WHEN** 检索实现代码（`src-tauri/src/**`、`src/**`）中的任务 id、样例路径与样例小节标题
+- **THEN** 零命中；样例只存在于配置样例与 vault 文档样例
+
 ### Requirement: 运行时定时守护
 
-系统 SHALL 在应用**进程内**运行一个时间触发的评估循环（运行时守护），按本机本地时间评估
-`[cron].tasks` 声明的任务；MUST NOT 安装、依赖或调用任何系统级守护（launchd / LaunchAgent /
-登录项 / 系统 cron daemon），MUST NOT 依赖 cron 表达式、任意条件表达式或脚本执行。
+系统 SHALL 在应用**进程内**运行时间触发的评估循环，按本机本地时间评估 `[cron].tasks`；MUST NOT
+安装、依赖或调用任何系统级守护（launchd / LaunchAgent / 登录项 / 系统 cron daemon）。
 
-任务 SHALL 以 `at`（本地 `HH:MM`）与 `days`（星期集合，缺省全周）声明时间面，以 `template`
-（引用的模板 id）与 `vault`（目标 vault 绝对路径）声明环境面。守护 SHALL 以「本地日期属于 `days`、本地时钟已越过当日 `at`、且任务条件未满足、
-且当日尚未通知过」为唯一投递判据；任务条件 SHALL 是「模板当日实例的目标文件已存在」，判定规则见
-「拉取式兜底与判定函数共享」。同一任务在同一本地日期内 MUST NOT 投递多于一次通知。
+守护 SHALL 以「本地日期属于 `days`、本地时钟已越过当日 `at`、且该任务当日尚未触发过」为唯一触发
+判据，判定 MUST NOT 读文件系统、MUST NOT 写盘；同一任务在同一本地日期内 MUST NOT 触发多于一次。
+守护 MUST NOT 提供 cron 表达式、秒级触发、一天多次触发或任意间隔（这类需求由多条任务表达或另立
+change）。
 
 守护 SHALL 在主窗口就绪之后启动，其装载、线程创建与首次评估 MUST NOT 落在冷启动测量路径上
-（ADR 0002 第 6 条：冷启动 <300ms）；周期评估 SHALL 只做本地时钟比较，仅在到期时做一次目标路径
-存在性探测，MUST NOT 在评估循环里读写 config.json。
+（ADR 0002 第 6 条：冷启动 <300ms）；周期评估 SHALL 只做本地时钟比较。应用进程不在运行时 MUST NOT
+有任何触达（无通知、无运行、无后台补发）：这是运行时守护的定义，不是缺陷。
 
-应用进程不在运行时 MUST NOT 有任何触达（无通知、无自动创建、无后台补发）：这是运行时守护的定义，
-不是缺陷。系统级守护留档不做，升级触发条件见 proposal。
+#### Scenario: 到点触发一次
 
-#### Scenario: 到点未满足投递通知
+- **WHEN** 任务 `at` 为 `21:00`，当日 21:00 已过、当日尚未触发，应用运行中
+- **THEN** 守护按该任务的触达策略触发一次；`cron-state.json` 记录今日本地日期；机制自身 MUST NOT
+  创建、改写或删除 vault 内任何文件
 
-- **WHEN** 任务 `at` 为 `21:00`、当日 21:00 已过、今日实例文件不存在、当日未通知过，应用运行中
-- **THEN** 投递一次系统通知；`cron-state.json` 记录该任务的 `last_notified` 为今日本地日期；目标文件 MUST NOT 因通知而创建
-
-#### Scenario: 到点已满足不通知
-
-- **WHEN** 到点前今日实例文件已存在，时钟越过 `at`
-- **THEN** 不投递通知、不写去重状态，文件内容与 mtime 均不变
-
-#### Scenario: 未到点不通知
+#### Scenario: 未到点不触发
 
 - **WHEN** 当前本地时间为 09:00，任务 `at` 为 `21:00`
-- **THEN** 守护不投递任何通知（即使今日文件不存在）
+- **THEN** 守护不投递通知、不发起运行
 
 #### Scenario: 星期过滤
 
-- **WHEN** 任务的 `days` 为 `[wed]`，当前为周二 21:05 且当日文件不存在
-- **THEN** 不投递通知；到周三 21:00 后按同一判据投递
+- **WHEN** 任务的 `days` 为 `[wed]`，当前为周二 21:05
+- **THEN** 不触发；到周三 21:00 后按同一判据触发
 
 #### Scenario: 冷启动不被守护阻塞
 
-- **WHEN** 配置含合法 cron 任务，启动应用
+- **WHEN** 配置含合法任务，启动应用
 - **THEN** 启动就绪信号（`LUMIR_READY`）在守护首次评估之前发出；启动耗时不受任务数量影响
 
 #### Scenario: 应用未运行无触达
 
 - **WHEN** 21:00 时应用进程不在运行，随后于 21:30 启动应用
-- **THEN** 21:00 不产生任何通知（无进程）；启动后经拉取式兜底按同一判据处理（见「拉取式兜底与判定函数共享」），昨日错过的提醒不补发
+- **THEN** 21:00 不产生任何通知或运行（无进程）；21:30 启动后经拉取式兜底按同一判据补触发一次
+  （同日补，不是跨日补）
 
 ### Requirement: 拉取式兜底与判定函数共享
 
-系统 SHALL 在**两个**时机调用与定时器**同一个**判定函数：①应用启动就绪之后一次；②主窗口每次
-获得焦点（切前台）时一次。MUST NOT 为实现兜底再写一份判定逻辑、MUST NOT 让两个触发源各自判定
-不同的条件。
+系统 SHALL 在**三个**时机调用与定时器**同一个**判定函数：①应用启动就绪之后一次；②主窗口每次
+获得焦点时一次；③目标 vault 打开成功之后一次。MUST NOT 为实现兜底再写一份判定逻辑、MUST NOT 让
+不同触发源各自判定不同的条件。
 
-判定 SHALL 使用同一组输入（任务定义、模板、目标 vault、当前本地时间、去重状态）与同一组输出
-（不动作 / 已满足 / 应通知），并遵守同一去重规则。判定 MUST NOT 产生任何文件写：实例创建只发生在
-通知点击链路与模板独立入口里。
+判定 SHALL 使用同一组输入（`at`、`days`、当前本地时间、去重状态）与同一组输出（不动作 / 当日已
+触发 / 应触发），并遵守同一去重规则。判定 MUST NOT 产生任何文件写。补触发语义：已过点且当日未触发
+⇒ SHALL 与该任务的定时触发同样处理（按触达策略投递通知或发起运行）；已过点且当日已触发 ⇒ MUST NOT
+重复动作；未到点 ⇒ MUST NOT 动作。焦点触发在短时间内的重复到达 SHALL 合并，MUST NOT 因焦点切换
+风暴产生多次判定或多次触发。跨日 MUST NOT 补发：昨日错过的触发不在今日补。
 
-补判语义：已过点、未满足、当日未通知 ⇒ SHALL 与定时器触发同样投递一次通知；已过点但当日已通知 ⇒
-MUST NOT 重复投递；已满足或未到点 ⇒ MUST NOT 动作。焦点触发在短时间内的重复到达 SHALL 合并，
-MUST NOT 因窗口焦点切换风暴产生多次探测或多次通知。
+#### Scenario: 启动补触发
 
-#### Scenario: 启动补判
+- **WHEN** 任务 `at` 为 `21:00`，应用于 22:30 启动，当日尚未触发
+- **THEN** 启动后按触达策略触发一次并记录今日 `last_fired`
 
-- **WHEN** 任务 `at` 为 `21:00`，应用于 22:30 启动，今日实例文件不存在，今日尚未通知
-- **THEN** 启动后投递一次通知并记录今日 `last_notified`
+#### Scenario: 切前台补触发
 
-#### Scenario: 切前台补判
+- **WHEN** 应用整天在后台运行，用户在 22:00 切到 Lumir，当日尚未触发
+- **THEN** 主窗口获得焦点时调用同一判定函数并触发一次
 
-- **WHEN** 应用整天在后台运行（窗口被遮挡），用户在 22:00 切到 Lumir
-- **THEN** 主窗口获得焦点时调用同一判定函数；条件如仍未满足且当日未通知，投递一次通知
+#### Scenario: 当日已触发不重复
 
-#### Scenario: 当日已通知不重复
+- **WHEN** 21:00 已触发过，用户在 21:30、22:00 多次切前台
+- **THEN** 这些焦点触发不再投递通知、不再发起运行，也不写盘
 
-- **WHEN** 21:00 已投递过通知，用户在 21:30、22:00 多次切前台，文件仍未创建
-- **THEN** 这些焦点触发不再投递通知（当日去重），也不写盘
+#### Scenario: 跨日不补
 
-#### Scenario: 两源判定一致
-
-- **WHEN** 今日实例文件已存在，无论时钟越过 `at` 还是启动 / 切前台触发判定
-- **THEN** 两个触发源都判为「已满足」，均不投递、均不写盘
+- **WHEN** 昨日 21:00 应用未运行，今日 09:00 启动应用
+- **THEN** 昨日的触发不补；今日 21:00 前判定为未到点
 
 #### Scenario: 判定不创建文件
 
-- **WHEN** 条件未满足，触发源为定时器或拉取兜底（未发生点击）
-- **THEN** 目标文件不存在、其父目录不因判定而创建，`cron-state.json` 之外无任何写盘
+- **WHEN** 触发源为定时器或拉取兜底，任务尚未被用户点击（`notify-then-run`）
+- **THEN** 目标 vault 内无任何写入，`cron-state.json` 之外无任何写盘
+
+### Requirement: 三档触达策略
+
+每个任务的 `delivery` SHALL 取以下三档之一，缺省为 `notify-then-run`：
+
+- `notify-then-run`：到点 SHALL 投递「到点」通知并记录当日已触发，MUST NOT 在点击前发起运行；用户
+  点击通知后 SHALL 唤起窗口、必要时打开目标 vault，并在交互会话槽位发起运行——点击即意图，无点击
+  不产生任何模型调用。
+- `run-then-notify`：到点 SHALL 静默发起运行并记录当日已触发；运行到达终态后 SHALL 投递结果通知
+  （正文只表明「已完成」或「运行失败」）；点击结果通知 SHALL 聚焦窗口并恢复该次运行的会话，MUST NOT
+  重新运行。
+- `silent-run`：到点 SHALL 静默发起运行并记录当日已触发；MUST NOT 投递任何通知，结果只留在会话
+  留存与诊断事件里。
+
+三档 MUST 共用同一条运行实现（既有 harness 装配与发送通道），差别只在「何时通知、谁发起运行、
+点击落地到哪」。通知投递失败时 MUST NOT 记录当日已触发（允许下一次评估重试）；运行交接未被接受时
+MUST NOT 记录当日已触发。运行到达终态后 MUST NOT 在同一本地日期内自动重试（避免无人值守下的 token
+风暴）。
+
+#### Scenario: 默认档不在点击前花 token
+
+- **WHEN** 任务的 `delivery` 缺省，到点条件满足
+- **THEN** 只投递通知并记录 `last_fired`；无运行、无模型请求；直到用户点击通知才发起运行
+
+#### Scenario: run-then-notify 静默运行后通知结果
+
+- **WHEN** 任务 `delivery` 为 `run-then-notify`，到点条件满足
+- **THEN** 无「到点」通知；运行在无用户点击的情况下发起；运行终态后投递一条结果通知；点击该通知
+  恢复该次运行的会话且不重新运行
+
+#### Scenario: silent-run 不通知
+
+- **WHEN** 任务 `delivery` 为 `silent-run`，到点条件满足
+- **THEN** 运行照常发起并完成；全程零通知；会话留存可经既有会话历史找到
+
+#### Scenario: 通知投递失败不写去重
+
+- **WHEN** 通知权限被拒或插件投递失败
+- **THEN** `last_fired` 不写入；下一次评估（同一天内）再次尝试；不记录为已触发
+
+### Requirement: 运行装配与会话形态
+
+运行 SHALL 沿用既有 harness 会话装配与发送通道：目标 vault 的既有指令上下文（含 vault 根
+AGENTS.md）照既有规则装配，任务 `prompt` SHALL 作为一条显式用户消息送入，MUST NOT 解析、替换
+占位符或改写其文本。运行 MUST NOT 把 prompt 写入或覆盖用户的 composer 草稿。
+
+`session` SHALL 取 `new`（缺省）或 `dedicated`：`new` 每次触发建立新会话；`dedicated` 每任务复用
+一个专用会话并在后续触发中续写（缺状态时新建）。`model` 在场时 SHALL 作为该次会话的模型覆盖，按
+运行时 `[harness].providers.<provider>.models` 的声明解析；未声明时回落该 provider 默认模型并给一条
+warning，MUST NOT 丢弃任务。
+
+**无人值守运行（`run-then-notify` / `silent-run`）MUST NOT 改写、重置或替换用户的交互会话**：其运行
+槽位与交互会话槽位分离，其事件 MUST NOT 渲染进用户当前会话的 transcript；运行结果仍按既有 per-vault
+布局落会话留存。**用户点击发起的运行**（`notify-then-run`）SHALL 落在交互会话槽位，使用户看见运行
+过程。
+
+同一任务同一时刻 MUST NOT 有多个在途运行。无人值守运行遇到需要用户批准的工具调用时 MUST NOT 无限
+挂起：SHALL 中止本次运行、以 `approval_required` 记录诊断，并按触达策略通知失败（`silent-run` 只
+落诊断）；MUST NOT 自动放行，也 MUST NOT 自动拒绝。
+
+目标 vault 不是当前打开的 vault 时，无人值守运行 MUST NOT 切换用户当前 vault：SHALL 延后到当日
+下一次拉取触发重试，当日始终未打开则当日不运行并落诊断，MUST NOT 跨日补。
+
+#### Scenario: 每次触发新会话
+
+- **WHEN** 任务 `session` 为 `new`，连续两日各触发一次运行
+- **THEN** 两次运行落在两个不同的会话 id；第二天的运行上下文中不含第一天会话的历史消息
+
+#### Scenario: 专用会话续写
+
+- **WHEN** 任务 `session` 为 `dedicated`，第二次触发
+- **THEN** 运行恢复同一专用会话并续写；`cron-state.json` 的 `session_id` 更新为续写后的会话 id
+
+#### Scenario: 模型覆盖
+
+- **WHEN** 任务声明了已在 `[harness].providers.<provider>.models` 中声明的 `model`
+- **THEN** 该次会话按该模型建立（会话留存 `session_open` 记录该模型）；未声明时回落 provider 默认
+  模型并给一条 warning，任务不丢
+
+#### Scenario: 无人值守运行不影响用户当前会话
+
+- **WHEN** 用户在一个会话里有历史消息，`run-then-notify` 任务在后台完成一次运行
+- **THEN** 用户当前会话的内容与槽位不变，后台运行的事件不出现在其 transcript；后台会话可在既有
+  会话历史中列出
+
+#### Scenario: 需批准时中止而不是挂起
+
+- **WHEN** 无人值守运行发起一个需要用户批准的工具调用
+- **THEN** 本次运行以 `approval_required` 中止并落诊断（`run-then-notify` 另投递失败通知）；不自动
+  放行、不自动拒绝、不无限等待
+
+#### Scenario: 目标 vault 未打开时延后
+
+- **WHEN** `silent-run` 任务到点，但目标 vault 不是当前打开 vault
+- **THEN** 该次运行不发起、不切换 vault、不写 `last_fired`；当日打开目标 vault 或切前台后按同一
+  判定补跑；当日未打开则当日不运行并落一条诊断
 
 ### Requirement: 通知的投递与点击唤起
 
-系统 SHALL 经系统通知中心投递提醒（macOS 上为通知中心；应用在后台、被遮挡或窗口最小化时同样
-投递）。通知正文 SHALL 只含任务可读名与目标文件的可读名，MUST NOT 含文档正文，MUST NOT 含 vault
-绝对路径。
+系统 SHALL 经系统通知中心投递通知（macOS 上为通知中心；应用在后台、被遮挡或最小化时同样投递）。
+通知标题 SHALL 为任务 `id`，正文 SHALL 是通用文案（「到点」/「已完成」/「运行失败」）；MUST NOT
+含任务 prompt 内容、文档正文或 vault 绝对路径。
 
 通知权限：存在至少一条有效任务时，系统 SHALL 在启动装载期检查通知权限；权限未决定 SHALL 申请
-一次（系统弹窗）；权限被拒 SHALL 给出一条人话 warning、MUST NOT 反复申请、MUST NOT 阻断任务的
-判定或模板入口的其它功能。
+一次（系统弹窗）；权限被拒 SHALL 给出一条人话 warning、MUST NOT 反复申请、MUST NOT 阻断守护的
+判定或非通知类功能。
 
-点击监听 SHALL 在应用启动时注册一次并常驻；MUST NOT 按需注册（平台只在「通知投递时监听器已在场」
-的通知上上报点击）。收到点击（`actionId` 为通知本体，即 `tap`）后，系统 SHALL 按顺序执行：
+点击监听 SHALL 在应用启动时注册一次并常驻，MUST NOT 按需注册（平台只在「通知投递时监听器已在场」
+的通知上上报点击）。收到点击（`actionId` 为通知本体，即 `tap`）后，系统 SHALL 按该任务的触达策略
+执行：`notify-then-run` → 唤起并聚焦主窗口、必要时经既有 vault 打开链路打开目标 vault、在交互会话
+槽位发起运行；`run-then-notify` → 唤起并聚焦主窗口、恢复该次运行的会话。任一步失败 SHALL 落一条
+诊断事件并给人话反馈，MUST NOT 静默。
 
-1. 唤起并聚焦主窗口（隐藏则显示、最小化则还原、被遮挡则前置）；
-2. 重新执行同一判定并确保环境存在：模板当日实例不存在则按 `note-templates` 的实例化规则创建，
-   已存在则 MUST NOT 覆盖或改写任何字节；
-3. 打开该实例文件（复用既有文档打开链路），并在模板声明了 prompt 时把它预载进该 vault 的 harness
-   composer 草稿；MUST NOT 自动发送，MUST NOT 因此发起任何模型请求。
+重复点击同一通知 SHALL 幂等：当日该任务已有运行会话时，只聚焦并打开该会话，MUST NOT 重复发起
+运行，MUST NOT 产生重复的模型请求。
 
-目标 vault 尚未打开时，系统 SHALL 先经既有 vault 打开链路打开该 vault，成功后再打开文件。任一步
-失败 SHALL 给出人话反馈并落一条诊断事件，MUST NOT 静默；同一通知被重复点击 SHALL 幂等（第二次
-不重建文件、不重复发起任何模型请求）。
+#### Scenario: 到点通知内容
 
-#### Scenario: 点击通知创建并进入环境
+- **WHEN** `notify-then-run` 任务到点，通知被投递
+- **THEN** 通知标题为任务 `id`，正文为通用文案；不含 prompt、文档内容或绝对路径
 
-- **WHEN** 通知已投递（今日实例不存在），用户点击通知本体
-- **THEN** 主窗口被唤起并置于前台；模板当日实例被创建（日期 frontmatter 与固定小节齐全）；该文件在新标签中打开；若模板声明了 prompt，composer 草稿含该 prompt 且尚未发送
+#### Scenario: 点击通知发起运行
 
-#### Scenario: 实例已存在时只打开不覆盖
+- **WHEN** 通知已投递，用户点击通知本体
+- **THEN** 主窗口被唤起并置于前台；目标 vault 未打开时先打开；交互会话槽位出现一次新运行，任务的
+  prompt 作为用户消息在场；运行事件与结果可在界面上观察
 
-- **WHEN** 通知投递后用户在别处手动创建了今日实例，随后点击通知
-- **THEN** 文件内容与 mtime 不变，仅执行唤起与打开
+#### Scenario: 结果通知点击恢复会话
 
-#### Scenario: 重复点击幂等
-
-- **WHEN** 同一通知被连续点击两次
-- **THEN** 第二次不创建文件、不改写文件，composer 草稿内容不变，无重复的模型请求
+- **WHEN** `run-then-notify` 的结果通知被点击
+- **THEN** 窗口被唤起，该次运行的会话被恢复并可继续对话；不产生第二次运行
 
 #### Scenario: 权限被拒
 
 - **WHEN** 用户拒绝通知权限，配置含合法任务
-- **THEN** 启动不失败，产生一条人话 warning；到点后不投递通知；任务判定与模板独立入口仍照常工作
+- **THEN** 启动不失败，产生一条人话 warning；到点不投递通知、不写 `last_fired`；其它任务形态
+  （如 `silent-run`）的判定与运行不受影响
 
-#### Scenario: 点击时目标 vault 未打开
+#### Scenario: 重复点击幂等
 
-- **WHEN** 当前打开的是别的 vault，通知指向 daily vault 的模板实例
-- **THEN** 系统先打开 daily vault，成功后再打开实例文件；打开失败时给出人话提示并记录诊断事件
+- **WHEN** 同一 `notify-then-run` 通知被连续点击两次，第一次已发起运行
+- **THEN** 第二次只聚焦并打开已有运行会话；不新建第二个会话、不产生第二次模型请求
 
-#### Scenario: 点击时窗口最小化
-
-- **WHEN** 主窗口处于最小化状态，用户点击通知
-- **THEN** 窗口还原并置于前台，随后打开实例文件
-
-### Requirement: cron 任务定义与配置校验
+### Requirement: 任务定义与配置校验
 
 `[cron]` 配置节 SHALL 为配置即数据形态（ADR 0002 第 5 条）：`tasks` 数组，每项为
-`{id, vault, at, template, days?}`。校验 SHALL 逐项进行——非法项只丢弃该项并给一条人话 warning，
-其余任务照常生效；`tasks` 整键形状非法（非数组）或 `[cron]` 整节形状非法 SHALL 走既有解析模型的
-整文件回落，MUST NOT 发明逐字段类型容忍。未知字段 SHALL 被忽略（与既有配置口径一致）。
+`{id, vault, at, days?, prompt, delivery?, session?, model?}`。校验 SHALL 逐项进行——非法项只丢弃
+该项并给一条人话 warning，其余任务照常生效；`tasks` 整键形状非法（非数组）或 `[cron]` 整节形状
+非法 SHALL 走既有解析模型的整文件回落，MUST NOT 发明逐字段类型容忍。未知字段 SHALL 被忽略（与
+既有配置口径一致）。
 
 字段口径：`id` 非空且不含空白，重复 id 保留首项、丢弃后项并 warning；`vault` 为绝对路径（是否
-存在不在装载期判定）；`at` 为 `HH:MM`（`00:00`–`23:59`）；`template` MUST 指向
-`[note_templates]` 中已定义的模板 id，悬空引用丢项并 warning；`days` 可选，取 `mon`/`tue`/`wed`/
-`thu`/`fri`/`sat`/`sun` 的非空数组，缺省为全周。
+存在不在装载期判定）；`at` 为 `HH:MM`（`00:00`–`23:59`）；`days` 可选，取 `mon`/`tue`/`wed`/
+`thu`/`fri`/`sat`/`sun` 的非空数组，缺省为全周；`prompt` 必填且 trim 后非空；`delivery` 可选，
+闭集合 `notify-then-run` / `run-then-notify` / `silent-run`，缺省 `notify-then-run`，闭集合外取值
+回落缺省并保留任务 + warning；`session` 可选，闭集合 `new` / `dedicated`，缺省 `new`，闭集合外
+取值回落缺省并保留任务 + warning；`model` 可选，非空字符串，形状非法只丢 `model` 并保留任务。
 
-任务集合 SHALL 在启动装载时读一次，运行期 MUST NOT 热重载（改配置需重启，与既有配置键口径一致）。
-`"tasks": []` SHALL 表示守护空转：不投递任何通知、不报错。本 capability MUST NOT 支持 cron 表达式、
-秒级触发、一天多次触发、任意间隔或脚本执行（这类需求由多条任务表达或另立 change）。
+任务集合 SHALL 在启动装载时读一次，运行期 MUST NOT 热重载（改配置需重启）。`"tasks": []` SHALL
+表示守护空转：不触发任何任务、不报错。
 
 #### Scenario: 合法任务被调度
 
-- **WHEN** 配置一条 `at = "21:00"`、`template` 指向已定义模板、`vault` 为绝对路径的任务
+- **WHEN** 配置一条 `at = "21:00"`、`prompt` 非空、`vault` 为绝对路径的任务
 - **THEN** 守护在本地 21:00 后按判定函数评估该任务；无需重启以外的额外动作
 
 #### Scenario: 非法项只丢一项
 
 - **WHEN** `tasks` 含两条任务，其中一条 `at` 为 `"25:00"`
-- **THEN** 该条被丢弃并给出一条人话 warning；另一条任务照常生效
+- **THEN** 该条被丢弃并给出一条人话 warning（`cron_task_invalid`）；另一条任务照常生效
 
-#### Scenario: 悬空模板引用
+#### Scenario: 缺 prompt 丢项
 
-- **WHEN** 任务的 `template` 指向不存在的模板 id（或该模板因自身非法已被丢弃）
-- **THEN** 该任务被丢弃并给出一条人话 warning，守护不因它反复失败
+- **WHEN** 某任务的 `prompt` 缺失或为空白字符串
+- **THEN** 该任务被丢弃并给出一条人话 warning；其余任务照常生效
+
+#### Scenario: 非法 delivery 回落默认档
+
+- **WHEN** 某任务的 `delivery` 为 `"notify-me"`（闭集合外）
+- **THEN** 该任务保留并按 `notify-then-run` 处理，另给一条人话 warning
 
 #### Scenario: 重复 id
 
@@ -187,41 +304,51 @@ MUST NOT 因窗口焦点切换风暴产生多次探测或多次通知。
 #### Scenario: 空任务表
 
 - **WHEN** 配置为 `"cron": { "tasks": [] }` 或无 `[cron]` 节
-- **THEN** 应用正常启动，守护不投递任何通知、无 warning
+- **THEN** 应用正常启动，守护不触发任何任务、无 warning
 
 #### Scenario: 整节错形状回落
 
 - **WHEN** 配置为 `"cron": "daily-log"`（整节不是对象）
 - **THEN** 走整文件回落（全部字段回默认值 + 一条 warning），启动不失败
 
-### Requirement: 通知去重状态与持久化
+### Requirement: 触发去重状态与持久化
 
-通知去重状态 SHALL 落在配置目录根下的独立小文件 `cron-state.json`（与 `window-state.json` 同
-惯例）；MUST NOT 写入 `config.json`，MUST NOT 写入任何 vault。存档 SHALL 记录每个任务最近一次
-通知的本地日期，并携带 schema 版本号。
+触发去重状态 SHALL 落在配置目录根下的独立小文件 `cron-state.json`（与 `window-state.json` 同
+惯例）；MUST NOT 写入 `config.json`，MUST NOT 写入任何 vault。存档 SHALL 记录每个任务最近一次触发的
+本地日期（`last_fired`）与最近一次运行的会话标识（`session_id`，在场时），并携带 schema 版本号。
 
-写入 SHALL 使用临时文件 + rename 原子替换，只在通知投递成功后写；写失败 SHALL 降级为 warning，
-MUST NOT 阻断守护循环或影响其它功能。读取纪律：文件缺失、不可读、非合法 JSON、`version` 与实现
-不符，四类对调用方的语义完全相同——「没有去重状态」（最多导致一次重复通知），一律 MUST NOT 抛错、
-MUST NOT 阻断启动；缺失是常态不告警，其余三类各记一条 warning。任务从配置删除后其状态记录 SHALL
-惰性残留，MUST NOT 为清理它做启动期扫描。
+`last_fired` SHALL 只在派发成功时写入（通知投递成功，或运行交接被接受）；运行失败、运行被跳过、
+通知投递失败 MUST NOT 写入。`session_id` SHALL 由运行终态回执更新，消费者是结果通知的会话恢复与
+`dedicated` 的续写。
+
+写入 SHALL 使用临时文件 + rename 原子替换；写失败 SHALL 降级为 warning，MUST NOT 阻断守护循环或
+影响其它功能。读取纪律：文件缺失、不可读、非合法 JSON、`version` 与实现不符，四类对调用方的语义
+完全相同——「没有去重状态」（最多导致一次重复触发），一律 MUST NOT 抛错、MUST NOT 阻断启动；缺失是
+常态不告警，其余三类各记一条 warning。任务从配置删除后其状态记录 SHALL 惰性残留，MUST NOT 为清理
+它做启动期扫描。
 
 #### Scenario: 当日至多一次
 
-- **WHEN** 同一任务当日已投递过通知，随后多次触发判定
-- **THEN** 不再投递第二条通知（状态文件记录当日日期）
+- **WHEN** 同一任务当日已派发过，随后多次触发判定
+- **THEN** 不再投递通知、不再发起运行（状态文件记录当日日期）
 
 #### Scenario: 跨日重新允许
 
-- **WHEN** 昨日已通知且今日到点条件仍未满足
-- **THEN** 今日按判据可再次投递一次（本地日期变化即重新允许）
+- **WHEN** 昨日已触发且今日到点条件满足
+- **THEN** 今日按判据可再次触发一次（本地日期变化即重新允许）
 
 #### Scenario: 状态文件损坏
 
 - **WHEN** `cron-state.json` 被截断或含非法 JSON
-- **THEN** 应用正常启动，视为无状态（最多重复通知一次），并记一条 warning
+- **THEN** 应用正常启动，视为无状态（最多重复触发一次），并记一条 warning
+
+#### Scenario: 会话标识随运行更新
+
+- **WHEN** 一次运行到达终态并回执成功
+- **THEN** `cron-state.json` 中该任务的 `session_id` 为本次运行的会话；点击结果通知可据此恢复
 
 #### Scenario: 不污染配置与 vault
 
-- **WHEN** 完成一次通知投递
-- **THEN** 去重状态只出现在 `cron-state.json`；`config.json` 无新增运行态字段，vault 内无任何本功能写入
+- **WHEN** 完成一次触发与一次运行
+- **THEN** 去重状态只出现在 `cron-state.json`；`config.json` 无新增运行态字段；机制自身不向 vault
+  写入任何内容（运行期写入由 agent 经既有工具与权限闸完成）
