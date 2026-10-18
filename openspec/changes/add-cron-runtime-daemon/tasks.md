@@ -31,7 +31,8 @@
   `create_new` 写入（行 `\n` 连接 + 末尾单个 `\n`）；写失败清理本次文件并返回错误。
 - [ ] 2.3 单测：首次创建逐字节、二次调用 mtime/内容不变、父目录创建、非法路径拒绝、写失败清理。
 - [ ] 2.4 `commands.rs` 新增 `note_template_open({ template_id, vault? })`：`vault` 省略用当前 vault；
-  返回 `{ path, created }` 并触发前端 `note-template:open` 事件。
+  返回 `{ path, created }` 并触发前端 `note-template:open` 事件；完成（含失败）记 `template_open`
+  诊断事件，**不记** `cron_open`（两条来源的事件名分开，见 design §11）。
 - [ ] 2.5 `src/main.ts` 装配唯一处理器：必要时先打开目标 vault → 既有打开文件链路开标签 →
   `prompt` 在场时用既有 `harness_draft_put` 预载草稿（不发送）。
 - [ ] 2.6 断言模板入口不读 cron 配置：`rg -n "cron" src-tauri/src/note_templates.rs` 零命中（注释除外）。
@@ -48,7 +49,8 @@
   spawn、不阻塞启动；配置装载时快照、运行期不热重载。
 - [ ] 3.5 拉取触发接线：启动就绪后一次 + `WindowEvent::Focused(true)`（200ms 去抖），两处只投 poke，
   不内联判定。
-- [ ] 3.6 日志白名单新增 `cron_notified` / `cron_open` / `cron_task_invalid` 三个事件名（含字段校验用例）。
+- [ ] 3.6 日志白名单新增 `cron_notified` / `cron_open`（仅通知点击链路）/ `template_open`（仅模板独立
+  入口）/ `cron_task_invalid` 四个事件名（含字段校验用例；断言独立入口不产生 `cron_open`）。
 
 ## 4. 通知与点击链路（独立功能点）
 
@@ -95,5 +97,6 @@
 - [ ] 7.2 `cargo test` 通过（含 §1.5 / §2.3 / §3.1 / 3.2 / 3.3 的新增单测）。
 - [ ] 7.3 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）。
 - [ ] 7.4 真机跑新增验收场景（§6.1–6.4），`test-results/acceptance/<日期>/` 下证据目录可用绝对路径 `ls` 到。
-- [ ] 7.5 反向扳机观测可用性自验：人为投递一次后在日志里能 grep 到 `cron_notified` / `cron_open`
-  （证明 proposal 的 4 周度量口径可执行）。
+- [ ] 7.5 反向扳机观测可用性自验：人为点击一次通知、并调用一次模板独立入口，日志里分别能 grep 到
+  `cron_notified` + `cron_open` 与 `template_open`（且独立入口不产生 `cron_open`）——证明 proposal
+  的两条度量口径（cron 只计点击链路、模板独立调用方另计）可执行。

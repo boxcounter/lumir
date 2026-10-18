@@ -181,7 +181,9 @@ loop {
 - 来源 B：`note_template_open` 命令（独立入口，§6.3）。
 
 处理器职责：必要时打开目标 vault → 用既有「打开文件」链路开标签 → `prompt` 在场时预载草稿。
-MUST NOT 自带第二条 `vault_create_file` 或第二条「打开文件」实现。
+MUST NOT 自带第二条 `vault_create_file` 或第二条「打开文件」实现。前端**不写** `cron_open` /
+`template_open` 这两个事件名：它们是「发起方」在 Rust 侧按来源记录的（见 §11）；前端自身失败走既有
+`log_event` 通道，不冒充这两个事件，也不让同一次使用被记两次。
 
 ## 5. 配置面（配置即数据）
 
@@ -303,7 +305,8 @@ warning，其余照常生效。
 
 - `vault` 省略 → 当前打开的 vault；显式给 → 目标 vault（点击链路走这一支）。
 - 行为：`ensure_instance` → 返回 `{ path, created }` 并触发前端 `note-template:open`（与点击链路同一
-  事件、同一处理器）；`prompt` 在事件载荷里。
+  事件、同一处理器）；`prompt` 在事件载荷里；命令完成（实例化 + 交付打开事件，含失败）后记
+  `template_open` 诊断事件，**不记** `cron_open`（口径见 §11）。
 - 与 cron 的关系：cron 点击链路复用 `ensure_instance` + 同一事件，**不新增第二条打开/预载实现**。
 - 模板在无 cron 任务、通知权限被拒、通知插件未装载时同样可用（独立原语的验收判据）。
 
@@ -333,8 +336,9 @@ warning，其余照常生效。
   两者都不经 webview，capabilities 零增量。
 - **性能**：setup 内只 spawn 线程（微秒级）；tick 30s 一次、纯内存比较；到期一次 `metadata`；
   状态文件只在通知成功时写（一天一次）；通知权限查询一次。冷启动 / keypress-to-paint 合同无接触面。
-- **日志**：`cron_notified` / `cron_open` / `cron_task_invalid` 三个事件名进 `logging::LogEventName`
-  白名单（字段值上限 256 字符的隐私护栏不变）。日志日期口径仍是 UTC（不改 `logging.rs` 的既有裁决）。
+- **日志**：`cron_notified` / `cron_open`（仅通知点击链路）/ `template_open`（模板独立入口）/
+  `cron_task_invalid` 四个事件名进 `logging::LogEventName` 白名单（字段值上限 256 字符的隐私护栏
+  不变）。日志日期口径仍是 UTC（不改 `logging.rs` 的既有裁决）。
 
 ## 9. 测试矩阵（机器验收面）
 
@@ -357,7 +361,7 @@ warning，其余照常生效。
 **契约（`lib.rs` 接线层，可测的部分）**
 
 - `note-template:open` 载荷形状（vault / path / prompt / created）。
-- 日志白名单接受三个新事件名。
+- 日志白名单接受四个新事件名；事件按来源分名（点击链路 → `cron_open`，命令 → `template_open`）。
 
 **真机验收（`scripts/acceptance/scenarios/`，新增；通知到达与点击唤起的验证法）**
 
@@ -381,6 +385,13 @@ warning，其余照常生效。
 
 ## 10. 已知边界与风险
 
+- **统一触发抽象（对真源声明的回应）**：设计真源通用原语节要求「动工任一原语前应先落实『触发器 +
+  上下文装配 + 工具循环 + 留存』统一抽象，避免两个功能各写一套调度」。本 change 的 cron v1
+  **不经 harness 运行**——它只做「到点判定 + 通知 + 环境创建」，prompt 只预载进 composer 草稿、
+  不自动发送，因此不涉及上下文装配与工具循环，也就不存在「两套调度」；该抽象不是本 change 的前置
+  条件（这是与真源「动工任一原语前」字面要求的显式偏离，理由即此，供节点 1 裁决）。登记重审点：
+  **Subagents 落地时必须重审调度共享**；届时若 cron 也要触发 harness 运行（如定时 lint 自动跑会话），
+  须先落实统一触发器抽象再动工，MUST NOT 为 cron 单独长出一套 harness 调度。
 - **dev flavour 通知可用性（实现期第一验证项）**：未签名 / 非 bundle 进程在 macOS 上可能拿不到通知
   授权或投递失败。若 `pnpm tauri dev` 不可用：用 `cargo build --features custom-protocol` 后的
   bundle 验证；两者都不可用则停下上报（不得以「跳过通知验证」结项）。
@@ -404,15 +415,29 @@ warning，其余照常生效。
 | 事件 | 时机 | 字段（≤256 字符） |
 |---|---|---|
 | `cron_notified` | 通知投递成功 | `task`（id）、`at`、`trigger`（`timer` / `startup` / `focus`） |
-| `cron_open` | 点击链路或独立入口完成 | `task`（无任务记空）、`created`（`true`/`false`）、`ok`（`true`/`false`）、`error`（错误码，可选） |
+| `cron_open` | **仅通知点击链路**完成（含失败） | `task`（id）、`created`（`true`/`false`）、`ok`（`true`/`false`）、`error`（错误码，可选） |
+| `template_open` | **仅模板独立入口**（命令）完成（含失败） | `template`（id）、`created`（`true`/`false`）、`ok`（`true`/`false`）、`error`（错误码，可选） |
 | `cron_task_invalid` | 装载期丢弃任务项 | `task`（id 或空）、`field`、`reason` |
+
+两个入口共用前端打开实现与 `note-template:open` 事件，但**事件名按来源分开**：Rust 侧在发起方完成点
+按来源记录（点击链路 → `cron_open`；独立命令 → `template_open`）。前端**不写**这两个事件名（自身
+失败走既有 `log_event` 通道）——同一次使用 MUST NOT 被记两次，也 MUST NOT 出现「独立入口记成
+`cron_open`」的口径串味（这正是反向扳机判据失效的形态）。
 
 反向扳机（连续 4 周零使用）的度量口径：
 
 ```bash
-# 合并日起 4 周内，点击后真正进入环境的次数（created=true 与 false 都算使用）
+# ① cron 扳机：4 周内「通知点击后真正进入环境」的次数（created=true/false 都算使用；
+#    ok=false 的打开失败不计入——失败是缺陷，先修，不当作使用）
 rg -c '"event":"cron_open"' ~/.config/lumir/logs/
-# 为 0（或文件不存在）⇒ 扳机触发，按 proposal 条款删除
+rg -c '"event":"cron_open".*"ok":false' ~/.config/lumir/logs/
+#    总数 − 失败数 = 0（或文件不存在）⇒ 扳机触发，按 proposal 条款删除 cron
+
+# ② note-templates 去留举证：4 周内模板独立入口的使用次数
+rg -c '"event":"template_open"' ~/.config/lumir/logs/
+#    为 0 ⇒ 没有独立调用方 ⇒ 按 proposal 条款与 cron 一并删除；>0 ⇒ 由 Alex 指认使用者后决定
 ```
 
 `cron_notified` 只作诊断，不作为「使用」判据——通知弹了四周没人点，说明它没在帮忙。
+`template_open` **不计入** cron 扳机（否则「只用过独立入口」会被误算成提醒链路有人在用）；它只服务
+「note-templates 有没有独立调用方」这一条举证。

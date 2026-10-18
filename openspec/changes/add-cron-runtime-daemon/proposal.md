@@ -101,25 +101,36 @@
 **条款（Alex 2026-10-18 裁决原文）**：「连续 4 周零使用即删除」。
 
 **判据**：从本 change 合并之日起连续 4 周，「由本 change 引入的链路被真正使用」的次数为 0。
-「使用」只认**点击通知后真正进入环境**这一件事——诊断日志事件 `cron_open` 的累计条数为 0
-（定义见 design §11）。仅仅「通知每天照常弹」不算使用：通知弹了四周没人点，说明它是噪音而不是
-提醒，同样触发删除。
+「使用」只认**点击通知后真正进入环境**这一件事——诊断日志事件 `cron_open` 中 `ok=true` 的累计
+条数为 0（定义见 design §11；`ok=false` 是打开失败、不计入使用，属缺陷照常修）。`cron_open`
+**只记通知点击链路**；模板独立入口（`note_template_open` 命令）另记 `template_open`，不计入本条
+判据（它是下面「独立调用方」举证的数据源）。仅仅「通知每天照常弹」不算使用：通知弹了四周没人点，
+说明它是噪音而不是提醒，同样触发删除。
 
 **动作**：扳机触发即删除 `cron` capability 的运行时守护、通知链路与任务配置面；`note-templates`
 一并摘除，除非届时能指名独立调用方（非 cron 路径的真实使用者）——写不出调用方就等于没有消费者
-（AGENTS.md「变更默认直接切断」的举证口径），一并删除。删除走一个新 change，把本 reverse trigger
-的判定结果写进其 proposal。
+（AGENTS.md「变更默认直接切断」的举证口径），一并删除。举证口径与 `template_open` 事件一致：该事件
+在 4 周内累计为 0 ⇒ 没有独立调用方 ⇒ 与 cron 一并删除；累计 >0 时由 Alex 指认使用者，再决定
+`note-templates` 的去留。删除走一个新 change，把本 reverse trigger 的判定结果写进其 proposal。
 
-**观测手段**：`cron_notified` / `cron_open` 两个白名单诊断事件（本地 JSONL，`~/.config/lumir/logs/`，
-不联网、不外发）。周检查一次即可，不需要指标系统：
+**观测手段**：`cron_notified` / `cron_open` / `template_open` 三个使用类白名单诊断事件（本地 JSONL，
+`~/.config/lumir/logs/`，不联网、不外发；另有 `cron_task_invalid` 记装载期丢弃）。周检查一次即可，
+不需要指标系统：
 
 ```bash
-rg -c '"event":"cron_open"' ~/.config/lumir/logs/    # 4 周内累计为 0 ⇒ 扳机触发
+# ① cron 扳机（只计通知点击链路）：
+rg -c '"event":"cron_open"' ~/.config/lumir/logs/                  # 总数
+rg -c '"event":"cron_open".*"ok":false' ~/.config/lumir/logs/      # 其中打开失败的（不计入使用）
+#    总数 − 失败数 = 0（或日志文件不存在）⇒ 扳机触发
+
+# ② 独立调用方举证：4 周内模板独立入口的使用次数
+rg -c '"event":"template_open"' ~/.config/lumir/logs/
 ```
 
 ## 观测：怎么知道用了 / 有效 / 出问题怎么发现
 
-- **怎么知道用了**：`cron_open` 事件（点击 → 创建/打开是否成功、是否新建）。零条就是没用，见上。
+- **怎么知道用了**：`cron_open`（通知点击 → 创建/打开是否成功、是否新建）——零条就是提醒链路没人用，
+  见上。`template_open`（模板独立入口的使用）单独记，用于回答「模板原语有没有独立调用方」。
 - **怎么知道有效**：同一任务下 `cron_notified` 的时刻与当日实例文件的落盘/打开时刻是否在同一晚；
   若通知后从未出现 `cron_open`、而文件仍靠手动创建，说明提醒链路没帮上忙。
 - **出问题怎么发现**：配置校验的逐项 warning（非法任务被丢弃时会说清是哪一项）；通知权限被拒时
@@ -141,7 +152,8 @@ rg -c '"event":"cron_open"' ~/.config/lumir/logs/    # 4 周内累计为 0 ⇒ �
   - `src-tauri/src/lib.rs`：守护线程、启动/聚焦拉取触发、通知投递与点击回调、前端事件接线；
     注册 notification 插件。
   - `src-tauri/src/commands.rs`：`note_template_open` 命令（独立入口的薄封装）。
-  - `src-tauri/src/logging.rs`：新增 `cron_notified` / `cron_open` / `cron_task_invalid` 事件白名单。
+  - `src-tauri/src/logging.rs`：新增 `cron_notified` / `cron_open`（仅通知点击链路）/
+    `template_open`（模板独立入口）/ `cron_task_invalid` 事件白名单。
   - `src/main.ts`（或既有标签/harness 装配处）：`note-template:open` 事件的前端处理——打开文件、
     必要时先打开目标 vault、预载草稿。
   - `src-tauri/Cargo.toml`：`tauri-plugin-notification`（≥ 2.6.0，桌面点击回调自 2.6.0 起可用）
@@ -175,6 +187,12 @@ rg -c '"event":"cron_open"' ~/.config/lumir/logs/    # 4 周内累计为 0 ⇒ �
    第 5 条「配置即数据、拒绝配置即代码」。
 5. **任务粒度 = 每天一次 + 可选 weekday 过滤**（推荐），不支持一天多次 / 任意间隔。理由：多次触发
    可由多条任务表达；任意间隔是 cron 表达式那一档，明确不做。
+
+**补充上下文（非取舍，供节点 1 裁决时有完整依据）**：设计真源在通用原语节要求「动工任一原语前
+应先落实『触发器 + 上下文装配 + 工具循环 + 留存』统一抽象，避免两个功能各写一套调度」。本 change
+的 cron v1 **只做「通知 + 环境创建」，不经 harness 运行**（prompt 仅预载草稿、不自动发送），因此该
+统一抽象不是本 change 的前置条件；登记的重审点见 design §10「统一触发抽象（对真源声明的回应）」
+——Subagents 落地时须重审调度共享，届时若 cron 也要触发 harness 运行，先落抽象再动工。
 
 ## 裁决点
 
