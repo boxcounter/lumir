@@ -25,9 +25,11 @@ import {
   launchApp,
   prepareSeed,
   reclaimPort,
+  resetCronState,
   resetPositions,
   resetRecovery,
   resetHarness,
+  resetLogs,
   resetRegistry,
   resetSecondVault,
   resetSessions,
@@ -478,6 +480,8 @@ async function main() {
       await resetSecondVault(); // 第二个合成 vault：多 vault 场景的切换目标
       await resetRecovery(); // 备份目录在隔离配置下，不清会让上一场景的备份串场
       await resetHarness(); // 对话面板 JSONL 同因：在隔离配置下，不清会跨场景串记录（M304 实证）
+      // 诊断日志：cron 场景用「日志里有 / 没有某事件」作判据，上一场景的事件会让负向断言假绿。
+      await resetLogs();
       // 注册表与会话也在隔离配置下：前者决定列表浮层有几行、后被哪些 id 命中，后者决定装载后
       // 恢复哪些标签——两者残留都会让本场景看到上一场景的状态（与 recovery 同因）。
       await resetRegistry();
@@ -487,6 +491,9 @@ async function main() {
       // 残留会让本场景的「首启」读到上一场景的窗口尺寸（M434 起首启 = 工作区 90%、
       // 其后按存档恢复，窗口几何断言正对着这个量判）。
       await resetWindowState();
+      // cron 去重状态（change add-cron-runtime-daemon §8）：与 window-state 同因——`last_fired`
+      // 残留会让本场景的「首启即到点」读到上一场景的日期而静默不触发。
+      await resetCronState();
       // 场景自己的注册表 / 会话预置：**必须在 launchApp 之前**（见 prepareSeed 的说明）。
       await prepareSeed(scenario.seed);
       const scenarioConfig = Object.fromEntries(

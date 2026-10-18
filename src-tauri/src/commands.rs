@@ -1483,6 +1483,27 @@ pub fn fs_reveal_in_finder(
     })
 }
 
+/// 运行终态回执（change add-cron-runtime-daemon §3.3）：前端接线层在 `cron:run_finished`
+/// 到达后调用一次。终态的唯一来源是这里——Rust 不据事件流或字符串猜成功与否
+/// （REVIEW.md「同一语义两处真源」条）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn cron_run_result(
+    app: tauri::AppHandle,
+    run_id: String,
+    ok: bool,
+    session_id: Option<String>,
+    error: Option<String>,
+) -> Result<(), CommandError> {
+    crate::cron_run_result(&app, &run_id, ok, session_id, error);
+    Ok(())
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cron_bridge_ready(app: tauri::AppHandle) -> Result<(), CommandError> {
+    crate::cron_bridge_ready(&app);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

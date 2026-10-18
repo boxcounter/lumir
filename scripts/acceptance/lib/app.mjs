@@ -50,6 +50,10 @@ export const SCENARIO_CONFIG_KEYS = [
   // 的同名参数），给「新增的 editor 配置项」构造**启动口径**用——不必每加一个键就回来改套件。
   // 形状校验见 execute.mjs 的 checkScenario（非表即报，避免静默丢半张表）。
   "editor",
+  // `[cron]` 表（change add-cron-runtime-daemon §7）：`{ tasks: [...] }` 整表直落配置文件的
+  // `cron` 节（与配置文件同形）。任务的 `at` 可写 `$nextMinute` / `$nowMinute` / `$pastMinute`
+  // ——到点类场景按「下一次分钟边界 / 今日已过」构造，不把时刻写死进场景。
+  "cron",
 ];
 
 /** 写隔离 config.json。`keys` 不传时整体不写该字段（默认无覆盖）。
@@ -92,6 +96,10 @@ export async function writeConfig({
   // 省略即缺省）。传了才写；整表不写 = 出厂口径（自动命名开、provider 跟随会话、模型跟随该
   // provider 的生效模型）。
   sessionNaming = undefined,
+  // `[cron]` 表（change add-cron-runtime-daemon §7）：`{ tasks: [...] }` 整表直落 `cron` 节。
+  // 任务的 `vault` 支持 `$vault` / `$vault2` 记号；`at` 支持 `$nextMinute` / `$nowMinute` /
+  // `$pastMinute`（按写入时刻算），到点类场景因此不必写死时刻。
+  cron = undefined,
 } = {}) {
   const dir = path.join(envHome(), "lumir");
   await mkdirp(dir);
@@ -146,8 +154,39 @@ export async function writeConfig({
   // SCENARIO_CONFIG_KEYS 的注释）。
   if (sessionNaming !== undefined) h.session_naming = sessionNaming;
   if (Object.keys(h).length > 0) cfg.harness = h;
+  if (cron !== undefined) cfg.cron = resolveCronConfig(cron);
   await writeFile(path.join(dir, "config.json"), `${JSON.stringify(cfg, null, 2)}\n`);
   return path.join(dir, "config.json");
+}
+
+/**
+ * `[cron]` 表的场景归一（change add-cron-runtime-daemon §7）：两件事只在这里做——
+ * ① 任务 `vault` 的 `$vault` / `$vault2` 记号按套件的合成 vault 解析（不写死 /tmp 路径）；
+ * ② `at` 的时刻记号按**写入时刻**换算：`$nextMinute` = 至少 60s 之后的下一个分钟边界
+ * （给起 app 留裕量）、`$nowMinute` = 当前分钟（今日已过、立即到点）、`$pastMinute` = 前一分钟。
+ * 到点类场景因此不把时刻写死，跨天重跑也成立。
+ */
+function resolveCronConfig(cron) {
+  const now = Date.now();
+  const format = (ms) => {
+    const d = new Date(ms);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+  const minute = 60_000;
+  const at = {
+    // 下一次分钟边界且至少 60s 之后：ceil((now + 60s) / 1min)。
+    $nextMinute: () => format(Math.ceil((now + minute) / minute) * minute),
+    $nowMinute: () => format(now),
+    $pastMinute: () => format(now - minute),
+  };
+  const tasks = Array.isArray(cron?.tasks)
+    ? cron.tasks.map((task) => ({
+        ...task,
+        vault: typeof task.vault === "string" ? resolveSeedPath(task.vault) : task.vault,
+        at: at[task.at] !== undefined ? at[task.at]() : task.at,
+      }))
+    : cron?.tasks;
+  return { ...cron, tasks };
 }
 
 export async function readConfig() {
@@ -496,6 +535,25 @@ export async function resetPositions() {
  *  对合并 M434 之前的 master 是空操作（那时产品没有这个文件），因此不影响既有场景。 */
 export async function resetWindowState() {
   const file = path.join(envHome(), "lumir", "window-state.json");
+  await rm(file, { force: true });
+  return file;
+}
+
+/** 清掉诊断日志目录（`<env>/lumir/logs/`，change add-cron-runtime-daemon §7）。
+ *  为什么必须做：日志文件在隔离配置目录下、跨场景累积，而 cron 场景用「日志里有 / 没有某事件」
+ *  作为判据——上一场景的 `cron_run_started` 会让本场景的负向断言（「未点击不花 token」）假绿。
+ *  每个场景从空日志开始，「本场景产生了什么」才可判。 */
+export async function resetLogs() {
+  const dir = path.join(envHome(), "lumir", "logs");
+  await rm(dir, { recursive: true, force: true });
+  return dir;
+}
+
+/** 清掉 cron 去重状态（`<env>/lumir/cron-state.json`，change add-cron-runtime-daemon §8）。
+ *  为什么必须做：`last_fired` 决定「当日是否已触发」，残留会让本场景的「首启即到点」读到上一
+ *  场景的日期而静默不触发——与 window-state / recovery 同因的跨场景串场。 */
+export async function resetCronState() {
+  const file = path.join(envHome(), "lumir", "cron-state.json");
   await rm(file, { force: true });
   return file;
 }
