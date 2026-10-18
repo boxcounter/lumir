@@ -939,6 +939,80 @@ pub fn fs_write_attachment(
     fs_io::write_attachment(&root, &policy, dir_rel, data_base64, source_mime)
 }
 
+/// 图片语义命名（change add-semantic-image-naming，design §3–§5）：粘贴落盘之后的异步尾巴。
+///
+/// 前端**不 await** 这条命令（粘贴事务早已完成）；结果回来时对账打开中的会话并弹 toast。
+/// 线程语义：`#[command(async)]`（与 `vault_open_path` 同一形态）——body 跑在 async 运行时的
+/// worker 上，不占 IPC 主线程；里面是一次阻塞 HTTP（20 秒超时，见 `llm::naming_client`），
+/// 与既有那条命令同一取舍（不引入第三种线程形态）。
+///
+/// 全部失败都返回 `Ok(NamingOutcome { status: skipped, code: … })`，MUST NOT 让后端错误冒到
+/// 前端弹失败 toast（spec：高频路径静默降级）。配置在**调用时**读一次（= 粘贴时刻的快照，
+/// design §1 的生效时点）。
+#[tauri::command(async, rename_all = "snake_case")]
+pub fn attachment_semantic_name(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, VaultState>,
+    path: String,
+    note_path: Option<String>,
+    before: String,
+    after: String,
+) -> Result<crate::attachment_naming::NamingOutcome, CommandError> {
+    use tauri::Emitter;
+    let snapshot = match crate::attachment_naming::load_config() {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            // 配置目录不可解析：与「开关关闭」同一处置（命名是可选增强，不报错）。
+            return Ok(crate::attachment_naming::NamingOutcome::skipped(
+                &path,
+                crate::attachment_naming::CODE_CONFIG,
+            ));
+        }
+    };
+    let emit = move |event: &crate::attachment_naming::NamingEcho| {
+        let _ = app.emit("attachment:naming", event);
+    };
+    Ok(crate::attachment_naming::run(
+        &state,
+        &snapshot,
+        crate::attachment_naming::NamingRequest {
+            path,
+            note_path,
+            before,
+            after,
+        },
+        &emit,
+    ))
+}
+
+/// 撤销一次语义改名（design §6）：与改名对称的反向操作。令牌一次性、过期即失效；
+/// 放弃条件命中时返回结构化错误（前端按 code 弹人话 toast——撤销是用户显式动作，MUST NOT
+/// 静默）。线程语义同上。
+#[tauri::command(async, rename_all = "snake_case")]
+pub fn attachment_semantic_undo(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, VaultState>,
+    token: String,
+) -> Result<crate::attachment_naming::NamingOutcome, CommandError> {
+    use tauri::Emitter;
+    let emit = move |event: &crate::attachment_naming::NamingEcho| {
+        let _ = app.emit("attachment:naming", event);
+    };
+    crate::attachment_naming::undo(&state, &token, &emit)
+}
+
+/// 纯函数命令（design §5.3 / task 6.3）：对**给定文本**重算 wikilink 末段改写点，MUST NOT
+/// 碰磁盘。dirty 文档（引用只在内存里）的对账走这条；匹配与改写语义全在
+/// `link_graph::retarget_text`（前端不复制解析）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn wikilink_retarget_text(
+    text: &str,
+    from_rel: &str,
+    to_rel: &str,
+) -> Vec<crate::attachment_naming::TextChangePayload> {
+    crate::attachment_naming::wikilink_retarget_text(text, from_rel, to_rel)
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub fn fs_file_revision(
     state: tauri::State<'_, VaultState>,

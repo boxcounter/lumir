@@ -66,16 +66,19 @@ SHA-256 并与本次转码结果比对（MUST NOT 仅凭后缀前缀相同即判
 
 ### Requirement: 图片语义命名与异步重命名
 
-配置 `attachments.semantic_naming` 为 `true`（出厂默认）时，系统 SHALL 为**本次粘贴新写盘**
-的图片排一次语义命名。粘贴事务 SHALL 先按「落盘与命名去重」落暂存名并插入引用，在
+配置 `harness.attachment_naming.enabled` 为 `true`（出厂默认）时，系统 SHALL 为**本次粘贴
+新写盘**的图片排一次语义命名。粘贴事务 SHALL 先按「落盘与命名去重」落暂存名并插入引用，在
 keypress-to-paint <16ms 的性能合同内完成；命名 SHALL 是投递之后的异步任务，MUST NOT 在粘贴
 路径上等待模型调用。去重命中（未写盘）、文件已是语义名、开关关闭时 MUST NOT 投递任务。
 
 命名请求 SHALL 携带：图片字节 + **粘贴时刻**光标前后段落的文本 + 笔记标题；前后段落各有长度
-上限，MUST NOT 携带整篇文档。模型 SHALL 由 `[harness]` 当前生效 provider 提供，模型 id 取
-`attachments.naming_model`，该键为 `null` 时取当前生效模型；所选模型 MUST 由其配置声明
-`vision: true`（mock provider 恒定支持）。无满足条件的模型时，系统 SHALL 跳过命名、保留暂存名、
-MUST NOT 弹失败 toast（诊断日志如实记录一条）。
+上限，MUST NOT 携带整篇文档。调用目标 SHALL 由 `harness.attachment_naming` 三键解析：provider
+取 `harness.attachment_naming.provider`（`null` = 当前生效 provider），模型取
+`harness.attachment_naming.model`（`null` = 该 provider 的生效模型）；provider / 模型 / wire
+方言 / api_key / base_url SHALL 同出**同一个 provider 条目**（MUST NOT 跨条目混用）。所选模型
+MUST 由该 provider 的配置声明 `vision: true`（mock provider 恒定支持，但没有模型维度 ⇒ `model`
+只能是 `null`）。无满足条件的模型时，系统 SHALL 跳过命名、保留暂存名、MUST NOT 弹失败 toast
+（诊断日志如实记录一条）；MUST NOT 静默换用清单里的其它模型。
 
 模型输出 SHALL 被规整为文件名 slug，字符集 SHALL 为**纯 ASCII kebab-case**：只允许小写 ASCII
 字母 `a-z`、数字 `0-9` 与连字符 `-`；ASCII 大写 SHALL 折叠为小写，空白与下划线 SHALL 折成
@@ -91,14 +94,14 @@ vault 被切换或关闭、目标文件已不存在、或文件字节哈希已�
 
 #### Scenario: 粘贴先落暂存名、异步改名
 
-- **WHEN** 在已保存的 md 笔记中粘贴一张图片（`semantic_naming` 开、模型可用）
+- **WHEN** 在已保存的 md 笔记中粘贴一张图片（`attachment_naming.enabled` 开、模型可用）
 - **THEN** 粘贴在键入路径内完成：文档立即插入 `![[pasted-<hash16>.<ext>]]` 引用并渲染；
   随后（不阻塞编辑器）文件改名为 `<语义名>-<hash6>.<ext>`，正文引用同步改为新名，并出现带
   「撤销」的 toast
 
 #### Scenario: 无可用 vision 模型时静默保留暂存名
 
-- **WHEN** `semantic_naming` 为开，但当前 provider + 模型的配置未声明 `vision: true`
+- **WHEN** `attachment_naming.enabled` 为开，但选定 provider + 模型的配置未声明 `vision: true`
 - **THEN** 不发起任何模型请求；文件保持 `pasted-<hash16>.<ext>`；引用照常插入并渲染；
   不出现命名 toast、不出现失败 toast
 

@@ -78,6 +78,10 @@ steps:
 
 # 转码体积实证（S5，change paste-clipboard-image）
 
+> **语义命名前提（change add-semantic-image-naming，task 8.3）**：本场景不声明 `config.harness.attachment_naming`，
+> 验收默认配置没有声明 `vision` 能力的模型 ⇒ 粘贴不会触发语义命名，落盘文件保持
+> `pasted-<hash16>.webp`（体积读数因此对应转码结果本身，不掺一次改名）。
+
 ## 这个场景验什么
 
 Alex 的原始动机（节点 1 裁决原话）：「macOS 系统截图到剪贴板很大，经常十几兆二十几兆」。

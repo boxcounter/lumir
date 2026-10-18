@@ -453,10 +453,17 @@
 | D466 | ~~harness ctx 气泡第三行（tokens 形态）~~（M533 退场） | 作者 | 本回合缓存命中：{cached} tokens · 命中率 {turn}% | Cache hits this turn: {cached} tokens · hit rate {turn}% | M526：本回合命中绝对值（`cached_tokens`）+ 命中率同句，成因句（D453/D454）照旧追加其后；绝对值缺键（旧载荷）时回落百分比形态 D452。消费点 src/harness-panel.ts 的 ctxPopRows。**M533 退场，编号停用、不复用**——本回合行整行退场（与它的百分比形态 D452、成因句 D453/D454 同批），`cached_tokens` 绝对值随之失去上屏面（留存面不动）。 |
 | D467 | 后端错误信封（按 code 渲染） | 作者 | 不能移动到自身或其子目录：{rel} | Can't move an entry into itself or its own subdirectory: {rel} | M530（file-tree「拖拽移动条目」）：`fs_move_entry` 对「目录移入自身/后代」与「移回原位（to == from，rename 语义是静默 no-op）」的显式前置拒绝（`fs_move_into_self`）。内核 rename 本来就拒绝前者（EINVAL），显式判定给出人话与专属错误码、不依赖内核行为。前端拖拽落点判定（src/tree.ts 的 `canMoveEntry`）先行拒绝，这条是命令层兜底——harness 的 `vault_move` 等不经树的调用方直接命中它。占位键 `{rel}` 与后端 `.param("rel", …)` 逐字对应。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 | D468 | harness 恢复路径的思考块折叠行（无时长变体） | 作者 | 思考过程 | Thinking | M542（Alex 2026-10-16 原文：「重建后 thinking 过程默认是展开的，我希望它保持收起」）：恢复重建的 assistant 消息里思考块的折叠行文案，是 D388 的**无时长变体**——恢复路径的思考文本来自 wire 的 reasoning 回放项，wire 不带「思考了多久」的读数，写一个数字就是伪造读数（M398 的立意保留；与「无戳不显示 when」同口径）。折叠态与默认渲染一致（含点击展开回原文），只差时长读数这一项本来就取不到的信息。消费点 src/harness-panel.ts 的 `createRestoredThinking`（语言切换经 `relabelThinkingViews` 依 `data-restored` 重取本串）。 |
+| D469 | toast 图片语义命名成功 | 作者 | 已命名为 {名称} | Renamed to {name} | M577（change add-semantic-image-naming，design §7）：异步改名成功后的 toast，`{名称}` = 新文件名（语义名 + 短哈希 + 扩展名）。与「撤销」动作同一条 toast（D470），窗口 = 该 toast 的可见期（8 秒）。命名失败 / 跳过没有 toast（高频路径静默降级）。消费点 src/main.ts 的 `semanticName`。 |
+| D470 | toast 图片语义命名成功动作 | 作者 | 撤销 | Undo | M577：D469 toast 上的动作钮标签——撤销是与改名对称的反向操作（引用改回 + 文件改回暂存名）。消费点 src/main.ts 的 `semanticName` / `semanticUndo`。 |
+| D471 | toast 图片语义命名部分引用未更新 | 作者 | 部分笔记的引用未更新（{数量} 篇） | Some notes still reference the old name ({count}) | M577（spec「异步重命名的引用更新」的末段）：个别笔记因扫描后被外部改动而被跳过时点名数量，MUST NOT 静默。`{数量}` = 未更新篇数。文案不分单复数（数量以括号补充，避免为一句话引入复数档）。消费点 src/main.ts 的 `reconcileNaming`。 |
+| D472 | toast 撤销图片语义命名成功 | 作者 | 已撤销命名，文件恢复为 {名称} | Rename undone; the file is back to {name} | M577（design §6）：撤销成功后的确认，`{名称}` = 恢复后的暂存名（`pasted-<hash16>.<ext>`）。消费点 src/main.ts 的 `semanticUndo`。 |
+| D473 | 后端错误信封（按 code 渲染） | 作者 | 撤销窗口已过：这次改名的撤销入口已失效 | The undo window has passed for this rename | M577：撤销令牌过期 / 不可识别时的人话（`attachment_undo_unavailable`）。正常路径不会发生（toast 消隐后动作钮已不在），留着是为了让「绕过界面的调用」也有可读答复。消费点 src/copy-data.ts 的 ERROR_COPY。 |
+| D474 | 后端错误信封（按 code 渲染） | 作者 | 文件已被改名、移走或内容改变，无法撤销 | The file was renamed, moved or changed, so the rename can't be undone | M577：撤销的放弃判据命中时的人话（`attachment_undo_stale`）——文件在撤销前又被人工改名 / 移走 / 内容变化，或 vault 已切换。MUST NOT 覆盖用户当前的命名。消费点 src/copy-data.ts 的 ERROR_COPY。 |
+| D475 | 后端错误信封（按 code 渲染） | 作者 | 暂存名已被占用，无法撤销 | The staging name is already taken, so the rename can't be undone | M577：撤销要改回的 `pasted-<hash16>.<ext>` 已被别的文件占用时的人话（`attachment_undo_occupied`）——放弃撤销，MUST NOT 覆盖既有文件。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 
 ## 编号沿革
 
-**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D468**（M542 的恢复路径思考块折叠行无时长变体；前一位 D467 是 M530 的拖拽移动错误信封文案，再前四位 D463–D466 是 M526 的 ctx 气泡 tokens 行）。
+**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D475**（M577 的图片语义命名 toast 与撤销错误信封；前一位 D474，再前一位 D473 同批；D468–D472 之间的前一位是 M542 的恢复路径思考块折叠行无时长变体）。
 
 **不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
 
@@ -521,6 +528,7 @@
 - M533 气泡行集精简（**未取新号**）：D465 改形为只出百分比（编号沿用）、D335 改准尾句并去掉 `{ctx}`（编号沿用）；D401、D452–D455、D466 停用
 - M540 D414 批准卡命令类副句删除（**未取新号**）：编号停用、不复用、不随行留档——Alex 原话「去掉 ask for approve 的文案……因为不提供有价值的信息」；命令类批准卡不再有副句，写类副句 D413 不变
 - M542 D468 恢复路径的思考块折叠行（D388 的无时长变体，接末位）
+- M577 D469–D475 图片语义命名：成功 toast / 撤销动作 / 部分引用未更新 / 撤销成功 + 三条撤销错误信封（接末位）
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 

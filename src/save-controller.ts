@@ -156,6 +156,22 @@ export interface SaveController {
    *  的会话按新路径立即补一份备份。目录改名由调用方对每个受影响的会话路径各调一次
    *  （`editor.remapSessionPaths` 返回的路径对逐条喂进来）。 */
   noteRenamed(from: string, to: string): void;
+  /**
+   * 推进某路径的磁盘 revision 基准（change add-semantic-image-naming，design §5.3 / task 6.6）：
+   * 后台改写的规范化机制是「后端改了磁盘、但前端保留了 dirty 内存」——内存里的引用由装配层
+   * 就地改写，磁盘那一份也已经被后端改过，因此基准必须换到新值，否则用户下一次 ⌘S 会撞上
+   * 「磁盘比你新」的假 CAS 冲突。只对**已登记**的路径生效（未打开的路径没有登记，调用是 no-op）。
+   */
+  noteRevisionAdvanced(path: string, revision: string): void;
+  /**
+   * 一篇 clean 的打开文档被**本应用的其它能力**改写（图片语义改名改写引用）后的处置：
+   * 盘上内容已是最终结果，按既有 reload 路径就地重载并推进 revision（用户无未保存内容可丢）。
+   * 调用时若该路径已变 dirty（用户在窗口内开始输入），只推进基准、不重载——不丢用户输入。
+   *
+   * 返回 Promise：调用方（装配层的命名对账）要等基准真正推进之后再撤回声抑制——否则
+   * 「抑制已撤、基准未推进」的窗口里到达的写盘事件会被误判成外部修改。
+   */
+  noteRewritten(path: string, revision: string): Promise<void>;
   /** dirty 清除时整批撤下守卫提示（保存成功 / 重载）。 */
   clearGuardToasts(): void;
   /** 退出/关窗被 dirty 守卫拦截的提示（sticky，属守卫提示族）。 */
@@ -287,6 +303,32 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     const session = sessionOf(to);
     if (session === undefined || !session.dirty) return;
     void backupDirty(to); // 立即补一份：不留「旧备份已清、下次键入才有新备份」的空窗
+  }
+
+  /** 推进磁盘 revision 基准（change add-semantic-image-naming，design §5.3）：dirty 文档的
+   *  引用被后端在盘上改过、前端又在内存里做了同样的改写——内存仍是用户的那一份，基准必须
+   *  跟上盘上的新值，否则下一次 ⌘S 是假 CAS 冲突。只对**已登记**的路径生效：未打开的路径
+   *  没有基准可推进（下次打开时按当时的磁盘内容登记）。 */
+  function noteRevisionAdvanced(path: string, revision: string): void {
+    if (!revisions.has(path)) return;
+    revisions.set(path, revision);
+  }
+
+  /** clean 的打开文档被本应用其它能力改写后的就地重载（同上）：盘上内容已是最终结果，
+   *  按既有 reload 路径换掉缓冲并推进基准（用户无未保存内容可丢）。
+   *
+   *  **dirty 复查**：判定 clean 与真正重载之间有窗口，用户在窗口里开始输入就只推进基准、
+   *  不重载——MUST NOT 吞掉这一拍里敲进去的内容。 */
+  async function noteRewritten(path: string, revision: string): Promise<void> {
+    if (sessionOf(path) === undefined) {
+      revisions.set(path, revision);
+      return;
+    }
+    if (isDirty(path)) {
+      revisions.set(path, revision);
+      return;
+    }
+    await reloadDocument(path);
   }
 
   // ---------------------------------------------------------------------------
@@ -890,6 +932,8 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     handleExternalChange,
     forgetBackup,
     noteRenamed,
+    noteRevisionAdvanced,
+    noteRewritten,
     clearGuardToasts,
     showQuitBlocked,
     checkRecovery,

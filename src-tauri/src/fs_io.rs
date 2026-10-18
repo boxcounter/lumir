@@ -1890,8 +1890,133 @@ pub(crate) fn base64_decode(input: &str) -> Result<Vec<u8>, CommandError> {
 pub struct WrittenAttachment {
     /// 最终 vault 相对路径（去重命中时为既有文件所在位置——首贴位置赢）。
     pub path: String,
-    /// 内容寻址文件名 `pasted-<hash16>.<ext>`——前端据此拼 `![[name]]` 引用，不自己拼名字。
+    /// 该路径当前的**实际文件名**（去重命中时是既有文件的现名，可能是语义名）——前端据此拼
+    /// `![[name]]` 引用，不自己拼名字。
     pub name: String,
+    /// 本次是否**新写盘**（`false` = 去重命中既有文件）。语义命名的投递判据之一：去重命中不
+    /// 投递（change add-semantic-image-naming，design §3）。
+    pub fresh: bool,
+}
+
+/// 暂存名（内容寻址，design §2）：`pasted-<hash16>.<ext>`。撤销时由同一内容哈希重建。
+pub(crate) fn staging_name(hash16: &str, extension: &str) -> String {
+    format!("pasted-{hash16}.{extension}")
+}
+
+/// 文件名末尾的十六进制短哈希后缀（design §2 的两种文件名形态共用一条判据）：
+/// 返回 `(stem, hash 后缀, 扩展名)`，后缀长度必须是 6 / 8 / 12 / 16 位且全为 ASCII 十六进制。
+/// 不符合即 None（例如 `.DS_Store`、`image.png`）。
+///
+/// 暂存名 `pasted-<hash16>.<ext>` 天然命中这条规则（前缀 `pasted`、后缀 16 位），因此去重
+/// 探测不需要为它写第二个分支——两族名字是同一个判据的两个实例。
+fn split_hash_suffix(name: &str) -> Option<(&str, &str, &str)> {
+    let (stem, extension) = name.rsplit_once('.')?;
+    let (prefix, suffix) = stem.rsplit_once('-')?;
+    if !matches!(suffix.len(), 6 | 8 | 12 | 16) {
+        return None;
+    }
+    if !suffix.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some((prefix, suffix, extension))
+}
+
+/// 全 vault 内容去重探测（change add-semantic-image-naming，design §2）：按**字节哈希**判定
+/// 同一内容，返回字典序最小的命中路径（首贴位置赢）。
+///
+/// 判据（承重）：候选文件名的末尾短哈希后缀覆盖 6 / 8 / 12 / 16 位、且其前 6 位等于本次
+/// `hash16` 的前 6 位；命中候选后**重算该文件字节的 SHA-256** 与本次 `hash16` 全量比对——
+/// MUST NOT 只凭后缀相同即判同图（6 位十六进制的生日碰撞在几百张图上就可见，误判会把两张
+/// 不同的图片静默合并成一张）。文件名只是内容的两个视图，身份判据恒为哈希。
+///
+/// 遍历口径与 [`find_vault_entry_by_name`] 完全一致（同一个 [`scan_vault_files`]）。
+fn find_content_match(
+    root: &Path,
+    policy: &IgnorePolicy,
+    extension: &str,
+    hash16: &str,
+) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let hash6 = &hash16[..6.min(hash16.len())];
+    for rel in scan_vault_files(root, policy) {
+        let Some(name) = rel.rsplit('/').next() else {
+            continue;
+        };
+        let Some((_, suffix, file_extension)) = split_hash_suffix(name) else {
+            continue;
+        };
+        if !file_extension.eq_ignore_ascii_case(extension) {
+            continue;
+        }
+        if !suffix[..6].eq_ignore_ascii_case(hash6) {
+            continue;
+        }
+        let Ok(abs) = resolve_in_vault(root, &rel) else {
+            continue;
+        };
+        let Ok(bytes) = std::fs::read(&abs) else {
+            continue;
+        };
+        let actual: String = Sha256::digest(&bytes)
+            .iter()
+            .take(8)
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        if actual == hash16 {
+            // 升序遍历 ⇒ 第一个命中即字典序最小者（首贴位置赢的确定性兜底）。
+            return Some(rel);
+        }
+    }
+    None
+}
+
+/// 语义改名目标名的规划结果（design §2「改名撞名」/ §3.2）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PlannedSemanticName {
+    /// 可用目标名（全 vault 未被占用）。
+    Available(String),
+    /// 目标名的某档后缀已被**同一内容**的既有文件占用（并发 / 手工复制的边缘场景）：
+    /// 放弃改名、复用既有位置，不产生第二个副本。
+    OccupiedBySameContent(String),
+    /// 6 → 8 → 12 → 16 四档后缀全部被内容不同的文件占用：改名失败，保留暂存名。
+    Exhausted,
+}
+
+/// 目标名规划（纯规划，不写盘）：`<slug>-<hash16 前 N 位>.<ext>`，N = 6 / 8 / 12 / 16，
+/// 取第一个全 vault 未被占用的名字；撞名且内容不同 MUST NOT 覆盖（按档扩展），撞名且内容相同
+/// 则放弃改名（[`PlannedSemanticName::OccupiedBySameContent`]）。
+///
+/// 每档的占用探测都重新走一遍遍历（四档最多四次）——改名成功时只发生一次（每个新图片一次），
+/// 且只在前档被占时才继续，代价与粘贴去重同量级。
+pub(crate) fn plan_semantic_name(
+    root: &Path,
+    policy: &IgnorePolicy,
+    slug: &str,
+    hash16: &str,
+    extension: &str,
+) -> PlannedSemanticName {
+    for length in [6usize, 8, 12, 16] {
+        let suffix = &hash16[..length.min(hash16.len())];
+        let name = format!("{slug}-{suffix}.{extension}");
+        let Some(existing) = find_vault_entry_by_name(root, policy, &name) else {
+            return PlannedSemanticName::Available(name);
+        };
+        // 占用者的内容与本次相同 ⇒ 同一内容已有语义名（不会再产生第二个副本）。
+        if let Ok(occupied) = resolve_in_vault(root, &existing) {
+            if let Ok(bytes) = std::fs::read(&occupied) {
+                use sha2::{Digest, Sha256};
+                let actual: String = Sha256::digest(&bytes)
+                    .iter()
+                    .take(8)
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect();
+                if actual == hash16 {
+                    return PlannedSemanticName::OccupiedBySameContent(existing);
+                }
+            }
+        }
+    }
+    PlannedSemanticName::Exhausted
 }
 
 /// 广告支持的目标格式（design §4.3）：png 转码、jpeg/webp 原样、其余拒绝。
@@ -1998,11 +2123,11 @@ fn resolve_attachment_dir(root: &Path, dir_rel: &str) -> Result<PathBuf, Command
     Ok(dir)
 }
 
-/// 全 vault 按**文件名**探测既有条目，返回字典序最小的 vault 相对路径（无命中为 None）。
+/// 全 vault 普通文件的 vault 相对路径清单（**唯一遍历实现**，升序）。
 ///
 /// 不用 [`scan_workspace`]：那条路径按**可见性规则**枚举（`lazy` 档 / 用户规则的目录出一行不递归），
-/// 而去重判据是「这个名字在 vault 里已经存在」，与可见性正交——用户在 `.gitignore` 里写规则
-/// 不该让同一张图被重复落盘。
+/// 而这里服务的三处判据（去重探测 / 语义名占用探测 / 引用扫描）都与可见性正交——用户在
+/// `.gitignore` 里写规则不该让同一张图被重复落盘，也不该让引用漏改。
 ///
 /// 剪枝口径（change ignore-tiers-config 节点 1 修正）：**hidden 档与配置 `lazy` 档命中的目录
 /// 整棵跳过**——前者是工具目录（`.git` 等），后者的名字来自配置默认的构建产物族
@@ -2011,11 +2136,8 @@ fn resolve_attachment_dir(root: &Path, dir_rel: &str) -> Result<PathBuf, Command
 /// 全盘成本。**用户规则命中的惰性目录照旧遍历**（master 的既有行为：用户声明不跟踪的目录里
 /// 仍可能有同名文件，重复落盘与可见性正交）。符号链接目录不跟随（`file_type()` 不 follow，
 /// 防循环 / 防逃逸）。
-///
-/// 多个命中时取字典序最小者：内容寻址命名下同名即同内容，多命中只可能来自用户手工放入的
-/// 副本，字典序是既有的确定性兜底口径（design §5）。
-fn find_vault_entry_by_name(root: &Path, policy: &IgnorePolicy, name: &str) -> Option<String> {
-    let mut best: Option<String> = None;
+pub(crate) fn scan_vault_files(root: &Path, policy: &IgnorePolicy) -> Vec<String> {
+    let mut files: Vec<String> = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(read) = std::fs::read_dir(&dir) else {
@@ -2026,11 +2148,9 @@ fn find_vault_entry_by_name(root: &Path, policy: &IgnorePolicy, name: &str) -> O
                 continue;
             };
             let path = item.path();
-            if file_type.is_file() && item.file_name().to_string_lossy().as_ref() == name {
+            if file_type.is_file() {
                 if let Some(rel) = rel_string(root, &path) {
-                    if best.as_ref().is_none_or(|seen| rel < *seen) {
-                        best = Some(rel);
-                    }
+                    files.push(rel);
                 }
                 continue;
             }
@@ -2046,7 +2166,22 @@ fn find_vault_entry_by_name(root: &Path, policy: &IgnorePolicy, name: &str) -> O
             stack.push(path);
         }
     }
-    best
+    files.sort();
+    files
+}
+
+/// 全 vault 按**文件名**探测既有条目，返回字典序最小的 vault 相对路径（无命中为 None）。
+///
+/// 多个命中时取字典序最小者：内容寻址命名下同名即同内容，多命中只可能来自用户手工放入的
+/// 副本，字典序是既有的确定性兜底口径（design §5）。
+pub(crate) fn find_vault_entry_by_name(
+    root: &Path,
+    policy: &IgnorePolicy,
+    name: &str,
+) -> Option<String> {
+    scan_vault_files(root, policy)
+        .into_iter()
+        .find(|rel| rel.rsplit('/').next() == Some(name))
 }
 
 /// 附件落盘的写路径（[`write_bytes_atomic`] 的 [`RenameGuard::RejectExisting`] 包装）：撞名按
@@ -2123,31 +2258,43 @@ pub fn write_attachment(
     } else {
         raw
     };
-    let name = format!("pasted-{}.{extension}", short_hash(&bytes));
+    let hash16 = short_hash(&bytes);
+    let name = staging_name(&hash16, extension);
     let dir = resolve_attachment_dir(root, dir_rel)?;
-    if let Some(existing) = find_vault_entry_by_name(root, policy, &name) {
-        return Ok(WrittenAttachment {
-            path: existing,
-            name,
-        });
+    // 去重判定按**内容哈希**（不是一个名字）：覆盖 `pasted-<hash16>` 与语义名两族形态
+    // （change add-semantic-image-naming，design §2）。
+    if let Some(existing) = find_content_match(root, policy, extension, &hash16) {
+        return Ok(existing_attachment(existing));
     }
     let path = join_rel(dir_rel, &name);
     match write_attachment_atomic(&dir, &name, &bytes)? {
-        AtomicWriteOutcome::Written => Ok(WrittenAttachment { path, name }),
+        AtomicWriteOutcome::Written => Ok(WrittenAttachment {
+            path,
+            name,
+            fresh: true,
+        }),
         // 竞态：探测与 rename 之间目标被建出 ⇒ 按去重收敛（不覆盖、不报错），返回既有位置。
         // 只在确实存在同名**文件**时收敛——目标名被目录 / 符号链接占用时无文件可指，
         // 报错而 MUST NOT 报成功（spec「写入结果无法确认时返回错误」）。
         AtomicWriteOutcome::TargetExists => match find_vault_entry_by_name(root, policy, &name) {
-            Some(existing) => Ok(WrittenAttachment {
-                path: existing,
-                name,
-            }),
+            Some(existing) => Ok(existing_attachment(existing)),
             None => Err(CommandError::new(
                 "attachment_write_failed",
                 format!("目标名被非文件条目占用：{path}"),
             )
             .param("reason", "目标名被非文件条目占用")),
         },
+    }
+}
+
+/// 去重命中 / 竞态收敛时的返回值：`name` 取既有文件的**实际文件名**（可能是语义名），
+/// `fresh = false`（未写盘，语义命名不投递）。
+fn existing_attachment(path: String) -> WrittenAttachment {
+    let name = path.rsplit('/').next().unwrap_or(path.as_str()).to_string();
+    WrittenAttachment {
+        path,
+        name,
+        fresh: false,
     }
 }
 
@@ -5024,6 +5171,169 @@ mod tests {
             write_attachment(&v.0, &v.policy(), "", "not base64!!!", "image/png").unwrap_err();
         assert_eq!(err.code, "attachment_decode_failed");
         assert_eq!(std::fs::read_dir(&v.0).unwrap().count(), 0, "不落盘");
+    }
+
+    // -----------------------------------------------------------------------
+    // 语义命名的去重与改名规划（change add-semantic-image-naming，tasks §2 / §3）
+    // -----------------------------------------------------------------------
+
+    /// 转码后字节的 hash16（写盘 / 断言共用同一口径）。
+    fn hash16_of(bytes: &[u8]) -> String {
+        short_hash(bytes)
+    }
+
+    #[test]
+    fn dedupe_hits_semantic_name_with_same_content_and_returns_its_name() {
+        let v = TempVault::new();
+        let png = sample_png_rgba();
+        // 首贴：暂存名 + fresh。
+        let first = write_attachment(&v.0, &v.policy(), "", &base64_encode(&png), "image/png")
+            .expect("首贴");
+        assert!(first.fresh, "首贴必须是新写盘");
+        let bytes = std::fs::read(v.0.join(&first.path)).expect("读回");
+        let hash16 = hash16_of(&bytes);
+        // 手工把它改成语义名（模拟已完成命名）。
+        let semantic = format!("harness-arch-{}.webp", &hash16[..6]);
+        std::fs::rename(v.0.join(&first.path), v.0.join(&semantic)).unwrap();
+        // 再贴同一张：命中语义名、零写盘、返回既有文件名（不是暂存名）。
+        let second = write_attachment(&v.0, &v.policy(), "", &base64_encode(&png), "image/png")
+            .expect("再贴");
+        assert!(!second.fresh, "去重命中不算新写盘");
+        assert_eq!(second.path, semantic);
+        assert_eq!(second.name, semantic, "返回既有的实际文件名");
+        assert_eq!(
+            std::fs::read_dir(&v.0).unwrap().count(),
+            1,
+            "MUST NOT 产生第二个副本"
+        );
+    }
+
+    #[test]
+    fn dedupe_rehashes_suffix_matches_and_does_not_merge_different_content() {
+        let v = TempVault::new();
+        let a = transcode_png_to_webp(&sample_png_rgba()).unwrap();
+        let b = transcode_png_to_webp(&sample_png_rgb()).unwrap();
+        let hash_a = hash16_of(&a);
+        let hash_b = hash16_of(&b);
+        assert_ne!(hash_a, hash_b);
+        // 落一张 A 的语义名文件，再放一张**内容不同**但后缀前 6 位与 A 相同的文件（构造碰撞：
+        // 后缀取自 A 的 hash6，内容取 B）。
+        std::fs::write(v.0.join(format!("alpha-{}.webp", &hash_a[..6])), &a).unwrap();
+        std::fs::write(v.0.join(format!("beta-{}.webp", &hash_a[..6])), &b).unwrap();
+        // 再贴 B：MUST NOT 命中 A（后缀相同但哈希不同），B 自己照常落盘。
+        let written = write_attachment(
+            &v.0,
+            &v.policy(),
+            "",
+            &base64_encode(&sample_png_rgb()),
+            "image/png",
+        )
+        .expect("落盘");
+        assert!(written.fresh);
+        assert_eq!(written.name, staging_name(&hash_b, "webp"));
+        // 反过来：贴 A 时命中既有语义名（同一内容），不新写盘。
+        let again = write_attachment(
+            &v.0,
+            &v.policy(),
+            "",
+            &base64_encode(&sample_png_rgba()),
+            "image/png",
+        )
+        .expect("再贴 A");
+        assert!(!again.fresh);
+        assert_eq!(again.path, format!("alpha-{}.webp", &hash_a[..6]));
+    }
+
+    #[test]
+    fn plan_semantic_name_extends_suffix_until_free() {
+        let v = TempVault::new();
+        let a = transcode_png_to_webp(&sample_png_rgba()).unwrap();
+        let other = transcode_png_to_webp(&sample_png_rgb()).unwrap();
+        let hash16 = hash16_of(&a);
+        // 6 位与 8 位被**别的**内容占着 ⇒ 取 12 位。
+        std::fs::write(
+            v.0.join(format!("harness-arch-{}.webp", &hash16[..6])),
+            &other,
+        )
+        .unwrap();
+        std::fs::write(
+            v.0.join(format!("harness-arch-{}.webp", &hash16[..8])),
+            &other,
+        )
+        .unwrap();
+        assert_eq!(
+            plan_semantic_name(&v.0, &v.policy(), "harness-arch", &hash16, "webp"),
+            PlannedSemanticName::Available(format!("harness-arch-{}.webp", &hash16[..12]))
+        );
+        // 12 位也被占 ⇒ 16 位；四档全占 ⇒ Exhausted。
+        std::fs::write(
+            v.0.join(format!("harness-arch-{}.webp", &hash16[..12])),
+            &other,
+        )
+        .unwrap();
+        assert_eq!(
+            plan_semantic_name(&v.0, &v.policy(), "harness-arch", &hash16, "webp"),
+            PlannedSemanticName::Available(format!("harness-arch-{}.webp", &hash16[..16]))
+        );
+        std::fs::write(
+            v.0.join(format!("harness-arch-{}.webp", &hash16[..16])),
+            &other,
+        )
+        .unwrap();
+        assert_eq!(
+            plan_semantic_name(&v.0, &v.policy(), "harness-arch", &hash16, "webp"),
+            PlannedSemanticName::Exhausted
+        );
+    }
+
+    #[test]
+    fn plan_semantic_name_abandons_when_same_content_already_named() {
+        let v = TempVault::new();
+        let a = transcode_png_to_webp(&sample_png_rgba()).unwrap();
+        let hash16 = hash16_of(&a);
+        let existing = format!("harness-arch-{}.webp", &hash16[..6]);
+        std::fs::write(v.0.join(&existing), &a).unwrap();
+        assert_eq!(
+            plan_semantic_name(&v.0, &v.policy(), "harness-arch", &hash16, "webp"),
+            PlannedSemanticName::OccupiedBySameContent(existing)
+        );
+        // 既有文件逐字节不变（改名 MUST NOT 覆盖）。
+        assert_eq!(
+            std::fs::read(v.0.join(format!("harness-arch-{}.webp", &hash16[..6]))).unwrap(),
+            a
+        );
+    }
+
+    #[test]
+    fn split_hash_suffix_recognizes_two_name_families() {
+        assert_eq!(
+            split_hash_suffix("pasted-0123456789abcdef.webp"),
+            Some(("pasted", "0123456789abcdef", "webp"))
+        );
+        assert_eq!(
+            split_hash_suffix("harness-arch-012345.webp"),
+            Some(("harness-arch", "012345", "webp"))
+        );
+        assert_eq!(
+            split_hash_suffix("harness-arch-01234567.webp"),
+            Some(("harness-arch", "01234567", "webp"))
+        );
+        assert_eq!(split_hash_suffix("harness-arch.webp"), None);
+        assert_eq!(split_hash_suffix("image-zzzzzz.webp"), None);
+        assert_eq!(split_hash_suffix("no-extension"), None);
+    }
+
+    #[test]
+    fn staging_name_round_trips_from_content_hash() {
+        let bytes = transcode_png_to_webp(&sample_png_rgba()).unwrap();
+        let hash16 = hash16_of(&bytes);
+        assert_eq!(
+            staging_name(&hash16, "webp"),
+            format!("pasted-{hash16}.webp")
+        );
+        // 撤销用同一内容哈希重建暂存名（task 3.3）：名字里的 hash 就是字节 SHA-256 的前 16 位。
+        assert_eq!(hash16.len(), 16);
+        assert!(hash16.bytes().all(|b| b.is_ascii_hexdigit()));
     }
 
     #[test]

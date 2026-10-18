@@ -76,7 +76,9 @@ import { fsFileMtime } from "./ipc";
 import {
   attachmentDirOf,
   imagePasteItemIndex,
+  paragraphContext,
   pastedImageInsertion,
+  semanticNameTask,
   writePastedImage,
 } from "./paste-image";
 import type { PasteImagePort } from "./paste-image";
@@ -1038,6 +1040,19 @@ export interface EditorHandle {
    */
   reloadSession(session: EditorSession, doc: string, path: string | undefined, requestId?: number): void;
   /**
+   * 对一个会话应用一组**文本改写点**（change add-semantic-image-naming，design §5.3）：异步改名
+   * 完成时，dirty 文档的内存文本里可能还有指向旧名的引用（刚粘贴、尚未保存的引用只存在于内存）。
+   * 按编辑事务应用 ⇒ 保留撤销栈与未保存内容；选区由 CM 映射。后台会话同样支持（只换代它的
+   * state，与 reloadSession 的既有分岔同形）。
+   *
+   * 空变更 / 会话不属于本实例时是空操作（返回 false）。调用方（装配层）负责判定哪些会话走
+   * 内存改写（dirty）与哪些走磁盘重载（clean），本层不重复那一套判据。
+   */
+  applySessionChanges(
+    session: EditorSession,
+    changes: readonly { from: number; to: number; insert: string }[],
+  ): boolean;
+  /**
    * 运行期置某会话的可编辑性（M329，分栏态空 pane 的输入闸门）。
    *
    * **为什么需要它**：会话的可编辑性此前只在创建点（`makeSession`）与路径变更点
@@ -1874,22 +1889,25 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     const port = pasteImagePort;
     if (port === null) return;
     try {
-      const { name } = await writePastedImage(port, attachmentDirOf(session.path), blob);
+      const written = await writePastedImage(port, attachmentDirOf(session.path), blob);
       // 落盘期间前台会话可能已换（切标签 / 关标签）：换过就不插——插进别的文档比不插更糟。
       // 图片本身已落盘（内容寻址，重贴即去重命中），不构成「半截状态」。
       if (active !== session) return;
       const range = view.state.selection.main;
-      const changes = pastedImageInsertion(
-        view.state.doc.toString(),
-        range.from,
-        range.to,
-        name,
-      );
+      const doc = view.state.doc.toString();
+      const changes = pastedImageInsertion(doc, range.from, range.to, written.name);
       view.dispatch({
         changes,
         selection: { anchor: changes.from + changes.insert.length },
         userEvent: "input.paste",
       });
+      // 语义命名（change add-semantic-image-naming）：**投递即返回**，不 await、不阻塞插入。
+      // 上下文取粘贴时刻的文档与落点（异步返回后光标早已不在原位，design §4.5）。
+      const task = semanticNameTask(written, port.semanticNaming?.() ?? false, {
+        notePath: session.path,
+        ...paragraphContext(doc, range.from, range.to),
+      });
+      if (task !== null) port.name?.(task);
     } catch (error) {
       port.toast(error);
     }
@@ -2425,6 +2443,25 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       emitReady("decoration-ready");
       emitReady("frontmatter-ready");
       schedulePaint(serial);
+    },
+    applySessionChanges(session, changes) {
+      if (!sessions.includes(session) || changes.length === 0) return false;
+      const specs = changes.map((change) => ({
+        from: change.from,
+        to: change.to,
+        insert: change.insert,
+      }));
+      if (session === active) {
+        const before = view.state.doc;
+        view.dispatch({ changes: specs, userEvent: "input.rewrite" });
+        return view.state.doc !== before;
+      }
+      // 后台会话：只换代它的 state（与 reloadSession / remapSessionPaths 的既有分岔同形）。
+      const update = session.state.update({ changes: specs, userEvent: "input.rewrite" });
+      if (!update.docChanged) return false;
+      session.state = update.state;
+      setSessionDirty(session, update.state.doc.toString() !== session.cleanDoc);
+      return true;
     },
     remapSessionPaths(from, to) {
       // 菜单发起的重命名（M244，裁决点 5）：**只改路径**，不碰内容 / 选区 / 滚动 / dirty

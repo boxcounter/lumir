@@ -175,6 +175,42 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
 `responses` 解释。历史项不随方言改写——items → chat messages 的翻译发生在发送边界，因此改配置后
 恢复续聊即可切到 chat 方言（回退 = 删掉该键，见 change `add-harness-chat-completions-dialect`）。
 
+### 1.6 `harness.attachment_naming` 表（图片语义命名）
+
+图片语义命名的开关与模型选择（change `add-semantic-image-naming`，规范正文见
+[openspec/specs/clipboard-image-paste/spec.md](../../openspec/specs/clipboard-image-paste/spec.md)
+的「图片语义命名与异步重命名」条）。**位置在 `[harness]` 表内**（2026-10-18 配置面重塑：原顶层
+`[attachments]` 表已废除，旧键按未知键口径静默忽略、无兼容读取——单用户、未发布）。
+
+**布局判据**（Alex 2026-10-18 裁决）：**配置跟随资源域**——自动 LLM 行为的开关与模型选择归
+`[harness]` 域（`providers` 所在）；触发位置是 UI 事实，不是配置域。粘贴只是触发点，命名调用的
+本质是「一次自动 LLM 行为」，因此与会话自动命名（`auto_title` / `title_provider` /
+`providers.<id>.title_model`）同域、同解析口径（五字段同出一个 provider 条目，MUST NOT 混用）。
+
+| 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
+|---|---|---|---|---|---|
+| `harness.attachment_naming.enabled` | boolean | `true` | `true` / `false` | **关 → 开：需重启**（前端投递闸取启动装载值，关着时前端根本不投递任务）；**开 → 关：立即生效**（后端命令每次调用现场 `config::load()`，读到 `false` 即跳过）。方向不对称是隐私面的有意取舍——关是更严的方向 | `config.rs` 的 `AttachmentNamingConfig`、`validate_attachment_naming` |
+| `harness.attachment_naming.provider` | string \| null | `null` | `"kimi"` / `"deepseek"` / `"mock"`；`null` = 会话当前 provider | 后端每次命名现场读一次 ⇒ 改动**下一次粘贴即生效**；闭集合外取值装载期回落 `null` + 人话 warning | `config.rs` 的 `HarnessConfig::attachment_naming_target` |
+| `harness.attachment_naming.model` | string \| null | `null` | 非空字符串，且必须是**选定 provider** 的 `harness.providers.<id>.models` 清单内声明 `vision: true` 的 id；`null` = 该 provider 的生效模型 | 同上（下一次粘贴生效）；运行期切 provider 后，发起命名时按**当时选定**的 provider 重新核对 | 同上 |
+
+口径：
+
+- **缺省即默认**：整表缺席 / 单键缺席 = 出厂值；`model: null` 与缺席同义。表内类型不符
+  （`"enabled": "yes"`、`"model": 3`、整表写成字符串）走整文件回落（与 `[harness]` 其余字段同路）。
+- **非法 `provider` 回落缺省**：闭集合外取值 ⇒ 回落 `null`（= 会话当前 provider）+ 一条人话 warning。
+- **非法 `model` 只点名、不回落**：未在清单内 / 未声明 `vision` / mock provider 下的非空值 ⇒ 装载期
+  一条点名 warning，**值原样保留**；随后资格不通过 ⇒ **不发起命名、保留暂存名**。MUST NOT 静默换成
+  该 provider 的生效模型——那等于替用户选模型。空串按「未配置」归一为 `null` + warning。
+- **无可用 vision 模型 = 命名不生效**：`model = null` 时用选定 provider 的生效模型；该模型未声明
+  `vision: true`（或清单为空）时**不发起任何模型请求**，图片保持暂存名 `pasted-<hash16>.<ext>`，
+  不弹失败 toast。mock provider 恒支持 vision（fixture 驱动档），但其没有模型维度 ⇒ `model` 只能是
+  `null`（非空即资格不通过）。
+- **隐私面**：默认开意味着每次粘贴**新图**都会把图片字节与粘贴时刻光标前后各至多 500 字的笔记正文
+  发往配置的模型 provider（proposal「隐私面」，Alex 2026-10-18 显式接受）。不配置 vision 模型、或把
+  `enabled` 关掉即完全不发。
+- **不在本表内的**：命名形态（`<slug>-<hash6>.<ext>`）、slug 字符集（纯 ASCII kebab-case）、撤销窗口、
+  扫描范围——这些是行为，不是偏好。
+
 ## 2. 解析与容错口径
 
 - **未知键忽略**：新版写入的字段旧版读取不报错（向前兼容）。未知键在应用回写时**原样保留**（见 §3）。

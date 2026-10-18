@@ -463,8 +463,11 @@ export interface RenameEchoGuard {
    * 在 **invoke 发起时**登记 `from → to`（不是成功返回后——in-flight 窗口内到达的真实
    * 外部事件必须照常归因，回滚消除乱序窗口）。返回值是撤销函数：invoke 失败即调用它，
    * 「这行改动从未发生」。
+   *
+   * `timeoutMs` 覆盖默认的 1 秒窗口：图片语义命名的写盘批次（一次改名 + 最多数百篇笔记改写）
+   * 比一次菜单改名长，调用方按自己的批次规模传值（见 `main.ts` 的 SEMANTIC_ECHO_TIMEOUT_MS）。
    */
-  register(from: string, to: string): () => void;
+  register(from: string, to: string, timeoutMs?: number): () => void;
   /**
    * 消费一整批 watcher 事件：返回**属于已登记改名回响的路径集合**（调用方据此在会话链路
    * 上跳过处置；树 / 附件索引 / 链接索引照常收敛）。喂进来的是整批路径而不是「命中会话的
@@ -506,11 +509,11 @@ export function createRenameEchoGuard(
   };
 
   return {
-    register(from, to) {
+    register(from, to, overrideMs) {
       const pair: PendingEcho = {
         from,
         to,
-        deadline: now() + timeoutMs,
+        deadline: now() + (overrideMs ?? timeoutMs),
         sawFrom: false,
         sawTo: false,
       };
@@ -529,6 +532,11 @@ export function createRenameEchoGuard(
           // `created:to`（走「检测到外部修改」分支）。子树前缀一并覆盖（目录改名）。
           if (within(path, pair.from)) {
             pair.sawFrom = true;
+            // `from === to` 的条目（图片语义命名的「这篇笔记被本应用改写」登记）只有一个
+            // 可匹配的路径：命中一次即视作双向满足，`settle()` 才能收走它。否则它只会在
+            // `sawTo` 恒 false 的情况下挂到 TTL 过期——窗口尾部到达的**真实**外部变更会被
+            // 一并吞掉（评审 r1 P2-3）。
+            if (pair.from === pair.to) pair.sawTo = true;
             skipped.add(path);
             break;
           }

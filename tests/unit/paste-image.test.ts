@@ -14,7 +14,9 @@ import { test } from "node:test";
 import {
   attachmentDirOf,
   imagePasteItemIndex,
+  paragraphContext,
   pastedImageInsertion,
+  semanticNameTask,
   writePastedImage,
 } from "../../src/paste-image.ts";
 
@@ -119,4 +121,45 @@ test("落盘段：Blob → base64 → 端口写；失败原样抛出给调用方
     caught = error;
   }
   assert.equal(caught, failure, "端口错误必须原样传出");
+});
+
+test("语义命名投递判据：开关开且本次新写盘才投递", () => {
+  const context = { notePath: "notes/a.md", before: "前文", after: "后文" };
+  assert.deepEqual(semanticNameTask({ path: "notes/pasted-abc.webp", fresh: true }, true, context), {
+    path: "notes/pasted-abc.webp",
+    ...context,
+  });
+  // 三档不投递：开关关 / 去重命中（fresh=false）/ 旧后端没有 fresh 字段（按未写盘处理）。
+  assert.equal(semanticNameTask({ path: "x", fresh: true }, false, context), null);
+  assert.equal(semanticNameTask({ path: "x", fresh: false }, true, context), null);
+  assert.equal(semanticNameTask({ path: "x" }, true, context), null);
+});
+
+test("段落上下文：以空行为界，取粘贴点前后的同段文本", () => {
+  const doc = "第一段第一行\n第一段第二行\n\n第二段 [[插入点]] 之后\n继续一行\n\n第三段";
+  const at = doc.indexOf("[[插入点]]");
+  const { before, after } = paragraphContext(doc, at, at);
+  assert.equal(before, "第二段 ");
+  assert.equal(after, "[[插入点]] 之后\n继续一行");
+  // 段落首 / 段落尾的边界。
+  const start = doc.indexOf("第一段第一行");
+  assert.deepEqual(paragraphContext(doc, start, start), {
+    before: "",
+    after: "第一段第一行\n第一段第二行",
+  });
+  const end = doc.indexOf("第三段");
+  assert.deepEqual(paragraphContext(doc, end, end), { before: "", after: "第三段" });
+  // 有选区时：before 到选区起点、after 从选区终点开始。
+  const selStart = doc.indexOf("第二段");
+  const selEnd = doc.indexOf("之后");
+  const selection = paragraphContext(doc, selStart, selEnd);
+  assert.equal(selection.before, "");
+  assert.equal(selection.after, "之后\n继续一行");
+});
+
+test("段落上下文：不做截断（上限在 Rust 侧唯一一份）", () => {
+  const paragraph = "字".repeat(2000);
+  const doc = `${paragraph}\n\n尾`;
+  const { before } = paragraphContext(doc, paragraph.length, paragraph.length);
+  assert.equal(before.length, 2000);
 });

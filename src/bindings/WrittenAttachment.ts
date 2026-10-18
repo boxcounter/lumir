@@ -9,6 +9,12 @@ export type WrittenAttachment = {
  */
 path: string, 
 /**
- * 内容寻址文件名 `pasted-<hash16>.<ext>`——前端据此拼 `![[name]]` 引用，不自己拼名字。
+ * 该路径当前的**实际文件名**（去重命中时是既有文件的现名，可能是语义名）——前端据此拼
+ * `![[name]]` 引用，不自己拼名字。
  */
-name: string, };
+name: string, 
+/**
+ * 本次是否**新写盘**（`false` = 去重命中既有文件）。语义命名的投递判据之一：去重命中不
+ * 投递（change add-semantic-image-naming，design §3）。
+ */
+fresh: boolean, };

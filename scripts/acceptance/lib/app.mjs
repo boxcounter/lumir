@@ -137,6 +137,11 @@ export async function writeConfig({
     if (harness.loopMax !== undefined) h.loop_max = harness.loopMax;
     if (harness.warnCtxPct !== undefined) h.warn_ctx_pct = harness.warnCtxPct;
     if (harness.autoCompact !== undefined) h.auto_compact = harness.autoCompact;
+    // 图片语义命名（change add-semantic-image-naming，2026-10-18 配置面重塑）：三键
+    // `{ enabled, provider, model }` 原样落 `harness.attachment_naming`（与会话自动命名的
+    // autoTitle / titleProvider 同一资源域）。传了才写——缺省即出厂（开、provider 跟随会话、
+    // 模型跟随该 provider 的生效模型）。
+    if (harness.attachment_naming !== undefined) h.attachment_naming = harness.attachment_naming;
   }
   // 会话自动命名三键（顶层）：snake_case 落 `[harness]`；title_model 落命名调用实际使用的
   // provider 条目（titleProvider 缺省 = 会话 provider）——与 Rust `title_target` 同一口径。

@@ -75,12 +75,34 @@ steps:
         ax: { has: "/AXImage[^\n]*pasted-[0-9a-f]{16}\\.webp/" }
       - shot: S1-贴图入vault
 
+  # 语义命名（change add-semantic-image-naming，task 8.4）：本场景**不**声明
+  # `config.harness.attachment_naming`，走的是验收套件的默认配置——provider 为 kimi（默认值）、
+  # 没有声明任何 models（更没有 `vision: true`）⇒ 命名资格判定为「无可用 vision 模型」⇒
+  # 不发起请求、保持暂存名、不弹 toast。
+  # 观察窗口给足 3 秒（mock / 真 provider 都不该在这段时间里出现语义名），再按终态判一次。
+  - name: 观察窗口：默认配置下不发起语义命名（保持暂存名、无命名 toast）
+    do: sleep
+    ms: 3000
+    expect:
+      - label: vault 内不存在语义名文件（`<slug>-<hash6>.webp`）
+        glob: { dir: notes, pattern: "[a-z0-9-]+-[0-9a-f]{6}\\.webp$", exact: 0 }
+      - label: 暂存名文件仍在（重命名没有发生）
+        glob: { dir: notes, pattern: "pasted-[0-9a-f]{16}\\.webp$", exact: 1 }
+      - label: 没有命名成功 toast、也没有失败 toast（失败是静默降级）
+        ax: { not: "/已命名为 /" }
+      - shot: S1-无语义命名
+
   - name: 清理本次产物，不给后续场景留残留
     do: vaultRm
     file: notes/s1.md
 ---
 
 # 剪贴板贴图入 vault（S1，change paste-clipboard-image）
+
+> **语义命名前提（change add-semantic-image-naming，task 8.3）**：本场景不声明 `config.harness.attachment_naming`，
+> 验收默认配置是 `provider = kimi` 且 `models` 未声明任何模型（也就没有 `vision: true`），
+> 因此粘贴**不会**触发语义命名，`pasted-<hash16>` 终态期望不变；文末另有一条「观察窗口」步
+> 显式断言这一点（无语义名文件、无命名 toast）。
 
 ## 这个场景验什么
 

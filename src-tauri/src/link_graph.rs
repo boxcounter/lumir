@@ -22,6 +22,13 @@ use crate::commands::CommandError;
 pub struct WikiLink {
     /// 整条链接的范围 `[start, end)`，code point 偏移，含 `!` 前缀。
     pub span: (usize, usize),
+    /// target **path 段**的范围 `[start, end)`，code point 偏移（同上口径）。纯词法信息：
+    /// 由 `scan_link` 在切掉 `![[`、`|alias`、`#heading` 与首尾空白之后算出，不改变任何
+    /// 解析语义。消费方是异步改名的引用改写（change add-semantic-image-naming，
+    /// design §5.2）——它只替换这一段的末段路径，其余字节逐字节不动。
+    ///
+    /// 空 path（如 `[[#h]]`）时是零宽区间（`start == end`）。
+    pub path_span: (usize, usize),
     /// 是否 `![[...]]` embed 形态。
     pub embed: bool,
     /// target 的 path 段（去首尾空白，原文形态，不做大小写折叠）。
@@ -204,9 +211,26 @@ fn scan_link(chars: &[char], start: usize, embed: bool) -> Result<(WikiLink, usi
         return Err(start + open_len); // 如 `[[#]]`：无任何目标
     }
     let block_ref = heading_path.iter().any(|s| s.starts_with('^'));
+    // path 在原文里的词法范围（design §5.2 的 `path_span`）：`![[` 之后跳到 target 首个
+    // 非空白字符，扫到 `#`（heading）/ `|`（alias）/ 闭合 `]]` 为止，再裁掉尾部空白。
+    // 与上面 `path` 的字符串口径逐字节一致——两段都必须是同一份判据（REVIEW.md「同一语义
+    // 两处真源」条），因此这里重新点数而不是从字符串偏移反推（target 的原貌可能带多字节
+    // 空白与大小写差异）。
+    let mut path_start = start + open_len;
+    while path_start < close && chars[path_start].is_whitespace() {
+        path_start += 1;
+    }
+    let mut path_end = path_start;
+    while path_end < close && chars[path_end] != '#' && chars[path_end] != '|' {
+        path_end += 1;
+    }
+    while path_end > path_start && chars[path_end - 1].is_whitespace() {
+        path_end -= 1;
+    }
     Ok((
         WikiLink {
             span: (start, close + 2),
+            path_span: (path_start, path_end),
             embed,
             path,
             heading_path,
@@ -299,6 +323,84 @@ fn excluded_ranges(chars: &[char]) -> Vec<(usize, usize)> {
         li += 1;
     }
     ranges
+}
+
+// ---------------------------------------------------------------------------
+// 引用改写（change add-semantic-image-naming，design §5）
+// ---------------------------------------------------------------------------
+
+/// 文本改写点：**code point** 偏移（与本模块 span 同一单位）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextChange {
+    pub from: usize,
+    pub to: usize,
+    pub insert: String,
+}
+
+/// target 的末段（文件名部分）：最后一个 `/` 之后的内容；无 `/` 即整段。
+pub fn last_path_segment(path: &str) -> &str {
+    match path.rfind('/') {
+        Some(index) => &path[index + 1..],
+        None => path,
+    }
+}
+
+/// 把 target 的末段替换为新文件名，**目录前缀原样保留**（design §5.2：只替换末段）。
+pub fn retargeted_path(path: &str, new_name: &str) -> String {
+    match path.rfind('/') {
+        Some(index) => format!("{}{new_name}", &path[..=index]),
+        None => new_name.to_string(),
+    }
+}
+
+/// 按「target 末段 = `from_name`」匹配，把命中链接的末段替换为 `to_name`；返回按 span
+/// **从后往前**排好的改写点（同一文档多处引用时调用方从后往前应用，偏移不会串联）。
+///
+/// 匹配语义（design §5.2 的第二条判据）：末段比较走解析器同一套大小写折叠规则
+///（`str::to_lowercase`，§3.1）——MUST NOT 另写一份折叠（REVIEW.md「同一语义两处真源」条）。
+/// 这是**纯词法+大小写**判据，不查 vault 索引：调用方是「dirty 文档的内存对账」（刚粘贴未
+/// 保存的引用在磁盘上不存在，解析器无从查起），文件名在 vault 内唯一由改名时的可用性探测
+/// 保证（design §5.2 末段）。
+///
+/// 代码块 / 行内代码 / frontmatter 内的同串按解析口径不是链接（[`parse_links`] 不返回），
+/// 因此天然不碰；`!` 前缀、目录前缀、`#heading`、`|alias` 与链接之外的正文全在 span 之外。
+pub fn retarget_text(text: &str, from_name: &str, to_name: &str) -> Vec<TextChange> {
+    let from_lower = from_name.to_lowercase();
+    let mut changes: Vec<TextChange> = parse_links(text)
+        .into_iter()
+        .filter(|link| !link.path.is_empty())
+        .filter(|link| last_path_segment(&link.path).to_lowercase() == from_lower)
+        .map(|link| TextChange {
+            from: link.path_span.0,
+            to: link.path_span.1,
+            insert: retargeted_path(&link.path, to_name),
+        })
+        .collect();
+    changes.sort_by_key(|change| std::cmp::Reverse(change.from));
+    changes
+}
+
+/// 把改写点应用到文本：按 `from` **升序**缝入（调用方无需自己排序；重叠 / 越界的改写点丢弃）。
+///
+/// 升序而不是降序：这里是构造新串，不是原地改写——先缝后一条会把前面的改写点甩到
+/// 光标之前（那正是本函数初版把「同一行两条链接」改坏的那种写法）。
+pub fn apply_text_changes(text: &str, changes: &[TextChange]) -> String {
+    let mut ordered: Vec<&TextChange> = changes.iter().collect();
+    ordered.sort_by_key(|change| change.from);
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for change in ordered {
+        // `change.from < cursor` = 与前一条重叠 / 乱序输入；越界一律丢弃（不改坏文本）。
+        if change.from < cursor || change.to > chars.len() || change.from > change.to {
+            continue;
+        }
+        out.extend(chars[cursor..change.from].iter());
+        out.push_str(&change.insert);
+        cursor = change.to;
+    }
+    out.extend(chars[cursor..].iter());
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1444,6 +1546,101 @@ mod tests {
         assert_eq!(
             g.resolve_relative("notes/index.md", "readme.md").as_deref(),
             Some("notes/Readme.md")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // path_span 与引用改写（change add-semantic-image-naming，tasks §5）
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn path_span_covers_only_the_path_segment() {
+        let cases = [
+            ("![[pasted-abc.webp]]", (3usize, 18usize), "pasted-abc.webp"),
+            ("[[notes/a.webp|别名]]", (2, 14), "notes/a.webp"),
+            ("![[ a.webp #小节 ]]", (4, 10), "a.webp"),
+            ("[[a.webp#h]]", (2, 8), "a.webp"),
+        ];
+        for (text, span, path) in cases {
+            let links = parse_links(text);
+            assert_eq!(links.len(), 1, "{text}");
+            assert_eq!(links[0].path_span, span, "{text}");
+            let chars: Vec<char> = text.chars().collect();
+            let got: String = chars[span.0..span.1].iter().collect();
+            assert_eq!(got, path, "{text}");
+            assert_eq!(links[0].path, path, "{text}");
+        }
+        // 空 path（只有锚点）是零宽区间。
+        let links = parse_links("[[#小节]]");
+        assert_eq!(links[0].path_span.0, links[0].path_span.1);
+    }
+
+    #[test]
+    fn retarget_text_rewrites_only_the_last_segment() {
+        let text = "见 ![[notes/pasted-0123456789abcdef.webp|示意图]] 与 ![[PASTED-0123456789ABCDEF.WEBP#小节]]";
+        let changes = retarget_text(
+            text,
+            "pasted-0123456789abcdef.webp",
+            "harness-arch-012345.webp",
+        );
+        assert_eq!(changes.len(), 2, "大小写变体与两种形态都要命中");
+        let next = apply_text_changes(text, &changes);
+        assert_eq!(
+            next,
+            "见 ![[notes/harness-arch-012345.webp|示意图]] 与 ![[harness-arch-012345.webp#小节]]"
+        );
+        // 确定性：同一输入两次得到同一组改写点。
+        assert_eq!(
+            changes,
+            retarget_text(
+                text,
+                "pasted-0123456789abcdef.webp",
+                "harness-arch-012345.webp"
+            )
+        );
+    }
+
+    #[test]
+    fn retarget_text_skips_code_inline_code_and_frontmatter() {
+        let text = "---\ncover: pasted-abc.webp\n---\n\n```\n![[pasted-abc.webp]]\n```\n\n行内 `![[pasted-abc.webp]]` 与真链接 ![[pasted-abc.webp]]\n";
+        let changes = retarget_text(text, "pasted-abc.webp", "new-name.webp");
+        assert_eq!(
+            changes.len(),
+            1,
+            "代码块 / 行内代码 / frontmatter 内的同串不碰"
+        );
+        let next = apply_text_changes(text, &changes);
+        assert!(next.contains("```\n![[pasted-abc.webp]]\n```"), "{next}");
+        assert!(next.contains("行内 `![[pasted-abc.webp]]`"), "{next}");
+        assert!(next.contains("真链接 ![[new-name.webp]]"), "{next}");
+        // 除链接末段外逐字节不变（差异长度 = 旧名与新名之差）。
+        assert_eq!(
+            next.len(),
+            text.len() - "pasted-abc.webp".len() + "new-name.webp".len()
+        );
+    }
+
+    #[test]
+    fn retarget_text_ignores_other_files_and_empty_paths() {
+        let text = "[[pasted-abc.webp]] [[other.webp]] [[]]";
+        let changes = retarget_text(text, "pasted-abc.webp", "new.webp");
+        assert_eq!(changes.len(), 1);
+        assert_eq!(
+            apply_text_changes(text, &changes),
+            "[[new.webp]] [[other.webp]] [[]]"
+        );
+    }
+
+    #[test]
+    fn apply_text_changes_is_order_independent() {
+        let text = "[[a.webp]] 中间 [[a.webp]]";
+        let changes = retarget_text(text, "a.webp", "bb.webp");
+        // 乱序输入也得到同一结果（函数内部按 from 倒序缝入）。
+        let mut shuffled = changes.clone();
+        shuffled.reverse();
+        assert_eq!(
+            apply_text_changes(text, &changes),
+            apply_text_changes(text, &shuffled)
         );
     }
 }

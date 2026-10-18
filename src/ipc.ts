@@ -27,6 +27,9 @@ import type { SessionResumeInfo } from "./bindings/SessionResumeInfo";
 import type { SessionSummary } from "./bindings/SessionSummary";
 import type { HarnessWrittenImage } from "./bindings/HarnessWrittenImage";
 import type { WrittenAttachment } from "./bindings/WrittenAttachment";
+import type { NamingOutcome } from "./bindings/NamingOutcome";
+import type { NamingEcho } from "./bindings/NamingEcho";
+import type { TextChangePayload } from "./bindings/TextChangePayload";
 
 /** 判断 invoke 的 reject 值是否为 CommandError 信封。 */
 export function isCommandError(e: unknown): e is CommandError {
@@ -147,6 +150,53 @@ export function onFsEntryChanged(
   handler: (changes: FsChange[]) => void,
 ): Promise<() => void> {
   return listen<FsEntryChangedEvent>("fs:entry_changed", (e) => handler(e.payload.changes));
+}
+
+/**
+ * 投递一次图片语义命名（change add-semantic-image-naming）：后端异步改名 + 全 vault 引用
+ * 改写。**不要 await 在粘贴链路上**——调用方在插入事务之后投递即返回；结果用于对账打开中
+ * 的会话与弹 toast。失败一律以 `status: "skipped"` 返回（静默降级），不抛业务错误。
+ */
+export function attachmentSemanticName(task: {
+  path: string;
+  notePath?: string;
+  before: string;
+  after: string;
+}): Promise<NamingOutcome> {
+  return invoke<NamingOutcome>("attachment_semantic_name", {
+    path: task.path,
+    note_path: task.notePath ?? null,
+    before: task.before,
+    after: task.after,
+  });
+}
+
+/** 撤销一次语义改名（令牌来自命名结果；过期 / 放弃条件命中时 reject 结构化错误）。 */
+export function attachmentSemanticUndo(token: string): Promise<NamingOutcome> {
+  return invoke<NamingOutcome>("attachment_semantic_undo", { token });
+}
+
+/**
+ * 纯函数命令：对给定文本重算 wikilink 末段改写点（dirty 文档的内存对账，不写盘）。
+ * 偏移单位 = UTF-16 code unit（JS 字符串下标）；匹配语义全在 Rust 的 link_graph。
+ */
+export function wikilinkRetargetText(
+  text: string,
+  fromRel: string,
+  toRel: string,
+): Promise<TextChangePayload[]> {
+  return invoke<TextChangePayload[]>("wikilink_retarget_text", {
+    text,
+    from_rel: fromRel,
+    to_rel: toRel,
+  });
+}
+
+/** 订阅语义命名的回声抑制事件（后端开始写盘之前发出；见 NamingEcho 的载荷注释）。 */
+export function onAttachmentNaming(
+  handler: (echo: NamingEcho) => void,
+): Promise<() => void> {
+  return listen<NamingEcho>("attachment:naming", (e) => handler(e.payload));
 }
 
 /**

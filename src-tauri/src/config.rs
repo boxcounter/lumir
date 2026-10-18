@@ -635,6 +635,49 @@ impl PermissionMode {
     }
 }
 
+/// `[harness].attachment_naming` 表（change add-semantic-image-naming，2026-10-18 配置面重塑
+/// 后落在 harness 域）：图片语义命名的开关与模型选择。
+///
+/// **布局判据**（Alex 2026-10-18 裁决，已沉淀进 `docs/specs/config-reference.md` §1.6）：
+/// **配置跟随资源域**——自动 LLM 行为的开关与模型选择归 `[harness]` 域（providers 所在）；
+/// 触发位置（粘贴）是 UI 事实，不是配置域。原顶层 `[attachments]` 表因此废除（它只有命名
+/// 两个键、没有别的住户），旧键按未知键口径静默忽略，无兼容读取（单用户、未发布）。
+///
+/// **缺省即默认**：整表缺席 / 单键缺席 = 出厂值；`model: null` 与缺席同义。
+/// **生效时点**（两个方向不同，MUST NOT 当成一句「下次粘贴即生效」）：`enabled` 关→开需重启
+/// （前端投递闸是启动装载值，关着时前端根本不投递任务）；开→关立即生效（后端命令每次调用
+/// 现场 `config::load()`）。`provider` / `model` 由后端在每次命名时现读 ⇒ 下一次粘贴即生效。
+///
+/// 不在本表内的东西（design §1 末段）：命名形态、slug 字符集、撤销窗口、扫描范围——那些是
+/// 行为，不是偏好。
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct AttachmentNamingConfig {
+    /// 图片语义命名开关（出厂 `true`）：false 时后端跳过命名、不发任何模型请求（前端仍可能
+    /// 投递任务，后端读到 false 即返回 skipped）。默认开意味着每次粘贴**新图**都会把图片
+    /// 字节与粘贴时刻光标前后各至多 500 字的正文发往配置的模型 provider（proposal「隐私面」，
+    /// Alex 2026-10-18 显式接受）。
+    pub enabled: bool,
+    /// 命名调用发往哪个 provider（`None` = 会话当前 provider）。闭集合外取值在校验期回落
+    /// `None` + 人话 warning（与 `title_provider` 同模板）。
+    pub provider: Option<HarnessProvider>,
+    /// 命名调用使用的模型 id（`None` = 选定 provider 的生效模型）。非空值 MUST 是该 provider
+    /// 的 `models` 清单内、声明 `vision: true` 的 id；不满足时**资格不通过**（保留暂存名），
+    /// MUST NOT 静默换成清单里的别的模型——那等于替用户选模型。装载期会给一条点名 warning，
+    /// 但值原样保留（不回落）。
+    pub model: Option<String>,
+}
+
+impl Default for AttachmentNamingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            provider: None,
+            model: None,
+        }
+    }
+}
+
 /// `[harness]` 表（change add-harness-probe §11）：对话运行时的配置面。
 ///
 /// **生效时点**：会话建立 / 每轮请求时由 harness 运行时读一次（M302），不热重载——与
@@ -663,6 +706,10 @@ pub struct HarnessConfig {
     /// 命名调用发往哪个 provider（design D8）：`None` = 会话当前 provider（旧行为即缺省值）；
     /// 非空须是 `providers` 表内的 id，闭集合外取值在校验期回落 `None` + 人话 warning。
     pub title_provider: Option<HarnessProvider>,
+    /// 图片语义命名（change add-semantic-image-naming，2026-10-18 配置面重塑）：开关 +
+    /// provider / model 选择。与会话自动命名（`auto_title` / `title_provider` /
+    /// `providers.<id>.title_model`）同一资源域、同一解析口径。
+    pub attachment_naming: AttachmentNamingConfig,
 }
 
 impl Default for HarnessConfig {
@@ -677,6 +724,7 @@ impl Default for HarnessConfig {
             auto_compact: true,
             auto_title: true,
             title_provider: None,
+            attachment_naming: AttachmentNamingConfig::default(),
         }
     }
 }
@@ -854,6 +902,81 @@ impl HarnessConfig {
             },
         }
     }
+
+    /// 图片语义命名的**唯一解析口**（change add-semantic-image-naming，design §1 / §4.2；
+    /// 2026-10-18 配置面重塑后与 [`HarnessConfig::title_target`] 同口径）：`None` = 没有
+    /// 满足条件的 vision 模型（或选定 provider 没有模型维度），调用方跳过命名、保留暂存名、
+    /// 不发任何请求、不弹失败 toast。
+    ///
+    /// 五字段**同出 `attachment_naming.provider` 指向的那一个 provider 条目**——模型取 A、
+    /// key 取 B 的混用形态与会话自动命名同样被禁止（design 不变量 8），调用方只该持有本结构、
+    /// 不再回读配置。
+    ///
+    /// 判据（按**当时生效**的 provider 现算——运行期切 provider 后重新核对，design §1）：
+    /// - `provider` 缺省 = 会话当前 provider（`session_provider`）；
+    /// - `model` 非空 ⇒ 必须就是本次使用的模型，且该 provider 的 `models` 清单列出它并声明
+    ///   `vision: true`；不满足即 `None`（MUST NOT 降级到清单里的其它模型——那等于替用户选
+    ///   模型）。`model` 为空 ⇒ 跟随该 provider 的生效模型。
+    ///
+    /// mock 是 fixture 驱动档：恒支持 vision，但没有模型维度，`model` 非空对它不成立。
+    /// 开关（`enabled`）不在本函数：它是独立的开关语义，诊断码要把它与「无可用模型」分开，
+    /// 因此由调用方先判（`attachment_naming::run`）。
+    pub fn attachment_naming_target(
+        &self,
+        session_provider: HarnessProvider,
+    ) -> Option<AttachmentNamingTarget> {
+        let provider = self.attachment_naming.provider.unwrap_or(session_provider);
+        let requested = self
+            .attachment_naming
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        match provider {
+            HarnessProvider::Mock => requested.is_none().then(|| AttachmentNamingTarget {
+                provider,
+                model: String::new(),
+                wire_api: WireApi::Responses,
+                api_key: String::new(),
+                base_url: None,
+            }),
+            HarnessProvider::Kimi | HarnessProvider::Deepseek => {
+                let entry = match provider {
+                    HarnessProvider::Kimi => &self.providers.kimi,
+                    _ => &self.providers.deepseek,
+                };
+                let model = match requested {
+                    Some(value) => value.to_string(),
+                    None => entry.model.clone(),
+                };
+                if model.trim().is_empty() || !self.vision_supported(&provider, &model) {
+                    return None;
+                }
+                Some(AttachmentNamingTarget {
+                    provider,
+                    model,
+                    wire_api: entry.wire_api,
+                    api_key: entry.api_key.clone(),
+                    base_url: entry.base_url.clone(),
+                })
+            }
+        }
+    }
+}
+
+/// 一次图片语义命名调用的完整目标（change add-semantic-image-naming，2026-10-18 配置面重塑）：
+/// 与会话自动命名的 [`TitleTarget`] 同形同口径——五个字段同出**一个** provider 条目。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentNamingTarget {
+    /// 实际发往的 provider（`attachment_naming.provider`，缺省 = 会话当前 provider）。
+    pub provider: HarnessProvider,
+    /// 本次调用实际使用的模型 id。mock 无模型维度，此处为空串（不伪造模型 id）。
+    pub model: String,
+    /// wire 方言（与 `api_key` / `base_url` 同出该 provider 条目）。
+    pub wire_api: WireApi,
+    pub api_key: String,
+    /// `None` = 该 provider 的官方地址（与 `HarnessProviderConfig.base_url` 同义）。
+    pub base_url: Option<String>,
 }
 
 /// 网络 provider 的 `TitleTarget` 装配（两个网络 provider 共用一份，MUST NOT 各写一遍）：
@@ -1017,6 +1140,20 @@ struct RawHarnessConfig {
     /// 命名调用发往的 provider（同上）：闭集合取值，缺键 / 空串 ⇒ 会话当前 provider（不告警）；
     /// 闭集合外取值在本模块回落 `None` + 人话 warning；类型不符在解析期失败 → 整文件回落。
     title_provider: Option<String>,
+    /// 图片语义命名（change add-semantic-image-naming，2026-10-18 配置面重塑）：开关 +
+    /// provider / model 三键。表内类型不符（`"enabled": "yes"`、`"model": 3`）或整表错形状
+    /// （`"attachment_naming": "on"`）在解析期失败 → 整文件回落（与 `[harness]` 其余字段同路）。
+    attachment_naming: RawAttachmentNamingConfig,
+}
+
+/// `harness.attachment_naming` 的解析镜像：三个字段都是「缺席 → `None` → 用默认；
+/// 显式给出 → 校验」。
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawAttachmentNamingConfig {
+    enabled: Option<bool>,
+    provider: Option<String>,
+    model: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1605,6 +1742,9 @@ fn validate_ignore_name(name: &str) -> Result<(), &'static str> {
 /// 两处**逐项**校验的例外（与 `vault.rule_files` 同形）：`permissions.allow` / `deny` 的
 /// 非法项逐项丢弃并各给一条 warning，其余项照常生效。空 `api_key` 是「未配置」的出厂状态，
 /// **不告警**（理由见模块头）。
+///
+/// `attachment_naming`（图片语义命名，2026-10-18 配置面重塑）走 [`validate_attachment_naming`]：
+/// `provider` 闭集合外回落缺省、`model` 不可用只点名不回落（资格不通过即保留暂存名）。
 fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
     let defaults = HarnessConfig::default();
     let mut warnings = Vec::new();
@@ -1684,6 +1824,16 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
     // 会话自动命名开关同路（change add-session-auto-naming）：缺键 ⇒ 默认 true、不告警。
     let auto_title = raw.auto_title.unwrap_or(defaults.auto_title);
 
+    // 图片语义命名（change add-semantic-image-naming 的配置面重塑）：校验要对照**选定
+    // provider** 的模型清单，因此排在 providers 校验之后。
+    let attachment_naming = validate_attachment_naming(
+        raw.attachment_naming,
+        provider,
+        &kimi,
+        &deepseek,
+        &mut warnings,
+    );
+
     (
         HarnessConfig {
             provider,
@@ -1699,9 +1849,92 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
             auto_compact,
             auto_title,
             title_provider,
+            attachment_naming,
         },
         warnings,
     )
+}
+
+/// `harness.attachment_naming` 的校验（change add-semantic-image-naming，2026-10-18 配置面
+/// 重塑）：照 `[harness]` 的模板——缺键回落默认（不告警）；`provider` 闭集合外取值回落
+/// `None` + 一条人话 warning；类型不符到不了这里（解析期整文件回落，见
+/// [`RawAttachmentNamingConfig`]）。
+///
+/// `model` 的处置与旧 `naming_model` 不同（评审重塑口径「不静默降级」）：非空值**原样保留**，
+/// 装载期只点名「当前不可用」（未在所选 provider 的清单内 / 未声明 `vision` / mock 下非空），
+/// **不回落**成别的模型——回落到生效模型等于替用户选模型。真正的资格判定在每次发起命名时由
+/// [`HarnessConfig::attachment_naming_target`] 按当时生效的 provider 现算（运行期切 provider
+/// 后重新核对）；不满足即保留暂存名、不发请求。空串按「未配置」归一为 `None` + warning。
+fn validate_attachment_naming(
+    raw: RawAttachmentNamingConfig,
+    session_provider: HarnessProvider,
+    kimi: &HarnessProviderConfig,
+    deepseek: &HarnessProviderConfig,
+    warnings: &mut Vec<String>,
+) -> AttachmentNamingConfig {
+    let defaults = AttachmentNamingConfig::default();
+    // bool 只有两种取值，缺键即回落默认、不告警（与 `auto_compact` / `auto_title` 同路）；
+    // 类型不符到不了这里（解析期整文件回落，单测钉住）。
+    let enabled = raw.enabled.unwrap_or(defaults.enabled);
+
+    // provider：缺键 / 空串 ⇒ 会话当前 provider（不告警）；闭集合外 ⇒ 回落缺省 + 人话 warning
+    // （与 `harness.title_provider` 同模板）。
+    let mut provider = None;
+    if let Some(raw_provider) = raw.provider.as_deref() {
+        let value = raw_provider.trim();
+        if !value.is_empty() {
+            match HarnessProvider::parse(value) {
+                Some(parsed) => provider = Some(parsed),
+                None => warnings.push(format!(
+                    "配置项 harness.attachment_naming.provider 取值 \"{value}\" 非法（可选：kimi、deepseek、mock），已回退为会话当前 provider"
+                )),
+            }
+        }
+    }
+
+    let model = match raw.model.as_deref().map(str::trim) {
+        None => None,
+        Some("") => {
+            warnings.push(
+                "配置项 harness.attachment_naming.model 为空，已按 null（跟随该 provider 的生效模型）处理"
+                    .to_string(),
+            );
+            None
+        }
+        Some(value) => {
+            let target = provider.unwrap_or(session_provider);
+            match target {
+                HarnessProvider::Mock => warnings.push(format!(
+                    "配置项 harness.attachment_naming.model 的值 \"{value}\" 无效：mock provider 没有模型清单，该键只能是 null；语义命名将不会发起"
+                )),
+                _ => {
+                    let entry = match target {
+                        HarnessProvider::Kimi => kimi,
+                        _ => deepseek,
+                    };
+                    match entry.models.iter().find(|spec| spec.id == value) {
+                        None => warnings.push(format!(
+                            "配置项 harness.attachment_naming.model 的值 \"{value}\" 不在 provider（{}）的 models 清单内；语义命名将不会发起——请在 harness.providers.{}.models 中声明该模型",
+                            target.as_str(),
+                            target.as_str()
+                        )),
+                        Some(spec) if !spec.vision => warnings.push(format!(
+                            "配置项 harness.attachment_naming.model 的值 \"{value}\" 未声明 vision 能力；语义命名将不会发起"
+                        )),
+                        Some(_) => {}
+                    }
+                }
+            }
+            // 值原样保留（不静默换成别的模型）。
+            Some(value.to_string())
+        }
+    };
+
+    AttachmentNamingConfig {
+        enabled,
+        provider,
+        model,
+    }
 }
 
 /// 单个 provider 参数的校验（M381 起 config-only）：`api_key` 去空白后原样保留（空 = 未配置，
@@ -4276,6 +4509,296 @@ mod tests {
                 api_key: "sk-deep".into(),
                 base_url: Some("https://deep.example/v1".into()),
             }
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // `harness.attachment_naming` 与语义命名资格（change add-semantic-image-naming；
+    // 2026-10-18 配置面重塑：从顶层 `[attachments]` 表搬进 harness 域）
+    // -----------------------------------------------------------------------
+
+    /// 带 vision 声明的模型清单项。
+    fn vision_spec_json(id: &str, vision: bool) -> String {
+        format!(r#"{{"id":"{id}","effort":false,"vision":{vision},"window":131072}}"#)
+    }
+
+    /// 缺省即默认：整表缺席 / 表内键缺席都是出厂值（开、provider 跟随会话、模型跟随生效模型），
+    /// 且不产生 warning。
+    #[test]
+    fn attachment_naming_defaults_without_warnings() {
+        let snap = load_from(&TempFile::new(r#"{"version":1}"#).0);
+        assert_eq!(
+            snap.config.harness.attachment_naming,
+            AttachmentNamingConfig {
+                enabled: true,
+                provider: None,
+                model: None,
+            }
+        );
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+
+        let snap =
+            load_from(&TempFile::new(r#"{"harness":{"attachment_naming":{"enabled":false}}}"#).0);
+        assert!(!snap.config.harness.attachment_naming.enabled);
+        assert_eq!(snap.config.harness.attachment_naming.provider, None);
+        assert_eq!(snap.config.harness.attachment_naming.model, None);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    /// 顶层 `attachments` 表已废除：旧键按未知键口径**静默忽略**（无兼容读取、无 warning）。
+    #[test]
+    fn legacy_attachments_table_is_ignored() {
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"attachments":{"semantic_naming":false,"naming_model":"kimi-cheap"},"last_vault":"/tmp/v"}"#,
+            )
+            .0,
+        );
+        assert!(
+            snap.config.harness.attachment_naming.enabled,
+            "旧键 MUST NOT 生效"
+        );
+        assert_eq!(snap.config.harness.attachment_naming.model, None);
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/v"));
+        assert!(
+            snap.warnings.is_empty(),
+            "未知键静默忽略：{:?}",
+            snap.warnings
+        );
+    }
+
+    /// 合法三键：`provider` 闭集合值 + 清单内声明 vision 的 `model` 原样生效，解析口按选定
+    /// provider 出五字段。
+    #[test]
+    fn attachment_naming_accepts_declared_provider_and_vision_model() {
+        let raw = format!(
+            r#"{{"harness":{{"provider":"kimi","attachment_naming":{{"enabled":true,"provider":"deepseek","model":"deepseek-vision"}},"providers":{{
+                "kimi":{{"api_key":"sk-kimi","model":"k3-256k","base_url":"https://kimi.example/v1","models":[{}]}},
+                "deepseek":{{"api_key":"sk-deep","model":"deepseek-vision","base_url":"https://deep.example/v1","models":[{},{}]}}}}}}}}"#,
+            vision_spec_json("k3-256k", true),
+            vision_spec_json("deepseek-vision", true),
+            vision_spec_json("deepseek-plain", false),
+        );
+        let snap = load_from(&TempFile::new(&raw).0);
+        assert_eq!(
+            snap.config.harness.attachment_naming.provider,
+            Some(HarnessProvider::Deepseek)
+        );
+        assert_eq!(
+            snap.config.harness.attachment_naming.model.as_deref(),
+            Some("deepseek-vision")
+        );
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        let target = snap
+            .config
+            .harness
+            .attachment_naming_target(snap.config.harness.provider)
+            .expect("资格通过");
+        assert_eq!(
+            target,
+            AttachmentNamingTarget {
+                provider: HarnessProvider::Deepseek,
+                model: "deepseek-vision".into(),
+                wire_api: WireApi::Responses,
+                api_key: "sk-deep".into(),
+                base_url: Some("https://deep.example/v1".into()),
+            },
+            "五字段同出选定 provider 条目，MUST NOT 混用会话 provider"
+        );
+        assert_ne!(target.api_key, "sk-kimi");
+    }
+
+    /// `provider` 闭集合外 ⇒ 回落 `None`（= 会话当前 provider）+ 人话 warning；`model` 的
+    /// 不可用形态只点名、**值原样保留**（不静默降级到别的模型）。
+    #[test]
+    fn attachment_naming_invalid_values_warn_without_silent_downgrade() {
+        // provider 非法。
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"provider":"kimi","attachment_naming":{"provider":"openai"}}}"#,
+            )
+            .0,
+        );
+        assert_eq!(snap.config.harness.attachment_naming.provider, None);
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|w| w.contains("attachment_naming.provider") && w.contains("openai")),
+            "{:?}",
+            snap.warnings
+        );
+
+        // model 不在清单内：warning 但值保留 ⇒ 资格不通过（不替用户换模型）。
+        let raw = format!(
+            r#"{{"harness":{{"providers":{{"kimi":{{"model":"k3-256k","models":[{}]}}}},"attachment_naming":{{"model":"gpt-vision"}}}}}}"#,
+            vision_spec_json("k3-256k", true),
+        );
+        let snap = load_from(&TempFile::new(&raw).0);
+        assert_eq!(
+            snap.config.harness.attachment_naming.model.as_deref(),
+            Some("gpt-vision"),
+            "值原样保留（MUST NOT 静默换成生效模型）"
+        );
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|w| w.contains("attachment_naming.model") && w.contains("gpt-vision")),
+            "{:?}",
+            snap.warnings
+        );
+        assert_eq!(
+            snap.config
+                .harness
+                .attachment_naming_target(snap.config.harness.provider),
+            None,
+            "未声明的模型 ⇒ 资格不通过（保留暂存名）"
+        );
+
+        // model 在清单内但未声明 vision：同样只点名 + 保留值。
+        let raw = format!(
+            r#"{{"harness":{{"providers":{{"kimi":{{"model":"k3-256k","models":[{}]}}}},"attachment_naming":{{"model":"k3-256k"}}}}}}"#,
+            vision_spec_json("k3-256k", false),
+        );
+        let snap = load_from(&TempFile::new(&raw).0);
+        assert_eq!(
+            snap.config.harness.attachment_naming.model.as_deref(),
+            Some("k3-256k")
+        );
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|w| w.contains("attachment_naming.model") && w.contains("vision")),
+            "{:?}",
+            snap.warnings
+        );
+        assert_eq!(
+            snap.config
+                .harness
+                .attachment_naming_target(snap.config.harness.provider),
+            None
+        );
+
+        // 空串：归一为 null（= 跟随生效模型）+ warning。
+        let snap =
+            load_from(&TempFile::new(r#"{"harness":{"attachment_naming":{"model":"  "}}}"#).0);
+        assert_eq!(snap.config.harness.attachment_naming.model, None);
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|w| w.contains("attachment_naming.model")),
+            "{:?}",
+            snap.warnings
+        );
+    }
+
+    /// mock provider 没有模型清单：非空 `model` 只点名 + 保留，资格不通过。
+    #[test]
+    fn attachment_naming_rejects_non_null_model_for_mock() {
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"provider":"mock","attachment_naming":{"model":"anything"}}}"#,
+            )
+            .0,
+        );
+        assert_eq!(
+            snap.config.harness.attachment_naming.model.as_deref(),
+            Some("anything"),
+            "值保留（不静默改）"
+        );
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|w| w.contains("attachment_naming.model") && w.contains("mock")),
+            "{:?}",
+            snap.warnings
+        );
+        assert_eq!(
+            snap.config
+                .harness
+                .attachment_naming_target(HarnessProvider::Mock),
+            None
+        );
+        // 模型为 null 时 mock 恒可用（记录侧不伪造模型 id）。
+        let snap = load_from(&TempFile::new(r#"{"harness":{"provider":"mock"}}"#).0);
+        let target = snap
+            .config
+            .harness
+            .attachment_naming_target(HarnessProvider::Mock)
+            .expect("mock 恒支持 vision");
+        assert_eq!(target.model, "");
+        assert_eq!(target.provider, HarnessProvider::Mock);
+    }
+
+    /// 类型不符走整文件回落（与 `[harness]` 的既有解析模型同路，单测钉住）。
+    #[test]
+    fn attachment_naming_wrong_type_falls_back_entire_file() {
+        let snap =
+            load_from(&TempFile::new(r#"{"harness":{"attachment_naming":{"enabled":"yes"}}}"#).0);
+        assert_eq!(snap.config, AppConfig::default());
+        assert!(snap.config.harness.attachment_naming.enabled);
+        assert_eq!(snap.warnings.len(), 1);
+
+        let snap = load_from(&TempFile::new(r#"{"harness":{"attachment_naming":{"model":3}}}"#).0);
+        assert_eq!(snap.config, AppConfig::default());
+        assert_eq!(snap.warnings.len(), 1);
+    }
+
+    /// 资格判定四档（design §4.2 的实现面）：有 vision / 无 vision / 缺省跟随 / mock。
+    /// `None` 一律表示「不发起命名、保留暂存名」。断言的是 [`HarnessConfig::attachment_naming_target`]
+    /// 的实返值（`run` 与它同构），不再另设封装函数（评审 r1 P2-1）。
+    #[test]
+    fn attachment_naming_target_qualification() {
+        let raw = format!(
+            r#"{{"harness":{{"provider":"kimi","providers":{{"kimi":{{"api_key":"sk-x","model":"k3-256k","models":[{},{}]}}}}}}}}"#,
+            vision_spec_json("k3-256k", true),
+            vision_spec_json("k2-plain", false),
+        );
+        let snap = load_from(&TempFile::new(&raw).0);
+        let harness = &snap.config.harness;
+        // 缺省：跟随会话当前 provider 的生效模型。
+        assert_eq!(
+            harness
+                .attachment_naming_target(harness.provider)
+                .map(|t| t.model),
+            Some("k3-256k".to_string())
+        );
+        // 显式指定一个未声明 vision 的模型：不发请求。
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"providers":{"kimi":{"model":"k3-256k","models":[{"id":"k3-256k","effort":false,"vision":true,"window":131072},{"id":"k2-plain","effort":false,"vision":false,"window":131072}]}},"attachment_naming":{"model":"k2-plain"}}}"#,
+            )
+            .0,
+        );
+        assert_eq!(
+            snap.config
+                .harness
+                .attachment_naming_target(snap.config.harness.provider),
+            None
+        );
+        // 清单外的模型：不发请求（MUST NOT 替用户选模型）。
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"providers":{"kimi":{"model":"k3-256k","models":[{"id":"k3-256k","effort":false,"vision":true,"window":131072}]}},"attachment_naming":{"model":"gpt-vision"}}}"#,
+            )
+            .0,
+        );
+        assert_eq!(
+            snap.config
+                .harness
+                .attachment_naming_target(snap.config.harness.provider),
+            None
+        );
+        // 当前模型本身没有 vision 声明：缺省档同样不发请求。
+        let raw = format!(
+            r#"{{"harness":{{"providers":{{"kimi":{{"model":"k2-plain","models":[{}]}}}}}}}}"#,
+            vision_spec_json("k2-plain", false),
+        );
+        let snap = load_from(&TempFile::new(&raw).0);
+        assert_eq!(
+            snap.config
+                .harness
+                .attachment_naming_target(snap.config.harness.provider),
+            None
         );
     }
 }

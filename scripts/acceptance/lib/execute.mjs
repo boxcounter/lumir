@@ -233,7 +233,21 @@ export function checkScenario(scenario) {
   if (titleModel !== undefined && titleProvider === undefined && scenario.config?.harness?.provider === undefined) {
     push("config.titleModel 需要同时给出 config.harness.provider 或 config.titleProvider（title_model 落在命名调用实际使用的 provider 条目上）");
   }
+  // 已废除但仍可能被旧场景 / 旧注释抄回来的键：**出现即报错**并点名替代键位（2026-10-18 配置面
+  // 重塑把附件命名从顶层 `attachments` 表搬进 `harness.attachment_naming`）。不拦的话 writeConfig
+  // 会静默丢弃它、场景跑在默认配置上——正是最该挡的「拼错即静默」形态。专属检查在前、通用
+  // 未知键检查里排除该键，避免同一条配置报两次。
+  const REMOVED_CONFIG_KEYS = new Map([
+    [
+      "attachments",
+      "config.attachments 已废除：附件命名配置改到 config.harness.attachment_naming（{ enabled, provider, model }）——写旧键会被静默丢弃、场景会跑在默认配置上",
+    ],
+  ]);
+  for (const [key, message] of REMOVED_CONFIG_KEYS) {
+    if (scenario.config?.[key] !== undefined) push(message);
+  }
   for (const k of Object.keys(scenario.config ?? {})) {
+    if (REMOVED_CONFIG_KEYS.has(k)) continue;
     if (!SCENARIO_CONFIG_KEYS.includes(k)) push(`config 未知键 ${k}（拼错即静默不生效，允许：${SCENARIO_CONFIG_KEYS.join(" / ")}）`);
   }
   // `config.editor`（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）：**整表透传**的 `[editor]` 表（snake_case 键），给
@@ -241,6 +255,16 @@ export function checkScenario(scenario) {
   // 写成非表（如列表 / 字符串）时 writeConfig 会把它当普通值铺开，静默丢掉半张表，故在此挡住。
   if (scenario.config?.editor !== undefined && !isPlainTable(scenario.config.editor))
     push(`config.editor 需要对象（[editor] 表，snake_case 键），实际 ${JSON.stringify(scenario.config.editor)}`);
+  // `config.harness.attachment_naming`（change add-semantic-image-naming，2026-10-18 配置面重塑）：
+  // 三键 `{ enabled, provider, model }` 写进 `harness` 表。写成非表时后端按类型不符整文件回落，
+  // 场景会静默跑到默认配置上，故在此挡住。
+  if (
+    scenario.config?.harness?.attachment_naming !== undefined &&
+    !isPlainTable(scenario.config.harness.attachment_naming)
+  )
+    push(
+      `config.harness.attachment_naming 需要对象（{ enabled, provider, model }），实际 ${JSON.stringify(scenario.config.harness.attachment_naming)}`,
+    );
   for (const [i, step] of (scenario.steps ?? []).entries()) {
     const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;
     if (!step.name) push(`${at} 缺少 name`);
