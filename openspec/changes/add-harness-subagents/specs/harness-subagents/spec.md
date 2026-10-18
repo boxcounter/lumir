@@ -5,7 +5,8 @@
 > 定义即 Markdown + YAML frontmatter 文件、按名字委派、按 `description` 自动委派、部分结果可 resume。
 > 第二轮按 Alex 节点 1 裁决修订：并行 + 后台运行、批准卡透传、内建 `explore`、用量按模型分桶、
 > 任务面板可见面。第三轮按节点 1 终审前的裁决修订：后台完成**自动唤醒**父会话 + 链式失控闸
-> （`AUTO_WAKE_CHAIN_MAX = 3`）；逐条出处见 [proposal.md](../../proposal.md)「裁决留痕」。与参照系的
+> （`AUTO_WAKE_CHAIN_MAX`）；节点 1 终审（2026-10-18）通过提案其余部分，该上限定为 5。逐条出处见
+> [proposal.md](../../proposal.md)「裁决留痕」。与参照系的
 > 逐项对照及刻意偏离见 proposal「参照系」节。运行公共层（`RunSpec` / `RunContext`）属 `harness`
 > capability，见 [harness delta](../harness/spec.md)。本 capability 只管「有哪些子代理、一次委派怎么
 > 跑、怎么收敛、怎么记账、怎么留档、用户看到什么」。
@@ -207,7 +208,7 @@ sidecar 重建一条自动化通知并上屏（agent / description / 终态 / `s
 
 链式失控闸 SHALL 是确定性规则，MUST NOT 依赖模型自行判断何时停止。每个父会话 SHALL 维护「连续自动
 回合数」：自动回合开始时加一；任何用户回合开始、任务面板「继续」、会话重置 / 恢复 / 切 vault 时清零
-（计数不持久化）。计数达到 `AUTO_WAKE_CHAIN_MAX = 3` 时，父会话快照 SHALL 暴露
+（计数不持久化）。计数达到 `AUTO_WAKE_CHAIN_MAX = 5` 时，父会话快照 SHALL 暴露
 `auto_wake.blocked = "chain_limit"` 并使任务面板出现触顶提示行（不必等下一次通知被拒才提示）。起
 自动回合前若计数已达上限，系统 SHALL NOT 起回合：通知照常上屏并写投递标记（恢复后据标记重建显示），
 仍提供「继续」入口（点击等价一次用户发言——计数清零并按当前待处理通知起一个回合）；用户停止自动
@@ -236,7 +237,7 @@ sidecar 重建一条自动化通知并上屏（agent / description / 终态 / `s
 
 #### Scenario: 链上限触顶停摆
 
-- **WHEN** 连续三个自动回合已经跑完，第 4 条后台结果收敛
+- **WHEN** 连续五个自动回合已经跑完，第 6 条后台结果收敛
 - **THEN** 不再起自动回合；通知仍作为自动化通知上屏并写投递标记；`subagent_notified.wake = blocked_chain`；
   任务面板出现触顶提示行与「继续」入口；快照 `auto_wake.blocked = "chain_limit"`
 
@@ -575,7 +576,7 @@ SHALL 沿用既有模板：类型不符整节回落 + 人话 warning；数值越
 委派段（`subrun_limit`），只计实际进入执行的段（前台 + 后台），MUST NOT 静默跳过。`max_concurrent`
 SHALL 限制会话级同时运行的 run 数；超出时后台委派回 `concurrency_limit`，前台委派等待许可。
 
-自动唤醒的链上限（`AUTO_WAKE_CHAIN_MAX = 3`）与合并窗口（`AUTO_WAKE_COALESCE_MS = 2000`）MUST NOT
+自动唤醒的链上限（`AUTO_WAKE_CHAIN_MAX = 5`）与合并窗口（`AUTO_WAKE_COALESCE_MS = 2000`）MUST NOT
 是本节的配置键，SHALL 由代码常量表达（安全绳不是策略旋钮，见 harness-subagents「后台完成的通知投递
 与自动唤醒」）。配置文档 SHALL 写明无人注视下的消耗上界（链上限 × 单回合委派上限 × 单 run token
 预算 + 自动回合自身往返）。

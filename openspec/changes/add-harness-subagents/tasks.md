@@ -5,16 +5,18 @@
 > `docs/specs/{config-reference,subagent-definitions}.md`、`scripts/acceptance/scenarios/**`、
 > `openspec/changes/add-harness-subagents/**`、`docs/adr/0007-*.md`。
 >
-> **前置**：节点 1（提案评审）通过前不动手；本 change 只到提案制品 + 原型。
+> **前置**：节点 1（提案评审）已于 2026-10-18 终审通过（Alex 原话「5 个回合。subagents 的提案其他
+> 部分我没有异议，通过。」，见 proposal「裁决留痕」）；ADR 0007 修订（§0.1）仍须 Alex 过目。节点 1
+> 通过后本 change 进入实现，实现范围以本文件各节 tasks 为准。
 >
 > **裁决口径**：形态照 Claude Code subagents 参照系（定义即 Markdown + frontmatter、按名字委派、按
 > description 自动委派、partial 可 resume）；真源已裁决的两条不松动——工具缺省只读三件、三重闸全在。
 > 第二轮按 Alex 节点 1 阅读中的裁决改写：**并行 + 后台运行、批准卡透传、内建 `explore`、用量按模型
 > 分桶、用户可见面**（逐条原话见 proposal「裁决留痕」）。第三轮按节点 1 终审前的裁决改写：**后台完成
-> 自动唤醒父会话**（推翻取舍 14）+ **链式失控闸**（`AUTO_WAKE_CHAIN_MAX = 3`，取舍 19）、降级检查改由
+> 自动唤醒父会话**（推翻取舍 14）+ **链式失控闸**（`AUTO_WAKE_CHAIN_MAX = 5`，取舍 19）、降级检查改由
 > cron 承载。深度 1 层用「不授予 `task` 工具」表达；逐条取舍见 proposal 末尾 19 条设计取舍（第 7、13 条
-> 与 15–18 条已采纳；第 14 条先采纳后推翻；第 19 条待裁），Alex 否决项按替代方案改写后重走节点 1；
-> 实现期发现意图需变更时停下重走节点 1。
+> 与 15–18 条已采纳；第 14 条先采纳后推翻；第 19 条已裁决，节点 1 终审把链上限定为 5）。节点 1 已
+> 通过；实现期发现意图需变更时，把替代方案写清后停下重走节点 1。
 
 ## 0. 前置（ADR 与跨 change 对齐）
 
@@ -123,10 +125,10 @@
   `shown_at`），供「已上屏、未消费」窗口的恢复。单测：空闲唤醒、两 run 忙时合并为 1 个回合、
   在飞时排队、用户回合撤销待起唤醒并把通知并入用户回合输入、上屏后退出→恢复按标记重建且不补唤醒、
   通知已进过 `llm_request` 时标记被判陈旧不重复上屏。
-- [ ] 4.14 链式失控闸：常量 `AUTO_WAKE_CHAIN_MAX = 3`（代码常量，不进 `SubagentsConfig`）；计数在
+- [ ] 4.14 链式失控闸：常量 `AUTO_WAKE_CHAIN_MAX = 5`（代码常量，不进 `SubagentsConfig`）；计数在
   自动回合开始时加一，用户回合开始 / 面板「继续」/ 会话重置恢复切 vault 时清零，不持久化；触顶
   不起回合、`auto_wake.blocked = "chain_limit"`、通知照常上屏并写投递标记；用户停止自动回合视同触顶
-  （`blocked = "stopped"`）。单测覆盖：链内三回合放行、第 4 次触顶、清零后恢复、停止后不再唤醒、
+  （`blocked = "stopped"`）。单测覆盖：链内五回合放行、第 6 次触顶、清零后恢复、停止后不再唤醒、
   aborted 不唤醒、自动回合内部触顶 `loop_max` 不改变链计数（两者正交）。
 
 ## 5. 用量归属与留存
@@ -155,7 +157,7 @@
 - [ ] 6.3 `docs/specs/config-reference.md` 新增 `[harness.subagents]` 键表：缺省值、合法域、生效时机
   （装载时读一次）、定义值夹取、**子运行用量按模型分桶且不进父会话 ctx% / cache%**、回合级最坏
   token 消耗（`max_subruns_per_turn × max_tokens`）；另写明两个**不是配置键**的常量
-  （`AUTO_WAKE_CHAIN_MAX = 3`、`AUTO_WAKE_COALESCE_MS = 2000`）与无人注视下的消耗上界
+  （`AUTO_WAKE_CHAIN_MAX = 5`、`AUTO_WAKE_COALESCE_MS = 2000`）与无人注视下的消耗上界
   （`AUTO_WAKE_CHAIN_MAX × max_subruns_per_turn × max_tokens` + 自动回合自身往返）。
 - [ ] 6.4 新增 `docs/specs/subagent-definitions.md`：定义文件格式（vault / user 路径、frontmatter
   字段表含 `background`、校验与丢弃规则、优先级、热加载时机、清单与 15k 告警、内建 `explore` 与
@@ -215,7 +217,7 @@
   批准卡在行内展开并点名 agent；主 transcript 的 AX 树不含子运行工具行；停止单个 run 只停它。
 - [ ] 8.20 「忙时合并为一个回合」：用户回合进行中两个后台 run 相继收敛；断言当前回合结束后只起**一个**
   自动回合、输入含两条通知（同一 `wake_batch`）、自动回合数 = 1。
-- [ ] 8.21 「链上限与恢复」：连续三个自动回合后第 4 条后台结果收敛 ⇒ 不起回合、通知照常上屏并写
+- [ ] 8.21 「链上限与恢复」：连续五个自动回合后第 6 条后台结果收敛 ⇒ 不起回合、通知照常上屏并写
   投递标记、`wake=blocked_chain`、任务区出现触顶提示行（AX 断言）且「继续」可点；用户发言后链清零，
   下一条后台结果恢复自动唤醒；停止自动回合后同样不再唤醒（`blocked_stopped`）。
 - [ ] 8.22 「自动回合与 loop_max 正交」：自动回合内 mock 驱动工具往返触顶 `loop_max`，断言该回合按

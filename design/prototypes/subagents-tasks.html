@@ -406,6 +406,9 @@ const USAGE_SCENES = {
   wake: [{ model: MODELS.fast, io: "输入 134k（缓存 82k）· 输出 4.6k · 2 段" }],
 };
 
+/* 链式失控闸上限：原型内的唯一来源（与 spec 的 AUTO_WAKE_CHAIN_MAX 同值） */
+const CHAIN_MAX = 5;
+
 const SCENES = {
   parallel: {
     name: "并行运行中",
@@ -432,13 +435,13 @@ const SCENES = {
   },
   wake: {
     name: "自动唤醒与链上限",
-    desc: "两个后台任务在同一个合并窗口里收敛：通知合并成一条、只起一个自动回合。连续自动回合已达上限（3）后不再唤醒——通知照常上屏，任务区顶部留提示行，「继续」等价一次发言（链清零并起一个回合）。",
+    desc: `两个后台任务在同一个合并窗口里收敛：通知合并成一条、只起一个自动回合。连续自动回合已达上限（${CHAIN_MAX}）后不再唤醒——通知照常上屏，任务区顶部留提示行，「继续」等价一次发言（链清零并起一个回合）。`,
     user: "这两份都不急，你先跑着。",
     lead: "好，两个都放后台；写完我会自动汇报，不用你催。",
     wake: {
       notice: ["r1", "r2"],
       reply: "两份都完了：research 梳理出 9 个变更（两类），scribe 已把结论落成笔记，两处措辞待你确认。",
-      chainIndex: 3,
+      chainIndex: 5,
       blocked: "chain_limit",
     },
   },
@@ -702,7 +705,7 @@ function wakeReplyHTML() {
   if (!w || !w.reply) return "";
   const more = state.continued ? "<p>好，接着把还没汇报的后台结果处理掉。</p>" : "";
   return `<div class="msg msg-agent msg-auto">
-    <div class="who">AGENT · 自动回合<span class="when">· 由完成通知唤醒 · 链 ${w.chainIndex} / 3</span></div>
+    <div class="who">AGENT · 自动回合<span class="when">· 由完成通知唤醒 · 链 ${w.chainIndex} / ${CHAIN_MAX}</span></div>
     <div class="body"><p>${w.reply}</p>${more}</div>
   </div>`;
 }
@@ -716,7 +719,7 @@ function chainAlertHTML() {
   }
   const text = w.blocked === "stopped"
     ? "<b>你停止了自动回合</b>：后续后台结果只上屏，不再自动唤醒。"
-    : "<b>自动回合已达上限（3）</b>：后续后台结果只上屏，等你发言后处理。";
+    : `<b>自动回合已达上限（${CHAIN_MAX}）</b>：后续后台结果只上屏，等你发言后处理。`;
   return `<div class="tp-alert"><span class="al-text">${text}</span><button type="button" class="mini" data-continue>继续</button></div>`;
 }
 
@@ -742,7 +745,7 @@ const NOTES = {
   parallel: "<b>并行</b>：三个任务同时跑，任务区每行只留 agent + 一句话 + 一个读数；点行展开看模型、步骤与用时。状态词永不截断，description 是唯一可截断字段。",
   approval: "<b>批准透传</b>：卡片跟着发起者走（行内展开），点名 agent 与 description；标题标待批数。点「批准 / 拒绝」看卡片就地收敛、行回到运行中——拒绝只废这一次调用。",
   background: "<b>后台 + 自动唤醒</b>：回合结束后行仍常驻（带「后台」）；收敛的通知（左侧色条）不只是上屏——父会话空闲时会自动起一个回合，模型据此汇报（「AGENT · 自动回合」）。多条通知在同一窗口收敛时合并为一条。",
-  wake: "<b>链上限</b>：自动回合同样是普通回合，但连续三次没有你的发言就停摆——通知照常上屏，任务区顶部留提示行；点「继续」等价你说了一句话（链清零并起一个回合）。闸是确定性计数，不靠模型自觉。",
+  wake: `<b>链上限</b>：自动回合同样是普通回合，但连续 ${CHAIN_MAX} 次没有你的发言就停摆——通知照常上屏，任务区顶部留提示行；点「继续」等价你说了一句话（链清零并起一个回合）。闸是确定性计数，不靠模型自觉。`,
   done: "<b>按模型分桶</b>：全部收敛后任务区收敛为一行摘要（完成数）+ 按模型用量；每个 run 的详情从 transcript 的 task 行点开（历史任务不逐行留在面板）。触顶的行标「部分结果」并给出触顶原因。",
   catalog: "<b>清单</b>：名字 / 来源 / 工具数 / 模型 / 一句话描述；覆盖内建时只显示生效的一份。v1 没有编辑界面，改定义仍是编辑文本文件。",
   off: "<b>关停</b>：任务区整块不出现（空态不占位），transcript 里也没有 task 行——工具不注册，模型看不见它。",
