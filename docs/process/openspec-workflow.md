@@ -12,7 +12,7 @@
         ▼
 validate --all --strict + CI 门禁 ──► 提交 PR ──► 【评审节点 2：归档评审】
                                                   │ 通过
-openspec archive（并入 living spec） ◄── Alex 确认 ◄────┘
+openspec archive（并入 living spec） ◄── 节点 2 通过 ◄────┘
 ```
 
 一个 change 对应一个 PR 序列：提案 PR 与实现 PR 可以合并为一个 PR（小型变更），也可以拆开（提案先行锁定意图）。判断标准：Alex 是否需要在实现前就裁决"做不做"。需要则拆开。
@@ -22,9 +22,16 @@ openspec archive（并入 living spec） ◄── Alex 确认 ◄────�
 | 节点 | 时机 | 看的制品 | 通过标准 |
 |---|---|---|---|
 | 1. 提案评审 | 实现开始前 | `proposal.md`（+ `design.md` 如有） | 不看代码即可裁决：为什么改、改什么、不做什么，三者都答清楚了 |
-| 2. 归档评审 | 实现完成、archive 前 | `tasks.md` 勾选状态、`specs/` 增量 | tasks 全部勾选或标注放弃原因；spec 增量与 proposal 的意图一致，无实现期静默扩scope |
+| 2. 归档评审 | 实现完成、archive 前 | `tasks.md` 勾选状态、`specs/` 增量 | tasks 全部勾选或标注放弃原因；spec 增量与 proposal 的意图一致，无实现期静默扩scope。delta 相对 living spec 无新增内容的纯目录移动可由机器判据替代人肉评审（见下） |
 
-两个节点都是硬门禁：**未经节点 1 通过的 change 不进入实现；未经节点 2 通过的 change 不 archive。** 这是"人不 review 代码"模式下意图层唯一的防线（ADR 0004）。
+两个节点都是硬门禁：**未经节点 1 通过的 change 不进入实现；未经节点 2 通过的 change 不 archive。** 这是"人不 review 代码"模式下意图层唯一的防线（ADR 0004）。节点 2 的「通过」有两条通道——Alex 人肉评审，或纯目录移动情形下的机器判据替代（见下）。
+
+**节点 2 的机器判据替代**（2026-10-18 Alex 裁决）：归档命令与归档对账脚本合起来判「delta 相对 living spec 无新增内容、无静默丢段」时，归档**不等 Alex 人肉点头**，机器判据即通过。两个机器读数缺一不可：
+
+- 归档命令输出 `Specs already in sync; no files changed`（1.12.0 原文）——delta 相对 living 无任何新增 / 改动，归档是纯目录移动；
+- 归档提交后 `node scripts/openspec-archive-check.mjs --archived <change-id>` 输出 `PASS`——无静默丢段，且 delta 的每个段落都完整落进了归档后的 living spec。
+
+delta 相对 living spec **有新增内容**时仍走人肉节点 2：机器只能证「没丢东西」，证不了「新增的东西是对的」。裁决原话（2026-10-18）：「如果只是需要两个字，不需要我做什么，那真的有必要等我回一句吗？」——机器能判定「无事可裁」时，再等人肉回一句没有价值。首个适用现场：change `trim-ignore-default-names`（M571 归档，delta 与 living 逐字相同，两个读数均如上）。
 
 评估性约定（ADR 0004 第 4 条）：自首个全循环跑通起算，跑满 ≥3 个全循环或满两周，先到为准，评估"评审制品是否真的让 Alex 不看代码也能裁决"。不达标则退化为 `docs/proposals/` + 模板自建约定，不留恋。
 
@@ -55,6 +62,8 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 
 已知边界：同一 gap 里删一段、增一段时按位置配对判「改写」，故「删一段、原地写一段无关内容」会被当作改写放行——这类改动在 PR diff 里是可见的，不属本判据守的静默丢失面。
 
+**活跃 change 的 MODIFIED 内容 MUST NOT 提前写进 living spec**（2026-10-18 Alex 裁决；原话：「如果只是需要两个字，不需要我做什么，那真的有必要等我回一句吗？」——机器判据要在无事可裁时替代人肉点头，前提就是 delta 必须留下可对账的增量，不能先写进 living 把判据掏空）：living spec 只由 `archive` 从 delta 并入；change 仍活跃时直接改写 living，会让 delta 与 living 逐字相同——归档退化为纯目录移动，节点 2 评审没有增量可看，上面的对账门禁也同样判不出任何东西（delta == living ⇒ 无段落可丢）。现场：change `trim-ignore-default-names` 的 delta 在活跃期被直接写进 `openspec/specs/{fs-io,file-tree}/spec.md`，沉淀为 finding `.tower/comms/findings/20261018-worker-m569-improve-change-trim-ignore-default-names-delta-living-spec-living.md`，M571 以「直接归档」处置。特例：行为随实现合并立即生效、living spec 必须描述现状（读者拿 living 当现状读）时允许提前改写，但须 tower 在 mission 里**显式授权**并写明理由；授权只针对该 change，不构成后续 change 的先例。
+
 ## 有原型时的设计合同：视觉保真必填（2026-10-06）
 
 凡有原型的 change——`design/prototypes/` 下的原型、Alex 过目定稿的原型截图、或提案期以屏幕形态定下的方向——`design.md` 的合同**必须含「视觉保真」一节**，逐屏（或逐表面）列出可直接对账的视觉口径：
@@ -84,15 +93,15 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 2. **自验**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 必须通过；CI 会重复此校验。
 3. **提案 PR**：提交并在 PR 描述中 @ Alex 请求节点 1 评审。未通过则按批注修订，保持 change 不进入实现。
 4. **实现**：按 `tasks.md` 逐项实现并勾选（`- [x]`）。发现 proposal 意图需要变更时，停下：更新 proposal 并重新走节点 1，不静默扩 scope。
-5. **归档评审**：tasks 全部勾选（或标注放弃原因）后提交 PR 请求节点 2 评审。
-6. **归档**：节点 2 通过后执行 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，living spec 自动并入 `openspec/specs/`。
+5. **归档评审**：tasks 全部勾选（或标注放弃原因）后提交 PR 请求节点 2 评审；delta 相对 living spec 无新增内容的纯目录移动按上文「节点 2 的机器判据替代」直接归档，不等人肉点头。
+6. **归档**：节点 2 通过后执行 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，living spec 自动并入 `openspec/specs/`；随后按上文跑一次 `--archived` 事后审计。
 
 ## 批次收尾 checklist（归档跟踪）
 
 实测失效模式（M150 归档对账，2026-09-17）：**实现 PR 合并后没人跟进归档**——当时 11 个活跃 change 里 7 个已实现未归档（`add-wikilink` 积压 12 天），living spec 因此长期落后于实现，其间还出现 living spec 与实现直接矛盾（`editor-live-preview` 自称「M1 只读口径」而 md 模式早已可编辑）。防线是把它做成批次收尾的强制项：
 
 - [ ] **本批 merge 的 change 全部列入归档待办并跟踪到归档**：每个 change 在实现 PR 合并时即落一条归档跟踪记录（记在 `docs/backlog.md`；待归档属可客观核对的事项，由 tower 记账、不进「待 Alex 裁决」区），批次收尾时用 `npx --yes @fission-ai/openspec@1.12.0 list` 逐个核对——列表里出现 `✓ Complete` 却仍在活跃列表里的，就是漏跟踪的那个。
-- [ ] **归档前逐条对账**（对账口径）：tasks 勾选状态 / spec 增量 / 当前实现三者一致才归档；任务未勾但有正当理由的，先就地标注放弃原因再归档；spec 增量与实现矛盾的，**不归档**，并在 `docs/backlog.md` 说明矛盾点。其中「spec 增量没丢掉 living spec 的既有段落」由机器判据兜底（`scripts/openspec-archive-check.mjs`，随 `scripts/docs-check.sh` 在 PR 阶段就跑）；归档完成后再对该 change 跑一次 `node scripts/openspec-archive-check.mjs --archived <change-id>` 复核。
+- [ ] **归档前逐条对账**（对账口径）：tasks 勾选状态 / spec 增量 / 当前实现三者一致才归档；任务未勾但有正当理由的，先就地标注放弃原因再归档；spec 增量与实现矛盾的，**不归档**，并在 `docs/backlog.md` 说明矛盾点。其中「spec 增量没丢掉 living spec 的既有段落」由机器判据兜底（`scripts/openspec-archive-check.mjs`，随 `scripts/docs-check.sh` 在 PR 阶段就跑）；归档完成后再对该 change 跑一次 `node scripts/openspec-archive-check.mjs --archived <change-id>` 复核。纯目录移动（delta 与 living 逐字相同）的归档按上文「节点 2 的机器判据替代」走，不等 Alex 点头。
 - [ ] **归档后核对新建 capability 的 Purpose**：`archive` 会为新建的 living spec 写入占位 Purpose（`TBD - created by archiving change …`），`validate --all --strict` 会因此报红——须手写替换为「这个 capability 是干什么的」，再跑一次 validate 确认全绿。
 - [ ] **backlog 卫生（2026-10-12 Alex 裁决）**：本批核销 / 裁决落地的条目**直接从 `docs/backlog.md` 删除、不留索引**（git 历史即台账；含仍在生效的长期口径时改移「承接残项」）；条目一律一行 gist + 证据指针，批次报告与全量回归总表只留指针；只记改变未来动作的信息（结论 / 待办 / 裁决点 / 复现口径）——过程性验证状态（「跑完、PASS」类）不入账（2026-10-16 Alex 裁决，口径见该文件头部「维护规则」）；顺带检查体量红线——`wc -l docs/backlog.md` 超 **300** 行即触发一次结构清理（口径见该文件头部的「维护规则」；无核销/僵尸项可清时记「已查」即过，不为压行数删活条目）。
 - [ ] **finding 落账率对账（2026-10-12 Alex 认可）**：本批 `.tower/comms/findings/` 新增文件数与 `docs/backlog.md` 新增条目数逐一核对，不等即查漏——漏落账的 finding 等于没登记。
