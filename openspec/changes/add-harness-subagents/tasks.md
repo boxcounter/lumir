@@ -170,9 +170,10 @@
 - [x] 4.3 三重闸 + 配额：预算来自定义（夹取配置上限）；检查点（往返前、工具调用前、往返后 token
   复查）；时间闸按运行时长累计、审批等待顺延；provider 配额 / 限流 ⇒ `stopped_by=quota` 且不重试
   （单测覆盖四闸 + 停止 + 审批等待不计时）。
-  （往返后复查在 `turn::run_turn_core_with_mode`（只对 tokens / time 生效，交互 loop_max 语义不变）。
-  单测 `three_budgets_stop_with_the_right_reason` / `approval_wait_does_not_count_against_the_time_budget`
-  / `api_error_and_quota_semantics`。）
+  （往返后复查在 `turn::run_turn_core_with_mode`；**工具调用前**检查点在
+  `turn::execute_calls` 的逐调用循环里（只对 tokens / time 生效，交互 loop_max 语义不变）。
+  单测 `three_budgets_stop_with_the_right_reason` / `time_budget_is_checked_before_each_tool_call`
+  / `approval_wait_does_not_count_against_the_time_budget` / `api_error_and_quota_semantics`。）
 - [x] 4.4 错误语义：API 错误但有文本 ⇒ partial + `stopped_by=error`；无文本 ⇒ failed；不自动重试
   （单测）。
   （单测同上；quota 无产出时按 failed 收口。）
@@ -206,9 +207,12 @@
   收尾点。M586 的 `parallel_orchestration_backfills_in_call_order` 继续覆盖回填顺序。）
 - [x] 4.11 后台生命周期：跨回合运行不改 busy；父回合停止广播中止；单个 run 可从面板停止；会话重置 /
   恢复 / 切 vault / 退出中止并记 `aborted`（单测覆盖四条）。
-  （`SubagentHub::broadcast_abort` / `stop_run`；`Session::Drop → shutdown` 覆盖重置 / 恢复 /
-  切 vault / 退出。停止单个 run 的命令层接线归 M590；本棒提供 `stop_run` 唯一实现体。单测
-  `aborted_background_run_does_not_wake`。）
+  （`SubagentHub::broadcast_abort` / `stop_run`；`Runtime::request_abort` 在释放 sessions 锁
+  之后**直接**广播（前台 `task` 的同步 join 期间也能送达）；`Session::Drop → shutdown` 覆盖
+  重置 / 恢复 / 切 vault / 退出。中枢与终态 sink 都持 `WeakRuntime`，运行时结束后可回收。
+  停止单个 run 的命令层接线归 M590；本棒提供 `stop_run` 唯一实现体。单测
+  `aborted_background_run_does_not_wake` / `stopping_the_parent_aborts_a_foreground_task_immediately`
+  / `isolated_slot_does_not_wake_and_the_hub_is_reclaimable`。）
 - [x] 4.12 批准透传接线：`ApprovalRequest` 增加 `source`（agent / run_id / description）；会话待批
   由单槽改列表 `pending_approvals`（快照字段一次迁净，旧字段直接删）；批准 / 拒绝 / 本会话不再问 /
   停止收回四条路径的单测；断言「持 `Runtime.sessions` 锁时不等待用户或子运行」。
@@ -232,7 +236,11 @@
   `Runtime::resume_session`（通知灌回 input、面板加 `notice` 行、投递标记复制进新文件，
   不起回合）。面板的渲染样式归 M590。单测
   `idle_background_result_wakes_one_parent_turn` / `busy_background_results_merge_into_one_turn` /
-  `notice_markers_rebuild_only_unconsumed_batches`。）
+  `notice_markers_rebuild_only_unconsumed_batches`。链触顶 / 停止时 pending **保留**（上屏但
+  不消费），`continue_wake` 按 `TurnInput::Preloaded` 立即起回合且不重复入历史；isolated 槽位
+  在 `on_background_finished` / `process_wake` 全路径短路。单测
+  `continue_after_chain_limit_starts_a_turn_without_duplicating_the_notice` /
+  `isolated_slot_does_not_wake_and_the_hub_is_reclaimable`。）
 - [x] 4.14 链式失控闸：常量 `AUTO_WAKE_CHAIN_MAX = 5`（代码常量，不进 `SubagentsConfig`）；计数在
   自动回合开始时加一，用户回合开始 / 面板「继续」/ 会话重置恢复切 vault 时清零，不持久化；触顶
   不起回合、`auto_wake.blocked = "chain_limit"`、通知照常上屏并写投递标记；用户停止自动回合视同触顶

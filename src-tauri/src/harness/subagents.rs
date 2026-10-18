@@ -13,8 +13,7 @@
 //! MUST NOT 进入父会话 transcript 或父会话 LLM 历史；父会话只拿 `task` 工具结果与后台完成
 //! 通知（design §10 / §12.2）。
 //!
-//! 模块声明在 `run.rs`（`#[path = "subagents.rs"]`）：`harness.rs` 的模块表不在本棒改动面内，
-//! 对外路径是 `harness::run::subagents`。
+//! 模块在 `harness.rs` 的 mod 表注册，对外路径是 `harness::subagents`。
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -61,7 +60,10 @@ pub struct SubagentHub {
 }
 
 struct HubInner {
-    runtime: Runtime,
+    /// **弱引用**（评审 r1 P1-1）：中枢挂在 Session 上、Session 又在 Runtime 里；持强
+    /// `Runtime` 会把 `RuntimeInner → sessions → Session → hub → RuntimeInner` 闭成环，
+    /// cron 的独立运行实例每次都无法回收。运行实例结束后 upgrade 失败，唤醒与收尾停摆。
+    runtime: crate::harness::WeakRuntime,
     scope: VaultScope,
     /// 建中枢时的父会话令牌（诊断用；子运行各自保存自己的启动令牌）。
     parent_token: u64,
@@ -122,14 +124,21 @@ struct WakeState {
     blocked: Option<&'static str>,
     /// 自动回合在飞。
     running: bool,
-    /// 已收敛但尚未投递的通知（父会话正忙时排队）。
+    /// 已收敛、尚未被某个回合消费的通知。**链触顶 / 停止时不清空**（design §12.6.3
+    /// 「`pending` 保留」）——「继续」要据此起回合；只有回合真正起成 / 用户回合并入后才消费。
     pending: Vec<NoticeRun>,
+    /// `pending` 里已经写进父会话历史（上屏）的 run id：链触顶时先上屏但保留 pending，
+    /// 「继续」或用户回合不得把同一条通知再插一次（「同一语义两处真源」的反面：历史里
+    /// 只能有一份）。
+    delivered: HashSet<String>,
     /// 当前批次 id（pending 为空时下一次入队重新铸）。
     batch: Option<String>,
     /// 空闲合并窗口的截止时刻（从首条通知起算、不因新通知顺延）。
     deadline: Option<Instant>,
     /// 空闲监视线程是否已在跑。
     idle_watch: bool,
+    /// 面板「继续」：跳过合并窗口、立即按 pending 起回合（design §12.6.3）。
+    force: bool,
 }
 
 #[derive(Clone)]
@@ -179,7 +188,7 @@ impl SubagentHub {
         let limit = config.subagents.max_concurrent;
         Self {
             inner: Arc::new(HubInner {
-                runtime,
+                runtime: runtime.downgrade(),
                 scope,
                 parent_token,
                 config: Mutex::new(config),
@@ -305,21 +314,34 @@ impl SubagentHub {
     /// 取消待起唤醒、清零链计数与次数闸。
     pub(crate) fn begin_user_turn(&self) -> Option<NoticeInsert> {
         self.reset_turn_accounting();
-        let (notices, batch) = {
+        let (notices, delivered, batch) = {
             let mut wake = self.inner.wake.lock().unwrap_or_else(|e| e.into_inner());
             wake.chain = 0;
             wake.blocked = None;
             wake.deadline = None;
             wake.idle_watch = false;
-            (std::mem::take(&mut wake.pending), wake.batch.take())
+            wake.force = false;
+            (
+                std::mem::take(&mut wake.pending),
+                std::mem::take(&mut wake.delivered),
+                wake.batch.take(),
+            )
         };
         if notices.is_empty() {
             return None;
         }
+        // 去重：链触顶时通知已经上屏（`delivered`），用户回合不得把它再插一遍。
+        let undelivered: Vec<NoticeRun> = notices
+            .into_iter()
+            .filter(|notice| !delivered.contains(&notice.run_id))
+            .collect();
+        if undelivered.is_empty() {
+            return None;
+        }
         let batch_id = batch.unwrap_or_else(|| self.new_batch_id());
-        let text = notice_text(&notices, &batch_id);
+        let text = notice_text(&undelivered, &batch_id);
         // 通知的「最终处理」事件：并入用户回合（design §12.6.3 的 `user_turn`）。
-        for notice in &notices {
+        for notice in &undelivered {
             self.emit(events::subagent_notified(
                 &notice.run_id,
                 &notice.agent,
@@ -425,12 +447,20 @@ impl SubagentHub {
         found
     }
 
-    /// 面板「继续」（design §12.6.3）：链清零、blocked 清空，按当前 pending 恢复唤醒。
+    /// 面板「继续」（design §12.6.3）：等价一次用户发言——链清零、blocked 清空；pending
+    /// 非空时**立即**按 `TurnInput::Preloaded` 起一个自动回合（触顶期间上屏但保留的 pending
+    /// 在这里被消费；已上屏的部分不重复入历史）。
     pub fn continue_wake(&self) {
-        {
+        let has_pending = {
             let mut wake = self.inner.wake.lock().unwrap_or_else(|e| e.into_inner());
             wake.chain = 0;
             wake.blocked = None;
+            wake.force = !wake.pending.is_empty();
+            !wake.pending.is_empty()
+        };
+        if !has_pending {
+            // 无待处理通知：只恢复监听。
+            return;
         }
         self.ensure_wake_worker();
         if let Some(tx) = self
@@ -463,9 +493,17 @@ impl SubagentHub {
         *guard = Some(tx);
         drop(guard);
         let hub = self.clone();
-        let _ = std::thread::Builder::new()
+        if let Err(error) = std::thread::Builder::new()
             .name("lumir-subagent-wake".into())
-            .spawn(move || wake_worker(hub.inner.clone(), rx));
+            .spawn(move || wake_worker(hub.inner.clone(), rx))
+        {
+            // 线程起不来：清掉 sender 以便下一次 notify 重试；否则调度永久卡死。
+            *self.inner.wake_tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            crate::logging::config_warning(
+                "subagents",
+                &format!("唤醒调度线程启动失败（下次事件将重试）：{error}"),
+            );
+        }
     }
 
     fn notify_wake(&self, event: WakeEvent) {
@@ -484,6 +522,12 @@ impl SubagentHub {
     /// aborted 不投递、不唤醒。
     fn on_background_finished(&self, notice: NoticeRun) {
         if self.inner.closed.load(Ordering::SeqCst) {
+            return;
+        }
+        // design §12.6.1：cron 的无人值守槽位**不参与唤醒与链计数**。这是全路径约束，
+        // 不是只在 `begin_user_turn` 一处——否则 cron 回合起的后台 run 会在僵尸 Runtime
+        // 上自动起回合、烧真实配额（评审 r1 P1-1 的第二层后果）。
+        if self.inner.runtime.is_isolated() {
             return;
         }
         {
@@ -639,12 +683,18 @@ fn wake_worker(hub: Arc<HubInner>, rx: Receiver<WakeEvent>) {
 /// 调度状态机的一步（可重入：事件与超时都走这里）。
 fn process_wake(hub: &Arc<HubInner>) {
     let hub_view = SubagentHub { inner: hub.clone() };
+    // design §12.6.1：无人值守槽位不参与唤醒与链计数（全路径短路；见
+    // `on_background_finished` 的同一条注释）。
+    if hub.runtime.is_isolated() {
+        return;
+    }
     // 先读会话（sessions 锁）再取唤醒锁：与 `Session::drop → shutdown` 的锁序一致
     // （sessions → wake），不在这条路径上制造反向等待。
     let busy = hub_view.parent_busy();
     let mut wake = hub.wake.lock().unwrap_or_else(|e| e.into_inner());
     if wake.pending.is_empty() {
         wake.deadline = None;
+        wake.force = false;
         return;
     }
     // 自动回合在飞：通知排队等该回合结束（这就是链的一环）。
@@ -660,23 +710,35 @@ fn process_wake(hub: &Arc<HubInner>) {
         }
         return;
     }
-    // 空闲：先等合并窗口（从首条通知起算、不因新通知顺延）。
-    match wake.deadline {
-        None => {
-            wake.deadline = Some(Instant::now() + Duration::from_millis(AUTO_WAKE_COALESCE_MS));
-            return;
+    // 空闲：先等合并窗口（从首条通知起算、不因新通知顺延）；面板「继续」跳过窗口。
+    if !wake.force {
+        match wake.deadline {
+            None => {
+                wake.deadline = Some(Instant::now() + Duration::from_millis(AUTO_WAKE_COALESCE_MS));
+                return;
+            }
+            Some(deadline) if Instant::now() < deadline => return,
+            Some(_) => {}
         }
-        Some(deadline) if Instant::now() < deadline => return,
-        Some(_) => {}
     }
-    // 窗口到期：把 pending 收成一批。
-    let notices = std::mem::take(&mut wake.pending);
-    let batch = wake.batch.take().unwrap_or_else(|| hub_view.new_batch_id());
     wake.deadline = None;
-    if notices.is_empty() {
-        return;
+    wake.force = false;
+    // 只上屏**尚未投递**的通知；`pending` 在触顶 / 继续路径上保留（design §12.6.3）。
+    let mut undelivered: Vec<NoticeRun> = Vec::new();
+    for notice in &wake.pending {
+        if !wake.delivered.contains(&notice.run_id) {
+            undelivered.push(notice.clone());
+        }
     }
-    // 链闸：触顶不起回合，但通知照常上屏 + 投递标记（标记在收敛时已写）。
+    for notice in &undelivered {
+        wake.delivered.insert(notice.run_id.clone());
+    }
+    let batch = wake
+        .batch
+        .clone()
+        .unwrap_or_else(|| hub_view.new_batch_id());
+    wake.batch = Some(batch.clone());
+    // 链闸：触顶不起回合，但通知照常上屏 + 投递标记（标记在收敛时已写）；pending 保留。
     let blocked = wake.blocked;
     if blocked.is_some() || wake.chain >= AUTO_WAKE_CHAIN_MAX {
         let reason = match blocked {
@@ -687,25 +749,28 @@ fn process_wake(hub: &Arc<HubInner>) {
                 "blocked_chain"
             }
         };
-        let text = notice_text(&notices, &batch);
         drop(wake);
-        insert_notices_into_session(hub, &text, &batch);
-        for notice in &notices {
-            hub_view.emit(events::subagent_notified(
-                &notice.run_id,
-                &notice.agent,
-                &notice.status,
-                reason,
-                &batch,
-                0,
-            ));
+        if !undelivered.is_empty() {
+            insert_notices_into_session(hub, &notice_text(&undelivered, &batch), &batch);
+            for notice in &undelivered {
+                hub_view.emit(events::subagent_notified(
+                    &notice.run_id,
+                    &notice.agent,
+                    &notice.status,
+                    reason,
+                    &batch,
+                    0,
+                ));
+            }
         }
         return;
     }
     // 起自动回合：先抢占父会话（busy 锁）；抢不到说明用户恰好发言，通知留给用户回合
     // 的 `begin_user_turn` 并入（下一轮事件会再驱动）。
-    let notices_for_turn = notices.clone();
     drop(wake);
+    let Some(runtime) = hub.runtime.upgrade() else {
+        return; // 运行实例已结束：没有可唤醒的会话。
+    };
     let config = hub_view.config();
     let sink = hub_view
         .inner
@@ -713,11 +778,9 @@ fn process_wake(hub: &Arc<HubInner>) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    if hub.runtime.acquire_turn(&hub.scope, &config).is_err() {
-        // 抢不到：通知放回 pending（批次 id 一并保留），等用户回合或空闲监视。
+    if runtime.acquire_turn(&hub.scope, &config).is_err() {
+        // 抢不到：pending / delivered / batch 原样保留，等用户回合或空闲监视。
         let mut wake = hub.wake.lock().unwrap_or_else(|e| e.into_inner());
-        wake.pending = notices_for_turn;
-        wake.batch = Some(batch);
         wake.deadline = None;
         if !wake.idle_watch {
             wake.idle_watch = true;
@@ -728,39 +791,43 @@ fn process_wake(hub: &Arc<HubInner>) {
     }
     // 自动回合也是一次父回合：次数闸按回合复位；停止广播只覆盖本回合起的 run。
     hub_view.reset_turn_accounting();
-    let chain_index = {
+    let (chain_index, previous_blocked) = {
         let mut wake = hub.wake.lock().unwrap_or_else(|e| e.into_inner());
+        let previous_blocked = wake.blocked;
         wake.chain = wake.chain.saturating_add(1);
         wake.running = true;
         if wake.chain >= AUTO_WAKE_CHAIN_MAX {
             wake.blocked = Some("chain_limit");
         }
-        wake.chain
+        (wake.chain, previous_blocked)
     };
-    let text = notice_text(&notices, &batch);
-    insert_notices_into_session(hub, &text, &batch);
-    for notice in &notices {
-        hub_view.emit(events::subagent_notified(
-            &notice.run_id,
-            &notice.agent,
-            &notice.status,
-            "auto_turn",
-            &batch,
-            chain_index,
-        ));
+    if !undelivered.is_empty() {
+        insert_notices_into_session(hub, &notice_text(&undelivered, &batch), &batch);
+        for notice in &undelivered {
+            hub_view.emit(events::subagent_notified(
+                &notice.run_id,
+                &notice.agent,
+                &notice.status,
+                "auto_turn",
+                &batch,
+                chain_index,
+            ));
+        }
     }
     // 自动回合本身就是一个普通交互回合（design §12.6.2 末段），没有豁免。
-    let runtime = hub.runtime.clone();
+    // `Preloaded`：通知已在历史里（无论本轮新插入还是触顶期间已上屏），不再入队。
+    let turn_text = if undelivered.is_empty() {
+        String::new()
+    } else {
+        notice_text(&undelivered, &batch)
+    };
     let scope = hub.scope.clone();
     let sink = sink.unwrap_or_else(|| Arc::new(NullSink));
     let worker_hub = hub.clone();
-    let _ = std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("lumir-subagent-auto-turn".into())
         .spawn(move || {
-            let ok = super::turn::run_auto_turn_acquired(runtime, scope, config, sink, text);
-            if !ok {
-                // 无法起回合（配置级失败）：把控制权交回调度器，通知已在历史里。
-            }
+            let _ = super::turn::run_auto_turn_acquired(runtime, scope, config, sink, turn_text);
             let mut wake = worker_hub.wake.lock().unwrap_or_else(|e| e.into_inner());
             wake.running = false;
             drop(wake);
@@ -769,11 +836,35 @@ fn process_wake(hub: &Arc<HubInner>) {
             };
             hub_view.notify_wake(WakeEvent::AutoTurnEnded);
         });
+    match spawned {
+        Ok(_) => {
+            // 起回合成功：pending 被本回合消费。
+            let mut wake = hub.wake.lock().unwrap_or_else(|e| e.into_inner());
+            wake.pending.clear();
+            wake.delivered.clear();
+            wake.batch = None;
+        }
+        Err(error) => {
+            // 线程都起不来：回滚链计数与 running，pending 留给下一次重试（不能把调度卡死）。
+            let mut wake = hub.wake.lock().unwrap_or_else(|e| e.into_inner());
+            wake.running = false;
+            wake.chain = wake.chain.saturating_sub(1);
+            wake.blocked = previous_blocked;
+            wake.deadline = None;
+            drop(wake);
+            crate::logging::config_warning(
+                "subagents",
+                &format!("自动唤醒回合线程启动失败（将重试）：{error}"),
+            );
+            hub_view.notify_wake(WakeEvent::AutoTurnEnded);
+        }
+    }
 }
 
 /// 用户回合进行中时的空闲监视（轮次结束没有事件源；100ms 采样，单实例）。
 fn spawn_idle_watcher(hub: Arc<HubInner>) {
-    let _ = std::thread::Builder::new()
+    let for_error = hub.clone();
+    let spawned = std::thread::Builder::new()
         .name("lumir-subagent-idle".into())
         .spawn(move || loop {
             if hub.closed.load(Ordering::SeqCst) {
@@ -792,6 +883,16 @@ fn spawn_idle_watcher(hub: Arc<HubInner>) {
             }
             std::thread::sleep(Duration::from_millis(100));
         });
+    if let Err(error) = spawned {
+        // `idle_watch` 已置位；线程起不来必须复位，否则后续「父回合结束」的驱动永久丢失。
+        let mut wake = for_error.wake.lock().unwrap_or_else(|e| e.into_inner());
+        wake.idle_watch = false;
+        drop(wake);
+        crate::logging::config_warning(
+            "subagents",
+            &format!("空闲监视线程启动失败（下次事件将重试）：{error}"),
+        );
+    }
 }
 
 /// 把合并后的通知写进父会话（LLM input + 面板行）。父会话已被重建 / 不存在时静默放弃
@@ -1345,8 +1446,21 @@ fn start_task_inner(
         background,
     ));
 
+    // 子运行线程**自己持有**一份强 Runtime：后台 run 可能比父回合活得久（cron 的父线程
+    // 结束后仍要收尾 / 写 sidecar）。这不是引用环——中枢只持弱引用，这份强引用随线程结束。
+    let Some(segment_runtime) = hub.inner.runtime.upgrade() else {
+        return Err(spawn_failed_cleanup(
+            hub,
+            &run_id,
+            segment,
+            &definition.name,
+            &model,
+            "父运行实例已结束",
+        ));
+    };
     let seed = SegmentSeed {
         hub: hub.clone(),
+        runtime: segment_runtime,
         run_id: run_id.clone(),
         segment,
         definition,
@@ -1366,33 +1480,93 @@ fn start_task_inner(
             .unwrap_or_default(),
     };
 
+    // spawn 失败时 `seed`（连同并发许可 / 保留会话）随闭包被 drop；活动表与 runs 的残留
+    // 必须显式清掉，否则该 run 永久是「运行中」的僵尸（后台分支尤其：父已拿到 running）。
+    let cleanup_agent = args.agent.clone();
     if background {
         let envelope = running_envelope(&args.agent, &run_id, segment, &model, true);
-        let _ = std::thread::Builder::new()
+        match std::thread::Builder::new()
             .name(format!("lumir-subagent-{run_id}"))
             .spawn(move || {
                 run_segment(seed);
-            });
-        Ok(TaskHandle {
-            immediate: Some(envelope),
-            handle: None,
-        })
+            }) {
+            Ok(_) => Ok(TaskHandle {
+                immediate: Some(envelope),
+                handle: None,
+            }),
+            Err(error) => Err(spawn_failed_cleanup(
+                hub,
+                &run_id,
+                segment,
+                &cleanup_agent,
+                &model,
+                &error.to_string(),
+            )),
+        }
     } else {
-        let handle = std::thread::Builder::new()
+        match std::thread::Builder::new()
             .name(format!("lumir-subagent-{run_id}"))
             .spawn(move || run_segment(seed))
-            .map_err(|error| {
-                ToolOutput::err(
-                    "harness_internal_error",
-                    format!("无法启动子运行线程：{error}"),
-                )
-            })?;
-        // 前台结果由线程返回信封；`TaskHandle::join` 读取。
-        Ok(TaskHandle {
-            immediate: None,
-            handle: Some(handle),
-        })
+        {
+            // 前台结果由线程返回信封；`TaskHandle::join` 读取。
+            Ok(handle) => Ok(TaskHandle {
+                immediate: None,
+                handle: Some(handle),
+            }),
+            Err(error) => Err(spawn_failed_cleanup(
+                hub,
+                &run_id,
+                segment,
+                &cleanup_agent,
+                &model,
+                &error.to_string(),
+            )),
+        }
     }
+}
+
+/// 子运行线程启动失败的统一收口：清活动表 / runs 残留 + 一条 failed 完成事件。
+/// （`seed` 已随失败的闭包 drop——并发许可与保留会话随之释放。）返回父模型看到的错误信封。
+fn spawn_failed_cleanup(
+    hub: &SubagentHub,
+    run_id: &str,
+    segment: u32,
+    agent: &str,
+    model: &str,
+    reason: &str,
+) -> ToolOutput {
+    hub.inner
+        .runs
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(run_id);
+    hub.inner
+        .registry
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .active
+        .remove(run_id);
+    hub.emit(events::subagent_finished(
+        run_id,
+        segment,
+        agent,
+        "failed",
+        None,
+        0,
+        model,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        None,
+        Some(&format!("子运行线程启动失败：{reason}")),
+    ));
+    ToolOutput::err(
+        "harness_internal_error",
+        format!("无法启动子运行线程：{reason}"),
+    )
 }
 
 fn new_run_id(hub: &SubagentHub) -> String {
@@ -1448,6 +1622,8 @@ fn resolve_model(
 
 struct SegmentSeed {
     hub: SubagentHub,
+    /// 本段线程自己的强 Runtime（见 `start_task_inner` 的注释；不参与引用环）。
+    runtime: Runtime,
     run_id: String,
     segment: u32,
     definition: AgentDefinition,
@@ -1711,7 +1887,7 @@ fn report_envelope(
             "resumable": true,
             "background": background,
             "stopped_by": stopped_by.as_str(),
-            "note": partial_note(*stopped_by),
+            "note": partial_note(*stopped_by, report.rounds),
             "model": report.model,
             "summary": report.summary,
             "truncated": report.summary_truncated,
@@ -1733,13 +1909,23 @@ fn report_envelope(
     }
 }
 
-fn partial_note(reason: StopReason) -> &'static str {
+/// 部分结果的说明文案（design §5.2「summary 为空串时 note 说明已完成多少轮工具调用」）：
+/// 轮数从信封的 `rounds` 同源读出，不另算一份。
+fn partial_note(reason: StopReason, rounds: u32) -> String {
     match reason {
-        StopReason::Rounds => "子运行触及轮次预算；可用 resume 续跑",
-        StopReason::Tokens => "子运行触及 token 预算；可用 resume 续跑",
-        StopReason::Time => "子运行触及时间预算；可用 resume 续跑",
-        StopReason::Quota => "provider 配额或限流；不自动重试",
-        StopReason::Error => "子运行被 API 错误中断；以下为已产出部分",
+        StopReason::Rounds => {
+            format!("子运行触及轮次预算（已完成 {rounds} 轮）；可用 resume 续跑")
+        }
+        StopReason::Tokens => {
+            format!("子运行触及 token 预算（已完成 {rounds} 轮）；可用 resume 续跑")
+        }
+        StopReason::Time => {
+            format!("子运行触及时间预算（已完成 {rounds} 轮）；可用 resume 续跑")
+        }
+        StopReason::Quota => format!("provider 配额或限流（已完成 {rounds} 轮）；不自动重试"),
+        StopReason::Error => {
+            format!("子运行被 API 错误中断（已完成 {rounds} 轮）；以下为已产出部分")
+        }
     }
 }
 
@@ -1982,7 +2168,7 @@ impl ChildContext {
             },
             parent_sink,
             hub: hub.clone(),
-            runtime: hub.inner.runtime.clone(),
+            runtime: seed.runtime.clone(),
             scope: hub.inner.scope.clone(),
             parent_token,
             namespace,
@@ -2484,8 +2670,8 @@ mod tests {
         runtime: Runtime,
         sink: Arc<CollectSink>,
         /// 每个夹具**一个**中枢（与生产「一个父会话一个中枢」同构）：resume / 保留表
-        /// 跨多次 `run_task` 才有意义。
-        hub: SubagentHub,
+        /// 跨多次 `run_task` 才有意义；同时挂进 Session（停止广播经会话拿 hub）。
+        hub: Arc<SubagentHub>,
         _xdg: XdgGuard,
         _lock: std::sync::MutexGuard<'static, ()>,
     }
@@ -2527,8 +2713,17 @@ mod tests {
                 .with_session(&scope, |session| session.subagent_token())
                 .unwrap();
             let sink = Arc::new(CollectSink::default());
-            let hub = SubagentHub::new(runtime.clone(), scope.clone(), config.clone(), token);
+            let hub = Arc::new(SubagentHub::new(
+                runtime.clone(),
+                scope.clone(),
+                config.clone(),
+                token,
+            ));
             hub.set_sink(Some(sink.clone()));
+            // 与生产一致：中枢挂在父会话上（`Runtime::request_abort` 经会话直接广播停止）。
+            let _ = runtime.with_session(&scope, |session| {
+                session.ensure_subagent_hub(|| hub.clone())
+            });
 
             Self {
                 root,
@@ -2562,7 +2757,7 @@ mod tests {
         }
 
         fn hub(&self) -> SubagentHub {
-            self.hub.clone()
+            (*self.hub).clone()
         }
 
         /// 模拟「应用重启」：同一父会话上的全新中枢（保留表为空）。
@@ -3314,12 +3509,167 @@ mod tests {
                 .unwrap(),
             "触顶不得起回合"
         );
+        assert_eq!(
+            hub.inner.wake.lock().unwrap().pending.len(),
+            1,
+            "触顶时 pending 保留（「继续」要据此起回合）"
+        );
 
-        // 用户发言 = 一次用户回合开始：链清零、blocked 清空。
-        let _ = hub.begin_user_turn();
+        // 用户发言 = 一次用户回合开始：链清零、blocked 清空；已上屏的通知不重复入历史。
+        assert!(hub.begin_user_turn().is_none(), "已上屏的通知不得再插一遍");
         let snapshot = hub.wake_snapshot();
         assert_eq!(snapshot.chain, 0);
         assert_eq!(snapshot.blocked, None);
+        assert_eq!(f.notice_inputs().len(), 1);
+        assert!(hub.inner.wake.lock().unwrap().pending.is_empty());
+    }
+
+    /// 链触顶 → 面板「继续」：立即按保留的 pending 起一个回合，通知不重复入历史。
+    #[test]
+    fn continue_after_chain_limit_starts_a_turn_without_duplicating_the_notice() {
+        let f = Fixture::new(
+            "wake-continue",
+            r#"{"responses":[{"text":"继续后的回复"}]}"#,
+            |_| {},
+        );
+        f.research("");
+        let hub = f.hub();
+        hub.inner.wake.lock().unwrap().chain = AUTO_WAKE_CHAIN_MAX;
+        hub.on_background_finished(NoticeRun {
+            run_id: "r-continue".into(),
+            agent: "research".into(),
+            description: "触顶后继续".into(),
+            status: "completed".into(),
+            stopped_by: None,
+            summary: "结论".into(),
+        });
+        hub.inner.wake.lock().unwrap().deadline = Some(Instant::now() - Duration::from_millis(1));
+        process_wake(&hub.inner);
+        assert_eq!(hub.wake_snapshot().blocked, Some("chain_limit"));
+        assert_eq!(f.notice_inputs().len(), 1);
+
+        hub.continue_wake();
+        assert!(f.wait(Duration::from_secs(3), || {
+            f.runtime
+                .with_session(&f.scope, |session| {
+                    !session.is_busy()
+                        && session.input().iter().any(|item| {
+                            item["role"].as_str() == Some("assistant")
+                                && item["content"].as_array().is_some_and(|parts| {
+                                    parts
+                                        .iter()
+                                        .any(|part| part["text"].as_str() == Some("继续后的回复"))
+                                })
+                        })
+                })
+                .unwrap_or(false)
+        }));
+        assert_eq!(
+            hub.wake_snapshot().chain,
+            1,
+            "继续起的是一个新链的第 1 回合"
+        );
+        assert_eq!(hub.wake_snapshot().blocked, None);
+        assert_eq!(f.notice_inputs().len(), 1, "通知不得重复入历史");
+        assert!(hub.inner.wake.lock().unwrap().pending.is_empty());
+    }
+
+    /// design §12.6.1：无人值守槽位不参与唤醒与链计数；且中枢不持强 Runtime 引用——
+    /// isolated Runtime 结束后整个 hub 可回收（评审 r1 P1-1）。
+    #[test]
+    fn isolated_slot_does_not_wake_and_the_hub_is_reclaimable() {
+        let f = Fixture::new("isolated", r#"{"responses":[]}"#, |_| {});
+        let runtime = Runtime::isolated();
+        runtime.acquire_turn(&f.scope, &f.config).unwrap();
+        let ctx =
+            super::super::run::SessionContext::new(&super::NullSink, &runtime, &f.scope, &f.config);
+        let hub = runtime
+            .with_session(&f.scope, |session| session.subagent_hub())
+            .unwrap()
+            .expect("SessionContext 应建立 hub");
+        let weak = Arc::downgrade(&hub);
+        hub.on_background_finished(NoticeRun {
+            run_id: "r-cron".into(),
+            agent: "research".into(),
+            description: "cron 的后台任务".into(),
+            status: "completed".into(),
+            stopped_by: None,
+            summary: "结论".into(),
+        });
+        let wake = hub.inner.wake.lock().unwrap();
+        assert!(wake.pending.is_empty(), "cron 槽位不排通知");
+        assert!(!wake.running, "cron 槽位不起自动回合");
+        drop(wake);
+        assert!(f.notice_inputs().is_empty());
+
+        // isolated 运行实例结束后：没有引用环，hub 随会话一起回收。
+        drop(hub);
+        drop(ctx);
+        runtime.release_turn(&f.scope);
+        drop(runtime);
+        assert!(
+            f.wait(Duration::from_secs(2), || weak.upgrade().is_none()),
+            "hub 应可回收（Runtime ↔ Session ↔ Hub 引用环已断）"
+        );
+    }
+
+    /// 时间闸的「工具调用前」检查点（design §7.1 / spec scenario「时间闸在工具调用前生效」）：
+    /// 第一个调用跑过 deadline 后，第二个调用不得执行。
+    #[test]
+    fn time_budget_is_checked_before_each_tool_call() {
+        let f = Fixture::new(
+            "time-between-tools",
+            r#"{"responses":[{"tool_calls":[
+                {"id":"c1","name":"cli_run","arguments":"{\"command\":\"sleep\",\"args\":[\"1.1\"],\"purpose\":\"等一下\"}"},
+                {"id":"c2","name":"vault_read","arguments":"{\"path\":\"a.md\"}"}
+            ]}]}"#,
+            |config| {
+                config.permission_mode = PermissionMode::FullAccess;
+                config.subagents.timeout_secs = 1;
+            },
+        );
+        f.write_agent(
+            "runner.md",
+            "---\nname: runner\ndescription: 跑工具\ntools: [cli_run, vault_read]\ntimeout_secs: 1\n---\n正文\n",
+        );
+        let out = f.run_task(args("runner", "先等一下再读"));
+        assert_eq!(out["status"], "partial", "{out}");
+        assert_eq!(out["stopped_by"], "time");
+        assert_eq!(
+            out["tool_calls"],
+            json!({"cli_run": 1}),
+            "deadline 之后不得执行第二个调用：{out}"
+        );
+        assert_eq!(out["rounds"], 1);
+    }
+
+    /// 前台 `task` 在父循环同步 join 期间按停止：停止必须直接广播到子运行，不等父线程轮询
+    /// （design §12.4「前台 + 本回合起的后台」）。
+    #[test]
+    fn stopping_the_parent_aborts_a_foreground_task_immediately() {
+        let f = Fixture::new(
+            "fg-abort",
+            r#"{"responses":[{"text":"慢结果","delay_ms":600}]}"#,
+            |_| {},
+        );
+        f.research("");
+        let hub = f.hub();
+        // 父回合在飞（前台 task 的前置）。
+        f.runtime.acquire_turn(&f.scope, &f.config).unwrap();
+        let handle = start_task(
+            &hub,
+            &f.config,
+            &f.catalog(),
+            &f.task_call(args("research", "前台跑")),
+            None,
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        f.runtime.request_abort(&f.scope).expect("abort ok");
+        let out = handle.result_value();
+        assert_eq!(out["ok"], json!(false), "{out}");
+        assert_eq!(out["code"], "turn_aborted", "{out}");
+        assert_eq!(hub.retained_count(), 0, "aborted 的 run 不保留");
+        f.runtime.release_turn(&f.scope);
     }
 
     /// 用户停止自动回合 ⇒ blocked=stopped，后续通知不再唤醒。

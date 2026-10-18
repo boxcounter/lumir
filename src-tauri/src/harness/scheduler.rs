@@ -10,8 +10,7 @@
 //! - 自动唤醒的两个常量与快照形状（design §12.6.3）：`AUTO_WAKE_CHAIN_MAX = 5`、
 //!   `AUTO_WAKE_COALESCE_MS = 2000`。它们是**安全绳不是策略旋钮**，刻意不是配置键。
 //!
-//! 模块声明在 `run.rs`（`#[path = "scheduler.rs"]`）——`harness.rs` 的模块表不在本棒
-//! 的改动面内；对外的模块路径是 `harness::run::scheduler`。
+//! 模块在 `harness.rs` 的 mod 表注册，对外路径是 `harness::scheduler`。
 
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};

@@ -61,7 +61,7 @@ pub mod turn;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use crate::commands::CommandError;
 use crate::config::{self, HarnessConfig};
@@ -120,6 +120,53 @@ pub struct TurnTerminal {
     pub ok: bool,
     /// 失败时的错误码（`error` 事件的 code；`aborted` 记 `aborted`）。
     pub error: Option<String>,
+}
+
+/// [`Runtime`] 的弱引用（change add-harness-subagents 评审 r1 P1-1）：子运行中枢与事件
+/// 出口挂在会话上，而会话又在 Runtime 里——中枢若持强 Runtime 就形成
+/// `RuntimeInner.sessions → Session.subagent_hub → HubInner → RuntimeInner` 的引用环，
+/// cron 的每次独立 `Runtime::isolated()` 运行结束后都无法回收。中枢只持弱引用：
+/// 运行实例结束后 upgrade 失败，唤醒调度与收尾自然停摆。
+#[derive(Clone)]
+pub(crate) struct WeakRuntime {
+    inner: Weak<RuntimeInner>,
+}
+
+impl Runtime {
+    /// 见 [`WeakRuntime`]。只有需要在会话生命周期之外继续工作的持有方（子运行中枢 /
+    /// 终态 sink）才该降级；其余调用方照旧持有 `Runtime` 克隆。
+    pub(crate) fn downgrade(&self) -> WeakRuntime {
+        WeakRuntime {
+            inner: Arc::downgrade(&self.inner),
+        }
+    }
+}
+
+impl WeakRuntime {
+    pub(crate) fn upgrade(&self) -> Option<Runtime> {
+        self.inner.upgrade().map(|inner| Runtime { inner })
+    }
+
+    /// 运行实例已不存在时按无人值守处理（不参与唤醒）。
+    pub(crate) fn is_isolated(&self) -> bool {
+        self.upgrade()
+            .map(|runtime| runtime.is_isolated())
+            .unwrap_or(true)
+    }
+
+    pub(crate) fn with_session<R>(
+        &self,
+        scope: &VaultScope,
+        f: impl FnOnce(&mut session::Session) -> R,
+    ) -> Result<R, CommandError> {
+        match self.upgrade() {
+            Some(runtime) => runtime.with_session(scope, f),
+            None => Err(CommandError::new(
+                "harness_no_session",
+                "运行实例已结束，会话不可用",
+            )),
+        }
+    }
 }
 
 impl Default for Runtime {
@@ -248,7 +295,11 @@ impl Runtime {
     /// 无在途轮次（已完成/从未开始）返回 `harness_not_running`——调用方（前端停止钩子）
     /// 据此知道「等终态事件即可」，不是异常。
     pub fn request_abort(&self, scope: &VaultScope) -> Result<(), CommandError> {
-        self.with_session(scope, |s| {
+        // 先收回会话内的停止标志与待批项，**释放 sessions 锁之后**再把停止广播给子运行：
+        // `broadcast_abort` 会读会话（`walk_stopped_by_user`），在锁内调用会自锁。
+        // 前台 `task` 在父循环里同步 join，等不到父线程的下一个轮询点——因此必须在这里
+        // 直接广播（design §12.4「前台 + 本回合起的后台」）。
+        let hub = self.with_session(scope, |s| {
             if !s.is_busy() {
                 return Err(CommandError::new(
                     "harness_not_running",
@@ -256,8 +307,12 @@ impl Runtime {
                 ));
             }
             s.request_abort();
-            Ok(())
-        })?
+            Ok(s.subagent_hub())
+        })??;
+        if let Some(hub) = hub {
+            hub.broadcast_abort();
+        }
+        Ok(())
     }
 
     /// 一轮结束（含错误路径）：释放 busy。会话对象保留（消息历史是状态）。

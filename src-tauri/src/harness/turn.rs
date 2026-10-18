@@ -230,7 +230,9 @@ pub fn run_turn(
     // **不发 `harness:event`**（其会话与交互槽位物理分离，事件 MUST NOT 渲染进用户当前
     // transcript），只把本轮终态记进 runtime——`cron:run_finished` 据此产出回执。
     let terminal_sink = std::sync::Arc::new(TerminalSink {
-        runtime: runtime.clone(),
+        // 弱引用：这个 sink 会被挂进子运行中枢（会话生命周期外），强引用 Runtime 会把
+        // `RuntimeInner → sessions → Session → hub → sink` 闭成环（评审 r1 P1-1）。
+        runtime: runtime.downgrade(),
         forward: (!runtime.is_isolated()).then(|| TauriEventSink(app.clone())),
     });
     // 可跨线程持有的同一出口：子运行与自动唤醒回合在父回合结束后仍要发事件，借用的
@@ -648,7 +650,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
         // 的多个 `task` 因此并行推进（design §12.1）。**入 input 的顺序另算**：先攒下每条的
         // 「调用项 + 输出项」，本轮结束（或中断收口）时一次按调用顺序压栈（见
         // [`flush_call_items`] 与 [`execute_calls`]）。
-        let pending = match execute_calls(ctx, &tctx, &output.calls) {
+        let pending = match execute_calls(ctx, &tctx, &output.calls, rounds as u32) {
             Ok(pending) => pending,
             // 中断收口前先把**已执行**调用的项入 input（与逐条压栈的效果一致，只是顺序
             // 改成成组）；未执行的调用不留任何项，会话里不会出现悬空的 function_call。
@@ -686,6 +688,7 @@ fn execute_calls<C: RunContext>(
     ctx: &mut C,
     tctx: &ToolContext,
     calls: &[llm::ToolCall],
+    rounds: u32,
 ) -> Result<Vec<(serde_json::Value, serde_json::Value)>, ()> {
     let mut results: BTreeMap<usize, (serde_json::Value, serde_json::Value)> = BTreeMap::new();
     // 编排调用（`task`）：先全部**启动**，再按调用序收敛（design §12.1 / §12.2）。
@@ -695,6 +698,19 @@ fn execute_calls<C: RunContext>(
             let executed: Vec<_> = results.values().cloned().collect();
             flush_call_items(ctx, &executed);
             return Err(());
+        }
+        // 时间 / token 闸的「工具调用前」检查点（design §7.1 表 + spec scenario
+        // 「时间闸在工具调用前生效」）：一批 N 个调用不得整体超支。轮次闸不在此复查
+        // （交互 loop_max 的既有语义是「本批跑完、下一轮不再发请求」）。
+        if call.name != "task" {
+            if let BudgetVerdict::Exhausted(reason) = ctx.budget(rounds) {
+                if reason != super::run::StopReason::Rounds {
+                    ctx.on_budget_exhausted(reason);
+                    let executed: Vec<_> = results.values().cloned().collect();
+                    flush_call_items(ctx, &executed);
+                    return Err(());
+                }
+            }
         }
         if call.name == "task" {
             // 工具行按调用序创建：started 事件在启动时发，done 在收敛时发（`finish_call`）。
@@ -1592,22 +1608,9 @@ impl EventSink for OwnedScopedSink {
 ///
 /// 返回 `false` = 父会话忙（用户恰好发了消息），调用方把这一批通知留到下一次机会；
 /// 此时**不**推进链计数（计数由调用方在真正起回合时加）。
-#[allow(dead_code)]
-pub(crate) fn run_auto_turn(
-    runtime: Runtime,
-    scope: VaultScope,
-    config: HarnessConfig,
-    sink: std::sync::Arc<dyn EventSink>,
-    user_text: String,
-) -> bool {
-    if runtime.acquire_turn(&scope, &config).is_err() {
-        return false;
-    }
-    run_auto_turn_acquired(runtime, scope, config, sink, user_text)
-}
-
 /// 已占用父会话后的自动回合本体（调度器在「插入通知」之前就 acquire，保证通知与回合
-/// 之间不会插进一个用户回合）。
+/// 之间不会插进一个用户回合）。**不在这里 acquire**：重复 acquire 会把自动回合变成
+/// 「父会话忙」的失败路径。
 pub(crate) fn run_auto_turn_acquired(
     runtime: Runtime,
     scope: VaultScope,
@@ -1678,26 +1681,30 @@ impl EventSink for TauriEventSink {
 /// `forward` 为 `None` = 无人值守运行槽：事件**不**发往面板（其 transcript 不属于用户当前
 /// 会话）；为 `Some` 时照旧转发（交互槽位行为一字不变）。
 struct TerminalSink {
-    runtime: Runtime,
+    /// 弱引用（见 `run_turn` 构造点）：运行实例结束后终态无处可记，静默跳过即可
+    /// （此时也没有回执消费者）。
+    runtime: super::WeakRuntime,
     forward: Option<TauriEventSink>,
 }
 
 impl EventSink for TerminalSink {
     fn emit(&self, payload: serde_json::Value) {
-        match payload["type"].as_str() {
-            Some("done") => self.runtime.record_terminal(super::TurnTerminal {
-                ok: true,
-                error: None,
-            }),
-            Some("error") => self.runtime.record_terminal(super::TurnTerminal {
-                ok: false,
-                error: Some(payload["code"].as_str().unwrap_or("error").to_string()),
-            }),
-            Some("aborted") => self.runtime.record_terminal(super::TurnTerminal {
-                ok: false,
-                error: Some("aborted".to_string()),
-            }),
-            _ => {}
+        if let Some(runtime) = self.runtime.upgrade() {
+            match payload["type"].as_str() {
+                Some("done") => runtime.record_terminal(super::TurnTerminal {
+                    ok: true,
+                    error: None,
+                }),
+                Some("error") => runtime.record_terminal(super::TurnTerminal {
+                    ok: false,
+                    error: Some(payload["code"].as_str().unwrap_or("error").to_string()),
+                }),
+                Some("aborted") => runtime.record_terminal(super::TurnTerminal {
+                    ok: false,
+                    error: Some("aborted".to_string()),
+                }),
+                _ => {}
+            }
         }
         if let Some(forward) = &self.forward {
             forward.emit(payload);
