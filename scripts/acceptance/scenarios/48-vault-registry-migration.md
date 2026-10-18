@@ -114,7 +114,7 @@ teardown:
 
 ## 环境与副作用
 
-- 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`（`test-results/acceptance/` 下）；
+- 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`（`.local/acceptance/` 下）；
   端口 1430。**用户的 `~/.config/lumir` 全程不读不写**——Alex 机器上的那次迁移随下一次自然启动
   发生，不由本场景触发。
 - `seed.legacyRegistry` 是本 mission 给套件加的预置通道（M248）：它把注册项写进**旧名**目录

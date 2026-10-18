@@ -93,7 +93,7 @@ modeline 同款，Alex 过目基线候选后的复裁决；原话写作 • 以�
 **M526 当时只更新了 106 / 155（新场景），本条场景里的零读数断言被漏掉了**（同族欠账之一，
 M532 扫气泡行时仍未触及）：本步的判据因此从 `has: "0% · 0%"` 改成本形态（`not` + 发送钮在场的
 正观测，与 155 / m347 的同名判据对齐）。旧行为（M349 首跑实测：AX dump 里发送前那条就是
-`AXStaticText = "ctx 0%"`，见 `test-results/acceptance/2026-10-06/76-harness-usage/ax/`）在 M526
+`AXStaticText = "ctx 0%"`，见 `.local/acceptance/2026-10-06/76-harness-usage/ax/`）在 M526
 之后不再成立——这条注记保留，是那次实测的历史现场。
 
 **改形沿革（本场景第五次改写）**：M347（change move-harness-to-pane-chat-frame）把读数从

@@ -89,7 +89,7 @@ teardown:
   （`tests/visual/scenes/content-width.spec.ts` 的「写盘失败」一条，failures 注入）与
   Rust 侧 `config_set_ui_value` 的 cargo test 覆盖。
 - **拖拽帧耗（1MB 文档）不进本套件**：性能探针归 mission 的 6.5 任务（playwright chromium
-  一次性探针，数据落 `test-results/m228/`），真机手感归 Alex。
+  一次性探针，数据落 `.local/missions/m228/`），真机手感归 Alex。
 - dx 是**窗口局部点**（CGEvent 通道与 doubleClick 同口径，不经过截图像素的 0.96 缩放）。
   但通道的**实测精度不是逐位确定**：栏宽增量 = 2 × 指针位移，通道的 ±1–2px 抖动在这一层被放大到
   ±4px——M236 实测「场景 38 单跑 3 轮」里有一轮左缘 −40pt 落在 **997**（期望 1000，差 3px），

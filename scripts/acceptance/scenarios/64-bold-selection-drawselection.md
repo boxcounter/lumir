@@ -128,7 +128,7 @@ teardown:
 
 ## 这个场景验什么
 
-**缺陷**（M273 survey 定位，全量报告 `test-results/m277/findings.md`）：编辑器此前没装 CM6 的
+**缺陷**（M273 survey 定位，全量报告 `.local/probes/m277/findings.md`）：编辑器此前没装 CM6 的
 `drawSelection()`，可见选中高亮全靠浏览器**原生选区**。md 的 live preview 在 `mouseup` 解冻那一拍
 重建强调段（`**粗体**` 显露）的 DOM，WKWebView 没有把重建出来的那段画进选中层 ⇒ 选中跨粗体时粗体段
 出现一个「洞」（底色缺一块），而复制内容却是对的（复制走 CM 的 state）。
@@ -172,7 +172,7 @@ teardown:
   ⇒ eink 的 `contrast` 跨度塌到 0（2026-10-13 实测 `亮度 185..185`）。重取到 `(500,211)`。
 - 「选区外 选区下方空白」旧点 `(420,265)` 落进延展后的选区带内（带下缘 ≈278，与选区内同色
   `#c6c5c0`）⇒ `differ` 判「应异色却相近」。重取到 `(420,300)`（带下缘之下）。
-现场：`test-results/acceptance/2026-10-13/64-bold-selection-drawselection/steps.md`。
+现场：`.local/acceptance/2026-10-13/64-bold-selection-drawselection/steps.md`。
 
 **失效条件**：再改空行行高 / 段落间距（或 M399 被推翻）时这组坐标会再次漂移。红点会集中在
 某条 `contrast` / `differ` 上（同色组几乎不受影响，因为带本身是纯色块）——按上面同法重取，
@@ -189,7 +189,7 @@ teardown:
 - 同色组实测差 **1**（两档都是），异色组实测差 light **26** / eink **254** ⇒ 缺省容差（同 8 / 异 16）
   两侧都留了余量，不需要在场景里覆盖。
 - eink 选区内粗体段的亮度跨度实测 **243**（黑底白字），阈值取 60。
-- 证据：首标 `test-results/acceptance/2026-09-28/m285-probe/{light,eink}-v3/`（标定用的探针现场）；
+- 证据：首标 `.local/acceptance/2026-09-28/m285-probe/{light,eink}-v3/`（标定用的探针现场）；
   重取现场见上文 2026-10-13 那条。
 
 ## 记录手势为什么用「点正文 + ⌃⇧N」而不是鼠标拖拽
@@ -227,5 +227,5 @@ teardown:
 | 修前 | **FAIL**（21 条里 1 条红） | 「第 1 行行尾空白 vs 选区内文字」→ `#fdfdfd` / `#e8e8e0`，差 29 > 容差 8 |
 | 修后 | **PASS**（21/21） | 同一条读数 `#e9e7e2` / `#e9e7e3`，差 1 |
 
-证据：`test-results/m285/{pre-fix,post-fix}/64-bold-selection-drawselection/`（`steps.md` + `shots/` +
+证据：`.local/missions/m285/{pre-fix,post-fix}/64-bold-selection-drawselection/`（`steps.md` + `shots/` +
 `ax/` 全量）。

@@ -1,7 +1,7 @@
 // 证据落盘。
 //
 // 约定（与 docs/process/real-machine-acceptance.md 裁决点 1 一致）：全部产物落
-// test-results/acceptance/<日期>/，**不入 git**（与 perf-results 同惯例）；Alex 抽审靠本地目录。
+// .local/acceptance/<日期>/，**不入 git**（与 perf-results 同惯例）；Alex 抽审靠本地目录。
 // 每场景一个目录：status.txt（PASS/FAIL）+ steps.md（逐步骤逐断言）+ shots/ + ax/。
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";

@@ -59,7 +59,7 @@ steps:
       # 编辑器把这条引用渲染成「附件未找到：![[pasted-<hash16>.webp]]」的占位文本，同一份 AX
       # 文本里也**含有**那串 `![[…]]`——原判据（`has: ["/!\\[\\[pasted-…\\]\\]/"]`）因此在
       # widget 还没挂载时就成立，紧随其后的两条 AX 断言对着「无 AXImage 节点」的快照判红
-      # （证据 `test-results/acceptance/2026-10-14-full/112-paste-image-to-vault/`：02/03 号
+      # （证据 `.local/acceptance/2026-10-14-full/112-paste-image-to-vault/`：02/03 号
       # dump 只有占位文本，同一 run 的 04 号截图步 dump 里节点完好）。
       # 改等 `AXImage` 节点本身——与下面那条断言同一口径，盘侧两条断言在这之后按终态判。
       has: ["/AXImage[^\\n]*pasted-[0-9a-f]{16}\\.webp/"]

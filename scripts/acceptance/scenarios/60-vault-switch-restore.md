@@ -180,7 +180,7 @@ steps:
   # （`document_save`）都是**同步 command**（主线程内联执行），实测阻塞期间 `get_app_state`
   # 只回 `element_count: 1`（读不到任何节点；按 REVIEW.md 「读不到当成空」条这**不算**「指示不在场」，
   # 不可读与为空不是一回事）；而本 change 之后恢复段只剩毫秒级 ⇒ 指示的窗口在本场景里没有
-  # **可读**部分。正观测与区分度因此落在探针上（`test-results/m283/probe-indicator-window/`：
+  # **可读**部分。正观测与区分度因此落在探针上（`.local/missions/m283/probe-indicator-window/`：
   # 用定时器把写盘段拉长 ⇒ 主线程空闲、可读；同一条断言在「指示起点回退到装载壳」的注入版下
   # 必须 FAIL——先红后绿，REVIEW.md 「断言等价于子串」条）。
   - name: 选「保存并切换」
@@ -302,7 +302,7 @@ steps:
 1. **写盘段的前置状态与三出口**：A 里有个脏标签 → 点 B → 守卫浮条给出三条出口（此刻
    MUST NOT 有指示，负向配对）。**「选定出口后指示在场」这条正观测不在本场景里**——见上面那段
    注释与「覆盖边界」：同步 command 阻塞期间 AX 读不到节点，本 change 之后恢复段又只剩毫秒级，
-   指示的窗口没有可读部分；它由探针（`test-results/m283/probe-indicator-window/`，先红后绿）
+   指示的窗口没有可读部分；它由探针（`.local/missions/m283/probe-indicator-window/`，先红后绿）
    与门层的单测（`tests/unit/vault-switcher.test.ts` 的「指示窗口」组：`begin` 早于 `saveAll`、
    `end` 紧随其后）分别承担真机与逻辑两侧。
 2. **标签栏当面**：切回 A 之后标签栏是完整的 40 个（不是逐个长出来），激活项与存储一致，
@@ -317,7 +317,7 @@ steps:
   秒级，分辨不了指示起于写盘前」。实测更进一步——**套件读不到**：`get_app_state` 需要主线程
   空闲，而打开段（`vault_open_path`）与写盘段（`document_save`）都是同步 command、跑在主线程，
   阻塞期间 AX 只回 `element_count: 1`（2026-09-28 首轮实测，见
-  `test-results/m283/probe-indicator-window/`）；本 change 又把恢复段压到毫秒级 ⇒ 指示的窗口
+  `.local/missions/m283/probe-indicator-window/`）；本 change 又把恢复段压到毫秒级 ⇒ 指示的窗口
   在真机上没有可读部分。**所以本场景不写这条断言**（写了会是一条恒假红），它改由探针承担：
   同一场景的临时版本 + 把写盘段用定时器拉长 ⇒ 主线程空闲、可读 ⇒ 有修复时 PASS、把指示起点
   回退到装载壳时 FAIL（先红后绿，两次现场都留档）。**逻辑层**另有一对判据
@@ -336,7 +336,7 @@ steps:
   （A 上没有放大器，是 bulkVault 生成的真实形状 7MB）。**MUST NOT** 拿本场景日志里的
   `vault_load_open`（切到 B 那一次）当规模读数——那是放大器读数。
 - **耗时不做断言**（机器间抖动，REVIEW.md 「容差吞掉真实变化」条同族问题）：三段读数走 `env:logs/*.jsonl` 的
-  `vault_load_*` / `vault_open_watch`，实现期把读数截进 `test-results/m283/` 供人读，不做阈值判定。
+  `vault_load_*` / `vault_open_watch`，实现期把读数截进 `.local/missions/m283/` 供人读，不做阈值判定。
   末步只断言「这两条读数在盘上」——它管的是**读数通道还活着**（本 change 新增的两条埋点不至于
   被静默摘掉），不是耗时。
 - **`vault_load_open` / `vault_load_tree` 在本场景的日志里可能缺席**：两者沿用 M252 的 250ms 阈值，

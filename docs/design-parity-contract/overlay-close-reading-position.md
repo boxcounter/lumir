@@ -66,7 +66,7 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
    同组另有一条**空窗对照**（同样的中间态在无窗口时如实落盘），保证判据有输入。
    `tests/unit/viewport-transition.test.ts` 判窗口本身（嵌套安全、多余 end 不压负计数）。
    **消融**：删掉 `scrolled()` 里那条早退 ⇒ 主用例如实红在 `0 !== 1200`
-   （`test-results/m286/ablation-gate-unit.log`，git 外）。
+   （`.local/missions/m286/ablation-gate-unit.log`，git 外）。
 2. **真机同款 UA 的 WebKit 分支（判别消费者）**：`tests/visual/scenes/m280-overlay-esc-scroll.spec.ts`
    的表格用例——越过 1s 防抖后，桩收到的 `reading_position_put` 载荷 MUST 落在 ESC 前那一拍的**真实锚**
    （行号差 ≤ 1）且 MUST NOT 为 `pos 0`。该用例**断言前提**：这一支必须看到引擎真的动过视口
@@ -81,7 +81,7 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
 
 | 层 | 看得见吗 | 实测依据 |
 |---|---|---|
-| tests/unit（node） | **看得见**（确定性：注入中间态时间线，无需引擎） | 消融红：`test-results/m286/ablation-gate-unit.log` |
+| tests/unit（node） | **看得见**（确定性：注入中间态时间线，无需引擎） | 消融红：`.local/missions/m286/ablation-gate-unit.log` |
 | chromium（Playwright） | 看不见（`preventScroll` 挡住揭示，中间态不发生） | 本轮读数：`focusCalls ... before 1541 after 1541` |
 | Playwright WebKit，真机同款 UA | **看得见**（中间态真的发生，载荷判据在这里有输入） | 本轮读数：`before 1540 → after 0`，载荷 `pos 1628` |
 | 系统 WKWebView（真机） | 机制上同上；判据**表达不了** | 与 CL-1 同一格的理由 |
@@ -112,7 +112,7 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
    不出现 `pos 0`；第二条用例（负向）——外部改写后台标签时前台视口与遮罩都不动。
    **消融**：去掉 `src/save-controller.ts` 的两处 dep 调用 ⇒ 第一条如实红
    （`重载前 scrollTop=1541、重载后=0`、`afterOverlayOpen: true`），第二条照旧绿
-   （`test-results/m286/ablation-reload-deps.log` + 同目录的 `ablation-reload-deps.evidence.json`，git 外）。
+   （`.local/missions/m286/ablation-reload-deps.log` + 同目录的 `ablation-reload-deps.evidence.json`，git 外）。
 2. **真机层（系统 WKWebView）**：场景 **65**（`scripts/acceptance/scenarios/65-external-reload-reading-position.md`）
    ——⌃V 到文档尾部 → ⌘J 开表格全屏 → 外部在**末尾追加**一段 → 断言「第 15 章两行在渲染行里 /
    第 1 章两行不在」+ 遮罩已退出 + 内容已重载；邻近护栏场景 07c（外部重载本身）同批重跑。
@@ -131,7 +131,7 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
 |---|---|---|
 | chromium（Playwright） | **看不见**——聚焦揭示被 `preventScroll` 挡住 | M274 §2.2 的消融 G（chromium 全绿、WebKit 跳） |
 | Playwright WebKit，**默认 UA**（带 `Version/26.x`） | **看不见**——CM6 据此关掉 `preventScroll`，改走它自己的同步回写栈，揭示被抹平 | M279 §0.2、`playwright.config.ts` 的 `REAL_WEBKIT_UA` 注释 |
-| Playwright WebKit，**真机同款 UA**（无 `Version/`） | **看得见**——走原生 `preventScroll` 分支、没有任何回写兜底；实测 `focus({preventScroll:true})` 把 `scrollTop` 从 1540 拽到 0 | M279 §2 的 T4/T4b、M280 的 `test-results/m280/before-fix-red.log` |
+| Playwright WebKit，**真机同款 UA**（无 `Version/`） | **看得见**——走原生 `preventScroll` 分支、没有任何回写兜底；实测 `focus({preventScroll:true})` 把 `scrollTop` 从 1540 拽到 0 | M279 §2 的 T4/T4b、M280 的 `.local/missions/m280/before-fix-red.log` |
 | 系统 WKWebView（真机） | 机制上应当同第三行；M274 的离屏探针曾测得「`preventScroll` 被尊重」（与第三行相反，**两处结论互斥、未定性**） | M280 的真机批次只跑出场景 40/62 的 PASS（回归护栏，不判别）；真机判据**目前表达不了**——器材限制见 docs/backlog.md 的「验收套件表达不了 CL-1 的判据」条与 finding `20260927-worker-impl-esc-jump-improve-playwright-webkit-ua-wkwebview-preventscroll-webkit-playwrig.md` |
 
 ⇒ **条款通过的证据只能来自第三行与第四行**。前两行绿灯一律不作为条款通过的证据。
@@ -180,14 +180,14 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
 
 | 文件（git 外） | 内容 |
 |---|---|
-| `test-results/m280/before-fix-red.log` | master 状态：表格用例红（`1540 → 0`），时间线 `[[1729,0]]` |
-| `test-results/m280/after-fix-green.log` | 修后：3/3 绿 |
-| `test-results/m280/ablation-table-bare-focus.log` | 只把表格的 `restoreFocus` 改回裸 focus ⇒ **只有表格用例**变红 |
-| `test-results/m280/ablation-codeblock-bare-focus.log` | 只把代码块的 `restoreFocus` 改回裸 focus ⇒ **只有代码块用例**变红 |
-| `test-results/m280/scene-readings/*.json` | 每次跑的逐拍读数（scrollTop / caret 位置 / DOM 选区 / 聚焦调用参数） |
-| `test-results/m279/REPORT.md` | 机制调查与 UA 分支对照 |
-| `test-results/m278/REPORT.md` | 主矩阵与消融（M274） |
-| `test-results/m286/ablation-gate-unit.log` | CL-2 的单测消融红（删掉窗口早退 ⇒ 载荷落成中间态 `0 !== 1200`） |
-| `test-results/m286/ablation-reload-deps.log` | CL-3 的消融红（去掉两处 dep ⇒ `1541 → 0` 且遮罩仍开，后台那条照旧绿） |
-| `test-results/m286/ablation-reload-deps-and-load-window.log` | 装载窗口消融后如实写出 `{"pos":0,"y":115.109375}`（与真实 vault 的 `pos 0 / y 114` 同形态） |
-| `test-results/m286/scene-readings/*.json` | CL-3 场景的逐轮读数（`before` / `after` / 载荷） |
+| `.local/missions/m280/before-fix-red.log` | master 状态：表格用例红（`1540 → 0`），时间线 `[[1729,0]]` |
+| `.local/missions/m280/after-fix-green.log` | 修后：3/3 绿 |
+| `.local/missions/m280/ablation-table-bare-focus.log` | 只把表格的 `restoreFocus` 改回裸 focus ⇒ **只有表格用例**变红 |
+| `.local/missions/m280/ablation-codeblock-bare-focus.log` | 只把代码块的 `restoreFocus` 改回裸 focus ⇒ **只有代码块用例**变红 |
+| `.local/missions/m280/scene-readings/*.json` | 每次跑的逐拍读数（scrollTop / caret 位置 / DOM 选区 / 聚焦调用参数） |
+| `.local/missions/m279/REPORT.md` | 机制调查与 UA 分支对照 |
+| `.local/missions/m278/REPORT.md` | 主矩阵与消融（M274） |
+| `.local/missions/m286/ablation-gate-unit.log` | CL-2 的单测消融红（删掉窗口早退 ⇒ 载荷落成中间态 `0 !== 1200`） |
+| `.local/missions/m286/ablation-reload-deps.log` | CL-3 的消融红（去掉两处 dep ⇒ `1541 → 0` 且遮罩仍开，后台那条照旧绿） |
+| `.local/missions/m286/ablation-reload-deps-and-load-window.log` | 装载窗口消融后如实写出 `{"pos":0,"y":115.109375}`（与真实 vault 的 `pos 0 / y 114` 同形态） |
+| `.local/missions/m286/scene-readings/*.json` | CL-3 场景的逐轮读数（`before` / `after` / 载荷） |

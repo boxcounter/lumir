@@ -182,7 +182,7 @@ steps:
 **结论**：验收套件的键盘通道（KimiCU `press_key`）产不出 `Cmd-}` / `Cmd-{` 这个 token，因此
 `⌘}` / `⌘{` 的按键链路在真机上**未验**。这不是产品缺陷，是通道能力边界。
 
-三条实测（2026-09-26，本机，日志在 `test-results/m232/`，git 外）：
+三条实测（2026-09-26，本机，日志在 `.local/missions/m232/`，git 外）：
 
 1. **键名形态**：KimiCU 的键名表用 `rightbracket` / `leftbracket`（`cmd+shift+rightbracket`），
    xdotool 的拼法 `bracketright` / `bracketleft` 会被直接拒：

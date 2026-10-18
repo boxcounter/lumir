@@ -279,7 +279,7 @@ modeline 显示当前标题路径（兼作位置指示），点击它或按 ⌘�
   **M199 实测推翻这条通道**：筛选输入框接管焦点后，`(focused)` 跟着 `aria-activedescendant` 落在
   `<input role="combobox">`（AX 里报成 `AXComboBox`）上，**条目上没有任何可见标记**（AX dump：
   `AXList (大纲)` 下的条目全是裸 `AXStaticText`；实测现场
-  `test-results/acceptance/2026-09-24/32-list-filter/ax/`）。因此游标落点改用**派生证据**——modeline
+  `.local/acceptance/2026-09-24/32-list-filter/ax/`）。因此游标落点改用**派生证据**——modeline
   指示段的标题链（见下一条）；「浮层还开着」这种恒真断言仍不足以承担它，链条串里的 `›` 分隔符才是判据。
 - **⌃N / ⌃P 与 ↑↓ 等价，关闭后归还编辑器（M157；判据 M199 改写）**：浮层里这两条键与箭头共用同一份
   `move()`（`src/toc.ts` 的 onKeydown）。落点判据取**指示段的链条**：按完 ⌃N / ⌃P 后再按一次 `↓`

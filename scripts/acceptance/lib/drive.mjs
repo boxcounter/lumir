@@ -125,7 +125,7 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
  * 早先覆写对象漏抄 `titleBarStyle: "Overlay"` / `hiddenTitle: true`，套件实例因此长出原生
  * 标题栏（窗口多一行、webview 让出 32pt、屏幕上出现窗口标题「Lumir」），**且全程无报错**——
  * 任何「真机验证窗口级配置」的断言在套件里都验不到（M213 实测对照：
- * `test-results/m213/titlebar/readings.md` §4）。配置侧的修法在 app.mjs 的 launchApp
+ * `.local/missions/m213/titlebar/readings.md` §4）。配置侧的修法在 app.mjs 的 launchApp
  * （从 tauri.conf.json 读原件再 spread）；这里补的是**运行期反查**：万一将来又漏，本自检报红，
  * 不留给「断言静默验到非 overlay 形态」这条路。
  *
@@ -160,7 +160,7 @@ function assertOverlayChrome(ax) {
  *
  *  用结构判据而不是场景断言的读屏名「关闭 <名>」：那串文案随语言面漂（与 `waitAppReady` 的
  *  LANG_PATTERNS 同因），而「标签 = AXTabGroup 下的 AXRadioButton」是 dump 上复核过的结构事实
- *  ——M511 的 49 号证据（`test-results/acceptance/2026-10-14-m511/`）里，43 个标签的那份 dump
+ *  ——M511 的 49 号证据（`.local/acceptance/2026-10-14-m511/`）里，43 个标签的那份 dump
  *  恰 43 个 AXRadioButton，空 vault（B 侧）的 dump 里 0 个；本仓库里 AXRadioButton 的 label
  *  也全是标签名（2026-10-14-full 全量 dump 复核）。
  *

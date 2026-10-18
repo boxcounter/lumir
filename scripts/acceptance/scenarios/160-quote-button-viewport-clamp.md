@@ -16,7 +16,7 @@ steps:
     retries: 4
 
   - name: 双击 316 字符长行上的 A 串（连续无分隔符 ⇒ CM 词选区覆盖整行 ⇒ 选区右缘越出容器）
-    # 通道选择的全经过（2026-10-16 探针定案，证据 test-results/acceptance/2026-10-16/tmp-m536-drag-probe/）：
+    # 通道选择的全经过（2026-10-16 探针定案，证据 .local/acceptance/2026-10-16/tmp-m536-drag-probe/）：
     # ① ⌘A 单发 1/1、幂等三连发 3/3 全丢（press_key 键码级丢弃族，同 cmd+v 8/9；cmd+s / cmd+z
     #   同场照落——非服务整体退化）；② 套件 CGEvent 拖选在 CM 编辑器里造不出任何选区（裸拖 /
     #   前置 hover / 段内短拖三个变体 3/3 全败，M228 边界复确认；transcript 静态文本侧 121/122

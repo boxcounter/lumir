@@ -257,7 +257,7 @@ steps:
 - **这条日志断言的残余风险（如实记录）**：同一 worktree 同一天重复跑时，最新文件就是同一个
   （同日线同一个 JSONL），里面可能有**上一次 run** 落下的事件。因此它不独立成立——与同步骤的
   正向/负向 UI 断言联合构成判定。真机上每轮全量只跑一次本场景，风险可接受；人工核对可直接
-  `grep '"category":"asset"' test-results/acceptance/env/lumir/logs/*.jsonl`。
+  `grep '"category":"asset"' .local/acceptance/env/lumir/logs/*.jsonl`。
 - **⌘-Click**：**本套件无法表达**。`click` 动作不支持修饰键（`lib/execute.mjs` 的 click 只有
   target/count）——给 click 加修饰键是套件能力改造（已投 finding，记进 `docs/backlog.md`）。
   因此该路径由视觉场景 `tests/visual/scenes/render-link.spec.ts` 覆盖（stub 记录

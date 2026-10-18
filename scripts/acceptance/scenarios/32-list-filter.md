@@ -261,12 +261,12 @@ steps:
 输入框后，读屏与键盘的落点都变了。**实测（2026-09-24）**：`<input role="combobox">` 在 WKWebView 的 AX
 里落成 **AXComboBox**（不是 AXTextField），且它的文本经 `Value: …` 暴露——本批同时修了套件对这一形态的
 两处支持（`lib/ax.mjs` 的 value 解析、`lib/execute.mjs` 的 `TEXT_FIELD_ROLES`），否则 `keys` 的回读会盯
-在 label 上、注入的落地永远判不出来（现场读数见 `test-results/m199/`）。
+在 label 上、注入的落地永远判不出来（现场读数见 `.local/missions/m199/`）。
 
 ## 覆盖边界（如实记录）
 
 - **未覆盖**：中文 / 拼音查询串的真机注入（通道造不出输入法组合）；点击输入框落焦点的现象在 vault 侧由
   `tests/visual/scenes/list-filter.spec.ts` 覆盖（真机上「点了没反应」只能人工或 chromium 判）；
-  击键到渲染完成的时长（读数在 `test-results/m199/filter-keystroke.json`，不是本场景的断言）。
+  击键到渲染完成的时长（读数在 `.local/missions/m199/filter-keystroke.json`，不是本场景的断言）。
 - **手感项归 Alex**：输入即筛的跟手感、无命中态的观感。
 - 本场景只判行为，不拍基线（浮层的像素基线归 `tests/visual`）。

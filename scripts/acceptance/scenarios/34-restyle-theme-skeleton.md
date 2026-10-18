@@ -94,7 +94,7 @@ steps:
 
 旧 masthead 的 DOM 是「vault 名 span + 文件路径 span + 大纲指示段 button」三件，AX 把它前两件
 **合并成一条 AXStaticText**（真机实证：`- [8] AXStaticText = "lumir-m102-acceptance end-marker-long.md"`，
-见 `test-results/acceptance/2026-09-21/27-document-end-marker/ax/`）。迁移后 vault 名进了侧栏头的
+见 `.local/acceptance/2026-09-21/27-document-end-marker/ax/`）。迁移后 vault 名进了侧栏头的
 按钮、文件路径进了 modeline——**「vault 名与路径合并成一条静态文本」这条形态只可能由旧 masthead
 产生**，因此它是可判定的移除指纹。
 
@@ -118,4 +118,4 @@ steps:
 - 「modeline 右段在场」的判据是文本形态正则（`Markdown · N 行 · UTF-8`）：行数取 `doc.lines`，
   fixture 改动会让 N 变而断言照绿——它守的是**派生接线**，不是某个具体数字。
 - 本场景不覆盖：标题栏 overlay 形态（traffic 灯原生绘制 / 标题不显示 / 可拖拽）——那是窗口级证据，
-  走 `35-restyle-three-themes` 与本批的 `test-results/m213/titlebar/` 读数。
+  走 `35-restyle-three-themes` 与本批的 `.local/missions/m213/titlebar/` 读数。

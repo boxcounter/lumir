@@ -11,14 +11,15 @@ import { defineConfig } from "vite";
 // （finding `.tower/comms/findings/20261007-worker-rfn1-bug-dev-server-watch-tower-worktrees-agent-html-tsconfig-reload.md`）。
 //
 // 为什么忽略这几处是安全的：套件不在这几处放「改了就该重载」的源码——`.tower/` 是别的 agent
-// 的 worktree，`dist/` 与 `playwright-report/` 是构建 / 视觉门禁产物，`test-results/` 是跑批
+// 的 worktree，`dist/` 与 `playwright-report/` 是构建 / 视觉门禁产物，`.local/` 是跑批
 // 自己的证据目录。vite 8 自身已默认忽略 `.git/`、`node_modules/`、`test-results/`、cacheDir
 // 与**根** outDir（见 `node_modules/vite/dist/node` 内的 `resolveChokidarOptions`）；这里补的是默认面之外的
-// `.tower/`、worktree 里的嵌套 `dist/` 与 `playwright-report/`，并显式重列 test-results 让
-// 口径自解释（REVIEW.md 「同一语义两处真源」条：宁可重列，也不要让读者去猜默认面）。
+// `.tower/`、`.local/`、worktree 里的嵌套 `dist/` 与 `playwright-report/`。`.local/` 必须显式
+// 列出——它是点目录，不在默认面内；漏掉就等于让跑批自己写证据的动作触发整页 reload（M359
+// 要挡的那类级联假 FAIL）。
 const ACCEPTANCE_WATCH_IGNORED = [
   "**/.tower/**",
-  "**/test-results/**",
+  "**/.local/**",
   "**/dist/**",
   "**/playwright-report/**",
 ];

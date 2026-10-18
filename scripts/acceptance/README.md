@@ -31,7 +31,7 @@ node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手�
 1. **起真实 app**：`pnpm tauri dev`（WKWebView，非 chromium 近似）。
 2. **驱动**：经 KimiCU MCP（stdio JSON-RPC）读 AX 树 / 截图 / 注入键盘与点击。
 3. **断言**：AX 文本、编辑器文档文本、磁盘文件（sha256 / mtime / 内容 / glob）。
-4. **落证**：`test-results/acceptance/<日期>/<场景>/`（git 外）。
+4. **落证**：`.local/acceptance/<日期>/<场景>/`（git 外）。
 
 ### 起实例前的环境纪律（tower 定，2026-09-16）
 
@@ -81,8 +81,8 @@ LaunchServices、没有启动激活）⇒ **启动零激活**：无人在场的�
 `title/width/height`，`titleBarStyle: "Overlay"` 与 `hiddenTitle: true` 因此被**静默**丢掉：套件实例
 长出原生标题栏（窗口多一行、webview 让出 32pt、屏幕上还出现窗口标题「Lumir」），**全程零报错**，
 于是「真机验证窗口级配置」这一类断言在套件里永远验不到（M213 实测对照见
-`test-results/m213/titlebar/readings.md` §4；M236 的修前/修后对照见
-`test-results/m236/baseline-review/backlog366-before-after/`）。
+`.local/missions/m213/titlebar/readings.md` §4；M236 的修前/修后对照见
+`.local/missions/m236/baseline-review/backlog366-before-after/`）。
 
 配置侧的纪律：`lib/app.mjs` 的 `launchApp` **从 `src-tauri/tauri.conf.json` 读 `app.windows[0]` 原件
 再 spread**（窗口配置只有一份真源，REVIEW.md 「同一语义两处真源」条），只叠 `x/y/focus`。读不到窗口对象就抛错，
@@ -174,7 +174,7 @@ dev 端口是**全机共享**的，`reclaimPort()` 只在两个 app 实例同时
 | 验收 vault（两个） | `/tmp/lumir-m102-acceptance` 与 `/tmp/lumir-m102-acceptance-b`，每次运行把 vault **根下**重置为 `fixtures/` 与 `fixtures/second-vault/` 的 `.md` 副本 | 合成 vault；用户真实 vault（真实路径按信息卫生纪律不落库）永不写入（`assertSafeTargets()` 对两个 vault 与配置目录都兜底拒绝）。第二个 vault 是多 vault 场景的切换目标，文件名与第一个刻意不重叠。**根下的非 `.md` 产物不被这次重置覆盖**（场景 `fixtures:` 带进来的 `.gitignore` / `x.jsonc` / `huge.log` 等会跨场景留着）——已登记在 `docs/backlog.md`，新场景**不要**依赖或假设这类残留（`resetVault` 的注释是这条口径的 canonical 居所） |
 | 端口 | dev server 走 `LUMIR_ACCEPTANCE_PORT`（默认 1430），经 `--config` 覆写 | 绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420 |
 | 跑批串行 | 真跑批持 `/tmp/lumir-acceptance-rmachine.lock`（缺省 vault 下强制；显式覆写 `LUMIR_ACCEPTANCE_VAULT` 则跳过，见「跑批独占锁」） | 上面三项都到位也只保证「一条跑批内部」不串扰——两条跑批之间共享 vault 与端口，靠人工约定会漏，故由 runner 强制 |
-| dev server watch | 验收实例的 vite 忽略 `**/.tower/**`、`**/test-results/**`、`**/dist/**`、`**/playwright-report/**`（`vite.config.ts` 按 `LUMIR_ACCEPTANCE_PORT` 在场判定，只有验收实例装得上；`app.log` 里有一行 `[vite] 验收模式 watch-ignore 生效` 作正向见证） | 同机别的 agent 在自己的 worktree 里 checkout / 构建时写下 `.html` / `tsconfig.json`，会让验收实例的前端整页重载、把正在跑的场景打断，产出与产品缺陷无法区分的级联假 FAIL（2026-10-07 实证：一次跑批的 18 条 reload 全部来自 `.tower/worktrees/` 下） |
+| dev server watch | 验收实例的 vite 忽略 `**/.tower/**`、`**/.local/**`、`**/dist/**`、`**/playwright-report/**`（`vite.config.ts` 按 `LUMIR_ACCEPTANCE_PORT` 在场判定，只有验收实例装得上；`app.log` 里有一行 `[vite] 验收模式 watch-ignore 生效` 作正向见证） | 同机别的 agent 在自己的 worktree 里 checkout / 构建时写下 `.html` / `tsconfig.json`，会让验收实例的前端整页重载、把正在跑的场景打断，产出与产品缺陷无法区分的级联假 FAIL（2026-10-07 实证：一次跑批的 18 条 reload 全部来自 `.tower/worktrees/` 下） |
 
 **dev server watch 的隔离（M359，finding 已闭环）**：runner 以仓库根起 vite，`.tower/worktrees/**`
 原本就在 watch 面内——同机别的 agent 连跑批都不用跑，只要在自己 worktree 里 checkout / 构建，写下的
@@ -190,8 +190,8 @@ dev 端口是**全机共享**的，`reclaimPort()` 只在两个 app 实例同时
 
 判据形态（**这次加固的验收口径**）：跑批期间向 `.tower/worktrees/` 下自建的探针目录**同法**写
 `.html` / `tsconfig.json`——加固后 `app.log` 一次 `page reload` / `forcing full-reload` 都没有，
-未加固的对照跑里同一次注入必然出现（对照证据 `test-results/acceptance/m359-run-control/`、
-加固证据 `test-results/acceptance/m359-run-fixed/`，均在本地、git 外）。「一次都没有」这条负向判据
+未加固的对照跑里同一次注入必然出现（对照证据 `.local/acceptance/m359-run-control/`、
+加固证据 `.local/acceptance/m359-run-fixed/`，均在本地、git 外）。「一次都没有」这条负向判据
 因此有区分度，而不是「探针根本没生效」（REVIEW.md 「断言等价于子串 / 读不到当成空」条）。
 
 边界：忽略面只覆盖同机写者的**产物目录**。跑批期间改写**被测 checkout 的非忽略路径**（`src/`、
@@ -397,7 +397,7 @@ change `vault-open-ignore-set` 之前，`vault_open_path` 是**同步 command**�
 那个副作用消失——两次快照逐字节一致（旧 vault 的树 + 装载指示在场）⇒ `settle` 在装载**途中**
 就返回。
 
-**现场（M296 首跑，2026-09-29，`test-results/acceptance/2026-09-29/`）**：场景 60 与 67 在切换
+**现场（M296 首跑，2026-09-29，`.local/acceptance/2026-09-29/`）**：场景 60 与 67 在切换
 后紧跟 `do: settle`，`settle` 返回时 AX 里仍是切换**前**的 vault（60：A 的 40 个标签 + 指示；
 67：`Vaults:…-b` + 指示），后续断言因此全对着旧状态判红（60 的「B 装载完成」三条 + 后面的
 「按需装载」两步连带超时；67 的「A 装载完成」四条）。**这不是产品缺陷**：同一批里 67 的
@@ -471,7 +471,7 @@ not: ["AXProgressIndicator"] }`）；`settle` 只在「判据明确不依赖任�
 **`geom` 为什么存在、边界在哪（M397）**：浮层类弹出物（popover / 菜单 / 选择器）「打开后是否真的
 画出来了」在既有通道里看不见——AX 文本断言只能证浮层的**节点**在树里。M397 的现场戳破了这一层
 的薄弱：会话浮层被祖先 `overflow: hidden`（harness 段）整段裁掉、一个像素都没画，而 WKWebView 的
-AX 照样暴露浮层项、报的还是**未裁的完整包围盒**（证据 `test-results/acceptance/2026-10-08/
+AX 照样暴露浮层项、报的还是**未裁的完整包围盒**（证据 `.local/acceptance/2026-10-08/
 106-harness-session-restore/ax/01-01-选择器.txt`）——场景 106「AX 含 `zqxalpha`」因此判绿，纯几何
 断言（「包围盒完整且在视口内」）同样判绿。所以 `geom` 是**两段**：几何段钉合同 O2（完整、非退化、
 在视口内），绘制段钉 O1（在包围盒区域内扫描亮度跨度，要求 `painted.min` 之上）——绘制段是「真被
@@ -515,7 +515,7 @@ chord `verify.pattern`、`drag.selection`，以及节点定位里走 `matcher()`
 的「`click` / `clickInNode` 的 `target` 与断言里的匹配器不是同一套口径」条）；`\int` / `\\` /
 JSONL 里的 `\n` 这类**字面反斜杠**同样不判。
 
-## 证据布局（`test-results/acceptance/<日期>/`，git 外）
+## 证据布局（`.local/acceptance/<日期>/`，git 外）
 
 ```
 <日期>/
@@ -609,11 +609,11 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 
   **两类共通的纪律**：键盘类场景的**负向断言**必须配一条同通道可达的**正观测**（同一场景里先有一次
   成功的注入证明通道通着，再判「没变」）；红了先按丢键复跑一次再判产品缺陷（丢键是间歇的，REVIEW.md「键盘注入丢键」条）。
-- **面板内的局部键只在焦点留在该面板内时命中——「面板内 Escape 收 harness pane」因此不是确定性通道（M523 定案，2026-10-15）**：harness 面板的 Escape 收起处理器挂在 `panel` 元素上（`src/harness-panel.ts:6835-6853`），靠 keydown 从**面板内的焦点**冒泡上来；焦点移到面板外（点编辑器）那拍 Escape 不再经过 panel，收起**整体失效**——M523 真机探针实测「`clickEditor` 移焦后再 Escape」→ pane 照旧开着（`test-results/acceptance/2026-10-15-m523-probe/148-harness-image-mention/`：`等 pane 收起` 15s 超时、存档位停在 `"harness_pane": true`）。**套件口径**：断言「pane 已收起」用 `⌘⇧A`（`harness.toggle`，`src/keys.ts:700`，全局绑定、与焦点无关；「pane 开着 + 焦点在 composer」这一同款现场由场景 86 守）；场景 148 的收起步因此从 Escape 换成 `⌘⇧A`，**「Escape 收 pane」这一覆盖随之从 148 撤出**（仍由场景 127 守——它的前置是「焦点留在 composer」，焦点一移出面板它就红，别当确定性通道复用）。**顺带更正一条归因（未实测坐实，只作候选登记）**：M498 记的「Escape 被 composer 消费」站不住——composer 的 keydown 没有 Escape 分支（`src/harness-panel.ts:6364-6460`），keydown 从 composer 冒泡到 panel 照常命中收起；当时那两跑的红更可能来自面板的两段式收敛（`selPop` / `permPop` / `ctxPop` 任一在场时第一拍 Escape 只收浮层，`src/harness-panel.ts:6838-6851`）。
+- **面板内的局部键只在焦点留在该面板内时命中——「面板内 Escape 收 harness pane」因此不是确定性通道（M523 定案，2026-10-15）**：harness 面板的 Escape 收起处理器挂在 `panel` 元素上（`src/harness-panel.ts:6835-6853`），靠 keydown 从**面板内的焦点**冒泡上来；焦点移到面板外（点编辑器）那拍 Escape 不再经过 panel，收起**整体失效**——M523 真机探针实测「`clickEditor` 移焦后再 Escape」→ pane 照旧开着（`.local/acceptance/2026-10-15-m523-probe/148-harness-image-mention/`：`等 pane 收起` 15s 超时、存档位停在 `"harness_pane": true`）。**套件口径**：断言「pane 已收起」用 `⌘⇧A`（`harness.toggle`，`src/keys.ts:700`，全局绑定、与焦点无关；「pane 开着 + 焦点在 composer」这一同款现场由场景 86 守）；场景 148 的收起步因此从 Escape 换成 `⌘⇧A`，**「Escape 收 pane」这一覆盖随之从 148 撤出**（仍由场景 127 守——它的前置是「焦点留在 composer」，焦点一移出面板它就红，别当确定性通道复用）。**顺带更正一条归因（未实测坐实，只作候选登记）**：M498 记的「Escape 被 composer 消费」站不住——composer 的 keydown 没有 Escape 分支（`src/harness-panel.ts:6364-6460`），keydown 从 composer 冒泡到 panel 照常命中收起；当时那两跑的红更可能来自面板的两段式收敛（`selPop` / `permPop` / `ctxPop` 任一在场时第一拍 Escape 只收浮层，`src/harness-panel.ts:6838-6851`）。
 - **原生剪贴板命令（⌘C / ⌘V）在真机通道不落地（M345 实测，2026-10-06）**：`⌘C` 与 `⌘V` 是
   WKWebView 的原生命令（`src/keys.ts` 里没有它们，因此不经 DOM 的 keydown 链路），KimiCU 的
   `press_key` 注入在这台机器上**产不出它们的副作用**——M345 的一次真机探针（**未入库**，现场
-  `test-results/acceptance/2026-10-06/86-quote-card-paste-sanitize/steps.md`）实测两轮：先经 app 自己的
+  `.local/acceptance/2026-10-06/86-quote-card-paste-sanitize/steps.md`）实测两轮：先经 app 自己的
   `block.copy` 命令把含字面 `<quote>` 的文本写进系统剪贴板（`clipboard` 断言逐字读到了它），随后在**已聚焦**
   （AX 标 `(focused)`）的 composer 上发 `⌘V`：composer 仍停在占位文案、编辑器正文逐字未变，
   即**粘贴事件从未到达 DOM**。同批对照：`⌘Z`（编辑器撤销）与 `⌘J`（app 命令）都照常落地——
@@ -633,7 +633,7 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   **2026-10-11 修正（M456）——上面两条各放宽一格**：① 「⌘V 不落地」**只对文本成立**：对**图片**，
   ⌘V 经同一 KimiCU `press_key` 注入**真的落地**（M456 探针：osascript 把一个合成 png 置入剪贴板，
   `press_key("cmd+v")` 打到已聚焦的 composer 上，AX 里立刻多出一张 `pasted-<hex>.webp · 200×120`
-  的图片卡片；现场 `test-results/acceptance/2026-10-11/134-harness-composer-intercard-caret/`）。
+  的图片卡片；现场 `.local/acceptance/2026-10-11/134-harness-composer-intercard-caret/`）。
   **注意：这条只在 KimiCU 层成立，套件动作面尚未成立**——⌘V 直接在 KimiCU 的 `press_key` 注入
   （探针）确实落；但经套件的 `do: key { key: "cmd+v" }` 注入时，紧跟 `clipboardImage`（osascript
   置剪贴板）之后毫秒级发出**不落地**，加一拍（`do: sleep { ms: 800 }`）后**仍不落地**（M456 两次
@@ -644,7 +644,7 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   **2026-10-11 收口（M456，Alex 裁决后）——把结论写全**：
   - **布局面已修**：`src/harness-panel.css` 给 composer 末尾空段落恒留一条可见、可点入的行（`commit ad372fa`）。
     修后实测：菜单 Paste 通道**通**（第二步右键开出含 Paste 的编辑菜单）、第二张图**贴上且次序正确**。
-    漂移 6 条整页/元素基线，前后对比见主仓 `test-results/m456-visual/`（Alex 过目后才 `--update`）。
+    漂移 6 条整页/元素基线，前后对比见主仓 `.local/reviews/m456-visual/`（Alex 过目后才 `--update`）。
   - **注入面仍阻塞（本条的硬知识，值钱）**：**原生菜单 Paste 交互之后，CGEvent 逐键注入
     （`press_key` / `do: keys` / `do: key`）对 composer 确定性死亡**——3/3 不落地、工具自报 ok、
     目标串 0 命中；同期 `ax: { focused: "AXTextArea" }` 断言 **PASS**（⇒ 不是聚焦、不是前台）。
@@ -802,7 +802,7 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   - **可挂**：⌘V 贴字（composer 值里多出被贴的文本；场景 134/150 即此）等「直接副作用 = 目标文本变化」
     的 chord。
   - **不可挂（M507 的 dump 核查坐实，别试）**：① **段末 ⇧Enter**——WKWebView 的 AX 只在**块之间**插
-    `\n`、末尾空段落不产字符（`test-results/acceptance/2026-10-12/154-…/ax/01-…`：落完末尾空行后
+    `\n`、末尾空段落不产字符（`.local/acceptance/2026-10-12/154-…/ax/01-…`：落完末尾空行后
     composer 值 = `"hnl-brk-aa\nhnl-brk-cd"`、**无尾随换行**），几何又受 composer min-height 下限压住
     （空框 444×42 / 1 段落 444×46 / 3 块 444×66 ⇒ 1 块与 2 块 bbox 同值；118 的 composer 越过 ~7 块后
     达 max-height 封顶，更分不出来）；② **纯导航键**（⌃B/⌃A/⌃P，只动 caret 不改文本）；③ **浮层内被
@@ -838,9 +838,9 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   2026-09-25）**：KimiCU 现有通道实测失败的有四条：`click` 的 `count: 2`（坐标路径）、`click` 的
   `count: 2`（AX 索引路径，即 AXPress ×2）、两次独立的 `click`（两次 MCP 往返的间隔超出系统双击
   间隔）、`drag_paths` 的两条单点路径（`path_gap_ms` 取 10ms 与 0ms 两种）。现场
-  `test-results/m184/13`～`/17`（本机，git 外）。
-  **M209 修订两处**（探针脚本 `test-results/m209-probe/cgevent-click.swift` + harness
-  `probe.mjs`，现场与 AX dump 落 `test-results/acceptance/<日期>/m209-probe/`；探针脚本随后移进
+  `.local/missions/m184/13`～`/17`（本机，git 外）。
+  **M209 修订两处**（探针脚本 `.local/probes/m209-probe/cgevent-click.swift` + harness
+  `probe.mjs`，现场与 AX dump 落 `.local/acceptance/<日期>/m209-probe/`；探针脚本随后移进
   套件成为 `lib/cgevent-click.swift`，`doubleClick` 动作的驱动）：
   ① **M184 用的那条判据不成立**，不能拿它当「双击没到前端」的证据：`openFile` 对**已打开的同路径**
   会短路（`src/main.ts:380-386`——`existing !== undefined` 时只把这个标签从预览固定住、**不新建
@@ -854,7 +854,7 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   接管、放大图 `AXImage` 几何读数 1120×374、`Esc` 关得掉）。套件动作 `doubleClick`（实现
   `lib/{execute,drive}.mjs` + `lib/cgevent-click.swift`）走的就是这条；场景 33 是它的第一个消费者
   （三种引用形态各双击一次 + 三条关闭路径 + 两条 `unchangedSince`，PASS 现场
-  `test-results/acceptance/<日期>/33-image-lightbox/`）。
+  `.local/acceptance/<日期>/33-image-lightbox/`）。
   **用它的三条纪律**：
   - **目标窗口必须在前台且未被遮挡**：真鼠标点击落在该点最上层的那扇窗上，KimiCU 的键盘注入可以
     后台走、这条不行。`doubleClick` 拿到前台失败会**报错**（不是静默点到别处）。跑双击类场景时
@@ -888,7 +888,7 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   目标窗口必须前台未被遮挡）。另有一条 WKWebView 的 AX 怪癖配套：拖类控件若是 `role=separator`，
   WKWebView 暴露成**无 bbox 的 AXSplitter**（节点在树、名字对、frame 为空），按节点定位不到——
   栏宽手柄用 `textareaEdge` 形态（从 AXTextArea bbox 的列缘内侧 2px 起拖）绕开。场景 38 是首个
-  消费者（现场 `test-results/acceptance/<日期>/38-content-width-drag/`）。
+  消费者（现场 `.local/acceptance/<日期>/38-content-width-drag/`）。
   **通道选型的边界（M536 定案）**：这条 CGEvent 拖拽序列（`lib/cgevent-click.swift` 的 mode 5）
   只对**栏宽手柄 / 文件树拖放 / 1px 抖动点击**这类 DOM 控件目标成立，**在 CM 编辑器正文上造不出
   任何文本选区**（裸拖 / 前置 hover / 段内短拖三变体 3/3 全败；带修饰 flag 的点击——mode 6——
@@ -950,10 +950,10 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   `src-tauri/tauri.conf.json` 窗口配置（`app.windows[0]`）的 `dragDropEnabled: false`（M537
   裁决；产品当前无任何 OS 文件拖入消费者）。修复后本套件 `drag`（swift + CGEvent mode 5）
   即可完整驱动 HTML5 拖——场景 159 修复后复跑全 PASS（五条拖拽全落盘，现场
-  `test-results/acceptance/2026-10-16/159-filetree-drag-move/`）。**将来若重开该开关**（如
+  `.local/acceptance/2026-10-16/159-filetree-drag-move/`）。**将来若重开该开关**（如
   Finder 拖文件入 vault），先解决同一 wry 上游洞，否则「拖了没落盘」的失败都是它，不是产品回归。
   另注：纯 Playwright/CDP 鼠标在 Chromium 里起不了 HTML5 拖（M537 探针
-  `test-results/m537-probe/`）——那是 chromium 侧测试的边界，与本套件的真鼠标通道无关。
+  `.local/probes/m537-probe/`）——那是 chromium 侧测试的边界，与本套件的真鼠标通道无关。
 - **场景维护权归实现者**：新功能 mission 的 tasks 必须带「新增/更新验收场景」一项（裁决点 3）。
 
 ## 加一个场景

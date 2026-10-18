@@ -82,7 +82,7 @@ M373 起双 chip（模型 + 思考）合并为**一个选择器 chip**（`src/ha
 
 **修复前**：`.lumir-hp-modelpop` 是 chip `<button>` 的**子节点**，而 WKWebView 的 AX 树把
 **嵌在 button 里的 button 当成叶子**——浮层项在 AX 里一个都不出现。M349 首跑实测
-（`test-results/acceptance/2026-10-06/90-harness-model-chip/`）：截图里浮层清楚可见，
+（`.local/acceptance/2026-10-06/90-harness-model-chip/`）：截图里浮层清楚可见，
 而同一时刻的 AX dump 里 chip 节点没有任何子节点。
 
 **修复后（M351，finding 20261006-worker-hp4）**：chip 与浮层同挂 wrapper

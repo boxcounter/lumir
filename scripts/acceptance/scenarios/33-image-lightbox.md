@@ -165,7 +165,7 @@ steps:
 |---|---|
 | 6.1 新增场景 | 本文件；三种引用形态（固定尺寸 svg / 百分比宽度 svg / 位图）各双击一次，三条关闭路径各走一遍，`Esc` 后焦点回编辑器 |
 | 6.2 fixture 落库 | `fixtures: [lightbox.md, lightbox-fixed.svg, lightbox-percent.svg, lightbox-bitmap.png]`，随 `runScenario` 拷进合成 vault |
-| 6.3 反向验证 | 把本场景驱动双击的两条 `do: doubleClick` 换成 `do: click`（单击）后重跑：遮罩断言必须 FAIL（现场留 `test-results/acceptance/<日期>/33-image-lightbox/`） |
+| 6.3 反向验证 | 把本场景驱动双击的两条 `do: doubleClick` 换成 `do: click`（单击）后重跑：遮罩断言必须 FAIL（现场留 `.local/acceptance/<日期>/33-image-lightbox/`） |
 | 6.5 不改写源文件 | 最后一步的两条 `unchangedSince`（编辑器内容逐字节 + 磁盘 sha256） |
 | 8.3 跑一次留档 | `node scripts/acceptance/run.mjs 33`，`status.txt` = PASS，`steps.md` 逐条可读 |
 

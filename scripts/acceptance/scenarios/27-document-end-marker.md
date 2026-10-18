@@ -121,12 +121,12 @@ steps:
   可视范围内**的行——现场（`ax/03-_动作_从长文直接切到非_md_文件…txt`）里 file tree 的行按钮止于
   `y≈777`（窗口高 800），排序在 `links.md` 之后的行（`notes.txt` / `plain.md` / `x.jsonc` 等）
   **完全不在 AX 里**，`open` 因此以「等待左栏出现 XXX 超时（60000ms）」告终（首跑现场见
-  `test-results/m251/acceptance-27.log`）。所以这一步用 `vaultWrite` 造一个排序最前的
+  `.local/missions/m251/acceptance-27.log`）。所以这一步用 `vaultWrite` 造一个排序最前的
   `aaa-nonmd.txt` 再打开（场景 47 造 `aaa-menu.md` 是同一约束的同一手法）。**顺带登记**：凡 `open:`
   指向排序靠后 fixture 的场景都会撞这条（`41-editable-non-md-files` / `42-non-md-edit-guardrails`
   的 `open: notes.txt` 即此形态，本批未跑它们，是否真红待验）。
 - **同一时刻只跑一份验收**（M251 现场）：本套件的隔离配置目录是**主 checkout 共享**的
-  `test-results/acceptance/env`（证据落主 checkout 是既定纪律），两个 worktree 的套件并发跑会互相
+  `.local/acceptance/env`（证据落主 checkout 是既定纪律），两个 worktree 的套件并发跑会互相
   污染——M251 那次真机跑里标签栏出现了一批**不属于本场景**的已打开标签（`ax/04-短文.txt`：callout.md /
   headings-ramp.md / identity.md … 二十余个），是另一份并发套件（wt-252 的实例当时仍活着）在本场景
   `resetSessions()` 之后写回的会话。本场景的判据（文档文本 / 标记节点 / 磁盘）不受它影响，但并发跑会

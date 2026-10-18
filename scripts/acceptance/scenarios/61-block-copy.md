@@ -7,7 +7,7 @@ open: block-copy.md
 marker: "块级复制场景"
 config:
   keys: { "Cmd-j": "block.copy" }
-# caret 的落点策略（M277 现场试了五版才定，读数逐条留在 test-results/acceptance/m277/）：
+# caret 的落点策略（M277 现场试了五版才定，读数逐条留在 .local/probes/m277/）：
 #   - **唯一可靠的可点锚点是表格的 AXTable**：块内文本节点与图表 widget 在 AX 里都不带 bbox
 #     （实测三种目标都报「找不到带 bbox 的节点」，见 zz-probe2 的现场）。
 #   - 长 chain（8–19 个 chord）在盲发注入下会丢键 ⇒ 只允许 4–7 步的短链，且每个目标块 4–6 行

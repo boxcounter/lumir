@@ -11,8 +11,8 @@ src-tauri/target/
 # perf 测量结果（scripts/perf/* 产出，CI 作为 artifact 上传）
 perf-results/
 
-# 真机验收与评审证据（scripts/acceptance/* 与 test-results/<mission>/ 产出；截图量大、session 产物，不入 git；.last-run.json 已被跟踪、不受此豁免影响）
-test-results/
+# 本地证据与材料根（真机验收 / 探针 / mission 证据 / 评审材料 / 安装包 / 设计真源；按使用场景分层，见 .local/README.md；截图量大、session 产物，不入 git）
+.local/
 
 # misc
 *.log

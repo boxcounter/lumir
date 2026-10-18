@@ -710,7 +710,7 @@ function spawnSyncText(cmd, args) {
  * 早先的写法是在这里手抄 title/width/height（+注释提醒「改那边要同步这里」），结果
  * `titleBarStyle: "Overlay"` 与 `hiddenTitle: true` 被**静默**吃掉：套件实例长出原生标题栏
  * （窗口多一行、webview 让出 32pt），而这个丢配置一点报错都没有——任何「真机验证窗口级配置」
- * 的断言在套件里都验不到（M213 实测对照见 `test-results/m213/titlebar/readings.md` §4）。
+ * 的断言在套件里都验不到（M213 实测对照见 `.local/missions/m213/titlebar/readings.md` §4）。
  * 现在改成从 `src-tauri/tauri.conf.json` 读 `app.windows[0]` 再 spread：窗口配置只有一份真源
  * （REVIEW.md 「同一语义两处真源」条），新增窗口级键不会再漏。读不到就抛错，**不回落手抄一份**（静默降级回来
  * 就是同一个坑）。运行期自检见 `drive.mjs` 的 assertOverlayChrome（waitAppReady 内）。
@@ -842,8 +842,8 @@ export function assertSafeTargets() {
     throw new CuError(`拒绝：第二个验收 vault 指向用户目录（${v2}）；只允许 /tmp 下的合成 vault`);
   }
   const home = envHome();
-  if (!home.includes("test-results/acceptance/")) {
-    throw new CuError(`拒绝：隔离配置目录不在 test-results/acceptance 下（${home}）`);
+  if (!home.includes(".local/acceptance/")) {
+    throw new CuError(`拒绝：隔离配置目录不在 .local/acceptance 下（${home}）`);
   }
   return { vault: v, secondVault: v2, envHome: home };
 }

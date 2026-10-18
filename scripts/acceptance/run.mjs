@@ -12,7 +12,7 @@
 // （显式覆写 `LUMIR_ACCEPTANCE_VAULT` 到别的 vault 则跳过锁，按「各自隔离」并行——见下方 acquireRmachineLock）。
 //
 // 设计（docs/process/real-machine-acceptance.md）：起真实 app（`pnpm tauri dev`，WKWebView 非
-// chromium 近似）→ KimiCU 驱动 → AX/内容断言 + 截图证据 → test-results/acceptance/<日期>/（git 外）。
+// chromium 近似）→ KimiCU 驱动 → AX/内容断言 + 截图证据 → .local/acceptance/<日期>/（git 外）。
 // 每个场景前重置验收 vault、重置隔离配置、重启 app——场景之间零串扰，代价是每次重启几秒。
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";

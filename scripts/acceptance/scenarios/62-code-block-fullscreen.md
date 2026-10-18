@@ -234,7 +234,7 @@ Alex 原话（2026-09-27）：「代码块也可以像表格那样，放大查�
   稳定的注入通道（change tasks 6.1 的登记）。MUST NOT 拿 Esc 路径的绿灯冒充它。
 - **M280 补记（2026-09-27，本场景的判据一字未改）**：本场景在真机上**修前也 PASS**（M277 的
   落地批），而那两次 PASS **不等于**位置不变量成立——同一条几何在 chromium 与「真机同款 UA 的
-  Playwright WebKit」下时红时绿（`test-results/m280/` 与 `test-results/m279/REPORT.md` §2）。
+  Playwright WebKit」下时红时绿（`.local/missions/m280/` 与 `.local/missions/m279/REPORT.md` §2）。
   因此本场景在真机层只能当**回归护栏**（修前修后都绿），MUST NOT 引用它宣称 CL-1 已验。
   M280 试图为条款补两条真机场景（表格 ESC / 代码块 ESC），实测**做不出可证伪的判据**：
   器材三约束（无 `scrollTop` 读数、AX 文本窗口宽达 ~2500–3600px、命令入口的块定位范围

@@ -193,7 +193,7 @@ Alex 原话（2026-10-12）：「希望 Ctrl-A 回到行首」；「当光标在
   ⌃B / ⌃A / ⌃N / ⌃P 注入在通道修好前不落地，读数**待复跑**；模型层判据已由单测覆盖
   （`tests/unit/composer-nav.test.ts` 的段末档与渲染行闸门、`tests/unit/harness-composer.test.ts`
   的写回落点阶梯），引擎层（caret 几何、`beforeinput` 是否派发、渲染行一步）由 M457 的 WebKit
-  探针判（真实 app + WebKit，读数落 `test-results/m457-probe/`，git 外；永久化的回归判据缺位已
+  探针判（真实 app + WebKit，读数落 `.local/probes/m457-probe/`，git 外；永久化的回归判据缺位已
   作为 finding / backlog 条登记）。
 - **⌃N / ⌃P 渲染行这一步的真机读数本场景只留截图**：AX 不暴露 contenteditable 内的光标位，
   「打字落点」在这里依赖折行点（脆判据），故两步只断言「导航不改文本」+ 截图给 Alex 人眼过目。

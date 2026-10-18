@@ -18,11 +18,11 @@ import { mkdirSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { stubTauri, configGets } from "./tauri-stub";
 
-/** 基线过目包（M277）：hover 帧的观感截图落 test-results/m277-impl/baseline-review/，等 Alex 过目。
+/** 基线过目包（M277）：hover 帧的观感截图落 .local/reviews/m277-impl/baseline-review/，等 Alex 过目。
  *  **刻意不写成 `expectScreenshot` 断言**：新增整页 / 元素基线是 Alex 的人肉裁决点（AGENTS.md
  *  的视觉门禁卫生），断言化会让门禁在裁决之前一直是红的；静止态基线零变化由全量视觉门禁
  *  （22 处既有像素断言）自己证明。 */
-const REVIEW_DIR = new URL("../../../test-results/m277-impl/baseline-review/", import.meta.url);
+const REVIEW_DIR = new URL("../../../.local/reviews/m277-impl/baseline-review/", import.meta.url);
 async function captureReview(page: Page, name: string): Promise<void> {
   mkdirSync(REVIEW_DIR, { recursive: true });
   const path = new URL(name, REVIEW_DIR).pathname;

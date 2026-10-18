@@ -638,7 +638,7 @@ Alex 请求的六个条目级操作（删除、重命名、复制完整路径、
   里既有被 wt-356 / wt-357 的 `.html` + `tsconfig.json` 触发的那批强制 full reload，又有这份
   jsonl 里的成对事件（`.678` / `.694`），而失败的那一步（点「重命名…」后断言输入框）正落在这一秒。
   场景内防不住：瞬时状态被整页换掉的那一刻，「一步开菜单、下一步点菜单项」的写法必然落空。防线在
-  套件侧——让验收实例的 dev server 不 watch `.tower/**`（以及 `dist/**`、`test-results/**`、
+  套件侧——让验收实例的 dev server 不 watch `.tower/**`（以及 `dist/**`、`.local/**`、
   `playwright-report/**`），已按 M358 上报（finding）。
 - **注入通道的两条老账**：① `cmd+a` 是 chord，套件**盲发不重试**（丢键就 red，按 README 先复跑
   一次再判产品缺陷）；② 内联输入框的**素材串注入已迁 `do: typeInNode`**（M507：`type_text` 整串一次
@@ -659,7 +659,7 @@ Alex 请求的六个条目级操作（删除、重命名、复制完整路径、
 - **真机 AX 读不到非空值输入框的读屏名（M324 实测，判据因此换了形态）**：WKWebView 暴露给 AX 文本
   通道的 `<input type="text">`，**值为空**时带上读屏名（`AXTextField (新建文件的名称)`），**值非空**
   时只剩 `= "值"`——同一个「新建文件」输入框，用户一敲键就变成 `AXTextField = "sh."`（现场
-  `test-results/acceptance/2026-09-26/47-file-tree-context-menu/ax/23-_动作_输入_fresh.md.txt`）。
+  `.local/acceptance/2026-09-26/47-file-tree-context-menu/ax/23-_动作_输入_fresh.md.txt`）。
   行内重命名框是**预填**的（值 = 原名），所以 `ax: { has: "重命名 {名称}" }` 永远读不到——这不是
   产品缺陷，与场景 56（goto-line 的同款预填输入框）是同一条边界。读屏名措辞仍在
   `tests/visual/scenes/tree-menu.spec.ts:138` / `:512` 逐字断言（`.ft-edit` 的 `aria-label`），

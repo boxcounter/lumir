@@ -11,7 +11,7 @@
 // 判别层：chromium。两条都与引擎的聚焦揭示无关（重载是应用自己发起的动作），因此不需要
 // `webkit-realua` 那一支（它只对「引擎聚焦揭示」那一族有区分度，见 m280-overlay-esc-scroll）。
 //
-// 反向验证（先红后绿，日志见 test-results/m286/）：把 `src/save-controller.ts` 的
+// 反向验证（先红后绿，日志见 .local/missions/m286/）：把 `src/save-controller.ts` 的
 // `deps.restoreReadingPosition` / `deps.documentReplaced` 两处调用去掉，第一条用例的两半分别变红
 // （视口停在 0；遮罩仍 hidden=false）；第二条用例（后台标签）**照旧绿**——它判的是「不许越界触发」，
 // 与那两处调用缺失无关，这正是它与第一条的分工。
@@ -21,7 +21,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { stubTauri, configGets, externalWrite, fireFsEvent, readingPositionPuts } from "./tauri-stub";
 
 /** 证据落点（git 外，与门禁日志分开）：每次跑把读数写一份，便于逐条核对。 */
-const EVIDENCE_DIR = new URL("../../../test-results/m286/scene-readings/", import.meta.url);
+const EVIDENCE_DIR = new URL("../../../.local/missions/m286/scene-readings/", import.meta.url);
 
 const TRIGGER_KEY = "Cmd-j";
 const TRIGGER_PRESS = "Meta+j";
@@ -167,7 +167,7 @@ test("外部重载前台文档：视口不回篇首 + 遮罩退出 + 载荷不�
   await fireFsEvent(page, [{ kind: "modified", path: "scene.md", entry_kind: "file" }]);
   await expect.poll(() => docText(page)).toContain("这一段只存在于磁盘版");
 
-  // 先落读数再断言（证据纪律：任一条断言红掉，现场仍留在 test-results/m286/ 里）。
+  // 先落读数再断言（证据纪律：任一条断言红掉，现场仍留在 .local/missions/m286/ 里）。
   // 1.4s 的等待同时覆盖两件事：恢复的落点经 CM 的测量周期落地（几帧内），以及捕获侧越过 1s 防抖。
   await page.waitForTimeout(1400);
   const after = await anchorNow(page);
@@ -184,7 +184,7 @@ test("外部重载前台文档：视口不回篇首 + 遮罩退出 + 载荷不�
   expect(
     Math.abs(after.scrollTop - before.scrollTop),
     `重载前 scrollTop=${before.scrollTop}（第 ${before.line} 行）、重载后=${after.scrollTop}（第 ${after.line} 行）` +
-      "——重载把视口复位到篇首而没有恢复时，这条如实变红（消融证据见 test-results/m286/）",
+      "——重载把视口复位到篇首而没有恢复时，这条如实变红（消融证据见 .local/missions/m286/）",
   ).toBeLessThanOrEqual(TOLERANCE_PX);
   expect(after.scrollTop, "非零：篇首是这一族缺陷的形态").toBeGreaterThan(0);
 

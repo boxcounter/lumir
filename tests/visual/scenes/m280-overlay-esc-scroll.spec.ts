@@ -25,7 +25,7 @@
 //   本身是断言，不是前提。
 //
 // 自检（REVIEW.md 「断言等价于子串」条）：判据必须能 FAIL，而且分得清是哪一半在 FAIL。修前 / 修后 / 两次
-// 单点消融的读数与日志见 test-results/m280/：
+// 单点消融的读数与日志见 .local/missions/m280/：
 //   - **表格 ESC（触发钮入口）是主判别用例**：master 上红（`scrollTop 1540 → 0`，时间线
 //     `[[1729,0]]`），修后绿；只把 `src/main.ts` 的表格 `restoreFocus` 改回裸
 //     `editor.view.focus()`，它单独变红。
@@ -33,7 +33,7 @@
 //     `focusPreservingReadingPosition` 对代码块已经接上，它这次恰好没被那句「落点判定」吃掉
 //     ——M279 的 T4b 用的是另一份几何，那一支被吃掉（读数见 M279 REPORT §0.3）。本用例因此是
 //     **回归护栏**而不是判别用例；它的判别力由消融证明：把代码块的 `restoreFocus` 改回裸
-//     `editor.view.focus()` 后它如实变红（test-results/m280/ablation-codeblock-bare-focus.log）。
+//     `editor.view.focus()` 后它如实变红（.local/missions/m280/ablation-codeblock-bare-focus.log）。
 //   - 命令入口（⌘J）同样只作护栏：命中条件要求 caret 在块内 ⇒ caret 必然在视口内，引擎的聚焦
 //     揭示不成立（M279 的 T1/T2）。
 //
@@ -47,7 +47,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { stubTauri, configGets, readingPositionPuts } from "./tauri-stub";
 
 /** 证据落点（git 外，与门禁日志分开）：每次跑都把读数写一份，便于逐条核对。 */
-const EVIDENCE_DIR = new URL("../../../test-results/m280/scene-readings/", import.meta.url);
+const EVIDENCE_DIR = new URL("../../../.local/missions/m280/scene-readings/", import.meta.url);
 
 const TRIGGER_KEY = "Cmd-j";
 const TRIGGER_PRESS = "Meta+j";
