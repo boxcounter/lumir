@@ -1144,9 +1144,11 @@ injectEach((handle) =>
 // 拦截判定 / 落盘目录推导 / 插入事务都在 `src/editor.ts` 的 paste 处理器里（能力随编辑器走），
 // 这里只给两样它看不到的东西：后端调用与提示出口。
 //
-// `semanticNamingEnabled` 是 `attachments.semantic_naming` 的**粘贴时刻读数**（design §1 的
-// 生效时点）：启动装载时喂初值（configGet 块），之后只有改配置 + 重启才变——与 `editor` /
-// `ui` 的「装载时施加」同路，不提供运行期开关命令。
+// `semanticNamingEnabled` 是 `harness.attachment_naming.enabled` 的**粘贴时刻读数**
+// （design §1 的生效时点）：启动装载时喂初值（configGet 块），之后只有改配置 + 重启才变——
+// 与 `editor` / `ui` 的「装载时施加」同路，不提供运行期开关命令。方向不对称是 privacy 的
+// 有意取舍：运行期**关掉**由后端现场读配置立即生效，**打开**需要重启（这个闸关着时前端
+// 根本不投递任务）。
 let semanticNamingEnabled = true;
 injectEach((handle) =>
   handle.setPasteImagePort({
@@ -3270,7 +3272,7 @@ configGet().then((snapshot) => {
   editor.setMode(snapshot.config.editor.mode);
   // 图片语义命名开关（change add-semantic-image-naming，design §1）：装载时读一次，粘贴时
   // 取快照（`semanticNamingEnabled` 是那唯一一份读数，见其声明处）。键缺席 = 出厂 true。
-  semanticNamingEnabled = snapshot.config.attachments?.semantic_naming ?? true;
+  semanticNamingEnabled = snapshot.config.harness.attachment_naming?.enabled ?? true;
   // 折行口径（M180，change line-wrap-options；M247 起三项）：配置给的是**启动时的起点**——
   // 应用运行期的翻转由两条 `view.toggle-*` 命令承担，运行期 MUST NOT 回写这里（config.json 的
   // mtime 与内容在翻转前后逐字节不变）。放在 setMode 之后：mode 决定代码块内容级 class 有没有

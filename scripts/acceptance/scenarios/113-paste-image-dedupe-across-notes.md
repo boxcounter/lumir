@@ -119,7 +119,7 @@ steps:
 
 # 同图跨笔记去重（S2，change paste-clipboard-image）
 
-> **语义命名前提（change add-semantic-image-naming，task 8.3）**：本场景不声明 `config.attachments`，
+> **语义命名前提（change add-semantic-image-naming，task 8.3）**：本场景不声明 `config.harness.attachment_naming`，
 > 验收默认配置没有声明 `vision` 能力的模型 ⇒ 粘贴不会触发语义命名，两处引用都是
 > `pasted-<hash16>.webp`；去重判据（内容哈希）与语义命名无关，本场景的期望因此逐字不变。
 

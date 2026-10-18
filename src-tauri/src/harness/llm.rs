@@ -142,7 +142,7 @@
 use std::io::BufRead;
 
 use crate::commands::CommandError;
-use crate::config::{HarnessConfig, HarnessProvider, TitleTarget, WireApi};
+use crate::config::{AttachmentNamingTarget, HarnessConfig, HarnessProvider, TitleTarget, WireApi};
 
 use super::events::StreamSink;
 use super::thinking::{self, ThinkingEffort};
@@ -699,19 +699,20 @@ pub fn title_client(
     }
 }
 
-/// 图片语义命名的 client（change add-semantic-image-naming，design §4）：**当前生效 provider**
-/// 的一次性 vision 调用，模型由 [`HarnessConfig::attachment_naming_model`] 解析后传进来
-/// （`None` 时调用方根本不发请求，到不了这里）。
+/// 图片语义命名的 client（change add-semantic-image-naming，design §4；2026-10-18 配置面重塑
+/// 后与 [`title_client`] 同形）：**只**消费 [`HarnessConfig::attachment_naming_target`] 解析出的
+/// 五字段——MUST NOT 回读会话 provider 的 `api_key` / `base_url` / 模型 / 方言（与会话自动命名
+/// 同一不变量：五字段同出一个 provider 条目）。
 ///
 /// 与会话 / 标题调用共用 [`network_client`] 的装配（方言、effort、store 口径），差别只有：
 /// - 独立 20 秒超时（[`TITLE_TIMEOUT`] 同一档：一次性后台调用，不与会话请求共用 300 秒）；
 /// - mock 走 fixture 顶层独立的 `naming` 队列（与会话 `responses`、标题 `titles` 互不错位）。
 pub fn naming_client(
     config: &HarnessConfig,
-    model: &str,
+    target: &AttachmentNamingTarget,
     vault_id: &str,
 ) -> Result<Box<dyn LlmClient>, CommandError> {
-    match config.provider {
+    match target.provider {
         HarnessProvider::Mock => {
             let fixture = config.providers.mock.fixture.clone().ok_or_else(|| {
                 CommandError::new(
@@ -724,19 +725,7 @@ pub fn naming_client(
         }
         provider @ (HarnessProvider::Kimi | HarnessProvider::Deepseek) => {
             let name = provider.as_str();
-            let (api_key, base_url, wire_api) = match provider {
-                HarnessProvider::Kimi => (
-                    &config.providers.kimi.api_key,
-                    config.providers.kimi.base_url.as_deref(),
-                    config.providers.kimi.wire_api,
-                ),
-                _ => (
-                    &config.providers.deepseek.api_key,
-                    config.providers.deepseek.base_url.as_deref(),
-                    config.providers.deepseek.wire_api,
-                ),
-            };
-            if api_key.trim().is_empty() {
+            if target.api_key.trim().is_empty() {
                 return Err(CommandError::new(
                     "harness_api_key_missing",
                     format!(
@@ -746,10 +735,22 @@ pub fn naming_client(
                 .param("provider", name));
             }
             let preset = preset(&provider);
-            let base = base_url.unwrap_or(preset.base_url).trim_end_matches('/');
+            let base = target
+                .base_url
+                .as_deref()
+                .unwrap_or(preset.base_url)
+                .trim_end_matches('/');
             let http = http_client(TITLE_TIMEOUT)?;
             Ok(network_client(
-                config, provider, model, api_key, base, wire_api, vault_id, http, preset,
+                config,
+                provider,
+                &target.model,
+                &target.api_key,
+                base,
+                target.wire_api,
+                vault_id,
+                http,
+                preset,
             ))
         }
     }

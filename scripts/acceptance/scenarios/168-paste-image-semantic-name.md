@@ -6,12 +6,14 @@ config:
   # mock provider 恒支持 vision（design §10）：贴图即触发一次命名调用。mock 的 `naming` 队列
   # 脚本化返回固定 slug `Harness Arch`（fixtures/harness-mock-semantic-naming.json），
   # 规整后是 `harness-arch`，最终文件名 `<slug>-<内容哈希前 6 位>.webp`。
-  # **显式声明 semantic_naming** 是 design §10 的纪律：mock + 贴图的场景不能靠默认值碰运气。
+  # **显式声明 attachment_naming.enabled** 是 design §10 的纪律：mock + 贴图的场景不能靠
+  # 默认值碰运气。三键落在 `harness.attachment_naming`（2026-10-18 配置面重塑：与会话自动
+  # 命名同一资源域）。
   harness:
     provider: mock
     fixture: "$fixtures/harness-mock-semantic-naming.json"
-  attachments:
-    semantic_naming: true
+    attachment_naming:
+      enabled: true
 steps:
   - name: 造笔记（落盘目录 = 当前笔记同目录）
     do: vaultWrite

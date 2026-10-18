@@ -241,11 +241,15 @@ export function checkScenario(scenario) {
   // 写成非表（如列表 / 字符串）时 writeConfig 会把它当普通值铺开，静默丢掉半张表，故在此挡住。
   if (scenario.config?.editor !== undefined && !isPlainTable(scenario.config.editor))
     push(`config.editor 需要对象（[editor] 表，snake_case 键），实际 ${JSON.stringify(scenario.config.editor)}`);
-  // `config.attachments`（change add-semantic-image-naming）：同样是**整表透传**的 `[attachments]` 表，
-  // 写成非表时 writeConfig 会把它当普通值铺开、静默丢掉整张表，故在此挡住。
-  if (scenario.config?.attachments !== undefined && !isPlainTable(scenario.config.attachments))
+  // `config.harness.attachment_naming`（change add-semantic-image-naming，2026-10-18 配置面重塑）：
+  // 三键 `{ enabled, provider, model }` 写进 `harness` 表。写成非表时后端按类型不符整文件回落，
+  // 场景会静默跑到默认配置上，故在此挡住。
+  if (
+    scenario.config?.harness?.attachment_naming !== undefined &&
+    !isPlainTable(scenario.config.harness.attachment_naming)
+  )
     push(
-      `config.attachments 需要对象（[attachments] 表：semantic_naming / naming_model），实际 ${JSON.stringify(scenario.config.attachments)}`,
+      `config.harness.attachment_naming 需要对象（{ enabled, provider, model }），实际 ${JSON.stringify(scenario.config.harness.attachment_naming)}`,
     );
   for (const [i, step] of (scenario.steps ?? []).entries()) {
     const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;

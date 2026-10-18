@@ -98,7 +98,7 @@ steps:
 
 # 剪贴板贴图入 vault（S1，change paste-clipboard-image）
 
-> **语义命名前提（change add-semantic-image-naming，task 8.3）**：本场景不声明 `config.attachments`，
+> **语义命名前提（change add-semantic-image-naming，task 8.3）**：本场景不声明 `config.harness.attachment_naming`，
 > 验收默认配置是 `provider = kimi` 且 `models` 未声明任何模型（也就没有 `vision: true`），
 > 因此粘贴**不会**触发语义命名，`pasted-<hash16>` 终态期望不变；文末另有一条「观察窗口」步
 > 显式断言这一点（无语义名文件、无命名 toast）。

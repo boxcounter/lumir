@@ -52,7 +52,7 @@ export interface PasteImagePort {
   ): Promise<{ path: string; name: string; fresh?: boolean }>;
   /** 失败出口：人话 toast。MUST NOT 静默失败、MUST NOT 插引用留破图。 */
   toast(error: unknown): void;
-  /** 语义命名开关（`attachments.semantic_naming` 的粘贴时刻读数）。未注入 = 关。 */
+  /** 语义命名开关（`harness.attachment_naming.enabled` 的粘贴时刻读数）。未注入 = 关。 */
   semanticNaming?(): boolean;
   /** 投递一次语义命名任务（**不 await**：粘贴事务已经完成，结果处理在装配层）。 */
   name?(task: SemanticNameTask): void;

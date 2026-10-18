@@ -7,43 +7,50 @@
 
 ## 1. 配置面
 
-新增 `[attachments]` 表：`config.json` 顶层的 JSON 对象键（不是数据库表，也不改 TOML）：
+配置面落在 `[harness]` 表内（2026-10-18 Alex 裁决的**配置面重塑**）：自动 LLM 行为的开关与模型
+选择归 `[harness]` 域（`providers` 所在），触发位置（粘贴）是 UI 事实、不是配置域。原顶层
+`[attachments]` 表已废除——它只有命名两个键、没有别的住户；旧键一次性切断，无兼容读取（单用户、
+未发布；旧键按既有未知键口径静默忽略）。
 
 ```json
 {
-  "attachments": {
-    "semantic_naming": true,
-    "naming_model": null
+  "harness": {
+    "attachment_naming": { "enabled": true, "provider": "kimi", "model": "kimi-k3" }
   }
 }
 ```
 
 | 键 | 类型 | 默认 | 取值范围 | 生效时机 |
 |---|---|---|---|---|
-| `attachments.semantic_naming` | boolean | `true` | `true` / `false` | **运行期关掉立即生效**（后端命令每次调用现场 `config::load()`，读到 `false` 即跳过）；**打开需重启**（前端投递闸取启动装载值，关着时前端根本不投递任务）。方向不对称是隐私面的有意取舍：关是更严的方向 |
-| `attachments.naming_model` | string \| null | `null` | 非空字符串；必须是 `[harness]` 当前 provider 的 `models` 清单里声明 `vision: true` 的 id。不满足 → 一条人话 warning + 按 `null` 处理 | 后端每次调用现场读一次 ⇒ 改动**下一次粘贴即生效**（无需重启）；前端不复制这条判据 |
+| `harness.attachment_naming.enabled` | boolean | `true` | `true` / `false` | **关 → 开：需重启**（前端投递闸取启动装载值，关着时前端根本不投递任务）；**开 → 关：立即生效**（后端命令每次调用现场 `config::load()`，读到 `false` 即跳过）。方向不对称是隐私面的有意取舍：关是更严的方向 |
+| `harness.attachment_naming.provider` | string \| null | `null` | `"kimi"` / `"deepseek"` / `"mock"`；`null` = 会话当前 provider。闭集合外取值回落 `null` + 人话 warning | 后端每次命名现场读一次 ⇒ 改动**下一次粘贴即生效**（无需重启） |
+| `harness.attachment_naming.model` | string \| null | `null` | 非空字符串；必须是**选定 provider** 的 `models` 清单里声明 `vision: true` 的 id。`null` = 该 provider 的生效模型 | 同上；运行期切 provider 后，发起命名时按当时选定的 provider 重新核对 |
 
-> 生效时机的实现口径（评审 r1 观察 1）：canonical 文档
-> `docs/specs/config-reference.md` §1.6 与 `config.rs` 的 doc comment 已按实现写准，本表与之
-> 一致；「启动装载读一次、改配置需重启」是初稿的过时表述（只对 `semantic_naming` 的**打开**
-> 方向成立）。
+> 生效时机的实现口径（r1 观察 1 / r2 P2-1）：canonical 文档
+> `docs/specs/config-reference.md` §1.6 与 `config.rs` 的 `AttachmentNamingConfig` doc comment
+> 与本表同口径（`enabled` 两方向不对称；`provider` / `model` 下一次粘贴生效）。原顶层
+> `[attachments]` 表与「启动装载读一次、改配置需重启」的初稿表述一并作废。
 
 - 缺省即默认：整表缺席 / 单键缺席 = 出厂值；`null` 与缺席同义。
-- 非法值（类型不符、`naming_model` 指向未声明或未声明 vision 的 id）按既有逐字段回落模板：
-  回落默认 + 一条 warning，其余键照常生效（ADR 0002 §5）。
-- `naming_model = null` 时用 `[harness]` 当前生效 provider 的当前 `model`；该模型未声明
-  `vision: true`（mock provider 恒支持）时**不发起命名**，保留 hash 名。理由：配置里没有价格 /
-  档位字段，自动从清单里挑「最便宜」等于猜；命名档位由用户显式指定，缺省跟随当前模型。
-- **运行期 provider 切换**：校验只在装载时做一次，但命名任务发起时会按**当时生效**的 provider
-  重新核对 `naming_model`（是否列出、是否声明 vision）；不再满足即跳过本次命名（MUST NOT 降级
-  到清单里的其它模型——那等于替用户选模型）。mock provider 没有 `models` 清单，`naming_model`
-  对其必须是 `null`（非空即装载 warning + 按 `null` 处理）。
+- **非法值**：`provider` 闭集合外 ⇒ 回落 `null` + 一条人话 warning；`model` 不可用（未在清单内 /
+  未声明 `vision` / mock 下非空）⇒ **一条点名 warning、值原样保留**，随后资格不通过（保留暂存名）——
+  MUST NOT 静默换成该 provider 的生效模型（那等于替用户选模型）。空串按「未配置」归一为 `null` +
+  warning。表内类型不符走整文件回落（与 `[harness]` 其余字段同路，ADR 0002 §5）。
+- `model = null` 时用选定 provider 的生效模型；该模型未声明 `vision: true`（mock provider 恒支持）
+  时**不发起命名**，保留 hash 名。理由：配置里没有价格 / 档位字段，自动从清单里挑「最便宜」等于猜；
+  命名档位由用户显式指定，缺省跟随该 provider 的生效模型。
+- **运行期 provider 切换**：装载期只做一次点名校验，命名任务发起时按**当时选定**的 provider 重新
+  核对（模型是否列出、是否声明 vision）；不再满足即跳过本次命名（MUST NOT 降级到清单里的其它模型
+  ——那等于替用户选模型）。mock provider 没有 `models` 清单，`model` 对其必须是 `null`。
 - 不在配置面内的东西：命名形态（语义名 + 6 位短哈希 + 原扩展名）、slug 字符集、撤销窗口、
   扫描范围——这些是行为，不是偏好。
 
-`config.rs` 侧形状：`AttachmentsConfig { semantic_naming: bool, naming_model: Option<String> }`，
-挂在顶层 `Config` 上（与 `editor` / `ui` / `vault` / `harness` 平级）。ts-rs 导出
-`src/bindings/`，前端不重算合法性（REVIEW.md「同一语义两处真源」）。
+`config.rs` 侧形状：`HarnessConfig.attachment_naming: AttachmentNamingConfig { enabled: bool,
+provider: Option<HarnessProvider>, model: Option<String> }`（`[harness]` 表内，与 `auto_title` /
+`title_provider` 平级）。唯一解析口 `HarnessConfig::attachment_naming_target(session_provider)`
+与 `title_target` 同形：五字段（provider / model / wire_api / api_key / base_url）**同出**选定
+provider 的那一个条目，MUST NOT 跨条目混用（design 不变量 8 同口径）。ts-rs 导出 `src/bindings/`，
+前端不重算合法性（REVIEW.md「同一语义两处真源」）。
 
 ## 2. 命名身份：内容哈希与两种文件名形态
 
@@ -126,7 +133,7 @@
   「保留暂存名 + 诊断一条」；MUST NOT 弹失败 toast（高频路径，静默降级即现状）。
 - **调度档位 = 便宜档**（harness-vision 的调度原则：按产物纠错成本分档，一次性产物的错误活得
   短、易发现）。落法：不自动挑模型——配置里没有价格 / 档位字段，自动挑「最便宜」等于猜；
-  `attachments.naming_model` 是显式的成本阀门，缺省跟随当前生效模型。命名请求不进 harness
+  `harness.attachment_naming.model` 是显式的成本阀门，缺省跟随选定 provider 的生效模型。命名请求不进 harness
   会话的上下文装配与工具循环，单次成本只有一张图 + 一小段上下文，天生是同一档里最轻的调用。
 
 ## 5. 引用更新
@@ -246,7 +253,7 @@
 - 改写保字节：除 target 末段外全文逐字节不变（fixture 断言）。
 - 放弃：文件被改名 / 移走 / 内容变化 / vault 切走各一例。
 - 撤销：反向扫描 + 改回暂存名；暂存名被占 / 文件再被改名 ⇒ 放弃并报错。
-- 配置：缺省 / 关闭 / 非法 `naming_model` 回落 + warning / 类型不符整文件回落。
+- 配置：缺省 / 关闭 / `provider` 闭集合外回落 + warning / `model` 不可用只点名不回落 / 类型不符整文件回落。
 - 打开文档对账：dirty 文本经纯函数重算后只改链接末段；revision 推进后保存不报 CAS 冲突
   （前端单测 + Rust 纯函数各自覆盖）。
 
@@ -259,8 +266,8 @@
 
 **验收套件（真机，`scripts/acceptance/`）**
 
-- 新增场景：mock provider + 专用 fixture 驱动一次命名（`harness: { provider: mock, fixture:
-  <semantic-naming fixture> }`，`config: { attachments: { semantic_naming: true } }`）；断言
+- 新增场景：mock provider + 专用 fixture 驱动一次命名（`harness` 表里同时给
+  `provider: mock`、`fixture: <semantic-naming fixture>` 与 `attachment_naming: { enabled: true }`）；断言
   终态文件名 `<slug>-<6 hex>.webp`、正文引用同名、暂存名文件不残留、toast 带「撤销」。
 - 同一场景续做撤销：点「撤销」后文件名回到 `pasted-<hash16>.webp`、正文引用同步改回。
 - 回扫既有 112 / 113 / 116：在验收环境的默认配置下没有声明 vision 的模型（且默认 provider
@@ -284,6 +291,6 @@
 - **命名失败不补发**：暂存名文件不会在后续粘贴或后台重试中被命名；只有重新粘贴同一内容（去重
   命中）也不会补发。避免后台调用变成无人控制的自动流水线。
 - **mock provider 恒支持 vision**：验收环境下粘贴即会触发命名，凡是「贴图 + mock provider」
-  的既有 / 新场景都必须显式声明 `semantic_naming` 的期望，不能靠默认值碰运气。
+  的既有 / 新场景都必须显式声明 `attachment_naming.enabled` 的期望，不能靠默认值碰运气。
 - **不做文件名去重以外的语义检索**：本 change 只让名字可读，不建图片索引、不生成标题 /
   alt 文本。

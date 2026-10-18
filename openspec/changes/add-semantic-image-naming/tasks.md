@@ -4,18 +4,20 @@
 > （新建）、`src-tauri/src/harness/llm.rs`（仅复用，不改协议）、`src-tauri/tests/**`、
 > `src/bindings/**`、`src/{paste-image,editor,main,save-controller,copy-data}.ts`、
 > `文案-Copy.md`、`docs/specs/config-reference.md`、`scripts/acceptance/**`（新增场景 + 新
-> fixture + `lib/app.mjs` 的 `[attachments]` 配置通道）、`openspec/changes/add-semantic-image-naming/**`。
+> fixture + `lib/app.mjs` 的 `harness.attachment_naming` 配置通道）、`openspec/changes/add-semantic-image-naming/**`。
 >
-> **前置**：节点 1（提案评审）通过后才可开工；本 change 的三项形态选择（配置面归属、
-> `naming_model` 缺省、slug 字符集）已于 2026-10-18 全部落槌（原文见 proposal「裁决记录」），
-> 开工时不再重开。
+> **前置**：节点 1（提案评审）通过后才可开工；slug 字符集与「默认开」已于 2026-10-18 落槌
+> （原文见 proposal「裁决记录」），开工时不再重开。**配置面形态**后经同日「配置面重塑」裁决
+> 调整：落在 `[harness].attachment_naming { enabled, provider, model }`，原顶层 `[attachments]`
+> 表废除（见 proposal「裁决记录」第 4 条）。
 
 ## 1. 配置面（`src-tauri/src/config.rs`）
 
-- [x] 1.1 新增 `[attachments]` 表与 `AttachmentsConfig { semantic_naming: bool（默认 true）, naming_model: Option<String>（默认 None） }`，挂在顶层 `Config`；doc comment 写清缺省即默认、生效时机（启动装载一次）。
-- [x] 1.2 校验：类型不符走既有整文件回落模板；`naming_model` 非空但不在当前 provider 的 `models` 清单、或未声明 `vision: true` 时回落 `None` + 一条人话 warning（逐字段回落，其余键照常生效）。
-- [x] 1.3 单测：整表缺席 / 单键缺席 / `null` / 两键显式值 / 非法 `naming_model`（未列出、未声明 vision、空串）/ 类型不符整文件回落。
-- [x] 1.4 `src/bindings/**` 由 ts-rs 重导出（`AttachmentsConfig.ts` 等），重导出产物先 `git add` 再跑门禁（bindings-drift 纪律）。
+- [x] 1.1 新增 `[harness].attachment_naming` 表与 `AttachmentNamingConfig { enabled: bool（默认 true）, provider: Option<HarnessProvider>（默认 None = 会话当前 provider）, model: Option<String>（默认 None = 该 provider 的生效模型） }`，挂在 `HarnessConfig` 上；doc comment 写清缺省即默认、布局判据（配置跟随资源域）与两方向的生效时机。
+- [x] 1.2 校验：类型不符走整文件回落模板；`provider` 闭集合外回落 `None` + 人话 warning；`model` 不可用（未在**选定 provider** 的 `models` 清单 / 未声明 `vision: true` / mock 下非空）只点名警告、**值原样保留**（资格不通过即保留暂存名，MUST NOT 静默换成别的模型）；空串归一为 `None` + warning。
+- [x] 1.3 单测：整表缺席 / 单键缺席 / 三键显式值 / `provider` 非法回落 / `model` 三类不可用（未列出、未声明 vision、mock 非空）/ 空串 / 类型不符整文件回落 / 旧顶层 `attachments` 表静默忽略。
+- [x] 1.4 `src/bindings/**` 由 ts-rs 重导出（`AttachmentNamingConfig.ts` 等），重导出产物先 `git add` 再跑门禁（bindings-drift 纪律）；旧 `AttachmentsConfig.ts` 删除。
+- [x] 1.5 唯一解析口 `HarnessConfig::attachment_naming_target(session_provider)`（与会话自动命名的 `title_target` 同形：provider / model / wire_api / api_key / base_url 五字段同出一个 provider 条目），替换旧的 `attachment_naming_model`；单测钉住跨 provider 不混用。
 
 ## 2. 内容寻址去重改造（`src-tauri/src/fs_io.rs`）
 
@@ -33,7 +35,7 @@
 ## 4. 命名任务与模型调用（新模块，建议 `src-tauri/src/attachment_naming.rs`）
 
 - [x] 4.1 任务入口：入参 = vault 根 / 文件 vault 相对路径 / 笔记路径 / 粘贴时刻的光标前后段落文本；只对「本次新写盘 + 文件名是暂存名 + 开关开」的调用投递。
-- [x] 4.2 资格判定：`semantic_naming` 快照为 true；当前 provider + 模型（`naming_model` 或当前模型）声明 `vision: true`（mock 恒支持）；不满足即静默返回、不发请求。
+- [x] 4.2 资格判定：`harness.attachment_naming.enabled` 为 true；`attachment_naming_target` 解析出的选定 provider + 模型声明 `vision: true`（mock 恒支持、但无模型维度）；不满足即静默返回、不发请求。
 - [x] 4.3 读取字节并计算 hash16 / hash6；放弃判据（前置快检：文件不在 / 哈希不符 / vault 已切换）先于请求，改名前的最终判定再复核一次（同一规则）。
 - [x] 4.4 一次性 vision 请求：复用 `harness::llm::client` 与图片展开链路；单条 user 消息（文本指令 + `input_image`）、无工具、无历史、非流式；**不建 harness 会话、不写会话 JSONL**。
 - [x] 4.5 上下文装配：粘贴时刻快照的段落各截断到固定上限 + 笔记标题（文件名 stem，无路径取空串）；MUST NOT 在异步返回时重读光标。
@@ -66,12 +68,12 @@
 
 ## 7. 文档与配置参考
 
-- [x] 7.1 `docs/specs/config-reference.md` 新增 `[attachments]` 节：两键的类型 / 默认 / 取值 / 生效时机 / 真源指针，以及「`naming_model` 缺省 = 当前模型、无 vision 声明则命名不生效」的口径。
+- [x] 7.1 `docs/specs/config-reference.md` 新增 `harness.attachment_naming` 节：三键的类型 / 默认 / 取值 / 生效时机 / 真源指针，布局判据（配置跟随资源域），以及「`enabled` 关→开需重启、开→关立即生效」「`model` 缺省 = 该 provider 的生效模型、不可用即资格不通过」的口径。
 - [ ]（归档时执行，本 mission 不动 living spec）7.2 `openspec/specs/clipboard-image-paste/spec.md` 的 Purpose 段补一句语义命名的边界（归档时由增量并入，不提前改 living spec）。
 
 ## 8. 验收场景
 
-- [x] 8.1 `scripts/acceptance/lib/app.mjs` 增加 `attachments` 配置通道（与 `editor` 表同形的整表透传），供场景构造 `semantic_naming` / `naming_model`。
+- [x] 8.1 `scripts/acceptance/lib/app.mjs` 增加 `harness.attachment_naming` 配置通道（随 `harness` 结构化参数透传三键），`execute.mjs` 挡非表形态；供场景构造 `enabled` / `provider` / `model`。
 - [x] 8.2 新增 mock fixture（脚本化返回一个固定 slug，供命名调用消费）；新增场景「贴图 → 语义改名 → toast 撤销」：断言终态文件名 `<slug>-<6 hex>.webp`、正文引用同名、暂存名文件不残留、toast 带「撤销」；点撤销后文件名与引用都回到 `pasted-<hash16>.webp`。
 - [x] 8.3 回扫既有 112 / 113 / 116：核对在验收默认配置（provider 非 mock、无 vision 模型声明）下不发起命名、既有 `pasted-<hash16>` 期望不变；在场景注释里写明该前提。
 - [x] 8.4 新增「无 vision 模型时保持暂存名」的断言：粘贴后经过明确观察窗口，vault 内不存在语义名文件、无命名 toast（复用 112 的驱动通道）。

@@ -50,7 +50,7 @@ pub const SLUG_MAX: usize = 40;
 pub const UNDO_TTL: Duration = Duration::from_secs(60);
 
 /// 诊断码（落 `attachment_naming` 日志的 `code` 字段，也是返回给前端的跳过原因）。
-pub const CODE_DISABLED: &str = "semantic_naming_disabled";
+pub const CODE_DISABLED: &str = "attachment_naming_disabled";
 pub const CODE_CONFIG: &str = "config_unavailable";
 pub const CODE_NO_VAULT: &str = "vault_not_open";
 pub const CODE_NO_MODEL: &str = "no_vision_model";
@@ -538,14 +538,12 @@ pub fn run(
     emit: &dyn Fn(&NamingEcho),
 ) -> NamingOutcome {
     let path = request.path.clone();
-    let config = &config_snapshot.config;
-    if !config.attachments.semantic_naming {
+    let harness = &config_snapshot.config.harness;
+    // 开关与资格分两步判：诊断码要把「关着」与「无可用 vision 模型」分开（design §4.2）。
+    if !harness.attachment_naming.enabled {
         return NamingOutcome::skipped(&path, CODE_DISABLED);
     }
-    let Some(model) = config
-        .harness
-        .attachment_naming_model(config.attachments.naming_model.as_deref())
-    else {
+    let Some(target) = harness.attachment_naming_target(harness.provider) else {
         // 无可用 vision 模型：不发起任何请求（design §4.2）。
         return NamingOutcome::skipped(&path, CODE_NO_MODEL);
     };
@@ -556,7 +554,7 @@ pub fn run(
     let Some(guard) = queue().acquire(&path) else {
         return NamingOutcome::skipped(&path, CODE_DUPLICATE);
     };
-    let outcome = run_locked(&root, &policy, &vault_id, config, &model, &request, emit);
+    let outcome = run_locked(&root, &policy, &vault_id, harness, &target, &request, emit);
     drop(guard);
     // vault 在任务期间被切换：技术前提失效（不产生产品侧可见动作，spec）。
     if matches!(state.root_policy_and_id(), Ok((current, _, _)) if current == root) {
@@ -570,13 +568,13 @@ fn run_locked(
     root: &Path,
     policy: &IgnorePolicy,
     vault_id: &str,
-    config: &config::AppConfig,
-    model: &str,
+    harness: &config::HarnessConfig,
+    target: &config::AttachmentNamingTarget,
     request: &NamingRequest,
     emit: &dyn Fn(&NamingEcho),
 ) -> NamingOutcome {
     let path = request.path.clone();
-    let mut client = match llm::naming_client(&config.harness, model, vault_id) {
+    let mut client = match llm::naming_client(harness, target, vault_id) {
         Ok(client) => client,
         Err(error) => {
             // 配置级失败（mock fixture 缺失 / api_key 未配）：按失败分类静默降级。
@@ -966,20 +964,22 @@ mod tests {
         assert!(!slug.ends_with('-'));
     }
 
-    /// 资格判定的四档（design §4.2 / task 4.9）：开 + 有 vision / 开 + 无 vision / 关 / mock。
+    /// 资格判定的四档（design §4.2 / task 4.9）：有 vision / 无 vision / 关 / mock。
     ///
-    /// 断言的是 [`run`] 里**实际执行的展开式**（开关 && 模型资格），不另设封装函数——评审 r1
-    /// P2-1 判定过一个只有测试调用的 `enabled()` 是假闸（REVIEW.md「值或开关声明了却没有消费
-    /// 者」条），已删除；测试与 `run` 读同一组判据，也就没有第二处真源。
+    /// 断言的是 [`run`] 里**实际执行的两步判据**（先 `enabled`，再
+    /// [`HarnessConfig::attachment_naming_target`]），不另设封装函数——评审 r1 P2-1 判定过
+    /// 一个只有测试调用的 `enabled()` 是假闸（REVIEW.md「值或开关声明了却没有消费者」条），
+    /// 已删除；测试与 `run` 读同一组判据，也就没有第二处真源。
     #[test]
     fn naming_qualification_covers_four_tiers() {
         use crate::config::{HarnessConfig, HarnessModelSpec, HarnessProvider};
-        let qualifies = |harness: &HarnessConfig, semantic_naming: bool, model: Option<&str>| {
-            semantic_naming && harness.attachment_naming_model(model).is_some()
+        let qualifies = |harness: &HarnessConfig| {
+            harness.attachment_naming.enabled
+                && harness.attachment_naming_target(harness.provider).is_some()
         };
         // 出厂 harness（kimi、空模型清单）：没有 vision 模型 ⇒ 命名不生效。
         let bare = HarnessConfig::default();
-        assert!(!qualifies(&bare, true, None));
+        assert!(!qualifies(&bare));
         let mut vision = bare.clone();
         vision.providers.kimi.model = "k3-256k".to_string();
         vision.providers.kimi.models = vec![HarnessModelSpec {
@@ -988,19 +988,18 @@ mod tests {
             vision: true,
             window: 262_144,
         }];
-        assert!(qualifies(&vision, true, None), "开 + 有 vision");
-        assert!(!qualifies(&vision, false, None), "关");
-        assert!(
-            !qualifies(&vision, true, Some("not-declared")),
-            "指定了未声明的模型 ⇒ 不发起"
-        );
+        assert!(qualifies(&vision), "有 vision");
+        let mut off = vision.clone();
+        off.attachment_naming.enabled = false;
+        assert!(!qualifies(&off), "关");
+        let mut bad_model = vision.clone();
+        bad_model.attachment_naming.model = Some("not-declared".to_string());
+        assert!(!qualifies(&bad_model), "指定了未声明的模型 ⇒ 不发起");
         let mut mock = vision.clone();
         mock.provider = HarnessProvider::Mock;
-        assert!(qualifies(&mock, true, None), "mock 恒支持 vision");
-        assert!(
-            !qualifies(&mock, true, Some("anything")),
-            "mock 下 naming_model 只能是 null"
-        );
+        assert!(qualifies(&mock), "mock 恒支持 vision");
+        mock.attachment_naming.model = Some("anything".to_string());
+        assert!(!qualifies(&mock), "mock 下 model 只能是 null");
     }
 
     #[test]
