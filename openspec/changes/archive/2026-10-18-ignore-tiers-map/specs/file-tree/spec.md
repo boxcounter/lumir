@@ -1,7 +1,7 @@
 # file-tree 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 MODIFIED，基线是 living spec
-> [openspec/specs/file-tree/spec.md](../../../../specs/file-tree/spec.md) 的「全类型文件树展示」。
+> [openspec/specs/file-tree/spec.md](../../../../../specs/file-tree/spec.md) 的「全类型文件树展示」。
 > 本次修订只改**键名引用**：两档的名字来源从 `vault.lazy` / `vault.hidden` 两个数组，改成
 > `vault.ignore` 地图里档位为 `"lazy"` / `"hidden"` 的键（change `ignore-tiers-map`）。
 > 可见集、惰性展开、空目录与惰性目录的区分、以及「树侧 MUST NOT 有第二份忽略名单」全部逐字保留。

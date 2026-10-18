@@ -1,7 +1,7 @@
 # fs-io 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 MODIFIED，基线是 living spec
-> [openspec/specs/fs-io/spec.md](../../../../specs/fs-io/spec.md) 的「全类型递归枚举」。
+> [openspec/specs/fs-io/spec.md](../../../../../specs/fs-io/spec.md) 的「全类型递归枚举」。
 > 本次修订只换**配置面形状**：两档名单从 `vault.hidden` / `vault.lazy` 两个名字数组，改成
 > `vault.ignore` 一张**名字 → 档位**的地图（档位值 `"hidden"` / `"lazy"`）。判定链（`hidden` →
 > `lazy` → 用户规则 → 可见）、前两档命中即定格、watch 按档分流、索引排除、剪枝、临时文件模式
