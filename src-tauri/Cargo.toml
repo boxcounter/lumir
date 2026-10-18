@@ -32,6 +32,19 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # 只需要"类型一处定义、TS 自动生成"，不需要它生成的 invoke wrapper。取舍详见 commands.rs 模块文档。
 ts-rs = "11"
 sha2 = "0.10"
+# 子代理定义文件的 frontmatter 解析（change add-harness-subagents tasks §2.1）：只解析标量 +
+# 字符串列表 + 注释子集，产出窄结构体，不走宽松反序列化。
+#
+# **为什么是 saphyr 而不是 yaml-rust2**：`serde_yaml` 已 deprecated（0.9.34+deprecated，2024-03
+# 后无更新）。yaml-rust2 0.13 的 README 自述「只做基础维护、保留稳定 API」，新特性归 saphyr
+# （同作者、同仓库谱系的继任者，0.2.x）；本仓只在定义文件这一处消费 YAML，API 稳定性不是取舍点，
+# 维护方向才是——选继任者，避免下一次 YAML 修复落不到已冻结的 API 上。两者的解析质量同源
+# （同一份 YAML 1.2 实现谱系），saphyr 多出的传递依赖（saphyr-parser / ordered-float / thiserror）
+# 都是小 crate，编译重量可忽略。
+#
+# `default-features = false`：默认档带 `encoding`（encoding_rs）——定义文件是 UTF-8，本仓不读
+# 别的编码，关掉避免白付依赖。
+saphyr = { version = "0.2", default-features = false }
 # 剪贴板图片转码（change paste-clipboard-image，design §4）：png 解码 + **无损 WebP** 编码。
 # 用 `default-features = false` 只开需要的两个格式 feature——默认格式集含 avif（ravif）、tiff 等
 # 本 change 用不到的重依赖，开着会白付编译与二进制体积。两条链路都是纯 Rust（`image-webp` +

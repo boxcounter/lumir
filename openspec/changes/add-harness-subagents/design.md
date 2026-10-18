@@ -243,6 +243,11 @@ vision 的已裁决心只有两条，都直接命中本 change。逐条尝试反
 - `serde_yaml` 已标记 deprecated（0.9.34+deprecated，最后更新 2024-03）；候选 `yaml-rust2`（0.13，
   2026-09 更新）与 `saphyr`（0.2，2026-10 更新），实现时二选一并记录理由。手写 YAML 解析器不选
   （解析器的边界语义不值得自造）。
+  **实现选型（M587，2026-10-19）：`saphyr` 0.2。** 理由是维护方向而非 API 形状：yaml-rust2 的
+  README 自述「只做基础维护、保留稳定 API」，新特性归同谱系的继任者 saphyr；本仓只在定义文件一处
+  消费 YAML，不需要为「稳定 API」付冻结的代价。两者解析质量同源、许可相同；`saphyr` 多出的
+  `saphyr-parser` / `ordered-float` / `thiserror` 都是小 crate。关掉默认 `encoding` 档
+  （定义文件恒 UTF-8，避免 encoding_rs）。理由全文见 `src-tauri/Cargo.toml` 的依赖注释。
 - 解析产出 `serde_json::Value` 或一个窄结构体（字段逐个取、逐项校验），不走宽松反序列化——校验文案
   要能点名具体字段。
 

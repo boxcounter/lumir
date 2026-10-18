@@ -25,6 +25,7 @@ use crate::commands::CommandError;
 use crate::config::HarnessConfig;
 use crate::fs_io::IgnorePolicy;
 
+use super::agents;
 use super::approval::{ApprovalDecision, ApprovalRequest, ApprovalSignal};
 use super::events::{self, EventSink};
 use super::jsonl;
@@ -304,6 +305,9 @@ pub struct SessionContext<'a> {
     runtime: &'a Runtime,
     scope: &'a VaultScope,
     config: &'a HarnessConfig,
+    /// 本回合的子代理定义快照（change add-harness-subagents design §4.1：每回合开头扫描一次，
+    /// 回合内不回读磁盘，不做 watcher）。
+    catalog: agents::AgentCatalog,
 }
 
 impl<'a> SessionContext<'a> {
@@ -313,11 +317,16 @@ impl<'a> SessionContext<'a> {
         scope: &'a VaultScope,
         config: &'a HarnessConfig,
     ) -> Self {
+        // 定义快照在回合开头取一次：磁盘改动下一回合生效；同一回合内的请求共用同一份清单，
+        // 不会出现「同一回合前后定义不一致」。装载期 warning / 容量事件在扫描后落诊断日志。
+        let catalog = agents::AgentCatalog::load(&scope.root, config);
+        catalog.log_diagnostics();
         Self {
             sink,
             runtime,
             scope,
             config,
+            catalog,
         }
     }
 
@@ -346,7 +355,10 @@ impl RunContext for SessionContext<'_> {
     }
 
     fn tool_definitions(&self) -> Vec<serde_json::Value> {
-        gate_tool_definitions(tools::definitions(), self.config.subagents.enabled)
+        gate_tool_definitions(
+            tools::definitions_with_subagents(&self.catalog),
+            self.config.subagents.enabled,
+        )
     }
 
     fn decide(&self, tool: &str, subject: &str, args: &serde_json::Value) -> permissions::Verdict {
@@ -554,9 +566,9 @@ impl RunContext for SessionContext<'_> {
 
 /// 工具定义的 kill switch（`[harness.subagents].enabled`）：关闭时第 9 件 `task` 不注册。
 ///
-/// 第 9 件由 §3 的 `tool` 定义注册（`tools::definitions()` 的加项），本函数是**唯一**的关闭点
-/// ——交互上下文与将来的子运行上下文都从这里取快照。定义名是跨层契约（`task` 工具名），
-/// MUST NOT 在别处再写一份过滤。
+/// 第 9 件由 [`tools::definitions_with_subagents`] 按定义快照注册（`gate_tool_definitions`
+/// 是**唯一**的关闭点——交互上下文与将来的子运行上下文都从这里取快照）。定义名是跨层契约
+/// （`task` 工具名），MUST NOT 在别处再写一份过滤。
 fn gate_tool_definitions(
     mut definitions: Vec<serde_json::Value>,
     enabled: bool,
@@ -631,6 +643,58 @@ mod tests {
             "enabled=false 必须与既有 8 件清单深度相等"
         );
         assert_eq!(ctx.tool_definitions().len(), tools::TOOL_NAMES.len());
+        runtime.release_turn(&scope);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// enabled=true 时第 9 件 `task` 注册，描述里带定义快照的清单（内建 `explore` 恒在场，
+    /// vault 级定义同回合可见）。
+    #[test]
+    fn enabled_subagents_register_task_with_the_catalog() {
+        let root = std::env::temp_dir().join(format!("lumir-run-task-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let _xdg = crate::harness::xdg_test_lock();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let vault = root.join("vault");
+        let agents = vault.join(".lumir").join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(
+            agents.join("research.md"),
+            "---\nname: research\ndescription: 调研任务\n---\n正文\n",
+        )
+        .unwrap();
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-test-2".to_string(),
+        };
+        let config = HarnessConfig {
+            provider: HarnessProvider::Mock,
+            ..Default::default()
+        };
+        assert!(config.subagents.enabled);
+
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&scope, &config).unwrap();
+        let sink = NullSink;
+        let ctx = SessionContext::new(&sink, &runtime, &scope, &config);
+        let definitions = ctx.tool_definitions();
+        assert_eq!(definitions.len(), tools::definitions().len() + 1);
+        let task = definitions.last().unwrap();
+        assert_eq!(task["name"], "task");
+        let description = task["description"].as_str().unwrap();
+        assert!(description.contains("可用子代理"), "{description}");
+        assert!(description.contains("- explore："), "{description}");
+        assert!(
+            description.contains("- research：调研任务"),
+            "{description}"
+        );
         runtime.release_turn(&scope);
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -124,6 +124,10 @@ pub enum LogEventName {
     /// 装载期丢弃了任务项：`task` = 任务 id（id 不可读时为空）、`field` = 第一处问题所在
     /// 字段、`reason` = 人话原因。每个被丢弃的任务项一条。
     CronTaskInvalid,
+    /// 子代理清单容量告警（change add-harness-subagents design §4.4 / tasks §2.6）：所有生效
+    /// 定义的描述合计估算超过 15,000 token 时产一条。**只告警、不截断**——清单本体照常完整
+    /// 注入（截断会让定义静默消失）。字段只有估算值与定义数。
+    SubagentCatalogLarge,
 }
 
 impl LogEventName {
@@ -148,6 +152,7 @@ impl LogEventName {
             Self::CronRunFinished => "cron_run_finished",
             Self::CronRunSkipped => "cron_run_skipped",
             Self::CronTaskInvalid => "cron_task_invalid",
+            Self::SubagentCatalogLarge => "subagent_catalog_large",
         }
     }
 
@@ -161,7 +166,8 @@ impl LogEventName {
             | Self::AppMetaUnavailable
             | Self::SlowCallback
             | Self::CronRunSkipped
-            | Self::CronTaskInvalid => "warn",
+            | Self::CronTaskInvalid
+            | Self::SubagentCatalogLarge => "warn",
             Self::RenderError => "error",
             _ => "info",
         }
@@ -206,6 +212,8 @@ impl LogEventName {
             Self::CronRunSkipped => &["task", "reason"],
             // `task` 可能为空（id 本身不可读），`field` / `reason` 是字段名与分类后的原因。
             Self::CronTaskInvalid => &["task", "field", "reason"],
+            // 只有估算值与定义数（都是数字，不含定义名 / 描述正文——清单正文属用户内容）。
+            Self::SubagentCatalogLarge => &["estimated_tokens", "definition_count"],
         }
     }
 }
@@ -598,6 +606,22 @@ fn config_warning_to(sink: &Sink, source: &str, message: &str) {
         Event::new(LogEventName::ConfigWarning)
             .field("source", source)
             .field("message", message),
+    );
+}
+
+/// Rust 侧埋点：子代理清单容量告警（change add-harness-subagents design §4.4）。估算口径是
+/// 「描述字符数 ÷ 4 向上取整」，**清单本身不截断**——这条事件只是让读日志的人知道上下文
+/// 前缀可能偏大。
+pub fn subagent_catalog_large(estimated_tokens: u64, definition_count: usize) {
+    subagent_catalog_large_to(global(), estimated_tokens, definition_count);
+}
+
+fn subagent_catalog_large_to(sink: &Sink, estimated_tokens: u64, definition_count: usize) {
+    emit(
+        sink,
+        Event::new(LogEventName::SubagentCatalogLarge)
+            .field("estimated_tokens", estimated_tokens.to_string())
+            .field("definition_count", definition_count.to_string()),
     );
 }
 
@@ -1366,6 +1390,26 @@ mod tests {
         save_conflict("docs/a.md", "document_conflict");
         flush();
     }
+    /// 子代理清单容量告警（change add-harness-subagents tasks §2.6）：落一行可 grep 的
+    /// `subagent_catalog_large`，负载只有估算值与定义数（清单正文属用户内容，不进日志）。
+    #[test]
+    fn subagent_catalog_large_lands_estimate_and_count_only() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        subagent_catalog_large_to(&sink, 15_001, 12);
+        sink.flush();
+        let lines = read_lines(dir.path());
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["event"], "subagent_catalog_large");
+        assert_eq!(lines[0]["level"], "warn");
+        assert_eq!(lines[0]["estimated_tokens"], "15001");
+        assert_eq!(lines[0]["definition_count"], "12");
+        assert_eq!(
+            LogEventName::SubagentCatalogLarge.allowed_fields(),
+            &["estimated_tokens", "definition_count"]
+        );
+    }
+
     /// 忽略计数诊断（change vault-open-ignore-set §3.3，tasks 1.4）：事件名与字段白名单都
     /// 只在代码里（`LogEventName::VaultScanIgnored` / `allowed_fields`），这里钉住三件事——
     /// ① 落盘一行、事件名可 `grep vault_scan_ignored`；② 负载**只有** `count`；
