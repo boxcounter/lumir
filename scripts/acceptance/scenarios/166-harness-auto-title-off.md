@@ -1,13 +1,15 @@
 ---
 id: "166-harness-auto-title-off"
 item: 166
-title: 会话自动命名④：autoTitle=false 时不发起调用、不写标题记录（会话名走回落口径）
+title: 会话自动命名④：sessionNaming.enabled=false 时不发起调用、不写标题记录（会话名走回落口径）
 open: harness-note.md
 marker: "HNL-ALPHA"
 config:
-  # 关闭开关。fixture **仍然带有 titles 脚本**——若开关被忽略，标题会照常生成、标题栏会换名，
-  # 两条断言因此都有区分度（不是「没有脚本所以没标题」的空转）。
-  autoTitle: false
+  # 关闭开关（整表直落 `[harness].session_naming`，子键可省）。fixture **仍然带有 titles 脚本**
+  # ——若开关被忽略，标题会照常生成、标题栏会换名，两条断言因此都有区分度（不是「没有脚本所以
+  # 没标题」的空转）。
+  sessionNaming:
+    enabled: false
   harness:
     provider: mock
     fixture: "$fixtures/harness-mock-title-initial.json"
@@ -52,7 +54,7 @@ steps:
 
 ## 本场景在验什么
 
-`autoTitle: false` 时：不发起任何命名调用、不写 `session_title` 记录；会话名按「会话边界」条
+`sessionNaming.enabled: false` 时：不发起任何命名调用、不写 `session_title` 记录；会话名按「会话边界」条
 的回落口径显示（首条用户消息截断）。
 
 ## 区分度（REVIEW.md「断言等价于子串」条）

@@ -39,13 +39,13 @@ export const SCENARIO_CONFIG_KEYS = [
   "language",
   "keys",
   "harness",
-  // 会话自动命名（change add-session-auto-naming，task 5.2）：`autoTitle` / `titleProvider` /
-  // `titleModel` 映射到 `[harness]` 的同义 snake_case 键（`titleModel` 落在「命名调用实际会用的
-  // provider」条目上——`titleProvider` 缺省 = `provider`，与 Rust 侧 `title_target` 同一口径）。
-  // 缺省不写 = 出厂行为（自动命名开、title provider = 会话 provider、模型 = 该 provider 生效模型）。
-  "autoTitle",
-  "titleProvider",
-  "titleModel",
+  // 会话自动命名（change add-session-auto-naming，task 5.2b）：`sessionNaming: { enabled, provider,
+  // model }` 整表直落配置文件的 `[harness].session_naming`，三键都可省——缺省不写 = 出厂行为
+  // （自动命名开、命名 provider = 会话 provider、模型 = 该 provider 生效模型）。
+  // 2026-10-18 配置面重塑（M579）废除的旧顶层键 `autoTitle` / `titleProvider` / `titleModel`
+  // 不在此保留别名：execute.mjs 的 REMOVED_CONFIG_KEYS 对它们出现即报错（静默丢弃正是 finding
+  // 20261018-worker-m579 报告的现场）。
+  "sessionNaming",
   // `[editor]` 表整表透传（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）：snake_case 键写进 `editor` 表（`writeConfig`
   // 的同名参数），给「新增的 editor 配置项」构造**启动口径**用——不必每加一个键就回来改套件。
   // 形状校验见 execute.mjs 的 checkScenario（非表即报，避免静默丢半张表）。
@@ -87,13 +87,11 @@ export async function writeConfig({
   // fixtures 目录，不拷进 vault——拷进 vault 会留下非 .md 残留，串红场景 28/65 的
   // 「vault 里无 json/tmp 产物」断言）；$vault / $vault2 精确记号仍可经 resolveSeedPath 解析。
   harness = undefined,
-  // 会话自动命名三键（change add-session-auto-naming，task 5.2）：与 theme / language 同形的
-  // **顶层**键，映射进 `[harness]` 的 snake_case——`auto_title` / `title_provider`，以及
-  // `title_model`（落在「命名调用实际会用的 provider」条目上：`titleProvider` 缺省 = 会话
-  // provider，与 Rust 侧 `title_target` 的解析口径同一处语义）。传了才写。
-  autoTitle = undefined,
-  titleProvider = undefined,
-  titleModel = undefined,
+  // 会话自动命名（change add-session-auto-naming，task 5.2b）：**顶层** `sessionNaming:
+  // { enabled, provider, model }` 整表直落 `[harness].session_naming`（与配置文件同形，子键
+  // 省略即缺省）。传了才写；整表不写 = 出厂口径（自动命名开、provider 跟随会话、模型跟随该
+  // provider 的生效模型）。
+  sessionNaming = undefined,
 } = {}) {
   const dir = path.join(envHome(), "lumir");
   await mkdirp(dir);
@@ -139,24 +137,14 @@ export async function writeConfig({
     if (harness.autoCompact !== undefined) h.auto_compact = harness.autoCompact;
     // 图片语义命名（change add-semantic-image-naming，2026-10-18 配置面重塑）：三键
     // `{ enabled, provider, model }` 原样落 `harness.attachment_naming`（与会话自动命名的
-    // autoTitle / titleProvider 同一资源域）。传了才写——缺省即出厂（开、provider 跟随会话、
+    // `session_naming` 同一资源域）。传了才写——缺省即出厂（开、provider 跟随会话、
     // 模型跟随该 provider 的生效模型）。
     if (harness.attachment_naming !== undefined) h.attachment_naming = harness.attachment_naming;
   }
-  // 会话自动命名三键（顶层）：snake_case 落 `[harness]`；title_model 落命名调用实际使用的
-  // provider 条目（titleProvider 缺省 = 会话 provider）——与 Rust `title_target` 同一口径。
-  if (autoTitle !== undefined) h.auto_title = autoTitle;
-  if (titleProvider !== undefined) h.title_provider = titleProvider;
-  if (titleModel !== undefined) {
-    const target = titleProvider ?? harness?.provider;
-    if (target === undefined) {
-      throw new Error(
-        "writeConfig：titleModel 需要同时给出 titleProvider 或 harness.provider（title_model 落在命名调用实际使用的 provider 条目上）",
-      );
-    }
-    h.providers = h.providers ?? {};
-    h.providers[target] = { ...(h.providers[target] ?? {}), title_model: titleModel };
-  }
+  // 会话自动命名（顶层 `sessionNaming`）：整表原样落 `[harness].session_naming`——不在这里再
+  // 拆键映射（旧形态的 `title_model` 落 provider 条目那种拼法已随 M579 废除，见 app.mjs 头部
+  // SCENARIO_CONFIG_KEYS 的注释）。
+  if (sessionNaming !== undefined) h.session_naming = sessionNaming;
   if (Object.keys(h).length > 0) cfg.harness = h;
   await writeFile(path.join(dir, "config.json"), `${JSON.stringify(cfg, null, 2)}\n`);
   return path.join(dir, "config.json");

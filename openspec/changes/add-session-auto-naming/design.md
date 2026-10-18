@@ -262,7 +262,7 @@
 4. **关闭开关**：`sessionNaming.enabled: false` → 完成首轮后无 `session_title` 记录，名字为回落口径。
 5. **naming provider 非法值回落**：会话 provider 为 mock，配 `sessionNaming.provider: "openai"`（闭集合外）→ 启动不失败，首轮后仍按 mock 的 `titles` 写出 `session_title` 记录（回落会话 provider），标题栏正常显示标题。
 
-> 场景配置键口径：验收套件的顶层键映射（`scripts/acceptance/lib/app.mjs` 的 `SCENARIO_CONFIG_KEYS`）在 2026-10-18 重塑后应改为 `sessionNaming: { enabled, provider, model }` 直落 `harness.session_naming`。该文件不在 M579（配置面重塑）的 scope 内，改名作为后续小任务处理（见 tasks §5.2）；在改名落地前，旧键 `autoTitle` / `titleProvider` / `titleModel` 会按未知键被静默忽略——场景 164 / 167 的配置将不生效。
+> 场景配置键口径：验收套件的顶层键映射（`scripts/acceptance/lib/app.mjs` 的 `SCENARIO_CONFIG_KEYS`）在 2026-10-18 重塑后改为 `sessionNaming: { enabled, provider, model }` 直落 `harness.session_naming`（M580 已落地，见 tasks §5.2b）。旧键 `autoTitle` / `titleProvider` / `titleModel` 已从套件删掉并进 `--check` 的 `REMOVED_CONFIG_KEYS`（出现即报错、文案点名新键位），不再有静默忽略的场景。
 
 漂移信号与合法 / 非法输出的全分支留在单测（真机场景驱动 5+ 轮成本高、判别力不增）；真机只锁「端到端能被看到」的五条。既有场景回扫：任何断言会话名等于首条消息截断的场景，若 fixture 未声明 `titles`，行为不变；新增 `titles` 只加在新场景自己的 fixture 上。
 
