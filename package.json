@@ -29,13 +29,13 @@
     "@lezer/python": "^1.1.19",
     "@lezer/rust": "^1.0.3",
     "@lezer/sass": "^1.1.0",
-    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/api": "^2.12.4",
     "js-yaml": "^4.1.0",
     "katex": "0.18.7",
     "mermaid": "^11.17.2"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "2.11.4",
+    "@tauri-apps/cli": "2.12.3",
     "@types/js-yaml": "^4.0.9",
     "typescript": "^5.9.3",
     "vite": "^8.2.2"
