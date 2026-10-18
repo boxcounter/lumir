@@ -74,7 +74,7 @@
 - [ ] 8.2 新增 mock fixture（脚本化返回一个固定 slug，供命名调用消费）；新增场景「贴图 → 语义改名 → toast 撤销」：断言终态文件名 `<slug>-<6 hex>.webp`、正文引用同名、暂存名文件不残留、toast 带「撤销」；点撤销后文件名与引用都回到 `pasted-<hash16>.webp`。
 - [ ] 8.3 回扫既有 112 / 113 / 116：核对在验收默认配置（provider 非 mock、无 vision 模型声明）下不发起命名、既有 `pasted-<hash16>` 期望不变；在场景注释里写明该前提。
 - [ ] 8.4 新增「无 vision 模型时保持暂存名」的断言：粘贴后经过明确观察窗口，vault 内不存在语义名文件、无命名 toast（复用 112 的驱动通道）。
-- [ ] 8.5 `node scripts/acceptance/run.mjs --check` 通过；新场景与 112 / 113 / 116 真机 PASS，证据落 `test-results/acceptance/<日期>/`。
+- [ ] 8.5 `node scripts/acceptance/run.mjs --check` 通过；新场景与 112 / 113 / 116 真机 PASS，证据落 `.local/acceptance/<日期>/`。
 
 ## 9. 验证
 

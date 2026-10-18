@@ -51,7 +51,7 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 - **执行时机**：dogfood 批次每次合并后、Alex 验收前，由 agent 先跑一遍；Alex 只看 FAIL 项与手感项。
 - **维护权**：新功能 mission 的 tasks 必须附带「新增/更新验收场景」一项（随实现同 PR），否则套件会腐烂。
 - **手感/审美不下沉**：表头双击选中手感、表格宽度观感、WKWebView 翻屏节奏等仍归 Alex，套件只留截图证据。
-- **证据不入 git**：`.local/acceptance/`，与 perf-results 同惯例，Alex 抽审靠本地目录。
+- **证据不入 git**：`.local/acceptance/`，与 perf 读数 `.local/perf/` 同惯例，Alex 抽审靠本地目录。
 - **环境隔离**：套件自带 `XDG_CONFIG_HOME` 与合成验收 vault（`/tmp/lumir-m102-acceptance`），
   绝不读写用户的 `~/.config/lumir` 与真实 vault；dev 端口用 `LUMIR_ACCEPTANCE_PORT`（默认 1430）
   与 Alex 手头的 1420 隔离。

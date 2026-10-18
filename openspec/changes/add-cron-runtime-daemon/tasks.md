@@ -96,7 +96,7 @@
 - [ ] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
 - [ ] 7.2 `cargo test` 通过（含 §1.5 / §2.3 / §3.1 / 3.2 / 3.3 的新增单测）。
 - [ ] 7.3 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）。
-- [ ] 7.4 真机跑新增验收场景（§6.1–6.4），`test-results/acceptance/<日期>/` 下证据目录可用绝对路径 `ls` 到。
+- [ ] 7.4 真机跑新增验收场景（§6.1–6.4），`.local/acceptance/<日期>/` 下证据目录可用绝对路径 `ls` 到。
 - [ ] 7.5 反向扳机观测可用性自验：人为点击一次通知、并调用一次模板独立入口，日志里分别能 grep 到
   `cron_notified` + `cron_open` 与 `template_open`（且独立入口不产生 `cron_open`）——证明 proposal
   的两条度量口径（cron 只计点击链路、模板独立调用方另计）可执行。

@@ -1,4 +1,4 @@
-// 阈值比较（spec §5 + 总约定「相对回归门禁」）：对照 tests/perf/thresholds.json 检查 perf-results/*.json。
+// 阈值比较（spec §5 + 总约定「相对回归门禁」）：对照 tests/perf/thresholds.json 检查 .local/perf/*.json。
 // mode=absolute：门禁值 < threshold 即过；mode=relative：对照滚动基线（最近 window 次 master 门禁值的
 // median），回退超过该指标容忍线拒合。enforce=true 时超阈/回退/结果缺失均 exit 1；
 // 基线缺失只 warning 不拒合（否则基线永远无法建立或重建）。
@@ -23,20 +23,18 @@
 //    稀薄的是精度，不是量级判断力。
 // 3) 缺数据即红：enforce 下本次结果文件缺失仍是 exit 1，与上面两条无关。
 //
-// 判据落盘 perf-results/gate-status.json（逐指标 pass/fail/skip）供 update-baseline.mjs 逐指标裁决
+// 判据落盘 .local/perf/gate-status.json（逐指标 pass/fail/skip）供 update-baseline.mjs 逐指标裁决
 // 基线推进——基线推进与「整个 run 是否全绿」解耦，见 spec「基线更新规则」。
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { repoRoot, resultsDir, summarize } from "./lib/stats.mjs";
+import { baselinePath as resolveBaselinePath, repoRoot, resultsDir, summarize } from "./lib/stats.mjs";
 
 const thresholdsPath = path.join(repoRoot(), "tests/perf/thresholds.json");
 const { enforce, regression = {}, metrics } = JSON.parse(
   await readFile(thresholdsPath, "utf8")
 );
 const outDir = resultsDir();
-const baselinePath =
-  process.env.PERF_BASELINE_FILE ??
-  path.join(repoRoot(), regression.baselineFile ?? "perf-results/baseline/baseline.json");
+const baselinePath = resolveBaselinePath(regression.baselineFile);
 const windowSize = regression.window ?? 10;
 const defaultMaxRegressionPct = regression.maxRegressionPct ?? 40;
 const minRuns = regression.minRuns ?? 5;

@@ -11,15 +11,19 @@ seed:
   # 复刻真实形状的批量内容 + 两类忽略探针（change vault-open-ignore-set §9.3；
   # change ignore-tiers-config 起改口径）。探针必须落在 vault **根**下：树默认收起，
   # 根级才断得到「这一行在不在」。
-  #   ignoredDirs —— 默认 `lazy` 档的构建产物族（根下 target / dist / test-results，各带若干 md）。
+  #   ignoredDirs —— 默认 `lazy` 档的构建产物族（根下 target / dist / .cache，各带若干 md）。
   #                  本 change 之后它们**出惰性行**（可见、可展开），不再是「不进树」。
+  #                  第三个探针原为 `test-results`，随 change trim-ignore-default-names
+  #                  （2026-10-18）从默认表移除后换成 `.cache`——该场景验的是惰性档可见性，
+  #                  不是「本仓产物目录名」。`test-results` / `perf-results` 已不在默认表里，
+  #                  真机上它们现在按普通目录逐层枚举。
   #   lazyDirs    —— 用户规则：根 `.gitignore` 声明 `.local` 并带一条取反 `!target/`；根
   #                  `.git/info/exclude` 声明 `.excluded-dir`；两者各带一个 tutorial.md。
   #                  取反那条是刻意的：真机上也要有一条「用户规则的取反不能推翻两档」的判据。
   #                  默认 `hidden` 档只剩 `.git` / `.DS_Store`——本 fixture 的 `.git/`
   #                  （`info/exclude` 所在）就是它的探针。
   bulkVault:
-    ignoredDirs: { target: 400, dist: 200, test-results: 150 }
+    ignoredDirs: { target: 400, dist: 200, .cache: 150 }
     lazyDirs:
       gitignore: [".local"]
       gitignoreNegations: ["target/"]
@@ -61,8 +65,8 @@ steps:
         ax: { has: "/AXButton \\(target\\)/" }
       - label: lazy 档命中：dist 出惰性行
         ax: { has: "/AXButton \\(dist\\)/" }
-      - label: lazy 档命中：test-results 出惰性行
-        ax: { has: "/AXButton \\(test-results\\)/" }
+      - label: lazy 档命中：.cache 出惰性行
+        ax: { has: "/AXButton \\(\\.cache\\)/" }
       - label: lazy 档命中：node_modules 出惰性行（批量内容里的既有探针，回归见证）
         ax: { has: "/AXButton \\(node_modules\\)/" }
       # hidden 档命中：`.git` 的行不在（本 fixture 的 `.git/` 是 info/exclude 的宿主）。
@@ -340,7 +344,7 @@ change `ignore-tiers-config` 与 `ignore-tiers-map` 修订。本场景是它的*
 
 1. **三档的可见性**：`hidden` 档命中的（默认只有 `.git` —— 本 fixture 的 `.git/` 是
    `info/exclude` 的宿主）不出现在树里；`lazy` 档命中的（默认 `target` / `dist` /
-   `test-results` / `node_modules`）**出惰性行、可展开、可打开**——**且 vault 根 `.gitignore`
+   `.cache` / `node_modules`）**出惰性行、可展开、可打开**——**且 vault 根 `.gitignore`
    里那条 `!target/` 取反不能改变它的去向**（两档先判且命中即定格）；用户规则命中的（根
    `.gitignore` 声明的 `.local`、根 `.git/info/exclude` 声明的 `.excluded-dir`）同待遇。
 2. **外部写入的两种形态**：运行时往 `target/probe.md`（未展开的惰性目录里的**子孙**）写一份

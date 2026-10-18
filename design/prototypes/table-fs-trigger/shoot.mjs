@@ -1,6 +1,6 @@
 // 表格全屏触发钮裁决稿截图：index.html × 12 变体 × 3 主题 + overlay × 3 + board 总览 × 3
 // 用法：node design/prototypes/table-fs-trigger/shoot.mjs
-//   输出：test-results/m235/shots/（证据不入 git，.gitignore「test-results/」豁免）
+//   输出：.local/missions/m235/shots/（证据不入 git，.gitignore「.local/」豁免）
 //   playwright 模块默认取本仓 tests/visual；
 //   worktree 未装依赖时用 LUMIR_VISUAL_PKG=/path/to/tests/visual/package.json 指定主仓。
 import { createRequire } from 'node:module';
@@ -15,7 +15,7 @@ const visualPkg = process.env.LUMIR_VISUAL_PKG || join(repoRoot, 'tests/visual/p
 const require = createRequire(visualPkg);
 const { chromium } = require('@playwright/test');
 
-const outDir = join(repoRoot, 'test-results/m235/shots');
+const outDir = join(repoRoot, '.local/missions/m235/shots');
 mkdirSync(outDir, { recursive: true });
 
 const positions = ['inside', 'outside', 'top'];

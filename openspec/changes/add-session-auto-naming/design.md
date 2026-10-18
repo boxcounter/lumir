@@ -1,6 +1,6 @@
 # Design: add-session-auto-naming
 
-> 读者假设：不看代码也能评审。设计真源是 `test-results/harness-vision.md`「就地增强 > 会话自动命名」节（2026-10-18 定稿，git 外）。真源只给了四条机制（首轮生成 / 每 N 轮或漂移重估 / keep-rename 防抖 / 留存加 title 且旧文件回落）与一条调度口径（便宜档）；本文把参数、边界与失败路径钉死，供实现批照章落地、供 reviewer 对账。
+> 读者假设：不看代码也能评审。设计真源是 `.local/design/harness-vision.md`「就地增强 > 会话自动命名」节（2026-10-18 定稿，git 外）。真源只给了四条机制（首轮生成 / 每 N 轮或漂移重估 / keep-rename 防抖 / 留存加 title 且旧文件回落）与一条调度口径（便宜档）；本文把参数、边界与失败路径钉死，供实现批照章落地、供 reviewer 对账。
 >
 > 基线口径：本 change 的 spec 增量以 living spec 当前正文为基线，并对齐已实现未归档的 change `add-harness-chat-completions-dialect` 已写入的 wire 方言条款（该 change 的增量同时改「配置节 [harness]」与「会话本地留存」两条）。归档顺序对账见 D17。
 

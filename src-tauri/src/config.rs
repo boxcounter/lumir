@@ -176,14 +176,17 @@ pub enum IgnoreTier {
 
 /// 忽略地图的内置默认（change ignore-tiers-map）：名字 → 档位。
 ///
-/// **16 名全在这张表里，档位写在名字自己身上**——旧的 `hidden` / `lazy` 两个默认常量（把档位
+/// **14 名全在这张表里，档位写在名字自己身上**——旧的 `hidden` / `lazy` 两个默认常量（把档位
 /// 编码进常量名）随单键地图退役，默认值只留这一处（REVIEW.md「同一语义两处真源」条）。
-/// 名单与 change ignore-tiers-config 的默认逐名等价：`.git` / `.DS_Store` 不可见，其余 14 名
+/// 名单与 change ignore-tiers-config 的默认逐名等价：`.git` / `.DS_Store` 不可见，其余 12 名
 /// 惰性可见；`build` / `out` / `vendor` 经 Alex 2026-09-28 裁决仍不纳入。
+/// `test-results` / `perf-results` 经 Alex 2026-10-18 裁决从默认表移除（change
+/// trim-ignore-default-names）：它们是本仓自己的产物目录，不是用户 vault 的通用形态，
+/// 留在通用默认里属于替用户猜。
 ///
 /// 这是**配置的缺省值**，不是安装快照：`config.json` 里没写 `[vault].ignore` 时用整张表，
 /// 写了（含 `{}`）则整图按配置解释（ADR 0002 §5 / proposal「缺省即默认」）。
-pub const DEFAULT_IGNORE: [(&str, IgnoreTier); 16] = [
+pub const DEFAULT_IGNORE: [(&str, IgnoreTier); 14] = [
     (".git", IgnoreTier::Hidden),
     (".DS_Store", IgnoreTier::Hidden),
     ("node_modules", IgnoreTier::Lazy),
@@ -196,8 +199,6 @@ pub const DEFAULT_IGNORE: [(&str, IgnoreTier); 16] = [
     (".pnpm-store", IgnoreTier::Lazy),
     (".tox", IgnoreTier::Lazy),
     (".gradle", IgnoreTier::Lazy),
-    ("test-results", IgnoreTier::Lazy),
-    ("perf-results", IgnoreTier::Lazy),
     ("target", IgnoreTier::Lazy),
     ("dist", IgnoreTier::Lazy),
 ];
@@ -2799,10 +2800,10 @@ mod tests {
     // `[vault]` 的忽略地图（change ignore-tiers-map，口径承接 ignore-tiers-config §2.2）
     // -----------------------------------------------------------------------
 
-    /// 默认地图的不变量：16 名逐项等于今天的名单、档位划分仍是 2 hidden + 14 lazy——
-    /// 名单从代码常量变配置默认时**不漏一个名字**（行为的唯一有意变化是 14 名从不可见变惰性可见）。
+    /// 默认地图的不变量：14 名逐项等于今天的名单、档位划分仍是 2 hidden + 12 lazy——
+    /// 名单从代码常量变配置默认时**不漏一个名字**（行为的唯一有意变化是惰性名从不可见变惰性可见）。
     #[test]
-    fn default_ignore_map_partitions_the_legacy_sixteen_names() {
+    fn default_ignore_map_partitions_the_legacy_names() {
         let map = VaultConfig::default().ignore;
         let mut names: Vec<&str> = map.keys().map(String::as_str).collect();
         names.sort_unstable();
@@ -2819,15 +2820,13 @@ mod tests {
             ".pnpm-store",
             ".tox",
             ".gradle",
-            "test-results",
-            "perf-results",
             "target",
             "dist",
         ];
         legacy.sort_unstable();
-        assert_eq!(names, legacy, "默认地图的键必须逐项等于既有 16 名");
-        assert_eq!(map.len(), 16);
-        assert_eq!(DEFAULT_IGNORE.len(), 16);
+        assert_eq!(names, legacy, "默认地图的键必须逐项等于既有 14 名");
+        assert_eq!(map.len(), 14);
+        assert_eq!(DEFAULT_IGNORE.len(), 14);
         let hidden: Vec<&str> = map
             .iter()
             .filter(|(_, tier)| **tier == IgnoreTier::Hidden)
@@ -2842,10 +2841,10 @@ mod tests {
             map.values()
                 .filter(|tier| **tier == IgnoreTier::Lazy)
                 .count(),
-            14
+            12
         );
-        // A3 档仍不纳入（Alex 2026-09-28 裁决）
-        for not_included in ["build", "out", "vendor"] {
+        // A3 档仍不纳入（Alex 2026-09-28 裁决）；本仓产物目录 2026-10-18 起也不纳入
+        for not_included in ["build", "out", "vendor", "test-results", "perf-results"] {
             assert!(
                 !map.contains_key(not_included),
                 "{not_included} 不该在内置默认里"

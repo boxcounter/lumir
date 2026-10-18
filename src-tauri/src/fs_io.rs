@@ -2575,7 +2575,7 @@ mod tests {
         // hidden 档：自身与子孙都不出现
         assert!(!paths.iter().any(|p| p.contains(".git")));
         assert!(!paths.iter().any(|p| p.contains(".DS_Store")));
-        // lazy 档（默认 14 名）：自身出一行惰性条目，子孙不进枚举
+        // lazy 档（默认 12 名）：自身出一行惰性条目，子孙不进枚举
         let nm = entries
             .iter()
             .find(|e| e.path == "node_modules")
@@ -3993,8 +3993,9 @@ mod tests {
     // change vault-open-ignore-set：一份规则表（内置 + 用户）、按需枚举、watch 判定
     // -----------------------------------------------------------------------
 
-    /// 两档默认名单（change ignore-tiers-config §2.1）：`hidden` 档 = `.git` / `.DS_Store`，
-    /// 外加恒定临时文件模式两条；`lazy` 档 = 其余 14 名。名字匹配是**任意深度 + 大小写敏感**，
+    /// 两档默认名单（change ignore-tiers-config §2.1，名单经 change trim-ignore-default-names
+    /// 缩到 14 名）：`hidden` 档 = `.git` / `.DS_Store`，外加恒定临时文件模式两条；
+    /// `lazy` 档 = 其余 12 名。名字匹配是**任意深度 + 大小写敏感**，
     /// 同名文件与目录一视同仁；名字相近的（`targets` / `dist-old` / `Target`）与 A3 档
     /// （`build` / `out` / `vendor`）两档都不命中。
     #[test]
@@ -4015,7 +4016,7 @@ mod tests {
         ] {
             assert!(p.hidden_hit(name, false), "临时文件模式必须命中 {name}");
         }
-        for name in ["node_modules", "target", "dist", "test-results", ".venv"] {
+        for name in ["node_modules", "target", "dist", ".venv"] {
             assert!(p.lazy_hit(name, false), "{name} 在 lazy 档");
             assert!(p.lazy_hit(name, true), "{name} 作为目录同样命中");
             assert!(!p.hidden_hit(name, false), "{name} 不在 hidden 档");
@@ -4035,6 +4036,10 @@ mod tests {
             "build",
             "out",
             "vendor",
+            // 2026-10-18 从默认表移除的两个名字（change trim-ignore-default-names）：用户 vault 里
+            // 出现同名目录时按普通目录逐层枚举，不再是惰性行
+            "test-results",
+            "perf-results",
             // 合法点文件与「以 .lumir- 之外的形式」出现的名字
             ".hidden.conf",
             "note.md.lumir-1",

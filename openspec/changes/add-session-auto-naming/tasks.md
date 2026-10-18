@@ -35,7 +35,7 @@
 
 - [ ] 5.1 mock fixture 顶层可选 `titles` 数组（独立队列；缺失 / 空 / 弹尽 → 空正文 → `error/invalid`），**会话 `responses` 队列不动**。判据：`harness::llm::tests::title_script_is_separate_from_responses` 全绿，且既有 fixture 驱动场景（70–77、87–98）零改动回归。
 - [ ] 5.2 `scripts/acceptance/lib/app.mjs`：`SCENARIO_CONFIG_KEYS` 增 `autoTitle` / `titleModel` 并映射到配置文件 snake_case；`--check` 能挡住拼错与类型错。判据：`node scripts/acceptance/run.mjs --check` 通过。
-- [ ] 5.3 新增真机验收场景（编号取落地时最大号 +1，文件名 `16x-harness-auto-title-*.md`）：①首轮命名（标题栏 + 浮层行名 + JSONL `decision=initial`）；②keep 防抖（5 轮后标题不变 + `decision=keep` 记录）；③旧文件安静回落（预置无标题记录的 JSONL，行名回落且无告警）；④关闭开关（`autoTitle: false` 时不写记录）。判据：`node scripts/acceptance/run.mjs <新编号…>` 全 PASS，证据落 `test-results/acceptance/`（git 外）。
+- [ ] 5.3 新增真机验收场景（编号取落地时最大号 +1，文件名 `16x-harness-auto-title-*.md`）：①首轮命名（标题栏 + 浮层行名 + JSONL `decision=initial`）；②keep 防抖（5 轮后标题不变 + `decision=keep` 记录）；③旧文件安静回落（预置无标题记录的 JSONL，行名回落且无告警）；④关闭开关（`autoTitle: false` 时不写记录）。判据：`node scripts/acceptance/run.mjs <新编号…>` 全 PASS，证据落 `.local/acceptance/`（git 外）。
 - [ ] 5.4 全量回扫既有验收场景里「会话名 = 首条用户消息截断」的期望（`rg "会话名|新会话" scripts/acceptance/scenarios/`），逐条确认：fixture 未声明 `titles` 时行为逐字节不变；有期望变化的逐条改准（口径：openspec-workflow 的「改闸 / 改语义须回扫既有场景」）。判据：回扫清单写进实现批的完成报告，未改的场景给出「行为不变」的理由。
 
 ## 6. 文档

@@ -6,7 +6,7 @@ name: perf
 # （容忍线逐指标、随基线窗口实测散布浮动；统计口径与容忍线以 docs/specs/perf-measurement.md
 # 「相对回归门禁」为准，此处不重复数字）；结果缺失即 exit 1。
 # 基线推进逐指标解耦（M174）：写回条件为 always()，是否推进由 update-baseline.mjs 读
-# perf-results/gate-status.json 逐指标裁决——任一指标确定性超阈不再连带冻结其它指标的滚动基线。
+# .local/perf/gate-status.json 逐指标裁决——任一指标确定性超阈不再连带冻结其它指标的滚动基线。
 
 on:
   pull_request:
@@ -47,7 +47,7 @@ jobs:
       - name: 恢复滚动基线（相对回归门禁用；缺失则首次/重建期，比较跳过不拒合）
         uses: actions/cache/restore@v4
         with:
-          path: perf-results/baseline/
+          path: .local/perf/baseline/
           key: perf-baseline-${{ github.run_id }}
           restore-keys: perf-baseline-
 
@@ -94,17 +94,20 @@ jobs:
         # contract 字段仍记合同值 200MB，门禁阈值见 thresholds.json / gate-status.json。
         run: node scripts/perf/memory.mjs
 
-      - name: 阈值比较（enforce：超阈/相对回归超容忍线/结果缺失即红；判据落盘 perf-results/gate-status.json）
+      - name: 阈值比较（enforce：超阈/相对回归超容忍线/结果缺失即红；判据落盘 .local/perf/gate-status.json）
         if: always()
         run: node scripts/perf/check-thresholds.mjs
 
+      # `include-hidden-files` 必须显式打开：产出根 `.local/perf/` 本身就是隐藏目录，
+      # upload-artifact v4 默认跳过隐藏文件——不开这一项会得到一个空 artifact，而 run 照绿。
       - name: 上传数值 artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: perf-results
-          path: perf-results/
+          path: .local/perf/
           retention-days: 30
+          include-hidden-files: true
 
       # 条件由 success() 改为 always()（M174）：基线推进必须与「整个 run 是否全绿」解耦。
       # 原口径下任一指标确定性超阈（M172：resident-memory 9/9 超阈 206.50–215.28MB）⇒ run 永不 success
@@ -121,5 +124,5 @@ jobs:
         if: always() && github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/cache/save@v4
         with:
-          path: perf-results/baseline/
+          path: .local/perf/baseline/
           key: perf-baseline-${{ github.run_id }}

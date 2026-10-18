@@ -8,10 +8,7 @@ dist/
 # tauri / rust
 src-tauri/target/
 
-# perf 测量结果（scripts/perf/* 产出，CI 作为 artifact 上传）
-perf-results/
-
-# 本地证据与材料根（真机验收 / 探针 / mission 证据 / 评审材料 / 安装包 / 设计真源；按使用场景分层，见 .local/README.md；截图量大、session 产物，不入 git）
+# 本地证据与材料根（真机验收 / 探针 / mission 证据 / 评审材料 / 安装包 / 设计真源 / perf 读数；按使用场景分层，见 .local/README.md；截图量大、session 产物，不入 git）
 .local/
 
 # misc

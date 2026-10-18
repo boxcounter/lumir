@@ -17,7 +17,7 @@
 - **门禁已启用拒合**：`tests/perf/thresholds.json` 的 `enforce` 为 `true`；超阈（绝对模式）或回退超**该指标容忍线**（相对模式；默认 40%、`keypress-to-paint` 60%，并随基线窗口实测散布浮动，见「相对回归门禁」一节）即 CI 红。enforce 后任一指标的本次结果文件缺失或不可读同样拒合（exit 1，缺数据即红，不得静默跳过）。
 - **性质声明（2026-09-18 M174）——与 2026-09-05 口径修正的范式对照，须分清两类**：
   - **同类**（沿用第 41 行的范式，仅改 CI 判据口径、不动 ADR 0002 合同数字，不占用 ADR 0002 的一次性校准额度）：相对回归的容忍线逐指标化与随窗口散布浮动、基线样本下限 `minRuns`、基线推进逐指标解耦。
-  - **不同类**（M174 新增，如实标注）：常驻内存的 CI 门禁阈值 200→250MB **改动了 ADR 0002 §6 的数字之一**。它是按实测稳态做的阈值修订（不是重新校准：未做标准化环境测量、未改 ADR 文件），但 **ADR 0002 §6 的文本因此需要修订**。本 spec 与 `thresholds.json` 已标出该分叉，ADR 文本修订登记为 follow-up；在修订落地前，常驻内存一项上「ADR 0002 合同值（200MB）」≠「CI 门禁阈值（250MB）」，且 artifact 的 `contract` 字段仍记 200MB、门禁阈值记在 `perf-results/gate-status.json`。
+  - **不同类**（M174 新增，如实标注）：常驻内存的 CI 门禁阈值 200→250MB **改动了 ADR 0002 §6 的数字之一**。它是按实测稳态做的阈值修订（不是重新校准：未做标准化环境测量、未改 ADR 文件），但 **ADR 0002 §6 的文本因此需要修订**。本 spec 与 `thresholds.json` 已标出该分叉，ADR 文本修订登记为 follow-up；在修订落地前，常驻内存一项上「ADR 0002 合同值（200MB）」≠「CI 门禁阈值（250MB）」，且 artifact 的 `contract` 字段仍记 200MB、门禁阈值记在 `.local/perf/gate-status.json`。
 - 判定口径（门禁比较值的统计量，按模式区分）：
   - **绝对模式**（打开 1MB 文件）：该次运行的 **p95**；常驻内存取 max（见 §4）。
   - **相对回归模式**（冷启动、keypress-to-paint）：该次运行的 **median**（2026-09-05 口径修正，修正前为 p95；证据与声明见「相对回归门禁」一节）。
@@ -31,14 +31,14 @@
 
 ### 采样统计口径
 
-- 每项指标产出 `perf-results/<metric>.json`，schema：
+- 每项指标产出 `.local/perf/<metric>.json`，schema：
   `{"metric": string, "unit": "ms"|"MB", "contract": number, "samples": number[], "median": number, "p95": number, "max": number, "min": number, "mean": number, "meta": object}`。
   `samples` 保留全部原始样本，供校准期复核分布形状；统计量由 `scripts/perf/lib/stats.mjs` 统一计算，各脚本不得自造。
 - p95 采用 nearest-rank 法：`sort(samples)[ceil(0.95 * N) - 1]`。
 
 ### 相对回归门禁（冷启动、keypress-to-paint）
 
-- **基线来源**：仅 master 分支 push 触发的 perf workflow 写基线（PR 与 workflow_dispatch 只读不写）。写回条件是 `if: always() && push && master`（2026-09-18 M174 由 `success()` 改），**是否推进逐指标裁决**：`check-thresholds.mjs` 把逐指标判据落盘到 `perf-results/gate-status.json`（`pass`/`fail`/`skip` + 判据明细），`update-baseline.mjs` 只把「该指标判据非 `fail` 且本次读数可读」的条目追加进滚动基线文件 `perf-results/baseline/baseline.json`，再经 `actions/cache` 持久化（cache key `perf-baseline-<run_id>`，`restore-keys: perf-baseline-` 前缀匹配取最近一次）。判据文件缺失或该指标在判据里没有条目 → fail-closed：一条都不推进。
+- **基线来源**：仅 master 分支 push 触发的 perf workflow 写基线（PR 与 workflow_dispatch 只读不写）。写回条件是 `if: always() && push && master`（2026-09-18 M174 由 `success()` 改），**是否推进逐指标裁决**：`check-thresholds.mjs` 把逐指标判据落盘到 `.local/perf/gate-status.json`（`pass`/`fail`/`skip` + 判据明细），`update-baseline.mjs` 只把「该指标判据非 `fail` 且本次读数可读」的条目追加进滚动基线文件 `.local/perf/baseline/baseline.json`，再经 `actions/cache` 持久化（cache key `perf-baseline-<run_id>`，`restore-keys: perf-baseline-` 前缀匹配取最近一次）。判据文件缺失或该指标在判据里没有条目 → fail-closed：一条都不推进。
 - **比较方法**（2026-09-05 统计口径修正 + 2026-09-18 M174 修正）：对相对模式指标，本次门禁值取当次运行的 **median**；基线值取基线文件该指标**最近 10 次**（滚动窗口）master 门禁值的 **median**——历史条目存的本身就是各次 master 运行的 median，基线值即 median of medians。回退幅度 = `(value - baseline) / baseline`，**超过该指标容忍线即拒合**。容忍线（M174）= `max(该指标 maxRegressionPct, 窗口高侧散布 × spreadHeadroom)`，「窗口高侧散布」= `(窗口 max − 窗口 median) / 窗口 median`：
   - `maxRegressionPct` 默认 40%（M37 依据见下条），`keypress-to-paint` 逐指标取 60%（M174 依据见其证据链）；`spreadHeadroom` 默认 1.2。
   - 浮动项只松不紧，且**只在窗口自身已含高端读数时生效**：按同一子集穷举法，k≥minRuns=5 的窗口高侧散布上界是 **57.9%**（窗口 22.35/26.75/33.70/33.90/53.20，median 33.70）×1.2 = **69.4% > 60%**，该窗口下容忍线会被抬到配置值以上；而完整 9 条窗口是 33.7%×1.2 = 40.4%、S3b 那个低端紧致角落窗口是 18.1%×1.2 = 21.7%，两者低于 60%、浮动项在那两处惰性。它是针对 runner 抖动量级的护栏：抖动变大时容忍线自动抬高、稳定后回落到配置值——静态常数在「噪 runner」与「稳 runner」两种状态下必错一边。
@@ -48,7 +48,7 @@
 - **M174 判据修正证据链（2026-09-18，抽样 9 次 master perf run + 子集穷举）**：① **主因是基线冻结，不是容忍线太紧**——9 次 keypress-to-paint 门禁值 22.35/26.75/33.70/33.90/39.80/42.10/43.55/46.65/53.20ms（median 39.80ms），而当时基线是**单样本** 28.15ms（比 9 次的 median 低 29%），40% 判红线（28.15×1.4 = 39.4ms）因此落在实测散布内部。② 对上述读数穷举「k 条子集的 median」（子集穷举给出的是连续窗口可能范围的**上界**）：k=1 时窗口 median 的可能范围就是整条散布（22.35–53.20ms，2.38 倍），k=3 为 26.75–46.65ms，k=5 起收窄到 33.70–43.55ms——即**单样本「基线」不是水平值，而是散布里的一次抽样**；k<5 时「低端窗口 median + 实测最高读数」可造出 +138%(k=1)/+117%(k=2)/+99%(k=3)/+76%(k=4) 的假回退，这是 `minRuns=5` 的依据。③ **60% 容忍线的算术**：`minRuns=5` 下窗口 median 的最差组合是 33.70ms，与实测最高读数 53.20ms 相距 **+57.9%**，取大于它的最小整十档 60%（静态 40% 在该角落必误报）。④ **灵敏性未被牺牲**：+100% 量级真实劣化（keypress 70ms vs 窗口 median 36.85ms）在 60% 容忍线下仍拒合。⑤ 同期 cold-start 9/9 通过（115–225ms vs 冻结基线 278.54ms）、open-1mb-file 9/9 通过（0.82–5.42ms），故本轮**不动**这两项的阈值与判据。
 - **性质声明：本条是门禁实现的统计口径修正，不是 ADR 0002 的合同校准**——合同数字（冷启动 <300ms、keypress-to-paint <16ms）不动，2026-09-05 一次性校准额度已用尽的状态不变，合同值在标准化环境的裁决口径不变；变更的仅是 CI 相对回归门禁用哪个统计量与多大容忍线判断"回退"，以及基线推进的触发条件与逐指标粒度（M174）。常驻内存门禁阈值 200→250MB 属**另一类**（改动了 ADR 0002 §6 的数字之一），声明见总约定「性质声明（2026-09-18 M174）」。
 - **基线更新规则**：只进不出地追加、按窗口裁剪到最近 10 次；**逐指标独立推进**（M174 起）：某指标判 `fail`（超阈、回退超容忍线、结果缺失、判据缺失）只冻结它自己的历史，不再连带冻结其它指标的基线。2026-09-18 前的口径是「整轮全绿才更新」，而 resident-memory 确定性超阈（M172 抽样 9/9）会让整轮永不 success ⇒ 全部相对基线永久冻结，keypress-to-paint 长期对着单样本基线比较（CI 日志「最近 1 次 master」即此）。`skip`（基线缺失、窗口未满 `minRuns`、统计口径迁移）的读数**照常进基线**——否则窗口永远攒不满、薄基线降级会把自己锁死；只有 `fail` 不进（`enforce: false` 的 warn-only 档不拒合任何读数，故该档下 `fail` 也照常进——进基线的准绳与拒合的准绳是同一条，不在两处各判一次）。cache 因 GitHub 7 天未访问清理而丢失时，由下一次 master run 重建。**统计口径迁移**：基线条目的 `gate` 字段记录历史值的统计口径；与当前门禁 gate 不一致时（如 2026-09-05 修正前遗留的 p95 口径 cache），`check-thresholds.mjs` 跳过相对比较（warning，不拒合），`update-baseline.mjs` 丢弃旧口径历史、以新口径重建——旧条目存的是另一种统计量，混用会让窗口 median 系统性偏离（p95 历史配 median 当前值必出假阴性，反之必出假阳性）。
-- **基线缺失处理**：基线文件不存在或该指标无历史（首次运行、cache 丢失重建期）→ `::warning::` 并跳过该项的相对比较，**不拒合**（否则永远无法建立/重建基线）。注意区分：本次**测量结果**缺失（`perf-results/<metric>.json` 不存在或不可读）在 enforce 下是 exit 1 拒合；基线缺失只是无法比较。
+- **基线缺失处理**：基线文件不存在或该指标无历史（首次运行、cache 丢失重建期）→ `::warning::` 并跳过该项的相对比较，**不拒合**（否则永远无法建立/重建基线）。注意区分：本次**测量结果**缺失（`.local/perf/<metric>.json` 不存在或不可读）在 enforce 下是 exit 1 拒合；基线缺失只是无法比较。
 - **基线文件 schema**：`{"metrics": {"<metric>": {"unit": string, "gate": "p95"|"median"|"max", "history": [{"run_id": number, "ts": string, "value": number}, ...]}}}`，`history` 按时间升序、长度 ≤ 窗口；`gate` 必须与 thresholds.json 该指标当前 gate 一致（不一致的处理见「基线更新规则」的口径迁移），`value` 为该次运行的 gate 统计量（相对回归模式即 median）。
 - **存储选型 trade-off**：候选二选其一是仓库内 baseline 文件（随 master 提交）。放弃理由：需要 bot identity 提交回 master，引入写权限与并发冲突复杂度，且每次 perf run 污染 git 历史；`actions/cache` 天然跨 run 共享、branch 可读默认分支 cache、无需写权限，代价是 7 天未访问会被清理（可接受，重建成本为一次 master run）与不做强一致并发控制（master 串行 push 下无实际问题）。
 
@@ -66,9 +66,9 @@
 | `tests/perf/fixtures/markdown-1mb.md` | 1MB Markdown fixture（提交入库） |
 | `tests/perf/fixtures/gen-fixture.mjs` | fixture 确定性再生成器 |
 | `tests/perf/thresholds.json` | 阈值、门禁模式、相对回归参数与 enforce 开关 |
-| `perf-results/`（CI artifact） | 四项指标 JSON + 原始样本 + `gate-status.json`（逐指标判据） |
-| `perf-results/gate-status.json`（CI artifact） | `check-thresholds.mjs` 落盘的逐指标判据（`pass`/`fail`/`skip` + 门禁值、基线值、回退%、容忍线、基线条数、理由），供 `update-baseline.mjs` 逐指标裁决 |
-| `perf-results/baseline/baseline.json`（CI cache） | 滚动基线（相对回归模式用，不入库） |
+| `.local/perf/`（CI artifact） | 四项指标 JSON + 原始样本 + `gate-status.json`（逐指标判据） |
+| `.local/perf/gate-status.json`（CI artifact） | `check-thresholds.mjs` 落盘的逐指标判据（`pass`/`fail`/`skip` + 门禁值、基线值、回退%、容忍线、基线条数、理由），供 `update-baseline.mjs` 逐指标裁决 |
+| `.local/perf/baseline/baseline.json`（CI cache） | 滚动基线（相对回归模式用，不入库） |
 
 ## 1. 冷启动 <300ms
 
@@ -149,7 +149,7 @@
 - **"常驻"（settle 条件）**：ready 信号出现后 idle 10 秒（无输入、无窗口操作），随后进入采样窗口。
 - **口径缺陷声明**：RSS 含 shared pages，多进程合计会重复计数共享区，读数系统性偏高（虚高方向，即偏保守）；`vmmap -summary` 的 Physical footprint 是更准的口径，但单进程采样耗时数秒、不适合 CI 高频采样。校准期若发现 RSS 口径把阈值顶死，允许以 OpenSpec 循环将口径修订为 phys_footprint——这属于测量方法学修订，不属于 ADR 0002 的一次性数字校准。
 - **CI 门禁阈值（2026-09-18 M174 提阈为 250MB）**：`tests/perf/thresholds.json` 的 `resident-memory.threshold` = **250MB**。依据：2026-09-16~18 抽样 9 次 master perf run，该项 **9/9 确定性超阈**、读数 206.50–215.28MB（非抖动；另见 backlog「记录在案」的「dogfood 性能专项」条——其中的「内存合同存量超标」记 2026-09-06 读数 218–222MB），而 2026-09-05 校准实测约 110MB——稳态相对校准值翻了一倍。250MB 相对实测最高读数 215.28MB 留 ≥16% 余量（稳态再涨 16% 即报警）。
-- **提阈的性质（如实标注，勿混同于本 spec 的其他口径修正）**：这是改到了 ADR 0002 §6 的**数字之一**（常驻内存 200MB），不是「只改 CI 判据、不动合同值」那一类（对照总约定「性质声明（2026-09-18 M174）」）。它按 Alex 2026-09-18 的裁决落地，**不占用** 2026-09-05 的一次性校准额度（未在标准化环境重新测量），但也**不解除**「稳态为何翻倍」这个产品问题——提阈只让 CI 重新可用；归因与治理（或按上条改用 phys_footprint 口径）是独立议题。artifact 的 `contract` 字段仍记 200MB（ADR 合同值），CI 实际使用的门禁阈值记在 `perf-results/gate-status.json` 的 `threshold` 字段；ADR 0002 §6 的文本修订登记为 follow-up。
+- **提阈的性质（如实标注，勿混同于本 spec 的其他口径修正）**：这是改到了 ADR 0002 §6 的**数字之一**（常驻内存 200MB），不是「只改 CI 判据、不动合同值」那一类（对照总约定「性质声明（2026-09-18 M174）」）。它按 Alex 2026-09-18 的裁决落地，**不占用** 2026-09-05 的一次性校准额度（未在标准化环境重新测量），但也**不解除**「稳态为何翻倍」这个产品问题——提阈只让 CI 重新可用；归因与治理（或按上条改用 phys_footprint 口径）是独立议题。artifact 的 `contract` 字段仍记 200MB（ADR 合同值），CI 实际使用的门禁阈值记在 `.local/perf/gate-status.json` 的 `threshold` 字段；ADR 0002 §6 的文本修订登记为 follow-up。
 
 ### 工具链
 
@@ -165,7 +165,7 @@
 
 ## 5. CI 集成与门禁状态
 
-- 工作流 `.github/workflows/perf.yml`：`macos-15` runner，先经 `actions/cache/restore` 取回滚动基线（`perf-results/baseline/`，`restore-keys: perf-baseline-`），release 构建后依次跑四项脚本，`perf-results/` 整目录上传为 artifact（保留 30 天），随后 `check-thresholds.mjs` 对照 `tests/perf/thresholds.json` 比较。
-- **现阶段（2026-09-05 校准 + 2026-09-18 M174 修正后）**：`thresholds.json` 的 `enforce` 为 `true`，门禁拒合已启用。绝对模式指标超阈即 CI 红（resident-memory 的门禁阈值为 250MB，见 §4）；相对模式指标回退超**该指标容忍线**（默认 40%、`keypress-to-paint` 60%，并随基线窗口实测散布浮动；基线历史不足 `minRuns=5` 时降级为 `::warning::` 不拒合）即 CI 红；任一指标的本次结果文件缺失或不可读亦 CI 红（exit 1，缺数据即红）；基线缺失、薄基线、统计口径迁移只 warning 不拒合。`check-thresholds.mjs` 同时把逐指标判据落盘 `perf-results/gate-status.json`（随 artifact 上传，可复核每次 run 用的是哪条基线、哪个容忍线）。
-- **基线写回**：`push` 到 master 时，`update-baseline.mjs` 以 `if: always()` 运行（**不再**要求整轮全绿，缘由见「基线更新规则」），按 `gate-status.json` **逐指标**把「判据非 `fail` 且读数可读」的门禁值追加进 `perf-results/baseline/baseline.json`（裁剪到最近 10 次），再由 `actions/cache/save` 以 `perf-baseline-<run_id>` 为 key 写回。某指标自身拒合、结果缺失或判据缺失时，只有该指标的历史不动（fail-closed：判据文件整体缺失则一条都不推进）。
+- 工作流 `.github/workflows/perf.yml`：`macos-15` runner，先经 `actions/cache/restore` 取回滚动基线（`.local/perf/baseline/`，`restore-keys: perf-baseline-`），release 构建后依次跑四项脚本，`.local/perf/` 整目录上传为 artifact（保留 30 天），随后 `check-thresholds.mjs` 对照 `tests/perf/thresholds.json` 比较。
+- **现阶段（2026-09-05 校准 + 2026-09-18 M174 修正后）**：`thresholds.json` 的 `enforce` 为 `true`，门禁拒合已启用。绝对模式指标超阈即 CI 红（resident-memory 的门禁阈值为 250MB，见 §4）；相对模式指标回退超**该指标容忍线**（默认 40%、`keypress-to-paint` 60%，并随基线窗口实测散布浮动；基线历史不足 `minRuns=5` 时降级为 `::warning::` 不拒合）即 CI 红；任一指标的本次结果文件缺失或不可读亦 CI 红（exit 1，缺数据即红）；基线缺失、薄基线、统计口径迁移只 warning 不拒合。`check-thresholds.mjs` 同时把逐指标判据落盘 `.local/perf/gate-status.json`（随 artifact 上传，可复核每次 run 用的是哪条基线、哪个容忍线）。
+- **基线写回**：`push` 到 master 时，`update-baseline.mjs` 以 `if: always()` 运行（**不再**要求整轮全绿，缘由见「基线更新规则」），按 `gate-status.json` **逐指标**把「判据非 `fail` 且读数可读」的门禁值追加进 `.local/perf/baseline/baseline.json`（裁剪到最近 10 次），再由 `actions/cache/save` 以 `perf-baseline-<run_id>` 为 key 写回。某指标自身拒合、结果缺失或判据缺失时，只有该指标的历史不动（fail-closed：判据文件整体缺失则一条都不推进）。
 - 触发路径：`src/**`、`src-tauri/**`、`scripts/perf/**`、`tests/perf/**`、workflow 自身的 PR 与 master push，外加 `workflow_dispatch`（手动跑数/验证门禁行为）。

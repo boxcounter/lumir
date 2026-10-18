@@ -116,7 +116,7 @@ token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定�
 | 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
 |---|---|---|---|---|---|
 | `vault.rule_files` | string 数组 | `[".gitignore", ".git/info/exclude"]` | 每项是**vault 相对路径**（非空、非绝对路径、不含 `..`）；文件不存在静默跳过 | **vault 装载时**读一次；改动下次装载生效 | `config.rs` 的 `DEFAULT_RULE_FILES`、`validate_rule_files` |
-| `vault.ignore` | 对象：名字 → `"hidden"` \| `"lazy"` | 16 名（见下） | 键是**单个名字**：不含 `/`、不是 `.` / `..`、不含 `* ? [ ] ! # \`、首尾无空白；值是闭集合 `"hidden"` / `"lazy"` | **vault 装载时**读一次；改动下次装载生效 | `config.rs` 的 `DEFAULT_IGNORE`、`validate_ignore_map` |
+| `vault.ignore` | 对象：名字 → `"hidden"` \| `"lazy"` | 14 名（见下） | 键是**单个名字**：不含 `/`、不是 `.` / `..`、不含 `* ? [ ] ! # \`、首尾无空白；值是闭集合 `"hidden"` / `"lazy"` | **vault 装载时**读一次；改动下次装载生效 | `config.rs` 的 `DEFAULT_IGNORE`、`validate_ignore_map` |
 
 两个忽略档的语义（change `ignore-tiers-map`，档位语义承接 `ignore-tiers-config`）：
 
@@ -127,12 +127,12 @@ token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定�
 - **缺省即默认（粒度整图）**：`ignore` 键缺席（或缺整个 `[vault]` 节）⇒ 整图取代码内置默认；键存在（含 `{}`）⇒ 整图按配置解释。**不在图里的名字 ⇒ 该名字走用户规则 / 完全可见**（「第三档」，没有第三个键、也没有 `"visible"` 档位值）。
 - 只接受**名字**，不接受模式：写 `"*.log": "lazy"` 一类逐项忽略并给人话 warning。
 - 保存临时文件模式（`.lumir-*` / `.*.lumir-*`）**恒定硬编码、不在配置面内**（那是数据损坏面）。
-- 默认地图（`hidden` 2 名 + `lazy` 14 名）：
+- 默认地图（`hidden` 2 名 + `lazy` 12 名；`test-results` / `perf-results` 于 2026-10-18 从默认表移除，change `trim-ignore-default-names`）：
 
   | 档位 | 名字 |
   |---|---|
   | `hidden` | `.git`、`.DS_Store` |
-  | `lazy` | `node_modules`、`.venv`、`venv`、`__pycache__`、`.next`、`.nuxt`、`.cache`、`.pnpm-store`、`.tox`、`.gradle`、`test-results`、`perf-results`、`target`、`dist` |
+  | `lazy` | `node_modules`、`.venv`、`venv`、`__pycache__`、`.next`、`.nuxt`、`.cache`、`.pnpm-store`、`.tox`、`.gradle`、`target`、`dist` |
 
 示例：
 
