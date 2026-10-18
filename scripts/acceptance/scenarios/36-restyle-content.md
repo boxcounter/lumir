@@ -95,5 +95,5 @@ steps:
   单测钉住（`src-tauri/src/fs_io.rs` 的两个 watch/refine 测试、`tests/unit/tree-increment.test.ts`）。
 - 外部新建**文件**（非目录）同一条 watch 路径、无此问题：场景 47 的「树里有 aaa-menu.md /
   aab-tab.md」与「目录行已在树里」三条断言在 2026-09-26 全量真机运行里 PASS
-  （证据 `test-results/acceptance/2026-09-26/47-file-tree-context-menu/`）。
+  （证据 `.local/acceptance/2026-09-26/47-file-tree-context-menu/`）。
 - chevron 的 0.12s 旋转过渡、对齐像素级观感不进机器判据（同 13-toc 的手感项口径）。

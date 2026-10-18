@@ -66,7 +66,7 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 症状：评审复验发现报告里声称的证据目录不存在（M143 r1 P2-1）；另一处证据实际留在 worktree 内，worktree 清理后指针失效（M138 r1 P2-2）。
 - 根因：自报证据不落盘，或落在会被清理的位置——合并评审无从复核。
 - 证据：`scripts/acceptance/README.md` 的「证据布局」节与「重试次数写进证据」口径；AGENTS.md 硬规则「批次收尾顺带 `git push origin master`」（同族：落地动作无人校验）。
-- 防线：下次声称「跑过了」之前，用绝对路径 `ls` 一遍自己写下的证据路径再写进报告；证据落在 `test-results/`（本地留存、git 外）而不是 worktree 内；写不出可 `ls` 的指针就等于没跑。
+- 防线：下次声称「跑过了」之前，用绝对路径 `ls` 一遍自己写下的证据路径再写进报告；证据落在 `.local/`（本地留存、git 外）而不是 worktree 内；写不出可 `ls` 的指针就等于没跑。
 
 **8. 同一语义两处真源，改动只落到一处**
 - 症状：frontmatter 行数上限 `src/preview/wikilinks.ts:19` 是 200、`src/preview/frontmatter.ts:19` 是 512；`src/editor.ts:878` 与 `src/preview/code.ts:46` 各有一份着色语言表（后者注释自认「与 editor.ts 同批」）；扩展名集合也漂过（`e33e10b` 收敛过一次）。跨层同理（M368，2026-10-07）：harness live 的 `done` 事件成功时 summary 是固定哨兵串「成功」，前端据此判成功 / 失败，而 M367 已把 `panel_summary` 的形状落进持久化路径（成功 = 参数摘要 / 失败 = 状态·错误码）——同一条成功语义被两端各判一次，改动只落到一处即静默改判。
@@ -91,7 +91,7 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 **16. 标题栏内元素上的 `mousedown` preventDefault 会静默打断窗口拖拽（真机场景 39 判红，成因未定位）**
 - 症状：标题栏（`.titlebar` 带 `data-tauri-drag-region="deep"`）内任何元素挂了 `mousedown` + `preventDefault()`（「别抢焦点」是很自然的写法）之后，**真机**场景 39 的「标识块上按下拖拽窗口成立」稳定判红——`window_bounds` Δ=(0,0)，窗口纹丝不动，**无任何报错**，而拖拽落点根本不经过那个元素。chromium 层与 CI 都看不见（视觉门禁照绿），最容易被当成本机环境问题放过。单次现场，但形态是「静默失效 + 判据只存在于本地真机门禁」⇒ 按收录门槛的「单次但代价高」收。
 - 根因：**未定位**。坐实的差异因子只有那一条监听（M238 的六行二分表）；机制候选照录 finding、均未坐实：tauri 2.11.5 的 `src/window/scripts/drag.js` 只在 document 的 mousedown 上按 `isDragRegion(composedPath)` 判定，**不检查 `defaultPrevented`**，按源码推不出因果；可能与 WKWebView 在「页面上存在阻止默认行为的 mousedown 监听」时的窗口激活 / 事件投递路径有关。
-- 证据：M238（2026-09-26）二分表——修复版全量（容器级 click + 容器级 mousedown）FAIL ×3、只回退 `src/tabs.ts` PASS ×1、回退 + 补容器级 click PASS ×2、再补回容器级 mousedown FAIL ×1；现场 `test-results/acceptance/2026-09-26/39-titlebar-identity/`；原卷 `.tower/comms/findings/20260926-worker-fix-pack-improve-39-mousedown-preventdefault.md`。M238 的处置即此：容器级 mousedown 未采用（容器级 click 已满足需求），原监听留在按钮上，并在 `src/tabs.ts` 就地留注释。
+- 证据：M238（2026-09-26）二分表——修复版全量（容器级 click + 容器级 mousedown）FAIL ×3、只回退 `src/tabs.ts` PASS ×1、回退 + 补容器级 click PASS ×2、再补回容器级 mousedown FAIL ×1；现场 `.local/acceptance/2026-09-26/39-titlebar-identity/`；原卷 `.tower/comms/findings/20260926-worker-fix-pack-improve-39-mousedown-preventdefault.md`。M238 的处置即此：容器级 mousedown 未采用（容器级 click 已满足需求），原监听留在按钮上，并在 `src/tabs.ts` 就地留注释。
 - 防线：动过标题栏内元素的事件监听后，本地跑一次 `node scripts/acceptance/run.mjs 39`（这条判据只在真机层）；「阻止默认行为」不要挂在容器级元素上——需要它时挂在具体按钮上，并就地留一条指向本条的注释。
 
 ## 五、多实例与调度（tower 侧）

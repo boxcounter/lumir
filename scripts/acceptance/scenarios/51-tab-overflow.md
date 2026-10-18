@@ -138,9 +138,9 @@ M257（tab-overflow-english-menu）的两件事在**真实 WKWebView** 下的表
   实现读的是 `mode=ax` 的快照（按设计不带图），这条路径因此必然报「取不到窗口截图，无法用 right 键
   在坐标上点击」——当时登记为通道边界、不判产品缺陷。M266 改读 `mode=full`（同一份快照既带图、
   bbox 又是截图像素口径），场景 50 在同一次实跑里验通，本场景 M269 复跑亦 PASS（证据
-  `test-results/m269/`，git 外）。M257 绕过套件通道的旁证（用 KimiCU MCP 直接对 `--keep-app`
+  `.local/missions/m269/`，git 外）。M257 绕过套件通道的旁证（用 KimiCU MCP 直接对 `--keep-app`
   保留的实例右键：三项逐字 Close / Close Other Tabs / Close Tabs to the Right、游标在首项、
-  右键不改上下文）仍留档在 `test-results/m257/menu-english-probe.md`（git 外）。菜单英文上屏的
+  右键不改上下文）仍留档在 `.local/reviews/m257/menu-english-probe.md`（git 外）。菜单英文上屏的
   权威判定在 chromium 层（`tests/visual/scenes/tab-menu.spec.ts`）。
 - **AX 暴露滚出视口的标签（本场景实测）**：13 个标签的精确计数在溢出态下 PASS——标签栏的
   AX 树不受滚动裁剪（与 M251 文件树「只暴露可视行」的现场不同形）。

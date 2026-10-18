@@ -56,7 +56,7 @@ export function secondVaultDir() {
 /** 套件全部运行期产物（git 外）。日期目录便于 Alex 抽审时按批次定位。 */
 export function resultsRoot() {
   const date = new Date().toISOString().slice(0, 10);
-  return process.env.LUMIR_ACCEPTANCE_RESULTS ?? path.join(repoRoot(), "test-results/acceptance", date);
+  return process.env.LUMIR_ACCEPTANCE_RESULTS ?? path.join(repoRoot(), ".local/acceptance", date);
 }
 
 /** 隔离的 XDG_CONFIG_HOME：套件自带 config.json，绝不写用户的 ~/.config/lumir。 */

@@ -317,7 +317,7 @@ steps:
       - shot: 08-A-稳定态
 
   # ================= 第三组：读数通道还活着（不做阈值判定） =================
-  - name: 读数：分段读数与忽略计数都在盘上（耗时由实现期截进 test-results/ 供人读）
+  - name: 读数：分段读数与忽略计数都在盘上（耗时由实现期截进 `.local/missions/` 供人读）
     expect:
       - label: scan 段读数在盘上（本 change 新增，刻意不设阈值）
         file: { path: "env:logs/*.jsonl", has: '/^.*"event":"slow_callback".*"name":"vault_open_scan".*$/' }
@@ -367,7 +367,7 @@ change `ignore-tiers-config` 与 `ignore-tiers-map` 修订。本场景是它的*
 - **不判动画帧**：一次 `get_app_state` 的往返是秒级，逐帧判「转圈在动」没有通道；spec 的判据
   本来就是「指示在窗口内**在场**」。
 - **耗时不做断言**（机器间抖动，REVIEW.md 「容差吞掉真实变化」条同族）：读数只断言「在盘上」，数值由实现期截进
-  `test-results/` 供人读。
+  `.local/missions/` 供人读。
 - **20×8MB 是测量放大器**：它把「切回 A」的打开段撑到秒级，否则打开段收窄之后只剩毫秒级、
   指示这类瞬时状态落不进快照。**MUST NOT** 拿本场景日志里的 `vault_load_open` 当规模读数。
   放大器落在 **A 的 vault 根**（可见 md），不在 `.local` 之下（design §9.4）。

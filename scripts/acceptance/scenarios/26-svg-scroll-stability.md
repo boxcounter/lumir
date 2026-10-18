@@ -111,7 +111,7 @@ steps:
   ——逐帧采 `scrollTop` + 输入事件时间戳，判「非用户输入引起的滚动位移」，驱动扫正向快滚（控制组）、
   倒序慢滚、倒序快滚、翻屏键 ⌥V 与窄图重建路径。该文件在 master 上两条用例都 FAIL（最坏 532px /
   60px，读数见 [docs/specs/image-reading.md](../../../docs/specs/image-reading.md) §6），修复后 0 次 / 0px；
-  红绿原样输出留档 `test-results/m187/`。**本场景与它分工**：它守瞬态（chromium 近似），本场景守
+  红绿原样输出留档 `.local/missions/m187/`。**本场景与它分工**：它守瞬态（chromium 近似），本场景守
   真机终态（WKWebView）。
 
 ## `editor.*` 断言读的是「渲染窗口」，不是整篇文档（本次真机首跑失败的根因，后来者必读）
@@ -132,7 +132,7 @@ steps:
 第 1–4 章，同一口径——该场景说明里那句「value 是整篇文本」与实测不符，已另报 finding）。
 因此本场景出生时那条起点断言（`editor.has "![滚动大图](svg-scroll-tall.svg)"`，标签「图片行的源码
 还没被装饰替换」）**在真机上恒 FAIL**，加段落数也修不好：这是通道语义，不是时序。出生首跑现场留档
-`test-results/m190/26-baseline-fail-2026-09-21/`（同时可见：旧夹具下图片顶边本来就在首屏之内，
+`.local/missions/m190/26-baseline-fail-2026-09-21/`（同时可见：旧夹具下图片顶边本来就在首屏之内，
 `shots/01-起点.jpeg`，「大图在首屏之下」这个前提本身不成立）。
 
 ## 覆盖边界：AX 里大图的**节点形状**不稳定，不要拿形状当判据
@@ -145,11 +145,11 @@ steps:
 
 实测（证据目录见下）：
 
-- **同一次会话里两种形状都出现过**：出生首跑 `test-results/m190/26-baseline-fail-2026-09-21/ax/`——
+- **同一次会话里两种形状都出现过**：出生首跑 `.local/missions/m190/26-baseline-fail-2026-09-21/ax/`——
   `02-起点.txt` 是 `AXGroup` + 子文本，`05-倒序回来看图.txt` 是 `AXImage … @325,260 735×572`。
 - **同一个状态在不同运行里形状不同**：终态在出生首跑里是 `AXImage … @325,260`，在
-  `test-results/m190/26-calibration-runs-2026-09-21/ax/05-倒序回来看图.txt` 与
-  `test-results/m190/26-pass-2026-09-21/ax/04-倒序回来看图.txt` 两次运行里都是 `AXGroup`——三处同期的
+  `.local/missions/m190/26-calibration-runs-2026-09-21/ax/05-倒序回来看图.txt` 与
+  `.local/missions/m190/26-pass-2026-09-21/ax/04-倒序回来看图.txt` 两次运行里都是 `AXGroup`——三处同期的
   截图（各自的 `shots/04-倒序回来看图.jpeg`）里图片都**画得完整**（贴满栏宽、三色分带齐全、比例正确）。
 - **换夹具救不了**：试过把夹具 svg 里的 `<text>` 全部去掉（猜「有可读子文本才会被展开成组」），
   结果**同一次运行里两种形状照样并存**——`26-shape-experiment-textless-svg-2026-09-21/ax/02-大图已渲染.txt`

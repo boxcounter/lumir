@@ -338,7 +338,7 @@ MUST ≥ 40；eink 另把编辑器内的原生选区字色复位成 `--text`（�
 已按实测重取。light / dark 的带色判据是**相对**的、容忍 y 漂移，未动。
 **失效条件**：空行行高 / 段落间距再变时只看这三条 eink 字形断言——按同法重取，**不要放宽 `min`
 阈值**（它判的是「块里真有字形」，降低阈值等于失去区分度）。现场：
-`test-results/acceptance/2026-10-13/68-selection-contrast/steps.md`。
+`.local/acceptance/2026-10-13/68-selection-contrast/steps.md`。
 
 y 坐标与 chromium 场景 `tests/visual/scenes/m291-selection-contrast.spec.ts` **同一份 fixture（逐行同构）**，
 两侧由 DOM 几何 / 手写坐标各量一次（chromium 侧实测首行 y=152.1+16.75≈169、字符串行 y=269.0+9.3≈278

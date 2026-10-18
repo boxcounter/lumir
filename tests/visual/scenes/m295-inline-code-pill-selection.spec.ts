@@ -49,8 +49,8 @@ const MIN_DARK_CONTROL = 16;
 /** 选中态里字形可辨的最小亮度跨度（真机场景 68 / M291 同阈值）。 */
 const MIN_SPREAD = 60;
 
-/** 证据目录（test-results 不入 git，与 M288 / M291 同惯例；跑完同步到主仓同路径）。 */
-const EVIDENCE_DIR = new URL("../../../test-results/m295/", import.meta.url);
+/** 证据目录（`.local/` 不入 git，与 M288 / M291 同惯例；跑完同步到主仓同路径）。 */
+const EVIDENCE_DIR = new URL("../../../.local/missions/m295/", import.meta.url);
 mkdirSync(EVIDENCE_DIR, { recursive: true });
 
 const THEMES = ["light", "dark", "eink"] as const;

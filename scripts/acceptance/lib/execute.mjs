@@ -789,7 +789,7 @@ function verifyReadValue(ax, spec) {
  * （AX 只在**块之间**插 `\\n`，末尾空段落不产字符；几何又受 composer min-height 下限压住，
  * 1 块与 2 块 bbox 同值）、纯导航键（⌃B/⌃A/⌃P）、浮层内被列表消费的 ⌃N（overlay 游标不进
  * AX）。这些 chord 若挂 verify，命中时目标字节不变，会被判成「未落地」重注到上限后 **假 FAIL**
- * ——比不挂更糟。判据来自 M507 的 dump 核查（`test-results/acceptance/**`，git 外）。
+ * ——比不挂更糟。判据来自 M507 的 dump 核查（`.local/acceptance/**`，git 外）。
  *
  * 判据（M143，与 `keys` / `type` 同一口径，只把「目标串」换成 `verify.pattern`）：
  *   注入前记 pattern 在目标值里出现 N 次，落地要求恰为 N + delta（delta 缺省 1）；
@@ -1911,7 +1911,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // KimiCU 只在返回值里自报 `suspected_noop`（`ok:true`，判红仍由场景断言给出，不静默）。
       // 分离口径：同一坐标上真实 CGEvent 单击（`doubleClick` + `mode: 1`；`drag` / `modifiers`
       // 同一条 swift 通道）有效 ⇒ 先按**通道差异**复跑一次再归因，别急着记成产品缺陷。现场与
-      // 四跑对照见 `test-results/acceptance/m549-122/` 与 M549 的 finding。
+      // 四跑对照见 `.local/acceptance/m549-122/` 与 M549 的 finding。
       // 修饰键点击（M379，backlog「`click` 不支持修饰键」）：KimiCU 的 click **没有修饰键参数**（工具 schema 实测
       // 只有 button / mouse_button / count / hold_ms），因此 ⌘-Click 这类路径（跟随链接）在真机上
       // 原本无法触发。这里走 doubleClick 同一条 swift + CGEvent 通道，把修饰键作为**鼠标事件的

@@ -18,6 +18,7 @@ Lumir：本地文本工作台，当前阶段定位为 Emacs keybinding PKM（[AD
 | [docs/process/](docs/process/) | 制品流程约定 |
 | [docs/backlog.md](docs/backlog.md) | 暂不修 / 待裁决的 findings 队列——新 findings 首选提议安排处理（见硬规则），这里只收暂不修的；不再积在 HANDOFF.md |
 | [REVIEW.md](REVIEW.md) | 反复踩过的坑与开工前检查清单（症状/根因/证据/防线）——**worker 动工前、reviewer 出 verdict 前必读** |
+| `.local/`（git 外） | 本地证据与材料根：按使用场景分层（`acceptance` / `missions` / `probes` / `reviews` / `releases` / `design` / `reports`）；新证据落哪个桶的判据与 `test-results/` 旧路径对照见 `.local/README.md` |
 | [scripts/acceptance/](scripts/acceptance/) | 真机验收套件（用法与场景格式见其 [README](scripts/acceptance/README.md)） |
 | [tests/visual/README.md](tests/visual/README.md) | 视觉门禁口径与基线更新纪律 |
 | `HANDOFF.md`（git 外） | 当前 session 状态、桌面复验现场、配额 runbook 细节 |
@@ -50,7 +51,7 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 - **执行时机**：dogfood 批次每次合并后、Alex 验收前，由 agent 先跑一遍；Alex 只看 FAIL 项与手感项。
 - **维护权**：新功能 mission 的 tasks 必须附带「新增/更新验收场景」一项（随实现同 PR），否则套件会腐烂。
 - **手感/审美不下沉**：表头双击选中手感、表格宽度观感、WKWebView 翻屏节奏等仍归 Alex，套件只留截图证据。
-- **证据不入 git**：`test-results/acceptance/`，与 perf-results 同惯例，Alex 抽审靠本地目录。
+- **证据不入 git**：`.local/acceptance/`，与 perf-results 同惯例，Alex 抽审靠本地目录。
 - **环境隔离**：套件自带 `XDG_CONFIG_HOME` 与合成验收 vault（`/tmp/lumir-m102-acceptance`），
   绝不读写用户的 `~/.config/lumir` 与真实 vault；dev 端口用 `LUMIR_ACCEPTANCE_PORT`（默认 1430）
   与 Alex 手头的 1420 隔离。
@@ -68,7 +69,7 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 - **基线更新是人肉裁决点**：视觉基线 `--update` 前截图须 Alex 过目，不要机械执行（[tests/visual/README.md](tests/visual/README.md)）。
 - **仓库信息卫生**：任何入库制品——原型 HTML、测试/视觉 fixture、视觉基线与原型截图、文档——MUST NOT 包含真实 vault 内容（真实人名、真实项目/目录/文件名、真实文档正文），一律用合成 fixture；含截图类二进制（内容以像素形式存在，只能靠重截清除）。纪律文本本身也不得引用真实字符串——检索针只活在当次会话，不落 git。提交前对改动面做一次 text 级 grep 清扫。动过原型 HTML 必须同步重截对应截图——HTML 清了而截图没重截等于没清。
 - **原型控制面板**：交互原型 MUST 在页面内置可点击的控制面板（切屏 / 切主题等全部选项点击可达），不得要求人手改 URL query；query 参数（如 `?screen=` / `?theme=`）保留作深链，截图脚本用显式参数（如 `&panel=0`）关面板。
-- **给 Alex 的路径必须当下可开**：凡让 Alex 审阅/查看的文件，给出的路径必须在主仓 checkout 里**当下真实存在**——未合并分支 / worktree 里的文件，先复制到 `test-results/` 下（git 外），再给绝对路径 + 一条可整段运行的 `open` 命令；禁止直接给 `docs/...` 这类「分支合并后才存在」的仓内相对路径。与用户级 AGENTS.md「给我的材料零前置知识」同源，仓内钉给 tower 与所有 worker。
+- **给 Alex 的路径必须当下可开**：凡让 Alex 审阅/查看的文件，给出的路径必须在主仓 checkout 里**当下真实存在**——未合并分支 / worktree 里的文件，先复制到 `.local/reviews/` 下（git 外），再给绝对路径 + 一条可整段运行的 `open` 命令；禁止直接给 `docs/...` 这类「分支合并后才存在」的仓内相对路径。与用户级 AGENTS.md「给我的材料零前置知识」同源，仓内钉给 tower 与所有 worker。
 - **变更默认直接切断**：见到「兼容」「迁移」「过渡」「双写」「保留旧路径」这类方案字样，先回答「消费者是谁」——零读者 / 单用户场景一律直接切断（不双写、不留过渡期；存量制品按孤儿先例「不再续写、不做迁移」处理，并在代码注释就地写明），需要迁移就一次迁干净。只有能指名具体消费者（外部用户、已发布契约、不可逆数据）才允许兼容层，且必须在提案里写出该消费者作为举证——写不出来就等于没有。
 
 ### 操作流程（机器 / 工具 / 协作通道的使用）

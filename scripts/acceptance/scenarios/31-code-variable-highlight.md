@@ -193,7 +193,7 @@ steps:
 「四条通道造不出 dblclick」这个结论**待按修正判据重跑才作数**，旧文里的「已定死」不再成立。
 ② 套件从 M209 起**已有 `doubleClick` 动作**（`lib/cgevent-click.swift` 的 swift + `CGEvent` 显式
 `kCGMouseEventClickState` 通道；实测能造出 WKWebView 的 DOM `dblclick`，现场见
-`test-results/acceptance/<日期>/33-image-lightbox/`）。
+`.local/acceptance/<日期>/33-image-lightbox/`）。
 
 **本场景继续走选区通道的理由**：判据写在**选区**上（spec：「选区非空、单区间、完整包含于一个变量类
 位置的标识符节点内」），不写在手势上——换通道不改变被测行为，而 `doubleClick` 走真鼠标、要求目标窗口
@@ -239,7 +239,7 @@ M254 之前「单击树文件 = 预览意图、就地替换同一个标签（同
   不随光标改渲染文本），故只改 md 段。
 - **装饰的在场 / 缺席在本通道不可判**（如实写明，MUST NOT 把「读不到」当「通过」）：
   - `design.md:89` 与提案都写明 **AX 不暴露装饰与颜色**；M197 的实机 AX dump 可复核
-    （`test-results/acceptance/2026-09-24/30-code-outline/ax/01-*.txt`：编辑器只有
+    （`.local/acceptance/2026-09-24/30-code-outline/ax/01-*.txt`：编辑器只有
     `AXTextArea = "<全文>"` 与逐行 `AXStaticText`，没有任何样式信息）；
   - runner 的断言词表只有 `ax` / `editor` / `file` / `glob` / `shot`，**没有 DOM 探针**；
   - 因此本场景**不做**「字符串 / 注释里的同名文本不亮」这类需要读装饰的步骤——那种步骤在本通道下
@@ -248,11 +248,11 @@ M254 之前「单击树文件 = 预览意图、就地替换同一个标签（同
     把 8 门语言的字符串 / 注释 / 成员名 / 字段名 / 类型成员逐条断言成 0 装饰，另有「选不全也命中」
     与「三层可区分」两条；单测层（`tests/unit/code-identifiers.test.ts`，70 条判据语料）另有一层。
   - **反向验证（把判定临时改成全词匹配 → 字符串 / 注释用例必须 FAIL）同样只在 chromium 层做**，
-    证据在 `test-results/m198/reverse-verification/`；本文件如实写明这条不在真机层覆盖。
+    证据在 `.local/missions/m198/reverse-verification/`；本文件如实写明这条不在真机层覆盖。
 - **AX 探针（M198 实测）**：本场景每步都留 `shot`（截图 + AX dump）。触发前 / 触发后两份 dump
   逐行比对过：编辑器的 `AXTextArea` 与逐行 `AXStaticText` 逐字符相同、`element_count` 也不变
   —— 装饰在 AX 侧没有任何可判信号，因此**没有**把「装饰在场」升级成真机断言
-  （读数见 `test-results/m198/task8-ax-probe.md`）。
+  （读数见 `.local/missions/m198/task8-ax-probe.md`）。
 - **零文案**：本能力不引入任何 toast / 提示；真机侧的判据是「已知提示串一条都不出现」+ 截图。
 - **焦点必须先点回正文**：`open` 是点击左栏文件行，焦点在文件树上，编辑器内的键盘命令不会生效
   ——每个文档段落开始都要先 `clickEditor`（M198 首轮实测：漏掉这步会让文档内的按键全部落空）。
@@ -265,4 +265,4 @@ M254 之前「单击树文件 = 预览意图、就地替换同一个标签（同
   （理由同上：需要读装饰与计算样式）。
 - **颜色与底纹可辨识度**归 Alex 手感项，套件只留截图（`shots/02`、`shots/03`）。
 - **1MB 级文件的索引构建耗时**不在本场景（fixture 都是短文件），读数与量级见
-  `test-results/m198/perf-var-highlight.json`（如实记录：1MB 首次触发 ≈ 0.9s，为不达标项）。
+  `.local/missions/m198/perf-var-highlight.json`（如实记录：1MB 首次触发 ≈ 0.9s，为不达标项）。

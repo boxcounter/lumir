@@ -3,7 +3,7 @@
 - 状态：生效中的质量合同（M182 建立；新增条款 = 图片显示宽度的时序无关性；M187 增补 = 替换区尺寸的会话内一致性）
 - 范围：md 文档内图片引用的**显示宽度 / 高度**与它们依赖的量；不重定义 [attachment-display](../../openspec/specs/attachment-display/spec.md) 已定的语法覆盖、路径解析、可见回退与 SVG 安全条款
 - 上位合同：[Foundation Markdown 质量合同](foundation-markdown.md)（§2 F0/F1 与异步资源 settle、§3 P1.5 image）、[attachment-display spec](../../openspec/specs/attachment-display/spec.md)（「图片引用的可见回退不变量」）
-- 依据：用户实测报告（2026-09-18：首次打开文件时图约为正文栏宽的一半，切走再切回后与正文同宽；2026-09-21：倒序慢滚经过 svg 图时正文跳一下再弹回，滚不到图的完整内容）；M182 与 M187 的真机取证与反向验证证据留档 `test-results/m182/`、`test-results/m187/` 与 `test-results/acceptance/`
+- 依据：用户实测报告（2026-09-18：首次打开文件时图约为正文栏宽的一半，切走再切回后与正文同宽；2026-09-21：倒序慢滚经过 svg 图时正文跳一下再弹回，滚不到图的完整内容）；M182 与 M187 的真机取证与反向验证证据留档 `.local/missions/m182/`、`.local/missions/m187/` 与 `.local/acceptance/`
 
 ## 1. 两个输入维度：固有尺寸是否确定
 
@@ -80,7 +80,7 @@
   - 宽图（只声明 `viewBox`）用例：master 上 FAIL，读数 `非输入位移 1 次 / 最坏 532px`；修复后 0 次 / 0px。
   - 窄图（`240×80`）用例：master 上 FAIL，读数 `1 次 / 最坏 60px`；修复后 0 次 / 0px，并断言包装盒宽度仍 = 栏宽、图片未被拉伸。
   - 自检（防判据空转）：两条用例都断言「附件读取次数 ≥ 2」（widget 真被销毁重建过）、`⌥V` 每步真的滚动了视口、焦点落在 `.cm-content` 上——观测路径没走到就 FAIL。自检当场抓到过真实问题：一次跳到底的预热会让图片整段落在渲染视口之外、重建路径根本没被走到（该版本已被改为分步预热）。
-  - 红/绿原样输出留档 `test-results/m187/`（`red-wide-master.log`、`red-narrow-master.log`、`green-fixed.log`）。
+  - 红/绿原样输出留档 `.local/missions/m187/`（`red-wide-master.log`、`red-narrow-master.log`、`green-fixed.log`）。
 - **本属性测试当场抓出的一处实现洞**（已修）：行在字节到达前被渲染视口淘汰时，settle 对脱离文档的 DOM 量出 0×0、判成「终态不可见」，除走占位路径外还失效了缓存里的几何 → 下一次重建退回冷启动。修法与口径写在 §5 的机制落点（`isConnected` 判据 + 同步 complete 推到微任务）。
 - **已知边界**：
   - **首次渲染**（会话内还没见过该引用）：字节到达时行块按真实高度增长，属条款明确排除的一次；若此时图片底边正压在正文区顶部（锚点落在该行块内），正文会随这一次真实增长下移一次——这是图片占位的必然，不是缺陷。

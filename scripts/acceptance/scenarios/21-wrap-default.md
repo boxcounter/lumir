@@ -158,7 +158,7 @@ M474 起**有入口可验**（⌃⌥S 送焦点进容器，随后五条键逐步
 - **`Tab` 进容器这条路径已被 change `list-tab-indent`（M239）移除，且不会回来**：编辑器内容区里的
   `Tab` 归列表缩进命令 `editor.list-indent`（键位层命中即消费），原生焦点遍历不再能把焦点送进容器；
   容器节点在 AX 里既无 bbox 也无 `AXPress` 动作，**按节点点也不生效**（2026-09-26 实测：`AXPress`
-  后 `focused=AXTextArea`，证据 `test-results/acceptance/2026-09-26-m239-21/`）。上面的 Tab 步骤继续
+  后 `focused=AXTextArea`，证据 `.local/acceptance/2026-09-26-m239-21/`）。上面的 Tab 步骤继续
   守着这条（焦点留在编辑器）。
 - **入口已由 change M474 接回（候选①）**：`editor.focus-block-scroll` 绑 `⌃⌥S`——把焦点交给 caret
   所在块的横滚容器（`src/preview/livePreview.ts` 的 `focusBlockScroll`）。容器持焦后 M132 收编的五条键

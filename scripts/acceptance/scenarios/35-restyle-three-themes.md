@@ -83,7 +83,7 @@ steps:
 ## 这个场景验什么
 
 1. **三主题在真机上各截一张**（light / dark / eink），落
-   `test-results/acceptance/<日期>/35-restyle-three-themes/shots/`，供 Alex 抽审——
+   `.local/acceptance/<日期>/35-restyle-three-themes/shots/`，供 Alex 抽审——
    WKWebView 的真实渲染与 chromium 门禁不等价，这一层证据只能真机出（AGENTS.md 的
    「视觉门禁分层」口径）。
 2. **主题切换的粒度 = 重启**（restyle 节点 1 裁决 D3：`[ui] theme` 启动读一次）：每一步都用
@@ -119,4 +119,4 @@ steps:
   内容，因此**不覆盖**它们在 dark / eink 下的呈现——那是 R4 基线重建批次的逐张核对项
   （tasks §8.2）。
 - 标题栏的可拖拽与「标题文字不显示」是窗口级、非 AX 项：证据落在本批的
-  `test-results/m213/titlebar/`（截图 + 拖拽前后的窗口 bounds 读数），不在本场景的断言里。
+  `.local/missions/m213/titlebar/`（截图 + 拖拽前后的窗口 bounds 读数），不在本场景的断言里。

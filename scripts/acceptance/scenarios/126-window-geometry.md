@@ -131,7 +131,7 @@ M434 把主窗口的启动尺寸从「构建配置里的固定数字」升成一
 ## 覆盖边界（如实记录）
 
 - **warning 行不入本场景的机器判据**：spec 说损坏存档 / 版本不符「记一条 warning」，那条走
-  产品的 `eprintln` 落到 `test-results/acceptance/<日期>/app.log`——该路径不在场景可寻址面内
+  产品的 `eprintln` 落到 `.local/acceptance/<日期>/app.log`——该路径不在场景可寻址面内
   （只有 `env:` 与 vault 相对路径），且 app.log 跨 run 追加，断言「含 warning」会命中上一轮的
   行而永久假绿。**本场景判的是 warning 的**行为后果**（回落 90%、启动照常、存档自愈）**；
   warning 原文由 Alex 抽审 app.log（或后续给套件加一个 `$results` 记号再补这条）。

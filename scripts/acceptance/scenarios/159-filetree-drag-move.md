@@ -520,7 +520,7 @@ teardown:
   `dragDropEnabled: false`，详见 README「已知边界」的 HTML5 DnD 条与
   openspec/specs/file-tree 的「拖拽移动条目」requirement）。**不是套件通道边界**：本场景
   `drag`（swift + CGEvent mode 5）在修复后的复跑里五条拖拽全部真实落盘、树收敛、撞名三态
-  全过（现场 `test-results/acceptance/2026-10-16/159-filetree-drag-move/`）。复跑仍红时的判读
+  全过（现场 `.local/acceptance/2026-10-16/159-filetree-drag-move/`）。复跑仍红时的判读
   顺序：先确认 `drag 自报` 一行里 frontmost=lumir、target 落在窗口内且落在**目标行**（steps.md
   的 note），再查 `dragDropEnabled` 是否被重开，最后按 README「重试与丢键」单步复跑排除通道 flake。
 - **夹具装在自建盒子里（跨 run 残留）**：`resetVault` 只重置 vault 根下的 `.md`，本场景的夹具在

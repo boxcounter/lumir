@@ -112,7 +112,7 @@ Alex 2026-10-16 dogfood 的两条反馈（原话见 front-matter 注释）：
 ## 覆盖边界（如实登记，别读成「已覆盖」）
 
 - **空槽列位在真机 AX 里没有可观测量（M535 首跑坐实，如实登记）**：2026-10-16 的真机读数
-  （`test-results/acceptance/2026-10-16/157-harness-toolsum-table-columns/ax/03-02-live-表格列数.txt`）
+  （`.local/acceptance/2026-10-16/157-harness-toolsum-table-columns/ax/03-02-live-表格列数.txt`）
   ——harness 面板这张表只产 `AXTable` + 2 个叶子 `AXRow`，**`AXCell` 计数 = 0**（面板渲染的 `<td>`
   不产 `AXCell`；编辑器预览表才产，见该条 dump 与 `03-table-ctrl-np` 等编辑器侧 dump）；行名又由
   **非空格**文本拼接而来，空槽不贡献片段 ⇒ 修前（空格被吃掉、后续格子左移）与修后（空槽占位）的

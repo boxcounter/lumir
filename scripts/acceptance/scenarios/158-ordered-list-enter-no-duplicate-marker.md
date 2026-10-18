@@ -64,9 +64,9 @@ contenteditable、经 CM 读回成文档变更，与 CM 自己的续行叠加。
 
 ## 已知边界（如实登记）
 
-- **WebKit 裸插入那一半的组合态无法合成复现**（`test-results/m461-probe/readings.md` §缺陷②；M529 探针
+- **WebKit 裸插入那一半的组合态无法合成复现**（`.local/probes/m461-probe/readings.md` §缺陷②；M529 探针
   三通道实测：KimiCU `press_key`、`osascript keystroke`、切输入源都进不了组合态
-  `test-results/m529-probe/readings.md` §结论②）。裸 marker 插入的落点形状由 M529 探针的等价注入复验
+  `.local/probes/m529-probe/readings.md` §结论②）。裸 marker 插入的落点形状由 M529 探针的等价注入复验
   （同文件 §结论③：`range.insertNode` 绕开 `beforeinput` 直接改 contenteditable，读回形态与
   Alex 现场「2. 3.」逐结构同形）；本场景覆盖的是**英文路径（CM 键位单次 dispatch）无重复**
   （同文件 §结论①：Enter 全程零 `beforeinput`、DOM 一次性得到「2. 」）。**Alex 输入法路径的最终

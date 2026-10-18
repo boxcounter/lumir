@@ -13,9 +13,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { stubTauri, configGets } from "./tauri-stub";
 
-/** 基线过目包（M277）：浮层观感截图落 test-results/m277-impl/baseline-review/，等 Alex 过目
+/** 基线过目包（M277）：浮层观感截图落 .local/reviews/m277-impl/baseline-review/，等 Alex 过目
  *  （同 block-copy 场景的口径：新增基线是人肉裁决点，不写成断言）。 */
-const REVIEW_DIR = new URL("../../../test-results/m277-impl/baseline-review/", import.meta.url);
+const REVIEW_DIR = new URL("../../../.local/reviews/m277-impl/baseline-review/", import.meta.url);
 async function captureReview(page: Page, name: string): Promise<void> {
   mkdirSync(REVIEW_DIR, { recursive: true });
   const path = new URL(name, REVIEW_DIR).pathname;

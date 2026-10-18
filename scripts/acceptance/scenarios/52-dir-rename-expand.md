@@ -204,7 +204,7 @@ Alex 2026-09-27 的现场（fieldnotes vault，非只读）：把 `.local` 下�
 - **真机 AX 读不到非空值输入框的读屏名（M324 实测，判据因此换了形态）**：WKWebView 暴露给 AX 文本
   通道的 `<input type="text">`，**值为空**时带上读屏名（`AXTextField (新建文件的名称)`），**值非空**
   时只剩 `= "值"`（同一输入框键入后变成 `AXTextField = "sh."`，现场
-  `test-results/acceptance/2026-09-26/47-file-tree-context-menu/ax/23-_动作_输入_fresh.md.txt`）。
+  `.local/acceptance/2026-09-26/47-file-tree-context-menu/ax/23-_动作_输入_fresh.md.txt`）。
   行内重命名框是**预填**的（值 = 原名），所以 `ax: { has: "重命名 {名称}" }` 这条**永远读不到**——
   它不是产品缺陷，与场景 56（goto-line 的同款输入框）是同一条边界。读屏名措辞仍在
   `tests/visual/scenes/tree-menu.spec.ts:138` / `:512` 逐字断言（`.ft-edit` 的 `aria-label`）。

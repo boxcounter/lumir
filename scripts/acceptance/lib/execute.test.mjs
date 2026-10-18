@@ -13,7 +13,7 @@
 //   node --test scripts/acceptance/lib/execute.test.mjs
 //
 // 纪律（REVIEW.md 「测试污染真实环境」条）：全程对临时目录（`os.tmpdir()`）跑——不碰验收 vault、不碰用户的
-// `~/.config/lumir`、不写 `test-results/`。file 类断言与零断言兜底都不读 app / KimiCU，故 ctx 可桩化。
+// `~/.config/lumir`、不写 `.local/`。file 类断言与零断言兜底都不读 app / KimiCU，故 ctx 可桩化。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";

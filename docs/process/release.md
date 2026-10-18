@@ -1,6 +1,6 @@
 # 发布（打包）流程与版本口径
 
-Lumir 正式版本的版本口径与打包、交付步骤。口径来自 Alex 裁决（修复批 = patch、特性批 = minor），步骤全部来自一次已实操的完整发布——0.7.0 打包（M512，2026-10-14，证据 `test-results/release-0.7.0/`），并按该次实操与 git 历史（bump 提交 `6579b64`）逐条溯源。**本文只写 0.7.0 验证过的步骤，不引入未验证流程**；下次实操长出新步骤时再加进来。
+Lumir 正式版本的版本口径与打包、交付步骤。口径来自 Alex 裁决（修复批 = patch、特性批 = minor），步骤全部来自一次已实操的完整发布——0.7.0 打包（M512，2026-10-14，证据 `.local/releases/release-0.7.0/`），并按该次实操与 git 历史（bump 提交 `6579b64`）逐条溯源。**本文只写 0.7.0 验证过的步骤，不引入未验证流程**；下次实操长出新步骤时再加进来。
 
 ## 版本口径
 
@@ -47,7 +47,7 @@ pnpm tauri build
 
 ### 已知坑：dmg bundling 偶发失败
 
-`bundle_dmg.sh` 偶发失败：`hdiutil: create failed - Operation not permitted`（0.7.0 的 10-13 首次打包实证，日志 `test-results/release-0.7.0/dmg-retry.log`）。处理：**重试 dmg bundle，不必怀疑代码**——
+`bundle_dmg.sh` 偶发失败：`hdiutil: create failed - Operation not permitted`（0.7.0 的 10-13 首次打包实证，日志 `.local/releases/release-0.7.0/dmg-retry.log`）。处理：**重试 dmg bundle，不必怀疑代码**——
 
 ```
 pnpm tauri build --bundles dmg
@@ -67,18 +67,18 @@ pnpm tauri build --bundles dmg
 
 ## 交付惯例
 
-- 证据目录 `test-results/release-<version>/`（git 外；`test-results/` 被 gitignore）。把 dmg 复制一份进该目录，同目录留本次打包的脚本与门禁 / 构建日志（0.7.0 样板：`build.sh`、`gate-quick.log`、`gate-visual.log`、`tauri-build.log`、`dmg-retry.log`）。
+- 证据目录 `.local/releases/release-<version>/`（git 外；`.local/` 被 gitignore）。把 dmg 复制一份进该目录，同目录留本次打包的脚本与门禁 / 构建日志（0.7.0 样板：`build.sh`、`gate-quick.log`、`gate-visual.log`、`tauri-build.log`、`dmg-retry.log`）。
 - 目录内另有 `smoke.mjs`（发布版启动冒烟脚本，启动 `.app` 里的二进制、用 KimiCU 读 AX 树判定「真渲染 + 版本号上屏 + 非白屏」）。**0.7.0 批次未执行它**——按纪律不启动安装版，以免写入用户真实 `~/.config/lumir`。
 - **sha256 记录惯例**：对交付的 dmg 计算并记录，供 Alex 校验与归档（0.7.0 读数 `8ac0eebe…2976` 已记入交付报告与 HANDOFF）：
 
   ```
-  shasum -a 256 test-results/release-<version>/Lumir_<version>_aarch64.dmg
+  shasum -a 256 .local/releases/release-<version>/Lumir_<version>_aarch64.dmg
   ```
 
 - **给 Alex 的路径必须当下可开**（AGENTS.md 硬规则）：报 dmg 的**绝对路径** + 一条可整段运行的 `open` 命令（0.7.0 的交付即此形态）：
 
   ```
-  open <主仓绝对路径>/test-results/release-<version>/Lumir_<version>_aarch64.dmg
+  open <主仓绝对路径>/.local/releases/release-<version>/Lumir_<version>_aarch64.dmg
   ```
 
 ## 评审节点（Alex）

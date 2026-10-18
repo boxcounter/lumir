@@ -80,9 +80,9 @@ chip（路径 + 行范围）；随消息注入同一份上下文。现行口径�
 `add-harness-quote-cards`（M345，2026-10-06 合并）的 tasks 4.1「选区自动注入移除；路径注入
 保留；视口注入在无卡片时保留、携带卡片时跳过；可核对 chip 口径更新」把**选区自动注入整条移除**，
 D331（chip 的选区形态）随之退场。本场景（item 70）当时没跟着改，于是在 M349 真机批次里红了两次
-（根因不是 pane 化、也不是丢键；`test-results/acceptance/2026-10-06/70-harness-context-chip/`）：
+（根因不是 pane 化、也不是丢键；`.local/acceptance/2026-10-06/70-harness-context-chip/`）：
 注入串变成 `视口（第 1-6 行）`，而断言还在找 `选区（第`。旧断言「选区 N–M 行」的现场见
-`test-results/acceptance/2026-10-04/70-harness-context-chip/steps.md`（当时 PASS）。
+`.local/acceptance/2026-10-04/70-harness-context-chip/steps.md`（当时 PASS）。
 
 **M412 再改注入侧**：Alex 指出「我发的每个消息都会带视口 context 的原文，很冗余，浪费上下文」，
 裁决视口块只留行号、去原文。因此本场景的**注入侧**由「路径 + 视口节头 + 原文」收紧为「路径 +

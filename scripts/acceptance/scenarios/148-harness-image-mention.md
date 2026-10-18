@@ -202,7 +202,7 @@ steps:
   # 收起通道（M523 换键）：本步原用「面板内 Escape」。M523 真机探针把它的边界钉死了——Escape 的
   # 收起处理器挂在 **panel 元素**上（`src/harness-panel.ts:6835-6853`，靠 keydown 从面板内的焦点
   # 冒泡上来），焦点一旦移出面板这条通道**整体失效**：探针跑「clickEditor 移焦后再 Escape」
-  # （证据 `test-results/acceptance/2026-10-15-m523-probe/148-harness-image-mention/steps.md:55-58`）
+  # （证据 `.local/acceptance/2026-10-15-m523-probe/148-harness-image-mention/steps.md:55-58`）
   # 里 pane 照旧开着（「等 pane 收起」15s 超时、存档位停在 `true`）。⇒「先移焦再 Escape」不是可用
   # 通道，改用 `⌘⇧A`（`harness.toggle`，`src/keys.ts:700`，全局绑定、与焦点无关；「pane 开着 + 焦点
   # 在 composer」这一同款现场由场景 86 的「⌘⇧A 再按——收起 harness pane」步守着）。
@@ -380,7 +380,7 @@ design §10 的真机验收面 ①②③④（⑤ 引用卡片 / 消息摘录卡
 - **收起 pane 用 `⌘⇧A`、不用「面板内 Escape」（M523 换键；覆盖损失如实登记）**：Escape 的收起
   处理器挂在 **panel 元素**上（`src/harness-panel.ts:6835-6853`），靠 keydown 从**面板内的焦点**
   冒泡上来——焦点移到面板外（点编辑器）这条通道整体失效。M523 真机探针实测「clickEditor 移焦后
-  再 Escape」→ pane 照旧开着（`test-results/acceptance/2026-10-15-m523-probe/148-harness-image-mention/`
+  再 Escape」→ pane 照旧开着（`.local/acceptance/2026-10-15-m523-probe/148-harness-image-mention/`
   的 `等 pane 收起` 15s 超时 + 存档位停在 `true`）。`⌘⇧A`（`harness.toggle`，`src/keys.ts:700`）是
   全局绑定、与焦点无关，且「pane 开着 + 焦点在 composer」这一同款现场由场景 86 守着。
   **代价**：「面板内 Escape 收 pane」这一条覆盖从本场景撤出（仍由场景 127 覆盖，其前置是焦点留在

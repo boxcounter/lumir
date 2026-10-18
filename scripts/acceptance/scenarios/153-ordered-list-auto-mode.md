@@ -24,10 +24,10 @@ steps:
   # 2026-10-16 两跑实证**该配方真的打坏了文档**：do: type 带 index 会先点 AXTextArea bbox 中心
   # 再键入（M498 探针 3），裸 marker 行已被 widget 接管后这次点击把 caret 落进 widget 邻域，CM 的
   # DOM 读回把随后键入的 "alpha" 算成下一行插入——落盘成 「1. \nalpha」（marker 与内容分处两行，
-  # Enter 永不续行），三步全链路红（证据 test-results/acceptance/2026-10-16/153-ordered-list-auto-mode/）。
+  # Enter 永不续行），三步全链路红（证据 .local/acceptance/2026-10-16/153-ordered-list-auto-mode/）。
   # 因此 alpha 改走**不点击的通道**：可打印 do: keys 逐键直发 press_key（无 bbox 中心点击、不动
   # caret），空格已把 caret 留在 marker 之后，逐键 insertText 经 CM 读回落在同一行（M529 探针在
-  # 「2. 」后键入 x 读回 CM-DOC "…2. x" 同形实证，test-results/m529-probe/readings.md）。
+  # 「2. 」后键入 x 读回 CM-DOC "…2. x" 同形实证，.local/probes/m529-probe/readings.md）。
   # 回读判据：value 里 "alpha" 基线 0 次 → 恰 1 次（widget 只替换 marker，内容字面在场）。
   # 空格那一键若丢（盲发通道无回读）则 widget 不触发、「1. alpha」不成列表项——下游断言如实红，
   # 不为它配重试（重试会把空格重复插入，反而制造「1.  alpha」这类脏文本）。
@@ -109,7 +109,7 @@ lazy continuation，树驱动的渲染与续行都不认它。本 change 按文�
   beforeinput），英文路径直输照绿（本场景用例 1 的落盘断言：续出 `/1\. alpha\n2\. /`、
   无重复 marker `/1\. 1\. /` 为负）+ chromium 视觉层
   有派发事件的接线断言。真机组合态无法用合成键盘复现（合成事件不进 TSM，
-  探针证据 test-results/m461-probe/readings.md），**真 IME 复验留 dogfood**——若
+  探针证据 .local/probes/m461-probe/readings.md），**真 IME 复验留 dogfood**——若
   Alex 的中文输入法仍复现重复，按「裸 DOM 变更路径」另立项（本拦截不兜该形态，
   已登记为已知边界）。
 - **注入通道为什么拆成这三步**（M461 后本场景的标定过期点，2026-10-16 重取）：M461 起「1. 」行

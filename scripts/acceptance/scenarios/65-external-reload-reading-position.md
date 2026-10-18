@@ -145,7 +145,7 @@ KimICU 的 AX 输出**不暴露滚动位置**（整窗一个 `AXScrollArea`，�
 
 - **像素级「差多少算回到原处」不在判据里**：AX 不暴露 `scrollTop`。精确往返读数在 chromium 层
   （`tests/visual/scenes/m286-external-reload-viewport.spec.ts`：同一处「重载前 → 重载后」的
-  `scrollTop` 差 0，行号相同；那里的消融日志 `test-results/m286/` 给出改前的红：`1541 → 0`、
+  `scrollTop` 差 0，行号相同；那里的消融日志 `.local/missions/m286/` 给出改前的红：`1541 → 0`、
   遮罩 `hidden=false` 仍在）。
 - **载荷侧的 pos 0 判据（M279 finding 的另一半）在 chromium 层**：视觉场景读桩上的
   `reading_position_put` 载荷；本层没有读配置目录里 json 字段的动作（DSL 没有「读文件内容」的
