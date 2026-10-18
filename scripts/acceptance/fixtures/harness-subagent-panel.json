@@ -14,7 +14,8 @@
           "name": "task",
           "arguments": "{\"agent\": \"beta\", \"prompt\": \"慢任务乙\", \"description\": \"慢任务乙\"}"
         }
-      ]
+      ],
+      "delay_ms": 8000
     },
     {
       "text": "我先读文件。",
@@ -25,7 +26,7 @@
           "arguments": "{\"path\": \"harness-note.md\"}"
         }
       ],
-      "delay_ms": 2500
+      "delay_ms": 8000
     },
     {
       "text": "SGP-A-CHILD 慢任务甲完成。"
@@ -39,7 +40,7 @@
           "arguments": "{\"path\": \"harness-note.md\"}"
         }
       ],
-      "delay_ms": 2500
+      "delay_ms": 8000
     },
     {
       "text": "SGP-B-CHILD 慢任务乙完成。"

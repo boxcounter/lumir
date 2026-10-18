@@ -7597,6 +7597,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         stop.type = "button";
         stop.className = "lumir-tp-mini";
         stop.textContent = t("D490");
+        // 读屏名与发送钮（D378，同名「停止」）区分开：真机 AX 选择器靠它定位本钮（M590 r1）。
+        stop.setAttribute("aria-label", t("D522"));
         stop.addEventListener("click", (event: MouseEvent) => {
           event.stopPropagation();
           harnessSubagentStop(run.runId).catch((e: unknown) =>

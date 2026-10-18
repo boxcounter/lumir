@@ -70,9 +70,9 @@ steps:
         ax: { has: '/AXButton \(停止\)/' }
       - shot: 02-行详情
 
-  - name: 停止第一个 run（只停它）
+  - name: 停止第一个 run（只停它；任务行停止钮的读屏名是「停止该任务」，与发送钮的「停止」区分）
     do: click
-    target: { role: AXButton, name: "^停止$", nth: 0 }
+    target: { role: AXButton, name: "^停止该任务$" }
 
   - name: 等本轮结束
     do: waitFor

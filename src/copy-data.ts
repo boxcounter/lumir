@@ -1686,6 +1686,13 @@ const COPY_TABLE = {
     zh: "无法读取子代理清单（{reason}）",
     en: "Couldn't read the subagent list ({reason})",
   },
+  // D522：任务行停止钮的读屏名（可见文本仍是 D490「停止」）。独立成条的原因：面板里发送钮的
+  // 读屏名也叫「停止」（D378），两钮同名时真机 AX 选择器无法稳定区分（场景 201 现场：点击落到
+  // 发送钮 / 未触发 harness_subagent_stop）。读屏名不参与视觉，只做可区分标识。
+  D522: {
+    zh: "停止该任务",
+    en: "Stop this task",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
