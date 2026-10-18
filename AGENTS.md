@@ -106,7 +106,7 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 ## 工作流分工速查
 
 - **开工前必读**：worker 动工前与 reviewer 给 verdict 前先过一遍 [REVIEW.md](REVIEW.md)，逐条对一眼自己的改动面；重复踩到表内某条时把新现场补进该条证据，不另起条目。
-- 功能变更（新能力、行为修改）→ OpenSpec change（提案评审 → 实现 → 归档评审，两个 Alex 节点是硬门禁）。
+- 功能变更（新能力、行为修改）→ OpenSpec change（提案评审 → 实现 → 归档评审）。节点 1（提案评审）是 Alex 硬门禁；节点 2（归档评审）在 delta 相对 living spec 无新增内容的纯目录移动情形下由机器判据替代人肉评审，判据口径以 [openspec-workflow.md](docs/process/openspec-workflow.md) 为 canonical，此处不复刻。
 - 跨切面架构决策 → ADR。
 - 渲染/交互缺陷修复 → 合同先行（[rendering-defect-contract-first.md](docs/process/rendering-defect-contract-first.md)）：先定位不变量条款 + 属性测试，禁止只做案例级补丁。
 - 拿不准归属：只影响一个 capability 走 OpenSpec；影响多个 capability 的结构关系或推翻技术选型走 ADR。
