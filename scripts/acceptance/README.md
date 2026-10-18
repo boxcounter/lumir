@@ -273,6 +273,13 @@ effort 能力 / 上下文窗口按声明现算。**M381 起内置 preset 表彻�
 `cache_write_tokens` → `cached_tokens` → `input_tokens` → `output_tokens` 这样的字母序写
 （M443 实测：把 `cache_write_tokens` 写在 `input_tokens` 之后的断言恒不命中）。
 
+`sessionNaming`（change add-session-auto-naming 的 5.2b，2026-10-18 配置面重塑后的形态）是**顶层**
+键：`{ enabled, provider, model }` 整表直落配置文件的 `[harness].session_naming`，三键都可省
+（缺省 = 自动命名开、命名 provider 跟随会话、模型跟随该 provider 的生效模型）。旧的三处顶层键
+`autoTitle` / `titleProvider` / `titleModel` 已废除——`--check` 对它们出现即报错并点名新键位；
+配置文件原生的 `config.harness.session_naming` 写法同样会被拒绝（`harness` 表只认白名单子键，
+写在那里会被静默丢弃）。
+
 `editor`（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）是**整表透传**的 `[editor]` 表：`config: { editor: { line_wrap: false,
 future_key: 42 } }` 原样写进 `editor` 表（snake_case 键，非表即由 `--check` 挡住）。给「新增的
 editor 配置项」构造**启动口径**用——不必每加一个键就回来改套件；同名字段仍由具名键（`lineWrap`

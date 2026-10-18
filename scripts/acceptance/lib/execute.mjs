@@ -212,35 +212,70 @@ export function checkScenario(scenario) {
   if (pm !== undefined && !["read_only", "vault_write", "full_access"].includes(pm)) {
     push(`config.harness.permission_mode 只能是 read_only/vault_write/full_access（实际 ${JSON.stringify(pm)}）——写错会静默回落 vault_write`);
   }
-  // 会话自动命名（change add-session-auto-naming，task 5.2）：三个键**类型 / 闭集合**先在
-  // 静态层挡住——Rust 侧的回落是静默的（非法 provider 只产生一条 warning），场景写错会拿到
-  // 默认口径、断言对着没起作用的开关判红，归因指向别处（与 permission_mode 同一条口径）。
-  const autoTitle = scenario.config?.autoTitle;
-  if (autoTitle !== undefined && typeof autoTitle !== "boolean") {
-    push(`config.autoTitle 需要布尔值（实际 ${JSON.stringify(autoTitle)}）——写错会整文件回落默认（自动命名仍为开）`);
+  // 会话自动命名（change add-session-auto-naming，task 5.2b）：`config.sessionNaming` 是
+  // `{ enabled, provider, model }` 整表直落 `[harness].session_naming`——对象形状、子键名与
+  // 子键类型在静态层挡住。Rust 侧的回落全是静默的（整表类型不符 ⇒ 整文件回落；非法 provider
+  // 只产生一条 warning），场景写错会拿到默认口径、断言对着没起作用的开关判红，归因指向别处
+  //（与 permission_mode 同一条口径）。
+  //
+  // **`provider` 只挡类型、不挡取值**：闭集合外的值正是场景 167 要验的现场（Rust 侧回落
+  // 会话 provider + 一条人话 warning），静态层若按闭集合挡掉，那条场景就写不出来。类型写错
+  //（数字 / 对象）会在 Rust 侧整文件回落，同样必须挡住。
+  const sessionNaming = scenario.config?.sessionNaming;
+  if (sessionNaming !== undefined) {
+    if (!isPlainTable(sessionNaming)) {
+      push(
+        `config.sessionNaming 需要对象（{ enabled, provider, model }），实际 ${JSON.stringify(sessionNaming)}` +
+          "——类型不符会整文件回落默认配置",
+      );
+    } else {
+      // 子键名写错 = 被 Rust 侧按未知键静默忽略（会话命名整表同 key 解析），断言因此对着
+      // 默认口径判——与其余「拼错即静默」同一口径，在这里逐键挡掉。
+      for (const k of Object.keys(sessionNaming)) {
+        if (!["enabled", "provider", "model"].includes(k))
+          push(`config.sessionNaming 未知键 ${k}（拼错即静默不生效，允许：enabled / provider / model）`);
+      }
+      if (sessionNaming.enabled !== undefined && typeof sessionNaming.enabled !== "boolean") {
+        push(`config.sessionNaming.enabled 需要布尔值（实际 ${JSON.stringify(sessionNaming.enabled)}）——写错会整文件回落默认（自动命名仍为开）`);
+      }
+      if (sessionNaming.provider !== undefined && typeof sessionNaming.provider !== "string") {
+        push(`config.sessionNaming.provider 需要字符串（实际 ${JSON.stringify(sessionNaming.provider)}）——类型不符会整文件回落默认配置`);
+      }
+      if (sessionNaming.model !== undefined && (typeof sessionNaming.model !== "string" || sessionNaming.model === "")) {
+        push(`config.sessionNaming.model 需要非空字符串（实际 ${JSON.stringify(sessionNaming.model)}）`);
+      }
+    }
   }
-  const titleProvider = scenario.config?.titleProvider;
-  // **只挡类型、不挡取值**：闭集合外的值正是场景 167 要验的现场（Rust 侧回落会话 provider +
-  // 一条人话 warning），静态层若按闭集合挡掉，那条场景就写不出来。类型写错（数字 / 对象）会
-  // 在 Rust 侧整文件回落，同样必须挡住。
-  if (titleProvider !== undefined && typeof titleProvider !== "string") {
-    push(`config.titleProvider 需要字符串（实际 ${JSON.stringify(titleProvider)}）——类型不符会整文件回落默认配置`);
-  }
-  const titleModel = scenario.config?.titleModel;
-  if (titleModel !== undefined && (typeof titleModel !== "string" || titleModel === "")) {
-    push(`config.titleModel 需要非空字符串（实际 ${JSON.stringify(titleModel)}）`);
-  }
-  if (titleModel !== undefined && titleProvider === undefined && scenario.config?.harness?.provider === undefined) {
-    push("config.titleModel 需要同时给出 config.harness.provider 或 config.titleProvider（title_model 落在命名调用实际使用的 provider 条目上）");
+  // 配置文件原生键位 `config.harness.session_naming` **不接受**：套件口径是顶层
+  // `config.sessionNaming`，而 `writeConfig` 的 `harness` 表只认白名单子键——写在 harness 表
+  // 里会被静默丢弃（与旧键同一形态），故点名替代写法。
+  if (scenario.config?.harness?.session_naming !== undefined) {
+    push(
+      "config.harness.session_naming 不是套件键位：请写顶层 config.sessionNaming（{ enabled, provider, model }）" +
+        "——写在 harness 表里会被静默丢弃、场景会跑在默认配置上",
+    );
   }
   // 已废除但仍可能被旧场景 / 旧注释抄回来的键：**出现即报错**并点名替代键位（2026-10-18 配置面
-  // 重塑把附件命名从顶层 `attachments` 表搬进 `harness.attachment_naming`）。不拦的话 writeConfig
-  // 会静默丢弃它、场景跑在默认配置上——正是最该挡的「拼错即静默」形态。专属检查在前、通用
-  // 未知键检查里排除该键，避免同一条配置报两次。
+  // 重塑把附件命名从顶层 `attachments` 表搬进 `harness.attachment_naming`，把会话自动命名的
+  // 三个顶层键收成 `sessionNaming` 表）。不拦的话 writeConfig 会静默丢弃它、场景跑在默认配置上
+  // ——正是最该挡的「拼错即静默」形态（finding 20261018-worker-m579 报告的现场即此）。专属
+  // 检查在前、通用未知键检查里排除这些键，避免同一条配置报两次。
   const REMOVED_CONFIG_KEYS = new Map([
     [
       "attachments",
       "config.attachments 已废除：附件命名配置改到 config.harness.attachment_naming（{ enabled, provider, model }）——写旧键会被静默丢弃、场景会跑在默认配置上",
+    ],
+    [
+      "autoTitle",
+      "config.autoTitle 已废除（2026-10-18 配置面重塑）：会话自动命名改到 config.sessionNaming.enabled（整表直落 [harness].session_naming）——写旧键会被静默丢弃、场景会跑在默认配置上（自动命名仍为开）",
+    ],
+    [
+      "titleProvider",
+      "config.titleProvider 已废除（2026-10-18 配置面重塑）：命名 provider 改到 config.sessionNaming.provider（整表直落 [harness].session_naming）——写旧键会被静默丢弃、命名调用会跑在会话当前 provider 上",
+    ],
+    [
+      "titleModel",
+      "config.titleModel 已废除（2026-10-18 配置面重塑）：命名模型改到 config.sessionNaming.model（整表直落 [harness].session_naming，不再挂在 provider 条目上）——写旧键会被静默丢弃、命名调用会跑在该 provider 的生效模型上",
     ],
   ]);
   for (const [key, message] of REMOVED_CONFIG_KEYS) {
