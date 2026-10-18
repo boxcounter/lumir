@@ -142,7 +142,7 @@
 use std::io::BufRead;
 
 use crate::commands::CommandError;
-use crate::config::{HarnessConfig, HarnessProvider, WireApi};
+use crate::config::{HarnessConfig, HarnessProvider, TitleTarget, WireApi};
 
 use super::events::StreamSink;
 use super::thinking::{self, ThinkingEffort};
@@ -473,6 +473,22 @@ pub fn wrap_cursor(start: usize, consumed: usize, len: usize) -> usize {
     }
 }
 
+/// 会话请求的 HTTP 超时（既有口径：一轮可能流式几分钟）。
+const SESSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+/// 命名调用的独立超时（change add-session-auto-naming，design D8：便宜档的调用形态之一，
+/// **不复用**会话请求的 300 秒——超时即 `harness_title_failed`，失败静默）。
+pub const TITLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// reqwest blocking client 的唯一构造口（会话请求与命名调用共用 TLS 口径，只有超时不同）。
+fn http_client(timeout: std::time::Duration) -> Result<reqwest::blocking::Client, CommandError> {
+    reqwest::blocking::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|e| {
+            CommandError::new("harness_http_failed", format!("{e}")).param("reason", e.to_string())
+        })
+}
+
 /// 按配置装配 client：mock ⇒ fixture 驱动；kimi / deepseek ⇒ reqwest blocking。
 /// `vault_id` 供 wire 展开（`attachments::expand_image_refs`）解析 harness 附件落点——
 /// 会话侧 input 项恒为 `lumir-attachment://` 引用，发送前在 client 内就地展开为
@@ -544,13 +560,7 @@ pub fn client_at(
             let effort_supported = config.effort_supported(&config.provider, model);
             // 共享一份 reqwest client 构造：两方言同一超时 / TLS 口径（只有 path 与
             // body 形状不同）。
-            let http = reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(300))
-                .build()
-                .map_err(|e| {
-                    CommandError::new("harness_http_failed", format!("{e}"))
-                        .param("reason", e.to_string())
-                })?;
+            let http = http_client(SESSION_TIMEOUT)?;
             // 方言选择（change add-harness-chat-completions-dialect，design D1）：配置显式
             // 声明、无嗅探。`config.wire_api()` 是唯一读数（deepseek 的 chat 档在校验期已回落，
             // 因此这里只可能是 kimi 命中 chat 分支）。
@@ -588,6 +598,89 @@ pub fn active_model(config: &HarnessConfig) -> &str {
         HarnessProvider::Kimi => &config.providers.kimi.model,
         HarnessProvider::Deepseek => &config.providers.deepseek.model,
         HarnessProvider::Mock => &config.providers.kimi.model,
+    }
+}
+
+/// 命名调用的 client（change add-session-auto-naming，design D8 / D12）：**只**消费
+/// [`HarnessConfig::title_target`] 解析出的五字段——MUST NOT 回读会话 provider 的
+/// `api_key` / `base_url` / 模型 / 方言（设计不变量 8）。
+///
+/// 两条腿：
+/// - mock：独立 `titles` 队列（`mock_start` = 会话级标题游标；缺失 / 空 / 弹尽 → 空正文 →
+///   解析为 `harness_title_invalid`）。既有 fixture 没有 `titles` 数组 ⇒ 空队列，行为零改动。
+/// - 网络 provider：独立 20 秒超时（[`TITLE_TIMEOUT`]）；思考档能力按该 provider 的 models
+///   声明现算。
+pub fn title_client(
+    config: &HarnessConfig,
+    target: &TitleTarget,
+    vault_id: &str,
+    mock_start: usize,
+) -> Result<Box<dyn LlmClient>, CommandError> {
+    match target.provider {
+        HarnessProvider::Mock => {
+            let fixture = config.providers.mock.fixture.clone().ok_or_else(|| {
+                CommandError::new(
+                    "harness_fixture_missing",
+                    "provider 为 mock 但 harness.providers.mock.fixture 未配置",
+                )
+            })?;
+            MockClient::titles_from_file(std::path::Path::new(&fixture)).map(|client| {
+                Box::new(client.for_vault(vault_id).with_title_start(mock_start))
+                    as Box<dyn LlmClient>
+            })
+        }
+        HarnessProvider::Kimi | HarnessProvider::Deepseek => {
+            let name = target.provider.as_str();
+            if target.api_key.trim().is_empty() {
+                return Err(CommandError::new(
+                    "harness_api_key_missing",
+                    format!(
+                        "命名调用所用 provider（{name}）的 api_key 未配置（config.json 的 harness.providers 节）"
+                    ),
+                )
+                .param("provider", name));
+            }
+            if target.model.trim().is_empty() {
+                return Err(CommandError::new(
+                    "harness_model_missing",
+                    format!(
+                        "命名调用所用 provider（{name}）未配置任何模型：请在 config.json 的 harness.providers.{name}.models 下逐项声明"
+                    ),
+                )
+                .param("provider", name));
+            }
+            let preset = preset(&target.provider);
+            let base = target
+                .base_url
+                .as_deref()
+                .unwrap_or(preset.base_url)
+                .trim_end_matches('/');
+            let effort_supported = config.effort_supported(&target.provider, &target.model);
+            let http = http_client(TITLE_TIMEOUT)?;
+            match target.wire_api {
+                WireApi::ChatCompletions => Ok(Box::new(ChatCompletionsClient {
+                    http,
+                    endpoint: format!("{base}/chat/completions"),
+                    api_key: target.api_key.clone(),
+                    model: target.model.clone(),
+                    effort_supported,
+                    vault_id: vault_id.to_string(),
+                    preset,
+                    diagnostics: Vec::new(),
+                })),
+                WireApi::Responses => Ok(Box::new(ResponsesClient {
+                    http,
+                    endpoint: format!("{base}/responses"),
+                    api_key: target.api_key.clone(),
+                    model: target.model.clone(),
+                    // store:false 只由**该 provider** 决定（kimi 支持该字段；deepseek 不发）。
+                    store_false: matches!(target.provider, HarnessProvider::Kimi),
+                    effort_supported,
+                    vault_id: vault_id.to_string(),
+                    preset,
+                })),
+            }
+        }
     }
 }
 
@@ -1773,6 +1866,9 @@ pub struct MockClient {
     vault_id: String,
     /// 每次 `complete` 展开后的 input（按调用序；`received_inputs` 的断言数据源）。
     received_inputs: Vec<Vec<serde_json::Value>>,
+    /// 标题队列模式（change add-session-auto-naming，design D12）：弹尽时返回**空正文**而不是
+    /// `fixture_exhausted`——缺失 / 空 / 弹尽都要落到解析侧的 `harness_title_invalid`。
+    title_queue: bool,
 }
 
 impl MockClient {
@@ -1812,7 +1908,60 @@ impl MockClient {
             received_efforts: Vec::new(),
             vault_id: String::new(),
             received_inputs: Vec::new(),
+            title_queue: false,
         })
+    }
+
+    /// 命名调用的 mock client（change add-session-auto-naming，design D12）：读 fixture 顶层的
+    /// **可选 `titles` 数组**（元素形状与 `responses` 相同），与会话 `responses` 队列完全独立
+    /// ——共用一条队列会把既有场景的脚本整体错位。缺失 / 空 ⇒ 空队列（每次调用得到空正文）。
+    pub fn titles_from_file(path: &std::path::Path) -> Result<Self, CommandError> {
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            CommandError::new(
+                "harness_fixture_unreadable",
+                format!("mock fixture 不可读（{}）：{e}", path.display()),
+            )
+            .param("path", path.display().to_string())
+            .param("reason", e.to_string())
+        })?;
+        Self::titles_from_str(&text, &path.display().to_string())
+    }
+
+    /// [`Self::titles_from_file`] 的文本形态（单测直接用）。
+    pub fn titles_from_str(text: &str, source: &str) -> Result<Self, CommandError> {
+        #[derive(serde::Deserialize)]
+        struct FixtureFile {
+            #[serde(default)]
+            titles: Vec<FixtureResponse>,
+        }
+        let file: FixtureFile = serde_json::from_str(text).map_err(|e| {
+            CommandError::new(
+                "harness_fixture_invalid",
+                format!("mock fixture 不是合法 JSON（{source}）：{e}"),
+            )
+            .param("path", source)
+            .param("reason", e.to_string())
+        })?;
+        Ok(Self {
+            script_len: file.titles.len(),
+            script: file.titles.into(),
+            consumed: 0,
+            source: source.to_string(),
+            received_efforts: Vec::new(),
+            vault_id: String::new(),
+            received_inputs: Vec::new(),
+            title_queue: true,
+        })
+    }
+
+    /// 命名调用的会话级标题游标（`start` = 本会话已弹过的 `titles` 条数）：与
+    /// [`Self::with_start`] 不同，**不按长度取模**——标题脚本弹尽即空（design D12），不 wrap
+    /// 回第一条（否则第 3 次重估会重新写出初始标题）。
+    pub fn with_title_start(mut self, start: usize) -> Self {
+        for _ in 0..start.min(self.script_len) {
+            self.script.pop_front();
+        }
+        self
     }
 
     /// 绑定会话作用域的 vault 稳定 id（wire 展开的落点解析；`llm::client` 装配路径）。
@@ -1881,6 +2030,10 @@ impl LlmClient for MockClient {
         // 故放在最前面，耗尽路径也留痕。
         self.received_efforts.push(request.effort);
         let Some(entry) = self.script.pop_front() else {
+            if self.title_queue {
+                // 标题队列弹尽（含缺失 / 空的 `titles`）：空正文 → 解析侧判 invalid（design D12）。
+                return TurnOutput::default();
+            }
             return TurnOutput {
                 error: Some(TurnError::new(
                     "fixture_exhausted",

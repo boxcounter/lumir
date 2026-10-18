@@ -20,6 +20,7 @@ use super::jsonl::JsonlWriter;
 use super::llm::{normalize_reasoning_item, Usage};
 use super::permissions::DecisionReason;
 use super::thinking::ThinkingEffort;
+use super::title::TitleSchedule;
 
 /// 面板消息（`harness_state` 快照 `messages[]` 的元素；m303 宽容解析，缺字段=空态）。
 #[derive(Debug, Clone, Serialize, TS)]
@@ -299,6 +300,7 @@ impl StateSnapshot {
                 level: ThinkingEffort::default(),
                 supported: thinking_supported,
             },
+            title: None,
         }
     }
 }
@@ -329,6 +331,11 @@ pub struct StateSnapshot {
     pub warn_ctx_pct: f64,
     /// 思考程度档位与 provider 能力（面板思考 chip 的数据源，M362）。
     pub thinking: ThinkingState,
+    /// 会话有效标题（change add-session-auto-naming，design D11）：无标题时**缺键**（前端按
+    /// 「可能缺席」读并回落首条用户消息口径）。取值来自 [`super::jsonl::effective_title`] 的
+    /// 同一读取口径（活会话是内存态的有效标题，恢复 / 列举从留存读）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// 面板可见的批准请求摘要（不含通道 sender）。
@@ -408,6 +415,11 @@ pub struct SessionSummary {
     #[ts(type = "number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ts: Option<u64>,
+    /// 会话有效标题（change add-session-auto-naming，design D11）：`jsonl::effective_title`
+    /// 的读数；无 `session_title` 记录的旧文件为**缺键**（前端回落首条用户消息口径）。
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// 一个 vault 的会话。
@@ -440,6 +452,14 @@ pub struct Session {
     /// [`super::turn::run_turn`] 与 [`super::llm::wrap_cursor`]）。真 provider 不消费它。
     /// 新会话（对象被丢弃重造）随之回到 0。
     mock_cursor: usize,
+    /// 会话有效标题（change add-session-auto-naming）：**内存态的唯一读数**——由命名调用写入、
+    /// 轮换继承时由调用侧灌入；恢复 / 列举从留存经 [`super::jsonl::effective_title`] 读。
+    title: Option<String>,
+    /// 命名调度的内存态（首轮触发 / 周期 / 漂移 / 单飞行；design D1）。随逻辑会话轮换重置。
+    title_schedule: TitleSchedule,
+    /// mock 标题队列的会话级游标（本会话已弹过的 `titles` 条数，design D12）：与 `mock_cursor`
+    /// 同路——client 每次调用重建，游标存在会话上才能「依次取 initial、keep」。
+    title_cursor: usize,
     jsonl: JsonlWriter,
 }
 
@@ -472,6 +492,9 @@ impl Session {
             current_context: None,
             thinking_effort,
             mock_cursor: 0,
+            title: None,
+            title_schedule: TitleSchedule::default(),
+            title_cursor: 0,
             jsonl,
         }
     }
@@ -506,6 +529,39 @@ impl Session {
     /// 设置会话级 mock 游标（[`super::turn::run_turn`] 一轮结束回写，按脚本长度 wrap）。
     pub fn set_mock_cursor(&mut self, cursor: usize) {
         self.mock_cursor = cursor;
+    }
+
+    /// 会话有效标题（内存态；`None` = 尚无标题，展示回落首条用户消息口径）。
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    /// 写入有效标题（命名调用的落盘点；轮换继承由调用侧灌入同一值）。
+    ///
+    /// **单写入者不变量**（design D6 的「唯一读取口径」）：每次 `set_title(Some(x))` 都与一条携带
+    /// `x` 的 `session_title` 记录**同批发生**（命名落盘 / 恢复 inherit / 压缩 inherit 三处），
+    /// 因此内存态恒等于「文件内最后一条带 title 的记录」——快照出口读内存态与读
+    /// [`super::jsonl::effective_title`] 同值，不构成第二份 last-wins 逻辑。
+    pub fn set_title(&mut self, title: Option<String>) {
+        self.title = title;
+    }
+
+    /// 命名调度状态机（轮完成点的触发判定与评估结束的释放）。
+    pub fn title_schedule(&self) -> &TitleSchedule {
+        &self.title_schedule
+    }
+
+    pub fn title_schedule_mut(&mut self) -> &mut TitleSchedule {
+        &mut self.title_schedule
+    }
+
+    /// 本会话已弹过的 mock `titles` 条数（会话级标题游标，design D12）。
+    pub fn title_cursor(&self) -> usize {
+        self.title_cursor
+    }
+
+    pub fn set_title_cursor(&mut self, cursor: usize) {
+        self.title_cursor = cursor;
     }
 
     pub fn is_busy(&self) -> bool {
@@ -566,10 +622,16 @@ impl Session {
     /// 面板此刻显示的是压缩前那一轮的读数，与既有的 ctx% 行为一致（「压缩后 usage 仍是压缩前
     /// 读数，下轮请求才更新」），且两条通道（事件 / 快照）看到的是同一个值——在这里清快照会让
     /// 「实时面仍是旧值、重载后面变成 0」的错位出现（REVIEW.md 「同一语义两处真源」条同族）。
+    ///
+    /// 会话自动命名（design D8 的轮换条款）：调度计数与 mock 标题游标随逻辑会话重置（cadence
+    /// 不从记录重建——记录不携带轮序号）；**有效标题不清**——继承标题由调用侧随新文件的
+    /// `inherit` 记录一起灌入（`set_title`），新会话（对象重造）才从无标题起步。
     pub fn rotate(&mut self, system: String, jsonl: JsonlWriter) {
         self.system = system;
         self.jsonl = jsonl;
         self.cache_totals = CacheTotals::default();
+        self.title_schedule.reset();
+        self.title_cursor = 0;
     }
 
     pub fn set_current_context(&mut self, section: Option<String>) {
@@ -597,6 +659,7 @@ impl Session {
                 level: self.thinking_effort,
                 supported: thinking_supported,
             },
+            title: self.title.clone(),
         }
     }
 

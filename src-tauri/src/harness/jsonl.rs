@@ -343,6 +343,23 @@ pub fn read_session_file(path: &Path) -> Result<SessionFile, CommandError> {
     })
 }
 
+/// **有效标题的唯一读取口径**（change add-session-auto-naming，design D6 / D7）：文件内最后一条
+/// 带 `title` 的 `session_title` 记录的 `title`；没有则 `None`（调用侧回落首条用户消息口径，
+/// 旧文件安静回落——不告警、不补写）。
+///
+/// 列举 / 恢复 / 快照 / 事件四条出口都从这一处取值——MUST NOT 各写一份 last-wins 逻辑
+/// （REVIEW.md 「同一语义两处真源」条）。`error` 记录不带 `title`，因此天然被跳过；`keep` /
+/// `inherit` 记录带 `title`，参与 last-wins。
+pub fn effective_title(records: &[serde_json::Value]) -> Option<String> {
+    records
+        .iter()
+        .rev()
+        .filter(|record| record["kind"] == "session_title")
+        .filter_map(|record| record["title"].as_str())
+        .find(|title| !title.trim().is_empty())
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,5 +531,154 @@ mod tests {
         let err = read_session_file(&bad).unwrap_err();
         assert_eq!(err.code, "harness_session_invalid");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- change add-session-auto-naming：session_title sidecar 与有效标题 ----
+
+    /// `session_title` 记录 round-trip（design D6 的字段表）：写入后读回逐字段在场；
+    /// `error` 记录不带 `title`、带 `code`；`inherit` 记录不带 `model`。
+    #[test]
+    fn session_title_records_roundtrip() {
+        use crate::harness::title;
+        let dir = tmpdir("session-title");
+        let mut writer = JsonlWriter::at_path(dir.join("s-title.jsonl"), &session_open("s-title"));
+        writer.record(&title::record_payload(
+            "initial",
+            title::REASON_FIRST_TURN,
+            Some("Rust 生命周期排查"),
+            Some("k3-256k"),
+            None,
+        ));
+        writer.record(&title::record_payload(
+            "error",
+            title::REASON_CADENCE,
+            None,
+            Some("k3-256k"),
+            Some(title::CODE_INVALID),
+        ));
+        writer.record(&title::inherit_payload("Rust 生命周期排查"));
+        let file = read_session_file(writer.path()).unwrap();
+        let titles: Vec<&serde_json::Value> = file
+            .records
+            .iter()
+            .filter(|r| r["kind"] == "session_title")
+            .collect();
+        assert_eq!(titles.len(), 3);
+        assert_eq!(titles[0]["decision"], "initial");
+        assert_eq!(titles[0]["reason"], "first-turn");
+        assert_eq!(titles[0]["title"], "Rust 生命周期排查");
+        assert_eq!(titles[0]["model"], "k3-256k");
+        // error：无 title、有 code（错误码是唯一诊断字段）。
+        assert_eq!(titles[1]["decision"], "error");
+        assert_eq!(titles[1]["reason"], "cadence");
+        assert!(titles[1].get("title").is_none(), "{}", titles[1]);
+        assert_eq!(titles[1]["code"], title::CODE_INVALID);
+        // inherit：没有发起调用 ⇒ 不带 model。
+        assert_eq!(titles[2]["decision"], "inherit");
+        assert_eq!(titles[2]["reason"], "inherit");
+        assert!(titles[2].get("model").is_none(), "{}", titles[2]);
+        // 信封 ts 与既有记录同取时点（一条都不缺）。
+        assert!(file.record_ts.iter().all(|ts| ts.is_some()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 有效标题 = 最后一条带 `title` 的记录（last-wins）：keep 携带同一标题不改变读数；
+    /// error 记录被跳过；无记录 / 只有 error 记录 ⇒ None（回落首条用户消息口径）。
+    #[test]
+    fn effective_title_last_wins() {
+        let title = |decision: &str, value: Option<&str>| {
+            let mut record = serde_json::json!({"kind": "session_title", "decision": decision});
+            if let Some(value) = value {
+                record["title"] = serde_json::json!(value);
+            }
+            record
+        };
+        assert_eq!(effective_title(&[]), None);
+        // error-only：没有可读标题（不伪造、不回落成空串）。
+        assert_eq!(
+            effective_title(&[title("error", None), title("error", None)]),
+            None
+        );
+        assert_eq!(
+            effective_title(&[
+                title("initial", Some("A")),
+                title("keep", Some("A")),
+                title("error", None),
+                title("rename", Some("B")),
+                // 空串标题（防御形态）不作为读数。
+                title("rename", Some("  ")),
+            ])
+            .as_deref(),
+            Some("B")
+        );
+        // 非标题记录不参与（kind 判据）。
+        assert_eq!(
+            effective_title(&[
+                serde_json::json!({"kind": "llm_response", "title": "不该被读"}),
+                title("inherit", Some("C")),
+            ])
+            .as_deref(),
+            Some("C")
+        );
+    }
+
+    /// 恢复充分性（design 不变量 5 / D17）：`session_title` 是 wire 外 sidecar——它在场与否
+    /// 不改变 wire 记录序列，也不改变「最后一条会话请求」的锚点。这里用同一份请求 / 响应序列
+    /// 造两份文件（一份夹标题记录、一份不夹），断言 sidecar 过滤后的记录序列逐字节相等。
+    #[test]
+    fn restore_sufficiency_ignores_title_sidecars() {
+        let request = serde_json::json!({
+            "kind": "llm_request",
+            "request": {"system": "S", "messages": [
+                {"role": "user", "content": [{"type": "input_text", "text": "问"}]}
+            ]},
+        });
+        let response = serde_json::json!({"kind": "llm_response", "text": "答。"});
+        let wire = |records: &[serde_json::Value]| -> Vec<serde_json::Value> {
+            records
+                .iter()
+                .filter(|record| {
+                    record["kind"] == "llm_request" || record["kind"] == "llm_response"
+                })
+                .cloned()
+                .collect()
+        };
+        use crate::harness::title;
+        let plain = vec![
+            request.clone(),
+            response.clone(),
+            request.clone(),
+            response.clone(),
+        ];
+        let with_titles = vec![
+            title::inherit_payload("标题"),
+            plain[0].clone(),
+            plain[1].clone(),
+            title::record_payload("keep", title::REASON_CADENCE, Some("标题"), Some("m"), None),
+            plain[2].clone(),
+            // 记录不在请求 / 响应之间（空闲才追加），但仍要证明它不改变过滤结果。
+            plain[3].clone(),
+            title::record_payload(
+                "rename",
+                title::REASON_DRIFT,
+                Some("新标题"),
+                Some("m"),
+                None,
+            ),
+        ];
+        assert_eq!(wire(&plain), wire(&with_titles));
+        // 请求 / 响应严格成对且相邻（折叠末尾响应的判据）——标题记录不插进这对之间。
+        let pairs: Vec<&str> = with_titles
+            .iter()
+            .filter(|r| r["kind"] == "llm_request" || r["kind"] == "llm_response")
+            .map(|r| r["kind"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec!["llm_request", "llm_response", "llm_request", "llm_response"]
+        );
+        // 有效标题只改变展示读数，不改变上面的重建材料。
+        assert_eq!(effective_title(&with_titles).as_deref(), Some("新标题"));
+        assert_eq!(effective_title(&plain), None);
     }
 }

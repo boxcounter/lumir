@@ -156,6 +156,7 @@ fn kimi_chat_config() -> HarnessConfig {
                     window: 262_144,
                 }],
                 wire_api: WireApi::ChatCompletions,
+                title_model: String::new(),
             },
             ..Default::default()
         },

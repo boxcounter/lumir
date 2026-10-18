@@ -14,6 +14,13 @@
 > 命名调用发往该 provider，模型、`api_key`、`base_url`、wire 方言同出它这一个条目——所取
 > `title_model` 须在**该 provider** 的 `models` 清单内声明。design D2 的隐私约束段一并改写为
 > 「素材发往 `title_provider` 指定的 provider」。
+>
+> **评审记录（节点 1：提案评审，2026-10-18，逐字）**
+>
+> Alex：「理解了，那 Change ID: add-session-auto-naming 我没有异议。」
+>
+> 含义：提案与 design 冻结，实现批按 tasks.md 照章落地（参数、边界、失败路径已钉死，
+> 不再重新设计；design 未覆盖的决策点走 tower 上报）。
 
 ## Why
 

@@ -131,6 +131,22 @@ export function checkScenario(scenario) {
     if (e?.raw === undefined && typeof e?.vaultRoot !== "string")
       push(`seed.harnessFlatSessions[${i}] 需要 vaultRoot（字符串）或 raw（原样落盘）之一`);
   }
+  // 新布局会话种子（change add-session-auto-naming）：`seed.harnessSessions` 写的是
+  // `sessions/<vault 稳定 id>/<name>.jsonl`——场景 165 用它构造「本 change 之前的旧文件」。
+  // `vaultId` 必须与 `seed.registry` 的某个 id 同名（产品自生成的 id 场景侧预知不到，写错即
+  // 文件落在没人会读的目录、回落断言在空目录上假绿），故这里连同注册表一起校验。
+  const seededIds = new Set((scenario.seed?.registry ?? []).map((e) => e?.id));
+  for (const [i, e] of (scenario.seed?.harnessSessions ?? []).entries()) {
+    if (typeof e?.vaultId !== "string" || e.vaultId === "") {
+      push(`seed.harnessSessions[${i}].vaultId 需要非空字符串`);
+    } else if (!seededIds.has(e.vaultId)) {
+      push(`seed.harnessSessions[${i}].vaultId=${e.vaultId} 不在 seed.registry 的 id 里（目录名取注册表 id，写错即文件落进没人会读的目录）`);
+    }
+    if (typeof e?.name !== "string" || !e.name.endsWith(".jsonl"))
+      push(`seed.harnessSessions[${i}].name 需要 *.jsonl 文件名`);
+    if (e?.raw !== undefined && typeof e.raw !== "string")
+      push(`seed.harnessSessions[${i}].raw 需要字符串（原样落盘）`);
+  }
   // 会话种子（M321）：`panes` 是**分栏现场**的形状，写错会静默退化成 v1 空会话——预置的标签
   // 根本没进盘，断言恒红且归因指向别处（写错的键 = 不生效，与其余种子同一条假绿/假红口径）。
   for (const [id, s] of Object.entries(scenario.seed?.sessions ?? {})) {
@@ -195,6 +211,27 @@ export function checkScenario(scenario) {
   const pm = scenario.config?.harness?.permission_mode;
   if (pm !== undefined && !["read_only", "vault_write", "full_access"].includes(pm)) {
     push(`config.harness.permission_mode 只能是 read_only/vault_write/full_access（实际 ${JSON.stringify(pm)}）——写错会静默回落 vault_write`);
+  }
+  // 会话自动命名（change add-session-auto-naming，task 5.2）：三个键**类型 / 闭集合**先在
+  // 静态层挡住——Rust 侧的回落是静默的（非法 provider 只产生一条 warning），场景写错会拿到
+  // 默认口径、断言对着没起作用的开关判红，归因指向别处（与 permission_mode 同一条口径）。
+  const autoTitle = scenario.config?.autoTitle;
+  if (autoTitle !== undefined && typeof autoTitle !== "boolean") {
+    push(`config.autoTitle 需要布尔值（实际 ${JSON.stringify(autoTitle)}）——写错会整文件回落默认（自动命名仍为开）`);
+  }
+  const titleProvider = scenario.config?.titleProvider;
+  // **只挡类型、不挡取值**：闭集合外的值正是场景 167 要验的现场（Rust 侧回落会话 provider +
+  // 一条人话 warning），静态层若按闭集合挡掉，那条场景就写不出来。类型写错（数字 / 对象）会
+  // 在 Rust 侧整文件回落，同样必须挡住。
+  if (titleProvider !== undefined && typeof titleProvider !== "string") {
+    push(`config.titleProvider 需要字符串（实际 ${JSON.stringify(titleProvider)}）——类型不符会整文件回落默认配置`);
+  }
+  const titleModel = scenario.config?.titleModel;
+  if (titleModel !== undefined && (typeof titleModel !== "string" || titleModel === "")) {
+    push(`config.titleModel 需要非空字符串（实际 ${JSON.stringify(titleModel)}）`);
+  }
+  if (titleModel !== undefined && titleProvider === undefined && scenario.config?.harness?.provider === undefined) {
+    push("config.titleModel 需要同时给出 config.harness.provider 或 config.titleProvider（title_model 落在命名调用实际使用的 provider 条目上）");
   }
   for (const k of Object.keys(scenario.config ?? {})) {
     if (!SCENARIO_CONFIG_KEYS.includes(k)) push(`config 未知键 ${k}（拼错即静默不生效，允许：${SCENARIO_CONFIG_KEYS.join(" / ")}）`);

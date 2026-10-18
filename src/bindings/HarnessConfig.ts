@@ -39,4 +39,14 @@ warn_ctx_pct: number,
 /**
  * 自动压缩（默认 true）：一轮响应完成后 ctx% 越阈值即自动压缩续聊；false 退化为纯手动。
  */
-auto_compact: boolean, };
+auto_compact: boolean, 
+/**
+ * 会话自动命名开关（change add-session-auto-naming，design D8；默认 true）：false 时不
+ * 发起任何命名调用、不写标题记录；既有标题记录照常展示。
+ */
+auto_title: boolean, 
+/**
+ * 命名调用发往哪个 provider（design D8）：`None` = 会话当前 provider（旧行为即缺省值）；
+ * 非空须是 `providers` 表内的 id，闭集合外取值在校验期回落 `None` + 人话 warning。
+ */
+title_provider: HarnessProvider | null, };

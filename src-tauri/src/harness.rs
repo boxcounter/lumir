@@ -44,6 +44,7 @@ pub mod permission_cache;
 pub mod permissions;
 pub mod session;
 pub mod thinking;
+pub mod title;
 pub mod tools;
 pub mod turn;
 
@@ -355,6 +356,10 @@ impl Runtime {
             .as_str()
             .ok_or_else(|| CommandError::new("harness_session_invalid", "session_open 缺 system"))?
             .to_string();
+        // 源会话的有效标题（change add-session-auto-naming，design D7 的继承点之二）：有则随
+        // 新文件的 `session_open` 之后写一条 `decision=inherit`，会话名在轮换后保持连续；源无
+        // 标题记录时不写——恢复会灌回原始首条用户消息，回落名字与源会话一致。
+        let inherited_title = jsonl::effective_title(&file.records);
         // 恢复入口：源文件里**最后一条会话轮次** llm_request——压缩调用是内部汇总
         // 调用（system 是压缩指令，与会话 system 不同），天然被这个判据排除。
         let conversation_requests: Vec<(usize, &serde_json::Value)> = file
@@ -489,6 +494,13 @@ impl Runtime {
         // 读数落种（M526）：恢复出的会话从源会话的最近一次真实读数接着显示/累计
         // （快照与累计器同源自上面的重算，事件/快照两条通道此后看到的与留存可推导值一致）。
         new_session.restore_usage(usage_snapshot, cache_totals);
+        // 继承标题（design D7）：新文件 `session_open` 之后紧接一条 `inherit` 记录。恢复入口只在
+        // 非 busy 时可达，因此这里不违反「标题记录只在会话空闲时追加」（此处新文件还没有任何
+        // 请求 / 响应对，记录也不会插进一对之间）。
+        if let Some(title) = &inherited_title {
+            new_session.jsonl().record(&title::inherit_payload(title));
+            new_session.set_title(Some(title.clone()));
+        }
         self.inner
             .sessions
             .lock()
@@ -641,6 +653,9 @@ pub fn list_sessions(scope: &VaultScope) -> Result<Vec<session::SessionSummary>,
             session_id,
             first_user_text: first_user_text(&file),
             ts: file.first_ts,
+            // 会话名首选源（change add-session-auto-naming）：有效标题的唯一读取口径；旧文件
+            // 无 session_title 记录 ⇒ None ⇒ 前端安静回落首条用户消息截断（不迁移、不告警）。
+            title: jsonl::effective_title(&file.records),
         });
     }
     // session id 是时间序（`s<unix_millis>-<随机后缀>`）：字符串倒序即时间倒序。
@@ -1139,7 +1154,8 @@ pub fn harness_new_session(
 
 /// 当前 vault 会话快照 JSON（供 webview 重载后面板恢复渲染）。
 /// 键集合是 m303 消费形状的超集：`vault`（会话标识 = vault 根路径，M312）/ `messages[]` /
-/// `usage` / `pending_approval` / `warn_ctx_pct` / `thinking`（M362：`{level, supported}`）。
+/// `usage` / `pending_approval` / `warn_ctx_pct` / `thinking`（M362：`{level, supported}`）/
+/// `title`（change add-session-auto-naming：有效标题，无标题时缺键——前端回落首条用户消息口径）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn harness_state(
     vault: tauri::State<'_, crate::commands::VaultState>,
@@ -1210,6 +1226,18 @@ pub fn harness_delete_session(
 ) -> Result<(), CommandError> {
     let scope = vault_scope(&vault)?;
     runtime.delete_session(&scope, &session_id)
+}
+
+/// 单测的进程级 XDG 互斥（`XDG_CONFIG_HOME` 是**进程全局**，cargo test 并行跑）。
+///
+/// 为什么需要：多个测试各自把 XDG 指到自己的临时目录；不串行时，A 测试的目录会被 B 测试的
+/// `config_dir()` 读到，甚至 A 结束删目录、B 正写到一半 —— 症状是「No such file or directory」
+/// 这类与产品无关的红（2026-10-18 实测：`compact_inherits_title` 与 `result_is_dropped_while_busy`
+/// 并发跑时踩到）。所有改 XDG 的测试在 `set_var` **之前**取这把锁并持有到测试结束。
+#[cfg(test)]
+pub(crate) fn xdg_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[cfg(test)]

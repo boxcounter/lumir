@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "验收回答：标题已生成。",
+      "usage": {
+        "input_tokens": 1000,
+        "cached_tokens": 100,
+        "output_tokens": 10
+      }
+    }
+  ],
+  "titles": [
+    {
+      "text": "{\"decision\": \"rename\", \"title\": \"Rust 生命周期排查\"}"
+    }
+  ]
+}
