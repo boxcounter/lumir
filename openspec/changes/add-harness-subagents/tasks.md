@@ -357,7 +357,7 @@
   `subagent_events_round_trip_from_panel_payloads` 反向钉住 `vault` 缺席。）
 - [x] 7.3 观测读数自验：跑一次 completed、一次 failed、一次 quota 收敛的子运行，给出使用计数与触顶
   分布（含 quota 单列）的 `rg` 命令实际读数与执行时刻。
-  （M590 实测（执行时刻 2026-10-18T20:37:09Z，日志副本 `.local/acceptance/2026-10-18/observability/`）：
+  （M590 实测（执行时刻 2026-10-18T20:37:09Z，日志副本 `.local/acceptance/2026-10-18-m590/observability/`（主仓；证据副本由 tower 在合并前从 worktree 复制，worktree 清理后仍可复核））：
   `rg -c '"event":"subagent_finished".*"status":"(completed|partial)"'` → 180=1（completed）、197=1
   （partial + stopped_by=error）、188=4（partial；stopped_by 分布 tokens=1 / rounds=1 / time=1 /
   quota=1，quota 单列）；自动唤醒代价面：`"wake":"auto_turn"` 在读数组内共 15 条、
@@ -456,7 +456,7 @@
   详见完成报告。）
 - [x] 9.4 真机跑新增验收场景（§8.1–8.23），证据目录用绝对路径 `ls` 到；失败与跳过项逐条写明原因。
   （M590：新增 27 条场景，**27 条 PASS**（r1 收口后 201 补跑 PASS；见 §8.19 注）。证据：
-  `.local/acceptance/2026-10-18/<场景>/`。）
+  `.local/acceptance/2026-10-18-m590/<场景>/`（主仓；含 summary.md / 逐场景 steps.md / ax / shots）。）
 - [x] 9.5 公共层对账：`rg -n "fn run_turn_for|fn run_turn" src-tauri/src` 确认循环入口唯一；
   `rg -n "cron:run" src` 确认 cron 交接载荷已按 `RunSpec` 形状（或按 §0.2 记录的顺序豁免）。
   （M590 实测读数：`run_turn` / `run_turn_for` 各一处（turn.rs:217 / 315，共享同一循环
