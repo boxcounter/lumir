@@ -80,7 +80,8 @@ subagents 定义的挂载点，两者不冲突）。首个住户 `[wiki]`：
 - 未知键忽略（与既有配置同口径）；不认识的键不报错，避免旧版本读新文件时崩。
 - **格式选 JSON**：与全局 `config.json` 同一套解析 / 校验口径，零新增依赖（`src-tauri/src/config.rs`
   模块头已记录「JSON 而非 TOML」的选型与重评条件——手改成为高频动作时再重评 TOML）。真源草图写的
-  是 `config.toml`，本稿按「一套配置格式」优先，列为 proposal 设计取舍第 5 条供 Alex 否决。
+  是 `config.toml`，本稿按「一套配置格式」优先；Alex 已于 2026-10-18 裁决「JSON.」，TOML 备选关闭
+  （proposal 设计取舍第 5 条）。
 
 ### 3.2 装载时机与失效面
 
@@ -101,6 +102,8 @@ subagents 定义的挂载点，两者不冲突）。首个住户 `[wiki]`：
 - 若 `dir` / `index` / `log` 缺失：同一动作在用户确认后创建**空骨架**（目录；`index.md` 与 `log.md`
   为空文件）。MUST NOT 写入标题、模板、字段清单或任何 schema 文案——机制不生成 schema。
 - 已存在同名文件时 MUST NOT 覆盖、MUST NOT 截断；只补缺失项。
+- 启用成功后产一条 `wiki_enabled` 诊断事件（本次创建了哪几个骨架文件、声明了几个源目录）：它是观测
+  读数「启用 → 首次成功 ingest」的起点。
 - 空 index 的后果是「所有页都算未登记」——这是准确的状态，第一次 ingest 会把它填上；界面文案说明
   这一点，不把它当错误。
 
@@ -435,13 +438,15 @@ cron 任务新增两个可选字段（由 cron 侧 delta 在节点 1 修订时�
 
 | 事件 | 字段 |
 |---|---|
+| `wiki_enabled` | `dir_created`, `index_created`, `log_created`（bool：本次是否创建）, `sources_count` |
 | `wiki_workflow_started` | `workflow`, `origin`(builtin/vault), `entry`(tree_menu/picker/command/cron), `trigger`(manual/unattended), `input_kinds[]`, `tools[]`, `write_scope_count`, `gate`, `checks[]`, `model`, `definition_hash`, `session` |
 | `wiki_workflow_preflight` | `workflow`, `duration_ms`, `scanned_files`, `results[]`（每项：`kind`, `total`, `listed`, `truncated`） |
-| `wiki_workflow_finished` | `workflow`, `entry`, `status`(completed/verification_failed/failed/aborted), `reason`（闭集合：`ok` / `preflight_failed` / `model_error` / `tool_error` / `verification_failed` / `source_changed` / `log_missing` / `verify_error` / `user_stopped`）、`rounds`, `tokens`, `write_calls`, `log_changed`, `source_unchanged`, `verify_delta`（新增 / 修掉的计数）, `duration_ms` |
+| `wiki_workflow_finished` | `workflow`, `entry`, `status`(completed/verification_failed/failed/aborted), `reason`（闭集合：`ok` / `preflight_failed` / `model_error` / `tool_error` / `verification_failed` / `source_changed` / `log_missing` / `verify_error` / `user_stopped`）、`rounds`, `tokens`, `write_calls`（对象：`patch` / `create` / `move` / `delete` 的调用计数）, `log_changed`, `source_unchanged`, `verify_delta`（新增 / 修掉的计数）, `duration_ms` |
 | `wiki_verify_failed` | `workflow`, `reason`, `kinds[]`（哪几项不过）, `new_items_total`, `new_items_listed`（前若干条：检查器 + 路径 + 目标） |
 | `wiki_workflow_rejected` | `workflow?`, `reason`(disabled/definition_invalid/workflow_not_found/input_invalid/source_missing/source_placeholder/not_unattended/scope_invalid) |
 
-- 全部事件进 `logging.rs` 白名单；`status` / `reason` / `entry` / `trigger` 为闭集合。
+- 全部事件进 `logging.rs` 白名单；`status` / `reason` / `entry` / `trigger` 为闭集合；字段键由既有
+  序列化按字母序输出（观测命令的匹配顺序以此为准，proposal G 的三组命令是 canonical 读数口径）。
 - 事件 MUST NOT 含页面正文、源正文、模型输出与 vault 绝对路径；`new_items` 只带 vault 相对路径与
   目标名。会话 id 在场时按既有口径处理（不新增出域面）。
 - 完成事件在收尾函数里产出一次，失败 / 中止 / 验证未通过路径同样产出一条，不静默。
@@ -484,9 +489,9 @@ cron 任务新增两个可选字段（由 cron 侧 delta 在节点 1 修订时�
 
 ## 14. 入口与可见面
 
-**无原型**：本 change 不新增视觉语言——入口复用文件树右键菜单与既有浮层控件，运行卡片复用 transcript
-的既有块形态与既有折叠行样式。因此不写「视觉保真」合同；若 Alex 要求在实现前看形态，原型应另立
-change（不在本文制品范围内）。
+**无原型（已裁决）**：Alex 2026-10-18 裁决「不需要。」。本 change 不新增视觉语言——入口复用文件树
+右键菜单与既有浮层控件，运行卡片复用 transcript 的既有块形态与既有折叠行样式，因此不写「视觉保真」
+合同。若将来要在实现前看形态，另立 change（不在本文制品范围内）。
 
 ### 14.1 入口
 

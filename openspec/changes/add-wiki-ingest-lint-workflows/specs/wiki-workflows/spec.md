@@ -311,12 +311,13 @@ cron 任务 SHALL 能以「工作流名 + 输入」的形式发起一次工作�
 
 ### Requirement: 诊断与可观测
 
-系统 SHALL 产出五类诊断事件：`wiki_workflow_started`、`wiki_workflow_preflight`、
+系统 SHALL 产出六类诊断事件：`wiki_enabled`、`wiki_workflow_started`、`wiki_workflow_preflight`、
 `wiki_workflow_finished`、`wiki_verify_failed`、`wiki_workflow_rejected`，字段与闭集合见 design §11。
-完成事件 SHALL 带终态、原因码、轮次、tokens、写工具调用数、log 是否变化、源是否变化、验证新增 / 修掉
-的计数与耗时；验证失败的明细 SHALL 带检查器、vault 相对路径与目标名。事件 MUST NOT 含页面正文、源
-正文、模型输出与 vault 绝对路径；验证明细只保留检查器、vault 相对路径、目标名与闭集合枚举值，
-MUST NOT 含页面正文或源正文。
+启用事件 SHALL 记录本次创建了哪几个骨架文件与声明的源目录数；完成事件 SHALL 带终态、原因码、轮次、
+tokens、写工具调用计数（按工具拆分）、log 是否变化、源是否变化、验证新增 / 修掉的计数与耗时；验证
+失败的明细 SHALL 带检查器、vault 相对路径与目标名。事件 MUST NOT 含页面正文、源正文、模型输出与
+vault 绝对路径；验证明细只保留检查器、vault 相对路径、目标名与闭集合枚举值，MUST NOT 含页面正文或
+源正文。
 
 任一运行 SHALL 有终态（completed / verification_failed / failed / aborted）与原因码，MUST NOT 出现
 无终态的「永远转圈」；入口被拒、定义非法、输入非法、验证失败各有独立原因码，MUST NOT 静默跳过。

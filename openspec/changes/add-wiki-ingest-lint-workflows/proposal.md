@@ -31,6 +31,15 @@
 > 与流程的真实形态样本」来校验机制边界，**不复制其中任何一条具体约定**（信息卫生；同时避免把某个
 > vault 的私有 schema 变成产品语义）。该草稿同时暴露了本提案要解决的问题：流程写在一份长文档里，
 > 依赖用户与模型「都记得并遵守」，没有机制侧的兜底。
+>
+> **节点 1 轮次裁决（2026-10-18，逐字）**：
+>
+> | 裁决点 | Alex 原话 | 落法 |
+> |---|---|---|
+> | 设计取舍 5（vault 配置格式 JSON vs TOML） | 「JSON.」 | 采用 `<vault>/.lumir/config.json`；`config.toml` 备选关闭，不再作为可选项 |
+> | 设计取舍 13（实现前是否要原型） | 「不需要。」 | 本 change 不做原型、不写视觉保真合同；入口与卡片复用既有控件与块形态 |
+>
+> 设计取舍 15（v1 不投递图片字节）仍待 Alex 裁决，保持原样。
 
 ## Why
 
@@ -163,13 +172,16 @@ requirement。
 
 ### G. 观测：怎么知道用了 / 有效 / 出问题怎么发现
 
-诊断事件（本地 JSONL，不联网）：
+诊断事件（本地 JSONL `~/.config/lumir/logs/YYYY-MM-DD.jsonl`，每行一个事件；字段键由 `logging.rs`
+的 BTreeMap 按**字母序**输出，下面命令的匹配顺序据此写死）：
 
+- `wiki_enabled`：`dir` / `index` / `log` 是否本次创建、`sources` 数量。
 - `wiki_workflow_started`：工作流名、来源（内置 / vault）、入口（文件树 / 选择器 / 命令 / cron）、
   输入类型、工具白名单、写范围、`gate`、检查项、模型、定义快照哈希。
 - `wiki_workflow_preflight`：每个检查器的发现数、扫描文件数、耗时、是否有界截断、总发现数。
 - `wiki_workflow_finished`：终态（completed / failed / aborted / verification_failed）、原因码、
-  轮次、tokens、写工具调用数、验证逐项结果、log 是否变化、源是否变化、耗时。
+  轮次、tokens、写工具调用计数（按 `patch` / `create` / `move` / `delete` 拆分）、验证逐项结果、
+  log 是否变化、源是否变化、耗时。
 - `wiki_verify_failed`：检查项、新增发现项（路径 + 目标）的前若干条与总数。
 - `wiki_workflow_rejected`：原因（disabled / definition_invalid / input_invalid / source_missing /
   source_placeholder / not_unattended / scope_invalid / workflow_not_found）。
@@ -178,23 +190,60 @@ requirement。
 
 ```bash
 rg -c '"event":"wiki_workflow_started"' ~/.config/lumir/logs/
-rg -o '"event":"wiki_workflow_started".*"entry":"[a-z_]+"' ~/.config/lumir/logs/ | sort | uniq -c
+rg --no-filename -o -r '$1' '"entry":"([a-z_]+)".*"event":"wiki_workflow_started"' ~/.config/lumir/logs/ | sort | uniq -c
 ```
 
-第二行按入口分桶：从文件树右键与选择器发起的比例高，说明「不用记口令」这一条真的成立；几乎全部
-来自命令入口，说明入口没被发现，是产品问题而不是用户问题。
+第二条按入口分桶：`--no-filename` 去掉文件名前缀，`-r '$1'` 只打印入口名（`entry` 在 `event` 之前是
+键序决定的，模式必须同序，否则恒为空匹配）。无命中时 `rg` 退出码 1，属正常（日志里还没有 wiki 事件），
+不是命令写错。
 
-**怎么知道有效**：四个读数——① 写入产出：每次 ingest 的写工具调用数与新建 / 改写页数（`finished`
-事件里的写调用计数）；② 机械健康度：`preflight` 的发现数按检查器分桶随时间的走势，以及
-`wiki_verify_failed` 的比例；③ 复发：同一发现项（检查器 + 路径 + 目标）连续两次 lint 都在场，
-说明上一次的修复没落地或 schema 有缺口（后者应触发改 AGENTS.md 的提议）；④ 门槛是否真的降了：
-入口分布 + 从「启用 wiki」到「第一次成功 ingest」的时间（`started` / `finished` 事件时刻）。
+**怎么知道有效**：四个读数，各给可执行命令。`cat … 2>/dev/null | jq` 的写法同时覆盖「日志目录为空 /
+文件不存在」：`jq` 读到空流，输出空（④ 会明确打印「数据不足」），退出码 0。
 
-**出问题怎么发现**：入口被拒与运行失败各有终态与原因码（`wiki_workflow_rejected` /
-`finished.status`），不出现静默跳过；定义非法、检查器声明非法、写范围非法各产一条点名 warning；
-验证未通过逐项点名（新增断链 / 新增孤儿 / index 漂移 / log 未变化 / 源被改动）；iCloud 占位文件与
-冲突副本只报告不自动处理；cron 触发的失败沿用 cron 的结果通知与诊断。真机验收覆盖入口、禁用态、
-输入拒绝、检查器结果、写范围越界、写入闸、验证未通过与无人值守触发（见 tasks §7）。
+① 写入产出（每次 ingest 的新建 / 改写量）：
+
+```bash
+cat ~/.config/lumir/logs/*.jsonl 2>/dev/null | jq -r 'select(.event=="wiki_workflow_finished" and .workflow=="wiki-ingest") | "\(.ts)\tcreate=\(.write_calls.create // 0)\tpatch=\(.write_calls.patch // 0)"'
+```
+
+② 机械健康度走势（每次 preflight 的各项发现数）：
+
+```bash
+cat ~/.config/lumir/logs/*.jsonl 2>/dev/null | jq -r 'select(.event=="wiki_workflow_preflight") | .ts as $t | .results[] | "\($t)\t\(.kind)=\(.total)"' | sort
+```
+
+③ 验证失败比例（终态分桶）：
+
+```bash
+cat ~/.config/lumir/logs/*.jsonl 2>/dev/null | jq -r 'select(.event=="wiki_workflow_finished") | .status' | sort | uniq -c
+```
+
+④ 门槛是否真的降了（启用 → 首次成功 ingest 的间隔）：
+
+```bash
+cat ~/.config/lumir/logs/*.jsonl 2>/dev/null | jq -s -r '([.[]?|select(.event=="wiki_enabled")]|sort_by(.ts)|.[0].ts) as $a | ([.[]?|select(.event=="wiki_workflow_finished" and .workflow=="wiki-ingest" and .status=="completed")]|sort_by(.ts)|.[0].ts) as $b | if $a==null or $b==null then "数据不足（尚未启用或尚无成功 ingest）" else "启用到首次成功 ingest：\((($b|sub("\\.[0-9]+Z$";"Z")|fromdateiso8601)-($a|sub("\\.[0-9]+Z$";"Z")|fromdateiso8601))) 秒" end'
+```
+
+复发读数取 ② 的时间序列：同一检查器的 `total` 在连续两次 lint 的 preflight 里都不下降，说明上一次
+的修复没落地或 schema 有缺口（后者应触发改 AGENTS.md 的提议）；逐项差异（哪条断链还在）在两次 lint
+的报告里对，机制事件只带计数，不重复存明细。
+
+**出问题怎么发现**：
+
+```bash
+rg --no-filename -o -r '$1' '"event":"wiki_workflow_rejected".*"reason":"([a-z_]+)"' ~/.config/lumir/logs/ | sort | uniq -c
+cat ~/.config/lumir/logs/*.jsonl 2>/dev/null | jq -r 'select(.event=="wiki_workflow_finished") | "\(.status)\t\(.reason)"' | sort | uniq -c
+cat ~/.config/lumir/logs/*.jsonl 2>/dev/null | jq -r 'select(.event=="wiki_verify_failed") | "\(.ts)\t\(.reason)\t\(.new_items_total)"'
+```
+
+入口被拒与运行失败各有终态与原因码，不出现静默跳过；定义非法、检查器声明非法、写范围非法各产一条
+点名 warning；验证未通过逐项点名（新增断链 / 新增孤儿 / index 漂移 / log 未变化 / 源被改动）；
+iCloud 占位文件与冲突副本只报告不自动处理；cron 触发的失败沿用 cron 的结果通知与诊断。真机验收覆盖
+入口、禁用态、输入拒绝、检查器结果、写范围越界、写入闸、验证未通过与无人值守触发（见 tasks §7）。
+
+以上命令用 macOS 自带的 `jq` 1.7 与 `rg` 在起草期实测跑过（合成日志：三问各有非空读数；真实日志
+目录尚无 wiki 事件：`rg` 无命中退出码 1、`jq` 输出空或「数据不足」且退出码 0）。实现期按 tasks §6.4
+在真机上复跑一遍并把读数写进完成报告。
 
 ## 能力边界（本 change 刻意不碰的东西）
 
@@ -302,10 +351,9 @@ rg -o '"event":"wiki_workflow_started".*"entry":"[a-z_]+"' ~/.config/lumir/logs/
 4. **流程正文里写明「与 vault 约定冲突时以 vault 为准」**（推荐）。这样 vault 的 AGENTS.md 仍是
    流程与 schema 的唯一权威，内置正文只是兜底骨架；避免「两处真源」漂移。备选：内置正文就是完整
    流程——更省心，但与 vault 文档必然分叉。
-5. **vault 配置用 JSON（`.lumir/config.json`）而非真源草图里的 `config.toml`**（推荐，可被否决）。
-   理由：与既有 `config.json` 同一解析与校验口径，不引入第二个 parser（`src-tauri/src/config.rs`
-   的模块头已记录「JSON 而非 TOML」的选型与重评条件）；代价是手写时没有注释。备选：TOML——可注释，
-   但要新增依赖并维护两套校验路径。
+5. **【已裁决】vault 配置用 JSON（`.lumir/config.json`）**（Alex 2026-10-18：「JSON.」）。理由：与既有
+   `config.json` 同一解析与校验口径，不引入第二个 parser（`src-tauri/src/config.rs` 的模块头已记录
+   「JSON 而非 TOML」的选型与重评条件）；代价是手写时没有注释。TOML 备选已关闭，不再作为可选项。
 6. **写范围精确到文件，而不只是目录**（推荐）。lint 的「只出报告」需要一个精确到 log 文件的写范围，
    而不是「允许写整个 wiki 目录」；否则「不改页」只能靠提示词。备选：引入 `log` 专用开关——多一个
    只为内置定义存在的机制面。
@@ -326,9 +374,9 @@ rg -o '"event":"wiki_workflow_started".*"entry":"[a-z_]+"' ~/.config/lumir/logs/
 12. **入口：文件树右键 + 选择器 + 命令，不新增默认键位**（推荐）。降低门槛靠可发现，不靠再加一个
     要记的快捷键；默认键位还会引出与既有键位表 / 原生菜单 accelerator 的三源核对。备选：给
     `wiki.run` 一个默认绑定——多一个记忆负担与冲突面。
-13. **不做原型**（推荐，请 Alex 确认）。本 change 不新增视觉语言：入口复用文件树菜单与既有浮层控件，
-    运行卡片复用 transcript 的既有块形态。若 Alex 要求在实现前看形态，原型应另立 change（不在本
-    change 的制品范围内）。
+13. **【已裁决】不做原型**（Alex 2026-10-18：「不需要。」）。本 change 不新增视觉语言：入口复用文件树
+    菜单与既有浮层控件，运行卡片复用 transcript 的既有块形态。若将来要在实现前看形态，另立 change
+    （不在本 change 的制品范围内）。
 14. **未启用即隐身**（推荐）。未启用 vault 不出现任何入口，第一个入口是「启用 wiki」本身；不用
     「默认开启、可关」——wiki 会写入用户的知识库，默认开不是中立选择。
 15. **v1 只检测图片、不投递图片**（推荐，可被否决）。理由与候选路径见 design §6.3：投递需要把
@@ -336,4 +384,5 @@ rg -o '"event":"wiki_workflow_started".*"entry":"[a-z_]+"' ~/.config/lumir/logs/
     检测并禁止模型装看过，是保守且可交付的一步。备选：v1 就把源内图片导入附件存储——更完整，
     但把一次输入的可重建性绑到附件目录与内容寻址上，建议单独 change。
 
-以上 15 条均为设计取舍。节点 1 通过前不进入实现。
+以上 15 条均为设计取舍：第 5、13 条已由 Alex 裁决（JSON / 不做原型），第 15 条待裁，其余待节点 1
+通读时的否决意见。节点 1 通过前不进入实现。
