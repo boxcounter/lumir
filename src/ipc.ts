@@ -368,10 +368,11 @@ interface HarnessEventEnvelope {
   vault?: string;
 }
 
-/** harness:event 的事件载荷（九类，type 字段判别；每类都带信封字段 `vault`）。
+/** harness:event 的事件载荷（十类，type 字段判别；每类都带信封字段 `vault`）。
  *  aborted 为 M348 新增的第八类（本轮被用户停止）；reasoning_chunk 为 M362 新增的
  *  第九类（思考文本分片，index 0 起、同块多个分片共用同一 index，在该轮 text_chunk
- *  之前发出）；既有七类的形状一律未动——**usage 除外**（M443 起换键，见下条注）。 */
+ *  之前发出）；title 为 change add-session-auto-naming 新增的第十类（会话标题即时更新）；
+ *  既有九类的形状一律未动——**usage 除外**（M443 起换键，见下条注）。 */
 export type HarnessEvent = HarnessEventEnvelope &
   (
     | { type: "text_chunk"; text: string }
@@ -401,6 +402,10 @@ export type HarnessEvent = HarnessEventEnvelope &
     // 合同条款见 openspec/specs/harness/spec.md 的「usage 事件与状态快照同键同值」scenario。
     | { type: "usage"; ctx_pct: number; cache_pct_session: number; cache_pct_turn: number; cache_write_tokens: number; cache_write_tokens_session: number; cache_note: "cold_start" | "block_dilution" | null; input_tokens: number; cached_tokens: number; cached_tokens_session: number; context_window: number; has_usage: boolean }
     | { type: "compact"; summary: string }
+    // title（change add-session-auto-naming，design D11）：会话标题即时更新。载荷只有标题
+    // 字符串；前端只改会话名文本与 tooltip（不重渲染 transcript、不动滚动 / 焦点 / 清单
+    // 顺序），压缩 / 恢复的继承标题也发一次。
+    | { type: "title"; title: string }
     | { type: "done" }
     | { type: "error"; code: string; message: string }
     | { type: "aborted" }
@@ -515,7 +520,8 @@ export function harnessSetThinkingEffort(effort: ThinkingEffort): Promise<void> 
  * 此前前端按 string 读，快照恢复把数组整段丢弃；purpose / remember 是 M413 契约字段，前者
  * 供批准卡展示用途句、后者是「采纳且本会话不再问」次级动作的可见性开关）、`warn_ctx_pct`（缺省 85）、`thinking{level,supported}`
  * （M362：思考程度档位读数 + 当前 provider/model 是否支持程度调节；缺键 = 旧后端 / 桩，
- * 思考 chip 按「不伪造读数」口径隐藏）。
+ * 思考 chip 按「不伪造读数」口径隐藏）、`title`（change add-session-auto-naming：会话有效
+ * 标题；**缺键 = 无标题**——面板回落首条用户消息截断，不伪造）。
  * 后端不可用（纯浏览器预览 / 命令未注册）时 reject，调用方按「空会话」降级。
  */
 export function harnessState(): Promise<string> {

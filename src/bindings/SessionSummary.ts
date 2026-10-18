@@ -18,4 +18,9 @@ first_user_text?: string,
 /**
  * 首行 `session_open` 信封的 UNIX 秒（会话建立时刻）；缺 ts 的历史文件为 None。
  */
-ts?: number, };
+ts?: number, 
+/**
+ * 会话有效标题（change add-session-auto-naming，design D11）：`jsonl::effective_title`
+ * 的读数；无 `session_title` 记录的旧文件为**缺键**（前端回落首条用户消息口径）。
+ */
+title?: string, };

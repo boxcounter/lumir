@@ -1,8 +1,9 @@
 // 会话恢复选择器纯模型层的单测（M392，change reshape-harness-session-recording design §6.1）：
 //   - sessionEntriesOf：harness_list_sessions 载荷的宽容解析（M392 + M395 合同形状
-//     SessionSummary[] = { session_id, first_user_text, ts }）+ 时间倒序兜底；
+//     SessionSummary[] = { session_id, first_user_text, ts, title? }）+ 时间倒序兜底；
 //   - truncateSessionName：会话名截断（标题栏会话名与选择器行同一份口径）；
-//   - sessionWhen：行时间读数（同日相对时间、跨天回落短日期）。
+//   - sessionWhen：行时间读数（同日相对时间、跨天回落短日期）；
+//   - 会话名优先级 sessionNameSource（change add-session-auto-naming：title → firstUserText → D330）。
 // 合同：mission M392 任务 1 / 2，与 src/harness-panel.ts 该段的注释判词、
 // openspec/changes/reshape-harness-session-recording/design.md §6.1 对账。
 // 这一层是零 DOM 环境（tests/unit/README.md）：只驱动 src/harness-panel.ts 导出的纯函数；
@@ -15,6 +16,7 @@ import assert from "node:assert/strict";
 import {
   SESSION_NAME_MAX,
   sessionEntriesOf,
+  sessionNameSource,
   sessionWhen,
   sessPopDecision,
   sessPopDom,
@@ -34,8 +36,14 @@ test("合同数组原样提取：三项键齐全 → 字段直取", () => {
     sessionId: "s1759912345678-k3x9ab",
     firstUserText: "帮我整理这份笔记",
     ts: 1759912345,
+    title: null,
   });
-  assert.deepEqual(entries[1], { sessionId: "s1759912000000-a1b2c3", firstUserText: null, ts: null });
+  assert.deepEqual(entries[1], {
+    sessionId: "s1759912000000-a1b2c3",
+    firstUserText: null,
+    ts: null,
+    title: null,
+  });
 });
 
 test("JSON string 载荷先 parse；坏 JSON / 非数组 / 非对象 → 空清单（不抛错）", () => {
@@ -190,3 +198,59 @@ test("O5 aria 一致性：aria-expanded==='true' ⟺ 浮层可见（hidden===fal
   }
 });
 
+// ── 会话标题（change add-session-auto-naming，design D11）────────────────────────
+//  显示优先级 title → firstUserText → D330；标题值只来自后端（SessionSummary.title /
+//  harness_state.title / title 事件），前端不生成、不猜测。
+
+test("title parsing: 合同 title 原样提取；缺 / null / 空白 / 非字符串 → null", () => {
+  const entries = sessionEntriesOf([
+    { session_id: "a", title: "Rust 生命周期排查", first_user_text: "帮我看看这个文件", ts: 1 },
+    { session_id: "b", first_user_text: "只有首条消息", ts: 2 },
+    { session_id: "c", title: "   ", first_user_text: "空白标题", ts: 3 },
+    { session_id: "d", title: 42, first_user_text: "非字符串标题", ts: 4 },
+    { session_id: "e", title: null, first_user_text: null, ts: 5 },
+  ]);
+  const byId = [...entries].sort((x, y) => (x.sessionId < y.sessionId ? -1 : 1));
+  assert.deepEqual(
+    byId.map((entry) => entry.title),
+    ["Rust 生命周期排查", null, null, null, null],
+  );
+});
+
+test("title wins over first user text（会话名优先级）", () => {
+  assert.equal(sessionNameSource("Rust 生命周期排查", "帮我看看这个文件"), "Rust 生命周期排查");
+  assert.equal(sessionNameSource(null, "帮我看看这个文件"), "帮我看看这个文件");
+  // 标题为空白不夺权（后端不会产出空白标题，仍按「无标题」处理——不显示空名）。
+  assert.equal(sessionNameSource("   ", "帮我看看这个文件"), "帮我看看这个文件");
+  assert.equal(sessionNameSource(null, null), null);
+});
+
+test("fallback order（标题 → 首条用户消息 → 新会话）", () => {
+  const fallback = "新会话";
+  const shown = (title: string | null, firstUserText: string | null): string =>
+    sessionNameSource(title, firstUserText) ?? fallback;
+  assert.equal(shown("标题", "首条消息"), "标题");
+  assert.equal(shown(null, "首条消息"), "首条消息");
+  assert.equal(shown(null, null), fallback);
+  // 标题硬上限 20 码点 = 显示截断长度 ⇒ 标题显示不带省略号（截断函数对它无操作）。
+  const title20 = "一二三四五六七八九十一二三四五六七八九十";
+  assert.equal(Array.from(title20).length, 20);
+  assert.equal(truncateSessionName(shown(title20, "首条消息")), title20);
+  assert.ok(!truncateSessionName(shown(title20, "首条消息")).endsWith("…"));
+});
+
+test("title event updates rows in place（纯模型层：只换名字）", () => {
+  // 事件前：无标题，会话名取首条用户消息；事件后：标题到达，名字换掉。
+  const before = { title: null as string | null, firstUserText: "帮我整理这份笔记" };
+  const after = { ...before, title: "笔记整理方案" };
+  assert.equal(sessionNameSource(before.title, before.firstUserText), "帮我整理这份笔记");
+  assert.equal(sessionNameSource(after.title, after.firstUserText), "笔记整理方案");
+  // 会话名是唯一被改变的量：首条用户消息原文不动（回落口径随时可回）、清单顺序与标题无关。
+  assert.equal(after.firstUserText, before.firstUserText);
+  const entries = sessionEntriesOf([
+    { session_id: "s200-b", title: "旧标题", first_user_text: "B", ts: 200 },
+    { session_id: "s300-c", title: "新标题", first_user_text: "C", ts: 300 },
+    { session_id: "s100-a", first_user_text: "A", ts: 100 },
+  ]);
+  assert.deepEqual(entries.map((entry) => entry.sessionId), ["s300-c", "s200-b", "s100-a"]);
+});

@@ -39,6 +39,13 @@ export const SCENARIO_CONFIG_KEYS = [
   "language",
   "keys",
   "harness",
+  // 会话自动命名（change add-session-auto-naming，task 5.2）：`autoTitle` / `titleProvider` /
+  // `titleModel` 映射到 `[harness]` 的同义 snake_case 键（`titleModel` 落在「命名调用实际会用的
+  // provider」条目上——`titleProvider` 缺省 = `provider`，与 Rust 侧 `title_target` 同一口径）。
+  // 缺省不写 = 出厂行为（自动命名开、title provider = 会话 provider、模型 = 该 provider 生效模型）。
+  "autoTitle",
+  "titleProvider",
+  "titleModel",
   // `[editor]` 表整表透传（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）：snake_case 键写进 `editor` 表（`writeConfig`
   // 的同名参数），给「新增的 editor 配置项」构造**启动口径**用——不必每加一个键就回来改套件。
   // 形状校验见 execute.mjs 的 checkScenario（非表即报，避免静默丢半张表）。
@@ -80,6 +87,13 @@ export async function writeConfig({
   // fixtures 目录，不拷进 vault——拷进 vault 会留下非 .md 残留，串红场景 28/65 的
   // 「vault 里无 json/tmp 产物」断言）；$vault / $vault2 精确记号仍可经 resolveSeedPath 解析。
   harness = undefined,
+  // 会话自动命名三键（change add-session-auto-naming，task 5.2）：与 theme / language 同形的
+  // **顶层**键，映射进 `[harness]` 的 snake_case——`auto_title` / `title_provider`，以及
+  // `title_model`（落在「命名调用实际会用的 provider」条目上：`titleProvider` 缺省 = 会话
+  // provider，与 Rust 侧 `title_target` 的解析口径同一处语义）。传了才写。
+  autoTitle = undefined,
+  titleProvider = undefined,
+  titleModel = undefined,
 } = {}) {
   const dir = path.join(envHome(), "lumir");
   await mkdirp(dir);
@@ -98,8 +112,8 @@ export async function writeConfig({
   if (language !== undefined) ui.language = language;
   if (Object.keys(ui).length > 0) cfg.ui = ui;
   if (keys !== undefined) cfg.keys = keys;
+  const h = {};
   if (harness !== undefined) {
-    const h = {};
     if (harness.provider !== undefined) h.provider = harness.provider;
     if (harness.fixture !== undefined) h.providers = { mock: { fixture: resolveSeedPath(harness.fixture) } };
     // M372（场景 99）：kimiModel 写了就构造 kimi provider 节（model + 占位 api_key）——
@@ -123,8 +137,22 @@ export async function writeConfig({
     if (harness.loopMax !== undefined) h.loop_max = harness.loopMax;
     if (harness.warnCtxPct !== undefined) h.warn_ctx_pct = harness.warnCtxPct;
     if (harness.autoCompact !== undefined) h.auto_compact = harness.autoCompact;
-    cfg.harness = h;
   }
+  // 会话自动命名三键（顶层）：snake_case 落 `[harness]`；title_model 落命名调用实际使用的
+  // provider 条目（titleProvider 缺省 = 会话 provider）——与 Rust `title_target` 同一口径。
+  if (autoTitle !== undefined) h.auto_title = autoTitle;
+  if (titleProvider !== undefined) h.title_provider = titleProvider;
+  if (titleModel !== undefined) {
+    const target = titleProvider ?? harness?.provider;
+    if (target === undefined) {
+      throw new Error(
+        "writeConfig：titleModel 需要同时给出 titleProvider 或 harness.provider（title_model 落在命名调用实际使用的 provider 条目上）",
+      );
+    }
+    h.providers = h.providers ?? {};
+    h.providers[target] = { ...(h.providers[target] ?? {}), title_model: titleModel };
+  }
+  if (Object.keys(h).length > 0) cfg.harness = h;
   await writeFile(path.join(dir, "config.json"), `${JSON.stringify(cfg, null, 2)}\n`);
   return path.join(dir, "config.json");
 }
@@ -586,7 +614,7 @@ function resolveSeedPath(p) {
  *  `legacyRegistry`（M248）写进**旧名**目录 `workspaces/`，供迁移场景 48 构造「升级前现场」，
  *  与其他块同一时点、同一纪律。 */
 export async function prepareSeed(seed) {
-  const written = { registry: [], legacyRegistry: [], sessions: [], harnessFlat: [], bulkVault: null };
+  const written = { registry: [], legacyRegistry: [], sessions: [], harnessFlat: [], harnessSessions: [], bulkVault: null };
   if (!seed) return written;
   // 复刻真实形状的批量内容（M283）：先重置（调用方已做）再生成，之后才是注册表 / 会话
   // ——会话里的路径必须指向真实存在的文件，否则恢复时会按「不在 vault 内」跳过。
@@ -630,6 +658,9 @@ export async function prepareSeed(seed) {
   for (const e of seed.harnessFlatSessions ?? []) {
     written.harnessFlat.push(await writeHarnessFlatSession(e));
   }
+  for (const e of seed.harnessSessions ?? []) {
+    written.harnessSessions.push(await writeHarnessSession(e));
+  }
   return written;
 }
 
@@ -672,6 +703,66 @@ export async function writeHarnessFlatSession({ name, vaultRoot, raw }) {
 export async function copyFixture(name) {
   await cp(path.join(fixturesDir(), name), path.join(vaultDir(), name));
   return path.join(vaultDir(), name);
+}
+
+/**
+ * 预置一份**新布局**的会话留存
+ * （`<env>/lumir/harness/sessions/<vault 稳定 id>/<name>.jsonl`）。
+ *
+ * 为什么需要（change add-session-auto-naming 场景 165）：要构造「本 change 之前的旧会话文件」
+ * ——无 `session_title` 记录的现场，而产品的自动命名一旦跑过就会写记录，只能由磁盘状态表达。
+ * `vaultId` 必须是场景 `seed.registry` 里预置的 id（产品自生成的 `vault-<pid>-<n>` 场景侧无从
+ * 预知；场景 124 同一做法）。`raw` 给了就原样落盘（畸形现场），否则合成一份最小可恢复会话
+ * （`session_open` + 一条 `llm_request` + 对应 `llm_response`，**没有标题记录**）。
+ * `vaultRoot` 走 `resolveSeedPath` 且**刻意不做 realpath**：`session_open.vault_root` 的归属判据
+ * 是逐字比较，验收 vault 在 /tmp 下、注册表存的是 /private/tmp——这正是产品要面对的现场。
+ */
+export async function writeHarnessSession({ vaultId, name, vaultRoot = "$vault", raw, firstUserText = "旧会话提问" }) {
+  if (!ID_RE.test(vaultId ?? "")) {
+    throw new CuError(`harness 会话目录 id 非法：${JSON.stringify(vaultId)}（须与 seed.registry 的 id 同形）`);
+  }
+  if (typeof name !== "string" || !name.endsWith(".jsonl")) {
+    throw new CuError(`harness 会话文件名非法：${JSON.stringify(name)}（需要 *.jsonl）`);
+  }
+  const sessionId = name.replace(/\.jsonl$/, "");
+  const dir = await mkdirp(path.join(envHome(), "lumir", "harness", "sessions", vaultId));
+  const content =
+    raw ??
+    [
+      {
+        ts: 1759913000,
+        payload: {
+          kind: "session_open",
+          session_id: sessionId,
+          vault_root: resolveSeedPath(vaultRoot),
+          opened_from: "new",
+          provider: "mock",
+          model: "mock-model",
+          thinking: "high",
+          system: "S",
+          assembly: [],
+        },
+      },
+      {
+        ts: 1759913005,
+        payload: {
+          kind: "llm_request",
+          request: {
+            provider: "mock",
+            model: "mock-model",
+            system: "S",
+            messages: [{ role: "user", content: [{ type: "input_text", text: firstUserText }] }],
+            params: { thinking: "high" },
+          },
+        },
+      },
+      { ts: 1759913006, payload: { kind: "llm_response", text: "旧会话回答。" } },
+    ]
+      .map((line) => JSON.stringify(line))
+      .join("\n") + "\n";
+  const file = path.join(dir, name);
+  await writeFile(file, content);
+  return file;
 }
 
 /**

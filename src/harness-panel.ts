@@ -1875,23 +1875,38 @@ export function truncateSessionName(text: string, max: number = SESSION_NAME_MAX
   return chars.length > max ? `${chars.slice(0, max).join("")}…` : text;
 }
 
+/** 会话名的素材优先级（change add-session-auto-naming，design D11）：有效标题 → 首条用户消息
+ *  → null（调用方回落 D330「新会话」）。标题栏会话名与历史浮层行名共用这一处口径——前端
+ *  MUST NOT 自行生成或猜测标题（标题值只来自后端读取）。 */
+export function sessionNameSource(
+  title: string | null | undefined,
+  firstUserText: string | null | undefined,
+): string | null {
+  if (typeof title === "string" && title.trim() !== "") return title;
+  if (typeof firstUserText === "string" && firstUserText.trim() !== "") return firstUserText;
+  return null;
+}
+
 /** 历史会话清单的一条（`harness_list_sessions` 的宽容提取结果；M395 合同形状
- *  `SessionSummary` = { session_id, first_user_text, ts }，解析只认这三个键）。 */
+ *  `SessionSummary` = { session_id, first_user_text, ts, title? }，解析只认这四个键）。 */
 export interface SessionEntry {
   /** `sessions/<vault 稳定 id>/<id>.jsonl` 的文件名（恢复命令的入参）。 */
   sessionId: string;
-  /** 首条用户消息原文（会话名口径的数据源）；null = 无用户消息（回落 D330「新会话」）。 */
+  /** 首条用户消息原文（会话名回落口径的数据源）；null = 无用户消息（回落 D330「新会话」）。 */
   firstUserText: string | null;
   /** 首行 `session_open` 信封的 unix 秒；null = 缺读数不伪造（时间不显示）。 */
   ts: number | null;
+  /** 会话有效标题（change add-session-auto-naming，design D11）：后端 `SessionSummary.title`
+   *  的唯一读取口径；null = 无标题记录（旧文件安静回落首条用户消息）。 */
+  title: string | null;
 }
 
 /**
- * `harness_list_sessions` 载荷的宽容解析（M392 + M395 合同）：string 先 JSON.parse，
- * 非数组 / 坏 JSON → 空清单（桩环境、M395 合并前的旧后端、读取失败不报错打断浮层）；
- * 逐项提取只认三个键——`session_id` 必须是非空字符串（缺 / 空串 / 非字符串的项丢弃，
- * 没有 id 就无法恢复，留着也是死项）；`first_user_text` 缺 / null / 空白串 → null；
- * `ts` 缺 / 非数 / 非正 → null。
+ * `harness_list_sessions` 载荷的宽容解析（M392 + M395 合同 + change add-session-auto-naming 的
+ * `title`）：string 先 JSON.parse，非数组 / 坏 JSON → 空清单（桩环境、M395 合并前的旧后端、
+ * 读取失败不报错打断浮层）；逐项提取只认四个键——`session_id` 必须是非空字符串（缺 / 空串 /
+ * 非字符串的项丢弃，没有 id 就无法恢复，留着也是死项）；`first_user_text` / `title` 缺 / null /
+ * 空白串 → null；`ts` 缺 / 非数 / 非正 → null。
  *
  * 排序：合同说服务端已按时间倒序，这里仍按 session_id 字典序降序再排一次——时间序
  * 前缀（s<unix_millis>-…）可排序，字典序与时间序同向，乱序 / 桩环境的渲染序因此不
@@ -1913,11 +1928,13 @@ export function sessionEntriesOf(payload: unknown): SessionEntry[] {
     const rec = item as Record<string, unknown>;
     if (typeof rec.session_id !== "string" || rec.session_id === "") continue;
     const text = rec.first_user_text;
+    const title = rec.title;
     const ts = rec.ts;
     out.push({
       sessionId: rec.session_id,
       firstUserText: typeof text === "string" && text.trim() !== "" ? text : null,
       ts: typeof ts === "number" && Number.isFinite(ts) && ts > 0 ? ts : null,
+      title: typeof title === "string" && title.trim() !== "" ? title : null,
     });
   }
   return out.sort((a, b) => (a.sessionId < b.sessionId ? 1 : a.sessionId > b.sessionId ? -1 : 0));
@@ -3239,9 +3256,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let permissionConfigured = false;
   let permMode: PermissionMode = "vault_write";
   let lastChip: HarnessContextBlock | null | "none" = null;
-  /** 当前逻辑会话的首条用户消息原文（会话名口径：截断约 20 字上屏；null = 未发消息，
+  /** 当前逻辑会话的首条用户消息原文（会话名回落口径：截断约 20 字上屏；null = 未发消息，
    *  显示「新会话」）。自动压缩开新逻辑会话后归 null，按同口径重算（design §3）。 */
   let firstUserText: string | null = null;
+  /** 当前逻辑会话的有效标题（change add-session-auto-naming，design D11）：唯一来源是后端
+   *  （`harness_state.title` 快照 / `title` 事件 / 会话清单 `title`）——前端 MUST NOT 自行
+   *  生成或猜测。非空时优先于 `firstUserText` 显示（标题已受 20 码点硬上限，不带省略号）。 */
+  let sessionTitle: string | null = null;
   let streamingEl: HTMLElement | null = null;
   /** 本轮完整正文源（全部文本段的拼接）——复制源用；分段渲染不改变它。 */
   let streamingText = "";
@@ -4497,9 +4518,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     panel.style.setProperty("--lumir-hp-scale", String(hpFontSize / base));
   }
 
-  // ── 会话名（标题栏 harness 段的会话身份；design §3 口径）───────────────────
+  // ── 会话名（标题栏 harness 段的会话身份；design §3 口径 + change add-session-auto-naming
+  //    D11 的显示优先级）──────────────────────────────────────────────────────────────
   // 截断口径的单一真源在模块级（truncateSessionName / SESSION_NAME_MAX）——恢复选择器的
-  // 会话行与这里共用同一份（design §6.1）。
+  // 会话行与这里共用同一份（design §6.1）；优先级口径在 sessionNameSource 一处。
 
   /** 从消息块序列取「首条用户消息的原始问题文本」：第一个段落块的文字（XML 序列化前的
    *  原始输入——卡片与序列化标签不作名），空白折叠成单空格。 */
@@ -4509,14 +4531,35 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return para.text.replace(/\s+/g, " ").trim();
   }
 
+  /** 会话名上屏形态（标题栏与浮层行共用同一份算法，注入 D330 文案）：有效标题 → 首条用户
+   *  消息截断 → 「新会话」。标题本身 ≤20 码点（后端校验），故标题显示不带省略号。 */
+  function sessionNameShown(title: string | null, firstUserText: string | null): string {
+    const name = sessionNameSource(title, firstUserText);
+    if (name === null) return t("D330");
+    return title !== null && title.trim() !== "" ? name : truncateSessionName(name);
+  }
+
   function applySessionName(): void {
-    if (firstUserText === null) {
-      sname.textContent = t("D330"); // 未发消息：「新会话」
-      sessionButton.removeAttribute("title");
-      return;
+    const shown = sessionNameShown(sessionTitle, firstUserText);
+    sname.textContent = shown;
+    const name = sessionNameSource(sessionTitle, firstUserText);
+    if (name === null) sessionButton.removeAttribute("title");
+    else sessionButton.title = name;
+  }
+
+  /** 标题事件到达时，把已打开的历史浮层里显示「旧名」的行原地改名（design D11：不重开、
+   *  不跳位置）。后端快照 / 清单不暴露「当前活跃 session id」，故按上屏名匹配——当前会话
+   *  行的名与标题栏同名（同一口径）；匹配不到就不动（重开浮层会按新口径重取，永不改错行）。 */
+  function retitleOpenSessRows(previousShown: string, nextShown: string): void {
+    if (sessList.hidden) return;
+    for (const name of Array.from(
+      sessList.querySelectorAll<HTMLElement>(".lumir-hp-sesspop-name"),
+    )) {
+      if (name.textContent !== previousShown) continue;
+      name.textContent = nextShown;
+      name.dataset.name = nextShown;
+      name.title = nextShown;
     }
-    sname.textContent = truncateSessionName(firstUserText);
-    sessionButton.title = firstUserText;
   }
 
   function applyChip(): void {
@@ -6326,11 +6369,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }
       case "compact":
         // 自动压缩 = 开新逻辑会话：会话名按同口径重算（下一条用户消息成为新名，
-        // 未发前显示「新会话」——design §3）。
+        // 未发前显示「新会话」——design §3）。标题由紧随其后的 `title` 事件按继承口径恢复
+        //（change add-session-auto-naming D7/D11），这里先清空、不自行保留。
         firstUserText = null;
+        sessionTitle = null;
         applySessionName();
         appendCompactMarker(typeof event.summary === "string" ? event.summary : "");
         return;
+      case "title": {
+        // 会话标题即时更新（change add-session-auto-naming，design D11）：只换会话名文本与
+        // tooltip——不重渲染 transcript、不动滚动 / 焦点 / 历史清单顺序；浮层若正打开，行名
+        // 原地更新（不重开、不跳位置）。标题值只来自后端，前端不生成、不猜测。
+        const previousShown = sessionNameShown(sessionTitle, firstUserText);
+        sessionTitle =
+          typeof event.title === "string" && event.title.trim() !== "" ? event.title : null;
+        applySessionName();
+        retitleOpenSessRows(previousShown, sessionNameShown(sessionTitle, firstUserText));
+        return;
+      }
       case "done":
         turnOpen = false;
         finalizeStreamingMessage();
@@ -6596,6 +6652,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       thinkLevel = thinking.level;
       thinkSupported = thinking.supported;
     }
+    // 会话标题（change add-session-auto-naming，design D11）：`title` 缺键 = 无标题 ⇒ 回落
+    // 首条用户消息口径（不伪造）。快照是恢复 / 切 vault 回来时标题的唯一来源。
+    sessionTitle =
+      typeof state.title === "string" && state.title.trim() !== "" ? state.title : null;
     applySelChip();
     rebuildSelPopIfOpen();
     const pending = state.pending_approval as
@@ -6667,8 +6727,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     thinkingDirty = false;
     pendingThinkCreates = [];
     pendingSegSeq = null;
-    // 会话名随会话作废：未发消息前显示「新会话」，首条消息后再按口径重算。
+    // 会话名随会话作废：未发消息前显示「新会话」，首条消息后再按口径重算。标题也随会话
+    // 作废（新会话不继承；快照 / 恢复路径随后会灌入各自的标题）。
     firstUserText = null;
+    sessionTitle = null;
     applySessionName();
     // 相位一并经 finished 收口回 idle：旧会话那一轮的 done 事件可能永远到不了这里（切 vault
     //  后被过滤，见 handleEvent）——不复位的话新会话的发送钮会被一个等不到的「处理中」锁死。
@@ -7204,9 +7266,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           item.setAttribute("role", "menuitem");
           const name = document.createElement("span");
           name.className = "lumir-hp-sesspop-name";
-          const text = entry.firstUserText ?? t("D330"); // 无用户消息：回落「新会话」（同会话名口径）
-          name.textContent = truncateSessionName(text);
-          name.title = text;
+          // 会话名优先级（change add-session-auto-naming，design D11）：有效标题 → 首条用户
+          // 消息截断 → D330。与标题栏共用 sessionNameShown（同一口径、同一截断规则）；tooltip
+          // 保留未截断的原始名（标题本身 ≤20 码点，回落名给全文）。
+          const rawName = sessionNameSource(entry.title, entry.firstUserText);
+          const text = sessionNameShown(entry.title, entry.firstUserText);
+          name.textContent = text;
+          name.dataset.name = text;
+          name.title = rawName ?? text;
           item.append(name);
           if (entry.ts !== null) {
             const when = document.createElement("span");
@@ -7297,6 +7364,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         resetView();
         renderSnapshotMessages(Array.isArray(info.messages) ? info.messages : []);
         firstUserText = entry.firstUserText;
+        // 恢复后的标题 = 选中项的有效标题（后端 `SessionSummary.title` 的同一读数；恢复入口在
+        // 源有标题时把 inherit 记录写进新文件，值与此一致——design D7/D11）。
+        sessionTitle = entry.title;
         applySessionName();
         // 恢复批次收尾落在末尾（与 restoreSnapshot 末尾同一句）：`appendSnapshotMessage` 的
         // assistant 分支是裸 `transcript.append(el)`、不滚——恢复 transcript 以 assistant 收尾

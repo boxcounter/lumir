@@ -1,11 +1,12 @@
 //! `harness:event` 事件载荷（tower 钉死、与 m303 面板共用的九类契约）。
 //!
 //! 事件名固定 `harness:event`；payload 是 JSON **对象**（m303 宽容解析：若是 string 会
-//! JSON.parse 一次——直接发对象即零改动接入）。九类 type：
+//! JSON.parse 一次——直接发对象即零改动接入）。十类 type：
 //! text_chunk / tool_call / approval_request / usage / compact / done / error / aborted /
-//! reasoning_chunk
+//! reasoning_chunk / title
 //!（aborted 为 M348 新增的第八类——本轮被用户停止；reasoning_chunk 为 M362 新增的第九类——
-//! 思考文本分片，见 [`reasoning_chunk`]；既有七类的形状与语义一律未动）。
+//! 思考文本分片，见 [`reasoning_chunk`]；title 为 change add-session-auto-naming 新增的第十类
+//! ——会话标题即时更新，见 [`title`]；既有九类的形状与语义一律未动）。
 //!
 //! 九类载荷之上有**一个公共信封字段**：`vault` = 发送该事件的会话所属 vault 的根路径
 //!（M312，[`stamp_vault`] / [`ScopedSink`]）。前端据此只渲染**当前 vault** 的会话——
@@ -189,6 +190,16 @@ pub fn usage(snapshot: &UsageSnapshot) -> serde_json::Value {
     serde_json::Value::Object(readings)
 }
 
+/// `{"type":"title","title":"..."}`——会话标题即时更新（change add-session-auto-naming，
+/// design D11 的第十类）。
+///
+/// 载荷取后端 `effective_title` 的唯一读取结果（前端 MUST NOT 自行生成或猜测标题）。只改会话
+/// 身份展示（标题栏会话名 + 已打开的历史浮层行名），MUST NOT 触发 transcript 重渲染、滚动 /
+/// 焦点变化或历史清单重排。压缩 / 恢复的 `inherit` 标题也发一次（轮换后名字保持连续）。
+pub fn title(title: &str) -> serde_json::Value {
+    serde_json::json!({"type": "title", "title": title})
+}
+
 /// `{"type":"compact","summary":"..."}`（摘要可供面板展开）。
 pub fn compact(summary: &str) -> serde_json::Value {
     serde_json::json!({"type": "compact", "summary": summary})
@@ -225,7 +236,7 @@ mod tests {
         }
     }
 
-    /// 九类载荷**每一类**都盖上 vault 标识——漏一类就是一条跨 vault 泄漏路径（M312）。
+    /// 十类载荷**每一类**都盖上 vault 标识——漏一类就是一条跨 vault 泄漏路径（M312）。
     /// `ScopedSink` 是生产中唯一的装配点（`turn::run_turn`），这里驱动的是同一个装饰器。
     #[test]
     fn scoped_sink_stamps_vault_on_every_event_kind() {
@@ -241,9 +252,10 @@ mod tests {
         sink.emit(error("harness_busy", "忙"));
         sink.emit(aborted());
         sink.emit(reasoning_chunk("先读 a.md。", 0));
+        sink.emit(title("Rust 生命周期排查"));
 
         let events = seen.lock().unwrap();
-        assert_eq!(events.len(), 9);
+        assert_eq!(events.len(), 10);
         for event in events.iter() {
             assert_eq!(
                 event[VAULT_FIELD],
@@ -265,6 +277,11 @@ mod tests {
         assert_eq!(
             events[8],
             serde_json::json!({"type": "reasoning_chunk", "text": "先读 a.md。", "index": 0, "vault": "/tmp/vault-a"})
+        );
+        // 第十类（change add-session-auto-naming）：标题随信封到达面板。
+        assert_eq!(
+            events[9],
+            serde_json::json!({"type": "title", "title": "Rust 生命周期排查", "vault": "/tmp/vault-a"})
         );
     }
 

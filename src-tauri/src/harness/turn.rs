@@ -224,7 +224,7 @@ pub fn run_turn(
     // 事件信封（M312）：每个 harness:event 都带 vault 根路径（= 会话标识），前端据此只渲染
     // 当前 vault 的会话。包装放在本函数——生产路径上唯一的装配点，下面十几处发射点与
     // `run_turn_for` 都不必各带一个 vault 参数。
-    let app_sink = TauriEventSink(app);
+    let app_sink = TauriEventSink(app.clone());
     let sink = events::ScopedSink::new(&app_sink, scope.key());
     // 会话级 mock 游标（M456）：mock client 每轮重建，游标存在会话上才能让同一会话的第二轮
     // 接着上一轮往下弹（131/133 的「两轮不同 usage」依赖它）。真 provider 的 client 两方法
@@ -241,8 +241,9 @@ pub fn run_turn(
             return;
         }
     };
+    let mut title_job = None;
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run_turn_for(
+        title_job = run_turn_core(
             &sink,
             &runtime,
             &scope,
@@ -264,15 +265,28 @@ pub fn run_turn(
         let _ = runtime.with_session(&scope, |s| s.set_mock_cursor(next));
     }
     runtime.release_turn(&scope);
+    // 会话自动命名（change add-session-auto-naming，design D9）：**release_turn 之后**才起线程
+    // ——结果落盘前复核「会话空闲」，先起线程会被自己这轮的 busy 挡掉。线程只做便宜档辅助调用
+    // 与落盘，失败静默（用户面零可见错误）。
+    if let Some(job) = title_job {
+        let title_runtime = runtime.clone();
+        let title_scope = scope.clone();
+        let title_app = app.clone();
+        if let Err(e) = std::thread::Builder::new()
+            .name("lumir-harness-title".into())
+            .spawn(move || {
+                let app_sink = TauriEventSink(title_app);
+                let sink = events::ScopedSink::new(&app_sink, title_scope.key());
+                super::title::run_job(&sink, &title_runtime, &title_scope, job);
+            })
+        {
+            eprintln!("lumir: 会话标题线程启动失败：{e}");
+        }
+    }
 }
 
-/// 循环本体（client 与 sink 注入，单测直接驱动）。
-///
-/// 事件信封（vault 标识）由**调用侧包装好的 sink** 承担（`run_turn` 用 [`super::events::ScopedSink`]
-/// 包了一层）；本函数不自己盖，单测可以直接注入自己的收集器。
-///
-/// 会话存在性由 busy 协议保证（`acquire_turn` 建会话、busy 期间 `new_session` /
-/// 切 vault 都被挡），循环中途的 `with_session` 只会 Ok，忽略其 Err 不是吞错。
+/// 循环本体的单测入口：与 [`run_turn_core`] 同一实现，返回值（命名任务）丢弃——单测只断言
+/// 会话状态与事件，命名调用由单测直接驱动 `title::run_job_with_client`。
 pub fn run_turn_for(
     sink: &dyn EventSink,
     runtime: &Runtime,
@@ -282,10 +296,37 @@ pub fn run_turn_for(
     context_section: Option<String>,
     client: &mut dyn LlmClient,
 ) {
+    let _ = run_turn_core(sink, runtime, scope, config, parts, context_section, client);
+}
+
+/// 循环本体（client 与 sink 注入，单测直接驱动）。
+///
+/// 事件信封（vault 标识）由**调用侧包装好的 sink** 承担（`run_turn` 用 [`super::events::ScopedSink`]
+/// 包了一层）；本函数不自己盖，单测可以直接注入自己的收集器。
+///
+/// 会话存在性由 busy 协议保证（`acquire_turn` 建会话、busy 期间 `new_session` /
+/// 切 vault 都被挡），循环中途的 `with_session` 只会 Ok，忽略其 Err 不是吞错。
+///
+/// 返回值 = 本轮正常完成后要交给后台线程的命名任务（change add-session-auto-naming，
+/// design D1/D9）：只有走到 `done` 的轮才可能产出它；`aborted` / 错误收尾的轮恒 `None`
+/// （标题素材需要真实问答）。触发判定是纯内存的一次运算，HTTP 调用由调用方起线程。
+fn run_turn_core(
+    sink: &dyn EventSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    parts: impl Into<DeliveryInput>,
+    context_section: Option<String>,
+    client: &mut dyn LlmClient,
+) -> Option<super::title::TitleJob> {
     // user 消息入队（LLM 侧 + 面板侧 + JSONL + 上下文节记录，压缩重注入用）。
     // 上下文节由调用侧从 ContextBlock **同一次生成**并传入（装配与存储同源，M309）——
     // 不再从拼好的 message 里重解析（正文含 `\n\n[` 时会串味）。投递 parts 与面板文本是
     // 同一块序列的两个投影，由 attachments 模块同一组函数产出（design §4.2，REVIEW.md「同一语义两处真源」条）；会话侧（input 项 / JSONL）恒为引用形态，base64 展开只在 client 发送前。
+    //
+    // `turn_user_text`：本轮用户提问的**原文段**（剥掉自动注入的编辑器上下文节）——飘移信号的
+    // 判据素材（change add-session-auto-naming，design D5：标题词元 vs 用户消息词元）。
+    let mut turn_user_text = String::new();
     let enqueue = runtime.with_session(scope, |s| {
         let parts =
             super::attachments::apply_context_section(parts.into().0, context_section.as_deref());
@@ -294,6 +335,7 @@ pub fn run_turn_for(
             .as_array()
             .and_then(|content| super::attachments::panel_text_of_content(content))
             .unwrap_or_default();
+        turn_user_text = strip_context_section(&panel_text).to_string();
         s.push_input(item);
         s.push_panel(PanelMessage {
             role: "user".into(),
@@ -310,7 +352,7 @@ pub fn run_turn_for(
     });
     if let Err(e) = enqueue {
         sink.emit(events::error(&e.code, &e.message));
-        return;
+        return None;
     }
     // 中断标注的 base：本轮起点（user 消息已入队）——`abort_turn` 只在此后的消息里
     // 找 assistant 标注「已停止」，此前轮次的历史消息绝不误标（M348）。
@@ -384,7 +426,7 @@ pub fn run_turn_for(
         // 用户已表态「不再继续」，别再追错误行。
         if turn_aborted(runtime, scope) {
             abort_turn(sink, runtime, scope, panel_base, &output);
-            return;
+            return None;
         }
 
         // —— 错误路径：上下文超限可压缩重试一次，其余错误即终态 ——
@@ -404,13 +446,13 @@ pub fn run_turn_for(
                                 panel_base,
                                 &llm::TurnOutput::default(),
                             );
-                            return;
+                            return None;
                         }
                         continue;
                     }
                     Err(e) => {
                         sink.emit(events::error(&e.code, &e.message));
-                        return;
+                        return None;
                     }
                 }
             }
@@ -418,7 +460,7 @@ pub fn run_turn_for(
             let _ = runtime.with_session(scope, |s| s.jsonl().record(&error_payload));
             // SSE 事件形态**不变**（前端只读 code/message）：wire 面诊断字段只进留存。
             sink.emit(events::error(&error.code, &error.message));
-            return;
+            return None;
         }
 
         // —— 输出项入队（分片不在这里发：M369 起正文 / 思考分片都在流式路径即时转发）——
@@ -467,7 +509,7 @@ pub fn run_turn_for(
                 "harness_empty_response",
                 "模型返回了空响应（无文本也无工具调用），本轮已停止",
             ));
-            return;
+            return None;
         }
 
         if output.calls.is_empty() {
@@ -487,7 +529,7 @@ pub fn run_turn_for(
                                 panel_base,
                                 &llm::TurnOutput::default(),
                             );
-                            return;
+                            return None;
                         }
                     }
                 }
@@ -514,7 +556,7 @@ pub fn run_turn_for(
                     panel_base,
                     &llm::TurnOutput::default(),
                 );
-                return;
+                return None;
             }
             pending.push(handle_call(sink, runtime, scope, config, &tctx, call));
         }
@@ -529,10 +571,14 @@ pub fn run_turn_for(
                 panel_base,
                 &llm::TurnOutput::default(),
             );
-            return;
+            return None;
         }
     }
     sink.emit(events::done());
+    // 会话自动命名（change add-session-auto-naming，design D1/D9）：`done` 之后做一次**纯内存**
+    // 的触发判定 + 素材装配，把任务交回调用方起后台线程——轮完成路径不等 HTTP、不持会话锁发
+    // 请求（ADR 0002 §6：不进 keypress-to-paint 与轮次完成路径）。
+    super::title::job_after_turn(runtime, scope, config, &turn_user_text)
 }
 
 /// 本轮是否已被请求停止（会话在 busy 协议下必然存在；Err 按未停止处理——
@@ -1224,6 +1270,12 @@ fn compact_now(
     let usage_snapshot = runtime
         .with_session(scope, |s| s.usage())
         .unwrap_or_default();
+    // 压缩前源会话的有效标题（change add-session-auto-naming，design D7 的继承点之一）：
+    // 新文件在 `session_open` 之后追加一条 `decision=inherit`——不继承的话新文件的首条用户
+    // 消息是压缩模板文字，回落口径会把那段模板当会话名（比没有标题更糟）。
+    let inherited_title = runtime
+        .with_session(scope, |s| s.title().map(str::to_string))
+        .unwrap_or(None);
     let assembled = super::context::assemble_system(&scope.root);
     let session_id = jsonl::new_session_id();
     let open = super::session_open_payload(
@@ -1259,8 +1311,19 @@ fn compact_now(
         });
         // 文件边界即压缩留痕：压缩事件类（旧 compact kind）已废弃。
         s.rotate(assembled.text, writer);
+        // 继承标题（design D7）：新文件 `session_open` 之后紧接 `inherit` 记录。压缩发生在轮次
+        // 进行中，但新文件此刻还没有任何请求 / 响应对，记录不会插进一对之间（不变量 7）。
+        if let Some(title) = &inherited_title {
+            s.jsonl().record(&super::title::inherit_payload(title));
+            s.set_title(Some(title.clone()));
+        }
     });
     sink.emit(events::compact(&summary));
+    // 继承标题也发一次 title 事件（design D11）：面板先按 compact 重置视图，再应用续用的标题
+    // ——轮换后会话名保持连续。
+    if let Some(title) = inherited_title {
+        sink.emit(events::title(&title));
+    }
     Ok(())
 }
 
@@ -1497,6 +1560,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md 「测试污染真实环境」条：测试绝不写真实的 ~/.config/lumir）。
+        // 先取进程级 XDG 锁、再改环境（drop 逆序：XDG 复原时仍持锁，见 `xdg_test_lock`）。
+        let _xdg = crate::harness::xdg_test_lock();
         let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
         std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
 
@@ -1584,6 +1649,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md 「测试污染真实环境」条：测试绝不写真实的 ~/.config/lumir）。
+        // 先取进程级 XDG 锁、再改环境（drop 逆序：XDG 复原时仍持锁，见 `xdg_test_lock`）。
+        let _xdg = crate::harness::xdg_test_lock();
         let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
         std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
 
@@ -1782,6 +1849,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md 「测试污染真实环境」条：不写真实 ~/.config/lumir）。
+        // 先取进程级 XDG 锁、再改环境（drop 逆序：XDG 复原时仍持锁，见 `xdg_test_lock`）。
+        let _xdg = crate::harness::xdg_test_lock();
         let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
         std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
 
