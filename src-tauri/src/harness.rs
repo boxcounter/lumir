@@ -343,22 +343,27 @@ impl Runtime {
 
     /// 一轮结束（含错误路径）：释放 busy。会话对象保留（消息历史是状态）。
     /// 本轮契约的工具白名单随 busy 一起撤销——它只描述在途运行，不得漏进下一次交互发送。
+    ///
+    /// **顺序即正确性**：先撤销白名单、再放 busy。反过来的话，两步之间同 vault 的新一轮可以
+    /// `acquire_turn` 成功（busy 已清）并读到上一轮遗留的策略，把交互回合错误过滤成 cron 的
+    /// 8 件工具。结束的回合不再需要策略；新的 cron 回合会在拿到 busy 后自行覆写。
     pub fn release_turn(&self, scope: &VaultScope) {
         {
-            let mut sessions = self
+            let mut policies = self
                 .inner
-                .sessions
+                .tool_policies
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            if let Some(s) = sessions.get_mut(&scope.key()) {
-                s.set_busy(false);
-            }
+            policies.remove(&scope.key());
         }
-        self.inner
-            .tool_policies
+        let mut sessions = self
+            .inner
+            .sessions
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&scope.key());
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = sessions.get_mut(&scope.key()) {
+            s.set_busy(false);
+        }
     }
 
     /// 挂一个批准请求进当前会话（工具循环线程在锁内调用），返回请求 id。
