@@ -40,6 +40,10 @@ node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手�
 ```bash
 pnpm build
 pnpm tauri build --debug --bundles app
+# 必须补一步 ad-hoc 签名（M608 的已知约束，M612 实测复现）：tauri 的 debug bundle 只有
+# linker-signed，UN 通知授权会直接返回 denied（启动日志 `通知权限被拒绝`）——横幅根本不出现，
+# 场景在 waitForNotification 就红，形态与「点击回调坏掉」无法区分。
+codesign --force --deep --sign - src-tauri/target/debug/bundle/macos/Lumir.app
 LUMIR_ACCEPTANCE_BUNDLE="$PWD/src-tauri/target/debug/bundle/macos/Lumir.app/Contents/MacOS/lumir" \
   node scripts/acceptance/run.mjs 170 171
 ```
