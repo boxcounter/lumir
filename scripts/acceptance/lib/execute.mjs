@@ -9,7 +9,7 @@ import { appendFile, open, readdir, readFile, rm, stat, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
-import { findNode, windowBounds } from "./ax.mjs";
+import { findNode, parseNodes, windowBounds } from "./ax.mjs";
 import { fixturesDir, SCENARIO_CONFIG_KEYS, writeWindowState } from "./app.mjs";
 import { encodePng, syntheticScreenshot } from "./png.mjs";
 import { DEFAULT_MIN_DIFF, DEFAULT_PATCH, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
@@ -42,6 +42,7 @@ export const ACTIONS = new Set([
   "doubleClick", "drag", "hover", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
   "clipboardImage", "clipboardText", "note", "migrateHarnessSessions", "invalidate", "envWrite", "mockFill",
+  "waitForNotification", "clickNotification",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes"]);
 
@@ -98,6 +99,11 @@ export function checkScenario(scenario) {
   if (!scenario.id) push("缺少 id");
   if (scenario.item === undefined) push("缺少 item");
   if (scenario.open && !scenario.marker) push(`open=${scenario.open} 但没写 marker（无法判断是否打开成功）`);
+  // `requires: bundle`（M605）：通知点击类场景只能在打包实例下判——dev flavour 把通知归属写成
+  // `com.apple.Terminal`，点击响应到不了本进程（见 README「实例 flavour」）。写错值会让 runner
+  // 静默忽略这条声明、场景在 dev 下跑出一串与产品缺陷无法区分的 FAIL，故在静态校验里挡。
+  if (scenario.requires !== undefined && scenario.requires !== "bundle")
+    push(`requires 只支持 "bundle"（当前声明 ${JSON.stringify(scenario.requires)}）`);
   // 空步骤表（M543）：`steps:` 写到 front-matter 的闭合 `---` 之后时，`loadScenario` 只解析第一段
   // front-matter、整份步骤表落进 body 被丢掉；而本函数遍历的是 `(scenario.steps ?? [])`——空数组
   // 时循环体一次都不进、零问题返回，于是 `run.mjs --check` 报 PASS，真机跑批里该场景**零断言判
@@ -410,6 +416,22 @@ export function checkScenario(scenario) {
       }
       if (step.timeoutMs !== undefined && (!Number.isInteger(step.timeoutMs) || step.timeoutMs <= 0))
         push(`${at} do=waitFor 的 timeoutMs 需要正整数，实际 ${JSON.stringify(step.timeoutMs)}`);
+    }
+    // 通知横幅的等待 / 点击（change add-cron-runtime-daemon §7.7 的可点击化）：title 是唯一
+    // 必填项（= cron 任务 id，通知标题）。漏写或写错会在真机等满 timeout 才暴露，且报错形态
+    // 与「通知没投递」混在一起——静态这里先挡。body 可选，用来区分同一任务的 trigger / result
+    // 通知（两档的标题相同、正文不同）。
+    if (step.do === "waitForNotification" || step.do === "clickNotification") {
+      if (typeof step.title !== "string" || step.title.trim() === "")
+        push(`${at} do=${step.do} 需要非空字符串 title（通知标题 = cron 任务 id）`);
+      if (step.body !== undefined && typeof step.body !== "string")
+        push(`${at} do=${step.do} 的 body 需要字符串（通知正文），实际 ${JSON.stringify(step.body)}`);
+      if (step.timeoutMs !== undefined && (!Number.isInteger(step.timeoutMs) || step.timeoutMs <= 0))
+        push(`${at} do=${step.do} 的 timeoutMs 需要正整数，实际 ${JSON.stringify(step.timeoutMs)}`);
+      for (const k of Object.keys(step)) {
+        if (!["do", "name", "title", "body", "timeoutMs", "expect"].includes(k))
+          push(`${at} do=${step.do} 未知键 ${k}（拼错即静默不生效，允许：title / body / timeoutMs）`);
+      }
     }
     if (step.do === "doubleClick" && !step.target) push(`${at} do=doubleClick 需要 target（节点或 {x,y} 窗口局部坐标）`);
     // hover（M443）：与 doubleClick / drag 同一条坐标口径，`target` 是唯一必填项——漏写会让
@@ -1694,6 +1716,82 @@ async function settleEditorless(cu, pid, evidence) {
   return prev;
 }
 
+/**
+ * 系统通知中心进程 pid（change add-cron-runtime-daemon §7.7 的可点击化）。
+ *
+ * 通知横幅由 `NotificationCenter.app` 渲染，**不在 Lumir 的 AX 树 / 窗口截图里**；KimiCU 的
+ * `list_apps` 也不列后台 app，因此按进程名直接取 pid。拿不到即报错（通知链路整体不可用，
+ * 别静默把「没有通知可点」当成「点击通过」——REVIEW.md 「读不到当成空」条）。
+ */
+function notificationCenterPid() {
+  try {
+    const out = execFileSync("/usr/bin/pgrep", ["-x", "NotificationCenter"], { encoding: "utf8" }).trim();
+    const pid = Number(out.split("\n")[0]);
+    if (Number.isInteger(pid) && pid > 0) return pid;
+  } catch {
+    /* 下面统一报错 */
+  }
+  throw new Error(
+    "系统通知中心进程 NotificationCenter 不在场：无法定位可点击的通知横幅" +
+      "（通知点击链路的前置；先确认 macOS 通知服务正常）",
+  );
+}
+
+/**
+ * 轮询通知中心 AX 树，找到标题/正文都匹配的通知条目（`AXGroup`，label 形如
+ * `(Terminal, acc-cron-click, 到点)`）。
+ *
+ * 为什么必须轮询：横幅只在屏幕上停留几秒，消失后条目就不再出现在 NotificationCenter 的 AX
+ * 树里（实测：超过约 1 分钟即读不到）——先 sleep 再点会永远点空。因此「等通知」与「点通知」都
+ * 走本函数，命中即返回（第几次读取、pid 与条目原文一并进证据）。
+ */
+async function findNotificationNode(cu, { title, body, timeoutMs = 20_000, evidence, action }) {
+  const pid = notificationCenterPid();
+  const deadline = Date.now() + timeoutMs;
+  let lastText = "";
+  for (let attempt = 1; ; attempt += 1) {
+    const ax = await readAx(cu, pid);
+    lastText = ax.text;
+    const node = ax.nodes.find(
+      (n) =>
+        n.role === "AXGroup" &&
+        n.raw.includes(title) &&
+        (body === undefined || n.raw.includes(body)),
+    );
+    if (node) {
+      evidence.record({
+        kind: "note",
+        text:
+          `${action} 第 ${attempt} 次读取通知中心（pid ${pid}）命中：${node.raw}` +
+          `（title=${JSON.stringify(title)}${body === undefined ? "" : `，body=${JSON.stringify(body)}`}）`,
+      });
+      return { pid, node };
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `${action} 超时（${timeoutMs}ms / ${attempt} 次读取）：通知中心 AX 树里找不到标题含 ` +
+          `${JSON.stringify(title)}${body === undefined ? "" : `、正文含 ${JSON.stringify(body)}`} 的 ` +
+          `AXGroup。最后一份 NotificationCenter AX 树：\n${lastText.slice(0, 1500)}`,
+      );
+    }
+    await sleep(400);
+  }
+}
+
+/** `do: waitForNotification` 的入参校验（运行期 fail-loud，与 `--check` 同口径）。 */
+function notificationSpec(step, action) {
+  if (typeof step.title !== "string" || step.title.trim() === "") {
+    throw new Error(`do=${action} 需要非空的 title（通知标题 = cron 任务 id）`);
+  }
+  if (step.body !== undefined && typeof step.body !== "string") {
+    throw new Error(`do=${action} 的 body 需要字符串（通知正文：到点 / 已完成 / 运行失败）`);
+  }
+  if (step.timeoutMs !== undefined && !(Number.isFinite(step.timeoutMs) && step.timeoutMs > 0)) {
+    throw new Error(`do=${action} 的 timeoutMs 需要正数`);
+  }
+  return { title: step.title, body: step.body, timeoutMs: step.timeoutMs ?? 20_000 };
+}
+
 async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
   const p = pid();
   switch (step.do) {
@@ -2173,6 +2271,29 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       setClipboardText(step.text ?? "");
       evidence.record({ kind: "note", text: `剪贴板置纯文本：${JSON.stringify(step.text ?? "")}` });
       return step.text ?? "";
+    }
+    // 等通知横幅出现在系统通知中心（change add-cron-runtime-daemon §7.7 的可点击化）：
+    // 只等到场、不点击——给「未点击 ⇒ 零运行」这类负向断言留一个客观时点。
+    // 横幅由 NotificationCenter 进程渲染，不在 Lumir 的 AX 树里，定位见 findNotificationNode。
+    case "waitForNotification": {
+      const spec = notificationSpec(step, "waitForNotification");
+      return (await findNotificationNode(cu, { ...spec, evidence, action: "waitForNotification" })).node.raw;
+    }
+    // 点击通知横幅本体（Default action = AXPress；与真实用户点横幅同一条系统动作）。
+    // 场景 170 / 171 的点击链路（cron_click → 运行 / 恢复会话）由此可客观驱动。
+    case "clickNotification": {
+      const spec = notificationSpec(step, "clickNotification");
+      const { pid: ncPid, node } = await findNotificationNode(cu, {
+        ...spec,
+        evidence,
+        action: "clickNotification",
+      });
+      const out = await cu.click(ncPid, { index: node.index });
+      evidence.record({
+        kind: "note",
+        text: `点击通知横幅 AXPress：${node.raw}（KimiCU 自报 ${JSON.stringify(out.json ?? out.text).slice(0, 200)}）`,
+      });
+      return node.raw;
     }
     // 显式「本次运行无效」（change add-cron-runtime-daemon §7.7）：某个步骤在当前环境下无法
     // 客观判定时，用它把整场标 INVALID（退出码 2）——**不伪造 PASS**。`reason` 写进证据与

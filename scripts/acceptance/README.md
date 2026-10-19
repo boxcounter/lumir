@@ -26,6 +26,29 @@ node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手�
 前提：本机已装 KimiCU.app（`/Applications/KimiCU.app`）并授予辅助功能 + 屏幕录制。套件自身零新增
 依赖——只用 Node 内置模块 + 仓库已有的 `js-yaml`，GUI 通道复用 KimiCU 官方 MCP server。
 
+### 实例 flavour：dev（缺省）/ bundle（通知点击链路）
+
+缺省起 `pnpm tauri dev`（dev flavour）。**通知点击回调在 dev flavour 下验不到**：插件按
+`tauri::is_dev()` 把通知归属写成 `com.apple.Terminal`（`tauri-plugin-notification` 的 dev 行为），
+横幅能投递也能点，但 usernoted 把点击响应路由给 Terminal 的 bundle 身份，本进程的 `on_action`
+永远收不到（2026-10-19 实证：`Received response … app:"com.apple.Terminal" …`，Lumir 日志零
+`cron_click`）。这是 dev 通道边界，不是产品缺陷。
+
+要验通知点击（场景 170 / 171 的后半段），先构建打包实例、再用 `LUMIR_ACCEPTANCE_BUNDLE`
+指向 `.app` 内的二进制跑同一批场景：
+
+```bash
+pnpm build
+pnpm tauri build --debug --bundles app
+LUMIR_ACCEPTANCE_BUNDLE="$PWD/src-tauri/target/debug/bundle/macos/Lumir.app/Contents/MacOS/lumir" \
+  node scripts/acceptance/run.mjs 170 171
+```
+
+bundle 模式的 bundle id 是 `com.lumir.app`，点击响应回到自己的进程。**frontend 取编译期嵌入的
+`dist`**——改了 `src/` 必须先 `pnpm build` 再 bundle；窗口位置退回 `tauri.conf.json` 的构建值
+（dev 模式的 `--config` 位置覆写不生效），尺寸仍由套件钉。`run.log` / 报告里会写明本次 flavour。
+打包实例在场时同样会被起跑自检按「安装版实例」挡住——跑完即停，别用 `--keep-app` 留现场后直接重跑。
+
 ## 它做了什么
 
 1. **起真实 app**：`pnpm tauri dev`（WKWebView，非 chromium 近似）。
@@ -236,6 +259,12 @@ steps:
 ---
 ```
 
+**实例 flavour 声明（`requires: bundle`，M605）**：通知点击类场景（170 / 171）在 dev flavour 下
+物理上验不到——点击响应按 `com.apple.Terminal` 路由，本进程的 `on_action` 收不到（见上「实例
+flavour」）。这类场景在 front-matter 写 `requires: bundle`：dev 下 runner 直接把该场景标
+`INVALID`（退出码 2，附复跑指引），不跑出一串与产品缺陷无法区分的 FAIL。`--check` 只接受
+`bundle` 这一个取值（写错即报）。
+
 **步骤表必须写在 front-matter 内**（M543）：`loadScenario` 只解析**第一段** front-matter（首个闭合
 `---` 之前），写到闭合 `---` 之后的 `steps:` 整表会被丢进正文、**完全不生效**——旧实现下这种场景
 零断言判 PASS（158 的实证，M535 才补上场景本体）。三道防线现在都在：`--check` 挡「缺少 steps
@@ -350,6 +379,8 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | （省略） | — | 只做断言 |
 | `settle` | — | **真 settle**（M249）：连续两次 AX 快照**逐字节一致**才返回，用于纯断言步骤前的稳定。编辑器在位时直接复用 `lib/drive.mjs` 的 `settle()`；「还没打开文件」的两类引导态走同口径的无编辑器门版本。15s 未收敛则退回单次读取并在证据里落一条 note，**不**因此判 FAIL。语义与「外部写入后先留一拍」的口径见下节。**它判的是「界面此刻静止」，不是「异步的活儿干完了」**——要等装载 / 等按键生效请用 `waitFor`（见下条与「已知边界」） |
 | `waitFor` | `waitFor: { has: [...], not: [...] }`（至少一项，非空字符串数组）、`timeoutMs`（缺省 60000） | **轮询一个可观测终态直到成立**（M296）：每轮读一次 AX，全部 `has` 命中且全部 `not` 不命中即返回（成立时把「第几次读取成立 / 耗时」记进证据）；超时**抛错判 FAIL**（不静默放过）。判据形态与 `ax` 断言同源（`matcher()`）。**为什么必须有它**：change `vault-open-ignore-set` 把打开段移出 IPC 主线程之后，装载期间界面保持响应、AX 快照逐字节不变 ⇒ `settle` 会在装载**途中**返回（M296 首跑实测：返回时 AX 里还是旧 vault 的标签栏 + 装载指示在场，于是后面所有断言都对着旧状态判红）。场景里凡是「等某件事发生」的地方都用它，**不要**用 `sleep` 猜时长、也不要用 `settle` 冒充 |
+| `waitForNotification` | `title`（必填，通知标题 = cron 任务 id）、`body`（可选，通知正文）、`timeoutMs`（缺省 20000） | **等系统通知横幅出现**（change add-cron-runtime-daemon §7.7 的可点击化）：横幅由 `NotificationCenter.app` 渲染，不在 Lumir 的 AX 树 / 窗口截图里，因此本动作按进程名取通知中心的 pid，轮询它自己的 AX 树，命中「`AXGroup` 的 label 同时含 title 与 body」即返回（读取次数与条目原文落证据）。**横幅只在屏上停留数秒**，消失后条目不再出现在 AX 树里——「先 sleep 再点」必然点空，等待必须由本动作完成。超时抛错判 FAIL，错误里附带最后一份通知中心 AX 树（DND 抑制时只有菜单栏，可据此区分环境问题） |
+| `clickNotification` | `title`（必填）、`body`（可选）、`timeoutMs`（缺省 20000） | **点通知横幅本体**：同一套定位口径找到条目后，对它发 `AXPress`——与用户点横幅是同一条系统默认动作（会激活通知所属 app）。给「点击通知 → 应用内可断言后果」的链路用（场景 170 的 `cron_click(action=run)`、171 的 `action=open-session`）。同一任务的 trigger / result 两档通知标题相同，用 `body`（到点 / 已完成 / 运行失败）区分 |
 | `open` | `file`、`marker` | 点左栏文件名打开，等编辑器出现 marker |
 | `click` | `target: {role,name\|help\|any,nth,count,modifiers}` 或 `{x,y,count}`，两者都可带 `button`（`left`（默认）/`right`/`middle`）与 `dx`/`dy` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，那四条通道**产生不出 DOM 的 `dblclick`**（判据与修正见「已知边界」）——要双击类交互请用 `doubleClick`。**`button` 给非左键时改走坐标路径**（M244）：AX 索引路径发的是 AXPress（「按下这个元素」），产不出鼠标右键，而 DOM 的 `contextmenu` 靠真实指针事件；此时套件取该节点 bbox 的中心（`dx`/`dy` 按宽高比例偏移，默认 0.5）注入真实鼠标事件（**cursor-safe，不移动用户指针**）。因此**目标行必须落在窗口可视区内**——树/列表里靠下的条目 AX 报的是内容坐标（实测 40 个 fixture 时 y≈1300 而窗口高 800），出视口时套件按错因报错（「右键目标不在可视区内…请先用 open / 滚动把它带进视口」），不静默；另外该路径要求快照带截图，取不到时同样报错不静默。**`modifiers`（M379）**：给 `["meta"]`（或 `cmd`/`control`/`ctrl`/`shift`/`alt`/`option`）时改走 swift + CGEvent 通道投递**带修饰键 flags 的鼠标点击**（DOM 侧 `metaKey` 等为真，⌘-Click 跟随链接这类路径因此可在真机验）——KimiCU 的 click 没有修饰键参数。该路径与 `doubleClick` 同代价：**会移动真实光标、要求目标窗口在前台**，坐标用 `target` 的**窗口局部点**（`{x,y}` 也按这个空间给），并支持 `settleMs`（缺省 600）。**该通道恒为左键**（swift 侧的点击事件写死 `.left`）：`modifiers` 与 `button` **不能同写**，`--check` 会挡；要右键就单独写 `button: right` |
 | `clickNodeText` | `text` | 点 value/title **逐字等于** `text` 的节点（比 `name` 的正则更死板） |

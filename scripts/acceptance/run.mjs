@@ -21,6 +21,7 @@ import { CuClient } from "./lib/cu.mjs";
 import {
   acceptPort,
   assertSafeTargets,
+  bundleBinary,
   copyFixture,
   launchApp,
   prepareSeed,
@@ -430,6 +431,11 @@ async function main() {
     log("  注意：端口仍可能与别的跑批相撞，真并行请同时覆写 LUMIR_ACCEPTANCE_PORT\n");
   }
   await preflight();
+  log(
+    bundleBinary()
+      ? `实例 flavour：bundle（${bundleBinary()}；通知点击回调按 com.lumir.app 路由）`
+      : "实例 flavour：dev（pnpm tauri dev；通知点击回调按插件 dev 行为归属 com.apple.Terminal，点击链路验不到）",
+  );
   log(`验收 vault：${targets.vault}`);
   log(`隔离配置：${targets.envHome}（用户的 ~/.config/lumir 全程不读写）`);
   log(`证据目录：${root}（git 外）`);
@@ -464,6 +470,16 @@ async function main() {
     // 2），不按产品判红记（退出码 1）。越过 `runScenario` 之后，异常才是场景自己的事。
     let setupPhase = true;
     try {
+      // 场景声明的实例 flavour（M605）：`requires: bundle` 的通知点击类场景在 dev flavour 下
+      // 物理上验不到（点击响应按 `com.apple.Terminal` 路由，本进程收不到）——直接判 INVALID，
+      // 不让它跑成一串「cron_click 零条」的产品 FAIL。复跑条件写进证据与提示。
+      if (scenario.requires === "bundle" && !bundleBinary()) {
+        throw new InfraError(
+          `场景 ${scenario.id} 声明 requires: bundle（通知点击链路），但本次是 dev flavour——` +
+            "按 README「实例 flavour」一节用 LUMIR_ACCEPTANCE_BUNDLE 指向打包实例后复跑；" +
+            "本次读数不用于判产品缺陷",
+        );
+      }
       await resetVault();
       // 场景 front-matter 声明的 vault fixture 必须在**起 app 之前**落进 vault（M516）。
       // `fixtures:` 是场景的**初始状态**声明：`.md` 由 `resetVault` 铺，非 `.md`

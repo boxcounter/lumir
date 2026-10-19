@@ -41,6 +41,12 @@ steps:
   - name: 右键 → 原生菜单 Paste
     do: click
     target: { role: AXTextArea, button: right }
+    # 与 112 同一条正观测（M605 场景修复）：右键到菜单上屏有一拍，直接进下一步点 Paste 会
+    # 在菜单尚未进 AX 树时读空（2026-10-19 复跑实测：「找不到可点节点 AXMenuItem」）。
+    # 这一步先等菜单项在场，下一步再点。
+    expect:
+      - label: 原生菜单出现且 Paste 项在场
+        ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
 
   - name: 点 Paste
     do: click

@@ -52,7 +52,8 @@ steps:
 
 **通知横幅的验证边界（§7.7，如实登记）**：横幅属系统通知中心进程，不在 Lumir 的 AX 树里，
 也不在 Lumir 窗口截图内（`shot` 拍到的是应用窗口）。本场景的投递判据是**应用日志**
-（`cron_notified` 在 `deliver_notification` 返回成功后写入）；横幅的像素级证据在本轮真机环境
-下不可得——机器处于专注模式（DND），usernoted 日志显示 `muted by DND suppression: delay`
-（通知已进入通知中心存储、横幅被抑制）。点击链路因此无法自动化，场景 170 / 171 按 §7.7
-标 INVALID，不伪造 PASS。复跑条件：关闭专注模式后重跑 169–171，`shot` 才能拍到横幅。
+（`cron_notified` 在 `deliver_notification` 返回成功后写入），不依赖横幅像素。
+
+点击链路已不再靠人工：场景 170 / 171 用 `do: waitForNotification` / `do: clickNotification`
+直接读 `NotificationCenter.app` 的 AX 树并对其条目发 `AXPress`（2026-10-19 起，专注模式关闭后
+可复跑）。本场景（只投递、不点击）保持日志判据，不用横幅是否上屏作为 PASS/FAIL 条件。
