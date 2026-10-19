@@ -492,12 +492,6 @@
 | D505 | agent 面板 · 触顶原因词 | 作者 | 接口错误 | API error | M590：`stopped_by = error` 的词。消费点 `subrunStoppedByWord`。 |
 | D506 | agent 面板 · 按模型用量区 | 作者 | 子任务用量（按模型） | Subtask usage (by model) | M590（tasks §10.6 / design §9.1）：子运行用量分桶的区标题。父会话控制行读数不掺这些数字（两处各说各的才不误导）。消费点 `subrunUsageRows` 的渲染。 |
 | D507 | agent 面板 · 按模型用量行 | 作者 | 输入 {input}（缓存 {cached}）· 输出 {output} · {segments} 段 | Input {input} (cached {cached}) · Output {output} · {segments} segments | M590：单个模型桶的读数行（`{input}` / `{cached}` / `{output}` 是格式化后的 token 数，`{segments}` = 段数）。消费点 `subrunUsageRows`。 |
-| D508 | agent 面板 · 子代理清单 | 作者 | 子代理清单 · {count} | Subagents · {count} | M590（design §19.4）：只读折叠清单的标题，`{count}` = 生效定义数。消费点清单区渲染。 |
-| D509 | agent 面板 · 子代理清单行 | 作者 | {count} 件工具 · 模型 {model} | {count} tools · Model {model} | M590：清单行的工具数与模型读数（模型缺省 = `inherit`）。消费点清单区渲染。 |
-| D510 | agent 面板 · 来源标记 | 作者 | 内建 | Built-in | M590（design §19.4）：来源标记之一（内建 `explore`）。同一词也用于 D513 的覆盖说明。消费点清单区渲染。 |
-| D511 | agent 面板 · 来源标记 | 作者 | 用户级 | User | M590：来源标记之一（`<config_dir>/agents`）。消费点清单区渲染。 |
-| D512 | agent 面板 · 来源标记 | 作者 | vault 级 | Vault | M590：来源标记之一（`<vault>/.lumir/agents`）。消费点清单区渲染。 |
-| D513 | agent 面板 · 覆盖说明 | 作者 | 覆盖了{source}的同名定义 | Overrides the same-named {source} definition | M590（design §19.4）：同名覆盖时行内注明被覆盖的层（`{source}` 取 D510–D512）。来源标由后端从定义合并的 warning 解析（`harness_subagent_catalog` 的 `override_from`），前端不推导。消费点清单区渲染。 |
 | D514 | agent 面板 · 后台完成通知 | 作者 | 后台任务完成 · {agent} | Background task finished · {agent} | M590（tasks §10.4 / design §19.3）：单条后台完成通知的头部——与用户消息视觉区分（左侧色条 + 标签）。`{agent}` = 子代理名。消费点 `noticeHeadline`。 |
 | D515 | agent 面板 · 后台完成通知 | 作者 | {count} 个后台任务完成 · 已合并为一条通知 | {count} background tasks finished · merged into one notice | M590（design §19.3）：同一合并窗口 / 同一批次的多条通知合并成一条时的头部。消费点 `noticeHeadline`。 |
 | D516 | agent 面板 · 后台完成通知 | 作者 | 详情见任务面板 | Details in the tasks panel | M590：通知正文末尾的详情指引（通知只给 agent / description / 摘要首行，细节在任务面板与审计流水）。消费点通知渲染。 |
@@ -512,7 +506,7 @@
 
 **编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D522**（M590 的子代理任务面板文案，D477–D522 同批；D476 由并发的 M593 cron 运行契约错误信封先取，本批从 D477 起接续以避免撞号）。
 
-**不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
+**不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377、D508–D513。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
 
 **分配记录**（批 → D 区间；未登记的批按「只追加」接末位，编号碰撞裁决见 `docs/backlog.md`）：
 
@@ -578,6 +572,7 @@
 - M577 D469–D475 图片语义命名：成功 toast / 撤销动作 / 部分引用未更新 / 撤销成功 + 三条撤销错误信封（接末位）
 - M590 D477–D522 子代理任务面板：任务区计数与状态词 / 行详情 / 触顶提示行 / 按模型用量 / 子代理清单与覆盖说明 / 后台完成通知（D476 由 M593 先取，本批从 D477 起）
 - M593 D476 cron 运行契约校验的错误信封（接 D475 的下一位；D477–D522 由 M590 接续，避免撞号）
+- M607 D508–D513 子代理清单退场（**未取新号**）：编号停用、不复用——面板「Subagents 常驻栏」按 Alex 2026-10-19 裁决「彻底去掉，只留任务区」删除，清单专用文案随消费者一并切掉；任务区文案（D477–D507、D514–D522）不变
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 

@@ -1507,7 +1507,7 @@ const COPY_TABLE = {
   //   D492–D494 自动回合触顶提示行的两种文案与「已继续」；
   //   D495–D500 行详情（模型 / 轮次步数 / 用时 / 触顶原因 / 摘要 / 最近一步）；
   //   D501–D505 触顶原因词（stopped_by 的值域，前端只做词映射）；
-  //   D506–D507 按模型用量区；D508–D513 子代理清单（来源与覆盖说明）；
+  //   D506–D507 按模型用量区；
   //   D514–D517 后台完成通知（单条 / 合并 / 详情指引 / 点名发起者）。
   D477: {
     zh: "任务",
@@ -1632,30 +1632,6 @@ const COPY_TABLE = {
   D507: {
     zh: "输入 {input}（缓存 {cached}）· 输出 {output} · {segments} 段",
     en: "Input {input} (cached {cached}) · Output {output} · {segments} segments",
-  },
-  D508: {
-    zh: "子代理清单 · {count}",
-    en: "Subagents · {count}",
-  },
-  D509: {
-    zh: "{count} 件工具 · 模型 {model}",
-    en: "{count} tools · Model {model}",
-  },
-  D510: {
-    zh: "内建",
-    en: "Built-in",
-  },
-  D511: {
-    zh: "用户级",
-    en: "User",
-  },
-  D512: {
-    zh: "vault 级",
-    en: "Vault",
-  },
-  D513: {
-    zh: "覆盖了{source}的同名定义",
-    en: "Overrides the same-named {source} definition",
   },
   D514: {
     zh: "后台任务完成 · {agent}",

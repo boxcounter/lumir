@@ -96,7 +96,6 @@ import {
   harnessSend,
   harnessSetThinkingEffort,
   harnessState,
-  harnessSubagentCatalog,
   harnessSubagentContinue,
   harnessSubagentStop,
   harnessWriteImage,
@@ -3288,79 +3287,6 @@ export function subrunUsageRows(
   return rows;
 }
 
-/** 子代理清单的视图（`harness_subagent_catalog` 的返回；宽容解析）。 */
-export interface SubagentCatalogEntry {
-  name: string;
-  description: string;
-  tools: number;
-  /** `null` = inherit（跟随会话模型）。 */
-  model: string | null;
-  background: boolean;
-  source: "builtin" | "user" | "vault";
-  /** 同名覆盖时被覆盖的层（无覆盖为 null）。 */
-  overrideFrom: string | null;
-}
-
-export interface SubagentCatalogView {
-  enabled: boolean;
-  definitions: SubagentCatalogEntry[];
-  warnings: string[];
-}
-
-/** 清单命令的返回解析：形状不认识返回 null（面板不显示清单，不猜）。 */
-export function parseSubagentCatalog(json: string): SubagentCatalogView | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(json);
-  } catch {
-    return null;
-  }
-  if (typeof value !== "object" || value === null) return null;
-  const root = value as Record<string, unknown>;
-  if (typeof root.enabled !== "boolean" || !Array.isArray(root.definitions)) return null;
-  const definitions: SubagentCatalogEntry[] = [];
-  for (const raw of root.definitions) {
-    if (typeof raw !== "object" || raw === null) continue;
-    const item = raw as Record<string, unknown>;
-    if (typeof item.name !== "string") continue;
-    const source = item.source;
-    if (source !== "builtin" && source !== "user" && source !== "vault") continue;
-    definitions.push({
-      name: item.name,
-      description: typeof item.description === "string" ? item.description : "",
-      tools: typeof item.tools === "number" && Number.isFinite(item.tools) ? item.tools : 0,
-      model: typeof item.model === "string" ? item.model : null,
-      background: item.background === true,
-      source,
-      overrideFrom:
-        item.override_from === "builtin" ||
-        item.override_from === "user" ||
-        item.override_from === "vault"
-          ? item.override_from
-          : null,
-    });
-  }
-  const warnings = Array.isArray(root.warnings)
-    ? root.warnings.filter((entry): entry is string => typeof entry === "string")
-    : [];
-  return { enabled: root.enabled, definitions, warnings };
-}
-
-/** 来源标（内建 / 用户级 / vault 级）——清单行与覆盖说明共用一处。 */
-export function subagentSourceWord(
-  source: "builtin" | "user" | "vault",
-  lang: Language = currentLanguage(),
-): string {
-  switch (source) {
-    case "builtin":
-      return t("D510", undefined, lang);
-    case "user":
-      return t("D511", undefined, lang);
-    case "vault":
-      return t("D512", undefined, lang);
-  }
-}
-
 /** 后台完成通知的一个 run 行（`notice` 事件的 `runs[]`）。 */
 export interface NoticeRunView {
   runId: string;
@@ -3767,25 +3693,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   taskUsage.hidden = true;
   taskArea.append(taskAlert, taskHead, taskList, taskUsage);
 
-  // 子代理清单（只读折叠列表，design §19.4）：名字 / 描述 / 工具数 / 模型 / 来源；
-  // 同名覆盖只显示生效的一份并注明被覆盖的层。`enabled=false` 时整块不出现。
-  const catalogArea = document.createElement("section");
-  catalogArea.className = "lumir-tpc";
-  catalogArea.hidden = true;
-  const catalogHead = document.createElement("button");
-  catalogHead.type = "button";
-  catalogHead.className = "lumir-tpc-head";
-  const catalogTitle = document.createElement("span");
-  const catalogChev = document.createElement("span");
-  catalogChev.className = "lumir-tpc-chev";
-  catalogChev.setAttribute("aria-hidden", "true");
-  catalogChev.textContent = "▾"; // i18n-exempt: glyph（下指 chevron 图形，非文案）
-  catalogHead.append(catalogTitle, catalogChev);
-  const catalogList = document.createElement("div");
-  catalogList.className = "lumir-tpc-list";
-  catalogArea.append(catalogHead, catalogList);
-
-  panel.append(transcript, progress, taskArea, catalogArea, composerArea);
+  panel.append(transcript, progress, taskArea, composerArea);
 
   // ── 状态 ─────────────────────────────────────────────────────────────────
   /** 面板挂载的 pane 槽（null = 收起/未开）。pane 在场与否由装配层管，面板只记录挂在哪。 */
@@ -3946,10 +3854,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let subrunUsage: unknown = null;
   /** transcript 里 `task` 工具行的绑定表（runId ↔ 行；历史任务详情的挂点）。 */
   const taskRowEntries: TaskRowEntry[] = [];
-  /** 子代理清单（`harness_subagent_catalog`；null = 尚未拉到 / 解析失败——清单区隐藏）。 */
-  let catalogView: SubagentCatalogView | null = null;
-  /** 清单折叠态（默认收起：清单是发现面，不是常驻读数）。 */
-  let catalogOpen = false;
   /** 快照刷新世代（任务区状态与 transcript 分开刷新：只应用读数类字段，不重放消息）。 */
   let taskStateSeq = 0;
   /** 当前轮次的工具清单块（M351 还原原型屏 4 清单形态，change harness-pane-visual-fidelity
@@ -7243,7 +7147,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   //
   // 渲染是**差量**的：行骨架建一次，读数就地更新（重建会丢批准卡原因框里正在输入的文字）；
   // 批准卡按 id 建一次、决策后移除。数据面全部来自事件与快照（`subruns` / `autoWake` /
-  // `subrunUsage` / `catalogView`），渲染点不推导状态（状态词与终态判据走纯映射）。
+  // `subrunUsage`），渲染点不推导状态（状态词与终态判据走纯映射）。
 
   /** 行图标：脉冲点（运行中）/ 暂停（等待批准、触顶）/ 对勾（完成）/ 叉（失败、停止）。 */
   function taskIcon(status: SubrunStatus): HTMLElement {
@@ -7671,16 +7575,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   function renderTaskArea(): void {
-    const enabled = catalogView === null ? true : catalogView.enabled;
+    // 子代理关停由后端保证：`[harness.subagents].enabled = false` 时 `task` 工具不注册，
+    // 也就没有 run 事件与分桶读数——任务区自然不出现，前端不再另读开关。
     const live = subruns.filter(isLiveSubrun);
     const headline = taskHeadline(subruns);
     const alertText = autoWakeAlertText(autoWake.blocked, autoWake.max, wakeContinued);
     // 用量区是快照读数（恢复后没有 run 事件可回放）：只要 `subrun_usage` 有内容就给它一个
     // 出口，否则重启恢复后面板整块不出现、分桶读数无处可见（M590 真机场景 192 现场）。
     const usageRows = live.length === 0 ? subrunUsageRows(subrunUsage) : [];
-    const show =
-      enabled &&
-      (live.length > 0 || headline !== "" || alertText !== null || usageRows.length > 0);
+    const show = live.length > 0 || headline !== "" || alertText !== null || usageRows.length > 0;
     taskArea.hidden = !show;
     if (!show) return;
     taskAlert.hidden = alertText === null;
@@ -7725,51 +7628,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         }),
       );
     }
-  }
-
-  function renderCatalog(): void {
-    const visible = catalogView !== null && catalogView.enabled;
-    catalogArea.hidden = !visible;
-    if (!visible || catalogView === null) return;
-    catalogTitle.textContent = t("D508", { count: catalogView.definitions.length });
-    catalogHead.setAttribute("aria-expanded", String(catalogOpen));
-    catalogArea.classList.toggle("is-open", catalogOpen);
-    if (!catalogOpen) {
-      catalogList.replaceChildren();
-      return;
-    }
-    catalogList.replaceChildren(
-      ...catalogView.definitions.map((definition) => {
-        const item = document.createElement("div");
-        item.className = "lumir-tpc-item";
-        const top = document.createElement("div");
-        top.className = "lumir-tpc-top";
-        const name = document.createElement("span");
-        name.className = "lumir-tpc-name";
-        name.textContent = definition.name;
-        const source = document.createElement("span");
-        source.className = "lumir-tpc-src";
-        source.textContent = subagentSourceWord(definition.source);
-        top.append(name, source);
-        const desc = document.createElement("div");
-        desc.className = "lumir-tpc-desc";
-        desc.textContent = definition.description;
-        const meta = document.createElement("div");
-        meta.className = "lumir-tpc-meta";
-        meta.textContent = t("D509", { count: definition.tools, model: definition.model ?? "inherit" });
-        item.append(top, desc, meta);
-        // 同名覆盖：只显示生效的一份，行内注明被覆盖的层（design §19.4）。
-        if (definition.overrideFrom !== null) {
-          const override = document.createElement("div");
-          override.className = "lumir-tpc-override";
-          override.textContent = t("D513", {
-            source: subagentSourceWord(definition.overrideFrom as "builtin" | "user" | "vault"),
-          });
-          item.append(override);
-        }
-        return item;
-      }),
-    );
   }
 
   /** 快照里的读数类字段（任务区专用刷新）：只吃 `auto_wake` / `subrun_usage` /
@@ -7840,28 +7698,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       .catch(() => {});
   }
 
-  /** 子代理清单拉取（挂载 / 切 vault / 启用状态可能变化时）：失败按「读不到」隐藏清单区，
-   *  不伪造条目。 */
-  function fetchCatalog(): void {
-    void harnessSubagentCatalog()
-      .then((json) => {
-        catalogView = parseSubagentCatalog(json);
-        renderTaskArea();
-        renderCatalog();
-      })
-      .catch(() => {
-        catalogView = null;
-        renderCatalog();
-      });
-  }
-
   taskHead.addEventListener("click", () => {
     taskCollapsed = !taskCollapsed;
     renderTaskArea();
-  });
-  catalogHead.addEventListener("click", () => {
-    catalogOpen = !catalogOpen;
-    renderCatalog();
   });
   taskAlertButton.addEventListener("click", () => {
     harnessSubagentContinue()
@@ -8046,9 +7885,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           model: event.model,
           background: event.background === true,
         });
-        // 定义在这轮开头扫描过：清单可能已变（热加载 / 新建定义），顺带重取一次——
-        // 清单区因此始终显示模型此刻看到的清单。
-        fetchCatalog();
         {
           const run = subruns.find((item) => item.runId === event.run_id);
           if (run !== undefined) refreshTaskRow(run);
@@ -8142,8 +7978,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         turnOpen = false;
         finalizeStreamingMessage();
         applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
-        // 回合结束重取清单：定义在回合间可能被编辑（design §4.7 的热加载口径），面板随之刷新。
-        fetchCatalog();
         return;
       case "aborted": {
         turnOpen = false;
@@ -8525,8 +8359,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     autoWake = { chain: 0, max: autoWake.max, blocked: null };
     subrunUsage = null;
     renderTaskArea();
-    catalogView = null;
-    renderCatalog();
     streamingEl = null;
     currentSeg = null;
     textSegments = [];
@@ -8593,7 +8425,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     renderComposer([{ kind: "paragraph", text: "" }], null);
     refreshChip();
     fetchSnapshot();
-    fetchCatalog();
     void restoreDraft();
   }
 
@@ -8640,7 +8471,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 发送时才会报「发送失败」。挂载这一次拉取在「后端已经开着某个 vault」时会被快照准入
   // 判据挡下（此时 currentVault 还是 null），随后那次 vaultChanged 的拉取承担首帧渲染。
   fetchSnapshot();
-  fetchCatalog();
 
   // ── 发送与新会话 ─────────────────────────────────────────────────────────
   function send(): void {
@@ -9196,7 +9026,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         refreshUsageState();
         // 恢复出的会话若带子运行分桶（M589 的恢复重算），任务区的用量区要跟着出来——
         // 恢复命令只回放消息，不含读数快照（M590 真机场景 192：恢复后用量区整块缺席）。
-        fetchCatalog();
         refreshTaskState();
       })
       .catch((e: unknown) => appendError(t("D348", { message: errorText(e) })));
@@ -9273,9 +9102,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       mount.append(panel);
       panel.hidden = false;
       refreshChip();
-      // 清单按「打开面板这一刻」的磁盘状态重取（定义是每回合扫描的文本文件；挂载期可能是
-      // 很久以前的那次拉取——185 / 187 的真机现场：面板打开后才写的定义在清单里缺失）。
-      fetchCatalog();
       // when 的 30s 低频刷新：只在挂载期间走表（摘下即清，重挂重建）。
       if (whenTimer !== null) window.clearInterval(whenTimer);
       whenTimer = window.setInterval(refreshWhoLines, 30_000);

@@ -624,8 +624,8 @@ SHALL 限制会话级同时运行的 run 数；超出时后台委派回 `concurr
   文案），并提供「继续」入口；提示行 SHALL 与 run 行视觉区分，MUST NOT 冒充一个任务。
 - `enabled = false` 或没有任何子运行任务时，任务区 MUST NOT 出现（空态不占位）。
 
-前端 SHALL 提供只读的子代理清单（名字、description、工具数、模型、来源：内建 / vault / 用户），
-MUST NOT 提供定义编辑界面。
+前端 MUST NOT 提供子代理清单区（名字 / description / 工具数 / 模型 / 来源）：该区已按 Alex
+2026-10-19 裁决「彻底去掉，只留任务区」撤销。MUST NOT 提供定义编辑界面。
 
 子运行的批准请求 SHALL 在任务面板中对应 run 的行内呈现，卡片 SHALL 点名发起者（agent 与
 description）；待批时该行 SHALL 自动展开，面板标题 SHALL 显示待批数量。拒绝后卡片 SHALL 收敛为终态

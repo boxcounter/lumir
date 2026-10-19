@@ -2,7 +2,7 @@
 //   - 事件 → 任务行状态的归约（started / progress / step / finished；未知 run 与未知终态丢弃）；
 //   - 批准关联（挂起 → 等待批准；决策 / 收回 → 回到运行中）；
 //   - 标题计数与「全部收敛后的一行摘要」、触顶提示行两种文案、按模型用量读数；
-//   - 子代理清单与通知载荷的宽容解析（形状不认识即不显示 / 原文兜底，不伪造）。
+//   - 通知载荷的宽容解析（形状不认识即不显示 / 原文兜底，不伪造）。
 // 合同：design §19 的可见面口径 + tasks §10.1–§10.8。
 // 这一层是零 DOM 环境（tests/unit/README.md）：只驱动 src/harness-panel.ts 导出的纯函数；
 // 行渲染与 AX 判据归真机场景 §8.19 / §8.21。
@@ -19,7 +19,6 @@ import {
   noticeRunsOf,
   parseApprovalSource,
   parseNoticeDisplayText,
-  parseSubagentCatalog,
   reduceSubruns,
   subrunStatusOf,
   subrunStatusWord,
@@ -245,28 +244,6 @@ test("formatDuration：秒 / 分秒 / 时分的短串", () => {
   assert.equal(formatDuration(72_000), "1m12s");
   assert.equal(formatDuration(3_900_000), "1h05m");
   assert.equal(formatDuration(-5), "0s");
-});
-
-test("parseSubagentCatalog：宽容解析（坏项丢弃、override 层标、warning 保序）", () => {
-  const parsed = parseSubagentCatalog(
-    JSON.stringify({
-      enabled: true,
-      definitions: [
-        { name: "explore", description: "只读探索", tools: 3, model: null, background: false, source: "builtin", override_from: null },
-        { name: "research", description: "调研", tools: 4, model: "mock-fast", background: true, source: "vault", override_from: "user" },
-        { name: "bad", description: "来源不认识", tools: 1, model: null, source: "elsewhere" },
-        "not-an-object",
-      ],
-      warnings: ["w1", 42],
-    }),
-  );
-  assert.ok(parsed !== null);
-  assert.equal(parsed.enabled, true);
-  assert.deepEqual(parsed.definitions.map((entry) => entry.name), ["explore", "research"]);
-  assert.equal(parsed.definitions[1]?.overrideFrom, "user");
-  assert.deepEqual(parsed.warnings, ["w1"]);
-  assert.equal(parseSubagentCatalog("not json"), null);
-  assert.equal(parseSubagentCatalog(JSON.stringify({ definitions: [] })), null);
 });
 
 test("通知：单条点名 agent / 多条说合并；正文行带状态与摘要；展示串可还原", () => {
