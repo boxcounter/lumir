@@ -17,7 +17,7 @@
 #
 # 输出：`PACK PASS|FAIL <检查项>`；跳过的步骤打 `PACK SKIP <检查项>`（不计入 PASS/FAIL 行）。
 # 结尾 `PACK RESULT: PASS|FAIL`，与 scripts/gate.sh 的 `GATE RESULT` 同族。
-# 退出码：0 = 闸通过（--check-only）/ 打包成功；1 = 闸拒绝或打包失败；2 = 环境缺命令或参数错误。
+# 退出码：0 = 闸通过（--check-only）/ 打包成功；1 = 闸拒绝或打包失败；2 = 环境缺命令。
 #
 # `.local/` 是 gitignore 的本地目录，闸语义是「本机这个版本已经交付过」，所以证据目录查的是
 # 主仓 checkout 的 `.local`（worktree 里跑时经 `git rev-parse --git-common-dir` 指回主仓，
