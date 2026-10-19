@@ -20,6 +20,24 @@ export function acceptPort() {
   return Number(process.env.LUMIR_ACCEPTANCE_PORT ?? 1430);
 }
 
+/**
+ * **打包实例模式**（M605）：`LUMIR_ACCEPTANCE_BUNDLE=<…>/Lumir.app/Contents/MacOS/lumir` 时，
+ * 套件不再起 `pnpm tauri dev`，而是直接执行打包二进制。
+ *
+ * 为什么需要这条通道（dev flavour 的通知点击路由，2026-10-19 实证）：插件在 `tauri::is_dev()`
+ * 时把通知归属写成 `com.apple.Terminal`（`tauri-plugin-notification` 的 dev 行为）。横幅能投递、
+ * 也能点，但 usernoted 记录 `Received response … app:"com.apple.Terminal" … foreground: true`
+ * ——系统把点击响应路由给 **Terminal** 的 bundle 身份，本进程的 `on_action` 回调永远收不到
+ * ⇒ `cron_click` 不产生。这是 dev flavour 的通道边界，不是产品缺陷；打包实例的 bundle id 是
+ * `com.lumir.app`，响应回到自己的进程（change add-cron-runtime-daemon §4.7 的兜底口径）。
+ *
+ * 返回 null 表示走原来的 `pnpm tauri dev`（缺省，所有既有场景行为不变）。
+ */
+export function bundleBinary() {
+  const bin = process.env.LUMIR_ACCEPTANCE_BUNDLE;
+  return bin ? path.resolve(bin) : null;
+}
+
 export function fixturesDir() {
   return path.join(repoRoot(), "scripts/acceptance/fixtures");
 }
@@ -877,6 +895,7 @@ function spawnSyncText(cmd, args) {
  */
 export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logFile } = {}) {
   const root = repoRoot();
+  const bundle = bundleBinary();
   const conf = JSON.parse(await readText(path.join(root, "src-tauri", "tauri.conf.json")));
   const baseWindow = conf.app?.windows?.[0];
   if (!baseWindow) {
@@ -909,16 +928,34 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
   // 本场景 seed 的形状，上一实例在复位之后、退出之前写回的一律覆盖掉。场景内的 `do: restart`
   // 复用本函数，但那时武装标记已用掉，不动会话——重启要的正是盘上的布局。
   await applySessionReset();
-  const child = spawn(
-    "pnpm",
-    ["tauri", "dev", "--config", JSON.stringify(config)],
-    {
+  // 打包实例模式（M605）：直接执行 .app 内的二进制——不走 tauri CLI、不写 `--config` 覆写
+  // （窗口位置退回 tauri.conf 的构建值；本模式下首启的 `apply_startup_size` 仍会让窗口落在
+  // 屏内，`pinWindowSize` 照常钉尺寸）。frontend 由 custom-protocol 从编译期嵌入的 dist 提供。
+  let child;
+  if (bundle) {
+    if (!(await exists(bundle))) {
+      throw new InfraError(
+        `打包实例不存在：${bundle}——先 \`pnpm tauri build --debug --bundles app\`（或改用 dev flavour：不设 LUMIR_ACCEPTANCE_BUNDLE）`,
+      );
+    }
+    child = spawn(bundle, [], {
       cwd: root,
-      detached: true, // 自成进程组：vite/cargo/app 一并收尸
+      detached: true, // 自成进程组：app 与它拉起的子进程一并收尸
       env: { ...process.env, XDG_CONFIG_HOME: envHome() },
       stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+    });
+  } else {
+    child = spawn(
+      "pnpm",
+      ["tauri", "dev", "--config", JSON.stringify(config)],
+      {
+        cwd: root,
+        detached: true, // 自成进程组：vite/cargo/app 一并收尸
+        env: { ...process.env, XDG_CONFIG_HOME: envHome() },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+  }
 
   let out = "";
   const chunks = [];
@@ -939,15 +976,19 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
     while (Date.now() < deadline) {
       if (/^LUMIR_READY /m.test(out)) return true;
       if (child.exitCode !== null)
-        throw new InfraError(`pnpm tauri dev 提前退出（code=${child.exitCode}）：\n${out.slice(-2000)}`);
+        throw new InfraError(
+          `${bundle ? "打包实例" : "pnpm tauri dev"} 提前退出（code=${child.exitCode}）：\n${out.slice(-2000)}`,
+        );
       await sleep(500);
     }
     throw new InfraError(`等待 LUMIR_READY 超时（${timeoutMs}ms）：\n${out.slice(-2000)}`);
   })();
 
   await ready;
-  const pid = await waitForPid(child.pid, 30_000);
-  return { child, pid, output: () => chunks.join("") };
+  // 打包模式：spawn 的就是 app 本体，pid 已知；dev 模式的进程组里还有 pnpm/vite/cargo，
+  // 需要等到组内出现 `target/debug/lumir`。
+  const pid = bundle ? child.pid : await waitForPid(child.pid, 30_000);
+  return { child, pid, flavour: bundle ? "bundle" : "dev", output: () => chunks.join("") };
 }
 
 async function waitForPid(pgid, timeoutMs) {

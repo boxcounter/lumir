@@ -242,6 +242,32 @@ test("不误伤：/…/ 形态、裸正则源字段、字面反斜杠都不判�
   assert.deepEqual(checkScenario(scenario(steps, { marker: "第 15 章 概览\\s*正文" })), []);
 });
 
+test("通知动作与 requires: bundle：写错键在静态校验期就报（M605）", () => {
+  const errs = (steps, extra = {}) => checkScenario({ id: "notif", item: 0, steps, ...extra });
+  assert.ok(
+    errs([{ name: "缺 title", do: "waitForNotification" }]).some((p) => p.includes("非空字符串 title")),
+    "waitForNotification 缺 title 应报 problem",
+  );
+  assert.ok(
+    errs([{ name: "坏 body", do: "clickNotification", title: "t", body: 5 }]).some((p) => p.includes("body 需要字符串")),
+    "body 类型错应报 problem",
+  );
+  assert.ok(
+    errs([{ name: "多写键", do: "clickNotification", title: "t", target: { x: 1 } }]).some((p) =>
+      p.includes("未知键 target"),
+    ),
+    "通知动作不吃 target（不是节点点击），多写应报 problem 而不是静默忽略",
+  );
+  assert.deepEqual(errs([{ name: "ok", do: "clickNotification", title: "t", body: "到点", timeoutMs: 1000 }]), []);
+  assert.ok(
+    errs([{ name: "一步", expect: [{ shot: "x" }] }], { requires: "dev" }).some((p) =>
+      p.includes('requires 只支持 "bundle"'),
+    ),
+    "requires 写错值应报 problem（否则 runner 静默忽略、场景在 dev 下跑出假 FAIL）",
+  );
+  assert.deepEqual(errs([{ name: "一步", expect: [{ shot: "x" }] }], { requires: "bundle" }), []);
+});
+
 test("全库场景静态校验通过（--check 的真实通道）", () => {
   const out = execFileSync(process.execPath, [path.join(repoRoot(), "scripts/acceptance/run.mjs"), "--check"], {
     encoding: "utf8",
