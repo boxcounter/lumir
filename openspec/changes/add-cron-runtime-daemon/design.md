@@ -201,6 +201,12 @@ loop {
 
 - `session_target` / `approval_policy`：定时与拉取运行是 `unattended` + `reject_unavailable`；
   点击发起是 `interactive` + `interactive`（用户就在现场，批准卡照既有方式出现，§6.2）。
+- `tool_policy` 是**被执行**的契约值，不是声明：运行入口在拿到 busy 后把它交给运行层，
+  `SessionContext` 构造时按 `allow` 过滤工具定义（`src-tauri/src/harness/run.rs` 的
+  `filter_tool_definitions`）。因此本 change 声明的 8 件 vault 工具白名单在
+  `[harness.subagents].enabled = true` 时同样生效——无人值守运行看不见委派工具 `task`；
+  交互**发送**（用户输入，不是 cron 交接）没有运行契约，仍是完整注册表。两个槽位（无人值守
+  与点击发起的交互槽）都消费同一份契约值。
 - `trigger` 只服务诊断事件 `cron_run_started.trigger`；行为分支只读契约枚举，不读这个字符串。
 - `session_id` 只在 `session = dedicated` 时携带（来自 `cron-state.json` 的续写会话）；`new` 档为
   `null`。运行槽位的实现落点是 `Runtime::isolated()` 的独立运行时实例（见 §6.2 的「等价形态」）。
@@ -449,6 +455,9 @@ rg -c '"event":"cron_run_finished".*"ok":true' ~/.config/lumir/logs/
 - `cron:run` 载荷形状：`RunSpec` 字段（`origin` / `session_target` / `tool_policy` / `budget` /
   `approval_policy` / `background`）+ 任务载荷（`trigger` / `vault` / `prompt` / `session` /
   `session_id` / `model`）；契约合成点 `cron::handoff` 有单测钉线格式。
+- 工具白名单被执行：`tool_policy.allow` = 8 件 vault 工具时，运行上下文（`SessionContext`）
+  的工具定义恰为这 8 件；即使 `[harness.subagents].enabled = true` 也不含 `task`。交互发送
+  路径没有契约，仍注册第 9 件（两条用例的区分度即在此）。
 - `cron_run_result` 回执后：状态更新、`cron_run_finished` 的 `ok` 与错误码、`run-then-notify` 只在
   终态后投递结果通知。
 - 运行槽位隔离：无人值守运行前后，交互会话槽位的内容与 id 不变。

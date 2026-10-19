@@ -118,6 +118,12 @@ pub trait RunContext {
 完成时通知，通知可能给父会话起一个自动回合 vs. 本回合等待结果），不改变循环本体。实现提示：会话与
 事件接收端按字段分开持有（`SessionContext` 内部拆分），避免 `&mut session` 与 `&sink` 的借用冲突。
 
+**`tool_policy` 是被执行的契约值**（M602）：`SessionContext` 构造时读本回合契约，按 `allow` 过滤
+`tool_definitions`（`run::filter_tool_definitions`），白名单因此是模型可见工具集的唯一真源。
+cron 交接声明 8 件 vault 工具，所以无人值守运行在 `[harness.subagents].enabled = true` 时也看不见
+`task`——与 cron design §6.1 的交接声明一致。交互**发送**（用户输入）没有交接契约：构造时读到
+`None`，注册表原样暴露（含第 9 件）。契约随 busy 生效、`release_turn` 撤销，不泄漏到下一轮。
+
 ### 2.2 交互路径（`SessionContext`）
 
 - 现有 `run_turn_for(runtime, scope, config, parts, context, client)` 的 25 处 `with_session` 改经

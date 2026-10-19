@@ -51,6 +51,13 @@ capability，不进入本契约。
 - **THEN** 触发来源只用于诊断与事件归属；会话目标、批准策略、工具白名单、预算的差异全部来自契约值，
   循环内部没有按触发来源分叉的执行路径
 
+#### Scenario: 工具白名单被执行
+
+- **WHEN** 一次运行的契约声明 `tool_policy.allow` 为 8 件 vault 操作工具（cron 交接的形状），且
+  `[harness.subagents].enabled = true`
+- **THEN** 该运行的模型请求只包含白名单内的工具定义，`task` MUST NOT 出现；同一配置下的交互发送
+  （没有交接契约）仍注册 `task`
+
 ## MODIFIED Requirements
 
 ### Requirement: 工具循环

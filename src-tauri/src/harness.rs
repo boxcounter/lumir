@@ -111,6 +111,10 @@ struct RuntimeInner {
     isolated: bool,
     /// 本轮运行的终态（仅 isolated 实例记录）：`done` / `error` / `aborted` 三类的最后一次。
     terminal: Mutex<Option<TurnTerminal>>,
+    /// 在途运行的契约工具白名单（`RunSpec.tool_policy`，按 vault 键控）：`start_turn` 在
+    /// 拿到 busy 之后写入、`release_turn` 清掉；`SessionContext` 构造时读取一次。
+    /// 交互路径没有交接契约 ⇒ 该 vault 无条目 ⇒ 完整注册表。
+    tool_policies: Mutex<HashMap<String, run::ToolPolicy>>,
 }
 
 /// 一次运行的终态读数（`cron_run_finished` 回执的素材）：成功与否只由 turn 的终态事件决定，
@@ -178,6 +182,7 @@ impl Default for Runtime {
                 approval_seq: AtomicU64::new(0),
                 isolated: false,
                 terminal: Mutex::new(None),
+                tool_policies: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -217,6 +222,27 @@ impl Runtime {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .take()
+    }
+
+    /// 挂上本轮运行的工具白名单（`RunSpec.tool_policy`，change add-harness-subagents
+    /// design §2.1 的运行契约值）：`start_turn` 在拿到 busy 之后写入，`release_turn` 清掉。
+    /// `SessionContext` 构造时读一次——回合内工具集不随契约变化漂移。
+    pub(crate) fn set_tool_policy(&self, scope: &VaultScope, policy: run::ToolPolicy) {
+        self.inner
+            .tool_policies
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(scope.key(), policy);
+    }
+
+    /// 当前在途运行的契约白名单；`None` = 交互路径（没有交接契约，暴露完整注册表）。
+    pub(crate) fn tool_policy(&self, scope: &VaultScope) -> Option<run::ToolPolicy> {
+        self.inner
+            .tool_policies
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&scope.key())
+            .cloned()
     }
 
     /// 当前 vault 会话的留存 session id（运行回执的 `session_id`）：取自 JSONL 文件名——
@@ -316,7 +342,20 @@ impl Runtime {
     }
 
     /// 一轮结束（含错误路径）：释放 busy。会话对象保留（消息历史是状态）。
+    /// 本轮契约的工具白名单随 busy 一起撤销——它只描述在途运行，不得漏进下一次交互发送。
+    ///
+    /// **顺序即正确性**：先撤销白名单、再放 busy。反过来的话，两步之间同 vault 的新一轮可以
+    /// `acquire_turn` 成功（busy 已清）并读到上一轮遗留的策略，把交互回合错误过滤成 cron 的
+    /// 8 件工具。结束的回合不再需要策略；新的 cron 回合会在拿到 busy 后自行覆写。
     pub fn release_turn(&self, scope: &VaultScope) {
+        {
+            let mut policies = self
+                .inner
+                .tool_policies
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            policies.remove(&scope.key());
+        }
         let mut sessions = self
             .inner
             .sessions
@@ -1242,6 +1281,8 @@ pub fn harness_send(
         config,
         parts,
         context_section,
+        // 交互发送没有运行交接契约：注册表原样暴露（`None`）。
+        None,
         None,
     )
 }
@@ -1252,6 +1293,11 @@ pub fn harness_send(
 ///
 /// `completion` 在轮次结束后（`run_turn` 已释放 busy）在线程内调用一次：cron 入口用它投
 /// `cron:run_finished`，普通发送传 `None`。
+///
+/// `tool_policy` 是运行契约（`RunSpec.tool_policy`）在白名单维度的**唯一消费入口**：拿到 busy
+/// 之后挂到 runtime 上，`SessionContext` 构造时读取并过滤工具定义，`release_turn` 清掉。
+/// 交互发送传 `None`（没有交接契约 ⇒ 完整注册表）；cron 两个槽位都传契约值。
+#[allow(clippy::too_many_arguments)] // 两个入口共用这一条运行实现；拆结构体只会把参数换个容器。
 fn start_turn(
     app: tauri::AppHandle,
     runtime: Runtime,
@@ -1259,9 +1305,14 @@ fn start_turn(
     config: HarnessConfig,
     parts: Vec<attachments::DeliveryPart>,
     context_section: Option<String>,
+    tool_policy: Option<run::ToolPolicy>,
     completion: Option<Box<dyn FnOnce() + Send>>,
 ) -> Result<(), CommandError> {
     runtime.acquire_turn(&scope, &config)?;
+    if let Some(policy) = tool_policy {
+        // 契约在拿到 busy 之后才挂上：acquire 失败（busy）不得留下本轮策略。
+        runtime.set_tool_policy(&scope, policy);
+    }
     let runtime_thread = runtime.clone();
     let runtime_release = runtime.clone();
     let scope_release = scope.clone();
@@ -1473,6 +1524,9 @@ pub fn harness_cron_run(
         config,
         parts,
         None,
+        // 契约的工具白名单原样交给运行层：`SessionContext` 只暴露其中声明的工具。
+        // 定时 / 点击两个槽位共用这一条链路（点击槽也用契约值，不回落交互全量）。
+        Some(spec.tool_policy),
         Some(completion),
     )?;
     // 交接被接受（acquire 成功、线程已起）才记「运行已开始」——失败路径由前端回执落终态。
