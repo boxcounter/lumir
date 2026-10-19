@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import type { ConfigSnapshot } from "../../../src/bindings/ConfigSnapshot";
 import { setLanguageRoot } from "../../../src/copy";
 
 // 场景**在 Node 侧**解析文案时的语言档（M282，change ui-language-i18n）：locale 的决定权在
@@ -390,7 +391,15 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
       },
       config_get: () => {
         w.__configGets = (w.__configGets as number) + 1;
-        return {
+        // 形状按 Rust 的 `ConfigSnapshot` **全量**给出（M597）：`AppConfig` 的每张表都不是
+        // Option，真后端序列化必带；桩少给一张表，启动装配链就会在首个非可选解引用处抛
+        // TypeError，而 `src/main.ts` 末尾的 `.catch(() => {})` 会把整条链静默吞掉——主题、
+        // 语言、折行、排版全都不施加，症状是一大片场景以「读到浅色 token / 英文文案」的
+        // 理由超时（M577 把 `attachments?.semantic_naming` 改成
+        // `harness.attachment_naming` 后，桩缺 `harness` 表即触发；桩当年没跟上契约）。
+        // 这里的 `ConfigSnapshot` 注解是防线：Rust 侧新增必填表时，`tsc --noEmit` 直接报错，
+        // 而不是等运行期静默断链（REVIEW.md「同一语义两处真源」条的同族）。
+        const snapshot: ConfigSnapshot = {
           config: {
             version: 1,
             last_vault: null,
@@ -436,10 +445,63 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
               language: current?.config?.language ?? "zh",
             },
             keys: current?.config?.keys ?? {},
+            // `[log]` / `[vault]` / `[harness]` / `[cron]` 四张表当前都没有被视觉场景的断言
+            // 直接消费，但都是 `AppConfig` 的必填项（Rust 侧非 Option）：给出与 Rust `Default`
+            // 同值的整表，保持「桩 = 真后端契约形状」这条前提。`harness` 在场还有一个可见后果：
+            // 面板控制行的权限 chip 按「`harness` 段是否在场」决定显隐（harness-panel.ts 的
+            // `permissionConfigured`），真后端恒在场——m303 的整页基线里没有该 chip（旧桩缺表
+            // 时代截的），但它与基线的像素差低于容差，故不触发基线更新（另行记入 finding）。
+            log: { level: "info" },
+            vault: {
+              rule_files: [".gitignore", ".git/info/exclude"],
+              ignore: {
+                ".git": "hidden",
+                ".DS_Store": "hidden",
+                "node_modules": "lazy",
+                ".venv": "lazy",
+                venv: "lazy",
+                __pycache__: "lazy",
+                ".next": "lazy",
+                ".nuxt": "lazy",
+                ".cache": "lazy",
+                ".pnpm-store": "lazy",
+                ".tox": "lazy",
+                ".gradle": "lazy",
+                target: "lazy",
+                dist: "lazy",
+              },
+            },
+            harness: {
+              provider: "kimi",
+              providers: {
+                kimi: { api_key: "", model: "", base_url: null, models: [], wire_api: "responses" },
+                deepseek: { api_key: "", model: "", base_url: null, models: [], wire_api: "responses" },
+                mock: { fixture: null },
+              },
+              permissions: { allow: [], deny: [] },
+              permission_mode: "vault_write",
+              loop_max: 50,
+              warn_ctx_pct: 85,
+              auto_compact: true,
+              session_naming: { enabled: true, provider: null, model: null },
+              // M577 起 `src/main.ts` 的启动装配链**非可选**读取本表（`harness.attachment_naming`）；
+              // 它就是 M597 的断链点，值取 Rust `Default`（enabled = true）。
+              attachment_naming: { enabled: true, provider: null, model: null },
+              subagents: {
+                enabled: true,
+                max_turns: 20,
+                max_tokens: 200_000n,
+                timeout_secs: 300n,
+                max_subruns_per_turn: 8,
+                max_concurrent: 4,
+              },
+            },
+            cron: { tasks: [] },
           },
           warnings: current?.config?.warnings ?? [],
           path: "/mock/config.json",
         };
+        return snapshot;
       },
       // `[ui]` 单键合并写（M228，content-width-drag）：桩只**记录**写入序列（真后端的
       // 读-改-写与原子替换归 cargo test / 真机验收），场景用 __uiValueWrites 断言
