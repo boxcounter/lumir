@@ -2,6 +2,9 @@
 // 的准入白名单都必须放行——漏一个就是事件在 IPC 边界被静默丢弃（REVIEW.md「同一语义两处
 // 真源」条：「联合已声明、白名单缺分支」是本仓第二次踩的同族形态）。
 //
+// M603 在同一份联合上补消费侧的两处同族形态（文件末尾的三组用例）：`handleEvent` 的 switch
+// 穷尽性（default + never 断言）与轮次闸门集合的类型化。
+//
 // 现场：M576（9b97ff4a）引入 `title` 事件（会话自动命名的即时改名）时漏了白名单分支，
 // M590（bee2ee69）扩白名单仍未补；类型层写着 `{ type: "title"; title: string }`，运行期
 // 却被 `parseHarnessEvent` 的 default 丢成 null，标题只在重开快照 / 切 vault 后从磁盘恢复。
@@ -121,4 +124,127 @@ test("对账的反向输入：从源码里删掉任一 case，对账必须如实
     '$1case "ghost_event":\n$1case "title":\n',
   );
   assert.notDeepEqual(whitelistTypesOf(withGhost), union, "幽灵 case 必须被对账判红");
+});
+
+// ── M603：消费侧的同一族穷尽性闸门 ─────────────────────────────────────────────
+//
+// M595 收的是 IPC 入口的准入门（白名单）；M603 收的是消费侧两处同族形态：
+//   1. `handleEvent` 的 switch 没有 default ⇒ 联合新增 type 漏补 case 时事件被静默忽略；
+//   2. `GATED_EVENT_TYPES` 曾是 `Set<string>`，与 `HarnessEvent["type"]` 无编译期关系。
+// 编译期判据分别是 default 里的 `uncoveredEventType(event)`（收窄到 `never`，漏 case 时
+// tsc 报 TS2345）与 `ReadonlySet<HarnessEvent["type"]>` 注解（拼错词元即报错）。本层从源码
+// 取集合与联合逐项对账，是独立的第二道机器防线——实例化检查与源码对账互为兜底。
+
+const PANEL_SOURCE = readFileSync(new URL("../../src/harness-panel.ts", import.meta.url), "utf8");
+const HANDLE_EVENT_HEADER = "function handleEvent(event: HarnessEvent): void {";
+
+/** `handleEvent` switch 的 case 字面量（升序）。case 在 switch 内缩进六格，嵌套块不命中。 */
+function handleEventTypesOf(source: string): string[] {
+  const body = blockOf(source, HANDLE_EVENT_HEADER);
+  const types = [...body.matchAll(/^      case "([^"]+)":/gm)].map((match) => match[1]);
+  assert.ok(types.length > 0, "handleEvent 的 case 一个都没解析出来（解析口径已过期）");
+  return types.sort();
+}
+
+/** `GATED_EVENT_TYPES` 声明块（从声明行到 `]);`）。 */
+function gatedDeclarationOf(source: string): string {
+  const start = source.indexOf("const GATED_EVENT_TYPES");
+  assert.notEqual(start, -1, "src/harness-panel.ts 里找不到 GATED_EVENT_TYPES 声明");
+  const end = source.indexOf("]);", start);
+  assert.notEqual(end, -1, "GATED_EVENT_TYPES 声明找不到 `]);` 收尾");
+  return source.slice(start, end + 3);
+}
+
+/** 轮次闸门集合的字面量（升序）。只取 `new Set(...)` 的数组实参，不把注解里的 `"type"` 当词元。 */
+function gatedTypesOf(source: string): string[] {
+  const decl = gatedDeclarationOf(source);
+  const setStart = decl.indexOf("new Set");
+  assert.notEqual(setStart, -1, "GATED_EVENT_TYPES 不是由 new Set(...) 构造");
+  const arrayStart = decl.indexOf("([", setStart);
+  assert.notEqual(arrayStart, -1, "GATED_EVENT_TYPES 的 new Set 找不到数组实参起点");
+  const arrayEnd = decl.indexOf("]", arrayStart);
+  assert.notEqual(arrayEnd, -1, "GATED_EVENT_TYPES 的数组实参没有收尾");
+  const types = [...decl.slice(arrayStart, arrayEnd).matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  assert.ok(types.length > 0, "GATED_EVENT_TYPES 的字面量一个都没解析出来");
+  return types.sort();
+}
+
+test("M603 handleEvent：case 集合与联合 type 集合逐项一致（漏 case / 幽灵 case 即红）", () => {
+  assert.deepEqual(
+    handleEventTypesOf(PANEL_SOURCE),
+    unionTypesOf(IPC_SOURCE),
+    "handleEvent 与 HarnessEvent 联合不一致（漏 case 或幽灵 case）",
+  );
+});
+
+test("M603 handleEvent：default 分支经共享的 never 断言收口（静默忽略的出口已封）", () => {
+  const body = blockOf(PANEL_SOURCE, HANDLE_EVENT_HEADER);
+  const defaultIndex = body.lastIndexOf("\n      default:");
+  assert.notEqual(defaultIndex, -1, "handleEvent 的 switch 没有 default 分支");
+  assert.ok(
+    body.slice(defaultIndex).includes("uncoveredEventType(event);"),
+    "default 分支没有调用 uncoveredEventType(event)——穷尽性断言缺席",
+  );
+  const helperStart = IPC_SOURCE.indexOf("export function uncoveredEventType(");
+  assert.notEqual(helperStart, -1, "src/ipc.ts 里找不到 uncoveredEventType 的导出");
+  const helperSignature = IPC_SOURCE.slice(helperStart, IPC_SOURCE.indexOf("{", helperStart));
+  assert.match(
+    helperSignature,
+    /_uncovered: never/,
+    "uncoveredEventType 的形参不是 never，断言不成立",
+  );
+});
+
+test("M603 GATED_EVENT_TYPES：类型化为 ReadonlySet<HarnessEvent[\"type\"]>，词元全在联合内", () => {
+  const decl = gatedDeclarationOf(PANEL_SOURCE);
+  assert.ok(
+    decl.includes('ReadonlySet<HarnessEvent["type"]>'),
+    "GATED_EVENT_TYPES 没有 ReadonlySet<HarnessEvent[\"type\"]> 注解——拼错词元不会编译失败",
+  );
+  const gated = gatedTypesOf(PANEL_SOURCE);
+  assert.deepEqual([...new Set(gated)], gated, "闸门集合有重复词元");
+  const union = unionTypesOf(IPC_SOURCE);
+  const ghosts = gated.filter((type) => !union.includes(type));
+  assert.deepEqual(ghosts, [], `闸门里出现联合不存在的词元：${ghosts.join(", ")}`);
+});
+
+test("M603 GATED_EVENT_TYPES：闸门只含内容事件五类；title / notice / approval_request 不在其内", () => {
+  assert.deepEqual(
+    gatedTypesOf(PANEL_SOURCE),
+    ["compact", "reasoning_chunk", "text_chunk", "tool_call", "usage"],
+    "闸门集合与 M374 的「内容类事件」口径不一致——扩缩闸门是产品语义决定，须同步本断言与注释",
+  );
+});
+
+test("M603 反向输入：删 case / 删闸门词元 / 去注解 / 删 default 调用，四条判据各自判红", () => {
+  const union = unionTypesOf(IPC_SOURCE);
+
+  const withoutNotice = PANEL_SOURCE.replace(/^      case "notice":\n/m, "");
+  assert.notEqual(withoutNotice, PANEL_SOURCE, "反向输入必须真的删掉了 case（否则本用例恒真）");
+  assert.deepEqual(
+    union.filter((type) => !handleEventTypesOf(withoutNotice).includes(type)),
+    ["notice"],
+    "删掉 case \"notice\" 后 handleEvent 对账必须报出 notice",
+  );
+
+  const withoutCompact = PANEL_SOURCE.replace(/^    "compact",\n/m, "");
+  assert.notEqual(withoutCompact, PANEL_SOURCE, "反向输入必须真的删掉了闸门词元（否则本用例恒真）");
+  assert.deepEqual(gatedTypesOf(withoutCompact), ["reasoning_chunk", "text_chunk", "tool_call", "usage"]);
+
+  const untyped = PANEL_SOURCE.replace('ReadonlySet<HarnessEvent["type"]> = ', "= ");
+  assert.notEqual(untyped, PANEL_SOURCE, "反向输入必须真的去掉了注解（否则本用例恒真）");
+  assert.equal(
+    gatedDeclarationOf(untyped).includes('ReadonlySet<HarnessEvent["type"]>'),
+    false,
+    "去掉注解后类型化判据必须如实判红",
+  );
+
+  const withoutDefaultCall = PANEL_SOURCE.replace(/^        uncoveredEventType\(event\);\n/m, "");
+  assert.notEqual(withoutDefaultCall, PANEL_SOURCE, "反向输入必须真的删掉了 default 里的断言调用");
+  const body = blockOf(withoutDefaultCall, HANDLE_EVENT_HEADER);
+  assert.equal(
+    body.slice(body.lastIndexOf("\n      default:")).includes("uncoveredEventType(event);"),
+    false,
+    "删掉 default 里的 uncoveredEventType 调用后判据必须如实判红",
+  );
 });

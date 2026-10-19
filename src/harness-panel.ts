@@ -102,6 +102,7 @@ import {
   harnessWriteImage,
   onHarnessEvent,
   openExternalUrl,
+  uncoveredEventType,
 } from "./ipc";
 import type { HarnessEvent } from "./ipc";
 import type { DecisionReason } from "./bindings/DecisionReason";
@@ -7210,8 +7211,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   // ── 事件流 ───────────────────────────────────────────────────────────────
-  /** 内容类事件（轮次闸门 M374 的管控面）：终态之后到达的一律丢弃。 */
-  const GATED_EVENT_TYPES = new Set(["text_chunk", "reasoning_chunk", "tool_call", "usage", "compact"]);
+  /** 内容类事件（轮次闸门 M374 的管控面）：终态之后到达的一律丢弃。
+   *
+   *  元素类型钉死为 `HarnessEvent["type"]`：集合里拼错词元、或写进联合不存在的名字，
+   *  编译期直接报错（`Set<string>` 时这些只会变成永不命中的死词元）。
+   *  `title` / `notice` / `approval_request` **刻意不在闸门内**——它们不是「一轮的内容
+   *  产出」：标题可在压缩收口之后才到（继承标题）、后台完成通知在没有回合进行时上屏、
+   *  子运行的批准卡挂在任务区随 run 生命周期进出，都不受父轮次边界约束。
+   *  联合新增 type 是否该进闸门，由 `handleEvent` 的 case 集合照常决定；闸门集合本身不
+   *  必与联合一一对应。 */
+  const GATED_EVENT_TYPES: ReadonlySet<HarnessEvent["type"]> = new Set<HarnessEvent["type"]>([
+    "text_chunk",
+    "reasoning_chunk",
+    "tool_call",
+    "usage",
+    "compact",
+  ]);
 
   // ── 子代理任务区：渲染与接线（change add-harness-subagents tasks §10，M590）──────────
   //
@@ -8167,6 +8182,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         finalizeStreamingMessage();
         applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
         appendError(t("D348", { message: typeof event.message === "string" ? event.message : event.code }));
+        return;
+      default:
+        // 类型层穷尽性闸门：全部 case 覆盖完时 `event` 收窄为 `never`；联合新增 type 而这里
+        // 漏补 case，收窄不到 `never`，调用处 tsc 报 TS2345——不再是一次静默忽略的事件。
+        // 运行期恒返回 false：未知 type 本来也过不来（ipc.ts 的准入门已先丢弃）。
+        uncoveredEventType(event);
         return;
     }
   }
