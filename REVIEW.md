@@ -105,7 +105,7 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 **25. scope 写 `dir/**` 不覆盖同级 `dir.rs` / `dir.ts` 单文件（picomatch 语义）**
 - 症状：TowerPlan 给 mission 写 scope `src-tauri/src/harness/**`，而 mission 实际要改同级的 `src-tauri/src/harness.rs`——合并门禁按越界判红，只能由 tower 手工补 scope 放行；同形态第二次出现时靠 worker 开工前核对抗住。M584 / M586 两连踩。
 - 根因：picomatch 里 `foo/**` 的 `**` 只匹配 `foo/` 之下的路径，前缀 `foo` 之后必须跟 `/`，因此不匹配同级的 `foo.rs`；写 scope 时按「目录语义」想当然，把目录通配与同名文件当成一个覆盖。
-- 证据：finding `.tower/comms/findings/20261018-tower-improve-scope-dir-dir-rs-picomatch.md`（reviewer-m584 用仓内 picomatch@4.0.7 实证 `src-tauri/src/harness/**` 不匹配 `src-tauri/src/harness.rs`）；M584 mission Notes「r1 处置：scope 已补 src-tauri/src/harness.rs」；M586 的 scope 已显式并列表 `src-tauri/src/harness/run.rs`、`src-tauri/src/harness.rs`（`.tower/comms/missions/M586-implement-subagents-run-layer-and-config.md`）。
+- 证据：finding `.tower/comms/findings/20261018-tower-improve-scope-dir-dir-rs-picomatch.md`（reviewer-m584 用仓内 picomatch@4.0.7 实证 `src-tauri/src/harness/**` 不匹配 `src-tauri/src/harness.rs`）；M584 mission Notes「r1 处置：scope 已补 src-tauri/src/harness.rs」；M586 的 scope 已显式并列 `src-tauri/src/harness/run.rs`、`src-tauri/src/harness.rs`（`.tower/comms/missions/M586-implement-subagents-run-layer-and-config.md`）。
 - 防线：TowerPlan 写 scope 时，凡出现 `foo/**` 形态，MUST 在同一级 `ls` 确认有没有 `foo.rs` / `foo.ts`（及同名的其他单文件）并显式列入 scope；worker 开工前照自己的 scope 做一次反向核对——任务要动的同名单文件不在 scope 里，动工前上报补 scope，不要等合并门禁判越界。
 
 **26. cargo 锁「先复核再创建」是 check-then-create 竞态，同秒双 claim**
