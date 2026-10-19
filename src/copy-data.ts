@@ -1500,7 +1500,7 @@ const COPY_TABLE = {
   },
   // 子代理任务面板（change add-harness-subagents tasks §10，M590）。取号从 D477 起：M593
   // 的 cron 运行契约错误信封先占了 D476（并发分支，避免撞号）；本批是任务区 / 行详情 /
-  // 触顶提示 / 按模型用量 / 子代理清单 / 后台完成通知的可见文案。
+  // 触顶提示 / 按模型用量 / 后台完成通知的可见文案。
   //   D477–D483 任务区标题与计数（标题由「任务」+ 各计数段拼成；全部收敛后只出完成 / 部分
   //              结果的本次会话摘要）；
   //   D484–D488 行状态词（终态词永不截断）；D489「后台」标记；D490–D491 行内动作；
@@ -1649,9 +1649,8 @@ const COPY_TABLE = {
     zh: "来自 {agent}：{description}",
     en: "From {agent}: {description}",
   },
-  // D518–D521：任务行读数的两个组合形态（轮次 / 轮次 + tokens）、通知行的状态 + 触顶原因
-  // （原实现把全角括号拼在 TS 字面量里，被 `src/**` 零 CJK 门禁挡下——文案一律走表）、
-  // 以及清单读取失败的错误信封。
+  // D518–D520：任务行读数的两个组合形态（轮次 / 轮次 + tokens）与通知行的状态 + 触顶原因
+  // （原实现把全角括号拼在 TS 字面量里，被 `src/**` 零 CJK 门禁挡下——文案一律走表）。
   D518: {
     zh: "{status}（{reason}）",
     en: "{status} ({reason})",
@@ -1663,10 +1662,6 @@ const COPY_TABLE = {
   D520: {
     zh: "{rounds} 轮",
     en: "{rounds} rounds",
-  },
-  D521: {
-    zh: "无法读取子代理清单（{reason}）",
-    en: "Couldn't read the subagent list ({reason})",
   },
   // D522：任务行停止钮的读屏名（可见文本仍是 D490「停止」）。独立成条的原因：面板里发送钮的
   // 读屏名也叫「停止」（D378），两钮同名时真机 AX 选择器无法稳定区分（场景 201 现场：点击落到
@@ -1807,7 +1802,4 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   open_url_failed: "D79",
   // 窗口底色同步（M525）：只走 console 降级、永不上屏（见 D462 条目注记）。
   window_background_failed: "D462",
-  // 子代理清单快照序列化失败（M590）：正常路径不可达（只序列化本进程构造的对象），留人话
-  // 是为了不让错误码落回未知 code 的兜底。
-  harness_subagent_catalog_failed: "D521",
 };

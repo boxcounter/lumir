@@ -1662,93 +1662,6 @@ pub fn harness_state(
     })
 }
 
-/// 子代理清单快照（`harness_subagent_catalog`，change add-harness-subagents tasks §10.5）。
-/// 返回 JSON String（M302 纪律：命令返回值不为此新增 ts-rs 类型）：`{enabled, definitions[],
-/// warnings[]}`。每个定义给出名字 / 一行描述 / 工具数 / 模型（`null` = inherit）/ 是否强制后台 /
-/// 来源（`builtin` / `user` / `vault`）/ 同名覆盖的来源标（无覆盖时缺键）。
-///
-/// **扫描时机与运行侧同源**：与 `task` 描述里的清单同一次 `AgentCatalog::load`（回合级热
-/// 加载），面板显示的就是模型此刻看到的清单——两处若各扫一次，「面板说 A、工具描述说 B」
-/// 的漂移无从察觉（REVIEW.md「同一语义两处真源」条）。
-#[tauri::command(rename_all = "snake_case")]
-pub fn harness_subagent_catalog(
-    vault: tauri::State<'_, crate::commands::VaultState>,
-) -> Result<String, CommandError> {
-    let scope = vault_scope(&vault)?;
-    let config = config::load()?.config.harness;
-    let catalog = agents::AgentCatalog::load(&scope.root, &config);
-    let overrides = catalog_override_sources(&catalog);
-    let definitions: Vec<serde_json::Value> = catalog
-        .definitions()
-        .iter()
-        .map(|definition| {
-            serde_json::json!({
-                "name": definition.name,
-                "description": definition.description,
-                "tools": definition.tools.len(),
-                "model": definition.model,
-                "background": definition.background,
-                "source": definition.source.as_str(),
-                "override_from": overrides.get(&definition.name),
-            })
-        })
-        .collect();
-    serde_json::to_string(&serde_json::json!({
-        "enabled": config.subagents.enabled,
-        "definitions": definitions,
-        "warnings": catalog.warnings(),
-    }))
-    .map_err(|e| {
-        CommandError::new(
-            "harness_subagent_catalog_failed",
-            format!("无法序列化子代理清单：{e}"),
-        )
-        .param("reason", e.to_string())
-    })
-}
-
-/// 把生效定义映射到「它覆盖了哪一层」（design §19.4 的行内来源说明）。
-///
-/// 被覆盖者只出现在 [`agents::AgentCatalog`] 的 warning 文案里（合并循环产
-/// `子代理定义 {name} 被 … 覆盖（原来源：{previous}）…`）——生效定义自身不保留这一信息。
-/// 因此这里解析**本进程刚产出的**同一批 warning：生产者与消费者相邻、解析对象不会跨版本；
-/// 措辞由下方单测钉住，改文案即红（不存在「悄悄解析失败 → 面板少一行」的静默）。
-fn catalog_override_sources(
-    catalog: &agents::AgentCatalog,
-) -> std::collections::BTreeMap<String, String> {
-    let user_root = config::config_dir().ok().map(|dir| dir.join("agents"));
-    let mut out = std::collections::BTreeMap::new();
-    for warning in catalog.warnings() {
-        if let Some((name, previous)) = parse_override_warning(warning) {
-            out.insert(name, override_source_label(&previous, user_root.as_deref()));
-        }
-    }
-    out
-}
-
-/// 解析一条覆盖 warning，返回 `(定义名, 原来源串)`；不是覆盖 warning 时 `None`。
-fn parse_override_warning(warning: &str) -> Option<(String, String)> {
-    let rest = warning.strip_prefix("子代理定义 ")?;
-    let (name, rest) = rest.split_once(" 被 ")?;
-    let previous = rest.split_once("（原来源：")?.1.split_once('）')?.0;
-    Some((name.to_string(), previous.to_string()))
-}
-
-/// 原来源串 → 层标：`builtin` / `user` / `vault`。内建以「内建 {name}」形态出现（
-/// `agents.rs` 的 `definition_location`），其余是文件路径——落在 `<config_dir>/agents`
-/// 之下即用户级，否则是 vault 级（判定口径与定义扫描的两个根同源）。
-fn override_source_label(previous: &str, user_root: Option<&std::path::Path>) -> String {
-    if previous.starts_with("内建 ") {
-        return "builtin".to_string();
-    }
-    if let Some(root) = user_root {
-        if std::path::Path::new(previous).starts_with(root) {
-            return "user".to_string();
-        }
-    }
-    "vault".to_string()
-}
-
 /// 面板停止单个子运行（design §12.4 / tasks §10.2 的「停止」按钮）：只停该 run，其它 run
 /// 不受影响；它的待批项收回、收敛为 `aborted`、不触发唤醒。实现体唯一在
 /// [`subagents::SubagentHub::stop_run`]，本命令只做 scope 解析与「找不到该 run」的宽容化——
@@ -2427,41 +2340,6 @@ mod tests {
         let (resolved, warning) = with_model_override(&mock, Some("ignored-model"));
         assert_eq!(resolved, mock);
         assert!(warning.is_none(), "mock 没有模型维度，不应告警");
-    }
-
-    /// 面板「覆盖了哪一层」的来源标：解析的是 `agents.rs` 合并循环产的同一条 warning 文案。
-    /// 这条用例是**措辞钉子**——`agents.rs` 改了覆盖 warning 的写法而这里没跟，本用例先红，
-    /// 面板不会静默少一行来源说明（REVIEW.md「同一语义两处真源」条的对策）。
-    #[test]
-    fn override_warning_is_parsed_into_layer_labels() {
-        let user_root = std::path::Path::new("/tmp/lumir-user-config/agents");
-        let samples = [
-            (
-                "子代理定义 research 被 内建 explore 覆盖（原来源：内建 research）；清单只保留生效的一份",
-                "builtin",
-            ),
-            (
-                "子代理定义 research 被 /tmp/lumir-vault/.lumir/agents/research.md 覆盖（原来源：/tmp/lumir-user-config/agents/research.md）；清单只保留生效的一份",
-                "user",
-            ),
-            (
-                "子代理定义 research 被 /tmp/other-vault/.lumir/agents/research.md 覆盖（原来源：/tmp/other-config/agents/research.md）；清单只保留生效的一份",
-                "vault",
-            ),
-        ];
-        for (warning, expected) in samples {
-            let (name, previous) =
-                parse_override_warning(warning).expect("覆盖 warning 必须可解析");
-            assert_eq!(name, "research");
-            assert_eq!(
-                override_source_label(&previous, Some(user_root)),
-                expected,
-                "warning：{warning}"
-            );
-        }
-        // 非覆盖 warning（坏定义 / 容量告警）不得被误判成覆盖。
-        assert!(parse_override_warning("子代理定义 x：缺少 name 字段").is_none());
-        assert!(parse_override_warning("子代理清单估算 15001 token，超过阈值").is_none());
     }
 
     /// `cron:run` 的线格式与 `CronRunRequest` 同形：`RunSpec` 字段平铺 + 任务载荷。

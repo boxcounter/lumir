@@ -571,17 +571,6 @@ export function harnessNewSession(): Promise<void> {
   return invoke<void>("harness_new_session");
 }
 
-/**
- * 子代理清单快照（change add-harness-subagents tasks §10.5，面板定义清单的只读数据源）：
- * 返回 JSON String（M302 纪律，命令返回值不为此新增 ts-rs 类型）——
- * `{enabled, definitions: [{name, description, tools, model, background, source,
- * override_from?}], warnings}`。`enabled=false` 时面板任务区与清单整块不出现（定义照常保留）。
- * 扫描与 `task` 工具描述里的清单同源（同一 `AgentCatalog::load` 口径）。
- */
-export function harnessSubagentCatalog(): Promise<string> {
-  return invoke<string>("harness_subagent_catalog");
-}
-
 /** 面板停止单个子运行（tasks §10.2「停止」；design §12.4：只停该 run，它的待批项收回、
  *  收敛为 `aborted`、不触发唤醒）。返回是否找到该 run——与收敛事件赛跑（run 刚好结束）是
  *  常态，false 不当作错误。 */
