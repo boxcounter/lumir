@@ -55,3 +55,16 @@ jobs:
             printf '%s\n' "$dirty"
             exit 1
           fi
+
+      - name: tauri gen/schemas 无漂移（cargo 构建重生成后须与仓内一致，含未跟踪的新文件）
+        run: |
+          set -euo pipefail
+          # tauri-build 每次构建都会按当前依赖的 ACL 能力面重写 gen/schemas/*.json；不提交就会
+          # 每次构建弄脏工作区，且 schema 与真实能力面脱节。与本地 scripts/gate.sh 的
+          # schemas-drift 同口径：工作区相对索引的任何差异都算漂移（git diff 看不见 untracked）。
+          dirty=$(git status --porcelain -- src-tauri/gen/schemas/)
+          if [ -n "$dirty" ]; then
+            echo "::error::src-tauri/gen/schemas/ 有漂移（tauri-build 重生成结果与仓内不一致）："
+            printf '%s\n' "$dirty"
+            exit 1
+          fi
