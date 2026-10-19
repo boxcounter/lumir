@@ -102,6 +102,18 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 证据：`.tower/comms/log/activity.log`（`23:34:38` vs `23:36:12` 两组同 agent id 的 spawn）；findings `.tower/comms/findings/20260918-worker-interaction-fixes-2-improve-towerspawn-mission-agent-id-live-loop-worktree.md` 与 `20260918-worker-codeblock-lang-proposal-bug-agent-wt-167.md`；被拦评审 `.tower/comms/inbox/20260918-reviewer-interaction-fixes-b-tower-review-result-blocked-m165-tip-b9ce80c-clean-merge-roster-re.md`。
 - 防线：spawn/resume 后约 2 分钟核 activity.log 尾部有无非本 tower 发起的 spawn/merge 行；发现 `-2` 同名注册立即收束到单一写者；resume 前确认旧实例已终态（`tower died` 行）。worker 侧：尽早 commit 让 tip 可评审；探针/临时目录带 mission 后缀（`/tmp/lumir-probe-<mission>`）；动工前 `ls -lT` 核对目标文件 mtime 是否晚于自己上次写入，发现被并发写入即停手上报，不靠覆盖取胜。
 
+**25. scope 写 `dir/**` 不覆盖同级 `dir.rs` / `dir.ts` 单文件（picomatch 语义）**
+- 症状：TowerPlan 给 mission 写 scope `src-tauri/src/harness/**`，而 mission 实际要改同级的 `src-tauri/src/harness.rs`——合并门禁按越界判红，只能由 tower 手工补 scope 放行；同形态第二次出现时靠 worker 开工前核对抗住。M584 / M586 两连踩。
+- 根因：picomatch 里 `foo/**` 的 `**` 只匹配 `foo/` 之下的路径，前缀 `foo` 之后必须跟 `/`，因此不匹配同级的 `foo.rs`；写 scope 时按「目录语义」想当然，把目录通配与同名文件当成一个覆盖。
+- 证据：finding `.tower/comms/findings/20261018-tower-improve-scope-dir-dir-rs-picomatch.md`（reviewer-m584 用仓内 picomatch@4.0.7 实证 `src-tauri/src/harness/**` 不匹配 `src-tauri/src/harness.rs`）；M584 mission Notes「r1 处置：scope 已补 src-tauri/src/harness.rs」；M586 的 scope 已显式并列 `src-tauri/src/harness/run.rs`、`src-tauri/src/harness.rs`（`.tower/comms/missions/M586-implement-subagents-run-layer-and-config.md`）。
+- 防线：TowerPlan 写 scope 时，凡出现 `foo/**` 形态，MUST 在同一级 `ls` 确认有没有 `foo.rs` / `foo.ts`（及同名的其他单文件）并显式列入 scope；worker 开工前照自己的 scope 做一次反向核对——任务要动的同名单文件不在 scope 里，动工前上报补 scope，不要等合并门禁判越界。
+
+**26. cargo 锁「先复核再创建」是 check-then-create 竞态，同秒双 claim**
+- 症状：2026-10-10 05:19:15，worker-m419 与 worker-m421 在同一秒各自「复核锁不存在」后都广播了 `cargo-lock-claim`，两者都以为自己持有 `/tmp/lumir-cargo-build.lock`；tower 亲查锁元数据（cwd=wt-419、pid 40231）与进程，实际只有 wt-419 的 cargo 在跑。单次现场，但形态是互斥静默失效——两边都按「已持锁」继续干活，冲突要等资源真正撞上才暴露，按收录门槛的「单次但代价高」收。
+- 根因：获取流程是「先 ps/ls 检查不存在 → 再创建」两步，两个进程可以同时通过检查再先后创建；创建动作本身不排他（`touch` / `mkdir -p` 对已存在路径照样成功），互斥判据放在检查里而不是创建里。
+- 证据：同秒两条 claim——`.tower/comms/inbox/20261010-worker-m419-all-cargo-lock-claim-tmp-lumir-cargo-build-lock-by-worker-m419-m.md`（sent_at `05:19:15.498Z`）与 `.tower/comms/inbox/20261010-worker-m421-all-cargo-lock-claim-tmp-lumir-cargo-build-lock-by-worker-m421-m.md`（`05:19:15.334Z`）；finding `.tower/comms/findings/20261010-tower-improve-cargo-check-then-create-m419-m421-claim.md`；`docs/backlog.md` 同条指针。
+- 防线：获取 cargo 锁直接用 `mkdir /tmp/lumir-cargo-build.lock`——退出码 0 = 持有，`mkdir: File exists` = 被占（等待或在 inbox 问持有者），不再先 `ps` / `ls` 复核；锁目录内可留 `owner` / `pid` 文件供诊断，但持有判据只认 `mkdir` 的退出码。残留锁（无 owner、进程已死）上报 tower 处理，不要自行删掉别人的锁。
+
 ## 维护
 
 - 重复踩到表内某条：把新现场（commit / 证据路径）补进该条的「证据」，不要另起重复条目。命中已固化（已删除）条目的复发按批次收尾 checklist 的「复发对账」处理（`docs/process/openspec-workflow.md`）。
