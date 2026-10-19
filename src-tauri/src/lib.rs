@@ -1403,6 +1403,10 @@ fn current_vault_root(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// 通知投递端口（design §4.4 / §9）：标题 = 任务 id，正文只用通用文案（到点 / 已完成 /
 /// 运行失败），`extra` 携带任务 id（结果通知另带该次会话 id）。文案 MUST NOT 含 prompt、
 /// 文档内容或绝对路径——通知会出现在锁屏与通知中心。
+///
+/// macOS 打包实例走 UNUserNotificationCenter（M608，点击回调可用）；dev flavour 走
+/// mac-notification-sys 的 legacy 投递——UN 在无 bundle 的裸二进制里会 abort，而 dev 的通知
+/// 点击回调本就是已知失效的通道边界（套件按 `requires: bundle` 标 INVALID），只要投递可用即可。
 fn deliver_notification(
     app: &tauri::AppHandle,
     task: &str,
@@ -1415,6 +1419,10 @@ fn deliver_notification(
         "failure" => "运行失败",
         _ => "到点",
     };
+    #[cfg(target_os = "macos")]
+    if tauri::is_dev() {
+        return deliver_notification_dev(task, body);
+    }
     let mut builder = app
         .notification()
         .builder()
@@ -1427,19 +1435,35 @@ fn deliver_notification(
     builder.show().map_err(|error| error.to_string())
 }
 
+/// dev flavour 的 legacy 投递（M608）：归属沿用插件的 dev 口径（`com.apple.Terminal`），
+/// 异步投递、不等待响应——dev 下没有可用的点击回调，等待只会白挂一个线程。
+#[cfg(target_os = "macos")]
+fn deliver_notification_dev(task: &str, body: &str) -> Result<(), String> {
+    let _ = mac_notification_sys::set_application("com.apple.Terminal");
+    let mut notification = mac_notification_sys::Notification::default();
+    notification.title(task).message(body).asynchronous(true);
+    notification
+        .send()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
 /// 通知权限检查（design §4.3）：有有效任务时检查一次；未决定申请一次；被拒落一条人话
 /// warning 且不反复申请。查询 / 申请失败都只降级为 warning——MUST NOT 阻断启动。
 ///
-/// macOS（M608）：投递走 UNUserNotificationCenter（见 Cargo.toml 的 `preview-macos-un`），
-/// 插件的 `permission_state` 在桌面恒返回 Granted——那是对 legacy 路径的假设，真实授权状态
-/// 只有 UN 能读到。这里直接请求一次：已决定（Allow / Deny）时 `requestAuthorization` 不弹窗、
-/// 按现状返回，未决定时才弹一次。
+/// macOS 打包实例投递走 UNUserNotificationCenter（M608）：插件的 `permission_state` 在桌面
+/// 恒返回 Granted——那是对 legacy 路径的假设，真实授权状态只有 UN 能读到。这里直接请求一次：
+/// 已决定（Allow / Deny）时 `requestAuthorization` 不弹窗、按现状返回，未决定时才弹一次。
+/// dev flavour 走 legacy 投递，UN 授权在无 bundle 进程里没有意义，直接跳过。
 fn ensure_notification_permission(app: &tauri::AppHandle) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static REQUESTED: AtomicBool = AtomicBool::new(false);
     #[cfg(target_os = "macos")]
     {
         let _ = app;
+        if tauri::is_dev() {
+            return;
+        }
         if REQUESTED.swap(true, Ordering::SeqCst) {
             return;
         }

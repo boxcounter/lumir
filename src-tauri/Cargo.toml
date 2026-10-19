@@ -118,18 +118,29 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # 对外语义不变（`install_notification_click` 不用改）。版本必须与插件的 `notify-rust = "4.18"`
 # 解析到同一份，所以钉死 4.18.2（当前锁文件值）。
 #
-# 代价：多出 mac-usernotifications / objc2-user-notifications 两个传递依赖；UN 要求 app 有 bundle
-# 与代码签名（打包实例是 ad-hoc 签名，够用），且授权状态要单独请求（见 lib.rs
+# **dev flavour 例外**：UN 要求进程有 bundle 身份；dev 的裸二进制（`target/debug/lumir`，无 bundle）
+# 第一次投递会直接 abort（M608 真机探针：`Abort trap: 6`，崩溃点在 `set_application` 之后）。
+# 该分支在 lib.rs 的 `deliver_notification` 里按 `tauri::is_dev()` 运行期分流：dev 直接走
+# mac-notification-sys 的 legacy 投递（与修复前行为一致——投递可用；点击回调本就是已知失效的
+# dev 通道边界，套件按 `requires: bundle` 标 INVALID），打包实例才走 UN + 点击回调。
+# 不用 cargo feature 分流：tauri CLI 打包时传的是 `--features tauri/custom-protocol`（依赖自身的
+# feature），本仓自定义 feature 不会被它激活（M608 实测：门控后打包产物落回 legacy 后端）。
+#
+# 代价：多出 mac-usernotifications / futures-timer 两个传递依赖；UN 要求 app 有代码签名
+# （打包实例补一次 ad-hoc 签名即可），且授权状态要单独请求（见 lib.rs
 # `ensure_notification_permission` 的 macOS 分支）。
 [target.'cfg(target_os = "macos")'.dependencies]
 notify-rust = { version = "=4.18.2", features = ["preview-macos-un"] }
+# dev flavour 的 legacy 投递（M608）：UN 在无 bundle 进程里 abort，dev 用它保持「能投递」。
+# 与 notify-rust 用的同一版本（后者默认后端就是它），不引入新 crate。
+mac-notification-sys = "=0.6.15"
 
 [features]
 # 生产构建开关（Tauri 2 官方模板约定，名称必须恰为 custom-protocol）：
-# tauri build 会自动带上 --features custom-protocol，此时 tauri::is_dev() == false，
-# webview 加载内嵌的 frontendDist；不带该 feature 的构建（含裸 cargo build）一律视为
-# dev，加载 tauri.conf.json 的 devUrl——vite dev server 不在时窗口就是白屏（空文档，
-# 控制台报 "Could not connect to the server http://127.0.0.1:1420/"），不弹任何错误。
+# tauri build 会带上 `--features tauri/custom-protocol`（依赖自身的 feature），此时
+# tauri::is_dev() == false，webview 加载内嵌的 frontendDist；不带该 feature 的构建（含裸
+# cargo build）一律视为 dev，加载 tauri.conf.json 的 devUrl——vite dev server 不在时窗口就是
+# 白屏（空文档，控制台报 "Could not connect to the server http://127.0.0.1:1420/"），不弹任何错误。
 # 裸 debug 二进制直连 dist 的验证方式：cargo build --features custom-protocol。
 custom-protocol = ["tauri/custom-protocol"]
 

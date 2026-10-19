@@ -2227,6 +2227,7 @@ dependencies = [
  "chrono",
  "ignore",
  "image",
+ "mac-notification-sys",
  "notify",
  "notify-rust",
  "rand 0.10.3",
