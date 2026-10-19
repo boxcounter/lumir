@@ -66,8 +66,9 @@ async function measureDiffRows(page: Page) {
   });
 }
 
-/** 批准闸桩：harness_state 带 pending_approval（恢复路径渲染批准卡），harness_approve
- *  记录参数并成功返回（决策路径不报错）。`pending_approval` 默认是 vault_patch + DIFF；页面侧
+/** 批准闸桩：harness_state 带 `pending_approvals` 列表（M590 起快照字段从单槽
+ *  `pending_approval` 迁到列表，恢复路径按列表渲染批准卡），harness_approve
+ *  记录参数并成功返回（决策路径不报错）。列表默认一项 vault_patch + DIFF；页面侧
  *  可经全局 `__pendingApprovalOverride`（见 `stubPendingApproval`）换成别的载荷——读数在**调用
  *  时**取，与两个 init 脚本的注册顺序无关。 */
 async function stubHarnessApproval(page: Page): Promise<void> {
@@ -81,8 +82,9 @@ async function stubHarnessApproval(page: Page): Promise<void> {
         return JSON.stringify({
           messages: [],
           usage: { ctx_pct: 0, cache_pct_session: 0 },
-          pending_approval:
+          pending_approvals: [
             override ?? { id: "call_p1", tool: "vault_patch", diff, argv: undefined },
+          ],
           warn_ctx_pct: 85,
         });
       }
@@ -220,7 +222,7 @@ test("拒绝附原因：原因行就地可见，diff 折叠", async ({ page }) =
 // 快照两条通道到达），面板只按 `kind` 取文案——本组断言判呈现层：在场 / 文案 / 位置 /
 // 缺键不出行 / 随决策退场。三份桩数据与真实管线各自自洽（工具与层对得上），不是随手填的载荷。
 
-/** 判定依据桩：把 `harness_state` 的 `pending_approval` 换成给定载荷——写法是**设一个页面全局**，
+/** 判定依据桩：把 `harness_state` 的 `pending_approvals` 列表项换成给定载荷——写法是**设一个页面全局**，
  *  由 `stubHarnessApproval` 的 invoke 桩在调用时读取（因此与两个 init 脚本的注册顺序无关；
  *  外层再包一层 invoke 的做法会被 Playwright 的注册顺序反噬，M459 实测）。 */
 async function stubPendingApproval(page: Page, pending: Record<string, unknown>): Promise<void> {
