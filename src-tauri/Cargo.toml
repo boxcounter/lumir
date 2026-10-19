@@ -108,6 +108,22 @@ ignore = "0.4"
 # 单个顺序 SSE 流没有 async 组合需求，与 lib.rs:410 的既有判断同路。
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 
+# 通知点击回调的后端选择（M608）：macOS 26 上 legacy NSUserNotificationCenter（mac-notification-sys
+# 0.6.15）的 `didActivateNotification` 到不了 app——横幅投递与点击系统侧都确认，进程内零回调，
+# 点击链路整条失效（探针证据：`.local/probes/m608-cron-notification-click/`）。
+#
+# notify-rust 4.18.0 起提供 UNUserNotificationCenter 后端，由 `preview-macos-un` feature 选择；
+# tauri-plugin-notification 2.6.0 自己不启用它，而 Cargo 特性是可加的——这里用**同版本**直接依赖
+# 并开该 feature，统一后插件那份 notify-rust 也切到 UN 后端，插件的 `on_action` / `wait_for_response`
+# 对外语义不变（`install_notification_click` 不用改）。版本必须与插件的 `notify-rust = "4.18"`
+# 解析到同一份，所以钉死 4.18.2（当前锁文件值）。
+#
+# 代价：多出 mac-usernotifications / objc2-user-notifications 两个传递依赖；UN 要求 app 有 bundle
+# 与代码签名（打包实例是 ad-hoc 签名，够用），且授权状态要单独请求（见 lib.rs
+# `ensure_notification_permission` 的 macOS 分支）。
+[target.'cfg(target_os = "macos")'.dependencies]
+notify-rust = { version = "=4.18.2", features = ["preview-macos-un"] }
+
 [features]
 # 生产构建开关（Tauri 2 官方模板约定，名称必须恰为 custom-protocol）：
 # tauri build 会自动带上 --features custom-protocol，此时 tauri::is_dev() == false，

@@ -1429,27 +1429,53 @@ fn deliver_notification(
 
 /// 通知权限检查（design §4.3）：有有效任务时检查一次；未决定申请一次；被拒落一条人话
 /// warning 且不反复申请。查询 / 申请失败都只降级为 warning——MUST NOT 阻断启动。
+///
+/// macOS（M608）：投递走 UNUserNotificationCenter（见 Cargo.toml 的 `preview-macos-un`），
+/// 插件的 `permission_state` 在桌面恒返回 Granted——那是对 legacy 路径的假设，真实授权状态
+/// 只有 UN 能读到。这里直接请求一次：已决定（Allow / Deny）时 `requestAuthorization` 不弹窗、
+/// 按现状返回，未决定时才弹一次。
 fn ensure_notification_permission(app: &tauri::AppHandle) {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use tauri_plugin_notification::NotificationExt;
     static REQUESTED: AtomicBool = AtomicBool::new(false);
-    match app.notification().permission_state() {
-        Ok(tauri_plugin_notification::PermissionState::Granted) => {}
-        Ok(tauri_plugin_notification::PermissionState::Denied) => logging::config_warning(
-            "cron",
-            "通知权限被拒绝：notify-then-run 任务无法投递，可改用 run-then-notify / silent-run",
-        ),
-        Ok(_) => {
-            if !REQUESTED.swap(true, Ordering::SeqCst) {
-                if let Err(error) = app.notification().request_permission() {
-                    logging::config_warning("cron", &format!("申请通知权限失败：{error}"));
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        if REQUESTED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        match notify_rust::request_auth_blocking() {
+            Ok(true) => {}
+            Ok(false) => logging::config_warning(
+                "cron",
+                "通知权限被拒绝：notify-then-run 任务无法投递，可改用 run-then-notify / silent-run",
+            ),
+            Err(error) => logging::config_warning(
+                "cron",
+                &format!("通知权限申请失败（不影响启动与任务判定）：{error}"),
+            ),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        use tauri_plugin_notification::NotificationExt;
+        match app.notification().permission_state() {
+            Ok(tauri_plugin_notification::PermissionState::Granted) => {}
+            Ok(tauri_plugin_notification::PermissionState::Denied) => logging::config_warning(
+                "cron",
+                "通知权限被拒绝：notify-then-run 任务无法投递，可改用 run-then-notify / silent-run",
+            ),
+            Ok(_) => {
+                if !REQUESTED.swap(true, Ordering::SeqCst) {
+                    if let Err(error) = app.notification().request_permission() {
+                        logging::config_warning("cron", &format!("申请通知权限失败：{error}"));
+                    }
                 }
             }
+            Err(error) => logging::config_warning(
+                "cron",
+                &format!("通知权限查询失败（不影响启动与任务判定）：{error}"),
+            ),
         }
-        Err(error) => logging::config_warning(
-            "cron",
-            &format!("通知权限查询失败（不影响启动与任务判定）：{error}"),
-        ),
     }
 }
 
