@@ -1,6 +1,8 @@
 # 发布（打包）流程与版本口径
 
-Lumir 正式版本的版本口径与打包、交付步骤。口径来自 Alex 裁决（修复批 = patch、特性批 = minor），步骤全部来自一次已实操的完整发布——0.7.0 打包（M512，2026-10-14，证据 `.local/releases/release-0.7.0/`），并按该次实操与 git 历史（bump 提交 `6579b64`）逐条溯源。**本文只写 0.7.0 验证过的步骤，不引入未验证流程**；下次实操长出新步骤时再加进来。
+Lumir 正式版本的版本口径与打包、交付步骤。口径来自 Alex 裁决（修复批 = patch、特性批 = minor），步骤全部来自一次已实操的完整发布——0.7.0 打包（M512，2026-10-14，证据 `.local/releases/release-0.7.0/`），并按该次实操与 git 历史（bump 提交 `6579b64`）逐条溯源。**本文只写实际验证过的步骤，不引入未验证流程**；下次实操长出新步骤时再加进来。
+
+2026-10-19 起打包入口改为 `scripts/pack-release.sh`（版本闸；闸的两个方向已实测）。闸之外仍是 0.7.0 验证过的 `pnpm tauri build` 原路径，包装层本身留待下次打包实测。
 
 ## 版本口径
 
@@ -25,7 +27,7 @@ bump 提交信息惯例：`chore(release): X.Y.Z——<本批内容>，<MINOR bu
 
 ## 打包前置
 
-- 版本号已按上节 bump 并提交（0.7.0 打包前版本号已就绪，M512 不再 bump）。
+- 版本号已按上节 bump 并提交。**bump 由机器闸强制**：`scripts/pack-release.sh` 构建前读 `src-tauri/tauri.conf.json` 的 `version`，已有同名证据目录 `.local/releases/release-<version>/` 即拒绝打包并提示先 bump。闸只管「同一版本号不重复交付」；本批该 MINOR 还是 PATCH 仍由 tower 按上节批次性质口径裁决。动机：0.8.0 打包漏 bump（M596，2026-10-19），交付的 dmg 实际含本批新能力却仍标 0.8.0。
 - 在 master、tracked 干净；打包用主仓 checkout，不用 worktree。
 - `bash scripts/gate.sh quick` 全绿。报告时**照抄 `GATE RESULT` 原文行并附退出码**，不用「X/Y PASS」复述（REVIEW.md 「门禁报告口径」条：分母口径含不含 SKIP 只在脚本里定义）。
 - 动过视觉相关代码（`src/style.css`、`src/preview/**`、`tests/visual/scenes/**`）的批次，另跑 `bash scripts/gate.sh visual`（AGENTS.md「视觉门禁分层」）。
@@ -36,9 +38,10 @@ bump 提交信息惯例：`chore(release): X.Y.Z——<本批内容>，<MINOR bu
 主仓 checkout 执行：
 
 ```
-pnpm tauri build
+bash scripts/pack-release.sh
 ```
 
+- 脚本先跑版本闸，通过后原样执行 `pnpm tauri build`（其余参数透传）。闸拒绝时输出 `PACK FAIL version-gate …` 并以 1 退出——按上文 bump 后再跑。只想查闸、不构建：`bash scripts/pack-release.sh --check-only`（通过时 `PACK RESULT: PASS`，拒绝时 `PACK RESULT: FAIL`）。
 - 产物由 `src-tauri/tauri.conf.json` 的 `bundle.targets = ["app", "dmg"]` 决定；`beforeBuildCommand` 会先跑 `pnpm build`（`tsc --noEmit && vite build`）。release 剖面带 `--features tauri/custom-protocol`，前端被打进二进制。
 - 产物路径（0.7.0 实测）：
   - `src-tauri/target/release/bundle/dmg/Lumir_<version>_aarch64.dmg`——安装包（Apple Silicon；后缀随构建机架构）。
@@ -50,10 +53,10 @@ pnpm tauri build
 `bundle_dmg.sh` 偶发失败：`hdiutil: create failed - Operation not permitted`（0.7.0 的 10-13 首次打包实证，日志 `.local/releases/release-0.7.0/dmg-retry.log`）。处理：**重试 dmg bundle，不必怀疑代码**——
 
 ```
-pnpm tauri build --bundles dmg
+bash scripts/pack-release.sh --bundles dmg
 ```
 
-（10-14 那次首跑即成功。）tauri 另会对 `identifier` 以 `.app` 结尾（`com.lumir.app`）打一条 warning，当前无害。
+（10-14 那次首跑即成功。重试时闸会重跑一遍；证据目录在交付步骤才创建，重试阶段通常还不存在，闸照常放行。）tauri 另会对 `identifier` 以 `.app` 结尾（`com.lumir.app`）打一条 warning，当前无害。
 
 ## 产物验证
 
