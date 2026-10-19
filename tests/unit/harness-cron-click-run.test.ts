@@ -52,13 +52,30 @@ test("handleCronRun：交互槽位在 invoke 之前切屏（闸门先开，首�
   );
 });
 
-test("handleCronRun：发起失败回滚面板到后端当前会话（不留在乐观切屏态）", () => {
+test("handleCronRun：只有真正切屏成功才在失败时回滚（忙时未切屏 ⇒ 不重置渲染面）", () => {
+  assert.match(
+    HANDLE_CRON_RUN,
+    /adopted = harnessPanel\.beginCronRun\(/,
+    "必须接住 beginCronRun 的返回值：忙时它不切屏，失败路径也不能回滚",
+  );
   const catchStart = HANDLE_CRON_RUN.search(/catch \(error\)/);
   assert.notEqual(catchStart, -1, "handleCronRun 必须有 catch 分支");
-  assert.ok(
-    HANDLE_CRON_RUN.indexOf("harnessPanel.reloadSession()", catchStart) !== -1,
-    "发起失败必须调用 reloadSession() 撤回 beginCronRun 的乐观切屏",
+  const catchBody = HANDLE_CRON_RUN.slice(catchStart);
+  assert.match(
+    catchBody,
+    /if \(adopted\) harnessPanel\.reloadSession\(\);/,
+    "失败回滚必须以「本次确实切了屏」为条件——无条件 reloadSession 会 resetView 掉在途轮次的流式渲染（P2-1）",
   );
+});
+
+test("beginCronRun：忙时（sendPhase !== idle）不切屏，在途轮次不受影响", () => {
+  const guard = BEGIN_CRON_RUN.search(/if \(sendPhase !== "idle"\) return false;/);
+  assert.notEqual(guard, -1, "beginCronRun 必须先判忙：交互槽位在途 ⇒ 后端必 busy，乐观切屏注定被回滚");
+  const reset = BEGIN_CRON_RUN.search(/resetView\(\)/);
+  assert.notEqual(reset, -1, "beginCronRun 正常路径必须清渲染面");
+  assert.ok(guard < reset, "忙判定必须排在 resetView 之前——先清屏再判忙会把握手轮次的流式泡清掉（P2-1）");
+  assert.match(BEGIN_CRON_RUN, /return false;/, "忙时返回 false（装配层据此跳过失败回滚）");
+  assert.match(BEGIN_CRON_RUN, /return true;/, "切屏成功返回 true（装配层据此启用失败回滚）");
 });
 
 // ── 面板：切屏入口的判据 ───────────────────────────────────────────────────

@@ -196,8 +196,11 @@ export interface HarnessPanelHandle {
   vaultChanged(root: string): void;
   /** cron 点击发起运行的面板切屏（M612，场景 170）：清渲染面、把本次 prompt 作为用户消息
    *  上屏、立刻打开轮次闸门与发送相位。装配层 MUST 在 `harness_cron_run` **之前**调用——
-   *  后端不为 cron 回合发 `sent` / `auto_turn_started`，晚开闸门会把先到的正文分片丢掉。 */
-  beginCronRun(prompt: string): void;
+   *  后端不为 cron 回合发 `sent` / `auto_turn_started`，晚开闸门会把先到的正文分片丢掉。
+   *  返回 `true` = 本次确实切了屏（失败回滚启用）；`false` = 交互轮次在途（sendPhase 非 idle），
+   *  此时后端必 busy 拒单、乐观切屏注定被回滚，故**不动渲染面**（M612 r1 P2-1：先清屏再回滚
+   *  会把在途轮次的流式泡清掉、关掉轮次闸门，后续分片被当迟到产出丢弃）。 */
+  beginCronRun(prompt: string): boolean;
   /** 按后端当前会话重取快照重建渲染面（M612）：cron 点击运行发起失败时撤回乐观切屏，
    *  面板回到后端真实会话。不切 vault。 */
   reloadSession(): void;
@@ -8859,7 +8862,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 因此由装配层在 `invoke("harness_cron_run")` **之前**调本函数：清渲染面、prompt 上屏、闸门
   // 与发送相位立刻置为运行中。运行终态（done）后按后端快照重载一次——专用会话（dedicated）
   // 的历史因此回到面板，面板内容最终仍以后端为单一真源。
-  function beginCronRun(prompt: string): void {
+  //
+  // **忙判定先行**（M612 r1 P2-1）：交互轮次在途（sendPhase 非 idle）时后端 `acquire_turn`
+  // 必然 busy 拒单，乐观切屏注定被回滚；而 `resetView` 会把握手轮次的流式泡清空、`turnOpen`
+  // 关掉，随后 catch 里的快照回滚又只取到中段——在途轮次后续分片被 M374 闸门当迟到产出丢弃。
+  // 这种点击什么都不该动渲染面：返回 false，装配层据此跳过失败回滚。
+  function beginCronRun(prompt: string): boolean {
+    if (sendPhase !== "idle") return false;
     // 在途快照作废（seq 与 fetchSnapshot 同一条纪律）：切 vault 那一次快照可能还没回来，
     // 迟到的响应会把它的消息追加进刚清空的渲染面（与乐观上屏的 prompt 重复 / 串台）。
     snapshotSeq += 1;
@@ -8872,6 +8881,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     turnOpen = true;
     applySendPhase(reduceSendPhase(sendPhase, { type: "sent" }));
     cronRunAdopted = true;
+    return true;
   }
 
   /** 按后端当前会话重取快照并重建渲染面（M612）：cron 点击运行发起失败时的回滚通道——
