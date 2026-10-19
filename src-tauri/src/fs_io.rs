@@ -16,6 +16,7 @@ use notify::{EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 use ts_rs::TS;
@@ -26,7 +27,8 @@ use crate::config::IgnoreTier;
 /// 保存临时文件模式（两条）。**必须两条**才能与既有判据「`.` 开头且含 `.lumir-`」逐条等价：
 /// - `.lumir-*` —— 名字在**开头**就是 `.lumir-`（`.lumir-notes.md` / `.lumir-` / `.lumir-1`）；
 /// - `.*.lumir-*` —— 首个 `.` 之后另有内容再出现 `.lumir-`（本 app 产生的
-///   `.{目标名}.lumir-{pid}`，如 `.note.md.lumir-123`，以及 `..lumir-1`）。
+///   `.{目标名}.lumir-{pid}-{seq}-{rand}`，如 `.note.md.lumir-123-0-0a1b2c3d4e5f6071`，
+///   以及 `..lumir-1`）。
 ///
 /// 只写后者会漏掉「以 `.lumir-` 开头」的名字（r2/r3 评审用真 `git check-ignore` 实测过
 /// `.lumir-notes.md`）——那等于顺手把一个今天隐藏的文件改成可见，对拍测试也会红。
@@ -1322,12 +1324,21 @@ enum RenameGuard<'a> {
 /// **全仓唯一的原子替换写核心**：同目录 `.lumir-` 临时文件 + `sync_all` + 原子 rename。
 /// 三个写入方共用这一份——`document_save` / [`fs_patch_file`]（文本）与
 /// [`write_attachment`]（二进制附件）——「整文件保存 / 局部 patch / 贴图落盘走同一套写纪律」
-/// 因此是结构性的，不是巧合（REVIEW.md 「同一语义两处真源」条）。三条纪律：
-/// - **`.lumir-` 标记**：tmp 名形如 `.{name}.lumir-{pid}`，命中忽略集（[`LUMIR_TMP_PATTERNS`]），
-///   因此写入过程不在文件树 / watch 流里留下临时条目（`fs-io` spec 的「局部 patch 写入」把
-///   这层口径称作写盘方的自身标记）；
-/// - **ghost 重试**：`create_new` 撞上同名文件 = 上次写入进程崩溃留下的残留（tmp 名含自身
-///   pid，活着的进程互不挡道），删掉重试一次；再失败才是真错误；
+/// 因此是结构性的，不是巧合（REVIEW.md 「同一语义两处真源」条）。四条纪律：
+/// - **`.lumir-` 标记**：tmp 名形如 `.{name}.lumir-{pid}-{seq}-{rand}`，命中忽略集
+///   （[`LUMIR_TMP_PATTERNS`]），因此写入过程不在文件树 / watch 流里留下临时条目
+///   （`fs-io` spec 的「局部 patch 写入」把这层口径称作写盘方的自身标记）；
+/// - **tmp 名进程内唯一（M599）**：本函数是**任意文件的并发写者**（前端 `document_save`
+///   与 harness `fs_patch_file` 会撞同一文档，贴图落盘同理），因此只把名字唯一化、不做
+///   全局串行——与 config.json「单文件单写者、进程内串行」的语义不同（见
+///   `config::write_json_atomic`），串行化这里会把无关文件的写入拖成一条队列。旧实现固定
+///   用 `.{name}.lumir-{pid}`：同进程两个线程撞名后，撞名分支 `remove_file` 删掉的是**对方
+///   在途的 tmp**，随后 rename 可能把对方写了一半的内容顶成正式文件（低频但不可逆）；
+/// - **撞名重试、不删残留**：名字已含 pid + 进程内序号 + 随机段，活着的写者互不共用路径；
+///   `create_new` 仍撞上同名文件只可能是**崩溃残留**（上次进程已死，pid 被系统回收、随机段
+///   又恰好相同）。此时换一个新名字重试，MUST NOT 删除它——它不是本次写的半成品，删掉可能
+///   误删他人在途写入；残留交给枚举路径的超龄 ghost 清扫（[`GHOST_TMP_MAX_AGE`]）。连续
+///   16 个名字都撞上才是真错误；
 /// - **失败即清理 tmp**，不留半截目标文件。
 ///
 /// `guard` 决定 rename 之前的那一刻是否放行（见 [`RenameGuard`]）：每个前置守卫都在
@@ -1337,6 +1348,40 @@ enum RenameGuard<'a> {
 /// [`AtomicWriteError::TargetChanged`]），MUST NOT 覆盖。`std::fs::rename` 的 POSIX 语义是
 /// **原子替换**，零窗口需要平台的原子排他改名，本批不做（与 [`rename_entry`] /
 /// [`fs_move_entry`] 同一取舍，别在别处读成更强的保证）。
+/// 进程内 tmp 序号（M599）：与 pid、随机段一起保证并发写者各拿一条独立 tmp 路径。
+/// `write_bytes_atomic` 服务任意文件的并发写者，全局串行会把无关文件的写入也拖成一条队列，
+/// 因此这里只做「名字唯一」，不引入锁。
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 新建本次写入独占的 tmp 文件，返回 `(路径, 已打开的句柄)`。
+///
+/// 名字形如 `.{name}.lumir-{pid}-{seq}-{rand}`：同进程由序号分开，多实例由 pid 分开，
+/// 随机段把「pid 回收后撞上崩溃残留」的概率压到可忽略。撞名（只可能是崩溃残留）换名重试、
+/// 不删残留——语义见 [`write_bytes_atomic`] 的「撞名重试、不删残留」条。
+fn create_tmp_file(parent: &Path, name: &str) -> std::io::Result<(PathBuf, std::fs::File)> {
+    for _ in 0..16 {
+        let tmp = parent.join(format!(
+            ".{name}.lumir-{}-{}-{:016x}",
+            std::process::id(),
+            TMP_SEQ.fetch_add(1, Ordering::Relaxed),
+            rand::random::<u64>(),
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(file) => return Ok((tmp, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "连续 16 次生成的临时文件名都撞上了残留文件",
+    ))
+}
+
 fn write_bytes_atomic(
     target: &Path,
     bytes: &[u8],
@@ -1347,26 +1392,7 @@ fn write_bytes_atomic(
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("document");
-    let tmp = parent.join(format!(".{name}.lumir-{}", std::process::id()));
-    let mut file = match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)
-    {
-        Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            let _ = std::fs::remove_file(&tmp);
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&tmp)
-            {
-                Ok(file) => file,
-                Err(e) => return Err(AtomicWriteError::CreateTemp(e)),
-            }
-        }
-        Err(e) => return Err(AtomicWriteError::CreateTemp(e)),
-    };
+    let (tmp, mut file) = create_tmp_file(parent, name).map_err(AtomicWriteError::CreateTemp)?;
     use std::io::Write;
     if let Err(e) = file.write_all(bytes) {
         let _ = std::fs::remove_file(&tmp);
@@ -3269,17 +3295,95 @@ mod tests {
         assert!(save_document(&v.0, ".gitignore", &revision, "ok").is_ok());
     }
 
+    /// 崩溃残留的 ghost（旧格式的固定名）不再与本次写入撞名：保存照常成功，残留本身不被
+    /// 碰——它可能是别人在途的写入，删不得（M599），超龄后由枚举路径的 ghost 清扫回收。
     #[test]
-    fn document_save_recovers_from_stale_ghost_tmp() {
+    fn document_save_is_not_blocked_by_stale_ghost_tmp() {
         let v = TempVault::with_fixture();
-        // 预置与本次保存同名的 ghost（同 pid）：create_new 撞车须删除后重试成功
         let ghost = v.0.join(format!(".note.md.lumir-{}", std::process::id()));
         std::fs::write(&ghost, "stale ghost").unwrap();
         let revision = file_revision(&v.0, "note.md").unwrap();
         let next = save_document(&v.0, "note.md", &revision, "# recovered").unwrap();
         assert_ne!(revision, next);
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# recovered");
-        assert!(!ghost.exists(), "ghost 应已被删除重试清理");
+        assert!(ghost.exists(), "写入方 MUST NOT 删除不是自己创建的残留");
+    }
+
+    /// **同进程并发写同一目标（M599）**：两条线程各拿一条独立 tmp，rename 落地的永远是一份
+    /// **完整**内容。旧实现（tmp 名只带 pid）撞名时会删掉对方在途的 tmp，随后 rename 把对方
+    /// 写了一半的内容顶成正式文件——两线程之一必然 `Rename` 失败，且读者能观察到半截内容。
+    ///
+    /// 两个判据同时钉住：
+    /// - 双方都必须 `Ok(Written)`（旧实现必有一方 rename 失败）；
+    /// - 运行期间读者轮询目标文件，任何一次快照都必须是「旧内容 / A / B」三者之一——半截 /
+    ///   交错内容一次都不许出现（这正是本 finding 的损坏形态，端态比对抓不到）。
+    #[test]
+    fn atomic_write_concurrent_same_target_keeps_content_whole() {
+        const ROUNDS: usize = 20;
+        const BODY: usize = 256 * 1024;
+        let v = TempVault::new();
+        let target = v.0.join("note.md");
+        let body_a = "A".repeat(BODY).into_bytes();
+        let body_b = "B".repeat(BODY).into_bytes();
+        let old = b"# old".to_vec();
+        std::fs::write(&target, &old).unwrap();
+
+        for round in 0..ROUNDS {
+            let barrier = Arc::new(std::sync::Barrier::new(3));
+            let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let mut writers = Vec::new();
+            for body in [body_a.clone(), body_b.clone()] {
+                let target = target.clone();
+                let barrier = Arc::clone(&barrier);
+                writers.push(std::thread::spawn(move || {
+                    barrier.wait();
+                    write_bytes_atomic(&target, &body, RenameGuard::Replace)
+                }));
+            }
+            // 读者：只在目标可读时取样，停止信号由两个写者都返回后置位。
+            let reader = {
+                let target = target.clone();
+                let barrier = Arc::clone(&barrier);
+                let done = Arc::clone(&done);
+                let (old, a, b) = (old.clone(), body_a.clone(), body_b.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let mut seen = 0usize;
+                    while !done.load(Ordering::Acquire) {
+                        if let Ok(snapshot) = std::fs::read(&target) {
+                            assert!(
+                                snapshot == old || snapshot == a || snapshot == b,
+                                "第 {round} 轮：目标出现了半截 / 交错内容（{} 字节）",
+                                snapshot.len()
+                            );
+                            seen += 1;
+                        }
+                        std::hint::spin_loop();
+                    }
+                    seen
+                })
+            };
+            for writer in writers {
+                let outcome = writer.join().unwrap();
+                assert!(
+                    matches!(outcome, Ok(AtomicWriteOutcome::Written)),
+                    "第 {round} 轮：并发写者必须各自成功，实际 {outcome:?}"
+                );
+            }
+            done.store(true, Ordering::Release);
+            assert!(
+                reader.join().unwrap() > 0,
+                "第 {round} 轮：读者应至少取样一次"
+            );
+
+            let landed = std::fs::read(&target).unwrap();
+            assert!(
+                landed == body_a || landed == body_b,
+                "第 {round} 轮：落地内容既不是 A 也不是 B（{} 字节）",
+                landed.len()
+            );
+            assert_no_lumir_tmp(&v.0);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -3328,11 +3432,7 @@ mod tests {
             "# external edit",
             "外部内容 MUST NOT 被静默覆盖"
         );
-        assert!(
-            !v.0.join(format!(".note.md.lumir-{}", std::process::id()))
-                .exists(),
-            "被拦下时 tmp 必须清理"
-        );
+        assert_no_lumir_tmp(&v.0);
     }
 
     /// 反向路径之二：**同 inode 就地改写**——dev/ino 不变，只有 mtime/size 能抓到。这条守住
@@ -3536,17 +3636,18 @@ mod tests {
         assert_eq!(err.code, "fs_invalid_utf8");
     }
 
-    /// patch 与保存走的是同一个写核心（M301 抽出的 [`write_document_atomic`]）：ghost tmp 的
-    /// 删除重试对 patch 同样成立——这条断言同时钉住「两者不是两份实现」。
+    /// patch 与保存走的是同一个写核心（M301 抽出的 [`write_document_atomic`]）：崩溃残留的
+    /// ghost 不再挡住 patch、也不被删除（M599 的「撞名重试、不删残留」），这条同时钉住
+    /// 「两者不是两份实现」。
     #[test]
-    fn fs_patch_file_recovers_from_stale_ghost_tmp() {
+    fn fs_patch_file_is_not_blocked_by_stale_ghost_tmp() {
         let v = TempVault::with_fixture();
         let ghost = v.0.join(format!(".note.md.lumir-{}", std::process::id()));
         std::fs::write(&ghost, "ghost").unwrap();
         let revision = file_revision(&v.0, "note.md").unwrap();
         fs_patch_file(&v.0, "note.md", &[edit("hello", "patched")], &revision).unwrap();
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# patched");
-        assert!(!ghost.exists(), "ghost 应已被删除重试清理");
+        assert!(ghost.exists(), "写入方 MUST NOT 删除不是自己创建的残留");
     }
 
     /// watch 面（fs-io spec「局部 patch 写入」的落盘条款）：patch 之后事件流里出现的是
@@ -3609,7 +3710,8 @@ mod tests {
     /// `document_conflict`，外部内容 MUST NOT 被静默覆盖，tmp 一并清理。
     ///
     /// **同步点**：这段窗口没法从外面「打孔」，干扰线程只能盯住本次写入必然创建的
-    /// `.big.md.lumir-<pid>` 临时文件，它一出现就换掉目标；此刻正文还没写完 + `sync_all`
+    /// `.{REL}.lumir-*` 临时文件（M599 起名字带 pid + 序号 + 随机段，只能按前缀扫描），
+    /// 它一出现就换掉目标；此刻正文还没写完 + `sync_all`
     /// （正文≈15MB ⇒ 窗口约 37ms）。实测（本机 5 次采样）干扰自身耗时 3.5–21ms，落地后窗口还剩
     /// 21–46ms。临时文件在 CAS 读**之后**才被创建 ⇒ 换掉的必然是「已通过校验的那一代文件」，
     /// 干扰 MUST NOT 被 CAS 那条路径挡下——判据因此额外钉住「错误不带 rel 参数（CAS 冲突那条带
@@ -3624,7 +3726,6 @@ mod tests {
         use std::sync::atomic::AtomicBool;
         const REL: &str = "big.md";
         let padding = "填充行：保持不动。\n".repeat(600_000);
-        let tmp_name = format!(".{REL}.lumir-{}", std::process::id());
         let mut lost = Vec::new();
 
         for attempt in 1..=3 {
@@ -3638,8 +3739,8 @@ mod tests {
             std::fs::write(&intruder, "# external edit\n").unwrap();
             let intruder_ino = std::fs::metadata(&intruder).unwrap().ino();
 
-            let tmp = v.0.join(&tmp_name);
-            let watch_tmp = tmp.clone();
+            let tmp_prefix = format!(".{REL}.lumir-");
+            let watch_dir = v.0.clone();
             let watch_target = target.clone();
             let swapped = Arc::new(AtomicBool::new(false));
             let stopped = Arc::new(AtomicBool::new(false));
@@ -3647,7 +3748,15 @@ mod tests {
             let stop = Arc::clone(&stopped);
             let watcher = std::thread::spawn(move || {
                 while !stop.load(Ordering::Acquire) {
-                    if watch_tmp.exists() {
+                    let appeared = std::fs::read_dir(&watch_dir).is_ok_and(|entries| {
+                        entries.flatten().any(|entry| {
+                            entry
+                                .file_name()
+                                .to_str()
+                                .is_some_and(|name| name.starts_with(&tmp_prefix))
+                        })
+                    });
+                    if appeared {
                         // 临时文件出现 = 已过 CAS 校验、正文正在写：把目标换成另一代文件
                         if std::fs::rename(&intruder, &watch_target).is_ok() {
                             flag.store(true, Ordering::Release);
@@ -3689,7 +3798,7 @@ mod tests {
                 intruder_ino,
                 "被换上的那一代文件必须还在（我们的 rename MUST NOT 发生过）"
             );
-            assert!(!tmp.exists(), "被拦下时 tmp 必须清理");
+            assert_no_lumir_tmp(&v.0);
             return;
         }
         panic!("三段都没在 CAS 与 rename 之间被拦下（丢了竞态的是 {lost:?}）：要么写核心没有拿到快照（旧实现），要么干扰没命中窗口");
