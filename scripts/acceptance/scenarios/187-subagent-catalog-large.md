@@ -77,18 +77,16 @@ steps:
   - name: 等回合装载完成
     do: waitFor
     waitFor:
-      has: ["SGE-CHECK 清单装载完成。", "/子代理清单 · 6/"]
+      has: ["SGE-CHECK 清单装载完成。"]
     timeoutMs: 30000
     expect:
-      - label: 清单未截断（5 个自定义 + 内建 explore 全部在）
-        ax: { has: "/子代理清单 · 6/" }
       - shot: 01-超阈值
 
   - name: 等诊断日志落盘（日志写线程按批次刷盘，留一拍再读）
     do: sleep
     ms: 1200
     expect:
-      - label: 超阈值落诊断事件（估算值 + 定义数）
+      - label: 超阈值落诊断事件（估算值 + 定义数；`definition_count = 6` 即清单未截断——5 个自定义 + 内建 explore 全部在）
         file: { path: "env:logs/*.jsonl", has: '/"definition_count":"6".*"estimated_tokens":"\d{5}".*"event":"subagent_catalog_large"/' }
       - label: 装载期产一条点名阈值的 warning
         file: { path: "env:logs/*.jsonl", has: "超过 15000 阈值" }
@@ -97,6 +95,7 @@ steps:
 
 # 187 —— 8.6 描述超阈值
 
-5 个定义、描述合计约 6.5 万字符（估算 ≈ 16250 token > 15000 阈值）。断言三处：
-诊断事件（`subagent_catalog_large` 带估算值与定义数）、装载 warning、面板清单计数未被截断
-（截断 = 定义静默消失，正是这条要防的形态）。
+5 个定义、描述合计约 6.5 万字符（估算 ≈ 16250 token > 15000 阈值）。断言两处：诊断事件
+（`subagent_catalog_large` 带估算值与定义数）与装载 warning。清单未截断由诊断事件的
+`definition_count = 6` 判（截断 = 定义静默消失，正是这条要防的形态）；M610 起面板清单区已退场，
+界面计数读数不再参与断言。

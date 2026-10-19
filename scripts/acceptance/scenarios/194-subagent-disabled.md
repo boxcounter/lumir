@@ -48,8 +48,6 @@ steps:
         file: { path: "env:harness/sessions/*/*.jsonl", count: { pattern: '"name":"task"', exact: 0 } }
       - label: 任务区整块不出现（空态不占位）
         ax: { not: "任务 · 本次会话" }
-      - label: 子代理清单不出现（enabled=false 的关停面）
-        ax: { not: "子代理清单" }
       - label: 定义文件原样保留（重新启用即恢复）
         file: { path: ".lumir/agents/research.md", has: "关停时保留的定义" }
       - shot: 01-关停态
@@ -57,5 +55,5 @@ steps:
 
 # 194 —— 8.12 关停
 
-`[harness.subagents].enabled = false`：`task` 不注册、任务区与清单整块不出现；定义文件与内建
-`explore` 原样保留（改配置即可恢复，不需要删定义）。
+`[harness.subagents].enabled = false`：`task` 不注册、任务区整块不出现；定义文件与内建
+`explore` 原样保留（改配置即可恢复，不需要删定义）。清单区已随 M610 退场，不再有界面判据。

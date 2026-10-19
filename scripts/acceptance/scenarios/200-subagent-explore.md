@@ -16,23 +16,6 @@ steps:
       - label: harness 以旁侧 pane 出现
         ax: { has: "分隔条" }
 
-  - name: 等清单拉取完成
-    do: waitFor
-    waitFor:
-      has: ["/子代理清单 · 1/"]
-    timeoutMs: 15000
-  - name: 打开子代理清单（无自定义定义）
-    do: click
-    target: { role: AXButton, name: "子代理清单 · 1" }
-    expect:
-      - label: 清单只有内建 explore
-        ax: { has: "explore" }
-      - label: 来源标为内建
-        ax: { has: "内建" }
-      - label: 工具数是只读三件
-        ax: { has: "3 件工具" }
-      - shot: 01-内建 explore
-
   - name: 输入提问并发送
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|SUBQ" }
@@ -94,5 +77,6 @@ steps:
 
 # 200 —— 8.18 内建 explore 与覆盖
 
-无自定义定义时清单含内建 `explore`（只读三件）；放同名自定义定义后生效的是自定义定义，清单
-只显示一份并注明覆盖来源。判据：清单区读数、两轮 `subagent_started.tools`、覆盖 warning。
+无自定义定义时生效的是内建 `explore`（只读三件）；放同名自定义定义后生效的是自定义定义，
+原内建定义被覆盖。判据：两轮 `subagent_started.tools` 与覆盖 warning。M610 起面板清单区已退场，
+界面读数不再参与断言。

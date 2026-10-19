@@ -499,7 +499,8 @@
 - [x] 10.5 子代理清单：只读折叠列表（名字 / description / 工具数 / 模型 / 来源），覆盖时标来源说明。
   （M590 新增命令 `harness_subagent_catalog`（与 `task` 描述同一次 `AgentCatalog::load`）；
   `override_from` 由后端从定义合并 warning 解析（措辞有单测钉子）。`enabled=false` 时整块不出现。
-  验收：场景 194 / 200。）
+  验收：场景 194 / 200。**M610：本条已撤销**——按 Alex 2026-10-19「彻底去掉，只留任务区」裁决，
+  清单区、命令、IPC 包装与 D521 已全部退役；验收 194 / 200 改为只判任务区与诊断日志。）
 - [x] 10.6 按模型用量区：展开区给「子任务用量（按模型）」表，父会话控制行读数不变（不掺子运行）。
   （M590：`subrunUsageRows` 消费快照 `subrun_usage`；只在全部 run 收敛后显示。父会话读数不掺
   子运行由 M589 的 `subrun_records_do_not_change_parent_readings` 单测钉住。验收：场景 192。）

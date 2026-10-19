@@ -150,10 +150,9 @@ pub fn run() {
             harness::harness_abort,
             harness::harness_new_session,
             harness::harness_state,
-            // 子代理任务面板的接线面（change add-harness-subagents tasks §10.2 / §10.5 / §10.8）：
-            // 清单快照、单 run 停止、自动回合触顶后的「继续」。实现体在 subagents 中枢，命令只
+            // 子代理任务面板的接线面（change add-harness-subagents tasks §10.2 / §10.8）：
+            // 单 run 停止、自动回合触顶后的「继续」。实现体在 subagents 中枢，命令只
             // 解析 scope——面板是这些动作的唯一消费者。
-            harness::harness_subagent_catalog,
             harness::harness_subagent_stop,
             harness::harness_subagent_continue,
             harness::harness_set_thinking_effort,

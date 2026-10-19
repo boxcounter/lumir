@@ -131,12 +131,10 @@ steps:
   - name: 等这一轮装载完成（定义在回合开头扫描）
     do: waitFor
     waitFor:
-      has: ["SGD-CHECK 定义装载完成。", "/子代理清单 · 6/"]
+      has: ["SGD-CHECK 定义装载完成。"]
     timeoutMs: 30000
     expect:
-      - label: 生效清单只保留合法定义（explore + 6 个保留项：research / dupe / field-ok / budget / background-bool）
-        ax: { has: "/子代理清单 · 6/" }
-      - shot: 01-校验与清单
+      - shot: 01-定义校验
 
   - name: 等诊断日志落盘（日志写线程按批次刷盘，留一拍再读）
     do: sleep
@@ -164,4 +162,5 @@ steps:
 # 185 —— 8.4 定义校验与优先级
 
 坏定义各产一条点名 warning 且好定义照常；`vault > 用户级` 的覆盖与同层字典序规则各自可判。
-判据取诊断日志的 `config_warning`（`source = subagents`）与面板清单计数——两处独立事实。
+判据取诊断日志的 `config_warning`（`source = subagents`）。M610 起面板清单区已退场，界面计数读数
+一并删除——本场景只判每条坏定义的丢弃 / 降级 warning，不再单独断言「好定义保留」。
