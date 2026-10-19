@@ -31,7 +31,7 @@ steps:
       - label: 到点通知已投递
         file:
           path: "env:logs/*.jsonl"
-          has: '/^.*"event":"cron_notified".*"kind":"trigger".*$/'
+          jsonl: { event: cron_notified, kind: trigger }
       - label: 未点击 ⇒ 没有 cron_run_started（无模型请求）
         file:
           path: "env:logs/*.jsonl"
@@ -52,15 +52,17 @@ steps:
       - label: 点击链路被处理（cron_click ok=true, action=run）
         file:
           path: "env:logs/*.jsonl"
-          has: '/^.*"event":"cron_click".*"task":"acc-cron-click".*"ok":"true".*"action":"run".*$/'
+          # 字段序无关（M612）：serde_json 按字母序落盘（action→event→ok→task），写死顺序的正则
+          # 永不命中。逐字段断言，别回到「按序列化顺序拼正则」的写法。
+          jsonl: { event: cron_click, task: acc-cron-click, ok: "true", action: run }
       - label: 点击后运行已发起（不是到点自动运行）
         file:
           path: "env:logs/*.jsonl"
-          has: '"event":"cron_run_started"'
+          jsonl: { event: cron_run_started }
       - label: 运行终态 ok=true
         file:
           path: "env:logs/*.jsonl"
-          has: '/^.*"event":"cron_run_finished".*"ok":"true".*$/'
+          jsonl: { event: cron_run_finished, ok: "true" }
       - label: 面板出现任务 prompt（点击落地到交互会话）
         ax: { has: "CRON-PROBE-CLICK" }
       - label: 面板出现回答（同一会话里跑完一轮）

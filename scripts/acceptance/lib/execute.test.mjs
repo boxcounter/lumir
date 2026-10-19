@@ -171,6 +171,81 @@ test("多键 file 断言逐键判：同内容重写 ⇒ sha256 那条绿、mtime
   assert.equal(status, "FAIL", "一条判据红 ⇒ 场景判红（不再被静默吞掉）");
 });
 
+test("file.jsonl：按字段判、与键序无关（serde_json 的字母序现场，M612 场景 170/171 红因）", async () => {
+  const root = tmpRoot("jsonl-order-insensitive");
+  useTmpEnv(root);
+  // 实际落盘形状：serde_json 的 Map 是 BTreeMap ⇒ cron_click 的字段按 action→event→ok→task
+  // 排列，而旧断言按 event→task→ok→action 写死顺序，永不命中（场景 171 的「已验证」红因）。
+  const line = JSON.stringify({ action: "run", event: "cron_click", ok: "true", task: "acc-cron-click" });
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写一行日志", do: "vaultWrite", file: "log.jsonl", content: `${line}\n` },
+      {
+        name: "字段序无关",
+        expect: [
+          {
+            label: "点击被处理",
+            file: {
+              path: "log.jsonl",
+              jsonl: { event: "cron_click", task: "acc-cron-click", ok: "true", action: "run" },
+            },
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "PASS", `字母序落盘的那一行应命中，实际：${JSON.stringify(records)}`);
+});
+
+test("file.jsonl：字段值不符 / 字段缺席一律 FAIL（不是「有 event 就算过」）", async () => {
+  const root = tmpRoot("jsonl-miss");
+  useTmpEnv(root);
+  const line = JSON.stringify({ action: "run", event: "cron_click", ok: "false", task: "acc-cron-click" });
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写一行日志", do: "vaultWrite", file: "log.jsonl", content: `${line}\n` },
+      {
+        name: "值不符与字段缺席",
+        expect: [
+          { label: "ok 不符", file: { path: "log.jsonl", jsonl: { event: "cron_click", ok: "true" } } },
+          { label: "字段缺席", file: { path: "log.jsonl", jsonl: { event: "cron_click", action: "open-session" } } },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "两条判据都应红");
+  assert.deepEqual(
+    records.map((r) => r.ok),
+    [false, false],
+    `期望两条判据都 FAIL，实际：${JSON.stringify(records)}`,
+  );
+});
+
+test("file.jsonl：布尔 / 数值期望按日志的字符串化口径比较（ok: true 命中 \"true\"）", async () => {
+  const root = tmpRoot("jsonl-scalar-coercion");
+  useTmpEnv(root);
+  const line = JSON.stringify({ event: "cron_notified", kind: "trigger", ok: "true", count: "3", task: "t" });
+  const { status } = await drive(root, {
+    steps: [
+      { name: "写一行日志", do: "vaultWrite", file: "log.jsonl", content: `${line}\n` },
+      {
+        name: "标量比较",
+        expect: [{ label: "字符串日志字段", file: { path: "log.jsonl", jsonl: { ok: true, count: 3, kind: "trigger" } } }],
+      },
+    ],
+  });
+  assert.equal(status, "PASS", "日志字段恒为字符串（logging.rs 的 field_text），数值 / 布尔期望应等价比较");
+});
+
+test("file.jsonl 静态校验：空表 / 非标量值 / 非 JSONL 解析输入写错即报 problem", () => {
+  const errs = (spec) => checkScenario({ id: "jsonl-check", item: 0, steps: [{ name: "校验", expect: [{ file: { path: "log.jsonl", ...spec } }] }] });
+  assert.ok(errs({ jsonl: {} }).some((p) => p.includes("jsonl") && p.includes("至少一个字段")), "空 jsonl 应报 problem");
+  assert.ok(
+    errs({ jsonl: { event: { nested: true } } }).some((p) => p.includes("jsonl.event")),
+    "嵌套值应报 problem（日志字段只有标量）",
+  );
+});
+
 test("缺文件时内容类判据仍判 FAIL（不把「读不到」当「为空」）", async () => {
   const root = tmpRoot("missing-file");
   useTmpEnv(root);

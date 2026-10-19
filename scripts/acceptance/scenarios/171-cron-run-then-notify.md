@@ -28,15 +28,15 @@ steps:
       - label: 后台运行已发起（无用户点击）
         file:
           path: "env:logs/*.jsonl"
-          has: '"event":"cron_run_started"'
+          jsonl: { event: cron_run_started }
       - label: 运行终态 ok=true
         file:
           path: "env:logs/*.jsonl"
-          has: '/^.*"event":"cron_run_finished".*"ok":"true".*$/'
+          jsonl: { event: cron_run_finished, ok: "true" }
       - label: 终态后投递了结果通知（kind=result）
         file:
           path: "env:logs/*.jsonl"
-          has: '/^.*"event":"cron_notified".*"kind":"result".*$/'
+          jsonl: { event: cron_notified, kind: result }
       - label: run-then-notify 不投「到点」通知
         file:
           path: "env:logs/*.jsonl"
@@ -61,7 +61,8 @@ steps:
       - label: 点击链路被处理（cron_click ok=true, action=open-session）
         file:
           path: "env:logs/*.jsonl"
-          has: '/^.*"event":"cron_click".*"task":"acc-cron-run".*"ok":"true".*"action":"open-session".*$/'
+          # 字段序无关（M612）：serde_json 按字母序落盘（action→event→ok→task）。
+          jsonl: { event: cron_click, task: acc-cron-run, ok: "true", action: open-session }
       - label: 点击不重跑（全程 cron_run_started 恰好一条）
         file:
           path: "env:logs/*.jsonl"

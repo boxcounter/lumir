@@ -194,6 +194,13 @@ export interface HarnessPanelHandle {
   /** 装载新 vault 之后由装配层调用（M312）：把面板的会话作用域切到新 vault——丢掉旧 vault 的
    *  渲染面与本地态，并按当前 vault 重拉一次 `harness_state`。同一个 vault 重复调用是空操作。 */
   vaultChanged(root: string): void;
+  /** cron 点击发起运行的面板切屏（M612，场景 170）：清渲染面、把本次 prompt 作为用户消息
+   *  上屏、立刻打开轮次闸门与发送相位。装配层 MUST 在 `harness_cron_run` **之前**调用——
+   *  后端不为 cron 回合发 `sent` / `auto_turn_started`，晚开闸门会把先到的正文分片丢掉。 */
+  beginCronRun(prompt: string): void;
+  /** 按后端当前会话重取快照重建渲染面（M612）：cron 点击运行发起失败时撤回乐观切屏，
+   *  面板回到后端真实会话。不切 vault。 */
+  reloadSession(): void;
   /**
    * 下发**可点的 vault 文件路径集**（change harness-path-link）：装载 vault 时一次、watch
    * 增量后一次。面板用它做存在性校验（路径候选只有命中它才可点）；集合内容由装配层按
@@ -3779,6 +3786,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  （或已结束）的轮次迟到产出不得再进消息流。已知边界：webview 重载后在途轮次没有
    *  快照标记可重建本闸门，该轮的流式产出会被丢弃（如实登记，不伪造「正在运行」）。 */
   let turnOpen = false;
+  /** cron 点击运行的面板切屏态（M612）：`beginCronRun` 置位，done 收尾后据此按后端快照重载
+   *  一次（专用会话的历史回屏）。它不是会话状态，只是「这一轮由点击发起」的登记。 */
+  let cronRunAdopted = false;
   /** 本轮的思考块（M363）：reasoning_chunk 事件的累加数据与「有待 rAF 重渲」脏标记。
    *  轮次终态经 finalizeStreamingMessage 定格（数据引用释放，DOM 元素留在消息内）。 */
   let thinkingBlocks: ThinkingBlock[] = [];
@@ -7978,9 +7988,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         turnOpen = false;
         finalizeStreamingMessage();
         applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
+        // cron 点击运行收尾（M612）：按后端快照重载一次——本次运行的 prompt / 回答以留存面板为
+        // 单一真源（专用会话的历史也回屏），不把「这一轮的面板态」当作会话的全部内容。
+        if (cronRunAdopted) reloadSession();
         return;
       case "aborted": {
         turnOpen = false;
+        // 中断不是 done（turn.rs 的 abort 收口直接返回，不再发 done）：点击运行的切屏态在此
+        // 清掉，避免下一次无关回合的 done 误触发快照重载。
+        cronRunAdopted = false;
         // 本轮被用户停止（M348）：中断语义是「不再继续」——已流式产出保留（上面的
         // text_chunk 已落进流式泡），标注「已停止」，经 finished 收口回 idle，
         // composer 立即可开新一轮。无产出（停止在首个 chunk 前）时补一条「Agent ·
@@ -8024,6 +8040,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }
       case "error":
         turnOpen = false;
+        // 同 aborted：错误轮次不发 done，切屏态在此清掉（不再等一次不会来的 done）。
+        cronRunAdopted = false;
         finalizeStreamingMessage();
         applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
         appendError(t("D348", { message: typeof event.message === "string" ? event.message : event.code }));
@@ -8831,6 +8849,40 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
   segNew.addEventListener("click", startNewSession);
 
+  // ── cron 点击发起运行的切屏（M612，change add-cron-runtime-daemon §7.2 / 场景 170）──────
+  //
+  // 点击通知发起的运行走**交互槽位**（后端与 `harness_send` 同一条运行实现），但后端不为它发
+  // `sent` / `auto_turn_started` 事件：面板不主动切屏，这两件事就会同时坏掉——
+  //   ① 面板停在上一段会话（或空占位），用户看不到这次运行的 prompt；
+  //   ② `turnOpen` 仍是 false，先到的 `text_chunk` / `tool_call` 会被轮次闸门当「已结束轮次的
+  //      迟到产出」丢掉（M374 闸门），回答永远上不了屏。
+  // 因此由装配层在 `invoke("harness_cron_run")` **之前**调本函数：清渲染面、prompt 上屏、闸门
+  // 与发送相位立刻置为运行中。运行终态（done）后按后端快照重载一次——专用会话（dedicated）
+  // 的历史因此回到面板，面板内容最终仍以后端为单一真源。
+  function beginCronRun(prompt: string): void {
+    // 在途快照作废（seq 与 fetchSnapshot 同一条纪律）：切 vault 那一次快照可能还没回来，
+    // 迟到的响应会把它的消息追加进刚清空的渲染面（与乐观上屏的 prompt 重复 / 串台）。
+    snapshotSeq += 1;
+    resetView();
+    const blocks: ComposerBlock[] = [{ kind: "paragraph", text: prompt }];
+    appendUserMessage(blocks, prompt, Date.now());
+    firstUserText = firstUserTextOf(blocks);
+    applySessionName();
+    stageWaiting = true;
+    turnOpen = true;
+    applySendPhase(reduceSendPhase(sendPhase, { type: "sent" }));
+    cronRunAdopted = true;
+  }
+
+  /** 按后端当前会话重取快照并重建渲染面（M612）：cron 点击运行发起失败时的回滚通道——
+   *  `beginCronRun` 的乐观切屏必须撤回，面板回到后端真实会话，不留下一条没发出去的 prompt。
+   *  不切 vault（与 `vaultChanged` 的区别：无 vault 作用域变化，只换渲染面）。 */
+  function reloadSession(): void {
+    cronRunAdopted = false;
+    resetView();
+    fetchSnapshot();
+  }
+
   /** 会话浮层可见态的唯一写入口（O5 / aria-expanded 同步，M442）：`sessPop.hidden` 与
    *  `aria-expanded` 是同一次跃迁的两面，由 `sessPopDom` 从同一个布尔派生（合同
    *  docs/specs/overlay-visibility.md 的 O5）。分开写正是 M442 缺陷的形态——`aria-expanded`
@@ -9158,6 +9210,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     },
     titlebarSegment: () => seg,
     vaultChanged,
+    beginCronRun,
+    reloadSession,
     setPathLinkIndex,
     setChromeRetreat(on) {
       toggleButton.hidden = on;
