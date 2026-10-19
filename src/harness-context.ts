@@ -14,6 +14,9 @@
 // 不 import 面板，也不知道「注入」之后发生了什么。输出形状就是 harness_send 的 context_json
 // 契约（宽容解析在 Rust 侧 turn::parse_context）。
 //
+// 另含 chip 路径折叠的纯函数（M606，collapseMiddleDirs）：chip 的可见读数与注入路径同源，
+// 折叠口径只在这一份实现里，面板只消费（语义见函数注释）。
+//
 // 取数先例：视口范围用 view.viewport.from/to（livePreview.ts:255 同先例），对齐到整行边界。
 // 选区不再在此取数——摘录卡片创建时由 QC3 在编辑器侧经 CM6 lineAt 捕获行范围（design §3）。
 
@@ -74,4 +77,24 @@ export function assembleHarnessContext(
 /** context_json 契约的序列化唯一入口（面板与「发送前核对」读同一个产物）。 */
 export function serializeHarnessContext(block: HarnessContextBlock): string {
   return JSON.stringify(block);
+}
+
+/**
+ * 上下文 chip 的路径折叠（M606，Alex 2026-10-19 裁决）：文件名恒完整显示，中间目录折叠成
+ * 「…/」前缀；根目录文件与一层目录没有中间目录可省，原样返回。深层路径把 chip 撑爆，
+ * 而文件名是文件身份的主体、目录只是消歧辅助（hover 出全路径承接消歧）。
+ *
+ * 折叠口径落在本模块：chip 的可见读数与 context_json 的 path 同源，面板只消费本函数，
+ * 因此全前端只有这一份实现（REVIEW.md「同一语义两处真源」条）。纯逻辑、零 IO，单测直接
+ * 钉住深 / 浅两侧与边界输入。
+ */
+export function collapseMiddleDirs(relPath: string): string {
+  const segments = relPath.split("/");
+  const name = segments[segments.length - 1] ?? "";
+  // 末段为空（空串 / 尾斜杠）：没有文件名可作身份主体，原样返回，不编造「…/」。
+  if (name === "") return relPath;
+  const dirDepth = segments.slice(0, -1).filter((part) => part !== "").length;
+  // 0（根目录文件）与 1（一层目录）都没有「中间目录」可省；两层起才折叠。
+  if (dirDepth <= 1) return relPath;
+  return `…/${name}`;
 }

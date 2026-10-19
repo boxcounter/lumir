@@ -107,7 +107,11 @@ import {
 import type { HarnessEvent } from "./ipc";
 import type { DecisionReason } from "./bindings/DecisionReason";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
-import { assembleHarnessContext, serializeHarnessContext } from "./harness-context";
+import {
+  assembleHarnessContext,
+  collapseMiddleDirs,
+  serializeHarnessContext,
+} from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
 import {
@@ -5196,18 +5200,25 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (lastChip === null || lastChip === "none") {
       chip.textContent = t("D333");
       chip.classList.add("is-none");
+      // 「无」态没有路径：清掉上一条文件的 hover 提示，否则会挂着一个已不存在的路径（M606）。
+      chip.removeAttribute("title");
       return;
     }
     chip.classList.remove("is-none");
+    // 可见面折叠中间目录（M606，Alex 2026-10-19 裁决）：文件名恒完整显示、目录只是消歧
+    // 辅助；完整 vault 相对路径落 title 承接 hover 消歧。折叠口径的唯一实现是
+    // collapseMiddleDirs（本文件只消费，不再算第二份）。
+    chip.title = lastChip.path;
+    const shownPath = collapseMiddleDirs(lastChip.path);
     if (lastChip.viewport_range !== undefined) {
       chip.textContent = t("D332", {
-        path: lastChip.path,
+        path: shownPath,
         from: lastChip.viewport_range.from_line,
         to: lastChip.viewport_range.to_line,
       });
     } else {
       // 消息携带引用卡片：跳过视口注入，自动上下文只剩路径（卡片本身在 composer 内核对）。
-      chip.textContent = t("D373", { path: lastChip.path });
+      chip.textContent = t("D373", { path: shownPath });
     }
   }
 
