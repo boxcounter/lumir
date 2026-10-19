@@ -79,6 +79,11 @@
   同一个进程内 per-provider 信号量：隔离槽位（cron 无人值守）取 `Child` 优先级、交互槽位取
   `Parent`；许可数 = `max_concurrent + 1`（design §12.3）。M593 rebase 后已用单测
   `isolated_cron_run_shares_the_provider_request_gate` 钉住「cron 持有的许可会挡住交互路径」。
+- [x] 3.10 `tool_policy` 从声明变为执行（M602，finding：契约无人执行等于没有契约）：`start_turn`
+  在拿到 busy 后把 `RunSpec.tool_policy` 挂到 runtime，`SessionContext` 构造时按 `allow` 过滤
+  工具定义，`release_turn` 撤销；定时与点击两个槽位共用这一条链路。cron 的 8 件白名单因此在
+  `subagents.enabled` 默认开时也不暴露 `task`（单测 `cron_tool_policy_hides_task_even_when_subagents_enabled`
+  钉住；交互发送路径保持完整注册表）。
 
 ## 4. 通知与点击链路
 

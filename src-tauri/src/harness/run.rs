@@ -67,7 +67,10 @@ pub enum SessionTarget {
     Child { run_id: String },
 }
 
-/// 工具白名单：子运行只拿到定义声明的工具子集；交互路径恒为全量（8 件 vault 操作工具）。
+/// 工具白名单：运行契约的一部分（change add-harness-subagents design §2.1）。
+/// `SessionContext` 构造时按它过滤工具定义——cron 交接声明 8 件 vault 工具，因此无人值守
+/// 运行看不见 `task`；交互路径没有交接契约（`None`），暴露完整注册表。子运行另按定义
+/// `tools` 字段过滤（`subagents::ChildContext`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolPolicy {
     /// 允许的工具名闭集合（元素必须是 `tools::TOOL_NAMES` 的成员）。
@@ -253,7 +256,8 @@ pub trait RunContext {
     fn sink(&self) -> &dyn EventSink;
 
     /// 本回合的工具定义快照。交互上下文 = 当前注册表（`task` 的注册与清单注入由
-    /// §2/§3 的 agents + task 工具提供；`[harness.subagents].enabled=false` 时不得出现第 9 件）。
+    /// §2/§3 的 agents + task 工具提供；`[harness.subagents].enabled=false` 时不得出现第 9 件）；
+    /// 有运行契约的槽位再按 `RunSpec.tool_policy` 过滤（cron 的 8 件白名单因此不含 `task`）。
     fn tool_definitions(&self) -> Vec<serde_json::Value>;
 
     /// 权限判定（含会话内批准缓存命中）。调用侧只给工具名、主体串与参数；判定层序在
@@ -383,6 +387,9 @@ pub struct SessionContext<'a> {
     catalog: agents::AgentCatalog,
     /// 本会话的子运行中枢（父会话对象持有；本回合开始时把事件出口与配置快照同步进去）。
     hub: Option<std::sync::Arc<subagents::SubagentHub>>,
+    /// 本回合运行契约的工具白名单（`RunSpec.tool_policy`）：构造时从 runtime 取一次。
+    /// `None` = 交互路径（没有交接契约，暴露完整注册表）。
+    tool_policy: Option<ToolPolicy>,
 }
 
 impl<'a> SessionContext<'a> {
@@ -407,6 +414,10 @@ impl<'a> SessionContext<'a> {
         // 不会出现「同一回合前后定义不一致」。装载期 warning / 容量事件在扫描后落诊断日志。
         let catalog = agents::AgentCatalog::load(&scope.root, config);
         catalog.log_diagnostics();
+        // 运行契约的工具白名单（change add-harness-subagents design §2.1）：`start_turn` 在
+        // 拿到 busy 后把 `RunSpec.tool_policy` 挂到 runtime 上，本构造点读取一次。回合内
+        // 工具集因此不随运行期状态变化漂移；交互路径没有契约 ⇒ `None`。
+        let tool_policy = runtime.tool_policy(scope);
         // 中枢随父会话对象存亡：这里只做「取或建」并把本回合的事件出口 / 配置同步进去。
         let hub = runtime
             .with_session(scope, |session| {
@@ -433,6 +444,7 @@ impl<'a> SessionContext<'a> {
             config,
             catalog,
             hub,
+            tool_policy,
         }
     }
 
@@ -461,10 +473,11 @@ impl RunContext for SessionContext<'_> {
     }
 
     fn tool_definitions(&self) -> Vec<serde_json::Value> {
-        gate_tool_definitions(
+        let definitions = gate_tool_definitions(
             tools::definitions_with_subagents(&self.catalog),
             self.config.subagents.enabled,
-        )
+        );
+        filter_tool_definitions(definitions, self.tool_policy.as_ref())
     }
 
     fn decide(&self, tool: &str, subject: &str, args: &serde_json::Value) -> permissions::Verdict {
@@ -766,6 +779,29 @@ fn gate_tool_definitions(
     definitions
 }
 
+/// 运行契约的工具白名单闸（`RunSpec.tool_policy.allow`，change add-harness-subagents
+/// design §2.1）：白名单是闭集合，模型只看得见其中声明的工具。
+///
+/// `None` = 交互路径没有交接契约（完整注册表）；`Some` = 契约唯一真源——成员之外的注册表
+/// 条目（包括按 `[harness.subagents].enabled` 刚注册的 `task`）一律不暴露。放行仍归权限管线，
+/// 本函数只决定「可见」。
+fn filter_tool_definitions(
+    definitions: Vec<serde_json::Value>,
+    policy: Option<&ToolPolicy>,
+) -> Vec<serde_json::Value> {
+    let Some(policy) = policy else {
+        return definitions;
+    };
+    definitions
+        .into_iter()
+        .filter(|definition| {
+            definition["name"]
+                .as_str()
+                .is_some_and(|name| policy.allow.iter().any(|allowed| allowed == name))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -884,6 +920,91 @@ mod tests {
         );
         runtime.release_turn(&scope);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 运行契约的工具白名单是**唯一真源**（change add-harness-subagents design §2.1）：
+    /// cron 交接声明 `tool_policy.allow` = 8 件 vault 工具（不含 `task`），即使
+    /// `[harness.subagents].enabled=true`，`SessionContext::tool_definitions` 也不得暴露 `task`。
+    ///
+    /// 区分度：同配置下交互路径（无契约，见上一条用例）会注册第 9 件——去掉白名单过滤后本
+    /// 用例必 FAIL。断言直接取 `cron::handoff` 产出的契约值，而不是在测试里另抄一份 8 件表。
+    #[test]
+    fn cron_tool_policy_hides_task_even_when_subagents_enabled() {
+        let root = std::env::temp_dir().join(format!("lumir-run-policy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let _xdg = crate::harness::xdg_test_lock();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let vault = root.join("vault");
+        std::fs::create_dir_all(vault.join(".lumir").join("agents")).unwrap();
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-test-3".to_string(),
+        };
+        let config = HarnessConfig {
+            provider: HarnessProvider::Mock,
+            ..Default::default()
+        };
+        assert!(config.subagents.enabled);
+
+        let task = crate::config::CronTask {
+            id: "task-a".to_string(),
+            vault: vault.display().to_string(),
+            at: "21:00".to_string(),
+            days: crate::config::CronWeekday::ALL.to_vec(),
+            prompt: "synthetic prompt".to_string(),
+            delivery: crate::config::DeliveryPolicy::RunThenNotify,
+            session: crate::config::SessionShape::New,
+            model: None,
+        };
+        let handoff = crate::cron::handoff(&crate::cron::HandoffInput {
+            task: &task,
+            run_id: "run-1",
+            trigger: crate::cron::Trigger::Timer,
+            vault: &task.vault,
+            loop_max: 42,
+            session_id: None,
+        });
+
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&scope, &config).unwrap();
+        runtime.set_tool_policy(&scope, handoff.spec.tool_policy);
+        let sink = NullSink;
+        let ctx = SessionContext::new(&sink, &runtime, &scope, &config);
+        let definitions = ctx.tool_definitions();
+        assert_eq!(
+            definitions,
+            tools::definitions(),
+            "cron 契约的 8 件白名单必须与既有 vault 工具清单深度相等"
+        );
+        assert!(
+            !definitions.iter().any(|defined| defined["name"] == "task"),
+            "契约未声明 task，无人值守运行不得看见委派工具"
+        );
+
+        // 白名单随 busy 一起撤销：下一轮交互发送回到完整注册表（task 重新可见）。
+        runtime.release_turn(&scope);
+        assert!(runtime.tool_policy(&scope).is_none());
+        let ctx = SessionContext::new(&sink, &runtime, &scope, &config);
+        assert_eq!(ctx.tool_definitions().len(), tools::definitions().len() + 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 契约也承载「子集」：白名单之外的注册表条目一律不暴露（模型看不见未声明的工具）。
+    #[test]
+    fn tool_policy_filters_arbitrary_subsets() {
+        let policy = ToolPolicy {
+            allow: vec!["vault_read".to_string()],
+        };
+        let filtered = filter_tool_definitions(tools::definitions(), Some(&policy));
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0]["name"], "vault_read");
     }
 
     /// kill switch 对第 9 件真的生效：合成的 `task` 定义在关闭时被移除、打开时保留。
