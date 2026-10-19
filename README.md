@@ -27,10 +27,10 @@ pnpm dev:app
 ### 发布构建（单命令）
 
 ```bash
-pnpm tauri build
+bash scripts/pack-release.sh
 ```
 
-`tauri build` 会先执行 `beforeBuildCommand`（`pnpm build`）构建前端，并自动为 Rust 侧带上 `--features custom-protocol`，webview 加载内嵌的 `dist/`。
+脚本先过版本闸（当前版本号已有交付证据即拒绝，口径见 [docs/process/release.md](docs/process/release.md)），再执行 `pnpm tauri build`。`tauri build` 会先执行 `beforeBuildCommand`（`pnpm build`）构建前端，并自动为 Rust 侧带上 `--features custom-protocol`，webview 加载内嵌的 `dist/`。
 
 如果不用 Tauri CLI、直接走 cargo，**必须显式带 feature**，否则构建产物被视为 dev、运行时尝试连接不存在的 dev server，窗口白屏且无任何报错：
 
