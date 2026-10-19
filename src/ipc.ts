@@ -709,8 +709,11 @@ function isHarnessEventType(type: string): boolean {
 }
 
 /** 类型层穷尽性断言：形参是 `never`，所以联合里还有没被 case 覆盖的成员时调用处不成立
- *  （tsc 报错）；运行期恒返回 false——运行时来的未知 type 照旧按「不认识」丢弃。 */
-function uncoveredEventType(_uncovered: never): false {
+ *  （tsc 报错，TS2345）；运行期恒返回 false——运行时来的未知 type 照旧按「不认识」丢弃。
+ *  两处消费同一机制：本文件的准入白名单（`isHarnessEventType`），以及 harness-panel.ts
+ *  的 `handleEvent` switch default（判别联合收窄后直接把 `event` 传进来；漏 case 时收窄
+ *  不到 `never`，同样编译失败）。 */
+export function uncoveredEventType(_uncovered: never): false {
   return false;
 }
 

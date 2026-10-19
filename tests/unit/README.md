@@ -28,6 +28,7 @@ node tests/unit/run.mjs     # = pnpm test
 | `src/harness-panel.ts`（M378 hint 文案 + pane 字号步进） | hint 两行带值文案插值（D395 第一行 ctx、D401 第二行 cache，zh/en 双档，缺占位参数抛错）与 `nextHarnessFontSize` 的步进状态（与内容 pane `nextFontSize` 同档位表、reset 回基线、到界返回原值、共享钳制 [12,32]） |
 | `src/harness-panel.ts`（M510 撤销 force 单一真源） | `STRUCTURAL_EDIT_FORCE` + `deleteFamilyStep` / `selectionDeleteStep` / `softBreakStep` 的 force 单一真源（composer 全部结构性 call site：卡片插入/移除、粘贴、拆段、删除族、kill-yank 族、边界位物化键入、IME 组合物化）：贴图（force 压栈）后 1000ms 聚簇窗口内结构步的复现链，撤销时 MUST 恢复「贴图后、结构步前」状态；反向守卫（把 force 强制回 false）证明该断言确有区分度。三处 `false` 豁免（键入压栈、⌃T 转置、删除族空转空写）不变——契约见 `openspec/specs/harness/spec.md`「混排输入区的撤销栈聚簇与结构操作独立成步」 |
 | `src/ipc.ts`（`harness:event` 白名单不变量） | M595：`HarnessEvent` 联合的每个 type 都必须通过 `parseHarnessEvent` 的准入门——从源码取联合声明的 type 清单逐个喂 parser（漏接即 null → 红）、白名单 case 集合与联合逐项对账（多一个 / 少一个都红）、`parseHarnessEvent` 自身不得再另列 case 清单（防第三份真源）；反向输入删任一 case / 加幽灵 case 均实测判红。现场是 `title` 事件被静默丢弃（M576 引入、M590 未补），同族第二次 |
+| `src/harness-panel.ts`（事件消费侧穷尽性闸门） | M603：`handleEvent` 的 switch case 集合与 `HarnessEvent` 联合逐项对账（漏 case / 幽灵 case 即红）、default 分支必须经共享的 `uncoveredEventType(event)` 收口（形参确认是 `never`）；`GATED_EVENT_TYPES` 的 `ReadonlySet<HarnessEvent["type"]>` 注解与词元对账（必为联合成员、闸门恒为内容事件五类）；反向输入逐条证明判据有区分度 |
 
 不在这一层：DOM 交互、CodeMirror view、渲染与布局（归 `tests/visual`）、真实 WKWebView
 下的行为（归 `scripts/acceptance`）。真 `EditorView` 需要 DOM，硬造只会得到一层假实现，
