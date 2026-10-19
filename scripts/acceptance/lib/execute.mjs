@@ -60,6 +60,7 @@ function isPlainTable(v) {
  *  决定 steps.md 里记录的先后，不再决定「谁生效」。 */
 const FILE_JUDGE_KEYS = [
   "exists", "changedSince", "unchangedSince", "mtimeUnchangedSince", "mtimeNewerThan", "has", "not", "count",
+  "jsonl",
 ];
 
 /** 只可能出自「以为在写正则」的转义序列（M556）：转义元字符，或 `\d` / `\w` / `\s` 这类字符组。
@@ -563,6 +564,18 @@ export function checkScenario(scenario) {
         if (!isPlainTable(c) || typeof c.pattern !== "string" || !Number.isInteger(c.exact) || c.exact < 0)
           push(`${at} expect[${j}] file.count 需要 { pattern: 字符串, exact: 非负整数 }，实际 ${JSON.stringify(c)}`);
         else pushBare(`${at} expect[${j}] file.count.pattern`, c.pattern);
+      }
+      else if (kinds[0] === "file" && exp.file.jsonl !== undefined) {
+        // 字段序无关的 JSONL 断言（M612）：值必须是标量——日志字段恒为字符串（logging.rs 的
+        // field_text），写成嵌套对象 / 数组一定是拼错，静默比较会变成「永不命中」的假红。
+        const spec = exp.file.jsonl;
+        if (!isPlainTable(spec) || Object.keys(spec).length === 0)
+          push(`${at} expect[${j}] file.jsonl 需要至少一个字段（如 { event: cron_click, ok: \"true\" }）`);
+        else
+          for (const [k, v] of Object.entries(spec)) {
+            if (!["string", "number", "boolean"].includes(typeof v))
+              push(`${at} expect[${j}] file.jsonl.${k} 需要标量（字符串 / 数值 / 布尔），实际 ${JSON.stringify(v)}`);
+          }
       }
       else if (kinds[0] === "glob" && (!exp.glob.dir || !exp.glob.pattern)) push(`${at} expect[${j}] glob 断言缺 dir/pattern`);
       else if (kinds[0] === "bytes" && !exp.bytes.path) push(`${at} expect[${j}] bytes 断言缺 path`);
@@ -1457,7 +1470,37 @@ export async function runScenario(ctx, scenario) {
                   reason: `（期望 ${m.show} 命中 ${specCount.exact} 行，实际 ${matches} 行）`,
                 };
           }
-          default: {
+          case "jsonl": {
+            // 字段序无关的 JSONL 判据（M612）：按字段名逐项比较，不把对象序列化顺序写进判据。
+            // 为什么需要它：diagnostic 日志由 serde_json 落盘，Map 默认是 BTreeMap ⇒ 字段按
+            // **字母序**输出（cron_click 实际是 action→event→ok→task）；把 event→task→ok→action
+            // 写死的正则永远命中 0 行（场景 171 的「已验证」红因）。期望值按日志的字符串化口径
+            // 比较——logging.rs 的 field_text 把布尔 / 数值一并转成字符串。
+            if (content === undefined && contentErr === undefined) await readContent();
+            if (contentErr) return { ok: false, reason: contentErr };
+            const want = spec.jsonl;
+            const fields = Object.keys(want);
+            const asText = (value) => (typeof value === "object" ? JSON.stringify(value) : String(value));
+            const lines = content.split("\n").filter((line) => line.trim() !== "");
+            for (const line of lines) {
+              let record;
+              try {
+                record = JSON.parse(line);
+              } catch {
+                continue; // 非 JSONL 行（日志截断 / 空行）不参与匹配
+              }
+              if (typeof record !== "object" || record === null || Array.isArray(record)) continue;
+              if (fields.every((field) => field in record && asText(record[field]) === asText(want[field]))) {
+                return { ok: true, detail: `命中 ${JSON.stringify(want)}` };
+              }
+            }
+            return {
+              ok: false,
+              reason: `（${lines.length} 行里没有一行同时满足 ${JSON.stringify(want)}）`,
+            };
+          }
+          case "has":
+          case "not": {
             // has / not
             if (content === undefined && contentErr === undefined) await readContent();
             if (contentErr) return { ok: false, reason: contentErr };

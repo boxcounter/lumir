@@ -2561,9 +2561,18 @@ async function ensureCronVault(root: string): Promise<void> {
  *  runtime，事件不进当前 transcript）。 */
 async function handleCronRun(payload: CronRunPayload): Promise<void> {
   const slot = payload.session_target.kind === "interactive" ? "interactive" : "run";
+  // 本次是否真的切了屏（M612 r1 P2-1）：忙时 beginCronRun 返回 false、不动渲染面，失败回滚
+  // 也必须跟着跳过——无条件 reloadSession 会 resetView 掉在途轮次的流式渲染。
+  let adopted = false;
   try {
     await ensureCronVault(payload.vault);
-    if (slot === "interactive") openHarnessPane();
+    if (slot === "interactive") {
+      openHarnessPane();
+      // 点击发起 = 面板切到这次运行（M612，场景 170）：prompt 上屏 + 轮次闸门立刻打开。
+      // MUST 在 invoke 之前——后端不为 cron 回合发 `sent` / `auto_turn_started`，晚开闸门会
+      // 把先到的正文分片当「已结束轮次的迟到产出」丢掉（面板停在空占位就是这个形态）。
+      adopted = harnessPanel.beginCronRun(payload.prompt);
+    }
     await invoke("harness_cron_run", {
       payload: {
         origin: payload.origin,
@@ -2581,7 +2590,10 @@ async function handleCronRun(payload: CronRunPayload): Promise<void> {
       },
     });
   } catch (error) {
-    // 发起失败也是终态：立即回执（cron_state 不写 last_fired、不误判 busy），并给人话提示。
+    // 发起失败也是终态：先把乐观切屏撤回（M612——面板回到后端真实会话，不留下没发出去的
+    // prompt），再立即回执（cron_state 不写 last_fired、不误判 busy），并给人话提示。
+    // 只在**本次确实切了屏**时回滚：忙时（交互轮次在途）面板原样未动，回滚反而会清掉流式泡。
+    if (adopted) harnessPanel.reloadSession();
     void invoke("cron_run_result", {
       run_id: payload.origin.run_id,
       ok: false,
