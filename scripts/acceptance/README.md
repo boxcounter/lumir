@@ -290,7 +290,13 @@ flavour」）。这类场景在 front-matter 写 `requires: bundle`：dev 下 ru
 = 读自动放行、一切写逐个问（写类批准闸场景 72/73/74 显式钉它），`vault_write`（缺省）= 库内写
 自动放行，`full_access` = 全自动（仅危险命令仍问）；非法值在应用侧会**静默**回落 `vault_write`
 （只发一条 warning），故 `--check` 按闭集合挡拼错。`fixture` 写 `$fixtures/...` 只读引用套件 fixtures
-目录（见下文「占位符」），mock provider 场景（70–77、87–98）是样例。`kimiModel`（M372，场景 99）
+目录（见下文「占位符」），mock provider 场景（70–77、87–98）是样例。**fixture 里的时刻记号**
+（M616）：mock 脚本的字符串里可写 `$nextMinute` / `$nowMinute` / `$pastMinute`——与 `[cron]` 表
+同名记号**同一份换算、同一个写入时刻**（`app.mjs` 的 `cronAtTokens`），写入配置前把记号换成
+`HH:MM` 并落一份副本到隔离配置目录，`providers.mock.fixture` 指向副本。需要它的场景形态：
+「对话式注册」的 `at` 在**模型的工具参数**里（fixture 是仓库里的静态 JSON），而「注册时未到点 /
+今日已过点」必须按运行时刻算（场景 207–211）。无记号的 fixture 原样引用，既有场景逐字节不变。
+`kimiModel`（M372，场景 99）
 写了就构造 `providers.kimi` 节（model + 占位 api_key）——自定义模型 id（如 Kimi Code 订阅端的
 `k3-256k`）的能力判定（effort 置灰判据）按 config 现算，不发消息就验得到；发消息的场景不会配
 这个键。`kimiModels`（M373，场景 102；M381 起 config-only）把逐项 `{ id, effort, window }`

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "好，我来注册这条定时任务。",
+      "tool_calls": [
+        {
+          "id": "call_cron_register",
+          "name": "cron_task_create",
+          "arguments": "{\"id\":\"acc-cron-register\",\"at\":\"$nextMinute\",\"prompt\":\"CRON-REG-PROBE 每天记一笔今日进度，写入 daily-log.md。\"}"
+        }
+      ]
+    },
+    {
+      "text": "定时任务已注册。"
+    }
+  ]
+}

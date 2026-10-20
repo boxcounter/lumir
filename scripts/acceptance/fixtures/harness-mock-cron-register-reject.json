@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "先注册第一条。",
+      "tool_calls": [
+        {
+          "id": "call_cron_keep",
+          "name": "cron_task_create",
+          "arguments": "{\"id\":\"acc-cron-keep\",\"at\":\"$nextMinute\",\"prompt\":\"CRON-KEEP-PROBE 这一条采纳后必须落盘。\"}"
+        }
+      ]
+    },
+    {
+      "text": "再注册第二条。",
+      "tool_calls": [
+        {
+          "id": "call_cron_drop",
+          "name": "cron_task_create",
+          "arguments": "{\"id\":\"acc-cron-drop\",\"at\":\"$nextMinute\",\"prompt\":\"CRON-DROP-PROBE 这一条拒绝后不得落盘。\"}"
+        }
+      ]
+    },
+    {
+      "text": "一条采纳、一条拒绝。"
+    }
+  ]
+}
