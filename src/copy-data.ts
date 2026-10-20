@@ -1670,6 +1670,32 @@ const COPY_TABLE = {
     zh: "停止该任务",
     en: "Stop this task",
   },
+  // D523–D543：定时任务批准卡的键值标签 / 档位词 / 星期词 / 注册日口径 / 删除后果
+  // （change add-cron-conversational-registration design §6.3；文案一律走表，TS 里零 CJK）。
+  D523: { zh: "时间", en: "Time" },
+  D524: { zh: "星期", en: "Days" },
+  D525: { zh: "触达", en: "Delivery" },
+  D526: { zh: "会话", en: "Session" },
+  D527: { zh: "目标 vault", en: "Target vault" },
+  D528: { zh: "任务", en: "Task" },
+  D529: { zh: "到点提醒，点通知后运行", en: "Notify; runs when clicked" },
+  D530: { zh: "自动运行，完成后提醒", en: "Runs automatically, then notifies" },
+  D531: { zh: "静默运行，不提醒", en: "Runs silently" },
+  D532: { zh: "新会话", en: "New session" },
+  D533: { zh: "专用会话", en: "Dedicated session" },
+  D534: {
+    zh: "今天已过点，注册后今天不再触发",
+    en: "Today's time has passed; it won't fire again today",
+  },
+  D535: { zh: "今天照常触发", en: "It can still fire today" },
+  D536: { zh: "删除后不再触发", en: "It will no longer fire after removal" },
+  D537: { zh: "周一", en: "Mon" },
+  D538: { zh: "周二", en: "Tue" },
+  D539: { zh: "周三", en: "Wed" },
+  D540: { zh: "周四", en: "Thu" },
+  D541: { zh: "周五", en: "Fri" },
+  D542: { zh: "周六", en: "Sat" },
+  D543: { zh: "周日", en: "Sun" },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

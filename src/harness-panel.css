@@ -776,6 +776,40 @@
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-3);
 }
+/* 定时任务批准卡（change add-cron-conversational-registration design §6.3）：判定依据行之后、
+   按钮之前的任务要素块。两列键值——键名右对齐次级灰（复用判定依据行的 color token）、值等宽；
+   prompt 全文复用 argv 块的等宽字族与底色；注册日口径一行放在最下。**不新增配色**。 */
+.lumir-hp-approval-cron {
+  margin: 0 0 var(--sp-2);
+}
+.lumir-hp-cron-kv {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px var(--sp-3);
+  margin: 0 0 var(--sp-2);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+}
+.lumir-hp-cron-kv dt {
+  color: var(--text-3);
+  text-align: right;
+}
+.lumir-hp-cron-kv dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+/* prompt 是人读的自然语言而不是命令行：保留 argv 块的字族 / 底色，但软换行（MUST NOT 让
+   一整段 prompt 摊进横向滚动区）。 */
+.lumir-hp-cron-prompt {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.lumir-hp-cron-note {
+  margin: 0;
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
 /* vault_delete 的后果说明（M414，design §5.1）：路径之下的次级灰一行——「移入系统废纸篓、
    可恢复」是这次批准的真实后果，让人知道批准不等于不可恢复。 */
 .lumir-hp-approval-note {

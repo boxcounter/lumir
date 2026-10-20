@@ -500,10 +500,31 @@
 | D519 | agent 面板 · 任务行读数 | 作者 | {rounds} 轮 · {tokens} | {rounds} rounds · {tokens} | M590（tasks §10.1「轮次 · tokens」）：收尾后有真 token 读数的行读数形态。消费点 `runReadText`。 |
 | D520 | agent 面板 · 任务行读数 | 作者 | {rounds} 轮 | {rounds} rounds | M590：运行中尚无 token 读数时的行读数形态（不给假数——tokens 只在收尾后可见）。消费点 `runReadText`。 |
 | D522 | agent 面板 · 任务行停止钮读屏名 | 作者 | 停止该任务 | Stop this task | M590 r1：任务行停止钮的 aria-label（可见文本仍是 D490「停止」）。面板里发送钮的读屏名也叫「停止」（D378），两钮同名时真机 AX 选择器无法稳定区分（场景 201 现场：AX 点击未触发 `harness_subagent_stop`）。消费点 `updateRunRow` 的停止钮。 |
+| D523 | agent 面板 · 定时任务批准卡 | 作者 | 时间 | Time | M615（change add-cron-conversational-registration design §6.3）：任务要素块「时间」行的键名，值 = 批准载荷的 `at`。消费点 `renderCronTaskBlock`。 |
+| D524 | agent 面板 · 定时任务批准卡 | 作者 | 星期 | Days | M615：任务要素块「星期」行的键名，值由 D537–D543 按 `days` 顺序拼接。消费点 `renderCronTaskBlock`。 |
+| D525 | agent 面板 · 定时任务批准卡 | 作者 | 触达 | Delivery | M615：任务要素块「触达」行的键名；值取 D529–D531（闭集合外的原值原样上屏）。消费点 `renderCronTaskBlock`。 |
+| D526 | agent 面板 · 定时任务批准卡 | 作者 | 会话 | Session | M615：任务要素块「会话」行的键名；值取 D532–D533（闭集合外的原值原样上屏）。消费点 `renderCronTaskBlock`。 |
+| D527 | agent 面板 · 定时任务批准卡 | 作者 | 目标 vault | Target vault | M615：任务要素块「目标 vault」行的键名，值 = 批准载荷的绝对路径。消费点 `renderCronTaskBlock`。 |
+| D528 | agent 面板 · 定时任务批准卡 | 作者 | 任务 | Task | M615：`cron_task_remove` 批准卡的「任务」行键名，值 = 待删除任务的 `id`。消费点 `renderCronTaskBlock`。 |
+| D529 | agent 面板 · 定时任务批准卡 | 作者 | 到点提醒，点通知后运行 | Notify; runs when clicked | M615：`delivery = notify-then-run` 的档位词（默认档：到点只提醒，点击通知才运行）。消费点 `renderCronTaskBlock`。 |
+| D530 | agent 面板 · 定时任务批准卡 | 作者 | 自动运行，完成后提醒 | Runs automatically, then notifies | M615：`delivery = run-then-notify` 的档位词。消费点 `renderCronTaskBlock`。 |
+| D531 | agent 面板 · 定时任务批准卡 | 作者 | 静默运行，不提醒 | Runs silently | M615：`delivery = silent-run` 的档位词。消费点 `renderCronTaskBlock`。 |
+| D532 | agent 面板 · 定时任务批准卡 | 作者 | 新会话 | New session | M615：`session = new` 的档位词。消费点 `renderCronTaskBlock`。 |
+| D533 | agent 面板 · 定时任务批准卡 | 作者 | 专用会话 | Dedicated session | M615：`session = dedicated` 的档位词。消费点 `renderCronTaskBlock`。 |
+| D534 | agent 面板 · 定时任务批准卡 | 作者 | 今天已过点，注册后今天不再触发 | Today's time has passed; it won't fire again today | M615（design §8）：`skip_today = true` 的注册日口径行——用户批准前最需要知道的一条。值由线程按本地时钟算好回传，前端不重算。消费点 `renderCronTaskBlock`。 |
+| D535 | agent 面板 · 定时任务批准卡 | 作者 | 今天照常触发 | It can still fire today | M615：`skip_today = false` 的注册日口径行（注册时未到点，当日照常触发）。消费点 `renderCronTaskBlock`。 |
+| D536 | agent 面板 · 定时任务批准卡 | 作者 | 删除后不再触发 | It will no longer fire after removal | M615：`cron_task_remove` 批准卡的后果句（design §6.1 的删除卡口径）。消费点 `renderCronTaskBlock`。 |
+| D537 | agent 面板 · 定时任务批准卡 | 作者 | 周一 | Mon | M615：`days` 里的 `mon` 显示词（批准载荷是英文缩写，按闭集合映射）。消费点 `cronDaysLabel`。 |
+| D538 | agent 面板 · 定时任务批准卡 | 作者 | 周二 | Tue | M615：`days` 里的 `tue` 显示词。消费点 `cronDaysLabel`。 |
+| D539 | agent 面板 · 定时任务批准卡 | 作者 | 周三 | Wed | M615：`days` 里的 `wed` 显示词。消费点 `cronDaysLabel`。 |
+| D540 | agent 面板 · 定时任务批准卡 | 作者 | 周四 | Thu | M615：`days` 里的 `thu` 显示词。消费点 `cronDaysLabel`。 |
+| D541 | agent 面板 · 定时任务批准卡 | 作者 | 周五 | Fri | M615：`days` 里的 `fri` 显示词。消费点 `cronDaysLabel`。 |
+| D542 | agent 面板 · 定时任务批准卡 | 作者 | 周六 | Sat | M615：`days` 里的 `sat` 显示词。消费点 `cronDaysLabel`。 |
+| D543 | agent 面板 · 定时任务批准卡 | 作者 | 周日 | Sun | M615：`days` 里的 `sun` 显示词。消费点 `cronDaysLabel`。 |
 
 ## 编号沿革
 
-**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D522**（M590 的子代理任务面板文案，D477–D522 同批；D476 由并发的 M593 cron 运行契约错误信封先取，本批从 D477 起接续以避免撞号）。
+**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D543**（M615 的定时任务批准卡文案，D523–D543 同批；D477–D522 由 M590 子代理任务面板批占用，本批从 D523 起接续以避免撞号）。
 
 **不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377、D508–D513、D521。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
 
@@ -573,6 +594,7 @@
 - M593 D476 cron 运行契约校验的错误信封（接 D475 的下一位；D477–D522 由 M590 接续，避免撞号）
 - M607 D508–D513 子代理清单退场（**未取新号**）：编号停用、不复用——面板「Subagents 常驻栏」按 Alex 2026-10-19 裁决「彻底去掉，只留任务区」删除，清单专用文案随消费者一并切掉；任务区文案（D477–D507、D514–D520、D522）不变
 - M610 D521 子代理清单后端退役（**未取新号**）：编号停用、不复用——`harness_subagent_catalog` 命令、IPC 包装与序列化失败错误信封随后端退场一并删除（M607 后已无运行时消费者）
+- M615 D523–D543 定时任务批准卡：要素键名 / 触达与会话档位词 / 星期词 / 注册日口径 / 删除后果（接 D522 末位）
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 
