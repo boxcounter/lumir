@@ -1,9 +1,15 @@
-//! 工具集（design §4）：**8 件 vault 操作工具 + 1 件编排工具**——vault_read / vault_search /
-//! vault_patch / vault_create / vault_move / vault_delete / skill_load / cli_run，外加 `task`
-//! （子代理委派；change add-harness-subagents，ADR 0007 Decision 7 的「编排工具」一类）。
+//! 工具集（design §4）：**8 件 vault 操作工具 + 1 件编排工具 + 3 件调度工具**——vault_read /
+//! vault_search / vault_patch / vault_create / vault_move / vault_delete / skill_load / cli_run，
+//! 外加 `task`（子代理委派；change add-harness-subagents，ADR 0007 Decision 7 的「编排工具」一类）
+//! 与 `cron_task_create` / `cron_task_list` / `cron_task_remove`（change
+//! add-cron-conversational-registration，ADR 0007 Decision 7 的「调度工具」一类）。
 //! `task` 不在 [`TOOL_NAMES`] 里：它不是 vault 操作、不走 `execute` 的 vault 工具注册表，也
 //! 不受「写且需防护」判据约束。清单外扩张须经 Alex 裁决（ADR 0007）；本次扩张（vault_move /
 //! vault_delete）即 change add-harness-permission-modes 的 Alex 节点 1 裁决。
+//!
+//! 三件调度工具另立 [`CRON_TOOL_NAMES`]，且**只在交互发送路径注册**（`run::SessionContext` 在
+//! `tool_policy = None` 时追加、经 [`ToolContext::cron`] 执行）：无人值守运行与子运行天然看不见
+//! 它们——「定时运行不能给自己排新任务、子代理不能排任务」由既有机制表达，不是新增开关。
 //!
 //! 执行层抽象（ADR 0007 Decision 3 留口）：「工具名 + JSON 参数 → JSON 结果」注册表——
 //! [`execute`] 就是这个形状的唯一入口，未来 headless CLI 后端翻译成同一中间表示即可。
@@ -28,17 +34,22 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
+use crate::cron;
 use crate::fs_io::{self, IgnorePolicy, PatchEdit};
+use crate::logging;
 
 use super::agents::AgentCatalog;
 use super::context::SkillEntry;
 use super::diff;
-
-/// 工具执行上下文（vault 作用域 + 会话建立时快照的 Skill 清单）。
+/// 工具执行上下文（vault 作用域 + 会话建立时快照的 Skill 清单 + 调度工具端口）。
 pub struct ToolContext<'a> {
     pub root: &'a Path,
     pub policy: &'a IgnorePolicy,
     pub skills: &'a [SkillEntry],
+    /// 调度工具端口（change add-cron-conversational-registration）：**只有交互发送路径**注入
+    /// （`SessionContext::cron_port` 在交接契约槽位返回 `None`）。`None` 时三件调度工具对这个
+    /// 运行而言就是清单外的工具名——可见面与可执行面由同一个判据控制。
+    pub cron: Option<&'a dyn cron::CronPort>,
 }
 
 /// 批准预览（ask 档 approval_request 事件的载荷来源）。
@@ -55,6 +66,10 @@ pub struct ApprovalPreview {
     /// cli_run 的用途说明（design §3.4）：批准卡在命令上方展示它（命令原文仍完整可见）。
     /// 事件层的载荷键名即 `purpose`（turn.rs 注入），前端有则显示、无则回落现状。
     pub purpose: Option<String>,
+    /// 定时任务预览（cron_task_create / cron_task_remove，change
+    /// add-cron-conversational-registration design §6.3）：五要素的待批准快照。
+    /// 事件载荷键 `cron_task`；`prompt` 全文只出现在这里（不进诊断日志）。
+    pub cron_task: Option<serde_json::Value>,
 }
 
 impl ApprovalPreview {
@@ -64,6 +79,7 @@ impl ApprovalPreview {
             argv: None,
             revision: None,
             purpose: None,
+            cron_task: None,
         }
     }
 }
@@ -111,6 +127,11 @@ pub const TOOL_NAMES: [&str; 8] = [
     "skill_load",
     "cli_run",
 ];
+
+/// 3 件调度工具的名字表（change add-cron-conversational-registration design §2.1）：**只在交互
+/// 发送路径注册**（`run::SessionContext::tool_definitions`）。`TOOL_NAMES` 保持 8 件不变——cron
+/// 交接的工具白名单与子运行定义白名单都以它为界，三件调度工具因此拿不到无人值守运行与子运行。
+pub const CRON_TOOL_NAMES: [&str; 3] = ["cron_task_create", "cron_task_list", "cron_task_remove"];
 
 /// Responses API function tools 定义（`type: "function"`，JSON Schema parameters）。
 /// deepseek 兼容表：`function` 类型支持，其余 type 被忽略——只发这一种。
@@ -234,6 +255,53 @@ pub fn definitions() -> Vec<serde_json::Value> {
     ]
 }
 
+/// 三件调度工具的定义（change add-cron-conversational-registration design §2.3）。
+///
+/// 参数与 `[cron].tasks` 的字段一一对应：`create` 取 `id` / `at` / `prompt`（必填）与 `days` /
+/// `vault` / `delivery` / `session` / `model`（可选，缺省同配置口径）；`list` 无参；`remove`
+/// 取 `id`。`prompt` 的「自包含」无法机器判定，写在 description 里、归抽样观察。
+pub fn cron_definitions() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "type": "function",
+            "name": "cron_task_create",
+            "description": "在 Lumir 里注册一条定时任务（只在 Lumir 运行时触发；不要另建系统级调度）。prompt 必须自包含：到点运行时是一个新会话，看不到当前这段对话。缺省触达策略 notify-then-run（到点只通知，用户点击才运行）。注册前先 cron_task_list 查重；改任务 = cron_task_remove + cron_task_create。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "任务身份：非空、不含空白、不得与既有任务重名；同时是通知标题"},
+                    "at": {"type": "string", "description": "本地时间 HH:MM（00:00–23:59）"},
+                    "prompt": {"type": "string", "description": "自包含的自然语言载荷：做什么、在哪个目录、产出放哪、不要做什么"},
+                    "days": {"type": "array", "items": {"type": "string"}, "description": "可选，mon/tue/wed/thu/fri/sat/sun 的非空子集；缺省全周"},
+                    "vault": {"type": "string", "description": "可选，目标 vault 的绝对路径；缺省当前 vault"},
+                    "delivery": {"type": "string", "description": "可选：notify-then-run（缺省）/ run-then-notify / silent-run"},
+                    "session": {"type": "string", "description": "可选：new（缺省）/ dedicated（每任务一个专用会话，后续触发续写）"},
+                    "model": {"type": "string", "description": "可选，运行期模型 id 覆盖"}
+                },
+                "required": ["id", "at", "prompt"]
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "name": "cron_task_list",
+            "description": "列出本机已注册的定时任务与最近一次触发日（last_fired；无记录为 null）。只读，不修改任何文件。",
+            "parameters": {"type": "object", "properties": {}}
+        }),
+        serde_json::json!({
+            "type": "function",
+            "name": "cron_task_remove",
+            "description": "删除一条定时任务：删除后不再触发。id 不存在时返回错误。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "任务身份"}
+                },
+                "required": ["id"]
+            }
+        }),
+    ]
+}
+
 /// 第 9 件工具 `task` 的定义（change add-harness-subagents design §5.1）：工具集与三闸值不在
 /// 调用参数里（它们是定义字段）；`model` / `background` 是仅有的两个调用级覆盖项。
 ///
@@ -310,7 +378,12 @@ pub fn cli_argv(args: &serde_json::Value) -> Vec<String> {
 }
 
 /// 权限判定的主体串：cli = 拼接 argv；vault_* = 路径参数；skill_load = 技能名；
-/// vault_search = path_glob（无则 query）。
+/// vault_search = path_glob（无则 query）；调度工具 = `id + at + days`。
+///
+/// 调度工具**不含 `prompt`**（change add-cron-conversational-registration design §6.2）：主体串会
+/// 进缓存键、批准事件与诊断（日志字段有 256 字符上限），prompt 可能含用户的私密内容。`id + at +
+/// days` 是用户对「同一条任务」最容易复述的判据；改 prompt 而时间不变时缓存放行是刻意的。
+/// `cron_task_list` 走 `_` 分支（空串，读类工具的既有形态）。
 pub fn permission_subject(name: &str, args: &serde_json::Value) -> String {
     match name {
         "cli_run" => cli_argv(args)
@@ -329,12 +402,31 @@ pub fn permission_subject(name: &str, args: &serde_json::Value) -> String {
             .or_else(|| args.get("query").and_then(|v| v.as_str()))
             .unwrap_or("")
             .to_string(),
+        "cron_task_create" | "cron_task_remove" => {
+            let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let at = args.get("at").and_then(|v| v.as_str()).unwrap_or("");
+            let days = args
+                .get("days")
+                .and_then(|v| v.as_array())
+                .map(|items| join_days(items))
+                .unwrap_or_default();
+            format!("{id} {at} {days}")
+        }
         _ => args
             .get("path")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
     }
+}
+
+/// `days` 数组 → 规范化串（非字符串元素丢弃；规范化交给 `permission_cache::normalize_subject`）。
+fn join_days(items: &[serde_json::Value]) -> String {
+    items
+        .iter()
+        .filter_map(|item| item.as_str())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// 注册表入口：工具名 + JSON 参数 → JSON 结果。
@@ -359,6 +451,11 @@ pub fn execute_with_revision(
         "vault_delete" => vault_delete(args, ctx),
         "skill_load" => skill_load(args, ctx),
         "cli_run" => cli_run(args),
+        // 调度工具（change add-cron-conversational-registration）：执行侧只做参数 → 草稿的
+        // 映射与回执整形，校验 / 落盘 / 重载都在端口实现里（`cron.rs` + `lib.rs`）。
+        "cron_task_create" => cron_task_create(args, ctx),
+        "cron_task_list" => cron_task_list(ctx),
+        "cron_task_remove" => cron_task_remove(args, ctx),
         _ => ToolOutput::err("tool_unknown", format!("未知工具：{name}")),
     }
 }
@@ -404,6 +501,7 @@ pub fn approval_preview(
                 argv: None,
                 revision: Some(revision),
                 purpose: None,
+                cron_task: None,
             })
         }
         "vault_create" => {
@@ -413,6 +511,7 @@ pub fn approval_preview(
                 argv: None,
                 revision: None,
                 purpose: None,
+                cron_task: None,
             })
         }
         // vault_move：源 → 目标路径对（design §5.1 的批准预览）。
@@ -423,6 +522,7 @@ pub fn approval_preview(
                 argv: Some(vec![input.path, input.new_path]),
                 revision: None,
                 purpose: None,
+                cron_task: None,
             })
         }
         // vault_delete：路径（面板侧附「将移入系统废纸篓，可恢复」的说明文案）。
@@ -433,6 +533,7 @@ pub fn approval_preview(
                 argv: Some(vec![input.path]),
                 revision: None,
                 purpose: None,
+                cron_task: None,
             })
         }
         "cli_run" => {
@@ -445,9 +546,157 @@ pub fn approval_preview(
                 argv: Some(argv),
                 revision: None,
                 purpose: (!purpose.is_empty()).then(|| purpose.to_string()),
+                cron_task: None,
+            })
+        }
+        // 定时任务注册（design §6.3）：五要素 + prompt 全文 + 「今天还触不触发」。
+        // 预览不校验（校验在执行侧，失败走结构化错误回送模型），只按草稿给出待批准快照。
+        "cron_task_create" => Ok(ApprovalPreview {
+            diff: None,
+            argv: None,
+            revision: None,
+            purpose: None,
+            cron_task: Some(cron::create_preview(
+                &cron::CronTaskDraft::from_args(args, &ctx.root.display().to_string()),
+                &cron::LocalNow::now(),
+            )),
+        }),
+        // 删除：id + at（卡片要让人看见删的是哪一条）。
+        "cron_task_remove" => {
+            let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let at = crate::config::config_dir()
+                .ok()
+                .map(|dir| dir.join("config.json"))
+                .and_then(|path| cron::find_task_at(&path, id));
+            Ok(ApprovalPreview {
+                diff: None,
+                argv: None,
+                revision: None,
+                purpose: None,
+                cron_task: Some(serde_json::json!({
+                    "op": "remove",
+                    "id": id,
+                    "at": at,
+                })),
             })
         }
         _ => Ok(ApprovalPreview::empty()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 调度工具（change add-cron-conversational-registration）
+// ---------------------------------------------------------------------------
+
+/// 三件调度工具的端口取用：`None` = 本次运行没有调度工具（无人值守运行 / 子运行）。
+///
+/// 与工具定义的注册面同源：定义只在交互发送路径出现（`SessionContext::tool_definitions`），
+/// 端口也只在交互路径注入（`SessionContext::cron_port`）。两句「未知工具」因此对这类运行是
+/// 事实陈述——它确实不在本次运行的注册表里。
+fn cron_port<'a>(ctx: &ToolContext<'a>) -> Result<&'a dyn cron::CronPort, ToolOutput> {
+    ctx.cron.ok_or_else(|| {
+        ToolOutput::err(
+            "tool_unknown",
+            "调度工具只在交互会话里可用（定时运行与子代理都不能排任务）",
+        )
+    })
+}
+
+/// 失败回执 + 诊断事件的**唯一产出点**（design §10）：`cron_task_rejected` 只在这里落，
+/// 字段只有任务身份、字段名与错误码（MUST NOT 记 prompt）。
+fn cron_rejected(error: cron::CronToolError) -> ToolOutput {
+    logging::cron_task_rejected(
+        error.task.as_deref().unwrap_or(""),
+        error.field.as_deref().unwrap_or(""),
+        &error.code,
+    );
+    ToolOutput::err(&error.code, error.message)
+}
+
+fn cron_task_create(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+    let port = match cron_port(ctx) {
+        Ok(port) => port,
+        Err(output) => return output,
+    };
+    let draft = cron::CronTaskDraft::from_args(args, &ctx.root.display().to_string());
+    match port.create(draft) {
+        Ok(outcome) => {
+            // 只有线程确认过（`effect = active`）才落「注册成功」——`pending_restart` 不落，
+            // 避免一条「任务已生效」的假记录（design §10 / §11）。
+            if outcome.effect.is_active() {
+                logging::cron_task_registered(
+                    &outcome.task.id,
+                    &outcome.task.at,
+                    &cron::days_label(&outcome.task.days),
+                    outcome.task.delivery.as_str(),
+                    outcome.task.session.as_str(),
+                    outcome.skip_today,
+                );
+            }
+            ToolOutput::ok(serde_json::json!({
+                "task": {
+                    "id": outcome.task.id,
+                    "vault": outcome.task.vault,
+                    "at": outcome.task.at,
+                    "days": cron::days_json(&outcome.task.days),
+                    "delivery": outcome.task.delivery.as_str(),
+                    "session": outcome.task.session.as_str(),
+                },
+                "effect": outcome.effect.as_str(),
+                "skip_today": outcome.skip_today,
+            }))
+        }
+        Err(error) => cron_rejected(error),
+    }
+}
+
+fn cron_task_list(ctx: &ToolContext) -> ToolOutput {
+    let port = match cron_port(ctx) {
+        Ok(port) => port,
+        Err(output) => return output,
+    };
+    match port.list() {
+        Ok(tasks) => {
+            let tasks: Vec<serde_json::Value> = tasks
+                .into_iter()
+                .map(|task| {
+                    serde_json::json!({
+                        "id": task.id,
+                        "vault": task.vault,
+                        "at": task.at,
+                        "days": cron::days_json(&task.days),
+                        "delivery": task.delivery.as_str(),
+                        "session": task.session.as_str(),
+                        "last_fired": task.last_fired,
+                    })
+                })
+                .collect();
+            ToolOutput::ok(serde_json::json!({ "tasks": tasks }))
+        }
+        Err(error) => cron_rejected(error),
+    }
+}
+
+fn cron_task_remove(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+    let port = match cron_port(ctx) {
+        Ok(port) => port,
+        Err(output) => return output,
+    };
+    let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
+    if id.is_empty() {
+        return cron_rejected(cron::CronToolError::missing_id());
+    }
+    match port.remove(id) {
+        Ok(outcome) => {
+            if outcome.effect.is_active() {
+                logging::cron_task_removed(&outcome.id, outcome.effect.as_str());
+            }
+            ToolOutput::ok(serde_json::json!({
+                "id": outcome.id,
+                "effect": outcome.effect.as_str(),
+            }))
+        }
+        Err(error) => cron_rejected(error),
     }
 }
 
@@ -1066,6 +1315,7 @@ mod tests {
             root,
             policy,
             skills,
+            cron: None,
         }
     }
 
@@ -1399,6 +1649,363 @@ mod tests {
         let args = serde_json::json!({"command": "echo", "args": ["hi"], "purpose": "打招呼"});
         assert_eq!(cli_argv(&args), vec!["echo".to_string(), "hi".to_string()]);
         assert_eq!(permission_subject("cli_run", &args), "echo hi");
+    }
+
+    // -----------------------------------------------------------------------
+    // 调度工具（change add-cron-conversational-registration）
+    // -----------------------------------------------------------------------
+
+    struct CreatePort {
+        outcome: cron::CronCreateOutcome,
+        seen: std::sync::Mutex<Option<cron::CronTaskDraft>>,
+    }
+
+    impl CreatePort {
+        fn new(outcome: cron::CronCreateOutcome) -> Self {
+            Self {
+                outcome,
+                seen: std::sync::Mutex::new(None),
+            }
+        }
+    }
+
+    impl cron::CronPort for CreatePort {
+        fn create(
+            &self,
+            draft: cron::CronTaskDraft,
+        ) -> Result<cron::CronCreateOutcome, cron::CronToolError> {
+            *self.seen.lock().unwrap() = Some(draft);
+            Ok(self.outcome.clone())
+        }
+        fn list(&self) -> Result<Vec<cron::CronTaskSummary>, cron::CronToolError> {
+            unreachable!("本用例不走 list")
+        }
+        fn remove(&self, _id: &str) -> Result<cron::CronRemoveOutcome, cron::CronToolError> {
+            unreachable!("本用例不走 remove")
+        }
+    }
+
+    struct ListPort(Vec<cron::CronTaskSummary>);
+
+    impl cron::CronPort for ListPort {
+        fn create(
+            &self,
+            _draft: cron::CronTaskDraft,
+        ) -> Result<cron::CronCreateOutcome, cron::CronToolError> {
+            unreachable!("本用例不走 create")
+        }
+        fn list(&self) -> Result<Vec<cron::CronTaskSummary>, cron::CronToolError> {
+            Ok(self.0.clone())
+        }
+        fn remove(&self, _id: &str) -> Result<cron::CronRemoveOutcome, cron::CronToolError> {
+            unreachable!("本用例不走 remove")
+        }
+    }
+
+    struct FailPort(cron::CronToolError);
+
+    impl cron::CronPort for FailPort {
+        fn create(
+            &self,
+            _draft: cron::CronTaskDraft,
+        ) -> Result<cron::CronCreateOutcome, cron::CronToolError> {
+            Err(self.0.clone())
+        }
+        fn list(&self) -> Result<Vec<cron::CronTaskSummary>, cron::CronToolError> {
+            Err(self.0.clone())
+        }
+        fn remove(&self, _id: &str) -> Result<cron::CronRemoveOutcome, cron::CronToolError> {
+            Err(self.0.clone())
+        }
+    }
+
+    fn cron_task(id: &str) -> crate::config::CronTask {
+        crate::config::CronTask {
+            id: id.to_string(),
+            vault: "/tmp/vault-a".to_string(),
+            at: "21:00".to_string(),
+            days: crate::config::CronWeekday::ALL.to_vec(),
+            prompt: "写今日 log".to_string(),
+            delivery: crate::config::DeliveryPolicy::NotifyThenRun,
+            session: crate::config::SessionShape::New,
+            model: None,
+        }
+    }
+
+    fn cron_ctx<'a>(
+        root: &'a Path,
+        policy: &'a IgnorePolicy,
+        skills: &'a [SkillEntry],
+        port: &'a dyn cron::CronPort,
+    ) -> ToolContext<'a> {
+        ToolContext {
+            root,
+            policy,
+            skills,
+            cron: Some(port),
+        }
+    }
+
+    /// 三件调度工具的名字表与定义同源；`definitions()` 的 8 件清单不掺它们
+    /// （cron 交接 / 子运行的白名单都以 `TOOL_NAMES` 为界）。
+    #[test]
+    fn cron_tool_definitions_match_the_name_table() {
+        let defined: Vec<String> = cron_definitions()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            defined,
+            CRON_TOOL_NAMES.map(str::to_string).to_vec(),
+            "定义面与名字表必须同源"
+        );
+        for name in CRON_TOOL_NAMES {
+            assert!(
+                !TOOL_NAMES.contains(&name),
+                "{name} 不属于 vault 工具名表（否则无人值守运行会拿到它）"
+            );
+            assert!(
+                !definitions().iter().any(|tool| tool["name"] == name),
+                "{name} 不在 8 件 vault 定义里"
+            );
+        }
+        // `create` 的三个必填参数与 design §2.3 一致。
+        let create = cron_definitions()
+            .into_iter()
+            .find(|tool| tool["name"] == "cron_task_create")
+            .unwrap();
+        assert_eq!(
+            create["parameters"]["required"],
+            serde_json::json!(["id", "at", "prompt"])
+        );
+    }
+
+    /// 没有端口（无人值守运行 / 子运行）时，三件调度工具就是清单外的工具名：不可执行。
+    #[test]
+    fn cron_tools_are_unknown_without_a_port() {
+        let (root, policy) = fixture_vault("cron-no-port");
+        let skills: Vec<SkillEntry> = Vec::new();
+        let empty_ctx = ctx(&root, &policy, &skills);
+        let out = execute(
+            "cron_task_create",
+            &serde_json::json!({"id": "a", "at": "21:00", "prompt": "p"}),
+            &empty_ctx,
+        );
+        assert!(!out.succeeded());
+        assert_eq!(out.value["code"], "tool_unknown");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `create` 回执：参数 → 草稿的映射（`vault` 缺省填当前 vault 根）、`effect` / `skip_today`
+    /// 原样投影。区分度：把 `skip_today` 写死 false、或漏掉 vault 缺省，本用例必 FAIL。
+    #[test]
+    fn cron_task_create_receipt_maps_draft_and_effect() {
+        let (root, policy) = fixture_vault("cron-create");
+        let skills: Vec<SkillEntry> = Vec::new();
+        let port = CreatePort::new(cron::CronCreateOutcome {
+            task: cron_task("daily-log"),
+            effect: cron::CronEffect::Active,
+            skip_today: true,
+        });
+        let out = execute(
+            "cron_task_create",
+            &serde_json::json!({"id": "daily-log", "at": "21:00", "prompt": "写今日 log"}),
+            &cron_ctx(&root, &policy, &skills, &port),
+        );
+        assert!(out.succeeded(), "{:?}", out.value);
+        assert_eq!(out.value["effect"], "active");
+        assert_eq!(out.value["skip_today"], serde_json::json!(true));
+        assert_eq!(out.value["task"]["id"], "daily-log");
+        assert_eq!(out.value["task"]["days"][0], "mon");
+        assert_eq!(out.value["task"]["delivery"], "notify-then-run");
+
+        let seen = port.seen.lock().unwrap().clone().expect("端口应收到草稿");
+        assert_eq!(
+            seen.vault,
+            Some(serde_json::Value::String(root.display().to_string())),
+            "vault 缺省必须落成当前 vault 根"
+        );
+        assert!(seen.days.is_none(), "没给的键不进草稿");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `list` 回执：`last_fired` 缺席时是 null；给出时原样带出。
+    #[test]
+    fn cron_task_list_receipt_reports_last_fired() {
+        let (root, policy) = fixture_vault("cron-list");
+        let skills: Vec<SkillEntry> = Vec::new();
+        let mut summary = cron::CronTaskSummary {
+            id: "a".to_string(),
+            vault: "/tmp/v".to_string(),
+            at: "21:00".to_string(),
+            days: crate::config::CronWeekday::ALL.to_vec(),
+            delivery: crate::config::DeliveryPolicy::NotifyThenRun,
+            session: crate::config::SessionShape::New,
+            last_fired: None,
+        };
+        let port = ListPort(vec![summary.clone()]);
+        let out = execute(
+            "cron_task_list",
+            &serde_json::json!({}),
+            &cron_ctx(&root, &policy, &skills, &port),
+        );
+        assert!(out.succeeded(), "{:?}", out.value);
+        assert!(out.value["tasks"][0]["last_fired"].is_null());
+
+        summary.last_fired = Some("2026-10-19".to_string());
+        let port = ListPort(vec![summary]);
+        let out = execute(
+            "cron_task_list",
+            &serde_json::json!({}),
+            &cron_ctx(&root, &policy, &skills, &port),
+        );
+        assert_eq!(out.value["tasks"][0]["last_fired"], "2026-10-19");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 失败回执：错误码与 message 原样回送（模型据此重试）；缺 `id` 的 remove 被入口拦下。
+    #[test]
+    fn cron_tool_failures_use_the_structured_envelope() {
+        let (root, policy) = fixture_vault("cron-fail");
+        let skills: Vec<SkillEntry> = Vec::new();
+        let port = FailPort(cron::CronToolError {
+            code: "cron_task_not_found".to_string(),
+            message: "任务 id \"x\" 不存在".to_string(),
+            field: Some("id".to_string()),
+            reason: Some("不存在该任务".to_string()),
+            task: Some("x".to_string()),
+        });
+        let out = execute(
+            "cron_task_remove",
+            &serde_json::json!({"id": "x"}),
+            &cron_ctx(&root, &policy, &skills, &port),
+        );
+        assert!(!out.succeeded());
+        assert_eq!(out.value["code"], "cron_task_not_found");
+        assert!(out.value["message"].as_str().unwrap().contains("不存在"));
+
+        let out = execute(
+            "cron_task_remove",
+            &serde_json::json!({"id": "  "}),
+            &cron_ctx(&root, &policy, &skills, &port),
+        );
+        assert_eq!(out.value["code"], "cron_task_invalid");
+        assert_eq!(out.value["message"], "id：缺失或不是字符串");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 主体串（design §6.2）：`id + at + days`，**不含 prompt**；改 prompt 不改缓存键。
+    #[test]
+    fn cron_permission_subject_is_id_at_days_without_prompt() {
+        let first = serde_json::json!({
+            "id": "daily-log", "at": "21:00", "prompt": "写今日 log",
+            "days": ["mon", "wed"]
+        });
+        let renamed_prompt = serde_json::json!({
+            "id": "daily-log", "at": "21:00", "prompt": "换一段完全不同的载荷",
+            "days": ["mon", "wed"]
+        });
+        let later = serde_json::json!({
+            "id": "daily-log", "at": "22:00", "prompt": "写今日 log",
+            "days": ["mon", "wed"]
+        });
+        assert_eq!(
+            permission_subject("cron_task_create", &first),
+            "daily-log 21:00 mon,wed"
+        );
+        assert_eq!(
+            permission_subject("cron_task_create", &first),
+            permission_subject("cron_task_create", &renamed_prompt),
+            "改 prompt 不改变「它是哪条任务」"
+        );
+        assert_ne!(
+            permission_subject("cron_task_create", &first),
+            permission_subject("cron_task_create", &later),
+            "改时间必须换缓存键"
+        );
+        assert_eq!(
+            crate::harness::permission_cache::normalize_subject(&permission_subject(
+                "cron_task_remove",
+                &serde_json::json!({"id": "daily-log"})
+            )),
+            "daily-log",
+            "remove 只有 id；空白由 permission_cache::normalize_subject 归一（缓存键口径）"
+        );
+        assert_eq!(
+            permission_subject("cron_task_list", &serde_json::json!({})),
+            ""
+        );
+    }
+
+    /// 批准预览：`cron_task` 载荷带五要素 + prompt 全文 + `skip_today`；其余预览字段为空。
+    #[test]
+    fn cron_create_approval_preview_carries_the_five_elements() {
+        let (root, policy) = fixture_vault("cron-preview");
+        let skills: Vec<SkillEntry> = Vec::new();
+        let args = serde_json::json!({
+            "id": "daily-log", "at": "21:00", "prompt": "写今日 log",
+            "days": ["mon"], "delivery": "run-then-notify", "session": "dedicated"
+        });
+        let preview = approval_preview("cron_task_create", &args, &ctx(&root, &policy, &skills))
+            .expect("预览不校验参数");
+        assert!(preview.diff.is_none());
+        assert!(preview.argv.is_none());
+        let cron_task = preview.cron_task.expect("create 预览必须带 cron_task");
+        assert_eq!(cron_task["op"], "create");
+        assert_eq!(cron_task["id"], "daily-log");
+        assert_eq!(cron_task["at"], "21:00");
+        assert_eq!(cron_task["days"], serde_json::json!(["mon"]));
+        assert_eq!(cron_task["delivery"], "run-then-notify");
+        assert_eq!(cron_task["session"], "dedicated");
+        assert_eq!(cron_task["vault"], root.display().to_string());
+        assert_eq!(cron_task["prompt"], "写今日 log");
+        assert!(cron_task["skip_today"].is_boolean());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 删除预览：id + at（at 从配置文件只读查出；文件不存在时为 null）。
+    #[test]
+    fn cron_remove_approval_preview_looks_up_the_existing_at() {
+        let (root, policy) = fixture_vault("cron-preview-remove");
+        let skills: Vec<SkillEntry> = Vec::new();
+        let _xdg = crate::harness::xdg_test_lock();
+        struct XdgGuard(Option<std::ffi::OsString>);
+        impl Drop for XdgGuard {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                    None => std::env::remove_var("XDG_CONFIG_HOME"),
+                }
+            }
+        }
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+        std::fs::create_dir_all(root.join("xdg/lumir")).unwrap();
+        std::fs::write(
+            root.join("xdg/lumir/config.json"),
+            r#"{"cron":{"tasks":[{"id":"daily-log","vault":"/tmp/v","at":"21:00","prompt":"p"}]}}"#,
+        )
+        .unwrap();
+
+        let preview = approval_preview(
+            "cron_task_remove",
+            &serde_json::json!({"id": "daily-log"}),
+            &ctx(&root, &policy, &skills),
+        )
+        .unwrap();
+        let cron_task = preview.cron_task.expect("remove 预览必须带 cron_task");
+        assert_eq!(cron_task["op"], "remove");
+        assert_eq!(cron_task["id"], "daily-log");
+        assert_eq!(cron_task["at"], "21:00");
+
+        let preview = approval_preview(
+            "cron_task_remove",
+            &serde_json::json!({"id": "missing"}),
+            &ctx(&root, &policy, &skills),
+        )
+        .unwrap();
+        assert!(preview.cron_task.unwrap()["at"].is_null());
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

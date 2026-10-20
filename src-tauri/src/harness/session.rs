@@ -443,6 +443,10 @@ pub struct PendingApprovalSnapshot {
     /// 无则缺省（旧载荷 / 自动放行的层）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<DecisionReason>,
+    /// 定时任务预览（change add-cron-conversational-registration design §6.3）：与
+    /// `approval_request.cron_task` 同源同形（都取自 `ApprovalRequest.cron_task`）。无则缺省。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cron_task: Option<serde_json::Value>,
     /// 该卡支持「采纳且本会话不再问」次级动作（design §6；批准闸请求恒 true）——
     /// 面板按钮可见性的数据源。
     pub remember: bool,
@@ -460,6 +464,7 @@ impl PendingApprovalSnapshot {
             argv: r.argv.clone(),
             purpose: r.purpose.clone(),
             reason: r.reason.clone(),
+            cron_task: r.cron_task.clone(),
             remember: r.remember,
             source: r.source.clone(),
         }

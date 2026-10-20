@@ -16,86 +16,86 @@
 
 ## 1. 校验复用（`src-tauri/src/config.rs`）
 
-- [ ] 1.1 从 `validate_cron` 的循环体抽出 `validate_cron_task(item, position_label, existing_ids)`，
+- [x] 1.1 从 `validate_cron` 的循环体抽出 `validate_cron_task(item, position_label, existing_ids)`，
   作为「一条合法任务」的唯一定义；`validate_cron` 改为逐项调用它，**行为逐字节不变**（既有单测
   全绿即证据）。
-- [ ] 1.2 单测：同一组非法形态（`at="25:00"`、空 `id`、非绝对 `vault`、空 `prompt`、`days=[]`、
+- [x] 1.2 单测：同一组非法形态（`at="25:00"`、空 `id`、非绝对 `vault`、空 `prompt`、`days=[]`、
   `at` 为数字）分别经装载期与工具侧入口各跑一次，断言 `field` 与原因文案**逐字相等**。
-- [ ] 1.3 新增「读—改—写同锁」入口 `config::update_json_atomic(path, f)`：`CONFIG_WRITE_LOCK` 覆盖
+- [x] 1.3 新增「读—改—写同锁」入口 `config::update_json_atomic(path, f)`：`CONFIG_WRITE_LOCK` 覆盖
   读、改、rename 三段；复用 `write_file_atomic` 与 `bump_config_version`。
-- [ ] 1.4 并发单测（照 M592 / M600 的既有形态）：两线程同时写不同键（一条 `ui.theme`、一条
+- [x] 1.4 并发单测（照 M592 / M600 的既有形态）：两线程同时写不同键（一条 `ui.theme`、一条
   `cron.tasks`），断言两键都在、无 tmp 残留、未知顶层键保留。
-- [ ] 1.5 `AppConfig.cron` 的注释改准（`config.rs:164-165`）：删掉「运行期不热重载」，改为「启动
+- [x] 1.5 `AppConfig.cron` 的注释改准（`config.rs:164-165`）：删掉「运行期不热重载」，改为「启动
   装载 + 运行期经注册通道重载；文件变化本身不触发重读（重载读的是文件当下内容）」。同理改
   `CronRunner.loop_max` 的注释（tasks 3.7）。
 
 ## 2. 工具面（`src-tauri/src/harness/tools.rs`）
 
-- [ ] 2.1 `CRON_TOOL_NAMES: [&str; 3]`（`cron_task_create` / `cron_task_list` / `cron_task_remove`）
+- [x] 2.1 `CRON_TOOL_NAMES: [&str; 3]`（`cron_task_create` / `cron_task_list` / `cron_task_remove`）
   与 `cron_definitions()`：JSON Schema 按 design §2.3（`create` 的 8 个参数、`list` 无参、`remove`
   一个 `id`）；description 里写明「prompt 必须自包含」「缺省 `notify-then-run`」。
-- [ ] 2.2 `ToolContext` 增加 `cron: Option<&dyn CronPort>`；`CronPort` trait（`create` / `list` /
+- [x] 2.2 `ToolContext` 增加 `cron: Option<&dyn CronPort>`；`CronPort` trait（`create` / `list` /
   `remove` 三个方法，返回结构化结果或错误码）定义在 `cron.rs` 侧、实现落在 `lib.rs` 接线层
   （`cron.rs` 保持无 tauri 依赖）。
-- [ ] 2.3 `execute` 增加三支：参数解析 → 校验（`validate_cron_task`）→ 写配置（`update_json_atomic`
+- [x] 2.3 `execute` 增加三支：参数解析 → 校验（`validate_cron_task`）→ 写配置（`update_json_atomic`
   + 只写用户给出的键，`vault` 缺省填当前 vault 根并落绝对路径）→ 投 `Reload` + `recv_timeout(1s)`
   → 回执 `{ok, task, effect, skip_today}`。
-- [ ] 2.4 错误码按 design §2.4：`cron_task_exists` / `cron_task_not_found` / `cron_task_invalid`
+- [x] 2.4 错误码按 design §2.4：`cron_task_exists` / `cron_task_not_found` / `cron_task_invalid`
   （带 `field` 与同一句原因）/ 复用 `config_write_failed`。
-- [ ] 2.5 `create` 不静默覆盖：重名直接报错并指出既有任务的 `at`；唯一性判据是**文件里的全部 id**
+- [x] 2.5 `create` 不静默覆盖：重名直接报错并指出既有任务的 `at`；唯一性判据是**文件里的全部 id**
   （含装载期被丢弃的非法项）。
-- [ ] 2.6 `list` 只读：读 `config.json`（宽读，失败按空表）+ 读 `cron-state.json`（只读，缺失 /
+- [x] 2.6 `list` 只读：读 `config.json`（宽读，失败按空表）+ 读 `cron-state.json`（只读，缺失 /
   损坏给 `last_fired: null`），不写任何文件。
-- [ ] 2.7 `permission_subject` 增加 cron 分支：`create` / `remove` 用 `id + at + days`，**不含
+- [x] 2.7 `permission_subject` 增加 cron 分支：`create` / `remove` 用 `id + at + days`，**不含
   prompt**；`list` 为空串。
-- [ ] 2.8 单测：成功 create 后 ① 新项在场 ② 模型没给的键缺席（`delivery` / `session` / `days`）
+- [x] 2.8 单测：成功 create 后 ① 新项在场 ② 模型没给的键缺席（`delivery` / `session` / `days`）
   ③ 其它表与未知顶层键逐字节保留 ④ `version` 未降 ⑤ `cron-state.json` 的 mtime 不变。
-- [ ] 2.9 单测（负向断言带区分度）：失败路径（非法 / 重名 / 落盘失败）配置逐字节不变——同组用例里
+- [x] 2.9 单测（负向断言带区分度）：失败路径（非法 / 重名 / 落盘失败）配置逐字节不变——同组用例里
   先做一次成功写，证明文件可写。
 
 ## 3. 运行时重载（`src-tauri/src/cron.rs` + `lib.rs`）
 
-- [ ] 3.1 `CronMessage::Reload { ack }` + `ReloadOutcome { applied, seeded, error }`；复用既有的
+- [x] 3.1 `CronMessage::Reload { ack }` + `ReloadOutcome { applied, seeded, error }`；复用既有的
   `CronRuntime.inner.tx` 通道（不新开通道）。
-- [ ] 3.2 线程不再因空表退出（`lib.rs:958` 的 `return` 改为空转）：空表下 tick 仍是零次循环、
+- [x] 3.2 线程不再因空表退出（`lib.rs:958` 的 `return` 改为空转）：空表下 tick 仍是零次循环、
   零文件 IO。
-- [ ] 3.3 抽出 `schedule_of(snapshot) -> Vec<ScheduledTask>`，启动装载与 reload 共用（`parse_at` +
+- [x] 3.3 抽出 `schedule_of(snapshot) -> Vec<ScheduledTask>`，启动装载与 reload 共用（`parse_at` +
   vault 路径规范化同一段代码）。
-- [ ] 3.4 reload 处理按 design §3.3 的七步：重读配置（失败保留旧任务集 + warning + `ack.error`）
+- [x] 3.4 reload 处理按 design §3.3 的七步：重读配置（失败保留旧任务集 + warning + `ack.error`）
   → 重建任务集 → 新增任务判「注册时刻是否已过点」并写当日种子 → 替换 `tasks` 与 `loop_max` →
   清理被删任务的内存记录（in-flight 保留）→ 任务集非空时补检通知权限 → ack。
-- [ ] 3.5 状态写者唯一：种子只由线程写（工具侧零写状态文件，2.8 的单测钉住）；`cron-state.json`
+- [x] 3.5 状态写者唯一：种子只由线程写（工具侧零写状态文件，2.8 的单测钉住）；`cron-state.json`
   仍走 `cron.rs` 既有原子写。
-- [ ] 3.6 纯函数单测：任务集替换（新增 / 移除 / 改 `at`）、已过点新增 → 种子、未到点新增 →
+- [x] 3.6 纯函数单测：任务集替换（新增 / 移除 / 改 `at`）、已过点新增 → 种子、未到点新增 →
   不种子、空表替换不 panic、`loop_max` 随 reload 更新、被删任务的在途运行记录保留。
-- [ ] 3.7 `CronRunner.loop_max` 的注释（`lib.rs:1015`）「配置不热重载」改为「随 reload 更新」。
-- [ ] 3.8 ack 超时（接收端已断 / 线程未起）→ 回执 `effect="pending_restart"`，**不回滚**已写入的
+- [x] 3.7 `CronRunner.loop_max` 的注释（`lib.rs:1015`）「配置不热重载」改为「随 reload 更新」。
+- [x] 3.8 ack 超时（接收端已断 / 线程未起）→ 回执 `effect="pending_restart"`，**不回滚**已写入的
   配置；`cron_task_registered` 只在 `effect=active` 时落。
 
 ## 4. 工具注册面与权限（`harness/run.rs` + `harness/permissions.rs`）
 
-- [ ] 4.1 `SessionContext::tool_definitions`：`tool_policy.is_none()` 时追加
+- [x] 4.1 `SessionContext::tool_definitions`：`tool_policy.is_none()` 时追加
   `tools::cron_definitions()`（交互路径唯一注册点）。
-- [ ] 4.2 单测（区分度：两条断言必须能分别红）：交互路径定义 = 8 + 1 + 3；cron 交接
+- [x] 4.2 单测（区分度：两条断言必须能分别红）：交互路径定义 = 8 + 1 + 3；cron 交接
   （`allow = TOOL_NAMES`）= 8 且三件不在内；子运行定义写 `tools: ["cron_task_create"]` 被定义校验
   拒绝。
-- [ ] 4.3 `mode_layer` 增加三支：`cron_task_list` 进 `READ_TOOLS`（三档 Allow）；
+- [x] 4.3 `mode_layer` 增加三支：`cron_task_list` 进 `READ_TOOLS`（三档 Allow）；
   `cron_task_create` / `cron_task_remove` 在 `read_only` / `vault_write` 档 Ask、`full_access` 档
   Allow。
-- [ ] 4.4 权限矩阵单测 3 × 3 逐格断言（含 `read_only` 档 `list` 仍 Allow）。
-- [ ] 4.5 `ApprovalPreview` 增加 `cron_task: Option<serde_json::Value>`；`turn.rs` 的
+- [x] 4.4 权限矩阵单测 3 × 3 逐格断言（含 `read_only` 档 `list` 仍 Allow）。
+- [x] 4.5 `ApprovalPreview` 增加 `cron_task: Option<serde_json::Value>`；`turn.rs` 的
   `approval_request` 载荷带上该键（`op` / 五要素 / `prompt` 全文 / `skip_today`）；`remember`
   语义不变。
-- [ ] 4.6 契约单测：批准卡载荷五要素在场、prompt 与请求逐字一致、`skip_today` 与线程计算一致；
+- [x] 4.6 契约单测：批准卡载荷五要素在场、prompt 与请求逐字一致、`skip_today` 与线程计算一致；
   拒绝路径配置字节不变且无 reload。
 
 ## 5. 系统提示词（`harness/context.rs` + `prompts/cron-reference.md`）
 
-- [ ] 5.1 新增 `src-tauri/src/harness/prompts/cron-reference.md`，正文照抄 design §7.2。
-- [ ] 5.2 `context.rs` 增加 `CRON_REFERENCE` / `CRON_REFERENCE_PATH` 常量，`assemble_system` 在
+- [x] 5.1 新增 `src-tauri/src/harness/prompts/cron-reference.md`，正文照抄 design §7.2。
+- [x] 5.2 `context.rs` 增加 `CRON_REFERENCE` / `CRON_REFERENCE_PATH` 常量，`assemble_system` 在
   path_reference 之后、AGENTS 三层之前注入，装配清单记 `cron_reference` 条目（仓内相对路径、
   `exists=true`、trim 后字节数）；`assemble_system_for_subagent` **不**注入。
-- [ ] 5.3 单测：`assemble_system` 文本包含该段且剔除尾空白后逐字节等于文件；清单条目字段齐；
+- [x] 5.3 单测：`assemble_system` 文本包含该段且剔除尾空白后逐字节等于文件；清单条目字段齐；
   子运行装配不含该段；`prompts/` 目录内增删其它文件不改变注入顺序。
 - [ ] 5.4 回扫：`rg -n "不热重载" src-tauri/src docs/specs` 只剩改准后的表述（运行期只经注册通道
   重载、文件变化不单独触发重读），没有「任务集恒为启动快照」或「手改一定等下次启动」一类旧话
@@ -111,7 +111,7 @@
   （「该本地日期不再派发」）。
 - [ ] 6.3 `docs/adr/0007-ai-positioning-probe.md` Decision 7 修订为「8 件 vault 操作 + 1 件编排 +
   3 件调度」，Revisit 条件追加本次消费记录（日期 + 本 change）。
-- [ ] 6.4 **回扫既有验收场景的闸 / 工具清单期望**（`docs/process/openspec-workflow.md` 的强制项）：
+- [x] 6.4 **回扫既有验收场景的闸 / 工具清单期望**（`docs/process/openspec-workflow.md` 的强制项）：
   全仓 `rg` 既有场景里「工具清单恰好 8 件」「写类工具默认 ask」「交互路径工具数」一类期望，逐条
   确认是否需要随本 change 改准。已知候选（开工时逐个读，不凭 grep 命中就下结论）：
   `scripts/acceptance/scenarios/75-harness-permissions.md`、`103-harness-tool-order.md`、
@@ -120,7 +120,7 @@
   多数期望仍然成立——**预期不改也必须给出核对结论**（「读过 + 为何不变」），不能默认放过。
 - [ ] 6.5 信息卫生：本 change 全部制品与验收场景里不出现真实 vault 路径、真实 LaunchAgent label、
   真实脚本路径（一律占位）；提交前对改动面做一次 text 级 grep 清扫。
-- [ ] 6.6 `src/bindings/**` 若有 ts-rs 导出变化，`git add` 重导出产物后跑 `scripts/gate.sh quick`
+- [x] 6.6 `src/bindings/**` 若有 ts-rs 导出变化，`git add` 重导出产物后跑 `scripts/gate.sh quick`
   （`bindings-drift` 的既有纪律）。
 - [ ] 6.7 把既有两写者未迁移的读—改—写窗口记进 `docs/backlog.md`（design §4.1 的承诺）：
   `commands::write_config_value_to` / `write_last_vault_to` 的读发生在取 `CONFIG_WRITE_LOCK` 之前，

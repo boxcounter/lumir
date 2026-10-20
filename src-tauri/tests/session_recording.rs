@@ -413,14 +413,21 @@ fn wire_shape_records_full_session() {
             .contains("Lumir 的内置助手"),
         "{open:?}"
     );
-    // 装配清单：七个来源全在场（path_reference 由 change harness-path-link 追加在摘录段之后），
+    // 装配清单：八个来源全在场（path_reference 由 change harness-path-link 追加在摘录段之后，
+    // cron_reference 由 change add-cron-conversational-registration 追加在路径纪律之后），
     // vault 根 AGENTS.md / AGENTS.local.md 不存在如实记 exists:false。
     let assembly = open["assembly"].as_array().unwrap();
-    assert_eq!(assembly.len(), 7, "{assembly:?}");
+    assert_eq!(assembly.len(), 8, "{assembly:?}");
     assert!(
         assembly
             .iter()
             .any(|s| s["source"] == "path_reference" && s["exists"] == true),
+        "{assembly:?}"
+    );
+    assert!(
+        assembly
+            .iter()
+            .any(|s| s["source"] == "cron_reference" && s["exists"] == true),
         "{assembly:?}"
     );
     let vault_root = assembly

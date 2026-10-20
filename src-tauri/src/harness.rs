@@ -1460,7 +1460,8 @@ pub fn harness_cron_run(
         )
     })?;
     let mut base = config::load()?.config.harness;
-    // 契约的轮次预算是本次运行的唯一预算来源（cron 装载期快照；配置对 cron 不热重载）。
+    // 契约的轮次预算是本次运行的唯一预算来源（cron 启动装载 / 运行期经注册通道重载；
+    // 配置文件变化本身不触发重读，改动最迟在下一次启动或下一次注册重载时生效）。
     base.loop_max = spec.budget.max_rounds;
     let (config, warning) = with_model_override(&base, model.as_deref());
     if let Some(warning) = warning {

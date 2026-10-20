@@ -952,12 +952,20 @@ mod tests {
             "nested.md",
             "---\nname: nested\ndescription: 描述\ntools: [task]\n---\n",
         );
+        // 三件调度工具不在 `TOOL_NAMES` 里，子运行定义因此拿不到它们
+        // （change add-cron-conversational-registration tasks 4.2 的第三条）。
+        fixture.write_vault(
+            "scheduler.md",
+            "---\nname: scheduler\ndescription: 描述\ntools: [cron_task_create]\n---\n",
+        );
         let catalog = fixture.load();
         assert!(catalog.get("unknown").is_none());
         assert!(catalog.get("nested").is_none());
+        assert!(catalog.get("scheduler").is_none());
         let joined = catalog.warnings().join("\n");
         assert!(joined.contains("web_search"), "{joined}");
         assert!(joined.contains("不能包含 task"), "{joined}");
+        assert!(joined.contains("cron_task_create"), "{joined}");
     }
 
     #[test]

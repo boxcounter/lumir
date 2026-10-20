@@ -124,6 +124,15 @@ pub enum LogEventName {
     /// 装载期丢弃了任务项：`task` = 任务 id（id 不可读时为空）、`field` = 第一处问题所在
     /// 字段、`reason` = 人话原因。每个被丢弃的任务项一条。
     CronTaskInvalid,
+    /// 调度工具注册成功且运行时已确认（`effect = active`，change
+    /// add-cron-conversational-registration design §10）：字段只有任务身份与调度要素——
+    /// **不含 prompt**（prompt 全文只在批准卡与会话留存里，日志会长期留档、字段有 256 字符上限）。
+    /// `pending_restart` 不落这条（避免「注册成功」的假记录）。
+    CronTaskRegistered,
+    /// 调度工具删除成功且运行时已确认：`task` + `effect`。
+    CronTaskRemoved,
+    /// 调度工具拒绝（校验失败 / 重名 / 不存在 / 落盘失败）：`task`（可空）、`field`、`code`。
+    CronTaskRejected,
     /// 子代理清单容量告警（change add-harness-subagents design §4.4 / tasks §2.6）：所有生效
     /// 定义的描述合计估算超过 15,000 token 时产一条。**只告警、不截断**——清单本体照常完整
     /// 注入（截断会让定义静默消失）。字段只有估算值与定义数。
@@ -184,6 +193,9 @@ impl LogEventName {
             Self::CronRunFinished => "cron_run_finished",
             Self::CronRunSkipped => "cron_run_skipped",
             Self::CronTaskInvalid => "cron_task_invalid",
+            Self::CronTaskRegistered => "cron_task_registered",
+            Self::CronTaskRemoved => "cron_task_removed",
+            Self::CronTaskRejected => "cron_task_rejected",
             Self::SubagentCatalogLarge => "subagent_catalog_large",
             Self::SubagentStarted => "subagent_started",
             Self::SubagentProgress => "subagent_progress",
@@ -205,6 +217,7 @@ impl LogEventName {
             | Self::SlowCallback
             | Self::CronRunSkipped
             | Self::CronTaskInvalid
+            | Self::CronTaskRejected
             | Self::SubagentCatalogLarge
             | Self::SubagentRejected => "warn",
             Self::RenderError => "error",
@@ -251,6 +264,13 @@ impl LogEventName {
             Self::CronRunSkipped => &["task", "reason"],
             // `task` 可能为空（id 本身不可读），`field` / `reason` 是字段名与分类后的原因。
             Self::CronTaskInvalid => &["task", "field", "reason"],
+            // 注册 / 删除 / 拒绝（change add-cron-conversational-registration design §10）：
+            // 只有任务身份与调度要素，**prompt 不在白名单内**——它的私密内容不该有第二条落点。
+            Self::CronTaskRegistered => {
+                &["task", "at", "days", "delivery", "session", "skip_today"]
+            }
+            Self::CronTaskRemoved => &["task", "effect"],
+            Self::CronTaskRejected => &["task", "field", "code"],
             // 只有估算值与定义数（都是数字，不含定义名 / 描述正文——清单正文属用户内容）。
             Self::SubagentCatalogLarge => &["estimated_tokens", "definition_count"],
             // 子运行七事件（design §13）：字段与面板事件同名同源，`tools` 落成逗号分隔串。
@@ -941,6 +961,71 @@ fn cron_task_invalid_to(sink: &Sink, task: &str, field: &str, reason: &str) {
     );
 }
 
+/// Rust 侧埋点：调度工具注册成功**且运行时已确认**（`effect = active`；change
+/// add-cron-conversational-registration design §10）。`days` 是规范化串（`mon,tue,…`）。
+/// **不含 prompt**：它的私密内容只出现在批准卡与会话留存里。
+pub fn cron_task_registered(
+    task: &str,
+    at: &str,
+    days: &str,
+    delivery: &str,
+    session: &str,
+    skip_today: bool,
+) {
+    cron_task_registered_to(global(), task, at, days, delivery, session, skip_today);
+}
+
+fn cron_task_registered_to(
+    sink: &Sink,
+    task: &str,
+    at: &str,
+    days: &str,
+    delivery: &str,
+    session: &str,
+    skip_today: bool,
+) {
+    emit(
+        sink,
+        Event::new(LogEventName::CronTaskRegistered)
+            .field("task", task)
+            .field("at", at)
+            .field("days", days)
+            .field("delivery", delivery)
+            .field("session", session)
+            .field("skip_today", skip_today.to_string()),
+    );
+}
+
+/// Rust 侧埋点：调度工具删除成功且运行时已确认（`effect = active`）。
+pub fn cron_task_removed(task: &str, effect: &str) {
+    cron_task_removed_to(global(), task, effect);
+}
+
+fn cron_task_removed_to(sink: &Sink, task: &str, effect: &str) {
+    emit(
+        sink,
+        Event::new(LogEventName::CronTaskRemoved)
+            .field("task", task)
+            .field("effect", effect),
+    );
+}
+
+/// Rust 侧埋点：调度工具拒绝（校验失败 / 重名 / 不存在 / 落盘失败）。`task` 可空（id 本身
+/// 不可读时），`field` / `code` 是分类后的字段名与错误码——**不记 prompt**。
+pub fn cron_task_rejected(task: &str, field: &str, code: &str) {
+    cron_task_rejected_to(global(), task, field, code);
+}
+
+fn cron_task_rejected_to(sink: &Sink, task: &str, field: &str, code: &str) {
+    emit(
+        sink,
+        Event::new(LogEventName::CronTaskRejected)
+            .field("task", task)
+            .field("field", field)
+            .field("code", code),
+    );
+}
+
 /// 前端经 `log_event` 命令转发的入口：白名单外负载**显式拒绝**（返回错误信封），
 /// 不落盘（spec「invoke 入口 SHALL 校验事件名与字段白名单」）。
 pub fn log_frontend_event(
@@ -1276,6 +1361,9 @@ mod tests {
             LogEventName::CronRunFinished,
             LogEventName::CronRunSkipped,
             LogEventName::CronTaskInvalid,
+            LogEventName::CronTaskRegistered,
+            LogEventName::CronTaskRemoved,
+            LogEventName::CronTaskRejected,
             LogEventName::SubagentStarted,
             LogEventName::SubagentProgress,
             LogEventName::SubagentStep,
@@ -1613,6 +1701,47 @@ mod tests {
         save_conflict("docs/a.md", "document_conflict");
         flush();
     }
+    /// 调度工具的三个诊断事件（change add-cron-conversational-registration design §10）：
+    /// 事件名可 grep、字段只有任务身份与调度要素，**prompt 不在白名单内**（它的私密内容只
+    /// 出现在批准卡与会话留存里）。区分度：把 prompt 塞进注册事件会被白名单丢弃。
+    #[test]
+    fn cron_tool_events_land_identity_only() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        cron_task_registered_to(
+            &sink,
+            "daily-log",
+            "21:00",
+            "mon,tue,wed,thu,fri,sat,sun",
+            "notify-then-run",
+            "new",
+            true,
+        );
+        cron_task_removed_to(&sink, "daily-log", "active");
+        cron_task_rejected_to(&sink, "daily-log", "at", "cron_task_invalid");
+        sink.flush();
+        let lines = read_lines(dir.path());
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0]["event"], "cron_task_registered");
+        assert_eq!(lines[0]["level"], "info");
+        assert_eq!(lines[0]["task"], "daily-log");
+        assert_eq!(lines[0]["skip_today"], "true");
+        assert_eq!(lines[1]["event"], "cron_task_removed");
+        assert_eq!(lines[1]["effect"], "active");
+        assert_eq!(lines[2]["event"], "cron_task_rejected");
+        assert_eq!(lines[2]["level"], "warn");
+        assert_eq!(lines[2]["code"], "cron_task_invalid");
+
+        // prompt 不在白名单：前端转发会被拒（机制化护栏，不靠实现者自觉）。
+        let err = log_frontend_event_to(
+            &sink,
+            LogEventName::CronTaskRegistered,
+            fields(&[("task", "daily-log"), ("prompt", "写今日 log 的私密内容")]),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "log_event_rejected");
+    }
+
     /// 子代理清单容量告警（change add-harness-subagents tasks §2.6）：落一行可 grep 的
     /// `subagent_catalog_large`，负载只有估算值与定义数（清单正文属用户内容，不进日志）。
     #[test]

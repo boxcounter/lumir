@@ -72,6 +72,10 @@ pub struct ApprovalRequest {
     /// （`DecisionReason`，只可能来自产批准卡的两层）。事件与快照两条 UI 通道都从这里取
     /// （单一真源）；`None` = 无依据可讲（旧载荷 / 未来新增的 Ask 层未标依据）。
     pub reason: Option<DecisionReason>,
+    /// 定时任务预览（change add-cron-conversational-registration design §6.3）：`cron_task_create` /
+    /// `cron_task_remove` 的五要素快照（`prompt` 全文只在这里出现，不进诊断日志）。
+    /// 事件载荷键 `cron_task` 与 `PendingApprovalSnapshot.cron_task` 同源（都取自本字段）。
+    pub cron_task: Option<serde_json::Value>,
     /// 该批准卡支持「采纳且本会话不再问」次级动作（design §6；批准闸挂出的请求恒 true）。
     /// 是面板动作可见性的开关——`PendingApprovalSnapshot` 原样镜像给前端。
     pub remember: bool,
@@ -98,6 +102,7 @@ impl ApprovalRequest {
             argv,
             purpose,
             reason,
+            cron_task: None,
             remember,
             source: ApprovalSource::Interactive,
             tx,
@@ -106,6 +111,12 @@ impl ApprovalRequest {
 
     pub fn with_id(mut self, id: String) -> Self {
         self.id = id;
+        self
+    }
+
+    /// 附带定时任务预览（`cron_task_create` / `cron_task_remove` 的批准卡载荷）。
+    pub fn with_cron_task(mut self, cron_task: Option<serde_json::Value>) -> Self {
+        self.cron_task = cron_task;
         self
     }
 
