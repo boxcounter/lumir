@@ -42,10 +42,19 @@ steps:
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"kind":"session_open"' }
       - label: 装配清单有 cron_reference 条目（来源标识）
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"source":"cron_reference"' }
-      - label: 条目字段齐：仓内相对路径 + exists=true + 非零字节
+      # 装配清单经 serde_json 的 Value 落盘，**对象键按字母序**（bytes → exists → path → source），
+      # 不是 Rust 结构体声明序——按声明序拼的「source→path→exists→bytes」正则在真机上恒不命中
+      # （2026-10-20 首跑实测）。判据因此按「同一个对象内」写：前瞻断言把 source 钉在同一对象里，
+      # 其余键**不依赖顺序**；exists=false 或 bytes=0 照样必红（README「按序列化顺序拼正则」
+      # 与 M612 的 jsonl 口径同源）。
+      - label: 条目在同一个对象里带仓内相对路径（审计可反查的路径）
         file:
           path: "env:harness/sessions/*/*.jsonl"
-          has: '/"source":"cron_reference","path":"src-tauri\/src\/harness\/prompts\/cron-reference\.md","exists":true,"bytes":[1-9][0-9]*/'
+          has: '/\{(?=[^}]*"source":"cron_reference")[^}]*"path":"src-tauri\/src\/harness\/prompts\/cron-reference\.md"/'
+      - label: 同一条目 exists=true 且字节数非零（「在场」不是「登记过」）
+        file:
+          path: "env:harness/sessions/*/*.jsonl"
+          has: '/\{(?=[^}]*"source":"cron_reference")(?=[^}]*"exists":true)(?=[^}]*"bytes":[1-9][0-9]*)[^}]*\}/'
       - label: system 全文里有「定时任务」段（固定段的标题行）
         file: { path: "env:harness/sessions/*/*.jsonl", has: "===== 定时任务 =====" }
       - label: 段正文真的注入了（禁令句原文——能力告知与禁区的承重句）
