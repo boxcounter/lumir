@@ -545,11 +545,11 @@ pub fn retain_live_tasks<T>(
 // 触发去重状态（cron-state.json）
 // ---------------------------------------------------------------------------
 
-/// 单个任务的去重记录。两个字段都可缺：`last_fired` 只在派发成功时写，`session_id` 只在
-/// 运行终态回执带回时写。
+/// 单个任务的去重记录。两个字段都可缺：`last_fired` 在派发成功或运行期注册写当日种子时写，
+/// `session_id` 只在运行终态回执带回时写。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CronTaskRecord {
-    /// 最近一次**派发成功**的本地日期（`YYYY-MM-DD`）：当日至多一次的判据。
+    /// 该本地日期不再派发的判据（派发成功或注册种子写入；`YYYY-MM-DD`）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_fired: Option<String>,
     /// 最近一次运行落到的会话 id：`dedicated` 的续写与结果通知点击后的会话恢复都靠它。
@@ -575,14 +575,14 @@ impl Default for CronState {
 }
 
 impl CronState {
-    /// 该任务今日是否已派发过（判定与派发共用的唯一读数）。
+    /// 该任务今日是否已不再派发（判定与派发共用的唯一读数：派发成功与注册种子都写它）。
     pub fn last_fired(&self, task: &str) -> Option<&str> {
         self.tasks
             .get(task)
             .and_then(|record| record.last_fired.as_deref())
     }
 
-    /// 派发成功后的唯一写入口（`date` 是本地日期，不是 UTC）。
+    /// 写 `last_fired` 的唯一入口（`date` 是本地日期，不是 UTC）：派发成功与运行期注册种子共用。
     pub fn mark_fired(&mut self, task: &str, date: &str) {
         let record = self.tasks.entry(task.to_string()).or_default();
         record.last_fired = Some(date.to_string());
