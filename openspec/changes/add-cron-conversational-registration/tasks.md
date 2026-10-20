@@ -26,7 +26,8 @@
 - [ ] 1.4 并发单测（照 M592 / M600 的既有形态）：两线程同时写不同键（一条 `ui.theme`、一条
   `cron.tasks`），断言两键都在、无 tmp 残留、未知顶层键保留。
 - [ ] 1.5 `AppConfig.cron` 的注释改准（`config.rs:164-165`）：删掉「运行期不热重载」，改为「启动
-  装载 + 运行期经注册通道重载；手改配置文件需重启」。
+  装载 + 运行期经注册通道重载；文件变化本身不触发重读（重载读的是文件当下内容）」。同理改
+  `CronRunner.loop_max` 的注释（tasks 3.7）。
 
 ## 2. 工具面（`src-tauri/src/harness/tools.rs`）
 
@@ -96,8 +97,9 @@
   `exists=true`、trim 后字节数）；`assemble_system_for_subagent` **不**注入。
 - [ ] 5.3 单测：`assemble_system` 文本包含该段且剔除尾空白后逐字节等于文件；清单条目字段齐；
   子运行装配不含该段；`prompts/` 目录内增删其它文件不改变注入顺序。
-- [ ] 5.4 回扫：`rg -n "不热重载" src-tauri/src docs/specs` 只剩「手改配置需重启」的正确表述，
-  没有「任务集恒为启动快照」一类旧话（REVIEW.md「设定类现状断言」条）。
+- [ ] 5.4 回扫：`rg -n "不热重载" src-tauri/src docs/specs` 只剩改准后的表述（运行期只经注册通道
+  重载、文件变化不单独触发重读），没有「任务集恒为启动快照」或「手改一定等下次启动」一类旧话
+  （REVIEW.md「设定类现状断言」条）。
 
 ## 6. 文档与口径
 
@@ -120,6 +122,10 @@
   真实脚本路径（一律占位）；提交前对改动面做一次 text 级 grep 清扫。
 - [ ] 6.6 `src/bindings/**` 若有 ts-rs 导出变化，`git add` 重导出产物后跑 `scripts/gate.sh quick`
   （`bindings-drift` 的既有纪律）。
+- [ ] 6.7 把既有两写者未迁移的读—改—写窗口记进 `docs/backlog.md`（design §4.1 的承诺）：
+  `commands::write_config_value_to` / `write_last_vault_to` 的读发生在取 `CONFIG_WRITE_LOCK` 之前，
+  本 change 只让新写者走同锁入口，未迁移旧写者。条目一行 gist + 证据指针（`config.rs` 的
+  `CONFIG_WRITE_LOCK` 只覆盖写、`commands.rs` 的读在锁外），不写过程性验证状态。
 
 ## 7. 批准卡呈现（前端）
 
