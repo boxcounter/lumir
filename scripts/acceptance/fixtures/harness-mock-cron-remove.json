@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "先建一条马上要删的任务。",
+      "tool_calls": [
+        {
+          "id": "call_cron_create_doomed",
+          "name": "cron_task_create",
+          "arguments": "{\"id\":\"acc-cron-doomed\",\"at\":\"$nextMinute\",\"prompt\":\"CRON-DOOMED-PROBE 建了马上删，到点不该响。\"}"
+        }
+      ]
+    },
+    {
+      "text": "再把它删掉。",
+      "tool_calls": [
+        {
+          "id": "call_cron_remove_doomed",
+          "name": "cron_task_remove",
+          "arguments": "{\"id\":\"acc-cron-doomed\"}"
+        }
+      ]
+    },
+    {
+      "text": "任务已删除。"
+    }
+  ]
+}

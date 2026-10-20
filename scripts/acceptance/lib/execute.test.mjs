@@ -246,6 +246,62 @@ test("file.jsonl 静态校验：空表 / 非标量值 / 非 JSONL 解析输入�
   );
 });
 
+test("do: waitForFile：已落盘的事件立即成立，等不到的事件如实判 FAIL（M616）", async () => {
+  const root = tmpRoot("wait-for-file");
+  useTmpEnv(root);
+  // 现场来历（M616 首跑）：等通知横幅会被**更早一次 run 的同标题通知**满足（条目在 AX 树里
+  // 存活数分钟），随后的日志断言在事件落盘之前执行 ⇒ 假红。等待必须与判定同源 = 等这份日志。
+  const line = JSON.stringify({ event: "cron_notified", kind: "trigger", task: "acc-cron-register" });
+  const hit = await drive(root, {
+    steps: [
+      { name: "写日志", do: "vaultWrite", file: "log.jsonl", content: `${line}\n` },
+      {
+        name: "等事件",
+        do: "waitForFile",
+        waitForFile: { path: "log.jsonl", jsonl: { event: "cron_notified", task: "acc-cron-register" } },
+        timeoutMs: 2000,
+      },
+    ],
+  });
+  assert.equal(hit.status, "PASS", `已落盘的事件应立即成立，实际：${JSON.stringify(hit.records)}`);
+
+  const miss = await drive(root, {
+    steps: [
+      { name: "写别的日志", do: "vaultWrite", file: "other.jsonl", content: '{"event":"other"}\n' },
+      {
+        name: "等不会来的事件",
+        do: "waitForFile",
+        waitForFile: { path: "other.jsonl", jsonl: { event: "cron_notified" } },
+        timeoutMs: 300,
+      },
+    ],
+  });
+  assert.equal(miss.status, "FAIL", "超时必须判红（不静默放过——判据没成立与判据为真不是一回事）");
+  const actionFail = miss.records.find((r) => !r.ok && r.label.includes("等不会来的事件"));
+  assert.ok(actionFail, `应落一条动作 FAIL，实际：${JSON.stringify(miss.records)}`);
+  assert.match(actionFail.detail ?? "", /超时/, "失败理由应点明超时");
+});
+
+test("do: waitForFile 静态校验：缺 path / 无判据 / 非标量 jsonl / 未知键都报 problem", () => {
+  const errs = (waitForFile) => checkScenario({ id: "wff", item: 0, steps: [{ name: "校验", do: "waitForFile", waitForFile }] });
+  assert.ok(
+    errs({ jsonl: { event: "x" } }).some((p) => p.includes("path")),
+    "缺 path 应报 problem（写错路径口径 = 永远等不到）",
+  );
+  assert.ok(
+    errs({ path: "x.jsonl" }).some((p) => p.includes("至少一项")),
+    "没有任何判据应报 problem（否则等价于「等文件出现」，判据不明确）",
+  );
+  assert.ok(
+    errs({ path: "x.jsonl", jsonl: { event: { nested: true } } }).some((p) => p.includes("jsonl.event")),
+    "嵌套 jsonl 值应报 problem（日志字段只有标量）",
+  );
+  assert.ok(
+    errs({ path: "x.jsonl", has: "x", bogus: 1 }).some((p) => p.includes("bogus")),
+    "未知键应报 problem（拼错即静默不判）",
+  );
+});
+
 test("缺文件时内容类判据仍判 FAIL（不把「读不到」当「为空」）", async () => {
   const root = tmpRoot("missing-file");
   useTmpEnv(root);

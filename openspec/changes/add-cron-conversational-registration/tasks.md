@@ -139,23 +139,25 @@
 
 ## 8. 真机验收场景（`scripts/acceptance/scenarios/`）
 
-- [ ] 8.1 「对话注册 → 工具被调 → 立即生效」：mock fixture 两段（`tool_calls: cron_task_create`
+- [x] 8.1 「对话注册 → 工具被调 → 立即生效」（场景 `207-cron-conversational-register`）：mock fixture 两段（`tool_calls: cron_task_create`
   → 收尾）；`at` = 下一分钟（未到点）。断言批准卡（含 `at` 与 prompt 片段）→ 采纳后 `config.json`
   有该任务且**无** `delivery` 键 → `cron_task_registered(skip_today=false)` → 过点后
   `cron_notified(kind=trigger)` 出现 → 当日 `cron_run_started` 为 0。
-- [ ] 8.2 「注册日不补触发」：`at` = 今日已过；断言批准卡 → `cron_task_registered(skip_today=true)`
-  → `cron-state.json` 今日 `last_fired` → 多次切前台 + `restart` 后仍零 `cron_notified`。
-- [ ] 8.3 「拒绝不落盘」：批准卡点拒绝；断言配置无该任务（同 run 里另一条已采纳的任务必须在文件
+- [x] 8.2 「注册日不补触发」（场景 `208-cron-register-skip-today`）：`at` = 今日已过；断言批准卡 → `cron_task_registered(skip_today=true)`
+  → `cron-state.json` 今日 `last_fired` → 多次切前台 + `restart` 后仍零 `cron_notified`
+  （对照组 `acc-cron-control` 恰投递一次，作区分度正观测）。
+- [x] 8.3 「拒绝不落盘」（场景 `209-cron-register-reject`）：批准卡点拒绝；断言配置无该任务（同 run 里另一条已采纳的任务必须在文件
   里，作为「文件可写」的正观测）→ 无 `cron_task_registered` → 面板出现拒绝后的收尾。
-- [ ] 8.4 「删除任务」：先建后删；断言 `config.json` 不再有该任务、`cron_task_removed`、该任务到点
-  后无通知。
-- [ ] 8.5 「重名拒绝」：对已存在 `id` 再 create；断言 `cron_task_exists`、配置字节不变、面板工具行
+- [x] 8.4 「删除任务」（场景 `210-cron-register-remove`）：先建后删；断言 `config.json` 不再有该任务、`cron_task_removed`、该任务到点
+  后无通知（同分钟到点的对照任务照常通知，作区分度正观测）。
+- [x] 8.5 「重名拒绝」（场景 `211-cron-register-duplicate`）：对已存在 `id` 再 create；断言 `cron_task_exists`、配置字节不变、面板工具行
   显示错误摘要。
-- [ ] 8.6 「提示词段在场」：新建会话；断言系统上下文含有 cron 段、`session_open.assembly` 有
+- [x] 8.6 「提示词段在场」（场景 `212-cron-prompt-section`）：新建会话；断言系统上下文含有 cron 段、`session_open.assembly` 有
   `cron_reference` 条目。注：段内容的行为遵从度归抽样观察，**不做机器断言**。
-- [ ] 8.7 通知横幅相关子步骤若被 DND 抑制，按 `scripts/acceptance/README.md` 标 INVALID 并写明原因，
-  不伪造 PASS（先例：`add-cron-runtime-daemon` tasks §7.2 / §7.3）。
-- [ ] 8.8 `node scripts/acceptance/run.mjs --check` 通过（新增场景静态校验）。
+- [x] 8.7 通知横幅相关子步骤若被 DND 抑制，按 `scripts/acceptance/README.md` 标 INVALID 并写明原因，
+  不伪造 PASS（先例：`add-cron-runtime-daemon` tasks §7.2 / §7.3）。（本批到点等待改等日志事件
+  `waitForFile`，不依赖横幅判据；DND 已实测关闭。）
+- [x] 8.8 `node scripts/acceptance/run.mjs --check` 通过（新增场景静态校验）。
 
 ## 9. 验证
 
@@ -165,7 +167,8 @@
   单测）。
 - [x] 9.4 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）。
 - [x] 9.5 `scripts/gate.sh visual` 本地全绿（动过 `src/harness-panel.*` 后必跑）。
-- [ ] 9.6 真机跑 §8.1–8.6，证据落 `.local/acceptance/<日期>/`；失败 / 跳过项逐条写明原因，
-  INVALID 不并进 PASS。
+- [x] 9.6 真机跑 §8.1–8.6，证据落 `.local/acceptance/<日期>/`；失败 / 跳过项逐条写明原因，
+  INVALID 不并进 PASS。（2026-10-20 真机批 6/6 PASS，证据镜像在 `.local/acceptance/2026-10-20-m616/`；
+  首跑的一条 FAIL 与本轮另两次环境/判据修正的现场留在 `pre-run-invalid/` 与 run.log 里。）
 - [ ] 9.7 归档顺序核对：`openspec list` 确认 `add-cron-runtime-daemon` / `add-harness-subagents`
   已归档（否则本 change 不归档，并在报告里点名）。

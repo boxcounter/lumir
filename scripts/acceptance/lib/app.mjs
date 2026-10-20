@@ -137,9 +137,15 @@ export async function writeConfig({
   if (Object.keys(ui).length > 0) cfg.ui = ui;
   if (keys !== undefined) cfg.keys = keys;
   const h = {};
+  const now = Date.now();
   if (harness !== undefined) {
     if (harness.provider !== undefined) h.provider = harness.provider;
-    if (harness.fixture !== undefined) h.providers = { mock: { fixture: resolveSeedPath(harness.fixture) } };
+    // mock fixture 里的时刻记号（M616）：`$nextMinute` / `$nowMinute` / `$pastMinute` 与
+    // `[cron]` 表同一份换算（同一个 `now`），脚本里因此可以写「注册时未到点 / 今日已过点」——
+    // 对话式注册的 `at` 由**模型给出的工具参数**决定，仓库里的 fixture 是静态 JSON，写死时刻
+    // 会让场景随当天时段漂到另一种语义。无记号的 fixture 原样引用（既有场景逐字节不变）。
+    if (harness.fixture !== undefined)
+      h.providers = { mock: { fixture: await materializeMockFixture(resolveSeedPath(harness.fixture), now) } };
     // M372（场景 99）：kimiModel 写了就构造 kimi provider 节（model + 占位 api_key）——
     // k3-256k 等自定义模型的能力判定（思考 chip 置灰判据）按 config 现算，不发消息就验得到；
     // 发消息的场景不会配这个键（真 api_key 不进验收环境）。
@@ -178,36 +184,62 @@ export async function writeConfig({
   // SCENARIO_CONFIG_KEYS 的注释）。
   if (sessionNaming !== undefined) h.session_naming = sessionNaming;
   if (Object.keys(h).length > 0) cfg.harness = h;
-  if (cron !== undefined) cfg.cron = resolveCronConfig(cron);
+  if (cron !== undefined) cfg.cron = resolveCronConfig(cron, now);
   await writeFile(path.join(dir, "config.json"), `${JSON.stringify(cfg, null, 2)}\n`);
   return path.join(dir, "config.json");
 }
 
 /**
- * `[cron]` 表的场景归一（change add-cron-runtime-daemon §7）：两件事只在这里做——
- * ① 任务 `vault` 的 `$vault` / `$vault2` 记号按套件的合成 vault 解析（不写死 /tmp 路径）；
- * ② `at` 的时刻记号按**写入时刻**换算：`$nextMinute` = 至少 60s 之后的下一个分钟边界
- * （给起 app 留裕量）、`$nowMinute` = 当前分钟（今日已过、立即到点）、`$pastMinute` = 前一分钟。
- * 到点类场景因此不把时刻写死，跨天重跑也成立。
+ * `at` 的时刻记号 → `HH:MM`（change add-cron-runtime-daemon §7）：`$nextMinute` = 至少 60s
+ * 之后的下一个分钟边界（给起 app 留裕量）、`$nowMinute` = 当前分钟（今日已过、立即到点）、
+ * `$pastMinute` = 前一分钟。`[cron]` 表与 mock fixture 共用这一个换算点（M616）——两处各算一份
+ * 会让同一次运行里的「对照组」与「注册任务」落在不同的分钟上（REVIEW.md「同一语义两处真源」条）。
  */
-function resolveCronConfig(cron) {
-  const now = Date.now();
+function cronAtTokens(now) {
   const format = (ms) => {
     const d = new Date(ms);
     return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   };
   const minute = 60_000;
-  const at = {
-    // 下一次分钟边界且至少 60s 之后：ceil((now + 60s) / 1min)。
-    $nextMinute: () => format(Math.ceil((now + minute) / minute) * minute),
-    $nowMinute: () => format(now),
-    $pastMinute: () => format(now - minute),
+  return {
+    $nextMinute: format(Math.ceil((now + minute) / minute) * minute),
+    $nowMinute: format(now),
+    $pastMinute: format(now - minute),
   };
+}
+
+/**
+ * mock fixture 的时刻记号展开（M616）：读 fixture 原文，把 `$nextMinute` / `$nowMinute` /
+ * `$pastMinute` 换成按**写入配置时刻**算出的 `HH:MM`，落一份副本到隔离配置目录，config 指向它。
+ *
+ * 为什么必须存在：对话式注册场景的 `at` 在**模型的工具参数**里（fixture 是仓库里的静态
+ * JSON），而「注册时未到点 / 今日已过点」必须按运行时刻算。无记号的 fixture 返回原路径
+ * （既有场景的引用路径逐字节不变）；副本写在隔离配置目录（git 外），仓库里的 fixture 不被改写。
+ */
+async function materializeMockFixture(source, now) {
+  const text = await readText(source);
+  const tokens = cronAtTokens(now);
+  let out = text;
+  for (const [token, value] of Object.entries(tokens)) out = out.split(token).join(value);
+  if (out === text) return source;
+  const target = path.join(envHome(), "lumir", `mock-fixture-${path.basename(source)}`);
+  await writeFile(target, out);
+  return target;
+}
+
+/**
+ * `[cron]` 表的场景归一（change add-cron-runtime-daemon §7）：两件事只在这里做——
+ * ① 任务 `vault` 的 `$vault` / `$vault2` 记号按套件的合成 vault 解析（不写死 /tmp 路径）；
+ * ② `at` 的时刻记号按**写入时刻**换算（记号表见 [`cronAtTokens`]）。
+ * 到点类场景因此不把时刻写死，跨天重跑也成立。
+ */
+function resolveCronConfig(cron, now) {
+  const at = cronAtTokens(now);
   const tasks = Array.isArray(cron?.tasks)
     ? cron.tasks.map((task) => ({
         ...task,
         vault: typeof task.vault === "string" ? resolveSeedPath(task.vault) : task.vault,
-        at: at[task.at] !== undefined ? at[task.at]() : task.at,
+        at: typeof task.at === "string" && Object.hasOwn(at, task.at) ? at[task.at] : task.at,
       }))
     : cron?.tasks;
   return { ...cron, tasks };

@@ -43,6 +43,9 @@ export const ACTIONS = new Set([
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
   "clipboardImage", "clipboardText", "note", "migrateHarnessSessions", "invalidate", "envWrite", "mockFill",
   "waitForNotification", "clickNotification",
+  // `waitForFile`（M616）：轮询**磁盘事实**直到成立——「等日志里出现某个事件」这类判据此前只能
+  // 靠 `sleep` 猜时长，或借通知横幅（横幅会被**更早一次 run 的同标题通知**满足，见动作体注释）。
+  "waitForFile",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes"]);
 
@@ -434,6 +437,39 @@ export function checkScenario(scenario) {
           push(`${at} do=${step.do} 未知键 ${k}（拼错即静默不生效，允许：title / body / timeoutMs）`);
       }
     }
+    // `do: waitForFile`（M616）：轮询磁盘事实。形状写错会静默等到超时（或恒真）——按本套件
+    // 「拼错即静默」的同一口径在这里挡：path 必填、至少一个判据、jsonl 值为标量、count 形状。
+    if (step.do === "waitForFile") {
+      const spec = step.waitForFile;
+      if (!isPlainTable(spec)) push(`${at} do=waitForFile 需要对象 { path, has|jsonl|count, timeoutMs? }`);
+      else {
+        if (typeof spec.path !== "string" || spec.path === "")
+          push(`${at} do=waitForFile 需要非空 path（与 file 断言同一路径口径）`);
+        if (spec.has === undefined && spec.jsonl === undefined && spec.count === undefined)
+          push(`${at} do=waitForFile 需要 has / jsonl / count 至少一项（判据不明确即无法判成立）`);
+        if (spec.has !== undefined && typeof spec.has !== "string")
+          push(`${at} do=waitForFile 的 has 需要字符串（子串或 /…/ 正则，与 ax.has 同口径）`);
+        if (spec.count !== undefined) {
+          const c = spec.count;
+          if (!isPlainTable(c) || typeof c.pattern !== "string" || !Number.isInteger(c.exact) || c.exact < 0)
+            push(`${at} do=waitForFile 的 count 需要 { pattern: 字符串, exact: 非负整数 }，实际 ${JSON.stringify(c)}`);
+        }
+        if (spec.jsonl !== undefined) {
+          if (!isPlainTable(spec.jsonl) || Object.keys(spec.jsonl).length === 0)
+            push(`${at} do=waitForFile 的 jsonl 需要至少一个字段（如 { event: cron_notified }）`);
+          else
+            for (const [k, v] of Object.entries(spec.jsonl))
+              if (!["string", "number", "boolean"].includes(typeof v))
+                push(`${at} do=waitForFile 的 jsonl.${k} 需要标量，实际 ${JSON.stringify(v)}`);
+        }
+        for (const k of Object.keys(spec)) {
+          if (!["path", "has", "jsonl", "count"].includes(k))
+            push(`${at} do=waitForFile 的 waitForFile.${k} 未知键（拼错即静默不判，允许：path / has / jsonl / count）`);
+        }
+      }
+      pushBare(`${at} 的 waitForFile.has`, spec?.has);
+      pushBare(`${at} 的 waitForFile.count.pattern`, spec?.count?.pattern);
+    }
     if (step.do === "doubleClick" && !step.target) push(`${at} do=doubleClick 需要 target（节点或 {x,y} 窗口局部坐标）`);
     // hover（M443）：与 doubleClick / drag 同一条坐标口径，`target` 是唯一必填项——漏写会让
     // windowLocalTarget 抛「找不到带 bbox 的节点」，但那要等一整轮真机；静态这里先挡。
@@ -753,6 +789,33 @@ export function matcher(pattern) {
     return { test: (v) => re.test(v), show: s };
   }
   return { test: (v) => String(v).includes(s), show: JSON.stringify(s) };
+}
+
+/**
+ * JSONL 的**字段序无关**匹配（M612）：找一行同时满足 `want` 的全部字段，命中返回该行，否则 `null`。
+ *
+ * 为什么按字段算而不是拼正则：diagnostic 日志由 `serde_json` 落盘，Map 默认是 BTreeMap ⇒ 字段
+ * 按**字母序**输出；把 `event→task→ok→action` 的顺序写死进正则永远命中 0 行。期望值按日志的
+ * 字符串化口径比较（`logging.rs` 的 `field_text` 把布尔 / 数值一并转成字符串）。
+ *
+ * 单一实现：`file.jsonl` 断言（[`checkFileExpectation`] 的 jsonl 分支）与 `do: waitForFile`
+ * 共用这一份——两处各写一遍会在下一次改判定口径时只改到一处（REVIEW.md「同一语义两处真源」条）。
+ */
+export function findJsonlRecord(content, want) {
+  const fields = Object.keys(want);
+  const asText = (value) => (typeof value === "object" ? JSON.stringify(value) : String(value));
+  for (const line of content.split("\n")) {
+    if (line.trim() === "") continue;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue; // 非 JSONL 行（日志截断 / 空行）不参与匹配
+    }
+    if (typeof record !== "object" || record === null || Array.isArray(record)) continue;
+    if (fields.every((field) => field in record && asText(record[field]) === asText(want[field]))) return line;
+  }
+  return null;
 }
 
 /** 一处文本里 `pattern` 出现的次数（M507 的 chord `verify` 用）。**与 `matcher` 同一口径**：
@@ -1479,21 +1542,8 @@ export async function runScenario(ctx, scenario) {
             if (content === undefined && contentErr === undefined) await readContent();
             if (contentErr) return { ok: false, reason: contentErr };
             const want = spec.jsonl;
-            const fields = Object.keys(want);
-            const asText = (value) => (typeof value === "object" ? JSON.stringify(value) : String(value));
+            if (findJsonlRecord(content, want) !== null) return { ok: true, detail: `命中 ${JSON.stringify(want)}` };
             const lines = content.split("\n").filter((line) => line.trim() !== "");
-            for (const line of lines) {
-              let record;
-              try {
-                record = JSON.parse(line);
-              } catch {
-                continue; // 非 JSONL 行（日志截断 / 空行）不参与匹配
-              }
-              if (typeof record !== "object" || record === null || Array.isArray(record)) continue;
-              if (fields.every((field) => field in record && asText(record[field]) === asText(want[field]))) {
-                return { ok: true, detail: `命中 ${JSON.stringify(want)}` };
-              }
-            }
             return {
               ok: false,
               reason: `（${lines.length} 行里没有一行同时满足 ${JSON.stringify(want)}）`,
@@ -1887,6 +1937,64 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
           );
         }
         await sleep(700);
+      }
+    }
+    case "waitForFile": {
+      // 轮询**磁盘事实**直到成立（M616）。与 `waitFor`（AX 终态）同一分工：场景要「等日志里
+      // 出现某个事件」时，此前只能靠 `sleep` 猜时长，或者借通知横幅——而横幅会被**更早一次 run
+      // 的同标题通知**满足（2026-10-20 实测：通知列表在 NotificationCenter 的 AX 树里存活数分钟，
+      // `waitForNotification` 在到点前 56s 就命中了上一次批的同名通知，随后的日志断言在事件落盘
+      // 之前执行 ⇒ 假红）。判据直接读被判的产物，等待与判定同源。
+      //
+      // 判据：路径口径与 `file` 断言同源（`env:` / vault 相对 / 绝对 / glob 取 mtime 最新一份）；
+      // `has` / `jsonl` / `count` 可写多个，**同时成立**才返回；文件不存在 = 未成立（继续轮询）。
+      // 超时抛错（如实判 FAIL，不静默放过），成立时把次数与耗时记进证据。
+      const spec = step.waitForFile ?? {};
+      if (typeof spec.path !== "string" || spec.path === "")
+        throw new Error("do=waitForFile 需要非空 path（与 file 断言同一路径口径）");
+      if (spec.has === undefined && spec.jsonl === undefined && spec.count === undefined)
+        throw new Error("do=waitForFile 需要 has / jsonl / count 至少一项（否则等价于「等文件出现」，判据不明确）");
+      const has = spec.has === undefined ? null : matcher(spec.has);
+      const count =
+        spec.count === undefined
+          ? null
+          : { m: matcher(spec.count.pattern), exact: spec.count.exact };
+      const want = spec.jsonl ?? null;
+      const timeoutMs = step.timeoutMs ?? 120_000;
+      const deadline = Date.now() + timeoutMs;
+      const startedAt = Date.now();
+      let last = `（${spec.path} 不存在）`;
+      for (let attempt = 1; ; attempt += 1) {
+        const file = await resolveSpecFile(spec.path);
+        const content = await readText(file).catch(() => null);
+        if (content !== null) {
+          const detail = [];
+          let ok = true;
+          if (has !== null) {
+            ok = has.test(content);
+            detail.push(`has ${has.show}=${ok}`);
+          }
+          if (ok && count !== null) {
+            const n = content.split("\n").filter((line) => count.m.test(line)).length;
+            ok = n === count.exact;
+            detail.push(`count ${count.m.show}=${n}（期望 ${count.exact}）`);
+          }
+          if (ok && want !== null) {
+            ok = findJsonlRecord(content, want) !== null;
+            detail.push(`jsonl ${JSON.stringify(want)}=${ok}`);
+          }
+          if (ok) {
+            evidence.record({
+              kind: "note",
+              text: `do=waitForFile 第 ${attempt} 次读取成立（用时 ${Date.now() - startedAt}ms；${file}）`,
+            });
+            return;
+          }
+          last = `${file}：${detail.join("，")}；内容前 200 字 ${JSON.stringify(content.slice(0, 200))}`;
+        }
+        if (Date.now() >= deadline)
+          throw new Error(`do=waitForFile 超时（${timeoutMs}ms / ${attempt} 次读取）：${last}`);
+        await sleep(500);
       }
     }
     case "sleep":
