@@ -79,7 +79,7 @@
 
 import { GFM, parser as commonmarkParser } from "@lezer/markdown";
 import { currentLanguage, errorText, formatDate, formatRelative, onRelabel, t } from "./copy";
-import type { Language } from "./copy";
+import type { CopyKey, Language } from "./copy";
 import {
   configGet,
   configSetValue,
@@ -1646,6 +1646,130 @@ export function approvalReasonText(reason: DecisionReason | undefined): string |
   }
 }
 
+/** 定时任务批准预览（change add-cron-conversational-registration design §6.3 契约）：形状由
+ *  Rust 侧批准载荷给出（事件与快照同源同形），前端只呈现、不推导——`skip_today` 是线程按
+ *  自己的时钟算好的结果，MUST NOT 在前端重算。`op = "remove"` 时只有 `id` 与 `at`
+ *  （任务可能已不存在 ⇒ `at` 缺席）。 */
+export interface CronTaskPreview {
+  op: "create" | "remove";
+  id: string;
+  at?: string | undefined;
+  days?: string[] | undefined;
+  delivery?: string | undefined;
+  session?: string | undefined;
+  vault?: string | undefined;
+  prompt?: string | undefined;
+  skip_today?: boolean | undefined;
+}
+
+/** 定时任务预览的宽容解析（事件 / 快照两条入口同一份）：形状不合 / 未知 op ⇒ `undefined`
+ *  （调用方不建块，MUST NOT 伪造）；缺键按缺席处理，空值由渲染层跳过该行。 */
+export function parseCronTaskPreview(value: unknown): CronTaskPreview | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const raw = value as Record<string, unknown>;
+  const op = raw.op === "create" ? "create" : raw.op === "remove" ? "remove" : undefined;
+  if (op === undefined) return undefined;
+  return {
+    op,
+    id: typeof raw.id === "string" ? raw.id : "",
+    at: typeof raw.at === "string" ? raw.at : undefined,
+    days: Array.isArray(raw.days)
+      ? raw.days.filter((day): day is string => typeof day === "string")
+      : undefined,
+    delivery: typeof raw.delivery === "string" ? raw.delivery : undefined,
+    session: typeof raw.session === "string" ? raw.session : undefined,
+    vault: typeof raw.vault === "string" ? raw.vault : undefined,
+    prompt: typeof raw.prompt === "string" ? raw.prompt : undefined,
+    skip_today: typeof raw.skip_today === "boolean" ? raw.skip_today : undefined,
+  };
+}
+
+/** 任务要素的档位词（design §6.3：键名走文案表，取值按闭集合译成同一张表里的措辞；
+ *  闭集合外的值原样上屏——不猜、不吞掉模型给的东西）。 */
+const CRON_DELIVERY_COPY: Record<string, CopyKey> = {
+  "notify-then-run": "D529",
+  "run-then-notify": "D530",
+  "silent-run": "D531",
+};
+const CRON_SESSION_COPY: Record<string, CopyKey> = { new: "D532", dedicated: "D533" };
+const CRON_DAY_COPY: Record<string, CopyKey> = {
+  mon: "D537",
+  tue: "D538",
+  wed: "D539",
+  thu: "D540",
+  fri: "D541",
+  sat: "D542",
+  sun: "D543",
+};
+
+function cronValueLabel(copy: Record<string, CopyKey>, value: string): string {
+  const key = copy[value];
+  return key === undefined ? value : t(key);
+}
+
+function cronDaysLabel(days: readonly string[]): string {
+  return days.map((day) => cronValueLabel(CRON_DAY_COPY, day)).join(" / ");
+}
+
+/** 定时任务批准块（design §6.3）：两列键值 + prompt 全文 + 注册日口径。纯呈现——取值只来自
+ *  批准载荷；空值不建行（不伪造）。随语言重绘由 `relabelApproval` 重跑本函数（元素不重建）。 */
+function renderCronTaskBlock(el: HTMLElement, preview: CronTaskPreview): void {
+  const nodes: Node[] = [];
+  const kv = document.createElement("dl");
+  kv.className = "lumir-hp-cron-kv";
+  const addRow = (label: CopyKey, value: string | undefined): void => {
+    if (value === undefined || value === "") return;
+    const dt = document.createElement("dt");
+    dt.textContent = t(label);
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    kv.append(dt, dd);
+  };
+  if (preview.op === "create") {
+    addRow("D523", preview.at);
+    addRow("D524", preview.days === undefined ? undefined : cronDaysLabel(preview.days));
+    addRow(
+      "D525",
+      preview.delivery === undefined
+        ? undefined
+        : cronValueLabel(CRON_DELIVERY_COPY, preview.delivery),
+    );
+    addRow(
+      "D526",
+      preview.session === undefined
+        ? undefined
+        : cronValueLabel(CRON_SESSION_COPY, preview.session),
+    );
+    addRow("D527", preview.vault);
+  } else {
+    addRow("D528", preview.id);
+    addRow("D523", preview.at);
+  }
+  if (kv.childElementCount > 0) nodes.push(kv);
+  if (preview.op === "create" && preview.prompt !== undefined && preview.prompt !== "") {
+    const pre = document.createElement("pre");
+    pre.className = "lumir-hp-argv lumir-hp-cron-prompt";
+    pre.textContent = preview.prompt;
+    nodes.push(pre);
+  }
+  // 注册日口径（design §8）：true / false 才有话可说，缺键（旧载荷）不伪造。
+  const noteKey =
+    preview.op === "remove"
+      ? "D536"
+      : preview.skip_today === true
+        ? "D534"
+        : preview.skip_today === false
+          ? "D535"
+          : null;
+  if (noteKey !== null) {
+    const note = document.createElement("div");
+    note.className = "lumir-hp-cron-note";
+    note.textContent = t(noteKey);
+    nodes.push(note);
+  }
+  el.replaceChildren(...nodes);
+}
+
 /** 命令拆段时的连接符（长者在前：`&&` 必须先于 `&`、`||` 先于 `|` 命中）。 */
 const COMMAND_CONNECTORS = ["&&", "||", "\r\n", "|", ";", "&", "\n"] as const;
 
@@ -2418,13 +2542,19 @@ export function failureTextOf(record: unknown): string | null {
 }
 
 /** gated 调用批准载荷的关键参数全文（行内人话化的「完整版」数据源）：cli_run = argv 拼接；
- *  写工具 = diff 头文件名；都无 → ""。 */
+ *  写工具 = diff 头文件名；调度工具 = `id` + `at`（任务身份与时间；id 即通知标题，必须在
+ *  行上看得见）；都无 → ""。 */
 export function approvalArgsText(request: {
   diff?: string | undefined;
   argv?: readonly string[] | undefined;
+  cronTask?: CronTaskPreview | undefined;
 }): string {
   if (request.argv !== undefined) return formatArgv(request.argv);
   if (request.diff !== undefined) return diffPathOf(request.diff) ?? "";
+  if (request.cronTask !== undefined) {
+    const { id, at } = request.cronTask;
+    return at !== undefined && at !== "" ? `${id} ${at}` : id;
+  }
   return "";
 }
 
@@ -2918,6 +3048,9 @@ interface PendingApproval {
   /** 判定依据（M459 契约字段，可缺席 = 旧载荷 / 不可上卡的层）：批准卡「判定依据」行的数据源，
    *  层级由 Rust 判定管线产出，前端只按 kind 取文案。 */
   reason?: DecisionReason | undefined;
+  /** 定时任务预览（change add-cron-conversational-registration §6.3，可缺席）：任务要素块的
+   *  数据源，随语言重绘时按它重跑 `renderCronTaskBlock`。 */
+  cronTask?: CronTaskPreview | undefined;
   argsText: string;
   /** 参数里取到的路径目标（change harness-path-link）：行内重渲 / 终态行复用，不在重渲时重解析。 */
   targets: readonly ToolPathTarget[];
@@ -2979,6 +3112,8 @@ export interface TaskApprovalRequest {
   argv?: string[] | undefined;
   purpose?: string | undefined;
   reason?: DecisionReason | undefined;
+  /** 定时任务预览（change add-cron-conversational-registration §6.3；子运行不可达这类工具）。 */
+  cronTask?: CronTaskPreview | undefined;
   remember: boolean;
 }
 
@@ -6541,6 +6676,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const basis = pending.element.querySelector(".lumir-hp-approval-basis");
     const basisText = approvalReasonText(pending.reason);
     if (basis !== null && basisText !== null) basis.textContent = basisText;
+    // 定时任务要素块的键名 / 档位词 / 注册日口径都是 chrome 文案，随语言重跑（元素不重建）。
+    const cronEl = pending.element.querySelector<HTMLElement>(".lumir-hp-approval-cron");
+    if (cronEl !== null && pending.cronTask !== undefined) {
+      renderCronTaskBlock(cronEl, pending.cronTask);
+    }
     // 待决行的「等待批准」尾注同口径重取（行是交互中的 UI，不是历史记录）；argsText 是
     // 数据（命令 / 文件名），不译文。路径目标随行重建（结构化参数 → 可点段）。
     pending.row.replaceChildren(
@@ -6685,6 +6825,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     purpose?: string | undefined;
     /** 判定依据（M459 契约：哪一层让这次调用进闸）——层级来自 Rust 判定管线，前端不推导。 */
     reason?: DecisionReason | undefined;
+    /** 定时任务预览（change add-cron-conversational-registration §6.3；其它工具缺键）。 */
+    cronTask?: CronTaskPreview | undefined;
     /** 次级动作可见性（M413 契约：批准闸挂出的请求恒 true；缺键按可见处理）。 */
     remember?: boolean | undefined;
   }): void {
@@ -6732,6 +6874,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const basis = document.createElement("div");
       basis.className = "lumir-hp-approval-basis";
       el.append(basis);
+    }
+    // 定时任务要素块（change add-cron-conversational-registration design §6.3）：紧跟判定依据
+    // 行之后、diff / argv 与按钮之前——与它们同一层级。内容全来自批准载荷（含线程算好的
+    // skip_today），随语言重绘走 relabelApproval。
+    if (request.cronTask !== undefined) {
+      const cronEl = document.createElement("div");
+      cronEl.className = "lumir-hp-approval-cron";
+      renderCronTaskBlock(cronEl, request.cronTask);
+      el.append(cronEl);
     }
     // 模型自述的用途句（M407 契约 purpose 字段）：有则在命令 / diff 上方显眼位置展示——
     // 信任边界：purpose 只是阅读辅助，命令原文永远完整可见、不被替代或截断。
@@ -6825,6 +6976,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       argv: request.argv,
       purpose: request.purpose,
       reason: request.reason,
+      cronTask: request.cronTask,
       argsText,
       targets: pathTargets,
       element: el,
@@ -7843,6 +7995,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             purpose: typeof event.purpose === "string" ? event.purpose : undefined,
             // 判定依据（M459 契约）：宽容解析，形状不合 / 缺键 = undefined ⇒ 不出该行。
             reason: parseDecisionReason(event.reason),
+            // 定时任务预览（§6.3 契约）：形状不合 / 缺键 = undefined ⇒ 不建要素块。
+            cronTask: parseCronTaskPreview(event.cron_task),
             // 次级动作可见性（M413 契约）：事件载荷可带 remember；缺键按可见处理
             //（当前后端的事件载荷不带本键，缺键即「批准闸挂出的请求」，恒可见）。
             remember: event.remember !== false,
@@ -8334,6 +8488,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         purpose: typeof pending.purpose === "string" ? pending.purpose : undefined,
         // 判定依据（M459）：与事件入口同一份宽容解析（快照缺键 = 旧后端，不出该行）。
         reason: parseDecisionReason(pending.reason),
+        // 定时任务预览（§6.3）：与事件入口同一份解析（快照缺键 = 旧载荷，不建块）。
+        cronTask: parseCronTaskPreview(pending.cron_task),
         // remember = 次级动作可见性（M413 契约：批准闸挂出的请求恒 true；缺键 = 旧载荷，
         // 按可见处理——旧载荷同样来自批准闸）。
         remember: pending.remember !== false,

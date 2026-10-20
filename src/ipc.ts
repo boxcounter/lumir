@@ -446,7 +446,10 @@ export type HarnessEvent = HarnessEventEnvelope &
     // 类型取 Rust 侧的 ts-rs 导出（`src/bindings/DecisionReason.ts`，单一来源）。注意该联合里的
     // `deny_rule` 变体**不会到达前端**（deny 不产批准卡，规则原文走工具行的错误文案）——
     // 前端只处理三个可上卡的 kind（见 harness-panel.ts 的 parseDecisionReason）。
-    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string; reason?: DecisionReason; remember?: boolean; source?: ApprovalSource }
+    // cron_task 是 change add-cron-conversational-registration 的可选字段（定时任务要素预览；
+    // 形状由 Rust `ApprovalPreview.cron_task` 给出，前端按宽容解析消费——此处只声明键在场，
+    // 不复制第二份形状定义，见 harness-panel.ts 的 `parseCronTaskPreview`）。
+    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string; reason?: DecisionReason; cron_task?: Record<string, unknown>; remember?: boolean; source?: ApprovalSource }
     // usage（M443，change harness-cache-metrics §4.1）：cache 侧口径拆成会话累计与单回合两个
     // 投影——`cache_pct_session` = 控制行主读数（本逻辑会话 Σcached÷Σinput）、`cache_pct_turn`
     // = hover 气泡里的单回合值、`cache_write_tokens[_session]` = 本回合 / 本会话累计的缓存写入、
@@ -606,11 +609,12 @@ export function harnessSetThinkingEffort(effort: ThinkingEffort): Promise<void> 
  * 缓存写入两值 + 成因标注；旧 `cache_pct` 单回合键退役。M526 的五个绝对值键与事件侧同属一份
  * 载荷——同键同值不变量见 HarnessEvent 的 usage 成员注：两侧键集合由同一份 `UsageSnapshot`
  * 序列化产出，改一侧即须同改另一侧）、
- * `pending_approvals[]{id,tool,diff?,argv?,purpose?,reason?,remember?,source}`（列表，change
+ * `pending_approvals[]{id,tool,diff?,argv?,purpose?,reason?,cron_task?,remember?,source}`（列表，change
  * add-harness-subagents §8.3 起替代单槽 `pending_approval`：并行时多个子运行可以同时等批准；
  * `source` 是发起者，`kind: "subrun"` 的卡渲染在任务面板该 run 的行内。argv 是**字符串数组**，
  * M406 起与事件侧同型——此前前端按 string 读，快照恢复把数组整段丢弃；purpose / remember 是
- * M413 契约字段，前者供批准卡展示用途句、后者是「采纳且本会话不再问」次级动作的可见性开关）、
+ * M413 契约字段，前者供批准卡展示用途句、后者是「采纳且本会话不再问」次级动作的可见性开关；
+ * cron_task 是 change add-cron-conversational-registration 的可选字段，与事件侧同源同形）、
  * `auto_wake{chain,max,blocked}` / `subrun_usage{<model>:{…}}`（change add-harness-subagents：
  * 自动唤醒链读数与子运行按模型分桶）、`warn_ctx_pct`（缺省 85）、`thinking{level,supported}`
  * （M362：思考程度档位读数 + 当前 provider/model 是否支持程度调节；缺键 = 旧后端 / 桩，
