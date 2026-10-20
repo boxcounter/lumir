@@ -1879,8 +1879,15 @@ export function notificationBaseline(nodes, spec) {
  * 文档顺序取第一条「出现次数超出基线」的条目，即列表顶部那条（macOS 把新投递插在列表顶部）。
  * 位置判错的后果是点到了旧条目——随后的 `cron_click` 日志断言会判红，不会假绿；`clickNotification`
  * 另有一条「拿不到可辨的新条目时退回顶部条目」的兜底（见 findNotificationNode 的
- * `fallbackToExisting`）。列表顺序这一点仍待 DND 关闭的真机复跑核对（M617 首轮跑批被专注模式
- * 挡住，见该批证据里的 usernoted 日志）；核对前按「顶部 = 新」实现。
+ * `fallbackToExisting`）。
+ *
+ * **已知的保守角落（M617 真机探针实测，2026-10-21 07:38–07:40）**：基线里 1 条旧条目 → 旧条目
+ * 在等待中过期（通知中心日志 `Dismissing`，banner 存活 ~32s）→ 新投递到达时**同签名**（同任务
+ * id、同正文），当前匹配数 1 与基线 1 相等，判不出「新投递」，等待会超时判 FAIL。方向是安全的
+ * （M616 的「旧条目让等待提前返回」不会再发生：旧条目在基线里，永远不算新），但同文替换场景
+ * 下这条等待不可用——场景若要判「本次确实投递」，用 `waitForFile` 等 `cron_notified` 落盘。
+ * 替代方案（把「匹配数掉到基线以下再回升」当新投递）**未采用**：AX 快照偶发退化（只剩菜单栏）
+ * 也会让匹配数暂时归零，回升时会把旧条目误判成新投递——正是本 finding 要消灭的形态。
  */
 export function pickFreshNotification(nodes, spec, baseline) {
   const seen = new Map();
