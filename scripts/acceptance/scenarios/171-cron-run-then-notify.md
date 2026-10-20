@@ -93,7 +93,8 @@ steps:
 与场景 170 同一通道：`do: waitForNotification` 轮询系统通知中心，按「标题 = 任务 id、
 正文 = 已完成」定位结果通知条目（同任务的 trigger 通知只有一条 `到点`，正文可区分两档）；
 横幅在场后先判运行侧六条，再用 `do: clickNotification` 发 `AXPress`。横幅只在屏上停留数秒，
-因此「先睡 50s 再点」的旧写法不可用——等待由 `waitForNotification` 自己完成。
+因此「先睡 50s 再点」的旧写法不可用——等待由 `waitForNotification` 自己完成。新鲜度口径与
+170 相同（M617）：等待只认动作开始之后新出现的条目，点击沿用同一基线，不点上一轮 run 的旧通知。
 
 ## 已知边界
 

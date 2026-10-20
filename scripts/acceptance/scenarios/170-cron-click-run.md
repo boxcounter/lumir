@@ -94,6 +94,11 @@ prompt 与回答出现在面板上、会话 JSONL 落在目标 vault 的目录�
    「横幅在场、尚未点击」这个时点上判（负向判据 `cron_run_started` 必须为 0）；
 2. `do: clickNotification` 立刻在同一快照口径上重新定位并点击。
 
+**新鲜度（M617）**：`waitForNotification` 在动作开始时快照当前匹配 title/body 的条目作基线，
+只认那之后**新出现**的条目——上一轮 run 留在通知列表里的同标题条目不会让等待提前返回；
+`clickNotification` 沿用这份基线，只点新出现的那条（点旧通知会被系统路由到已退出的实例，
+`cron_click` 日志不出现，归因会误指向「点击链路坏掉」）。
+
 **DND**：横幅被专注模式抑制时 `waitForNotification` 会超时失败（dump 里只有菜单栏）。本场景
 2026-10-19 的复跑前提是 Alex 确认专注模式已关；若 dump 显示通知中心里没有条目而日志里
 `cron_notified` 已投递，先按环境项（DND / 通知权限）排查，不要当产品缺陷。

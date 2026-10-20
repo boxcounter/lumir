@@ -100,7 +100,8 @@ steps:
     # 等的是**日志落盘**（cron_notified 是投递成功后才写的事件），不是通知横幅：横幅由
     # NotificationCenter 渲染，其 AX 树里存着**上一次 run 同标题**的通知（2026-10-20 实测：
     # 到点前 56s 就命中了上一批的横幅），拿它当「本次事件已发生」的等待条件会让后续日志断言
-    # 抢跑。`waitForFile` 与下面的 file 断言同源（同一份 matcher / jsonl / path 口径）。
+    # 抢跑（M617 起 waitForNotification 已带新鲜度基线，但等日志事件直接读日志更直接）。
+    # `waitForFile` 与下面的 file 断言同源（同一份 matcher / jsonl / path 口径）。
     do: waitForFile
     waitForFile:
       path: "env:logs/*.jsonl"
@@ -149,4 +150,5 @@ steps:
 
 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；到点的等待与判定都取**应用日志**
 （`cron_notified` 是投递成功后才写的事件），因此不依赖通知横幅是否上屏、也不受 DND 状态影响——
-横幅的 AX 树里存着更早一次 run 的同标题通知，拿它当等待条件会抢跑（首跑实测）。
+横幅的 AX 树里存着更早一次 run 的同标题通知，拿它当等待条件会抢跑（首跑实测；M617 起
+`waitForNotification` 已带新鲜度基线，本场景仍直接读日志：等待与判定同源）。

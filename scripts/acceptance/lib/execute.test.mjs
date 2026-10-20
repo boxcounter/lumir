@@ -21,7 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { checkScenario, loadScenario, runScenario } from "./execute.mjs";
+import { checkScenario, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, runScenario } from "./execute.mjs";
 import { repoRoot } from "./util.mjs";
 
 /** 临时根（每个用例一份，跑完不清也无妨——全在 `os.tmpdir()` 下）。 */
@@ -397,6 +397,165 @@ test("通知动作与 requires: bundle：写错键在静态校验期就报（M60
     "requires 写错值应报 problem（否则 runner 静默忽略、场景在 dev 下跑出假 FAIL）",
   );
   assert.deepEqual(errs([{ name: "一步", expect: [{ shot: "x" }] }], { requires: "bundle" }), []);
+});
+
+test("通知新鲜度基线（M617）：基线里的旧条目不算新投递，新出现的条目才算", () => {
+  // 现场（finding 20261020-worker-m616-bug-waitfornotification-run-ax）：更早一次 run 的同标题
+  // 通知在通知列表里存活数分钟，而新旧条目在 AX 里逐字相同——只能按「同签名条目比基线多出来的
+  // 那条」判新投递。这里用纯函数把三种形态钉住（真机层由 170/171 复跑兜底）。
+  const group = (app, task, body) => ({
+    role: "AXGroup",
+    raw: `- [10] AXGroup (${app}, ${task}, ${body}) actions=[AXPress, Show Details, Close]`,
+  });
+  const spec = { title: "acc-cron-click", body: "到点" };
+  const stale = group("Lumir", "acc-cron-click", "到点");
+
+  // ① 基线 1 条旧条目，当前树里仍只有它 ⇒ 不满足等待（旧条目不是新投递）。
+  const baseline = notificationBaseline([stale], spec);
+  assert.equal(baseline.size, 1, "基线应记下 1 个签名");
+  assert.equal(pickFreshNotification([stale], spec, baseline), null, "只有旧条目时不得命中（这正是 M616 的 56s 提前现场）");
+
+  // ② 同签名的新条目落进列表（旧条目还在）⇒ 第 2 条同签名条目才是新的。
+  const fresh = group("Lumir", "acc-cron-click", "到点");
+  const current = [fresh, stale];
+  const picked = pickFreshNotification(current, spec, baseline);
+  assert.ok(picked, "出现第 2 条同签名条目后应命中");
+  assert.equal(picked.raw, fresh.raw, "命中的必须是新投递那条（同文，按列表顶部取）");
+  assert.notEqual(pickFreshNotification([stale], spec, baseline), picked, "旧条目自身不得被当成新投递");
+
+  // ③ 新条目的原文与基线不同（如系统在旧条目上补了时间 / stacked 标记）⇒ 直接认新签名。
+  const stamped = group("Lumir", "acc-cron-click", "到点, 12:46");
+  assert.equal(
+    pickFreshNotification([stamped, stale], spec, baseline)?.raw,
+    stamped.raw,
+    "基线里没有的签名（旧列表条目被系统补了时间）应直接判为新投递",
+  );
+
+  // ④ 基线为空（动作开始时列表里没有匹配条目）⇒ 任何匹配条目都算新投递。
+  assert.equal(pickFreshNotification([stale], spec, new Map())?.raw, stale.raw, "基线为空时首条匹配即新投递");
+  assert.equal(pickFreshNotification([], spec, new Map()), null, "没有匹配条目时不得命中（不把「读不到」当「已投递」）");
+});
+
+test("do: waitForNotification（动作级）：旧条目在场不提前返回，新条目出现才返回；只有旧条目时超时判 FAIL", async (t) => {
+  // 动作级验证 M617 的接线：基线快照取自**动作开始时**的树，只有它之后多出来的条目才算投递。
+  // 树用桩喂（`cu.state`），不读真实通知中心——套件自测不碰用户环境；NotificationCenter 进程
+  // 只是 pid 来源，不在场就跳过（CI / 无桌面环境不红）。
+  try {
+    execFileSync("/usr/bin/pgrep", ["-x", "NotificationCenter"], { encoding: "utf8" });
+  } catch {
+    t.skip("NotificationCenter 不在场（无桌面环境）：本用例只验动作接线，跳过");
+    return;
+  }
+  const root = tmpRoot("notify-fresh-action");
+  useTmpEnv(root);
+  const entry = "- [10] AXGroup (Lumir, acc-cron-click, 到点) actions=[AXPress, Show Details, Close]";
+  const tree = (entries) =>
+    ["# Notification Center App State", "```text", '- [0] AXApplication "Notification Center"', ...entries, "```"].join("\n");
+
+  // ① 前两次读只有更早一次 run 的旧条目；第 3 次读起列表里多出一条同文的新条目。
+  let reads = 0;
+  const ctx = stubCtx(root);
+  ctx.cu = {
+    state: async () => {
+      reads += 1;
+      return { text: tree(reads <= 2 ? [entry] : [entry, entry]), image: null };
+    },
+  };
+  const ok = await runScenario(ctx, {
+    id: "notify-fresh",
+    item: 0,
+    title: "通知新鲜度",
+    file: path.join(root, "notify-fresh.md"),
+    steps: [{ name: "等新通知", do: "waitForNotification", title: "acc-cron-click", body: "到点", timeoutMs: 5000 }],
+  });
+  assert.equal(ok.status, "PASS", `新条目出现后应 PASS，实际：${JSON.stringify(ctx.evidence.records)}`);
+  assert.ok(reads >= 3, `旧条目在场的前两次读不得命中（基线里已有它），实际只读了 ${reads} 次`);
+  const notes = ctx.evidence.records.filter((r) => r.kind === "note").map((r) => r.text).join("\n");
+  assert.match(notes, /基线快照.*1 条/, `证据里应记下基线（1 条旧条目），实际：${notes}`);
+
+  // ② 整个等待期间只有那条旧条目 ⇒ 超时判 FAIL，错误里点明「基线之后新出现的」与基线读数。
+  const stuck = stubCtx(root);
+  stuck.cu = { state: async () => ({ text: tree([entry]), image: null }) };
+  const bad = await runScenario(stuck, {
+    id: "notify-stale",
+    item: 0,
+    title: "通知新鲜度（旧条目）",
+    file: path.join(root, "notify-stale.md"),
+    steps: [{ name: "等不到新通知", do: "waitForNotification", title: "acc-cron-click", body: "到点", timeoutMs: 300 }],
+  });
+  assert.equal(bad.status, "FAIL", "只有旧条目时必须判 FAIL（不得把上一批的通知当成这次投递）");
+  const fail = stuck.evidence.records.find((r) => r.kind === "assert" && !r.ok && r.label.includes("等不到新通知"));
+  assert.ok(fail, `应落一条动作 FAIL，实际：${JSON.stringify(stuck.evidence.records)}`);
+  assert.match(fail.detail ?? "", /超时/, "失败理由应点明超时");
+  assert.match(fail.detail ?? "", /基线之后新出现的|基线 1 个签名/, "失败理由应给出基线口径（旧条目在场、但不在基线之外）");
+});
+
+test("do: clickNotification（动作级）：沿用等待基线，点新条目而不是更早一次 run 的同任务旧条目（M617）", async (t) => {
+  // 两个同名条目的**原文不同**时（系统给旧条目补了时间后缀），基线能让点击绕开旧条目；
+  // 不沿用基线的话 clickNotification 会命中列表里的第一条（这里是旧条目），点到已退出的实例。
+  try {
+    execFileSync("/usr/bin/pgrep", ["-x", "NotificationCenter"], { encoding: "utf8" });
+  } catch {
+    t.skip("NotificationCenter 不在场（无桌面环境）：本用例只验动作接线，跳过");
+    return;
+  }
+  const root = tmpRoot("notify-click-baseline");
+  useTmpEnv(root);
+  const stale = "- [10] AXGroup (Lumir, acc-cron-click, 到点, 21:12) actions=[AXPress, Show Details, Close]";
+  const fresh = "- [12] AXGroup (Lumir, acc-cron-click, 到点) actions=[AXPress, Show Details, Close]";
+  const tree = (entries) =>
+    ["# Notification Center App State", "```text", '- [0] AXApplication "Notification Center"', ...entries, "```"].join("\n");
+  let reads = 0;
+  const clicks = [];
+  const ctx = stubCtx(root);
+  ctx.cu = {
+    state: async () => {
+      reads += 1;
+      return { text: tree(reads <= 2 ? [stale] : [stale, fresh]), image: null };
+    },
+    click: async (pid, args) => {
+      clicks.push({ pid, ...args });
+      return { json: { ok: true } };
+    },
+  };
+  const { status } = await runScenario(ctx, {
+    id: "notify-click",
+    item: 0,
+    title: "通知点击沿用基线",
+    file: path.join(root, "notify-click.md"),
+    steps: [
+      { name: "等新通知", do: "waitForNotification", title: "acc-cron-click", body: "到点", timeoutMs: 5000 },
+      { name: "点新通知", do: "clickNotification", title: "acc-cron-click", body: "到点", timeoutMs: 5000 },
+    ],
+  });
+  assert.equal(status, "PASS", `等待 + 点击应 PASS，实际：${JSON.stringify(ctx.evidence.records)}`);
+  assert.equal(clicks.length, 1, `应只点一次，实际：${JSON.stringify(clicks)}`);
+  assert.equal(clicks[0].index, 12, "点击目标应是新条目（index 12），不是旧条目（index 10）——基线没沿用就会点到旧条目");
+  const notes = ctx.evidence.records.filter((r) => r.kind === "note").map((r) => r.text).join("\n");
+  assert.match(notes, /沿用前置 waitForNotification 的基线/, `证据里应记明沿用了等待基线，实际：${notes}`);
+});
+
+test("通知定位判据：title 与 body 必须同时命中，且只认 AXGroup（M617 抽出的单一实现）", () => {
+  const group = (text) => ({ role: "AXGroup", raw: `- [10] AXGroup ${text}` });
+  const nodes = [
+    group("(Lumir, acc-cron-click, 到点) actions=[AXPress]"),
+    group("(Lumir, acc-cron-run, 已完成) actions=[AXPress]"),
+    { role: "AXStaticText", raw: '- [11] AXStaticText = "acc-cron-click 到点"' },
+  ];
+  assert.equal(notificationMatches(nodes, { title: "acc-cron-click", body: "到点" }).length, 1, "同文静态文本不算通知条目");
+  assert.equal(notificationMatches(nodes, { title: "acc-cron-click", body: "已完成" }).length, 0, "body 不符不得命中");
+  assert.equal(
+    notificationMatches(nodes, { title: "acc-cron-run" }).length,
+    1,
+    "不写 body 时按标题匹配（trigger / result 两档同标题）",
+  );
+  // 多重集合：两条逐字相同的条目应记成「同签名 ×2」。
+  const dup = [group("(Lumir, acc-cron-click, 到点)"), group("(Lumir, acc-cron-click, 到点)")];
+  assert.equal(
+    [...notificationBaseline(dup, { title: "acc-cron-click", body: "到点" }).values()].join(","),
+    "2",
+    "同文条目按出现次数计入基线（集合语义会把两条压成一条）",
+  );
 });
 
 test("全库场景静态校验通过（--check 的真实通道）", () => {
