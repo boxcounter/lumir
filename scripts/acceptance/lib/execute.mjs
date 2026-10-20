@@ -44,7 +44,8 @@ export const ACTIONS = new Set([
   "clipboardImage", "clipboardText", "note", "migrateHarnessSessions", "invalidate", "envWrite", "mockFill",
   "waitForNotification", "clickNotification",
   // `waitForFile`（M616）：轮询**磁盘事实**直到成立——「等日志里出现某个事件」这类判据此前只能
-  // 靠 `sleep` 猜时长，或借通知横幅（横幅会被**更早一次 run 的同标题通知**满足，见动作体注释）。
+  // 靠 `sleep` 猜时长，或借通知横幅（M616 之前横幅会被**更早一次 run 的同标题通知**满足；M617
+  // 给通知等待加了新鲜度基线，横幅不再有这个缺口，但「等某个日志事件」仍应直接读那份日志）。
   "waitForFile",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes"]);
@@ -1831,40 +1832,149 @@ function notificationCenterPid() {
 }
 
 /**
- * 轮询通知中心 AX 树，找到标题/正文都匹配的通知条目（`AXGroup`，label 形如
- * `(Terminal, acc-cron-click, 到点)`）。
- *
- * 为什么必须轮询：横幅只在屏幕上停留几秒，消失后条目就不再出现在 NotificationCenter 的 AX
- * 树里（实测：超过约 1 分钟即读不到）——先 sleep 再点会永远点空。因此「等通知」与「点通知」都
- * 走本函数，命中即返回（第几次读取、pid 与条目原文一并进证据）。
+ * 前置 `waitForNotification` 留给紧随其后 `clickNotification` 的新鲜度基线（场景级 `vars` 的
+ * 内部键，`__` 前缀与 `__foreground` 同惯例）。键是「title + body」，body 精确到档——170 的
+ * 「到点」与 171 的「已完成」不会被彼此误用。
  */
-async function findNotificationNode(cu, { title, body, timeoutMs = 20_000, evidence, action }) {
+const NOTIFICATION_FRESHNESS_KEY = "__notificationFreshness";
+
+/**
+ * 通知条目的定位判据（M617 抽成单一实现）：`AXGroup` 的 `raw` 同时含标题与正文。
+ *
+ * 通知标题 = cron 任务 id、正文 = 到点 / 已完成 / 运行失败；同一任务的 trigger / result 两档
+ * 标题相同，靠正文区分。wait / click / 套件自测共用这一份，别各写一遍
+ * （REVIEW.md 「同一语义两处真源」条）。
+ */
+export function notificationMatches(nodes, { title, body }) {
+  return nodes.filter(
+    (n) => n.role === "AXGroup" && n.raw.includes(title) && (body === undefined || n.raw.includes(body)),
+  );
+}
+
+/**
+ * 基线快照 = 匹配条目的**多重集合**（签名 → 出现次数），签名取条目的 AX 原文。
+ *
+ * 为什么是多重集合而不是集合（M617，finding
+ * `20261020-worker-m616-bug-waitfornotification-run-ax`）：更早一次 run 投递的同标题通知在
+ * NotificationCenter 的 AX 树里存活数分钟（M616 实测：约 6 分钟后仍被命中，等待因此提前约 56s
+ * 返回，随后的日志断言在事件落盘前执行 ⇒ 假红）。而**同一条任务的新旧通知在 AX 里逐字相同**
+ * （label 只有 `(Lumir, <task>, <body>)`，没有时间戳 / 投递 id 这类可区分字段），单看一条根本
+ * 分不出新旧——能判的只有「同签名条目比基线多出来的那条一定是新的」。因此：
+ *   - 基线里有 0 条 ⇒ 任何匹配条目都算新投递；
+ *   - 基线里有 1 条 ⇒ 必须看到第 2 条同签名条目才算新投递（旧条目被系统清掉、新条目又恰好
+ *     同签名时这条会等不到——方向是安全的：超时判 FAIL，不会把旧条目当新投递放行）。
+ */
+export function notificationBaseline(nodes, spec) {
+  const counts = new Map();
+  for (const node of notificationMatches(nodes, spec)) {
+    counts.set(node.raw, (counts.get(node.raw) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * 相对基线**新出现**的条目；没有返回 null（M617）。
+ *
+ * 同签名条目（标题 / 正文逐字相同）在 AX 里没有可区分字段，新旧只能按**列表位置**挑：本函数按
+ * 文档顺序取第一条「出现次数超出基线」的条目，即列表顶部那条（macOS 把新投递插在列表顶部）。
+ * 位置判错的后果是点到了旧条目——随后的 `cron_click` 日志断言会判红，不会假绿；`clickNotification`
+ * 另有一条「拿不到可辨的新条目时退回顶部条目」的兜底（见 findNotificationNode 的
+ * `fallbackToExisting`）。列表顺序这一点仍待 DND 关闭的真机复跑核对（M617 首轮跑批被专注模式
+ * 挡住，见该批证据里的 usernoted 日志）；核对前按「顶部 = 新」实现。
+ */
+export function pickFreshNotification(nodes, spec, baseline) {
+  const seen = new Map();
+  for (const node of notificationMatches(nodes, spec)) {
+    const appeared = (seen.get(node.raw) ?? 0) + 1;
+    seen.set(node.raw, appeared);
+    if (appeared > (baseline.get(node.raw) ?? 0)) return node;
+  }
+  return null;
+}
+
+/** 基线 / 当前读数的证据串：`2 条（…；…）`，给 steps.md 复盘「等的时候在场几条」。 */
+function describeNotificationSet(nodes) {
+  if (nodes.length === 0) return "0 条";
+  return `${nodes.length} 条：${nodes.map((n) => n.raw).join("；")}`;
+}
+
+/**
+ * 轮询通知中心 AX 树，找到标题/正文都匹配、且相对基线**新出现**的通知条目（`AXGroup`，label
+ * 形如 `(Terminal, acc-cron-click, 到点)`）。
+ *
+ * 为什么必须轮询：横幅只在屏幕上停留几秒，错过那一刻就再也点不到——先 sleep 再点会永远点空。
+ * 因此「等通知」与「点通知」都走本函数，命中即返回（第几次读取、pid 与条目原文一并进证据）。
+ *
+ * 新鲜度判据（M617，见 `notificationBaseline`）：等待类用法在**动作开始时**快照当前匹配条目
+ * 作为基线（记进证据），只认基线之外的新条目——更早一次 run 的同标题条目不再能满足等待。
+ * `snapshotBaseline` 由 `waitForNotification` 传；`clickNotification` 用它留下的基线。
+ */
+async function findNotificationNode(
+  cu,
+  {
+    title,
+    body,
+    timeoutMs = 20_000,
+    evidence,
+    action,
+    baseline = null,
+    snapshotBaseline = false,
+    fallbackToExisting = false,
+  },
+) {
   const pid = notificationCenterPid();
+  const spec = { title, body };
   const deadline = Date.now() + timeoutMs;
+  const startedAt = Date.now();
   let lastText = "";
+  let lastMatches = [];
+  let base = baseline;
   for (let attempt = 1; ; attempt += 1) {
     const ax = await readAx(cu, pid);
     lastText = ax.text;
-    const node = ax.nodes.find(
-      (n) =>
-        n.role === "AXGroup" &&
-        n.raw.includes(title) &&
-        (body === undefined || n.raw.includes(body)),
-    );
+    lastMatches = notificationMatches(ax.nodes, spec);
+    if (base === null && snapshotBaseline) {
+      // 第一次读取同时充当基线快照：动作开始时**已经在场**的匹配条目一律算旧条目。
+      base = notificationBaseline(ax.nodes, spec);
+      evidence.record({
+        kind: "note",
+        text:
+          `${action} 基线快照（pid ${pid}）：动作开始时匹配 title=${JSON.stringify(title)}` +
+          `${body === undefined ? "" : `、body=${JSON.stringify(body)}`} 的条目 ${describeNotificationSet(lastMatches)}` +
+          "——等待期间只认基线之外新出现的条目（更早一次 run 的同标题条目不算）",
+      });
+    }
+    if (base === null) base = new Map();
+    const node = pickFreshNotification(ax.nodes, spec, base);
     if (node) {
       evidence.record({
         kind: "note",
         text:
           `${action} 第 ${attempt} 次读取通知中心（pid ${pid}）命中：${node.raw}` +
-          `（title=${JSON.stringify(title)}${body === undefined ? "" : `，body=${JSON.stringify(body)}`}）`,
+          `（title=${JSON.stringify(title)}${body === undefined ? "" : `，body=${JSON.stringify(body)}`}；` +
+          `用时 ${Date.now() - startedAt}ms，基线 ${base.size} 个签名 → 当前匹配 ${lastMatches.length} 条）`,
       });
-      return { pid, node };
+      return { pid, node, baseline: base, matches: lastMatches };
+    }
+    if (fallbackToExisting && lastMatches.length > 0) {
+      // 只给 click 用：前置 waitForNotification 已经证明「新投递发生过」，但同签名新旧不可辨
+      // （旧条目在同一时刻被系统清掉、新条目同文）时按位置退回列表顶部那条——比空等 20s 再判
+      // 「通知不在场」更接近真实成因。点击目标对不对由场景自己的 cron_click 日志断言兜底。
+      evidence.record({
+        kind: "note",
+        text:
+          `${action} 第 ${attempt} 次读取：没有可辨的新条目（基线 ${base.size} 个签名，当前匹配 ` +
+          `${lastMatches.length} 条），退回列表顶部那条：${lastMatches[0].raw}`,
+      });
+      return { pid, node: lastMatches[0], baseline: base, matches: lastMatches };
     }
     if (Date.now() >= deadline) {
       throw new Error(
-        `${action} 超时（${timeoutMs}ms / ${attempt} 次读取）：通知中心 AX 树里找不到标题含 ` +
-          `${JSON.stringify(title)}${body === undefined ? "" : `、正文含 ${JSON.stringify(body)}`} 的 ` +
-          `AXGroup。最后一份 NotificationCenter AX 树：\n${lastText.slice(0, 1500)}`,
+        `${action} 超时（${timeoutMs}ms / ${attempt} 次读取）：通知中心 AX 树里找不到` +
+          `${snapshotBaseline ? "基线之后新出现的" : ""}标题含 ${JSON.stringify(title)}` +
+          `${body === undefined ? "" : `、正文含 ${JSON.stringify(body)}`} 的 AXGroup` +
+          `（基线 ${base.size} 个签名；当前匹配 ${describeNotificationSet(lastMatches)}）。` +
+          `最后一份 NotificationCenter AX 树：\n${lastText.slice(0, 1500)}`,
       );
     }
     await sleep(400);
@@ -1942,9 +2052,10 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     case "waitForFile": {
       // 轮询**磁盘事实**直到成立（M616）。与 `waitFor`（AX 终态）同一分工：场景要「等日志里
       // 出现某个事件」时，此前只能靠 `sleep` 猜时长，或者借通知横幅——而横幅会被**更早一次 run
-      // 的同标题通知**满足（2026-10-20 实测：通知列表在 NotificationCenter 的 AX 树里存活数分钟，
+      // 的同标题通知**满足（M616 现场：通知列表在 NotificationCenter 的 AX 树里存活数分钟，
       // `waitForNotification` 在到点前 56s 就命中了上一次批的同名通知，随后的日志断言在事件落盘
-      // 之前执行 ⇒ 假红）。判据直接读被判的产物，等待与判定同源。
+      // 之前执行 ⇒ 假红）。M617 已给通知等待加了新鲜度基线（见 findNotificationNode），但「等
+      // 某个日志事件」仍应直接读那份日志：等待与判定同源。
       //
       // 判据：路径口径与 `file` 断言同源（`env:` / vault 相对 / 绝对 / glob 取 mtime 最新一份）；
       // `has` / `jsonl` / `count` 可写多个，**同时成立**才返回；文件不存在 = 未成立（继续轮询）。
@@ -2426,24 +2537,49 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     // 等通知横幅出现在系统通知中心（change add-cron-runtime-daemon §7.7 的可点击化）：
     // 只等到场、不点击——给「未点击 ⇒ 零运行」这类负向断言留一个客观时点。
     // 横幅由 NotificationCenter 进程渲染，不在 Lumir 的 AX 树里，定位见 findNotificationNode。
+    // **新鲜度（M617）**：动作开始时快照当前匹配条目作基线，只认那之后新出现的条目——更早一次
+    // run 投递的同标题条目在通知列表里存活数分钟，不挡掉它就会提前命中（M616 的 56s 提前现场）。
     case "waitForNotification": {
       const spec = notificationSpec(step, "waitForNotification");
-      return (await findNotificationNode(cu, { ...spec, evidence, action: "waitForNotification" })).node.raw;
+      const out = await findNotificationNode(cu, {
+        ...spec,
+        evidence,
+        action: "waitForNotification",
+        snapshotBaseline: true,
+      });
+      // 基线留给紧随其后的 clickNotification：点击要落在**本次等到**的那条上，不是更早一次
+      // run 的旧条目（点旧通知会被系统路由到已退出的实例，cron_click 日志不出现）。
+      vars[NOTIFICATION_FRESHNESS_KEY] = { title: spec.title, body: spec.body ?? null, baseline: out.baseline };
+      return out.node.raw;
     }
     // 点击通知横幅本体（Default action = AXPress；与真实用户点横幅同一条系统动作）。
     // 场景 170 / 171 的点击链路（cron_click → 运行 / 恢复会话）由此可客观驱动。
     case "clickNotification": {
       const spec = notificationSpec(step, "clickNotification");
+      const last = vars[NOTIFICATION_FRESHNESS_KEY];
+      const reuse =
+        last && last.title === spec.title && last.body === (spec.body ?? null) ? last : null;
+      evidence.record({
+        kind: "note",
+        text: reuse
+          ? "clickNotification 沿用前置 waitForNotification 的基线：只点它之后新出现的那条"
+          : "clickNotification 前没有同一 title/body 的 waitForNotification：按当前在场的匹配条目点击" +
+            "（新旧不可辨——同签名条目在 AX 里逐字相同）",
+      });
       const { pid: ncPid, node } = await findNotificationNode(cu, {
         ...spec,
         evidence,
         action: "clickNotification",
+        baseline: reuse ? reuse.baseline : null,
+        fallbackToExisting: true,
       });
       const out = await cu.click(ncPid, { index: node.index });
       evidence.record({
         kind: "note",
         text: `点击通知横幅 AXPress：${node.raw}（KimiCU 自报 ${JSON.stringify(out.json ?? out.text).slice(0, 200)}）`,
       });
+      // 用掉即清：下一次 clickNotification 不该沿用一条早已翻篇的基线。
+      delete vars[NOTIFICATION_FRESHNESS_KEY];
       return node.raw;
     }
     // 显式「本次运行无效」（change add-cron-runtime-daemon §7.7）：某个步骤在当前环境下无法
