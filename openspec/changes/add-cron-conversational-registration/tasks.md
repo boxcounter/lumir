@@ -118,7 +118,7 @@
   `106-harness-session-restore.md`、`96-harness-transcript-restore.md`、`77-harness-skill-load.md`，
   以及 `tests/unit/harness-restore-block-defaults.test.ts`。本 change 不改既有工具的档位，因此预期
   多数期望仍然成立——**预期不改也必须给出核对结论**（「读过 + 为何不变」），不能默认放过。
-- [ ] 6.5 信息卫生：本 change 全部制品与验收场景里不出现真实 vault 路径、真实 LaunchAgent label、
+- [x] 6.5 信息卫生：本 change 全部制品与验收场景里不出现真实 vault 路径、真实 LaunchAgent label、
   真实脚本路径（一律占位）；提交前对改动面做一次 text 级 grep 清扫。
 - [x] 6.6 `src/bindings/**` 若有 ts-rs 导出变化，`git add` 重导出产物后跑 `scripts/gate.sh quick`
   （`bindings-drift` 的既有纪律）。
