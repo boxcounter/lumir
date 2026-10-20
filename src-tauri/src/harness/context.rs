@@ -2,8 +2,10 @@
 //!
 //! - 固定身份段：v1 不做 persona 系统（裁决点 7），固定朴素身份 + 工具使用纪律。正文真源是
 //!   同目录的 `prompts/identity.md`；摘录回指纪律在同目录 `prompts/quote-reference.md`，路径
-//!   引用纪律在同目录 `prompts/path-reference.md`——三段都是编译期嵌入的 Markdown（change
-//!   `harness-prompt-files` / `harness-path-link`），改文案直接改文件。
+//!   引用纪律在同目录 `prompts/path-reference.md`，定时任务段在同目录
+//!   `prompts/cron-reference.md`——四段都是编译期嵌入的 Markdown（change
+//!   `harness-prompt-files` / `harness-path-link` / `add-cron-conversational-registration`），
+//!   改文案直接改文件。
 //! - AGENTS.md 三层：user-wide（`~/.agents/AGENTS.md`）、vault 根（`<vault>/AGENTS.md`）、
 //!   vault 根本地覆盖层（`<vault>/AGENTS.local.md`，change `harness-agents-local-md`）；
 //!   文件不存在**静默跳过**（常态）；嵌套子目录级是 Non-goal。
@@ -45,13 +47,22 @@ const PATH_REFERENCE: &str = include_str!("prompts/path-reference.md");
 /// 装配清单 path_reference 条目的来源路径（仓内相对路径，供审计反查）。
 const PATH_REFERENCE_PATH: &str = "src-tauri/src/harness/prompts/path-reference.md";
 
+/// 定时任务的能力告知与禁区（change add-cron-conversational-registration design §7）：三件调度
+/// 工具存在、使用纪律与「不手搓系统级调度」的禁令。正文真源见 `prompts/cron-reference.md`。
+///
+/// **只注入交互会话**：子运行的工具白名单里没有调度工具，注入即噪音（design §7.1）。遵从度按
+/// 抽样观察验收，不进机器判据（与路径引用纪律同口径）。
+const CRON_REFERENCE: &str = include_str!("prompts/cron-reference.md");
+/// 装配清单 cron_reference 条目的来源路径（仓内相对路径，供审计反查）。
+const CRON_REFERENCE_PATH: &str = "src-tauri/src/harness/prompts/cron-reference.md";
+
 /// 装配清单的一个来源项（`session_open.assembly` 的元素，design §2）：每个来源的
 /// 路径与**当时是否存在**。「不存在」本身是装配事实的一部分——旧实现静默跳过，
 /// 事后无法区分「没配」与「忘了注入」。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AssemblySource {
-    /// 来源标识：identity / quote_reference / path_reference / agents_user_wide /
-    /// agents_vault_root / agents_vault_root_local / skill_index。
+    /// 来源标识：identity / quote_reference / path_reference / cron_reference /
+    /// agents_user_wide / agents_vault_root / agents_vault_root_local / skill_index。
     pub source: &'static str,
     /// 来源路径（固定段为仓内相对路径；Skill 索引无单一文件来源，为 null）。
     pub path: Option<String>,
@@ -165,6 +176,18 @@ fn assemble_with_identity(
         PATH_REFERENCE_PATH,
         path_reference,
     ));
+    // 定时任务段（change add-cron-conversational-registration design §7.1）：path_reference 之后、
+    // AGENTS.md 三层之前——与既有固定段顺序并列，MUST NOT 依赖目录枚举顺序。子运行（delegation）
+    // 不注入：它的工具白名单里没有调度工具。
+    if !delegation {
+        let cron_reference = CRON_REFERENCE.trim_end();
+        push_section(&mut out, "定时任务", cron_reference);
+        manifest.push(AssemblySource::fixed(
+            "cron_reference",
+            CRON_REFERENCE_PATH,
+            cron_reference,
+        ));
+    }
     let user_agents_path = user_agents_path();
     let user_agents = read_agents_md(&user_agents_path);
     manifest.push(AssemblySource::file(
@@ -472,6 +495,76 @@ mod tests {
         );
     }
 
+    /// 定时任务段（change add-cron-conversational-registration design §7 / tasks 5.3）：
+    /// 交互装配逐字节包含该段（trim 后）；子运行装配**不含**它（子运行没有调度工具）。
+    #[test]
+    fn cron_reference_is_injected_for_interactive_only() {
+        let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tmpdir("home-cron");
+        let vault = tmpdir("vault-cron");
+        let _guard = EnvGuard::new(&home);
+
+        let interactive = assemble_system(&vault);
+        let section = CRON_REFERENCE.trim_end();
+        assert!(
+            interactive.text.contains(section),
+            "交互装配必须逐字节包含 cron 段"
+        );
+        let entry = interactive
+            .manifest
+            .iter()
+            .find(|source| source.source == "cron_reference")
+            .expect("装配清单必须有 cron_reference 条目");
+        assert!(entry.exists);
+        assert_eq!(entry.path.as_deref(), Some(CRON_REFERENCE_PATH));
+        assert_eq!(entry.bytes, section.len() as u64);
+
+        // 位置：path_reference 之后、AGENTS 三层之前。
+        let path_at = interactive.text.find("路径引用的纪律").unwrap();
+        let cron_at = interactive.text.find(section).unwrap();
+        assert!(path_at < cron_at, "cron 段应排在 path_reference 之后");
+
+        // 子运行：定义正文替换身份段，机制级 cron 段不注入。
+        let subagent = assemble_system_for_subagent(&vault, "子代理定义正文");
+        assert!(!subagent.text.contains(section), "子运行不得注入 cron 段");
+        assert!(
+            subagent
+                .manifest
+                .iter()
+                .all(|source| source.source != "cron_reference"),
+            "子运行装配清单不得有 cron_reference 条目"
+        );
+        assert!(subagent.text.contains("子代理定义正文"));
+    }
+
+    /// 提示词段正文钉住三块（能力 / 纪律 / 禁区）：改文案是预期动作，但三块内容一个都不能丢。
+    #[test]
+    fn cron_reference_covers_capability_and_ban() {
+        assert!(
+            CRON_REFERENCE.contains("cron_task_create"),
+            "{CRON_REFERENCE}"
+        );
+        assert!(
+            CRON_REFERENCE.contains("cron_task_list"),
+            "{CRON_REFERENCE}"
+        );
+        assert!(
+            CRON_REFERENCE.contains("cron_task_remove"),
+            "{CRON_REFERENCE}"
+        );
+        assert!(CRON_REFERENCE.contains("自包含"), "{CRON_REFERENCE}");
+        assert!(
+            CRON_REFERENCE.contains("notify-then-run"),
+            "{CRON_REFERENCE}"
+        );
+        for banned in ["LaunchAgent", "launchctl", "crontab", "systemd"] {
+            assert!(
+                CRON_REFERENCE.contains(banned),
+                "禁令缺 {banned}：{CRON_REFERENCE}"
+            );
+        }
+    }
+
     #[test]
     fn assemble_system_skips_missing_agents_and_includes_index() {
         let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -505,9 +598,14 @@ mod tests {
         assert!(system.contains("路径引用的纪律"), "{system}");
         assert!(system.contains("完整的 vault 相对路径"), "{system}");
         assert!(system.contains("不要用 Markdown 链接语法"), "{system}");
-        // 装配清单：七个来源全在场，三层 AGENTS 指令文件各记路径与存在与否，skill_index 记数量。
+        // 定时任务段（change add-cron-conversational-registration）是第四个固定段：能力告知 +
+        // 使用纪律 + 外部调度器禁令，位置在 path_reference 之后。
+        assert!(system.contains("定时任务"), "{system}");
+        assert!(system.contains("cron_task_create"), "{system}");
+        assert!(system.contains("不许用 cli_run 手搓系统级调度"), "{system}");
+        // 装配清单：八个来源全在场，三层 AGENTS 指令文件各记路径与存在与否，skill_index 记数量。
         let manifest = &assembled.manifest;
-        assert_eq!(manifest.len(), 7, "{manifest:?}");
+        assert_eq!(manifest.len(), 8, "{manifest:?}");
         let by_source = |s: &str| manifest.iter().find(|m| m.source == s).unwrap();
         // 固定段（change `harness-prompt-files`）：path 指向仓内来源文件，bytes 为注入
         // （trim 后）文本的字节数。
@@ -536,6 +634,16 @@ mod tests {
             "{path_ref:?}"
         );
         assert_eq!(path_ref.bytes, PATH_REFERENCE.trim_end().len() as u64);
+        // 定时任务段（change add-cron-conversational-registration）：与既有固定段同口径——
+        // 仓内来源路径 + trim 后字节数（`assemble_system` 与文件逐字节相等的判据之一）。
+        let cron_ref = by_source("cron_reference");
+        assert!(cron_ref.exists, "{cron_ref:?}");
+        assert_eq!(
+            cron_ref.path.as_deref(),
+            Some(CRON_REFERENCE_PATH),
+            "{cron_ref:?}"
+        );
+        assert_eq!(cron_ref.bytes, CRON_REFERENCE.trim_end().len() as u64);
         let user = by_source("agents_user_wide");
         assert!(user.path.as_deref().unwrap().ends_with(".agents/AGENTS.md"));
         assert!(user.exists && user.bytes == 10, "{user:?}"); // "user rules"
@@ -568,21 +676,22 @@ mod tests {
         assert!(!system.contains("vault rules"), "{system}");
         assert!(system.contains("引用摘录的纪律"), "{system}");
         assert!(system.contains("路径引用的纪律"), "{system}");
-        assert_eq!(assembled.manifest.len(), 7);
+        assert!(system.contains("定时任务"), "{system}");
+        assert_eq!(assembled.manifest.len(), 8);
         assert!(
-            !assembled.manifest[3].exists,
+            !assembled.manifest[4].exists,
             "user-wide 缺失须记 exists:false"
         );
         assert!(
-            !assembled.manifest[4].exists,
+            !assembled.manifest[5].exists,
             "vault 根缺失须记 exists:false"
         );
         assert!(
-            !assembled.manifest[5].exists,
+            !assembled.manifest[6].exists,
             "本地覆盖层缺失须记 exists:false"
         );
-        assert_eq!(assembled.manifest[6].skills, Some(0));
-        assert!(!assembled.manifest[6].exists);
+        assert_eq!(assembled.manifest[7].skills, Some(0));
+        assert!(!assembled.manifest[7].exists);
     }
 
     /// 三层齐备（change `harness-agents-local-md` design §4-1）：三份文件内容都在文本中、
@@ -613,7 +722,7 @@ mod tests {
         let local_at = system.find("local override rules").unwrap();
         assert!(root_at < local_at, "{system}");
 
-        assert_eq!(assembled.manifest.len(), 7, "{:?}", assembled.manifest);
+        assert_eq!(assembled.manifest.len(), 8, "{:?}", assembled.manifest);
         let local = assembled
             .manifest
             .iter()
@@ -645,7 +754,7 @@ mod tests {
         assert!(system.contains("user rules"), "{system}");
         assert!(system.contains("vault rules"), "{system}");
         assert!(!system.contains("本机本地覆盖层"), "{system}");
-        assert_eq!(assembled.manifest.len(), 7);
+        assert_eq!(assembled.manifest.len(), 8);
         let local = assembled
             .manifest
             .iter()
@@ -692,6 +801,7 @@ mod tests {
             (IDENTITY_PATH, IDENTITY),
             (QUOTE_REFERENCE_PATH, QUOTE_REFERENCE),
             (PATH_REFERENCE_PATH, PATH_REFERENCE),
+            (CRON_REFERENCE_PATH, CRON_REFERENCE),
         ] {
             assert!(
                 !path.starts_with('/') && !path.starts_with(".."),
@@ -706,8 +816,9 @@ mod tests {
 
     /// 固定段顺序与拼接格式（顺序是代码逻辑，change `harness-prompt-files`）：空环境里装配
     /// 结果恰好是 identity + 摘录回指纪律 + 路径引用纪律三节（change `harness-path-link` 把
-    /// 路径段追加在摘录段之后）——不随 `prompts/` 目录内容 / 枚举顺序变化，且文件尾换行不进入
-    /// 注入文本（输出不以换行结尾）。
+    /// 路径段追加在摘录段之后），路径段之后是定时任务段（change
+    /// add-cron-conversational-registration）——不随 `prompts/` 目录内容 / 枚举顺序变化，且
+    /// 文件尾换行不进入注入文本（输出不以换行结尾）。
     #[test]
     fn assemble_system_fixed_prefix_is_identity_then_quote_reference() {
         let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -716,11 +827,13 @@ mod tests {
         let _guard = EnvGuard::new(&home);
         let assembled = assemble_system(&vault);
         let expected = format!(
-            "{}\n\n===== 引用摘录的回指纪律 =====\n{}\n\n===== 路径引用的纪律 =====\n{}",
+            "{}\n\n===== 引用摘录的回指纪律 =====\n{}\n\n===== 路径引用的纪律 =====\n{}\n\n===== 定时任务 =====\n{}",
             IDENTITY.trim_end(),
             QUOTE_REFERENCE.trim_end(),
-            PATH_REFERENCE.trim_end()
+            PATH_REFERENCE.trim_end(),
+            CRON_REFERENCE.trim_end()
         );
         assert_eq!(assembled.text, expected);
+        assert!(!assembled.text.ends_with('\n'));
     }
 }

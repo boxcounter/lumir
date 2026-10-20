@@ -30,7 +30,7 @@
 //!   昨日时既有记录**保留不删**，最多抑制当天一次触发（保守方向）。
 //! - **跨日不补**：00:00 后「今天」变成新日期，昨日错过的任务不补——提醒的意义在当天。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -38,7 +38,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::{DateTime, Datelike, FixedOffset, Local, Timelike};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{CronTask, CronWeekday, DeliveryPolicy, SessionShape};
+use crate::commands::CommandError;
+use crate::config::{CronTask, CronTaskIssue, CronWeekday, DeliveryPolicy, SessionShape};
 use crate::harness::run::{
     ApprovalPolicy, RunBudget, RunOrigin, RunSpec, SessionTarget, ToolPolicy,
 };
@@ -189,11 +190,17 @@ pub enum Decision {
     Fire,
 }
 
+/// 「当下是否已过点」的**唯一判据**：今天轮到这个任务，且本地时钟已越过 `at`。
+///
+/// 两个消费者共用它（同一组输入、同一个时钟口径）：① 判定函数 [`decide`] 的 `due` 分支；
+/// ② 运行期注册的**当日种子**（change add-cron-conversational-registration design §8）。
+pub fn due_now(days: &[CronWeekday], at_minutes: u16, now: &LocalNow) -> bool {
+    days.contains(&now.weekday) && now.minutes_since_midnight >= at_minutes
+}
+
 /// **纯函数**：不读时钟、不碰磁盘。四个触发源都只走它。
 pub fn decide(input: &CheckInput) -> Decision {
-    let due = input.days.contains(&input.now.weekday)
-        && input.now.minutes_since_midnight >= input.at_minutes;
-    if !due {
+    if !due_now(input.days, input.at_minutes, input.now) {
         return Decision::NotDue;
     }
     if input.last_fired == Some(input.now.date.as_str()) {
@@ -402,6 +409,139 @@ pub fn handoff(input: &HandoffInput<'_>) -> Handoff {
 }
 
 // ---------------------------------------------------------------------------
+// 运行期任务集：装载与重载共用的形态与纯函数
+// ---------------------------------------------------------------------------
+
+/// 守护线程的一条待评估任务：配置里的任务 + 解析一次的 `at` 分钟数 + 规范化的目标 vault 根
+/// （`canonicalize`——macOS `/tmp` → `/private/tmp` 软链下，配置路径与 vault 根逐字比较会假判
+/// 「不是当前 vault」）。启动装载与运行期重载共用同一个构造点（[`schedule_of`]）。
+#[derive(Debug, Clone)]
+pub struct ScheduledTask {
+    pub task: CronTask,
+    pub at_minutes: u16,
+    pub vault_root: String,
+}
+
+/// 把生效任务清单转成调度形态。**启动装载与运行期重载的唯一共用实现**（change
+/// add-cron-conversational-registration tasks 3.3）：`parse_at` 与 vault 路径规范化都只在这里。
+///
+/// 返回的第二项是「校验期已挡住、运行期仍解析不出 `at`」的漂移项（实现漂移 / 校验后文件被改坏）；
+/// 调用方据此落 `cron_task_invalid`，不静默丢。
+pub fn schedule_of(tasks: &[CronTask]) -> (Vec<ScheduledTask>, Vec<CronTaskIssue>) {
+    let mut scheduled = Vec::with_capacity(tasks.len());
+    let mut drift = Vec::new();
+    for task in tasks {
+        match parse_at(&task.at) {
+            Ok(at_minutes) => {
+                let vault_root = std::fs::canonicalize(&task.vault)
+                    .unwrap_or_else(|_| PathBuf::from(&task.vault))
+                    .display()
+                    .to_string();
+                scheduled.push(ScheduledTask {
+                    task: task.clone(),
+                    at_minutes,
+                    vault_root,
+                });
+            }
+            Err(reason) => drift.push(CronTaskIssue {
+                task: task.id.clone(),
+                field: "at".to_string(),
+                reason: reason.to_string(),
+            }),
+        }
+    }
+    (scheduled, drift)
+}
+
+/// 重载回执（change add-cron-conversational-registration design §3.1）：守护线程处理完一次
+/// 重载后给调用方的一次性答复。`applied` = 替换后的任务数，`seeded` = 写了当日种子的 id，
+/// `error` = 本次重载失败的原因（失败时线程保留原任务集）。
+#[derive(Debug, Clone)]
+pub struct ReloadOutcome {
+    pub applied: usize,
+    pub seeded: Vec<String>,
+    pub error: Option<String>,
+}
+
+/// 把重载回执投影成工具侧可见的生效状态（design §2.4 / §3.8）：**只有收到回执且没有失败原因**
+/// 才算 `Active`；回执超时（`None`，线程不在或 1s 内没处理）或失败回执一律 `pending_restart`。
+pub fn effect_of(outcome: Option<&ReloadOutcome>) -> (CronEffect, Vec<String>) {
+    match outcome {
+        Some(outcome) if outcome.error.is_none() => (CronEffect::Active, outcome.seeded.clone()),
+        _ => (CronEffect::PendingRestart, Vec::new()),
+    }
+}
+
+/// 一次重载的计划（纯函数的输出）：新任务集 + 被删除的 id + 写入当日种子的 id + 轮次预算。
+#[derive(Debug, Clone)]
+pub struct ReloadPlan {
+    /// 替换后的任务集。
+    pub tasks: Vec<ScheduledTask>,
+    /// 本次从任务集消失的 id（调用方据此清理 `skipped_today` / `clicked_today`；
+    /// **在途运行不在此列**——它还要收尾并回执）。
+    pub removed: Vec<String>,
+    /// 本次写入当日种子的任务 id（`ack.seeded`、工具回执的 `skip_today` 都读它）。
+    pub seeded: Vec<String>,
+    /// 随配置读数更新的轮次预算（`[harness].loop_max`，交接载荷的唯一预算来源）。
+    pub loop_max: u32,
+}
+
+/// 运行期重载的**纯函数**部分（change add-cron-conversational-registration design §3.3）：
+/// 不读时钟、不碰磁盘、不做 IO——时钟由调用方注入，状态只改内存副本。
+///
+/// 规则：只有**本次新增**的任务可能写当日种子，判据是 [`due_now`]（与判定函数同一组输入）；
+/// 启动装载引入的任务不走这里（启动补触发是既有语义，design §8）。
+pub fn plan_reload(
+    previous: &[ScheduledTask],
+    next: Vec<ScheduledTask>,
+    loop_max: u32,
+    now: &LocalNow,
+    state: &mut CronState,
+) -> ReloadPlan {
+    let previous_ids: BTreeSet<&str> = previous
+        .iter()
+        .map(|scheduled| scheduled.task.id.as_str())
+        .collect();
+    let mut seeded = Vec::new();
+    for scheduled in &next {
+        if previous_ids.contains(scheduled.task.id.as_str()) {
+            continue;
+        }
+        if due_now(&scheduled.task.days, scheduled.at_minutes, now) {
+            state.mark_fired(&scheduled.task.id, &now.date);
+            seeded.push(scheduled.task.id.clone());
+        }
+    }
+    let next_ids: BTreeSet<&str> = next
+        .iter()
+        .map(|scheduled| scheduled.task.id.as_str())
+        .collect();
+    let removed = previous_ids
+        .into_iter()
+        .filter(|id| !next_ids.contains(*id))
+        .map(str::to_string)
+        .collect();
+    ReloadPlan {
+        tasks: next,
+        removed,
+        seeded,
+        loop_max,
+    }
+}
+
+/// 重载后清理「属于被删任务、且纯内存、无后续消费者」的记录（design §3.3 第 5 步）：
+/// `skipped_today` / `clicked_today` 只服务派发与点击去重，任务不再存在即无意义。
+///
+/// **in-flight 记录不经过这里**（调用方不传它）：被删任务的在途运行还要收尾并回执，
+/// MUST NOT 因任务消失而丢弃终态。
+pub fn retain_live_tasks<T>(
+    entries: &mut std::collections::HashMap<String, T>,
+    removed: &[String],
+) {
+    entries.retain(|task, _| !removed.contains(task));
+}
+
+// ---------------------------------------------------------------------------
 // 触发去重状态（cron-state.json）
 // ---------------------------------------------------------------------------
 
@@ -542,6 +682,432 @@ pub fn new_run_id() -> String {
         .unwrap_or(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     format!("{millis:x}-{seq:x}-{:04x}", rand::random::<u16>())
+}
+
+// ---------------------------------------------------------------------------
+// 调度工具（cron_task_create / list / remove）的领域面
+// ---------------------------------------------------------------------------
+//
+// 本段是**没有 tauri 依赖**的那一半（ADR 0002 第 7 条）：参数草稿 → 校验 → 读—改—写同一把锁
+// （`config::update_json_atomic`）→ 生效任务。运行期重载通道（`CronMessage::Reload`）在
+// `lib.rs` 的接线层，经 [`CronPort`] 注入；工具执行侧（`harness::tools`）只经端口取结果。
+
+/// `cron_task_create` 的参数草稿：**只保模型实际给出的字段**（值为 `None` 的键不写进配置——
+/// 缺省值跟随出厂默认，写死会把「跟随默认」钉成写入当天的取值，design §4.2）。
+///
+/// 字段保留原始 JSON 值而不是先反序列化成强类型：形状错误（`"at": 21`）要走与装载期**同一句**
+/// 原因文案（`cron_task_invalid(field=at)`），先 serde 解析会把它变成另一种错误口径。
+#[derive(Debug, Clone, Default)]
+pub struct CronTaskDraft {
+    pub id: Option<serde_json::Value>,
+    pub at: Option<serde_json::Value>,
+    pub prompt: Option<serde_json::Value>,
+    pub vault: Option<serde_json::Value>,
+    pub days: Option<serde_json::Value>,
+    pub delivery: Option<serde_json::Value>,
+    pub session: Option<serde_json::Value>,
+    pub model: Option<serde_json::Value>,
+}
+
+impl CronTaskDraft {
+    /// 从工具参数取已知键（未知键忽略；`null` 视同缺席）。
+    ///
+    /// `default_vault` 是会话当前 vault 根：`vault` 缺席时**必须落成绝对路径**（运行坐标不能在
+    /// 运行期重新推导，design §4.2 的唯一例外）。
+    pub fn from_args(args: &serde_json::Value, default_vault: &str) -> Self {
+        let value = |key: &str| args.get(key).filter(|value| !value.is_null()).cloned();
+        Self {
+            id: value("id"),
+            at: value("at"),
+            prompt: value("prompt"),
+            vault: value("vault").or_else(|| Some(serde_json::Value::String(default_vault.into()))),
+            days: value("days"),
+            delivery: value("delivery"),
+            session: value("session"),
+            model: value("model"),
+        }
+    }
+
+    /// 待校验 / 待写入的任务项：**只含给出的键**（`id` / `at` / `prompt` / `vault` 恒在）。
+    fn item(&self) -> serde_json::Map<String, serde_json::Value> {
+        let mut item = serde_json::Map::new();
+        let mut put = |key: &str, value: &Option<serde_json::Value>| {
+            if let Some(value) = value {
+                item.insert(key.to_string(), value.clone());
+            }
+        };
+        put("id", &self.id);
+        put("at", &self.at);
+        put("prompt", &self.prompt);
+        put("vault", &self.vault);
+        put("days", &self.days);
+        put("delivery", &self.delivery);
+        put("session", &self.session);
+        put("model", &self.model);
+        item
+    }
+}
+
+/// 调度工具的结构化失败（工具信封 `{"ok":false,"code","message"}` 的来源）。
+///
+/// `reason` 保留与装载期**逐字相同**的那句原因（`message` 已把 `field` 与它拼在一起）——两条
+/// 通道共用 [`crate::config::validate_cron_task`]，文案不在这里另写一份。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CronToolError {
+    pub code: String,
+    pub message: String,
+    /// 第一处问题所在字段（`cron_task_rejected` 的 `field`；无字段时为 `None`）。
+    pub field: Option<String>,
+    /// 与装载期同一句原因（`message` 的组成部分）。
+    pub reason: Option<String>,
+    /// 相关任务 id（可能为空：id 本身不可读时）。
+    pub task: Option<String>,
+}
+
+impl CronToolError {
+    fn invalid(issue: CronTaskIssue) -> Self {
+        Self {
+            code: "cron_task_invalid".to_string(),
+            message: format!("{}：{}", issue.field, issue.reason),
+            field: Some(issue.field),
+            reason: Some(issue.reason),
+            task: Some(issue.task),
+        }
+    }
+
+    fn exists(id: &str, existing_at: &str) -> Self {
+        Self {
+            code: "cron_task_exists".to_string(),
+            message: format!(
+                "任务 id \"{id}\" 已存在（at = {existing_at}）：请先用 cron_task_remove 删除，或换一个 id"
+            ),
+            field: Some("id".to_string()),
+            reason: Some("与既有任务重名".to_string()),
+            task: Some(id.to_string()),
+        }
+    }
+
+    fn not_found(id: &str) -> Self {
+        Self {
+            code: "cron_task_not_found".to_string(),
+            message: format!("任务 id \"{id}\" 不存在"),
+            field: Some("id".to_string()),
+            reason: Some("不存在该任务".to_string()),
+            task: Some(id.to_string()),
+        }
+    }
+
+    /// `cron_task_remove` 的 `id` 缺失 / 不是字符串（该工具没有装载期对照，原因文案在此定义）。
+    pub fn missing_id() -> Self {
+        Self {
+            code: "cron_task_invalid".to_string(),
+            message: "id：缺失或不是字符串".to_string(),
+            field: Some("id".to_string()),
+            reason: Some("缺失或不是字符串".to_string()),
+            task: None,
+        }
+    }
+
+    /// 落盘失败的映射：沿用 `config.rs` 既有错误码（不新增同义码，design §2.4）。
+    pub fn from_command_error(error: CommandError) -> Self {
+        Self {
+            code: error.code,
+            message: error.message,
+            field: None,
+            reason: None,
+            task: None,
+        }
+    }
+}
+
+/// 注册 / 删除的生效状态：只有线程回执确认过才算 `Active`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CronEffect {
+    /// 运行时已确认重载（新任务已进入派发）。
+    Active,
+    /// 配置已写入但运行时未确认（ack 超时 / 通道断 / 线程回执失败）：下次启动生效。
+    PendingRestart,
+}
+
+impl CronEffect {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CronEffect::Active => "active",
+            CronEffect::PendingRestart => "pending_restart",
+        }
+    }
+
+    pub fn is_active(self) -> bool {
+        matches!(self, CronEffect::Active)
+    }
+}
+
+/// `cron_task_create` 的回执载荷（工具侧只加 `ok`）。
+#[derive(Debug, Clone)]
+pub struct CronCreateOutcome {
+    pub task: CronTask,
+    pub effect: CronEffect,
+    /// 注册时刻已过点 ⇒ 线程写了当日种子，今天不会再触发（design §8）。
+    pub skip_today: bool,
+}
+
+/// `cron_task_remove` 的回执载荷。
+#[derive(Debug, Clone)]
+pub struct CronRemoveOutcome {
+    pub id: String,
+    pub effect: CronEffect,
+}
+
+/// `cron_task_list` 的一行：任务要素 + 最近触发日（`cron-state.json` 只读）。
+#[derive(Debug, Clone)]
+pub struct CronTaskSummary {
+    pub id: String,
+    pub vault: String,
+    pub at: String,
+    pub days: Vec<CronWeekday>,
+    pub delivery: DeliveryPolicy,
+    pub session: SessionShape,
+    /// `last_fired` 的语义是「该本地日期不再派发」；状态文件缺失 / 损坏时为 `None`（不报错）。
+    pub last_fired: Option<String>,
+}
+
+/// 工具执行侧的端口（change add-cron-conversational-registration tasks 2.2）：`cron.rs` 只定
+/// 义契约、`lib.rs` 落实现（那里才有重载通道与 tauri 状态）。单测用替身注入。
+///
+/// `Send + Sync`：交互上下文会被 scoped 线程借用（`harness.rs` 的并发用例），端口是实现方
+/// 持有的 `tauri::AppHandle` / 测试替身，天然满足。
+pub trait CronPort: Send + Sync {
+    fn create(&self, draft: CronTaskDraft) -> Result<CronCreateOutcome, CronToolError>;
+    fn list(&self) -> Result<Vec<CronTaskSummary>, CronToolError>;
+    fn remove(&self, id: &str) -> Result<CronRemoveOutcome, CronToolError>;
+}
+
+/// `days` 的规范化串（`mon,tue,…`）：诊断事件与成功回执共用的唯一写法。
+pub fn days_label(days: &[CronWeekday]) -> String {
+    days.iter()
+        .map(|day| day.as_str())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// 批准卡上的 `days`（数组形态；design §6.3 的载荷形状）。
+pub fn days_json(days: &[CronWeekday]) -> Vec<&'static str> {
+    days.iter().map(|day| day.as_str()).collect()
+}
+
+/// 写入一条任务（读—改—写同一把锁，design §4.1）：校验走 [`crate::config::validate_cron_task`]
+/// （「一条合法任务」的唯一定义，design §5），只写模型给出的键。
+///
+/// 唯一性判据是**文件里出现的全部 id**（含装载期因非法而被丢弃的项）：否则文件里会有两条同 id
+/// 的项，下次启动的「保留首项」会把刚写进去的那条丢掉（design §5 的唯一加严）。
+pub fn create_task_at(path: &Path, draft: &CronTaskDraft) -> Result<CronTask, CronToolError> {
+    let item = serde_json::Value::Object(draft.item());
+    let mut created: Option<CronTask> = None;
+    let mut deferred: Option<CronToolError> = None;
+    let write = crate::config::update_json_atomic(path, |root| {
+        match apply_create(root, &item) {
+            Ok(task) => {
+                created = Some(task);
+                Ok(())
+            }
+            Err(error) => {
+                deferred = Some(error);
+                // 闭包签名是 `Result<(), CommandError>`：哨兵错误只用来中止写入，真实失败经
+                // `deferred` 原样带出（错误码与字段不丢）。哨兵复用既有 code——它永远不会
+                // 到达用户面（`deferred` 有值即直接返回），不新增一个前端没有文案的错误码。
+                Err(CommandError::new("config_write_failed", "任务未写入"))
+            }
+        }
+    });
+    if let Some(error) = deferred {
+        return Err(error);
+    }
+    write.map_err(CronToolError::from_command_error)?;
+    created.ok_or_else(|| {
+        CronToolError::from_command_error(CommandError::new(
+            "config_write_failed",
+            "配置已写入但未能读出刚注册的任务",
+        ))
+    })
+}
+
+/// 锁内的新增逻辑：取 `[cron].tasks`、全部 id 查重、单条校验、只推入给出的键。
+fn apply_create(
+    root: &mut serde_json::Value,
+    item: &serde_json::Value,
+) -> Result<CronTask, CronToolError> {
+    let tasks = cron_tasks_mut(root)?;
+    let all_ids: Vec<String> = tasks
+        .iter()
+        .filter_map(|task| task.get("id").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .collect();
+    let id_label = |_id: &str| "cron_task_create".to_string();
+    let validated =
+        match crate::config::validate_cron_task(item, "cron_task_create", &id_label, &all_ids) {
+            Ok(validated) => validated,
+            Err(rejection) if rejection.duplicate => {
+                let existing_at = tasks
+                    .iter()
+                    .find(|task| {
+                        task.get("id").and_then(serde_json::Value::as_str)
+                            == Some(rejection.issue.task.as_str())
+                    })
+                    .and_then(|task| task.get("at"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("未知");
+                return Err(CronToolError::exists(&rejection.issue.task, existing_at));
+            }
+            Err(rejection) => return Err(CronToolError::invalid(rejection.issue)),
+        };
+    // 非致命回落（非法 delivery / session / model）在工具侧同样是拒绝：模型可以改对，
+    // 而在配置里写一个下次装载要 warning 的值只会制造双份口径。
+    if let Some(degraded) = validated.degraded.into_iter().next() {
+        return Err(CronToolError::invalid(degraded));
+    }
+    tasks.push(item.clone());
+    Ok(validated.task)
+}
+
+/// 删除一条任务（读—改—写同一把锁）：目标不存在报 `cron_task_not_found`，配置逐字节不变。
+pub fn remove_task_at(path: &Path, id: &str) -> Result<(), CronToolError> {
+    let mut deferred: Option<CronToolError> = None;
+    let write = crate::config::update_json_atomic(path, |root| match apply_remove(root, id) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            deferred = Some(error);
+            // 哨兵只用来中止写入；真实失败经 deferred 带出（见 create_task_at 同处注释）。
+            Err(CommandError::new("config_write_failed", "任务未删除"))
+        }
+    });
+    if let Some(error) = deferred {
+        return Err(error);
+    }
+    write.map_err(CronToolError::from_command_error)
+}
+
+fn apply_remove(root: &mut serde_json::Value, id: &str) -> Result<(), CronToolError> {
+    let tasks = cron_tasks_mut(root)?;
+    let index = tasks
+        .iter()
+        .position(|task| task.get("id").and_then(serde_json::Value::as_str) == Some(id));
+    match index {
+        Some(index) => {
+            tasks.remove(index);
+            Ok(())
+        }
+        None => Err(CronToolError::not_found(id)),
+    }
+}
+
+/// `[cron].tasks` 的可变槽位（缺失则创建；**形状非法时报错、不覆盖**——那是一份用户手写的
+/// 内容，工具无权按「空表」把它抹掉）。
+fn cron_tasks_mut(
+    root: &mut serde_json::Value,
+) -> Result<&mut Vec<serde_json::Value>, CronToolError> {
+    let Some(root) = root.as_object_mut() else {
+        return Err(CronToolError::from_command_error(CommandError::new(
+            "config_write_failed",
+            "配置文件的顶层不是对象，未写入",
+        )));
+    };
+    let cron = root.entry("cron").or_insert_with(|| serde_json::json!({}));
+    let Some(cron) = cron.as_object_mut() else {
+        return Err(CronToolError::from_command_error(CommandError::new(
+            "config_write_failed",
+            "[cron] 不是对象，未写入（请先修好配置文件）",
+        )));
+    };
+    let tasks = cron
+        .entry("tasks")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+    tasks.as_array_mut().ok_or_else(|| {
+        CronToolError::from_command_error(CommandError::new(
+            "config_write_failed",
+            "cron.tasks 不是数组，未写入（请先修好配置文件）",
+        ))
+    })
+}
+
+/// 只读列出任务（`cron_task_list`）：配置宽读（失败按空表）+ 状态文件只读（缺失 / 损坏 →
+/// `last_fired = null`）。**不写任何文件**（含退役值迁移那笔写副作用——不走 `config::load`）。
+pub fn list_tasks_at(config_path: &Path, state_path: &Path) -> Vec<CronTaskSummary> {
+    let (state, _warnings) = load_state(state_path);
+    crate::config::read_cron_tasks_at(config_path)
+        .into_iter()
+        .map(|task| CronTaskSummary {
+            last_fired: state.last_fired(&task.id).map(str::to_string),
+            id: task.id,
+            vault: task.vault,
+            at: task.at,
+            days: task.days,
+            delivery: task.delivery,
+            session: task.session,
+        })
+        .collect()
+}
+
+/// 批准卡预览的只读查询：既有任务的 `at`（`cron_task_remove` 的卡片要展示它）。
+pub fn find_task_at(config_path: &Path, id: &str) -> Option<String> {
+    let value = crate::config::read_config_json(config_path);
+    value
+        .get("cron")
+        .and_then(|cron| cron.get("tasks"))
+        .and_then(serde_json::Value::as_array)?
+        .iter()
+        .find(|task| task.get("id").and_then(serde_json::Value::as_str) == Some(id))?
+        .get("at")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+/// `cron_task_create` 的批准卡载荷（design §6.3）。`skip_today` 与线程用**同一个**纯判据
+/// （[`due_now`]）算一次：卡片上「今天还会不会触发」是用户批准前最需要知道的一条。
+pub fn create_preview(draft: &CronTaskDraft, now: &LocalNow) -> serde_json::Value {
+    let days = draft_days(draft);
+    let at = draft
+        .at
+        .as_ref()
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let skip_today = parse_at(at).is_ok_and(|at_minutes| due_now(&days, at_minutes, now));
+    let delivery = draft
+        .delivery
+        .as_ref()
+        .and_then(serde_json::Value::as_str)
+        .and_then(DeliveryPolicy::parse)
+        .unwrap_or_default();
+    let session = draft
+        .session
+        .as_ref()
+        .and_then(serde_json::Value::as_str)
+        .and_then(SessionShape::parse)
+        .unwrap_or_default();
+    serde_json::json!({
+        "op": "create",
+        "id": draft.id.as_ref().and_then(serde_json::Value::as_str).unwrap_or(""),
+        "at": at,
+        "days": days_json(&days),
+        "delivery": delivery.as_str(),
+        "session": session.as_str(),
+        "vault": draft.vault.as_ref().and_then(serde_json::Value::as_str).unwrap_or(""),
+        "prompt": draft.prompt.as_ref().and_then(serde_json::Value::as_str).unwrap_or(""),
+        "skip_today": skip_today,
+    })
+}
+
+/// 预览用的 `days`：给出且可解析时用给出的（忽略非法项），否则全周（缺省口径）。
+fn draft_days(draft: &CronTaskDraft) -> Vec<CronWeekday> {
+    if let Some(serde_json::Value::Array(items)) = &draft.days {
+        let days: Vec<CronWeekday> = items
+            .iter()
+            .filter_map(|item| item.as_str().and_then(parse_weekday))
+            .collect();
+        if !days.is_empty() {
+            return days;
+        }
+    }
+    CronWeekday::ALL.to_vec()
 }
 
 #[cfg(test)]
@@ -1163,5 +1729,418 @@ mod tests {
         let second = new_run_id();
         assert_ne!(first, second);
         assert!(!first.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // 运行期任务集重载（change add-cron-conversational-registration design §3.3 / tasks 3.6）
+    // -----------------------------------------------------------------------
+
+    fn scheduled(id: &str, at: &str, days: Vec<CronWeekday>) -> ScheduledTask {
+        let task = CronTask {
+            id: id.to_string(),
+            vault: "/tmp/vault-a".to_string(),
+            at: at.to_string(),
+            days,
+            prompt: "synthetic prompt".to_string(),
+            delivery: DeliveryPolicy::NotifyThenRun,
+            session: SessionShape::New,
+            model: None,
+        };
+        let at_minutes = parse_at(at).expect("测试里的 at 合法");
+        ScheduledTask {
+            task,
+            at_minutes,
+            vault_root: "/tmp/vault-a".to_string(),
+        }
+    }
+
+    /// 新增 / 移除 / 改 `at` 三种变化一次覆盖：任务集整体替换、被删 id 上报、`loop_max` 随重载更新。
+    #[test]
+    fn plan_reload_replaces_the_set_and_reports_removed_ids() {
+        let previous = vec![
+            scheduled("kept", "21:00", CronWeekday::ALL.to_vec()),
+            scheduled("gone", "22:00", CronWeekday::ALL.to_vec()),
+        ];
+        let next = vec![
+            // 同 id 改 at：算「替换」，不算新增，因此不写种子。
+            scheduled("kept", "23:00", CronWeekday::ALL.to_vec()),
+            scheduled("fresh", "23:30", CronWeekday::ALL.to_vec()),
+        ];
+        let moment = now((2026, 10, 18), 21, 30);
+        let mut state = CronState::default();
+        state.set_session("gone", Some("session-9"));
+        let plan = plan_reload(&previous, next, 50, &moment, &mut state);
+
+        assert_eq!(plan.tasks.len(), 2);
+        assert_eq!(plan.tasks[0].task.at, "23:00", "任务集按文件当下内容替换");
+        assert_eq!(plan.removed, vec!["gone".to_string()]);
+        assert_eq!(plan.loop_max, 50);
+        assert!(plan.seeded.is_empty(), "改 at 不是新增：{plan:?}");
+        // 被删任务的状态记录惰性残留（不为清理做扫描）。
+        assert_eq!(state.session_id("gone"), Some("session-9"));
+    }
+
+    /// 只有**本次新增且注册时刻已过点**的任务写当日种子；未到点的照常派发。
+    #[test]
+    fn plan_reload_seeds_only_new_tasks_that_are_already_due() {
+        let previous = vec![scheduled("old", "21:00", CronWeekday::ALL.to_vec())];
+        let next = vec![
+            scheduled("old", "21:00", CronWeekday::ALL.to_vec()),
+            scheduled("due", "20:00", CronWeekday::ALL.to_vec()),
+            scheduled("later", "22:00", CronWeekday::ALL.to_vec()),
+        ];
+        let moment = now((2026, 10, 18), 21, 30);
+        let mut state = CronState::default();
+        let plan = plan_reload(&previous, next, 50, &moment, &mut state);
+
+        assert_eq!(plan.seeded, vec!["due".to_string()]);
+        assert_eq!(state.last_fired("due"), Some("2026-10-18"));
+        assert_eq!(state.last_fired("later"), None, "未到点不写种子");
+        assert_eq!(state.last_fired("old"), None, "既有任务不走种子");
+    }
+
+    /// 新增任务的 `days` 不含今天 ⇒ 不写种子（判据与 `decide` 同一组输入）。
+    #[test]
+    fn plan_reload_does_not_seed_when_today_is_not_in_days() {
+        let moment = now((2026, 10, 18), 21, 30); // 周日
+        let next = vec![scheduled("weekday-only", "20:00", vec![CronWeekday::Mon])];
+        let mut state = CronState::default();
+        let plan = plan_reload(&[], next, 50, &moment, &mut state);
+
+        assert!(plan.seeded.is_empty());
+        assert_eq!(state.last_fired("weekday-only"), None);
+    }
+
+    /// 重载回执投影（design §3.8）：只有「收到回执且没有失败原因」才是 active；超时 / 失败回执
+    /// 一律 pending_restart。区分度：把 `None` 当 active（「写了文件就说生效」）本用例必 FAIL。
+    #[test]
+    fn effect_of_ack_distinguishes_active_from_pending_restart() {
+        let ok = ReloadOutcome {
+            applied: 2,
+            seeded: vec!["daily-log".to_string()],
+            error: None,
+        };
+        let (effect, seeded) = effect_of(Some(&ok));
+        assert_eq!(effect, CronEffect::Active);
+        assert_eq!(seeded, vec!["daily-log".to_string()]);
+
+        let failed = ReloadOutcome {
+            applied: 1,
+            seeded: Vec::new(),
+            error: Some("配置文件不是合法 JSON".to_string()),
+        };
+        assert_eq!(effect_of(Some(&failed)).0, CronEffect::PendingRestart);
+        assert_eq!(effect_of(None).0, CronEffect::PendingRestart);
+        assert!(effect_of(None).1.is_empty());
+    }
+
+    /// 空表替换不 panic：任务全删是合法状态（守护空转）。
+    #[test]
+    fn plan_reload_to_an_empty_set_is_silent() {
+        let previous = vec![scheduled("only", "21:00", CronWeekday::ALL.to_vec())];
+        let moment = now((2026, 10, 18), 21, 30);
+        let mut state = CronState::default();
+        let plan = plan_reload(&previous, Vec::new(), 12, &moment, &mut state);
+
+        assert!(plan.tasks.is_empty());
+        assert_eq!(plan.removed, vec!["only".to_string()]);
+        assert!(plan.seeded.is_empty());
+        assert_eq!(plan.loop_max, 12);
+    }
+
+    /// 被删任务的内存记录清理边界（design §3.3 第 5 步）：`skipped_today` / `clicked_today`
+    /// 清掉，**在途运行记录保留**（它还要收尾并回执）。区分度：把 inflight 也传进
+    /// `retain_live_tasks` 的实现在下列断言里必 FAIL。
+    #[test]
+    fn reload_pruning_clears_memory_marks_but_keeps_inflight() {
+        let removed = vec!["gone".to_string()];
+        let mut skipped: std::collections::HashMap<String, String> = [
+            ("gone".to_string(), "2026-10-18".to_string()),
+            ("kept".to_string(), "2026-10-18".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let mut clicked: std::collections::HashMap<String, String> =
+            [("gone".to_string(), "2026-10-18".to_string())]
+                .into_iter()
+                .collect();
+        let mut inflight: std::collections::HashMap<String, String> =
+            [("run-1".to_string(), "gone".to_string())]
+                .into_iter()
+                .collect();
+
+        retain_live_tasks(&mut skipped, &removed);
+        retain_live_tasks(&mut clicked, &removed);
+        // in-flight 明确不经过 prune。
+        assert!(!skipped.contains_key("gone"));
+        assert!(skipped.contains_key("kept"));
+        assert!(clicked.is_empty());
+        assert_eq!(
+            inflight.remove("run-1").as_deref(),
+            Some("gone"),
+            "被删任务的在途运行必须保留到终态回执"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 调度工具的落盘语义（change add-cron-conversational-registration tasks 2.8 / 2.9）
+    // -----------------------------------------------------------------------
+
+    fn task_args() -> serde_json::Value {
+        serde_json::json!({
+            "id": "daily-log",
+            "at": "21:00",
+            "prompt": "写今日 log",
+            "vault": "/tmp/vault-a",
+        })
+    }
+
+    /// 成功 create：① 新项在场 ② 模型没给的键缺席 ③ 其它表与未知顶层键保留 ④ `version` 未降
+    /// ⑤ 工具侧零写 `cron-state.json`。
+    #[test]
+    fn create_task_writes_only_the_given_keys_and_keeps_the_rest() {
+        let dir = TempDir::new();
+        let config = dir.path().join("config.json");
+        let state = state_path(dir.path());
+        std::fs::write(
+            &config,
+            r#"{"version":7,"unknown_top":{"keep":[1,2]},"ui":{"theme":"dark"},"cron":{"tasks":[]}}"#,
+        )
+        .unwrap();
+        std::fs::write(&state, r#"{"version":1,"tasks":{}}"#).unwrap();
+        let state_meta = std::fs::metadata(&state).unwrap();
+        let state_body = std::fs::read(&state).unwrap();
+
+        let draft = CronTaskDraft::from_args(&task_args(), "/tmp/vault-a");
+        let task = create_task_at(&config, &draft).expect("合法任务应写入");
+        assert_eq!(task.id, "daily-log");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+        let tasks = value["cron"]["tasks"].as_array().unwrap();
+        assert_eq!(tasks.len(), 1);
+        let item = &tasks[0];
+        assert_eq!(item["id"], "daily-log");
+        assert_eq!(item["at"], "21:00");
+        assert_eq!(item["prompt"], "写今日 log");
+        assert_eq!(item["vault"], "/tmp/vault-a");
+        for absent in ["days", "delivery", "session", "model"] {
+            assert!(
+                item.get(absent).is_none(),
+                "缺省键不得写死：{absent}：{item}"
+            );
+        }
+        assert_eq!(value["unknown_top"], serde_json::json!({"keep": [1,2]}));
+        assert_eq!(value["ui"], serde_json::json!({"theme": "dark"}));
+        assert_eq!(value["version"], serde_json::json!(7), "高版本不降回");
+
+        // 工具不写状态文件：内容与 mtime 都不变。
+        assert_eq!(
+            std::fs::read(&state).unwrap(),
+            state_body,
+            "状态文件内容被改"
+        );
+        assert_eq!(
+            std::fs::metadata(&state).unwrap().modified().unwrap(),
+            state_meta.modified().unwrap(),
+            "状态文件 mtime 被改（工具侧零写）"
+        );
+    }
+
+    /// 失败路径（非法 / 重名 / 落盘失败）配置逐字节不变。
+    ///
+    /// 区分度：同组用例先做一次**成功写**（同一个文件、同一个入口），证明文件可写；否则「失败
+    /// 也没改」可能只是「根本写不进去」。
+    #[test]
+    fn create_task_failures_leave_the_config_byte_identical() {
+        let dir = TempDir::new();
+        let config = dir.path().join("config.json");
+        std::fs::write(
+            &config,
+            r#"{"version":1,"cron":{"tasks":[{"id":"taken","vault":"/tmp/v","at":"22:00","prompt":"p"}]}}"#,
+        )
+        .unwrap();
+
+        // 先证明可写：成功写一条，再回到原内容做失败断言。
+        let ok = CronTaskDraft::from_args(
+            &serde_json::json!({"id":"fresh","at":"09:00","prompt":"p","vault":"/tmp/v"}),
+            "/tmp/v",
+        );
+        create_task_at(&config, &ok).expect("同文件必须先可写");
+        std::fs::write(
+            &config,
+            r#"{"version":1,"cron":{"tasks":[{"id":"taken","vault":"/tmp/v","at":"22:00","prompt":"p"}]}}"#,
+        )
+        .unwrap();
+        let before = std::fs::read(&config).unwrap();
+
+        for (args, code) in [
+            (
+                serde_json::json!({"id":"bad","at":"25:00","prompt":"p","vault":"/tmp/v"}),
+                "cron_task_invalid",
+            ),
+            (
+                serde_json::json!({"id":"taken","at":"09:00","prompt":"p","vault":"/tmp/v"}),
+                "cron_task_exists",
+            ),
+        ] {
+            let draft = CronTaskDraft::from_args(&args, "/tmp/v");
+            let error = create_task_at(&config, &draft).expect_err("应拒绝");
+            assert_eq!(error.code, code, "{error:?}");
+            assert_eq!(
+                std::fs::read(&config).unwrap(),
+                before,
+                "失败不得改动配置：{args}"
+            );
+        }
+
+        // 落盘失败：父路径是普通文件，连目录都建不出来。
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, b"not a dir").unwrap();
+        let draft = CronTaskDraft::from_args(&task_args(), "/tmp/vault-a");
+        let error = create_task_at(&blocker.join("config.json"), &draft).expect_err("应拒绝");
+        assert_eq!(error.code, "config_write_failed", "{error:?}");
+    }
+
+    /// 重名的唯一性判据是**文件里的全部 id**（含装载期因非法而被丢弃的项）：否则下次启动的
+    /// 「保留首项」会把刚写进去的那条丢掉。
+    #[test]
+    fn create_task_rejects_ids_that_only_appear_in_dropped_items() {
+        let dir = TempDir::new();
+        let config = dir.path().join("config.json");
+        std::fs::write(
+            &config,
+            r#"{"cron":{"tasks":[{"id":"ghost","vault":"/tmp/v","at":"25:00","prompt":"p"}]}}"#,
+        )
+        .unwrap();
+        let draft = CronTaskDraft::from_args(
+            &serde_json::json!({"id":"ghost","at":"09:00","prompt":"p","vault":"/tmp/v"}),
+            "/tmp/v",
+        );
+        let error = create_task_at(&config, &draft).expect_err("装载期丢弃的 id 也算重名");
+        assert_eq!(error.code, "cron_task_exists", "{error:?}");
+        assert!(
+            error.message.contains("25:00"),
+            "应指出既有任务的 at：{error:?}"
+        );
+    }
+
+    /// 装载期与工具侧**同一句原因**（design §5 / tasks 1.2）：同一组非法形态经两条入口各跑一次，
+    /// `field` 与原因文案逐字相等。区分度：任何一处文案被改写，本用例必 FAIL。
+    #[test]
+    fn load_and_tool_report_the_same_field_and_reason() {
+        for item in [
+            serde_json::json!({"id":"x","vault":"/tmp/v","at":"25:00","prompt":"p"}),
+            serde_json::json!({"id":"","vault":"/tmp/v","at":"21:00","prompt":"p"}),
+            serde_json::json!({"id":"x","vault":"relative/path","at":"21:00","prompt":"p"}),
+            serde_json::json!({"id":"x","vault":"/tmp/v","at":"21:00","prompt":"   "}),
+            serde_json::json!({"id":"x","vault":"/tmp/v","at":"21:00","prompt":"p","days":[]}),
+            serde_json::json!({"id":"x","vault":"/tmp/v","at":21,"prompt":"p"}),
+        ] {
+            let dir = TempDir::new();
+            let config = dir.path().join("config.json");
+            let body = serde_json::json!({"cron":{"tasks":[item]}});
+            std::fs::write(&config, serde_json::to_string(&body).unwrap()).unwrap();
+
+            let snapshot = crate::config::load_from(&config);
+            let load_issue = snapshot
+                .cron_issues
+                .first()
+                .unwrap_or_else(|| panic!("装载期应丢弃：{item}"));
+            // 工具侧换一个 id：重名检查先于字段检查，同 id 会掩盖本用例要比的字段文案。
+            let mut tool_args = item.clone();
+            if tool_args["id"] == serde_json::json!("x") {
+                tool_args["id"] = serde_json::json!("tool-side");
+            }
+            let draft = CronTaskDraft::from_args(&tool_args, "/tmp/v");
+            let error = create_task_at(&config, &draft).expect_err("工具侧应拒绝");
+
+            assert_eq!(error.code, "cron_task_invalid", "{item}");
+            assert_eq!(
+                error.field.as_deref(),
+                Some(load_issue.field.as_str()),
+                "字段定位不一致：{item}"
+            );
+            assert_eq!(
+                error.reason.as_deref(),
+                Some(load_issue.reason.as_str()),
+                "原因文案不一致：{item}"
+            );
+        }
+    }
+
+    /// `remove`：目标存在则删除并回执；不存在报 `cron_task_not_found` 且配置逐字节不变。
+    #[test]
+    fn remove_task_deletes_only_the_named_entry() {
+        let dir = TempDir::new();
+        let config = dir.path().join("config.json");
+        std::fs::write(
+            &config,
+            r#"{"cron":{"tasks":[{"id":"a","vault":"/tmp/v","at":"21:00","prompt":"p"},{"id":"b","vault":"/tmp/v","at":"22:00","prompt":"p"}]}}"#,
+        )
+        .unwrap();
+        remove_task_at(&config, "a").expect("应删除");
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+        let tasks = value["cron"]["tasks"].as_array().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["id"], "b");
+
+        let before = std::fs::read(&config).unwrap();
+        let error = remove_task_at(&config, "missing").expect_err("不存在应报错");
+        assert_eq!(error.code, "cron_task_not_found", "{error:?}");
+        assert_eq!(std::fs::read(&config).unwrap(), before, "失败不得改配置");
+    }
+
+    /// `list`：读配置有效任务 + 只读状态文件；状态缺失时 `last_fired = None`，存在时取当日值。
+    #[test]
+    fn list_tasks_reads_config_and_state_without_writing() {
+        let dir = TempDir::new();
+        let config = dir.path().join("config.json");
+        let state = state_path(dir.path());
+        std::fs::write(
+            &config,
+            r#"{"cron":{"tasks":[{"id":"a","vault":"/tmp/v","at":"21:00","prompt":"p"},{"id":"broken","vault":"/tmp/v","at":"25:00","prompt":"p"}]}}"#,
+        )
+        .unwrap();
+
+        let tasks = list_tasks_at(&config, &state);
+        assert_eq!(tasks.len(), 1, "非法项在列表里不可见（与装载期同一套校验）");
+        assert_eq!(tasks[0].id, "a");
+        assert_eq!(tasks[0].last_fired, None);
+
+        let mut cron_state = CronState::default();
+        cron_state.mark_fired("a", "2026-10-18");
+        save_state(&state, &cron_state).unwrap();
+        let before = std::fs::read(&config).unwrap();
+        let tasks = list_tasks_at(&config, &state);
+        assert_eq!(tasks[0].last_fired.as_deref(), Some("2026-10-18"));
+        assert_eq!(std::fs::read(&config).unwrap(), before, "list 不写配置文件");
+
+        // 配置不可解析 ⇒ 空表（宽读，不报错）。
+        std::fs::write(&config, "{not json").unwrap();
+        assert!(list_tasks_at(&config, &state).is_empty());
+    }
+
+    /// 批准卡预览：`skip_today` 与线程用同一个判据；缺省字段按缺省档展示。
+    #[test]
+    fn create_preview_reports_due_state_and_defaults() {
+        let draft = CronTaskDraft::from_args(
+            &serde_json::json!({"id":"a","at":"21:00","prompt":"p"}),
+            "/abs/vault",
+        );
+        let before = create_preview(&draft, &now((2026, 10, 18), 20, 0));
+        assert_eq!(before["skip_today"], serde_json::json!(false));
+        assert_eq!(before["vault"], "/abs/vault");
+        assert_eq!(before["delivery"], "notify-then-run");
+        assert_eq!(before["session"], "new");
+        assert_eq!(
+            before["days"],
+            serde_json::json!(["mon", "tue", "wed", "thu", "fri", "sat", "sun"])
+        );
+        assert_eq!(before["prompt"], "p");
+
+        let after = create_preview(&draft, &now((2026, 10, 18), 21, 30));
+        assert_eq!(after["skip_today"], serde_json::json!(true));
     }
 }

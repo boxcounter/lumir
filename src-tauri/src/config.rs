@@ -162,7 +162,9 @@ pub struct AppConfig {
     /// 运行时（M302）：会话建立时读一次 provider 参数、权限规则表与循环上限。
     pub harness: HarnessConfig,
     /// 定时任务（change add-cron-runtime-daemon）：`[cron]` 表。消费方是 `lumir-cron`
-    /// 守护线程——启动装载时快照一次，运行期**不热重载**（改配置需重启）。
+    /// 守护线程——启动时装载一次；运行期只经**注册通道**（`cron_task_*` 工具写完配置后投递的
+    /// 重载工作项，change add-cron-conversational-registration）重载任务集。**文件变化本身不触发
+    /// 重读**（不做文件监听）；该次重载读的是文件当下内容，先前未重启生效的手改可能被一并吸收。
     pub cron: CronConfig,
 }
 
@@ -836,8 +838,8 @@ impl SubagentsConfig {
 
 /// `[harness]` 表（change add-harness-probe §11）：对话运行时的配置面。
 ///
-/// **生效时点**：会话建立 / 每轮请求时由 harness 运行时读一次（M302），不热重载——与
-/// `editor` / `ui` 的「装载时施加」同路。`api_key` 明文（Alex 裁决点 2，理由见模块头）。
+/// **生效时点**：会话建立 / 每轮请求时由 harness 运行时读一次（M302），运行期不为它做热重载
+/// ——与 `editor` / `ui` 的「装载时施加」同路。`api_key` 明文（Alex 裁决点 2，理由见模块头）。
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct HarnessConfig {
@@ -1363,6 +1365,14 @@ pub struct ConfigSnapshot {
     #[serde(skip)]
     #[ts(skip)]
     pub cron_issues: Vec<CronTaskIssue>,
+    /// 整文件回落标记：读文件失败 / JSON 不合法 / 结构解析失败时置 `true`（本次用默认配置）。
+    ///
+    /// 消费者是 `lumir-cron` 线程的**重载**（change add-cron-conversational-registration design
+    /// §3.3）：重读失败必须保留既有任务集，不能把一次坏读当成「任务表变空」。不进序列化面
+    /// ——前端拿到的一直是「生效配置 + warning」，没有「是否回落」的语义。
+    #[serde(skip)]
+    #[ts(skip)]
+    pub fallback: bool,
 }
 
 /// 宽容解析的中间结构：字段类型放宽到可选 / Value，使单字段非法不至于拖垮整文件。
@@ -1617,6 +1627,8 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
                 warnings: vec![],
                 path: path_str,
                 cron_issues: vec![],
+                // 文件不存在不是「读失败」：空配置就是它的有效语义（首次启动常态）。
+                fallback: false,
             };
         }
         Err(e) => {
@@ -1625,6 +1637,7 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
                 warnings: vec![format!("无法读取配置文件 {path_str}：{e}，已使用默认配置")],
                 path: path_str,
                 cron_issues: vec![],
+                fallback: true,
             };
         }
     };
@@ -1641,6 +1654,7 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
                 )],
                 path: path_str,
                 cron_issues: vec![],
+                fallback: true,
             };
         }
     };
@@ -1682,6 +1696,7 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
                 warnings,
                 path: path_str,
                 cron_issues,
+                fallback: false,
             }
         }
         Err(e) => ConfigSnapshot {
@@ -1693,6 +1708,7 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
             )],
             path: path_str,
             cron_issues: vec![],
+            fallback: true,
         },
     }
 }
@@ -1804,6 +1820,55 @@ pub(crate) fn write_json_atomic(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     write_file_atomic(path, body.as_bytes()).map_err(|failure| failure.into_command_error(path))
+}
+
+/// config.json 的「读—改—写同锁」入口（change add-cron-conversational-registration design §4.1）。
+///
+/// 现状的两条写入口 `commands::write_config_value_to` / `write_last_vault_to` 的读发生在取
+/// [`CONFIG_WRITE_LOCK`] **之前**：两个写者可以各自读到旧版本，后写者把前者的改动顶掉（丢键）。
+/// 本函数把读、改、原子替换放进同一把锁，供新写者（调度工具）使用；**不新增第二套原子写实现**
+/// ——锁内只做一次读 + 一次 [`write_file_atomic`]。
+///
+/// - 读是宽容读入（缺失 / 不可解析 / 非对象一律按 `{}`）：与既有写回纪律同口径，未知顶层键在
+///   可解析时逐键保留；
+/// - 闭包只改它关心的键；返回 `Err` 时**不落盘**（文件逐字节不变）；
+/// - `version` 由 [`crate::commands::bump_config_version`] 统一补齐（不降高版本）。
+pub(crate) fn update_json_atomic(
+    path: &Path,
+    f: impl FnOnce(&mut serde_json::Value) -> Result<(), CommandError>,
+) -> Result<(), CommandError> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| {
+            CommandError::new(
+                "config_write_failed",
+                format!("无法创建配置目录 {}：{e}", dir.display()),
+            )
+        })?;
+    }
+    let _serialized = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut value = read_config_json(path);
+    f(&mut value)?;
+    crate::commands::bump_config_version(&mut value);
+    let body = serde_json::to_string_pretty(&value).expect("配置 Value 一定可序列化");
+    write_file_atomic(path, body.as_bytes()).map_err(|failure| failure.into_command_error(path))
+}
+
+/// 应用侧写 config.json 的共用读入（ADR 0002 §5 配置即数据）：读整份 JSON 为 `Value`，
+/// 解析失败或不是对象按 `{}` 起——与写回纪律配套的宽容读入，未知字段原样保留在 `Value` 里。
+///
+/// 单一实现：`commands::write_config_value_to` / `write_last_vault_to` 与
+/// [`update_json_atomic`] 共用（REVIEW.md「同一语义两处真源」条）。
+pub(crate) fn read_config_json(path: &Path) -> serde_json::Value {
+    let mut value: serde_json::Value = match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({})),
+        Err(_) => serde_json::json!({}),
+    };
+    if !value.is_object() {
+        value = serde_json::json!({});
+    }
+    value
 }
 
 /// 原子替换写的失败阶段：只决定错误文案（沿用既有的「写入 / 落盘」两句），错误码不随之变。
@@ -2094,6 +2159,10 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
 /// - 非致命（保留任务）：`delivery` / `session` 闭集合外取值回落缺省 + warning，`model`
 ///   形状非法只丢该键 + warning。
 ///
+/// 单条判定归 [`validate_cron_task`]（「一条合法任务」的唯一定义）；本函数只负责逐项循环与
+/// 装载期处置（丢弃 + warning + 结构化 issue）。change add-cron-conversational-registration 引入
+/// 的调度工具走同一个单条函数，差别只在处置（拒绝写入 + 结构化错误，不回落）。
+///
 /// 路径**是否存在**不在这里判定（design §7.2：装载期 stat 会拖慢启动，且外置盘可能后挂载）；
 /// `model` 是否在 `[harness].providers.<provider>.models` 内也不在这里判定（清单本身可在
 /// 配置里演化，运行期解析并给 `config_warning`，任务不丢）。
@@ -2104,256 +2173,286 @@ fn validate_cron(
     let Some(items) = raw.tasks else {
         return (CronConfig::default(), Vec::new());
     };
+    validate_cron_items(&items, warnings)
+}
+
+/// 逐项校验的循环体（装载期与只读读取 [`read_cron_tasks_at`] 共用）。
+fn validate_cron_items(
+    items: &[serde_json::Value],
+    warnings: &mut Vec<String>,
+) -> (CronConfig, Vec<CronTaskIssue>) {
     let mut tasks: Vec<CronTask> = Vec::with_capacity(items.len());
     let mut issues: Vec<CronTaskIssue> = Vec::new();
     for (index, item) in items.iter().enumerate() {
-        let position = index + 1;
-        let Some(map) = item.as_object() else {
-            reject_cron_task(
-                warnings,
-                &mut issues,
-                &format!("cron.tasks 的第 {position} 项"),
-                "tasks",
-                "",
-                "不是对象".to_string(),
-            );
-            continue;
-        };
-
-        // id：身份，先判——后面 warning 的定位也靠它。
-        let id = match map.get("id") {
-            Some(serde_json::Value::String(text))
-                if !text.trim().is_empty() && !text.chars().any(char::is_whitespace) =>
-            {
-                text.clone()
-            }
-            Some(serde_json::Value::String(text)) => {
-                reject_cron_task(
-                    warnings,
-                    &mut issues,
-                    &format!("cron.tasks 的第 {position} 项"),
-                    "id",
-                    text,
-                    "为空或含空白".to_string(),
-                );
-                continue;
-            }
-            _ => {
-                reject_cron_task(
-                    warnings,
-                    &mut issues,
-                    &format!("cron.tasks 的第 {position} 项"),
-                    "id",
-                    "",
-                    "缺失或不是字符串".to_string(),
-                );
-                continue;
-            }
-        };
-        let label = format!("cron.tasks 的 \"{id}\"");
+        let position_label = format!("cron.tasks 的第 {} 项", index + 1);
+        let id_label = |id: &str| format!("cron.tasks 的 \"{id}\"");
         // 重复 id 保留首项：判据是**已生效**清单（前项被别的原因丢掉时，本项不算重复）。
-        if tasks.iter().any(|task| task.id == id) {
-            reject_cron_task(
-                warnings,
-                &mut issues,
-                &label,
-                "id",
-                &id,
-                "与前面的任务重复（保留首项）".to_string(),
-            );
-            continue;
+        let existing_ids: Vec<String> = tasks.iter().map(|task| task.id.clone()).collect();
+        match validate_cron_task(item, &position_label, &id_label, &existing_ids) {
+            Ok(validated) => {
+                warnings.extend(validated.warnings);
+                tasks.push(validated.task);
+            }
+            Err(rejection) => {
+                reject_cron_task(warnings, &mut issues, &rejection.label, rejection.issue);
+            }
         }
+    }
+    (CronConfig { tasks }, issues)
+}
 
-        let vault = match map.get("vault") {
-            Some(serde_json::Value::String(text)) if Path::new(text).is_absolute() => text.clone(),
-            Some(serde_json::Value::String(text)) => {
-                reject_cron_task(
-                    warnings,
-                    &mut issues,
-                    &label,
-                    "vault",
-                    &id,
-                    format!("\"{text}\" 不是绝对路径"),
-                );
-                continue;
-            }
-            _ => {
-                reject_cron_task(
-                    warnings,
-                    &mut issues,
-                    &label,
-                    "vault",
-                    &id,
-                    "缺失或不是字符串".to_string(),
-                );
-                continue;
-            }
+/// 单条任务校验的失败：致命字段问题，或 id 与既有任务重复。
+///
+/// 两条通道的差别只在处置——装载期一律「丢弃 + warning」，工具侧（`cron_task_create`）
+/// 把两者都变成拒绝写入：`Invalid` ⇒ `cron_task_invalid`，`Duplicate` ⇒ `cron_task_exists`
+/// （工具查得到既有任务的 `at`，可以给模型一条可执行的方向）。
+///
+/// `label` 是这条问题应有的定位标签（在 [`validate_cron_task`] 里用两个 label 参数算好）：
+/// id 阶段的问题用项定位，其余用任务定位，装载期的 warning 因此与回落前的实现逐字节一致。
+pub(crate) struct CronTaskRejection {
+    pub duplicate: bool,
+    pub label: String,
+    pub issue: CronTaskIssue,
+}
+
+/// 单条任务校验的结果：生效任务 + 非致命回落。
+pub(crate) struct ValidatedCronTask {
+    pub task: CronTask,
+    /// 非致命回落的人话 warning（装载期逐条进 `ConfigSnapshot.warnings`；文案与
+    /// 回落前的实现逐字节一致）。
+    pub warnings: Vec<String>,
+    /// 非致命回落项（工具侧据此拒绝写入：模型可以改对，不像手改配置那样只能保留）。
+    pub degraded: Vec<CronTaskIssue>,
+}
+
+/// 「什么是一条合法任务」的**唯一定义**（change add-cron-conversational-registration design §5）：
+/// 字段顺序、致命 / 非致命的分界、每条 warning 的文案都只在这里。装载期与 `cron_task_create`
+/// 共用同一实现与同一套原因文案。
+///
+/// - `position_label`：id 不可读时用的人话定位（装载期「cron.tasks 的第 N 项」；工具
+///   「cron_task_create」）；
+/// - `id_label`：id 可读后的人话定位（装载期带任务 id；工具用固定名）；
+/// - `existing_ids`：重复 id 的判据（装载期 = 已生效项；工具 = 文件里的全部 id）。
+pub(crate) fn validate_cron_task(
+    item: &serde_json::Value,
+    position_label: &str,
+    id_label: &dyn Fn(&str) -> String,
+    existing_ids: &[String],
+) -> Result<ValidatedCronTask, CronTaskRejection> {
+    let invalid = |field: &str, task: &str, reason: String| -> CronTaskRejection {
+        let issue = CronTaskIssue {
+            task: task.to_string(),
+            field: field.to_string(),
+            reason,
         };
+        // id 阶段的问题（字段 `id` / `tasks`）用项定位，其余用任务定位——装载期 warning 与
+        // 回落前的实现逐字节一致。
+        let label = if issue.field == "tasks" || issue.field == "id" {
+            position_label.to_string()
+        } else {
+            id_label(&issue.task)
+        };
+        CronTaskRejection {
+            duplicate: false,
+            label,
+            issue,
+        }
+    };
+    let Some(map) = item.as_object() else {
+        return Err(invalid("tasks", "", "不是对象".to_string()));
+    };
 
-        let at = match map.get("at").and_then(|value| value.as_str()) {
-            Some(text) => match crate::cron::parse_at(text) {
-                Ok(_) => text.to_string(),
-                Err(reason) => {
-                    reject_cron_task(
-                        warnings,
-                        &mut issues,
-                        &label,
-                        "at",
-                        &id,
-                        format!("取值 \"{text}\" {reason}"),
-                    );
-                    continue;
-                }
+    // id：身份，先判——后面 warning 的定位也靠它。
+    let id = match map.get("id") {
+        Some(serde_json::Value::String(text))
+            if !text.trim().is_empty() && !text.chars().any(char::is_whitespace) =>
+        {
+            text.clone()
+        }
+        Some(serde_json::Value::String(text)) => {
+            return Err(invalid("id", text, "为空或含空白".to_string()));
+        }
+        _ => {
+            return Err(invalid("id", "", "缺失或不是字符串".to_string()));
+        }
+    };
+    let label = id_label(&id);
+    if existing_ids.iter().any(|existing| existing == &id) {
+        return Err(CronTaskRejection {
+            duplicate: true,
+            label: label.clone(),
+            issue: CronTaskIssue {
+                task: id,
+                field: "id".to_string(),
+                reason: "与前面的任务重复（保留首项）".to_string(),
             },
-            None => {
-                reject_cron_task(
-                    warnings,
-                    &mut issues,
-                    &label,
-                    "at",
-                    &id,
-                    "缺失或不是字符串".to_string(),
-                );
-                continue;
-            }
-        };
+        });
+    }
 
-        let days = match map.get("days") {
-            None | Some(serde_json::Value::Null) => CronWeekday::ALL.to_vec(),
-            Some(serde_json::Value::Array(entries)) => {
-                if entries.is_empty() {
-                    reject_cron_task(
-                        warnings,
-                        &mut issues,
-                        &label,
-                        "days",
-                        &id,
-                        "为空数组（缺省即全周，空数组没有意义）".to_string(),
-                    );
-                    continue;
-                }
-                let mut days = Vec::with_capacity(entries.len());
-                let mut invalid = None;
-                for entry in entries {
-                    match entry.as_str().and_then(crate::cron::parse_weekday) {
-                        Some(day) => days.push(day),
-                        None => {
-                            invalid = Some(entry.to_string());
-                            break;
-                        }
-                    }
-                }
-                if let Some(bad) = invalid {
-                    reject_cron_task(
-                        warnings,
-                        &mut issues,
-                        &label,
-                        "days",
-                        &id,
-                        format!("含非法值 {bad}（可选：{}）", CronWeekday::list()),
-                    );
-                    continue;
-                }
-                days
+    let vault = match map.get("vault") {
+        Some(serde_json::Value::String(text)) if Path::new(text).is_absolute() => text.clone(),
+        Some(serde_json::Value::String(text)) => {
+            return Err(invalid("vault", &id, format!("\"{text}\" 不是绝对路径")));
+        }
+        _ => {
+            return Err(invalid("vault", &id, "缺失或不是字符串".to_string()));
+        }
+    };
+
+    let at = match map.get("at").and_then(|value| value.as_str()) {
+        Some(text) => match crate::cron::parse_at(text) {
+            Ok(_) => text.to_string(),
+            Err(reason) => {
+                return Err(invalid("at", &id, format!("取值 \"{text}\" {reason}")));
             }
-            Some(_) => {
-                reject_cron_task(
-                    warnings,
-                    &mut issues,
-                    &label,
+        },
+        None => {
+            return Err(invalid("at", &id, "缺失或不是字符串".to_string()));
+        }
+    };
+
+    let days = match map.get("days") {
+        None | Some(serde_json::Value::Null) => CronWeekday::ALL.to_vec(),
+        Some(serde_json::Value::Array(entries)) => {
+            if entries.is_empty() {
+                return Err(invalid(
                     "days",
                     &id,
-                    "应为数组".to_string(),
-                );
-                continue;
-            }
-        };
-
-        let prompt = match map.get("prompt").and_then(|value| value.as_str()) {
-            Some(text) if !text.trim().is_empty() => text.to_string(),
-            Some(_) => {
-                reject_cron_task(
-                    warnings,
-                    &mut issues,
-                    &label,
-                    "prompt",
-                    &id,
-                    "为空白或空串（没有载荷的任务无从运行）".to_string(),
-                );
-                continue;
-            }
-            None => {
-                reject_cron_task(
-                    warnings,
-                    &mut issues,
-                    &label,
-                    "prompt",
-                    &id,
-                    "缺失或不是字符串（没有载荷的任务无从运行）".to_string(),
-                );
-                continue;
-            }
-        };
-
-        // 非致命三项：回落 / 丢键，任务保留。
-        let delivery = match map.get("delivery") {
-            None | Some(serde_json::Value::Null) => DeliveryPolicy::default(),
-            Some(serde_json::Value::String(text)) => match DeliveryPolicy::parse(text) {
-                Some(policy) => policy,
-                None => {
-                    warnings.push(format!(
-                        "配置项 {label} 的 delivery 取值 \"{text}\" 非法（可选：notify-then-run、run-then-notify、silent-run），已回退为 notify-then-run"
-                    ));
-                    DeliveryPolicy::default()
-                }
-            },
-            Some(_) => {
-                warnings.push(format!(
-                    "配置项 {label} 的 delivery 不是字符串，已回退为 notify-then-run"
+                    "为空数组（缺省即全周，空数组没有意义）".to_string(),
                 ));
+            }
+            let mut days = Vec::with_capacity(entries.len());
+            let mut invalid_entry = None;
+            for entry in entries {
+                match entry.as_str().and_then(crate::cron::parse_weekday) {
+                    Some(day) => days.push(day),
+                    None => {
+                        invalid_entry = Some(entry.to_string());
+                        break;
+                    }
+                }
+            }
+            if let Some(bad) = invalid_entry {
+                return Err(invalid(
+                    "days",
+                    &id,
+                    format!("含非法值 {bad}（可选：{}）", CronWeekday::list()),
+                ));
+            }
+            days
+        }
+        Some(_) => {
+            return Err(invalid("days", &id, "应为数组".to_string()));
+        }
+    };
+
+    let prompt = match map.get("prompt").and_then(|value| value.as_str()) {
+        Some(text) if !text.trim().is_empty() => text.to_string(),
+        Some(_) => {
+            return Err(invalid(
+                "prompt",
+                &id,
+                "为空白或空串（没有载荷的任务无从运行）".to_string(),
+            ));
+        }
+        None => {
+            return Err(invalid(
+                "prompt",
+                &id,
+                "缺失或不是字符串（没有载荷的任务无从运行）".to_string(),
+            ));
+        }
+    };
+
+    // 非致命三项：回落 / 丢键，任务保留。warning 文案与回落前的实现逐字节一致；同时记一条
+    // 结构化回落项（工具侧据此拒绝写入——模型可以改对，手改配置的作者只能等下一次 warning）。
+    let mut warnings = Vec::new();
+    let mut degraded: Vec<CronTaskIssue> = Vec::new();
+    let mut degrade = |field: &str, reason: String, warning: String| {
+        warnings.push(warning);
+        degraded.push(CronTaskIssue {
+            task: id.clone(),
+            field: field.to_string(),
+            reason,
+        });
+    };
+    let delivery = match map.get("delivery") {
+        None | Some(serde_json::Value::Null) => DeliveryPolicy::default(),
+        Some(serde_json::Value::String(text)) => match DeliveryPolicy::parse(text) {
+            Some(policy) => policy,
+            None => {
+                degrade(
+                    "delivery",
+                    format!(
+                        "取值 \"{text}\" 非法（可选：notify-then-run、run-then-notify、silent-run）"
+                    ),
+                    format!(
+                        "配置项 {label} 的 delivery 取值 \"{text}\" 非法（可选：notify-then-run、run-then-notify、silent-run），已回退为 notify-then-run"
+                    ),
+                );
                 DeliveryPolicy::default()
             }
-        };
-        let session = match map.get("session") {
-            None | Some(serde_json::Value::Null) => SessionShape::default(),
-            Some(serde_json::Value::String(text)) => match SessionShape::parse(text) {
-                Some(shape) => shape,
-                None => {
-                    warnings.push(format!(
+        },
+        Some(_) => {
+            degrade(
+                "delivery",
+                "不是字符串（期望闭集合取值）".to_string(),
+                format!("配置项 {label} 的 delivery 不是字符串，已回退为 notify-then-run"),
+            );
+            DeliveryPolicy::default()
+        }
+    };
+    let session = match map.get("session") {
+        None | Some(serde_json::Value::Null) => SessionShape::default(),
+        Some(serde_json::Value::String(text)) => match SessionShape::parse(text) {
+            Some(shape) => shape,
+            None => {
+                degrade(
+                    "session",
+                    format!("取值 \"{text}\" 非法（可选：new、dedicated）"),
+                    format!(
                         "配置项 {label} 的 session 取值 \"{text}\" 非法（可选：new、dedicated），已回退为 new"
-                    ));
-                    SessionShape::default()
-                }
-            },
-            Some(_) => {
-                warnings.push(format!(
-                    "配置项 {label} 的 session 不是字符串，已回退为 new"
-                ));
+                    ),
+                );
                 SessionShape::default()
             }
-        };
-        let model = match map.get("model") {
-            None | Some(serde_json::Value::Null) => None,
-            Some(serde_json::Value::String(text)) => {
-                let trimmed = text.trim();
-                if trimmed.is_empty() {
-                    warnings.push(format!(
-                        "配置项 {label} 的 model 为空，已按未配置处理（该任务保留）"
-                    ));
-                    None
-                } else {
-                    Some(trimmed.to_string())
-                }
-            }
-            Some(_) => {
-                warnings.push(format!(
-                    "配置项 {label} 的 model 应为模型 id 字符串，已忽略该键（该任务保留）"
-                ));
+        },
+        Some(_) => {
+            degrade(
+                "session",
+                "不是字符串（期望闭集合取值）".to_string(),
+                format!("配置项 {label} 的 session 不是字符串，已回退为 new"),
+            );
+            SessionShape::default()
+        }
+    };
+    let model = match map.get("model") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(text)) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                degrade(
+                    "model",
+                    "为空（期望模型 id 字符串）".to_string(),
+                    format!("配置项 {label} 的 model 为空，已按未配置处理（该任务保留）"),
+                );
                 None
+            } else {
+                Some(trimmed.to_string())
             }
-        };
+        }
+        Some(_) => {
+            degrade(
+                "model",
+                "应为模型 id 字符串".to_string(),
+                format!("配置项 {label} 的 model 应为模型 id 字符串，已忽略该键（该任务保留）"),
+            );
+            None
+        }
+    };
 
-        tasks.push(CronTask {
+    Ok(ValidatedCronTask {
+        task: CronTask {
             id,
             vault,
             at,
@@ -2362,9 +2461,10 @@ fn validate_cron(
             delivery,
             session,
             model,
-        });
-    }
-    (CronConfig { tasks }, issues)
+        },
+        warnings,
+        degraded,
+    })
 }
 
 /// 丢弃一条任务项：人话 warning 给人读，[`CronTaskIssue`] 供调度线程落诊断事件——两者同源
@@ -2373,16 +2473,34 @@ fn reject_cron_task(
     warnings: &mut Vec<String>,
     issues: &mut Vec<CronTaskIssue>,
     label: &str,
-    field: &str,
-    task: &str,
-    reason: String,
+    issue: CronTaskIssue,
 ) {
-    warnings.push(format!("配置项 {label} {reason}，已丢弃该任务"));
-    issues.push(CronTaskIssue {
-        task: task.to_string(),
-        field: field.to_string(),
-        reason,
-    });
+    warnings.push(format!("配置项 {label} {}，已丢弃该任务", issue.reason));
+    issues.push(issue);
+}
+
+/// 只读读取 `[cron].tasks` 的生效任务（`cron_task_list` 用）：**不写任何文件**、不触发退役值
+/// 迁移（[`load_from`] 有那一笔写副作用，工具侧不能借用它）。
+///
+/// 宽容读入与装载期同口径：文件缺失 / 不可解析 / `[cron]` 形状不对一律按空表；逐项判定走
+/// [`validate_cron_items`]（与装载期同一套校验与处置——非法项在列表里同样不可见）。
+pub(crate) fn read_cron_tasks_at(path: &Path) -> Vec<CronTask> {
+    let value = match std::fs::read_to_string(path) {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(value) => value,
+            Err(_) => return Vec::new(),
+        },
+        Err(_) => return Vec::new(),
+    };
+    let Some(items) = value
+        .get("cron")
+        .and_then(|cron| cron.get("tasks"))
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let (config, _issues) = validate_cron_items(items, &mut Vec::new());
+    config.tasks
 }
 
 /// `[vault]` 表的校验（change vault-open-ignore-set §2.9 + change ignore-tiers-map）：
@@ -6316,6 +6434,96 @@ mod tests {
                 "{:?}",
                 snap.warnings
             );
+            assert!(snap.fallback, "整文件回落必须如实标记：{body}");
         }
+    }
+
+    /// 回落标记只在「本次没能按文件解释」时置位（change add-cron-conversational-registration
+    /// design §3.3 的判据）：正常解析与文件缺失都不算失败。
+    #[test]
+    fn fallback_flag_marks_only_real_failures() {
+        let normal = TempFile::new(r#"{"last_vault":"/tmp/vault"}"#);
+        assert!(!load_from(&normal.0).fallback);
+        assert!(!load_from(&TempFile::missing().0).fallback, "缺失是常态");
+        let broken = TempFile::new("{not json");
+        assert!(load_from(&broken.0).fallback);
+    }
+
+    // -----------------------------------------------------------------------
+    // 读—改—写同锁（change add-cron-conversational-registration tasks 1.3 / 1.4）
+    // -----------------------------------------------------------------------
+
+    /// 并发写者各改一个键：两个键都在、无 tmp 残留、未知顶层键保留。
+    ///
+    /// 区分度：去掉 `update_json_atomic` 里的锁（或把读移到锁外）后，两个线程会读到同一份旧
+    /// 版本、后写者顶掉前者的键——本用例必 FAIL。
+    #[test]
+    fn update_json_atomic_serializes_concurrent_writers() {
+        let dir = TempDir::new("update-json");
+        let path = dir.config_path();
+        std::fs::write(&path, r#"{"unknown_top":{"keep":true}}"#).unwrap();
+
+        let first = path.clone();
+        let second = path.clone();
+        let one = std::thread::spawn(move || {
+            update_json_atomic(&first, |value| {
+                value["ui"]["theme"] = serde_json::json!("dark");
+                Ok(())
+            })
+            .expect("写 ui.theme")
+        });
+        let two = std::thread::spawn(move || {
+            update_json_atomic(&second, |value| {
+                value["cron"]["tasks"] = serde_json::json!([]);
+                Ok(())
+            })
+            .expect("写 cron.tasks")
+        });
+        one.join().unwrap();
+        two.join().unwrap();
+
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["ui"]["theme"], serde_json::json!("dark"));
+        assert_eq!(value["cron"]["tasks"], serde_json::json!([]));
+        assert_eq!(value["unknown_top"], serde_json::json!({"keep": true}));
+        assert_eq!(value["version"], serde_json::json!(SCHEMA_VERSION));
+
+        // 没有 tmp 残留（原子写成功即 rename 走，失败也清理）。
+        let leftovers: Vec<String> = std::fs::read_dir(dir.0.clone())
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "tmp 残留：{leftovers:?}");
+    }
+
+    /// 闭包返回 `Err` 时不落盘：文件逐字节不变（失败路径的区分度由前一条并发用例提供——
+    /// 同一入口能成功写）。
+    #[test]
+    fn update_json_atomic_does_not_write_when_the_closure_fails() {
+        let dir = TempDir::new("update-json-abort");
+        let path = dir.config_path();
+        std::fs::write(&path, r#"{"ui":{"theme":"light"}}"#).unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let error = update_json_atomic(&path, |value| {
+            value["ui"]["theme"] = serde_json::json!("dark");
+            Err(CommandError::new("config_write_failed", "拒绝写入"))
+        })
+        .expect_err("闭包失败必须冒泡");
+        assert_eq!(error.code, "config_write_failed");
+        assert_eq!(std::fs::read(&path).unwrap(), before, "失败不得落盘");
+
+        // 同路径能成功写（证明「没写」不是因为写不进去）。
+        update_json_atomic(&path, |value| {
+            value["ui"]["theme"] = serde_json::json!("dark");
+            Ok(())
+        })
+        .expect("同一路径应可写");
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["ui"]["theme"], serde_json::json!("dark"));
     }
 }

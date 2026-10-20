@@ -325,6 +325,13 @@ pub trait RunContext {
         true
     }
 
+    /// 调度工具端口（change add-cron-conversational-registration tasks 2.2）：交互上下文返回
+    /// `turn::run_turn` 注入的端口；**交接契约槽位与子运行恒 `None`**——那些运行的注册表里
+    /// 本来就没有三件调度工具。
+    fn cron_port(&self) -> Option<std::sync::Arc<dyn crate::cron::CronPort>> {
+        None
+    }
+
     /// 用户回合开始（在 user 消息入队**之前**调用）：交互上下文借此把排队中的后台完成
     /// 通知并入本回合输入、取消待起唤醒并清零链计数（design §12.6.2）。
     fn begin_user_turn(&mut self) {}
@@ -390,6 +397,10 @@ pub struct SessionContext<'a> {
     /// 本回合运行契约的工具白名单（`RunSpec.tool_policy`）：构造时从 runtime 取一次。
     /// `None` = 交互路径（没有交接契约，暴露完整注册表）。
     tool_policy: Option<ToolPolicy>,
+    /// 调度工具端口（change add-cron-conversational-registration）：由 `turn::run_turn` 注入，
+    /// **只在交互路径**（`tool_policy = None`）对模型可见 / 可执行（[`Self::cron_port`] 的判据）。
+    /// 单测直接构造上下文时缺省 `None`。
+    cron: Option<std::sync::Arc<dyn crate::cron::CronPort>>,
 }
 
 impl<'a> SessionContext<'a> {
@@ -445,7 +456,23 @@ impl<'a> SessionContext<'a> {
             catalog,
             hub,
             tool_policy,
+            cron: None,
         }
+    }
+
+    /// 注入调度工具端口（`turn::run_turn` 的接线点）：交互路径持有一个，
+    /// [`Self::cron_port`] 在交接契约槽位仍返回 `None`——可见面与可执行面共用一个判据。
+    pub fn with_cron_port(
+        mut self,
+        port: Option<std::sync::Arc<dyn crate::cron::CronPort>>,
+    ) -> Self {
+        self.cron = port;
+        self
+    }
+
+    /// 本回合是否**交互发送路径**（没有交接契约）：三件调度工具的唯一注册面。
+    fn is_interactive(&self) -> bool {
+        self.tool_policy.is_none()
     }
 
     /// 会话内批准缓存的命名空间：`(vault 根, 会话 id)`（design §6）。会话 id 取自留存文件名
@@ -473,11 +500,23 @@ impl RunContext for SessionContext<'_> {
     }
 
     fn tool_definitions(&self) -> Vec<serde_json::Value> {
-        let definitions = gate_tool_definitions(
+        let mut definitions = gate_tool_definitions(
             tools::definitions_with_subagents(&self.catalog),
             self.config.subagents.enabled,
         );
+        // 三件调度工具只在**交互发送路径**追加（change add-cron-conversational-registration
+        // design §2.2）：交接契约槽位（cron 定时 / 点击）与子运行拿到的定义里没有它们。
+        if self.is_interactive() {
+            definitions.extend(tools::cron_definitions());
+        }
         filter_tool_definitions(definitions, self.tool_policy.as_ref())
+    }
+
+    fn cron_port(&self) -> Option<std::sync::Arc<dyn crate::cron::CronPort>> {
+        if !self.is_interactive() {
+            return None;
+        }
+        self.cron.clone()
     }
 
     fn decide(&self, tool: &str, subject: &str, args: &serde_json::Value) -> permissions::Verdict {
@@ -503,23 +542,26 @@ impl RunContext for SessionContext<'_> {
         if let Some((code, message)) = self.reject_unavailable() {
             return ApprovalOutcome::Unavailable { code, message };
         }
-        // 事件载荷的四件展示字段在请求被 park 前取出（park 取走所有权）；批准卡与事件同源。
+        // 事件载荷的展示字段在请求被 park 前取出（park 取走所有权）；批准卡与事件同源。
         let tool = request.tool.clone();
         let diff = request.diff.clone();
         let argv = request.argv.clone();
         let purpose = request.purpose.clone();
         let reason = request.reason.clone();
+        let cron_task = request.cron_task.clone();
         let id = match self.runtime.park_approval(self.scope, request) {
             Ok(id) => id,
             Err(error) => return ApprovalOutcome::Failed(error),
         };
-        self.sink.emit(events::approval_request_with_purpose(
+        self.sink.emit(events::approval_request_full(
             &id,
             &tool,
             diff.as_deref(),
             argv.as_deref(),
             purpose.as_deref(),
             reason.as_ref(),
+            None,
+            cron_task.as_ref(),
         ));
         // 未决批准项不自动超时通过：通道失效（会话重置 / vault 切换）⇒ 判过期，不执行。
         match rx.recv() {
@@ -860,12 +902,31 @@ mod tests {
         runtime.acquire_turn(&scope, &config).unwrap();
         let sink = NullSink;
         let ctx = SessionContext::new(&sink, &runtime, &scope, &config);
+        // 交互路径 = 8 件 vault 工具（逐字节不变）+ 3 件调度工具（子代理关闭时 `task` 缺席）。
+        let definitions = ctx.tool_definitions();
         assert_eq!(
-            ctx.tool_definitions(),
-            tools::definitions(),
-            "enabled=false 必须与既有 8 件清单深度相等"
+            definitions[..tools::definitions().len()],
+            tools::definitions()[..],
+            "enabled=false 时 8 件 vault 清单必须逐字节不变"
         );
-        assert_eq!(ctx.tool_definitions().len(), tools::TOOL_NAMES.len());
+        assert_eq!(
+            definitions.len(),
+            tools::TOOL_NAMES.len() + tools::CRON_TOOL_NAMES.len()
+        );
+        let names: Vec<&str> = definitions
+            .iter()
+            .map(|definition| definition["name"].as_str().unwrap())
+            .collect();
+        for cron_tool in tools::CRON_TOOL_NAMES {
+            assert!(
+                names.contains(&cron_tool),
+                "交互路径应注册 {cron_tool}：{names:?}"
+            );
+        }
+        assert!(
+            !names.contains(&"task"),
+            "子代理关闭时 task 必须缺席：{names:?}"
+        );
         runtime.release_turn(&scope);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -908,9 +969,14 @@ mod tests {
         let sink = NullSink;
         let ctx = SessionContext::new(&sink, &runtime, &scope, &config);
         let definitions = ctx.tool_definitions();
-        assert_eq!(definitions.len(), tools::definitions().len() + 1);
-        let task = definitions.last().unwrap();
-        assert_eq!(task["name"], "task");
+        assert_eq!(
+            definitions.len(),
+            tools::definitions().len() + 1 + tools::CRON_TOOL_NAMES.len()
+        );
+        let task = definitions
+            .iter()
+            .find(|definition| definition["name"] == "task")
+            .expect("enabled=true 时 task 必须注册");
         let description = task["description"].as_str().unwrap();
         assert!(description.contains("可用子代理"), "{description}");
         assert!(description.contains("- explore："), "{description}");
@@ -987,12 +1053,20 @@ mod tests {
             !definitions.iter().any(|defined| defined["name"] == "task"),
             "契约未声明 task，无人值守运行不得看见委派工具"
         );
+        assert!(
+            !definitions.iter().any(|defined| tools::CRON_TOOL_NAMES
+                .contains(&defined["name"].as_str().unwrap_or_default())),
+            "交接契约槽位不得看见三件调度工具：{definitions:?}"
+        );
 
-        // 白名单随 busy 一起撤销：下一轮交互发送回到完整注册表（task 重新可见）。
+        // 白名单随 busy 一起撤销：下一轮交互发送回到完整注册表（task 与三件调度工具重新可见）。
         runtime.release_turn(&scope);
         assert!(runtime.tool_policy(&scope).is_none());
         let ctx = SessionContext::new(&sink, &runtime, &scope, &config);
-        assert_eq!(ctx.tool_definitions().len(), tools::definitions().len() + 1);
+        assert_eq!(
+            ctx.tool_definitions().len(),
+            tools::definitions().len() + 1 + tools::CRON_TOOL_NAMES.len()
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

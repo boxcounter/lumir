@@ -27,7 +27,7 @@ pub mod window_state;
 use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind};
 use tauri::{Emitter, Manager};
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Mutex;
 use std::time::Instant;
@@ -775,7 +775,7 @@ struct CronRuntimeInner {
     last_focus_poke: Option<Instant>,
 }
 
-/// 投给守护线程的三类消息。
+/// 投给守护线程的四类消息。
 enum CronMessage {
     /// 拉取兜底的一次评估（带触发源）。
     Poke(cron::Trigger),
@@ -783,7 +783,15 @@ enum CronMessage {
     RunResult(CronRunResult),
     /// 用户点击了一条通知（`tap`）：按该任务的触达策略聚焦 / 打开会话 / 发起运行。
     Click { task: String },
+    /// 任务表可能变了：重读配置并替换任务集（change add-cron-conversational-registration
+    /// design §3.1）。**载荷为空**——配置是唯一真源，带任务载荷等于在进程里放第二份任务表。
+    /// `ack` 是一次性回执：工具侧 `recv_timeout` 等它，把「已生效 / 未确认」如实写进回执。
+    Reload { ack: Sender<cron::ReloadOutcome> },
 }
+
+/// 工具侧等待重载回执的上限（design §3.1）：工具跑在 LLM 线程上，不阻塞 UI；线程处理一次
+/// 重载只是一次小文件读。超时即 `pending_restart`（配置已写入是事实，不回滚）。
+const RELOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// `cron_run_result` 回执载荷（design §6.1）：运行终态的**唯一**来源。成功与否只由前端在终态
 /// 时交一次，Rust 不据事件流或字符串猜（REVIEW.md「同一语义两处真源」条）。
@@ -842,6 +850,88 @@ impl CronRuntime {
         inner.last_focus_poke = Some(Instant::now());
         let _ = inner.tx.send(CronMessage::Poke(cron::Trigger::Focus));
     }
+
+    /// 投一次重载并等回执（design §3.1）：`None` = 线程不在 / 超时（配置已写入，运行时未确认）。
+    fn reload(&self) -> Option<cron::ReloadOutcome> {
+        let (ack, reply) = std::sync::mpsc::channel();
+        self.send(CronMessage::Reload { ack });
+        reply.recv_timeout(RELOAD_TIMEOUT).ok()
+    }
+}
+
+/// 调度工具端口的 tauri 实现（change add-cron-conversational-registration tasks 2.2）：
+/// 落盘逻辑与「什么是一条合法任务」都在 `cron.rs`（无 tauri 依赖），本结构只补两件接线层才有
+/// 的东西——配置目录解析与重载通道。
+pub struct CronToolPort {
+    app: tauri::AppHandle,
+}
+
+impl CronToolPort {
+    pub fn new(app: tauri::AppHandle) -> Self {
+        Self { app }
+    }
+
+    fn config_path() -> Result<PathBuf, cron::CronToolError> {
+        config::config_dir()
+            .map(|dir| dir.join("config.json"))
+            .map_err(cron::CronToolError::from_command_error)
+    }
+
+    /// 写后投重载：只有线程回执确认（且没有失败原因）才算 `active`（design §2.4 / §3.8）。
+    fn reload_effect(&self) -> (cron::CronEffect, Vec<String>) {
+        let outcome = self.app.state::<CronRuntime>().reload();
+        if outcome.is_none() {
+            // ack 超时 / 线程不在：配置已写入是事实（不回滚），但运行时未确认要留痕。
+            logging::config_warning(
+                "cron",
+                "任务集重载未在 1s 内得到确认：配置已写入，运行时未确认（下次启动生效）",
+            );
+        }
+        // 刚写完配置却重载出空任务集：文件可能在写入后被外部改掉。回执仍是 active
+        //（线程确实按文件当下内容重载了），但留一条可诊断的 warning。
+        if let Some(outcome) = &outcome {
+            if outcome.error.is_none() && outcome.applied == 0 {
+                logging::config_warning("cron", "任务集重载后为空（配置可能在写入后被外部修改）");
+            }
+        }
+        cron::effect_of(outcome.as_ref())
+    }
+}
+
+impl cron::CronPort for CronToolPort {
+    fn create(
+        &self,
+        draft: cron::CronTaskDraft,
+    ) -> Result<cron::CronCreateOutcome, cron::CronToolError> {
+        let task = cron::create_task_at(&Self::config_path()?, &draft)?;
+        let (effect, seeded) = self.reload_effect();
+        Ok(cron::CronCreateOutcome {
+            skip_today: seeded.iter().any(|id| id == &task.id),
+            task,
+            effect,
+        })
+    }
+
+    fn list(&self) -> Result<Vec<cron::CronTaskSummary>, cron::CronToolError> {
+        let config_path = Self::config_path()?;
+        let config_dir = config_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        Ok(cron::list_tasks_at(
+            &config_path,
+            &cron::state_path(&config_dir),
+        ))
+    }
+
+    fn remove(&self, id: &str) -> Result<cron::CronRemoveOutcome, cron::CronToolError> {
+        cron::remove_task_at(&Self::config_path()?, id)?;
+        let (effect, _seeded) = self.reload_effect();
+        Ok(cron::CronRemoveOutcome {
+            id: id.to_string(),
+            effect,
+        })
+    }
 }
 
 /// 拉取兜底的一次投递（启动就绪 / 主窗口获得焦点 / 目标 vault 打开成功共用同一个入口）。
@@ -875,15 +965,9 @@ pub fn cron_run_result(
         }));
 }
 
-/// 守护线程的一条待评估任务：配置里的任务 + 启动时解析一次的 `at` 分钟数 + 规范化的目标
-/// vault 根（`canonicalize` —— macOS `/tmp` → `/private/tmp` 软链下，配置路径与 vault 根
-/// 逐字比较会假判「不是当前 vault」）。
-#[derive(Debug, Clone)]
-struct ScheduledTask {
-    task: config::CronTask,
-    at_minutes: u16,
-    vault_root: String,
-}
+/// 守护线程的一条待评估任务（形态与构造点归 `cron::ScheduledTask` / `cron::schedule_of`：
+/// 启动装载与运行期重载共用同一段 `parse_at` + vault 路径规范化）。
+type ScheduledTask = cron::ScheduledTask;
 
 /// 一次在途运行的登记（`run_id` → 任务与触达策略）。
 struct InflightRun {
@@ -915,6 +999,9 @@ fn start_cron(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
 }
 
 /// 守护线程主循环：30s tick 或被 poke 唤醒后评估全部任务（design §4.1）。
+///
+/// **空任务表不再退出线程**（change add-cron-conversational-registration design §3.2）：
+/// 空表只是空转（零派发、零报错），否则运行期注册的任务没有消费者。
 fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
     let snapshot = match config::load() {
         Ok(snapshot) => snapshot,
@@ -930,33 +1017,10 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
     for issue in &snapshot.cron_issues {
         logging::cron_task_invalid(&issue.task, &issue.field, &issue.reason);
     }
-    let tasks: Vec<ScheduledTask> = snapshot
-        .config
-        .cron
-        .tasks
-        .iter()
-        .filter_map(|task| match cron::parse_at(&task.at) {
-            Ok(at_minutes) => {
-                let vault_root = std::fs::canonicalize(&task.vault)
-                    .unwrap_or_else(|_| PathBuf::from(&task.vault))
-                    .display()
-                    .to_string();
-                Some(ScheduledTask {
-                    task: task.clone(),
-                    at_minutes,
-                    vault_root,
-                })
-            }
-            // 校验期已挡过一次；这里只防实现漂移（校验后 at 又被改坏），不静默丢。
-            Err(reason) => {
-                logging::cron_task_invalid(&task.id, "at", reason);
-                None
-            }
-        })
-        .collect();
-    // `tasks: []` ⇒ 守护空转：不触发任何任务、不报错（spec「空任务表」）。
-    if tasks.is_empty() {
-        return;
+    let (tasks, drift) = cron::schedule_of(&snapshot.config.cron.tasks);
+    for issue in &drift {
+        // 校验期已挡过一次；这里只防实现漂移（校验后 at 又被改坏），不静默丢。
+        logging::cron_task_invalid(&issue.task, &issue.field, &issue.reason);
     }
     let state_path = match config::config_dir() {
         Ok(dir) => cron::state_path(&dir),
@@ -984,14 +1048,17 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
         clicked_today: std::collections::HashMap::new(),
         cached_vault: None,
     };
-    // 通知权限（design §4.3）：有有效任务时检查一次；未决定申请一次；被拒落一条 warning
-    // 且不反复申请。查询失败不阻断启动（通知链路降级，判定与运行不受影响）。
-    ensure_notification_permission(app);
+    // 通知权限（design §4.3）：**有有效任务时**检查一次；未决定申请一次；被拒落一条 warning
+    // 且不反复申请。空表不检查——运行期注册引入的任务由重载补检（design §3.3 第 6 步）。
+    if !runner.tasks.is_empty() {
+        ensure_notification_permission(app);
+    }
     loop {
         match rx.recv_timeout(cron::TICK) {
             Ok(CronMessage::Poke(trigger)) => runner.evaluate(trigger),
             Ok(CronMessage::RunResult(result)) => runner.finish(result),
             Ok(CronMessage::Click { task }) => runner.handle_click(&task),
+            Ok(CronMessage::Reload { ack }) => runner.reload(ack),
             Err(RecvTimeoutError::Timeout) => runner.evaluate(cron::Trigger::Timer),
             Err(RecvTimeoutError::Disconnected) => return,
         }
@@ -1011,8 +1078,9 @@ struct CronRunner {
     tasks: Vec<ScheduledTask>,
     state: cron::CronState,
     state_path: PathBuf,
-    /// 运行交接契约里的轮次预算（`[harness].loop_max`）：装载期快照一次，与 cron 的
-    /// 「配置不热重载」口径一致。交接载荷是这次运行的唯一预算来源。
+    /// 运行交接契约里的轮次预算（`[harness].loop_max`）：启动装载时取一次，**随运行期重载
+    /// 更新**（change add-cron-conversational-registration tasks 3.7——重载读的是文件当下内容，
+    /// 与配置读数绑定的运行参数一起换）。交接载荷是这次运行的唯一预算来源。
     loop_max: u32,
     /// 在途运行：`run_id` → 任务。同一任务同一时刻至多一个（design §6.6）。
     inflight: std::collections::HashMap<String, InflightRun>,
@@ -1057,6 +1125,81 @@ impl CronRunner {
         for index in 0..self.tasks.len() {
             let scheduled = self.tasks[index].clone();
             self.dispatch(&scheduled, &now, trigger, current_vault.as_deref());
+        }
+    }
+
+    /// 运行期重载（change add-cron-conversational-registration design §3.3）：重读配置 → 重建
+    /// 任务集 → 新增且已过点的任务写当日种子 → 替换任务集与轮次预算 → 清理被删任务的内存记录
+    /// （在途运行保留，它还要收尾回执）→ 任务集非空时补检通知权限 → 回执。
+    ///
+    /// 读失败（不可读 / 非法 JSON / 整文件回落）**保留原任务集**：清空会让「配置文件被外部
+    /// 编辑器写坏一瞬间」变成「今天所有提醒消失」。
+    fn reload(&mut self, ack: Sender<cron::ReloadOutcome>) {
+        let outcome = self.apply_reload();
+        let _ = ack.send(outcome);
+    }
+
+    fn apply_reload(&mut self) -> cron::ReloadOutcome {
+        let snapshot = match config::load() {
+            Ok(snapshot) if !snapshot.fallback => snapshot,
+            Ok(snapshot) => {
+                let message = snapshot
+                    .warnings
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "配置重读失败".to_string());
+                logging::config_warning(
+                    "cron",
+                    &format!("任务集重载失败，保留原任务集：{message}"),
+                );
+                return cron::ReloadOutcome {
+                    applied: self.tasks.len(),
+                    seeded: Vec::new(),
+                    error: Some(message),
+                };
+            }
+            Err(error) => {
+                logging::config_warning(
+                    "cron",
+                    &format!("任务集重载失败，保留原任务集：{}", error.message),
+                );
+                return cron::ReloadOutcome {
+                    applied: self.tasks.len(),
+                    seeded: Vec::new(),
+                    error: Some(error.message),
+                };
+            }
+        };
+        for issue in &snapshot.cron_issues {
+            logging::cron_task_invalid(&issue.task, &issue.field, &issue.reason);
+        }
+        let (next, drift) = cron::schedule_of(&snapshot.config.cron.tasks);
+        for issue in &drift {
+            logging::cron_task_invalid(&issue.task, &issue.field, &issue.reason);
+        }
+        let now = cron::LocalNow::now();
+        let plan = cron::plan_reload(
+            &self.tasks,
+            next,
+            snapshot.config.harness.loop_max,
+            &now,
+            &mut self.state,
+        );
+        if !plan.seeded.is_empty() {
+            self.persist_state();
+        }
+        self.tasks = plan.tasks;
+        self.loop_max = plan.loop_max;
+        cron::retain_live_tasks(&mut self.skipped_today, &plan.removed);
+        cron::retain_live_tasks(&mut self.clicked_today, &plan.removed);
+        // 在途运行（`self.inflight`）**不清理**：被删任务的运行还要收尾并回执（design §3.3 第 5 步）。
+        if !self.tasks.is_empty() {
+            ensure_notification_permission(&self.app);
+        }
+        cron::ReloadOutcome {
+            applied: self.tasks.len(),
+            seeded: plan.seeded,
+            error: None,
         }
     }
 

@@ -573,23 +573,16 @@ pub(crate) fn write_last_vault_to(path: &Path, root: &Path) -> Result<(), Comman
     config::write_json_atomic(path, &value)
 }
 
-/// 应用侧写 config.json 的共用读入（ADR 0002 §5 配置即数据）：读整份 JSON 为 `Value`，
-/// 解析失败或不是对象按 `{}` 起——与写回纪律配套的宽容读入，未知字段原样保留在 Value 里。
+/// 应用侧写 config.json 的共用读入：单一实现在 [`config::read_config_json`]（change
+/// add-cron-conversational-registration 让新的「读—改—写同锁」入口复用同一份宽容读入）。
 fn read_config_json(path: &Path) -> serde_json::Value {
-    let mut value: serde_json::Value = match std::fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({})),
-        Err(_) => serde_json::json!({}),
-    };
-    if !value.is_object() {
-        value = serde_json::json!({});
-    }
-    value
+    config::read_config_json(path)
 }
 
-/// version 的写入纪律（merge_last_vault 与 merge_ui_value 共用）：仅在缺失或不高于
-/// 当前 schema 时写入：更高版本说明配置由更新版本的应用写入，盲写会把
-/// 版本标记降回当前值（失真），保留原值让 config::load 继续按高版本 warning。
-fn bump_config_version(value: &mut serde_json::Value) {
+/// version 的写入纪律（merge_last_vault / merge_ui_value / [`config::update_json_atomic`]
+/// 共用）：仅在缺失或不高于当前 schema 时写入——更高版本说明配置由更新版本的应用写入，盲写
+/// 会把版本标记降回当前值（失真），保留原值让 config::load 继续按高版本 warning。
+pub(crate) fn bump_config_version(value: &mut serde_json::Value) {
     let version = value.get("version").and_then(|v| v.as_u64());
     if version.is_none_or(|v| v <= u64::from(config::SCHEMA_VERSION)) {
         value["version"] = serde_json::json!(config::SCHEMA_VERSION);

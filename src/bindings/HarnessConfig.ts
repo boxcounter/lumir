@@ -10,8 +10,8 @@ import type { SubagentsConfig } from "./SubagentsConfig";
 /**
  * `[harness]` 表（change add-harness-probe §11）：对话运行时的配置面。
  *
- * **生效时点**：会话建立 / 每轮请求时由 harness 运行时读一次（M302），不热重载——与
- * `editor` / `ui` 的「装载时施加」同路。`api_key` 明文（Alex 裁决点 2，理由见模块头）。
+ * **生效时点**：会话建立 / 每轮请求时由 harness 运行时读一次（M302），运行期不为它做热重载
+ * ——与 `editor` / `ui` 的「装载时施加」同路。`api_key` 明文（Alex 裁决点 2，理由见模块头）。
  */
 export type HarnessConfig = { 
 /**

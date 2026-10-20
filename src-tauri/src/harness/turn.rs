@@ -260,8 +260,13 @@ pub fn run_turn(
     };
     let mut title_job = None;
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // 调度工具端口（change add-cron-conversational-registration）：交互发送路径注入；
+        // 交接契约槽位（cron 定时 / 点击）在 `SessionContext::cron_port` 里仍返回 None。
         let mut ctx =
-            SessionContext::new_with_owned_sink(&sink, Some(owned), &runtime, &scope, &config);
+            SessionContext::new_with_owned_sink(&sink, Some(owned), &runtime, &scope, &config)
+                .with_cron_port(Some(std::sync::Arc::new(crate::CronToolPort::new(
+                    app.clone(),
+                ))));
         title_job = run_turn_core(&mut ctx, &config, parts, context_section, client.as_mut());
     }))
     .is_err();
@@ -440,10 +445,14 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
     let root = ctx.vault_root().to_path_buf();
     let policy = ctx.ignore_policy().clone();
     let skills = super::context::discover_skills(&root);
+    // 调度工具端口在回合开始时取一次（与工具定义快照同刻）：交互路径有、交接契约槽位与
+    // 子运行没有。`Arc` 由这里持有，`ToolContext` 只借它的 trait object。
+    let cron_port = ctx.cron_port();
     let tctx = ToolContext {
         root: &root,
         policy: &policy,
         skills: &skills,
+        cron: cron_port.as_deref(),
     };
 
     let mut rounds: usize = 0;
@@ -1123,7 +1132,12 @@ fn handle_call<C: RunContext>(
     let args = parsed.unwrap_or_default();
     // 未知工具（清单外）：直接回送错误，不进权限判定——它不可执行，走 ask 闸
     // 只会把循环挂死在永远等不到的批准上（工具集是闭集合，MUST NOT 扩张）。
-    let known = tools::TOOL_NAMES.contains(&call.name.as_str());
+    //
+    // 三件调度工具只在交互路径「已知」：判据与定义注册面、`ToolContext::cron` 同源——
+    // 无人值守运行 / 子运行里同名调用仍是清单外的工具名（change
+    // add-cron-conversational-registration design §2.2）。
+    let known = tools::TOOL_NAMES.contains(&call.name.as_str())
+        || (tools::CRON_TOOL_NAMES.contains(&call.name.as_str()) && tctx.cron.is_some());
     let subject = tools::permission_subject(&call.name, &args);
 
     // 批准闸决定（面板 decision 字段的数据源，M413）：只有 ask 档批准闸产出
@@ -1318,7 +1332,8 @@ fn gated_execute<C: RunContext>(
         reason.clone(),
         true,
         tx,
-    );
+    )
+    .with_cron_task(preview.cron_task.clone());
     // 事件载荷（purpose / 判定依据与批准卡同源）由上下文在挂起成功后发行；无人值守槽位
     // 在这里得到 `approval_required`（程序性中止原因已由上下文置进会话）。
     let decision = match ctx.approval(request, rx) {

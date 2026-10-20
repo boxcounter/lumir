@@ -40,6 +40,8 @@ vault: VaultConfig,
 harness: HarnessConfig, 
 /**
  * 定时任务（change add-cron-runtime-daemon）：`[cron]` 表。消费方是 `lumir-cron`
- * 守护线程——启动装载时快照一次，运行期**不热重载**（改配置需重启）。
+ * 守护线程——启动时装载一次；运行期只经**注册通道**（`cron_task_*` 工具写完配置后投递的
+ * 重载工作项，change add-cron-conversational-registration）重载任务集。**文件变化本身不触发
+ * 重读**（不做文件监听）；该次重载读的是文件当下内容，先前未重启生效的手改可能被一并吸收。
  */
 cron: CronConfig, };

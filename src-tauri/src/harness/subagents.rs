@@ -2745,6 +2745,8 @@ impl RunContext for ChildContext {
                 purpose.as_deref(),
                 reason.as_ref(),
                 Some(&source),
+                // 调度工具不在子运行的注册表里，子运行透传的卡永远没有定时任务预览。
+                None,
             ));
         }
         let wait_start = Instant::now();

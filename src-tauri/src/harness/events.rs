@@ -138,12 +138,14 @@ pub fn approval_request_with_purpose(
     purpose: Option<&str>,
     reason: Option<&super::permissions::DecisionReason>,
 ) -> serde_json::Value {
-    approval_request_full(id, tool, diff, argv, purpose, reason, None)
+    approval_request_full(id, tool, diff, argv, purpose, reason, None, None)
 }
 
-/// 完整形态：在既有展示字段之外带**发起者**（change add-harness-subagents design §8.3）。
-/// 交互调用传 `None`（键缺席 = 父会话自己的卡，旧前端零改动）；子运行透传的请求带
-/// `source = {kind: "subrun", agent, run_id, description}`，卡片据此点名发起者。
+/// 完整形态：在既有展示字段之外带**发起者**（change add-harness-subagents design §8.3）与
+/// **定时任务预览**（change add-cron-conversational-registration design §6.3）。
+/// 交互调用传 `None` 的 source（键缺席 = 父会话自己的卡，旧前端零改动）；`cron_task` 只在
+/// 调度工具的批准卡上出现，形状见 `cron::create_preview` / 删除载荷。
+#[allow(clippy::too_many_arguments)]
 pub fn approval_request_full(
     id: &str,
     tool: &str,
@@ -152,6 +154,7 @@ pub fn approval_request_full(
     purpose: Option<&str>,
     reason: Option<&super::permissions::DecisionReason>,
     source: Option<&super::approval::ApprovalSource>,
+    cron_task: Option<&serde_json::Value>,
 ) -> serde_json::Value {
     let mut value = serde_json::json!({"type": "approval_request", "id": id, "tool": tool});
     if let Some(diff) = diff {
@@ -172,6 +175,9 @@ pub fn approval_request_full(
         if let Ok(encoded) = serde_json::to_value(source) {
             value["source"] = encoded;
         }
+    }
+    if let Some(cron_task) = cron_task {
+        value["cron_task"] = cron_task.clone();
     }
     value
 }
@@ -574,6 +580,27 @@ mod tests {
             with_reason["reason"],
             serde_json::json!({"kind": "mode_default", "mode": "vault_write"})
         );
+
+        // 定时任务预览（change add-cron-conversational-registration design §6.3）：有值时
+        // 原样进载荷；缺省时键整体缺席（旧前端宽容解析不受影响）。
+        assert!(plain.get("cron_task").is_none());
+        let cron_task = serde_json::json!({
+            "op": "create", "id": "daily-log", "at": "21:00", "days": ["mon"],
+            "delivery": "notify-then-run", "session": "new", "vault": "/abs/vault",
+            "prompt": "写今日 log", "skip_today": false,
+        });
+        let with_cron = approval_request_full(
+            "ap-4",
+            "cron_task_create",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&cron_task),
+        );
+        assert_eq!(with_cron["cron_task"], cron_task);
+        assert!(with_cron.get("diff").is_none());
     }
 
     /// 标识来自**包装时的作用域**，不是全局态：两个 sink 各盖各的，互不串。

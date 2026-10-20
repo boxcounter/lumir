@@ -98,7 +98,10 @@ impl Verdict {
 }
 
 /// 读类工具：默认 allow（三档一致）。
-const READ_TOOLS: [&str; 3] = ["vault_read", "vault_search", "skill_load"];
+///
+/// `cron_task_list` 是读类（change add-cron-conversational-registration design §6.1）：它读的是配置
+/// 与去重状态、不是 vault——但「读类默认放行」依赖的是「没有副作用」，不依赖被读对象的类型。
+const READ_TOOLS: [&str; 4] = ["vault_read", "vault_search", "skill_load", "cron_task_list"];
 
 /// 判定一次工具调用（design §1 的五层管线）。
 ///
@@ -214,6 +217,14 @@ fn mode_layer(tool: &str, class: Option<CliClass>, mode: PermissionMode) -> Deci
         // 但打断成本高于 patch；与「危险黑名单任何档都问」同一安全侧。只读档同为逐个问
         // （Always Ask），语义与上面三个写工具一致。
         "vault_delete" => match mode {
+            PermissionMode::FullAccess => Decision::Allow,
+            PermissionMode::ReadOnly | PermissionMode::VaultWrite => Decision::Ask,
+        },
+        // 调度工具（change add-cron-conversational-registration design §6.1，Alex 节点 1 裁决 2）：
+        // `create` / `remove` 与 `vault_delete` 同形——定时任务是**持续性开销**，批准的一刻是
+        // 用户唯一能看见「它以后每天会自己跑」的时机；`full_access` 档的承诺是不打断。`list`
+        // 在读类白名单里，三档放行。
+        "cron_task_create" | "cron_task_remove" => match mode {
             PermissionMode::FullAccess => Decision::Allow,
             PermissionMode::ReadOnly | PermissionMode::VaultWrite => Decision::Ask,
         },
@@ -2195,6 +2206,46 @@ mod tests {
         assert!(is_dangerous("git", &argv(&["reset", "--hard"])));
         assert!(!is_dangerous("git", &argv(&["reset", "--soft"])));
         assert!(!is_dangerous("ls", &argv(&["-la"])));
+    }
+
+    /// 调度工具的三档矩阵（change add-cron-conversational-registration design §6.1）：
+    /// 3 工具 × 3 档逐格断言。区分度：把任意一格改错（如 `list` 在 `read_only` 档落到 Ask、
+    /// 或 `create` 在 `vault_write` 档被放行）本用例必 FAIL。
+    #[test]
+    fn cron_tools_matrix_is_decision_per_mode() {
+        let root = fixture_root("cron-matrix");
+        let p = HarnessPermissions::default();
+        for mode in [
+            PermissionMode::ReadOnly,
+            PermissionMode::VaultWrite,
+            PermissionMode::FullAccess,
+        ] {
+            let j = Judge {
+                mode,
+                root: &root,
+                argv: None,
+                cached: false,
+            };
+            // list：读类，三档放行。
+            assert_eq!(
+                decide(&p, "cron_task_list", "", &j),
+                Decision::Allow,
+                "list 在 {mode:?} 档必须直接放行"
+            );
+            // create / remove：只读与默认档逐个问，full_access 放行。
+            let expected = match mode {
+                PermissionMode::FullAccess => Decision::Allow,
+                PermissionMode::ReadOnly | PermissionMode::VaultWrite => Decision::Ask,
+            };
+            for tool in ["cron_task_create", "cron_task_remove"] {
+                assert_eq!(
+                    decide(&p, tool, "daily-log 21:00 mon,tue", &j),
+                    expected,
+                    "{tool} 在 {mode:?} 档的档位不符"
+                );
+            }
+        }
+        std::fs::remove_dir_all(&root).ok();
     }
 
     /// 序列化形状：internally tagged 的 `kind` + snake_case（前端按 `kind` 取文案，事件与快照
