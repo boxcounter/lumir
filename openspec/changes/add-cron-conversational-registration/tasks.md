@@ -97,19 +97,19 @@
   `exists=true`、trim 后字节数）；`assemble_system_for_subagent` **不**注入。
 - [x] 5.3 单测：`assemble_system` 文本包含该段且剔除尾空白后逐字节等于文件；清单条目字段齐；
   子运行装配不含该段；`prompts/` 目录内增删其它文件不改变注入顺序。
-- [ ] 5.4 回扫：`rg -n "不热重载" src-tauri/src docs/specs` 只剩改准后的表述（运行期只经注册通道
+- [x] 5.4 回扫：`rg -n "不热重载" src-tauri/src docs/specs` 只剩改准后的表述（运行期只经注册通道
   重载、文件变化不单独触发重读），没有「任务集恒为启动快照」或「手改一定等下次启动」一类旧话
   （REVIEW.md「设定类现状断言」条）。
 
 ## 6. 文档与口径
 
-- [ ] 6.1 `docs/specs/config-reference.md` §1.8：`cron.tasks` 的**生效时机**列改准；新增
+- [x] 6.1 `docs/specs/config-reference.md` §1.8：`cron.tasks` 的**生效时机**列改准；新增
   「1.8.1 对话式注册（agent 调度工具）」小节（三件工具表、参数缺省、错误码、注册时已过点不补触发、
   写回纪律：只写给出的键、`vault` 落绝对路径）。
-- [ ] 6.2 `docs/specs/config-reference.md` §3 / §4：§3 的「只有四个键会被回写」补上 `cron.tasks`
+- [x] 6.2 `docs/specs/config-reference.md` §3 / §4：§3 的「只有四个键会被回写」补上 `cron.tasks`
   （由 agent 工具写、读写同锁）；§4 的 `cron-state.json` 段补「注册种子」与 `last_fired` 的语义
   （「该本地日期不再派发」）。
-- [ ] 6.3 `docs/adr/0007-ai-positioning-probe.md` Decision 7 修订为「8 件 vault 操作 + 1 件编排 +
+- [x] 6.3 `docs/adr/0007-ai-positioning-probe.md` Decision 7 修订为「8 件 vault 操作 + 1 件编排 +
   3 件调度」，Revisit 条件追加本次消费记录（日期 + 本 change）。
 - [x] 6.4 **回扫既有验收场景的闸 / 工具清单期望**（`docs/process/openspec-workflow.md` 的强制项）：
   全仓 `rg` 既有场景里「工具清单恰好 8 件」「写类工具默认 ask」「交互路径工具数」一类期望，逐条
@@ -122,19 +122,19 @@
   真实脚本路径（一律占位）；提交前对改动面做一次 text 级 grep 清扫。
 - [x] 6.6 `src/bindings/**` 若有 ts-rs 导出变化，`git add` 重导出产物后跑 `scripts/gate.sh quick`
   （`bindings-drift` 的既有纪律）。
-- [ ] 6.7 把既有两写者未迁移的读—改—写窗口记进 `docs/backlog.md`（design §4.1 的承诺）：
+- [x] 6.7 把既有两写者未迁移的读—改—写窗口记进 `docs/backlog.md`（design §4.1 的承诺）：
   `commands::write_config_value_to` / `write_last_vault_to` 的读发生在取 `CONFIG_WRITE_LOCK` 之前，
   本 change 只让新写者走同锁入口，未迁移旧写者。条目一行 gist + 证据指针（`config.rs` 的
   `CONFIG_WRITE_LOCK` 只覆盖写、`commands.rs` 的读在锁外），不写过程性验证状态。
 
 ## 7. 批准卡呈现（前端）
 
-- [ ] 7.1 `src/harness-panel.ts`：批准卡增加 `.lumir-hp-approval-cron` 块（两列键值：时间 / 星期 /
+- [x] 7.1 `src/harness-panel.ts`：批准卡增加 `.lumir-hp-approval-cron` 块（两列键值：时间 / 星期 /
   触达 / 会话 / 目标 vault；其下 prompt 全文走既有等宽块样式；再下一行「今天已过点，注册后今天
   不再触发」/「今天照常触发」），位置在判定依据行之后、按钮之前（design §6.3）。
-- [ ] 7.2 `src/harness-panel.css`：只新增该块的布局规则（复用既有颜色 token 与等宽字族，**不新增
+- [x] 7.2 `src/harness-panel.css`：只新增该块的布局规则（复用既有颜色 token 与等宽字族，**不新增
   配色**）；`src/copy-data.ts` 加对应双语文案条目（`D` 编号）。
-- [ ] 7.3 视觉门禁：`scripts/gate.sh visual` 本地跑一次并核对既有批准卡基线的差异只在本块（动过
+- [x] 7.3 视觉门禁：`scripts/gate.sh visual` 本地跑一次并核对既有批准卡基线的差异只在本块（动过
   `src/harness-panel.ts` / `.css` 后必跑；基线更新是人肉裁决点，先出截图给 Alex）。
 
 ## 8. 真机验收场景（`scripts/acceptance/scenarios/`）
@@ -159,12 +159,12 @@
 
 ## 9. 验证
 
-- [ ] 9.1 `openspec validate --all --strict` 通过（CI 与 `scripts/gate.sh` 的同一命令）。
-- [ ] 9.2 `bash scripts/docs-check.sh` 全绿（ADR 结构 + openspec 相对链接 + 归档对账）。
-- [ ] 9.3 `cargo test` 通过（含 §1.2 / §1.4 / §2.8 / §2.9 / §3.6 / §4.2 / §4.4 / §4.6 / §5.3 的新增
+- [x] 9.1 `openspec validate --all --strict` 通过（CI 与 `scripts/gate.sh` 的同一命令）。
+- [x] 9.2 `bash scripts/docs-check.sh` 全绿（ADR 结构 + openspec 相对链接 + 归档对账）。
+- [x] 9.3 `cargo test` 通过（含 §1.2 / §1.4 / §2.8 / §2.9 / §3.6 / §4.2 / §4.4 / §4.6 / §5.3 的新增
   单测）。
-- [ ] 9.4 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）。
-- [ ] 9.5 `scripts/gate.sh visual` 本地全绿（动过 `src/harness-panel.*` 后必跑）。
+- [x] 9.4 `scripts/gate.sh quick` 全绿（`GATE RESULT` 原文行与退出码照抄进完成报告）。
+- [x] 9.5 `scripts/gate.sh visual` 本地全绿（动过 `src/harness-panel.*` 后必跑）。
 - [ ] 9.6 真机跑 §8.1–8.6，证据落 `.local/acceptance/<日期>/`；失败 / 跳过项逐条写明原因，
   INVALID 不并进 PASS。
 - [ ] 9.7 归档顺序核对：`openspec list` 确认 `add-cron-runtime-daemon` / `add-harness-subagents`

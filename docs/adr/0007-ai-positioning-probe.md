@@ -2,7 +2,7 @@
 
 - 状态: accepted
 - 日期: 2026-10-02
-- 修订: 2026-10-18（Decision 7 拆为「vault 操作工具 8 + 编排工具 1」，`task` 入册；Revisit 第三分支据此消费）
+- 修订: 2026-10-18（Decision 7 拆为「vault 操作工具 8 + 编排工具 1」，`task` 入册；Revisit 第三分支据此消费）；2026-10-20（Decision 7 第二次扩张为「8 + 1 + 3」，三件调度工具入册；Revisit 第三分支再次消费）
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
 ## Context
@@ -41,11 +41,13 @@
    - ADR 0004 M2（agent 集成）维持 deferred：本探针不等于恢复 M2，只是 AI 方向上的一个使用探针。
    - ADR 0005 与 PRODUCT-CONCEPT.md 仍是未来定位决策的输入而非必须恢复的前提（前者留在仓库；后者已按 Alex 裁决于 2026-10-06 从仓库删除，master a99a913，内容可用 `git show 545dd65:PRODUCT-CONCEPT.md` 从 git 历史取回，本 ADR 引用均指该历史版本）。
    - ADR 0006 的 Revisit 条款由本 ADR 消费；0006 其余内容（当前阶段定位 = Emacs keybinding PKM、视觉基线等）继续有效。
-7. **工具集边界原则（2026-10-09 Alex 裁决，2026-10-18 修订；工具清单治理的 canonical 口径）。**
-   - **工具集分两类，清单记为 8 + 1**：**vault 操作工具** 8 件（`vault_read` / `vault_search` /
-     `vault_patch` / `vault_create` / `vault_move` / `vault_delete` / `skill_load` / `cli_run`）与
-     **编排工具** 1 件（`task`）。两类不在同一判据下讨论（以下三段是 vault 操作工具的口径，
-     第四段是编排工具的口径）。
+7. **工具集边界原则（2026-10-09 Alex 裁决，2026-10-18 与 2026-10-20 两次修订；工具清单治理的
+   canonical 口径）。**
+   - **工具集分三类，清单记为 8 + 1 + 3**：**vault 操作工具** 8 件（`vault_read` /
+     `vault_search` / `vault_patch` / `vault_create` / `vault_move` / `vault_delete` /
+     `skill_load` / `cli_run`）、**编排工具** 1 件（`task`）与**调度工具** 3 件
+     （`cron_task_create` / `cron_task_list` / `cron_task_remove`）。三类不在同一判据下讨论
+     （以下三段是 vault 操作工具的口径，第四段是编排工具、第五段是调度工具的口径）。
    - **「写且需防护才有 vault 工具」**：vault 工具存在的理由是写入需要防护层（批准预览 diff、vault 根禁锢、可恢复），工具是防护的载体、不是 shell 的替代品。**读操作不建 vault 工具**——读走 `cli_run` 只读白名单（首版清单见 change `add-harness-permission-modes` 的 design §3.1），不因「shell 不熟 / 图方便」另立只读工具（`vault_list` 这类必要性低的工具即被本条挡下）。
    - **mkdir 不建工具**：目录创建由 `vault_create` 自动创建缺失父目录（`mkdir -p` 语义）吸收；`cli_run mkdir` 写目标在 vault 内者由权限闸门改道 `vault_create`（同 change design §4.2 的 suggested_tool 映射）。
    - **vault 根路径定向**：vault 绝对根路径注入会话上下文（system 上下文），使「定位 vault 根 / 摸清工作目录」这类需求不再经 `cli_run`（`pwd` / `find <HOME>` 形态；M404 survey 里 3/9 即此类）。
@@ -54,8 +56,17 @@
      shell 的替代品，也不是一个 vault 工具。它的能力边界由子代理定义的工具白名单表达：缺省只读
      三件，`task` 不在可授予集合内（深度 1 由此表达，不维护运行时深度计数）；子代理内每一次
      vault 操作仍走被授予的 vault 操作工具与同一套权限 / 批准闸。`task` 是否注册受
-     `[harness.subagents].enabled` 控制（kill switch），关闭后工具集回到 8 件。
-   - 用途：后续任何「要不要加一个 vault 工具」的讨论先过上面三条——读操作、无需防护层、可由既有工具语义吸收者一律不加工具；新增**编排工具**（第二类）同样按 Decision 2 与 Revisit 条件经 Alex 显式裁决——`task` 即 2026-10-18 按该口径裁决的第一件（change `add-harness-subagents` 节点 1）。
+     `[harness.subagents].enabled` 控制（kill switch），关闭后编排工具退场、交互路径回到
+     8 + 3 件。
+   - **调度工具（`cron_task_*`）不操作 vault**：它们只经配置写通道读写配置目录里的
+     `[cron].tasks`（读—改—写同锁 + 原子替换）并投递一条运行期重载，不读、不写、不移动 vault
+     内容，因此同样**不参与**「写且需防护才有」的判据，也不属于「读操作走 `cli_run`」的收窄面。
+     能力边界由注册面表达：三件工具只在**交互发送路径**（`tool_policy` 为 `None`）注册；无人值守
+     的定时运行（交接契约 `allow = TOOL_NAMES`）与子运行（定义白名单以 `TOOL_NAMES` 为界）都看
+     不见它们——定时运行不能给自己排新任务，子代理也不能。**这是工具清单的第二次扩张**，2026-10-20
+     按 Decision 2 与 Revisit 条件经 Alex 显式裁决（change `add-cron-conversational-registration`
+     节点 1「全按推荐。」）。
+   - 用途：后续任何「要不要加一个 vault 工具」的讨论先过上面三条——读操作、无需防护层、可由既有工具语义吸收者一律不加工具；新增**编排工具**（第二类）或**调度工具**（第三类）同样按 Decision 2 与 Revisit 条件经 Alex 显式裁决——`task` 即 2026-10-18 按该口径裁决的第一件（change `add-harness-subagents` 节点 1）；三件调度工具即 2026-10-20 按同一口径裁决的第二组（change `add-cron-conversational-registration` 节点 1）。
 
 ## Consequences
 
@@ -84,3 +95,7 @@
   - **已命中并消费（2026-10-18）**：subagent 从架构约束转为实际需求，change `add-harness-subagents`
     节点 1 经 Alex 裁决通过；本 ADR Decision 7 同日修订为「vault 操作工具 8 + 编排工具 1」，
     `task` 是提案明示的第 9 件工具。该修订属本 Revisit 分支的正常消费，不是新的扩张授权。
+  - **已命中并消费（2026-10-20）**：探测能力清单第二次扩张——对话式定时任务注册需要三件调度工具，
+    change `add-cron-conversational-registration` 节点 1 经 Alex「全按推荐。」裁决通过；本 ADR
+    Decision 7 同日修订为「8 件 vault 操作 + 1 件编排 + 3 件调度」。该修订同属本 Revisit 分支的
+    正常消费，不是新的扩张授权。

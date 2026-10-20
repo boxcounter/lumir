@@ -41,6 +41,8 @@
 
 一条一行（主题 + 来源/日期/severity + gist + finding 指针）；叙述与读数明细见 git 历史与指针文件。
 
+- **两条既有配置写入口的读—改—写仍未同锁**（M615，2026-10-20，medium）→ `commands::write_last_vault_to` / `write_config_value_to` 的读发生在取 `CONFIG_WRITE_LOCK` 之前（读在 `src-tauri/src/commands.rs:571` / `:658`，锁只覆盖 `src-tauri/src/config.rs:1819` 起的写段），两个写者仍可各自读到旧版本、后写者把前者改动顶掉（丢键）。change `add-cron-conversational-registration` 只让新写者（调度工具）走 `config.rs` 的 `update_json_atomic`（读—改—写同锁，`config.rs:1826-1860`），旧调用方未迁移；迁移属独立收口（design §4.1 明示不在该 change 面内）。
+
 - **验收套件零步骤场景静默 PASS（loader/--check 都不挡）**（worker-scenfix，2026-10-16，high）→ `steps:` 写到 front-matter 闭合 `---` 之后时整表被忽略（loadScenario 只取第一段），checkScenario 也不挡空 steps——场景 158 曾因此假绿、M529 修复当时真机未验（M535 已修场景本体）；修法 = checkScenario 挡「空 steps」+ loadScenario 对正文里顶层 `steps:`/`teardown:` 给定位提示，均静态零真机成本。指针 `.tower/comms/findings/20261016-worker-scenfix-bug-pass-loader-check-0.md`。
 - **验收套件 file 断言一条只判一个键，多写静默失效**（worker-scenfix，2026-10-16，medium）→ `execute.mjs:1089-1145` 的 if 链命中即 return，README 要求的 unchangedSince + mtimeUnchangedSince 双对账写不出（M535 在 159 场景侧拆条规避，未修根因）；修法二选一（命中键逐条判 / --check 挡多键同写）。指针 `.tower/comms/findings/20261016-worker-scenfix-bug-file-readme-sha256-mtime.md`。
 - **`src/ipc.ts:396` usage 事件联合类型欠声明 M526/M534 绝对值键**（worker-usagekeys，2026-10-16，medium）→ 类型层脱节（消费点走 `unknown` 故 CI/tsc 全绿，正是「声明了却没有跟着改」的静默面）；修法 = 补五键 + 注释指向 harness spec 的「事件/快照同键同值」不变量，改完跑 `pnpm exec tsc --noEmit`。指针 `.tower/comms/findings/20261016-worker-usagekeys-improve-src-ipc-ts-usage-m526-m534.md`。
