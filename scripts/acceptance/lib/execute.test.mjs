@@ -490,6 +490,51 @@ test("do: waitForNotification（动作级）：旧条目在场不提前返回，
   assert.match(fail.detail ?? "", /基线之后新出现的|基线 1 个签名/, "失败理由应给出基线口径（旧条目在场、但不在基线之外）");
 });
 
+test("do: clickNotification（动作级）：沿用等待基线，点新条目而不是更早一次 run 的同任务旧条目（M617）", async (t) => {
+  // 两个同名条目的**原文不同**时（系统给旧条目补了时间后缀），基线能让点击绕开旧条目；
+  // 不沿用基线的话 clickNotification 会命中列表里的第一条（这里是旧条目），点到已退出的实例。
+  try {
+    execFileSync("/usr/bin/pgrep", ["-x", "NotificationCenter"], { encoding: "utf8" });
+  } catch {
+    t.skip("NotificationCenter 不在场（无桌面环境）：本用例只验动作接线，跳过");
+    return;
+  }
+  const root = tmpRoot("notify-click-baseline");
+  useTmpEnv(root);
+  const stale = "- [10] AXGroup (Lumir, acc-cron-click, 到点, 21:12) actions=[AXPress, Show Details, Close]";
+  const fresh = "- [12] AXGroup (Lumir, acc-cron-click, 到点) actions=[AXPress, Show Details, Close]";
+  const tree = (entries) =>
+    ["# Notification Center App State", "```text", '- [0] AXApplication "Notification Center"', ...entries, "```"].join("\n");
+  let reads = 0;
+  const clicks = [];
+  const ctx = stubCtx(root);
+  ctx.cu = {
+    state: async () => {
+      reads += 1;
+      return { text: tree(reads <= 2 ? [stale] : [stale, fresh]), image: null };
+    },
+    click: async (pid, args) => {
+      clicks.push({ pid, ...args });
+      return { json: { ok: true } };
+    },
+  };
+  const { status } = await runScenario(ctx, {
+    id: "notify-click",
+    item: 0,
+    title: "通知点击沿用基线",
+    file: path.join(root, "notify-click.md"),
+    steps: [
+      { name: "等新通知", do: "waitForNotification", title: "acc-cron-click", body: "到点", timeoutMs: 5000 },
+      { name: "点新通知", do: "clickNotification", title: "acc-cron-click", body: "到点", timeoutMs: 5000 },
+    ],
+  });
+  assert.equal(status, "PASS", `等待 + 点击应 PASS，实际：${JSON.stringify(ctx.evidence.records)}`);
+  assert.equal(clicks.length, 1, `应只点一次，实际：${JSON.stringify(clicks)}`);
+  assert.equal(clicks[0].index, 12, "点击目标应是新条目（index 12），不是旧条目（index 10）——基线没沿用就会点到旧条目");
+  const notes = ctx.evidence.records.filter((r) => r.kind === "note").map((r) => r.text).join("\n");
+  assert.match(notes, /沿用前置 waitForNotification 的基线/, `证据里应记明沿用了等待基线，实际：${notes}`);
+});
+
 test("通知定位判据：title 与 body 必须同时命中，且只认 AXGroup（M617 抽出的单一实现）", () => {
   const group = (text) => ({ role: "AXGroup", raw: `- [10] AXGroup ${text}` });
   const nodes = [
