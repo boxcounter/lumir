@@ -259,7 +259,7 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
 
 | 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
 |---|---|---|---|---|---|
-| `cron.tasks` | 数组（每项为对象） | `[]` | 见下表；`[]` = 守护空转、零报错 | **启动装载读一次**；运行期不热重载，改任务 / 策略需重启 | `config.rs` 的 `CronConfig`、`validate_cron` |
+| `cron.tasks` | 数组（每项为对象） | `[]` | 见下表；`[]` = 守护空转、零报错 | **启动装载读一次**；运行期只经**显式注册通道**重载（agent 工具写完配置后投工作项，见 §1.8.1）；**手改本文件仍需重启**（不做文件监听） | `config.rs` 的 `CronConfig`、`validate_cron` |
 
 任务项的字段（`{id, vault, at, days?, prompt, delivery?, session?, model?}`）：
 
@@ -323,6 +323,36 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
   }
 }
 ```
+
+#### 1.8.1 对话式注册（agent 调度工具）
+
+交互会话里的 agent 有三件调度工具（change `add-cron-conversational-registration`；语义真源是该
+change 的 [specs/cron/spec.md](../../openspec/changes/add-cron-conversational-registration/specs/cron/spec.md)）。
+它们写的就是上面这张 `[cron].tasks` 表——**配置始终是任务的唯一真源**，工具没有第二份任务表。
+
+| 工具 | 参数 | 缺省 | 模式档（`read_only` / `vault_write` / `full_access`） |
+|---|---|---|---|
+| `cron_task_list` | 无 | — | 放行 / 放行 / 放行 |
+| `cron_task_create` | `id`、`at`、`prompt`（必填），`days`、`vault`、`delivery`、`session`、`model`（可选） | 同下表配置缺省；`vault` 缺省 = 当前 vault 根（落绝对路径） | 问 / 问 / 放行 |
+| `cron_task_remove` | `id` | — | 问 / 问 / 放行 |
+
+口径：
+
+- **校验同源**：`create` 的字段校验与装载期是同一个实现、同一句原因文案；非法时**拒绝写入**并回执
+  `cron_task_invalid`（带 `field`）。`id` 重名回执 `cron_task_exists`（不覆盖、不静默丢弃）；唯一性
+  判据是文件里出现的全部 `id`（含装载期被丢弃的非法项）。`remove` 的目标不存在回执
+  `cron_task_not_found`。
+- **即时生效**：写入后守护线程重读配置并替换任务集，仍在运行的应用无需重启。回执的 `effect` 为
+  `active` 才算已生效；`pending_restart` 表示配置已写入但运行时未确认（线程未运行 / 回执超时），
+  下次启动生效。
+- **注册时已过点则当日不补触发**：注册时刻**已过点**（本地日期属于 `days` 且当前时刻 ≥ `at`）的新任务，当日
+  不派发——去重状态写当日种子（`last_fired` = 注册当日本地日期，语义见 §4）。注册时刻未到点的任务
+  当日照常触发。回执的 `skip_today` 即该判定结果。启动装载引入的任务**不**写种子（启动补触发是
+  既有语义）。
+- **只写给出的键**：`create` 不把缺省值写进配置（缺省档跟随出厂默认，见 §3）；`vault` 例外，必填
+  绝对路径。
+- **工具不写状态文件**：`cron-state.json` 只有守护线程一个写者；`list` 只读（缺失 / 损坏时
+  `last_fired` 为空，不报错）。
 
 ### 1.9 `harness.subagents` 表（子代理运行）
 
@@ -397,7 +427,7 @@ change 的 [design §9](../../openspec/changes/add-harness-subagents/design.md)�
 1. **未知键原样保留**——写通道不认识 `future_field` 也不会把它删掉；
 2. **没写过的键始终缺席**，因此永远跟随出厂默认（而不是被钉死成写入当时的旧值）。
 
-当前只有四个键会被回写：`last_vault`（打开成功）、`ui.theme`（主题切换）、`ui.content_width`（栏宽拖拽松手）、`ui.language`（语言切换）。
+当前只有四个键会被应用自身回写：`last_vault`（打开成功）、`ui.theme`（主题切换）、`ui.content_width`（栏宽拖拽松手）、`ui.language`（语言切换）。另有一个键由**交互会话里的 agent 工具**回写：`cron.tasks`（调度工具注册 / 删除任务，见 §1.8.1）——它走同一条「读—改—原子替换」通道，并且读、改、替换在同一把进程内写锁内完成（避免与上面四个键的并发写互相顶掉）。
 `version` 由写通道补齐，纪律是「仅在缺失或不高于当前 schema 时写入」（高版本配置不降回）。
 
 **不推荐**把全量默认写进 `config.json`（手写或让应用生成都不推荐）：那会把每个缺字段的「跟随出厂默认」
@@ -423,8 +453,11 @@ change 的 [design §9](../../openspec/changes/add-harness-subagents/design.md)�
 `cron-state.json` 的读取纪律（change `add-cron-runtime-daemon` design §8）：文件缺失、不可读、
 非合法 JSON、`version` 与实现不符——四类对调用方的语义**完全相同**：「没有去重状态」（最多导致
 一次重复触发）。一律不抛错、不阻断启动；**缺失是常态不告警**，其余三类各记一条 `config_warning`
-（`source = "cron-state"`）。`last_fired` 只在派发成功时写（通知投递成功 / 运行交接被接受），
-运行失败与被跳过不写；任务从配置删掉后其记录**惰性残留**，不做启动期清理。
+（`source = "cron-state"`）。`last_fired` 的语义是「该任务在这一本地日期不再派发」，写入时机有两处：
+派发成功（通知投递成功 / 运行交接被接受），以及**运行期注册引入且注册时已过点的新任务写当日种子**
+（change `add-cron-conversational-registration`，见 §1.8.1）；运行失败与被跳过不写，启动装载引入的
+任务不写种子。`cron-state.json` 的写者只有 `lumir-cron` 线程一处（调度工具不写它，`list` 只读）。
+任务从配置删掉后其记录**惰性残留**，不做启动期清理。
 
 **为什么注册表与会话刻意分存**（同一 vault 实体的两个面，`vault_session.rs` 头注释 / change
 `multi-vault-workspaces` design §2）：注册项文件是**身份**，它的读取路径对解析失败一律跳过——把易变的
