@@ -97,9 +97,14 @@ steps:
       - shot: 02-采纳后
 
   - name: 等到点（$nextMinute 至少 60s 后到点，30s tick 内投递「到点」通知）
-    do: waitForNotification
-    title: "acc-cron-register"
-    body: "到点"
+    # 等的是**日志落盘**（cron_notified 是投递成功后才写的事件），不是通知横幅：横幅由
+    # NotificationCenter 渲染，其 AX 树里存着**上一次 run 同标题**的通知（2026-10-20 实测：
+    # 到点前 56s 就命中了上一批的横幅），拿它当「本次事件已发生」的等待条件会让后续日志断言
+    # 抢跑。`waitForFile` 与下面的 file 断言同源（同一份 matcher / jsonl / path 口径）。
+    do: waitForFile
+    waitForFile:
+      path: "env:logs/*.jsonl"
+      jsonl: { event: cron_notified, task: acc-cron-register, kind: trigger }
     timeoutMs: 180000
     expect:
       - label: 到点通知已投递（notify-then-run 的 trigger 档）
@@ -142,6 +147,6 @@ steps:
 
 ## 环境与边界
 
-合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；通知横幅的判据是
-`waitForNotification` 读系统通知中心（DND 关闭时可用），通知投递本身另有应用日志
-`cron_notified` 兜底。
+合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；到点的等待与判定都取**应用日志**
+（`cron_notified` 是投递成功后才写的事件），因此不依赖通知横幅是否上屏、也不受 DND 状态影响——
+横幅的 AX 树里存着更早一次 run 的同标题通知，拿它当等待条件会抢跑（首跑实测）。

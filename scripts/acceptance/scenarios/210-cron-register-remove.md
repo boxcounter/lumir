@@ -90,10 +90,13 @@ steps:
           jsonl: { event: cron_task_removed, task: acc-cron-doomed, effect: active }
       - shot: 03-删除后
 
-  - name: 等到点：对照组通知上屏（证明这个时刻确实评估过）
-    do: waitForNotification
-    title: "acc-cron-keep-control"
-    body: "到点"
+  - name: 等到点：对照组通知落盘（证明这个时刻确实评估过）
+    # 同 207：等日志事件（投递成功才写），不等横幅——横幅的 AX 树里存着上一批同标题的通知。
+    # 「被删任务零通知」这条负向判据因此有真正的区分度：这一刻确实评估过，且对照组响了。
+    do: waitForFile
+    waitForFile:
+      path: "env:logs/*.jsonl"
+      jsonl: { event: cron_notified, task: acc-cron-keep-control, kind: trigger }
     timeoutMs: 180000
     expect:
       - label: 对照组到点通知已投递（到点判定跑过 —— 区分度正观测）
@@ -121,8 +124,8 @@ steps:
 ## 区分度（删除的「不响」怎么证明）
 
 「删掉的任务没响」在「这个时刻什么都没评估」时同样成立。因此配置里预置一条同分钟到点的
-**对照任务**（`acc-cron-keep-control`）：它的通知必须上屏（`waitForNotification`），证明
-到达同一个 tick；同一份日志里按任务 id 计数——对照组 1 条、被删任务 0 条。
+**对照任务**（`acc-cron-keep-control`）：它的 `cron_notified` 必须落盘（`waitForFile` 等这一条
+日志事件），证明到达同一个 tick；同一份日志里按任务 id 计数——对照组 1 条、被删任务 0 条。
 
 ## 时序前提
 
@@ -132,5 +135,5 @@ steps:
 
 ## 环境与边界
 
-合成 vault + 隔离 `XDG_CONFIG_HOME`；通知横幅由系统通知中心进程渲染（`waitForNotification`
-读它自己的 AX 树），DND 关闭时可用。
+合成 vault + 隔离 `XDG_CONFIG_HOME`；到点判定取应用日志（`cron_notified`），不依赖通知横幅
+是否上屏——横幅的 AX 树里存着更早一次 run 的同标题通知，拿它当等待条件会抢跑（207 首跑实测）。
