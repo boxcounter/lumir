@@ -42,7 +42,7 @@ export const ACTIONS = new Set([
   "doubleClick", "drag", "hover", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
   "clipboardImage", "clipboardText", "note", "migrateHarnessSessions", "invalidate", "envWrite", "mockFill",
-  "waitForNotification", "clickNotification",
+  "waitForNotification", "clickNotification", "openNotificationCenter", "closeNotificationCenter",
   // `waitForFile`（M616）：轮询**磁盘事实**直到成立——「等日志里出现某个事件」这类判据此前只能
   // 靠 `sleep` 猜时长，或借通知横幅（M616 之前横幅会被**更早一次 run 的同标题通知**满足；M617
   // 给通知等待加了新鲜度基线，横幅不再有这个缺口，但「等某个日志事件」仍应直接读那份日志）。
@@ -1837,6 +1837,75 @@ function notificationCenterPid() {
   );
 }
 
+/** Control Center 进程（菜单栏的时钟项属于它）：打开 / 关闭通知中心面板的点击入口。 */
+function controlCenterPid() {
+  // 进程 comm 是 `ControlCenter`（无空格，macOS 15+）；`Control Center` 是 Accessibility 里的
+  // 显示名。两个名字都试，避免不同系统版本上 pgrep -x 落空（M620 实测前者命中）。
+  for (const name of ["ControlCenter", "Control Center"]) {
+    try {
+      const out = execFileSync("/usr/bin/pgrep", ["-x", name], { encoding: "utf8" }).trim();
+      const pid = Number(out.split("\n")[0]);
+      if (Number.isInteger(pid) && pid > 0) return pid;
+    } catch {
+      /* 试下一个名字 */
+    }
+  }
+  throw new InfraError(
+    "Control Center 进程不在场：无法点开通知中心面板（菜单栏时钟项的宿主）——环境项，不是产品缺陷",
+  );
+}
+
+/** 通知中心面板是否在场（NC 的 AX 树里有没有 AXWindow）。面板关着时 NC 只剩菜单栏，读不到任何通知条目。 */
+async function notificationCenterPanelOpen(cu, pid) {
+  const ax = await readAx(cu, pid);
+  return ax.nodes.some((node) => node.role === "AXWindow");
+}
+
+/**
+ * 点菜单栏时钟，切换通知中心面板；`want` 是目标态（true = 打开）。
+ *
+ * 为什么需要它（M620）：通知条目只有在**面板打开**时才出现在 NotificationCenter 的 AX 树里
+ * （面板关着时只剩菜单栏）。冷启动投递的条目早就躺在通知中心里，等横幅上屏太晚、也抓不到——
+ * 场景先把面板打开再读，才有一条稳定的机器判据。
+ */
+async function toggleNotificationCenter(cu, { want, evidence, action }) {
+  const ncPid = notificationCenterPid();
+  if ((await notificationCenterPanelOpen(cu, ncPid)) === want) {
+    evidence.record({
+      kind: "note",
+      text: `${action}：通知中心面板已在${want ? "打开" : "关闭"}态，无需点击`,
+    });
+    return want ? "notification-center-open" : "notification-center-closed";
+  }
+  const ccPid = controlCenterPid();
+  const ccAx = await readAx(cu, ccPid);
+  const clock = ccAx.nodes.find(
+    (node) => node.role === "AXMenuBarItem" && /\(Clock\)|时钟|Date & Time/.test(node.raw),
+  );
+  if (!clock) {
+    throw new InfraError(
+      "Control Center 的菜单栏里找不到时钟项（Clock）——无法切换通知中心面板（环境项，不是产品缺陷）",
+    );
+  }
+  await cu.click(ccPid, { index: clock.index });
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if ((await notificationCenterPanelOpen(cu, ncPid)) === want) {
+      evidence.record({
+        kind: "note",
+        text: `${action}：已点菜单栏时钟 → 通知中心面板${
+          want ? "打开" : "关闭"
+        }（验证：NC AX 树里 ${want ? "出现" : "消失"} AXWindow）`,
+      });
+      return want ? "notification-center-open" : "notification-center-closed";
+    }
+    await sleep(200);
+  }
+  throw new InfraError(
+    `点了菜单栏时钟但通知中心面板 5s 内没有${want ? "出现" : "关闭"}——环境项（系统通知服务异常），不是产品缺陷`,
+  );
+}
+
 /**
  * 前置 `waitForNotification` 留给紧随其后 `clickNotification` 的新鲜度基线（场景级 `vars` 的
  * 内部键，`__` 前缀与 `__foreground` 同惯例）。键是「title + body」，body 精确到档——170 的
@@ -2563,6 +2632,12 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     // 横幅由 NotificationCenter 进程渲染，不在 Lumir 的 AX 树里，定位见 findNotificationNode。
     // **新鲜度（M617）**：动作开始时快照当前匹配条目作基线，只认那之后新出现的条目——更早一次
     // run 投递的同标题条目在通知列表里存活数分钟，不挡掉它就会提前命中（M616 的 56s 提前现场）。
+    // 打开 / 关闭通知中心面板（M620）：面板关着时 NC 的 AX 树只剩菜单栏，任何条目都读不到；
+    // 冷启动投递早于场景轮询，必须先把面板打开再读（见 toggleNotificationCenter）。
+    case "openNotificationCenter":
+      return await toggleNotificationCenter(cu, { want: true, evidence, action: step.do });
+    case "closeNotificationCenter":
+      return await toggleNotificationCenter(cu, { want: false, evidence, action: step.do });
     case "waitForNotification": {
       const spec = notificationSpec(step, "waitForNotification");
       if (!spec.fresh) {

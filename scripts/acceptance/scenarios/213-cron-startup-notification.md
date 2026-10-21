@@ -17,6 +17,10 @@ config:
         delivery: "notify-then-run"
         session: "new"
 steps:
+  # 面板打开前 NotificationCenter 的 AX 树只剩菜单栏（读不到任何条目）；冷启动投递早于场景轮询，
+  # 想用 AX 判「条目在通知中心里」必须先把面板打开。
+  - name: 打开通知中心面板
+    do: openNotificationCenter
   - name: 冷启动后通知中心里真实存在这条「到点」条目（判据在通知中心，不在 Lumir 窗口里）
     do: waitForNotification
     title: "acc-cron-startup"
@@ -37,6 +41,9 @@ steps:
           path: "env:logs/*.jsonl"
           count: { pattern: '"event":"cron_run_started"', exact: 0 }
       - shot: 冷启动即到点的通知已出现在通知中心
+  # 把面板收起来：面板是全场最大的一层窗口，留着会影响后续场景的前台 / 横幅判定。
+  - name: 收起通知中心面板
+    do: closeNotificationCenter
 ---
 
 # 213-cron-startup-notification —— 冷启动即到点的通知不能丢（M620）
@@ -60,6 +67,14 @@ Ok ⇒ 本仓误判「已投递」，写 `cron_notified` + `last_fired`，这次
 既有场景 170 / 171 都用 `$nextMinute`（启动后 60–120s 才到点），因此从未覆盖这条路径——这正是
 finding 里「启动窗口」的成因：不是系统在 0–60s 内丢通知，而是**启动最初半秒内的投递被本地拒绝、
 且被误判成功、不再重试**。
+
+## 为什么要先打开通知中心面板
+
+`NotificationCenter.app` 的 AX 树只在**面板打开**时才有 `AXWindow` / 通知条目；面板关着时只剩
+菜单栏（M620 实测：冷启动投递 3s 后开始轮询，30s / 72 次读取全是 12 个元素、无 `AXWindow`，
+而同一时刻 usernoted 已记录 `Delivering … to [.alert .lockScreen .notificationCenter]`、
+点开面板立刻读到 `(Lumir, acc-cron-startup, 到点)`）。因此场景先 `openNotificationCenter`
+（点菜单栏时钟，幂等：已在打开态就跳过）再读，读完 `closeNotificationCenter` 收起。
 
 ## 为什么用 `fresh: false`
 
