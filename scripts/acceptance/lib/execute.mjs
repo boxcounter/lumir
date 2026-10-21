@@ -2591,10 +2591,10 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         kind: "note",
         text: `点击通知横幅 AXPress：${node.raw}（KimiCU 自报 ${JSON.stringify(out.json ?? out.text).slice(0, 200)}）`,
       });
-      // M619：UN 点击的系统侧动作是「按 bundle id 激活 app」，走 LaunchServices。打包实例已改为
-      // 经 `open` 启动、是 LS 注册的运行实例，点击应落回自己；若仍拉起同 bundle id 的其他副本
-      // （安装版），在点击窗口内识别并清退（只动这些新起的 pid，不按 `.app` 通配）。dev flavour
-      // 的点击响应路由给 Terminal，不会拉起 Lumir，跳过扫描。
+      // M619：UN 点击的系统侧动作是「按 bundle id 激活 app」，走 LaunchServices——真机实测
+      // （2026-10-21）即使本副本经 `open` 启动、是 LS launch 实例，点击仍落到安装版的注册 URL
+      // （/Applications/Lumir.app）。因此在点击窗口内识别并清退这些新起的副本（只动这些 pid，
+      // 不按 `.app` 通配）。dev flavour 的点击响应路由给 Terminal，不会拉起 Lumir，跳过扫描。
       if (bundleBinary()) {
         if (preexisting.length) {
           evidence.record({
