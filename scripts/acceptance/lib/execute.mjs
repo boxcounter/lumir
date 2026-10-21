@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
 import { findNode, parseNodes, windowBounds } from "./ax.mjs";
-import { fixturesDir, SCENARIO_CONFIG_KEYS, writeWindowState } from "./app.mjs";
+import { bundleBinary, fixturesDir, listOtherBundleInstances, quiesceStrayBundleInstances, SCENARIO_CONFIG_KEYS, writeWindowState } from "./app.mjs";
 import { encodePng, syntheticScreenshot } from "./png.mjs";
 import { DEFAULT_MIN_DIFF, DEFAULT_PATCH, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
 import {
@@ -2580,11 +2580,39 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         baseline: reuse ? reuse.baseline : null,
         fallbackToExisting: true,
       });
+      // 点击窗口起点先记下：M619 的游离实例清退只认「这个时刻之后新起的」`.app` 实例——跑批
+      // 开始时 M478 起跑自检已确认场上零实例，因此点击窗口内新起的只可能是这次点击拉起的。
+      // 点击**前**若场上已有别的 bundle 实例（用户在跑批期间自己打开了 Lumir），归因前提不成立：
+      // 不清退，只记证据交人判断——硬约束是绝不误伤用户实例。
+      const preexisting = bundleBinary() ? listOtherBundleInstances(bundleBinary()) : [];
+      const clickStartedAt = Date.now();
       const out = await cu.click(ncPid, { index: node.index });
       evidence.record({
         kind: "note",
         text: `点击通知横幅 AXPress：${node.raw}（KimiCU 自报 ${JSON.stringify(out.json ?? out.text).slice(0, 200)}）`,
       });
+      // M619：UN 点击的系统侧动作是「按 bundle id 激活 app」，走 LaunchServices。打包实例已改为
+      // 经 `open` 启动、是 LS 注册的运行实例，点击应落回自己；若仍拉起同 bundle id 的其他副本
+      // （安装版），在点击窗口内识别并清退（只动这些新起的 pid，不按 `.app` 通配）。dev flavour
+      // 的点击响应路由给 Terminal，不会拉起 Lumir，跳过扫描。
+      if (bundleBinary()) {
+        if (preexisting.length) {
+          evidence.record({
+            kind: "note",
+            text:
+              "点击前场上已有其他 bundle 实例：" +
+              `${preexisting.map((i) => `pid ${i.pid}（${i.cmd}）`).join("；")}——` +
+              "归因前提不成立，本次点击后**不做**游离实例清退（可能是用户自己打开的，不误伤）",
+          });
+        } else {
+          await quiesceStrayBundleInstances({
+            sinceMs: clickStartedAt - 1_000,
+            ownBinary: bundleBinary(),
+            evidence,
+            action: "clickNotification",
+          });
+        }
+      }
       // 用掉即清：下一次 clickNotification 不该沿用一条早已翻篇的基线。
       delete vars[NOTIFICATION_FRESHNESS_KEY];
       return node.raw;

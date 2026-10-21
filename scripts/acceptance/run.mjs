@@ -24,6 +24,7 @@ import {
   bundleBinary,
   copyFixture,
   launchApp,
+  listLumirInstances,
   prepareSeed,
   reclaimPort,
   resetCronState,
@@ -343,7 +344,7 @@ async function preflight() {
     log(`磁盘可用 ${freeGb.toFixed(1)}G`);
   }
   const { execFileSync } = await import("node:child_process");
-  assertNoForeignLumir(execFileSync);
+  assertNoForeignLumir();
   let on1420 = "";
   try {
     on1420 = execFileSync("/usr/sbin/lsof", ["-nP", "-iTCP:1420", "-sTCP:LISTEN"], { encoding: "utf8" }).trim();
@@ -379,30 +380,15 @@ async function preflight() {
  *
  * 清除方法只给**逐个 kill**，不给 `pkill -f` 这类模式匹配——那条误伤过用户手头的实例
  * （README「已知边界」的清理条，M164 实证）。
+ *
+ * 进程扫描的**单一实现**在 `lib/app.mjs` 的 `listLumirInstances()`（M619）：通知点击后的游离实例
+ * 清退要用同一判据，两处各写一份就会漂（REVIEW.md 「同一语义两处真源」条）。
  */
-function assertNoForeignLumir(execFileSync) {
-  const rows = execFileSync("/bin/ps", ["-axo", "pid=,command="], { encoding: "utf8" }).split("\n");
-  const installed = [];
-  const dev = [];
-  for (const row of rows) {
-    const m = /^\s*(\d+)\s+(.*)$/.exec(row);
-    if (!m) continue;
-    const pid = Number(m[1]);
-    const cmd = m[2].trim();
-    const isInstalled = /\.app\/Contents\/MacOS\/lumir$/.test(cmd);
-    const isDev = /(?:^|[\s/])target\/debug\/lumir$/.test(cmd);
-    if (!isInstalled && !isDev) continue;
-    let comm = "";
-    try {
-      comm = execFileSync("/bin/ps", ["-o", "comm=", "-p", String(pid)], { encoding: "utf8" }).trim();
-    } catch {
-      continue; // 进程在这一瞬退出了
-    }
-    if (comm.split("/").pop() !== "lumir") continue;
-    (isInstalled ? installed : dev).push({ pid, cmd });
-  }
+function assertNoForeignLumir() {
+  const found = listLumirInstances();
+  const installed = found.filter((p) => p.kind === "bundle");
+  const dev = found.filter((p) => p.kind === "dev");
   if (installed.length === 0 && dev.length === 0) return;
-  const found = [...installed, ...dev];
   throw new Error(
     [
       "✗ 起跑自检不过：同机已有 Lumir 实例在场，拒绝启动（M478）",
@@ -694,6 +680,36 @@ process.on("exit", () => {
   releaseRmachineLock();
 });
 
+/**
+ * 跑批结束后的游离实例扫描（M619）：`open` 启动让通知点击落回自己，这条是**收尾证据**——
+ * 把这一次跑批结束时的 `.app` 实例清单（不含 `--keep-app` 保留的本次实例）写进 run.log，
+ * 给「跑完无游离 com.lumir.app 实例残留」一个机器可查的落点（判据与起跑自检、点击后清退
+ * 共用 `listLumirInstances()`）。
+ *
+ * 这里**只报告、不 kill**：能归因到点击窗口的已由 execute.mjs 的 clickNotification 清退；
+ * 收尾时仍在场的实例可能是用户在跑批期间打开了自己的 Lumir，按硬约束不得动它，交给 M478
+ * 起跑自检在下一批挡住并由人决定。
+ */
+async function reportStrayBundleInstances({ keepPid = null } = {}) {
+  const strays = listLumirInstances().filter((i) => i.kind === "bundle" && i.pid !== keepPid);
+  const line =
+    strays.length === 0
+      ? `STRAY-SCAN ${new Date().toISOString()} none（无 .app/Contents/MacOS/lumir 实例）`
+      : `STRAY-SCAN ${new Date().toISOString()} found ${strays.length}：` +
+        strays
+          .map((i) => `pid ${i.pid} ${i.cmd}（起于 ${i.startedAt === null ? "未知" : new Date(i.startedAt).toISOString()}）`)
+          .join("; ");
+  await appendRunLog(root, line);
+  log(line);
+  if (strays.length) {
+    log(
+      "⚠ 跑批结束后仍有 .app 实例在场：本次跑批不自动清退它们（只清点击窗口内新起的）。" +
+        "请确认是不是你自己打开的 Lumir；若是，⌘Q 后再跑下一批（M478 起跑自检会挡）。",
+    );
+  }
+  return strays;
+}
+
 let exitCode = 0;
 try {
   const summary = await main();
@@ -710,6 +726,7 @@ try {
 } finally {
   if (!keepApp && handle) await stopApp(handle);
   if (keepApp && handle) log(`app 保留运行中：pid ${handle.pid}（vault ${vaultDir()}，配置 ${envHome()}）`);
+  if (handle) await reportStrayBundleInstances({ keepPid: keepApp ? handle.pid : null });
   await cu?.stop();
   if (releaseRmachineLock()) log(`跑批锁已释放：${RMACHINE_LOCK}`);
 }
