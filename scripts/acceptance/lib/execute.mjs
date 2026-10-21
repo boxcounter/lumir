@@ -2688,17 +2688,18 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // 开始时 M478 起跑自检已确认场上零实例，因此点击窗口内新起的只可能是这次点击拉起的。
       // 点击**前**若场上已有别的 bundle 实例（用户在跑批期间自己打开了 Lumir），归因前提不成立：
       // 不清退，只记证据交人判断——硬约束是绝不误伤用户实例。
-      const preexisting = bundleBinary() ? listOtherBundleInstances(bundleBinary()) : [];
+      const preexisting = bundleBinary() ? listOtherBundleInstances() : [];
       const clickStartedAt = Date.now();
       const out = await cu.click(ncPid, { index: node.index });
       evidence.record({
         kind: "note",
         text: `点击通知横幅 AXPress：${node.raw}（KimiCU 自报 ${JSON.stringify(out.json ?? out.text).slice(0, 200)}）`,
       });
-      // M619：UN 点击的系统侧动作是「按 bundle id 激活 app」，走 LaunchServices——真机实测
-      // （2026-10-21）即使本副本经 `open` 启动、是 LS launch 实例，点击仍落到安装版的注册 URL
-      // （/Applications/Lumir.app）。因此在点击窗口内识别并清退这些新起的副本（只动这些 pid，
-      // 不按 `.app` 通配）。dev flavour 的点击响应路由给 Terminal，不会拉起 Lumir，跳过扫描。
+      // M619 / M622：UN 点击的系统侧动作是「按 bundle id 激活 app」，走 LaunchServices。M619 真机
+      // 实测（2026-10-21）两个副本同 id 时点击落到安装版的注册 URL（/Applications/Lumir.app）；
+      // M622 起验收副本构建期带独立 id，点击应激活本副本。清退保留作**纵深防御**——若仍有点击
+      // 窗口内新起的副本（旧注册残留 / 同路径第二份副本），在 3s 内识别并按 pid 清退（只动这些
+      // pid，不按 `.app` 通配）。dev flavour 的点击响应路由给 Terminal，不会拉起 Lumir，跳过扫描。
       if (bundleBinary()) {
         if (preexisting.length) {
           evidence.record({
@@ -2711,7 +2712,6 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         } else {
           await quiesceStrayBundleInstances({
             sinceMs: clickStartedAt - 1_000,
-            ownBinary: bundleBinary(),
             evidence,
             action: "clickNotification",
           });

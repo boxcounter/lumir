@@ -20,6 +20,8 @@ import path from "node:path";
 import { CuClient } from "./lib/cu.mjs";
 import {
   acceptPort,
+  acceptanceBundleId,
+  assertAcceptanceBundleIdentity,
   assertSafeTargets,
   bundleBinary,
   copyFixture,
@@ -344,6 +346,16 @@ async function preflight() {
     log(`磁盘可用 ${freeGb.toFixed(1)}G`);
   }
   const { execFileSync } = await import("node:child_process");
+  // 打包实例的身份门（M622）：bundle id 从产物 Info.plist 现读，必须等于验收 id。放这里而不是
+  // 每个场景起 app 时才判——构建漏了 `--config` 时整轮直接退出码 2，不产出一串「点击落到安装版」
+  // 的假 FAIL。dev flavour 没有 .app，返回 null。
+  const identity = assertAcceptanceBundleIdentity();
+  if (identity) {
+    log(
+      `打包实例 bundle id：${identity.bundleId}（产品 id ${identity.productBundleId}——身份已隔离，` +
+        "点击通知按验收 id 回到本副本）",
+    );
+  }
   assertNoForeignLumir();
   let on1420 = "";
   try {
@@ -363,8 +375,9 @@ async function preflight() {
  *
  * 检出两类目标（都按「这个进程自己就是要跑的那个二进制」判定，不做宽松的子串匹配）：
  *   - **安装版实例**：命令行以 `<某个>.app/Contents/MacOS/lumir` 结尾（打包产物，通常来自
- *     /Applications）。它与套件实例同 bundle 身份（`com.lumir.app`）、共用同一份 AX / 前台归属，
- *     窗口还可能盖在套件实例上（键盘注入 `occluded` 的成因之一）；
+ *     /Applications）。它（以及任何别的副本）与套件实例共用同一份 AX / 前台归属，窗口还可能盖在
+ *     套件实例上（键盘注入 `occluded` 的成因之一）——M622 起 bundle flavour 的 bundle id 已
+ *     独立，但前台 / AX 归属仍是全机共享资源，这条判据因此不变；
  *   - **残留的开发实例**：命令行以 `target/debug/lumir` 结尾。上一次跑批没清干净、或**另一个
  *     worktree** 的实例——`reclaimPort` 只回收**本 worktree** 的残留，别的 worktree 的会与本次
  *     跑批争夺同一个前台归属。
@@ -394,9 +407,10 @@ function assertNoForeignLumir() {
       "✗ 起跑自检不过：同机已有 Lumir 实例在场，拒绝启动（M478）",
       ...installed.map((p) => `  安装版实例：pid ${p.pid}（${p.cmd}）`),
       ...dev.map((p) => `  开发实例：pid ${p.pid}（${p.cmd}）`),
-      "  为什么挡：套件实例与它们同 bundle 身份（com.lumir.app），共用同一份 AX / 前台归属——在场的",
-      "  第二个实例会静默改变「前台焦点归谁」这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法",
-      "  区分的假 FAIL（REVIEW.md 「键盘注入丢键」条：同机第二个实例显著加剧丢键）。",
+      "  为什么挡：第二份 Lumir 实例会与套件实例共用同一份 AX / 前台归属（bundle flavour 的 bundle id",
+      "  自 M622 起已独立，但前台 / AX 归属仍是全机共享的）——在场的第二个实例会静默改变「前台焦点归谁」",
+      "  这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 「键盘注入丢键」条：",
+      "  同机第二个实例显著加剧丢键）。",
       "  清除方法：安装版退出（⌘Q 或它的「退出」菜单）；开发实例逐个退出：",
       `    kill ${found.map((p) => p.pid).join(" ")}`,
       '  MUST NOT 用 pkill -f "target/debug/lumir" 这类模式匹配——它会连别人手头的实例一起打掉',
@@ -419,7 +433,7 @@ async function main() {
   await preflight();
   log(
     bundleBinary()
-      ? `实例 flavour：bundle（${bundleBinary()}；通知点击回调按 com.lumir.app 路由）`
+      ? `实例 flavour：bundle（${bundleBinary()}；bundle id ${acceptanceBundleId()}，通知点击回调回到本进程）`
       : "实例 flavour：dev（pnpm tauri dev；通知点击回调按插件 dev 行为归属 com.apple.Terminal，点击链路验不到）",
   );
   log(`验收 vault：${targets.vault}`);
@@ -437,6 +451,14 @@ async function main() {
     `${selected.map((s) => s.id).join(" ")} =====`;
   await appendRunLog(root, runHeader);
   appendFileSync(appLogFile, `${runHeader}\n`);
+  // 本轮实例身份也进 run.log（M622）：bundle flavour 的 bundle id 从产物 Info.plist 现读，
+  // 复盘时要能回答「这批点击链路是在哪个 id 上跑的」——终端日志不进证据目录。
+  await appendRunLog(
+    root,
+    `${new Date().toISOString()} FLAVOUR ${
+      bundleBinary() ? `bundle id=${acceptanceBundleId()} binary=${bundleBinary()}` : "dev（pnpm tauri dev）"
+    }`,
+  );
 
   cu = await CuClient.start();
   log("KimiCU MCP 已连接\n");
@@ -681,11 +703,11 @@ process.on("exit", () => {
 });
 
 /**
- * 跑批结束后的游离实例扫描（M619）：这条是**收尾证据**——点击通知仍会按 bundle id 拉起安装版的
- * 注册 URL（2026-10-21 真机实测：170 pid 7786、171 pid 9890，均由点击后的清退清掉），所以收尾
- * 要把这一次跑批结束时的 `.app` 实例清单（不含 `--keep-app` 保留的本次实例）写进 run.log，
- * 给「跑完无游离 com.lumir.app 实例残留」一个机器可查的落点（判据与起跑自检、点击后清退
- * 共用 `listLumirInstances()`）。
+ * 跑批结束后的游离实例扫描（M619）：这条是**收尾证据**——M619 当时点击通知会按 bundle id 拉起
+ * 安装版的注册 URL（2026-10-21 真机实测：170 pid 7786、171 pid 9890，均由点击后的清退清掉）；
+ * M622 起验收副本带独立 id，点击应回到本副本，清退与这条扫描保留作纵深防御。收尾要把这一次跑批
+ * 结束时的 `.app` 实例清单（不含 `--keep-app` 保留的本次实例）写进 run.log，给「跑完无游离实例
+ * 残留」一个机器可查的落点（判据与起跑自检、点击后清退共用 `listLumirInstances()`）。
  *
  * 这里**只报告、不 kill**：能归因到点击窗口的已由 execute.mjs 的 clickNotification 清退；
  * 收尾时仍在场的实例可能是用户在跑批期间打开了自己的 Lumir，按硬约束不得动它，交给 M478
