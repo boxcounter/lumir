@@ -39,13 +39,15 @@ export function acceptPort() {
  * `com.lumir.app`，响应回到自己的进程（change add-cron-runtime-daemon §4.7 的兜底口径）。
  *
  * **启动方式（M619）**：打包实例经 LaunchServices（`open`）启动，**不是**直接 exec 二进制——
- * 直接 exec 的 GUI app 也会向 LS check in（`lsappinfo list` 有记录），但它不是 LS 的 **launch
- * 实例**：没有 launch time / coalition，`parentASN` 指向终端（2026-10-21 探针）。通知点击的
- * 系统侧动作是按 bundle id 激活 app，走 LaunchServices 的 launch 记录——直接 exec 时命中的是
- * LS 数据库里已注册的安装版 `/Applications/Lumir.app`，于是点通知会把安装版拉起来（M617 finding
- * `20261020-worker-m617-bug-bundle-lumir-app`），下一次跑批再被 M478 起跑自检挡住。经 `open`
- * 启动后本副本是 LS 的 launch 实例，点击激活落在它自己身上。详见 `launchApp` 的 bundle 分支
- * 与 README「实例 flavour」节。
+ * 直接 exec 的 GUI app 也会向 LS check in，但它不是 LS 的 **launch 实例**（无 launch time /
+ * coalition，`parentASN` 指向终端）；`open` 启动后本副本才是 LS launch 实例（2026-10-21 探针；
+ * 170/171 真机窗口里 `lsappinfo` 也确认了这一点）。**但这不足以改变通知点击的落点**：2026-10-21
+ * 11:44 / 11:46 的真机复跑里，点击通知仍拉起已注册的安装版 `/Applications/Lumir.app`——LS 按
+ * bundle id 解析到的是安装版 URL，而不是同 bundle id 的另一个运行副本。本套件在
+ * scripts/acceptance 范围内的对策是点击后 3s 内识别并清退这个游离实例（见
+ * `quiesceStrayBundleInstances`）；**根治需要验收副本使用独立 bundle id**（构建期 `--config`
+ * 覆盖 + 一次性通知授权），属设计取舍，待裁决。详见 `launchApp` 的 bundle 分支与 README
+ * 「实例 flavour」节。
  *
  * 返回 null 表示走原来的 `pnpm tauri dev`（缺省，所有既有场景行为不变）。
  */
@@ -1002,11 +1004,12 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
   await applySessionReset();
   // 打包实例模式（M605 / M619）：经 LaunchServices 启动 .app（`open`），**不是**直接 exec 二进制。
   // 直接 exec 的 GUI app 会 check in 但不是 LS 的 launch 实例（无 launch time / coalition，
-  // parentASN 指向终端——2026-10-21 探针）；通知点击的激活按 bundle id 走 LaunchServices 的
-  // launch 记录，直接 exec 时命中的是 LS 数据库里已注册的安装版 `/Applications/Lumir.app` ⇒ 把
-  // 安装版拉起来（M617 finding 的现场）。`open` 启动让本副本成为 LS 的 launch 实例，点击落回
-  // 自己身上；`-W` 让 open 等 app 退出，仍有一个可观察的子进程；stdout / stderr 经
-  // `--stdout/--stderr` 落到文件，由下面的 pump 原样喂回 chunks（`LUMIR_READY` 就绪门不变）。
+  // parentASN 指向终端——2026-10-21 探针）；`open` 启动后本副本才是 LS launch 实例（真机
+  // lsappinfo 已确认）。**实测（2026-10-21 11:44/11:46）点击通知仍会拉起安装版**——LS 按
+  // bundle id 解析到安装版 URL，运行中的同 bundle id 副本不改变这个落点；套件的对策是点击后
+  // 清退游离实例（execute.mjs 的 clickNotification），根治需独立 bundle id（待裁决）。
+  // `-W` 让 open 等 app 退出，仍有一个可观察的子进程；stdout / stderr 经 `--stdout/--stderr`
+  // 落到文件，由下面的 pump 原样喂回 chunks（`LUMIR_READY` 就绪门不变）。
   // 窗口位置退回 tauri.conf 的构建值（本模式不写 `--config` 覆写）；首启的 `apply_startup_size`
   // 仍会让窗口落在屏内，`pinWindowSize` 照常钉尺寸。frontend 由 custom-protocol 从编译期嵌入的
   // dist 提供。配置隔离经 `--env XDG_CONFIG_HOME=…` 传递（launchd 启动的进程不继承本进程 env）。

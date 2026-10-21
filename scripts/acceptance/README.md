@@ -56,25 +56,31 @@ bundle 模式的 bundle id 是 `com.lumir.app`，点击响应回到自己的进�
 **bundle 模式经 LaunchServices 启动（M619）**：套件用
 `open -n -W --stdout <文件> --stderr <文件> --env XDG_CONFIG_HOME=<隔离配置> <…/Lumir.app>`
 启动打包实例，**不是**直接 exec `.app/Contents/MacOS/lumir`。直接 exec 的 GUI app 也会向 LS
-check in（`lsappinfo list` 有记录），但它**不是 LS 的 launch 实例**：没有 launch time /
-coalition，`parentASN` 指向终端；`open -n` 启动的实例才带 launch time / coalition（2026-10-21
-探针）。而通知点击的系统侧动作是按 bundle id 激活 app、走 LaunchServices 的 launch 记录——
-直接 exec 时命中的是 LS 数据库里已注册的安装版 `/Applications/Lumir.app`，于是点通知会把安装版
-拉起来（M617 finding `20261020-worker-m617-bug-bundle-lumir-app`），下一次跑批再被起跑自检挡住。
-经 `open` 启动后本副本是 LS 的 launch 实例，点击激活落回自己；`--stdout/--stderr` 让
-`LUMIR_READY` 就绪门与 `app.log` 的口径不变。`LUMIR_ACCEPTANCE_BUNDLE` 仍可写上面的 `.app` 内
-二进制（套件会截出 `.app`），写不出 `.app` 直接报错，**不回落直接 exec**——静默降级回来就是
-同一个坑。
+check in，但不是 LS 的 launch 实例（没有 launch time / coalition，`parentASN` 指向终端）；
+`open -n` 启动后才带 launch time / coalition（2026-10-21 探针；170/171 真机窗口里
+`lsappinfo` 确认）。`--stdout/--stderr` 让 `LUMIR_READY` 就绪门与 `app.log` 的口径不变。
+`LUMIR_ACCEPTANCE_BUNDLE` 仍可写上面的 `.app` 内二进制（套件会截出 `.app`），写不出 `.app`
+直接报错，**不回落直接 exec**。
+
+**已知边界：点击通知仍会拉起安装版（M619 真机实测）**：即使本副本是 LS launch 实例，
+2026-10-21 11:44 / 11:46 的 170/171 复跑里点击通知仍拉起 `/Applications/Lumir.app`——LS 按
+bundle id 解析到的是安装版的注册 URL，而不是同 bundle id 的另一个运行副本。套件的对策是
+**点击后清退这个游离实例**（下段）；它保证「跑完无残留、下一批不被 M478 挡住」，但**不是**
+「不再触碰安装版」：那次拉起会让安装版用**真实配置**跑起来约 1s（读 last_vault / 窗口尺寸等），
+所以跑批期间不要依赖用户自己的 Lumir 会话。**根治方向是验收副本使用独立 bundle id**
+（构建期 `--config '{"identifier":"com.lumir.app.acceptance"}'` + 一次性通知授权），属设计
+取舍，未在本 mission 内实施。
 
 **游离实例的识别与清退（M619）**：`clickNotification` 在 AXPress 之后 3s 内扫描同机
 `.app/Contents/MacOS/lumir` 实例，只有「不是本次跑批自己的二进制路径」且「`etime` 反推的启动
 时刻落在点击窗口内」的实例才清退（SIGTERM，1s 后仍在则 SIGKILL），pid / 路径 / 启动时刻写进
-该场景证据。跑批收尾再扫一次并把 `STRAY-SCAN none（无 …）` / `STRAY-SCAN found …` 写进
-`run.log`；收尾扫描**只报告不 kill**（可能是用户在跑批期间自己打开的 Lumir）。`stopApp` 对
-bundle 实例按本次跑批自己的二进制路径精确定位后收掉，不按 `.app` 通配 kill——安装版路径不同，
-结构上碰不到用户实例；收掉后再用 `lsregister -u <本 .app>` 撤销本次启动写进 LaunchServices 的
-记录（只按路径撤销：实测两副本同 bundle id 时，撤销其中一份后另一份的记录仍在），避免 worktree
-副本以 `com.lumir.app` 的身份长期留在 LS 数据库里。
+该场景证据（2026-10-21 真机复跑：170 清掉 pid 7786、171 清掉 pid 9890，均在一个采样周期内消失）。
+跑批收尾再扫一次并把 `STRAY-SCAN none（无 …）` / `STRAY-SCAN found …` 写进 `run.log`；收尾扫描
+**只报告不 kill**（可能是用户在跑批期间自己打开的 Lumir）。`stopApp` 对 bundle 实例按本次跑批
+自己的二进制路径精确定位后收掉，不按 `.app` 通配 kill——安装版路径不同，结构上碰不到用户实例；
+收掉后再用 `lsregister -u <本 .app>` 撤销本次启动写进 LaunchServices 的记录（只按路径撤销：
+实测两副本同 bundle id 时，撤销其中一份后另一份的记录仍在），避免 worktree 副本以
+`com.lumir.app` 的身份长期留在 LS 数据库里。
 
 ## 它做了什么
 
