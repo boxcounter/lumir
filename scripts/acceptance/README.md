@@ -34,24 +34,50 @@ node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手�
 永远收不到（2026-10-19 实证：`Received response … app:"com.apple.Terminal" …`，Lumir 日志零
 `cron_click`）。这是 dev 通道边界，不是产品缺陷。
 
-要验通知点击（场景 170 / 171 的后半段），先构建打包实例、再用 `LUMIR_ACCEPTANCE_BUNDLE`
-指向 `.app` 内的二进制跑同一批场景：
+要验通知点击（场景 170 / 171 的后半段）与冷启动投递（213），先构建**带独立 bundle id 的验收
+副本**，再用 `LUMIR_ACCEPTANCE_BUNDLE` 指向 `.app` 内的二进制跑同一批场景：
 
 ```bash
-pnpm build
-pnpm tauri build --debug --bundles app
-# 必须补一步 ad-hoc 签名（M608 的已知约束，M612 实测复现）：tauri 的 debug bundle 只有
-# linker-signed，UN 通知授权会直接返回 denied（启动日志 `通知权限被拒绝`）——横幅根本不出现，
-# 场景在 waitForNotification 就红，形态与「点击回调坏掉」无法区分。
-codesign --force --deep --sign - src-tauri/target/debug/bundle/macos/Lumir.app
+node scripts/acceptance/build-bundle.mjs
 LUMIR_ACCEPTANCE_BUNDLE="$PWD/src-tauri/target/debug/bundle/macos/Lumir.app/Contents/MacOS/lumir" \
-  node scripts/acceptance/run.mjs 170 171
+  node scripts/acceptance/run.mjs 170 171 213
 ```
 
-bundle 模式的 bundle id 是 `com.lumir.app`，点击响应回到自己的进程。**frontend 取编译期嵌入的
-`dist`**——改了 `src/` 必须先 `pnpm build` 再 bundle；窗口位置退回 `tauri.conf.json` 的构建值
-（dev 模式的 `--config` 位置覆写不生效），尺寸仍由套件钉。`run.log` / 报告里会写明本次 flavour。
-打包实例在场时同样会被起跑自检按「安装版实例」挡住——跑完即停，别用 `--keep-app` 留现场后直接重跑。
+产物路径随 `CARGO_TARGET_DIR` 走（worktree 常把它指向主仓的 warm target 以省掉一次全量构建）——
+构建脚本结尾会打印本机的绝对路径与现成的 `LUMIR_ACCEPTANCE_BUNDLE=…` 命令行，直接用它即可；
+上面的 `$PWD/src-tauri/target/...` 是缺省 target dir 的形态。
+
+构建脚本做三件事：`tauri build --debug --bundles app --config '{"identifier":"com.lumir.app.acceptance"}'`
+（构建期覆盖 identifier，`src-tauri/tauri.conf.json` 本体一字不动；`beforeBuildCommand` 会先跑
+`pnpm build`）、`codesign --force --deep --sign - <…/Lumir.app>`、回读产物 Info.plist 校验 id。
+签名这一步不能省（M608 的已知约束，M612 实测复现）：tauri 的 debug bundle 只有 linker-signed，
+UN 通知授权会直接返回 denied（启动日志 `通知权限被拒绝`）——横幅根本不出现，场景在
+`waitForNotification` 就红，形态与「点击回调坏掉」无法区分。
+
+**独立 bundle id 是通知点击落点的根治（M622）**：usernoted / LaunchServices 按 **bundle id**
+解析点击目标。验收副本若与产品同 id（`com.lumir.app`），点击会被解析到安装版的注册 URL，
+2026-10-21 11:44 / 11:46 的 170/171 真机复跑里点击仍拉起 `/Applications/Lumir.app`（M619）——
+那次拉起会让安装版用**真实配置**跑起来约 1s（读 last_vault / 窗口尺寸等），且在途的
+`on_action` 收不到。构建期换成独立 id 后，点击按验收 id 回到本副本。
+
+套件**不硬编码身份**：`lib/app.mjs` 从构建产物的 `Contents/Info.plist` 读 `CFBundleIdentifier`
+（`acceptanceBundleId()`），并要求它等于期望值 `ACCEPTANCE_BUNDLE_ID`
+（`com.lumir.app.acceptance`）。起跑预检与每次 `launchApp` 都核一遍（`assertAcceptanceBundleIdentity`）：
+漏了 `--config`（产物仍是产品 id）或换了别的 id，整轮直接判红（退出码 2），不产出一串「点击
+落到安装版」的假绿。`run.log` 会写本轮的 `FLAVOUR bundle id=… binary=…`。
+
+**首次通知授权是人肉 checkpoint（M622）**：新 bundle id 在系统里的通知权限是空的，第一次启动
+请求授权时必须有人（Alex）在系统设置 > 通知里给验收副本打开权限；未授权时横幅不出、场景在
+`waitForNotification` 必红，形态与通道坏掉无法区分（与上面 M608 的签名问题同型）。授权按
+bundle id 记账：同一 id 重建副本通常沿用授权；若启动日志再次出现 `通知权限被拒绝`，去系统
+设置重新打开。跑批期间系统设置里可能同时存在安装版与验收副本两个「Lumir」条目——验收副本那条
+只在启动验收 app 之后才出现。**因此含通知的场景（170 / 171 / 213）MUST NOT 在未授权的新 id
+上直接放行**：先起一次验收副本、确认授权，再跑场景。
+
+bundle 模式的**前端取编译期嵌入的 `dist`**——改了 `src/` 必须先 `pnpm build` 再 bundle；
+窗口位置退回 `tauri.conf.json` 的构建值（dev 模式的 `--config` 位置覆写不生效），尺寸仍由套件钉。
+`run.log` / 报告里会写明本次 flavour。打包实例在场时同样会被起跑自检按「安装版实例」挡住——
+跑完即停，别用 `--keep-app` 留现场后直接重跑。
 
 **bundle 模式经 LaunchServices 启动（M619）**：套件用
 `open -n -W --stdout <文件> --stderr <文件> --env XDG_CONFIG_HOME=<隔离配置> <…/Lumir.app>`
@@ -62,25 +88,22 @@ check in，但不是 LS 的 launch 实例（没有 launch time / coalition，`pa
 `LUMIR_ACCEPTANCE_BUNDLE` 仍可写上面的 `.app` 内二进制（套件会截出 `.app`），写不出 `.app`
 直接报错，**不回落直接 exec**。
 
-**已知边界：点击通知仍会拉起安装版（M619 真机实测）**：即使本副本是 LS launch 实例，
-2026-10-21 11:44 / 11:46 的 170/171 复跑里点击通知仍拉起 `/Applications/Lumir.app`——LS 按
-bundle id 解析到的是安装版的注册 URL，而不是同 bundle id 的另一个运行副本。套件的对策是
-**点击后清退这个游离实例**（下段）；它保证「跑完无残留、下一批不被 M478 挡住」，但**不是**
-「不再触碰安装版」：那次拉起会让安装版用**真实配置**跑起来约 1s（读 last_vault / 窗口尺寸等），
-所以跑批期间不要依赖用户自己的 Lumir 会话。**根治方向是验收副本使用独立 bundle id**
-（构建期 `--config '{"identifier":"com.lumir.app.acceptance"}'` + 一次性通知授权），属设计
-取舍，未在本 mission 内实施。
+**游离实例的识别与清退（M619 引入；M622 起是纵深防御）**：独立 id 下点击应激活正在跑的验收
+副本、不再拉起安装版；套件仍保留 `clickNotification` 在 AXPress 之后 3s 内扫描同机
+`.app/Contents/MacOS/lumir` 实例。归属判据自 M622 起按**本次跑批的 pid** 认：同一个 `.app`
+路径下若被拉起第二份副本，路径分不出它与被测实例，pid 可以；pid 未知时退回「按本副本二进制
+路径排除」（宁可不杀）。命中的实例才清退（SIGTERM，1s 后仍在则 SIGKILL），pid / 路径 / 启动
+时刻写进该场景证据（M619 真机复跑：170 清掉 pid 7786、171 清掉 pid 9890）。跑批收尾再扫一次
+并把 `STRAY-SCAN none（无 …）` / `STRAY-SCAN found …` 写进 `run.log`；收尾扫描**只报告不 kill**
+（可能是用户在跑批期间自己打开的 Lumir）。`stopApp` 对 bundle 实例按本次跑批自己的二进制路径
+精确定位后收掉，不按 `.app` 通配 kill——安装版路径不同，结构上碰不到用户实例；收掉后再用
+`lsregister -u <本 .app>` 撤销本次启动写进 LaunchServices 的记录（只按路径撤销：实测两副本同
+bundle id 时，撤销其中一份后另一份的记录仍在），避免 worktree 副本以验收 id 的身份长期留在
+LS 数据库里指向一个已删除的路径。
 
-**游离实例的识别与清退（M619）**：`clickNotification` 在 AXPress 之后 3s 内扫描同机
-`.app/Contents/MacOS/lumir` 实例，只有「不是本次跑批自己的二进制路径」且「`etime` 反推的启动
-时刻落在点击窗口内」的实例才清退（SIGTERM，1s 后仍在则 SIGKILL），pid / 路径 / 启动时刻写进
-该场景证据（2026-10-21 真机复跑：170 清掉 pid 7786、171 清掉 pid 9890，均在一个采样周期内消失）。
-跑批收尾再扫一次并把 `STRAY-SCAN none（无 …）` / `STRAY-SCAN found …` 写进 `run.log`；收尾扫描
-**只报告不 kill**（可能是用户在跑批期间自己打开的 Lumir）。`stopApp` 对 bundle 实例按本次跑批
-自己的二进制路径精确定位后收掉，不按 `.app` 通配 kill——安装版路径不同，结构上碰不到用户实例；
-收掉后再用 `lsregister -u <本 .app>` 撤销本次启动写进 LaunchServices 的记录（只按路径撤销：
-实测两副本同 bundle id 时，撤销其中一份后另一份的记录仍在），避免 worktree 副本以
-`com.lumir.app` 的身份长期留在 LS 数据库里。
+**已知边界**：只有构建产物确实带验收 id 时点击才路由到本副本；套件已在起跑预检挡住「漏
+`--config`」的构建。若系统里残留旧的同路径 LS 记录，`lsregister -u` 只撤销本副本路径、不影响
+安装版的记录。
 
 ## 它做了什么
 
@@ -97,7 +120,8 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 |---|---|---|
 | KimiCU 可用 | 二进制不存在即报错并给安装命令 | 驱动通道缺失时跑也是白跑 |
 | 磁盘水位 | `< 2G` 拒绝启动（可选显式绕过，见下） | 真机实例触发 cargo/vite 时 ENOSPC 硬失败（批次四实证） |
-| 同机已有 Lumir 实例 | 检出**安装版**（`*.app/Contents/MacOS/lumir`）或**残留的开发实例**（`target/debug/lumir`）即拒绝启动，消息给出 pid 与逐个 `kill` 的清除方法（退出码 2） | 在场的第二个实例与套件实例同 bundle 身份、共用同一份 AX / 前台归属，会**静默**改变「前台焦点归谁」这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 「键盘注入丢键」条；2026-10-13 的复跑就是在这样的现场上跑的） |
+| 同机已有 Lumir 实例 | 检出**安装版**（`*.app/Contents/MacOS/lumir`）或**残留的开发实例**（`target/debug/lumir`）即拒绝启动，消息给出 pid 与逐个 `kill` 的清除方法（退出码 2） | 在场的第二个实例会与套件实例共用同一份 AX / 前台归属（bundle flavour 的 bundle id 自 M622 起已独立，但前台 / AX 归属仍是全机共享资源），**静默**改变「前台焦点归谁」这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 「键盘注入丢键」条；2026-10-13 的复跑就是在这样的现场上跑的） |
+| 打包实例身份 | bundle flavour 下从产物 `Contents/Info.plist` 读 `CFBundleIdentifier`，必须等于 `com.lumir.app.acceptance`（≠ 产品 id `com.lumir.app`），否则拒绝启动（退出码 2） | 同 bundle id 的验收副本点通知会被 LaunchServices 解析到安装版（M619 的根因）；漏了构建期 `--config` 的产物在这里就红，不留假绿（见「实例 flavour」） |
 | 1420 端口 | 只报告占用情况 | 全机同一时刻只能有一个 `pnpm tauri dev`（vite strictPort 1420）；本套件走独立端口，但仍先看一眼同机负载 |
 | 跑批独占锁 | 需持锁的真跑批先 `mkdir` 抢 `/tmp/lumir-acceptance-rmachine.lock`；已被别人持有时拒绝启动（退出码 2） | 合成 vault 与 dev 端口都是**全机共享**的，光靠人工约定会漏——两条跑批错开启动就能互相 `resetVault`（见下节） |
 
@@ -423,7 +447,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `waitForFile` | `waitForFile: { path, has?, jsonl?, count? }`（至少一项判据）、`timeoutMs`（缺省 120000） | **轮询磁盘事实直到成立**（M616）：路径口径与 `file` 断言同源（`env:` / vault 相对 / 绝对 / `*` 取 mtime 最新一份），`has` / `jsonl` / `count` 写多个时**同时成立**才返回；文件不存在 = 未成立（继续轮询，每 500ms 一次）。超时**抛错判 FAIL**，成立时把「第几次读取成立 / 耗时」记进证据。**为什么需要它**：等日志事件（`cron_notified` 这类投递成功后才写的事件）此前只能靠 `sleep` 猜时长，或借 `waitForNotification`——而那时的通知等待还没有新鲜度判据，横幅会被**更早一次 run 的同标题通知**满足（2026-10-20 M616 实测：到点前 56s 就命中了上一批的横幅），拿它当「本次事件已发生」的等待条件会让随后的日志断言抢跑（场景 207/210 的假红现场）。M617 已给通知等待补上新鲜度基线（见 `waitForNotification` 条），但**等日志事件仍应直接读那份日志**：等待与判定同源，判据就是最终要断言的文件内容 |
 | `waitForNotification` | `title`（必填，通知标题 = cron 任务 id）、`body`（可选，通知正文）、`timeoutMs`（缺省 20000）、`fresh`（缺省 true；false = 接受动作开始前已在场的匹配条目，**只给冷启动投递用**） | **等系统通知横幅出现**（change add-cron-runtime-daemon §7.7 的可点击化）：横幅由 `NotificationCenter.app` 渲染，不在 Lumir 的 AX 树 / 窗口截图里，因此本动作按进程名取通知中心的 pid，轮询它自己的 AX 树，命中「`AXGroup` 的 label 同时含 title 与 body」即返回（读取次数与条目原文落证据）。**横幅只在屏上停留数秒**——「先 sleep 再点」必然点空，等待必须由本动作完成。**新鲜度判据（M617）**：动作开始时先快照当前匹配 title/body 的条目作**基线**（条数与原文记入证据），等待期间**只认基线之外新出现的条目**——更早一次 run 投递的同标题条目在通知列表里存活数分钟（M616 实测约 6 分钟后仍被命中，等待因此提前约 56s 返回、随后的日志断言抢跑判红），基线把它挡在外面。同一条任务的新旧通知在 AX 里**逐字相同**（label 只有 `(Lumir, <task>, <body>)`，没有时间戳 / 投递 id），因此判据落在多重集合上：同签名条目比基线**多出来的那条**才算新投递；旧条目恰在同一刻被系统清掉、新条目又同文时这条会等不到——方向安全（超时判 FAIL，不把旧条目当新投递放行）。**M617 真机探针实测过这个保守角落**（2026-10-21 07:38–07:40：基线 1 条旧条目 → 旧条目在等待中过期 → 新投递到达时同签名，等待超时判 FAIL；旧条目全程没有让等待提前返回）；同文替换场景一律改用 `waitForFile` 判 `cron_notified` 落盘。**等日志事件请用 `waitForFile`**（判据就是最终要断言的产物）。超时抛错判 FAIL，错误里附带基线读数与最后一份通知中心 AX 树（DND 抑制时只有菜单栏，可据此区分环境问题）。**`fresh: false`（M620，场景 213）**：冷启动投递发生在套件开始轮询**之前**，条目已经躺在通知中心里——默认基线会把唯一那条当旧条目挡掉、等待必然超时。这一档显式接受已在场的匹配条目，代价是不再区分新旧：用它的场景 MUST 另配一条**本轮才可能成立**的判据（日志按场景重置，如 `cron_notified(trigger=startup)`）来排除上一轮残留条目的假绿；`clickNotification` 不接受该键（点击仍按基线挑新条目） |
 | `clickNotification` | `title`（必填）、`body`（可选）、`timeoutMs`（缺省 20000） | **点通知横幅本体**：同一套定位口径找到条目后，对它发 `AXPress`——与用户点横幅是同一条系统默认动作（会激活通知所属 app）。给「点击通知 → 应用内可断言后果」的链路用（场景 170 的 `cron_click(action=run)`、171 的 `action=open-session`）。**点到哪一条**：紧跟同一 title/body 的 `waitForNotification` 时，沿用它的新鲜度基线，**只点那之后新出现的条目**（点旧通知会被系统路由到已退出的实例，`cron_click` 日志不出现 ⇒ 归因会误指向「点击链路坏掉」）；前面没有对应的等待时按当前在场的匹配条目点（新旧不可辨——同签名条目在 AX 里逐字相同，证据里会记明本次用的是哪种口径）。同一任务的 trigger / result 两档通知标题相同，用 `body`（到点 / 已完成 / 运行失败）区分 |
-| `openNotificationCenter` / `closeNotificationCenter` | 无参数（`expect` 可用） | **切换通知中心面板**（M620）：点菜单栏时钟（Control Center 的 `AXMenuBarItem (Clock)`），幂等——目标态已成立时不点；点完 5s 内验证 NC 的 AX 树里出现 / 消失 `AXWindow`，等不到判 INVALID（环境项）。**为什么需要它**：`NotificationCenter.app` 的 AX 树只在面板打开时才有条目（面板关着只剩菜单栏）。冷启动投递的条目早就在通知中心里、但场景开始时读不到，必须先打开面板再 `waitForNotification`；读完收起，避免遮住后续场景的前台 / 横幅判定 |
+| `openNotificationCenter` / `closeNotificationCenter` | 无参数（`expect` 可用） | **切换通知中心面板**（M620）：点菜单栏时钟（Control Center 的 `AXMenuBarItem (Clock)`），幂等——目标态已成立时不点；点完 5s 内验证 NC 的 AX 树里出现 / 消失 `AXWindow`，等不到判 INVALID（环境项）。**开关态竞态（M622）**：面板的开态可能在「读状态」与「点击」之间被别的动作改掉（前一场景的 `clickNotification` 会把面板留在打开态，随后前台切换又可能把它收掉），那一次点击恰好在相反方向上生效——因此最多点两次（每次后 5s 验证、重读状态），收起方向再以 **Escape** 兜底（面板的默认收起键，2026-10-21 实测有效）；两条兜底都写进证据。**为什么需要它**：`NotificationCenter.app` 的 AX 树只在面板打开时才有条目（面板关着只剩菜单栏）。冷启动投递的条目早就在通知中心里、但场景开始时读不到，必须先打开面板再 `waitForNotification`；读完收起，避免遮住后续场景的前台 / 横幅判定 |
 | `open` | `file`、`marker` | 点左栏文件名打开，等编辑器出现 marker |
 | `click` | `target: {role,name\|help\|any,nth,count,modifiers}` 或 `{x,y,count}`，两者都可带 `button`（`left`（默认）/`right`/`middle`）与 `dx`/`dy` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，那四条通道**产生不出 DOM 的 `dblclick`**（判据与修正见「已知边界」）——要双击类交互请用 `doubleClick`。**`button` 给非左键时改走坐标路径**（M244）：AX 索引路径发的是 AXPress（「按下这个元素」），产不出鼠标右键，而 DOM 的 `contextmenu` 靠真实指针事件；此时套件取该节点 bbox 的中心（`dx`/`dy` 按宽高比例偏移，默认 0.5）注入真实鼠标事件（**cursor-safe，不移动用户指针**）。因此**目标行必须落在窗口可视区内**——树/列表里靠下的条目 AX 报的是内容坐标（实测 40 个 fixture 时 y≈1300 而窗口高 800），出视口时套件按错因报错（「右键目标不在可视区内…请先用 open / 滚动把它带进视口」），不静默；另外该路径要求快照带截图，取不到时同样报错不静默。**`modifiers`（M379）**：给 `["meta"]`（或 `cmd`/`control`/`ctrl`/`shift`/`alt`/`option`）时改走 swift + CGEvent 通道投递**带修饰键 flags 的鼠标点击**（DOM 侧 `metaKey` 等为真，⌘-Click 跟随链接这类路径因此可在真机验）——KimiCU 的 click 没有修饰键参数。该路径与 `doubleClick` 同代价：**会移动真实光标、要求目标窗口在前台**，坐标用 `target` 的**窗口局部点**（`{x,y}` 也按这个空间给），并支持 `settleMs`（缺省 600）。**该通道恒为左键**（swift 侧的点击事件写死 `.left`）：`modifiers` 与 `button` **不能同写**，`--check` 会挡；要右键就单独写 `button: right` |
 | `clickNodeText` | `text` | 点 value/title **逐字等于** `text` 的节点（比 `name` 的正则更死板） |
@@ -1053,13 +1077,16 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 
 ```bash
 node --test scripts/acceptance/lib/execute.test.mjs
+node --test scripts/acceptance/lib/app.test.mjs   # app.mjs 的纯函数：实例扫描 / 游离实例归属 / bundle 身份
 ```
 
 纯 `node:test`、零新增依赖、不起真机（file 类断言与零断言兜底都不读 app / KimiCU，ctx 桩化即可）。
-它钉的是这一层最容易重犯的三条**静默**缺陷——「步骤表写在闭合 `---` 之外 ⇒ 整表被丢弃、零断言
-判绿」「一条 `file` 断言只判优先级最高的键 ⇒ 多写的键静默失效（README 要求的
+`execute.test.mjs` 钉的是这一层最容易重犯的三条**静默**缺陷——「步骤表写在闭合 `---` 之外 ⇒ 整表
+被丢弃、零断言判绿」「一条 `file` 断言只判优先级最高的键 ⇒ 多写的键静默失效（README 要求的
 `unchangedSince` + `mtimeUnchangedSince` 成对写法正好命中）」与「裸串里写正则转义 ⇒ 按子串永远
 命中 0 次」（M556，逐字段覆盖 `matcher()` 的判据面，另有一条反向用例钉住 `/…/` 形态与
-`target.name` 这类裸正则源字段不误伤）——用「必须红的输入」证明判据真的
-成立（零步骤场景被 `--check` 挡；同一份内容重写时 sha256 那条绿、mtime 那条必红）。它**不进 gate**，
-与 `scripts/migrate-harness-sessions.test.mjs` 同例（跑法写在文件头）。
+`target.name` 这类裸正则源字段不误伤）——用「必须红的输入」证明判据真的成立（零步骤场景被
+`--check` 挡；同一份内容重写时 sha256 那条绿、mtime 那条必红）。`app.test.mjs`（M619 / M622）钉
+游离实例的三条归属（本次 pid / 同路径第二份副本 / pid 未知时的路径回退）与 bundle 身份门（产物 =
+产品 id、产物 = 别的 id 都必须红）。两者**不进 gate**，与 `scripts/migrate-harness-sessions.test.mjs`
+同例（跑法写在文件头）。

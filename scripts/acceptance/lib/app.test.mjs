@@ -6,7 +6,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { bundleAppPath, listLumirInstances, parseElapsedSeconds, straysInClickWindow } from "./app.mjs";
+import {
+  assertAcceptanceBundleIdentity,
+  bundleAppPath,
+  listLumirInstances,
+  parseElapsedSeconds,
+  readBundleId,
+  straysInClickWindow,
+} from "./app.mjs";
 
 test("parseElapsedSeconds：[[dd-]hh:]mm:ss → 秒；解析不出给 null", () => {
   assert.equal(parseElapsedSeconds("09:42"), 9 * 60 + 42);
@@ -114,5 +121,73 @@ test("straysInClickWindow：只挑点击窗口内新起、且不是本次跑批�
     straysInClickWindow(instances, { sinceMs: undefined, ownBinary: own }).map((i) => i.pid),
     [11, 12],
     "不传窗口时不按时刻过滤（仍排除自身与 dev）——调用方传 undefined 即显式放弃归因约束，正常路径都要传",
+  );
+});
+
+test("straysInClickWindow：自己的实例按 pid 认——同路径的第二份副本必须能清退（M622）", () => {
+  const own = "/tmp/wt/src-tauri/target/debug/bundle/macos/Lumir.app/Contents/MacOS/lumir";
+  const clickAt = 1_800_000_000_000;
+  const instances = [
+    // 本次跑批的实例（被测 app）
+    { pid: 10, cmd: own, kind: "bundle", startedAt: clickAt - 120_000 },
+    // 点击拉起同一个 .app 的第二份副本：路径与本次相同，只能靠 pid 区分
+    { pid: 15, cmd: own, kind: "bundle", startedAt: clickAt + 80 },
+    { pid: 11, cmd: "/Applications/Lumir.app/Contents/MacOS/lumir", kind: "bundle", startedAt: clickAt + 50 },
+  ];
+  assert.deepEqual(
+    straysInClickWindow(instances, { sinceMs: clickAt, ownBinary: own, ownPid: 10 }).map((i) => i.pid),
+    [15, 11],
+    "ownPid 在场时排除的是本次实例本身；同路径的第二份副本（pid 15）是游离实例",
+  );
+  assert.deepEqual(
+    straysInClickWindow(instances, { sinceMs: clickAt, ownBinary: own, ownPid: null }).map((i) => i.pid),
+    [11],
+    "pid 未知时退回按本副本路径排除——宁可漏报也不误杀",
+  );
+});
+
+test("readBundleId：从 .app 的 Info.plist 读 CFBundleIdentifier，读不到 / 读到空值即报错", () => {
+  const plist = "/tmp/wt/Lumir.app/Contents/Info.plist";
+  const ok = (_cmd, args) => {
+    assert.equal(args[0], "-extract");
+    assert.equal(args[1], "CFBundleIdentifier");
+    assert.equal(args.at(-1), plist, "读的必须是本 .app 的 Info.plist");
+    return "com.lumir.app.acceptance\n";
+  };
+  assert.equal(readBundleId("/tmp/wt/Lumir.app", ok), "com.lumir.app.acceptance");
+
+  assert.throws(
+    () =>
+      readBundleId("/tmp/wt/Lumir.app", () => {
+        const e = new Error("plutil failed");
+        e.stderr = "Could not extract value, error: No value at that key path";
+        throw e;
+      }),
+    /读不到打包实例的 CFBundleIdentifier/,
+    "Info.plist 缺键 / 不可读必须报错，不回落字面量",
+  );
+  assert.throws(() => readBundleId("/tmp/wt/Lumir.app", () => "  \n"), /CFBundleIdentifier 为空/);
+});
+
+test("assertAcceptanceBundleIdentity：只有构建产物带验收 id 才放行", () => {
+  const appPath = "/tmp/wt/Lumir.app";
+  const productId = "com.lumir.app";
+
+  assert.deepEqual(
+    assertAcceptanceBundleIdentity({ appPath, bundleId: "com.lumir.app.acceptance", productId }),
+    { appPath, bundleId: "com.lumir.app.acceptance", productBundleId: productId },
+    "验收 id：放行并交出产物身份",
+  );
+  assert.equal(assertAcceptanceBundleIdentity({ appPath: null, productId }), null, "dev flavour 没有 .app 身份可核");
+
+  assert.throws(
+    () => assertAcceptanceBundleIdentity({ appPath, bundleId: productId, productId }),
+    /仍是产品 id.*build-bundle\.mjs/s,
+    "漏了 --config 的构建（产物 = 产品 id）必须判红并给重建命令",
+  );
+  assert.throws(
+    () => assertAcceptanceBundleIdentity({ appPath, bundleId: "com.lumir.app.acceptance2", productId }),
+    /与验收 id com\.lumir\.app\.acceptance 不一致/,
+    "换了别的 id 同样判红：通知授权按 bundle id 记账，id 漂了就不可复现",
   );
 });

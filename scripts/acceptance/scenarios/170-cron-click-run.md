@@ -28,15 +28,27 @@ steps:
     # `$nextMinute` 最坏是「写入时刻 + 60s 再向上取整」≈120s，再加 30s tick 余量；90s 不够。
     timeoutMs: 180000
     expect:
-      - label: 到点通知已投递
-        file:
-          path: "env:logs/*.jsonl"
-          jsonl: { event: cron_notified, kind: trigger }
       - label: 未点击 ⇒ 没有 cron_run_started（无模型请求）
         file:
           path: "env:logs/*.jsonl"
           count: { pattern: '"event":"cron_run_started"', exact: 0 }
       - shot: 通知已投递（Lumir 窗口；横幅属系统通知中心，不在窗口内）
+
+  # 日志是**批量落盘**（`logging.rs` 的 200ms 静默期）：横幅上屏由 usernoted 异步完成，可能早于
+  # `cron_notified` 这一行落盘。M622 首跑实测：waitForNotification 返回时日志只有 6 行启动事件、
+  # 没有 cron_notified（通知本体已投递、点击链路随后全 PASS）⇒ 等日志事件要直接轮询那份日志，
+  # 不要拿「横幅已出现」当「日志已落盘」（README「waitForFile」条）。
+  - name: 等到点投递事件落盘（cron_notified trigger）
+    do: waitForFile
+    waitForFile:
+      path: "env:logs/*.jsonl"
+      jsonl: { event: cron_notified, kind: trigger }
+    timeoutMs: 30000
+    expect:
+      - label: 到点通知已投递
+        file:
+          path: "env:logs/*.jsonl"
+          jsonl: { event: cron_notified, kind: trigger }
 
   - name: 点击通知横幅本体（系统通知中心 AXPress = 真实点击）
     do: clickNotification
@@ -88,11 +100,14 @@ prompt 与回答出现在面板上、会话 JSONL 落在目标 vault 的目录�
 定位条目（`AXGroup`，label 形如 `(Terminal, acc-cron-click, 到点)`），对条目发 `AXPress`——与用户
 点横幅是同一条系统默认动作。
 
-两个动作分工（横幅只在屏上停留数秒，先 sleep 再点必然点空）：
+三个动作分工（横幅只在屏上停留数秒，先 sleep 再点必然点空）：
 
-1. `do: waitForNotification` 轮询通知中心直到条目出现——命中即返回，第一步的三条断言在
+1. `do: waitForNotification` 轮询通知中心直到条目出现——命中即返回，这一步的断言在
    「横幅在场、尚未点击」这个时点上判（负向判据 `cron_run_started` 必须为 0）；
-2. `do: clickNotification` 立刻在同一快照口径上重新定位并点击。
+2. `do: waitForFile` 等 `cron_notified(trigger)` **落盘**——日志是批量落盘（200ms 静默期），
+   横幅由 usernoted 异步渲染，可能早于这一行写入；M622 首跑就撞上这个竞态（等待返回时日志只有
+   6 行启动事件），判据因此改为直接轮询那份日志（README「waitForFile」）；
+3. `do: clickNotification` 立刻在同一快照口径上重新定位并点击。
 
 **新鲜度（M617）**：`waitForNotification` 在动作开始时快照当前匹配 title/body 的条目作基线，
 只认那之后**新出现**的条目——上一轮 run 留在通知列表里的同标题条目不会让等待提前返回；

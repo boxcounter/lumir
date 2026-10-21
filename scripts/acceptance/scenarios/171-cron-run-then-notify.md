@@ -33,10 +33,6 @@ steps:
         file:
           path: "env:logs/*.jsonl"
           jsonl: { event: cron_run_finished, ok: "true" }
-      - label: 终态后投递了结果通知（kind=result）
-        file:
-          path: "env:logs/*.jsonl"
-          jsonl: { event: cron_notified, kind: result }
       - label: run-then-notify 不投「到点」通知
         file:
           path: "env:logs/*.jsonl"
@@ -46,6 +42,20 @@ steps:
       - label: 用户当前会话 / 界面没有被后台运行的 prompt 污染
         ax: { not: "CRON-PROBE-RUNTHEN" }
       - shot: 运行完成后的界面
+
+  # 与 170 同因：日志批量落盘（200ms 静默期），结果通知横幅由 usernoted 异步渲染，可能早于
+  # `cron_notified(kind=result)` 落盘。等日志事件直接轮询那份日志（README「waitForFile」）。
+  - name: 等结果通知事件落盘（cron_notified result）
+    do: waitForFile
+    waitForFile:
+      path: "env:logs/*.jsonl"
+      jsonl: { event: cron_notified, kind: result }
+    timeoutMs: 30000
+    expect:
+      - label: 终态后投递了结果通知（kind=result）
+        file:
+          path: "env:logs/*.jsonl"
+          jsonl: { event: cron_notified, kind: result }
 
   - name: 点击结果通知横幅（系统通知中心 AXPress = 真实点击）
     do: clickNotification

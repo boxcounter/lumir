@@ -8,20 +8,109 @@
 //      用户真实 vault（真实路径按信息卫生纪律不落库）永不写入。
 //   3. 端口隔离：dev server 走独立端口，绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420。
 import { execFileSync, spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { cp, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CuError } from "./cu.mjs";
 import { envHome, exists, InfraError, log, mkdirp, readText, repoRoot, secondVaultDir, sleep, stripAnsi, vaultDir } from "./util.mjs";
 
-export const BUNDLE_ID = "com.lumir.app";
+/**
+ * 验收副本的 bundle id（M622，Alex 2026-10-21 裁决的 B 方案）：构建期用 `tauri build --config`
+ * 把 identifier 覆盖成这个值，`src-tauri/tauri.conf.json` 本体一字不动。独立 id 是通知点击落点的
+ * 根治——usernoted / LaunchServices 按 **bundle id** 解析点击目标，与产品同 id 的验收副本点通知时
+ * 会被解析到安装版 `/Applications/Lumir.app`（M619 真机实证，见 README「实例 flavour」）。
+ *
+ * 运行时**不拿这个常量当身份**：身份取自构建产物 `Contents/Info.plist` 的 `CFBundleIdentifier`
+ * （`acceptanceBundleId()`）。常量只是**期望值**，由 `assertAcceptanceBundleIdentity()` 把两者
+ * 对齐——构建时漏了 `--config`（产物仍是产品 id）或换了别的 id，都在起跑预检里判红，不让一次
+ * 「点击仍落到安装版」的假绿跑完。
+ */
+export const ACCEPTANCE_BUNDLE_ID = "com.lumir.app.acceptance";
 
 /** LaunchServices 注册表工具（M619）：打包实例经 `open` 启动会登记进 LS 数据库，收尾时按本副本
  *  路径撤销这条记录——只撤销指定路径，同 bundle id 的其他副本不受影响（实测两副本同 bundle id
- *  时 `-u B` 后 A 的记录仍在）。不撤销的话，worktree 里的副本会以 `com.lumir.app` 的身份留在
- *  LS 数据库里，可能影响后续「按 bundle id 打开 app」的解析。 */
+ *  时 `-u B` 后 A 的记录仍在）。不撤销的话，worktree 里的副本会以验收 id 的身份留在 LS 数据库里，
+ *  指向一个随后被清理的路径。 */
 const LSREGISTER =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+
+/** 产品自己的 bundle id：从 `src-tauri/tauri.conf.json` 现场读（产品身份的真源，不在套件里抄字面量）。 */
+export function productBundleId() {
+  const conf = JSON.parse(readFileSync(path.join(repoRoot(), "src-tauri", "tauri.conf.json"), "utf8"));
+  if (!conf.identifier) {
+    throw new Error("src-tauri/tauri.conf.json 缺 identifier：无法核对验收副本的身份隔离");
+  }
+  return conf.identifier;
+}
+
+/**
+ * 从 `.app` 的 `Contents/Info.plist` 读 `CFBundleIdentifier`——**构建产物是 bundle 身份的真源**。
+ * 读不到即抛 `InfraError`，不回落任何字面量：回落就是回到「套件里的 id 与产物里的 id 各写一份」，
+ * 而这条差异正是 M619 的点击落点问题（README「实例 flavour」）。
+ * `exec` 可注入（自测用），签名同 `spawnSyncText(cmd, args)`。
+ */
+export function readBundleId(appPath, exec = spawnSyncText) {
+  const plist = path.join(appPath, "Contents", "Info.plist");
+  let raw;
+  try {
+    raw = exec("/usr/bin/plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-", plist]);
+  } catch (e) {
+    const stderr = e?.stderr ? String(e.stderr).trim() : "";
+    throw new InfraError(
+      `读不到打包实例的 CFBundleIdentifier（${plist}）：${stderr || e.message}——重新构建验收副本` +
+        "（node scripts/acceptance/build-bundle.mjs）",
+    );
+  }
+  const id = String(raw).trim();
+  if (!id) {
+    throw new InfraError(`打包实例的 CFBundleIdentifier 为空（${plist}）：Info.plist 不完整，重新构建验收副本`);
+  }
+  return id;
+}
+
+/** 构建产物里的验收 bundle id；dev flavour（没有 .app）返回 null。按 `.app` 路径缓存，一次跑批只读一次盘。 */
+const bundleIdCache = new Map();
+export function acceptanceBundleId() {
+  const appPath = bundleAppPath();
+  if (!appPath) return null;
+  if (!bundleIdCache.has(appPath)) bundleIdCache.set(appPath, readBundleId(appPath));
+  return bundleIdCache.get(appPath);
+}
+
+/**
+ * 起跑预检的身份门（M622）：验收副本的 bundle id 必须等于 `ACCEPTANCE_BUNDLE_ID`。
+ *
+ * 三类输入、两种红法：
+ *   - 等于期望值 → 返回 `{ appPath, bundleId, productBundleId }`；
+ *   - 等于**产品 id**（最常见：构建时漏了 `--config`）→ 点通知会被 LS 解析到安装版，本次读数
+ *     不算数，直接判红并给出重建命令；
+ *   - 其他任何 id → 通知授权按 bundle id 记账，换 id 会让首次授权作废、点击链路不可复现，同样判红。
+ * dev flavour 返回 null（没有 .app 身份可核）。
+ *
+ * `bundleId` / `productId` 可注入（自测用），不注入时从构建产物与 tauri.conf.json 现读。
+ */
+export function assertAcceptanceBundleIdentity({
+  appPath = bundleAppPath(),
+  bundleId,
+  productId = productBundleId(),
+} = {}) {
+  if (!appPath) return null;
+  const actual = bundleId ?? readBundleId(appPath);
+  if (actual === productId) {
+    throw new InfraError(
+      `打包实例的 bundle id 仍是产品 id（${productId}）：构建时没加 --config 覆盖 identifier。` +
+        "通知点击会按这个 id 被 LaunchServices 解析到安装版（M619 的根因），本次读数不算数——" +
+        `用 node scripts/acceptance/build-bundle.mjs 重建（产物 id 应为 ${ACCEPTANCE_BUNDLE_ID}）。`,
+    );
+  }
+  if (actual !== ACCEPTANCE_BUNDLE_ID) {
+    throw new InfraError(
+      `打包实例的 bundle id 是 ${actual}，与验收 id ${ACCEPTANCE_BUNDLE_ID} 不一致：通知授权按 bundle id ` +
+        "记账，换 id 会让首次授权作废、点击链路也不可复现——用 node scripts/acceptance/build-bundle.mjs 重建。",
+    );
+  }
+  return { appPath, bundleId: actual, productBundleId: productId };
+}
 
 export function acceptPort() {
   return Number(process.env.LUMIR_ACCEPTANCE_PORT ?? 1430);
@@ -36,18 +125,17 @@ export function acceptPort() {
  * 也能点，但 usernoted 记录 `Received response … app:"com.apple.Terminal" … foreground: true`
  * ——系统把点击响应路由给 **Terminal** 的 bundle 身份，本进程的 `on_action` 回调永远收不到
  * ⇒ `cron_click` 不产生。这是 dev flavour 的通道边界，不是产品缺陷；打包实例的 bundle id 是
- * `com.lumir.app`，响应回到自己的进程（change add-cron-runtime-daemon §4.7 的兜底口径）。
+ * 验收 id（`ACCEPTANCE_BUNDLE_ID`，构建期覆盖，运行时从 Info.plist 现读），响应回到自己的进程
+ * （change add-cron-runtime-daemon §4.7 的兜底口径）。
  *
  * **启动方式（M619）**：打包实例经 LaunchServices（`open`）启动，**不是**直接 exec 二进制——
  * 直接 exec 的 GUI app 也会向 LS check in，但它不是 LS 的 **launch 实例**（无 launch time /
  * coalition，`parentASN` 指向终端）；`open` 启动后本副本才是 LS launch 实例（2026-10-21 探针；
- * 170/171 真机窗口里 `lsappinfo` 也确认了这一点）。**但这不足以改变通知点击的落点**：2026-10-21
- * 11:44 / 11:46 的真机复跑里，点击通知仍拉起已注册的安装版 `/Applications/Lumir.app`——LS 按
- * bundle id 解析到的是安装版 URL，而不是同 bundle id 的另一个运行副本。本套件在
- * scripts/acceptance 范围内的对策是点击后 3s 内识别并清退这个游离实例（见
- * `quiesceStrayBundleInstances`）；**根治需要验收副本使用独立 bundle id**（构建期 `--config`
- * 覆盖 + 一次性通知授权），属设计取舍，待裁决。详见 `launchApp` 的 bundle 分支与 README
- * 「实例 flavour」节。
+ * 170/171 真机窗口里 `lsappinfo` 也确认了这一点）。M619 当时点击仍拉起安装版，因为 LS 按
+ * **bundle id** 解析落点、两个副本同 id；M622 起验收副本构建期改用独立 id（见
+ * `ACCEPTANCE_BUNDLE_ID`），点击应回到本副本。M619 的游离实例识别与清退保留作纵深防御
+ * （`quiesceStrayBundleInstances`），归属判据按 pid 认。详见 `launchApp` 的 bundle 分支与
+ * README「实例 flavour」节。
  *
  * 返回 null 表示走原来的 `pnpm tauri dev`（缺省，所有既有场景行为不变）。
  */
@@ -1002,12 +1090,13 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
   // 本场景 seed 的形状，上一实例在复位之后、退出之前写回的一律覆盖掉。场景内的 `do: restart`
   // 复用本函数，但那时武装标记已用掉，不动会话——重启要的正是盘上的布局。
   await applySessionReset();
-  // 打包实例模式（M605 / M619）：经 LaunchServices 启动 .app（`open`），**不是**直接 exec 二进制。
-  // 直接 exec 的 GUI app 会 check in 但不是 LS 的 launch 实例（无 launch time / coalition，
+  // 打包实例模式（M605 / M619 / M622）：经 LaunchServices 启动 .app（`open`），**不是**直接 exec
+  // 二进制。直接 exec 的 GUI app 会 check in 但不是 LS 的 launch 实例（无 launch time / coalition，
   // parentASN 指向终端——2026-10-21 探针）；`open` 启动后本副本才是 LS launch 实例（真机
-  // lsappinfo 已确认）。**实测（2026-10-21 11:44/11:46）点击通知仍会拉起安装版**——LS 按
-  // bundle id 解析到安装版 URL，运行中的同 bundle id 副本不改变这个落点；套件的对策是点击后
-  // 清退游离实例（execute.mjs 的 clickNotification），根治需独立 bundle id（待裁决）。
+  // lsappinfo 已确认）。M619 实测（2026-10-21 11:44/11:46）点击通知仍拉起安装版，因为 LS 按
+  // **bundle id** 解析落点、两个副本同 id；M622 起验收副本在构建期用独立 id（起跑预检断言产物
+  // Info.plist 就是那个 id），点击应回到本副本；M619 的游离实例清退保留作纵深防御
+  // （execute.mjs 的 clickNotification）。
   // `-W` 让 open 等 app 退出，仍有一个可观察的子进程；stdout / stderr 经 `--stdout/--stderr`
   // 落到文件，由下面的 pump 原样喂回 chunks（`LUMIR_READY` 就绪门不变）。
   // 窗口位置退回 tauri.conf 的构建值（本模式不写 `--config` 覆写）；首启的 `apply_startup_size`
@@ -1019,9 +1108,12 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
   if (bundle) {
     if (!(await exists(appPath))) {
       throw new InfraError(
-        `打包实例不存在：${appPath}——先 \`pnpm tauri build --debug --bundles app\`（或改用 dev flavour：不设 LUMIR_ACCEPTANCE_BUNDLE）`,
+        `打包实例不存在：${appPath}——先 \`node scripts/acceptance/build-bundle.mjs\`（或改用 dev flavour：不设 LUMIR_ACCEPTANCE_BUNDLE）`,
       );
     }
+    // 每次起实例都核一遍身份（M622）：预检已经拦过一次，这里保证「实际被拉起的这份 .app」就是
+    // 带验收 id 的那份——不留「预检过了、但环境变量中途指向别的产物」的缝。
+    assertAcceptanceBundleIdentity({ appPath });
     const launchDir = path.join(envHome(), "bundle-launch");
     await rm(launchDir, { recursive: true, force: true });
     await mkdirp(launchDir);
@@ -1127,6 +1219,8 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
     // 打包模式：app 由 launchd 拉起（不是 open 的子进程），按**本次跑批自己的二进制路径**精确定位；
     // dev 模式的进程组里还有 pnpm/vite/cargo，需要等到组内出现 `target/debug/lumir`。
     pid = bundle ? await waitForBundlePid(bundle, 30_000) : await waitForPid(child.pid, 30_000);
+    // 记下本次跑批自己的打包实例 pid（M622）：游离实例的归属按 pid 认，路径不足以区分同路径的第二份副本。
+    if (bundle) ownBundlePid = pid;
   } catch (e) {
     // 启动失败也要把这一轮自己拉起的东西收干净：open / tauri 的进程组 + 精确匹配本 bundle 路径的
     // app 进程（不按 `.app` 通配，碰不到用户实例）。
@@ -1256,27 +1350,47 @@ export function findBundleAppPid(binPath) {
   return hits[0].pid;
 }
 
+/**
+ * 本次跑批自己的打包实例 pid（M622，游离实例归属的判据）：路径不足以区分同一个 `.app` 的第二份
+ * 副本（LaunchServices / `open -n` 语义下会拉起同路径的另一个进程），pid 可以。`launchApp`
+ * 成功拿到 pid 后置入、`stopApp` 收尾时清空；为空时退回「按本次二进制路径排除」（宁可不杀）。
+ */
+let ownBundlePid = null;
+
+export function ownBundleInstancePid() {
+  return ownBundlePid;
+}
+
+/** 这条 `.app` 实例是不是本次跑批自己的：优先按 pid 认，没有 pid 时按本副本的二进制路径排除。 */
+export function isOwnBundleInstance(instance, { ownPid = ownBundlePid, ownBinary = bundleBinary() } = {}) {
+  if (ownPid !== null && ownPid !== undefined) return instance.pid === ownPid;
+  return binaryPaths(ownBinary).has(instance.cmd);
+}
+
 /** 场上**不属于本次跑批**的 `.app` 实例（M619：点击前的归因前置检查——点击前就在场的实例
- *  可能是用户自己打开的，之后新起的就不再能一律判给本次点击）。 */
-export function listOtherBundleInstances(ownBinary = bundleBinary()) {
-  const own = binaryPaths(ownBinary);
-  return listLumirInstances().filter((i) => i.kind === "bundle" && !own.has(i.cmd));
+ *  可能是用户自己打开的，之后新起的就不再能一律判给本次点击）。归属口径见 `isOwnBundleInstance`。 */
+export function listOtherBundleInstances({ ownBinary = bundleBinary(), ownPid = ownBundlePid } = {}) {
+  return listLumirInstances().filter(
+    (i) => i.kind === "bundle" && !isOwnBundleInstance(i, { ownBinary, ownPid }),
+  );
 }
 
 /**
- * 纯判据（M619，自测覆盖）：从实例清单里挑出「**本次点击窗口内新起、且不是本次跑批自己**」的
- * `.app` 实例。四条同时成立才返回：
- *   1. `kind === "bundle"`；2. 路径不在 `ownBinary` 的两种字面里；3. 启动时刻可读；
- *   4. `startedAt >= sinceMs`（`sinceMs` 缺省时不按时刻过滤，只保留 1–3）。
+ * 纯判据（M619 / M622，自测覆盖）：从实例清单里挑出「**本次点击窗口内新起、且不是本次跑批自己**」
+ * 的 `.app` 实例。四条同时成立才返回：
+ *   1. `kind === "bundle"`；2. 不是本次跑批自己的实例（pid 优先，见 `isOwnBundleInstance`）；
+ *   3. 启动时刻可读；4. `startedAt >= sinceMs`（`sinceMs` 缺省时不按时刻过滤，只保留 1–3）。
  * 调用方在点击前已确认场上没有其他 bundle 实例，因此这里挑出来的只会是这次点击拉起的；启动
  * 时刻读不出的进程永远不动（无法归因）。
  */
-export function straysInClickWindow(instances, { sinceMs, ownBinary = bundleBinary() } = {}) {
-  const own = binaryPaths(ownBinary);
+export function straysInClickWindow(
+  instances,
+  { sinceMs, ownBinary = bundleBinary(), ownPid = ownBundlePid } = {},
+) {
   return instances.filter(
     (i) =>
       i.kind === "bundle" &&
-      !own.has(i.cmd) &&
+      !isOwnBundleInstance(i, { ownBinary, ownPid }) &&
       i.startedAt !== null &&
       (sinceMs === undefined || i.startedAt >= sinceMs),
   );
@@ -1296,12 +1410,12 @@ async function waitForBundlePid(binPath, timeoutMs) {
 }
 
 /**
- * 通知点击后的游离实例识别与清退（M619，任务「若仍产生游离实例，套件必须识别并清退（仅限本次
- * 跑批自己拉起的）」）。
+ * 通知点击后的游离实例识别与清退（M619 引入；M622 独立 bundle id 落地后保留作**纵深防御**）。
  *
  * 判据（三条同时成立才动）：
  *   1. 是 `.app/Contents/MacOS/lumir` 实例；
- *   2. **不是**本次跑批自己的二进制路径（`ownBinary`；安装版 / 别的副本才可能游离）；
+ *   2. **不是**本次跑批自己的**实例**（`ownPid` 优先；pid 未知时按 `ownBinary` 路径排除）——独立
+ *      id 下点击应激活本副本，但同一个 `.app` 若被拉起第二份副本，路径分不出它与被测实例，pid 能；
  *   3. `etime` 反推的启动时刻不早于 `sinceMs`（调用方传「点击开始前」的时刻）——跑批开始时
  *      M478 起跑自检已确认场上零实例，因此点击窗口内新起的 `.app` 实例只可能是这次点击拉起的。
  *
@@ -1309,8 +1423,15 @@ async function waitForBundlePid(binPath, timeoutMs) {
  * 命中的这些 pid**，不按 `.app` 通配 kill——用户手头的安装版若在跑（跑批开始时已存在）不在窗口内，
  * 结构上不会被这条碰到；硬约束「不得干扰用户正在运行的实例」由此守住。
  */
-export async function quiesceStrayBundleInstances({ sinceMs, ownBinary = bundleBinary(), evidence, action = "clickNotification", settleMs = 3_000 } = {}) {
-  const findStrays = () => straysInClickWindow(listLumirInstances(), { sinceMs, ownBinary });
+export async function quiesceStrayBundleInstances({
+  sinceMs,
+  ownBinary = bundleBinary(),
+  ownPid = ownBundlePid,
+  evidence,
+  action = "clickNotification",
+  settleMs = 3_000,
+} = {}) {
+  const findStrays = () => straysInClickWindow(listLumirInstances(), { sinceMs, ownBinary, ownPid });
   // 点击拉起是异步的（M617 现场：AXPress 记录 21:55:25.89 → launchservicesd CHECKIN 21:55:25.99，
   // 相差约 100ms），立刻扫会漏；在 settleMs 内轮询，命中即停。
   const deadline = Date.now() + settleMs;
@@ -1320,7 +1441,10 @@ export async function quiesceStrayBundleInstances({ sinceMs, ownBinary = bundleB
     strays = findStrays();
   }
   if (strays.length === 0) {
-    evidence?.record({ kind: "note", text: `${action} 后游离实例扫描：无（本次跑批自己的 bundle 不计）` });
+    evidence?.record({
+      kind: "note",
+      text: `${action} 后游离实例扫描：无（本次跑批自己的实例 pid ${ownPid ?? "未知"} 不计）`,
+    });
     return [];
   }
   const cleaned = [];
@@ -1390,8 +1514,8 @@ export async function stopApp(handle) {
     killOwn("SIGKILL");
     await sleep(500);
     // 撤销本次跑批经 `open` 写进 LaunchServices 的本副本记录（M619）：只按本 .app 路径撤销，
-    // 同 bundle id 的其他副本（安装版）不受影响；不撤的话 worktree 副本会以 com.lumir.app 的
-    // 身份留在 LS 数据库里，影响后续「按 bundle id 打开 app」的解析。
+    // 同 id 的其他副本不受影响；不撤的话 worktree 副本会以验收 id 的身份留在 LS 数据库里，
+    // 指向一个随后被清理的路径。
     if (handle.appPath) {
       try {
         spawnSyncText(LSREGISTER, ["-u", handle.appPath]);
@@ -1399,6 +1523,8 @@ export async function stopApp(handle) {
         /* 未注册 / 系统已清理：无副作用 */
       }
     }
+    // 本次实例已收（或已尽力收）：清掉 pid 归属，后续扫描不再把它当「自己」。
+    ownBundlePid = null;
     return;
   }
   const pgid = handle?.child?.pid;
@@ -1421,10 +1547,13 @@ export async function stopApp(handle) {
   await sleep(500);
 }
 
-export async function cuSeesApp(cu, pid, { retries = 20 } = {}) {
+/** KimiCU 的 app 清单里确认 `pid` 就是本次跑批的验收副本（bundle id 从构建产物现读，M622）。
+ *  dev flavour 没有 .app 身份可核，返回 false。 */
+export async function cuSeesApp(cu, pid, { retries = 20, bundleId = acceptanceBundleId() } = {}) {
+  if (!bundleId) return false;
   for (let i = 0; i < retries; i++) {
     const apps = await cu.listApps();
-    if (apps.some((a) => a.pid === pid && a.bundle_id === BUNDLE_ID)) return true;
+    if (apps.some((a) => a.pid === pid && a.bundle_id === bundleId)) return true;
     await sleep(500);
   }
   return false;

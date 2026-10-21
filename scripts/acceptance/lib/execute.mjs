@@ -1867,10 +1867,17 @@ async function notificationCenterPanelOpen(cu, pid) {
  * 为什么需要它（M620）：通知条目只有在**面板打开**时才出现在 NotificationCenter 的 AX 树里
  * （面板关着时只剩菜单栏）。冷启动投递的条目早就躺在通知中心里，等横幅上屏太晚、也抓不到——
  * 场景先把面板打开再读，才有一条稳定的机器判据。
+ *
+ * **开关态竞态（M622，213 连续两次 INVALID 的现场）**：面板的开态可能在「读状态」与「点时钟」
+ * 之间被别的动作改掉（前一场景的 clickNotification 会把面板留在打开态；随后前台切换 / 应用激活
+ * 又可能把它收掉）。此时这一次点击恰好把它**打开**，而收起步骤等的是「关闭」，5s 后判 INVALID。
+ * 对策：点击前后都以 NC 的 AX 树为准，最多点两次（每次 5s 验证）——第一次被竞态翻转掉，第二次
+ * 会把状态拨回目标；收起方向最后再用 Escape 兜底（macOS 面板的默认收起键，2026-10-21 实测有效）。
  */
 async function toggleNotificationCenter(cu, { want, evidence, action }) {
   const ncPid = notificationCenterPid();
-  if ((await notificationCenterPanelOpen(cu, ncPid)) === want) {
+  const isOpen = () => notificationCenterPanelOpen(cu, ncPid);
+  if ((await isOpen()) === want) {
     evidence.record({
       kind: "note",
       text: `${action}：通知中心面板已在${want ? "打开" : "关闭"}态，无需点击`,
@@ -1878,28 +1885,50 @@ async function toggleNotificationCenter(cu, { want, evidence, action }) {
     return want ? "notification-center-open" : "notification-center-closed";
   }
   const ccPid = controlCenterPid();
-  const ccAx = await readAx(cu, ccPid);
-  const clock = ccAx.nodes.find(
-    (node) => node.role === "AXMenuBarItem" && /\(Clock\)|时钟|Date & Time/.test(node.raw),
-  );
-  if (!clock) {
-    throw new InfraError(
-      "Control Center 的菜单栏里找不到时钟项（Clock）——无法切换通知中心面板（环境项，不是产品缺陷）",
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const ccAx = await readAx(cu, ccPid);
+    const clock = ccAx.nodes.find(
+      (node) => node.role === "AXMenuBarItem" && /\(Clock\)|时钟|Date & Time/.test(node.raw),
     );
-  }
-  await cu.click(ccPid, { index: clock.index });
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    if ((await notificationCenterPanelOpen(cu, ncPid)) === want) {
-      evidence.record({
-        kind: "note",
-        text: `${action}：已点菜单栏时钟 → 通知中心面板${
-          want ? "打开" : "关闭"
-        }（验证：NC AX 树里 ${want ? "出现" : "消失"} AXWindow）`,
-      });
-      return want ? "notification-center-open" : "notification-center-closed";
+    if (!clock) {
+      throw new InfraError(
+        "Control Center 的菜单栏里找不到时钟项（Clock）——无法切换通知中心面板（环境项，不是产品缺陷）",
+      );
     }
-    await sleep(200);
+    await cu.click(ccPid, { index: clock.index });
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if ((await isOpen()) === want) {
+        evidence.record({
+          kind: "note",
+          text: `${action}：第 ${attempt} 次点菜单栏时钟 → 通知中心面板${
+            want ? "打开" : "关闭"
+          }（验证：NC AX 树里 ${want ? "出现" : "消失"} AXWindow）`,
+        });
+        return want ? "notification-center-open" : "notification-center-closed";
+      }
+      await sleep(200);
+    }
+    evidence.record({
+      kind: "note",
+      text: `${action}：第 ${attempt} 次点菜单栏时钟后 5s 内未达到目标态（面板${
+        (await isOpen()) ? "仍打开" : "仍关闭"
+      }）——重读状态后再点一次`,
+    });
+  }
+  if (!want) {
+    await cu.pressKey(ncPid, "escape");
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      if (!(await isOpen())) {
+        evidence.record({
+          kind: "note",
+          text: `${action}：两次点时钟都未收起 → Escape 收起通知中心面板成功（M622 兜底通道）`,
+        });
+        return "notification-center-closed";
+      }
+      await sleep(200);
+    }
   }
   throw new InfraError(
     `点了菜单栏时钟但通知中心面板 5s 内没有${want ? "出现" : "关闭"}——环境项（系统通知服务异常），不是产品缺陷`,
@@ -2688,17 +2717,18 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // 开始时 M478 起跑自检已确认场上零实例，因此点击窗口内新起的只可能是这次点击拉起的。
       // 点击**前**若场上已有别的 bundle 实例（用户在跑批期间自己打开了 Lumir），归因前提不成立：
       // 不清退，只记证据交人判断——硬约束是绝不误伤用户实例。
-      const preexisting = bundleBinary() ? listOtherBundleInstances(bundleBinary()) : [];
+      const preexisting = bundleBinary() ? listOtherBundleInstances() : [];
       const clickStartedAt = Date.now();
       const out = await cu.click(ncPid, { index: node.index });
       evidence.record({
         kind: "note",
         text: `点击通知横幅 AXPress：${node.raw}（KimiCU 自报 ${JSON.stringify(out.json ?? out.text).slice(0, 200)}）`,
       });
-      // M619：UN 点击的系统侧动作是「按 bundle id 激活 app」，走 LaunchServices——真机实测
-      // （2026-10-21）即使本副本经 `open` 启动、是 LS launch 实例，点击仍落到安装版的注册 URL
-      // （/Applications/Lumir.app）。因此在点击窗口内识别并清退这些新起的副本（只动这些 pid，
-      // 不按 `.app` 通配）。dev flavour 的点击响应路由给 Terminal，不会拉起 Lumir，跳过扫描。
+      // M619 / M622：UN 点击的系统侧动作是「按 bundle id 激活 app」，走 LaunchServices。M619 真机
+      // 实测（2026-10-21）两个副本同 id 时点击落到安装版的注册 URL（/Applications/Lumir.app）；
+      // M622 起验收副本构建期带独立 id，点击应激活本副本。清退保留作**纵深防御**——若仍有点击
+      // 窗口内新起的副本（旧注册残留 / 同路径第二份副本），在 3s 内识别并按 pid 清退（只动这些
+      // pid，不按 `.app` 通配）。dev flavour 的点击响应路由给 Terminal，不会拉起 Lumir，跳过扫描。
       if (bundleBinary()) {
         if (preexisting.length) {
           evidence.record({
@@ -2711,7 +2741,6 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         } else {
           await quiesceStrayBundleInstances({
             sinceMs: clickStartedAt - 1_000,
-            ownBinary: bundleBinary(),
             evidence,
             action: "clickNotification",
           });
