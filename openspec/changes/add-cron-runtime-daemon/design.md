@@ -167,7 +167,7 @@ loop {
 
 | 情形 | 是否写 `last_fired` | 后续行为 |
 |---|---|---|
-| 通知投递失败（权限 / 插件错误） | 否 | 下一次 tick 再试；最小重试间隔 = tick（30s），不形成风暴 |
+| 通知投递失败（权限 / 投递后端错误） | 否 | 下一次 tick 再试；最小重试间隔 = tick（30s），不形成风暴 |
 | 运行交接被拒（目标 vault 不是当前 vault） | 否 | 当日下一次拉取触发重试（§6.5）；定时器不再重复尝试 |
 | 运行交接被拒（该任务上一次运行仍在进行） | 否 | 落 `cron_run_skipped(reason=busy)`；下一次拉取触发重试 |
 | 运行失败 / 因需批准而中止 | 是（已在交接时写入） | 当日不自动重试（避免无人值守下的 token 风暴）；`run-then-notify` 通知失败，`silent-run` 只落诊断 |
@@ -387,9 +387,9 @@ harness 运行时的会话按 vault 键控、每个 vault 一个活跃槽位（`
     状态文件读写、tick 常量。
   - `src-tauri/src/lib.rs`：唯一 tauri 接线层——线程启动、poke 通道、通知投递、点击回调、运行交接
     事件、结果回执落状态。副作用以回调形式注入，判定模块不知道通知或窗口存在。
-- **依赖新增**：`tauri-plugin-notification`（2.6+，Rust 侧 API，桌面点击回调自 2.6.0 起可用）、
-  `chrono`（本地时间；锁文件已在树内）。两者都不经 webview，`src-tauri/capabilities/default.json`
-  零增量。
+- **依赖新增**：`notify-rust`（4.18.2，Rust 侧直连投递；macOS 的 UN 后端由 `preview-macos-un`
+  选择）、`chrono`（本地时间；锁文件已在树内）。两者都不经 webview，
+  `src-tauri/capabilities/default.json` 零增量。
 - **性能**：setup 内只 spawn 线程（微秒级）；tick 30s 一次、纯内存比较；通知权限查询一次；
   状态文件只在派发成功时写（一天几次）。冷启动 / keypress-to-paint 合同无接触面。
 - **日志**：六个事件名进 `logging::LogEventName` 白名单（§11），字段值上限 256 字符的隐私护栏不变；
@@ -500,11 +500,11 @@ rg -c '"event":"cron_run_finished".*"ok":true' ~/.config/lumir/logs/
   进入的是会话而不是文件（proposal 裁决点 6）。要改须另裁新增工具。
 - **通知文案通用**：不读 prompt 摘要、不含路径与内容（锁屏隐私）；代价是通知本身信息量低，靠任务
   id 的可读命名弥补。
-- **点击上报的平台口径**：插件文档写明桌面端点击「as far as the notification server reports it」，
-  且只对「投递时监听器已在场」的通知上报。macOS 实现把响应登记绑在每条通知自己身上：投递成功
-  （系统确认已送达）后为这条通知起一个响应等待线程（`spawn_notification_click_waiter`），点通知
-  本体 → `CronMessage::Click` 交给 `lumir-cron` 线程；非 macOS 仍走插件的 `on_action`，启动时
-  注册一次并常驻。两条路径分工相同：回调只投工作项，判定与副作用都在 cron 线程上。
+- **点击上报的平台口径**：点击响应与具体的投递请求绑定（平台按请求 id 路由），只有为这条通知登记的
+  等待能收到它。因此点击等待随每条通知在投递成功后登记（§4.2）：投递成功（系统确认已送达）后为
+  这条通知起一个响应等待线程（`spawn_notification_click_waiter`），点通知本体 →
+  `CronMessage::Click` 交给 `lumir-cron` 线程。三平台同一条路径（M625 移除了通知插件，不再有
+  「启动时注册一次并常驻」的 `on_action`）；回调只投工作项，判定与副作用都在 cron 线程上。
   > **M620 实现期修订（本条的第一次更正）**：草案曾写「我们启动即常驻监听，覆盖自身投递的通知」
   > （插件 `on_action` 口径）。投递改走 notify-rust 直连后，平台按 `UNNotificationRequest` 的
   > request id 路由响应，**每条通知都必须有自己的响应登记**——插件内部同样每条通知起一个 wait
@@ -513,6 +513,10 @@ rg -c '"event":"cron_run_finished".*"ok":true' ~/.config/lumir/logs/
   > `CronMessage::Click`、同一份 cron 线程处理、同样的 tap 语义（非 tap 动作同样落 warning）；
   > 差异只在登记时机与归属（随每条通知登记 vs 启动时常驻）。平台约束仍满足：响应通道随这条通知的
   > 请求一起建立（发出前注册），不是点击后才补。真机依据：M620 的 170 / 171 两条点击链路 PASS。
+  > **M625 实现期修订（本条的第二次更正）**：非 macOS 的插件通道整体移除——本仓走的是 Rust 侧
+  > 直接投递，插件的 action 追踪只在它自己的 JS tracked 路径上建立，`on_action` 永远收不到回调；
+  > 它的 `permission_state` 亦恒为 Granted。三平台因此只剩「投递成功后逐条登记」一条路径，
+  > 本条此前的平台差异消失。
 - **应用退出后的残留通知**：进程已退出时点击通知最多把 app 拉起来，没有运行上下文（不会自动打开
   会话）；与「应用未运行无触达」同类边界。
 - **运行中退出应用**：`last_fired` 已写，当日不重跑；会话留存里能看到半截运行，诊断有记录。

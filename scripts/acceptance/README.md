@@ -28,11 +28,12 @@ node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手�
 
 ### 实例 flavour：dev（缺省）/ bundle（通知点击链路）
 
-缺省起 `pnpm tauri dev`（dev flavour）。**通知点击回调在 dev flavour 下验不到**：插件按
-`tauri::is_dev()` 把通知归属写成 `com.apple.Terminal`（`tauri-plugin-notification` 的 dev 行为），
-横幅能投递也能点，但 usernoted 把点击响应路由给 Terminal 的 bundle 身份，本进程的 `on_action`
-永远收不到（2026-10-19 实证：`Received response … app:"com.apple.Terminal" …`，Lumir 日志零
-`cron_click`）。这是 dev 通道边界，不是产品缺陷。
+缺省起 `pnpm tauri dev`（dev flavour）。**通知点击回调在 dev flavour 下验不到**：dev 档按
+`tauri::is_dev()` 走 legacy 投递（`deliver_notification_dev`），并把通知归属写成
+`com.apple.Terminal`（裸二进制没有自己的 bundle 身份），横幅能投递也能点，但 usernoted 把点击
+响应路由给 Terminal 的 bundle 身份，本进程的点击等待永远收不到（2026-10-19 实证：
+`Received response … app:"com.apple.Terminal" …`，Lumir 日志零 `cron_click`）。这是 dev 通道
+边界，不是产品缺陷。
 
 要验通知点击（场景 170 / 171 的后半段）与冷启动投递（213），先构建**带独立 bundle id 的验收
 副本**，再用 `LUMIR_ACCEPTANCE_BUNDLE` 指向 `.app` 内的二进制跑同一批场景：
@@ -57,8 +58,8 @@ UN 通知授权会直接返回 denied（启动日志 `通知权限被拒绝`）�
 **独立 bundle id 是通知点击落点的根治（M622）**：usernoted / LaunchServices 按 **bundle id**
 解析点击目标。验收副本若与产品同 id（`com.lumir.app`），点击会被解析到安装版的注册 URL，
 2026-10-21 11:44 / 11:46 的 170/171 真机复跑里点击仍拉起 `/Applications/Lumir.app`（M619）——
-那次拉起会让安装版用**真实配置**跑起来约 1s（读 last_vault / 窗口尺寸等），且在途的
-`on_action` 收不到。构建期换成独立 id 后，点击按验收 id 回到本副本。
+那次拉起会让安装版用**真实配置**跑起来约 1s（读 last_vault / 窗口尺寸等），且在途的点击等待
+收不到。构建期换成独立 id 后，点击按验收 id 回到本副本。
 
 套件**不硬编码身份**：`lib/app.mjs` 从构建产物的 `Contents/Info.plist` 读 `CFBundleIdentifier`
 （`acceptanceBundleId()`），并要求它等于期望值 `ACCEPTANCE_BUNDLE_ID`
@@ -317,7 +318,7 @@ steps:
 ```
 
 **实例 flavour 声明（`requires: bundle`，M605）**：通知点击类场景（170 / 171）在 dev flavour 下
-物理上验不到——点击响应按 `com.apple.Terminal` 路由，本进程的 `on_action` 收不到（见上「实例
+物理上验不到——点击响应按 `com.apple.Terminal` 路由，本进程的点击等待收不到（见上「实例
 flavour」）。这类场景在 front-matter 写 `requires: bundle`：dev 下 runner 直接把该场景标
 `INVALID`（退出码 2，附复跑指引），不跑出一串与产品缺陷无法区分的 FAIL。`--check` 只接受
 `bundle` 这一个取值（写错即报）。
