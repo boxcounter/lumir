@@ -16,13 +16,20 @@ import { envHome, exists, InfraError, log, mkdirp, readText, repoRoot, secondVau
 
 export const BUNDLE_ID = "com.lumir.app";
 
+/** LaunchServices 注册表工具（M619）：打包实例经 `open` 启动会登记进 LS 数据库，收尾时按本副本
+ *  路径撤销这条记录——只撤销指定路径，同 bundle id 的其他副本不受影响（实测两副本同 bundle id
+ *  时 `-u B` 后 A 的记录仍在）。不撤销的话，worktree 里的副本会以 `com.lumir.app` 的身份留在
+ *  LS 数据库里，可能影响后续「按 bundle id 打开 app」的解析。 */
+const LSREGISTER =
+  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+
 export function acceptPort() {
   return Number(process.env.LUMIR_ACCEPTANCE_PORT ?? 1430);
 }
 
 /**
  * **打包实例模式**（M605）：`LUMIR_ACCEPTANCE_BUNDLE=<…>/Lumir.app/Contents/MacOS/lumir` 时，
- * 套件不再起 `pnpm tauri dev`，而是直接执行打包二进制。
+ * 套件不再起 `pnpm tauri dev`，而是启动打包实例。
  *
  * 为什么需要这条通道（dev flavour 的通知点击路由，2026-10-19 实证）：插件在 `tauri::is_dev()`
  * 时把通知归属写成 `com.apple.Terminal`（`tauri-plugin-notification` 的 dev 行为）。横幅能投递、
@@ -31,11 +38,46 @@ export function acceptPort() {
  * ⇒ `cron_click` 不产生。这是 dev flavour 的通道边界，不是产品缺陷；打包实例的 bundle id 是
  * `com.lumir.app`，响应回到自己的进程（change add-cron-runtime-daemon §4.7 的兜底口径）。
  *
+ * **启动方式（M619）**：打包实例经 LaunchServices（`open`）启动，**不是**直接 exec 二进制——
+ * 直接 exec 的 GUI app 也会向 LS check in，但它不是 LS 的 **launch 实例**（无 launch time /
+ * coalition，`parentASN` 指向终端）；`open` 启动后本副本才是 LS launch 实例（2026-10-21 探针；
+ * 170/171 真机窗口里 `lsappinfo` 也确认了这一点）。**但这不足以改变通知点击的落点**：2026-10-21
+ * 11:44 / 11:46 的真机复跑里，点击通知仍拉起已注册的安装版 `/Applications/Lumir.app`——LS 按
+ * bundle id 解析到的是安装版 URL，而不是同 bundle id 的另一个运行副本。本套件在
+ * scripts/acceptance 范围内的对策是点击后 3s 内识别并清退这个游离实例（见
+ * `quiesceStrayBundleInstances`）；**根治需要验收副本使用独立 bundle id**（构建期 `--config`
+ * 覆盖 + 一次性通知授权），属设计取舍，待裁决。详见 `launchApp` 的 bundle 分支与 README
+ * 「实例 flavour」节。
+ *
  * 返回 null 表示走原来的 `pnpm tauri dev`（缺省，所有既有场景行为不变）。
  */
 export function bundleBinary() {
   const bin = process.env.LUMIR_ACCEPTANCE_BUNDLE;
   return bin ? path.resolve(bin) : null;
+}
+
+/**
+ * 打包实例的 `.app` 根（M619）：`open` 只接受 `.app` 路径，而 README / 历史用法给的
+ * `LUMIR_ACCEPTANCE_BUNDLE` 是 `.app` 内的二进制。两种写法都收：`…/Lumir.app` 原样返回，
+ * `…/Lumir.app/Contents/MacOS/lumir` 按最后一段 `Contents/MacOS/` 截出 `.app`。
+ *
+ * 解析不出 `.app` 即抛 `InfraError`——不回落「按路径起二进制」的旧通道，那正是把安装版
+ * 拉起来的成因（静默降级回来就是同一个坑）。
+ */
+export function bundleAppPath() {
+  const bin = bundleBinary();
+  if (!bin) return null;
+  if (bin.endsWith(".app")) return bin;
+  const marker = `${path.sep}Contents${path.sep}MacOS${path.sep}`;
+  const idx = bin.lastIndexOf(marker);
+  if (idx > 0) {
+    const app = bin.slice(0, idx);
+    if (app.endsWith(".app")) return app;
+  }
+  throw new InfraError(
+    `LUMIR_ACCEPTANCE_BUNDLE 必须是 …/Lumir.app 或 …/Lumir.app/Contents/MacOS/lumir（打包实例模式经 ` +
+      `LaunchServices 启动 .app，不再直接 exec 二进制——见 app.mjs 的 bundleBinary 注释）：${bin}`,
+  );
 }
 
 export function fixturesDir() {
@@ -960,22 +1002,54 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
   // 本场景 seed 的形状，上一实例在复位之后、退出之前写回的一律覆盖掉。场景内的 `do: restart`
   // 复用本函数，但那时武装标记已用掉，不动会话——重启要的正是盘上的布局。
   await applySessionReset();
-  // 打包实例模式（M605）：直接执行 .app 内的二进制——不走 tauri CLI、不写 `--config` 覆写
-  // （窗口位置退回 tauri.conf 的构建值；本模式下首启的 `apply_startup_size` 仍会让窗口落在
-  // 屏内，`pinWindowSize` 照常钉尺寸）。frontend 由 custom-protocol 从编译期嵌入的 dist 提供。
+  // 打包实例模式（M605 / M619）：经 LaunchServices 启动 .app（`open`），**不是**直接 exec 二进制。
+  // 直接 exec 的 GUI app 会 check in 但不是 LS 的 launch 实例（无 launch time / coalition，
+  // parentASN 指向终端——2026-10-21 探针）；`open` 启动后本副本才是 LS launch 实例（真机
+  // lsappinfo 已确认）。**实测（2026-10-21 11:44/11:46）点击通知仍会拉起安装版**——LS 按
+  // bundle id 解析到安装版 URL，运行中的同 bundle id 副本不改变这个落点；套件的对策是点击后
+  // 清退游离实例（execute.mjs 的 clickNotification），根治需独立 bundle id（待裁决）。
+  // `-W` 让 open 等 app 退出，仍有一个可观察的子进程；stdout / stderr 经 `--stdout/--stderr`
+  // 落到文件，由下面的 pump 原样喂回 chunks（`LUMIR_READY` 就绪门不变）。
+  // 窗口位置退回 tauri.conf 的构建值（本模式不写 `--config` 覆写）；首启的 `apply_startup_size`
+  // 仍会让窗口落在屏内，`pinWindowSize` 照常钉尺寸。frontend 由 custom-protocol 从编译期嵌入的
+  // dist 提供。配置隔离经 `--env XDG_CONFIG_HOME=…` 传递（launchd 启动的进程不继承本进程 env）。
+  const appPath = bundle ? bundleAppPath() : null;
   let child;
+  let launchLog = null;
   if (bundle) {
-    if (!(await exists(bundle))) {
+    if (!(await exists(appPath))) {
       throw new InfraError(
-        `打包实例不存在：${bundle}——先 \`pnpm tauri build --debug --bundles app\`（或改用 dev flavour：不设 LUMIR_ACCEPTANCE_BUNDLE）`,
+        `打包实例不存在：${appPath}——先 \`pnpm tauri build --debug --bundles app\`（或改用 dev flavour：不设 LUMIR_ACCEPTANCE_BUNDLE）`,
       );
     }
-    child = spawn(bundle, [], {
-      cwd: root,
-      detached: true, // 自成进程组：app 与它拉起的子进程一并收尸
-      env: { ...process.env, XDG_CONFIG_HOME: envHome() },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const launchDir = path.join(envHome(), "bundle-launch");
+    await rm(launchDir, { recursive: true, force: true });
+    await mkdirp(launchDir);
+    const stamp = `${Date.now()}-${process.pid}`;
+    const stdoutFile = path.join(launchDir, `${stamp}.out`);
+    const stderrFile = path.join(launchDir, `${stamp}.err`);
+    await rm(stdoutFile, { force: true });
+    await rm(stderrFile, { force: true });
+    launchLog = { stdoutFile, stderrFile, seen: new Map([[stdoutFile, 0], [stderrFile, 0]]) };
+    child = spawn(
+      "/usr/bin/open",
+      [
+        "-n",
+        "-W",
+        "--stdout",
+        stdoutFile,
+        "--stderr",
+        stderrFile,
+        "--env",
+        `XDG_CONFIG_HOME=${envHome()}`,
+        appPath,
+      ],
+      {
+        cwd: root,
+        detached: true, // open 自成进程组；app 由 launchd 拉起、另有自己的进程组（stopApp 按路径收）
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
   } else {
     child = spawn(
       "pnpm",
@@ -1003,6 +1077,37 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
   child.stdout.on("data", onChunk);
   child.stderr.on("data", onChunk);
 
+  // bundle 模式：把 app 的 stdout / stderr（open 重定向到文件）增量喂回同一套 chunks / logFile，
+  // 就绪门与 app.log 的口径与 dev 模式一致。文件不存在（open 尚未创建）时跳过。
+  let stopPump = false;
+  if (launchLog) {
+    const pump = async () => {
+      for (const file of [launchLog.stdoutFile, launchLog.stderrFile]) {
+        let text = "";
+        try {
+          text = await readText(file);
+        } catch {
+          continue;
+        }
+        const seen = launchLog.seen.get(file) ?? 0;
+        if (text.length > seen) {
+          onChunk(text.slice(seen));
+          launchLog.seen.set(file, text.length);
+        }
+      }
+    };
+    void (async () => {
+      while (!stopPump) {
+        await pump();
+        if (child.exitCode !== null) {
+          await pump();
+          break;
+        }
+        await sleep(400);
+      }
+    })();
+  }
+
   const ready = (async () => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -1016,11 +1121,45 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
     throw new InfraError(`等待 LUMIR_READY 超时（${timeoutMs}ms）：\n${out.slice(-2000)}`);
   })();
 
-  await ready;
-  // 打包模式：spawn 的就是 app 本体，pid 已知；dev 模式的进程组里还有 pnpm/vite/cargo，
-  // 需要等到组内出现 `target/debug/lumir`。
-  const pid = bundle ? child.pid : await waitForPid(child.pid, 30_000);
-  return { child, pid, flavour: bundle ? "bundle" : "dev", output: () => chunks.join("") };
+  let pid;
+  try {
+    await ready;
+    // 打包模式：app 由 launchd 拉起（不是 open 的子进程），按**本次跑批自己的二进制路径**精确定位；
+    // dev 模式的进程组里还有 pnpm/vite/cargo，需要等到组内出现 `target/debug/lumir`。
+    pid = bundle ? await waitForBundlePid(bundle, 30_000) : await waitForPid(child.pid, 30_000);
+  } catch (e) {
+    // 启动失败也要把这一轮自己拉起的东西收干净：open / tauri 的进程组 + 精确匹配本 bundle 路径的
+    // app 进程（不按 `.app` 通配，碰不到用户实例）。
+    stopPump = true;
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
+      /* 组已不在 */
+    }
+    if (bundle) {
+      const strayPid = findBundleAppPid(bundle);
+      if (strayPid !== null) {
+        try {
+          process.kill(strayPid, "SIGTERM");
+        } catch {
+          /* 已退出 */
+        }
+      }
+    }
+    throw e;
+  }
+  return {
+    child,
+    pid,
+    flavour: bundle ? "bundle" : "dev",
+    appPath,
+    binary: bundle,
+    launchLog,
+    stopLogPump: () => {
+      stopPump = true;
+    },
+    output: () => chunks.join(""),
+  };
 }
 
 async function waitForPid(pgid, timeoutMs) {
@@ -1033,8 +1172,235 @@ async function waitForPid(pgid, timeoutMs) {
   throw new InfraError("app 进程未找到（本进程组内的 target/debug/lumir）");
 }
 
-/** 停 app：先整组 SIGTERM，再兜底 SIGKILL 残留（只在本次运行的进程组内）。 */
+/** `etime`（`[[dd-]hh:]mm:ss`）→ 秒；解析不出返回 null（M619：游离实例的启动时刻判据）。 */
+export function parseElapsedSeconds(text) {
+  if (typeof text !== "string" || text === "") return null;
+  let rest = text;
+  let days = 0;
+  const dayMatch = /^(\d+)-(.+)$/.exec(rest);
+  if (dayMatch) {
+    days = Number(dayMatch[1]);
+    rest = dayMatch[2];
+  }
+  const parts = rest.split(":").map((p) => Number(p));
+  if (parts.some((n) => !Number.isInteger(n) || n < 0)) return null;
+  if (parts.length === 2) return days * 86_400 + parts[0] * 60 + parts[1];
+  if (parts.length === 3) return days * 86_400 + parts[0] * 3_600 + parts[1] * 60 + parts[2];
+  return null;
+}
+
+/**
+ * 同机 Lumir 实例清单（M619：M478 起跑自检与游离实例清退的**单一实现**——此前扫描逻辑只在
+ * run.mjs 的 `assertNoForeignLumir` 里，清退要用同一判据时不复制一份，见 REVIEW.md
+ * 「同一语义两处真源」条）。
+ *
+ * 两类目标都按「这个进程自己就是要跑的那个二进制」判定，不做宽松子串匹配：
+ *   - `bundle`：命令行以 `<某个>.app/Contents/MacOS/lumir` 结尾（安装版 / 套件自己的打包实例）；
+ *   - `dev`：命令行以 `target/debug/lumir` 结尾（残留的开发实例）。
+ * 再叠一条「可执行文件名必须是 `lumir`」（`ps -o comm=` 的 basename）——命令行里**提到**这个
+ * 路径的进程不算实例（watchdog shell / `pkill -f …` 这类）。
+ *
+ * `startedAt` 由 `etime` 反推（毫秒；秒级精度），供清退时判「是不是本次点击拉起的」。
+ * `exec` 可注入（自测用）：签名同 `spawnSyncText(cmd, args)`，返回 stdout 文本。
+ */
+export function listLumirInstances(exec = spawnSyncText) {
+  const rows = exec("/bin/ps", ["-axo", "pid=,etime=,command="]).split("\n");
+  const now = Date.now();
+  const out = [];
+  for (const row of rows) {
+    const m = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(row);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const cmd = m[3].trim();
+    const isBundle = /\.app\/Contents\/MacOS\/lumir$/.test(cmd);
+    const isDev = /(?:^|[\s/])target\/debug\/lumir$/.test(cmd);
+    if (!isBundle && !isDev) continue;
+    let comm = "";
+    try {
+      comm = exec("/bin/ps", ["-o", "comm=", "-p", String(pid)]).trim();
+    } catch {
+      continue; // 进程在这一瞬退出了
+    }
+    if (comm.split("/").pop() !== "lumir") continue;
+    const elapsed = parseElapsedSeconds(m[2]);
+    out.push({
+      pid,
+      cmd,
+      kind: isBundle ? "bundle" : "dev",
+      startedAt: elapsed === null ? null : now - elapsed * 1000,
+    });
+  }
+  return out;
+}
+
+/** `binPath` 的两种字面（原样 / realpath）——`open` 经 launchd 启动时 `ps` 里可能是
+ *  canonicalize 后的路径（macOS 的 `/tmp` → `/private/tmp`）。 */
+function binaryPaths(binPath) {
+  const set = new Set();
+  if (!binPath) return set;
+  set.add(path.resolve(binPath));
+  try {
+    set.add(realpathSync(binPath));
+  } catch {
+    /* 路径已不在：按字面匹配 */
+  }
+  return set;
+}
+
+/** 按**精确二进制路径**找本次跑批的打包实例 pid；找不到返回 null。 */
+export function findBundleAppPid(binPath) {
+  const wanted = binaryPaths(binPath);
+  const hits = listLumirInstances().filter((i) => i.kind === "bundle" && wanted.has(i.cmd));
+  if (hits.length === 0) return null;
+  hits.sort((a, b) => b.pid - a.pid);
+  return hits[0].pid;
+}
+
+/** 场上**不属于本次跑批**的 `.app` 实例（M619：点击前的归因前置检查——点击前就在场的实例
+ *  可能是用户自己打开的，之后新起的就不再能一律判给本次点击）。 */
+export function listOtherBundleInstances(ownBinary = bundleBinary()) {
+  const own = binaryPaths(ownBinary);
+  return listLumirInstances().filter((i) => i.kind === "bundle" && !own.has(i.cmd));
+}
+
+/**
+ * 纯判据（M619，自测覆盖）：从实例清单里挑出「**本次点击窗口内新起、且不是本次跑批自己**」的
+ * `.app` 实例。四条同时成立才返回：
+ *   1. `kind === "bundle"`；2. 路径不在 `ownBinary` 的两种字面里；3. 启动时刻可读；
+ *   4. `startedAt >= sinceMs`（`sinceMs` 缺省时不按时刻过滤，只保留 1–3）。
+ * 调用方在点击前已确认场上没有其他 bundle 实例，因此这里挑出来的只会是这次点击拉起的；启动
+ * 时刻读不出的进程永远不动（无法归因）。
+ */
+export function straysInClickWindow(instances, { sinceMs, ownBinary = bundleBinary() } = {}) {
+  const own = binaryPaths(ownBinary);
+  return instances.filter(
+    (i) =>
+      i.kind === "bundle" &&
+      !own.has(i.cmd) &&
+      i.startedAt !== null &&
+      (sinceMs === undefined || i.startedAt >= sinceMs),
+  );
+}
+
+async function waitForBundlePid(binPath, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const pid = findBundleAppPid(binPath);
+    if (pid) return pid;
+    await sleep(300);
+  }
+  throw new InfraError(
+    `打包实例进程未找到（LaunchServices 已启动 .app 但 ps 里没有 ${binPath}；` +
+      "检查是否被 gatekeeper / 签名问题挡住）",
+  );
+}
+
+/**
+ * 通知点击后的游离实例识别与清退（M619，任务「若仍产生游离实例，套件必须识别并清退（仅限本次
+ * 跑批自己拉起的）」）。
+ *
+ * 判据（三条同时成立才动）：
+ *   1. 是 `.app/Contents/MacOS/lumir` 实例；
+ *   2. **不是**本次跑批自己的二进制路径（`ownBinary`；安装版 / 别的副本才可能游离）；
+ *   3. `etime` 反推的启动时刻不早于 `sinceMs`（调用方传「点击开始前」的时刻）——跑批开始时
+ *      M478 起跑自检已确认场上零实例，因此点击窗口内新起的 `.app` 实例只可能是这次点击拉起的。
+ *
+ * 对命中的实例先 SIGTERM、等 1s 仍在则 SIGKILL，并把 pid / 路径 / 启动时刻写进证据。**只动
+ * 命中的这些 pid**，不按 `.app` 通配 kill——用户手头的安装版若在跑（跑批开始时已存在）不在窗口内，
+ * 结构上不会被这条碰到；硬约束「不得干扰用户正在运行的实例」由此守住。
+ */
+export async function quiesceStrayBundleInstances({ sinceMs, ownBinary = bundleBinary(), evidence, action = "clickNotification", settleMs = 3_000 } = {}) {
+  const findStrays = () => straysInClickWindow(listLumirInstances(), { sinceMs, ownBinary });
+  // 点击拉起是异步的（M617 现场：AXPress 记录 21:55:25.89 → launchservicesd CHECKIN 21:55:25.99，
+  // 相差约 100ms），立刻扫会漏；在 settleMs 内轮询，命中即停。
+  const deadline = Date.now() + settleMs;
+  let strays = findStrays();
+  while (strays.length === 0 && Date.now() < deadline) {
+    await sleep(250);
+    strays = findStrays();
+  }
+  if (strays.length === 0) {
+    evidence?.record({ kind: "note", text: `${action} 后游离实例扫描：无（本次跑批自己的 bundle 不计）` });
+    return [];
+  }
+  const cleaned = [];
+  for (const p of strays) {
+    const started = p.startedAt === null ? "启动时刻未知" : new Date(p.startedAt).toISOString();
+    evidence?.record({
+      kind: "note",
+      text:
+        `${action} 后检出点击窗口内新起的 bundle 实例：pid ${p.pid}（${p.cmd}，起于 ${started}）——` +
+        "判定为本次跑批自己拉起的游离实例，清退（SIGTERM，1s 后仍在则 SIGKILL）",
+    });
+    let termSent = false;
+    try {
+      process.kill(p.pid, "SIGTERM");
+      termSent = true;
+    } catch {
+      /* 已退出 */
+    }
+    await sleep(1_000);
+    let alive = listLumirInstances().some((i) => i.pid === p.pid);
+    if (alive) {
+      try {
+        process.kill(p.pid, "SIGKILL");
+      } catch {
+        /* 已退出 */
+      }
+      await sleep(500);
+      alive = listLumirInstances().some((i) => i.pid === p.pid);
+    }
+    cleaned.push({ pid: p.pid, cmd: p.cmd, startedAt: p.startedAt, termSent, stillAlive: alive });
+    evidence?.record({
+      kind: "note",
+      text: `游离实例清退${alive ? "失败（仍在场）" : "完成"}：pid ${p.pid}`,
+    });
+  }
+  return cleaned;
+}
+
+/**
+ * 停 app。
+ * - dev：先整组 SIGTERM，再兜底 SIGKILL 残留（只在本次运行的进程组内）。
+ * - bundle（M619）：app 由 launchd 启动、**不在本进程组里**，按本次跑批自己的二进制路径精确定位
+ *   后再收；`open -W` 等待者单独收（它收到 SIGTERM 不会波及 app）。绝不按 `.app` 通配 kill
+ *   ——安装版路径不同，结构上碰不到用户实例。
+ */
 export async function stopApp(handle) {
+  if (!handle) return;
+  handle.stopLogPump?.();
+  if (handle.flavour === "bundle") {
+    const killOwn = (signal) => {
+      const pid = findBundleAppPid(handle.binary);
+      if (pid === null) return false;
+      try {
+        process.kill(pid, signal);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    killOwn("SIGTERM");
+    try {
+      process.kill(-handle.child.pid, "SIGTERM");
+    } catch {
+      /* open 已退出 */
+    }
+    await sleep(2000);
+    killOwn("SIGKILL");
+    await sleep(500);
+    // 撤销本次跑批经 `open` 写进 LaunchServices 的本副本记录（M619）：只按本 .app 路径撤销，
+    // 同 bundle id 的其他副本（安装版）不受影响；不撤的话 worktree 副本会以 com.lumir.app 的
+    // 身份留在 LS 数据库里，影响后续「按 bundle id 打开 app」的解析。
+    if (handle.appPath) {
+      try {
+        spawnSyncText(LSREGISTER, ["-u", handle.appPath]);
+      } catch {
+        /* 未注册 / 系统已清理：无副作用 */
+      }
+    }
+    return;
+  }
   const pgid = handle?.child?.pid;
   if (pgid) {
     try {
