@@ -21,8 +21,8 @@
 #
 # `.local/` 是 gitignore 的本地目录，闸语义是「本机这个版本已经交付过」，所以证据目录查的是
 # 主仓 checkout 的 `.local`（worktree 里跑时经 `git rev-parse --git-common-dir` 指回主仓，
-# 免得因 worktree 缺 `.local` 假通过），并同时查当前 checkout 自己的 `.local`。打包本身按
-# release.md 要求在 master 的主仓 checkout 跑，不在 worktree。
+# 免得因 worktree 缺 `.local` 假通过），并同时查当前 checkout 自己的 `.local`。打包位置见
+# release.md「打包前置」的路径 A（主仓）/ 路径 B（mission worktree），两条都合法，闸语义一致。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
