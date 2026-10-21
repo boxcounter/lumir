@@ -61,6 +61,7 @@ const MENU_COMMAND_EVENT: &str = "app:menu_command";
 /// 启动 Tauri app。
 pub fn run() {
     let started = std::time::Instant::now();
+    let _ = PROCESS_STARTED.set(started);
     // cron 守护的通道：发送端交给 `CronRuntime`（app state），接收端在 setup 尾部交给
     // `lumir-cron` 线程。通道先建、线程后起——任何一次 poke 在消费端就位前只是排队。
     let (cron_tx, cron_rx) = std::sync::mpsc::channel();
@@ -202,6 +203,10 @@ pub fn run() {
             // 通知点击监听（change add-cron-runtime-daemon §4.2）：**启动时注册一次并常驻**
             // ——平台只在「通知投递时监听器已在场」的通知上报点击，按需注册会漏。回调只投一个
             // 工作项给 `lumir-cron` 线程，判定与副作用都在那条线程上。
+            //
+            // macOS 打包实例的点击登记随通知走（M620）：投递改用 notify-rust 直连后，响应按
+            // request id 路由，每条通知在投递成功后登记一次（见 spawn_notification_click_waiter）。
+            #[cfg(not(target_os = "macos"))]
             install_notification_click(app.handle());
             // cron 守护（change add-cron-runtime-daemon §4.1）：窗口已显示、`LUMIR_READY`
             // 已发出之后才 spawn——线程自己装载配置与去重状态，setup 不等它，冷启动
@@ -1543,38 +1548,217 @@ fn current_vault_root(app: &tauri::AppHandle) -> Option<PathBuf> {
 }
 
 /// 通知投递端口（design §4.4 / §9）：标题 = 任务 id，正文只用通用文案（到点 / 已完成 /
-/// 运行失败），`extra` 携带任务 id（结果通知另带该次会话 id）。文案 MUST NOT 含 prompt、
-/// 文档内容或绝对路径——通知会出现在锁屏与通知中心。
+/// 运行失败）。文案 MUST NOT 含 prompt、文档内容或绝对路径——通知会出现在锁屏与通知中心。
 ///
 /// macOS 打包实例走 UNUserNotificationCenter（M608，点击回调可用）；dev flavour 走
 /// mac-notification-sys 的 legacy 投递——UN 在无 bundle 的裸二进制里会 abort，而 dev 的通知
 /// 点击回调本就是已知失效的通道边界（套件按 `requires: bundle` 标 INVALID），只要投递可用即可。
+///
+/// **不走 tauri-plugin-notification 的投递（M620）**：它的 macOS 投递把结果吞成恒 Ok
+/// （`show_tracked` 的 wait 线程 `let Ok(handle) = notification.show() else { return; }`，
+/// `NotificationBuilder::show()` 无条件返回 Ok），而底层阻塞投递在冷启动最初约 0.5s 内会直接
+/// 返回 `MainThreadNotRunning`——主线程 `CFRunLoop` 还没进入等待，请求根本没发出去。于是
+/// 「投递成功」是假的：`cron_notified` 与 `last_fired` 照写，这次提醒永久丢失（M620 真机
+/// 探针：进程内阻塞投递 t≈0.37s 返回 `MainThreadNotRunning`、t≈0.57s 起 accepted；同期
+/// usernoted 零请求记录）。这里直接用插件底层的同一份 notify-rust（已是直接依赖）投递：
+/// 错误能真实上抛（design §5.4「投递失败不写 last_fired，下一次评估重试」因此才成立），
+/// 启动窗口内按短间隔重试到被接受（见 [`show_notification_with_startup_retry`]）。
+///
+/// **成功判据 = 系统确认（M620）**：`show()` 的 Ok 只说明请求被本地接受，本函数随后用
+/// [`notification_is_delivered`] 查通知中心的已投递列表；查不到就同 id 重投一次，仍查不到则
+/// 落一条 `config_warning` 并返回 Err（不写 `cron_notified` / `last_fired`，下一次评估再试）。
+/// `cron_notified` 因此代表「系统确认已送达」，而不是「我方以为发了」。
 fn deliver_notification(
     app: &tauri::AppHandle,
     task: &str,
     kind: &str,
-    session_id: Option<&str>,
+    _session_id: Option<&str>,
 ) -> Result<(), String> {
-    use tauri_plugin_notification::NotificationExt;
     let body = match kind {
         "result" => "已完成",
         "failure" => "运行失败",
         _ => "到点",
     };
     #[cfg(target_os = "macos")]
-    if tauri::is_dev() {
-        return deliver_notification_dev(task, body);
+    {
+        // `session_id` 只服务插件通道的 `extra` 载荷；macOS 的点击等待线程直接持有任务 id，
+        // 会话 id 在点击时由 cron-state 现查（handle_click），不需要随通知携带。
+        if tauri::is_dev() {
+            return deliver_notification_dev(task, body);
+        }
+        // 请求 id 在整次投递（含自查失败后的重投）内保持不变：macOS 按请求 id 替换同一条通知，
+        // 重投不会在通知中心留下第二条（usernoted 日志：`Adding new request, remove
+        // notifications similar to: <同一 req>`）。时间戳只用来让不同次投递彼此区分。
+        let request_id = format!(
+            "lumir-cron-{task}-{kind}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_millis())
+                .unwrap_or_default()
+        );
+        let mut last_error = String::new();
+        for _attempt in 0..NOTIFY_DELIVERY_ATTEMPTS {
+            let mut notification = notify_rust::Notification::new();
+            notification
+                .id(request_id.as_str())
+                .summary(task)
+                .body(body);
+            match show_notification_with_startup_retry(&notification) {
+                Ok(handle) => {
+                    if notification_is_delivered(&request_id, NOTIFY_DELIVERY_VERIFY) {
+                        spawn_notification_click_waiter(app, task, handle);
+                        return Ok(());
+                    }
+                    // 自查没查到：这次不算投递成立。句柄丢掉（解登记响应通道），同 id 重投。
+                    last_error = "投递后自查：通知中心里查不到该请求".to_string();
+                }
+                Err(error) => last_error = error,
+            }
+        }
+        logging::config_warning(
+            "cron",
+            &format!(
+                "任务 {task} 的通知（{kind}）未被系统确认送达（{NOTIFY_DELIVERY_ATTEMPTS} 次尝试）：{last_error}"
+            ),
+        );
+        Err(last_error)
     }
-    let mut builder = app
-        .notification()
-        .builder()
-        .title(task)
-        .body(body)
-        .extra("task", task);
-    if let Some(session_id) = session_id {
-        builder = builder.extra("session_id", session_id);
+    #[cfg(not(target_os = "macos"))]
+    {
+        use tauri_plugin_notification::NotificationExt;
+        let mut builder = app
+            .notification()
+            .builder()
+            .title(task)
+            .body(body)
+            .extra("task", task);
+        if let Some(session_id) = _session_id {
+            builder = builder.extra("session_id", session_id);
+        }
+        builder.show().map_err(|error| error.to_string())
     }
-    builder.show().map_err(|error| error.to_string())
+}
+
+/// 进程启动时刻：冷启动窗口的判据（见 [`NOTIFY_STARTUP_RETRY`]）。`run()` 在入口处记录。
+static PROCESS_STARTED: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// 冷启动窗口的重试预算（M620）：启动最初约 0.5s 内阻塞投递会被本地拒绝，窗口比实测值留足
+/// 余量（慢盘 / 冷启动更慢的机器）；只在窗口内重试，之后的失败原样上抛。
+const NOTIFY_STARTUP_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// 冷启动窗口内的重试间隔：投递失败是本地早退（请求没发出去），20ms 足够密、又不会烧 CPU。
+const NOTIFY_STARTUP_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// 投递后自查的重投上限（M620）：一次投递 = 首次 + 至多一次同 id 重投。重投用同一请求 id，
+/// 系统按 id 替换而不是新增条目（不会出现两条同样的通知）。
+#[cfg(target_os = "macos")]
+const NOTIFY_DELIVERY_ATTEMPTS: usize = 2;
+
+/// 每次投递后等「通知中心里查得到」的预算：探针实测请求被接受后 ~100ms 内可见；1200ms 留足
+/// 系统繁忙时的余量，同时把 cron 线程的阻塞压在可接受范围内。
+#[cfg(target_os = "macos")]
+const NOTIFY_DELIVERY_VERIFY: std::time::Duration = std::time::Duration::from_millis(1200);
+
+/// 自查轮询间隔：查一次通知中心是一次 XPC 往返，100ms 粒度足够又不吵。
+#[cfg(target_os = "macos")]
+const NOTIFY_DELIVERY_VERIFY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// 投递一条 UN 通知，冷启动窗口内失败即重试（M620）。
+///
+/// `mac-usernotifications` 的阻塞投递（`notify-rust` 的 `show()`）在 `CFRunLoop.main` 尚未
+/// 进入等待时返回 `MainThreadNotRunning`，请求不会发给 usernoted；这是启动最初半秒的必经阶段，
+/// 重试到主线程进入事件循环即被接受。窗口之外的失败（权限被拒 / 插件错误）不再重试——按
+/// design §5.4 交给下一次评估。
+#[cfg(target_os = "macos")]
+fn show_notification_with_startup_retry(
+    notification: &notify_rust::Notification,
+) -> Result<notify_rust::NotificationHandle, String> {
+    let started = *PROCESS_STARTED.get_or_init(Instant::now);
+    let deadline = started + NOTIFY_STARTUP_RETRY;
+    loop {
+        match notification.show() {
+            Ok(handle) => return Ok(handle),
+            Err(error) => {
+                if Instant::now() >= deadline {
+                    return Err(error.to_string());
+                }
+                std::thread::sleep(NOTIFY_STARTUP_RETRY_INTERVAL);
+            }
+        }
+    }
+}
+
+/// 投递后自查（M620）：系统确认这条请求**已经在通知中心里**才算这次投递成立。
+///
+/// 为什么 `show()` 的 Ok 不够：它只证明请求被本地接受。本次 finding 的原始形态里，插件把
+/// 「本地拒绝」吞成 Ok，usernoted 从未收到请求；即使请求发出，也只有 `getDeliveredNotificationIds`
+/// 能回答「系统真的把它放进了通知中心」。这条查询就是 `UNUserNotificationCenter` 的
+/// `getDeliveredNotificationsWithCompletionHandler`（mac-usernotifications 0.3.1 暴露，
+/// 与投递走同一份底层依赖）。
+///
+/// 带宽：`budget` 内每 [`NOTIFY_DELIVERY_VERIFY_INTERVAL`] 查一次；超时返回 false，由调用方
+/// 决定重投（同请求 id）还是判失败。注意这是一次跨进程往返，主线程被长任务占住时它也跟着等
+/// ——调用点只在 `lumir-cron` 线程上、且投递本身是低频动作，代价可接受。
+#[cfg(target_os = "macos")]
+fn notification_is_delivered(request_id: &str, budget: std::time::Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    loop {
+        let delivered = mac_usernotifications::block_on(
+            mac_usernotifications::get_delivered_notification_ids(),
+        );
+        if delivered.iter().any(|id| id == request_id) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(NOTIFY_DELIVERY_VERIFY_INTERVAL);
+    }
+}
+
+/// 点击等待（M620）：**每条通知在投递成功后**注册一个响应等待线程，`tap`（点通知本体）投一个
+/// `CronMessage::Click` 给 `lumir-cron` 线程——判定与副作用仍在那条线程上，与 design §4.2 的
+/// 分工一致。
+///
+/// 为什么不是「启动时注册一次并常驻」的插件 `on_action`：平台按 `UNNotificationRequest` 的
+/// request id 路由响应，**每条通知都必须有自己的响应登记**（插件内部也是每条通知起一个 wait
+/// 线程做这件事，`on_action` 只是它的分派出口）。这里直接做同一件事，少一层恒 Ok 的封装；
+/// 投递成功即主线程 run loop 已进入等待，登记紧随其后。
+///
+/// 非 `tap` 动作（当前无动作按钮，属防御）落 warning，不静默吞掉；关闭 / 过期不产生事件。
+///
+/// **订阅线程起不来不影响这次投递的成败**（通知已经在系统通知中心）：只落一条 warning——
+/// 把「点击订阅失败」当投递失败会让 cron 重投一条已经在场的通知。
+#[cfg(target_os = "macos")]
+fn spawn_notification_click_waiter(
+    app: &tauri::AppHandle,
+    task: &str,
+    handle: notify_rust::NotificationHandle,
+) {
+    let app = app.clone();
+    let task = task.to_string();
+    let spawned = std::thread::Builder::new()
+        .name("lumir-notify-click".to_string())
+        .spawn(move || {
+            let _ =
+                handle.wait_for_response(move |response: &notify_rust::NotificationResponse| {
+                    match response {
+                        notify_rust::NotificationResponse::Default => {
+                            app.state::<CronRuntime>().send(CronMessage::Click { task });
+                        }
+                        notify_rust::NotificationResponse::Action(action) => {
+                            logging::config_warning(
+                                "cron",
+                                &format!("忽略非 tap 的通知动作：{action}"),
+                            )
+                        }
+                        _ => {}
+                    }
+                });
+        });
+    if let Err(error) = spawned {
+        logging::config_warning("cron", &format!("通知点击等待线程启动失败：{error}"));
+    }
 }
 
 /// dev flavour 的 legacy 投递（M608）：归属沿用插件的 dev 口径（`com.apple.Terminal`），
@@ -1645,8 +1829,14 @@ fn ensure_notification_permission(app: &tauri::AppHandle) {
     }
 }
 
-/// 通知点击监听（design §4.2）：**启动时注册一次并常驻**——平台只在「投递时监听器已在场」
-/// 的通知上上报点击。回调只投一个工作项给 `lumir-cron` 线程；非 `tap` 动作忽略并落诊断。
+/// 通知点击监听（design §4.2，**非 macOS 的插件通道**）：启动时注册一次并常驻——平台只在
+/// 「投递时监听器已在场」的通知上上报点击。回调只投一个工作项给 `lumir-cron` 线程；非 `tap`
+/// 动作忽略并落诊断。
+///
+/// macOS 打包实例不走这条：投递已改由 notify-rust 直连（M620，见 `deliver_notification`），
+/// 点击登记随每条通知在投递成功后登记（`spawn_notification_click_waiter`）——底层按 request id
+/// 路由响应，本来就需要每条通知各自登记一次。
+#[cfg(not(target_os = "macos"))]
 fn install_notification_click(app: &tauri::AppHandle) {
     use tauri_plugin_notification::NotificationExt;
     let handle = app.clone();

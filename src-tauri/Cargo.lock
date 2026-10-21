@@ -2228,6 +2228,7 @@ dependencies = [
  "ignore",
  "image",
  "mac-notification-sys",
+ "mac-usernotifications",
  "notify",
  "notify-rust",
  "rand 0.10.3",

@@ -390,6 +390,20 @@ test("通知动作与 requires: bundle：写错键在静态校验期就报（M60
     "通知动作不吃 target（不是节点点击），多写应报 problem 而不是静默忽略",
   );
   assert.deepEqual(errs([{ name: "ok", do: "clickNotification", title: "t", body: "到点", timeoutMs: 1000 }]), []);
+  // M620：`fresh` 只属于 waitForNotification，且必须是布尔（写错值会静默退回默认新鲜度）。
+  assert.deepEqual(errs([{ name: "ok", do: "waitForNotification", title: "t", fresh: false }]), []);
+  assert.ok(
+    errs([{ name: "fresh 只给 wait", do: "clickNotification", title: "t", fresh: false }]).some((p) =>
+      p.includes("clickNotification 不接受 fresh"),
+    ),
+    "clickNotification 写 fresh 应报 problem",
+  );
+  assert.ok(
+    errs([{ name: "fresh 类型", do: "waitForNotification", title: "t", fresh: "no" }]).some((p) =>
+      p.includes("fresh 需要布尔值"),
+    ),
+    "fresh 非布尔应报 problem（字符串 'no' 这种真值输入会让判据静默变味）",
+  );
   assert.ok(
     errs([{ name: "一步", expect: [{ shot: "x" }] }], { requires: "dev" }).some((p) =>
       p.includes('requires 只支持 "bundle"'),
@@ -488,6 +502,65 @@ test("do: waitForNotification（动作级）：旧条目在场不提前返回，
   assert.ok(fail, `应落一条动作 FAIL，实际：${JSON.stringify(stuck.evidence.records)}`);
   assert.match(fail.detail ?? "", /超时/, "失败理由应点明超时");
   assert.match(fail.detail ?? "", /基线之后新出现的|基线 1 个签名/, "失败理由应给出基线口径（旧条目在场、但不在基线之外）");
+});
+
+test("do: waitForNotification（动作级，M620）：fresh=false 接受动作开始前已送达的条目，默认判据仍把它当旧条目", async (t) => {
+  // 冷启动通知比步骤先到：条目在动作开始时就在场，默认新鲜度判据会（正确地）把它当旧条目挡掉，
+  // 冷启动场景因此用 `fresh: false` 显式接受它。这里构造同一棵树分别跑两档，证明两档判据真的不同。
+  try {
+    execFileSync("/usr/bin/pgrep", ["-x", "NotificationCenter"], { encoding: "utf8" });
+  } catch {
+    t.skip("NotificationCenter 不在场（无桌面环境）：本用例只验动作接线，跳过");
+    return;
+  }
+  const root = tmpRoot("notify-fresh-off");
+  useTmpEnv(root);
+  const entry = "- [10] AXGroup (Lumir, acc-cron-startup, 到点) actions=[AXPress, Show Details, Close]";
+  const tree = ["# Notification Center App State", "```text", '- [0] AXApplication "Notification Center"', entry, "```"].join(
+    "\n",
+  );
+
+  // ① 默认档（fresh 缺省 = true）：唯一那条是动作开始前就在场的 ⇒ 超时判 FAIL。
+  const strict = stubCtx(root);
+  let strictReads = 0;
+  strict.cu = {
+    state: async () => {
+      strictReads += 1;
+      return { text: tree, image: null };
+    },
+  };
+  const bad = await runScenario(strict, {
+    id: "notify-fresh-on",
+    item: 0,
+    title: "冷启动通知（默认新鲜度）",
+    file: path.join(root, "notify-fresh-on.md"),
+    steps: [{ name: "等新通知", do: "waitForNotification", title: "acc-cron-startup", body: "到点", timeoutMs: 300 }],
+  });
+  assert.equal(bad.status, "FAIL", "默认档不得把动作开始前已在场的条目当新投递");
+  assert.ok(strictReads >= 2, `默认档应持续轮询到超时，实际只读了 ${strictReads} 次`);
+
+  // ② fresh=false：同一条目立即满足等待（冷启动投递早于步骤），证据里记明这一档的口径。
+  const loose = stubCtx(root);
+  let looseReads = 0;
+  loose.cu = {
+    state: async () => {
+      looseReads += 1;
+      return { text: tree, image: null };
+    },
+  };
+  const ok = await runScenario(loose, {
+    id: "notify-fresh-off",
+    item: 0,
+    title: "冷启动通知（fresh=false）",
+    file: path.join(root, "notify-fresh-off.md"),
+    steps: [
+      { name: "冷启动通知在场", do: "waitForNotification", title: "acc-cron-startup", body: "到点", fresh: false, timeoutMs: 300 },
+    ],
+  });
+  assert.equal(ok.status, "PASS", `fresh=false 应立即命中已在场的条目，实际：${JSON.stringify(loose.evidence.records)}`);
+  assert.equal(looseReads, 1, "fresh=false 不该先空等一轮（首读即容忍已在场的条目）");
+  const notes = loose.evidence.records.filter((r) => r.kind === "note").map((r) => r.text).join("\n");
+  assert.match(notes, /fresh=false：接受动作开始前已在场的匹配条目/, `证据应记明这一档的口径，实际：${notes}`);
 });
 
 test("do: clickNotification（动作级）：沿用等待基线，点新条目而不是更早一次 run 的同任务旧条目（M617）", async (t) => {

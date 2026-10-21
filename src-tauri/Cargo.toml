@@ -131,6 +131,10 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # `ensure_notification_permission` 的 macOS 分支）。
 [target.'cfg(target_os = "macos")'.dependencies]
 notify-rust = { version = "=4.18.2", features = ["preview-macos-un"] }
+# 投递后自查（M620）：读通知中心的已投递列表（`getDeliveredNotificationIds`），把
+# `cron_notified` 的语义从「请求被接受」升级为「系统确认已送达」。这是 notify-rust 的
+# 传递依赖（同一份 =0.3.1），升为直接依赖零新增编译重量。
+mac-usernotifications = "=0.3.1"
 # dev flavour 的 legacy 投递（M608）：UN 在无 bundle 进程里 abort，dev 用它保持「能投递」。
 # 与 notify-rust 用的同一版本（后者默认后端就是它），不引入新 crate。
 mac-notification-sys = "=0.6.15"
