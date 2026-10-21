@@ -433,9 +433,15 @@ export function checkScenario(scenario) {
         push(`${at} do=${step.do} 的 body 需要字符串（通知正文），实际 ${JSON.stringify(step.body)}`);
       if (step.timeoutMs !== undefined && (!Number.isInteger(step.timeoutMs) || step.timeoutMs <= 0))
         push(`${at} do=${step.do} 的 timeoutMs 需要正整数，实际 ${JSON.stringify(step.timeoutMs)}`);
+      if (step.do === "waitForNotification" && step.fresh !== undefined && typeof step.fresh !== "boolean")
+        push(`${at} do=waitForNotification 的 fresh 需要布尔值，实际 ${JSON.stringify(step.fresh)}`);
+      if (step.do === "clickNotification" && step.fresh !== undefined)
+        push(`${at} do=clickNotification 不接受 fresh（新鲜度判据只属于 waitForNotification）`);
+      const allowed = ["do", "name", "title", "body", "timeoutMs", "expect"];
+      if (step.do === "waitForNotification") allowed.push("fresh");
       for (const k of Object.keys(step)) {
-        if (!["do", "name", "title", "body", "timeoutMs", "expect"].includes(k))
-          push(`${at} do=${step.do} 未知键 ${k}（拼错即静默不生效，允许：title / body / timeoutMs）`);
+        if (!allowed.includes(k))
+          push(`${at} do=${step.do} 未知键 ${k}（拼错即静默不生效，允许：${allowed.join(" / ")}）`);
       }
     }
     // `do: waitForFile`（M616）：轮询磁盘事实。形状写错会静默等到超时（或恒真）——按本套件
@@ -1999,7 +2005,18 @@ function notificationSpec(step, action) {
   if (step.timeoutMs !== undefined && !(Number.isFinite(step.timeoutMs) && step.timeoutMs > 0)) {
     throw new Error(`do=${action} 的 timeoutMs 需要正数`);
   }
-  return { title: step.title, body: step.body, timeoutMs: step.timeoutMs ?? 20_000 };
+  if (step.fresh !== undefined && typeof step.fresh !== "boolean") {
+    throw new Error(`do=${action} 的 fresh 需要布尔值（false = 接受动作开始前已在场的匹配条目）`);
+  }
+  if (step.fresh !== undefined && action !== "waitForNotification") {
+    throw new Error(`do=${action} 不接受 fresh（新鲜度判据只属于 waitForNotification）`);
+  }
+  return {
+    title: step.title,
+    body: step.body,
+    timeoutMs: step.timeoutMs ?? 20_000,
+    fresh: step.fresh ?? true,
+  };
 }
 
 async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
@@ -2548,11 +2565,23 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     // run 投递的同标题条目在通知列表里存活数分钟，不挡掉它就会提前命中（M616 的 56s 提前现场）。
     case "waitForNotification": {
       const spec = notificationSpec(step, "waitForNotification");
+      if (!spec.fresh) {
+        // `fresh: false`（M620）：接受**动作开始前就已送达**的匹配条目。只给「投递早于步骤」
+        // 的冷启动场景用——那类通知在套件开始轮询之前就已上屏，基线会把唯一的那条当旧条目挡掉。
+        // 代价是它不再区分新旧条目：场景必须另配一条本轮才可能成立的判据（按场景重置的日志，
+        // 如 `cron_notified(trigger=startup)`）来排除「上一轮残留条目」的假绿。
+        evidence.record({
+          kind: "note",
+          text:
+            "waitForNotification fresh=false：接受动作开始前已在场的匹配条目（冷启动投递早于步骤；" +
+            "新旧不可辨，场景须另配本轮日志判据）",
+        });
+      }
       const out = await findNotificationNode(cu, {
         ...spec,
         evidence,
         action: "waitForNotification",
-        snapshotBaseline: true,
+        snapshotBaseline: spec.fresh,
       });
       // 基线留给紧随其后的 clickNotification：点击要落在**本次等到**的那条上，不是更早一次
       // run 的旧条目（点旧通知会被系统路由到已退出的实例，cron_click 日志不出现）。

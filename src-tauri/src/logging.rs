@@ -865,6 +865,10 @@ fn subagent_event_to(sink: &Sink, payload: &serde_json::Value) {
 /// `kind` = `trigger` / `result` / `failure`，`trigger` = `timer` / `startup` / `focus` /
 /// `vault-open`。投递**失败**不落这条（失败口径是「不写 `last_fired`、下一次评估重试」），
 /// 也就不存在把失败伪装成已通知的路径。
+///
+/// **「成功」的口径（M620）**：投递后自查在系统通知中心的已投递列表里查到了这条请求——
+/// 即系统确认送达，而不是「请求被本地接受」。冷启动最初约 0.5s 内阻塞投递会被本地拒绝而
+/// 请求根本没发出去（插件还把该错误吞成 Ok），旧口径会在这里写出一条假成功。
 pub fn cron_notified(task: &str, kind: &str, trigger: &str) {
     cron_notified_to(global(), task, kind, trigger);
 }
