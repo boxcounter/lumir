@@ -120,13 +120,14 @@ export function acceptPort() {
  * **打包实例模式**（M605）：`LUMIR_ACCEPTANCE_BUNDLE=<…>/Lumir.app/Contents/MacOS/lumir` 时，
  * 套件不再起 `pnpm tauri dev`，而是启动打包实例。
  *
- * 为什么需要这条通道（dev flavour 的通知点击路由，2026-10-19 实证）：插件在 `tauri::is_dev()`
- * 时把通知归属写成 `com.apple.Terminal`（`tauri-plugin-notification` 的 dev 行为）。横幅能投递、
- * 也能点，但 usernoted 记录 `Received response … app:"com.apple.Terminal" … foreground: true`
- * ——系统把点击响应路由给 **Terminal** 的 bundle 身份，本进程的 `on_action` 回调永远收不到
- * ⇒ `cron_click` 不产生。这是 dev flavour 的通道边界，不是产品缺陷；打包实例的 bundle id 是
- * 验收 id（`ACCEPTANCE_BUNDLE_ID`，构建期覆盖，运行时从 Info.plist 现读），响应回到自己的进程
- * （change add-cron-runtime-daemon §4.7 的兜底口径）。
+ * 为什么需要这条通道（dev flavour 的通知点击路由，2026-10-19 实证）：dev 档按
+ * `tauri::is_dev()` 走 legacy 投递（`deliver_notification_dev`），把通知归属写成
+ * `com.apple.Terminal`（裸二进制没有自己的 bundle 身份）。横幅能投递、也能点，但 usernoted
+ * 记录 `Received response … app:"com.apple.Terminal" … foreground: true`——系统把点击响应路由给
+ * **Terminal** 的 bundle 身份，本进程的点击等待永远收不到 ⇒ `cron_click` 不产生。这是 dev
+ * flavour 的通道边界，不是产品缺陷；打包实例的 bundle id 是验收 id（`ACCEPTANCE_BUNDLE_ID`，
+ * 构建期覆盖，运行时从 Info.plist 现读），响应回到自己的进程（change add-cron-runtime-daemon
+ * §4.7 的兜底口径）。
  *
  * **启动方式（M619）**：打包实例经 LaunchServices（`open`）启动，**不是**直接 exec 二进制——
  * 直接 exec 的 GUI app 也会向 LS check in，但它不是 LS 的 **launch 实例**（无 launch time /

@@ -190,14 +190,14 @@ requirement。
   - `src-tauri/src/harness.rs` 及运行路径：为无人值守运行提供与交互会话分离的运行槽位，并让发送
     通道接受显式消息文本（不改写 composer 草稿）；装配与发送本身仍只有一份实现。
   - `src-tauri/src/lib.rs`：守护线程、三个拉取触发点（启动 / 焦点 / 目标 vault 打开成功）、通知
-    投递与常驻点击回调、运行交接事件与结果回执；注册 notification 插件。
+    投递与逐条通知的点击等待、运行交接事件与结果回执。
   - `src-tauri/src/commands.rs`：运行结果回执命令（前端把 session id 与成功 / 失败交回守护）。
   - `src-tauri/src/logging.rs`：`cron_notified` / `cron_click` / `cron_run_started` /
     `cron_run_finished` / `cron_run_skipped` / `cron_task_invalid` 六个事件名进白名单。
   - `src/main.ts`：`cron:run` 事件的唯一处理器——确保目标 vault 已打开、按会话形态建立 / 恢复
     会话、经既有发送通道送出 prompt、回执结果；不写第二套打开或发送实现。
-  - `src-tauri/Cargo.toml`：`tauri-plugin-notification`（≥ 2.6.0，桌面点击回调自 2.6.0 起可用）
-    与 `chrono`（本地时间换算，已在依赖树内）。
+  - `src-tauri/Cargo.toml`：`notify-rust`（4.18.2，三平台直连投递与点击等待；macOS 的 UN 后端由
+    `preview-macos-un` 选择）与 `chrono`（本地时间换算，已在依赖树内）。
   - `src/bindings/**`：ts-rs 重导出（新增配置类型）。
   - `docs/specs/config-reference.md`：新增 `[cron]` 一节（键表、默认值、非法项口径、生效时机、
     状态文件位置）。

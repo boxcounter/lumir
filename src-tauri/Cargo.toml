@@ -51,16 +51,35 @@ saphyr = { version = "0.2", default-features = false }
 # `png`），零 C 依赖、零外部进程，不引入构建面。
 image = { version = "0.25", default-features = false, features = ["png", "webp"] }
 # 系统通知（change add-cron-runtime-daemon §4）：cron 的「到点 / 已完成 / 运行失败」投递与
-# 点击唤起。用插件的 **Rust 侧 API**（`app.notification()`）而非前端 JS API：通知的投递点在
-# `lumir-cron` 线程上，点击回调也要在进程侧常驻——capabilities 因此零增量（与 opener / rfd
-# 同一取舍先例）。
+# 点击唤起。三平台统一走 notify-rust 直连：投递点是 `lumir-cron` 线程、点击等待在进程侧，都是
+# Rust 侧调用而不经 webview——capabilities 因此零增量（与 opener / rfd 同一取舍先例）。
 #
-# **版本钉死 2.6.0**：桌面点击回调（`on_action` / `wait_for_response`）自 2.6.0 起才有。
-# 代价（如实登记）：该版本自身要求 `tauri = "2.12"`，锁文件因此把 tauri 从 2.11.5 抬到
-# 2.12.4，与 npm 侧 `@tauri-apps/api` / `@tauri-apps/cli` 的 2.11.x 形成 minor 不匹配——
-# tauri-cli 会打印一条 "version mismatched Tauri packages" 警告（非致命，真机验收已跑通），
-# 收口需要把 package.json 的两个 @tauri-apps 包一并升到 2.12.x（不在本 mission 的改动面）。
-tauri-plugin-notification = "=2.6.0"
+# **为什么直连而不是通知插件**（M620 / M625）：插件的投递把结果吞成恒 Ok（`show()` 无条件
+# 返回 Ok，底层错误被丢弃），「投递成功」是假的——`cron_notified` 与 `last_fired` 照写，提醒
+# 却可能没发出去。直连后错误能真实上抛（design §5.4「投递失败不写 last_fired，下一次评估重试」
+# 因此才成立）；点击等待由本仓按每条通知登记（lib.rs 的 `spawn_notification_click_waiter`），
+# 三平台同一条路径。
+#
+# **macOS 的 UN 后端（`preview-macos-un`，M608）**：macOS 26 上 legacy NSUserNotificationCenter
+# （默认后端，mac-notification-sys 0.6.15）的 `didActivateNotification` 到不了 app——横幅投递
+# 与点击系统侧都确认，进程内零回调，点击链路整条失效（探针证据：
+# `.local/probes/m608-cron-notification-click/`）。notify-rust 4.18.0 起提供
+# UNUserNotificationCenter 后端，由该 feature 选择，版本因此钉死 4.18.2（当前锁文件值）。
+# 该 feature 只激活 macOS target 下的可选依赖，在 Linux / Windows 上是 no-op——两地的投递后端
+# 由 notify-rust 自己按 target 选择（Linux zbus/dbus、Windows winrt-notification）。
+#
+# **dev flavour 例外**：UN 要求进程有 bundle 身份；dev 的裸二进制（`target/debug/lumir`，无 bundle）
+# 第一次投递会直接 abort（M608 真机探针：`Abort trap: 6`，崩溃点在 `set_application` 之后）。
+# 该分支在 lib.rs 的 `deliver_notification` 里按 `tauri::is_dev()` 运行期分流：dev 直接走
+# mac-notification-sys 的 legacy 投递（与修复前行为一致——投递可用；点击回调本就是已知失效的
+# dev 通道边界，套件按 `requires: bundle` 标 INVALID），打包实例才走 UN + 点击回调。
+# 不用 cargo feature 分流：tauri CLI 打包时传的是 `--features tauri/custom-protocol`（依赖自身的
+# feature），本仓自定义 feature 不会被它激活（M608 实测：门控后打包产物落回 legacy 后端）。
+#
+# 代价：macOS 上多出 mac-usernotifications / futures-timer 两个传递依赖；UN 要求 app 有代码签名
+# （打包实例补一次 ad-hoc 签名即可），且授权状态要单独请求（见 lib.rs
+# `ensure_notification_permission`）。
+notify-rust = { version = "=4.18.2", features = ["preview-macos-un"] }
 # vault watch（add-vault-workspace）：notify 8 稳定线（9.x 仍是 rc）。
 notify = "8"
 # 目录选择器：rfd 纯 Rust 原生 dialog，不需要 tauri-plugin-dialog 的
@@ -108,29 +127,7 @@ ignore = "0.4"
 # 单个顺序 SSE 流没有 async 组合需求，与 lib.rs:410 的既有判断同路。
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 
-# 通知点击回调的后端选择（M608）：macOS 26 上 legacy NSUserNotificationCenter（mac-notification-sys
-# 0.6.15）的 `didActivateNotification` 到不了 app——横幅投递与点击系统侧都确认，进程内零回调，
-# 点击链路整条失效（探针证据：`.local/probes/m608-cron-notification-click/`）。
-#
-# notify-rust 4.18.0 起提供 UNUserNotificationCenter 后端，由 `preview-macos-un` feature 选择；
-# tauri-plugin-notification 2.6.0 自己不启用它，而 Cargo 特性是可加的——这里用**同版本**直接依赖
-# 并开该 feature，统一后插件那份 notify-rust 也切到 UN 后端，插件的 `on_action` / `wait_for_response`
-# 对外语义不变（`install_notification_click` 不用改）。版本必须与插件的 `notify-rust = "4.18"`
-# 解析到同一份，所以钉死 4.18.2（当前锁文件值）。
-#
-# **dev flavour 例外**：UN 要求进程有 bundle 身份；dev 的裸二进制（`target/debug/lumir`，无 bundle）
-# 第一次投递会直接 abort（M608 真机探针：`Abort trap: 6`，崩溃点在 `set_application` 之后）。
-# 该分支在 lib.rs 的 `deliver_notification` 里按 `tauri::is_dev()` 运行期分流：dev 直接走
-# mac-notification-sys 的 legacy 投递（与修复前行为一致——投递可用；点击回调本就是已知失效的
-# dev 通道边界，套件按 `requires: bundle` 标 INVALID），打包实例才走 UN + 点击回调。
-# 不用 cargo feature 分流：tauri CLI 打包时传的是 `--features tauri/custom-protocol`（依赖自身的
-# feature），本仓自定义 feature 不会被它激活（M608 实测：门控后打包产物落回 legacy 后端）。
-#
-# 代价：多出 mac-usernotifications / futures-timer 两个传递依赖；UN 要求 app 有代码签名
-# （打包实例补一次 ad-hoc 签名即可），且授权状态要单独请求（见 lib.rs
-# `ensure_notification_permission` 的 macOS 分支）。
 [target.'cfg(target_os = "macos")'.dependencies]
-notify-rust = { version = "=4.18.2", features = ["preview-macos-un"] }
 # 投递后自查（M620）：读通知中心的已投递列表（`getDeliveredNotificationIds`），把
 # `cron_notified` 的语义从「请求被接受」升级为「系统确认已送达」。这是 notify-rust 的
 # 传递依赖（同一份 =0.3.1），升为直接依赖零新增编译重量。

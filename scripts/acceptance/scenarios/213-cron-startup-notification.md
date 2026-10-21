@@ -9,7 +9,8 @@ config:
     tasks:
       # `$pastMinute` = 应用启动那一刻任务已经到点：启动评估（Trigger::Startup）会立刻投递。
       # 这正是 M620 的现场——冷启动最初约 0.5s 内主线程 run loop 尚未进入等待，阻塞投递会被
-      # 本地拒绝（MainThreadNotRunning）而请求根本没发出去；插件又把这个错误吞成恒 Ok。
+      # 本地拒绝（MainThreadNotRunning）而请求根本没发出去；M620 前的投递封装又把这个错误吞成
+      # 恒 Ok。
       - id: "acc-cron-startup"
         vault: "$vault"
         at: "$pastMinute"
@@ -59,10 +60,10 @@ steps:
 ## 为什么必须新增这条场景（M620 的现场）
 
 2026-10-21 的探针（M620，产物在 `/tmp`、不入库）确认：macOS 打包实例冷启动最初约 0.5s 内，
-`mac-usernotifications` 的**阻塞**投递（`tauri-plugin-notification` 的 wait 线程与
-`notify-rust` 的 `show()` 都走它）会直接返回 `MainThreadNotRunning`——主线程 `CFRunLoop` 还没
-进入等待——请求根本没发给 usernoted；而插件把该错误吞掉，`NotificationBuilder::show()` 恒返回
-Ok ⇒ 本仓误判「已投递」，写 `cron_notified` + `last_fired`，这次提醒永久丢失。
+`mac-usernotifications` 的**阻塞**投递（`notify-rust` 的 `show()` 走它）会直接返回
+`MainThreadNotRunning`——主线程 `CFRunLoop` 还没进入等待——请求根本没发给 usernoted。M620 前的
+投递封装把该错误吞成恒 Ok ⇒ 本仓误判「已投递」，写 `cron_notified` + `last_fired`，这次提醒
+永久丢失。
 
 既有场景 170 / 171 都用 `$nextMinute`（启动后 60–120s 才到点），因此从未覆盖这条路径——这正是
 finding 里「启动窗口」的成因：不是系统在 0–60s 内丢通知，而是**启动最初半秒内的投递被本地拒绝、

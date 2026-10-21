@@ -152,7 +152,7 @@ MUST NOT 记录当日已触发。运行到达终态后 MUST NOT 在同一本地�
 
 #### Scenario: 通知投递失败不写去重
 
-- **WHEN** 通知权限被拒或插件投递失败
+- **WHEN** 通知权限被拒或投递失败
 - **THEN** `last_fired` 不写入；下一次评估（同一天内）再次尝试；不记录为已触发
 
 ### Requirement: 运行装配与会话形态
@@ -222,11 +222,11 @@ warning，MUST NOT 丢弃任务。
 一次（系统弹窗）；权限被拒 SHALL 给出一条人话 warning、MUST NOT 反复申请、MUST NOT 阻断守护的
 判定或非通知类功能。
 
-点击监听 SHALL 在应用启动时注册一次并常驻，MUST NOT 按需注册（平台只在「通知投递时监听器已在场」
-的通知上上报点击）。收到点击（`actionId` 为通知本体，即 `tap`）后，系统 SHALL 按该任务的触达策略
-执行：`notify-then-run` → 唤起并聚焦主窗口、必要时经既有 vault 打开链路打开目标 vault、在交互会话
-槽位发起运行；`run-then-notify` → 唤起并聚焦主窗口、恢复该次运行的会话。任一步失败 SHALL 落一条
-诊断事件并给人话反馈，MUST NOT 静默。
+点击等待 SHALL 随每条通知在投递成功后登记，MUST NOT 依赖一次性的全局注册（点击响应与具体的投递
+请求绑定，平台按请求 id 路由，只有为该条通知登记的等待能收到它）。收到点击（`actionId` 为通知
+本体，即 `tap`）后，系统 SHALL 按该任务的触达策略执行：`notify-then-run` → 唤起并聚焦主窗口、
+必要时经既有 vault 打开链路打开目标 vault、在交互会话槽位发起运行；`run-then-notify` → 唤起并
+聚焦主窗口、恢复该次运行的会话。任一步失败 SHALL 落一条诊断事件并给人话反馈，MUST NOT 静默。
 
 重复点击同一通知 SHALL 幂等：当日该任务已有运行会话时，只聚焦并打开该会话，MUST NOT 重复发起
 运行，MUST NOT 产生重复的模型请求。

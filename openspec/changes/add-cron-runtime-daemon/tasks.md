@@ -87,22 +87,23 @@
 
 ## 4. 通知与点击链路
 
-- [x] 4.1 依赖：`tauri-plugin-notification = "2.6"`（桌面点击回调自 2.6.0 起）与 `chrono`；插件用
-  Rust 侧 API 注册，`src-tauri/capabilities/default.json` 零增量（逐条核对）。
-- [x] 4.2 启动时注册常驻 `on_action` 监听（`actionId == "tap"`），回调只投递工作项到 `lumir-cron`
-  线程；非 `tap` 动作忽略并落诊断。
+- [x] 4.1 依赖：`notify-rust = "=4.18.2"`（三平台直连；macOS 的 UN 后端由 `preview-macos-un`
+  选择）与 `chrono`；Rust 侧调用，`src-tauri/capabilities/default.json` 零增量（逐条核对）。
+- [x] 4.2 点击等待随每条通知在投递成功后登记（`spawn_notification_click_waiter`，M620 / M625），
+  回调只投递工作项到 `lumir-cron` 线程；非 `tap` 动作忽略并落诊断。
 - [x] 4.3 权限：有有效任务时检查、未决定申请一次、被拒一条 warning 且不反复申请；权限查询失败不
   阻断启动。
-- [x] 4.4 投递：标题 = 任务 `id`，正文 = 通用文案（到点 / 已完成 / 运行失败）；`extra` 携带
-  `{"task": id}`（结果通知另带该次 `session_id`）；正文不含 prompt、文档内容与绝对路径。
+- [x] 4.4 投递：标题 = 任务 `id`，正文 = 通用文案（到点 / 已完成 / 运行失败）；正文不含 prompt、
+  文档内容与绝对路径。
 - [x] 4.5 点击链路：`notify-then-run` → 聚焦（show/unminimize/set_focus）→ 必要时打开目标 vault →
   发起运行；`run-then-notify` → 聚焦 → 恢复该次会话；失败各落 `cron_click(ok=false)` + 人话提示。
 - [x] 4.6 重复点击幂等：当日已有运行会话时只聚焦并打开该会话，不重复运行、不产生第二次模型请求。
 - [x] 4.7 **实现期第一验证项**：确认 `pnpm tauri dev` 的 dev flavour 在 macOS 上能拿到通知权限并
   投递；不可用则改用打包 `.app` 实例验证，并在完成报告写明 flavour。两者都不可用即停下上报，不
   跳过通知验证。
-  （**结论：dev flavour 可用**。插件在 dev 档按 `tauri::is_dev()` 把通知归属到
-  `com.apple.Terminal`（插件源码行为），首次投递触发 Terminal 的通知权限弹窗；授权后
+  （**结论：dev flavour 可用**。dev 档由 `deliver_notification_dev` 按 `tauri::is_dev()` 走 legacy
+  投递：裸二进制没有自己的 bundle 身份，通知归属因此写成 `com.apple.Terminal`；首次投递触发
+  Terminal 的通知权限弹窗；授权后
   `usernoted` 日志出现 `successfully processed by pipeline, scheduled for delivery` 与
   `Presenting … as banner`。本机结论另有一条环境项：系统处于专注模式（DND，user 的
   「我要睡觉了」Focus），横幅被 `muted by DND suppression: delay` 抑制——通知进入通知中心
