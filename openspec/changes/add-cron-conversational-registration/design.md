@@ -163,8 +163,9 @@ enum CronMessage {
 struct ReloadOutcome { applied: usize, seeded: Vec<String>, error: Option<String> }
 ```
 
-- **复用既有工作项通道**（`CronRuntime.inner.tx`，`src-tauri/src/lib.rs:766-850`）：通知点击的
-  `on_action` 已经走这条通道投工作项，reload 是同一形状的第二类消息，不新发明 IPC。
+- **复用既有工作项通道**（`CronRuntime.inner.tx`）：通知点击的响应等待
+  （`spawn_notification_click_waiter`）已经走这条通道投工作项，reload 是同一形状的第二类消息，
+  不新发明 IPC。
 - **不带任务载荷**：线程自己 `config::load()` 重读。带载荷等于在进程里放第二份任务表，两份迟早
   分叉（REVIEW.md「同一语义两处真源」条）。
 - **一次性回执**（`ack`）：工具侧 `recv_timeout(1s)` 等结果，把「已生效 / 未确认」如实写进回执。
@@ -397,6 +398,8 @@ pub struct ApprovalPreview {
 - 用户说「每天 / 每周几 / 到点提醒我 / 定时检查一下」时，用 cron_task_create 在本机 Lumir 里注册
   定时任务；它只在 Lumir 运行时触发，不需要、也不许另建系统级调度。先 cron_task_list 看有没有
   同名或重复的任务，改任务 = cron_task_remove + cron_task_create。
+- 注册 / 删除是否生效以工具回执为准：没实际调用工具、或回执不是 ok 时，如实说没注册成 / 没删掉，
+  不得声称已注册、已生效。
 - 定时任务的 prompt 要自包含：到点运行时是一个新会话，看不到你们现在这段对话。写清「做什么、在
   哪个目录、产出放哪、不要做什么」。
 - 默认触达策略是 notify-then-run（到点只提醒，用户点通知才运行）；用户没明确要「自动跑完再告诉我」

@@ -788,7 +788,7 @@ mod tests {
                 fnv1a64(quote.as_bytes()),
                 quote.len(),
             ),
-            (0xb92eb692300af983, 1345, 0x05cba54b785b843b, 1170),
+            (0x34f46128dbf26830, 1525, 0x05cba54b785b843b, 1170),
         );
     }
 

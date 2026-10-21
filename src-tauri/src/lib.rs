@@ -1699,7 +1699,7 @@ fn notification_is_delivered(request_id: &str, budget: std::time::Duration) -> b
 
 /// 点击等待（M620 macOS / M625 全平台）：**每条通知在投递成功后**注册一个响应等待线程，
 /// `tap`（点通知本体）投一个 `CronMessage::Click` 给 `lumir-cron` 线程——判定与副作用仍在
-/// 那条线程上，与 design §4.2 的分工一致。
+/// 那条线程上，与 design §13「点击上报的平台口径」的分工一致。
 ///
 /// **为什么逐条通知登记**：点击响应与具体的投递请求绑定（平台按请求 id 路由），
 /// `NotificationHandle::wait_for_response` 消费的就是这条通知的句柄；不存在一条全局监听能覆盖
