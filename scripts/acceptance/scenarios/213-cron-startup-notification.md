@@ -9,7 +9,8 @@ config:
     tasks:
       # `$pastMinute` = 应用启动那一刻任务已经到点：启动评估（Trigger::Startup）会立刻投递。
       # 这正是 M620 的现场——冷启动最初约 0.5s 内主线程 run loop 尚未进入等待，阻塞投递会被
-      # 本地拒绝（MainThreadNotRunning）而请求根本没发出去；插件又把这个错误吞成恒 Ok。
+      # 本地拒绝（MainThreadNotRunning）而请求根本没发出去；M620 前的投递封装又把这个错误吞成
+      # 恒 Ok。
       - id: "acc-cron-startup"
         vault: "$vault"
         at: "$pastMinute"
