@@ -43,6 +43,10 @@ LUMIR_ACCEPTANCE_BUNDLE="$PWD/src-tauri/target/debug/bundle/macos/Lumir.app/Cont
   node scripts/acceptance/run.mjs 170 171 213
 ```
 
+产物路径随 `CARGO_TARGET_DIR` 走（worktree 常把它指向主仓的 warm target 以省掉一次全量构建）——
+构建脚本结尾会打印本机的绝对路径与现成的 `LUMIR_ACCEPTANCE_BUNDLE=…` 命令行，直接用它即可；
+上面的 `$PWD/src-tauri/target/...` 是缺省 target dir 的形态。
+
 构建脚本做三件事：`tauri build --debug --bundles app --config '{"identifier":"com.lumir.app.acceptance"}'`
 （构建期覆盖 identifier，`src-tauri/tauri.conf.json` 本体一字不动；`beforeBuildCommand` 会先跑
 `pnpm build`）、`codesign --force --deep --sign - <…/Lumir.app>`、回读产物 Info.plist 校验 id。
@@ -60,7 +64,7 @@ UN 通知授权会直接返回 denied（启动日志 `通知权限被拒绝`）�
 （`acceptanceBundleId()`），并要求它等于期望值 `ACCEPTANCE_BUNDLE_ID`
 （`com.lumir.app.acceptance`）。起跑预检与每次 `launchApp` 都核一遍（`assertAcceptanceBundleIdentity`）：
 漏了 `--config`（产物仍是产品 id）或换了别的 id，整轮直接判红（退出码 2），不产出一串「点击
-落到安装版」的假绿。`run.log` 会写本轮的 bundle id 与产品 id。
+落到安装版」的假绿。`run.log` 会写本轮的 `FLAVOUR bundle id=… binary=…`。
 
 **首次通知授权是人肉 checkpoint（M622）**：新 bundle id 在系统里的通知权限是空的，第一次启动
 请求授权时必须有人（Alex）在系统设置 > 通知里给验收副本打开权限；未授权时横幅不出、场景在

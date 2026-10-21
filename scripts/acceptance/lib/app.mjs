@@ -1443,7 +1443,7 @@ export async function quiesceStrayBundleInstances({
   if (strays.length === 0) {
     evidence?.record({
       kind: "note",
-      text: `${action} 后游离实例扫描：无（本次跑批自己的 bundle ${ownPid ?? "pid 未知"} 不计）`,
+      text: `${action} 后游离实例扫描：无（本次跑批自己的实例 pid ${ownPid ?? "未知"} 不计）`,
     });
     return [];
   }
