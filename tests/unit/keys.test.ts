@@ -185,6 +185,41 @@ test("⌘} / ⌘{ 的 token 形态：真机事件与表内写法同 token，写 
   }
 });
 
+// M627：⌘⇧, / ⌘⇧. 切标签（Alex 2026-10-23「三键组合无法切换 TAB」）。与 M242 同一条
+// 静默失配风险：⌘⇧, 在 US 布局上打出的是 `<`，事件 token 是 `Cmd-<`；把表写成
+// `Cmd-Shift-,` 不报错、只是永远不命中。方向映射是 tower 拟定的假设（, 在 . 左侧）。
+test("⌘⇧, / ⌘⇧. 的 token 形态：真机事件是 Cmd-< / Cmd->，写 Cmd-Shift-, 永不命中", () => {
+  // 真机 ⌘⇧, / ⌘⇧.：US 布局上必须按 Shift，WKWebView 给的是 Shift 后的字符 + shiftKey。
+  const prevEvent = { key: "<", code: "Comma", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
+  const nextEvent = { key: ">", code: "Period", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
+  assert.equal(keyToken(prevEvent), "Cmd-<", "⌘⇧, 的事件 token 是 `Cmd-<`（Shift 隐含在字符里）");
+  assert.equal(keyToken(nextEvent), "Cmd->", "⌘⇧. 的事件 token 是 `Cmd->`");
+  // 反向断言（REVIEW.md 「断言等价于子串」条）：错误形态与真机 token 必须不等。
+  assert.notEqual(keyToken(prevEvent), "Cmd-Shift-,", "写 `Cmd-Shift-,` 的绑定永远不命中");
+  assert.notEqual(keyToken(nextEvent), "Cmd-Shift-.", "写 `Cmd-Shift-.` 的绑定永远不命中");
+  assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-Shift-,"), undefined);
+  assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-Shift-."), undefined);
+  // 两条绑定与 ⌃⇥ / ⌃⇧⇥ / ⌘} / ⌘{ 指向同一命令（零新命令 id）：命令层实现是同一个。
+  const prev = KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-<");
+  const next = KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd->");
+  assert.equal(prev?.command, "tab.prev", "⌘⇧, 应绑定 tab.prev（方向假设：, 在 . 左侧）");
+  assert.equal(next?.command, "tab.next", "⌘⇧. 应绑定 tab.next");
+  for (const binding of [prev, next]) {
+    assert.ok(binding !== undefined);
+    assert.equal(binding.scope, "global", `${binding.key} 的作用域应为 global（切标签是窗口级动作）`);
+    assert.ok(docTextOf(binding).length > 0, `${binding.key} 的绑定必须带来由说明（表即文档）`);
+    // 三条来源的冲突核对结论与方向假设写进 doc（表即文档的口径）
+    assert.ok(docTextOf(binding).includes("muda") || docTextOf(binding).includes("原生菜单"));
+  }
+  // 单段、无空白 ⇒ 可经 [keys] 重绑 / 解绑（与 M242 两条同形）。
+  const rebound = applyKeyOverrides({ "Cmd-<": "tab.next" });
+  assert.deepEqual(rebound.warnings, []);
+  assert.equal(rebound.bindings.find((item) => normalizeKey(item.key) === "Cmd-<")?.command, "tab.next");
+  const unbound = applyKeyOverrides({ "Cmd->": null });
+  assert.deepEqual(unbound.warnings, []);
+  assert.equal(unbound.bindings.find((item) => normalizeKey(item.key) === "Cmd->"), undefined);
+});
+
 test("⌘} / ⌘{ 可由 [keys] 重绑 / 解绑（默认键位单段无空白）", () => {
   for (const key of ["Cmd-}", "Cmd-{"]) {
     assert.ok(!/\s/.test(key), `${key} 含空白会让用户无法重绑（chord 本版不支持）`);
@@ -944,6 +979,9 @@ test("pane.* 命令可由 [keys] 重绑 / 解绑（默认键位单段无空白�
 
 test("text 面命令组：与 design §4 的键表逐条对应、作用域派生为 text、族外 editor 命令不放宽", () => {
   const expected: string[] = [
+    // M627：全选进文本面（⌘A 在编辑器与 composer 两处都成立；它不是 Emacs 导航族成员，
+    // 但满足「两个文本面上同样成立的文本编辑命令」这一判据）。
+    "editor.select-all",
     "editor.cursor-forward",
     "editor.cursor-backward",
     "editor.line-start",
@@ -980,7 +1018,7 @@ test("text 面命令组：与 design §4 的键表逐条对应、作用域派生
     "editor.scroll-page-up",
     "editor.recenter",
     "editor.keyboard-quit",
-    "editor.select-all",
+    // M627：`editor.select-all` **不在此列**——它已进文本面（见上方 expected）。
     "editor.undo",
     "editor.redo",
     "editor.list-indent",

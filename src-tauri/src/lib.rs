@@ -53,6 +53,10 @@ const CLOSE_MENU_ID: &str = "lumir.close";
 #[cfg(target_os = "macos")]
 const CLOSE_WINDOW_MENU_ID: &str = "lumir.close_window";
 
+/// 自定义「全选」菜单项 id（M627）：见 install_menu_overrides / swap_select_all_item。
+#[cfg(target_os = "macos")]
+const SELECT_ALL_MENU_ID: &str = "lumir.select_all";
+
 /// 菜单命令事件名（M131）：前端 main.ts 订阅它，把菜单点击交给统一键位层的命令实现。
 /// 载荷见 menu_command_of（菜单只说 undo / redo 这类平台术语，映射到前端命令 id 是前端的事）。
 #[cfg(target_os = "macos")]
@@ -381,7 +385,8 @@ fn install_menu_overrides(app: &tauri::AppHandle) -> tauri::Result<()> {
     let quit_guarded = guard_quit_item(&menu, app)?;
     let undo_redo_swapped = swap_undo_redo_items(&menu, app)?;
     let close_swapped = swap_close_window_items(&menu, app)?;
-    if quit_guarded || undo_redo_swapped || close_swapped {
+    let select_all_swapped = swap_select_all_item(&menu, app)?;
+    if quit_guarded || undo_redo_swapped || close_swapped || select_all_swapped {
         app.set_menu(menu)?;
     }
     Ok(())
@@ -458,6 +463,70 @@ fn swap_close_window_items<R: tauri::Runtime>(
 #[cfg(target_os = "macos")]
 fn is_close_item_text(text: &str) -> bool {
     text == "Close" || text == "C&lose Window" || text == "Close Window"
+}
+
+/// 全选菜单项让位（M627）：把 **Edit** 子菜单的**预置** Select All 换成不带加速键的自定义项，
+/// 点击经 MENU_COMMAND_EVENT 交回前端统一命令层。
+///
+/// 为什么必须换：预置 SelectAll 在 macOS 上自带 key equivalent ⌘A（muda 的
+/// `PredefinedMenuItemType::SelectAll => Accelerator::new(Some(CMD_OR_CTRL), Code::KeyA)`，
+/// 见 items/predefined.rs 的 accelerator()，经 platform_impl/macos 落到 NSMenuItem）。菜单键
+/// 等价在 NSApplication 分发阶段就被截获，webview 的 keydown 收不到 ⌘A——与 M131 的
+/// ⌘Z / ⇧⌘Z、M149 的 ⌘W 完全同一机制。M627 之前 ⌘A 全靠引擎原生 selectAll 兜底：编辑器
+/// 内容恰好对，harness composer（混排 contenteditable，含原子卡片）选不到全文
+///（Alex 2026-10-23 报告）。让出该键后 ⌘A 回到统一键位层的 `text` 作用域命令，按事件目标
+/// 分派（编辑器 → CM 全选；composer → composer 全选），菜单点击走同一条命令。
+///
+/// 结构性假设（tauri 2.11.5 `menu::Menu::default` 源码）：Edit 子菜单为
+/// [Undo, Redo, 分隔符, Cut, Copy, Paste, SelectAll]，SelectAll 在末位；预置项文案为
+/// "Select All"（muda 对 macOS 不带助记符 `&`）。校验失败即跳过并打 stderr 警告，绝不在
+/// 结构变化时盲目删项。返回是否做了替换。
+#[cfg(target_os = "macos")]
+fn swap_select_all_item<R: tauri::Runtime>(
+    menu: &Menu<R>,
+    app: &tauri::AppHandle<R>,
+) -> tauri::Result<bool> {
+    let submenu = menu.items()?.into_iter().find_map(|item| match item {
+        MenuItemKind::Submenu(submenu)
+            if submenu.text().map(|text| text == "Edit").unwrap_or(false) =>
+        {
+            Some(submenu)
+        }
+        _ => None,
+    });
+    let Some(submenu) = submenu else {
+        eprintln!(
+            "lumir: select all menu not installed: Menu::default() has no Edit submenu (tauri menu structure changed)"
+        );
+        return Ok(false);
+    };
+    let items = submenu.items()?;
+    let Some(MenuItemKind::Predefined(select_all)) = items.last() else {
+        eprintln!(
+            "lumir: select all menu not installed: Edit submenu last item is not a predefined item (tauri menu structure changed)"
+        );
+        return Ok(false);
+    };
+    let text = select_all.text().unwrap_or_default();
+    if !is_select_all_item_text(&text) {
+        eprintln!(
+            "lumir: select all menu not installed: Edit submenu last item text {text:?} is not Select All (tauri menu structure changed)"
+        );
+        return Ok(false);
+    }
+    // 文案沿用原生（"Select All"），加速键刻意不设——设了就等于把 ⌘A 又截走。
+    let item = MenuItemBuilder::with_id(SELECT_ALL_MENU_ID, text).build(app)?;
+    submenu.remove_at(items.len() - 1)?;
+    submenu.append(&item)?;
+    Ok(true)
+}
+
+/// 判断菜单项文案是否为原生 Select All 项：muda 对 macOS 给出 "Select All"（Windows/Linux
+/// 为 "Select &All"，一并接受，便于将来跨平台时不静默退化）。纯函数，供
+/// swap_select_all_item 删项前校验。
+#[cfg(target_os = "macos")]
+fn is_select_all_item_text(text: &str) -> bool {
+    text == "Select All" || text == "Select &All"
 }
 
 /// macOS 退出守卫菜单（M101）：Cocoa 默认 Quit 项直连 NSApp terminate:，不经
@@ -584,6 +653,9 @@ fn menu_command_of(id: &str) -> Option<&'static str> {
         REDO_MENU_ID => Some("redo"),
         // File 与 Window 两个子菜单的关闭项做同一个动作（关当前标签），因此同一个载荷。
         CLOSE_MENU_ID | CLOSE_WINDOW_MENU_ID => Some("close"),
+        // M627：全选（原预置 SelectAll 让出 ⌘A 后，菜单点击仍要能全选；落哪个面由前端按
+        // 当前焦点决定）。
+        SELECT_ALL_MENU_ID => Some("selectAll"),
         _ => None,
     }
 }
@@ -1828,7 +1900,8 @@ fn notice(app: &tauri::AppHandle, message: &str) {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::{
-        edit_items_are_predefined_undo_redo, is_close_item_text, is_quit_item_text, menu_command_of,
+        edit_items_are_predefined_undo_redo, is_close_item_text, is_quit_item_text,
+        is_select_all_item_text, menu_command_of,
     };
 
     #[test]
@@ -1865,6 +1938,18 @@ mod tests {
         assert!(!is_close_item_text("Quit lumir"));
     }
 
+    /// 全选项文案校验（M627）：只认 muda 的 Select All 两种形态，别把邻近的编辑项误删。
+    #[test]
+    fn select_all_item_text_rejects_other_predefined_items() {
+        assert!(is_select_all_item_text("Select All"));
+        assert!(is_select_all_item_text("Select &All")); // Windows/Linux 的助记符形态
+        assert!(!is_select_all_item_text(""));
+        assert!(!is_select_all_item_text("select all")); // 大小写敏感，非 muda 默认文案
+        assert!(!is_select_all_item_text("Select All Tabs"));
+        assert!(!is_select_all_item_text("Paste"));
+        assert!(!is_select_all_item_text("Cut"));
+    }
+
     /// Edit 子菜单前两项校验：只认 muda 对 macOS 的默认文案（不带助记符 `&`）。
     #[test]
     fn edit_head_requires_predefined_undo_redo() {
@@ -1897,24 +1982,27 @@ mod tests {
         ])));
     }
 
-    /// 菜单事件载荷（M131 + M149）：只认自己的菜单项 id，其余（含 Quit、预置项文案本身）
-    /// 不产生命令事件。
+    /// 菜单事件载荷（M131 + M149 + M627）：只认自己的菜单项 id，其余（含 Quit、预置项
+    /// 文案本身）不产生命令事件。
     ///
     /// M149 新增的两个关闭项 id 各断言一次：它们是**两次独立的菜单手术**（File 子菜单与
     /// Window 子菜单各一处），只测一个会漏掉另一条转发路径。
     ///
     /// 真实菜单手术（remove_at / append）需要一份 AppHandle，纯单测覆盖不到——与 M131
     /// 同一深度：可判定的部分是「文案校验 + id → 载荷映射」，手术本身由真机验收覆盖
-    /// （14-tabs 的菜单点击步骤）。
+    /// （14-tabs 的菜单点击步骤；M627 的全选菜单项 id → 载荷在这里判，按键链路由 chromium 的
+    /// m627 场景覆盖，菜单点击的真机路径登记在场景 215 的覆盖边界里）。
     #[test]
     fn menu_command_only_covers_our_menu_items() {
         assert_eq!(menu_command_of("lumir.undo"), Some("undo"));
         assert_eq!(menu_command_of("lumir.redo"), Some("redo"));
         assert_eq!(menu_command_of("lumir.close"), Some("close"));
         assert_eq!(menu_command_of("lumir.close_window"), Some("close"));
+        assert_eq!(menu_command_of("lumir.select_all"), Some("selectAll"));
         assert_eq!(menu_command_of("lumir.quit"), None);
         assert_eq!(menu_command_of("Undo"), None);
         assert_eq!(menu_command_of("Close"), None);
+        assert_eq!(menu_command_of("Select All"), None);
         assert_eq!(menu_command_of(""), None);
     }
 }

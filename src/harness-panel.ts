@@ -68,9 +68,9 @@
 //（change composer-draft-persistence：防抖写控制器在 src/harness-draft.ts、落盘在 Rust 的
 // harness::draft、块模型 ⟺ 草稿 JSON 在 src/quote-card.ts——本模块只挂时点：编辑后防抖、
 // 输入区失焦 / 面板关闭 / 窗口失焦或退出前 flush、装载 vault 后恢复、发送成功后清除）；
-// M378 起面板内容字号支持 ⌘+/- 步进
-//（--lumir-hp-scale，与内容 pane 的 textScale 同语义：×1.1 钳 [12,32]、reset 回基线、
-// 不落盘；焦点路由在装配层 src/main.ts）；
+// M378 起面板内容字号可缩放（--lumir-hp-scale）；M627 起它由**一套字号**驱动——比值来自
+// 编辑器当前字号 ÷ 配置基线，随每条 ⌘+/-/0 同步施加（与内容 pane 一起变，焦点在哪无关；
+// 计算与路由在装配层 src/main.ts，面板不认焦点、不自持档位）；
 // 长驻元素（toggle 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / ctx 读数 /
 // 合并选择器 chip / 待决批准项）注册 onRelabel，
 // 语言切换时从已存状态重渲（design §5.2 的不变量）；transcript 的历史条目是已发生事实的记
@@ -137,8 +137,6 @@ import { highlightCode } from "./preview/code";
 import { clusterBackward, clusterForward, currentKillSlot, imageMentionText, imageOrdinals, mergeKillText, setKillSlot, wordEndForward, wordStartBackward } from "./quote-card";
 import type { CommandId } from "./keys";
 import { mirrorThemeScope } from "./overlay-scope";
-import { nextFontSize } from "./typography";
-import type { TextScaleDirection } from "./typography";
 import type { AppShell } from "./shell";
 
 /** 面板对编辑器句柄的结构需求：上下文组装（HarnessContextSource）+ 关面板时的焦点归还 +
@@ -233,13 +231,11 @@ export interface HarnessPanelHandle {
    *  双击收到第二次）。
    */
   setStopHandler(handler: (() => void) | null): void;
-  /** harness pane 内容字号步进一档 / 回基线（M378，与内容 pane 的 textScale 同语义：
-   *  ×1.1 取整、钳 [12,32]、运行期不落盘；reset 回基线 = 面板根字号 --fs-ui 的现值）。
-   *  缩放经 --lumir-hp-scale 施加到面板全部内容字号；装配层按焦点路由 view.text-scale-*。 */
-  textScale(direction: TextScaleDirection): void;
-  /** 焦点是否在面板内（pane 内容件持焦判据）：缩放命令经它决定作用于 harness 面板
-   *  还是编辑器——与内容 pane「焦点在哪个 pane，⌘+/- 就缩放哪个 pane 的内容」同口径。 */
-  hasFocus(): boolean;
+  /** 施加**一套字号**的缩放级（M627）：`ratio` = 编辑器当前字号 ÷ 配置基线（1 = 基线），
+   *  由装配层在每条 view.text-scale-* 命令里算出后传入（面板不自持字号档位、不认方向）。
+   *  缩放经 --lumir-hp-scale 施加到面板全部内容字号（单一写入路径）；运行期不落盘。
+   *  `ratio` 非有限正数时按基线处理（异常输入不放大、不抛错）。 */
+  applyTextScale(ratio: number): void;
   /**
    * composer 侧的文本面命令入口（M447，change composer-emacs-nav design §3.2）：按命令 id 分派
    * 到 composer 的模型层动作（移动 / 扩选 / 删除 / kill-yank / 转置）。**命中即消费**——装配层的
@@ -1962,24 +1958,11 @@ export function ctxPopRows(r: UsageReadings, warnPct: number): CtxPopRow[] {
   return rows;
 }
 
-// ── harness pane 内容字号步进的纯模型层（M378）────────────────────────────────
-// 与内容 pane 的 textScale（src/editor.ts，change typography-and-zoom）同一条语义：
-// up / down 复用 nextFontSize（×1.1 取整、钳 [12,32]）、reset 回基线、到界无变化、运行期
-// 不落盘。基线是面板根字号 --fs-ui 的现值（创建时读到）——对应编辑器的「⌘0 回配置字号」。
-// 纯函数零 DOM（tests/unit 直接驱动）。
-
-/**
- * harness pane 字号步进一档 / 回基线（纯函数）：`reset` 回 `base`；`up` / `down` 走
- * nextFontSize 的同款档位（倍率 1.1、取整、钳 [12,32]，到界返回原值——调用方据此
- * 「无变化、无提示、不报错」，与 editor.textScale 同口径）。
- */
-export function nextHarnessFontSize(
-  current: number,
-  direction: TextScaleDirection,
-  base: number,
-): number {
-  return direction === "reset" ? base : nextFontSize(current, direction);
-}
+// ── harness pane 内容字号（M378；M627 起由「一套字号」驱动）────────────────────
+// 面板不自持字号档位：缩放比由装配层从**编辑器的那一套字号**算出（src/typography.ts 的
+// textScaleRatio），面板只把比值施加到自己的字号阶梯（--lumir-hp-scale）。两个内容面的
+// 基线字号不同（编辑器 15px 起、面板 --fs-ui 13px 起），共用的是缩放级而不是绝对值——⌘0
+// 回到配置值时两处同时回各自的基线。纯函数 `nextFontSize` / `textScaleRatio` 在 typography.ts。
 
 /** 消息 when 的相对时间（M351，change harness-pane-visual-fidelity design §4）：上屏打戳 →
  *  分档标签。「刚刚」复用 D100.1（同一语义单一真源），其余档经 Intl（formatRelative
@@ -3889,12 +3872,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let lastHasUsage: boolean | null = null;
   /** 上下文用量警示阈值（快照 warn_ctx_pct，缺省 85——与 Rust 侧 DEFAULT_WARN_CTX_PCT 同值）。 */
   let warnCtxPct = 85;
-  /** harness pane 内容字号（M378，运行期态、不落盘、不回写 config）：hpBaseFontSize = 基线
-   *  （面板根字号 --fs-ui 创建时的计算值——「⌘0 回到基线」的锚，与编辑器的「回配置字号」
-   *  同口径），hpFontSize = 当前生效值。缩放经 --lumir-hp-scale（= hpFontSize / 基线）
-   *  施加：css 的全部 font-size 声明 calc 乘该变量（缺省 1 = 零缩放，逐字节不改基线观感）。 */
-  let hpBaseFontSize = 0;
-  let hpFontSize = 0;
+  /** 面板当前生效的字号缩放比（M627）：由装配层按**编辑器的那一套字号**给出
+   *  （`textScaleRatio(当前字号, 配置基线)`，1 = 基线），面板不再自持字号档位——「一套字号
+   *  设置，无论焦点在哪，两个 pane 一起变」。经 --lumir-hp-scale 施加（单一写入路径，见
+   *  writeTextScale）：css 的全部 font-size 声明 calc 乘该变量（缺省 1 = 零缩放，逐字节
+   *  不改基线观感）。运行期态、不落盘、不回写 config。 */
+  let hpScale = 1;
   /** 合并选择器状态（config_get 宽容提取的 HarnessSelection；null = 未配置/读不到——
    *  桩环境 / 旧配置 / 读取失败不伪造读数，chip 隐藏）。 */
   let selSelection: HarnessSelection | null = null;
@@ -4838,6 +4821,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     scrollCaretIntoView(measure, h.blockEl ?? composer.lastElementChild ?? composer);
   }
 
+  /** 全选（M627）：选区覆盖整个 composer，**含原子卡片**。走 DOM 的 `selectNodeContents`
+   *  ——端点落在 composer 自身的两个块级边界上，模型读回即 `{block:0,offset:0}` →
+   *  `{block:块数,offset:0}`（`modelCaretAt` 的 composer 档），与「末尾之后」的模型表示同源；
+   *  随后的删除 / 覆写走既有选区路径（`selectionDeleteStep`）。MUST NOT 用
+   *  `document.execCommand("selectAll")` 或裸原生选区：前者按引擎口径选整页，后者在混排
+   *  contenteditable（含 contenteditable=false 卡片）上选不到全文——这正是 Alex 报告的现象。 */
+  function selectAllComposer(): void {
+    if (composer.children.length === 0) return;
+    const selection = window.getSelection();
+    if (selection === null) return;
+    const range = document.createRange();
+    range.selectNodeContents(composer);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
   // ── composer 侧的文本面命令入口（M447，change composer-emacs-nav design §3.2 / §4） ──
   // 装配层的一处分派包装在事件目标落在 composer 内时调 `runComposerCommand`（`text` 作用域
   // 命令的两个面）。**移动 / 扩选只写选区与滚动位**——MUST NOT 重渲、MUST NOT 压撤销步
@@ -4853,6 +4852,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const sel = caretFromDom();
     const caret = sel === null ? null : sel.focus;
     switch (command) {
+      // M627：⌘A 全选——composer 全部块（含卡片）。命中即消费（分发器已 preventDefault），
+      // 不再依赖引擎原生 selectAll（它在混排 contenteditable 上选不到全文）。
+      case "editor.select-all":
+        selectAllComposer();
+        return;
       case "editor.cursor-forward":
         navigate(blocks, caret, moveCharForward);
         return;
@@ -5181,27 +5185,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     relabelThinkingViews();
   }
 
-  // ── harness pane 内容字号步进（M378，与内容 pane 的 textScale 同语义）──────────
-  // 基线惰性捕获：第一次步进时读面板根字号 --fs-ui 的计算值（调用点必在面板已挂载、可
-  // 持焦之后——捕获时样式链完整；创建时面板尚未进 DOM，不在这里读）。运行期只写面板根上的
-  // --lumir-hp-scale（单一写入路径）——面板摘出 / 重挂不丢（元素长驻），不落盘、不回写
-  // config.json（与内容 pane 的持久化口径逐条对齐，不新造口径）。
-  // getComputedStyle 的守卫：tests/unit 的假 DOM 没有它——回退 13（--fs-ui 现值，与
-  // src/style.css 的声明同值同口径；浏览器里永远走真读数分支）。
-  function harnessBaseFontSize(): number {
-    if (hpBaseFontSize === 0) {
-      hpBaseFontSize =
-        typeof getComputedStyle === "function"
-          ? Number.parseFloat(getComputedStyle(panel).fontSize) || 13
-          : 13;
-      hpFontSize = hpBaseFontSize;
-    }
-    return hpBaseFontSize;
-  }
-
-  function applyHarnessTextScale(): void {
-    const base = harnessBaseFontSize();
-    panel.style.setProperty("--lumir-hp-scale", String(hpFontSize / base));
+  // ── harness pane 内容字号（M378 起可缩放；M627 起由「一套字号」驱动）──────────
+  // 运行期只写面板根上的 --lumir-hp-scale（**单一写入路径**）——面板摘出 / 重挂不丢（元素
+  // 长驻），不落盘、不回写 config.json（与内容 pane 的持久化口径逐条对齐，不新造口径）。
+  // 比值由装配层给（编辑器当前字号 ÷ 配置基线），面板不读 DOM、不自持档位——焦点在哪个
+  // pane 都不影响结果（M627 裁决：两个 pane 一起吃同一套字号）。
+  function writeTextScale(ratio: number): void {
+    hpScale = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+    panel.style.setProperty("--lumir-hp-scale", String(hpScale));
   }
 
   // ── 会话名（标题栏 harness 段的会话身份；design §3 口径 + change add-session-auto-naming
@@ -9398,17 +9389,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     setStopHandler(handler) {
       stopHandler = handler;
     },
-    textScale(direction: TextScaleDirection): void {
-      // 基线先捕获（首次调用时读 --fs-ui 计算值）——捕获动作会同步 hpFontSize，必须在
-      // 算步进之前完成，否则惰性初始化把刚步进的值冲掉。
-      const base = harnessBaseFontSize();
-      const next = nextHarnessFontSize(hpFontSize, direction, base);
-      if (next === hpFontSize) return; // 到界：无变化、无提示、不报错（与 editor.textScale 同口径）
-      hpFontSize = next;
-      applyHarnessTextScale();
-    },
-    hasFocus(): boolean {
-      return document.activeElement instanceof Node && panel.contains(document.activeElement);
+    applyTextScale(ratio: number): void {
+      writeTextScale(ratio);
     },
     composerCommand(command: CommandId): void {
       runComposerCommand(command);
