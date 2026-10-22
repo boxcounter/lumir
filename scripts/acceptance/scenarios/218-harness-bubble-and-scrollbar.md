@@ -99,7 +99,7 @@ M628 的两条视觉调整要在真机 WKWebView 下走一遍「样式改了，�
 
 ## 已知边界
 
-- 本场景首次真机运行在下一个 dogfood 批次（合并后）；截图落在
+- 本场景的首次真机运行排在 M627 的机器窗口之后（tower 协调发信号）；截图落在
   `.local/acceptance/<日期>/218-harness-bubble-and-scrollbar/`。
 - chromium 里 `::-webkit-scrollbar` 的形态是 overlay（闲置不上屏），截图看不到条；
   WKWebView 声明该选择器后是常驻自绘条，真机截图能看见 4px 细条——这正是本场景要看的东西。
