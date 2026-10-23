@@ -1,4 +1,4 @@
-import { Annotation, Compartment, EditorSelection, EditorState, Prec, StateEffect, Transaction } from "@codemirror/state";
+import { Compartment, EditorSelection, EditorState, Prec, StateEffect, Transaction } from "@codemirror/state";
 import type { Extension, SelectionRange, Text } from "@codemirror/state";
 import { EditorView, drawSelection, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
@@ -41,7 +41,8 @@ import type { ImageLightbox } from "./lightbox";
 import type { TableFullscreen } from "./table-fullscreen";
 import type { GotoLinePromptPort } from "./goto-line";
 import type { MarkdownLineNumbers } from "./bindings/MarkdownLineNumbers";
-import { detectFrontmatter } from "./preview/frontmatter";
+import { detectFrontmatter, firstBodyLineStart, frontmatterBlockField, normalizeFrontmatterCaret } from "./preview/frontmatter";
+import { trustedLoad } from "./editor-annotations";
 import { findMathSpans } from "./preview/math";
 import type { MathSpan } from "./preview/math";
 import { findTables, tableAt } from "./preview/table";
@@ -134,8 +135,10 @@ fn main() { println!("lumir"); }
 
 // 块级 replace widget（frontmatter / $$ 公式 / mermaid 围栏）的边界收集。
 // moveVertically 跨这类原子块时会把光标一步扔到块另一侧（M110 真实桌面缺陷：
-// 公式附近 Ctrl-N 落点错误），需钳制到行进方向的近端边界。数学 span 用词法
-// 口径（findMathSpans，与装饰层一致）；mermaid 围栏按语法树 FencedCode+CodeInfo。
+// 公式附近 Ctrl-N 落点错误），需钳制到块内最近源码位（不是块边界——边界位置会让 CM
+// 按整块 widget 的包围盒画光标，见 clampAcrossBlockWidgets 与 `docs/specs/editor-caret.md`
+// 的 C1/C4）。数学 span 用词法口径（findMathSpans，与装饰层一致）；mermaid 围栏按语法树
+// FencedCode+CodeInfo。
 function blockWidgetBoundaries(state: EditorState, from: number, to: number): { starts: number[]; ends: number[] } {
   const starts: number[] = [];
   const ends: number[] = [];
@@ -166,18 +169,26 @@ function blockWidgetBoundaries(state: EditorState, from: number, to: number): { 
   return { starts, ends };
 }
 
-/** 垂直移动跨越块级原子 widget 时，把落点钳制到近端边界；未跨越返回原落点。 */
+/** 垂直移动跨越块级原子 widget 时，把落点钳制到块内最近源码位（并显露该块）；未跨越返回原落点。
+ *
+ *  **落点是块内、不是块边界**（change cursor-visibility-oct23 的 C4）：块级 replace 在边界位置
+ *  由 CM 按整块 widget 的包围盒画光标（空光标的 top/bottom 取 `coordsAtPos` 的结果，
+ *  block widget 直接返回 `getBoundingClientRect()`）——frontmatter 上就是一条贯穿
+ *  properties + doc-title 的竖线。停到边界另一侧也不行：M110 裁定「一步跨过整块」是缺陷
+ *  （落点感知丢失）。因此推进一个字符进块：三类 replace（frontmatter / $$ 公式 / mermaid）
+ *  的源码长度都 ≥ 2，`best ± 1` 必在块内，且严格重叠会撤下装饰、显露出光标所在的源码行。
+ *  合同见 `docs/specs/editor-caret.md` 的 C1 / C4。 */
 function clampAcrossBlockWidgets(state: EditorState, from: number, to: number, forward: boolean): number {
   if (from === to) return to;
   const { starts, ends } = blockWidgetBoundaries(state, Math.min(from, to), Math.max(from, to));
   if (forward) {
     let best = Infinity;
     for (const s of starts) if (s > from && s < to && s < best) best = s;
-    return best === Infinity ? to : best;
+    return best === Infinity ? to : best + 1;
   }
   let best = -1;
   for (const e of ends) if (e < from && e > to && e > best) best = e;
-  return best === -1 ? to : best;
+  return best === -1 ? to : best - 1;
 }
 
 // grid 表格（rectangular 且未降级）内/外的垂直移动路由（M118 tower 裁决，取代
@@ -1561,7 +1572,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    *  save-controller 原先往 view 上 appendConfig 一个 updateListener 的写法
    *（那条路径由 M149 收编——扩展追加只作用于当时那一个 state，新建会话会漏掉它）。 */
   const docChangedListeners = new Set<() => void>();
-  const trustedLoad = Annotation.define<boolean>();
+  // 装载事务的注解住在叶子模块（frontmatter 光标过滤器也要读它，见 src/editor-annotations.ts）。
 
   // ---------------------------------------------------------------------------
   // 会话（M149 多标签）：sessions 按创建顺序持有全部文档会话，active 是前台那一个
@@ -1831,9 +1842,22 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       //     底色 / 字色的规则分工：底色在本文件（CM 自绘那一层），`::selection` 的前景在
       //     `src/style.css`（那里的 eink 值已是黑字，两条规则同值是刻意的一致，不是两处真源）。
       ".cm-selectionBackground": { backgroundColor: "var(--sel-band) !important" },
-      // 光标色：`drawSelection()` 装上后光标由 CM 自绘（`.cm-cursor`）、原生 caret 被置透明；
-      // 本条此前是「声明了没有消费者」的存量，M285 起是真的生效路径。
-      ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
+      // 光标（change cursor-visibility-oct23 的 D2=A；合同 docs/specs/editor-caret.md）：
+      //   · 宽度 2px 是**组件常量**，三主题同值——eink 没有颜色，线宽是它唯一的强调手段
+      //     （tokens 文档规则⑧），2px 落在既有语汇内（1.2–1.6px 强调线宽 / 2px 引用块竖线）。
+      //     颜色仍走 `--text`（三主题都是最高对比档）。宽度 3px、accent 变色、呼吸块光标均在
+      //     提案 D2 里被否，别按「再粗一点更显眼」改回。
+      //   · `marginLeft` 按宽度居中：CM 基础主题的 `-0.6px` 是 1.2px 的居中量，改宽必须同步，
+      //     否则光标相对插入点右偏 0.4px。
+      //   · 常亮：基础主题给 `.cm-cursorLayer` 挂了 `steps(1) cm-blink 1.2s infinite`（一半时间
+      //     opacity 0）——「一眼扫不到」的第二个成因。用**同选择器 + 明确值**覆盖：base 与用户
+      //     主题的先后顺序不是可依赖的契约，计算样式断言（m647 场景）钉住 `animationName = none`。
+      // 本条此前是「声明了没有消费者」的存量，M285 装上 `drawSelection()` 后才是真的生效路径。
+      ".cm-cursor, .cm-dropCursor": { borderLeft: "2px solid var(--text)", marginLeft: "-1px" },
+      // `!important` 不是可选：CM 在光标移动时把 `animationName` 直接写成元素的**内联样式**
+      // （`dom.style.animationName = "cm-blink" | "cm-blink2"`，用于免重排重启动画），
+      // 内联样式压过任何无 `!important` 的样式表声明。计算样式断言（m647 场景）钉住 none。
+      "&.cm-focused > .cm-scroller > .cm-cursorLayer": { animation: "none !important" },
     });
     // 可编辑性随会话标志装进 Compartment（editable-non-md-files）：此前硬绑
     // `mode === "md"`（M101 的只读合同），现在按**文件类**——md 与注册表文本类
@@ -2291,6 +2315,38 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   }
 
   /**
+   * 以 frontmatter 开头的 md 文档的初始光标（合同 C3，change cursor-visibility-oct23）：
+   * 放到块之后第一条可见正文行。纯 state 运算（无 view、无渲染中间态），装载路径用。
+   *
+   * 只在选区停在块起点（装载复位的 0 = `fm.from`）时生效；无正文行时不动——widget 正常
+   * 渲染 properties 盒，编辑器获得焦点时由 `normalizeFrontmatterCaret` 接管（C3 的聚焦支）。
+   */
+  function initialCaretState(state: EditorState): EditorState {
+    const fm = detectFrontmatter(state.doc);
+    if (!fm || state.selection.main.head !== fm.from) return state;
+    const body = firstBodyLineStart(state.doc, fm);
+    if (body === null) return state;
+    return state.update({ selection: { anchor: body } }).state;
+  }
+
+  /**
+   * 前台装载之后的同一口径（openFile 的 dispatchTrusted 之后调用）：有正文行 → 正文首行；
+   * 无正文行且编辑器已聚焦 → 按 C3 显露源码；未聚焦则不动（widget 正常渲染）。
+   *
+   * 不靠 focus 事件：openFile 常在「编辑器已聚焦」时发生（切文件），focus 不会再触发一次。
+   */
+  function normalizeInitialCaret(): void {
+    const fm = view.state.field(frontmatterBlockField, false);
+    if (!fm || view.state.selection.main.head !== fm.from) return;
+    const body = firstBodyLineStart(view.state.doc, fm);
+    if (body !== null) {
+      view.dispatch({ selection: { anchor: body } });
+      return;
+    }
+    if (view.hasFocus) normalizeFrontmatterCaret(view);
+  }
+
+  /**
    * 装载事务：整篇替换 + 复位选区，不进撤销史（口径见 dispatchTrusted 的注释）。
    *
    * 走事务派生新 state 而不是 `EditorState.create`，是为了让装载**继承原 state 的
@@ -2299,7 +2355,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    * panel 注释）。后台会话的重载同理，只是派生完不往 view 上派发。
    */
   function loadedState(state: EditorState, doc: string, mode: EditorMode, path: string | undefined, editable: boolean): EditorState {
-    return state.update({
+    const next = state.update({
       changes: { from: 0, to: state.doc.length, insert: doc },
       selection: { anchor: 0 },
       // 模式（含视图层可编辑性）与折行两个 Compartment 一起重配（M180）：装载可能把会话
@@ -2307,6 +2363,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       effects: modeAndWrapEffects(mode, path, editable),
       annotations: [trustedLoad.of(true), Transaction.addToHistory.of(false)],
     }).state;
+    // C3：初始光标放到 frontmatter 之后的第一条正文行（md 专属；code 模式没有 properties
+    // 渲染面，选区 0 就是正常的文档起点）。
+    return mode === "md" ? initialCaretState(next) : next;
   }
 
   /** 激活会话本体：换 state + 恢复该会话的滚动位置 + 同步模式/可编辑性上下文。 */
@@ -2340,6 +2399,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // reloadSession 复位到篇首，未命名空文档本来就在篇首。
     if (session.scroll !== undefined) view.dispatch({ effects: session.scroll });
     collapseDomSelectionIfBlurred();
+    // C3（change cursor-visibility-oct23）：切到「装载时未被聚焦、只有 frontmatter」的后台
+    // 会话不会再触发 focus 事件——已聚焦状态下换 state 后补一刀边界光标规范化。code 模式
+    // 没有检测场，normalizer 自然 no-op。只改选区，不碰滚动（上面的快照恢复优先）。
+    if (view.hasFocus) normalizeFrontmatterCaret(view);
   }
 
   /**
@@ -2480,6 +2543,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 模式（含视图层可编辑性）与折行一起重配：代码块内容级 class 只在 md 模式有意义
       //（见 modeAndWrapEffects）。可编辑性不随模式漂移，取会话上那一份（active.editable）。
       view.dispatch({ effects: modeAndWrapEffects(mode, active.path, active.editable) });
+      // C3（change cursor-visibility-oct23）：切到 md 之后若编辑器仍聚焦，边界光标会显形
+      //（code 模式下没有 frontmatter 检测场，normalizer 自然 no-op）。
+      if (view.hasFocus) normalizeFrontmatterCaret(view);
     },
     mode: () => active.mode,
     setWrap,
@@ -2593,6 +2659,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       });
       updateDirty(false);
       collapseDomSelectionIfBlurred();
+      // C3（change cursor-visibility-oct23）：装载事务把选区复位到 0，有 frontmatter 时 0 就是
+      // 块边界。放到正文首行（无正文行时视聚焦态显露源码）。必须在装载事务之后单独一步——
+      // 它是 selection-only 事务，不碰文档字节（ADR 0003 §3）。
+      normalizeInitialCaret();
       emitReady("source-ready");
       emitReady("decoration-ready");
       emitReady("frontmatter-ready");

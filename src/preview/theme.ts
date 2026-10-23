@@ -180,12 +180,9 @@ export const livePreviewTheme = EditorView.theme({
   // 段落间距走末行 padding（CM 无 margin 折叠模型：间距阶梯的「段落 8」落在段末行，
   // 类名由 livePreview 按「段落最后一行」加）。
   ".cm-line.cm-lp-paragraph-end": { paddingBottom: "var(--sp-4)" },
-  // frontmatter widget 被选区覆盖时的选中态（显露态）：底色取 --sel；前景 light/dark 不写，
-  // eink 取 --sel-text（M291 起该档的值 = 正文黑字，与选中族同一口径）。
-  ".cm-lp-frontmatter.cm-lp-frontmatter-selected": { backgroundColor: "var(--sel)" },
-  ".cm-lp-frontmatter.cm-lp-frontmatter-selected *": { backgroundColor: "transparent" },
-  [`:root[data-theme="eink"] & .cm-lp-frontmatter.cm-lp-frontmatter-selected,
-    :root[data-theme="eink"] & .cm-lp-frontmatter.cm-lp-frontmatter-selected *`]: { color: "var(--sel-text)" },
+  // frontmatter 的「被选区覆盖」选中态（`cm-lp-frontmatter-selected` 三条样式）随
+  // cursor-visibility-oct23 删除：显露判据改为严格重叠后，widget 在选区触及块时就撤下，
+  // 选中态不可达（REVIEW.md「值或开关声明了却没有消费者」条）。
   // 正文强调取 UA 的 700：定稿原型对 .doc-body 内的 <strong> 没有覆盖规则（仍是 UA 的粗体），
   // 故保持 700——650 是标题档、550/600 是「强调不粗」与「半粗」档，都不对应正文强调。
   ".cm-lp-strong": { fontWeight: "700" },

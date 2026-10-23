@@ -1,0 +1,492 @@
+import { expect, test, type Page } from "@playwright/test";
+import { Text } from "@codemirror/state";
+import { detectFrontmatter } from "../../../src/preview/frontmatter";
+import { stubTauri } from "./tauri-stub";
+import { readDocument } from "./parity-checks";
+
+// m647：编辑器光标的几何与样式（change cursor-visibility-oct23，合同 docs/specs/editor-caret.md）。
+//
+// 缺陷（Alex 2026-10-23）：点击 frontmatter 时光标是一条贯穿整个 properties + doc-title 的
+// 竖线，高度远超行高。根因是光标位置落在**块级 replace 装饰的边界**上时，CM6 用整个 widget 的
+// `getBoundingClientRect()` 当光标矩形（`RectangleMarker.forRange` 取 `coordsAtPos` 的
+// top/bottom，block widget 的 `coordsInWidget` 原样返回整块 rect）。所以本文件判的不是
+// "CSS 宽度"，而是 C1 的不变量：**光标矩形的高度 = 它所在可见文本行的行盒高度**。
+//
+// 读数分两路，互不借用（REVIEW.md「断言等价于子串」条）：
+//   · 「实际画出来的光标」= `.cm-cursor-primary` 的 getBoundingClientRect()；
+//   · 「所在可见行盒」= 该位置落到的那条 `.cm-line` 里**文本 Range** 的 rect——Range 覆盖的是
+//     inline 盒（line-height），不是 line 元素的盒子（后者含段落末行 padding，M218）。
+// 两者相差 > 1px 即判 FAIL；任一路读不到（没有光标元素 / 位置没有可见行承载）同样判 FAIL，
+// 不判 skip（REVIEW.md「读不到当成空」条）。
+//
+// 区分度对照（让断言在修前必红）：
+//   ① 光标高度 MUST 小于被撤下的 `.cm-lp-frontmatter-outer` 高度（修前 = 整块高）；
+//   ② H1 行光标高度 MUST 大于正文行光标高度（证明「等于行盒」不是把光标钉到常量高度）。
+//
+// 光标样式（D2=A）同在本场景：2px 实心 `--text`、`marginLeft: -1px`、`.cm-cursorLayer`
+// 无动画、未聚焦时不显示。像素基线不在此处——新场景只建结构断言，截图过目归 Alex。
+
+const FM_DOC = [
+  "---",
+  "title: 示例标题",
+  "tags: [示例, 合成]",
+  "status: 已确认",
+  "---",
+  "正文首行（frontmatter 之后第一行）。",
+  "",
+  "# 一级标题",
+  "",
+  "正文段落，供行盒对照用。",
+  "",
+].join("\n");
+
+const FM_ONLY = ["---", "title: 示例标题", "tags: [示例]", "---"].join("\n");
+const FM_ONLY_TRAILING = `${FM_ONLY}\n`;
+const BAD_YAML = ["---", "title: [未闭合", "---", "正文首行。", ""].join("\n");
+const NO_FM = ["# 对照文档", "", "没有 frontmatter 的正文。", ""].join("\n");
+
+/** 512 行上限的 frontmatter（超过它就不再是 properties 区块——只用上限内的一档）。 */
+function longFrontmatter(lines: number): string {
+  const inner = Array.from({ length: lines }, (_, i) => `field_${i + 1}: 值_${i + 1}`);
+  return ["---", ...inner, "---", "正文首行。", ""].join("\n");
+}
+
+interface CaretBox {
+  top: number;
+  left: number;
+  height: number;
+  width: number;
+}
+
+interface CaretReading {
+  head: number;
+  from: number;
+  to: number;
+  caret: CaretBox | null;
+  lineBox: CaretBox | null;
+  lineText: string | null;
+}
+
+interface ViewHandle {
+  state: {
+    selection: { main: { head: number; from: number; to: number } };
+    doc: { length: number; lineAt(pos: number): { from: number; to: number; number: number } };
+  };
+  domAtPos(pos: number): { node: Node; offset: number };
+  dispatch(spec: unknown): void;
+  focus(): void;
+}
+
+/** 页面内取 CM 的 view（与 m285 等场景同一取法：`cmTile.root.view`），经 init script 暴露。 */
+
+async function readCaret(page: Page): Promise<CaretReading> {
+  return page.evaluate(() => {
+    const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+    const sel = view.state.selection.main;
+    const cursorEl = document.querySelector<HTMLElement>(".cm-cursor-primary");
+    const caret = cursorEl ? cursorEl.getBoundingClientRect() : null;
+    const at = view.domAtPos(sel.head);
+    let node: Node | null = at.node;
+    if (node && node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+    const lineEl = node instanceof Element ? node.closest(".cm-line") : null;
+    let lineBox: CaretBox | null = null;
+    let lineText: string | null = null;
+    if (lineEl) {
+      lineText = lineEl.textContent;
+      const range = document.createRange();
+      range.selectNodeContents(lineEl);
+      const rect = Array.from(range.getClientRects()).find((r) => r.height > 0) ?? null;
+      if (rect) lineBox = { top: rect.top, left: rect.left, height: rect.height, width: rect.width };
+    }
+    return {
+      head: sel.head,
+      from: sel.from,
+      to: sel.to,
+      caret: caret ? { top: caret.top, left: caret.left, height: caret.height, width: caret.width } : null,
+      lineBox,
+      lineText,
+    };
+  });
+}
+
+/** 光标必须画在一条可见行上，且高度等于该行行盒（±1px）。读不到任一路一律 FAIL。 */
+function expectCaretOnLineBox(reading: CaretReading, label: string): void {
+  expect(reading.caret, `${label}：没有画出来的光标矩形（读不到 ≠ 通过）`).not.toBeNull();
+  expect(reading.lineBox, `${label}：光标位置没有可见文本行承载（读不到 ≠ 通过）`).not.toBeNull();
+  expect(
+    Math.abs(reading.caret!.height - reading.lineBox!.height),
+    `${label}：光标高度 ${reading.caret!.height} MUST 等于所在行行盒 ${reading.lineBox!.height}（C1，±1px）`,
+  ).toBeLessThanOrEqual(1);
+}
+
+async function frontmatterOuterHeight(page: Page): Promise<number | null> {
+  return page.evaluate(() => {
+    const outer = document.querySelector<HTMLElement>(".cm-lp-frontmatter-outer");
+    return outer ? outer.getBoundingClientRect().height : null;
+  });
+}
+
+interface OpenOptions {
+  doc: string;
+  name?: string;
+  theme?: "light" | "dark" | "eink";
+  fontSize?: number;
+  /** 上屏就绪的文本标记（默认 properties 的标题行；回退块 / 无 fm 对照各给自己的）。 */
+  ready?: string;
+}
+
+/** 打开文档并等 properties 区块（或对照文档的正文）上屏；主题 / 字号走真实配置通道。 */
+async function openDoc(page: Page, options: OpenOptions): Promise<void> {
+  const name = options.name ?? "caret.md";
+  await stubTauri(page, {
+    root: "/mock/vault",
+    vault_id: "v1",
+    files: { [name]: options.doc },
+    entries: [{ path: name, name, kind: "file", size: options.doc.length, mtime_ms: 0 }],
+    config: {
+      theme: options.theme ?? "light",
+      ...(options.fontSize !== undefined ? { font_size: options.fontSize } : {}),
+    },
+  });
+  await page.addInitScript(() => {
+    (window as unknown as { __m647View: () => ViewHandle }).__m647View = () => {
+      const content = document.querySelector(".cm-content") as unknown as {
+        cmTile: { root: { view: ViewHandle } };
+      };
+      return content.cmTile.root.view;
+    };
+  });
+  await page.goto("/");
+  await page.locator(`.ft-row[title="${name}"]`).click();
+  await expect(page.locator(".cm-content")).toContainText(options.ready ?? "示例");
+  await page.waitForTimeout(60);
+}
+
+/** 文档的 frontmatter 范围（Node 侧用同一份检测实现，fixture 与断言不各算一套）。 */
+function fmRange(doc: string): { from: number; to: number } {
+  const fm = detectFrontmatter(Text.of(doc.split("\n")));
+  expect(fm, "fixture 必须带 frontmatter（检测不到 = 场景装置坏了）").not.toBeNull();
+  return { from: fm!.from, to: fm!.to };
+}
+
+function bodyStart(doc: string): number {
+  const fm = fmRange(doc);
+  if (fm.to >= doc.length) throw new Error("fixture 没有正文行（该用例请直接断言块内落点）");
+  return doc.indexOf("\n", fm.to) + 1;
+}
+
+/** 把选区挪回文档末尾（渲染态恢复：widget 重新上屏）。 */
+async function resetToRendered(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+  });
+  await expect(page.locator(".cm-lp-frontmatter")).toBeVisible();
+  await page.waitForTimeout(50);
+}
+
+/** 在 properties 盒的指定纵向比例处按下（真实 mousedown 走 widget 自己的路由）。
+ *  纵向落点钳在视口内（512 行档的盒子远高于视口，按比例会点到视口外）。 */
+async function clickPropertiesAt(page: Page, fraction: number): Promise<void> {
+  const box = await page.locator(".cm-lp-frontmatter").boundingBox();
+  expect(box, "properties 盒必须在场（否则点击路径没有输入）").not.toBeNull();
+  const viewport = page.viewportSize();
+  expect(viewport, "视口尺寸必须可得").not.toBeNull();
+  const x = box!.x + Math.min(box!.width - 12, 24);
+  const y = Math.min(box!.y + box!.height * fraction, viewport!.height - 40);
+  expect(y, "点击纵坐标必须落在盒子内（否则点的是别的东西）").toBeGreaterThan(box!.y);
+  await page.mouse.click(x, y);
+  await page.waitForTimeout(80);
+}
+
+test.describe("m647 光标几何（C1）与指针入口（C2）", () => {
+  test("装载：有正文 → 初始光标在正文首行（不在块边界），聚焦后高度 = 行盒、小于块高", async ({ page }) => {
+    await openDoc(page, { doc: FM_DOC });
+    const outer = await frontmatterOuterHeight(page);
+    expect(outer, "装载后 properties 区块必须在场").not.toBeNull();
+    const head = await page.evaluate(() => {
+      const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+      return view.state.selection.main.head;
+    });
+    expect(head, "装载后的初始光标 = 正文首行行首（C3）").toBe(bodyStart(FM_DOC));
+    // 光标矩形只在聚焦时绘制（CM 的 `.cm-cursor` 在前者之外 display:none，rect 为 0）——
+    // 先聚焦再量，避免把「没画」当成「高度为 0」。
+    await page.evaluate(() => {
+      const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+      view.focus();
+    });
+    await page.waitForTimeout(100);
+    const reading = await readCaret(page);
+    expect(reading.head, "聚焦不改初始落点（正文首行本来就在可见行上）").toBe(bodyStart(FM_DOC));
+    expectCaretOnLineBox(reading, "装载初始光标");
+    expect(reading.caret!.height, "区分度：光标高度 MUST 小于整块 widget 高度（修前这里相等）").toBeLessThan(
+      outer!,
+    );
+    expect(await readDocument(page), "装载不改文档（C5）").toBe(FM_DOC);
+  });
+
+  test("点击 properties 上 / 中 / 下三分之一：显露 YAML、光标落在块内可见行、高度 = 行盒、文档不变", async ({
+    page,
+  }) => {
+    await openDoc(page, { doc: FM_DOC });
+    const fm = fmRange(FM_DOC);
+    for (const fraction of [0.2, 0.5, 0.8]) {
+      await resetToRendered(page);
+      const outer = await frontmatterOuterHeight(page);
+      expect(outer, `${fraction}：点击前 properties 区块必须在场`).not.toBeNull();
+      await clickPropertiesAt(page, fraction);
+      await expect(page.locator(".cm-lp-frontmatter"), `${fraction}：点击后 properties 盒必须撤下（显露源码）`).toHaveCount(0);
+      const reading = await readCaret(page);
+      expect(reading.head, `${fraction}：光标 MUST 落在块内（[${fm.from},${fm.to})）`).toBeGreaterThanOrEqual(fm.from);
+      expect(reading.head, `${fraction}：光标 MUST 落在块内（[${fm.from},${fm.to})）`).toBeLessThan(fm.to);
+      expectCaretOnLineBox(reading, `点击 properties ${fraction}`);
+      expect(
+        reading.caret!.height,
+        `${fraction}：区分度——光标高度 MUST 小于整块 widget 高度（修前 = 块高）`,
+      ).toBeLessThan(outer!);
+      expect(await readDocument(page), `${fraction}：指针入口不改文档（C2/C5）`).toBe(FM_DOC);
+    }
+  });
+
+  test("非法 YAML 回退块：点击同样显露源码（与 properties 盒同一入口）", async ({ page }) => {
+    await openDoc(page, { doc: BAD_YAML, ready: "未闭合" });
+    const fm = fmRange(BAD_YAML);
+    await expect(page.locator(".cm-lp-fm-error"), "回退块必须上屏（否则点的是别的东西）").toBeVisible();
+    await clickPropertiesAt(page, 0.5);
+    await expect(page.locator(".cm-lp-frontmatter")).toHaveCount(0);
+    const reading = await readCaret(page);
+    expect(reading.head).toBeGreaterThanOrEqual(fm.from);
+    expect(reading.head).toBeLessThan(fm.to);
+    expectCaretOnLineBox(reading, "回退块点击");
+    expect(await readDocument(page)).toBe(BAD_YAML);
+  });
+
+  test("512 行 frontmatter（上限档）：点击显露、光标落在 YAML 行盒上、文档不变", async ({ page }) => {
+    const doc = longFrontmatter(510);
+    await openDoc(page, { doc, ready: "field_1" });
+    const fm = fmRange(doc);
+    const outer = await frontmatterOuterHeight(page);
+    expect(outer, "510 行 frontmatter 仍渲染 properties 区块").not.toBeNull();
+    await clickPropertiesAt(page, 0.5);
+    await expect(page.locator(".cm-lp-frontmatter")).toHaveCount(0);
+    const reading = await readCaret(page);
+    expect(reading.head).toBeGreaterThanOrEqual(fm.from);
+    expect(reading.head).toBeLessThan(fm.to);
+    expectCaretOnLineBox(reading, "512 行档点击");
+    expect(reading.caret!.height).toBeLessThan(outer!);
+    expect(await readDocument(page)).toBe(doc);
+  });
+
+  test("点击 doc-title / outer 底部 padding（合成面）：不显露 YAML、不把光标放进 YAML，高度 = 行盒", async ({ page }) => {
+    await openDoc(page, { doc: FM_DOC });
+    const paragraph = FM_DOC.indexOf("正文段落");
+    // 合成面只在「光标停在块边界」时改变落点（规范化）；把光标先放到正文段落的可见行上——
+    // 点击不得把它挪走、更不得挪进 YAML。
+    await page.evaluate((pos) => {
+      const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+      view.focus();
+      view.dispatch({ selection: { anchor: pos } });
+    }, paragraph);
+    await page.waitForTimeout(60);
+    await page.locator(".cm-lp-doc-title").click();
+    await page.waitForTimeout(80);
+    await expect(page.locator(".cm-lp-frontmatter"), "合成面不显露 YAML——widget 必须仍在").toBeVisible();
+    const afterTitle = await readCaret(page);
+    expect(afterTitle.head, "点标题 → 光标留在原可见行（不进入 YAML）").toBe(paragraph);
+    expectCaretOnLineBox(afterTitle, "点击 doc-title");
+
+    const outerBox = await page.locator(".cm-lp-frontmatter-outer").boundingBox();
+    expect(outerBox, "outer 必须在场").not.toBeNull();
+    await page.mouse.click(outerBox!.x + 6, outerBox!.y + outerBox!.height - 4);
+    await page.waitForTimeout(80);
+    await expect(page.locator(".cm-lp-frontmatter"), "点 padding 同样不显露 YAML").toBeVisible();
+    const afterPadding = await readCaret(page);
+    expect(afterPadding.head, "点 padding → 光标留在原可见行（不进入 YAML）").toBe(paragraph);
+    expectCaretOnLineBox(afterPadding, "点击 outer padding");
+    expect(await readDocument(page)).toBe(FM_DOC);
+  });
+
+  test("只有 frontmatter（无正文行）：未聚焦时停在块边界、widget 在场；聚焦后显露源码、光标落块内可见行", async ({
+    page,
+  }) => {
+    await openDoc(page, { doc: FM_ONLY });
+    const fm = fmRange(FM_ONLY);
+    const headBefore = await page.evaluate(() => {
+      const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+      return view.state.selection.main.head;
+    });
+    expect(headBefore, "装载时没有正文行 → 选区停在块起点（不自动变源码）").toBe(fm.from);
+    await expect(page.locator(".cm-lp-frontmatter"), "未聚焦时 properties 盒正常渲染").toBeVisible();
+    await page.evaluate(() => {
+      const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+      view.focus();
+    });
+    await page.waitForTimeout(120);
+    await expect(page.locator(".cm-lp-frontmatter"), "聚焦后边界光标 MUST 被规范化：显露源码").toHaveCount(0);
+    const reading = await readCaret(page);
+    expect(reading.head).toBeGreaterThanOrEqual(fm.from);
+    expect(reading.head).toBeLessThan(fm.to);
+    expectCaretOnLineBox(reading, "只有 fm 的聚焦规范化");
+    expect(await readDocument(page)).toBe(FM_ONLY);
+  });
+
+  test("键盘：正文首行 ↑ / ⌃P 跨块 → 落点在块内（显露）、高度 = 行盒、文档不变", async ({ page }) => {
+    await openDoc(page, { doc: FM_DOC });
+    const fm = fmRange(FM_DOC);
+    const start = bodyStart(FM_DOC);
+    for (const key of ["ArrowUp", "Control+p"]) {
+      await page.evaluate((pos) => {
+        const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+        view.focus();
+        view.dispatch({ selection: { anchor: pos } });
+      }, start);
+      await expect(page.locator(".cm-lp-frontmatter"), `${key}：起点必须是渲染态`).toBeVisible();
+      await page.keyboard.press(key);
+      await page.waitForTimeout(100);
+      await expect(page.locator(".cm-lp-frontmatter"), `${key}：跨块后 MUST 显露源码（C4）`).toHaveCount(0);
+      const reading = await readCaret(page);
+      expect(reading.head, `${key}：落点 MUST 在块内（不是块边界）`).toBeGreaterThan(fm.from);
+      expect(reading.head, `${key}：落点 MUST 在块内（不是块边界）`).toBeLessThan(fm.to);
+      expectCaretOnLineBox(reading, `${key} 跨块移动`);
+      expect(await readDocument(page)).toBe(FM_DOC);
+    }
+  });
+
+  test("事务边界：程序化选区（goto-line 同形）落块边界 → 正文首行；垂直移动事务 → 块内", async ({ page }) => {
+    await openDoc(page, { doc: FM_DOC });
+    const fm = fmRange(FM_DOC);
+    const body = bodyStart(FM_DOC);
+    const readings = await page.evaluate(
+      ([from, to, bodyPos]) => {
+        const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+        const out: number[] = [];
+        view.dispatch({ selection: { anchor: from } });
+        out.push(view.state.selection.main.head);
+        view.dispatch({ selection: { anchor: to } });
+        out.push(view.state.selection.main.head);
+        view.dispatch({ selection: { anchor: to }, userEvent: "move.line.down" });
+        out.push(view.state.selection.main.head);
+        view.dispatch({ selection: { anchor: bodyPos } });
+        out.push(view.state.selection.main.head);
+        return out;
+      },
+      [fm.from, fm.to, body] as const,
+    );
+    expect(readings[0], "程序化落 fm.from → 正文首行（C3）").toBe(body);
+    expect(readings[1], "程序化落 fm.to → 正文首行（C3）").toBe(body);
+    expect(readings[2], "垂直移动事务落 fm.to → 块内一个字符（C4）").toBe(fm.to - 1);
+    expect(readings[3], "正文首行是合法落点，不被改写").toBe(body);
+  });
+
+  test("选区触及块的一部分 → widget 撤下；折叠回正文 → widget 恢复", async ({ page }) => {
+    await openDoc(page, { doc: FM_DOC });
+    const fm = fmRange(FM_DOC);
+    await page.evaluate((from) => {
+      const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+      view.dispatch({ selection: { anchor: from, head: from + 3 } });
+    }, fm.from);
+    await page.waitForTimeout(80);
+    await expect(page.locator(".cm-lp-frontmatter"), "选区触及块 → 显露源码").toHaveCount(0);
+    await resetToRendered(page);
+    await expect(page.locator(".cm-lp-frontmatter"), "选区离开块 → 恢复 properties 渲染").toBeVisible();
+    expect(await readDocument(page), "选区与显露不改文档（C5）").toBe(FM_DOC);
+  });
+
+  test("区分度：H1 行光标高度 > 正文行光标高度，各自等于本行行盒（不是常量高度）", async ({ page }) => {
+    await openDoc(page, { doc: FM_DOC });
+    const h1 = FM_DOC.indexOf("# 一级标题");
+    const paragraph = FM_DOC.indexOf("正文段落");
+    await page.evaluate((pos) => {
+      const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+      view.focus();
+      view.dispatch({ selection: { anchor: pos } });
+    }, paragraph);
+    await page.waitForTimeout(80);
+    const bodyReading = await readCaret(page);
+    expectCaretOnLineBox(bodyReading, "正文行光标");
+    await page.evaluate((pos) => {
+      const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+      view.dispatch({ selection: { anchor: pos } });
+    }, h1);
+    await page.waitForTimeout(80);
+    const h1Reading = await readCaret(page);
+    expectCaretOnLineBox(h1Reading, "H1 行光标");
+    expect(
+      h1Reading.caret!.height,
+      "区分度：H1 行光标 MUST 高于正文行光标（否则断言在常量高度上空转）",
+    ).toBeGreaterThan(bodyReading.caret!.height + 1);
+  });
+
+  test("eink × 32px：点击 properties 后光标高度仍等于（放大后的）行盒", async ({ page }) => {
+    await openDoc(page, { doc: FM_DOC, theme: "eink", fontSize: 32 });
+    const fm = fmRange(FM_DOC);
+    await clickPropertiesAt(page, 0.5);
+    await expect(page.locator(".cm-lp-frontmatter")).toHaveCount(0);
+    const reading = await readCaret(page);
+    expect(reading.head).toBeGreaterThanOrEqual(fm.from);
+    expect(reading.head).toBeLessThan(fm.to);
+    expectCaretOnLineBox(reading, "eink × 32px");
+    expect(reading.caret!.height, "32px 字号下光标高度必须随行盒放大（不是 15px 常量）").toBeGreaterThan(30);
+  });
+
+  test("对照：无 frontmatter 的文档光标高度 = 所在行盒（证明本场景的读数不依赖 fm 路径）", async ({
+    page,
+  }) => {
+    await openDoc(page, { doc: NO_FM, ready: "对照文档" });
+    await page.evaluate(() => {
+      const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+      view.focus();
+      view.dispatch({ selection: { anchor: 3 } });
+    });
+    await page.waitForTimeout(80);
+    expectCaretOnLineBox(await readCaret(page), "无 fm 对照");
+  });
+});
+
+test.describe("m647 光标样式（D2=A）", () => {
+  for (const theme of ["light", "dark", "eink"] as const) {
+    test(`光标计算样式 × ${theme}：2px 实心 --text、-1px 居中、无动画；未聚焦时不显示`, async ({ page }) => {
+      await openDoc(page, { doc: FM_DOC, theme });
+      await page.evaluate(() => {
+        const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+        view.focus();
+      });
+      await page.waitForTimeout(120);
+      const style = await page.evaluate(() => {
+        const cursor = document.querySelector<HTMLElement>(".cm-cursor-primary");
+        const layer = document.querySelector<HTMLElement>(".cm-cursorLayer");
+        if (!cursor || !layer) throw new Error("光标或光标层不在场（drawSelection 未装配？）");
+        const probe = document.createElement("span");
+        probe.style.color = "var(--text)";
+        document.body.append(probe);
+        const expectedColor = getComputedStyle(probe).color;
+        probe.remove();
+        const cs = getComputedStyle(cursor);
+        return {
+          width: cs.borderLeftWidth,
+          color: cs.borderLeftColor,
+          expectedColor,
+          marginLeft: cs.marginLeft,
+          animationName: getComputedStyle(layer).animationName,
+          display: cs.display,
+        };
+      });
+      expect(style.width, "宽度 = 2px（组件常量，D2=A）").toBe("2px");
+      expect(style.color, "颜色 = --text 的计算值").toBe(style.expectedColor);
+      expect(style.marginLeft, "按 2px 宽度居中（CM 基础主题的 -0.6px 是 1.2px 的居中量）").toBe("-1px");
+      expect(style.animationName, "常亮：不继承 CM 基础主题的 cm-blink 动画").toBe("none");
+      expect(style.display, "聚焦时可见").not.toBe("none");
+
+      // 未聚焦：光标不显示（与基础主题的 `&.cm-focused ... .cm-cursor { display: block }` 同口径）。
+      const blurred = await page.evaluate(() => {
+        const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+        const active = document.activeElement as HTMLElement | null;
+        active?.blur();
+        view.dispatch({ selection: { anchor: view.state.doc.length } });
+        const cursor = document.querySelector<HTMLElement>(".cm-cursor-primary");
+        return cursor ? getComputedStyle(cursor).display : "absent";
+      });
+      expect(["none", "absent"], "未聚焦时 .cm-cursor 不可见").toContain(blurred);
+    });
+  }
+});

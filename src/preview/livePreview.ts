@@ -7,12 +7,17 @@
 
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
-import { StateEffect, StateField } from "@codemirror/state";
-import type { EditorState, Range, Text } from "@codemirror/state";
+import { EditorState, StateEffect, StateField } from "@codemirror/state";
+import type { Extension, Range, Text } from "@codemirror/state";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import { livePreviewTheme } from "./theme";
 import { listDecorations } from "./lists";
-import { detectFrontmatter, FrontmatterWidget } from "./frontmatter";
+import {
+  frontmatterBlockField,
+  frontmatterCaretSpecs,
+  FrontmatterWidget,
+  normalizeFrontmatterCaret,
+} from "./frontmatter";
 import type { FrontmatterBlock } from "./frontmatter";
 import {
   AttachmentNoticeWidget,
@@ -34,7 +39,6 @@ import {
   pointerPressField,
   pointerPressFrame,
   rangeRevealsSource,
-  revealSelection,
   touchesSource,
 } from "./reveal-gate";
 import { hiddenInlineTailCaretFilter } from "./hidden-tail-caret";
@@ -616,10 +620,17 @@ const pointerPressWindow = ViewPlugin.fromClass(
   },
 );
 
+/**
+ * frontmatter 边界光标的事务级兜底（合同 C3 / C4，change cursor-visibility-oct23）。
+ * 判定与分流住在 `frontmatter.ts` 的 `frontmatterCaretSpecs`（本模块只负责装配）：
+ * 同一条语义只应有一处实现，单测直接钉那份判定矩阵。
+ */
+const frontmatterCaretFilter: Extension = EditorState.transactionFilter.of(frontmatterCaretSpecs);
+
 export function livePreview(ctx: PreviewContext) {
   // frontmatter 的 replace 跨行，而插件装饰不允许替换换行符（CM6 硬限制），
-  // 故走 StateField：文档或选区变化时重算，且 detectFrontmatter 从文档首部扫描、
-  // 有行数上限（见 frontmatter.ts），与视口增量策略不冲突（不是全量装饰构建）。
+  // 故走 StateField：文档或选区变化时重算。块范围的检测只在 `frontmatterBlockField`
+  // 一处（见 frontmatter.ts），本层只消费它——与光标规范化共读同一个答案。
   // 重算时机另加 previewRefresh：折叠进 widget 的 doc-title 的 mtime 段经它到达。
   // 需要 ctx（doc-title 的标题/路径段/mtime），故装配在闭包内而非模块级。
   const frontmatterDecorations = StateField.define<DecorationSet>({
@@ -637,17 +648,16 @@ export function livePreview(ctx: PreviewContext) {
   });
 
   function frontmatterSet(state: EditorState): DecorationSet {
-    const fm = detectFrontmatter(state.doc);
+    const fm = state.field(frontmatterBlockField, false);
     if (!fm) return Decoration.none;
+    // 显露判据（change cursor-visibility-oct23）：从「选区覆盖整块」改为严格重叠
+    // （`touchesSource`，与 callout 行 / 链接同一口径），判据选区仍取 M259 的按压快照
+    // （见 ./reveal-gate）。覆盖整块的旧条件只会换一层 --sel 底色、不显露源码，且那个
+    // 态在新口径下不可达（严格重叠先撤 widget），已删除。
+    if (touchesSource(state, fm.from, fm.to)) return Decoration.none;
     return Decoration.set([
       Decoration.replace({
-        widget: new FrontmatterWidget(
-          fm.inner,
-          // 判据选区取 revealSelection（M259）：按压期间用按下瞬间的快照，
-          // 同一份理由见 ./reveal-gate。
-          revealSelection(state).ranges.some((range) => range.from <= fm.from && range.to >= fm.to),
-          docTitleForFrontmatter(state, ctx, fm),
-        ),
+        widget: new FrontmatterWidget(fm.inner, docTitleForFrontmatter(state, ctx, fm)),
         block: true,
       }).range(fm.from, fm.to),
     ]);
@@ -660,8 +670,21 @@ export function livePreview(ctx: PreviewContext) {
     // 指针按压窗口（M259）：只影响显露判定用哪个选区，不产生任何装饰。
     pointerPressField,
     pointerPressWindow,
+    // 块范围检测场（单一检测处）：必须排在 frontmatterDecorations 之前，后者 create 时依赖它。
+    frontmatterBlockField,
     // 隐藏尾标后的指针落点修正（M539）：点击渲染内容末字之后，光标落到闭合标记之后。
     hiddenInlineTailCaretFilter,
+    // frontmatter 边界光标的事务级兜底（C3 / C4，cursor-visibility-oct23）。
+    frontmatterCaretFilter,
+    // frontmatter 边界光标的聚焦规范化（C3）：装载 / 程序化选区留下的边界光标在编辑器
+    // 获得焦点时显形。MUST NOT 放进 ViewPlugin.update——CM 禁止在更新进行中 dispatch，
+    // DOM 事件回调里 dispatch 是既有写法（enterReplacedSource 同款）。
+    EditorView.domEventHandlers({
+      focus(_event, view) {
+        normalizeFrontmatterCaret(view);
+        return false;
+      },
+    }),
     frontmatterDecorations,
     mathBlockDecorations,
     mermaidBlockDecorations,
@@ -853,7 +876,8 @@ function collectTableDecorations(view: EditorView, tables: readonly TableModel[]
 
 function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet {
   const decos: Range<Decoration>[] = [];
-  const fm = detectFrontmatter(view.state.doc);
+  // 块范围读同一个检测场（frontmatter.ts 的单一检测处），不再第二次扫文档首部。
+  const fm = view.state.field(frontmatterBlockField, false) ?? null;
   const { from, to } = tableDiscoveryRange(view);
   const tables = tableModels(view.state, from, to).models;
 

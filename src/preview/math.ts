@@ -14,6 +14,7 @@ import type { EditorState, Range } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { logEvent } from "../diagnostics";
+import { enterReplacedSource } from "./replaced-source";
 import { detectFrontmatter } from "./frontmatter";
 import { findClosingRun, runLen } from "./lexical";
 import { findTables, tableAt } from "./table";
@@ -162,38 +163,8 @@ export function mathRenderCacheSize(): number {
   return renderCache.size;
 }
 
-// 点击进入编辑态（M111 真实桌面缺陷）：replace widget 整体隐藏源码，CM 对 widget
-// 内事件默认 ignoreEvent、不放置光标，点击渲染态公式因此无处落点。与 callout/
-// 表格同口径：点击即显露源码并把光标放到点击处。先把光标送入 span 内触发显露
-//（选区重叠口径，装饰同步重建），源码上屏后再用同一点位 posAtCoords 精确定位，
-// 钳制在 span 内部（落在边界会重新触发渲染态）。
-// M112 起与 mermaid 共用：preventDefault 同时挡住浏览器原生 caret 进入 widget
-// DOM——异步重建（如 mermaid settle）替换 widget 节点后，原生选区锚点若滞留在
-// 游离节点上，selectionchange 读取时 posFromDOM 会把它映射为 0（点击落点跳到
-// 文档起点）；preventDefault 后 CM 不再读取这条原生选区，该路径被掐断。
-// innerFrom/innerTo 是相对块起点的光标钳制区间（公式为定界符内侧，mermaid 为
-// 开围栏行之后到闭围栏行之前）。
-export function enterReplacedSource(
-  event: MouseEvent,
-  view: EditorView,
-  dom: HTMLElement,
-  innerFrom: number,
-  innerTo: number,
-): void {
-  if (event.button !== 0) return;
-  event.preventDefault();
-  const from = view.posAtDOM(dom);
-  view.dispatch({ selection: { anchor: from + innerFrom }, userEvent: "select.pointer" });
-  const exact = view.posAtCoords({ x: event.clientX, y: event.clientY });
-  if (exact !== null) {
-    const clamped = Math.min(Math.max(exact, from + innerFrom), from + innerTo);
-    if (clamped !== from + innerFrom) {
-      view.dispatch({ selection: { anchor: clamped }, userEvent: "select.pointer" });
-    }
-  }
-  view.focus();
-}
-
+// 指针入口的实现已迁到 ./replaced-source（三类块级 replace 共用一份，change
+// cursor-visibility-oct23）。公式的钳制区间是定界符内侧。
 function enterMathSource(event: MouseEvent, view: EditorView, dom: HTMLElement, delimiter: number, rawLength: number): void {
   enterReplacedSource(event, view, dom, delimiter, rawLength - delimiter);
 }
@@ -323,7 +294,8 @@ export function collectInlineMath(
  * 全文档块级公式装饰（StateField 侧：跨行 block replace 不允许走插件装饰，
  * 与 frontmatter 同约束）。词法扫描是单趟字符循环，1MB 文档为毫秒级；
  * 渲染在 widget toDOM 惰性发生且有缓存，不阻塞 F0。选区进入公式范围时
- * 跳过装饰显示原文（编辑/选择可见源码，与 frontmatter 的 selected 口径一致）。
+ * 跳过装饰显示原文（编辑/选择可见源码；与 frontmatter 的显露同源：选区与块源码范围
+ * 严格重叠即显露，见 ./reveal-gate）。
  * 表格单元格内的 $$ 不做 replace（block replace 会拆散表格 grid 行），保留原文；
  * cell 内的行内 $ 公式不受影响，由 collectInlineMath 正常渲染。
  */

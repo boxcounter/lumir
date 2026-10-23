@@ -27,7 +27,7 @@ import { syntaxTree } from "@codemirror/language";
 import { logEvent } from "../diagnostics";
 import { t } from "../copy";
 import { detectFrontmatter } from "./frontmatter";
-import { enterReplacedSource } from "./math";
+import { enterReplacedSource } from "./replaced-source";
 
 /** 渲染结果三态：pending 占位 / ok SVG / error 降级（消息取首行）。
  * error 带阶段：load = 渲染器（懒加载 chunk / initialize）失败，
@@ -299,7 +299,7 @@ export function clearMermaidRenderCache(): void {
 // ---------------------------------------------------------------------------
 // 装饰：```mermaid 围栏块整块 replace（跨行 block，走 StateField，与
 // frontmatter / 块级公式同约束）。选区进入块范围时跳过装饰显示原文
-//（编辑/选择可见源码，与 mathBlockSet 的 selected 口径一致）。
+//（编辑/选择可见源码，与 mathBlockSet 的严格重叠口径同源）。
 // ---------------------------------------------------------------------------
 
 /** 占位 / 成功 SVG / 失败降级三态 widget；state 对象身份参与 eq，settle 后重建。
