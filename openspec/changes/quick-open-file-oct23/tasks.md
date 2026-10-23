@@ -122,3 +122,12 @@
 > 补跑。其余各档门的读数：`GATE RESULT: 11/11 PASS（SKIP 0）`（退出码 0）；视觉套件本地全量
 > `743 passed / 1 skipped`（含整页像素对比，零基线更新）；`openspec validate --all --strict`
 > 43/43；`docs-check` PASS。
+>
+> rebase 记录（2026-10-24）：本分支已 rebase 到 master（M653 / M654 已合入）。文案号与 M653
+> 碰撞：M653 先合并且占走 D564–D569，本 change 的 14 条因此整体顺延为 **D570–D583**（一一对应、
+> 顺序不变，deck 两列 + `src/copy-data.ts` + 引用处同批改；末位 D583）。rebase 后复跑：
+> `GATE RESULT: 11/11 PASS（SKIP 0）`（退出码 0，单测 1249 PASS）、受影响的视觉场景集
+> （quick-open / list-filter / code-outline / editable-host-guard / m642，含 webkit-realua
+> project）45 passed。另修一处 master 上的遗留断链：`m642-overlay-select-all.spec.ts` 仍 import
+> 已被 M645 删除的 `configGets`（master 的 tsc-visual 因此是红的），改用同一个 change 给出的
+> `configApplied`。
