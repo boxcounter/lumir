@@ -66,18 +66,17 @@ steps:
       - label: 第一段落进 composer
         ax: { has: "alpha" }
 
-  - name: ⇧Enter 换行后键入第二段 beta（两段让「全选」有可判的多块文本）
-    do: keys
-    keys: ["shift+return"]
-    gapMs: 150
-
-  - name: 键入第二段探针串 beta
+  # 不再用 ⇧Enter 造第二段：chord 注入是盲发（无回读重试），本场景首跑实测整拍丢失、
+  # 两段拼成 "alphabeta"（2026-10-23 首跑现场，.local/acceptance/2026-10-23/215-…/ax/）。
+  # 「多块 + 原子卡片」的全选判据在 chromium 的 m627-composer-select-all.spec.ts（含卡片用例）；
+  # 真机这里只验命令链路：同一段里两串文本 → 全选 → 退格清零。
+  - name: 继续键入第二段探针串 beta（同一段，追加）
     do: typeInNode
     target: { role: AXTextArea, name: "alpha|beta" }
     text: "beta"
     expect:
-      - label: 第二段落进 composer（两段分两行）
-        ax: { has: "/alpha[\r\n]+beta/" }
+      - label: 第二段也落进 composer（同段追加成 alphabeta）
+        ax: { has: "alphabeta" }
 
   - name: 注入前确保窗口在前台
     do: focusWindow
@@ -92,9 +91,9 @@ steps:
     expect:
       - label: composer 回到空输入态（占位读屏名回来）——全选真的选中了全文
         ax: { has: "问点什么" }
-      - label: 两段探针串都不在了（不是只删了一个字符 / 一段）
+      - label: 探针串不在了（不是只删了一个字符）
         ax: { not: "alpha" }
-      - label: 第二段也不在
+      - label: 第二个探针串也不在
         ax: { not: "beta" }
       - label: 删除没有漏进编辑器文档
         editor: { unchangedSince: 键盘前文档 }
