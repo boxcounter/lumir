@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { stubTauri, configGets } from "./tauri-stub";
+import { stubTauri, configApplied } from "./tauri-stub";
 
 // M293：**eink 实心强调族 / 边框族的字面值归位 token**（三主题；纯收敛，值不变）。
 //
@@ -67,7 +67,7 @@ async function openDoc(page: Page, theme: Theme, doc = DOC, source = SOURCE): Pr
   await page.goto("/");
   await page.locator(`.ft-row[title="${doc}"]`).click();
   await expect(page.locator(".modeline-path")).toHaveText(doc);
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80);
 }
 
@@ -342,7 +342,7 @@ for (const theme of THEMES) {
     await stubTauri(page, null);
     await page.goto("/");
     await expect(page.locator(".ft-open-btn")).toBeVisible();
-    await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+    await configApplied(page);
     for (let i = 0; i < THEMES.indexOf(theme); i++) await page.keyboard.press("Meta+Shift+T");
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme);
 

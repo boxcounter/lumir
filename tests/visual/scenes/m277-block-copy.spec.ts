@@ -16,7 +16,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { readFileSync } from "node:fs";
-import { stubTauri, configGets } from "./tauri-stub";
+import { stubTauri, configApplied } from "./tauri-stub";
 
 /** 基线过目包（M277）：hover 帧的观感截图落 .local/reviews/m277-impl/baseline-review/，等 Alex 过目。
  *  **刻意不写成 `expectScreenshot` 断言**：新增整页 / 元素基线是 Alex 的人肉裁决点（AGENTS.md
@@ -60,7 +60,7 @@ async function openDoc(page: Page, context: { grantPermissions(p: string[]): Pro
   // 一张 grid 表 + 两个代码块（围栏 / 缩进）有钮；非矩形表与 mermaid 块没有。
   await expect(page.locator(".cm-lp-table")).toHaveCount(1);
   await expect(page.locator(COPY_TRIGGER)).toHaveCount(3);
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await expect(page.locator(".modeline-path")).toHaveText(DOC);
   await page.waitForTimeout(80);
 }
@@ -339,7 +339,7 @@ test("M291 r3：触发钮热态取选中族（eink = 明度带 + 黑字，硬编
   });
   await page.goto("/");
   await page.locator(`.ft-row[title="${DOC}"]`).click();
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
 
   const read = () =>
     page.locator(`${COPY_TRIGGER}`).first().evaluate((el) => {

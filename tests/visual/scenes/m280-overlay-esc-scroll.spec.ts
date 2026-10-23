@@ -44,7 +44,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { stubTauri, configGets, readingPositionPuts } from "./tauri-stub";
+import { stubTauri, configApplied, readingPositionPuts } from "./tauri-stub";
 
 /** 证据落点（git 外，与门禁日志分开）：每次跑都把读数写一份，便于逐条核对。 */
 const EVIDENCE_DIR = new URL("../../../.local/missions/m280/scene-readings/", import.meta.url);
@@ -119,7 +119,7 @@ async function openDoc(page: Page, doc: string): Promise<void> {
   // 目标块在首屏之外 ⇒ 装载时它**还不在 DOM 里**（CM 只渲染视口附近），不能在这里等它的 slot。
   await expect(page.locator(".cm-content")).toBeVisible();
   // [keys] 覆盖要等 config_get 回来之后才挂上分发器（m132 的时序口径）。
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await expect(page.locator(".modeline-path")).toHaveText("scene.md");
   await page.waitForTimeout(120);
   await page.evaluate(() => {

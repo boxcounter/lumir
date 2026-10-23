@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
 import { readFileSync } from "node:fs";
-import { configGets, stubTauri } from "./tauri-stub";
+import { configApplied, stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 import { HighlightStyle } from "@codemirror/language";
 import { highlightTree } from "@lezer/highlight";
@@ -557,7 +557,7 @@ async function openWrap(page: Page, editorConfig?: Record<string, unknown>): Pro
   await page.goto("/");
   await page.locator('.ft-row[title="wrap.md"]').click();
   await expect(page.locator(".modeline-path")).toHaveText("wrap.md");
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80);
 }
 
@@ -999,7 +999,7 @@ test("容器不改变纵向节奏；滚到右端不露白底（底板取自 --bg
     config: { keys: WRAP_KEYS },
   });
   await page.goto("/");
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.locator('.ft-row[title="languages.md"]').click();
   await expect(page.locator(".cm-lp-tok-keyword").first()).toBeVisible();
   await page.waitForTimeout(80);
@@ -1117,7 +1117,7 @@ test("应用级口径（D1）：翻转作用于全部会话，新标签页取当
   await page.goto("/");
   await page.locator('.ft-row[title="wrap.md"]').click();
   await expect(page.locator(".modeline-path")).toHaveText("wrap.md");
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80);
 
   /** 当前标签里代码块行的口径（每次切完标签重新取）。 */

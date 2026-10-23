@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { configGets, documentWrites, stubTauri, type VaultFixture } from "./tauri-stub";
+import { configApplied, documentWrites, stubTauri, type VaultFixture } from "./tauri-stub";
 
 // 可编辑宿主守卫（change list-filter，M199 r1 P1-1）的 chromium 断言。
 //
@@ -30,7 +30,7 @@ async function openDirty(page: Page): Promise<void> {
   await page.goto("/");
   await page.locator('.ft-row[title="guard.md"]').click();
   await expect(page.locator(".modeline-path")).toHaveText("guard.md");
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80);
   await page.locator(".cm-content").click();
   await page.keyboard.press("Meta+ArrowDown"); // 光标到文档末尾（原生路径，不经本层绑定）

@@ -19,7 +19,6 @@ import type { InlineEditRequest, OpenKind } from "./tree";
 import {
   attachmentSemanticName,
   attachmentSemanticUndo,
-  configGet,
   configSetUiValue,
   errorMessage,
   fsCreateDir,
@@ -127,6 +126,8 @@ import { cronNoticeText } from "./copy";
 import type { CronNoticePayload } from "./copy";
 import { invalidateMermaidTheme } from "./preview/mermaid";
 import { logEvent, sampleCallback } from "./diagnostics";
+import { consumeConfigSnapshot } from "./config-handoff";
+import { startupSurface } from "./startup-surface";
 import type { FsEntry } from "./bindings/FsEntry";
 import type { UiTheme } from "./bindings/UiTheme";
 import type { VaultInfo } from "./bindings/VaultInfo";
@@ -256,7 +257,7 @@ function activeEditor(): EditorHandle {
 
 const paneAssemblies = new Map<PaneId, PaneAssembly>();
 
-// 配置期值的跟踪（新 pane 能力同步的真源）：全部只在文件末尾的 configGet 块写一次，
+// 配置期值的跟踪（新 pane 能力同步的真源）：全部只在文件末尾的配置装配块写一次，
 // 运行期没有改它们的命令（与 editor.ts 各自的「装载时喂一次」口径同源）。初值与
 // editor.ts 的实例初值逐项对齐——split 发生在配置到达之前时，pane B 因此与 root pane
 // 同口径。折行 / 排版 / 栏宽不在这里跟踪：它们是运行期口径，split 时从既有 pane
@@ -1354,7 +1355,7 @@ injectEach((handle) =>
 // 这里只给两样它看不到的东西：后端调用与提示出口。
 //
 // `semanticNamingEnabled` 是 `harness.attachment_naming.enabled` 的**粘贴时刻读数**
-// （design §1 的生效时点）：启动装载时喂初值（configGet 块），之后只有改配置 + 重启才变——
+// （design §1 的生效时点）：启动装载时喂初值（配置装配块），之后只有改配置 + 重启才变——
 // 与 `editor` / `ui` 的「装载时施加」同路，不提供运行期开关命令。方向不对称是 privacy 的
 // 有意取舍：运行期**关掉**由后端现场读配置立即生效，**打开**需要重启（这个闸关着时前端
 // 根本不投递任务）。
@@ -2678,8 +2679,10 @@ const linkFollow = createLinkFollow({
 // 写入，循环命令读的也是 data-theme（`src/theme.ts` 的 currentTheme）。主题的循环序与两条
 // 可见文案同在 src/theme.ts（纯逻辑，单测在那层跑），本文件只管施加与接线。
 //
-// applyTheme 是**唯一施加点**：启动装配（本文件末尾 configGet 块的最后一条）与运行期切换都经
-// 它，MUST NOT 出现第二处 `data-theme` 写入者（REVIEW.md 「同一语义两处真源」条）。
+// applyTheme 是**唯一完整施加点**：启动装配（本文件末尾配置装配块的最后一条）与运行期切换都经
+// 它。首帧之前另有启动层的最小写入（src/boot.ts 只写 `<html data-theme>`，让启动面的首个内容帧
+// 就在当前主题下，change app-splash-screen design §3.5）——两处的分工是「首帧前 / 首帧后」，
+// 首帧后 MUST NOT 在它之外再写 `data-theme`（REVIEW.md 「同一语义两处真源」条）。
 // ---------------------------------------------------------------------------
 
 /** 施加主题：写 `<html data-theme>`（token 层三组块按它取色，chrome / CM 主题 / 两路语法高亮 /
@@ -2756,7 +2759,7 @@ shell.modelineTheme.addEventListener("click", cycleTheme);
 // **运行期唯一生效面**（顺带修掉 index.html 原先写死的 `lang="en"` 与全界面不符）。文案层的
 // 取值一律读 `<html lang>`（src/copy.ts 的 currentLanguage），本文件**不另存一份当前语言**。
 //
-// applyLanguage 是**唯一施加点**：启动装配（本文件末尾 configGet 块内）与运行期切换都经它，
+// applyLanguage 是**唯一施加点**：启动装配（本文件末尾配置装配块内）与运行期切换都经它，
 // MUST NOT 出现第二处写 `<html lang>` 的地方（与 applyTheme 同款纪律，REVIEW.md 「同一语义两处真源」条）。
 // 语言的派生物比主题多得多（全部可见字符串），因此施加点还要跑一遍 `runRelabels()`：长驻
 // chrome 的模块在挂载时把串写死了，不重写就不会变（design §5.2 的不变量）。
@@ -3419,8 +3422,11 @@ onRelabel(() => {
   if (theme !== null) applyTheme(theme);
   // 树空态那一行必须**重新取值**而不是重放旧字符串：`RESTORING_NOTICE()` 在显示的那一刻就
   // 解析成了字符串，重放等于把切换前的语言钉死（同族的还有后端透传的 notice，那是真值，原样重放）。
+  // 恢复进行中时呈现面是启动态（change app-splash-screen）——阶段行走启动面的重绘，不在这里
+  // 建空态（同一等待不两处呈现）；启动面已撤下（安全阀）时 `.ft-empty` 的重绘归树自己的注册。
   if (lastVaultStatus !== null && lastVaultStatus.vault === null && !vaultLoaded) {
-    tree.showEmpty(lastVaultStatus.restore_pending ? RESTORING_NOTICE() : lastVaultStatus.notice);
+    if (lastVaultStatus.restore_pending) startup?.setPhase(RESTORING_NOTICE());
+    else tree.showEmpty(lastVaultStatus.notice);
   }
   // 栏宽手柄的读屏名：`createShell` 在挂载时写死（D120），它没有「打开」这个点时重写的机会，
   // 因此必须走重绘注册（design §5.2 的不变量：挂载后无法重写的语言相关文本 MUST NOT 存在）。
@@ -3694,6 +3700,11 @@ async function applyVault(
   const treeAt = performance.now();
   tree.setVault(root, entries);
   phaseMs(treeAt, "vault_load_tree");
+  // 启动态的第一个撤下信号（change app-splash-screen，design §2.2「终点 1」）：树已可交互，
+  // 启动面没有理由继续在场。挂在既有收口上、不新造状态机；`dismiss` 幂等——用户此后每次换
+  // vault 都会再走到这里，已撤下即空动作。（`startup` 在文件后段的启动恢复块里声明：模块
+  // 求值先于任何装载调用，首次 `applyVault` 一定发生在那之后。）
+  startup?.notifyTreeReady();
   // 表现层一次对齐：modeline 路径回「无当前文件」、标签栏隐藏（空态）、树高亮清空、
   // 大纲指示段收起、后端 dirty 镜像复位。放在 setVault 之后：setVault 重绘整棵树，
   // 之后再由它把树高亮刷成「无当前文件」。
@@ -3773,8 +3784,13 @@ onFsEntryChanged((changes) => {
 // 事件只是唤醒信号（无载荷）；权威状态始终是 vault_current 的返回值——webview 挂载晚于
 // 恢复完成时事件根本收不到，终态照样正确。
 
-// 恢复中态的提示行（文案-Copy.md D95）。复用未打开空态的布局，只换提示行：零新样式、
-// 零布局变化，「打开 vault」入口天然保留（用户可在恢复期间抢先改选目录，design §4.3）。
+// 启动态（change app-splash-screen）：启动层已在首个内容帧画出启动面（src/boot.ts），本模块
+// 负责把它接到既有收口上——「打开 vault」入口、两个撤下信号、安全阀撤下后的既有恢复中态。
+// 句柄经 src/startup-surface.ts 的单例交接：主模块是动态装载的，拿不到启动层的局部变量。
+const startup = startupSurface();
+
+// 恢复中提示（文案-Copy.md D95）：启动态的阶段行（恢复进行中）与安全阀撤下后的既有恢复中态
+// 共用这一句——同一等待只有一个文案真源，不新增文案条目。
 const RESTORING_NOTICE = (): string => t("D95");
 
 /** 拉一次权威 vault 状态：已打开就装载，否则按终态（恢复中 / 恢复失败 / 无 vault）显示空态。
@@ -3785,6 +3801,18 @@ const RESTORING_NOTICE = (): string => t("D95");
  *  更早那次拉取的迟到响应，不能把已装载的树降级成空态。 */
 let lastVaultStatus: VaultStatus | null = null;
 
+// 「打开 vault」入口（spec「启动态的上屏与撤下」）：与树空态按钮同一条链路——`requestAddVault`
+// 先过 dirty 前置门再走既有目录选择器（`pickVault` → `loadUserVault` → `applyVault`），不新开
+// 第二条打开链路。启动态期间打开成功的 vault 优先于进行中的恢复（既有让位规则逐字不变）。
+startup?.setOpenHandler(() => requestAddVault());
+
+// 安全阀撤下（design §6 的「安全阀超时」行）：撤下启动态并露出既有恢复中态（D95 + 打开入口），
+// 用户可继续等或另选 vault。降级撤下不补这一层——那时既有启动路径由启动层 / 浏览器照常接管。
+startup?.onDismiss((reason) => {
+  if (reason !== "timeout") return;
+  if (lastVaultStatus === null || lastVaultStatus.restore_pending) tree.showEmpty(RESTORING_NOTICE());
+});
+
 function refreshVaultStatus(): Promise<void> {
   return vaultCurrent()
     .then((status) => {
@@ -3793,11 +3821,24 @@ function refreshVaultStatus(): Promise<void> {
         if (status.vault.root === loadedRoot) return;
         loadVault(status.vault.root, status.vault.entries, status.vault.vault_id, true);
       } else if (!vaultLoaded) {
-        tree.showEmpty(status.restore_pending ? RESTORING_NOTICE() : status.notice);
+        if (status.restore_pending) {
+          // 恢复进行中：呈现面归启动态（change app-splash-screen 对 vault-workspace 的
+          // MODIFIED），阶段行复用 D95——不再建未打开空态（同一等待不两处呈现）。
+          startup?.setPhase(RESTORING_NOTICE());
+        } else {
+          // 未打开终态：启动态的第二个撤下信号，随后露出既有空态与提示。
+          startup?.notifyNoVault();
+          tree.showEmpty(status.notice);
+        }
       }
     })
     .catch((e) => {
-      if (!vaultLoaded) tree.showEmpty(errorMessage(e));
+      if (!vaultLoaded) {
+        // 「读不到」不是「未打开终态」（REVIEW.md『读不到当成空』条）：这里只铺既有错误空态，
+        // 不因一次读取失败给启动态发 no_vault 信号——终态判据只认后端给出的真终态，读失败
+        // 由安全阀兜底（最坏情形是启动面多留到 10s，而不是把未知当成结论）。
+        tree.showEmpty(errorMessage(e));
+      }
     });
 }
 
@@ -3831,10 +3872,16 @@ Promise.all([getName(), getVersion()])
     logEvent("app_meta_unavailable", { message: errorMessage(e) });
   });
 
+// 配置装配的读数来自启动层：`config_get` 由 src/boot.ts 在首帧之前发起一次，快照经
+// `config-handoff` 交到这里（同一份配置 MUST NOT 两处各读一次，change app-splash-screen
+// design §3.4）。消费到 null = 那次读取失败：整块按既有口径跳过（启动层已按默认主题出图，
+// 与改造前 `.catch(() => {})` 的失败面一致）。
+//
 // editor.mode：只对没有文件上下文的文档（空态 / 新建）生效的默认模式；打开文件时
 // 一律按扩展名裁决（M130 方向 A：非 md 只读 code），该配置对文件打开不再有影响。
 // keys：单键重绑 / 解绑（M132），覆盖到位后重挂分发器（见 applyKeyConfig）。
-configGet().then((snapshot) => {
+consumeConfigSnapshot().then((snapshot) => {
+  if (snapshot === null) return;
   currentDefaultMode = snapshot.config.editor.mode;
   editor.setMode(snapshot.config.editor.mode);
   // 图片语义命名开关（change add-semantic-image-naming，design §1）：装载时读一次，粘贴时

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
-import { configGets, stubTauri, type VaultFixture } from "./tauri-stub";
+import { configApplied, stubTauri, type VaultFixture } from "./tauri-stub";
 
 // M320 双 pane 视觉基线（pane-system-split-view 的基线波次；M316–M318 落了能力，
 // 视觉基线刻意后置到本 mission——基线更新是 Alex 人肉裁决点，见 tests/visual/README.md）。
@@ -44,7 +44,7 @@ async function boot(page: Page): Promise<void> {
   await page.goto("/");
   await page.locator('.ft-row[title="alpha.md"]').click();
   await expect(page.locator(".modeline-path")).toHaveText("alpha.md");
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80);
 }
 

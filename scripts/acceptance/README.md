@@ -664,6 +664,16 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   源码）」（合法 HMR，见上节末段的边界）。
 - **不做手感/审美判定**：表头双击选中手感、表格宽度观感、WKWebView 下的翻屏节奏等归 Alex；
   套件只留截图证据（与 `tests/visual/README.md` 同一原则）。
+- **启动态在场的那一小段不在套件的可断言范围内（M645，change app-splash-screen）**：启动态
+  从窗口上屏活到当前 vault 的树装载完成，而就绪门（`waitAppReady`）恰在「树里出现第一行 /
+  空态成立」那一刻才放行——两者挂在同一个收口（`tree.setVault`）上，步骤开跑时启动态必然
+  已撤下。因此「启动态长什么样、其间能不能拖窗、经它的入口打开另一个 vault」**不在真机层判**：
+  视觉场景 `tests/visual/scenes/m645-startup-surface.spec.ts`（冻结恢复态、三主题首帧、几何 /
+  零动画 / 拖拽区结构断言）与 `startup-restore.spec.ts`（启动态入口的让位链路）承担；真机层
+  只判两端——诊断读数证明它出现过（`startup_surface` 的 `first_frame`）、撤下读数 + 阶段行
+  不在 AX 树里证明它撤下了（场景 225）。**安全阀（10s 超时）路径同样无法在跑批环境合成**
+  （合成 vault 的恢复总有界），由单测 `tests/unit/startup-gate.test.ts` 钉住。要改这条边界，
+  先给套件一个「就绪门之前执行步骤」的通道，而不是在场景里加大 vault 的规模去碰运气。
 - **`aria-haspopup` 的钮在 AX 里不是 `AXButton`（M351 批次实证，2026-10-07）**：WKWebView 把带
   `aria-haspopup="menu"` 的 `<button>` 映射成 `AXPopUpButton`（vault 切换钮、harness 会话名钮、
   模型 chip 都在此列），`role="menuitemradio"` 的项也不一定映射 `AXButton`。`click` 的 target

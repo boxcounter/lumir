@@ -93,6 +93,10 @@ test("浮层：当前项 / 摘要 / 失效行 / 新增入口，且不占常驻�
   });
   await page.goto("/");
   const entry = page.locator(".ft-vault");
+  // M645：两段式启动——`goto` 回来时主模块可能尚未装载，先等树头部入口与第一条文件行就位
+  // 再量几何（否则 `headerGeometry` 的 querySelector 拿到 null）。
+  await expect(entry).toBeVisible();
+  await expect(page.locator(".ft-row").first()).toBeVisible();
   const before = await headerGeometry(page);
 
   await openSwitcher(page);

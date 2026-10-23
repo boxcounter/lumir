@@ -1,3 +1,4 @@
+import { expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import type { ConfigSnapshot } from "../../../src/bindings/ConfigSnapshot";
 import { setLanguageRoot } from "../../../src/copy";
@@ -231,8 +232,6 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     // window_set_background_color 的调用记录（M525，app-window「窗口底色跟随主题」）：
     // 场景据此断言 applyTheme 把 CSS token 解析值同步给了后端。桩只记录不解释。
     w.__windowBgCalls = [] as Array<{ r?: number; g?: number; b?: number }>;
-    // config_get 的调用计数（M132 场景用它等「配置已加载 → 键位覆盖已挂上」）。
-    w.__configGets = 0;
     // `fs_read_attachment` 的**按路径**读取记录（M629）：D3 的「切回重读一次」判据要数
     // 某一张图读了几次——全局计数会被启动期 SAMPLE 演示文档里的相对路径图片引用污染。
     w.__attachmentReads = [] as string[];
@@ -440,7 +439,6 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         return null;
       },
       config_get: () => {
-        w.__configGets = (w.__configGets as number) + 1;
         // 形状按 Rust 的 `ConfigSnapshot` **全量**给出（M597）：`AppConfig` 的每张表都不是
         // Option，真后端序列化必带；桩少给一张表，启动装配链就会在首个非可选解引用处抛
         // TypeError，而 `src/main.ts` 末尾的 `.catch(() => {})` 会把整条链静默吞掉——主题、
@@ -880,9 +878,21 @@ export async function setBackendVault(page: Page, vault: VaultFixture | null): P
   );
 }
 
-/** config_get 的调用计数（等「配置已加载」用；M132 的 [keys] 覆盖在配置到位后生效）。 */
-export async function configGets(page: Page): Promise<number> {
-  return page.evaluate(() => (window as unknown as { __configGets: number }).__configGets);
+/**
+ * 等「配置已施加到界面」（M645，change app-splash-screen）：`.modeline-language` 初始 hidden，
+ * 只有 `applyLanguage` 去 hidden（`src/main.ts` 的唯一施加点），而它是配置装配块的最后一步——
+ * 它可见即 `applyTheme` / `[keys]` 覆盖 / 折行 / 排版 / 栏宽全部落地。
+ *
+ * 为什么不再用「`config_get` 调用计数 > 0」当判据：M645 起这次读取由**启动层**发起（主模块装载
+ * 之前），计数器在配置施加之前就会 >0，继续拿它当就绪信号会让按键 / 主题类场景抢在键位覆盖之前
+ * 动手（实测 m293 的 ⌘⇧T 循环在 dark / eink 两档丢键）。旧计数器与 helper 已删除——「调用过」
+ * 与「已施加」不再是同一件事，留一个没有消费者的代理只会让下一个人再踩一次（REVIEW.md
+ * 「值或开关声明了却没有消费者」条）。
+ */
+export async function configApplied(page: Page): Promise<void> {
+  await expect(page.locator(".modeline-language"), "配置已施加（applyLanguage 落地）").toBeVisible({
+    timeout: 15_000,
+  });
 }
 
 /**

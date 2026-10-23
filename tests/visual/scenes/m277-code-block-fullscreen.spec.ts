@@ -11,7 +11,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
-import { stubTauri, configGets } from "./tauri-stub";
+import { stubTauri, configApplied } from "./tauri-stub";
 
 /** 基线过目包（M277）：浮层观感截图落 .local/reviews/m277-impl/baseline-review/，等 Alex 过目
  *  （同 block-copy 场景的口径：新增基线是人肉裁决点，不写成断言）。 */
@@ -70,7 +70,7 @@ async function openDoc(
   await page.goto("/");
   await page.locator(`.ft-row[title="${DOC}"]`).click();
   await expect(page.locator(".cm-lp-codeblock-slot")).toHaveCount(options.slots ?? 3);
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await expect(page.locator(".modeline-path")).toHaveText(DOC);
   await page.waitForTimeout(80);
 }

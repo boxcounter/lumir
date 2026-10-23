@@ -169,6 +169,9 @@ test('partial组超出后台提前范围仍完成且末端标记不重叠', asyn
   const large = Array.from({ length: 18000 }, (_, i) => `${i === 17999 ? '999999999. [x]' : `${i + 1}.`} Item ${i + 1} ${'long list content '.repeat(3)}`).join('\n');
   await stubTauri(page, { entries: [{ path: 'lists.md', kind: 'file', size: large.length, mtime_ms: 0 }], files: { 'lists.md': large } });
   await page.goto('/');
+  // M645 起主模块是两段式装载（启动层先出首帧、配置到手后才 `import("./main")`）：`goto` 回来时
+  // 壳与编辑器可能还没建出，直接 evaluate `.cm-content` 会拿到 null（`observe` 抛 TypeError）。
+  await expect(page.locator(".cm-content")).toHaveCount(1);
   await page.evaluate(() => {
     (window as any).listStages = [];
     new MutationObserver(() => {

@@ -12,7 +12,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { stubTauri, configGets } from "./tauri-stub";
+import { stubTauri, configApplied } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
 const fixtureDir = new URL("../fixtures/table-fullscreen/", import.meta.url);
@@ -44,7 +44,7 @@ async function openDoc(page: Page, doc: string): Promise<void> {
   await page.goto("/");
   await page.locator('.ft-row[title="scene.md"]').click();
   await expect(page.locator(".cm-lp-table")).not.toHaveCount(0);
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80);
 }
 

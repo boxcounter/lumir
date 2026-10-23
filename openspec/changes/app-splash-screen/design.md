@@ -199,6 +199,8 @@
   门槛，比 CI 的 40% 相对回归容忍线紧得多——拿它当「没拖慢」的证据，而不是拿门禁恰好没红当证据。
 - **观测缺口补上的那一块**：「上屏 → 启动层首帧」今天没有任何读数（F4 明确排除），本 change 把它变成一条可
   grep 的日志；它不作门禁，只作后续是否需要 show 闸门的判据。
+- **实现期落点与实测**：事件名 `startup_surface`、字段 `phase` / `reason` / `ms` / `ts_unix_ms`（白名单在
+  `src-tauri/src/logging.rs`，越界字段被拒）；两项实测读数见 §11.4。
 
 ## 6. 失败路径与边界
 
@@ -243,7 +245,9 @@
 1. **首帧前的空窗消不掉**：窗口 `show()` 早于前端执行（F2 / F5）。这一段里用户可能先看到窗口底色，也可能看到
    webview 自绘的一帧页面背景（页面已加载、启动面尚未挂上时）——后者在 dark / eink 下是浅色（CSS 默认块），
    属同一族的主题断档。本 change 只测量并登记这段的时长（§5、tasks 1.6），不宣称已消除；若后续实测显著，
-   单独立案讨论 `show()` 闸门（§3.6 已记下那条路的坑）。
+   单独立案讨论 `show()` 闸门（§3.6 已记下那条路的坑）。**实现期实测**：release 构建、空配置、n=10，
+   `LUMIR_READY` → 启动层首帧中位 ≈ 253ms（其中页面自身 ≈ 117ms，`ready` → 页面导航开始 ≈ 135ms）——
+   见 §11.4。
 2. **窗口底色的施加晚于 `show()`**（F3）：dark / eink 用户可能看到 light 窗口边缘一瞬。属窗口层缺陷，与启动态
    正交，另行登记，不在本 change 内修（proposal 的 Non-goals 已写明）。
 3. **标签恢复（S6）不在启动态内**：撤下后标签仍可能逐个出现，与今天一致；要盖住它得把 M252 的指示器扩展到
@@ -264,3 +268,65 @@
 本 change **无原型**，按 `docs/process/openspec-workflow.md` 的「有原型时必填」口径，本节在提案阶段不适用。
 若 D1 裁品牌仪式（需要定稿的品牌面），实现前必须补原型截图并在此逐屏填写（布局节奏 / 卡片或字标样式 /
 字层级 / 各状态样式），否则视觉层会落进无人负责的真空。
+
+## 11. 实现注记（M645 落地）
+
+本节回填实现期定下的落点与实测读数；§§1–10 的裁决与设计依据不改。
+
+### 11.1 落点
+
+| 文件 | 职责 |
+|---|---|
+| `src/boot.ts` | 启动层：`Promise.all([configGet, getName])`（两端各 `catch` 成 null）→ 交接配置 → 只写 `<html data-theme>` → 挂启动面 → 双 rAF（200ms 上界）→ `await import("./main")`；异常统一 `degrade()` |
+| `src/startup-surface.ts` / `src/startup-surface.css` | 启动面的 DOM 与样式；`#startup` 挂 `document.body`（`#app` 之外）；`dismiss` 幂等、单帧 `remove()`；两条读数在此落盘 |
+| `src/startup-gate.ts` | 撤下判据纯函数与安全阀常量（`STARTUP_TIMEOUT_MS = 10_000`），单测 `tests/unit/startup-gate.test.ts` |
+| `src/config-handoff.ts` | 启动层 → 主模块的一次性配置快照交接 |
+| `src/main.ts` | 两个撤下信号（`applyVault` 的 `tree.setVault` 之后、`refreshVaultStatus` 的未打开终态分支）、阶段行、启动态入口的接线、安全阀撤下后的既有恢复中态 |
+| `src-tauri/src/logging.rs` | `startup_surface` 事件与四个允许字段（`phase` / `reason` / `ms` / `ts_unix_ms`） |
+
+### 11.2 两处实现期收窄（按 spec 原意，未改契约）
+
+1. **阶段行不是首帧的一部分。** spec「不读 vault」禁止启动层在首帧之前读 `vault_current`，而「恢复进行中」
+   只有主模块能判（`refreshVaultStatus`）。因此首帧 = 骨架 + 产品标记；阶段行由主模块判到 `restore_pending`
+   时经 `setPhase(t("D95"))` 施加，先于树出现。代价：无 `last_vault` 的启动里首帧也短暂只有标记（随后按
+   `no_vault` 撤下）。
+2. **`nextPaint` 带上界。** §3.4 的「双 rAF 只是尽力」落成「双 rAF 与 200ms 定时器取先到者」：窗口不可见时
+   WebKit 可能不派发渲染帧（§3.6），没有上界等于让主模块装载押在一次可能不来的回调上。上界只保证不卡死，
+   不改变「先画后载」的意图。
+
+### 11.3 async IIFE 与 TLA（tasks 1.1）
+
+本机（macOS 26.6.2，`WebKit.framework` 版本 21624）的 WKWebView 支持 top-level await；但产品最低支持系统
+10.15 的 WKWebView 是 Safari 13 级、TLA 要 Safari 15。结论：**不用 TLA**，用 async IIFE（语义等价，不押用户
+系统版本）。结论写在 `src/boot.ts` 文件头。
+
+### 11.4 实测读数（本机，2026-10-23）
+
+- **`phase=first_frame` 的语义**：`ms` 是「启动层交出渲染机会」的时刻（双 rAF 或 200ms 上界先到者），不是
+  绘制完成时刻。
+- **「上屏 → 启动层首帧」**（release 构建、隔离的空配置、warm-up 1 次后 n=10；`LUMIR_READY.ts_unix_ms` 与
+  `first_frame.ts_unix_ms` 相减）：241 / 241 / 243 / 247 / 251 / 255 / 257 / 257 / 261 / 264 ms，**中位
+  ≈ 253ms**；其中页面自身（`first_frame.ms`）≈ 112–126ms，其余（≈ 135ms）是 `LUMIR_READY` → 页面导航
+  开始的那一段（§9 第 1 条的已知边界，本 change 只测量不消除）。dev flavour 下同一间隔被 vite 模块图拉长到
+  ≈ 690–770ms（验收场景 225 的两次冷启读数），**dev 数字不可与产品口径混用**。
+- **冷启动主口径**（spawn → `LUMIR_READY`，release，两枚只差 `logging.rs` 一个枚举值的构建；5 轮交错、每轮
+  n=20）：单轮中位增量 −31…+36ms（量级已超 10ms 判据——那是机器噪声，见下），中位-中位 **−8.1ms**（改动前
+  246.7ms / 改动后 238.6ms）→ 满足 ≤10ms 判据。结构上该端点由 Rust setup 发射、早于本 change 的任何前端
+  代码；Rust 侧唯一改动是诊断白名单的事件枚举值（启动路径不引用），因此读数按「没拖慢」采信。
+
+### 11.5 视觉层判据的边界（反向验证记录）
+
+删掉 `applyVault` 里的 `startup?.notifyTreeReady()` 后实测：`startup-restore.spec.ts` 的第 3 / 4 条在 5s
+内判红（判别力成立）；**但 app-main 等既有截图场景仍全绿、每条多耗 10s**——交互类场景的点击会重试到安全阀
+（10s）把启动面撤下之后再成功，覆盖层不进截图。因此「撤下信号有没有接上」的判别性判据只落在
+`startup-restore.spec.ts`（树就绪后 5s 内断言 `#startup` 计数为 0），`expect-screenshot.ts` 的撤下门只作
+第二道防线（防「启动面永不撤下」）。这条边界同时写在两处代码注释与 `scripts/acceptance/README.md` 的
+「已知边界」。
+
+**两段式启动作废了两条视觉场景的旧就绪代理**（同一批反向验证的副产物）：`page.goto("/")` 不再等于
+「壳 / 编辑器已建出」（主模块在配置到手后才装载），`config_get` 的调用计数也不再等于「配置已施加」
+（那次读取由启动层在**装载主模块之前**发起）。首轮全量视觉门禁因此红了 4 条（lists / m293 的 dark 与
+eink / mv-vault-switcher）：两条是 `goto` 后裸 `evaluate` 拿到 `null`，两条是抢在键位覆盖之前按 ⌘⇧T。
+处置：受影响场景改等界面信号（`.cm-content` / `.ft-vault` / `configApplied()`），`configGets` helper 与
+`__configGets` 计数器删除（「调用过」与「已施加」不再同一件事，留一个没有消费者的代理只会让下一个人
+再踩一次）；口径写进 `tests/visual/README.md` 的「启动是两段式的」条。第二次全量门禁结果见 tasks 5.6。
