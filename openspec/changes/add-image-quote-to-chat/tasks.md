@@ -82,7 +82,10 @@
 ## 7. 验证
 
 - [x] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（`Totals: 33 passed, 0 failed (33 items)`）
-- [x] 7.2 `bash scripts/gate.sh quick` 全绿：`GATE RESULT: 11/11 PASS（SKIP 0）`（退出码 0；final 树的 `gate.sh visual` 里 quick 段同样 11/11 PASS）
-- [x] 7.3 `bash scripts/gate.sh visual` 全绿：`GATE RESULT: 13/13 PASS（SKIP 0）`（退出码 0；visual-regression 489s，含整页 / 元素像素对比）
+- [x] 7.2 `bash scripts/gate.sh quick` 全绿：`GATE RESULT: 11/11 PASS（SKIP 0）`（退出码 0；final 树的 `gate.sh visual` 里 quick 段同样 11/11 PASS）。
+      rebase 到 bf5ac46f 后复跑：同样 `GATE RESULT: 11/11 PASS（SKIP 0）`（退出码 0，2026-10-23 20:54）
+- [x] 7.3 `bash scripts/gate.sh visual` 全绿：`GATE RESULT: 13/13 PASS（SKIP 0）`（退出码 0；visual-regression 489s，含整页 / 元素像素对比）。
+      rebase 到 bf5ac46f 后复跑视觉面（与 gate 的 visual-regression 同一条命令 `scripts/visual/run.sh`，端口 4291）：
+      **722 passed / 1 skipped（8.5m，退出码 0）**；isolation-runs 2 pass。零基线更新（`tests/visual/baselines` 对本分支零改动）
 - [x] 7.4 信息卫生清扫：改动面（新增 / 修改的全部文件）对真实 vault 内容、真实路径、真实人名做 text 级
       grep——零命中；图片 fixture 全为合成像素（1×1 / 96×48 纯色 PNG、纯几何 SVG）
