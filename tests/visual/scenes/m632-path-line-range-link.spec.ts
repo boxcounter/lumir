@@ -16,7 +16,7 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //
 // 本场景不覆盖（如实登记）：三种形态的解析边界与畸形矩阵在
 // `tests/unit/harness-path-link.test.ts`；`止` 越界钳制在 `src/editor.ts` 的既有 revealLine；
-// 真机 WKWebView 的同一链路与 prompt 遵从度在 `scripts/acceptance/scenarios/220-*`。
+// 真机 WKWebView 的同一链路与 prompt 遵从度在 `scripts/acceptance/scenarios/221-*`。
 // 无新像素基线：元素形态复用既有 `.lumir-hp-pathlink`，本场景只做结构 / 几何断言。
 
 const FILLER = (n: number): string => `第 ${String(n).padStart(3, "0")} 行：行范围跳转的填充内容。`;

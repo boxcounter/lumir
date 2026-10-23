@@ -8,7 +8,7 @@
 # 复用 fixtures/goto-line-long.md 作目标文件（不新增 .md fixture：验收 vault 每次重置为
 # fixtures 里**全部** .md 的副本，为一条判据给所有场景加一个文件不划算）；第 39 行 =
 # `JUMP-TARGET-39`，在 48 行文档里开篇一屏看不到、落点后居中——截图据此可判读。
-id: "220-harness-path-line-range"
+id: "221-harness-path-line-range"
 item: 552
 title: harness 输出里的行范围路径可点击（:起-止 落到起始行，畸形形态不吞半截）
 open: harness-note.md
@@ -78,7 +78,7 @@ steps:
       - shot: 02-行范围落点（第 39 行居中；选区是否出现由截图判读）
 ---
 
-# 220-harness-path-line-range —— 输出里的行范围路径可点击（change add-path-line-range-links）
+# 221-harness-path-line-range —— 输出里的行范围路径可点击（change add-path-line-range-links）
 
 ## 本场景在验什么
 
