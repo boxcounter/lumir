@@ -105,6 +105,10 @@
   在交还焦点后的短窗口内按「caret 塌到 0」这一缺陷签名把捕获的选区写回一次（不 scrollIntoView，
   窗口外与用户其他选择不动作）。判据：`tests/visual/scenes/m642-overlay-select-all.spec.ts` 的
   Esc 用例连跑 8 次全绿。
+- **r1 评审两条 P2 的处置**：① `overlay-select.ts` 的清理时机注释由「之后」改为「之前」，并写明
+  `hide()` 先于 `restoreFocus()`，防止后来者按注释把 caret-0 竞态放回来；② 合同断言补两条
+  「选区在场时点击遮罩关闭」「选区在场时再次 toggle 关闭」（选区清空 + caret 不动 + 文档不变），
+  spec 场景枚举的三条关闭路径至此逐条断言。
 - **自验结果**：`gate quick` → `GATE RESULT: 11/11 PASS（SKIP 0）`，退出码 0；
   `gate visual` → `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（整页基线零更新）。
 - **未完成的两项真机动作**：dark/eink 的选中带截图、验收场景 227 的真机跑批。两者都被操作中途

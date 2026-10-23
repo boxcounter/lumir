@@ -4,8 +4,9 @@
 //   1. ⌘A 的**落面**：选区非空 + 锚点在遮罩内容容器内 + 含 cell 文本 + **不含**遮罩外标题
 //      （负向与该场景同批断言：只判「非空」会在「选中整页」上假绿）。
 //   2. 菜单「全选」与键盘同一落面（D3）：`app:menu_command` 的 selectAll 载荷经桩送达前端。
-//   3. 选中后 Esc：遮罩关闭、DOM 选区清空、焦点回编辑器（行为判据，不读布尔口），
-//      且 ⌘C 不再拿到遮罩里的旧文本。
+//   3. 选中之后三条退出路径逐条不变（spec 场景枚举）：Esc / 点击遮罩 / 再次 toggle——遮罩关闭、
+//      DOM 选区清空、焦点回编辑器（行为判据，不读布尔口）、caret 不被重置；Esc 那条另验
+//      ⌘C 不再拿到遮罩里的旧文本。
 //   4. 「选中态可辨」：遮罩内 `::selection` 与遮罩底色的对比不低于编辑器既有选区带
 //      （`--sel-band`）与正文底色的对比（三主题各一档，取既有 token，零新增色值）。
 //   5. 拖选能在遮罩内建立选区（chromium 代理；真机结论以 M650 的 `.local/probes/` 探针为准
@@ -330,6 +331,46 @@ test("M650 选中后 Esc：关闭、选区清空、焦点回编辑器、⌘C 不
     expect(copied, "关闭后 ⌘C 不得取到遮罩里的旧文本").not.toBe(selected);
     expect(copied).toContain("| 甲 |");
   }
+});
+
+test("M650 选区在场时点击遮罩关闭：选区清空、caret 不动、文档不变", async ({ page }) => {
+  await openTableDoc(page);
+  const original = await readDocument(page);
+  const caret = await caretAt(page, "| 甲 |");
+  await page.keyboard.press(TRIGGER_PRESS);
+  expect(await overlayVisible(page)).toBe(true);
+  await page.keyboard.press("Meta+a");
+  await expect.poll(async () => (await selectionReading(page)).text.length).toBeGreaterThan(0);
+
+  // 点击面板以外的遮罩区（m240 5.2 的既有落点）：关闭路径与 Esc 共用同一个 close()。
+  await page.mouse.click(4, 4);
+  expect(await overlayVisible(page)).toBe(false);
+  const after = await selectionReading(page);
+  expect(after.text, "关闭后 DOM 选区不得残留").toBe("");
+  expect(after.focusInsideOverlay, "焦点不得留在遮罩里").toBe(false);
+  await page.waitForTimeout(400);
+  expect(await caretRange(page), "点击遮罩关闭后 caret 不得被重置").toEqual({ anchor: caret, head: caret });
+  expect(await readDocument(page)).toBe(original);
+});
+
+test("M650 选区在场时再次 toggle 关闭：选区清空、caret 不动、文档不变", async ({ page }) => {
+  await openTableDoc(page);
+  const original = await readDocument(page);
+  const caret = await caretAt(page, "| 甲 |");
+  await page.keyboard.press(TRIGGER_PRESS);
+  expect(await overlayVisible(page)).toBe(true);
+  await page.keyboard.press("Meta+a");
+  await expect.poll(async () => (await selectionReading(page)).text.length).toBeGreaterThan(0);
+
+  // 再执行一次同一命令（toggle 是命令入口的自然对偶）。
+  await page.keyboard.press(TRIGGER_PRESS);
+  expect(await overlayVisible(page)).toBe(false);
+  const after = await selectionReading(page);
+  expect(after.text, "关闭后 DOM 选区不得残留").toBe("");
+  expect(after.focusInsideOverlay, "焦点不得留在遮罩里").toBe(false);
+  await page.waitForTimeout(400);
+  expect(await caretRange(page), "toggle 关闭后 caret 不得被重置").toEqual({ anchor: caret, head: caret });
+  expect(await readDocument(page)).toBe(original);
 });
 
 for (const theme of ["light", "dark", "eink"] as const) {

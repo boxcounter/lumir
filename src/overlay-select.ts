@@ -20,7 +20,9 @@ export function selectAllOf(root: HTMLElement): void {
 
 /** 关闭遮罩前清掉**落在 `root` 内**的 DOM 选区。
  *
- *  两个消费者各只有一个理由（第 2 条决定了调用时机必须排在焦点交还之后——见两个遮罩的 hide）：
+ *  两个消费者各只有一个理由（第 2 条决定了调用时机必须排在**焦点交还之前**——两个遮罩的
+ *  `hide()` 里先 `clearSelectionWithin(overlay)` 再 `overlay.hidden = true`，而
+ *  `createOverlayState.close()` 保证 `hide()` 严格先于 `restoreFocus()`）：
  *   1. 「关闭后 MUST NOT 残留可被复制动作取到的遮罩文本」——显式全选或拖选之后的选区不会随
  *      `hidden = true` 自动坍缩，必须在关闭路径上主动清；
  *   2. 交还焦点时浏览器可能把隐藏子树的旧选区带进编辑器（实测：不清理时 CM 的 caret 会被
