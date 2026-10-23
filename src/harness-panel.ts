@@ -135,9 +135,13 @@ import { blobToBase64, firstImageFileIndex } from "./paste-image";
 import type { QuotedImage } from "./quote-image";
 import { createMessageQuoteGesture, MESSAGE_QUOTE_FLASH_MS, resolveMessageQuoteTarget } from "./message-quote-gesture";
 import { highlightCode } from "./preview/code";
+import { BLOCK_TRIGGER_CLASS, CODEBLOCK_FS_TRIGGER_LABEL, CORNERS_ICON_SVG } from "./preview/block-trigger";
+import { TABLE_TRIGGER_LABEL } from "./preview/table-trigger";
+import { planCodeBlockOfDocument } from "./preview/code-block-content";
+import type { CodeBlockRender } from "./preview/code-block-content";
 import { clusterBackward, clusterForward, currentKillSlot, imageMentionText, imageOrdinals, mergeKillText, setKillSlot, wordEndForward, wordStartBackward } from "./quote-card";
 import type { CommandId } from "./keys";
-import { mirrorThemeScope } from "./overlay-scope";
+import { mirrorThemeScope, THEME_SCOPE_HOST_CLASS } from "./overlay-scope";
 import type { AppShell } from "./shell";
 
 /** 面板对编辑器句柄的结构需求：上下文组装（HarnessContextSource）+ 关面板时的焦点归还 +
@@ -146,9 +150,41 @@ export interface HarnessPanelEditor extends HarnessContextSource {
   view: HarnessContextSource["view"] & { dom: HTMLElement; focus(): void };
 }
 
+/**
+ * 块级全屏的接线面（装配层注入，change add-harness-block-fullscreen §4）。
+ *
+ * 三个动作都由装配层落到**既有的**两个单实例遮罩上（`src/table-fullscreen.ts` /
+ * `src/code-block-fullscreen.ts`）：关闭路径、主题镜像、读屏语义、焦点归还因此与 content pane
+ * 逐条同源（REVIEW.md「同一语义两处真源」条）。
+ */
+export interface HarnessBlockFullscreenPort {
+  /** 表格：`source` 是刚渲染出的 `<table>`（遮罩深克隆它）；`label` 是该表的读屏名
+   *  （`Markdown 表格 N`，N = 本条消息内同类块的序号）；`trigger` 是发起钮（再次触发 = toggle，
+   *  关闭后焦点归还给它）。 */
+  openTable(source: HTMLElement, label: string, trigger: HTMLElement): void;
+  /** 代码块：`render` 是**点击那一刻**按块源码现取的呈现计划（D4：打开即快照，后续流式增量
+   *  不回灌）；`trigger` 既是 toggle 判据与焦点落点，也是遮罩主题 scope 的解析起点（它在
+   *  transcript 内，遮罩会走到那块「已镜像宿主」上，见 src/overlay-scope.ts）。 */
+  openCodeBlock(render: CodeBlockRender, label: string, trigger: HTMLElement): void;
+  /** 内容换代（会话切换 / 面板重载 / 快照重取）：遮罩里的快照已不存在，显式关闭
+   *  （spec「内容换代时遮罩自动关闭」；关闭路径与既有 `closeDocumentOverlays` 同族）。 */
+  close(): void;
+}
+
+/** 渲染期的接线面（模块层的渲染件不认识面板根：装配边界只绑端口与标签，scope 宿主由
+ *  装配层按来源推导——trigger 本身就在面板里）。 */
+export interface HarnessBlockOpeners {
+  code(render: CodeBlockRender, label: string, trigger: HTMLElement): void;
+  table(source: HTMLElement, label: string, trigger: HTMLElement): void;
+}
+
 export interface HarnessPanelDeps {
   shell: AppShell;
   editor: HarnessPanelEditor;
+  /** 块级全屏（代码块 / 表格）的接线面（change add-harness-block-fullscreen）：面板负责块的
+   *  定位容器与悬停钮，遮罩本体、来源与焦点归还全在装配层（复用既有两个单实例遮罩）。
+   *  未注入时钮照常渲染、点击无动作——与触发钮 widget 的「opener 未接线返回 null」同口径。 */
+  blocks?: HarnessBlockFullscreenPort;
   /** 开/合 harness pane 的装配层入口（账本 split/close + DOM 槽 + 焦点移交）：toggle 钮、
    *  面板内 Escape、摘录插入的「未开先开」都经这一条路径——面板自己不碰 pane 账本
    *  （HP1，change move-harness-to-pane-chat-frame；⌘⇧A 命令表也在装配层）。 */
@@ -2808,6 +2844,87 @@ function buildCodeBlock(code: string, info: string): HTMLElement {
   return pre;
 }
 
+// ---------------------------------------------------------------------------
+// 块级全屏入口（change add-harness-block-fullscreen）：定位容器 + 悬停钮
+// ---------------------------------------------------------------------------
+
+/** SVG 命名空间（模块无 innerHTML 的渲染纪律：全部图标经 DOM API 内联构建）。 */
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/** 四角框图标元素：字形与画笔属性取 `src/preview/block-trigger.ts` 的唯一一份
+ *  （`CORNERS_ICON_SVG`），本模块用 DOM API 建——渲染纪律是本模块零 innerHTML 赋值
+ *  （全部内容经 DOM API + textContent 注入），不是另画一个图标。 */
+function createCornersIcon(): SVGElement {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  for (const [name, value] of Object.entries(CORNERS_ICON_SVG.attrs)) svg.setAttribute(name, value);
+  for (const d of CORNERS_ICON_SVG.paths) {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
+/** 悬停钮的读屏名：与 content pane 的块级动作钮同一份词条（D124 / D156，零新增编号）。
+ *  块序数不下沉到钮面文字（遮罩自己的读屏名带序号，见 `blockFullscreenLabel`）。 */
+function blockTriggerLabel(kind: "code" | "table"): string {
+  return kind === "table" ? TABLE_TRIGGER_LABEL() : CODEBLOCK_FS_TRIGGER_LABEL();
+}
+
+/** 遮罩读屏名（D5）：`Markdown 表格 N` / `Markdown 代码块 N`（D211 / D212——与文档内容器
+ *  同一份词条）。N = **本条消息内**同类块的 1-based 序号：点击那一刻从 DOM 现数的纯派生读数，
+ *  不进任何数据模型、不持久化。 */
+function blockFullscreenLabel(slot: HTMLElement, kind: "code" | "table"): string {
+  return t(kind === "table" ? "D211" : "D212", { index: blockOrdinal(slot, kind) });
+}
+
+/** 消息内序号：从块容器向上找消息根（`.lumir-hp-msg`），数同类块的 DOM 序。消息根缺席
+ *  （单测 / 嵌入式渲染件）时退回父节点——序号退化为 1，不抛错。 */
+function blockOrdinal(slot: HTMLElement, kind: "code" | "table"): number {
+  const root: Element | null = slot.closest(".lumir-hp-msg") ?? slot.parentElement ?? null;
+  if (root === null) return 1;
+  const same = [...root.querySelectorAll(".lumir-hp-block-slot")].filter(
+    (el) => (el as HTMLElement).dataset.hpBlock === kind,
+  );
+  const index = same.indexOf(slot);
+  return index < 0 ? 1 : index + 1;
+}
+
+/**
+ * 代码块 / 表格的块级全屏入口：包一层 `.lumir-hp-block-slot`（零足迹定位容器），内挂悬停钮。
+ *
+ * 为什么包 slot 而不是给 `<pre>` / `<table>` 加 `position: relative`：两者都是内容盒（面板的
+ * 代码块自带横向滚动），给块本体加定位会让钮跟着内容横滚走——slot 在滚动容器**之外**，
+ * 与 content pane 的 `.cm-lp-codeblock-slot` / `.cm-lp-table-slot` 是同一条理由
+ * （src/preview/block-trigger.ts 的文件头）。
+ *
+ * 钮只带共享形态类 `.lumir-block-trigger` + 一个位置 class（壳 / 尺寸 / 热态 / eink 规则
+ * 在 src/style.css 只有一份）。点击 `preventDefault` + `stopPropagation`：消息容器可能挂着
+ * 摘录手势，钮的点击不得被它接走。
+ */
+function blockSlot(
+  block: HTMLElement,
+  kind: "code" | "table",
+  open: (trigger: HTMLElement, slot: HTMLElement) => void,
+): HTMLElement {
+  const slot = document.createElement("div");
+  slot.className = "lumir-hp-block-slot";
+  slot.dataset.hpBlock = kind;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `${BLOCK_TRIGGER_CLASS} lumir-hp-block-fs-trigger`;
+  button.setAttribute("aria-label", blockTriggerLabel(kind));
+  button.append(createCornersIcon());
+  button.addEventListener("mousedown", (event) => event.preventDefault());
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    open(button, slot);
+  });
+  slot.append(block, button);
+  return slot;
+}
+
 /** 一行表格行的列位分布：`cells[k]` = 第 k 列的 cell（空位 `undefined`）。 */
 interface TableRowPlan {
   header: boolean;
@@ -2869,12 +2986,14 @@ function tableRowSlotsOf(row: MdSyntaxNode): Array<MdSyntaxNode | undefined> {
 }
 
 /** 块级渲染：top-level 节点 → 块元素。不认识的块按转义文本段落落地（可见但惰性）。
- *  `ctx` 只作用于行内文本落地；代码块（围栏 / 缩进）不经过它——代码里的路径不链接化。 */
+ *  `ctx` 只作用于行内文本落地；代码块（围栏 / 缩进）不经过它——代码里的路径不链接化。
+ *  `openers` 是代码块 / 表格的全屏接线面（缺省 = 钮照常渲染、点击无动作，见 HarnessBlockOpeners）。 */
 function renderBlock(
   container: HTMLElement,
   node: MdSyntaxNode,
   doc: string,
   ctx?: PathLinkRenderContext,
+  openers?: HarnessBlockOpeners,
 ): void {
   const heading = /^ATXHeading([1-6])$/.exec(node.name);
   if (heading !== null || node.name === "SetextHeading1" || node.name === "SetextHeading2") {
@@ -2905,7 +3024,7 @@ function renderBlock(
             li.append(marker, document.createTextNode(" "));
             continue;
           }
-          renderBlock(li, item, doc, ctx);
+          renderBlock(li, item, doc, ctx, openers);
         }
         el.append(li);
       }
@@ -2915,7 +3034,7 @@ function renderBlock(
     case "Blockquote": {
       const el = document.createElement("blockquote");
       for (let child = node.firstChild; child !== null; child = child.nextSibling) {
-        renderBlock(el, child, doc, ctx);
+        renderBlock(el, child, doc, ctx, openers);
       }
       container.append(el);
       return;
@@ -2923,20 +3042,35 @@ function renderBlock(
     case "FencedCode": {
       const infoNode = node.getChild("CodeInfo");
       const textNode = node.getChild("CodeText");
+      const pre = buildCodeBlock(
+        textNode !== null ? textOf(doc, textNode) : "",
+        infoNode !== null ? textOf(doc, infoNode).trim() : "",
+      );
+      // 围栏**闭合**后才有入口：@lezer/markdown 把未闭合的围栏也解析成 FencedCode（实测），
+      // 「语法上还不是代码块」不成立——判据取块自己的尾 `CodeMark`，仍是解析事实（不是一条
+      // 要维护的开关）。闭合那一帧起尾块重渲即带钮（design §1.2 / spec「围栏未闭合时没有入口」）。
+      const closed = node.lastChild !== null && node.lastChild.name === "CodeMark";
       container.append(
-        buildCodeBlock(
-          textNode !== null ? textOf(doc, textNode) : "",
-          infoNode !== null ? textOf(doc, infoNode).trim() : "",
-        ),
+        closed
+          ? blockSlot(pre, "code", (trigger, slot) => {
+              openers?.code(planCodeBlockOfDocument(doc, node), blockFullscreenLabel(slot, "code"), trigger);
+            })
+          : pre,
       );
       return;
     }
     case "CodeBlock": {
-      container.append(buildCodeBlock(textOf(doc, node), ""));
+      const pre = buildCodeBlock(textOf(doc, node), "");
+      container.append(
+        blockSlot(pre, "code", (trigger, slot) => {
+          openers?.code(planCodeBlockOfDocument(doc, node), blockFullscreenLabel(slot, "code"), trigger);
+        }),
+      );
       return;
     }
     case "Table": {
       const table = document.createElement("table");
+      table.className = "lumir-hp-table";
       const thead = document.createElement("thead");
       const tbody = document.createElement("tbody");
       for (const plan of tableRowsOf(node, doc)) {
@@ -2950,7 +3084,11 @@ function renderBlock(
       }
       if (thead.childElementCount > 0) table.append(thead);
       if (tbody.childElementCount > 0) table.append(tbody);
-      container.append(table);
+      container.append(
+        blockSlot(table, "table", (trigger, slot) => {
+          openers?.table(table, blockFullscreenLabel(slot, "table"), trigger);
+        }),
+      );
       return;
     }
     case "HorizontalRule": {
@@ -2971,7 +3109,7 @@ function renderBlock(
       if (node.name === "Document") {
         let child = node.firstChild;
         while (child !== null) {
-          renderBlock(container, child, doc, ctx);
+          renderBlock(container, child, doc, ctx, openers);
           child = child.nextSibling;
         }
         return;
@@ -2988,14 +3126,16 @@ function renderBlock(
  *  URL 不重复上屏、vault 路径可点）——纯函数层驱动不到 DOM 面，重建一份渲染器则失去判据
  *  （REVIEW.md 「同一语义两处真源」条）。
  *
- *  `ctx` 缺省 = 不做路径链接化（单测与既有调用逐字不变）；面板内部传入自己的上下文。 */
+ *  `ctx` 缺省 = 不做路径链接化（单测与既有调用逐字不变）；面板内部传入自己的上下文。
+ *  `openers` 缺省 = 代码块 / 表格照常带全屏钮、点击无动作（与 `ctx` 同一条缺省口径）。 */
 export function renderMarkdownInto(
   container: HTMLElement,
   source: string,
   ctx?: PathLinkRenderContext,
+  openers?: HarnessBlockOpeners,
 ): void {
   const tree = mdParser.parse(source);
-  renderBlock(container, tree.topNode, source, ctx);
+  renderBlock(container, tree.topNode, source, ctx, openers);
 }
 
 /**
@@ -3520,9 +3660,8 @@ export function parseApprovalSource(value: unknown):
 export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const { shell, editor } = deps;
 
-  // SVG 命名空间常量（模块无 innerHTML 的渲染纪律：全部图标经 DOM API 内联构建，
-  // toggle 火花 / 发送钮两态 glyph / 工具 ✓ / 思考 chevron 共用）。
-  const SVG_NS = "http://www.w3.org/2000/svg";
+  // SVG 命名空间在模块层（`SVG_NS`）：块级全屏钮的四角框图标由模块层的渲染件建，
+  // toggle 火花 / 发送钮两态 glyph / 工具 ✓ / 思考 chevron 与本函数共用同一份常量。
 
   // ── DOM：toggle 钮（标题栏动作钮槽位，钉右端；HP1 起产品标识块在 traffic 灯区，
   // 右端只有这颗钮）─────────────────────────────────────────────────────────
@@ -3614,6 +3753,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // preview 主题 scope 镜像：cm-lp-tok-* 着色与 cm-lp-inline-code 药丸的规则值只定义在
   // src/preview/theme.ts 一处，这里只搬 scope 类（机制与守卫见 src/overlay-scope.ts）。
   mirrorThemeScope(editor.view.dom, transcript, "lumir-hp-transcript");
+  // 面板里的块级全屏（M634）来源在编辑器根之外：transcript 带上「已镜像宿主」标记，遮罩的
+  // 主题 scope 据此取到同一批 CM 生成类（解析见 src/overlay-scope.ts）。标记必须在镜像之后
+  // 加——`mirrorThemeScope` 会按「基类 + 镜像类」重写容器的 className。
+  transcript.classList.add(THEME_SCOPE_HOST_CLASS);
+
+  // 块级全屏的渲染期接线（change add-harness-block-fullscreen）：模块层的渲染件不认识面板根，
+  // 装配层按**来源**（发起钮）推导主题 scope 宿主——trigger 在 transcript 内，遮罩自己会走到
+  // 上面那块「已镜像宿主」。
+  // 端口未注入时 `deps.blocks` 为空——钮照常渲染、点击无动作（与触发钮 widget 的 opener 同口径）。
+  const blockOpeners: HarnessBlockOpeners = {
+    code: (render, label, trigger) => deps.blocks?.openCodeBlock(render, label, trigger),
+    table: (source, label, trigger) => deps.blocks?.openTable(source, label, trigger),
+  };
 
   const emptyHint = document.createElement("div");
   emptyHint.className = "lumir-hp-empty";
@@ -7244,12 +7396,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const grown = seg.source.slice(seg.renderedFinalized, boundary);
       const finalizedEl = document.createElement("div");
       finalizedEl.className = "lumir-hp-md-final";
-      renderMarkdownInto(finalizedEl, grown, pathLinks);
+      renderMarkdownInto(finalizedEl, grown, pathLinks, blockOpeners);
       seg.el.insertBefore(finalizedEl, seg.tailEl);
       seg.renderedFinalized = boundary;
     }
     seg.tailEl.replaceChildren();
-    renderMarkdownInto(seg.tailEl, seg.source.slice(seg.renderedFinalized), pathLinks);
+    renderMarkdownInto(seg.tailEl, seg.source.slice(seg.renderedFinalized), pathLinks, blockOpeners);
     scrollToBottom();
   }
 
@@ -7270,7 +7422,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const el = streamingEl;
     for (const seg of textSegments) {
       seg.el.replaceChildren();
-      renderMarkdownInto(seg.el, seg.source, pathLinks);
+      renderMarkdownInto(seg.el, seg.source, pathLinks, blockOpeners);
     }
     // 纯工具轮（模型零正文产出）不挂复制钮——空源复制无意义（与 appendUserMessage 同口径）。
     if (streamingText !== "") attachCopyButton(el, streamingText);
@@ -8285,7 +8437,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         if (text !== null) {
           const body = document.createElement("div");
           body.className = "lumir-hp-body";
-          renderMarkdownInto(body, text, pathLinks);
+          renderMarkdownInto(body, text, pathLinks, blockOpeners);
           el.append(body);
           attachCopyButton(el, text); // 复制源 = 模型原始输出（留存原文）
         }
@@ -8529,6 +8681,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 清空渲染面与本地流式态（「新会话」与「切 vault」共用：两者都是「换了一个会话」）。
    *  会话真源在 Rust，这里清的是**渲染面**与只属于上一段会话的本地态。 */
   function resetView(): void {
+    // 内容换代 = 全屏遮罩里的快照已不存在（spec「内容换代时遮罩自动关闭」）：显式经既有遮罩
+    // 关闭入口（`document` 径，交还焦点），MUST NOT 让遮罩停在一份已不存在的消息上。
+    deps.blocks?.close();
     transcript.replaceChildren();
     pendingApprovals.clear();
     decidedApprovals.clear();

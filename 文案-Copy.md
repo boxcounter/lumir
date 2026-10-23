@@ -632,13 +632,13 @@
 - **D117–D119** — `src/list-filter.ts` `NO_MATCH_TEXT` / `FILTER_PLACEHOLDER` / `FILTER_LABEL`（两处浮层共用，MUST NOT 各处再写字面量）
 - **D120–D121** — `src/content-width.ts` `WIDTH_HANDLE_LABEL` / `WIDTH_SAVE_FAILED_TEXT`（toast 由 `src/main.ts` 发出）
 - **D122–D123** — `src/theme.ts` `THEME_INDICATOR_LABEL` / `THEME_SAVE_FAILED_TEXT`（DOM 写入在 `src/main.ts` `applyTheme`）
-- **D124** — `src/preview/table-trigger.ts` `TABLE_TRIGGER_LABEL`；遮罩读屏名复用 `Markdown 表格 N`（`src/preview/livePreview.ts` `tableWrappers` 唯一生成处）
+- **D124** — `src/preview/table-trigger.ts` `TABLE_TRIGGER_LABEL`；遮罩读屏名复用 `Markdown 表格 N`（`src/preview/livePreview.ts` `tableWrappers` 唯一生成处）。M634 起 harness 面板的表格块级全屏钮同取这句（`src/harness-panel.ts` `blockTriggerLabel`），遮罩读屏名按消息内序号取 D211
 - **D125–D138** — `src/tree-menu.ts`（`TRASH_CONFIRM_DIR_BODY` / `TRASH_CONFIRM_FILE_BODY` 两个模板函数）
 - **D139–D142** — `src/tree.ts`（内联编辑）
 - **D143–D147** — `src/tree.ts` `validateEntryName` **与** `src-tauri/src/fs_io.rs`（前后端同源，Rust 侧权威）
 - **D148–D151** — `src/tabs.ts` `TAB_MENU_LABEL` / `TAB_MENU_CLOSE` / `TAB_MENU_CLOSE_OTHERS` / `TAB_MENU_CLOSE_RIGHT`
 - **D152 / D157 / D158** — `src/goto-line.ts` `GOTO_LINE_LABEL` / `GOTO_LINE_PLACEHOLDER` / `gotoLineTotalText`；越界与取消静默（沿用既有机制，无新增条目）
-- **D153 / D156** — `src/preview/block-trigger.ts` `blockCopyLabel()` / `CODEBLOCK_FS_TRIGGER_LABEL`（同带 `CORNERS_ICON`）
+- **D153 / D156** — `src/preview/block-trigger.ts` `blockCopyLabel()` / `CODEBLOCK_FS_TRIGGER_LABEL`（同带 `CORNERS_ICON`）。M634 起 harness 面板的代码块全屏钮取同一个 `CODEBLOCK_FS_TRIGGER_LABEL`（`src/harness-panel.ts`），遮罩读屏名按消息内序号取 D212
 - **D154–D155** — `src/main.ts` `COPIED_TABLE_TOAST` / `COPIED_CODE_BLOCK_TOAST` / `COPY_BLOCK_FAILED_TOAST`
 - **D159–D320** — 成组的运行时表条目（后端信封、块类型词、装配层、预览装饰、保存链路、callout 类型标签、键位来由、pane、相对时间与复数档等）；逐条语境在模块注释与 `src/copy-data.ts`，本表不逐条复述
 - **D321–D325** — `src/copy-data.ts` 后端错误信封（patch 后端）
@@ -671,7 +671,7 @@
 - M236 标题栏产品标识（change product-version-display）：文本取自 `tauri.conf.json`，前端只组装（`src/modeline.ts` `identityView()`）；分隔符 `·` 纯排版。
 - M144 命令 id 更名 `wikilink.follow` → `link.follow`：非可见文案，配置层影响记此。
 - D100 之余的相对时间档、`{n}` 一类复数档：由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出。
-- 表格 / 代码块全屏遮罩与块级复制的遮罩读屏名（M240 / M277）：复用 `Markdown 表格 N` / `Markdown 代码块 N`（`src/preview/livePreview.ts` 唯一生成处）。
+- 表格 / 代码块全屏遮罩与块级复制的遮罩读屏名（M240 / M277）：复用 `Markdown 表格 N` / `Markdown 代码块 N`（`src/preview/livePreview.ts` 唯一生成处）。M634 起 harness 面板的块级全屏同一条口径——D211 / D212，序号按**消息内**同类块（纯派生读数，不进数据模型）。
 - 键位面板逐条的键位来由：来自 `src/keys.ts` 键位表 `doc` 字段（表即文档）。
 - M163 未进 deck 的 mock 文案（`demo/multi-vault.html` V5/V10/V11/V12/V13/V15_saved/V17/V18/V19）：两拍过渡态属非目标，「已加入」/ 恢复 / 「已保存 {n} 个标签」提示默认不发（主动动作本身即结果；保存留痕走逐标签既有 toast，D55/D56 一族），V5 不可达，V17/V18 是 mock 示意，V19 由系统目录选择器承担。
 - 编号徽标裸数字、modeline 主题名、provider 名、档位名 Low/High/Max：读数不属措辞。

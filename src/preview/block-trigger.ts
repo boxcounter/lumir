@@ -50,10 +50,30 @@ export function blockCopyLabel(kind: BlockCopyKind): string {
   return t("D153", { block: t(kind === "table" ? "D203" : "D204") });
 }
 
+/** 四角框图标的字形与画笔属性（**唯一一份**）：widget 侧拼成字符串注入（`CORNERS_ICON`），
+ *  DOM 直建侧（harness 面板的块级全屏钮，渲染纪律要求零 innerHTML 赋值）按同一份数据建元素
+ *  —— 字形、尺寸与描边因此只有一处可漂移。 */
+export const CORNERS_ICON_SVG = {
+  attrs: {
+    width: "14",
+    height: "14",
+    viewBox: "0 0 16 16",
+    fill: "none",
+    stroke: "currentColor",
+    "stroke-width": "1.4",
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round",
+  },
+  paths: ["M6 3 H3 V6", "M10 3 H13 V6", "M13 10 V13 H10", "M3 10 V13 H6"],
+} as const;
+
 /** 四角框图标（M235 划稿的 `corners`，1.4px 描边、currentColor）：与 direction-c 的自绘控件
- *  同一手法，形状逐字取自裁决稿 `design/prototypes/table-fs-trigger/index.html`。 */
+ *  同一手法，形状逐字取自裁决稿 `design/prototypes/table-fs-trigger/index.html`。
+ *  由 `CORNERS_ICON_SVG` 拼出（属性序即声明序，与 DOM 直建版逐项同值）。 */
 export const CORNERS_ICON =
-  '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3 H3 V6"/><path d="M10 3 H13 V6"/><path d="M13 10 V13 H10"/><path d="M3 10 V13 H6"/></svg>';
+  `<svg ${Object.entries(CORNERS_ICON_SVG.attrs)
+    .map(([name, value]) => `${name}="${value}"`)
+    .join(" ")}>${CORNERS_ICON_SVG.paths.map((d) => `<path d="${d}"/>`).join("")}</svg>`;
 
 /** 复制图标（双矩形「复制」字形，1.4px 描边、currentColor，14×14 / viewBox 16×16，
  *  与四角框同一手法）：后页只画左上两条边，前页是一整个圆角矩形。 */

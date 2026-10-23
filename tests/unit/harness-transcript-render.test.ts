@@ -23,9 +23,10 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatDate } from "../../src/copy.ts";
+import { formatDate, t } from "../../src/copy.ts";
 import { renderMarkdownInto, whenTextOf } from "../../src/harness-panel.ts";
-import type { PathLinkRenderContext } from "../../src/harness-panel.ts";
+import type { HarnessBlockOpeners, PathLinkRenderContext } from "../../src/harness-panel.ts";
+import type { CodeBlockRender } from "../../src/preview/code-block-content.ts";
 
 // ---------------------------------------------------------------------------
 // 最小 DOM 替身（只覆盖 markdown → DOM 这一小撮面）
@@ -109,22 +110,48 @@ class FakeEl {
     for (const child of this.children) out.push(...child.findTag(tagName));
     return out;
   }
+
+  /** 最近的带该类名的祖先（含自身）——块全屏的「消息内序号」判据用（`.lumir-hp-msg`）。 */
+  closest(selector: string): FakeEl | null {
+    const name = selector.startsWith(".") ? selector.slice(1) : selector;
+    let el: FakeEl | null = this;
+    while (el !== null) {
+      if (el.classes.has(name)) return el;
+      el = el.parent;
+    }
+    return null;
+  }
+
+  /** 真 DOM 的父元素入口（`closest` 缺席时的退路；替身内部用 `parent`）。 */
+  get parentElement(): FakeEl | null {
+    return this.parent;
+  }
+
+  /** 类名选择器的后代查询（仅 `.name` 形态）：序号判据只查 `.lumir-hp-block-slot`，
+   *  按数据集细分（替身不实现属性选择器）。 */
+  querySelectorAll(className: string): FakeEl[] {
+    const name = className.startsWith(".") ? className.slice(1) : className;
+    return this.find(name).filter((el) => el !== this);
+  }
+}
+
+/** `el.className = "a b"` 的赋值入口：替身把它落进类集合（find 按类名找）。 */
+function withClassName(el: FakeEl): FakeEl {
+  Object.defineProperty(el, "className", {
+    get: () => el.classNameValue,
+    set: (value: string) => {
+      el.classes.clear();
+      for (const name of value.split(/\s+/).filter(Boolean)) el.classes.add(name);
+    },
+  });
+  return el;
 }
 
 function installFakeDom(): void {
   (globalThis as unknown as Record<string, unknown>).document = {
-    createElement: (tag: string) => {
-      const el = new FakeEl(tag);
-      // `el.className = "a b"` 的赋值入口：替身把它落进类集合（find 按类名找）。
-      Object.defineProperty(el, "className", {
-        get: () => el.classNameValue,
-        set: (value: string) => {
-          el.classes.clear();
-          for (const name of value.split(/\s+/).filter(Boolean)) el.classes.add(name);
-        },
-      });
-      return el;
-    },
+    createElement: (tag: string) => withClassName(new FakeEl(tag)),
+    // 块全屏钮的图标经 createElementNS 建（面板零 innerHTML 的渲染纪律）；替身按标签名建节点。
+    createElementNS: (_ns: string, tag: string) => withClassName(new FakeEl(tag)),
     createTextNode: (text: string) => {
       const node = new FakeEl("#text", TEXT_NODE);
       node.textContent = text;
@@ -134,10 +161,14 @@ function installFakeDom(): void {
 }
 
 /** 一段 Markdown → 渲染出的 DOM 根（真渲染件 + 替身 DOM）。`ctx` 缺省 = 不链接化路径。 */
-function render(source: string, ctx?: PathLinkRenderContext): FakeEl {
+function render(
+  source: string,
+  ctx?: PathLinkRenderContext,
+  openers?: HarnessBlockOpeners,
+  host: FakeEl = new FakeEl("div"),
+): FakeEl {
   installFakeDom();
-  const host = new FakeEl("div");
-  renderMarkdownInto(host as unknown as HTMLElement, source, ctx);
+  renderMarkdownInto(host as unknown as HTMLElement, source, ctx, openers);
   return host;
 }
 
@@ -145,7 +176,7 @@ function render(source: string, ctx?: PathLinkRenderContext): FakeEl {
 function fire(el: FakeEl, type: string, event: Record<string, unknown> = {}): void {
   const listeners = el.listeners.get(type) ?? [];
   assert.ok(listeners.length > 0, `元素上没有 ${type} 监听`);
-  for (const listener of listeners) listener({ preventDefault() {}, ...event });
+  for (const listener of listeners) listener({ preventDefault() {}, stopPropagation() {}, ...event });
 }
 
 /** 路径链接上下文：`files` = 文件索引，`dirs` = 目录模型（change harness-dir-link）；
@@ -567,4 +598,138 @@ test("目录不在模型里时仍是文本（反向对照）；文件优先于�
   fire(host.find("lumir-hp-pathlink")[0], "click");
   assert.deepEqual(both.opened, [["docs/x", undefined]]);
   assert.deepEqual(both.revealed, []);
+});
+
+// ---------------------------------------------------------------------------
+// 块级全屏入口（M634，change add-harness-block-fullscreen）
+//
+// 判据落在三处：入口**结构**（slot + 悬停钮、读屏名取既有词条）、**消息内序号**（D5：只数
+// 同类块，跨消息重数）、**流式口径的入口事实**（围栏未闭合没有钮——@lezer/markdown 把未闭合
+// 围栏也解析成 FencedCode，判据因此是块的尾 CodeMark，不是「有没有节点」）。
+// 点击交出的内容（呈现计划 / 表格元素）由端口替身接住逐项断言；遮罩开合本身归视觉场景与
+// 真机验收（本层不造遮罩 DOM）。
+// ---------------------------------------------------------------------------
+
+interface OpenedBlock {
+  kind: "code" | "table";
+  label: string;
+  render?: CodeBlockRender;
+  table?: FakeEl;
+}
+
+/** 块级全屏端口替身：记录每次打开请求（面板侧的 `openCodeBlock` / `openTable`）。 */
+function fakeBlockOpeners(): { opened: OpenedBlock[]; openers: HarnessBlockOpeners } {
+  const opened: OpenedBlock[] = [];
+  const openers: HarnessBlockOpeners = {
+    code: (render, label) => void opened.push({ kind: "code", label, render }),
+    table: (source, label) => void opened.push({ kind: "table", label, table: source as unknown as FakeEl }),
+  };
+  return { opened, openers };
+}
+
+/** 一条消息根（`.lumir-hp-msg`）：序号判据从块容器向上找它。 */
+function messageHost(): FakeEl {
+  const msg = withClassName(new FakeEl("div"));
+  msg.className = "lumir-hp-msg";
+  return msg;
+}
+
+test("围栏代码块：包 slot + 悬停钮（读屏名取 D156），点击交出整块源码的呈现计划", () => {
+  const { opened, openers } = fakeBlockOpeners();
+  const host = render("前文\n\n```js\nconst a = 1\n```\n", undefined, openers);
+
+  const slots = host.find("lumir-hp-block-slot");
+  assert.equal(slots.length, 1, "围栏代码块必须包一层定位容器（全屏钮的包含块）");
+  const slots2 = host.find("lumir-hp-block-slot");
+  assert.deepEqual(slots2[0].dataset.hpBlock, "code", "slot 标记块类型（序号与断言共用）");
+  const buttons = host.find("lumir-hp-block-fs-trigger");
+  assert.equal(buttons.length, 1, "每个块一个悬停钮");
+  assert.equal(buttons[0].tagName, "button");
+  assert.equal(buttons[0].attrs.get("aria-label"), t("D156"), "钮面读屏名与 content pane 同一词条");
+  assert.equal(buttons[0].classes.has("lumir-block-trigger"), true, "形态取共享类（不另写一套壳）");
+  assert.equal(slots[0].find("lumir-hp-codeblock").length, 1, "块本体在 slot 内、内容照常上屏");
+
+  fire(buttons[0], "click");
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].kind, "code");
+  assert.equal(opened[0].label, t("D212", { index: 1 }), "遮罩读屏名 = Markdown 代码块 1");
+  const render0 = opened[0].render;
+  assert.ok(render0 !== undefined && render0.kind === "lines");
+  assert.equal(render0.lines[0].text, "```js", "首行（围栏）是头部条");
+  assert.equal(render0.lines[0].head, true);
+  assert.equal(render0.lines[1].text, "const a = 1", "内容行逐字交给遮罩（快照源自块源码）");
+});
+
+test("缩进代码块：同样有入口，且没有头部条（与 content pane 逐项同口径）", () => {
+  const { opened, openers } = fakeBlockOpeners();
+  const host = render("段落\n\n    indented one\n    indented two\n", undefined, openers);
+
+  const buttons = host.find("lumir-hp-block-fs-trigger");
+  assert.equal(buttons.length, 1);
+  fire(buttons[0], "click");
+  const render0 = opened[0].render;
+  assert.ok(render0 !== undefined && render0.kind === "lines");
+  assert.equal(render0.lines.some((line) => line.head), false, "缩进块没有围栏行 ⇒ 没有头部条");
+  assert.equal(render0.lines[0].text, "    indented one", "源码逐字（含语法缩进）");
+});
+
+test("表格：包 slot + 悬停钮（读屏名取 D124），点击交出渲染出的 <table> 与消息内序号", () => {
+  const { opened, openers } = fakeBlockOpeners();
+  const host = render("| 列 |\n|---|\n| 甲 |\n", undefined, openers);
+
+  const buttons = host.find("lumir-hp-block-fs-trigger");
+  assert.equal(buttons.length, 1);
+  assert.equal(buttons[0].attrs.get("aria-label"), t("D124"), "表格钮与 content pane 同一词条");
+  fire(buttons[0], "click");
+
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].kind, "table");
+  assert.equal(opened[0].label, t("D211", { index: 1 }), "遮罩读屏名 = Markdown 表格 1");
+  assert.equal(opened[0].table?.tagName, "table", "深克隆的源就是这个渲染出的表格");
+  assert.equal(opened[0].table?.classes.has("lumir-hp-table"), true, "结构样式随元素走（遮罩里不脱样式）");
+});
+
+test("消息内序号（D5）：只数同类块、1-based、跨消息重数", () => {
+  // 第一条消息：表格 / 代码块 / 表格 —— 表格编号 1、2，代码块不占表格号。
+  const first = messageHost();
+  const body = withClassName(new FakeEl("div"));
+  body.className = "lumir-hp-body";
+  first.append(body);
+  const open1 = fakeBlockOpeners();
+  render("| a |\n|---|\n| 1 |\n\n```js\nx\n```\n\n| b |\n|---|\n| 2 |\n", undefined, open1.openers, body);
+  for (const button of body.find("lumir-hp-block-fs-trigger")) fire(button, "click");
+  assert.deepEqual(
+    open1.opened.map((item) => item.label),
+    [t("D211", { index: 1 }), t("D212", { index: 1 }), t("D211", { index: 2 })],
+    "表格只数表格：第二张表是 2，中间那块代码块不占表格号",
+  );
+
+  // 第二条消息：编号重数。
+  const second = messageHost();
+  const body2 = withClassName(new FakeEl("div"));
+  body2.className = "lumir-hp-body";
+  second.append(body2);
+  const open2 = fakeBlockOpeners();
+  render("| c |\n|---|\n| 3 |\n", undefined, open2.openers, body2);
+  fire(body2.find("lumir-hp-block-fs-trigger")[0], "click");
+  assert.equal(open2.opened[0].label, t("D211", { index: 1 }), "序号按消息重数，不累加");
+});
+
+test("围栏未闭合（流式片段）没有入口；闭合那一帧起钮出现", () => {
+  const open = fakeBlockOpeners();
+  const streaming = render("```js\nconst a = 1", undefined, open.openers);
+  assert.equal(streaming.find("lumir-hp-codeblock").length, 1, "未闭合围栏照常按代码块上屏");
+  assert.equal(streaming.find("lumir-hp-block-fs-trigger").length, 0, "未闭合围栏不得有全屏钮");
+
+  const closed = render("```js\nconst a = 1\n```", undefined, open.openers);
+  assert.equal(closed.find("lumir-hp-block-fs-trigger").length, 1, "闭合后同一块出现入口");
+});
+
+test("块内既有交互不受入口影响：表格 cell 里的路径链接仍在、点击照常到达落点", () => {
+  const { ctx, opened } = pathCtx("projects/plans");
+  const host = render("| 列 |\n|---|\n| projects/plans |\n", ctx, fakeBlockOpeners().openers);
+  const links = host.find("lumir-hp-pathlink");
+  assert.equal(links.length, 1, "路径链接的数量与之前逐值相同（slot 只包一层，不改行内渲染）");
+  fire(links[0], "click");
+  assert.deepEqual(opened, [["projects/plans", undefined]]);
 });

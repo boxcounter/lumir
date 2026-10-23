@@ -30,7 +30,7 @@ import { runRelabels, setLanguageRoot, t } from "../../src/copy.ts";
 import { installBackend } from "./harness.ts";
 import type { FakeBackend } from "./harness.ts";
 import { createHarnessPanel } from "../../src/harness-panel.ts";
-import type { HarnessPanelEditor } from "../../src/harness-panel.ts";
+import type { HarnessBlockFullscreenPort, HarnessPanelEditor } from "../../src/harness-panel.ts";
 import type { AppShell } from "../../src/shell.ts";
 
 // ---------------------------------------------------------------------------
@@ -401,7 +401,10 @@ const EMPTY_SNAPSHOT = {
 };
 
 /** 挂载面板并装载 vault（假后端 + 假 DOM；`harness_state` 的应答由 snapshotOf 现取）。 */
-async function mountPanel(snapshotOf: () => unknown): Promise<{
+async function mountPanel(
+  snapshotOf: () => unknown,
+  blocks?: HarnessBlockFullscreenPort,
+): Promise<{
   mount: FakeEl;
   titlebar: FakeEl;
   backend: FakeBackend;
@@ -421,6 +424,7 @@ async function mountPanel(snapshotOf: () => unknown): Promise<{
   const handle = createHarnessPanel({
     shell: { titlebar } as unknown as AppShell,
     editor: editorDouble(),
+    blocks,
     togglePane: () => {},
     toast: () => {},
     openVaultPath: () => {}, // 这些用例不点路径：桩空实现
@@ -594,6 +598,38 @@ test("恢复路径的单行工具清单保持展开：折叠是「≥2 行」的
     const rows = mount.querySelectorAll(".lumir-hp-tool-row");
     assert.equal(rows.length, 1, "恰一行工具行");
     assert.equal(rows[0].hidden, false, "单行清单保持展开（唯一一行本身就是信息）");
+  } finally {
+    handle.attachTo(null);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 用例 D：内容换代关闭面板来源的全屏遮罩（M634，change add-harness-block-fullscreen §5）
+//
+// 面板里的代码块 / 表格全屏是**打开那一刻的快照**：会话切换 / 面板重载 / 切 vault 之后那条
+// 消息已不存在，遮罩必须显式退出（否则停在一份已删除的内容上）。关闭入口是端口注入的
+// `close`（装配层落到既有两个遮罩的 `document` 径），本用例判的是**调用点**：四条换代路径
+// 都经 `resetView`，同一 vault 的重复装载不是换代（不关）。
+// ---------------------------------------------------------------------------
+
+test("内容换代（切 vault / 重载会话）关闭面板来源的全屏遮罩；同 vault 重复装载不关", async () => {
+  let closed = 0;
+  const { handle } = await mountPanel(() => EMPTY_SNAPSHOT, {
+    openTable: () => {},
+    openCodeBlock: () => {},
+    close: () => void (closed += 1),
+  });
+  try {
+    const afterMount = closed;
+    // 同一 vault 的重复装载（重定位 / 重开）不是换代：面板不动渲染面，遮罩也不该退场。
+    handle.vaultChanged(VAULT);
+    assert.equal(closed, afterMount, "同一 vault 重复装载不关遮罩");
+    // 切 vault = 内容换代。
+    handle.vaultChanged("/tmp/lumir-m634-other-vault");
+    assert.equal(closed, afterMount + 1, "切 vault 必须显式关闭面板来源的遮罩");
+    // 重载会话（快照重取，如 cron 回滚）= 内容换代。
+    handle.reloadSession();
+    assert.equal(closed, afterMount + 2, "重载会话必须显式关闭面板来源的遮罩");
   } finally {
     handle.attachTo(null);
   }
