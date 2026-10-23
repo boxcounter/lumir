@@ -7,8 +7,8 @@
 #   ③ 一次 ⌘Z 撤掉整次引用（结构编辑步 = 撤销步）。
 # 判据的可读面：composer 图片卡片的编号徽标是裸数字（AX 无稳定形态），因此编号读数落在
 # transcript 的 `图片 1：<name>`（D447 含编号形态）与留存的 `lumir_label` 上（同源派生）。
-id: "220-image-quote-to-chat"
-item: 220
+id: "222-image-quote-to-chat"
+item: 222
 title: 图片摘录到对话：悬停引用钮 / 跨图选区 / 一次 ⌘Z
 fixtures: [image-quote-note.md, lightbox-bitmap.png]
 open: image-quote-note.md
@@ -115,7 +115,7 @@ steps:
       - shot: 06-一次撤销后
 ---
 
-# 220-image-quote-to-chat —— 图片摘录到对话
+# 222-image-quote-to-chat —— 图片摘录到对话
 
 ## 本场景在验什么
 
