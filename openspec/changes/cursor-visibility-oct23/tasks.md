@@ -91,12 +91,12 @@
 - [ ] 4.4 `bash scripts/gate.sh quick` 全绿，照抄 `GATE RESULT` 原文行与退出码
 - [ ] 4.5 `bash scripts/gate.sh visual` 全绿；变化基线逐张列出并由 Alex 过目（光标宽度 /
       常亮带来的像素变化 = 基线更新的人肉裁决点）
-- [ ] 4.6 新增真机场景 `scripts/acceptance/scenarios/224-caret-visibility.md` 并 PASS：
+- [ ] 4.6 新增真机场景 `scripts/acceptance/scenarios/228-caret-visibility.md` 并 PASS：
       点击 properties / doc-title / 正文前后光标截图证据（含 light + eink）、
       `editor.unchangedSince` + 文件 `unchangedSince` 的字节断言；光标高度是手感项，
       不在真机断言（AX 不暴露 caret 几何，照实登记）
 - [ ] 4.7 只有 frontmatter 的文档 / 非法 YAML 回退 / 512 行 frontmatter 三个边界在场景
-      224 或 m647 视觉场景里至少各有一条读数
+      228 或 m647 视觉场景里至少各有一条读数
 - [ ] 4.8 信息卫生：新增 fixture / 截图 / 文案 MUST NOT 出现真实 vault 内容；改动面做一次
       text 级 grep 清扫（含 `cm-lp-frontmatter-selected`、`selected` 残留）
 - [ ] 4.9 真机 dogfood（Alex 手感项）：`pnpm tauri dev` 起真实 app，打开带 frontmatter 的

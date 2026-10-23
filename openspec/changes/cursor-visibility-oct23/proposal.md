@@ -115,7 +115,7 @@ doc-title 底端。加粗 / 调 CSS `line-height` 都改不了它——量错的
    `ui-design-system` 新增「编辑器光标视觉」requirement。
 8. **测试**：新增 `tests/visual/scenes/m647-caret-geometry.spec.ts` 的属性矩阵
    （frontmatter 形状 × 标题有无 × 正文有无 × 入口 × 主题 × 字号）；光标视觉的计算样式
-   断言并入同一场景；新增真机验收场景 224（截图证据 + 文档不变；光标高度在真机 AX 不可
+   断言并入同一场景；新增真机验收场景 228（截图证据 + 文档不变；光标高度在真机 AX 不可
    断言，见 design §6）。
 
 ## 裁决点（每项给倾向；不回即按倾向落地）
@@ -184,7 +184,7 @@ doc-title 底端。加粗 / 调 CSS `line-height` 都改不了它——量错的
   推进 + 光标视觉）、`src/style.css`（如需组件常量注释）。
 - **测试**：`tests/unit/doc-title-placement.test.ts`（FrontmatterWidget 构造参数变更）、
   新增 `tests/visual/scenes/m647-caret-geometry.spec.ts`、新增
-  `scripts/acceptance/scenarios/224-caret-visibility.md`。
+  `scripts/acceptance/scenarios/228-caret-visibility.md`。
 - **视觉基线**：光标宽度 / 常亮若出现在既有整页基线里，需按
   [tests/visual/README.md](../../../tests/visual/README.md) 的纪律重新截图并由 Alex 过目
   （基线更新是人肉裁决点）。

@@ -329,7 +329,7 @@ ADR 0002 §6）。
 | `tests/unit/doc-title-placement.test.ts` | FrontmatterWidget 构造参数收窄 |
 | `tests/unit/frontmatter-caret.test.ts`（新） | `firstBodyLineStart` / 边界规范化纯函数的输入网格 |
 | `tests/visual/scenes/m647-caret-geometry.spec.ts`（新） | §4 的属性矩阵 + 光标计算样式 |
-| `scripts/acceptance/scenarios/224-caret-visibility.md`（新） | 真机截图证据 + 文档不变 |
+| `scripts/acceptance/scenarios/228-caret-visibility.md`（新） | 真机截图证据 + 文档不变 |
 
 ## 4. 属性测试矩阵（不变量级）
 
@@ -414,12 +414,12 @@ ADR 0002 §6）。
 | 单测 | `pnpm test`（新增 `tests/unit/frontmatter-caret.test.ts`；更新 doc-title-placement） | 全绿 |
 | 结构 / 几何 | `LUMIR_VISUAL_STRUCTURAL=1` 的 visual 层 + 新增 m647 场景 | 属性矩阵全绿；修前红色读数留档 |
 | 像素 | 本地 `scripts/gate.sh visual` | 全绿；变化基线逐张过目 |
-| 真机 | `node scripts/acceptance/run.mjs 224` | 场景 PASS（截图证据 + 文档不变）；光标高度归 Alex 手感项 |
+| 真机 | `node scripts/acceptance/run.mjs 228` | 场景 PASS（截图证据 + 文档不变）；光标高度归 Alex 手感项 |
 | 文档 | `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` / `bash scripts/docs-check.sh` | 全绿 |
 | 总门禁 | `bash scripts/gate.sh quick` | 照抄 `GATE RESULT` 原文行与退出码 |
 
 真机验收的边界（照实登记）：套件的 AX 输出不暴露 `AXSelectedTextRange`（见
-`scripts/acceptance/README.md` 的「光标/选区不可断言」条），所以场景 224 只能留「点击后
+`scripts/acceptance/README.md` 的「光标/选区不可断言」条），所以场景 228 只能留「点击后
 properties 撤下 / 标题让位 / 光标是短竖线」的截图证据与「文档不变」的字节断言；光标高度的
 机器判据在 chromium 结构层，不在真机层。
 
