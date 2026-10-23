@@ -19,6 +19,7 @@ import {
   quoteContextOf,
   quoteLinesOf,
   quotePrefixMatched,
+  quoteTextWithoutImages,
   reduceGestureTiming,
   resolveQuoteAnchor,
 } from "../../src/quote-gesture.ts";
@@ -115,6 +116,36 @@ test("resolveQuoteAnchor：摘录原文可含换行，整串命中（层一截�
   // 层一的前缀校验对跨行原文同样成立：摘录被截短（层一仍按行号命中，不走层二）。
   assert.deepEqual(resolveQuoteAnchor(doc, { lines: "2-3", text: "alpha\nbe" }), { from: start, to: end });
 });
+
+// --- 选区里「只有图片」的判据（change add-image-quote-to-chat 的 D4） -----------------------
+
+test("quoteTextWithoutImages：选区恰好覆盖图片源码 ⇒ 剩余为空（D4 不造空卡片）", () => {
+  const doc = "前言\n\n![[a.png]]\n\n后记";
+  const from = doc.indexOf("![[");
+  const text = "![[a.png]]";
+  assert.equal(quoteTextWithoutImages(text, from, [{ from, to: from + text.length }]), "");
+  // 候选边界的空白（行首缩进 / 行尾换行）同样视为「没有文字」——调用方按 trim 判空。
+  const padded = "  ![[a.png]]\n";
+  assert.equal(
+    quoteTextWithoutImages(padded, 0, [{ from: 2, to: 2 + text.length }]).trim(),
+    "",
+  );
+});
+
+test("quoteTextWithoutImages：图文混选保留文字、剥掉图片源码，且与 span 顺序无关", () => {
+  const doc = "首 ![x](a.png) 并 ![[b.png]] 尾";
+  const from = 0;
+  const text = doc;
+  const spans = [
+    { from: doc.indexOf("![[b.png]]"), to: doc.indexOf("![[b.png]]") + "![[b.png]]".length },
+    { from: doc.indexOf("![x]"), to: doc.indexOf("![x]") + "![x](a.png)".length },
+  ];
+  // 乱序输入（真实 collectImageRefs 已排序，这里验证函数自身不依赖顺序）。
+  assert.equal(quoteTextWithoutImages(text, from, spans), "首  并  尾");
+  // 反向验证：不剥 span 时同一段文字里明显有图片源码。
+  assert.ok(text.includes("![x](a.png)"));
+});
+
 
 // --- 浮动钮时机门（M541：选区完成后才出现；编辑器手势与 transcript 手势共用的纯状态机） --------
 

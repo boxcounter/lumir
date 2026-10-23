@@ -4,7 +4,8 @@
 // （`position: relative`）里的 `Decoration.widget`。形态纪律（壳 / 尺寸 / 圆角 / 图标色与热态 /
 // 过渡 / 出现时机 / eink 两条规则）只在 src/style.css 的共享类 `.lumir-block-trigger` 里写一份，
 // 本文件只出常量与 DOM；各钮自己的 class 只承担**位置偏移**（REVIEW.md 「同一语义两处真源」条：同一语义一处
-// 真源，四个消费者不各抄一遍形态）。
+// 真源，消费者不各抄一遍形态）。图片引用钮（change add-image-quote-to-chat）是第五个消费者：
+// 它不住在块级 slot 里，但同样只带共享类 + 一个位置 class（贴图片右下角内侧）。
 //
 // 坐标系统沿用 M240 表格全屏钮的机制（src/preview/table-trigger.ts 的文件头有完整推导）：
 // 钮的最近定位祖先是 slot 层，而横滚容器在 slot 内侧——包含块在横滚容器**之外**的绝对定位元素
@@ -26,6 +27,11 @@ export const BLOCK_COPY_TRIGGER_CLASS = "lumir-block-copy-trigger";
 
 /** 代码块放大钮的位置类（`top: 6px; right: 6px` = 贴可视盒右上角内侧，与表格放大钮同几何）。 */
 export const CODEBLOCK_FS_TRIGGER_CLASS = "lumir-codeblock-fs-trigger";
+
+/** 图片引用钮的位置类（change add-image-quote-to-chat）：`right: 6px; bottom: 6px` = 贴图片
+ *  可视盒右下角内侧——与块级钮的右上角家族错开，避免压住图片内容本身的角部细节。形态全部
+ *  来自共享类 `.lumir-block-trigger`（本 class 只承担位置）。 */
+export const IMAGE_QUOTE_TRIGGER_CLASS = "lumir-image-quote-trigger";
 
 /** 代码块触发钮的坐标系统（BlockWrapper，rank 20）：`position: relative` 的唯一职责是给钮当
  *  包含块。与 `.cm-lp-table-slot` 同机制；本层零足迹（无背景 / 边框 / 内外边距 / overflow），
@@ -53,6 +59,12 @@ export const CORNERS_ICON =
  *  与四角框同一手法）：后页只画左上两条边，前页是一整个圆角矩形。 */
 export const COPY_ICON =
   '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="7" height="7" rx="1.6"/><path d="M10 3.6 H4.6 A1.6 1.6 0 0 0 3 5.2 V10.6"/></svg>';
+
+/** 对话气泡图标（图片引用钮，change add-image-quote-to-chat）：气泡 + 两个「在输入」点；
+ *  14×14 / viewBox 16×16、1.4px 描边、currentColor，与复制 / 四角框同一手法。读屏名取
+ *  D370（与文本选区钮同一份文案），图标本身 aria-hidden（钮已带 aria-label）。 */
+export const QUOTE_ICON =
+  '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.4" y="3.2" width="11.2" height="7.6" rx="1.4"/><path d="M5.8 10.8v2.4l2.6-2.4"/><path d="M6.3 7h.01M9.7 7h.01"/></svg>';
 
 /** 复制能力的口子（装配层注入；未接线返回 null，与 `PreviewContext.lightbox()` 同口径）。 */
 export type BlockCopyOpener = () => { copy(range: BlockCopyRange): void } | null;

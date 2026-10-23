@@ -109,6 +109,32 @@ test("insertBlockAtCaret：图片卡片块与引用卡同语义（段中拆两�
   assert.deepEqual(caret, { block: 2, offset: 0 });
 });
 
+test("图文摘录的插入编排：卡片 + 两张图 → 块序 [卡, 图1, 图2, 段落]、光标落尾段", () => {
+  // change add-image-quote-to-chat：面板的 insertQuoteWithImages 用同一组原语依次落位
+  // （卡片走 insertCardAtCaret，图片逐个走 insertBlockAtCaret），MUST NOT 另写拆段逻辑。
+  const image2: ComposerBlock = {
+    kind: "image",
+    card: { name: "pasted-fedcba9876543210.webp", sourceMime: "image/webp" },
+  };
+  let next: ComposerBlock[] = [para("前段文字后段")];
+  let caret = { block: 0, offset: 2 };
+  let result = insertCardAtCaret(next, caret, cardA);
+  next = result.blocks;
+  caret = result.caret;
+  result = insertBlockAtCaret(next, caret, imageBlock);
+  next = result.blocks;
+  caret = result.caret;
+  result = insertBlockAtCaret(next, caret, image2);
+  next = result.blocks;
+  caret = result.caret;
+
+  assert.deepEqual(next, [para("前段"), quote(cardA), imageBlock, image2, para("文字后段")]);
+  assert.deepEqual(caret, { block: 4, offset: 0 }, "光标落最后一张图之后的段落（承接继续输入）");
+  // 只有图片、无卡片（D4）：同一原语链从空输入区起插，块序 [图, 空段落]。
+  const imagesOnly = insertBlockAtCaret([para("")], { block: 0, offset: 0 }, imageBlock);
+  assert.deepEqual(imagesOnly.blocks, [imageBlock, para("")]);
+});
+
 // ── 粘贴净化（quirk ①）：纯文本经模型插入，\n 拆段落 ─────────────────────────
 
 test("insertPlainTextAtCaret：单行插入、光标落插入文本末尾", () => {

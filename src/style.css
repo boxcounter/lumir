@@ -1365,8 +1365,9 @@ body {
   position: relative;
 }
 
-/* 块级动作钮的**共享形态类**（M277 抽取，四个消费者：表格复制 / 表格放大 / 代码块复制 /
-   代码块放大）。形态纪律逐条来自 M235 划稿的推荐档 `inside-corners-hover`（M240 已落地）：
+/* 块级动作钮的**共享形态类**（M277 抽取；消费者：表格复制 / 表格放大 / 代码块复制 /
+   代码块放大 / 图片引用——change add-image-quote-to-chat 起第五个消费者）。形态纪律逐条来自
+   M235 划稿的推荐档 `inside-corners-hover`（M240 已落地）：
    位置 = 右上角内侧叠放（各钮自己的位置 class 给 top/right，见下）；
    壳 = --preview-bg + 1px --border hairline，圆角 r6（小型控件档），尺寸 26×24
    （design-tokens-v1.md:212 的 `--layout-tb-btn` 侧栏内变体——本仓没有 30×28 那个 token 的
@@ -1414,11 +1415,19 @@ body {
   top: 6px;
   right: 36px;
 }
+/* 图片引用钮（change add-image-quote-to-chat）：贴图片可视盒右下角内侧——与块级钮的右上角
+   家族错开，避免压住图片内容本身的角部细节。形态全部来自上面的共享类（本 class 只承担位置）。 */
+.lumir-image-quote-trigger {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+}
 
-/* hover 块的可视盒即浮现（表格与代码块的 slot 同判据）；键盘焦点落在钮上（focus-visible）
-   同样浮现——hover 之外的唯一入口，保持「可见即可用」。 */
+/* hover 块的可视盒即浮现（表格与代码块的 slot 同判据；图片取挂载盒——它贴住图片自身宽度）；
+   键盘焦点落在钮上（focus-visible）同样浮现——hover 之外的唯一入口，保持「可见即可用」。 */
 .cm-lp-table-slot:hover .lumir-block-trigger,
 .cm-lp-codeblock-slot:hover .lumir-block-trigger,
+.cm-lp-image-box:hover .lumir-block-trigger,
 .lumir-block-trigger:focus-visible {
   opacity: 1;
   visibility: visible;
@@ -1456,6 +1465,7 @@ body {
 }
 :root[data-theme="eink"] .cm-lp-table-slot:hover .lumir-block-trigger,
 :root[data-theme="eink"] .cm-lp-codeblock-slot:hover .lumir-block-trigger,
+:root[data-theme="eink"] .cm-lp-image-box:hover .lumir-block-trigger,
 :root[data-theme="eink"] .lumir-block-trigger:focus-visible {
   background: var(--sel);
   color: var(--sel-text);
@@ -1467,7 +1477,8 @@ body {
    `.lumir-block-trigger:hover` (0,2,0)——不抬到这里，这一层在 eink 下会被静默吃掉（底色与前景仍
    来自上面那条：`--sel` + `--sel-text`，此处不重复声明值）。 */
 :root[data-theme="eink"] .cm-lp-table-slot:hover .lumir-block-trigger:hover,
-:root[data-theme="eink"] .cm-lp-codeblock-slot:hover .lumir-block-trigger:hover {
+:root[data-theme="eink"] .cm-lp-codeblock-slot:hover .lumir-block-trigger:hover,
+:root[data-theme="eink"] .cm-lp-image-box:hover .lumir-block-trigger:hover {
   background-image: linear-gradient(var(--hover), var(--hover));
 }
 

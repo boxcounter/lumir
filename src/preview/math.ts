@@ -19,6 +19,7 @@ import { findClosingRun, runLen } from "./lexical";
 import { findTables, tableAt } from "./table";
 import type { TableModel } from "./table";
 import { t } from "../copy";
+import { isInsideCodeContext } from "./code-context";
 
 export interface MathSpan {
   /** 整条公式的范围 `[from, to)`，含定界 `$` / `$$`。 */
@@ -112,17 +113,8 @@ function scanInlineEnd(text: string, from: number): number | null {
   return null;
 }
 
-const CODE_NODE_NAMES = new Set(["FencedCode", "CodeBlock", "InlineCode", "HTMLBlock"]);
-
-/** pos 是否落在代码上下文（fenced/indented/inline code、HTML block）内。 */
-export function isInsideCodeContext(tree: ReturnType<typeof syntaxTree>, pos: number): boolean {
-  let node: ReturnType<ReturnType<typeof syntaxTree>["resolveInner"]> | null = tree.resolveInner(pos, 0);
-  while (node) {
-    if (CODE_NODE_NAMES.has(node.name)) return true;
-    node = node.parent;
-  }
-  return false;
-}
+// 代码上下文判据在 ./code-context（模块头记着理由：本模块的参数属性构造器挡着零 DOM 单测，
+// 而选区图片枚举必须与装饰层共用同一份判据）。本模块只 import 局部用，不再导出。
 
 // ---------------------------------------------------------------------------
 // 渲染：KaTeX renderToString 同步产出 HTML，按「模式 + 源码」缓存（含失败结果，

@@ -635,6 +635,10 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-end-marker-text": { lineHeight: "1.4" },
 
   ".cm-lp-image": { display: "inline-block", width: "100%", margin: "var(--sp-3) 0" },
+  // 图片引用钮的挂载盒（change add-image-quote-to-chat）：块级、贴住图片自身宽度。宽图 /
+  // 固有宽不定的图盒宽 = 栏宽 = 图宽；窄图由 attachments.ts 的 settle 按实测宽度钉住
+  // （inline width，max-width 在这里兜住窗口变窄）。零内外边距，不影响 M182 的宽度判据面。
+  ".cm-lp-image-box": { display: "block", position: "relative", maxWidth: "100%" },
   ".cm-lp-image img": { maxWidth: "100%", borderRadius: "var(--r4)", display: "block" },
   ".cm-lp-image-status": { color: "var(--text-3)", fontSize: "calc(12.5em / 15)" },
   // 失败 / 不支持态：否定语义取 --danger 文字（旧 token 层的 --accent 在旧色板里同时兼任

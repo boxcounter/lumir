@@ -25,8 +25,19 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { WidgetType } from "@codemirror/view";
+import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
+import type { EditorState } from "@codemirror/state";
 import { errorMessage } from "../ipc";
 import { t } from "../copy";
+import { BLOCK_TRIGGER_CLASS, IMAGE_QUOTE_TRIGGER_CLASS, QUOTE_ICON } from "./block-trigger";
+import { isInsideCodeContext } from "./code-context";
+import { detectFrontmatter } from "./frontmatter";
+import { findTables, tableAt } from "./table";
+import { findWikilinkSpans } from "./wikilinks";
+import type { WikilinkResolver } from "./livePreview";
+// 浮动钮钳制的**同一份**实现（change add-image-quote-to-chat 的 spec：引用钮与文本选区摘录钮
+// 同一钳制口径）。MUST NOT 在预览层复制一份算式（REVIEW.md「同一语义两处真源」条）。
+import { clampGestureButton } from "../quote-gesture";
 
 /** 扩展名的打开/展示分类。md = Markdown（md 模式，可编辑 + live preview）；
  *  code = code 模式（有语言包则高亮，无则纯文本）；image = 图片附件；
@@ -298,6 +309,128 @@ export function resolveImagePath(ref: string, currentFilePath: string | undefine
   return parts.join("/");
 }
 
+// ---------------------------------------------------------------------------
+// 选区内的图片枚举（change add-image-quote-to-chat design §2）
+//
+// 一次文本摘录手势要把选区里**已渲染的图片**一起带进 composer。判据与渲染层逐条相同，MUST NOT
+// 在这里新写图片语法 / 代码上下文 / 表格判据：
+//   - 标准 md 图片：语法树 `Image` 节点（collectSyntaxDecorations 的同一判据）；表格内的引用在
+//     渲染层被整类跳过（表格只放行 InlineCode / 强调系 / Link / URL），这里同样跳过；
+//   - `![[...]]`：`findWikilinkSpans` 的 embed 分支，语义解析走 resolver（与 buildWikilink
+//     同判据），未接线时走降级路径（与 buildWikiEmbedWidget 同判据）；
+//   - 代码上下文判据取 code-context.ts 的唯一实现（与 collectWikilinks 同款）。
+// 渲染不出 `<img>` 的引用（远程 http(s) 的幻影源、解析不到、非图片扩展、笔记嵌入）一律跳过。
+// ---------------------------------------------------------------------------
+
+/** 选区内的一个图片引用：`from` / `to` 是引用原文在文档里的范围（去重与「只有图片」判定用），
+ *  `path` 是解析后的 vault 相对路径（引用事务读 Vault 字节用），`rawRef` 是引用原文。 */
+export interface ImageRef {
+  from: number;
+  to: number;
+  path: string;
+  rawRef: string;
+}
+
+/** collectImageRefs 的上下文面（PreviewContext 的三条查询的结构化最小面）。 */
+export interface ImageRefContext {
+  currentFilePath(): string | undefined;
+  attachmentProvider(): AttachmentProvider | null;
+  wikilinkResolver(): WikilinkResolver | null;
+}
+
+/**
+ * 枚举文档区间 [from, to) 内的图片引用：按文档序、按路径去重（同一张图一次引用只带一次——
+ * 避免同一份字节写两遍、也避免模型侧两张同图各占一个编号）。空区间 / 无图片返回空数组。
+ */
+export function collectImageRefs(
+  state: EditorState,
+  from: number,
+  to: number,
+  ctx: ImageRefContext,
+): ImageRef[] {
+  const lo = Math.max(0, Math.min(from, to));
+  const hi = Math.min(state.doc.length, Math.max(from, to));
+  if (hi <= lo) return [];
+  const provider = ctx.attachmentProvider();
+  if (provider === null) return []; // 附件能力未接线：所有引用都只渲染成占位，没有可引用的图片
+  const { doc } = state;
+  const tree = ensureSyntaxTree(state, hi, 25) ?? syntaxTree(state);
+  const fm = detectFrontmatter(doc);
+  const tables = findTables((start, end) => doc.sliceString(start, end), doc.length, tree, lo, hi);
+  const refs: ImageRef[] = [];
+  const overlaps = (start: number, end: number): boolean => start < hi && end > lo;
+
+  tree.iterate({
+    from: lo,
+    to: hi,
+    enter(ref) {
+      if (ref.name !== "Image") return;
+      if (!overlaps(ref.from, ref.to)) return;
+      if (fm !== null && ref.from >= fm.from && ref.to <= fm.to) return;
+      // 表格内（含降级表）的标准图片不渲染：渲染层只放行行内 code / 强调系 / Link / URL。
+      if (tableAt(tables, ref.from, ref.to) !== undefined) return;
+      const url = ref.node.getChild("URL");
+      if (url === null) return;
+      const target = doc.sliceString(url.from, url.to);
+      // 远程 http(s) 引用没有字节来源（渲染层给空 payload 的幻影源，永远落占位），不可引用。
+      if (/^https?:\/\//.test(target)) return;
+      const path = resolveImagePath(target, ctx.currentFilePath());
+      if (!isImageName(path)) return;
+      refs.push({ from: ref.from, to: ref.to, path, rawRef: doc.sliceString(ref.from, ref.to) });
+    },
+  });
+
+  const resolver = ctx.wikilinkResolver();
+  let line = doc.lineAt(lo);
+  while (line.from <= hi) {
+    for (const span of findWikilinkSpans(line.text)) {
+      if (!span.embed) continue;
+      const spanFrom = line.from + span.from;
+      const spanTo = line.from + span.to;
+      if (!overlaps(spanFrom, spanTo)) continue;
+      if (fm !== null && spanFrom >= fm.from && spanTo <= fm.to) continue;
+      if (isInsideCodeContext(tree, spanFrom)) continue;
+      const raw = doc.sliceString(spanFrom, spanTo);
+      const path = resolveEmbeddedImagePath(raw, resolver, provider);
+      if (path === null) continue;
+      refs.push({ from: spanFrom, to: spanTo, path, rawRef: raw });
+    }
+    if (line.number >= doc.lines) break;
+    line = doc.line(line.number + 1);
+  }
+
+  refs.sort((a, b) => a.from - b.from);
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    if (seen.has(ref.path)) return false;
+    seen.add(ref.path);
+    return true;
+  });
+}
+
+/** `![[...]]` → 图片的 vault 相对路径；解析不到 / 非图片 / 渲染层会给占位（笔记嵌入、未解析、
+ *  provider 缺失已在上游排除）时返回 null。两条分支分别与 buildWikilink（有 resolver）与
+ *  buildWikiEmbedWidget（无 resolver 的降级路径）逐条同判据。 */
+function resolveEmbeddedImagePath(
+  raw: string,
+  resolver: WikilinkResolver | null,
+  provider: AttachmentProvider,
+): string | null {
+  if (resolver !== null) {
+    const result = resolver.resolve(raw);
+    // pending（undefined）也跳过：解析尚未到达时装饰层只给 pending 样式、没有图片。
+    // ambiguous 与 resolved 同档：渲染层对 embed 只看 `path`（binding 注释：ambiguous 的
+    // `path` 是 chosen 目标），因此歧义但已选定目标的引用照常渲染成图片。
+    if (result === undefined) return null;
+    if (result.status !== "resolved" && result.status !== "ambiguous") return null;
+    if (result.embed_target !== "attachment") return null;
+    return result.path !== null && isImageName(result.path) ? result.path : null;
+  }
+  const target = raw.slice(3, -2).split("|")[0].trim();
+  if (!isImageName(target)) return null;
+  return target.includes("/") ? target.replace(/^\.?\//, "") : provider.resolveByName(target);
+}
+
 /** 替换区或其内容的可见尺寸（布局盒，单位 px）。 */
 export interface ImageBox {
   width: number;
@@ -418,6 +551,36 @@ export function forgetGeometry(key: string): void {
  *  句柄的纯桩 / 单测）时不传——图片因此没有双击路径，与 attachmentProvider 未接线即走占位同一口径。 */
 export type ImageOpenHandler = (img: HTMLImageElement, rawRef: string) => void;
 
+/** 图片引用钮的接线口（change add-image-quote-to-chat）：点击图片右下角的「摘录到对话」钮时
+ *  回调——`key` 是解析后的 vault 相对路径（widget 已有），`rawRef` 只用于人侧 / 错误提示。
+ *  未接线时不渲染钮（与 onDoubleClick 同一口径：能力没装配是结构性表现，不是一条开关）。 */
+export type ImageQuoteHandler = (key: string, rawRef: string) => void;
+
+/** 引用钮贴图片右下角内侧的留白（px；与 style.css 的 `.lumir-image-quote-trigger` 同值）。 */
+const IMAGE_QUOTE_INSET = 6;
+
+/**
+ * 引用钮的落位（纯函数，change add-image-quote-to-chat 的「同一钳制口径」条款）：
+ * 期望落点 = 图片右下角内侧 6px；再按既有浮动钮钳制（`clampGestureButton`，与文本选区摘录钮
+ * 同一份实现）把钮**整体**收进可视带——图片比可视区高 / 宽时（长图、横向滚动），钮不会落在
+ * 可视区之外。`image` / `box` / `band` 必须在同一坐标空间（本函数用「相对挂载盒」的坐标）。
+ */
+export function imageQuoteButtonPlacement(
+  image: { left: number; right: number; top: number; bottom: number },
+  box: { left: number; top: number },
+  band: { left: number; top: number; width: number; height: number },
+  size: { width: number; height: number },
+): { left: number; top: number } {
+  return clampGestureButton(
+    {
+      left: image.right - box.left - size.width - IMAGE_QUOTE_INSET,
+      top: image.bottom - box.top - size.height - IMAGE_QUOTE_INSET,
+    },
+    size,
+    band,
+  );
+}
+
 /** 内联图片 widget：异步读字节，成功渲染 <img>，读取失败 / 解码失败 / 渲染不出可见像素时
  *  原地换可见占位（不抛错、不破图、不留零高度空白）。
  *
@@ -430,20 +593,35 @@ export class ImageWidget extends WidgetType {
   readonly rawRef: string;
   /** 放大查看的双击回调（未接线时为 undefined）。 */
   readonly onDoubleClick: ImageOpenHandler | undefined;
+  /** 图片引用钮的回调（未接线时为 undefined——钮不渲染）。 */
+  readonly onQuote: ImageQuoteHandler | undefined;
 
-  constructor(key: string, load: () => Promise<string>, rawRef: string, onDoubleClick?: ImageOpenHandler) {
+  constructor(
+    key: string,
+    load: () => Promise<string>,
+    rawRef: string,
+    onDoubleClick?: ImageOpenHandler,
+    onQuote?: ImageQuoteHandler,
+  ) {
     super();
     this.key = key;
     this.load = load;
     this.rawRef = rawRef;
     this.onDoubleClick = onDoubleClick;
+    this.onQuote = onQuote;
   }
 
   eq(other: ImageWidget): boolean {
     // rawRef 参与相等性：alt / 加载文案 / 占位文案都取自它——两条引用同一个目标但原文不同的
     // 引用（`![alt](a.svg)` 与 `![[a.svg]]`）必须各自渲染自己那条引用文本。
     // 双击回调**不参与**：它不改变渲染结果，参与进来只会让装饰无谓重建（change design §3）。
-    return other.key === this.key && other.rawRef === this.rawRef;
+    // 引用钮**按在场判据参与**（change add-image-quote-to-chat）：钮是真实 DOM，装配口子
+    // 从无到有（注入）或从有到无时必须重建，否则 eq 会把旧 DOM 原样留下、钮不出现 / 不消失。
+    return (
+      other.key === this.key &&
+      other.rawRef === this.rawRef &&
+      (other.onQuote === undefined) === (this.onQuote === undefined)
+    );
   }
 
   toDOM(): HTMLElement {
@@ -494,6 +672,58 @@ export class ImageWidget extends WidgetType {
         const img = document.createElement("img");
         img.alt = this.rawRef;
         img.onerror = fallback;
+        // 图片引用钮的挂载盒（change add-image-quote-to-chat）：一个贴住**图片自身宽度**的
+        // 定位层，钮贴它的右下角。宽图 / 固有宽不定的图盒宽 = 栏宽 = 图宽；窄图按上一次
+        // 渲染几何（或 settle 时的实测宽度）钉住——否则钮会落到栏宽右缘、离开图片一大截。
+        // 盒本身是块级、零内外边距，M182 的宽度判据面（包装盒）与图片布局都不受影响。
+        const boxEl = document.createElement("span");
+        boxEl.className = IMAGE_BOX_CLASS;
+        if (reserve !== null && reserve.maxWidth !== null) boxEl.style.width = `${reserve.maxWidth}px`;
+        boxEl.append(img);
+        // 引用钮（D370 文案，与文本选区钮同一份）：只挂在**终态 `<img>`** 旁边——加载中 /
+        // 读取失败 / 终态不可见三类占位没有 `<img>`，因此「占位不可引用」是结构性事实。
+        // mousedown / click 都阻止默认与冒泡：不让钮抢走编辑器选区，也不触发图片双击放大。
+        if (this.onQuote !== undefined) {
+          const quote = this.onQuote;
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = `${BLOCK_TRIGGER_CLASS} ${IMAGE_QUOTE_TRIGGER_CLASS}`;
+          button.setAttribute("aria-label", t("D370"));
+          button.innerHTML = QUOTE_ICON;
+          button.addEventListener("mousedown", (event) => event.preventDefault());
+          button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            quote(this.key, this.rawRef);
+          });
+          // 落位 = 图片右下角内侧 6px，再按既有浮动钮钳制口径收进**编辑器可视区**（长图 / 横向
+          // 滚动时钮不会落在可视区外；spec 的「同一钳制口径」条款）。只在鼠标进入挂载盒时量一次：
+          // 钮随 hover 出现，位置取出现那一刻的真实几何；CSS 的右下角位置是量之前的兜底。
+          const place = (): void => {
+            const boxRect = boxEl.getBoundingClientRect();
+            const imageRect = img.getBoundingClientRect();
+            const scroller = wrap.closest(".cm-scroller");
+            const viewRect = (scroller ?? wrap.parentElement)?.getBoundingClientRect();
+            if (viewRect === undefined) return;
+            const placed = imageQuoteButtonPlacement(
+              { left: imageRect.left, right: imageRect.right, top: imageRect.top, bottom: imageRect.bottom },
+              { left: boxRect.left, top: boxRect.top },
+              {
+                left: viewRect.left - boxRect.left,
+                top: viewRect.top - boxRect.top,
+                width: viewRect.width,
+                height: viewRect.height,
+              },
+              { width: button.offsetWidth, height: button.offsetHeight },
+            );
+            button.style.left = `${placed.left}px`;
+            button.style.top = `${placed.top}px`;
+            button.style.right = "auto";
+            button.style.bottom = "auto";
+          };
+          boxEl.addEventListener("mouseenter", place);
+          boxEl.append(button);
+        }
         // 放大查看（M184）：双击**只挂在这一张终态 `<img>` 上**——加载中状态块、读取失败与终态
         // 不可见三类形态都没有 `<img>`，因此「占位不可点开」是结构性事实，不是一条要维护的开关。
         // 阻止默认行为与公式 / mermaid widget 同款（src/preview/math.ts）：原生 caret / 选区若滞留
@@ -528,7 +758,13 @@ export class ImageWidget extends WidgetType {
           const box = boxOf(img);
           if (imageVisible(box)) {
             // 记下这次渲染的几何（含当时的栏宽），供本次会话内后续重建预留空间（M187）。
-            rememberGeometry(this.key, { box, column: columnOf(wrap, box.width) });
+            const column = columnOf(wrap, box.width);
+            rememberGeometry(this.key, { box, column });
+            // 窄图把引用钮的挂载盒钉在本次渲染出的宽度上（判据与 imageReserve 同一条：
+            // 窄于栏宽的图不拉伸，钮必须贴图片右缘而不是栏宽右缘）。
+            if (this.onQuote !== undefined && box.width < column - 1) {
+              boxEl.style.width = `${box.width}px`;
+            }
             return;
           }
           const width = imageFallbackWidth(box, {
@@ -539,7 +775,7 @@ export class ImageWidget extends WidgetType {
           if (!imageVisible(boxOf(img))) fallback();
         };
         img.onload = settle;
-        wrap.append(img);
+        wrap.append(boxEl);
         img.src = src;
         // data: URL 常在赋 src 后**同步** complete：不补一次探测就等不到 load 事件的终态处置。
         // 同步完成时把 settle 推到微任务：CM 在同一次同步执行里把 widget 的 DOM 插进行里
@@ -577,6 +813,10 @@ function columnOf(wrap: HTMLElement, fallback: number): number {
 /** 预留占位元素的类名（样式全部内联：尺寸逐引用不同，theme.ts 里不设规则；类名留给
  *  排查时在 DOM 上认元素）。 */
 const IMAGE_RESERVE_CLASS = "cm-lp-image-reserve";
+
+/** 引用钮挂载盒的类名（change add-image-quote-to-chat）：`display: block; position: relative`
+ *  + 窄图按实测宽度钉住（样式在 style.css 的 `.cm-lp-image-box`），钮是它的绝对定位后代。 */
+const IMAGE_BOX_CLASS = "cm-lp-image-box";
 
 function errorChip(text: string): HTMLElement {
   const chip = document.createElement("span");
