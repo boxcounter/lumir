@@ -480,6 +480,14 @@ mod tests {
         );
         assert!(PATH_REFERENCE.contains("扩展名"), "{PATH_REFERENCE}");
         assert!(PATH_REFERENCE.contains(":行号"), "{PATH_REFERENCE}");
+        // 行范围形态（change add-path-line-range-links design §5 / D3）：识别能力只对模型
+        // 写出来的形态起作用，纪律段不写这一句，`:起-止` 的出现率就取决于模型自觉。
+        assert!(PATH_REFERENCE.contains(":起-止"), "{PATH_REFERENCE}");
+        assert!(PATH_REFERENCE.contains("一段连续行"), "{PATH_REFERENCE}");
+        assert!(
+            PATH_REFERENCE.contains("两端的行号都取自你实际读到的位置"),
+            "{PATH_REFERENCE}"
+        );
         assert!(
             PATH_REFERENCE.contains("只引用工具结果里真实出现过的路径"),
             "{PATH_REFERENCE}"

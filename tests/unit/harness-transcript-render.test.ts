@@ -458,6 +458,51 @@ test("Enter 键与点击同一出口；无行号时 open 收到 undefined", () =
   assert.deepEqual(opened, [["a.md", undefined]]);
 });
 
+// ---------------------------------------------------------------------------
+// change add-path-line-range-links：`:起-止` 行范围（渲染面）
+// ---------------------------------------------------------------------------
+
+test("行范围引用渲染成**一个**可点元素，文本逐字不变、点击只交出起始行", () => {
+  const { ctx, opened } = pathCtx("notes/a.md");
+  const source = "见 notes/a.md:12-40 完";
+  const host = render(source, ctx);
+  const links = host.find("lumir-hp-pathlink");
+  assert.equal(links.length, 1, "整段一个元素，不按 `-` 或 `:` 拆成两个");
+  assert.equal(links[0].tagName, "button");
+  assert.equal(links[0].textContent, "notes/a.md:12-40", "展示文本含整个后缀，不重写原文");
+  assert.equal(host.textContent, source, "周围文本逐字不变");
+  fire(links[0], "click");
+  assert.deepEqual(opened, [["notes/a.md", 12]], "落点 = 起；止不进装配层");
+  fire(links[0], "keydown", { key: "Enter" });
+  assert.deepEqual(opened, [
+    ["notes/a.md", 12],
+    ["notes/a.md", 12],
+  ]);
+
+  // 行内代码里的行范围同样在列（与既有路径链接同一宿主面）。
+  const inline = render("见 `notes/a.md:12-40` 完", ctx);
+  const inlineLinks = inline.find("lumir-hp-pathlink");
+  assert.equal(inlineLinks.length, 1);
+  assert.equal(inlineLinks[0].textContent, "notes/a.md:12-40");
+});
+
+test("畸形行范围只链接路径本身（点击不带行落点）", () => {
+  const { ctx, opened } = pathCtx("notes/a.md");
+  for (const [source, why] of [
+    ["见 notes/a.md:40-12 完", "止 < 起"],
+    ["见 notes/a.md:12- 完", "缺止段"],
+    ["见 notes/a.md:9-12-15 完", "三段"],
+  ] as Array<[string, string]>) {
+    const host = render(source, ctx);
+    const links = host.find("lumir-hp-pathlink");
+    assert.equal(links.length, 1, `${source}：路径本身可点`);
+    assert.equal(links[0].textContent, "notes/a.md", `${source}：${why} ⇒ 可点范围止于路径`);
+    assert.equal(host.textContent, source, "后缀留作普通文本，逐字不变");
+  }
+  fire(render("见 notes/a.md:40-12 完", ctx).find("lumir-hp-pathlink")[0], "click");
+  assert.deepEqual(opened.at(-1), ["notes/a.md", undefined], "不产行落点");
+});
+
 test("同一源两次渲染结果一致（流式尾块每帧重渲的确定性）", () => {
   const { ctx } = pathCtx("notes/a.md", "b.md");
   const source = "见 notes/a.md:3 与 b.md，再看 c.md 完";
