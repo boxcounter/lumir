@@ -67,7 +67,7 @@
       `Image 1`、缩略图在场；一次 ⌘Z 后卡片消失
 - [x] 5.3 同场景：选区跨文字与图片 → composer 依次出现引用卡与图片块；一次 ⌘Z 全撤
 - [x] 5.4 同场景反向验证：加载中 / 失败占位图片 hover **不**出现钮；`svg` 引用给 toast 且不插卡片
-- [ ] 5.5 既有整页基线：默认不动图的场景**零更新**；若实现导致任何基线变化，停下报 Alex 过目
+- [x] 5.5 既有整页基线：**零更新**（`git status` 对 `tests/visual/baselines` 零改动；gate visual 全量像素层跑过两轮，均 13/13 PASS）
 
 ## 6. 真机验收场景
 
@@ -81,8 +81,8 @@
 
 ## 7. 验证
 
-- [ ] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 7.2 `bash scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行 + 退出码）
-- [ ] 7.3 `bash scripts/gate.sh visual` 全绿（动过 `src/style.css` 与 `src/preview/**`，必须本地跑）
-- [ ] 7.4 信息卫生清扫：新增 fixture / 场景 / 文档对改动面做一次 text 级 grep，真实 vault 内容、真实
-      路径、真实人名零命中（图片 fixture 用合成像素）
+- [x] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（`Totals: 33 passed, 0 failed (33 items)`）
+- [x] 7.2 `bash scripts/gate.sh quick` 全绿：`GATE RESULT: 11/11 PASS（SKIP 0）`（退出码 0；final 树的 `gate.sh visual` 里 quick 段同样 11/11 PASS）
+- [x] 7.3 `bash scripts/gate.sh visual` 全绿：`GATE RESULT: 13/13 PASS（SKIP 0）`（退出码 0；visual-regression 489s，含整页 / 元素像素对比）
+- [x] 7.4 信息卫生清扫：改动面（新增 / 修改的全部文件）对真实 vault 内容、真实路径、真实人名做 text 级
+      grep——零命中；图片 fixture 全为合成像素（1×1 / 96×48 纯色 PNG、纯几何 SVG）
