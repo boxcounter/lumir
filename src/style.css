@@ -2152,6 +2152,19 @@ body {
   padding: 3px var(--sp-4);
   color: var(--text-3);
 }
+/* 行壳（M646，change vault-and-session-removal）：切换钮与移除钮是**并列兄弟**——WKWebView
+   把嵌套 button 当叶子、AX 树不暴露内层（M351 finding，会话浮层的删除钮是同一形态）。
+   行距与底色仍留在 `.vault-row` 上：它是 flex:1 的子项，而当前项没有移除钮（唯一子项时
+   宽度与底色逐像素不变）——底色不迁到壳上，是为了让悬停移除钮时只有它自己上 danger 一档。 */
+.vault-row-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.vault-row-wrap > .vault-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .vault-row {
   display: flex;
   flex-direction: column;
@@ -2230,6 +2243,65 @@ body {
   font-size: var(--fs-label);
   color: var(--text);
   text-decoration: underline;
+}
+/* 移除钮（M646）：逐项复用会话浮层删除钮的规格（`.lumir-hp-sesspop-del`）——20×20、常驻
+   淡色 ×、悬停才上 danger 一档，行的默认视觉重心因此仍在切换上。不新增色值 / 字号 / 圆角。 */
+.vault-row-del {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--r4);
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--dur-ui) var(--ease-standard),
+    color var(--dur-ui) var(--ease-standard);
+}
+.vault-row-del:hover {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+/* 确认态（行内两步确认，语汇同会话浮层的删除确认）：确认句 + 移除 + 取消三个兄弟。确认句
+   用次一级字色 / 字号并允许折行——它要点名显示名，再写「磁盘上的目录与文件不受影响」这条
+   用户最担心的约定。 */
+.vault-row-confirm {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px var(--sp-4);
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  line-height: var(--lh-ui);
+}
+.vault-row-confirm-yes,
+.vault-row-confirm-no {
+  flex: none;
+  padding: 2px var(--sp-2);
+  border-radius: var(--r4);
+  font: inherit;
+  font-size: var(--fs-label);
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.vault-row-confirm-yes {
+  border: none;
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.vault-row-confirm-yes:disabled {
+  cursor: default;
+}
+.vault-row-confirm-no {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-2);
+}
+.vault-row-confirm-no:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 .vault-sep {
   flex: 0 0 auto;

@@ -44,11 +44,14 @@ import {
   vaultOpen,
   vaultOpenPath,
   vaultRemap,
+  vaultRemove,
+  vaultRestore,
   vaultSessionGet,
   vaultSessionPut,
   wikilinkRetargetText,
 } from "./ipc";
 import type { NamingOutcome } from "./bindings/NamingOutcome";
+import type { RemovedVault } from "./bindings/RemovedVault";
 import type { SemanticNameTask } from "./paste-image";
 import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
 import { invoke } from "@tauri-apps/api/core";
@@ -69,6 +72,7 @@ import {
   createVaultSwitcher,
   createVaultSwitchGate,
   samePath,
+  vaultRemovedText,
 } from "./vault-switcher";
 import type { VaultSwitcherHandle } from "./vault-switcher";
 import { createReadingPositionStore } from "./reading-position";
@@ -1847,6 +1851,21 @@ const remapPrompt = createVaultRemapPrompt({
   fail: (message) => toast(message),
 });
 
+/** 撤销一次 vault 移除（M646，spec「撤销恢复原注册项」）：按移除前的原值把注册项写回，再把
+ *  列表刷新回同一份口径。
+ *
+ *  不打开、不切换：用户刚移除的东西回来了，不该顺手把他带走（清单里的那一行回来就够了）。
+ *  浮层关着时 `refresh()` 是 no-op——下次打开本来就会重拉，这里不维护背景镜像。 */
+async function undoVaultRemove(entry: RemovedVault): Promise<void> {
+  try {
+    await vaultRestore(entry);
+  } catch (e) {
+    toast(errorText(e));
+    return;
+  }
+  switcher.refresh();
+}
+
 const switcher: VaultSwitcherHandle = createVaultSwitcher({
   mount: shell.root, // 浮层挂点取 app-shell 根：左栏两个容器都 overflow:auto，挂进去会被裁掉
   entry: () => tree.vaultEntry(),
@@ -1868,6 +1887,21 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   requestSwitch: (row) => guardVaultSwitch(() => switchToVault(row.path)),
   requestAdd: () => requestAddVault(),
   requestRelocate: (row, siblings) => guardVaultSwitch(() => requestRelocate(row, siblings)),
+  // 移除（M646，spec「vault 移除」）：只删注册表项，盘上的目录 / 文件与 per-id 数据不动
+  //（后端 `vault_remove` 是唯一写点）。reject 交给浮层还原该行——人话提示在下面这一层给。
+  requestRemove: async (row) => {
+    const removed = await vaultRemove(row.id);
+    // null = 该注册项已经不在了（重复删除 / 竞态）：浮层照常重拉（那一行本来就会消失），
+    // 但没有原值就没有撤销提示——MUST NOT 编一条指向不存在注册项的「撤销」。
+    if (removed === null) return;
+    // 非 sticky（8s 后自消）：多次移除各自的撤销互不顶掉；sticky 会按文案去重并一直挂着，
+    // 正是这里不要的。
+    toast(
+      vaultRemovedText(row.name),
+      [{ label: t("D561"), run: () => void undoVaultRemove(removed) }],
+      false,
+    );
+  },
   expanded: (expanded) => tree.setVaultEntryExpanded(expanded),
   // 收起浮层后把焦点交还编辑器（M186）：这三条一起构成「交还焦点 MUST NOT 改变阅读位置」。
   // 滚动位置只存在于 scrollDOM、不属于 CM state。把焦点放进编辑器是**浏览器**接管的视口动作

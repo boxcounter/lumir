@@ -16,8 +16,11 @@
 //! **读取侧**按「单 pane = 顶层 tabs/active」解释——字段向后兼容在读取侧做，不写双份真源。
 //! 其余版本按「无历史」。写侧恒落 v2（盘上不出现顶层 `tabs`/`active` 的旧形状）。
 //!
-//! **生命周期**：注册项只归档不删除，会话文件不参与注册表治理（`sweep_registry` 不碰它），
-//! 也不做删除；孤儿文件只可能来自手工操作，属无害残留。
+//! **生命周期**：注册项由自动治理（失效超期）只归档不删除；用户可以在列表里**移除**某一项
+//! （M646，change vault-and-session-removal）——那一步只删注册项文件，本模块的会话文件与
+//! `reading-positions` / harness 留存一概不动，因此被移除项的会话从此成为**不可达孤儿**
+//!（不是缺陷，是「移除列表行」的直接后果：重新加入同一目录会铸新稳定 id，旧身份不复活）。
+//! 会话文件不参与注册表治理（`sweep_registry` 不碰它），也不做删除；孤儿属无害残留。
 
 use crate::{commands::CommandError, config, vault_registry};
 use serde::{Deserialize, Serialize};

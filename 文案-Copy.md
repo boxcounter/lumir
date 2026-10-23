@@ -536,10 +536,17 @@
 | D554 | cron 通知投递连续失败 toast（其它成因） | 作者 | 通知连续 {次数} 次投递失败，提醒没有送达。请检查「系统设置 › 通知」里 Lumir 的权限 | Notifications failed to deliver {count} times in a row — check Lumir's notification permission in System Settings › Notifications | M635：`code = cron_notify_delivery_failed` 时上屏——用户拒绝 / 已授权却投递失败 / 无法判定统一走这一档。消费点与阈值同 D553。 |
 | D555 | harness「回到底部」浮钮的可访问名（无新内容） | 作者 | 回到底部 | Back to bottom | M644（change improve-harness-streaming-scroll 的 D2 / D7 裁决）：transcript 脱离态时右下角浮钮的名字，同时落 `title` 与 `aria-label`（面板内图标钮的既有口径，D327 / D329 / D330）。钮不出现于内容不足一屏或跟随态；点击回底并恢复跟随。消费点 `src/harness-panel.ts` 的 `applyJumpBottomState`。 |
 | D556 | harness「回到底部」浮钮的可访问名（有新内容） | 作者 | 有新内容，回到底部 | New content, back to bottom | M644（D3 裁决：未读 = 圆点、不计数）：脱离期间 transcript 有新内容到达时的名字。圆点是 `aria-hidden` 的布尔提示，可访问名是它的语义载体——屏幕阅读器因此能感知「下面有新内容」。未读回底 / 复跟即清除。消费点同 D555。 |
+| D557 | vault 列表 · 行尾移除钮的读屏名 | 作者 | 从列表移除 {名称} | Remove {name} from the list | M646（change vault-and-session-removal 的 spec「vault 移除」）：行尾那枚常驻 `×` 钮的读屏名与 `title`（`×` 是图形、不成词，可访问名是它的语义载体）。当前项那一行不渲染它。消费点 `src/vault-switcher.ts` 的 `REMOVE_LABEL`。 |
+| D558 | vault 列表 · 移除的行内确认句 | 作者 | 从列表移除「{名称}」？磁盘上的目录与文件不受影响。 | Remove {name} from the list? Files on disk are not affected. | M646：行内两步确认的确认句（与 M406 会话删除同一套语汇）。两条要点各占一句：**点名**是哪一个（同名目录靠它区分），**盘上数据不受影响**是用户对「移除」最大的担心。确认文案只说这一句，不解释孤儿数据（design §1.2 的边界不进界面）。消费点同 D557。 |
+| D559 | vault 列表 · 移除的确认钮 | 作者 | 移除 | Remove | M646：确认态的破坏侧按钮；取消侧复用 D136（与 M406 会话删除同一选择——破坏性动作的默认落点必须是安全项）。 |
+| D560 | vault 列表 · 已移除的撤销提示 | 作者 | 已从列表移除「{名称}」 | Removed {name} from the list | M646：移除成功后的**非 sticky** 提示（8s 后自消，与既有带动作提示同档）——多次移除各自的撤销因此互不顶掉。消费点 `src/main.ts` 的 `requestRemove`（文本经 `src/vault-switcher.ts` 的 `vaultRemovedText`）。 |
+| D561 | vault 列表 · 撤销钮 | 作者 | 撤销 | Undo | M646：D560 那条提示上的动作钮（`toast` 的 `actions[].label`）。撤销按移除前的原值写回注册项（稳定 id / 路径 / 上次打开时间 / 失效治理标记），不打开、不切换。 |
+| D562 | vault 列表 · 移除当前 vault 被拒绝 | 作者 | 当前打开的 vault 不能从列表移除，请先切换到其他 vault | The open vault can't be removed from the list — switch to another vault first | M646：`vault_remove_current` 的人话（`src-tauri/src/vault_registry.rs` 的 `remove_entry_at` 构造，前端经 `ERROR_COPY` 按 code 取值）。入口在当前项那一行已被隐藏；这句是 IPC 直调 / 竞态（移除前一刻切到了它）时的兜底。 |
+| D563 | vault 列表 · 移除失败 | 作者 | 移除失败：{原因} | Couldn't remove the vault: {reason} | M646：`vault_remove_failed` 的人话（删除注册表项文件的 IO / 权限失败，构造点带 `path` + `reason`，与 D421 同形）。只说原因、不点名路径——行上的显示名就是用户刚点的那个；这一档意味着「看起来没删掉」，所以措辞不能有「已移除」的暗示。 |
 
 ## 编号沿革
 
-**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D556**（M644 的 harness「回到底部」浮钮两条可访问名 D555–D556；M635 的通知送不出去文案 D551–D554：D551–D552 是注册回执的两档成因，D553–D554 是投递连续失败 toast 的两档；D548–D550 是 change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
+**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D563**（M644 的 harness「回到底部」浮钮两条可访问名 D555–D556；M646 的 vault 列表移除文案 D557–D563：行尾移除钮读屏名 / 行内确认句 / 确认钮 / 已移除提示 / 撤销钮 + 后端两条错误的人话（接 M644 的 D556 末位）。M635 的通知送不出去文案 D551–D554：D551–D552 是注册回执的两档成因，D553–D554 是投递连续失败 toast 的两档；D548–D550 是 change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
 
 **不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377、D508–D513、D521。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
 
@@ -615,6 +622,7 @@
 - M635 D551–D554 通知送不出去的两处可见面：注册回执的两档成因（身份未被系统认可 / 用户拒绝）+ 投递连续失败 toast 的两档（接 M631 的 D550 末位；rebase 到含 M631 的 master 时原 D548–D551 顺延为 D551–D554）
 - M644 D555–D556 harness「回到底部」浮钮的可访问名：无新内容 / 有新内容两串（接 M635 的 D554 末位；change improve-harness-streaming-scroll）
 - change app-splash-screen（M645）**未取新号**：本次**无新增文案条目**——启动态的「打开 vault」入口复用 D6，恢复中的阶段行复用 D95（D95 的消费者从「恢复中空态」换成启动态的阶段行；安全阀撤下后仍回落到 `tree.showEmpty`）。
+- M646 D557–D563 vault 列表移除：行尾移除钮读屏名 / 行内确认句 / 确认钮 / 已移除提示 / 撤销钮 + 后端两条错误的人话（接 M644 的 D556 末位；change vault-and-session-removal）
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 
@@ -635,6 +643,7 @@
 - **D95** — `src/main.ts` `RESTORING_NOTICE` → 启动态的阶段行（change app-splash-screen 起；安全阀撤下后回落 `tree.showEmpty()`）
 - **D96** — `src/tree.ts`（入口 DOM 归它）
 - **D97–D104 / D108–D110** — `src/vault-switcher.ts`（切换闸判据经 `VaultSwitchGateDeps.block()` 取自 `src/save-controller.ts` `vaultSwitchBlock()`；相对时间档 `relativeTime()` 单点生成；`{名称}` 取 `src/tree.ts` `baseName()`）
+- **D557–D559** — `src/vault-switcher.ts`（`renderRow` 的行尾移除钮与行内两步确认；D560 的文本经同文件的 `vaultRemovedText`）；**D560–D561** — `src/main.ts`（`requestRemove` 的撤销提示是装配层的 toast，动作钮的 `run` 走 `undoVaultRemove`）；**D562–D563** — `src/copy-data.ts` `ERROR_COPY`（后端 `vault_remove` 的两条错误信封）
 - **D105–D107** — `src/main.ts`（需装配层上下文）
 - **D111–D113** — `src/preview/attachments.ts` `imageLoadingText` / `imageReadErrorText` / `imageFallbackText`（`tests/unit/image-widget.test.ts` 读 deck）
 - **D114** — `src/preview/endMarker.ts` `END_MARKER_TEXT`（`tests/unit/end-marker.test.ts` 读 deck）

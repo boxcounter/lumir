@@ -139,6 +139,18 @@ test("浮层：当前项 / 摘要 / 失效行 / 新增入口，且不占常驻�
   await expect(missing.locator(".vault-row-sub.is-warn")).toHaveText("路径不可用：目录被移动，或所在卷未挂载");
   await expect(missing.locator(".vault-row-act")).toHaveText("重新定位…");
 
+  // 行尾移除钮（M646，change vault-and-session-removal）：当前项那一行没有（spec「当前项没有
+  // 移除入口」），其余两行各一枚。移除钮与切换钮是**兄弟**——嵌套 button 在 WKWebView 里是
+  // 叶子、AX 树不暴露内层（M351），所以这里同时钉住「没有嵌套」。
+  await expect(page.locator(".vault-row-wrap")).toHaveCount(3);
+  await expect(page.locator(".vault-row-wrap > .vault-row")).toHaveCount(3);
+  await expect(page.locator(".vault-row .vault-row-del")).toHaveCount(0);
+  await expect(page.locator(".vault-row-del")).toHaveCount(2);
+  // 行序同上：0 = gone（失效）、1 = demo-vault（当前）、2 = notes-vault
+  await expect(page.locator(".vault-row-wrap").nth(1).locator(".vault-row-del")).toHaveCount(0);
+  await expect(page.locator(".vault-row-wrap").nth(0).locator(".vault-row-del")).toHaveAttribute("aria-label", "从列表移除 gone");
+  await expect(page.locator(".vault-row-wrap").nth(2).locator(".vault-row-del")).toHaveAttribute("aria-label", "从列表移除 notes-vault");
+
   // 浮层底部的新增入口（形态 A 下浮层内唯一的新增入口）
   await expect(page.locator(".vault-add")).toHaveText("＋新增 vault…");
   await expect(page.locator(".vault-add")).toHaveAttribute("aria-label", "选择一个目录作为新 vault");
@@ -292,4 +304,35 @@ test("壳态装载在途时关掉该标签：不把已关闭的会话置为前�
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("inbox.md");
   await expect(page.locator(".cm-content")).toContainText("第二个 vault 的收件箱");
   await expect(page.locator(".cm-content")).not.toContainText("第二个 vault 的笔记");
+});
+
+test("行内两步确认：点 × 换成确认句 + 两个按钮，取消逐字还原（M646）", async ({ page }) => {
+  // 这一步只走「点 × → 确认态 → 取消」：不点「移除」，因此不需要 `vault_remove` 的桩
+  //（真删的完整链路归真机场景 226——它连盘上的文件一起判）。这里钉的是 DOM 形态与可访问名：
+  // `×` 是图形、不成词，读屏名与 title 必须点名这一行的显示名。
+  await stubTauri(page, { ...DEMO_VAULT, vaults: REGISTRY });
+  await page.goto("/");
+  await openSwitcher(page);
+
+  const rows = page.locator(".vault-row-wrap");
+  const del = rows.nth(2).locator(".vault-row-del");
+  await expect(del).toHaveAttribute("title", "从列表移除 notes-vault");
+  await del.click();
+
+  // 确认态：确认句点名显示名 + 「移除」/「取消」两个兄弟；切换钮不在 DOM 上
+  const confirm = rows.nth(2);
+  await expect(confirm.locator(".vault-row-confirm")).toHaveText("从列表移除「notes-vault」？磁盘上的目录与文件不受影响。");
+  await expect(confirm.locator(".vault-row-confirm-yes")).toHaveText("移除");
+  await expect(confirm.locator(".vault-row-confirm-no")).toHaveText("取消");
+  await expect(confirm.locator(".vault-row")).toHaveCount(0);
+  // 其它行不受影响（确认态只落在被点的那一行）
+  await expect(page.locator(".vault-row-del")).toHaveCount(1);
+
+  // 取消 → 逐字还原（行名 / 摘要 / 移除钮都回来，列表不重拉）
+  await confirm.locator(".vault-row-confirm-no").click();
+  await expect(confirm.locator(".vault-row-name")).toHaveText("notes-vault");
+  await expect(confirm.locator(".vault-row-sub").first()).toHaveText("还没有打开过文件");
+  await expect(confirm.locator(".vault-row-del")).toHaveCount(1);
+  await expect(page.locator(".vault-row-wrap")).toHaveCount(3);
+  await expect(page.locator(".vault-pop")).toBeVisible();
 });

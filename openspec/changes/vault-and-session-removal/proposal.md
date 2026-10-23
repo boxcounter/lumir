@@ -5,8 +5,9 @@
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
 > 评审记录
-> 节点 1（提案评审）：**待 Alex 裁决**（2026-10-23 起草）。裁决点 D1–D4 见下方「裁决点」节，
-> 每个都给了倾向；逐条回或不回都行——不回即按倾向落地。
+> 节点 1（提案评审）：**已裁决**（2026-10-23）。Alex 原话：「按倾向」。四个裁决点全部按提案里的
+> 倾向落地，未提出修正——D1 当前打开的 vault 不可移除；D2 只删注册表项（盘上文件与 per-id 派生
+> 数据不动，重新加入铸新 id）；D3 有撤销（非 sticky + 8s）；D4 sessions 零改动。
 > 节点 2（归档评审）：实现完成后填写。
 
 ## Why
@@ -156,7 +157,7 @@ living spec 两处、验收场景文件一份逐条对照；本 mission 是纯�
 - **影响的代码/系统**：`src-tauri/src/vault_registry.rs`（移除 / 撤销两个命令 + 当前 vault 守卫）、
   `src/vault-switcher.ts`（行内移除钮 + 确认态 + 列表刷新）、`src/main.ts`（命令接线 + 撤销提示）、
   `src/ipc.ts`（薄封装）、`src/style.css`（移除钮）、`src/copy-data.ts`（两个新错误码的人话映射）、
-  `文案-Copy.md`（新增条目）、视觉基线（浮层元素级截图）、验收套件新场景（编号 223）。
+  `文案-Copy.md`（新增条目）、视觉基线（浮层元素级截图）、验收套件新场景（编号 226；220–225 由并行批次占用）。
 - **归档时要同步的文本**：`openspec/specs/vault-workspace/spec.md:5` 的 capability 概览句
   「（单激活、稳定 id、只归档不删除）」与 `docs/specs/config-reference.md:445` 的同句——前者按纪律
   MUST NOT 在 change 活跃期提前改（归档步骤一并改），后者按实现期改；`src-tauri/src/vault_session.rs:19`

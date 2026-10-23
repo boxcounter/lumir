@@ -26,7 +26,7 @@ master `18c21ef2`）逐一读过原文的位置；行号会漂，实现前以符
 | toast 的两种形态 | `src/main.ts:1483` `toast(text, actions, sticky, tone)`；`:1551` 非 sticky 且带动作 → 8000ms 后自消；sticky 才按文案去重 | 撤销提示取非 sticky（8s 窗口），多次移除各自的撤销互不顶掉 |
 | 会话删除的既有形态（本 change 不改，只对照） | `src/harness-panel.ts:9120` `buildSessList`：行 = `div` 壳 + 恢复钮 + `×` 钮两个**兄弟**；点击后行内两步确认（`D418` / `D419` / 取消复用 `D136`）；`:9191` 调 `harnessDeleteSession`；样式 `src/harness-panel.css:241` / `:252` | 交互语汇与 DOM 纪律的直接先例：MUST NOT 钮套钮（WKWebView 把嵌套 button 当叶子，M351 finding），确认态复用 D136 |
 | 嵌套按钮的机器约束 | 同上；视觉场景断言 `.vault-list[role=listbox]` 与 `.vault-row` 的类名 / 文本（`tests/visual/scenes/mv-vault-switcher.spec.ts:102` / `:107` / `:139`）、单测的假 DOM（`tests/unit/vault-switcher.test.ts:1631`） | 行的外层元素类型变化会牵动这三处；实现时先跑它们 |
-| 验收套件 | `scripts/acceptance/scenarios/108-harness-session-delete.md`（会话删除的真机场景，含直读盘断言）；scenario 编号已用到 222 | 新场景编号 223 |
+| 验收套件 | `scripts/acceptance/scenarios/108-harness-session-delete.md`（会话删除的真机场景，含直读盘断言）；scenario 编号已用到 223（220–225 由并行批次占用） | 新场景编号 226 |
 
 ## 1. 语义与数据
 
@@ -157,7 +157,7 @@ div.vault-row-wrap                （纯布局壳，无 role）
 - `.vault-list[role=listbox]` 的直接子元素从 option 变成 `div` 壳。**已知偏离**：列表内容的 ARIA
   content model 只允许 option / group，多一个按钮是越界的；会话浮层（M406）是同一形态、同一偏离，
   且那里的读屏路径已被真机场景 108 覆盖过。本 change 沿用同一手法、不另造第三种结构，把「listbox
-  里出现兄弟按钮」记为已知边界（真机场景 223 会以 AX 断言钉住实际暴露形态，若 WKWebView 让按钮
+  里出现兄弟按钮」记为已知边界（真机场景 226 会以 AX 断言钉住实际暴露形态，若 WKWebView 让按钮
   在读屏树里消失，就在场景里登记为已知边界并改走「行内 × 但读屏名挂在 option 上」的备选）。
 - 备选方案（已评估不采纳）：把移除做成浮层页脚的动作项（「移除「{name}」…」）。它保住了 listbox
   的纯正结构，但**页脚动作只能作用于键盘游标行**，而失效行不在键盘游标空间里
@@ -240,7 +240,7 @@ requestRemove: async (row) => {
 | Rust 单测 | §2.4 四组 |
 | 前端单测（`tests/unit/vault-switcher.test.ts`，假 DOM rig） | ① 当前行无移除钮、非当前行有；② 失效行也有；③ 点 × 进确认态、取消还原、确认调 `requestRemove` 且只调一次；④ 确认后刷新重拉 `list()`、查询串保持、游标落在原下标；⑤ `refresh()` 在关闭时是 no-op |
 | 视觉（`tests/visual/scenes/mv-vault-switcher.spec.ts`） | 现有断言要跟着改：`renderRow` 外层从 `.vault-row` 变 `.vault-row-wrap`；新增断言「当前行没有 `.vault-row-del`」「非当前行有」。浮层元素级截图基线**必须重截**（新增一列按钮 = 真实像素变化，`maxDiffPixelRatio: 0.001` 容差在该尺寸下可能吞掉一枚 20×20 的钮——按 REVIEW.md「容差吞掉真实变化」条，元素级基线重截后逐张核对） |
-| 真机（新场景 `scripts/acceptance/scenarios/223-vault-remove.md`） | ① 打开浮层：当前行无移除钮、另一行有；② 点 × → 确认态（AX 断言确认句与两个按钮）；③ 取消 → 行还原（断言原文本）；④ 再确认 → 行消失、浮层仍在；⑤ 直读盘断言 vault 目录内文件仍在（`file` 断言的 mtime / 内容不变）；⑥ 撤销 → 行回到列表；⑦ 重开浮层 → 该行仍不在（持久化） |
+| 真机（新场景 `scripts/acceptance/scenarios/226-vault-remove.md`） | ① 打开浮层：当前行无移除钮、另一行有；② 点 × → 确认态（AX 断言确认句与两个按钮）；③ 取消 → 行还原（断言原文本）；④ 再确认 → 行消失、浮层仍在；⑤ 直读盘断言 vault 目录内文件仍在（`file` 断言的 mtime / 内容不变）；⑥ 撤销 → 行回到列表；⑦ 重开浮层 → 该行仍不在（持久化） |
 
 验收套件的自清理：场景动的是套件自己的合成配置目录（`XDG_CONFIG_HOME` 隔离）与合成 vault，符合
 「绝不读写用户配置」纪律；场景结束要把注册表恢复（套件的 `seed` / `resetVault` 机制，按 108 的写法）。
