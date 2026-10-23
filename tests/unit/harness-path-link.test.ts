@@ -124,6 +124,109 @@ test("行号后紧跟中文是行文边界，不是路径延续（见a.md:12的�
   assert.equal(found[0].text, "a.md:12", "可点范围含行号、不含行文里的「见 / 的内容」");
 });
 
+// ---------------------------------------------------------------------------
+// 行范围后缀 `:起-止`（change add-path-line-range-links）
+//
+// 判据形状：每种畸形形态都**必须**产出「路径本身」这一条候选（存在性命中），再断言它不带
+// 行落点且可点范围不含后缀——只看「line === undefined」会在解析器整条失效时同样成立。
+// ---------------------------------------------------------------------------
+
+test("行范围后缀属于可点范围：落点取起始行，止不参与", () => {
+  const text = "见notes/plan.md:120-140的内容";
+  const found = findPathCandidates(text, fileIndex("notes/plan.md"));
+  assert.equal(found.length, 1);
+  assert.equal(found[0].path, "notes/plan.md");
+  assert.equal(found[0].kind, "file");
+  assert.equal(found[0].line, 120, "落点取起始行");
+  assert.equal(found[0].column, undefined, "行范围不产列号");
+  assert.equal(found[0].text, "notes/plan.md:120-140", "可点范围覆盖整个后缀，展示文本不重写");
+  assert.equal(text.slice(found[0].from, found[0].to), "notes/plan.md:120-140");
+  assert.equal(found[0].from, 1, "行文里的「见」不进可点范围");
+});
+
+test("行范围边界：起 = 止 与中文紧贴 / 句号收尾都命中", () => {
+  const single = findPathCandidates("notes/plan.md:1-1", fileIndex("notes/plan.md"));
+  assert.equal(single[0].line, 1, "起 = 止 是合法范围");
+  assert.equal(single[0].text, "notes/plan.md:1-1");
+
+  const glued = findPathCandidates("见a.md:12-40的", fileIndex("a.md"));
+  assert.equal(glued[0].line, 12);
+  assert.equal(glued[0].text, "a.md:12-40", "中文是行文边界，不是路径延续");
+
+  const punctuation = findPathCandidates("看a.md:3-9。", fileIndex("a.md"));
+  assert.equal(punctuation[0].line, 3);
+  assert.equal(punctuation[0].text, "a.md:3-9");
+});
+
+test("畸形行范围整段不成立：可点范围止于路径本身、不产行落点", () => {
+  const cases: Array<[string, string]> = [
+    ["notes/plan.md:12-", "缺止段"],
+    ["notes/plan.md:-9", "缺起段"],
+    ["notes/plan.md:9-12-15", "三段"],
+    ["notes/plan.md:40-12", "止 < 起（MUST NOT 反向钳成合法范围）"],
+    ["notes/plan.md:5-0", "止 为 0"],
+  ];
+  for (const [text, why] of cases) {
+    const found = findPathCandidates(text, fileIndex("notes/plan.md"));
+    assert.equal(found.length, 1, `${text}：路径本身仍可点`);
+    assert.equal(found[0].path, "notes/plan.md", text);
+    assert.equal(found[0].line, undefined, `${text}：${why} ⇒ 不产行落点`);
+    assert.equal(found[0].text, "notes/plan.md", `${text}：${why} ⇒ 后缀不进可点范围`);
+  }
+});
+
+test("行范围后缀后紧跟 ASCII 路径字符 ⇒ 整段不成立（沿用既有守卫）", () => {
+  for (const text of ["a.md:12-40x", "a.md:12-40/5", "a.md:12-40_"]) {
+    const found = findPathCandidates(text, fileIndex("a.md"));
+    assert.equal(found.length, 1, text);
+    assert.equal(found[0].line, undefined, `${text}：路径还在继续，不是行范围引用`);
+    assert.equal(found[0].text, "a.md", text);
+  }
+});
+
+test("`-` 两侧含空白时按既有 :行号 口径只吞到第一个数字", () => {
+  const found = findPathCandidates("notes/plan.md:12 - 40", fileIndex("notes/plan.md"));
+  assert.equal(found.length, 1);
+  assert.equal(found[0].line, 12, "空白是候选边界");
+  assert.equal(found[0].text, "notes/plan.md:12", "` - 40` 留作普通文本");
+});
+
+test("三种后缀形态并存时各吞各的（行范围不改变 :行号 / :行号:列号 的读数）", () => {
+  const found = findPathCandidates(
+    "见a.md:12 与 notes/b.md:3:4 以及 notes/c.md:5-9 完",
+    fileIndex("a.md", "notes/b.md", "notes/c.md"),
+  );
+  assert.deepEqual(
+    found.map((c) => ({ path: c.path, line: c.line, column: c.column, text: c.text })),
+    [
+      { path: "a.md", line: 12, column: undefined, text: "a.md:12" },
+      { path: "notes/b.md", line: 3, column: 4, text: "notes/b.md:3:4" },
+      { path: "notes/c.md", line: 5, column: undefined, text: "notes/c.md:5-9" },
+    ],
+  );
+});
+
+test("组合后缀不叠加：`起-止:列` 只认到行范围，尾随冒号段留作文本", () => {
+  const found = findPathCandidates("a.md:12-40:5", fileIndex("a.md"));
+  assert.equal(found.length, 1);
+  assert.equal(found[0].line, 12);
+  assert.equal(found[0].column, undefined, "行范围不产列号（后缀形态互斥）");
+  assert.equal(found[0].text, "a.md:12-40", "`:5` 不在可点范围（与 `:12:3:5` 的既有口径同一条）");
+});
+
+test("候选不声明「止」字段：行范围只多出一个落点读数（无消费者的字段不落地）", () => {
+  const found = findPathCandidates("a.md:12-40", fileIndex("a.md"));
+  assert.deepEqual(Object.keys(found[0]).sort(), [
+    "column",
+    "from",
+    "kind",
+    "line",
+    "path",
+    "text",
+    "to",
+  ]);
+});
+
 test("绝对路径、.. 穿越、空段在结构层被拒绝（谓词恒 true 也不产候选）", () => {
   for (const bad of ["/tmp/a.md", "../a.md", "a/../b.md", "a//b.md", "./a.md", "a/b//"]) {
     assert.deepEqual(
@@ -210,6 +313,13 @@ test("目录引用不消费行号后缀（与文件成对对照）", () => {
   assert.equal(dir[0].kind, "dir");
   assert.equal(dir[0].line, undefined, "目录没有行上下文");
   assert.equal(dir[0].text, "projects/plans", "可点范围止于路径本身");
+
+  // 行范围同口径：`:12-40` 也整段留在正文里，目录候选不带任何行读数。
+  const rangeDir = findPathCandidates("见 projects/plans:12-40 完", dirIndex("projects/plans"));
+  assert.equal(rangeDir.length, 1);
+  assert.equal(rangeDir[0].kind, "dir");
+  assert.equal(rangeDir[0].line, undefined);
+  assert.equal(rangeDir[0].text, "projects/plans");
 
   const file = findPathCandidates("见 notes/a.md:12 完", fileIndex("notes/a.md"));
   assert.equal(file[0].line, 12);
@@ -354,6 +464,36 @@ test("无行号不碰视口；打开失败不 reveal", async () => {
   const failed = makePlan({ opened: false });
   await openPathAtLine(failed.plan, "notes/a.md", 12);
   assert.deepEqual(failed.events, ["open:notes/a.md"]);
+});
+
+test("行范围点击只把起始行交给落点编排（不选中、不高亮：编排面上没有第二个行读数）", async () => {
+  // 从解析到编排端到端驱动：候选给什么，编排就只拿到什么。
+  const candidate = findPathCandidates("见notes/a.md:12-40 完", fileIndex("notes/a.md"))[0];
+  assert.equal(candidate.line, 12, "落点 = 起");
+
+  const trace = makePlan({ needsRescroll: true });
+  await openPathAtLine(trace.plan, candidate.path, candidate.line);
+  assert.deepEqual(trace.events, [
+    "open:notes/a.md",
+    "window:begin",
+    "reveal:12:inWindow=true",
+    "window:end",
+    "frame",
+    "window:begin",
+    "reveal:12:inWindow=true",
+    "window:end",
+  ]);
+  // 反向断言：编排面（PathJumpPlan）只有 open / reveal / 转场窗口 / 下一帧 / 复核——
+  // 没有任何能造出范围选区或高亮的入口；reveal 也只收到一个行号（止在上游就没有被带出来）。
+  // 编辑器层的另一半（revealLine 只落折叠光标 ⇒ `selection.main.empty` 恒真、正文不变）由
+  // tests/visual/scenes/m632-path-line-range-link.spec.ts 在真 CM view 上断言。
+  assert.deepEqual(Object.keys(trace.plan).sort(), [
+    "duringTransition",
+    "needsRescroll",
+    "nextFrame",
+    "open",
+    "reveal",
+  ]);
 });
 
 // ---------------------------------------------------------------------------

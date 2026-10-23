@@ -3,7 +3,7 @@
 // 分层纪律：本模块是**纯函数层**（无 DOM、无 IPC、无编辑器内核），面板只做接线，单测直接驱动。
 // 三条职责：
 //   1. 正文候选：从一段文本里找出「命中 vault 文件索引或目录模型」的可点路径（允许中文、支持
-//      `:行号` / `:行号:列号` 后缀；change harness-dir-link 起目录也在列，后缀只归文件）。候选宽、
+//      `:行号` / `:行号:列号` / `:起-止` 后缀；change harness-dir-link 起目录也在列，后缀只归文件）。候选宽、
 //      校验严——字符规则只负责切出 run，**是否可点由调用方给的索引判定**决定（扫描实证：中文
 //      行文里的对照式斜杠与 vault 外仓库路径都靠这一层滤掉）。
 //   2. 工具卡片：从结构化工具参数里取路径目标（Read 的 offset 作落点行；Move 两段；diff 头由
@@ -15,8 +15,9 @@
 const PATH_CHAR = /[\p{L}\p{N}_.\-/]/uy;
 /** 只用于「两端收缩」的中文类字符（路径本身允许它们，因此先试整串再剥）。 */
 const CJK_CHAR = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/uy;
-/** `:行号` / `:行号:列号`（1-based；列号只解析、不参与落点）。 */
-const LINE_SUFFIX = /:(\d{1,7})(?::(\d{1,7}))?/y;
+/** `:行号` / `:行号:列号` / `:起-止`（1-based；列号只解析、不参与落点；行范围的 `止` 只参与
+ *  「后缀是否成立」，落点取 `起`）。两种第二段互斥，`起-止:列` 不叠加（design §2.1）。 */
+const LINE_SUFFIX = /:(\d{1,7})(?:-(\d{1,7})|:(\d{1,7}))?/y;
 
 /** run 长度上限：超过即按「极长无断句中文串」处理，不识别（design §2.2 的已知边界）。 */
 export const MAX_CANDIDATE_RUN = 120;
@@ -40,9 +41,9 @@ export interface PathCandidate {
   path: string;
   /** 目标类型：文件走打开链路，目录走左栏定位。 */
   kind: PathTargetKind;
-  /** 1-based 行号；无后缀时缺省（目录从不带行号）。 */
+  /** 1-based 行号；无后缀时缺省（目录从不带行号）。`:起-止` 的落点即 `起`。 */
   line?: number;
-  /** 列号（后缀第二段）；v1 只解析、不参与落点。 */
+  /** 列号（`:行号:列号` 的第二段）；v1 只解析、不参与落点。 */
   column?: number;
   /** 可点范围（相对传入文本，含行号后缀）。 */
   from: number;
@@ -89,11 +90,18 @@ function lineSuffixAt(text: string, at: number): { line?: number; column?: numbe
   if (match === null) return { end: at };
   // 后缀之后必须不是 ASCII 路径延续（`a.md:12x` / `a.md:12/5` 不是行号引用）。中文紧跟
   // 行号则是行文（「见 a.md:12 的内容」常写成「见a.md:12的内容」）——中文是候选字符，
-  // 不能拿它当「路径还在继续」的判据。
+  // 不能拿它当「路径还在继续」的判据。`-` 留在拒绝类里，`9-12-15` 因此整段不成立。
   if (/[A-Za-z0-9_.\-/]/.test(text[at + match[0].length] ?? "")) return { end: at };
   const line = Number(match[1]);
   if (!Number.isInteger(line) || line < 1) return { end: at };
-  const column = match[2] === undefined ? undefined : Number(match[2]);
+  // `:起-止`：`止 < 起` 使**整个**后缀不成立（MUST NOT 回退成只有 `:起`——半吞会让可点范围
+  // 与文字承诺错位）。`止` 越界不在这里判，落点由 revealLine 的既有钳制处理（design §2.2）。
+  if (match[2] !== undefined) {
+    const rangeEnd = Number(match[2]);
+    if (rangeEnd < line) return { end: at };
+    return { line, end: at + match[0].length };
+  }
+  const column = match[3] === undefined ? undefined : Number(match[3]);
   return {
     line,
     column: column !== undefined && Number.isInteger(column) && column >= 1 ? column : undefined,
@@ -155,7 +163,8 @@ function resolveRun(
  * 内置忽略名目录、图片/二进制都在调用方那一侧滤掉）。
  *
  * 目录候选的可点范围**不含行号后缀**（目录没有行上下文）：`目录:12` 只链接目录本身；
- * 文件候选的 `:行号` / `:行号:列号` 行为不变。
+ * 文件候选的 `:行号` / `:行号:列号` / `:起-止` 三种后缀都归可点范围，落点取后缀里的起始行
+ * （`起-止` 的 `止` 不参与落点，见 `lineSuffixAt`）。
  */
 export function findPathCandidates(text: string, index: PathTargetIndex): PathCandidate[] {
   const out: PathCandidate[] = [];

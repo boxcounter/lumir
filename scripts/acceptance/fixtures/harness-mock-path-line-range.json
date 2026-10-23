@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "行范围链接验收：第 39–48 行见 goto-line-long.md:39-48，畸形写法 goto-line-long.md:48-39 只该链接到文件本身。",
+      "usage": { "input_tokens": 1000, "cached_tokens": 100, "output_tokens": 10 }
+    }
+  ]
+}
