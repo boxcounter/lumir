@@ -6,8 +6,8 @@
 > 「遮罩里的文本怎么选中、怎么复制」这一条能力。起草期实测读数与根因见 [design.md](../../design.md)
 > §1–§2；五个起草期取值见 [proposal.md](../../proposal.md) 的「起草期取值」表。
 >
-> harness 面的同族条款**不在本 delta 里**：`harness` 的那条 ADDED requirement 还在在途 change
-> `add-harness-block-fullscreen` 里、尚未进 living spec（写它的 MODIFIED 会让 `validate --strict`
+> harness 面的同族条款**不在本 delta 里**：`harness` 的那条 ADDED requirement 还在已合并、尚未归档的
+> change `add-harness-block-fullscreen` 里、没进 living spec（写它的 MODIFIED 会让 `validate --strict`
 > 失败）。实现由两个面共用的遮罩模块承担，因此行为上同时成立；条款待那个 change 归档后另立补上
 > （design §8）。
 

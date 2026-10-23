@@ -67,7 +67,7 @@ Alex 2026-10-23 的需求原话（逐字）：
 | D2 | 遮罩**就地消费** ⌘A（不写进统一键位表） | 与 Esc 完全同一先例：`editor.widget-escape` 已占 Esc，遮罩仍就地消费（`src/code-block-fullscreen.ts:22` 的头注写明理由）。写进表则同 token 第二条绑定被构造期拒绝 | 走「键位表按面路由」的实现：要给键位层加第三个面的判据，并把 `text` 作用域对遮罩放行、再用 `commandGate` 逐命令收敛——改动面从 2 个遮罩模块变成键位层 + 装配层两处语义 |
 | D3 | 菜单「全选」**同口径**（遮罩在场时选遮罩内容） | 不改的话，从菜单点「全选」会选中蒙层后的正文——同一能力两条入口两个结果，用户会以为复制到了表格 | 只修键盘：菜单路径留作已知边界（design §7） |
 | D4 | 复制口径 = **原生纯文本** | 最小改动、与编辑器里复制一致；要表格结构的人自然会用块级复制 / 摘录 | 要 Markdown 源或 TSV：那是另一条能力（要定「表格 → 纯文本」的列序 / 转义口径），本 change 不夹带 |
-| D5 | 与 M634（harness 块全屏，在途）的关系：**实现覆盖、条款分两次** | 两个面共用同一份遮罩模块（`createTableFullscreen` / `createCodeBlockFullscreen`），本 change 的修法对 harness 面**自动生效**；但 `harness` 的那条 ADDED requirement 还在 M634 的 change 里、未进 living spec，本 change 写它的 MODIFIED 会让 `validate --strict` 失败 | 连 harness 条款一起写：必须先等 M634 归档进 living spec，本 change 再 rebase 补一条 MODIFIED——合并顺序被 M634 绑死 |
+| D5 | 与 M634（harness 块全屏，已合并、待归档）的关系：**实现覆盖、条款分两次** | 两个面共用同一份遮罩模块（`createTableFullscreen` / `createCodeBlockFullscreen`），本 change 的修法对 harness 面**自动生效**；但 `harness` 的那条 ADDED requirement 还在 M634 的 change 里、未进 living spec，本 change 写它的 MODIFIED 会让 `validate --strict` 失败 | 连 harness 条款一起写：必须先等 M634 归档进 living spec，本 change 再补一条 MODIFIED——条款仍被归档顺序绑死 |
 
 ## Non-goals
 

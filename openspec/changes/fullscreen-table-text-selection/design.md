@@ -169,19 +169,20 @@ MUST NOT 在装配层直接查遮罩的 DOM——内容根归遮罩自己管。
 - **拖选终点落在 scrim 上**：选区坍缩、遮罩不关——既有行为，本 change 不改；用户要么在面板内起止，
   要么重新选。
 
-## 8. 与 M634（harness 块全屏）的关系与合并顺序
+## 8. 与 M634（harness 块全屏）的关系与落地时机
 
 - **实现覆盖**：harness 面板的表格 / 代码块全屏走同一份 `createTableFullscreen` /
   `createCodeBlockFullscreen`，本 change 在遮罩模块里的修法对 harness 面**自动生效**，不需要 M634
   改一行。
-- **条款分两次**（D5）：`harness` 的那条 ADDED requirement 还在 M634 的 change 目录里、没进 living
-  spec；本 change 若写它的 MODIFIED，`validate --all --strict` 会因「同名 requirement 不存在」失败。
-  因此本 change 只定义 `editor-live-preview` 的契约，M634 归档后另立一次微型 change 把 harness 条款
-  补上（登记为 follow-up，不在本 change 里伪造 MODIFIED）。
-- **合并顺序**：两个 change 的同文件风险面只有 `src/style.css`（本 change 加一行 `user-select: text`）
-  与 `src/main.ts`（本 change 在 `selectAllByFocusedFace` 加一档，M634 在装配段有大改）。建议 M634
-  先合、本 change rebase 后再落地；反过来时，本 change 落 `src/main.ts` 的那一处要与 M634 的改动点
-  逐行核对。
+- **条款分两次**（D5）：M634 已于 2026-10-23 合并进 master（merge `3b5b51d9`，feat 提交
+  `8ba8ac4c`），但**尚未归档**——`harness` 的那条 ADDED requirement 还在 `openspec/changes/` 的
+  change 目录里、没进 living spec；本 change 若写它的 MODIFIED，`validate --all --strict` 会因
+  「同名 requirement 不存在」失败。因此本 change 只定义 `editor-live-preview` 的契约，M634 归档后
+  另立一次微型 change 把 harness 条款补上（登记为 follow-up，不在本 change 里伪造 MODIFIED）。
+- **落地时机**：M634 已合并（见上），本 change 实现时把分支 rebase 到含它的 master 之上即可。两个
+  change 的同文件风险面只有 `src/style.css`（本 change 加一行 `user-select: text`）与 `src/main.ts`
+  （本 change 在 `selectAllByFocusedFace` 加一档，M634 已改过装配段）——实现期按 rebase 后的现状
+  核对这两处。
 - **反向不成立的地方**：M634 的 spec 已经写了「面板里的块全屏复用既有两条能力」；本 change 不改它的
   呈现与关闭路径，因此 M634 的 tasks / spec 无需回改。
 
