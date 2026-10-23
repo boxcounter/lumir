@@ -1888,9 +1888,19 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   requestAdd: () => requestAddVault(),
   requestRelocate: (row, siblings) => guardVaultSwitch(() => requestRelocate(row, siblings)),
   // 移除（M646，spec「vault 移除」）：只删注册表项，盘上的目录 / 文件与 per-id 数据不动
-  //（后端 `vault_remove` 是唯一写点）。reject 交给浮层还原该行——人话提示在下面这一层给。
+  //（后端 `vault_remove` 是唯一写点）。
   requestRemove: async (row) => {
-    const removed = await vaultRemove(row.id);
+    let removed: RemovedVault | null;
+    try {
+      removed = await vaultRemove(row.id);
+    } catch (e) {
+      // 失败的两件事各归一层（reviewer r1 P1）：用户侧的人话提示在这里给（`vault_remove_current`
+      // / `vault_remove_failed` 经 `ERROR_COPY` 取文案），浮层侧靠这次 **rethrow** 把该行从确认态
+      // 还原。只 toast 不 rethrow 会让行停在确认态、看起来像删掉了；只 rethrow 不 toast 则用户
+      // 只看到行弹回去、没有任何解释（D563 于是成了死文案）。
+      toast(errorText(e));
+      throw e;
+    }
     // null = 该注册项已经不在了（重复删除 / 竞态）：浮层照常重拉（那一行本来就会消失），
     // 但没有原值就没有撤销提示——MUST NOT 编一条指向不存在注册项的「撤销」。
     if (removed === null) return;

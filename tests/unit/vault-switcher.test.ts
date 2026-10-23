@@ -2191,6 +2191,25 @@ test("刷新后的游标：移除游标那一行时落在上移进来的那一�
   );
 });
 
+test("确认态：Enter 既不触发移除也不切走确认行（该行已移出键盘游标空间）", async () => {
+  // reviewer r1 P2 的不变量：确认态的行若仍留在 `this.rows` 里，Enter 会按游标请求**切换**
+  //（用户以为在确认，却整窗换了一个 vault）。`suspendRow` 就是这条不变量本身——把这里的
+  // 断言当回归钉子：去掉 suspend 后本用例必须红。
+  const rig = await openRemoveRig();
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  assert.equal(rig.activeRowId(), "sandbox", "游标先落在 sandbox 这一行");
+
+  const wrap = rowWrap(rig, "sandbox");
+  wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+  assert.equal(rig.activeRowId(), undefined, "确认态的行离开键盘游标空间（is-active 撤下）");
+
+  rig.popover().fire("keydown", keydownEvent("Enter"));
+  await flush();
+  assert.deepEqual(rig.removed, [], "确认态下 Enter MUST NOT 触发移除");
+  assert.deepEqual(rig.switched, [], "确认态下 Enter MUST NOT 请求切换");
+  assert.equal(rig.popover().hidden, false, "浮层不因这次 Enter 收起");
+});
+
 test("刷新保持查询串与筛选状态（重拉不 reset 筛选）", async () => {
   const rig = await openRemoveRig();
   const input = rig.input();
