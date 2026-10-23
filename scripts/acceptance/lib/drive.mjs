@@ -631,8 +631,9 @@ export async function injectHover(pid, point) {
   }
 }
 
-/** CGEvent 滚轮注入（M644，mode 8）：把光标移到 `point` 后按拍投 `scrollWheel`（单位 = 行，
- *  正 = 向上 / 向左，与 KimiCU / xdotool 的 dy / dx 同向）。
+/** CGEvent 滚轮注入（M644，mode 8）：把光标移到 `point` 后按拍投 `scrollWheel`（单位 = 行）。
+ *  **dy / dx 的正负指向尚未真机标定**（swift 侧 mode 8 的注释同口径）：首跑按场景 224 步骤 5
+ *  的实测核对，方向若反，按实测结论回改两侧注释与场景，不按「与 KimiCU 同向」的假设下结论。
  *
  *  为什么需要它：KimiCU 的 `scroll` 在本 app 上从未产出过位移（M252 / M379 的通道边界，
  *  见 README「已知边界」的滚动条）——`do: scroll` 因此在真机上层长期是死通道。滚轮注入走

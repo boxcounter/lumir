@@ -27,9 +27,11 @@
 //   mode 8 = 滚轮（需 dy [dx]，单位 = 行）：光标先移到 (x,y)，再按拍投 `CGEvent` 的
 //            scrollWheel（units = .line；wheel1 = 纵向、wheel2 = 横向）。**套件动作 `scroll`
 //            的 wheel 兜底用这条**（M644）：KimiCU 的 scroll 在本 app 上从未产出过位移
-//            （M252 / M379 的通道边界），滚轮注入是同一 app 上唯一验证过的底层通道
-//            （与 doubleClick / drag 同一条 swift + CGEvent 通路）。正值 = 向上 / 向左，
-//            与 KimiCU / xdotool 的 dy / dx 语义同向。会移动真实光标、要求目标窗口在前台。
+//            （M252 / M379 的通道边界），滚轮注入因此是**候选**通道——swift + CGEvent 这条
+//            通路本身已被 doubleClick / drag / hover 验证，**但本 mode 能否产出位移、dy / dx
+//            的正负指向都尚未真机标定**。首跑（场景 224 步骤 5）按实测核对符号：若 `dy: -20`
+//            产出的位移方向与「上滚」相反，按实测结论回改本注释、execute.mjs 的说明与场景。
+//            会移动真实光标、要求目标窗口在前台。
 // 坐标是 Quartz 全局坐标（原点 = 主屏左上角，单位 pt）；KimiCU 的 AX dump 不给这个空间
 // （mode=ax 给窗口局部点、要加 window_bounds 原点；mode=full 给截图像素），换算在 execute.mjs 里。
 //
