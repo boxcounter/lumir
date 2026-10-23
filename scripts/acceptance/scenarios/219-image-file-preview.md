@@ -8,7 +8,7 @@ marker: "IMG-TAB-219"
 steps:
   - name: 反向对照先行：点开 PDF 仍给「暂不支持预览」（图片分流没有误伤二进制）
     do: click
-    target: { role: AXButton, name: "^image-tab-probe\\.pdf$" }
+    target: { role: AXButton, name: "^binary-probe\\.pdf$" }
     expect:
       - shot: 反向-PDF 提示
       - label: 覆盖层给出既有提示（M130 起的护栏，本 change 不动它）
