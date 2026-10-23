@@ -14,7 +14,9 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // `scripts/acceptance/README.md` 的「键盘注入通道的两类不可达」同族），验不到按键链路。
 // chromium 的 `keyboard.press("Meta+a")` 走的是同一条 window keydown 分发器（也让出了原生
 // 菜单），产出的正是让位后的硬件形态事件。菜单点击那条路（原生 NSMenuItem）由 Rust 单测
-// `menu_command_only_covers_our_menu_items`（id → 载荷）与真机场景 214（点击后行为）覆盖。
+// 覆盖（`menu_command_only_covers_our_menu_items` 的 id → 载荷、`select_all_item_text_rejects_other_predefined_items`
+// 的文案校验）；真机套件没有菜单栏驱动动作，菜单点击的人肉复验登记在验收场景 215 的
+// 「覆盖边界」节（那里也写明 ⌘A 按键链路不可注入、由本场景判）。
 
 const DOC = [
   "# 全选基线",
