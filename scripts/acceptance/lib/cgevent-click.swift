@@ -24,6 +24,12 @@
 //            `click({ modifiers })` 同形）。**套件动作 `click` 的 `target.modifiers` 用这条**：
 //            KimiCU 的 click 没有修饰键参数（工具 schema 实测），⌘-Click 只能走这里。
 //            mods 是 `,` 分隔的 cmd|shift|ctrl|opt（别名集与执行器一侧同源）。
+//   mode 8 = 滚轮（需 dy [dx]，单位 = 行）：光标先移到 (x,y)，再按拍投 `CGEvent` 的
+//            scrollWheel（units = .line；wheel1 = 纵向、wheel2 = 横向）。**套件动作 `scroll`
+//            的 wheel 兜底用这条**（M644）：KimiCU 的 scroll 在本 app 上从未产出过位移
+//            （M252 / M379 的通道边界），滚轮注入是同一 app 上唯一验证过的底层通道
+//            （与 doubleClick / drag 同一条 swift + CGEvent 通路）。正值 = 向上 / 向左，
+//            与 KimiCU / xdotool 的 dy / dx 语义同向。会移动真实光标、要求目标窗口在前台。
 // 坐标是 Quartz 全局坐标（原点 = 主屏左上角，单位 pt）；KimiCU 的 AX dump 不给这个空间
 // （mode=ax 给窗口局部点、要加 window_bounds 原点；mode=full 给截图像素），换算在 execute.mjs 里。
 //
@@ -34,7 +40,7 @@ import Foundation
 
 let args = CommandLine.arguments
 guard args.count >= 4, let x = Double(args[1]), let y = Double(args[2]), let mode = Int(args[3]) else {
-    FileHandle.standardError.write("usage: cgevent-click <x> <y> <mode 0|1|2|3|4|5|6|7> [pid | x2 y2 | mods [count]]\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: cgevent-click <x> <y> <mode 0|1|2|3|4|5|6|7|8> [pid | x2 y2 | mods [count] | dy [dx]]\n".data(using: .utf8)!)
     exit(2)
 }
 let point = CGPoint(x: x, y: y)
@@ -158,6 +164,41 @@ case 6:
     }
     let count = args.count >= 6 ? (Int64(args[5]) ?? 1) : 1
     clickWithFlags(point, clickCount: count, flags: flags)
+case 8:
+    // 滚轮注入（M644）：按拍投 `scrollWheel`，正负与 KimiCU / xdotool 的 dy / dx 同向
+    //（正 = 向上 / 向左）。分多拍而不是单发一个大 delta——单发在 WKWebView 的滚动容器里
+    // 常被钳成一小段，多拍与真实滚轮的增量序列更接近。
+    guard args.count >= 5, let totalY = Int32(args[4]) else {
+        FileHandle.standardError.write("mode 8 需要第 5 个参数：纵向行数 dy（可带第 6 个：横向 dx）\n".data(using: .utf8)!)
+        exit(2)
+    }
+    let totalX: Int32 = args.count >= 6 ? (Int32(args[5]) ?? 0) : 0
+    guard totalY != 0 || totalX != 0 else {
+        FileHandle.standardError.write("mode 8 的 dy / dx 都是 0（等价于「没滚」）\n".data(using: .utf8)!)
+        exit(2)
+    }
+    let wheelSteps = 12
+    var sentY: Int32 = 0
+    var sentX: Int32 = 0
+    for i in 1...wheelSteps {
+        let targetY = Int32((Double(totalY) * Double(i) / Double(wheelSteps)).rounded())
+        let targetX = Int32((Double(totalX) * Double(i) / Double(wheelSteps)).rounded())
+        let stepY = targetY - sentY
+        let stepX = targetX - sentX
+        sentY = targetY
+        sentX = targetX
+        if stepY == 0 && stepX == 0 { continue }
+        let wheel = CGEvent(
+            scrollWheelEvent2Source: source,
+            units: .line,
+            wheelCount: 2,
+            wheel1: stepY,
+            wheel2: stepX,
+            wheel3: 0,
+        )
+        wheel?.post(tap: .cghidEventTap)
+        usleep(16_000)
+    }
 default:
     FileHandle.standardError.write("unknown mode \(mode)\n".data(using: .utf8)!)
     exit(2)

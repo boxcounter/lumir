@@ -113,6 +113,8 @@ import {
 } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
+import { createFollowController } from "./harness-scroll-lock";
+import type { FollowState } from "./harness-scroll-lock";
 import {
   findPathCandidates,
   isWellFormedVaultPath,
@@ -3748,6 +3750,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // HP1：头部栏整条上移进标题栏 harness 段（见上方 .lumir-hp-seg），面板本体从 transcript
   // 开始；ctx% 读数与常驻警示句随头部栏退场（读数迁入 composer 控制行是后续 mission 的面）。
 
+  // ── transcript 视口层 + 「回到底部」浮钮（M644，change improve-harness-streaming-scroll §4）──
+  // 浮钮 MUST NOT 放进 `.lumir-hp-transcript` 内容流：那是滚动容器，绝对定位的子节点会随内容
+  // 滚出视口（消息摘录钮是「跟选区走」的相反需求，定位口径不可复用）。因此 transcript 外包一层
+  // 视口层做定位基准——盒模型逐值不动（视口层接管 transcript 原来的 flex 位，transcript 在层内
+  // 继续吃满），既有视觉基线在浮钮 hidden 时零像素漂移。
+  const transcriptViewport = document.createElement("div");
+  transcriptViewport.className = "lumir-hp-transcript-viewport";
+
   const transcript = document.createElement("div");
   transcript.className = "lumir-hp-transcript";
   // preview 主题 scope 镜像：cm-lp-tok-* 着色与 cm-lp-inline-code 药丸的规则值只定义在
@@ -3757,6 +3767,34 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 主题 scope 据此取到同一批 CM 生成类（解析见 src/overlay-scope.ts）。标记必须在镜像之后
   // 加——`mirrorThemeScope` 会按「基类 + 镜像类」重写容器的 className。
   transcript.classList.add(THEME_SCOPE_HOST_CLASS);
+
+  // 「回到底部」浮钮（M644）：脱离态的常驻导航件，浮在视口层右下角、不随内容滚动。默认
+  // hidden（只有脱离态才出现，D2）；可键盘聚焦（Tab 到它 + Enter 回底，D4 不新增键位）。
+  const jumpBottom = document.createElement("button");
+  jumpBottom.type = "button";
+  jumpBottom.className = "lumir-hp-jumpbottom";
+  jumpBottom.hidden = true;
+  // 图标 = ↓（DOM API 构造，本模块无 innerHTML 的渲染纪律；与发送钮 glyph 同一条构造口径）。
+  const jumpBottomIcon = document.createElementNS(SVG_NS, "svg");
+  jumpBottomIcon.setAttribute("width", "11");
+  jumpBottomIcon.setAttribute("height", "11");
+  jumpBottomIcon.setAttribute("viewBox", "0 0 12 12");
+  jumpBottomIcon.setAttribute("fill", "none");
+  jumpBottomIcon.setAttribute("stroke", "currentColor");
+  jumpBottomIcon.setAttribute("stroke-width", "1.6");
+  jumpBottomIcon.setAttribute("stroke-linecap", "round");
+  jumpBottomIcon.setAttribute("stroke-linejoin", "round");
+  jumpBottomIcon.setAttribute("aria-hidden", "true");
+  const jumpBottomPath = document.createElementNS(SVG_NS, "path");
+  jumpBottomPath.setAttribute("d", "M6 2v8M2.5 6.5 6 10l3.5-3.5");
+  jumpBottomIcon.append(jumpBottomPath);
+  // 未读圆点（D3）：布尔提示，不是计数；`aria-hidden`——可访问名随未读态变化，屏幕阅读器
+  // 从名字感知（design §4.3）。
+  const jumpBottomDot = document.createElement("span");
+  jumpBottomDot.className = "lumir-hp-jumpbottom-dot";
+  jumpBottomDot.setAttribute("aria-hidden", "true");
+  jumpBottom.append(jumpBottomIcon, jumpBottomDot);
+  transcriptViewport.append(transcript, jumpBottom);
 
   // 块级全屏的渲染期接线（change add-harness-block-fullscreen）：模块层的渲染件不认识面板根，
   // 装配层按**来源**（发起钮）推导主题 scope 宿主——trigger 在 transcript 内，遮罩自己会走到
@@ -3981,7 +4019,53 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   taskUsage.hidden = true;
   taskArea.append(taskAlert, taskHead, taskList, taskUsage);
 
-  panel.append(transcript, progress, taskArea, composerArea);
+  panel.append(transcriptViewport, progress, taskArea, composerArea);
+
+  // ── 跟随滚动控制器（M644，change improve-harness-streaming-scroll design §2/§3）──────────
+  // 判据与写底编排全在 `src/harness-scroll-lock.ts`（纯模型层，单一真源）：这里只是适配器——
+  // 读三个滚动读数、写回唯一入口、把写底推迟到 rAF、把态 / 未读交给浮钮呈现。面板里 MUST NOT
+  // 再写一份阈值或比较（REVIEW.md「同一语义两处真源」条）。
+  const follow = createFollowController({
+    read: () => ({
+      scrollTop: transcript.scrollTop,
+      clientHeight: transcript.clientHeight,
+      scrollHeight: transcript.scrollHeight,
+    }),
+    writeScrollTop: (top) => {
+      transcript.scrollTop = top;
+    },
+    schedule: (cb) => {
+      requestAnimationFrame(cb);
+    },
+    render: applyJumpBottomState,
+  });
+
+  /** 浮钮的唯一施加点（态 / 未读每次变化只走这里；`applyLabels` 重取文案时也走这里）。 */
+  function applyJumpBottomState(state: FollowState): void {
+    jumpBottom.hidden = state.phase !== "detached"; // D2：脱离即显示，无论有没有新内容
+    jumpBottom.classList.toggle("is-unread", state.unread);
+    const label = state.unread ? t("D556") : t("D555");
+    jumpBottom.title = label;
+    jumpBottom.setAttribute("aria-label", label);
+  }
+
+  // scroll 监听的唯一用途 = 按几何位置换态（passive：不阻止滚动、不进键盘路径；ADR 0002 §6）。
+  // MUST NOT 在事件回调里同步写底——那会把写底挪到 scroll 事件之前（design §3.2）。
+  transcript.addEventListener("scroll", () => follow.onScroll(), { passive: true });
+
+  // 视口尺寸变化（窗口缩放 / 分栏拖拽 / 左栏宽度变化引起的重排）：跟随态补一次贴底，脱离态
+  // 零写入。观察 transcript **自身的盒**——内容高度增长不改变盒尺寸，因此不与流式 rAF 的
+  // 未读补扫重复（design §3.4）。面板单例长驻，构造期注册、不随 attach / detach 增删。
+  const transcriptResize = new ResizeObserver(() => follow.viewportChanged());
+  transcriptResize.observe(transcript);
+
+  jumpBottom.addEventListener("click", () => {
+    const wasFocused = document.activeElement === jumpBottom;
+    follow.jumpToBottom();
+    // 钮点击后自身隐藏；隐藏前若持有焦点（键盘 Enter / Chromium 下鼠标点击都会让钮获焦），
+    // 把焦点交还 composer——否则焦点落到 body，键盘用户失去键入落点（design §4.3）。
+    if (wasFocused) composer.focus();
+  });
 
   // ── 状态 ─────────────────────────────────────────────────────────────────
   /** 面板挂载的 pane 槽（null = 收起/未开）。pane 在场与否由装配层管，面板只记录挂在哪。 */
@@ -5352,6 +5436,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     refreshWhoLines();
     relabelToolSummaries();
     relabelThinkingViews();
+    // M644：浮钮的可访问名随语言重取（无新内容 / 有新内容两串）；态 / 未读取控制器现值——
+    // 与 render 走同一个施加函数，不构成第二份状态。
+    applyJumpBottomState({ phase: follow.phase(), unread: follow.unread() });
   }
 
   // ── harness pane 内容字号（M378 起可缩放；M627 起由「一套字号」驱动）──────────
@@ -6102,9 +6189,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   // ── transcript 追加 ──────────────────────────────────────────────────────
-  function scrollToBottom(): void {
-    transcript.scrollTop = transcript.scrollHeight;
-  }
+  // 滚动位只有两个出口（M644，design §3.1 的分流表，MUST NOT 出现第三类）：
+  //   - 内容增长 → `follow.contentGrew()`（following 贴底、detached 只更新未读）；
+  //   - 强制回底白名单（发送消息 / 快照重建 / 恢复会话 / 重新打开面板）→ `follow.jumpToBottom()`。
 
   function syncEmptyHint(): void {
     if (transcript.childElementCount === 0 && !transcript.contains(emptyHint)) {
@@ -6204,7 +6291,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     transcript.append(el);
     lastAssistantEl = null; // 用户消息开新轮：恢复路径的工具记录挂点作废
     syncEmptyHint();
-    scrollToBottom();
+    follow.jumpToBottom(); // 分流表 #1：用户发送 = 白名单动作，新消息必须在眼前
   }
 
   // ── 工具调用清单（M351 还原原型屏 4 形态，design §2.4/§3.3；Alex 2026-10-06 裁决）──
@@ -6683,7 +6770,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         taskRowEntries.push(entry);
         renderTaskToolRow(entry, null);
         syncEmptyHint();
-        scrollToBottom();
+        follow.contentGrew();
         return;
       }
       // done：只收「没绑到 run」的行（被闸拒 / 参数非法）；已绑定行的终态由 run 事件驱动。
@@ -6693,7 +6780,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         renderTaskToolRow(entry, null, summary);
       }
       syncEmptyHint();
-      scrollToBottom();
+      follow.contentGrew();
       return;
     }
     // 抑制槽判定先于 ensureToolsBlock：槽命中时不建行，也不该为被抑制的 done 开新块。
@@ -6713,7 +6800,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           text.append(document.createTextNode(" "), outEl);
         }
       }
-      scrollToBottom();
+      follow.contentGrew();
       return;
     }
     const block = ensureToolsBlock();
@@ -6762,7 +6849,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       block.rows.push(row);
     }
     syncEmptyHint();
-    scrollToBottom();
+    follow.contentGrew();
   }
 
   function appendCompactMarker(summary: string): void {
@@ -6781,14 +6868,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     el.append(line, details);
     transcript.append(el);
     syncEmptyHint();
-    scrollToBottom();
+    follow.contentGrew();
   }
 
   function appendError(text: string): void {
     // 同文案去重（design §6）：同一原因的反复报错就地滚回视野，不追加堆叠（Alex 真机
     // 同一错误曾堆 6 条）。元素被 resetView 清掉后引用同步失效（transcript.contains 复核）。
     if (lastErrorEl !== null && lastErrorText === text && transcript.contains(lastErrorEl)) {
-      scrollToBottom();
+      // 分流表 #7：就地替换、内容高度可能不变——detached 下点亮未读（spec「脱离态下重复错误
+      // 不拽走视口」要求未读提示在场），following 下滚到可见；两态都不写滚动位以外的东西。
+      follow.contentReplaced();
       return;
     }
     const el = document.createElement("div");
@@ -6798,7 +6887,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     lastErrorEl = el;
     lastErrorText = text;
     syncEmptyHint();
-    scrollToBottom();
+    follow.contentGrew();
   }
 
   // ── 批准闸 ───────────────────────────────────────────────────────────────
@@ -7173,7 +7262,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     });
 
     syncEmptyHint();
-    scrollToBottom();
+    follow.contentGrew(); // 分流表 #9：批准卡不拽视口（D5），未读圆点提示
   }
 
   // ── 思考块（M363，原型屏 9 形态合同）────────────────────────────────────────
@@ -7374,6 +7463,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     requestAnimationFrame(() => {
       flushScheduled = false;
       flushChunks();
+      // M644（design §3.3）：本拍已在 scroll 事件之后——following 下把本帧排队的写底就地落地
+      //（再等一帧只会让视口永远落后一帧的增量）；detached 下补一次未读扫描（纯思考帧
+      // flushChunks 早退，不经过 contentGrew，思考内容增长也要点亮未读）。
+      if (follow.phase() === "detached") follow.contentGrew();
+      else follow.flushNow();
     });
   }
 
@@ -7402,7 +7496,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     seg.tailEl.replaceChildren();
     renderMarkdownInto(seg.tailEl, seg.source.slice(seg.renderedFinalized), pathLinks, blockOpeners);
-    scrollToBottom();
+    follow.contentGrew(); // 分流表 #10：主战场——修前这里每帧无条件写底
   }
 
   /** 一轮结束：对每个文本段的完整源做一次全量重渲（增量渲染的近似在松散列表等形态上
@@ -7436,7 +7530,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     thinkingDirty = false;
     pendingThinkCreates = [];
     pendingSegSeq = null;
-    scrollToBottom();
+    follow.contentGrew(); // 分流表 #11：轮次终态不强制回底（D6）
     return el;
   }
 
@@ -8069,7 +8163,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     el.append(head, body);
     transcript.append(el);
     syncEmptyHint();
-    scrollToBottom();
+    follow.contentGrew(); // 分流表 #12：后台完成通知不拽视口
   }
 
   /** 通知正文无法还原成 run 行时的兜底上屏（原文照登，不丢内容）。 */
@@ -8082,7 +8176,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     el.append(body);
     transcript.append(el);
     syncEmptyHint();
-    scrollToBottom();
+    follow.contentGrew(); // 分流表 #13：同上（兜底上屏）
   }
 
   function handleEvent(event: HarnessEvent): void {
@@ -8329,7 +8423,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           attachStoppedMark(marker);
           transcript.append(marker);
           syncEmptyHint();
-          scrollToBottom();
+          follow.contentGrew(); // 分流表 #14：中断收口不拽视口
         }
         // 待决批准项随中断收回（design §5）：未决策的批准卡撤下、解壳回工具行——它们的
         // 唯一出口（点击）已失效，后端那条通道已被 Withdrawn 关闭。正常路径下 Withdrawn
@@ -8665,7 +8759,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     applyTaskReadings(state);
     applySessionName();
     syncEmptyHint();
-    scrollToBottom();
+    follow.jumpToBottom(); // 分流表 #15：快照重建收尾必须看到末尾（既有语义）
   }
 
   /** 快照请求（挂载 / 切 vault 共用）：世代号保证只有最新一次请求的结果被应用。 */
@@ -8685,6 +8779,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 关闭入口（`document` 径，交还焦点），MUST NOT 让遮罩停在一份已不存在的消息上。
     deps.blocks?.close();
     transcript.replaceChildren();
+    // M644：视图复位 = 换了一个会话，跟随态回 following、清未读、写底（快照 / 恢复路径随后
+    // 各自再「强制」一次，白名单动作不靠这一句兜底）。
+    follow.reset();
     pendingApprovals.clear();
     decidedApprovals.clear();
     // 任务区是**会话**的视图：换会话即清空（终态 run 的「本次会话摘要」不跨会话）。
@@ -9402,7 +9499,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // assistant 分支是裸 `transcript.append(el)`、不滚——恢复 transcript 以 assistant 收尾
         // （会话常态：末轮答复后用户尚未再提问）时少了这一句就停在最末 user 消息处、收尾回复
         // 折在视口外（M398 r1 P1）。user / tool 分支自带滚动不足以覆盖这个尾形态。
-        scrollToBottom();
+        follow.jumpToBottom(); // 分流表 #16：恢复历史会话必须从末尾读起（既有语义）
         refreshThinkingState();
         refreshUsageState();
         // 恢复出的会话若带子运行分桶（M589 的恢复重算），任务区的用量区要跟着出来——
@@ -9483,6 +9580,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       mount.append(panel);
       panel.hidden = false;
       refreshChip();
+      // M644：重新打开面板 = 白名单动作（D5）——强制回底并恢复跟随。同时覆盖「隐藏期间
+      // 布局读数不可信」的现场（元素摘下时 clientHeight 为 0）；挂载后的真实尺寸由
+      // ResizeObserver 再补一次贴底。
+      follow.jumpToBottom();
       // when 的 30s 低频刷新：只在挂载期间走表（摘下即清，重挂重建）。
       if (whenTimer !== null) window.clearInterval(whenTimer);
       whenTimer = window.setInterval(refreshWhoLines, 30_000);

@@ -522,6 +522,12 @@ function installFakeDom(): void {
       return [];
     }
   };
+  // 面板构造期注册的 transcript 视口观察器（M644）：本文件不驱动尺寸变化，观察器从不回调。
+  host.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  };
 }
 
 /** 冲掉若干拍微任务，落定 invoke 的 promise 链。 */

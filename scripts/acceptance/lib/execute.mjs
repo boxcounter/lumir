@@ -22,6 +22,7 @@ import {
   injectClickWithModifiers,
   injectDrag,
   injectHover,
+  injectWheel,
   openFile,
   pressKey,
   readAx,
@@ -2248,33 +2249,74 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const snapshot = await readAx(cu, p, { mode: "full" });
       const t = step.target;
       let index = step.index;
-      // 失败时把**通道边界**写进错误里：KimiCU 自报 `no scroll movement / already at end` 时，
-      // 场景作者很容易读成「文档到头了」，而实测是这条通道在本 app 上产不出位移（见下）。
+      let node = null;
+      if (t && t.x === undefined) {
+        node =
+          t.any !== undefined
+            ? findByAny(snapshot.nodes, { role: t.role, any: t.any, nth: t.nth ?? 0 })
+            : findNode(snapshot.nodes, { role: t.role, name: t.name, nth: t.nth ?? 0 });
+        if (!node) throw new Error(`scroll：找不到目标节点 ${JSON.stringify(t)}`);
+        index = node.index;
+      }
+
+      // wheel 兜底（M644）：KimiCU 的 scroll 在本 app 上从未产出过位移（M252 / M379 的通道
+      // 边界，见下方错误文案），滚轮注入因此是唯一可能真正滚起来的通道（swift + CGEvent
+      // mode 8，与 doubleClick / drag 同一条已验证通路）。只在 KimiCU 失败时启用、只在
+      // dy / dx 显式给出时启用——`page` 是「视口页」语义，换算成行数要猜视口高度，套件不猜
+      //（给 page 的步骤仍按原样报通道边界错误，场景改写成 dy）。
+      const wheelPlan = (() => {
+        if (step.page !== undefined) return null;
+        if (step.dy === undefined && step.dx === undefined) return null;
+        const bounds = windowBounds(snapshot.text);
+        const shot = screenshotSize(snapshot.text);
+        if (!bounds || !shot) return null;
+        let px;
+        let py;
+        if (t && t.x !== undefined) {
+          px = t.x;
+          py = t.y;
+        } else if (node?.bbox) {
+          px = node.bbox.x + node.bbox.w / 2;
+          py = node.bbox.y + node.bbox.h / 2;
+        } else {
+          return null;
+        }
+        // 截图像素 → 窗口局部点 → Quartz 屏幕点（与 windowLocalTarget 的换算同一把尺）。
+        return {
+          point: { x: bounds.x + (px * bounds.w) / shot.w, y: bounds.y + (py * bounds.h) / shot.h },
+          dy: step.dy ?? 0,
+          dx: step.dx ?? 0,
+        };
+      })();
       const scrollOrExplain = async (args) => {
         try {
           return (await cu.scroll(p, args)).json;
         } catch (e) {
+          if (wheelPlan !== null) {
+            const out = await injectWheel(wheelPlan.point, { dy: wheelPlan.dy, dx: wheelPlan.dx });
+            evidence.record({
+              kind: "note",
+              text:
+                `scroll：KimiCU 通道自报「${e.message}」，退到 swift + CGEvent 滚轮注入 ` +
+                `(dy=${wheelPlan.dy}, dx=${wheelPlan.dx} @屏幕 ${Math.round(wheelPlan.point.x)},${Math.round(wheelPlan.point.y)})｜${out}`,
+            });
+            await sleep(step.settleMs ?? 700);
+            return out;
+          }
           throw new Error(
             `scroll 失败：${e.message}——KimiCU 的 scroll 在**本 app** 上产不出位移：M252 的三轮探针` +
               "（树行 bbox 中心 × page 正/负、左栏 padding 点、legacy dy）与 M379 在 299 行长文档上的复验" +
               "（编辑器中心点 + dy）都是 no movement / already at end；CM 的 .cm-scroller 与树滚动区都没有" +
               "作为可滚对象暴露给 KimiCU。这是通道边界不是产品缺陷，见 README「已知边界」的滚动条：" +
-              "要真正滚起来得给 lib/cgevent-click.swift 加 wheel mode（finding " +
-              "20260927-worker-vault-switch-fb-improve-scroll-m252）。",
+              "显式写 dy（或 dx）即可启用 M644 的滚轮兜底（lib/cgevent-click.swift mode 8）；" +
+              "`page` 形态不换算成行数（套件不猜视口高度）。finding " +
+              "20260927-worker-vault-switch-fb-improve-scroll-m252。",
           );
         }
       };
       if (t && t.x !== undefined) {
         // 点形态也要带位移量：只给 x/y 时 KimiCU 报 `dy and dx both zero`（M379 探针实测）。
         return await scrollOrExplain({ x: t.x, y: t.y, page: step.page, dx: step.dx, dy: step.dy });
-      }
-      if (t) {
-        const node =
-          t.any !== undefined
-            ? findByAny(snapshot.nodes, { role: t.role, any: t.any, nth: t.nth ?? 0 })
-            : findNode(snapshot.nodes, { role: t.role, name: t.name, nth: t.nth ?? 0 });
-        if (!node) throw new Error(`scroll：找不到目标节点 ${JSON.stringify(t)}`);
-        index = node.index;
       }
       return await scrollOrExplain({ index, page: step.page, dx: step.dx, dy: step.dy });
     }
