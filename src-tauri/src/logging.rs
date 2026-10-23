@@ -154,6 +154,13 @@ pub enum LogEventName {
     SubagentNotified,
     /// 子运行启动被拒（design §13）：`reason` 是闭集合（见 [`SUBAGENT_REJECT_REASONS`]）。
     SubagentRejected,
+    /// 第三方库经 `log` 门面落下的 warning / error（M637）：`target` 是库里的模块路径，
+    /// `severity` 取 warn / error，`message` 是 `log` 记录的消息（按 [`MAX_VALUE_CHARS`] 截断）。
+    ///
+    /// 为什么需要：Lumir 原先没装 `log` 后端，`mac-usernotifications` 投递失败时打的
+    /// `log::error!`（含 NSError 的 localizedDescription）全被丢弃，日志里只剩一句笼统的
+    /// 「未被系统确认送达」。这条事件让第三方的失败原因第一次出现就落盘。
+    DependencyLog,
 }
 
 impl LogEventName {
@@ -203,6 +210,7 @@ impl LogEventName {
             Self::SubagentFinished => "subagent_finished",
             Self::SubagentNotified => "subagent_notified",
             Self::SubagentRejected => "subagent_rejected",
+            Self::DependencyLog => "dependency_log",
         }
     }
 
@@ -219,7 +227,8 @@ impl LogEventName {
             | Self::CronTaskInvalid
             | Self::CronTaskRejected
             | Self::SubagentCatalogLarge
-            | Self::SubagentRejected => "warn",
+            | Self::SubagentRejected
+            | Self::DependencyLog => "warn",
             Self::RenderError => "error",
             _ => "info",
         }
@@ -325,6 +334,10 @@ impl LogEventName {
                 "chain_index",
             ],
             Self::SubagentRejected => &["reason", "agent", "description"],
+            // 第三方库日志：`target` 是库的模块路径、`severity` 是原始级别（warn / error）、
+            // `message` 是消息正文（按 [`MAX_VALUE_CHARS`] 截断）。字段名不用 `level`：每行的
+            // 顶层 `level` 由事件名决定（[`LogEventName::level`]），同名字段会把它覆盖掉。
+            Self::DependencyLog => &["target", "severity", "message"],
         }
     }
 }
@@ -560,9 +573,57 @@ fn global() -> &'static Sink {
     })
 }
 
-/// 启动时显式初始化（lib.rs setup）：让 `[log] level` 在第一条事件之前就生效。
+/// 启动时显式初始化（lib.rs setup）：让 `[log] level` 在第一条事件之前就生效，
+/// 并装好第三方库的 `log` 桥（[`LogBridge`]）。
 pub fn init() {
+    // 先建落盘器（它会读配置，进程内唯一），再装桥：桥上的记录会走 `global()`，倒过来装
+    // 就有「初始化落盘器的过程本身触发一条库日志」的重入可能。
     let _ = global();
+    install_log_bridge();
+}
+
+/// `log` 门面的桥（M637）：把第三方库的 warn / error 转进本模块的 JSONL 落盘管道。
+///
+/// 为什么需要：本仓自己的埋点走本模块的显式 API、从不打 `log`，而依赖树里的
+/// `mac-usernotifications` 在投递失败时用 `log::error!` 打出 NSError 的 localizedDescription
+/// ——没有后端时这些记录被整个丢弃，诊断面只剩调用方自己拼的一句笼统错误（0.9.2 的
+/// 「未被系统确认送达」就是这样，真正的原因「request not allowed」没留下）。
+///
+/// 口径：只收 warn / error（info / debug / trace 不进诊断日志，避免把库的逐条流水刷进来）；
+/// 消息按 [`MAX_VALUE_CHARS`] 截断。**隐私**：第三方消息可能带路径等运行时数据，所以限级别、
+/// 限长度——这条桥的承诺是「库报告的问题能被看到」，不是「所有库日志都进日志」。
+struct LogBridge;
+
+static LOG_BRIDGE: LogBridge = LogBridge;
+
+impl log::Log for LogBridge {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let severity = match record.level() {
+            log::Level::Error => "error",
+            log::Level::Warn => "warn",
+            _ => return,
+        };
+        dependency_log(record.target(), severity, &record.args().to_string());
+    }
+
+    fn flush(&self) {}
+}
+
+/// 安装 [`LogBridge`]（进程内一次）。已被别的后端占用时只打 stderr——诊断是旁路，
+/// 绝不阻断启动。`max_level` 同样只放到 warn：更低的级别连格式化都省掉。
+fn install_log_bridge() {
+    if log::set_logger(&LOG_BRIDGE).is_ok() {
+        log::set_max_level(log::LevelFilter::Warn);
+    } else {
+        eprintln!("lumir: log 后端已被占用，第三方库的诊断日志不落盘");
+    }
 }
 
 /// 尽力把缓冲刷盘（lib.rs 进程退出路径）。
@@ -716,7 +777,27 @@ fn config_warning_to(sink: &Sink, source: &str, message: &str) {
         sink,
         Event::new(LogEventName::ConfigWarning)
             .field("source", source)
-            .field("message", message),
+            // 超长消息按字段上限截断：`emit` 对超限字段是**整条丢弃**，而配置 / 投递错误的
+            // 正文（含第三方库的 NSError 描述）经常超过上限——截断留住前半句，丢弃则什么都看不到
+            // （M637：投递失败诊断要的就是这半句）。
+            .field("message", clip_field_text(message.to_string())),
+    );
+}
+
+/// Rust 侧埋点：第三方库经 `log` 门面落下的 warning / error（M637，见 [`LogBridge`]）。
+pub fn dependency_log(target: &str, severity: &str, message: &str) {
+    dependency_log_to(global(), target, severity, message);
+}
+
+fn dependency_log_to(sink: &Sink, target: &str, severity: &str, message: &str) {
+    emit(
+        sink,
+        Event::new(LogEventName::DependencyLog)
+            // target / severity 正常都很短，但仍走同一个截断：字段超限会让 `emit` 整条丢弃，
+            // 这条通道宁可少几个字符也不能静默丢事件。
+            .field("target", clip_field_text(target.to_string()))
+            .field("severity", clip_field_text(severity.to_string()))
+            .field("message", clip_field_text(message.to_string())),
     );
 }
 
@@ -2114,5 +2195,65 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// 第三方库日志（M637）：字段按白名单落盘；超长消息**截断**而不是整条丢弃
+    /// （`emit` 对超限字段是整条丢弃——投递失败的长 NSError 描述不能被这样吞掉）。
+    #[test]
+    fn dependency_log_emits_fields_and_clips_instead_of_dropping() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        dependency_log_to(
+            &sink,
+            "mac_usernotifications::send",
+            "error",
+            "notification request rejected: com.lumir.app not allowed",
+        );
+        let long = format!("{}TAIL", "x".repeat(MAX_VALUE_CHARS));
+        dependency_log_to(&sink, "some_crate::module", "warn", &long);
+        sink.flush();
+
+        let lines = read_lines(dir.path());
+        assert_eq!(lines.len(), 2, "两条都应落盘：{lines:?}");
+        assert_eq!(lines[0]["event"], serde_json::json!("dependency_log"));
+        assert_eq!(lines[0]["level"], serde_json::json!("warn"));
+        assert_eq!(
+            lines[0]["target"],
+            serde_json::json!("mac_usernotifications::send")
+        );
+        assert_eq!(lines[0]["severity"], serde_json::json!("error"));
+        assert!(
+            lines[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("not allowed"),
+            "短消息原样保留：{lines:?}"
+        );
+        let clipped = lines[1]["message"].as_str().unwrap();
+        assert_eq!(
+            clipped.chars().count(),
+            MAX_VALUE_CHARS,
+            "超长消息按字段上限截断"
+        );
+        assert!(clipped.ends_with('…'), "截断带省略号");
+        assert!(!clipped.contains("TAIL"), "截断丢尾部而不是整条丢弃");
+    }
+
+    /// `config_warning` 的超长消息同样截断落盘（M637）：投递失败 / 配置错误的正文常常超过
+    /// 字段上限，整条丢弃会让最需要的那半句消失。
+    #[test]
+    fn config_warning_clips_oversized_message_instead_of_dropping() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        let message = format!("任务投递失败：{}", "y".repeat(MAX_VALUE_CHARS * 2));
+        config_warning_to(&sink, "cron", &message);
+        sink.flush();
+
+        let lines = read_lines(dir.path());
+        assert_eq!(lines.len(), 1, "超长消息必须仍然落盘：{lines:?}");
+        assert_eq!(lines[0]["event"], serde_json::json!("config_warning"));
+        let stored = lines[0]["message"].as_str().unwrap();
+        assert_eq!(stored.chars().count(), MAX_VALUE_CHARS);
+        assert!(stored.starts_with("任务投递失败："));
     }
 }

@@ -1128,6 +1128,7 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
         inflight: std::collections::HashMap::new(),
         skipped_today: std::collections::HashMap::new(),
         clicked_today: std::collections::HashMap::new(),
+        delivery_retry: std::collections::HashMap::new(),
         cached_vault: None,
         notify_failures: cron::NotifyFailureStreak::default(),
     };
@@ -1172,6 +1173,10 @@ struct CronRunner {
     /// 今日点击过的通知（repeat-click 幂等，design §5.1 / §4.6）：记录本次点击的日期与该次
     /// 运行的会话 id（回执带回才写）。同日第二次点击只聚焦 / 打开已有会话，不重复运行。
     clicked_today: std::collections::HashMap<String, ClickState>,
+    /// 投递失败的重试节奏（M637）：任务 → 退避状态。失败仍不写 `last_fired`（design §5.4 的
+    /// 语义不变），变的是重试间隔与日志量——指数退避、当日上限、只在第一次失败与当日放弃时
+    /// 各落一条 warning。成功投递即删除条目。
+    delivery_retry: std::collections::HashMap<String, cron::DeliveryRetry>,
     /// 当前 vault 规范化比较键的缓存：`(原始根, 规范化键)`。`canonicalize` 只在原始根变化时
     /// 做一次（macOS `/tmp` → `/private/tmp` 软链下，配置路径与 vault 根可能只差这一层），
     /// 定时器 tick 的常规路径因此仍是纯内存比较（tasks.md 2.4「30s tick 零文件 IO」）。
@@ -1281,6 +1286,7 @@ impl CronRunner {
         self.loop_max = plan.loop_max;
         cron::retain_live_tasks(&mut self.skipped_today, &plan.removed);
         cron::retain_live_tasks(&mut self.clicked_today, &plan.removed);
+        cron::retain_live_tasks(&mut self.delivery_retry, &plan.removed);
         // 在途运行（`self.inflight`）**不清理**：被删任务的运行还要收尾并回执（design §3.3 第 5 步）。
         // 通知权限的判据同一次补检回流给注册回执（M635）：空任务集不补检（不为了没人用的通道
         // 弹系统对话框），此时如实报「无法判定」。
@@ -1355,14 +1361,25 @@ impl CronRunner {
             cron::Plan::Idle => {}
             cron::Plan::Notify => {
                 // 投递失败（权限 / 投递后端错误）：不写 last_fired，下一次评估重试
-                // （design §5.4）。通道未就绪时不落事件——否则每个 tick 一条噪音。
+                // （design §5.4）。重试**节奏与日志量**由 `cron::DeliveryRetry` 管（M637）：
+                // 失败按指数退避，连续失败到当日上限即停——不这样做的现场是每 30s 重试一整天、
+                // 同一条 warning 刷 123 条。退避窗口内的评估直接跳过，不投递也不落日志。
+                // 可见提示（M635）与重试节奏（M637）各记各的账：前者按连续失败阈值在 app 内
+                // 上屏一次，后者管调度与日志量；成功时两条账都清。
+                if !self.delivery_ready(&task.id, &now.date) {
+                    return;
+                }
                 match deliver_notification(&self.app, &task.id, "trigger") {
                     Ok(()) => {
+                        self.delivery_retry.remove(&task.id);
                         self.notify_failures.record_success();
                         logging::cron_notified(&task.id, "trigger", trigger.as_str());
                         self.mark_fired(&task.id, &now.date);
                     }
-                    Err(error) => self.note_notify_failure(&task.id, &error),
+                    Err(error) => {
+                        self.note_notify_failure(&task.id, &error);
+                        self.record_delivery_failure(&task.id, &now.date, &error);
+                    }
                 }
             }
             cron::Plan::Handoff => self.handoff(scheduled, trigger, now),
@@ -1448,6 +1465,9 @@ impl CronRunner {
                     self.notify_failures.record_success();
                     logging::cron_notified(&run.task, kind, run.trigger.as_str());
                 }
+                // 单次失败不进 cron 日志（M637：`deliver_notification` 不再逐次打 warning，
+                // 底层 NSError 经 `log` 桥落 `dependency_log`）；这里只记账，达阈值那一次
+                // 由 `note_notify_failure` 落一条 warning + app 内可见提示。
                 Err(error) => self.note_notify_failure(&run.task, &error),
             }
         }
@@ -1632,7 +1652,10 @@ impl CronRunner {
 
     /// 一次投递失败的记账（M635）：连续次数由 [`cron::NotifyFailureStreak`] 判，只有达到
     /// 阈值的那一次才在 app 内上屏（同一段连续失败只提示一次，不拿重复提示吵人）。
-    /// 单次失败本身的行为不变：`deliver_notification` 已落 `config_warning`，下次评估重试。
+    ///
+    /// 日志口径归 M637：单次失败的诊断由 [`Self::record_delivery_failure`] 落（一段退避里第一
+    /// 次失败一条）；`deliver_notification` 本身不再逐次打 warning。这里只在「已给出可见提示」
+    /// 那一次记一条。
     fn note_notify_failure(&mut self, task: &str, error: &str) {
         let Some(count) = self.notify_failures.record_failure() else {
             return;
@@ -1648,6 +1671,42 @@ impl CronRunner {
             cron::delivery_failed_code(cached_notification_permission()),
             serde_json::json!({ "count": count }),
         );
+    }
+
+    /// 该任务现在是否允许再试一次投递（退避窗口 / 当日上限，M637）。没有失败记录即允许。
+    fn delivery_ready(&self, task: &str, date: &str) -> bool {
+        match self.delivery_retry.get(task) {
+            Some(state) => state.ready(date, Instant::now()),
+            None => true,
+        }
+    }
+
+    /// 记一次投递失败：**只**在第一次失败与当日放弃时各落一条 warning，中间的退避重试静默
+    /// （M637）。静默的是日志而不是行为——失败仍不写 `last_fired`，退避窗口结束后照常重试。
+    fn record_delivery_failure(&mut self, task: &str, date: &str, error: &str) {
+        let state = self
+            .delivery_retry
+            .entry(task.to_string())
+            .or_insert_with(|| cron::DeliveryRetry::new(date, Instant::now()));
+        match state.record_failure(date, Instant::now()) {
+            cron::RetryOutcome::Retry {
+                failures: 1,
+                next_in,
+            } => logging::config_warning(
+                "cron",
+                &format!(
+                    "任务 {task} 的通知投递失败，按退避重试（第 1 次；约 {}s 后）：{error}",
+                    next_in.as_secs()
+                ),
+            ),
+            cron::RetryOutcome::Retry { .. } => {}
+            cron::RetryOutcome::GivenUp { failures } => logging::config_warning(
+                "cron",
+                &format!(
+                    "任务 {task} 的通知已连续 {failures} 次投递失败，今日不再重试（次日到点窗口重新开始）：{error}"
+                ),
+            ),
+        }
     }
 }
 
@@ -1680,9 +1739,12 @@ fn current_vault_root(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// 上抛；点击等待与 macOS 同一路径（见 [`spawn_notification_click_waiter`]）。
 ///
 /// **成功判据 = 系统确认（M620，macOS）**：`show()` 的 Ok 只说明请求被本地接受，本函数随后用
-/// [`notification_is_delivered`] 查通知中心的已投递列表；查不到就同 id 重投一次，仍查不到则
-/// 落一条 `config_warning` 并返回 Err（不写 `cron_notified` / `last_fired`，下一次评估再试）。
-/// `cron_notified` 因此代表「系统确认已送达」，而不是「我方以为发了」。
+/// [`notification_is_delivered`] 查通知中心的已投递列表；查不到就同 id 重投一次，两次都查不到
+/// 即返回 Err（不写 `cron_notified` / `last_fired`）。`cron_notified` 因此代表「系统确认已送达」，
+/// 而不是「我方以为发了」。
+///
+/// **本函数不落日志**（M637）：失败的重试节奏与日志量归调用方——`Plan::Notify` 有退避与当日
+/// 上限，只落第一次失败与当日放弃两条 warning；在这里逐次打 warning 会让那个上限失效。
 fn deliver_notification(app: &tauri::AppHandle, task: &str, kind: &str) -> Result<(), String> {
     let body = match kind {
         "result" => "已完成",
@@ -1723,13 +1785,13 @@ fn deliver_notification(app: &tauri::AppHandle, task: &str, kind: &str) -> Resul
                 Err(error) => last_error = error,
             }
         }
-        logging::config_warning(
-            "cron",
-            &format!(
-                "任务 {task} 的通知（{kind}）未被系统确认送达（{NOTIFY_DELIVERY_ATTEMPTS} 次尝试）：{last_error}"
-            ),
-        );
-        Err(last_error)
+        // 调用方决定日志（M637）：`Plan::Notify` 的失败重试有退避与当日上限，在这里逐次打
+        // warning 会让「只落一条」失效（0.9.2 一天 123 条的现场）。错误文本带回尝试次数，
+        // 详情由调用方同那条唯一的 warning 一起落。
+        Err(format!(
+            "{} 次尝试均未被系统确认送达：{last_error}",
+            NOTIFY_DELIVERY_ATTEMPTS
+        ))
     }
     #[cfg(not(target_os = "macos"))]
     {

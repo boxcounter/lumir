@@ -18,6 +18,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 第三方库的诊断通道（M637）：本仓自己的埋点走 `logging` 模块的显式 API，从不打 `log`；
+# 但依赖树里的 `mac-usernotifications` 等库在失败时用 `log::error!` 报告原因（含 NSError 的
+# localizedDescription），没有后端就全被丢弃。`log` 本就在依赖树里（transitive），提升为直接
+# 依赖零新增编译重量；`logging::init` 装一条 warn / error → JSONL 的桥。
+log = "0.4"
 # session id 的随机段（rand 已在依赖树内 transitive 存在，直接引用零新增编译重量）。
 rand = "0.10"
 # 本地时间换算（change add-cron-runtime-daemon，design §4.3）：定时任务的「今天」与「到点」
