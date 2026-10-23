@@ -924,7 +924,7 @@ fn vault_patch(
             Err(e) => return ToolOutput::from_command_error(&e),
         },
     };
-    match fs_io::fs_patch_file(ctx.root, &input.path, &input.edits, &revision) {
+    match fs_io::fs_patch_file(ctx.root, ctx.policy, &input.path, &input.edits, &revision) {
         Ok(new_revision) => ToolOutput::ok(serde_json::json!({
             "path": input.path,
             "revision": new_revision,
@@ -974,12 +974,13 @@ struct DeleteArgs {
 
 /// vault_delete：**只有移入系统废纸篓一条路径**（`trash_entry`），本工具集里物理上做不到
 /// 永久删除（design §5.3）。失败不留半删除状态（`trash` crate 的单次系统调用语义）。
+/// `hidden` 档命中的路径在 `trash_entry` 里被拒（树里没有行 ⇒ 没有正当删除入口）。
 fn vault_delete(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
     let input = match parse_args::<DeleteArgs>(args) {
         Ok(input) => input,
         Err(output) => return output,
     };
-    match fs_io::trash_entry(ctx.root, &input.path) {
+    match fs_io::trash_entry(ctx.root, ctx.policy, &input.path) {
         Ok(()) => ToolOutput::ok(serde_json::json!({ "path": input.path })),
         Err(e) => ToolOutput::from_command_error(&e),
     }
