@@ -15,11 +15,13 @@
 
 - [ ] 1.1 新增 `src/quick-open.ts` 的解析纯函数：`resolveQuickOpenInput(raw, ctx)`——`trim` →
       绝对路径根前缀剥离（复用 `vaultAbsolutePath` 的拼接口径）→ `./` 归一 → 整串优先 →
-      剥后缀（存在性优先，D5）→ 目录判定 → 三类结果
+      剥后缀（存在性优先，D5）→ 目录判定 → 三类结果。**vault 外绝对路径走同一次序**（整串优先 +
+      同样的后缀剥离，命中后只读），MUST NOT 在归一化阶段就把外部路径分流掉
 - [ ] 1.2 后缀解析复用既有语义：把 `src/harness-path-link.ts` 的 `lineSuffixAt` 导出（或抽成
       共享纯函数模块），MUST NOT 复制 `LINE_SUFFIX`；`harness-path-link.test.ts` 的既有断言原样通过
 - [ ] 1.3 大小写策略：逐字精确优先；无精确命中时折叠等值回退；折叠多命中 ⇒ 列候选（不猜）
-- [ ] 1.4 单测（`tests/unit/quick-open.test.ts`）：design §2.4 的表逐行断言；另加畸形后缀
+- [ ] 1.4 单测（`tests/unit/quick-open.test.ts`）：design §2.4 的表逐行断言（含外部路径带行号 /
+      外部路径后缀畸形两行）；另加畸形后缀
       （`:0` / `:12-` / `:40-12` / `:9-12-15` / `:12x`）、冒号文件名、`../` 拒绝、反斜杠拒绝、
       越界行号（钳制交给 revealLine，解析层不改判）
 - [ ] 1.5 单测：候选过滤以**完整相对路径**为匹配对象（`filterIndices` 复用，不重测其语义）
@@ -73,8 +75,8 @@
 - [ ] 5.5 逐项不参与：保存入口早退、`save.noteOpened` 不登记、崩溃备份不写、watch 增量跳过、
       阅读位置不记、`paneSnapshot` 过滤（`src/vault-switcher.ts:131`）、`resolveBase()` 不给 from、
       `ensureMtime` 不调用
-- [ ] 5.6 `openExternal(path, line)` 装配：读 → 建只读会话 → `reloadSession` → `afterLoad`；同一
-      外部路径再次打开切到既有标签
+- [ ] 5.6 `openExternal(path, line)` 装配：读 → 建只读会话 → `reloadSession` → `afterLoad`；带行号时
+      接同一份 `openPathAtLine` 编排（打开后落到起始行）；同一外部路径再次打开切到既有标签
 - [ ] 5.7 modeline 只读段（「vault 外 · 只读」）+ 标签 `aria-label` 同句；外部图片 / 二进制给提示
 - [ ] 5.8 单测 / 场景：外部标签不入 `paneSnapshot`；`⌘S` 在外部会话上无 invoke；外部会话不写
       阅读位置
@@ -94,8 +96,8 @@
       含冒号的文件名、一个外部文本文件——**全部合成，不含真实内容**）；场景号按实现时批次的分配
       （M647 已占 228、M650 占 227，本 change 预计 229 起，实现期与 tower 核一次）
 - [ ] 7.2 断言：粘贴 `深层/路径.md:行` → 一次 Enter 落行；粘贴 vault 外绝对路径 → 只读打开 +
-      `⌘S` 无反应 + modeline 只读段在场；重启后外部标签不回来；`⌘P` 在编辑器 / 树 / composer
-      三处各按一次都能开
+      `⌘S` 无反应 + modeline 只读段在场；粘贴 vault 外 `绝对路径:行` → 只读打开并落该行；重启后
+      外部标签不回来；`⌘P` 在编辑器 / 树 / composer 三处各按一次都能开
 - [ ] 7.3 回扫既有验收场景：`grep` 所有对 `⌘P` / 快速打开 / 标签持久化标签数的期望，逐条确认
       仍然成立；`node scripts/acceptance/run.mjs --check` 通过
 - [ ] 7.4 如实登记覆盖边界（候选列表的滚动手感、浮层弹出节奏归 Alex 手感裁决，不进机器判据）
