@@ -1,0 +1,70 @@
+## REMOVED Requirements
+
+### Requirement: 失效 vault 的处置
+
+整条移除，并由下条新名 requirement（「失效 vault 的处置与清理」）承接：原文最后一句「系统 MUST NOT 提供「从列表移除」或硬删除注册项（既有治理口径是只归档不删除）」是本 change 要推翻的旧非目标（Alex 2026-10-23 要求「增加 vault 移除」），专钉它的 Scenario「没有从列表移除」随之废止；其余内容（不可切换、重新定位复用 `vault_remap`、占用拒绝）逐字保留在承接条里。改名的通道是「整条移除 + 新增承接条」——OpenSpec 的 MODIFIED 块不允许改 scenario 名。
+
+## ADDED Requirements
+
+### Requirement: 失效 vault 的处置与清理
+
+列表中路径不可用的注册项 SHALL 不可切换（MUST NOT 发起打开），并 SHALL 给出「重新定位…」出口；重新定位 SHALL 复用既有 `vault_remap` 链路（把该稳定 id 绑到用户选定的新路径），成功 SHALL 打开该 vault（等价于一次切换）。用户选定的新路径若已被另一个注册项占用，系统 SHALL 拒绝并给出人话提示（MUST NOT 静默合并两个身份——稳定 id 是重映射的锚点）。路径不可用的注册项 SHALL 同样提供「从列表移除」出口（见「vault 移除」条）：它不可切换，但用户 SHALL 能把它从列表里清理掉；自动治理（失效超期归档）仍只打归档标记、不删除注册项。
+
+#### Scenario: 失效行不可切换
+
+- **WHEN** 列表里某行标注路径不可用，用户点击该行
+- **THEN** 不发起打开、不给错误弹窗；该行只提供「重新定位…」
+
+#### Scenario: 重新定位成功后打开
+
+- **WHEN** 用户对失效项选「重新定位…」并在目录选择器里选定该 vault 的新位置
+- **THEN** 该稳定 id 绑到新路径、失效标记复位、列表顺序按最近打开更新，并切换到该 vault
+
+#### Scenario: 重定位到已被占用的路径被拒绝
+
+- **WHEN** 用户选定的新路径已是列表中另一个 vault 的路径
+- **THEN** 拒绝该次重定位并给出人话提示，两个注册项的身份都不变
+
+#### Scenario: 失效项可被清理
+
+- **WHEN** 列表里某行标注路径不可用，用户点该行的移除钮并在确认态点「移除」
+- **THEN** 该行从列表消失（注册项文件被删除，见「vault 移除」条），其余注册项不变；失效行 MUST NOT 因为不可用而无法清理
+
+### Requirement: vault 移除
+
+列表浮层 SHALL 为除当前项之外的每个注册项提供「从列表移除」入口；当前打开的 vault 那一行 MUST NOT 出现移除入口，系统对它的移除请求 SHALL 拒绝并给出人话提示（`vault_remove_current`）——移除当前 vault 要先决定「换到哪个上下文」，本能力不承担这个决定。移除 SHALL 走行内两步确认：第一次触发把该行换成点名该 vault 显示名的确认态（移除 / 取消），确认才执行、取消 SHALL 逐字还原该行。移除 SHALL 只删注册表里该 vault 的那一项（`<config_dir>/vault-registry/<vault-id>.json`）：MUST NOT 删除 vault 目录或其中任何文件，MUST NOT 删除按该 id 键控的标签会话、阅读位置与 harness 会话留存 / 附件。移除成功后浮层 SHALL 从 `vault_list` 重新拉取列表（MUST NOT 就地维护一份被改过的本地列表），该行因此不再出现；该注册项此后 SHALL 不再出现在 remap 候选里。移除 SHALL 给出一个带「撤销」动作的提示：撤销 SHALL 按移除前的原值（稳定 id、路径、上次打开时间、失效治理标记）把该注册项写回，列表视为从未移除。同一目录被重新加入（「新增 vault…」）时系统 SHALL 铸新的稳定 id，MUST NOT 复活被移除项的身份。
+
+#### Scenario: 移除一个非当前 vault
+
+- **WHEN** 列表里有 A（当前）与 B，用户点 B 行的移除钮并在确认态点「移除」
+- **THEN** B 从列表消失、浮层保持打开；磁盘上 B 的目录与其中全部文件逐字节不变（MUST NOT 有任何删除）；A 仍是当前项
+
+#### Scenario: 当前项没有移除入口
+
+- **WHEN** 用户打开切换器，看当前 vault 那一行
+- **THEN** 该行 MUST NOT 有移除钮；对该 vault 的移除请求由系统以 `vault_remove_current` 拒绝，注册项保持不变
+
+#### Scenario: 取消确认不动作
+
+- **WHEN** 用户点某行移除钮后在确认态点「取消」
+- **THEN** 该行逐字还原为移除前的内容，注册项仍在、列表顺序不变
+
+#### Scenario: 撤销恢复原注册项
+
+- **WHEN** 用户移除 B 后在提示里点「撤销」
+- **THEN** B 的注册项按移除前的原值写回（稳定 id、上次打开时间与失效治理标记都不变），列表重新出现 B 且排序位置与移除前一致
+
+#### Scenario: 移除后不再参与 remap 候选
+
+- **WHEN** 用户移除了 B，随后在目录选择器里打开一个未注册目录
+- **THEN** remap 候选浮条 MUST NOT 提到 B（该注册项已不存在）
+
+#### Scenario: 移除失败不静默
+
+- **WHEN** 注册表项删除失败（权限 / IO 错误）
+- **THEN** 该行保留在列表里，并给出点名原因的人话提示（`vault_remove_failed`）；MUST NOT 假装已移除
+
+#### Scenario: 重新加入得到新身份
+
+- **WHEN** 用户移除了 B，之后又经「新增 vault…」选中 B 的同一个目录
+- **THEN** 系统把它登记为新的稳定 id，MUST NOT 让被移除身份的标签 / 阅读位置 / 会话历史复活
