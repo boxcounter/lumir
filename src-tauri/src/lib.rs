@@ -139,6 +139,10 @@ pub fn run() {
             vault_registry::vault_remap,
             // 多 vault（M162）：列表 + 按 vault 的标签会话（前端在 M163 接）
             vault_registry::vault_list,
+            // 列表移除与撤销（M646，change vault-and-session-removal）：只删注册表项，
+            // 盘上的 vault 内容与 per-id 数据一概不动；撤销按原值写回。
+            vault_registry::vault_remove,
+            vault_registry::vault_restore,
             vault_session::vault_session_get,
             vault_session::vault_session_put,
             // 文档阅读位置（M194，change remember-reading-position）：与标签会话分开存

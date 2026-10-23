@@ -23,6 +23,7 @@ import type { CreateNoteResult } from "./bindings/CreateNoteResult";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import type { DecisionReason } from "./bindings/DecisionReason";
 import type { VaultWorkspace } from "./bindings/VaultWorkspace";
+import type { RemovedVault } from "./bindings/RemovedVault";
 import type { SessionResumeInfo } from "./bindings/SessionResumeInfo";
 import type { SessionSummary } from "./bindings/SessionSummary";
 import type { HarnessWrittenImage } from "./bindings/HarnessWrittenImage";
@@ -318,6 +319,19 @@ export const vaultRemap = (id: string, path: string): Promise<VaultWorkspace> =>
  *  注册表是唯一真源（spec「vault 列表与可见性」）。可用性探测在后端的非主线程上做。 */
 export function vaultList(): Promise<VaultListEntry[]> {
   return invoke<VaultListEntry[]>("vault_list");
+}
+
+/** 从列表移除一个注册项（M646，spec「vault 移除」）：唯一写操作是删注册表项文件，
+ *  盘上的 vault 目录 / 文件与 per-id 数据一概不动。resolve 为 null = 该项已不存在
+ *  （重复删除 / 竞态删除，幂等成功）；当前 vault 与 IO 失败走错误信封。 */
+export function vaultRemove(id: string): Promise<RemovedVault | null> {
+  return invoke<RemovedVault | null>("vault_remove", { id });
+}
+
+/** 撤销一次移除：按移除前的原值把注册项写回（稳定 id / 路径 / 上次打开时间 / 失效治理
+ *  标记）。目标已存在时不覆盖（幂等成功）；不打开、不切换。 */
+export function vaultRestore(entry: RemovedVault): Promise<void> {
+  return invoke<void>("vault_restore", { entry });
 }
 
 /** 读某 vault 的标签会话。无历史（首次打开 / 文件损坏 / 版本不匹配）resolve 为 null，

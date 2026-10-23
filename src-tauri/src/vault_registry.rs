@@ -24,6 +24,11 @@
 //! 归档是标记不是删除——外置卷重新挂载、目录恢复后同一注册项凭路径命中
 //! 即复位，身份不丢；归档项不再作为 remap 候选，幽灵项不再污染浮条。
 //!
+//! **用户主动移除**（[`vault_remove`]，M646 / change vault-and-session-removal）是唯一会删掉
+//! 注册项文件的路径：只删 `<id>.json` 那一项，vault 目录与按 id 键控的其余数据一概不动
+//!（此后成为不可达孤儿）；[`vault_restore`] 按移除前的原值把它写回。自动治理仍只归档，
+//! 两者不是一回事。
+//!
 //! 注册项另记 `last_opened_at`（打开**成功**路径的记账，供 `vault_list` 排序与「上次打开
 //! 时间」）。它不是治理标记：治理与注册都不清除它（`sweep_registry` 与 `vault_register`
 //! 都显式保留），只有真正发生的打开才刷新它。
@@ -490,6 +495,118 @@ pub async fn vault_list() -> Result<Vec<VaultListEntry>, CommandError> {
 }
 
 // ---------------------------------------------------------------------------
+// 列表移除与撤销（M646，change vault-and-session-removal）
+//
+// 移除是**整理列表**的动作，不是数据销毁：唯一的写操作是删掉
+// `<config>/vault-registry/<id>.json`——vault 目录、其中任何文件、按 id 键控的其余数据
+// （`vault-sessions/<id>.json` / `reading-positions/<id>.json` / `harness/sessions/<id>/` /
+// `harness/attachments/<id>/`）一律不碰，它们此后成为不可达的孤儿（`vault_session` 模块头的
+// 「无害残留」口径）。撤销按移除前的原值写回，是唯一能挽回那个身份的通道。
+// ---------------------------------------------------------------------------
+
+/// 「移除 → 撤销」的往返载荷：注册项的完整落盘字段（含三个 `#[ts(skip)]` 的治理字段）。
+///
+/// 为什么不复用 [`VaultWorkspace`]：它把 `missing_since` / `archived_at` / `last_opened_at`
+/// 标成 `#[ts(skip)]`（落盘字段不进 webview 契约）。为撤销把它们解禁，等于让注册项的内部
+/// 治理字段突然成为前端可见契约面；另立一个只服务这次往返的小类型，契约面增量就是它自己。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct RemovedVault {
+    pub id: String,
+    pub path: String,
+    /// 上次打开时间（Unix 毫秒）：撤销按原值写回，列表排序因此与移除前一致。
+    #[ts(type = "number | null")]
+    pub last_opened_at: Option<i64>,
+    /// 失效治理标记（`None` = 路径有效）：撤销时原值写回，一次撤销不得顺手把历史洗掉。
+    #[ts(type = "number | null")]
+    pub missing_since: Option<i64>,
+    /// 归档标记（`None` = 未归档）：同 `missing_since`，原值写回。
+    #[ts(type = "number | null")]
+    pub archived_at: Option<i64>,
+}
+
+/// [`vault_remove`] 的可测内核（注册表目录按参数注入，测试不碰真实配置目录）。
+///
+/// 判据顺序（design §2.1）：id 合法 → 读项（读不到 = 幂等 `None`）→ 当前 vault 守卫 →
+/// `remove_file`。读不到**不是**「删掉了」：撤销需要原值，没有原值就没有撤销提示。
+fn remove_entry_at(
+    registry: &Path,
+    current_id: Option<&str>,
+    id: &str,
+) -> Result<Option<RemovedVault>, CommandError> {
+    valid_id(id)?;
+    let path = registry.join(format!("{id}.json"));
+    let Some(v) = read_entry_file(&path) else {
+        return Ok(None);
+    };
+    // 当前 vault 不可移除（spec「当前项没有移除入口」）：按**稳定 id** 比对，不按路径字符串
+    //（路径比较要担心尾部斜杠与 canonicalize 口径）。前端隐藏入口只是呈现，这里才是防线。
+    if current_id == Some(v.id.as_str()) {
+        return Err(CommandError::new(
+            "vault_remove_current",
+            "当前打开的 vault 不能从列表移除，请先切换到其他 vault",
+        ));
+    }
+    fs::remove_file(&path).map_err(|e| {
+        CommandError::new("vault_remove_failed", "移除 vault 失败")
+            .param("path", path.display().to_string())
+            .param("reason", e.to_string())
+    })?;
+    Ok(Some(RemovedVault {
+        id: v.id,
+        path: v.path,
+        last_opened_at: v.last_opened_at,
+        missing_since: v.missing_since,
+        archived_at: v.archived_at,
+    }))
+}
+
+/// [`vault_restore`] 的可测内核：按原值把注册项写回。
+///
+/// 目标已存在**不覆盖**：撤销不是「改写现存注册项」的写通道（该项可能已被别的路径恢复，或
+/// 用户已经重新加过同一 id）。不刷新 `last_opened_at`、不动 `last_vault`、不触发打开。
+fn restore_entry_at(registry: &Path, entry: &RemovedVault) -> Result<(), CommandError> {
+    valid_id(&entry.id)?;
+    let path = registry.join(format!("{}.json", entry.id));
+    if path.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(registry)
+        .map_err(|_| CommandError::new("workspace_write", "无法创建 vault 注册表目录"))?;
+    let v = VaultWorkspace {
+        id: entry.id.clone(),
+        path: entry.path.clone(),
+        missing_since: entry.missing_since,
+        archived_at: entry.archived_at,
+        last_opened_at: entry.last_opened_at,
+    };
+    write_entry(&path, &v)
+        .map_err(|_| CommandError::new("workspace_write", "无法写入 vault 注册表"))
+}
+
+/// 从列表移除一个注册项（M646，spec「vault 移除」）：只删注册表项文件，盘上的 vault 内容与
+/// per-id 数据一概不动。返回移除前的完整注册项（撤销的载荷）；该项已不存在时返回 `None`
+/// ——重复删除 / 竞态删除不是错误（与 `harness_delete_session` 的幂等口径一致）。
+///
+/// 当前 vault 拒绝移除：未打开 vault 时 `root_policy_and_id` 返回 `vault_not_open`，按「没有
+/// 当前 vault」放行（任何注册项都可移除）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn vault_remove(
+    state: tauri::State<'_, crate::commands::VaultState>,
+    id: String,
+) -> Result<Option<RemovedVault>, CommandError> {
+    let current = state.root_policy_and_id().ok().map(|(_, _, id)| id);
+    remove_entry_at(&registry_dir()?, current.as_deref(), &id)
+}
+
+/// 撤销一次移除（spec「撤销恢复原注册项」）：把注册项按移除前的原值写回，列表视为从未移除。
+/// 已存在的项不被覆盖；不打开、不切换、不动 `last_vault`。
+#[tauri::command(rename_all = "snake_case")]
+pub fn vault_restore(entry: RemovedVault) -> Result<(), CommandError> {
+    restore_entry_at(&registry_dir()?, &entry)
+}
+
+// ---------------------------------------------------------------------------
 // M248（backlog #37）：旧注册表目录 `workspaces/` → `vault-registry/` 的一次性迁移。
 //
 // 迁移内核按配置目录注入（`migrate_legacy_registry_dir`），因此这四态都不碰 XDG_CONFIG_HOME
@@ -743,5 +860,178 @@ mod tests {
                 "第 {round} 轮并发 remap 不得留下 tmp：{leftovers:?}"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // 列表移除与撤销（M646）：内核按注册表目录注入，全程不碰真实的 `~/.config/lumir`。
+    // -----------------------------------------------------------------------
+
+    /// 在注册表目录里落一条注册项（治理字段可缺省）。
+    fn seed_entry(dir: &Path, id: &str, vault_path: &str, last_opened_at: Option<i64>) {
+        fs::create_dir_all(dir).expect("create registry dir");
+        let entry = VaultWorkspace {
+            id: id.to_string(),
+            path: vault_path.to_string(),
+            missing_since: None,
+            archived_at: None,
+            last_opened_at,
+        };
+        write_entry(&dir.join(format!("{id}.json")), &entry).expect("write entry");
+    }
+
+    /// 移除只删目标项文件：同目录其它项、`vault-sessions` / `reading-positions` 下的同名文件、
+    /// vault 目录内的文件全部逐字节不变（spec「移除一个非当前 vault」的 MUST NOT 那一半）。
+    #[test]
+    fn remove_entry_deletes_only_the_target_registry_file() {
+        let root = TempDir::new();
+        let registry = root.path().join(REGISTRY_DIR_NAME);
+        let vault_a = root.path().join("vault-a");
+        let vault_b = root.path().join("vault-b");
+        fs::create_dir_all(&vault_a).expect("create vault-a");
+        fs::create_dir_all(&vault_b).expect("create vault-b");
+        fs::write(vault_b.join("note.md"), "b-note").expect("write vault-b note");
+        seed_entry(
+            &registry,
+            "vault-a",
+            &vault_a.display().to_string(),
+            Some(10),
+        );
+        seed_entry(
+            &registry,
+            "vault-b",
+            &vault_b.display().to_string(),
+            Some(20),
+        );
+        // 按 id 键控的其余数据：移除 MUST NOT 碰它们。
+        let sessions = root.path().join("vault-sessions");
+        let positions = root.path().join("reading-positions");
+        fs::create_dir_all(&sessions).expect("create sessions dir");
+        fs::create_dir_all(&positions).expect("create positions dir");
+        fs::write(sessions.join("vault-b.json"), "{\"tabs\":[]}").expect("write session");
+        fs::write(positions.join("vault-b.json"), "{}").expect("write positions");
+
+        let removed = remove_entry_at(&registry, Some("vault-a"), "vault-b")
+            .expect("remove vault-b")
+            .expect("removal returns the previous entry");
+        assert_eq!(removed.id, "vault-b");
+        assert_eq!(removed.last_opened_at, Some(20));
+
+        assert!(
+            !registry.join("vault-b.json").exists(),
+            "目标注册项文件必须被删掉"
+        );
+        assert!(
+            registry.join("vault-a.json").exists(),
+            "同目录其它注册项不得受影响"
+        );
+        assert_eq!(
+            fs::read_to_string(sessions.join("vault-b.json")).expect("read session"),
+            "{\"tabs\":[]}",
+            "标签会话不是移除的删除面"
+        );
+        assert_eq!(
+            fs::read_to_string(positions.join("vault-b.json")).expect("read positions"),
+            "{}",
+            "阅读位置不是移除的删除面"
+        );
+        assert_eq!(
+            fs::read_to_string(vault_b.join("note.md")).expect("read vault-b note"),
+            "b-note",
+            "vault 目录内的文件不是移除的删除面"
+        );
+        assert!(vault_b.is_dir(), "vault 目录本身必须还在");
+    }
+
+    /// 当前 vault 拒绝移除（按稳定 id），未打开 vault 时放行。
+    #[test]
+    fn remove_entry_refuses_the_current_vault_by_stable_id() {
+        let root = TempDir::new();
+        let registry = root.path().join(REGISTRY_DIR_NAME);
+        seed_entry(&registry, "vault-a", "/tmp/vault-a", None);
+        seed_entry(&registry, "vault-b", "/tmp/vault-b", None);
+
+        let err = remove_entry_at(&registry, Some("vault-a"), "vault-a")
+            .expect_err("当前 vault 必须被拒绝");
+        assert_eq!(err.code, "vault_remove_current");
+        assert!(
+            registry.join("vault-a.json").exists(),
+            "被拒绝时注册项必须原样留在盘上"
+        );
+
+        // 没有当前 vault（未打开）：任何注册项都可移除。
+        remove_entry_at(&registry, None, "vault-a")
+            .expect("无当前 vault 时放行")
+            .expect("returns the previous entry");
+        assert!(!registry.join("vault-a.json").exists());
+    }
+
+    /// 幂等：删两次，第二次返回 `None`（不把「读不到」当成删掉了去返回假载荷）。
+    #[test]
+    fn remove_entry_is_idempotent() {
+        let root = TempDir::new();
+        let registry = root.path().join(REGISTRY_DIR_NAME);
+        seed_entry(&registry, "vault-a", "/tmp/vault-a", None);
+
+        assert!(
+            remove_entry_at(&registry, None, "vault-a")
+                .expect("first removal")
+                .is_some(),
+            "第一次移除返回原值（撤销的载荷）"
+        );
+        assert!(
+            remove_entry_at(&registry, None, "vault-a")
+                .expect("second removal is not an error")
+                .is_none(),
+            "第二次移除是幂等的 None，不是伪造的载荷"
+        );
+    }
+
+    /// 撤销逐字还原三个时间字段；已存在的项不被覆盖。
+    #[test]
+    fn restore_entry_writes_back_the_original_fields() {
+        let root = TempDir::new();
+        let registry = root.path().join(REGISTRY_DIR_NAME);
+        fs::create_dir_all(&registry).expect("create registry dir");
+        let original = RemovedVault {
+            id: "vault-ghost".to_string(),
+            path: "/Volumes/gone/notes".to_string(),
+            last_opened_at: Some(1_757_000_001_000),
+            missing_since: Some(1_757_000_002_000),
+            archived_at: Some(1_757_000_003_000),
+        };
+        restore_entry_at(&registry, &original).expect("restore");
+
+        let read = read_entry_file(&registry.join("vault-ghost.json")).expect("entry readable");
+        assert_eq!(read.id, original.id);
+        assert_eq!(read.path, original.path);
+        assert_eq!(read.last_opened_at, original.last_opened_at);
+        assert_eq!(read.missing_since, original.missing_since);
+        assert_eq!(read.archived_at, original.archived_at);
+
+        // 已存在的项不被覆盖：撤销不是「改写现存注册项」的写通道。
+        let occupied = RemovedVault {
+            id: "vault-ghost".to_string(),
+            path: "/elsewhere".to_string(),
+            last_opened_at: None,
+            missing_since: None,
+            archived_at: None,
+        };
+        restore_entry_at(&registry, &occupied).expect("restore over an existing entry");
+        let unchanged =
+            read_entry_file(&registry.join("vault-ghost.json")).expect("entry readable");
+        assert_eq!(unchanged.path, original.path, "已存在的注册项不得被覆盖");
+        assert_eq!(unchanged.last_opened_at, original.last_opened_at);
+
+        // 移除 → 撤销的往返：往返后四个字段与移除前逐项相等。
+        let removed = remove_entry_at(&registry, None, "vault-ghost")
+            .expect("remove")
+            .expect("previous entry");
+        assert_eq!(removed.missing_since, original.missing_since);
+        restore_entry_at(&registry, &removed).expect("undo");
+        let round_trip =
+            read_entry_file(&registry.join("vault-ghost.json")).expect("entry readable");
+        assert_eq!(round_trip.last_opened_at, original.last_opened_at);
+        assert_eq!(round_trip.missing_since, original.missing_since);
+        assert_eq!(round_trip.archived_at, original.archived_at);
     }
 }

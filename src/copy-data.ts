@@ -1750,6 +1750,37 @@ const COPY_TABLE = {
   // 信息载体：屏幕阅读器从可访问名感知「下面有新内容」。
   D555: { zh: "回到底部", en: "Back to bottom" },
   D556: { zh: "有新内容，回到底部", en: "New content, back to bottom" },
+  // D557–D561：vault 列表移除（M646，change vault-and-session-removal）。行尾移除钮的读屏名 /
+  // 行内两步确认的确认句与确认钮 / 已移除的撤销提示与撤销钮（取消侧复用 D136）。
+  D557: {
+    zh: "从列表移除 {name}",
+    en: "Remove {name} from the list",
+  },
+  D558: {
+    zh: "从列表移除「{name}」？磁盘上的目录与文件不受影响。",
+    en: "Remove {name} from the list? Files on disk are not affected.",
+  },
+  D559: {
+    zh: "移除",
+    en: "Remove",
+  },
+  D560: {
+    zh: "已从列表移除「{name}」",
+    en: "Removed {name} from the list",
+  },
+  D561: {
+    zh: "撤销",
+    en: "Undo",
+  },
+  // D562–D563：`vault_remove` 的两条错误（后端错误信封，经 ERROR_COPY 按 code 取值）。
+  D562: {
+    zh: "当前打开的 vault 不能从列表移除，请先切换到其他 vault",
+    en: "The open vault can't be removed from the list — switch to another vault first",
+  },
+  D563: {
+    zh: "移除失败：{reason}",
+    en: "Couldn't remove the vault: {reason}",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1878,6 +1909,10 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   // 会话删除（M406）：harness_delete_session。
   harness_session_active: "D420",
   harness_session_delete_failed: "D421",
+  // vault 列表移除（M646，change vault-and-session-removal）：vault_remove 的两条错误。
+  // `vault_remove_current` 不带占位；`vault_remove_failed` 带 path + reason（同 D421 的形）。
+  vault_remove_current: "D562",
+  vault_remove_failed: "D563",
   open_url_rejected: "D78",
   open_url_failed: "D79",
   // 窗口底色同步（M525）：只走 console 降级、永不上屏（见 D462 条目注记）。

@@ -442,7 +442,7 @@ change 的 [design §9](../../openspec/changes/add-harness-subagents/design.md)�
 | 路径 | 内容 | 性质 |
 |---|---|---|
 | `config.json` | 本文档 §1 的全部键 | 用户手编的输入面（「配置即数据」，ADR 0002 §5） |
-| `vault-registry/` | vault 注册表：`<vault-id>.json`，装 id ↔ path、治理标记、`last_opened_at` | **身份**（该 vault 是谁、在哪）；只归档不删除 |
+| `vault-registry/` | vault 注册表：`<vault-id>.json`，装 id ↔ path、治理标记、`last_opened_at` | **身份**（该 vault 是谁、在哪）；自动治理只归档不删除；用户在列表里可**移除**（只删本项文件——盘上的 vault 目录 / 文件与 `vault-sessions` / `reading-positions` / `harness/*` 下的 per-id 数据一概不动，它们此后成为不可达的孤儿；撤销按移除前的原值写回） |
 | `vault-sessions/` | 标签会话：`<vault-id>.json`（`tabs` / `active` / `updated_at`） | **易变状态**（上次开着哪些标签） |
 | `reading-positions/` | 阅读位置：`<vault-id>.json`（按文件路径记滚动位置） | **易变状态** |
 | `cron-state.json` | 定时任务的当日去重状态：`{"version":1,"tasks":{"<task-id>":{"last_fired":"YYYY-MM-DD","session_id":"…"}}}` | **易变状态**（运行态，不是用户声明）；tmp + rename 原子写，不进 `config.json`、不进任何 vault |

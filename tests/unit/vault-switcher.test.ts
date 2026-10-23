@@ -1374,6 +1374,8 @@ interface FakeEvent {
   isComposing?: boolean;
   defaultPrevented?: boolean;
   preventDefault?(): void;
+  /** 行内确认 / 删除钮的点击处理会挡住冒泡（与 M406 会话删除同款），替身给个空实现。 */
+  stopPropagation?(): void;
 }
 
 /** 元素替身：只实现被浮层代码碰到的那一小撮 DOM 面。 */
@@ -1514,6 +1516,12 @@ interface SwitcherRig {
   warns: string[];
   /** `list()` 被调用的次数（筛选 MUST NOT 触发第二次拉取，tasks 3.4）。 */
   listCalls: number;
+  /** `requestRemove` 的调用记录（M646：一次确认只能排出一次请求）。 */
+  removed: VaultListEntry[];
+  /** 让 `requestRemove` 拒绝（浮层据此还原行）——用例在调用前设它。 */
+  removeFails: boolean;
+  /** 从列表来源里摘掉一行（模拟后端删掉注册项：下次 `list()` 不再返回它）。 */
+  dropRow(id: string): void;
   /** 当前选中行的 vault id（无选中行时 undefined）。 */
   activeRowId(): string | undefined;
   /** 编辑器替身：阅读位置（滚动值语义）+ 光标位置 + 三条 dep 的调用次序。 */
@@ -1550,6 +1558,12 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
     focusedEditor: 0,
     warns: [],
     listCalls: 0,
+    removed: [],
+    removeFails: false,
+    dropRow: (id) => {
+      const index = rows.findIndex((row) => row.id === id);
+      if (index >= 0) rows.splice(index, 1);
+    },
     activeRowId: () =>
       mounts.children[0]
         .find("vault-row")
@@ -1571,6 +1585,13 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
     requestSwitch: (row) => void rig.switched.push(row),
     requestAdd: () => void (rig.added += 1),
     requestRelocate: (row, siblings) => void rig.relocated.push({ row, siblings }),
+    // 移除替身（M646）：记下调用并按 `removeFails` 决定成败；成功时像后端那样从注册表
+    //（= 列表来源）里摘掉该行，下一次 `list()` 因此不再返回它。
+    requestRemove: async (row) => {
+      rig.removed.push(row);
+      if (rig.removeFails) throw new Error("vault_remove_failed");
+      rig.dropRow(row.id);
+    },
     expanded: (value) => void rig.expandedFlags.push(value),
     readingPosition: () => {
       editor.calls.push("readingPosition");
@@ -1664,6 +1685,7 @@ test("浮层：未装载 vault（入口不存在）时打开是无操作", () =>
     requestSwitch: () => {},
     requestAdd: () => {},
     requestRelocate: () => {},
+    requestRemove: async () => {},
     expanded: () => {},
     readingPosition: () => ({ at: 0 }) as unknown as ScrollSnapshot,
     restoreReadingPosition: () => {},
@@ -2012,4 +2034,222 @@ test("浮层筛选：组合期不刷新结果集（拼音串零命中的闪烁�
   rig.input().fire("compositionend", {});
   assert.equal(rig.popover().find("vault-row").length, 0, "组合结束后刷一次（此处零命中）");
   assert.equal(rig.popover().hidden, false, "零命中同样保持浮层打开");
+});
+
+// ---------------------------------------------------------------------------
+// 列表移除与撤销（M646，change vault-and-session-removal）：行尾移除钮 / 行内两步确认 /
+// 刷新后游标落点 / refresh 的关态 no-op。判定是纯 DOM 行为，用同一套假 DOM 直接驱动。
+// ---------------------------------------------------------------------------
+
+/** 三行：notes（当前）、gone-vault（失效）、sandbox（可用）。 */
+const REMOVE_ROWS = (): VaultListEntry[] => [
+  listRow({ id: "notes", path: "/Users/alex/notes", tab_count: 2, last_opened_at: Date.now() }),
+  listRow({ id: "gone-vault", path: "/Volumes/gone", available: false, name: "gone-vault" }),
+  listRow({ id: "sandbox", path: "/Users/alex/sandbox" }),
+];
+
+/** 打开浮层并把三行渲染出来。 */
+async function openRemoveRig(rows: VaultListEntry[] = REMOVE_ROWS()) {
+  const rig = createSwitcherRig(rows);
+  await rig.switcher.onVaultLoaded("notes", []); // 当前项 = notes
+  rig.switcher.toggle();
+  await flush();
+  return rig;
+}
+
+/** 某一行（按 vault id）的行壳：`.vault-row-wrap` 里带该 dataset 的切换钮的父级。 */
+function rowWrap(rig: { list(): FakeEl }, id: string): FakeEl {
+  const index = rig
+    .list()
+    .find("vault-row-wrap")
+    .findIndex((wrap) => wrap.find("vault-row").some((row) => row.dataset.vault === id));
+  assert.ok(index >= 0, `列表里没有 ${id} 这一行`);
+  return rig.list().find("vault-row-wrap")[index];
+}
+
+test("移除钮：每行一枚、当前项没有（spec「当前项没有移除入口」），失效行同样有", async () => {
+  const rig = await openRemoveRig();
+  const wraps = rig.list().find("vault-row-wrap");
+  assert.equal(wraps.length, 3, "一行一个行壳（切换钮与移除钮是兄弟）");
+  assert.equal(rig.list().find("vault-row-del").length, 2, "三行里只有当前项没有移除钮");
+  assert.equal(rowWrap(rig, "notes").find("vault-row-del").length, 0, "当前项 MUST NOT 有移除钮");
+  assert.ok(rowWrap(rig, "sandbox").find("vault-row-del").length === 1, "可用行有移除钮");
+  assert.ok(
+    rowWrap(rig, "gone-vault").find("vault-row-del").length === 1,
+    "失效行也要能清理（它是本能力的主用例）",
+  );
+  // 读屏名点名这一行的显示名（`×` 是图形、不成词）
+  assert.equal(
+    rowWrap(rig, "sandbox").find("vault-row-del")[0].getAttribute("aria-label"),
+    "从列表移除 sandbox",
+  );
+  // 切换钮仍是 option，且 dataset 落在切换钮上（浮层的游标 / 重定位都靠它）
+  const switchButton = rowWrap(rig, "sandbox").find("vault-row")[0];
+  assert.equal(switchButton.getAttribute("role"), "option");
+  assert.equal(switchButton.dataset.vault, "sandbox");
+});
+
+test("确认态：点 × 换成「确认句 + 移除 + 取消」，取消逐字还原且不请求移除", async () => {
+  const rig = await openRemoveRig();
+  const wrap = rowWrap(rig, "sandbox");
+  wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+
+  // 确认句点名显示名，并写明盘上数据不受影响
+  assert.deepEqual(
+    wrap.find("vault-row-confirm").map((el) => el.textContent),
+    ["从列表移除「sandbox」？磁盘上的目录与文件不受影响。"],
+  );
+  assert.deepEqual(
+    wrap.find("vault-row-confirm-yes").map((el) => el.textContent),
+    ["移除"],
+  );
+  assert.deepEqual(
+    wrap.find("vault-row-confirm-no").map((el) => el.textContent),
+    ["取消"], // D136 复用
+  );
+  assert.equal(wrap.find("vault-row").length, 0, "确认态里切换钮不在 DOM 上");
+
+  wrap.find("vault-row-confirm-no")[0].fire("click", { stopPropagation: () => {} });
+  assert.deepEqual(rig.removed, [], "取消 MUST NOT 发移除请求");
+  assert.equal(wrap.find("vault-row").length, 1, "取消逐字还原该行");
+  assert.equal(wrap.find("vault-row-del").length, 1, "移除钮一起回来");
+  assert.equal(wrap.find("vault-row-confirm").length, 0, "确认态撤下");
+  assert.equal(rig.listCalls, 1, "取消不重拉列表（列表没变，重拉只会闪一下）");
+});
+
+test("确认态：确认只发一次请求，重拉列表且该行消失（不就地改本地列表）", async () => {
+  const rig = await openRemoveRig();
+  const wrap = rowWrap(rig, "sandbox");
+  wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+  const yes = wrap.find("vault-row-confirm-yes")[0];
+  yes.fire("click", { stopPropagation: () => {} });
+  // 双击 / 连点：第二次点击落在已 disabled 的钮上，不该排出第二个删除
+  yes.fire("click", { stopPropagation: () => {} });
+  await flush();
+
+  assert.deepEqual(rig.removed.map((row) => row.id), ["sandbox"], "一次确认只发一次移除请求");
+  assert.equal(rig.listCalls, 2, "成功后 MUST 重新拉取列表（打开时 1 次 + 刷新 1 次）");
+  assert.deepEqual(
+    rig.list().find("vault-row").map((row) => row.dataset.vault),
+    ["notes", "gone-vault"],
+    "被移除的行从列表消失（数据来自重新拉取，不是本地删改）",
+  );
+  assert.equal(rig.popover().hidden, false, "移除后浮层保持打开");
+});
+
+test("确认失败：行还原、不重拉列表（提示由装配层给）", async () => {
+  const rig = await openRemoveRig();
+  rig.removeFails = true;
+  const wrap = rowWrap(rig, "sandbox");
+  wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+  wrap.find("vault-row-confirm-yes")[0].fire("click", { stopPropagation: () => {} });
+  await flush();
+
+  assert.deepEqual(rig.removed.map((row) => row.id), ["sandbox"]);
+  assert.equal(rig.listCalls, 1, "失败不重拉列表");
+  assert.equal(wrap.find("vault-row").length, 1, "失败把该行还原（MUST NOT 假装已移除）");
+  assert.equal(wrap.find("vault-row-del").length, 1);
+  assert.equal(rig.popover().find("vault-row").length, 3, "列表里三行都还在");
+});
+
+test("刷新后的游标：落在原下标那一行（被移除行下方的行上移到该位置）", async () => {
+  const rig = await openRemoveRig();
+  // 游标先移到 sandbox（下标 2：available 行是 notes / sandbox，失效行不在游标空间里）
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  assert.equal(rig.activeRowId(), "sandbox");
+
+  // 移除 gone-vault（失效行、不在游标空间里）：游标仍应是 sandbox
+  const wrap = rowWrap(rig, "gone-vault");
+  wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+  wrap.find("vault-row-confirm-yes")[0].fire("click", { stopPropagation: () => {} });
+  await flush();
+  assert.equal(rig.activeRowId(), "sandbox", "移除失效行不挪动游标");
+});
+
+test("刷新后的游标：移除游标那一行时落在上移进来的那一行（不回到当前项）", async () => {
+  const rows = [
+    listRow({ id: "notes", path: "/Users/alex/notes" }),
+    listRow({ id: "alpha", path: "/Users/alex/alpha" }),
+    listRow({ id: "beta", path: "/Users/alex/beta" }),
+  ];
+  const rig = await openRemoveRig(rows);
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  assert.equal(rig.activeRowId(), "alpha");
+
+  const wrap = rowWrap(rig, "alpha");
+  wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+  wrap.find("vault-row-confirm-yes")[0].fire("click", { stopPropagation: () => {} });
+  await flush();
+  assert.deepEqual(
+    rig.list().find("vault-row").map((row) => row.dataset.vault),
+    ["notes", "beta"],
+  );
+  assert.equal(
+    rig.activeRowId(),
+    "beta",
+    "原下标位置那一行（beta 上移到 alpha 的位置），不跳回当前项",
+  );
+});
+
+test("确认态：Enter 既不触发移除也不切走确认行（该行已移出键盘游标空间）", async () => {
+  // reviewer r1 P2 的不变量：确认态的行若仍留在 `this.rows` 里，Enter 会按游标请求**切换**
+  //（用户以为在确认，却整窗换了一个 vault）。`suspendRow` 就是这条不变量本身——把这里的
+  // 断言当回归钉子：去掉 suspend 后本用例必须红。
+  const rig = await openRemoveRig();
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  assert.equal(rig.activeRowId(), "sandbox", "游标先落在 sandbox 这一行");
+
+  const wrap = rowWrap(rig, "sandbox");
+  wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+  assert.equal(rig.activeRowId(), undefined, "确认态的行离开键盘游标空间（is-active 撤下）");
+
+  rig.popover().fire("keydown", keydownEvent("Enter"));
+  await flush();
+  assert.deepEqual(rig.removed, [], "确认态下 Enter MUST NOT 触发移除");
+  assert.deepEqual(rig.switched, [], "确认态下 Enter MUST NOT 请求切换");
+  assert.equal(rig.popover().hidden, false, "浮层不因这次 Enter 收起");
+});
+
+test("刷新保持查询串与筛选状态（重拉不 reset 筛选）", async () => {
+  const rig = await openRemoveRig();
+  const input = rig.input();
+  input.value = "s";
+  input.fire("input", {});
+  assert.deepEqual(
+    rig.list().find("vault-row").map((row) => row.dataset.vault),
+    ["notes", "sandbox"],
+    "只留下含 s 的行（notes / sandbox）",
+  );
+
+  const wrap = rowWrap(rig, "sandbox");
+  wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+  wrap.find("vault-row-confirm-yes")[0].fire("click", { stopPropagation: () => {} });
+  await flush();
+  assert.equal(input.value, "s", "查询串不变");
+  assert.deepEqual(
+    rig.list().find("vault-row").map((row) => row.dataset.vault),
+    ["notes"],
+    "刷新后仍按同一条查询筛选",
+  );
+});
+
+test("refresh()：浮层关着是 no-op（不拉列表），开着按同一份口径重拉", async () => {
+  const rig = await openRemoveRig();
+  rig.switcher.toggle(); // 收起
+  rig.switcher.refresh();
+  await flush();
+  assert.equal(rig.listCalls, 1, "关着时 refresh 不拉列表（下次打开本来就会重拉）");
+
+  rig.switcher.toggle();
+  await flush();
+  assert.equal(rig.listCalls, 2, "打开时照常拉取");
+  rig.dropRow("sandbox"); // 模拟撤销之外的注册表变化（撤销由装配层在 refresh 前写完）
+  rig.switcher.refresh();
+  await flush();
+  assert.equal(rig.listCalls, 3, "开着时 refresh 重拉");
+  assert.deepEqual(
+    rig.list().find("vault-row").map((row) => row.dataset.vault),
+    ["notes", "gone-vault"],
+    "列表按重新拉取的结果重建",
+  );
 });

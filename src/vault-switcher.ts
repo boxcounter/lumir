@@ -72,6 +72,18 @@ const RELOCATE_TEXT = (): string => t("D103");
 /** D104 浮层底部新增入口（形态 A 下浮层内唯一的新增入口）。 */
 const ADD_TEXT = (): string => t("D104.1");
 const ADD_TITLE = (): string => t("D104.2");
+/** D557 行尾移除钮的读屏名（点名这一行的显示名）。 */
+const REMOVE_LABEL = (name: string): string => t("D557", { name });
+/** D558 行内确认句：点名显示名，并写明盘上的东西不受影响（用户最担心的那一件事）。 */
+const REMOVE_CONFIRM = (name: string): string => t("D558", { name });
+/** D559 确认态里的破坏侧按钮。 */
+const REMOVE_CONFIRM_YES = (): string => t("D559");
+/** D136 确认态里的取消钮（与 M406 会话删除同一选择：破坏性动作的默认落点必须是安全项）。 */
+const CANCEL_TEXT = (): string => t("D136");
+/** D560 移除成功后的提示（装配层发，撤销动作见 D561）——点名被移除的那一行。 */
+export function vaultRemovedText(name: string): string {
+  return t("D560", { name });
+}
 /** D108 恢复时跳过缺失文件的计数提示（一次一条，MUST NOT 逐个报错）。 */
 export function skippedText(count: number): string {
   return tPlural("D108", count, { n: count });
@@ -812,6 +824,9 @@ export interface VaultSwitcherDeps extends VaultSessionStoreDeps {
   requestAdd(): void;
   /** 失效项「重新定位…」请求；siblings 是本次渲染的整份列表（占用判定用它，不重新拉取）。 */
   requestRelocate(row: VaultListEntry, siblings: readonly VaultListEntry[]): void;
+  /** 移除某一行（M646）：只删注册表项，盘上的数据不动。**reject = 移除失败**——浮层据此把
+   *  该行还原，人话提示由装配层给（浮层不写第二份文案）。 */
+  requestRemove(row: VaultListEntry): Promise<void>;
   /** 同步入口的展开态（`aria-expanded`：入口 DOM 归树模块，展开态归浮层）。 */
   expanded(expanded: boolean): void;
   /** 焦点交还编辑器（浮层里按 Esc / Enter 关闭后）。MUST NOT 改变正文的阅读位置——
@@ -826,6 +841,9 @@ export interface VaultSwitcherDeps extends VaultSessionStoreDeps {
 export interface VaultSwitcherHandle extends VaultSessionStore {
   /** 打开 / 收起浮层（⌘O 命令与入口点击共用）。未装载 vault 时无操作。 */
   toggle(): void;
+  /** 按同一份口径重拉列表（M646：移除 / 撤销之后由装配层调）。浮层关着时是 no-op——下次
+   *  打开本来就会重新拉取，这里 MUST NOT 维护一份背景镜像。 */
+  refresh(): void;
 }
 
 /** 装配多 vault 切换器（浮层 + 会话）；返回命令层与装配层要的入口。 */
@@ -1090,9 +1108,16 @@ class VaultSwitcher implements VaultSwitcherHandle {
   }
 
   /** 一行：显示名 + 摘要次行（M217 起路径次行裁掉，gap 表 #12 Alex 裁决）；失效行改给成因与
-   *  「重新定位…」。失效行**不发起打开**（点击与 Enter 都走重定位），可用行点击即请求切换。 */
-  private renderRow(row: VaultListEntry, source: number, now: number): HTMLButtonElement {
+   *  「重新定位…」。失效行**不发起打开**（点击与 Enter 都走重定位），可用行点击即请求切换。
+   *
+   *  行的 DOM 形态（M646，change vault-and-session-removal）：`div.vault-row-wrap` 纯布局壳 +
+   *  切换钮与移除钮两个**兄弟**——WKWebView 把嵌套 button 当叶子、AX 树不暴露内层（M351
+   *  finding，会话浮层的删除钮是同一形态）。行距与底色仍留在 `button.vault-row` 上：它是
+   *  flex:1 的子项，当前项没有移除钮，宽度与底色因此逐像素不变。 */
+  private renderRow(row: VaultListEntry, source: number, now: number): HTMLDivElement {
     const current = row.id === this.currentId;
+    const wrap = document.createElement("div");
+    wrap.className = "vault-row-wrap";
     const el = document.createElement("button");
     el.type = "button";
     el.className = "vault-row";
@@ -1105,7 +1130,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
       this.rows.push(el);
     } else {
       // 不可用：仍是可聚焦的一行（键盘要能走到「重新定位…」），语义是「不可选中」，
-      // 点击不发起打开（spec「失效 vault 的处置」）。
+      // 点击不发起打开（spec「失效 vault 的处置与清理」）。
       el.classList.add("is-missing");
       el.setAttribute("aria-disabled", "true");
     }
@@ -1148,7 +1173,142 @@ class VaultSwitcher implements VaultSwitcherHandle {
         this.deps.requestRelocate(row, this.rowEntries);
       });
     }
-    return el;
+    wrap.append(el);
+    // 当前 vault 那一行**不渲染**移除钮（spec「当前项没有移除入口」）：隐藏只是呈现，后端
+    // `vault_remove` 按稳定 id 拒绝才是防线（IPC 可被任意调用）。失效行同样有——它是清理
+    // 失效项这个主用例的落点。
+    if (!current) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "vault-row-del";
+      del.setAttribute("aria-label", REMOVE_LABEL(row.name));
+      del.title = REMOVE_LABEL(row.name);
+      del.textContent = "×"; // i18n-exempt: glyph（乘号图形，非文案）
+      del.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.enterConfirm(wrap, row, el, del);
+      });
+      wrap.append(del);
+    }
+    return wrap;
+  }
+
+  /** 行内两步确认（M646，与 M406 会话删除同一套语汇）：把行壳的两个子元素换成「确认句 +
+   *  移除 + 取消」三个兄弟。
+   *
+   *  确认态**不参与键盘游标**：任何 `render()`（↑↓ 移动、输入筛选、列表刷新）都重建行，
+   *  确认态随之丢弃——它只存在于当前这份 DOM，不引入「确认中的行」这个要跨渲染维护的状态。
+   *  进入时把切换钮移出 `rows`：它已不在 DOM 里，留着的话 Enter 会照旧请求切换（用户以为
+   *  自己在确认，却整窗换了一个 vault）。 */
+  private enterConfirm(
+    wrap: HTMLDivElement,
+    row: VaultListEntry,
+    switchButton: HTMLButtonElement,
+    del: HTMLButtonElement,
+  ): void {
+    const position = this.suspendRow(switchButton);
+    const prompt = document.createElement("span");
+    prompt.className = "vault-row-confirm";
+    prompt.textContent = REMOVE_CONFIRM(row.name);
+    const yes = document.createElement("button");
+    yes.type = "button";
+    yes.className = "vault-row-confirm-yes";
+    yes.textContent = REMOVE_CONFIRM_YES();
+    const no = document.createElement("button");
+    no.type = "button";
+    no.className = "vault-row-confirm-no";
+    no.textContent = CANCEL_TEXT();
+    const restoreRow = (): void => {
+      wrap.replaceChildren(switchButton, del);
+      this.resumeRow(switchButton, position);
+    };
+    no.addEventListener("click", (event) => {
+      event.stopPropagation();
+      // 取消逐字还原该行——不重拉列表（列表没变，重拉只会闪一下）。
+      restoreRow();
+    });
+    yes.addEventListener("click", (event) => {
+      event.stopPropagation();
+      // 一次确认只发一次请求：双击 / 连点不该排出第二个移除。`disabled` 在真实 DOM 上就
+      // 不再派发 click，这一行是让「只一次」成为处理函数自己的不变量（不依赖浏览器）。
+      if (yes.disabled) return;
+      yes.disabled = true;
+      void this.commitRemove(row, position, restoreRow);
+    });
+    wrap.replaceChildren(prompt, yes, no);
+  }
+
+  /** 确认后的收口：调装配层移除 → 成功按同一份口径重拉列表；失败把该行还原（人话提示由
+   *  装配层给，浮层只恢复行——本模块不写第二份文案）。 */
+  private async commitRemove(
+    row: VaultListEntry,
+    position: number,
+    restoreRow: () => void,
+  ): Promise<void> {
+    try {
+      await this.deps.requestRemove(row);
+    } catch {
+      restoreRow();
+      return;
+    }
+    // 游标锚点：suspendRow 把确认行移出游标空间后 activeIndex 可能是 -1（确认行原本在游标上）
+    // ——那时用它的原下标，被移除行下方的行上移到该位置，正好是「原下标位置那一行」。
+    await this.reload(this.activeIndex >= 0 ? this.activeIndex : position);
+  }
+
+  /** 把一行暂时移出键盘游标空间（确认态期间），返回它在 `rows` 里的原下标；不在游标空间里
+   *  （失效行）返回 -1。 */
+  private suspendRow(row: HTMLButtonElement): number {
+    const index = this.rows.indexOf(row);
+    if (index < 0) return -1;
+    this.rows.splice(index, 1);
+    if (this.activeIndex === index) {
+      this.activeIndex = -1;
+      row.classList.remove("is-active");
+      this.input.removeAttribute("aria-activedescendant");
+    } else if (this.activeIndex > index) {
+      this.activeIndex -= 1;
+    }
+    return index;
+  }
+
+  /** 取消确认：把该行按原下标放回游标空间（原来在游标上就重新成为游标）。 */
+  private resumeRow(row: HTMLButtonElement, index: number): void {
+    if (index < 0) return;
+    const at = Math.min(index, this.rows.length);
+    this.rows.splice(at, 0, row);
+    if (this.activeIndex >= at) {
+      this.activeIndex += 1;
+      return;
+    }
+    this.setActive(at);
+  }
+
+  /** 重拉列表并按原下标摆放游标（M646 §3.3）：MUST NOT 就地改 `rowEntries`——注册表是唯一
+   *  真源。查询串与筛选状态不 reset（`render` 用的是输入框当前值）。 */
+  private async reload(anchor: number): Promise<void> {
+    if (!this.open) return;
+    const token = ++this.openToken;
+    let rows: readonly VaultListEntry[];
+    try {
+      rows = await this.deps.list();
+    } catch (e) {
+      // 令牌已过期（期间又刷新过 / 浮层收起）：这一次的结果整体丢弃，不报一条过期提示。
+      if (token !== this.openToken || !this.open) return;
+      this.deps.warn(errorText(e));
+      return;
+    }
+    if (token !== this.openToken || !this.open) return;
+    this.render(rows);
+    // 游标落在「原下标位置那一行」：被移除行下方的行上移到该位置，连续清理多个失效项时游标
+    // 不跳回当前项。列表里当前 vault 一定还在（它不可移除），因此不会是空列表。
+    if (anchor >= 0 && this.rows.length > 0) {
+      this.setActive(Math.min(anchor, this.rows.length - 1));
+    }
+  }
+
+  refresh(): void {
+    void this.reload(this.activeIndex);
   }
 
   private subLine(text: string, extraClass?: string): HTMLSpanElement {
