@@ -2,7 +2,8 @@
 
 > 阶段门：节点 1（Alex 提案评审）通过前 MUST NOT 改产品代码。tasks 随实现逐项勾选；实现期发现 proposal
 > 意图需要变更时，停下更新 proposal 并重走节点 1，不静默扩 scope。
-> 若 D2 裁「只到壳挂载」：删除 3.2 与 6.3（`vault-workspace` 的 MODIFIED 整块撤回），其余不变。
+> 若 D2 裁「只到壳挂载」：删除 3.2（`vault-workspace` 的 MODIFIED 整块撤回），其余不变；6.3（归档时为
+> 新 capability 手写 Purpose）与 D2 无关，任何分支都要做。
 
 ## 0. 提案（节点 1）
 

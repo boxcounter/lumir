@@ -4,9 +4,12 @@
 > [openspec/specs/vault-workspace/spec.md](../../../../specs/vault-workspace/spec.md) 的「启动恢复的时序与
 > 可见性」。**整条复制现行正文再改**（`openspec archive` 对 MODIFIED 是整块替换，少抄的段落会静默消失）：
 > 改动只有三处——① 恢复中态的呈现面从「未打开空态布局 + 提示」改为「启动态 + 阶段行（同一句文案）」；
-> ② 「打开 vault」入口的承载面在启动态期间由启动态承担；③ 首个 scenario 的 THEN 随 ①② 对齐。其余条款
-> （`restore_pending` 语义、`vault:restore_finished`、让位规则、`LUMIR_READY` 位置、全部 scenario 的判据）
-> 逐字不变。
+> ② 「打开 vault」入口的承载面在启动态期间由启动态承担；③ 首个 scenario 的 THEN 随 ①② 对齐：既有判据
+> 「窗口在恢复完成前即可绘制**并可交互**」在本 delta 里收窄为「即可绘制**并可拖动**」——启动态期间的交互面
+> = 窗口拖拽 + 「打开 vault」入口，其余交互对象（树、编辑器、modeline）此刻本不存在。措辞按实收窄（不冒充
+> 等价），「恢复完成前可用」的承诺由这两项承担。
+> 其余条款（`restore_pending` 语义、`vault:restore_finished`、让位规则、`LUMIR_READY` 位置、全部 scenario 的
+> 判据）逐字不变。
 >
 > 本 delta 只在 D2 裁「覆盖到树可用」时成立；若裁「只到壳挂载」，整条撤回（design.md 头部起草注记）。
 

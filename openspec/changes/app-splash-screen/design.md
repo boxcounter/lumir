@@ -101,8 +101,8 @@
 1. **主题通道**：`index.html` 的静态标记在 `configGet` 之前绘制，拿不到 `[ui] theme`，只能按默认 light 出图
    ——对 dark / eink 用户就是一次异色闪烁（M525 要消除的正是这类）。要让静态首帧主题正确，必须在
    document-start 注入主题：`initialization_script` 只存在于 `WebviewWindowBuilder`（程序化建窗），
-   `tauri.conf.json` 的 `app.windows[]` 没有该字段（tauri 2.11.5 源码核对）；`Builder::on_page_load`
-   是「导航开始」时机，能否稳定早于文档脚本与首帧需要实测。
+   `tauri.conf.json` 的 `app.windows[]` 没有该字段（tauri 2.12.4 源码核对，版本取 `src-tauri/Cargo.lock`
+   的 pin）；`Builder::on_page_load` 是「导航开始」时机，能否稳定早于文档脚本与首帧需要实测。
 2. **第二份布局**：骨架要在 HTML 里再写一遍元素结构。几何值虽可复用 `--layout-*` token，但 DOM 结构是第二份
    真源，后续改壳结构时不会自动跟着变。
 
