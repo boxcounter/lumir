@@ -2227,6 +2227,7 @@ dependencies = [
  "chrono",
  "ignore",
  "image",
+ "log",
  "mac-notification-sys",
  "mac-usernotifications",
  "notify",

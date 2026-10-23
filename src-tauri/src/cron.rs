@@ -11,6 +11,8 @@
 //! - [`handoff`]：运行交接载荷（`RunSpec` + 任务载荷）的**唯一**合成点（change
 //!   add-harness-subagents design §2.4）。同样纯函数——定时派发与点击发起共用它，接线层只把
 //!   结果 emit 出去。
+//! - [`DeliveryRetry`]：投递失败后的重试节奏（M637）。纯状态机——指数退避与当日失败上限都在
+//!   这里，时刻由调用方注入；重试动作与日志策略在接线层（`lib.rs`）。
 //! - `at` / `days` 解析与本地时间换算（[`chrono::Local`]；判定接受**注入**的 [`LocalNow`]，
 //!   单测不依赖系统时区）。
 //! - `cron-state.json` 的读写（原子替换、四类读取失败一律视为「无状态」）。
@@ -33,7 +35,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Datelike, FixedOffset, Local, Timelike};
 use serde::{Deserialize, Serialize};
@@ -312,6 +314,105 @@ pub fn plan(input: &PlanInput) -> Plan {
 }
 
 // ---------------------------------------------------------------------------
+// 投递失败的重试节奏（M637）
+// ---------------------------------------------------------------------------
+
+/// 当日投递失败上限：连续失败达到该次数即放弃当天剩余的重试。
+///
+/// 为什么要有上限：投递失败最常见的成因是**持续的**身份 / 权限问题（未签名的安装包被通知
+/// 守护进程拒收，M636 定论），下一次 tick 重试必然同样失败。没有上限时这类失败每 30s 重试
+/// 一整天、把同一条 warning 刷满日志（10-23 一天 123 条），真正的信号反而被埋掉。
+pub const DELIVERY_RETRY_LIMIT: u32 = 8;
+
+/// 首次失败后的重试间隔（= 一个 tick）。之后每次失败翻倍，封顶 [`DELIVERY_RETRY_MAX`]。
+pub const DELIVERY_RETRY_BASE: Duration = TICK;
+
+/// 退避间隔的上限：覆盖显示睡眠 / 通知守护进程重启这类分钟级的瞬时故障，又不至于把重试
+/// 拖到用户早已不需要这条提醒的时刻。
+pub const DELIVERY_RETRY_MAX: Duration = Duration::from_secs(15 * 60);
+
+/// 第 `failures` 次失败（1-based）到下一次尝试的间隔：指数退避、封顶 15 分钟。
+///
+/// 序列（`failures` 1..=7）：30s、1m、2m、4m、8m、15m、15m——累计约 45 分钟的重试窗口，
+/// 正好覆盖瞬时故障，又给第 [`DELIVERY_RETRY_LIMIT`] 次失败后的放弃留了明确边界。
+/// `failures == 0`（没有失败过）返回零间隔。
+pub fn delivery_retry_delay(failures: u32) -> Duration {
+    if failures == 0 {
+        return Duration::ZERO;
+    }
+    // 2^(failures-1) 会在 u32 上溢出，先夹到封顶所需的上限（5 次翻倍 = 16 分钟 > 封顶）。
+    let doublings = failures.saturating_sub(1).min(5);
+    DELIVERY_RETRY_BASE
+        .saturating_mul(1 << doublings)
+        .min(DELIVERY_RETRY_MAX)
+}
+
+/// 一条任务的投递失败重试状态（内存态，不落盘）。
+///
+/// 不落盘的理由：进程重启本身就是一次彻底的重试（主线程 run loop、通知守护进程连接都重建），
+/// 把计数写进 `cron-state.json` 会让「今天已经试过 N 次」跨重启生效，反而挡住重启后真正可能
+/// 成功的那次尝试。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryRetry {
+    /// 计数所属的本地日期（`LocalNow::date`）：跨日重新计数。
+    date: String,
+    failures: u32,
+    /// 下一次允许尝试的时刻。
+    next_attempt: Instant,
+}
+
+/// 一次失败后的处置：调用方据此决定落哪条日志（第一次失败与当日放弃各一条，中间静默）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryOutcome {
+    /// 继续按退避重试：`failures` 是累计次数，`next_in` 是到下一次尝试的间隔。
+    Retry { failures: u32, next_in: Duration },
+    /// 已达到当日上限，今天不再重试（次日到点窗口重新开始计数）。
+    GivenUp { failures: u32 },
+}
+
+impl DeliveryRetry {
+    pub fn new(date: &str, now: Instant) -> Self {
+        Self {
+            date: date.to_string(),
+            failures: 0,
+            next_attempt: now,
+        }
+    }
+
+    /// 当前是否该尝试投递：当日已放弃则恒 `false`；跨日则 `true`（新的一天重新计）。
+    pub fn ready(&self, date: &str, now: Instant) -> bool {
+        if self.date != date {
+            return true;
+        }
+        self.failures < DELIVERY_RETRY_LIMIT && now >= self.next_attempt
+    }
+
+    /// 记一次失败并推进退避窗口。跨日时先清空旧计数（那一天的失败不该压住今天的第一次尝试）。
+    pub fn record_failure(&mut self, date: &str, now: Instant) -> RetryOutcome {
+        if self.date != date {
+            *self = Self::new(date, now);
+        }
+        self.failures += 1;
+        if self.failures >= DELIVERY_RETRY_LIMIT {
+            return RetryOutcome::GivenUp {
+                failures: self.failures,
+            };
+        }
+        let next_in = delivery_retry_delay(self.failures);
+        self.next_attempt = now + next_in;
+        RetryOutcome::Retry {
+            failures: self.failures,
+            next_in,
+        }
+    }
+
+    /// 已累计的失败次数（诊断用；调用方靠 [`RetryOutcome`] 决定日志，不靠这个值再判一次）。
+    pub fn failures(&self) -> u32 {
+        self.failures
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 运行交接载荷（RunSpec + 任务载荷）
 // ---------------------------------------------------------------------------
 
@@ -580,8 +681,8 @@ pub fn delivery_failed_code(permission: Option<NotifyPermission>) -> &'static st
 
 /// 投递连续失败的可见提示阈值：达到即上屏一次，同一段连续失败只上屏一次。
 ///
-/// 3 次的取法：`notify-then-run` 的投递失败按 30s tick 重试（design §5.4），3 次 ≈ 1.5 分钟
-/// ——足以排除一次抖动，又不至于让用户等到下次交互才发现提醒根本没来。
+/// 3 次的取法：`notify-then-run` 的投递失败按退避重试（首次 30s，见 [`DeliveryRetry`]，M637），
+/// 3 次 ≈ 1.5 分钟——足以排除一次抖动，又不至于让用户等到下次交互才发现提醒根本没来。
 pub const NOTIFY_FAILURE_NOTICE_AFTER: u32 = 3;
 
 /// 通知投递的连续失败计数：**纯状态**，不含上屏动作（上屏在 `lib.rs` 的接线层）。
@@ -2406,5 +2507,73 @@ mod tests {
 
         let after = create_preview(&draft, &now((2026, 10, 18), 21, 30));
         assert_eq!(after["skip_today"], serde_json::json!(true));
+    }
+
+    /// 退避序列：30s 起、逐次翻倍、封顶 15 分钟；没有失败就没有退避。
+    #[test]
+    fn delivery_retry_delay_doubles_and_caps() {
+        use super::{delivery_retry_delay, DELIVERY_RETRY_MAX};
+        assert_eq!(delivery_retry_delay(0), std::time::Duration::ZERO);
+        assert_eq!(delivery_retry_delay(1), std::time::Duration::from_secs(30));
+        assert_eq!(delivery_retry_delay(2), std::time::Duration::from_secs(60));
+        assert_eq!(delivery_retry_delay(3), std::time::Duration::from_secs(120));
+        assert_eq!(delivery_retry_delay(4), std::time::Duration::from_secs(240));
+        assert_eq!(delivery_retry_delay(5), std::time::Duration::from_secs(480));
+        assert_eq!(delivery_retry_delay(6), DELIVERY_RETRY_MAX);
+        assert_eq!(delivery_retry_delay(7), DELIVERY_RETRY_MAX);
+        // 极端输入不 panic、不溢出。
+        assert_eq!(delivery_retry_delay(u32::MAX), DELIVERY_RETRY_MAX);
+    }
+
+    /// 退避窗口内的评估不重试、窗口过后重试；达到当日上限后当天恒不重试，次日重新开始。
+    #[test]
+    fn delivery_retry_backs_off_then_gives_up_for_the_day() {
+        use super::{DeliveryRetry, RetryOutcome, DELIVERY_RETRY_LIMIT};
+        use std::time::{Duration, Instant};
+
+        let t0 = Instant::now();
+        let mut retry = DeliveryRetry::new("2026-10-23", t0);
+        assert!(retry.ready("2026-10-23", t0), "首次尝试立即允许");
+
+        // 第 1 次失败：30s 内不重试。
+        let outcome = retry.record_failure("2026-10-23", t0);
+        assert_eq!(
+            outcome,
+            RetryOutcome::Retry {
+                failures: 1,
+                next_in: Duration::from_secs(30)
+            }
+        );
+        assert!(!retry.ready("2026-10-23", t0));
+        assert!(!retry.ready("2026-10-23", t0 + Duration::from_secs(29)));
+        assert!(retry.ready("2026-10-23", t0 + Duration::from_secs(30)));
+
+        // 连续失败到上限：最后一次返回 GivenUp，此后当天不再允许尝试。
+        let mut at = t0 + Duration::from_secs(30);
+        let mut last = None;
+        while retry.failures() + 1 < DELIVERY_RETRY_LIMIT {
+            last = Some(retry.record_failure("2026-10-23", at));
+            at += Duration::from_secs(60 * 60);
+        }
+        let outcome = retry.record_failure("2026-10-23", at);
+        assert_eq!(
+            outcome,
+            RetryOutcome::GivenUp {
+                failures: DELIVERY_RETRY_LIMIT
+            },
+            "第 {DELIVERY_RETRY_LIMIT} 次失败即当日放弃（中间结果：{last:?}）"
+        );
+        assert!(!retry.ready("2026-10-23", at + Duration::from_secs(24 * 60 * 60)));
+
+        // 跨日：重新计数，立即允许。
+        assert!(retry.ready("2026-10-24", at));
+        assert_eq!(
+            retry.record_failure("2026-10-24", at),
+            RetryOutcome::Retry {
+                failures: 1,
+                next_in: Duration::from_secs(30)
+            },
+            "跨日后的第一次失败按新的一天重新计数"
+        );
     }
 }

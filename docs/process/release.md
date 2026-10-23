@@ -78,6 +78,34 @@ bash scripts/pack-release.sh --bundles dmg
 
 ## 产物验证
 
+### 签名（M637，发布门禁强制）
+
+`src-tauri/tauri.conf.json` 的 `bundle.macOS.signingIdentity: "-"`（Tauri v2 官方的 ad-hoc 伪身份写法，[Tauri macOS 代码签名文档](https://v2.tauri.app/distribute/sign/macos/)）让 bundler 在 app→dmg 之间做一次 **bundle 级签名**。`scripts/pack-release.sh` 构建成功后跑签名闸，任一条不成立即 `PACK FAIL signature`，退出码 1，不产出可交付结论：
+
+- `codesign --verify --deep --strict <app>` 通过。
+- `codesign -dv --verbose=4 <app>` 的 `Identifier` == 产物 `Info.plist` 的 `CFBundleIdentifier`（== `tauri.conf.json` 的 `identifier`，当前 `com.lumir.app`）。linker 塞进去的签名打的是 `Identifier=lumir-<hash>`，这条判红。
+- `Info.plist entries=N` 在场（linker 签名是 `Info.plist=not bound`）。
+- `Sealed Resources version=N` 在场（linker 签名是 `Sealed Resources=none`）。
+
+为什么是机器闸而不是人工核对：未签名的 app 打包命令照样退出 0——0.9.2 就是这样交付的，而 macOS 的通知守护进程按**代码签名身份**判定调用方资格，未签名实例的 `requestAuthorization` 与 `addNotificationRequest` 全被拒（M636 定论，证据 `.tower/comms/inbox/20261023-worker-notify-survey-oct23-tower-survey-summary.md`）。闸挡的正是「构建退出 0 但产物没签」这一形态。
+
+ad-hoc 签名只够本机：DR（designated requirement）就是 cdhash，换版即换身份，TCC 授权可能重问一次；对外分发需要 Developer ID + 公证（$99/年），属另行裁决。
+
+`bash scripts/pack-release.sh --bundles dmg` 重打后 tauri 会清掉 `bundle/macos/Lumir.app`（只留 dmg）——此时闸只读挂载 dmg、对 payload 里的同名 app 跑同一组判据（`PACK INFO signature … 改验 dmg payload`），判据不降级。人工复核同理：先把 dmg 挂上（`hdiutil attach -readonly <dmg>`），对 `<挂载点>/Lumir.app` 跑上面的命令。
+
+人工复核命令（与闸同口径，打包机上手跑一次可复核闸的判定）：
+
+```
+app=src-tauri/target/release/bundle/macos/Lumir.app
+codesign --verify --deep --strict "$app" && echo SIGN-VERIFY-OK
+codesign -dv --verbose=4 "$app" 2>&1 | grep -E '^(Identifier|Info.plist entries|Sealed Resources)'
+/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist"
+```
+
+期望：`SIGN-VERIFY-OK`、`Identifier=com.lumir.app`、`Info.plist entries=<N>`、`Sealed Resources version=<N>`、`CFBundleIdentifier=com.lumir.app`。
+
+### dmg
+
 对 `Lumir_<version>_aarch64.dmg`：
 
 - `hdiutil verify <dmg>` → `checksum ... is VALID`。

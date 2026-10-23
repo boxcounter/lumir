@@ -41,7 +41,8 @@
     "longDescription": "Lumir 是一个本地优先的 Markdown 文本工作台，带 Emacs 键位与三套主题（light / dark / eink）。所有文件留在你自己的 vault 目录里，不上传、不联网。",
     "copyright": "Copyright © 2026 Alex",
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "signingIdentity": "-"
     }
   }
 }
