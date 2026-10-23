@@ -500,8 +500,23 @@ function focusSourcePane(paneId: PaneId | undefined): void {
     pane.handle.focus();
     return;
   }
-  ((pane?.handle.kind === "doc" ? pane.handle.editor : undefined) ?? activeEditor())
-    .focusPreservingReadingPosition();
+  const handle = (pane?.handle.kind === "doc" ? pane.handle.editor : undefined) ?? activeEditor();
+  const selection = handle.view.state.selection;
+  handle.focusPreservingReadingPosition();
+  // 浮层关闭、焦点交还编辑器时，浏览器偶尔会把 DOM 选区放到内容区起点并把 CM 的状态同步成
+  // caret 0（M650 实测：遮罩里选中过文本时约 1/6 概率，300ms 内落定；CM 的 atElementStart
+  // 护栏只挡「聚焦后的第一次 selectionchange」，前置事件会把它让过去）。这里在交还焦点后的
+  // 短窗口里按**缺陷签名**兜一次：状态塌到 0 才写回捕获的选区，不覆盖用户的其他选择；
+  // 窗口外与正常路径都不动作（`scrollIntoView` 不设，阅读位置不变量不受影响）。
+  for (const delay of [0, 50, 150, 300]) {
+    setTimeout(() => {
+      if (!handle.view.dom.isConnected || !handle.view.hasFocus) return;
+      const main = handle.view.state.selection.main;
+      if (main.empty && main.head === 0 && !selection.eq(handle.view.state.selection)) {
+        handle.view.dispatch({ selection });
+      }
+    }, delay);
+  }
 }
 
 /** 活跃 **doc** pane 的标签条实例（harness pane 无标签条；harness 持焦时标签命令族
@@ -1271,6 +1286,7 @@ injectEach((handle) =>
     },
     close: (reason) => tableFullscreen.close(reason),
     isOpen: () => tableFullscreen.isOpen(),
+    selectAll: () => tableFullscreen.selectAll(),
   }),
 );
 
@@ -3366,11 +3382,21 @@ const bindingsPanel = createBindingsPanel({
   restoreFocus: () => editor.focusPreservingReadingPosition(),
 });
 
-/** 菜单「全选」的落面（M627）：菜单点击没有键盘事件可判面，按**当前焦点**路由——composer
- *  持焦 → composer 全选；其余 → 编辑器全选（与让位前的原生 selectAll 在编辑器里的结果等价）。
+/** 菜单「全选」的落面（M627；M650 加遮罩档）：菜单点击没有键盘事件可判面，按**当前焦点**
+ *  路由——全屏遮罩开着 → 选遮罩内容（与遮罩内 ⌘A 同一落面，D3）；composer 持焦 → composer
+ *  全选；其余 → 编辑器全选（与让位前的原生 selectAll 在编辑器里的结果等价）。
  *  键盘路径不经这里：它走 `text` 作用域的 `composerTextFaceCommands` 包装，按事件目标分派
- *  同一个命令。面判据复用 `isComposerNode`（单一真源）。 */
+ *  同一个命令。面判据复用 `isComposerNode`（单一真源）；遮罩内容根归遮罩端口自己管，
+ *  MUST NOT 在这里查遮罩 DOM。 */
 function selectAllByFocusedFace(): void {
+  if (tableFullscreen.isOpen()) {
+    tableFullscreen.selectAll();
+    return;
+  }
+  if (codeBlockFullscreen.isOpen()) {
+    codeBlockFullscreen.selectAll();
+    return;
+  }
   if (isComposerNode(document.activeElement)) {
     harnessPanel.composerCommand("editor.select-all");
     return;
@@ -3383,7 +3409,8 @@ function selectAllByFocusedFace(): void {
 // 取值口径见 lib.rs MENU_COMMAND_EVENT：菜单只说 undo / redo / close / selectAll 这类平台
 // 术语，映射到命令 id 是前端的事。关闭项映射到 `tab.close`（M149：⌘W 归标签，菜单里的关闭项
 // 因此也关标签而不是关窗，两者的语义必须一致）；全选按焦点面路由（M627：⌘A 让出加速键后，
-// 菜单项仍要能全选，且焦点在 composer 里时选 composer 全文）。
+// 菜单项仍要能全选，且焦点在 composer 里时选 composer 全文；M650 起全屏遮罩开着时选遮罩内容，
+// 与遮罩内就地消费的 ⌘A 同一落面）。
 // M132：该通道从装配层直连 listen 收进 ipc.ts 的 onMenuCommand（同类事件走同一模块，
 // M131 已把它记为待收编项）；ipc.ts 的这一族因此覆盖 invoke 与 listen 两条通道。
 const MENU_COMMANDS: Record<string, CommandRunner | undefined> = {

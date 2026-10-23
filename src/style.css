@@ -1823,6 +1823,27 @@ body {
   font-size: var(--editor-font-size);
   line-height: var(--lh-ui);
   color: var(--text);
+  /* 「可选」是契约，不是从祖先继承来的默认值（M650，change fullscreen-table-text-selection）：
+     与 .lumir-codeblock-fs-content 同款显式声明——将来任何祖先加 user-select: none 都挡不住
+     这条规则。 */
+  user-select: text;
+}
+
+/* 遮罩内的原生选区带（M650）：全屏快照是应用里少有的一处「只能靠原生 `::selection` 显示选中」
+   的面——编辑器里看得见的那条是 CM 自绘的 `.cm-selectionBackground`（--sel-band）。
+   这里必须压过 CM 的 `hideNativeSelection` 主题：它把 `.cm-line ::selection` 设成
+   `transparent !important`（@codemirror/view 的 drawSelection 邻居规则），而快照 / 代码行的
+   克隆节点带 `.cm-line`、主题 scope 又经 `mirrorThemeScope` 镜像到浮层上——不覆盖的话，选中的
+   原生底色被那条规则静默抹成透明，正是「拖选没有出现选择块」的机制（M650 探针读数：
+   `cell::sel bg=rgba(0,0,0,0)`，而快照根自己的 `::selection` 仍是全局 `--accent-tint`）。
+   判据与取舍：取编辑器选区带同一档 `--sel-band`（对比 light 1.96:1 / dark 2.05:1，与编辑器
+   齐平，零新增色值）；`!important` 与三层类选择器都是必需的——CM 那条是 highest 优先级主题，
+   同 !important 下要靠更高的特异度才能压过。eink 档 `--sel` 与 `--sel-band` 同值，不额外分叉。 */
+.lumir-table-fs-overlay .lumir-table-fs-panel .lumir-table-fs-snapshot::selection,
+.lumir-table-fs-overlay .lumir-table-fs-panel .lumir-table-fs-snapshot ::selection,
+.lumir-codeblock-fs-overlay .lumir-codeblock-fs-panel .lumir-codeblock-fs-content::selection,
+.lumir-codeblock-fs-overlay .lumir-codeblock-fs-panel .lumir-codeblock-fs-content ::selection {
+  background-color: var(--sel-band) !important;
 }
 
 /* 代码块放大全屏查看（M277，change code-block-fullscreen）：与表格全屏**同一份浮层配方**
