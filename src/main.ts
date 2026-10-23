@@ -123,6 +123,8 @@ import {
   tPlural,
 } from "./copy";
 import type { Language } from "./copy";
+import { cronNoticeText } from "./copy";
+import type { CronNoticePayload } from "./copy";
 import { invalidateMermaidTheme } from "./preview/mermaid";
 import { logEvent, sampleCallback } from "./diagnostics";
 import type { FsEntry } from "./bindings/FsEntry";
@@ -2988,9 +2990,11 @@ async function installCronBridge(): Promise<void> {
         }).catch(() => {});
       },
     ).catch(() => {}),
-    listen<{ message: string }>("cron:notice", (event) =>
-      void showToast(harnessPaneMount(), event.payload.message),
-    ).catch(() => {}),
+    listen<CronNoticePayload>("cron:notice", (event) => {
+      const text = cronNoticeText(event.payload);
+      // 空串不上屏：没有文案的提示等于一条空白 toast（`message` 缺省只可能来自构造疏漏）。
+      if (text !== "") void showToast(harnessPaneMount(), text);
+    }).catch(() => {}),
   ]);
 }
 void installCronBridge()

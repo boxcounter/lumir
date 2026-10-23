@@ -11,7 +11,7 @@
 // **运行时唯一取值入口**，两边由 `tests/unit/copy.test.ts` 的全量漂移门禁钉住（改一处必红）。
 // 表不是从 deck 生成的，理由见 design §4.2（deck 的格是编辑性 bundle，不是「一格一条串」）。
 
-import { COPY, ERROR_COPY } from "./copy-data";
+import { COPY, CRON_NOTICE_COPY, ERROR_COPY } from "./copy-data";
 import type { CopyEntry, CopyKey } from "./copy-data";
 
 export type { CopyEntry, CopyKey } from "./copy-data";
@@ -176,6 +176,29 @@ function messageOf(e: unknown): string {
     if (typeof message === "string") return message;
   }
   return String(e);
+}
+
+/** `cron:notice` 的载荷（M635）：两种形态二选一——`code` 走文案表（当前界面语言 + 插值），
+ *  `message` 是既有调用点直传的串（那批文案还没迁进 deck）。 */
+export interface CronNoticePayload {
+  code?: string;
+  params?: Record<string, string | number>;
+  message?: string;
+}
+
+/** `cron:notice` 的上屏文本：`code` 有登记就按文案表取值，否则回落 `message`。
+ *
+ * 与 `errorText` 同一种分工（Rust 只发 `code` + `params`，人话在这里取值）：差别是这条通道
+ * 还带着一批**直传中文串**的既有调用点，因此 `message` 是合法的第二形态而不是兜底。 */
+export function cronNoticeText(
+  payload: CronNoticePayload,
+  lang: Language = currentLanguage(),
+): string {
+  if (payload.code !== undefined) {
+    const key = CRON_NOTICE_COPY[payload.code];
+    if (key !== undefined) return t(key, payload.params, lang);
+  }
+  return payload.message ?? "";
 }
 
 /** 信封形状判定（与 `src/ipc.ts` 的 `isCommandError` 同口径）。本模块不 import `ipc.ts`：

@@ -530,9 +530,14 @@
 | D549 | 左栏分隔条的读屏名 | 作者 | 调整左栏宽度 | Adjust sidebar width | 分隔条是 `role=separator` 的纯操作元素（静止态零足迹，只有 hover / 拖拽 / 焦点时显现 1px 视觉线），读屏需要一句说明拖它会改变什么；命名为动作（「调整」+ 对象），与 D120（「调整内容宽度」）同口径。消费点 `src/sidebar-width.ts` 的 `SIDEBAR_DIVIDER_LABEL`。 |
 | D550 | toast 左栏宽度写盘失败 | 作者 | 左栏宽度没能存进配置：{原因}（本次调整仍生效，重启后恢复） | Couldn't save the sidebar width: {reason} (the new width applies now, but reverts after restart) | 拖拽松手后写 `config.json` 失败时：调整本身已在运行期生效，只是不持久——措辞必须同时交代「现在生效」与「重启后恢复」（与 D121 同构，{原因} 在前）。运行期宽度不回滚。 |
 
+| D551 | cron 注册回执 · 通知身份未被系统认可 | 作者 | 系统未认可当前 Lumir 的通知身份（安装包缺少有效签名），通知无法送达。这条任务到点不会有提醒 | macOS doesn't recognize this Lumir's notification identity (the installed app lacks a valid signature), so notifications can't be delivered. This task won't alert you when it's due | M635（Alex 2026-10-23 裁决「安排。」）/ M636 定论：macOS 26 按调用进程的代码签名身份判定通知资格，只有 ad-hoc 签名的安装包系统认不到，`requestAuthorization` 与投递一律被拒；系统设置里的「Lumir」条目属于另一个签过名的身份，改它没有用——因此本句**不给**「去系统设置打开」的引导，只陈述身份与后果。消费者是 **Rust 侧**（`src-tauri/src/cron.rs` 的 `notify_permission_notice`，按注册那一刻的界面语言取列，与 D321 同一种「后端持有」形态；前端不取值），经 `cron_task_create` 回执的 `notice` 字段、由模型按 `cron-reference.md` 原样转达。只有 notify-then-run 档出句。 |
+| D552 | cron 注册回执 · 通知权限被拒（用户拒绝） | 作者 | 通知权限被拒，通知无法送达。这条任务到点不会有提醒。请到「系统设置 › 通知 › Lumir」里打开通知权限 | Notification permission is denied, so this task won't alert you when it's due. Allow notifications for Lumir in System Settings › Notifications | M635：与 D551 同一消费者的另一档——`authorizationStatus = Denied`（系统里确有本客户端的授权记录且被拒）时才有「去系统设置打开」这条引导。两档分开的理由见 D551；判据与取列口径同 D551。 |
+| D553 | cron 通知投递连续失败 toast（身份未被认可） | 作者 | 通知连续 {次数} 次投递失败，提醒没有送达：系统未认可当前 Lumir 的通知身份（安装包缺少有效签名） | Notifications failed to deliver {count} times in a row, so reminders aren't getting through: macOS doesn't recognize this Lumir's notification identity (the installed app lacks a valid signature) | M635 / M636：`cron:notice` 带 `code = cron_notify_delivery_failed_identity` 时上屏（`src/copy.ts` 的 `cronNoticeText` 取 `CRON_NOTICE_COPY`）。连续失败达阈值（`cron.rs` 的 `NOTIFY_FAILURE_NOTICE_AFTER`，3 次）的那一次弹一条，同一段连续失败只弹一次。`{次数}` = 当时的连续失败次数。 |
+| D554 | cron 通知投递连续失败 toast（其它成因） | 作者 | 通知连续 {次数} 次投递失败，提醒没有送达。请检查「系统设置 › 通知」里 Lumir 的权限 | Notifications failed to deliver {count} times in a row — check Lumir's notification permission in System Settings › Notifications | M635：`code = cron_notify_delivery_failed` 时上屏——用户拒绝 / 已授权却投递失败 / 无法判定统一走这一档。消费点与阈值同 D553。 |
+
 ## 编号沿革
 
-**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D550**（change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast，D548–D550；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
+**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D554**（M635 的通知送不出去文案 D551–D554：D551–D552 是注册回执的两档成因，D553–D554 是投递连续失败 toast 的两档；D548–D550 是 change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
 
 **不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377、D508–D513、D521。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
 
@@ -605,6 +610,7 @@
 - M615 D523–D543 定时任务批准卡：要素键名 / 触达与会话档位词 / 星期词 / 注册日口径 / 删除后果（接 D522 末位）
 - M629 D546–D547 图片标签的 modeline 右段：标签词 + 〔宽×高 · 文件大小〕读数模板（接 M627 的 D545 末位）
 - change add-sidebar-resize-hide-and-root-create（M631）D548–D550 左栏宽度与收起：⌘B 绑定来由 / 分隔条读屏名 / 宽度写盘失败 toast（接 M629 的 D547 末位）
+- M635 D551–D554 通知送不出去的两处可见面：注册回执的两档成因（身份未被系统认可 / 用户拒绝）+ 投递连续失败 toast 的两档（接 M631 的 D550 末位；rebase 到含 M631 的 master 时原 D548–D551 顺延为 D551–D554）
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 

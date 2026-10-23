@@ -1720,6 +1720,29 @@ const COPY_TABLE = {
     zh: "左栏宽度没能存进配置：{reason}（本次调整仍生效，重启后恢复）",
     en: "Couldn't save the sidebar width: {reason} (the new width applies now, but reverts after restart)",
   },
+  // cron 通知送不出去（M635 / M636 定论）：D551 / D552 的消费者是 **Rust 侧**
+  // （`src-tauri/src/cron.rs` 的 `notify_permission_notice`）——它们进 `cron_task_create` 的
+  // 工具回执，由模型原样转达给用户。前端不取值，但条目必须在表里（漂移门禁要求 deck ↔ 表
+  // 一一对应；与 D321 同一种形态）。两档分开的理由：系统不认签名身份时「去系统设置打开」是
+  // 误导（设置里的条目属于另一个身份）。
+  D551: {
+    zh: "系统未认可当前 Lumir 的通知身份（安装包缺少有效签名），通知无法送达。这条任务到点不会有提醒",
+    en: "macOS doesn't recognize this Lumir's notification identity (the installed app lacks a valid signature), so notifications can't be delivered. This task won't alert you when it's due",
+  },
+  D552: {
+    zh: "通知权限被拒，通知无法送达。这条任务到点不会有提醒。请到「系统设置 › 通知 › Lumir」里打开通知权限",
+    en: "Notification permission is denied, so this task won't alert you when it's due. Allow notifications for Lumir in System Settings › Notifications",
+  },
+  // 通知投递连续失败的 toast（M635）：消费点 `src/copy.ts` 的 `cronNoticeText`（Rust 侧只发
+  // `code` + `params`，文案在这里按当前界面语言取值）。
+  D553: {
+    zh: "通知连续 {count} 次投递失败，提醒没有送达：系统未认可当前 Lumir 的通知身份（安装包缺少有效签名）",
+    en: "Notifications failed to deliver {count} times in a row, so reminders aren't getting through: macOS doesn't recognize this Lumir's notification identity (the installed app lacks a valid signature)",
+  },
+  D554: {
+    zh: "通知连续 {count} 次投递失败，提醒没有送达。请检查「系统设置 › 通知」里 Lumir 的权限",
+    en: "Notifications failed to deliver {count} times in a row — check Lumir's notification permission in System Settings › Notifications",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1852,4 +1875,19 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   open_url_failed: "D79",
   // 窗口底色同步（M525）：只走 console 降级、永不上屏（见 D462 条目注记）。
   window_background_failed: "D462",
+};
+
+/**
+ * cron 人话提示的 `code` → 文案表键（M635）：`cron:notice` 事件里带 `code` 时按这张表取值，
+ * 由前端按当前界面语言渲染并插 `params`——Rust 侧只发 `code` + `params`（ui-language 的
+ * 「Rust 侧错误只带 code + params」口径），MUST NOT 再持有可见文案。
+ *
+ * 既有调用点仍直传 `message`（中文串，尚未迁进 deck），所以这张表**只登记新 code**；
+ * `cron:notice` 的取值口只在 `src/copy.ts` 的 `cronNoticeText` 一处。
+ */
+export const CRON_NOTICE_COPY: Record<string, CopyKey> = {
+  // 通知投递连续失败（`src-tauri/src/lib.rs` 的 `note_notify_failure`）：params = `count`。
+  // 身份未被系统认可（签名）与其它成因分成两条——见 D553 / D554 的设计意图列。
+  cron_notify_delivery_failed_identity: "D553",
+  cron_notify_delivery_failed: "D554",
 };
