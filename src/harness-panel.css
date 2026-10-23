@@ -965,37 +965,12 @@
   line-height: var(--lh-code);
   white-space: pre;
 }
-/* 细滚动条（M406，Alex：cli_run 详情横向滚动条太粗、遮挡内容）：4px 细条 + 透明轨道，
-   两条声明都要（scrollbar-width 管标准通道，::-webkit-scrollbar 管 WKWebView/chromium）——
-   与 tabstrip 的既有细条条款（src/style.css）同手法。
-   M628（Alex 2026-10-23「代码块横向滑动的滚动条很粗，影响阅读代码」）：配方扩到
-   `.lumir-hp-codeblock`——它一直漏在这条之外，横向溢出时走系统默认粗条。三个消费者
-   （代码块 / diff / argv）共用这一份声明，MUST NOT 各自再写一份（tests/visual 的 m628
-   场景按 CSSOM 断言三处逐值一致）。
-   浮层列表（vault 切换 / harness 会话 / 权限规则段）**不在本组**：它们的右缘有常驻钮，
-   细条仍会压住钮的右缘，归 src/style.css 的隐藏档（M660）。 */
-.lumir-hp-codeblock,
-.lumir-hp-diff,
-.lumir-hp-argv {
-  scrollbar-width: thin;
-}
-.lumir-hp-codeblock::-webkit-scrollbar,
-.lumir-hp-diff::-webkit-scrollbar,
-.lumir-hp-argv::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-.lumir-hp-codeblock::-webkit-scrollbar-thumb,
-.lumir-hp-diff::-webkit-scrollbar-thumb,
-.lumir-hp-argv::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 2px;
-}
-.lumir-hp-codeblock::-webkit-scrollbar-track,
-.lumir-hp-diff::-webkit-scrollbar-track,
-.lumir-hp-argv::-webkit-scrollbar-track {
-  background: transparent;
-}
+/* 细滚动条配方（M406 / M628）已迁到 src/style.css 的「滚动条分档」区段（M663）：文件里
+   只剩这一份指针，MUST NOT 在本文件再写滚动条声明（分档登记表与机器判据：
+   tests/unit/scrollbar-registry.test.ts）。消费者含 harness 的代码块 / diff / argv 与编辑器
+   预览的四个块级横滚容器。
+   浮层列表（vault 切换 / harness 会话 / 权限规则段）**不在细条档**：它们右缘 0 留白且逐行有
+   常驻钮，4px 条仍会盖住钮右缘，归 src/style.css 的隐藏档（M660）。 */
 :root[data-theme="eink"] .lumir-hp-diff,
 :root[data-theme="eink"] .lumir-hp-argv {
   background: var(--preview-bg);
