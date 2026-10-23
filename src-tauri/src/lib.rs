@@ -945,7 +945,11 @@ impl CronToolPort {
     }
 
     /// 写后投重载：只有线程回执确认（且没有失败原因）才算 `active`（design §2.4 / §3.8）。
-    fn reload_effect(&self) -> (cron::CronEffect, Vec<String>) {
+    ///
+    /// 第三项是线程在本次重载里读到的通知权限快照（M635）：注册回执据它判断要不要在回复里
+    /// 明说「通知送不出去」。回执丢了（超时 / 线程不在）⇒ `Unknown`——注册不声称一个没读到的
+    /// 结论。
+    fn reload_effect(&self) -> (cron::CronEffect, Vec<String>, cron::NotifyPermission) {
         let outcome = self.app.state::<CronRuntime>().reload();
         if outcome.is_none() {
             // ack 超时 / 线程不在：配置已写入是事实（不回滚），但运行时未确认要留痕。
@@ -961,7 +965,12 @@ impl CronToolPort {
                 logging::config_warning("cron", "任务集重载后为空（配置可能在写入后被外部修改）");
             }
         }
-        cron::effect_of(outcome.as_ref())
+        let (effect, seeded) = cron::effect_of(outcome.as_ref());
+        let permission = outcome
+            .as_ref()
+            .map(|outcome| outcome.notify_permission)
+            .unwrap_or(cron::NotifyPermission::Unknown);
+        (effect, seeded, permission)
     }
 }
 
@@ -971,11 +980,17 @@ impl cron::CronPort for CronToolPort {
         draft: cron::CronTaskDraft,
     ) -> Result<cron::CronCreateOutcome, cron::CronToolError> {
         let task = cron::create_task_at(&Self::config_path()?, &draft)?;
-        let (effect, seeded) = self.reload_effect();
+        let (effect, seeded, notify_permission) = self.reload_effect();
+        let notice = cron::registration_notice(
+            task.delivery,
+            notify_permission,
+            crate::commands::current_ui_language(),
+        );
         Ok(cron::CronCreateOutcome {
             skip_today: seeded.iter().any(|id| id == &task.id),
             task,
             effect,
+            notice,
         })
     }
 
@@ -993,7 +1008,7 @@ impl cron::CronPort for CronToolPort {
 
     fn remove(&self, id: &str) -> Result<cron::CronRemoveOutcome, cron::CronToolError> {
         cron::remove_task_at(&Self::config_path()?, id)?;
-        let (effect, _seeded) = self.reload_effect();
+        let (effect, _seeded, _permission) = self.reload_effect();
         Ok(cron::CronRemoveOutcome {
             id: id.to_string(),
             effect,
@@ -1114,6 +1129,7 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
         skipped_today: std::collections::HashMap::new(),
         clicked_today: std::collections::HashMap::new(),
         cached_vault: None,
+        notify_failures: cron::NotifyFailureStreak::default(),
     };
     // 通知权限（design §4.3）：**有有效任务时**检查一次；未决定申请一次；被拒落一条 warning
     // 且不反复申请。空表不检查——运行期注册引入的任务由重载补检（design §3.3 第 6 步）。
@@ -1163,6 +1179,9 @@ struct CronRunner {
     /// 它只是比较键的缓存，**不是**触发源：第三个拉取触发（目标 vault 打开成功）由打开路径
     /// 直接 poke（`commands::open_vault` / `RestoreGuard::finish`），不在 tick 上观察。
     cached_vault: Option<(PathBuf, PathBuf)>,
+    /// 通知投递的连续失败计数（M635）：达阈值那一次在 app 内给一条可见提示。判据与上屏文案
+    /// 的阈值都在 `cron.rs`（[`cron::NotifyFailureStreak`]），这里只做记账与派发。
+    notify_failures: cron::NotifyFailureStreak,
 }
 
 impl CronRunner {
@@ -1223,6 +1242,8 @@ impl CronRunner {
                     applied: self.tasks.len(),
                     seeded: Vec::new(),
                     error: Some(message),
+                    // 读配置失败时没有做权限补检：如实报「无法判定」，注册回执据此不声称被拒。
+                    notify_permission: cron::NotifyPermission::Unknown,
                 };
             }
             Err(error) => {
@@ -1234,6 +1255,7 @@ impl CronRunner {
                     applied: self.tasks.len(),
                     seeded: Vec::new(),
                     error: Some(error.message),
+                    notify_permission: cron::NotifyPermission::Unknown,
                 };
             }
         };
@@ -1260,13 +1282,18 @@ impl CronRunner {
         cron::retain_live_tasks(&mut self.skipped_today, &plan.removed);
         cron::retain_live_tasks(&mut self.clicked_today, &plan.removed);
         // 在途运行（`self.inflight`）**不清理**：被删任务的运行还要收尾并回执（design §3.3 第 5 步）。
-        if !self.tasks.is_empty() {
-            ensure_notification_permission();
-        }
+        // 通知权限的判据同一次补检回流给注册回执（M635）：空任务集不补检（不为了没人用的通道
+        // 弹系统对话框），此时如实报「无法判定」。
+        let notify_permission = if self.tasks.is_empty() {
+            cron::NotifyPermission::Unknown
+        } else {
+            ensure_notification_permission()
+        };
         cron::ReloadOutcome {
             applied: self.tasks.len(),
             seeded: plan.seeded,
             error: None,
+            notify_permission,
         }
     }
 
@@ -1329,9 +1356,13 @@ impl CronRunner {
             cron::Plan::Notify => {
                 // 投递失败（权限 / 投递后端错误）：不写 last_fired，下一次评估重试
                 // （design §5.4）。通道未就绪时不落事件——否则每个 tick 一条噪音。
-                if deliver_notification(&self.app, &task.id, "trigger").is_ok() {
-                    logging::cron_notified(&task.id, "trigger", trigger.as_str());
-                    self.mark_fired(&task.id, &now.date);
+                match deliver_notification(&self.app, &task.id, "trigger") {
+                    Ok(()) => {
+                        self.notify_failures.record_success();
+                        logging::cron_notified(&task.id, "trigger", trigger.as_str());
+                        self.mark_fired(&task.id, &now.date);
+                    }
+                    Err(error) => self.note_notify_failure(&task.id, &error),
                 }
             }
             cron::Plan::Handoff => self.handoff(scheduled, trigger, now),
@@ -1413,11 +1444,11 @@ impl CronRunner {
         if run.delivery == config::DeliveryPolicy::RunThenNotify {
             let kind = if result.ok { "result" } else { "failure" };
             match deliver_notification(&self.app, &run.task, kind) {
-                Ok(()) => logging::cron_notified(&run.task, kind, run.trigger.as_str()),
-                Err(error) => logging::config_warning(
-                    "cron",
-                    &format!("任务 {} 的结果通知投递失败：{error}", run.task),
-                ),
+                Ok(()) => {
+                    self.notify_failures.record_success();
+                    logging::cron_notified(&run.task, kind, run.trigger.as_str());
+                }
+                Err(error) => self.note_notify_failure(&run.task, &error),
             }
         }
     }
@@ -1597,6 +1628,26 @@ impl CronRunner {
         self.skipped_today
             .insert(task.to_string(), date.to_string());
         logging::cron_run_skipped(task, reason.as_str());
+    }
+
+    /// 一次投递失败的记账（M635）：连续次数由 [`cron::NotifyFailureStreak`] 判，只有达到
+    /// 阈值的那一次才在 app 内上屏（同一段连续失败只提示一次，不拿重复提示吵人）。
+    /// 单次失败本身的行为不变：`deliver_notification` 已落 `config_warning`，下次评估重试。
+    fn note_notify_failure(&mut self, task: &str, error: &str) {
+        let Some(count) = self.notify_failures.record_failure() else {
+            return;
+        };
+        logging::config_warning(
+            "cron",
+            &format!("任务 {task} 的通知已连续 {count} 次投递失败，已给出可见提示：{error}"),
+        );
+        // 措辞按**已探测的**权限快照分档（M636）：身份未被认可时说签名，别的成因走通用档
+        // ——通用档不把「去系统设置打开」说成唯一出路（那里开着也送不出去时它不解决问题）。
+        notice_code(
+            &self.app,
+            cron::delivery_failed_code(cached_notification_permission()),
+            serde_json::json!({ "count": count }),
+        );
     }
 }
 
@@ -1827,6 +1878,26 @@ fn deliver_notification_dev(task: &str, body: &str) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+/// 通知权限快照（macOS 打包实例；dev flavour / 非 macOS 从不写入）。
+///
+/// 单独一个静态而不是函数内 `static`：投递失败时要用**已探测的**快照选措辞，而那条路径
+/// MUST NOT 触发一次新的申请（见 [`cached_notification_permission`]）。
+#[cfg(target_os = "macos")]
+static NOTIFY_PERMISSION: std::sync::OnceLock<cron::NotifyPermission> = std::sync::OnceLock::new();
+
+/// 已经探测过的通知权限快照（不发起申请）：投递失败时按它选可见提示的措辞（M635）。
+/// 从未探测过（进程内还没有任何任务）⇒ `None`，调用方按「无法判定」处理。
+fn cached_notification_permission() -> Option<cron::NotifyPermission> {
+    #[cfg(target_os = "macos")]
+    {
+        NOTIFY_PERMISSION.get().copied()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
 /// 通知权限检查（design §4.3）：有有效任务时检查一次；未决定申请一次；被拒落一条人话
 /// warning 且不反复申请。查询 / 申请失败都只降级为 warning——MUST NOT 阻断启动。
 ///
@@ -1835,29 +1906,81 @@ fn deliver_notification_dev(task: &str, body: &str) -> Result<(), String> {
 /// 一次。dev flavour 走 legacy 投递，UN 授权在无 bundle 进程里没有意义，直接跳过。非 macOS
 /// （Linux 无权限模型、Windows 无查询 API）同样无需检查：投递失败由调用侧按 design §5.4 交给
 /// 下一次评估。
-fn ensure_notification_permission() {
+///
+/// **返回值是判据快照，不是新的判断**（M635）：申请只发生在这里一次，结果缓存在
+/// [`NOTIFY_PERMISSION`]；重载回执把它带回去（[`cron::ReloadOutcome::notify_permission`]），
+/// 注册回执与下面的 warning 读的是同一份快照。注册路径 MUST NOT 自己再申请一次——「未决定」
+/// 时申请会弹系统对话框，第二处申请等于让注册动作多弹一次窗。
+///
+/// **`Ok(false)` 不是「用户拒绝」的同义词**（M636 定论）：macOS 26 的 usernotificationsd 按调用
+/// 进程的代码签名身份判定资格，安装包只有 linker ad-hoc 签名时系统认不到该 bundle id，申请
+/// 一律返回 false，而系统设置里「Lumir」的条目属于另一个签过名的身份。因此再读一次
+/// `authorizationStatus` 把成因分开：`NotDetermined`（系统里没有本客户端的授权记录）⇒
+/// [`cron::NotifyPermission::Unrecognized`]，`Denied` ⇒ [`cron::NotifyPermission::Denied`]。
+fn ensure_notification_permission() -> cron::NotifyPermission {
     #[cfg(target_os = "macos")]
     {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        static REQUESTED: AtomicBool = AtomicBool::new(false);
         if tauri::is_dev() {
-            return;
+            return cron::NotifyPermission::Granted;
         }
-        if REQUESTED.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        match notify_rust::request_auth_blocking() {
-            Ok(true) => {}
-            Ok(false) => logging::config_warning(
-                "cron",
-                "通知权限被拒绝：notify-then-run 任务无法投递，可改用 run-then-notify / silent-run",
-            ),
-            Err(error) => logging::config_warning(
+        // 诊断文案在探测里落（那里才有 crate 的错误详情），这里只做「一次」与「缓存」。
+        *NOTIFY_PERMISSION.get_or_init(probe_notification_permission)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        cron::NotifyPermission::Granted
+    }
+}
+
+/// 申请一次通知授权，并用 `authorizationStatus` 把「用户拒绝」与「系统不认这个身份」分开
+/// （M636）：`requestAuthorization` 只在「未决定」时弹窗，已决定时按现状返回。诊断 warning 也
+/// 只在这里落一次（`get_or_init` 保证）。
+///
+/// 读设置失败时按 `Denied` 处理——两条措辞都说明「通知送不出去」，只有「要不要让用户去系统
+/// 设置」这条引导不同；读不到状态时不排除用户拒绝的可能，因此走 `Denied` 档。
+#[cfg(target_os = "macos")]
+fn probe_notification_permission() -> cron::NotifyPermission {
+    use mac_usernotifications::AuthorizationStatus;
+    let permission = match notify_rust::request_auth_blocking() {
+        Ok(true) => cron::NotifyPermission::Granted,
+        Ok(false) => match notify_rust::get_notification_settings_blocking() {
+            Ok(settings) => match settings.authorization_status {
+                AuthorizationStatus::NotDetermined => cron::NotifyPermission::Unrecognized,
+                // 申请说没授权、设置说已授权（Provisional / Ephemeral / Authorized）：两头矛盾，
+                // 按「送不出去」的一般档处理，不编原因。
+                _ => cron::NotifyPermission::Denied,
+            },
+            Err(error) => {
+                logging::config_warning(
+                    "cron",
+                    &format!("读取通知授权状态失败，按「被拒」处理：{error}"),
+                );
+                cron::NotifyPermission::Denied
+            }
+        },
+        Err(error) => {
+            logging::config_warning(
                 "cron",
                 &format!("通知权限申请失败（不影响启动与任务判定）：{error}"),
-            ),
+            );
+            cron::NotifyPermission::Unknown
         }
+    };
+    match permission {
+        cron::NotifyPermission::Granted => {}
+        cron::NotifyPermission::Denied => logging::config_warning(
+            "cron",
+            "通知权限被拒绝：notify-then-run 任务无法投递，可改用 run-then-notify / silent-run",
+        ),
+        cron::NotifyPermission::Unrecognized => logging::config_warning(
+            "cron",
+            "系统未认可当前 Lumir 的通知身份（安装包缺少有效签名，系统设置里的 Lumir 条目属于其它身份）：\
+             notify-then-run 任务无法投递，可改用 run-then-notify / silent-run",
+        ),
+        // `Err` 分支已经落过带错误详情的 warning，这里不再重复。
+        cron::NotifyPermission::Unknown => {}
     }
+    permission
 }
 
 /// 把主窗口唤起并置前（通知点击的第一步，design §4.5）。返回是否成功——失败由调用方落
@@ -1893,8 +2016,22 @@ fn session_started_today(session_id: &str, now: &cron::LocalNow) -> bool {
 }
 
 /// 人话提示（点击链路失败时的可见反馈）：前端监听 `cron:notice` 并上屏。
+///
+/// 载荷是**直传的中文串**——既有调用点沿用（它们的文案还没迁进 deck，属独立的 i18n 收尾
+/// 治理，不在 M635 范围）。新调用点一律走 [`notice_code`]：文案只在 deck 一处，前端按当前
+/// 界面语言取值（ui-language 的「Rust 侧错误只带 code + params」口径）。
 fn notice(app: &tauri::AppHandle, message: &str) {
     let _ = app.emit(CRON_NOTICE_EVENT, serde_json::json!({ "message": message }));
+}
+
+/// 按**文案 code** 上屏的人话提示（M635）：前端把 `code` 映射成 deck 条目、按当前界面语言
+/// 渲染并插 `params`。code 只在 `src/copy-data.ts` 的 `CRON_NOTICE_COPY` 里登记一次，Rust 侧
+/// MUST NOT 持有可见文案（D321 是唯一例外：OS 绘制的原生对话框）。
+fn notice_code(app: &tauri::AppHandle, code: &str, params: serde_json::Value) {
+    let _ = app.emit(
+        CRON_NOTICE_EVENT,
+        serde_json::json!({ "code": code, "params": params }),
+    );
 }
 
 #[cfg(all(test, target_os = "macos"))]

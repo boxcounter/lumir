@@ -633,7 +633,7 @@ fn cron_task_create(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
                     outcome.skip_today,
                 );
             }
-            ToolOutput::ok(serde_json::json!({
+            let mut receipt = serde_json::json!({
                 "task": {
                     "id": outcome.task.id,
                     "vault": outcome.task.vault,
@@ -644,7 +644,13 @@ fn cron_task_create(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
                 },
                 "effect": outcome.effect.as_str(),
                 "skip_today": outcome.skip_today,
-            }))
+            });
+            // 通知送不出去（M635 / M636）：回执里带一句人话告知，模型按 `cron-reference.md`
+            // 的指令原样转达——注册成功但到点不会有提醒，是用户必须当场知道的事实，不能只进日志。
+            if let Some(notice) = outcome.notice {
+                receipt["notice"] = serde_json::json!(notice);
+            }
+            ToolOutput::ok(receipt)
         }
         Err(error) => cron_rejected(error),
     }
@@ -1806,6 +1812,7 @@ mod tests {
             task: cron_task("daily-log"),
             effect: cron::CronEffect::Active,
             skip_today: true,
+            notice: None,
         });
         let out = execute(
             "cron_task_create",
@@ -1826,6 +1833,52 @@ mod tests {
             "vault 缺省必须落成当前 vault 根"
         );
         assert!(seen.days.is_none(), "没给的键不进草稿");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 注册回执的通知送不出去告知（M635）：`notice` 在场时原样进回执；缺席时回执里**没有这个
+    /// 键**（不是空串）——模型按「有没有 notice」决定要不要转达，空串会被读成「说坏了但没话说」。
+    #[test]
+    fn cron_task_create_receipt_carries_notify_permission_notice() {
+        let (root, policy) = fixture_vault("cron-create-notice");
+        let skills: Vec<SkillEntry> = Vec::new();
+        let notice = cron::notify_permission_notice(
+            cron::NotifyPermission::Unrecognized,
+            crate::config::UiLanguage::Zh,
+        )
+        .unwrap();
+
+        let port = CreatePort::new(cron::CronCreateOutcome {
+            task: cron_task("daily-log"),
+            effect: cron::CronEffect::Active,
+            skip_today: false,
+            notice: Some(notice),
+        });
+        let out = execute(
+            "cron_task_create",
+            &serde_json::json!({"id": "daily-log", "at": "21:00", "prompt": "写今日 log"}),
+            &cron_ctx(&root, &policy, &skills, &port),
+        );
+        assert!(out.succeeded(), "{:?}", out.value);
+        assert_eq!(out.value["notice"], notice);
+
+        let port = CreatePort::new(cron::CronCreateOutcome {
+            task: cron_task("daily-log"),
+            effect: cron::CronEffect::Active,
+            skip_today: false,
+            notice: None,
+        });
+        let out = execute(
+            "cron_task_create",
+            &serde_json::json!({"id": "daily-log", "at": "21:00", "prompt": "写今日 log"}),
+            &cron_ctx(&root, &policy, &skills, &port),
+        );
+        assert!(out.succeeded(), "{:?}", out.value);
+        assert!(
+            out.value.get("notice").is_none(),
+            "通知送得出去时回执 MUST NOT 出现 notice 键：{:?}",
+            out.value
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 

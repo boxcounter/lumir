@@ -728,7 +728,7 @@ fn warn_last_vault_failed(e: &CommandError) {
 ///
 /// 配置读不到（首次启动 / 配置损坏）时按出厂默认 `En`（与 `UiConfig::default().language` 同值）
 /// ——这里 MUST NOT 让一次标题取值把「打开 vault」这条链路打红。
-fn current_ui_language() -> crate::config::UiLanguage {
+pub(crate) fn current_ui_language() -> crate::config::UiLanguage {
     crate::config::load()
         .map(|snapshot| snapshot.config.ui.language)
         .unwrap_or(crate::config::UiLanguage::En)

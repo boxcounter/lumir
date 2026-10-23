@@ -39,7 +39,9 @@ use chrono::{DateTime, Datelike, FixedOffset, Local, Timelike};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::CommandError;
-use crate::config::{CronTask, CronTaskIssue, CronWeekday, DeliveryPolicy, SessionShape};
+use crate::config::{
+    CronTask, CronTaskIssue, CronWeekday, DeliveryPolicy, SessionShape, UiLanguage,
+};
 use crate::harness::run::{
     ApprovalPolicy, RunBudget, RunOrigin, RunSpec, SessionTarget, ToolPolicy,
 };
@@ -461,6 +463,9 @@ pub struct ReloadOutcome {
     pub applied: usize,
     pub seeded: Vec<String>,
     pub error: Option<String>,
+    /// 本次重载时线程读到的通知权限快照（M635）：注册回执据此判断要不要告知用户「通知送不
+    /// 出去」。它是**同一次申请**的回流，不构成第二处申请。
+    pub notify_permission: NotifyPermission,
 }
 
 /// 把重载回执投影成工具侧可见的生效状态（design §2.4 / §3.8）：**只有收到回执且没有失败原因**
@@ -469,6 +474,147 @@ pub fn effect_of(outcome: Option<&ReloadOutcome>) -> (CronEffect, Vec<String>) {
     match outcome {
         Some(outcome) if outcome.error.is_none() => (CronEffect::Active, outcome.seeded.clone()),
         _ => (CronEffect::PendingRestart, Vec::new()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 通知权限（M635：拒权可见性）
+// ---------------------------------------------------------------------------
+
+/// 通知权限的判据快照。**判据只有一处**：`lib.rs` 的 `ensure_notification_permission`
+/// 在 macOS 打包实例上申请 / 读取一次，结果随重载回执与注册回执回流，注册回执与
+/// `config_warning` 读的是同一份快照（MUST NOT 另起一次申请——「未决定」时申请会弹系统
+/// 对话框，第二处申请等于让注册动作多弹一次窗）。
+///
+/// **「被拒」有两种成因，措辞必须分开**（M636 定论，2026-10-23）：macOS 26 的
+/// usernotificationsd 按**调用进程的代码签名身份**判定资格。安装包只有 linker ad-hoc 签名
+/// （Info.plist 未绑定、TeamIdentifier 为空）时，系统认不到该 bundle id，`requestAuthorization`
+/// 与 `addNotificationRequest` 一律被拒；此时系统设置里「Lumir」条目即使开着，也属于**另一个
+/// 签过名的身份**（探针 / 验收副本），与本进程无关——让用户「去系统设置打开」是误导。
+/// 判据因此读 `authorizationStatus`：`NotDetermined`（系统里没有本客户端的授权记录）⇒
+/// [`NotifyPermission::Unrecognized`]，`Denied` ⇒ [`NotifyPermission::Denied`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotifyPermission {
+    /// 已授权；或该平台 / 运行形态没有可查询的权限模型（dev flavour 走 legacy 投递、非 macOS
+    /// 没有查询 API）——这两种情况不阻断任何动作，投递失败仍交给 design §5.4 的下一次评估。
+    Granted,
+    /// 用户在系统设置里明确拒绝过本应用的通知。
+    Denied,
+    /// 系统里没有本客户端的授权记录：签名身份没被认可（安装包缺少有效签名）。设置里开着的
+    /// 条目属于别的身份，改它没有用。
+    Unrecognized,
+    /// 申请 / 查询本身失败：**无法判定**。与上面两档分开，不把人话提示建立在猜测上。
+    Unknown,
+}
+
+impl NotifyPermission {
+    /// 通知送不出去（用户拒绝 / 系统不认可身份）：注册回执与可见提示要说话的两种情况。
+    pub fn blocks_delivery(self) -> bool {
+        matches!(
+            self,
+            NotifyPermission::Denied | NotifyPermission::Unrecognized
+        )
+    }
+}
+
+/// 注册回执里「通知送不出去」的告知句（文案 deck 的 D551 / D552）。
+///
+/// **消费者是 Rust 侧**（`lib.rs` 的 `CronToolPort::create` 把它放进注册回执）：模型读到工具
+/// 回执后按 `cron-reference.md` 的指令原样转达给用户。取哪一列由注册那一刻的界面语言决定
+/// （与 D321 的选择口径同源：注册是一次性动作，早于它 / 晚于它的界面语言切换不回溯改句）。
+///
+/// 两档措辞对应两种成因（见 [`NotifyPermission`]）：`Denied` 才让用户去系统设置打开；
+/// `Unrecognized` 说的是签名身份没被认可——设置里的条目是别的身份，改它不解决问题。
+pub fn notify_permission_notice(
+    permission: NotifyPermission,
+    language: UiLanguage,
+) -> Option<&'static str> {
+    match (permission, language) {
+        (NotifyPermission::Denied, UiLanguage::Zh) => Some(
+            "通知权限被拒，通知无法送达。这条任务到点不会有提醒。请到「系统设置 › 通知 › Lumir」里打开通知权限",
+        ),
+        (NotifyPermission::Denied, UiLanguage::En) => Some(
+            "Notification permission is denied, so this task won't alert you when it's due. Allow notifications for Lumir in System Settings › Notifications",
+        ),
+        (NotifyPermission::Unrecognized, UiLanguage::Zh) => Some(
+            "系统未认可当前 Lumir 的通知身份（安装包缺少有效签名），通知无法送达。这条任务到点不会有提醒",
+        ),
+        (NotifyPermission::Unrecognized, UiLanguage::En) => Some(
+            "macOS doesn't recognize this Lumir's notification identity (the installed app lacks a valid signature), so notifications can't be delivered. This task won't alert you when it's due",
+        ),
+        _ => None,
+    }
+}
+
+/// 注册回执要不要带「通知送不出去」的告知（M635 的判别点，纯函数）。
+///
+/// 只有 `notify-then-run` 档依赖通知投递：`silent-run` 本来就不发通知；`run-then-notify` 的
+/// 运行照常发生，通知发不出去由「投递连续失败」的可见提示收口（[`NotifyFailureStreak`]）
+/// ——注册时先报一条会让同一件事说两遍。权限判为 `Unknown` 时不报：没读到结论就不声称坏了。
+pub fn registration_notice(
+    delivery: DeliveryPolicy,
+    permission: NotifyPermission,
+    language: UiLanguage,
+) -> Option<&'static str> {
+    if delivery != DeliveryPolicy::NotifyThenRun || !permission.blocks_delivery() {
+        return None;
+    }
+    notify_permission_notice(permission, language)
+}
+
+/// 投递连续失败时可见提示的 `code`（`cron:notice` 载荷的取值，文案在
+/// `src/copy-data.ts` 的 `CRON_NOTICE_COPY` 里登记）。
+///
+/// 身份没被认可是最常见的成因（M636），两档分开是为了不把用户引向「去打开一个开着的开关」；
+/// 其它成因（含已授权却投递失败、无法判定）统一走通用档。
+pub fn delivery_failed_code(permission: Option<NotifyPermission>) -> &'static str {
+    match permission {
+        Some(NotifyPermission::Unrecognized) => "cron_notify_delivery_failed_identity",
+        _ => "cron_notify_delivery_failed",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 投递连续失败（M635：app 内可见提示）
+// ---------------------------------------------------------------------------
+
+/// 投递连续失败的可见提示阈值：达到即上屏一次，同一段连续失败只上屏一次。
+///
+/// 3 次的取法：`notify-then-run` 的投递失败按 30s tick 重试（design §5.4），3 次 ≈ 1.5 分钟
+/// ——足以排除一次抖动，又不至于让用户等到下次交互才发现提醒根本没来。
+pub const NOTIFY_FAILURE_NOTICE_AFTER: u32 = 3;
+
+/// 通知投递的连续失败计数：**纯状态**，不含上屏动作（上屏在 `lib.rs` 的接线层）。
+///
+/// 计数是**全进程**的，不分任务：失败原因是应用级的（权限 / 投递后端），按任务各记一份只会
+/// 让同一件事在若干任务上各报一遍。
+#[derive(Debug, Default)]
+pub struct NotifyFailureStreak {
+    consecutive: u32,
+    surfaced: bool,
+}
+
+impl NotifyFailureStreak {
+    /// 记一次成功：清零，并把「本段已上屏」复位——下一段连续失败会重新提示。
+    pub fn record_success(&mut self) {
+        self.consecutive = 0;
+        self.surfaced = false;
+    }
+
+    /// 记一次失败。返回 `Some(次数)` = **这一次**该上屏（已达阈值且本段尚未上屏过）；
+    /// 其余情况返回 `None`，调用方据此不重复打扰。
+    pub fn record_failure(&mut self) -> Option<u32> {
+        self.consecutive = self.consecutive.saturating_add(1);
+        if self.consecutive >= NOTIFY_FAILURE_NOTICE_AFTER && !self.surfaced {
+            self.surfaced = true;
+            return Some(self.consecutive);
+        }
+        None
+    }
+
+    /// 当前连续失败次数（诊断事件与上屏文案的 `{count}` 共用这一读数）。
+    pub fn consecutive(&self) -> u32 {
+        self.consecutive
     }
 }
 
@@ -849,6 +995,12 @@ pub struct CronCreateOutcome {
     pub effect: CronEffect,
     /// 注册时刻已过点 ⇒ 线程写了当日种子，今天不会再触发（design §8）。
     pub skip_today: bool,
+    /// 注册回执里「通知送不出去」的告知句（[`notify_permission_notice`] 的取值，M635）。
+    ///
+    /// 只在 `notify-then-run` 档且权限被判为 `Denied` 时在场：`silent-run` 本来就不发通知；
+    /// `run-then-notify` 的运行照常发生，通知发不出去由「投递连续失败」的可见提示收口
+    /// （[`NotifyFailureStreak`]）——注册时先报一条会让同一件事说两遍。
+    pub notice: Option<&'static str>,
 }
 
 /// `cron_task_remove` 的回执载荷。
@@ -1819,6 +1971,7 @@ mod tests {
             applied: 2,
             seeded: vec!["daily-log".to_string()],
             error: None,
+            notify_permission: NotifyPermission::Granted,
         };
         let (effect, seeded) = effect_of(Some(&ok));
         assert_eq!(effect, CronEffect::Active);
@@ -1828,10 +1981,121 @@ mod tests {
             applied: 1,
             seeded: Vec::new(),
             error: Some("配置文件不是合法 JSON".to_string()),
+            notify_permission: NotifyPermission::Granted,
         };
         assert_eq!(effect_of(Some(&failed)).0, CronEffect::PendingRestart);
         assert_eq!(effect_of(None).0, CronEffect::PendingRestart);
         assert!(effect_of(None).1.is_empty());
+    }
+
+    /// 投递连续失败的可见提示（M635）：达到阈值那一次上屏一次，同一段连续失败不重复提示；
+    /// 成功清零后，下一段连续失败重新提示。
+    ///
+    /// 区分度（REVIEW.md「断言等价于子串」条）：把「只提示一次」写成「每次达阈值都提示」或
+    /// 「首次失败就提示」，下面 `assert_eq!(None)` / `assert_eq!(Some(3))` 都会红。
+    #[test]
+    fn notify_failure_streak_surfaces_once_per_streak() {
+        let mut streak = NotifyFailureStreak::default();
+        assert_eq!(streak.record_failure(), None);
+        assert_eq!(streak.record_failure(), None);
+        assert_eq!(streak.consecutive(), 2);
+        assert_eq!(
+            streak.record_failure(),
+            Some(NOTIFY_FAILURE_NOTICE_AFTER),
+            "达到阈值那一次必须返回次数（调用方据此上屏）"
+        );
+        assert_eq!(streak.record_failure(), None, "同一段连续失败不重复上屏");
+        assert_eq!(streak.consecutive(), 4);
+
+        streak.record_success();
+        assert_eq!(streak.consecutive(), 0);
+        assert_eq!(streak.record_failure(), None);
+        assert_eq!(streak.record_failure(), None);
+        assert_eq!(
+            streak.record_failure(),
+            Some(NOTIFY_FAILURE_NOTICE_AFTER),
+            "清零后的下一段连续失败要重新提示"
+        );
+    }
+
+    /// 注册告知句的两档措辞（D551 / D552，M636 定论）：拒绝与「身份未被认可」必须分开——
+    /// 后者让用户「去系统设置打开」是误导（设置里的条目属于别的签名身份）。区分度：两档写成
+    /// 同一句、或身份档里出现「系统设置」的引导，本用例必 FAIL。
+    #[test]
+    fn notify_permission_notice_splits_denied_from_unrecognized() {
+        let denied_zh = notify_permission_notice(NotifyPermission::Denied, UiLanguage::Zh).unwrap();
+        let denied_en = notify_permission_notice(NotifyPermission::Denied, UiLanguage::En).unwrap();
+        let identity_zh =
+            notify_permission_notice(NotifyPermission::Unrecognized, UiLanguage::Zh).unwrap();
+        let identity_en =
+            notify_permission_notice(NotifyPermission::Unrecognized, UiLanguage::En).unwrap();
+
+        assert_ne!(denied_zh, identity_zh, "两档成因不能共用一句");
+        assert_ne!(denied_en, identity_en);
+        assert!(denied_zh.contains("系统设置"), "{denied_zh}");
+        assert!(denied_en.contains("System Settings"), "{denied_en}");
+        assert!(identity_zh.contains("签名") && identity_en.contains("signature"));
+        assert!(
+            !identity_zh.contains("系统设置") && !identity_en.contains("System Settings"),
+            "身份档 MUST NOT 把用户引向系统设置：{identity_zh} / {identity_en}"
+        );
+        assert_eq!(
+            notify_permission_notice(NotifyPermission::Granted, UiLanguage::Zh),
+            None
+        );
+        assert_eq!(
+            notify_permission_notice(NotifyPermission::Unknown, UiLanguage::Zh),
+            None
+        );
+    }
+
+    /// 注册告知的判别点（M635）：只有 `notify-then-run` × 「送不出去」才出句；已授权 /
+    /// 无法判定 / 其它两档一律不出句。区分度：把判据写成「只要被拒就出句」（漏掉档位）本用例必 FAIL。
+    #[test]
+    fn registration_notice_only_for_notify_then_run_when_blocked() {
+        for permission in [NotifyPermission::Denied, NotifyPermission::Unrecognized] {
+            assert_eq!(
+                registration_notice(DeliveryPolicy::NotifyThenRun, permission, UiLanguage::Zh),
+                notify_permission_notice(permission, UiLanguage::Zh),
+                "notify-then-run 且送不出去：出句"
+            );
+        }
+        for permission in [NotifyPermission::Granted, NotifyPermission::Unknown] {
+            assert_eq!(
+                registration_notice(DeliveryPolicy::NotifyThenRun, permission, UiLanguage::Zh),
+                None,
+                "没读到「送不出去」就不出句：{permission:?}"
+            );
+        }
+        for delivery in [DeliveryPolicy::RunThenNotify, DeliveryPolicy::SilentRun] {
+            assert_eq!(
+                registration_notice(delivery, NotifyPermission::Denied, UiLanguage::Zh),
+                None,
+                "只有 notify-then-run 依赖通知投递：{delivery:?}"
+            );
+        }
+    }
+
+    /// 连续失败提示的措辞分档（M635 / M636）：身份未被认可时点名签名成因，其余走通用档
+    /// ——通用档不能把「系统设置」说成唯一出路（已授权仍失败时它不解决问题）。
+    #[test]
+    fn delivery_failed_code_splits_identity_cause() {
+        assert_eq!(
+            delivery_failed_code(Some(NotifyPermission::Unrecognized)),
+            "cron_notify_delivery_failed_identity"
+        );
+        for permission in [
+            None,
+            Some(NotifyPermission::Denied),
+            Some(NotifyPermission::Granted),
+            Some(NotifyPermission::Unknown),
+        ] {
+            assert_eq!(
+                delivery_failed_code(permission),
+                "cron_notify_delivery_failed",
+                "{permission:?}"
+            );
+        }
     }
 
     /// 空表替换不 panic：任务全删是合法状态（守护空转）。

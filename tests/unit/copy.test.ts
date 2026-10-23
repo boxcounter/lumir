@@ -17,6 +17,7 @@ import ts from "typescript";
 import {
   COPY,
   currentLanguage,
+  cronNoticeText,
   formatDate,
   formatNumber,
   formatRelative,
@@ -31,6 +32,7 @@ import {
   t,
   tPlural,
 } from "../../src/copy.ts";
+import { CRON_NOTICE_COPY } from "../../src/copy-data.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const deckText = readFileSync(path.join(root, "文案-Copy.md"), "utf8");
@@ -229,11 +231,54 @@ test("格式化：NumberFormat / DateTimeFormat / RelativeTimeFormat 的两态�
 });
 
 // ---------------------------------------------------------------------------
-// 4）语言域纯逻辑（不造 DOM 替身）
+// 3b）cron 人话提示的 code 取值（M635）
 // ---------------------------------------------------------------------------
 
-test("语言域：tag ↔ 档位映射、当前语言读取与下一步推导", () => {
-  assert.equal(languageTag("zh"), "zh-Hans");
+/** `cron:notice` 的两种载荷形态（M635）：新调用点发 `code` + `params`（文案在这里取），
+ *  既有调用点仍直传 `message`——两者都只经 `cronNoticeText` 一个取值口。 */
+test("cronNoticeText：登记过的 code 按文案表插值，未登记 / 缺席回落 message", () => {
+  // 语言显式传入（与 `errorText` 同款可注入）：两档 code 各自取到不同的条目。
+  const identity = cronNoticeText(
+    { code: "cron_notify_delivery_failed_identity", params: { count: 3 } },
+    "en",
+  );
+  const generic = cronNoticeText(
+    { code: "cron_notify_delivery_failed", params: { count: 3 } },
+    "en",
+  );
+  assert.notEqual(identity, generic, "身份成因与通用成因必须是两条不同的文案");
+  assert.ok(identity.includes("signature"), identity);
+  assert.ok(!identity.includes("System Settings"), "身份档不把系统设置当出路");
+  assert.ok(identity.includes("3") && generic.includes("3"), "count 必须插值");
+  assert.equal(
+    cronNoticeText({ code: "cron_notify_delivery_failed", params: { count: 2 } }, "zh"),
+    "通知连续 2 次投递失败，提醒没有送达。请检查「系统设置 › 通知」里 Lumir 的权限",
+  );
+  assert.equal(cronNoticeText({ code: "not_registered", message: "直传串" }), "直传串");
+  assert.equal(cronNoticeText({ message: "直传串" }), "直传串");
+  assert.equal(cronNoticeText({}), "");
+});
+
+/** code 是跨语言的一根细线：Rust 发 `code`、TS 按表取文案，任何一侧改名都会让提示**静默**
+ *  失去正文（前端取不到键 ⇒ 回落 `message` ⇒ 空串不上屏）。两侧逐字对齐由本用例钉住。 */
+test("cron:notice 的 code 两侧对齐：Rust 发出的每个 code 都登记了文案，反之亦然", () => {
+  const rust = readFileSync(path.join(root, "src-tauri/src/cron.rs"), "utf8");
+  const emitted = new Set(
+    [...rust.matchAll(/"(cron_notify_[a-z_]+)"/g)].map((match) => match[1]),
+  );
+  assert.ok(emitted.size >= 2, `Rust 侧扫到的 code 数量异常：${[...emitted].join(",")}`);
+  for (const code of emitted) {
+    assert.ok(code in CRON_NOTICE_COPY, `${code} 在文案表里没有条目`);
+  }
+  for (const code of Object.keys(CRON_NOTICE_COPY)) {
+    assert.ok(emitted.has(code), `${code} 在 Rust 侧没有发出点（表里多了一条幽灵 code）`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 4）语言域纯逻辑（不造 DOM 替身）
+// ---------------------------------------------------------------------------
+test("语言域：tag ↔ 档位映射、当前语言读取与下一步推导", () => {  assert.equal(languageTag("zh"), "zh-Hans");
   assert.equal(languageTag("en"), "en");
   assert.equal(languageFromTag("zh-Hans"), "zh");
   assert.equal(languageFromTag("zh"), "zh");
