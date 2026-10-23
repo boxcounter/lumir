@@ -51,7 +51,8 @@
 ## 3. 文案与文档
 
 - [x] 3.1 `文案-Copy.md` 追加七条（D557–D563：行内移除钮 aria 名 / 确认句 / 移除 / 已移除提示 /
-      撤销 + 后端两条错误的人话），编号接合并后 deck 末位（D555–D556 由并行批次 M644 占用）；
+      撤销 + 后端两条错误的人话），编号接合并后 deck 末位（D555–D556 由 M644 占用，已随
+      master 合并；rebase 后两侧并存、号码连续无重复）；
       取消复用 D136；同批更新「消费点」映射表与「当前末位」
 - [x] 3.2 `src/copy-data.ts` 的 `ERROR_COPY` 增加 `vault_remove_current`（D562）/
       `vault_remove_failed`（D563）两条（`workspace_write` 复用既有码）
