@@ -92,8 +92,10 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 | 视觉机械改动：样式值替换、视觉场景断言 / 文案 / fixture 调整、基线重截执行、原型 HTML——派发前先要求把期望效果写成机器断言（断言先行） | `deepseek/deepseek-flash` |
 | 机械核验与证据复跑：mission tasks 对账、门禁输出比对、scope 越界检查、gate / 验收套件复跑、截图归档 | `deepseek/deepseek-flash` |
 | 无机器验收的判断类开发（交互手感、新功能设计、结构调整）；探针 / 探错类步骤（结果未知、需设计退路，探针通过后的照章实现段仍归 deepseek） | `deepseek/deepseek-flash` |
-| 复杂任务、review 判断层、像素表现本身的改动（`src/style.css` 全局面、`src/preview/**` 渲染语义）——「看着对不对」是唯一判据的活 | `Kimi For Coding/k3-256k` |
-| k3 1M | **禁用** |
+| 复杂任务、review 判断层、像素表现本身的改动（`src/style.css` 全局面、`src/preview/**` 渲染语义）——「看着对不对」是唯一判据的活 | managed provider 的 k3-256k（`kimi-code/k3-256k`，Agent 工具里用 alias `primary`） |
+| `Kimi For Coding` provider 的任何模型（含 `Kimi For Coding/k3-256k`）；k3 1M | **禁用** |
+
+k3-256k 的 provider 纪律（Alex 2026-10-23 裁决）：调动 k3-256k 时**只用 managed provider**（`kimi-code/k3-256k`，与 tower 主模型同配额），**不用 `Kimi For Coding` provider** 的同名模型。根治手法（同日落地并实证）：`~/.kimi-code/config.toml` 的 `[secondary_model.models]` 池里的 k3 键改为 `kimi-code/k3-256k`——`TowerSpawn` 无 model 参数，其 worker / reviewer 的模型从该池解析（worker 取池默认、reviewer 取池内 k3 项），改池即改落点；Agent 工具的 k3 派发改用池键 `kimi-code/k3-256k` 或 alias `primary`。
 
 执行规则：
 
