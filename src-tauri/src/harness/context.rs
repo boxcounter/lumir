@@ -785,6 +785,10 @@ mod tests {
     /// 固定段字节指纹（change `harness-prompt-files`）：常量取自迁移前（master `81e4db01`）
     /// `IDENTITY` / `QUOTE_REFERENCE` 字面量 trim 后的字节。**有意改 `prompts/*.md` 就是改注入
     /// 文本**——失败信息给出实测 (hash, len)，确认是预期改动后用实测值更新此处常量；不要绕过。
+    ///
+    /// 变更沿革：change `harness-permission-rules-oct23` A4 在 identity.md 的工具纪律段补了三句
+    /// （cli_run 直传 argv / 组合查询优先拆开 / 确需 shell 时才用 bash -lc），identity 段因此
+    /// 1525 → 1917 字节、指纹随之更新（QUOTE_REFERENCE 未动）。
     #[test]
     fn fixed_segments_keep_migrated_bytes() {
         let identity = IDENTITY.trim_end();
@@ -796,7 +800,7 @@ mod tests {
                 fnv1a64(quote.as_bytes()),
                 quote.len(),
             ),
-            (0x34f46128dbf26830, 1525, 0x05cba54b785b843b, 1170),
+            (0x6005fdbeab15629c, 1917, 0x05cba54b785b843b, 1170),
         );
     }
 

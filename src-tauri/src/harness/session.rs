@@ -447,9 +447,15 @@ pub struct PendingApprovalSnapshot {
     /// `approval_request.cron_task` 同源同形（都取自 `ApprovalRequest.cron_task`）。无则缺省。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cron_task: Option<serde_json::Value>,
-    /// 该卡支持「采纳且本会话不再问」次级动作（design §6；批准闸请求恒 true）——
-    /// 面板按钮可见性的数据源。
-    pub remember: bool,
+    /// 该卡支持「采纳且本会话不再问（记住 `<粒度>`）」次级动作：`Some(粒度)` = 面板显示该
+    /// 按钮，`None` = 不显示（危险黑名单层恒 `None`）。与 `approval_request.remember`
+    /// 同源同形（都取自 `ApprovalRequest.remember`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remember: Option<String>,
+    /// 该卡支持「以后都允许 `<规则>`」次级动作：`Some(规则原文)` = 显示，`None` = 不显示。
+    /// 与 `approval_request.persist_rule` 同源同形（都取自 `ApprovalRequest.persist_rule`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persist_rule: Option<String>,
     /// 发起者（change add-harness-subagents design §8.3）：父会话自己的调用恒 `Interactive`，
     /// 子运行透传的请求带 agent / run_id / description。
     pub source: super::approval::ApprovalSource,
@@ -465,7 +471,8 @@ impl PendingApprovalSnapshot {
             purpose: r.purpose.clone(),
             reason: r.reason.clone(),
             cron_task: r.cron_task.clone(),
-            remember: r.remember,
+            remember: r.remember.clone(),
+            persist_rule: r.persist_rule.clone(),
             source: r.source.clone(),
         }
     }
@@ -859,15 +866,25 @@ impl Session {
         self.pending.push(request);
     }
 
+    /// 按 id 取挂起请求（只读）：`harness_approve` 持久化规则时从这里取 argv / 主体串现算
+    /// 规则文本——**MUST NOT** 采信前端传入的文本（change harness-permission-rules-oct23
+    /// Q5 裁决）。找不到返回 `None`（调用方随后按既有 `approval_not_found` 报错）。
+    pub fn pending_request(&self, request_id: &str) -> Option<&ApprovalRequest> {
+        self.pending.iter().find(|pending| pending.id == request_id)
+    }
+
     /// `harness_approve` 的落点：按 id 找到挂起请求并把决定（含「采纳且本会话不再问」
-    /// 标志，design §6）发回工具循环线程。remember 随决定走通道，由 turn.rs 的
-    /// gated_execute 在 approved && remember 时写会话内批准缓存——缓存写入只在那一处。
+    /// 标志与「以后都允许」标志，change harness-permission-rules-oct23 A1）发回工具循环线程。
+    /// remember 随决定走通道，由 turn.rs 的 gated_execute 在 approved && remember 时写会话内
+    /// 批准缓存——缓存写入只在那一处；持久规则由 `harness_approve` 在调用本函数**之前**写回
+    /// （写失败则本函数不被调用，批准保持待决）。
     pub fn resolve_approval(
         &mut self,
         request_id: &str,
         approved: bool,
         reason: Option<String>,
         remember: bool,
+        persist_rule: bool,
     ) -> Result<(), CommandError> {
         let index = self
             .pending
@@ -881,12 +898,15 @@ impl Session {
             })?;
         let pending = self.pending.remove(index);
         let tx: Sender<ApprovalSignal> = pending.tx;
+        // `remember` 现在是按钮的粒度标签（Option<String>）；留存口径仍记布尔语义
+        // （「这次决定是否带会话记忆」），不把粒度文本写进 JSONL（那是 UI 面）。
         self.jsonl.record(&serde_json::json!({
             "kind": "approval",
             "id": pending.id,
             "tool": pending.tool,
             "decision": if approved { "approved" } else { "rejected" },
             "remember": remember,
+            "persist_rule": persist_rule,
             "reason": reason,
         }));
         // 发送失败 = 等待线程已不在（会话被重置等），人话报错即可，不 panic。
@@ -894,6 +914,7 @@ impl Session {
             approved,
             reason,
             remember,
+            persist_rule,
         }))
         .map_err(|_| {
             CommandError::new(

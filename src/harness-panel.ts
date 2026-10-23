@@ -91,6 +91,7 @@ import {
   harnessDraftPut,
   harnessListSessions,
   harnessNewSession,
+  harnessPermissionRuleRemove,
   harnessReadImage,
   harnessResumeSession,
   harnessSend,
@@ -1632,6 +1633,59 @@ export function harnessPermissionMode(harness: unknown): PermissionMode {
 /** chip 上的短名（D423–D425；Alex 2026-10-09 裁决：控制行空间紧，chip 只放短名）。 */
 export function permissionShortName(mode: PermissionMode): string {
   return t(mode === "read_only" ? "D423" : mode === "vault_write" ? "D424" : "D425");
+}
+
+/** `[harness].permissions.allow` 的宽容提取（change harness-permission-rules-oct23）：非字符串 /
+ *  空串逐项丢弃（与后端 `validate_harness_rules` 同口径），缺表 / 错形状按空列表——浮层据此
+ *  决定「已记住的规则」段渲不渲染。规则的匹配语义不在这里判定（后端单一真源）。 */
+export function harnessPermissionRules(harness: unknown): string[] {
+  if (typeof harness !== "object" || harness === null) return [];
+  const permissions = (harness as { permissions?: unknown }).permissions;
+  if (typeof permissions !== "object" || permissions === null) return [];
+  const allow = (permissions as { allow?: unknown }).allow;
+  if (!Array.isArray(allow)) return [];
+  return allow
+    .filter((rule): rule is string => typeof rule === "string")
+    .map((rule) => rule.trim())
+    .filter((rule) => rule !== "");
+}
+
+/** 批准卡两枚次级动作的**纯模型层**（change harness-permission-rules-oct23 design §5）：
+ *  把事件 / 快照 / 子运行载荷解析成「要渲染哪几枚按钮」。
+ *
+ *  字段是渲染的唯一开关：缺键 / null / 非字符串一律 `undefined`（不渲染）——**M413 的「缺键按
+ *  可见处理」契约已按 D3 裁决翻转**，否则危险黑名单卡经快照恢复会复活两枚死按钮。
+ *  前端 MUST NOT 按 `reason.kind` 自行推断（层级判断在 Rust 判定管线）。
+ *
+ *  单一实现：事件入口、父会话待决快照、子运行快照三处归一化都调它（REVIEW.md「同一语义两处
+ *  真源」条——三处各写一遍 `typeof … === "string"` 必然漂移一处）。线格式是 snake_case
+ *  （`persist_rule`），内部形状是 camelCase（`persistRule`）。 */
+export function approvalActionsFromPayload(raw: {
+  remember?: unknown;
+  persist_rule?: unknown;
+}): { remember?: string; persistRule?: string } {
+  return {
+    remember: typeof raw.remember === "string" ? raw.remember : undefined,
+    persistRule: typeof raw.persist_rule === "string" ? raw.persist_rule : undefined,
+  };
+}
+
+/** 构建侧的同一条判据（`approvalActionsFromPayload` 的输出原样进门）：两枚都没有 ⇒ 整行不建。 */
+export function approvalSecondaryActions(actions: {
+  remember?: string | undefined;
+  persistRule?: string | undefined;
+}): { remember?: string; persistRule?: string } {
+  return {
+    remember: typeof actions.remember === "string" ? actions.remember : undefined,
+    persistRule:
+      typeof actions.persistRule === "string" ? actions.persistRule : undefined,
+  };
+}
+
+/** 会话记忆按钮文案：有粒度 ⇒ D565（授权面在按下前可见）；粒度为空串 ⇒ D434 回退
+ *  （D434 保留的唯一用途；理论上前端不会收到空粒度——后端生成器不产空串）。 */
+export function approvalRememberText(label: string): string {
+  return label.trim() === "" ? t("D434") : t("D565", { prefix: label });
 }
 
 /** 浮层里的全名（D427–D429）——同时是 chip 读屏名（D426）的 {mode} 取值。 */
@@ -3184,6 +3238,10 @@ interface PendingApproval {
   /** 定时任务预览（change add-cron-conversational-registration §6.3，可缺席）：任务要素块的
    *  数据源，随语言重绘时按它重跑 `renderCronTaskBlock`。 */
   cronTask?: CronTaskPreview | undefined;
+  /** 会话记忆粒度 / 持久规则原文（change harness-permission-rules-oct23）：随语言重上按钮
+   *  文案时的插值素材；缺键 = 该按钮不存在。 */
+  remember?: string | undefined;
+  persistRule?: string | undefined;
   argsText: string;
   /** 参数里取到的路径目标（change harness-path-link）：行内重渲 / 终态行复用，不在重渲时重解析。 */
   targets: readonly ToolPathTarget[];
@@ -3247,7 +3305,10 @@ export interface TaskApprovalRequest {
   reason?: DecisionReason | undefined;
   /** 定时任务预览（change add-cron-conversational-registration §6.3；子运行不可达这类工具）。 */
   cronTask?: CronTaskPreview | undefined;
-  remember: boolean;
+  /** 会话记忆粒度（change harness-permission-rules-oct23 design §5；缺键 = 不渲染该按钮）。 */
+  remember?: string | undefined;
+  /** 持久规则原文（同上；缺键 = 不渲染该按钮）。 */
+  persistRule?: string | undefined;
 }
 
 /** 任务行已建的 DOM 骨架（就地更新用：重建会丢批准卡里正在输入的原因）。 */
@@ -4135,6 +4196,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  取值 / 缺键按后端同款口径回落默认 `vault_write`）。写回失败回滚本值。 */
   let permissionConfigured = false;
   let permMode: PermissionMode = "vault_write";
+  /** 已记住的持久权限规则（change harness-permission-rules-oct23）：权限浮层底部那段的数据
+   *  源。**打开浮层时从配置现读**（`refreshPermissionRules`），MUST NOT 用前端旧值呈现；
+   *  段为空时整段不渲染。 */
+  let permissionRules: string[] = [];
   let lastChip: HarnessContextBlock | null | "none" = null;
   /** 当前逻辑会话的首条用户消息原文（会话名回落口径：截断约 20 字上屏；null = 未发消息，
    *  显示「新会话」）。自动压缩开新逻辑会话后归 null，按同口径重算（design §3）。 */
@@ -5759,7 +5824,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /** 权限浮层：每次打开现建（读数随当前语言与选中档，懒建不囤旧串）。三档单选
    *  （menuitemradio + check 格 + 当前档 accent-tint 底——M373 浮层配方），项 = 全名
-   *  （D427–D429）+ 一行释义（D430–D432）。 */
+   *  （D427–D429）+ 一行释义（D430–D432）。
+   *
+   *  change harness-permission-rules-oct23 A1 / Q6：三档下方另附「已记住的规则」段——分隔线 +
+   *  段标题 + 逐条规则（等宽原文 + 删除钮）。列表为空时整段不渲染（浮层形态与无此段时一致）；
+   *  规则来自后端现读（打开浮层时取），MUST NOT 用前端缓存的旧值呈现。 */
   function buildPermPop(): void {
     permPop.replaceChildren();
     permPop.setAttribute("aria-label", t("D433"));
@@ -5789,12 +5858,79 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       });
       permPop.append(item);
     }
+    if (permissionRules.length === 0) return;
+    const divider = document.createElement("div");
+    divider.className = "lumir-hp-permpop-divider";
+    const heading = document.createElement("div");
+    heading.className = "lumir-hp-permpop-heading";
+    heading.textContent = t("D566");
+    const list = document.createElement("div");
+    list.className = "lumir-hp-permpop-rules";
+    for (const rule of permissionRules) {
+      const row = document.createElement("div");
+      row.className = "lumir-hp-permpop-rule";
+      row.dataset.rule = rule;
+      const text = document.createElement("code");
+      text.className = "lumir-hp-permpop-ruletext";
+      text.textContent = rule;
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "lumir-hp-permpop-ruledel";
+      del.dataset.act = "permission-rule-remove";
+      const label = t("D567", { rule });
+      del.title = label;
+      del.setAttribute("aria-label", label);
+      const svg = document.createElementNS(SVG_NS, "svg");
+      svg.setAttribute("width", "16");
+      svg.setAttribute("height", "16");
+      svg.setAttribute("viewBox", "0 0 16 16");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "1.4");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("aria-hidden", "true");
+      for (const d of ["M4 4 12 12", "M12 4 4 12"]) {
+        const path = document.createElementNS(SVG_NS, "path");
+        path.setAttribute("d", d);
+        svg.append(path);
+      }
+      del.append(svg);
+      // 删除钮是浮层内的独立动作：不让点击冒泡到「浮层外点击即关」的判据之外。
+      del.addEventListener("click", (event) => {
+        event.stopPropagation();
+        removePermissionRule(rule);
+      });
+      row.append(text, del);
+      list.append(row);
+    }
+    permPop.append(divider, heading, list);
+  }
+
+  /** 已记住的持久规则（浮层底部那段）。打开浮层时从配置现读——不用前端旧值。 */
+  function refreshPermissionRules(): void {
+    configGet()
+      .then((snapshot) => {
+        permissionRules = harnessPermissionRules(snapshot.config.harness);
+        rebuildPermPopIfOpen();
+      })
+      .catch(() => {});
+  }
+
+  /** 删除一条规则：后端单写者写回（幂等），随后重取列表（MUST NOT 本地数组读改写）。 */
+  function removePermissionRule(rule: string): void {
+    harnessPermissionRuleRemove(rule)
+      .then(() => refreshPermissionRules())
+      .catch((e: unknown) => appendError(t("D348", { message: errorMessage(e) })));
   }
 
   /** 权限浮层开合（与合并浮层同一条开合语义：选定不自动关——关闭只走 chip 再点 /
-   *  浮层外点击 / Esc 三条路）。 */
+   *  浮层外点击 / Esc 三条路）。打开时清掉上一份规则再现取（MUST NOT 用前端旧值呈现）。 */
   function setPermPop(open: boolean): void {
-    if (open) buildPermPop();
+    if (open) {
+      permissionRules = [];
+      refreshPermissionRules();
+      buildPermPop();
+    }
     permPop.hidden = !open;
     permChip.setAttribute("aria-expanded", String(open));
     if (open) clampPermPop();
@@ -6949,7 +7085,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (approve !== null) approve.textContent = t("D336");
     if (reject !== null) reject.textContent = t("D337");
     const remember = pending.element.querySelector("button[data-act=approve-remember]");
-    if (remember !== null) remember.textContent = t("D434");
+    if (remember !== null) {
+      const label = pending.remember;
+      remember.textContent = label === undefined ? t("D434") : approvalRememberText(label);
+    }
+    // 「以后都允许 <规则>」同口径重取（规则原文是后端算出来的数据，插值进 chrome 句式）。
+    const persist = pending.element.querySelector("button[data-act=approve-persist]");
+    if (persist !== null && pending.persistRule !== undefined) {
+      persist.textContent = t("D564", { rule: pending.persistRule });
+    }
   }
 
   /** 终态记录随语言重渲（M384）：结果词 / 原因句 / 详情摘要重取文案；工具名与原因正文
@@ -7066,6 +7210,49 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     });
   }
 
+  /** 批准卡的两枚次级动作（change harness-permission-rules-oct23 design §5 / §6.1）。
+   *  **唯一构建点**：transcript 卡片与任务区卡片共用同一段（禁止各写一份）。
+   *
+   *  - `remember` = 会话记忆粒度（D565，带 `{prefix}`；空串回退 D434）；
+   *  - `persistRule` = 持久规则原文（D564，带 `{rule}`）。
+   *
+   *  两字段缺省 / null 一律不渲染该按钮——字段是渲染的唯一开关，前端 MUST NOT 按
+   *  `reason.kind` 自行推断（危险层两项皆缺省，快照恢复因此不会复活死按钮，D3 裁决）。 */
+  function createApprovalSecondaryActions(
+    actions: { remember?: string | undefined; persistRule?: string | undefined },
+    onPick: (remember: boolean, persistRule: boolean) => void,
+  ): {
+    row: HTMLElement;
+    rememberButton: HTMLButtonElement | null;
+    persistButton: HTMLButtonElement | null;
+  } | null {
+    const { remember, persistRule } = approvalSecondaryActions(actions);
+    if (remember === undefined && persistRule === undefined) return null;
+    const row = document.createElement("div");
+    row.className = "lumir-hp-approval-remember";
+    let rememberButton: HTMLButtonElement | null = null;
+    let persistButton: HTMLButtonElement | null = null;
+    if (remember !== undefined) {
+      rememberButton = document.createElement("button");
+      rememberButton.type = "button";
+      rememberButton.className = "lumir-hp-remember";
+      rememberButton.dataset.act = "approve-remember";
+      rememberButton.textContent = approvalRememberText(remember);
+      rememberButton.addEventListener("click", () => onPick(true, false));
+      row.append(rememberButton);
+    }
+    if (persistRule !== undefined) {
+      persistButton = document.createElement("button");
+      persistButton.type = "button";
+      persistButton.className = "lumir-hp-remember";
+      persistButton.dataset.act = "approve-persist";
+      persistButton.textContent = t("D564", { rule: persistRule });
+      persistButton.addEventListener("click", () => onPick(false, true));
+      row.append(persistButton);
+    }
+    return { row, rememberButton, persistButton };
+  }
+
   function appendApproval(request: {
     id: string;
     tool: string;
@@ -7076,8 +7263,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     reason?: DecisionReason | undefined;
     /** 定时任务预览（change add-cron-conversational-registration §6.3；其它工具缺键）。 */
     cronTask?: CronTaskPreview | undefined;
-    /** 次级动作可见性（M413 契约：批准闸挂出的请求恒 true；缺键按可见处理）。 */
-    remember?: boolean | undefined;
+    /** 会话记忆粒度（change harness-permission-rules-oct23；缺键 = 不渲染该按钮）。 */
+    remember?: string | undefined;
+    /** 持久规则原文（同上；缺键 = 不渲染该按钮）。 */
+    persistRule?: string | undefined;
   }): void {
     // 收敛单行生命周期（M406，原型 variant B）：批准卡不再独立挂 transcript 末尾，而是
     // 就地挂进该调用工具行的 .lumir-hp-pend 壳——同一行承载「运行中 → 等待批准 → 终态」
@@ -7196,22 +7385,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     actions.append(approve, reject);
     el.append(reason, actions);
 
-    // 次级动作「采纳且本会话不再问」（M414，design §6 裁决点 4 倾向 A：**显式逐次记忆**——
-    // 点上面的「采纳」不自动记，免问由用户逐次给出）。独立一行、弱化样式（次级动作不抢
-    // 「采纳 / 拒绝」这对主决策的视觉重心）。可见性由 request.remember 决定（M413 契约：
-    // 批准闸挂出的请求恒 true；缺键按可见处理）。判据键 = (工具名, 规范化主体串) 精确匹配，
-    // 只活在会话内存里（不落盘、新会话清空）。
-    let rememberButton: HTMLButtonElement | null = null;
-    if (request.remember !== false) {
-      const rememberRow = document.createElement("div");
-      rememberRow.className = "lumir-hp-approval-remember";
-      rememberButton = document.createElement("button");
-      rememberButton.type = "button";
-      rememberButton.className = "lumir-hp-remember";
-      rememberButton.dataset.act = "approve-remember";
-      rememberRow.append(rememberButton);
-      el.append(rememberRow);
-    }
+    // 次级动作（change harness-permission-rules-oct23）：最多两枚并列的次级按钮——「采纳且本
+    // 会话不再问（记住 <粒度>）」与「以后都允许 <规则>」。独立一行、弱化样式（次级动作不抢
+    // 「采纳 / 拒绝」这对主决策的视觉重心）；可见性完全由后端下发的两个字段决定。
+    const secondary = createApprovalSecondaryActions(request, (remember, persistRule) => {
+      decide(true, remember, persistRule);
+    });
+    if (secondary !== null) el.append(secondary.row);
 
     const wrap = document.createElement("div");
     wrap.className = "lumir-hp-pend";
@@ -7226,6 +7406,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       purpose: request.purpose,
       reason: request.reason,
       cronTask: request.cronTask,
+      remember: request.remember,
+      persistRule: request.persistRule,
       argsText,
       targets: pathTargets,
       element: el,
@@ -7238,8 +7420,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 未决项不自动超时：唯一的出口是 Alex 点击 / ⌘Enter。决策幂等——重复触发不会向后端
     // 发第二次（pendingApprovals.delete 只兑现一次）；决策后同一行就地收敛为终态记录
     // （settleApprovalRecord），元素留在 transcript 里作决策记录。
-    // remember = 「采纳且本会话不再问」（唯一一次带 true 的路径是那颗次级动作钮）。
-    const decide = (approved: boolean, remember = false): void => {
+    // 两枚次级动作各自带一个布尔：remember = 会话记忆；persistRule = 持久规则写回。
+    const decide = (approved: boolean, remember = false, persistRule = false): void => {
       if (!pendingApprovals.delete(request.id)) return;
       const reasonText = reason.value.trim();
       settleApprovalRecord(pending, approved, reasonText === "" ? undefined : reasonText, Date.now());
@@ -7248,11 +7430,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         approved,
         reasonText === "" ? undefined : reasonText,
         remember ? true : undefined,
+        persistRule ? true : undefined,
       ).catch((e: unknown) => appendError(t("D348", { message: errorMessage(e) })));
     };
     approve.addEventListener("click", () => decide(true));
     reject.addEventListener("click", () => decide(false));
-    rememberButton?.addEventListener("click", () => decide(true, true));
     reason.addEventListener("keydown", (event: KeyboardEvent) => {
       if (event.isComposing) return;
       if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -7781,30 +7963,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     reject.textContent = t("D337");
     actions.append(approve, reject);
     card.append(reason, actions);
-    let rememberButton: HTMLButtonElement | null = null;
-    if (request.remember) {
-      const rememberRow = document.createElement("div");
-      rememberRow.className = "lumir-hp-approval-remember";
-      rememberButton = document.createElement("button");
-      rememberButton.type = "button";
-      rememberButton.className = "lumir-hp-remember";
-      rememberButton.dataset.act = "approve-remember";
-      rememberButton.textContent = t("D434");
-      rememberRow.append(rememberButton);
-      card.append(rememberRow);
-    }
-    const decide = (approved: boolean, remember = false): void => {
+    // 两枚次级动作与 transcript 卡共用同一段构建（change harness-permission-rules-oct23
+    // design §6.1：两处渲染点共用同一段构建函数）。
+    const secondary = createApprovalSecondaryActions(request, (remember, persistRule) => {
+      decide(true, remember, persistRule);
+    });
+    if (secondary !== null) card.append(secondary.row);
+    const decide = (approved: boolean, remember = false, persistRule = false): void => {
       const reasonText = reason.value.trim();
       decideTaskApproval(
         request.id,
         approved,
         reasonText === "" ? undefined : reasonText,
         remember,
+        persistRule,
       );
     };
     approve.addEventListener("click", () => decide(true));
     reject.addEventListener("click", () => decide(false));
-    rememberButton?.addEventListener("click", () => decide(true, true));
     reason.addEventListener("keydown", (event: KeyboardEvent) => {
       if (event.isComposing) return;
       if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -7822,6 +7998,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     approved: boolean,
     reasonText: string | undefined,
     remember: boolean,
+    persistRule: boolean,
   ): void {
     const entry = taskApprovals.get(id);
     if (entry === undefined) return; // 幂等：重复点击不向后端发第二次
@@ -7833,9 +8010,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     list.push({ tool: entry.request.tool, approved, reason: reasonText });
     taskDecisions.set(entry.runId, list);
     subruns = detachRunApproval(subruns, id);
-    harnessApprove(id, approved, reasonText, remember ? true : undefined).catch((e: unknown) =>
-      appendError(t("D348", { message: errorMessage(e) })),
-    );
+    harnessApprove(
+      id,
+      approved,
+      reasonText,
+      remember ? true : undefined,
+      persistRule ? true : undefined,
+    ).catch((e: unknown) => appendError(t("D348", { message: errorMessage(e) })));
     renderTaskArea();
   }
 
@@ -8093,7 +8274,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         argv: argv !== undefined && argv.length > 0 ? argv : undefined,
         purpose: typeof value.purpose === "string" ? value.purpose : undefined,
         reason: parseDecisionReason(value.reason),
-        remember: value.remember !== false,
+        // 两枚次级动作的字段（change harness-permission-rules-oct23）：形状不合 / 缺键 =
+        // 不渲染该按钮——**M413 的「缺键按可见处理」契约已翻转**（D3：危险卡经快照恢复
+        // 不得复活死按钮）。解析口径与事件 / 父会话快照同出一处。
+        ...approvalActionsFromPayload(value),
       },
       source: { agent: source.agent, description: source.description, run_id: source.run_id },
     };
@@ -8251,9 +8435,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             reason: parseDecisionReason(event.reason),
             // 定时任务预览（§6.3 契约）：形状不合 / 缺键 = undefined ⇒ 不建要素块。
             cronTask: parseCronTaskPreview(event.cron_task),
-            // 次级动作可见性（M413 契约）：事件载荷可带 remember；缺键按可见处理
-            //（当前后端的事件载荷不带本键，缺键即「批准闸挂出的请求」，恒可见）。
-            remember: event.remember !== false,
+            // 两枚次级动作（change harness-permission-rules-oct23）：与事件 / 快照入口同一份
+            // 宽容解析（缺键 / 非字符串 = 不渲染该按钮——D3 翻转后的缺键语义）。
+            ...approvalActionsFromPayload(event),
           };
           const source = parseApprovalSource(event.source);
           if (source !== null && source.kind === "subrun") {
@@ -8744,9 +8928,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         reason: parseDecisionReason(pending.reason),
         // 定时任务预览（§6.3）：与事件入口同一份解析（快照缺键 = 旧载荷，不建块）。
         cronTask: parseCronTaskPreview(pending.cron_task),
-        // remember = 次级动作可见性（M413 契约：批准闸挂出的请求恒 true；缺键 = 旧载荷，
-        // 按可见处理——旧载荷同样来自批准闸）。
-        remember: pending.remember !== false,
+        // 两枚次级动作（change harness-permission-rules-oct23）：与事件入口同一份宽容解析
+        // （快照缺键 = 不渲染按钮——D3 翻转后的缺键语义，危险卡因此不会被复活死按钮）。
+        ...approvalActionsFromPayload(pending),
       };
       const source = parseApprovalSource(pending.source);
       if (source !== null && source.kind === "subrun") {

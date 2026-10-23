@@ -1071,13 +1071,18 @@
   opacity: 0.45;
   cursor: default;
 }
-/* 次级动作「采纳且本会话不再问」（M414，design §6 裁决点 4 倾向 A）：主决策行（采纳 /
-   拒绝）之下独立一行、文字钮形态（无边框无底色，hover 才给底）——次级动作不抢主决策的
-   视觉重心；文案长，窄面板里独立成行才不会把「采纳 / 拒绝」挤变形。 */
+/* 次级动作行（M414 起「采纳且本会话不再问」；change harness-permission-rules-oct23 起最多
+   两枚并列）：主决策行（采纳 / 拒绝）之下独立一行、文字钮形态（无边框无底色，hover 才给
+   底）——次级动作不抢主决策的视觉重心；文案长，窄面板里独立成行才不会把「采纳 / 拒绝」
+   挤变形。两枚并列时等宽（flex:1）：授权面在按下前逐字可见，不靠谁更显眼引导点击。 */
 .lumir-hp-approval-remember {
+  display: flex;
+  gap: var(--sp-3);
   margin-top: var(--sp-2);
 }
 .lumir-hp-remember {
+  flex: 1;
+  min-width: 0;
   padding: 0;
   border: none;
   background: none;
@@ -1492,6 +1497,62 @@
 :root[data-theme="eink"] .lumir-hp-permpop-item.is-current {
   background: var(--sel);
   color: var(--sel-text);
+}
+
+/* 「已记住的规则」段（change harness-permission-rules-oct23 A1 / Q6）：三档单选下方一条
+   1px 分隔线 + 段标题 + 逐条规则（等宽原文 + 右侧 16px 删除钮）。列表为空时整段不渲染
+   （元素根本不建，浮层形态与无此段时一致）；条目超过 6 条时列表区滚动，浮层本体不超高。 */
+.lumir-hp-permpop-divider {
+  height: 1px;
+  margin: var(--sp-2) 0;
+  background: var(--border);
+}
+.lumir-hp-permpop-heading {
+  padding: 0 var(--sp-3) var(--sp-1);
+  color: var(--text-3);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+}
+.lumir-hp-permpop-rules {
+  max-height: calc(6 * 1.7em * var(--lumir-hp-scale, 1) + var(--sp-2) * 2);
+  overflow-y: auto;
+}
+.lumir-hp-permpop-rule {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r4);
+}
+.lumir-hp-permpop-rule:hover {
+  background: var(--hover);
+}
+.lumir-hp-permpop-ruletext {
+  flex: 1;
+  min-width: 0;
+  /* 规则原文**逐字可见**：长规则换行而不是省略号（省略号会让「授权面」看不见——浮层的
+     存在意义就是让用户读清楚自己允许了什么）。 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+}
+.lumir-hp-permpop-ruledel {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-permpop-ruledel:hover {
+  color: var(--text);
 }
 
 /* ctx% 读数 + 警示浮层（M347；M351 对齐原型 .h-usage：fs-label 等宽小字；M370 读数改

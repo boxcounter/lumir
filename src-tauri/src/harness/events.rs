@@ -138,13 +138,17 @@ pub fn approval_request_with_purpose(
     purpose: Option<&str>,
     reason: Option<&super::permissions::DecisionReason>,
 ) -> serde_json::Value {
-    approval_request_full(id, tool, diff, argv, purpose, reason, None, None)
+    approval_request_full(
+        id, tool, diff, argv, purpose, reason, None, None, None, None,
+    )
 }
 
-/// 完整形态：在既有展示字段之外带**发起者**（change add-harness-subagents design §8.3）与
-/// **定时任务预览**（change add-cron-conversational-registration design §6.3）。
-/// 交互调用传 `None` 的 source（键缺席 = 父会话自己的卡，旧前端零改动）；`cron_task` 只在
-/// 调度工具的批准卡上出现，形状见 `cron::create_preview` / 删除载荷。
+/// 完整形态：在既有展示字段之外带**发起者**（change add-harness-subagents design §8.3）、
+/// **定时任务预览**（change add-cron-conversational-registration design §6.3）与**两枚次级
+/// 动作**（change harness-permission-rules-oct23 design §5：`remember` = 会话记忆粒度，
+/// `persist_rule` = 持久规则原文；缺省 = 不显示该按钮）。交互调用传 `None` 的 source
+/// （键缺席 = 父会话自己的卡，旧前端零改动）；`cron_task` 只在调度工具的批准卡上出现，
+/// 形状见 `cron::create_preview` / 删除载荷。
 #[allow(clippy::too_many_arguments)]
 pub fn approval_request_full(
     id: &str,
@@ -155,6 +159,8 @@ pub fn approval_request_full(
     reason: Option<&super::permissions::DecisionReason>,
     source: Option<&super::approval::ApprovalSource>,
     cron_task: Option<&serde_json::Value>,
+    remember: Option<&str>,
+    persist_rule: Option<&str>,
 ) -> serde_json::Value {
     let mut value = serde_json::json!({"type": "approval_request", "id": id, "tool": tool});
     if let Some(diff) = diff {
@@ -178,6 +184,12 @@ pub fn approval_request_full(
     }
     if let Some(cron_task) = cron_task {
         value["cron_task"] = cron_task.clone();
+    }
+    if let Some(remember) = remember {
+        value["remember"] = serde_json::json!(remember);
+    }
+    if let Some(persist_rule) = persist_rule {
+        value["persist_rule"] = serde_json::json!(persist_rule);
     }
     value
 }
@@ -598,9 +610,30 @@ mod tests {
             None,
             None,
             Some(&cron_task),
+            None,
+            None,
         );
         assert_eq!(with_cron["cron_task"], cron_task);
         assert!(with_cron.get("diff").is_none());
+
+        // 两枚次级动作（change harness-permission-rules-oct23 design §5）：有值即进载荷，
+        // 缺省时键整体缺席（前端按「缺键 = 不渲染」的翻转后的语义处理）。
+        assert!(plain.get("remember").is_none());
+        assert!(plain.get("persist_rule").is_none());
+        let with_actions = approval_request_full(
+            "ap-5",
+            "cli_run",
+            None,
+            None,
+            Some("查资料"),
+            None,
+            None,
+            None,
+            Some("tvly search"),
+            Some("cli(tvly search *)"),
+        );
+        assert_eq!(with_actions["remember"], "tvly search");
+        assert_eq!(with_actions["persist_rule"], "cli(tvly search *)");
     }
 
     /// 标识来自**包装时的作用域**，不是全局态：两个 sink 各盖各的，互不串。

@@ -629,6 +629,11 @@ pub fn config_set_ui_value(key: String, value: serde_json::Value) -> Result<(), 
 }
 
 /// 指定配置文件路径的「表 + 键」合并写（可测：不依赖真实配置目录）。
+///
+/// 读—改—写放在**同一把锁**里（change harness-permission-rules-oct23 design §4）：本通道与
+/// 权限规则写回（`config::append_permission_rule_to` / `remove_permission_rule_to`）写的是
+/// 同一张 `[harness]` 表，各自「先读后写」会丢更新。锁与原子写实现都在
+/// [`config::update_json_atomic`]（单一实现，不新增第二套）。
 pub(crate) fn write_config_value_to(
     path: &Path,
     section: &str,
@@ -655,9 +660,10 @@ pub(crate) fn write_config_value_to(
             format!("{section} 配置键 \"{key}\" 非法（点分路径的每一级都必须非空）"),
         ));
     }
-    let mut value = read_config_json(path);
-    merge_config_value(&mut value, section, key, section_value);
-    config::write_json_atomic(path, &value)
+    config::update_json_atomic(path, |value| {
+        merge_config_value(value, section, key, section_value);
+        Ok(())
+    })
 }
 
 /// 合并写 `<section>.<key>` 的纯函数部分（可测）：只改这一个键，其余字段（含未知字段与其它表）

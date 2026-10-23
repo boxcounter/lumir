@@ -2693,7 +2693,14 @@ impl RunContext for ChildContext {
             argv: (tool == "cli_run").then(|| tools::cli_argv(args)),
             cached,
         };
-        permissions::decide(&self.config.permissions, tool, subject, &judge)
+        // 与父会话同一份「本轮生效规则」（change harness-permission-rules-oct23 design §4）：
+        // 父会话批准卡上沉淀的规则对子运行的后续判定同样立即生效。
+        permissions::decide(
+            &self.runtime.live_permissions(&self.config.permissions),
+            tool,
+            subject,
+            &judge,
+        )
     }
 
     fn approval(
@@ -2721,6 +2728,8 @@ impl RunContext for ChildContext {
         let argv = request.argv.clone();
         let purpose = request.purpose.clone();
         let reason = request.reason.clone();
+        let remember = request.remember.clone();
+        let persist_rule = request.persist_rule.clone();
         let request = request.with_id(id.clone()).with_source(source.clone());
         let parked = self.runtime.with_session(&self.scope, |parent| {
             if parent.subagent_token() != self.parent_token {
@@ -2747,6 +2756,8 @@ impl RunContext for ChildContext {
                 Some(&source),
                 // 调度工具不在子运行的注册表里，子运行透传的卡永远没有定时任务预览。
                 None,
+                remember.as_deref(),
+                persist_rule.as_deref(),
             ));
         }
         let wait_start = Instant::now();
@@ -3616,7 +3627,7 @@ mod tests {
         // 拒绝：文件保留、子运行继续完成。
         f.runtime
             .with_session(&f.scope, |session| {
-                session.resolve_approval(&request.id, false, Some("先别删".into()), false)
+                session.resolve_approval(&request.id, false, Some("先别删".into()), false, false)
             })
             .unwrap()
             .unwrap();
@@ -3670,7 +3681,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(1300));
         f.runtime
             .with_session(&f.scope, |session| {
-                session.resolve_approval(&id, true, None, false)
+                session.resolve_approval(&id, true, None, false, false)
             })
             .unwrap()
             .unwrap();
@@ -4679,7 +4690,7 @@ mod tests {
             .clone();
         f.runtime
             .with_session(&f.scope, |session| {
-                session.resolve_approval(&id, true, None, false)
+                session.resolve_approval(&id, true, None, false, false)
             })
             .unwrap()
             .unwrap();

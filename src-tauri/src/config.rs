@@ -1898,6 +1898,63 @@ pub(crate) fn read_config_json(path: &Path) -> serde_json::Value {
     value
 }
 
+/// 追加一条持久权限规则到 `[harness].permissions.allow`（change
+/// harness-permission-rules-oct23 A1 / design §4）：全局作用域、去重按字符串全等、
+/// 读—改—写同锁（与 `[harness].permission_mode` 的写回共用 [`CONFIG_WRITE_LOCK`]，因此
+/// 不会被权限档写回顶掉）。
+///
+/// 规则文本由调用方从待决请求现算（后端单一真源），本函数只做出入形状与去重。
+pub(crate) fn append_permission_rule_to(path: &Path, rule: &str) -> Result<(), CommandError> {
+    let rule = rule.trim();
+    if rule.is_empty() {
+        return Err(CommandError::new(
+            "permission_rule_invalid",
+            "权限规则不能为空".to_string(),
+        ));
+    }
+    update_json_atomic(path, |value| {
+        let allow = permission_rules_mut(value);
+        if !allow.iter().any(|entry| entry.as_str() == Some(rule)) {
+            allow.push(serde_json::json!(rule));
+        }
+        Ok(())
+    })
+}
+
+/// 删除一条持久权限规则（第一条全等匹配）。返回是否确实删掉了——不存在即安静成功
+/// （幂等，change harness-permission-rules-oct23 design §4）。
+pub(crate) fn remove_permission_rule_to(path: &Path, rule: &str) -> Result<bool, CommandError> {
+    let rule = rule.trim();
+    let mut removed = false;
+    update_json_atomic(path, |value| {
+        let allow = permission_rules_mut(value);
+        if let Some(index) = allow.iter().position(|entry| entry.as_str() == Some(rule)) {
+            allow.remove(index);
+            removed = true;
+        }
+        Ok(())
+    })?;
+    Ok(removed)
+}
+
+/// `[harness].permissions.allow` 的可变数组槽：缺失 / 错形状就地重置为空数组（与
+/// [`update_json_atomic`] 的宽容口径同路——一份错形状的配置不该让规则写回整条失败）。
+fn permission_rules_mut(value: &mut serde_json::Value) -> &mut Vec<serde_json::Value> {
+    for section in ["harness", "permissions"] {
+        if !value.get(section).is_some_and(serde_json::Value::is_object) {
+            value[section] = serde_json::json!({});
+        }
+    }
+    let permissions = &mut value["harness"]["permissions"];
+    if !permissions
+        .get("allow")
+        .is_some_and(serde_json::Value::is_array)
+    {
+        permissions["allow"] = serde_json::json!([]);
+    }
+    permissions["allow"].as_array_mut().expect("刚刚填过")
+}
+
 /// 原子替换写的失败阶段：只决定错误文案（沿用既有的「写入 / 落盘」两句），错误码不随之变。
 enum AtomicWriteFailure {
     /// 写 tmp 或 `sync_all` 失败。
@@ -6636,5 +6693,92 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["ui"]["theme"], serde_json::json!("dark"));
+    }
+
+    // -----------------------------------------------------------------------
+    // 持久权限规则的追加 / 删除（change harness-permission-rules-oct23 tasks 2.3 / 2.6）
+    // -----------------------------------------------------------------------
+
+    /// 追加去重：同一条规则写两次仍只有一条；其它键逐键保留。
+    #[test]
+    fn append_permission_rule_dedupes_and_keeps_other_keys() {
+        let dir = TempDir::new("perm-rules-append");
+        let path = dir.config_path();
+        std::fs::write(
+            &path,
+            r#"{"harness":{"permission_mode":"read_only"},"unknown_top":{"keep":true}}"#,
+        )
+        .unwrap();
+
+        append_permission_rule_to(&path, "cli(tvly search *)").expect("第一次追加");
+        append_permission_rule_to(&path, "cli(tvly search *)").expect("重复追加");
+        append_permission_rule_to(&path, "vault_patch(notes/*)").expect("第二条");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            value["harness"]["permissions"]["allow"],
+            serde_json::json!(["cli(tvly search *)", "vault_patch(notes/*)"]),
+            "去重按字符串全等，顺序按追加"
+        );
+        assert_eq!(
+            value["harness"]["permission_mode"],
+            serde_json::json!("read_only"),
+            "同一张 [harness] 表的其它键逐键保留"
+        );
+        assert_eq!(value["unknown_top"], serde_json::json!({"keep": true}));
+    }
+
+    /// 空规则拒绝（后端单写者的入参校验）：文件不落盘。
+    #[test]
+    fn append_permission_rule_rejects_empty_rule() {
+        let dir = TempDir::new("perm-rules-empty");
+        let path = dir.config_path();
+        let before = std::fs::read(&path).ok();
+        let error = append_permission_rule_to(&path, "   ").expect_err("空规则必须报错");
+        assert_eq!(error.code, "permission_rule_invalid");
+        assert_eq!(std::fs::read(&path).ok(), before);
+    }
+
+    /// 删除幂等：第一条全等匹配被移除；不存在时安静成功（`false`）且不落盘改内容。
+    #[test]
+    fn remove_permission_rule_is_idempotent() {
+        let dir = TempDir::new("perm-rules-remove");
+        let path = dir.config_path();
+        std::fs::write(
+            &path,
+            r#"{"harness":{"permissions":{"allow":["cli(a *)","cli(b *)"]}}}"#,
+        )
+        .unwrap();
+
+        assert!(
+            remove_permission_rule_to(&path, "cli(a *)").expect("删除"),
+            "存在即 true"
+        );
+        assert!(
+            !remove_permission_rule_to(&path, "cli(a *)").expect("重复删除"),
+            "不存在即 false（幂等）"
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            value["harness"]["permissions"]["allow"],
+            serde_json::json!(["cli(b *)"])
+        );
+    }
+
+    /// 错形状宽容：缺 `[harness].permissions` 时追加会建出结构；`allow` 不是数组时重置为空数组。
+    #[test]
+    fn append_permission_rule_tolerates_bad_shapes() {
+        let dir = TempDir::new("perm-rules-shape");
+        let path = dir.config_path();
+        std::fs::write(&path, r#"{"harness":{"permissions":{"allow":"nope"}}}"#).unwrap();
+        append_permission_rule_to(&path, "cli(x *)").expect("错形状也要能写");
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            value["harness"]["permissions"]["allow"],
+            serde_json::json!(["cli(x *)"])
+        );
     }
 }

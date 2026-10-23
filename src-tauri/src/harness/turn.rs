@@ -235,6 +235,9 @@ pub fn run_turn(
         runtime: runtime.downgrade(),
         forward: (!runtime.is_isolated()).then(|| TauriEventSink(app.clone())),
     });
+    // 本轮生效的权限规则（change harness-permission-rules-oct23 design §4）：从本轮配置快照
+    // 播种——规则写回 / 删除成功时后端会再从配置文件重播一次，同一轮的下一条判定因此立即生效。
+    runtime.seed_permissions(&config.permissions);
     // 可跨线程持有的同一出口：子运行与自动唤醒回合在父回合结束后仍要发事件，借用的
     // `&sink` 活不到那时。`ScopedSink` 只借用 inner，故这里再包一层 owned 版本。
     let owned: std::sync::Arc<dyn EventSink> = std::sync::Arc::new(OwnedScopedSink {
@@ -329,6 +332,9 @@ pub fn run_turn_for(
     context_section: Option<String>,
     client: &mut dyn LlmClient,
 ) {
+    // 与生产入口同一份播种（`run_turn` 的注释即契约）：单测 / 子运行驱动的轮次也吃同一份
+    // 「本轮生效规则」，不给测试面留一条不同的判定路径。
+    runtime.seed_permissions(&config.permissions);
     let mut ctx = SessionContext::new(sink, runtime, scope, config);
     let _ = run_turn_core(&mut ctx, config, parts, context_section, client);
 }
@@ -1294,6 +1300,26 @@ struct GatedCall<'a> {
     reason: Option<permissions::DecisionReason>,
 }
 
+/// 批准卡两枚次级动作的派生（change harness-permission-rules-oct23 design §5）：**唯一产出点**。
+///
+/// 危险黑名单层（`DangerousWrapper` / `DangerousCommand`，判定第 3 层）两项皆 `None`——那一层
+/// 先于 allow 规则与会话缓存，按钮点了也不生效（D3 裁决：死按钮藏起来）。其余进闸的卡按
+/// [`permissions::permission_prefix`] 给粒度 / 规则文本（`vault_delete` / `cron_task_*` 的规则
+/// 为 `None`，Q7 裁决）。`reason` 缺席（未来新增的 Ask 层未标依据）按模式层处理——那是保守侧
+/// 唯一可用的读法，且与「字段缺省 = 不渲染」的按钮开关不冲突。
+fn gated_actions(
+    tool: &str,
+    argv: Option<&[String]>,
+    subject: &str,
+    reason: Option<&permissions::DecisionReason>,
+) -> Option<permissions::PermissionActions> {
+    match reason {
+        Some(permissions::DecisionReason::DangerousWrapper { .. })
+        | Some(permissions::DecisionReason::DangerousCommand) => None,
+        _ => permissions::permission_prefix(tool, argv, subject),
+    }
+}
+
 /// ask 档：无人值守短路 → 生成预览 → 挂起批准 → 等决定 → 采纳执行 / 拒绝回送。
 ///
 /// 返回值带批准闸决定（`Some("approved")` / `Some("rejected")`）——面板工具行的
@@ -1322,15 +1348,22 @@ fn gated_execute<C: RunContext>(
         Err(output) => return (output, None),
     };
     let (tx, rx) = mpsc::channel();
-    // 批准闸挂出的请求恒支持「采纳且本会话不再问」（design §6 次级动作）——remember
-    // 字段是面板按钮可见性的开关，快照原样镜像。
+    // 两枚次级动作（change harness-permission-rules-oct23 design §5）：唯一产出点在这里。
+    let actions = gated_actions(
+        &call.name,
+        preview.argv.as_deref(),
+        subject,
+        reason.as_ref(),
+    );
     let request = ApprovalRequest::new(
         call.name.clone(),
         preview.diff.clone(),
         preview.argv.clone(),
         preview.purpose.clone(),
         reason.clone(),
-        true,
+        subject.to_string(),
+        actions.as_ref().map(|a| a.remember_label.clone()),
+        actions.as_ref().and_then(|a| a.rule.clone()),
         tx,
     )
     .with_cron_task(preview.cron_task.clone());
@@ -1364,9 +1397,12 @@ fn gated_execute<C: RunContext>(
     };
     if decision.approved {
         // 「采纳且本会话不再问」（design §6）：写会话内批准缓存——唯一写入点。
-        // 缓存键 = (工具, 规范化主体串)，与 handle_call 判定时的取法同源（都是这里算的 subject）。
+        // 缓存键与判定时的取法同源（同一份 `permission_prefix` 派生量；A3 起 cli_run 是
+        // 带尾随空格的命令前缀键）。
         if decision.remember {
-            ctx.remember_approval(&call.name, subject);
+            if let Some(actions) = &actions {
+                ctx.remember_approval(&call.name, &actions.remember_key);
+            }
         }
         // 写工具带预览基准 revision 执行：批准窗内文件被改 ⇒ fs_patch_file CAS
         // 拒掉（document_conflict 回送模型），落盘不与已批准 diff 分叉。
@@ -1758,6 +1794,50 @@ mod tests {
             }),
             viewport_range: None,
         }
+    }
+
+    /// 次级动作派生（change harness-permission-rules-oct23 tasks 3.7）：危险层两项皆 `None`，
+    /// 模式层两项皆 `Some`，`vault_delete` 只有会话记忆。
+    #[test]
+    fn gated_actions_are_derived_from_the_reason_layer() {
+        let cli = vec!["tvly".to_string(), "search".to_string(), "x".to_string()];
+        // 危险层：两枚都不给（死按钮藏起来）。
+        for reason in [
+            permissions::DecisionReason::DangerousWrapper {
+                command: "bash".into(),
+            },
+            permissions::DecisionReason::DangerousCommand,
+        ] {
+            assert_eq!(
+                gated_actions("cli_run", Some(&cli), "tvly search x", Some(&reason)),
+                None,
+                "{reason:?}"
+            );
+        }
+        // 模式层：粒度 + 规则都给。
+        let actions = gated_actions(
+            "cli_run",
+            Some(&cli),
+            "tvly search x",
+            Some(&permissions::DecisionReason::ModeDefault {
+                mode: crate::config::PermissionMode::VaultWrite,
+            }),
+        )
+        .expect("模式层的卡必须有次级动作");
+        assert_eq!(actions.remember_label, "tvly search");
+        assert_eq!(actions.rule.as_deref(), Some("cli(tvly search *)"));
+        // vault_delete：有会话记忆、无持久规则（Q7）。
+        let actions = gated_actions(
+            "vault_delete",
+            None,
+            "notes/a.md",
+            Some(&permissions::DecisionReason::ModeDefault {
+                mode: crate::config::PermissionMode::VaultWrite,
+            }),
+        )
+        .expect("vault_delete 仍保留会话记忆");
+        assert_eq!(actions.remember_key, "notes/a.md");
+        assert_eq!(actions.rule, None);
     }
 
     /// 丢弃事件的 sink（本模块只关心入队后的会话状态）。

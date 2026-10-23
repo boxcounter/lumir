@@ -970,7 +970,9 @@ fn sidecar_records_approval_decision() {
         .unwrap()
         .to_string();
     runtime
-        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None, true))
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&id, true, None, true, false)
+        })
         .expect("resolve ok")
         .expect("resolve ok");
     worker.join().unwrap();
