@@ -1,5 +1,11 @@
 // app-shell 布局骨架 —— M1 接缝（架构复查 P2-7）。
 import { WIDTH_HANDLE_LABEL } from "./content-width";
+import {
+  DEFAULT_SIDEBAR_WIDTH,
+  SIDEBAR_DIVIDER_LABEL,
+  SIDEBAR_WIDTH_MAX,
+  SIDEBAR_WIDTH_MIN,
+} from "./sidebar-width";
 import { onRelabel, t } from "./copy";
 // 只建容器：标题栏（traffic 灯区 + 标签 + 产品标识块）/ 侧栏 / 编辑器 / modeline 四区，
 // 与文件树 / 编辑器的挂载点。文件树由 src/tree.ts 挂载（add-vault-workspace）；大纲的
@@ -70,6 +76,11 @@ export interface AppShell {
    *  `view.language-cycle` 是**同一条**实现路径，接线在 src/main.ts）。文案由 `applyLanguage`
    *  写；初始 hidden——语言还没施加到 `<html lang>` 就永远不显示。 */
   modelineLanguage: HTMLButtonElement;
+  /** 左栏宽度拖拽分隔条（change add-sidebar-resize-hide-and-root-create，design §1.2）：
+   *  `role=separator` 的透明命中带，静止态零足迹。拖拽控制器在 src/sidebar-width.ts，
+   *  宽度的施加与持久化在装配层（src/main.ts）；这里只建 DOM。收起态由 `.app-shell` 的
+   *  `is-sidebar-hidden` class 一并隐藏（CSS）。 */
+  sidebarDivider: HTMLElement;
 }
 
 function pane(className: string, label: string): HTMLElement {
@@ -174,6 +185,24 @@ export function createShell(mount: HTMLElement): AppShell {
   treeMount.className = "tree-pane";
   fileTree.append(treeMount);
 
+  // 左栏宽度拖拽分隔条（change add-sidebar-resize-hide-and-root-create，design §1.2 / §5）：
+  // 6px 透明命中带跨在既有的 1px 右侧 hairline 上，只有中央 1px 在 hover / 拖拽中 /
+  // :focus-visible 时显现一档 `--hover`（零新色值、零新尺寸 token）。**绝对定位、不是网格项**
+  // ——`.app-shell` 的 grid-template-columns 只有两列，多一个网格项会把正文挤到下一行；
+  // left 由 `--layout-sidebar-w` 派生，纵跨主行（不进标题栏行）。读屏身份是 separator
+  // （与栏宽手柄同族），读屏名取文案 D549 的单一来源。
+  const sidebarDivider = document.createElement("div");
+  sidebarDivider.className = "sidebar-divider";
+  sidebarDivider.setAttribute("role", "separator");
+  sidebarDivider.setAttribute("aria-orientation", "vertical");
+  sidebarDivider.setAttribute("aria-label", SIDEBAR_DIVIDER_LABEL());
+  sidebarDivider.setAttribute("aria-valuemin", String(SIDEBAR_WIDTH_MIN));
+  sidebarDivider.setAttribute("aria-valuemax", String(SIDEBAR_WIDTH_MAX));
+  sidebarDivider.setAttribute("aria-valuenow", String(DEFAULT_SIDEBAR_WIDTH));
+  sidebarDivider.tabIndex = 0;
+  // 读屏名的运行期可重跑写入点（M282 / M285 的口径）：语言切换后重跑，取新语言的文案。
+  onRelabel(() => sidebarDivider.setAttribute("aria-label", SIDEBAR_DIVIDER_LABEL()));
+
   // modeline（M211 新增）：左「文件路径 › 大纲指示段」/ 右「语法 · 行数 · 编码 (+ 版本号 + 主题)」。
   const modeline = document.createElement("footer");
   modeline.className = "modeline";
@@ -215,7 +244,7 @@ export function createShell(mount: HTMLElement): AppShell {
   right.append(modelineMeta, modelineVersion, modelineTheme, modelineLanguage);
   modeline.append(left, right);
 
-  root.append(titlebar, fileTree, editor, modeline);
+  root.append(titlebar, fileTree, sidebarDivider, editor, modeline);
   mount.replaceChildren(root);
   return {
     root,
@@ -235,5 +264,6 @@ export function createShell(mount: HTMLElement): AppShell {
     modelineVersion,
     modelineTheme,
     modelineLanguage,
+    sidebarDivider,
   };
 }

@@ -217,6 +217,11 @@
   --r10: 10px;
   --r-pill: 20px;
 
+  /* 侧栏宽度默认 236px（change add-sidebar-resize-hide-and-root-create 的 D1 裁决，
+     2026-10-23）。运行期由左栏分隔条拖拽经 src/sidebar-width.ts 覆写本 token（写在
+     documentElement 上），合法区间 [180, 480]；标题栏 traffic 区的 width 也读本 token，
+     两处因此像素对齐。三处同值：Rust DEFAULT_SIDEBAR_WIDTH / TS DEFAULT_SIDEBAR_WIDTH /
+     本行（REVIEW.md「同一语义两处真源」条）。 */
   --layout-sidebar-w: 236px;
   --layout-agent-w: 348px;
   --layout-titlebar-h: 42px;
@@ -698,6 +703,58 @@ body {
   overflow: hidden;
   background: var(--frame);
   border-right: 1px solid var(--border);
+}
+/* 左栏宽度拖拽分隔条（change add-sidebar-resize-hide-and-root-create，design §1.2 / §5）：
+   静止态**零足迹**——6px 透明命中带骑在既有 1px 右侧 hairline 上，只有中央 1px 在 hover /
+   拖拽中 / `:focus-visible` 时显现一档 `--hover` 底色（零新色值、零新尺寸 token，eink 由
+   token 层自动落位）。命中宽度与可见宽度分离是栏宽手柄的既有手法（src/content-width.ts）。
+   定位：绝对定位、不是网格项——`.app-shell` 的 grid-template-columns 只有两列，多一个网格项
+   会把正文挤到下一行；left 由 `--layout-sidebar-w` 派生，纵跨主行（标题栏是独立网格行，
+   拖拽热区只覆盖 row 2）。
+   **命中带从 hairline 起、向正文一侧伸**（不是左右对称跨线）：左栏整幅宽度（含 `.filetree`
+   的右内边距那条带）在 M251 起属于行——右键落在那里仍作用于该行。对称跨线会把最后 2–3px
+   从行手里抢走（右键在那一带落到分隔条上、连行菜单都不出）。向正文一侧伸的 5px 落在编辑器
+   的左空白 / gutter 区，不遮挡正文。 */
+.sidebar-divider {
+  position: absolute;
+  top: var(--layout-titlebar-h);
+  bottom: var(--layout-modeline-h);
+  left: calc(var(--layout-sidebar-w) - 1px);
+  width: 6px;
+  z-index: 4;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.sidebar-divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: var(--hover);
+  opacity: 0;
+}
+.sidebar-divider:hover::before,
+.sidebar-divider.dragging::before,
+.sidebar-divider:focus-visible::before {
+  opacity: 1;
+}
+/* 收起态（⌘B，design §2.1）：首列归 0、侧栏内容不显示（藏 DOM，不销毁——树模型 / 展开态 /
+   watcher 订阅全部保留）、traffic 区回到「交通灯 + 产品标识块」的最小宽。分隔条没有可调宽度，
+   一并隐藏（也不可 Tab 聚焦）。 */
+.app-shell.is-sidebar-hidden {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+.app-shell.is-sidebar-hidden .pane-filetree {
+  display: none;
+}
+.app-shell.is-sidebar-hidden .titlebar-traffic {
+  width: auto;
+}
+.app-shell.is-sidebar-hidden .sidebar-divider {
+  display: none;
 }
 .pane-editor {
   grid-column: 2;

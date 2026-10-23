@@ -35,8 +35,8 @@
 //! ## ui 表（restyle-ui-tokens-v1，M237 起含运行期切换）
 //!
 //! `{"ui": {"theme": "light" | "dark" | "eink", "content_width": 760,` +
-//! `"markdown_line_numbers": "on-demand" | "always" | "off",` +
-//! `"language": "en" | "zh"}}`，默认 `light` / `760` / `on-demand` / `en`。取值校验照 `editor.mode`
+//! `"sidebar_width": 236, "markdown_line_numbers": "on-demand" | "always" | "off",` +
+//! `"language": "en" | "zh"}}`，默认 `light` / `760` / `236` / `on-demand` / `en`。取值校验照 `editor.mode`
 //! 模板：表内 `theme` 缺失 → 默认；取值不在表内 → warning + 回落默认（ADR 0002 §5：非法
 //! 配置不导致启动失败）。它与 `editor` 一样是**结构化表**（`RawUiConfig`），不是 keys / log
 //! 那种「整表收成 Value」——因此 `{"ui": "dark"}` 这种表的错形状与表内 `"theme": 2` 同路，
@@ -390,6 +390,23 @@ pub const DEFAULT_CONTENT_WIDTH: f64 = 760.0;
 pub const CONTENT_WIDTH_MIN: f64 = 760.0;
 pub const CONTENT_WIDTH_MAX: f64 = 1200.0;
 
+/// 侧栏宽度默认（px，change add-sidebar-resize-hide-and-root-create 的 D1 裁决 2026-10-23：
+/// 默认 236、合法区间 `[180, 480]`）。默认值刻意不动（视觉基线与标题栏 traffic 区宽都按它
+/// 钉住），宽度是用户拉出来的。
+///
+/// 三处同语义写值：本常量（配置面的真源）、`src/sidebar-width.ts` 的 `DEFAULT_SIDEBAR_WIDTH`、
+/// `src/style.css` 的 `--layout-sidebar-w` 默认值。三者必须同值，各有断言钉住，改一处必须同步
+/// 其余两处（REVIEW.md 「同一语义两处真源」条）。
+pub const DEFAULT_SIDEBAR_WIDTH: f64 = 236.0;
+
+/// 侧栏宽度合法区间（含端点，D1 裁决 [180, 480]）：与前端 `src/sidebar-width.ts` 的
+/// `SIDEBAR_WIDTH_MIN` / `SIDEBAR_WIDTH_MAX` 同值。区间外一律回落默认值 + warning。
+///
+/// 运行期的「窗口过窄按四成再钳」是**显示口径**（前端做、不落盘）：盘上存的是用户意图值，
+/// 因此本区间不受窗口尺寸影响。
+pub const SIDEBAR_WIDTH_MIN: f64 = 180.0;
+pub const SIDEBAR_WIDTH_MAX: f64 = 480.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../src/bindings/")]
@@ -416,6 +433,12 @@ pub struct UiConfig {
     /// 类型不符（`"content_width": "760"`）与 `font_size` 同路：serde 解析期失败 →
     /// 整文件回落。
     pub content_width: f64,
+    /// 侧栏宽度（px，change add-sidebar-resize-hide-and-root-create 的 D1 裁决 2026-10-23）：
+    /// 默认 236、合法区间 `[180, 480]`（越界回落默认 + warning）。启动时装配一次；运行期由
+    /// 左栏分隔条拖拽推进并回写（`config_set_ui_value`，与 `content_width` 同一条合并写通道）。
+    /// 窗口过窄时的「四成」钳制是显示口径（前端做，不回写到本字段）——盘上存的是用户意图值。
+    /// 类型不符（`"sidebar_width": "236"`）与 `content_width` 同路：整文件回落。
+    pub sidebar_width: f64,
     /// md 模式行号 gutter 的在场档位（change goto-line-command 的 D4 二次改判，2026-09-28），
     /// 默认 `on-demand`。**只管 md**：只读 code 模式的行号 gutter 恒常显、不读本键。
     /// 与 `editor.mode` / `editor.font_size` 同路：**装载时读一次、运行期 MUST NOT 回写**
@@ -436,6 +459,7 @@ impl Default for UiConfig {
         Self {
             theme: UiTheme::Light,
             content_width: DEFAULT_CONTENT_WIDTH,
+            sidebar_width: DEFAULT_SIDEBAR_WIDTH,
             markdown_line_numbers: MarkdownLineNumbers::OnDemand,
             language: UiLanguage::En,
         }
@@ -1469,6 +1493,9 @@ struct RawUiConfig {
     /// 栏宽（content-width-drag，M228）：数值字段，类型不符（`"content_width": "760"`）
     /// 在解析期失败 → 整文件回落（与 `font_size` 先例同型同路，不发明逐字段容忍）。
     content_width: Option<f64>,
+    /// 侧栏宽度（change add-sidebar-resize-hide-and-root-create）：数值字段，类型不符
+    /// （`"sidebar_width": "236"`）在解析期失败 → 整文件回落（与 `content_width` 同型同路）。
+    sidebar_width: Option<f64>,
     /// md 行号 gutter 档位（change goto-line-command 的 D4 二次改判）：取值是闭集合
     /// （`on-demand` / `always` / `off`），非法值到不了这里——在 `validate()` 里回落 + warning
     ///（与 `theme` 同路）。类型不符（`"markdown_line_numbers": 2`）在 serde 解析期失败 →
@@ -2076,6 +2103,20 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
         }
     }
 
+    // 侧栏宽度（change add-sidebar-resize-hide-and-root-create 的 D1 裁决）：区间判定照
+    // `content_width` 模板——缺字段回落默认不告警、越界回落默认 + warning；类型不符同样走
+    // 解析期整文件回落（单测钉住）。运行期的「窗口四成」钳制在前端、不进本判定。
+    let mut sidebar_width = defaults.ui.sidebar_width;
+    if let Some(value) = raw.ui.sidebar_width {
+        if (SIDEBAR_WIDTH_MIN..=SIDEBAR_WIDTH_MAX).contains(&value) {
+            sidebar_width = value;
+        } else {
+            warnings.push(format!(
+                "配置项 ui.sidebar_width 取值 {value} 超出合法区间 [{SIDEBAR_WIDTH_MIN}, {SIDEBAR_WIDTH_MAX}]，已回退为 {DEFAULT_SIDEBAR_WIDTH}"
+            ));
+        }
+    }
+
     // md 行号 gutter 档位（change goto-line-command 的 D4 二次改判，2026-09-28）：取值校验照
     // `theme` 模板——缺字段回落默认（不告警）、取值不在三档内回落默认 + 人话 warning；
     // 类型不符到不了这里（解析期整文件回落，见 `RawUiConfig` 的注释）。
@@ -2136,6 +2177,7 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
             ui: UiConfig {
                 theme,
                 content_width,
+                sidebar_width,
                 markdown_line_numbers,
                 language,
             },
@@ -3691,6 +3733,75 @@ mod tests {
         assert_eq!(snap.config, AppConfig::default(), "应整份落回默认");
         assert_eq!(snap.config.ui.theme, UiTheme::Light);
         assert_eq!(snap.config.editor.mode, EditorMode::Md);
+        assert_eq!(snap.config.last_vault, None, "合法字段同样落回默认");
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(
+            snap.warnings[0].contains("不是合法 JSON"),
+            "{:?}",
+            snap.warnings
+        );
+    }
+
+    #[test]
+    fn missing_ui_sidebar_width_takes_default() {
+        // 老配置文件（change add-sidebar-resize-hide-and-root-create 之前写入）没有这一项：
+        // 回落默认 236（D1 裁决）、不产生 warning。
+        let f = TempFile::new(r#"{"version":1,"ui":{"theme":"dark"}}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.ui.sidebar_width, DEFAULT_SIDEBAR_WIDTH);
+        assert_eq!(snap.config.ui.theme, UiTheme::Dark, "同表其它字段不受影响");
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        // 整个 [ui] 表缺失同样回落默认。
+        let f = TempFile::new(r#"{"version":1}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.ui.sidebar_width, DEFAULT_SIDEBAR_WIDTH);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn explicit_ui_sidebar_width_is_loaded() {
+        let f = TempFile::new(r#"{"ui":{"sidebar_width":320}}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.ui.sidebar_width, 320.0);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn out_of_range_ui_sidebar_width_falls_back_with_warning() {
+        // 区间 [180, 480]（D1 裁决）：两端之外都回落默认 + 恰一条 warning。
+        for raw in [
+            r#"{"ui":{"sidebar_width":100}}"#,
+            r#"{"ui":{"sidebar_width":600}}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(snap.config.ui.sidebar_width, DEFAULT_SIDEBAR_WIDTH, "{raw}");
+            assert_eq!(snap.warnings.len(), 1, "{raw}: {:?}", snap.warnings);
+            assert!(
+                snap.warnings[0].contains("ui.sidebar_width"),
+                "{raw}: {:?}",
+                snap.warnings
+            );
+        }
+        // 端点值合法（含端点）。
+        for edge in [180, 480] {
+            let f = TempFile::new(&format!(r#"{{"ui":{{"sidebar_width":{edge}}}}}"#));
+            let snap = load_from(&f.0);
+            assert_eq!(snap.config.ui.sidebar_width, f64::from(edge));
+            assert!(snap.warnings.is_empty(), "{edge}: {:?}", snap.warnings);
+        }
+    }
+
+    #[test]
+    fn wrong_type_ui_sidebar_width_falls_back_entire_file() {
+        // 与 `wrong_type_ui_content_width_falls_back_entire_file` 同路：数值字段写成字符串在
+        // serde 解析期失败 → 整文件回落，不出现逐字段类型容忍。
+        let f = TempFile::new(
+            r#"{"last_vault":"/tmp/vault","ui":{"sidebar_width":"236","theme":"dark"}}"#,
+        );
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config, AppConfig::default(), "应整份落回默认");
+        assert_eq!(snap.config.ui.sidebar_width, DEFAULT_SIDEBAR_WIDTH);
+        assert_eq!(snap.config.ui.theme, UiTheme::Light);
         assert_eq!(snap.config.last_vault, None, "合法字段同样落回默认");
         assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
         assert!(

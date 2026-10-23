@@ -93,6 +93,17 @@ import { createTabs } from "./tabs";
 import type { TabsHandle } from "./tabs";
 import { createBindingsPanel } from "./bindings-panel";
 import { WIDTH_HANDLE_LABEL, WIDTH_SAVE_FAILED_TEXT, createContentWidthDrag } from "./content-width";
+import {
+  DEFAULT_SIDEBAR_WIDTH,
+  SIDEBAR_HIDDEN_CLASS,
+  SIDEBAR_SAVE_FAILED_TEXT,
+  SIDEBAR_WIDTH_MIN,
+  SIDEBAR_WIDTH_TOKEN,
+  clampSidebarWidth,
+  clampSidebarWidthForViewport,
+  createSidebarDrag,
+  sidebarWidthLimit,
+} from "./sidebar-width";
 import { createTitlebarIdentity } from "./modeline";
 import {
   THEME_INDICATOR_LABEL,
@@ -1349,6 +1360,52 @@ const widthDrag = createContentWidthDrag({
   },
 });
 
+// 左栏宽度（change add-sidebar-resize-hide-and-root-create，design §1）——唯一运行期真源 =
+// `documentElement` 上的 `--layout-sidebar-w`；`.app-shell` 的网格首列与 `.titlebar-traffic`
+// 的宽读同一 token，两处因此像素对齐（不存在第二份宽度数值）。
+//
+// 两个量分工（design §1.2 的两层钳制）：`sidebarWidthIntent` 是**用户意图值**（静态区间
+// [180, 480]，＝落盘值）；写进 token 的是**显示值**（再按窗口四成钳一次，不落盘）。窗口变窄
+// 再变宽时按意图值重新施加，因此意图值 MUST NOT 被显示钳制改写。
+let sidebarWidthIntent = DEFAULT_SIDEBAR_WIDTH;
+
+/** 宽度的**唯一施加点**：写 token + 同步分隔条的 ARIA 值语义（显示值，不是意图值）。
+ *  ARIA 的三个值跟着**当前可调区间**走（窗口过窄时上限是四成、下限跟着放宽）——否则
+ *  `aria-valuenow` 会落在 `aria-valuemin` 之外，读屏读到一个自相矛盾的可调区间。 */
+function applySidebarWidth(width: number): void {
+  const limit = sidebarWidthLimit(window.innerWidth);
+  const display = clampSidebarWidthForViewport(width, window.innerWidth);
+  document.documentElement.style.setProperty(SIDEBAR_WIDTH_TOKEN, `${display}px`);
+  shell.sidebarDivider.setAttribute("aria-valuemin", String(Math.min(SIDEBAR_WIDTH_MIN, limit)));
+  shell.sidebarDivider.setAttribute("aria-valuemax", String(limit));
+  shell.sidebarDivider.setAttribute("aria-valuenow", String(display));
+}
+
+/** 设置意图宽度（拖拽与启动装配共用）：存意图值 + 施加一次显示值。 */
+function setSidebarWidth(width: number): void {
+  sidebarWidthIntent = clampSidebarWidth(width);
+  applySidebarWidth(sidebarWidthIntent);
+}
+
+// 分隔条拖拽（design §1.2）：拖拽期只写 token（rAF 合并、零 IPC），松手且值有变化时经既有
+// 合并写通道落盘一次；写失败降级为 toast + 诊断日志，运行期宽度**不回滚**（与栏宽 D3 同口径）。
+// 句柄的 destroy 只在重建 / 测试路径用得上，装配层没有第二套侧栏生命周期，因此不留引用。
+createSidebarDrag({
+  divider: shell.sidebarDivider,
+  getWidth: () => sidebarWidthIntent,
+  setWidth: (width) => setSidebarWidth(width),
+  onCommit(width) {
+    configSetUiValue("sidebar_width", width).catch((e: unknown) => {
+      toast(SIDEBAR_SAVE_FAILED_TEXT(errorMessage(e)));
+      logEvent("config_warning", { source: "sidebar-width", message: errorMessage(e) });
+    });
+  },
+});
+
+// 窗口尺寸变化：按同一式子重钳**显示值**（不写盘——盘上存的是用户意图值）。只读意图值，
+// 不回写它：窗口恢复后侧栏自动回到用户拖出来的宽度。
+window.addEventListener("resize", () => applySidebarWidth(sidebarWidthIntent));
+
 // 编辑器区域的"暂不支持预览 / 错误提示"覆盖层：显示提示时藏起编辑器本体。
 //
 // M317 2.6：提示**点名跟随活跃 pane**——`showNotice` 的文案由打开动作给的 path 派生（打开 /
@@ -2000,6 +2057,40 @@ function runTreeAction(action: TreeMenuAction, target: TreeMenuTarget): void {
       });
       return;
   }
+}
+
+// ---------------------------------------------------------------------------
+// 左栏收起 / 展开（⌘B，change add-sidebar-resize-hide-and-root-create design §2）
+// ---------------------------------------------------------------------------
+// 状态 = `.app-shell` 上的 `is-sidebar-hidden` class（运行期态、不落盘，D2：收起不跨启动）；
+// 几何在 src/style.css（首列 0 / 侧栏内容不显示 / traffic 区回到最小宽）。展开只移除 class——
+// token 未被改写，宽度因此自动回到收起前的值，不需要单独记忆一份「收起前宽度」。
+function sidebarHidden(): boolean {
+  return shell.root.classList.contains(SIDEBAR_HIDDEN_CLASS);
+}
+
+/**
+ * 收起是「隐藏用户可能正在操作的面」，因此先按固定顺序收掉在手状态，再施加 class：
+ * ① 关闭树右键菜单；② 进行中的行内编辑按取消处理（不提交半截输入、不留临时行）；
+ * ③ 焦点原本在左栏内时交还活跃文档 pane 的编辑器。顺序 MUST NOT 换——尤其焦点判定必须先做：
+ * `cancelInlineEdit` 会把输入框从 DOM 里移除，之后 `document.activeElement` 退回 body，
+ * 那时再判就读不到「焦点原本在左栏里」这一事实（键盘可用性底线：焦点 MUST NOT 留在不可见元素上）。
+ */
+function toggleSidebar(): void {
+  if (sidebarHidden()) {
+    shell.root.classList.remove(SIDEBAR_HIDDEN_CLASS);
+    return;
+  }
+  const focusWasInSidebar =
+    shell.fileTree.contains(document.activeElement) ||
+    document.activeElement === shell.sidebarDivider ||
+    treeMenu.isOpen();
+  treeMenu.close(); // ① 菜单关闭（handle 的 close 缺省归还焦点：行元素 / 根菜单的 vault 名入口）
+  tree.cancelInlineEdit(); // ② 行内重命名 / 新建按取消处理
+  // ③ 交还焦点走 focusPreservingReadingPosition（M280 口径：聚焦不把阅读位置拽回光标处），
+  // MUST NOT 写裸 `editor.view.focus()`。
+  if (focusWasInSidebar) editor.focusPreservingReadingPosition();
+  shell.root.classList.add(SIDEBAR_HIDDEN_CLASS); // ④ 施加 class
 }
 
 /**
@@ -2930,6 +3021,10 @@ const commands: CommandRuntime = {
   // 就是上面的 cycleLanguage（与 modeline 语言钮共用同一条路径，见那段注释）。默认键位 ⌘⇧L 在
   // keys.ts 的 KEY_BINDINGS 里（三条冲突来源的复核与 token 形态见那一条的 docKey 指向的表条目）。
   "view.language-cycle": () => cycleLanguage(),
+  // 左栏收起 / 展开（M631，change add-sidebar-resize-hide-and-root-create design §2）：一个键
+  // 往返切换（默认 ⌘B，冲突核实见表条目 D548，表即文档）。在手状态的收尾顺序与焦点交接见
+  // toggleSidebar 的注释；几何在 src/style.css。
+  "view.toggle-sidebar": () => toggleSidebar(),
   // harness 对话面板唤起 / 收起（M303，change add-harness-probe；HP1 改「旁侧 pane 打开/
   // 收起」，change move-harness-to-pane-chat-frame）：与标题栏 toggle 钮共用面板的同一条
   // toggle 路径（面板内经 deps.togglePane 路由到装配层的 openHarnessPane/closeHarnessPane）。
@@ -3651,6 +3746,12 @@ configGet().then((snapshot) => {
   // 拖拽推进并回写 `ui.content_width`（D3），因此不存在「运行期态 vs 配置默认」的双真源。
   // 前端不判区间（Rust 侧 validate 已越界回落默认 + warning，与主题同口径）。
   editor.setContentWidth(snapshot.config.ui.content_width);
+  // 左栏宽度（change add-sidebar-resize-hide-and-root-create）：配置给的是**启动时的意图值**
+  // ——运行期由分隔条拖拽推进并回写 `ui.sidebar_width`，因此不存在「运行期态 vs 配置默认」的
+  // 双真源。前端不判静态区间（Rust 侧 validate 已越界回落默认 + warning）；窗口四成的显示
+  // 钳制在 applySidebarWidth 里做。**收起状态不在这里施加**：它不跨启动（D2：每次启动都显示
+  // 左栏），`.app-shell` 上没有 `is-sidebar-hidden` 即展开态。
+  setSidebarWidth(snapshot.config.ui.sidebar_width);
   // md 行号 gutter 档位（M281 的 D4 二次改判，2026-09-28）：三档 `on-demand`（默认）/ `always`
   // / `off` 只管 md，code 恒常显。与 `ui.theme` 的**差别**：它没有运行期切换的落点，因此是
   // **装载时读一次、运行期 MUST NOT 回写**（同 `editor.mode` / `editor.font_size`）——本 change

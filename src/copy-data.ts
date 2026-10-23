@@ -1707,6 +1707,19 @@ const COPY_TABLE = {
     zh: "{width}×{height} · {size}",
     en: "{width}×{height} · {size}",
   },
+  // 左栏宽度 / 收起（change add-sidebar-resize-hide-and-root-create，Alex 2026-10-23）：
+  // D548 = ⌘B 绑定的来由（表即文档，docKey 在 src/keys.ts 的 KEY_BINDINGS 里），D549 = 分隔条
+  // 的读屏名（role=separator 的纯操作元素，与 D120 同口径），D550 = 拖拽写盘失败的 toast
+  //（与 D121 同口径：本次调整仍生效、重启后恢复）。
+  D548: {
+    zh: "⌘B 收起 / 展开左栏（change add-sidebar-resize-hide-and-root-create，Alex 2026-10-23 的需求原话「可以隐藏，需要有快捷键」+ 同日澄清「⌘B 来回一键」）。一个键同时承担隐藏与恢复：一次按下 = 切换当前状态，不设第二条「显示左栏」动作（单入口 = 单真源）。取 global——焦点在编辑器、文件树、搜索框或 harness composer 内时都要能按（侧栏是窗口级对象，与 tab.* / view.* 一族同理由）。键位占用已核（零冲突，三条独立来源）：① 表内——src/keys.ts 即真源，现表无 `Cmd-b`（`Ctrl-b` 是 editor.cursor-backward，作用域 text，与 ⌘ 系不是同一物理组合）；② 原生菜单 accelerator 集合（tauri 的 Menu::default() 逐项来自 muda predefined，清单见 keys.ts 文件头 M149 段）不含 ⌘B——预置项里唯一的 ⌘ 系截获是 CloseWindow 的 ⌘W，自建项只有 ⌘Q；③ 系统级——macOS 不给 ⌘B 预置系统菜单项（Bold 属文本编辑语义，本应用无原生菜单项占用）。token 形态 `Cmd-b` 单段、无空白（无 Alt，按字符判定即可）；它**有**默认绑定，因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。",
+    en: "⌘B collapses / expands the sidebar (change add-sidebar-resize-hide-and-root-create; Alex's 2026-10-23 request \"可以隐藏，需要有快捷键\" plus the same-day clarification \"⌘B toggles with one key\"). One key carries both hiding and restoring: a press toggles the current state, and there is no second \"show sidebar\" action (single entry = single source of truth). Scope is global — it must work while focus is in the editor, the file tree, the search box or the harness composer (the sidebar is a window-level object, same rationale as the tab.* / view.* family). Key occupancy checked (no conflicts, three independent sources): (1) in the table — src/keys.ts is the source of truth, and no `Cmd-b` exists (the `Ctrl-b` binding is editor.cursor-backward, scope text, not the same physical combination as the ⌘ family); (2) the native menu accelerator set (tauri's Menu::default() takes each item from muda's predefined, list in the M149 section of keys.ts) has no ⌘B — the only intercepted ⌘ item among the presets is CloseWindow's ⌘W, and the self-built items only carry ⌘Q; (3) the system level — macOS presets no ⌘B menu item (Bold is a text-editing semantic, and this app's native menu does not occupy it). Token form `Cmd-b` is a single segment with no whitespace (no Alt, so the character is enough); it **has** a default binding and therefore MUST NOT be registered in KEYLESS_COMMAND_IDS.",
+  },
+  D549: { zh: "调整左栏宽度", en: "Adjust sidebar width" },
+  D550: {
+    zh: "左栏宽度没能存进配置：{reason}（本次调整仍生效，重启后恢复）",
+    en: "Couldn't save the sidebar width: {reason} (the new width applies now, but reverts after restart)",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
