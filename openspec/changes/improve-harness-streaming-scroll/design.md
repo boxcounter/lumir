@@ -95,6 +95,9 @@ export interface FollowController {
   onScroll(): void;
   /** 内容增长后的唯一出口：following 排一次下一帧写底；detached 只更新未读。 */
   contentGrew(): void;
+  /** 内容**就地替换**（错误行同文案去重，高度可能不变）：detached 下点亮未读
+   *（spec「脱离态下重复错误不拽走视口」要求未读提示在场），following 下同 contentGrew。 */
+  contentReplaced(): void;
   /** 立即执行排队的写底（面板 rAF 尾部调用：该拍已在 scroll 事件之后，无需再等一帧）。 */
   flushNow(): void;
   /** 强制回底（白名单动作）→ 同步写底 + 回 following + 清未读。 */
@@ -118,6 +121,9 @@ export function createFollowController(surface: FollowSurface): FollowController
 - `contentGrew()`：following → 置 pending 并 `schedule(flush)`（同帧多次增长只排一次）；
   detached → 用新鲜读数比较 `unreadBaseline`（`scrollHeight > baseline + 1`，1px 容差），
   **不写** `scrollTop`、不排写。
+- `contentReplaced()`（错误行同文案去重）：高度可能不变（就地替换），但「下面发生了新事件」是
+  事实；detached → 不比较高度、直接点亮未读（spec「脱离态下重复错误不拽走视口」要求未读提示
+  在场）；following → 与 `contentGrew()` 同义（滚到可见）。
 - `flushNow()`：pending 已清或态已不是 following（用户滚动已把态换走）→ 直接返回；否则写
   `bottomScrollTop(read())`。排队的 `flush` 只是延时版的同一个函数。它是 rAF 里的最后一道
   复核，MUST NOT 改态。面板自己的 rAF（流式合帧）在末尾直接调它——该拍已在 scroll 事件之后，
@@ -127,6 +133,12 @@ export function createFollowController(surface: FollowSurface): FollowController
 - **只有 `onScroll()` 能改态**：`contentGrew()` / `flushNow()` / `viewportChanged()` 一律不改态
   ——内容增长永远不能被误读成「用户滚动」。`jumpToBottom()` / `reset()` 是白名单动作，按
   定义可以置回 following。
+- **自写回声**（实现期实证补充，2026-10-23）：写底会异步产生一个 scroll 事件；若布局在写入与
+  事件之间变了（实证：发送消息 → 强制回底 → 进度条出现把视口压矮 28px，事件这时才到、读到
+  距底 28px），几何判据单独会把「我们的回声」判成「用户上滚」。控制器记住最近一次写入值，
+  读数与写入值差 ≤ 1px 的 scroll 事件按「不是用户滚动」吞掉一次：不换态，距底超出回底容差时
+  补排一次贴底（layout 变化自己收敛）。一次写入只产生一次回声，识别后即清——之后用户真滚到
+  同一像素位置仍按几何判据正常换态。
 - `following` 下写回触发的 scroll 事件随后读到距底 0，仍是 following（不抖动）。
 
 ## 3. DOM 接线（`src/harness-panel.ts`）
@@ -142,7 +154,7 @@ export function createFollowController(surface: FollowSurface): FollowController
 | 1 | 6038 | `appendUserMessage` | **强制** | 用户发送 = 白名单动作，新消息必须在眼前 |
 | 2–5 | 6517 / 6527 / 6547 / 6596 | `appendToolCall`（task 行建行 / task done / 抑制槽终态 / 普通行） | 增长 | 工具行是流式过程的一部分，不拽视口 |
 | 6 | 6615 | `appendCompactMarker` | 增长 | 自动压缩标记不是用户动作 |
-| 7–8 | 6622 / 6632 | `appendError`（同文案去重 / 新错误） | 增长 | 由 MODIFIED 的错误呈现条款收口 |
+| 7–8 | 6622 / 6632 | `appendError`（同文案去重 / 新错误） | 增长 | 由 MODIFIED 的错误呈现条款收口：去重分支高度可能不变，走 `contentReplaced()`（detached 下点亮未读）；新错误走 `contentGrew()` |
 | 9 | 7007 | `appendApproval` | 增长 | 批准卡不拽视口（D5）；未读圆点提示 |
 | 10 | 7236 | `flushChunks`（rAF 合帧） | 增长 | 主战场：修前每帧无条件写底 |
 | 11 | 7270 | `finalizeStreamingMessage` | 增长 | 轮次终态不强制回底（D6） |

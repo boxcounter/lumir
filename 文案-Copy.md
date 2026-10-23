@@ -534,10 +534,12 @@
 | D552 | cron 注册回执 · 通知权限被拒（用户拒绝） | 作者 | 通知权限被拒，通知无法送达。这条任务到点不会有提醒。请到「系统设置 › 通知 › Lumir」里打开通知权限 | Notification permission is denied, so this task won't alert you when it's due. Allow notifications for Lumir in System Settings › Notifications | M635：与 D551 同一消费者的另一档——`authorizationStatus = Denied`（系统里确有本客户端的授权记录且被拒）时才有「去系统设置打开」这条引导。两档分开的理由见 D551；判据与取列口径同 D551。 |
 | D553 | cron 通知投递连续失败 toast（身份未被认可） | 作者 | 通知连续 {次数} 次投递失败，提醒没有送达：系统未认可当前 Lumir 的通知身份（安装包缺少有效签名） | Notifications failed to deliver {count} times in a row, so reminders aren't getting through: macOS doesn't recognize this Lumir's notification identity (the installed app lacks a valid signature) | M635 / M636：`cron:notice` 带 `code = cron_notify_delivery_failed_identity` 时上屏（`src/copy.ts` 的 `cronNoticeText` 取 `CRON_NOTICE_COPY`）。连续失败达阈值（`cron.rs` 的 `NOTIFY_FAILURE_NOTICE_AFTER`，3 次）的那一次弹一条，同一段连续失败只弹一次。`{次数}` = 当时的连续失败次数。 |
 | D554 | cron 通知投递连续失败 toast（其它成因） | 作者 | 通知连续 {次数} 次投递失败，提醒没有送达。请检查「系统设置 › 通知」里 Lumir 的权限 | Notifications failed to deliver {count} times in a row — check Lumir's notification permission in System Settings › Notifications | M635：`code = cron_notify_delivery_failed` 时上屏——用户拒绝 / 已授权却投递失败 / 无法判定统一走这一档。消费点与阈值同 D553。 |
+| D555 | harness「回到底部」浮钮的可访问名（无新内容） | 作者 | 回到底部 | Back to bottom | M644（change improve-harness-streaming-scroll 的 D2 / D7 裁决）：transcript 脱离态时右下角浮钮的名字，同时落 `title` 与 `aria-label`（面板内图标钮的既有口径，D327 / D329 / D330）。钮不出现于内容不足一屏或跟随态；点击回底并恢复跟随。消费点 `src/harness-panel.ts` 的 `applyJumpBottomState`。 |
+| D556 | harness「回到底部」浮钮的可访问名（有新内容） | 作者 | 有新内容，回到底部 | New content, back to bottom | M644（D3 裁决：未读 = 圆点、不计数）：脱离期间 transcript 有新内容到达时的名字。圆点是 `aria-hidden` 的布尔提示，可访问名是它的语义载体——屏幕阅读器因此能感知「下面有新内容」。未读回底 / 复跟即清除。消费点同 D555。 |
 
 ## 编号沿革
 
-**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D554**（M635 的通知送不出去文案 D551–D554：D551–D552 是注册回执的两档成因，D553–D554 是投递连续失败 toast 的两档；D548–D550 是 change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
+**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D556**（M644 的 harness「回到底部」浮钮两条可访问名 D555–D556；M635 的通知送不出去文案 D551–D554：D551–D552 是注册回执的两档成因，D553–D554 是投递连续失败 toast 的两档；D548–D550 是 change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
 
 **不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377、D508–D513、D521。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
 
@@ -611,6 +613,7 @@
 - M629 D546–D547 图片标签的 modeline 右段：标签词 + 〔宽×高 · 文件大小〕读数模板（接 M627 的 D545 末位）
 - change add-sidebar-resize-hide-and-root-create（M631）D548–D550 左栏宽度与收起：⌘B 绑定来由 / 分隔条读屏名 / 宽度写盘失败 toast（接 M629 的 D547 末位）
 - M635 D551–D554 通知送不出去的两处可见面：注册回执的两档成因（身份未被系统认可 / 用户拒绝）+ 投递连续失败 toast 的两档（接 M631 的 D550 末位；rebase 到含 M631 的 master 时原 D548–D551 顺延为 D551–D554）
+- M644 D555–D556 harness「回到底部」浮钮的可访问名：无新内容 / 有新内容两串（接 M635 的 D554 末位；change improve-harness-streaming-scroll）
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 

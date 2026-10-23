@@ -1743,6 +1743,13 @@ const COPY_TABLE = {
     zh: "通知连续 {count} 次投递失败，提醒没有送达。请检查「系统设置 › 通知」里 Lumir 的权限",
     en: "Notifications failed to deliver {count} times in a row — check Lumir's notification permission in System Settings › Notifications",
   },
+  // harness transcript 的「回到底部」浮钮（M644，change improve-harness-streaming-scroll
+  // design §4.3）：D555 = 无新内容，D556 = 有新内容（未读圆点在场）。同串落 `title` 与
+  // `aria-label`（面板内图标钮的既有口径：D327 / D329 / D330）；消费点 `src/harness-panel.ts`
+  // 的 `applyJumpBottomState`（语言切换与每次态 / 未读变化都经它重取）。未读圆点不是唯一
+  // 信息载体：屏幕阅读器从可访问名感知「下面有新内容」。
+  D555: { zh: "回到底部", en: "Back to bottom" },
+  D556: { zh: "有新内容，回到底部", en: "New content, back to bottom" },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

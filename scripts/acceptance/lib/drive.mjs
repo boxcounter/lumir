@@ -631,6 +631,35 @@ export async function injectHover(pid, point) {
   }
 }
 
+/** CGEvent 滚轮注入（M644，mode 8）：把光标移到 `point` 后按拍投 `scrollWheel`（单位 = 行）。
+ *  **dy / dx 的正负指向尚未真机标定**（swift 侧 mode 8 的注释同口径）：首跑按场景 224 步骤 5
+ *  的实测核对，方向若反，按实测结论回改两侧注释与场景，不按「与 KimiCU 同向」的假设下结论。
+ *
+ *  为什么需要它：KimiCU 的 `scroll` 在本 app 上从未产出过位移（M252 / M379 的通道边界，
+ *  见 README「已知边界」的滚动条）——`do: scroll` 因此在真机上层长期是死通道。滚轮注入走
+ *  doubleClick / drag / hover 同一条已验证的 swift + CGEvent 通路，是唯一可能真正滚起来的
+ *  通道；`execute.mjs` 的 `scroll` 动作在 KimiCU 自报无位移时退化到这条。
+ *
+ *  `point` 是 **Quartz 全局屏幕坐标**（与 injectClickWithClickState 同口径，换算由调用方做）；
+ *  代价与那条通道一致：要 /usr/bin/swift + 辅助功能权限、**会移动真实光标**、要求目标窗口
+ *  在前台且未被遮挡。 */
+export async function injectWheel(point, { dy = 0, dx = 0 } = {}) {
+  const script = new URL("./cgevent-click.swift", import.meta.url).pathname;
+  const args = [
+    "/usr/bin/swift", script,
+    String(Math.round(point.x)), String(Math.round(point.y)), "8",
+    String(Math.round(dy)), String(Math.round(dx)),
+  ];
+  try {
+    return execFileSync(args[0], args.slice(1), { encoding: "utf8" }).trim();
+  } catch (e) {
+    throw new StepError(
+      `swift + CGEvent 滚轮注入失败（${e.message}）。这条通道要 /usr/bin/swift（Xcode Command Line Tools）` +
+        `且进程要有辅助功能权限；README「已知边界」的滚动条有说明。`,
+    );
+  }
+}
+
 /** CGEvent 拖拽（M228，mode 5）：leftMouseDown → 插值 dragged 序列 → leftMouseUp。
  *  KimiCU 的 drag 工具在 WKWebView 里不产生 DOM 拖拽（连文本选择都造不出来，M228 实测），
  *  与 dblclick 同一类注入边界，因此走同一条 swift 通道。坐标是 Quartz 全局屏幕点（与

@@ -314,6 +314,17 @@
   font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
 }
 
+/* ── transcript 视口层（M644，change improve-harness-streaming-scroll design §4.1）：
+   承载「回到底部」浮钮的定位基准。接管 transcript 原来的 flex 位——盒模型逐值不变，
+   既有视觉基线在浮钮 hidden 时零像素漂移（M303 / M351 / M628 等整页基线据此预期不动）。 */
+.lumir-hp-transcript-viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
 /* ── transcript：消息流（底 padding sp-2 对齐原型 .h-transcript——末条消息与 composer
    区之间的余量由 composer-area 的 padding 接续） ─────────────────────────────── */
 .lumir-hp-transcript {
@@ -329,6 +340,61 @@
   /* 消息摘录浮动钮的定位基准（change harness-message-excerpt design §7）：钮挂在本容器内，
      与选区内容一起滚动（scrollTop 折算进定位）。abspos 子节点不参与 flex 布局。 */
   position: relative;
+}
+
+/* 「回到底部」浮钮（M644）：脱离态的常驻导航件，贴视口层右下角、不随内容滚动。配方沿用
+   浮层件的既有语言（消息摘录钮 `.quote-gesture-btn`：--preview-bg 面 + 1px --border +
+   --shadow-raise）——比面板底 --agent-bg 亮一档；eink 两者同为白面，靠描边立起（规则⑤）。
+   面板本体「平铺不吃 elevation」的纪律针对面板本体，浮在正文上的件走这条既有配方。
+   z-index 10 < 消息摘录钮的 15：两者落点重叠时以瞬态交互的摘录钮为准。
+   无动效（不脉冲、不淡入）：出现 / 消失本身就是状态表达，prefers-reduced-motion 下零差异。 */
+.lumir-hp-jumpbottom {
+  position: absolute;
+  right: var(--sp-6);
+  bottom: var(--sp-6);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-raise);
+  color: var(--text-2);
+  cursor: pointer;
+}
+/* 作者样式的 display:flex 会盖过 UA 的 [hidden]{display:none}——显隐必须在这里再声明一次。 */
+.lumir-hp-jumpbottom[hidden] {
+  display: none;
+}
+.lumir-hp-jumpbottom:hover {
+  /* 叠层而不是替换：--hover 是半透明覆盖色，单独当背景会把浮钮的实底（--preview-bg）
+     替换成透底，正文从钮里透出来。底色不动，只叠一层 hover 色。 */
+  background-image: linear-gradient(var(--hover), var(--hover));
+  color: var(--text);
+}
+.lumir-hp-jumpbottom:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  color: var(--text);
+}
+/* 未读圆点（D3）：布尔提示、不是计数；6px、--accent（eink = 黑），`aria-hidden`——语义由
+   可访问名承担（D556）。 */
+.lumir-hp-jumpbottom-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  opacity: 0;
+}
+.lumir-hp-jumpbottom.is-unread .lumir-hp-jumpbottom-dot {
+  opacity: 1;
 }
 .lumir-hp-empty {
   margin: auto;
