@@ -16,6 +16,7 @@ import {
   clampFontSize,
   nextFontSize,
   planTypography,
+  textScaleRatio,
 } from "../../src/typography.ts";
 import type { TypographySettings } from "../../src/typography.ts";
 
@@ -86,6 +87,20 @@ test("上下限钳制：到界后继续按返回原值（调用方据此「无�
   for (const size of [33, 100]) {
     assert.equal(nextFontSize(size, "up"), FONT_SIZE_MAX, "越界输入向上钳到上限");
   }
+});
+
+test("textScaleRatio：两个内容面共用的缩放级（1 = 基线，与各自基线字号无关）", () => {
+  // M627（Alex 2026-10-23 裁决「编辑器和 harness 一起变，一套字号设置」）：编辑器写绝对字号，
+  // harness pane 按同一**比值**缩放自己的字号阶梯——两个面的基线字号不同（15px / 13px），
+  // 共用的是缩放级。出厂基线 15：17/15 与 12/15 各是一档。
+  assert.equal(textScaleRatio(DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE), 1);
+  assert.equal(textScaleRatio(17, 15), 17 / 15);
+  assert.equal(textScaleRatio(12, 15), 12 / 15);
+  // 配置基线不是出厂值时同样成立（D5 裁决的 ⌘0 锚是配置值：18 → 步进到 22）。
+  assert.equal(textScaleRatio(22, 18), 22 / 18);
+  // 基线非正（异常态）：按基线处理，不放大、不抛错、不产出 Infinity / NaN。
+  assert.equal(textScaleRatio(20, 0), 1);
+  assert.equal(textScaleRatio(20, -3), 1);
 });
 
 test("档位断言有区分度：把倍率写成 1.2，档位表不匹配（必须 FAIL 的输入）", () => {

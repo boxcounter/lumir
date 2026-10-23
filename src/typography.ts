@@ -72,6 +72,16 @@ export function clampFontSize(size: number): number {
   return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, size));
 }
 
+/** 字号相对基线的缩放比（1 = 基线，>1 = 放大，<1 = 缩小）。
+ *
+ *  「一套字号设置」的**共用读数**（M627）：内容 pane 写绝对字号（`--editor-font-size`），
+ *  harness pane 按同一比值缩放自己的字号阶梯（`--lumir-hp-scale`）——两个面的基线字号不同
+ *  （内容 15px 起、面板 --fs-ui 13px 起），共用的是**缩放级**而不是绝对值。基线非正时按
+ *  基线处理（异常态不放大、不抛错）。 */
+export function textScaleRatio(size: number, base: number): number {
+  return base > 0 ? size / base : 1;
+}
+
 /** 施加的产物：实际写进 token 的值 + 人话 warning + 生效字号（调用方读它做断言/记账）。 */
 export interface TypographyWriteResult {
   /** 生效的内容字号（px）。 */

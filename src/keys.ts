@@ -153,6 +153,24 @@
 //     （同族先例 Alt-KeyV 的 `√` 已在真机跑过；含 Alt 的组合按物理键 `code` 判定，见 M277 /
 //     M195 段的 token 形态说明）。三条均为单段、无空白 ⇒ 可经 `[keys]` 重绑 / 解绑。
 //
+// M627（交互缺陷批次，Alex 2026-10-23 的三条报告）：本表两处语义调整 + 两条新绑定。
+//   1. **字号步进（⌘= / ⌘+ / ⌘− / ⌘0）不改绑定**，改的是命令的作用面：三条 `view.text-scale-*`
+//      由「焦点在哪个 pane 就缩哪个」改为「一套字号，两个内容面同时变」（裁决原话「编辑器和
+//      harness 一起变」）。实现在装配层 src/main.ts 的 scaleTextEverywhere——编辑器步进得到
+//      缩放比后交给 harness 面板，本表只留既有的 global 绑定。token 形态教训见下方 M195 段
+//      （`Cmd--` 不得写 `Cmd-Minus`）。
+//   2. **⌘A 的作用域由 `editor` 改判 `text`**（`editor.select-all` 进 COMPOSER_TEXT_COMMAND_IDS）：
+//      composer 是混排 contenteditable，引擎原生 selectAll 选不到它的全文；而 ⌘A 此前根本到
+//      不了本层——Edit 菜单的预置 SelectAll 自带 ⌘A 加速键，菜单键等价在 NSApplication 分发
+//      阶段就被截获（M131 的 ⌘Z / M149 的 ⌘W 同一机制）。修法与那两处同形：src-tauri/src/lib.rs
+//      的 swap_select_all_item 把预置项换成不带加速键的自定义项、点击经 app:menu_command 回
+//      前端同一命令。⌘A 因此第一次真正经本表分发：编辑器 → CM 全选、composer → composer 全选。
+//   3. **新增 ⌘⇧, → tab.prev / ⌘⇧. → tab.next**（Alex「三键组合无法切换 TAB」；方向假设由
+//      tower 拟定、未经 Alex 确认）。token 形态：Shift 隐含在字符里，事件 key 是 `<` / `>`，
+//      表内写 `Cmd-<` / `Cmd->`（MUST NOT 写 `Cmd-Shift-,`）。零冲突核对三条独立来源见
+//      两条绑定的注释。零新命令 id——与 tab.next / tab.prev 逐字同语义（同命令多条绑定的
+//      既有形态）。
+//
 // 平台口径（M131 评审 r1 F1 如实记录）：迁移后**表内绑定一律全平台无条件生效**，不再有
 // 平台门。两处与迁移前不同，均只在非 macOS 平台可观测：
 //   - ⌃N/P/F/B/E 迁移前是 CM keymap 的 `{ mac: "Ctrl-n" }`（只绑 mac），现在非 mac 平台
@@ -275,15 +293,23 @@ export type WidgetCommandId = (typeof WIDGET_COMMAND_IDS)[number];
 export const EDITOR_COMMAND_IDS = [...EDITOR_CORE_COMMAND_IDS, ...WIDGET_COMMAND_IDS] as const;
 
 /**
- * `text` 面（文本面）命令组（M447，change composer-emacs-nav design §3.1）：编辑器内容区与
- * harness composer **两处可编辑文本面**都成立的文本编辑命令——即 Emacs 文本导航整族
- *（移动 / 删除 / kill-yank / 转置 / 扩选）。这批命令的绑定作用域由 `scopeOfCommand` 派生为
- * `text`：同一物理键在编辑器与 composer 两处共用**同一条**绑定，实现在装配层的一处包装里
- * 按事件目标分派到编辑器侧或 composer 侧（MUST NOT 为 composer 另立同 token 绑定）。
+ * `text` 面（文本面）命令组（M447，change composer-emacs-nav design §3.1；M627 增全选）：
+ * 编辑器内容区与 harness composer **两处可编辑文本面**都成立的文本编辑命令——Emacs 文本
+ * 导航整族（移动 / 删除 / kill-yank / 转置 / 扩选）加全选（M627：⌘A 在 composer 内必须选中
+ * composer 全文，而原生 selectAll 在混排 contenteditable 上选不到）。这批命令的绑定作用域
+ * 由 `scopeOfCommand` 派生为 `text`：同一物理键在编辑器与 composer 两处共用**同一条**绑定，
+ * 实现在装配层的一处包装里按事件目标分派到编辑器侧或 composer 侧（MUST NOT 为 composer
+ * 另立同 token 绑定）。
  *
- * 清单与 design §4 的键表一一对应（keys 层单测逐条对账，缺一条即红）。
+ * 清单与 design §4 的键表一一对应（keys 层单测逐条对账，缺一条即红）；M627 的全选是族外
+ * 追加，同样进对账。
  */
 export const COMPOSER_TEXT_COMMAND_IDS = [
+  // M627：全选也归文本面——⌘A 在编辑器与 composer 两处都必须成立（composer 是混排
+  // contenteditable，引擎原生 selectAll 选不到全文；Edit 菜单的预置 SelectAll 已按 M131/M149
+  // 先例在 src-tauri/src/lib.rs 让出加速键，⌘A 因此回到本表）。它不是 Emacs 导航族成员，
+  // 但满足文本面命令的判据「在编辑器与 composer 内同样成立的文本编辑命令」。
+  "editor.select-all",
   "editor.cursor-forward",
   "editor.cursor-backward",
   "editor.line-start",
@@ -551,7 +577,11 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Ctrl-a", command: "editor.line-start", scope: scopeOfCommand("editor.line-start"), docKey: "D267" },
 
   // ── 编辑器内：全选（⌘ 系归 mac 惯例）
-  { key: "Cmd-a", command: "editor.select-all", scope: "editor", docKey: "D268" },
+  // M627：作用域由 `editor` 改判 `text`——⌘A 在编辑器与 composer 两处都要成立（一个 token
+  // 一条绑定，实现在装配层按事件目标分派）。同时 Edit 菜单的预置 SelectAll 已让出加速键
+  //（src-tauri/src/lib.rs 的 swap_select_all_item），⌘A 才到得了本层：M131 的 ⌘Z / M149 的
+  // ⌘W 是同一机制，之前 ⌘A 全靠引擎原生 selectAll 兜底，而它在混排 composer 上选不到全文。
+  { key: "Cmd-a", command: "editor.select-all", scope: scopeOfCommand("editor.select-all"), docKey: "D268" },
 
   // ── 编辑器内：撤销 / 重做（M131 新增能力，CM history 线性双栈，见 editor.ts）
   { key: "Cmd-z", command: "editor.undo", scope: "editor", docKey: "D269" },
@@ -713,12 +743,32 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Alt-KeyO", command: "pane.other", scope: "global", docKey: "D366" },
   { key: "Alt-KeyW", command: "pane.close", scope: "global", docKey: "D367" },
 
-  // ── 全局：标签（M149；M242 追加 ⌘} / ⌘{ 两条绑定，来由与冲突核对见文件头 M242 段）
+  // ── 全局：标签（M149；M242 追加 ⌘} / ⌘{ 两条绑定；M627 追加 ⌘⇧, / ⌘⇧. 两条，
+  //    来由与冲突核对见文件头 M242 / M627 段）
   { key: "Cmd-w", command: "tab.close", scope: "global", docKey: "D312" },
   { key: "Ctrl-Tab", command: "tab.next", scope: "global", docKey: "D313" },
   { key: "Ctrl-Shift-Tab", command: "tab.prev", scope: "global", docKey: "D314" },
   { key: "Cmd-}", command: "tab.next", scope: "global", docKey: "D315" },
   { key: "Cmd-{", command: "tab.prev", scope: "global", docKey: "D316" },
+  // M627（Alex 2026-10-23 报告「三键组合无法切换 TAB：CMD + SHIFT + ,/.」）：⌘⇧, →
+  // tab.prev、⌘⇧. → tab.next。方向假设由 tower 拟定（, 在 . 左侧，同 < > 方向直觉），
+  // Alex 验收时若方向相反按同一对 token 对调即可。
+  //   方向映射：⌘⇧, 在 US 布局上是 `⇧⌘<`（, 的 Shift 形态是 `<`）、⌘⇧. 是 `⇧⌘>`。
+  // token 形态是这条最大的静默失配风险：Shift 已隐含在字符 `<` / `>` 里（两者都在
+  // SHIFT_IMPLIED_KEYS），事件 key 是 `<` / `>`、不带可判别的 `,` / `.`——表内 MUST 写
+  // `Cmd-<` / `Cmd->`，MUST NOT 写 `Cmd-Shift-,` / `Cmd-Shift-.`（永不命中，同 M195 的
+  // `Cmd-+`、M242 的 `Cmd-}` 同一机制）。
+  // 零冲突核对（三条独立来源，M242 追加核对的同形口径）：
+  //   ① 表内：本文件即真源，现表无 `Cmd-<` / `Cmd->` token（Shift 隐含后归一，与
+  //      Cmd-} / Cmd-{ / Cmd-1..9 等互不相同）；⌘, 的「偏好设置」语义不在本仓（且那条是
+  //      不带 Shift 的 ⌘,，与本对键不是同一组合）。
+  //   ② 原生菜单 accelerator：tauri 2.11.5 的 `Menu::default()` 逐项来自 muda 0.19.3
+  //      `items/predefined.rs` 的 `accelerator()`（清单见文件头 M149 段），不含 ⌘< / ⌘>；
+  //      自建项里只有 `CmdOrCtrl+Q`（退出）带键；M627 让位后的 ⌘A 刻意不带加速键。
+  //   ③ 系统级：macOS 不预置 ⌘< / ⌘>（窗口循环键是 ⌘`，系统菜单的标签切换是 ⌃⇥ 系）。
+  // 取 global——切标签是窗口级动作（与 tab.next / tab.prev 的既有两条绑定同一条命令）。
+  { key: "Cmd-<", command: "tab.prev", scope: "global", docKey: "D544" },
+  { key: "Cmd->", command: "tab.next", scope: "global", docKey: "D545" },
   ...TAB_GOTO_BINDINGS,
 ];
 

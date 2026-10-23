@@ -906,7 +906,16 @@ const editor: EditorHandle = {
   typographySettings: () => activeEditor().typographySettings(),
   syncRuntimeTypography: (settings) =>
     forEachEditor((handle) => handle.syncRuntimeTypography(settings)),
-  textScale: (direction) => forEachEditor((handle) => handle.textScale(direction)),
+  // 字号是**一套设置**（M627）：广播到每个编辑器实例（各写一次 documentElement 上的 token，
+  // 幂等，与 setContentWidth 同形），并把返回的缩放比交给 harness pane 同步施加。广播而非只
+  // 施加活跃 pane，与「一份字号管全部会话」的既有口径一致（切标签不会回到旧字号）。
+  textScale: (direction) => {
+    let ratio = 1;
+    forEachEditor((handle) => {
+      ratio = handle.textScale(direction);
+    });
+    return ratio;
+  },
   // 栏宽是**全局单键**（`ui.content_width`，ADR 0008 Decision 2）：一份值管全部 pane，
   // 单 key 不动（M317 2.5）。广播施加到每个实例（各写一次 documentElement 上的 token，幂等），
   // 并**逐 pane 各自 requestMeasure()**——CSS 变量变化不触发 CM 的 ResizeObserver（editor.ts
@@ -2649,13 +2658,13 @@ void installCronBridge()
   .then(() => invoke("cron_bridge_ready"))
   .catch(() => {});
 
-/** 字号步进的焦点路由（M378）：焦点在 harness 面板内 → 步进面板内容字号；否则 → 步进
- *  编辑器内容字号（M195 的 editor.textScale 路径，行为与 M378 之前逐字节一致——焦点在
- *  编辑器 / 文件树 / 其余 chrome 时 ⌘+/- 的作用面不变）。焦点判据由面板自查（hasFocus），
- *  装配层不探面板 DOM。 */
-function scaleFocusedPane(direction: TextScaleDirection): void {
-  if (harnessPanel.hasFocus()) harnessPanel.textScale(direction);
-  else editor.textScale(direction);
+/** 字号步进的施加面（M627）：**两个内容面一起吃同一套字号**。编辑器内容字号是唯一的
+ *  字号设置（`editor.textScale`），harness pane 按同一缩放比（当前字号 ÷ 配置基线）缩放自己
+ *  的字号阶梯——两个面的基线字号不同，共用的是缩放级。焦点在哪都不影响结果：M378 的
+ *  「焦点在哪个 pane 就只缩哪个 pane」路由已废止（Alex 2026-10-23 裁决「编辑器和 harness
+ *  一起变，一套字号设置，无论焦点在哪」）。 */
+function scaleTextEverywhere(direction: TextScaleDirection): void {
+  harnessPanel.applyTextScale(editor.textScale(direction));
 }
 
 // 摘录手势与跳回（M344，change add-harness-quote-cards design §4/§5）：浮动钮的选区捕获与
@@ -2694,13 +2703,18 @@ harnessPanel.setQuoteJumpHandler((card) => void quoteGesture.jump(card));
 /** harness composer 输入区的 class（M447）：`text` 作用域的面判定选择器。 */
 const COMPOSER_INPUT_CLASS = "lumir-hp-composer";
 
-/** 事件目标是否落在 harness composer 输入区内（M447）。`KeymapContext.isComposerEvent` 与
- *  `text` 面命令的分派包装**调同一个**助手——两条路径各写一遍判定就是第二个真源
- *（REVIEW.md 「同一语义两处真源」条）。面板未开 / harness pane 不在场时 composer 元素不在 DOM 里，判定
- *  自然为假。 */
+/** 一个 DOM 节点是否落在 harness composer 输入区内（M447；M627 从事件目标泛化到任意节点，
+ *  菜单点击的焦点判定复用同一份）。`KeymapContext.isComposerEvent`、`text` 面命令的分派包装
+ *  与菜单「全选」的落面判定**调同一个**助手——几处各写一遍判定就是第二个真源
+ *（REVIEW.md 「同一语义两处真源」条）。面板未开 / harness pane 不在场时 composer 元素不在
+ *  DOM 里，判定自然为假。 */
+function isComposerNode(node: EventTarget | null | undefined): boolean {
+  return node instanceof Element && node.closest(`.${COMPOSER_INPUT_CLASS}`) !== null;
+}
+
+/** 事件目标是否落在 harness composer 输入区内（M447）：键盘路径的 face 判定。 */
 function isComposerTarget(event: KeyboardEvent | undefined): boolean {
-  const target = event?.target;
-  return target instanceof Element && target.closest(`.${COMPOSER_INPUT_CLASS}`) !== null;
+  return isComposerNode(event?.target);
 }
 
 /** `text` 面命令的**一处**面内分派包装（M447，change composer-emacs-nav design §3.2）：事件
@@ -2750,18 +2764,18 @@ const commands: CommandRuntime = {
   // 作用域 global，故 id 前缀取 `view.` 而不是 `editor.`（前缀与作用域不得互相打脸）。
   "view.toggle-line-wrap": () => editor.toggleLineWrap(),
   "view.toggle-code-block-wrap": () => editor.toggleCodeBlockWrap(),
-  // 字号步进（M195，change typography-and-zoom）：改的是**编辑器内容字号**（Emacs 的
+  // 字号步进（M195，change typography-and-zoom）：改的是**文字**大小（Emacs 的
   // text-scale-adjust 的对应物），不是整体界面缩放——MUST NOT 启用 Tauri 的 webview 缩放
   // 热键（它会在统一键位表之外再注册一条 keydown 通路、接管同一批键，见 keymap-commands 的
   // delta）。能力（运行期真源 + 施加）在 editor 侧：一份值管全部会话、不落盘、不回写
   // config.json、不进撤销栈、不碰 dirty；⌘0 回到**配置字号**而不是出厂默认值（15px，D1 裁决）。
-  // M378：焦点在 harness 面板内时同三条命令改为步进**面板内容字号**（--lumir-hp-scale，
-  // 与编辑器同语义：×1.1 钳 [12,32]、reset 回面板基线 --fs-ui、不落盘）——「harness pane
-  // 也支持 CMD +/- 放大缩小（即和内容 pane 一样）」（Alex 2026-10-07）：焦点在哪个 pane，
-  // 缩放就作用于哪个 pane 的内容。
-  "view.text-scale-up": () => scaleFocusedPane("up"),
-  "view.text-scale-down": () => scaleFocusedPane("down"),
-  "view.text-scale-reset": () => scaleFocusedPane("reset"),
+  // M627（Alex 2026-10-23 裁决「编辑器和 harness 一起变，一套字号设置」）：三条命令**同时**
+  // 作用于编辑器与 harness pane——M378 的焦点路由（焦点在哪个 pane 就只缩哪个）已废止。
+  // 编辑器内容字号是唯一的字号设置，harness pane 按同一缩放比缩放自己的字号阶梯
+  //（--lumir-hp-scale），焦点在哪不影响结果。
+  "view.text-scale-up": () => scaleTextEverywhere("up"),
+  "view.text-scale-down": () => scaleTextEverywhere("down"),
+  "view.text-scale-reset": () => scaleTextEverywhere("reset"),
   // 主题循环切换（M237，change live-theme-switch 的 D1/D2 裁决）：light → dark → eink 循环，
   // 命令实现就是上面的 cycleTheme（与 modeline 主题钮共用同一条路径，见那段注释）。
   // 默认键位 ⌘⇧T 在 keys.ts 的 KEY_BINDINGS 里（冲突核实与 token 形态见那一条的 doc）。
@@ -2926,17 +2940,31 @@ const bindingsPanel = createBindingsPanel({
   restoreFocus: () => editor.focusPreservingReadingPosition(),
 });
 
-// 原生 Edit 菜单的撤销 / 重做项与 File/Window 的关闭项（lib.rs 的自定义项，都不带
+/** 菜单「全选」的落面（M627）：菜单点击没有键盘事件可判面，按**当前焦点**路由——composer
+ *  持焦 → composer 全选；其余 → 编辑器全选（与让位前的原生 selectAll 在编辑器里的结果等价）。
+ *  键盘路径不经这里：它走 `text` 作用域的 `composerTextFaceCommands` 包装，按事件目标分派
+ *  同一个命令。面判据复用 `isComposerNode`（单一真源）。 */
+function selectAllByFocusedFace(): void {
+  if (isComposerNode(document.activeElement)) {
+    harnessPanel.composerCommand("editor.select-all");
+    return;
+  }
+  editor.commands["editor.select-all"]();
+}
+
+// 原生 Edit 菜单的撤销 / 重做 / 全选项与 File/Window 的关闭项（lib.rs 的自定义项，都不带
 // accelerator）点击后经此事件回到前端——菜单与键盘走同一个命令层，不产生第二套实现。
-// 取值口径见 lib.rs MENU_COMMAND_EVENT：菜单只说 undo / redo / close 这类平台术语，
-// 映射到命令 id 是前端的事。关闭项映射到 `tab.close`（M149：⌘W 归标签，菜单里的关闭项
-// 因此也关标签而不是关窗，两者的语义必须一致）。
+// 取值口径见 lib.rs MENU_COMMAND_EVENT：菜单只说 undo / redo / close / selectAll 这类平台
+// 术语，映射到命令 id 是前端的事。关闭项映射到 `tab.close`（M149：⌘W 归标签，菜单里的关闭项
+// 因此也关标签而不是关窗，两者的语义必须一致）；全选按焦点面路由（M627：⌘A 让出加速键后，
+// 菜单项仍要能全选，且焦点在 composer 里时选 composer 全文）。
 // M132：该通道从装配层直连 listen 收进 ipc.ts 的 onMenuCommand（同类事件走同一模块，
 // M131 已把它记为待收编项）；ipc.ts 的这一族因此覆盖 invoke 与 listen 两条通道。
 const MENU_COMMANDS: Record<string, CommandRunner | undefined> = {
   undo: commands["editor.undo"],
   redo: commands["editor.redo"],
   close: commands["tab.close"],
+  selectAll: selectAllByFocusedFace,
 };
 onMenuCommand((payload) => {
   MENU_COMMANDS[payload]?.();

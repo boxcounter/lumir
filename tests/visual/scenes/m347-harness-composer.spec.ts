@@ -11,8 +11,9 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // cache 侧纯前端消费）、ⓘ 钮移除、警示说明改越线时 hover 读数翻出（D377 随 ⓘ 退场）。
 // M378 起 hover hint 改带当时实际值的多行（第一行 context window usage = D395、
 // 第二行缓存命中率 = D401 / D465，越线时 D335 警示句追加在其下）并按面板边界收编（窄 pane 左缘
-// 不被 overflow:hidden 裁）；harness pane 内容字号支持 ⌘+/- 步进（与内容 pane 同语义，
-// 焦点路由——焦点在 composer 时 ⌘= 放大面板内容、焦点在编辑器时照旧放大编辑器内容）。
+// 不被 overflow:hidden 裁）；harness pane 内容字号支持 ⌘+/- 步进。
+// **M627 起字号是「一套设置」**：⌘+/-/0 同时作用于编辑器与 harness 面板（面板按同一缩放比
+// 缩放自己的字号阶梯），焦点在哪都不影响结果——M378 的「焦点在哪个 pane 就只缩哪个」已废止。
 // **M443 起**：控制行 cache 读数改**会话累计**（事件键 `cache_pct_session`，旧 `cache_pct`
 // 退役）；气泡补第三行「本回合缓存命中」（`cache_pct_turn`，带成因句 D453/D454）与第四行
 // 「缓存写入」（`cache_write_tokens`，为 0 整行不渲染）。
@@ -713,7 +714,7 @@ test("权限浮层边界收编：窄面板下完整可见、未被祖先裁切�
   }
 });
 
-test("harness pane ⌘+/- 内容字号步进：焦点路由、重置与编辑器隔离（M378）", async ({ page }) => {
+test("字号是**一套设置**：⌘+/-/0 让编辑器与 harness 面板一起变，焦点无关（M627）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await stubHarnessComposer(page);
   await page.goto("/");
@@ -722,33 +723,36 @@ test("harness pane ⌘+/- 内容字号步进：焦点路由、重置与编辑器
   const panel = page.locator(".lumir-harness");
   await expect(panel).toBeVisible();
   const composer = page.locator(".lumir-hp-composer");
-  const composerFontSize = () => composer.evaluate((el) => getComputedStyle(el).fontSize);
-  const editorFontToken = () =>
+  const composerFontPx = () => composer.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize));
+  const editorFontPx = () =>
     page.evaluate(() =>
-      getComputedStyle(document.documentElement).getPropertyValue("--editor-font-size").trim(),
+      Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--editor-font-size")),
     );
 
-  // 焦点在 composer（harness pane）：⌘= 步进**面板**内容字号（基线 --fs-ui 13 → 14 → 15）。
-  await composer.click();
-  await expect.poll(composerFontSize).toBe("13px");
-  const editorBefore = await editorFontToken();
-  await page.keyboard.press("Meta+=");
-  await expect.poll(composerFontSize).toBe("14px");
-  await page.keyboard.press("Meta+=");
-  await expect.poll(composerFontSize).toBe("15px");
-  // 面板持焦期间编辑器内容字号不被触碰（路由隔离）。
-  await expect.poll(editorFontToken).toBe(editorBefore);
-  // ⌘0 回面板基线（= --fs-ui 现值，与内容 pane「回配置字号」同口径，不是出厂默认）。
-  await page.keyboard.press("Meta+0");
-  await expect.poll(composerFontSize).toBe("13px");
+  // 基线：编辑器内容 15px、面板根字号 --fs-ui 13px。
+  await expect.poll(editorFontPx).toBe(15);
+  await expect.poll(composerFontPx).toBe(13);
 
-  // 焦点在编辑器：⌘= 照旧步进**编辑器**内容字号（M378 之前的行为逐字节保留），面板不动。
+  // 焦点在 composer：⌘= 同时放大两个内容面（编辑器 15→17；面板 13 × 17/15 ≈ 14.73）。
+  await composer.click();
+  await page.keyboard.press("Meta+=");
+  await expect.poll(editorFontPx).toBe(17);
+  await expect.poll(composerFontPx).toBeGreaterThan(14);
+  await page.keyboard.press("Meta+=");
+  await expect.poll(editorFontPx).toBe(19);
+  await expect.poll(composerFontPx).toBeGreaterThan(16);
+  // ⌘0 两个面一起回各自的基线（编辑器回配置字号 15；面板回 --fs-ui 13）。
+  await page.keyboard.press("Meta+0");
+  await expect.poll(editorFontPx).toBe(15);
+  await expect.poll(composerFontPx).toBe(13);
+
+  // 焦点在编辑器：结果与焦点无关（M378 的焦点路由已废止）——两个面照样一起变。
   await page.locator(".cm-content").click();
   await page.keyboard.press("Meta+=");
-  await expect.poll(editorFontToken).not.toBe(editorBefore);
-  await expect.poll(composerFontSize).toBe("13px");
-  // ⌘- 回退编辑器字号到步进前，面板依旧不动。
+  await expect.poll(editorFontPx).toBe(17);
+  await expect.poll(composerFontPx).toBeGreaterThan(14);
+  // ⌘- 回退：编辑器 17 → 15，面板随缩放比回基线。
   await page.keyboard.press("Meta+-");
-  await expect.poll(editorFontToken).toBe(editorBefore);
-  await expect.poll(composerFontSize).toBe("13px");
+  await expect.poll(editorFontPx).toBe(15);
+  await expect.poll(composerFontPx).toBe(13);
 });

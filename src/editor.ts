@@ -56,7 +56,7 @@ import { LANGUAGES, TOKEN_GROUPS, tokenClassOf } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
 import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_CODE_MODE_LINE_WRAP, DEFAULT_LINE_WRAP, codeBindingTheme, codeTokenTheme, wrapSpec } from "./preview/theme";
 import type { WrapSettings } from "./preview/theme";
-import { DEFAULT_FONT_SIZE, applyTypography as writeTypography, nextFontSize } from "./typography";
+import { DEFAULT_FONT_SIZE, applyTypography as writeTypography, nextFontSize, textScaleRatio } from "./typography";
 import { CONTENT_WIDTH_TOKEN, DEFAULT_CONTENT_WIDTH, clampContentWidth } from "./content-width";
 import type { TextScaleDirection, TypographySettings } from "./typography";
 import { lumirSearch } from "./search";
@@ -1007,8 +1007,11 @@ export interface EditorHandle {
    * documentElement 上、天然覆盖全部实例，因此这里只补实例记账（+ 一次重测量），不重写 token。
    */
   syncRuntimeTypography(settings: TypographySettings): void;
-  /** 字号步进一档 / 回到配置字号（应用运行期口径，不落盘）。 */
-  textScale(direction: TextScaleDirection): void;
+  /** 字号步进一档 / 回到配置字号（应用运行期口径，不落盘）。
+   *  返回**步进后的缩放比**（`textScaleRatio(当前字号, 配置基线)`，1 = 基线）——M627 起装配层
+   *  用它把同一套字号同步施加到 harness pane；到界 / 无变化时返回当前比值（仍是一次读数，
+   *  MUST NOT 返回 undefined——那会让调用方把它当成「重置到基线」）。 */
+  textScale(direction: TextScaleDirection): number;
   /**
    * 施加阅读栏宽（M228，change content-width-drag）：写 `--layout-doc-measure` token 并请求
    * 重测量（唯一写入路径，见实现处的注释）。装配层在 `config_get` 之后调用一次；启动之后
@@ -2277,17 +2280,19 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
 
   /**
    * 字号步进一档（`up` / `down`）或回到配置字号（`reset`）。到界后**无变化、无提示、不报错**：
-   * 值没变就直接返回（不写样式、不请求重测量——避免无意义的样式重算与重测量）。只动字号，
-   * 字体族不参与步进（没有「下一档字体」这种语义）。
+   * 值没变就不写样式、不请求重测量（避免无意义的样式重算与重测量），但仍返回当前缩放比——
+   * 装配层每次按键都拿它同步两个内容面（M627）。只动字号，字体族不参与步进（没有「下一档
+   * 字体」这种语义）。
    */
-  function textScale(direction: TextScaleDirection): void {
+  function textScale(direction: TextScaleDirection): number {
     const current = typography.fontSize;
     const next = direction === "reset" ? baseFontSize : nextFontSize(current, direction);
-    if (next === current) return;
+    if (next === current) return textScaleRatio(current, baseFontSize);
     typography = { ...typography, fontSize: next };
     writeTypography(typography);
     view.requestMeasure();
     keepCaretVisible();
+    return textScaleRatio(next, baseFontSize);
   }
 
   /** 应用运行期折行口径的写入路径（M180）：配置加载与两条 toggle 命令共用，只传要改的轴。 */

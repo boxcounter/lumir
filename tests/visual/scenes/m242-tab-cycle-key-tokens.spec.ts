@@ -13,6 +13,10 @@ import { stubTauri } from "./tauri-stub";
 // 表内 token 形态另由 `tests/unit/keys.test.ts` 专测（含「`Cmd-Shift-]` 不在表内」的反向断言）；
 // 真机场景 45 验的是同两条命令的循环语义（`⌃⇥` / `⌃⇧⇥`，同一份 `cycleTab`）。三层口径互补，别互相
 // 替代。
+//
+// **M627 起**同一文件也守 `⌘⇧,` → tab.prev / `⌘⇧.` → tab.next（Alex「三键组合无法切换 TAB」）：
+// 与 M242 同一条静默失配风险——`⇧,` 的字符是 `<`、`⇧.` 的字符是 `>`，token 是 `Cmd-<` /
+// `Cmd->`，写成 `Cmd-Shift-,` 永不命中。方向映射是 tower 拟定的假设（, 在 . 左侧）。
 
 const VAULT = {
   entries: [
@@ -67,6 +71,43 @@ test("同一 token 的简写形态 `Meta+}` / `Meta+{` 等价命中（归一化�
   await page.keyboard.press("Meta+}");
   await expect(activeTab(page)).toHaveText("alpha.md");
   await page.keyboard.press("Meta+{");
+  await expect(activeTab(page)).toHaveText("beta.md");
+});
+
+test("⌘⇧,（硬件形态：key=`<` + shiftKey）命中 `Cmd-<` → tab.prev（M627）", async ({ page }) => {
+  await twoTabs(page);
+
+  await page.keyboard.press("Meta+Shift+Comma");
+  await expect(activeTab(page)).toHaveText("alpha.md");
+  await expect(page.locator(".cm-content")).toContainText("甲篇正文");
+});
+
+test("⌘⇧.（硬件形态：key=`>` + shiftKey）命中 `Cmd->` → tab.next，末端回卷（M627）", async ({ page }) => {
+  await twoTabs(page);
+
+  // 已激活的是最后一个标签：next 回卷到第一个（与 ⌘} 同一条 cycleTab）。
+  await page.keyboard.press("Meta+Shift+Period");
+  await expect(activeTab(page)).toHaveText("alpha.md");
+  await expect(page.locator(".cm-content")).toContainText("甲篇正文");
+
+  await page.keyboard.press("Meta+Shift+Period");
+  await expect(activeTab(page)).toHaveText("beta.md");
+  await expect(page.locator(".cm-content")).toContainText("乙篇正文");
+});
+
+test("边界固化：KimiCU 形态的事件（`⌘⇧,` 给 key=`,` + shiftKey）不命中——表只收硬件形态的 token（M627）", async ({
+  page,
+}) => {
+  await twoTabs(page);
+
+  // 与 ⌘} 那条边界同形：真机注入给的是未按 Shift 的字符 + shiftKey，归一成 `Cmd-Shift-,`，
+  // 而表里只有 `Cmd-<`。合成事件复刻它，断言「切不动」——将来若有人把 `Cmd-Shift-,` 塞进表里
+  // 「修」真机通道，这条会红，逼出一次显式裁决。
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", metaKey: true, shiftKey: true, bubbles: true }));
+  });
+  await page.waitForTimeout(80);
+
   await expect(activeTab(page)).toHaveText("beta.md");
 });
 

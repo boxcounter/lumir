@@ -1,7 +1,7 @@
 # keymap-commands Specification
 
 ## Purpose
-全应用键位的单一事实来源与分发合同：唯一一张 key → command 表（`src/keys.ts`）驱动所有编辑、文档与 widget 焦点键，口径为「⌘ 系归 macOS 惯例、⌃ 系归 Emacs 惯例」，覆盖移动 / 扩选 / 删除 / kill-yank / 撤销与配置层（`[keys]` 重绑与解绑）。由 change `toc-popover-emacs-keys-and-max-height` 归档并入的增量（2026-09-18，实现 M160）：`大纲开关——⌘⇧O 与 toc.toggle` 的浮层就地键枚举由三个（`↑↓` / `Enter` / `Esc`）扩为五个（新增 `⌃N` / `⌃P`），并写明这两键不进本表的理由。由 change `typography-and-zoom` 归档并入的增量（2026-09-24，实现 M195）：字号步进命令 `view.text-scale-up` / `-down` / `-reset` 与其默认键位（`⌘=` / `⌘−` / `⌘0`，全局面作用域）。由 change `pane-system-split-view` 归档并入的增量（2026-10-05，实现 M315–M322）：编辑器命令分发改为按活跃 pane 解析（`isEditorEvent` 泛化为「任一编辑器 pane 的 contentDOM 内」，作用域边界不放宽到 chrome 焦点），并新增 pane 命令族 `pane.split` / `pane.other` / `pane.close`（默认键位 ⌥S / ⌥O / ⌥W）。
+全应用键位的单一事实来源与分发合同：唯一一张 key → command 表（`src/keys.ts`）驱动所有编辑、文档与 widget 焦点键，口径为「⌘ 系归 macOS 惯例、⌃ 系归 Emacs 惯例」，覆盖移动 / 扩选 / 删除 / kill-yank / 撤销与配置层（`[keys]` 重绑与解绑）。由 change `toc-popover-emacs-keys-and-max-height` 归档并入的增量（2026-09-18，实现 M160）：`大纲开关——⌘⇧O 与 toc.toggle` 的浮层就地键枚举由三个（`↑↓` / `Enter` / `Esc`）扩为五个（新增 `⌃N` / `⌃P`），并写明这两键不进本表的理由。由 change `typography-and-zoom` 归档并入的增量（2026-09-24，实现 M195）：字号步进命令 `view.text-scale-up` / `-down` / `-reset` 与其默认键位（`⌘=` / `⌘−` / `⌘0`，全局面作用域）。由 change `pane-system-split-view` 归档并入的增量（2026-10-05，实现 M315–M322）：编辑器命令分发改为按活跃 pane 解析（`isEditorEvent` 泛化为「任一编辑器 pane 的 contentDOM 内」，作用域边界不放宽到 chrome 焦点），并新增 pane 命令族 `pane.split` / `pane.other` / `pane.close`（默认键位 ⌥S / ⌥O / ⌥W）。M627（交互缺陷批次，Alex 2026-10-23 三条报告）并入的增量：`text` 面命令族加入全选 `editor.select-all`，Edit 菜单的预置 Select All 让出 `⌘A` 加速键（新增「⌘A 归文本面」requirement）；标签命令族新增 `⌘⇧,` → `tab.prev` / `⌘⇧.` → `tab.next`（token 是 `Cmd-<` / `Cmd->`，方向为待 Alex 验收确认的假设）；字号步进三条命令的绑定与命令 id 不变，作用面改为「一套字号、编辑器与 harness 面板一起变」（条款住 typography 的「字号步进的运行期口径」）。
 
 ## Requirements
 
@@ -12,8 +12,9 @@
 `editor`（事件目标落在编辑器内容区内才生效，含其中的 widget）与 **`text`（文本面：事件目标落在编辑器内容区内
 **或** harness 面板的 composer 输入区内才生效）**。作用域 SHALL 由命令归属**机械派生**，且派生 SHALL 只有一处
 实现（默认表的对账、装配期校验、配置覆盖三处共用同一函数）——`text` 面的命令族 SHALL 恰为「在 composer 内同
-样成立的文本编辑命令」那一族（Emacs 文本导航族，见 harness 的「composer 的 Emacs 文本导航族」），其余编辑器
-命令仍派生为 `editor`，其余命令仍派生为 `global`。`text` 作用域的命令实现 SHALL 按事件目标所属的**面**分派
+样成立的文本编辑命令」那一族（Emacs 文本导航族，见 harness 的「composer 的 Emacs 文本导航族」，加上全选
+`editor.select-all`——M627：composer 是混排 contenteditable，引擎原生 selectAll 选不到全文，⌘A 必须由本层
+按面分派，见 harness 的「composer 的全选」），其余编辑器命令仍派生为 `editor`，其余命令仍派生为 `global`。`text` 作用域的命令实现 SHALL 按事件目标所属的**面**分派
 （编辑器内容区内 → 编辑器侧实现；composer 内 → composer 侧实现），分派 SHALL 收口在**一处**装配层包装——
 MUST NOT 每条命令各写一份面判定。`editor` 作用域的命令 MUST NOT 因本增量放宽：焦点在 composer 内时它们照旧
 不命中（越界边界不放宽到 composer）。绑定 SHALL 全平台无条件生效（表内不做平台门）：当前运行目标只有 macOS
@@ -90,7 +91,7 @@ SHALL 在装配期直接失败（MUST NOT 让后注册者静默覆盖前者，�
 
 键位 token SHALL 逐修饰键记录（Cmd / Ctrl / Alt / Shift），MUST NOT 把 ⌘（metaKey）与 ⌃（ctrlKey）合并为同一修饰。⌘ 系绑定 SHALL 遵循 macOS 惯例，⌃ 系 SHALL 遵循 Emacs 惯例。归一化 SHALL 与运行期事件同源：表内写法与事件 token 走同一归一化函数，修饰前缀顺序与大小写无关。两类字符陷阱 SHALL 有明确口径：US 布局上需 Shift 才能打出的符号（如 `_`）按「Shift 已隐含在字符里」归一（⌃_ 在 mac 键盘上物理是 ⌃⇧-，表内写 `Ctrl-_` 即可匹配）；含 Alt 的组合 SHALL 按物理键（`KeyboardEvent.code`）判定——macOS 的 Alt 层会替换字符（⌥⇧- 给的是 `—`、⌥a 给的是 `å`），`e.key` 判别不了用户按的键，⌃⌥_ 这类别名因此以物理键名入表（`Ctrl-Alt-Minus`）。纯修饰键 SHALL NOT 参与键位判定。
 
-绑定裁决：`⌘A` = 全选（D2）；`⌃A` = 行首（D2，Emacs `C-a`，与 ⌃E 行尾对称）；`⌘S` = 保存唯一键（D3）；`⌃S` SHALL 解绑（预留给 isearch），MUST NOT 触发保存。
+绑定裁决：`⌘A` = 全选（D2；M627 起在**编辑器与 harness composer 两个文本面**都成立，作用域 `text`——见统一的键位分发表的 `text` 面命令族）；`⌃A` = 行首（D2，Emacs `C-a`，与 ⌃E 行尾对称）；`⌘S` = 保存唯一键（D3）；`⌃S` SHALL 解绑（预留给 isearch），MUST NOT 触发保存。
 
 #### Scenario: ⌃A 到行首、⌘A 全选
 
@@ -182,6 +183,9 @@ SHALL 在装配期直接失败（MUST NOT 让后注册者静默覆盖前者，�
 ### Requirement: 菜单与命令层一致
 
 macOS 原生菜单 MUST NOT 提供第二套撤销：Edit 子菜单 MUST NOT 保留直连原生 responder chain 撤销栈的预置 Undo/Redo 项（Lumir 的文档由编辑器内核持有，撤销栈只有一份）。菜单的撤销 / 重做入口 SHALL 经事件交回前端同一命令层执行，MUST NOT 自带 accelerator——⌘Z / ⌘⇧Z SHALL 留给 webview 的 keydown 路径由统一键位层接管，使键盘与菜单两条路进同一个命令实现。
+
+全选项同理（M627）：Edit 子菜单的预置 Select All SHALL 让出加速键，`⌘A` 由统一键位层按
+`text` 作用域分发——条款见下方「⌘A 归文本面」requirement（单一居所，此处只留指针）。
 
 菜单改造 SHALL 对 tauri 默认菜单结构做校验：结构假设不成立时 SHALL 保持默认菜单不改动并留下可诊断的告警，MUST NOT 静默产生半改造的菜单（例如改了撤销项却丢掉退出守卫）。
 
@@ -490,20 +494,24 @@ token 一条绑定」，而其中 `↑↓` / `⌃N` / `⌃P` 已被 `editor.curs
 （会话 API）与 `src/tabs.ts`（标签栏与切换 / 循环，M151 从装配层抽出）。
 
 默认绑定 SHALL 为：`⌘W` → `tab.close`、`⌃⇥` → `tab.next`、`⌃⇧⇥` → `tab.prev`、
-`⌘}` → `tab.next`、`⌘{` → `tab.prev`、`⌘1`…`⌘9` → `tab.goto-1` … `tab.goto-9`。
+`⌘}` → `tab.next`、`⌘{` → `tab.prev`、`⌘⇧,` → `tab.prev`、`⌘⇧.` → `tab.next`、
+`⌘1`…`⌘9` → `tab.goto-1` … `tab.goto-9`。
 `⌘}` / `⌘{` 物理上是 `⇧⌘]` / `⇧⌘[`（US 布局上 `}` / `{` 必须按 Shift；方向映射按
 macOS 惯例：`}` 侧 = 下一个、`{` 侧 = 上一个），键位表内的 token 形态 SHALL 是
 `Cmd-}` / `Cmd-{`（`{` / `}` ∈ SHIFT_IMPLIED_KEYS，Shift 已隐含在字符里），MUST NOT
-写成 `Cmd-Shift-[` / `Cmd-Shift-]`（归一化后永不命中）。同一命令两条绑定（`⌃⇥` 与
-`⌘}` 同指 `tab.next`、`⌃⇧⇥` 与 `⌘{` 同指 `tab.prev`）SHALL 走同一个命令实现，
+写成 `Cmd-Shift-[` / `Cmd-Shift-]`（归一化后永不命中）。`⌘⇧,` / `⌘⇧.`（M627）同理：
+物理键的 Shift 形态是 `<` / `>`，token SHALL 是 `Cmd-<` / `Cmd->`，MUST NOT 写成
+`Cmd-Shift-,` / `Cmd-Shift-.`；方向映射取「`,` 在 `.` 左侧」的直觉（`⌘⇧,` = 上一个、
+`⌘⇧.` = 下一个，tower 拟定的假设，待 Alex 验收确认）。同一命令多条绑定（`⌃⇥` / `⌘}` /
+`⌘⇧.` 同指 `tab.next`，`⌃⇧⇥` / `⌘{` / `⌘⇧,` 同指 `tab.prev`）SHALL 走同一个命令实现，
 MUST NOT 因触发键不同而行为分叉。全部 SHALL 进 `KEY_BINDINGS` 与
 `GLOBAL_COMMAND_IDS`，因此 `[keys]` 配置 SHALL 能像其余命令一样对它们重绑或解绑，
 `app.describe-bindings` 面板 SHALL 自动列出它们（面板渲染的是生效表与 `COMMAND_IDS`）；
 每条绑定的 `doc` 字段 SHALL 写明取该键的来由与作用域理由。
 
 序号越界（标签数少于序号）SHALL 为无操作——MUST NOT 退化为「跳到最后一个」这类隐式兜底。
-`⌃⇥` / `⌃⇧⇥` / `⌘}` / `⌘{` 在标签数少于 2 时 SHALL 为无操作；循环切换在首 / 尾
-标签处 SHALL 环绕（末端回卷到第一个、首端回卷到最后一个）。
+`⌃⇥` / `⌃⇧⇥` / `⌘}` / `⌘{` / `⌘⇧,` / `⌘⇧.` 在标签数少于 2 时 SHALL 为无操作；循环切换在
+首 / 尾标签处 SHALL 环绕（末端回卷到第一个、首端回卷到最后一个）。
 
 #### Scenario: 表的不变量在新增绑定后仍成立
 
@@ -520,6 +528,13 @@ MUST NOT 因触发键不同而行为分叉。全部 SHALL 进 `KEY_BINDINGS` 与
 - **WHEN** 打开三个标签且前台是第二个，按 `⌘}`（物理 `⇧⌘]`）一次，再按 `⌘{`（物理 `⇧⌘[`）两次
 - **THEN** 第一次后前台切到第三个标签；随后两次依次切到第二个、再回卷到第一个
   （与 `⌃⇥` / `⌃⇧⇥` 走同一条 `tab.next` / `tab.prev` 实现，环绕口径逐字相同）
+
+#### Scenario: ⌘⇧, / ⌘⇧. 与既有循环键同命令同语义（M627）
+
+- **WHEN** 打开三个标签且前台是第二个，按 `⌘⇧.`（物理 `⇧⌘>`）一次，再按 `⌘⇧,`（物理 `⇧⌘<`）两次
+- **THEN** 第一次后前台切到第三个标签；随后两次依次切到第二个、再回卷到第一个
+  （与 `⌃⇥` / `⌘}` / `⌃⇧⇥` / `⌘{` 走同一条 `tab.next` / `tab.prev` 实现，环绕口径逐字相同）；
+  焦点在 harness composer 内时同样成立（作用域 `global`）
 
 #### Scenario: 键位冲突核对的留痕
 
@@ -549,6 +564,30 @@ MUST NOT 关窗；零标签时 `⌘W` SHALL 为无操作。退出仍走 `⌘Q`�
 
 - **WHEN** 菜单里任意一个自定义关闭项被点击
 - **THEN** 经 `app:menu_command` 发出的载荷 SHALL 是平台术语 `close`（不是前端命令 id），File 与 Window 两处映射到同一个载荷；前端把它映射到 `tab.close`
+
+### Requirement: ⌘A 归文本面——原生菜单全选项让出该加速键（M627）
+
+macOS 原生 `Menu::default()` 的 Edit 子菜单里的**预置** Select All 项自带 `⌘A`
+key equivalent，菜单键等价在 NSApplication 分发阶段就被截获，webview 的 keydown 收不到该键。
+系统 SHALL 在 `src-tauri/src/lib.rs` 把该预置项换成**不带加速键**的自定义菜单项（与 ⌘Z / ⌘W
+的让位同一先例），点击经 `app:menu_command` 交回前端，由前端落到同一个全选命令。
+
+`⌘A` SHALL 由统一键位层按 `text` 作用域分发：焦点在编辑器内容区内 → 编辑器全选；焦点在
+harness composer 内 → composer 全选（见 harness 的「composer 的全选」）；其余焦点不消费该键
+（原生输入框等仍走各自的原生行为）。菜单点击没有键盘事件可判面，SHALL 按**当前焦点**路由到
+同一个命令——composer 持焦时选 composer 全文，其余情况选编辑器全文（与让位前的原生行为等价）。
+菜单手术的结构性假设（Edit 子菜单存在、末位项确为预置 Select All、文案匹配）SHALL 在替换前
+校验，校验失败时保留默认菜单不改动并打 stderr 警告。
+
+#### Scenario: 键盘与菜单两条路进同一个命令
+
+- **WHEN** 焦点在 composer 内，分别按 `⌘A` 与点击 Edit 菜单的 Select All
+- **THEN** 两条路都选中 composer 的全部块（含原子卡片）；焦点在编辑器内时两条路都选中整篇文档
+
+#### Scenario: 结构假设不成立时不动菜单
+
+- **WHEN** 默认菜单里找不到 Edit 子菜单，或其末位项不是文案为 `Select All` 的预置项
+- **THEN** 该子菜单不被改动、打一条 stderr 警告，其余菜单改造照常进行
 
 ### Requirement: 链接跟随——⌘⏎ 与 ⌘-Click 同一命令
 

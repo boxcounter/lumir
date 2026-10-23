@@ -1469,6 +1469,28 @@ MUST NOT 被实现为词移动。
 - **THEN** 它们的路径与行为与本能力存在之前一致（本能力不接管、不消费）：⌥G 与 `Tab` 不产生任何本层动作，
   ⌃V 走视口滚动，⌘Z 仍由 composer 既有的撤销栈处理
 
+### Requirement: composer 的全选（⌘A，M627）
+
+焦点在 composer 内时按下 `⌘A` SHALL 选中 composer 的**全部块**——段落块的全部文本与原子卡片
+（引用卡片 / 消息摘录卡片 / 图片卡片）整体在内，MUST NOT 只选当前段落、MUST NOT 把选区扩到
+composer 之外（编辑器 / transcript 不被波及）。命令 SHALL 经统一键位表的 `text` 作用域分发
+（`editor.select-all` 与编辑器内容面共用同一条绑定，装配层按事件目标分派），MUST NOT 依赖引擎
+原生的 selectAll：混排 contenteditable 里的原生 selectAll 选不到全文（Alex 2026-10-23 报告的
+形态；Edit 菜单的预置 Select All 因此让出 `⌘A` 加速键，见 keymap-commands 的「⌘A 归文本面」）。
+全选后的删除 / 键入 SHALL 走既有选区路径（删除整段选区、键入替换整段选区），MUST NOT 留下半截
+卡片或裸节点。视图层契约与证伪口径见 `docs/specs/harness-composer.md` 的 HC6。
+
+#### Scenario: 有卡片时全选覆盖全文
+
+- **WHEN** composer 里有一张引用卡片、卡片后一行问题段落，焦点在 composer 内按 `⌘A`
+- **THEN** 选区覆盖卡片与段落的全部内容（摘录原文与问题文本都在选区里），编辑器与 transcript
+  的选区 / 内容不受影响
+
+#### Scenario: 全选后键入替换整段内容
+
+- **WHEN** composer 里有两段文本，按 `⌘A` 后键入一个字符
+- **THEN** composer 只剩该字符（整段被替换，而不是在光标处插入）；随后的撤销恢复全选前的块序列
+
 ### Requirement: 系统提示词固定段来源
 
 系统提示词的两段固定正文——身份段（装配清单来源 id `identity`）与摘录回指纪律（来源 id `quote_reference`）——SHALL 以仓内 Markdown 文件为**唯一**真源：`src-tauri/src/harness/prompts/identity.md` 与 `src-tauri/src/harness/prompts/quote-reference.md`，经编译期嵌入进入程序。文件名与来源 id SHALL 一一对应（`identity` ↔ `identity.md`、`quote_reference` ↔ `quote-reference.md`，仅 `_` ↔ `-` 的命名转换不同），使「id → 文件」与「文件 → id」双向可检索；代码侧 SHALL 同时保留指向来源文件的仓内路径常量。系统 MUST NOT 在运行期从配置目录、vault 或任何外部路径读取这两段正文的覆盖内容，也 MUST NOT 在代码里保留第二份正文副本。

@@ -2,7 +2,8 @@
 
 > 状态：新增（M419，2026-10-10；M450 补 HC3；M457 修订 HC3 的写回形态与键入挂点、HC4 的行级
 > 基准光标；M462 补 HC1 第 3 条——段末断行的落点；M473 对齐三处光标口径——删除族卡片档的落点、
-> 词步的基准位、「末尾之后」的 DOM 写回；M527 补 HC5——IME 组合期结构冻结）。本文档是 **harness 面板输入区（composer）的
+> 词步的基准位、「末尾之后」的 DOM 写回；M527 补 HC5——IME 组合期结构冻结；M627 补 HC6——全选
+> ⌘A 覆盖全部块含卡片）。本文档是 **harness 面板输入区（composer）的
 > 换行、视口与边界光标位**质量合同：可被测试证伪的不变量条款。渲染/交互缺陷修复的「合同先行」规则见
 > [../process/rendering-defect-contract-first.md](../process/rendering-defect-contract-first.md)——
 > 定位到本文件某一条、配不变量级属性测试，两者与修复同 PR。
@@ -237,6 +238,25 @@ DOM 落定落在 compositionend 之后的那一段时序里）。对**任意**�
 组合窗内的键盘入口已被 M361 门覆盖（确认拍吞掉、其余键自清窗口），withModel 组合期闸门防的是
 鼠标路径（组合期右键粘贴 / 拖入）等不经键盘的入口。
 
+### HC6 — 全选（⌘A）覆盖 composer 的全部块，含原子卡片
+
+M627（Alex 2026-10-23：「harness composer 里 CMD + A 没有选中 composer 中的全文」）。对**任意**
+块序列（段落 / 引用卡片 / 消息摘录卡片 / 图片卡片任意交错）：
+
+1. **覆盖不变量**：焦点在 composer 内按下 `⌘A`（经统一键位表的 `text` 作用域命令
+   `editor.select-all`）后，DOM 选区 SHALL 覆盖 composer 的全部子块——每个段落块的文本与每张
+   原子卡片都被选区包含；选区 MUST NOT 缺块（只选当前段落）、MUST NOT 越界（编辑器 /
+   transcript 的选区与内容不被波及）。
+2. **表示不变量**：选区端点 SHALL 落在 composer 的块级边界上（首块前缘 → 末尾之后），模型读回
+   SHALL 是 `{block:0, offset:0}` → `{block:块数, offset:0}` 这一对端点——与既有的边界光标位
+   表示同源（HC3），MUST NOT 另造一套选区模型。
+3. **后续编辑不变量**：全选后的删除 / 键入 SHALL 走既有选区路径（`selectionDeleteStep` /
+   原生键入替换），结果是「整段被删除 / 整段被替换」，MUST NOT 留下半截卡片或裸节点；撤销
+   SHALL 恢复全选前的块序列。
+4. **与引擎原生路径的边界**：本条款 MUST NOT 依赖引擎原生 selectAll——混排 contenteditable 里
+   它选不到全文（这正是缺陷形态）。`⌘A` 必须由统一键位层分发（Edit 菜单的预置 Select All 因此
+   让出加速键，见 keymap-commands 的「⌘A 归文本面」）。
+
 ## 证伪方式（属性测试口径）
 
 对「光标落点 × 段落文本 × 内容体量」的输入分布逐个取样：
@@ -339,6 +359,15 @@ DOM 落定落在 compositionend 之后的那一段时序里）。对**任意**�
     合成键进不了 TSM（m461 探针定案），**不可自动化**，候选确认路径留手动复验步骤（场景
     `scripts/acceptance/scenarios/156-harness-composer-ime-composition-freeze.md` 的「手动复验
     步骤」节，Alex dogfood 执行）。这正是 HC5 可观测判据（第 4 条）在真机上的完整执行。
+13. **HC6 行为层（chromium 按键链路）**：`tests/visual/scenes/m627-composer-select-all.spec.ts`
+    ——空段落 / 两段文本（含软断行）/ 卡片 + 段落三种块序列各按 `Meta+a`：断言选区的两端落在
+    composer 元素上、`intersectsNode` 覆盖全部子块、文本含卡片摘录原文与问题文本；全选后键入
+    一个字符 ⇒ composer 只剩该字符（端到端证明「真的全选」，不只是选区好看）；编辑器面同一
+    按键仍选整篇（作用域分派互不串台）。**已知未覆盖**：真机 ⌘A 注入是键码级丢弃
+    （README 的「键盘注入通道的两类不可达」同族），键盘链路的真机判据不可写——真机场景 215
+    只经 `[keys]` 把同一条命令绑到通道可达的键上验命令链路；Edit 菜单 Select All 的点击路径
+    套件没有菜单栏驱动动作（场景 215 的覆盖边界已登记），其 Rust 侧只判 id → 载荷映射
+    （`menu_command_of` 单测）。
 
 ## 实测依据（M419 现场，2026-10-10）
 
