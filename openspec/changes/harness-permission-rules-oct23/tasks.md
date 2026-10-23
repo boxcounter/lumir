@@ -91,8 +91,10 @@
 
 - [x] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 7.2 `bash scripts/docs-check.sh` 通过（含 MODIFIED delta 的归档对账）
-- [ ] 7.3 `bash scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行）
-- [ ] 7.4 `bash scripts/gate.sh visual` 全绿（动过 UI，本地必跑；CI 绿不代表像素层没回归）
+- [x] 7.3 `bash scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行）
+- [x] 7.4 `bash scripts/gate.sh visual` 全绿（动过 UI，本地必跑；CI 绿不代表像素层没回归）
 - [x] 7.5 反向验证记录：每处放宽（解包、前缀匹配、等值容差）各给一条「改一个字符必须变红」的
       实测读数，写进完工报告
-- [ ] 7.6 涉及 `src/bindings/**` 的重导出先 `git add` 再跑 quick（`remember` 字段形态变化会重导出）
+- [x] 7.6 涉及 `src/bindings/**` 的重导出先 `git add` 再跑 quick（`remember` 字段形态变化会重导出）
+      实测**无**重导出：`ApprovalRequest` / `PendingApprovalSnapshot` 只派生 `Serialize`、不走 ts-rs，
+      字段形态变化因此不产生 bindings 变更；`bindings-drift` 门禁 PASS 即证。
