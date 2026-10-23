@@ -23,6 +23,7 @@
 // `editor.widget-escape` 占用，同 token 第二条绑定会被构造期拒绝（见 src/keys.ts）。
 
 import { keyToken } from "./keys";
+import { clearSelectionWithin, selectAllOf } from "./overlay-select";
 import { createOverlayState } from "./overlay-state";
 import type { OverlayCloseReason, OverlayState, OverlaySurface } from "./overlay-state";
 import { mirrorThemeScope } from "./overlay-scope";
@@ -36,6 +37,8 @@ export interface CodeBlockFullscreen {
   open(render: CodeBlockRender, label: string): void;
   close(reason: CodeBlockFullscreenCloseReason): void;
   isOpen(): boolean;
+  /** 菜单「全选」的落面（M650 D3）：内容根归遮罩自己管，装配层不查遮罩 DOM。 */
+  selectAll(): void;
 }
 
 export type CodeBlockFullscreenSurface = OverlaySurface<CodeBlockRender>;
@@ -101,6 +104,8 @@ function buildLines(render: CodeBlockRender): DocumentFragment {
 /** 装配遮罩（DOM、焦点、四条关闭路径）。DOM 惰性建立：首次打开时才建。 */
 export function createCodeBlockFullscreen(options: CodeBlockFullscreenOptions): CodeBlockFullscreen {
   let state: CodeBlockFullscreenState | null = null;
+  /** 内容容器（全选的落面）。菜单路径与遮罩内 ⌘A 共用一处内容根。 */
+  let selectRoot: HTMLElement | null = null;
 
   function ensureState(): CodeBlockFullscreenState {
     if (state !== null) return state;
@@ -140,7 +145,13 @@ export function createCodeBlockFullscreen(options: CodeBlockFullscreenOptions): 
         panel.scrollLeft = 0;
       },
       show: () => void (overlay.hidden = false),
-      hide: () => void (overlay.hidden = true),
+      hide: () => {
+        // 先把落在遮罩内的 DOM 选区清掉，再隐藏：隐藏一个还持有选区的子树会让浏览器把选区
+        // 异步搬迁（实测 0–300ms 内出现一次 selectionchange），CM 会把搬迁后的位置同步成
+        // caret 0，把「关闭后交还焦点、caret 不动」的口径打破。同步清掉就没有被搬迁的选区。
+        clearSelectionWithin(overlay);
+        overlay.hidden = true;
+      },
       focus: () => overlay.focus(),
       restoreFocus: () => options.restoreFocus(),
     });
@@ -153,11 +164,18 @@ export function createCodeBlockFullscreen(options: CodeBlockFullscreenOptions): 
       event.preventDefault();
       created.close("overlay");
     });
-    // 关闭键就地消费（Esc）；Tab 挡在遮罩内——浮层内容里没有可聚焦元素，放行 Tab 会让焦点
-    // 走进编辑器内容区，而遮罩还开着，后续按键就又能穿透到文档（aria-modal 的语义当场失效）。
+    // 关闭键就地消费（Esc）；⌘A 就地全选内容容器（M650：与表格全屏同一先例，见
+    // src/table-fullscreen.ts 的同段注释与 change design §2）；Tab 挡在遮罩内——浮层内容里
+    // 没有可聚焦元素，放行 Tab 会让焦点走进编辑器内容区，而遮罩还开着，后续按键就又能穿透到
+    // 文档（aria-modal 的语义当场失效）。
     overlay.addEventListener("keydown", (event) => {
       const token = keyToken(event);
       if (token === null) return;
+      if (token === "Cmd-A") { // token 归一化把单字符键名大写（键位表里写 Cmd-a）
+        event.preventDefault();
+        selectAllOf(content);
+        return;
+      }
       if (token === "Tab" || token === "Shift-Tab") {
         event.preventDefault();
         return;
@@ -172,6 +190,7 @@ export function createCodeBlockFullscreen(options: CodeBlockFullscreenOptions): 
     overlay.addEventListener("blur", () => created.close("blur"));
 
     state = created;
+    selectRoot = content;
     return created;
   }
 
@@ -184,6 +203,10 @@ export function createCodeBlockFullscreen(options: CodeBlockFullscreenOptions): 
     },
     isOpen() {
       return state?.isOpen() ?? false;
+    },
+    selectAll() {
+      if (state?.isOpen() !== true || selectRoot === null) return;
+      selectAllOf(selectRoot);
     },
   };
 }

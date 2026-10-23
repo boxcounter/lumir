@@ -282,6 +282,57 @@ MUST NOT 新增色值；MUST NOT 为了对比度改正文色（前景与带的�
 
 ## 9. 视觉保真
 
-本 change **无原型、零视觉变化**：选中底色取既有 `::selection`（`src/style.css:299`），不新增色值、
-字号、间距与任何可见元素；新增的 CSS 只有一条不可见的 `user-select: text`。因此不适用「有原型时的
-视觉保真合同」——实现 PR 不产生视觉基线更新；若出现基线差异，说明改到了不该改的地方。
+本 change **无原型**：不新增色值、字号、间距与任何可见元素。**有一处刻意的可见变化**（实施期修正，
+见 §10.2）：遮罩内的原生选区带从「被 CM 主题清成透明」改为 `--sel-band`，这正是「选中态可辨」的
+需求本身。视觉基线与像素门禁的判据面是**未选中**的静态画面，基线场景不选中文本，因此实现 PR 不产生
+基线更新；若出现基线差异，说明改到了不该改的地方（另见 §10.3 的截图证据）。
+
+## 10. 实施期探针结论（2026-10-23，M650 实现）
+
+> 本节是实现期的实测回流，不改写上文已评审的判定；两者冲突处以本节为准并标注。
+
+### 10.1 真机计算样式（WKWebView）
+
+在 `pnpm tauri dev` 的真实 WKWebView 上（端口 1430、隔离 XDG、合成 vault），遮罩打开、未选中时
+读到的 `::selection` 计算底色：
+
+| 元素 | `::selection` background |
+|---|---|
+| 快照容器 `.lumir-table-fs-snapshot` | `rgb(238, 241, 251)`（全局 `--accent-tint`，与 §2.1 H2 的读数一致） |
+| 表格行 `.cm-line.cm-lp-table-row` / cell `.cm-lp-table-cell` | **`rgba(0, 0, 0, 0)`（透明）** |
+
+### 10.2 根因修正：不是「选区带太弱」，是「被 CM 主题清成透明」
+
+`@codemirror/view` 的 `hideNativeSelection`（`drawSelection` 的邻居主题，`Prec.highest`）对
+`.cm-line ::selection` 声明 `background-color: transparent !important`——它把编辑器内原生选区
+藏起来，让 CM 自绘的 `.cm-selectionBackground` 显示。快照克隆里的表格行带 `.cm-line`，而
+`mirrorThemeScope`（§4.1 同族机制，`src/overlay-scope.ts`）把编辑器的主题 scope 类镜像到浮层
+内容容器上 ⇒ **那条隐藏规则在遮罩内继续命中**。
+
+因此 §2.1 H2 的机制从「`--accent-tint` 对比只有 1.13:1」修正为「cell / 行上的原生选区底色是
+透明的；只有快照根自己的 `::selection` 还是 `--accent-tint`」。这正是 Alex 实测「拖选没有出现
+选择块」的代码级解释：选区建立了，但选中带被静默抹成透明。
+
+**修法**（实现已落地）：遮罩内容内的 `::selection` 覆盖到 `--sel-band`，必须带 `!important`
+与比 CM 规则更高的特异度（三层类选择器），否则压不过 `Prec.highest` + `!important`。零新增色值。
+
+### 10.3 真机拖选分流结论：H2 确认，H1/H3/H4/H5 排除
+
+前置条件：窗口必须是 **key window**（先真实点击一次标题栏）。非 key 时首个 mousedown 被激活
+吃掉，表现为「事件不到 DOM」——那是注入通道的边界，不是产品行为。
+
+真机读数（证据 `.local/probes/2026-10-23-fullscreen-selection/`）：
+
+| 动作 | 读数 | 判定 |
+|---|---|---|
+| 表格全屏内真实鼠标拖选（跨 cell） | `selectstart` → `selchange` len 24 → 32；松手后 60/300/1200ms 仍 `rangeCount=1, len=32`；锚点 / 焦点都在快照内；`activeElement` 恒为遮罩 | **H1/H3/H4/H5 排除** |
+| 同一次选中的计算样式 | 修复前 `cell::sel bg=rgba(0,0,0,0)`；修复后 `rgb(198,197,191)`（= `--sel-band`） | **H2 确认** |
+| 拖选后 ⌘C | `pbpaste` = 选中的 32 字符表格文本（含链接尾 `↗︎`） | 原生纯文本复制成立 |
+| 代码块全屏内拖选（一行） | 40 字符选区、锚点在代码行；截图可见选区带；`pbpaste` = 那 40 字符 | 两个面同修法生效 |
+| 遮罩内 ⌘A | 268 字符选区（该代码块内容），不是整页 | 就地全选成立 |
+
+截图：`01-table-selection-light.jpg`（表格选中带）、`02-codeblock-selection-light.jpg`（代码块
+选中带）。**⌘C / ⌘A 在真机可用（前提是窗口为 key window）**：⌘C 后 `pbpaste` 与选中文本逐字一致，
+⌘A 选中浮层内容而非整页；验收 README 里 M345 的「原生剪贴板不落地」旧表述已按此口径收窄。dark / eink 的真机截图未取：真机操作中途弹出 macOS 屏幕录制授权弹窗（属系统隐私
+授权，未点 Allow），GUI 操作就地停止；三主题的选区带对比由 chromium 场景
+`tests/visual/scenes/m642-overlay-select-all.spec.ts` 逐主题钉住（计算值）。

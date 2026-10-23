@@ -35,18 +35,21 @@
 // 的守卫）；本文件只保留表格侧的 surface 与遮罩 DOM 装配。
 
 import { keyToken } from "./keys";
+import { clearSelectionWithin, selectAllOf } from "./overlay-select";
 import { createOverlayState } from "./overlay-state";
 import type { OverlayCloseReason, OverlayState, OverlaySurface } from "./overlay-state";
 import { mirrorThemeScope } from "./overlay-scope";
 
 /** 遮罩对外的唯一入口。外部（命令实现）只表达「打开这张表 / 关掉遮罩 / 现在开着吗」，
- *  关闭路径的其余三个（`Esc` / 点击遮罩 / 焦点离开）在遮罩内部自治。 */
+ *  关闭路径的其余三个（`Esc` / 点击遮罩 / 焦点离开）在遮罩内部自治。
+ *  `selectAll` 供菜单「全选」的落面按（D3）：内容根归遮罩自己管，装配层不查遮罩 DOM。 */
 export interface TableFullscreen {
   /** 打开遮罩，快照取自 `source`（渲染态的 `.cm-lp-table` 子树）；`label` 是该表既有的
    *  读屏名（同一来源，见文件头）。 */
   open(source: HTMLElement, label: string): void;
   close(reason: TableFullscreenCloseReason): void;
   isOpen(): boolean;
+  selectAll(): void;
 }
 
 /** 遮罩的五个 DOM 动作（状态机的驱动面）。真实现见 createTableFullscreen；单测注入假实现——
@@ -114,6 +117,8 @@ export interface TableFullscreenOptions {
  *  键入路径因此零新增工作（ADR 0002 §6；spec 的「文档打开路径零新增」scenario）。 */
 export function createTableFullscreen(options: TableFullscreenOptions): TableFullscreen {
   let state: TableFullscreenState | null = null;
+  /** 快照容器（全选的落面）。菜单路径与遮罩内 ⌘A 共用一处内容根，MUST NOT 由装配层查 DOM。 */
+  let selectRoot: HTMLElement | null = null;
 
   function ensureState(): TableFullscreenState {
     if (state !== null) return state;
@@ -146,7 +151,13 @@ export function createTableFullscreen(options: TableFullscreenOptions): TableFul
         panel.scrollLeft = 0;
       },
       show: () => void (overlay.hidden = false),
-      hide: () => void (overlay.hidden = true),
+      hide: () => {
+        // 先把落在遮罩内的 DOM 选区清掉，再隐藏：隐藏一个还持有选区的子树会让浏览器把选区
+        // 异步搬迁（实测 0–300ms 内出现一次 selectionchange），CM 会把搬迁后的位置同步成
+        // caret 0，把「关闭后交还焦点、caret 不动」的口径打破。同步清掉就没有被搬迁的选区。
+        clearSelectionWithin(overlay);
+        overlay.hidden = true;
+      },
       focus: () => overlay.focus(),
       restoreFocus: () => options.restoreFocus(),
     });
@@ -159,11 +170,18 @@ export function createTableFullscreen(options: TableFullscreenOptions): TableFul
       event.preventDefault();
       created.close("overlay");
     });
-    // 关闭键就地消费（Esc）；Tab 挡在遮罩内——快照里没有可聚焦元素，放行 Tab 会让焦点走进
-    // 编辑器内容区，而遮罩还开着，后续按键就又能穿透到文档（aria-modal 的语义当场失效）。
+    // 关闭键就地消费（Esc）；⌘A 就地全选快照内容（M650：遮罩是第三个能持焦、有可选文本的
+    // 面，不消费就会落到引擎的文档级全选——选区含标题栏与蒙层后的正文；见 change design §2）。
+    // Tab 挡在遮罩内——快照里没有可聚焦元素，放行 Tab 会让焦点走进编辑器内容区，而遮罩还开着，
+    // 后续按键就又能穿透到文档（aria-modal 的语义当场失效）。
     overlay.addEventListener("keydown", (event) => {
       const token = keyToken(event);
       if (token === null) return;
+      if (token === "Cmd-A") { // token 归一化把单字符键名大写（键位表里写 Cmd-a）
+        event.preventDefault();
+        selectAllOf(snapshot);
+        return;
+      }
       if (token === "Tab" || token === "Shift-Tab") {
         event.preventDefault();
         return;
@@ -182,6 +200,7 @@ export function createTableFullscreen(options: TableFullscreenOptions): TableFul
     overlay.addEventListener("blur", () => created.close("blur"));
 
     state = created;
+    selectRoot = snapshot;
     return created;
   }
 
@@ -194,6 +213,10 @@ export function createTableFullscreen(options: TableFullscreenOptions): TableFul
     },
     isOpen() {
       return state?.isOpen() ?? false;
+    },
+    selectAll() {
+      if (state?.isOpen() !== true || selectRoot === null) return;
+      selectAllOf(selectRoot);
     },
   };
 }
