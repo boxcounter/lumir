@@ -1,11 +1,14 @@
 import { expect, test } from "@playwright/test";
+import { Text } from "@codemirror/state";
 import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
+import { detectFrontmatter, firstBodyLineStart } from "../../../src/preview/frontmatter";
 
 // M110 交互缺陷回归（真实桌面用户截图实证）：
 // 2) 光标在 latex 公式附近 Ctrl-N 落到错误位置——moveVertically 跨块级 replace
-//    widget（$$ 公式/frontmatter/mermaid 围栏）时一步扔到块另一侧；修复为钳制到
-//    行进方向近端边界。
+//    widget（$$ 公式/frontmatter/mermaid 围栏）时一步扔到块另一侧；修复为钳制到块内
+//    最近源码位（M110 先钳到边界；cursor-visibility-oct23 的 C4 改为推进块内一个字符并
+//    显露源码——边界位置会让 CM 按整块 widget 画光标）。
 // 3) Ctrl-F（forward char）无法进入 latex 公式区域——原生 contenteditable caret
 //    进不了 CM replace 原子范围，在边界卡住后回弹跳过；修复为 CM 派发水平移动，
 //    公式 span 作为唯一可进入原子范围逐字符放行（进入即显露源码，可编辑）。
@@ -83,26 +86,37 @@ test("Ctrl-F 进入块级公式后源码显露可编辑", async ({ page }) => {
   expect(await readDocument(page)).toBe(MATH_DOC);
 });
 
-test("Ctrl-N 跨块级公式落在近端边界而非一次跳过", async ({ page }) => {
+test("Ctrl-N 跨块级公式推进块内最近源码行而非一次跳过", async ({ page }) => {
   await stubTauri(page, { entries: [{ path: "m.md", kind: "file", size: MATH_DOC.length, mtime_ms: 0 }], files: { "m.md": MATH_DOC } });
   await page.goto("/");
   await page.locator('.ft-row[title="m.md"]').click();
   await expect(page.locator(".cm-lp-math-block")).toHaveCount(1);
   await setCursor(page, 0);
-  // 修复前：一次 Ctrl-N 从 0 直接落到 37（块另一侧），跨过整个公式
+  // 修复前：一次 Ctrl-N 从 0 直接落到 37（块另一侧），跨过整个公式。
+  // M110 修到「钳到近端边界」（20）；cursor-visibility-oct23 的 C4 再进一步：边界位置
+  // 会被 CM 按整块 widget 的包围盒画光标（一条贯穿整块的竖线），所以落点推进**块内**一个字符
+  // （21 = 块起始 +1），并因严格重叠显露源码；仍然不一步跨过整块。
   await page.keyboard.press("Control+n");
   expect((await cmSelection(page)).head).toBe(19); // 空行（M399 起正常行高，逐行经过）
+  await expect(page.locator(".cm-lp-math-block"), "停在块前的空行：渲染态").toHaveCount(1);
   await page.keyboard.press("Control+n");
-  expect((await cmSelection(page)).head).toBe(20); // 钳制到块起始边界
+  expect((await cmSelection(page)).head).toBe(21); // 块内最近源码位（20 的边界 → 21）
+  await expect(page.locator(".cm-lp-math-block"), "落点进块：显露源码（C1/C4）").toHaveCount(0);
+  // 进块之后块已显露为源码：后续 Ctrl-N 在源码行之间逐行经过（不再按整块跳过）。
+  await page.keyboard.press("Control+n");
+  expect((await cmSelection(page)).head).toBe(24); // 块内第 2 行（goal column 保持）
+  await page.keyboard.press("Control+n");
+  expect((await cmSelection(page)).head).toBe(34); // 块内末行
   await page.keyboard.press("Control+n");
   expect((await cmSelection(page)).head).toBe(36); // 越过块，落在块下空行（M399 起空行逐行经过）
   await page.keyboard.press("Control+n");
   expect((await cmSelection(page)).head).toBe(37); // 再按到末尾段落
-  // 对称方向：从块下方 Ctrl-P 先落空行，再按才钳制到块结束边界
+  // 对称方向：从块下方 Ctrl-P 先落空行，再按才推进块内（35 的边界 → 34）
   await page.keyboard.press("Control+p");
   expect((await cmSelection(page)).head).toBe(36); // 空行
   await page.keyboard.press("Control+p");
-  expect((await cmSelection(page)).head).toBe(35);
+  expect((await cmSelection(page)).head).toBe(34);
+  await expect(page.locator(".cm-lp-math-block"), "反向落点同样显露源码").toHaveCount(0);
   expect(await readDocument(page)).toBe(MATH_DOC);
 });
 
@@ -211,7 +225,7 @@ title: 测试文档
 第一段正文内容。
 `;
 
-test("打开文件后选区与滚动复位，点击落点即光标", async ({ page }) => {
+test("打开文件后选区复位（有 frontmatter 时 = 正文首行）、滚动归顶，点击落点即光标", async ({ page }) => {
   await stubTauri(page, {
     entries: [
       { path: "a.md", kind: "file", size: LONG_A.length, mtime_ms: 0 },
@@ -228,7 +242,9 @@ test("打开文件后选区与滚动复位，点击落点即光标", async ({ pa
   await page.keyboard.press("ArrowDown");
   await page.keyboard.up("Shift");
   for (let i = 0; i < 10; i++) await page.keyboard.press("PageDown");
-  // 打开新文件：选区必须干净归 0、滚动回顶部（缺陷 7：不得有残留选区/错误落点）
+  // 打开新文件：选区必须干净复位、滚动回顶部（缺陷 7：不得有残留选区/错误落点）。
+  // cursor-visibility-oct23 的 C3：有 frontmatter 时「干净复位」= 块之后第一条可见正文行
+  // ——装载复位的 0 就是 fm.from，聚焦时那里会画出覆盖整块高度的光标。
   await page.locator('.ft-row[title="b.md"]').click();
   await page.locator(".cm-lp-frontmatter").waitFor();
   const state = await page.evaluate(() => {
@@ -241,7 +257,10 @@ test("打开文件后选区与滚动复位，点击落点即光标", async ({ pa
     };
   });
   expect(state.empty).toBeTruthy();
-  expect(state.head).toBe(0);
+  const fmB = detectFrontmatter(Text.of(DOC_B.split("\n")));
+  expect(fmB, "DOC_B 必须带 frontmatter（否则这条断言没有输入）").not.toBeNull();
+  const bodyB = firstBodyLineStart(Text.of(DOC_B.split("\n")), fmB!);
+  expect(state.head, "初始光标 = frontmatter 之后第一条可见正文行（C3）").toBe(bodyB);
   expect(state.scrollTop).toBe(0);
   expect(state.native).toBe("");
   // 点击标题行：光标落在点击处，为空选区

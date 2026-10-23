@@ -169,15 +169,15 @@ const TITLE_A = { title: "note", dir: "Work", lines: 3, mtimeMs: 1700000000000 }
 const TITLE_B = { title: "note", dir: "Work", lines: 4, mtimeMs: 1700000000000 };
 
 test("I4 title 进入 eq：null/null 相等，null/data 不等，数据逐位比对", () => {
-  assert.ok(new FrontmatterWidget("x", false, null).eq(new FrontmatterWidget("x", false, null)));
-  assert.ok(!new FrontmatterWidget("x", false, null).eq(new FrontmatterWidget("x", false, TITLE_A)));
-  assert.ok(!new FrontmatterWidget("x", false, TITLE_A).eq(new FrontmatterWidget("x", false, null)));
-  assert.ok(new FrontmatterWidget("x", false, TITLE_A).eq(new FrontmatterWidget("x", false, TITLE_A)));
-  assert.ok(!new FrontmatterWidget("x", false, TITLE_A).eq(new FrontmatterWidget("x", false, TITLE_B)));
+  assert.ok(new FrontmatterWidget("x", null).eq(new FrontmatterWidget("x", null)));
+  assert.ok(!new FrontmatterWidget("x", null).eq(new FrontmatterWidget("x", TITLE_A)));
+  assert.ok(!new FrontmatterWidget("x", TITLE_A).eq(new FrontmatterWidget("x", null)));
+  assert.ok(new FrontmatterWidget("x", TITLE_A).eq(new FrontmatterWidget("x", TITLE_A)));
+  assert.ok(!new FrontmatterWidget("x", TITLE_A).eq(new FrontmatterWidget("x", TITLE_B)));
 });
 
 test("I4 title 字段原样保留（toDOM 的数据源，DOM 断言在场景层）", () => {
-  assert.equal(new FrontmatterWidget("x", false, TITLE_A).title, TITLE_A);
+  assert.equal(new FrontmatterWidget("x", TITLE_A).title, TITLE_A);
   assert.equal(new FrontmatterWidget("x").title, null);
 });
 

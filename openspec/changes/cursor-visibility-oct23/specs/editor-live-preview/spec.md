@@ -53,11 +53,13 @@ frontmatter 块的边界上时，系统 SHALL 同样按本条的规则规范化�
 
 #### Scenario: 点击 doc-title / padding 只聚焦
 
-- **WHEN** 同上文档带 doc-title（有文件路径），指针点击 doc-title 的标题行、meta 行或
+- **WHEN** 同上文档带 doc-title（有文件路径）、且空光标停在 frontmatter 块的边界上（`fm.from` /
+  `fm.to`——装载复位或程序化落点的结果），指针点击 doc-title 的标题行、meta 行或
   frontmatter 块 outer 的纯装饰 padding
 - **THEN** properties 盒与 doc-title 保持渲染，空光标规范化到 frontmatter 之后第一条可见
   正文行行首（没有正文行时显露 frontmatter 源码并把光标放到块内）；`.cm-cursor` 高度等于
-  所在可见行的行盒高度（±1px）；MUST NOT 出现覆盖替换块高度的光标矩形；文档逐字节不变
+  所在可见行的行盒高度（±1px）；MUST NOT 出现覆盖替换块高度的光标矩形；文档逐字节不变。
+  光标本来就在别的可见行上时，合成面点击 MUST NOT 挪动它（规范化只针对边界光标）
 
 #### Scenario: 装载与聚焦不留下替换块光标
 
