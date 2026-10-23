@@ -253,13 +253,22 @@ test("vault 外绝对路径只读打开：标签与 modeline 的只读标记、�
   await page.keyboard.type("SHOULD-NOT-LAND");
   expect(await editorFacts(page).then((next) => next.text)).toBe(EXTERNAL_DOC);
 
+  // 「不生效**并给一次性提示**」（D2 追加裁决 ③ / D584）：第一次键入就给一句说明，
+  // 同一会话里继续键入不重复（每会话一次——去重按会话对象记，见 src/editor.ts 的探针）
+  const hint = page.locator(".lumir-toast").filter({ hasText: "vault 外的文件以只读方式打开" });
+  await expect(hint).toHaveCount(1);
+  await page.keyboard.type("AGAIN");
+  await expect(hint).toHaveCount(1);
+  await expect(page.locator(".lumir-toast")).toHaveCount(1, { timeout: 2000 });
+
   // ⌘S 无落点：没有任何写类 invoke，也不出现保存失败提示
   const before = await invokes(page);
   await page.keyboard.press("Meta+s");
   await page.waitForTimeout(150);
   const after = await invokes(page);
   expect(after.slice(before.length)).not.toContain("document_save");
-  await expect(page.locator(".lumir-toast")).toHaveCount(0);
+  // 提示条此刻若还在场，只能是上面那条只读说明——MUST NOT 混进「尚未可保存」一类保存失败文案
+  await expect(page.locator(".lumir-toast").filter({ hasText: "尚未可保存" })).toHaveCount(0);
 
   // 同一绝对路径再次打开 = 切到既有标签（不重读、不产生第二个标签）
   await openQuickOpen(page);

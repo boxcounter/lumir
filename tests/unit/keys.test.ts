@@ -700,6 +700,66 @@ test("主题切换命令可由 [keys] 重绑 / 解绑（默认键位单段无空
 });
 
 // ---------------------------------------------------------------------------
+// M655：按路径快速打开命令（change quick-open-file-oct23）——默认键位 ⌘P 的 token 形态、
+// 作用域 global、可经 [keys] 重绑 / 解绑（tasks 3.3 的专项对账）
+// ---------------------------------------------------------------------------
+
+test("快速打开命令：⌘P 的 token 形态、作用域 global、不在默认不绑键清单里", () => {
+  assert.ok(commandIds.includes("app.quick-open"), "app.quick-open 不在 COMMAND_IDS");
+  assert.ok(
+    !editorCommandIds.includes("app.quick-open"),
+    "落在 editor 组会让作用域派生成 editor；快速打开必须是 global（输入面打开时焦点在浮层里）",
+  );
+  // 事件侧与表内必须同 token：真实 ⌘P 事件的 key 是 "p"，`normalizeKey` 把单字符键名大写，
+  // 表内写 `Cmd-p` 因此与事件 token 相等——这条 equality 是防「表内写 Cmd-P / Cmd-KeyP 之类
+  // 永不命中的形态」那类静默失配的判据（与 ⌘⇧T / ⌘B 的同款）。
+  const event = { key: "p", code: "KeyP", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false };
+  const token = normalizeKey("Cmd-p");
+  assert.equal(keyToken(event), token, "⌘P 的事件 token 与表内写法必须相等");
+  assert.equal(token, "Cmd-P");
+  const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === token);
+  assert.equal(binding?.command, "app.quick-open");
+  assert.equal(binding?.scope, "global");
+  assert.ok(docTextOf(binding).length > 0, "绑定必须带来由说明（表即文档）");
+  // 键位面板的「全局」组 = NON_TAB_GLOBAL_COMMAND_IDS；有默认绑定 ⇒ 不在默认不绑键清单里。
+  assert.ok(
+    (NON_TAB_GLOBAL_COMMAND_IDS as readonly string[]).includes("app.quick-open"),
+    "不在 NON_TAB_GLOBAL_COMMAND_IDS（面板全局组的成员来源）里",
+  );
+  assert.ok(
+    !KEYLESS_COMMAND_IDS.includes("app.quick-open"),
+    "该命令默认有绑定，MUST NOT 登记为默认不绑键",
+  );
+});
+
+test("快速打开命令可由 [keys] 重绑 / 解绑（默认键位单段无空白）", () => {
+  assert.ok(!/\s/.test("Cmd-p"), "默认键位含空白会让用户无法重绑（chord 本版不支持）");
+  // 重绑 = 解掉旧键 + 绑新键：重绑后新组合生效、⌘P 不再唤起（spec「可重绑与解绑」scenario）。
+  const rebound = applyKeyOverrides({ "Cmd-p": null, "Ctrl-Alt-q": "app.quick-open" });
+  assert.deepEqual(rebound.warnings, []);
+  const moved = rebound.bindings.find((binding) => normalizeKey(binding.key) === "Ctrl-Alt-Q");
+  assert.equal(moved?.command, "app.quick-open");
+  assert.equal(moved?.scope, "global", "作用域由命令清单派生，不随配置漂移");
+  assert.equal(
+    rebound.bindings.filter((binding) => normalizeKey(binding.key) === "Cmd-P").length,
+    0,
+    "重绑后 ⌘P 不再指向任何命令",
+  );
+  // 解绑：⌘P 不再指向任何命令，该命令在生效表里没有绑定（键位面板据此显示未绑定 + 成因说明）。
+  const unbound = applyKeyOverrides({ "Cmd-p": null });
+  assert.deepEqual(unbound.warnings, []);
+  assert.equal(
+    unbound.bindings.find((binding) => normalizeKey(binding.key) === "Cmd-P"),
+    undefined,
+  );
+  assert.equal(
+    unbound.bindings.find((binding) => binding.command === "app.quick-open"),
+    undefined,
+    "解绑后该命令在生效表里没有绑定",
+  );
+});
+
+// ---------------------------------------------------------------------------
 // 左栏开关（M631，change add-sidebar-resize-hide-and-root-create）——默认键位 ⌘B 的 token
 // 形态、作用域 global、可重绑 / 解绑
 // ---------------------------------------------------------------------------

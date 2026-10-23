@@ -147,6 +147,19 @@ steps:
         editor: { has: "localhost" }
       - shot: 06-vault 外只读
 
+  - name: 记录只读文档的字节基线（编辑尝试 MUST NOT 改动它）
+    do: recordEditor
+    as: external-before-edit
+  - name: 在只读标签里键入一个字符（不生效 + 一次性提示）
+    do: keys
+    keys: ["x"]
+    expect:
+      - label: 提示条说明「vault 外的文件以只读方式打开」（D2 追加裁决 ③ / D584）
+        ax: { has: "vault 外的文件以只读方式打开" }
+      - label: 文档逐字节不变（键入没有落进正文）
+        editor: { unchangedSince: external-before-edit }
+      - shot: 06b-只读编辑尝试的提示
+
   - name: ⌘S 在只读会话上无落点（MUST NOT 写盘、MUST NOT 出保存失败提示）
     do: keys
     keys: ["cmd+s"]
@@ -276,6 +289,9 @@ Alex 2026-10-23 的需求原话：「快速便捷地查找、打开文件（类�
   （候选集合、上限与游标落点在 `tests/visual/scenes/quick-open.spec.ts` 用真实 DOM 钉住）。
 - **Rust 侧的读取拒绝矩阵**（非绝对路径 / `..` / 目录 / 超限 / 非法编码）在 `cargo test` 的
   `read_external_text_ok_and_rejections`，不在真机造现场。
+- **「每会话一次」的负向判据不在真机层**：AX 读不到提示条的**条数**（也无法区分「同一个浮条」
+  与「第二次弹出的浮条」），本场景只判「第一次键入就有提示」；「第二次不再出现」由
+  `tests/visual/scenes/quick-open.spec.ts` 用真实 DOM 计数钉住（`.lumir-toast` 恰为 1 条）。
 - **输入法组合期**：本场景用 `typeInNode` 注入 ASCII 路径，中文查询串的组合期行为由
   `tests/visual/scenes/list-filter.spec.ts` 的同款事件序列覆盖。
 - **样例全合成**：两个 `vaultWrite` 文件与 `/etc/hosts` 都不含真实 vault 内容；标签名与 marker

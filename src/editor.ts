@@ -1138,6 +1138,20 @@ export interface EditorHandle {
    */
   setSessionLoaded(session: EditorSession, loaded: boolean): void;
   /**
+   * 注入「外部只读会话上的编辑尝试」通知口（change quick-open-file-oct23 的 D2 追加裁决 ③：
+   * 尝试编辑**不生效并给一次性提示**）。装配层收到就弹一条瞬态提示。
+   *
+   * **触发判据在本层**：键入（无修饰键的可打印字符 / Enter / Backspace / Delete）、粘贴与
+   * 拖入文本都算一次「编辑尝试」——结构性只读把它们全部拒收（视图层摘掉 contenteditable、
+   * `changeFilter` 兜底），不给人话反馈时表现就是「打了没反应」。**去重也在这里**：按会话
+   * 对象记（`WeakSet`），同一个外部标签只提示一次；关掉重开是另一个会话对象，因此会再提示
+   * 一次（与「每会话一次」的口径一致）。会话不是外部只读会话时什么都不做——本口子只服务
+   * 那一种会话，别处（普通只读文档、图片会话）行为一字不变。
+   *
+   * 未注入（`null` / 从未调用）时是空操作：探针仍然只听不报。
+   */
+  setExternalEditGuard(guard: ((session: EditorSession) => void) | null): void;
+  /**
    * 用新内容改写一个既有会话（外部重载 / 放弃我的修改 / 恢复崩溃备份）。
    * 目标会话不在前台时只换它的 state，不碰 view。
    */
@@ -2218,6 +2232,44 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     for (const listener of scrollListeners) listener();
   });
 
+  // ---------------------------------------------------------------------------
+  // 外部只读会话的「编辑尝试」探针（change quick-open-file-oct23 的 D2 追加裁决 ③：
+  // 尝试编辑**不生效并给一次性提示**）。
+  //
+  // 为什么必须有这条探针：结构性只读在视图层摘掉 contenteditable、`changeFilter` 再兜底，
+  // 键入 / 粘贴 / 拖入都不会产生任何文档变更——没有反馈时用户看到的是「打了没反应」，
+  // 与「键位丢了 / 界面卡了」不可区分。提示的**内容与呈现**归装配层（它才有提示出口），
+  // 本层只负责「发生了一次编辑尝试」与「每会话只报一次」。
+  //
+  // 为什么挂在 DOM 事件而不是 changeFilter：被拒的 transaction 在 `changeFilter` 里能看见，
+  // 但视图层先一步摘掉了 contenteditable ⇒ 大多数键入**根本到不了** dispatch（没有 DOM 变更
+  // 就没有 transaction），只有 DOM 入口能覆盖全部路径。挂点选 contentDOM（不是 window）：
+  // 它只在本 pane 的正文区被聚焦时收到事件，多 pane / composer / 浮层里的按键不会误报。
+  // 事件本身一律不消费、不 preventDefault——只读语义已经由视图层与 changeFilter 决定，
+  // 这条探针 MUST NOT 改变任何输入行为。
+  let externalEditGuard: ((session: EditorSession) => void) | null = null;
+  /** 已提示过的外部会话（每会话一次；`WeakSet` 不拖住已关闭的会话对象）。 */
+  const externalEditHinted = new WeakSet<EditorSession>();
+
+  function reportExternalEditAttempt(): void {
+    if (externalEditGuard === null) return;
+    const session = active;
+    if (!isDocSession(session) || session.external !== true) return;
+    if (externalEditHinted.has(session)) return;
+    externalEditHinted.add(session);
+    externalEditGuard(session);
+  }
+
+  view.contentDOM.addEventListener("keydown", (event) => {
+    // 打字键（无修饰键的可打印字符；Shift 仍属打字——与键位层的 `isTypingKey` 同口径）与
+    // 三个纯粹「改动文档」的命名键。方向键 / Tab / 翻页键不算编辑尝试（它们是导航）。
+    const typing = event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey;
+    const editing = event.key === "Enter" || event.key === "Backspace" || event.key === "Delete";
+    if (typing || editing) reportExternalEditAttempt();
+  });
+  view.contentDOM.addEventListener("paste", () => reportExternalEditAttempt());
+  view.contentDOM.addEventListener("drop", () => reportExternalEditAttempt());
+
   // 统一键位层（keys.ts）的编辑器侧命令实现：每条只读 view 当前状态并自行 dispatch。
   // 全部返回 void——命中即已消费，分发器统一吞掉默认行为（命中但无事可做，例如历史
   // 为空的 ⌘Z，也必须吞掉，否则原生 contenteditable 撤销会插手 CM 管理的文档）。
@@ -2656,6 +2708,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 幂等；不属于本实例的会话忽略（防御性——调用方按会话对象传）。
       if (session.loaded === loaded || !sessions.includes(session)) return;
       session.loaded = loaded;
+    },
+    setExternalEditGuard(guard) {
+      externalEditGuard = guard;
     },
     reloadSession(session: EditorSession, doc: string, path: string | undefined, requestId?: number) {
       // 图片会话没有可装载的文本：字节装载走查看面（装配层），MUST NOT 经本条把一份

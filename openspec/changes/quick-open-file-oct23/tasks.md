@@ -131,3 +131,12 @@
 > project）45 passed。另修一处 master 上的遗留断链：`m642-overlay-select-all.spec.ts` 仍 import
 > 已被 M645 删除的 `configGets`（master 的 tsc-visual 因此是红的），改用同一个 change 给出的
 > `configApplied`。
+>
+> r1 评审处置（2026-10-24）：**P1-1**（D2 追加裁决 ③ 的「一次性提示」缺席）已兑现——编辑器层
+> 在 contentDOM 上装「编辑尝试」探针（键入 / Enter / Backspace / Delete / 粘贴 / 拖入；每会话
+> 一次，去重按会话对象记），装配层注入瞬态 toast；文案 D584（接 D583 末位）；spec delta 补
+> 一句 normative 与 scenario「编辑尝试给一次性提示」；视觉场景加「提示出现 + 同会话第二次不再
+> 出现」两条断言（并做反向验证：关掉注入即红）；验收场景 230 加第一步键入的 AX 判据（「每会话
+> 一次」的负向判据留在 chromium 层，AX 数不到条数）。**P2-1**（tasks 3.3 的「重绑与解绑各一条」
+> 专项单测缺席）已补：`tests/unit/keys.test.ts` 加 `app.quick-open` 两条用例（token 形态 /
+> 作用域 / 不绑键清单对账 + 重绑与解绑各一条）。

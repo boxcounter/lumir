@@ -999,6 +999,10 @@ const editor: EditorHandle = {
     (paneLayout.panes()[0].handle as { kind: "doc"; editor: EditorHandle }).editor.createShellSession(path),
   // vault 外只读会话只有在**活跃 pane** 打开这一条路径（M655），因此落活跃 pane 的实例。
   createExternalSession: (path) => activeEditor().createExternalSession(path),
+  // 编辑尝试提示口（M655 的 D2 追加裁决 ③）：提示是**全局一处**的出口，但触发在各自 pane
+  // 的视图上——因此与 createSession 等写类口径一致，广播到全部实例（后建 pane 经 injectEach
+  // 重放，见下方装配点）。
+  setExternalEditGuard: (guard) => forEachEditor((handle) => handle.setExternalEditGuard(guard)),
   reloadSession: (session, doc, path, requestId) => {
     const owner = paneEntryOfSession(session)?.[1].handle;
     ((owner?.kind === "doc" ? owner.editor : undefined) ?? activeEditor()).reloadSession(
@@ -1439,6 +1443,11 @@ const gotoLine = createGotoLinePrompt({
   onVisibilityChange: (open) => editor.setGotoLineGutterVisible(open),
 });
 injectEach((handle) => handle.setGotoLinePrompt(gotoLine));
+
+// 外部只读会话的「编辑尝试」一次性提示（M655，change quick-open-file-oct23 的 D2 追加裁决 ③：
+// 尝试编辑不生效**并给一次性提示**）。触发与去重都在编辑器层（`src/editor.ts` 的 contentDOM
+// 探针：每会话一次），这里只给提示出口——瞬态 toast、非 sticky；内容由 D584 提供。
+injectEach((handle) => handle.setExternalEditGuard(() => toast(t("D584"))));
 
 // ---------------------------------------------------------------------------
 // 按路径快速打开（M655，change quick-open-file-oct23；D1 ⌘P / D2 vault 外只读 / D3 路径优先 +

@@ -267,6 +267,13 @@ input --trim--> raw
   追加同一句。标签的 `title` 本来就是完整路径（`src/tabs.ts:289`），外部会话因此天然显示绝对路径。
   **不加颜色 / 图标 token**：现有视觉场景里没有外部会话，既有基线因此零变化（若实现期发现基线
   变化，按「基线更新是人肉裁决点」报 Alex 过目）。
+- **编辑尝试的一次性提示**（Alex 追加裁决 ③ 的后半句「并给一次性提示」；r1 评审补入）：常驻标记
+  回答「它是不是只读」，回答不了「我刚才为什么打不进字」。触发判据落在**编辑器层的 DOM 入口**
+  （`view.contentDOM` 的 keydown 打字键 / Enter / Backspace / Delete、`paste`、`drop`）而不是
+  `changeFilter`：视图层先摘掉 contenteditable ⇒ 大多数键入根本形不成 transaction，只有 DOM
+  入口能覆盖全部路径。**每会话一次**（按会话对象记 `WeakSet`；关掉重开算新会话），呈现是装配层
+  的瞬态 toast（文案 1 条）。探针不消费事件、不 `preventDefault`——只读语义仍只由视图层与
+  `changeFilter` 决定，提示 MUST NOT 变成「按键被吞」的第二道实现。
 - **未覆盖**：外部图片 / 二进制（`openKind` 为 image / binary 时给一行提示「暂不支持在 vault 外
   打开这类文件」）。
 
