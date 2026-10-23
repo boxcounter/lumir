@@ -118,9 +118,13 @@
 - [x] 4.3 `pnpm test` 全绿（新增 / 更新的 unit）
       ——1221 pass / 0 fail（含新增 15 条）。
 - [x] 4.4 `bash scripts/gate.sh quick` 全绿，照抄 `GATE RESULT` 原文行与退出码
+      ——`gate.sh visual` 内含 quick：13 门全 PASS；单跑 quick 的原文行是
+      `GATE RESULT: 11/11 PASS（SKIP 0）`（首轮 tsc-unit 红，修的是单测 helper 的
+      `TransactionSpec` 类型标注，非产品代码；修复后含在 13/13 的复跑里）。
 - [x] 4.5 `bash scripts/gate.sh visual` 全绿；变化基线逐张列出并由 Alex 过目（光标宽度 /
       常亮带来的像素变化 = 基线更新的人肉裁决点）
-      ——见完成报告的逐张清单；**未执行任何 `--update`**。
+      ——`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0；visual-regression 522s 全绿，
+      **零像素基线变化**（没有需要 Alex 过目的基线更新；**未执行任何 `--update`**）。
 - [ ] 4.6 新增真机场景 `scripts/acceptance/scenarios/228-caret-visibility.md` 并 PASS：
       点击 properties / doc-title / 正文前后光标截图证据（含 light + eink）、
       `editor.unchangedSince` + 文件 `unchangedSince` 的字节断言；光标高度是手感项，
