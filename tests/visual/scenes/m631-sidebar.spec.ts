@@ -10,7 +10,7 @@
 // 元素时，在场守卫落在结构断言」办——本文件的断言即那道守卫。
 
 import { expect, test, type Page } from "@playwright/test";
-import { stubTauri } from "./tauri-stub";
+import { configApplied, stubTauri } from "./tauri-stub";
 
 const DOC = "# 侧栏场景\n\n宽度与收起都只改骨架，不改文档。\n";
 
@@ -32,8 +32,8 @@ async function open(
   await page.goto("/");
   await page.locator('.ft-row[title="doc.md"]').click();
   await expect(page.locator(".modeline-path")).toHaveText("doc.md");
-  // 等配置装载完成（setSidebarWidth 在 config_get 的回调里，晚于首帧）。
-  await expect.poll(() => page.evaluate(() => (window as never as { __configGets: number }).__configGets)).toBeGreaterThan(0);
+  // 等配置装载完成（setSidebarWidth 在配置装配块里，晚于首帧）。
+  await configApplied(page);
   await page.waitForTimeout(80);
 }
 

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { applyKeyOverrides, KEY_BINDINGS, Keymap, normalizeKey } from "../../../src/keys";
-import { configGets, fireMenuCommand, stubTauri } from "./tauri-stub";
+import { configApplied, fireMenuCommand, stubTauri } from "./tauri-stub";
 import type { VaultFixture } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
@@ -34,7 +34,7 @@ async function openWithConfig(
   await page.goto("/");
   await page.locator(`.ft-row[title="${name}"]`).click();
   await expect(page.locator(".modeline-path")).toHaveText(name);
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80);
 }
 

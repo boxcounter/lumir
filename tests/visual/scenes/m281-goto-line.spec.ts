@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { configGets, stubTauri } from "./tauri-stub";
+import { configApplied, stubTauri } from "./tauri-stub";
 import type { VaultFixture } from "./tauri-stub";
 import { expectScreenshot } from "./expect-screenshot";
 import { SCROLL_SETTLE_TIMEOUT } from "./poll-budgets";
@@ -352,7 +352,7 @@ test("输入条：[keys] 重绑 ⌃J 生效；切标签收起且不跳转", asyn
   await openFile(page, { "a.md": LONG_DOC, "b.md": "# 另一篇\n\n另一篇的正文。\n" }, "a.md", {
     config: { keys: { "Ctrl-j": "editor.goto-line" } },
   });
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80); // [keys] 覆盖在 config_get 之后才重挂分发器
   await focusLine(page, 7);
 

@@ -13,7 +13,7 @@
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { stubTauri, configGets } from "./tauri-stub";
+import { stubTauri, configApplied } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
 const fixtureDir = new URL("../fixtures/table-fullscreen/", import.meta.url);
@@ -46,7 +46,7 @@ async function openDoc(page: Page, options: { theme?: "light" | "dark" | "eink" 
   // 三张表：正常表 + 宽表渲染为 grid，非矩形表整块回退（无 .cm-lp-table）。
   await expect(page.locator(".cm-lp-table")).toHaveCount(2);
   // [keys] 覆盖在 config_get 之后才挂上分发器（m132 的时序口径）：等它到位再按键。
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await expect(page.locator(".modeline-path")).toHaveText(DOC);
   await page.waitForTimeout(80);
 }

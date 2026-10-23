@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { stubTauri, configGets } from "./tauri-stub";
+import { stubTauri, configApplied } from "./tauri-stub";
 
 // M294：**「面」族与一处处前景色的 eink 字面值归位 token**（三主题；纯收敛，值不变）。
 //
@@ -79,7 +79,7 @@ async function openDoc(page: Page, theme: Theme): Promise<void> {
   await page.goto("/");
   await page.locator(`.ft-row[title="${DOC}"]`).click();
   await expect(page.locator(".modeline-path")).toHaveText(DOC);
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80);
 }
 

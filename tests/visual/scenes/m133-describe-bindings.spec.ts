@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
 import { COMMAND_IDS, KEYLESS_COMMAND_IDS, KEY_BINDINGS } from "../../../src/keys";
-import { configGets, stubTauri } from "./tauri-stub";
+import { configApplied, stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
 // M133：键位查看面板（app.describe-bindings，默认键 ⌘/）。dogfood 期的自用查看器：
@@ -29,7 +29,7 @@ async function openVault(page: Page, config?: { keys?: Record<string, string | n
   await page.goto("/");
   await page.locator('.ft-row[title="keys.md"]').click();
   await expect(page.locator(".modeline-path")).toHaveText("keys.md");
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80);
 }
 

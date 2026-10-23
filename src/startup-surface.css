@@ -1,0 +1,113 @@
+/* 启动态（change app-splash-screen）的样式：几何全部取既有 --layout-* token，色值只取既有
+   色 token——启动面不设自己的主题块，三主题同构（design §2.4）。本文件与 src/style.css 同属
+   入口 CSS（启动层 import），首个内容帧因此就是带样式的启动面。
+
+   零 animation / 零 transition：撤下是单帧移除（spec「零动画」）；动效纪律见
+   ui-design-system「chrome 表面与动效纪律」。 */
+
+#startup {
+  /* 覆盖整窗。z-index 高于全部既有覆盖层（style.css 现状最高 20）：启动期它是唯一可见内容。 */
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  grid-template-rows: var(--layout-titlebar-h) minmax(0, 1fr) var(--layout-modeline-h);
+  background: var(--content-bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-ui);
+  font-feature-settings: "cv11", "ss01";
+  /* 不持焦点、不拦事件：启动面只是一层静态 DOM（键盘焦点仍在 webview 默认落点）。 */
+}
+
+/* 标题栏占位带：与真实壳同口径的拖拽区（`data-tauri-drag-region="deep"` 由模块写）。
+   容器 MUST NOT 挂 mousedown + preventDefault——见模块头与 REVIEW.md 同名条。 */
+.startup-titlebar {
+  grid-row: 1;
+  background: var(--frame);
+  border-bottom: 1px solid var(--border);
+}
+
+/* 主行：侧栏占位 + 内容区（与 .app-shell 的两列同宽）。 */
+.startup-body {
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: var(--layout-sidebar-w) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 左侧树行占位：行高取 --layout-tree-row-h（与真实树同档）；占位块只表达「结构在长出来」，
+   不画假条目名、不画假数字。 */
+.startup-sidebar {
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-5) var(--sp-4);
+  background: var(--frame);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+
+.startup-row {
+  display: flex;
+  align-items: center;
+  height: var(--layout-tree-row-h);
+  flex: none;
+}
+
+.startup-row-bar {
+  height: var(--sp-3);
+  border-radius: var(--r4);
+  background: var(--hover);
+}
+
+/* 宽度错落只是让骨架像「结构」而不是一列等宽块：百分比不是数据，不表达任何条目 / 计数。 */
+.startup-row:nth-child(3n + 1) .startup-row-bar {
+  width: 62%;
+}
+.startup-row:nth-child(3n + 2) .startup-row-bar {
+  width: 44%;
+}
+.startup-row:nth-child(3n) .startup-row-bar {
+  width: 74%;
+}
+
+/* 内容区：产品标记居中；阶段行与「打开 vault」入口依次在其下。 */
+.startup-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 产品标记：既有产品名档（与标题栏标识块同一档字号 / 字重 / 色值，design §2.3 的字体层级）。
+   读不到产品名时整块不建——这里不设占位形态。 */
+.startup-mark {
+  font-size: var(--fs-ui-s);
+  font-weight: var(--fw-emphasis);
+  color: var(--text-2);
+  user-select: none;
+}
+
+/* 阶段行：meta 档（--text-3），只在恢复进行中显示（文案由装配层给既有 D95）。 */
+.startup-phase {
+  margin: 0;
+  font-size: var(--fs-ui-s);
+  color: var(--text-3);
+}
+
+/* 「打开 vault」入口：按钮形态复用 .ft-open-btn（与树空态的同一入口同一形态）；本类只管
+   它在启动面里的落位。 */
+.startup-open {
+  margin: 0;
+}
+
+/* 底部 modeline 占位带。 */
+.startup-modeline {
+  grid-row: 3;
+  background: var(--frame);
+  border-top: 1px solid var(--border);
+}

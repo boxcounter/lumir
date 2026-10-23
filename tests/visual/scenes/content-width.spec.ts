@@ -13,7 +13,7 @@
 
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { stubTauri } from "./tauri-stub";
+import { configApplied, stubTauri } from "./tauri-stub";
 
 /** 场景文档：一段足以撑满栏宽的长行（列缘矩形可读）+ 若干短行。 */
 /** 首段刻意长于两个栏宽的可容纳量（约 990 字符 = 6 遍下句）：文字宽 672px（框宽 760）下约 12 个可视行、
@@ -46,8 +46,8 @@ async function open(page: Page, options: { config?: WidthConfig; text?: string; 
   await page.goto("/");
   await page.locator('.ft-row[title="doc.md"]').click();
   await expect(page.locator(".modeline-path")).toHaveText("doc.md");
-  // 等配置装载完成（setContentWidth 在 config_get 的回调里，晚于首帧）
-  await expect.poll(() => page.evaluate(() => (window as never as { __configGets: number }).__configGets)).toBeGreaterThan(0);
+  // 等配置装载完成（setContentWidth 在配置装配块里，晚于首帧）
+  await configApplied(page);
   await page.waitForTimeout(80);
 }
 
@@ -127,7 +127,7 @@ test("空态无手柄（覆盖层在时隐藏，回文档恢复）", async ({ pa
   // 空 vault：没有任何条目 → 启动即空态
   await stubTauri(page, { entries: [], files: {} });
   await page.goto("/");
-  await expect.poll(() => page.evaluate(() => (window as never as { __configGets: number }).__configGets)).toBeGreaterThan(0);
+  await configApplied(page);
   await expect(page.locator(".content-width-handles")).toBeHidden();
 });
 
@@ -218,7 +218,7 @@ test("code 模式：手柄按实测矩形贴合（列不居中也不偏）", asy
   await page.goto("/");
   await page.locator('.ft-row[title="main.ts"]').click();
   await expect(page.locator(".modeline-path")).toHaveText("main.ts");
-  await expect.poll(() => page.evaluate(() => (window as never as { __configGets: number }).__configGets)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80);
   const geometry = await page.evaluate(() => {
     const rect = document.querySelector(".cm-content")!.getBoundingClientRect();

@@ -7,8 +7,12 @@
 //
 // 分层（REVIEW.md 「同一语义两处真源」条：同一语义不留两处真源）：
 //   - 本模块：三档顺序、循环取下一档、从根元素读当前主题，以及主题的两条可见文案；
-//   - src/main.ts 的 `applyTheme`：**唯一施加点**——写 `data-theme` 并刷新 modeline 指示钮，
-//     启动装配与运行期切换都经它，MUST NOT 出现第二处 `data-theme` 写入者；
+//   - src/main.ts 的 `applyTheme`：**唯一完整施加点**——写 `data-theme`、刷新 modeline 指示钮
+//     并同步窗口底色，启动装配与运行期切换都经它；
+//   - src/boot.ts 的**首帧前最小写入**（change app-splash-screen）：启动层在画启动面之前只写
+//     `<html data-theme>`，让首个内容帧就在当前主题下（design §3.5）；它不碰 modeline / 窗口
+//     底色，那些仍归 `applyTheme`。两处的分工是「首帧前 / 首帧后」，不是两条主题真源——值都
+//     取自同一次 `config_get` 的 `[ui] theme`；
 //   - src/preview/mermaid.ts 的 `invalidateMermaidTheme`：唯一「按主题失效」出口（颜色烧进
 //     SVG 内联样式，CSS 变量跟不上，只能重渲）。
 

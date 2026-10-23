@@ -109,12 +109,28 @@ worktree 的 dist）：用 `LUMIR_VISUAL_PORT=<端口>` 指定独立端口隔离
 1. 在 `scenes/` 加一个 `.spec.ts`（或往现有 spec 加断言）；
 2. 像素断言一律写成 `expectScreenshot(page, "foo.png")`（入口函数在
    `scenes/expect-screenshot.ts`）——**不要直接调 `expect(...).toHaveScreenshot(...)`**：
-   开关只在入口函数上生效，直接调会在 CI 里照跑并撞上环境不等价的红；
+   开关只在入口函数上生效，直接调会在 CI 里照跑并撞上环境不等价的红；唯一的例外是
+   `expectStartupScreenshot`（启动态在场时截图，只有 `m645-startup-surface` 用它）；
 3. 跑 `pnpm --dir tests/visual run update-baselines` 生成基线；
 4. 截图人工过目后连同代码一起提交；
 5. 新增低于整页容差预算（1200×800 × 0.001 ≈ 960 像素）的 UI 元素时，「在场」守卫必须落在结构断言
    （存在性 / 文案 / 可见性），不能指望整页像素——新增元素整体被吞的现场见
    REVIEW.md「容差吞掉真实变化」条（M322 空 pane 引导水印，835px）。
+
+### 启动是两段式的：`goto` 回来时主模块未必已装载（M645）
+
+change `app-splash-screen` 把入口换成启动层（`src/boot.ts`）：先读配置、画启动面，**之后**才
+`await import("./main")`。两条旧的就绪代理由此失效，写场景时按下面的口径办：
+
+- **`page.goto("/")` 只表示入口模块开始执行**，不表示壳 / 编辑器 / 文件树已建出。紧接
+  `page.goto` 的裸 `page.evaluate` 里 `document.querySelector(...)` 可能拿到 `null`。要操作
+  DOM 先等一个界面信号（如 `.cm-content` / `.ft-vault` / `.ft-row` 可见），不要靠时间。
+- **`config_get` 调用计数不再等于「配置已施加」**：那次读取由启动层在装载主模块**之前**发起。
+  等配置落地用 `configApplied(page)`（等 `.modeline-language` 可见——`applyLanguage` 是配置
+  装配块的最后一步）；旧的 `configGets` helper 已删除，MUST NOT 再按调用计数当就绪门。
+- **启动面（`#startup`）会在就绪门之前撤下**，所以既有场景不需要为它加等待；`expectScreenshot`
+  内部有一道「撤下」门（5s 上界）兜底，但它防不住「信号没接上」（安全阀 10s 会把面撤掉），
+  判别性判据在 `startup-restore.spec.ts`——见 `expect-screenshot.ts` 的注释。
 
 ## 更新基线
 

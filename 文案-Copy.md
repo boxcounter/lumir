@@ -614,6 +614,7 @@
 - change add-sidebar-resize-hide-and-root-create（M631）D548–D550 左栏宽度与收起：⌘B 绑定来由 / 分隔条读屏名 / 宽度写盘失败 toast（接 M629 的 D547 末位）
 - M635 D551–D554 通知送不出去的两处可见面：注册回执的两档成因（身份未被系统认可 / 用户拒绝）+ 投递连续失败 toast 的两档（接 M631 的 D550 末位；rebase 到含 M631 的 master 时原 D548–D551 顺延为 D551–D554）
 - M644 D555–D556 harness「回到底部」浮钮的可访问名：无新内容 / 有新内容两串（接 M635 的 D554 末位；change improve-harness-streaming-scroll）
+- change app-splash-screen（M645）**未取新号**：本次**无新增文案条目**——启动态的「打开 vault」入口复用 D6，恢复中的阶段行复用 D95（D95 的消费者从「恢复中空态」换成启动态的阶段行；安全阀撤下后仍回落到 `tree.showEmpty`）。
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 
@@ -631,7 +632,7 @@
 - **D78 / D79 / D83** — `src-tauri/src/commands.rs`（`open_external_url` / `link_open_path` 的错误信封 message；判定在 Rust 侧故文案在 Rust 侧）
 - **D81 / D82** — `src/main.ts` `followNoteLink` / `followLink`
 - **D84–D87** — `src/toc.ts`（M160 只改 D86 串长，仍由 `POPOVER_HINT` 一处持有）
-- **D95** — `src/main.ts` `RESTORING_NOTICE` → `tree.showEmpty()`
+- **D95** — `src/main.ts` `RESTORING_NOTICE` → 启动态的阶段行（change app-splash-screen 起；安全阀撤下后回落 `tree.showEmpty()`）
 - **D96** — `src/tree.ts`（入口 DOM 归它）
 - **D97–D104 / D108–D110** — `src/vault-switcher.ts`（切换闸判据经 `VaultSwitchGateDeps.block()` 取自 `src/save-controller.ts` `vaultSwitchBlock()`；相对时间档 `relativeTime()` 单点生成；`{名称}` 取 `src/tree.ts` `baseName()`）
 - **D105–D107** — `src/main.ts`（需装配层上下文）

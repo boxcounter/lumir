@@ -161,6 +161,12 @@ pub enum LogEventName {
     /// `log::error!`（含 NSError 的 localizedDescription）全被丢弃，日志里只剩一句笼统的
     /// 「未被系统确认送达」。这条事件让第三方的失败原因第一次出现就落盘。
     DependencyLog,
+    /// 启动态（change app-splash-screen，「启动态的可观测性」）：启动层首帧交付与启动态撤下
+    /// 各一条。`phase` 取 `first_frame` / `dismissed`，`reason` 只在撤下那条上出现（闭集合
+    /// `tree_ready` / `no_vault` / `timeout` / `degraded`），`ms` 是相对页面导航开始的毫秒数，
+    /// `ts_unix_ms` 与 `LUMIR_READY` 的 `ts_unix_ms` 同钟，相减即得「窗口上屏 → 启动层首帧」。
+    /// **不作 CI 门禁判据**：前端首帧时刻在被测量的端点之外（perf-measurement 的冷启动口径）。
+    StartupSurface,
 }
 
 impl LogEventName {
@@ -211,6 +217,7 @@ impl LogEventName {
             Self::SubagentNotified => "subagent_notified",
             Self::SubagentRejected => "subagent_rejected",
             Self::DependencyLog => "dependency_log",
+            Self::StartupSurface => "startup_surface",
         }
     }
 
@@ -338,6 +345,10 @@ impl LogEventName {
             // `message` 是消息正文（按 [`MAX_VALUE_CHARS`] 截断）。字段名不用 `level`：每行的
             // 顶层 `level` 由事件名决定（[`LogEventName::level`]），同名字段会把它覆盖掉。
             Self::DependencyLog => &["target", "severity", "message"],
+            // 启动态读数（change app-splash-screen）：只有阶段名 / 撤下原因 / 毫秒数 / unix 毫秒
+            // 时间戳。**vault 名、路径、文件名、文档内容都不在白名单内**——机制化兜底
+            // （spec「载荷无敏感信息」）。
+            Self::StartupSurface => &["phase", "reason", "ms", "ts_unix_ms"],
         }
     }
 }
@@ -1456,6 +1467,7 @@ mod tests {
             LogEventName::SubagentNotified,
             LogEventName::SubagentRejected,
             LogEventName::SubagentCatalogLarge,
+            LogEventName::StartupSurface,
         ] {
             let text = name.as_str();
             assert!(
@@ -1464,6 +1476,61 @@ mod tests {
             );
             assert!(!name.allowed_fields().is_empty(), "{text} 缺字段白名单");
         }
+    }
+
+    /// 启动态读数的字段面（change app-splash-screen，「启动态的可观测性」）：白名单恰好是
+    /// 阶段名 / 撤下原因 / 毫秒数 / unix 毫秒时间戳四项；多出的字段（vault 名、路径、文件名
+    /// 这类）一律被拒——这是「载荷无敏感信息」的机制化判据，不是靠调用方自觉。
+    #[test]
+    fn startup_surface_readings_are_the_observation_set() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        log_frontend_event_to(
+            &sink,
+            LogEventName::StartupSurface,
+            fields(&[
+                ("phase", "first_frame"),
+                ("ms", "12.3"),
+                ("ts_unix_ms", "1700000000123"),
+            ]),
+        )
+        .unwrap();
+        log_frontend_event_to(
+            &sink,
+            LogEventName::StartupSurface,
+            fields(&[
+                ("phase", "dismissed"),
+                ("reason", "tree_ready"),
+                ("ms", "48.7"),
+                ("ts_unix_ms", "1700000000159"),
+            ]),
+        )
+        .unwrap();
+        // 白名单之外的字段必须被拒（不是静默丢弃、更不是落盘）。
+        let rejected = log_frontend_event_to(
+            &sink,
+            LogEventName::StartupSurface,
+            fields(&[
+                ("phase", "dismissed"),
+                ("path", "/Users/alex/private-vault/note.md"),
+            ]),
+        );
+        assert!(rejected.is_err(), "白名单外字段必须被拒");
+        sink.flush();
+
+        let lines = read_lines(dir.path());
+        assert_eq!(lines.len(), 2, "被拒的一条不落盘");
+        assert_eq!(lines[0]["event"], "startup_surface");
+        assert_eq!(lines[0]["level"], "info");
+        assert_eq!(lines[0]["phase"], "first_frame");
+        assert!(lines[0].get("reason").is_none(), "首帧读数不带撤下原因");
+        assert_eq!(lines[1]["phase"], "dismissed");
+        assert_eq!(lines[1]["reason"], "tree_ready");
+        assert_eq!(
+            LogEventName::StartupSurface.allowed_fields(),
+            &["phase", "reason", "ms", "ts_unix_ms"][..],
+            "字段面就是观测集合：多一个都可能变成隐私落点"
+        );
     }
 
     /// cron 六个事件的字段面（change add-cron-runtime-daemon §5.1）：每条 Rust 侧埋点各落

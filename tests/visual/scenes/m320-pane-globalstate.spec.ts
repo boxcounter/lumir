@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { configGets, stubTauri, type VaultFixture } from "./tauri-stub";
+import { configApplied, stubTauri, type VaultFixture } from "./tauri-stub";
 
 // M320 tasks 7.4：跨实例全局态验证（只验证与登记，不改 src）。pane 化把 EditorView 从一例
 // 变两例，src/preview/mermaid.ts 与 src/preview/lists.ts 里**进程级 / document 级**的全局态
@@ -61,7 +61,7 @@ async function boot(page: Page, files: Record<string, string>, first: string): P
   await page.goto("/");
   await page.locator(`.ft-row[title="${first}"]`).click();
   await expect(page.locator(".modeline-path")).toHaveText(first);
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80);
 }
 

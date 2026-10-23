@@ -18,7 +18,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { stubTauri, configGets, externalWrite, fireFsEvent, readingPositionPuts } from "./tauri-stub";
+import { stubTauri, configApplied, externalWrite, fireFsEvent, readingPositionPuts } from "./tauri-stub";
 
 /** 证据落点（git 外，与门禁日志分开）：每次跑把读数写一份，便于逐条核对。 */
 const EVIDENCE_DIR = new URL("../../../.local/missions/m286/scene-readings/", import.meta.url);
@@ -82,7 +82,7 @@ async function openScene(page: Page, files: Record<string, string>): Promise<voi
   await page.goto("/");
   await page.locator('.ft-row[title="scene.md"]').click();
   await expect(page.locator(".cm-content")).toBeVisible();
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await expect(page.locator(".modeline-path")).toHaveText("scene.md");
   await page.waitForTimeout(120);
   await page.evaluate(() => {

@@ -12,7 +12,7 @@
 
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { stubTauri } from "./tauri-stub";
+import { configApplied, stubTauri } from "./tauri-stub";
 import { expectScreenshot } from "./expect-screenshot";
 import { readDocument } from "./parity-checks";
 
@@ -73,8 +73,8 @@ async function open(page: Page, options: { config?: TypographyConfig; text?: str
   await page.locator('.ft-row[title="doc.md"]').click();
   await expect(page.locator(".modeline-path")).toHaveText("doc.md");
   await expect(page.locator(".cm-lp-list-marker").first()).toBeVisible();
-  // 等配置装载完成（applyTypography 在 config_get 的回调里，晚于首帧）
-  await expect.poll(() => page.evaluate(() => (window as never as { __configGets: number }).__configGets)).toBeGreaterThan(0);
+  // 等配置装载完成（applyTypography 在配置装配块里，晚于首帧）
+  await configApplied(page);
   await page.waitForTimeout(80);
 }
 

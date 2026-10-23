@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { configGets, stubTauri } from "./tauri-stub";
+import { configApplied, stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
 // M247（change code-mode-line-wrap）：折行口径的两模式分叉——**md 折 / code 不折**。
@@ -49,7 +49,7 @@ async function openFile(
   await page.goto("/");
   await page.locator(`.ft-row[title="${name}"]`).click();
   await expect(page.locator(".modeline-path")).toHaveText(name);
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await page.waitForTimeout(80);
 }
 
