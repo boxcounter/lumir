@@ -88,8 +88,10 @@ steps:
         file: { path: "env:harness/sessions/*/*.jsonl", has: "/\"call_id\":\"call_rule2\"/" }
       - label: 解包段的调用确实跑了（wire 留存里有它的 call_id）
         file: { path: "env:harness/sessions/*/*.jsonl", has: "/\"call_id\":\"call_unpack1\"/" }
-      - label: 危险卡收敛为「已拒绝」终态
+      - label: 危险卡收敛为「已拒绝」终态 ⇒ 界面没有残留待决卡（终态记录不带待决问句）
         ax: { has: "已拒绝" }
+      - label: 收尾时没有待决卡在场（第二、三条调用确实没进闸，负向断言）
+        ax: { not: "要运行这条命令吗？" }
       - shot: 03-收尾
 
   - name: 点权限 chip 展开浮层（chip 带 aria-haspopup → WKWebView 映射 AXPopUpButton）
@@ -185,8 +187,11 @@ change `harness-permission-rules-oct23` 的三条用户可见行为（proposal �
   前端纯模型层单测（`tests/unit/harness-permission-rules.test.ts` 的缺键语义）——真机这条只证
   「最终渲染面没有」。
 - **`tvly` 是虚构命令**：批准后执行会拿到「命令不存在」类错误，这是刻意的——本场景判的是
-  **权限面**（是否进闸 / 是否写规则），不是命令本身的成败。第二段「不再出卡」的判据是终态
-  （final text 到达）+ `ax: { not: "要运行这条命令吗？" }` + wire 留存的 call_id，三条合成。
+  **权限面**（是否进闸 / 是否写规则），不是命令本身的成败。第二段「不再出卡」的判据是三条
+  合成，且**分散在两个步骤里**：① 能等到混合脚本那张危险卡（`r2` / `r3` 若出卡，mock 序列会
+  停在批准闸上，这一步必超时）；② `call_rule2` / `call_unpack1` 的 call_id 在 wire 留存里
+  （证明确实执行了）；③ 第一轮收尾步的 `ax: { not: "要运行这条命令吗？" }`（收尾时界面没有
+  残留待决卡）。三条缺一不可，不依赖任何内部状态。
 - **`bash -lc` 全只读段不判 stdout**：解包后走既有 cli_run 执行路径，`ls .` 在应用工作目录下
   可能非零退出（目录内容无关），本场景只判「没进闸」（call_id 在 wire 留存里）。
 - **两条用户消息**：第一段到「第一次的规则生效了。」收尾；浮层交互不消耗消息；第二条只发一个
