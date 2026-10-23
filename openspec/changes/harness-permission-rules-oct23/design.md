@@ -267,9 +267,28 @@ prefix 是 `"git push "`，而恰好无参数的 `git push` 主体串没有尾�
   权限档写回与规则写回是同一张 `[harness]` 表的两次「读→改→写」，不加锁就有丢更新窗口。
   这是顺手收口，不新增语义。
 - 切断口径（AGENTS.md「变更默认直接切断」条）：`ApprovalRequest.remember` 的线上形状从
-  `bool` 改为可空对象字段，消费者只有仓内前端两处渲染点（`harness-panel.ts:7115-7124`、
-  `:7690-7700`），没有外部消费者、没有持久化载荷（待决批准不落盘）——**直接切断，不做兼容层**。
-  旧快照缺字段 = 两枚次级动作都不渲染（与判定依据 MISSING 的降级口径一致）。
+  `bool` 改为 `Option<String>` 并新增 `persist_rule: Option<String>`。消费者全部在仓内前端
+  （下表逐点列全），没有外部消费者、没有持久化载荷（待决批准不落盘）——**直接切断，不做兼容层**。
+
+  | 消费点 | 现位置（本分支基线 `ba98587d` 实测） | 改法 |
+  |---|---|---|
+  | 批准卡渲染 · 事件路径 | `harness-panel.ts:7115-7124`（`request.remember !== false`） | 按字段 `!= null` 渲染；文案带粒度 |
+  | 批准卡渲染 · 快照恢复路径 | `:7690-7700`（`request.remember`） | 同上 |
+  | 事件载荷归一化 | `:8162`（`event.remember !== false`） | `typeof … === "string" ? … : null`；`persist_rule` 同款解析 |
+  | 父会话待决快照归一化 | `:8655`（`pending.remember !== false`） | 同上 |
+  | 子运行快照归一化 | `:8002`（`value.remember !== false`，`parseTaskApproval`） | 同上 |
+  | 语言切换重上文案 | `:6862-6863`（`button[data-act=approve-remember]` 重取 D434） | 两枚按钮都重上，插值取当前请求的粒度 / 规则文本 |
+  | 事件路径 decide 链 | `:7153-7166`（`harnessApprove(…, remember ? true : undefined)`） | 决策时透传两个布尔（`remember` / `persist_rule`） |
+  | 快照恢复路径 decide 链 | `:7702-7713` | 同上 |
+  | 子运行 decide 链 | `:7726-7745`（`decideTaskApproval`） | 同上（子运行卡同样按字段渲染） |
+  | 载荷类型声明 | `:3248`（`TaskApprovalRequest.remember: boolean`）、`:6991`（`remember?: boolean`） | 字段类型改为 `string \| undefined`（新增 `persistRule`） |
+
+  **归一化的缺键语义 MUST 翻转**：现行三处归一化都是「缺键按可见处理」（`X.remember !== false`，
+  M413 契约），新形状下缺键 / null MUST 归一为「不渲染」。不翻转的后果不是多一个按钮——危险卡
+  经快照恢复会**复活死按钮**，正是 D3 要杀掉的形态。三处按 `rg 'remember !== false'` 全改，并补
+  前端单测（缺键 / null 不渲染；危险卡快照恢复后仍无两枚按钮）。行号以本分支基线实测为准；评审
+  首轮给出的 `:8096` / `:8256` / `:8749` 与表中三处归一化是同一批点（行号随基线漂移，按符号
+  `remember !== false` 检索即可定位）。
 
 ## 5. 次级动作字段契约（死按钮）
 
