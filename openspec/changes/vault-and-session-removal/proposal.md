@@ -100,10 +100,21 @@ living spec 两处、验收场景文件一份逐条对照；本 mission 是纯�
 - A 的代价（明说）：移除后 per-id 数据变成不可达的孤儿（留在盘上，界面上再无入口）；之后重新加入
   同一目录会铸新稳定 id，旧标签 / 旧会话历史不会复活。确认文案里会写明「磁盘上的目录与文件不受影响」，
   孤儿一事记在 design 的「已知边界」，不进界面文案。
-- 另一条联动（登记，不在本 change 处置）：被移除的 vault 若仍是某个 cron 任务的目标，任务下次触发会
-  经既有运行链路（`src/main.ts:2798` `ensureCronVault` → `switchToVault`）打开它并重新登记——列表里
-  会以新 id 出现。移除是**列表操作**、不是禁令；要彻底摆脱该 vault 得同时删掉指向它的定时任务。
-  是否要在确认态点名「该 vault 还有 N 个定时任务」见 design §6 的未采纳项。
+- 另一条联动（登记，不在本 change 处置）：被移除的 vault 若仍是某个 cron 任务的目标，结局按**触发源**
+  分两种（master `18c21ef2` 核对过代码）：
+  - **定时 / 启动 / 聚焦 / vault 打开后补跑（无人值守）**：`cron::plan` 的目标 vault 闸门见「目标不是
+    当前 vault」即 `Skip(vault_not_current)`（`src-tauri/src/cron.rs:303`），不打开、不切换、不复活；
+    后端 `harness_cron_run` 另有 `vault_not_open` 兜底（`src-tauri/src/harness.rs:1452`）。净效果是
+    **该任务从此静默停跑**——当天第一次跳过落一条 `cron_run_skipped reason=vault_not_current`
+    （`src-tauri/src/logging.rs:939`；同日重算不再记，`record_skip` 按任务 + 日期去重，
+    `src-tauri/src/lib.rs:1593`），这才是定时路径的反直觉点。
+  - **用户发起（点击运行 / 点击结果通知）**：`cron_click` 与 `cron:open_session` 不走上面那道闸门，
+    前端先 `ensureCronVault`（`src/main.ts:2798`）→ `switchToVault` 打开目标 vault，于是
+    `reconcile_vault` 铸新 id、列表里以新身份出现，并且**会切走当前 vault**
+    （`src/main.ts:2810` `handleCronRun` / `:2856` `handleCronOpenSession`）。`notify-then-run` 任务
+    到点只投通知，用户点一下就走这条路径。
+  移除是**列表操作**、不是禁令；要彻底摆脱该 vault 得同时删掉指向它的定时任务。是否要在确认态点名
+  「该 vault 还有 N 个定时任务」见 design §6 的未采纳项。
 
 ### D3 撤销通道
 
@@ -129,8 +140,9 @@ living spec 两处、验收场景文件一份逐条对照；本 mission 是纯�
   位置 / harness 会话留存与附件）。
 - **不提供「移除当前 vault」**（若 D1 改判为 B，本项随裁决解除）。
 - **不做批量移除 / 清空列表 / 孤儿数据回收**：一次一行、只处理用户点中的那一项。
-- **不处理 cron / 其它打开路径的联动**：移除不构成禁令——被移除的 vault 若仍是某个 cron 任务的目标，
-  任务下次触发会打开它并重新登记（新 id，见 D2 的联动说明）。本 change 不阻断、不加检查。
+- **不处理 cron / 其它打开路径的联动**：移除不构成禁令——定时触发遇目标不是当前 vault 会**跳过**
+  （任务静默停跑，不复活）；只有用户点击「运行」/ 点击结果通知才会打开它并重新登记（新 id，见 D2 的
+  联动说明）。本 change 不阻断、不加检查。
 - **不改 session 删除的既有行为**（入口形态、两步确认、活跃拒删、删盘上留存文件）。
 - **不引入第三种治理标记**（`removed_at`）与「已移除但可复活」的状态（D2 选 C 才需要）。
 - **不动 `last_vault`**：当前 vault 不可移除（D1 = A），因此 `last_vault` 永远指向一个仍在注册表里的

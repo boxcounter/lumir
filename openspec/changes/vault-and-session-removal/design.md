@@ -264,10 +264,20 @@ requestRemove: async (row) => {
    定时任务」（见第 6 条，属可加项，本 change 不做）。
 5. **撤销窗口**：非 sticky 提示 8s 后自消（`src/main.ts:1551` 既有口径）。超时后无法从界面撤销。
    为可接受：移除不销毁任何用户数据，重新加入目录即可恢复访问（身份是新的）。
-6. **cron 会把它带回来**：被移除的 vault 若仍是某 cron 任务的目标，任务下次触发经
-   `ensureCronVault`（`src/main.ts:2798`）→ `switchToVault` → `vaultOpenPath` 打开它，
-   `reconcile_vault` 随即铸新 id——列表里以新身份重新出现，且**会切换用户当前 vault**（cron 的既有
-   行为）。移除是列表操作、不是禁令，本 change 不阻断也不加检查。若日后要提示，成本最低的落点是
-   确认态由**后端**数一次（`config.cron.tasks[].vault` 需 canonicalize 后才能与注册项路径比较，
-   前端拿原串比较会漏），即给 `vault_remove` 加一个「预览计数」查询或让 `VaultListEntry` 带
+6. **cron 联动按触发源分两种结局**（master `18c21ef2` 核对过代码，勿按「触发即复活」的直觉读）：
+   - **定时 / 启动 / 聚焦 / vault 打开后补跑（无人值守）**：`cron::plan` 的目标 vault 闸门见「目标不是
+     当前 vault」即 `Skip(vault_not_current)`（`src-tauri/src/cron.rs:303`；cron 侧既有口径是「无人值守
+     运行不切换用户界面」），后端 `harness_cron_run` 再以 `vault_not_open` 兜一道
+     （`src-tauri/src/harness.rs:1452`）。**不打开、不切换、不复活**；被移除 vault 的任务就此**静默停跑**，
+     当天第一次跳过落一条 `cron_run_skipped reason=vault_not_current`（`src-tauri/src/logging.rs:939`；
+     同日重算不再记，`record_skip` 按任务 + 日期去重，`src-tauri/src/lib.rs:1593`）。
+   - **用户发起（点击「运行」/ 点击结果通知）**：`cron_click` 与 `cron:open_session` 不经过上面那道
+     vault 闸门——前端先 `ensureCronVault`（`src/main.ts:2798`）→ `switchToVault` → `vaultOpenPath`
+     打开目标 vault，`reconcile_vault` 随即铸新 id：列表里以新身份重新出现，且**会切走当前 vault**
+     （`src/main.ts:2810` `handleCronRun` / `:2856` `handleCronOpenSession`）。`notify-then-run` 的任务
+     到点只投通知，用户点一下就走这条路径。
+   移除是列表操作、不是禁令，本 change 不阻断也不加检查。若日后要在确认态提示「该 vault 还有 N 个定时
+   任务」，适用面是两件事：**任务会停跑**（定时路径）、**点击会把它带回来并切走当前屏幕**（点击路径）。
+   成本最低的落点仍是**后端**数一次（`config.cron.tasks[].vault` 需 canonicalize 后才能与注册项路径
+   比较，前端拿原串比较会漏），即给 `vault_remove` 加一个「预览计数」查询或让 `VaultListEntry` 带
    `cron_task_count`——两者都要动契约面，故本 change 不做。
