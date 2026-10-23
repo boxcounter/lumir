@@ -900,6 +900,30 @@ impl IgnorePolicy {
         }
         Ok(())
     }
+
+    /// **既有目标路径**的 `hidden` 档闸（写类命令唯一一份路径级判定；新建 / 改名的末段名走
+    /// [`Self::validate_new_name`]，新建父段由 `ensure_parent_dirs` 逐段判）。
+    ///
+    /// 为什么必须有：`hidden` 档命中的条目**在枚举结果里没有行**（spec「全类型递归枚举」）——
+    /// 用户看不见、树里也点不到。只校验新建 / 改名的末段名会漏掉「已存在的隐藏路径」这一类
+    /// 入口：patch 的目标、move 的源 / 目标父段、delete 的目标都能直接指名一条没有行的路径，
+    /// 于是 `.git/config` 可在默认档被免闸改写（finding 20261023：hidden 档写入面 + 只读 git
+    /// = 零批准执行链）。spec 的既有口径「是否可操作只取决于该名字是否在可见集里」因此要在
+    /// **现有条目**上同样成立，而不是只对新名字成立。
+    ///
+    /// 判定复用 [`Self::hidden_hit`]：一份策略、一个判定，调用点 MUST NOT 各自再造一份
+    /// （REVIEW.md「同一语义两处真源」条）。用户把 `.git` 配成可见后这里为假——它与别的名字
+    /// 一样按普通条目处理，没有名字级特判。
+    fn validate_not_hidden(&self, rel: &str) -> Result<(), CommandError> {
+        if self.hidden_hit(rel, false) {
+            return Err(CommandError::new(
+                "fs_name_invalid",
+                format!("{rel} 在忽略集内（hidden 档），不能修改、移动或删除"),
+            )
+            .param("rel", rel));
+        }
+        Ok(())
+    }
 }
 
 /// 新建 / 改名的目标解析变体（写类命令的**共用一个入口**，安全边界不分散）。
@@ -963,7 +987,11 @@ pub fn resolve_new_in_vault(
 /// 目录连子孙整棵入篓由 `trash` 的平台语义承担（macOS = NSFileManager 的 trashItem，
 /// 在 Finder 里可整体放回）。失败即报错且**不留半删除状态**——crate 的删除是单次系统
 /// 调用语义，这也是提示语里「未删除任何内容」承诺的依据（design §3.1）。
-pub fn trash_entry(root: &Path, rel: &str) -> Result<(), CommandError> {
+///
+/// `hidden` 档命中的目标拒绝（[`IgnorePolicy::validate_not_hidden`]）：这类条目在树里没有行，
+/// 用户既看不到也点不到，「删除一条看不见的条目」没有正当入口——它只可能是脚本 / 模型越过了
+/// 可见集（finding 20261023 同款面：`vault_delete` 走 `resolve_in_vault`，不查 hidden）。
+pub fn trash_entry(root: &Path, policy: &IgnorePolicy, rel: &str) -> Result<(), CommandError> {
     let abs = resolve_in_vault(root, rel)?;
     // 空 rel 已在 resolve_in_vault 里被拒（fs_path_invalid）；这里再挡一次「解析结果
     // 就是 vault 根」的形态（防御性：vault 根永远不进废纸篓）。
@@ -982,6 +1010,7 @@ pub fn trash_entry(root: &Path, rel: &str) -> Result<(), CommandError> {
         )
         .param("rel", rel));
     }
+    policy.validate_not_hidden(rel)?;
     trash::delete(&abs).map_err(|e| {
         // trash::Error 的 Display 是内部 Debug 结构（英文、带字段名），人话在前、
         // 原始错误附在尾部只作排查线索。
@@ -1005,6 +1034,10 @@ pub fn trash_entry(root: &Path, rel: &str) -> Result<(), CommandError> {
 /// 真要做到零窗口需要平台的原子排他改名（macOS 的 `renamex_np(RENAME_EXCL)`，其余平台各有
 /// 对应物），本批不做：那要引 libc/平台分支，收益与风险不成比例。**因此「撞名不覆盖」在
 /// rename 这条路上是「复查 + 极窄窗口」，不是原子保证**——别在别处读成更强的东西。
+///
+/// 源的既有路径与目标末段名都按 `hidden` 档判：目标名走 [`IgnorePolicy::validate_new_name`]，
+/// 源走 [`IgnorePolicy::validate_not_hidden`]——hidden 条目在树里没有行，改名没有正当入口
+/// （同 [`trash_entry`] 的理由）。
 pub fn rename_entry(
     root: &Path,
     policy: &IgnorePolicy,
@@ -1012,6 +1045,7 @@ pub fn rename_entry(
     new_name: &str,
 ) -> Result<String, CommandError> {
     let from = resolve_in_vault(root, rel)?;
+    policy.validate_not_hidden(rel)?;
     let parent_rel = parent_rel_of(rel).to_string();
     let to = resolve_new_in_vault(root, policy, &parent_rel, new_name)?;
     // 写路径复查（见上面注释）：与 create 路径同一个错误码与同一句话，前端不必分辨来源。
@@ -1048,6 +1082,11 @@ pub fn rename_entry(
 /// - **移入自身/后代**：显式前置拒绝（`fs_move_into_self`）。内核 rename 本来就拒绝这种
 ///   形态（EINVAL），但给的是「移动失败」的泛化措辞——这里提前挡，信息更人话，也不依赖
 ///   内核行为。`to_rel == from_rel`（移回原位，rename 会是静默 no-op）一并拒绝。
+/// - **`hidden` 档两端都拒绝**：源的既有路径走 [`IgnorePolicy::validate_not_hidden`]、目标
+///   末段名走 [`IgnorePolicy::validate_new_name`]、目标**父段**由同一次 `validate_not_hidden`
+///   经 `matched_path_or_any_parents` 一并判——移动是把一条没有行的条目搬到/搬进没有行的
+///   位置，两个方向都没有正当入口（finding 20261023：改 `.git/config` / 往 `.git/hooks/`
+///   落文件是同一条 hidden 档写入面）。
 pub fn fs_move_entry(
     root: &Path,
     policy: &IgnorePolicy,
@@ -1062,6 +1101,7 @@ pub fn fs_move_entry(
         .param("rel", from_rel));
     }
     let from = resolve_in_vault(root, from_rel)?;
+    policy.validate_not_hidden(from_rel)?;
     let to_name = match to_rel.rsplit('/').next() {
         Some(name) if !name.is_empty() => name,
         _ => {
@@ -1073,6 +1113,7 @@ pub fn fs_move_entry(
     };
     let to_parent_rel = parent_rel_of(to_rel);
     let to = resolve_new_in_vault(root, policy, to_parent_rel, to_name)?;
+    policy.validate_not_hidden(to_rel)?;
     // 写路径复查（撞名不覆盖，见本函数文档的取舍说明）。
     if std::fs::symlink_metadata(&to).is_ok() {
         return Err(
@@ -1629,6 +1670,10 @@ pub struct PatchEdit {
 ///    它只负责把磁盘改对，编辑器同步交给既有链路。
 /// 5. **类型守卫**：image/binary 扩展名拒绝（`fs_read_only`，沿用 [`save_document`] 的
 ///    [`SAVE_REJECTED_EXTENSIONS`] 口径），判定先于任何 IO。
+/// 6. **`hidden` 档拒绝**：目标路径（含任一祖先段）命中 `hidden` 档即 `fs_name_invalid`，判定
+///    在 resolve 之后、读内容之前（[`IgnorePolicy::validate_not_hidden`]）。这类条目在树里没有
+///    行，改写等于静默改动用户看不见的东西；finding 20261023 的 `.git/config` + 只读 git 就是
+///    绕这一条走成了零批准执行链。`.git` 被配置成可见后即普通文件（判定随策略，无名字级特判）。
 ///
 /// **CAS 窗口收窄**（M545，与 [`save_document`] 同形态）：CAS 校验通过的字节与 rename 之间
 /// 原本隔着建 tmp / 写内容 / `sync_all` 的毫秒级窗口，窗口内的外部改写（尤其是编辑器常见的
@@ -1641,6 +1686,7 @@ pub struct PatchEdit {
 /// 空 `edits`、空 `old_string` 返回 `patch_invalid`（空串没有唯一命中语义，不能滑成「插入」）。
 pub fn fs_patch_file(
     root: &Path,
+    policy: &IgnorePolicy,
     rel: &str,
     edits: &[PatchEdit],
     expected_revision: &str,
@@ -1657,6 +1703,7 @@ pub fn fs_patch_file(
         );
     }
     let target = resolve_in_vault(root, rel)?;
+    policy.validate_not_hidden(rel)?;
     // 快照先于读内容（见函数文档的 CAS 窗口收窄节）：它描述的是「被校验的那份字节所在的那
     // 一代文件」，交给写核心在 rename 前重取比对。
     let snapshot = stat_snapshot(&target).map_err(|e| {
@@ -3647,7 +3694,14 @@ mod tests {
         std::fs::write(v.0.join("doc.md"), &original).unwrap();
         let revision = file_revision(&v.0, "doc.md").unwrap();
 
-        let next = fs_patch_file(&v.0, "doc.md", &[edit("旧的", "新的")], &revision).unwrap();
+        let next = fs_patch_file(
+            &v.0,
+            &v.policy(),
+            "doc.md",
+            &[edit("旧的", "新的")],
+            &revision,
+        )
+        .unwrap();
 
         assert_ne!(next, revision, "revision 必须前进");
         assert_eq!(next, file_revision(&v.0, "doc.md").unwrap());
@@ -3666,6 +3720,70 @@ mod tests {
         );
     }
 
+    /// `hidden` 档的既有文件 MUST NOT 被 patch（finding 20261023 的可达链第一步）：
+    /// `.git/config` 这类文件在树里没有行、用户看不见，改它就是静默改动；默认档免闸的
+    /// `vault_patch` 若放过它，配合只读 git 就是一条零批准执行链。
+    ///
+    /// 三条断言缺一不可：隐藏目标拒绝且**逐字节不变**（拒绝在读内容 / 写盘之前）；
+    /// 普通既有文件照常 patch（不是「一律拒绝」）；`.git` 被配置成可见后即可 patch
+    ///（判定随策略，不是硬编码名单）。
+    #[test]
+    fn fs_patch_file_refuses_hidden_target_and_respects_policy() {
+        let v = TempVault::with_fixture();
+        std::fs::write(v.0.join(".git/config"), "[core]\n").unwrap();
+        let revision = file_revision(&v.0, ".git/config").unwrap();
+
+        let err = fs_patch_file(
+            &v.0,
+            &v.policy(),
+            ".git/config",
+            &[edit("[core]", "[core]\n\tfsmonitor = /tmp/evil.sh")],
+            &revision,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "fs_name_invalid");
+        assert_eq!(
+            std::fs::read_to_string(v.0.join(".git/config")).unwrap(),
+            "[core]\n"
+        );
+        assert_eq!(
+            file_revision(&v.0, ".git/config").unwrap(),
+            revision,
+            "拒绝发生在写盘之前：revision 不变"
+        );
+
+        // 普通既有文件不受影响。
+        let note_revision = file_revision(&v.0, "note.md").unwrap();
+        fs_patch_file(
+            &v.0,
+            &v.policy(),
+            "note.md",
+            &[edit("hello", "patched")],
+            &note_revision,
+        )
+        .unwrap();
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# patched");
+
+        // 配置把 `.git` 移出 hidden 档 ⇒ 它就是普通文件。
+        let visible_policy = IgnorePolicy::load(
+            &v.0,
+            &[],
+            &BTreeMap::from([(".DS_Store".to_string(), IgnoreTier::Hidden)]),
+        );
+        fs_patch_file(
+            &v.0,
+            &visible_policy,
+            ".git/config",
+            &[edit("[core]", "[core]\n\tfsmonitor = /tmp/evil.sh")],
+            &revision,
+        )
+        .unwrap();
+        assert_eq!(
+            read_text_file(&v.0, ".git/config").unwrap(),
+            "[core]\n\tfsmonitor = /tmp/evil.sh\n"
+        );
+    }
+
     /// 0 次 / 多次命中都拒绝**整组**编辑：文件逐字节不变、revision 不变，错误里带命中次数与
     /// 编辑序号（回送模型即可据此重试）。
     #[test]
@@ -3675,18 +3793,33 @@ mod tests {
         let before = std::fs::read(v.0.join("doc.md")).unwrap();
         let revision = file_revision(&v.0, "doc.md").unwrap();
 
-        let err = fs_patch_file(&v.0, "doc.md", &[edit("missing", "x")], &revision).unwrap_err();
+        let err = fs_patch_file(
+            &v.0,
+            &v.policy(),
+            "doc.md",
+            &[edit("missing", "x")],
+            &revision,
+        )
+        .unwrap_err();
         assert_eq!(err.code, "patch_not_found");
         assert_eq!(err.params.get("count").map(String::as_str), Some("0"));
         assert_eq!(err.params.get("index").map(String::as_str), Some("1"));
 
-        let err = fs_patch_file(&v.0, "doc.md", &[edit("alpha", "x")], &revision).unwrap_err();
+        let err = fs_patch_file(
+            &v.0,
+            &v.policy(),
+            "doc.md",
+            &[edit("alpha", "x")],
+            &revision,
+        )
+        .unwrap_err();
         assert_eq!(err.code, "patch_not_unique");
         assert_eq!(err.params.get("count").map(String::as_str), Some("2"));
 
         // 合法编辑在前、非法编辑在后：整组拒绝，绝不落半截（前一条不许已经写进文件）
         let err = fs_patch_file(
             &v.0,
+            &v.policy(),
             "doc.md",
             &[edit("beta", "B"), edit("nope", "x")],
             &revision,
@@ -3708,7 +3841,14 @@ mod tests {
     #[test]
     fn fs_patch_file_rejects_stale_revision() {
         let v = TempVault::with_fixture();
-        let err = fs_patch_file(&v.0, "note.md", &[edit("hello", "hi")], "deadbeef").unwrap_err();
+        let err = fs_patch_file(
+            &v.0,
+            &v.policy(),
+            "note.md",
+            &[edit("hello", "hi")],
+            "deadbeef",
+        )
+        .unwrap_err();
         assert_eq!(err.code, "document_conflict");
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
     }
@@ -3725,7 +3865,7 @@ mod tests {
             "bundle.zip",
             "song.mp3",
         ] {
-            let err = fs_patch_file(&v.0, rel, &[edit("a", "b")], "any").unwrap_err();
+            let err = fs_patch_file(&v.0, &v.policy(), rel, &[edit("a", "b")], "any").unwrap_err();
             assert_eq!(err.code, "fs_read_only", "{rel} 必须被拒");
         }
     }
@@ -3736,13 +3876,13 @@ mod tests {
         let v = TempVault::with_fixture();
         let revision = file_revision(&v.0, "note.md").unwrap();
         assert_eq!(
-            fs_patch_file(&v.0, "note.md", &[], &revision)
+            fs_patch_file(&v.0, &v.policy(), "note.md", &[], &revision)
                 .unwrap_err()
                 .code,
             "patch_invalid"
         );
         assert_eq!(
-            fs_patch_file(&v.0, "note.md", &[edit("", "x")], &revision)
+            fs_patch_file(&v.0, &v.policy(), "note.md", &[edit("", "x")], &revision)
                 .unwrap_err()
                 .code,
             "patch_invalid"
@@ -3758,6 +3898,7 @@ mod tests {
         let revision = file_revision(&v.0, "doc.md").unwrap();
         fs_patch_file(
             &v.0,
+            &v.policy(),
             "doc.md",
             &[edit("alpha", "beta"), edit("beta", "gamma")],
             &revision,
@@ -3772,7 +3913,8 @@ mod tests {
         let v = TempVault::with_fixture();
         std::fs::write(v.0.join("doc.md"), [0xff, 0xfe, 0x00]).unwrap();
         let revision = file_revision(&v.0, "doc.md").unwrap();
-        let err = fs_patch_file(&v.0, "doc.md", &[edit("a", "b")], &revision).unwrap_err();
+        let err =
+            fs_patch_file(&v.0, &v.policy(), "doc.md", &[edit("a", "b")], &revision).unwrap_err();
         assert_eq!(err.code, "fs_invalid_utf8");
     }
 
@@ -3785,7 +3927,14 @@ mod tests {
         let ghost = v.0.join(format!(".note.md.lumir-{}", std::process::id()));
         std::fs::write(&ghost, "ghost").unwrap();
         let revision = file_revision(&v.0, "note.md").unwrap();
-        fs_patch_file(&v.0, "note.md", &[edit("hello", "patched")], &revision).unwrap();
+        fs_patch_file(
+            &v.0,
+            &v.policy(),
+            "note.md",
+            &[edit("hello", "patched")],
+            &revision,
+        )
+        .unwrap();
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# patched");
         assert!(ghost.exists(), "写入方 MUST NOT 删除不是自己创建的残留");
     }
@@ -3808,7 +3957,14 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(500));
         let revision = file_revision(&v.0, "note.md").unwrap();
-        fs_patch_file(&v.0, "note.md", &[edit("hello", "patched")], &revision).unwrap();
+        fs_patch_file(
+            &v.0,
+            &v.policy(),
+            "note.md",
+            &[edit("hello", "patched")],
+            &revision,
+        )
+        .unwrap();
 
         let batch = rx
             .recv_timeout(Duration::from_secs(5))
@@ -3835,11 +3991,23 @@ mod tests {
     fn fs_patch_file_window_guard_does_not_false_report_on_normal_patches() {
         let v = TempVault::with_fixture();
         let first = file_revision(&v.0, "note.md").unwrap();
-        let after_first =
-            fs_patch_file(&v.0, "note.md", &[edit("hello", "first")], &first).unwrap();
+        let after_first = fs_patch_file(
+            &v.0,
+            &v.policy(),
+            "note.md",
+            &[edit("hello", "first")],
+            &first,
+        )
+        .unwrap();
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# first");
-        let after_second =
-            fs_patch_file(&v.0, "note.md", &[edit("first", "second")], &after_first).unwrap();
+        let after_second = fs_patch_file(
+            &v.0,
+            &v.policy(),
+            "note.md",
+            &[edit("first", "second")],
+            &after_first,
+        )
+        .unwrap();
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# second");
         assert_ne!(after_first, after_second, "每次 patch 后 revision 都应前进");
         assert_eq!(after_second, file_revision(&v.0, "note.md").unwrap());
@@ -3907,7 +4075,7 @@ mod tests {
                 }
             });
 
-            let result = fs_patch_file(&v.0, REL, &[edit("旧的", "新的")], &revision);
+            let result = fs_patch_file(&v.0, &v.policy(), REL, &[edit("旧的", "新的")], &revision);
             stopped.store(true, Ordering::Release);
             watcher.join().unwrap();
             let swapped = swapped.load(Ordering::Acquire);
@@ -4356,22 +4524,78 @@ mod tests {
     fn trash_moves_entry_out_of_vault_and_reports_human_errors() {
         let v = TempVault::with_fixture();
         let root = &v.0;
+        let policy = v.policy();
         let rel = format!("lumir-trash-test-{}.txt", std::process::id());
         let victim = root.join(&rel);
         std::fs::write(&victim, "").unwrap();
-        trash_entry(root, &rel).expect("移到废纸篓");
+        trash_entry(root, &policy, &rel).expect("移到废纸篓");
         assert!(!victim.exists(), "入篓后 vault 内不应再有该条目");
         assert!(
             root.join("note.md").exists(),
             "只动目标条目，vault 其余内容不变"
         );
         // 错误路径一：目标不存在（菜单开着期间被外部移走）
-        let err = trash_entry(root, "missing.md").unwrap_err();
+        let err = trash_entry(root, &policy, "missing.md").unwrap_err();
         assert_eq!(err.code, "fs_not_found");
         // 错误路径二：空路径（防御性，vault 根永不进废纸篓）
-        let err = trash_entry(root, "").unwrap_err();
+        let err = trash_entry(root, &policy, "").unwrap_err();
         assert_eq!(err.code, "fs_path_invalid");
         assert!(root.join("note.md").exists());
+    }
+
+    /// `hidden` 档的既有条目（finding 20261023 的同款面）：删除 / 改名 / 移动的**源**都不得
+    /// 越过可见集。树里没有行的条目没有正当操作入口——`vault_delete` 今天走
+    /// `resolve_in_vault` 不查 hidden，`.git` 整个目录因此可以被一条免批准以外的调用搬走。
+    ///
+    /// 「配置成可见即普通条目」一并断言：判定随策略走（`validate_not_hidden` 复用
+    /// [`IgnorePolicy::hidden_hit`]），MUST NOT 是硬编码 `.git` 名单。
+    #[test]
+    fn existing_path_operations_refuse_hidden_tier_targets() {
+        let v = TempVault::with_fixture();
+        let root = &v.0;
+        let policy = v.policy();
+        // 任意深度的 hidden 段同样命中（祖先段传染），不只是根下的 `.git`
+        std::fs::create_dir_all(root.join("sub/.git")).unwrap();
+        std::fs::write(root.join("sub/.git/x.md"), "x").unwrap();
+        for rel in [".git/HEAD", ".DS_Store", "sub/.git/x.md"] {
+            let err = trash_entry(root, &policy, rel).unwrap_err();
+            assert_eq!(err.code, "fs_name_invalid", "trash: {rel}");
+        }
+        // 连目录带子孙也没动：HEAD 内容原样，`.DS_Store` 字节原样
+        assert_eq!(
+            std::fs::read_to_string(root.join(".git/HEAD")).unwrap(),
+            "ref"
+        );
+        assert!(root.join(".DS_Store").exists());
+        assert_eq!(
+            rename_entry(root, &policy, ".git/HEAD", "HEAD2")
+                .unwrap_err()
+                .code,
+            "fs_name_invalid"
+        );
+        assert_eq!(
+            fs_move_entry(root, &policy, ".git/HEAD", "hooked.txt")
+                .unwrap_err()
+                .code,
+            "fs_name_invalid"
+        );
+        // 移**进**隐藏目录同样拒绝（目标父段经 `matched_path_or_any_parents` 命中）
+        assert_eq!(
+            fs_move_entry(root, &policy, "note.md", ".git/objects/info")
+                .unwrap_err()
+                .code,
+            "fs_name_invalid"
+        );
+        assert!(root.join(".git/HEAD").exists() && root.join("note.md").exists());
+
+        // 用户把 `.git` 配置成可见：它按普通条目处理，写操作恢复可用。
+        let visible_policy = IgnorePolicy::load(
+            root,
+            &[],
+            &BTreeMap::from([(".DS_Store".to_string(), IgnoreTier::Hidden)]),
+        );
+        rename_entry(root, &visible_policy, ".git/HEAD", "HEAD2").expect("可见后即可改名");
+        assert!(root.join(".git/HEAD2").exists());
     }
 
     #[cfg(unix)]
@@ -4381,7 +4605,7 @@ mod tests {
         let root = &v.0;
         // vault 内指向 vault 根的 symlink：resolve_in_vault 归一后正好是根，必须挡住
         std::os::unix::fs::symlink(root, root.join("loop")).unwrap();
-        let err = trash_entry(root, "loop").unwrap_err();
+        let err = trash_entry(root, &v.policy(), "loop").unwrap_err();
         assert_eq!(err.code, "fs_trash_failed", "vault 根本身永不进废纸篓");
         assert!(root.join("note.md").exists());
     }

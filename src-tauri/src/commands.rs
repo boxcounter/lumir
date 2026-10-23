@@ -1421,13 +1421,14 @@ pub fn create_file(
 
 /// 删除 = **移到系统废纸篓**（裁决点 2）：删除必须可恢复，MUST NOT 提供永久删除入口。
 /// 目录连子孙整棵入篓；失败返回 `fs_trash_failed` 且提示明示「未删除任何内容」。
+/// `hidden` 档命中的路径被拒（`fs_name_invalid`，判定在 `fs_io::trash_entry` 里）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn fs_trash_entry(
     state: tauri::State<'_, VaultState>,
     rel: String,
 ) -> Result<(), CommandError> {
-    let root = state.root()?;
-    fs_io::trash_entry(&root, &rel)
+    let (root, policy) = state.root_and_policy()?;
+    fs_io::trash_entry(&root, &policy, &rel)
 }
 
 /// 同目录改末段名（裁决点 3 的落地：树内联编辑提交后调它）。目标已存在返回
