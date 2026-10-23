@@ -73,14 +73,19 @@
 - [x] 4.3 `bash scripts/gate.sh quick` 全绿，照抄 `GATE RESULT` 原文行与退出码
       —— `GATE RESULT: 10/10 PASS（SKIP 1）`，退出码 0；SKIP 项为 `tsc-visual`
       （当时本 worktree 未装 tests/visual 依赖，随后装齐并单独跑通 `tsc --noEmit`）
-- [ ] 4.4 `bash scripts/gate.sh visual` 全绿；浮层元素级基线**重截并逐张核对**（新增一列按钮 =
+- [x] 4.4 `bash scripts/gate.sh visual` 全绿；浮层元素级基线**重截并逐张核对**（新增一列按钮 =
       真实像素变化，容差会吞小元素；基线过目是人肉裁决点）
       —— 实现期实测（`LUMIR_VISUAL_PORT=4283 bash scripts/visual/run.sh`，全量）：**728 passed /
       1 skipped，退出码 0**（含 `isolation-runs` 2/2，另单独跑过）。但**这正是容差吞变化的现场**：
       逐像素比对旧基线与新渲染，差异 68 / 79360 = 0.00086 < 0.001 的上限（允许 79 px），两块差异各
       7×7，落在 `y72..78 x300..306` 与 `y176..182 x300..306`（= 非当前那两行行尾的 `×`，当前行
-      没有）。取证：before / after / diff 三张图 + 确认态渲染图在 `.local/reviews/M646/`（git 外），
-      基线重截**待人肉裁决**（未擅自 `--update`）
+      没有）。取证：before / after / diff 三张图 + 确认态渲染图在 `.local/reviews/M646/`（git 外）。
+      **Alex 2026-10-23 裁决「认可」该基线更新**，已重截
+      `tests/visual/baselines/mv-vault-switcher.spec.ts-snapshots/vault-popover-chromium-darwin.png`
+      （与送审候选图逐字节相同，sha256 `34a4a6f1…`）：`=changed` 通道不会刷新这张（旧基线在容差内
+      算「未变化」），故按 `-g "浮层：当前项" --update-snapshots=all` 只跑含该断言的那条用例，
+      **其余基线一张未动**（`vault-entry` 时间戳不变、提交里只有这一个基线文件）；重截后复跑
+      `run.sh scenes/mv-vault-switcher.spec.ts` → **7 passed**
 - [ ] 4.5 真机场景 `scripts/acceptance/scenarios/226-vault-remove.md` 落地并 PASS（design §4 七步；
       含直读盘断言「vault 目录内文件不变」与撤销往返）—— 场景已落地且 `--check` PASS；
       真机跑批需机器窗口，归 tower 排期
