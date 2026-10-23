@@ -767,3 +767,33 @@ test("语义命名改写引用后的基准推进：dirty 只换基准，clean �
   assert.equal(rig.editor.handle.sessionForPath("c.md")!.state.doc.toString(), "# C 改");
   stopTimers(rig);
 });
+
+test("图片会话（M629）：⌘S / 保存全部脏标签都零 document_write，也不给「尚未可保存」提示", async () => {
+  const rig = createRig();
+  rig.backend.handle("document_save", (args) => `rev-${args.path}`);
+  // 图片会话：生产中恒 clean（结构性只读、不进编辑器视图），这里把 dirty 人为置真——
+  // 判据若被删掉，保存链路会落进 saveBaseline 的 null 分支弹「尚未可保存」（D234），
+  // 那对一张图片是一句错话；两条提示断言因此都有区分度（写盘数本来就不会变，单看它不够）。
+  const shot = rig.editor.open("shot.png", "", { kind: "image" });
+  shot.dirty = true;
+
+  await rig.controller.save();
+  assert.equal(rig.backend.countOf("document_save"), 0, "图片会话上 ⌘S 零 document_write");
+  assert.equal(rig.toasts.live().length, 0, "MUST NOT 给图片会话弹「尚未可保存」");
+
+  const ok = await rig.controller.saveAllDirty();
+  assert.equal(rig.backend.countOf("document_save"), 0, "图片会话不进「保存全部脏标签」");
+  assert.equal(rig.toasts.live().length, 0, "同上：不产生保存侧提示");
+  assert.equal(ok, true, "图片会话不是待保存项，不拦「保存并切换」的出口判据");
+
+  // 对照：同一轮里的文本脏标签照常保存——判据没有把整类保存一起挡掉。
+  rig.editor.open("a.md", "# A");
+  rig.controller.noteOpened("a.md", "rev-1");
+  rig.editor.edit("a.md", "# A 改");
+  await rig.controller.saveAllDirty();
+  assert.deepEqual(
+    rig.backend.argsOf("document_save").map((args) => args.path),
+    ["a.md"],
+  );
+  stopTimers(rig);
+});

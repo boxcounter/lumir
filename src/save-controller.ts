@@ -22,6 +22,7 @@ import type { FsChangeKind } from "./bindings/FsChangeKind";
 import type { ReadSnapshot } from "./bindings/ReadSnapshot";
 import { logEvent } from "./diagnostics";
 import type { EditorHandle } from "./editor";
+import { isDocSession } from "./session-kind";
 import {
   createFile,
   documentSave,
@@ -515,9 +516,15 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     for (const session of editor.sessions()) {
       const path = session.path;
       if (path === undefined || !session.dirty) continue;
+      // 图片会话（M629）：不进保存链路。不写盘是**结构**保证（图片会话没有磁盘 revision，
+      // `saveBaseline` 返回 null），但这里仍显式挡住——否则走进去只会拿到一条「尚未可保存」
+      // 的人话提示（D234），那对图片是一句错话（spec：图片标签不产生写入、不出现保存提示）。
+      if (!isDocSession(session)) continue;
       await saveDocument(path);
     }
-    return !editor.sessions().some((session) => session.path !== undefined && session.dirty);
+    return !editor
+      .sessions()
+      .some((session) => session.path !== undefined && session.dirty && isDocSession(session));
   }
 
   /** 保存冲突的恢复提示：两个动作分别对应「放弃本地」与「覆盖磁盘」。sticky：
@@ -922,7 +929,12 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     noteOpened,
     noteVaultReset,
     save: async () => {
-      const path = displayedPath();
+      const session = editor.activeSession();
+      // 图片会话（M629）：⌘S 没有任何落点（attachment-display spec 的「图片标签不产生写入」）。
+      // 与 saveAllDirty 同一条理由：不写盘是结构保证，这里挡的是「尚未可保存」那条错误的
+      // 人话提示（D234）——对一张图片说「尚未可保存」是假信息。
+      if (!isDocSession(session)) return;
+      const path = session.path;
       if (path === undefined) {
         if (editor.isDirty()) reportUnsaveable(path);
         return;

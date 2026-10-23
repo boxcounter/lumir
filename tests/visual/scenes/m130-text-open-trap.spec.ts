@@ -9,8 +9,9 @@ import { DEMO_VAULT, dirtyReports, documentWrites, fileText, stubTauri } from ".
 //
 // **本 change 的新口径**（注册表全量文本类可编辑）：md / code / text 三族以**可编辑** code
 // 模式打开（纯文本 + 既有语法高亮，无 live preview 装饰层），撤销 / dirty / Cmd+S / 崩溃备份
-// / 冲突恢复与 md 走同一条链路（`saveDocument` + `saveBaseline` 的 editable 闸）。image / binary
-// 类不进编辑器，维持「暂不支持预览」。
+// / 冲突恢复与 md 走同一条链路（`saveDocument` + `saveBaseline` 的 editable 闸）。binary 类不进
+// 编辑器，维持「暂不支持预览」；image 类自 M629（change add-image-file-preview）起进**图片查看面**
+// ——它的落点由 `m629-image-tab-preview.spec.ts` 覆盖，本场景只留 binary 这一档。
 //
 // **断言口径**（REVIEW.md 「断言等价于子串 / 读不到当成空」条）：每条正向断言都配一次**必须让它 FAIL 的反向输入**——
 // 打字前先断言标记文本不在文档里（旧口径下它永远不会出现），键入后断言**回读的文档文本**与
@@ -37,7 +38,7 @@ async function tokenColor(page: import("@playwright/test").Page, token: string):
 
 /** 覆盖矩阵：未知扩展（txt/log/csv/xyz）、原两套注册表的差集（hpp/bash/zsh/php/
  *  svelte 与 cc/scss）、dotfile、无扩展名文件（LICENSE/Makefile）与 md 对照。
- *  `logo.png` 是 image 类（分流证据），`bundle.zip` 是 binary 类。 */
+ *  `logo.png` 是 image 类（M629 起走图片查看面，本场景不点它），`bundle.zip` 是 binary 类。 */
 const FILES: Record<string, string> = {
   "readme.md": "# 真 Markdown\n\n正文段落。\n",
   "notes.txt": "# 不是标题\n\n纯文本原文。\n",
@@ -63,11 +64,15 @@ const VAULT = {
   files: FILES,
 };
 
-/** image / binary 类：不进编辑器（文件树点击给「暂不支持预览」）。 */
-const NON_EDITOR = ["logo.png", "bundle.zip"];
+/** binary 类：不进编辑器（文件树点击给「暂不支持预览」）。image 类不再属于这一档
+ *  （M629：图片走查看面，见 change add-image-file-preview），因此不在这里点。 */
+const NON_EDITOR = ["bundle.zip"];
 
-/** 注册表文本类：可编辑 code 模式打开（M130 前它们是「只读 code」，更早前是「可编辑 md」）。 */
-const EDITABLE = Object.keys(FILES).filter((path) => path !== "readme.md" && !NON_EDITOR.includes(path));
+/** 注册表文本类：可编辑 code 模式打开（M130 前它们是「只读 code」，更早前是「可编辑 md」）。
+ *  排除 md 对照、binary 与 image（图片 M629 起有自己的查看面，不是文本）。 */
+const EDITABLE = Object.keys(FILES).filter(
+  (path) => path !== "readme.md" && path !== "logo.png" && !NON_EDITOR.includes(path),
+);
 
 test("非 md 文本文件一律以可编辑 code 模式打开（可编辑、无只读态、有行号）", async ({ page }) => {
   await stubTauri(page, VAULT);
@@ -195,7 +200,7 @@ test("注册表差集的裁决落地：hpp/cc 走 C++、bash/zsh 走 shell、php
   await expect.poll(() => tokenColor(page, "echo")).toBe(null);
 });
 
-test("image / binary 仍不进编辑器：点击给「暂不支持预览」，不产生会话与 dirty", async ({ page }) => {
+test("binary 仍不进编辑器：点击给「暂不支持预览」，不产生会话与 dirty", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   // 装载 vault 但一个标签都没有 = M163 的空 vault 首入态：D107 的引导层盖住正文

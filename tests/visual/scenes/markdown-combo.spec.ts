@@ -45,8 +45,8 @@ const REFS = {
 } as const;
 
 /**
- * `fs_read_attachment` 的桩：tauri-stub 的 invoke 路由里没有这个命令（缺省按 unknown_command
- * 抛错 → 图片一律走「读取失败」占位），本场景要验真实渲染，因此在 stub 之后包一层。
+ * `fs_read_attachment` 的桩：tauri-stub **自 M629 起**路由这个命令（缺省返回合成 1×1 PNG）；
+ * 本场景要的是各 fixture 的真实字节与失败注入，因此在 stub 之后包一层覆盖应答。
  * 必须在 `page.goto` 之前调用（addInitScript 按注册顺序执行，stubTauri 在前）。
  *
  * 每次调用在 `window.__lumirAttachmentReads` 上自增（M184 的「打开遮罩不重读字节」判据要读它：

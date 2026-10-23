@@ -1,6 +1,9 @@
 import { createShell } from "./shell";
 import { createEditor } from "./editor";
+import { isDocSession, textModeOf } from "./editor";
 import type { EditorHandle, EditorSession } from "./editor";
+import { createImageViewer, imageModelineText } from "./image-viewer";
+import type { ImageInfo, ImageViewerHandle } from "./image-viewer";
 import type { EditorView } from "@codemirror/view";
 import { applyKeyOverrides, BLOCK_SCROLL_CLASS, COMPOSER_TEXT_COMMAND_IDS, EDITOR_COMMAND_IDS, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, EditorCommandId, KeyBinding, KeyOverrides } from "./keys";
@@ -11,7 +14,7 @@ import { DEFAULT_FONT_SIZE } from "./typography";
 import type { TextScaleDirection, TypographySettings } from "./typography";
 import type { EditorMode } from "./bindings/EditorMode";
 import type { MarkdownLineNumbers } from "./bindings/MarkdownLineNumbers";
-import { baseName, createFileTree, openKind, patchAttachmentPaths, vaultAbsolutePath } from "./tree";
+import { baseName, createFileTree, linkableVaultPaths, openKind, patchAttachmentPaths, shellPlanOf, vaultAbsolutePath } from "./tree";
 import type { InlineEditRequest, OpenKind } from "./tree";
 import {
   attachmentSemanticName,
@@ -200,6 +203,9 @@ interface PaneAssembly {
   guideEl: HTMLElement | null;
   /** 该 pane 的标签条实例；root pane 在下方 tabs 装配块就位，pane B 在 split 时就位。 */
   tabs: TabsHandle | undefined;
+  /** 该 pane 的图片查看面（M629）：**惰性建立**——首次有图片标签成为该 pane 的前台时才建，
+   *  从未打开过图片的 pane 恒为 undefined（打开文档的路径上零新增 DOM）。 */
+  imageViewer?: ImageViewerHandle;
   /** 该 pane 的订阅与监听的退订函数（disposePaneHandle 时整批跑掉）。 */
   unsubs: Array<() => void>;
 }
@@ -522,6 +528,9 @@ function moveSessionToPane(session: EditorSession, targetPaneId: PaneId): void {
   paneLayout.moveTab(session, targetPaneId);
   (owner?.[1].handle as { kind: "doc"; editor: EditorHandle } | undefined)?.editor.closeSession(session); // 源实例摘除（不销毁 state；前台让位给邻居）
   targetEditor.adoptSession(session); // 目标实例接管原 state（不重建）
+  // 图片会话（M629）：字节归源 pane 的查看面（D3），移动即释放——目标 pane 的查看面按新
+  // 落点重读一次。不回落标志的话，目标 pane 的同步点会以为「已装载」而什么都不显示。
+  if (!isDocSession(session)) targetEditor.setSessionLoaded(session, false);
   renderAllTabStrips();
   activatePane(targetPaneId);
   targetEditor.activateSession(session); // view.setState(原 state)：撤销史 / 选区 / 滚动随行
@@ -930,6 +939,16 @@ const editor: EditorHandle = {
   contentWidth: () => activeEditor().contentWidth(),
   // 新会话落在**活跃 pane**（tasks 2.10 / 4.2 的打开落点）。
   createSession: () => activeEditor().createSession(),
+  // 图片会话同样落活跃 pane（M629：图片标签与文本标签的落点口径一致）。
+  createImageSession: (path, loaded) => activeEditor().createImageSession(path, loaded),
+  // 归属 pane 路由：装载标志属于会话本身，与 reloadSession / closeSession 同一条路由口径。
+  setSessionLoaded: (session, loaded) => {
+    const owner = paneEntryOfSession(session)?.[1].handle;
+    ((owner?.kind === "doc" ? owner.editor : undefined) ?? activeEditor()).setSessionLoaded(
+      session,
+      loaded,
+    );
+  },
   // 复合句柄的这个方法恒落 root pane（EditorHandle 接口要求实现它）。**会话恢复不再走它**：
   // M318 起按 pane 恢复，恢复路径直接用目标 pane 的句柄（见 switcher deps 的 createShell）。
   // 新 pane 的空白档由 split 自己的 reset 提供。
@@ -1036,15 +1055,10 @@ const editor: EditorHandle = {
 };
 
 // vault 文件索引：vault 内全部文件（不含目录 / 惰性条目）的 vault 相对路径。两个消费者：
-// 附件解析（resolveByName 闭包活读它）与 harness 面板的路径链接存在性校验（经
-// setPathLinkIndex 下发；面板只认可打开的文本类文件，过滤在装配层做）。vault 切换 / watch
-// 增量就地更新数组，无需重注。
+// 附件解析（`resolveByName` 闭包活读它）与 harness 面板的路径链接存在性校验（经
+// `setPathLinkIndex` 下发；面板只认可打开的文本类文件，过滤的判据在 `src/tree.ts` 的
+// `linkableVaultPaths`——单一实现，本文件只调用）。
 let vaultFilePaths: string[] = [];
-/** 面板可点路径集：vault 文件索引里**可打开**的那部分（图片 / 二进制点开只会得到既有的
- *  「暂不支持预览」，是死路，不链接化——与文件树的打开分类共用同一份注册表）。 */
-function linkableVaultPaths(paths: readonly string[]): string[] {
-  return paths.filter((path) => openKind(path) !== "binary");
-}
 /** 是否已有 vault 装载成功；onOpenVault 失败时据此决定空态还是浮条提示。 */
 let vaultLoaded = false;
 /** 已装载的 vault 根（`vaultLoaded` 为真时有效）：启动恢复有两条入口（完成信号与首次
@@ -1062,16 +1076,20 @@ let vaultName = "";
 // 原地换「图片读取失败」占位，都不抛错。MIME 取扩展名注册表（M130 收敛后
 // main.ts 不再自维护一份 IMAGE_MIME）。
 // M316 起全部能力注入走 injectEach 注册表（现存 pane 立即施加、新 pane 重放，见其上注释）。
-injectEach((handle) =>
-  handle.setAttachmentProvider({
-    resolveByName: (name) => resolveByNameUnique(vaultFilePaths, name),
-    async readDataUrl(path) {
-      const base64 = await fsReadAttachment(path);
-      const mime = mimeTypeOf(extensionOf(path)) ?? "application/octet-stream";
-      return `data:${mime};base64,${base64}`;
-    },
-  }),
-);
+//
+// M629：provider 提成模块级单例而不是在注入闭包里现造——图片查看面（`src/image-viewer.ts`）
+// 与文档内图片引用必须是**同一条**字节供给（同一 `fs_read_attachment` + 同一 `mimeTypeOf`
+// 拼 data: URL，REVIEW.md「同一语义两处真源」条）。索引闭包活读 `vaultFilePaths`，vault
+// 切换 / watch 增量就地更新，无需重注。
+const attachmentProvider = {
+  resolveByName: (name: string) => resolveByNameUnique(vaultFilePaths, name),
+  async readDataUrl(path: string): Promise<string> {
+    const base64 = await fsReadAttachment(path);
+    const mime = mimeTypeOf(extensionOf(path)) ?? "application/octet-stream";
+    return `data:${mime};base64,${base64}`;
+  },
+};
+injectEach((handle) => handle.setAttachmentProvider(attachmentProvider));
 
 // 图片放大查看（M184，双击内联图片 → 应用内遮罩）：能力与 DOM 在 src/lightbox.ts，装配侧只给
 // 它两样看不到的东西——挂点（app-shell 根，与键位面板同款）与关闭后把焦点交还编辑器。
@@ -1084,6 +1102,67 @@ const lightbox = createImageLightbox({
   restoreFocus: () => editor.focusPreservingReadingPosition(),
 });
 injectEach((handle) => handle.setLightbox(lightbox));
+
+// ---------------------------------------------------------------------------
+// 图片查看面（M629，change add-image-file-preview）：每个 doc pane 一个**惰性建立**的
+// `.image-viewer`（模块与三态在 src/image-viewer.ts）。
+//
+// 驱动点只有一个：`syncActiveDocument` 调 `syncImageViewer`，按**每个 pane 的前台会话**判
+// 在场——图片标签成为前台 ⇒ 显示查看面并按需读一次字节；前台换成文本会话 ⇒ 隐藏并释放 src
+// （D3：切回时重读一次）。
+//
+// 装载标志（`EditorSession.loaded`）是「字节是否已在场」的账本：false ⇒ 需要一次读取
+//（首次前台化 / 切回重读）；true ⇒ 终态（成功或失败占位），同步点不再重读。释放时回落 false。
+//
+// 作用域说明（如实登记）：D3 的「只保留激活图片」以 **pane** 为作用域——分栏时每个 doc pane
+// 各自保留自己前台的那一张（至多两张），后台标签一张都不留。与 `syncActiveDocument` 的
+// 「前台」定义一致（活跃 pane 的前台标签）。
+// ---------------------------------------------------------------------------
+
+/** 该 pane 的查看面（惰性建立：首次有图片标签成为该 pane 前台时才挂进 mountEl）。 */
+function ensureImageViewer(assembly: PaneAssembly): ImageViewerHandle {
+  if (assembly.imageViewer !== undefined) return assembly.imageViewer;
+  const viewer = createImageViewer(assembly.mountEl, {
+    // 字节供给与文档内图片引用**同一条**（模块级 attachmentProvider，见其声明处）。
+    readDataUrl: (path) => attachmentProvider.readDataUrl(path),
+    lightbox: () => lightbox,
+    onChange: () => syncModelineMeta(),
+  });
+  assembly.imageViewer = viewer;
+  return viewer;
+}
+
+/** 释放一个 pane 的查看面（前台换成文本会话 / 关掉图片标签）：撤下 `<img>`、置空 src，
+ *  并把该会话的装载标志回落——切回时重读一次（D3）。 */
+function releaseImageViewer(handle: EditorHandle, viewer: ImageViewerHandle): void {
+  const released = viewer.release();
+  if (released === undefined) return;
+  const session = handle.sessionForPath(released);
+  if (session !== undefined && !isDocSession(session)) handle.setSessionLoaded(session, false);
+}
+
+/** 查看面的在场 / 离场与字节装载（唯一同步点的一部分，见上方模块注释）。 */
+function syncImageViewer(): void {
+  for (const assembly of paneAssemblies.values()) {
+    if (assembly.handle.kind !== "doc") continue;
+    const handle = assembly.handle.editor;
+    const session = handle.activeSession();
+    if (!isDocSession(session) && session.path !== undefined) {
+      const viewer = ensureImageViewer(assembly);
+      // 装载标志为真**且**查看面正是这一张 ⇒ 终态（含失败占位），同步点不重读。
+      // 两头都要判：标志只说明「读过一次」，路径改名（remapSessionPaths）后查看面还停在
+      // 旧路径的那张图上——那时必须按新路径重读。
+      if (session.loaded && viewer.currentPath() === session.path) continue;
+      const path = session.path;
+      void viewer.show(path).then(() => {
+        handle.setSessionLoaded(session, true);
+        syncModelineMeta();
+      });
+      continue;
+    }
+    if (assembly.imageViewer !== undefined) releaseImageViewer(handle, assembly.imageViewer);
+  }
+}
 
 // 表格放大全屏查看（M240，D3 双入口：命令 + 表格 hover 触发钮）：能力与 DOM 在
 // src/table-fullscreen.ts，装配侧只给它两样看不到的东西——挂点（与 lightbox / 键位面板同款）
@@ -1453,13 +1532,19 @@ const toc = createToc({
   view: () => editor.view,
   indicator: shell.modelineSection,
   mount: shell.modeline,
-  hasFile: () => save.displayedPath() !== undefined,
+  // 图片会话（M629）不是文本文档：没有大纲可给，指示段不显示（与「无当前文件」同一条出口）。
+  // ⌘⇧O 的入口在命令层按 isDocSession 挡掉（见命令表的 toc.toggle）。
+  hasFile: () => {
+    const session = editor.activeSession();
+    return isDocSession(session) && session.path !== undefined;
+  },
   // 活读前台会话的模式与路径（切标签 / 切 vault 后自动跟上）：语言名只在这里派生一次，
-  // toc 侧不再自己从路径推。
+  // toc 侧不再自己从路径推。模式经 textModeOf 投影——toc 只认 md / code 两档（图片会话
+  // 永远走不到这里，hasFile 已为假）。
   context: () => {
     const session = editor.activeSession();
     return {
-      mode: session.mode,
+      mode: textModeOf(session.mode),
       language: session.path === undefined ? null : codeLanguageOfPath(session.path),
     };
   },
@@ -1638,13 +1723,19 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   applyPaneCount: applyStoredLayout,
   // 会话恢复的第一步（M283 的 3.2）：**当帧建壳**——为每个条目建一个「有路径、内容未装载」的
   // 标签，落进**它自己所属的那个 doc pane**（M318：按 pane 恢复；`pane` 是 doc pane 序数——
-  // harness 在场时它不占序数位）。不可打开的文件类（image/binary）不成壳，交回 store 计入
-  // 跳过数（与它此前必然装载失败同口径，行为不变）。
+  // harness 在场时它不占序数位）。不可打开的文件类（binary）不成壳，交回 store 计入跳过数
+  //（与它此前必然装载失败同口径，行为不变）。
+  //
+  // 图片（M629，design §1.4）：**放行**，建图片会话（`loaded === false`，不建文本壳）；
+  // 字节装载留到它成为前台（`ensureActiveSessionLoaded` 的图片分支）。恢复失败（文件已被
+  // 删除 / 超过上限）不在这里判——标签照建，失败由查看面显示占位（spec：MUST NOT 静默丢标签）。
   createShell: (path, pane) => {
-    if (openKind(path) === "binary") return false;
+    const plan = shellPlanOf(path);
+    if (plan === "skip") return false;
     const target = docPanes()[pane];
     if (target === undefined || target.handle.kind !== "doc") return false;
-    target.handle.editor.createShellSession(path);
+    if (plan === "image") target.handle.editor.createImageSession(path);
+    else target.handle.editor.createShellSession(path);
     return true;
   },
   // 壳建齐的一拍把标签栏刷成完整列表（`syncActiveDocument` 是渲染标签栏的唯一落点）。
@@ -2050,7 +2141,12 @@ async function submitInlineEdit(request: InlineEditRequest): Promise<void> {
 
 /** 阅读位置的存储。`activePath` 与标签会话取同一份（前台标签是哪一个），不再各自存副本。 */
 const readingPositions = createReadingPositionStore({
-  activePath: () => save.displayedPath(),
+  // 阅读位置只记**文本文档**（M629）：图片没有「上次读到哪里」，图片会话对它是空动作
+  // （spec「独立查看 vault 图片文件」的「搜索 / 大纲 / 阅读位置三项为空动作」之一）。
+  activePath: () => {
+    const session = editor.activeSession();
+    return isDocSession(session) ? session.path : undefined;
+  },
   readPosition: () => editor.readScrollPosition(),
   // 装载口径（M280 拆开）：装载复位之后读数取在 scrollTop = 0 上，落点 ≤ 0 即「这条历史就是
   // 篇首」，静默不施加（保 M110 的页首内边距）。运行期那条（切标签 / 交还焦点）的口径不同，
@@ -2106,6 +2202,9 @@ function syncActiveDocument(): void {
   // 挂在这一个同步点上：标签点击 / ⌃⇥ 轮换 / 关标签后的相邻激活 / 树里点开一个已在会话里的
   // 文件，全部经过它——别处不必各埋一个「记得装载」的钩子。
   ensureActiveSessionLoaded();
+  // 图片查看面的在场 / 离场 / 按需读字节（M629）：与「前台会话是谁」同一个同步点——
+  // 切标签、关标签、开图片、跨 pane 切换全部汇到这里，别处不另埋钩子。
+  syncImageViewer();
 }
 
 /** 装载完成后的表现层对齐（打开 / 重载共用）。
@@ -2116,14 +2215,48 @@ function afterLoad(): void {
   syncActiveDocument();
 }
 
+/** 打开一张图片（M629，design §3.2）：命中已开的图片标签则前台化，否则在落点 pane 新建一个
+ *  图片标签。
+ *
+ *  **没有「就地替换前台标签」这一态**：文本会话不能改判成图片会话，而 "current" 意图的两条
+ *  来源（链接跟随 / 另存为）都只指向文本路径（`linkableVaultPaths` 与创建链路只产出 md /
+ *  code / text）——图片一律新开标签，MUST NOT 为了这个意图把一份文本文档顶掉。
+ *
+ *  字节装载不在这里：`syncActiveDocument` 的同步点会经 `syncImageViewer` 让该 pane 的查看面
+ *  读一次（与文档壳的按需装载同一挂点）。恢复失败（文件已删 / 超限）同样落在这里之后——
+ *  标签照建，查看面显示占位。 */
+function openImage(path: string, targetPane?: number): boolean {
+  const existing = editor.sessionForPath(path);
+  if (existing !== undefined) {
+    // 与 openFile 的 existing 分支同一口径：恢复路径的显式落点命中他 pane 已开的同一张图时
+    // 移动到目标 pane。
+    const ownerId = paneEntryOfSession(existing)?.[0];
+    const targetPaneId = targetPane === undefined ? activeDocPane().id : docPanes()[targetPane]?.id;
+    if (targetPaneId !== undefined && ownerId !== undefined && ownerId !== targetPaneId) {
+      moveSessionToPane(existing, targetPaneId);
+    }
+    activateSessionInOwnerPane(existing);
+    showEditor(); // 撤下可能残留的「暂不支持预览」/ 读取错误覆盖层（图片不是二进制）
+    syncActiveDocument();
+    return true;
+  }
+  const pane = targetPane === undefined ? activeDocPane() : docPanes()[targetPane];
+  if (pane === undefined || pane.handle.kind !== "doc") return false;
+  const session = pane.handle.editor.createImageSession(path);
+  activateSessionInOwnerPane(session);
+  showEditor();
+  syncActiveDocument();
+  return true;
+}
+
 // 打开文件：读出文本交给内核装载——模式裁决（以扩展名注册表为唯一事实源：
 // .md/.markdown → md 模式；其余已打开的文件一律 code，含未知扩展与 basename
 // 无点的文件，M130 方向 A）和附件相对路径解析依赖的 currentFilePath 都在内核里完成
 //（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
 //
 // 可编辑性同源于注册表（editable-non-md-files）：md / code / text 三类进可编辑 code/md
-// 模式并登记磁盘 revision；image/binary 按 kind 在下面提前分流（fileClass 的 image/binary
-// 两类的 openKind 都是 "binary"），因此不在这里重复判定。
+// 模式并登记磁盘 revision；image 在下面早于文本装载分流（`openImage`，M629），binary 仍走
+// `loadSessionContent` 里的 D25 分支——两条判定都不在这里重复（`kind` 取 `openKind` 一处分类）。
 //
 // 落点由 intent 决定（M254 起只剩两个取值，预览机制已退场）：
 //   - "current"（**默认值**）：当前标签跟随换文档——文档内链接跟随 / 另存为新文件 /
@@ -2142,7 +2275,7 @@ function afterLoad(): void {
 //（spec：跳过并给一次计数提示）；其余调用方沿用既有表现，不看返回值。
 async function openFile(
   path: string,
-  kind: "md" | "code" | "text" | "binary",
+  kind: OpenKind,
   intent: "new" | "current" = "current",
   quiet = false,
   targetPane?: number,
@@ -2173,6 +2306,10 @@ async function openFile(
       moveSessionToPane(existing, targetPaneId);
     }
   }
+  // 图片文件（M629，design §3.2）：不进文本装载链路——建 / 命中图片标签并前台化，字节装载
+  // 由唯一同步点上的查看面触发。`kind === "binary"` 的 D25 分支逐字不变（PDF / 可执行文件
+  // 仍在 loadSessionContent 里给提示）。
+  if (kind === "image") return openImage(path, targetPane);
   if (existing !== undefined && !existing.loaded) {
     // 经 `withSessionLoad` 登记在途：装载里的 `tabs.activateTab` 会经同步点回调到
     // `ensureActiveSessionLoaded`，不登记就会为同一个文件并发发起第二次装载。
@@ -2210,7 +2347,9 @@ async function openFile(
 async function loadSessionContent(
   resolveSession: () => EditorSession,
   path: string,
-  kind: "md" | "code" | "text" | "binary",
+  // 图片不走本函数（`openFile` 在进入前已分流到 `openImage`）：类型层面关掉它，
+  // 「文本装载器把一份空文本装进图片会话」这条路径因此不可能存在（design §1.2 的红线）。
+  kind: Exclude<OpenKind, "image">,
   quiet: boolean,
 ): Promise<boolean> {
   const request = save.beginSwitch();
@@ -2279,10 +2418,13 @@ function ensureActiveSessionLoaded(): void {
   const session = editor.activeSession();
   const path = session.path;
   if (path === undefined || session.loaded) return;
+  // 图片会话的「装载」是查看面读字节（M629）：由同一个同步点上的 `syncImageViewer` 驱动
+  // （它按每个 pane 的前台会话判在场，图片的可见性与装载只有一个驱动点）。本函数只管文本。
+  if (!isDocSession(session)) return;
   if (shellLoadsInFlight.has(session)) return;
-  void withSessionLoad(session, () =>
-    loadSessionContent(() => session, path, openKind(path), false),
-  );
+  const kind = openKind(path);
+  if (kind === "image") return; // 类型收窄 + 防御：图片会话的前台永远不会走到这里
+  void withSessionLoad(session, () => loadSessionContent(() => session, path, kind, false));
 }
 
 /** 登记「某个会话的内容装载在途」，跑完自动摘掉。所有发起装载的路径都必须经它——包括
@@ -2754,7 +2896,11 @@ const commands: CommandRuntime = {
   //（focusin 只发生在 pane 的 contentDOM 上），搜索 / 替换目标因此不随焦点漂。
   "app.search-open": () => openSearch(editor.view),
   // 轻量大纲（M148）：开→关 / 关→开，无标题文档只给提示（不弹空浮层）。
-  "toc.toggle": () => toc.toggle(),
+  // 图片会话（M629）：大纲对它是空动作——MUST NOT 打开浮层、MUST NOT 给「这份文档还没有标题」
+  // 这类错误提示（图片没有「文档」可谈）。判据与其余「读 state 做语义」的入口同源。
+  "toc.toggle": () => {
+    if (isDocSession(editor.activeSession())) toc.toggle();
+  },
   // vault 切换器（M163）：开→关 / 关→开；未装载 vault 时无操作（那时没有列表入口）。
   "vault.switcher": () => switcher.toggle(),
   // 折行开关（M180，change line-wrap-options 的 D1/D3 裁决）：翻转的是**应用运行期**的折行
@@ -2996,15 +3142,36 @@ function syncDirtyIndicator(): void {
  *  - 编码恒为 "UTF-8"：读取链路的契约就是 Rust `String`（fs_read_snapshot 的
  *    `content: String`），前端拿不到也造不出别的编码——它不是「检测结果」，是契约事实。
  *
- *  只在**值真的变化**时写 DOM（每次键入都会走这条路径，条件写避免无谓的布局失效）。 */
+ *  只在**值真的变化**时写 DOM（每次键入都会走这条路径，条件写避免无谓的布局失效）。
+ *
+ *  图片会话（M629，D5 裁决）走另一条分支：「图片 · 宽×高 · 文件大小」，读数取自该 pane 的
+ *  查看面（宽度 / 高度 = `<img>` 的自然尺寸；文件大小由 data: URL 的字节数反推——不为此另开
+ *  一次 IPC）。装载中 / 失败 / 查看面不在场时只有标签（D546），MUST NOT 用 0×0 冒充读数。 */
 function syncModelineMeta(): void {
   const session = editor.activeSession();
+  if (!isDocSession(session)) {
+    const text = imageModelineText(activeImageViewerInfo(session));
+    if (shell.modelineMeta.textContent !== text) shell.modelineMeta.textContent = text;
+    return;
+  }
   const lines = editor.view.state.doc.lines;
   const language = session.mode === "md"
     ? "Markdown"
     : codeLanguageOfPath(session.path ?? "") ?? "Plain text";
   const text = tPlural("D208", lines, { language, lines: formatNumber(lines) });
   if (shell.modelineMeta.textContent !== text) shell.modelineMeta.textContent = text;
+}
+
+/** 前台图片会话的查看面读数（modeline 右段的数据源）。
+ *
+ *  「查看面在不在场」用 `currentPath() === session.path` 判：查看面只显示它所属 pane 的前台
+ *  图片；切走瞬间（隐藏在前、同步在后）两者会短暂不一致，此时按「没有读数」渲染标签，
+ *  不给上一张图的尺寸（REVIEW.md「读不到当成空」条的反面：读到的是别的图的读数更糟）。 */
+function activeImageViewerInfo(session: EditorSession): ImageInfo | null {
+  const viewer = paneEntryOfSession(session)?.[1].imageViewer;
+  if (viewer === undefined || session.path === undefined) return null;
+  if (viewer.currentPath() !== session.path) return null;
+  return viewer.info();
 }
 
 // 语言切换后重写 modeline 的两段长驻文本（左段的路径 / 未保存标记、右段的「语法 · 行数 ·

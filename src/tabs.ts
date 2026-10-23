@@ -33,6 +33,7 @@
 // 关闭确认的未命名文档守卫（reviewer r1 P2-1 的那条）在 closeTab 里，语义见该函数注释。
 
 import type { EditorHandle, EditorSession } from "./editor";
+import { isDocSession } from "./session-kind";
 import { TAB_GOTO_IDS, keyToken } from "./keys";
 import type { CommandRunner } from "./keys";
 import { baseName } from "./tree";
@@ -384,7 +385,10 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     if (path === undefined) return Promise.resolve(false);
     // 已经不在了（被前一个动作带走 / 别处关掉）：那不是失败，继续下一个。
     if (!editor.sessions().includes(session)) return Promise.resolve(true);
-    if (!session.dirty) {
+    // 图片会话（M629）：恒无未保存内容，直接关。判据**显式**写出来而不是靠 `dirty` 恒 false
+    // 这一条隐含事实——任何把图片会话做成可 dirty 的改动都会打开「关标签前保存 → 把空文本
+    // 写回图片」的链路（design §1.2 的红线），本行是那条链路的闸门。
+    if (!isDocSession(session) || !session.dirty) {
       closeTabNow(session);
       return Promise.resolve(true);
     }

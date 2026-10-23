@@ -184,8 +184,9 @@ export function baseName(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1) || path;
 }
 
-/** 点击打开的行为分类：md / code 进编辑器对应模式，text 只读原文，binary 给提示。 */
-export type OpenKind = "md" | "code" | "text" | "binary";
+/** 点击打开的行为分类：md / code 进编辑器对应模式，text 只读原文，image 进图片查看面，
+ *  binary 给提示。 */
+export type OpenKind = "md" | "code" | "text" | "image" | "binary";
 
 // 分类注册表（图片 / 二进制 / 代码 / Markdown，含 dotfile 的名字约定）的唯一事实源在
 // preview/attachments.ts（M130 收敛、dotfile-jsonc-highlight 起含文件名表）；本文件只按分类
@@ -199,11 +200,46 @@ export function displayKind(entry: FsEntry): DisplayKind {
   return "other";
 }
 
-/** 打开行为分类：image/binary 走"暂不支持预览"，其余尝试按文本读（含无扩展名）。 */
+/** 打开行为分类：image 单独一档（content pane 的图片查看面），binary 走「暂不支持预览」，
+ *  其余按文本读（含无扩展名）。分类一律来自注册表 `fileClassOfPath`，本函数不持扩展名集合
+ *  （REVIEW.md「同一语义两处真源」条）。 */
 export function openKind(path: string): OpenKind {
   const cls = fileClassOfPath(path);
-  if (cls === "md" || cls === "code" || cls === "text") return cls;
+  if (cls === "md" || cls === "code" || cls === "text" || cls === "image") return cls;
   return "binary";
+}
+
+/** 可经**文本通道**打开的档（md / code / text）：编辑器会话、路径链接化、harness 路径链接
+ *  的准入判据共用这一条。image / binary 都不是文本文档——图片有自己的查看面，但它在
+ *  harness 输出里 MUST 保持纯文本（attachment-display spec），所以「可打开」不等于「可链接」：
+ *  消费者按自己的语义二选一，MUST NOT 各自写一份 `!== "binary"` 这类否定式（加档时会静默
+ *  把新档划进旧集合）。 */
+export function isTextOpenKind(kind: OpenKind): boolean {
+  return kind === "md" || kind === "code" || kind === "text";
+}
+
+/** 会话恢复时一个条目的**建壳裁决**（M629，change add-image-file-preview §1.4）：
+ *  - `"doc"`：文本类（md / code / text）⇒ 建文本壳（`createShellSession`）；
+ *  - `"image"`：图片 ⇒ 建图片会话（`createImageSession`，不建文本壳）——放行图片是本 change
+ *    的硬要求，否则重启后图片标签静默丢失；
+ *  - `"skip"`：二进制 ⇒ 不成壳（与它此前必然装载失败同口径，交回 store 计入跳过数）。
+ *
+ *  写成纯判据而不是留在装配层，是为了让「图片不再被跳过」这条**可单测**：装配层的
+ *  `createShell` 只是按本函数的三态各调一个构造点。 */
+export type ShellPlan = "doc" | "image" | "skip";
+export function shellPlanOf(path: string): ShellPlan {
+  const kind = openKind(path);
+  if (kind === "binary") return "skip";
+  return kind === "image" ? "image" : "doc";
+}
+
+/** vault 文件索引 → harness 面板**可点路径集**（只含 md / code / text）。
+ *
+ *  判据取 `isTextOpenKind` 而不是 `openKind !== "binary"`：后者是**否定式**，加一个可打开的档
+ *  （图片）就会静默把它划进「可点」——而 attachment-display spec 明确要求 harness 输出里的
+ *  图片路径保持纯文本。这一条是那项要求的唯一防线，因此做成可单测的纯函数（tests/unit）。 */
+export function linkableVaultPaths(paths: readonly string[]): string[] {
+  return paths.filter((path) => isTextOpenKind(openKind(path)));
 }
 
 export interface FileTreeCallbacks {

@@ -56,9 +56,43 @@ interface StoredSession {
   updated_at: number;
 }
 
+/**
+ * 合成 1×1 PNG（8-bit RGB，单像素 `#2f6f8f`）的 base64，69 字节。
+ *
+ * 为什么用合成像素（M629 的信息卫生纪律）：图片 fixture 的**内容以像素形式存在**，真实截图
+ * 无法用 grep 清扫；一条纯合成的 1×1 常量既够验「解码成功、自然尺寸 = 1×1」，又不携带任何
+ * vault 内容。生成方式与校验：zlib 压缩单像素扫描行 → PNG 三段 chunk，`file` 报
+ * `PNG image data, 1 x 1, 8-bit/color RGB`；字节数 69 与 `dataUrlByteLength` 的折算一致。
+ */
+export const SYNTHETIC_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mPQz+8HAAH+AS4inemcAAAAAElFTkSuQmCC";
+
+/**
+ * 把合成 PNG 随 fixture 一起过桥进 init script（M629 的实证）：init script 的函数体是
+ * **序列化**后注入页面的，模块作用域常量在页面里不存在——直接引用会得到
+ * `ReferenceError: SYNTHETIC_PNG_BASE64 is not defined`，被查看面渲染成「读取失败」占位。
+ * 因此常量挂在 fixture 的一个内部字段上（`syntheticPng`，场景不写）。
+ */
+function withSyntheticPng(vault: VaultFixture | null): VaultFixture | null {
+  return vault === null ? null : { ...vault, syntheticPng: SYNTHETIC_PNG_BASE64 };
+}
+
 export interface VaultFixture {
   entries: unknown[];
   files?: Record<string, string>;
+  /**
+   * `fs_read_attachment` 桩的字节表（M629，change add-image-file-preview 的 5.1）。
+   * 键 = vault 相对路径，值 = **base64**（与真后端的应答形状一致，不带 `data:` 前缀）。
+   * 未收录的路径按 `SYNTHETIC_PNG_BASE64`（1×1 合成 PNG）应答——只要它在 `files` 里存在；
+   * 两者都没有 ⇒ 抛 `fs_not_found`（与真后端「文件不存在」同形）。
+   *
+   * 造「字节读成但解码不出像素」的现场就靠它：给一条合法 base64 但非图片内容的串。
+   * 读取失败（权限 / 超限）走通用 `failures` 通道，不在这里造。
+   */
+  attachments?: Record<string, string>;
+  /** **内部字段，场景 MUST NOT 写**：`stubTauri` 把 {@link SYNTHETIC_PNG_BASE64} 挂在这里
+   *  过桥进 init script（函数体序列化，模块常量在页面里不可见）。 */
+  syntheticPng?: string;
   notice?: string | null;
   root?: string;
   vault_id?: string;
@@ -189,6 +223,9 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     w.__windowBgCalls = [] as Array<{ r?: number; g?: number; b?: number }>;
     // config_get 的调用计数（M132 场景用它等「配置已加载 → 键位覆盖已挂上」）。
     w.__configGets = 0;
+    // `fs_read_attachment` 的**按路径**读取记录（M629）：D3 的「切回重读一次」判据要数
+    // 某一张图读了几次——全局计数会被启动期 SAMPLE 演示文档里的相对路径图片引用污染。
+    w.__attachmentReads = [] as string[];
     // 全部 invoke 的命令名，按调用顺序（M195）。「按 ⌘= 后 config.json 逐字节不变」这条判据
     // 在 chromium 里没有文件面（真机场景 29 用文件哈希 + mtime 断言），这里退化为等价判据：
     // **没有第二处写类 command 被调用**。桩只记录，不解释语义。
@@ -562,6 +599,23 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         ) as { mtime_ms?: number } | undefined;
         return { mtime_ms: entry?.mtime_ms ?? null };
       },
+      // 二进制附件读取（M629，change add-image-file-preview 的 5.1）：真后端的契约是
+      // 「vault 相对路径 → base64 字符串」，50MB 上限与路径校验归 Rust（桩不复制）。
+      // 未收录在 `attachments` 的路径给合成 1×1 PNG（前提是它在 files 里存在——不存在就抛
+      // fs_not_found，与真后端同形）；这样「打开一张图」的默认现场零配置即可跑。
+      fs_read_attachment: (args) => {
+        const path = args.path ?? "";
+        (w.__attachmentReads as string[]).push(path);
+        const override = current?.attachments?.[path];
+        if (override !== undefined) return override;
+        if (current?.files?.[path] === undefined) {
+          throw { code: "fs_not_found", message: `文件不存在：${path}` };
+        }
+        if (current?.syntheticPng === undefined) {
+          throw { code: "fixture_contract", message: "fixture 缺少合成 PNG（应由 stubTauri 注入）" };
+        }
+        return current.syntheticPng;
+      },
       document_save: (args) => {
         const path = args.path ?? "";
         const currentText = current?.files?.[path];
@@ -726,7 +780,8 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     // 测试钩子：替换后端当前 vault（模拟恢复线程稍后提交 / 用户打开成功）——此后
     // vault_current 按新 fixture 应答。前端不持副本，只能经权威拉取看到它。
     w.__setBackendVault = (v: VaultFixture | null) => {
-      current = v;
+      // 换后端 vault 时保留过桥的合成 PNG（场景传进来的对象没有这个内部字段，M629）。
+      current = v === null ? null : { ...v, syntheticPng: current?.syntheticPng };
     };
     // 测试钩子：模拟外部程序改/删文件（Lumir ↔ Obsidian 来回场景）。
     // 不触发 watch 事件——事件由场景显式 fireFsEvent 送达，与真后端
@@ -739,7 +794,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     };
     // 磁盘内容探针：恢复动作（强制覆盖 / 另存为）是否真正落盘的证据。
     w.__fileText = (path: string) => current?.files?.[path];
-  }, vault);
+  }, withSyntheticPng(vault));
 }
 
 /** 模拟一次外部变更事件（经 listen 注册的回调送达前端）。 */
@@ -797,6 +852,11 @@ export async function fsMutations(page: Page): Promise<Array<Record<string, unkn
 /** 全部 invoke 的命令名（按调用顺序）——「筛选 MUST NOT 触发第二次拉取」这类次数判据读它。 */
 export async function invokes(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __invokes: string[] }).__invokes);
+}
+
+/** `fs_read_attachment` 的**按路径**读取记录（M629，按调用顺序）。 */
+export async function attachmentReads(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __attachmentReads: string[] }).__attachmentReads);
 }
 
 /** 前端已转发的诊断事件（按发出顺序）；`event` 选传，只看某一类事件。 */
