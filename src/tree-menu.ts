@@ -71,10 +71,15 @@ export interface TreeMenuItem {
   label: string;
 }
 
-/** 触发菜单的条目：`anchor` 是那一行的行元素（关闭后焦点归还它）。 */
+/** 触发菜单的条目：`anchor` 是那一行的行元素（关闭后焦点归还它）。
+ *
+ *  `kind` 的第三档 `"root"`（change add-sidebar-resize-hide-and-root-create）：vault 根本身
+ *  没有行元素，指针落在树的**非条目行区域**（树头部 / 列表尾部空白）时右键请求的就是它。
+ *  此时 `path = ""`（树模型里根 = 空串，`beginCreate("")` 是既有能力）、`name` = vault 名、
+ *  `anchor` = 树头部的 vault 名入口（根没有行元素，取最近的等价锚点）。 */
 export interface TreeMenuTarget {
   path: string;
-  kind: "file" | "dir";
+  kind: "file" | "dir" | "root";
   name: string;
   anchor: HTMLElement;
 }
@@ -91,8 +96,19 @@ const SEPARATOR = "separator";
  * 项集按条目类型分流（spec：文件行不含新建项；目录行在文件项集基础上多出两条）。
  * 顺序固定：目录专属项 → 分隔 → 通用项 → 分隔 → 破坏性项（design §2.2 的「破坏性项
  * 固定尾部 + 分隔线」）。这是**唯一一份**项集定义（菜单渲染、单测、验收断言三处同源）。
+ *
+ * 第三档 `"root"`（change add-sidebar-resize-hide-and-root-create，design §3.2）：vault 根
+ * 只有两条新建项，**无分隔线、无破坏性项**——重命名 / 复制路径 / 在 Finder 中显示 / 移到废纸篓
+ * 都以条目为对象，根不是条目；也**不提供**「重新载入 / 刷新」类动作（Reload 是 webview 页面
+ * 刷新，文件树由 watcher 增量维护，没有需要手工刷新的状态——D4 裁决）。
  */
-export function menuItemsFor(kind: "file" | "dir"): (Row | typeof SEPARATOR)[] {
+export function menuItemsFor(kind: "file" | "dir" | "root"): (Row | typeof SEPARATOR)[] {
+  if (kind === "root") {
+    return [
+      { kind: "item", item: { action: "new-file", label: NEW_FILE_LABEL() } },
+      { kind: "item", item: { action: "new-dir", label: NEW_DIR_LABEL() } },
+    ];
+  }
   const common: Row[] = [
     { kind: "item", item: { action: "rename", label: RENAME_LABEL() } },
     { kind: "item", item: { action: "copy-path", label: COPY_PATH_LABEL() } },
@@ -111,7 +127,7 @@ export function menuItemsFor(kind: "file" | "dir"): (Row | typeof SEPARATOR)[] {
 }
 
 /** 项集里的动作清单（去掉分隔线）；断言与调用方按这个顺序对账。 */
-export function menuActionsFor(kind: "file" | "dir"): TreeMenuAction[] {
+export function menuActionsFor(kind: "file" | "dir" | "root"): TreeMenuAction[] {
   const actions: TreeMenuAction[] = [];
   for (const row of menuItemsFor(kind)) {
     if (row !== SEPARATOR) actions.push(row.item.action);
@@ -177,7 +193,9 @@ class TreeContextMenu implements TreeContextMenuHandle {
     // 作用行了）。同一行重复打开时这句是空动作。
     this.target?.anchor.classList.remove(MENU_TARGET_CLASS);
     this.target = target;
-    target.anchor.classList.add(MENU_TARGET_CLASS);
+    // 作用行标记只属于「行」语义：root 的锚点是树头部入口（vault 名），没有行可标——留一个
+    // 无样式的类会让 `MENU_TARGET_CLASS` 的「这一行是作用行」不再精确。
+    if (target.kind !== "root") target.anchor.classList.add(MENU_TARGET_CLASS);
     // 菜单壳的读屏名在**构造期**就写在 DOM 上（挂载早于配置到位），每次打开重写一遍——
     // 打开是它唯一可见的时刻，因此这是最省的「可重跑写入路径」（design §5.2 的不变量）。
     this.menu.setAttribute("aria-label", MENU_LABEL());
@@ -220,7 +238,7 @@ class TreeContextMenu implements TreeContextMenuHandle {
     return this.menu;
   }
 
-  private render(kind: "file" | "dir"): void {
+  private render(kind: "file" | "dir" | "root"): void {
     this.items = [];
     this.actions = [];
     const children: HTMLElement[] = [];

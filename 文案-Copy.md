@@ -526,10 +526,13 @@
 
 | D546 | modeline 右段（图片标签） | 作者 | 图片 | Image | M629（change add-image-file-preview 的 D5 裁决）：图片标签在 modeline 右段的标签词——装载中 / 无法读取时只有它。消费点 `src/image-viewer.ts` 的 `imageModelineText`。 |
 | D547 | modeline 右段（图片标签） | 作者 | {width}×{height} · {size} | {width}×{height} · {size} | M629（D5「图片 · 宽×高 · 文件大小」）：装载完成后的读数模板。宽高取 `<img>` 的自然尺寸，`{size}` 由前端按字节格式化为 B / KB / MB（ASCII 单位，与 D437 的 MB 用法同源）；两列同形。消费点同 D546。 |
+| D548 | 键位面板逐条来由（src/keys.ts 的绑定） | 作者 | ⌘B 收起 / 展开左栏（change add-sidebar-resize-hide-and-root-create，Alex 2026-10-23 的需求原话「可以隐藏，需要有快捷键」+ 同日澄清「⌘B 来回一键」）。一个键同时承担隐藏与恢复：一次按下 = 切换当前状态，不设第二条「显示左栏」动作（单入口 = 单真源）。取 global——焦点在编辑器、文件树、搜索框或 harness composer 内时都要能按（侧栏是窗口级对象，与 tab.* / view.* 一族同理由）。键位占用已核（零冲突，三条独立来源）：① 表内——src/keys.ts 即真源，现表无 `Cmd-b`（`Ctrl-b` 是 editor.cursor-backward，作用域 text，与 ⌘ 系不是同一物理组合）；② 原生菜单 accelerator 集合（tauri 的 Menu::default() 逐项来自 muda predefined，清单见 keys.ts 文件头 M149 段）不含 ⌘B——预置项里唯一的 ⌘ 系截获是 CloseWindow 的 ⌘W，自建项只有 ⌘Q；③ 系统级——macOS 不给 ⌘B 预置系统菜单项（Bold 属文本编辑语义，本应用无原生菜单项占用）。token 形态 `Cmd-b` 单段、无空白（无 Alt，按字符判定即可）；它**有**默认绑定，因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。 | ⌘B collapses / expands the sidebar (change add-sidebar-resize-hide-and-root-create; Alex's 2026-10-23 request "可以隐藏，需要有快捷键" plus the same-day clarification "⌘B toggles with one key"). One key carries both hiding and restoring: a press toggles the current state, and there is no second "show sidebar" action (single entry = single source of truth). Scope is global — it must work while focus is in the editor, the file tree, the search box or the harness composer (the sidebar is a window-level object, same rationale as the tab.* / view.* family). Key occupancy checked (no conflicts, three independent sources): (1) in the table — src/keys.ts is the source of truth, and no `Cmd-b` exists (the `Ctrl-b` binding is editor.cursor-backward, scope text, not the same physical combination as the ⌘ family); (2) the native menu accelerator set (tauri's Menu::default() takes each item from muda's predefined, list in the M149 section of keys.ts) has no ⌘B — the only intercepted ⌘ item among the presets is CloseWindow's ⌘W, and the self-built items only carry ⌘Q; (3) the system level — macOS presets no ⌘B menu item (Bold is a text-editing semantic, and this app's native menu does not occupy it). Token form `Cmd-b` is a single segment with no whitespace (no Alt, so the character is enough); it **has** a default binding and therefore MUST NOT be registered in KEYLESS_COMMAND_IDS. | D8 裁决把 `src/keys.ts` 的逐条 `doc` 纳入语言面：绑定表只留 `docKey`，文本回到这张表。术语原形一律保留（`M149` / `Emacs` / `Cmd-b` 这类编号、术语与键符照抄，只译句子）。 |
+| D549 | 左栏分隔条的读屏名 | 作者 | 调整左栏宽度 | Adjust sidebar width | 分隔条是 `role=separator` 的纯操作元素（静止态零足迹，只有 hover / 拖拽 / 焦点时显现 1px 视觉线），读屏需要一句说明拖它会改变什么；命名为动作（「调整」+ 对象），与 D120（「调整内容宽度」）同口径。消费点 `src/sidebar-width.ts` 的 `SIDEBAR_DIVIDER_LABEL`。 |
+| D550 | toast 左栏宽度写盘失败 | 作者 | 左栏宽度没能存进配置：{原因}（本次调整仍生效，重启后恢复） | Couldn't save the sidebar width: {reason} (the new width applies now, but reverts after restart) | 拖拽松手后写 `config.json` 失败时：调整本身已在运行期生效，只是不持久——措辞必须同时交代「现在生效」与「重启后恢复」（与 D121 同构，{原因} 在前）。运行期宽度不回滚。 |
 
 ## 编号沿革
 
-**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D547**（M629 的图片标签 modeline 读数，D546–D547；D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
+**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D550**（change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast，D548–D550；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
 
 **不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377、D508–D513、D521。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
 
@@ -601,6 +604,7 @@
 - M610 D521 子代理清单后端退役（**未取新号**）：编号停用、不复用——`harness_subagent_catalog` 命令、IPC 包装与序列化失败错误信封随后端退场一并删除（M607 后已无运行时消费者）
 - M615 D523–D543 定时任务批准卡：要素键名 / 触达与会话档位词 / 星期词 / 注册日口径 / 删除后果（接 D522 末位）
 - M629 D546–D547 图片标签的 modeline 右段：标签词 + 〔宽×高 · 文件大小〕读数模板（接 M627 的 D545 末位）
+- change add-sidebar-resize-hide-and-root-create（M631）D548–D550 左栏宽度与收起：⌘B 绑定来由 / 分隔条读屏名 / 宽度写盘失败 toast（接 M629 的 D547 末位）
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 

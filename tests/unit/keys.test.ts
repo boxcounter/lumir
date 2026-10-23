@@ -700,6 +700,67 @@ test("主题切换命令可由 [keys] 重绑 / 解绑（默认键位单段无空
 });
 
 // ---------------------------------------------------------------------------
+// 左栏开关（M631，change add-sidebar-resize-hide-and-root-create）——默认键位 ⌘B 的 token
+// 形态、作用域 global、可重绑 / 解绑
+// ---------------------------------------------------------------------------
+
+test("侧栏开关命令：⌘B 的 token 形态、作用域 global、不在默认不绑键清单里", () => {
+  assert.ok(commandIds.includes("view.toggle-sidebar"), "view.toggle-sidebar 不在 COMMAND_IDS");
+  assert.ok(
+    !editorCommandIds.includes("view.toggle-sidebar"),
+    "落在 editor 组会让作用域派生成 editor；侧栏开关必须是 global（焦点在编辑器 / 文件树 / composer 都要命中）",
+  );
+  assert.equal(scopeOfCommand("view.toggle-sidebar"), "global");
+  // 事件侧与表内必须同 token：真实 ⌘B 的 key 是 "b"（无 Shift），不含 Alt ⇒ 按字符判定。
+  const event = { key: "b", code: "KeyB", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false };
+  const token = normalizeKey("Cmd-b");
+  assert.equal(keyToken(event), token, "⌘B 的事件 token 与表内写法必须相等");
+  assert.equal(token, "Cmd-B", "归一后单字符键名大写（表内写 Cmd-b、事件 key 是 b，两边归一到 Cmd-B）");
+  const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === token);
+  assert.equal(binding?.command, "view.toggle-sidebar");
+  assert.equal(binding?.scope, "global");
+  assert.ok(docTextOf(binding).length > 0, "绑定必须带来由说明（表即文档）");
+  // 面板的「全局」组成员来自 NON_TAB_GLOBAL_COMMAND_IDS；本命令必须在里面（键位面板可查）。
+  assert.ok(
+    (NON_TAB_GLOBAL_COMMAND_IDS as readonly string[]).includes("view.toggle-sidebar"),
+    "不在 NON_TAB_GLOBAL_COMMAND_IDS（面板全局组的成员来源）里",
+  );
+  // 三条冲突来源的核实结论要能在来由里读到（表即文档的口径）。
+  assert.ok(docTextOf(binding).includes("表内"));
+  assert.ok(docTextOf(binding).includes("muda") || docTextOf(binding).includes("原生菜单"));
+  assert.ok(docTextOf(binding).includes("macOS"));
+  assert.ok(
+    !KEYLESS_COMMAND_IDS.includes("view.toggle-sidebar"),
+    "该命令默认有绑定，MUST NOT 登记为默认不绑键",
+  );
+  // 反向输入（REVIEW.md「断言等价于子串」条）：Ctrl-b 是编辑器作用域的 cursor-backward，
+  // 与 ⌘B 不是同一物理组合——两条绑定归一后 MUST NOT 相等。
+  assert.notEqual(normalizeKey("Ctrl-b"), token, "⌘B 与 ⌃B 必须是两条互不干扰的绑定");
+});
+
+test("侧栏开关命令可由 [keys] 重绑 / 解绑（默认键位单段无空白）", () => {
+  assert.ok(!/\s/.test("Cmd-b"), "默认键位含空白会让用户无法重绑（chord 本版不支持）");
+  const rebound = applyKeyOverrides({ "Ctrl-;": "view.toggle-sidebar" });
+  assert.deepEqual(rebound.warnings, []);
+  // 重绑只换「键 → 命令」的对应，命令仍有绑定；⌘B 不再指向它。
+  const moved = rebound.bindings.find((binding) => normalizeKey(binding.key) === "Ctrl-;");
+  assert.equal(moved?.command, "view.toggle-sidebar");
+  assert.equal(moved?.scope, "global");
+  assert.equal(
+    rebound.bindings.find((binding) => normalizeKey(binding.key) === "Cmd-b"),
+    undefined,
+    "重绑后 ⌘B 不再触发切换",
+  );
+  // 解绑：⌘B 无操作，且该命令在生效表里没有绑定（键位面板据此显示未绑定）。
+  const unbound = applyKeyOverrides({ "Cmd-b": null });
+  assert.deepEqual(unbound.warnings, []);
+  assert.equal(
+    unbound.bindings.find((binding) => binding.command === "view.toggle-sidebar"),
+    undefined,
+  );
+});
+
+// ---------------------------------------------------------------------------
 // 跳转到行（M281，change goto-line-command）
 // ---------------------------------------------------------------------------
 

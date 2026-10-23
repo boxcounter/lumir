@@ -488,6 +488,10 @@ test("目录下新建子目录：命令参数与树收敛，不自动展开", as
 // 修法：命中判定提升到**容器**层（`src/tree.ts` 的 `rowLiAt`），行内/行右侧带同一判定；面板空白、
 // 树头部、编辑中的行照旧不参与（后者的抑制是 M244 §2.3 的既有要求）。零视觉变化——行元素的
 // 盒子、hover / 选中底色的范围一个像素都没动。
+//
+// M631（change add-sidebar-resize-hide-and-root-create 的 D5 裁决）改了两处「不参与」的**落点**：
+// 面板空白与树头部现在是 **vault 根的右键面**（弹根级菜单：只有新建文件 / 新建子目录两项），
+// 仍然不作用于任何行——本测试末尾两条边界因此断言「有菜单、但菜单里没有行动作」。
 // ---------------------------------------------------------------------------
 
 test("M251：右键落在行右侧的空白带也作用于该行（含面板右内边距）", async ({ page }) => {
@@ -519,11 +523,16 @@ test("M251：右键落在行右侧的空白带也作用于该行（含面板右�
   // ② 行元素右缘之外、树容器右缘之内（面板右内边距）——M251 之前这里连菜单都不出
   await rightClickAt(tree.x + tree.width - 2);
 
-  // 不变量之外的两条边界：面板空白与树头部不参与（解析不到行时不拦系统菜单、更不弹应用菜单）
+  // 不变量之外的两条边界（M631 起语义改准）：面板空白与树头部**不作用于任何行**（菜单里没有
+  // 行动作），但不再是「不弹应用菜单」——这两处是本 change 新定义的 vault 根右键面，弹根级菜单。
   await page.mouse.click(tree.x + 60, tree.y + tree.height - 4, { button: "right" });
-  await expect(page.locator(".ft-menu")).toBeHidden();
+  await expect(page.locator(".ft-menu")).toBeVisible();
+  await expect(page.locator(".ft-menu-item", { hasText: "重命名…" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await page.mouse.click(tree.x + tree.width - 2, tree.y + 4, { button: "right" });
-  await expect(page.locator(".ft-menu")).toBeHidden();
+  await expect(page.locator(".ft-menu")).toBeVisible();
+  await expect(page.locator(".ft-menu-item", { hasText: "重命名…" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
   // 右键全程不改上下文（M244 的不变量，M251 不碰它）
   await expect(page.locator(".tab")).toHaveCount(0);
 });

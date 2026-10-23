@@ -26,6 +26,14 @@ theme: UiTheme,
  */
 content_width: number, 
 /**
+ * 侧栏宽度（px，change add-sidebar-resize-hide-and-root-create 的 D1 裁决 2026-10-23）：
+ * 默认 236、合法区间 `[180, 480]`（越界回落默认 + warning）。启动时装配一次；运行期由
+ * 左栏分隔条拖拽推进并回写（`config_set_ui_value`，与 `content_width` 同一条合并写通道）。
+ * 窗口过窄时的「四成」钳制是显示口径（前端做，不回写到本字段）——盘上存的是用户意图值。
+ * 类型不符（`"sidebar_width": "236"`）与 `content_width` 同路：整文件回落。
+ */
+sidebar_width: number, 
+/**
  * md 模式行号 gutter 的在场档位（change goto-line-command 的 D4 二次改判，2026-09-28），
  * 默认 `on-demand`。**只管 md**：只读 code 模式的行号 gutter 恒常显、不读本键。
  * 与 `editor.mode` / `editor.font_size` 同路：**装载时读一次、运行期 MUST NOT 回写**

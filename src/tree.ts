@@ -320,6 +320,9 @@ export interface FileTree {
   beginRename(path: string): void;
   /** 进入内联编辑：在目录下新建（§3.5 / §3.6）。父不是目录或已有编辑进行中时空动作。 */
   beginCreate(parentRel: string, kind: "file" | "dir"): void;
+  /** 取消进行中的行内编辑（M631，⌘B 收起的必要条件）：按取消处理——不提交半截输入、
+   *  撤掉新建的临时行、磁盘与实际条目都不动。无编辑进行中时是空动作。 */
+  cancelInlineEdit(): void;
   /** 编辑提交的结果回报：成功 = 退出编辑态；失败 = 留在编辑态并给原因（后端是权威）。 */
   endInlineEdit(ok: boolean, reason?: string): void;
   /** 移动提交的结果回报（M530，镜像 endInlineEdit 的登记撤销语义）：失败 = 撤销 drop 时
@@ -481,11 +484,35 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
   }
 
   // 右键监听挂在**容器**上（M251），不在每行的行元素上：行元素覆盖不到它右侧那条带。
-  // 解析不到行时**不**拦系统菜单（面板空白 / 树头部 / 空态照旧，与 M251 之前的行为一致）。
+  // M631（change add-sidebar-resize-hide-and-root-create，design §3.1）：解析不到行时不再直接
+  // 放行 webview 默认菜单，而是按**与拖拽落点同源的判据**（`rootDropBandHit`：指针在首行
+  // 之上 / 末行之下）请求 vault 根菜单——两处命中面（树头部 + 列表尾部空白）与 M538 定义的
+  // 「vault 根」逐条相同，MUST NOT 另写一套几何。行带之内（含缩进区、行间缝）仍按既有口径：
+  // 缩进区不属于任何一行，不产根菜单。未装载 vault 时 entryEl 为 undefined（空态的树容器已
+  // 整块换掉），根菜单因此不出现。
   rootEl.addEventListener("contextmenu", (event) => {
     const li = rowLiAt(event.target, event.clientX, event.clientY);
     const node = li === null ? undefined : nodes.get(li.dataset.path ?? "");
-    if (li === null || node === undefined) return;
+    if (li === null || node === undefined) {
+      if (entryEl === undefined) return;
+      // 编辑期不换上下文（与输入框自己的 contextmenu 抑制同一条口径）：编辑行的行带不在
+      // `hitRows()` 里，不挡的话它会落进「列表之外」而弹出根菜单。
+      if (editing !== null) return;
+      if (!rootDropBandHit(bandsOf(hitRows()), event.clientY)) return;
+      event.preventDefault();
+      cb.onContextMenu(
+        {
+          // 根 = 树模型里的空串路径（`beginCreate("")` 是既有能力，M631 不为根另写创建路径）。
+          path: "",
+          kind: "root",
+          name: vaultName,
+          // 根没有行元素：关闭菜单后焦点归还树头部的 vault 名入口（最近的等价锚点）。
+          anchor: entryEl,
+        },
+        { x: event.clientX, y: event.clientY },
+      );
+      return;
+    }
     event.preventDefault();
     cb.onContextMenu(
       {
@@ -1307,6 +1334,10 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
 
     beginCreate(parentRel, kind) {
       beginCreate(parentRel, kind);
+    },
+
+    cancelInlineEdit() {
+      cancelEdit();
     },
 
     editingPath() {

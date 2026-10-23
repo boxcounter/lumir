@@ -176,12 +176,12 @@ const keydown = (key: string, over: FakeEvent = {}): FakeEvent => ({
 
 /** 触发菜单的条目替身：`value` 是交给菜单的条目、`anchor` 是那一行的行元素替身
  *（替身顶替 HTMLElement，同 vault-switcher 测试的惯例——焦点断言读替身自己的标记）。 */
-function target(kind: "file" | "dir", path = "sub/a.md") {
+function target(kind: "file" | "dir" | "root", path = "sub/a.md") {
   const anchor = new FakeEl("button");
   const value = {
     path,
     kind,
-    name: path.split("/").pop() as string,
+    name: path === "" ? "demo-vault" : (path.split("/").pop() as string),
     anchor: anchor as unknown as HTMLElement,
   };
   return { value, anchor };
@@ -221,6 +221,35 @@ test("项集按条目类型分流：文件 4 项、目录 6 项，破坏性项�
   // 反向输入（REVIEW.md 「断言等价于子串」条：断言要有区分度）：目录项集里 MUST NOT 出现文件项集的
   // 全部内容，否则「分流」这条断言等价于恒真。
   assert.notDeepEqual(menuActionsFor("file"), menuActionsFor("dir"));
+});
+
+test("vault 根项集：只有两条新建项，无分隔线、无破坏性项、无通用项（M631）", () => {
+  // spec「vault 根的新建入口」：项集 = 新建文件 / 新建子目录；重命名 / 复制路径 / 在 Finder 中
+  // 显示 / 移到废纸篓都以条目为对象，根不是条目；也 MUST NOT 提供「刷新 / 重新载入」。
+  assert.deepEqual(menuActionsFor("root"), ["new-file", "new-dir"]);
+  const rows = menuItemsFor("root");
+  assert.equal(rows.filter((row) => row === "separator").length, 0, "根项集无分隔线");
+  assert.equal(rows.length, 2);
+  // 区分度：根项集既不等于文件项集也不等于目录项集（否则「第三档」这条断言等价于恒真）。
+  assert.notDeepEqual(menuActionsFor("root"), menuActionsFor("file"));
+  assert.notDeepEqual(menuActionsFor("root"), menuActionsFor("dir"));
+  assert.ok(
+    !menuActionsFor("root").includes("trash") && !menuActionsFor("root").includes("rename"),
+    "根项集不得含破坏性项或条目项",
+  );
+});
+
+test("根菜单打开：渲染两条新建项、锚点不标作用行（根没有行元素），关闭后焦点归还锚点", () => {
+  const rig = menuRig();
+  const { value, anchor } = target("root", "");
+  rig.menu.open(value, { x: 10, y: 20 });
+  const labels = rig.element.texts();
+  assert.deepEqual(labels, ["新建文件…", "新建子目录…"]);
+  assert.equal(anchor.classes.has("is-menu-target"), false, "根锚点不是行，不标作用行");
+  assert.equal(rig.element.focused, true, "打开即持焦点");
+  rig.menu.close();
+  assert.equal(anchor.focused, true, "关闭后焦点归还锚点（树头部的 vault 名入口）");
+  assert.equal(rig.menu.isOpen(), false);
 });
 
 test("打开菜单：渲染对应项集、无新建项（文件）、持焦点、首项为键盘游标", () => {

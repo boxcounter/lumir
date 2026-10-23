@@ -166,6 +166,10 @@ export interface VaultFixture {
      *  `DEFAULT_CONTENT_WIDTH` 同值，D1 落槌值 2026-09-26 修订）——不传的场景天然跑默认栏宽，
      *  不会因为桩扩了形状而变宽。越界值的回落 + warning 归 Rust 侧（cargo test），桩只负责送达。 */
     content_width?: number;
+    /** 左栏宽度 px（M631，change add-sidebar-resize-hide-and-root-create）：缺省 236 = 出厂
+     *  口径（与 Rust `DEFAULT_SIDEBAR_WIDTH` 同值）——不传的场景天然跑默认宽度，不会因为桩
+     *  扩了形状而变宽。静态区间的越界回落 + warning 归 Rust 侧（cargo test），桩只负责送达。 */
+    sidebar_width?: number;
     /** md 行号 gutter 档位（M281 的 D4 二次改判）：`on-demand` / `always` / `off`（与 Rust
      *  `MarkdownLineNumbers` 同一闭集合）。缺省 `on-demand` = 出厂口径（与 Rust
      *  `UiConfig::default()` 同值）——不传的场景天然跑「md 默认无行号、输入条在场时出现」，
@@ -469,6 +473,11 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
               theme: current?.config?.theme ?? "light",
               // 阅读栏宽（M228）：缺省 760 = Rust `UiConfig::default()` 同值（2026-09-26 修订）。
               content_width: current?.config?.content_width ?? 760,
+              // 左栏宽度（M631，change add-sidebar-resize-hide-and-root-create）：缺省 236 =
+              // Rust `UiConfig::default()` 同值。桩必须带上这个键——启动装配层的读取顺序在
+              // `ui.content_width` 之后，缺键会让 `setSidebarWidth(undefined)` 落回默认值
+              //（clampSidebarWidth 对非有限值回落 236），场景便读不到「配置值生效」这一档。
+              sidebar_width: current?.config?.sidebar_width ?? 236,
               // md 行号 gutter 档位（M281 的 D4 二次改判）：缺省 `on-demand` = Rust
               // `UiConfig::default()` 同值。桩必须带上这个键——启动装配层的读取顺序在
               // `ui.content_width` 之后，缺键会得到 undefined 而让 md 的 gutter 静默不装。

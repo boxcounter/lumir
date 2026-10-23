@@ -171,6 +171,15 @@
 //      两条绑定的注释。零新命令 id——与 tab.next / tab.prev 逐字同语义（同命令多条绑定的
 //      既有形态）。
 //
+// M631（change add-sidebar-resize-hide-and-root-create，Alex 2026-10-23 原话「左栏：可以通过
+// 拖拽调整宽度；可以隐藏，需要有快捷键」+ 同日澄清「⌘B 来回一键」）：表新增一条**有默认绑定**
+// 的全局命令（`⌘B` → `view.toggle-sidebar`）。一个键同时承担隐藏与恢复（一次按下 = 切换），
+// MUST NOT 拆成「显示」「隐藏」两条命令。取 `view.` 前缀而不是 `editor.`：它改的是**应用运行期**
+// 的骨架显示口径（与折行 / 字号 / 主题 / 语言同族），作用域由 `NON_TAB_GLOBAL_COMMAND_IDS`
+// 派生为 global——焦点在编辑器、文件树、搜索框或 harness composer 内时都要能按。它有默认绑定，
+// 因此 MUST NOT 登记进 `KEYLESS_COMMAND_IDS`。三条独立来源的键位占用核对写在绑定条目 D548 的
+// 正文里（表即文档，本段不另抄一份）。
+//
 // 平台口径（M131 评审 r1 F1 如实记录）：迁移后**表内绑定一律全平台无条件生效**，不再有
 // 平台门。两处与迁移前不同，均只在非 macOS 平台可观测：
 //   - ⌃N/P/F/B/E 迁移前是 CM keymap 的 `{ mac: "Ctrl-n" }`（只绑 mac），现在非 mac 平台
@@ -408,6 +417,12 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   // 作用域由本清单派生为 global——焦点在左栏 / 搜索框 / 键位面板 / 浮层里时同样要能切。
   // 它**有**默认绑定（⌘⇧L），因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。
   "view.language-cycle",
+  // M631：左栏收起 / 展开（change add-sidebar-resize-hide-and-root-create，Alex 2026-10-23）。
+  // 取 `view.` 前缀而不是 `editor.`：它改的是**应用运行期**的骨架显示口径（与折行 / 字号 /
+  // 主题 / 语言同族），作用域由本清单派生为 global——焦点在编辑器、文件树、搜索框或 harness
+  // composer 内时都要能按。它**有**默认绑定（⌘B，冲突核实三条独立来源见表条目 D548），
+  // 因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。
+  "view.toggle-sidebar",
   // M303：harness 对话面板唤起 / 收起（change add-harness-probe；HP1 语义改「旁侧 pane
   // 打开/收起 harness」，change move-harness-to-pane-chat-frame）。前缀取 `harness.`：它作用的
   // 对象是**那块面板**，不属于 `editor.*`（编辑器内核）/ `view.*`（应用运行期显示口径）任何一族
@@ -724,6 +739,12 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // M282：⌘⇧L 循环切换界面语言（change ui-language-i18n 的 D3 裁决）。三条冲突来源的复核写在
   // 表条目 D318 的正文里（表即文档，MUST NOT 在本文件另抄一份）。
   { key: "Cmd-Shift-L", command: "view.language-cycle", scope: "global", docKey: "D318" },
+  // M631：⌘B 收起 / 展开左栏（change add-sidebar-resize-hide-and-root-create，Alex 2026-10-23
+  // 需求原话「可以隐藏，需要有快捷键」+ 同日澄清「⌘B 来回一键」）。三条冲突来源的复核写在
+  // 表条目 D548 的正文里（表即文档，MUST NOT 在本文件另抄一份）。取 global——焦点在编辑器 /
+  // 文件树 / harness composer 内都要能切换（侧栏是窗口级对象，与 tab.* / view.* 一族同理由）。
+  // 一个键同时承担隐藏与恢复，MUST NOT 拆成两条命令。
+  { key: "Cmd-b", command: "view.toggle-sidebar", scope: "global", docKey: "D548" },
   // M303：⌘⇧A 唤起 / 收起 harness 对话面板（change add-harness-probe；HP1 语义改「旁侧
   // pane 打开/收起 harness」，change move-harness-to-pane-chat-frame）。三条冲突来源的复核写在
   // 表条目 D345 的正文里（表即文档，MUST NOT 在本文件另抄一份）。
