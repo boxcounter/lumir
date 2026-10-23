@@ -2,7 +2,7 @@
 id: "42-non-md-edit-guardrails"
 item: 42
 title: 非 md 可编辑的护栏矩阵——二进制仍「暂不支持预览」、非 UTF-8 打开即拒、文本类不受牵连
-fixtures: [lightbox-bitmap.png, invalid-utf8.bin, notes.txt]
+fixtures: [binary-probe.pdf, invalid-utf8.bin, notes.txt]
 open: notes.txt
 marker: "真机验收用的非 md 文件"
 steps:
@@ -19,15 +19,15 @@ steps:
         ax: { not: "（未保存）" }
       - shot: 起点-文本类可编辑
 
-  - name: 二进制（image 类）：点击给「暂不支持预览」，不进编辑器
+  - name: 二进制（PDF）：点击给「暂不支持预览」，不进编辑器
     do: click
-    target: { role: AXButton, name: "^lightbox-bitmap.png$" }
+    target: { role: AXButton, name: "^binary-probe\\.pdf$" }
     expect:
       - shot: 二进制-提示
-      - label: 覆盖层给出「暂不支持预览」（M130 起的护栏，本 change 不动它）
+      - label: 覆盖层给出「暂不支持预览」（M130 起的护栏；M629 起图片不再属于这一档）
         ax: { has: "暂不支持预览" }
       - label: 提示点名的是被点击的那个文件（判据有区分度：不是别的提示恰好在场）
-        ax: { has: "暂不支持预览：lightbox-bitmap.png" }
+        ax: { has: "暂不支持预览：binary-probe.pdf" }
       - label: 反向：没有出现任何 dirty（二进制不进编辑器 ⇒ 不可能有内存修改）
         ax: { not: "（未保存）" }
 
@@ -114,7 +114,7 @@ steps:
 
 teardown:
   - label: 收尾：被拒的二进制文件逐字节未动
-    file: { path: lightbox-bitmap.png, exists: true }
+    file: { path: binary-probe.pdf, exists: true }
   - label: 收尾：被拒的非 UTF-8 文件逐字节未动
     file: { path: invalid-utf8.bin, exists: true }
   - label: 收尾：文本类停在含探针的已保存形态
@@ -130,16 +130,19 @@ teardown:
 
 | 护栏 | 现状锚点 | 本场景的判据 |
 |---|---|---|
-| image / binary 类不进编辑器 | `src/tree.ts` 的 `openKind` → `src/main.ts` 的 `showNotice("暂不支持预览：…")` | 点击后覆盖层出现该提示**且点名该文件**；没有 dirty |
+| binary 类不进编辑器 | `src/tree.ts` 的 `openKind` → `src/main.ts` 的 `showNotice("暂不支持预览：…")` | 点击后覆盖层出现该提示**且点名该文件**；没有 dirty。**M629 起 image 类不再属于这一档**：图片打开内容区的图片查看面（场景 219 覆盖它），因此本场景的二进制探针改用 PDF |
 | 非 UTF-8 文本打开即拒 | Rust `fs_io::read_text_snapshot` 的 `from_utf8` 失败 → `fs_invalid_utf8` 人话文案 → 前端覆盖层 | 点击后出现「不是合法 UTF-8 编码」；没有 dirty |
 | 超 50MB 拒读 | Rust `fs_io::read_file_bytes` 的 `meta.len() > ATTACHMENT_MAX_BYTES` → `fs_too_large` 人话文案 | 点击 51MiB 的 `huge.log` 后出现「超过 50MB 上限，已拒绝读取」；没有 dirty |
 | 文本类不被牵连 | —— | 同一 vault 的 `.txt` 编辑、dirty、落盘全程照常 |
 
 `invalid-utf8.bin` 是第二条分支**唯一**的真机入口：扩展名 `.bin` 未收录 ⇒ `fileClass` 为 `text`
-⇒ 前端不按二进制分流、真去读文件 ⇒ Rust 解码失败。图像 fixture（如本场景的
-`lightbox-bitmap.png`）走不到这里——它被 `openKind → "binary"` 提前分流，**从不读内容**。
-两类的分流点在 `openKind` 是同一条（都是 `"binary"`），所以 image 类那次点击覆盖的是同一条
-前端护栏路径。
+⇒ 前端不按二进制分流、真去读文件 ⇒ Rust 解码失败。二进制 fixture（本场景的 `binary-probe.pdf`）
+走不到这里——它被 `openKind → "binary"` 提前分流，**从不读内容**。
+
+**M629（change add-image-file-preview）改准了一处期望**：图片文件自本 change 起不再与二进制
+同档——`openKind` 给图片单独一档，点击后打开内容区的图片查看面（无「暂不支持预览」）。因此
+本场景原先用 `lightbox-bitmap.png` 当二进制探针的那一步改成了 PDF：护栏矩阵的语义是「二进制
+仍被挡在编辑器之外」，与图片的新落点无关；图片的落点由场景 219 正面覆盖。
 
 `huge.log` 由 `do: vaultSparse`（M241 起的新动作：`open` + `ftruncate`）造出：**大小 51MiB、
 内容全零、几乎不占磁盘**。这是第三条分支能在真机上被触发的唯一干净做法——提交一份 50MB+ 的

@@ -29,6 +29,8 @@ import type { Language } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { GFM } from "@lezer/markdown";
 import type { EditorMode } from "./bindings/EditorMode";
+import { isDocSession } from "./session-kind";
+import type { EditorSessionKind } from "./session-kind";
 import { livePreview, previewRefresh, widgetCommands } from "./preview/livePreview";
 import { blockCopyTarget, codeBlockSlotWrappers, codeBlockWrappers, focusBlockScroll } from "./preview/livePreview";
 import { endMarker } from "./preview/endMarker";
@@ -878,6 +880,25 @@ export interface EditorReadyEvent {
 
 export type EditorReadyListener = (event: EditorReadyEvent) => void;
 
+/** 会话的运行期模式：文档会话取 `EditorMode`（md / code），图片会话取新档 `"image"`。
+ *  `"image"` **不落盘、不进配置**，只是运行期投影（modeline 分支与命令层排除的判据）；
+ *  它 MUST NOT 进 `bindings/EditorMode`——那是 Rust 契约（ts-rs）的生成面，加一档要改后端
+ *  且会触发 bindings 漂移门禁。 */
+export type SessionMode = EditorMode | "image";
+
+/** 会话模式 → **文本模式**投影（图片会话按 `code` 档）：只给「按模式装扩展 / 取文本读数」的
+ *  既有代码用（`wrapExtensions` / `modeAndWrapEffects` / toc 的 context）。
+ *  语义分支一律用会话档（`isDocSession`），MUST NOT 用本投影反推「这是不是图片会话」。 */
+export function textModeOf(mode: SessionMode): EditorMode {
+  return mode === "image" ? "code" : mode;
+}
+
+// 会话档与「是不是文本文档」的判据在 `src/session-kind.ts`（零重依赖的叶子模块，理由见那边
+// 文件头：本文件的 import 链带参数属性，tests/unit 的 strip-only 装载会直接抛）。这里原样
+// 转出，编辑器的消费者按「一处 import」的既有习惯继续从本模块取。
+export { isDocSession } from "./session-kind";
+export type { EditorSessionKind } from "./session-kind";
+
 /**
  * 一个**文档会话**（M149 多标签）：一份 EditorState + 逐文档的记账。
  *
@@ -899,7 +920,14 @@ export interface SessionPathRemap {
 export interface EditorSession {
   /** 会话 id（单调递增，供标签栏做 DOM key / 断言；顺序由 sessions() 的数组序决定）。 */
   readonly id: number;
-  /** 当前状态：激活期间每次 dispatch 后回写，非激活会话是上次切走时的那一份。 */
+  /** 会话档（M629）：文本文档 / 图片。判别字段，**全生命周期不变**——
+   *  图片会话不会被改判成文档会话（反之亦然）。 */
+  readonly kind: EditorSessionKind;
+  /** 当前状态：激活期间每次 dispatch 后回写，非激活会话是上次切走时的那一份。
+   *
+   *  图片会话的 state 是本实例的**共享哨兵空状态**（见 imageSentinelState）：只读、无路径
+   *  语义、恒零内容。MUST NOT 让图片会话持有上一份文档的 state——任何读 `view.state` 的命令
+   *  （⌘S 尤其）都会落到一份真实文档上。 */
   state: EditorState;
   /** 文档的 vault 相对路径；未命名文档（空态 / 新建）为 undefined。 */
   path: string | undefined;
@@ -917,6 +945,10 @@ export interface EditorSession {
    * **dirty 语义不看它**：壳的 `cleanDoc` 是空串、`dirty` 恒 false——未装载的内容没有可丢的修改，
    * 因此它既不拦「切换 vault / 退出」（`vaultSwitchBlock`）、也不进「保存全部脏标签」
    * （`saveAllDirty`），更不会被当成「无落盘基准」（`saveBaseline` 只对有本字段为真的会话有意义）。
+   *
+   * **图片会话同一条口径**（M629）：建图片会话时 `loaded === false`（失败恢复建出来的壳也是），
+   * 它的「装载」是字节读取 + 查看面显示，由装配层在唯一同步点触发；读成 / 读失败都把本字段
+   * 置真——失败不会反复重试，占位就是终态（用户再点一次这个标签是重试路径）。
    */
   loaded: boolean;
   /** dirty 判定基准：最近一次装载或保存时的全文。 */
@@ -934,8 +966,11 @@ export interface EditorSession {
    * 的拦截投影（当时判据是「非 md 全拦」）；该判据已换成按会话 `editable`，投影随之改为
    * `currentEditable`（见其注释），**changeFilter 不再读模式**——本字段的存在理由只剩上面
    * 那类装配与分支消费点。
+   *
+   * M629：图片会话取运行期新档 `"image"`（见 SessionMode）。语义分支一律走 `kind`
+   * （`isDocSession`），本字段只服务「按模式装扩展 / 取读数」这一类投影。
    */
-  mode: EditorMode;
+  mode: SessionMode;
   /**
    * 该会话是否可编辑（editable-non-md-files，裁决 D1「注册表全量文本类」）。取值 = 无文件
    * 上下文（空态 / 新建）或 `isEditablePath(path)`——判据只有
@@ -952,6 +987,8 @@ export interface EditorSession {
    * 存快照而不是裸 `scrollTop`：快照记的是「某个文档位置 + 相对视口的偏移」，恢复时报给
    * CM 的 `scrollTarget` 由它自己的测量周期落地，不受两份内容高度差与排版变化的影响；
    * 直接写 `scrollDOM.scrollTop` 会被 CM 的滚动锚点维护逻辑改掉（M149 实测差 242px）。
+   *
+   * 图片会话恒 `undefined`：它没有文档位置可锚（哨兵空状态里也没有可读的阅读位置）。
    */
   scroll: ScrollSnapshot | undefined;
 }
@@ -970,7 +1007,8 @@ export interface EditorHandle {
    * Compartment 热切换，不重建 view。
    */
   setMode(mode: EditorMode): void;
-  mode(): EditorMode;
+  /** 前台会话的模式（图片会话是 `"image"`，见 SessionMode）。 */
+  mode(): SessionMode;
   /**
    * 设置**应用运行期**的折行口径（M180，D1 裁决原话「应用级」）：配置加载（启动时喂初值）与
    * 两条 toggle 命令都走这一个入口，全部会话随即同步重配。只传要改的轴，未传的轴保持不变；
@@ -1037,6 +1075,27 @@ export interface EditorHandle {
    * 不激活、不装载内容——调用方按存储顺序建完壳后自己决定激活哪一个。
    */
   createShellSession(path: string): EditorSession;
+  /**
+   * 建一个**图片会话**（M629，change add-image-file-preview §1.2）：`kind === "image"`、
+   * `mode === "image"`、`editable === false`、`dirty === false`、`cleanDoc === ""`、
+   * `scroll === undefined`，`state` 取本实例的共享哨兵空状态（只读、零内容）。
+   *
+   * `loaded` 缺省 `false`：字节装载不在这里做——它由装配层在「成为前台」这一个时点触发
+   * （与文档壳的按需装载同一挂点），打开与恢复因此共用同一条路径。不激活、不碰 view。
+   *
+   * **分类不在这里判**：调用方按 `openKind(path)` 分流（`"image"` 才调本方法），本层不持
+   * 第二份扩展名 / 分类判据（REVIEW.md「同一语义两处真源」条）。
+   */
+  createImageSession(path: string, loaded?: boolean): EditorSession;
+  /**
+   * 写会话的「内容已装载」标志（M629，只服务图片会话的查看面生命周期）。
+   *
+   * 图片会话的 `loaded` 语义与文本壳同一格，但装载动作在查看面（装配层）：字节读成、
+   * 读失败、以及切走释放 src（D3）三条路径都由装配层经本入口落账。文本会话的 `loaded`
+   * 只由 `createShellSession` / `reloadSession` 写，不走这里——两条装载语义因此各有一个
+   * 写入者，没有跨语义的复用。
+   */
+  setSessionLoaded(session: EditorSession, loaded: boolean): void;
   /**
    * 用新内容改写一个既有会话（外部重载 / 放弃我的修改 / 恢复崩溃备份）。
    * 目标会话不在前台时只换它的 state，不碰 view。
@@ -2004,12 +2063,51 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     const editable = isEditablePath(path);
     return {
       id: ++sessionSerial,
+      kind: "doc",
       state: sessionState(doc, path, mode, editable, wrap),
       path,
       loaded,
       mode,
       editable,
       cleanDoc: doc,
+      dirty: false,
+      scroll: undefined,
+    };
+  }
+
+  /**
+   * 图片会话的**共享哨兵空状态**（M629，design §1.2）：本实例一份、全部图片会话共用。
+   *
+   * 三条理由：
+   *  - **MUST NOT 留上一份文档的状态**：图片成为前台时 `view.setState` 必须换成一份空状态，
+   *    否则任何读 `view.state` 的命令（⌘S 的 `contentOf` 尤其）都会作用在上一份文档上；
+   *  - 共享（每实例一份而非每标签一份）省掉重复构造，也保证它**永不被写入**——没有 dispatch
+   *    会落到它上面（`editable === false` 在视图层与 changeFilter 两层拒收），因此可以跨图片
+   *    会话复用同一对象；
+   *  - 按 `code` 档构造：不装 live preview、不解析 Markdown，内容恒空。
+   *
+   * 它不是全局单例：`sessionState` 里的基础层（changeFilter / updateListener）绑**本实例**的
+   * 闭包，跨实例共享会让图片会话的输入 / dirty 判定落到别人的前台会话上。
+   */
+  let imageSentinel: EditorState | null = null;
+  function imageSentinelState(): EditorState {
+    imageSentinel ??= sessionState("", undefined, "code", false, wrap);
+    return imageSentinel;
+  }
+
+  /** 建一个图片会话（不激活、不装载字节，见 EditorHandle.createImageSession 的契约）。
+   *  取值全部在构造点定死：图片会话是**结构性只读**，运行期不会再变（editable / dirty /
+   *  mode 都没有改判路径）。 */
+  function makeImageSession(path: string, loaded: boolean): EditorSession {
+    return {
+      id: ++sessionSerial,
+      kind: "image",
+      state: imageSentinelState(),
+      path,
+      loaded,
+      mode: "image",
+      editable: false,
+      cleanDoc: "",
       dirty: false,
       scroll: undefined,
     };
@@ -2195,19 +2293,26 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // 存成 CM 的 scrollSnapshot（位置锚 + 相对偏移），恢复时走同一个 scrollTarget
     // 通道——它由 CM 自己的测量周期落地，不受两份内容高度差与排版变化影响；
     // 直接写 scrollDOM.scrollTop 会被 CM 的滚动锚点维护逻辑改掉（M149 实测差 242px）。
-    active.scroll = view.scrollSnapshot();
+    //
+    // 图片会话不存快照（M629）：它的 `scroll` 恒 undefined（图片没有「上次读到哪里」），
+    // 且哨兵空状态里没有可锚的文档位置——给空文档记一份再「恢复」没有语义。
+    if (isDocSession(active)) active.scroll = view.scrollSnapshot();
     active = session;
     syncProjection();
     readyPath = session.path;
     // 壳态（内容未装载）不取 mtime：那是每标签一次的 IPC，而壳的正文本来就没有可标注的
     // doc-meta（M283）；装载时 `reloadSession` 会补上，随后前台重建装饰时缓存已就位。
-    if (session.loaded) ensureMtime(session.path);
+    // 图片会话同样不取：它没有正文装饰，字节装载走查看面（装配层）。
+    if (isDocSession(session) && session.loaded) ensureMtime(session.path);
     // 在途的 paint 事件作废：它属于刚切走的那个会话。
     ++readySerial;
     // 只换 state——撤销史 / 语法树 / 选区 / 搜索查询都在 state 里跟着走，不重新解析。
     // setState 不能在 update 进行中调用（CM 会抛），本函数只在命令层与装配层的
     // 事件回调里调用，都不在 update 内。
-    view.setState(session.state);
+    //
+    // 图片会话换到**哨兵空状态**（M629，design §1.3）：MUST NOT 留着上一份文档的状态——
+    // 否则任何读 `view.state` 的命令都会作用在上一份文档上，⌘S 尤其危险。
+    view.setState(isDocSession(session) ? session.state : imageSentinelState());
     // 恢复该会话的滚动位置。没有快照（新建会话）时不干预：新装载的文档由
     // reloadSession 复位到篇首，未命名空文档本来就在篇首。
     if (session.scroll !== undefined) view.dispatch({ effects: session.scroll });
@@ -2223,7 +2328,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    */
   function reconfigureWrap(): void {
     for (const session of sessions) {
-      const effects = wrapCompartment.reconfigure(wrapExtensions(session.mode, wrap));
+      // 图片会话没有文本面（哨兵空状态里没有可折行的正文），翻折行口径对它无可观测效果；
+      // 跳过而不是给 `wrapExtensions` 喂 "image"（它只接受 EditorMode）。
+      if (!isDocSession(session)) continue;
+      const effects = wrapCompartment.reconfigure(wrapExtensions(textModeOf(session.mode), wrap));
       if (session === active) view.dispatch({ effects });
       else session.state = session.state.update({ effects }).state;
     }
@@ -2339,6 +2447,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 显式切换即新的配置默认基线；即便与当前模式相同也要锚定（当前模式
       // 可能是上一个文件经装载漂移来的）。
       defaultMode = mode;
+      // 前台是图片会话（M629）：配置默认模式只对**文本**会话有意义——MUST NOT 把它写进
+      // 图片会话的 `mode`（那会把 "image" 改判成 md/code，modeline 与命令层的排除判据随之失准）。
+      // 基线已锚定，之后新建 / 装载的文本会话照常取它。
+      if (!isDocSession(active)) return;
       if (mode === active.mode) return;
       active.mode = mode;
       syncProjection();
@@ -2395,7 +2507,21 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       sessions.push(session);
       return session;
     },
+    createImageSession(path: string, loaded = false) {
+      // 图片会话（M629）：不建文本壳、不读字节、不激活（契约见 EditorHandle）。
+      const session = makeImageSession(path, loaded);
+      sessions.push(session);
+      return session;
+    },
+    setSessionLoaded(session: EditorSession, loaded: boolean) {
+      // 幂等；不属于本实例的会话忽略（防御性——调用方按会话对象传）。
+      if (session.loaded === loaded || !sessions.includes(session)) return;
+      session.loaded = loaded;
+    },
     reloadSession(session: EditorSession, doc: string, path: string | undefined, requestId?: number) {
+      // 图片会话没有可装载的文本：字节装载走查看面（装配层），MUST NOT 经本条把一份
+      // 「空文本」装进图片会话——那会把它变成一份可被 ⌘S 写回的空文档（design §1.2 的红线）。
+      if (!isDocSession(session)) return;
       const mode = modeForPath(path, defaultMode);
       // 可编辑性按文件类（与 mode 正交，唯一判据 isEditablePath）：path 一换就要一起改，
       // 否则会话会停在上一份文件的编辑性上。
@@ -2483,6 +2609,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         remapped.push({ from: path, to: next });
         mtimeCache.delete(path);
         session.path = next;
+        // 图片会话（M629）：只改路径。它没有文本面——mode / editable / mtime / 装饰一律不涉及；
+        // 查看面的字节按新路径重读由装配层的同步点判据（路径变了就重装）承担。
+        if (!isDocSession(session)) continue;
         // 扩展名可能变了（a.md → a.txt）：mode 与可编辑性按新路径重裁，内容不动。
         const mode = modeForPath(next, defaultMode);
         const editable = isEditablePath(next);
@@ -2516,12 +2645,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 幂等：装配层在唯一的同步点上每次重算（稳态下绝大多数调用在这里早退）。
       if (session.editable === editable) return;
       if (!sessions.includes(session)) return; // 防御性：不属于本实例的会话忽略
+      // 图片会话是**结构性只读**（M629）：editable 恒 false，运行期没有改判路径，
+      // 也没有可重配的文本面。这里守住而不是让下面喂 "image" 给 modeAndWrapEffects。
+      if (!isDocSession(session)) return;
       session.editable = editable;
       // 视图层与 dispatch 层**同判据一起翻**（changeFilter 读的 currentEditable 是前台会话的
       // 投影）：只翻视图层会得到「contenteditable 在场但按键在 dispatch 层被吞」的假可编辑
       // 编辑器（反例注释在 modeExtensions 与 baseExtensions）。可编辑性装在 mode 那个
       // Compartment 里，所以复用 modeAndWrapEffects（折行随同重配，幂等）。
-      const effects = modeAndWrapEffects(session.mode, session.path, editable);
+      const effects = modeAndWrapEffects(textModeOf(session.mode), session.path, editable);
       if (session === active) {
         syncProjection();
         view.dispatch({ effects });
@@ -2562,8 +2694,16 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 在目标 pane 的编辑落到源实例前台会话（污染 + 丢编辑 + dirty 漏判，P1-1 的后果链）。
       // `state.update({ effects })` 不带 changes ⇒ 不制造撤销事件、不重新解析；history 是模块级
       // StateField，reconfigure 不丢撤销栈。
+      if (!isDocSession(session)) {
+        // 图片会话（M629）：哨兵空状态绑的是**源实例**的闭包（changeFilter / updateListener），
+        // 迁进本实例后要换成本实例那一份。它没有可保留的文本状态，因此直接取本实例的哨兵状态
+        // ——比 rebind 一份共享哨兵更干净（同一实例的全部图片会话仍共用同一个 state 对象）。
+        session.state = imageSentinelState();
+        sessions.push(session);
+        return;
+      }
       session.state = session.state.update({
-        effects: rebindEffects(session.mode, session.path, session.editable),
+        effects: rebindEffects(textModeOf(session.mode), session.path, session.editable),
       }).state;
       sessions.push(session);
     },

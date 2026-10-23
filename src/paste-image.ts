@@ -82,9 +82,13 @@ export function firstImageFileIndex(items: ArrayLike<{ kind: string; type: strin
  *
  * code / text 模式编辑器、只读文档 MUST NOT 触发本能力（spec「只读与非 md 模式不触发」）；
  * 无 `image/*` 的剪贴板（纯文本 / 富文本 / 非图片文件）走降级条款，一律不拦。
+ *
+ * 入参的形状是本模块自己的最小面（不外引 editor.ts 的 SessionMode——那会形成 editor →
+ * paste-image → editor 的类型环）：图片会话的 `mode` 是 `"image"`，第一个条件即为非 md，
+ * 与只读文档走同一条「不消费」出口。
  */
 export function imagePasteItemIndex(
-  session: { mode: EditorMode; editable: boolean },
+  session: { mode: EditorMode | "image"; editable: boolean },
   items: ArrayLike<{ kind: string; type: string }>,
 ): number | null {
   if (session.mode !== "md" || !session.editable) return null;

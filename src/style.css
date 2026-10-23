@@ -718,6 +718,49 @@ body {
   min-height: 0;
   position: relative;
 }
+/* 图片查看面（M629，change add-image-file-preview §2.1 / §6）：pane 局部的查看面，绝对定位
+   盖住该 pane 的编辑器区（包含块 = `.editor-pane` 的 position:relative）。与 CM 视图互斥显示
+   ——opaque 的 `--content-bg` 底 + `hidden` 切换（author 的 display:grid 会盖掉 UA 的
+   [hidden] 规则，下面显式补回）。不画边框、不加阴影、不新增色值（design §6 的硬约束）；
+   四周留白吃既有 `--sp-9` 档。 */
+.image-viewer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-9);
+  background: var(--content-bg);
+  overflow: hidden;
+  color: var(--text-3);
+  /* 字号与文档内图片的加载态 / 占位同源：`calc(12.5em / 15)` 在 CM 里以内容字号为 em 基准，
+     查看面在编辑器之外，因此按同一算式显式取 `--editor-font-size`（随字号步进一起缩放）。 */
+  font-size: calc(12.5 / 15 * var(--editor-font-size));
+  line-height: var(--lh-ui);
+}
+.image-viewer[hidden] {
+  display: none;
+}
+/* 适配可视区且**不放大**（D2，与 lightbox 同一条口径）：不设 width / height，浏览器按自然
+   尺寸渲染，越界由 max-width / max-height 收住；`object-fit: contain` 只影响被收缩后的
+   填充方式，不改纵横比。MUST NOT 写 `width: 100%`（那会把小图拉大失真）。 */
+.image-viewer-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+/* 失败占位：与文档内图片的 `.cm-lp-image-error` **同一形态、同一组 token**。那条规则在
+   `src/preview/theme.ts` 的 CM 主题里（只作用于编辑器 DOM），查看面在编辑器之外，因此这里
+   按同组值再声明一次——两处是同一形态的两个落点，改一处必须同时改另一处（M629）。 */
+.image-viewer .cm-lp-image-error {
+  display: inline-block;
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--r4);
+  padding: var(--sp-2) var(--sp-5);
+  margin: var(--sp-1) 0;
+  color: var(--danger);
+  background-color: var(--code-bg);
+}
 /* 空 pane 引导（M322，文案 D369）：pane 在场但零标签时正文区的水印层——绝对定位盖在该
    pane 的编辑器之上（**透明底**：光标与键入内容透得出；前台未命名文档是 dirty 草稿时引导
    让位，谓词在 pane-layout 的 emptyPaneGuideVisible）。常驻 mountEl 内、`hidden` 切换在场 /

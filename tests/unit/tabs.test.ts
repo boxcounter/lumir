@@ -136,9 +136,10 @@ function installFakeDocument(): void {
   (globalThis as unknown as Record<string, unknown>).Node = FakeEl;
 }
 
-/** 会话替身：标签条只读 `path` / `dirty` 与对象身份。 */
+/** 会话替身：标签条只读 `path` / `dirty` / `kind` 与对象身份。`kind` 缺省 `"doc"`——
+ *  缺了它 `isDocSession` 会把替身当成图片会话（判据的默认回答是「不是文档」）。 */
 function session(path: string | undefined, over: Partial<EditorSession> = {}): EditorSession {
-  return { id: 1, path, dirty: false, loaded: true, ...over } as unknown as EditorSession;
+  return { id: 1, kind: "doc", path, dirty: false, loaded: true, ...over } as unknown as EditorSession;
 }
 
 interface Rig {
@@ -179,7 +180,7 @@ function createRig(sessions: EditorSession[], active: EditorSession): Rig {
     editor: fakeEditor,
     mount: mount as unknown as HTMLElement,
     overlayMount: new FakeEl("div") as unknown as HTMLElement,
-    toast: () => {},
+    toast: () => void order.push("toast"),
     saveCurrent: async () => {},
     forgetBackup: () => {},
     invalidateResolve: () => {},
@@ -250,5 +251,20 @@ test("点关闭钮：同样先激活所属 pane（点 / 关都是该 pane 标签
 
   assert.equal(rig.order[0], "activatePane", "关闭钮点击 MUST 先让所属 pane 成为活跃 pane");
   assert.ok(rig.order.includes("closeSession"), "干净标签直接关掉");
+  assert.ok(rig.order.includes("syncActiveDocument"), "关闭后仍跑一次同步点");
+});
+
+test("图片会话（M629）：关闭不弹保存确认、不调保存链路（即使被置脏）", () => {
+  // 生产中图片会话恒 clean（结构性只读、没有落盘基准）；这里人为置脏，把「万一有 dirty 的
+  // 图片会话」这条形态造出来。判据（`isDocSession`）若被删掉，resolveClose 会走
+  // showCloseConfirm：先弹 sticky 确认、用户不答复就不关——下面两条断言因此都有区分度。
+  const shot = session("shot.png", { kind: "image", dirty: true });
+  const doc = session("a.md");
+  const rig = createRig([shot, doc], shot);
+
+  rig.clickClose("shot.png");
+
+  assert.equal(rig.order.includes("toast"), false, "图片标签 MUST NOT 弹「有未保存修改」确认");
+  assert.ok(rig.order.includes("closeSession"), "图片标签直接关掉（恒无未保存内容）");
   assert.ok(rig.order.includes("syncActiveDocument"), "关闭后仍跑一次同步点");
 });

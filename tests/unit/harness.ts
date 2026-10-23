@@ -9,6 +9,7 @@
 import { EditorState } from "@codemirror/state";
 import type { EditorMode } from "../../src/bindings/EditorMode.ts";
 import type { EditorHandle, EditorSession } from "../../src/editor.ts";
+import type { EditorSessionKind } from "../../src/session-kind.ts";
 import { isEditablePath } from "../../src/preview/attachments.ts";
 import type { SaveController, ToastAction, ToastFn } from "../../src/save-controller.ts";
 import { createSaveController } from "../../src/save-controller.ts";
@@ -161,7 +162,11 @@ export interface EditorDouble {
    *  同源：跑的是 src/preview/attachments.ts 的 isEditablePath），显式传布尔值可造出
    *  「不可编辑文件类」的会话（image/binary 形态——生产中它们不进编辑器，这里只为覆盖
    *  saveBaseline 的不可保存分支）。 */
-  open(path: string | undefined, content: string, options?: { mode?: EditorMode; editable?: boolean }): EditorSession;
+  open(
+    path: string | undefined,
+    content: string,
+    options?: { mode?: EditorMode; editable?: boolean; kind?: EditorSessionKind },
+  ): EditorSession;
   /** 改内容：换 state、按 cleanDoc 重算 dirty，并触发 onDocChanged（崩溃备份排期靠它）。 */
   edit(path: string | undefined, content: string): void;
   /** 造一个**壳态**标签（M283）：有路径、内容为空、`loaded === false`、没有落盘基准。
@@ -241,8 +246,10 @@ export function createEditorDouble(): EditorDouble {
     reloads,
     open(path, content, options = {}) {
       const existing = find(path);
+      const kind = options.kind ?? "doc";
       const session: EditorSession = {
         id: nextId++,
+        kind,
         path,
         // 假编辑器的会话一律是「内容已装载」（M283 的壳态在真编辑器里由 createShellSession 造，
         // 本替身不给它建模——save-controller 的判定只读 dirty 与 path，壳态的语义等价于
@@ -251,8 +258,10 @@ export function createEditorDouble(): EditorDouble {
         state: stateOf(content),
         cleanDoc: content,
         dirty: false,
-        mode: options.mode ?? "md",
-        editable: options.editable ?? isEditablePath(path),
+        // 图片会话（M629）：mode 恒 "image"、editable 恒 false——与真编辑器 makeImageSession
+        // 的取值逐项一致（values 由那条构造点定死，本替身不为测试放宽）。
+        mode: kind === "image" ? "image" : (options.mode ?? "md"),
+        editable: kind === "image" ? false : (options.editable ?? isEditablePath(path)),
         scroll: undefined,
       };
       if (existing !== undefined) list[list.indexOf(existing)] = session;

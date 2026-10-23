@@ -170,7 +170,7 @@ async function openFile(
   await expect(page.locator(".modeline-path")).toHaveText(name);
 }
 
-/** 把附件字节接上（桩不路由 `fs_read_attachment`）。 */
+/** 把附件字节接上（桩自 M629 起的缺省应答是合成 PNG；本场景要的是这一段 SVG 文本）。 */
 async function stubAttachment(page: Page, svg: string): Promise<void> {
   await page.addInitScript((payload: string) => {
     const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a: unknown) => unknown } })
