@@ -167,9 +167,10 @@ case 6:
     let count = args.count >= 6 ? (Int64(args[5]) ?? 1) : 1
     clickWithFlags(point, clickCount: count, flags: flags)
 case 8:
-    // 滚轮注入（M644）：按拍投 `scrollWheel`，正负与 KimiCU / xdotool 的 dy / dx 同向
-    //（正 = 向上 / 向左）。分多拍而不是单发一个大 delta——单发在 WKWebView 的滚动容器里
-    // 常被钳成一小段，多拍与真实滚轮的增量序列更接近。
+    // 滚轮注入（M644）：按拍投 `scrollWheel`。dy / dx 的正负指向**尚未真机标定**（头注释
+    // 同口径）——首跑按场景 224 步骤 5 的实测核对，方向反了按实测回改。分多拍而不是单发
+    // 一个大 delta——单发在 WKWebView 的滚动容器里常被钳成一小段，多拍与真实滚轮的增量
+    // 序列更接近。
     guard args.count >= 5, let totalY = Int32(args[4]) else {
         FileHandle.standardError.write("mode 8 需要第 5 个参数：纵向行数 dy（可带第 6 个：横向 dx）\n".data(using: .utf8)!)
         exit(2)
