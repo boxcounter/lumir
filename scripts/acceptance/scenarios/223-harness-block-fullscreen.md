@@ -1,6 +1,6 @@
 ---
-id: "220-harness-block-fullscreen"
-item: 220
+id: "223-harness-block-fullscreen"
+item: 223
 title: harness 面板里的代码块与表格全屏：hover 钮打开遮罩、内容只含该块、Esc 退出、焦点回到面板
 open: harness-note.md
 marker: "HNL-ALPHA"
@@ -113,7 +113,7 @@ steps:
         ax: { focused: "AXButton" }
 ---
 
-# 220-harness-block-fullscreen —— harness 面板里的块级全屏（M634，change add-harness-block-fullscreen）
+# 223-harness-block-fullscreen —— harness 面板里的块级全屏（M634，change add-harness-block-fullscreen）
 
 ## 本场景在验什么
 

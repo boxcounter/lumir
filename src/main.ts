@@ -1182,14 +1182,21 @@ function syncImageViewer(): void {
   }
 }
 
-/** 遮罩的来源：关闭后焦点归还到**发起它的面**（M317 2.9 的 pane 档 + M634 的面板档）。
+/**
+ * 遮罩的来源：关闭后焦点归还到**发起它的面**（M317 2.9 的 pane 档 + M634 的面板档）。
  *
  *  - `pane`：文档 pane（焦点经 `focusSourcePane` 回该 pane 的编辑器，带阅读位置不变量）；
  *  - `harness`：对话面板（焦点回**发起钮**——它还在 DOM 里时；流式重渲可能已把它替换掉，
  *    那时回 composer。MUST NOT 交给编辑器，design §4.2）。
  *
+ *  **来源同时是主题 scope 的判据**（P2-1，r1 评审）：代码块遮罩的 `themeScopeSource()` 按
+ * `kind` 推导，不另存一份可漂移的宿主变量——从面板开过之后再用编辑器命令开，取到的必然是
+ * 编辑器根（面板档的触发器本身就在 transcript 里，遮罩的 scope 解析会自己走到那块宿主上）。
+ *
  *  遮罩打开后活跃 pane 可能已切换，所以来源必须在打开那一刻记下，不能关闭时现取。 */
-type OverlaySource = { kind: "pane"; paneId: PaneId | undefined } | { kind: "harness"; trigger: HTMLElement };
+type OverlaySource =
+  | { kind: "pane"; paneId: PaneId | undefined }
+  | { kind: "harness"; trigger: HTMLElement };
 
 function restoreOverlayFocus(source: OverlaySource): void {
   if (source.kind === "harness") {
@@ -1198,6 +1205,13 @@ function restoreOverlayFocus(source: OverlaySource): void {
     return;
   }
   focusSourcePane(source.paneId);
+}
+
+/** 代码块遮罩的主题 scope 来源：面板档取**发起钮**（它是 transcript 的后代，`mirrorThemeScope`
+ *  按「已镜像宿主」标记解析到 transcript，见 src/overlay-scope.ts），否则取编辑器根。
+ *  单一判据是来源本身——没有第二条可忘记同步的路径（P2-1 的修法）。 */
+function codeBlockThemeScopeSource(): HTMLElement {
+  return codeBlockFullscreenSource.kind === "harness" ? codeBlockFullscreenSource.trigger : editor.view.dom;
 }
 
 /** 把焦点交给面板里的发起钮；交不出去（已不在 DOM / 不可聚焦）返回 false，由调用方退到 composer。
@@ -1259,14 +1273,16 @@ injectEach((handle) =>
 // （scrollTop 2750 → 0，chromium 结构性看不见）。这里注入 editor 的原语（取阅读位置 → focus →
 // 经编辑器滚动通道写回），见 src/scroll-position-view.ts 的 focusPreservingReadingPosition。
 // M317 2.9：与表格侧同款——来源 pane 在打开时记下，关闭时焦点归还到它（不机械回活跃 pane）。
-// M634：`themeScopeSource` 改按来源解析——从面板打开时取面板的 scope 宿主（transcript 随身
-// 带着同一批 CM 生成类，见 src/overlay-scope.ts），编辑器来源仍取编辑器根，行为逐字不变。
+// M634：`themeScopeSource` 改按**来源**推导（`codeBlockThemeScopeSource`）——从面板打开时取
+// 面板里的发起钮（它在 transcript 内，遮罩的 scope 解析会走到那块「已镜像宿主」上，见
+// src/overlay-scope.ts），编辑器来源仍取编辑器根，行为逐字不变。判据只有来源这一处：
+// 不再另存 「当前主题宿主」变量（P2-1：那种变量在编辑器命令入口漏清就会把面板的宿主
+// 带进编辑器遮罩，`editor.code_block_wrap` 的折行档随之被改错）。
 let codeBlockFullscreenSource: OverlaySource = { kind: "pane", paneId: undefined };
-let codeBlockFullscreenThemeHost: HTMLElement | null = null;
 const codeBlockFullscreen = createCodeBlockFullscreen({
   mount: shell.root,
   restoreFocus: () => restoreOverlayFocus(codeBlockFullscreenSource),
-  themeScopeSource: () => codeBlockFullscreenThemeHost ?? editor.view.dom,
+  themeScopeSource: codeBlockThemeScopeSource,
 });
 // 装饰层拿到的是「按块起点打开」的**端口**（不是遮罩本体）：呈现计划在点击那一刻按当前
 // `EditorState` 现取，读屏名复用文档内容器同一份生成处（见 livePreview 的 codeBlockLabel）。
@@ -1278,8 +1294,8 @@ injectEach((handle) =>
       const target = codeBlockFullscreenTarget(handle.view, from);
       if (target === null) return;
       // 来源 pane 记录（M317 2.9）：触发钮在哪个 pane 的 DOM 里，焦点就还给哪个 pane。
+      // 主题 scope 也随之回到编辑器（来源一翻，`codeBlockThemeScopeSource` 即翻）。
       codeBlockFullscreenSource = { kind: "pane", paneId: paneIdOfHandle(handle) };
-      codeBlockFullscreenThemeHost = null;
       codeBlockFullscreen.open(target.render, target.label);
     },
   }),
@@ -1300,7 +1316,7 @@ const harnessBlocks: HarnessBlockFullscreenPort = {
     tableFullscreenSource = { kind: "harness", trigger };
     tableFullscreen.open(source, label);
   },
-  openCodeBlock(render, label, themeScopeHost, trigger) {
+  openCodeBlock(render, label, trigger) {
     if (
       codeBlockFullscreen.isOpen() &&
       codeBlockFullscreenSource.kind === "harness" &&
@@ -1310,7 +1326,6 @@ const harnessBlocks: HarnessBlockFullscreenPort = {
       return;
     }
     codeBlockFullscreenSource = { kind: "harness", trigger };
-    codeBlockFullscreenThemeHost = themeScopeHost;
     codeBlockFullscreen.open(render, label);
   },
   close() {

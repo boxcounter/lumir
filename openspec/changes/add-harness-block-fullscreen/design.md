@@ -119,9 +119,11 @@ type OverlaySource = { kind: "pane"; paneId: PaneId } | { kind: "harness" };
 
 ### 4.3 主题镜像来源
 
-`codeBlockFullscreen` 的 `themeScopeSource()` 从「恒取编辑器 DOM」改为「按当前来源取」：来源是面板时
-返回面板根（面板根带主题作用域），否则返回编辑器 DOM。表格侧不需要改（它从源元素自己镜像）。
-实现期的落地细节（来源解析需要一个显式标记）见 §11.4。
+`codeBlockFullscreen` 的 `themeScopeSource()` 从「恒取编辑器 DOM」改为「按当前来源推导」：来源是
+面板时返回**发起钮**（它在 transcript 内，遮罩的 scope 解析会走到那块「已镜像宿主」上），否则返回
+编辑器 DOM。判据只有来源这一处——MUST NOT 另存一份「当前主题宿主」变量（r1 评审 P2-1 的现场：
+那种变量在编辑器命令入口漏清，从面板开过全屏后再用编辑器命令开，折行档会按面板的宿主判错）。
+表格侧不需要改（它从源元素自己镜像）。实现期的落地细节（来源解析需要一个显式标记）见 §11.4。
 
 ## 5. 流式口径（D4：打开即快照）
 
@@ -222,7 +224,7 @@ type OverlaySource = { kind: "pane"; paneId: PaneId } | { kind: "harness" };
 `lumir-theme-scope`（`src/overlay-scope.ts` 的 `THEME_SCOPE_HOST_CLASS`），解析顺序改为
 「最近的 `.cm-editor` → 否则最近的标记宿主」；编辑器来源的解析结果逐字不变（第一条永远命中）。
 这条让**表格与代码块**两条遮罩都能从面板取到同一批 scope 类（表格走源元素 `closest` 也会命中
-transcript）。
+transcript；代码块遮罩的 scope 来源按 §4.3 推导为**发起钮**，同样是 transcript 的后代）。
 
 ### 11.5 静止态的钮不可聚焦 ⇒ 焦点归还先「露出」再聚焦
 
@@ -231,3 +233,13 @@ transcript）。
 `<body>`。修法：先把触发钮的 `visibility` / `opacity` 用内联样式临时提到可见、再 `focus()`，
 失焦时还原（`:focus-visible` 本来就会让钮浮现，这里只补「先能聚焦」这一步）；聚焦未落到钮上
 （钮已被流式重渲摘掉等）才退到 composer。
+
+### 11.6 主题 scope 来源不另存变量（r1 评审 P2-1 的修法）
+
+§4.3 的实现期版本曾用一个可变变量 `codeBlockFullscreenThemeHost` 记「面板宿主」，并在编辑器两条
+入口里手工清空——编辑器命令入口（`code-block.toggle-fullscreen`）漏了那一行，于是「先从面板开过
+全屏、再用编辑器命令开」时遮罩拿到陈旧的 transcript：`overlayWrapClass` 在 transcript 里找不到
+`.cm-content`，`editor.code_block_wrap=true` 时折行档被改错。修法取「更稳」的那一侧：删掉该变量，
+`themeScopeSource()` 直接按 `codeBlockFullscreenSource.kind` 推导（面板档取发起钮、pane 档取编辑器
+根），端口也一并去掉 `themeScopeHost` 参数——同一语义只留来源一处判据，不再有可忘记同步的第二条
+路径。回归判据在 `tests/visual/scenes/m634-harness-block-fullscreen.spec.ts` 的最后一条用例。

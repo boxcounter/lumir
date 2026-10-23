@@ -42,9 +42,10 @@
       来源与发起钮；`restoreFocus` 在来源为面板时回到该钮（仍在 DOM 时），否则回 composer；MUST NOT
       把焦点交给编辑器。实现期实测：静止态钮 `visibility: hidden` 不可聚焦，故先临时露出再聚焦
       （design §11.5）
-- [x] 3.2 代码块全屏的 `themeScopeSource()` 改为按来源解析（面板 → 面板的 scope 宿主 transcript；
-      编辑器 → 编辑器 DOM）；表格侧不改（既有实现从源元素镜像）。`mirrorThemeScope` 的来源解析补
-      「已镜像宿主」标记（design §11.4）
+- [x] 3.2 代码块全屏的 `themeScopeSource()` 改为按**来源**推导（面板 → 发起钮，落到面板的 scope
+      宿主 transcript；编辑器 → 编辑器 DOM），不另存可变宿主变量（r1 P2-1 修法，design §4.3 / §11.6）；
+      表格侧不改（既有实现从源元素镜像）。`mirrorThemeScope` 的来源解析补「已镜像宿主」标记
+      （design §11.4）
 - [x] 3.3 面板侧的**内容换代**关闭点：`resetView`（新会话 / 切 vault / cron 切屏 / 重载会话的共用
       出口）调端口 `close`——只关**面板来源**的那一份，编辑器里开的遮罩不因面板换会话退场
 - [x] 3.4 单测：内容换代三态（同 vault 重复装载不关 / 切 vault 关 / 重载会话关，
@@ -65,13 +66,13 @@
       遮罩在场、内容逐字相同（代码块） / cell 逐字相同（表格）、遮罩内无钮副本、表格结构（cell 边框）
       随元素走、主题 scope 镜像成立（`white-space: pre`）→ `Esc` 关闭、焦点回面板；**既有整页基线零
       更新**（本场景只做结构断言，钮静止态 `visibility: hidden`）
-- [x] 5.2 真机验收：新增 `scripts/acceptance/scenarios/220-harness-block-fullscreen.md` + 合成 fixture
+- [x] 5.2 真机验收：新增 `scripts/acceptance/scenarios/223-harness-block-fullscreen.md` + 合成 fixture
       `scripts/acceptance/fixtures/harness-mock-block-fs.json`——真实 WKWebView 下悬停唤出钮、点开两类
       全屏、内容互斥（代码遮罩里没有表格 cell / 表格遮罩里没有代码行）、`Esc` 退出、焦点回面板。
       静态校验通过（`--check`）；**尚未真机跑过**（本轮只到静态校验，见 mission 纪律）
 - [x] 5.3 回扫既有验收场景：新增的 slot 只包一层 div、不改任何文本节点，既有 harness 场景的文本断言
       不受影响；`node scripts/acceptance/run.mjs --check` 全量通过（217 个场景）
-- [x] 5.4 如实登记覆盖边界：钮的浮现手感与遮罩观感归 Alex 手感裁决（不进机器判据）；场景 220 的
+- [x] 5.4 如实登记覆盖边界：钮的浮现手感与遮罩观感归 Alex 手感裁决（不进机器判据）；场景 223 的
       hover 通道依赖静态文本节点的 bbox（已知边界写在场景文件末尾）
 
 ## 6. 验证

@@ -20,9 +20,20 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // 本场景只做结构断言，不碰任何像素基线（同 m347 / m460：harness 面板的场景守行为与计算样式，
 // 整页像素归既有基线；本 change 的钮静止态 visibility: hidden，因此基线零更新）。
 //
-// 不在本层：真机 WKWebView 下的 AX 通道与 hover 注入（归验收场景 220）；遮罩观感归 Alex 手感裁决。
+// 不在本层：真机 WKWebView 下的 AX 通道与 hover 注入（归验收场景 223）；遮罩观感归 Alex 手感裁决。
 
-const DOC = "# 块全屏笔记\n\n第一段，给上下文 chip 一个视口口径。\n";
+/** 编辑器里的文档：一段正文 + 一个围栏块（末尾那条 P2-1 回归用例要用编辑器入口开它）。 */
+const DOC = [
+  "# 块全屏笔记",
+  "",
+  "第一段，给上下文 chip 一个视口口径。",
+  "",
+  "```bash",
+  "echo WRAP-PROBE-01",
+  "echo WRAP-PROBE-02",
+  "```",
+  "",
+].join("\n");
 
 const VAULT: VaultFixture = {
   entries: [{ path: "harness-note.md", kind: "file", size: DOC.length, mtime_ms: 0 }],
@@ -72,8 +83,12 @@ async function stubHarness(page: Page, snapshot: unknown): Promise<void> {
   );
 }
 
-async function openPanel(page: Page, snapshot: unknown = STATE): Promise<void> {
-  await stubTauri(page, VAULT);
+async function openPanel(
+  page: Page,
+  snapshot: unknown = STATE,
+  config?: VaultFixture["config"],
+): Promise<void> {
+  await stubTauri(page, config === undefined ? VAULT : { ...VAULT, config });
   await stubHarness(page, snapshot);
   await page.goto("/");
   await page.locator('.ft-row[title="harness-note.md"]').click();
@@ -236,4 +251,72 @@ test("流式口径（D4）：打开即快照——后续增量不回灌遮罩，
   await expect(page.locator('.lumir-hp-block-slot[data-hp-block="code"]')).toHaveCount(1);
   await fireEvent(page, { type: "text_chunk", text: "\n```" });
   await expect(page.locator('.lumir-hp-block-slot[data-hp-block="code"]')).toHaveCount(2);
+});
+
+/** 把编辑器 caret 落到文档里 `needle` 之后的 `offset` 处并聚焦（与 m277 场景同一手法：
+ *  CodeMirror 在 `.cm-content` 上挂着 `cmTile.root.view` 这个自用手柄）。 */
+async function caretInEditor(page: Page, needle: string, offset = 0): Promise<void> {
+  const pos = await page.evaluate(
+    ({ needle, offset }) => {
+      const el = document.querySelector(".cm-content") as unknown as {
+        cmTile: { root: { view: { state: { doc: { toString(): string } }; dispatch(spec: unknown): void; focus(): void } } };
+      };
+      const view = el.cmTile.root.view;
+      const at = view.state.doc.toString().indexOf(needle);
+      if (at < 0) throw new Error(`文档里找不到 ${needle}`);
+      return at + offset;
+    },
+    { needle, offset },
+  );
+  await page.evaluate((p) => {
+    const el = document.querySelector(".cm-content") as unknown as {
+      cmTile: { root: { view: { dispatch(spec: unknown): void; focus(): void } } };
+    };
+    const view = el.cmTile.root.view;
+    view.dispatch({ selection: { anchor: p } });
+    view.focus();
+  }, pos);
+}
+
+test("P2-1 回归：从面板开过全屏后，编辑器命令入口仍按编辑器来源取主题 scope（折行档不被面板污染）", async ({
+  page,
+}) => {
+  // 编辑器开代码块折行；⌘J 绑定到命令入口。面板的块**不折行**（面板没有 .cm-content），
+  // 因此两条入口的折行档读数天然互斥——这正是判别面板宿主有没有漏进编辑器路径的判据。
+  await openPanel(page, STATE, {
+    keys: { "Cmd-j": "code-block.toggle-fullscreen" },
+    code_block_wrap: true,
+  });
+
+  const overlay = page.locator(".lumir-codeblock-fs-overlay");
+
+  // ① 先走面板入口：nowrap 档（与编辑器的 code_block_wrap=true 无关）。
+  const slot = page.locator('.lumir-hp-block-slot[data-hp-block="code"]').first();
+  await slot.hover();
+  await slot.locator(".lumir-hp-block-fs-trigger").click();
+  await expect(overlay).toBeVisible();
+  const harnessContent = overlay.locator(".lumir-codeblock-fs-content");
+  await expect(harnessContent).toHaveAttribute("class", /cm-lp-codeblock-nowrap/);
+  const harnessWhiteSpace = await harnessContent
+    .locator(".cm-line.cm-lp-codeblock-line")
+    .nth(1)
+    .evaluate((el) => getComputedStyle(el).whiteSpace);
+  expect(harnessWhiteSpace).toBe("pre");
+  await page.keyboard.press("Escape");
+  await expect(overlay).toBeHidden();
+
+  // ② 再从编辑器命令入口开：折行档必须跟编辑器配置（break-spaces）。修前这里会拿到陈旧的
+  //    面板宿主 ⇒ 找不到 .cm-content ⇒ 退回 nowrap（"pre"），折行设置被面板污染。
+  await caretInEditor(page, "WRAP-PROBE-01", 1);
+  await page.keyboard.press("Meta+j");
+  await expect(overlay).toBeVisible();
+  const editorContent = overlay.locator(".lumir-codeblock-fs-content");
+  await expect(editorContent).toHaveAttribute("class", /cm-lp-codeblock-wrap/);
+  const editorWhiteSpace = await editorContent
+    .locator(".cm-line.cm-lp-codeblock-line")
+    .nth(1)
+    .evaluate((el) => getComputedStyle(el).whiteSpace);
+  expect(editorWhiteSpace).toBe("break-spaces");
+  await page.keyboard.press("Escape");
+  await expect(overlay).toBeHidden();
 });

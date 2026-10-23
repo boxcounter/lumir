@@ -163,20 +163,16 @@ export interface HarnessBlockFullscreenPort {
    *  关闭后焦点归还给它）。 */
   openTable(source: HTMLElement, label: string, trigger: HTMLElement): void;
   /** 代码块：`render` 是**点击那一刻**按块源码现取的呈现计划（D4：打开即快照，后续流式增量
-   *  不回灌）；`themeScopeHost` 是面板的主题 scope 宿主（transcript）——遮罩据此镜像同一批
-   *  CM 生成类，呈现与面板逐项同形。 */
-  openCodeBlock(
-    render: CodeBlockRender,
-    label: string,
-    themeScopeHost: HTMLElement,
-    trigger: HTMLElement,
-  ): void;
+   *  不回灌）；`trigger` 既是 toggle 判据与焦点落点，也是遮罩主题 scope 的解析起点（它在
+   *  transcript 内，遮罩会走到那块「已镜像宿主」上，见 src/overlay-scope.ts）。 */
+  openCodeBlock(render: CodeBlockRender, label: string, trigger: HTMLElement): void;
   /** 内容换代（会话切换 / 面板重载 / 快照重取）：遮罩里的快照已不存在，显式关闭
    *  （spec「内容换代时遮罩自动关闭」；关闭路径与既有 `closeDocumentOverlays` 同族）。 */
   close(): void;
 }
 
-/** 渲染期的接线面（模块层的渲染件不认识面板根：`themeScopeHost` 由面板在装配边界绑上）。 */
+/** 渲染期的接线面（模块层的渲染件不认识面板根：装配边界只绑端口与标签，scope 宿主由
+ *  装配层按来源推导——trigger 本身就在面板里）。 */
 export interface HarnessBlockOpeners {
   code(render: CodeBlockRender, label: string, trigger: HTMLElement): void;
   table(source: HTMLElement, label: string, trigger: HTMLElement): void;
@@ -3763,10 +3759,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   transcript.classList.add(THEME_SCOPE_HOST_CLASS);
 
   // 块级全屏的渲染期接线（change add-harness-block-fullscreen）：模块层的渲染件不认识面板根，
-  // 主题 scope 宿主（transcript 是面板里唯一已镜像过 CM 生成类的宿主）在这里绑上。
+  // 装配层按**来源**（发起钮）推导主题 scope 宿主——trigger 在 transcript 内，遮罩自己会走到
+  // 上面那块「已镜像宿主」。
   // 端口未注入时 `deps.blocks` 为空——钮照常渲染、点击无动作（与触发钮 widget 的 opener 同口径）。
   const blockOpeners: HarnessBlockOpeners = {
-    code: (render, label, trigger) => deps.blocks?.openCodeBlock(render, label, transcript, trigger),
+    code: (render, label, trigger) => deps.blocks?.openCodeBlock(render, label, trigger),
     table: (source, label, trigger) => deps.blocks?.openTable(source, label, trigger),
   };
 
