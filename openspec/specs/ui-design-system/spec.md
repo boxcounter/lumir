@@ -187,6 +187,34 @@ hover 过渡与（随 agent 特性启用的）pulse 呼吸，MUST NOT 新增入�
 - **WHEN** 审查全仓 `transition` 声明
 - **THEN** 时长值只有 0.1s 与 0.12s 两种（动画 `pulse 1.6s` 除外），缓动统一
 
+### Requirement: 阅读面横向滚动条
+
+承载阅读内容的滚动容器（harness transcript 的代码块与工具详情、编辑器 / 预览的横向滚动区等）
+SHALL 使用细滚动条或按场景隐藏，MUST NOT 让系统默认粗滚动条上屏——默认粗条遮挡内容、且与产品
+「两档 hairline + 底色差」的层次语汇冲突。两档实现 SHALL 由共用选择器组承担（`src/harness-panel.css`
+的细条组、`src/style.css` 的标签栏隐藏组），组件 MUST NOT 各抄一份值：
+
+- **细条配方**（M406 起）：`scrollbar-width: thin` + `::-webkit-scrollbar { width: 4px; height: 4px }`
+  + thumb 取 `--border`、轨道 `transparent`。两条声明都要——标准通道管标准渲染，`::-webkit-scrollbar`
+  管 WKWebView 与 chromium（只写前者时 WKWebView 仍是系统默认条）。现行消费者：harness 的代码块 /
+  diff / argv（M628 把代码块并入同一份声明；机器判据 `tests/visual/scenes/m628-harness-bubble-and-scrollbar.spec.ts`
+  按 CSSOM 断言三处消费者逐值一致）。
+- **隐藏档**（M257 起）：`scrollbar-width: none` + `::-webkit-scrollbar { display: none }`。滚动能力
+  保留（触控板手势 / 程序化对齐），只是不占位、不上屏。现行消费者：标签栏（与浏览器标签条同形态）。
+
+新增阅读面滚动容器时 SHALL 先归入上述两档之一；两档都落不了（例如必须可见的纵向滚动条）时，
+SHALL 在实现处写明取舍，MUST NOT 留在系统默认形态。
+
+#### Scenario: 代码块横向溢出是细条
+
+- **WHEN** harness transcript 里出现横向溢出的代码块（超长代码行）
+- **THEN** 其滚动条为 4px 细条（`scrollbar-width: thin` + `::-webkit-scrollbar` 的 4px 声明，与工具详情的 diff / argv 同一份声明逐值一致），系统默认粗条不出现
+
+#### Scenario: 标签栏不出滚动条
+
+- **WHEN** 打开的标签多到标签栏横向溢出
+- **THEN** 标签栏没有可见滚动条（`scrollbar-width: none` + `::-webkit-scrollbar { display: none }`），横向滚动能力保留，标签宽度与正文列宽不受影响
+
 ### Requirement: 视觉基线处置
 
 本 change 使既有全部整页 / 元素基线失效（底色、字体、栏宽、骨架全换），基线 SHALL 以

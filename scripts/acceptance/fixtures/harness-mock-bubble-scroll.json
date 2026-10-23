@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "BUBBLE-PROBE 收到。下面这段代码一行很长，看横向滚动条的样子：\n\n```js\nconst longIdentifier = mapCellsToViewportWithRoundTrip(\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\");\n```\n",
+      "usage": { "input_tokens": 1000, "cached_tokens": 100, "output_tokens": 60 }
+    }
+  ]
+}

@@ -358,20 +358,35 @@
   align-self: stretch;
   min-width: 0;
 }
-/* 用户消息气泡（原型 .msg.user .body）：挂 body 体——who 行在气泡外上方。M351 底色 =
-   content-bg（与面板 --agent-bg 只差一档明度）；M370 改挂 --sel（选中底色一族）——
-   Alex「看不清我的消息和 Agent 的回复之间的边界」：content-bg/agent-bg 的两档明度差
-   在一屏内不可辨，--sel 是既有 token 里最强的中性底色（eink = #b9b9b9 灰实底，
-   无色彩语义、规则①不冲突），用户消息因此「扫一眼可分」。正文色 text-2 不动
-   （原型有意区分，合同见 change design §2.2）。 */
+/* 用户消息气泡（原型 .msg.user .body）：挂 body 体——who 行在气泡外上方。
+   底色沿革：M351 = content-bg（与面板 --agent-bg 只差一档明度）→ M370 改挂 --sel（选中
+   底色一族）——Alex「看不清我的消息和 Agent 的回复之间的边界」：content-bg/agent-bg 的
+   两档明度差在一屏内不可辨，--sel 是既有 token 里最强的中性底色（无色彩语义、规则①不
+   冲突），用户消息因此「扫一眼可分」。eink 档的灰实底已被下面的 M628 覆盖块换掉。
+
+   M628（Alex 2026-10-23「灰底黑字难以阅读，特别是 eink 模式」）：正文色从 --text-2
+   换成 --text。--text-2 是 tokens 文档给 meta / th / 引用块 / lede 的**次级**档，压在
+   --sel 实底上实测 light 4.26:1（连 WCAG AA 4.5 都不到）/ dark 4.67:1 / eink 5.54:1；
+   换正文档后 13.2 / 10.2 / 21:1。「用户消息 vs agent 消息」的区分改由**面**承担
+   （light/dark = --sel 实底，M370 裁决不动；eink 见下一条），不再靠压暗正文——正文
+   是内容本体，降档是 meta 文本的手段，用在这里正是「看不清」的根因。 */
 .lumir-hp-msg-user > .lumir-hp-body {
   padding: var(--sp-3) var(--sp-4);
   background: var(--sel);
   border: 1px solid var(--border-soft);
   border-radius: var(--r6);
-  color: var(--text-2);
+  color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
+}
+/* eink 用户气泡（M628）：灰实底退场，改白面 + 结构档描边。依据 tokens 文档 eink 规则⑤
+   的同一条口径——「区块不另立色面 ⇒ 取正文面，层次由线宽承担」（代码块 eink 翻白同款）：
+   #b9b9b9 在 e-ink 屏是靠抖动呈现的中间调，整块灰底上的字发糊；纸面 + 1px 黑框既守
+   「无大片灰实底」的纪律，又与 agent 的平铺正文一眼可分（气泡本来就按「描边气泡」定义，
+   spec「消息呈现」条）。 */
+:root[data-theme="eink"] .lumir-hp-msg-user > .lumir-hp-body {
+  background: var(--content-bg);
+  border-color: var(--border);
 }
 .lumir-hp-msg-assistant {
   align-self: stretch;
@@ -833,21 +848,29 @@
 }
 /* 细滚动条（M406，Alex：cli_run 详情横向滚动条太粗、遮挡内容）：4px 细条 + 透明轨道，
    两条声明都要（scrollbar-width 管标准通道，::-webkit-scrollbar 管 WKWebView/chromium）——
-   与 tabstrip 的既有细条条款（src/style.css）同手法。 */
+   与 tabstrip 的既有细条条款（src/style.css）同手法。
+   M628（Alex 2026-10-23「代码块横向滑动的滚动条很粗，影响阅读代码」）：配方扩到
+   `.lumir-hp-codeblock`——它一直漏在这条之外，横向溢出时走系统默认粗条。三个消费者
+   （代码块 / diff / argv）共用这一份声明，MUST NOT 各自再写一份（tests/visual 的 m628
+   场景按 CSSOM 断言三处逐值一致）。 */
+.lumir-hp-codeblock,
 .lumir-hp-diff,
 .lumir-hp-argv {
   scrollbar-width: thin;
 }
+.lumir-hp-codeblock::-webkit-scrollbar,
 .lumir-hp-diff::-webkit-scrollbar,
 .lumir-hp-argv::-webkit-scrollbar {
   width: 4px;
   height: 4px;
 }
+.lumir-hp-codeblock::-webkit-scrollbar-thumb,
 .lumir-hp-diff::-webkit-scrollbar-thumb,
 .lumir-hp-argv::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 2px;
 }
+.lumir-hp-codeblock::-webkit-scrollbar-track,
 .lumir-hp-diff::-webkit-scrollbar-track,
 .lumir-hp-argv::-webkit-scrollbar-track {
   background: transparent;

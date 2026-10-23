@@ -7,7 +7,8 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // design §2 视觉保真节）。四面：
 //
 //   1. **消息区**：who/when meta 行（角色 + 相对时间，live 上屏打戳）；用户气泡挂 body
-//      （content-bg 底 + border-soft 边 + r6 + 正文 text-2——计算样式探针对照）；快照
+//      （--sel 底 + border-soft 边 + r6 + 正文档 text——计算样式探针对照；M628 起正文
+//      不再是次级档 text-2，可读性判据在 m628 场景）；快照
 //      恢复消费后端 ts（M353）显示真实相对时间，无 ts 的旧快照只有角色（不伪造读数）。
 //   2. **composer**：圆角卡片容器（content-bg + border + r8，focus-within 出 accent 框）；
 //      发送钮 26×26 图标形态——M356 起配色按原型走组件级变量（中性值，非产品蓝
@@ -121,7 +122,8 @@ test("消息区：who/when meta 行 + 用户气泡计算样式 + agent 平铺", 
   // 气泡挂 body（不挂消息元素）：M351 = content-bg 底 / border-soft 边 / r6 / 正文 text-2
   // （探针对照）；M370 底色改挂 --sel（选中底色一族）——content-bg 与面板 --agent-bg 的
   // 两档明度差在一屏内不可辨（Alex「看不清我的消息和 Agent 的回复之间的边界」），--sel 是
-  // 既有 token 里最强的中性底色（eink = #b9b9b9 灰实底，无色彩语义）。
+  // 既有 token 里最强的中性底色（eink = #b9b9b9 灰实底，无色彩语义）。M628 正文改 --text
+  // （可读性，三主题对比度判据在 m628 场景），eink 底色改白面 + 结构档描边。
   const userBody = userMsg.locator(".lumir-hp-body");
   await expect(userBody).toHaveCount(1);
   const bubble = await userBody.evaluate((el) => {
@@ -135,7 +137,7 @@ test("消息区：who/when meta 行 + 用户气泡计算样式 + agent 平铺", 
     };
   });
   expect(bubble.backgroundColor).toBe(await probeColor(page, "background-color", "--sel"));
-  expect(bubble.color).toBe(await probeColor(page, "color", "--text-2"));
+  expect(bubble.color).toBe(await probeColor(page, "color", "--text"));
   expect(bubble.borderRadius).toBe("6px");
   expect(bubble.borderTopWidth).toBe("1px");
   expect(bubble.padding).toBe("6px 8px"); // sp-3 sp-4（原型 .msg.user .body）
