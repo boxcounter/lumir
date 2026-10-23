@@ -15,7 +15,7 @@
 ## 1. 判据（`src-tauri/src/cron.rs`）
 
 - [x] 1.1 `NotifyPermission` 四档（`Granted` / `Denied` / `Unrecognized` / `Unknown`）+
-  `blocks_delivery()` / `as_str()`；档位含义与 M636 机制写进类型文档注释。
+  `blocks_delivery()`；档位含义与 M636 机制写进类型文档注释。
 - [x] 1.2 `ReloadOutcome` 增加 `notify_permission` 字段（重载回执回流，注册路径不二次申请）。
 - [x] 1.3 `notify_permission_notice(permission, language)`：两档成因 × 两语言的四句；
   `Unrecognized` 档 MUST NOT 出现「系统设置」引导。
