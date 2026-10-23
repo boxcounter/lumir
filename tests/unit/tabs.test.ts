@@ -20,6 +20,7 @@ import assert from "node:assert/strict";
 import { createTabs } from "../../src/tabs.ts";
 import type { TabsDeps, TabsHandle } from "../../src/tabs.ts";
 import type { EditorHandle, EditorSession } from "../../src/editor.ts";
+import { t } from "../../src/copy.ts";
 
 interface FakeEvent {
   target?: unknown;
@@ -267,4 +268,32 @@ test("图片会话（M629）：关闭不弹保存确认、不调保存链路（�
   assert.equal(rig.order.includes("toast"), false, "图片标签 MUST NOT 弹「有未保存修改」确认");
   assert.ok(rig.order.includes("closeSession"), "图片标签直接关掉（恒无未保存内容）");
   assert.ok(rig.order.includes("syncActiveDocument"), "关闭后仍跑一次同步点");
+});
+
+test("vault 外只读标签（M660 #7）：可见侧是 aria-hidden 的锁形图标，可见文字不再带「只读」", () => {
+  // Alex 2026-10-24：「现在 TAB 上显示 read-only，但区分度不够，是否有其他图像化表达，比如
+  // TAB 上能改为一个小图标」。判据三层：① 图标在场且 aria-hidden（图形只做可见标记，不进
+  // 读屏树）；② 可见文字只剩文件名（旧的 D578 文字后缀退场）；③ 可访问名仍是 D579——
+  // 「只读」这件事对读屏用户零损失。负向对照钉住判据是 `session.external`，不是「所有标签」。
+  const ext = session("/tmp/draft.md", { external: true });
+  const inner = session("a.md");
+  const rig = createRig([ext, inner], ext);
+
+  const tabOf = (path: string): FakeEl => {
+    const found = rig.mount.children.find((child) => child.dataset.path === path);
+    assert.ok(found, `没有找到路径为 ${path} 的标签元素`);
+    return found;
+  };
+
+  const extTab = tabOf("/tmp/draft.md");
+  const lock = extTab.find("tab-readonly");
+  assert.equal(lock.length, 1, "只读标签 MUST 带一枚锁形图标");
+  assert.equal(lock[0].getAttribute("aria-hidden"), "true", "图标不进读屏树（语义由 aria-label 承担）");
+  assert.equal(extTab.find("tab-name")[0].textContent, "draft.md", "可见文字只剩文件名");
+  assert.equal(
+    extTab.find("tab-open")[0].getAttribute("aria-label"),
+    t("D579", { name: "draft.md" }),
+    "读屏名仍是 D579（{名称}（vault 外只读））",
+  );
+  assert.equal(tabOf("a.md").find("tab-readonly").length, 0, "vault 内标签没有这枚图标");
 });

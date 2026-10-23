@@ -138,6 +138,29 @@ const overlayVisible = (page: Page) =>
     return el !== null && !el.hidden;
   });
 
+/** 内容容器相对面板**内边距盒**的水平余量（M660 #5 的居中判据）。
+ *  面板是滚动容器、内边距在 clientWidth 之内：可用宽 = clientWidth − 左右内边距，
+ *  余量 = 内容盒与内边距盒两侧的空隙。窄内容居中时两侧余量相等；宽内容仍贴左（左余量 0）。 */
+function horizontalInsets(page: Page) {
+  return page.evaluate(() => {
+    const panel = document.querySelector<HTMLElement>(".lumir-codeblock-fs-panel")!;
+    const content = document.querySelector<HTMLElement>(".lumir-codeblock-fs-content")!;
+    const ps = getComputedStyle(panel);
+    const paddingLeft = Number.parseFloat(ps.paddingLeft);
+    const paddingRight = Number.parseFloat(ps.paddingRight);
+    const p = panel.getBoundingClientRect();
+    const c = content.getBoundingClientRect();
+    return {
+      left: c.left - (p.left + paddingLeft),
+      right: p.right - paddingRight - c.right,
+      contentWidth: c.width,
+      available: panel.clientWidth - paddingLeft - paddingRight,
+      panelScrollWidth: panel.scrollWidth,
+      panelClientWidth: panel.clientWidth,
+    };
+  });
+}
+
 const scrollerState = (page: Page) =>
   page.evaluate(() => {
     const scroller = document.querySelector(".cm-scroller") as HTMLElement;
@@ -332,6 +355,11 @@ test("5.5 折行两口径：不折行时浮层横向可滚，折行时不出现�
   expect(nowrap.label).toBe("Markdown 代码块 1");
   expect(nowrap.contentClass).toContain("cm-lp-codeblock-nowrap");
   expect(nowrap.panelScrollWidth).toBeGreaterThan(nowrap.panelClientWidth);
+  // M660 #5 的另一半：宽内容的行为不变——内容仍吃满面板可用宽、贴左，超长行靠壳横滚。
+  // 居中只对「窄于可用宽」的块生效；这条钉住它没有被居中写法推动（左余量 0、宽度不缩）。
+  const wide = await horizontalInsets(page);
+  expect(wide.contentWidth).toBeGreaterThanOrEqual(wide.available - 1);
+  expect(wide.left).toBeLessThanOrEqual(1);
   await page.evaluate(() => {
     (document.querySelector(".lumir-codeblock-fs-panel") as HTMLElement).scrollLeft = 400;
   });
@@ -434,7 +462,10 @@ test("5.7 入口边界：正文段落与 code 模式文件都没有入口（负�
   expect(await overlayVisible(page)).toBe(false);
 });
 
-test("5.7b 缩进代码块同样可放大：没有头部条（没有围栏行）", async ({ page }) => {
+test("5.7b 缩进代码块同样可放大：没有头部条（没有围栏行）；窄内容在浮层内水平居中（M660 #5）", async ({ page }) => {
+  // Alex 2026-10-24 反馈原话：「全屏查看 code block 时，如果 code block 比较窄，会靠左显示。
+  // 不好看，是否能居中？」缩进块是现成的窄块（两行短文本），内容自然宽远小于浮层可用宽——
+  // 判据 = 内容盒相对面板内边距盒的左右余量相等；宽块的行为由 5.5 的「左余量 0 + 吃满可用宽」钉住。
   await openDoc(page);
   await caretAt(page, "indented body one", 1);
   await page.keyboard.press(TRIGGER_PRESS);
@@ -443,4 +474,10 @@ test("5.7b 缩进代码块同样可放大：没有头部条（没有围栏行）
   expect(reading.label).toBe("Markdown 代码块 3");
   expect(reading.text).toBe("    indented body one\n    indented body two");
   expect(reading.headCount).toBe(0);
+
+  const inset = await horizontalInsets(page);
+  // 区分度前提：块确实窄（否则「居中」与「贴左」读数无差别）。
+  expect(inset.available - inset.contentWidth).toBeGreaterThan(100);
+  expect(inset.left, "窄内容的左余量").toBeGreaterThan(1);
+  expect(Math.abs(inset.left - inset.right), "两侧余量相等 = 水平居中").toBeLessThanOrEqual(1);
 });

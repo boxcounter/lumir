@@ -141,7 +141,7 @@ steps:
     expect:
       - label: modeline 右段出现只读段（vault 外 · 只读）
         ax: { has: "vault 外 · 只读" }
-      - label: 标签页标题带可见的只读区分标记（读屏名 = 文件名 + vault 外只读）
+      - label: 标签页的读屏名带「vault 外只读」（可见侧是文件名前的锁形图标，M660 #7）
         ax: { has: '/AXRadioButton \\(hosts（vault 外只读）\\)/' }
       - label: 内容可读（/etc/hosts 的正文进了编辑器）
         editor: { has: "localhost" }
@@ -294,5 +294,8 @@ Alex 2026-10-23 的需求原话：「快速便捷地查找、打开文件（类�
   `tests/visual/scenes/quick-open.spec.ts` 用真实 DOM 计数钉住（`.lumir-toast` 恰为 1 条）。
 - **输入法组合期**：本场景用 `typeInNode` 注入 ASCII 路径，中文查询串的组合期行为由
   `tests/visual/scenes/list-filter.spec.ts` 的同款事件序列覆盖。
+- **只读标签的锁形图标是可见标记、不进 AX**（M660 #7）：真机层只判读屏名（`{名称}（vault 外
+  只读）`）与可见文字不再带「只读」；图标在场 / `aria-hidden` / SVG 形态 / vault 内标签无图标
+  由 `tests/visual/scenes/quick-open.spec.ts` 与 `tests/unit/tabs.test.ts` 钉住。
 - **样例全合成**：两个 `vaultWrite` 文件与 `/etc/hosts` 都不含真实 vault 内容；标签名与 marker
   是验收用的合成串。

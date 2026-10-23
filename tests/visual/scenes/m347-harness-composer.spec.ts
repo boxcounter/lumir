@@ -756,3 +756,90 @@ test("字号是**一套设置**：⌘+/-/0 让编辑器与 harness 面板一起�
   await expect.poll(editorFontPx).toBe(15);
   await expect.poll(composerFontPx).toBe(13);
 });
+
+test("权限规则段滚动条：隐藏档，溢出态下删除钮不被压住（M660 #1 追加）", async ({ page }) => {
+  // 同一缺陷类的第三处（M658 滚动条盘点 P1，较轻）：规则段的 6px 行右留白 − 16px 删除钮，
+  // overlay 条覆盖约 5px、半遮删除钮。按 tower 2026-10-24 追加，与 vault / 会话浮层同档（隐藏）。
+  // 规则列表只在 `[harness].permissions.allow` 非空时渲染，且超过 6 行才滚动——本用例先造
+  // 10 条合成规则把列表顶出滚动，再断言声明与实际占位（先溢出、后断言，同 M658 的判据要求）。
+  const RULES = Array.from({ length: 10 }, (_, i) => `cli(tool-${i + 1} search *)`);
+  await stubTauri(page, VAULT);
+  await stubHarnessComposer(page);
+  // 在既有桩链最外层改写 config_get 的应答：只补规则表，其余形状原样透传。
+  await page.addInitScript((rules) => {
+    const internals = (window as unknown as Record<string, any>).__TAURI_INTERNALS__;
+    const orig = internals.invoke as (cmd: string, args: unknown) => Promise<unknown>;
+    internals.invoke = async (cmd: string, args: unknown) => {
+      const out = await orig(cmd, args);
+      if (cmd !== "config_get") return out;
+      // 桩链的返回形态可能是对象（invoke 桥已解析）或 JSON 串，两种都接住。
+      const snap = (typeof out === "string" ? JSON.parse(out) : out) as {
+        config: { harness: { permissions: { allow: string[]; deny: string[] } } };
+      };
+      snap.config.harness.permissions = { ...snap.config.harness.permissions, allow: rules };
+      return typeof out === "string" ? JSON.stringify(snap) : snap;
+    };
+  }, RULES);
+
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await page.locator(".lumir-hp-perm").click();
+  await expect(page.locator(".lumir-hp-permpop")).toBeVisible();
+  await expect(page.locator(".lumir-hp-permpop-rule")).toHaveCount(10);
+
+  const reading = await page.evaluate(() => {
+    const list = document.querySelector<HTMLElement>(".lumir-hp-permpop-rules");
+    if (list === null) throw new Error("权限规则段不在场");
+    const cs = getComputedStyle(list);
+    list.scrollTop = list.scrollHeight;
+    let webkitDisplay = "";
+    const walk = (ruleList: CSSRuleList) => {
+      for (const rule of Array.from(ruleList)) {
+        const anyRule = rule as unknown as {
+          selectorText?: string;
+          style?: CSSStyleDeclaration;
+          cssRules?: CSSRuleList;
+        };
+        if (anyRule.cssRules !== undefined) walk(anyRule.cssRules);
+        if (anyRule.selectorText === ".lumir-hp-permpop-rules::-webkit-scrollbar") {
+          webkitDisplay = anyRule.style?.display ?? "";
+        }
+      }
+    };
+    for (const sheet of Array.from(document.styleSheets)) {
+      let sheetRules: CSSRuleList;
+      try {
+        sheetRules = sheet.cssRules;
+      } catch {
+        continue;
+      }
+      walk(sheetRules);
+    }
+    return {
+      scrollbarWidth: cs.scrollbarWidth,
+      overflowY: cs.overflowY,
+      scrollHeight: list.scrollHeight,
+      clientHeight: list.clientHeight,
+      offsetWidth: list.offsetWidth,
+      clientWidth: list.clientWidth,
+      scrolledTop: list.scrollTop,
+      rules: list.querySelectorAll(".lumir-hp-permpop-rule").length,
+      dels: list.querySelectorAll(".lumir-hp-permpop-ruledel").length,
+      webkitDisplay,
+    };
+  });
+
+  // 区分度前提：规则段真的溢出（10 行 > 6 行上限）。
+  expect(reading.overflowY).toBe("auto");
+  expect(reading.scrollHeight).toBeGreaterThan(reading.clientHeight + 40);
+  expect(reading.scrolledTop).toBeGreaterThan(0);
+  expect(reading.rules).toBe(10);
+  expect(reading.dels).toBe(10);
+
+  // 隐藏档：标准通道 + 经典通道 + 实测零占位。
+  expect(reading.scrollbarWidth).toBe("none");
+  expect(reading.webkitDisplay).toBe("none");
+  expect(reading.offsetWidth - reading.clientWidth).toBe(0);
+});

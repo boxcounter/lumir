@@ -234,11 +234,27 @@ test("vault 外绝对路径只读打开：标签与 modeline 的只读标记、�
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
 
-  // 标签页：可见的「只读」后缀（Alex 追加裁决：一眼可辨），悬停提示是**完整绝对路径**
+  // 标签页（M660 #7，Alex 2026-10-24：「现在 TAB 上显示 read-only，但区分度不够，是否有其他
+  // 图像化表达，比如 TAB 上能改为一个小图标」）：可见文字只剩文件名，只读态改由**锁形图标**
+  // 表达（`.tab-readonly`，细线 SVG、aria-hidden——它不参与可访问名）；悬停提示仍是**完整绝对
+  // 路径**；读屏名仍是 D579 的「{名称}（vault 外只读）」，语义零损失。
+  // 旧的可见文字后缀（D578「· 只读」）随本改动退场：可见侧不再有「只读」二字。
   const tab = page.locator(".tab-open").filter({ hasText: "draft.md" });
-  await expect(tab).toHaveText("draft.md · 只读");
+  await expect(tab.locator(".tab-name")).toHaveText("draft.md");
+  await expect(tab).not.toContainText("只读");
+  const lock = tab.locator(".tab-readonly");
+  await expect(lock).toHaveCount(1);
+  await expect(lock).toHaveAttribute("aria-hidden", "true");
+  await expect(lock.locator("svg")).toHaveCount(1);
   await expect(tab).toHaveAttribute("title", EXTERNAL_PATH);
   await expect(tab).toHaveAttribute("aria-label", "draft.md（vault 外只读）");
+  // 负向对照：vault 内标签不得带这枚图标（判据是 `session.external`，不是「所有标签」）。
+  // 开一个 vault 内文件看一眼再关掉——用例末尾按「标签总数 1」判去重，这里不能留残局。
+  await page.locator('.ft-row[title="notes/plan.md"]').click();
+  const vaultTab = page.locator(".tab").filter({ hasText: "plan.md" });
+  await expect(vaultTab.locator(".tab-readonly")).toHaveCount(0);
+  await vaultTab.locator(".tab-close").click();
+  await page.locator(".tab-open").filter({ hasText: "draft.md" }).click();
 
   // modeline：右段追加「vault 外 · 只读」，左段的路径段是完整绝对路径（辅助面）
   await expect(page.locator(".modeline-meta")).toContainText("vault 外 · 只读");

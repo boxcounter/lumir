@@ -39,6 +39,15 @@ import type { CommandRunner } from "./keys";
 import { baseName } from "./tree";
 import { onRelabel, t } from "./copy";
 
+/** vault 外只读标签的锁形图标（M660 #7，Alex 2026-10-24：「TAB 上显示 read-only，但区分度不够，
+ *  是否有其他图像化表达，比如 TAB 上能改为一个小图标」）：10×10 细线 SVG，与目录 / vault 的
+ *  caret 同一工艺（stroke = currentColor、1.3px、圆头圆角）。图形只表达状态——可访问名仍由
+ *  按钮的 aria-label（D579）承担，图标带 `aria-hidden`，不进读屏树。字节是静态常量、无插值。
+ *  旧的可见文字后缀（D578「· 只读」）随本改动退场：零消费者的文案条目按「变更默认直接切断」
+ *  从 deck 与 copy-data 一并删除，编号不复用。 */
+const READONLY_LOCK_SVG =
+  '<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><rect x="2.6" y="5.3" width="6.8" height="5.2" rx="1.1" stroke="currentColor" stroke-width="1.3"/><path d="M4.2 5.3V3.9a1.8 1.8 0 0 1 3.6 0v1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+
 // ---------------------------------------------------------------------------
 // 文案（编号见 文案-Copy.md 的 D148 起；本模块是它们唯一一份字面量）
 // ---------------------------------------------------------------------------
@@ -46,6 +55,7 @@ import { onRelabel, t } from "./copy";
 /** 标签右键菜单的读屏名（`role=menu` 的 aria-label）。不叫「右键菜单」：键盘路径也能开，
  *  读屏用户没有「右键」这个概念（与 D125 文件树菜单同口径）。 */
 export const TAB_MENU_LABEL = (): string => t("D148");
+
 /** 定位项（D322，M300 / change tab-reveal-in-tree）：把这一条标签的文件在左栏树里显现出来
  *  （展开祖先 + 滚进视口 + 标成当前行，能力在 `src/tree.ts` 的 `revealPath`）。
  *  **这与 D128「在 Finder 中显示」不是同一个动作**：那一条的对象是系统文件管理器。
@@ -284,7 +294,9 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         open.setAttribute("role", "tab");
         open.setAttribute("aria-selected", String(isActive));
         // 读屏名点名文件名 + 它自己的状态：vault 外只读标签（change quick-open-file-oct23 的
-        // D2 追加裁决）追加「vault 外只读」一句，未保存变体沿用 D90。
+        // D2 追加裁决）追加「vault 外只读」一句，未保存变体沿用 D90。M660 #7 起可见侧改成锁形
+        // 图标（见下面的 lock）：图形语义不会自动进可访问名，只读这件事必须继续留在这条
+        // aria-label 上——它是读屏用户唯一的来源。
         open.setAttribute(
           "aria-label",
           session.external === true ? t("D579", { name }) : session.dirty ? t("D90", { name }) : name,
@@ -299,13 +311,23 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         const dot = document.createElement("span");
         dot.className = "tab-dirty";
         dot.hidden = !session.dirty;
+        // vault 外只读的可见标记（M660 #7，Alex 2026-10-24：可见文字「只读」的区分度不够，
+        // 改为图形表达）：一枚锁形图标排在文件名之前——`.tab-name` 是 flex 增长项，图标放在它
+        // 后面会被推到关闭钮一侧，因此排在名称前（读作「锁形图标 + 文件名」）。图标 aria-hidden、不参与
+        // 可访问名；只读语义由上面的 D579 读屏名承担，可见文字里不再出现「只读」二字。
+        // 已知边界：外部会话恒不 dirty（dot 恒隐藏），两者不会同时占位。
+        const lock = session.external === true ? document.createElement("span") : null;
+        if (lock !== null) {
+          lock.className = "tab-readonly";
+          lock.setAttribute("aria-hidden", "true");
+          lock.innerHTML = READONLY_LOCK_SVG;
+        }
         const label = document.createElement("span");
         label.className = "tab-name";
-        // 可见的只读标记（Alex 2026-10-23 追加裁决：必须在标签页一眼可辨，不能只靠 modeline
-        // 的灰字）：可见文本追加「· 只读」；纯文本，不新增色值 / 字号 / 图标 token。
-        label.textContent =
-          session.external === true ? `${name} · ${t("D578")}` : name;
-        open.append(dot, label);
+        label.textContent = name;
+        open.append(dot);
+        if (lock !== null) open.append(lock);
+        open.append(label);
 
         const close = document.createElement("button");
         close.type = "button";

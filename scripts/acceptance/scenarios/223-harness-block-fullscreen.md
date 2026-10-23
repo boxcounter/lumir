@@ -86,6 +86,9 @@ steps:
     expect:
       - label: 悬停后表格的全屏钮进 AX 树
         ax: { has: "/AXButton \\(放大查看表格\\)/" }
+      # 钮的位置（表格右上角内侧 6px，M660 #4）由 chromium 场景按几何钉住；这张截图留给
+      # Alex 看「钮是否一眼可见」的手感判断。
+      - shot: 03b-表格悬停-全屏钮
 
   - name: 点开表格全屏
     do: click
@@ -139,6 +142,10 @@ Alex 的需求原话：「harness pane 中的 code 和 table 也支持全屏查�
   （REVIEW.md「读不到当成空」条）。
 - **hover 是唯一通道**：钮静止态 `visibility: hidden`，不进 AX 树（`not 放大查看代码块` 那条）——
   这是形态类的刻意口径，不是缺陷；hover 之后同一条断言反过来成立，两条配对证明「通道有效」。
+- **钮与表格的几何距离不进真机判据**（M660 #4）：AX 只回答「钮在不在树里」，回答不了「钮离表
+  多远」；「表格 slot 贴合表宽、钮落回表格右缘内侧 6px」由
+  `tests/visual/scenes/m634-harness-block-fullscreen.spec.ts` 的 M660 #4 用例按 `getBoundingClientRect`
+  钉住（含「表确实窄于面板」的区分度前置）。本场景的 `03b` 截图只作手感证据。
 
 ## 已知边界（如实登记）
 
