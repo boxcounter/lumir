@@ -17,6 +17,10 @@
 
 剪贴板读数用 `navigator.clipboard.readText()`（chromium 授权后可读；WebKit 下权限被拒，只能读选区）。
 
+**这层探针能证什么、不能证什么**（2026-10-23 Alex 的现场确认之后补的口径）：它跑在引擎上，不是真机
+WKWebView。本次实测恰好证明两者的行为会分叉（§1.3），因此下面的读数只用于**定位代码结构层面的缺口**，
+MUST NOT 当作真机行为的证据；真机事实以 Alex 的实测与 §6.1 的探针为准。
+
 ### 1.2 读数
 
 | 动作 | chromium | WebKit（真机同款 UA） |
@@ -34,15 +38,19 @@
 | Esc 后 ⌘C | 复制到的是编辑器自己的选区（`# 表格全屏场景`），**不是**遮罩里的旧文本 | — |
 | 编辑器里 ⌘A | 23 字符、锚点在 `.cm-content` 内（`editor.select-all` 正常） | 同左 |
 | 原生输入框（大纲筛选）里 ⌘A | `selectionStart/End = 0/3`（原生全选正常） | 同左 |
+| **真机（WKWebView）里的鼠标拖选** | — | **没有出现选择块 / 选中状态**（Alex 2026-10-23 现场确认；原话见 proposal 的 Why） |
 
-### 1.3 结论
+### 1.3 结论：两类事实，取证方式不同
 
-- **鼠标拖选已经成立**：遮罩里的文本可选、可复制，两个引擎都成立，跨 cell 也成立。
-  所以 mission 里「文本不可选中」这一表述在引擎层**不成立**——需要 Alex 的真机旁证（§6.3）。
-- **键盘全选不成立**：⌘A 在遮罩里选中的是**整份文档**（含蒙层后的正文），复制出来的是整页。
-  这是本 change 修的缺口，读数可复现、两个引擎一致。
-- 遮罩内的计算样式全部是 `user-select: auto` / `-webkit-user-select: text`、`pointer-events: auto`、
-  无 `contenteditable`——不存在「CSS 关掉了选中」这回事。
+- **代码结构可证的缺口（引擎层读数）**：`⌘A` 在遮罩里选中**整份文档**（601 / 627 字符，锚点在遮罩外），
+  复制出来的是整页。这是本 change 修的确定项。
+- **真机实测的事实（Alex，WKWebView）**：同样的鼠标拖选**没有出现选择块 / 选中状态**。
+- **分叉本身是证据**：同一动作在引擎层探针里能建立选区（29 / 32 字符）并可复制，而在真机上没有选区
+  反馈 ⇒ Playwright 的 WebKit 与真机 WKWebView 在这一行为上**不等价**，引擎层的「拖选能选中」**不能**
+  用来否定 Alex 的现场。真机根因**未定位**，候选与判据见 §2.1，探针见 §6.1。
+- 引擎层的计算样式全部是 `user-select: auto` / `-webkit-user-select: text`、`pointer-events: auto`、
+  无 `contenteditable`——这只能排除「引擎里被 CSS 关掉」，**不能**排除真机上「选区建立了但看不见」
+  或「选区压根没建立」（两种都在 §2.1 里）。
 
 ## 2. 根因
 
@@ -61,15 +69,47 @@
 
 一句话：**「全选」这个能力今天只存在于两个文本面上；遮罩不是它的一员，而原生兜底已经被 M627 拆掉了。**
 
-## 3. 排除的候选（逐条给判据）
+### 2.1 真机拖选不成立：根因未定位，候选与判别据
+
+Alex 的现场（§1.3）是「拖选没有出现选择块 / 状态」。探针要在下面五条里做区分，五条互斥、各有可观测读数：
+
+| # | 假设 | 探针要读什么 |
+|---|---|---|
+| H1 | 选区**没有建立**（WKWebView 不认这块内容可选） | 拖选后 `getSelection().rangeCount` / `toString().length` 仍为 0；⌘C 拿不到 cell 文本 |
+| H2 | 选区建立了但**看不见**（`::selection` 与遮罩底色对比过低） | 选区非空、⌘C 能拿到 cell 文本；但截图里选中区域与未选中区域无可辨差异 |
+| H3 | 选区建立后被**立刻清掉** | `selectionchange` 时间线：建立后紧跟一次清空；与 `blur` / `close` 事件时刻对得上 |
+| H4 | 遮罩 / 焦点状态变化 | 拖选期间 `document.activeElement` 离开遮罩，或 `overlay.hidden` 变成 true |
+| H5 | 事件未到达内容（tauri 注入脚本 / drag region / `pointer-events`） | `mousedown` 的 `defaultPrevented` 与 `composedPath()`；`pointer-events` / `user-select` 的计算值；`mousemove` 是否到达文档 |
+
+**H2 已有量化证据**（起草期读 token 算出来的，不是猜测）：`::selection` 的底色取 `--accent-tint`，
+遮罩壳的底色是 `--preview-bg`，两者对比：
+
+| 主题 | 原生选区带 vs 遮罩底色 | 编辑器自绘选区带 `--sel-band` vs 正文底 |
+|---|---|---|
+| light | `#eef1fb` on `#ffffff` = **1.13:1** | `#c6c5bf` on `#fdfdfc` = 1.70:1 |
+| dark | 合成 `rgb(52,56,71)` on `#26272b` = **1.28:1** | 合成 `rgb(83,83,86)` on `#222326` = 2.05:1 |
+| eink | `--sel` `#b9b9b9` on 白底 ≈ 1.9:1 | 同值（两处同 token） |
+
+也就是说：**应用的原生选区带一直比编辑器那条自绘的弱一半左右**；而全屏快照是应用里少有的一处「只能靠
+原生 `::selection` 显示选中」的面（编辑器里看到的那条是 CM 自绘的 `.cm-selectionBackground`，
+真源是 `src/preview/theme.ts` 的 `--sel-band`）。真机上「没有出现选择块」很可能就是这一档底色。
+
+**最快的判别动作**（真机上一秒钟，建议作为探针第一步）：遮罩里拖选后按 ⌘C 粘到任意编辑器里——
+粘出 cell 文本 ⇒ 选区已建立（H2）；粘不出或粘出旧内容 ⇒ 选区没建立（H1 或 H3–H5）。
+
+## 3. 排除的候选（引擎层，逐条给判据）
+
+> 下表是**引擎层**（chromium / Playwright WebKit）的计算样式与事件读数。真机未必同判——§1.3 的分叉
+> 已经证明引擎与真机会不一致，因此探针（§6.1）要在真机上重读这几项，MUST NOT 把下表当成真机的排除清单。
 
 | 候选 | 判据 | 结论 |
 |---|---|---|
-| CSS `user-select: none` | 遮罩 / 面板 / 快照 / 表格 / cell 的计算样式全是 `auto`（WebKit 下 `-webkit-user-select: text`）；全仓 `user-select: none` 只有 `.titlebar-identity`（`src/style.css:435`）；`::selection` 有可见底色（`src/style.css:299`） | 不成立 |
-| 遮罩的事件拦截 | `mousedown` 只在 `event.target === overlay` 时关闭（`src/table-fullscreen.ts:157`）；面板 / 内容上的按下不 preventDefault；拖选终点落在 scrim 上遮罩**不关**（读数表） | 不成立 |
-| 焦点层 / blur 兜底 | 整个拖选过程 `activeElement` 恒为遮罩；没有触发 `blur`（`src/table-fullscreen.ts:182`） | 不成立 |
-| 摘录手势抢选区 | `src/quote-gesture.ts` 的 `currentSelectionRect` 要求选区锚点在 `view.contentDOM` 内；遮罩在编辑器之外 | 不成立 |
-| 关闭后残留可复制的旧选区 | Esc 后 DOM 选区长度 0（焦点交还时坍缩），⌘C 拿到的是编辑器自己的内容 | 不成立（写成不变量防回归） |
+| CSS `user-select: none` | 遮罩 / 面板 / 快照 / 表格 / cell 的计算样式全是 `auto`（WebKit 下 `-webkit-user-select: text`）；全仓 `user-select: none` 只有 `.titlebar-identity`（`src/style.css:435`） | 引擎层不成立；真机待探针（`user-select` 在真机的计算值未读） |
+| `::selection` 不可见 | `::selection` 有声明（`src/style.css:299`），但它与遮罩底色的对比只有 1.13:1（light）/ 1.28:1（dark）——**声明存在不等于看得见**，见 §2.1 H2 | **未排除**（本 change 的候选根因之一） |
+| 遮罩的事件拦截 | `mousedown` 只在 `event.target === overlay` 时关闭（`src/table-fullscreen.ts:157`）；面板 / 内容上的按下不 preventDefault；拖选终点落在 scrim 上遮罩**不关**（读数表） | 引擎层不成立 |
+| 焦点层 / blur 兜底 | 整个拖选过程 `activeElement` 恒为遮罩；没有触发 `blur`（`src/table-fullscreen.ts:182`） | 引擎层不成立 |
+| 摘录手势抢选区 | `src/quote-gesture.ts` 的 `currentSelectionRect` 要求选区锚点在 `view.contentDOM` 内；遮罩在编辑器之外 | 引擎层不成立 |
+| 关闭后残留可复制的旧选区 | Esc 后 DOM 选区长度 0（焦点交还时坍缩），⌘C 拿到的是编辑器自己的内容 | 引擎层不成立（写成不变量防回归） |
 
 ## 4. 修法
 
@@ -106,7 +146,25 @@ MUST NOT 在装配层直接查遮罩的 DOM——内容根归遮罩自己管。
 `src/style.css:1881`）。今天靠继承来的 `auto` 成立，声明之后「可选」是契约而不是默认值——将来任何
 祖先加 `user-select: none` 都会被这条规则挡住。
 
-### 4.5 不动的东西
+### 4.5 若探针结论是 H2（选区带太弱）：可见性口径
+
+这一档**要等探针**，不在起草期定色值。方向是把遮罩内的选区带抬到与编辑器自绘选区带同强度：现在
+`::selection` 用的 `--accent-tint` 与遮罩底色只有 1.13:1 / 1.28:1（§2.1 的表），而 `--sel-band` 是
+1.70:1 / 2.05:1。可走的取法（实现期二选一，都要先给 Alex 看效果）：
+
+- **遮罩内覆盖**：给 `.lumir-table-fs-snapshot` / `.lumir-codeblock-fs-content` 里的 `::selection` 换
+  到 `--sel` / `--sel-band` 一档，作用域只在浮层——影响面最小，但「同一应用两种选中色」本身是一种分叉；
+- **全局抬档**：把 `::selection` 的取值整体对齐 `--sel-band`——一致，但会改变编辑器以外所有原生选中的
+  观感（原生输入框、transcript、路径链接），属跨切面的视觉变化，按基线纪律走。
+
+MUST NOT 新增色值；MUST NOT 为了对比度改正文色（前景与带的可辨性是两条独立判据）。
+
+### 4.6 拖选侧的根因修法（H1 / H3–H5）
+
+由探针结论决定，MUST NOT 在结论之前写死。若落在跨切面（全局 CSS、Tauri 注入脚本、webview 配置），
+按影响面升级线停下报 tower → Alex，不在本 change 里顺手改。
+
+### 4.7 不动的东西
 
 四条关闭路径、单实例语义、焦点交还（`restoreFocus` 注入）、`Tab` 挡在遮罩内、读屏名来源，全部一字不改。
 
@@ -121,38 +179,70 @@ MUST NOT 在装配层直接查遮罩的 DOM——内容根归遮罩自己管。
 
 ## 6. 判据与测试
 
-### 6.1 视觉场景（chromium，判别层）
+### 6.1 第一步：真机探针（先于任何产品代码）
+
+> 依据：Alex 2026-10-23 的现场确认（真机拖选没有出现选择块），以及引擎探针与真机的分叉（§1.3）。
+> 合同先行见 [rendering-defect-contract-first.md](../../../docs/process/rendering-defect-contract-first.md)：
+> 先定位不变量与判据，MUST NOT 只做案例级补丁。
+
+- **环境**：`pnpm tauri dev` 起真实 WKWebView（合成长验收 vault；用户真实 vault 只读），Safari 的
+  「开发」菜单连 Web Inspector 读 DOM 与事件。
+- **样本**：一张渲染为 grid 的表（含行内 code 与链接）+ 一条长代码块。
+- **读数**（按 §2.1 的 H1–H5 逐条取）：
+  1. 拖选后 `getSelection()` 的 `rangeCount` / `toString()` / 锚点归属；`selectionchange` 事件序列
+     （建立与清空的时间线）。
+  2. 拖选后按 ⌘C 粘到编辑器里看内容——H1 与 H2 的分水岭（§2.1 末尾的判别动作）。
+  3. 未选中 / 选中两张截图（同窗口、同滚动位），肉眼与像素比对选中带是否存在。
+  4. `mousedown` / `mousemove` 的 `defaultPrevented` 与 `composedPath()`；`pointer-events` 与
+     `user-select` 的计算值。
+  5. 对照：同一拖选在**编辑器正文**（非全屏）里做一次。CM 的选区是自绘的，所以「编辑器里能看见选中」
+     **不能**证明原生选区可见；但「编辑器里也选不中」会把问题指向全局，而不是遮罩这一层。
+- **落盘**：读数、截图与 console 记录进 `.local/probes/2026-10-23-fullscreen-selection/`（git 外），
+  任务与实现报告给可 `ls` 的绝对路径。
+- **分流**：
+  - H2（选区建立、看不见）⇒ 修法加一条**选区带可见性**（与 `--sel-band` 同强度口径），属视觉变化：
+    三主题的 `::selection` 观感会变，按基线纪律先给 Alex 过目再改。
+  - H1 / H3 / H4 / H5 ⇒ 按结论改实现面；若指向跨切面原因（全局 CSS、Tauri 注入脚本、webview 配置
+    这类），命中影响面升级线——**停下报 tower → Alex**，不在本 change 里顺手改。
+
+### 6.2 合同断言（跟随探针结论）
+
+- **不依赖根因、可直接写的不变量**：遮罩内的 `user-select` 不得为 `none`；拖选后**若**选区建立，锚点
+  必须在遮罩内容内；⌘A 的落面断言（6.3）。这些在任何根因下都必须成立。
+- **跟随探针的部分**：
+  - 确认 H2 ⇒ 加计算色彩断言：选中带与遮罩底色的对比不低于 `--sel-band` 与正文底色的对比（三主题
+    各一档，取值口径见 §2.1 的表），并留一张选中态截图进本地视觉门禁。
+  - 确认 H1 / H3 / H4 / H5 ⇒ 把该根因的最小复现写成断言再改代码（例如「被立即清空」⇒ 断言拖选后
+    `selectionchange` 的收口次数；「事件未到达」⇒ 断言 `mousedown` 的 `defaultPrevented`）。
+
+### 6.3 ⌘A 的判据（根因已核实，可直接落地）
 
 新场景 `tests/visual/scenes/m642-overlay-select-all.spec.ts`：
 
 1. 表格全屏：打开 → ⌘A → 断言 **① 选区非空；② 锚点在 `.lumir-table-fs-snapshot` 内；
-   ③ 选区含首行 cell 的文本；④ 选区**不含**遮罩外的文档标题**（负向，与 ②③ 配对，防「选到整页也算
+   ③ 选区含首行 cell 的文本；④ 选区**不含**遮罩外的文档标题（负向，与 ②③ 配对，防「选到整页也算
    非空」）；⑤ 剪贴板（chromium 授权后 `navigator.clipboard.readText()`）与 ③ 一致。
 2. 代码块全屏：同形，锚点在 `.lumir-codeblock-fs-content` 内。
-3. 选中后 Esc：遮罩关闭、DOM 选区清空、焦点回编辑器（行为判据用既有的「⌃D 真删一个字符」口径）。
-4. 鼠标拖选（跨 cell）：选区落在遮罩内、文本与 cell 可见文本一致——把「可选」从继承值变成判据。
+3. 选中后 Esc：遮罩关闭、DOM 选区清空、焦点回编辑器（行为判据用既有「⌃D 真删一个字符」口径）。
+4. **先造 FAIL**：这套断言在今天的基准提交上必须红（①–④ 在 ⌘A 之后就是「锚点在遮罩外」），
+   确认红了再改代码（REVIEW.md『断言等价于子串』条的口径）。
 
-**先造 FAIL**：这套断言在今天的基准提交上必须红（第 ①–④ 条在 ⌘A 之后就是「锚点在遮罩外」）。
-实现前先跑一次确认红，再改代码（REVIEW.md『断言等价于子串』条的口径）。
+### 6.4 WebKit 真机同款 UA 的作用降级
 
-### 6.2 WebKit 真机同款 UA（第二层）
+把该场景加进 `tests/visual/playwright.config.ts` 的 `webkit-realua` project 的 `testMatch` 仍然值得
+（引擎族回归、焦点路径同 m280 的成立理由），但**它不能替代真机**——本次分叉（引擎能选中、真机看不见）
+本身就是证据；真机判据只认 §6.1 的探针与 Alex 的观感裁决。
 
-把该场景加进 `tests/visual/playwright.config.ts` 的 `webkit-realua` project 的 `testMatch`：
-选中 / 焦点是引擎差异敏感面（m280 的成立理由同款），chromium 绿不代 WebKit 绿。剪贴板读不到时该
-断言降级为「选区内容」，并在场景里写明为什么（权限拒绝不是产品缺陷）。
-
-### 6.3 真机验收的边界（如实登记）
+### 6.5 真机验收的边界（如实登记）
 
 - 套件的 AX 通道**读不到选区**（不暴露 `AXSelectedTextRange`，见 `scripts/acceptance/README.md` 的
   「光标/选区不可断言」条）；原生 ⌘C 经键盘注入**不落地**（M345）。因此真机场景**不能**断言
   「选中了什么、复制到了什么」。
 - 真机可断言的是**退出路径不因选中而变**：遮罩内 ⌘A 之后按 Esc，遮罩关闭、焦点回编辑器。
   新增一条这样的验收场景，并在场景头注记「选区与复制不在真机判据内，理由见上」。
-- **如果 Alex 观测到的现象是「拖选也选不中」**：那是本次实测覆盖不到的真机差异。处置顺序是
-  先真机探针（`pnpm tauri dev` + 真实 WKWebView，读数落 `.local/`）定位，再按本 change 的合同补
-  断言——MUST NOT 跳过探针直接写案例级补丁（[rendering-defect-contract-first.md](../../../docs/process/rendering-defect-contract-first.md)）。
+- 选中的**可见性**属观感，归 Alex 手感裁决（套件只留截图证据）。
 
-### 6.4 单测
+### 6.6 单测
 
 这一层是 DOM 行为，按仓内纪律（`tests/unit` 不造 DOM 替身）不新增单测；「哪些 token 归遮罩」若是
 纯函数、值得单测，就抽成纯函数并覆盖「Cmd-a 命中 / 其它 token 不命中」两条。
@@ -168,6 +258,10 @@ MUST NOT 在装配层直接查遮罩的 DOM——内容根归遮罩自己管。
 - **`[keys]` 改绑 ⌘A 不影响遮罩内**（§5）。
 - **拖选终点落在 scrim 上**：选区坍缩、遮罩不关——既有行为，本 change 不改；用户要么在面板内起止，
   要么重新选。
+- **引擎层读数不等于真机行为**：本次已经实测到分叉（引擎能建立选区、真机看不到选中态）。后续任何
+  「选中相关」的结论，引擎层只能用来做回归，不能用来证真机成立。
+- **若根因是 H2（选区带太弱），修法会改三主题的 `::selection` 观感**：属视觉变化，需 Alex 过目并按
+  基线纪律处理；本 change 的 spec 只写「可辨」的判据，不写死色值。
 
 ## 8. 与 M634（harness 块全屏）的关系与落地时机
 
