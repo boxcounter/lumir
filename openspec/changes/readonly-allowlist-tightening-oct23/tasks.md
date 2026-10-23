@@ -4,16 +4,17 @@
 
 ## 1. 分类器（`src-tauri/src/harness/permissions.rs`）
 
-- [ ] 1.1 新增「写形态」判定：`base64 -o/--output`、`xxd -r`、`file -C`、`tree -o`、`less -o/-O/--log-file`、`find -fprint/-fprint0/-fprintf/-fls`；命中降为 `Write`（含 `--flag=value` 与短旗标簇形态）
+- [ ] 1.1 新增「写形态」判定：`base64 -o/--output`、`xxd` 的第二个位置参数（含 `-r`）、`file -C`、`tree -o`、`less -o/-O/--log-file`、`find -fprint/-fprint0/-fprintf/-fls`；命中降为 `Write`（含 `--flag=value`、短旗标簇与位置参数计数形态）
 - [ ] 1.2 新增「执行形态」判定：`rg --pre/--pre-glob/--hostname-bin`、`sed` 脚本的 `e`/`s///e`；命中归 `Dangerous`（危险层，任何档都问，allow 规则与会话缓存绕不过）
 - [ ] 1.3 实现 `sed` 保守脚本扫描（design §2.3）：取脚本源（`-e` / `--expression=` / `--expression X` / 位置参数）、`-f`/`--file`（含分写形态）直接归写、命令位识别 `w`/`W`（写）与 `e`（危险）、`s`/`y` 分隔字段与旗标、地址与正则里的同名字母不误判、解析失败归写
 - [ ] 1.4 把 `sed` 的 `-i` 判定从整参数前缀改为短旗标簇展开（堵 GNU sed 的 `-ni` / `-Ei`）
 - [ ] 1.5 `git` 全局 flag 改白名单（`-P` / `--no-pager` / `--no-optional-locks` / `--no-replace-objects`），表外全局 flag 归写
 - [ ] 1.6 `git` 只读子命令族收缩：保留 `rev-parse` / `ls-files` / `describe` / `shortlog` / `stash list` / `branch`·`tag` 列表 / `remote -v`；`status` / `diff` / `log` / `show` / `blame` 归写
-- [ ] 1.7 `write_targets` 补新增写形态的目标提取（`base64 -o`、`tree -o`、`xxd -r` 的第二位置参数、`find -fprint` 系），使 vault 内写仍走重定向；`suggested_tool` 按目标是否存在给 `vault_create` / `vault_patch`，不定时给 `None`
+- [ ] 1.7 `write_targets` 补新增写形态的目标提取（`base64 -o`、`tree -o`、`xxd` 的第二位置参数（不限于 `-r`）、`find -fprint` 系），使 vault 内写仍走重定向；`suggested_tool` 按目标是否存在给 `vault_create` / `vault_patch`，不定时给 `None`
 - [ ] 1.8 `cli_run` spawn 时清空注入型环境变量（`RIPGREP_CONFIG_PATH` / `LESSOPEN` / `LESSCLOSE` / `GREP_OPTIONS`），并在代码注释写明这是防御性硬化、不是 argv 判据
 - [ ] 1.9 单测：表驱动正 / 反例覆盖 design §6 的 6 类；每条拒判配一条只差一个 token 的正例、每条正例配一条改坏输入的反向验证
 - [ ] 1.10 单测：跨档矩阵（写形态 `read_only`/`vault_write` → Ask、`full_access` → Allow；执行形态三档全 Ask）与包装器继承（`sudo base64 -o …`、`xargs rg --pre …`）
+- [ ] 1.11 实测 git 保留族的执行面（r1 P2-1）：对 `rev-parse` / `ls-files` / `describe` / `shortlog` / `stash list` / `branch`·`tag` 列表 / `remote -v` 逐个在仓库 config 设 `log.showSignature=true` + 恶意 `gpg.program`（并覆盖 `core.fsmonitor` / `diff.external` / textconv）的仓库里跑一遍，确认不触发任何外部程序；触发则把该子命令移出保留族——「执行面不存在」的判据以实测背书，不靠推理
 
 ## 2. 验收场景（回扫 + 新增）
 

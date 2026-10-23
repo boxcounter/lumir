@@ -43,6 +43,7 @@
 | `git -c diff.external=… diff`（空格形态） | 脚本被执行；**但当前分类器把它判成写**（`-c` 的值被当子命令），不是只读绕过 |
 | `git -cdiff.external=… diff`（粘连形态） | git 自己报 `unknown option: -cdiff...` |
 | `xxd -r -p hex.txt out.bin` | 写出 6 字节 |
+| `xxd a.txt out.hex`（普通 dump，两个位置参数） | 写出 64 字节；`xxd -c 16 a.txt`（取值旗标 + 单位置参数）不落盘；`xxd - out.hex` 同样写（`-` 计输入位置参数） |
 | `file -C -m magicdir/mymagic` | 在**当前目录**写出 `magic.mgc`（不是 `-m` 指定路径旁边） |
 | `find . -fls out` / `find . -fprint out` | 本机 BSD find 报 `unknown primary or operator`；GNU find 支持（本 change 仍覆盖，分类器是文本级、跨平台） |
 | `less -o out a.txt` / `less '+!touch flag' a.txt`（非 tty、stdin 非管道） | 均无落盘，进程不阻塞 |
@@ -103,12 +104,14 @@ classify_cli(argv):
 | 成员 | 命中条件（argv 任一参数） | 说明 |
 |---|---|---|
 | `base64` | `-o`、以 `-o` 起首的粘连形态、`--output`、`--output=…` | 本机实测写文件；`-o -`（stdout）也会被拒，属可接受的过度保守 |
-| `xxd` | `-r` 与含 `r` 的短旗标簇（如 `-rp`） | 反向模式接受第二位置参数作为输出文件 |
+| `xxd` | **第二个位置参数**（按旗标语法跳过取值旗标的值后计数；`-` 计为位置参数） | `xxd infile outfile` 的普通 dump 与 `xxd -r infile outfile` 都会把结果写进第二个文件（实测） |
 | `file` | `-C`、`--compile`、含 `C` 的短旗标簇 | 编译 magic 并写 `<name>.mgc` |
 | `tree` | `-o`、以 `-o` 起首、`-R` | tree(1) man：`-o filename` 把输出写文件；`-R` 每层写 `00Tree.html` |
 | `less` | `-o`、`-O`、`--log-file[=…]` | 防御性（当前 spawn 不可达，见 §0） |
 | `find` | `-fprint`、`-fprint0`、`-fprintf`、`-fls` | GNU find 的写原语；BSD find 无，但分类器跨平台 |
 | `sed` | 见 §2.3 | 脚本级判定 |
+
+`xxd` 的位置参数计数：`-c` / `-g` / `-l` / `-n` / `-o` / `-s` 各取一个值（含 `-c16` 这类粘连形态），其后的 token 计为位置参数；`-` 单独成 token 时计为一个位置参数。位置参数 ≥ 2 即写——`xxd infile outfile` 与 `xxd -r infile outfile` 同形，`xxd infile` 只写 stdout 仍只读。
 
 短旗标簇的判据：单 `-` 起首、非 `--`、全部字符都在该命令的旗标字母表内（排除「把值粘在旗标后」
 的歧义）；命中即写。命中不了也只会落回「不写」以外的更高保守侧（未知形态 → 写），不会误放行。
@@ -173,7 +176,10 @@ sub = args[i]
 
 保留族的依据是「执行面不存在」而不是「没听说过出问题」：这几个子命令既不进 diff 机制、不查
 fsmonitor、不验签；分页器因 stdout 非 tty 不启动；alias 不能覆盖内建子命令；hooks 不在这些
-路径上触发。若未来 git 给其中之一新增执行型配置，需回到本节重新评估（§8 残余）。
+路径上触发。这条判据在实现期必须实测背书（tasks 1.11）：在 `log.showSignature=true` + 恶意
+`gpg.program`（并覆盖 `core.fsmonitor` / `diff.external` / textconv）的仓库 config 下逐个跑
+保留族，任一触发执行即移出保留族。若未来 git 给其中之一新增执行型配置，需回到本节重新评估
+（§8 残余）。
 
 ### 2.5 判定管线上的落点
 
@@ -215,7 +221,7 @@ fsmonitor、不验签；分页器因 stdout 非 tty 不启动；alias 不能覆�
 | 22 | `less` | 只读 | `-o` / `-O` / `--log-file`（仅管道输入）；`+cmd` 交互命令（需 tty） | 拒判 → 写（防御性；当前 spawn 不可达） |
 | 23 | `more` | 只读 | 无 argv 级（macOS 只支持 `+/pattern`、`+num`；`!` 需交互） | 不变 |
 | 24 | `jq` | 只读 | 无（可读文件，与 `cat` 同级） | 不变 |
-| 25 | `xxd` | 只读 | `-r` 的第二位置参数是输出文件（实测） | `-r`（含旗标簇）→ 写 |
+| 25 | `xxd` | 只读 | 第二个位置参数是输出文件——普通 dump 与 `-r` 同形（实测） | 出现第二个位置参数 → 写 |
 | 26 | `od` | 只读 | 无 | 不变 |
 | 27 | `hexdump` | 只读 | 无（`-e` 格式串不执行程序） | 不变 |
 | 28 | `base64` | 只读 | `-o` / `--output` 写文件（实测） | 写形态 → 写 |
@@ -230,7 +236,7 @@ fsmonitor、不验签；分页器因 stdout 非 tty 不启动；alias 不能覆�
 
 - **整表移除 28 条**：把 `cat` / `ls` / `rg` 也逐次问，等于取消只读档的意义；错的是判据，不是
   成员名单。
-- **只修 finding 点名的 4 个**：上表另外查出 `xxd -r`、`file -C`、`tree -o`、`sed -f`、GNU find 的
+- **只修 finding 点名的 4 个**：上表另外查出 `xxd` 的双位置参数、`file -C`、`tree -o`、`sed -f`、GNU find 的
   写原语、`rg --hostname-bin`，以及 git 的仓库 config 面。按案例打补丁会把它们留在原地。
 - **沙箱**：`sandbox-exec` / seatbelt 是另一条路线（执行隔离），与本 change 的分类判据不互斥，
   但工程量和平台耦合都高；本 change 不做，也不假装做了。
@@ -245,7 +251,7 @@ fsmonitor、不验签；分页器因 stdout 非 tty 不启动；alias 不能覆�
 |---|---|
 | `base64` | `-o` / `--output` 的取值（两种形态，复用既有 `option_values`） |
 | `tree` | `-o` 的取值；`-R` 写到每层的固定名 `00Tree.html`，无可提取目标 → 不重定向 |
-| `xxd` | `-r` 形态下的**第二个**非 flag 参数（第一个是输入） |
+| `xxd` | **第二个位置参数**（不限于 `-r`；第一个是输入） |
 | `find` | `-fprint` / `-fprint0` / `-fprintf` / `-fls` 的下一个参数 |
 | `file -C` | 无目标可取（写到 cwd 的固定名 `magic.mgc`）→ 不重定向，落普通写 |
 | `less -o` | 同上（且当前不可达）→ 不重定向 |
@@ -265,7 +271,7 @@ fsmonitor、不验签；分页器因 stdout 非 tty 不启动；alias 不能覆�
    确认断言真的会红。
 3. **跨档矩阵**：写形态在 `read_only` / `vault_write` 档 `Ask`、`full_access` 档 `Allow`；执行形态
    三档全 `Ask`；且在 `full_access` 下不被 allow 规则或会话缓存解锁（危险层先于两者）。
-4. **重定向**：`base64 -o notes/x` / `tree -o notes/x` / `xxd -r in notes/x` / `find … -fprint notes/x`
+4. **重定向**：`base64 -o notes/x` / `tree -o notes/x` / `xxd in notes/x`（普通形态）与 `xxd -r in notes/x` / `find … -fprint notes/x`
    在 vault 内触发重定向（targets 与 suggested_tool 正确），vault 外落普通写。
 5. **包装器继承**：`sudo base64 -o …` / `xargs rg --pre …` 的分类与被包装命令一致（既有递归的
    回归面）。
@@ -274,9 +280,10 @@ fsmonitor、不验签；分页器因 stdout 非 tty 不启动；alias 不能覆�
 
 ## 7. 与 M649 的对齐（同改一条 requirement）
 
-M649（`harness-permission-rules-oct23`）起草时**尚未并入 master**（2026-10-23 核对
-`git merge-base --is-ancestor` 不成立）。两条 change 都 MODIFIED「cli_run 命令分类与 vault 写
-重定向」，归档时 `openspec archive` 对 MODIFIED 是**整块替换**，因此：
+M649（`harness-permission-rules-oct23`）在起草基线（`40e6ae01`）上尚未并入 master；2026-10-23
+r1 评审时它已合并 master（merge `9e783038`）但未归档，living spec 仍是本 delta 的基线原文。
+两条 change 都 MODIFIED「cli_run 命令分类与 vault 写重定向」，归档时 `openspec archive` 对
+MODIFIED 是**整块替换**，因此：
 
 1. **判据层**：M649 的受限解包对每个子命令复用 `classify_cli`（其 design §2.4）。本 change 的
    收紧自动生效：`bash -lc "rg --pre c x"` → 子命令危险 ⇒ 整条危险；`bash -lc "sed -n 'w /tmp/x' f"`

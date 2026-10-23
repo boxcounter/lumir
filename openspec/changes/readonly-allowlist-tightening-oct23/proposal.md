@@ -38,7 +38,7 @@ Alex 2026-10-23 对一条 finding 的处置原话：
 | 3b | `rg --hostname-bin=./hostbin.sh needle .` | 执行了指定程序 | finding 未列，同一执行能力 |
 | 4 | `git status`（仓库 config 设 `core.fsmonitor`） | 执行了 config 指定的程序 | **finding 第 4 条的字面形态不成立、但风险更大**，见下 |
 | 4b | `git diff`（仓库 config 设 `diff.external`） | 执行了 config 指定的程序 | 同上 |
-| 5 | `xxd -r hex.txt out.bin` | 写出文件 | finding 未列（第二位置参数是输出文件） |
+| 5 | `xxd a.txt out.hex`（普通 dump）/ `xxd -r hex.txt out.bin` | 均写出第二个位置参数文件（普通形态 64 字节，`-r` 形态 6 字节） | finding 未列：**两个位置参数 = 输入 + 输出**是 xxd 的主接口形态，与 `-r` 无关 |
 | 6 | `file -C -m magic` | 在当前目录写出 `magic.mgc` | finding 未列 |
 | 7 | `tree -o out.txt .` / `tree -R` | tree(1) man（2.3.2）：`-o filename` 把输出写文件；`-R` 每层写一个 `00Tree.html`。**本机未安装 tree，未实测** | finding 未列（文档口径） |
 | 8 | `less -o log file` | 官方 man：仅当输入是管道时写；`cli_run` 的 stdin 继承 app（非管道），**未实测可达** | finding 未列（防御性处置） |
@@ -63,7 +63,7 @@ Alex 2026-10-23 对一条 finding 的处置原话：
 1. **只读分类的能力断言（spec 条款）**。在被修改的 requirement 里写死：判为只读 = 按 argv 与其
    执行环境不写文件、不执行外部程序；MUST NOT 以「常见用法」为放行依据；形态判不明确即归写。
 2. **参数级拒判（写形态 → 写）**。白名单成员出现写文件形态时降为写：`base64 -o/--output`、
-   `xxd -r`、`file -C`、`tree -o`/`-R`、`less -o`、`find -fprint/-fprint0/-fprintf/-fls`、
+   `xxd` 的双位置参数（含 `-r`）、`file -C`、`tree -o`/`-R`、`less -o`、`find -fprint/-fprint0/-fprintf/-fls`、
    `sed` 脚本的 `w`/`W` 与 `s///w`。
 3. **执行形态（→ 危险）**。`rg --pre/--pre-glob/--hostname-bin`、`sed` 脚本的 `e`/`s///e` 归为
    危险——「任意命令执行」与 shell 包装器同级，任何档都逐个问，full_access 也不例外。
@@ -71,14 +71,14 @@ Alex 2026-10-23 对一条 finding 的处置原话：
    （`rev-parse` / `ls-files` / `describe` / `shortlog` / `stash list` / `branch`·`tag` 列表 /
    `remote -v`）；`status` / `diff` / `log` / `show` / `blame` 降为写；全局 flag 走白名单。
 5. **重定向写目标补全**。新增的写形态若目标是 vault 内路径（`base64 -o`、`tree -o`、
-   `xxd -r` 的输出、`find -fprint` 系），仍按既有「vault 内写改道」条款重定向，不掉成普通写。
+   `xxd` 的输出位置参数、`find -fprint` 系），仍按既有「vault 内写改道」条款重定向，不掉成普通写。
 
 逐成员处置表（完整 31 行在 design §3）摘要：
 
 | 成员 | 处置 |
 |---|---|
 | `base64` | `-o` / `--output` 形态 → 写 |
-| `xxd` | `-r` 形态 → 写 |
+| `xxd` | 第二个位置参数 → 写（`-r` 与普通 dump 同形） |
 | `file` | `-C` / `--compile` 形态 → 写 |
 | `tree` | `-o` / `-R` 形态 → 写（文档口径，本机未安装） |
 | `less` | `-o` / `-O` / `--log-file` → 写（防御性；当前 spawn 形态下不可达） |
@@ -132,6 +132,7 @@ Alex 2026-10-23 对一条 finding 的处置原话：
   - ADR 0004：本文件与 design 必须让 Alex 不看代码就能裁决。
   - `docs/process/openspec-workflow.md`「改权限 / 闸语义的 change：tasks 必须含回扫既有验收场景的
     闸期望」——tasks 第 2 组。
-  - M649（`harness-permission-rules-oct23`）与本 change 同改一条 requirement；起草时该提案**尚未
-    并入 master**（`git merge-base --is-ancestor` 不成立），delta 以 master 原文为基线，合并顺序
-    处置见 design §7。
+  - M649（`harness-permission-rules-oct23`）与本 change 同改一条 requirement。起草基线
+    （`40e6ae01`）上该提案尚未并入；2026-10-23 r1 评审时它已合并 master（merge `9e783038`）但
+    未归档，living spec 仍是本 delta 的基线原文。delta 以 master 原文为基线，合并顺序处置见
+    design §7。
