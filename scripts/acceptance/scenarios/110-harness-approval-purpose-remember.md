@@ -41,8 +41,8 @@ steps:
         ax: { has: "chmod 700 /tmp/lumir-m414-seg-a" }
       - label: 组合命令按连接符拆段——第二段以 && 起首（拆段是排版，连接符仍逐字可见）
         ax: { has: "&& chmod 700 /tmp/lumir-m414-seg-b" }
-      - label: 次级动作在场（D434）
-        ax: { has: "采纳且本会话不再问" }
+      - label: 次级动作在场且写明记住的粒度（D565；`chmod` 的第二词是数字参数 ⇒ 两词前缀）
+        ax: { has: "采纳且本会话不再问（记住 chmod 700）" }
       - shot: 01-批准卡-用途句与拆段
 
   - name: 拒绝这一条（拆段那条命令不执行——真机不许造真副作用）
@@ -63,9 +63,9 @@ steps:
         ax: { has: "mkdir -p /tmp/lumir-m414-cache" }
       - shot: 02-第二张卡
 
-  - name: 点「采纳且本会话不再问」（次级动作 → harness_approve(remember=true)）
+  - name: 点「采纳且本会话不再问（记住 mkdir）」（次级动作 → harness_approve(remember=true)）
     do: click
-    target: { role: AXButton, name: "^采纳且本会话不再问$" }
+    target: { role: AXButton, name: "^采纳且本会话不再问（记住 mkdir）$" }
 
   - name: 等本轮收尾（第三次调用 = 同主体串 ⇒ 缓存命中免闸，直达最终答复）
     do: waitFor
@@ -106,18 +106,20 @@ M414 的三项批准卡改动（design §3.4 / §6，Alex 原话：「让询问�
 2. **组合命令拆段**：`chmod 700 /tmp/lumir-m414-seg-a && chmod 700 /tmp/lumir-m414-seg-b` 在卡里
    按连接符（`;` `&&` `||` `|` `&` / 换行）拆成多行、连接符起首——纯排版层，`join("")` 逐字符等于
    原文（不变量由 `tests/unit/harness-permission-modes.test.ts` 钉死）。
-3. **「采纳且本会话不再问」**：批准卡主决策行之下的次级动作（D434）。点它走
-   `harness_approve(remember=true)`，后端把 (工具, 规范化主体串) 记入**会话内**批准缓存；
-   同会话同主体串的后续调用不再出卡（缓存只短路模式默认分层——deny / 重定向 / 黑名单三层永远
-   先于缓存，这点由 core 侧集成测试钉，不在本场景）。
+3. **「采纳且本会话不再问（记住 <粒度>）」**：批准卡主决策行之下的次级动作（change
+   harness-permission-rules-oct23 A3 起文案带粒度、D565）。点它走
+   `harness_approve(remember=true)`，后端把**命令前缀**（`cli_run` = 命令名 + 首个非 flag 参数；
+   第二词是 flag 时退化为命令名）记入**会话内**批准缓存；同会话同前缀的后续调用不再出卡
+   （缓存只短路模式默认分层——deny / 重定向 / 黑名单三层永远先于缓存，这点由 core 侧集成测试钉，
+   不在本场景）。本 fixture 的两条命令因此分别记住 `chmod 700` 与 `mkdir`：按钮上逐字可见。
 
 ## fixture 的四段意图（**全部发生在同一条用户消息内**）
 
 | 段 | 命令 | 期望 |
 |---|---|---|
 | 1 | `chmod …&& chmod …`（argv 里 `&&` 是**独立 token**） | 出卡：用途句 + 两段拆行；场景**拒绝**它（真机不造副作用） |
-| 2 | `mkdir -p /tmp/lumir-m414-cache` | 出卡；点「采纳且本会话不再问」⇒ 执行 + 记缓存 |
-| 3 | 同一条 `mkdir …`（同工具 + 同主体串） | **不出卡**，直接执行 |
+| 2 | `mkdir -p /tmp/lumir-m414-cache` | 出卡；点「采纳且本会话不再问（记住 mkdir）」⇒ 执行 + 记前缀 `mkdir ` |
+| 3 | 同一条 `mkdir …`（同工具 + 同一前缀） | **不出卡**，直接执行 |
 | 4 | — | 最终答复（能到达即证明第 3 段没被卡住） |
 
 ## 断言口径与已知边界

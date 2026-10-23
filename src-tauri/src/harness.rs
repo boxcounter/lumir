@@ -64,7 +64,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::commands::CommandError;
-use crate::config::{self, HarnessConfig};
+use crate::config::{self, HarnessConfig, HarnessPermissions};
 use crate::fs_io::IgnorePolicy;
 
 /// 当前 vault 的运行时作用域：根 + 装载时编译的忽略规则表。
@@ -115,6 +115,13 @@ struct RuntimeInner {
     /// 拿到 busy 之后写入、`release_turn` 清掉；`SessionContext` 构造时读取一次。
     /// 交互路径没有交接契约 ⇒ 该 vault 无条目 ⇒ 完整注册表。
     tool_policies: Mutex<HashMap<String, run::ToolPolicy>>,
+    /// 本轮运行的**生效权限规则**（change harness-permission-rules-oct23 design §4）：
+    /// 每轮开始时从本轮配置快照播种；后端单写者（`harness_approve` /
+    /// `harness_permission_rule_remove`）写回配置成功后**重读配置文件**再播种一次——
+    /// 「点一次以后都允许，同一轮的下一条查询就免问」与「删掉规则后下一次判定重新问」由这一份
+    /// 生效值保证。它只是配置文件在本轮内的镜像（判定语义仍只有 `permissions.rs` 一份），
+    /// 不是第二个配置真源。
+    permissions: Mutex<Option<HarnessPermissions>>,
 }
 
 /// 一次运行的终态读数（`cron_run_finished` 回执的素材）：成功与否只由 turn 的终态事件决定，
@@ -183,6 +190,7 @@ impl Default for Runtime {
                 isolated: false,
                 terminal: Mutex::new(None),
                 tool_policies: Mutex::new(HashMap::new()),
+                permissions: Mutex::new(None),
             }),
         }
     }
@@ -203,6 +211,29 @@ impl Runtime {
     /// 据此判 `RejectUnavailable`（`gated_execute` 在生成预览之前短路中止本运行）。
     pub fn is_isolated(&self) -> bool {
         self.inner.isolated
+    }
+
+    /// 播种本轮生效的权限规则（change harness-permission-rules-oct23 design §4）：每轮开始时
+    /// 从本轮配置快照播一次，规则写回 / 删除成功后再从**配置文件**重播一次。判定层只读它
+    /// （[`Self::live_permissions`]），因此「点一次以后都允许」对同一轮的下一条查询立即生效。
+    pub fn seed_permissions(&self, permissions: &HarnessPermissions) {
+        let mut guard = self
+            .inner
+            .permissions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = Some(permissions.clone());
+    }
+
+    /// 本轮生效的权限规则：有镜像用它，没有则回落到调用方的配置快照（无镜像 = 未播种，
+    /// 等价于改动前「每轮一份配置快照」的语义）。
+    pub fn live_permissions(&self, fallback: &HarnessPermissions) -> HarnessPermissions {
+        let guard = self
+            .inner
+            .permissions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        guard.clone().unwrap_or_else(|| fallback.clone())
     }
 
     /// 记录本轮终态（`turn::run_turn` 的 sink 在 `done` / `error` / `aborted` 时调用）。
@@ -1601,8 +1632,14 @@ pub fn harness_read_image(
 }
 
 /// 批准 / 拒绝一个挂起的批准请求。`reason` 为拒绝原因（可选），随工具结果回送模型；
-/// `remember` = 「采纳且本会话不再问」（可选，缺省 false）——true 且采纳时
-/// `(工具, 主体串)` 记入会话内批准缓存（design §6），同会话同主体串后续免闸。
+/// `remember` = 「采纳且本会话不再问」（可选，缺省 false）——true 且采纳时把该调用的会话
+/// 记忆键写入会话内批准缓存（design §6）；`persist_rule` = 「以后都允许 `<规则>`」（可选，
+/// 缺省 false）——true 且采纳时把规则写回 `[harness].permissions.allow`（全局）。
+///
+/// 持久规则是**单一写者**（change harness-permission-rules-oct23 Q5 裁决）：规则文本由后端
+/// 从待决请求的 argv / 主体串现算，MUST NOT 采信前端传入的文本。写回在 resolve **之前**：
+/// 写失败直接返回错误、批准保持待决，MUST NOT 出现「调用执行了、规则没写」或「规则写了、
+/// 调用没批准」的半态。
 #[tauri::command(rename_all = "snake_case")]
 pub fn harness_approve(
     vault: tauri::State<'_, crate::commands::VaultState>,
@@ -1611,11 +1648,65 @@ pub fn harness_approve(
     approved: bool,
     reason: Option<String>,
     remember: Option<bool>,
+    persist_rule: Option<bool>,
 ) -> Result<(), CommandError> {
     let scope = vault_scope(&vault)?;
+    let persist = approved && persist_rule == Some(true);
+    if persist {
+        let rule = runtime.with_session(&scope, |session| {
+            let Some(pending) = session.pending_request(&request_id) else {
+                return Err(CommandError::new(
+                    "approval_not_found",
+                    format!("批准请求 {request_id} 不存在或已被处理"),
+                ));
+            };
+            permissions::permission_prefix(&pending.tool, pending.argv.as_deref(), &pending.subject)
+                .and_then(|actions| actions.rule)
+                .ok_or_else(|| {
+                    CommandError::new(
+                        "permission_rule_unavailable",
+                        "该批准卡没有可持久化的权限规则",
+                    )
+                })
+        })??;
+        let path = config::config_dir()?.join("config.json");
+        // 写失败 ⇒ 提前返回，批准保持待决（用户可重试或普通采纳）。
+        config::append_permission_rule_to(&path, &rule)?;
+        // 写成功即把**本轮生效规则**从配置文件重播（design §4）：同一轮的下一条同类调用
+        // 因此直接命中新规则，不必等到下一轮。重读失败只影响即时性——规则已落盘，下一轮
+        // 播种时照样生效，因此不把本次批准判成失败（不制造「规则写了、调用没批准」的半态）。
+        if let Ok(snapshot) = config::load() {
+            runtime.seed_permissions(&snapshot.config.harness.permissions);
+        }
+    }
     runtime.with_session(&scope, |s| {
-        s.resolve_approval(&request_id, approved, reason, remember.unwrap_or(false))
+        s.resolve_approval(
+            &request_id,
+            approved,
+            reason,
+            remember.unwrap_or(false),
+            persist,
+        )
     })?
+}
+
+/// 删除一条已记住的持久权限规则（权限浮层的删除钮，change
+/// harness-permission-rules-oct23 A1）：写回 `[harness].permissions.allow` 并返回是否删掉了。
+/// 幂等——规则不存在时安静成功（`false`）。删除在**下一次权限判定**生效：写回成功后从配置文件
+/// 重播本轮生效规则（design §4），同一轮里随后发生的判定就不再命中该规则。
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_permission_rule_remove(
+    runtime: tauri::State<'_, Runtime>,
+    rule: String,
+) -> Result<bool, CommandError> {
+    let path = config::config_dir()?.join("config.json");
+    let removed = config::remove_permission_rule_to(&path, &rule)?;
+    if removed {
+        if let Ok(snapshot) = config::load() {
+            runtime.seed_permissions(&snapshot.config.harness.permissions);
+        }
+    }
+    Ok(removed)
 }
 
 /// 停止当前在途轮次（M348，发送钮停止态点击；design §5：中断 = 「不再继续」，非回滚）。

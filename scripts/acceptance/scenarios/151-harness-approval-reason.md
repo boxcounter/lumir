@@ -33,7 +33,7 @@ steps:
     do: key
     key: enter
 
-  - name: 等第一张批准卡（zsh 包装器 = 危险黑名单 → vault_write 档照样问）
+  - name: 等第一张批准卡（zsh 包装器 = 危险黑名单 → vault_write 档照样问；脚本混合只读与删除 ⇒ 解包失败）
     do: waitFor
     waitFor:
       has: ["要运行这条命令吗？"]
@@ -98,7 +98,7 @@ M459（change add-approval-decision-reason）：Alex 2026-10-12 在 `vault_write
 
 | 段落 | 调用 | 拦截层 | 期望的「判定依据」 |
 |---|---|---|---|
-| A | `zsh -lc "echo HNA-WRAP"` | 危险黑名单 · shell 包装器（第 3 层） | 卡上 D459：点名 `zsh` + 说明内容不可知、任何档都问 |
+| A | `zsh -lc "echo HNA-WRAP; rm -rf /tmp/lumir-m459-nothing"` | 危险黑名单 · shell 包装器（第 3 层） | 卡上 D459：点名 `zsh` + 说明内容不可知、任何档都问 |
 | B | `npm install` | 模式默认分层（第 5 层，`vault_write` 档） | 卡上 D458：当时档位 + 该档释义（与浮层释义同源） |
 | C | `npm run deploy`（命中 `cli(npm run deploy*)`） | 用户 deny 规则（第 1 层） | **不产卡**；工具行的 rejected 摘要里带规则原文 |
 
@@ -106,17 +106,22 @@ M459（change add-approval-decision-reason）：Alex 2026-10-12 在 `vault_write
 
 | 段 | 命令 | 期望 |
 |---|---|---|
-| A | `zsh -lc "echo HNA-WRAP"` | 出卡：判定依据 = 包装器句；场景**拒绝**它 |
+| A | `zsh -lc "echo HNA-WRAP; rm -rf /tmp/lumir-m459-nothing"` | 出卡：判定依据 = 包装器句；场景**拒绝**它 |
 | B | `npm install` | 出卡：判定依据 = 模式分层句（带「保险库写入」档与释义）；场景**拒绝**它 |
 | C | `npm run deploy` | deny 规则命中 ⇒ **不出卡**、工具行给规则原文；拒绝语义（不进闸）与 A/B 的「出卡」互证 |
 | D | — | 最终答复（能到达即证明 C 段没有挂起在批准闸上） |
 
 ## 断言口径与已知边界
 
-- **命令原文的上屏形态带引号**：fixture 把命令写成结构化 argv（`command="zsh"`、`args=["-lc","echo HNA-WRAP"]`），
+- **命令原文的上屏形态带引号**：fixture 把命令写成结构化 argv（`command="zsh"`、`args=["-lc","echo HNA-WRAP; rm -rf /tmp/lumir-m459-nothing"]`），
   展示层 `formatArgv`（`src/harness-panel.ts:2030-2036`）对**含空白**的参数加双引号，实际渲染是
-  `zsh -lc "echo HNA-WRAP"`。A 段因此拆成 `has: "zsh -lc"` + `has: "echo HNA-WRAP"` 两条**对引号不敏感**的
+  `zsh -lc "echo HNA-WRAP; rm -rf /tmp/lumir-m459-nothing"`。A 段因此拆成 `has: "zsh -lc"` +
+  `has: "echo HNA-WRAP"` 两条**对引号不敏感**的
   断言（写死无引号整串会 FAIL）。B 段 `npm install` 无空白参数、不加引号，照旧一条 `has` 即可。
+- **A 段的样本是「混合脚本」（只读 + 删除）**：change harness-permission-rules-oct23 A2 起，
+  `sh|bash|zsh|dash` 的 `-c` / `-lc` / `-cl` 形态在**全部子命令只读**时会受限解包、不再出卡
+  （原样本 `zsh -lc "echo HNA-WRAP"` 因此变成免问）。混合脚本必然解包失败 ⇒ 维持危险、照常出卡，
+  这条样本同时把「fail-closed 方向」的真机行为钉住。
 - **「两条被拒 cli_run 没真跑」的判据是正观测「已拒绝」**：原用的 `ax: { not: "HNA-WRAP" }` 是 oracle 自扰——
   `echo HNA-WRAP` 的 stdout 哨兵与命令参数**同串**，而命令原文在待决卡与终态行恒可见 ⇒ 该负断言在命令
   可见时**永远无法通过**，与「是否真跑」无因果。产品侧的真值是终态行 `已拒绝`（`src/copy-data.ts:1138` 的

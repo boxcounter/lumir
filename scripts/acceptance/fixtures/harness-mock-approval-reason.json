@@ -7,7 +7,7 @@
         {
           "id": "call_wrap1",
           "name": "cli_run",
-          "arguments": "{\"command\":\"zsh\",\"args\":[\"-lc\",\"echo HNA-WRAP\"],\"purpose\":\"用登录 shell 看一眼环境变量\"}"
+          "arguments": "{\"command\":\"zsh\",\"args\":[\"-lc\",\"echo HNA-WRAP; rm -rf /tmp/lumir-m459-nothing\"],\"purpose\":\"用登录 shell 看一眼环境，再顺手清一个临时目录\"}"
         }
       ]
     },

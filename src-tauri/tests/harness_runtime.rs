@@ -751,6 +751,7 @@ fn ask_gate_approve_executes_and_reject_leaves_disk() {
                     approve,
                     (!approve).then(|| "先别删".to_string()),
                     false,
+                    false,
                 )
             })
             .expect("resolve ok")
@@ -1748,7 +1749,7 @@ fn permission_mode_is_read_from_config_per_call_face() {
                 .expect("批准请求 id");
             runtime
                 .with_session(&f.scope(), |s| {
-                    s.resolve_approval(&id, false, Some("先别改".into()), false)
+                    s.resolve_approval(&id, false, Some("先别改".into()), false, false)
                 })
                 .unwrap()
                 .unwrap();
@@ -1845,7 +1846,9 @@ fn read_only_patch_approval_window_cas_conflict() {
     std::fs::write(f.vault().join("a.md"), "old\n用户手改的一行\n").unwrap();
     let id = request["id"].as_str().unwrap().to_string();
     runtime
-        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None, false))
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&id, true, None, false, false)
+        })
         .expect("resolve ok")
         .expect("resolve ok");
     worker.join().unwrap();
@@ -1971,7 +1974,7 @@ fn cli_purpose_required_and_never_widens_permission() {
         .expect("有批准请求 id");
     runtime
         .with_session(&f.scope(), |s| {
-            s.resolve_approval(&id, false, Some("不许删".into()), false)
+            s.resolve_approval(&id, false, Some("不许删".into()), false, false)
         })
         .unwrap()
         .unwrap();
@@ -2032,7 +2035,7 @@ fn cli_purpose_reaches_approval_card_payload_with_full_command() {
     let id = request["id"].as_str().unwrap().to_string();
     runtime
         .with_session(&f.scope(), |s| {
-            s.resolve_approval(&id, false, Some("先不装".into()), false)
+            s.resolve_approval(&id, false, Some("先不装".into()), false, false)
         })
         .unwrap()
         .unwrap();
@@ -2163,7 +2166,9 @@ fn vault_delete_asks_in_vault_write_and_trashes_on_approve() {
     assert_eq!(request["argv"], serde_json::json!(["notes/a.md"]));
     let id = request["id"].as_str().unwrap().to_string();
     runtime
-        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None, false))
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&id, true, None, false, false)
+        })
         .unwrap()
         .unwrap();
     worker.join().unwrap();
@@ -2261,7 +2266,7 @@ fn session_approval_cache_skips_gate_for_same_subject_only() {
         .unwrap();
     runtime
         .with_session(&f.scope(), |s| {
-            s.resolve_approval(&id, false, Some("先留着".into()), false)
+            s.resolve_approval(&id, false, Some("先留着".into()), false, false)
         })
         .unwrap()
         .unwrap();
@@ -2308,7 +2313,7 @@ fn session_approval_cache_skips_gate_for_same_subject_only() {
         .unwrap();
     runtime
         .with_session(&f.scope(), |s| {
-            s.resolve_approval(&id, false, Some("不许".into()), false)
+            s.resolve_approval(&id, false, Some("不许".into()), false, false)
         })
         .unwrap()
         .unwrap();
@@ -2379,11 +2384,13 @@ fn approval_remember_writes_cache_and_decision_visible() {
         .expect("第一张卡在快照里");
     assert_eq!(pending.id, first_id);
     assert!(pending.purpose.is_none());
-    assert!(pending.remember, "批准闸请求恒支持 remember 次级动作");
+    // 次级动作的粒度 / 规则文本由后端生成（vault_delete 有会话记忆、无持久规则，Q7）。
+    assert_eq!(pending.remember.as_deref(), Some("a.md"));
+    assert!(pending.persist_rule.is_none());
 
     runtime
         .with_session(&f.scope(), |s| {
-            s.resolve_approval(&first_id, true, None, true)
+            s.resolve_approval(&first_id, true, None, true, false)
         })
         .unwrap()
         .unwrap();
@@ -2407,7 +2414,7 @@ fn approval_remember_writes_cache_and_decision_visible() {
     let second_id = second["id"].as_str().unwrap().to_string();
     runtime
         .with_session(&f.scope(), |s| {
-            s.resolve_approval(&second_id, true, None, false)
+            s.resolve_approval(&second_id, true, None, false, false)
         })
         .unwrap()
         .unwrap();
@@ -2528,7 +2535,7 @@ fn wrapper_recursion_gates_sudo_rm_in_full_access() {
         .unwrap();
     runtime
         .with_session(&f.scope(), |s| {
-            s.resolve_approval(&id, false, Some("不许".into()), false)
+            s.resolve_approval(&id, false, Some("不许".into()), false, false)
         })
         .unwrap()
         .unwrap();
@@ -2823,9 +2830,11 @@ fn approval_reason_reaches_event_and_snapshot_alike() {
     let runtime = f.runtime();
     runtime.acquire_turn(&f.scope(), &config).unwrap();
     let sink = CollectSink::default();
+    // 样本必须**不可解包**（change harness-permission-rules-oct23 A2）：全只读的
+    // `zsh -lc "echo hi"` 现在会受限解包、不再出卡，包装器层因此不会触达。
     let script = r#"{"responses": [
         {"tool_calls": [{"id": "c1", "name": "cli_run",
-            "arguments": "{\"command\":\"zsh\",\"args\":[\"-lc\",\"echo hi\"],\"purpose\":\"看一眼环境\"}"}]},
+            "arguments": "{\"command\":\"zsh\",\"args\":[\"-lc\",\"rm -rf /tmp/lumir-m459-reason\"],\"purpose\":\"清一个临时目录\"}"}]},
         {"text": "那算了。"}
     ]}"#;
     let mut client = MockClient::from_str(script, "approval-reason-wrapper").unwrap();
@@ -2881,9 +2890,17 @@ fn approval_reason_reaches_event_and_snapshot_alike() {
             }
         )
     );
+    // 两枚次级动作在危险卡上**两条通道都缺席**（change harness-permission-rules-oct23
+    // design §5 / D3）：事件载荷缺键、快照字段 None——点了也不生效的死按钮不显示。
+    assert!(request.get("remember").is_none(), "{request:?}");
+    assert!(request.get("persist_rule").is_none(), "{request:?}");
+    assert!(pending.remember.is_none());
+    assert!(pending.persist_rule.is_none());
     // 拒绝掉收口本轮（危险命令绝不落盘）。
     runtime
-        .with_session(&f.scope(), |s| s.resolve_approval(&id, false, None, false))
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&id, false, None, false, false)
+        })
         .unwrap()
         .unwrap();
     worker.join().unwrap();
@@ -2939,7 +2956,9 @@ fn approval_reason_carries_mode_default_layer() {
     );
     let id = request["id"].as_str().unwrap().to_string();
     runtime
-        .with_session(&f.scope(), |s| s.resolve_approval(&id, false, None, false))
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&id, false, None, false, false)
+        })
         .unwrap()
         .unwrap();
     worker.join().unwrap();

@@ -529,7 +529,14 @@ impl RunContext for SessionContext<'_> {
             argv: (tool == "cli_run").then(|| tools::cli_argv(args)),
             cached,
         };
-        permissions::decide(&self.config.permissions, tool, subject, &judge)
+        // 规则取**本轮生效值**（change harness-permission-rules-oct23 design §4）：批准卡上
+        // 沉淀 / 浮层里删掉的规则，对本轮的下一条判定立即生效；未播种时回落配置快照。
+        permissions::decide(
+            &self.runtime.live_permissions(&self.config.permissions),
+            tool,
+            subject,
+            &judge,
+        )
     }
 
     fn approval(
@@ -549,6 +556,8 @@ impl RunContext for SessionContext<'_> {
         let purpose = request.purpose.clone();
         let reason = request.reason.clone();
         let cron_task = request.cron_task.clone();
+        let remember = request.remember.clone();
+        let persist_rule = request.persist_rule.clone();
         let id = match self.runtime.park_approval(self.scope, request) {
             Ok(id) => id,
             Err(error) => return ApprovalOutcome::Failed(error),
@@ -562,6 +571,8 @@ impl RunContext for SessionContext<'_> {
             reason.as_ref(),
             None,
             cron_task.as_ref(),
+            remember.as_deref(),
+            persist_rule.as_deref(),
         ));
         // 未决批准项不自动超时通过：通道失效（会话重置 / vault 切换）⇒ 判过期，不执行。
         match rx.recv() {

@@ -317,7 +317,213 @@ const DANGEROUS_DISK: [&str; 2] = ["fdisk", "parted"];
 /// shell 元字符（design §3.2）：argv 直传下它们是**字面参数**（无害），仍保守按写处理——
 /// 一是防未来出现 shell 化执行路径时分类表变成隐患，二是模型把复合命令塞进单参数本身
 /// 就说明意图是复合写。
+///
+/// 受限解包形态（[`unpackable_script`] 命中）**不适用**本条：脚本里的 `;` `|` 由逐子命令
+/// 判定取代（change harness-permission-rules-oct23 design §2.4 硬约束 2）。非解包形态下
+/// 一字不动。
 const SHELL_META: [&str; 10] = ["|", ";", "&&", "||", ">", ">>", "<", "`", "$(", "${"];
+
+// ---------------------------------------------------------------------------
+// shell 包装器受限解包（change harness-permission-rules-oct23 A2 / design §2）
+// ---------------------------------------------------------------------------
+
+/// 可解包的 wrapper 名单（design §2.1 第 1 条）：只收 `-c` 族语义稳定的四种。
+/// `fish` / `csh` / `ksh` / `cmd` / `powershell` / `pwsh` / `osascript` / `eval` / `exec`
+/// 的 flag 组合形态各异、收益小，一律不解包（维持危险）。
+const UNPACK_WRAPPERS: [&str; 4] = ["sh", "bash", "zsh", "dash"];
+
+/// 嵌套解包深度上限（design §2.3 第 5 条）：`bash -lc "bash -lc \"ls\""` 是 2 层。
+const UNPACK_MAX_DEPTH: u32 = 2;
+
+/// 单脚本的子命令数上限（design §2.3 第 3 条，解析成本上限，非安全语义）。
+const UNPACK_MAX_COMMANDS: usize = 16;
+
+/// 单脚本字节数上限（同上）。
+const UNPACK_MAX_SCRIPT_BYTES: usize = 4096;
+
+/// 无害重定向的整 token 字面量（design §2.2 / Q3 裁决）：只合并输出流或丢进 `/dev/null`，
+/// 不碰文件系统。`>>` 与 `<` 刻意不在集内（前者写文件、后者可读任意文件外泄）。
+const HARMLESS_REDIRECTS: [&str; 4] = ["2>/dev/null", "1>/dev/null", ">/dev/null", "2>&1"];
+
+/// 可解包形态判据（design §2.1，全部满足才算）：wrapper 名 × 恰好 `-c` / `-lc` / `-cl` ×
+/// 恰好一个脚本参数。返回脚本原文。`bash script.sh` / `bash -lc a b` / 裸 `bash` /
+/// `-x` / `-e` / `--login` 等形态一律不是解包形态（维持危险）。
+fn unpackable_script<'a>(name: &str, args: &'a [String]) -> Option<&'a str> {
+    if !UNPACK_WRAPPERS.contains(&name) {
+        return None;
+    }
+    if args.len() != 2 {
+        return None;
+    }
+    let flag = args[0].strip_prefix('-')?;
+    if flag.is_empty() || flag.starts_with('-') {
+        return None;
+    }
+    if !flag.chars().all(|ch| ch == 'l' || ch == 'c') || !flag.contains('c') {
+        return None;
+    }
+    Some(&args[1])
+}
+
+/// 解包判定（design §2.4）：只有「整条脚本都是只读子命令」才降到 [`CliClass::ReadOnly`]；
+/// 其余一律 [`CliClass::Dangerous`]——**MUST NOT** 降为写，否则 `full_access` 会静默放行
+/// 包装脚本（Q4 裁决）。
+fn classify_unpacked_script(script: &str, depth: u32) -> CliClass {
+    if depth >= UNPACK_MAX_DEPTH || script.len() > UNPACK_MAX_SCRIPT_BYTES {
+        return CliClass::Dangerous;
+    }
+    let Some(commands) = split_linear_script(script) else {
+        return CliClass::Dangerous;
+    };
+    if commands.is_empty() || commands.len() > UNPACK_MAX_COMMANDS {
+        return CliClass::Dangerous;
+    }
+    // 子命令分类复用同一个 classify 入口（REVIEW.md 「同一语义两处真源」条）——
+    // 未知命令 / `cd` / 解释器 / 写动词都会落非 ReadOnly，从而整条维持危险。
+    if commands
+        .iter()
+        .all(|sub| classify_cli_at(sub, depth + 1) == CliClass::ReadOnly)
+    {
+        CliClass::ReadOnly
+    } else {
+        CliClass::Dangerous
+    }
+}
+
+/// 线性脚本的词法切分（design §2.2 的保守子集）：产出「子命令 × argv」列表。
+///
+/// 只认 `;` `&&` `||` `|` 四种分隔与本表四个无害重定向；单 / 双引号内按字面、引号内不解析
+/// 变量；其余任何 `$` 反引号括弧反斜杠换行 `&`（后台）`<` `>`（白名单外）都是**失败**
+/// （`None`），整条调用随后按危险处理。任何产出都是保守侧：`#` / glob 按字面当参数，
+/// 误判方向只会是多问一次。
+fn split_linear_script(script: &str) -> Option<Vec<Vec<String>>> {
+    /// 收尾当前词（`''` 这种空引号参数也要保留：shell 里它是真实参数）。
+    fn flush(word: &mut String, started: &mut bool, words: &mut Vec<String>) {
+        if *started {
+            words.push(std::mem::take(word));
+            *started = false;
+        }
+    }
+    /// 结束一个子命令：空子命令（`;;` / 首尾分隔符 / 只有重定向）一律失败。
+    fn end_command(words: &mut Vec<String>, commands: &mut Vec<Vec<String>>) -> Option<()> {
+        if words.is_empty() {
+            return None;
+        }
+        commands.push(std::mem::take(words));
+        Some(())
+    }
+
+    let mut commands: Vec<Vec<String>> = Vec::new();
+    let mut words: Vec<String> = Vec::new();
+    let mut word = String::new();
+    let mut word_started = false;
+    let mut expecting_command = true;
+    let mut index = 0;
+
+    while index < script.len() {
+        let rest = &script[index..];
+        let ch = rest.chars().next()?;
+
+        // 重定向识别先于通用词法（design §2.2 补充口径）：只在词边界处整段匹配，
+        // 命中即丢弃、不参与 argv——`2>&1` 里的 `&` 与 `2>` 里的 `>` 因此不会触发失败分支。
+        // 匹配后紧跟的必须是词边界（空白 / 分隔符 / 结尾）：`>/dev/null2` 在 shell 里写的是
+        // 另一个文件，不能让「白名单字面量 + 粘连尾巴」蒙混成无害形态（fail-closed）。
+        if !word_started {
+            if let Some(redirect) = HARMLESS_REDIRECTS
+                .iter()
+                .find(|literal| rest.starts_with(**literal))
+            {
+                let tail = &rest[redirect.len()..];
+                let boundary = tail
+                    .chars()
+                    .next()
+                    .is_none_or(|next| matches!(next, ' ' | '\t' | ';' | '&' | '|'));
+                if !boundary {
+                    return None;
+                }
+                index += redirect.len();
+                continue;
+            }
+        }
+
+        match ch {
+            ' ' | '\t' => {
+                flush(&mut word, &mut word_started, &mut words);
+                index += 1;
+            }
+            // 多行脚本一律不解包：换行是最容易藏东西的地方。
+            '\n' | '\r' => return None,
+            ';' => {
+                flush(&mut word, &mut word_started, &mut words);
+                end_command(&mut words, &mut commands)?;
+                expecting_command = true;
+                index += 1;
+            }
+            '&' => {
+                if !rest.starts_with("&&") {
+                    // 后台执行（单 `&`）。
+                    return None;
+                }
+                flush(&mut word, &mut word_started, &mut words);
+                end_command(&mut words, &mut commands)?;
+                expecting_command = true;
+                index += 2;
+            }
+            '|' => {
+                let width = if rest.starts_with("||") { 2 } else { 1 };
+                flush(&mut word, &mut word_started, &mut words);
+                end_command(&mut words, &mut commands)?;
+                expecting_command = true;
+                index += width;
+            }
+            '\'' => {
+                let body = &rest[1..];
+                let end = body.find('\'')?;
+                word.push_str(&body[..end]);
+                word_started = true;
+                expecting_command = false;
+                index += 1 + end + 1;
+            }
+            '"' => {
+                let body = &rest[1..];
+                let mut offset = 0;
+                loop {
+                    let inner = body[offset..].chars().next()?;
+                    match inner {
+                        '"' => break,
+                        // 变量、命令替换、转义都超出保守子集。
+                        '$' | '`' | '\\' => return None,
+                        other => {
+                            word.push(other);
+                            offset += other.len_utf8();
+                        }
+                    }
+                }
+                word_started = true;
+                expecting_command = false;
+                index += 1 + offset + 1;
+            }
+            // 变量 / 命令替换 / 子 shell / 分组 / 转义 / 非白名单重定向：一律失败。
+            '$' | '`' | '(' | ')' | '{' | '}' | '\\' | '<' | '>' => return None,
+            _ => {
+                word.push(ch);
+                word_started = true;
+                expecting_command = false;
+                index += ch.len_utf8();
+            }
+        }
+    }
+
+    flush(&mut word, &mut word_started, &mut words);
+    if !words.is_empty() {
+        commands.push(words);
+    }
+    // 空脚本 / 尾随分隔符 / 只有重定向：没有可判定的子命令。
+    if expecting_command {
+        return None;
+    }
+    Some(commands)
+}
 
 /// argv → 三态分类（design §3）。输入是 argv 数组（command + args），比主体串拼接信息全。
 ///
@@ -325,6 +531,12 @@ const SHELL_META: [&str; 10] = ["|", ";", "&&", "||", ">", ">>", "<", "`", "$(",
 /// 取被包装命令再分类，取不出归危险）→ 保守降级（解释器 / 元字符 / 已知写动词）→ 只读白名单
 /// → 未知归写。危险先判是因为黑名单与白名单的交集按黑名单处理（更保守侧赢，design §3.3）。
 pub fn classify_cli(argv: &[String]) -> CliClass {
+    classify_cli_at(argv, 0)
+}
+
+/// 带递归预算的分类入口（change harness-permission-rules-oct23 design §2.4）：`depth` 是
+/// 「已进入的包装层数」，公共入口传 0；sudo / xargs / find -exec 递归与 shell 解包共用。
+fn classify_cli_at(argv: &[String], depth: u32) -> CliClass {
     let Some(command) = argv.first() else {
         return CliClass::Write;
     };
@@ -336,6 +548,12 @@ pub fn classify_cli(argv: &[String]) -> CliClass {
     }
     let args = &argv[1..];
 
+    // 受限解包（design §2.4）：形态命中即走解包判定，结论只有只读 / 危险两种。
+    // 放在危险黑名单之前——包装器本身在黑名单里，先判黑名单就永远解不开；非解包形态
+    // （`bash script.sh` / 多重 flag / 裸包装器）落到下面的黑名单分支，行为与改动前一致。
+    if let Some(script) = unpackable_script(&name, args) {
+        return classify_unpacked_script(script, depth);
+    }
     if is_dangerous(&name, args) {
         return CliClass::Dangerous;
     }
@@ -343,7 +561,7 @@ pub fn classify_cli(argv: &[String]) -> CliClass {
     // full_access 档免闸绕过黑名单（backlog 2026-10-10 Alex 裁决「堵」）——先递归取被包装
     // 命令再进分类管线；取不出确定形态保守归危险（任何档都问）。放在解释器 / 元字符检查
     // 之前：`sudo bash -c "a;b"` 的外层参数带元字符，先判元字符会落「写」被 full_access 放行。
-    if let Some(class) = classify_wrapped(&name, args) {
+    if let Some(class) = classify_wrapped(&name, args, depth) {
         return class;
     }
     if INTERPRETERS.contains(&name.as_str()) {
@@ -464,19 +682,19 @@ const XARGS_VALUE_FLAGS: [&str; 11] = [
 /// 包装器名单内的命令：把被包装命令取出来递归分类。返回 None = 不是包装器（走正常路径）；
 /// Some(class) = 整条调用的分类（被包装命令的分类，取不出时保守归危险——「任何档都问」的
 /// 唯一表达，full_access 也放不过）。递归只在名单内展开，不做通用 shell 语义解析。
-fn classify_wrapped(name: &str, args: &[String]) -> Option<CliClass> {
+fn classify_wrapped(name: &str, args: &[String], depth: u32) -> Option<CliClass> {
     match name {
         "sudo" => Some(match extract_wrapped_command(args, &SUDO_VALUE_FLAGS) {
-            Some(argv) => classify_cli(&argv),
+            Some(argv) => classify_cli_at(&argv, depth + 1),
             // 取不出被包装命令（裸 sudo / 只有 flag）：保守归危险，不问形态不漏拦。
             None => CliClass::Dangerous,
         }),
         "xargs" => Some(match extract_wrapped_command(args, &XARGS_VALUE_FLAGS) {
-            Some(argv) => classify_cli(&argv),
+            Some(argv) => classify_cli_at(&argv, depth + 1),
             None => CliClass::Dangerous,
         }),
         // find 只在带 -exec / -execdir / -ok / -okdir 时进递归；否则走既有分支。
-        "find" => classify_find_exec(args),
+        "find" => classify_find_exec(args, depth),
         _ => None,
     }
 }
@@ -539,7 +757,7 @@ fn looks_like_env_assignment(arg: &str) -> bool {
 /// `;` / `\;` / `+` 终止符为止；整条 find 的分类 = 各子句分类的保守合并（危险 > 写 > 只读）。
 /// 子句取不完整（flag 后没有命令、没有终止符）保守归危险。无 exec 系 flag 返回 None
 /// （走既有分支：`-delete` 归写、纯查找到只读）。
-fn classify_find_exec(args: &[String]) -> Option<CliClass> {
+fn classify_find_exec(args: &[String], depth: u32) -> Option<CliClass> {
     const EXEC_FLAGS: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
     if !args.iter().any(|arg| EXEC_FLAGS.contains(&arg.as_str())) {
         return None;
@@ -567,7 +785,7 @@ fn classify_find_exec(args: &[String]) -> Option<CliClass> {
         }
         let mut argv = vec![command.clone()];
         argv.extend(args[index + 2..end].iter().cloned());
-        overall = max_class(overall, classify_cli(&argv));
+        overall = max_class(overall, classify_cli_at(&argv, depth + 1));
         index = end + 1;
     }
     // exec 子句之外的写形态折进 overall：`-delete` 直接删文件，`-fprint` / `-fprintf` 把输出
@@ -971,11 +1189,110 @@ fn rule_matches(rule: &str, tool: &str, subject: &str) -> bool {
                 return false;
             }
             match pattern.strip_suffix('*') {
-                Some(prefix) => subject.starts_with(prefix),
+                Some(prefix) => word_prefix_matches(prefix, subject),
                 None => subject == pattern,
             }
         }
         ParsedRule::Unparsable => false,
+    }
+}
+
+/// 词边界前缀匹配（change harness-permission-rules-oct23 Q2 / design §3.3）：
+/// 主体串以 `prefix` 开头，或——仅当 `prefix` 以空格结尾（星号前是空格，生成规则的标准
+/// 形态）——与去掉该尾随空格后的串**逐字相等**。等值容差只到「完全相等」为止，词边界
+/// 不放宽：`git pushx` 既不以 `"git push "` 开头、也不等于 `"git push"`。
+///
+/// 单一实现：规则匹配与会话内批准缓存的前缀键共用它（REVIEW.md「同一语义两处真源」条）。
+pub(crate) fn word_prefix_matches(prefix: &str, subject: &str) -> bool {
+    subject.starts_with(prefix) || (prefix.ends_with(' ') && subject == prefix.trim_end())
+}
+
+// ---------------------------------------------------------------------------
+// 批准卡次级动作的派生（change harness-permission-rules-oct23 A1 / A3 / design §3.1）
+// ---------------------------------------------------------------------------
+
+/// 一次过闸调用的两枚次级动作派生量——**单一真源**：批准卡按钮文案、会话记忆键、
+/// 持久规则文本全部从这里取，三处因此不可能漂移。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionActions {
+    /// 会话记忆的缓存键：`cli_run` 是带尾随空格的**前缀键**（词边界自描述，见
+    /// [`super::permission_cache`]），vault / 调度工具是精确主体串。
+    pub remember_key: String,
+    /// 按钮上显示的粒度（前缀原文 / 路径原文，没有尾随空格——给人看的形态）。
+    pub remember_label: String,
+    /// 持久规则文本；`None` = 该工具不提供持久入口（`vault_delete` / `cron_task_*`，
+    /// 见 design §3.2 与 Q7 裁决）。
+    pub rule: Option<String>,
+}
+
+/// 派生一次过闸调用的两枚次级动作（design §3.1 表逐行）：`cli_run` 取「命令 + 首个非 flag
+/// 参数」（第二词是 flag 或无参数时退化为命令名）；vault 写工具取路径目录段；`vault_delete`
+/// 与 `cron_task_*` 只给会话记忆、不给持久规则。
+///
+/// 规则文本 MUST 是 [`parse_rule`] 可解析、且能真实命中同族调用的字符串：含换行或空路径时
+/// 返回 `None`（不给按钮）——退化成「多问一次」可接受，退化成「误放行」不可接受。
+/// 返回值 `None` 只表示「这张卡没有可派的次级动作」。
+pub fn permission_prefix(
+    tool: &str,
+    argv: Option<&[String]>,
+    subject: &str,
+) -> Option<PermissionActions> {
+    match tool {
+        "cli_run" => {
+            let argv = argv?;
+            let command = argv.first()?.as_str();
+            if command.is_empty() {
+                return None;
+            }
+            // 第二词是 flag（`npm --version`）时退化为单词前缀——按钮上显示实际文本，
+            // 授权面在按下前可见（Q1 裁决）。
+            let second = argv
+                .get(1)
+                .map(String::as_str)
+                .filter(|arg| !arg.is_empty() && !arg.starts_with('-'));
+            let prefix = match second {
+                Some(second) => format!("{command} {second}"),
+                None => command.to_string(),
+            };
+            if prefix.contains('\n') || prefix.contains('\r') {
+                return None;
+            }
+            Some(PermissionActions {
+                remember_key: format!("{prefix} "),
+                rule: Some(format!("cli({prefix} *)")),
+                remember_label: prefix,
+            })
+        }
+        // vault 写工具（design §3.1）：路径含目录段 ⇒ 目录前缀规则；根目录文件 ⇒ 精确规则。
+        // `vault_delete` 不在本支（Q7：删除不给一键永久授权）。
+        "vault_patch" | "vault_create" | "vault_move" => {
+            let path = subject.trim();
+            if path.is_empty() || path.contains('\n') || path.contains('\r') {
+                return None;
+            }
+            let rule = match path.rfind('/') {
+                Some(index) => format!("{tool}({}*)", &path[..=index]),
+                None => format!("{tool}({path})"),
+            };
+            Some(PermissionActions {
+                remember_key: path.to_string(),
+                remember_label: path.to_string(),
+                rule: Some(rule),
+            })
+        }
+        // 会话内的既有记忆能力保留（精确主体串），持久入口不给（Q7 裁决）。
+        "vault_delete" | "cron_task_create" | "cron_task_remove" => {
+            let label = super::permission_cache::normalize_subject(subject);
+            if label.is_empty() {
+                return None;
+            }
+            Some(PermissionActions {
+                remember_key: label.clone(),
+                remember_label: label,
+                rule: None,
+            })
+        }
+        _ => None,
     }
 }
 
@@ -1385,7 +1702,12 @@ mod tests {
             vec!["rm", "notes/a.md"],
             vec!["/bin/rm", "-rf", "x"],
             vec!["bash", "-c", "rm -rf /"],
-            vec!["sh", "-c", "echo hi"],
+            // 解包形态但脚本不满足安全集（变量 / 非白名单重定向 / 非只读子命令）——失败即危险。
+            // 解包成功且全只读的形态不在此表（见 unpack_* 用例）。
+            vec!["sh", "-c", "echo $HOME"],
+            vec!["bash", "script.sh"],
+            vec!["bash", "-x", "-c", "ls"],
+            vec!["zsh", "-lc", "rm -rf /tmp/x"],
             vec!["zsh"],
             vec!["dash"],
             vec!["fish"],
@@ -1990,12 +2312,13 @@ mod tests {
             })
         );
 
-        // 第 3 层：shell 包装器点名（Alex 2026-10-12 现场那一类）。
+        // 第 3 层：shell 包装器点名（Alex 2026-10-12 现场那一类）。样本必须**不可解包**——
+        // 解包成立的只读形态根本不过闸（change harness-permission-rules-oct23 A2）。
         let v = super::decide(
             &default,
             "cli_run",
-            "zsh -lc pwd",
-            &judge(&root, Some(argv(&["zsh", "-lc", "pwd"]))),
+            "zsh -lc rm -rf /tmp/x",
+            &judge(&root, Some(argv(&["zsh", "-lc", "rm -rf /tmp/x"]))),
         );
         assert_eq!(v.decision, Decision::Ask);
         assert_eq!(
@@ -2008,8 +2331,8 @@ mod tests {
         let v = super::decide(
             &default,
             "cli_run",
-            "/bin/bash -c ls",
-            &judge(&root, Some(argv(&["/bin/bash", "-c", "ls"]))),
+            "/bin/bash -c rm -rf /",
+            &judge(&root, Some(argv(&["/bin/bash", "-c", "rm -rf /"]))),
         );
         assert_eq!(
             v.reason,
@@ -2275,5 +2598,314 @@ mod tests {
             }),
             serde_json::json!({"kind": "deny_rule", "rule": "cli(npm run deploy*)"})
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // shell 包装器受限解包（change harness-permission-rules-oct23 A2 / design §2.6）
+    // -----------------------------------------------------------------------
+
+    /// 正例表（design §2.6 第一张表逐行）：全部子命令只读 + 安全分隔符 / 重定向 ⇒ 只读。
+    #[test]
+    fn unpacked_read_only_scripts_are_read_only() {
+        for script in [
+            // Alex 的原现场：分号 + /dev/null 丢弃 + 管道。
+            "ls -la 2>/dev/null; echo ---; ls docs | tail -5",
+            "cat a.md >/dev/null",
+            "rg foo notes | head -20 2>&1",
+            "git status",
+            "git diff --stat",
+            // 嵌套恰好 2 层。
+            "bash -c \"ls\"",
+            // 双引号内的空格按字面并入同一词。
+            "echo \"hello world\"",
+            // `&&` / `||` 与四种白名单重定向。
+            "ls && echo ok || echo fail",
+            "ls 1>/dev/null",
+            "ls 2>&1 | tail -1",
+        ] {
+            let argv = argv(&["bash", "-lc", script]);
+            assert_eq!(classify_cli(&argv), CliClass::ReadOnly, "{script}");
+        }
+        // 四种 wrapper 名 × 三种 flag 形态（`-c` / `-lc` / `-cl`）。
+        for wrapper in ["sh", "bash", "zsh", "dash"] {
+            for flag in ["-c", "-lc", "-cl"] {
+                let argv = argv(&[wrapper, flag, "ls -la"]);
+                assert_eq!(classify_cli(&argv), CliClass::ReadOnly, "{wrapper} {flag}");
+            }
+        }
+    }
+
+    /// 反例表（design §2.6 第二张表逐行）：任何一条失败判据都维持**危险**（不是写）。
+    #[test]
+    fn unpack_failures_stay_dangerous() {
+        // 形态判据不满足：脚本文件 / 多重 flag / 多余参数 / 裸包装器 / 非名单包装器。
+        for items in [
+            vec!["bash", "script.sh"],
+            vec!["bash", "-x", "-c", "ls"],
+            vec!["bash", "-lc", "ls", "extra"],
+            vec!["bash"],
+            vec!["bash", "-c"],
+            vec!["fish", "-c", "ls"],
+            vec!["pwsh", "-c", "ls"],
+            vec!["osascript", "-e", "ls"],
+            vec!["bash", "-lc", "ls", "-la"], // 两个脚本参数：argc 不合约
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::Dangerous, "{argv:?}");
+        }
+        // 脚本词法 / 子命令判定失败。
+        for script in [
+            "ls; rm -rf /tmp/x",
+            "mkdir x",
+            "ls > notes/a.md",
+            "ls >> notes/a.md",
+            "cat < /etc/passwd",
+            "ls $(rm -rf /)",
+            "echo $HOME",
+            "echo `id`",
+            "ls & rm x",
+            "ls\nrm -rf /",
+        ] {
+            let argv = argv(&["sh", "-c", script]);
+            assert_eq!(classify_cli(&argv), CliClass::Dangerous, "{script}");
+        }
+        // 反向对照：合法多命令脚本仍是只读（防止本表退化成「见到 `;` 就危险」）。
+        assert_eq!(
+            classify_cli(&argv(&["sh", "-c", "ls; ls"])),
+            CliClass::ReadOnly
+        );
+        for script in [
+            "cd docs && ls",
+            "ls | xargs rm",
+            "bash -c \"bash -c 'ls'\"",
+            "ls 2>/dev/null2",
+            "ls >/dev/null2",
+            "ls 2>&1&",
+            "()",
+            "{}",
+            "ls \\; rm x",
+            "",
+            ";",
+            "ls;",
+            ">/dev/null",
+        ] {
+            let argv = argv(&["bash", "-lc", script]);
+            assert_eq!(classify_cli(&argv), CliClass::Dangerous, "{script}");
+        }
+        // 子命令数 > 16 / 脚本 > 4096 字节。
+        let many = vec!["ls"; 17].join("; ");
+        assert_eq!(
+            classify_cli(&argv(&["bash", "-lc", &many])),
+            CliClass::Dangerous,
+            "子命令数超上限"
+        );
+        let huge = format!("echo {}", "a".repeat(5000));
+        assert_eq!(
+            classify_cli(&argv(&["bash", "-lc", &huge])),
+            CliClass::Dangerous,
+            "脚本超字节上限"
+        );
+    }
+
+    /// 反向验证（REVIEW.md「断言等价于子串」条）：每条放宽只差一个字符就必须变红——
+    /// 证明只读结论不是靠子串巧合。
+    #[test]
+    fn unpack_relaxation_is_character_sensitive() {
+        let positives = [
+            "ls -la 2>/dev/null; echo ---; ls docs | tail -5",
+            "rg foo notes | head -20 2>&1",
+            "cat a.md >/dev/null",
+        ];
+        for script in positives {
+            assert_eq!(
+                classify_cli(&argv(&["bash", "-lc", script])),
+                CliClass::ReadOnly,
+                "{script}"
+            );
+        }
+        // 把 `;` 改 `&`（后台）、`|` 改 `&`、白名单重定向改非法重定向、只读命令名改未知命令。
+        for script in [
+            "ls -la 2>/dev/null & echo ---; ls docs | tail -5",
+            "rg foo notes & head -20 2>&1",
+            "cat a.md >>/dev/null",
+            "cat a.md >/dev/nullx",
+            "ls2 -la 2>/dev/null; echo ---; ls docs | tail -5",
+        ] {
+            assert_eq!(
+                classify_cli(&argv(&["bash", "-lc", script])),
+                CliClass::Dangerous,
+                "{script}"
+            );
+        }
+    }
+
+    /// 判定级（design §2.6 末段 / tasks 1.6）：解包失败样本在 `full_access` 档仍产 Ask；
+    /// 解包成功样本在 `vault_write` 档直接 Allow 且不产判定依据。
+    #[test]
+    fn unpack_decisions_respect_the_layer_order() {
+        let root = fixture_root("unpack-decisions");
+        let p = HarnessPermissions::default();
+        for script in [
+            "mkdir x",           // 非只读子命令：维持危险，MUST NOT 降为写
+            "ls; rm -rf /tmp/x", // 混合脚本
+        ] {
+            let call = argv(&["bash", "-lc", script]);
+            let j = Judge {
+                mode: PermissionMode::FullAccess,
+                root: &root,
+                argv: Some(call.clone()),
+                cached: false,
+            };
+            let verdict = super::decide(&p, "cli_run", &call.join(" "), &j);
+            assert_eq!(verdict.decision, Decision::Ask, "{script}");
+            assert!(
+                matches!(
+                    verdict.reason,
+                    Some(DecisionReason::DangerousWrapper { .. })
+                ),
+                "{script}"
+            );
+        }
+        let script = "ls -la 2>/dev/null; echo ---; ls docs | tail -5";
+        let call = argv(&["bash", "-lc", script]);
+        let j = Judge {
+            mode: PermissionMode::VaultWrite,
+            root: &root,
+            argv: Some(call.clone()),
+            cached: false,
+        };
+        let verdict = super::decide(&p, "cli_run", &call.join(" "), &j);
+        assert_eq!(verdict.decision, Decision::Allow);
+        assert!(verdict.reason.is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // 前缀生成器与规则等值容差（change harness-permission-rules-oct23 A1 / A3）
+    // -----------------------------------------------------------------------
+
+    fn actions(tool: &str, call: Option<&[&str]>, subject: &str) -> Option<PermissionActions> {
+        let call = call.map(argv);
+        permission_prefix(tool, call.as_deref(), subject)
+    }
+
+    #[test]
+    fn permission_prefix_covers_cli_and_vault_tools() {
+        // cli_run：两词前缀（命令 + 首个非 flag 参数）。
+        let a = actions(
+            "cli_run",
+            Some(&["tvly", "search", "prompt caching"]),
+            "tvly search prompt caching",
+        )
+        .unwrap();
+        assert_eq!(a.remember_label, "tvly search");
+        assert_eq!(a.remember_key, "tvly search ");
+        assert_eq!(a.rule.as_deref(), Some("cli(tvly search *)"));
+        // 第二词是 flag ⇒ 退化为单词前缀（按钮上显示的就是实际更宽的授权面）。
+        let a = actions("cli_run", Some(&["npm", "--version"]), "npm --version").unwrap();
+        assert_eq!(a.remember_label, "npm");
+        assert_eq!(a.rule.as_deref(), Some("cli(npm *)"));
+        // 无第二词同理。
+        let a = actions("cli_run", Some(&["pwd"]), "pwd").unwrap();
+        assert_eq!(a.rule.as_deref(), Some("cli(pwd *)"));
+        // 空命令 / 无 argv ⇒ 不给次级动作。
+        assert!(actions("cli_run", Some(&[]), "").is_none());
+        assert!(actions("cli_run", None, "tvly search x").is_none());
+        // 含换行的前缀无法安全表达 ⇒ 不给（退化为多问一次，不误放行）。
+        assert!(actions("cli_run", Some(&["a\nb", "x"]), "a\nb x").is_none());
+
+        // vault 写工具：目录段前缀 / 根级精确。
+        let a = actions("vault_patch", None, "notes/a.md").unwrap();
+        assert_eq!(a.remember_key, "notes/a.md");
+        assert_eq!(a.rule.as_deref(), Some("vault_patch(notes/*)"));
+        let a = actions("vault_move", None, "docs/2026/x.md").unwrap();
+        assert_eq!(a.rule.as_deref(), Some("vault_move(docs/2026/*)"));
+        let a = actions("vault_create", None, "a.md").unwrap();
+        assert_eq!(a.remember_key, "a.md");
+        assert_eq!(a.rule.as_deref(), Some("vault_create(a.md)"));
+        // 空路径 ⇒ 不给。
+        assert!(actions("vault_patch", None, "  ").is_none());
+
+        // vault_delete / 调度工具：有会话记忆、无持久规则（Q7 裁决）。
+        for tool in ["vault_delete", "cron_task_create", "cron_task_remove"] {
+            let a = actions(tool, None, "notes/a.md").unwrap();
+            assert_eq!(a.remember_key, "notes/a.md");
+            assert_eq!(a.rule, None, "{tool}");
+        }
+        // 读类工具永不过闸 ⇒ 没有次级动作可派。
+        assert!(actions("vault_read", None, "a.md").is_none());
+    }
+
+    #[test]
+    fn generated_rules_actually_match_their_family() {
+        let root = fixture_root("generated-rules");
+        let cli = actions("cli_run", Some(&["tvly", "search", "x"]), "tvly search x").unwrap();
+        let p = perms(&[cli.rule.as_deref().unwrap()], &[]);
+        // 同类另一条查询：命中。
+        assert_eq!(
+            decide(
+                &p,
+                "cli_run",
+                "tvly search 另一个问题",
+                &judge(&root, Some(argv(&["tvly", "search", "另一个问题"])))
+            ),
+            Decision::Allow
+        );
+        // 无参数的等值形态：命中（Q2 容差）。
+        assert_eq!(
+            decide(
+                &p,
+                "cli_run",
+                "tvly search",
+                &judge(&root, Some(argv(&["tvly", "search"])))
+            ),
+            Decision::Allow
+        );
+        // 不同子命令：不命中（vault_write 档 ⇒ 逐个问）。
+        assert_eq!(
+            decide(
+                &p,
+                "cli_run",
+                "tvly save x",
+                &judge(&root, Some(argv(&["tvly", "save", "x"])))
+            ),
+            Decision::Ask
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Q2 等值容差只到「完全相等」为止：词边界不放宽。
+    #[test]
+    fn rule_equality_tolerance_respects_word_boundary() {
+        let root = fixture_root("eq-tolerance");
+        let p = perms(&["cli(git push *)"], &[]);
+        for (subject, call, expected) in [
+            ("git push", vec!["git", "push"], Decision::Allow),
+            (
+                "git push origin main",
+                vec!["git", "push", "origin", "main"],
+                Decision::Allow,
+            ),
+            ("git pushx", vec!["git", "pushx"], Decision::Ask),
+            ("git pushx y", vec!["git", "pushx", "y"], Decision::Ask),
+        ] {
+            assert_eq!(
+                decide(&p, "cli_run", subject, &judge(&root, Some(argv(&call)))),
+                expected,
+                "{subject}"
+            );
+        }
+        // 星号前无空格的手写形态保持既有裸前缀语义（本 change 不改）。
+        let p = perms(&["cli(tvly*)"], &[]);
+        assert_eq!(
+            decide(
+                &p,
+                "cli_run",
+                "tvlyx",
+                &judge(&root, Some(argv(&["tvlyx"])))
+            ),
+            Decision::Allow
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 }

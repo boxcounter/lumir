@@ -1781,6 +1781,37 @@ const COPY_TABLE = {
     zh: "移除失败：{reason}",
     en: "Couldn't remove the vault: {reason}",
   },
+  // D564–D567：change harness-permission-rules-oct23 的两枚次级动作与权限浮层规则列表。
+  // D564 = 「以后都允许 <规则>」（规则原文由后端从 argv / 路径现算，按钮上逐字显示授权面）；
+  // D565 = 带前缀的会话记忆按钮（M414 的 D434 保留作无粒度可显示时的回退）；D566 = 浮层
+  // 规则段标题；D567 = 规则条目删除钮的可访问名（带规则原文）。
+  D564: {
+    zh: "以后都允许 {rule}",
+    en: "Always allow {rule}",
+  },
+  D565: {
+    zh: "采纳且本会话不再问（记住 {prefix}）",
+    en: "Approve and don't ask again this session (remember {prefix})",
+  },
+  D566: {
+    zh: "已记住的规则",
+    en: "Remembered rules",
+  },
+  D567: {
+    zh: "删除规则 {rule}",
+    en: "Delete rule {rule}",
+  },
+  // D568–D569：change harness-permission-rules-oct23 的规则写回错误（后端错误信封，经
+  // ERROR_COPY 按 code 取值）。两条都只在前端越权调用时出现——界面不会给不可持久化的卡
+  // 发「以后都允许」；错误说清楚即可，不引导用户做什么。
+  D568: {
+    zh: "该批准卡没有可持久化的权限规则",
+    en: "This approval card has no permission rule that can be persisted",
+  },
+  D569: {
+    zh: "权限规则不能为空",
+    en: "A permission rule can't be empty",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1913,6 +1944,10 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   // `vault_remove_current` 不带占位；`vault_remove_failed` 带 path + reason（同 D421 的形）。
   vault_remove_current: "D562",
   vault_remove_failed: "D563",
+  // 持久权限规则写回（change harness-permission-rules-oct23 A1）：两条都只在越权 / 竞态
+  // 调用时出现（界面对不可持久化的卡不渲染「以后都允许」）。
+  permission_rule_unavailable: "D568",
+  permission_rule_invalid: "D569",
   open_url_rejected: "D78",
   open_url_failed: "D79",
   // 窗口底色同步（M525）：只走 console 降级、永不上屏（见 D462 条目注记）。

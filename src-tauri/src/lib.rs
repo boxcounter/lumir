@@ -154,6 +154,9 @@ pub fn run() {
             // set_thinking_effort 为 M362 新增（思考程度档位，会话内生效、不写回配置）。
             harness::harness_send,
             harness::harness_approve,
+            // 权限浮层的「已记住的规则」删除钮（change harness-permission-rules-oct23 A1）：
+            // 规则写回走后端单写者（Q5 裁决），前端不做数组读改写。
+            harness::harness_permission_rule_remove,
             harness::harness_abort,
             harness::harness_new_session,
             harness::harness_state,

@@ -423,7 +423,7 @@
 | D431 | 权限浮层档位释义（保险库写入档） | 作者 | 库内写自动放行；库外命令先问你 | Auto-approves vault writes; asks before shell commands | M414：同 D430 的 `vault_write` 档。消费点 src/harness-panel.ts 的 buildPermPop。 |
 | D432 | 权限浮层档位释义（完全访问档） | 作者 | 全自动；仅危险命令仍问你 | Fully automatic; only dangerous commands still ask | M414：同 D430 的 `full_access` 档。消费点 src/harness-panel.ts 的 buildPermPop。 |
 | D433 | 权限浮层读屏名 | 作者 | 权限模式 | Permission mode | M414：权限浮层（`role="menu"`）的 `aria-label`——浮层本体是三档裸单选列表，可读身份走本句（M373 的 D398 同构）。消费点 src/harness-panel.ts 的 buildPermPop。 |
-| D434 | 批准卡次级动作（采纳且本会话不再问） | 作者 | 采纳且本会话不再问 | Approve and don't ask again this session | M414（design §6 裁决点 4 倾向 A）：批准卡在「采纳 / 拒绝」之外的第二行次级动作钮——**显式逐次记忆**（点 D336 的「采纳」不自动记，免问由用户逐次显式给出），点击走 `harness_approve(remember=true)`，判据键 = (工具名, 规范化主体串) 精确匹配、只活在会话内存里。消费点 src/harness-panel.ts 的 appendApproval（`data-act="approve-remember"`）。 |
+| D434 | 批准卡次级动作（采纳且本会话不再问） | 作者 | 采纳且本会话不再问 | Approve and don't ask again this session | M414（design §6 裁决点 4 倾向 A）：批准卡在「采纳 / 拒绝」之外的第二行次级动作钮——**显式逐次记忆**（点 D336 的「采纳」不自动记，免问由用户逐次显式给出），点击走 `harness_approve(remember=true)`，判据键 = (工具名, 规范化主体串) 精确匹配、只活在会话内存里。消费点 src/harness-panel.ts 的 appendApproval（`data-act="approve-remember"`）。change harness-permission-rules-oct23 起按钮文案改用 D565（带粒度），**本串保留作粒度缺席时的回退**（理论上不会发生：过闸的 `cli_run` 恒有前缀、vault 工具恒有路径）。 |
 | D435 | vault_delete 批准卡后果说明 | 作者 | 将移入系统废纸篓，可恢复 | Moves to the system trash; recoverable | M414：design §5.1 的批准预览口径（ask 档显示路径 + 本句）——后端 `approval_preview` 只给路径参数，那句后果说明按 design 的口径归面板侧（tools.rs 的同处注释也这么写）。如实说可恢复（工具底层只有 `trash_entry`，永久删除路径不存在）。消费点 src/harness-panel.ts 的 appendApproval。 |
 | D458 | 批准卡判定依据行（模式默认分层） | 作者 | 当前为 {mode} 档：{desc} | Currently in {mode} mode — {desc} | M459（change add-approval-decision-reason，design §4.1）：批准卡问句下方那行「这次为什么进闸」的判定依据——本档默认分层让这次调用进闸的情形（如默认 `vault_write` 档下的库外写命令、`read_only` 档下的写工具）。{mode} = 档全名（D427–D429）、{desc} = 档释义（D430–D432，**与浮层和 chip 悬停提示同源**，不写第二份）。层级由后端判定管线产出、随批准请求事件与快照两条通道到达，前端 MUST NOT 自行推导。消费点 src/harness-panel.ts 的 approvalReasonText。 |
 | D459 | 批准卡判定依据行（shell 包装器） | 作者 | shell 包装器命令（{command}）：内容不可知，任何权限档都需逐个确认 | Shell wrapper command ({command}): its contents are opaque, so it always asks in every permission mode | M459：危险黑名单·shell 包装器类（`sh` / `bash` / `zsh` / … / `eval` / `exec`）进闸时的判定依据——**点名包装器命令名**（`{command}` = 外层 argv[0] 的 basename），因为「`zsh -lc …` 看起来无害」正是 Alex 2026-10-12 产生疑惑的原点；后半句点破「任何档都问」这一与档位无关的绝对层。消费点 src/harness-panel.ts 的 approvalReasonText。 |
@@ -543,10 +543,16 @@
 | D561 | vault 列表 · 撤销钮 | 作者 | 撤销 | Undo | M646：D560 那条提示上的动作钮（`toast` 的 `actions[].label`）。撤销按移除前的原值写回注册项（稳定 id / 路径 / 上次打开时间 / 失效治理标记），不打开、不切换。 |
 | D562 | vault 列表 · 移除当前 vault 被拒绝 | 作者 | 当前打开的 vault 不能从列表移除，请先切换到其他 vault | The open vault can't be removed from the list — switch to another vault first | M646：`vault_remove_current` 的人话（`src-tauri/src/vault_registry.rs` 的 `remove_entry_at` 构造，前端经 `ERROR_COPY` 按 code 取值）。入口在当前项那一行已被隐藏；这句是 IPC 直调 / 竞态（移除前一刻切到了它）时的兜底。 |
 | D563 | vault 列表 · 移除失败 | 作者 | 移除失败：{原因} | Couldn't remove the vault: {reason} | M646：`vault_remove_failed` 的人话（删除注册表项文件的 IO / 权限失败，构造点带 `path` + `reason`，与 D421 同形）。只说原因、不点名路径——行上的显示名就是用户刚点的那个；这一档意味着「看起来没删掉」，所以措辞不能有「已移除」的暗示。 |
+| D564 | 批准卡 · 持久规则次级动作 | 作者 | 以后都允许 {rule} | Always allow {rule} | change harness-permission-rules-oct23 A1：危险层之外进闸的卡上第二枚次级动作（一次点击 = 采纳 + 写规则）。`{rule}` 由后端从待决调用的 argv / 路径**现算**并逐字显示（单写者，前端不拼装）——授权面在按下之前就可见。`vault_delete` 与 `cron_task_*` 不给这枚按钮（Q7 裁决）。 |
+| D565 | 批准卡 · 带粒度的会话记忆 | 作者 | 采纳且本会话不再问（记住 {prefix}） | Approve and don't ask again this session (remember {prefix}) | change harness-permission-rules-oct23 A3：`cli_run` 的会话记忆从整条命令改为**命令前缀**，按钮文案因此把粒度写出来（`{prefix}` = 后端生成的 `tvly search` 这类前缀 / vault 工具的路径原文），不给授权面静默放大留口子。D434 保留作粒度缺席时的回退。 |
+| D566 | 权限浮层 · 规则段标题 | 作者 | 已记住的规则 | Remembered rules | change harness-permission-rules-oct23 A1 / Q6：三档单选下方那段的段标题（分隔线 + 标题 + 逐条规则）。列表为空时整段不渲染，浮层形态与无此段时逐像素一致。 |
+| D567 | 权限浮层 · 规则删除钮读屏名 | 作者 | 删除规则 {rule} | Delete rule {rule} | change harness-permission-rules-oct23 A1：规则条目右侧图标钮的可访问名（`aria-label`），带规则原文以便读屏定位到具体哪一条。删除幂等、立即写回配置、下一次判定生效。 |
+| D568 | 权限规则 · 无持久入口 | 作者 | 该批准卡没有可持久化的权限规则 | This approval card has no permission rule that can be persisted | change harness-permission-rules-oct23 A1：`harness_approve(persist_rule=true)` 打在无持久入口的卡上（危险层 / `vault_delete` / `cron_task_*`）时的兜底错误。界面不会发这一次调用（按钮不存在），这条只为越权直调 / 竞态说话，不引导用户重试。 |
+| D569 | 权限规则 · 空规则 | 作者 | 权限规则不能为空 | A permission rule can't be empty | change harness-permission-rules-oct23 A1：`append_permission_rule_to` 拒绝空规则（后端单写者的入参校验）。规则文本由后端现算，空值只可能来自越权直调。 |
 
 ## 编号沿革
 
-**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D563**（M644 的 harness「回到底部」浮钮两条可访问名 D555–D556；M646 的 vault 列表移除文案 D557–D563：行尾移除钮读屏名 / 行内确认句 / 确认钮 / 已移除提示 / 撤销钮 + 后端两条错误的人话（接 M644 的 D556 末位）。M635 的通知送不出去文案 D551–D554：D551–D552 是注册回执的两档成因，D553–D554 是投递连续失败 toast 的两档；D548–D550 是 change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
+**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D569**（change harness-permission-rules-oct23 的权限规则文案 D564–D569：持久规则次级动作 / 带粒度的会话记忆 / 浮层规则段标题 / 删除钮读屏名 + 两条写回错误兜底（接 M646 的 D563 末位）。M644 的 harness「回到底部」浮钮两条可访问名 D555–D556；M646 的 vault 列表移除文案 D557–D563：行尾移除钮读屏名 / 行内确认句 / 确认钮 / 已移除提示 / 撤销钮 + 后端两条错误的人话（接 M644 的 D556 末位）。M635 的通知送不出去文案 D551–D554：D551–D552 是注册回执的两档成因，D553–D554 是投递连续失败 toast 的两档；D548–D550 是 change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
 
 **不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377、D508–D513、D521。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
 
@@ -643,6 +649,7 @@
 - **D95** — `src/main.ts` `RESTORING_NOTICE` → 启动态的阶段行（change app-splash-screen 起；安全阀撤下后回落 `tree.showEmpty()`）
 - **D96** — `src/tree.ts`（入口 DOM 归它）
 - **D97–D104 / D108–D110** — `src/vault-switcher.ts`（切换闸判据经 `VaultSwitchGateDeps.block()` 取自 `src/save-controller.ts` `vaultSwitchBlock()`；相对时间档 `relativeTime()` 单点生成；`{名称}` 取 `src/tree.ts` `baseName()`）
+- **D564–D567** — `src/harness-panel.ts`（`createApprovalActions` 的两枚次级动作 + `buildPermPop` 的规则段 / 删除钮）；**D565** 的 `{prefix}` 与 **D564** 的 `{rule}` 均由 Rust `permissions::permission_prefix` 现算后随事件 / 快照下发
 - **D557–D559** — `src/vault-switcher.ts`（`renderRow` 的行尾移除钮与行内两步确认；D560 的文本经同文件的 `vaultRemovedText`）；**D560–D561** — `src/main.ts`（`requestRemove` 的撤销提示是装配层的 toast，动作钮的 `run` 走 `undoVaultRemove`）；**D562–D563** — `src/copy-data.ts` `ERROR_COPY`（后端 `vault_remove` 的两条错误信封）
 - **D105–D107** — `src/main.ts`（需装配层上下文）
 - **D111–D113** — `src/preview/attachments.ts` `imageLoadingText` / `imageReadErrorText` / `imageFallbackText`（`tests/unit/image-widget.test.ts` 读 deck）

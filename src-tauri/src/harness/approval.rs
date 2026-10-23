@@ -37,10 +37,13 @@ pub struct ApprovalDecision {
     pub approved: bool,
     /// 拒绝原因（可选），随工具结果回送模型。
     pub reason: Option<String>,
-    /// 「采纳且本会话不再问」（design §6 次级动作）：true 时 `(工具, 主体串)` 由
-    /// gated_execute 写入会话内批准缓存（[`super::permission_cache`]）。点普通采纳是 false
+    /// 「采纳且本会话不再问」（design §6 次级动作）：true 时由 gated_execute 把该调用的
+    /// 会话记忆键写入会话内批准缓存（[`super::permission_cache`]）。点普通采纳是 false
     /// ——显式逐次记忆，不自动记（裁决点 4 落 A）。
     pub remember: bool,
+    /// 「以后都允许 `<规则>`」（change harness-permission-rules-oct23 A1）：true 且采纳时
+    /// 由 `harness_approve` 在 resolve **之前**把规则写回全局配置——写失败则批准保持待决。
+    pub persist_rule: bool,
 }
 
 /// 批准通道上的一次性信号：采纳 / 拒绝决定，或「本轮被停止」的收回。
@@ -76,9 +79,20 @@ pub struct ApprovalRequest {
     /// `cron_task_remove` 的五要素快照（`prompt` 全文只在这里出现，不进诊断日志）。
     /// 事件载荷键 `cron_task` 与 `PendingApprovalSnapshot.cron_task` 同源（都取自本字段）。
     pub cron_task: Option<serde_json::Value>,
-    /// 该批准卡支持「采纳且本会话不再问」次级动作（design §6；批准闸挂出的请求恒 true）。
-    /// 是面板动作可见性的开关——`PendingApprovalSnapshot` 原样镜像给前端。
-    pub remember: bool,
+    /// 该批准卡支持「采纳且本会话不再问（记住 `<粒度>`）」次级动作：`Some(粒度)` = 显示，
+    /// `None` = 不显示。粒度由 [`super::permissions::permission_prefix`] 从 argv / 路径现算
+    /// （单一真源）；危险黑名单层恒 `None`——那一层先于 allow 规则与会话缓存，按钮点了也不
+    /// 生效（D3 裁决：死按钮藏起来）。是面板动作可见性的唯一开关——`PendingApprovalSnapshot`
+    /// 原样镜像给前端。
+    pub remember: Option<String>,
+    /// 该批准卡支持「以后都允许 `<规则>`」次级动作：`Some(规则原文)` = 显示，`None` = 不显示。
+    /// 规则文本同样由 [`super::permissions::permission_prefix`] 生成（后端单一真源，按钮逐字
+    /// 显示）；`vault_delete` / `cron_task_*` 不给（Q7 裁决）。
+    pub persist_rule: Option<String>,
+    /// 模式匹配的主体串（规则文本的现算输入之一；`harness_approve` 持久化时**不采信前端**
+    /// 传入的任何文本，从本字段 + `argv` 重算）。`PendingApprovalSnapshot` 不含它——
+    /// 前端没有消费者。
+    pub subject: String,
     /// 发起者（design §8.3）：交互调用是 `Interactive`，子运行透传的请求带来源三件。
     pub source: ApprovalSource,
     /// 决定回传通道（harness_approve 发 Decided；停止本轮发 Withdrawn）。
@@ -86,13 +100,16 @@ pub struct ApprovalRequest {
 }
 
 impl ApprovalRequest {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         tool: String,
         diff: Option<String>,
         argv: Option<Vec<String>>,
         purpose: Option<String>,
         reason: Option<DecisionReason>,
-        remember: bool,
+        subject: String,
+        remember: Option<String>,
+        persist_rule: Option<String>,
         tx: Sender<ApprovalSignal>,
     ) -> Self {
         Self {
@@ -104,6 +121,8 @@ impl ApprovalRequest {
             reason,
             cron_task: None,
             remember,
+            persist_rule,
+            subject,
             source: ApprovalSource::Interactive,
             tx,
         }
