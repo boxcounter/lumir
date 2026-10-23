@@ -24,9 +24,10 @@
 | 主体串 = argv 用空格拼接 | `src-tauri/src/harness/tools.rs:364-378`、`:387-393` | 参数级拒判必须看 argv；主体串拼接后无法可靠还原 argv |
 | `fs_patch_file` 不查 hidden 档 | `src-tauri/src/fs_io.rs:1559-1576`；对照 `:879-908`、`:803` | 与 git 可达链有关；已单列 finding，不在本 change scope |
 
-### 0.1 本机实测记录（2026-10-23，合成目录，无真实 vault 内容）
+### 0.1 本机实测记录（2026-10-23 起草期；2026-10-24 补 git `--output` 探针；合成目录，无真实 vault 内容）
 
 平台：macOS 26.6.2、git 2.50.1 (Apple Git-155)、ripgrep 15.2.0、file 5.41、BSD sed / BSD base64。
+`--output` 探针在 `/tmp/lumir-probe-m657`，其余在 `/tmp/lumir-probe-m652`。
 
 | 探针 | 结果 |
 |---|---|
@@ -42,6 +43,9 @@
 | `git --git-dir=… --work-tree=… diff`（目标仓库 config 设 `diff.external`） | 脚本被执行 |
 | `git -c diff.external=… diff`（空格形态） | 脚本被执行；**但当前分类器把它判成写**（`-c` 的值被当子命令），不是只读绕过 |
 | `git -cdiff.external=… diff`（粘连形态） | git 自己报 `unknown option: -cdiff...` |
+| `git log --output=o` / `git show --output=o` / `git shortlog --output=o` | 写出 13 / 128 / 19 字节；空格分写形态（`--output o`）同样成立 |
+| `git diff --output=v` / `git blame --output=v`（`v` 为既有 18 字节文件） | 创建文件并截为 0 字节；空格分写形态同样成立 |
+| `git log -o o` / `git show -o o` / `git diff -o o` | 不被接受（exit 128）；短旗标形态不成立 |
 | `xxd -r -p hex.txt out.bin` | 写出 6 字节 |
 | `xxd a.txt out.hex`（普通 dump，两个位置参数） | 写出 64 字节；`xxd -ps a.txt t2`（原子簇选项）写出 25 字节；`xxd -c 16 a.txt`（取值旗标 + 单位置参数）不落盘；`xxd - out.hex` 同样写（`-` 计输入位置参数） |
 | `file -C -m magicdir/mymagic` | 在**当前目录**写出 `magic.mgc`（不是 `-m` 指定路径旁边） |
@@ -58,7 +62,8 @@ finding 原文把 `git -c diff.external=/tmp/evil diff` 列为只读绕过。实
 后」的全局 flag 不产生非 flag 参数，子命令仍被认成 `diff` / `status` ⇒ 判只读；而**不需要任何
 argv 花招**的形态是仓库自身 config——`core.fsmonitor` 让 `git status` 执行程序、`diff.external`
 让 `git diff` 执行程序（§0.1 实测）。仓库 config 的内容不在 argv 可见范围内，这是 git 处置
-（Q1）必须回答的问题，也是本设计不把 git 归入「补几个 flag 就完事」的原因。
+（Q1）必须回答的问题。2026-10-24 裁决把它答成「只读族保持只读 + 写入口（M656）关闭 +
+不可信仓库面登记为残余」，结论与论证见 §2.4。
 
 ## 1. 不变量（判据的唯一表述）
 
@@ -75,6 +80,13 @@ argv 花招**的形态是仓库自身 config——`core.fsmonitor` 让 `git stat
    危险仍问」，不是「任意命令执行免问」。
 4. 判据的输入是 **argv + 执行环境**，不是主体串（空格拼接会丢边界、把 `-o /tmp/x` 与
    `-o/tmp/x` 拼成不可区分的一串）。
+
+**P 的判据边界（git 的显式前提）**：判据的输入是 argv 与执行环境中**可由 argv 静态判定**的部分；
+运行环境中既存的配置文件不是判据输入。对 git 而言，仓库自身配置（`core.fsmonitor` /
+`diff.external` / textconv / `gpg.program`）就是这类既存输入——所以 git 只读族保持只读不是 P 的
+反例，而是一条写明的前提：仓库配置在 vault 内没有默认档的免闸写入口，隐藏路径的 patch / move /
+delete 由 M656 归入 hidden 档拒绝。前提不成立的情形（不可信仓库）按残余登记（§8），不假装 P
+覆盖了它。
 
 ## 2. 分类器的改动结构
 
@@ -148,9 +160,25 @@ classify_cli(argv):
 关键口径：扫描器**只有完整解析成功才返回只读**；「大部分像只读」不是放行理由。`sed` 因此保留在
 白名单里，但只对可静态证明的脚本生效（取值 D2）。
 
-### 2.4 `git`：子命令收缩 + 全局 flag 白名单（Q1-A）
+### 2.4 `git`：只读族保持只读 + 全局 flag 白名单（Q1，2026-10-24 裁决）
 
-**全局 flag 解析改为白名单**：
+**只读子命令族保持现状**：`status` / `diff` / `log` / `show` / `blame` 与既有保留族
+（`rev-parse` / `ls-files` / `describe` / `shortlog` / `stash list` / `branch`·`tag` 的纯列表形态 /
+`remote -v`）继续判只读、三档免闸；其余子命令（`add` / `commit` / `push` / `checkout` / …）仍落写。
+本 change 不为子命令族写任何收缩代码——原起草倾向 A 的「拆档」已被 Alex 2026-10-24 否决，
+裁决原话与理由见 proposal「裁决点 Q1」。
+
+安全论证（替代原「保留族执行面不存在」的论证）：
+
+- 执行面来自**仓库配置**而不是 argv（§0.1 的 `core.fsmonitor` / `diff.external` 实测）。拆档只能
+  把零批准链的下游一步变成问一次，写入口敞开时它只是把链推迟一步；裁决据此把修复点移到写入口。
+- 写入口由 M656 关闭：`vault_patch` / `vault_move` / `vault_delete` 对隐藏路径（含 `.git/config`）
+  直接拒绝；`cli_run` 侧对 vault 内 `.git/config` 的写在默认档至少进一次闸（vault 内目标还会被
+  重定向到 vault 工具，最终同样撞 hidden 拒绝）。默认档的零批准链因此不再成立。
+- 因此「`git status` 免闸」的前提是「vault 仓库配置没有默认档的免闸写入口」；前提不成立的面
+  （不可信仓库）在 §8 如实登记，本 change 不兜。
+
+**全局 flag 白名单（argv 层）**：
 
 ```text
 i = 0
@@ -166,20 +194,24 @@ sub = args[i]
 - 白名单里刻意**没有** `-p` / `--paginate`：它会强制分页器，分页器是 `core.pager` 指定的程序。
 - `git --version` 维持既有早退（只读；不执行任何子命令）。
 - 表外全局 flag 一律写：`-c` / `--config-env` / `--exec-path` / `--git-dir` / `--work-tree` /
-  `-C` / `--bare` / `--namespace`。它们要么直接注入配置，要么把 git 指向一份模型可写的仓库配置。
+  `-C` / `--bare` / `--namespace`。信任范围只覆盖 vault 自身仓库；argv 明示注入配置（`-c`）或
+  指向别处仓库配置（`--git-dir` / `--work-tree` / `-C`）时不在此列，必须归写。
+- 这条与「git 只读族保持只读」不矛盾：前者看 argv 明示的外部输入，后者信的是 vault 自身仓库
+  配置的免闸写入口已关（M656）。过度保守的代价可接受：`git -c core.quotepath=false status` 这类
+  形态会进闸，改用不带 `-c` 的形态即可。
 
-**只读子命令族收缩**：
+**只读子命令上的写形态（Q1 改裁的连带补全）**：`git log` / `show` / `shortlog` 的
+`--output=<file>` 与 `--output <file>` 写文件；`git diff` / `blame` 的同形态会创建文件并把既有
+文件截为 0 字节（§0.1 实测）。因此只读子命令族出现 `--output` 或 `--output=…` 参数时 → `Write`；
+`write_targets` 取其值（§5），vault 内目标仍走重定向。`-o` 短形态在这些子命令上不被接受
+（实测 exit 128），不列入；`--` 之后的同名字符串（pathspec）也会被保守判写，属可接受的过度
+保守。这条是 Q1 改裁的连带补全——原倾向把这几条降写，写形态不需要单列；保持只读后不补，
+§1 的 P 在 git 上不成立。
 
-| 保留（只读） | 移除（→ 写） | 移除理由 |
-|---|---|---|
-| `rev-parse` / `ls-files` / `describe` / `shortlog` / `stash list` / `branch`·`tag` 的纯列表形态 / `remote -v` | `status` / `diff` / `log` / `show` / `blame` | 会执行仓库 config / gitattributes 指定的程序：`core.fsmonitor`（status）、`diff.external` 与 textconv（diff / log -p / show / blame）、`log.showSignature` → `gpg.program`（log / show） |
-
-保留族的依据是「执行面不存在」而不是「没听说过出问题」：这几个子命令既不进 diff 机制、不查
-fsmonitor、不验签；分页器因 stdout 非 tty 不启动；alias 不能覆盖内建子命令；hooks 不在这些
-路径上触发。这条判据在实现期必须实测背书（tasks 1.11）：在 `log.showSignature=true` + 恶意
-`gpg.program`（并覆盖 `core.fsmonitor` / `diff.external` / textconv）的仓库 config 下逐个跑
-保留族，任一触发执行即移出保留族。若未来 git 给其中之一新增执行型配置，需回到本节重新评估
-（§8 残余）。
+**为什么不做 spawn 加固（原选项 C）**：`-c core.fsmonitor=false --no-ext-diff --no-textconv`
+一类执行期注入把判据分散到每个子命令的每个执行路径，textconv / `log.showSignature` 等按驱动 /
+按配置开的口子难以穷举，日后 git 新增执行型配置就再破一次。写入口关闭是单点，且 M656 的拒绝
+语义可直接验证；本 change 对 git 只落 argv 判据。
 
 ### 2.5 判定管线上的落点
 
@@ -227,7 +259,7 @@ fsmonitor、不验签；分页器因 stdout 非 tty 不启动；alias 不能覆�
 | 28 | `base64` | 只读 | `-o` / `--output` 写文件（实测） | 写形态 → 写 |
 | 29 | `find` | 条件只读 | `-exec*` 已递归；`-fprint` / `-fprint0` / `-fprintf` / `-fls` 写文件（GNU） | 四个写原语 → 写 |
 | 30 | `sed` | 条件只读（只看 `-i`） | `w` / `W` / `s///w` 写；`e` / `s///e` 执行（GNU）；`-f` 脚本体不可见；`-ni` 捆绑绕过现有 `-i` | §2.3：写形态 → 写，执行形态 → 危险 |
-| 31 | `git` | 条件只读 | 仓库 config 驱动执行（`core.fsmonitor` / `diff.external`，实测）；表外全局 flag 注入配置或指向 foreign repo | §2.4 拆档（Q1-A） |
+| 31 | `git` | 条件只读 | 仓库 config 驱动执行（`core.fsmonitor` / `diff.external`，实测）；表外全局 flag 注入配置或指向 foreign repo；只读子命令的 `--output` 写文件 / 截断文件（实测） | 只读族保持只读（Q1，2026-10-24 裁决）；全局 flag 白名单（表外 → 写）；`--output` → 写；仓库配置的默认档免闸写入口由 M656 关闭（§8） |
 
 `find -exec` 的递归、`sudo` / `xargs` 的递归不变：它们调用同一个 `classify_cli`，上表的收紧自动
 传递到被包装命令。
@@ -236,6 +268,9 @@ fsmonitor、不验签；分页器因 stdout 非 tty 不启动；alias 不能覆�
 
 - **整表移除 28 条**：把 `cat` / `ls` / `rg` 也逐次问，等于取消只读档的意义；错的是判据，不是
   成员名单。
+- **git 拆档**（原倾向 A）：2026-10-24 Alex 否决——`status` / `diff` / `log` 是最高频命令，全部
+  降写会让只读档名存实亡；且拆档只是把零批准链的下游一步变成问一次，写入口仍在。改裁为
+  「只读族保持 + 写入口（M656）关闭」，见 §2.4。
 - **只修 finding 点名的 4 个**：上表另外查出 `xxd` 的双位置参数、`file -C`、`tree -o`、`sed -f`、GNU find 的
   写原语、`rg --hostname-bin`，以及 git 的仓库 config 面。按案例打补丁会把它们留在原地。
 - **沙箱**：`sandbox-exec` / seatbelt 是另一条路线（执行隔离），与本 change 的分类判据不互斥，
@@ -255,10 +290,12 @@ fsmonitor、不验签；分页器因 stdout 非 tty 不启动；alias 不能覆�
 | `find` | `-fprint` / `-fprint0` / `-fprintf` / `-fls` 的下一个参数 |
 | `file -C` | 无目标可取（写到 cwd 的固定名 `magic.mgc`）→ 不重定向，落普通写 |
 | `less -o` | 同上（且当前不可达）→ 不重定向 |
+| `git` | 只读子命令的 `--output` / `--output=…` 的取值（空格与等号两形态）；`diff` / `blame` 的截断语义与普通写相同 |
 
-`suggested_tool` 映射：`base64` / `tree` / `xxd` / `find` 的写目标都建议 `vault_create`
+`suggested_tool` 映射：`base64` / `tree` / `xxd` / `find` / `git` 的写目标都建议 `vault_create`
 （新建产物）或 `vault_patch`（覆盖既有文件）——按目标是否存在走既有分流；拿不准时不给建议
-（`None`），不编造。
+（`None`），不编造。`git diff --output` / `git blame --output` 会截断既有文件，映射规则同上
+（`vault_patch`）。
 
 ## 6. 测试面（表驱动 + 反向验证 + 跨档矩阵）
 
@@ -267,11 +304,13 @@ fsmonitor、不验签；分页器因 stdout 非 tty 不启动；alias 不能覆�
    `-o` 粘连形态、旗标簇形态）。
 2. **反向验证**（REVIEW.md「断言等价于子串」条）：每个拒判配一条**只差一个 token / 一个字符**的
    正例，证明它仍只读（`base64 -d` vs `base64 -o`、`sed 's/a/b/'` vs `sed 'w x'`、`rg needle` vs
-   `rg --pre c needle`、`git rev-parse HEAD` vs `git status`）；每条正例再配一条改坏的输入，
-   确认断言真的会红。
+   `rg --pre c needle`、`git status` vs `git -C /tmp/other status`、`git log` vs
+   `git log --output=/tmp/x`）；每条正例再配一条改坏的输入，确认断言真的会红。git 的正例从
+   `git status` / `git diff` / `git log -1` 起（Q1 2026-10-24 裁决：保持只读），反例是表外全局
+   flag（`git -C …` / `git --git-dir=…`）、只读子命令的 `--output` 与写子命令（`git commit`）。
 3. **跨档矩阵**：写形态在 `read_only` / `vault_write` 档 `Ask`、`full_access` 档 `Allow`；执行形态
    三档全 `Ask`；且在 `full_access` 下不被 allow 规则或会话缓存解锁（危险层先于两者）。
-4. **重定向**：`base64 -o notes/x` / `tree -o notes/x` / `xxd in notes/x`（普通形态）与 `xxd -r in notes/x` / `find … -fprint notes/x`
+4. **重定向**：`base64 -o notes/x` / `tree -o notes/x` / `xxd in notes/x`（普通形态）与 `xxd -r in notes/x` / `find … -fprint notes/x` / `git log --output=notes/x`
    在 vault 内触发重定向（targets 与 suggested_tool 正确），vault 外落普通写。
 5. **包装器继承**：`sudo base64 -o …` / `xargs rg --pre …` 的分类与被包装命令一致（既有递归的
    回归面）。
@@ -288,10 +327,10 @@ MODIFIED 是**整块替换**，因此：
 1. **判据层**：M649 的受限解包对每个子命令复用 `classify_cli`（其 design §2.4）。本 change 的
    收紧自动生效：`bash -lc "rg --pre c x"` → 子命令危险 ⇒ 整条危险；`bash -lc "sed -n 'w /tmp/x' f"`
    → 子命令写 ⇒ 解包失败、整条危险。本 change 不需要为解包另写任何判据。
-2. **M649 的测试表与示例要跟着改**：其 design §2.6 的正例表里有 `bash -c "git status"` 与
-   `bash -lc "git diff --stat"`；Q1-A 之后它们是写 ⇒ 解包失败 ⇒ 危险。若两条 change 都落地，
-   这两行必须换成保留族（如 `git rev-parse HEAD`）。其 spec delta 的「`git` 只读子命令族」措辞
-   同步收缩。
+2. **M649 的测试表与示例不受影响**：其正例 `bash -c "git status"` / `bash -lc "git diff --stat"`
+   在 Q1 改裁（2026-10-24）后仍是只读（§2.4），解包照旧放行；其 spec delta 对「`git` 只读子命令族」
+   的措辞也无需收缩。M649 只需继承本 change 的全局 flag 白名单：`bash -lc "git -c … status"`
+   因表外全局 flag 归写而解包失败 ⇒ 危险，该变化由既有递归自动生效。
 3. **归档顺序**：本 delta 以 master 原文为基线。若 M649 先归档，本 change 的 MODIFIED 块必须在
    归档前重写为「master 原文 + M649 的解包段 + 本 change 的收紧段」；反之同理。tasks 第 3 组
    有对应项。
@@ -306,15 +345,26 @@ MODIFIED 是**整块替换**，因此：
 - **`date`**：设系统时钟需 root；非文件写，保留。
 - **`file -C`**：写到 cwd 的固定名 `magic.mgc`，目标不可选；归写后由批准闸兜底。
 - **`less +cmd`**：只在交互终端成立；`cli_run` 的 stdout 是管道，当前不可达。
-- **git 保留族的未来特性**：若 git 给 `rev-parse` / `ls-files` / `describe` / `shortlog` /
-  `stash list` / `branch`·`tag` 列表 / `remote -v` 新增执行型配置，需重开 Q1。
-- **隐藏文件写入面**：`vault_patch` 可改既有 `.git/config`（已单列 finding）。本 change 把
-  `git status` / `diff` 降写后，默认档的零批准链被堵住；但 hidden 面本身仍应另行处置。
+- **git 只读族 + 仓库配置（前提依赖）**：`core.fsmonitor` / `diff.external` / textconv /
+  `log.showSignature` → `gpg.program` 会让 `git status` / `diff` / `log` 执行仓库配置指定的程序
+  （§0.1 实测）。本 change 保留这些子命令为只读，前提是仓库配置在 vault 内没有默认档的免闸
+  写入口——由 M656（`vault_patch` / `vault_move` / `vault_delete` 对隐藏路径直接拒绝）提供。
+  **M656 未落地前这条前提不成立**，默认档仍存在零批准链；实施顺序 M656 → 本 change（tasks 3.4）。
+  前提本身还依赖 `.git` 仍在忽略策略的 hidden 档（默认配置）：用户显式把 `.git` 配成可见即自行
+  放开写入口（config 即数据，M656 不做名字级特判），这一用户选择不在本 change 的兜底范围内。
+- **不可信仓库**：vault 的仓库配置在成为 vault 之前已被写入、或由 vault 之外的进程改写时，
+  `git status` / `diff` 仍会执行其中的程序。这是「仓库来源可信」的运行环境假设，本 change 的
+  分类器只看 argv，无法也不打算消除；读侧与仓库来源校验不在 scope。
+- **git 未来新增执行型配置**：判据不再依赖「保留族执行面为零」，而依赖「仓库配置的免闸写入口
+  关闭」；新增执行型配置不破该前提，无需重开 Q1。若未来出现 argv 级的 git 注入面（新的全局
+  flag），按 §2.4 的全局 flag 白名单增补。
 - **读侧**：`cat` / `grep` 可读 vault 外文件，只读白名单不承担读隔离（Non-goal）。
 
 ## 9. 裁决点与取值
 
-- **Q1 git 处置**：A 拆档（倾向）/ B 整族移除 / C 保持 + spawn 加固。逐条理由见 proposal。
+- **Q1 git 处置（已裁决 2026-10-24）**：git 只读子命令族保持只读、不拆档；argv 层只收紧全局
+  flag 白名单。原选项 A（拆档）被 Alex 否决，B / C 不采纳；裁决原话与安全论证见 proposal
+  「裁决点 Q1」。
 - **D1** 写形态 → 写、执行形态 → 危险。
 - **D2** `sed` 保留 + 保守脚本扫描（不整成员移除）。
 - **D3** `less` / `more` 保留；`less -o` 防御性拒判；spawn 清空四个注入型环境变量。

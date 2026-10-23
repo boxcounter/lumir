@@ -1,12 +1,13 @@
 # Proposal: 收紧只读白名单——被判只读的命令不得自带写文件 / 执行程序能力
 
 - Change ID: `readonly-allowlist-tightening-oct23`
-- 日期: 2026-10-23
+- 日期: 2026-10-23（2026-10-24 修订：Q1 改裁，见「裁决点」）
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
 > 评审记录
-> 节点 1（提案评审）：**待 Alex 裁决**（2026-10-23 起草）。一个裁决点 Q1（git 的处置梯度）；
-> 其余为起草期取值 D1–D3，不同意时直接否掉即可，不回即按倾向落地。
+> 节点 1（提案评审）：**已裁决**（2026-10-23 起草；2026-10-24 Alex 就唯一裁决点 Q1 给出裁决——
+> 原倾向「git 拆档」被否决，改裁为「git 只读子命令族保持只读、不拆档」，原话与改写后的安全
+> 论证见「裁决点」。起草期取值 D1–D3 未被否，按倾向落地；其余内容维持原稿）。
 > 节点 2（归档评审）：实现完成后填写。
 
 ## Why
@@ -25,9 +26,10 @@ Alex 2026-10-23 对一条 finding 的处置原话：
 当成了「这条 argv 是只读」——前者是印象，后者才是判据。**只读分类必须是一条能力断言：判了
 只读，就等于承诺这次调用不写文件、不执行外部程序。**
 
-### 实测证据（2026-10-23，本机 macOS 26.6.2 / git 2.50.1 / ripgrep 15.2.0 / file 5.41 / BSD sed·base64）
+### 实测证据（2026-10-23 起草期；2026-10-24 补 git `--output` 探针。本机 macOS 26.6.2 / git 2.50.1 / ripgrep 15.2.0 / file 5.41 / BSD sed·base64）
 
-全部探针在合成目录 `/tmp/lumir-probe-m652` 下执行，无真实 vault 内容。
+探针在合成目录下执行，无真实 vault 内容：起草期为 `/tmp/lumir-probe-m652`，#4c 为
+`/tmp/lumir-probe-m657`。
 
 | # | 形态 | 结果 | 与 finding 的关系 |
 |---|---|---|---|
@@ -38,6 +40,7 @@ Alex 2026-10-23 对一条 finding 的处置原话：
 | 3b | `rg --hostname-bin=./hostbin.sh needle .` | 执行了指定程序 | finding 未列，同一执行能力 |
 | 4 | `git status`（仓库 config 设 `core.fsmonitor`） | 执行了 config 指定的程序 | **finding 第 4 条的字面形态不成立、但风险更大**，见下 |
 | 4b | `git diff`（仓库 config 设 `diff.external`） | 执行了 config 指定的程序 | 同上 |
+| 4c | `git log --output=out` / `git show --output=out` / `git shortlog --output=out`；`git diff --output=v` / `git blame --output=v`（`v` 是既有文件） | 前三者写出文件（13 / 128 / 19 字节）；后两者创建文件并把既有 18 字节文件截为 0 字节；空格分写形态（`--output v`）同样成立；`-o` 短形态不被接受（exit 128） | **Q1 改裁后新增的必补形态**：status/diff/log/show/blame 保持只读，`--output` 是这几条子命令的 argv 级写入口，不补则能力断言在 git 上不成立 |
 | 5 | `xxd a.txt out.hex`（普通 dump）/ `xxd -r hex.txt out.bin` | 均写出第二个位置参数文件（普通形态 64 字节，`-r` 形态 6 字节） | finding 未列：**两个位置参数 = 输入 + 输出**是 xxd 的主接口形态，与 `-r` 无关 |
 | 6 | `file -C -m magic` | 在当前目录写出 `magic.mgc` | finding 未列 |
 | 7 | `tree -o out.txt .` / `tree -R` | tree(1) man（2.3.2）：`-o filename` 把输出写文件；`-R` 每层写一个 `00Tree.html`。**本机未安装 tree，未实测** | finding 未列（文档口径） |
@@ -53,23 +56,38 @@ Alex 2026-10-23 对一条 finding 的处置原话：
 `git --git-dir=… --work-tree=… diff` 指向外部仓库同样执行。仓库 config 的内容不在 argv 可见范围，
 **任何只做 argv 判定的方案都堵不住它**——这正是 git 处置（Q1）的由来。
 
+**Q1 还带出一条 argv 级写形态**：`git log` / `show` / `shortlog` 的 `--output` 写文件，
+`git diff` / `blame` 的 `--output` 会创建文件并把既有文件截为 0 字节（表 #4c 实测）。原倾向
+（把这几个子命令降写）把它顺带盖住了；改裁为「保持只读」后必须单独补拒判。
+
 **可达性不是理论**：`vault_patch` 对既有隐藏文件不做 hidden 档判定（`src-tauri/src/fs_io.rs:1559`
 的 `fs_patch_file` 只走 `resolve_in_vault`），默认档免闸；「改 `.git/config` → `git status`」是一条
-零批准的执行链。我已经把这条单独登记为 finding（隐藏文件写入面本身，不在本 change scope）；
-本 change 只负责把下游的只读 git 拆掉。
+零批准的执行链。这条已单独登记为 finding（`20261023-worker-proposal-readonly-allow-vuln-vault-patch-git-config-hidden-patch-git.md`）
+并由 Alex 点头立项（M656，隐藏文件写入面本身）——**修的是写入口，不是下游**：M656 落地后，
+`.git/config` 一类 hidden 路径的 patch / move / delete 被直接拒绝，仓库配置不再有默认档免闸
+写入口，只读 git 的免闸前提才成立。本 change 因此保留 git 只读子命令族（2026-10-24 裁决），
+残余风险（把不可信仓库打开为 vault）见 Non-goals 与 design §8。
 
 ## What Changes
 
 1. **只读分类的能力断言（spec 条款）**。在被修改的 requirement 里写死：判为只读 = 按 argv 与其
-   执行环境不写文件、不执行外部程序；MUST NOT 以「常见用法」为放行依据；形态判不明确即归写。
+   执行环境中可由 argv 静态判定的部分不写文件、不执行外部程序；运行环境中既存的配置文件不在
+   判据内（git 的仓库配置面见第 4 条，其默认档免闸写入口由 M656 关闭）；MUST NOT 以「常见
+   用法」为放行依据；形态判不明确即归写。
 2. **参数级拒判（写形态 → 写）**。白名单成员出现写文件形态时降为写：`base64 -o/--output`、
    `xxd` 的双位置参数（含 `-r`）、`file -C`、`tree -o`/`-R`、`less -o`、`find -fprint/-fprint0/-fprintf/-fls`、
    `sed` 脚本的 `w`/`W` 与 `s///w`。
 3. **执行形态（→ 危险）**。`rg --pre/--pre-glob/--hostname-bin`、`sed` 脚本的 `e`/`s///e` 归为
    危险——「任意命令执行」与 shell 包装器同级，任何档都逐个问，full_access 也不例外。
-4. **git 拆档（Q1）**。只读子命令族收缩为不触发 diff 机制、不读执行型仓库配置的一族
-   （`rev-parse` / `ls-files` / `describe` / `shortlog` / `stash list` / `branch`·`tag` 列表 /
-   `remote -v`）；`status` / `diff` / `log` / `show` / `blame` 降为写；全局 flag 走白名单。
+4. **git：只读族保持只读 + 全局 flag 白名单（Q1，2026-10-24 裁决）**。`status` / `diff` / `log` /
+   `show` / `blame` 与既有保留族（`rev-parse` / `ls-files` / `describe` / `shortlog` / `stash list` /
+   `branch`·`tag` 列表 / `remote -v`）继续判只读、三档免闸——拆档会让只读档名存实亡（Alex
+   原话见「裁决点」）。argv 层只收紧全局 flag：`-P` / `--no-pager` / `--no-optional-locks` /
+   `--no-replace-objects` 放行，表外一律写（`-c` 在 argv 里直接注入配置，`--git-dir` /
+   `--work-tree` / `-C` 把 git 指向信任范围之外的仓库配置）。仓库配置的默认档免闸写入口由 M656 关闭
+   （见 Why 末段）。只读子命令的 `--output` / `--output=…` 归写（`log` / `show` / `shortlog`
+   写文件，`diff` / `blame` 创建或截断目标文件；Why 表 #4c 实测），`write_targets` 提取其目标，
+   vault 内仍走重定向。
 5. **重定向写目标补全**。新增的写形态若目标是 vault 内路径（`base64 -o`、`tree -o`、
    `xxd` 的输出位置参数、`find -fprint` 系），仍按既有「vault 内写改道」条款重定向，不掉成普通写。
 
@@ -85,7 +103,7 @@ Alex 2026-10-23 对一条 finding 的处置原话：
 | `find` | `-fprint` / `-fprint0` / `-fprintf` / `-fls` → 写（GNU find 形态） |
 | `sed` | 脚本含 `w`/`W`/`s///w`、`-f` 脚本文件、解析失败 → 写；脚本含 `e`/`s///e` → 危险 |
 | `rg` | `--pre` / `--pre-glob` / `--hostname-bin` → 危险 |
-| `git` | 只读子命令族收缩 + 全局 flag 白名单（Q1） |
+| `git` | 只读子命令族保持只读（Q1，2026-10-24 裁决）；全局 flag 白名单，表外 → 写；只读子命令的 `--output` → 写 |
 | 其余 22 个成员 | 2026-10-23 逐一核对 man / help，无 argv 级写或执行形态 → 不变 |
 
 ## Non-goals
@@ -95,8 +113,12 @@ Alex 2026-10-23 对一条 finding 的处置原话：
 - **不引入 `ask` 规则层**，不改判定层序，不改危险黑名单既有成员与「任何档都问」承诺。
 - **不改 M649 的受限解包判据**。解包复用同一份 `classify_cli`，子命令自动继承本 change 的收紧；
   两者对同一 requirement 的 delta 合并口径见 design §7。
-- **不修隐藏文件可被 `vault_patch` 改写**（已单列 finding），也不做读侧隔离——`cat` / `grep` 今天
-  就能读 vault 外文件，只读白名单不承担读边界。
+- **不修隐藏文件可被 `vault_patch` 改写**（已单列 finding 并由 Alex 批准立项 M656），也不做读侧
+  隔离——`cat` / `grep` 今天就能读 vault 外文件，只读白名单不承担读边界。M656 是本 change
+  「git 只读族保持只读」的前置依赖（见 Impact）。
+- **不消除「不可信仓库」面**：vault 的仓库配置在成为 vault 之前已被写入、或由 vault 之外进程
+  改写时，`git status` / `diff` 仍会执行其中的 `core.fsmonitor` / `diff.external`。本 change 的
+  判据只看 argv，这一面如实登记（design §8），不靠执行期注入兜。
 - 不把环境变量注入纳入 argv 判据（`RIPGREP_CONFIG_PATH` / `LESSOPEN` / `GREP_OPTIONS` 由 app 进程
   继承、模型不可设置）；取值 D3 在 spawn 侧做一次防御性清空，spec 不依赖它。
 
@@ -110,26 +132,50 @@ Alex 2026-10-23 对一条 finding 的处置原话：
 
 ## 裁决点
 
-- **Q1 git 的处置梯度**。三条路：
-  - **A（倾向）拆档**：保留 `rev-parse` / `ls-files` / `describe` / `shortlog` / `stash list` /
-    `branch`·`tag` 列表 / `remote -v`；`status` / `diff` / `log` / `show` / `blame` 降为写。
-    默认档下 `git status`、`git diff` 会开始问。理由是这两族正好是会执行仓库 config 的
-    （`core.fsmonitor` / `diff.external` / textconv / `log.showSignature`），其余子命令不触发。
-  - **B 整族移除**：全部 git 归写。残余面最小、实现最简单；代价是 `git rev-parse HEAD` 这类纯元
-    数据查询也逐次问。
-  - **C 保持 + spawn 加固**：保留全部只读子命令，执行时注入 `-c core.fsmonitor=false`、
-    `--no-ext-diff`、`--no-textconv`。不倾向：判据分散到每个子命令的每个执行路径，textconv /
-    `log.showSignature` 等按驱动 / 按配置开的口子难以穷举，日后 git 新增一个执行型配置就再破一次。
+- **Q1 git 的处置梯度——已裁决（2026-10-24）**。
+
+  Alex 2026-10-24 否决原倾向（A 拆档），原话：
+
+  > 「我不同意你的倾向——git diff / log / status 是最常用的命令，全部降为写意味着 ReadOnly
+  > 这一档是没有实际使用可能性的。」
+
+  **裁决：git 只读子命令族保持只读、不拆档。** `status` / `diff` / `log` / `show` / `blame`
+  与既有保留族继续在三档免闸；argv 层只收紧全局 flag 白名单（`-c` / `--git-dir` / `--work-tree` /
+  `-C` 一类归写）。
+
+  安全论证随之改写（原论证把拆档当兜底，现改为修写入口）：
+
+  1. 拆档针对的是「`vault_patch` 改 `.git/config` → `git status` 免闸执行 fsmonitor」这条零批准
+     执行链。拆档只把链条的下游一步变成问一次，写入口本身仍然敞着；Alex 已把写入口点头立项
+     （M656）。入口关闭后，这条链不再存在，下游无需再降档。
+  2. 把 `git status` / `diff` / `log` 降为写，代价是最高频的只读查询逐次进闸——只读档剩下的
+     `rev-parse` / `ls-files` 一类日常几乎不用，档位名存实亡。
+  3. 残余风险如实写明、不由本 change 兜：把**不可信仓库**（配置在成为 vault 前已被写入、或由
+     vault 之外进程改写）打开为 vault 时，git 仍会执行仓库配置指定的程序。这是「仓库来源可信」
+     的运行环境假设；读侧与仓库来源校验不在本 change scope（design §8）。
+
+  保持只读的连带补全：`status` / `diff` / `log` / `show` / `blame` 的 argv 级写形态（`--output`）
+  必须单独拒判（Why 表 #4c 实测：`log` / `show` / `shortlog` 写文件，`diff` / `blame` 会把既有
+  文件截为 0 字节）。原倾向 A 把这些子命令降写，写形态被顺带盖住；改裁后不补这一条，能力
+  断言在 git 上不成立。
+
+  原草案的另两条路（B 整族移除 / C 保持 + spawn 加固）不再采纳：B 与上述裁决直接冲突；
+  C 的执行期注入把判据分散到每个子命令的每个执行路径，textconv / `log.showSignature` 等按驱动 /
+  按配置开的口子难以穷举。本 change 对 git 只落 argv 判据，不做 spawn 注入；C 的加固不在本
+  change 范围内。
 
 ## Impact
 
 - 影响的 specs：`harness`（MODIFIED 1 条：`cli_run 命令分类与 vault 写重定向`）。
 - 影响的代码 / 系统：`src-tauri/src/harness/permissions.rs`（分类表、参数级拒判、sed 扫描、
-  git 子命令表、`write_targets`）、`src-tauri/src/harness/tools.rs`（spawn 环境清理，D3）、
+  git 全局 flag 白名单、`write_targets`）、`src-tauri/src/harness/tools.rs`（spawn 环境清理，D3）、
   对应单测；`scripts/acceptance/` 的既有场景回扫与新增场景。
 - 关联约束：
   - ADR 0002 性能合同：分类只在工具调用路径，不进 keypress-to-paint。
   - ADR 0004：本文件与 design 必须让 Alex 不看代码就能裁决。
+  - **前置依赖 M656**（`vault-patch-hidden-deny-oct24`）：git 只读族保持只读的安全前提是仓库
+    配置没有默认档免闸写入口。M656 未落地前不得以「写入口已关闭」为由实施 / 合并本 change；
+    实施顺序 M656 → 本 change（tasks 3.4）。
   - `docs/process/openspec-workflow.md`「改权限 / 闸语义的 change：tasks 必须含回扫既有验收场景的
     闸期望」——tasks 第 2 组。
   - M649（`harness-permission-rules-oct23`）与本 change 同改一条 requirement。起草基线
