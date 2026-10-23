@@ -53,6 +53,17 @@ finding 已在合成 fixture 上实测该链成立（`git config core.fsmonitor 
    `vault_create` 走 `vault_create_file` → `ensure_parent_dirs` 逐段判 `hidden`、末段名过
    `validate_new_name`；`document_save` / `create_file_entry` / `create_dir_entry` 只由前端文件树
    驱动，而 `hidden` 条目在树里没有行（不可达）。审计逐点结论与证据写进完成报告。
+5. **r1 评审处置（2026-10-24）：判定按文件系统身份，不按字符串显示名。**
+   (a) **大小写不敏感**——macOS 默认 APFS 上 `.GIT` 与 `.git` 是同一个目录，且 `realpath`
+   （`resolve_in_vault` 的 canonicalize）保留输入大小写，所以只查 canonical 相对路径也不够；
+   写入口的 hidden 判定改用同一份名字清单编出的**大小写不敏感匹配器**（分类 / 枚举仍用大小写
+   敏感那份——「名字匹配不折叠大小写」是 `vault.ignore` 地图的既有边界，改它会改变文件树的呈现）。
+   (b) **canonical 真身**——既有目标在字符串判定之外，还把 canonical 结果折回 vault 相对路径再
+   判一次：vault 内的可见名字可以是指向 `hidden` 条目的符号链接；`trash_entry` 用的是 canonical
+   路径，不判真身会把真 `.git` 目录搬进废纸篓。
+   同一缝在 `validate_new_name` 与 `ensure_parent_dirs` 里**先于本 change 存在**（`.GIT` 变体可
+   绕过新建 / 改名 / 父段判定），一并收敛；`ensure_parent_dirs` 的 symlink 段本来就由 `is_dir()`
+   拒（`symlink_metadata` 不跟随链接），故那里不需要额外的真身判定。
 
 ## Non-goals
 

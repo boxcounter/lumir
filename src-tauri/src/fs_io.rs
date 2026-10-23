@@ -38,7 +38,28 @@ const LUMIR_TMP_PATTERNS: [&str; 2] = [".lumir-*", ".*.lumir-*"];
 /// 的路径喂进来（两档名字与用户规则同口径），`ignore` crate 对根 `.` 有专门的「不剥前缀」
 /// 分支，正是我们要的（`Gitignore::strip` 的 `.` 特例）。
 fn build_matcher<'a>(lines: impl IntoIterator<Item = &'a str>) -> Gitignore {
+    compile_matcher(lines, false)
+}
+
+/// [`build_matcher`] 的**大小写不敏感**版本：同一份名字清单、同一个编译器，只换匹配语义。
+/// 唯一消费者是写入口的 `hidden` 闸（[`IgnorePolicy::hidden_hit_for_write`]）；分类与枚举
+/// 仍走大小写敏感的 [`build_matcher`]。
+fn build_matcher_case_insensitive<'a>(lines: impl IntoIterator<Item = &'a str>) -> Gitignore {
+    compile_matcher(lines, true)
+}
+
+/// 匹配器的唯一编译器：**名字清单**与**匹配语义（大小写）**是两件事，编译只在这里做一次，
+/// 调用点 MUST NOT 各自再拼一遍 builder（REVIEW.md「同一语义两处真源」条）。
+fn compile_matcher<'a>(
+    lines: impl IntoIterator<Item = &'a str>,
+    case_insensitive: bool,
+) -> Gitignore {
     let mut builder = GitignoreBuilder::new(".");
+    // `case_insensitive` 只影响**其后**加入的 glob；必须在 `add_line` 之前设。
+    // 该 API 返回 Result 只为将来能报错（crate 内有 TODO），当前取值不会失败。
+    builder
+        .case_insensitive(case_insensitive)
+        .expect("case_insensitive 开关不会失败");
     for line in lines {
         // 字面量由本文件持有：写错在编译期不可见，在这里以 panic 暴露（不是用户输入路径）
         builder.add_line(None, line).expect("规则字面量必须合法");
@@ -116,7 +137,14 @@ struct IgnorePolicyInner {
     /// vault 根（读嵌套 `.gitignore` 用）。
     root: PathBuf,
     /// `hidden` 档匹配器：配置名字 + 恒定临时文件模式（`LUMIR_TMP_PATTERNS` 不入配置面）。
+    /// **大小写敏感**——它是分类 / 枚举的口径（「名字匹配不折叠大小写」是 `vault.ignore`
+    /// 地图的既有边界，见 spec「已知边界」）。
     hidden: Gitignore,
+    /// `hidden` 档匹配器的**大小写不敏感**版本：**同一份名字清单、同一个编译器**
+    ///（[`compile_matcher`]），只换匹配语义。消费者只有写入口的 hidden 闸
+    ///（[`IgnorePolicy::hidden_hit_for_write`]）：写操作判定的是**文件系统身份**，
+    /// macOS 默认 APFS 上 `.GIT` 与 `.git` 是同一个目录（M656 r1 P1-1 现场）。
+    hidden_write: Gitignore,
     /// `lazy` 档匹配器：配置名字。
     lazy: Gitignore,
     /// 用户规则来源，**优先级从高到低**排列（深层 `.gitignore` > 浅层 > `info/exclude`）。
@@ -168,13 +196,17 @@ impl IgnorePolicy {
                 insert_source(&mut sources, "", matcher);
             }
         }
-        let hidden_matcher = build_matcher(
-            ignore
-                .iter()
-                .filter(|(_, tier)| **tier == IgnoreTier::Hidden)
-                .map(|(name, _)| name.as_str())
-                .chain(LUMIR_TMP_PATTERNS.iter().copied()),
-        );
+        // hidden 档的名字清单只构造一次（配置地图里档位为 `hidden` 的名字 + 恒定临时文件
+        // 模式），再由**同一个编译器**编出两个匹配器：分类用的大小写敏感版、写入口用的
+        // 大小写不敏感版。两版共享这份清单，MUST NOT 各建一份名字列表。
+        let hidden_names: Vec<&str> = ignore
+            .iter()
+            .filter(|(_, tier)| **tier == IgnoreTier::Hidden)
+            .map(|(name, _)| name.as_str())
+            .chain(LUMIR_TMP_PATTERNS.iter().copied())
+            .collect();
+        let hidden_matcher = build_matcher(hidden_names.iter().copied());
+        let hidden_write_matcher = build_matcher_case_insensitive(hidden_names.iter().copied());
         let lazy_matcher = build_matcher(
             ignore
                 .iter()
@@ -185,6 +217,7 @@ impl IgnorePolicy {
             inner: Arc::new(IgnorePolicyInner {
                 root: root.to_path_buf(),
                 hidden: hidden_matcher,
+                hidden_write: hidden_write_matcher,
                 lazy: lazy_matcher,
                 sources: Mutex::new(sources),
                 nested_gitignore,
@@ -197,11 +230,51 @@ impl IgnorePolicy {
     /// 路径是否命中 `hidden` 档（含恒定临时文件模式）：任一组件（含最后一段）命中才算。
     ///
     /// `matched_path_or_any_parents` 让祖先命中同样传染给子孙——与既有组件判定同形。
+    ///
+    /// **大小写敏感**：这是分类 / 枚举口径（`vault.ignore` 的「名字匹配不折叠大小写」边界）。
+    /// 写入口 MUST 用 [`Self::hidden_hit_for_write`]——见那里的理由。
     pub fn hidden_hit(&self, rel: &str, is_dir: bool) -> bool {
         self.inner
             .hidden
             .matched_path_or_any_parents(rel, is_dir)
             .is_ignore()
+    }
+
+    /// 写入口的 `hidden` 判定：**大小写不敏感**（与 [`Self::hidden_hit`] 同一份名字清单、
+    /// 同一个编译器，只换匹配语义）。
+    ///
+    /// 为什么写入口必须折叠大小写：这里判定的是**文件系统身份**，不是显示名。macOS 默认
+    /// 大小写不敏感 APFS 上 `.GIT` 与 `.git` 是同一个目录，且 `realpath`（`resolve_in_vault`
+    /// 的 canonicalize）**保留输入大小写**——大小写敏感的字符串判定会把 `.GIT/config` 当普通
+    /// 文件放行，finding 的零批准执行链原样复活（M656 r1 P1-1 实证）。
+    ///
+    /// 分类 / 枚举仍用大小写敏感的 [`Self::hidden_hit`]：改它等于改变文件树的呈现
+    ///（`.GIT` 行出现 / 消失），属另一个决定，不在写入口判据里。
+    fn hidden_hit_for_write(&self, rel: &str, is_dir: bool) -> bool {
+        self.inner
+            .hidden_write
+            .matched_path_or_any_parents(rel, is_dir)
+            .is_ignore()
+    }
+
+    /// canonical 绝对路径 → vault 相对路径（`/` 分隔；vault 根本身为 `""`）。
+    ///
+    /// 只给写入口用：`resolve_in_vault` 的 canonical 结果折回来，才能看见「这个可见名字
+    /// 在磁盘上到底指向哪里」（vault 内 symlink 指向 hidden 条目时字符串判定看不出来，
+    /// M656 r1 P2-1）。不在 vault 内（`resolve_in_vault` 之后理论上不会发生）或路径不是
+    /// 合法 UTF-8 时为 None——那表示「没有额外的真身可判」，不是命中。
+    fn vault_relative_of(&self, canon: &Path) -> Option<String> {
+        let root = self.inner.root.canonicalize().ok()?;
+        let parts: Vec<&str> = canon
+            .strip_prefix(&root)
+            .ok()?
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(s) => s.to_str(),
+                _ => None,
+            })
+            .collect();
+        Some(parts.join("/"))
     }
 
     /// 路径是否命中 `lazy` 档：祖先命中同样传染（展开后的子孙仍是惰性行，与用户规则同口径）。
@@ -876,6 +949,10 @@ impl IgnorePolicy {
     ///
     /// **`lazy` 档与用户规则命中的名字 MUST NOT 被拒绝**：那样名字本来就可见、可打开，只是不进索引。
     /// **没有任何名字级特判**（2026-10-17 节点 1 裁决）：`.git` 与其他名字同规则。
+    ///
+    /// 判定用**大小写不敏感**的 [`Self::hidden_hit_for_write`]：macOS 默认 APFS 上 `.GIT` 与
+    /// `.git` 是同一个目录，建出 `.GIT` 等于建出后者（M656 r1 P1-1 的同一缝，先于本 change
+    /// 存在）。
     pub fn validate_new_name(&self, name: &str) -> Result<(), CommandError> {
         if name.is_empty() {
             return Err(CommandError::new("fs_name_invalid", "名称不能为空"));
@@ -892,7 +969,7 @@ impl IgnorePolicy {
                 format!("{name} 不是有效的名称"),
             ));
         }
-        if self.hidden_hit(name, false) {
+        if self.hidden_hit_for_write(name, false) {
             return Err(CommandError::new(
                 "fs_name_invalid",
                 format!("{name} 在忽略集内，建成后不会出现在文件树里"),
@@ -911,18 +988,46 @@ impl IgnorePolicy {
     /// = 零批准执行链）。spec 的既有口径「是否可操作只取决于该名字是否在可见集里」因此要在
     /// **现有条目**上同样成立，而不是只对新名字成立。
     ///
-    /// 判定复用 [`Self::hidden_hit`]：一份策略、一个判定，调用点 MUST NOT 各自再造一份
-    /// （REVIEW.md「同一语义两处真源」条）。用户把 `.git` 配成可见后这里为假——它与别的名字
-    /// 一样按普通条目处理，没有名字级特判。
-    fn validate_not_hidden(&self, rel: &str) -> Result<(), CommandError> {
-        if self.hidden_hit(rel, false) {
-            return Err(CommandError::new(
-                "fs_name_invalid",
-                format!("{rel} 在忽略集内（hidden 档），不能修改、移动或删除"),
-            )
-            .param("rel", rel));
+    /// 两条判据都以本策略为准、调用点 MUST NOT 各自再造（REVIEW.md「同一语义两处真源」条）：
+    /// 1. `rel` 字符串按**大小写不敏感**判（[`Self::hidden_hit_for_write`]）——macOS 默认 APFS
+    ///    上 `.GIT/config` 就是 `.git/config`（M656 r1 P1-1）；
+    /// 2. `resolved`（[`resolve_in_vault`] 的 canonical 结果）折回 vault 相对路径再判一次——
+    ///    vault 内的可见名字可以是指向 hidden 条目的 symlink，字符串看不出来（M656 r1 P2-1；
+    ///    `trash_entry` 用的是 canonical 路径，不判真身的后果是把真 `.git` 搬进废纸篓）。
+    ///
+    /// 用户把 `.git` 配成可见后两者都为假——它与别的名字一样按普通条目处理，没有名字级特判。
+    fn validate_not_hidden(&self, rel: &str, resolved: &Path) -> Result<(), CommandError> {
+        let Some(hit) = self.hidden_write_target(rel, resolved) else {
+            return Ok(());
+        };
+        let message = if hit == rel {
+            format!("{rel} 在忽略集内（hidden 档），不能修改、移动或删除")
+        } else {
+            format!("{rel} 解析后落在忽略集内的 {hit} 上（hidden 档），不能修改、移动或删除")
+        };
+        let err = CommandError::new("fs_name_invalid", message).param("rel", rel);
+        let err = if hit == rel {
+            err
+        } else {
+            err.param("hidden", hit)
+        };
+        Err(err)
+    }
+
+    /// [`Self::validate_not_hidden`] 的判定核心：命中时返回**命中的那个路径**（磁盘真身优先，
+    /// 便于人话说清「你写的这个名字实际落在哪」），未命中为 None。创建路径也用这一份
+    ///（`ensure_parent_dirs` 的真身判定），避免「既有目标」与「新建父段」各写一套。
+    fn hidden_write_target(&self, rel: &str, resolved: &Path) -> Option<String> {
+        let real = self.vault_relative_of(resolved);
+        if let Some(real) = real.as_deref() {
+            if real != rel && self.hidden_hit_for_write(real, false) {
+                return Some(real.to_string());
+            }
         }
-        Ok(())
+        if self.hidden_hit_for_write(rel, false) {
+            return Some(rel.to_string());
+        }
+        None
     }
 }
 
@@ -1010,7 +1115,7 @@ pub fn trash_entry(root: &Path, policy: &IgnorePolicy, rel: &str) -> Result<(), 
         )
         .param("rel", rel));
     }
-    policy.validate_not_hidden(rel)?;
+    policy.validate_not_hidden(rel, &abs)?;
     trash::delete(&abs).map_err(|e| {
         // trash::Error 的 Display 是内部 Debug 结构（英文、带字段名），人话在前、
         // 原始错误附在尾部只作排查线索。
@@ -1045,7 +1150,7 @@ pub fn rename_entry(
     new_name: &str,
 ) -> Result<String, CommandError> {
     let from = resolve_in_vault(root, rel)?;
-    policy.validate_not_hidden(rel)?;
+    policy.validate_not_hidden(rel, &from)?;
     let parent_rel = parent_rel_of(rel).to_string();
     let to = resolve_new_in_vault(root, policy, &parent_rel, new_name)?;
     // 写路径复查（见上面注释）：与 create 路径同一个错误码与同一句话，前端不必分辨来源。
@@ -1101,7 +1206,7 @@ pub fn fs_move_entry(
         .param("rel", from_rel));
     }
     let from = resolve_in_vault(root, from_rel)?;
-    policy.validate_not_hidden(from_rel)?;
+    policy.validate_not_hidden(from_rel, &from)?;
     let to_name = match to_rel.rsplit('/').next() {
         Some(name) if !name.is_empty() => name,
         _ => {
@@ -1113,7 +1218,7 @@ pub fn fs_move_entry(
     };
     let to_parent_rel = parent_rel_of(to_rel);
     let to = resolve_new_in_vault(root, policy, to_parent_rel, to_name)?;
-    policy.validate_not_hidden(to_rel)?;
+    policy.validate_not_hidden(to_rel, &to)?;
     // 写路径复查（撞名不覆盖，见本函数文档的取舍说明）。
     if std::fs::symlink_metadata(&to).is_ok() {
         return Err(
@@ -1703,7 +1808,7 @@ pub fn fs_patch_file(
         );
     }
     let target = resolve_in_vault(root, rel)?;
-    policy.validate_not_hidden(rel)?;
+    policy.validate_not_hidden(rel, &target)?;
     // 快照先于读内容（见函数文档的 CAS 窗口收窄节）：它描述的是「被校验的那份字节所在的那
     // 一代文件」，交给写核心在 rename 前重取比对。
     let snapshot = stat_snapshot(&target).map_err(|e| {
@@ -1796,6 +1901,10 @@ pub fn fs_patch_file(
 /// 报 `fs_path_escape`——被拒请求在 vault 里留下一个可见空目录（M407 r1 P2-1 实证）。
 /// 再逐段下探：已存在的段 canonicalize 后必须在 vault 内（挡住符号链接逃逸），缺的段用
 /// `create_dir` 建出。
+///
+/// 段名按**大小写不敏感**判 `hidden`（M656 r1 P1-1：macOS 上 `.GIT` 就是 `.git`）。symlink
+/// 段本来就在这里被 `is_dir()` 拒（`symlink_metadata` 不跟随链接）⇒ 建进 symlink 指向的
+/// hidden 目录没有入口，不需要额外的真身判定。
 fn ensure_parent_dirs(
     root: &Path,
     policy: &IgnorePolicy,
@@ -1820,7 +1929,7 @@ fn ensure_parent_dirs(
             )
             .param("rel", parent_rel));
         }
-        if policy.hidden_hit(segment, false) {
+        if policy.hidden_hit_for_write(segment, false) {
             return Err(CommandError::new(
                 "fs_name_invalid",
                 format!("{segment} 在忽略集内，建在它里面的文件不会出现在文件树里"),
@@ -4334,7 +4443,18 @@ mod tests {
     fn validate_new_name_rejects_shape_and_hidden_tier_and_accepts_lazy_names() {
         let v = TempVault::new();
         let p = v.policy();
-        for bad in ["", "a/b", ".", "..", ".git", ".DS_Store", ".lumir-notes.md"] {
+        for bad in [
+            "",
+            "a/b",
+            ".",
+            "..",
+            ".git",
+            ".DS_Store",
+            ".lumir-notes.md",
+            // 大小写变体：macOS 默认 APFS 上 `.GIT` 就是 `.git`（M656 r1 P1-1）
+            ".GIT",
+            ".ds_store",
+        ] {
             let err = p.validate_new_name(bad).unwrap_err();
             assert_eq!(err.code, "fs_name_invalid", "case: {bad:?}");
         }
@@ -4596,6 +4716,103 @@ mod tests {
         );
         rename_entry(root, &visible_policy, ".git/HEAD", "HEAD2").expect("可见后即可改名");
         assert!(root.join(".git/HEAD2").exists());
+    }
+
+    /// **大小写变体**（M656 r1 P1-1）：`hidden` 闸按字符串判大小写，而 macOS 默认 APFS 大小写
+    /// 不敏感——`.GIT/config` 与 `.git/config` 是同一个文件，`realpath` 还保留输入大小写。
+    /// 写入口因此必须按**文件系统身份**判（大小写不敏感），否则 finding 的零批准执行链原样
+    /// 复活：`vault_patch(".GIT/config", fsmonitor=…)`；更狠的是 `vault_delete(".GIT")` 把整个
+    /// 仓库搬进废纸篓。
+    ///
+    /// 用例在大小写敏感的文件系统（CI 的 Linux）上同样成立：那里 `.GIT` 是独立目录，判据是
+    /// 字符串级的大小写折叠，不依赖磁盘身份。
+    #[test]
+    fn hidden_gate_is_case_insensitive_for_write_paths() {
+        let v = TempVault::with_fixture();
+        let root = &v.0;
+        let policy = v.policy();
+        // 区分度：分类口径仍大小写敏感（`.GIT` 这条缝正是从这里来的），只有写入口折叠大小写。
+        // 少了这两行，测试在「两个匹配器都折叠」或「都没折叠」时都可能假绿。
+        assert!(!policy.hidden_hit(".GIT", false), "分类口径保持大小写敏感");
+        assert!(
+            policy.hidden_hit_for_write(".GIT", false),
+            "写入口必须折叠大小写"
+        );
+        std::fs::create_dir_all(root.join(".GIT")).unwrap();
+        std::fs::write(root.join(".GIT/config"), "[core]\n").unwrap();
+        let revision = file_revision(root, ".GIT/config").unwrap();
+
+        let err = fs_patch_file(
+            root,
+            &policy,
+            ".GIT/config",
+            &[edit("[core]", "[core]\n\tfsmonitor = /tmp/evil.sh")],
+            &revision,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "fs_name_invalid");
+        assert_eq!(
+            std::fs::read_to_string(root.join(".GIT/config")).unwrap(),
+            "[core]\n"
+        );
+
+        // 整个目录进废纸篓同样拒绝（`.git` 真身仍在）。
+        let err = trash_entry(root, &policy, ".GIT").unwrap_err();
+        assert_eq!(err.code, "fs_name_invalid");
+        assert!(root.join(".git/HEAD").exists());
+
+        // 同一缝的两处先于本 change 存在：新建末段名与新建父段。
+        let err = create_dir_entry(root, &policy, "", ".GIT").unwrap_err();
+        assert_eq!(err.code, "fs_name_invalid");
+        let err = vault_create_file(root, &policy, ".GIT/evil.md", "x").unwrap_err();
+        assert_eq!(err.code, "fs_name_invalid");
+        assert!(!root.join(".GIT/evil.md").exists());
+    }
+
+    /// **vault 内 symlink 指向 hidden 目标**（M656 r1 P2-1）：`resolve_in_vault` 只挡「指出
+    /// vault 外」，vault 内的可见名字可以是指向 `.git` 的链接——字符串判定看不出来，必须把
+    /// canonical 结果折回 vault 相对路径再判一次。
+    ///
+    /// 三处都断言：patch 不写穿、`.git` 不被搬进废纸篓、其余内容不动。
+    #[cfg(unix)]
+    #[test]
+    fn hidden_gate_follows_in_vault_symlinks() {
+        let v = TempVault::with_fixture();
+        let root = &v.0;
+        let policy = v.policy();
+        std::fs::write(root.join(".git/config"), "[core]\n").unwrap();
+        std::os::unix::fs::symlink(root.join(".git/config"), root.join("doc-link.md")).unwrap();
+        std::os::unix::fs::symlink(root.join(".git"), root.join("repo-link")).unwrap();
+        // 区分度：两个链接的**字符串**都不在 hidden 档——命中只可能来自 canonical 真身判定。
+        assert!(!policy.hidden_hit_for_write("doc-link.md", false));
+        assert!(!policy.hidden_hit_for_write("repo-link", false));
+
+        let revision = file_revision(root, "doc-link.md").unwrap();
+        let err = fs_patch_file(
+            root,
+            &policy,
+            "doc-link.md",
+            &[edit("[core]", "[core]\n\tfsmonitor = /tmp/evil.sh")],
+            &revision,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "fs_name_invalid");
+        assert_eq!(
+            std::fs::read_to_string(root.join(".git/config")).unwrap(),
+            "[core]\n"
+        );
+
+        // `trash_entry` 用的是 canonical 路径：不判真身就会把真 `.git` 目录搬进废纸篓。
+        let err = trash_entry(root, &policy, "repo-link").unwrap_err();
+        assert_eq!(err.code, "fs_name_invalid");
+        assert!(root.join(".git/HEAD").exists());
+        assert!(root.join("repo-link").exists());
+
+        // 新建穿 symlink 进 hidden 目录：symlink 段在 `ensure_parent_dirs` 就被 `is_dir()` 拒
+        //（`symlink_metadata` 不跟随链接，先于本 change 的既有守卫）；断言「拒绝且没写进去」。
+        let err = vault_create_file(root, &policy, "repo-link/evil.md", "x").unwrap_err();
+        assert_eq!(err.code, "fs_path_invalid");
+        assert!(!root.join(".git/evil.md").exists());
     }
 
     #[cfg(unix)]

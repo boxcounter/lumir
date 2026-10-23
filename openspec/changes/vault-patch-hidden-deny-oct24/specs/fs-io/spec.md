@@ -21,6 +21,7 @@
 - 新建/改名的末段名 SHALL 校验：非空、不含 `/`、不是 `.`/`..`、不命中 **`hidden` 档（含恒定临时文件模式）**。命中 `lazy` 档或用户规则的名字 MUST NOT 被拒绝（那是可见、可打开的名字，只是不进索引）。
 - **无名字级写操作特判**（2026-10-17 节点 1 裁决）：删除 / 重命名 / 移动 / 新建 MUST NOT 对特定名字（含 `.git`）做额外拦截——是否可操作只取决于该名字是否在可见集里。`.git` 默认在 `hidden` 档，因此默认没有行、写操作被末段名校验拒绝（**已存在的**条目见下一条）；用户把它配置成可见后，它就是普通条目。
 - **既有条目的 `hidden` 档判定**：删除的目标、重命名的**源**、移动的**源与目标路径**（含目标父段）命中 `hidden` 档 SHALL 返回 `fs_name_invalid`，文件系统不变。理由与上一条同源：这类条目在枚举结果里没有行，用户既看不到也点不到，删除 / 改名 / 移动它没有正当入口；这条判定同时是 `hidden` 档写入面的入口闸（隐藏的仓库配置文件可被改写 + 只读命令执行仓库配置 = 零批准执行链，2026-10-24 立项）。判定 SHALL 复用装载时那**一份**忽略策略，MUST NOT 自建名字名单（含 `.git` 的硬编码拦截）；用户把该名字配置成可见后，它与普通条目等价。
+- **判定按文件系统身份，不按显示名**：`hidden` 判定 SHALL **大小写不敏感**——macOS 默认文件系统大小写不敏感，`.GIT` 与 `.git` 是同一个条目，按字符串大小写敏感判定会让变体路径整体绕闸（2026-10-24 r1 实证）。这一条只约束写入口；枚举分类的名字匹配口径不变（大小写敏感，见「全类型递归枚举」的已知边界）。既有目标 SHALL 还按**解析后的真实路径**判一次（`resolve_in_vault` 的 canonical 结果折回 vault 相对路径）——vault 内的可见名字可以是指向 `hidden` 条目的符号链接，字符串判定看不出来；删除用的是 canonical 路径，只判字符串会把真的是 `hidden` 的目录搬进废纸篓。
 - 目标解析 SHALL 经新建变体（父目录沿用 `resolve_in_vault` 全部逃逸防护，末段名按上条校验），
   MUST NOT 为写操作放松 vault 边界。父目录补建时 SHALL 逐段拒绝 `hidden` 档名字；`lazy` 档名字允许作为父段（建出来的条目随该目录惰性）。
 - 失败 SHALL 返回人话 `CommandError`（区分 `fs_not_found` / `fs_already_exists` /
@@ -69,6 +70,19 @@
   发起改名
 - **THEN** 改名照常成功（判定随装载时的忽略策略走，MUST NOT 是硬编码 `.git` 名单）
 
+#### Scenario: 大小写变体同样拒绝
+
+- **WHEN** 删除 / 改名 / 移动的目标或源写成大小写变体（如 `.GIT`、`.Git/HEAD`，或新建 / 移动
+  目标的父段写成 `.GIT`）
+- **THEN** 返回 `fs_name_invalid`，文件系统不变（大小写不敏感的文件系统上它与 `hidden` 档
+  命中是同一个条目）
+
+#### Scenario: 符号链接指向隐藏条目不穿透
+
+- **WHEN** vault 内的可见名字是指向 `hidden` 条目的符号链接（如 `repo-link` → `.git`、
+  `doc-link.md` → `.git/config`），对它们发起删除 / 改名 / 移动
+- **THEN** 返回 `fs_name_invalid`，链接与其真实目标都保持原样
+
 ### Requirement: 局部 patch 写入
 
 系统 SHALL 提供 `fs_patch_file(path, edits: [{old_string, new_string}], revision)` 库函数：对 vault 内既有文本文件应用一组编辑。每个 `old_string` SHALL 在**应用它的那一刻**的文本中**恰好命中一次**——零次或多次命中 SHALL 拒绝整组编辑并返回带命中次数与编辑序号的人话错误；编辑按数组顺序逐个应用（后一条看得到前一条的结果）；空 `edits` 或空 `old_string` SHALL 拒绝（空串没有唯一命中语义，MUST NOT 退化成插入）。替换后未触及部分 SHALL 逐字节不变（ADR 0003 §3 在 agent 写入侧的延伸）。image/binary 扩展名 SHALL 拒绝（沿用 `fs_read_only` 口径），判定先于任何 IO。
@@ -77,7 +91,7 @@ patch SHALL 携带调用方持有的 revision（SHA-256），与 `document_save`
 
 落盘 SHALL 走与保存**同一个写核心**（同目录 `.lumir-` 临时文件 + 原子 rename + ghost 重试），因此写入过程 MUST NOT 在文件树或 `fs:entry_changed` 事件流里产生临时条目（写盘方的自身标记被既有忽略集挡下）；patch 完成后 SHALL 有目标文件的一条 `modified` 增量进入事件流。被 patch 文件若有打开的编辑器会话，系统 SHALL 经该既有通路（`fs:entry_changed` 的外部变更分流：未 dirty 自动重载、dirty 交用户选择）同步编辑器内容，MUST NOT 绕过通路只改盘而不更新会话。
 
-patch 的目标路径 SHALL 按 **`hidden` 档（含恒定临时文件模式，含任一祖先段）** 判定：命中 SHALL 返回 `fs_name_invalid`，判定 MUST 在读取文件内容与任何写入之前。这类条目在枚举结果里没有行（见「全类型递归枚举」），改写它等于静默改动用户看不见的东西——隐藏的仓库配置文件被改写 + 只读命令执行仓库配置即经此处走通（2026-10-24 立项）。判定 SHALL 复用装载时那**一份**忽略策略，MUST NOT 自建名字名单；用户把该名字配置成可见后，patch 按普通文件处理。
+patch 的目标路径 SHALL 按 **`hidden` 档（含恒定临时文件模式，含任一祖先段）** 判定：命中 SHALL 返回 `fs_name_invalid`，判定 MUST 在读取文件内容与任何写入之前。这类条目在枚举结果里没有行（见「全类型递归枚举」），改写它等于静默改动用户看不见的东西——隐藏的仓库配置文件被改写 + 只读命令执行仓库配置即经此处走通（2026-10-24 立项）。判定 SHALL 复用装载时那**一份**忽略策略，MUST NOT 自建名字名单；用户把该名字配置成可见后，patch 按普通文件处理。判定 SHALL 按文件系统身份做（大小写不敏感 + 按 canonical 真身再判一次，口径同「文件级操作（删除 / 重命名 / 新建 / 定位）」的对应条款）：`.GIT/config` 与「可见名字是指向 `.git/config` 的符号链接」两种形态都 MUST 被拒。
 
 #### Scenario: 唯一命中替换
 
@@ -104,6 +118,17 @@ patch 的目标路径 SHALL 按 **`hidden` 档（含恒定临时文件模式，�
 - **WHEN** patch 的目标路径命中 `hidden` 档（如 `.git/config`，或 `sub/.git/x.md` 这类祖先段命中）
 - **THEN** 返回 `fs_name_invalid`，文件逐字节不变、revision 不变，且不进入读取内容之后的任何步骤；
   同一份策略下普通既有文件照常可 patch
+
+#### Scenario: hidden 档的大小写变体拒绝 patch
+
+- **WHEN** 目标写成大小写变体（如 `.GIT/config`；大小写不敏感的文件系统上它就是 `.git/config`）
+- **THEN** 返回 `fs_name_invalid`，目标文件逐字节不变、revision 不变
+
+#### Scenario: 符号链接指向隐藏文件拒绝 patch
+
+- **WHEN** patch 的目标是 vault 内的符号链接，其 canonical 落点命中 `hidden` 档（如
+  `doc-link.md` → `.git/config`）
+- **THEN** 返回 `fs_name_invalid`，链接与其真实目标都逐字节不变
 
 #### Scenario: 配置成可见后按普通文件 patch
 
