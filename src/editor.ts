@@ -50,8 +50,8 @@ import { cellClamp, cellContentEdge } from "./cell-geometry";
 import type { CellClamp } from "./cell-geometry";
 import { listIndentChange } from "./list-indent";
 import type { ListIndentDirection } from "./list-indent";
-import { createInvokeAttachmentProvider, codeLanguageOfPath, fileClassOfPath, isEditablePath } from "./preview/attachments";
-import type { AttachmentProvider } from "./preview/attachments";
+import { createInvokeAttachmentProvider, codeLanguageOfPath, collectImageRefs, fileClassOfPath, isEditablePath } from "./preview/attachments";
+import type { AttachmentProvider, ImageQuoteHandler, ImageRef } from "./preview/attachments";
 import { bindingHighlight } from "./code-identifiers";
 import { remapPathAfterRename } from "./tree";
 import { LANGUAGES, TOKEN_GROUPS, tokenClassOf } from "./preview/code";
@@ -1197,6 +1197,11 @@ export interface EditorHandle {
    */
   setLightbox(lightbox: ImageLightbox | null): void;
   /**
+   * 枚举文档区间内的图片引用（change add-image-quote-to-chat 的选区摘录）：判据与渲染层同源
+   * （`src/preview/attachments.ts` 的 `collectImageRefs`），按文档序、按路径去重。
+   */
+  collectImages(state: EditorState, from: number, to: number): ImageRef[];
+  /**
    * 注入表格放大全屏查看的遮罩（M240）；未注入（维护性调用 / 纯桩）时表格工具钮点击无反应
    * （同 `setLightbox` 口径：能力未接线是结构性表现，不是一条要维护的开关）。
    */
@@ -1439,7 +1444,17 @@ const baseCompartment = new Compartment();
 // 链路：DOM paste 事件 → `imagePasteItemIndex` 判拦不拦 → 取 Blob → **一次** `fs_write_attachment`
 // （后端转码 + 内容寻址命名 + 全 vault 去重）→ 用返回的 `name` 在光标处插 `![[name]]`。
 // 前端不算 hash、不调 `fs_paths_exist`；命名与去重的唯一事实源在 Rust 侧（design §1 / §3）。
-export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md", markdownConfig: Parameters<typeof markdown>[0] = { base: markdownLanguage, extensions: [GFM] }): EditorHandle {
+/** createEditor 的可选创建期依赖（change add-image-quote-to-chat）。
+ *
+ *  这些口子的共同前提：必须在**视图创建前**落位。装饰层在首帧构建时读它们，创建后注入要
+ *  派发 previewRefresh 重建——那会把启动文档里已渲染的图片重建一次、多读一次附件字节
+ *  （markdown-combo 的「打开遮罩不重读字节」判据实测判红）。 */
+export interface EditorCreateOptions {
+  /** 图片引用钮的处理器；未提供时图片没有引用钮。 */
+  quoteImage?: ImageQuoteHandler | null;
+}
+
+export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md", markdownConfig: Parameters<typeof markdown>[0] = { base: markdownLanguage, extensions: [GFM] }, options: EditorCreateOptions = {}): EditorHandle {
   // 三个 Compartment（mode / 折行 / md gutter）是**模块级共享**的，理由见其声明处（M317 4.1）。
   // 前台会话「可编辑性」的**投影**：changeFilter 的闭包在 state 创建时就绑好了，只能读实例
   // 变量，所以真源放在会话上（EditorSession.editable），这里只是把它投给创建期闭包。
@@ -1496,6 +1511,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let wikilinkResolver: WikilinkResolver | null = null;
   /** 图片放大查看的遮罩（M184）：装配层注入，装饰层只经 PreviewContext 取用。 */
   let lightbox: ImageLightbox | null = null;
+  /**
+   * 图片引用钮的处理器（change add-image-quote-to-chat）：**创建期依赖**，由 createEditor 的
+   * options 在视图创建前落位——首帧装饰就能渲染出钮。不走「创建后注入 + previewRefresh」的
+   * 形态：那会把启动文档里已渲染的图片重建一次、多读一次附件字节（markdown-combo 的
+   * 「打开遮罩不重读字节」判据会红）。未提供时图片没有引用钮（结构性表现，不是开关）。
+   */
+  const quoteImageHandler: ImageQuoteHandler | null = options.quoteImage ?? null;
   /** 表格放大全屏查看的遮罩（M240）：同上，装配层注入。 */
   let tableFullscreen: TableFullscreen | null = null;
   /** 代码块放大全屏查看的口子（M277）：装配层注入，装饰层只经 PreviewContext 取用。 */
@@ -1653,6 +1675,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     attachmentProvider: () => provider,
     wikilinkResolver: () => wikilinkResolver,
     lightbox: () => lightbox,
+    quoteImage: () => quoteImageHandler,
     tableFullscreen: () => tableFullscreen,
     codeBlockFullscreen: () => codeBlockFullscreen,
     blockCopy: () => blockCopy,
@@ -2755,6 +2778,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 已渲染出来的图片不会获得双击路径。
       view.dispatch({ effects: previewRefresh.of(null) });
     },
+    collectImages: (state: EditorState, from: number, to: number) =>
+      collectImageRefs(state, from, to, previewContext),
     setTableFullscreen(next: TableFullscreen | null) {
       tableFullscreen = next;
       // 同 setLightbox：装饰层在构建期读这个口子（表格全屏触发钮的点击接线），注入后重建一次。

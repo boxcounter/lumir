@@ -16,6 +16,7 @@ import {
   imageFallbackText,
   imageFallbackWidth,
   imageLoadingText,
+  imageQuoteButtonPlacement,
   imageReadErrorText,
   imageReserve,
   imageVisible,
@@ -97,6 +98,74 @@ test("widget 的引用文本与加载函数按构造入参原样持有", () => {
   assert.equal(widget.key, "assets/a.png");
   assert.equal(widget.rawRef, "![alt](assets/a.png)");
   assert.equal(widget.load, load);
+});
+
+test("widget 相等性：引用钮接线的有无必须参与（注入前后重建 DOM，回调身份不参与）", () => {
+  // change add-image-quote-to-chat：钮是真实 DOM——接线从无到有（或反向）时 eq 必须判不等，
+  // 否则 CM 会原样复用旧 DOM，钮不出现 / 不消失。两个都已接线时回调身份不同属正常
+  //（装饰重建每次现取 handler），不参与比较。
+  const load = () => Promise.resolve("data:image/png;base64,");
+  const bare = new ImageWidget("assets/a.png", load, "![alt](assets/a.png)");
+  const wired = new ImageWidget("assets/a.png", load, "![alt](assets/a.png)", undefined, () => {});
+  const wiredAgain = new ImageWidget("assets/a.png", load, "![alt](assets/a.png)", undefined, () => {});
+  assert.equal(bare.eq(wired), false);
+  assert.equal(wired.eq(bare), false);
+  assert.equal(wired.eq(wiredAgain), true);
+});
+
+// ---------------------------------------------------------------------------
+// 引用钮的落位与钳制（change add-image-quote-to-chat 的「同一钳制口径」条款）
+//
+// 判据是纯函数：期望贴图片右下角内侧 6px，再按既有浮动钮钳制口径把钮整体收进可视带。
+// 每个方向各配一条「必须被钳住」的反向输入（长图 / 横向滚动 / 容器比钮还窄）。
+// ---------------------------------------------------------------------------
+
+const BUTTON = { width: 26, height: 24 };
+
+test("引用钮落位：常规图片贴右下角内侧 6px（钳制不介入）", () => {
+  assert.deepEqual(
+    imageQuoteButtonPlacement(
+      { left: 0, right: 96, top: 0, bottom: 48 },
+      { left: 0, top: 0 },
+      { left: 0, top: 0, width: 700, height: 800 },
+      BUTTON,
+    ),
+    { left: 96 - 26 - 6, top: 48 - 24 - 6 },
+  );
+});
+
+test("引用钮落位：长图底部越出可视带时被钳到带底（钮不得落在可视区外）", () => {
+  const placed = imageQuoteButtonPlacement(
+    { left: 0, right: 96, top: 0, bottom: 2000 },
+    { left: 0, top: 0 },
+    { left: 0, top: 0, width: 700, height: 700 },
+    BUTTON,
+  );
+  // 钳制留白 4（clampGestureButton 的既有口径）：钮下缘 = 700 - 4。
+  assert.equal(placed.top, 700 - 24 - 4);
+  assert.equal(placed.left, 96 - 26 - 6);
+});
+
+test("引用钮落位：横向滚动后图片右缘越出可视带 → 钳到带右缘", () => {
+  const placed = imageQuoteButtonPlacement(
+    { left: 0, right: 1200, top: 0, bottom: 48 },
+    { left: 0, top: 0 },
+    { left: 0, top: 0, width: 600, height: 400 },
+    BUTTON,
+  );
+  assert.equal(placed.left, 600 - 26 - 4);
+});
+
+test("引用钮落位：可视带比钮还窄时贴左 / 上缘（下界优先，不反向越界）", () => {
+  assert.deepEqual(
+    imageQuoteButtonPlacement(
+      { left: 0, right: 96, top: 0, bottom: 48 },
+      { left: 0, top: 0 },
+      { left: 0, top: 0, width: 20, height: 20 },
+      BUTTON,
+    ),
+    { left: 4, top: 4 },
+  );
 });
 
 // ---------------------------------------------------------------------------

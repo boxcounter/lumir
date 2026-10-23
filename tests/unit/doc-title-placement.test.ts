@@ -60,6 +60,8 @@ function ctxFor(path: string | undefined, mtimeMs: number | null = null): Previe
     attachmentProvider: () => null,
     wikilinkResolver: () => null,
     lightbox: () => null,
+    // 图片引用钮（change add-image-quote-to-chat）：本层不测，未接线即 null（同 lightbox）。
+    quoteImage: () => null,
     // 表格全屏遮罩（M240）：本层不测遮罩，未接线即 null（同 lightbox）。
     tableFullscreen: () => null,
     // 代码块全屏与块级复制（M277）：同上，本层不测这两条能力。

@@ -20,11 +20,12 @@ import {
   isImageName,
   resolveImagePath,
 } from "./attachments";
-import type { AttachmentProvider, ImageOpenHandler } from "./attachments";
+import type { AttachmentProvider, ImageOpenHandler, ImageQuoteHandler } from "./attachments";
 import type { ImageLightbox } from "../lightbox";
 import { findWikilinkSpans } from "./wikilinks";
 import { classifyLinkTarget, literalLinkOfNode, standardLinkParts } from "./links";
-import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
+import { collectInlineMath, mathBlockSet } from "./math";
+import { isInsideCodeContext } from "./code-context";
 import { isMermaidDiagram, mermaidBlockSet, onMermaidSettled } from "./mermaid";
 import { calloutMarkerDecorations, detectCallout } from "./callout";
 import {
@@ -84,6 +85,9 @@ export interface PreviewContext {
   /** 图片放大查看的遮罩（M184）；未接线时返回 null——图片因此没有双击路径
    *（与 attachmentProvider 未接线即走占位同一口径）。 */
   lightbox(): ImageLightbox | null;
+  /** 图片引用钮的口子（change add-image-quote-to-chat）；未接线时返回 null——图片没有引用钮
+   *（同 lightbox 口径：能力没装配是结构性表现，不是一条要维护的开关）。 */
+  quoteImage(): ImageQuoteHandler | null;
   /** 表格放大全屏查看的遮罩（M240）；未接线时返回 null——表格工具钮仍在（它由装饰层按
    *  「表渲染为 grid」的结构事实渲染），只是点它没反应（与 lightbox() 未接线时双击图片没反应
    *  同一口径：能力没装配是结构性表现，不是一条要维护的开关）。 */
@@ -1382,6 +1386,12 @@ function imageOpenHandler(ctx: PreviewContext): ImageOpenHandler | undefined {
   return lightbox === null ? undefined : (img, rawRef) => lightbox.open(img.src, rawRef);
 }
 
+/** 图片引用钮的接线（change add-image-quote-to-chat）：把「解析后的 vault 路径 + 引用原文」交给
+ *  装配层。未接线时返回 undefined，widget 因此不渲染钮（与上面的双击接线同一口径）。 */
+function imageQuoteHandler(ctx: PreviewContext): ImageQuoteHandler | undefined {
+  return ctx.quoteImage() ?? undefined;
+}
+
 /** 远程 http(s) 引用的「字节来源」：空 payload 的 `data:` URL——`<img>` 解不出可见像素，
  *  失败事件随即把引用交给 ImageWidget 的占位终态（成因中立的 D113，见 attachments.ts）。 */
 const REMOTE_IMAGE_SRC = (): Promise<string> => Promise.resolve("data:image/png;base64,");
@@ -1407,7 +1417,13 @@ function buildStandardImage(
   }
   const path = resolveImagePath(target, ctx.currentFilePath());
   return Decoration.replace({
-    widget: new ImageWidget(path, () => provider.readDataUrl(path), rawRef, imageOpenHandler(ctx)),
+    widget: new ImageWidget(
+      path,
+      () => provider.readDataUrl(path),
+      rawRef,
+      imageOpenHandler(ctx),
+      imageQuoteHandler(ctx),
+    ),
   });
 }
 
@@ -1487,7 +1503,13 @@ function buildWikilink(
       return Decoration.replace({ widget: new AttachmentNoticeWidget(t("D32"), raw) });
     }
     return Decoration.replace({
-      widget: new ImageWidget(path, () => provider.readDataUrl(path), raw, imageOpenHandler(ctx)),
+      widget: new ImageWidget(
+        path,
+        () => provider.readDataUrl(path),
+        raw,
+        imageOpenHandler(ctx),
+        imageQuoteHandler(ctx),
+      ),
     });
   }
   return Decoration.replace({
@@ -1518,5 +1540,5 @@ function buildWikiEmbedWidget(rawRef: string, inner: string, ctx: PreviewContext
   if (path === null) {
     return new AttachmentNoticeWidget(t("D214"), rawRef);
   }
-  return new ImageWidget(path, () => provider.readDataUrl(path), rawRef, imageOpenHandler(ctx));
+  return new ImageWidget(path, () => provider.readDataUrl(path), rawRef, imageOpenHandler(ctx), imageQuoteHandler(ctx));
 }

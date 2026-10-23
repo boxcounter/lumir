@@ -172,3 +172,38 @@ insertQuoteWithImages(card: QuoteCard | null, images: ImageCard[]): void
    可解释的地方。
 6. 模型无视觉能力时发送仍按既有 `harness_image_unsupported` 拒绝（前端 toast + 标出图片卡片），
    本 change 不改那条语义。
+
+## 10. 实现期取值与偏差（M633 落地时记）
+
+本节记录实现时对上面设计的**落点选择**与几处偏差；行为判据以 specs 增量与 §1–§9 为准，
+这里只记「为什么代码长这样」。
+
+- **D4 的「没有文字」判据**：选区恰好覆盖整张图时，摘录原文就是图片源码（`![[x.png]]`），
+  旧的 `text === ""` 判据认不出来。实现取「剥掉已枚举的图片 span 后 `trim()` 是否为空」
+  （`src/quote-gesture.ts` 的 `quoteTextWithoutImages`）：空 / 纯空白 ⇒ 只插图片块、不造卡片。
+- **来源 hover title 的文案**：deck 没有「来自 …」模板，而 `文案-Copy.md` 不在本 mission 的
+  scope 内。实现取 deck 的裸路径模板 D91（`{path}`）——缩略图 title = vault 相对路径，满足
+  spec「悬停提示含来源的 vault 相对路径」，但不带「来自」前缀。若之后要那两个字，补一条
+  D 码即可（只改 `createImageCardEl` 一处）。
+- **部分失败的 toast 形态**：不改文案表的前提下，每张失败图各发一条既有错误文案 toast
+  （失败张数 = toast 条数、原因逐条可见）。没有引入「N 张失败」的聚合模板（同样受
+  `文案-Copy.md` 的 scope 约束）。
+- **引用钮的接线时点**：`quoteImage` 是 createEditor 的**创建期依赖**（`EditorCreateOptions`），
+  不是创建后 `setXxx` 注入。理由：装饰层在首帧构建时读它；创建后注入要派发 `previewRefresh`，
+  会把启动文档里已渲染的图片重建一次、多读一次附件字节（`markdown-combo` 的「打开遮罩不
+  重读字节」判据实测判红）。未提供 handler 时图片没有引用钮（结构性事实）。
+- **枚举额外排除表格内的标准图片**：渲染层对表格内的 `Image` 节点整类跳过（表格只放行
+  行内 code / 强调系 / Link / URL），枚举按「与渲染层同判据」一并跳过（§2 第 1 条的自然
+  推论，不是新裁决）。
+- **代码上下文判据的居所**：从 `src/preview/math.ts` 抽到 `src/preview/code-context.ts`
+  （`math.ts` 的参数属性构造器挡着零 DOM 单测，而枚举单测必须 import `attachments.ts`）。
+  行为逐字不变，两处消费者（math / livePreview）改为从新模块 import。
+
+### 已知边界（补充 §9）
+
+1. 引用钮是 26×24 的块级钮、贴图片右下角内 6px：图片**窄于 32px 或矮于 30px** 时钮会越出
+   图片盒（仍可点、仍在图片所在行内）。不为此另立位置规则——极小图的引用是边缘场景。
+2. 选区枚举只读文档状态，读不到 widget 的加载态：选区里的图若字节可读（只是尚在加载），
+   照常引用成功；终态失败（读取 / 解码 / 格式不支持）的引用在事务层失败并 toast，不插卡片。
+3. 引用钮只有指针路径（`<img>` 不可聚焦）；键盘用户仍可「选区跨过图片 + 文本摘录钮」达成
+   同等效果（§9 第 2 条不变）。

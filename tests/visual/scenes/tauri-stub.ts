@@ -120,6 +120,12 @@ export interface VaultFixture {
   noteLinks?: Record<string, string | null>;
   /** wikilink_create 桩：链接原文 → 创建后的 vault 相对路径（同时写入 files）。 */
   creates?: Record<string, string>;
+  /**
+   * `harness_write_image` 的按来源 MIME 失败注入（change add-image-quote-to-chat 的 5.1）：
+   * 键 = `source_mime` 的 MIME 段（如 `image/svg+xml`），命中即按该信封 reject——造「不支持的
+   * 格式」现场用（真后端在 Rust 侧按同一张转码面拒绝）。未命中的写入一律成功。
+   */
+  harnessImageFailures?: Record<string, { code: string; message: string; params?: Record<string, unknown> }>;
   /** 应用元信息桩（M236，product-version-display）：`plugin:app|name` / `plugin:app|version`
    *  两条内置 invoke 路由的应答。缺省 = 固定 fixture 值（"Lumir" / "9.9.9"），**刻意不跟随
    *  src-tauri/tauri.conf.json 的真版本**：跟随会让每次版本 bump 都推动标题栏像素基线
@@ -200,7 +206,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; rel?: string; new_name?: string; parent_rel?: string; name?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; panes?: Array<{ tabs: string[]; active: string | null }>; pane_split_ratio?: number; entries?: Record<string, { pos: number; y: number; x: number; at: number }>; key?: string; value?: unknown; r?: number; g?: number; b?: number };
+    type Args = { path?: string; from?: string; rel?: string; new_name?: string; parent_rel?: string; name?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; panes?: Array<{ tabs: string[]; active: string | null }>; pane_split_ratio?: number; entries?: Record<string, { pos: number; y: number; x: number; at: number }>; key?: string; value?: unknown; r?: number; g?: number; b?: number; data_base64?: string; source_mime?: string };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
@@ -230,6 +236,9 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     // `fs_read_attachment` 的**按路径**读取记录（M629）：D3 的「切回重读一次」判据要数
     // 某一张图读了几次——全局计数会被启动期 SAMPLE 演示文档里的相对路径图片引用污染。
     w.__attachmentReads = [] as string[];
+    // `harness_write_image` 的调用记录（change add-image-quote-to-chat 的 5.1）：图片摘录
+    // 事务的「先落盘再插块」与 source_mime 透传在这一层可见（载荷只记 MIME 与字节串）。
+    w.__harnessImageWrites = [] as Array<{ data_base64?: string; source_mime?: string }>;
     // 全部 invoke 的命令名，按调用顺序（M195）。「按 ⌘= 后 config.json 逐字节不变」这条判据
     // 在 chromium 里没有文件面（真机场景 29 用文件哈希 + mtime 断言），这里退化为等价判据：
     // **没有第二处写类 command 被调用**。桩只记录，不解释语义。
@@ -625,6 +634,34 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         }
         return current.syntheticPng;
       },
+      // harness 侧图片落盘（change add-image-quote-to-chat 的 5.1）：真后端的转码 / 内容寻址 /
+      // 去重都在 Rust 侧（那归 cargo test），桩只回答「写成功了，名字与像素尺寸是这个」——
+      // 名字固定可断言，字节不产生第二个真源。失败注入按 source_mime 走 fixture 的
+      // `harnessImageFailures`（造「不支持格式」现场）；`failures` 通道照旧优先。
+      harness_write_image: (args) => {
+        const sourceMime = String(args.source_mime ?? "");
+        (w.__harnessImageWrites as Array<{ data_base64?: string; source_mime?: string }>).push({
+          data_base64: args.data_base64,
+          source_mime: sourceMime,
+        });
+        const failure = current?.harnessImageFailures?.[sourceMime.split(";")[0]!.trim()];
+        if (failure !== undefined) throw failure;
+        if (typeof args.data_base64 !== "string" || args.data_base64 === "") {
+          throw { code: "attachment_decode_failed", message: "图片字节为空（桩）", params: { reason: "empty" } };
+        }
+        return { name: "pasted-633ab12cd34ef567.webp", width: 1, height: 1 };
+      },
+      // 缩略图读回（change harness-image-quote-to-chat 的 5.1 连带面）：图片卡片渲染时会按
+      // 落盘名读回字节；不路由会让卡片落 is-broken（m440 之前的既有桩缺这条的现场）。
+      harness_read_image: (args) => {
+        if (!/^pasted-[0-9a-f]{16}\.(webp|jpg)$/.test(args.name ?? "")) {
+          throw { code: "harness_image_read_failed", message: "非法附件名（桩）", params: { name: args.name, reason: "invalid" } };
+        }
+        if (current?.syntheticPng === undefined) {
+          throw { code: "fixture_contract", message: "fixture 缺少合成 PNG（应由 stubTauri 注入）" };
+        }
+        return current.syntheticPng;
+      },
       document_save: (args) => {
         const path = args.path ?? "";
         const currentText = current?.files?.[path];
@@ -866,6 +903,19 @@ export async function invokes(page: Page): Promise<string[]> {
 /** `fs_read_attachment` 的**按路径**读取记录（M629，按调用顺序）。 */
 export async function attachmentReads(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __attachmentReads: string[] }).__attachmentReads);
+}
+
+/** `harness_write_image` 的调用记录（change add-image-quote-to-chat 的 5.1，按调用顺序）：
+ *  「先落盘再插块」与 `source_mime` 透传在这一层可断言。 */
+export async function harnessImageWrites(
+  page: Page,
+): Promise<Array<{ data_base64?: string; source_mime?: string }>> {
+  return page.evaluate(
+    () =>
+      (window as unknown as {
+        __harnessImageWrites: Array<{ data_base64?: string; source_mime?: string }>;
+      }).__harnessImageWrites,
+  );
 }
 
 /** 前端已转发的诊断事件（按发出顺序）；`event` 选传，只看某一类事件。 */

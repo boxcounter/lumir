@@ -24,6 +24,7 @@ import { PATH_SEPARATOR } from "./toc";
 import type { TocHeading } from "./toc";
 import { createQuoteCard } from "./quote-card";
 import type { QuoteCard } from "./quote-card";
+import type { ImageRef } from "./preview/attachments";
 import type { EditorSession } from "./editor";
 
 // ---------------------------------------------------------------------------
@@ -136,6 +137,35 @@ export function resolveQuoteAnchor(
     if (found >= 0) return { from: found, to: found + card.text.length };
   }
   return null;
+}
+
+/**
+ * 选区原文剥掉已枚举的图片引用后的剩余文本（change add-image-quote-to-chat 的 D4 判据）。
+ *
+ * 选区恰好覆盖整张图片时，摘录原文就是图片源码（`![[x.png]]`）——旧的 `text === ""` 判据
+ * 认不出「只有图片」，会造一张正文只有图片语法的卡片。这里的判据是「剥掉图片 span 之后
+ * 还有没有文字」：空 / 纯空白 ⇒ 不造文本卡片（只插图片块）。
+ *
+ * `images` 的 from/to 是文档偏移（与选区的 from 同一坐标系）；`text` 是
+ * `doc.sliceString(from, to)` 的结果。函数不依赖图片 span 的排列顺序。
+ */
+export function quoteTextWithoutImages(
+  text: string,
+  from: number,
+  images: readonly { from: number; to: number }[],
+): string {
+  const end = from + text.length;
+  let out = "";
+  let cursor = from;
+  const spans = [...images].sort((a, b) => a.from - b.from);
+  for (const image of spans) {
+    const start = Math.max(from, image.from);
+    const stop = Math.min(end, image.to);
+    if (stop <= start || stop <= cursor) continue;
+    out += text.slice(cursor - from, start - from);
+    cursor = stop;
+  }
+  return out + text.slice(cursor - from);
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +366,12 @@ export interface QuoteGestureDeps {
   extractHeadings(state: EditorState): readonly TocHeading[];
   /** 卡片入 composer（面板未开先开再插入并聚焦——harness 面板那条 insertQuoteCard）。 */
   insertQuoteCard(card: QuoteCard): void;
+  /** 选区内的图片引用（change add-image-quote-to-chat）：判据与渲染层同源（编辑器侧
+   *  `collectImageRefs`），按文档序、按路径去重。 */
+  collectImages(state: EditorState, from: number, to: number): readonly ImageRef[];
+  /** 图片摘录入 composer（change add-image-quote-to-chat §4.1）：卡片可为 null（选区只有图片
+   *  时不造空文本卡，D4）；无图时走上面的 `insertQuoteCard`，逐字节不变。 */
+  insertQuoteWithImages(card: QuoteCard | null, images: readonly ImageRef[]): void;
   /** 失锚告知出口（notice 组件，文案 D372）。 */
   toast(text: string): void;
 }
@@ -524,10 +560,22 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
     const to = Math.max(range.anchor, range.head);
     const path = last.path;
     const lines = quoteLinesOf(view.state.doc, from, to);
+    if (lines === null) return; // 取不到行范围不产出卡片（design §3 裁决）
     const text = view.state.doc.sliceString(from, to);
-    if (lines === null || text === "") return; // 取不到行范围不产出卡片（design §3 裁决）
-    const { heading, headingPath } = quoteContextOf(deps.extractHeadings(view.state), from);
-    deps.insertQuoteCard(createQuoteCard({ file: path, heading, headingPath, lines, text }));
+    const cardOf = (): QuoteCard => {
+      const { heading, headingPath } = quoteContextOf(deps.extractHeadings(view.state), from);
+      return createQuoteCard({ file: path, heading, headingPath, lines, text });
+    };
+    const images = deps.collectImages(view.state, from, to);
+    if (images.length === 0) {
+      // 无图：与既有文本摘录逐字节一致（空选区不产出卡片，单卡片路径不变）。
+      if (text === "") return;
+      deps.insertQuoteCard(cardOf());
+      return;
+    }
+    // 图文混选（change add-image-quote-to-chat）：卡片在前、图片按文档序在后；选区只有图片
+    // （剥掉图片源码后无文字）时不造空文本卡片（D4）。
+    deps.insertQuoteWithImages(quoteTextWithoutImages(text, from, images).trim() === "" ? null : cardOf(), images);
   });
 
   document.addEventListener("selectionchange", onSelectionChange);

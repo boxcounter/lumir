@@ -136,6 +136,9 @@ import { createHarnessPanel } from "./harness-panel";
 import { openPathAtLine } from "./harness-path-link";
 import { duringViewportTransition } from "./scroll-position-view";
 import { createQuoteGesture } from "./quote-gesture";
+import { productionQuoteImagePorts, quoteImagesFromVault } from "./quote-image";
+import type { QuoteImageSource } from "./quote-image";
+import type { QuoteCard } from "./quote-card";
 import "./style.css";
 // 搜索 panel 的样式单列一个文件（M139）：与并行 mission 的 src/style.css 隔离，
 // 本 mission 的搜索样式一律放这里。
@@ -381,7 +384,9 @@ function createPaneHandle(paneId: PaneId, kind: PaneKind): PaneHandle {
     shell.tabStrip.after(stripEl);
     dividerEl = divider;
   }
-  const editor = createEditor(mountEl);
+  // 图片引用钮是**创建期依赖**（change add-image-quote-to-chat）：装饰层在首帧构建时读它，
+  // 创建后注入会为启动文档里已渲染的图片多读一次字节（见 EditorCreateOptions 的注释）。
+  const editor = createEditor(mountEl, undefined, undefined, { quoteImage: quoteImageFromImageButton });
   const handle: PaneHandle = { kind: "doc", editor };
   // 空 pane 引导（M322）：常驻 mountEl 的水印层（初态必隐——显示与否由 renderAllTabStrips
   // 的同步唯一决定，root pane 与动态 pane 同一形态）。透明底盖在编辑器之上，点击它 = 点击
@@ -1023,6 +1028,7 @@ const editor: EditorHandle = {
   setWikilinkResolver: (resolver) =>
     forEachEditor((handle) => handle.setWikilinkResolver(resolver)),
   setLightbox: (lightbox) => forEachEditor((handle) => handle.setLightbox(lightbox)),
+  collectImages: (state, from, to) => activeEditor().collectImages(state, from, to),
   setTableFullscreen: (fullscreen) =>
     forEachEditor((handle) => handle.setTableFullscreen(fullscreen)),
   setCodeBlockFullscreen: (port) =>
@@ -2905,6 +2911,30 @@ function scaleTextEverywhere(direction: TextScaleDirection): void {
 // 的解析（复合句柄 / paneEntryOfSession，与本文件其余消费者同源）、打开链路与提示出口注进去。
 // 摘录来源恒为最近活跃编辑器 pane（ADR 0008 Decision 3）：activeView/activePath 都活读活跃
 // doc pane，harness 面板持焦不改变文档表面的解析（见 activeDocPane）。
+
+/** 图片摘录事务的装配（change add-image-quote-to-chat design §3）：读 vault → 写 harness 存储 →
+ *  一次结构编辑步插入。两个入口共用它——图片上的引用钮（单张、无文本卡片）与跨图选区
+ *  （卡片 + 多张图，按文档序）。失败按既有错误文案 toast（归属 harness pane，M420 同口径）；
+ *  部分失败不整体回滚（事务层逐张 toast、返回成功的那几张）。 */
+async function insertQuotedImages(
+  card: QuoteCard | null,
+  sources: readonly QuoteImageSource[],
+): Promise<void> {
+  const images = await quoteImagesFromVault(
+    sources,
+    productionQuoteImagePorts((text) => void showToast(harnessPaneMount(), text)),
+  );
+  if (card === null && images.length === 0) return;
+  harnessPanel.insertQuoteWithImages(card, images);
+}
+
+/** 图片上的引用钮（change add-image-quote-to-chat）：装饰层只报「哪个 vault 路径 + 哪条引用原文」，
+ *  字节链路与插入都在装配层（与双击放大的接线同一分层）。作为**创建期依赖**交给 createEditor
+ *  （见 `EditorCreateOptions` 的理由：创建后注入会为启动文档里已渲染的图片多读一次字节）。 */
+function quoteImageFromImageButton(key: string, rawRef: string): void {
+  void insertQuotedImages(null, [{ path: key, rawRef }]);
+}
+
 const quoteGesture = createQuoteGesture({
   activeView: () => editor.view,
   activeMount: () => paneAssemblies.get(activeDocPane().id)?.mountEl,
@@ -2920,6 +2950,8 @@ const quoteGesture = createQuoteGesture({
   openFile: async (path) => openFile(path, openKind(path), "current", true),
   extractHeadings: (state) => extractHeadings(state, true),
   insertQuoteCard: (card) => harnessPanel.insertQuoteCard(card),
+  collectImages: (state, from, to) => editor.collectImages(state, from, to),
+  insertQuoteWithImages: (card, images) => void insertQuotedImages(card, images),
   // 失锚提示（D372）由**点卡片**触发，而卡片在 harness 面板里（jump 只经 setQuoteJumpHandler
   // 从面板进入）——归属是 harness pane，不是文档 pane（M420：toast 锚定发起它的区域）。
   toast: (text) => void showToast(harnessPaneMount(), text),

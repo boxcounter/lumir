@@ -132,6 +132,7 @@ import {
 } from "./quote-card";
 import type { ComposerBlock, ImageCard, MessageQuoteCard, QuoteCard } from "./quote-card";
 import { blobToBase64, firstImageFileIndex } from "./paste-image";
+import type { QuotedImage } from "./quote-image";
 import { createMessageQuoteGesture, MESSAGE_QUOTE_FLASH_MS, resolveMessageQuoteTarget } from "./message-quote-gesture";
 import { highlightCode } from "./preview/code";
 import { clusterBackward, clusterForward, currentKillSlot, imageMentionText, imageOrdinals, mergeKillText, setKillSlot, wordEndForward, wordStartBackward } from "./quote-card";
@@ -218,6 +219,13 @@ export interface HarnessPanelHandle {
    * 打开再插入并聚焦。卡片数据（含 lines 非空校验）由调用方经 `createQuoteCard` 产出。
    */
   insertQuoteCard(card: QuoteCard): void;
+  /**
+   * 图片摘录入 composer（change add-image-quote-to-chat design §4.1）：卡片可为 null（选区只有
+   * 图片时不造空文本卡，D4）；图片按文档序紧接卡片之后插入，整次插入是**一个**结构编辑步
+   *（一次 ⌘Z 撤掉整次引用）。面板未开时先开。来源路径（`QuotedImage.source`）只落缩略图
+   *  hover title，不进块模型 / 序列化 / 草稿（design §4.2）。
+   */
+  insertQuoteWithImages(card: QuoteCard | null, images: readonly QuotedImage[]): void;
   /**
    * 注册「点击卡片跳回原文」处理器（M343 为 M344/QC3 留的挂载点）：composer 与 transcript
    *  内的卡片点击（× 钮除外）都经它；未注册时点击无操作。失锚三层降级链与跳回高亮由 QC3 实现。
@@ -4178,6 +4186,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  读回命令必须只发一次——成功缓存 URL、失败缓存 null（占位 + 每图仅一次的 toast）。
    *  面板生命周期内不 revoke（卡片移除后 URL 留在缓存，下次贴同一张图直接命中）。 */
   const imageThumbCache = new Map<string, string | null>();
+  /** 引用来源（图片名 → vault 相对路径，change add-image-quote-to-chat design §4.2）：人侧
+   *  hover title 专用，面板生命周期内有效；不进卡片数据 / 序列化 / 投递 / 草稿。内容寻址名
+   *  相同 = 同字节，同一名字被粘贴与引用各来一次时显示哪个来源都对人不构成误导。 */
+  const imageSourceOf = new Map<string, string>();
   /** 能力闸拒绝过的图片名（design §6 的错误态）：渲染整面重跑会把 DOM class 丢掉，
    *  错误态因此按名记在模型侧，卡片重建（键入触发重渲）后依旧标出；发送成功才清除。 */
   const imageGateErrored = new Set<string>();
@@ -4307,6 +4319,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const thumb = document.createElement("div");
     thumb.className = "lumir-hp-qc-thumb";
     thumb.dataset.thumbName = card.name;
+    // 来源标注（change add-image-quote-to-chat design §4.2）：只有引用进来的图才有来源；
+    // 文案取 deck 的裸路径模板 D91（deck 没有「来自 …」模板，而裸路径已满足 spec 的
+    // 「悬停提示含来源的 vault 相对路径」）。该文本不进序列化 / 投递 / 草稿。
+    const sourcePath = imageSourceOf.get(card.name);
+    if (sourcePath !== undefined) thumb.title = t("D91", { path: sourcePath });
     if (ordinal !== null) thumb.append(createImageOrdinalBadge(ordinal, card.name));
     const source = document.createElement("div");
     source.className = "lumir-hp-qc-src";
@@ -9380,6 +9397,31 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         const sel = caretFromDom();
         const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
         return insertCardAtCaret(blocks, caret, valid);
+      }, STRUCTURAL_EDIT_FORCE);
+      composer.focus();
+    },
+    insertQuoteWithImages(card: QuoteCard | null, images: readonly QuotedImage[]): void {
+      const valid = card === null ? null : createQuoteCard(card);
+      if (valid === null && images.length === 0) return; // 空引用（无卡无图）不是一次编辑
+      if (mountEl === null) deps.togglePane(); // 装配层开 pane 后焦点已落 composer
+      for (const image of images) imageSourceOf.set(image.card.name, image.source);
+      // **一次** withModel = 一个撤销步（⌘Z 一次撤掉整次引用）：卡片 + 图片块在同一个模型步里
+      // 依次落位（每次插入复用 insertBlockAtCaret 的拆段 / 光标落点语义）。
+      withModel((blocks) => {
+        const sel = caretFromDom();
+        let caret: ComposerCaret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
+        let next: ComposerBlock[] = [...blocks];
+        if (valid !== null) {
+          const result = insertCardAtCaret(next, caret, valid);
+          next = result.blocks;
+          caret = result.caret;
+        }
+        for (const image of images) {
+          const result = insertBlockAtCaret(next, caret, { kind: "image", card: image.card });
+          next = result.blocks;
+          caret = result.caret;
+        }
+        return { blocks: next, caret };
       }, STRUCTURAL_EDIT_FORCE);
       composer.focus();
     },

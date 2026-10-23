@@ -380,6 +380,8 @@ function editorDeps() {
     openFile: async () => false,
     extractHeadings: () => [],
     insertQuoteCard: (card: QuoteCard) => inserted.push(card),
+    collectImages: () => [],
+    insertQuoteWithImages: () => {},
     toast: () => {},
   });
   return { gesture, mount, view, inserted, textNode };
