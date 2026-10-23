@@ -134,15 +134,18 @@ export interface PaneSnapshotInput {
   activePath: string | undefined;
 }
 
-/** 构造单个 pane 的入盘内容（**唯一**构造点的一部分）。两条口径都在这里：
- *   - 全部**有路径**的标签都入盘，按打开顺序（M254 之前这里还过滤掉「预览（临时）标签」——
- *     预览机制随 change preview-tab-removal 退场后，标签只有一种形态，没有「随时会被顶掉的
- *     槽位」这回事）；
- *   - 激活项不在入盘集合里时落为 null（例如前台是没有路径的空文档）——恢复侧据此退化到
- *     第一个可打开的标签，不在盘上留一个指向不存在条目的值。 */
+/** 构造单个 pane 的入盘内容（**唯一**构造点的一部分）。三条口径都在这里：
+ *   - 全部**有路径**的 vault 内标签都入盘，按打开顺序（M254 之前这里还过滤掉「预览（临时）
+ *     标签」——预览机制随 change preview-tab-removal 退场后，标签只有一种形态，没有
+ *     「随时会被顶掉的槽位」这回事）；
+ *   - **唯一例外是 vault 外只读标签**（change quick-open-file-oct23 的 D2：`session.external`）：
+ *     它没有 vault 相对路径、不参与保存与恢复，MUST NOT 入盘、MUST NOT 出现在列表行的标签数里。
+ *     判据只在这里出现一次（`vault-workspace` 的两条 MODIFIED 认领的是同一个例外）；
+ *   - 激活项不在入盘集合里时落为 null（例如前台是没有路径的空文档、或前台是外部只读标签）
+ *     ——恢复侧据此退化到第一个可打开的标签，不在盘上留一个指向不存在条目的值。 */
 export function paneSnapshot(input: PaneSnapshotInput): StoredPane {
   const tabs = input.sessions
-    .filter((session) => session.path !== undefined)
+    .filter((session) => session.path !== undefined && session.external !== true)
     .map((session) => session.path as string);
   const active =
     input.activePath !== undefined && tabs.includes(input.activePath) ? input.activePath : null;

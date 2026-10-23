@@ -262,6 +262,8 @@ export function createEditorDouble(): EditorDouble {
         // 的取值逐项一致（values 由那条构造点定死，本替身不为测试放宽）。
         mode: kind === "image" ? "image" : (options.mode ?? "md"),
         editable: kind === "image" ? false : (options.editable ?? isEditablePath(path)),
+        // 本替身不建模 vault 外只读会话（M655 的 `createExternalSession` 在真编辑器里）。
+        external: false,
         scroll: undefined,
       };
       if (existing !== undefined) list[list.indexOf(existing)] = session;

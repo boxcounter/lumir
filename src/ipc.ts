@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { CommandError } from "./bindings/CommandError";
 import type { ReadSnapshot } from "./bindings/ReadSnapshot";
+import type { ExternalTextSnapshot } from "./bindings/ExternalTextSnapshot";
 import type { FsFileMeta } from "./bindings/FsFileMeta";
 import type { ConfigSnapshot } from "./bindings/ConfigSnapshot";
 import type { FsChange } from "./bindings/FsChange";
@@ -98,6 +99,20 @@ export function vaultCurrent(): Promise<VaultStatus> {
 /** 读 vault 内文本文件与绑定 revision 快照。 */
 export function fsReadSnapshot(path: string): Promise<ReadSnapshot> {
   return invoke<ReadSnapshot>("fs_read_snapshot", { path });
+}
+
+/**
+ * 按**绝对路径**读一个 vault 外文本文件（change quick-open-file-oct23 的 `fs-io` ADDED
+ * 「vault 外只读读取通道」）。唯一消费方是 `quick-open` 的 vault 外只读会话——MUST NOT 用在
+ * 任何自动扫描 / 批量 / 后台任务上（spec 写成约束，代码里也没有第二个调用点）。
+ *
+ * 形状校验、常规文件判定、50MB 上限与 UTF-8 解码全在 Rust 侧（`fs_read_external`）；失败
+ * reject 人话 `CommandError`（`fs_path_invalid` / `fs_not_found` / `fs_not_a_file` /
+ * `fs_too_large` / `fs_invalid_utf8` / `fs_read_failed`，与 vault 内读取同一组错误码）。
+ * 返回的 payload **只有内容**（外部会话不保存、不参与监听，revision 与 mtime 没有消费者）。
+ */
+export function fsReadExternal(path: string): Promise<ExternalTextSnapshot> {
+  return invoke<ExternalTextSnapshot>("fs_read_external", { path });
 }
 
 /** 读 vault 内单文件元数据（M218 doc-meta「修改于」的 mtime 数据源）。 */

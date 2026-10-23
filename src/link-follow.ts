@@ -77,6 +77,10 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
    */
   function resolveBase(): string | undefined {
     const session = editor.activeSession();
+    // vault 外只读会话不提供解析基准（change quick-open-file-oct23 的 spec：外部文档里的
+    // 链接 MUST NOT 被解析）：`from` 是 vault 相对路径，绝对路径送进后端只会得到一个
+    // 「不在 vault 内」的失败，白白多一次 IPC。
+    if (session.external === true) return undefined;
     return session.mode === "md" ? session.path : undefined;
   }
   /** 解析结果缓存：键 = `${from}\n${raw}`。watch 增量 / 切文件 / 创建后整批失效。 */

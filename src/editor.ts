@@ -983,14 +983,31 @@ export interface EditorSession {
    */
   mode: SessionMode;
   /**
-   * 该会话是否可编辑（editable-non-md-files，裁决 D1「注册表全量文本类」）。取值 = 无文件
-   * 上下文（空态 / 新建）或 `isEditablePath(path)`——判据只有
+   * 该会话是否可编辑（editable-non-md-files，裁决 D1「注册表全量文本类」）。取值 =
+   * 无文件上下文（空态 / 新建）或 `isEditablePath(path)`，且 **vault 外只读会话恒为假**
+   *（change quick-open-file-oct23 的 D2）。判据只有
    * `attachments.ts` 的 `isEditablePath` 一处（REVIEW.md 「同一语义两处真源」条）。同 `mode` 一样是**逐会话**
    * 的：`modeExtensions` 按它装视图层 editability（`editable` / `readOnly` / `aria-readonly`），
    * dispatch 层的 `changeFilter` 按它的实例级投影放行，保存链路的 `saveBaseline` 也读它
    *（save-controller.ts）。装载与激活时必须与 state / mode 一起同步（见 syncProjection）。
+   *
+   * 三处按路径重算的地方（`makeSession` / `reloadSession` / `remapSessionPaths`）必须收敛到
+   * **同一个表达式** `!external && isEditablePath(path)`——漏一处，一次装载就能把只读翻回
+   * 可编辑（change quick-open-file-oct23 的 design §5.2 点名的风险点）。
    */
   editable: boolean;
+  /**
+   * 是否是**vault 外只读会话**（change quick-open-file-oct23 的 D2 倾向侧）。
+   *
+   * **全生命周期不变**，只在创建点定死（`EditorHandle.createExternalSession`）。它是「这个
+   * 会话来自 vault 之外」的唯一判据，派生的行为散在各消费点、但判据不看 `path` 是否以 `/`
+   * 开头（那会在每个消费点长出第二个判据）：不保存、不登记磁盘 revision、不写崩溃备份、
+   * 不参与 watch 与阅读位置、不进按 vault 持久化的标签列表、不提供链接解析基准。
+   *
+   * 结构性只读由 `editable === false` 承担（视图层 + `changeFilter` 两层拒收），本字段只
+   * 回答「它是不是外部会话」。
+   */
+  readonly external: boolean;
   /**
    * 离开该会话时的滚动位置快照（`view.scrollSnapshot()` 的产物）。**滚动不在 CM state 里**
    *（只存在于 scrollDOM），所以必须逐会话单独存，否则切标签会继承上一篇的滚动位置。
@@ -1098,6 +1115,19 @@ export interface EditorHandle {
    * 第二份扩展名 / 分类判据（REVIEW.md「同一语义两处真源」条）。
    */
   createImageSession(path: string, loaded?: boolean): EditorSession;
+  /**
+   * 建一个 **vault 外只读会话**（change quick-open-file-oct23 的 D2 倾向侧 / design §5.2）：
+   * `external === true`、`editable === false`、`path` 是**绝对路径**、内容未装载
+   * （`loaded === false`，随后的 `reloadSession` 填正文）。
+   *
+   * 与 `createShellSession` 的区别只有两处取值：`external` 与可编辑性——后者按路径判
+   *（绝对路径同样能判出 md / code / text），而外部会话**恒只读**（`editable` 的三处重算
+   * 因此都收敛到 `!external && isEditablePath(path)`）。
+   *
+   * 不读盘、不激活：字节读取走装配层的 `fs_read_external`（ADR 0002 §3：webview 不直接触
+   * 文件系统），本层只建账。
+   */
+  createExternalSession(path: string): EditorSession;
   /**
    * 写会话的「内容已装载」标志（M629，只服务图片会话的查看面生命周期）。
    *
@@ -1682,7 +1712,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // 那一份文档**的基准，切标签时它随 active 一起换（M149 前的静默错误面就在这里）。
     // 启动早期（EditorView 的 StateField create 早于 active 赋值）读到 undefined：
     // 装饰层按「无文件上下文」降级渲染，首个会话激活后随状态重建自然补齐（M218 A1）。
-    currentFilePath: () => active?.path,
+    // vault 外只读会话不提供基准（change quick-open-file-oct23 的 spec「外部会话的文档内
+    // wikilink / 相对路径链接 MUST NOT 被解析」）：它的 path 是绝对路径，按 vault 相对路径
+    // 解析只会得到错的东西——链接保持原样、不可激活。
+    currentFilePath: () => (active?.external === true ? undefined : active?.path),
     attachmentProvider: () => provider,
     wikilinkResolver: () => wikilinkResolver,
     lightbox: () => lightbox,
@@ -2104,10 +2137,17 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     });
   }
 
-  function makeSession(doc: string, path: string | undefined, mode: EditorMode, loaded = true): EditorSession {
+  function makeSession(
+    doc: string,
+    path: string | undefined,
+    mode: EditorMode,
+    loaded = true,
+    external = false,
+  ): EditorSession {
     // 可编辑性按文件类裁决（唯一判据在 attachments.ts 的 isEditablePath）：无路径（空态 /
     // 新建）可编辑；有路径时 md/code/text 可编辑，image/binary 不可（它们不进编辑器）。
-    const editable = isEditablePath(path);
+    // vault 外只读会话（external）**恒不可编辑**——三处重算共用这一个表达式（design §5.2）。
+    const editable = !external && isEditablePath(path);
     return {
       id: ++sessionSerial,
       kind: "doc",
@@ -2116,6 +2156,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       loaded,
       mode,
       editable,
+      external,
       cleanDoc: doc,
       dirty: false,
       scroll: undefined,
@@ -2154,6 +2195,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       loaded,
       mode: "image",
       editable: false,
+      external: false,
       cleanDoc: "",
       dirty: false,
       scroll: undefined,
@@ -2385,7 +2427,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // 壳态（内容未装载）不取 mtime：那是每标签一次的 IPC，而壳的正文本来就没有可标注的
     // doc-meta（M283）；装载时 `reloadSession` 会补上，随后前台重建装饰时缓存已就位。
     // 图片会话同样不取：它没有正文装饰，字节装载走查看面（装配层）。
-    if (isDocSession(session) && session.loaded) ensureMtime(session.path);
+    // vault 外只读会话也不取（design §5.2）：绝对路径走 vault 内校验必然被拒。
+    if (isDocSession(session) && session.loaded && !session.external) ensureMtime(session.path);
     // 在途的 paint 事件作废：它属于刚切走的那个会话。
     ++readySerial;
     // 只换 state——撤销史 / 语法树 / 选区 / 搜索查询都在 state 里跟着走，不重新解析。
@@ -2596,6 +2639,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       sessions.push(session);
       return session;
     },
+    createExternalSession(path: string) {
+      // vault 外只读会话（change quick-open-file-oct23 的 §5.2）：与壳同形，但 `external`
+      // 定死为真（可编辑性因此恒假）。字节读取在装配层（ADR 0002 §3）。
+      const session = makeSession("", path, modeForPath(path, defaultMode), false, true);
+      sessions.push(session);
+      return session;
+    },
     createImageSession(path: string, loaded = false) {
       // 图片会话（M629）：不建文本壳、不读字节、不激活（契约见 EditorHandle）。
       const session = makeImageSession(path, loaded);
@@ -2613,8 +2663,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       if (!isDocSession(session)) return;
       const mode = modeForPath(path, defaultMode);
       // 可编辑性按文件类（与 mode 正交，唯一判据 isEditablePath）：path 一换就要一起改，
-      // 否则会话会停在上一份文件的编辑性上。
-      const editable = isEditablePath(path);
+      // 否则会话会停在上一份文件的编辑性上。vault 外只读会话恒不可编辑——三处重算的
+      // 同一表达式（design §5.2）。
+      const editable = !session.external && isEditablePath(path);
       session.path = path;
       session.mode = mode;
       session.editable = editable;
@@ -2622,8 +2673,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       session.loaded = true;
       session.cleanDoc = doc;
       // 装载 = 磁盘内容以这次为准（打开 / 外部重载 / 恢复备份）：mtime 缓存一律废掉重取。
-      if (path !== undefined) mtimeCache.delete(path);
-      ensureMtime(path);
+      // vault 外只读会话不取 mtime（design §5.2 的「逐项不参与」表）：它的路径是绝对路径，
+      // `fs_file_mtime` 走 vault 内校验必然被拒——每标签一次的必然失败 IPC 没有意义。
+      if (path !== undefined && !session.external) {
+        mtimeCache.delete(path);
+        ensureMtime(path);
+      }
       // 内容整篇换掉：旧的滚动快照锚在一份已经不存在的正文上，作废。
       session.scroll = undefined;
       if (session !== active) {
@@ -2706,13 +2761,17 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // 查看面的字节按新路径重读由装配层的同步点判据（路径变了就重装）承担。
         if (!isDocSession(session)) continue;
         // 扩展名可能变了（a.md → a.txt）：mode 与可编辑性按新路径重裁，内容不动。
+        // vault 外只读会话同样收敛到同一表达式（它的路径是绝对路径，改名链路本就不会命中它，
+        // 这条判据是防线而不是活路径，design §5.2）。
         const mode = modeForPath(next, defaultMode);
-        const editable = isEditablePath(next);
+        const editable = !session.external && isEditablePath(next);
         const modeChanged = mode !== session.mode || editable !== session.editable;
         session.mode = mode;
         session.editable = editable;
-        mtimeCache.delete(next);
-        ensureMtime(next);
+        if (!session.external) {
+          mtimeCache.delete(next);
+          ensureMtime(next);
+        }
         // 前台会话经 dispatch 生效（updateListener 把新 state 回写 session.state），
         // 后台会话只换代它的 state——与 reconfigureWrap / reloadSession 的既有分岔同形。
         // 路径进装饰层的基准（previewContext.currentFilePath 活读 active.path）与
@@ -2738,6 +2797,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 幂等：装配层在唯一的同步点上每次重算（稳态下绝大多数调用在这里早退）。
       if (session.editable === editable) return;
       if (!sessions.includes(session)) return; // 防御性：不属于本实例的会话忽略
+      // vault 外只读会话是**结构性只读**（change quick-open-file-oct23 的 D2）：可编辑性在
+      // 创建点定死，运行期没有改判路径（本入口只服务「分栏态空 pane 的输入闸门」那一条）。
+      if (session.external) return;
       // 图片会话是**结构性只读**（M629）：editable 恒 false，运行期没有改判路径，
       // 也没有可重配的文本面。这里守住而不是让下面喂 "image" 给 modeAndWrapEffects。
       if (!isDocSession(session)) return;

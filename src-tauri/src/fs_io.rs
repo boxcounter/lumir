@@ -1226,6 +1226,89 @@ pub fn read_text_snapshot(root: &Path, rel: &str) -> Result<(String, String), Co
     Ok((content, revision))
 }
 
+/// vault **外**文本文件的只读读取（change quick-open-file-oct23 的 `fs-io` ADDED
+/// 「vault 外只读读取通道」；消费方只有 `quick-open` 的 vault 外只读会话）。
+///
+/// 它是本模块**唯一**一条接受 vault 外路径的读取入口，因此边界逐条写死在这里、不依赖调用方
+/// 自觉（[`resolve_in_vault`] 的任何约束都**不放宽**，vault 内文件仍走上面那几条）：
+///
+/// 1. 入参必须是**绝对路径**；相对路径、裸文件名、含 `..` 段的路径一律拒绝（绝对路径下 `..`
+///    本无逃逸含义，这里按「不认」处理——与 `is_well_formed_vault_path` 同一口径，形状明确
+///    比语义完备更重要）；
+/// 2. 归一化**跟随符号链接**（`canonicalize`）：`/tmp` 本身就是符号链接，拒绝符号链接会把最
+///    常见的临时路径一起拒掉；
+/// 3. 归一化后必须是**常规文件**（目录 / 设备 / 不存在的路径各给人话错误）；
+/// 4. 大小上限复用 [`ATTACHMENT_MAX_BYTES`]（与 vault 内文本读取**同一个常量**，MUST NOT
+///    新写一个数）——超限在分配内存之前判；
+/// 5. UTF-8 解码失败返回与 vault 内读取**同一组**错误码（`fs_invalid_utf8`），MUST NOT 发明
+///    平行 code（错误码到文案的映射表只有 `src/copy-data.ts` 一份）。
+///
+/// 不提供目录列举、通配、递归与写入：本函数只回答「读出这一个文件」。不读写任何 vault 状态
+/// （没有打开 vault 时同样可用——它不依赖 vault）。
+pub fn read_external_text(path: &str) -> Result<String, CommandError> {
+    if path.is_empty() {
+        return Err(CommandError::new("fs_path_invalid", "路径为空"));
+    }
+    let raw = Path::new(path);
+    if !raw.is_absolute() {
+        return Err(
+            CommandError::new("fs_path_invalid", format!("只允许绝对路径：{path}"))
+                .param("path", path),
+        );
+    }
+    if raw.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err(
+            CommandError::new("fs_path_invalid", format!("路径不允许包含 ..：{path}"))
+                .param("path", path),
+        );
+    }
+    let canon = raw.canonicalize().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            CommandError::new("fs_not_found", format!("文件不存在：{path}")).param("rel", path)
+        } else {
+            CommandError::new("fs_read_failed", format!("无法读取 {path}：{e}"))
+                .param("rel", path)
+                .param("reason", e.to_string())
+        }
+    })?;
+    let meta = std::fs::metadata(&canon).map_err(|e| {
+        CommandError::new("fs_read_failed", format!("无法读取 {path}：{e}"))
+            .param("rel", path)
+            .param("reason", e.to_string())
+    })?;
+    if !meta.is_file() {
+        return Err(
+            CommandError::new("fs_not_a_file", format!("{path} 不是文件（可能是目录）"))
+                .param("rel", path),
+        );
+    }
+    if meta.len() > ATTACHMENT_MAX_BYTES {
+        return Err(CommandError::new(
+            "fs_too_large",
+            format!(
+                "文件 {path} 大小 {}MB，超过 {}MB 上限，已拒绝读取",
+                meta.len() / (1024 * 1024),
+                ATTACHMENT_MAX_BYTES / (1024 * 1024)
+            ),
+        )
+        .param("rel", path)
+        .param("mb", meta.len() / (1024 * 1024))
+        .param("limit", ATTACHMENT_MAX_BYTES / (1024 * 1024)));
+    }
+    let bytes = std::fs::read(&canon).map_err(|e| {
+        CommandError::new("fs_read_failed", format!("无法读取 {path}：{e}"))
+            .param("rel", path)
+            .param("reason", e.to_string())
+    })?;
+    String::from_utf8(bytes).map_err(|_| {
+        CommandError::new(
+            "fs_invalid_utf8",
+            format!("文件 {path} 不是合法 UTF-8 编码（可能是 GBK 等其他编码），暂不支持读取"),
+        )
+        .param("rel", path)
+    })
+}
+
 /// `document_save` 拒绝保存的扩展名（image / binary 两类，升序）。
 ///
 /// **事实源是前端的 `src/preview/attachments.ts` 注册表**（image MIME 键 + 二进制扩展名
@@ -2853,6 +2936,63 @@ mod tests {
         // 目录按"不是文件"拒绝
         let err = read_text_file(&v.0, "sub").unwrap_err();
         assert_eq!(err.code, "fs_not_a_file");
+    }
+
+    /// vault 外只读读取通道（change quick-open-file-oct23 的 `fs-io` ADDED）的五条拒绝路径
+    /// 与一条正常读。判据落在**错误码**上（上屏文案按 code 取，码错 = 用户看到错的人话）。
+    #[test]
+    fn read_external_text_ok_and_rejections() {
+        let v = TempVault::with_fixture();
+        let note = v.0.join("note.md");
+        let note_abs = note.to_str().unwrap().to_string();
+        assert_eq!(read_external_text(&note_abs).unwrap(), "# hello");
+
+        // 相对路径 / 裸文件名：拒绝（`fs_path_invalid`，D172 无占位符）。
+        for bad in ["note.md", "sub/deep/a.txt", "./note.md"] {
+            let err = read_external_text(bad).unwrap_err();
+            assert_eq!(err.code, "fs_path_invalid", "case: {bad}");
+        }
+        // 含 `..` 段的绝对路径：形状不认（即使归一化后会落在同一文件）。
+        let dotdot = format!("{}/../{}", v.0.display(), "note.md");
+        let err = read_external_text(&dotdot).unwrap_err();
+        assert_eq!(err.code, "fs_path_invalid");
+        // 目录：`fs_not_a_file`（带 rel）。
+        let dir = v.0.join("sub");
+        let err = read_external_text(dir.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "fs_not_a_file");
+        assert_eq!(err.params.get("rel").map(String::as_str), dir.to_str());
+        // 不存在的路径：`fs_not_found`。
+        let missing = v.0.join("nope.md");
+        let err = read_external_text(missing.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "fs_not_found");
+        // 非法 UTF-8：与 vault 内读取同码（MUST NOT 发明平行 code）。
+        let gbk = v.0.join("gbk.txt");
+        std::fs::write(&gbk, [0xd6, 0xd0, 0xce, 0xc4]).unwrap();
+        let err = read_external_text(gbk.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "fs_invalid_utf8");
+        // 超限：稀疏文件，metadata 报超限即拒（不分配对应内存）。
+        let big = v.0.join("big.txt");
+        std::fs::File::create(&big)
+            .unwrap()
+            .set_len(ATTACHMENT_MAX_BYTES + 1)
+            .unwrap();
+        let err = read_external_text(big.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "fs_too_large");
+    }
+
+    /// 符号链接**跟随**（不是拒绝）：`/tmp` 本身就是符号链接，拒绝会把最常见的临时路径一起
+    /// 拒掉。这里用一条指向常规文件的链接钉住「归一化后是常规文件即放行」。
+    #[cfg(unix)]
+    #[test]
+    fn read_external_text_follows_symlink_to_regular_file() {
+        let v = TempVault::with_fixture();
+        let target = v.0.join("note.md");
+        let link = v.0.join("link.md");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(
+            read_external_text(link.to_str().unwrap()).unwrap(),
+            "# hello"
+        );
     }
 
     #[test]

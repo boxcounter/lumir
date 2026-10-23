@@ -1920,7 +1920,12 @@ body {
   border: 1px solid var(--border);
 }
 
-/* 轻量大纲浮层（M148）：绝对定位贴**指示段上方**，不占任何常驻空间。
+/* 轻量大纲浮层（M148）与按路径快速打开浮层（M655 的 `.lumir-qo`）：**同一条几何**、两个名字。
+   为什么写成选择器列表而不是复制一份规则：几何/配色/滚动口径只有一份真源（REVIEW.md
+   「同一语义两处真源」条）——快速打开浮层（change quick-open-file-oct23 的 design §8）要求
+   直接复用本段几何、MUST NOT 新增色值 / 字号 / 圆角 token。两个 class 是**互斥的**（各自
+   查各自的浮层），`.lumir-qo` 因此不继承 `.lumir-toc` 的任何选择器语义。
+   绝对定位贴**指示段上方**，不占任何常驻空间。
    壳 = --preview-bg + 1px --border + --shadow-raise（tokens v1.1 浮层配方；eink 无阴影，
    分层改由白底 + 实心黑框承担）。
    定位块是 modeline（M211 前挂在已删除的标题区）：指示段今天在**窗口最后一行**，浮层因此向上展开
@@ -1936,7 +1941,8 @@ body {
    H 下，可用高度 = H − 42（标题栏）− 25（modeline）：`H − 67 ≥ 0.8H` ⇔ `H ≥ 335px`；
    更矮的窗口下浮层上沿可能越出窗口顶部（不加钳制，见 change toc-popover-emacs-keys-and-max-height
    的非目标）。标题条数少时约束换成自然高度（输入行 + 列表 + 提示）。 */
-.lumir-toc {
+.lumir-toc,
+.lumir-qo {
   position: absolute;
   bottom: 100%;
   left: var(--sp-7);
@@ -1954,12 +1960,14 @@ body {
 }
 /* 优先级 0-2-0 > `.lumir-toc` 的 0-1-0：加了 display: flex 之后这里的隐藏仍然生效
    （空态与关闭态的防线是 tests/visual 的 toc-outline 场景）。 */
-.lumir-toc[hidden] {
+.lumir-toc[hidden],
+.lumir-qo[hidden] {
   display: none;
 }
 /* 唯一滚动容器：flex 子项要能缩到内容高以下，min-height: 0 是前提（漏了上限就失效）。
    padding 4（定稿 .pop-list，index.html:696）：选中底色内缩成圆角块，不直顶浮层边缘。 */
-.lumir-toc-list {
+.lumir-toc-list,
+.lumir-qo-list {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
@@ -1967,13 +1975,15 @@ body {
   padding: var(--sp-2);
 }
 /* 无命中态：列表让位给一行提示（列表隐藏后它顶在列表区的位置）。 */
-.lumir-toc-list[hidden] {
+.lumir-toc-list[hidden],
+.lumir-qo-list[hidden] {
   display: none;
 }
 /* 输入筛选行（change list-filter）：列向 flex 的固定行，MUST NOT 被压缩——浮层总高上限
    （80vh）因此不含它的伸缩。下划线形态（底线 --border、focus 转 --accent），与搜索面板的
    输入行同形（src/search-panel.css），不引入第二种输入形态。 */
-.lumir-toc-input {
+.lumir-toc-input,
+.lumir-qo-input {
   flex: 0 0 auto;
   margin: 0 var(--sp-6) var(--sp-3);
   padding: 3px 2px;
@@ -1986,11 +1996,13 @@ body {
   /* 定稿 .pop-filter（index.html:690-695）：12.5px。 */
   font-size: var(--fs-ui-s);
 }
-.lumir-toc-input:focus {
+.lumir-toc-input:focus,
+.lumir-qo-input:focus {
   outline: none;
   border-bottom-color: var(--accent);
 }
-.lumir-toc-empty {
+.lumir-toc-empty,
+.lumir-qo-empty {
   flex: 0 0 auto;
   margin: 0;
   padding: 3px var(--sp-6);
@@ -1999,7 +2011,8 @@ body {
 }
 /* 列表行（定稿 .opop .pop-row，index.html:697-704、:715-719）：h26 / radius 6 / 左 padding
    d0 8、d1 26（步进 18px，随 --toc-depth 归一后的层差；--toc-depth 由 src/toc.ts 写入）。 */
-.lumir-toc-item {
+.lumir-toc-item,
+.lumir-qo-item {
   height: 26px;
   line-height: 26px;
   padding: 0 var(--sp-4) 0
@@ -2021,30 +2034,35 @@ body {
   background: var(--sel);
   font-weight: var(--fw-emphasis);
 }
-.lumir-toc-item.is-active {
+.lumir-toc-item.is-active,
+.lumir-qo-item.is-active {
   background: var(--sel);
   box-shadow: inset 0 0 0 1px currentColor;
 }
 /* hover 与选中同族（design §2.7 #1 的类推行：is-active = 树选中态、hover = --hover）——
    声明在选中态之后，与 .ft-row 的次序一致（同一心智模型：悬停反馈压过常驻选中底色）。 */
-.lumir-toc-item:hover {
+.lumir-toc-item:hover,
+.lumir-qo-item:hover {
   background: var(--hover);
 }
 /* eink：选中项的前景取 `--sel-text`（当前段与键盘游标同底色，同一条规则）。
    M291 起不再排除 `:hover`（理由同 .ft-row.is-current：黑字下两种状态都可读）。 */
 :root[data-theme="eink"] .lumir-toc-item.is-current,
-:root[data-theme="eink"] .lumir-toc-item.is-active {
+:root[data-theme="eink"] .lumir-toc-item.is-active,
+:root[data-theme="eink"] .lumir-qo-item.is-active {
   color: var(--sel-text);
 }
 /* eink 规则⑧：filter 输入的聚焦强调走**线宽**档（下划线形态在 eink 无颜色可用）——
    取三档里的最强档 1.6px（与 composer focus 同值，见 design §2.7 #1 的偏差记录）。 */
 :root[data-theme="eink"] .lumir-toc-input:focus,
+:root[data-theme="eink"] .lumir-qo-input:focus,
 :root[data-theme="eink"] .vault-filter:focus,
 :root[data-theme="eink"] .lumir-goto-input:focus {
   border-bottom-width: 1.6px;
 }
 /* 提示常驻可见是 requirement（不是观感偏好）：flex 会压缩它，故不允许收缩。 */
-.lumir-toc-hint {
+.lumir-toc-hint,
+.lumir-qo-hint {
   flex: 0 0 auto;
   margin: var(--sp-3) 0 0;
   padding: var(--sp-3) var(--sp-6);

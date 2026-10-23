@@ -98,6 +98,9 @@ pub fn run() {
             // 批量存在探测（同 change §4.11）：会话恢复与阅读位置共用。
             commands::fs_paths_exist,
             commands::fs_read_snapshot,
+            // vault 外只读读取通道（change quick-open-file-oct23 的 fs-io ADDED）：只服务
+            // quick-open 的 vault 外只读会话，绝对路径 + 常规文件 + 50MB 上限全部在 Rust 侧。
+            commands::fs_read_external,
             commands::fs_read_attachment,
             // 剪贴板图片落盘（change paste-clipboard-image，M416）：转码 + 内容寻址命名 +
             // 全 vault 去重 + 原子写（见 fs_io::write_attachment）。

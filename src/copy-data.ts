@@ -1812,6 +1812,50 @@ const COPY_TABLE = {
     zh: "权限规则不能为空",
     en: "A permission rule can't be empty",
   },
+  // D570–D583：按路径快速打开（change quick-open-file-oct23；消费点见 文案-Copy.md 的
+  // 「D 区间 → 归属文件 / 常量」表）。
+  D570: { zh: "按路径快速打开文件", en: "Open a file by path" },
+  D571: { zh: "输入路径或文件名", en: "Type a path or file name" },
+  D572: {
+    zh: "输入路径或文件名；可加 :12 这样的行号后缀",
+    en: "Type a path or file name; add a line suffix such as :12 to jump",
+  },
+  D573: { zh: "找不到：{query}", en: "Not found: {query}" },
+  D574: { zh: "{path} 是目录，不能打开", en: "{path} is a folder and can't be opened" },
+  D575: {
+    zh: "命中 {count} 条",
+    en: "{count} matches",
+    enOne: "{count} match",
+  },
+  D576: {
+    zh: "命中 {count} 条，只显示前 {limit} 条",
+    en: "{count} matches, showing the first {limit}",
+    enOne: "{count} match, showing the first {limit}",
+  },
+  D577: { zh: "vault 外 · 只读", en: "Outside vault · read-only" },
+  D578: { zh: "只读", en: "read-only" },
+  D579: {
+    zh: "{name}（vault 外只读）",
+    en: "{name} (read-only, outside the vault)",
+  },
+  D580: {
+    zh: "暂不支持在 vault 外打开这类文件：{path}",
+    en: "Opening this kind of file from outside the vault isn't supported yet: {path}",
+  },
+  D581: {
+    zh: "打开失败，原因见正文区提示",
+    en: "Couldn't open it — see the message over the document area",
+  },
+  D582: {
+    zh: "还没有打开 vault，无法按路径打开文件",
+    en: "No vault is open, so opening a file by path isn't available yet",
+  },
+  // D583：`app.quick-open` 绑定 ⌘P 的来由（键位面板逐条来由；D8 裁决把 keys.ts 的 doc 纳进
+  // 语言面，绑定表只留 docKey）。
+  D583: {
+    zh: "⌘P 按路径快速打开文件（change quick-open-file-oct23 的 D1 裁决；D2 追加裁决的只读呈现口径见 D577–D579）。语义取 Emacs 的 `C-x C-f`，本仓单段键位面上取 ⌘P——代码编辑器里它就是「按路径 / 名字快速打开」的通行惯例（VS Code / Sublime / Zed 同款）。一条命令承担开与关（输入面已打开时再按收起）。取 global——焦点在编辑器、文件树、搜索框、浮层或 harness composer 内时同样要能按（`app.quick-open` 进 `NON_TAB_GLOBAL_COMMAND_IDS`，作用域由 `scopeOfCommand` 机械派生）。键位占用已核（零冲突，三条独立来源）：① 表内——src/keys.ts 即真源，现表无 `Cmd-p`（`⌘O` 是 vault.switcher、`⌘F` 是 app.search-open、`⌘⇧O` 是 toc.toggle）；② 原生菜单 accelerator 集合（tauri 2.12.4 的 `Menu::default()` 在 macOS 上 File 子菜单只有 CloseWindow，muda 0.20.0 的预置加速键表里没有 KeyP；自建项只有 ⌘Q）不含 ⌘P；③ 系统级——macOS 不把 ⌘P 预置为系统菜单键（打印是应用自己往 File 菜单加的项，本应用没有打印能力），WKWebView 层的行为由真机按键断言复核（MUST NOT 只凭推理落章）。token 形态 `Cmd-p` 单段、无空白（无 Alt，按字符判定即可）；它**有**默认绑定，因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。",
+    en: "⌘P opens quick-open: type or paste a path (optionally with a `:line` suffix) and press Enter to open it (change quick-open-file-oct23's D1; the read-only presentation for paths outside the vault is D577–D579). The semantics follow Emacs `C-x C-f`; on this repo's single-segment key surface it takes ⌘P — in code editors that is the conventional \"open by path / name\" key (VS Code / Sublime / Zed alike). One command both opens and closes (pressing it again while the input surface is open collapses it). Scope is global — it must work while focus is in the editor, the file tree, the search box, a popover or the harness composer (`app.quick-open` is listed in `NON_TAB_GLOBAL_COMMAND_IDS`, so `scopeOfCommand` derives the scope mechanically). Key occupancy checked (no conflicts, three independent sources): (1) in the table — src/keys.ts is the source of truth and there is no `Cmd-p` (`⌘O` is vault.switcher, `⌘F` is app.search-open, `⌘⇧O` is toc.toggle); (2) the native menu accelerator set (tauri 2.12.4's `Menu::default()` only has CloseWindow in the macOS File submenu, and muda 0.20.0's predefined accelerators contain no KeyP; the only self-built item is ⌘Q) has no ⌘P; (3) the system level — macOS presets no ⌘P menu item (Print is an item apps add to File themselves, and this app has no printing), while the WKWebView layer is verified by a real-machine key assertion (MUST NOT be concluded by reasoning alone). Token form `Cmd-p` is a single segment with no whitespace (no Alt, so the character is enough); it **has** a default binding and therefore MUST NOT be registered in KEYLESS_COMMAND_IDS.",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

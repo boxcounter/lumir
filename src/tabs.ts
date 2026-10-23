@@ -283,9 +283,14 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         open.className = "tab-open";
         open.setAttribute("role", "tab");
         open.setAttribute("aria-selected", String(isActive));
-        // 读屏名点名文件名 + 它自己的未保存状态（文案 D90）；悬停提示给完整相对路径
-        //（同名文件分散在不同目录时要能分辨，文案 D91）。
-        open.setAttribute("aria-label", session.dirty ? t("D90", { name }) : name);
+        // 读屏名点名文件名 + 它自己的状态：vault 外只读标签（change quick-open-file-oct23 的
+        // D2 追加裁决）追加「vault 外只读」一句，未保存变体沿用 D90。
+        open.setAttribute(
+          "aria-label",
+          session.external === true ? t("D579", { name }) : session.dirty ? t("D90", { name }) : name,
+        );
+        // 悬停提示给完整路径（同名文件分散在不同目录时要能分辨，文案 D91）。vault 外只读会话的
+        // path 就是**绝对路径**：这条 tooltip 因此天然满足「hover 显示完整绝对路径」。
         open.title = path;
         // 按钮上的这条与 M149 起逐字相同（点标签不该抢编辑器焦点、不拖出选区）。它不在
         // 拖拽问题的那条路径上（拖拽落点在标题栏右端的标识块），保留原样。
@@ -296,7 +301,10 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         dot.hidden = !session.dirty;
         const label = document.createElement("span");
         label.className = "tab-name";
-        label.textContent = name;
+        // 可见的只读标记（Alex 2026-10-23 追加裁决：必须在标签页一眼可辨，不能只靠 modeline
+        // 的灰字）：可见文本追加「· 只读」；纯文本，不新增色值 / 字号 / 图标 token。
+        label.textContent =
+          session.external === true ? `${name} · ${t("D578")}` : name;
         open.append(dot, label);
 
         const close = document.createElement("button");

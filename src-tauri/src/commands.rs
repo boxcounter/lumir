@@ -890,6 +890,30 @@ pub fn fs_read_snapshot(
     Ok(ReadSnapshot { content, revision })
 }
 
+/// vault 外文本文件的只读快照（change quick-open-file-oct23 的 `fs-io` ADDED
+/// 「vault 外只读读取通道」；消费方只有 `quick-open` 的 vault 外只读会话）。
+///
+/// **只含内容**：外部会话不保存、不参与监听，revision 与 mtime 都没有消费者
+///（REVIEW.md「值或开关声明了却没有消费者」条）。
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct ExternalTextSnapshot {
+    pub content: String,
+}
+
+/// 按**绝对路径**读取一个 vault 外文本文件（只读、只读单个文件、不列举目录）。
+///
+/// 形状校验、常规文件判定、50MB 上限与 UTF-8 解码全在 [`fs_io::read_external_text`] 里
+/// （Rust 侧强制，webview 不参与）；本命令只做转发。它**不依赖 vault**（未打开 vault 时同样
+/// 可用），也不改任何 vault 状态。既有「vault 内路径约束」一条不放宽——vault 内文件仍经
+/// `fs_read_snapshot` 读。
+#[tauri::command]
+pub fn fs_read_external(path: &str) -> Result<ExternalTextSnapshot, CommandError> {
+    Ok(ExternalTextSnapshot {
+        content: fs_io::read_external_text(path)?,
+    })
+}
+
 /// 单文件元数据（M218 doc-title/doc-meta 块的数据源）：mtime 取不到为 null，
 /// 与 `FsEntry.mtime_ms` 同口径。
 #[derive(Debug, Clone, Serialize, TS)]

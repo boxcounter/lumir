@@ -132,6 +132,17 @@ test("sessionSnapshot：**壳态标签一样入盘**（M283 的 3.1：纯惰性�
   });
 });
 
+test("sessionSnapshot：**vault 外只读标签不入盘**、也不计入标签数（M655 的唯一例外）", () => {
+  // change quick-open-file-oct23 的 vault-workspace MODIFIED：「每一个有路径的 vault 内标签
+  // SHALL 被持久化」的唯一例外是外部只读标签（`external: true`）。判据只在这一处出现。
+  const inside = { path: "a.md", external: false } as unknown as EditorSession;
+  const external = { path: "/tmp/notes/draft.md", external: true } as unknown as EditorSession;
+  assert.deepEqual(
+    sessionSnapshot([{ sessions: [inside, external], activePath: "/tmp/notes/draft.md" }], 0.5, false),
+    { panes: [{ tabs: ["a.md"], active: null }], ratio: 0.5, harnessPane: false },
+  );
+});
+
 test("sameSnapshot：逐项比较（顺序 / pane 数 / 比例也算），用于决定要不要排期写盘", () => {
   const a = { panes: [{ tabs: ["a.md", "b.md"], active: "b.md" }], ratio: 0.5, harnessPane: false };
   assert.equal(
