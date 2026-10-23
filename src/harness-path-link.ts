@@ -83,8 +83,13 @@ export function isWellFormedVaultPath(path: string): boolean {
   return true;
 }
 
-/** 在 `at` 处解析行号后缀；不合形状时不消费（返回 end = at）。 */
-function lineSuffixAt(text: string, at: number): { line?: number; column?: number; end: number } {
+/** 在 `at` 处解析行号后缀；不合形状时不消费（返回 end = at）。
+ *
+ *  导出是给 `src/quick-open.ts` 用的（change quick-open-file-oct23 的 D5）：快速打开的输入
+ *  串尾部同样要认 `:行` / `:行:列` / `:起-止`，语义必须与本模块**同一份**（MUST NOT 复制
+ *  正则——两种后缀解析一旦分叉，同一串在一个入口能开、另一个入口打不开，属于最难发现的
+ *  漂移）。调用方按「把 `at` 对准输入串里某个冒号、要求 `end` 恰好消耗到串尾」使用。 */
+export function lineSuffixAt(text: string, at: number): { line?: number; column?: number; end: number } {
   LINE_SUFFIX.lastIndex = at;
   const match = LINE_SUFFIX.exec(text);
   if (match === null) return { end: at };
@@ -317,17 +322,22 @@ export interface PathJumpPlan {
  *
  * 两次 reveal 各自单独开窗（首轮的窗在下一帧已经关了）；补发只在**用户没动**时发生，
  * 不跟用户抢选区。无行号时不碰视口。
+ *
+ * 返回 `plan.open` 的结果（这次打开是否成功）。两个调用方对它的用法不同——harness 侧
+ * 不看（点击的反馈由打开链路自己上屏），快速打开要等它才决定是否收起浮层
+ *（change quick-open-file-oct23 的 design §4：MUST NOT 在发起打开前就无条件关闭）。
  */
 export async function openPathAtLine(
   plan: PathJumpPlan,
   path: string,
   line?: number,
-): Promise<void> {
+): Promise<boolean> {
   const opened = await plan.open(path);
-  if (!opened || line === undefined) return;
+  if (!opened || line === undefined) return opened;
   plan.duringTransition(() => plan.reveal(line));
   plan.nextFrame(() => {
     if (!plan.needsRescroll()) return;
     plan.duringTransition(() => plan.reveal(line));
   });
+  return opened;
 }

@@ -14,7 +14,7 @@ import { DEFAULT_FONT_SIZE } from "./typography";
 import type { TextScaleDirection, TypographySettings } from "./typography";
 import type { EditorMode } from "./bindings/EditorMode";
 import type { MarkdownLineNumbers } from "./bindings/MarkdownLineNumbers";
-import { baseName, createFileTree, linkableVaultPaths, openKind, patchAttachmentPaths, shellPlanOf, vaultAbsolutePath } from "./tree";
+import { baseName, createFileTree, isTextOpenKind, linkableVaultPaths, openKind, patchAttachmentPaths, shellPlanOf, vaultAbsolutePath } from "./tree";
 import type { InlineEditRequest, OpenKind } from "./tree";
 import {
   attachmentSemanticName,
@@ -25,6 +25,7 @@ import {
   fsCreateFile,
   fsMoveEntry,
   fsReadAttachment,
+  fsReadExternal,
   fsReadSnapshot,
   fsRenameEntry,
   fsRevealInFinder,
@@ -61,6 +62,8 @@ import { createToc, extractHeadings } from "./toc";
 import { createImageLightbox } from "./lightbox";
 import { createTableFullscreen } from "./table-fullscreen";
 import { createGotoLinePrompt } from "./goto-line";
+import { createQuickOpen } from "./quick-open";
+import type { ExternalOpenOutcome } from "./quick-open";
 import { createCodeBlockFullscreen } from "./code-block-fullscreen";
 import { blockCopyTarget, codeBlockFullscreenTarget, tableFullscreenTarget } from "./preview/livePreview";
 import { blockCopyText } from "./preview/block-copy";
@@ -142,6 +145,7 @@ import { openSearch } from "./search";
 import { createHarnessPanel } from "./harness-panel";
 import type { HarnessBlockFullscreenPort } from "./harness-panel";
 import { openPathAtLine } from "./harness-path-link";
+import type { PathJumpPlan } from "./harness-path-link";
 import { duringViewportTransition } from "./scroll-position-view";
 import { createQuoteGesture } from "./quote-gesture";
 import { productionQuoteImagePorts, quoteImagesFromVault } from "./quote-image";
@@ -993,6 +997,12 @@ const editor: EditorHandle = {
   // 新 pane 的空白档由 split 自己的 reset 提供。
   createShellSession: (path) =>
     (paneLayout.panes()[0].handle as { kind: "doc"; editor: EditorHandle }).editor.createShellSession(path),
+  // vault 外只读会话只有在**活跃 pane** 打开这一条路径（M655），因此落活跃 pane 的实例。
+  createExternalSession: (path) => activeEditor().createExternalSession(path),
+  // 编辑尝试提示口（M655 的 D2 追加裁决 ③）：提示是**全局一处**的出口，但触发在各自 pane
+  // 的视图上——因此与 createSession 等写类口径一致，广播到全部实例（后建 pane 经 injectEach
+  // 重放，见下方装配点）。
+  setExternalEditGuard: (guard) => forEachEditor((handle) => handle.setExternalEditGuard(guard)),
   reloadSession: (session, doc, path, requestId) => {
     const owner = paneEntryOfSession(session)?.[1].handle;
     ((owner?.kind === "doc" ? owner.editor : undefined) ?? activeEditor()).reloadSession(
@@ -1433,6 +1443,36 @@ const gotoLine = createGotoLinePrompt({
   onVisibilityChange: (open) => editor.setGotoLineGutterVisible(open),
 });
 injectEach((handle) => handle.setGotoLinePrompt(gotoLine));
+
+// 外部只读会话的「编辑尝试」一次性提示（M655，change quick-open-file-oct23 的 D2 追加裁决 ③：
+// 尝试编辑不生效**并给一次性提示**）。触发与去重都在编辑器层（`src/editor.ts` 的 contentDOM
+// 探针：每会话一次），这里只给提示出口——瞬态 toast、非 sticky；内容由 D584 提供。
+injectEach((handle) => handle.setExternalEditGuard(() => toast(t("D584"))));
+
+// ---------------------------------------------------------------------------
+// 按路径快速打开（M655，change quick-open-file-oct23；D1 ⌘P / D2 vault 外只读 / D3 路径优先 +
+// 子串候选 / D4 新标签 / D5 存在性优先后缀解析）。能力、解析纯函数与浮层 DOM 在
+// src/quick-open.ts，装配侧给它六样它看不到的东西：挂点、当前 vault 根与文件索引、目录判定
+// （文件树的只读查询，MUST NOT 另建目录索引）、索引外的存在探测、打开链路（vault 内 = 唯一
+// 打开链路 + 行跳转编排；vault 外 = 只读会话）、以及提示与交还焦点的出口。
+// ---------------------------------------------------------------------------
+const quickOpen = createQuickOpen({
+  mount: shell.modeline,
+  root: () => loadedRoot,
+  files: () => vaultFilePaths,
+  // 目录判定复用装配层已有的那一份（`isVaultDirPath`：树未就绪时恒假，隔开构造时序窗口）。
+  isDir: (path) => isVaultDirPath(path),
+  probe: (paths) => fsPathsExist([...paths]),
+  // 打开意图取 "new"（D4：与文件树点击同落点）。行跳转走 `jumpPlanFor`，与 harness 路径点击
+  // 共用同一份「打开 → 落点 → 下一帧复核」编排。
+  openVaultPath: (path, line) => {
+    const handle = activeEditor();
+    return openPathAtLine(jumpPlanFor(handle, path, line), path, line);
+  },
+  openExternalPath: (path, line) => openExternalText(path, line),
+  notice: (text) => showNotice(text),
+  restoreFocus: () => editor.focusPreservingReadingPosition(),
+});
 
 /** 块级复制的反馈文案（文案 deck D154 / D155）。块类型词只写一处：这里的「表格 / 代码块」与
  *  `block-trigger.ts` 的 `blockCopyLabel`（D153 读屏名）取自同一对词，读屏名与 toast 因此不会
@@ -2403,9 +2443,12 @@ async function submitInlineEdit(request: InlineEditRequest): Promise<void> {
 const readingPositions = createReadingPositionStore({
   // 阅读位置只记**文本文档**（M629）：图片没有「上次读到哪里」，图片会话对它是空动作
   // （spec「独立查看 vault 图片文件」的「搜索 / 大纲 / 阅读位置三项为空动作」之一）。
+  // vault 外只读会话同样不记（M655）：它的键不是 vault 相对路径，键空间与「换 vault 后相对
+  // 路径仍有效」的前提都不成立（spec「外部只读标签不记也不恢复位置」）。
   activePath: () => {
     const session = editor.activeSession();
-    return isDocSession(session) ? session.path : undefined;
+    if (!isDocSession(session) || session.external === true) return undefined;
+    return session.path;
   },
   readPosition: () => editor.readScrollPosition(),
   // 装载口径（M280 拆开）：装载复位之后读数取在 scrollTop = 0 上，落点 ≤ 0 即「这条历史就是
@@ -2434,6 +2477,10 @@ function syncActiveDocument(): void {
   // 收起且不跳转（切标签 / 被外部打开请求置换两条路径都汇到这里）。收起时把焦点交还编辑器
   //（用户接下来的按键应落在新文档上；`focusPreservingReadingPosition` 不改变阅读位置）。
   gotoLine.close();
+  // 按路径快速打开同理（M655 的 spec「前台会话切换时收起」）：输入串指向的是切换前那一刻的
+  // 上下文，切换后 MUST NOT 打开任何文件。成功打开那一次也走这里（会话确实换了）——浮层因此
+  // 在打开成功时才收起，失败时保持打开、输入内容保留。
+  quickOpen.close();
   // resolve 的 from 基准不在这里同步：它由 link-follow.ts 的 resolveBase() 活读前台会话
   //（见那边的注释，那份副本曾在装载时序上造成一整批 wikilink 停在 pending）。
   syncDirtyIndicator();
@@ -2595,6 +2642,63 @@ async function openFile(
   // 新开一个标签（"new"）或就地替换前台标签（"current"）：会话在快照读成之后才落点——
   // 读失败的请求不许留下一个多余的空标签。落点 = 活跃 pane 的标签条（已裁形态）。
   return loadSessionContent(() => activeTabs().targetSessionFor(intent), path, kind, quiet);
+}
+
+// vault 外只读打开（M655，change quick-open-file-oct23 的 D2 倾向侧 / design §5.6）：
+// 读 → 建只读会话 → reloadSession → afterLoad。**第二条装载入口**——MUST NOT 走
+// `loadSessionContent`（它的每一步都假设 vault 相对路径：读快照、登记 revision、阅读位置）。
+//
+// 逐项不参与（都在别处显式跳过，这里只负责本次打开）：不保存 / 不登记 revision / 不写崩溃
+// 备份 / 不参与 watch / 不记阅读位置 / 不入标签持久化 / 不提供链接解析基准 / 不取 mtime。
+async function openExternalText(path: string, line?: number): Promise<ExternalOpenOutcome> {
+  // 外部只读只覆盖文本类（md / code / text）：图片与二进制给一句人话，不打开空标签。
+  const kind = openKind(path);
+  if (!isTextOpenKind(kind)) {
+    return { kind: "failed", message: t("D580", { path }) };
+  }
+
+  /** 把一个已建好的外部会话落到前台并按需落行（去重路径与新开路径共用这一份收尾）。 */
+  const showExternal = (session: EditorSession): ExternalOpenOutcome => {
+    activateSessionInOwnerPane(session);
+    afterLoad();
+    if (line !== undefined) {
+      // 行跳转与 vault 内**同一份**编排；`open` 恒真（文件已经打开了）。
+      void openPathAtLine(
+        jumpPlanFor(activeEditor(), path, line, () => Promise.resolve(true)),
+        path,
+        line,
+      );
+    }
+    return { kind: "opened" };
+  };
+
+  // 去重：同一绝对路径再次打开 = 切到既有标签（与 vault 内同一条语义；不重读——外部文件的
+  // 内容是「打开那一刻的快照」，见 design §9 的已知边界）。
+  const existing = editor.sessionForPath(path);
+  if (existing !== undefined) return showExternal(existing);
+  let content: string;
+  try {
+    content = (await fsReadExternal(path)).content;
+  } catch (e) {
+    // 三级分流（事件源头在 Rust，见 fs_io::read_external_text）：`fs_not_found` = 这一级候选
+    // 不成立（`/tmp/x.md:12` 的第二级是 `/tmp/x.md`，必须继续试）；`fs_not_a_file` = 是目录；
+    // 其余（超限 / 非法编码 / 读失败）按人话上屏、终态。
+    if (isCommandError(e)) {
+      if (e.code === "fs_not_found") return { kind: "missing" };
+      if (e.code === "fs_not_a_file") return { kind: "dir" };
+      return { kind: "failed", message: errorText(e) };
+    }
+    return { kind: "failed", message: errorMessage(e) };
+  }
+  // 读盘期间同一路径可能已经被打开（连按 Enter / 两个入口同时发起）：复查一次去重，
+  // MUST NOT 为同一份外部文件留下第二个标签（判据与读盘前那次相同）。
+  const raced = editor.sessionForPath(path);
+  if (raced !== undefined) return showExternal(raced);
+  const handle = activeEditor();
+  const session = handle.createExternalSession(path);
+  handle.reloadSession(session, content, path);
+  // 落的 pane = 活跃 doc pane（与 `openFile` 的「打开意图落在活跃 pane」同口径）。
+  return showExternal(session);
 }
 
 /** 内容装载的共同体（M283 起被两条路径共用）：壳态标签的「填充」与新文件的「打开」是同一件事
@@ -2878,8 +2982,45 @@ let treeReady = false;
 function isVaultDirPath(path: string): boolean {
   return treeReady && tree.hasDir(path);
 }
-const harnessPanel = createHarnessPanel({
-  shell,
+/** 行跳转 plan 的**唯一装配点**（M655 的 design §1.2）：打开 → 转场窗口内落点 → 下一帧复核
+ *  补发。harness 面板的路径点击与快速打开（`src/quick-open.ts`）共用这一份——MUST NOT 复制
+ *  第二份「下一帧复核」判据（REVIEW.md「同一语义两处真源」条：复核条件一旦分叉，两处会给出
+ *  不同的滚动行为）。
+ *
+ *  `open` 缺省是**vault 内**的唯一打开链路 + 新标签意图（与文件树点击同落点，D4）。vault 外
+ *  只读会话传入「已经打开过了」的恒真实现（字节读取与建会话在 `openExternalText` 里完成）。
+ *
+ *  复核判据：前台仍是捕获时的那个 pane 的文书、选区仍停在目标行首、且目标行不在视口内才补发
+ *  ——不跟用户抢滚动（与 editor.ts 的 healCollapsedReveal 同口径）。 */
+function jumpPlanFor(
+  handle: EditorHandle,
+  path: string,
+  line: number | undefined,
+  open: (target: string) => Promise<boolean> = (target) =>
+    openFile(target, openKind(target), "new"),
+): PathJumpPlan {
+  return {
+    open,
+    reveal: (at) => handle.revealLine(at),
+    duringTransition: (run) => duringViewportTransition(run),
+    nextFrame: (run) => requestAnimationFrame(run),
+    needsRescroll: () => {
+      if (line === undefined) return false;
+      if (activeEditor() !== handle) return false; // 用户已切到别的 pane：不在后台抢滚动
+      if (handle.activeSession().path !== path) return false;
+      const view = handle.view;
+      const doc = view.state.doc;
+      const pos = doc.line(Math.max(1, Math.min(line, doc.lines))).from;
+      if (view.state.selection.main.head !== pos) return false;
+      const coords = view.coordsAtPos(pos);
+      if (coords === null) return false;
+      const rect = view.scrollDOM.getBoundingClientRect();
+      return coords.bottom > rect.bottom + 1 || coords.top < rect.top - 1;
+    },
+  };
+}
+
+const harnessPanel = createHarnessPanel({  shell,
   editor,
   // 块级全屏（M634）：面板里的代码块 / 表格走既有两个单实例遮罩，来源记「面板」。
   blocks: harnessBlocks,
@@ -2888,34 +3029,12 @@ const harnessPanel = createHarnessPanel({
   //（M420 合同 O4：提示锚定**发起它的 pane**）——toast 产出点单一来源，面板不自建。
   toast: (text) => void showToast(harnessPaneMount(), text),
   // 面板里的 vault 路径点击（change harness-path-link）：唯一打开链路 + **新标签**意图；带行号
-  // 时落点走 editor.revealLine（与 TOC 同一算式），整个视口动作经转场窗口守 CL-2。下一帧复核
-  // 一次：前台仍是该文件、选区仍停在目标行首、且目标不在视口内才补发——不跟用户抢滚动
-  //（与 editor.ts 的 healCollapsedReveal 同口径）。
+  // 时落点走 editor.revealLine（与 TOC 同一算式），整个视口动作经转场窗口守 CL-2。行跳转的
+  // plan 由 `jumpPlanFor` 提供——与快速打开**同一份**（M655 的 design §1.2：复核判据一旦分叉，
+  // 两处会给出不同的滚动行为）。
   openVaultPath: (path, line) => {
     const handle = activeEditor();
-    void openPathAtLine(
-      {
-        open: (target) => openFile(target, openKind(target), "new"),
-        reveal: (at) => handle.revealLine(at),
-        duringTransition: (run) => duringViewportTransition(run),
-        nextFrame: (run) => requestAnimationFrame(run),
-        needsRescroll: () => {
-          if (line === undefined) return false;
-          if (activeEditor() !== handle) return false; // 用户已切到别的 pane：不在后台抢滚动
-          if (handle.activeSession().path !== path) return false;
-          const view = handle.view;
-          const doc = view.state.doc;
-          const pos = doc.line(Math.max(1, Math.min(line, doc.lines))).from;
-          if (view.state.selection.main.head !== pos) return false;
-          const coords = view.coordsAtPos(pos);
-          if (coords === null) return false;
-          const rect = view.scrollDOM.getBoundingClientRect();
-          return coords.bottom > rect.bottom + 1 || coords.top < rect.top - 1;
-        },
-      },
-      path,
-      line,
-    );
+    void openPathAtLine(jumpPlanFor(handle, path, line), path, line);
   },
   // 目录路径的落点（change harness-dir-link）：只做左栏定位——展开祖先、滚动、短暂高亮；
   // 不打开文档、不切标签、不创建条目（点击语义的规格在 harness「输出中的 vault 路径可点击」，
@@ -3107,7 +3226,13 @@ function quoteImageFromImageButton(key: string, rawRef: string): void {
 const quoteGesture = createQuoteGesture({
   activeView: () => editor.view,
   activeMount: () => paneAssemblies.get(activeDocPane().id)?.mountEl,
-  activePath: () => editor.activeSession().path,
+  // vault 外只读会话不参与摘录（M655）：卡片按**vault 相对路径**寻址，外部文档的绝对路径
+  // 在下游的链接解析里没有基准（点击卡片会落到「已失锚」）。`undefined` 是既有的关闸口
+  //（手势在取选区时直接返回 null）——与「没有前台文档」同一条出口，不新增第二个开关。
+  activePath: () => {
+    const session = editor.activeSession();
+    return session.external === true ? undefined : session.path;
+  },
   sessionForPath: (path) => editor.sessionForPath(path),
   viewOfSession: (session) => {
     const handle = paneEntryOfSession(session)?.[1].handle;
@@ -3173,6 +3298,10 @@ const commands: CommandRuntime = {
   ...editor.commands,
   ...composerTextFaceCommands(),
   "document.save": () => {
+    // vault 外只读会话没有保存落点（change quick-open-file-oct23 的 D2）：结构性只读已挡住
+    // dirty，这里挡的是「保存链路按绝对路径直调后端」那条必然被拒的路径——用户不该看到一片
+    // 红字（spec：⌘S 无落点、MUST NOT 出保存失败提示）。
+    if (editor.activeSession().external === true) return;
     void save.save();
   },
   // 轨道 A 原样迁入（键位与作用域不变）；M144 起跟随光标/选区处的链接——外链交系统
@@ -3187,6 +3316,10 @@ const commands: CommandRuntime = {
   //（src/search.ts 的 LumirSearchPanel 持 `this.view`），面板持焦期间活跃 pane 不漂移
   //（focusin 只发生在 pane 的 contentDOM 上），搜索 / 替换目标因此不随焦点漂。
   "app.search-open": () => openSearch(editor.view),
+  // 按路径快速打开（M655，change quick-open-file-oct23 的 D1/S1）：一条命令承担开与关
+  //（输入面已打开时再按 ⌘P 收起——`⌘P` 是 chord，可编辑宿主守卫不拦它，命令必然到达这里）。
+  // 未装载 vault 时只给提示、不打开空浮层；能力与浮层在 src/quick-open.ts。
+  "app.quick-open": () => quickOpen.toggle(),
   // 轻量大纲（M148）：开→关 / 关→开，无标题文档只给提示（不弹空浮层）。
   // 图片会话（M629）：大纲对它是空动作——MUST NOT 打开浮层、MUST NOT 给「这份文档还没有标题」
   // 这类错误提示（图片没有「文档」可谈）。判据与其余「读 state 做语义」的入口同源。
@@ -3465,7 +3598,10 @@ function syncModelineMeta(): void {
   const language = session.mode === "md"
     ? "Markdown"
     : codeLanguageOfPath(session.path ?? "") ?? "Plain text";
-  const text = tPlural("D208", lines, { language, lines: formatNumber(lines) });
+  const meta = tPlural("D208", lines, { language, lines: formatNumber(lines) });
+  // vault 外只读会话追加一段「vault 外 · 只读」（M655；Alex 2026-10-23 追加裁决的辅助面——
+  // 主标记在标签页标题上）。纯文本，不新增色值 / 字号 / 图标 token。
+  const text = session.external === true ? `${meta} · ${t("D577")}` : meta;
   if (shell.modelineMeta.textContent !== text) shell.modelineMeta.textContent = text;
 }
 

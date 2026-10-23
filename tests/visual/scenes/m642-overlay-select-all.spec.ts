@@ -19,7 +19,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { fireMenuCommand, stubTauri, configGets } from "./tauri-stub";
+import { configApplied, fireMenuCommand, stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
 const TABLE_SOURCE = readFileSync(new URL("../fixtures/table-fullscreen/scene.md", import.meta.url), "utf8");
@@ -87,7 +87,9 @@ async function openTableDoc(page: Page, theme: "light" | "dark" | "eink" = "ligh
   await page.goto("/");
   await page.locator(`.ft-row[title="${DOC}"]`).click();
   await expect(page.locator(".cm-lp-table")).toHaveCount(2);
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  // M645 起「配置已施加」的就绪信号是 `configApplied`（旧 `configGets` 计数器已随该
+  // change 删除——本场景的 import 是 master 上遗留的一处断链，随 M655 的 rebase 一并修正）。
+  await configApplied(page);
   await expect(page.locator(".modeline-path")).toHaveText(DOC);
   await page.waitForTimeout(80);
 }
@@ -104,7 +106,7 @@ async function openCodeDoc(page: Page): Promise<void> {
   await page.goto("/");
   await page.locator(`.ft-row[title="${DOC}"]`).click();
   await expect(page.locator(".cm-lp-codeblock-slot")).toHaveCount(3);
-  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await configApplied(page);
   await expect(page.locator(".modeline-path")).toHaveText(DOC);
   await page.waitForTimeout(80);
 }

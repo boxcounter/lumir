@@ -91,6 +91,13 @@ export interface VaultFixture {
    * 读取失败（权限 / 超限）走通用 `failures` 通道，不在这里造。
    */
   attachments?: Record<string, string>;
+  /**
+   * `fs_read_external` 桩的文本表（M655，change quick-open-file-oct23 的 5.1）：键 = **绝对
+   * 路径**，值 = 文件全文。未收录的路径抛 `fs_not_found`（与真后端「文件不存在」同形）——
+   * 「vault 外路径不存在 ⇒ 按找不到处置」的现场靠它造。目录 / 超限 / 非法编码的判定在 Rust
+   * 侧（桩不复制形状校验），那几类用通用 `failures` 通道注入。
+   */
+  externalFiles?: Record<string, string>;
   /** **内部字段，场景 MUST NOT 写**：`stubTauri` 把 {@link SYNTHETIC_PNG_BASE64} 挂在这里
    *  过桥进 init script（函数体序列化，模块常量在页面里不可见）。 */
   syntheticPng?: string;
@@ -235,6 +242,9 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     // `fs_read_attachment` 的**按路径**读取记录（M629）：D3 的「切回重读一次」判据要数
     // 某一张图读了几次——全局计数会被启动期 SAMPLE 演示文档里的相对路径图片引用污染。
     w.__attachmentReads = [] as string[];
+    // `fs_read_external` 的**按路径**读取记录（M655）：vault 外只读会话的「打开一次 = 读一次」
+    // 与「⌘S 无落点」这类次数判据要数它。
+    w.__externalReads = [] as string[];
     // `harness_write_image` 的调用记录（change add-image-quote-to-chat 的 5.1）：图片摘录
     // 事务的「先落盘再插块」与 source_mime 透传在这一层可见（载荷只记 MIME 与字节串）。
     w.__harnessImageWrites = [] as Array<{ data_base64?: string; source_mime?: string }>;
@@ -615,6 +625,19 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         ) as { mtime_ms?: number } | undefined;
         return { mtime_ms: entry?.mtime_ms ?? null };
       },
+      // vault 外只读读取（M655，change quick-open-file-oct23 的 5.1）：真后端的形状校验 /
+      // 常规文件 / 50MB / UTF-8 全在 Rust 侧（归 cargo test），桩只回答「这份绝对路径的内容是
+      // 什么」——未收录即 `fs_not_found`（与真后端同形）。调用逐次落账，供「⌘S 在外部会话上
+      // 无 invoke」这类负向断言。
+      fs_read_external: (args) => {
+        const path = String(args.path ?? "");
+        (w.__externalReads as string[]).push(path);
+        const content = current?.externalFiles?.[path];
+        if (content === undefined) {
+          throw { code: "fs_not_found", message: `文件不存在：${path}`, params: { rel: path } };
+        }
+        return { content };
+      },
       // 二进制附件读取（M629，change add-image-file-preview 的 5.1）：真后端的契约是
       // 「vault 相对路径 → base64 字符串」，50MB 上限与路径校验归 Rust（桩不复制）。
       // 未收录在 `attachments` 的路径给合成 1×1 PNG（前提是它在 files 里存在——不存在就抛
@@ -913,6 +936,11 @@ export async function invokes(page: Page): Promise<string[]> {
 /** `fs_read_attachment` 的**按路径**读取记录（M629，按调用顺序）。 */
 export async function attachmentReads(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __attachmentReads: string[] }).__attachmentReads);
+}
+
+/** `fs_read_external` 的**按路径**读取记录（M655，按调用顺序）。 */
+export async function externalReads(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __externalReads: string[] }).__externalReads);
 }
 
 /** `harness_write_image` 的调用记录（change add-image-quote-to-chat 的 5.1，按调用顺序）：

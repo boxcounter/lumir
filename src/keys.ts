@@ -372,6 +372,12 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   "app.describe-bindings",
   // M139：⌘F 打开文件内搜索（能力与 panel 在 src/search.ts，装配在 main.ts）
   "app.search-open",
+  // M655：按路径快速打开文件（change quick-open-file-oct23 的 D1 裁决；能力与浮层在
+  // src/quick-open.ts，装配在 main.ts）。作用域为 global 是理由决定的：输入面打开时焦点在
+  // 浮层输入框里（不在 contentDOM 内），`editor` 作用域会让「再按一次 ⌘P 收起」失效
+  //（`toc.toggle` 同款判词）。它**有**默认绑定（⌘P，冲突核实与 token 形态见表条目 D583），
+  // 因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。
+  "app.quick-open",
   // M148：⌘⇧O 展开/收起轻量大纲浮层（能力与浮层在 src/toc.ts，装配在 main.ts）
   "toc.toggle",
   // M163：⌘O 打开 vault 切换器（能力、浮层与会话在 src/vault-switcher.ts，装配在 main.ts）
@@ -699,6 +705,10 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Cmd-Enter", command: "link.follow", scope: "global", docKey: "D302" },
   { key: "Cmd-/", command: "app.describe-bindings", scope: "global", docKey: "D303" },
   { key: "Cmd-f", command: "app.search-open", scope: "global", docKey: "D304" },
+  // M655：⌘P 按路径快速打开（change quick-open-file-oct23 的 D1 裁决；三条独立来源的键位
+  // 占用核对与 token 形态说明写在表条目 D583 的正文里——表即文档，本文件不另抄一份）。
+  // 取 global——焦点在编辑器 / 文件树 / 搜索框 / 浮层 / harness composer 内都要能按。
+  { key: "Cmd-p", command: "app.quick-open", scope: "global", docKey: "D583" },
   { key: "Cmd-Shift-o", command: "toc.toggle", scope: "global", docKey: "D305" },
   { key: "Cmd-o", command: "vault.switcher", scope: "global", docKey: "D306" },
 
