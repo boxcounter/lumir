@@ -456,17 +456,29 @@
   margin: var(--sp-4) 0;
 }
 .lumir-hp-msg-assistant .lumir-hp-body table {
-  border-collapse: collapse;
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
 }
-.lumir-hp-msg-assistant .lumir-hp-body th,
-.lumir-hp-msg-assistant .lumir-hp-body td {
+/* 面板表格的**结构**（合并边框 / 边框 / 内边距 / 表头字重）挂在 `.lumir-hp-table` 类上，
+   不挂 `.lumir-hp-body` 祖先链（M634）：全屏遮罩深克隆的是 `<table>` 本身，克隆脱离 body
+   之后这些结构必须随元素走——否则遮罩里是一张无框表。字号仍留在 body 作用域：遮罩里有自己
+   的读数口径（`.lumir-table-fs-snapshot` 的 --editor-font-size），不搬面板的缩放档。 */
+.lumir-hp-table {
+  border-collapse: collapse;
+}
+.lumir-hp-table th,
+.lumir-hp-table td {
   padding: var(--sp-1) var(--sp-3);
   border: 1px solid var(--border-soft);
   text-align: left;
 }
-.lumir-hp-msg-assistant .lumir-hp-body th {
+.lumir-hp-table th {
   font-weight: var(--fw-semibold);
+}
+/* 全屏遮罩里按**自然尺寸**呈现（spec「按自然尺寸 + 双向滚动」）：表格是块级元素，不显式给
+   max-content 就会被壳宽压回、宽表折行——与 content pane 表格全屏（.cm-lp-table 的
+   inline-size: max-content）同一口径。 */
+.lumir-table-fs-snapshot .lumir-hp-table {
+  width: max-content;
 }
 .lumir-hp-link {
   color: var(--accent);
@@ -519,6 +531,37 @@
 }
 .lumir-hp-rawhtml {
   color: var(--text-3);
+}
+
+/* ── 块级全屏入口（M634，change add-harness-block-fullscreen）：代码块 / 表格的定位容器与
+   悬停钮。钮的**形态**（壳 / 尺寸 / 圆角 / 图标色 / 过渡 / eink）只在 src/style.css 的共享类
+   `.lumir-block-trigger` 写一份，这里只写位置——与 content pane 的放大钮同一几何
+   （top/right 6px）。 */
+.lumir-hp-block-slot {
+  /* 钮的包含块：slot 在块的横滚容器**之外**，横滚时钮不动（与 .cm-lp-codeblock-slot /
+     .cm-lp-table-slot 同一条理由，见 src/preview/block-trigger.ts 的文件头）。 */
+  position: relative;
+}
+.lumir-hp-block-fs-trigger {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+/* 纵向节奏（M634）：块被 slot 包住后 `pre:first-child` / `table:last-child` 这类结构选择器
+   对所有块都成立，块自己的 margin 不再能表达「消息首末块贴边」。因此块的 margin 在 slot 内
+   归零，由 slot 承担——规则值与上面 `.lumir-hp-body pre / table` 那条逐值相同（sp-2，首末贴 0）。 */
+.lumir-hp-msg-assistant .lumir-hp-body .lumir-hp-block-slot {
+  margin: var(--sp-2) 0;
+}
+.lumir-hp-msg-assistant .lumir-hp-body .lumir-hp-block-slot:first-child {
+  margin-top: 0;
+}
+.lumir-hp-msg-assistant .lumir-hp-body .lumir-hp-block-slot:last-child {
+  margin-bottom: 0;
+}
+.lumir-hp-msg-assistant .lumir-hp-body .lumir-hp-block-slot > .lumir-hp-codeblock,
+.lumir-hp-msg-assistant .lumir-hp-body .lumir-hp-block-slot > .lumir-hp-table {
+  margin: 0;
 }
 
 /* ── 工具调用清单（M351，原型屏 4 .tools；Alex 2026-10-06 裁决还原清单形态）：上下

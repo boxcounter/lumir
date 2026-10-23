@@ -13,7 +13,13 @@
 // 源码（同一份源码、逐字节一致；不逐行建 DOM、不着色，行样式由浮层容器承担）。
 //
 // 纯函数、无 DOM：`tests/unit/code-block-fullscreen.test.ts` 直接断言切分口径。
+//
+// M634（change add-harness-block-fullscreen）：文档里的代码块节点 → 呈现计划的**映射**也落在
+// 本文件（`planCodeBlockOfDocument`）。编辑器侧（src/preview/livePreview.ts 的 codeBlockRender）
+// 与 harness 面板侧（src/harness-panel.ts 的块渲染）各有一份调用方，映射规则只有这一份
+// （REVIEW.md「同一语义两处真源」条：两侧的头部条 / info 语言 / 64 KiB 上限因此不可能漂移）。
 
+import type { syntaxTree } from "@codemirror/language";
 import { highlightCode, MAX_CODE_HIGHLIGHT_CHARS } from "./code";
 import type { CodeToken } from "./code";
 
@@ -68,4 +74,74 @@ export function planCodeBlock(
     lines.push({ text, head: headFirstLine && i === 0, tokens: local });
   }
   return { kind: "lines", lines };
+}
+
+// ---------------------------------------------------------------------------
+// 文档里的代码块节点 → 呈现计划（M634：编辑器与 harness 面板共用的唯一映射）
+// ---------------------------------------------------------------------------
+
+/** 语法节点：从 `syntaxTree` 推导（@lezer/common 不是直接依赖，本仓同口径——见 block-copy.ts）。 */
+type CodeBlockNode = ReturnType<typeof syntaxTree>["topNode"];
+
+/** 文档切片的两种来源：CM 的 `Text`（`sliceString` / `lineAt`）与 harness 面板手里的纯字符串。
+ *  两者都满足这个结构形状，共享映射因此不需要任何一侧先 `toString()` 一份全文。 */
+export interface CodeBlockDocumentSource {
+  sliceString(from: number, to: number): string;
+  lineAt(pos: number): { readonly from: number };
+}
+
+function docSlice(doc: string | CodeBlockDocumentSource, from: number, to: number): string {
+  return typeof doc === "string" ? doc.slice(from, to) : doc.sliceString(from, to);
+}
+
+/** 位置所在**行首**的偏移。
+ *
+ *  缩进代码块的语法节点从缩进之后起算（`    x` 的 `CodeBlock` 从第 5 个字符开始），只按
+ *  `node.from` 切片会让首行丢掉语法缩进、后续行却带着——块内对不齐。编辑器侧的块范围一直
+ *  按行首对齐（`livePreview.codeBlocksIn` 的 `doc.lineAt(...).from`），共享映射因此也按行首取：
+ *  围栏块不受影响（节点本来就在行首），缩进块的首行缩进得以保留。 */
+function lineStartOf(doc: string | CodeBlockDocumentSource, pos: number): number {
+  return typeof doc === "string" ? doc.lastIndexOf("\n", pos - 1) + 1 : doc.lineAt(pos).from;
+}
+
+/** 块的纯内容：块内全部 `CodeText` 子节点文本按序拼接（复制口径与全屏口径同一份）。
+ *
+ *  `toTree()` 返回的子树位置是**相对该节点**的（见 block-copy.ts 的「位置基准的坑」），因此
+ *  一律加 `block.from` 还原成绝对位置再切片。 */
+export function codeTextOf(doc: string | CodeBlockDocumentSource, block: CodeBlockNode): string {
+  const base = block.from;
+  let out = "";
+  block.toTree().iterate({
+    enter(ref) {
+      if (ref.name === "CodeText") out += docSlice(doc, base + ref.from, base + ref.to);
+    },
+  });
+  return out;
+}
+
+/**
+ * 代码块语法节点 → 全屏呈现计划（编辑器侧 `livePreview.codeBlockRender` 与 harness 面板的块
+ * 渲染共用这一条映射）。
+ *
+ * 四个参数的来历（各只有一处判据）：
+ *   - `source`：块范围的源码切片（围栏块的围栏行因此进得了头部条）；
+ *   - `codeFrom`：内容起点相对块起点的偏移（围栏块的 `CodeText.from - block.from`）；
+ *   - `codeSource`：`codeTextOf` 的拼接结果（64 KiB 上界的判据与复制口径同源）；
+ *   - `headFirstLine`：块带 `CodeMark`（围栏）时首行是围栏行（缩进块恒 false）。
+ *  `info` 原样取自 `CodeInfo`（`highlightCode` 自己按空白切语言，两侧因此逐字同口径）。
+ */
+export function planCodeBlockOfDocument(
+  doc: string | CodeBlockDocumentSource,
+  node: CodeBlockNode,
+): CodeBlockRender {
+  const textNode = node.getChild("CodeText");
+  const infoNode = node.getChild("CodeInfo");
+  const from = lineStartOf(doc, node.from);
+  return planCodeBlock(
+    docSlice(doc, from, node.to),
+    textNode === null ? 0 : textNode.from - from,
+    codeTextOf(doc, node),
+    node.getChild("CodeMark") !== null,
+    infoNode === null ? "" : docSlice(doc, infoNode.from, infoNode.to),
+  );
 }

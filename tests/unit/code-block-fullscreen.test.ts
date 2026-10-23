@@ -17,10 +17,12 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { Text } from "@codemirror/state";
+import { GFM, parser as commonmarkParser } from "@lezer/markdown";
 import { createCodeBlockFullscreenState } from "../../src/code-block-fullscreen.ts";
 import type { CodeBlockFullscreenSurface } from "../../src/code-block-fullscreen.ts";
 import { createOverlayState } from "../../src/overlay-state.ts";
-import { planCodeBlock } from "../../src/preview/code-block-content.ts";
+import { planCodeBlock, planCodeBlockOfDocument } from "../../src/preview/code-block-content.ts";
 import type { CodeBlockRender } from "../../src/preview/code-block-content.ts";
 import { MAX_CODE_HIGHLIGHT_CHARS } from "../../src/preview/code.ts";
 import { CODEBLOCK_FS_TRIGGER_LABEL, blockCopyLabel } from "../../src/preview/block-trigger.ts";
@@ -196,6 +198,81 @@ test("超过单块着色上限：整块以单块纯文本呈现，源码逐字�
   assert.equal(render.kind, "plain");
   if (render.kind !== "plain") return;
   assert.equal(render.text, source, "退化分支必须是同一份源码、逐字节一致");
+});
+
+// ---------------------------------------------------------------------------
+// 节点 → 呈现计划的共享映射（M634，change add-harness-block-fullscreen）
+//
+// 编辑器侧（`livePreview.codeBlockRender` 的旧实现）与 harness 面板侧现在都调
+// `planCodeBlockOfDocument`：映射规则只有一份，本组用例钉的是**两种文档来源**（面板的纯字符串
+// / 编辑器的 CM `Text`）与三类块（围栏 / 缩进 / 超上限）的逐项一致——输入形态漂移是这条共享
+// 路径唯一剩下的分歧面。
+// ---------------------------------------------------------------------------
+
+const mdParser = commonmarkParser.configure([GFM]);
+
+/** 源里的第一个代码块节点（围栏或缩进）。 */
+function firstCodeBlock(source: string) {
+  const tree = mdParser.parse(source);
+  for (let child = tree.topNode.firstChild; child !== null; child = child.nextSibling) {
+    if (child.name === "FencedCode" || child.name === "CodeBlock") return child;
+  }
+  throw new Error("用例源里没有代码块");
+}
+
+/** 同一份源 → 面板来源（字符串）与编辑器来源（CM Text）的两条计划。 */
+function bothSources(source: string): [CodeBlockRender, CodeBlockRender] {
+  const node = firstCodeBlock(source);
+  return [planCodeBlockOfDocument(source, node), planCodeBlockOfDocument(Text.of(source.split("\n")), node)];
+}
+
+test("共享映射：围栏块在字符串来源与 CM Text 来源下逐项相同，头部条 / info 语言取自节点", () => {
+  const source = "```js\nlet a = 1;\n```";
+  const [panel, editor] = bothSources(source);
+  assert.deepEqual(panel, editor, "两条文档来源必须产出同一份计划（防漂移）");
+  assert.equal(panel.kind, "lines");
+  if (panel.kind !== "lines") return;
+  assert.deepEqual(
+    panel.lines.map((line) => line.text),
+    ["```js", "let a = 1;", "```"],
+  );
+  assert.deepEqual(
+    panel.lines.map((line) => line.head),
+    [true, false, false],
+    "首行（起始围栏）是头部条",
+  );
+  assert.ok(
+    panel.lines[1].tokens.some((token) => token.cls === "cm-lp-tok-keyword"),
+    "info 语言取自节点（CodeInfo），着色与编辑器同源",
+  );
+});
+
+test("共享映射：缩进块按行首取源——首行缩进不被吃掉、没有头部条", () => {
+  const source = "段落\n\n    indented one\n    indented two\n";
+  const [panel, editor] = bothSources(source);
+  assert.deepEqual(panel, editor);
+  assert.equal(panel.kind, "lines");
+  if (panel.kind !== "lines") return;
+  assert.deepEqual(
+    panel.lines.map((line) => line.text),
+    ["    indented one", "    indented two"],
+    "语法节点从缩进之后起算，映射按行首对齐（否则首行缩进丢失、块内对不齐）",
+  );
+  assert.deepEqual(
+    panel.lines.map((line) => line.head),
+    [false, false],
+    "缩进块没有围栏行",
+  );
+});
+
+test("共享映射：超过 64 KiB 时两条来源都退化为同一份单块纯文本", () => {
+  const body = "x".repeat(MAX_CODE_HIGHLIGHT_CHARS + 10);
+  const source = `\`\`\`\n${body}\n\`\`\``;
+  const [panel, editor] = bothSources(source);
+  assert.deepEqual(panel, editor);
+  assert.equal(panel.kind, "plain", "阈值沿用既有单块上限（MUST NOT 另立）");
+  if (panel.kind !== "plain") return;
+  assert.equal(panel.text, source, "退化分支是同一份源码、逐字节一致");
 });
 
 // ---------------------------------------------------------------------------

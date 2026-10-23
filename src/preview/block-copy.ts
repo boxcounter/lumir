@@ -19,6 +19,7 @@
 
 import { syntaxTree } from "@codemirror/language";
 import type { EditorState, Text } from "@codemirror/state";
+import { codeTextOf } from "./code-block-content";
 
 // @lezer/common 不是直接依赖（callout.ts / livePreview.ts 同口径），SyntaxNode 类型从
 // syntaxTree 推导。
@@ -60,16 +61,12 @@ export function codeBlockNodeAt(state: EditorState, pos: number): SyntaxNode | n
  *  **位置基准的坑（实现期实测）**：`SyntaxNode.toTree()` 返回的子树位置是**相对该节点**的，
  *  不是文档绝对位置——直接拿去 `doc.sliceString` 会切出偏移的片段（M277 单测实测：缩进块
  *  `toTree()` 读出 `CodeText 0..7` / `11..17`，而它们的绝对范围是 `4..11` / `15..21`）。
- *  因此一律加上 `block.from` 还原成绝对位置。 */
+ *  因此一律加上 `block.from` 还原成绝对位置。
+ *
+ *  M634 起实现落在 `src/preview/code-block-content.ts` 的 `codeTextOf`（全屏的呈现计划要用
+ *  同一份拼接结果）；本函数保留为复制口径的入口，两个消费者因此不可能各拼一份。 */
 export function codeBlockContent(doc: Text, block: SyntaxNode): string {
-  const base = block.from;
-  let out = "";
-  block.toTree().iterate({
-    enter(ref) {
-      if (ref.name === "CodeText") out += doc.sliceString(base + ref.from, base + ref.to);
-    },
-  });
-  return out;
+  return codeTextOf(doc, block);
 }
 
 /** caret 所在代码块的内容；不在块内时 null。 */

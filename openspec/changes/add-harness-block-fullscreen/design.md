@@ -55,24 +55,32 @@ master）逐一读过原文的位置；行号会漂，实现前以符号名为�
 
 - 终态渲染出的块 = 有 slot 就有钮（结构性，不设开关）。
 - 流式尾块每帧重渲（`renderMarkdownInto` 的 finalized / tail 分界）：尾块**照样**有钮——但打开后
-  得到的是那一刻的快照（§5）。围栏尚未闭合时该内容在语法上还不是 `FencedCode` 节点，因此**没有**
-  块、也没有钮；围栏闭合的那一帧起钮出现（这是解析事实，不是一条要维护的判据）。
+  得到的是那一刻的快照（§5）。围栏块的判据取其**尾 `CodeMark`**（围栏闭合）：@lezer/markdown
+  把未闭合的围栏也解析成 `FencedCode`（实现期实测，见 §11.1），因此「语法上还不是代码块」不成立
+  ——判据仍是解析事实，不是一条要维护的开关；闭合那一帧起尾块重渲即带钮。
 
 ### 1.3 读屏名与序号
 
-- 代码块：`t("D156")`（「放大查看代码块」）——与 content pane 的钮同一份词条。
-- 表格：`t("D203")`（「表格」）+ 序号 → 遮罩的 label 形如「Markdown 表格 2」。序号按**消息内**、
-  只数表格块、1-based（D5）；无序号时读屏无法区分同一消息里的两个表格。
-- 序号的实现：渲染一条消息时先数出块序（与 `imageOrdinals` 同为「块序列的派生读数」的形态，但作用面
-  是渲染出的块，不进任何数据模型；MUST NOT 持久化）。
+- **钮面**：代码块 `t("D156")`（「放大查看代码块」）、表格 `t("D124")`（「放大查看表格」）——与
+  content pane 的两颗同类钮**同一份词条**（零新增编号）。
+- **遮罩**：`Markdown 表格 N` / `Markdown 代码块 N`（D211 / D212，与文档内容器同一份词条）——文案
+  deck 的 D124 / D156 条目明写「同一张表 / 同一块代码的全屏遮罩读屏名不复用这句」，遮罩一律复用
+  `Markdown … N`（同一字符串单一来源）。序号按**消息内**、只数同类块、1-based（D5）；无序号时读屏
+  无法区分同一消息里的两个表格。
+- 序号的实现：点击那一刻从 DOM 现数（消息根 `.lumir-hp-msg` 内同类块槽的 DOM 序），纯派生读数，
+  不进任何数据模型、MUST NOT 持久化。
 
 ## 2. 表格全屏
 
 - 调用 `tableFullscreen.open(tableEl, label)`：`tableEl` 就是刚渲染出的 `<table>`。
 - 深克隆 + 自然尺寸 + 双向滚动 + 只读卫生全部由既有实现承担；克隆卫生已把 `.lumir-block-trigger`
   摘掉，因此快照里不会出现一份副本钮（这是共享类的红利，MUST NOT 在面板侧另写一份清理）。
+- 面板表格的**结构**（合并边框 / cell 边框 / 内边距 / 表头字重）挂在 `.lumir-hp-table` 类上、不挂
+  `.lumir-hp-body` 祖先链（实现期校正，§11.3）：克隆脱离 body 之后结构必须随元素走。遮罩里按
+  `width: max-content` 呈现（自然尺寸口径，与 `.cm-lp-table` 的 `inline-size: max-content` 同行）。
 - 主题镜像取源元素（`mirrorThemeScope(source, …)`）——面板根已带 `data-theme` 镜像（面板自身用
-  `mirrorThemeScope`），因此 eink 下的遮罩观感与面板一致。
+  `mirrorThemeScope`），因此 eink 下的遮罩观感与面板一致；<code>mirrorThemeScope</code> 的来源解析
+  见 §11.4（面板不在编辑器根内，需要显式的「已镜像宿主」标记）。
 
 ## 3. 代码块全屏
 
@@ -83,7 +91,9 @@ master）逐一读过原文的位置；行号会漂，实现前以符号名为�
   真源』条：映射规则只留一份。
 - 围栏块：首行（围栏行）作头部条、`info` 进着色语言；缩进块：无头部条、无语言（`planCodeBlock` 的
   既有口径，面板与编辑器因此逐项同形）。
-- 读屏名：`t("D156")`（同一词条）。
+- 缩进块的源按**行首**取（§11.2）：语法节点从缩进之后起算，按节点起点切会让首行丢掉语法缩进、
+  后续行却带着——块内对不齐。
+- 读屏名：`Markdown 代码块 N`（D212，见 §1.3）。
 
 ## 4. 装配（单实例、焦点归还、主题来源）
 
@@ -103,12 +113,15 @@ type OverlaySource = { kind: "pane"; paneId: PaneId } | { kind: "harness" };
 
 - 从面板打开时来源记 `harness`；关闭时焦点回到**该块的触发钮**（若它还在 DOM 里——流式重渲会替换
   尾块的 DOM），否则回到面板的 composer（面板的稳定焦点落点）。MUST NOT 把焦点交给编辑器。
+- 触发钮静止态 `visibility: hidden`（共享形态类的刻意口径）⇒ **不可 `focus()`**：关闭时先把钮
+  临时露出再聚焦（失焦还原），聚焦失败才退 composer（实现期校正，§11.5）。
 - 从编辑器打开时行为逐字不变。
 
 ### 4.3 主题镜像来源
 
 `codeBlockFullscreen` 的 `themeScopeSource()` 从「恒取编辑器 DOM」改为「按当前来源取」：来源是面板时
 返回面板根（面板根带主题作用域），否则返回编辑器 DOM。表格侧不需要改（它从源元素自己镜像）。
+实现期的落地细节（来源解析需要一个显式标记）见 §11.4。
 
 ## 5. 流式口径（D4：打开即快照）
 
@@ -170,3 +183,51 @@ type OverlaySource = { kind: "pane"; paneId: PaneId } | { kind: "harness" };
 4. 表格快照是「打开那一刻渲染态的子集」，与 content pane 表格全屏同一条已知边界（长表、惰性渲染）。
 5. 从面板打开全屏会顶掉编辑器里已开的同类全屏（单实例的应用模态语义）。
 6. 快捷键不在本 change（D1）。
+
+## 11. 实现期校正（2026-10-23，动工后实测/读源码得到的事实）
+
+本节只记「设计稿写的与实测不符」的五处，裁决侧（D1–D5 的取向）一条未变。
+
+### 11.1 未闭合围栏在语法上**就是** `FencedCode`
+
+设计 §1.2 原写「围栏尚未闭合时该内容在语法上还不是 `FencedCode` 节点」。实测
+（`@lezer/markdown` + GFM：``"```js\nconst a = 1"`` → `FencedCode[0,17]`）**不成立**：CommonMark
+允许围栏由文档结尾隐式闭合，lezer 照此解析。判据因此取块自己的尾 `CodeMark`（闭合围栏节点，
+实测闭合块 `children = CodeMark / CodeInfo / CodeText / CodeMark`，未闭合块没有尾 `CodeMark`）
+——仍是解析事实，不是一条要维护的开关；规范要求的「未闭合围栏没有入口」保持不变。
+
+### 11.2 缩进块的源按行首切，不按节点起点切
+
+缩进代码块的语法节点**从语法缩进之后起算**（`    x` 的 `CodeBlock` 从第 5 个字符开始）。编辑器侧
+的块范围一直按行首对齐（`livePreview.codeBlocksIn` 的 `doc.lineAt(...).from`），共享映射
+`planCodeBlockOfDocument` 因此也按行首取源：围栏块不受影响（节点本来就在行首），缩进块的首行
+缩进得以保留（否则首行丢缩进、后续行带着，块内对不齐）。副作用：面板内联的缩进块首行本来就丢
+那层缩进（`textOf` 按节点范围切），遮罩里因此比面板内联多一份首行缩进——遮罩的「整块源码」口径
+以原文为准，这是刻意的已知差异。
+
+### 11.3 表格结构必须随元素走（`.lumir-hp-table`）
+
+设计 §2 原以为「深克隆 + 既有实现承担」即可。实测面板的表格结构（`border-collapse` / cell 边框 /
+内边距 / 表头字重）挂在 `.lumir-hp-msg-assistant .lumir-hp-body table|th|td` 祖先链上，克隆只带
+`<table>` 本身 ⇒ 遮罩里是一张无框表。修法：结构规则改挂 `<table>` 自己的类 `.lumir-hp-table`
+（面板内的计算值逐值不变），字号仍留 body 作用域（遮罩里走 `.lumir-table-fs-snapshot` 的
+`--editor-font-size`）。遮罩里另加 `.lumir-table-fs-snapshot .lumir-hp-table { width: max-content }`
+——否则宽表被壳宽压回、折行，与「自然尺寸 + 双向滚动」的规格不符。
+
+### 11.4 主题 scope 的来源需要一个显式宿主标记
+
+设计 §4.3 原写「来源是面板时返回面板根（面板根带主题作用域）」。实测 `mirrorThemeScope` 的解析是
+`source.closest(".cm-editor")`：harness 面板**整体不在编辑器根内**，transcript 上的 CM 生成类
+（`ͼN`）是面板创建时镜像来的，`closest` 找不到。修法：transcript 挂显式标记类
+`lumir-theme-scope`（`src/overlay-scope.ts` 的 `THEME_SCOPE_HOST_CLASS`），解析顺序改为
+「最近的 `.cm-editor` → 否则最近的标记宿主」；编辑器来源的解析结果逐字不变（第一条永远命中）。
+这条让**表格与代码块**两条遮罩都能从面板取到同一批 scope 类（表格走源元素 `closest` 也会命中
+transcript）。
+
+### 11.5 静止态的钮不可聚焦 ⇒ 焦点归还先「露出」再聚焦
+
+共享形态类的静止态是 `visibility: hidden` + `opacity: 0`（不进读屏树、不可聚焦、不接收指针），而
+`visibility: hidden` 的元素**收不到** `focus()`。关闭遮罩时若直接 `trigger.focus()`，焦点会掉到
+`<body>`。修法：先把触发钮的 `visibility` / `opacity` 用内联样式临时提到可见、再 `focus()`，
+失焦时还原（`:focus-visible` 本来就会让钮浮现，这里只补「先能聚焦」这一步）；聚焦未落到钮上
+（钮已被流式重渲摘掉等）才退到 composer。

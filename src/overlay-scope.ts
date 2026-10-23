@@ -12,14 +12,27 @@
 // 状态类（`cm-editor` / `cm-focused` / …），镜像它们会把 `.cm-editor` 那套布局规则带进内容
 // 容器，而浮层要的是主题（取值），不是编辑器布局。守卫是两处浮层的计算样式断言（表格
 // 5.4 / 代码块 5.4）——CM 若换掉这套 scope 机制，断言会红，不会静默降级。
+//
+// **来源不在编辑器根内**（M634，change add-harness-block-fullscreen）：harness 面板自己渲染
+// Markdown，它不在 `.cm-editor` 子树里——面板的 transcript 是**已镜像过**的宿主（面板创建时
+// 用同一个编辑器根镜像了一次）。这类宿主由它自己挂上标记类 `THEME_SCOPE_HOST_CLASS`，来源解析
+// 因此是显式的：最近的 `.cm-editor` → 否则最近的标记宿主。编辑器来源的解析结果逐字不变。
+
+/** 「已镜像过主题 scope 的宿主」标记类（M634）：不在 `.cm-editor` 子树里、但自己带着一份
+ *  镜像来的 CM 生成类的容器（harness 面板的 transcript）。浮层来源落在它里面时（面板里的
+ *  代码块 / 表格），scope 从它这里取。 */
+export const THEME_SCOPE_HOST_CLASS = "lumir-theme-scope";
 
 export function mirrorThemeScope(source: HTMLElement, container: HTMLElement, baseClass: string): void {
-  const mirrored: string[] = [];
   const editor = source.closest(".cm-editor");
-  if (editor !== null) {
-    for (const cls of [...editor.classList]) {
-      if (!cls.startsWith("cm-")) mirrored.push(cls);
-    }
+  const scopeRoot = editor ?? source.closest(`.${THEME_SCOPE_HOST_CLASS}`);
+  const mirrored: string[] = [];
+  for (const cls of [...(scopeRoot?.classList ?? [])]) {
+    if (cls.startsWith("cm-")) continue;
+    // `lumir-` 前缀是本仓自己的组件类（含宿主自己的基类与标记类）：它们不是主题 scope，
+    // 搬进浮层会把宿主的布局规则（flex / 内边距 / 滚动）一并带进去。
+    if (editor === null && cls.startsWith("lumir-")) continue;
+    mirrored.push(cls);
   }
   // 每次装内容都从「容器自己的基类 + 本次镜像到的 scope 类」重建，不放任上一次留下的类漂着。
   container.className = [baseClass, ...mirrored].join(" ");

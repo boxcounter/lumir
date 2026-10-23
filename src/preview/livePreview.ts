@@ -51,8 +51,8 @@ import {
   CodeBlockFullscreenTrigger,
 } from "./block-trigger";
 import type { CodeBlockFullscreenPort } from "./block-trigger";
-import { codeBlockContent, codeBlockNodeAt, type BlockCopyRange } from "./block-copy";
-import { planCodeBlock, type CodeBlockRender } from "./code-block-content";
+import { codeBlockNodeAt, type BlockCopyRange } from "./block-copy";
+import { planCodeBlockOfDocument, type CodeBlockRender } from "./code-block-content";
 import type { TableFullscreen } from "../table-fullscreen";
 import { highlightCode } from "./code";
 import { BLOCK_SCROLL_CLASS, TABLE_SCROLL_CLASS, WIDGET_SCROLL_STEP_PX } from "../keys";
@@ -500,20 +500,10 @@ export interface CodeBlockFullscreenTarget {
   label: string;
 }
 
+/** 代码块节点 → 呈现计划：映射本体在 ./code-block-content（M634 起 harness 面板共用同一条，
+ *  两侧的头部条 / info 语言 / 64 KiB 上限只有一份判据）。 */
 function codeBlockRender(view: EditorView, block: CodeBlockInfo): CodeBlockRender {
-  const doc = view.state.doc;
-  const source = doc.sliceString(block.from, block.to);
-  const textNode = block.node.getChild("CodeText");
-  // 内容文本取 `codeBlockContent`（块内全部 CodeText 按序拼接）：64 KiB 上界的判据与复制口径
-  // 同源。着色偏移只对围栏块有意义（缩进块没有 info string ⇒ `highlightCode` 恒定返回空表），
-  // 因此缩进块的偏移即使与 `source` 不线性对应也不影响 token 切分（见 ./code-block-content）。
-  return planCodeBlock(
-    source,
-    textNode === null ? 0 : textNode.from - block.from,
-    codeBlockContent(doc, block.node),
-    block.head,
-    block.info,
-  );
+  return planCodeBlockOfDocument(view.state.doc, block.node);
 }
 
 /** 触发钮点击与命令入口共同的「这块代码块的全屏内容」。 */

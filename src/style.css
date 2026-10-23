@@ -1423,11 +1423,13 @@ body {
   bottom: 6px;
 }
 
-/* hover 块的可视盒即浮现（表格与代码块的 slot 同判据；图片取挂载盒——它贴住图片自身宽度）；
-   键盘焦点落在钮上（focus-visible）同样浮现——hover 之外的唯一入口，保持「可见即可用」。 */
+/* hover 块的可视盒即浮现（表格与代码块的 slot 同判据；图片取挂载盒——它贴住图片自身宽度；
+   面板里的块 slot（M634）与编辑器里的两级 slot 同一判据）；键盘焦点落在钮上（focus-visible）
+   同样浮现——hover 之外的唯一入口，保持「可见即可用」。形态仍只有共享类那一份，这里只补选择器。 */
 .cm-lp-table-slot:hover .lumir-block-trigger,
 .cm-lp-codeblock-slot:hover .lumir-block-trigger,
 .cm-lp-image-box:hover .lumir-block-trigger,
+.lumir-hp-block-slot:hover .lumir-block-trigger,
 .lumir-block-trigger:focus-visible {
   opacity: 1;
   visibility: visible;
@@ -1466,6 +1468,7 @@ body {
 :root[data-theme="eink"] .cm-lp-table-slot:hover .lumir-block-trigger,
 :root[data-theme="eink"] .cm-lp-codeblock-slot:hover .lumir-block-trigger,
 :root[data-theme="eink"] .cm-lp-image-box:hover .lumir-block-trigger,
+:root[data-theme="eink"] .lumir-hp-block-slot:hover .lumir-block-trigger,
 :root[data-theme="eink"] .lumir-block-trigger:focus-visible {
   background: var(--sel);
   color: var(--sel-text);
@@ -1478,7 +1481,8 @@ body {
    来自上面那条：`--sel` + `--sel-text`，此处不重复声明值）。 */
 :root[data-theme="eink"] .cm-lp-table-slot:hover .lumir-block-trigger:hover,
 :root[data-theme="eink"] .cm-lp-codeblock-slot:hover .lumir-block-trigger:hover,
-:root[data-theme="eink"] .cm-lp-image-box:hover .lumir-block-trigger:hover {
+:root[data-theme="eink"] .cm-lp-image-box:hover .lumir-block-trigger:hover,
+:root[data-theme="eink"] .lumir-hp-block-slot:hover .lumir-block-trigger:hover {
   background-image: linear-gradient(var(--hover), var(--hover));
 }
 

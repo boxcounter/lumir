@@ -133,6 +133,7 @@ import type { VaultListEntry } from "./bindings/VaultListEntry";
 import { extensionOf, codeLanguageOfPath, isEditablePath, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
 import { createHarnessPanel } from "./harness-panel";
+import type { HarnessBlockFullscreenPort } from "./harness-panel";
 import { openPathAtLine } from "./harness-path-link";
 import { duringViewportTransition } from "./scroll-position-view";
 import { createQuoteGesture } from "./quote-gesture";
@@ -1181,6 +1182,51 @@ function syncImageViewer(): void {
   }
 }
 
+/** 遮罩的来源：关闭后焦点归还到**发起它的面**（M317 2.9 的 pane 档 + M634 的面板档）。
+ *
+ *  - `pane`：文档 pane（焦点经 `focusSourcePane` 回该 pane 的编辑器，带阅读位置不变量）；
+ *  - `harness`：对话面板（焦点回**发起钮**——它还在 DOM 里时；流式重渲可能已把它替换掉，
+ *    那时回 composer。MUST NOT 交给编辑器，design §4.2）。
+ *
+ *  遮罩打开后活跃 pane 可能已切换，所以来源必须在打开那一刻记下，不能关闭时现取。 */
+type OverlaySource = { kind: "pane"; paneId: PaneId | undefined } | { kind: "harness"; trigger: HTMLElement };
+
+function restoreOverlayFocus(source: OverlaySource): void {
+  if (source.kind === "harness") {
+    if (focusHarnessTrigger(source.trigger)) return;
+    harnessPanel.focusComposer();
+    return;
+  }
+  focusSourcePane(source.paneId);
+}
+
+/** 把焦点交给面板里的发起钮；交不出去（已不在 DOM / 不可聚焦）返回 false，由调用方退到 composer。
+ *
+ *  **静止态不可聚焦**是共享形态类的刻意口径（`visibility: hidden` + `opacity: 0`：不进读屏树、
+ *  不可聚焦、不接收指针），而 `visibility: hidden` 的元素收不到 `focus()`——不先临时露出，焦点
+ *  会掉到 `<body>`（「关掉了也走不了」）。露出用内联样式，失焦即还原：`:focus-visible` 本来就会
+ *  让钮浮现，这里只补上「先能聚焦」这一步；内联样式因此不会留下常显的钮。 */
+function focusHarnessTrigger(trigger: HTMLElement): boolean {
+  if (!trigger.isConnected) return false;
+  trigger.style.visibility = "visible";
+  trigger.style.opacity = "1";
+  trigger.focus();
+  if (document.activeElement === trigger) {
+    trigger.addEventListener(
+      "blur",
+      () => {
+        trigger.style.visibility = "";
+        trigger.style.opacity = "";
+      },
+      { once: true },
+    );
+    return true;
+  }
+  trigger.style.visibility = "";
+  trigger.style.opacity = "";
+  return false;
+}
+
 // 表格放大全屏查看（M240，D3 双入口：命令 + 表格 hover 触发钮）：能力与 DOM 在
 // src/table-fullscreen.ts，装配侧只给它两样看不到的东西——挂点（与 lightbox / 键位面板同款）
 // 与关闭后把焦点交还编辑器。遮罩 DOM 惰性建立：文档打开路径与键入路径上零新增工作。
@@ -1190,15 +1236,16 @@ function syncImageViewer(): void {
 //（遮罩打开后活跃 pane 可能已切换；design §2 行 10 的显式例外）。两条打开入口（命令 /
 // 触发钮端口）都在打开前记下发起 pane；源元素本身也已按 pane 取（命令路径取活跃 pane 的
 // target，触发钮路径的 widget 本就在发起 pane 的 DOM 里）。
-let tableFullscreenSource: PaneId | undefined;
+// M634：来源多一档「面板」（harness pane 里的代码块 / 表格），见上面 OverlaySource。
+let tableFullscreenSource: OverlaySource = { kind: "pane", paneId: undefined };
 const tableFullscreen = createTableFullscreen({
   mount: shell.root,
-  restoreFocus: () => focusSourcePane(tableFullscreenSource),
+  restoreFocus: () => restoreOverlayFocus(tableFullscreenSource),
 });
 injectEach((handle) =>
   handle.setTableFullscreen({
     open: (source, label) => {
-      tableFullscreenSource = paneIdOfHandle(handle);
+      tableFullscreenSource = { kind: "pane", paneId: paneIdOfHandle(handle) };
       tableFullscreen.open(source, label);
     },
     close: (reason) => tableFullscreen.close(reason),
@@ -1212,11 +1259,14 @@ injectEach((handle) =>
 // （scrollTop 2750 → 0，chromium 结构性看不见）。这里注入 editor 的原语（取阅读位置 → focus →
 // 经编辑器滚动通道写回），见 src/scroll-position-view.ts 的 focusPreservingReadingPosition。
 // M317 2.9：与表格侧同款——来源 pane 在打开时记下，关闭时焦点归还到它（不机械回活跃 pane）。
-let codeBlockFullscreenSource: PaneId | undefined;
+// M634：`themeScopeSource` 改按来源解析——从面板打开时取面板的 scope 宿主（transcript 随身
+// 带着同一批 CM 生成类，见 src/overlay-scope.ts），编辑器来源仍取编辑器根，行为逐字不变。
+let codeBlockFullscreenSource: OverlaySource = { kind: "pane", paneId: undefined };
+let codeBlockFullscreenThemeHost: HTMLElement | null = null;
 const codeBlockFullscreen = createCodeBlockFullscreen({
   mount: shell.root,
-  restoreFocus: () => focusSourcePane(codeBlockFullscreenSource),
-  themeScopeSource: () => editor.view.dom,
+  restoreFocus: () => restoreOverlayFocus(codeBlockFullscreenSource),
+  themeScopeSource: () => codeBlockFullscreenThemeHost ?? editor.view.dom,
 });
 // 装饰层拿到的是「按块起点打开」的**端口**（不是遮罩本体）：呈现计划在点击那一刻按当前
 // `EditorState` 现取，读屏名复用文档内容器同一份生成处（见 livePreview 的 codeBlockLabel）。
@@ -1228,11 +1278,46 @@ injectEach((handle) =>
       const target = codeBlockFullscreenTarget(handle.view, from);
       if (target === null) return;
       // 来源 pane 记录（M317 2.9）：触发钮在哪个 pane 的 DOM 里，焦点就还给哪个 pane。
-      codeBlockFullscreenSource = paneIdOfHandle(handle);
+      codeBlockFullscreenSource = { kind: "pane", paneId: paneIdOfHandle(handle) };
+      codeBlockFullscreenThemeHost = null;
       codeBlockFullscreen.open(target.render, target.label);
     },
   }),
 );
+
+// harness 面板里代码块 / 表格的全屏（M634，change add-harness-block-fullscreen）：面板只出
+// 块级定位容器与悬停钮，遮罩、来源与焦点归还都在这里落。两个遮罩各只有**一个实例**——面板与
+// 编辑器共用，同一时刻只有一个应用模态（从面板打开会顶掉编辑器里已开的同类遮罩，无叠加）。
+// 打开时记来源为「面板」；再次点同一个钮是 toggle（与命令入口的 `toggle` 径同一语义）。
+// 内容换代（会话切换 / 面板重载 / vault 切换）由面板经 `close` 显式关闭——只关**面板来源**的
+// 那一份：编辑器里开的遮罩不因面板换会话而退场。
+const harnessBlocks: HarnessBlockFullscreenPort = {
+  openTable(source, label, trigger) {
+    if (tableFullscreen.isOpen() && tableFullscreenSource.kind === "harness" && tableFullscreenSource.trigger === trigger) {
+      tableFullscreen.close("toggle");
+      return;
+    }
+    tableFullscreenSource = { kind: "harness", trigger };
+    tableFullscreen.open(source, label);
+  },
+  openCodeBlock(render, label, themeScopeHost, trigger) {
+    if (
+      codeBlockFullscreen.isOpen() &&
+      codeBlockFullscreenSource.kind === "harness" &&
+      codeBlockFullscreenSource.trigger === trigger
+    ) {
+      codeBlockFullscreen.close("toggle");
+      return;
+    }
+    codeBlockFullscreenSource = { kind: "harness", trigger };
+    codeBlockFullscreenThemeHost = themeScopeHost;
+    codeBlockFullscreen.open(render, label);
+  },
+  close() {
+    if (tableFullscreenSource.kind === "harness") tableFullscreen.close("document");
+    if (codeBlockFullscreenSource.kind === "harness") codeBlockFullscreen.close("document");
+  },
+};
 
 // 块级复制（M277，change block-copy-affordance）：触发钮与 `block.copy` 命令共用一个口子，
 // 内容口径只有一处（`src/preview/block-copy.ts`）。剪贴板走既有纯前端通道
@@ -2716,6 +2801,8 @@ function isVaultDirPath(path: string): boolean {
 const harnessPanel = createHarnessPanel({
   shell,
   editor,
+  // 块级全屏（M634）：面板里的代码块 / 表格走既有两个单实例遮罩，来源记「面板」。
+  blocks: harnessBlocks,
   togglePane: toggleHarnessPane,
   // 面板发起的瞬态提示（消息摘录失锚 D443）走装配层的 showToast，锚 harness pane 右下角
   //（M420 合同 O4：提示锚定**发起它的 pane**）——toast 产出点单一来源，面板不自建。
@@ -3076,7 +3163,7 @@ const commands: CommandRuntime = {
     }
     const target = tableFullscreenTarget(editor.view);
     if (target === null) return;
-    tableFullscreenSource = paneLayout.active().id; // 焦点归还的来源 pane（M317 2.9）
+    tableFullscreenSource = { kind: "pane", paneId: paneLayout.active().id }; // 焦点归还的来源 pane（M317 2.9）
     tableFullscreen.open(target.table, target.label);
   },
   // 代码块放大全屏查看（M277）：与表格侧同形——遮罩已开 = 关闭（toggle），否则按命中判据找块
@@ -3089,7 +3176,7 @@ const commands: CommandRuntime = {
     }
     const target = codeBlockFullscreenTarget(editor.view, editor.view.state.selection.main.head);
     if (target === null) return;
-    codeBlockFullscreenSource = paneLayout.active().id; // 焦点归还的来源 pane（M317 2.9）
+    codeBlockFullscreenSource = { kind: "pane", paneId: paneLayout.active().id }; // 焦点归还的来源 pane（M317 2.9）
     codeBlockFullscreen.open(target.render, target.label);
   },
   // 块级复制（M277）：命中判据不满足时什么都不做（事件不被消费由下面的命令级门承担）。

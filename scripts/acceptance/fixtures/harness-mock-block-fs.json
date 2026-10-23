@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "BLOCK-FS 回复：先给一段命令，再给一张表。\n\n```bash\necho BLOCK-FS-CODE-01\necho BLOCK-FS-CODE-02\n```\n\n| 名称 | 说明 |\n| --- | --- |\n| 甲格 | BLOCK-FS-CELL-甲 |\n",
+      "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 40 }
+    }
+  ]
+}
