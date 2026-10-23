@@ -12,7 +12,7 @@
 - [ ] 1.6 `git` 只读子命令族收缩：保留 `rev-parse` / `ls-files` / `describe` / `shortlog` / `stash list` / `branch`·`tag` 列表 / `remote -v`；`status` / `diff` / `log` / `show` / `blame` 归写
 - [ ] 1.7 `write_targets` 补新增写形态的目标提取（`base64 -o`、`tree -o`、`xxd` 的第二位置参数（不限于 `-r`）、`find -fprint` 系），使 vault 内写仍走重定向；`suggested_tool` 按目标是否存在给 `vault_create` / `vault_patch`，不定时给 `None`
 - [ ] 1.8 `cli_run` spawn 时清空注入型环境变量（`RIPGREP_CONFIG_PATH` / `LESSOPEN` / `LESSCLOSE` / `GREP_OPTIONS`），并在代码注释写明这是防御性硬化、不是 argv 判据
-- [ ] 1.9 单测：表驱动正 / 反例覆盖 design §6 的 6 类；每条拒判配一条只差一个 token 的正例、每条正例配一条改坏输入的反向验证
+- [ ] 1.9 单测：表驱动正 / 反例覆盖 design §6 的 6 类；每条拒判配一条只差一个 token 的正例、每条正例配一条改坏输入的反向验证；xxd 位置参数计数专项含 `xxd -ps in out` → 写、`xxd -ps in` → 只读、`xxd -c16 in` / `xxd -c 16 in` → 只读
 - [ ] 1.10 单测：跨档矩阵（写形态 `read_only`/`vault_write` → Ask、`full_access` → Allow；执行形态三档全 Ask）与包装器继承（`sudo base64 -o …`、`xargs rg --pre …`）
 - [ ] 1.11 实测 git 保留族的执行面（r1 P2-1）：对 `rev-parse` / `ls-files` / `describe` / `shortlog` / `stash list` / `branch`·`tag` 列表 / `remote -v` 逐个在仓库 config 设 `log.showSignature=true` + 恶意 `gpg.program`（并覆盖 `core.fsmonitor` / `diff.external` / textconv）的仓库里跑一遍，确认不触发任何外部程序；触发则把该子命令移出保留族——「执行面不存在」的判据以实测背书，不靠推理
 

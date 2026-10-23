@@ -43,7 +43,7 @@
 | `git -c diff.external=… diff`（空格形态） | 脚本被执行；**但当前分类器把它判成写**（`-c` 的值被当子命令），不是只读绕过 |
 | `git -cdiff.external=… diff`（粘连形态） | git 自己报 `unknown option: -cdiff...` |
 | `xxd -r -p hex.txt out.bin` | 写出 6 字节 |
-| `xxd a.txt out.hex`（普通 dump，两个位置参数） | 写出 64 字节；`xxd -c 16 a.txt`（取值旗标 + 单位置参数）不落盘；`xxd - out.hex` 同样写（`-` 计输入位置参数） |
+| `xxd a.txt out.hex`（普通 dump，两个位置参数） | 写出 64 字节；`xxd -ps a.txt t2`（原子簇选项）写出 25 字节；`xxd -c 16 a.txt`（取值旗标 + 单位置参数）不落盘；`xxd - out.hex` 同样写（`-` 计输入位置参数） |
 | `file -C -m magicdir/mymagic` | 在**当前目录**写出 `magic.mgc`（不是 `-m` 指定路径旁边） |
 | `find . -fls out` / `find . -fprint out` | 本机 BSD find 报 `unknown primary or operator`；GNU find 支持（本 change 仍覆盖，分类器是文本级、跨平台） |
 | `less -o out a.txt` / `less '+!touch flag' a.txt`（非 tty、stdin 非管道） | 均无落盘，进程不阻塞 |
@@ -111,7 +111,7 @@ classify_cli(argv):
 | `find` | `-fprint`、`-fprint0`、`-fprintf`、`-fls` | GNU find 的写原语；BSD find 无，但分类器跨平台 |
 | `sed` | 见 §2.3 | 脚本级判定 |
 
-`xxd` 的位置参数计数：`-c` / `-g` / `-l` / `-n` / `-o` / `-s` 各取一个值（含 `-c16` 这类粘连形态），其后的 token 计为位置参数；`-` 单独成 token 时计为一个位置参数。位置参数 ≥ 2 即写——`xxd infile outfile` 与 `xxd -r infile outfile` 同形，`xxd infile` 只写 stdout 仍只读。
+`xxd` 的位置参数计数：`-c` / `-g` / `-l` / `-n` / `-o` / `-s` 各取一个值（含 `-c16` 这类粘连形态），其后的 token 计为位置参数；`-` 单独成 token 时计为一个位置参数。**取值消耗以 token 起首字母判定，MUST NOT 对簇做单字母展开**：`-s` / `-s0` / `-c 16` / `-c16` 成立；`-ps` 这类以非取值字母起首的簇是 xxd 的原子选项，`-s` 不消耗后续 token——按簇展开读法会把 `xxd -ps a.txt out.hex` 的 `a.txt` 误当 `-s` 的值、只剩 1 个位置参数而漏判（fail-open；实测该形态写 `out.hex`）。位置参数 ≥ 2 即写——`xxd infile outfile` 与 `xxd -r infile outfile` 同形，`xxd infile` 只写 stdout 仍只读。新版 xxd 的 `-R when`（colorize）刻意不列入取值表：把它当取值旗标会在不支持该旗标的平台上吞掉输入文件、反而 fail-open；不列入只导致过度保守（`xxd -R never a.txt` 会被当两个位置参数 → 写）。
 
 短旗标簇的判据：单 `-` 起首、非 `--`、全部字符都在该命令的旗标字母表内（排除「把值粘在旗标后」
 的歧义）；命中即写。命中不了也只会落回「不写」以外的更高保守侧（未知形态 → 写），不会误放行。
