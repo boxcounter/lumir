@@ -8,8 +8,10 @@
 // M678 探针在可用现场读到 `focusedWindowErr=0 ... isFirstWindow=true`。
 //
 // 用法：swift ax-key-window.swift <pid>
-// 成功打出一行 `focusedWindow=true|false title=<窗口标题>`；读 AXWindows 失败时 stderr + 非零退出
-// （调用方按「读不到」处理，不猜）。
+// 成功打出一行 `focusedWindow=true|false|unknown [err=<AXError 码>] title=<窗口标题>`；
+// 读 AXWindows 失败时 stderr + 非零退出（调用方按「读不到」处理，不猜）。
+// `unknown` 专指 AXFocusedWindow 属性读不到（含空值 / 读取错误），与 `false`（确定读到了
+// 另一个窗口）分开——前者是环境问题，后者是确定状态。
 // 前提：调用进程有辅助功能权限（与 doubleClick / resizeWindow 同）。
 import ApplicationServices
 import Foundation
@@ -30,14 +32,24 @@ guard err == .success, let windows = windowsRef as? [AXUIElement], !windows.isEm
 
 var focusedRef: CFTypeRef?
 let focusedErr = AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &focusedRef)
-// 判据 = 「app 的聚焦窗口存在，且就是 AXWindows[0]（套件操作的主窗口）」。
-// 读不到聚焦窗口（属性错误 / 空值）= 窗口没有拿到 key 状态——这正是 M667 的现场形态。
-var focusedWindow = false
-if focusedErr == .success, let fw = focusedRef, CFGetTypeID(fw) == AXUIElementGetTypeID() {
-    focusedWindow = CFEqual(windows[0], fw as! AXUIElement)
+// 三态输出（M678 r1 评审）：
+//   true    = 读到了聚焦窗口，且就是 AXWindows[0]（套件操作的主窗口）= 窗口是 key；
+//   false   = 读到了聚焦窗口，但不是主窗口（**确定**不是 key）；
+//   unknown = 属性读取失败 / 空值（AX 读数不可用——调用方必须判未建立，不得当成通过）。
+// 把 unknown 归一成 false 会把环境问题报成确定状态，两者必须分开。
+var state = "unknown"
+var errNote = ""
+if focusedErr == .success {
+    if let fw = focusedRef, CFGetTypeID(fw) == AXUIElementGetTypeID() {
+        state = CFEqual(windows[0], fw as! AXUIElement) ? "true" : "false"
+    } else {
+        errNote = " err=no-window-value"
+    }
+} else {
+    errNote = " err=\(focusedErr.rawValue)"
 }
 
 var titleRef: CFTypeRef?
 _ = AXUIElementCopyAttributeValue(windows[0], kAXTitleAttribute as CFString, &titleRef)
 let title = (titleRef as? String) ?? "?"
-print("focusedWindow=\(focusedWindow) title=\(title)")
+print("focusedWindow=\(state)\(errNote) title=\(title)")

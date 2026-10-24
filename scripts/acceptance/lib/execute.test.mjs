@@ -23,6 +23,7 @@ import test from "node:test";
 
 import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, runScenario } from "./execute.mjs";
 import { parseNodes } from "./ax.mjs";
+import { parseKeyWindowState } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
 
 /** 临时根（每个用例一份，跑完不清也无妨——全在 `os.tmpdir()` 下）。 */
@@ -792,9 +793,10 @@ test("正文单击落点（M678）：截图像素 → 窗口局部 → Quartz �
   assert.throws(() => contentClickGeometry({ textarea, bounds, shot: null }), (e) => e instanceof InfraError);
 });
 
-test("focusWindow click 的重试与判败（M678）：坏态不得判通过，修好的第二次单击才结束重试", async () => {
+test("focusWindow click 的重试与判败（M678）：双判据严格为真才通过，坏态与不可读一律判失败", async () => {
   let clicks = 0;
   let current = ["webview"];
+  const keyOk = async () => ({ focused: true, raw: "focusedWindow=true title=Lumir" });
   const clickOnce = async () => {
     clicks += 1;
     return { shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } };
@@ -802,18 +804,21 @@ test("focusWindow click 的重试与判败（M678）：坏态不得判通过，�
   const readFocus = async () => readDump(current);
 
   // ① 第一次单击被激活吃掉（仍是 M670 的 webview 级焦点），第二次落地 ⇒ 恰好点两次后成功。
+  //    成功路径必须显式注入 `focused: true`（r1 评审 P1-1：缺省 reader / null 不得通过）。
   const ok = await establishEditorFocus({
     clickOnce: async (i) => {
       current = i === 1 ? ["webview"] : ["editor"];
       return clickOnce(i);
     },
     readFocus,
+    readKeyWindow: keyOk,
     attempts: 3,
     sleepFn: async () => {},
   });
   assert.equal(ok.attempt, 2, `应在第 2 次单击后建立焦点，实际 ${ok.attempt}`);
   assert.equal(clicks, 2, `应恰好点两次，实际 ${clicks}`);
   assert.equal(ok.reading.isEditor, true);
+  assert.equal(ok.key.focused, true, "成功路径必须带上 key 读数（true）");
 
   // ② 单击一直不落地、焦点留在 composer（最像假绿的状态）⇒ 耗尽 attempts 后判失败，不静默放行。
   let stuckClicks = 0;
@@ -824,6 +829,7 @@ test("focusWindow click 的重试与判败（M678）：坏态不得判通过，�
         return { shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } };
       },
       readFocus: async () => readDump(["composer"]),
+      readKeyWindow: keyOk,
       attempts: 3,
       sleepFn: async () => {},
     }),
@@ -832,8 +838,7 @@ test("focusWindow click 的重试与判败（M678）：坏态不得判通过，�
   );
   assert.equal(stuckClicks, 3, `重试上限应恰好用满 3 次，实际 ${stuckClicks}`);
 
-  // ③ 编辑器有焦点、但没有 key window（AXFocusedWindow 不在场）⇒ 同样判失败：
-  //    只看 focused 标记会把「窗口未被激活、这次单击又被吃掉」放行（M667 的现场）。
+  // ③ 编辑器有焦点、但 AX 明确读到聚焦窗口是**另一个**窗口（false）⇒ 判失败。
   let notKeyClicks = 0;
   await assert.rejects(
     establishEditorFocus({
@@ -842,7 +847,7 @@ test("focusWindow click 的重试与判败（M678）：坏态不得判通过，�
         return { shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } };
       },
       readFocus: async () => readDump(["editor"]),
-      readKeyWindow: async () => ({ focused: false, raw: "focusedWindow=false title=Lumir" }),
+      readKeyWindow: async () => ({ focused: false, raw: "focusedWindow=false title=Agent" }),
       attempts: 2,
       sleepFn: async () => {},
     }),
@@ -851,7 +856,7 @@ test("focusWindow click 的重试与判败（M678）：坏态不得判通过，�
   );
   assert.equal(notKeyClicks, 2, `窗口不是 key 时应把重试用满，实际 ${notKeyClicks}`);
 
-  // ④ 第一次就成立（编辑器焦点 + 窗口是 key）⇒ 只点一次（不多点、不多等）。
+  // ④ 第一次就成立（编辑器焦点 + 窗口是 key=true）⇒ 只点一次（不多点、不多等）。
   let firstClicks = 0;
   const first = await establishEditorFocus({
     clickOnce: async () => {
@@ -859,7 +864,7 @@ test("focusWindow click 的重试与判败（M678）：坏态不得判通过，�
       return { shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } };
     },
     readFocus: async () => readDump(["editor"]),
-    readKeyWindow: async () => ({ focused: true, raw: "focusedWindow=true title=Lumir" }),
+    readKeyWindow: keyOk,
     attempts: 3,
     sleepFn: async () => {},
   });
@@ -867,15 +872,53 @@ test("focusWindow click 的重试与判败（M678）：坏态不得判通过，�
   assert.equal(firstClicks, 1);
   assert.equal(first.key.focused, true);
 
-  // ⑤ 窗口读数不可得（null）⇒ 只记录、不据此判败，编辑器焦点仍成立即通过。
-  const unknown = await establishEditorFocus({
-    clickOnce: async () => ({ shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } }),
-    readFocus: async () => readDump(["editor"]),
-    readKeyWindow: async () => ({ focused: null, raw: "读取失败：boom" }),
-    attempts: 1,
-    sleepFn: async () => {},
-  });
-  assert.equal(unknown.attempt, 1, "窗口读数读不到时不得把 unknown 当成 false 而判败");
+  // ⑤ 窗口读数 **unknown**（AX 读取失败）⇒ 必须判失败（r1 评审 P1-1 的核心反向用例）：
+  //    旧写法 `!== false` 会在这里静默通过，key-window 通道失效时退化成单判据。
+  let unknownClicks = 0;
+  await assert.rejects(
+    establishEditorFocus({
+      clickOnce: async () => {
+        unknownClicks += 1;
+        return { shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } };
+      },
+      readFocus: async () => readDump(["editor"]),
+      readKeyWindow: async () => ({ focused: null, raw: "focusedWindow=unknown err=-10005 title=Lumir" }),
+      attempts: 2,
+      sleepFn: async () => {},
+    }),
+    (e) => e instanceof InfraError && /AXfocusedWindow=unknown/.test(e.message),
+    "key 读数 unknown 时必须判「未建立」并在错误里点明读数不可用",
+  );
+  assert.equal(unknownClicks, 2, `unknown 应把重试用满（不得提前放行），实际 ${unknownClicks}`);
+
+  // ⑥ **根本没给 reader** ⇒ 同样必须判失败：两条判据不能因为通道缺席而退化成单判据。
+  let missingClicks = 0;
+  await assert.rejects(
+    establishEditorFocus({
+      clickOnce: async () => {
+        missingClicks += 1;
+        return { shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } };
+      },
+      readFocus: async () => readDump(["editor"]),
+      attempts: 2,
+      sleepFn: async () => {},
+    }),
+    (e) => e instanceof InfraError && /AXfocusedWindow=未读/.test(e.message),
+    "没有 key 读数通道时必须判「未建立」，不得当成通过",
+  );
+  assert.equal(missingClicks, 2, `缺 reader 应把重试用满，实际 ${missingClicks}`);
+});
+
+test("key window 读数解析（M678 r1）：true / false / unknown 三态分开，unknown 不归一成 false", () => {
+  assert.equal(parseKeyWindowState("focusedWindow=true title=Lumir"), true);
+  assert.equal(parseKeyWindowState("focusedWindow=false title=Agent"), false, "读到另一个窗口 = 确定不是主窗口");
+  assert.equal(
+    parseKeyWindowState("focusedWindow=unknown err=-10005 title=Lumir"),
+    null,
+    "属性读取失败 = unknown，必须与确定状态分开",
+  );
+  assert.equal(parseKeyWindowState("focusedWindow=unknown err=no-window-value title=Lumir"), null);
+  assert.equal(parseKeyWindowState("garbage output"), null, "输出无法解析同样是 unknown");
 });
 
 test("全库场景静态校验通过（--check 的真实通道）", () => {

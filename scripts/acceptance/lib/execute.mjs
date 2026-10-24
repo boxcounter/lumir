@@ -1125,10 +1125,11 @@ async function realContentClick(cu, p, { dx = CONTENT_FOCUS_DX, dy = CONTENT_FOC
  *   1. 真实单击落在**编辑器正文**里（不是标题栏拖拽区——M670 的根因）；
  *   2. 单击后 AX 里**恰有一个** focused 节点，且它就是编辑器的 `AXTextArea`（`isEditor`）——
  *      role 级判定不够：composer 也是 `AXTextArea`，「焦点还留在 composer」会假绿；
- *   3. app 的 `AXFocusedWindow` 就是本套件的主窗口（给了 `readKeyWindow` 时）= 窗口是 key：
+ *   3. app 的 `AXFocusedWindow` 就是本套件的主窗口且**读数严格为 true** = 窗口是 key：
  *      DOM 焦点可以留在非 key 窗口上，第 2 条证明不了「窗口是 key」。**别改用窗口自己的
  *      `AXFocused`**——该属性在本 app 上恒 false（M678 首轮 224/228 的 INVALID 现场）。
- *      读不到（null）只记录、不据此判败；
+ *      `false`（确定不是主窗口）、`unknown`（AX 读取失败）、读数缺失一律**判未建立**——
+ *      把不可读当通过就是 REVIEW.md「读不到当成空」的假绿形态（r1 评审 P1-1）；
  *   4. 建立不起来就**再点一次**（第一次可能被窗口激活吃掉，M667），上限 `attempts`；
  *   5. 耗尽仍不成立 → InfraError（本场读数不算数）：此时后续 hover / 键盘注入都不可信，
  *      继续跑只会产出与产品缺陷无法区分的假红 / 假绿。
@@ -1154,14 +1155,16 @@ export async function establishEditorFocus({
     const reading = await readFocus();
     // key window（M678）：编辑器焦点证明不了「窗口是 key」，所以再读一次 app 的 AXFocusedWindow
     // （**不是**窗口自己的 AXFocused——那个属性在本 app 上恒 false，见 `readKeyWindowState`）。
-    // 读不到（null）只记录、不据此判败。
+    // 未给 reader / 读数为 null（unknown / 读取失败）不在这里归一成可通过——判据要求严格 true。
     const key = readKeyWindow ? await readKeyWindow() : null;
     const entry = { attempt, click, reading, key };
     tries.push(entry);
     return entry;
   };
-  const established = (entry) => entry.reading.isEditor && entry.key?.focused !== false;
-  const keyText = (key) => (key ? `focusedWindow=${key.focused ?? "unknown"}` : "focusedWindow=未读");
+  // 两条判据必须同时为真（r1 评审 P1-1）：`focused` 严格 `=== true`——false / null（unknown /
+  // 读不到）/ 缺失 reader 一律判未建立。旧写法 `!== false` 会让 key-window 通道失效时静默退化成
+  // 单判据（REVIEW.md「读不到当成空」的假绿形态），重试也不触发。
+  const established = (entry) => entry.reading.isEditor && entry.key?.focused === true;
 
   for (let i = 1; i <= attempts; i++) {
     const click = await clickOnce(i);
@@ -1173,11 +1176,20 @@ export async function establishEditorFocus({
     if (established(second)) return { attempt: i, reading: second.reading, key: second.key, tries };
   }
   const last = tries.at(-1) ?? { reading: { count: 0, roles: [] }, key: null };
+  // 三种失败形态分开写：确定不是主窗口 / 读数不可用 / 根本没给 reader——环境归因不能混。
+  const keyNote =
+    last.key?.focused === false
+      ? "窗口 AXfocusedWindow=false（AX 读到了聚焦窗口，但不是主窗口）"
+      : last.key?.focused === true
+        ? "窗口 AXfocusedWindow=true（key 成立，但编辑器焦点未建立）"
+        : last.key
+          ? "窗口 AXfocusedWindow=unknown（AX 读数不可用 / 读取失败，不得当成通过）"
+          : "窗口 AXfocusedWindow=未读（没有提供 key 读数通道，不得当成通过）";
   throw new InfraError(
     `${label}：真实正文单击 ${attempts} 次仍未建立「key window + 编辑器焦点」` +
-      `（最后一次 focused=${last.reading.roles.join(",") || "无"}，共 ${last.reading.count} 个节点；` +
-      `窗口 AX${keyText(last.key)}）。这个状态下的后续 hover 与键盘注入都不可信——` +
-      "本次运行该场景读数不算数（环境项，非产品缺陷）；先把前台让给 Lumir 再复跑。",
+      `（最后一次 focused=${last.reading.roles.join(",") || "无"}，共 ${last.reading.count} 个节点；${keyNote}）。` +
+      "这个状态下的后续 hover 与键盘注入都不可信——本次运行该场景读数不算数（环境项，非产品缺陷）；" +
+      "先把前台让给 Lumir 再复跑。",
   );
 }
 

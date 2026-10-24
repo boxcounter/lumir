@@ -706,18 +706,28 @@ export async function resizeWindowAX(pid, width, height) {
  *  224/228 的现场）。`AXFocusedWindow` 是 AX 侧的 key window 读数：同一次探针在可用现场读到
  *  `focusedWindowErr=0 … isFirstWindow=true`。
  *
- *  返回 `{ focused: true|false|null, raw }`；`null` = 读不到（读 AXWindows 失败 / swift 失败），
- *  **不猜成 false**——判定方对 unknown 只记录、不据此判败（读不到不等于不是 key）。
+ *  返回 `{ focused: true|false|null, raw }`；**`null` = unknown**（AXFocusedWindow 属性读取失败 /
+ *  输出无法解析 / swift 失败），与 `false`（确定读到了聚焦窗口、但不是主窗口）分开记——判定方要求
+ *  严格 `true` 才通过（r1 评审 P1-1：unknown 不得当成通过，否则 key-window 通道失效时退化成单判据）。
  */
 export function readKeyWindowState(pid) {
   const script = new URL("./ax-key-window.swift", import.meta.url).pathname;
   try {
     const raw = execFileSync("/usr/bin/swift", [script, String(pid)], { encoding: "utf8" }).trim();
-    const m = /focusedWindow=(true|false)/.exec(raw);
-    return { focused: m ? m[1] === "true" : null, raw };
+    return { focused: parseKeyWindowState(raw), raw };
   } catch (e) {
     return { focused: null, raw: `读取失败：${e.message}` };
   }
+}
+
+/** `ax-key-window.swift` 输出的纯解析（M678 r1）：`focusedWindow=true|false|unknown` →
+ *  `true` / `false` / `null`。`unknown`（属性读取失败）与无法解析都归 `null`，**不归一成 false**：
+ *  「读不到」和「确定不是主窗口」是两种归因（前者是环境，后者是状态），混在一起会把环境问题
+ *  报成确定状态。判定方（`establishEditorFocus`）对 `null` 判未建立。 */
+export function parseKeyWindowState(raw) {
+  const m = /focusedWindow=(true|false|unknown)/.exec(raw);
+  if (!m || m[1] === "unknown") return null;
+  return m[1] === "true";
 }
 
 /** 启动后把窗口钉到固定尺寸（M491）：产品侧 `apply_startup_size`（src-tauri/src/lib.rs:242-322）
