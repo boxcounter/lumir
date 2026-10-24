@@ -407,6 +407,9 @@ check("S11 失效覆盖模型按 kind 分流：session 回落生效模型、atta
   assert(/不在清单，已回落生效模型/.test(namingTargetBody), "session raw option must describe the fallback");
   assert(/不在清单，会跳过/.test(namingTargetBody), "attachment raw option must describe the skip");
   assert(!/requested \? \(spec \? requested : ""\)/.test(resolveBody), "the shared empty-model branch must be gone");
+  const effectiveBody = functionBody(html, "effectiveModel");
+  assert(/if \(explicit\) return explicit;/.test(effectiveBody), "effective model must keep an explicit providers.<id>.model");
+  assert(!/declared\.includes\(explicit\)/.test(effectiveBody), "an explicit model must not be filtered by the declared list");
 });
 
 // ── 浏览器交互断言（可选依赖 Playwright） ────────────────────────────────────

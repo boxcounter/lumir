@@ -5,7 +5,7 @@
 - [x] 1.1 盘点固定 `HarnessProviders` 的全部消费者（`HarnessProvider` 精确引用 30 个文件 / 255 处；去掉 ts-rs 生成物 21 / 233；产品源码 13 / 211；另列 11 个不含类型名的形状级消费者）与四级影响面，落 design §0；设计可扩展 provider 映射（id / preset / 条目校验 / active 回退 / 命名目标解析）
 - [x] 1.2 重写 `proposal.md` / `design.md` / `tasks.md` 与 `specs/{settings,harness,keymap-commands}` delta 为完整 provider 管理（增删改、删除保护与替代目标、preset、一次性迁移、CAS 写通道、未知字段保留、全局自动化与**内联可编辑**的命名目标）
 - [x] 1.3 重做自包含可点击原型 `design/prototypes/model-automation-settings-oct24.html`：provider 列表 + 添加 / 编辑 / 删除、删除保护（当前使用 / 命名引用 / 未保存草稿）、重复 id、空清单、模型清单、高级区（预设只读 / Base URL / Wire）、全局自动化与两个命名行的内联目标选择（provider + 模型、默认跟随、关闭禁用但保留、图片标 vision、一行生效说明、无独立摘要框）；控制面板覆盖全部场景 / 主题 / provider / 操作，合成数据
-- [x] 1.4 新增机器断言并跑绿：`evidence/prototype-semantics-check.mjs`（35 项：增删流程、id 冲突、删除保护、空清单、自动化全局性、内联命名目标可编辑 / 跟随 / 覆盖 / 悬空 / 会话失效覆盖模型回落 / 关闭禁用但保留 / vision / 一行说明含来源与时机 / 无摘要框、单页无 TAB；含负向对照与 6 个 mutant 实测）与 `evidence/provider-rules-check.mjs`（44 项：迁移、默认回退、命名目标解析与编辑、失效模型按 kind 回落 / 跳过、删除计划、id 规则的纯函数判定表；含 16 个 mutant 对照）
+- [x] 1.4 新增机器断言并跑绿：`evidence/prototype-semantics-check.mjs`（35 项：增删流程、id 冲突、删除保护、空清单、自动化全局性、内联命名目标可编辑 / 跟随 / 覆盖 / 悬空 / 会话失效覆盖模型回落 / 关闭禁用但保留 / vision / 一行说明含来源与时机 / 无摘要框、单页无 TAB；含负向对照与 6 个 mutant 实测）与 `evidence/provider-rules-check.mjs`（46 项：迁移、默认回退、命名目标解析与编辑、失效模型按 kind 回落 / 跳过、显式生效模型优先于清单首项、删除计划、id 规则的纯函数判定表；含 17 个 mutant 对照）
 - [x] 1.5 重截三主题关键屏（已配置 / 自动化 / 命名关闭 / 图片无 vision / 空清单 / 添加 / 删除保护），同步 `.local/reviews/model-automation-settings-oct24/`（proposal / design / tasks / specs / prototype / index 副本 / 断言日志 / 截图）
 - [x] 1.6 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与 `scripts/docs-check.sh` 通过；`design/prototypes/index.html` 的本原型条目改准（只改本条目）
 - [ ] 1.7 等 Alex 节点 1 裁决；未通过前不进入实现
@@ -71,7 +71,7 @@
 
 - [ ] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [ ] 7.2 `scripts/docs-check.sh` 通过（含 `openspec-archive-check.mjs` 的 MODIFIED 段落对账）
-- [ ] 7.3 Rust 单测：迁移（补齐 / 幂等 / 显式值优先 / 写失败 / 未知 id / 与退役 model 同写）；映射解析（非法条目只丢自己 / preset 非法 / generic 缺 base_url / mock 保留 id / id 字符集）；active 回退（显式 / 缺省 / configured 优先 / 空映射 / 悬空 / mock 不被缺省选中）；命名目标（合法 / 悬空 / 缺省；失效覆盖模型——会话命名回落生效模型、图片命名保留原值并跳过；编辑——目标非 mock、model 在清单内、换 provider 清 model、同一笔 provider+model 按新目标校验、Reset 删键、开关关闭不清值）；删除保护（active / 命名引用 / 草稿外的替代目标 / 删最后一个（含只剩 mock）/ model 覆盖清除 / 文件逐字节不变）；快照 raw/生效 / revision / 坏条目可见；revision 冲突（外部改两个命名 `model` 后删除 provider → Conflict，不得静默清值）；patch 类型拒绝 / preset 不可改 / 重复 id / 未知子键保留；页级还原保留条目；非回归三组
+- [ ] 7.3 Rust 单测：迁移（补齐 / 幂等 / 显式值优先 / 写失败 / 未知 id / 与退役 model 同写）；映射解析（非法条目只丢自己 / preset 非法 / generic 缺 base_url / mock 保留 id / id 字符集）；active 回退（显式 / 缺省 / configured 优先 / 空映射 / 悬空 / mock 不被缺省选中）；生效模型（显式 `providers.<id>.model` 优先、缺省取清单首项、不在清单保留 + warning）；命名目标（合法 / 悬空 / 缺省；失效覆盖模型——会话命名回落生效模型、图片命名保留原值并跳过；编辑——目标非 mock、model 在清单内、换 provider 清 model、同一笔 provider+model 按新目标校验、Reset 删键、开关关闭不清值）；删除保护（active / 命名引用 / 草稿外的替代目标 / 删最后一个（含只剩 mock）/ model 覆盖清除 / 文件逐字节不变）；快照 raw/生效 / revision / 坏条目可见；revision 冲突（外部改两个命名 `model` 后删除 provider → Conflict，不得静默清值）；patch 类型拒绝 / preset 不可改 / 重复 id / 未知子键保留；页级还原保留条目；非回归三组
 - [ ] 7.4 前端单测（`pnpm test`）：增删改流程、重复 id、删除保护控件按 `references` 出现、删除后 active / 命名目标改写、空清单、保存中控件禁用、错误回填与 ARIA（重复模型 id 两行都标）、逐项恢复默认仅显式存在、内联命名目标四形态（跟随 / 指定 / 悬空回落 / 关闭禁用但保留）、换 provider 清 model、会话失效覆盖模型回落且不显示「会跳过」、图片 vision 标记与跳过分支的来源 + 时机、自动化不随 provider 变化、单页无 TAB、反向文案断言（无独立摘要框、无「每轮生成」）
 - [ ] 7.5 视觉场景：1280×800 与 900×700 下打开即完整可见（O1/O2）、无水平溢出、Tab 不逃出面板；三主题各一屏 + 空清单 / 添加（重复 id 错误）/ 删除确认 / 命名关闭（选择禁用但保留）/ 图片无 vision / 会话覆盖模型回落 / 校验错误 / 保存中各一屏
 - [ ] 7.6 `scripts/gate.sh quick` 与本地 `scripts/gate.sh visual` 通过
@@ -79,4 +79,4 @@
 - [ ] 7.8 新增验收场景：`⌘,` 与菜单打开同一面板；添加 provider 后 chip 出现；重复 id 被拒且文件不变；删除当前 provider 需替代目标；删除被命名引用项后读数更新；删除最后一个 provider 的空态与发送错误；旧格式配置启动后补齐 preset 且二次启动不再写
 - [ ] 7.9 真机验收套件全量跑一遍，证据落 `.local/acceptance/`
 - [ ] 7.10 全程只用合成 Key（形如 `test-key-…`）；MUST NOT 读取或写入真实 `~/.config/lumir` 与真实 vault
-- [ ] 7.11 原型回归：`node openspec/changes/add-model-automation-settings-oct24/evidence/prototype-semantics-check.mjs`（35 项）与 `node .../evidence/provider-rules-check.mjs`（44 项）全绿；实现 PR 把规则判定表移植成 Rust 单测后删除 `provider-rules-check.mjs`
+- [ ] 7.11 原型回归：`node openspec/changes/add-model-automation-settings-oct24/evidence/prototype-semantics-check.mjs`（35 项）与 `node .../evidence/provider-rules-check.mjs`（46 项）全绿；实现 PR 把规则判定表移植成 Rust 单测后删除 `provider-rules-check.mjs`

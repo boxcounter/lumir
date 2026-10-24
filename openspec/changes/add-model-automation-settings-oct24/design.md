@@ -212,7 +212,7 @@ scope 必须包含 schema 迁移本身。
 |---|---|---|---|
 | `preset` | `kimi` / `deepseek` / `generic` / `mock` | 缺键 ⇒ `generic` + warning（迁移会把旧三档补上，见 §3） | 闭集合外 ⇒ **整条忽略** + 点名 warning（猜错协议比丢弃更危险） |
 | `api_key` | string | `""` | 非字符串 ⇒ 整条忽略 + warning |
-| `model` | string | 清单首项 id；清单空 ⇒ `""` | 非字符串 ⇒ 整条忽略 + warning；不在清单内 ⇒ 保留值 + warning（窗口 / 能力按保守默认） |
+| `model` | string | 显式值优先（不在清单内也保留）+ warning；缺省取清单首项；清单空 ⇒ `""` | 非字符串 ⇒ 整条忽略 + warning；不在清单内 ⇒ 保留值 + warning（窗口 / 能力按保守默认） |
 | `models` | array | `[]` | 非数组 ⇒ 整条忽略 + warning；元素逐项校验（§9） |
 | `base_url` | string | kimi / deepseek 用预设官方地址；generic / mock 无 | 空串 ⇒ 视同缺省 + warning；generic 缺省 / 空 ⇒ 条目可用性为否 + warning |
 | `wire_api` | enum | kimi / deepseek：`responses`；generic：`chat_completions`；mock：`responses`（不消费） | 闭集合外 / 该 preset 不支持 ⇒ 回落 preset 缺省 + warning |
@@ -849,7 +849,8 @@ pub struct ConfigDiagnostic {
 - 设置页的图片命名行 MUST 在**模型选择器**上标出资格（每项后缀 `✓ vision` 或
   `未声明 vision`），并在选择旁的那一行生效说明里写出解析后的目标与后果（例如
   「实际：kimi-work / k3-256k ✓ vision · 跟随当前 provider · 下一次粘贴生效」或
-  「实际：local-lab / local-chat · 未声明 vision → 粘贴图片不会改名，保留暂存名」）。
+  「实际：local-lab / local-chat · 指定目标 · 未声明 vision → 粘贴图片不会改名，保留暂存名 ·
+  下一次粘贴生效」）。
   MUST NOT 为「哪个模型能做图片命名」另建一块摘要或矩阵。
 
 ## 10. 自动化与命名目标呈现
@@ -1044,8 +1045,9 @@ r4 移除了自动化节顶部的独立读数块。现在的唯一呈现是每�
   末尾是「发往 `[provider ▾]` `[model ▾]`」两个选择器 + **一行**生效说明。provider 的
   增删 / 切换 MUST NOT 重渲染开关行（DOM 与开关值不变），只刷新两行里的选择器选项与那一行
   说明。
-- **选择器**：宽 ≤190px、28px 高、1px `--border`、`--r5`；禁用态 45% 不透明；焦点环同其他
-  控件。图片命名的模型选项文本带 `✓ vision` / `未声明 vision`。
+- **选择器**：宽 ≤240px（r1 起实际值；190px 会截断「不在清单，已回落生效模型」这类长选项）、
+  28px 高、1px `--border`、`--r5`；禁用态 45% 不透明；焦点环同其他控件。图片命名的模型
+  选项文本带 `✓ vision` / `未声明 vision`。
 - **关闭态**：两个选择器 disabled，说明文字「已关闭：不发起命名调用；选择保留（…），重新
   开启后按此目标执行」用 `--text-3`（不是 danger）。视觉上 MUST NOT 隐藏控件，也 MUST NOT
   把已选值显示成空。
@@ -1081,6 +1083,8 @@ r4 移除了自动化节顶部的独立读数块。现在的唯一呈现是每�
   不可用；mock 只能 id=mock；id 字符集。
 - **active 回退**：显式合法保持（即使未配置，含显式 mock）；缺失 → 第一个 configured；
   全未配置 → 第一个合法非 mock 条目；空映射 / 只剩 mock → 无；悬空 → 回退 + warning。
+- **生效模型解析**：显式 `providers.<id>.model` 优先（非首项、不在清单也保留），缺省取清单
+  首项，清单空为空串；命名回落与图片命名缺省目标都用它。
 - **命名目标**：override 合法 / 悬空 / 缺省三种；model 覆盖与目标 provider 的清单对账；
   图片命名 vision 资格；**失效覆盖模型按 kind 分流**（会话命名回落生效模型 + warning，图片
   命名保留原值 + 资格跳闸，两类后果分别断言）；**编辑面**（r4）——Set 的目标必须是合法非
@@ -1139,10 +1143,10 @@ r4 移除了自动化节顶部的独立读数块。现在的唯一呈现是每�
   控制面板全选项点击、三主题 × 15 场景；文本 predicate 配负向对照（REVIEW.md『断言等价于
   子串』条），交互路径由 B1–B14 实测。
 - `evidence/provider-rules-check.mjs`：把 §2.5 / §3 / §4 / §2.3 / §10.2 的判定表写成可执行
-  纯函数，共 44 项检查；其中 **16 个 mutant 对照**覆盖关键规则组——迁移 R1/R2/R3/R4/R5、
-  configured R6、回退顺序 R8/R9、命名目标编辑 R12b/R12e、失效模型回落 R12g、删除
-  R13/R15/R16/R18、id R19。MUST NOT 宣称「每条规则各有一个 mutant」；其余检查是正向判定表。
-  它是实现的测试 oracle，不是产品代码的替代。
+  纯函数，共 46 项检查；其中 **17 个 mutant 对照**覆盖关键规则组——迁移 R1/R2/R3/R4/R5、
+  configured R6、回退顺序 R8/R9、命名目标编辑 R12b/R12e、失效模型回落 R12g、生效模型优先
+  R12h、删除 R13/R15/R16/R18、id R19。MUST NOT 宣称「每条规则各有一个 mutant」；其余检查是
+  正向判定表。它是实现的测试 oracle，不是产品代码的替代。
 - 两个脚本都不进 CI（提案期工具）；实现 PR 把同一判定表移植成 Rust 单测后再删掉
   `provider-rules-check.mjs`（或降级为文档，见 tasks）。
 

@@ -634,7 +634,8 @@ MUST NOT 只给一个笼统的「需重启」标记。两个命名目标的失�
 
 - **WHEN** 在图片命名行把目标 provider 选为 `local-lab`，再选一个未声明 `vision: true` 的模型
 - **THEN** 模型选项只列 `local-lab` 的模型、每项标明 vision 资格；那一行说明写
-  「实际：local-lab / <模型> · 未声明 vision → 粘贴图片不会改名，保留暂存名」；保存后
+  「实际：local-lab / <模型> · 指定目标 · 未声明 vision → 粘贴图片不会改名，保留暂存名 ·
+  下一次粘贴生效」；保存后
   `harness.attachment_naming.provider` 写为 `local-lab`；MUST NOT 改选清单里的其它模型
 
 #### Scenario: 切换目标 provider 清除旧模型覆盖

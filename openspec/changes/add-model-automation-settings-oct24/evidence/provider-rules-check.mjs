@@ -5,10 +5,10 @@
 // 它不是产品代码的替代，而是**实现的测试 oracle**：提案评审时机器可复核这些规则自洽；
 // 实现 PR 把同一判定表移植成 Rust 单测（tasks 7.3），之后本脚本可删除。
 //
-// 判据有区分度（REVIEW.md「断言等价于子串，没有区分度」条）：关键规则组配 **16 个 mutant
+// 判据有区分度（REVIEW.md「断言等价于子串，没有区分度」条）：关键规则组配 **17 个 mutant
 // 对照**（迁移 R1/R2/R3/R4/R5、configured R6、回退顺序 R8/R9、命名目标编辑 R12b/R12e、
-// 失效模型回落 R12g、删除 R13/R15/R16/R18、id R19），每个 mutant 都必须被对应检查抓红；
-// 不是「每条规则各有一个 mutant」。
+// 失效模型回落 R12g、生效模型优先 R12h、删除 R13/R15/R16/R18、id R19），每个 mutant 都必须
+// 被对应检查抓红；不是「每条规则各有一个 mutant」。
 //
 // 跑法：node openspec/changes/add-model-automation-settings-oct24/evidence/provider-rules-check.mjs
 
@@ -156,11 +156,15 @@ function validateProviderId(id, existing) {
  * 失效覆盖模型的解析（design §2.6 / §10.2）：会话命名回落目标 provider 的生效模型（与
  * config.rs 的 title_target_of 同口径）；图片命名原样保留覆盖值，vision 资格不通过时跳过、
  * 不换模型。两类后果 MUST NOT 混写。
+ *
+ * 生效模型按 harness 的「模型清单声明」条解析：显式 `entry.model`（非空即用；不在清单内也
+ * 保留该值 + warning）→ 缺省 / 空串取清单首项 → 清单为空时为空串。
  */
 function resolveNamingModel(entry, requested, kind) {
   const models = entry && Array.isArray(entry.models) ? entry.models : [];
   const declared = models.filter((m) => m && typeof m.id === "string" && m.id.trim()).map((m) => m.id.trim());
-  const effective = declared[0] || "";
+  const explicit = String(entry && entry.model != null ? entry.model : "").trim();
+  const effective = explicit || declared[0] || "";
   const value = String(requested == null ? "" : requested).trim();
   if (kind === "session") {
     const fallback = Boolean(value && !declared.includes(value));
@@ -495,6 +499,22 @@ check("R12g 失效覆盖模型：session 回落生效模型，attachment 保留�
   eq(resolveNamingModel(NAMING_ENTRY, null, "session"), { model: "k3-256k", fallback: false, eligible: true }, "absent override uses the effective model");
 });
 
+// 显式 providers.<id>.model = 非首项：两类的缺省 / 回落都必须用它，而不是清单首项。
+const EXPLICIT_ENTRY = {
+  preset: "kimi", api_key: "sk", model: "k3-128k",
+  models: [{ id: "k3-256k", vision: true }, { id: "k3-128k", vision: false }],
+};
+
+check("R12h 显式生效模型优先于清单首项（对 session 回落与 attachment 缺省都成立）", () => {
+  eq(resolveNamingModel(EXPLICIT_ENTRY, null, "session"), { model: "k3-128k", fallback: false, eligible: true }, "session default uses the explicit model");
+  eq(resolveNamingModel(EXPLICIT_ENTRY, "ds-chat", "session"), { model: "k3-128k", fallback: true, eligible: true }, "session fallback uses the explicit model");
+  eq(resolveNamingModel(EXPLICIT_ENTRY, null, "attachment"), { model: "k3-128k", fallback: false, eligible: false }, "attachment default uses the explicit model, then fails the vision gate");
+  eq(resolveNamingModel(EXPLICIT_ENTRY, "k3-128k", "attachment"), { model: "k3-128k", fallback: false, eligible: false }, "explicit non-vision attachment model is ineligible");
+  eq(resolveNamingModel(EXPLICIT_ENTRY, "k3-256k", "attachment"), { model: "k3-256k", fallback: false, eligible: true }, "an explicit vision-capable override still wins");
+  const outOfList = { preset: "kimi", api_key: "sk", model: "k3-legacy", models: [{ id: "k3-256k", vision: true }] };
+  eq(resolveNamingModel(outOfList, null, "session").model, "k3-legacy", "an out-of-list explicit model is kept (spec: keep the value + warning)");
+});
+
 function mutantSharedEmptyModel(entry, requested) {
   const models = (entry && entry.models) || [];
   const declared = models.filter((m) => m && typeof m.id === "string" && m.id.trim()).map((m) => m.id.trim());
@@ -504,6 +524,21 @@ function mutantSharedEmptyModel(entry, requested) {
 check("R12m3 mutant（两类共用空模型）被 R12g 抓住", () => {
   eq(mutantSharedEmptyModel(NAMING_ENTRY, "ds-chat").model, "", "mutant blanks the session model");
   eq(resolveNamingModel(NAMING_ENTRY, "ds-chat", "session").model, "k3-256k", "correct resolution falls back to the effective model");
+});
+
+function mutantFirstDeclaredEffective(entry, requested, kind) {
+  const models = (entry && entry.models) || [];
+  const declared = models.filter((m) => m && typeof m.id === "string" && m.id.trim()).map((m) => m.id.trim());
+  const value = String(requested == null ? "" : requested).trim();
+  if (kind === "session") {
+    const fallback = Boolean(value && !declared.includes(value));
+    return { model: value && !fallback ? value : (declared[0] || ""), fallback, eligible: true };
+  }
+  return { model: value || declared[0] || "", fallback: false, eligible: false };
+}
+check("R12m4 mutant（把清单首项当生效模型）被 R12h 抓住", () => {
+  eq(mutantFirstDeclaredEffective(EXPLICIT_ENTRY, null, "session").model, "k3-256k", "mutant ignores the explicit entry.model");
+  eq(resolveNamingModel(EXPLICIT_ENTRY, null, "session").model, "k3-128k", "correct resolution prefers the explicit entry.model");
 });
 
 // ── 删除保护 ────────────────────────────────────────────────────────────────
@@ -634,7 +669,7 @@ check("R19m mutant（放过大写 / 点）被 R19 抓住", () => {
   assert(validateProviderId("Kimi.work", []) === "settings_provider_id_invalid", "correct implementation rejects");
 });
 
-// ── 其余关键规则组的 mutant 对照（共 16 个 mutant） ───────────────────────────
+// ── 其余关键规则组的 mutant 对照（共 17 个 mutant） ───────────────────────────
 
 function mutantNoLegacyMigration(providers) {
   return { providers: clone(providers), rewritten: false };

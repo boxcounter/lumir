@@ -965,9 +965,11 @@ function statusOf(p) {
 }
 function effectiveModel(p) {
   if (!p || p.models.length === 0) return "";
+  // 显式 providers.<id>.model 优先；即使不在清单内也保留该值（harness「模型清单声明」条：
+  // 保留 + warning、窗口保守估算）。缺省 / 空串才取清单首项。
+  const explicit = String(p.modelId || "").trim();
+  if (explicit) return explicit;
   const declared = p.models.map((item) => String(item.id || "").trim()).filter(Boolean);
-  const explicit = p.modelId || "";
-  if (explicit && declared.includes(explicit)) return explicit;
   return declared[0] || "";
 }
 function modelSpec(p, id) {
