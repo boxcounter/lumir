@@ -1,7 +1,7 @@
 # ui-design-system 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 MODIFIED，基线是 living spec
-> [openspec/specs/ui-design-system/spec.md](../../../../specs/ui-design-system/spec.md) 的「阅读面横向滚动条」。
+> [openspec/specs/ui-design-system/spec.md](../../../../../specs/ui-design-system/spec.md) 的「阅读面横向滚动条」。
 > 按 `openspec archive` 的整块替换语义，整条复制现行正文后就地增补（作用域扩到浮层列表、隐藏档消费者
 > 清单 + 三处浮层、右缘 12px 不变量、溢出态前置判据与一条 scenario），未改动的段落逐字保留。
 > 标题保留旧名（「阅读面横向滚动条」）不重命名：改名需要 RENAMED 块且对账门禁按名字配对，收益只是
