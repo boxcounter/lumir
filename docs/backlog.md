@@ -64,8 +64,7 @@
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
 - **`improve-keybindings-lookup-oct24`**（M715）：delta = keymap-commands 1 条 MODIFIED（键位面板行模型）+ 3 条 ADDED（查找/捕获/详情、非自指入口、命令元数据与字形单一来源），节点 2 走人肉；实现批附带新增真机场景 235 / 236 / 237（查询 / 捕获 / 键盘）与 m133 视觉场景重写——**像素基线待 Alex 过目后重截**（未经过目不得 `--update`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
-- **序 10 · `readonly-allowlist-tightening-oct23`**（M664，20/22）：节点 2 材料齐——231（写形态 / 执行形态 / git 只读族，32 断言）与 231b（hidden 写入口拒绝，8 断言）真机 PASS，证据 `.local/acceptance/2026-10-24-m711/`；残留：3.2 待 M649 归档后把 MODIFIED 块重写为「master 原文 + M649 解包段 + M664 收紧段」（不得提前改，否则 M649 段会被整块替换静默抹掉）、3.3 finding 由 tower 记账；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
-- **序 11 · `rg-zip-flags-dangerous-oct24`**（M672，11/11）：delta = 序 10 全文 + `-z` / `--search-zip` 改写，必须紧接序 10。
+- **序 11 · `rg-zip-flags-dangerous-oct24`**（M672，11/11）：delta = `readonly-allowlist-tightening-oct23` 归档后的整条 requirement + `-z` / `--search-zip` 改写，必须紧接其归档。
 - **`overlay-width-contract-oct24`**（M702，34/37）：节点 1 追认材料已备（D1–D5 落地 + 证据 + 否决回改面，见 proposal）；真机 231/232 PASS（5 + 11 断言，`.local/acceptance/2026-10-24-m711/`）；残留：0.3 / 0.4 待 Alex 追认、9.1 归档期执行；delta = ui-design-system 1 条 ADDED，归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`fix-escape-overlay-close-oct24`**（M718，收尾中）：节点 1 已裁（Alex 2026-10-24「采纳你的提案。」，D1 裁 B）；先红后绿——238 红跑（master，Esc 后 AX `element_count: 1`、`ps` 空输出、浮层重建后 0 个 focused 节点）→ 绿跑 PASS（38 断言，`.local/acceptance/2026-10-24/238-escape-overlay-close/RED-before-fix/` 与同目录的 `GREEN-after-fix/`）；239 退出反例 PASS（①②③，含 dirty 文档 Esc 不弹提示）。delta = `keymap-commands` 1 条 ADDED + `harness` 1 条 MODIFIED（节点 2 走人肉）；残留：5.4 全量真机批与 6.x 门禁按本次收尾输出填写；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`add-path-line-range-links`**（M552，19/19）：节点 2 走人肉（delta = harness 两条 MODIFIED）；221 真机 PASS（10 断言，`.local/acceptance/2026-10-24-m711/221-harness-path-line-range/`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
