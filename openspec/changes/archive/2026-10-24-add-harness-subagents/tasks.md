@@ -542,5 +542,9 @@
 
 ## 11. 归档（节点 2 通过后，M713 执行）
 
-- [ ] 11.1 归档时为新建 capability `harness-subagents` 手写 living spec 的 Purpose（`archive` 只写
+- [x] 11.1 归档时为新建 capability `harness-subagents` 手写 living spec 的 Purpose（`archive` 只写
       占位 `TBD - created by archiving change …`），写完复跑 `validate --all --strict` 确认全绿
+      —— 2026-10-24（M713）：`openspec/specs/harness-subagents/spec.md` 的 Purpose 已手写
+      （定义文件两级覆盖 / `task` 委派与并行后台 / 工具集默认收紧 / 三重闸与 resume / 批准透传 /
+      上下文隔离 / 用量分桶 / 配置节 / 任务面板可见面）；`validate --all --strict` →
+      `Totals: 38 passed, 0 failed (38 items)`；全库无 `TBD - created by archiving` 残留。
