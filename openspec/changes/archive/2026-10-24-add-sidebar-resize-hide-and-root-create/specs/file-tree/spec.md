@@ -1,7 +1,7 @@
 # file-tree 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 ADDED，基线是 living spec
-> [openspec/specs/file-tree/spec.md](../../../../specs/file-tree/spec.md)。既有「条目右键菜单」与
+> [openspec/specs/file-tree/spec.md](../../../../../specs/file-tree/spec.md)。既有「条目右键菜单」与
 > 「目录下新建」两条 requirement 逐字不动——本增量只补**vault 根**这个没有行元素的入口，并明确它
 > 与拖拽落点共用「不在任何条目行带内」这一条既有判据（M538 已把树头部与列表尾部空白定义为
 > vault 根）。形态、命中面取值与项集取舍见 [design.md](../../design.md) §3 与 §4 的 D4 / D5。

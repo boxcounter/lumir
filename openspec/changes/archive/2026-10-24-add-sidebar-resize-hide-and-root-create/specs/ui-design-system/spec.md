@@ -1,7 +1,7 @@
 # ui-design-system 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 MODIFIED，基线是 living spec
-> [openspec/specs/ui-design-system/spec.md](../../../../specs/ui-design-system/spec.md)。改动面：骨架的
+> [openspec/specs/ui-design-system/spec.md](../../../../../specs/ui-design-system/spec.md)。改动面：骨架的
 > 侧栏从「写死 236px」改为「默认 236px + 可拖拽调宽 + 可经 ⌘B 收起/展开」；标题栏 traffic 区宽存活读
 > 同一 token，收起时回到最小宽。其余几何（标题栏 42 / modeline 25 / 内容区 pane 容器）逐字不变。
 > 宽度区间、收起态持久化与恢复通道等取值见 [design.md](../../design.md) §4 的 D1–D6。
