@@ -132,8 +132,8 @@
       `editor.unchangedSince` + 文件 `unchangedSince` 的字节断言；光标高度是手感项，
       不在真机断言（AX 不暴露 caret 几何，照实登记）
       ——场景已写、`run.mjs --check` PASS；真机 PASS `228-caret-visibility` 28 断言 0 失败
-      （2026-10-24T01:58:27Z，`.local/acceptance/2026-10-24/run.log`；同日 05:18 的复跑把该场景
-      目录覆盖成 INVALID——`focusWindow click` 环境项、非产品，PASS 读数以 run.log 为准）。
+      （2026-10-24T01:58:27Z，同日 05:26:05Z 复跑同 PASS；证据目录
+      `.local/acceptance/2026-10-24/228-caret-visibility/`，历次读数见同目录 `run.log`）。
       字节口径按场景设计改用 `file.unchangedSince` + `mtimeUnchangedSince`（本场景可见文本按设计
       会变：围栏进出），理由见场景「判据为什么这样写」；光标观感归 4.9。
 - [x] 4.7 只有 frontmatter 的文档 / 非法 YAML 回退 / 512 行 frontmatter 三个边界在场景
