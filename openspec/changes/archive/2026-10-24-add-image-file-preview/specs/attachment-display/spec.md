@@ -1,7 +1,7 @@
 # attachment-display 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 ADDED，基线是 living spec
-> [openspec/specs/attachment-display/spec.md](../../../../specs/attachment-display/spec.md)。既有条款
+> [openspec/specs/attachment-display/spec.md](../../../../../specs/attachment-display/spec.md)。既有条款
 > 全部针对**文档内**的图片引用（内联渲染、路径解析、可见回退、lightbox），本增量补的是**独立查看一个
 > vault 图片文件**的形态与边界；字节来源与 MIME 注册表与既有条款**同源**（同一 provider、同一
 > `mimeTypeOf`），MUST NOT 另立一套。本文按起草倾向（[design.md](../../design.md) §4 的 D1 = 图片是

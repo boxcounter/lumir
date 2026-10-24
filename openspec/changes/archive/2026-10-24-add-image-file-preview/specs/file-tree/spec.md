@@ -1,7 +1,7 @@
 # file-tree 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 MODIFIED，基线是 living spec
-> [openspec/specs/file-tree/spec.md](../../../../specs/file-tree/spec.md)。改动面只有一处：**图片文件**的
+> [openspec/specs/file-tree/spec.md](../../../../../specs/file-tree/spec.md)。改动面只有一处：**图片文件**的
 > 点击落点从「暂不支持预览提示」改为「在 content pane 里打开图片查看面」；其余二进制、md、非 md
 > 文本的打开分类与可编辑性裁决逐字不变。图片查看面的能力条款在 `attachment-display` 的增量里，
 > 形态与技术方案见 [design.md](../../design.md)。
