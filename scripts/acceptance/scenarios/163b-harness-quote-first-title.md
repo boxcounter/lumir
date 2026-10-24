@@ -10,8 +10,9 @@
 #
 # 时间窗：mock 响应 `delay_ms: 8000`——发送后先落 wire、再开浮层、最后命名事件到达。
 #
-# **当前判红**（M669 r1）：第一阻塞在「⌃⇧N 选区 → 浮动钮浮现」，与 222 的 hover finding
-# 同族；正文「当前状态」段记着红在哪一步、守卫防哪种假绿、第二层缺口留给 M671。
+# M671（Alex 2026-10-24 现场）：quote 卡片进 composer 后焦点没有搬进输入区——「quote 完想
+# 直接打字，字会落进编辑器」。本场景因此**不点 composer**：卡片插入后直接键入，「键入落在
+# 哪一侧」就是产品焦点归属的判据（正文「当前状态」段记着假绿形态与判据分层）。
 id: "163b-harness-quote-first-title"
 item: 163
 title: 会话自动命名②：quote 首条消息 → 命名事件 → 标题栏与已开历史浮层行同步改名
@@ -22,14 +23,15 @@ config:
     provider: mock
     fixture: "$fixtures/harness-mock-title-quote.json"
 steps:
-  - name: 抢前台并让窗口成为 key window（键盘注入 + 真实点击通道的前置；先做，避免它把编辑器焦点抢走）
-    do: focusWindow
-    retries: 4
-    click: true
-
-  - name: 把光标放进编辑器第 1 行（真实鼠标点击：同时建立 DOM 焦点与 key window）
+  - name: 把光标放进编辑器第 1 行（**真实鼠标单击**：同时建立 DOM 焦点、key window 与 webview 焦点）
     do: clickEditor
     real: true
+    retries: 4
+    # 本场景的键盘注入（⌃N / ⌃⇧N）与随后的真实点击都要求 webview 先有焦点。M670 实测：
+    # `focusWindow click: true` 打的是标题栏拖拽区（`data-tauri-drag-region="deep"`），那一下
+    # 只让 webview **失去**焦点，此后鼠标移动与键盘注入整批停投（finding
+    # 20261024-worker-image-hover-quote-oct24-bug-focuswindow-click-true-wkwebview.md）；
+    # 建立焦点的确定手段是正文里的真实单击（与场景 222 同一条通道）。
     expect:
       - label: 焦点落在编辑器正文里
         ax: { focused: "AXTextArea" }
@@ -38,14 +40,23 @@ steps:
     do: keys
     keys: ["ctrl+n", "ctrl+n"]
 
-  - name: ⌃⇧N 选中第 3 行——浮动钮应在选区右下浮现（场景 81 的同款配方）
+  - name: ⌃⇧N 选中第 3 行（场景 81 的同款配方）
     do: keys
     keys: ["ctrl+shift+n"]
+
+  # 浮现是**延迟**的（M541 时机门：键盘选区静默 `GESTURE_SETTLE_MS`=350ms 后才出钮），`keys`
+  # 注入返回时计时器通常还没到点——立即断言读到的是「尚未浮现」，是一条随机器负载漂的假红
+  #（2026-10-24 本场景实测：同一次运行里紧接着的 click 步能找到这颗钮）。等这个可观测终态。
+  - name: 等浮动「摘录到对话」钮浮现
+    do: waitFor
+    waitFor:
+      has: ["/AXButton \\(摘录到对话\\)/"]
+    timeoutMs: 10000
     expect:
       - label: 浮动「摘录到对话」钮在场（选区建立的正观测）
         ax: { has: "/AXButton \\(摘录到对话\\)/" }
 
-  - name: 点浮动钮 → harness pane 自动分栏、卡片入 composer
+  - name: 点浮动钮 → harness pane 自动分栏、卡片入 composer、焦点搬进输入区
     do: click
     target: { role: AXButton, name: "摘录到对话" }
     expect:
@@ -53,22 +64,23 @@ steps:
         ax: { has: "分隔条" }
       - label: 卡片带出处行（文档名 · 最近一级标题）
         ax: { has: "harness-quote.md · 摘录卡片验收" }
+      - shot: 01-卡片入composer
 
-  - name: 真实点 composer 末尾的空段落（contenteditable 的 DOM 焦点靠真实 mousedown；卡片本身不搬焦点）
-    do: clickInNode
-    target: { role: AXTextArea, name: "问点什么|harness-quote\\.md · 摘录卡片验收" }
-    dx: 0.5
-    dy: 0.88
+  - name: 记下编辑器基线（下一步的落点判据要逐字节比较）
+    do: recordEditor
+    as: 编辑器基线-键入前
 
-  - name: 键入问题（卡片之外的那段正文正是回落名的数据源；串里不含 'e'）
-    do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|harness-quote\\.md · 摘录卡片验收" }
-    text: "qqmark"
+  # M671：本步**不点 composer**。产品行为 = 卡片插入后焦点已在输入区，用户可以直接打字；
+  # 注入落在哪一侧就是焦点归属的判据（串里不含 'e'——press_key 在本机确定性丢 'e'，M497）。
+  - name: 直接键入问题（卡片之外的那段正文正是回落名的数据源）
+    do: keys
+    keys: ["q", "q", "m", "a", "r", "k"]
+    gapMs: 100
     expect:
       - label: 问题落在 composer
         ax: { has: "qqmark" }
-      - label: 编辑器正文没被写脏（注入漏到焦点元素上时这里必红；M669 中间一轮 01:49 的真实形态。注意最终 run 未走到这一步——第一阻塞在选区→浮钮，见正文「当前状态」）
-        editor: { not: "qqmark" }
+      - label: 编辑器正文逐字节未变——注入没有漏进仍有焦点的编辑器（M669 中间一轮 01:49 的真实形态；本步唯一能抓到「焦点没搬进输入区」的判据）
+        editor: { unchangedSince: 编辑器基线-键入前 }
 
   - name: 发送（mock 响应刻意延迟 8s，留出「浮层先开、命名事件后到」的窗口）
     do: key
@@ -98,7 +110,7 @@ steps:
         node: { role: AXMenuItem, name: "qqmark", present: true }
       - label: 回落名里没有 XML 前缀（M662 修的正是这一处）
         ax: { not: "<quote file=" }
-      - shot: 01-浮层行-回落名
+      - shot: 02-浮层行-回落名
 
   - name: 等命名事件：已开的浮层行随标题事件即时改名
     do: waitFor
@@ -116,41 +128,41 @@ steps:
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"decision":"initial"' }
       - label: 记录带触发原因 first-turn
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"reason":"first-turn"' }
-      - shot: 02-浮层行-标题即时更新
+      - shot: 03-浮层行-标题即时更新
 ---
 
 # 163b-harness-quote-first-title —— quote 首条消息的命名呈现
 
-## 当前状态（M669 r1：红，未通过）
+## 当前状态（M671）
 
-- **本场景当前判红**：`node scripts/acceptance/run.mjs 163b` → FAIL。最近读数
-  2026-10-24 01:57 场（9 断言 / 8 红），证据
-  `.local/acceptance/2026-10-24/163b-harness-quote-first-title/`。
-- **第一条红在哪**：`⌃⇧N 选中第 3 行——浮动钮应在选区右下浮现`——`AXButton (摘录到对话)`
-  根本没出现。**此后全部是级联红**（点浮动钮「找不到可点节点」、composer 从未出现、
-  `waitForFile` 超时因为 wire 从未落盘）。
-- **与 222 的 finding 同族**：222 走 hover 路径同样死在「摘录到对话钮不浮现」，
-  finding `.tower/comms/findings/20261024-worker-acceptance-repairs-oct2-bug-222-hover.md`；
-  本场景是 **⌃⇧N 键盘选区路径**。两条线索指向同一个待查根因（浮动钮的浮现 / AX 暴露链路），
-  排查应并到该 finding 的范围内，不要按「本场景自己坏了」另起一摊。
-- **第二层缺口（尚未撞到，留给 M671）**：quote 卡片进 composer 之后，没有可靠通道把
-  **DOM 焦点**搬进 composer——`type_text` 落在当前焦点元素上，注入会漏进仍有焦点的编辑器。
-  这是第一个阻塞解除后才会撞到的层，本场景现在没有走到。
-- **`editor: { not: "qqmark" }` 守卫防的是哪种假绿**：`ax: { has: "qqmark" }` 在整棵 AX 树上
-  匹配——注入漏进编辑器时它照样绿（M669 中间一轮 01:49 的真实形态：`qqmark` 落到文档末尾，
-  composer 里仍只有卡片）。那条负向断言把「落错面」变成红，是本场景唯一能抓到这层的判据。
+- **M669 r1 的两层红都已落地**：第一层「⌃⇧N 选区 → 浮动钮不浮现」归 M670（根因是场景层
+  拿 `focusWindow click: true` 去「抢 key window」，标题栏拖拽区那一下让 webview 失焦，此后
+  鼠标移动与键盘注入整批停投；2026-10-24 01:57 场那 9 断言 / 8 红全部是它的级联）。
+  本场景照 222 改成的配方：正文**真实鼠标单击**（`clickEditor real: true`）建立焦点。
+- **第二层（本场景现在的判据面）**：卡片插入后**焦点是否搬进 composer**。M671 之前本场景用
+  `clickInNode` 点 composer 再注入——那一步把「产品是否搬了焦点」整个绕过去，是**假绿**形态
+  （产品没搬，场景照样绿）。现在删掉它：卡片插入后直接键入，落点即判据。
 
 ## 本场景在验什么
 
 M659/M662 的会话自动命名在**quote 首条消息**这条路径上的用户面：
 
-1. quote 首条消息（摘录卡片 + 一段问题文字）发出去后，命名调用照常触发，标题事件到达；
-2. **已开着的历史浮层行**随事件即时改名（`retitleOpenSessRows` 命中的正观测）；
-3. 标题栏会话名与浮层行在同一事件里换成同一标题；
-4. `session_title` sidecar 落 `decision=initial` / `reason=first-turn`。
+1. quote 卡片进 composer 后焦点落在输入区，用户可以直接打字（M671）：键入进 composer、
+   编辑器逐字节不变；
+2. quote 首条消息（摘录卡片 + 一段问题文字）发出去后，命名调用照常触发，标题事件到达；
+3. **已开着的历史浮层行**随事件即时改名（`retitleOpenSessRows` 命中的正观测）；
+4. 标题栏会话名与浮层行在同一事件里换成同一标题；
+5. `session_title` sidecar 落 `decision=initial` / `reason=first-turn`。
 
 ## 判据为什么这样写
 
+- **键入落点 = 焦点归属的判据，不是 `ax: { focused: "AXTextArea" }`**：编辑器的正文与
+  composer 在 AX 里**同为 AXTextArea**，`focused` 断言分不出是哪一侧（M500/M502 已实证：
+  focused 标记可以与 `type_text` 的真实投递背离）。因此判据写成「键入后 composer 里有串
+  （正观测）+ 编辑器逐字节未变（区分度判据）」——焦点落在编辑器时第一条也可能绿（整棵 AX
+  树里都有该串），第二条必红。这就是本步不能省 `editor.unchangedSince` 的理由。
+- **两步注入之间的基线**：`recordEditor` 必须记在键入之前、卡片插入之后（编辑器正文在这一
+  段里不会被产品改写；基线记早了一旦有别的步骤写编辑器，这条判据就会变成假红）。
 - **浮层必须「先开、事件后到」**：163 已经覆盖「事件 → 标题栏 → 重开浮层读行名」；本场景换
   的是**已开浮层**那条路径——它是 M662 现场的唯一可判面（行名按上屏名匹配改名，口径一歪
   行就停在旧名上）。mock 响应的 `delay_ms: 8000` 造出这个窗口；`waitForFile` 先证 wire 已
@@ -163,8 +175,9 @@ M659/M662 的会话自动命名在**quote 首条消息**这条路径上的用户
 - **回落名的来源**：composer 是「quote 卡片 + 一段段落文字」，回落口径取第一个非空**段落**
   块（`firstUserTextOf` / 后端 `first_paragraph_text` 同口径），段落是 `qqmark`。因此浮层行
   在命名前应当显示 `qqmark`，而不是 XML 序列化文本（M662 修的现场）。
-- **hover / 真实点击的前台前提**：`focusWindow click: true` 先抢前台并把窗口做成 key window
-  （README 的 hover 条与前台上滚条同一条纪律），否则选区手势与真实点击会整批不落地。
+- **前台前提**：正文真实单击同时建立 DOM 焦点、key window 与 webview 焦点——`focusWindow`
+  本身只保证 app 在前台，窗口未必是 key window；而 `focusWindow click: true` 的标题栏单击
+  会让 webview 失焦（M670）。键盘注入与真实点击的前台纪律以正文单击为准。
 
 ## 已知边界
 
@@ -175,3 +188,6 @@ M659/M662 的会话自动命名在**quote 首条消息**这条路径上的用户
 - 标题事件与浮层清单拉取的竞态：`waitForFile` 之后再开浮层，清单来自已落盘的 wire；若产品
   在「清单拉取期间」完成改名，`retitleOpenSessRows` 会按旧名匹配不到（该行此刻尚未渲染）——
   这种情形在本场景的延迟窗口下不会出现（8s 远大于清单往返）。
+- 键入通道：`do: keys` 逐键注入对 composer 会丢 'e'（M497）——本场景的素材串 `qqmark` 不含
+  'e'；`typeInNode` 不适用（它的 attempt-1 焦点守卫会在目标没持焦时先点目标，恰好把本场景要
+  判的「焦点有没有搬过去」mask 掉）。

@@ -4867,6 +4867,41 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     composer.classList.toggle("is-empty", empty);
   }
 
+  /**
+   * 引用插入后的**焦点移交**（M671，三条引用入口共用：文本摘录 / 消息摘录 / 图片引用）。
+   *
+   * 合同：卡片进 composer 之后键盘落点 MUST 在输入区——用户「quote 完想直接打字」不该再自己
+   * 点一次 composer。判据是 **DOM 焦点**（`document.activeElement === composer`），不是 AX 的
+   * focused 标记：编辑器正文与 composer 在 AX 里同为 `AXTextArea`，标记分不出两侧
+   *（M500/M502 实证：标记在 composer、盲注仍落进编辑器）。
+   *
+   * 三件事的顺序本身是合同的一部分：
+   *  1. **面板必须在场**才谈得上聚焦：面板原本关着时装配层经 `deps.togglePane()` 现场开 pane
+   *     并**同步**把面板挂进 DOM（`createPaneHandle` → `attachTo`）。不在场就只返回——宁可不
+   *     聚焦，也不把焦点丢给别的元素；此时插入本身照旧落进（长驻内存的）输入区模型。
+   *  2. **先 focus、再写 caret**：`withModel` 的整面重渲不改焦点宿主（`composer` 整块长驻），
+   *     它在重渲时已经写过一次选区；但面板本来就是开着的现场，那一刻焦点还在编辑器里——
+   *     contenteditable 获得焦点的那一拍可能按引擎口径把 caret 归位，模型位因此要**在 focus
+   *     之后**再写一次，保证「光标落在卡片下一行的问题段落」（design §5 的装配合同）在焦点
+   *     移交后仍然成立。
+   *  3. **复核一次**：`focus()` 之后读 `activeElement`；没到位就在下一帧补一次。补的窗口只取
+   *     一帧（装配层刚挂载的那一拍、click 分发尾部的引擎焦点修正都在这一拍内），**不排持续
+   *     重试**——持续重试会跟用户的下一次点击抢焦点。
+   */
+  function focusComposerAfterInsert(caret: ComposerCaret | null): void {
+    if (mountEl === null) return;
+    const settle = (): void => {
+      composer.focus();
+      if (caret !== null) setDomCaret(caret);
+    };
+    settle();
+    if (document.activeElement === composer) return;
+    requestAnimationFrame(() => {
+      if (document.activeElement === composer) return;
+      settle();
+    });
+  }
+
   // ── 消息摘录：插入流转 / 跳回 / 失锚（change harness-message-excerpt design §5–§6） ──
 
   /** 消息摘录卡入 composer（走 insertBlockAtCaret 同路，面板未开先开、光标落卡片下一行段落）。 */
@@ -4876,12 +4911,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 一次新的引用收口上一次引用的失败状态行（spec：读数存活到「下一次引用」——消息摘录也是
     // 一次引用；r1 P2-1）。
     applyQuoteFailureNotice(null);
-    withModel((blocks) => {
+    const caret = withModel((blocks) => {
       const sel = caretFromDom();
-      const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
-      return insertBlockAtCaret(blocks, caret, { kind: "msgquote", card: valid });
+      const at = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
+      return insertBlockAtCaret(blocks, at, { kind: "msgquote", card: valid });
     }, STRUCTURAL_EDIT_FORCE);
-    composer.focus();
+    focusComposerAfterInsert(caret);
   }
 
   /** composer 贴图段（change harness-composer-image-paste design §7）：Blob → base64 →
@@ -5488,6 +5523,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * 移除、粘贴、拆段、删除族与 kill 族）——本文件不再写 force 字面量；`false` 只留给三处豁免：
    * 键入（原生文本编辑的压栈）、字符级编辑（⌃T 转置）、删除族的空转空模型写（见各自就地注释）。
    *
+   * 返回重渲后落到 DOM 的那个模型光标（`null` = 写入被下面两条闸门跳过、DOM 未变）——引用插入
+   * 的三条入口靠它把 caret 在**焦点移交之后**再写一次（见 focusComposerAfterInsert）。
+   *
    * HC5：IME 组合期（compositionstart → compositionend）整面重渲冻结——replaceChildren 会销毁
    * 组合锚点节点、打断 IME 会话（同 compositionstart 物化注释的理由）。键盘入口在 keydown 已有
    * 组合期早退，这里防的是鼠标路径（组合期右键粘贴 / 拖入）；被跳过的编辑不补发（组合文本的
@@ -5496,14 +5534,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function withModel(
     op: (blocks: readonly ComposerBlock[]) => { blocks: ComposerBlock[]; caret: ComposerCaret },
     force: boolean,
-  ): void {
-    if (imeGateState.composing) return;
+  ): ComposerCaret | null {
+    if (imeGateState.composing) return null;
     normalize();
     undoHistory.push(snapshot(), force);
     const result = op(readBlocksFromDom());
     renderComposer(result.blocks, result.caret);
     refreshChip();
     markDraft();
+    return result.caret;
   }
 
   function undo(): void {
@@ -9902,12 +9941,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       // 一次新的引用收口上一次引用的失败状态行（spec：读数存活到「下一次引用」——文本摘录
       // 也是一次引用；r1 P2-1）。
       applyQuoteFailureNotice(null);
-      withModel((blocks) => {
+      const caret = withModel((blocks) => {
         const sel = caretFromDom();
-        const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
-        return insertCardAtCaret(blocks, caret, valid);
+        const at = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
+        return insertCardAtCaret(blocks, at, valid);
       }, STRUCTURAL_EDIT_FORCE);
-      composer.focus();
+      focusComposerAfterInsert(caret);
     },
     insertQuoteWithImages(card: QuoteCard | null, outcomes: readonly QuoteImageOutcome[]): void {
       const valid = card === null ? null : createQuoteCard(card);
@@ -9935,23 +9974,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       applyQuoteFailureNotice(valid === null && failed > 0 ? quoteFailureText(failed) : null);
       // **一次** withModel = 一个撤销步（⌘Z 一次撤掉整次引用）：卡片 + 图片块在同一个模型步里
       // 依次落位（每次插入复用 insertBlockAtCaret 的拆段 / 光标落点语义）。
-      withModel((blocks) => {
+      const caret = withModel((blocks) => {
         const sel = caretFromDom();
-        let caret: ComposerCaret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
+        let at: ComposerCaret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
         let next: ComposerBlock[] = [...blocks];
         if (valid !== null) {
-          const result = insertCardAtCaret(next, caret, valid);
+          const result = insertCardAtCaret(next, at, valid);
           next = result.blocks;
-          caret = result.caret;
+          at = result.caret;
         }
         for (const image of images) {
-          const result = insertBlockAtCaret(next, caret, { kind: "image", card: image.card });
+          const result = insertBlockAtCaret(next, at, { kind: "image", card: image.card });
           next = result.blocks;
-          caret = result.caret;
+          at = result.caret;
         }
-        return { blocks: next, caret };
+        return { blocks: next, caret: at };
       }, STRUCTURAL_EDIT_FORCE);
-      composer.focus();
+      focusComposerAfterInsert(caret);
     },
     setQuoteJumpHandler(handler) {
       quoteJumpHandler = handler;
