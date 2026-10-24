@@ -11,8 +11,11 @@
       `specs/harness/spec.md`；根因链、代码锚点与事实核验清单落进 design §2 / §8
 - [x] 0.2 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与
       `bash scripts/docs-check.sh` 通过（含 MODIFIED delta 的归档对账）
-- [ ] 0.3 Alex 节点 1 评审通过（硬门禁；D1–D5 一并裁决，未回的按 proposal 里的倾向落地）
-- [ ] 0.4 裁决结果回填 proposal 的「评审记录」块（逐字），按裁决修正 design 与 delta
+- [x] 0.3 Alex 节点 1 评审通过（2026-10-24，原话「采纳你的提案。」；核心口径：只关最上层并回
+      还焦点、无浮层不额外消费、任何时候不能因此退出应用）。硬门禁已过；r1 的三项边界仍需在实现批
+      落地并经 fresh review，节点 1 批准不豁免它们
+- [x] 0.4 裁决结果回填 proposal 的「评审记录」块，并按裁决修正 design / delta 的「无浮层」措辞
+      （不新增产品动作；兜底只阻止默认行为到原生关窗）
 
 ## 1. 先红：真机场景与红跑证据
 
@@ -48,9 +51,10 @@
 - [ ] 2.2 `installEscapeRouter(win, router)`：`window` 冒泡阶段挂一个 keydown，返回解绑函数；
       文件头注释写明「必须最后装」的理由（design §3.1 的弃案）
 - [ ] 2.3 `tests/unit/escape-router.test.ts`：准入矩阵（键 × 修饰键 × 组合期 × 已消费）+ 层栈
-      决策（0/1/2 层，关栈顶、关闭恰一次）+ 幂等 + 顺序（假 window：消费型监听在前 / 路由在后
-      不重复关层；路由在前时用例变红）+ 反向验证（去掉「无层也消费」→ body 用例红；栈顶改栈底
-      → 两层用例红；把 `swallow` 改成 `close` → 修饰键用例红）
+      决策（0/1/2 层，关栈顶、关闭恰一次；无层时 `preventDefault` 但**不调用任何 `close`**）
+      + 幂等 + 顺序（假 window：消费型监听在前 / 路由在后不重复关层；路由在前时用例变红）
+      + 反向验证（去掉「无层也阻止默认行为」→ body 用例红并露出退出风险；栈顶改栈底 → 两层
+      用例红；把 `swallow` 改成 `close` → 修饰键用例红）
 - [ ] 2.4 `pnpm test` 绿（只这一层，不接装配时其余用例不受影响）
 
 ## 3. 层栈与装配
