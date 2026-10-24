@@ -55,7 +55,11 @@
 >    PASS（SKIP 1）`；M583 `GATE RESULT: 9/9 PASS（SKIP 1）`（SKIP 均为 `tsc-visual` 的环境性跳过）。
 >    真机 207–212 六场景 2026-10-20 全 PASS（24 / 17 / 16 / 18 / 14 / 10 断言，共 99 条，0 FAIL），
 >    证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-20-m616/run/`（各场景
->    `status.txt` = PASS，`run/summary.md` 记 6/6 PASS）。
+>    `status.txt` = PASS，`run/summary.md` 记 6/6 PASS）。**一处如实登记的记录缺口**：tasks 9.5 的
+>    visual 门禁只写「本地全绿」、未抄 `GATE RESULT` 原文行；归档批尝试在 master `9967f535` 补跑
+>    `scripts/visual/run.sh` 未采到终态读数（批次收尾时限内主动中止，进程与端口已清理），故**本次
+>    归档不以该补跑为证据**，visual 判据仍以实现批记录为准；需要逐字读数时由 reviewer 本地跑
+>    `bash scripts/gate.sh visual`（本批零代码改动，主仓与分支代码面相同）。
 > 5. **规格对账**：`node scripts/openspec-archive-check.mjs --change add-cron-conversational-registration`
 >    → PASS（2 份 delta / 5 条 MODIFIED / 74 段，无静默丢段；基线已是 permission-rules → readonly →
 >    rg-zip 归档后的 living）；`openspec validate --all --strict` → `Totals: 34 passed, 0 failed`；
