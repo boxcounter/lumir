@@ -45,7 +45,7 @@
       左右各 18 个 `*`（10 层 `StrongEmphasis`）的合法嵌套一次调用到最外层，二次调用返回同一个选区
 - [x] 2.3 单测矩阵（design §8 的输入表）：标题（1/6 级、缩进、闭合 `#`）× 选区形态（恰好覆盖 /
       少一字 / 多覆盖 / 整构造 / 多 range / 空光标）× 上下文（普通段落 / 表格 cell / callout 行内 /
-      引用块标题 / frontmatter 之后 / 文档首行）——`tests/unit/syntax-envelope.test.ts`，19 条
+      引用块标题 / frontmatter 之后 / 文档首行）——`tests/unit/syntax-envelope.test.ts`，20 条
 - [x] 2.4 反向区分度（REVIEW.md「断言等价于子串」条）：同一 fixture 里「部分覆盖不外扩」与
       「完整覆盖必须外扩」成对断言；「已含定界符」返回同一个 EditorSelection（幂等）
 - [x] 2.5 封闭集合的负向用例：行内代码 / 列表项 / wikilink / 链接引用式 / blocked / 图片一律不外扩
@@ -72,7 +72,8 @@
 
 ## 4. 测试与验收场景
 
-- [x] 4.1 新增 chromium 结构层场景 `tests/visual/scenes/m687-semantic-selection.spec.ts`（7 条）：
+- [x] 4.1 新增 chromium 结构层场景 `tests/visual/scenes/m687-semantic-selection.spec.ts`（7 条；r1 返修新增
+      「vault 外只读会话」一条——见 3.4 / 5.4）：
       拖选整段标题 / 粗体 → 松开后选区覆盖定界符、上屏字符有选中底色；拖拽中途不变；
       部分覆盖不外扩；双击外扩；三击不变；文档逐字节不变 + 阅读位置不变；程序化 / 键盘选区不外扩；
       vault 外只读会话（真实 ⌘P 打开）的 mouseup 不外扩。
@@ -91,10 +92,12 @@
 - [x] 4.4 真机场景的证据照实登记：**拖选路径在真机套件里造不出编辑器选区**（`drag` 通道在
       WKWebView 无效），拖选的机器判据只在 chromium 结构层；真机只判双击路径 + dogfood。
       场景正文的「覆盖边界」节逐条写明（含两字词双击落点、350ms settle 既有行为）
-- [ ] 4.5 真机 dogfood（Alex 手感项，**归 Alex，本 mission 不代判**）：`pnpm tauri dev` 起真实 app，
+- [x] 4.5 真机 dogfood（Alex 手感项，**归 Alex，本 mission 不代判**）：`pnpm tauri dev` 起真实 app，
       用合成 vault 逐项过——
       拖选标题 / 粗体松开后的观感、引用卡片里 `##`/`**` 的可读性、带 URL 的链接被整条引用时
       是否噪声过大（design §7 第 2 条）、编辑时替换外扩选区是否可接受（D1 的代价）
+      —— 2026-10-24 结项：Alex 原话「接受。」。通过边界 = 上列四项手感均由 Alex 亲手试用后接受，
+      **不外扩到机器判据面**（4.2 / 4.3 的读数不因这句改写）；本 change 随后由 M714 归档
 
 ## 5. 文档与门禁
 
@@ -110,7 +113,7 @@
       首跑 12/13（两条红：m259 双击对照的旧期望已随 D2=A 更新；`render-link` 一条是页面 session
       被关掉的基建抖动，重跑通过），读数见 `.local/probes/m687-semantic-release-snap/`
       `gate-visual-1.log` / `gate-visual-2.log`。**r1 返修后复跑**（2026-10-24，干净树、探针已删）：
-      `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（`gate-visual-r1.log`；m687 场景 8 条全绿）。
+      `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（`gate-visual-r1.log`；m687 场景 7 条全绿）。
       另：r1 第一次 quick 的 `cargo-test` 红是 `auto_turn_loop_max…` 的并行时序抖动（单跑/全量
       重跑均绿），已 file finding；第二次 quick `GATE RESULT: 11/11 PASS（SKIP 0）`
 - [x] 5.5 信息卫生：新增 fixture / 场景素材 MUST NOT 含真实 vault 内容；改动面做一次 text 级

@@ -18,7 +18,7 @@
 | F1 | 主窗声明式创建：`visible: false`、`backgroundColor: "#fdfdfc"`、`titleBarStyle: Overlay` | `src-tauri/tauri.conf.json` 的 `app.windows[0]` |
 | F2 | setup 次序：`logging::init` → `migrate_legacy_registry_dir_at_startup` → `emit_ready` → 菜单手术 → `window_state::init` → `apply_startup_size`（施加尺寸 → `show()` → `set_focus`）→ `start_restore` → `start_cron` | `src-tauri/src/lib.rs:187-210`、`:307-361` |
 | F3 | 窗口底色（M525）在**恢复线程**里施加：`restore_last_vault` 第一件事是 `window_chrome::apply_startup_window_background` | `src-tauri/src/lib.rs:766-774`；`src-tauri/src/window_chrome.rs` 模块头 |
-| F4 | 冷启动端点 = spawn → stdout 出现 `LUMIR_READY `；**不含**前端首屏挂载、**不含** `last_vault` 恢复 | [docs/specs/perf-measurement.md](../../../docs/specs/perf-measurement.md) §1；`src-tauri/src/ready.rs` 契约 |
+| F4 | 冷启动端点 = spawn → stdout 出现 `LUMIR_READY `；**不含**前端首屏挂载、**不含** `last_vault` 恢复 | [docs/specs/perf-measurement.md](../../../../docs/specs/perf-measurement.md) §1；`src-tauri/src/ready.rs` 契约 |
 | F5 | `index.html` 只有一个空的 `#app` 与一条指向 `/src/main.ts` 的模块脚本；CSS 由 `src/main.ts:142` import | `index.html`、`src/main.ts:142-147` |
 | F6 | 壳在模块顶层同步建出（`const shell = createShell(app)`），早于任何异步配置读 | `src/main.ts:187` |
 | F7 | 主题在 `configGet().then(...)` 末尾施加；未施加前 `data-theme` 缺失 ⇒ 命中 `:root, :root[data-theme="light"]` 默认块 | `src/main.ts:3731-3808`；`src/style.css:14-15` |
