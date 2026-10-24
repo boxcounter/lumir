@@ -151,12 +151,19 @@ test("悬停图片出现引用钮 → 点击入 composer（图片卡片、编号
 }) => {
   await openDoc(page);
   const trigger = page.locator(".lumir-image-quote-trigger").first();
-  // 静止态：钮在 DOM 里但不可见（visibility: hidden——不占位、不进读屏树）。
+  // 三态读数（M670，change image-hover-quote-btn-oct24「可见性双向跟随指针」的判据）：
+  // 静止不可见 → 悬停可见 → 指针移开重新不可见。只读悬停态会漏掉「钮一直亮着」的假绿。
   await expect(trigger).toBeHidden();
-
-  await page.locator(".cm-lp-image img").first().hover();
+  const image = page.locator(".cm-lp-image img").first();
+  await image.hover();
   await expect(trigger).toBeVisible();
   await expect(trigger).toHaveAttribute("aria-label", "摘录到对话");
+  // 指针移开（移回标题栏空白处）：悬停态必须跟着撤销，钮回到静止态。
+  await page.mouse.move(600, 8);
+  await expect(trigger).toBeHidden();
+  // 移回来：判据双向（这一步同时证明上一条不是「钮再也不会出现」）。
+  await image.hover();
+  await expect(trigger).toBeVisible();
 
   await trigger.click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
@@ -237,8 +244,15 @@ test("svg 引用走栅格化成功路径（M666）：卡片是位图内容寻址
   await openDoc(page);
   const logoBox = page.locator(".cm-lp-image").filter({ has: page.locator('img[alt*="logo.svg"]') });
   await expect(logoBox.locator("img")).toBeVisible();
-  await logoBox.locator("img").hover();
+  // 三态读数（M670，同本条上方位图用例）：svg 与位图在预览层是同一条渲染路径，钮的形态与
+  // 出现时机 MUST NOT 按扩展名分叉——静止不可见 → 悬停可见 → 指针移开重新不可见。
   const trigger = logoBox.locator(".lumir-image-quote-trigger");
+  await expect(trigger).toBeHidden();
+  await logoBox.locator("img").hover();
+  await expect(trigger).toBeVisible();
+  await page.mouse.move(600, 8);
+  await expect(trigger).toBeHidden();
+  await logoBox.locator("img").hover();
   await expect(trigger).toBeVisible();
   await trigger.click();
 
@@ -403,3 +417,4 @@ test("长图越出可视区：引用钮被钳进编辑器可视区（同一钳�
   expect(geometry.button.left).toBeGreaterThanOrEqual(geometry.band.left - 0.5);
   expect(geometry.button.right).toBeLessThanOrEqual(geometry.band.right - 4 + 0.5);
 });
+
