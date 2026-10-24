@@ -58,8 +58,8 @@ M664 建立的「只读分类的能力断言」是：一次被判只读的 `cli_
 - 影响的 specs：`harness`（一条 requirement 的整块 MODIFIED）。
 - 影响的代码/系统：`src-tauri/src/harness/permissions.rs`（`RG_EXEC_FLAGS` / `rg_exec_form` 与单测）；
   分类是纯 argv 文本判定，无新增 IO，不触及性能合同。
-- **归档顺序**：M664 已并入 master 但未归档，living spec 仍是收紧前原文。本 delta 以「master 原文 +
-  M664 的收紧段」为基线，只在该基线上追加枚举项：
-  - 若 M664 先归档：living spec 即 M664 的收紧段，本 delta 与之逐段对齐，归档是纯改动；
-  - 若本 change 先归档：M664 归档时须把本 change 的枚举项并进它的 MODIFIED 块（与 M664 design §7
-    第 3 条对 M649 的处理同口径，见 `openspec/changes/readonly-allowlist-tightening-oct23/design.md`）。
+- **归档顺序（2026-10-24 已按此重写）**：`harness-permission-rules-oct23` → `readonly-allowlist-
+  tightening-oct23`（M664）→ 本 change。M664 已并入 master 但未归档，其 delta 已按「M649 归档后的
+  living（两层权限 + 受限解包）」重写；本 delta 以「M664 归档后的形态（5 段正文 + 16 场景）」为基线，
+  只在该基线上追加 `-z` / `--search-zip` 枚举项与对应场景正反例，其余逐字保留。前两者归档后本
+  change 归档即纯改动，不会回退权限层数、受限解包或写形态收紧。

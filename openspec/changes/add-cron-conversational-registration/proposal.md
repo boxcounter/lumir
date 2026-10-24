@@ -186,11 +186,14 @@ cron 机制已在 0.9.0 交付并 dogfood（`add-cron-runtime-daemon` 已实现�
     tick 仍是纯内存比较。
   - ADR 0002 §7（核心模块不耦合 tauri）：三件工具的执行逻辑经端口注入，`cron.rs` 仍无 tauri 依赖。
   - ADR 0003 第 3 条（永不改写源文件格式）：本 change 不写 vault（工具只写配置目录）。
-  - **归档顺序前置条件**：`add-cron-runtime-daemon`（`cron` 的首个 delta，已实现待归档）与
-    `add-harness-subagents`（同样待归档、且已 MODIFY 过 `harness` 的「工具循环」）MUST 先归档；
-    否则本 change 的 MODIFIED 块会与它们的整块替换互相覆盖（`openspec archive` 对 MODIFIED 是整块
-    替换，`docs/process/openspec-workflow.md`）。本 change 的 MODIFIED 正文按**两者归档后**的
-    living 形态撰写。
+  - **归档顺序前置条件**：`add-cron-runtime-daemon` 与 `add-harness-subagents` **均已归档**
+    （2026-10-24 核）；`harness-permission-rules-oct23` **尚未归档，MUST 排在本 change 之前**——
+    它与本 change 同改 `harness` 的「权限机制」，且会把 living 从三层权限换成两层 + 受限解包；
+    反序归档会让本 change 的整块替换把权限条目回退成三层并抹掉解包例外。归档链：
+    `add-cron-runtime-daemon`（已归档）→ `add-harness-subagents`（已归档）→
+    `harness-permission-rules-oct23` → 本 change。本 change 的两个 MODIFIED 块已按各自前置
+    change 归档后的 living 形态重写（2026-10-24）。`rg-zip-flags-dangerous-oct24` 只改 `cli_run`
+    一条，与本 change 无 requirement 交集，顺序互不影响。
   - REVIEW.md「同一语义两处真源」条：任务表只有 `config.json` 一处真源（工具写它、线程读它），
     去重状态只有 `lumir-cron` 线程一个写者。
   - AGENTS.md「变更默认直接切断」：无兼容层——不存在「旧的不热重载行为」需要保留，也没有旧工具名。

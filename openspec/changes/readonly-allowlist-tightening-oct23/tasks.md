@@ -37,9 +37,14 @@
       —— **2026-10-24 已核**：proposal 的 A1/A2/A3 切片 ↔ design §1–§5 ↔ 实现（`permissions.rs` /
       `tools.rs` / `fs_io.rs`）逐条一致；delta 的写形态 / 执行形态 / git 全局 flag 三组措辞与实现
       一致；实现期增量（git 危险子命令跳过全局 flag 及其分写取值、`sed -i` 目标提取复用同一份
-      解析）已写进 design §0.3；行号锚点从 `40e6ae01` 回填到 `152559fc`。**未做**：与 M649 解包段
-      的 delta 并集（3.2，等 M649 归档，不得提前改）
-- [ ] 3.2 与 M649（`harness-permission-rules-oct23`）合并顺序处置：若 M649 先归档，把其受限解包段并入本 change 的 MODIFIED 块；M649 的 `git status` / `git diff` 正例保持不变（Q1 保持只读）。若本 change 先归档，在 M649 侧同步其全局 flag 白名单的继承口径
+      解析）已写进 design §0.3；行号锚点从 `40e6ae01` 回填到 `152559fc`。**已做**：与 M649 解包段
+      的 delta 并集（2026-10-24，见 3.2）
+- [x] 3.2 与 M649（`harness-permission-rules-oct23`）合并顺序处置：若 M649 先归档，把其受限解包段并入本 change 的 MODIFIED 块；M649 的 `git status` / `git diff` 正例保持不变（Q1 保持只读）。若本 change 先归档，在 M649 侧同步其全局 flag 白名单的继承口径
+      —— **2026-10-24 按「M649 先归档」分支完成**：归档评审确认的链为 permission-rules → 本
+      change → `rg-zip-flags-dangerous-oct24`；delta 的 MODIFIED 块重写为
+      「M649 归档后的 living（两层权限 + 受限解包，3 段正文 + 11 场景）+ 本 change 的收紧（+2 段
+      +5 场景）」= 5 段正文 + 16 场景；`git status` / `git diff` 正例逐字保留。逐段对账见 design §7
+      第 3 条，机械核对（去空白后逐字相等）全部通过（76/76）、无静默丢段。
 - [ ] 3.3 核销 finding：`docs/backlog.md` 与本 change 相关的 finding 条目由 tower 记账，确认已落账（finding 文件：`20261023-worker-proposal-permission-rul-vuln-sed-w-base64-o-rg-pre-git-c-diff-external.md`）
 - [x] 3.4 排序确认：M656（`vault-patch-hidden-deny-oct24`）先合并——git 只读族保持只读的安全前提（design §8）；本 change 的 proposal 与 spec delta 均依赖这条前提
 
@@ -55,6 +60,14 @@
       场景改走「再点权限 chip」；② 第二条提问的 `typeInNode.target` 只写了注入前状态，注入
       `pre` 后回读不到目标（现写 `问点什么|pre`）。修的是场景、没有放宽任何断言；失败现场留档
       `.local/acceptance/2026-10-24-m711-flake-r1/`
+- [x] 4.5 delta 重写后的门禁复跑（2026-10-24）：
+      `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 37 passed, 0 failed
+      (37 items)`，EXIT=0；`bash scripts/docs-check.sh` → `docs-check: PASS`（605 条相对链接 / 归档
+      对账 287 段 / COVERAGE 235 场景），EXIT=0；`node scripts/openspec-archive-check.mjs --change
+      readonly-allowlist-tightening-oct23` → PASS（1 条 MODIFIED / 17 段 / 无静默丢段）。注意
+      archive-check 对比的是**当前** living（M649 尚未归档），看不到「解包段是否并入」这一层；
+      该层由 3.2 的逐段核对（76/76）负责。本 mission 只改制品、不跑 `gate.sh quick`（cargo / 前端
+      单测与制品无关），也**未执行归档**。
 
 ## 实现注记（M664，2026-10-24）
 
