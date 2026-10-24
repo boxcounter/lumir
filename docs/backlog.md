@@ -66,8 +66,6 @@
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
 - **序 10 · `readonly-allowlist-tightening-oct23`**（M664，20/22）：节点 2 材料齐——231（写形态 / 执行形态 / git 只读族，32 断言）与 231b（hidden 写入口拒绝，8 断言）真机 PASS，证据 `.local/acceptance/2026-10-24-m711/`；残留：3.2 待 M649 归档后把 MODIFIED 块重写为「master 原文 + M649 解包段 + M664 收紧段」（不得提前改，否则 M649 段会被整块替换静默抹掉）、3.3 finding 由 tower 记账；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **序 11 · `rg-zip-flags-dangerous-oct24`**（M672，11/11）：delta = 序 10 全文 + `-z` / `--search-zip` 改写，必须紧接序 10。
-- **`semantic-selection-markdown-oct23`**（M687，28/29）：一条 ADDED requirement；4.5 dogfood 归 Alex，节点 2 走人肉，归档前后各跑门禁。
 - **`harness-permission-rules-oct23`**（M649/M653，35/36）：节点 2 材料齐——229 / 110 / 151 真机全 PASS（31 / 19 / 16 断言，证据 `.local/acceptance/2026-10-24-m711/`）、节点 1 已回填（Q1–Q7 全部「按倾向」）、6.3 不适用；残留仅 6.2（归档时把 living spec Purpose 的「三层」改两层）与归档期复核 M649 解包段相对 readonly / rg-zip 的 delta 合并顺序；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
-- **`app-splash-screen`**（M645，34/36）：节点 2 材料齐——225 真机 PASS（11 断言，`.local/acceptance/2026-10-24-m711/225-app-splash-screen/`）；残留：2.7 真机拖窗留作 Alex 手感项、6.3 归档时为新建 `app-startup` capability 手写 Purpose；delta = app-startup 4 条 ADDED + vault-workspace 1 条 MODIFIED，归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`overlay-width-contract-oct24`**（M702，34/37）：节点 1 追认材料已备（D1–D5 落地 + 证据 + 否决回改面，见 proposal）；真机 231/232 PASS（5 + 11 断言，`.local/acceptance/2026-10-24-m711/`）；残留：0.3 / 0.4 待 Alex 追认、9.1 归档期执行；delta = ui-design-system 1 条 ADDED，归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`add-path-line-range-links`**（M552，19/19）：节点 2 走人肉（delta = harness 两条 MODIFIED）；221 真机 PASS（10 断言，`.local/acceptance/2026-10-24-m711/221-harness-path-line-range/`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
