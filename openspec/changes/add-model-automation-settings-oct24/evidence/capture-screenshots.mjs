@@ -116,6 +116,10 @@ await open("theme=dark&scene=configured&advanced=1&panel=0");
 await page.locator("[data-advanced]").scrollIntoViewIfNeeded();
 await shot("09-advanced-dark");
 
+await open("theme=light&scene=configured&provider=local-lab&advanced=1&panel=0");
+await page.locator("[data-advanced]").scrollIntoViewIfNeeded();
+await shot("12-generic-advanced-light");
+
 await open("theme=light&scene=closed&panel=0");
 await shot("10-closed-light");
 

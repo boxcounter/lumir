@@ -85,16 +85,20 @@ function automationOwnershipViolation({ inProviderForm, totalRows, keys }) {
   return inProviderForm > 0 || totalRows !== 4 || keys.join(",") !== AUTOMATION_KEYS.join(",");
 }
 
-/** 会话命名不得说成每轮生成。 */
+/** 会话命名不得说成每轮生成；初始失败重试与已有标题不立即重试必须在行内。 */
 function namingCadenceCopyOk(text) {
   return (
-    text.length > 200 &&
+    text.length > 260 &&
     !/每轮/.test(text) &&
     !/下一轮必定生效/.test(text) &&
     text.includes("首轮") &&
     text.includes("5 轮") &&
     text.includes("3 轮") &&
-    text.includes("异步")
+    text.includes("异步") &&
+    /初始(生成)?失败/.test(text) &&
+    /(满足|至少).{0,8}3 轮/.test(text) &&
+    /已有标题/.test(text) &&
+    /不立即重试/.test(text)
   );
 }
 
@@ -141,11 +145,13 @@ check("N0 负向对照：automationOwnershipViolation 能识别复制 / 改归�
   assert(automationOwnershipViolation({ inProviderForm: 0, totalRows: 4, keys }) === false, "clean must pass");
 });
 
-check("N1 负向对照：namingCadenceCopyOk 能识别「每轮生成」", () => {
-  const bad = `${"填充".repeat(120)}首轮 5 轮 3 轮 异步 每轮完成后生成会话名`;
+check("N1 负向对照：namingCadenceCopyOk 能识别「每轮生成」与缺失重试节奏", () => {
+  const base = `${"填充".repeat(120)}首轮 5 轮 3 轮 异步`;
+  const bad = `${base} 每轮完成后生成会话名`;
   assert(bad.length > 200, "negative sample should be long enough");
   assert(namingCadenceCopyOk(bad) === false, "每轮 sample must fail");
-  assert(namingCadenceCopyOk(`${"填充".repeat(120)}首轮 5 轮 3 轮 异步`) === true, "clean sample must pass");
+  assert(namingCadenceCopyOk(base) === false, "missing initial-failure retry clauses must fail");
+  assert(namingCadenceCopyOk(`${base} 初始生成失败后，在满足 3 轮间隔的下一个正常完成轮重试；已有标题时失败不立即重试`) === true, "clean sample must pass");
 });
 
 check("N2 负向对照：modelSourceCopyOk 能识别「模型目录」", () => {
@@ -438,6 +444,22 @@ async function browserChecks() {
       assert(/悬空/.test(stateText), `dangling state must be visible, got ${stateText}`);
       const session = await page.locator(".naming-line").nth(0).locator(".naming-state").innerText();
       assert(!/悬空/.test(session), "session target should not be marked dangling");
+    });
+
+    await checkAsync("B6b 高级区：DeepSeek 的 chat 档存在且 disabled；generic 文案与空条目一致", async () => {
+      await page.goto(url("theme=light&scene=configured&panel=0"));
+      await page.click('[data-provider-select="deepseek"]');
+      await page.click("[data-advanced-toggle]");
+      const chatOption = page.locator('[data-wire-api] option[value="chat_completions"]');
+      assert((await chatOption.count()) === 1, "DeepSeek must render a chat_completions option");
+      assert(await chatOption.isDisabled(), "DeepSeek chat_completions option must be disabled");
+      assert((await page.locator("#provider-panel").innerText()).includes("v1 未实现"), "disabled reason must be visible");
+
+      await page.click('[data-provider-select="local-lab"]');
+      if (await page.locator("[data-advanced]").isHidden()) await page.click("[data-advanced-toggle]");
+      const panelText = await page.locator("#provider-panel").innerText();
+      assert(panelText.includes("已有 Key 或模型时必填"), `generic base-url hint missing conditional wording: ${panelText}`);
+      assert(panelText.includes("完全空"), "generic copy must allow saving an empty half-finished entry");
     });
 
     await checkAsync("B7 还原此页默认保留 provider 条目、清空字段并可保存", async () => {

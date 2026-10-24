@@ -2,7 +2,7 @@
 
 ## 1. 提案与原型（节点 1 交付）
 
-- [x] 1.1 盘点固定 `HarnessProviders` 的全部消费者（18 个文件、189 处引用）与四级影响面，落 design §0；设计可扩展 provider 映射（id / preset / 条目校验 / active 回退 / 命名目标解析）
+- [x] 1.1 盘点固定 `HarnessProviders` 的全部消费者（`HarnessProvider` 精确引用 30 个文件 / 255 处；去掉 ts-rs 生成物 21 / 233；产品源码 13 / 211；另列 11 个不含类型名的形状级消费者）与四级影响面，落 design §0；设计可扩展 provider 映射（id / preset / 条目校验 / active 回退 / 命名目标解析）
 - [x] 1.2 重写 `proposal.md` / `design.md` / `tasks.md` 与 `specs/{settings,harness,keymap-commands}` delta 为完整 provider 管理（增删改、删除保护与替代目标、preset、一次性迁移、CAS 写通道、未知字段保留、全局自动化与命名目标读数）
 - [x] 1.3 重做自包含可点击原型 `design/prototypes/model-automation-settings-oct24.html`：provider 列表 + 添加 / 编辑 / 删除、删除保护（当前使用 / 命名引用 / 未保存草稿）、重复 id、空清单、模型清单、高级区（预设只读 / Base URL / Wire）、全局自动化与命名目标读数；控制面板覆盖全部场景 / 主题 / provider / 操作，合成数据
 - [x] 1.4 新增机器断言并跑绿：`evidence/prototype-semantics-check.mjs`（增删流程、id 冲突、删除保护、空清单、自动化全局性、命名目标读数；含负向对照）与 `evidence/provider-rules-check.mjs`（迁移、默认回退、删除计划、id 规则的纯函数判定表；含 mutant 对照）
@@ -28,10 +28,10 @@
 - [ ] 3.2 实现 `SettingsPatch`：Add（id + preset）/ Update（Key / models / base_url / wire_api）/ Delete（`active_after` + 两个命名重定向）/ `active_provider` / automation；`deny_unknown_fields`；`preset` 不出现在 Update
 - [ ] 3.3 实现 apply 算法：锁内 revision 比对 → 添加 / 更新 / 删除 / 重定向 / active 按序应用 → 严格复解析 → 非回归判据（candidate × changed paths）→ 引用完整性复核 → 原子写
 - [ ] 3.4 实现删除计划：锁内按现读文件计算 active / 两个命名目标引用；缺替代目标 / 目标不存在 / 目标等于被删项 → Blocked；目标变化时清除对应 `model` 覆盖；删最后一个时删除 active 与命名 provider 键
-- [ ] 3.5 revision 口径：覆盖 provider 条目（不含 `providers.<id>.model`）、`harness.provider`、四开关、两个命名 `provider`；`Missing` 按空对象、`Invalid` 为 None
+- [ ] 3.5 revision 口径：覆盖 provider 条目（不含 chip 写回的 `providers.<id>.model`）、`harness.provider`、四开关、两个命名 `provider` 与两个命名 `model`（删除会清它们，外部改动必须触发冲突）；`Missing` 按空对象、`Invalid` 为 None
 - [ ] 3.6 未知字段保留：provider 条目只改提交路径；models 按 `id` 保留未知子键；装载期被忽略的非法条目不被其它条目的保存改写
 - [ ] 3.7 设置快照 / patch / 结果类型经 ts-rs 导出，重导出 `src/bindings/**` 并随实现提交
-- [ ] 3.8 半配置与最小可保存状态：Key 非空 + models 空 → Blocked；generic 缺 base_url → Blocked；空条目允许保存但 `configured = false`
+- [ ] 3.8 半配置与最小可保存状态：Key 非空 + models 空 → Blocked；generic 已有 Key 或模型但缺 base_url → Blocked；完全空的 generic 条目允许保存、`configured = false`
 
 ## 4. 运行时消费者
 
@@ -70,7 +70,7 @@
 
 - [ ] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [ ] 7.2 `scripts/docs-check.sh` 通过（含 `openspec-archive-check.mjs` 的 MODIFIED 段落对账）
-- [ ] 7.3 Rust 单测：迁移（补齐 / 幂等 / 显式值优先 / 写失败 / 未知 id / 与退役 model 同写）；映射解析（非法条目只丢自己 / preset 非法 / generic 缺 base_url / mock 保留 id / id 字符集）；active 回退（显式 / 缺省 / configured 优先 / 空映射 / 悬空 / mock 不被缺省选中）；命名目标（合法 / 悬空 / 缺省）；删除保护（active / 命名引用 / 草稿外的替代目标 / 删最后一个（含只剩 mock）/ model 覆盖清除 / 文件逐字节不变）；快照 raw/生效 / revision / 坏条目可见；patch 类型拒绝 / preset 不可改 / 重复 id / 未知子键保留；页级还原保留条目；非回归三组
+- [ ] 7.3 Rust 单测：迁移（补齐 / 幂等 / 显式值优先 / 写失败 / 未知 id / 与退役 model 同写）；映射解析（非法条目只丢自己 / preset 非法 / generic 缺 base_url / mock 保留 id / id 字符集）；active 回退（显式 / 缺省 / configured 优先 / 空映射 / 悬空 / mock 不被缺省选中）；命名目标（合法 / 悬空 / 缺省）；删除保护（active / 命名引用 / 草稿外的替代目标 / 删最后一个（含只剩 mock）/ model 覆盖清除 / 文件逐字节不变）；快照 raw/生效 / revision / 坏条目可见；revision 冲突（外部改两个命名 `model` 后删除 provider → Conflict，不得静默清值）；patch 类型拒绝 / preset 不可改 / 重复 id / 未知子键保留；页级还原保留条目；非回归三组
 - [ ] 7.4 前端单测（`pnpm test`）：增删改流程、重复 id、删除保护控件按 `references` 出现、删除后 active / 命名目标改写、空清单、保存中控件禁用、错误回填与 ARIA（重复模型 id 两行都标）、逐项恢复默认仅显式存在、命名目标读数四形态、自动化不随 provider 变化、反向文案断言
 - [ ] 7.5 视觉场景：1280×800 与 900×700 下打开即完整可见（O1/O2）、无水平溢出、Tab 不逃出面板；三主题各一屏 + 空清单 / 添加（重复 id 错误）/ 删除确认 / 校验错误 / 保存中各一屏
 - [ ] 7.6 `scripts/gate.sh quick` 与本地 `scripts/gate.sh visual` 通过

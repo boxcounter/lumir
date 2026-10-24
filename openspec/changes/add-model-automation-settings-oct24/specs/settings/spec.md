@@ -326,7 +326,7 @@ provider 条目本身（id 与预设是身份，不是设置值）；还原后�
 - **WHEN** 在高级区把 Base URL 从空值改为 `https://example.invalid/v1`
 - **THEN** 字段旁出现「带密钥的请求会发往这个地址」警示；值改回空值（恢复默认）时警示消失
 
-#### Scenario: generic 预设必须填 Base URL
+#### Scenario: generic 已有 Key 或模型时必须填 Base URL
 
 - **WHEN** 添加一个 `generic` 预设的 provider，不填 Base URL，填了 Key 与模型后保存
 - **THEN** 保存被拒，错误指向 `harness.providers.<id>.base_url`，说明 generic 预设必须

@@ -702,7 +702,7 @@ const PRESETS = {
   },
   deepseek: {
     label: "DeepSeek", official: "https://api.deepseek.com", defaultWire: "responses",
-    wires: ["responses"], requiresKey: true,
+    wires: ["responses", "chat_completions"], unsupported: ["chat_completions"], requiresKey: true,
     desc: "官方地址 · responses（chat 档 v1 未实现）",
   },
   generic: {
@@ -1299,7 +1299,7 @@ function renderProviderForm(p) {
             aria-describedby="base-url-hint" ${ro ? "readonly" : ""}
             ${baseError ? 'aria-invalid="true"' : ""}>
           <p class="hint" id="base-url-hint">${isGeneric
-            ? "generic 预设必须填 Base URL；留空时保存会被拒绝。"
+            ? "generic 预设在已有 Key 或模型时必填；完全空的条目可以先保存，之后再补。"
             : `留空 = 使用官方地址（${esc(official)}）。`}</p>
           <p class="inline-warning" data-base-url-warning ${isCustomBase(p) ? "" : "hidden"}>${p.hasKey || p.keyDraft ? "带密钥的请求会发往这个地址。非官方地址意味着把它交给了该主机的运维者。" : "请求会发往这个地址。请确认这是你信任的主机。"}</p>
           ${baseError ? `<p class="field-error" data-error-for="providers.${id}.base_url">${esc(baseError.message)}</p>` : ""}
@@ -1312,7 +1312,7 @@ function renderProviderForm(p) {
             </span>
           </div>
           <select id="wire-api" class="select-input" data-wire-api ${ro ? "disabled" : ""}>
-            ${conf.wires.map((wire) => `<option value="${wire}" ${p.wireApi === wire ? "selected" : ""}>${wire}</option>`).join("")}
+            ${conf.wires.map((wire) => `<option value="${wire}" ${p.wireApi === wire ? "selected" : ""} ${(conf.unsupported || []).includes(wire) ? "disabled" : ""}>${wire}</option>`).join("")}
           </select>
           <p class="hint">${p.preset === "deepseek"
             ? "deepseek 的 chat 档在 v1 未实现，选项已置灰；强行写入会在装载期回落 responses 并告警。"
@@ -1363,7 +1363,7 @@ const AUTOMATION = [
     "上下文接近上限时压缩并开启新会话，旧会话文件完整保留。",
     "全局 · 下一回合生效 · 产生一次模型调用"],
   ["session_naming", "会话命名",
-    "首轮生成；此后每 5 轮重估，话题漂移可提前（两次评估至少隔 3 轮）。失败按自然节奏重试，单飞行，结果异步落盘。",
+    "首轮生成；此后每 5 轮重估，话题漂移可提前（两次评估至少隔 3 轮）。初始生成失败后，在满足 3 轮间隔的下一个正常完成轮重试；已有标题时失败不立即重试，按自然节奏再来。单飞行，结果异步落盘。",
     "全局 · 从下一次触发点起生效 · 内容出域 + 一次便宜档调用"],
   ["attachment_naming", "图片命名",
     "每次粘贴新图时异步生成语义文件名；目标模型未声明 vision 时跳过、保留暂存名，不换模型。",

@@ -4,8 +4,9 @@
 // 它不是产品代码的替代，而是**实现的测试 oracle**：提案评审时机器可复核这些规则自洽；
 // 实现 PR 把同一判定表移植成 Rust 单测（tasks 7.3），之后本脚本可删除。
 //
-// 判据有区分度（REVIEW.md「断言等价于子串，没有区分度」条）：每条规则都配一个
-// **必须让它 FAIL 的实现变体**（mutant），mutant 没被抓住就一直红。
+// 判据有区分度（REVIEW.md「断言等价于子串，没有区分度」条）：关键规则组配 **13 个 mutant
+// 对照**（迁移 R1/R2/R3/R4/R5、configured R6、回退顺序 R8/R9、删除 R13/R15/R16/R18、id R19），
+// 每个 mutant 都必须被对应检查抓红；不是「每条规则各有一个 mutant」。
 //
 // 跑法：node openspec/changes/add-model-automation-settings-oct24/evidence/provider-rules-check.mjs
 
@@ -31,6 +32,18 @@ function migrateProviders(providers) {
     rewritten = true;
   }
   return { providers: next, rewritten };
+}
+
+/** 缺 preset 的条目按 generic + warning 解释（design §2.1/§3.1）。 */
+function resolvePreset(id, entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return { preset: null, warning: `harness.providers.${id} 不是对象，已忽略` };
+  }
+  if (Object.prototype.hasOwnProperty.call(entry, "preset")) {
+    if (PRESETS.includes(entry.preset)) return { preset: entry.preset, warning: null };
+    return { preset: null, warning: `harness.providers.${id}.preset 取值 ${entry.preset} 非法，已忽略` };
+  }
+  return { preset: "generic", warning: `harness.providers.${id}.preset 缺失，按 generic 处理` };
 }
 
 /** 可用性判据（design §2.4）。 */
@@ -226,11 +239,15 @@ check("R3 显式 preset 优先，不被迁移覆盖", () => {
   eq(providers.kimi.preset, "generic", "explicit preset preserved");
 });
 
-check("R4 未知 id 不迁移（按 generic + warning 对待）", () => {
+check("R4 未知 id 不迁移，且按 generic + warning 解释", () => {
   const raw = { openai: { api_key: "sk-x", models: [{ id: "m" }] } };
   const { providers, rewritten } = migrateProviders(raw);
   assert(rewritten === false, "unknown id must not migrate");
   assert(!("preset" in providers.openai), "unknown id must not receive a preset");
+  const resolved = resolvePreset("openai", providers.openai);
+  eq(resolved.preset, "generic", "missing preset resolves to generic");
+  assert(/缺失/.test(resolved.warning || ""), `missing-preset warning expected, got ${resolved.warning}`);
+  assert(configured(providers.openai) === false, "generic entry without base_url is not configured");
 });
 
 check("R5 迁移不丢未知键、不改值", () => {
@@ -466,6 +483,103 @@ function mutantLooseId(id, existing) {
 check("R19m mutant（放过大写 / 点）被 R19 抓住", () => {
   eq(mutantLooseId("Kimi.work", []), null, "mutant accepts bad id");
   assert(validateProviderId("Kimi.work", []) === "settings_provider_id_invalid", "correct implementation rejects");
+});
+
+// ── 其余关键规则组的 mutant 对照（共 13 个 mutant） ───────────────────────────
+
+function mutantNoLegacyMigration(providers) {
+  return { providers: clone(providers), rewritten: false };
+}
+check("R1m mutant（旧三档不补 preset）被 R1 抓住", () => {
+  const mutated = mutantNoLegacyMigration(LEGACY).providers;
+  assert(!("preset" in mutated.kimi), "mutant must leave the legacy entry without preset");
+  eq(migrateProviders(LEGACY).providers.kimi.preset, "kimi", "correct migration adds the preset");
+});
+
+function mutantAlwaysRewrite(providers) {
+  const result = migrateProviders(providers);
+  return { providers: result.providers, rewritten: true };
+}
+check("R2m mutant（永远报告 rewritten）被 R2 抓住", () => {
+  const once = migrateProviders(LEGACY).providers;
+  assert(mutantAlwaysRewrite(once).rewritten === true, "mutant must always rewrite");
+  assert(migrateProviders(once).rewritten === false, "correct migration is idempotent");
+});
+
+function mutantMissingPresetNoWarning(id, entry) {
+  return { preset: entry.preset === undefined ? "generic" : entry.preset, warning: null };
+}
+check("R4m mutant（缺 preset 不告警）被 R4 抓住", () => {
+  const raw = { openai: { api_key: "sk-x" } };
+  const mutated = mutantMissingPresetNoWarning("openai", raw.openai);
+  assert(mutated.warning === null, "mutant drops the missing-preset warning");
+  assert(/缺失/.test(resolvePreset("openai", raw.openai).warning || ""), "correct resolution keeps the warning");
+});
+
+function mutantDropUnknownKeys(providers) {
+  const next = clone(providers);
+  const legacy = { kimi: "kimi", deepseek: "deepseek", mock: "mock" };
+  for (const [id, entry] of Object.entries(next)) {
+    if (!entry || typeof entry !== "object") continue;
+    next[id] = { preset: entry.preset || legacy[id] || "generic", api_key: entry.api_key, models: entry.models };
+  }
+  return { providers: next, rewritten: true };
+}
+check("R5m mutant（迁移丢未知键）被 R5 抓住", () => {
+  const raw = { kimi: { api_key: "sk-a", models: [{ id: "m" }], custom: "x" } };
+  assert(!("custom" in mutantDropUnknownKeys(raw).providers.kimi), "mutant drops the unknown key");
+  eq(migrateProviders(raw).providers.kimi.custom, "x", "correct migration preserves the unknown key");
+});
+
+function mutantGenericConfiguredWithoutBaseUrl(entry) {
+  if (entry && entry.preset === "generic") return Array.isArray(entry.models) && entry.models.length > 0;
+  return configured(entry);
+}
+check("R6m mutant（generic 不看 base_url）被 R6 抓住", () => {
+  const entry = { preset: "generic", models: [{ id: "m" }] };
+  assert(mutantGenericConfiguredWithoutBaseUrl(entry) === true, "mutant says configured");
+  assert(configured(entry) === false, "correct predicate requires base_url");
+});
+
+function mutantFirstById(providers) {
+  const ordered = selectableEntries(providers).slice().sort((a, b) => a[0].localeCompare(b[0]));
+  const picked = ordered.find(([, entry]) => configured(entry)) || ordered[0];
+  return { active: picked ? picked[0] : null };
+}
+check("R9m mutant（按 id 而不是 preset 顺序）被 R9 抓住", () => {
+  const providers = {
+    "aaa-generic": { preset: "generic", base_url: "", models: [] },
+    kimi: { preset: "kimi", api_key: "", models: [] },
+  };
+  eq(mutantFirstById(providers).active, "aaa-generic", "mutant picks by id");
+  eq(resolveActive(providers, null).active, "kimi", "correct fallback follows preset order");
+});
+
+function mutantKeepActive(state, id) {
+  const providers = clone(state.providers);
+  delete providers[id];
+  return { ok: true, errors: [], next: { providers, active: state.active, naming: state.naming } };
+}
+check("R16m mutant（删最后一个仍保留 active）被 R16 抓住", () => {
+  const state = {
+    providers: { kimi: FULL.kimi },
+    active: "kimi",
+    naming: { session: { provider: null, model: null }, attachment: { provider: null, model: null } },
+  };
+  eq(mutantKeepActive(state, "kimi").next.active, "kimi", "mutant keeps the dangling active id");
+  eq(planDelete(state, "kimi", {}).next.active, null, "correct plan clears active");
+});
+
+function mutantRetargetAcceptsMock(state, id, options) {
+  const providers = clone(state.providers);
+  delete providers[id];
+  return { ok: true, errors: [], next: { providers, active: options.activeAfter || null, naming: state.naming } };
+}
+check("R18m mutant（允许 mock 作替代）被 R18b 抓住", () => {
+  const state = clone(DELETE_STATE);
+  state.providers.mock = { preset: "mock", fixture: "/tmp/f" };
+  eq(mutantRetargetAcceptsMock(state, "kimi", { activeAfter: "mock" }).next.active, "mock", "mutant accepts mock");
+  assert(planDelete(state, "kimi", { activeAfter: "mock", sessionAfter: "follow", attachmentAfter: "follow" }).ok === false, "correct plan rejects mock");
 });
 
 const failed = results.filter((entry) => !entry.ok);

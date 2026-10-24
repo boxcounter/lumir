@@ -57,30 +57,78 @@
 
 ### 0.2 消费者清单（改固定枚举要动的地方，逐面列出）
 
-起草时 `rg 'HarnessProvider'` 命中 **18 个文件、189 处**（含单测与注释）；`"kimi"` /
-`"deepseek"` 字面量在 14 个非生成文件里另有 119 处。按消费者类型归并：
+**计数口径（基线 `58bab1a5`；下面的命令可直接复跑）**：下面几个口径必须分开说，否则数字无法
+复核——ts-rs 生成物会整体重写、测试与验收文档需要回扫、产品源码才是主要改动面。
+
+```bash
+# A 精确类型引用：含生成物、单测、注释与验收文档
+git grep -l HarnessProvider 58bab1a5 -- 'src/**' 'src-tauri/**' 'scripts/**' 'tests/**' | wc -l   # 30
+git grep -o HarnessProvider 58bab1a5 -- 'src/**' 'src-tauri/**' 'scripts/**' 'tests/**' | wc -l   # 255
+
+# B 去掉 ts-rs 生成物（src/bindings/** 由 cargo test 整批重导出）
+git grep -l HarnessProvider 58bab1a5 -- 'src/**' 'src-tauri/**' 'scripts/**' 'tests/**' ':!src/bindings/**' | wc -l   # 21
+git grep -o HarnessProvider 58bab1a5 -- 'src/**' 'src-tauri/**' 'scripts/**' 'tests/**' ':!src/bindings/**' | wc -l   # 233
+
+# C 产品源码（含 src/harness-panel.ts，不含生成物）
+git grep -l HarnessProvider 58bab1a5 -- 'src-tauri/src' 'src' ':!src/bindings/**' | wc -l   # 13
+git grep -o HarnessProvider 58bab1a5 -- 'src-tauri/src' 'src' ':!src/bindings/**' | wc -l   # 211
+
+# D 测试与验收文档（6 个 Rust 集成测试 + 1 个 TS 单测 + 验收 README）
+git grep -l HarnessProvider 58bab1a5 -- 'src-tauri/tests' 'tests' 'scripts' | wc -l   # 8
+git grep -o HarnessProvider 58bab1a5 -- 'src-tauri/tests' 'tests' 'scripts' | wc -l   # 22
+```
+
+**A 的完整文件清单（30 个；括号内为该文件的出现次数，含注释与测试）**：
+
+| 类别 | 文件（次数） | 小计 |
+|---|---|---|
+| 产品源码 Rust | `config.rs`(125)、`harness/llm.rs`(30)、`harness/thinking.rs`(12)、`harness.rs`(11)、`harness/title.rs`(7)、`harness/subagents.rs`(6)、`harness/turn.rs`(5)、`harness/run.rs`(4)、`harness/agents.rs`(4)、`harness/scheduler.rs`(3)、`attachment_naming.rs`(2)、`commands.rs`(1) | 12 文件 / 210 处 |
+| 产品源码 TS | `src/harness-panel.ts`(1) | 1 / 1 |
+| 生成类型（ts-rs） | `HarnessConfig`(6)、`HarnessProviders`(5)、`SessionNamingConfig`(3)、`AttachmentNamingConfig`(3)、`WireApi` / `ThinkingEffort` / `PermissionMode` / `HarnessProviderConfig` / `HarnessProvider` 各 1 | 9 / 22 |
+| Rust 集成测试 | `session_recording.rs`(7)、`harness_runtime.rs`(4)、`harness_real_deepseek.rs`(3)、`harness_real_kimi_image.rs`(2)、`harness_real_kimi_cache.rs`(2)、`abort_turn.rs`(2) | 6 / 20 |
+| TS 单测 | `tests/unit/harness-panel-control.test.ts`(1) | 1 / 1 |
+| 验收文档 | `scripts/acceptance/README.md`(1) | 1 / 1 |
+| **合计** | | **30 / 255**（非生成物 **21 / 233**；产品源码 **13 / 211**） |
+
+**第二类：不含 `HarnessProvider` 类型名、但硬编码固定 provider 形状 / 选项的文件**。
+这些是 `git grep HarnessProvider` 抓不到的实质消费者，实现与测试回扫时必须一起改：
+
+- `src/ipc.ts`：注释写死 `providers.kimi.model` 的点分写回路径。
+- `src/copy-data.ts`：D402 / D403 / D404 的 `harness.providers.{provider}.models` 文案。
+- `tests/unit/harness-thinking-reset.test.ts`：构造 `provider: "kimi"` 的会话桩。
+- `tests/visual/scenes/m347-harness-composer.spec.ts`：provider 选项与 `providers.kimi.model`
+  写回断言。
+- `tests/visual/scenes/m702-overlay-width.spec.ts`、`tests/visual/scenes/tauri-stub.ts`：
+  `provider: "kimi"` 的配置桩。
+- `scripts/acceptance/lib/app.mjs`：`h.providers.kimi` 的合成配置写入。
+- `scripts/acceptance/scenarios/90-harness-model-chip.md`、`101-harness-k2-chip-disabled.md`、
+  `102-harness-model-dimension.md`：provider / chip / model 维度的既有期望。
+- `docs/specs/config-reference.md`：§1.5 / §1.6 / §1.7 / §3 的 provider id 取值表与写回路径。
+
+按消费者类型归并：
 
 | 面 | 文件 / 符号 | 现在依赖什么固定结构 | 改映射后 |
 |---|---|---|---|
 | 配置类型 | `config.rs` 的 `HarnessProvider` / `HarnessProviders` / `HarnessMockConfig` | 三档枚举、三字段容器、mock 独立结构 | id 字符串 + 映射 + 统一条目 |
 | 能力读取 | `config.rs:1003-1061` 五个方法 | 对三个变体 `match` | 按 id 查条目；缺失 = 空清单 / 保守默认 |
-| 命名解析 | `config.rs:1070/1104` | 目标参数是枚举，五字段从固定字段取 | 目标 id 查映射；悬空回落 active |
+| 命名解析 | `config.rs:1070/1104`、`harness/title.rs`（`title_target` 消费 + mock 装配测试） | 目标参数是枚举，五字段从固定字段取 | 目标 id 查映射；悬空回落 active |
 | 校验 | `config.rs:2746-3350` | provider 名硬编码为 `"kimi"` / `"deepseek"`；mock 单独校验 | 遍历映射、按 preset 校验、warning 带全路径 |
 | LLM 装配 | `harness/llm.rs:375/565/650/692/709/778` | `match` 三档；`store:false` 只按 `Kimi`；mock 借 kimi 的 model | 按 preset 取预设与 store 口径；active id 查条目 |
 | 运行期写回 | `harness.rs:1683` | 写死两个 provider 的 model 字段 | 写 `providers.<active>.model` |
 | 并发闸 | `harness/scheduler.rs:149` | `HashMap<&'static str, _>` | `HashMap<String, _>` |
 | mock 分支 | `harness/subagents.rs:1686/1875`、`harness/agents.rs:565`、`attachment_naming.rs:546` | `config.provider == Mock` | `entry.preset == Mock`（或 `is_mock(id)`） |
 | 会话记录 | `harness/turn.rs:618/943` | `context_window(&enum)`；`provider` 序列化为枚举 | id 字符串；历史记录按字符串读，无需迁移 |
-| IPC | `commands.rs:112/606/637/678` | `config_get` 形状是固定三字段；写通道点分下钻 | 形状变映射；chip 写回键 `providers.<id>.model`；设置面走 `settings_*` |
+| IPC | `commands.rs:112/606/637/678`、`src/ipc.ts` | `config_get` 形状是固定三字段；写通道点分下钻 | 形状变映射；chip 写回键 `providers.<id>.model`；设置面走 `settings_*` |
 | 前端选择器 | `harness-panel.ts:1528/1571/6151/6179` | 闭集合常量；`id in providers` 推断「已配置」 | 动态 id；后端 `configured`；空态去设置 |
 | 文案 | `copy-data.ts:1152-1175` | 单 provider、指向 config.json | 多 provider、指向设置面板、补 `vision` |
-| 生成类型 | `src/bindings/HarnessProvider.ts` / `HarnessProviders.ts` | 联合类型 + 三字段 | 重导出：联合类型消失、容器变映射 |
-| 单测 / 集成测试 | `config.rs` 单测、`harness/thinking.rs`、`harness.rs`、`llm.rs`、`run.rs` / `turn.rs` 的 mock 段，`tests/session_recording.rs`、`tests/harness_real_*.rs`、`tests/agent_runtime*.rs` | 直接构造 `HarnessProviders { kimi, deepseek, mock }` | 改构造 helper；新增迁移 / 回退 / 删除保护用例 |
-| 验收套件 | `scripts/acceptance/README.md:447` 与场景 front-matter 的 `config.harness` | 三档恒序列化 | 动态列表 + 空态；回扫既有 provider / chip 期望 |
+| 生成类型 | `src/bindings/HarnessProvider.ts` / `HarnessProviders.ts` 等 9 个文件 | 联合类型 + 三字段 | 重导出：联合类型消失、容器变映射 |
+| 测试与桩 | `config.rs` 单测、`harness/thinking.rs`、`harness.rs`、`llm.rs`、`run.rs` / `turn.rs` 的 mock 段；`tests/session_recording.rs`、`harness_runtime.rs`、`harness_real_deepseek.rs`、`harness_real_kimi_cache.rs`、`harness_real_kimi_image.rs`、`abort_turn.rs`；`tests/unit/harness-panel-control.test.ts`、`tests/unit/harness-thinking-reset.test.ts`、`tests/visual/scenes/{m347-harness-composer.spec.ts,m702-overlay-width.spec.ts,tauri-stub.ts}` | 直接构造 `HarnessProviders { kimi, deepseek, mock }` 或 `provider: "kimi"` 桩 | 改构造 helper；新增迁移 / 回退 / 删除保护用例 |
+| 验收套件 | `scripts/acceptance/README.md:447`、`lib/app.mjs`、场景 90 / 101 / 102 | 三档恒序列化；`h.providers.kimi` 合成配置 | 动态列表 + 空态；回扫既有 provider / chip 期望 |
 
-**结论**：固定枚举的代价不是「设置页少一个按钮」，而是上面 18 个文件里的 189 处条件分支
-共同假设「世界上只有三家 provider」。只做编辑器、把增删留给「另立 schema change」，等于让
-用户继续为这个假设付费。本 change 的 scope 必须包含 schema 迁移本身。
+**结论**：固定枚举的代价不是「设置页少一个按钮」，而是 **30 个文件、255 处引用**（去掉生成物
+仍有 21 个文件 / 233 处；产品源码 13 个文件 / 211 处）共同假设「世界上只有三家 provider」。
+只做编辑器、把增删留给「另立 schema change」，等于让用户继续为这个假设付费。本 change 的
+scope 必须包含 schema 迁移本身。
 
 ## 1. 范围与信息架构
 
@@ -950,6 +998,9 @@ pub struct ConfigDiagnostic {
   缺 base_url 拒。
 - **并发**：两笔同 revision 只有一笔成功；既有写入口改为锁内读后，`config_set_value` 与
   `settings_apply` 并发不丢键。
+- **revision 冲突**：外部改了 `session_naming.model` / `attachment_naming.model`，再在面板里
+  删除 provider（会清这两个键）→ Conflict，不得静默清除外部新值；外部仅改
+  `providers.<id>.model`（chip 写回）→ 不冲突。
 
 ### 12.2 前端单测（`pnpm test`）
 
@@ -972,12 +1023,14 @@ pub struct ConfigDiagnostic {
 
 ### 12.4 原型语义与规则回归（本 change 自带）
 
-- `evidence/prototype-semantics-check.mjs`：静态 + 浏览器断言。覆盖 provider 增删流程、
-  重复 id、删除保护控件、空清单、自动化全局性、命名目标读数、无模型目录暗示；每条 predicate
-  配一个必须让它 FAIL 的负向对照（REVIEW.md『断言等价于子串』条）。
+- `evidence/prototype-semantics-check.mjs`：静态 + 浏览器断言，共 26 项。覆盖 provider 增删
+  流程、重复 id、删除保护控件、空清单、自动化全局性、命名目标读数、高级区（DeepSeek 禁用档 /
+  generic 条件文案）、会话命名完整节奏、控制面板全选项点击、三主题 × 12 场景；文本 predicate
+  配负向对照（REVIEW.md『断言等价于子串』条），交互路径由 B1–B11 实测。
 - `evidence/provider-rules-check.mjs`：把 §2.5 / §3 / §4 / §2.3 的判定表写成可执行纯函数，
-  用合成输入断言迁移、默认回退、删除保护、id 冲突；每条规则带 mutant 对照（错误实现必须
-  判红）。它是实现的测试 oracle，不是产品代码的替代。
+  共 35 项检查；其中 **13 个 mutant 对照**覆盖关键规则组——迁移 R1/R2/R3/R4/R5、configured
+  R6、回退顺序 R8/R9、删除 R13/R15/R16/R18、id R19。MUST NOT 宣称「每条规则各有一个
+  mutant」；其余检查是正向判定表。它是实现的测试 oracle，不是产品代码的替代。
 - 两个脚本都不进 CI（提案期工具）；实现 PR 把同一判定表移植成 Rust 单测后再删掉
   `provider-rules-check.mjs`（或降级为文档，见 tasks）。
 
