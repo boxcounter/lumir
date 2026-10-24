@@ -62,6 +62,26 @@
 >    归档跟踪队列有且仅有一条。
 >
 > 归档后项见本块末尾的「归档后」追加段。
+>
+> **归档后（2026-10-25，M729）**：归档提交 `eedb5303`（归档目录 + 并入的 living spec
+> （`openspec/specs/cron/spec.md` 与 `openspec/specs/harness/spec.md`）+ Purpose 工具集手改 +
+> `docs/backlog.md` 队列条目核销同批提交）。`openspec archive` 实际输出：`cron: update`、
+> `harness: update`、`+ 3 added, ~ 5 modified, - 0, → 0`、`Change
+> 'add-cron-conversational-registration' archived as
+> '2026-10-25-add-cron-conversational-registration'.`。紧随其后
+> `node scripts/openspec-archive-check.mjs --archived add-cron-conversational-registration` →
+> `PASS（openspec/changes/archive/2026-10-25-add-cron-conversational-registration：5 条 MODIFIED，
+> 对比 74 段；人工恢复 0 段，声明认领 0 段）`，EXIT=0（2026-10-25 07:32 CST）。
+> 同批复跑：门禁模式 `openspec-archive-check` → `PASS（9 份 delta / 9 条 MODIFIED / 117 段）`；
+> `openspec validate --all --strict` → `Totals: 33 passed, 0 failed`；`bash scripts/docs-check.sh`
+> → `docs-check: PASS`。
+>
+> **Purpose 工具集手改（同一提交）**：`Purpose` 不是 requirement、不进 delta，故与 6.2 同一处置
+> 通道手改——句中的「另加 1 件编排工具 `task`」改为「另加 2 类不操作 vault 的工具：1 件编排工具
+> `task` 与 3 件调度工具 `cron_task_create` / `cron_task_list` / `cron_task_remove`」，M725 已改准的
+> pane 定位句与「8 件 vault 操作工具」计数句逐字保留。改前的 Purpose 只列 8 + 1 件工具，与本
+> change 并入「工具循环」requirement 后的 8 + 1 + 3 件相矛盾（living spec 里新旧表述并存的入口，
+> 见 REVIEW.md「设定类现状断言」条），故在本次归档提交里一并改准。
 
 ## Why
 
