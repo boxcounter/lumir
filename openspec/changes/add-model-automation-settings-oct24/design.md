@@ -1,7 +1,8 @@
 # Design: 模型接入与自动化的可见设置面板（全功能 provider 管理）
 
 - Change ID: `add-model-automation-settings-oct24`
-- 日期: 2026-10-24（r3：从「固定两项 provider 的编辑器」改为「完整 provider 管理」）
+- 日期: 2026-10-24（r3：从「固定两项 provider 的编辑器」改为「完整 provider 管理」；
+  r4 2026-10-25：自动化节按 Alex 六项反馈重做为内联命名目标，确认单页两节）
 - 分支基线：`feat/full-provider-management-proposal-oct24`（起草时 `git log -1` = `58bab1a5`；
   行号是起草时逐一读过的原文位置，实现前以符号名 / 检索串为准）
 - 本 change 只重做节点 1 提案、spec delta 与可点击原型；**不实现产品代码**。tasks.md 是实现计划。
@@ -13,6 +14,13 @@
 > `HarnessProviders` 的固定三字段改成**以稳定 id 为键的可扩展映射**，设置页提供完整的
 > provider 增删改、删除保护、默认回退与一次性迁移。固定枚举的成本不在「少一个按钮」，而在
 > 它把「接一个新模型供应商」变成了要改 Rust 枚举、运行时装配、前端表单三处的代码变更。
+
+> **r4 的六项重做（Alex 2026-10-25 原型评审，逐项已采纳）**：① 会话命名与图片命名的目标
+> 内联到各自开关行，provider 与模型都可编辑；② 默认跟随当前 provider（删键，不是快照）；
+> ③ 关闭功能时选择器禁用，但选择、草稿与 `config.json` 里的键都保留；④ 图片命名的模型选项
+> 标 `vision` 资格；⑤ 选择旁只保留**一行**实际生效说明；⑥ 移除自动化节顶部那块独立的命名
+> 目标摘要框。同时确认本页是**单页两节**：不做编辑器 / 权限设置页，不预设 TAB 或侧边导航。
+> 覆盖键的语义（每组一份全局键、每次只解析一个目标）不变——改的是编辑面，不是配置模型。
 
 本文只写「怎么做到 proposal 已裁的行为」与「为什么这样做」。安全写通道的判据按**输入分布**
 表述（任意 patch、任意既有文件内容），不按案例打补丁。
@@ -135,7 +143,7 @@ scope 必须包含 schema 迁移本身。
 设置面只有两节，顺序固定：
 
 ```
-设置
+设置（单页两节，无 TAB / 侧边导航）
 ├─ 模型接入（provider 列表 + 选中项的编辑表单）
 │  ├─ provider 列表：每行 id + 预设标签 + 可用状态；当前使用项有徽标
 │  ├─ 「+ 添加 provider」：id + 预设（创建后都不可改）
@@ -145,8 +153,8 @@ scope 必须包含 schema 迁移本身。
 │  │  └─ 危险区：删除此 provider（带保护与替代目标，见 §4）
 │  └─ 空清单态：还没有 provider → 「添加第一个 provider」
 └─ 自动化（全局节，不属于任何 provider）
-   ├─ 四个开关
-   └─ 命名目标读数：会话命名 / 图片命名**当前实际会发往**哪个 provider + 哪个模型
+   ├─ 自动压缩 / 子代理：一行一个开关
+   └─ 会话命名 / 图片命名：开关 + **行内可编辑**的目标（provider / 模型）+ 一行生效说明
 ```
 
 - **自动化是全局节**：四个开关的键在 `harness.*` 下，只有一份。provider 的切换 / 新增 /
@@ -159,6 +167,8 @@ scope 必须包含 schema 迁移本身。
   原型与截图里的模型 id 是**合成数据**。
 - **不做的**：主题 / 语言 / 字号 / 折行 / 栏宽 / 权限 / 忽略规则 / 键位 / cron / 日志。
   这些键在设置页出现的代价不是「多一行」，而是同一读数出现两处写入口。
+- **单页两节，不设导航**：没有 TAB、分段控件或侧边栏；不为编辑器 / 权限等未做的设置预留
+  空壳页。第三类设置出现时另立提案并重新裁决形态（r4 已裁）。
 - 页面是**固定两节**，不是通用 schema 表单：将来新增设置项要改前端，不靠 schema 自动长出
   控件——`describe-config` 仍是 backlog 里另立项的中期能力。
 
@@ -202,7 +212,7 @@ scope 必须包含 schema 迁移本身。
 |---|---|---|---|
 | `preset` | `kimi` / `deepseek` / `generic` / `mock` | 缺键 ⇒ `generic` + warning（迁移会把旧三档补上，见 §3） | 闭集合外 ⇒ **整条忽略** + 点名 warning（猜错协议比丢弃更危险） |
 | `api_key` | string | `""` | 非字符串 ⇒ 整条忽略 + warning |
-| `model` | string | 清单首项 id；清单空 ⇒ `""` | 非字符串 ⇒ 整条忽略 + warning；不在清单内 ⇒ 保留值 + warning（窗口 / 能力按保守默认） |
+| `model` | string | 显式值优先（不在清单内也保留；**清单为空也保留显式值**）+ warning；无显式值时取清单首项；两者皆无 ⇒ `""` | 非字符串 ⇒ 整条忽略 + warning；不在清单内 ⇒ 保留值 + warning（窗口 / 能力按保守默认） |
 | `models` | array | `[]` | 非数组 ⇒ 整条忽略 + warning；元素逐项校验（§9） |
 | `base_url` | string | kimi / deepseek 用预设官方地址；generic / mock 无 | 空串 ⇒ 视同缺省 + warning；generic 缺省 / 空 ⇒ 条目可用性为否 + warning |
 | `wire_api` | enum | kimi / deepseek：`responses`；generic：`chat_completions`；mock：`responses`（不消费） | 闭集合外 / 该 preset 不支持 ⇒ 回落 preset 缺省 + warning |
@@ -312,6 +322,12 @@ resolve_naming_target(providers, active, override):
 - `model` 覆盖项仍然只能来自选定 provider 的 `models` 清单：会话命名不满足时回落该 provider
   的生效模型 + warning；图片命名**原样保留值**并在发起时因 vision 资格不通过而跳过
   （既有语义，§10）。
+- **这两个覆盖键在设置面板里可编辑**（r4）：面板只写 `harness.<kind>.provider` 与
+  `harness.<kind>.model` 两个键，解析语义仍是本条规则；面板提交的 `provider` 必须指向合法、
+  非 `mock`、未被装载期忽略的条目，`model` 必须在该目标的清单内（patch 校验见 §6.1），所以
+  面板本身不会产生新的悬空引用。手改文件造成的悬空仍按上面的回落 + warning 处理。
+- 面板 MUST NOT 引入「按 provider 的命名模型矩阵」：仍只有两组全局键，编辑面只是这两组键的
+  控件；provider 增删只刷新选项，不复制控件（§10.2）。
 
 ## 3. 迁移：一次性、无双写
 
@@ -464,16 +480,27 @@ pub struct ProviderSettings {
 }
 
 pub struct NamingSettings {
-    pub session: ResolvedNamingTarget,
-    pub attachment: ResolvedNamingTarget,
-    pub session_override: Option<String>,
-    pub attachment_override: Option<String>,
+    pub session: NamingTargetState,
+    pub attachment: NamingTargetState,
 }
+
+/// 一组命名目标：两个可编辑的覆盖键 + 解析结果 + 选择器选项（r4）。
+pub struct NamingTargetState {
+    pub override_provider: Option<String>,          // raw harness.<kind>.provider；None = 跟随当前
+    pub override_model: Option<String>,             // raw harness.<kind>.model；None = 生效模型
+    pub provider_options: Vec<NamingProviderOption>,// 合法、非 mock、未被忽略的目标，规范顺序
+    pub model_options: Vec<NamingModelOption>,      // 目标 provider 的模型清单（含 vision）
+    pub resolved: ResolvedNamingTarget,
+}
+
+pub struct NamingProviderOption { pub id: String, pub is_active: bool, pub configured: bool }
+pub struct NamingModelOption { pub id: String, pub vision: bool, pub is_effective: bool }
 
 pub struct ResolvedNamingTarget {
     pub provider: Option<String>,          // 解析后的目标 id
     pub model: String,                     // 解析后的模型（空 = 无可用模型 / mock）
     pub follows_active: bool,              // 是否来自缺省而非显式覆盖
+    pub dangling: bool,                    // raw 覆盖悬空（已回落当前 provider）
     pub eligible: bool,                    // 图片命名：vision 资格；会话命名：模型非空
     pub reason: Option<String>,            // 不合格的原因码（D 编号文案在前端）
 }
@@ -488,11 +515,13 @@ pub struct ResolvedNamingTarget {
 - **`automation` 与 `providers` 平级，不挂在 provider 下**：四个开关的键在 `harness.*` 下，
   快照里只有一份 `AutomationSettings`（每个开关 `{ value, explicit }`——`explicit = false` 表示
   键缺席、用的是默认，前端据此显示「默认」徽标与「恢复默认」）；provider 切换只替换前端的
-  表单草稿，不触碰它。命名调用的 provider / model 覆盖项不在快照的可写面里（config-only），
-  页面只显示解析结果与覆盖键路径，不提供控件。
-- **`naming` 是只读读数**：两个 override 项留在配置文件，面板只显示「当前实际目标」与
-  「覆盖项在哪个键」。这既回答「图片优化到底用哪个模型」，又不把一处全局行为变成按 provider
-  的多份配置。
+  表单草稿，不触碰它。
+- **`naming` 是「可编辑的覆盖键 + 解析后的目标」**（r4）：`override_provider` /
+  `override_model` 就是面板里的两个选择器（空 = 删键 = 跟随），`provider_options` /
+  `model_options` 由后端按当前草稿的 provider 计算，前端 MUST NOT 自己拼清单或自行推导资格；
+  `resolved` 只用于渲染那一行实际生效说明（跟随 / 指定 / 悬空回落 / 无 vision 跳过）。
+- **关闭功能不清空快照**：开关关闭时快照照常回传两组 override 与选项，前端只把控件置灰
+  （§10.2）。「禁用但保留」是 UI 层行为，MUST NOT 在快照或 patch 里把值抹成空。
 - **`capabilities` 由后端下发**：预设表（官方 base URL / 支持的 wire / 缺省 wire / 是否要求
   Key）、`window` 上下限、provider id 的正则与保留 id、规范顺序；前端 MUST NOT 复制这些常量
   或取值区间（与 `window` / 枚举同一条「单一校验来源」纪律）。
@@ -517,6 +546,19 @@ pub struct SettingsPatch {
     pub active_provider: Option<FieldEdit<String>>, // Set(id) | Reset（删键）
     pub providers: Vec<ProviderEdit>,
     pub automation: AutomationPatch,
+    pub naming: Option<NamingPatch>,                // r4：两个命名目标的覆盖键
+}
+
+pub struct NamingPatch {
+    pub session: Option<NamingEdit>,                // None = 本笔不动会话命名目标
+    pub attachment: Option<NamingEdit>,
+}
+
+/// 每个键独立：None = 不动该键；Set = 写入；Reset = 删键（provider 删键 = 跟随当前，
+/// model 删键 = 用目标 provider 的生效模型）。
+pub struct NamingEdit {
+    pub provider: Option<FieldEdit<String>>,
+    pub model: Option<FieldEdit<String>>,
 }
 
 pub enum ProviderEdit {
@@ -549,8 +591,16 @@ pub struct SettingsApplyOutcome {
   新增一个 provider 再删旧的（§2.2）。
 - `Add` 只带 `id` + `preset`，其余字段为空（可作为半成品保存）；添加第一个 provider 时前端
   同一笔 patch 带 `active_provider = Set(new_id)`。
-- `Reset` 是**删键**（Base URL / Wire / 四个开关 / active）；`api_key.Clear` 同样是删键
-  （回到未配置）。「恢复默认」不会把默认值钉进文件。
+- `Reset` 是**删键**（Base URL / Wire / 四个开关 / active / 命名目标）；`api_key.Clear` 同样是
+  删键（回到未配置）。「恢复默认」不会把默认值钉进文件。
+- **命名目标的两个选择器就是两个键的编辑面**（r4）：provider 的「跟随当前 provider（默认）」
+  = `Reset`（删 `harness.<kind>.provider`），具体 id = `Set`；模型的「生效模型（默认）」
+  = `Reset`（删 `harness.<kind>.model`），具体模型 = `Set`。
+- **同一笔里 provider 与 model 的先后是语义**：先应用 provider 变化（换目标会清除旧 model
+  覆盖），再应用显式 model；因此同一笔 `Set(provider)` + `Set(model)` 合法，且 model 按**新
+  目标**的清单校验。`Reset(provider)` 同时清除 model 覆盖（跟随当前即没有「旧目标的模型」）。
+- **开关关闭不改变 patch 的内容**：前端按草稿提交目标键；关闭功能只让控件不可编辑，MUST NOT
+  因为开关关闭就发 `Reset`（那等于把用户的选择抹掉）。
 - **同一笔 patch 不允许「删掉 id X + 新增 id X」**：处理顺序不应承载语义，id 复用要拆成两次
   保存（先删、再新增）。想换 preset 时直接用一个新 id（设计本来就要求「新增 + 删除旧」）。
 
@@ -573,6 +623,9 @@ pub struct SettingsApplyOutcome {
          删除条目、改写 active 与两个命名目标、清除被牵连的 model 覆盖
      6.4 active_provider：Set 的 id 必须在（应用后的）映射内；Reset 删键
      6.5 automation：开关 Set / Reset
+     6.6 naming：按 session / attachment 逐组应用；provider 先——Set 必须是应用后映射内
+         合法、非 mock、未被忽略的条目，换目标 / Reset 一律清除该组 model；model 后——
+         Set 必须在该组目标 provider 的清单内，Reset 删键
 7. 反序列化 candidate 为 RawConfig：失败 → Blocked（只能是 patch 引入的）
 8. diagnostics = validate(candidate).diagnostics
 9. 非回归判据（§6.3）：与改动路径相交的阻断级诊断 → Blocked，文件不动
@@ -606,11 +659,13 @@ revision = sha256(canonical_json({
 }))
 ```
 
-- **覆盖设置面能写的全部键**：provider 条目、active id、四个开关、两个命名目标（删除时会改）。
+- **覆盖设置面能写的全部键**：provider 条目、active id、四个开关、两个命名目标（面板可编辑，
+  删除也会改）。
 - **不覆盖 `providers.<id>.model`**：它由 composer 的 chip 写回（`config_set_value`）；把它
   纳入 revision 会让「面板打开时切一次模型」变成一次无意义的冲突。
-- **覆盖 `session_naming.model` / `attachment_naming.model`**：面板平时不编辑它们，但删除
-  provider 会清除它们；若外部在面板打开期间改了这两个值，必须让用户看到冲突，不能静默覆盖。
+- **覆盖 `session_naming.model` / `attachment_naming.model`**：面板会直接编辑它们（r4），删除
+  provider 也会清除它们；若外部在面板打开期间改了这两个值，必须让用户看到冲突，不能静默
+  覆盖。
 - `models` 的 raw 数组整体入 hash（含未知子键），外部改任何一条都会触发冲突。
 - `wire_api` 入 hash 的是 **raw JSON 值**（含非法字符串），不是生效枚举。
 - `api_key` 入 hash：外部改了 Key，保存时必须让用户知道。
@@ -627,7 +682,7 @@ revision = sha256(canonical_json({
 | Update api_key / models / base_url / wire_api | `harness.providers.<id>.<field>`（models 含 `[i]` 后代） |
 | active_provider | `harness.provider` |
 | 四个开关 | `harness.auto_compact` / `harness.session_naming.enabled` / `harness.attachment_naming.enabled` / `harness.subagents.enabled` |
-| 删除牵连的命名目标 / model 覆盖 | `harness.session_naming.provider` / `.model`、`harness.attachment_naming.provider` / `.model` |
+| 删除牵连的命名目标 / model 覆盖 **或命名目标编辑** | `harness.session_naming.provider` / `.model`、`harness.attachment_naming.provider` / `.model` |
 
 **相交判据**：诊断路径与改动路径逐段比较，满足「相等 / 诊断在改动路径之下 / 诊断是改动路径的
 祖先」之一即相交（`providers.kimi` 与 `providers.kimi.models[2].window` 相交）。
@@ -644,7 +699,8 @@ revision = sha256(canonical_json({
   `settings_provider_reserved_id` / `settings_provider_not_found` /
   `settings_provider_preset_immutable`
 - `settings_active_provider_missing` / `settings_provider_delete_active_requires_target` /
-  `settings_provider_delete_referenced` / `settings_naming_target_missing`
+  `settings_provider_delete_referenced` / `settings_naming_target_missing` /
+  `settings_naming_model_missing`
 - `settings_unknown_field`
 
 **放行规则**：candidate 中**任何**阻断级诊断，只要路径与 `changed_paths` 相交，整笔 Blocked
@@ -746,7 +802,8 @@ pub struct ConfigDiagnostic {
 
 - 只展示 `path` 在设置面范围内（或 `None` 的文件级）的诊断；`theme` / `editor` 之类的 warning
   不进这个面板。
-- provider 条目的诊断挂在对应条目 / 字段下；命名目标的诊断挂在自动化节顶部；被丢弃的非法
+- provider 条目的诊断挂在对应条目 / 字段下；命名目标的诊断挂在自动化节内并带键路径
+  （不单独渲染摘要框）；被丢弃的非法
   条目在 provider 列表里显示「装载期已忽略」行（不可编辑，只能删除或去配置文件修）。
 - 整文件回落 `fallback == true` 或 `file = Invalid` → 顶部横幅，优先级高于字段级。
 
@@ -789,8 +846,12 @@ pub struct ConfigDiagnostic {
 - `vision` 是图片发送闸与图片命名的唯一依据；provider 动态化不改变这条。
 - 图片命名的目标解析（§2.6）之后，仍要求目标 provider 的清单里该模型声明
   `vision: true`；不满足即跳过、保留暂存名、不换模型。
-- 设置页的自动化节 MUST 显示**解析后的**图片命名目标与资格（例如「kimi-work / k3-256k ·
-  vision ✓」或「kimi-work / k3-256k · 未声明 vision → 粘贴图片不会改名」）。
+- 设置页的图片命名行 MUST 在**模型选择器**上标出资格（每项后缀 `✓ vision` 或
+  `未声明 vision`），并在选择旁的那一行生效说明里写出解析后的目标与后果（例如
+  「实际：kimi-work / k3-256k ✓ vision · 跟随当前 provider · 下一次粘贴生效」或
+  「实际：local-lab / local-chat · 指定目标 · 未声明 vision → 粘贴图片不会改名，保留暂存名 ·
+  下一次粘贴生效」）。
+  MUST NOT 为「哪个模型能做图片命名」另建一块摘要或矩阵。
 
 ## 10. 自动化与命名目标呈现
 
@@ -807,15 +868,32 @@ pub struct ConfigDiagnostic {
   MUST NOT 复制、重排、重置它们的值或 DOM。
 - 每行显示「默认」徽标（键缺席）与「恢复默认」（显式存在时，动作 = 删键）。
 
-### 10.2 命名目标：一处解析、一次调用、面板只读
+### 10.2 命名目标：内联可编辑、一处解析、一次调用
 
 - 两个命名调用默认跟随**当前使用**的 provider 与它的生效模型。
 - `config.json` 的 `harness.session_naming.provider` / `.model` 与
   `harness.attachment_naming.provider` / `.model` 可单独覆盖目标；每次触发只向解析出的
   **一个** provider + 一个模型发起**一次**调用，MUST NOT 对每个 provider 各做一次。
-- 这两组覆盖项**不搬进设置页**（否则会把一处全局行为变成按 provider 的多份配置）；面板显示
-  解析后的目标 + 覆盖键路径，诊断带键路径。
-- 删除 provider 会重定向这些覆盖项（§4），这是面板唯一触碰它们的地方。
+- **面板把这两组覆盖键做成各自开关行里的两个选择器**（r4）：
+  - provider 选择器：「跟随当前 provider（默认）」= 删键；其余选项 = 合法、非 `mock`、未被
+    装载期忽略的条目（规范顺序，当前项带标记）。
+  - 模型选择器：选项 = **目标 provider 的 `models`**；「生效模型（默认）」= 删键；图片命名
+    每个选项后缀 `✓ vision` / `未声明 vision`。
+  - **覆盖模型不在目标清单时按 kind 分流**（与 `title_target_of` 同口径）：会话命名**回落**
+    该 provider 的生效模型，并在行内写明「覆盖模型 X 不在清单，已回落生效模型」；图片命名
+    原样保留该值，vision 资格不通过即跳过。MUST NOT 把会话命名显示成「无模型 / 会跳过」。
+  - 换 provider 时旧 model 覆盖被清除（它属于旧 provider 的清单）；同一笔保存里显式选的
+    model 按**新目标**校验（§6.1）。
+  - 选择改变只改草稿；点「保存」才写入，生效时机见 §6.7（下一次评估触发点 / 下一次粘贴）。
+- **关闭功能时禁用但保留**：两个选择器置灰；选择、草稿与 `config.json` 里的键都不变，
+  那一行说明改为「已关闭：不发起命名调用；选择保留（…），重新开启后按此目标执行」。
+  MUST NOT 在关闭时清空选择或写空值——「关闭」表达的是不调用，不是「忘掉目标」。
+- **每组目标只有一份全局键**：不为每个 provider 复制选择器，也不做「按 provider 的命名模型
+  矩阵」；provider 增删 / 切换只刷新选项与那一行说明，开关行本身不重排（§11.6）。
+- **只有一行生效说明，没有独立摘要框**（r4）：见 §10.5。同一说明 MUST NOT 再以第二块形式
+  出现——两处必然漂移。
+- 诊断（悬空覆盖、模型不在清单）挂在自动化节内并带键路径。
+- 删除 provider 会重定向这些覆盖项（§4）；保存后两个选择器与那一行说明立即按新目标重绘。
 
 ### 10.3 会话命名的触发节奏（文案唯一事实源）
 
@@ -842,20 +920,32 @@ pub struct ConfigDiagnostic {
 - `attachment_naming.enabled` 关→开需重启（前端投递闸读启动装载值），开→关立即（后端每次
   调用现场读配置）。重启不对称必须在**行内**写出。
 
-### 10.5 面板上的「实际使用哪个模型」
+### 10.5 行内目标与生效说明（取代原独立读数块）
 
-自动化节顶部是一块**只读目标读数**：
+r4 移除了自动化节顶部的独立读数块。现在的唯一呈现是每个命名行末尾那一行：
 
 ```
-命名目标
-  会话命名  kimi-work / k3-256k          跟随当前 provider·下一个评估点生效
-  图片命名  kimi-work / k3-256k ✓ vision  跟随当前 provider·下一次粘贴生效
-覆盖项    config.json 的 harness.session_naming / harness.attachment_naming（本页不改）
+会话命名  发往 [跟随当前 provider（默认） ▾] [生效模型（默认：k3-256k） ▾]
+          实际：kimi-work / k3-256k · 跟随当前 provider · 下一次评估触发点生效
+图片命名  发往 [跟随当前 provider（默认） ▾] [k3-256k ✓ vision ▾]
+          实际：kimi-work / k3-256k ✓ vision · 跟随当前 provider · 下一次粘贴生效
 ```
 
-- 目标 provider 被删除 / 覆盖项悬空时，这里显示「已回落到当前 provider（原因）」。
-- 图片命名没有 vision 资格时，这里显示「跳过命名，保留暂存名；不会换用其它模型」。
-- 这行读数在 provider 增删 / 切换后立即重算（草稿态也按草稿的 active 计算，便于用户预判）。
+- 目标 provider 被删除 / 覆盖项悬空时，说明写「… · 覆盖项悬空，已回落当前 provider」；选择器
+  保留那个悬空的原始 id（选项标「不存在，已回落」），让用户看见文件里的旧值而不是被静默
+  规范化。
+- 会话命名的覆盖模型不在目标清单时，说明写「… · 覆盖模型 k3-256k 不在清单，已回落生效
+  模型 · 下一次评估触发点生效」；选择器保留原值（选项标「不在清单，已回落生效模型」）。
+  这是**回落**，MUST NOT 写成「无模型」或「会跳过」。
+- 图片命名没有 vision 资格时，说明写「… · <来源> · 未声明 vision → 粘贴图片不会改名，保留
+  暂存名 · 下一次粘贴生效」；选择器保留原值（选项标「不在清单，会跳过」）。
+- **每一条说明（含跳过与回落分支）MUST 同时含来源**（跟随当前 / 指定目标 / 悬空回落）**与
+  生效时机**；写后果不能挤掉这两个字段。
+- 关闭时写「已关闭：不发起命名调用；选择保留（<provider> / <model>），重新开启后按此目标
+  执行」。
+- 这一行在 provider 增删 / 切换后立即重算（草稿态也按草稿的 active 计算，便于用户预判）。
+- MUST NOT 把这一行扩成多行读数、表格或第二块卡片：一行之外的信息属于行内描述（节奏 /
+  敏感性），不属于目标读数。
 
 ## 11. 视觉保真（有原型，必填）
 
@@ -949,9 +1039,20 @@ pub struct ConfigDiagnostic {
   一句说明 + 「添加第一个 provider」主按钮；左列只剩「+ 添加 provider」。MUST NOT 渲染空的
   表单骨架或假的 provider 行。
 - **自动化节**：模型接入卡片的**兄弟**，独立 `--pane` 卡片；节标题右侧「全局 · 与所选
-  provider 无关」。卡片顶部：命名目标只读读数（§10.5）+ 一段 11.5px 说明（四个开关是
-  `harness.*` 全局键；覆盖项留在配置文件）。四行开关每行两列（左文案 / 右「恢复默认」+ 开关）。
-  provider 的增删 / 切换 MUST NOT 重渲染这张卡片（DOM 与开关值不变）。
+  provider 无关；增删或切换 provider 不会复制开关、也不会改变它们的值」。卡片顶部一段
+  11.5px 说明（四个开关是 `harness.*` 全局键；命名目标默认跟随当前 provider，每组只有一份
+  键）。四行开关每行两列（左文案 / 右「恢复默认」+ 开关）；会话命名与图片命名两行的文案列
+  末尾是「发往 `[provider ▾]` `[model ▾]`」两个选择器 + **一行**生效说明。provider 的
+  增删 / 切换 MUST NOT 重渲染开关行（DOM 与开关值不变），只刷新两行里的选择器选项与那一行
+  说明。
+- **选择器**：宽 ≤240px（r1 起实际值；190px 会截断「不在清单，已回落生效模型」这类长选项）、
+  28px 高、1px `--border`、`--r5`；禁用态 45% 不透明；焦点环同其他控件。图片命名的模型
+  选项文本带 `✓ vision` / `未声明 vision`。
+- **关闭态**：两个选择器 disabled，说明文字「已关闭：不发起命名调用；选择保留（…），重新
+  开启后按此目标执行」用 `--text-3`（不是 danger）。视觉上 MUST NOT 隐藏控件，也 MUST NOT
+  把已选值显示成空。
+- **没有独立摘要框**：自动化节顶部不再有卡片 / 边框 / 底色块；`#naming-readout` 这类块
+  MUST NOT 回来——目标读数只存在于那两行里。
 - 开关样式：32×18 轨道、14px 圆钮；开 = `--accent-fill` 轨道 + 白钮；eink 开 = 黑底白钮、
   关 = 白底 1px 黑边。
 
@@ -982,8 +1083,14 @@ pub struct ConfigDiagnostic {
   不可用；mock 只能 id=mock；id 字符集。
 - **active 回退**：显式合法保持（即使未配置，含显式 mock）；缺失 → 第一个 configured；
   全未配置 → 第一个合法非 mock 条目；空映射 / 只剩 mock → 无；悬空 → 回退 + warning。
+- **生效模型解析**：显式 `providers.<id>.model` 优先（非首项、不在清单也保留；**空清单不抹掉
+  显式值**），无显式值时取清单首项，两者皆无为空串；判断顺序固定为「显式 → 首项 → 空串」。
+  命名回落与图片命名缺省目标都用它。
 - **命名目标**：override 合法 / 悬空 / 缺省三种；model 覆盖与目标 provider 的清单对账；
-  图片命名 vision 资格。
+  图片命名 vision 资格；**失效覆盖模型按 kind 分流**（会话命名回落生效模型 + warning，图片
+  命名保留原值 + 资格跳闸，两类后果分别断言）；**编辑面**（r4）——Set 的目标必须是合法非
+  mock 条目、Set 的 model 必须在目标清单内、换 provider / Reset 清 model、同一笔
+  provider+model 按新目标校验、Reset 删键、开关关闭不影响目标键。
 - **删除保护**：删 active 无替代 → Blocked；有替代 → active 改写；删被命名引用项无 retarget
   → Blocked；retarget 指向不存在 / mock / 被忽略条目 → Blocked；删最后一个 → active 与命名键
   删除（映射里仍有 mock 也算「最后一个」）；model 覆盖被清除；文件逐字节不变。
@@ -1009,8 +1116,14 @@ pub struct ConfigDiagnostic {
 - 增删改：添加重复 id 报错、添加成功选中、删除保护控件按 `references` 出现、删除后 active
   与命名目标按选择改写、删最后一个显示空态警告。
 - 错误按 path 回填、首错聚焦、重复模型 id 两行都标；逐项恢复默认仅显式存在时出现。
-- **自动化不随 provider 增删 / 切换变化**：DOM 逐字节不变、四个开关顺序与值不变。
-- **命名目标读数**：跟随 active / 覆盖 / 悬空回落 / 无 vision 四种形态的文案。
+- **自动化不随 provider 增删 / 切换变化**：开关行的键、顺序、值与默认 / 显式徽标不变。
+- **内联命名目标（r4）**：跟随当前 / 指定 provider / 悬空回落三种初值；换 provider 清 model
+  并重算选项；关闭开关时两个选择器 disabled 且值原样保留（重新开启后仍是原值）；图片命名的
+  模型选项带 vision 标记、无资格时那一行写「不会改名」；**会话覆盖模型失效**时行内写「已回落
+  生效模型」、MUST NOT 出现「会跳过 / 无模型」；图片跳过分支同样带来源与「下一次粘贴生效」。
+- **反向断言**：页面 MUST NOT 有独立命名摘要框（`#naming-readout` / `[data-naming-readout]`
+  不存在）；每个命名行只有一行生效说明；没有按 provider 复制的第二组选择器；单页两节，无
+  TAB / 编辑器 / 权限设置页。
 - 反向文案断言：无「每轮生成」「下一轮必定生效」；模型来源写 `config.json`；无「模型目录」。
 - 三主题 class / `data-theme` 切换不改变布局（结构性断言）。
 
@@ -1018,30 +1131,45 @@ pub struct ConfigDiagnostic {
 
 - 面板在 1280×800 与 900×700 下打开即完整可见（O1 / O2）、无水平溢出、Tab 不逃出面板。
 - 三主题各一屏（已配置 + 自动化），外加：空清单、添加表单（含重复 id 错误）、删除确认
-  （active + 命名引用）、校验错误、保存中（控件禁用）各一屏。
+  （active + 命名引用）、命名关闭（选择器禁用但保留）、图片命名无 vision、会话命名覆盖模型
+  回落、显式模型 + 空清单、校验错误、保存中（控件禁用）各一屏。
 - 左列 provider 列表的选中 / hover / 当前徽标三态；eink 下徽标黑底白字。
 
 ### 12.4 原型语义与规则回归（本 change 自带）
 
-- `evidence/prototype-semantics-check.mjs`：静态 + 浏览器断言，共 26 项。覆盖 provider 增删
-  流程、重复 id、删除保护控件、空清单、自动化全局性、命名目标读数、高级区（DeepSeek 禁用档 /
-  generic 条件文案）、会话命名完整节奏、控制面板全选项点击、三主题 × 12 场景；文本 predicate
-  配负向对照（REVIEW.md『断言等价于子串』条），交互路径由 B1–B11 实测。
-- `evidence/provider-rules-check.mjs`：把 §2.5 / §3 / §4 / §2.3 的判定表写成可执行纯函数，
-  共 35 项检查；其中 **13 个 mutant 对照**覆盖关键规则组——迁移 R1/R2/R3/R4/R5、configured
-  R6、回退顺序 R8/R9、删除 R13/R15/R16/R18、id R19。MUST NOT 宣称「每条规则各有一个
-  mutant」；其余检查是正向判定表。它是实现的测试 oracle，不是产品代码的替代。
+- `evidence/prototype-semantics-check.mjs`：静态 + 浏览器断言，共 36 项。覆盖 provider 增删
+  流程、重复 id、删除保护控件、空清单、自动化全局性、内联命名目标（可编辑 / 跟随 / 覆盖 /
+  悬空 / 会话失效覆盖模型回落 / vision 标记 / 关闭禁用但保留 / 一行生效说明含来源与时机 /
+  无摘要框）、单页两节、高级区（DeepSeek 禁用档 / generic 条件文案）、会话命名完整节奏、
+  控制面板全选项点击、三主题 × 16 场景；文本 predicate 配负向对照（REVIEW.md『断言等价于
+  子串』条），交互路径由 B1–B15 实测。
+- `evidence/provider-rules-check.mjs`：把 §2.5 / §3 / §4 / §2.3 / §10.2 的判定表写成可执行
+  纯函数，共 47 项检查；其中 **18 个 mutant 对照**覆盖关键规则组——迁移 R1/R2/R3/R4/R5、
+  configured R6、回退顺序 R8/R9、命名目标编辑 R12b/R12e、失效模型回落 R12g、生效模型优先
+  R12h（含显式模型 + 空清单）、删除 R13/R15/R16/R18、id R19。MUST NOT 宣称「每条规则各有一个 mutant」；其余检查是
+  正向判定表。它是实现的测试 oracle，不是产品代码的替代。
 - 两个脚本都不进 CI（提案期工具）；实现 PR 把同一判定表移植成 Rust 单测后再删掉
   `provider-rules-check.mjs`（或降级为文档，见 tasks）。
 
 ### 12.5 验收场景（真机套件）
 
-- 打开设置 → 看到 provider 列表与四个开关；`⌘,` 与菜单两条入口都打开同一面板。
+- 打开设置 → 看到 provider 列表与四个开关；`⌘,` 与菜单两条入口都打开同一面板；面板只有
+  「模型接入」与「自动化」两节，没有 TAB / 侧边导航 / 编辑器或权限设置页。
+- 在会话命名行把目标 provider 改为另一个已配置项、模型选它的清单项 → 保存 → 下一次评估
+  调用发往新目标；该行只显示一行「实际：… · 指定目标 · …」。
+- 文件里把 `session_naming.model` 写成一个不属于目标 provider 的模型 → 面板行内显示「覆盖
+  模型 X 不在清单，已回落生效模型 · 下一次评估触发点生效」，选择器保留原值；MUST NOT 显示
+  「会跳过」或「无模型」。
+- 关闭会话命名 → 两个选择器禁用、值不变；重新开启后仍是原目标；期间 `config.json` 里的
+  两个覆盖键未被删除。
+- 图片命名选一个未声明 `vision` 的模型 → 行内**同时**写出处（跟随当前 / 指定目标 / 悬空
+  回落）、「未声明 vision → 粘贴图片不会改名，保留暂存名」与「下一次粘贴生效」；粘贴图片后
+  文件名仍是暂存名，且不发起视觉调用。
 - 添加一个 provider（合成 Key + 模型）→ 保存 → chip 出现该 provider；重启后仍在。
 - 添加重复 id → 保存被拒（后端）、文件逐字节不变。
 - 删除当前 provider → 必须选替代目标，保存后 chip 显示新 provider。
 - 删除被会话命名 / 图片命名引用的 provider → 目标改为「跟随当前 provider」或指定项，保存后
-  自动化节的命名目标读数更新。
+  自动化节两行的目标选择与生效说明更新。
 - 删除最后一个 provider → chip 空态，「去设置」可回到面板；发送给出 `harness_provider_missing`。
 - 未配置 Key 时发送 → 错误文案指向设置（不再是 `config.json`）。
 - 迁移：用旧格式（无 preset）的合成配置启动 → 运行正常，文件被补上 preset，第二次启动不再写。
@@ -1060,12 +1188,14 @@ pub struct ConfigDiagnostic {
 | 旧版 UI 洗掉未知子键 | provider 条目只改提交字段；models 按 id 合并；其它节不在 patch 路径 |
 | 多写者丢更新 / check-then-write | 读—改—写同锁；revision 锁内比对；既有两个写入口一并收口 |
 | 空清单 / 半配置状态未定义 | §4.4 / §6.4 明确定义；UI 空态与 chip 空态都有去向 |
-| 命名目标被做成按 provider 的多份 | 面板只读展示；删除时原子重定向；反向断言守「不按 provider 各做一次」 |
+| 命名目标被做成按 provider 的多份 | 每组只有一份全局键 + 行内两个选择器；provider 变化只刷新选项；反向断言守「不按 provider 各渲染一份」 |
+| 关闭命名时清掉用户的目标选择 | 关闭只禁用控件，值、草稿与配置键全部保留；前端单测 + 原型断言守「禁用但保留」 |
+| 命名目标说明出现第二处（摘要框与行内说明漂移） | 只保留行内一行（§10.5）；`#naming-readout` 类块由断言禁止 |
 | 会话命名文案退回「每轮生成」 | 文案以 §10.3 为唯一事实源；反向断言禁掉 |
 | generic 预设的协议差异（store / 超限识别 / 空 Key） | §2.2 显式定义；不支持的组合在保存前阻断；Q9 交 Alex 裁决空 Key |
 | 原型规模变大后控制面板漏场景 | 控制面板按「场景 / 主题 / provider / 操作」四组列全；断言遍历全部场景与主题 |
 
-## 14. 裁决点（与 proposal 的 Q1–Q9 对应）
+## 14. 裁决点（与 proposal 的 Q1–Q11 对应）
 
 | 编号 | 取舍 | 倾向 | 备选与代价 |
 |---|---|---|---|

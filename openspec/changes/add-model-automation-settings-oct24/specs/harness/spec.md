@@ -1,9 +1,10 @@
 # harness 增量规格
 
-> 起草注记（非规格正文）：本 delta 收口四件事——① provider 从固定三档闭集合改为以稳定 id 为键
+> 起草注记（非规格正文）：本 delta 收口五件事——① provider 从固定三档闭集合改为以稳定 id 为键
 > 的动态映射（含预设语义与一次性迁移）；② 模型 chip 的「已配置」口径与空态；③ `models[]`
-> 元素 schema 补进 living spec；④ 模型声明指引补 `vision`。设置面板本身的形态与写通道归新
-> capability `settings`，本 delta 不重复定义。
+> 元素 schema 补进 living spec；④ 模型声明指引补 `vision`；⑤ 两个命名目标的 `provider` /
+> `model` 覆盖键在设置面板里**可编辑**（默认跟随当前 provider、关闭功能时禁用但保留）——
+> 解析语义本文件不变，编辑面与写通道归新 capability `settings`。
 
 ## MODIFIED Requirements
 
@@ -51,8 +52,12 @@ SHALL 在运行期忽略；经设置面板保存时 SHALL 原样保留（见 `se
 
 校验 SHALL 沿用既有模板：缺字段回落默认不告警；预设的闭集合取值非法按条目丢弃 + 人话 warning；
 类型不符整文件回落（ADR 0002 §5）。运行期写回 SHALL 经泛化的 `config_set_value(section, key,
-value)`，`ui` 表既有行为不变；设置面板的 provider / 当前使用项 / 模型 / 自动化写回 SHALL 走
-`settings_apply`（见 `settings` capability 的「设置写通道」条），MUST NOT 复用本命令。
+value)`，`ui` 表既有行为不变；设置面板的 provider / 当前使用项 / 模型 / 命名目标 / 自动化写回
+SHALL 走 `settings_apply`（见 `settings` capability 的「设置写通道」条），MUST NOT 复用本命令。
+命名目标的两个覆盖键仍是本节的 `session_naming` / `attachment_naming` 表，设置面板只是它们的
+编辑面：面板写入的 provider 必须是本节的合法条目、model 必须在目标清单内，解析与回落规则
+MUST NOT 因编辑面而改变；开关关闭时这两个键 MUST NOT 被自动删除（关闭表达「不调用」，不表达
+「忘掉目标」）。
 
 #### Scenario: 非法 provider 回落
 

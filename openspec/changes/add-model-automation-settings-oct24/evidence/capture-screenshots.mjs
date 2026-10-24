@@ -1,4 +1,5 @@
-// 节点 1 关键屏截图（M716 r3）：三主题的已配置 / 自动化 / 删除保护，外加空清单、添加
+// 节点 1 关键屏截图（M716 r3 / M730 r4 / r1 / r3）：三主题的已配置 / 自动化 / 删除保护 /
+// 命名关闭 / 图片无 vision / 会话覆盖模型回落 / 显式模型 + 空清单，外加空清单、添加
 // （重复 id）、校验、警告、冲突、保存中、高级区、关闭态。
 //
 // 跑法（仓根或 worktree 根）：
@@ -84,6 +85,38 @@ for (const theme of ["light", "dark", "eink"]) {
 for (const theme of ["light", "dark", "eink"]) {
   await open(`theme=${theme}&scene=configured&panel=0`);
   const file = path.join(outDir, `11-automation-${theme}.png`);
+  await page.locator("#automation-pane").screenshot({ path: file });
+  captured.push(file);
+  console.log(`SHOT  ${file}`);
+}
+
+for (const theme of ["light", "dark", "eink"]) {
+  await open(`theme=${theme}&scene=naming-off&panel=0`);
+  const file = path.join(outDir, `13-naming-off-${theme}.png`);
+  await page.locator("#automation-pane").screenshot({ path: file });
+  captured.push(file);
+  console.log(`SHOT  ${file}`);
+}
+
+for (const theme of ["light", "dark", "eink"]) {
+  await open(`theme=${theme}&scene=naming-vision&panel=0`);
+  const file = path.join(outDir, `14-naming-vision-${theme}.png`);
+  await page.locator("#automation-pane").screenshot({ path: file });
+  captured.push(file);
+  console.log(`SHOT  ${file}`);
+}
+
+for (const theme of ["light", "dark", "eink"]) {
+  await open(`theme=${theme}&scene=naming-fallback&panel=0`);
+  const file = path.join(outDir, `15-naming-fallback-${theme}.png`);
+  await page.locator("#automation-pane").screenshot({ path: file });
+  captured.push(file);
+  console.log(`SHOT  ${file}`);
+}
+
+for (const theme of ["light", "dark", "eink"]) {
+  await open(`theme=${theme}&scene=naming-explicit&panel=0`);
+  const file = path.join(outDir, `16-naming-explicit-${theme}.png`);
   await page.locator("#automation-pane").screenshot({ path: file });
   captured.push(file);
   console.log(`SHOT  ${file}`);
