@@ -72,7 +72,8 @@
 
 ## 4. 测试与验收场景
 
-- [x] 4.1 新增 chromium 结构层场景 `tests/visual/scenes/m687-semantic-selection.spec.ts`（7 条）：
+- [x] 4.1 新增 chromium 结构层场景 `tests/visual/scenes/m687-semantic-selection.spec.ts`（8 条；首版 7 条，
+      r1 返修新增「vault 外只读会话」一条——见 3.4 / 5.4）：
       拖选整段标题 / 粗体 → 松开后选区覆盖定界符、上屏字符有选中底色；拖拽中途不变；
       部分覆盖不外扩；双击外扩；三击不变；文档逐字节不变 + 阅读位置不变；程序化 / 键盘选区不外扩；
       vault 外只读会话（真实 ⌘P 打开）的 mouseup 不外扩。
