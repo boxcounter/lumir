@@ -69,7 +69,8 @@
 ## 7. 文档与配置参考
 
 - [x] 7.1 `docs/specs/config-reference.md` 新增 `harness.attachment_naming` 节：三键的类型 / 默认 / 取值 / 生效时机 / 真源指针，布局判据（配置跟随资源域），以及「`enabled` 关→开需重启、开→关立即生效」「`model` 缺省 = 该 provider 的生效模型、不可用即资格不通过」的口径。
-- [ ]（归档时执行，本 mission 不动 living spec）7.2 `openspec/specs/clipboard-image-paste/spec.md` 的 Purpose 段补一句语义命名的边界（归档时由增量并入，不提前改 living spec）。
+- [x]（归档时执行，本 mission 不动 living spec）7.2 `openspec/specs/clipboard-image-paste/spec.md` 的 Purpose 段补一句语义命名的边界（归档时由增量并入，不提前改 living spec）。
+  —— 2026-10-24（M713）：Purpose 已补「语义命名是同一通道的异步后续、不属落盘原语」一句——落盘仍先取暂存名 `pasted-<hash16>.<ext>`，仅在 `harness.attachment_naming.enabled` 开且选定 provider 声明 vision 模型时于粘贴成功后发起独立命名调用，成功才改名 `<slug>-<hash6>.<ext>` 并按解析结果更新全 vault 引用（toast 一次撤销）；失败 / 超时 / 开关关闭保留暂存名，粘贴路径不等待、不阻塞插入。归档当场 `validate --all --strict` → `Totals: 37 passed, 0 failed (37 items)`。
 
 ## 8. 验收场景
 

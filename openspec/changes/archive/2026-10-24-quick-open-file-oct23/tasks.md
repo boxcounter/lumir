@@ -195,8 +195,12 @@
 
 ## 10. 归档（节点 2 通过后，M713 执行）
 
-- [ ] 10.1 归档时为新建 capability `quick-open` 手写 living spec 的 Purpose（`archive` 只写占位
+- [x] 10.1 归档时为新建 capability `quick-open` 手写 living spec 的 Purpose（`archive` 只写占位
       `TBD - created by archiving change …`），写完复跑 `validate --all --strict` 确认全绿
+      —— 2026-10-24（M713）：`openspec/specs/quick-open/spec.md` 的 Purpose 已手写（⌘P 唤起 /
+      `{path}:{line}` 解析 / 候选与结果区同源判决 / 打开落点与行跳转 / vault 外只读打开与四条
+      不参与面）；归档当场复跑 `validate --all --strict` → `Totals: 41 passed, 0 failed (41 items)`
+      （当时制品数；本批后续归档继续升降制品数，不影响本条结论）。
 
 > M700 验证读数（2026-10-24）：`GATE RESULT: 13/13 PASS（SKIP 0）`（`bash scripts/gate.sh visual`，
 > exit 0；含 quick 的 11 门 + isolation-runs + visual-regression 551s，单测 1338 pass，**零基线更新**）；
