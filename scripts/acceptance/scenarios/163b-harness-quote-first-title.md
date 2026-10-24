@@ -9,6 +9,9 @@
 # AXPopUpButton，role 分流让两条断言各打各的面（`node` 断言，不是整棵树文本匹配）。
 #
 # 时间窗：mock 响应 `delay_ms: 8000`——发送后先落 wire、再开浮层、最后命名事件到达。
+#
+# **当前判红**（M669 r1）：第一阻塞在「⌃⇧N 选区 → 浮动钮浮现」，与 222 的 hover finding
+# 同族；正文「当前状态」段记着红在哪一步、守卫防哪种假绿、第二层缺口留给 M671。
 id: "163b-harness-quote-first-title"
 item: 163
 title: 会话自动命名②：quote 首条消息 → 命名事件 → 标题栏与已开历史浮层行同步改名
@@ -64,7 +67,7 @@ steps:
     expect:
       - label: 问题落在 composer
         ax: { has: "qqmark" }
-      - label: 编辑器正文没被写脏（注入若漏到焦点元素上，这里必红——M669 首跑的真实现场）
+      - label: 编辑器正文没被写脏（注入漏到焦点元素上时这里必红；M669 中间一轮 01:49 的真实形态。注意最终 run 未走到这一步——第一阻塞在选区→浮钮，见正文「当前状态」）
         editor: { not: "qqmark" }
 
   - name: 发送（mock 响应刻意延迟 8s，留出「浮层先开、命名事件后到」的窗口）
@@ -117,6 +120,25 @@ steps:
 ---
 
 # 163b-harness-quote-first-title —— quote 首条消息的命名呈现
+
+## 当前状态（M669 r1：红，未通过）
+
+- **本场景当前判红**：`node scripts/acceptance/run.mjs 163b` → FAIL。最近读数
+  2026-10-24 01:57 场（9 断言 / 8 红），证据
+  `.local/acceptance/2026-10-24/163b-harness-quote-first-title/`。
+- **第一条红在哪**：`⌃⇧N 选中第 3 行——浮动钮应在选区右下浮现`——`AXButton (摘录到对话)`
+  根本没出现。**此后全部是级联红**（点浮动钮「找不到可点节点」、composer 从未出现、
+  `waitForFile` 超时因为 wire 从未落盘）。
+- **与 222 的 finding 同族**：222 走 hover 路径同样死在「摘录到对话钮不浮现」，
+  finding `.tower/comms/findings/20261024-worker-acceptance-repairs-oct2-bug-222-hover.md`；
+  本场景是 **⌃⇧N 键盘选区路径**。两条线索指向同一个待查根因（浮动钮的浮现 / AX 暴露链路），
+  排查应并到该 finding 的范围内，不要按「本场景自己坏了」另起一摊。
+- **第二层缺口（尚未撞到，留给 M671）**：quote 卡片进 composer 之后，没有可靠通道把
+  **DOM 焦点**搬进 composer——`type_text` 落在当前焦点元素上，注入会漏进仍有焦点的编辑器。
+  这是第一个阻塞解除后才会撞到的层，本场景现在没有走到。
+- **`editor: { not: "qqmark" }` 守卫防的是哪种假绿**：`ax: { has: "qqmark" }` 在整棵 AX 树上
+  匹配——注入漏进编辑器时它照样绿（M669 中间一轮 01:49 的真实形态：`qqmark` 落到文档末尾，
+  composer 里仍只有卡片）。那条负向断言把「落错面」变成红，是本场景唯一能抓到这层的判据。
 
 ## 本场景在验什么
 
