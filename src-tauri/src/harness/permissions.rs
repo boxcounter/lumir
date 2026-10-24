@@ -344,9 +344,37 @@ fn xxd_positionals(args: &[String]) -> Vec<String> {
     positionals
 }
 
-/// `rg` 的执行形态（proposal 第 3 条）：`--pre` / `--pre-glob` / `--hostname-bin` 会执行
-/// 指定程序——归危险，任何档都逐个问（危险层先于 allow 规则与会话缓存）。
-const RG_EXEC_FLAGS: [&str; 3] = ["--pre", "--pre-glob", "--hostname-bin"];
+/// `rg` 的执行形态（change readonly-allowlist-tightening-oct23 proposal 第 3 条 +
+/// change rg-zip-flags-dangerous-oct24）：`--pre` / `--pre-glob` / `--hostname-bin` 会执行指定
+/// 程序，`-z` / `--search-zip` 的解压搜索会调起外部解压程序（实测 `gzip -d -c <file>`）——
+/// 同族，归危险，任何档都逐个问（危险层先于 allow 规则与会话缓存）。
+const RG_EXEC_FLAGS: [&str; 4] = ["--pre", "--pre-glob", "--hostname-bin", "--search-zip"];
+
+/// `rg` 的取值短旗标（`rg --help` 的十四项）：短旗标簇里一旦出现，其后字符是它的粘连值，
+/// 不再是旗标字母。`-z` 的簇内扫描靠它区分 `-zH`（zip + with-filename 两个 flag）与
+/// `-ez`（pattern 是 `z`）。
+const RG_VALUE_SHORT_FLAGS: [char; 14] = [
+    'A', 'B', 'C', 'E', 'M', 'T', 'd', 'e', 'f', 'g', 'j', 'm', 'r', 't',
+];
+
+/// `-z`（`--search-zip` 的短名）在短旗标簇内是否出现：`rg -zH` 实测成立（ripgrep 15.2），
+/// 只按整 token 匹配会漏掉捆绑形态。长形态无缩写（实测 `rg --search` 被拒），由
+/// [`RG_EXEC_FLAGS`] 的整 flag / `=` 判据覆盖。簇内遇到取值旗标即停；未知字母按无值继续扫
+/// ——错误方向是多问一次，不是漏判。
+fn rg_search_zip_short_form(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        let Some(cluster) = arg.strip_prefix('-') else {
+            return false;
+        };
+        if cluster.is_empty() || cluster.starts_with('-') {
+            return false;
+        }
+        cluster
+            .chars()
+            .take_while(|ch| !RG_VALUE_SHORT_FLAGS.contains(ch))
+            .any(|ch| ch == 'z')
+    })
+}
 
 fn rg_exec_form(args: &[String]) -> bool {
     args.iter().any(|arg| {
@@ -356,7 +384,7 @@ fn rg_exec_form(args: &[String]) -> bool {
                     .strip_prefix(flag)
                     .is_some_and(|rest| rest.starts_with('='))
         })
-    })
+    }) || rg_search_zip_short_form(args)
 }
 
 /// find 的写原语（GNU find；BSD find 无 `-fls` 等，分类器是文本级、跨平台）。
@@ -2540,6 +2568,10 @@ mod tests {
             vec!["rg", "needle", "."],
             // `--pretty` 以 `--pre` 起首——前缀匹配会把只读查询误判危险，必须按完整 flag 判。
             vec!["rg", "--pretty", "needle", "."],
+            // `--no-search-zip` 是 `--search-zip` 的否定形态：关掉解压，不执行任何程序。
+            vec!["rg", "--no-search-zip", "needle", "."],
+            // `-ez` 的 `z` 是 `-e` 的粘连值（pattern 为 `z`），不是 `--search-zip` 的短旗标。
+            vec!["rg", "-ez", "needle", "."],
         ] {
             let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
             assert_eq!(classify_cli(&argv), CliClass::ReadOnly, "{argv:?}");
@@ -2577,7 +2609,8 @@ mod tests {
         );
     }
 
-    /// 执行形态 → 危险（design §2.1 / §2.3）：rg 的 `--pre` 系与 sed 脚本的 `e` / `s///e`。
+    /// 执行形态 → 危险（design §2.1 / §2.3）：rg 的 `--pre` 系 / `-z`·`--search-zip` 与
+    /// sed 脚本的 `e` / `s///e`。
     #[test]
     fn exec_forms_are_dangerous() {
         for items in [
@@ -2586,6 +2619,12 @@ mod tests {
             vec!["rg", "--pre-glob", "*.md", "needle", "."],
             vec!["rg", "--hostname-bin", "/tmp/bin", "needle", "."],
             vec!["rg", "--hostname-bin=/tmp/bin", "needle", "."],
+            // `-z` / `--search-zip` 调起外部解压程序（gzip -d 等）。
+            vec!["rg", "-z", "needle", "a.txt.gz"],
+            vec!["rg", "--search-zip", "needle", "a.txt.gz"],
+            // 短旗标簇里的 `-z`（实测 ripgrep 15.2 接受 `-zH` / `-zn` 捆绑）。
+            vec!["rg", "-zH", "needle", "a.txt.gz"],
+            vec!["rg", "-nz", "needle", "a.txt.gz"],
             vec!["sed", "-n", "e ls", "a.md"],
             vec!["sed", "s/a/b/e", "a.md"],
             vec!["sed", "1e date", "a.md"],
@@ -2765,6 +2804,9 @@ mod tests {
         for items in [
             vec!["xargs", "rg", "--pre", "/tmp/x", "needle"],
             vec!["bash", "-lc", "rg --pre /tmp/x needle ."],
+            // `-z` 与只读子命令组合：整条仍须危险（不是写，更不是只读）。
+            vec!["bash", "-lc", "rg -z needle a.txt.gz"],
+            vec!["xargs", "rg", "--search-zip", "needle"],
             vec!["sudo", "sed", "s/a/b/e", "a.md"],
         ] {
             let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
@@ -2774,6 +2816,11 @@ mod tests {
         assert_eq!(
             classify_cli(&argv(&["sudo", "base64", "-d", "a.txt"])),
             CliClass::ReadOnly
+        );
+        assert_eq!(
+            classify_cli(&argv(&["bash", "-lc", "rg --no-search-zip needle ."])),
+            CliClass::ReadOnly,
+            "否定形态没有执行面，解包仍应放行"
         );
     }
 
@@ -3142,6 +3189,9 @@ mod tests {
         };
         for items in [
             vec!["rg", "--pre", "/tmp/lumir-pre.sh", "needle", "."],
+            // `-z` 与 `--pre` 同族：full_access + allow 规则 + 缓存都不得解锁。
+            vec!["rg", "-z", "needle", "a.txt.gz"],
+            vec!["rg", "--search-zip", "needle", "a.txt.gz"],
             vec!["sed", "s/a/b/e", "a.md"],
         ] {
             for mode in [
