@@ -63,6 +63,12 @@ jobs:
       - name: 安装前端依赖
         run: pnpm install --frozen-lockfile
 
+      # 常驻内存归因护栏的纯函数夹具（node:test，零依赖、毫秒级）：护栏守的是 resident-memory
+      # 门禁读数的可信度，坏掉时必须在构建与测量之前失败，而不是等读数出来才发现。
+      # fixture 在 tests/perf/fixtures/memory-contamination-cases.json；paths 已含 scripts/perf/** 与 tests/perf/**。
+      - name: 常驻内存归因护栏夹具测试（node:test，零依赖）
+        run: node --test scripts/perf/memory.test.mjs
+
       - name: 构建前端产物（dist/，keypress-to-paint 的负载）
         run: pnpm build
 
