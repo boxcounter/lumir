@@ -47,7 +47,7 @@
 ## Why
 
 1. **hash 名不可读**。当前落盘名是内容寻址的 `pasted-<SHA-256 前 16 位>.webp`
-   （[clipboard-image-paste spec](../../specs/clipboard-image-paste/spec.md)「落盘与命名去重」）。
+   （[clipboard-image-paste spec](../../../specs/clipboard-image-paste/spec.md)「落盘与命名去重」）。
    这串名字在文件树、标签栏标题、链接补全和搜索结果里都是一个随机串：回到 vault 想找「上次那张
    架构图」，只能逐个打开辨认。可读的文件名是图片类附件唯一的人可用的索引。
 2. **正文与检索不可锚**。笔记正文里的 `![[pasted-a3f2c4d5e6f70819.webp]]` 读起来不携带任何
