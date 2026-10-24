@@ -29,7 +29,7 @@
 关闭 SHALL 覆盖四条路径：`Escape` / `⌃G`、焦点离开输入面、点击输入面之外的区域、成功打开之后。
 全部关闭路径 MUST NOT 改变打开前后的阅读位置；把焦点交还编辑器时 SHALL 走既有的「交还焦点且
 保持阅读位置」入口（MUST NOT 裸调 `view.focus()`，见
-[overlay-close-reading-position.md](../../../../../docs/design-parity-contract/overlay-close-reading-position.md)
+[overlay-close-reading-position.md](../../../docs/design-parity-contract/overlay-close-reading-position.md)
 的 CL-1）。前台会话发生切换（切标签 / 被外部打开请求置换）时输入面 SHALL 收起且 MUST NOT 打开
 任何文件——输入串指向的是切换前那一刻的上下文。
 
