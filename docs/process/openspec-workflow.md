@@ -107,7 +107,7 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 - [ ] **finding 落账率对账（2026-10-12 Alex 认可）**：本批 `.tower/comms/findings/` 新增文件数与 `docs/backlog.md` 新增条目数逐一核对，不等即查漏——漏落账的 finding 等于没登记。
 - [ ] **复发对账（2026-10-17 Alex 裁决）**：本批踩的坑若命中 REVIEW.md 已有条目（含已固化删除、只存于 git 历史的条目），复发 = 居所没拦住——先查防线该不该往更近的居所搬（人读 → tower 注入 → 机器门禁）或改写，不是只往该条证据里补一行现场。
 - [ ] **新条目准入与引用写法自检（2026-10-12 Alex 认可）**：本批新增的「待 Alex 裁决」条目只收**价值取舍 / 产品语义**类（答案客观可核的由 tower 直接裁并记录）；跨文件引用 backlog 条目一律用**主题关键词锚**，不用编号 / 行号。
-- [ ] **push 后跟进到 CI 终态（2026-10-24 Alex 裁决 A；规则本体见 AGENTS.md「操作流程」的 CI 观察者条）**：批次收尾 `git push origin master` 后，用 `gh run list --branch master`（或等价渠道）跟进该次 push 触发的每条 workflow 到终态（`success` / `failure` / `cancelled` / `timed_out`；`queued` / `in_progress` 不算）。分工不变：本地 `scripts/gate.sh` 全绿是提交合并请求的前置，**远端 CI 是最终确认**，两者不互替。任一失败须继续处理（修复重推，或查明原因并记录），批次报告附 run 链接与原因；**未全绿不得宣称批次完成**。Alex 不承担观察者职责。
+- [ ] **push 后跟进到 CI 终态**：按 AGENTS.md「操作流程」的 CI 观察者条执行；未全绿不得宣称批次完成。
 - [ ] **版本与打包（仅本批需要交付安装包时）**：按 `docs/process/release.md` 执行——semver 口径、bump 面（`src-tauri/tauri.conf.json` 的 `version` 为唯一真源，`package.json` / `Cargo.toml` / `Cargo.lock` 同步；视觉桩钉死 9.9.9 不跟随）、打包前置条件、产物路径与 sha256 记录惯例均以该文为 canonical（M522 落地，2026-10-15）。
 
 **归档队列的机器判据（2026-10-24，M684）**：上列第一条「每个 change 在实现 PR 合并时即落一条归档跟踪记录」已由 `scripts/openspec-archive-check.mjs` 的门禁模式执行（随 `scripts/docs-check.sh` 进本地 `gate.sh quick` 与 CI 的 docs-check.yml）；判据口径：
