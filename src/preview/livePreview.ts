@@ -745,8 +745,11 @@ export function livePreview(ctx: PreviewContext) {
       //
       // 只装在 md 的 live preview 扩展组里（code 模式没有这层扩展，规则因此不生效）；
       // 只听 mouseup，键盘 / 程序化选区 MUST NOT 经过这里（delta 的「只适用于指针选区」）。
+      // 只读面（vault 外会话）MUST NOT 外扩：只读编辑器不承载「选中后要编辑」的语义，外扩只
+      // 会把用户没选的定界符塞进复制 / 摘录；门控取 `state.readOnly`（与 editor.ts 装
+      // `EditorState.readOnly.of(!editable)` 的单一判据同源，不另看 contenteditable）。
       mouseup(event, view) {
-        if (event.button !== 0) return false;
+        if (event.button !== 0 || view.state.readOnly) return false;
         const selection = view.state.selection;
         if (selection.ranges.every((range) => range.empty)) return false;
         const expanded = expandSelectionToSyntax(view.state, selection);

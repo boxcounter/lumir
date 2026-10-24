@@ -141,16 +141,19 @@ function treeCovering(state: EditorState, to: number) {
   return ensureSyntaxTree(state, Math.min(to, state.doc.length), 25) ?? tree;
 }
 
-/** 迭代上限：嵌套节点深度受文档约束，8 轮覆盖 `***…***` 这类已知层序（参照 M539 filter 的写法）。 */
-const MAX_ROUNDS = 8;
-
-/** 单个 range 的外扩：反复扫描直到不动点（嵌套构造由内向外逐层扩）。 */
+/** 单个 range 的外扩：反复扫描直到真正的不动点（嵌套构造由内向外逐层扩）。
+ *
+ *  不设轮数上限：每一轮要么有一端严格外扩（`nextFrom < from` 或 `nextTo > to`），要么立即
+ *  停止；范围单调、两端都以文档长度为界，因此必然在有限轮内收敛。深层合法嵌套（例如
+ *  `******************x******************`，lezer 给出 10 层 `StrongEmphasis`）因此一次
+ *  调用就扩到最外层，且对结果再次调用是幂等的（review r1 P2-1 的现场：旧的 8 轮上限让
+ *  同一输入要调两次才到位）。 */
 function expandRange(state: EditorState, range: SelectionRange): SelectionRange {
   if (range.empty) return range;
   const tree = treeCovering(state, range.to);
   let from = range.from;
   let to = range.to;
-  for (let round = 0; round < MAX_ROUNDS; round++) {
+  for (;;) {
     let nextFrom = from;
     let nextTo = to;
     tree.iterate({

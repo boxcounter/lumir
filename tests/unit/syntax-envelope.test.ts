@@ -153,6 +153,37 @@ test("嵌套：***x*** 由内向外迭代到最外层", () => {
   assert.deepEqual(shape(expand(doc, from + 3, to - 3)), [[from, to, from, to]]);
 });
 
+test("深层嵌套（>8 层）：一次调用扩到最外层，且对结果再次调用幂等", () => {
+  // 左右各 18 个 `*`：lezer 形成 10 层 StrongEmphasis（旧实现 8 轮上限时首调只得 [2,35)，
+  // 要调两次才到 [0,37)——review r1 P2-1 的现场）。先在语法树上实测层数，避免 fixture 退化
+  // 后这条回归变成空断言。
+  const doc = "******************x******************\n";
+  const state = stateOf(doc, [[18, 19]]);
+  {
+    let depth = 0;
+    let max = 0;
+    syntaxTree(state).iterate({
+      enter(ref) {
+        if (ref.name === "StrongEmphasis" || ref.name === "Emphasis") {
+          depth += 1;
+          max = Math.max(max, depth);
+        }
+      },
+      leave(ref) {
+        if (ref.name === "StrongEmphasis" || ref.name === "Emphasis") depth -= 1;
+      },
+    });
+    assert.ok(max > 8, `fixture 应形成 >8 层嵌套，实际 ${max}`);
+  }
+  const rawTo = doc.indexOf("\n");
+  const once = expandSelectionToSyntax(state, state.selection);
+  assert.deepEqual(shape(once), [[0, rawTo, 0, rawTo]]);
+
+  // 幂等：把一次调用的结果作为新状态的选区，再调一次必须原样返回（同一个对象）。
+  const second = stateOf(doc, [[once.main.from, once.main.to]]);
+  assert.equal(expandSelectionToSyntax(second, second.selection), second.selection);
+});
+
 test("嵌套：链接 label 内的粗体 → 先扩粗体、再扩整条链接", () => {
   const doc = "[**粗体**](u)\n";
   const [linkFrom, linkTo] = rangeOf(doc, "[**粗体**](u)");

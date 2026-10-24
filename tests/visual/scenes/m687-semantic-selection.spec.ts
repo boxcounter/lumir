@@ -30,9 +30,11 @@ const HEADING_RAW = "## 标题语义验收";
 
 interface ViewLike {
   state: {
+    readOnly: boolean;
     doc: { length: number; toString(): string; sliceString(from: number, to: number): string };
     selection: { main: { from: number; to: number; anchor: number; head: number; empty: boolean } };
   };
+  contentDOM: HTMLElement;
   coordsAtPos(pos: number): { left: number; right: number; top: number; bottom: number } | null;
   dispatch(spec: unknown): void;
   focus(): void;
@@ -57,8 +59,8 @@ async function openDoc(page: Page): Promise<void> {
 }
 
 /** 文档内 `raw` 的首次出现；找不到直接抛（fixture 坏了，不是产品行为）。 */
-function offsetOf(needle: string): { from: number; to: number } {
-  const from = DOC.indexOf(needle);
+function offsetOf(needle: string, doc = DOC): { from: number; to: number } {
+  const from = doc.indexOf(needle);
   if (from < 0) throw new Error(`fixture 里找不到 ${JSON.stringify(needle)}`);
   return { from, to: from + needle.length };
 }
@@ -250,4 +252,73 @@ test("程序化 / 键盘选区不被隐式外扩（外扩只挂在指针 mouseup
     head: bold.to - 2,
   });
   expect(await readDocument(page)).toBe(DOC);
+});
+
+
+// ---------------------------------------------------------------------------
+// 只读面：vault 外只读 md 会话（state.readOnly）的 mouseup 不外扩
+// ---------------------------------------------------------------------------
+
+const EXTERNAL_PATH = "/tmp/lumir-verify/semantic-readonly.md";
+const EXTERNAL_DOC = "## 只读语义验收\n\n**粗体词** 是外部只读文档里的加粗短语。\n";
+
+test("只读 md（vault 外会话）的 mouseup 不外扩：选区保持渲染文字、定界符只显露不入选", async ({ page }) => {
+  await stubTauri(page, {
+    entries: [{ path: "e.md", kind: "file", size: DOC.length, mtime_ms: 0 }],
+    files: { "e.md": DOC },
+    externalFiles: { [EXTERNAL_PATH]: EXTERNAL_DOC },
+  });
+  await page.goto("/");
+  // 先开一个 vault 内文件建立文档焦点（quick-open.spec 同款前置——页面刚加载时 ⌘P 的
+  // 分发焦点不稳定，且这里本来就要有编辑器在场才能对照「可编辑场景外扩」）。
+  await page.locator('.ft-row[title="e.md"]').click();
+  await expect(page.locator(".cm-lp-strong").first()).toBeVisible();
+
+  // 走真实入口打开 vault 外文件：⌘P → 绝对路径 → Enter（quick-open 的只读通道）。
+  await page.keyboard.press("Meta+p");
+  await expect(page.locator(".lumir-qo-input")).toBeFocused();
+  await page.keyboard.type(EXTERNAL_PATH);
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-qo")).toBeHidden();
+  await expect(page.locator(".modeline-meta")).toContainText("vault 外 · 只读");
+
+  // 前置：这确实是只读编辑器（readOnly facet + contenteditable 都关），否则下面的「不外扩」
+  // 可能只是没走到被测路径（REVIEW.md「读不到当成空」条同族）。
+  const readonly = await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: ViewLike } } })
+      .cmTile.root.view;
+    return {
+      stateReadOnly: view.state.readOnly === true,
+      contentEditable: view.contentDOM.getAttribute("contenteditable"),
+    };
+  });
+  expect(readonly).toEqual({ stateReadOnly: true, contentEditable: "false" });
+
+  // 光标挪到文档末尾（回到渲染态），再拖选粗体词的全部渲染文字。
+  await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: ViewLike } } })
+      .cmTile.root.view;
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+  });
+  const bold = offsetOf("**粗体词**", EXTERNAL_DOC);
+  const box = (await page.locator(".cm-lp-strong", { hasText: "粗体词" }).boundingBox())!;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + 1, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 1, y, { steps: 4 });
+  const before = await selection(page);
+  expect(before.empty, "只读编辑器里指针拖选仍建立选区（只读拒收的是文档改动，不是选区）").toBe(false);
+  expect({ anchor: before.anchor, head: before.head }).toEqual({ anchor: bold.from + 2, head: bold.to - 2 });
+
+  await page.mouse.up();
+  await page.waitForTimeout(80);
+  const after = await selection(page);
+  // 只读门控：同一手势在可编辑场景里会扩到 [bold.from, bold.to)，这里必须原样。
+  expect({ anchor: after.anchor, head: after.head }, "只读会话 MUST NOT 外扩").toEqual({
+    anchor: bold.from + 2,
+    head: bold.to - 2,
+  });
+  // 按压窗口仍由 reveal-gate 的 window 层正常关闭：定界符上屏（M168），只是没进选区。
+  await expect(page.locator(".cm-line", { hasText: "粗体词" })).toContainText("**粗体词**");
+  expect(await readDocument(page)).toBe(EXTERNAL_DOC);
 });
