@@ -131,6 +131,19 @@ b, strong { font-weight: 650; }
   padding: 1px 4px; border-radius: 3px; color: var(--text-2);
 }
 .editor .syn { color: var(--text-3); }
+/* 合成块滚动容器：承载真实 editor.widget-* 的 when 示例（容器自身持焦才命中） */
+.mock-widget { max-width: 700px; margin: 0 auto 80px; padding: 0 40px; outline: none; }
+.mock-widget:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--r4); }
+.mock-widget-box {
+  border: 1px solid var(--border); border-radius: var(--r6); background: var(--preview-bg);
+  padding: 10px 12px; overflow-x: auto;
+}
+:root[data-theme="eink"] .mock-widget-box { border-width: 1.4px; }
+.mock-widget-label { margin-bottom: 6px; font-size: 10.5px; color: var(--text-3); }
+.mock-widget-pre {
+  margin: 0; font-family: var(--mono); font-size: 11px; line-height: 1.6; color: var(--text-2);
+  white-space: pre;
+}
 .modeline {
   flex: none; height: 25px; display: flex; align-items: center; gap: 12px; padding: 0 14px;
   background: var(--frame); border-top: 1px solid var(--border);
@@ -399,6 +412,14 @@ b, strong { font-weight: 650; }
           <blockquote>原型只验证交互，不代表最终文案与像素。</blockquote>
           <p>示例代码：<code>[keys]</code> 表里一行写一个 token 到命令 id 的映射。</p>
         </div>
+        <div class="mock-widget" id="app-widget-scroll" tabindex="0" role="group" aria-label="合成块滚动容器（when 示例）">
+          <div class="mock-widget-box">
+            <div class="mock-widget-label">合成块滚动容器 · 容器自身持有焦点时 Home / ← / → / End 才命中</div>
+            <pre class="mock-widget-pre">| 合成列 A | 合成列 B | 合成列 C | 合成列 D | 合成列 E |
+| 示例值 1 | 示例值 2 | 示例值 3 | 示例值 4 | 示例值 5 |
+| 示例值 6 | 示例值 7 | 示例值 8 | 示例值 9 | 示例值 10 |</pre>
+          </div>
+        </div>
       </main>
     </div>
 
@@ -571,11 +592,13 @@ const COMMANDS = [
     detail: "合成来由：同 tab.goto-1；标签数少于序号时是无操作。" },
 
   // ── 块
-  { id: "editor.focus-block-scroll", group: "blocks", label: { zh: "聚焦块滚动", en: "Focus block scroll" },
-    aliases: ["块滚动", "scroll", "focus block"], scope: "editor", keys: ["Ctrl-Alt-KeyS"],
-    when: { zh: "仅在块滚动容器获得焦点时生效", en: "Only while the block scroll container has focus" },
-    whenShort: { zh: "仅块滚动", en: "Block focus" },
-    detail: "合成来由：焦点送进 caret 所在块的横滚容器，⌃⌥S 取 Scroll 首字母；条件绑定保证文本里的同名组合不受影响。" },
+  // 真实 P2 示例：editor.widget-scroll-home（src/keys.ts:676，带 isWidgetKeyTarget 的 when）。
+  // 原型中 whenKey / whenShortKey 直接是 zh 文本；生产实现里它们是两个独立的 CopyKey。
+  { id: "editor.widget-scroll-home", group: "blocks", label: { zh: "块滚动回最左", en: "Scroll block to start" },
+    aliases: ["滚动", "块", "home", "scroll"], scope: "editor", keys: ["Home"],
+    whenKey: "仅在块级横滚容器自身持有焦点时生效",
+    whenShortKey: "仅块滚动",
+    detail: "合成来由：容器焦点内的 Home，横向滚回最左（真实绑定 D296 的口径）；when 保证文本编辑中的 Home 照旧走原生 caret 路径。" },
   { id: "block.copy", group: "blocks", label: { zh: "复制整个块", en: "Copy block" },
     aliases: ["复制块", "copy block"], scope: "editor", keys: [],
     detail: "合成来由：鼠标入口是块上的 hover 复制钮；键盘入口默认不占键位。" },
@@ -703,7 +726,7 @@ const SCENES = {
   default: {},
   entry: { lookup: false, menu: true, entrybar: true },
   p1: { query: "大纲" },
-  p2: { capture: "captured", token: "Ctrl-Alt-KeyS", detail: "editor.focus-block-scroll" },
+  p2: { capture: "captured", token: "Home", detail: "editor.widget-scroll-home" },
   p3: { scope: "global" },
   p4: { query: "折行", detail: "view.toggle-line-wrap" },
   p6: { active: "editor.cursor-up", focusList: true },
@@ -724,7 +747,7 @@ const state = {
   query: params.get("q") ?? scene.query ?? "",
   scope: pick("scope", ["all", "global", "editor", "text"], scene.scope ?? "all"),
   capture: pick("capture", ["off", "waiting", "captured"], scene.capture ?? "off"),
-  capturedToken: params.get("token") ?? scene.token ?? (scene.capture === "captured" ? "Ctrl-Alt-KeyS" : ""),
+  capturedToken: params.get("token") ?? scene.token ?? (scene.capture === "captured" ? "Home" : ""),
   detail: params.get("detail") ?? scene.detail ?? null,
   active: params.get("active") ?? scene.active ?? null,
   collapsedGroups: new Set(scene.collapsed ? GROUPS.map((group) => group.id) : []),
@@ -732,7 +755,7 @@ const state = {
   scene: sceneName && SCENES[sceneName] ? sceneName : null,
   focusList: scene.focusList === true,
 };
-if (state.capture === "captured" && state.capturedToken === "") state.capturedToken = "Ctrl-Alt-KeyS";
+if (state.capture === "captured" && state.capturedToken === "") state.capturedToken = "Home";
 if (state.detail !== null && !COMMAND_BY_ID.has(state.detail)) state.detail = null;
 if (state.active !== null && !COMMAND_BY_ID.has(state.active)) state.active = null;
 
@@ -746,6 +769,7 @@ const menuHelp = document.getElementById("menu-help");
 const menuPop = document.getElementById("menu-pop");
 const menuItemLookup = document.getElementById("menu-item-lookup");
 const editor = document.getElementById("app-editor");
+const widgetScroll = document.getElementById("app-widget-scroll");
 const overlay = document.getElementById("lookup-overlay");
 const panel = document.getElementById("lookup-panel");
 const input = document.getElementById("lookup-input");
@@ -767,6 +791,16 @@ const panelRestore = document.getElementById("panelRestore");
 
 let composing = false;
 let pendingFocusList = false;
+
+// 原型的 when 模型：只有合成块滚动容器自身持有焦点时，editor.widget-scroll-home 才命中。
+// 其余命令仍沿用简化分发（不模拟 scope），见文档「原型边界」。
+window.__widgetFocused = false;
+widgetScroll.addEventListener("focus", () => {
+  window.__widgetFocused = true;
+});
+widgetScroll.addEventListener("blur", () => {
+  window.__widgetFocused = false;
+});
 
 /* ============================================================
    6. 渲染：chrome（主题 / 面板 / 捕获 / 作用域）
@@ -867,11 +901,11 @@ function buildRow(cmd) {
 
   const meta = document.createElement("span");
   meta.className = "lk-row-meta";
-  if (cmd.when !== undefined) {
+  if (cmd.whenShortKey !== undefined) {
     const when = document.createElement("span");
     when.className = "lk-when-badge";
-    when.textContent = cmd.whenShort ? cmd.whenShort.zh : "条件";
-    when.title = cmd.when.zh;
+    when.textContent = cmd.whenShortKey;
+    when.title = cmd.whenKey ?? "";
     meta.append(when);
   }
   const scope = document.createElement("span");
@@ -916,7 +950,7 @@ function buildDetail(cmd) {
   addMeta("命令 id", cmd.id, true);
   addMeta("标签", `${cmd.label.zh} / ${cmd.label.en}`);
   addMeta("作用域", `${SCOPES[cmd.scope].zh} — ${SCOPES[cmd.scope].desc}`);
-  addMeta("条件", cmd.when ? cmd.when.zh : "无");
+  addMeta("条件", cmd.whenKey ?? "无");
   addMeta("原始键位", cmd.keys.length > 0 ? cmd.keys.join(" · ") : "—", cmd.keys.length > 0);
   detail.append(grid);
 
@@ -946,15 +980,22 @@ function visibleCommands() {
   return COMMANDS.filter(corpusMatches);
 }
 
+function scopeTotalCount() {
+  return state.scope === "all"
+    ? TOTAL_COMMANDS
+    : COMMANDS.filter((cmd) => cmd.scope === state.scope).length;
+}
+
 function updateCount(visible) {
   const n = visible.length;
   if (state.capture === "captured") {
     countEl.textContent = `按键 ${glyphOf(state.capturedToken)} · 命中 ${n}`;
   } else if (state.query !== "") {
-    countEl.textContent = `命中 ${n} / ${TOTAL_COMMANDS}`;
+    // 分母是**作用域筛选后**的命令数：查询只在当前筛选面内找，不拿全量 27 条做分母。
+    countEl.textContent = `命中 ${n} / ${scopeTotalCount()}`;
   } else {
     const groups = new Set(visible.map((cmd) => cmd.group)).size;
-    countEl.textContent = `${TOTAL_COMMANDS} 条命令 · ${groups} 组`;
+    countEl.textContent = `${n} 条命令 · ${groups} 组`;
   }
 }
 
@@ -1460,6 +1501,8 @@ document.addEventListener("keydown", (event) => {
   }
 
   const cmd = COMMAND_BY_ID.get(id);
+  // 原型只模拟这一条真实 when：容器自身持焦才命中（src/keys.ts:676 的 isWidgetKeyTarget）。
+  if (id === "editor.widget-scroll-home" && !window.__widgetFocused) return;
   // 面板打开时，editor / text 作用域的命令不会被分发（焦点在浮层里）；
   // global 命令照常可达——这也让「捕获必须消费」可以被判别。
   if (state.lookup && (cmd.scope === "editor" || cmd.scope === "text")) return;
@@ -1496,7 +1539,7 @@ function renderControlPanel() {
   const scopeButtonsHtml = ["all", "global", "editor", "text"]
     .map((scope) => cpButton("scope", scope, SCOPES[scope].zh, state.scope === scope)).join("");
   const captureButtons = [
-    ["off", "关闭"], ["waiting", "等待按键"], ["captured", "已捕获 ⌃⌥S"],
+    ["off", "关闭"], ["waiting", "等待按键"], ["captured", "已捕获 Home"],
   ].map(([value, label]) => cpButton("capture", value, label, state.capture === value)).join("");
   const groupButtons = [
     ["expanded", "展开全部"], ["collapsed", "折叠全部"],
@@ -1543,7 +1586,7 @@ function applyScene(name) {
   state.query = next.query ?? "";
   state.scope = next.scope ?? "all";
   state.capture = next.capture ?? "off";
-  state.capturedToken = next.token ?? (next.capture === "captured" ? "Ctrl-Alt-KeyS" : "");
+  state.capturedToken = next.token ?? (next.capture === "captured" ? "Home" : "");
   state.detail = next.detail ?? null;
   state.active = next.active ?? null;
   state.collapsedGroups = new Set(next.collapsed ? GROUPS.map((group) => group.id) : []);
@@ -1578,7 +1621,7 @@ cpanel.addEventListener("click", (event) => {
       state.scope = "all";
       if (value === "off") { state.capture = "off"; state.capturedToken = ""; }
       else if (value === "waiting") { state.capture = "waiting"; state.capturedToken = ""; state.query = ""; }
-      else { state.capture = "captured"; state.capturedToken = "Ctrl-Alt-KeyS"; state.query = ""; }
+      else { state.capture = "captured"; state.capturedToken = "Home"; state.query = ""; }
       state.detail = null;
       break;
     case "groups":

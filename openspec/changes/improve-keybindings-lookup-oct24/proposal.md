@@ -8,7 +8,7 @@
 > 节点 1（提案评审）：**待 Alex 裁决**（2026-10-24 起草）。方向已由 Alex 2026-10-24 认可：
 > 保留就地速查面板，不做独立设置页；每命令一行、人类标签、多键合并、来由移详情、文本查询 +
 > 按键捕获、分组/scope、非自指入口；分页与 11 族 TAB 不做，键位编辑暂留配置文件。本提案只把
-> 这些口径落成可裁决的制品与原型，裁决点 D1–D5 见下，每项附倾向；不回即按倾向落地。
+> 这些口径落成可裁决的制品与原型，裁决点 D1–D6 见下，每项附倾向；不回即按倾向落地。
 > 节点 2（归档评审）：实现完成后填写。
 
 ## Why
@@ -67,10 +67,12 @@ Alex 的原话是「找不到想查询的快捷键」。上一轮只读 survey�
    分发阶段截获物理键，既会把 `⌘/` 的 `[keys]` 重绑变成假开关，也会形成第二条分发路径。`⌘/` 仍是可重绑的
    默认键，菜单入口不依赖它。
 4. **单一数据来源（ADDED「命令元数据与键位字形的单一来源」）**：每条 `COMMAND_ID` 恰有一个中英标签，
-   标签住文案表（`文案-Copy.md` + `src/copy-data.ts`），由单测对账；别名是可选的**搜索专用**数据，不进上屏；
-   scope 文案与 `when` 文案各只有一份；token → `⌃⌥⇧⌘` 字形由 `src/key-glyphs.ts` 唯一实现，复用 `normalizeKey`
-   的归一化口径；面板不得逐条硬编码命令文本。字形顺序取 Apple HIG 的 `⌃⌥⇧⌘`（如 `⇧⌘O`），
-   需要 Shift 的符号反解成物理键（`Cmd-}` → `⇧⌘]`、`Cmd-<` → `⇧⌘,`），不把 token 直接写给人看。
+   标签住文案表（`文案-Copy.md` + `src/copy-data.ts`），由单测对账；别名是可选的**搜索专用**数据，不进上屏，
+   允许 `select all` / `quick open` 这类自然短语；scope 文案与 `when` 的全文 / 短徽标各只有一份
+   （`whenKey` / `whenShortKey` 两个 CopyKey，面板不截断）；token → `⌃⌥⇧⌘` 字形由 `src/key-glyphs.ts`
+   唯一实现，复用 `normalizeKey` 的归一化口径；面板不得逐条硬编码命令文本。字形顺序取 Apple HIG 的
+   `⌃⌥⇧⌘`（如 `⇧⌘O`），需要 Shift 的符号反解成物理键（`Cmd-}` → `⇧⌘]`、`Cmd-<` → `⇧⌘,`），
+   不把 token 直接写给人看。
 
 ### 原型
 
@@ -149,7 +151,7 @@ Alex 的原话是「找不到想查询的快捷键」。上一轮只读 survey�
 - **影响的 specs**：`keymap-commands`（1 条 MODIFIED + 3 条 ADDED）。其它 capability 只被引用，字面条款不动。
 - **影响的代码 / 系统**：
   - 前端：`src/bindings-panel.ts` 重写为速查视图；新增 `src/command-meta.ts`（标签 / 别名 / scope 文案）、
-    `src/key-glyphs.ts`（token → 字形）；`src/keys.ts` 给 5 条带 `when` 的绑定补 `whenKey`；
+    `src/key-glyphs.ts`（token → 字形）；`src/keys.ts` 给 5 条带 `when` 的绑定补 `whenKey` + `whenShortKey`；
     `src/style.css` 的面板区重排（外壳与 `.lumir-bindings-body` 的滚动条分档不变）；`src/main.ts` 装配与焦点交还；
     `src/copy-data.ts` + `文案-Copy.md` 新增标签与面板 UI 文案。
   - 后端：`src-tauri/src/lib.rs` 在 Help 菜单追加一个自定义项（无 accelerator），经既有 `app:menu_command`

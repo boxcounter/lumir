@@ -95,25 +95,33 @@ export const SCOPE_DESCRIPTION_KEYS: Record<KeyScope, CopyKey>; // 详情里的�
   71 条命令 × 中英两列是本 change 最大的文案工作量；新增命令漏写标签由单测在引入它的那次改动里红。
 - **别名只进搜索**：例如 `toc.toggle` 的「目录 / outline」、`app.describe-bindings` 的「快捷键 / keybindings」。
   两列标签**始终都进语料**（zh 界面也能打英文 `outline`），所以别名只为「标签里没有的同义词」而写，不追求覆盖。
-  别名文本不是上屏文案，住 `command-meta.ts`，按既有 AST 门禁标 `// i18n-exempt: data`。
+  别名 MAY 是含空格的自然短语（如 `select all` / `quick open`）——用户会按自己说命令的方式查询；单测只守
+  「非空字符串」，MUST NOT 以「含空白」为由拒绝。别名文本不是上屏文案，住 `command-meta.ts`，按既有 AST
+  门禁标 `// i18n-exempt: data`。
 - **不做**：把标签塞进 `KeyBinding`（未绑定命令没有 binding）；让面板按命令 id 查一份 `Record<string,string>` 字面量
   （第二份真源）；从 `doc` 里截取第一句当标签（来由不是描述，且不可翻译）。
 
-### 2.2 `whenKey`（`src/keys.ts` 的 `KeyBinding` 增补）
+### 2.2 `whenKey` / `whenShortKey`（`src/keys.ts` 的 `KeyBinding` 增补）
 
 ```ts
 export interface KeyBinding {
   // …既有字段…
-  /** `when` 的人类说明；与 `when` 同生同灭（单测对账）。 */
+  /** `when` 的全文说明（详情用）；与 `when` 同生同灭（单测对账）。 */
   whenKey?: CopyKey;
+  /** `when` 的短徽标说明（行内用）；与 `whenKey` 同生同灭。 */
+  whenShortKey?: CopyKey;
 }
 ```
 
 - 今天的 5 条块级横滚容器绑定共用同一个 `when` 函数；面板不能把一个函数渲染成人话，也不能在面板里另写一份条件描述。
-  给这些绑定补 `whenKey`（一条共用文案），面板只读 `whenKey`。
-- 不变量（单测）：对 `KEY_BINDINGS` 的每条绑定，`when !== undefined` ⇔ `whenKey !== undefined`。
-  `applyKeyOverrides` 合成的绑定两者都没有，不参与该断言。
-- `when` 的语义不变（命中条件、scope 判定都不动）；`whenKey` 只是可见说明。
+  给这些绑定各补 `whenKey`（详情全文）与 `whenShortKey`（行内短徽标）——两份都是文案表里的独立条目，面板不做截断。
+- 不变量（单测）：对 `KEY_BINDINGS` 的每条绑定，`when !== undefined` ⇔ `whenKey !== undefined` ⇔
+  `whenShortKey !== undefined`；两个键都在 `COPY` 里，短徽标渲染非空。`applyKeyOverrides` 合成的绑定三者都没有，
+  不参与该断言。
+- `when` 的语义不变（命中条件、scope 判定都不动）；两个键只是可见说明，MUST NOT 出现第三份条件文本。
+- **反例（本 change 特别写明）**：`editor.focus-block-scroll`（⌃⌥S）的真实语义是「把焦点送进块滚动容器」，
+  `src/keys.ts:680-686` 明确它**不带 `when`**；本 change 的 P2 示例因此改用真实的
+  `editor.widget-scroll-home`（`Home`，带 `when: isWidgetKeyTarget`），不给前者虚构条件。
 
 ### 2.3 字形（新模块 `src/key-glyphs.ts`）
 
@@ -155,7 +163,8 @@ export function glyphOfToken(token: string): string;
 - 行集 = `COMMAND_IDS` 按 `BINDING_GROUPS` 分组；组与组序不变（11 组 + 零兜底「其他」）。未绑定命令仍是行。
 - scope 取 `scopeOfCommand(command)`（`src/keys.ts` 的单一来源），不读 `binding.scope`——覆盖产出的绑定 scope
   也是派生的，两处读会漂。
-- `when` 取该命令绑定上的 `whenKey`；一行只显示短徽标，详情显示全文。
+- `when` 取该命令绑定上的 `whenShortKey`（行内短徽标）与 `whenKey`（详情全文）；面板 MUST NOT 从全文截断
+  出短徽标，也 MUST NOT 另写第三份条件文本。
 - 未绑定：无生效绑定。成因复用 `KEYLESS_COMMAND_IDS` 判定（默认不占键位 vs 配置解绑），文案复用 D66.1/D66.2；
   详情给出 `[keys]` 的绑定方法（合成示例，不读用户真实配置）。
 
@@ -230,15 +239,16 @@ panel
 
 **已捕获态**：
 
-- 输入框旁显示字形 chip（如 `⌃⌥S`）+「清除」；结果只剩该 token 的生效命令（若被 `[keys]` 解绑则无结果）。
+- 输入框旁显示字形 chip（如 `Home`）+「清除」；结果只剩该 token 的生效命令（若被 `[keys]` 解绑则无结果）。
 - 结果行显示命令、scope、`when` 短徽标；详情显示 `when` 全文与原始 token。
 - 打印字符 → 退出捕获、转入文本查询（输入框接住字符）；再按带修饰键的组合 → 重新捕获；
   Esc → 清除捕获但面板保持打开；`⌃G` / 当前 `app.describe-bindings` 键 → 关闭面板。
 - 捕获不持久化；关闭 / 重开清空。
 
 **为什么能保证「捕获的键不执行」**：遮罩 keydown 先于 window 分发器，捕获态 `preventDefault` + `stopPropagation`；
-window 分发器本身也检查 `defaultPrevented`。真机验收要用「同键在面板关闭时确实执行、捕获时不执行」的反例复验
-（原型的 assert.mjs 已有这一条：`⇧⌘T` 在面板关闭时切主题，捕获时不切）。
+window 分发器本身也检查 `defaultPrevented`。真机验收要用「同键在面板关闭时确实执行、捕获时不执行」的反例复验：
+原型已有 `⇧⌘T` 的「面板外先切主题、捕获后不再切」，以及 `Home` 在块滚动容器持焦时执行、捕获后不再执行
+（`assert.mjs`）。
 
 ### 3.4 分组 / 折叠 / 作用域
 
@@ -250,7 +260,7 @@ window 分发器本身也检查 `defaultPrevented`。真机验收要用「同键
 - **查询 / 捕获时**：匹配组自动展开，手动折叠是临时的，下一次查询变化即清空；清查询后恢复空查询下的手动折叠状态。
 - **作用域筛选**：`全部 / 全局 / 编辑器 / 文本` 是**单选筛选**，不是页签：`role=radiogroup` + roving tabindex，
   `←→↑↓` / Home / End 切换，Tab 只停在选中项。筛选即时生效、不换页、不记入历史。
-  `全部` 是默认；筛选后组内计数与总计数一起更新；无行的组隐藏。
+  `全部` 是默认；筛选后组内计数与计数分母一起更新（分母 = 筛选后的命令数），无行的组隐藏。
 - **不做**：分页、11 族页签、按 scope 的三页签、which-key（本仓没有多段 chord）。
 
 ### 3.5 详情
@@ -264,10 +274,10 @@ window 分发器本身也检查 `defaultPrevented`。真机验收要用「同键
 ### 3.6 计数与空态
 
 - 计数（`aria-live="polite"`，实现批做 ~150ms 去抖，避免逐键播报）：
-  - 空查询：`71 条命令 · 11 组`；
-  - 查询：`命中 N / 71`；
-  - 捕获：`按键 ⌃⌥S · 命中 N`；
-  - 作用域筛选参与分母/组数计算。
+  - 空查询：`N 条命令 · G 组`（N / G 都是**当前作用域筛选后**的值）；
+  - 查询：`命中 N / S`（S = **当前作用域筛选后**的命令数，MUST NOT 固定为全量 71）；
+  - 捕获：`按键 Home · 命中 N`（进入捕获时作用域已重置为全部）；
+  - 作用域筛选参与分母 / 组数计算，不是只换行不换计数。
 - 空态按成因给不同标题与下一步：
   - 查询：「没有匹配的命令」+ 查询串 + 「试试命令标签、别名或 id」+ 清除 / 捕获按钮；
   - 捕获：「没有命令使用这个键位」+ 换键 / 文本搜索提示；
@@ -388,7 +398,7 @@ window 分发器本身也检查 `defaultPrevented`。真机验收要用「同键
 |---|---|
 | `01-panel-light-default.png` | 默认全量：一行一命令、键位 chip、scope、sticky 组头、计数 |
 | `02-p1-query-light.png` | 两次击键命中「打开大纲」，目标行在首屏 |
-| `03-p2-capture-light.png` | 捕获 `⌃⌥S`：字形 chip、条件短徽标、详情、scope |
+| `03-p2-capture-light.png` | 捕获 `Home`（真实 `editor.widget-scroll-home`）：字形 chip、条件短徽标、详情、scope |
 | `04-p3-scope-light.png` | 作用域「全局」筛选后「标签」组进入视口 |
 | `05-p4-unbound-detail-light.png` | 「折行」未绑定 + `[keys]` 绑定示例 |
 | `06-empty-light.png` | 查询 / 捕获无命中的空态 |
@@ -419,13 +429,13 @@ window 分发器本身也检查 `defaultPrevented`。真机验收要用「同键
 |---|---|
 | `src/command-meta.ts`（新） | `COMMAND_META` / `SCOPE_LABEL_KEYS` / `SCOPE_DESCRIPTION_KEYS` |
 | `src/key-glyphs.ts`（新） | `glyphOfToken` + 修饰键 / 具名键 / SHIFT_IMPLIED 表 |
-| `src/keys.ts` | 5 条带 `when` 的绑定各补 `whenKey`；零新命令 / 绑定 |
+| `src/keys.ts` | 5 条带 `when` 的绑定各补 `whenKey` + `whenShortKey`；`editor.focus-block-scroll` 保持无 `when`；零新命令 / 绑定 |
 | `src/bindings-panel.ts` | 重写为速查视图：行聚合、查询、捕获、详情、键盘、焦点循环、空态 |
 | `src/style.css` | 面板区重排；保留 overlay / `.lumir-bindings-body` 壳与滚动条分档 |
 | `src/main.ts` | 面板装配、`restoreFocus`、菜单事件 → toggle；不新增第二条分发 |
 | `src/copy-data.ts` + `文案-Copy.md` | 71 条标签（中英）+ 面板 UI 文案 + scope 文案 + `when` 文案；D63 标题改措辞 |
 | `src-tauri/src/lib.rs` | Help 菜单追加 `Keyboard Shortcuts`（无 accelerator），`menu_command_of` 映射到 `describe-bindings` |
-| `tests/unit/*` | `command-meta` 覆盖 / 字形矩阵 / 语料不含来由 / 行聚合 / 捕获归一化 / `whenKey` 不变量 |
+| `tests/unit/*` | `command-meta` 覆盖 / 字形矩阵 / 语料不含来由 / 行聚合 / 捕获归一化 / `whenKey` + `whenShortKey` 不变量 |
 | `tests/visual/scenes/m133-*` | 行模型、组头、未绑定、详情、空态、三主题；基线需 Alex 过目后重截 |
 | `scripts/acceptance/scenarios/*` | 真机：菜单入口 / 查询 / 捕获 / 键盘 / 焦点 / 回滚语义 |
 
@@ -440,9 +450,10 @@ window 分发器本身也检查 `defaultPrevented`。真机验收要用「同键
 ### 6.1 原型覆盖
 
 `design/prototypes/keybindings-lookup-oct24.html`：自包含（零外部依赖），27 条合成命令 / 6 组 /
-3 种 scope / 3 条未绑定 / 1 条 `when` 绑定；内置控制面板可点击切换主题、场景、查询、作用域、捕获、
-分组、详情、入口条、菜单、面板开关；URL query 只作深链，`?panel=0` 关控制面板。
-内容全为合成 fixture（虚构文件名、合成来由、`M000`），不含真实 vault 内容。
+3 种 scope / 3 条未绑定 / 1 条真实 `editor.widget-scroll-home` 的 `when` 绑定（`whenKey` / `whenShortKey`
+两个说明键）；内置控制面板可点击切换主题、场景、查询、作用域、捕获、分组、详情、入口条、菜单、面板开关；
+URL query 只作深链，`?panel=0` 关控制面板。内容全为合成 fixture（虚构文件名、合成来由、`M000`），
+不含真实 vault 内容。
 
 ### 6.2 P1–P6 断言（先写后实现）
 
@@ -451,17 +462,18 @@ window 分发器本身也检查 `defaultPrevented`。真机验收要用「同键
 
 | 场景 | 断言要点 | 判别性反例 |
 |---|---|---|
-| P1 命令找键 | 空查询 27 条；两次击键「大纲」→ 恰一条 `toc.toggle`；键位 `⇧⌘O`；目标在列表视口内、`scrollTop=0` | 来由里的 `M000` 零命中；「删除」不误命中 `toc.toggle`；「全屏」命中未绑定命令 |
-| P2 键找命令 | 捕获 `⌃⌥S` → `editor.focus-block-scroll`；scope「编辑器」、条件徽标、详情「块滚动容器」；文档逐字不变 | 同一 `⌃⌥S` 在面板关闭时真的执行；捕获全局键 `⇧⌘T` 不切主题 |
-| P3 浏览 | 一次作用域筛选让「标签」组进入视口；所有行 ≤31px；键盘 Tab 到作用域组、方向键切换、Tab 到列表、PageDown 真滚动 | 小视口下「标签」组原本在视口之外；滚动量前后对比 |
+| P1 命令找键 | 空查询 27 条；两次击键「大纲」→ 恰一条 `toc.toggle`；键位 `⇧⌘O`；目标在列表视口内、`scrollTop=0` | 来由里的 `M000` 零命中；「删除」不误命中 `toc.toggle`；「全屏」与短语别名 `select all` / `quick open` 命中 |
+| P2 键找命令 | 捕获 `Home` → 真实 `editor.widget-scroll-home`；scope「编辑器」、条件短徽标「仅块滚动」、详情「横滚容器」；文档逐字不变 | 块滚动容器持焦时 `Home` 真的执行；`⇧⌘T` 面板外先切主题、捕获后不再切 |
+| P3 浏览 | 一次作用域筛选让「标签」组进入视口；所有行 ≤31px；全局档 `13 条命令 · 3 组`；编辑器档 + 「滚动」→ `命中 1 / 5`；键盘 Tab 到作用域组、方向键切换、Tab 到列表、PageDown 真滚动 | 小视口下「标签」组原本在视口之外；滚动量前后对比；计数分母不是全量 27 |
 | P4 未绑定 | 「折行」恰一条、未绑定 chip、详情含「默认不占键位」「[keys]」「config.json」；「关闭」命中关闭标签 | 「折行」不得误命中别的命令（旧面板的假阳性） |
 | P6 键盘全程 | `⌘/` 打开、输入、↓/Enter、Tab 四停、Shift+Tab 回绕、PageDown、End/Home、Esc 分层、焦点回编辑器、`__executed` 为空 | 每一步后焦点仍在面板内；PageDown 真的改变 `scrollTop` |
 | 入口 | 菜单项可见、无 `⌘` / 斜杠字形、点击打开并聚焦输入框 | 菜单项不带加速键 |
 | 控制面板 | 主题 / 场景 / 作用域 / 折叠 / 隐藏与恢复全部点击可达 | 每个状态写回 URL |
 
-**原型的边界**：为了判别「捕获必须消费」，原型的 window 分发器被简化成 `token → 命令`（不模拟 scope / when），
-只用来证明「同一个键在面板关闭时真的执行、捕获时不执行」；它不是产品分发语义的声明。真实分发仍以
-`src/keys.ts` 与 `src/main.ts` 为准。
+**原型的边界**：原型的 window 分发器仍做了简化（不模拟 scope 判定），但显式模拟了
+`editor.widget-scroll-home` 的真实 `when`——只有合成块滚动容器自身持焦时才命中；其余命令仍用简化分发。
+它只用来证明「同一个键在面板关闭时真的执行、捕获时不执行」以及「条件徽标来自真实 when 模型」，
+不是产品分发语义的声明。真实分发仍以 `src/keys.ts` 与 `src/main.ts` 为准。
 
 ## 7. 验收与测试计划
 
@@ -470,9 +482,13 @@ window 分发器本身也检查 `defaultPrevented`。真机验收要用「同键
 - `COMMAND_META` 键集 = `COMMAND_IDS`；无幻影；每个 `labelKey` 在 `COPY`；中英渲染非空；模板参数齐全。
 - 字形矩阵（§2.3），含「全部默认 token 不含 token 字面」反向断言。
 - 搜索语料：给定命令，语料包含中英标签 / 别名 / id；**不包含** `doc` 文本；`M447` 类来由词零命中。
-- 行聚合：一条命令多绑定 → 一行多 chip；未绑定 → 一行；scope 来自 `scopeOfCommand`；`when` 来自 `whenKey`。
+- 别名：只断言「非空字符串」，MUST NOT 断言「不含空白」——`select all` / `quick open` 这类自然短语必须能进语料。
+- 行聚合：一条命令多绑定 → 一行多 chip；未绑定 → 一行；scope 来自 `scopeOfCommand`；行内条件取
+  `whenShortKey`、详情取 `whenKey`。
+- 计数：空查询与查询态的分母都取**作用域筛选后的命令数**；补一条 scope + query 组合断言。
 - 捕获：`keyToken` 产出的 token 与表内 token 归一化后相等；Alt 组合走 `code`；无绑定 token → 空。
-- 不变量：`when` ⇔ `whenKey`；`BINDING_GROUPS` 零兜底组仍成立；一条 token 一条绑定不变。
+- 不变量：`when` ⇔ `whenKey` ⇔ `whenShortKey`；两个键都在文案表且短徽标非空；`BINDING_GROUPS` 零兜底组
+  仍成立；一条 token 一条绑定不变。
 
 ### 7.2 视觉层
 
@@ -488,7 +504,8 @@ window 分发器本身也检查 `defaultPrevented`。真机验收要用「同键
 
 1. 菜单：Help → Keyboard Shortcuts 打开面板；`[keys]` 重绑 / 解绑 `app.describe-bindings` 后菜单仍打开。
 2. 查询：输入「大纲」→ `toc.toggle` 行；输入「M447」→ 空态（来由不进语料）。
-3. 捕获：面板内捕获 `⌃⌥S` → `editor.focus-block-scroll`；文档逐字节不变；同键在面板关闭时真实执行（反例）。
+3. 捕获：面板内捕获 `Home` → 真实 `editor.widget-scroll-home`；文档逐字节不变；合成块滚动容器持焦时同键
+   真实执行（反例）；另对 `⇧⌘T` 做面板外先切主题、捕获后不再切的正向 / 反向。
 4. 键盘：`Tab` 四停不逃出；`PageDown` 改变 `scrollTop`；Esc 分层；关闭后焦点回编辑器。
 5. IME：组合期不刷新，`compositionend` 后出结果。
 6. eink / dark 结构：面板与详情用 token，无新增色值（视觉层兜底；真机看对比）。
