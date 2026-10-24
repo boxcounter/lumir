@@ -9,7 +9,7 @@ import { appendFile, open, readdir, readFile, rm, stat, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
-import { findNode, parseNodes, windowBounds } from "./ax.mjs";
+import { findNode, nodeName, parseNodes, windowBounds } from "./ax.mjs";
 import { bundleBinary, fixturesDir, listOtherBundleInstances, quiesceStrayBundleInstances, SCENARIO_CONFIG_KEYS, writeWindowState } from "./app.mjs";
 import { encodePng, syntheticScreenshot } from "./png.mjs";
 import { DEFAULT_MIN_DIFF, DEFAULT_PATCH, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
@@ -49,7 +49,14 @@ export const ACTIONS = new Set([
   // 给通知等待加了新鲜度基线，横幅不再有这个缺口，但「等某个日志事件」仍应直接读那份日志）。
   "waitForFile",
 ]);
-export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes"]);
+export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes", "node"]);
+
+/** `focusWindow` 的 `click: true` 打在标题栏的哪个高度（窗口局部点，M669）。
+ *
+ *  13pt 落在 overlay 标题栏的空白带里（同一台机器 1200×800、`titleBarStyle: Overlay`）：避开
+ *  左侧红绿灯（x<60）与中央拖拽区里的可点件——标题栏中央是 `data-tauri-drag-region="deep"`，
+ *  单次按下/抬起（同一点）不会移动窗口。取值来自 M650 / M669 真机探针的 `realClick(600, 13)`。 */
+const KEY_WINDOW_CLICK_Y = 13;
 
 /** `do: click` 的 `target.modifiers` 允许的修饰键（M379，backlog「`click` 不支持修饰键」）：KimiCU 与 swift 两侧的
  *  别名都收（`meta`/`cmd` 是同一个键的两种说法），小写比较。 */
@@ -479,6 +486,14 @@ export function checkScenario(scenario) {
       pushBare(`${at} 的 waitForFile.count.pattern`, spec?.count?.pattern);
     }
     if (step.do === "doubleClick" && !step.target) push(`${at} do=doubleClick 需要 target（节点或 {x,y} 窗口局部坐标）`);
+    // focusWindow 的 `click`（M669，key window 前置）：它只在这一条动作上有意义；写成别的动作
+    // 会静默无效（场景以为做了前置、实际没做），写成非布尔会在 `=== true` 上静默不执行——都挡掉。
+    if (step.click !== undefined && step.do !== "focusWindow")
+      push(`${at} click 参数只属于 do=focusWindow（key window 前置），当前 do=${step.do}`);
+    if (step.do === "focusWindow" && step.click !== undefined && typeof step.click !== "boolean")
+      push(`${at} do=focusWindow 的 click 需要布尔值，实际 ${JSON.stringify(step.click)}`);
+    if (step.do === "focusWindow" && step.settleMs !== undefined && (!Number.isInteger(step.settleMs) || step.settleMs < 0))
+      push(`${at} do=focusWindow 的 settleMs 需要非负整数`);
     // hover（M443）：与 doubleClick / drag 同一条坐标口径，`target` 是唯一必填项——漏写会让
     // windowLocalTarget 抛「找不到带 bbox 的节点」，但那要等一整轮真机；静态这里先挡。
     if (step.do === "hover" && !step.target) push(`${at} do=hover 需要 target（节点 / {x,y} / anchor 锚点）`);
@@ -627,6 +642,30 @@ export function checkScenario(scenario) {
         push(`${at} expect[${j}] bytes 断言缺 magic/nameHash（写错字段名会静默变成恒真断言）`);
       else if (kinds[0] === "ax" && !["has", "not", "count", "focused"].some((k) => exp.ax[k] !== undefined))
         push(`${at} expect[${j}] ax 断言缺 has/not/count/focused（写错字段名会静默变成恒真断言）`);
+      else if (kinds[0] === "node") {
+        // 节点在场性断言（M669）：`present` 必填（在场 / 不在场方向相反，缺省会让写错键静默变味）；
+        // `name` 是**裸正则源**（与 `target.name` 同口径，`findNode` 直接 `new RegExp`），因此
+        // 这里只挡「编译不过」，**不**走 pushBare 的正则转义检查（`\.` 在那个口径里是对的）。
+        const spec = exp.node;
+        if (!isPlainTable(spec) || typeof spec.name !== "string" || spec.name === "")
+          push(`${at} expect[${j}] node 断言需要 { name: 裸正则源, role?, present }`);
+        else {
+          if (typeof spec.present !== "boolean")
+            push(`${at} expect[${j}] node.present 必填布尔（true = 要求在场，false = 要求不在场）`);
+          if (spec.role !== undefined && (typeof spec.role !== "string" || !/^AX[A-Za-z]+$/.test(spec.role)))
+            push(`${at} expect[${j}] node.role 需要 AX 角色名（如 AXButton），实际 ${JSON.stringify(spec.role)}`);
+          if (spec.nth !== undefined && (!Number.isInteger(spec.nth) || spec.nth < 0))
+            push(`${at} expect[${j}] node.nth 需要非负整数`);
+          try {
+            new RegExp(spec.name);
+          } catch (e) {
+            push(`${at} expect[${j}] node.name 不是合法正则（${e.message}）`);
+          }
+          for (const k of Object.keys(spec)) {
+            if (!["role", "name", "present", "nth"].includes(k)) push(`${at} expect[${j}] node 未知键 ${k}（拼错即静默不判）`);
+          }
+        }
+      }
       else if (kinds[0] === "window") {
         // 窗口几何断言（M236；相对判据 M437）：至少一维或 moved；width/height 各是数值（绝对）
         // 或 `{ ofWork: 比例 }`（工作区 × 比例）。字段名 / 键名写错会静默变成「无期望值」，
@@ -1260,6 +1299,32 @@ export async function runScenario(ctx, scenario) {
         return ok ? pass(label, `命中 ${n} 次`) : fail(`${label}（期望命中 ${exact ?? `${min ?? ""}..${max ?? ""}`}，实际 ${n}）`, "", ax);
       }
       return fail(`${label}（ax 断言缺少 has/not/count/focused）`, "", ax);
+    }
+    if (expect.node !== undefined) {
+      // 节点在场性断言（M669）：`ax.has` / `ax.not` 在 AX 树**文本**上匹配，判据串一旦同时
+      // 出现在正文（`AXStaticText` 的 value / 编辑器 value）里，负向断言恒红、正向断言恒绿
+      // ——场景 224 的现场（fixture 正文自带「回到底部」）：修好产品也永远红，而正向那条
+      // 是假绿。这里改判**解析结果**：`findNode` 按 role（精确）+ name（裸正则源，匹配
+      // title / label / value）定位，与 `click` / `clickInNode` 的 `target` 同一套口径。
+      // `present` 必填：在场与不在场是两条方向相反的判据，缺省值会让写错键静默变味。
+      const spec = expect.node;
+      const ax = state.ax ?? (await readAx(cu, ctx.pid));
+      state.ax = ax;
+      // 读不到 ≠ 不在场（REVIEW.md 「读不到当成空」条）：去退化的快照（KimiCU 只回菜单栏 /
+      // 空树）上 `findNode` 必然返回 null，负向断言会因此恒真。先要求「快照有节点」这条
+      // 正观测，否则一律判 FAIL——节点在场性在不可观测的窗口里没有结论。
+      if (ax.nodes.length === 0) {
+        return fail(`${label}（AX 快照退化：0 个节点，节点在场性无法判定）`, "读不到一律判 FAIL，不在不可观测的窗口下结论", ax);
+      }
+      const hit = findNode(ax.nodes, { role: spec.role, name: spec.name, nth: spec.nth ?? 0 });
+      const what = `${spec.role ?? "任意角色"}${spec.name ? ` name≈${spec.name}` : ""}`;
+      if (hit) {
+        const seen = `${hit.role} ${nodeName(hit)}`.trim();
+        if (spec.present === true) return pass(label, `节点在场：${seen}`);
+        return fail(`${label}（期望 ${what} 节点不在场，实际在场：${seen}）`, tailAround(ax.text), ax);
+      }
+      if (spec.present === true) return fail(`${label}（期望 ${what} 节点在场，实际 AX 树里没有）`, tailAround(ax.text), ax);
+      return pass(label, `节点不在场：${what}`);
     }
     if (expect.clipboard !== undefined) {
       // 剪贴板的断言形态（M244）：与 clipboardRead 动作共用同一个固定命令。
@@ -3107,7 +3172,29 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const fg = await tryForeground(cu, p, { retries: step.retries ?? 2 });
       vars.__foreground = fg;
       // M478：这一步的结果（手段与失败原因）就是它的产出，直接写进证据，不再只回一句「已取得 / 未取得」。
-      return foregroundNote(fg);
+      const note = foregroundNote(fg);
+      if (step.click !== true) return note;
+      // key window 前置（M669，首个消费者：场景 224 / 228）。`tryForeground` 只保证 **app 在前台**，
+      // 而真鼠标点击与 CGEvent 滚轮落在 **key window** 上；「启动即在前台」时它直接早退、窗口未必
+      // 是 key（M667：随后第一次 KimiCU 点击被激活吃掉、截图里红绿灯转灰，之后每一步都对着空转
+      // 现场判红/假绿）。真实标题栏单击是让窗口成为 key 的确定手段（M650 / M667 探针里同一手法
+      // 先行，后续 KimiCU 点击与滚轮都落地）。这一次点击**不承载任何语义**——它本身可能就是被
+      // 激活过程吃掉的那一下，正是因此才把它单独提供成前置步骤。
+      if (!fg.frontmost) {
+        throw new InfraError(
+          `focusWindow.click 需要窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：` +
+            `真鼠标事件落在最上层那扇窗上。激活尝试：${foregroundWhy(fg)}`,
+        );
+      }
+      const ax = await readAx(cu, p);
+      const bounds = windowBounds(ax.text);
+      if (!bounds) throw new InfraError("focusWindow.click：AX 快照缺 window_bounds，算不出标题栏落点（快照退化）");
+      const local = { x: Math.round(bounds.w / 2), y: KEY_WINDOW_CLICK_Y };
+      const point = { x: bounds.x + local.x, y: bounds.y + local.y };
+      const out = await injectClickWithClickState(p, point, { mode: 1 });
+      await sleep(step.settleMs ?? 500);
+      evidence.record({ kind: "note", text: `focusWindow.click：真实标题栏单击 → 屏幕 ${point.x},${point.y}｜${out}` });
+      return `${note}｜key window：标题栏单击 @窗口 ${local.x},${local.y} → 屏幕 ${point.x},${point.y}｜${out}`;
     }
     case "vaultWrite": {
       const file = path.join(vaultDir(), step.file);
@@ -3420,6 +3507,10 @@ function describeExpect(expect) {
     return `像素底色（${n} 组采样点）`;
   }
   if (expect.geom) return `几何可见性（${JSON.stringify(expect.geom.target ?? {})}${expect.geom.painted ? " + 已绘制字形" : ""}）`;
+  if (expect.node) {
+    const s = expect.node;
+    return `节点${s.present ? "在场" : "不在场"}：${s.role ?? "任意角色"}${s.name ? ` name≈${s.name}` : ""}`;
+  }
   if (expect.shot) return `截图证据 ${expect.shot}`;
   return JSON.stringify(expect).slice(0, 80);
 }

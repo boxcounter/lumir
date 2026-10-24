@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "验收回答：引用问题已收到。",
+      "delay_ms": 8000,
+      "usage": {
+        "input_tokens": 1000,
+        "cached_tokens": 100,
+        "output_tokens": 10
+      }
+    }
+  ],
+  "titles": [
+    {
+      "text": "{\"decision\": \"rename\", \"title\": \"引用首问命名\"}"
+    }
+  ]
+}
