@@ -1,7 +1,7 @@
 # Backlog — findings 与待裁决队列
 唯一的积压载体。**一条 = 一个可关闭单元**：只留结论 gist + 证据指针 + 出口 / 下一动作；叙述与过程状态进 git 历史、`.tower/comms/`、`.local/`。场景清单见 [COVERAGE.md](../scripts/acceptance/COVERAGE.md)，长期口径与已裁暂缓见 [standing-decisions.md](specs/standing-decisions.md)，运行纪律见 [scripts/acceptance/README.md](../scripts/acceptance/README.md)。
-维护规则：`#decide` 只收价值取舍 / 产品语义（客观可核的由 tower 裁并记录）；`#fix` 客观可核；`#probe` 需实验；`#check` 证据不足；`#hygiene` 已定案的小收尾。**核销即删除、不留索引**（2026-10-12 Alex 裁决）；含长期口径时迁 standing-decisions，不留在本文件。
-维护规则续：**只记改变未来动作的信息**（2026-10-16 Alex 裁决）；**体量红线 80 行**（Alex 2026-10-24，自 300 下调），不为压行数删活条目；引用用主题关键词锚，MUST NOT 用编号或行号；finding 落账率由批次收尾核对（`.tower/comms/findings/` 新增数 = 新增条目数）。
+维护规则：`#decide` 只收价值取舍 / 产品语义（客观可核的由 tower 裁并记录）；`#fix` 客观可核；`#probe` 需实验；`#check` 证据不足；`#hygiene` 已定案的小收尾。**核销即删除、不留索引**（2026-10-12 Alex 裁决），**修复 PR 同批删除对应条目、reviewer 合并前核对**（2026-10-24）；含长期口径时迁 standing-decisions，不留在本文件。
+维护规则续：**只记改变未来动作的信息**（2026-10-16 Alex 裁决）；**体量红线 80 行**（Alex 2026-10-24，自 300 下调），不为压行数删活条目；引用用主题关键词锚，MUST NOT 用编号或行号；finding 落账率由批次收尾核对（`.tower/comms/findings/` 新增数 = 新增条目数）。出口由 `scripts/backlog-check.mjs` 机器判定（完成标记 / 缺出口 / 重复或死 finding 指针 / 记录在案无 canonical 居所 / 80 行硬上限，无 ratchet、无既有豁免；随 docs-check 跑）。
 
 ## 待 Alex 裁决（`#decide`，一行一题）
 
@@ -47,13 +47,13 @@
 - `#check` **表格全屏聚合**（M240）→ 逐子项对账：长表 / visual README 22 处 / config theme / 计算属性 / typography Purpose / 32-list-filter / Lezer 包。
 - `#check` **编辑器 / 键位聚合**（M101–M186）→ 逐子项对账：Alt+Shift、warnings UI、toast z-index、`$` 转义、mathSpanCrossed、⌃B、grid 表、删浮条、D40、hidden pipe、cell 公式、构造函数属性。
 - `#check` **shell / 系统聚合**（M101–M186）→ 逐子项对账：退出守卫、`{id}.json.tmp` 过滤、vault 滚动、焦点建议。
-- `#check` **验收套件表达力聚合**（M144）→ 逐项对账；scroll / doubleClick / click modifiers 已落地，其余见 git 历史。
+- `#check` **验收套件表达力聚合**（M144）→ 逐项对账余下子项，明细见 git 历史。
 - `#check` **文档指针聚合** → 逐项对账：M205/M208 旧路径、M151 失准、D64 过期、HEAD==origin/master、ADR 0002 200MB vs 250MB。
 - `#check` **多 vault 聚合**（M164）→ 逐项对账：视觉容差、窗口屏外、`M-<` / `M->`、demo 脱节、D90、tauri test feature、目录选择、`commit_vault_open` 分支。
 - `#check` **restyle 聚合**（M215/M216）→ 逐项对账：0.001 容差、code 模式 150px、doc-meta mtime、eink keyword 700。
-- `#check` **M291 in-flow 底色盖住选区带 / 场景 68 标定待判（M514）** → 确认真机是否仍开；finding `20260928-worker-selection-contrast-m291-improve-inline-surface-band-coverage`。
-- `#hygiene` **机械收尾（文档 / 套件 / 配置）**：`.gitignore:2` 的 `node_modules/` 去尾斜杠；`gate quick` 加验收 lib 的 `node --check`；场景 123 改 `focusWindow` 为 `click:true` 口径；README 的 `(?![\\s\\S])` 双反斜杠示例改为单反斜杠；`run.mjs --help` 打印用法退出 0；`scripts/visual/table-probe72/matrix.mjs` 产出路径改指归档件；删除 `.tab-menu-item` 死选择器（`src/style.css:2529-2568`）并改 `tests/visual/scenes/tab-menu.spec.ts:358` 的 CSSOM 断言，或给 tabs 改类名（二选一）；M282 日志文本语言口径确认。
-- `#hygiene` **产品行为收尾**：外链失败加 toast（`src/harness-panel.ts:2805`）；`.lumir-toast` 加 `role="status"` / `aria-live="polite"`；补 composer 光标 reveal 的 chromium 断言；重启恢复门改动态分流（`stopApp` 前读 `restoredTabCount>0`）；加一条 `modifiers:["meta"]` 真机夹具；M280 ESC 三条残余（vault 切换器第二份 `scrollSnapshot` / 捕获锚在原点不写回 / lightbox 不随文档代际退出）；套件长 chain 注入（8–19 chord）可靠性与可点节点面；会话浮层快速关→再开重复历史行（M392）攒批处理。
+- `#check` **M291 in-flow 底色盖住选区带 / 场景 68 标定待判（M514）** → 确认真机是否仍开；finding `20260928-worker-selection-contrast-m291-bug-in-flow-code-callout-frontmatter`。
+- `#hygiene` **机械收尾（文档 / 套件 / 配置）** → 下一动作：`.gitignore:2` 的 `node_modules/` 去尾斜杠；`gate quick` 加验收 lib 的 `node --check`；场景 123 改 `focusWindow` 为 `click:true` 口径；README 的 `(?![\\s\\S])` 双反斜杠示例改为单反斜杠；`run.mjs --help` 打印用法退出 0；`scripts/visual/table-probe72/matrix.mjs` 产出路径改指归档件；删除 `.tab-menu-item` 死选择器（`src/style.css:2529-2568`）并改 `tests/visual/scenes/tab-menu.spec.ts:358` 的 CSSOM 断言，或给 tabs 改类名（二选一）；M282 日志文本语言口径确认。
+- `#hygiene` **产品行为收尾** → 下一动作：外链失败加 toast（`src/harness-panel.ts:2805`）；`.lumir-toast` 加 `role="status"` / `aria-live="polite"`；补 composer 光标 reveal 的 chromium 断言；重启恢复门改动态分流（`stopApp` 前读 `restoredTabCount>0`）；加一条 `modifiers:["meta"]` 真机夹具；M280 ESC 三条残余（vault 切换器第二份 `scrollSnapshot` / 捕获锚在原点不写回 / lightbox 不随文档代际退出）；套件长 chain 注入（8–19 chord）可靠性与可点节点面；会话浮层快速关→再开重复历史行（M392）攒批处理。
 
 ## 承接残项（长期口径 + 未闭合尾巴）
 
@@ -63,13 +63,13 @@
 - **`vault-open-ignore-set` 未完成项**（M327）：7.2 / 9.3①②⑤ 真机反向验证、10.4 visual 门禁、8.3 残余档复采；下一动作：并成一个小验收 mission。
 - **UX 重做批（攒批）**：demo 探针栏去留、宽表横向溢出裁切是否预期、Emacs 档 3 与全产品键位、会话名钮可发现性；下一动作：随 UX 重做会话一起做。
 - **dogfood 性能专项（攒批）**：内存合同存量超标（218–222MB vs <200MB，门禁 250MB）、`open-1mb-file` 端点仍是占位口径、vault 打开 / 切换仍同步；下一动作：专项立项时拍板。
-- **M455 收尾尾巴**：真机复跑 138/140/144/145 与 hover 族 76/87/131/132/133/134；145 的 `mod+z` 同族观察留给 change 属主裁。
+- **M455 收尾尾巴** → 下一动作：真机复跑 138/140/144/145 与 hover 族 76/87/131/132/133/134；145 的 `mod+z` 同族观察留给 change 属主裁。
 
 ## 待真机验收（未收口；场景清单与 item 编号见 COVERAGE.md）
 
-- `02-math-click`（item 2）：「公式后 ⌃B 是否 1–2 次」仍待判定（AX 不暴露光标 / 选区）。
-- `153-ordered-list-auto-mode`（item 153）：列表自动模式三态 + IME 组合期不重复，留 dogfood 批次；裸 DOM 变更形态不兜。
-- 左栏拖拽（场景 159）：根落点（M538）待 Alex 手拖复验。
+- `02-math-click`（item 2）→ 下一动作：真机判定「公式后 ⌃B 是否 1–2 次」（AX 不暴露光标 / 选区）。
+- `153-ordered-list-auto-mode`（item 153）→ 下一动作：留 dogfood 批次真机跑列表自动模式三态 + IME 组合期不重复；裸 DOM 变更形态不兜。
+- 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
 

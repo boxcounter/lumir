@@ -20,6 +20,11 @@
 #      以及 id / item / title 必填、id 唯一、item 在覆盖表内一项一行（场景间共用 item 合法）
 #      （实现在 scripts/acceptance/coverage.mjs，本脚本调它——覆盖表是生成物，手维护或忘了重新
 #      生成都会静默失真；`node scripts/acceptance/run.mjs --check` 调的是同一份实现）
+#   7. docs/backlog.md 出口门禁：待修 / 已立项 / 待真机验收区出现完成标记（已修 / 已核销 / 已落地 /
+#      已收口…）仍留条目、活项缺下一动作 / 关闭条件、同一 finding 指针重复、finding 指针不存在、
+#      记录在案无 canonical 指针 / 复核口径、全文超 80 行 ⇒ FAIL；条目年龄只进报告不判红（实现
+#      在 scripts/backlog-check.mjs，本脚本调它——规则出处是 Alex 2026-10-24 裁决与
+#      docs/process/openspec-workflow.md「backlog 出口的机器判据」节）
 # 输出：失败时逐条打印问题（CI 上同时是 ::error:: 注解）并以 1 退出。
 #
 # 注意：OpenSpec 的 **结构 / 制品完整性** 校验不在这里——权威实现是 `openspec validate --all
@@ -121,7 +126,7 @@ fi
 # 挂这里两边同时继承（REVIEW.md「同一语义两处真源」条）。该脚本的门禁模式同时判两件事：
 # MODIFIED delta 的静默丢段面（第 4 条）与已完成 change 的归档队列条目（第 5 条）。
 if ! command -v node >/dev/null 2>&1; then
-  echo "::error::未找到 node，归档对账与验收覆盖表校验无法运行（环境要求见 README.md）"
+  echo "::error::未找到 node，归档对账 / 验收覆盖表 / backlog 出口门禁无法运行（环境要求见 README.md）"
   fail=1
 else
   if ! node scripts/openspec-archive-check.mjs; then
@@ -132,6 +137,11 @@ else
   if ! node scripts/acceptance/coverage.mjs --check; then
     fail=1
   fi
+  # backlog 出口门禁（第 7 条）：完成标记 / 缺出口 / 重复或死 finding 指针 / 记录在案无 canonical
+  # 居所 / 80 行硬上限。规则出处见 docs/process/openspec-workflow.md「backlog 出口的机器判据」。
+  if ! node scripts/backlog-check.mjs; then
+    fail=1
+  fi
 fi
 
 if [ "$fail" -ne 0 ]; then
@@ -139,4 +149,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达 + 归档对账无静默丢段 + 归档队列齐备 + 验收覆盖表与场景一致）"
+echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达 + 归档对账无静默丢段 + 归档队列齐备 + 验收覆盖表与场景一致 + backlog 出口合规）"

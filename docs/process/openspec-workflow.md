@@ -92,7 +92,7 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 1. **起草**：在 `openspec/changes/<change-id>/` 下创建制品。change-id 用 kebab-case 动词短语（如 `add-perf-measurement-methodology`）。复制 `docs/process/templates/` 下的模板。有原型的 change，`design.md` 还须含「视觉保真」一节（见上）。
 2. **自验**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 必须通过；CI 会重复此校验。
 3. **提案 PR**：提交并在 PR 描述中 @ Alex 请求节点 1 评审。未通过则按批注修订，保持 change 不进入实现。
-4. **实现**：按 `tasks.md` 逐项实现并勾选（`- [x]`）。发现 proposal 意图需要变更时，停下：更新 proposal 并重新走节点 1，不静默扩 scope。
+4. **实现**：按 `tasks.md` 逐项实现并勾选（`- [x]`）。发现 proposal 意图需要变更时，停下：更新 proposal 并重新走节点 1，不静默扩 scope。**修复类 PR（收掉某个既有 backlog 条目）MUST 同批删除 `docs/backlog.md` 对应条目，reviewer 合并前核对本批 diff 是否带删除**——不把删除留给下一批清理。
 5. **归档评审**：tasks 全部勾选（或标注放弃原因）后，同一 PR 在 `docs/backlog.md` 的归档跟踪队列落一条记录（判据见「批次收尾 checklist（归档跟踪）」下的「归档队列的机器判据」——缺条目 / 重复条目会让 docs-check 报红），再提交 PR 请求节点 2 评审；delta 相对 living spec 无新增内容的纯目录移动按上文「节点 2 的机器判据替代」直接归档，不等人肉点头。
 6. **归档**：节点 2 通过后执行 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，living spec 自动并入 `openspec/specs/`；随后按上文跑一次 `--archived` 事后审计。
 
@@ -103,7 +103,7 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 - [ ] **本批 merge 的 change 全部列入归档待办并跟踪到归档**：每个 change 在实现 PR 合并时即落一条归档跟踪记录（记在 `docs/backlog.md`；待归档属可客观核对的事项，由 tower 记账、不进「待 Alex 裁决」区），批次收尾时用 `npx --yes @fission-ai/openspec@1.12.0 list` 逐个核对——列表里出现 `✓ Complete` 却仍在活跃列表里的，就是漏跟踪的那个。**这条已机器化**（2026-10-24，M684）：tasks 全勾的活跃 change 在 `docs/backlog.md` 没有条目或有多条，`scripts/openspec-archive-check.mjs` 直接报红（判据口径见下）。
 - [ ] **归档前逐条对账**（对账口径）：tasks 勾选状态 / spec 增量 / 当前实现三者一致才归档；任务未勾但有正当理由的，先就地标注放弃原因再归档；spec 增量与实现矛盾的，**不归档**，并在 `docs/backlog.md` 说明矛盾点。其中「spec 增量没丢掉 living spec 的既有段落」由机器判据兜底（`scripts/openspec-archive-check.mjs`，随 `scripts/docs-check.sh` 在 PR 阶段就跑）；归档完成后再对该 change 跑一次 `node scripts/openspec-archive-check.mjs --archived <change-id>` 复核。纯目录移动（delta 与 living 逐字相同）的归档按上文「节点 2 的机器判据替代」走，不等 Alex 点头。
 - [ ] **归档后核对新建 capability 的 Purpose**：`archive` 会为新建的 living spec 写入占位 Purpose（`TBD - created by archiving change …`），`validate --all --strict` 会因此报红——须手写替换为「这个 capability 是干什么的」，再跑一次 validate 确认全绿。
-- [ ] **backlog 卫生（2026-10-12 Alex 裁决）**：本批核销 / 裁决落地的条目**直接从 `docs/backlog.md` 删除、不留索引**（git 历史即台账；含仍在生效的长期口径时迁 `docs/specs/standing-decisions.md`）；条目一律一行 gist + 证据指针，批次报告与全量回归总表只留指针；只记改变未来动作的信息（结论 / 待办 / 裁决点 / 复现口径）——过程性验证状态（「跑完、PASS」类）不入账（2026-10-16 Alex 裁决，口径见该文件头部「维护规则」）；顺带检查体量红线——`wc -l docs/backlog.md` 超 **80** 行即触发一次结构清理（Alex 2026-10-24 自 300 下调；口径见该文件头部的「维护规则」；无核销/僵尸项可清时记「已查」即过，不为压行数删活条目）。
+- [ ] **backlog 卫生（2026-10-12 Alex 裁决；2026-10-24 机器化）**：本批核销 / 裁决落地的条目**直接从 `docs/backlog.md` 删除、不留索引**（git 历史即台账；含仍在生效的长期口径时迁 `docs/specs/standing-decisions.md`）；**修复 PR MUST 同批删除对应条目、reviewer 合并前核对本批 diff 是否带删除**——不把删除留给下一批清理；条目一律一行 gist + 证据指针 + 出口，批次报告与全量回归总表只留指针；只记改变未来动作的信息（结论 / 待办 / 裁决点 / 复现口径）——过程性验证状态（「跑完、PASS」类）不入账（2026-10-16 Alex 裁决，口径见该文件头部「维护规则」）；体量红线 **80 行是硬上限、无 ratchet、无既有豁免**（Alex 2026-10-24 自 300 下调），超限由 `scripts/backlog-check.mjs` 在 docs-check 里直接报红——「已查即过」的免死口已删除；不为压行数删活条目（该删的是已完成 / 无出口的僵尸条目）。
 - [ ] **finding 落账率对账（2026-10-12 Alex 认可）**：本批 `.tower/comms/findings/` 新增文件数与 `docs/backlog.md` 新增条目数逐一核对，不等即查漏——漏落账的 finding 等于没登记。
 - [ ] **复发对账（2026-10-17 Alex 裁决）**：本批踩的坑若命中 REVIEW.md 已有条目（含已固化删除、只存于 git 历史的条目），复发 = 居所没拦住——先查防线该不该往更近的居所搬（人读 → tower 注入 → 机器门禁）或改写，不是只往该条证据里补一行现场。
 - [ ] **新条目准入与引用写法自检（2026-10-12 Alex 认可）**：本批新增的「待 Alex 裁决」条目只收**价值取舍 / 产品语义**类（答案客观可核的由 tower 直接裁并记录）；跨文件引用 backlog 条目一律用**主题关键词锚**，不用编号 / 行号。
@@ -116,6 +116,19 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 - **条目判定**：`docs/backlog.md` 里一行列表项，加粗首段**恰好**是 ``序 N · `<change-id>` ``（新批次可省略「序 N ·」，只留反引号里的 change-id），即 ``- **序 3 · `scrollbar-tiers-oct24`**（…）``。完成 change 必须有且仅有一条：缺失报出补登模板，重复报出行号。**正文里的提及不算条目**（如「外部前置」段落里点名一个 change），否则判据会退化成子串匹配（REVIEW.md「断言等价于子串，没有区分度」条）。
 - 完成 change 的实现 PR 就须落这条记录（M 号用该实现 mission 的编号，只写可核事实与节点 2 状态；归档顺序与同 requirement 冲突由 tower 排期时核对）。
 - 本判据只判台账在场：**不判节点 2 是否通过、不判归档顺序、不执行 archive**——节点 2 仍是人肉硬门禁（或纯目录移动时的机器判据替代，见上文）。
+
+**backlog 出口的机器判据（2026-10-24，M692）**：`backlog 卫生` 一条里的「核销即删除 / 一行一个可关闭单元 / 80 行上限」已由 `scripts/backlog-check.mjs` 执行（随 `scripts/docs-check.sh` 进本地 `gate.sh quick` 与 CI 的 docs-check.yml）。判据按 `## ` 区块分类，口径：
+
+- **work（标题含 `待修` / `已立项` / `待真机验收`）**：每条必须有一处出口标记（`下一动作：` / `出口：` / `关闭条件` / `→` 后接空白）；出现完成标记（已修 / 已核销 / 已落地 / 已收口 / 已接账 / 已解决 / 已关闭 / 已完成）仍留条目 ⇒ 报红。修改类 PR 收掉的问题，条目在该 PR 里删掉，不要改写成「已修」。
+- **record（标题含 `记录在案` / `承接残项` / `长期口径`）**：长期口径必须有出口、canonical 指针（`docs/` `openspec/` `src/` `src-tauri/` `scripts/` `tests/` `demo/` `.github/` 下的仓内路径）或 `复核：` 口径之一；canonical 指针必须存在，死指针报红。
+- **decision（标题含 `待 Alex 裁决` / `#decide`）与 queue（标题含 `归档跟踪队列`）**：不判出口——前者由 Alex 裁，后者由上面的归档队列判据判条目在场。
+- **finding 指针**：`` finding `<slug>` `` 或 `` `.tower/comms/findings/<slug>.md` `` 指向同一 slug 出现在多条 ⇒ 报红；文件不存在 ⇒ 报红。`.tower/` 不入 git，CI 检出与 worktree 没有该目录时只 INFO 跳过——不把「读不到」当「指针丢了」。
+- **`.local` 指针**：缺失只 WARN（本地证据桶随清理轮换，见 `.local/README.md`）；整个 `.local` 不存在（CI）时只 INFO 跳过。
+- **行数**：`docs/backlog.md` 超过 80 行 ⇒ 报红。**硬上限，无 ratchet、无既有豁免**；不为压行数删活条目。
+- **年龄**：0–14 / 15–30 / 31–60 / >60 天分档与无出口计数只进报告，不判红（Alex：「条目年龄先作为报告指标」）。
+- 未归类区块只 WARN——新区块须显式归类，否则出口判据会静默漏掉整块。
+
+判据是文本级的，只认区块标题与上述标记写法；「条目内容是否正确」不在它守的面内（那是 review 的事）。
 
 ## 撤回（withdrawn）：放弃一个 change
 
