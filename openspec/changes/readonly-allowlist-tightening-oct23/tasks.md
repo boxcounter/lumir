@@ -15,17 +15,30 @@
 - [x] 1.8 `cli_run` spawn 时清空注入型环境变量（`RIPGREP_CONFIG_PATH` / `LESSOPEN` / `LESSCLOSE` / `GREP_OPTIONS`），并在代码注释写明这是防御性硬化、不是 argv 判据
 - [x] 1.9 单测：表驱动正 / 反例覆盖 design §6 的 6 类；每条拒判配一条只差一个 token 的正例、每条正例配一条改坏输入的反向验证；xxd 位置参数计数专项含 `xxd -ps in out` → 写、`xxd -ps in` → 只读、`xxd -c16 in` / `xxd -c 16 in` → 只读
 - [x] 1.10 单测：跨档矩阵（写形态 `read_only`/`vault_write` → Ask、`full_access` → Allow；执行形态三档全 Ask）与包装器继承（`sudo base64 -o …`、`xargs rg --pre …`）
-- [ ] 1.11 核对 git 只读族的安全前提（原 r1 P2-1 项按 Q1 2026-10-24 改裁重写）：M656（hidden 路径的 patch / move / delete 直接拒绝）已合并，并在 vault 内实测 `vault_patch(".git/config")` 被拒；未落地则本 change 不得以「写入口已关闭」为由实施 / 合并。仓库配置驱动执行的面（`core.fsmonitor` / `diff.external`，design §0.1 实测）仅作残余登记，不再作为移出保留族的依据
+- [x] 1.11 核对 git 只读族的安全前提（原 r1 P2-1 项按 Q1 2026-10-24 改裁重写）：M656（hidden 路径的 patch / move / delete 直接拒绝）已合并，并在 vault 内实测 `vault_patch(".git/config")` 被拒；未落地则本 change 不得以「写入口已关闭」为由实施 / 合并。仓库配置驱动执行的面（`core.fsmonitor` / `diff.external`，design §0.1 实测）仅作残余登记，不再作为移出保留族的依据
+      —— **2026-10-24 真机实测 PASS**（场景 231b，8 断言，0 FAIL）：合成 vault 内
+      `vault_patch(".git/config")` 被写入口以 `fs_name_invalid` 拒绝、原因点名「hidden 档」，
+      文件 sha256 与 mtime 均未变；工具结果回送模型的 JSONL 同 `call_id` 带该错误码。证据
+      `.local/acceptance/2026-10-24-m711/231b-harness-hidden-write-refusal/`
 
 ## 2. 验收场景（回扫 + 新增）
 
 - [x] 2.1 全量回扫 `scripts/acceptance/scenarios/` 与 fixtures：逐条核对「把白名单成员当只读样本」的闸期望，重点 75（`cli(*)` + `echo`）、110、111、151；发现过期期望逐条改准（改权限语义的 change 必做项）
 - [x] 2.2 新增真机验收场景：`rg --pre` 在 `full_access` 档仍进批准闸（危险）；`base64 -o` / `git --git-dir=<外部仓库> diff`（表外全局 flag） / `git log --output=<外部路径>`（只读子命令的写形态）在默认档进闸（写）；`git status` / `git diff` / `git rev-parse` / `base64 -d` 仍免闸（反向，Q1 2026-10-24 裁决）
-- [ ] 2.3 新增场景的证据与截图按 `.local/acceptance/` 布局归档（git 外），场景文件本身入库
+- [x] 2.3 新增场景的证据与截图按 `.local/acceptance/` 布局归档（git 外），场景文件本身入库
+      —— 231（写形态 / 执行形态 / git 只读族，32 断言 PASS）与 231b（hidden 写入口拒绝，
+      8 断言 PASS）的 `steps.md` / 截图 / AX 均落主仓
+      `.local/acceptance/2026-10-24-m711/{231-harness-readonly-write-forms,231b-harness-hidden-write-refusal}/`；
+      两场景文件与 mock fixture 入库
 
 ## 3. 文档与合并口径
 
-- [ ] 3.1 归档前核对 proposal / design / spec delta / 实现四者一致；把实现期的实测读数和行号回填 design §0
+- [x] 3.1 归档前核对 proposal / design / spec delta / 实现四者一致；把实现期的实测读数和行号回填 design §0
+      —— **2026-10-24 已核**：proposal 的 A1/A2/A3 切片 ↔ design §1–§5 ↔ 实现（`permissions.rs` /
+      `tools.rs` / `fs_io.rs`）逐条一致；delta 的写形态 / 执行形态 / git 全局 flag 三组措辞与实现
+      一致；实现期增量（git 危险子命令跳过全局 flag 及其分写取值、`sed -i` 目标提取复用同一份
+      解析）已写进 design §0.3；行号锚点从 `40e6ae01` 回填到 `152559fc`。**未做**：与 M649 解包段
+      的 delta 并集（3.2，等 M649 归档，不得提前改）
 - [ ] 3.2 与 M649（`harness-permission-rules-oct23`）合并顺序处置：若 M649 先归档，把其受限解包段并入本 change 的 MODIFIED 块；M649 的 `git status` / `git diff` 正例保持不变（Q1 保持只读）。若本 change 先归档，在 M649 侧同步其全局 flag 白名单的继承口径
 - [ ] 3.3 核销 finding：`docs/backlog.md` 与本 change 相关的 finding 条目由 tower 记账，确认已落账（finding 文件：`20261023-worker-proposal-permission-rul-vuln-sed-w-base64-o-rg-pre-git-c-diff-external.md`）
 - [x] 3.4 排序确认：M656（`vault-patch-hidden-deny-oct24`）先合并——git 只读族保持只读的安全前提（design §8）；本 change 的 proposal 与 spec delta 均依赖这条前提
@@ -35,18 +48,26 @@
 - [x] 4.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 4.2 `bash scripts/docs-check.sh` 通过（含 MODIFIED delta 的归档对账）
 - [x] 4.3 `bash scripts/gate.sh quick` 通过（Rust 单测 + 前端单测 + bindings 漂移）——`GATE RESULT: 10/10 PASS（SKIP 1）`，退出码 0（SKIP = 本 worktree 未装 `tests/visual` 依赖）
-- [ ] 4.4 第 2 组新增的验收场景在真机跑通；失败项按现场修实现或修场景，不静默放宽断言
+- [x] 4.4 第 2 组新增的验收场景在真机跑通；失败项按现场修实现或修场景，不静默放宽断言
+      —— **2026-10-24 真机 PASS**：231（32 断言，0 FAIL）+ 231b（8 断言，0 FAIL）。231 初跑
+      暴露两点场景缺陷并把产品面问题单列：① 权限浮层按钮持焦时 `Esc` 走原生关窗、整个 app
+      退出（两次复跑同形，finding `20261024-worker-archive-rmachine-oct24-bug-harness-esc-app.md`），
+      场景改走「再点权限 chip」；② 第二条提问的 `typeInNode.target` 只写了注入前状态，注入
+      `pre` 后回读不到目标（现写 `问点什么|pre`）。修的是场景、没有放宽任何断言；失败现场留档
+      `.local/acceptance/2026-10-24-m711-flake-r1/`
 
 ## 实现注记（M664，2026-10-24）
 
 - **1.11**：M656 已合并（merge `c9a4d03`），hidden 写入口的拒绝有 Rust 单测证据
   （`src-tauri/src/fs_io.rs` 的 `fs_patch_file_refuses_hidden_target_and_respects_policy` /
   `existing_path_operations_refuse_hidden_tier_targets` / `hidden_gate_follows_in_vault_symlinks`）。
-  真机复验（vault 内 `vault_patch(".git/config")` 被拒）随本批次真机段挂起，待真机窗口补跑。
-- **2.3 / 4.4**：本批次真机段挂起（tower 约定）。场景 `231-harness-readonly-write-forms` 已入库，
-  `node scripts/acceptance/run.mjs --check` 通过；真机跑批、截图与 `.local/acceptance/` 证据归档待窗口。
-- **3.1 / 3.2 / 3.3**：归档期（节点 2）与 tower 记账事项，实现批次不涉及；M649 尚未归档，
-  归档顺序按 3.2 的条件分支在归档时判。
+  真机复验已补跑（2026-10-24，场景 231b）：`vault_patch(".git/config")` 被 `fs_name_invalid`
+  拒绝、文件未变——1.11 的证据见上方勾选项。
+- **2.3 / 4.4**：真机段已于 2026-10-24 补跑：231 PASS（32 断言）+ 231b PASS（8 断言），截图 /
+  AX / steps 归档在 `.local/acceptance/2026-10-24-m711/`；场景 231 的两处场景缺陷（Esc 关窗、
+  target 覆盖注入后状态）已按现场修正，见 4.4 的勾选注记。
+- **3.1 / 3.2 / 3.3**：3.1 已完成（四者一致核对 + design §0 行号 / 读数回填，见勾选注记）；
+  3.2 / 3.3 仍是归档期（节点 2）与 tower 记账事项；M649 尚未归档，3.2 按条件分支在归档时判。
 - 实现增量（超出 design §2.4 字面、同属既有承诺）：`git` 的危险子命令识别改为跳过全局 flag
   **及其分写取值**（`git -C <path> clean -fd` 不因 `-C` 落到写而让 `full_access` 免闸）；
   `write_targets` 的 `sed -i` 目标提取改用同一份 sed 参数解析（`-e` 形态下旧读法会漏输入文件）。

@@ -117,7 +117,9 @@
       reason=tree_ready」的顺序；启动态期间从入口打开另一个 vault（让位）；启动态期间拖动窗口（标题栏 drag
       region）；安全阀路径用合成慢加载 fixture。同步更新 `scripts/acceptance/README.md` 的场景清单
       —— 场景 `225-app-splash-screen.md`（大 vault 冷启读数顺序 + 失效路径 no_vault + 载荷卫生）；
-      真机 **2026-10-23 1/1 PASS**（证据 `.local/acceptance/2026-10-23/225-app-splash-screen/`）。
+      真机 **2026-10-24 1/1 PASS（11 断言，0 FAIL）**（证据
+      `.local/acceptance/2026-10-24-m711/225-app-splash-screen/`；`first_frame` 先于
+      `dismissed(reason=tree_ready)` 的顺序与 `no_vault` 撤下原因两条都命中）。
       **让位 / 窗口拖动 / 安全阀三项在真机层不可达**（启动态在就绪门之前，见 README「已知边界」）：
       让位由视觉场景 `startup-restore.spec.ts` 第 4 条判，拖动只有结构判据（2.7 未做真机拖），安全阀由
       单测 + 启动面计时器承担——如实登记，不冒充已覆盖

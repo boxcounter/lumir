@@ -66,8 +66,11 @@
 - [x] 4.2 新增场景：① 纯读 CLI 持久放行（批准卡点「以后都允许」→ 同类命令第二个查询不再问 →
       浮层里删掉规则后重新问）；② `bash -lc` 只读命令免问（保险库写入档直接执行）；③ 危险包装
       仍问且卡上无两枚次级动作
-- [ ] 4.3 真机跑一遍套件（`node scripts/acceptance/run.mjs`），证据落 `.local/acceptance/`；
+- [x] 4.3 真机跑一遍套件（`node scripts/acceptance/run.mjs`），证据落 `.local/acceptance/`；
       报告里给逐场景 PASS / FAIL 与证据路径
+      —— **2026-10-24 三条场景全部真机 PASS（0 FAIL）**：229 本 change 新增（31 断言）、
+      110 回扫改准（19 断言）、151 回扫改准（16 断言）；证据
+      `.local/acceptance/2026-10-24-m711/{229-harness-permission-rules,110-harness-approval-purpose-remember,151-harness-approval-reason}/`
 
 ## 5. 前端界面与文案
 
@@ -85,7 +88,9 @@
 - [ ] 6.2 **归档提交时**：把 `openspec/specs/harness/spec.md` Purpose 的「三层权限规则（allow / ask /
       deny）」改为两层口径（Purpose 不是 requirement、不进 delta，只能归档时手改；同「归档后核对
       Purpose」通道）
-- [ ] 6.3 若实现期发现 proposal 的意图需要变更，停下改 proposal 并重走节点 1，不静默扩 scope
+- [x] 6.3 若实现期发现 proposal 的意图需要变更，停下改 proposal 并重走节点 1，不静默扩 scope
+      —— **不适用（N/A）**：实现期与 r1 返修都未改 proposal 的 What Changes / 裁决点（r1 处置是
+      实现层修正与 scope 外 finding 登记，见评审 r1 的逐项核对），没有重走节点 1 的触发条件
 
 ## 7. 验证
 

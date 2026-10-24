@@ -106,3 +106,22 @@
 - **D5 换边 vs 平移**：选「位移最小」的锚定边；若两侧位移相同取组件默认边。当浮层宽度接近
   宿主可用宽时（`width > 宿主/2`）两侧位移都大，此时按可用宽铺满并居中偏移，视作 pane 级
   浮层——不强行换边制造更差的落点。倾向：采纳。
+
+## 节点 1 追认材料（待 Alex 裁决，2026-10-24）
+
+本 change 已按上表「倾向」侧实现并跑完机器判据。下表把**每项落地了什么、证据在哪、否决时改
+哪里**摆出来，供 Alex 追认。**节点 1 仍未通过**（tasks 0.3 / 0.4 保持未勾），本材料不代替裁决；
+若任一项被否决，按「若否决的回改面」回改后重跑对应门禁。
+
+| # | 倾向侧（已落地） | 落地与证据 | 若否决的回改面 |
+|---|---|---|---|
+| D1 | C 24em / L 26em / P 34em；下限 C 160 / L 200 / P 200（组件可覆盖） | `src/overlay-placement.ts` 的 `OVERLAY_TIERS`；`tests/unit/overlay-placement.test.ts` 的 host × natural × fontSize 网格（含换边与「不拉伸」负例）；`tests/unit/overlay-width-registry.test.ts` 的档位声明双向对账 | 只改档位表一处，视觉矩阵期望宽随动 |
+| D2 | `min(26em, 100vw − 28px)`（12.5px 基准 ⇒ 325px），列表宽度不随内容抖动 | `src/style.css` 的 `.lumir-qo` / `.lumir-toc`；`tests/visual/scenes/m702-overlay-width.spec.ts` 长路径用例；真机 231 的输入面几何（≥280 截图 px；旧 300px 定值下 ≈263 必红） | 改一个 CSS 宽度与场景 231 的 `minWidth` 阈值 |
+| D3 | 目录前缀可中段省略、文件名恒完整、全路径落 `title`；textContent 仍是完整文本 | `src/quick-open.ts` 的 `splitPathRowText` + 两段 DOM；单测覆盖深路径 / 根文件 / vault 外绝对路径 / path 不在文本里的防御分支；视觉矩阵断言 `.lumir-qo-dirs` 出省略号且 `.lumir-qo-name` 不溢出；真机 231 断言完整相对路径仍在 AX 里 | 改 `splitPathRowText` 的收缩优先级与视觉期望（M606 的裁决口径不变） |
+| D4 | ctxpop 保留 224px 组件下限（P 档默认 200），长内容按固有宽展开、34em 封顶 | `src/harness-panel.css` 的组件下限；`m347-ctxpop-cache-metrics-chromium-darwin.png` 由 225×103 重截为 262×67（Alex 过目批准，M702 提交 `18bc031e`）；真机 232 判 hover 翻出、三段内容齐全、绘制段亮度跨度 97 | 调组件下限并重截基线（人肉裁决点，禁止自行 `--update`） |
+| D5 | 浮层宽 > 宿主/2 时按可用宽铺满并居中偏移，不强行换边；否则选位移最小的锚定边 | `src/overlay-placement.ts` 的 `placeOverlay`；单测的 240 / 320 / 420 / 700 host 矩阵与「两侧都不够宽」负例；`placePop` 统一入口 + `ResizeObserver` 重夹 | 改 `placeOverlay` 的落点选择，视觉矩阵的窄 pane / resize 用例随动 |
+
+**机器证据现状**：真机 231 / 232 于 2026-10-24 跑通（5 + 11 断言，0 FAIL，证据
+`.local/acceptance/2026-10-24-m711/`）；chromium 结构矩阵与纯几何单测见 tasks 第 5 / 6 组。
+**如实登记的边界**：气泡宽度与行数在 WKWebView 的 AX 里不可量（232 只判翻出 / 内容 / 绘制 /
+收起），宽度数字归 chromium 矩阵；2.13 倍字号档的真机手感归 Alex。
