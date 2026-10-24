@@ -5,11 +5,14 @@
 - 角色: Alex Lee（评审 / 裁决），AI agent（起草）
 
 > 评审记录
-> 节点 1（提案评审）：**待评审**。来源是交接遗留：change `svg-image-quote-oct24` 在 design §D6
-> 与 tasks 6.2 登记了一条已知缺口——引用语境下 `attachment_decode_failed` 仍读粘贴语境的
-> D438（「无法解码剪贴板图片」），按调用点分码需要新 D 编号，而那个 mission 的改动面不含
-> `src/copy-data.ts` / `文案-Copy.md`，故另立本 change。**本 change 只起草提案：节点 1 通过前
-> 不实现、不动产品代码、不提前改 living spec。**
+> 节点 1（提案评审）：**通过**（2026-10-24）。Alex 原话：「好，我理解了，我没有异议，请你安排处理。」
+> 来源是交接遗留：change `svg-image-quote-oct24` 在 design §D6 与 tasks 6.2 登记了一条已知缺口
+> ——引用语境下 `attachment_decode_failed` 仍读粘贴语境的 D438（「无法解码剪贴板图片」），按调用点
+> 分码需要新 D 编号，而那个 mission 的改动面不含 `src/copy-data.ts` / `文案-Copy.md`，故另立本
+> change。节点 1 通过后按本 proposal / design / tasks 实现。
+> 实现期补记（2026-10-24）：**Impact 原清单漏列 `src/copy.ts`**——design §D4 的两条单点兜底形态
+> （`errorText` 的可选覆盖表 / 抽内部函数共用）都落在 `errorText` 所属文件，实现采用前者，已补进
+> 下面的 Impact 清单（tower 已同步扩 scope）。
 > 节点 2（归档评审）：实现完成后填写。
 
 ## Why
@@ -71,7 +74,8 @@
   `quote-pipeline-consistency-oct24` 已立的「失败人话按调用点分码」原则，但那条尚未归档，故本
   change 不能 MODIFIED 它。
 - 影响的代码 / 制品：`文案-Copy.md`（新增 D588 行 + 编号沿革的末位 / 分配记录 / D 区间归属）、
-  `src/copy-data.ts`（`COPY_TABLE` 加 D588）、`src/quote-image.ts`（`quoteImageErrorText` 一处分支 +
+  `src/copy-data.ts`（`COPY_TABLE` 加 D588）、`src/copy.ts`（`errorText` 的可选覆盖表——design
+  §D4 的单点兜底形态，实现期补记）、`src/quote-image.ts`（`quoteImageErrorText` 一处覆盖表 +
   文件头注释）、`src/main.ts`（`insertQuotedImages` 上方的按调用点分码注释同步）、
   `tests/unit/quote-image.test.ts`、`tests/unit/error-text.test.ts`、
   `tests/visual/scenes/m633-image-quote.spec.ts`（新增解码失败用例）、

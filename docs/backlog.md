@@ -25,6 +25,10 @@
 
 **外部前置（不计入本批）**：`harness-permission-rules-oct23`（M649，33/36）须先归档——4.3 已至少被 229 真机 PASS（31 断言，2026-10-24T01:59Z）覆盖，是否足以勾选由 M649 属主按任务原文（「真机跑一遍套件」）裁定；6.2 是归档时改 Purpose。`quick-open-file-oct23`（40/42）同样可先归档（其 delta 自注「归档顺序无关」）；`semantic-selection-markdown-oct23`（1/29，节点 1 未过）不进队列。
 
+**本批新完成（无批次序，节点 2 待评审）**
+
+- **`fix-quote-decode-error-copy-oct24`**（M686，tasks 全勾）：引用路径的 `attachment_decode_failed` 改读 D588（「无法解码这张图片」），粘贴路径的 D438 一字不动。delta 是**一条 ADDED requirement**（无 MODIFIED 面，不存在整块替换丢段的风险）；设计依赖链 `add-image-quote-to-chat` → `quote-pipeline-consistency-oct24` → `svg-image-quote-oct24` 已由 M685 归档完毕，顺序无冲突。节点 2 仍走人肉（ADDED 有新增内容，机器判据只证「没丢段」、证不了「新增面是对的」）；归档前后各跑一次 `node scripts/openspec-archive-check.mjs`（无参门禁模式 + `--archived fix-quote-decode-error-copy-oct24`）。
+
 ## 待 Alex 裁决
 
 只收**价值取舍 / 产品语义**类（客观可核的题由 tower 裁并记录，见维护规则）。

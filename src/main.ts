@@ -3203,9 +3203,9 @@ function scaleTextEverywhere(direction: TextScaleDirection): void {
 /** 图片摘录事务的装配（change add-image-quote-to-chat design §3；失败契约见 M662）：读 vault → 写
  *  harness 存储 → 一次结构编辑步插入。两个入口共用它——图片上的引用钮（单张、无文本卡片）与
  *  跨图选区（卡片 + 多张图，按文档序）。失败项**随结果数组返回**（`QuoteImageOutcome` 的
- *  `ok:false`，不是只返回成功的那几张）：人话按调用点分码（引用语境的格式不支持读 D585，不借用
- *  粘贴语境的「剪贴板」措辞），留痕是**持久态**（卡片出处行 / 输入区状态行，见 D586），toast 只是
- *  逐张的原因；单张失败不整体回滚。 */
+ *  `ok:false`，不是只返回成功的那几张）：人话按调用点分码（引用语境的格式不支持读 D585、解码失败读
+ *  D588（M686），不借用粘贴语境的「剪贴板」措辞），留痕是**持久态**（卡片出处行 / 输入区状态行，见
+ *  D586），toast 只是逐张的原因；单张失败不整体回滚。 */
 async function insertQuotedImages(
   card: QuoteCard | null,
   sources: readonly QuoteImageSource[],

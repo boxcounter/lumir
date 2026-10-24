@@ -1882,6 +1882,15 @@ const COPY_TABLE = {
     en: "Includes {n} images",
     enOne: "Includes {n} image",
   },
+  // D588：引用路径的解码失败（M686，change fix-quote-decode-error-copy-oct24；Alex 2026-10-24
+  // 节点 1「好，我理解了，我没有异议，请你安排处理。」）。写原语的 `attachment_decode_failed`
+  // 在粘贴语境读 D438（「剪贴板」），引用一张坏的 vault 图时用户根本没碰过剪贴板——按调用点
+  // 分码：只有引用路径改读本条（src/quote-image.ts 的 quoteImageErrorText），粘贴路径一字不动。
+  // 与 D585 的分工：本条「格式支持，但这份字节解不开」vs D585「这种格式还不支持」。
+  D588: {
+    zh: "无法解码这张图片：{reason}",
+    en: "Couldn't decode this image: {reason}",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

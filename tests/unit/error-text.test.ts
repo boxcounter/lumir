@@ -171,3 +171,43 @@ test("errorText()：按 code 渲染并插参；未知 code 与缺参都回落到
   assert.equal(errorText(new Error("boom")), "boom");
   assert.equal(errorText("plain"), "plain");
 });
+
+// M686（change fix-quote-decode-error-copy-oct24）：同一个 `attachment_decode_failed` 在两个
+// 调用点各有措辞。粘贴侧不经过覆盖表，读的仍是 D438；引用侧的改道在 quote-image.test.ts 里判。
+test("粘贴侧锁定：errorText 的 attachment_decode_failed 仍读 D438（「剪贴板」措辞逐字不变）", async () => {
+  const { errorText } = await import("../../src/copy.ts");
+  const reason = "invalid PNG signature";
+  const envelope = { code: "attachment_decode_failed", message: "无法解码剪贴板图片", params: { reason } };
+  assert.equal(errorText(envelope, "zh"), COPY.D438.zh.replace("{reason}", reason));
+  assert.match(errorText(envelope, "zh"), /剪贴板/, "粘贴语境的限定词必须还在（引用语境的 D588 不承担这层信息）");
+  assert.equal(errorText(envelope, "en"), COPY.D438.en.replace("{reason}", reason));
+  assert.match(errorText(envelope, "en"), /clipboard/);
+  // 缺参：仍是既有兜底（回落 message、不抛错、不留未替换占位符）——与 M686 之前逐字相同。
+  const fellBack = errorText({ code: "attachment_decode_failed", message: "无法解码剪贴板图片" }, "zh");
+  assert.equal(fellBack, "无法解码剪贴板图片");
+  assert.ok(!fellBack.includes("{reason}"));
+});
+
+test("errorText() 的可选覆盖表：只换 code → 键，命中与未命中的 code 各走各的（M686）", async () => {
+  const { errorText } = await import("../../src/copy.ts");
+  const overrides = { attachment_decode_failed: "D588" } as const;
+  // 命中的 code：读覆盖表里的键。
+  assert.equal(
+    errorText(
+      { code: "attachment_decode_failed", message: "后端人话", params: { reason: "bad signature" } },
+      "zh",
+      overrides,
+    ),
+    COPY.D588.zh.replace("{reason}", "bad signature"),
+  );
+  // 未命中的 code：行为与不传覆盖表完全相同（不是「传了就整张表替换」）。
+  assert.equal(
+    errorText({ code: "attachment_too_large", message: "后端人话", params: { mb: 1, limit: 50 } }, "zh", overrides),
+    COPY.D437.zh.replace("{mb}", "1").replace("{limit}", "50"),
+  );
+  // 缺参兜底仍只有一份：回落 message（不会先抛出来、也不会留占位符）。
+  assert.equal(
+    errorText({ code: "attachment_decode_failed", message: "后端人话" }, "zh", overrides),
+    "后端人话",
+  );
+});

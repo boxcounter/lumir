@@ -311,6 +311,48 @@ test("不支持的格式：gif 引用在预检被拒——引用语境文案 + �
   expect((await attachmentReads(page)).filter((path) => path === ANIM)).toHaveLength(gifReadsBefore);
 });
 
+test("解码失败：引用一张字节解不开的图读 D588（不含「剪贴板」）+ 持久状态行，零卡片（M686）", async ({
+  page,
+}) => {
+  // 同一份 vault，只给 `image/png` 的**写入口**注入解码失败信封（桩的按 MIME 失败通道）：
+  // 预览读字节是另一条链路，pic.png 照常渲染出 `<img>`（悬停引用钮因此可达）；引用路径在
+  // `harness_write_image` 撞上 `attachment_decode_failed`——正是「格式支持、字节解不开」的现场。
+  await stubTauri(page, {
+    ...VAULT,
+    harnessImageFailures: {
+      "image/png": {
+        code: "attachment_decode_failed",
+        message: "无法解码图片",
+        params: { reason: "invalid PNG signature" },
+      },
+    },
+  });
+  await stubHarnessState(page);
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-image-quote.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段文字");
+
+  // 走悬停引用钮（单图入口、无文本卡片）：失败留痕落输入区状态行（D586），与 gif 用例同一条
+  // 呈现路径，两条的差别只在文案（D588 vs D585）。
+  const pic = page.locator(".cm-lp-image img").first();
+  await pic.hover();
+  const trigger = page.locator(".lumir-image-quote-trigger").first();
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+
+  // 文案是引用语境（D588）：含「无法解码」、透传后端 {reason}，不含粘贴语境的「剪贴板」，
+  // 也不与格式不支持的 D585 混用——本场景上一条 gif 用例正是它的反向区分。
+  const toast = page.locator(".lumir-toast", { hasText: "无法解码这张图片" });
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("invalid PNG signature");
+  await expect(toast).not.toContainText("剪贴板");
+  await expect(toast).not.toContainText("暂不支持引用该格式");
+  // 持久留痕（D586）与失败契约：状态行在场、composer 无图片卡片、该张没进 harness 存储。
+  await expect(page.locator(".lumir-hp-quote-note")).toBeVisible();
+  await expect(page.locator(".lumir-hp-quote-note")).toContainText("1 张图片未能引用");
+  await expect(page.locator(".lumir-hp-composer .lumir-hp-imgcard")).toHaveCount(0);
+});
+
 test("状态行的收口：文本摘录与消息摘录都是「下一次引用」（r1 P2-1）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await stubHarnessState(page);
