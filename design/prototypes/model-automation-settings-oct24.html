@@ -189,6 +189,10 @@ kbd {
 .field-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-4); }
 .field label, .field-head label { font-size: var(--fs-label-s); font-weight: var(--fw-medium); color: var(--text-2); }
 .field-state { font-size: var(--fs-nano); color: var(--text-3); }
+.field-head-right { display: inline-flex; align-items: center; gap: var(--sp-3); }
+.link-btn { padding: 0 2px; font-size: var(--fs-label); color: var(--text-3); border-radius: 3px; }
+.link-btn:hover { color: var(--accent); text-decoration: underline; }
+.link-btn:disabled { opacity: 0.42; }
 .key-row { display: flex; gap: var(--sp-3); margin-top: var(--sp-2); }
 .text-input {
   width: 100%; height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: var(--r5);
@@ -292,6 +296,7 @@ kbd {
 :root[data-theme="eink"] .diag-callout { border: 1px solid var(--border); border-left-width: 3px; }
 .diag-title { font-size: var(--fs-label); font-weight: var(--fw-bold); color: var(--pending); margin-bottom: 3px; }
 .diag-callout ul { margin-left: 15px; line-height: 1.6; }
+.diag-path { display: block; margin-bottom: 1px; font-family: var(--font-mono); font-size: var(--fs-nano); color: var(--text-3); }
 .banner {
   margin-bottom: var(--sp-4); padding: 9px 11px; border-radius: var(--r6);
   font-size: var(--fs-label-s); line-height: 1.55; color: var(--text-2);
@@ -310,6 +315,7 @@ kbd {
 }
 .auto-row:last-child { border-bottom: none; }
 .auto-copy { min-width: 0; }
+.auto-actions { display: flex; align-items: center; gap: var(--sp-3); flex: none; }
 .auto-title { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-ui); font-weight: var(--fw-medium); }
 .auto-desc { margin-top: 2px; font-size: var(--fs-label-s); color: var(--text-2); line-height: 1.55; }
 .auto-meta { margin-top: 3px; font-size: var(--fs-label); color: var(--text-3); }
@@ -531,13 +537,40 @@ function deepClone(value) { return JSON.parse(JSON.stringify(value)); }
 function esc(value) {
   return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 }
-function providerBase(id, hasKey, keyHint, models, baseUrl, wireApi) {
-  return { id, hasKey, keyHint, keyDraft: "", baseUrl, wireApi, models };
+function providerBase(id, hasKey, keyHint, models, baseUrl, wireApi, baseUrlPresent, wireApiPresent, wireApiRaw) {
+  return {
+    id, hasKey, keyHint, keyDraft: "",
+    models,
+    baseUrl: baseUrl || "",
+    baseUrlPresent: baseUrlPresent === true,
+    wireApi,
+    wireApiRaw: wireApiRaw === undefined ? wireApi : wireApiRaw,
+    wireApiPresent: wireApiPresent === true,
+  };
+}
+
+function duplicateIdErrors(models, providerId) {
+  const counts = new Map();
+  models.forEach((item) => {
+    const id = String(item.id || "").trim();
+    if (id) counts.set(id, (counts.get(id) || 0) + 1);
+  });
+  const errors = [];
+  models.forEach((item, index) => {
+    const id = String(item.id || "").trim();
+    if (id && (counts.get(id) || 0) > 1) {
+      errors.push({
+        path: `providers.${providerId}.models[${index}].id`,
+        message: `模型 id "${id}" 重复：同一清单内 id 必须唯一`,
+      });
+    }
+  });
+  return errors;
 }
 
 function sceneSnapshot(scene) {
   const configured = {
-    kimi: providerBase("kimi", true, "4f2c", [model("k3-256k", true, true, 262144), model("k3-128k", false, false, 131072)], "", "responses"),
+    kimi: providerBase("kimi", true, "4f2c", [model("k3-256k", true, true, 262144), model("k3-128k", false, false, 131072)], "", "chat_completions", false, true, "chat_completions"),
     deepseek: providerBase("deepseek", true, "91bd", [model("ds-chat", false, false, 131072)], "", "responses"),
   };
   const unconfigured = {
@@ -571,7 +604,7 @@ function sceneSnapshot(scene) {
       { id: "", effort: false, vision: false, window: 0, issues: [] },
     ];
     s.errors = [
-      { path: "providers.kimi.models[1].id", message: '模型 id "k3-256k" 重复：同一清单内 id 必须唯一' },
+      ...duplicateIdErrors(s.providers.kimi.models, "kimi"),
       { path: "providers.kimi.models[2].id", message: "模型 id 不能为空" },
       { path: "providers.kimi.models[2].window", message: "上下文窗口应为 1–10,000,000 的整数" },
     ];
@@ -582,9 +615,13 @@ function sceneSnapshot(scene) {
       providers: deepClone(configured), automation: deepClone(defaults), dirty: true,
     });
     s.providers.kimi.models[1] = { id: "k3-128k", effort: null, vision: null, window: null, issues: [] };
+    s.providers.kimi.wireApi = "responses";
+    s.providers.kimi.wireApiRaw = "chat";
+    s.providers.kimi.wireApiPresent = true;
     s.diagnostics = [
       { code: "harness_provider_model_not_in_list", path: "harness.providers.kimi.model", message: "当前模型 k3-256k 不在模型清单内：上下文窗口按 131072 保守估算，思考程度按不支持处理。" },
       { code: "harness_session_naming_model_missing", path: "harness.session_naming.model", message: "会话命名的模型未在所选 provider 的清单内，已回落为当前生效模型。" },
+      { code: "harness_wire_api_invalid", path: "harness.providers.kimi.wire_api", message: "取值「chat」非法（可选：responses、chat_completions），已回落为 responses。" },
     ];
     return s;
   }
@@ -672,11 +709,12 @@ function render() {
 }
 
 function renderTabs() {
+  const locked = state.readonly || state.mode === "saving";
   $("#provider-tabs").innerHTML = ["kimi", "deepseek"].map((id) => {
     const p = state.providers[id];
     const on = state.provider === id;
     const configured = isConfigured(p);
-    return `<button type="button" role="tab" class="seg-btn${on ? " is-on" : ""}" data-provider-tab="${id}" aria-selected="${on}" tabindex="${on ? 0 : -1}">
+    return `<button type="button" role="tab" class="seg-btn${on ? " is-on" : ""}" data-provider-tab="${id}" aria-selected="${on}" tabindex="${on ? 0 : -1}" ${locked ? "disabled" : ""}>
       <span class="seg-dot${configured ? " is-on" : ""}" aria-hidden="true"></span>${PROVIDER_NAMES[id]}
       <span class="seg-state">${configured ? "已配置" : "未配置"}</span>
     </button>`;
@@ -685,7 +723,7 @@ function renderTabs() {
 
 function modelRowsHtml(p) {
   const id = p.id;
-  const ro = state.readonly;
+  const ro = state.readonly || state.mode === "saving";
   return p.models.map((m, index) => {
     const idError = errorFor(`providers.${id}.models[${index}].id`);
     const windowError = errorFor(`providers.${id}.models[${index}].window`);
@@ -722,12 +760,13 @@ function missingNote(m, index) {
 function renderProviderPanel() {
   const p = activeProvider();
   const id = p.id;
-  const ro = state.readonly;
+  const locked = state.readonly || state.mode === "saving";
   const keyError = errorFor(`providers.${id}.api_key`);
   const providerError = errorFor(`providers.${id}`);
   const baseError = errorFor(`providers.${id}.base_url`);
   const keyPlaceholder = p.hasKey ? `已配置 · …${p.keyHint || "????"}` : "未配置";
   const keyRowValue = p.keyDraft || "";
+  const rawWireDiffers = p.wireApiPresent && String(p.wireApiRaw ?? "") !== p.wireApi;
 
   $("#provider-panel").innerHTML = `
     <div class="field">
@@ -738,10 +777,10 @@ function renderProviderPanel() {
       <div class="key-row">
         <input id="api-key-input" class="text-input" type="password" data-api-key-input
           placeholder="${esc(keyPlaceholder)}" aria-describedby="api-key-note" autocomplete="off"
-          spellcheck="false" ${ro ? "readonly" : ""}
+          spellcheck="false" ${locked ? "readonly" : ""}
           ${keyError ? `aria-invalid="true" aria-errormessage="err-api-key"` : ""}>
-        <button type="button" class="btn ghost" data-api-key-replace ${ro ? "disabled" : ""}>替换</button>
-        <button type="button" class="btn ghost" data-api-key-clear ${(!p.hasKey && !p.keyDraft) || ro ? "disabled" : ""}>清除</button>
+        <button type="button" class="btn ghost" data-api-key-replace ${locked ? "disabled" : ""}>替换</button>
+        <button type="button" class="btn ghost" data-api-key-clear ${(!p.hasKey && !p.keyDraft) || locked ? "disabled" : ""}>清除</button>
       </div>
       <p class="hint" id="api-key-note">明文存储在 <span class="mono">config.json</span> 中；任何能读该文件的人都能读到它。已配置的 Key 不会在这里回显。</p>
       ${keyError ? `<p class="field-error" id="err-api-key" data-error-for="providers.${id}.api_key">${esc(keyError.message)}</p>` : ""}
@@ -750,7 +789,7 @@ function renderProviderPanel() {
     <div class="field models-field">
       <div class="models-head">
         <span class="label">模型清单</span>
-        <button type="button" class="btn ghost" data-model-add ${ro ? "disabled" : ""}>+ 添加模型</button>
+        <button type="button" class="btn ghost" data-model-add ${locked ? "disabled" : ""}>+ 添加模型</button>
       </div>
       <div class="model-table">
         <div class="model-table-head" aria-hidden="true">
@@ -770,25 +809,34 @@ function renderProviderPanel() {
         <div class="field">
           <div class="field-head">
             <label for="base-url">Base URL</label>
-            <span class="field-state" data-base-url-state>${isCustomBase(p) ? "自定义" : "官方地址"}</span>
+            <span class="field-head-right">
+              <span class="field-state" data-base-url-state>${isCustomBase(p) ? "自定义" : "官方地址"}</span>
+              <button type="button" class="link-btn" data-base-url-reset ${p.baseUrlPresent ? "" : "hidden"} ${locked ? "disabled" : ""}>恢复默认</button>
+            </span>
           </div>
           <input id="base-url" class="text-input mono-input" type="text" data-base-url
             value="${esc(p.baseUrl)}" placeholder="${esc(OFFICIAL[id])}（官方地址）"
-            aria-describedby="base-url-hint" ${ro ? "readonly" : ""}
+            aria-describedby="base-url-hint" ${locked ? "readonly" : ""}
             ${baseError ? 'aria-invalid="true"' : ""}>
           <p class="hint" id="base-url-hint">留空 = 使用官方地址（${esc(OFFICIAL[id])}）。</p>
           <p class="inline-warning" data-base-url-warning ${isCustomBase(p) ? "" : "hidden"}>带密钥的请求会发往这个地址。非官方地址意味着把它交给了该主机的运维者。</p>
           ${baseError ? `<p class="field-error" data-error-for="providers.${id}.base_url">${esc(baseError.message)}</p>` : ""}
         </div>
         <div class="field">
-          <label for="wire-api">Wire 方言</label>
-          <select id="wire-api" class="select-input" data-wire-api ${ro ? "disabled" : ""}>
+          <div class="field-head">
+            <label for="wire-api">Wire 方言</label>
+            <span class="field-head-right">
+              <button type="button" class="link-btn" data-wire-reset ${p.wireApiPresent ? "" : "hidden"} ${locked ? "disabled" : ""}>恢复默认</button>
+            </span>
+          </div>
+          <select id="wire-api" class="select-input" data-wire-api ${locked ? "disabled" : ""}>
             <option value="responses" ${p.wireApi === "responses" ? "selected" : ""}>responses</option>
             <option value="chat_completions" ${p.wireApi === "chat_completions" ? "selected" : ""} ${id === "deepseek" ? "disabled" : ""}>chat_completions</option>
           </select>
           <p class="hint">${id === "deepseek"
             ? "deepseek 的 chat 档在 v1 未实现，选项已置灰；强行写入会在装载期回落 responses 并告警。"
             : "responses = POST {base}/responses；chat_completions = POST {base}/chat/completions。"}</p>
+          ${rawWireDiffers ? `<p class="inline-warning" data-wire-raw-note>文件中的值是「${esc(p.wireApiRaw)}」，不是合法方言；装载期已回落为 ${p.wireApi}，保存后写为 ${p.wireApi}。</p>` : ""}
         </div>
       </div>
     </div>
@@ -808,7 +856,7 @@ function renderDiagnostics() {
   el.hidden = false;
   el.innerHTML = `<div class="diag-callout">
     <div class="diag-title">配置提示</div>
-    <ul>${state.diagnostics.map((entry) => `<li>${esc(entry.message)}</li>`).join("")}</ul>
+    <ul>${state.diagnostics.map((entry) => `<li>${entry.path ? `<span class="diag-path">${esc(entry.path)}</span>` : ""}${esc(entry.message)}</li>`).join("")}</ul>
   </div>`;
 }
 
@@ -820,11 +868,15 @@ const AUTOMATION = [
 ];
 
 function renderAutomation() {
+  const locked = state.readonly || state.mode === "saving";
   $("#automation-list").innerHTML = AUTOMATION.map(([key, title, desc, meta]) => {
     const item = state.automation[key];
     const badge = item.explicit ? "" : '<span class="badge" data-default-badge>默认</span>';
     const restart = key === "attachment_naming" && state.attachmentTurnedOn
       ? '<p class="auto-restart" data-restart>重新开启需重启应用</p>' : "";
+    const restore = item.explicit
+      ? `<button type="button" class="link-btn" data-switch-reset="${key}" ${locked ? "disabled" : ""}>恢复默认</button>`
+      : "";
     return `<div class="auto-row" data-auto-row="${key}">
       <div class="auto-copy">
         <div class="auto-title">${title}${badge}</div>
@@ -832,9 +884,12 @@ function renderAutomation() {
         <p class="auto-meta">${meta}</p>
         ${restart}
       </div>
-      <button type="button" role="switch" class="switch${item.value ? " is-on" : ""}"
-        data-switch="${key}" aria-checked="${item.value}" aria-label="${title}"
-        ${state.readonly ? "disabled" : ""}><span class="knob"></span></button>
+      <div class="auto-actions">
+        ${restore}
+        <button type="button" role="switch" class="switch${item.value ? " is-on" : ""}"
+          data-switch="${key}" aria-checked="${item.value}" aria-label="${title}"
+          ${locked ? "disabled" : ""}><span class="knob"></span></button>
+      </div>
     </div>`;
   }).join("");
 }
@@ -888,7 +943,9 @@ function renderStatus() {
   const locked = state.readonly || ["saving", "saved", "conflict", "fileInvalid"].includes(state.mode);
   save.disabled = locked || (!state.dirty && state.mode !== "blocked");
   save.textContent = state.mode === "saving" ? "保存中…" : "保存";
-  $("[data-reset-page]").disabled = state.readonly;
+  const editingLocked = state.readonly || state.mode === "saving";
+  $("[data-reset-page]").disabled = editingLocked;
+  $("[data-cancel]").disabled = state.mode === "saving";
 }
 
 function renderFooterFlags() {
@@ -917,7 +974,7 @@ function clearErrorDom() {
 }
 
 function markDirty() {
-  if (state.readonly) return;
+  if (state.readonly || state.mode === "saving") return;
   state.dirty = true;
   state.mode = "dirty";
   state.errors = [];
@@ -926,7 +983,7 @@ function markDirty() {
 }
 
 function setProvider(id) {
-  if (!["kimi", "deepseek"].includes(id) || state.provider === id) return;
+  if (!["kimi", "deepseek"].includes(id) || state.provider === id || state.mode === "saving") return;
   state.provider = id;
   renderTabs();
   renderProviderPanel();
@@ -934,7 +991,7 @@ function setProvider(id) {
 }
 
 function addModel() {
-  if (state.readonly) return;
+  if (state.readonly || state.mode === "saving") return;
   activeProvider().models.push({ id: "", effort: false, vision: false, window: NaN, issues: [] });
   markDirty();
   renderProviderPanel();
@@ -943,14 +1000,14 @@ function addModel() {
 }
 
 function removeModel(index) {
-  if (state.readonly) return;
+  if (state.readonly || state.mode === "saving") return;
   activeProvider().models.splice(index, 1);
   markDirty();
   renderProviderPanel();
 }
 
 function clearKey() {
-  if (state.readonly) return;
+  if (state.readonly || state.mode === "saving") return;
   const p = activeProvider();
   p.hasKey = false;
   p.keyHint = null;
@@ -959,8 +1016,34 @@ function clearKey() {
   renderProviderPanel();
 }
 
+function resetBaseUrl() {
+  if (state.readonly || state.mode === "saving") return;
+  const p = activeProvider();
+  p.baseUrl = "";
+  p.baseUrlPresent = false;
+  markDirty();
+  renderProviderPanel();
+}
+
+function resetWireApi() {
+  if (state.readonly || state.mode === "saving") return;
+  const p = activeProvider();
+  p.wireApi = "responses";
+  p.wireApiRaw = null;
+  p.wireApiPresent = false;
+  markDirty();
+  renderProviderPanel();
+}
+
+function resetSwitch(key) {
+  if (state.readonly || state.mode === "saving") return;
+  state.automation[key] = { value: true, explicit: false };
+  markDirty();
+  renderAutomation();
+}
+
 function toggleSwitch(key) {
-  if (state.readonly) return;
+  if (state.readonly || state.mode === "saving") return;
   const item = state.automation[key];
   item.value = !item.value;
   item.explicit = true;
@@ -973,17 +1056,29 @@ function toggleSwitch(key) {
     const badge = switchEl.closest("[data-auto-row]")?.querySelector("[data-default-badge]");
     if (badge) badge.remove();
   }
+  const actions = switchEl?.closest(".auto-actions");
+  if (actions && !actions.querySelector("[data-switch-reset]")) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "link-btn";
+    button.dataset.switchReset = key;
+    button.textContent = "恢复默认";
+    actions.prepend(button);
+  }
 }
 
 function resetPage() {
-  if (state.readonly) return;
+  if (state.readonly || state.mode === "saving") return;
   ["kimi", "deepseek"].forEach((id) => {
     const p = state.providers[id];
     p.hasKey = false;
     p.keyHint = null;
     p.keyDraft = "";
     p.baseUrl = "";
+    p.baseUrlPresent = false;
     p.wireApi = "responses";
+    p.wireApiRaw = null;
+    p.wireApiPresent = false;
     p.models = [];
   });
   Object.keys(state.automation).forEach((key) => {
@@ -1015,15 +1110,18 @@ function validateDraft() {
     if (hasKey && p.models.length === 0) {
       errors.push({ path: `providers.${id}`, message: "已填写 API Key，但模型清单为空：添加至少一个模型，或清除 Key。" });
     }
-    const seen = new Set();
+    const counts = new Map();
+    p.models.forEach((m) => {
+      const idText = String(m.id || "").trim();
+      if (idText) counts.set(idText, (counts.get(idText) || 0) + 1);
+    });
     p.models.forEach((m, index) => {
       const idText = String(m.id || "").trim();
       if (!idText) {
         errors.push({ path: `providers.${id}.models[${index}].id`, message: "模型 id 不能为空" });
-      } else if (seen.has(idText)) {
+      } else if ((counts.get(idText) || 0) > 1) {
         errors.push({ path: `providers.${id}.models[${index}].id`, message: `模型 id "${idText}" 重复：同一清单内 id 必须唯一` });
       }
-      seen.add(idText);
       if (!Number.isInteger(m.window) || m.window < WINDOW_MIN || m.window > WINDOW_MAX) {
         errors.push({ path: `providers.${id}.models[${index}].window`, message: "上下文窗口应为 1–10,000,000 的整数" });
       }
@@ -1056,7 +1154,7 @@ function save() {
   const providerId = state.provider;
   state.mode = "saving";
   state.errors = [];
-  renderStatus();
+  render();
   window.setTimeout(() => {
     const p = state.providers[providerId];
     if (p.keyDraft) {
@@ -1066,14 +1164,12 @@ function save() {
     }
     state.mode = "saved";
     state.dirty = false;
-    renderTabs();
-    renderProviderPanel();
-    renderStatus();
-    syncUrl();
+    render();
   }, 520);
 }
 
 function cancelDraft() {
+  if (state.mode === "saving") return;
   loadScene(state.scene);
 }
 
@@ -1200,6 +1296,10 @@ document.addEventListener("click", (event) => {
     syncUrl();
     return;
   }
+  if (target.closest("[data-base-url-reset]")) { resetBaseUrl(); return; }
+  if (target.closest("[data-wire-reset]")) { resetWireApi(); return; }
+  const switchReset = target.closest("[data-switch-reset]");
+  if (switchReset) { resetSwitch(switchReset.dataset.switchReset); return; }
   if (target.closest("[data-model-add]")) { addModel(); return; }
   const remove = target.closest("[data-model-remove]");
   if (remove) { removeModel(Number(remove.dataset.modelIndex)); return; }
@@ -1221,7 +1321,7 @@ overlay.addEventListener("click", (event) => {
 
 document.addEventListener("input", (event) => {
   const target = event.target;
-  if (!(target instanceof Element) || state.readonly) return;
+  if (!(target instanceof Element) || state.readonly || state.mode === "saving") return;
   if (target.matches("[data-api-key-input]")) {
     const provider = activeProvider();
     provider.keyDraft = target.value;
@@ -1235,10 +1335,13 @@ document.addEventListener("input", (event) => {
   if (target.matches("[data-base-url]")) {
     const provider = activeProvider();
     provider.baseUrl = target.value;
+    provider.baseUrlPresent = target.value !== "";
     const warning = $("[data-base-url-warning]");
     if (warning) warning.hidden = !isCustomBase(provider);
     const stateEl = $("[data-base-url-state]");
     if (stateEl) stateEl.textContent = isCustomBase(provider) ? "自定义" : "官方地址";
+    const reset = $("[data-base-url-reset]");
+    if (reset) reset.hidden = !provider.baseUrlPresent;
     markDirty();
     return;
   }
@@ -1254,10 +1357,14 @@ document.addEventListener("input", (event) => {
 
 document.addEventListener("change", (event) => {
   const target = event.target;
-  if (!(target instanceof Element) || state.readonly) return;
+  if (!(target instanceof Element) || state.readonly || state.mode === "saving") return;
   if (target.matches("[data-wire-api]")) {
-    activeProvider().wireApi = target.value;
+    const provider = activeProvider();
+    provider.wireApi = target.value;
+    provider.wireApiRaw = target.value;
+    provider.wireApiPresent = true;
     markDirty();
+    renderProviderPanel();
     return;
   }
   const field = target.dataset.modelField;

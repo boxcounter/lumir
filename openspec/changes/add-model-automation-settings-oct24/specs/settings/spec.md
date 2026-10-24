@@ -76,9 +76,10 @@ placeholder 里（placeholder 会消失，而这是长期事实）。
 选项 SHALL 由后端下发的能力矩阵决定；v1 未实现的档位（`deepseek` 的 `chat_completions`）
 SHALL 置灰并说明原因，MUST NOT 让用户选一个会被装载期回落的档位。
 
-每个字段（API Key 的「清除」、Base URL、Wire 方言、四个自动化开关）在键显式存在时 SHALL
-提供「恢复默认」。恢复默认的语义 SHALL 是**删除该键**（回到跟随默认），MUST NOT 是把当前默认值
-写进文件。
+Base URL、Wire 方言与四个自动化开关（见「自动化开关」条）在键显式存在时 SHALL 提供逐项
+「恢复默认」，键缺席时 MUST NOT 显示该动作。API Key 的「清除」是另一条动作：已配置或用户
+已输入替换值时可用，语义同为删除该键。恢复默认的语义 SHALL 是**删除该键**（回到跟随默认），
+MUST NOT 是把当前默认值写进文件。
 
 面板 SHALL 提供页级「还原此页默认」：把设置面拥有的键（两个 provider 的 API Key / 模型清单 /
 Base URL / Wire 方言与四个自动化开关）全部标记为删除。该动作 SHALL 只改草稿、MUST NOT 立即
@@ -109,6 +110,12 @@ Base URL / Wire 方言与四个自动化开关）全部标记为删除。该动�
 - **THEN** 两个 provider 的 Key 与模型清单被清空、四个开关回到默认开，状态显示有未保存修改；
   保存前 `config.json` 逐字节不变；点「取消」后恢复原草稿
 
+#### Scenario: 逐项恢复默认仅显式存在时出现
+
+- **WHEN** Base URL 与 Wire 方言均为键缺席（跟随默认）
+- **THEN** 两项都不显示「恢复默认」；填入自定义 Base URL 或选择非缺省 Wire 档后，对应按钮
+  出现；点「恢复默认」后草稿回到缺省值、按钮消失；保存后文件里该键被删除
+
 #### Scenario: 自定义 Base URL 显示目的地警示
 
 - **WHEN** 在高级区把 Base URL 从空值改为 `https://example.invalid/v1`
@@ -124,8 +131,12 @@ Base URL / Wire 方言与四个自动化开关）全部标记为删除。该动�
 设置面板 SHALL 使用窄接口读写，MUST NOT 复用「前端取整份配置 → 改 → 整份写回」的形态。
 
 读 SHALL 为一份只含设置面的快照，至少区分：键缺席（跟随默认）与键显式存在；raw 文件值与
-装载后的生效值；API Key 的「已配置」状态（不含完整值）；文件状态（缺失 / 可解析 /
-不可解析）。快照 SHALL 同时下发前端需要的默认值与能力矩阵（官方 Base URL、各 provider 支持
+装载后的生效值（`wire_api` 的 raw SHALL 是文件里的原 JSON 值，生效方言另给
+`effective.wire_api`，MUST NOT 用生效枚举充当 raw）；API Key 的「已配置」状态（不含完整值）；
+文件状态（缺失 / 可解析 / 不可解析）。快照 SHALL 在顶层携带 `revision`：所有非 Invalid 快照
+都有（文件缺失把文件视为空对象、按同一 revision 算法计算，首次接入也能填 `base_revision`），
+Invalid 时为空、保存禁用。
+快照 SHALL 同时下发前端需要的默认值与能力矩阵（官方 Base URL、各 provider 支持
 的 Wire 档、`window` 上下限），前端 MUST NOT 复制这些常量或取值区间。
 
 写 SHALL 为一次强类型 patch：字段类型在 IPC 边界由 Rust 结构定义，未知字段 SHALL 被拒绝；
@@ -139,9 +150,10 @@ patch SHALL 只携带本次改动的字段，MUST NOT 携带整份配置。校�
 解析错误位置），MUST NOT 在不可 round-trip 的文件上写入。
 
 保存 SHALL 满足**非回归**判据：把 patch 合并到当前 raw JSON 后，以装载同一路径解析并校验；
-任何**新增的阻断级诊断**与 patch 改动路径相交时，整笔保存 SHALL 被拒绝、文件逐字节不变，
-错误 SHALL 回填到具体字段。基线里已经存在且逐字不变的诊断 MUST NOT 阻断与它无关的改动。
-阻断级词表 SHALL 由 Rust 单一维护，MUST NOT 由前端判定。
+**任何**与 patch 改动路径相交的阻断级诊断 SHALL 拒绝整笔保存（不看 baseline 是否已有同一条；
+`window: 0 → 10000001` 这类「非法换另一种非法」同样拒绝），文件逐字节不变，错误回填到具体
+字段。baseline 只豁免**未改路径**上的既有诊断：未改路径的坏值不阻塞本次改动。阻断级词表
+SHALL 由 Rust 单一维护，MUST NOT 由前端判定。
 
 patch SHALL 携带设置面 revision（覆盖设置面拥有的键，不覆盖 `providers.<id>.model`、
 `harness.provider`、主题等其它写者拥有的键）；锁内现读的 revision 不一致时 SHALL 返回冲突，
@@ -157,11 +169,41 @@ MUST NOT 用打开时的旧快照整份覆盖。
 （API Key / 模型 / Base URL / Wire 方言 / 自动压缩 / 子代理 = 下一回合；会话命名 = 下一轮完成；
 图片命名 = 关→开需重启、开→关立即）。
 
+保存请求进行中，面板 SHALL 禁用全部编辑控件（输入 / 选择 / 开关 / 模型行增删 / 页级还原 /
+provider 切换），MUST NOT 允许请求期间的编辑被返回快照覆盖；保存完成（成功或进入需修正）后
+SHALL 解锁。取消动作在保存期间 SHALL 一并禁用。
+
 #### Scenario: 越界窗口被拒绝且文件不变
 
 - **WHEN** 把某模型的 `window` 改为 `0`（或大于 10,000,000）并保存
 - **THEN** 保存返回「需要修正」；`window` 控件标 `aria-invalid` 并显示原因；`config.json`
   逐字节不变；修正为合法值后保存成功
+
+#### Scenario: 非法换另一种非法也被拒绝
+
+- **WHEN** 文件里某项 `window` 已是 `0`，用户把同一项改为 `10000001` 并保存
+- **THEN** 保存被拒、文件逐字节不变；MUST NOT 因为「baseline 已有同一条诊断」而放行
+
+#### Scenario: 非法改合法可以保存
+
+- **WHEN** 文件里某项 `window` 已是 `0`，用户把同一项改为 `262144` 并保存
+- **THEN** 保存成功，该键被写为合法值
+
+#### Scenario: 未改路径的既有非法项不阻塞无关开关
+
+- **WHEN** provider A 已有一个越界 `window`，用户只切换 provider B 的某个自动化开关并保存
+- **THEN** 保存成功；provider A 的坏值原样留在文件里（不被本次 patch 触碰）
+
+#### Scenario: 文件缺失也能首次保存
+
+- **WHEN** `config.json` 不存在，打开设置面板、填入合成 Key + 一个合法模型并保存
+- **THEN** 快照带一个按空对象计算的 revision；保存成功并创建文件；MUST NOT 因「没有 revision」而无法保存
+
+#### Scenario: raw wire_api 与生效值分开
+
+- **WHEN** 文件里某 provider 的 `wire_api` 是闭集合外的字符串（如 `"chat"`）
+- **THEN** 快照的 raw 值仍是 `"chat"`，生效方言为 `responses` 并在面板上标注；保存该字段后
+  文件被写为选中值（`responses` 或 `chat_completions`）
 
 #### Scenario: 未知字段被拒绝
 
@@ -195,6 +237,13 @@ MUST NOT 用打开时的旧快照整份覆盖。
 - **WHEN** 两个保存请求以同一个 revision 并发到达
 - **THEN** 只有一笔写入成功，另一笔返回冲突；文件不出现丢键或半合并
 
+#### Scenario: 保存中编辑控件禁用
+
+- **WHEN** 点击保存、请求尚未返回
+- **THEN** 全部输入 / 选择 / 开关 / 模型行增删 / 页级还原 / provider 切换均为禁用或只读，取消
+  也禁用；保存完成后解锁；MUST NOT 出现「请求期间的编辑被返回快照覆盖」或「仍有未落盘修改
+  却显示已保存」
+
 ### Requirement: 设置面的校验与警告呈现
 
 字段级错误 SHALL 回填到具体控件：控件 SHALL 标 `aria-invalid="true"`，并通过
@@ -202,9 +251,10 @@ MUST NOT 用打开时的旧快照整份覆盖。
 第一个错误控件。错误文本 SHALL 来自后端诊断，MUST NOT 由前端按控件自行编造。
 
 面板 SHALL 展示**设置面范围内**的配置诊断（模型清单为空、当前模型不在清单、命名目标失效、
-Wire 档回落等），并带键路径；范围外的 warning（主题、编辑器、vault 等）MUST NOT 倒进本面板。
-整文件回落或文件不可解析时，面板顶部 SHALL 显示横幅并给出文件路径与解析错误位置；该横幅
-优先级高于字段级提示。
+Wire 档回落等），每条 SHALL 以可读形式同时展示**键路径**（如
+`harness.providers.kimi.model`）与消息；范围外的 warning（主题、编辑器、vault 等）MUST NOT
+倒进本面板。整文件回落或文件不可解析时，面板顶部 SHALL 显示横幅并给出文件路径与解析错误
+位置；该横幅优先级高于字段级提示。
 
 保存状态（没有未保存的修改 / 有未保存的修改 / 保存中 / 已保存 / 需要修正 / 外部冲突）
 SHALL 以可见文本呈现，并进入 `role="status"` 的 polite live region 供辅助技术宣告；
@@ -213,7 +263,8 @@ MUST NOT 只用颜色或图标表达。
 #### Scenario: 重复 id 回填到行
 
 - **WHEN** 模型清单里两行使用同一个 `id` 并保存
-- **THEN** 两行都标出错误、焦点落到第一行，状态行显示「需要修正」，文件不变
+- **THEN** **两行**的 id 控件都标 `aria-invalid="true"` 并各带重复原因，焦点落到第一行；
+  状态行显示「需要修正」，文件不变
 
 #### Scenario: 范围外 warning 不进面板
 
@@ -241,7 +292,8 @@ MUST NOT 只用颜色或图标表达。
 MUST NOT 只给一个笼统的「需重启」标记。两个命名开关的 provider / model 细项 MUST NOT 搬进
 本面板；它们失效时产生的诊断 SHALL 在自动化节顶部可见，并指明其配置文件路径。
 
-每个开关 SHALL 在键显式存在时提供「恢复默认」（删键）；键缺席时 SHALL 显示「默认」徽标。
+每个开关 SHALL 在键显式存在时提供「恢复默认」（删键），MUST NOT 在键缺席时显示该动作；
+键缺席时 SHALL 显示「默认」徽标。
 
 #### Scenario: 关闭自动压缩立即落盘
 
@@ -257,5 +309,6 @@ MUST NOT 只给一个笼统的「需重启」标记。两个命名开关的 prov
 #### Scenario: 默认与显式可区分
 
 - **WHEN** `harness.subagents.enabled` 键缺席（默认开），打开自动化节
-- **THEN** 该行开关为开，并显示「默认」徽标与「恢复默认」；用户显式关掉并保存后，徽标消失，
-  再点「恢复默认」保存后键被删除、徽标重新出现
+- **THEN** 该行开关为开，显示「默认」徽标，且 MUST NOT 显示「恢复默认」；用户显式关掉后
+  「恢复默认」出现、徽标消失；保存后仍是显式设置；再点「恢复默认」并保存后键被删除、
+  徽标重新出现、「恢复默认」再次消失

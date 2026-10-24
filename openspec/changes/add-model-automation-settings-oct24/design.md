@@ -79,7 +79,8 @@
 ```rust
 pub struct SettingsSnapshot {
     pub path: String,
-    pub file: SettingsFileState,          // Missing | Valid { revision } | Invalid { message, line, column }
+    pub file: SettingsFileState,          // Missing | Valid | Invalid { message, line, column }
+    pub revision: Option<String>,         // 非 Invalid 恒有：Missing 按空对象算；Invalid = None
     pub providers: Vec<ProviderSettings>, // 固定顺序 kimi, deepseek；mock 不出现
     pub automation: AutomationSettings,
     pub capabilities: SettingsCapabilities,
@@ -93,8 +94,15 @@ pub struct ProviderSettings {
     pub api_key: ApiKeyState,             // Unset | Set { hint: Option<String> }（末 4 位；永不回传完整值）
     pub models: Vec<ModelDraft>,          // raw 条目，含会被 validate 丢弃的坏项
     pub base_url: FieldState<String>,     // Absent | Present(raw)
-    pub wire_api: FieldState<WireApi>,
-    pub effective: ProviderEffective,     // model / 生效 base_url（官方值或自定义）/ 生效 wire_api / 有效模型清单
+    pub wire_api: FieldState<serde_json::Value>, // raw 原 JSON 值（正常是字符串；非法值也保留）
+    pub effective: ProviderEffective,     // model / 生效 base_url / 生效 wire 方言 / 有效模型清单
+}
+
+pub struct ProviderEffective {
+    pub model: String,
+    pub base_url: String,                 // 官方值或自定义
+    pub wire_api: WireApi,                // 生效方言（`FieldState` 里的 raw 值可能是非法字符串）
+    pub models: Vec<HarnessModelSpec>,
 }
 
 pub struct ModelDraft {
@@ -110,6 +118,14 @@ pub struct ModelDraft {
 - **raw vs 生效**：`FieldState` 的 `Absent` 与 `Present` 区分「键缺席（跟随默认）」与
   「显式写了值」；`effective` 单独给出装载后的读数。字段旁因此能显示「默认」徽标，
   「恢复默认」也有明确语义（删键，不是写死默认值）。
+- **`wire_api` 的 raw 与生效分开**：raw 字段承载文件里的**原 JSON 值**（正常是
+  `"responses"` / `"chat_completions"`；`"chat"` 这种闭集合外的字符串也原样保留），生效方言在
+  `effective.wire_api`。前端选择控件显示生效值，并在 raw 非法时旁注「文件里是「chat」，装载期
+  已回落 responses；保存会写为 responses」。MUST NOT 用生效枚举充当 raw 值——那会让「文件里有
+  非法字符串」这个状态在快照里消失，设置页一旦保存就会静默改写它。
+- **`revision` 在快照顶层**：所有非 `Invalid` 快照都有。文件缺失（`Missing`）把文件视为空对象、
+  按同一 revision 函数计算——首次接入正是「文件不存在」的主路径，前端必须有可填的
+  `base_revision`；`Invalid` 时为 `None`，保存禁用。计算口径与 apply 时「缺失 = 空对象」逐字相同。
 - **坏项不隐藏**：`models` 给的是 raw 条目（能读出多少给多少），`issues` 说明为什么装载期会
   丢它。MUST NOT 只给「生效清单」——那会让用户在设置页保存一次就静默清掉文件里的坏项。
 - **API Key 永不回传**：`ApiKeyState::Set { hint }` 至多带末 4 位。完整 Key 已经明文存在
@@ -174,19 +190,19 @@ pub struct SettingsApplyOutcome {
 ```text
 1. 取 CONFIG_WRITE_LOCK
 2. 严格读 config.json：
-     不存在        → 视为空对象（首次启动）
+     不存在        → 视为空对象（首次启动；快照的 revision 同样按空对象计算）
      JSON 解析失败 → status = FileInvalid，文件不动，返回解析 error（line/column）
      非对象        → FileInvalid
 3. 反序列化为 RawConfig：
      失败 → status = FileInvalid（整个文件在装载期也会回落，不能盲写）
-4. baseline = validate(raw) 的诊断
+4. baseline = validate(raw) 的诊断（只用于非阻断 warning 的对照与未改路径豁免）
 5. revision(raw) != patch.base_revision → status = Conflict，文件不动
 6. 把 patch 合并到 raw JSON（只改 patch 指定的路径）→ candidate
 7. 反序列化 candidate 为 RawConfig：
      失败 → status = Blocked（只能是 patch 引入的；baseline 已能解析）
 8. diagnostics = validate(candidate).diagnostics
-9. 非回归判据（§5.4）：任何**新增的阻断级诊断**与 patch 改动路径相交 → status = Blocked，
-   文件不动，errors 回填到具体字段
+9. 非回归判据（§5.4）：任何与 patch 改动路径相交的阻断级诊断 → status = Blocked，
+   文件不动，errors 回填到具体字段（不看 baseline 是否已有同一条）
 10. 原子写 candidate（tmp + sync + rename，复用 write_file_atomic）
 11. 释放锁；返回 status = Applied + 重新读出的 SettingsSnapshot
 ```
@@ -218,7 +234,11 @@ revision = sha256(canonical_json({
 - 只覆盖**设置面拥有的字段**：`providers.<id>.model`（chip 的写回）、`harness.provider`、
   权限档、主题等都不在 revision 里。否则用户在别处切一次模型就会让设置页报冲突。
 - `models` 的 raw 数组整体入 hash（含未知子键），所以外部改任何一条都会触发冲突。
+- `wire_api` 入 hash 的是 **raw JSON 值**（含非法字符串），不是生效枚举；否则「文件里的
+  `"chat"` 被外部改成 `"chatty"`」这类变化不会触发冲突。
 - `api_key` 也入 hash：外部改了 Key，保存时必须让用户知道。
+- `revision` 是快照顶层字段：`Missing` = 把文件视为空对象后按同一 canonical 函数计算（与 apply
+  时缺失文件的处理同一口径）；`Valid` = 当前文件；`Invalid` = `None`。
 
 ### 5.3 未知子键保留（Q6）
 
@@ -254,13 +274,24 @@ revision = sha256(canonical_json({
 - `harness_base_url_empty`（空串是显式错误输入；「用官方地址」应发 `Reset`）
 - `settings_unknown_field`
 
-**放行规则**：candidate 里**新增**的阻断级诊断（同 code + path + message 在 baseline 里不
-存在）与 `changed_paths` 相交 → 整笔 Blocked。baseline 里已经存在且逐字不变的诊断不阻断
-——既有坏配置不该让用户连别的开关都保存不了。
+**放行规则**：candidate 中**任何**阻断级诊断，只要路径与 `changed_paths` 相交，整笔 Blocked
+——**不看 baseline 是否已有同一条诊断**。baseline 只用来豁免**未改路径**上的既有诊断：未改
+路径上的坏值保持原样、不阻塞本次改动（例如 provider A 已有一条越界 window，用户只切 provider B
+的开关 → 允许）。
+
+这条规则必须「看 candidate × changed paths」，不能退化成「看新增诊断」：窗口越界的所有取值
+（`0`、`10000001`、非整数）在 `config.rs:3297-3300` 产出**同一 code / path / message**。
+既有 `window: 0` 被改为 `10000001` 时，按「新增诊断」判据完全看不出来，但它确实与改动路径
+相交，必须拒绝。三条判据样例：
+
+| baseline | patch | 期望 |
+|---|---|---|
+| 同一项 `window: 0` | 同一项改为 `10000001` | Blocked（非法 → 另一种非法也拒） |
+| 同一项 `window: 0` | 同一项改为 `262144` | Applied（非法 → 合法） |
+| provider A 已有非法项 | 只切 provider B 的某个开关 | Applied（未改路径豁免） |
 
 非阻断诊断（Warning）不阻断保存，但随 `outcome.warnings` 返回并在面板上可见：
-`harness_models_empty_when_configured` 之外的空清单提示、`harness_provider_model_not_in_list`
-（删掉当前模型后的善后提示）、两个命名目标失效等。
+`harness_provider_model_not_in_list`（删掉当前模型后的善后提示）、两个命名目标失效等。
 
 **为什么不用「前端先校验」**：窗口区间、枚举表、id 唯一性若在 TS 再写一份，就是
 REVIEW.md『同一语义两处真源』条。前端只做输入整形（`type="number"`、trim、按
@@ -416,26 +447,36 @@ pub struct ConfigDiagnostic {
   （id / effort / vision / window / 删除）；行 hover `var(--hover)`；删除钮 16px 图标，
   静息 `--text-3`、hover `--danger`。
 - **默认徽标**：10.5px `--text-3`、`--r-pill`、`var(--hover)` 底；表示「键缺席，保存后显式写入」。
+- **逐项「恢复默认」**：字段头右簇里的 11px 文本钮，静息 `--text-3`、hover `--accent`；
+  **只在键显式存在时渲染**，键缺席时整枚按钮不出现（不是置灰）。模型行不提供逐项恢复
+  ——整表保存时四字段全显式。
 - **添加行**：整行文本钮「+ 添加模型」，11.5px `--accent`，左对齐。
 
 ### 10.3 屏位 3：高级区（展开）
 
 - 折叠触发器：11.5px `var(--text-2)` + 右侧 chevron（旋转 90° 表示展开）；行高 28px。
 - 内容缩进 0，字段之间 12px；Base URL 输入框占满宽。
+- **字段头右簇**：Base URL 右侧是「自定义 / 官方地址」状态 + 逐项「恢复默认」；Wire 右侧是
+  逐项「恢复默认」。两枚按钮都只在键显式存在时出现（见 10.2 的样式口径）。
 - **目的地警示**：1px `var(--pending)` 左边线 + 12px 内边距的浅底块（`--pending` 的
   10% 透明度；eink 用 1px 黑边、透明底），文案 11.5px `--text-2`：
   「带密钥的请求会发往这个地址。非官方地址意味着把它交给了该主机的运维者。」
   只在值与官方地址不同时出现；空值（跟随官方）时不出现。
 - **Wire 方言**：`<select>` 28px 高；被后端标记为不支持的选项 `disabled` + 行下 11px
   `--text-3` 说明（「deepseek 的 chat 档在 v1 未实现」）。
+- **raw 非法值提示**：raw `wire_api` 是闭集合外字符串时，选择控件显示生效值，下面加一块
+  11.5px `--text-2` 的提示：「文件中的值是「chat」，不是合法方言；装载期已回落为
+  responses，保存后写为 responses」。样式同目的地警示（`--pending` 左边线 + 浅底）。
 
 ### 10.4 屏位 4：自动化节
 
 - 每行两列：左列标题 13px / 500 + 描述 12px `--text-2` + meta 11px `--text-3`（时机 · 敏感性）；
-  右列开关。行高 ≥ 56px，行间 1px `--border-soft` 分隔。
+  右列 = 逐项「恢复默认」（11px 文本钮）+ 开关，两者横排、间距 6px。行高 ≥ 56px，行间
+  1px `--border-soft` 分隔。
 - **开关**：32×18 轨道、14px 圆钮；关 = `var(--border)` 轨道 + `var(--preview-bg)` 钮；
   开 = `--accent-fill` 轨道 + 白钮；eink 开 = 黑底白钮、关 = 白底 1px 黑边。焦点环同全局。
-- **默认徽标**与「恢复默认」同 10.2；显式设置后徽标消失。注意两处语义不同：自动化开关的
+- **默认徽标与逐项恢复默认**：键缺席时显示「默认」徽标、MUST NOT 显示恢复按钮；显式设置后
+  徽标消失、恢复按钮出现；点恢复默认后徽标回来、按钮消失。注意两处语义不同：自动化开关的
   「默认」= 键缺席且继续保持缺席；模型行的「未声明」= 字段缺席、保存后按默认值显式写入。
 - **重启提示**：图片命名行在「关→开」方向显示 11px `--pending` 文本「重新开启需重启应用」；
   其余方向不显示。
@@ -450,8 +491,9 @@ pub struct ConfigDiagnostic {
 - **横幅**（顶部，正文之上）：圆角 `--r6`、1px 边、12px 文本、`padding: 8px 12px`；
   危险档 `--danger` / `--danger-tint`，提示档 `--pending` / 10% 底。冲突横幅带两枚动作
   （「重新载入」「仍然保存」）；文件损坏横幅只有说明与路径，无动作。
-- **保存中**：保存钮文案变「保存中…」并禁用；正文控件不禁用（允许继续编辑，但再次保存
-  被拒）；完成前不显示成功状态。
+- **保存中**：保存钮文案变「保存中…」并禁用；**全部编辑控件禁用或只读**（输入 / 选择 /
+  开关 / 模型行增删 / 逐项恢复默认 / 页级还原 / provider 切换 / 取消），避免请求期间的编辑
+  被返回快照覆盖；完成（成功或进入需修正）后解锁。完成前不显示成功状态。
 
 ### 10.6 屏位 6：关闭态与入口
 
@@ -468,23 +510,31 @@ pub struct ConfigDiagnostic {
 ## 11. 测试与验收计划
 
 - **Rust 单测**：
-  - snapshot：raw vs effective、键缺席 vs 显式、坏模型项可见、API Key 只回 hint、
-    `file = Invalid` 的只读形态。
+  - snapshot：raw vs effective（含 `wire_api` 的原 JSON 值与 `effective_wire_api`）、revision
+    在快照顶层（`Missing` = 空对象哈希、`Invalid` = `None`）、键缺席 vs 显式、坏模型项可见、
+    API Key 只回 hint、`file = Invalid` 的只读形态。
   - patch：类型拒绝未知字段、未知 provider、空 base_url、`Reset` 删键、`Clear` 删 Key、
     `models` 按 id 保留未知子键、重命名不跟随。
-  - 非回归：新增阻断诊断 → Blocked 且文件逐字节不变；baseline 已有的同一诊断不阻断；
-    `changed_paths` 相交判据（祖先 / 后代 / 相邻不误伤）。
+  - 非回归（三组必测）：① 同一项 `window: 0 → 10000001` → Blocked；② 同一项
+    `window: 0 → 262144` → Applied；③ provider A 既有非法项、只切 provider B 的开关 →
+    Applied（未改路径豁免）；外加 `changed_paths` 相交判据（祖先 / 后代 / 相邻不误伤）。
   - 并发：锁内 revision 比对（两笔并发 apply 只有一笔成功）；既有写入口改为锁内读后，
     `config_set_value` 与 `settings_apply` 并发不丢键。
   - 半配置：key + 空 models → Blocked；models + 空 key → Applied 且 `configured = false`。
 - **前端单测**（`pnpm test`）：
-  - 草稿状态机（clean / dirty / saving / saved / blocked / conflict）。
-  - 错误按 path 回填、首错聚焦、`aria-invalid` / `aria-errormessage` 同步。
+  - 草稿状态机（clean / dirty / saving / saved / blocked / conflict）；保存中全部编辑控件
+    禁用，保存完成后解锁。
+  - 错误按 path 回填、首错聚焦、`aria-invalid` / `aria-errormessage` 同步；重复 id 的
+    **两行**都标错。
+  - 逐项恢复默认仅在键显式存在时出现（Base URL / Wire 方言 / 四个开关），动作后徽标与
+    按钮同步。
+  - 诊断显示键路径；范围外 warning 不进入面板。
   - 开关 `role="switch"` + `aria-checked`；Space / Enter 可切换。
   - 关闭脏面板的两步确认；三条关闭路径。
   - 三主题 class / `data-theme` 切换不改变布局（结构性断言）。
 - **视觉场景**（`tests/visual`）：面板在 1280×800 与 900×700 下打开即完整可见
-  （O1 / O2）、无水平溢出、遮罩覆盖全窗、三主题各一屏；键盘 Tab 不逃出面板。
+  （O1 / O2）、无水平溢出、遮罩覆盖全窗、三主题各一屏 + 保存中（控件禁用）一屏；逐项恢复
+  默认只在键显式存在时出现；键盘 Tab 不逃出面板。
 - **验收场景**（真机套件）：
   - 打开设置 → 看到两个 provider 与四个开关；`⌘,` 与菜单两条入口都打开同一面板。
   - 未配置 Key 时发送 → 错误文案指向设置（不再是 `config.json`）。
@@ -500,6 +550,8 @@ pub struct ConfigDiagnostic {
 | 风险 | 缓解 |
 |---|---|
 | 设置页把非法值写进文件，导致整文件回落 | patch 强类型 + `RawConfig` 严格复解析 + 非回归阻断；文件不动时返回 Blocked（§5.1 / §5.4） |
+| 「非法值 → 另一种非法值」被 baseline 差异放行 | 非回归判据看 candidate × changed paths，不看是否新增（§5.4） |
+| 保存请求期间继续编辑被返回快照覆盖 | 保存中禁用全部编辑控件，保存完成后再解锁（§10.5 / settings spec） |
 | 多写者丢更新 | 读—改—写在 `CONFIG_WRITE_LOCK` 内；既有两个写入口一并收口（§5.1） |
 | check-then-write 竞态 | revision 比对与写入同一把锁（§5.1） |
 | 旧版 UI 洗掉未知子键 | models 按 id 合并未知键；其余节不在 patch 路径上（§5.3） |
