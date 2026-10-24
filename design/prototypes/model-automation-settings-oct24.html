@@ -161,12 +161,31 @@ kbd {
 .settings-body { min-height: 0; overflow: auto; padding: 0 var(--sp-10) var(--sp-9); }
 .section { padding-top: var(--sp-7); }
 .section + .section { margin-top: var(--sp-8); border-top: 1px solid var(--border-soft); }
+.section-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
 .section-title {
   font-size: var(--fs-label); font-weight: var(--fw-bold); letter-spacing: 0.08em;
-  color: var(--text-3); margin-bottom: var(--sp-4);
+  color: var(--text-3); margin-bottom: 0;
 }
+.section-note {
+  flex: none; max-width: 64%; font-size: var(--fs-label); color: var(--text-3);
+  text-align: right; line-height: 1.45;
+}
+.pane {
+  padding: var(--sp-6); border: 1px solid var(--border-soft); border-radius: var(--r8);
+  background: var(--preview-bg);
+}
+:root[data-theme="eink"] .pane { border-color: var(--border); }
+.fixed-note {
+  margin-top: var(--sp-3); font-size: var(--fs-label-s); color: var(--text-3); line-height: 1.55;
+}
+.fixed-note strong { color: var(--text-2); font-weight: var(--fw-medium); }
+.fixed-note .mono { font-size: 0.95em; }
 
 /* provider 分段控件 */
+.tabs-row { display: flex; align-items: center; gap: var(--sp-3); }
 .segment {
   display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r7);
   background: var(--hover);
@@ -288,7 +307,7 @@ kbd {
 :root[data-theme="eink"] .inline-warning { border: 1px solid var(--border); border-left-width: 3px; }
 
 /* 诊断与横幅 */
-#diagnostics { margin-top: var(--sp-4); }
+#model-diagnostics, #automation-diagnostics { margin-top: var(--sp-4); }
 .diag-callout {
   padding: 8px 10px; border-left: 2px solid var(--pending); border-radius: 0 var(--r4) var(--r4) 0;
   background: var(--pending-tint); font-size: var(--fs-label-s); color: var(--text-2);
@@ -307,8 +326,9 @@ kbd {
 .banner-actions { display: flex; gap: var(--sp-3); margin-top: var(--sp-3); }
 .banner-actions .btn { height: 26px; font-size: var(--fs-label-s); }
 
-/* 自动化 */
-#automation-list { margin-top: var(--sp-4); border-top: 1px solid var(--border-soft); }
+/* 自动化（全局节，独立 pane） */
+#automation-note { margin-top: 0; margin-bottom: var(--sp-3); }
+#automation-list { border-top: 1px solid var(--border-soft); }
 .auto-row {
   display: flex; align-items: center; justify-content: space-between; gap: var(--sp-6);
   padding: var(--sp-4) 0; border-bottom: 1px solid var(--border-soft);
@@ -449,14 +469,32 @@ kbd {
     <div class="settings-body">
       <div id="banner-slot"></div>
       <section class="section" aria-labelledby="sec-model">
-        <h2 class="section-title" id="sec-model">模型接入</h2>
-        <div class="segment" role="tablist" aria-label="模型 provider" id="provider-tabs"></div>
-        <div id="provider-panel" tabindex="-1"></div>
+        <div class="section-head">
+          <h2 class="section-title" id="sec-model">模型接入</h2>
+          <span class="section-note" data-provider-edit-note>按 provider 编辑接入参数 · 切换只换表单，不切换当前会话的 provider</span>
+        </div>
+        <div class="pane" id="model-pane">
+          <div class="tabs-row">
+            <div class="segment" role="tablist" aria-label="模型 provider" id="provider-tabs"></div>
+            <span class="badge" data-provider-fixed-badge>固定 2 项</span>
+          </div>
+          <p class="fixed-note" data-provider-fixed-note><strong>provider 固定两项</strong>：Kimi / DeepSeek（mock 不出现），不能增删；新增 provider 属于 schema 变更。</p>
+          <div id="model-diagnostics" hidden></div>
+          <div id="provider-panel" tabindex="-1"></div>
+          <p class="fixed-note" data-model-source-note><strong>模型清单来源</strong>：只来自 <span class="mono">config.json</span> 的 <span class="mono">harness.providers.&lt;id&gt;.models</span>；Lumir 不内置模型表。本原型为合成数据。</p>
+        </div>
       </section>
       <section class="section" aria-labelledby="sec-auto">
-        <h2 class="section-title" id="sec-auto">自动化</h2>
-        <div id="diagnostics" hidden></div>
-        <div id="automation-list"></div>
+        <div class="section-head">
+          <h2 class="section-title" id="sec-auto">自动化</h2>
+          <span class="section-note" data-automation-scope>全局 · 与所选 provider 无关；切换 provider 不会复制或改变这里</span>
+        </div>
+        <div class="pane" id="automation-pane" data-automation>
+          <p class="fixed-note" id="automation-note" data-automation-note>四个开关是 <span class="mono">harness.*</span> 下的全局键，不属于任何 provider。命名调用的 provider / model 覆盖项留在配置文件。</p>
+          <p class="fixed-note" id="naming-target-note" data-naming-target-note>命名调用目标：默认跟随当前会话的 provider 与它的生效模型；可在 <span class="mono">config.json</span> 的 <span class="mono">harness.session_naming</span> / <span class="mono">harness.attachment_naming</span> 下单独覆盖。每次只发往一个目标，不会对每个 provider 各做一次。</p>
+          <div id="automation-diagnostics" hidden></div>
+          <div id="automation-list"></div>
+        </div>
       </section>
     </div>
     <footer class="settings-foot">
@@ -512,7 +550,7 @@ kbd {
     <button type="button" class="cp-btn" data-toggle="advanced">展开 / 收起</button>
     <button type="button" class="cp-btn" data-toggle="reset">↺ 重置场景</button>
   </div>
-  <p class="cp-note">全部内容为合成数据：Key 只保留末 4 位提示，页面不含任何完整密钥。场景 / 主题 / provider 写回 URL 可刷新复现；页内交互不写 URL。截图用 <span class="mono">?panel=0</span> 关本面板。保存校验是为演示形态而模拟；实现里校验只在 Rust 一处（design §5）。</p>
+  <p class="cp-note">全部内容为合成数据：Key 只保留末 4 位提示，页面不含任何完整密钥；模型 id 也是合成数据，Lumir 不内置模型表。provider 固定两项、不能增删；四个自动化开关是全局键，不随 provider 切换变化。场景 / 主题 / provider 写回 URL 可刷新复现；页内交互不写 URL。截图用 <span class="mono">?panel=0</span> 关本面板。保存校验是为演示形态而模拟；实现里校验只在 Rust 一处（design §5）。</p>
 </div>
 
 <script>
@@ -619,7 +657,7 @@ function sceneSnapshot(scene) {
     s.providers.kimi.wireApiRaw = "chat";
     s.providers.kimi.wireApiPresent = true;
     s.diagnostics = [
-      { code: "harness_provider_model_not_in_list", path: "harness.providers.kimi.model", message: "当前模型 k3-256k 不在模型清单内：上下文窗口按 131072 保守估算，思考程度按不支持处理。" },
+      { code: "harness_provider_model_not_in_list", path: "harness.providers.kimi.model", message: "当前模型 k3-256k 不在模型清单内：上下文窗口按 131072 保守估算，effort 与 vision 按不支持处理。" },
       { code: "harness_session_naming_model_missing", path: "harness.session_naming.model", message: "会话命名的模型未在所选 provider 的清单内，已回落为当前生效模型。" },
       { code: "harness_wire_api_invalid", path: "harness.providers.kimi.wire_api", message: "取值「chat」非法（可选：responses、chat_completions），已回落为 responses。" },
     ];
@@ -846,25 +884,46 @@ function renderProviderPanel() {
   if (keyInput && keyRowValue) keyInput.value = keyRowValue;
 }
 
-function renderDiagnostics() {
-  const el = $("#diagnostics");
-  if (!state.diagnostics.length) {
+function isAutomationDiagnostic(path) {
+  return /^harness\.(session_naming|attachment_naming|auto_compact|subagents)\b/.test(path || "");
+}
+
+function diagnosticsHtml(entries) {
+  return `<div class="diag-callout">
+    <div class="diag-title">配置提示</div>
+    <ul>${entries.map((entry) => `<li>${entry.path ? `<span class="diag-path">${esc(entry.path)}</span>` : ""}${esc(entry.message)}</li>`).join("")}</ul>
+  </div>`;
+}
+
+function fillDiagnostics(selector, entries) {
+  const el = $(selector);
+  if (!entries.length) {
     el.hidden = true;
     el.innerHTML = "";
     return;
   }
   el.hidden = false;
-  el.innerHTML = `<div class="diag-callout">
-    <div class="diag-title">配置提示</div>
-    <ul>${state.diagnostics.map((entry) => `<li>${entry.path ? `<span class="diag-path">${esc(entry.path)}</span>` : ""}${esc(entry.message)}</li>`).join("")}</ul>
-  </div>`;
+  el.innerHTML = diagnosticsHtml(entries);
+}
+
+function renderDiagnostics() {
+  fillDiagnostics("#model-diagnostics", state.diagnostics.filter((entry) => !isAutomationDiagnostic(entry.path)));
+  fillDiagnostics("#automation-diagnostics", state.diagnostics.filter((entry) => isAutomationDiagnostic(entry.path)));
 }
 
 const AUTOMATION = [
-  ["auto_compact", "自动压缩", "上下文接近上限时压缩并开启新会话，旧会话文件完整保留。", "下一回合生效 · 产生一次模型调用"],
-  ["session_naming", "会话命名", "每轮完成后用模型生成一句会话名，替换首条消息截断的默认名。", "下一轮完成后生效 · 会话内容发送给 provider"],
-  ["attachment_naming", "图片命名", "粘贴图片时用视觉模型生成语义文件名；关闭后保留暂存名。", "关闭立即生效；重新开启需重启应用 · 图片与前后文发送给 provider"],
-  ["subagents", "子代理", "允许主对话派生并行子代理；关闭后所有委派被拒绝，是唯一的成本总开关。", "下一回合生效 · 每个子代理独立计费"],
+  ["auto_compact", "自动压缩",
+    "上下文接近上限时压缩并开启新会话，旧会话文件完整保留。",
+    "全局 · 下一回合生效 · 产生一次模型调用"],
+  ["session_naming", "会话命名",
+    "首轮生成；此后每 5 轮重估，话题漂移可提前（两次评估至少隔 3 轮）。失败按自然节奏重试，单飞行，结果异步落盘。",
+    "全局 · 从下一次触发点起生效 · 内容出域 + 一次便宜档调用"],
+  ["attachment_naming", "图片命名",
+    "每次粘贴新图时异步生成语义文件名；目标模型未声明 vision 时跳过、保留暂存名，不换模型。",
+    "全局 · 关闭立即生效；重新开启需重启应用 · 出域 + 一次视觉调用"],
+  ["subagents", "子代理",
+    "允许主对话派生并行子代理；关闭后所有委派被拒绝（子代理调用的总开关）。",
+    "全局 · 下一回合生效 · 每个子代理独立计费"],
 ];
 
 function renderAutomation() {
@@ -919,7 +978,7 @@ function renderBanner() {
 
 function statusText() {
   if (state.mode === "saving") return "保存中…";
-  if (state.mode === "saved") return state.attachmentTurnedOn ? "已保存 · 重启后生效" : "已保存 · 下一回合生效";
+  if (state.mode === "saved") return state.attachmentTurnedOn ? "已保存 · 重启后生效" : "已保存 · 按各行说明的时机生效";
   if (state.mode === "blocked") return `需要修正（${state.errors.length} 项）`;
   if (state.mode === "conflict") return "外部冲突：配置文件已在外部修改";
   if (state.mode === "fileInvalid") return "文件无法解析，保存已禁用";

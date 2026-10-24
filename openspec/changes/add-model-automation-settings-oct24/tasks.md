@@ -7,6 +7,8 @@
 - [x] 1.3 原型交互断言先写后实现并跑绿；light / dark / eink 关键屏截图落 `.local/reviews/model-automation-settings-oct24/`
 - [x] 1.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与 `scripts/docs-check.sh` 通过
 - [x] 1.5 r1 返修：非回归改为「candidate 与改动路径相交即拒」、revision 提到快照顶层、raw `wire_api` 与生效值分离、原型补逐项恢复默认 / 诊断路径 / 重复 id 两行 / 保存中禁用编辑控件；补断言与截图
+- [x] 1.6 r2 语义纠偏（M704）：四个自动化开关移出 provider 表单、改为独立全局节；会话命名按真实调度描述（首轮 / 5 轮周期 / 漂移提前 / 任两次评估至少 3 轮 / 失败按自然节奏 / 单飞行 / 异步落盘）；命名目标写明「默认跟随当前会话、可单独覆盖、每次只调用一个目标、不对每个 provider 各做一次」；图片命名写明 vision 资格与跳过后果；模型清单来源写明 `config.json`、provider 固定不可增删
+- [x] 1.7 r2 机器反向断言：新增 `evidence/prototype-semantics-check.mjs`（静态 + 浏览器 + 负向对照），覆盖自动化不随 provider 切换重复或改归属、文案无「每轮生成」、模型来源明确 `config.json`、无增删 provider 暗示；三主题截图重截并同步主仓评审副本
 
 ## 2. 配置层（Rust）
 
@@ -22,13 +24,15 @@
 ## 3. 前端
 
 - [ ] 3.1 命令 `app.settings-open`（global、默认 `⌘,`）+ 应用菜单「设置…」项（无 accelerator、结构假设失败降级）
-- [ ] 3.2 `src/settings-panel.ts`：模态面板、provider 切换、基础区 / 高级区、模型清单行编辑、四个开关、逐项恢复默认（Base URL / Wire / 四开关，仅显式存在时出现）、页级「还原默认」
+- [ ] 3.2 `src/settings-panel.ts`：模态面板、provider 切换（只换编辑面，不写 `harness.provider`）、基础区 / 高级区、模型清单行编辑、四个开关、逐项恢复默认（Base URL / Wire / 四开关，仅显式存在时出现）、页级「还原默认」
 - [ ] 3.3 草稿状态机：clean / dirty / saving / saved / blocked / conflict / file-invalid；保存中禁用全部编辑控件（输入 / 选择 / 开关 / 行增删 / 页级还原 / provider 切换 / 取消），保存完成后再解锁；保存后用返回值重建基线
 - [ ] 3.4 可访问性：背景 `inert`、`role="dialog"` + `aria-modal`、焦点圈定与交还、三条关闭路径、脏面板两步确认、`role="status"` polite live region
 - [ ] 3.5 字段错误按 path 回填、`aria-invalid` / `aria-errormessage`、首错聚焦；诊断显示键路径；重复 id **两行**都标错；顶部横幅（回落 / 文件不可解析 / 冲突 + 两个动作）
-- [ ] 3.6 文案：新增设置面文案；D402 / D403 / D404 从「去 `config.json`」改为「去设置面板」并补 `vision`；config warning 与 `harness_model_missing` 的字段清单补 `vision`
+- [ ] 3.6 文案：新增设置面文案；D402 / D403 / D404 从「去 `config.json`」改为「去设置面板」并补 `vision`；config warning 与 `harness_model_missing` 的字段清单补 `vision`；模型接入写明 provider 固定不可增删、模型清单只来自 `config.json`；会话命名按 design §9.2 写全节奏、图片命名写明 vision 资格与跳过后果
 - [ ] 3.7 面板关闭后 chip 重新取数一次（沿用 `configGet`），不引入全局配置状态层
 - [ ] 3.8 样式按 design §10 的 token 口径落地（含 eink 1.4px 边框 / 无阴影 / 黑白开关）
+- [ ] 3.9 自动化节独立成全局卡片（与模型接入卡片平级），`setProvider` / 编辑面切换 MUST NOT 重渲染或复制自动化节；命名行走查目标说明行
+- [ ] 3.10 保存状态文案不得写成「每轮生成」「下一轮必定生效」；统一为「已保存 · 按各行说明的时机生效」（图片命名关→开命中时仍提示重启）
 
 ## 4. 文档与规格
 
@@ -50,3 +54,5 @@
 - [ ] 5.8 新增验收场景：`⌘,` 与菜单打开同一面板；首次接入（Key + 模型）保存后 chip 出现该 provider；越界窗口保存被拒且文件逐字节不变；非法换另一种非法同样被拒；重复 id 两行都标错；逐项恢复默认仅显式存在时出现；保存中编辑控件禁用；外部修改冲突；未保存关闭两步确认
 - [ ] 5.9 真机验收套件全量跑一遍，证据落 `.local/acceptance/`
 - [ ] 5.10 全程只用合成 Key（形如 `test-key-…`）；MUST NOT 读取或写入真实 `~/.config/lumir` 与真实 vault
+- [ ] 5.11 原型语义回归：`node openspec/changes/add-model-automation-settings-oct24/evidence/prototype-semantics-check.mjs` 全绿（静态 + 浏览器 + 负向对照）
+- [ ] 5.12 前端单测补反向文案断言：自动化不随 provider 切换重复 / 文案无「每轮生成」/ 模型来源写明 `config.json` / 无增删 provider 暗示
