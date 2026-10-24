@@ -1,7 +1,7 @@
 # harness 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 ADDED，基线是 living spec
-> [openspec/specs/harness/spec.md](../../../../specs/harness/spec.md)。内容全屏的**呈现与关闭路径**
+> [openspec/specs/harness/spec.md](../../../../../specs/harness/spec.md)。内容全屏的**呈现与关闭路径**
 > 不在本增量里重新定义——它们是 `editor-live-preview` 的「表格放大全屏」/「代码块放大全屏」既有
 > 条款，本增量只规定「harness 面板里的代码块与表格 SHALL 复用同一套能力」及其入口与流式口径。
 > 取值与取舍见 [design.md](../../design.md) §7 的 D1–D5。
