@@ -1,7 +1,7 @@
 # harness 增量规格（M671）
 
 > 起草注记（非规格正文）：一条 MODIFIED，基线是 living spec
-> [openspec/specs/harness/spec.md](../../../../specs/harness/spec.md) 的「混排对话输入区」。
+> [openspec/specs/harness/spec.md](../../../../../specs/harness/spec.md) 的「混排对话输入区」。
 > 相对基线只有两处新增：① 正文里补一句**焦点移交**（三类卡片插入后键盘落点在输入区）；
 > ② 一条新 Scenario（插入后直接键入）。其余文字逐字保留——本 change 不改混排输入区的任何其它语义。
 
