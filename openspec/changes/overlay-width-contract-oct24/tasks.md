@@ -10,8 +10,11 @@
 - [x] 0.1 起草 `proposal.md` / `design.md` / `specs/ui-design-system/spec.md` / 本文件
 - [x] 0.2 依据 M698 只读 survey（`.local/reports/m698-overlay-width-audit-oct24.md`）落三档数值、
       W1–W6 与逐组件目标；Alex 两张截图（m1 ⌘P 截断 / m2 ctxpop 折行）记为节点 1 来源
-- [ ] 0.3 Alex 节点 1 评审通过（硬门禁；D1–D5 一并裁决，未回的按提案里的倾向落地）
-- [ ] 0.4 裁决结果回填 proposal 的「评审记录」块（逐字），按裁决修正 design 与 delta
+- [x] 0.3 Alex 节点 1 评审通过（硬门禁；D1–D5 一并裁决，未回的按提案里的倾向落地）
+      —— 2026-10-24 Alex 原话「现在就认可。」：D1–D5 全部按提案「倾向」侧落地，无否决项
+- [x] 0.4 裁决结果回填 proposal 的「评审记录」块（逐字），按裁决修正 design 与 delta
+      —— 原话已回填 proposal 开头评审记录块与「节点 1 追认材料」；无否决项 ⇒ design / delta 零改动。
+      节点 2（归档评审）仍未开始，不在本次回填范围内
 
 ## 1. 几何 helper（`src/overlay-placement.ts`）
 
@@ -57,7 +60,8 @@
 - [x] 6.4 resize 后重夹：拖分隔条后浮层仍在 pane 内
 - [x] 6.5 ctxpop 既有像素基线：本方案靠组件下限 224px 兜住短内容；实测长读数档仍有漂移，
       已先给 Alex 过目再重截——`m347-ctxpop-cache-metrics-chromium-darwin.png` 225×103 → 262×67
-      （同批 toc ×2 300→325，code-outline-popover 待确认后补；M702 提交 `18bc031e` / `22229b71`）。
+      （同批 toc ×2 300→325；`code-outline-popover` 300×209 → 325×209，同日补批。四张均经
+      Alex 过目批准；M702 提交 `18bc031e` / `22229b71`）。
       **禁止自行 `--update`**（`tests/visual/README.md` 的人肉裁决点）
 
 ## 7. 真机验收
