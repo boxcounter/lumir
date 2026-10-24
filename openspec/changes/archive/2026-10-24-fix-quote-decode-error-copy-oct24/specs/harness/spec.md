@@ -1,7 +1,7 @@
 # harness 增量规格（M680）
 
 > 起草注记（非规格正文）：一条 ADDED，基线是 living spec
-> [openspec/specs/harness/spec.md](../../../../specs/harness/spec.md)。本增量依附于活跃 change
+> [openspec/specs/harness/spec.md](../../../../../specs/harness/spec.md)。本增量依附于活跃 change
 > `quote-pipeline-consistency-oct24` 的「引用失败的留痕与引用语境反馈」——那条已经立下「失败人话
 > 按调用点分码」的原则，但只覆盖了格式不支持；该 change 尚未归档，故本 change 不能 MODIFIED
 > 它，只能 ADDED 一条并列的 requirement。缺口来源是 change `svg-image-quote-oct24` 的
