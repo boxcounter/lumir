@@ -37,6 +37,17 @@
 
 **外部前置（不计入本批 11 项）**：`harness-permission-rules-oct23`（M649，33/36）须先归档——4.3 已至少被 229 真机 PASS（31 断言，2026-10-24T01:59Z）覆盖，是否足以勾选由 M649 属主按任务原文（「真机跑一遍套件」）裁定；6.2 是归档时改 Purpose。`add-harness-block-fullscreen`（✓ Complete）先归档可消掉序 2 的悬空引用（非硬约束）；`quick-open-file-oct23`（40/42）同理，其 delta 自注「归档顺序无关」；`semantic-selection-markdown-oct23`（1/29，节点 1 未过）不进队列。
 
+## 归档跟踪队列（补账：M684 引入门禁时补登 6 项）
+
+以下 6 个 change 在 `openspec list` 里已是 ✓ Complete（tasks 全勾），但此前从未进任何队列——M684 把「tasks 全勾的活跃 change 必须有且仅有一条队列条目」做成机器判据（`scripts/openspec-archive-check.mjs`，随 `scripts/docs-check.sh` 进 `gate.sh quick` 与 CI）后逐项补登。本小节只登台账与可核事实：不作归档顺序主张，同 requirement 冲突与先后由节点 2 / tower 排期时核对。
+
+- **`add-cron-runtime-daemon`**（M568–M625，48/48）：节点 1 通过（2026-10-18 Alex「通过。」）；待 Alex 节点 2。
+- **`add-image-file-preview`**（M629，33/33）：proposal 的节点 1 记录仍写「待 Alex 评审」（记录未回填，本条目不改评审记录）；待 Alex 节点 2。
+- **`add-sidebar-resize-hide-and-root-create`**（M631，31/31）：节点 1 通过（2026-10-23「change 提案都通过」）；待 Alex 节点 2。
+- **`add-harness-block-fullscreen`**（M634，24/24）：proposal 的节点 1 记录仍写「待 Alex 评审」（记录未回填）；上文「外部前置」段对它的提及不是台账条目，本条才是；待 Alex 节点 2。
+- **`surface-cron-notify-failure`**（M635，25/25）：节点 1 立项（2026-10-23 Alex「安排。」）；待 Alex 节点 2。
+- **`vault-patch-hidden-deny-oct24`**（M656，12/12）：节点 1「Alex 已点头立项」（2026-10-24「安排」）；待 Alex 节点 2。
+
 ## 待 Alex 裁决
 
 只收**价值取舍 / 产品语义**类（客观可核的题由 tower 裁并记录，见维护规则）。
