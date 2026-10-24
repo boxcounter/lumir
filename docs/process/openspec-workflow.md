@@ -15,7 +15,7 @@ validate --all --strict + CI 门禁 + 独立 reviewer clean/merge ──► 提�
 openspec archive（并入 living spec） ◄────────────────────────────────────────┘
         │
         ▼
-归档后强制完成：`--archived` 审计 PASS + 记录（不 PASS 不算完成）
+归档后强制完成：提交归档结果 → `--archived` 审计 PASS + 记录（不 PASS 不算完成）
 ```
 
 一个 change 对应一个 PR 序列：提案 PR 与实现 PR 可以合并为一个 PR（小型变更），也可以拆开（提案先行锁定意图）。判断标准：Alex 是否需要在实现前就裁决"做不做"。需要则拆开。
@@ -52,13 +52,14 @@ openspec archive（并入 living spec） ◄────────────
 **归档后的强制完成步骤**（不属于五要件，而是归档本身的收尾；缺一步归档不算完成）：
 
 1. 执行 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，living spec 并入 `openspec/specs/`。纯目录移动（delta 与 living 逐字相同）时记下输出 `Specs already in sync; no files changed`（1.12.0 原文）。
-2. 紧接着跑 `node scripts/openspec-archive-check.mjs --archived <change-id>`，必须输出 `PASS`（用归档提交的前后快照核对 delta 的每个段落都完整落进了归档后的 living spec，无静默丢段）。
-3. `--archived` 不 PASS ⇒ **归档不算完成**：按脚本指出的缺失段落从归档提交的前后快照恢复，复跑审计至 PASS；不得用「已归档」或「历史归档」搪塞。批次收尾宣称完成前，本批每一次归档的 `--archived` 都必须 PASS——这是归档期唯一的丢段判据，归档前要件 5 证不到这一段。
+2. **提交归档结果**：把归档目录（`openspec/changes/archive/<日期>-<change-id>/`）与并入后的 living spec（`openspec/specs/**`）一起提交。`--archived` 不是读工作区 diff——它用 `git log --diff-filter=A` 定位归档目录 `proposal.md` 的首次加入提交，再读该提交与其父提交的 living spec（`scripts/openspec-archive-check.mjs:489-493`、`:510-518`）；**未提交时它必然 FAIL**「无法在 git 历史里定位…归档提交」。
+3. **归档提交后**跑 `node scripts/openspec-archive-check.mjs --archived <change-id>`，必须输出 `PASS`（用归档提交的前后快照核对 delta 的每个段落都完整落进了归档后的 living spec，无静默丢段）。
+4. `--archived` 不 PASS ⇒ **归档不算完成**：按脚本指出的缺失段落从归档提交的前后快照恢复并提交补回，复跑审计至 PASS；不得用「已归档」或「历史归档」搪塞。批次收尾宣称完成前，本批每一次归档的 `--archived` 都必须 PASS——这是归档期唯一的丢段判据，归档前要件 5 证不到这一段。
 
 **归档记录要求（分两段写，写进 change 的 `proposal.md` 节点 2 块，沿用既有惯例）**：
 
 - **归档前**：五要件各自的事实与指针——节点 1 批准依据；reviewer 的 verdict、评审时 tip 与评审文件路径；tasks 完成数或放弃理由位置；门禁输出行与证据目录绝对路径（`.local/...`）；要件 5 的三项读数（archive-check 门禁模式、`validate --all --strict`、队列条目唯一）。
-- **归档后**：在同一块追加（或在该 change 的归档跟踪条目里给指针）`openspec archive` 的实际输出（纯目录移动记 `Specs already in sync; no files changed`）与 `--archived <change-id>` 的 PASS 读数及时间。
+- **归档后**：在同一块追加（或在该 change 的归档跟踪条目里给指针）归档提交的 hash、`openspec archive` 的实际输出（纯目录移动记 `Specs already in sync; no files changed`）与 `--archived <change-id>` 的 PASS 读数及时间。
 - 属有序链的写清链位置与前一环；命中例外、经 Alex 裁决后才归档的抄录原话与日期，机器放行的写「机器 + 独立评审放行（本节要件）」并列出关键读数——两种记录都不得只写「通过」。
 
 **首批适用现场**：权限链 `harness-permission-rules-oct23` → `readonly-allowlist-tightening-oct23` → `rg-zip-flags-dangerous-oct24`（同一 `harness` 权限 requirement 的三段 delta，后一环以前一环归档后的 living 为基线），以及共用该段 requirement 的 `add-cron-conversational-registration`（排在 `harness-permission-rules-oct23` 之后）。这条链**不再逐个走人肉节点 2**：每环按五要件放行，链序与链内例外裁决一次完成（见下节）。
@@ -67,7 +68,7 @@ openspec archive（并入 living spec） ◄────────────
 
 ## 归档节奏：批量裁决、材料与依赖（2026-10-25 Alex 裁决）
 
-- **有序 change 链一次批量裁决**：多个 change 改同一条 requirement、delta 叠成先后基线（后一环以前一环归档后的 living 为基线）时，它们是一条**有序链**。链的裁决一次做完：tower 把链内例外项合成一次送裁，Alex 一次回话覆盖整条链；各环达到五要件即按链序归档，不再逐环送裁。链序由 delta 基线决定，MUST 串行归档——乱序归档时，后落的那一环用自己更早的基线整块替换 living，把先落的一环的增量静默抹掉，而对账门禁对此无感（它只比活跃 delta 与当次 living，不回看已归档的历史）。每一环归档后先按「归档后的强制完成步骤」取得 `--archived` PASS，再归档下一环——前一环审计不 PASS，后一环的基线就不可信。
+- **有序 change 链一次批量裁决**：多个 change 改同一条 requirement、delta 叠成先后基线（后一环以前一环归档后的 living 为基线）时，它们是一条**有序链**。链的裁决一次做完：tower 把链内例外项合成一次送裁，Alex 一次回话覆盖整条链；各环达到五要件即按链序归档，不再逐环送裁。链序由 delta 基线决定，MUST 串行归档——乱序归档时，后落的那一环用自己更早的基线整块替换 living，把先落的一环的增量静默抹掉，而对账门禁对此无感（它只比活跃 delta 与当次 living，不回看已归档的历史）。每一环归档后先提交归档结果、取得 `--archived` PASS，再归档下一环——前一环审计不 PASS（或归档没提交、审计定位不到提交），后一环的基线就不可信。
 - **小变更合并送裁**：同一批里小型、无价值 / 行为裁决的 change 可以合并成一个评审包，一次过目同一节点（一批节点 1 一起送，或一批例外项一起送）。合并只减少往返次数，不改变裁决面，也不放宽「节点 1 在各自实现前批准」。
 - **材料不自动构成阻塞**：送裁材料（评审包、README、截图归档）在场不构成阻塞理由——归档默认走五要件通道，不因「材料已备好、等 Alex 看」而停。阻塞只来自两类事实：命中例外类别且未裁决，或门禁红灯未修。反过来，材料备齐也不等于放行：五要件缺一仍不归档。tower 排期不把「材料齐 / 待送裁」记成队列阻塞项（`docs/backlog.md` 归档跟踪队列只记跟踪项与真实阻塞理由）。
 - **依赖按真实文件冲突判**：mission 合并依赖按**实际改动的文件集**重叠判定（`git diff --name-only <base>...<branch>` 的交集），不按 mission scope 里声明的宽泛 glob——`tests/visual/**` 这类声明只用来画越界边界，不是依赖证据（现场：M722 因 M715 的 `tests/visual/**` 被判伪依赖，最终用无真实文件重叠的新 mission 承载同一提交）。伪依赖不得阻塞合并。change 归档顺序是另一回事：按 delta 基线依赖判，见上一条。
@@ -93,7 +94,7 @@ spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 
 > 归档对账声明：删除「<该段里 8 字以上的原样片段>」
 ```
 
-归档之后 MUST 对指定 change 做一次事后审计（用 git 里归档提交的前后快照核对是否真的丢了段落，已被人工恢复的只报 INFO）——这是「归档后的强制完成步骤」的第 2 步，输出 `PASS` 才算归档完成：
+归档结果提交后 MUST 对指定 change 做一次事后审计（脚本用 `git log` 定位归档提交、读该提交的前后快照核对是否真的丢了段落，已被人工恢复的只报 INFO）——这是「归档后的强制完成步骤」的第 3 步，输出 `PASS` 才算归档完成；未提交归档结果时脚本定位不到提交，必然 FAIL：
 
 ```
 node scripts/openspec-archive-check.mjs --archived <change-id>
@@ -133,7 +134,7 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 3. **提案 PR**：提交并在 PR 描述中 @ Alex 请求节点 1 评审。未通过则按批注修订，保持 change 不进入实现。
 4. **实现**：按 `tasks.md` 逐项实现并勾选（`- [x]`）。发现 proposal 意图需要变更时，停下：更新 proposal 并重新走节点 1，不静默扩 scope。**修复类 PR（收掉某个既有 backlog 条目）MUST 同批删除 `docs/backlog.md` 对应条目，reviewer 合并前核对本批 diff 是否带删除**——不把删除留给下一批清理。
 5. **归档放行**：tasks 全部勾选（或标注放弃原因）后，同一 PR 在 `docs/backlog.md` 的归档跟踪队列落一条记录（判据见「批次收尾 checklist（归档跟踪）」下的「归档队列的机器判据」——缺条目 / 重复条目会让 docs-check 报红），逐条核对「节点 2 五要件」并把记录写进 proposal 的节点 2 块；五要件齐即由 tower 归档，命中「必须找 Alex 的例外类别」才送裁。
-6. **归档与归档后审计**：五要件齐（例外项另经 Alex 裁决）后执行 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，living spec 自动并入 `openspec/specs/`；紧接着按上文「归档后的强制完成步骤」跑 `node scripts/openspec-archive-check.mjs --archived <change-id>` 并取得 `PASS`、把两次读数记进归档记录——**审计不 PASS 不算归档完成**。
+6. **归档与归档后审计**：五要件齐（例外项另经 Alex 裁决）后执行 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，living spec 自动并入 `openspec/specs/`；**提交归档结果**（归档目录 + living spec），再按上文「归档后的强制完成步骤」跑 `node scripts/openspec-archive-check.mjs --archived <change-id>` 并取得 `PASS`、把归档提交 hash 与两次读数记进归档记录——**归档提交后审计不 PASS 不算归档完成**。
 
 ## 批次收尾 checklist（归档跟踪）
 
