@@ -615,7 +615,7 @@ pub fn client_at(
                 return Err(CommandError::new(
                     "harness_model_missing",
                     format!(
-                        "当前 provider（{name}）未配置任何模型：请在 config.json 的 harness.providers.{name}.models 下逐项声明（{{\"id\", \"effort\", \"window\"}}）"
+                        "当前 provider（{name}）未配置任何模型：请在 config.json 的 harness.providers.{name}.models 下逐项声明（{{\"id\", \"effort\", \"vision\", \"window\"}}）"
                     ),
                 ));
             }

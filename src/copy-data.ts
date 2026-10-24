@@ -1154,8 +1154,8 @@ const COPY_TABLE = {
   // 读数的 hover hint。{provider} = 当前 provider id（配置值读数，不译文）。配置加载时
   // Rust 侧已给同名 warning，本句是界面上的可见出口。
   D402: {
-    zh: "配置未声明任何模型：请在 config.json 的 harness.providers.{provider}.models 下逐项声明（id / effort / window）",
-    en: "No models declared in config: add entries under harness.providers.{provider}.models in config.json (id / effort / window)",
+    zh: "配置未声明任何模型：请在 config.json 的 harness.providers.{provider}.models 下逐项声明（id / effort / vision / window）",
+    en: "No models declared in config: add entries under harness.providers.{provider}.models in config.json (id / effort / vision / window)",
   },
   // 合并 chip 读屏名的空清单态（D403，M381）：当前 provider 无可用模型（models 清单
   // 为空——见 D402）时 chip 的读屏名。可见面同口径：model 名与分隔符收起，只留
@@ -1170,8 +1170,8 @@ const COPY_TABLE = {
   // 渲染本句）。配置加载时的 warning（models 未声明）与界面提示态（D402）是它的
   // 同伴出口，三处同一语义。
   D404: {
-    zh: "当前 provider 未配置任何模型：请在 config.json 的 harness.providers 下为该 provider 的 models 逐项声明（id / effort / window）",
-    en: "The active provider has no models configured: declare entries under its models list in config.json (id / effort / window)",
+    zh: "当前 provider 未配置任何模型：请在 config.json 的 harness.providers 下为该 provider 的 models 逐项声明（id / effort / vision / window）",
+    en: "The active provider has no models configured: declare entries under its models list in config.json (id / effort / vision / window)",
   },
   // 批准闸终态记录（D405–D408，M384）：决策后卡片收敛为一行记录（工具名 + 结果词 +
   // 相对时间戳，实现 src/harness-panel.ts settleApprovalRecord）——待决标题（D339/D340）与

@@ -18,7 +18,7 @@
 | 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
 |---|---|---|---|---|---|
 | `version` | number | `1` | 当前 schema 版本 `1`；更高值 → 一条 warning + 按 v1 解释 | 启动装载读一次；写回时按写入纪律补齐（见 §3） | `config.rs:63`、`validate()` |
-| `last_vault` | string \| null | `null` | vault 绝对路径 | 启动时由 `restore_last_vault` 恢复；每次**打开 vault 成功**后回写 | `config.rs:72`、`commands.rs:380-389` |
+| `last_vault` | string \| null | `null` | vault 绝对路径 | 启动时由 `restore_last_vault` 恢复（`lib.rs:776`）；每次**打开 vault 成功**后回写（`commands.rs` 的 `remember_last_vault`） | `config.rs:149`、`commands.rs:708-726` |
 | `keys` | 对象：键位 → 命令 id（字符串）\| `null`（解绑） | `{}` | 键位非空且**不含空白**（含空白即多段 chord，本版不支持）；命令 id 非空字符串 | 启动装载读一次，覆盖到位后重挂键位分发器 | `config.rs:79`、`validate_keys()` |
 | `log.level` | string 枚举 | `"info"` | `"info"` \| `"off"` | 启动装载读一次（消费方 `logging.rs`，`off` 时事件丢弃不写盘） | `config.rs:245`、`validate_log()` |
 
@@ -87,10 +87,11 @@ token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定�
 
 | 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
 |---|---|---|---|---|---|
-| `ui.theme` | string 枚举 | `"light"` | `"light"` \| `"dark"` \| `"eink"` | 启动装载施加一次（写 `documentElement.dataset.theme`）；运行期由 `view.theme-cycle` / modeline 主题钮切换，**切换即回写本键** | `config.rs:209` |
-| `ui.content_width` | number | `760` | 闭区间 `[760, 1200]`，区间外回落 `760` + warning | 启动时装配一次；运行期由阅读栏拖拽推进，**松手回写本键** | `config.rs:216`、`:183-189` |
-| `ui.markdown_line_numbers` | string 枚举 | `"on-demand"` | `"on-demand"` \| `"always"` \| `"off"`，档外回落 `"on-demand"` + warning | **仅启动装载时读一次**（喂给编辑器的 md 行号 gutter 档位）；**运行期不回写、无切换命令** | `config.rs:240`、`:275`、`:576` |
-| `ui.language` | string 枚举 | `"en"` | `"en"` \| `"zh"`，档外回落 `"en"` + warning | 启动装载施加一次（写 `documentElement.lang`，文档与预览装饰按它取值）；运行期由 `view.language-cycle` / modeline 语言钮切换，**切换即回写本键** | `config.rs:248`、`:283`、`:600` |
+| `ui.theme` | string 枚举 | `"light"` | `"light"` \| `"dark"` \| `"eink"` | 启动装载施加一次（写 `documentElement.dataset.theme`）；运行期由 `view.theme-cycle` / modeline 主题钮切换，**切换即回写本键** | `config.rs:428`、`:2139-2149` |
+| `ui.content_width` | number | `760` | 闭区间 `[760, 1200]`，区间外回落 `760` + warning | 启动时装配一次；运行期由阅读栏拖拽推进，**松手回写本键** | `config.rs:435`、`:2152-2161` |
+| `ui.sidebar_width` | number | `236` | 闭区间 `[180, 480]`，区间外回落 `236` + warning | 启动时装配一次；运行期由左栏分隔条拖拽推进，**松手回写本键**；窗口过窄时的「按窗口四成再钳」是显示口径（前端做、不落盘） | `config.rs:441`、`:2166-2175` |
+| `ui.markdown_line_numbers` | string 枚举 | `"on-demand"` | `"on-demand"` \| `"always"` \| `"off"`，档外回落 `"on-demand"` + warning | **仅启动装载时读一次**（喂给编辑器的 md 行号 gutter 档位）；**运行期不回写、无切换命令** | `config.rs:447`、`:2180-2193` |
+| `ui.language` | string 枚举 | `"en"` | `"en"` \| `"zh"`，档外回落 `"en"` + warning | 启动装载施加一次（写 `documentElement.lang`，文档与预览装饰按它取值）；运行期由 `view.language-cycle` / modeline 语言钮切换，**切换即回写本键** | `config.rs:454`、`:2195-2208` |
 
 `ui.language` 是**界面文案的语言档**（change ui-language-i18n，M282；默认 `en`，Alex 2026-09-27 节点 1 裁决）。
 它只管**界面文案的取值列**：文档内容、frontmatter 值、文件名与路径、以及只进诊断日志 / 配置告警的文本
@@ -104,10 +105,10 @@ token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定�
 按 `⌥G`（`editor.goto-line`）打开跳转输入条时行号出现、输入条收起后隐藏；`always` = md 常驻显示行号；
 `off` = md 恒不显示。**code 模式的行号 gutter 恒常显，不读本键**。它没有运行期切换的落点，
 因此是「装载时读一次、运行期 MUST NOT 回写」的瞬态口径（同 `editor.font_size` / `editor.mode`），
-与上面两个**持久偏好**（主题 / 栏宽有切换落点、切换即回写）分属两类。
+与上面几个**持久偏好**（主题 / 阅读栏宽 / 左栏宽 / 界面语言都有运行期落点，切换或拖拽松手即回写）分属两类。
 
-`ui` 的这几个键与 `editor.font_size` 的差别是**持久偏好 vs 瞬态口径**：主题与栏宽是用户显式选择的结果，
-切换即回写（让下次启动的真源跟上运行态）；字号步进、折行翻转与 md 行号档位是瞬态显示口径，不落盘、
+`ui` 的这几个键与 `editor.font_size` 的差别是**持久偏好 vs 瞬态口径**：主题、阅读栏宽、左栏宽与界面语言
+是用户显式选择的结果，切换 / 拖拽松手即回写（让下次启动的真源跟上运行态）；字号步进、折行翻转与 md 行号档位是瞬态显示口径，不落盘、
 重启回到配置值。`ui` 是结构化表：表内取值非法 → 回落该字段 + warning；整表错形状（如 `"ui": "dark"`）或表内类型不符
 （如 `"theme": 2`、`"markdown_line_numbers": 2`、`"language": 2`）走整文件回落（见 §2）。
 
@@ -422,13 +423,26 @@ change 的 [design §9](../../openspec/changes/add-harness-subagents/design.md)�
 ## 3. 写回纪律：合并写，不写全量默认
 
 应用回写 `config.json` 时只做**单键合并**：读入整份 JSON → 改这一个键 → tmp 文件 + `rename` 原子替换
-（`commands.rs:391-431`）。由此两条性质：
+（表级入口是 `commands.rs:570-574` 的 `write_last_vault_to` 与 `:637-703` 的 `write_config_value_to`；
+落盘实现是 `config.rs:1831-1884` 的 `write_json_atomic` / `update_json_atomic`）。由此两条性质：
 
 1. **未知键原样保留**——写通道不认识 `future_field` 也不会把它删掉；
 2. **没写过的键始终缺席**，因此永远跟随出厂默认（而不是被钉死成写入当时的旧值）。
 
-当前只有四个键会被应用自身回写：`last_vault`（打开成功）、`ui.theme`（主题切换）、`ui.content_width`（栏宽拖拽松手）、`ui.language`（语言切换）。另有一个键由**交互会话里的 agent 工具**回写：`cron.tasks`（调度工具注册 / 删除任务，见 §1.8.1）——它走同一条「读—改—原子替换」通道，并且读、改、替换在同一把进程内写锁内完成（避免与上面四个键的并发写互相顶掉）。
-`version` 由写通道补齐，纪律是「仅在缺失或不高于当前 schema 时写入」（高版本配置不降回）。
+当前运行期会回写 `config.json` 的键（键 → 触发点）：
+
+- `last_vault` → 打开 vault 成功（`commands.rs` 的 `remember_last_vault`，`:708-726`；remap 短路不算打开）；
+- `ui.theme` → 主题切换（`view.theme-cycle` / modeline 主题钮，`src/main.ts:2908` 的 `configSetUiValue`）；
+- `ui.content_width` → 阅读栏宽拖拽松手（`src/main.ts:1525`）；
+- `ui.sidebar_width` → 左栏分隔条拖拽松手（`src/main.ts:1567`）；
+- `ui.language` → 语言切换（`view.language-cycle` / modeline 语言钮，`src/main.ts:2956`）；
+- `harness.provider` / `harness.providers.<id>.model` → 合并选择器的 provider / 模型切换（`src/harness-panel.ts:6102` / `:6124` 的 `configSetValue`）；
+- `harness.permission_mode` → 权限 chip 切换（`src/harness-panel.ts:6082`）；
+- `harness.permissions.allow` → 批准卡的「以后都允许」写规则、权限浮层的规则删除（`harness.rs:1783` / `:1812`）；
+- `cron.tasks` → **交互会话里的 agent 调度工具**注册 / 删除任务（§1.8.1；`cron.rs:1156-1160` / `:1226-1228`）。
+
+`harness.permissions.allow` 与 `cron.tasks` 的读、改、替换在同一把进程内写锁内完成（避免与其余键的
+并发写互相顶掉）。`version` 由写通道补齐，纪律是「仅在缺失或不高于当前 schema 时写入」（高版本配置不降回）。
 
 **不推荐**把全量默认写进 `config.json`（手写或让应用生成都不推荐）：那会把每个缺字段的「跟随出厂默认」
 钉死成写入当时的取值——出厂默认日后一变，配置文件仍按旧值跑，且 `config.json` 从「用户手编的输入面」

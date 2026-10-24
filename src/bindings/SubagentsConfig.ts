@@ -3,7 +3,10 @@
 /**
  * `[harness.subagents]` 表（change add-harness-subagents design §14）：子代理运行的开关与上限。
  *
- * **生效时点**：装载时读一次（改配置需重启；子代理**定义文件**与此不同，按回合扫描）。
+ * **生效时点**：**每个回合**发送时由命令入口现场重读配置（`harness_send` / `harness_cron_run`
+ * 各 `config::load()` 一次，随该回合的配置快照传入中枢）——改动**下一个回合**生效，不需要重启；
+ * 子代理**定义文件**另按回合扫描。`enabled=false` 时该回合的 `task` 工具不注册（面板任务区因此
+ * 自然不出现），定义与内建 `explore` 保留（关掉可随时打开，不需要删定义）。
  * **语义分层**：`enabled` 是 kill switch；`max_turns` / `max_tokens` / `timeout_secs` 是单次
  * 子运行的预算上限，也是定义字段的上限（冲突取小）；`max_subruns_per_turn` 是父回合的次数闸；
  * `max_concurrent` 是会话级并发许可数（同时是 provider 请求闸的许可数 - 1）——**并发不是预算**，

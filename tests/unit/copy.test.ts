@@ -181,6 +181,16 @@ test("两列同形条目（D77 / D80 / D114）不分语言", () => {
   }
 });
 
+test("模型声明指引：D402 / D404 的两列都按 id / effort / vision / window 四字段点名", () => {
+  // 与 `HarnessModelSpec` 的 schema 对齐（config.rs：id / effort / vision / window）。
+  // deck 漂移门禁只能保证两边一致，不能保证这份「怎么写」的指引本身没漏字段——
+  // 漏 vision 会让用户按提示声明三字段，图片能力永远判为不支持。
+  for (const key of ["D402", "D404"] as const) {
+    assert.ok(COPY[key].zh.includes("（id / effort / vision / window）"), `${key} 的中文列漏了四字段指引`);
+    assert.ok(COPY[key].en.includes("(id / effort / vision / window)"), `${key} 的 English 列漏了四字段指引`);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 3）t() / tPlural()：插值、缺参、复数
 // ---------------------------------------------------------------------------

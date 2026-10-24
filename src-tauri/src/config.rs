@@ -78,8 +78,8 @@
 //! `mock.fixture` 的空串是显式的空值输入，回落默认 + warning。
 //!
 //! M373 起 `[harness].providers.<id>` 暴露 **model 维度**：`models` 清单逐项 =
-//! `{ "id": "k3-256k", "effort": true, "window": 262144 }`（effort = 是否支持思考程度调节、
-//! window = 上下文窗口 tokens）。M381 起（Alex 终裁 2026-10-07「只显示配置里写的模型。
+//! `{ "id": "k3-256k", "effort": true, "vision": true, "window": 262144 }`（effort = 是否支持
+//! 思考程度调节、vision = 是否接受图片输入、window = 上下文窗口 tokens）。M381 起（Alex 终裁 2026-10-07「只显示配置里写的模型。
 //! 彻底不使用内置表」）模型清单、逐模型 effort 能力、上下文窗口**严格只来自配置声明**——
 //! 内置 preset 表（KIMI_MODEL_PRESET / DEEPSEEK_MODEL_PRESET）与出厂模型常量
 //! （DEFAULT_KIMI_MODEL / DEFAULT_DEEPSEEK_MODEL）全部退役，缺省不再回落任何内置清单，
@@ -802,7 +802,10 @@ impl Default for SessionNamingConfig {
 
 /// `[harness.subagents]` 表（change add-harness-subagents design §14）：子代理运行的开关与上限。
 ///
-/// **生效时点**：装载时读一次（改配置需重启；子代理**定义文件**与此不同，按回合扫描）。
+/// **生效时点**：**每个回合**发送时由命令入口现场重读配置（`harness_send` / `harness_cron_run`
+/// 各 `config::load()` 一次，随该回合的配置快照传入中枢）——改动**下一个回合**生效，不需要重启；
+/// 子代理**定义文件**另按回合扫描。`enabled=false` 时该回合的 `task` 工具不注册（面板任务区因此
+/// 自然不出现），定义与内建 `explore` 保留（关掉可随时打开，不需要删定义）。
 /// **语义分层**：`enabled` 是 kill switch；`max_turns` / `max_tokens` / `timeout_secs` 是单次
 /// 子运行的预算上限，也是定义字段的上限（冲突取小）；`max_subruns_per_turn` 是父回合的次数闸；
 /// `max_concurrent` 是会话级并发许可数（同时是 provider 请求闸的许可数 - 1）——**并发不是预算**，
@@ -3138,7 +3141,7 @@ fn validate_harness_provider(
     };
     if section_configured && models.is_empty() {
         warnings.push(format!(
-            "配置项 harness.providers.{provider}.models 未声明任何可用模型：模型选择器将显示提示态，请在 config.json 的 harness.providers.{provider}.models 下逐项声明（{{\"id\", \"effort\", \"window\"}}）"
+            "配置项 harness.providers.{provider}.models 未声明任何可用模型：模型选择器将显示提示态，请在 config.json 的 harness.providers.{provider}.models 下逐项声明（{{\"id\", \"effort\", \"vision\", \"window\"}}）"
         ));
     }
     let model = match raw.model.as_deref().map(str::trim) {
