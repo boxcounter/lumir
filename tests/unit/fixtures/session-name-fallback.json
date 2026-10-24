@@ -1,0 +1,132 @@
+{
+  "about": "会话名回落口径的跨层 fixture（M662，change quote-pipeline-consistency-oct24）：同一份素材同时钉住前端活态路径 src/harness-panel.ts 的 firstUserTextOf 与后端 src-tauri/src/harness.rs 的 first_paragraph_text。任一侧漂移，它自己那条单测就红。",
+  "cases": [
+    {
+      "name": "纯文本单段",
+      "blocks": [{ "kind": "paragraph", "text": "Q1" }],
+      "parts": [{ "kind": "text", "text": "Q1" }],
+      "expected": "Q1"
+    },
+    {
+      "name": "引用卡片在前、提问在后",
+      "blocks": [
+        {
+          "kind": "quote",
+          "card": {
+            "file": "notes/doc.md",
+            "heading": "H",
+            "headingPath": "H › H",
+            "lines": "3-5",
+            "text": "摘录 ![x](attachments/a.png) 正文"
+          }
+        },
+        { "kind": "paragraph", "text": "Q2" }
+      ],
+      "parts": [
+        {
+          "kind": "text",
+          "text": "<quote file=\"notes/doc.md\" heading=\"H\" lines=\"3-5\">摘录 ![x](attachments/a.png) 正文</quote>\nQ2"
+        }
+      ],
+      "expected": "Q2"
+    },
+    {
+      "name": "提问在前、引用卡片在后",
+      "blocks": [
+        { "kind": "paragraph", "text": "Q3" },
+        {
+          "kind": "quote",
+          "card": {
+            "file": "notes/doc.md",
+            "heading": "H",
+            "headingPath": "H › H",
+            "lines": "3-5",
+            "text": "摘录正文"
+          }
+        }
+      ],
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Q3\n<quote file=\"notes/doc.md\" heading=\"H\" lines=\"3-5\">摘录正文</quote>"
+        }
+      ],
+      "expected": "Q3"
+    },
+    {
+      "name": "段落-图片-段落：图片 part 是块边界，取第一段",
+      "blocks": [
+        { "kind": "paragraph", "text": "A" },
+        {
+          "kind": "image",
+          "card": { "name": "pasted-0123456789abcdef.webp", "sourceMime": "image/webp", "width": 640, "height": 360 }
+        },
+        { "kind": "paragraph", "text": "B" }
+      ],
+      "parts": [
+        { "kind": "text", "text": "A" },
+        { "kind": "image", "name": "pasted-0123456789abcdef.webp", "label": "Image 1" },
+        { "kind": "text", "text": "B" }
+      ],
+      "expected": "A"
+    },
+    {
+      "name": "多行段落：整段按空白折叠成单空格",
+      "blocks": [{ "kind": "paragraph", "text": "第一行\n第二行" }],
+      "parts": [{ "kind": "text", "text": "第一行\n第二行" }],
+      "expected": "第一行 第二行"
+    },
+    {
+      "name": "XML 实体还原",
+      "blocks": [{ "kind": "paragraph", "text": "a & b <c>" }],
+      "parts": [{ "kind": "text", "text": "a &amp; b &lt;c&gt;" }],
+      "expected": "a & b <c>"
+    },
+    {
+      "name": "只有卡片、没有问题段落：没有可作名的文本",
+      "blocks": [
+        {
+          "kind": "quote",
+          "card": {
+            "file": "notes/doc.md",
+            "heading": "",
+            "headingPath": "",
+            "lines": "1-1",
+            "text": "只有摘录"
+          }
+        }
+      ],
+      "parts": [
+        {
+          "kind": "text",
+          "text": "<quote file=\"notes/doc.md\" heading=\"\" lines=\"1-1\">只有摘录</quote>"
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "消息摘录卡片在前、提问在后",
+      "blocks": [
+        { "kind": "msgquote", "card": { "role": "user", "at": null, "text": "上一轮的问题" } },
+        { "kind": "paragraph", "text": "Q8" }
+      ],
+      "parts": [
+        {
+          "kind": "text",
+          "text": "<msg-quote role=\"user\">上一轮的问题</msg-quote>\nQ8"
+        }
+      ],
+      "expected": "Q8"
+    },
+    {
+      "name": "旧留存的单串 content（图片占位元素在文本里）",
+      "content": "Q9\n<image ref=\"pasted-0123456789abcdef.webp\" type=\"image/webp\"/>",
+      "expected": "Q9"
+    },
+    {
+      "name": "注入的编辑器上下文节不参与命名",
+      "content": [{ "type": "input_text", "text": "Q10\n\n[当前编辑器上下文：\n文件：notes/doc.md]" }],
+      "expected": "Q10"
+    }
+  ]
+}

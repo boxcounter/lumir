@@ -904,18 +904,127 @@ pub fn list_sessions(scope: &VaultScope) -> Result<Vec<session::SessionSummary>,
     Ok(summaries)
 }
 
-/// 会话名素材：文件内**第一条** `llm_request` 的首条 user 消息正文，剥掉自动注入的
-/// 上下文节（[`turn::strip_context_section`]）后返回（None = 该会话还没有用户消息）。
-/// 截断规则归前端——这里给未截断的提问段全文。
+/// 会话名素材：文件内**第一条** `llm_request` 的首条 user 消息里**第一段提问文本**；
+/// None = 该会话还没有可作名的用户文本（纯图片消息 / 无用户消息）。
 ///
-/// 剥离走后端（design §6.1「与标题栏会话名同口径」）：注入节的形态是
+/// 口径与前端活态路径 `firstUserTextOf`（`src/harness-panel.ts`）**逐条相同**（M662，change
+/// quote-pipeline-consistency-oct24，Alex 2026-10-24 反馈 #2）：
+///   - 第一个**非空段落**的文本，空白折叠成单空格、首尾去空白；
+///   - 卡片元素（`<quote>` / `<msg-quote>` / `<image …/>`）不作名——它们是块边界，
+///     也是 Alex 现场看到 `<quote file="…` 的直接来源（wire 原文进了回落名）；
+///   - XML 实体还原（段落正文在 wire 上是转义形态，前端拿到的是原文）。
+///
+/// 为什么在 parts 上走而不是先拼串：图片 part 把消息切成若干 text run（`projectDelivery` 的
+/// 投影），拼串会丢掉这个边界——[段落, 图, 段落] 拼起来是「前段后段」，取错段落。
+///
+/// 两侧共用同一份 fixture（`tests/unit/fixtures/session-name-fallback.json`）：前端
+/// `tests/unit/session-name-fallback.test.ts` 与本文 `tests` 模块的单测各读一遍同一个期望值——
+/// 这是「同一语义」在跨语言两层之间唯一可机器钉住的地方。
+///
+/// 上下文节剥离走后端（design §6.1「与标题栏会话名同口径」）：注入节的形态是
 /// [`turn::assemble_user_message`] 的产物，形态的单一真源在那里——前端不复制 marker 字面量。
 fn first_user_text(file: &jsonl::SessionFile) -> Option<String> {
     let request = file.records.iter().find(|r| r["kind"] == "llm_request")?;
     let messages = request["request"]["messages"].as_array()?;
     let message = messages.iter().find(|m| m["role"] == "user")?;
-    let text = message_content_text(message)?;
-    Some(turn::strip_context_section(&text).to_string())
+    first_paragraph_text(message)
+}
+
+/// wire user 消息 → 首个非空段落文本：content 既可能是 parts 数组（现行形态），也可能是
+/// 单串（旧留存）。各 text part 之间不拼串——part 边界本身就是块边界。
+fn first_paragraph_text(message: &serde_json::Value) -> Option<String> {
+    match &message["content"] {
+        serde_json::Value::String(text) => first_paragraph_in_text(text),
+        serde_json::Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .find_map(first_paragraph_in_text),
+        _ => None,
+    }
+}
+
+/// 一段 wire 文本 → 首个非空段落：先剥注入的上下文节，再按卡片元素切块，取第一块有文本的；
+/// 块内空白折叠、XML 实体还原。
+fn first_paragraph_in_text(text: &str) -> Option<String> {
+    let mut rest = turn::strip_context_section(text);
+    while !rest.is_empty() {
+        match next_card_split(rest) {
+            Some((before, after)) => {
+                if let Some(found) = collapse_question(before) {
+                    return Some(found);
+                }
+                rest = after;
+            }
+            None => return collapse_question(rest),
+        }
+    }
+    None
+}
+
+/// 找本段里第一个卡片元素的起点与它之后的位置：返回 `(元素之前的文本, 元素之后的剩余文本)`。
+///
+/// 只认序列化投影（`src/quote-card.ts` 的 `projectDelivery`）产出的三种元素形态。用户正文里的
+/// 同名文字在 wire 上已被转义（`&lt;quote …`），不会命中——因此不需要再区分「真元素 / 用户原文」。
+/// 元素不完整（缺收尾）时按「不是元素」处理（`None`）：宁可多一个角括号进名字，也不整段丢失。
+fn next_card_split(text: &str) -> Option<(&str, &str)> {
+    let candidates: [(usize, &str); 3] = [
+        (text.find("<quote ").unwrap_or(usize::MAX), "</quote>"),
+        (
+            text.find("<msg-quote ").unwrap_or(usize::MAX),
+            "</msg-quote>",
+        ),
+        (text.find("<image ").unwrap_or(usize::MAX), "/>"),
+    ];
+    let (start, terminator) = candidates
+        .iter()
+        .copied()
+        .filter(|(index, _)| *index != usize::MAX)
+        .min_by_key(|(index, _)| *index)?;
+    let tail = &text[start..];
+    let end = tail.find(terminator)? + terminator.len();
+    Some((&text[..start], &text[start + end..]))
+}
+
+/// 块文本 → 名字素材：空白折叠成单空格、去首尾空白；空块 → None。空白折叠在实体还原**之前**
+/// （实体还原不会造出空白）；XML 实体单次左到右消解（`&amp;lt;` 只还原成 `&lt;`，与
+/// `src/harness-panel.ts` 的 `unescapeXmlEntities` 同一口径）。
+fn collapse_question(text: &str) -> Option<String> {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    Some(unescape_xml_entities(&collapsed))
+}
+
+/// XML 实体单次左到右消解（`&amp;` 先不解，避免把 `&amp;lt;` 解成 `<`——那是用户原文 "&lt;"）。
+fn unescape_xml_entities(value: &str) -> String {
+    const ENTITIES: [&str; 4] = ["&amp;", "&lt;", "&gt;", "&quot;"];
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(index) = rest.find('&') {
+        out.push_str(&rest[..index]);
+        rest = &rest[index..];
+        match ENTITIES
+            .into_iter()
+            .find(|entity| rest.starts_with(*entity))
+        {
+            Some(entity) => {
+                out.push_str(match entity {
+                    "&amp;" => "&",
+                    "&lt;" => "<",
+                    "&gt;" => ">",
+                    _ => "\"",
+                });
+                rest = &rest[entity.len()..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// 从一条 wire 消息项取正文（[`session::user_item`] / [`session::assistant_item`] 的逆：
@@ -1942,6 +2051,88 @@ mod tests {
     /// 会话轮次的 `llm_request`（时间读数归属走查的素材）。
     fn conversation_request(messages: Vec<serde_json::Value>) -> serde_json::Value {
         serde_json::json!({"kind": "llm_request", "request": {"system": "S", "messages": messages}})
+    }
+
+    /// M662（change quote-pipeline-consistency-oct24）：会话名的回落口径，跨层同一份 fixture——
+    /// 前端 `firstUserTextOf`（`tests/unit/session-name-fallback.test.ts`）与这里各读一遍同一组
+    /// 素材与期望值。任一侧漂移，自己那条单测就红。
+    ///
+    /// 现场（Alex 2026-10-24 反馈 #2）：quote 会话的浮层行显示 `<quote file="…`——后端取的是
+    /// wire 原文，卡片元素与 XML 实体原样进了回落名；前端活态路径取的是段落原文。两侧口径
+    /// 一致后，标题事件到达时浮层行的「按上屏名改名」也才命中（旧名相等）。
+    #[test]
+    fn first_user_text_matches_shared_fixture() {
+        let raw = include_str!("../../tests/unit/fixtures/session-name-fallback.json");
+        let fixture: serde_json::Value = serde_json::from_str(raw).expect("fixture 是合法 JSON");
+        let cases = fixture["cases"].as_array().expect("cases 是数组");
+        assert!(!cases.is_empty(), "fixture 没有用例");
+        for case in cases {
+            let name = case["name"].as_str().unwrap_or("?");
+            let expected = case["expected"].as_str().map(str::to_string);
+            let content = match case.get("content") {
+                Some(content) => content.clone(),
+                None => {
+                    // parts → wire content（现行留存形态：text part + image part）。
+                    let parts = case["parts"].as_array().expect("parts 是数组");
+                    serde_json::Value::Array(
+                        parts
+                            .iter()
+                            .map(|part| {
+                                if part["kind"] == "text" {
+                                    serde_json::json!({"type": "input_text", "text": part["text"]})
+                                } else {
+                                    serde_json::json!({
+                                        "type": "input_image",
+                                        "image_url": format!(
+                                            "lumir-attachment://{}",
+                                            part["name"].as_str().unwrap_or("")
+                                        ),
+                                    })
+                                }
+                            })
+                            .collect(),
+                    )
+                }
+            };
+            let message = serde_json::json!({"role": "user", "content": content});
+            assert_eq!(first_paragraph_text(&message), expected, "case: {name}");
+            // 文件级入口（first_user_text）与单消息口径一致。
+            let file = jsonl::SessionFile {
+                first_ts: None,
+                session_open: serde_json::json!({}),
+                records: vec![conversation_request(vec![message])],
+                record_ts: vec![],
+            };
+            assert_eq!(first_user_text(&file), expected, "case: {name}");
+        }
+    }
+
+    /// 卡片元素不完整（缺收尾）时按「不是元素」处理：宁可把角括号写进名字，也不整段丢失。
+    #[test]
+    fn first_paragraph_text_keeps_malformed_card_text() {
+        let message = serde_json::json!({
+            "role": "user",
+            "content": "问 <quote file=\"x\">没有收尾",
+        });
+        assert_eq!(
+            first_paragraph_text(&message).as_deref(),
+            Some("问 <quote file=\"x\">没有收尾")
+        );
+    }
+
+    /// 没有用户文本的消息（纯图片 / 只有卡片）：回落值为 None（调用方显示「新会话」，不伪造）。
+    #[test]
+    fn first_paragraph_text_none_without_user_text() {
+        let image_only = serde_json::json!({
+            "role": "user",
+            "content": [{"type": "input_image", "image_url": "lumir-attachment://pasted-0123456789abcdef.webp"}],
+        });
+        assert_eq!(first_paragraph_text(&image_only), None);
+        let card_only = serde_json::json!({
+            "role": "user",
+            "content": "<image ref=\"pasted-0123456789abcdef.webp\" type=\"image/webp\"/>",
+        });
+        assert_eq!(first_paragraph_text(&card_only), None);
     }
 
     /// M460：逐项 ts 的**归属走查**（沿记录序，不猜时间）——user 项归它所属 `llm_request`

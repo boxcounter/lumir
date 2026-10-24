@@ -7,3 +7,5 @@ QALPHA 第一段：选中这一段时会连下面那张图一起引用。
 QOMEGA 第二段。
 
 ![缺图](image-quote-missing.png)
+
+![[image-quote-logo.svg]]

@@ -126,8 +126,18 @@ pub struct HarnessWrittenImage {
     pub height: u32,
 }
 
-/// 引用名形态校验：`pasted-<hash16>.<webp|jpg>`（读命令的唯一入口形态；design §5.4）。
+/// 落盘扩展名（`pasted-<hash16>.<ext>` 的 `<ext>`，从写入口的格式表派生——M662 收敛：可读
+/// 集合与可写集合是**同一张表**，不另立第二份清单）。`None` = 该扩展名不是本链路的落盘形态。
+fn stored_ext_of(ext: &str) -> Option<&'static str> {
+    fs_io::ATTACHMENT_TARGETS
+        .iter()
+        .map(|(_, _, stored)| *stored)
+        .find(|stored| *stored == ext)
+}
+
+/// 引用名形态校验：`pasted-<hash16>.<落盘扩展名>`（读命令的唯一入口形态；design §5.4）。
 /// 形状校验即路径逃逸防护——无分隔符 / 无 `..` 成分，拼进 vault 目录后不可能出界。
+/// 扩展名的合法集合取自写入口的格式表（`stored_ext_of`），两边不会漂。
 fn is_attachment_name(name: &str) -> bool {
     let Some(rest) = name.strip_prefix("pasted-") else {
         return false;
@@ -139,16 +149,15 @@ fn is_attachment_name(name: &str) -> bool {
         && hash
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-        && matches!(ext, "webp" | "jpg")
+        && stored_ext_of(ext).is_some()
 }
 
-/// 从内容寻址扩展名推回 MIME 子类型（读回 / 展开时渲染 `<img>` 与 data URL 用）。
-fn mime_of_name(name: &str) -> &'static str {
-    if name.ends_with(".jpg") {
-        "jpeg"
-    } else {
-        "webp"
-    }
+/// 从内容寻址扩展名推回 MIME 子类型（读回 / 展开时渲染 `<img>` 与 data URL 用）。扩展名集合
+/// 取自写入口的格式表（`stored_ext_of`）；`jpg` 是唯一「扩展名 ≠ 子类型」的落盘形态
+/// （jpeg 的标准扩展名），其余按扩展名直取。
+fn mime_of_name(name: &str) -> Option<&'static str> {
+    let ext = stored_ext_of(name.rsplit_once('.')?.1)?;
+    Some(if ext == "jpg" { "jpeg" } else { ext })
 }
 
 /// 解码图片字节尺寸（`image` crate 已在依赖树内——与转码原语同 crate）。
@@ -288,9 +297,12 @@ fn expand_image_refs_from(
             }
             let bytes = read_image_bytes_from(dir, name)?;
             let mut expanded = part.clone();
+            // 引用名形态已由 `read_image_bytes_from` 校验；`mime_of_name` 的 None 分支到此不可达
+            // （防御值取落盘默认子类型 webp，与旧口径一致）。
+            let subtype = mime_of_name(name).unwrap_or("webp");
             expanded["image_url"] = serde_json::json!(format!(
                 "data:image/{};base64,{}",
-                mime_of_name(name),
+                subtype,
                 fs_io::base64_encode(&bytes),
             ));
             // 本地字段只活在留存 / 装配面：wire part 只剩标准字段（剥掉 lumir_label）。
@@ -363,7 +375,9 @@ pub fn panel_text_of_content(content: &[serde_json::Value]) -> Option<String> {
                 lines.push(format!(
                     "<image ref=\"{}\" type=\"image/{}\"/>",
                     name,
-                    mime_of_name(name),
+                    // 未知扩展名（旧留存 / 坏数据）取落盘默认子类型：占位元素是人侧面，
+                    // 不因一个缺失读数丢掉整条消息。
+                    mime_of_name(name).unwrap_or("webp"),
                 ));
             }
             _ => {}
@@ -497,6 +511,41 @@ mod tests {
         ] {
             assert!(!is_attachment_name(bad), "{bad}");
         }
+    }
+
+    /// M662（change quote-pipeline-consistency-oct24）：读回侧的两处判定（名字形态 / MIME）
+    /// 从写入口的格式表派生——写入口加一个落盘扩展名而读回侧不跟的漂移在这里判红。
+    #[test]
+    fn read_side_derives_from_write_targets() {
+        let mut stored: Vec<&str> = fs_io::ATTACHMENT_TARGETS
+            .iter()
+            .map(|(_, _, ext)| *ext)
+            .collect();
+        stored.sort_unstable();
+        stored.dedup();
+        assert_eq!(
+            stored,
+            vec!["jpg", "webp"],
+            "落盘扩展名集合变了：同步读回侧与前端 TS 表"
+        );
+        for ext in stored {
+            // 表内每个落盘扩展名都可回读、且能推回 MIME 子类型。
+            let name = format!("pasted-0123456789abcdef.{ext}");
+            assert!(is_attachment_name(&name), "{name}");
+            assert!(mime_of_name(&name).is_some(), "{name}");
+        }
+        assert_eq!(
+            mime_of_name("pasted-0123456789abcdef.jpg"),
+            Some("jpeg"),
+            "jpg 是唯一「扩展名 ≠ 子类型」的落盘形态"
+        );
+        assert_eq!(mime_of_name("pasted-0123456789abcdef.webp"), Some("webp"));
+        assert_eq!(
+            mime_of_name("pasted-0123456789abcdef.png"),
+            None,
+            "未落盘的扩展名不推 MIME"
+        );
+        assert_eq!(mime_of_name("pasted-0123456789abcdef"), None);
     }
 
     #[test]

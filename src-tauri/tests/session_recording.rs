@@ -194,6 +194,11 @@ fn quote_and_thinking_script() -> &'static str {
 /// 与 M342 单测同形的合成引用消息（serializeQuoteMessage 的产物）：属性值含 XML 保留字符。
 const QUOTE_MESSAGE: &str = "<quote file=\"reading-workflow.md\" heading=\"筛选 &amp; 排序\" lines=\"9-10\">先读结论 &lt;再读论证&gt;</quote>\n这段是什么意思？";
 
+/// `QUOTE_MESSAGE` 作为会话名素材的期望值（M662，change quote-pipeline-consistency-oct24）：
+/// 卡片元素不作名——会话名取**首个问题段落**（与前端 `firstUserTextOf` 同口径）。修前这里
+/// 断言的是 wire 原文（含 `<quote …>` 与 XML 实体），那正是浮层行显示 `<quote file="…` 的来源。
+const QUOTE_MESSAGE_NAME: &str = "这段是什么意思？";
+
 /// 跑一轮「引用 + 思考 + 工具循环」的标准回合，返回（夹具, 留存文件路径）。
 fn run_quote_turn(name: &str) -> (Fixture, PathBuf) {
     let f = Fixture::new(name);
@@ -1231,7 +1236,8 @@ fn list_sessions_filters_by_vault_and_orders_descending() {
 }
 
 /// 恢复出的会话同样可列举（任务 2.1 与恢复的联动）：恢复 + 续聊一轮后新留存文件落盘，
-/// 其首条用户消息就在灌回的 input 里（源会话首条用户消息）——会话名列得出原文。
+/// 其首条用户消息就在灌回的 input 里（源会话首条用户消息）——会话名列得出**问题段落**
+///（M662：卡片元素不作名，回落口径与前端活态一致）。
 #[test]
 fn resumed_session_is_listable_with_first_user_text() {
     let f = Fixture::new("list-resume");
@@ -1256,7 +1262,8 @@ fn resumed_session_is_listable_with_first_user_text() {
     let list = list_sessions(&f.scope()).unwrap();
     assert_eq!(list.len(), 1, "{list:?}");
     assert_eq!(list[0].session_id, source_id);
-    assert_eq!(list[0].first_user_text.as_deref(), Some(QUOTE_MESSAGE));
+    // M662：会话名素材 = 首个问题段落（卡片元素与 XML 实体不作名，见 QUOTE_MESSAGE_NAME）。
+    assert_eq!(list[0].first_user_text.as_deref(), Some(QUOTE_MESSAGE_NAME));
     assert!(list[0].ts.is_some());
 
     // 恢复 + 续聊一轮：新文件随首条记录创建，恢复出的会话随即出现在列举里。
@@ -1288,8 +1295,8 @@ fn resumed_session_is_listable_with_first_user_text() {
         .expect("恢复出的会话可列举");
     assert_eq!(
         restored.first_user_text.as_deref(),
-        Some(QUOTE_MESSAGE),
-        "恢复会话的首条用户消息 = 灌回 input 的第一条（源会话首条用户消息）"
+        Some(QUOTE_MESSAGE_NAME),
+        "恢复会话的首条用户消息 = 灌回 input 的第一条（源会话首条用户消息），M662 起取首个问题段落"
     );
     // 源会话仍在列（列举不隐藏源）。
     assert!(list.iter().any(|s| s.session_id == source_id));
