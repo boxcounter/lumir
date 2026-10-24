@@ -36,12 +36,14 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const pageUrl = `http://127.0.0.1:${server.address().port}/`;
 
-// --- 启动 headless Chrome，经 DevToolsActivePort 发现 CDP 端口 ---
+// --- 启动 headless Chrome（一次性 profile + 两项 Chromium 隔离开关），经 DevToolsActivePort 发现 CDP 端口 ---
 const profile = await mkdtemp(path.join(os.tmpdir(), "lumir-ktp-chrome-"));
 const chromeProc = spawn(chrome, [
   "--headless=new",
   "--remote-debugging-port=0",
   `--user-data-dir=${profile}`,
+  "--use-mock-keychain",
+  "--password-store=basic",
   "--no-first-run",
   "--disable-extensions",
   "about:blank",
