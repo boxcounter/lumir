@@ -55,7 +55,7 @@ Alex 2026-10-23 的现场确认（逐字）：
 
 **实施顺序（由 Alex 的现场确认激活）**：拖选的根因未定位 ⇒ 本 change 的第一步不是写产品代码，是
 **真机探针**（tasks §1、design §6.1）；探针结论决定实现面，合同断言跟随探针结论落地，MUST NOT 在探针
-之前按猜测打案例级补丁（[rendering-defect-contract-first.md](../../../docs/process/rendering-defect-contract-first.md)）。
+之前按猜测打案例级补丁（[rendering-defect-contract-first.md](../../../../docs/process/rendering-defect-contract-first.md)）。
 `⌘A` 那一半不受影响：根因链已被评审逐环核实，条款与判据可以直接落地。
 
 ## What Changes

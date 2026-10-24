@@ -182,7 +182,7 @@ MUST NOT 新增色值；MUST NOT 为了对比度改正文色（前景与带的�
 ### 6.1 第一步：真机探针（先于任何产品代码）
 
 > 依据：Alex 2026-10-23 的现场确认（真机拖选没有出现选择块），以及引擎探针与真机的分叉（§1.3）。
-> 合同先行见 [rendering-defect-contract-first.md](../../../docs/process/rendering-defect-contract-first.md)：
+> 合同先行见 [rendering-defect-contract-first.md](../../../../docs/process/rendering-defect-contract-first.md)：
 > 先定位不变量与判据，MUST NOT 只做案例级补丁。
 
 - **环境**：`pnpm tauri dev` 起真实 WKWebView（合成长验收 vault；用户真实 vault 只读），Safari 的

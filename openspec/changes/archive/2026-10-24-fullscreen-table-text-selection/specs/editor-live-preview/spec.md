@@ -1,7 +1,7 @@
 # editor-live-preview 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 ADDED，基线是 living spec
-> [openspec/specs/editor-live-preview/spec.md](../../../../specs/editor-live-preview/spec.md)。
+> [openspec/specs/editor-live-preview/spec.md](../../../../../specs/editor-live-preview/spec.md)。
 > 既有的两条全屏 requirement（「表格放大全屏查看」「代码块放大全屏查看」）**逐字不动**——本增量只补
 > 「遮罩里的文本怎么选中、怎么复制」这一条能力。起草期实测读数与根因见 [design.md](../../design.md)
 > §1–§2；五个起草期取值见 [proposal.md](../../proposal.md) 的「起草期取值」表。
