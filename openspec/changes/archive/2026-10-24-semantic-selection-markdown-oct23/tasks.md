@@ -45,7 +45,7 @@
       左右各 18 个 `*`（10 层 `StrongEmphasis`）的合法嵌套一次调用到最外层，二次调用返回同一个选区
 - [x] 2.3 单测矩阵（design §8 的输入表）：标题（1/6 级、缩进、闭合 `#`）× 选区形态（恰好覆盖 /
       少一字 / 多覆盖 / 整构造 / 多 range / 空光标）× 上下文（普通段落 / 表格 cell / callout 行内 /
-      引用块标题 / frontmatter 之后 / 文档首行）——`tests/unit/syntax-envelope.test.ts`，19 条
+      引用块标题 / frontmatter 之后 / 文档首行）——`tests/unit/syntax-envelope.test.ts`，20 条
 - [x] 2.4 反向区分度（REVIEW.md「断言等价于子串」条）：同一 fixture 里「部分覆盖不外扩」与
       「完整覆盖必须外扩」成对断言；「已含定界符」返回同一个 EditorSelection（幂等）
 - [x] 2.5 封闭集合的负向用例：行内代码 / 列表项 / wikilink / 链接引用式 / blocked / 图片一律不外扩
