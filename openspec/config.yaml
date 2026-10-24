@@ -17,5 +17,7 @@ rules:
 operations:
   archive:
     guidance:
-      - archive 前确认 Alex 归档评审（节点 2）已通过
+      - 归档前确认节点 2 五要件齐（均为归档前可取得的读数）：方案已批准、独立 reviewer clean/merge、tasks 完成或标注放弃理由、要求的门禁与真机证据通过、规格对账无丢段——齐即由 tower 归档
+      - 归档后先提交归档结果（归档目录 + living spec），再 MUST 跑 `node scripts/openspec-archive-check.mjs --archived <change-id>` 并得 PASS（未提交时它定位不到归档提交、必 FAIL），读数记进归档记录；不 PASS 不算归档完成
+      - 只有价值 / 行为裁决未决、审美手感、影响面升级、评审异常、证据缺口五类例外才送 Alex；判据以 docs/process/openspec-workflow.md 为 canonical
       - tasks 全部勾选或标注放弃原因后才可 archive
