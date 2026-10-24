@@ -13,7 +13,7 @@
 > 「接受。」。通过边界 = 4.5 列的四项手感（拖选标题 / 粗体松开后的观感、引用卡片里 `##` / `**` 的
 > 可读性、链接被整条引用时的 URL 噪声、编辑时替换外扩选区）由 Alex 亲手试用后接受；机器判据面不因
 > 这句放宽，仍以 M687 的读数为准（真机场景 233 的 1/1 PASS、chromium 结构层场景
-> `m687-semantic-selection.spec.ts` 8 条、纯函数单测 `tests/unit/syntax-envelope.test.ts` 20 条）。
+> `m687-semantic-selection.spec.ts` 7 条、纯函数单测 `tests/unit/syntax-envelope.test.ts` 20 条）。
 > Alex 同日同意本 change 后续归档（tower 转述，非逐字原话）。本 change 由 M714 归档。
 
 ## Why

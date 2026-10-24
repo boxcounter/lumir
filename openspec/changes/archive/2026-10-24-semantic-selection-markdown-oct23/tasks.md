@@ -72,8 +72,8 @@
 
 ## 4. 测试与验收场景
 
-- [x] 4.1 新增 chromium 结构层场景 `tests/visual/scenes/m687-semantic-selection.spec.ts`（8 条；首版 7 条，
-      r1 返修新增「vault 外只读会话」一条——见 3.4 / 5.4）：
+- [x] 4.1 新增 chromium 结构层场景 `tests/visual/scenes/m687-semantic-selection.spec.ts`（7 条；r1 返修新增
+      「vault 外只读会话」一条——见 3.4 / 5.4）：
       拖选整段标题 / 粗体 → 松开后选区覆盖定界符、上屏字符有选中底色；拖拽中途不变；
       部分覆盖不外扩；双击外扩；三击不变；文档逐字节不变 + 阅读位置不变；程序化 / 键盘选区不外扩；
       vault 外只读会话（真实 ⌘P 打开）的 mouseup 不外扩。
@@ -113,7 +113,7 @@
       首跑 12/13（两条红：m259 双击对照的旧期望已随 D2=A 更新；`render-link` 一条是页面 session
       被关掉的基建抖动，重跑通过），读数见 `.local/probes/m687-semantic-release-snap/`
       `gate-visual-1.log` / `gate-visual-2.log`。**r1 返修后复跑**（2026-10-24，干净树、探针已删）：
-      `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（`gate-visual-r1.log`；m687 场景 8 条全绿）。
+      `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（`gate-visual-r1.log`；m687 场景 7 条全绿）。
       另：r1 第一次 quick 的 `cargo-test` 红是 `auto_turn_loop_max…` 的并行时序抖动（单跑/全量
       重跑均绿），已 file finding；第二次 quick `GATE RESULT: 11/11 PASS（SKIP 0）`
 - [x] 5.5 信息卫生：新增 fixture / 场景素材 MUST NOT 含真实 vault 内容；改动面做一次 text 级
