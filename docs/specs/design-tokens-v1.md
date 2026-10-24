@@ -195,12 +195,14 @@ r10 = 文件卡、**浮层壳**（popover / modal：`.ovl-pop` :685、`.kbpanel`
   「强调档」。
 - 引用块竖线 2px `--border`、队列选中条 2.5px `--accent`、进度条 2.5px 高：
   三处「粗 hairline」是装饰性结构线的全部，不再新增。
-- 编辑器光标（组件常量，非 token；change `cursor-visibility-oct23` 的 D2=A）：**2px 实心
-  竖线、常亮（无闪烁）、三主题同宽**（含 eink；颜色取 `--text`，不新增色）。它是**交互
-  指示线**，不参与上面「三处粗 hairline 是装饰性结构线的全部」那张清单；宽度落在既有
-  线宽语汇内（1.2–1.6px 强调档 / 2px 引用块竖线同族，规则⑧），因此不新增 token 计数。
-  取消闪烁覆盖的是 CM 基础主题挂在 `.cm-cursorLayer` 上的 `cm-blink`——eink 上闪烁既有
-  残影、又让光标一半时间不可见。条款见 [editor-caret.md](editor-caret.md)。
+- 编辑器光标（组件常量，非 token；change `cursor-visibility-oct23` 的 D2，2026-10-24 改裁）：
+  **2px 实心竖线、约 1.2s 周期闪烁、三主题同宽同闪烁**（含 eink；颜色取 `--text`，不新增
+  色）。它是**交互指示线**，不参与上面「三处粗 hairline 是装饰性结构线的全部」那张清单；
+  宽度落在既有线宽语汇内（1.2–1.6px 强调档 / 2px 引用块竖线同族，规则⑧），因此不新增
+  token 计数。闪烁取 CM 基础主题挂在 `.cm-cursorLayer` 上的 `cm-blink`（`steps(1) 1.2s
+  infinite`，半程不可见）——2026-10-24 Alex 反馈「光标不闪了，也不容易一眼扫到」后由
+  「常亮」改回：闪烁是光标可发现性的核心信号；eink 同口径，残影风险归真机 dogfood 手感项。
+  条款见 [editor-caret.md](editor-caret.md)。
 
 服务原则 2/3：chrome 退后但不粗糙——层次全部来自两档灰与 1px 线，
 投影只留给「当前文档」与「悬空表面」两个隐喻。

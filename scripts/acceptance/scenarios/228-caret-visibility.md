@@ -1,7 +1,7 @@
 ---
 id: "228-caret-visibility"
 item: 228
-title: 光标可见性——属性盒按下即进 YAML 源码（不再出现贯穿整块的竖线）、doc-title / 正文按下不改文档、光标 2px 常亮（light + eink 截图证据）
+title: 光标可见性——属性盒按下即进 YAML 源码（不再出现贯穿整块的竖线）、doc-title / 正文按下不改文档、光标 2px 且以约 1.2s 周期闪烁（light + eink 截图证据）
 fixtures: [caret-fm.md]
 open: caret-fm.md
 marker: "正文首行"
@@ -76,7 +76,7 @@ steps:
     expect:
       - label: 文档已装载（eink 档）
         editor: { has: "正文首行" }
-      - label: eink 下属性盒仍是渲染态（该档的光标是 2px 常亮，靠本步截图人工过目）
+      - label: eink 下属性盒仍是渲染态（该档的光标同为 2px + 约 1.2s 闪烁，靠本步截图人工过目）
         editor: { not: "---" }
       - shot: eink-起点-属性盒渲染态
 
@@ -98,12 +98,17 @@ steps:
         file: { path: "env:config.json", has: '"theme": "light"' }
 ---
 
-# 场景 228：光标可见性（change `cursor-visibility-oct23`，M654）
+# 场景 228：光标可见性（change `cursor-visibility-oct23`，M654；2026-10-24 改裁恢复闪烁）
 
 Alex 2026-10-23 原话：「1. 当点击 frontmatter 时，光标特别高（截图：frontmatter 区域光标是一条
 贯穿整个 frontmatter 块高度的竖线，远超行高）2. 光标太细，不容易快速一眼扫到」。
-本场景判**真机 WKWebView 上的行为链路**；光标矩形的几何判据在 chromium 结构层
+本场景判**真机 WKWebView 上的行为链路**；光标矩形的几何与光标闪烁的机器判据在 chromium 层
 （`tests/visual/scenes/m647-caret-geometry.spec.ts`），不在本场景重复。
+
+2026-10-24 改裁（Alex 反馈 #6「光标可见性调地有些过头了 —— 现在光标不闪了，也不容易一眼
+扫到」）：D2 由「2px 常亮」改判「2px + 约 1.2s 闪烁」。本场景的可见文本 / 文档不变断言
+不受影响；截图里的光标可能落在亮的相位、也可能落在灭的相位（截图不控制动画相位），
+闪烁节奏以 m647 的计算样式与相位读数为准。
 
 ## 判据为什么这样写
 
@@ -125,9 +130,11 @@ Alex 2026-10-23 原话：「1. 当点击 frontmatter 时，光标特别高（截
 
 ## 覆盖边界（如实记账）
 
-- **光标矩形的高度（C1）真机 AX 不可断言**：KimiCU 的 AX 不暴露 `AXSelectedTextRange`，
-  也没有光标矩形节点。本场景给的是「光标是短竖线 / 属性盒是否撤下」的截图证据（light + eink），
-  高度 = 行盒的机器判据在 m647 场景（chromium 几何层），「2px 常亮」的观感归 Alex 手感项。
+- **光标矩形的高度（C1）与闪烁节奏真机 AX 不可断言**：KimiCU 的 AX 不暴露
+  `AXSelectedTextRange`，也没有光标矩形节点；截图还可能恰好落在闪烁的「灭」相位。本场景给的是
+  「光标是短竖线 / 属性盒是否撤下」的截图证据（light + eink）；高度 = 行盒、2px 宽度、
+  1.2s 闪烁（计算样式 + 亮 / 灭相位）的机器判据在 m647 场景（chromium 层），观感归 Alex
+  手感项。
 - **点击落点的精度**（点击位置与显露后光标所在的 YAML 行是否大致对应）不在这里断言：
   属手感项（design §5.2 的已知代价），截图留证、Alex dogfood 判。
 - **本场景不验**：拖拽跨块、⌘A、goto-line 第 1 行的边界（事务层已由 m647 + 单测

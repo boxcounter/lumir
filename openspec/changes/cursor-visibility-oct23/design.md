@@ -2,6 +2,7 @@
 
 - Change ID: `cursor-visibility-oct23`
 - 日期: 2026-10-23
+- 改裁: 2026-10-24（D2 由 A 改判 B：恢复 1.2s 闪烁；来由见 §3.5）
 
 本文只写「怎么做到 proposal 里已裁的行为」与「为什么这样做」。代码锚点是起草时在本分支
 （基于 master `1e148cb9`）逐一读过原文的位置；行号会漂，实现前以符号名为准。
@@ -293,30 +294,39 @@ ADR 0002 §6）。
 注释同步改准：原注释「钳制到行进方向的近端边界」改为「钳制到块内最近源码位（并显露）」，
 并把 M110 的来历与本 change 的 C4 一起写明，避免下一个人按旧注释改回边界。
 
-### 3.5 光标视觉（D2 = A）
+### 3.5 光标视觉（D2 改裁：2026-10-24 = B）
 
-- `src/editor.ts` 的 `baseTheme` 里，`.cm-cursor, .cm-dropCursor` 的现有规则（只改颜色，
-  `:1836`）扩展为：
+> 改裁来由：M654 按原 D2=A 落地「2px 常亮（无闪烁）」。Alex 2026-10-24 反馈 #6 原话
+> 「光标可见性调地有些过头了 —— 现在光标不闪了，也不容易一眼扫到。」⇒ 恢复约 1.2s 周期
+> 闪烁。宽度 / 颜色 / 居中取值全部保留；D1 / D3 与 C1–C5 不变，原始缺陷不回潮。
+
+- `src/editor.ts` 的 `baseTheme` 里，`.cm-cursor, .cm-dropCursor` 的规则：
   - `borderLeft: "2px solid var(--text)"`（宽度是组件常量；颜色仍走 token）
   - `marginLeft: "-1px"`（CM 基础主题的 `-0.6px` 是按 1.2px 居中的；宽度改 2px 必须同步
     居中，否则光标相对插入点右偏 0.4px）
-- `&.cm-focused > .cm-scroller > .cm-cursorLayer { animation: "none" }`：取消闪烁。
-  CM 基础主题把动画挂在 layer 上（`:6883-6887`）；用**同选择器 + 明确值**覆盖，必要时
-  `!important`（基础主题与用户主题的先后顺序不是可依赖的契约，实现期以计算样式断言钉住）。
-- eink：同宽、同色（`--text` = `#000`）、常亮。tokens 文档规则⑧（线宽是 eink 的强调）与
-  2px 引用块竖线的先例支持这个宽度；不新增色、不新增 token 数量（`--cursor-w` 不引入，
-  按组件常量登记在 `docs/specs/editor-caret.md` 与 design-tokens 的「阴影与 hairline」节）。
-  光标是**交互指示线**，不进 tokens 文档「三处粗 hairline 是装饰性结构线的全部」那张清单，
-  两者不冲突。
-- 若 D2 改判 B（保留闪烁）：删掉 `animation: none` 一条，宽度 / 居中不变；若改判 C，
-  宽度改 3px、`marginLeft` 改 `-1.5px`。delta 与测试同步改。
+- **闪烁用 CM 原生口径**：不写任何 `.cm-cursorLayer` 的 animation 覆盖。CM 基础主题挂
+  `steps(1) cm-blink 1.2s infinite`；周期由 `EditorView.cursorBlinkRate` facet 在挂载 /
+  配置变更时写进内联 `animationDuration`（默认 1200ms），光标移动时 CM 把内联
+  `animationName` 在 `cm-blink` / `cm-blink2` 之间切换以重启相位——这条内联重启正是
+  「按键 / 移动后光标立刻可见」的机制。
+- **MUST NOT 用 `!important` 覆盖动画**：M654 的 `animation: none !important` 正是靠压过
+  内联 `animationName` 生效；同样的写法反过来声明动画会让内联重启失效（光标在「灭」相位
+  移动后要等半程才可见，比常亮更难扫到）。判据由 m647 的计算样式 + 亮 / 灭相位读数钉住。
+- eink：同宽、同色（`--text` = `#000`）、同样以 1.2s 周期闪烁。M654 曾以「eink 残影 +
+  半程不可见」为由取消闪烁；本次改裁以「一眼扫到」为先，闪烁是唯一的运动信号，三主题
+  同构优先。eink 硬件上的残影 / 刷新节奏风险如实登记在这里，归真机 dogfood 手感项（场景
+  228 留截图证据）；不新增色、不新增 token 数量（`--cursor-w` 不引入，按组件常量登记在
+  `docs/specs/editor-caret.md` 与 design-tokens 的「阴影与 hairline」节）。光标是**交互
+  指示线**，不进 tokens 文档「三处粗 hairline 是装饰性结构线的全部」那张清单，两者不冲突。
+- D2=C（3px）仍不采纳：宽度改 3px 会超出 eink 既有强调线宽语汇，且不解决「没有运动信号」
+  这一半；`marginLeft` 因此保持 `-1px`。
 
 ### 3.6 改动面
 
 | 文件 | 改动 |
 |---|---|
 | `docs/specs/editor-caret.md` | 新建：C1–C5 条款 + 输入分布 + 属性测试指针 |
-| `docs/specs/design-tokens-v1.md` | 「阴影与 hairline」节登记光标宽度 2px / 常亮 / eink 同值 |
+| `docs/specs/design-tokens-v1.md` | 「阴影与 hairline」节登记光标宽度 2px / 1.2s 闪烁 / eink 同值 |
 | `src/preview/replaced-source.ts` | 新建：`enterReplacedSource` 从 math.ts 迁入 |
 | `src/editor-annotations.ts` | 新建：`trustedLoad` 从 editor.ts 迁入（editor / livePreview 共用） |
 | `src/preview/math.ts` | 删本地实现、改 import；reveal 注释里的「frontmatter selected 口径」改准 |
@@ -324,12 +334,12 @@ ADR 0002 §6）。
 | `src/preview/frontmatter.ts` | `toDOM(view)` + mousedown 路由；`selected` 删除；新增 `firstBodyLineStart` / `frontmatterBlockField` / `normalizeFrontmatterCaret` |
 | `src/preview/livePreview.ts` | 显露判据改 `touchesSource`；装 `frontmatterCaretFilter` 与 focus 处理器 |
 | `src/preview/theme.ts` | 删除 `cm-lp-frontmatter-selected` 三行样式 |
-| `src/editor.ts` | 初始选区、`clampAcrossBlockWidgets` 边界推进、光标宽度 / 居中 / 常亮、改 import `trustedLoad` |
+| `src/editor.ts` | 初始选区、`clampAcrossBlockWidgets` 边界推进、光标宽度 / 居中 / 1.2s 闪烁（2026-10-24 改裁恢复）、改 import `trustedLoad` |
 | `src/style.css` | 无 token 新增；如实现选择变量则在 `:root` 留一处并有注释（默认不加） |
 | `tests/unit/doc-title-placement.test.ts` | FrontmatterWidget 构造参数收窄 |
 | `tests/unit/frontmatter-caret.test.ts`（新） | `firstBodyLineStart` / 边界规范化纯函数的输入网格 |
-| `tests/visual/scenes/m647-caret-geometry.spec.ts`（新） | §4 的属性矩阵 + 光标计算样式 |
-| `scripts/acceptance/scenarios/228-caret-visibility.md`（新） | 真机截图证据 + 文档不变 |
+| `tests/visual/scenes/m647-caret-geometry.spec.ts`（新） | §4 的属性矩阵 + 光标计算样式 + 闪烁相位（2026-10-24 改裁） |
+| `scripts/acceptance/scenarios/228-caret-visibility.md`（新） | 真机截图证据（含闪烁的光标）+ 文档不变 |
 
 ## 4. 属性测试矩阵（不变量级）
 
@@ -360,13 +370,15 @@ ADR 0002 §6）。
 | D 键盘 | 正文首行 ↑ / ⌃P；正文末段 ↓ / ⌃N；Shift+↑ 扩选 | 落点在块内（块显露）或正常正文行；`clampAcrossBlockWidgets` 不再产出边界位置；光标高度符合 C1；文档不变 |
 | D2 事务边界 | `editor.goto-line` 跳第 1 行；程序化 `dispatch({selection:{anchor:0}})`；`revealLine(1)`；垂直移动事务 | 空光标在 `fm.from` / `fm.to` 时被 `frontmatterCaretFilter` 按来源分流：垂直移动 → 块内（显露）；其它 → 正文首行（无正文 → 块内）；装载事务（`trustedLoad`）不触发 filter，由装载路径放到正文首行；光标高度符合 C1；文档不变 |
 | E 选区 | 拖拽覆盖块的一部分；⌘A；程序化选区覆盖一半 | widget 撤下（源码可见）；选区覆盖范围按既有 drawSelection 口径；折叠回正文后 widget 恢复；文档不变 |
-| F 主题 / 字号 | light / dark / eink × 15px / 32px，重复 A / B / C 的代表格 | 所有高度断言按当前字号的行盒重算；eink 下光标计算样式 = 2px 黑、无动画 |
-| G 光标样式 | 聚焦 × 三主题 | `getComputedStyle(.cm-cursor).borderLeftWidth` = 2px；颜色 = `--text` 计算值；`.cm-cursorLayer` 的 `animationName` = none（D2=A）；`marginLeft` = -1px；非聚焦时 `.cm-cursor` 不显示 |
+| F 主题 / 字号 | light / dark / eink × 15px / 32px，重复 A / B / C 的代表格 | 所有高度断言按当前字号的行盒重算；eink 下光标计算样式 = 2px 黑、1.2s 闪烁 |
+| G 光标样式 | 聚焦 × 三主题 | `getComputedStyle(.cm-cursor).borderLeftWidth` = 2px；颜色 = `--text` 计算值；`marginLeft` = -1px；`.cm-cursorLayer` 的 `animationName` ∈ {`cm-blink`, `cm-blink2`}、`animation-duration` = 1.2s、无限循环且动画运行中（2026-10-24 改裁恢复闪烁）；把动画暂停在 0ms / 700ms 时 `opacity` = 1 / 0（亮 / 灭相位真实交替）；非聚焦时 `.cm-cursor` 不显示 |
 
 ### 4.3 通过标准
 
 - 每一格的 C1 断言在**修前必须 FAIL**（用 properties 渲染时「光标高度 < 块高度」的对照证明
   区分度；实现 PR 里记录一次修前红色读数）。
+- G 组的 `animationName` / 相位断言在 M654 的「常亮」实现上必须 FAIL（`animationName = none`，
+  没有可暂停的动画）；2026-10-24 改裁后两者都转绿，构成「闪烁恢复」的机器判据。
 - 任一格出现「读数不可得」判 FAIL，不判 skip（REVIEW.md「读不到当成空」条）。
 - 文档字节在所有格子里逐字节不变（C5）。
 
@@ -390,10 +402,11 @@ ADR 0002 §6）。
    聚焦规范化只在 focus 回调时跑一次 O(1) 检测；`frontmatterBlockField` 只在 `docChanged`
    时扫首部（≤512 行），filter 其余帧 O(1) 读 field。没有新增全量装饰构建，不触碰
    ADR 0002 §6 的打开路径阈值。
-6. **视觉基线**：光标宽度 / 常亮可能改变既有整页基线里的光标像素。按
-   [tests/visual/README.md](../../../tests/visual/README.md) 的纪律，基线更新须 Alex 过目；
-   实现 PR 报告里逐张列出变化基线。
-7. **code 模式**：光标宽度 / 常亮是 mode 无关的 baseTheme 改动，code 模式同步生效；C1–C4
+6. **视觉基线**：光标宽度 / 闪烁可能改变既有整页基线里的光标像素。视觉套件的截图设置
+   冻结 CSS 动画（`animations: "disabled"`，无限动画归位到初始态 = 光标可见），因此预期
+   零基线变化；按 [tests/visual/README.md](../../../tests/visual/README.md) 的纪律，任何
+   变化基线都须 Alex 过目后再更新。
+7. **code 模式**：光标宽度 / 闪烁是 mode 无关的 baseTheme 改动，code 模式同步生效；C1–C4
    只在 md 模式（livePreview）生效，code 模式没有 replace 装饰，行为不变。
 8. **只有 frontmatter 的文档**：装载时初始选区仍可为 0（widget 正常渲染）；聚焦时 C3 的
    规范化把光标放进块内并显露源码。打开这种文档不会自动变源码（未聚焦时 widget 在）；
@@ -412,9 +425,9 @@ ADR 0002 §6）。
 |---|---|---|
 | 合同 | `docs/specs/editor-caret.md` 的 C1–C5 与 design §2 逐字一致 | 人读 + docs-check 链接可达 |
 | 单测 | `pnpm test`（新增 `tests/unit/frontmatter-caret.test.ts`；更新 doc-title-placement） | 全绿 |
-| 结构 / 几何 | `LUMIR_VISUAL_STRUCTURAL=1` 的 visual 层 + 新增 m647 场景 | 属性矩阵全绿；修前红色读数留档 |
-| 像素 | 本地 `scripts/gate.sh visual` | 全绿；变化基线逐张过目 |
-| 真机 | `node scripts/acceptance/run.mjs 228` | 场景 PASS（截图证据 + 文档不变）；光标高度归 Alex 手感项 |
+| 结构 / 几何 | `LUMIR_VISUAL_STRUCTURAL=1` 的 visual 层 + 新增 m647 场景 | 属性矩阵全绿；修前红色读数留档；光标闪烁的计算样式 / 相位断言全绿（改裁前必红） |
+| 像素 | 本地 `scripts/gate.sh visual` | 全绿；变化基线逐张过目（截图冻结动画，预期零变化） |
+| 真机 | `node scripts/acceptance/run.mjs 228` | 场景 PASS（截图证据 + 文档不变）；光标高度与闪烁观感归 Alex 手感项 |
 | 文档 | `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` / `bash scripts/docs-check.sh` | 全绿 |
 | 总门禁 | `bash scripts/gate.sh quick` | 照抄 `GATE RESULT` 原文行与退出码 |
 
@@ -445,5 +458,5 @@ properties 撤下 / 标题让位 / 光标是短竖线」的截图证据与「文
 | 裁决点 | 影响 | 未回时的落地 |
 |---|---|---|
 | D1 frontmatter 点击语义 | 3.2 的 properties / doc-title 路由；delta 的 C2 | A（properties → YAML；标题 / padding 只聚焦） |
-| D2 光标视觉 | 3.5 的宽度 / 闪烁；ui-design-system delta | A（2px + 常亮；eink 同值） |
+| D2 光标视觉 | 3.5 的宽度 / 闪烁；ui-design-system delta | **B**（2px + 1.2s 闪烁；eink 同值）——2026-10-24 由 A 改裁；原裁决 A（2px + 常亮）不再现行 |
 | D3 合同条款 | §2 的 C1–C5 原文；`docs/specs/editor-caret.md` | 按原文 |

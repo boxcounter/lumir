@@ -23,8 +23,9 @@ import { readDocument } from "./parity-checks";
 //   ① 光标高度 MUST 小于被撤下的 `.cm-lp-frontmatter-outer` 高度（修前 = 整块高）；
 //   ② H1 行光标高度 MUST 大于正文行光标高度（证明「等于行盒」不是把光标钉到常量高度）。
 //
-// 光标样式（D2=A）同在本场景：2px 实心 `--text`、`marginLeft: -1px`、`.cm-cursorLayer`
-// 无动画、未聚焦时不显示。像素基线不在此处——新场景只建结构断言，截图过目归 Alex。
+// 光标样式同在本场景（D2 于 2026-10-24 改裁：恢复闪烁）：2px 实心 `--text`、`marginLeft: -1px`、
+// `.cm-cursorLayer` 以 1.2s 周期闪烁（CM 原生 `cm-blink`，亮 / 灭两个相位都实际读过）、
+// 未聚焦时不显示。像素基线不在此处——新场景只建结构断言，截图过目归 Alex。
 
 const FM_DOC = [
   "---",
@@ -443,9 +444,9 @@ test.describe("m647 光标几何（C1）与指针入口（C2）", () => {
   });
 });
 
-test.describe("m647 光标样式（D2=A）", () => {
+test.describe("m647 光标样式（D2 改裁：2026-10-24 恢复闪烁）", () => {
   for (const theme of ["light", "dark", "eink"] as const) {
-    test(`光标计算样式 × ${theme}：2px 实心 --text、-1px 居中、无动画；未聚焦时不显示`, async ({ page }) => {
+    test(`光标计算样式 × ${theme}：2px 实心 --text、-1px 居中、1.2s 闪烁；未聚焦时不显示`, async ({ page }) => {
       await openDoc(page, { doc: FM_DOC, theme });
       await page.evaluate(() => {
         const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
@@ -462,20 +463,56 @@ test.describe("m647 光标样式（D2=A）", () => {
         const expectedColor = getComputedStyle(probe).color;
         probe.remove();
         const cs = getComputedStyle(cursor);
+        const layerStyle = getComputedStyle(layer);
         return {
           width: cs.borderLeftWidth,
           color: cs.borderLeftColor,
           expectedColor,
           marginLeft: cs.marginLeft,
-          animationName: getComputedStyle(layer).animationName,
+          animationName: layerStyle.animationName,
+          animationDuration: layerStyle.animationDuration,
+          animationIterationCount: layerStyle.animationIterationCount,
+          running: layer.getAnimations().map((animation) => ({
+            playState: animation.playState,
+            duration: (animation.effect as KeyframeEffect | null)?.getTiming().duration ?? null,
+          })),
           display: cs.display,
         };
       });
-      expect(style.width, "宽度 = 2px（组件常量，D2=A）").toBe("2px");
+      expect(style.width, "宽度 = 2px（组件常量；改裁未动宽度）").toBe("2px");
       expect(style.color, "颜色 = --text 的计算值").toBe(style.expectedColor);
       expect(style.marginLeft, "按 2px 宽度居中（CM 基础主题的 -0.6px 是 1.2px 的居中量）").toBe("-1px");
-      expect(style.animationName, "常亮：不继承 CM 基础主题的 cm-blink 动画").toBe("none");
+      // 闪烁恢复（Alex 2026-10-24 反馈「光标不闪了，也不容易一眼扫到」）：动画名由 CM 的基础主题
+      // 或它写入的内联样式给出（`cm-blink` / `cm-blink2` 交替用于重启相位），两者都是「闪烁中」。
+      // M654 的 `animation: none !important` 会让这里读回 none —— 这条断言就是那次改裁的判据。
+      expect(["cm-blink", "cm-blink2"], "闪烁恢复：光标层挂着 CM 原生 cm-blink 动画").toContain(style.animationName);
+      expect(style.animationDuration, "周期 1.2s（CM 的 cursorBlinkRate facet 默认值）").toBe("1.2s");
+      expect(style.animationIterationCount, "无限循环").toBe("infinite");
+      expect(style.running, "动画在跑，且时长 1200ms").toEqual([{ playState: "running", duration: 1200 }]);
       expect(style.display, "聚焦时可见").not.toBe("none");
+
+      // 真实相位：把动画暂停在 0ms / 700ms，读光标层的 opacity——「亮 → 灭」必须真实发生
+      // （只看 animationName 证明不了动画在动；只读某一次计算值又会被相位抖动骗过）。
+      const blink = await page.evaluate(async () => {
+        const layer = document.querySelector<HTMLElement>(".cm-cursorLayer");
+        if (!layer) throw new Error("光标层不在场");
+        const [animation] = layer.getAnimations();
+        if (!animation) return null;
+        animation.pause();
+        const opacityAt = async (ms: number): Promise<string> => {
+          animation.currentTime = ms;
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          return getComputedStyle(layer).opacity;
+        };
+        const onPhase = await opacityAt(0);
+        const offPhase = await opacityAt(700);
+        animation.currentTime = 0;
+        animation.play();
+        return { onPhase, offPhase };
+      });
+      expect(blink, "光标层必须有可暂停的闪烁动画").not.toBeNull();
+      expect(blink!.onPhase, "相位 0ms：光标可见").toBe("1");
+      expect(blink!.offPhase, "相位 700ms（周期中点之后）：光标不可见——闪烁不是装饰，是真的明暗交替").toBe("0");
 
       // 未聚焦：光标不显示（与基础主题的 `&.cm-focused ... .cm-cursor { display: block }` 同口径）。
       const blurred = await page.evaluate(() => {
