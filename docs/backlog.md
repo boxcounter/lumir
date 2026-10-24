@@ -23,11 +23,13 @@
 - **序 10 · `readonly-allowlist-tightening-oct23`**（M664，16/22）：6 项未勾（1.11 安全前提 / 2.3 证据布局 / 3.1 四者一致 / 3.2 顺序处置 / 3.3 finding 落账 / 4.4 真机），场景 231 从未跑过、无证据目录；归档前 MUST 把 MODIFIED 块重写为「master 原文 + M649 解包段 + M664 收紧段」，否则 M649 的解包段会被按「改写」配对静默抹掉而门禁不判。
 - **序 11 · `rg-zip-flags-dangerous-oct24`**（M672，11/11）：delta = 序 10 全文 + `-z` / `--search-zip` 两段改写，**必须紧接序 10**；反序时 `-z` 同样被「改写」配对静默抹掉。
 
-**外部前置（不计入本批）**：`harness-permission-rules-oct23`（M649，33/36）须先归档——4.3 已至少被 229 真机 PASS（31 断言，2026-10-24T01:59Z）覆盖，是否足以勾选由 M649 属主按任务原文（「真机跑一遍套件」）裁定；6.2 是归档时改 Purpose。`quick-open-file-oct23`（40/42）同样可先归档（其 delta 自注「归档顺序无关」）；`semantic-selection-markdown-oct23`（1/29，节点 1 未过）不进队列。
+**外部前置（不计入本批）**：`harness-permission-rules-oct23`（M649，33/36）须先归档——4.3 已至少被 229 真机 PASS（31 断言，2026-10-24T01:59Z）覆盖，是否足以勾选由 M649 属主按任务原文（「真机跑一遍套件」）裁定；6.2 是归档时改 Purpose。`quick-open-file-oct23`（40/42）同样可先归档（其 delta 自注「归档顺序无关」）。
 
 **本批新完成（无批次序，节点 2 待评审）**
 
 - **`fix-quote-decode-error-copy-oct24`**（M686，tasks 全勾）：引用路径的 `attachment_decode_failed` 改读 D588（「无法解码这张图片」），粘贴路径的 D438 一字不动。delta 是**一条 ADDED requirement**（无 MODIFIED 面，不存在整块替换丢段的风险）；设计依赖链 `add-image-quote-to-chat` → `quote-pipeline-consistency-oct24` → `svg-image-quote-oct24` 已由 M685 归档完毕，顺序无冲突。节点 2 仍走人肉（ADDED 有新增内容，机器判据只证「没丢段」、证不了「新增面是对的」）；归档前后各跑一次 `node scripts/openspec-archive-check.mjs`（无参门禁模式 + `--archived fix-quote-decode-error-copy-oct24`）。
+
+- **`semantic-selection-markdown-oct23`**（M687，28/29；4.5 dogfood 归 Alex、本 mission 不代判）：指针选区的语法包裹外扩（release-snap）——拖选 / 双击结束的**同一事务**把选区扩到被完整覆盖构造的节点范围（封闭集合：ATX 标题 / 强调系 / 标准链接与角括号字面链接），M259 按压布局、M539 空光标修正、M285 选区即高亮三条边界不动。delta 是**一条 ADDED requirement**（无 MODIFIED 面）；机器判据：单测 20 条、chromium 结构场景 `tests/visual/scenes/m687-semantic-selection.spec.ts`（7 条，含断开接线 / 去掉只读门控即红的反向读数）、真机场景 233 PASS（双击 → 摘录 → composer 卡片逐字 `**粗体词**`，编辑器 48 字节与磁盘 sha256/mtime 未变）。r1 返修：去轮数上限（深层嵌套一次到不动点）+ 只读会话门控 + WKWebView 时序探针（shipped 稳态 354ms / 推迟外扩对照 658ms，判据有区分度）。**待 Alex dogfood**：拖选标题 / 粗体松开观感（现状本身有一次 ~350ms 的 Quote 钮 settle、外扩未新增排期）、带 URL 链接整条引用的噪声、编辑时替换外扩选区的代价（D1 的字面后果）。节点 2 仍走人肉（ADDED 有新增内容）；归档前后各跑一次 `node scripts/openspec-archive-check.mjs`（门禁模式 + `--archived semantic-selection-markdown-oct23`）。
 
 ## 待 Alex 裁决
 
