@@ -83,7 +83,7 @@
   `enabled_subagents_register_task_with_the_catalog`、
   `cron_tool_policy_hides_task_even_when_subagents_enabled`、`disabled_subagents_reject_the_call`）；
   真机场景 `180-subagent-delegate-discovery` PASS（定义清单 → 模型委派 → 摘要回父会话；
-  证据 `.local/acceptance/2026-10-24/180-subagent-delegate-discovery/`）。
+  证据 `.local/acceptance/2026-10-24-m708/mock-regression/180-subagent-delegate-discovery/`）。
 - [x] 1.4 `llm::client_at` 增加模型覆盖参数；`LlmClient` 增加 `external_consumed()` / `skip(n)`
   （真 provider 恒 0 / no-op），供 mock 父子游标编排（design §18）。
   （另加 `LlmClient::model()`：发送点 `llm_request.model` 取覆盖后的实际值，避免「覆盖参数与
@@ -95,11 +95,14 @@
   （归 M590 验收批执行；本棒用既有 `cargo test` 全绿兜底。）
   **M708 闭环（2026-10-24）**：mock 回归 5 条既有真机场景 PASS（71 发送+工具调用 / 72 批准卡
   采纳 / 76 读数 / 104 停止 / 180 子代理委派；合计 79 断言 0 红，证据
-  `.local/acceptance/2026-10-24/`）；真 provider 普通对话一轮（隔离 XDG + 合成 vault，现有配置
-  经只读软链使用；provider deepseek / model deepseek-flash / wire_api responses）：发送 →
+  `.local/acceptance/2026-10-24-m708/mock-regression/`）；真 provider 普通对话一轮（隔离 XDG +
+  合成 vault，现有配置经只读软链使用；provider deepseek / model deepseek-flash /
+  wire_api responses）：发送 →
   `vault_read` 工具调用 → 最终回答 `REAL-OK-708 / MARK-708-REAL-PROVIDER`，读数 `1% · 98%`，
-  留存两轮请求的 usage 见证据 `.local/real-provider-m708/`（`summary.json` +
-  `retention-metadata.json`，不含 api_key / 完整 prompt）。压缩路径由既有 `cargo test` 钉住
+  留存两轮请求的 usage 见证据 `.local/acceptance/2026-10-24-m708/real-provider/`（`summary.json` +
+  `retention-metadata.json`；证据已按 r1 脱敏——含完整 prompt 的原件已删除，prompt 文本在
+  `.redacted` 副本中以 `[REDACTED-PROMPT]` 替代，逐文件扫描零命中）。压缩路径由既有
+  `cargo test` 钉住
   （`auto_compact_triggers_over_threshold` / `session_cache_reading_restarts_after_auto_compact`
   / `context_overflow_compacts_and_retries_once`）。附带修正：两处既有「工具名+路径邻接」断言
   因 change `harness-path-link` 的路径 chip 失效（71 / 104-stop 已就地改准并复跑绿；
