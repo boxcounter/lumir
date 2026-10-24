@@ -59,7 +59,7 @@ Alex 2026-10-24 原话（逐字）：
    - 新增禁则：横向细条容器 MUST NOT 声明 `scrollbar-gutter`（纵向已 `hidden`，无抖宽场景）。
 2. **细条档落到预览横向滚动面**（P2 的 4 个可落地面）：`.cm-lp-block-scroll`（代码块横滚）、
    `.cm-lp-table-scroll`（宽表横滚）、`.cm-lp-math-block`（公式）、`.cm-lp-mermaid`（图）并入细条组。
-   同时把该组从 `src/harness-panel.css` **迁到 `src/style.css`**，与隐藏档组同文件同区段——细条配方
+   同时把该组从 `src/harness-panel.css` **迁到 `src/style.css`**——细条配方
    从此只有一份共用声明组（harness 的三处消费者选择器一并搬过去，声明值逐字不变）。
 3. **删除 `.cm-lp-table-scroll` 的 `scrollbar-gutter: stable`**：该容器纵向已 `overflow-y: hidden`，
    这个声明防的是「纵向条出现导致抖宽」这件不会发生的事，只在 classic 滚动条环境换来常驻 15px 沟槽

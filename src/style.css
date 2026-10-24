@@ -1258,7 +1258,8 @@ body {
 }
 
 /* ── 滚动条分档（canonical：openspec/specs/ui-design-system 的「滚动条分档与滚动容器注册表」）──
-   两档各只有一份共用声明组，消费者 MUST NOT 各抄一份值。分档登记表是可执行判据：
+   细条 / 隐藏两档各只有一份共用声明组（消费者 MUST NOT 各抄一份值）；第三档「原生 overlay
+   豁免」一条声明都不写。分档登记表是可执行判据：
    tests/unit/scrollbar-registry.test.ts 扫 style.css / harness-panel.css / preview/theme.ts
    的 overflow 声明与这两组双向对账。
    档位按**容器**分配、MUST NOT 按轴分配：WebKit 一旦为某容器自绘 ::-webkit-scrollbar，就把它
@@ -1279,7 +1280,8 @@ body {
    同文件两处、各档只有一份），并扩到编辑器预览的四个块级横滚容器——它们的 overflow 声明
    分散在 preview/theme.ts 与下方 `.cm-lp-block-scroll`，样式按 class 命中、值不再抄第二份。
    代价（M663 实测）：自绘 ::-webkit-scrollbar 让容器在 WKWebView 里两条轴转占位经典条，
-   横向 +4px 高度；这四个容器的纵向分别是 hidden / 不滚，代价只落在横向。编辑器主滚动
+   横向 +4px 高度；这四个容器的纵向要么显式 hidden、要么内容即块本体（不产生纵向溢出），
+   代价只落在横向。编辑器主滚动
    `.cm-scroller` 因此**不在本组**（纵向必须留 overlay，见上）。 */
 .lumir-hp-codeblock,
 .lumir-hp-diff,
