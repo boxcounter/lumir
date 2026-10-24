@@ -1861,6 +1861,27 @@ const COPY_TABLE = {
     zh: "vault 外的文件以只读方式打开，不能编辑",
     en: "Files outside the vault open read-only and can't be edited",
   },
+  // D585：引用路径的格式不支持（M662，Alex 2026-10-24 反馈 #3）。写原语的
+  // `attachment_type_unsupported` 在粘贴语境读 D436（「剪贴板」），引用不是粘贴——按调用点
+  // 分码：只有引用路径改读本条（src/quote-image.ts 的 quoteImageErrorText）。
+  D585: {
+    zh: "暂不支持引用该格式：{type}",
+    en: "Can't quote this image format yet: {type}",
+  },
+  // D586：未引用留痕（M662 / survey §2.4）。持久的呈现态，不是 toast：quote 卡片的出处行、
+  // 无卡片时的输入区状态行；读数来自引用事务的 failed 条目，不进块模型 / 序列化 / 投递。
+  D586: {
+    zh: "{n} 张图片未能引用",
+    en: "{n} images couldn't be quoted",
+    enOne: "{n} image couldn't be quoted",
+  },
+  // D587：引用卡片的含图派生读数（M662 / survey §2.2）。卡片数据模型没有图片字段（设计如此），
+  // 本条由摘录原文派生（src/preview/attachments.ts 的 countExcerptImageRefs），人侧专用读数。
+  D587: {
+    zh: "含 {n} 张图片",
+    en: "Includes {n} images",
+    enOne: "Includes {n} image",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

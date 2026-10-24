@@ -10,7 +10,9 @@ import { attachmentReads, harnessImageWrites, stubTauri, type VaultFixture } fro
 //      引用正文保留图片源码（design §5），一次 ⌘Z 全撤。
 //   3. **占位不可引用**：读取失败的图片占位没有 `<img>` ⇒ 没有引用钮（结构性事实，
 //      不是开关）；笔记嵌入与未解析引用同样没有钮。
-//   4. **不支持的格式**：svg 引用 → 既有错误文案 toast、不插卡片（D1 的格式面）。
+//   4. **不支持的格式（M662）**：svg 引用在预检就失败（零 IPC）——toast 是引用语境的
+//      D585「暂不支持引用该格式」、输入区留持久状态行 D586「1 张图片未能引用」，不插卡片。
+//   5. **含图读数（M662）**：引用卡片的出处行带派生角标「含 N 张图片」（人侧读数，不进投递）。
 //
 // 本场景刻意**不做像素基线**（零新基线、零既有基线更新）：钮的浮现手感 / 图片卡片观感归 Alex
 // dogfood；这里只钉结构、可见性与通信面。行为层（发送后 parts / transcript）归验收场景 161。
@@ -190,6 +192,8 @@ test("跨文字与图片的选区：引用卡片 + 图片块按文档序进入�
   // 引用正文保留图片源码（design §5：不剥离，锚校验要逐字前缀）。
   await expect(quote.locator(".lumir-hp-qc-ex")).toContainText("![[pic.png]]");
   await expect(quote.locator(".lumir-hp-qc-src")).toContainText("harness-image-quote.md");
+  // M662：摘录里的图片数 = 派生角标（人侧读数；卡片数据模型没有图片字段，见 survey §2.2）。
+  await expect(quote.locator(".lumir-hp-qc-src")).toContainText("含 1 张图片");
 
   await page.keyboard.press("Meta+z");
   await expect(composer.locator(".lumir-hp-qcard")).toHaveCount(0);
@@ -210,7 +214,7 @@ test("占位不可引用：读取失败的图片 / 笔记嵌入 / 未解析引�
   await expect(page.locator(".lumir-image-quote-trigger")).toHaveCount(2);
 });
 
-test("不支持的格式：svg 引用给既有错误文案 toast、不插卡片", async ({ page }) => {
+test("不支持的格式：svg 引用在预检被拒——引用语境文案 + 持久状态行，零 IPC、不插卡片", async ({ page }) => {
   await stubTauri(page, {
     ...VAULT,
     harnessImageFailures: {
@@ -227,16 +231,94 @@ test("不支持的格式：svg 引用给既有错误文案 toast、不插卡片"
 
   const logo = page.locator('.cm-lp-image img[alt*="logo.svg"]');
   await expect(logo).toBeVisible();
+  // 预览渲染这张 svg 时本来就读过它的字节（附件 provider）；判据是「点引用之后没有新读取」。
+  const logoReadsBefore = (await attachmentReads(page)).filter((path) => path === LOGO).length;
   await logo.hover();
   // 悬停到 svg 那张图上的钮（两张终态图片各有一个钮，按文档序 pic 在前、logo 在后；
   // 只有正被悬停的那一个可见——`.last()` 命中 svg 这一张）。
   await expect(page.locator(".lumir-image-quote-trigger")).toHaveCount(2);
   await page.locator(".lumir-image-quote-trigger").last().click();
 
-  await expect(page.locator(".lumir-toast", { hasText: "image/svg+xml" })).toBeVisible();
+  // 文案是引用语境（D585），不是粘贴语境的 D436「剪贴板」（Alex 现场的原句）。
+  const toast = page.locator(".lumir-toast", { hasText: "暂不支持引用该格式" });
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("image/svg+xml");
+  await expect(toast).not.toContainText("剪贴板");
+  // 持久留痕（D586）：不是 3 秒 toast 能代替的那条——输入区状态行在场。
+  await expect(page.locator(".lumir-hp-quote-note")).toBeVisible();
+  await expect(page.locator(".lumir-hp-quote-note")).toContainText("1 张图片未能引用");
   await expect(page.locator(".lumir-hp-composer .lumir-hp-imgcard")).toHaveCount(0);
-  const writes = await harnessImageWrites(page);
-  expect(writes.map((write) => write.source_mime)).toContain("image/svg+xml");
+  // 预检拦在 IPC 之前：既没读 vault 字节，也没发写请求（后端写原语仍是最后一道闸，
+  // 但可引用的判定面在 `src/preview/attachments.ts` 一处，见 M662 的格式对账）。
+  expect(await harnessImageWrites(page)).toHaveLength(0);
+  expect((await attachmentReads(page)).filter((path) => path === LOGO)).toHaveLength(logoReadsBefore);
+});
+
+test("状态行的收口：文本摘录与消息摘录都是「下一次引用」（r1 P2-1）", async ({ page }) => {
+  await stubTauri(page, {
+    ...VAULT,
+    harnessImageFailures: {
+      "image/svg+xml": {
+        code: "attachment_type_unsupported",
+        message: "不支持的剪贴板图片格式",
+        params: { type: "image/svg+xml" },
+      },
+    },
+  });
+  await stubHarnessState(page);
+  // 本用例要一条 transcript 消息做「消息摘录」的收口判据：发送成功即可（不推进轮次）。
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: unknown) => unknown;
+    w.__TAURI_INTERNALS__.invoke = (cmd: string, args: unknown) =>
+      cmd === "harness_send" ? null : invoke(cmd, args);
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-image-quote.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+
+  // 先发一条消息：transcript 里有一条用户消息，供后面的消息摘录用。
+  await page.locator(".lumir-hp-composer").fill("上一轮的问题");
+  await page.locator(".lumir-hp-send").click();
+  await expect(page.locator(".lumir-hp-msg-user .lumir-hp-qtext")).toHaveText("上一轮的问题");
+
+  const note = page.locator(".lumir-hp-quote-note");
+  const logo = page.locator('.cm-lp-image img[alt*="logo.svg"]');
+  const triggerSvgQuote = async (): Promise<void> => {
+    await logo.scrollIntoViewIfNeeded();
+    await logo.hover();
+    await page.locator(".lumir-image-quote-trigger").last().click();
+    await expect(note).toBeVisible();
+    await expect(note).toContainText("1 张图片未能引用");
+  };
+
+  // 失败 → 状态行在场。
+  await triggerSvgQuote();
+
+  // 路径一：**文本摘录**（insertQuoteCard）收口。选区取一段纯文字（不含图片），走卡片路径。
+  await selectRange(page, "第一段文字", "第一段文字");
+  await page.locator(".editor-pane > .quote-gesture-btn").click();
+  await expect(page.locator(".lumir-hp-composer > .lumir-hp-qcard")).toHaveCount(1);
+  await expect(note).toBeHidden();
+
+  // 再失败一次 → 状态行重新在场（判据有区分度：不是一直隐藏）。
+  await triggerSvgQuote();
+
+  // 路径二：**消息摘录**（insertMessageQuoteCard）收口。
+  await page.evaluate(() => {
+    const el = document.querySelector(".lumir-hp-msg-user .lumir-hp-qtext");
+    if (!el) throw new Error("没有 transcript 用户消息");
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const selection = window.getSelection();
+    if (!selection) throw new Error("no selection");
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  await page.locator(".lumir-hp-transcript > .quote-gesture-btn").click();
+  await expect(page.locator(".lumir-hp-composer > .lumir-hp-msgquote")).toHaveCount(1);
+  await expect(note).toBeHidden();
 });
 
 /** 长图 fixture（600×2000）：它的右下水远在可视区之外——引用钮的钳制判据需要这个现场。 */

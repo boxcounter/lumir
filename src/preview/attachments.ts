@@ -25,6 +25,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { WidgetType } from "@codemirror/view";
+import { GFM, parser as markdownParser } from "@lezer/markdown";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import type { EditorState } from "@codemirror/state";
 import { errorMessage } from "../ipc";
@@ -244,6 +245,143 @@ export function isImageName(name: string): boolean {
   return fileClass(extensionOf(name)) === "image";
 }
 
+// ---------------------------------------------------------------------------
+// 可引用格式（M662，change quote-pipeline-consistency-oct24）：能落进 harness 内容寻址存储的
+// 源图片格式。**这是前端唯一的「可引用」判定面**——预览层认 10 种图片（`IMAGE_MIME`，渲染
+// 能力），可引用只是其中一个子集（写原语只收 png / jpeg / webp）。枚举认 10 种、落盘认 3 种
+// 时，中间那 7 种必然走「枚举成功 → 落盘拒绝」的半成功路径（survey §4.3 的结构问题）。
+//
+// 单一真源在 Rust 的 `fs_io::ATTACHMENT_TARGETS`（写入口的判定面，后端必须自证）；这里逐项
+// 镜像，并由 `tests/unit/attachment-format-drift.test.ts` 双向对账（任一侧漂移即红）。跨语言
+// 共享不了内存，能共享的是同一份清单 + 一条机器判据——与 `SAVE_REJECTED_EXTENSIONS` 的处置
+// 同款（REVIEW.md「同一语义两处真源」条）。
+// ---------------------------------------------------------------------------
+
+/** 可引用格式表（源扩展名 → 落盘扩展名）：镜像 Rust `fs_io::ATTACHMENT_TARGETS` 的两列
+ *  （源 MIME / 落盘扩展名）。MIME 由 `IMAGE_MIME` 派生，不第三份表。 */
+const QUOTABLE_TARGETS: ReadonlyArray<{ readonly source: string; readonly stored: string }> = [
+  { source: "png", stored: "webp" }, // png 转码成 WebP（无损）
+  { source: "jpg", stored: "jpg" },
+  { source: "jpeg", stored: "jpg" },
+  { source: "webp", stored: "webp" },
+];
+
+/** 可引用的源图片扩展名（小写、不含点）。 */
+export const QUOTABLE_IMAGE_EXTENSIONS: readonly string[] = QUOTABLE_TARGETS.map((item) => item.source);
+
+/** 落盘扩展名集合（升序）：harness 内容寻址名合法扩展名的前端读数（与后端
+ *  `is_attachment_name` / `mime_of_name` 同源于同一张表的落盘列）。 */
+export const ATTACHMENT_STORED_EXTENSIONS: readonly string[] = [
+  ...new Set(QUOTABLE_TARGETS.map((item) => item.stored)),
+].sort();
+
+/** 该名字是否是可引用的图片（按扩展名判，与 `isImageName` 同一底层查询）。 */
+export function isQuotableImageName(name: string): boolean {
+  return QUOTABLE_IMAGE_EXTENSIONS.includes(extensionOf(name));
+}
+
+/** 可引用格式的 MIME 集合（去重、升序）：引用路径的预检与漂移对账共用的同一份派生值
+ *  （jpg / jpeg 同属 image/jpeg，集合是去重后的）。 */
+export function quotableImageMimes(): string[] {
+  return [
+    ...new Set(
+      QUOTABLE_IMAGE_EXTENSIONS.map((ext) => mimeTypeOf(ext)).filter(
+        (mime): mime is string => mime !== undefined,
+      ),
+    ),
+  ].sort();
+}
+
+/** harness 内容寻址名的回读 MIME（缩略图 blob 的 `type`）：扩展名只认落盘扩展名表（与后端
+ *  `mime_of_name` 同一份集合），MIME 取注册表同一份表；表外（旧留存 / 坏数据——后端
+ *  `is_attachment_name` 不放行，理论上不可达）回落 `image/webp`，与后端 `mime_of_name` 的
+ *  防御分支同口径（M662 收敛：此前是 `endsWith(".jpg") ? jpeg : webp` 的本地二分）。 */
+export function attachmentMimeOfName(name: string): string {
+  const ext = extensionOf(name);
+  if (!ATTACHMENT_STORED_EXTENSIONS.includes(ext)) return "image/webp";
+  return mimeTypeOf(ext) ?? "image/webp";
+}
+
+/** 摘录原文里的图片引用数（M662，change quote-pipeline-consistency-oct24；派生读数，仅呈现层）。
+ *
+ *  判据与选区枚举（`collectImageRefs`）**同源**，只是输入从编辑器状态换成一段文本：
+ *   - 标准 md 图片：GFM 语法树的 `Image` 节点（与装饰层同一解析器配置）；
+ *   - `![[…]]` embed：`findWikilinkSpans` 的 embed 分支（与装饰层同一词法）；
+ *   - 渲染不出 `<img>` 的引用不算：代码上下文、表格内、远程 http(s)、非图片扩展
+ *     （与 `collectImageRefs` 的每个 `continue` 逐条对应）；
+ *   - 同一目标只算一次（枚举侧同样按路径去重）。
+ *
+ *  `currentFilePath` 给定时标准图片按它解析相对路径（`resolveImagePath` 同一口径），缺省按
+ *  vault 根相对。结果只进人侧读数（引用卡片的 D587 角标），不进卡片数据模型 / 序列化 / 投递。
+ */
+export function countExcerptImageRefs(text: string, currentFilePath?: string): number {
+  if (text === "") return 0;
+  // 逐键击的整面重渲会反复算同一张卡片（卡片的摘录原文不会因为用户在段落里打字而变）：
+  // 按「来源路径 + 原文」缓存。解析成本实测 ~6ms / 40KB（M662），不缓存就落进 keypress-to-paint
+  // 的预算里。容量上限只为不随面板长驻无限增长（插入顺序淘汰）。
+  const cacheKey = `${currentFilePath ?? ""}\u0000${text}`;
+  const cached = excerptImageCountCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const tree = excerptParser.parse(text);
+  const seen = new Set<string>();
+  tree.iterate({
+    enter(ref) {
+      if (ref.name !== "Image") return;
+      // 表格内的标准图片不渲染：渲染层只放行行内 code / 强调系 / Link / URL（枚举侧同判据）。
+      if (insideNodeNamed(tree, ref.from, "Table")) return;
+      const url = ref.node.getChild("URL");
+      if (url === null) return;
+      const target = text.slice(url.from, url.to);
+      // 远程 http(s) 引用没有字节来源（渲染层给空 payload 的幻影源），不可引用。
+      if (/^https?:\/\//.test(target)) return;
+      const path = resolveImagePath(target, currentFilePath);
+      if (!isImageName(path)) return;
+      seen.add(path);
+    },
+  });
+  // `![[…]]` embed：findWikilinkSpans 的输入是单行文本，逐行扫、偏移回加到全文。
+  let lineStart = 0;
+  for (const line of text.split("\n")) {
+    for (const span of findWikilinkSpans(line)) {
+      if (!span.embed) continue;
+      const from = lineStart + span.from;
+      if (isInsideCodeContext(tree, from)) continue;
+      if (insideNodeNamed(tree, from, "Table")) continue;
+      const raw = line.slice(span.from, span.to);
+      // `![[target|alias]]`：竖线后是显示参数，只取目标（与 resolveEmbeddedImagePath 同口径）。
+      const target = raw.slice(3, -2).split("|")[0].trim();
+      if (!isImageName(target)) continue;
+      seen.add(target.replace(/^\.?\//, ""));
+    }
+    lineStart += line.length + 1;
+  }
+  const count = seen.size;
+  excerptImageCountCache.set(cacheKey, count);
+  if (excerptImageCountCache.size > EXCERPT_COUNT_CACHE_MAX) {
+    const oldest = excerptImageCountCache.keys().next();
+    if (!oldest.done) excerptImageCountCache.delete(oldest.value);
+  }
+  return count;
+}
+
+/** 摘录计数的小缓存与容量上限（见 `countExcerptImageRefs`）。 */
+const excerptImageCountCache = new Map<string, number>();
+const EXCERPT_COUNT_CACHE_MAX = 64;
+
+/** 摘录计数用的解析器：与编辑器同一份 @lezer/markdown 配置（GFM，`src/editor.ts` 的
+ *  `markdown({ extensions: [GFM] })` 同款）——不是第二套 Markdown 判据。 */
+const excerptParser = markdownParser.configure([GFM]);
+
+/** pos 是否落在名为 name 的语法节点内（只读语法树，零 DOM）。 */
+function insideNodeNamed(tree: ReturnType<typeof markdownParser.parse>, pos: number, name: string): boolean {
+  let node: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(pos, 0);
+  while (node !== null) {
+    if (node.name === name) return true;
+    node = node.parent;
+  }
+  return false;
+}
+
 /** 附件能力提供者：文件名解析 + 字节读取，均由 vault 侧能力支撑。 */
 export interface AttachmentProvider {
   /**
@@ -289,6 +427,10 @@ export function dirnameOf(path: string): string {
 /**
  * 标准 md 图片路径解析（spec「附件路径解析口径」）：相对当前文件路径解析；
  * currentFilePath 缺失或解析结果逃逸 vault 根时，回退为 vault 根相对。
+ *
+ * 逃逸的处置是**钳到根**（多余的前导 `..` 直接丢掉），不再拿原 ref 递归一次——ref 自身以
+ * `..` 开头时那样会以同一输入重进本函数，M662 实测 RangeError（栈溢出；摘录里带
+ * `![](../../assets/a.png)` 这种路径就会踩到，且它在渲染热路径上）。
  */
 export function resolveImagePath(ref: string, currentFilePath: string | undefined): string {
   const base = currentFilePath === undefined ? "" : dirnameOf(currentFilePath);
@@ -297,14 +439,11 @@ export function resolveImagePath(ref: string, currentFilePath: string | undefine
   for (const seg of combined.split("/")) {
     if (seg === "" || seg === ".") continue;
     if (seg === "..") {
-      if (parts.length === 0) {
-        // 逃逸 vault 根：回退为 vault 根相对解析。
-        return resolveImagePath(ref, undefined);
-      }
-      parts.pop();
-    } else {
-      parts.push(seg);
+      // 逃逸 vault 根：回退为 vault 根相对解析（钳到根）。
+      if (parts.length > 0) parts.pop();
+      continue;
     }
+    parts.push(seg);
   }
   return parts.join("/");
 }

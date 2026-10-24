@@ -10,7 +10,7 @@
 id: "222-image-quote-to-chat"
 item: 222
 title: 图片摘录到对话：悬停引用钮 / 跨图选区 / 一次 ⌘Z
-fixtures: [image-quote-note.md, lightbox-bitmap.png]
+fixtures: [image-quote-note.md, lightbox-bitmap.png, image-quote-logo.svg]
 open: image-quote-note.md
 marker: "QALPHA"
 config:
@@ -113,13 +113,39 @@ steps:
       - label: 图片块的 @ 钮一并消失（图片块随整次引用撤掉）
         ax: { count: { pattern: "/AXButton \\(插入图片引用\\)/", exact: 0 } }
       - shot: 06-一次撤销后
+
+  # ④ svg 引用失败（M662，Alex 2026-10-24 反馈 #3）：引用语境的人话 + 持久留痕
+  - name: 回到编辑器，光标移到文档末段（第 11 行是 svg 图片——图片须进视口才 hover 得到）
+    do: clickEditor
+  - name: ⌃N 逐行下移十次到第 11 行（第 1 行起，编辑器随光标滚动把图片带进视口）
+    do: keys
+    keys: ["ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n"]
+  - name: 悬停 svg 图片——引用钮应浮现（这张图预览渲染得出、但写入口不收）
+    do: hover
+    target: { role: AXImage, any: "image-quote-logo.svg" }
+    retries: 4
+    expect:
+      - label: 悬停后出现「摘录到对话」钮（与位图那张同一份文案）
+        ax: { has: "/AXButton \\(摘录到对话\\)/" }
+      - shot: 07-悬停svg引用钮
+  - name: 点引用钮 → 格式预检拒绝（零 IPC）→ 输入区留持久状态行
+    do: click
+    target: { role: AXButton, name: "摘录到对话" }
+    expect:
+      - label: toast 是引用语境的人话（D585；MUST NOT 落到粘贴语境的「剪贴板」措辞）
+        ax: { has: "/暂不支持引用该格式：image\\/svg\\+xml/" }
+      - label: 输入区状态行留下「1 张图片未能引用」（D586——持久可见，不是 3 秒 toast）
+        ax: { has: "1 张图片未能引用" }
+      - label: 没有图片卡片被插入（失败不产卡片；位图那张已在 ① 发出去、此处 composer 应为空）
+        ax: { count: { pattern: "/AXButton \\(插入图片引用\\)/", exact: 0 } }
+      - shot: 08-svg引用失败留痕
 ---
 
 # 222-image-quote-to-chat —— 图片摘录到对话
 
 ## 本场景在验什么
 
-change add-image-quote-to-chat 的两条入口与一条结构性承诺：
+change add-image-quote-to-chat 的两条入口与一条结构性承诺；M662 起加一条失败面：
 
 1. **悬停引用钮（单图）**：文档里已渲染的图片悬停浮现「摘录到对话」（D370，与文本选区钮
    同一份文案、同一形态家族）；点击把该图作为图片卡片插入 composer（与粘贴图片同一协议：
@@ -128,6 +154,9 @@ change add-image-quote-to-chat 的两条入口与一条结构性承诺：
 2. **跨图选区**：选区跨文字与图片时，一次手势产出「引用卡片 + 图片块」，出处行照旧
    （文档名 · 最近一级标题）。
 3. **一个撤销步**：整次引用是**一次**结构编辑（⌘Z 一次撤掉卡片与图片块）。
+4. **失败面（M662）**：引用一张预览能渲染、写入口不收的图（svg）时，toast 必须是**引用语境**
+   的人话（D585「暂不支持引用该格式」，MUST NOT 是粘贴语境的 D436「剪贴板」——Alex 2026-10-24
+   反馈 #3 的原文），并在输入区留下**持久**状态行「1 张图片未能引用」（D586）；失败不产卡片。
 
 ## 判据为什么这样写
 

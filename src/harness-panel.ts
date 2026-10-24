@@ -78,7 +78,7 @@
 //（前者每次点击现取、后者每次打开现建），天然跟当前语言走。
 
 import { GFM, parser as commonmarkParser } from "@lezer/markdown";
-import { currentLanguage, errorText, formatDate, formatRelative, onRelabel, t } from "./copy";
+import { currentLanguage, errorText, formatDate, formatRelative, onRelabel, t, tPlural } from "./copy";
 import type { CopyKey, Language } from "./copy";
 import {
   configGet,
@@ -135,9 +135,10 @@ import {
 } from "./quote-card";
 import type { ComposerBlock, ImageCard, MessageQuoteCard, QuoteCard } from "./quote-card";
 import { blobToBase64, firstImageFileIndex } from "./paste-image";
-import type { QuotedImage } from "./quote-image";
+import type { QuoteImageOutcome, QuotedImage } from "./quote-image";
 import { createMessageQuoteGesture, MESSAGE_QUOTE_FLASH_MS, resolveMessageQuoteTarget } from "./message-quote-gesture";
 import { highlightCode } from "./preview/code";
+import { attachmentMimeOfName, countExcerptImageRefs } from "./preview/attachments";
 import { BLOCK_TRIGGER_CLASS, CODEBLOCK_FS_TRIGGER_LABEL, CORNERS_ICON_SVG } from "./preview/block-trigger";
 import { TABLE_TRIGGER_LABEL } from "./preview/table-trigger";
 import { planCodeBlockOfDocument } from "./preview/code-block-content";
@@ -259,12 +260,15 @@ export interface HarnessPanelHandle {
    */
   insertQuoteCard(card: QuoteCard): void;
   /**
-   * 图片摘录入 composer（change add-image-quote-to-chat design §4.1）：卡片可为 null（选区只有
-   * 图片时不造空文本卡，D4）；图片按文档序紧接卡片之后插入，整次插入是**一个**结构编辑步
-   *（一次 ⌘Z 撤掉整次引用）。面板未开时先开。来源路径（`QuotedImage.source`）只落缩略图
-   *  hover title，不进块模型 / 序列化 / 草稿（design §4.2）。
+   * 图片摘录入 composer（change add-image-quote-to-chat design §4.1；失败留痕见 M662）：
+   * 卡片可为 null（选区只有图片时不造空文本卡，D4）；结果数组里成功的图片按文档序紧接卡片
+   * 之后插入，整次插入是**一个**结构编辑步（一次 ⌘Z 撤掉整次引用）。面板未开时先开。来源路径
+   * （`QuotedImage.source`）只落缩略图 hover title，不进块模型 / 序列化 / 草稿（design §4.2）。
+   *
+   * 失败条目（`ok: false`）**不是**一次静默：有文本卡片时在卡片的出处行留「N 张图片未能引用」
+   * （D586），没有卡片时落在输入区的状态行——持久可见，不是 3 秒 toast（Alex 2026-10-24 现场）。
    */
-  insertQuoteWithImages(card: QuoteCard | null, images: readonly QuotedImage[]): void;
+  insertQuoteWithImages(card: QuoteCard | null, outcomes: readonly QuoteImageOutcome[]): void;
   /**
    * 注册「点击卡片跳回原文」处理器（M343 为 M344/QC3 留的挂载点）：composer 与 transcript
    *  内的卡片点击（× 钮除外）都经它；未注册时点击无操作。失锚三层降级链与跳回高亮由 QC3 实现。
@@ -2109,6 +2113,26 @@ export function sessionNameSource(
   if (typeof title === "string" && title.trim() !== "") return title;
   if (typeof firstUserText === "string" && firstUserText.trim() !== "") return firstUserText;
   return null;
+}
+
+/**
+ * 消息块序列 →「首条用户消息的原始问题文本」：第一个非空**段落**块的文字（XML 序列化前的原始
+ * 输入——卡片与序列化标签不作名），空白折叠成单空格、去首尾空白；没有非空段落 → null。
+ *
+ * **同一语义的两层实现之一**（M662，change quote-pipeline-consistency-oct24）：后端读留存时
+ * 只有 wire 文本（没有块结构），`src-tauri/src/harness.rs` 的 `first_paragraph_text` 按同一
+ * 口径从 wire 反推。两侧共用 `tests/unit/fixtures/session-name-fallback.json` 的期望值
+ * （本模块的 tests/unit/session-name-fallback.test.ts 与 harness.rs 的单测各读一遍）——
+ * 跨语言两层共享不了代码，能共享的是同一份素材 + 同一组期望。
+ *
+ * 为什么这段口径重要：历史浮层行名与恢复会话都吃后端回落值，而标题事件到达时浮层里「当前
+ * 会话」那行是按**上屏名**匹配改名的（`retitleOpenSessRows`）。两侧口径一致时旧名相等、
+ * 改名命中；不一致时那行就停在旧名上（Alex 2026-10-24 现场：行里留着 `<quote file="…`）。
+ */
+export function firstUserTextOf(blocks: readonly ComposerBlock[]): string | null {
+  const para = blocks.find((block) => block.kind === "paragraph" && block.text.trim() !== "");
+  if (para === undefined || para.kind !== "paragraph") return null;
+  return para.text.replace(/\s+/g, " ").trim();
 }
 
 /** 历史会话清单的一条（`harness_list_sessions` 的宽容提取结果；M395 合同形状
@@ -4041,8 +4065,28 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   sendStop.append(sendStopRect);
   sendButton.append(sendGo, sendStop);
   ctl.append(modelWrap, permWrap, ctxWrap, ctlSpacer, sendButton);
+  // 引用失败的持久留痕（M662，Alex 2026-10-24 反馈 #3 / survey §2.4）：卡片能挂留痕时挂在
+  // 卡片的出处行（D586），但「只有图片、没有文本卡片」的引用（图片悬停引用钮 / 只选图片）
+  // 没有可挂的卡——状态行落在输入区上方，直到下一次引用 / 发送 / 切会话。呈现复用出处行的
+  // 小字样式（不新增样式面），`role="status"` 让读屏也听到。
+  const quoteNote = document.createElement("div");
+  quoteNote.className = "lumir-hp-qc-src lumir-hp-quote-note";
+  quoteNote.setAttribute("role", "status");
+  quoteNote.hidden = true;
   composerBox.append(composer, ctl);
-  composerArea.append(chip, composerBox);
+  composerArea.append(chip, quoteNote, composerBox);
+
+  /** 输入区失败状态行：`text` = 已渲染的人话（D586），null = 收起。面板生命周期内只由引用
+   *  事务与发送 / 切会话改写（不做自动消隐——「持久可见」正是本条的目的）。 */
+  function applyQuoteFailureNotice(text: string | null): void {
+    quoteNote.textContent = text ?? "";
+    quoteNote.hidden = text === null;
+  }
+
+  /** 引用失败的人话读数（D586）：卡片出处行与输入区状态行共用同一份渲染。 */
+  function quoteFailureText(count: number): string {
+    return tPlural("D586", count, { n: String(count) });
+  }
 
   // ── 任务区（change add-harness-subagents tasks §10，M590；原型 subagents-tasks.html）──
   // 位置：composer 之上、transcript 之下。只列运行中 / 等待批准的 run（历史任务在
@@ -4494,6 +4538,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 能力闸拒绝过的图片名（design §6 的错误态）：渲染整面重跑会把 DOM class 丢掉，
    *  错误态因此按名记在模型侧，卡片重建（键入触发重渲）后依旧标出；发送成功才清除。 */
   const imageGateErrored = new Set<string>();
+  /** 引用失败的张数（quote 卡片对象 → 未引用张数；M662）：与 `imageSourceOf` 同档的人侧
+   *  呈现态——卡片数据模型不存它（design §4.2 的「图片块只有一种形态」不变），整面重渲按
+   *  同一份表重建留痕；草稿 / 会话留存不带它（恢复出的卡片没有「刚刚失败」这回事）。 */
+  const quoteImageFailures = new WeakMap<QuoteCard, number>();
 
   /** 图片卡片的缩略图字节加载（harness_read_image → base64 → blob URL，异步）。`onImgLoad`
    *  在成功挂出的 `<img>` load 后回调（恢复路径补记宽高用，见 createImageCardEl）。 */
@@ -4511,8 +4559,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     harnessReadImage(name)
       .then((base64: string) => {
         const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0));
-        const mime = name.endsWith(".jpg") ? "image/jpeg" : "image/webp";
-        const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+        // 回读 MIME 走注册表派生（`attachmentMimeOfName`，与后端 `mime_of_name` 同一份落盘
+        // 扩展名表）——M662 起不再在这里写 `endsWith(".jpg") ? jpeg : webp` 的第二份判定。
+        const url = URL.createObjectURL(new Blob([bytes], { type: attachmentMimeOfName(name) }));
         imageThumbCache.set(name, url);
         applyImageThumb(name, url, thumb, onImgLoad);
       })
@@ -4685,6 +4734,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * 卡片 DOM（composer / transcript 两态，三类卡片同构；design §7：几何零改动、复用
    * .lumir-hp-qcard 整族样式）。差异在出处行文案、hover title 与整卡的角色（msgquote 卡
    * 整块可点跳回来源消息；图片卡无跳回、只呈现缩略图）。
+   *
+   * quote 卡片的出处行另带两条**派生读数**（M662，人侧专用，不进卡片数据 / 序列化 / 投递）：
+   *   - 「含 N 张图片」：摘录原文里的图片引用数（`countExcerptImageRefs`，与选区枚举同判据）；
+   *   - 「N 张图片未能引用」：本次引用事务里失败的那几张（`quoteImageFailures`，按卡片对象记）。
    */
   function createCardEl(
     card: QuoteCard | MessageQuoteCard | ImageCard,
@@ -4693,6 +4746,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   ): HTMLElement {
     if (isImageCard(card)) return createImageCardEl(card, mode, ordinal);
     const msgCard = isMessageQuoteCard(card);
+    const quoteCard: QuoteCard | null = msgCard ? null : card;
     const sourceText = msgCard ? messageQuoteSourceText(card) : cardSourceText(card);
     const jump = (): void => (msgCard ? jumpToMessageQuote(card) : quoteJumpHandler?.(card));
     const el = document.createElement("div");
@@ -4707,7 +4761,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     excerpt.textContent = card.text;
     const source = document.createElement("div");
     source.className = "lumir-hp-qc-src";
-    source.textContent = sourceText;
+    // 派生读数接在出处行之后（同一行、同一档小字——不新增行，卡片几何零改动）。
+    const readouts: string[] = [];
+    if (quoteCard !== null) {
+      const images = countExcerptImageRefs(quoteCard.text, quoteCard.file);
+      if (images > 0) readouts.push(tPlural("D587", images, { n: String(images) }));
+      // 「未能引用」是**输入期**的呈现态（只活在 composer）：发送后消息里本来就只有进来
+      // 的那几张图，再把失败数写进 transcript 会与恢复路径（侧表不带过来）不一致。
+      const failed = mode === "composer" ? (quoteImageFailures.get(quoteCard) ?? 0) : 0;
+      if (failed > 0) readouts.push(tPlural("D586", failed, { n: String(failed) }));
+    }
+    source.textContent = readouts.length === 0 ? sourceText : `${sourceText} · ${readouts.join(" · ")}`;
     main.append(excerpt, source);
     el.append(bar, main);
     el.title = msgCard ? messageQuoteHoverTitle(card) : cardHoverTitle(card);
@@ -4734,10 +4798,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       });
       el.addEventListener("click", jump);
     } else {
-      // transcript：同构呈现，无 ×；整块是跳回入口（键盘可达）。
+      // transcript：同构呈现，无 ×；整块是跳回入口（键盘可达）。可访问名取可见的整行
+      // （出处 + 派生读数）：读数也是人侧要听到的信息，不因 aria-label 覆盖而丢。
       el.setAttribute("role", "button");
       el.tabIndex = 0;
-      el.setAttribute("aria-label", `${t(msgCard ? "D444" : "D374")}: ${sourceText}`);
+      el.setAttribute("aria-label", `${t(msgCard ? "D444" : "D374")}: ${source.textContent ?? sourceText}`);
       el.addEventListener("click", jump);
       el.addEventListener("keydown", (event: KeyboardEvent) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -4808,6 +4873,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function insertMessageQuoteCard(card: MessageQuoteCard): void {
     const valid = createMessageQuoteCard(card); // role / 原文非空校验（取不到不得生成卡片）
     if (mountEl === null) deps.togglePane(); // 装配层开 pane 后焦点已落 composer
+    // 一次新的引用收口上一次引用的失败状态行（spec：读数存活到「下一次引用」——消息摘录也是
+    // 一次引用；r1 P2-1）。
+    applyQuoteFailureNotice(null);
     withModel((blocks) => {
       const sel = caretFromDom();
       const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
@@ -5519,15 +5587,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // ── 会话名（标题栏 harness 段的会话身份；design §3 口径 + change add-session-auto-naming
   //    D11 的显示优先级）──────────────────────────────────────────────────────────────
   // 截断口径的单一真源在模块级（truncateSessionName / SESSION_NAME_MAX）——恢复选择器的
-  // 会话行与这里共用同一份（design §6.1）；优先级口径在 sessionNameSource 一处。
-
-  /** 从消息块序列取「首条用户消息的原始问题文本」：第一个段落块的文字（XML 序列化前的
-   *  原始输入——卡片与序列化标签不作名），空白折叠成单空格。 */
-  function firstUserTextOf(blocks: readonly ComposerBlock[]): string | null {
-    const para = blocks.find((block) => block.kind === "paragraph" && block.text.trim() !== "");
-    if (para === undefined || para.kind !== "paragraph") return null;
-    return para.text.replace(/\s+/g, " ").trim();
-  }
+  // 会话行与这里共用同一份（design §6.1）；优先级口径在 sessionNameSource 一处；首条用户
+  // 消息的取法在 firstUserTextOf（模块级，与后端 first_paragraph_text 同一口径）。
 
   /** 会话名上屏形态（标题栏与浮层行共用同一份算法，注入 D330 文案）：有效标题 → 首条用户
    *  消息截断 → 「新会话」。标题本身 ≤20 码点（后端校验），故标题显示不带省略号。 */
@@ -8963,6 +9024,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 关闭入口（`document` 径，交还焦点），MUST NOT 让遮罩停在一份已不存在的消息上。
     deps.blocks?.close();
     transcript.replaceChildren();
+    // 引用失败的输入区状态行属于上一段输入（M662）：换会话即清（卡片上的留痕随卡片一起消失）。
+    applyQuoteFailureNotice(null);
     // M644：视图复位 = 换了一个会话，跟随态回 following、清未读、写底（快照 / 恢复路径随后
     // 各自再「强制」一次，白名单动作不靠这一句兜底）。
     follow.reset();
@@ -9100,6 +9163,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const blocks = readBlocksFromDom();
     // 重新发送即解除上一回能力闸的错误态（若再被拒，catch 里按名重新标出）。
     imageGateErrored.clear();
+    // 引用失败的输入区状态行随本条消息发出而收起（它描述的是「这条输入里的引用」；
+    // 留到发送之后就成了上一轮的残影）。卡片上的留痕是卡片自身的一部分，不在此清。
+    applyQuoteFailureNotice(null);
     // 投递投影（change harness-composer-image-paste design §4.2）：parts 与文本面由同一个
     // 函数产出——parts_json 给后端装配 content 数组，text = 面板/复制源/会话名素材的
     // 序列化文本（含图片占位元素行）。纯文本消息投影为单 text part，与历史行为逐字节一致。
@@ -9833,6 +9899,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     insertQuoteCard(card: QuoteCard): void {
       const valid = createQuoteCard(card); // lines 非空校验（取不到行范围不得生成卡片）
       if (mountEl === null) deps.togglePane(); // 装配层开 pane 后焦点已落 composer
+      // 一次新的引用收口上一次引用的失败状态行（spec：读数存活到「下一次引用」——文本摘录
+      // 也是一次引用；r1 P2-1）。
+      applyQuoteFailureNotice(null);
       withModel((blocks) => {
         const sel = caretFromDom();
         const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
@@ -9840,11 +9909,30 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }, STRUCTURAL_EDIT_FORCE);
       composer.focus();
     },
-    insertQuoteWithImages(card: QuoteCard | null, images: readonly QuotedImage[]): void {
+    insertQuoteWithImages(card: QuoteCard | null, outcomes: readonly QuoteImageOutcome[]): void {
       const valid = card === null ? null : createQuoteCard(card);
-      if (valid === null && images.length === 0) return; // 空引用（无卡无图）不是一次编辑
+      const images: QuotedImage[] = [];
+      let failed = 0;
+      for (const outcome of outcomes) {
+        if (outcome.ok) images.push(outcome.image);
+        else failed += 1;
+      }
+      if (valid === null && images.length === 0) {
+        // 什么都没有插进去（图片悬停引用钮 / 只选图片且全部失败）：不是「什么都没发生」——
+        // 失败留痕落在输入区（D586），持久可见到下一次引用 / 发送 / 切会话。面板未开时先开
+        //（与插入路径同一条先开再写：状态行挂在面板上，面板不在场就没人看得见）。
+        if (failed > 0) {
+          if (mountEl === null) deps.togglePane();
+          applyQuoteFailureNotice(quoteFailureText(failed));
+        }
+        return;
+      }
       if (mountEl === null) deps.togglePane(); // 装配层开 pane 后焦点已落 composer
       for (const image of images) imageSourceOf.set(image.card.name, image.source);
+      // 失败留痕的落点（M662）：有文本卡片时挂卡片（出处行的 D586 读数，随卡片在 composer 里
+      // 一起活）；没有卡片时挂输入区状态行。两者只出现一处，不重复播报同一次失败。
+      if (valid !== null && failed > 0) quoteImageFailures.set(valid, failed);
+      applyQuoteFailureNotice(valid === null && failed > 0 ? quoteFailureText(failed) : null);
       // **一次** withModel = 一个撤销步（⌘Z 一次撤掉整次引用）：卡片 + 图片块在同一个模型步里
       // 依次落位（每次插入复用 insertBlockAtCaret 的拆段 / 光标落点语义）。
       withModel((blocks) => {

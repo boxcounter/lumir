@@ -2284,6 +2284,20 @@ pub(crate) fn plan_semantic_name(
     PlannedSemanticName::Exhausted
 }
 
+/// 可粘贴 / 可引用的源图片格式表（**单一真源**，M662，change quote-pipeline-consistency-oct24）：
+/// 源 MIME → `(是否转码, 落盘扩展名)`。写入口（本函数）、读回口径
+/// （`harness::attachments` 的 `is_attachment_name` / `mime_of_name`）与前端
+/// （`src/preview/attachments.ts` 的 `QUOTABLE_IMAGE_EXTENSIONS`）都从这张表派生；前端那份
+/// 由 `tests/unit/attachment-format-drift.test.ts` 双向对账（任一侧漂移即红）。
+///
+/// png 转码成 WebP（无损）、jpeg / webp 原样；其余一律拒绝（provider 的图片输入白名单
+/// 只收位图，SVG 这类矢量格式不在其中——引用能力见 survey 报告 §4.2 的取舍记录）。
+pub(crate) const ATTACHMENT_TARGETS: &[(&str, bool, &str)] = &[
+    ("image/png", true, "webp"),
+    ("image/jpeg", false, "jpg"),
+    ("image/webp", false, "webp"),
+];
+
 /// 广告支持的目标格式（design §4.3）：png 转码、jpeg/webp 原样、其余拒绝。
 /// 返回 `(是否转码, 目标扩展名)`。MIME 参数（`image/png;xyz`）只取主类型——WKWebView 的
 /// file item 不带参数，容忍只为不把格式抖动变成假失败。
@@ -2292,16 +2306,17 @@ pub(crate) fn plan_semantic_name(
 /// （change harness-composer-image-paste design §5.3）。
 pub(crate) fn attachment_target(source_mime: &str) -> Result<(bool, &'static str), CommandError> {
     let mime = source_mime.split(';').next().unwrap_or("").trim();
-    match mime {
-        "image/png" => Ok((true, "webp")),
-        "image/jpeg" => Ok((false, "jpg")),
-        "image/webp" => Ok((false, "webp")),
-        other => Err(CommandError::new(
-            "attachment_type_unsupported",
-            format!("不支持的剪贴板图片格式：{other}"),
-        )
-        .param("type", other)),
-    }
+    ATTACHMENT_TARGETS
+        .iter()
+        .find(|(source, _, _)| *source == mime)
+        .map(|(_, transcode, extension)| (*transcode, *extension))
+        .ok_or_else(|| {
+            CommandError::new(
+                "attachment_type_unsupported",
+                format!("不支持的剪贴板图片格式：{mime}"),
+            )
+            .param("type", mime)
+        })
 }
 
 /// 落盘文件名的 `<hash16>`：转码后字节的 SHA-256 前 16 位十六进制（内容寻址，design §3）。
@@ -5852,6 +5867,29 @@ mod tests {
             Some("image/x-unknown")
         );
         assert_eq!(std::fs::read_dir(&v.0).unwrap().count(), 0, "不落盘");
+    }
+
+    /// M662（change quote-pipeline-consistency-oct24）：写入口的格式表是唯一判定面——
+    /// 表内每一项都经 `attachment_target` 命中（转码 / 落盘扩展名逐项钉住），表外一律拒。
+    #[test]
+    fn attachment_targets_table_is_the_single_authority() {
+        for (source, transcode, extension) in ATTACHMENT_TARGETS {
+            // CommandError 未实现 PartialEq，比较返回值本身而不是 `Result`。
+            let target = attachment_target(source).expect("表内格式必须命中");
+            assert_eq!(
+                target,
+                (*transcode, *extension),
+                "表项 {source} 与 attachment_target 的判定不一致"
+            );
+            // MIME 参数只取主类型（WKWebView 的 file item 不带参数；容忍格式抖动）。
+            let with_param = format!("{source};charset=binary");
+            let target = attachment_target(&with_param).expect("带参数的主类型必须命中");
+            assert_eq!(target, (*transcode, *extension), "{with_param}");
+        }
+        for outside in ["image/svg+xml", "image/gif", "image/heic", "image/bmp", ""] {
+            let err = attachment_target(outside).unwrap_err();
+            assert_eq!(err.code, "attachment_type_unsupported", "{outside}");
+        }
     }
 
     #[test]
