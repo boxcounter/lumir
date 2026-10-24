@@ -111,7 +111,7 @@ K3.1 Pro 的 provider 纪律（Alex 2026-10-24 裁决）：调动 K3.1 Pro 时**
 ## 工作流分工速查
 
 - **开工前必读**：worker 动工前与 reviewer 给 verdict 前先过一遍 [REVIEW.md](REVIEW.md)，逐条对一眼自己的改动面；重复踩到表内某条时把新现场补进该条证据，不另起条目。
-- 功能变更（新能力、行为修改）→ OpenSpec change（提案评审 → 实现 → 归档）。节点 1（提案评审）是 Alex 硬门禁；节点 2（归档放行）默认不找 Alex——独立 reviewer clean/merge + 机器对账 + 要求的门禁与真机证据齐即由 tower 归档，只有价值 / 行为裁决未决、审美手感、影响面升级、评审异常、证据缺口五类例外才送裁；有序 change 链批量裁决、小变更合并送裁、材料不构成阻塞、依赖按真实文件冲突——五要件与全部口径以 [openspec-workflow.md](docs/process/openspec-workflow.md) 为 canonical，此处不复刻。
+- 功能变更（新能力、行为修改）→ OpenSpec change（提案评审 → 实现 → 归档）。节点 1（提案评审）是 Alex 硬门禁；节点 2（归档放行）默认不找 Alex——独立 reviewer clean/merge + 机器对账 + 要求的门禁与真机证据齐即由 tower 归档，归档后还须 `--archived` 审计 PASS 才算完成；只有价值 / 行为裁决未决、审美手感、影响面升级、评审异常、证据缺口五类例外才送裁；有序 change 链批量裁决、小变更合并送裁、材料不构成阻塞、依赖按真实文件冲突——五要件与全部口径以 [openspec-workflow.md](docs/process/openspec-workflow.md) 为 canonical，此处不复刻。
 - 跨切面架构决策 → ADR。
 - 渲染/交互缺陷修复 → 合同先行（[rendering-defect-contract-first.md](docs/process/rendering-defect-contract-first.md)）：先定位不变量条款 + 属性测试，禁止只做案例级补丁。
 - 拿不准归属：只影响一个 capability 走 OpenSpec；影响多个 capability 的结构关系或推翻技术选型走 ADR。
