@@ -77,7 +77,14 @@
 - [x] 8.2 新增 mock fixture（脚本化返回一个固定 slug，供命名调用消费）；新增场景「贴图 → 语义改名 → toast 撤销」：断言终态文件名 `<slug>-<6 hex>.webp`、正文引用同名、暂存名文件不残留、toast 带「撤销」；点撤销后文件名与引用都回到 `pasted-<hash16>.webp`。
 - [x] 8.3 回扫既有 112 / 113 / 116：核对在验收默认配置（provider 非 mock、无 vision 模型声明）下不发起命名、既有 `pasted-<hash16>` 期望不变；在场景注释里写明该前提。
 - [x] 8.4 新增「无 vision 模型时保持暂存名」的断言：粘贴后经过明确观察窗口，vault 内不存在语义名文件、无命名 toast（复用 112 的驱动通道）。
-- [ ]（真机段归下一批次；本轮只写场景并跑 `--check`）8.5 `node scripts/acceptance/run.mjs --check` 通过；新场景与 112 / 113 / 116 真机 PASS，证据落 `.local/acceptance/<日期>/`。
+- [x] 8.5 `node scripts/acceptance/run.mjs --check` 通过；新场景与 112 / 113 / 116 真机 PASS，证据落 `.local/acceptance/<日期>/`。
+  （M709，2026-10-24 真机收口：`--check` 234 个场景 PASS；`node scripts/acceptance/run.mjs 168 112 113 116`
+  4/4 PASS、45 条断言 0 红、退出码 0。**168**：终态 `harness-arch-c982bc.webp` 恰一个、暂存名文件 0 个、
+  toast「已命名为 harness-arch-c982bc.webp」带「撤销」；点撤销后文件与渲染引用都回到
+  `pasted-c982bca91f016511.webp`（hash6 = hash16 前 6 位）、语义名文件 0 个。**112**：默认配置观察窗口内
+  无语义名文件、无命名 toast、暂存名保持（`pasted-9902da88ef019a8b.webp`）。**113**：同图跨笔记全 vault
+  仍一份（`pasted-a878f4b7cd4bb4d3.webp`）、第二目录 0 副本。**116**：剪贴板 PNG 35055 B → 落盘 WebP
+  6030 B。证据 `.local/acceptance/2026-10-24-m709/`（git 外，主仓；含 steps.md / ax dump / 截图）。）
 
 ## 9. 验证
 
