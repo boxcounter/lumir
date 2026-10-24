@@ -34,6 +34,19 @@
 >    → `Totals: 37 passed, 0 failed`；归档跟踪队列有且仅有一条（`docs/backlog.md`）。
 >
 > 归档后项（归档提交 hash、`openspec archive` 输出、`--archived` 读数）见本块末尾的「归档后」追加段。
+>
+> **归档后（2026-10-25，M729）**：归档提交 `bb0fb520`（归档目录 + 并入的 living spec + Purpose 手改
+> + `docs/backlog.md` 队列条目核销同批提交）。`openspec archive` 实际输出：`harness: update`、
+> `+ 1 added, ~ 5 modified, - 0, → 0`、`Change 'harness-permission-rules-oct23' archived as
+> '2026-10-25-harness-permission-rules-oct23'.`。紧随其后跑
+> `node scripts/openspec-archive-check.mjs --archived harness-permission-rules-oct23` →
+> `PASS（openspec/changes/archive/2026-10-25-harness-permission-rules-oct23：5 条 MODIFIED，对比 66
+> 段；人工恢复 0 段，声明认领 0 段）`，EXIT=0（2026-10-25 07:25 CST）。
+> 同批复跑：门禁模式 `openspec-archive-check` → `PASS（13 份 delta / 16 条 MODIFIED / 241 段）`；
+> `openspec validate --all --strict` → `Totals: 36 passed, 0 failed`；`bash scripts/docs-check.sh`
+> → `docs-check: PASS`；`node scripts/acceptance/run.mjs --check` → 238 场景全 PASS。Purpose 复核：
+> `openspec/specs/harness/spec.md` 中「三层权限规则」零命中，「两层权限规则」命中 Purpose（第 12 行）
+> 与「权限机制」requirement（第 167 行）。
 
 ## Why
 
