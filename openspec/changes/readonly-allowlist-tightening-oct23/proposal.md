@@ -8,7 +8,29 @@
 > 节点 1（提案评审）：**已裁决**（2026-10-23 起草；2026-10-24 Alex 就唯一裁决点 Q1 给出裁决——
 > 原倾向「git 拆档」被否决，改裁为「git 只读子命令族保持只读、不拆档」，原话与改写后的安全
 > 论证见「裁决点」。起草期取值 D1–D3 未被否，按倾向落地；其余内容维持原稿）。
-> 节点 2（归档评审）：实现完成后填写。
+> 节点 2（归档评审）：**机器 + 独立评审放行（五要件）**，2026-10-25。放行口径见
+> `docs/process/openspec-workflow.md`「节点 2」节；本 change 是权限链第二环（permission-rules →
+> readonly → rg-zip），归档批 M729 执行。归档前读数：
+> 1. **方案已批准**：节点 1 于 2026-10-23 起草、2026-10-24 Alex 就唯一裁决点 Q1 改裁为「git 只读
+>    子命令族保持只读、不拆档」（见上方评审记录与「裁决点」）；实现期无静默扩 scope（tasks 3.4 排序
+>    确认 M656 先落地）。
+> 2. **独立 reviewer clean / merge**：实现批
+>    `review-feat-readonly-allowlist-tightening-impl-oct24-reviewer-readonly-allowlist-oc-r1.md`
+>    （`status: clean` / `merge: merge`，评审 tip `a25a80b8`，M664）；delta 的 2026-10-24 重写另经
+>    `review-feat-align-permission-followup-deltas-oct24-reviewer-permission-deltas-oct-r1.md`
+>    （`status: clean` / `merge: merge`，评审 tip `31603339`，M724）。该 tip 之后本 change 目录逐字
+>    未改（`git diff 31603339 HEAD -- openspec/changes/readonly-allowlist-tightening-oct23` 空）。
+> 3. **tasks 完成**：23/23（3.3 就地标注 N/A + 理由：finding 的四条旁路由本 change 收口，仓内从未
+>    有过该 finding 的 backlog 条目）。
+> 4. **门禁与真机证据**：tasks 4.3 `GATE RESULT: 10/10 PASS（SKIP 1）`、退出码 0（SKIP = `tsc-visual`，
+>    worktree 未装 `tests/visual` 依赖，本 change 零前端改动）；真机 231（32 断言）与 231b（8 断言）
+>    2026-10-24 全 PASS，证据
+>    `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-24-m711/{231-harness-readonly-write-forms,231b-harness-hidden-write-refusal}/`。
+> 5. **规格对账**：`node scripts/openspec-archive-check.mjs --change readonly-allowlist-tightening-oct23`
+>    → PASS（1 份 delta / 1 条 MODIFIED / 25 段，无静默丢段；基线已是 M649 归档后的 living）；
+>    `openspec validate --all --strict` → `Totals: 36 passed, 0 failed`；归档跟踪队列有且仅有一条。
+>
+> 归档后项见本块末尾的「归档后」追加段。
 
 ## Why
 

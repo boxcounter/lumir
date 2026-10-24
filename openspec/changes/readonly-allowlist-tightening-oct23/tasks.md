@@ -45,7 +45,12 @@
       「M649 归档后的 living（两层权限 + 受限解包，3 段正文 + 11 场景）+ 本 change 的收紧（+2 段
       +5 场景）」= 5 段正文 + 16 场景；`git status` / `git diff` 正例逐字保留。逐段对账见 design §7
       第 3 条，机械核对（去空白后逐字相等）全部通过（76/76）、无静默丢段。
-- [ ] 3.3 核销 finding：`docs/backlog.md` 与本 change 相关的 finding 条目由 tower 记账，确认已落账（finding 文件：`20261023-worker-proposal-permission-rul-vuln-sed-w-base64-o-rg-pre-git-c-diff-external.md`）
+- [x] 3.3 核销 finding：`docs/backlog.md` 与本 change 相关的 finding 条目由 tower 记账，确认已落账（finding 文件：`20261023-worker-proposal-permission-rul-vuln-sed-w-base64-o-rg-pre-git-c-diff-external.md`）
+      —— **N/A（2026-10-25，M729 归档批）**：该 finding 的四条旁路（`base64 -o`、`sed` 脚本
+      `w`/`W`、`rg --pre`/`--hostname-bin`、`git` 全局 flag `-c`/`--exec-path` 等）全部由本 change
+      的实现收口（`src-tauri/src/harness/permissions.rs` 的参数级拒判与单测，见 1.x 勾选项），属
+      「修复 PR 同批删除对应条目」——仓内从未有过该 finding 的 backlog 条目（`git log -S` 核，
+      `docs/backlog.md` 全史零命中），故无条目可核销、也不按「不留索引」另立条目。
 - [x] 3.4 排序确认：M656（`vault-patch-hidden-deny-oct24`）先合并——git 只读族保持只读的安全前提（design §8）；本 change 的 proposal 与 spec delta 均依赖这条前提
 
 ## 4. 验证
@@ -68,6 +73,12 @@
       archive-check 对比的是**当前** living（M649 尚未归档），看不到「解包段是否并入」这一层；
       该层由 3.2 的逐段核对（76/76）负责。本 mission 只改制品、不跑 `gate.sh quick`（cargo / 前端
       单测与制品无关），也**未执行归档**。
+      —— **2026-10-25（M729 归档批）复跑更新**：M649 已于 2026-10-25 归档
+      （`openspec/changes/archive/2026-10-25-harness-permission-rules-oct23`），上段括注的「当前
+      living（M649 尚未归档）」已作废：现 living 已是 M649 归档后的两层权限 + 受限解包形态，
+      `--change readonly-allowlist-tightening-oct23` 复跑仍 PASS（1 条 MODIFIED / 25 段 / 无静默
+      丢段；对比段数由 17 升至 25，因为对账基线从「未含 M649 的 living」变成「已含 M649 解包段与
+      其场景的 living」，delta 侧内容未变）。
 
 ## 实现注记（M664，2026-10-24）
 
@@ -81,6 +92,10 @@
   target 覆盖注入后状态）已按现场修正，见 4.4 的勾选注记。
 - **3.1 / 3.2 / 3.3**：3.1 已完成（四者一致核对 + design §0 行号 / 读数回填，见勾选注记）；
   3.2 / 3.3 仍是归档期（节点 2）与 tower 记账事项；M649 尚未归档，3.2 按条件分支在归档时判。
+  —— **2026-10-25（M729 归档批）收口**：M649 已于 2026-10-25 归档
+  （`openspec/changes/archive/2026-10-25-harness-permission-rules-oct23`），3.2 的「M649 先归档」
+  分支兑现（delta 已按归档后 living 重写并经 M724 独立评审逐段核过）；3.3 按 N/A 处置，注记见其
+  勾选项。上句「M649 尚未归档」为 2026-10-24 当时的现状，不再成立。
 - 实现增量（超出 design §2.4 字面、同属既有承诺）：`git` 的危险子命令识别改为跳过全局 flag
   **及其分写取值**（`git -C <path> clean -fd` 不因 `-C` 落到写而让 `full_access` 免闸）；
   `write_targets` 的 `sed -i` 目标提取改用同一份 sed 参数解析（`-e` 形态下旧读法会漏输入文件）。
