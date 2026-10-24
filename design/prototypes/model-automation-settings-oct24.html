@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Lumir — 模型接入与自动化设置原型（M695）</title>
+<title>Lumir — 模型接入与自动化设置原型（M716）</title>
 <style>
 /* ============ tokens（逐值取自 src/style.css；原型自包含，零外部依赖） ============ */
 :root {
@@ -139,7 +139,7 @@ kbd {
   padding: 32px; background: var(--scrim);
 }
 .settings {
-  display: flex; flex-direction: column; width: 720px; max-width: 100%;
+  display: flex; flex-direction: column; width: 780px; max-width: 100%;
   max-height: calc(100vh - 64px); background: var(--preview-bg); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--r10); box-shadow: var(--shadow-raise);
   overflow: hidden; outline: none;
@@ -184,24 +184,123 @@ kbd {
 .fixed-note strong { color: var(--text-2); font-weight: var(--fw-medium); }
 .fixed-note .mono { font-size: 0.95em; }
 
-/* provider 分段控件 */
-.tabs-row { display: flex; align-items: center; gap: var(--sp-3); }
-.segment {
-  display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r7);
-  background: var(--hover);
+/* 模型接入：左列 provider 列表 + 右列表单 */
+.provider-layout {
+  display: grid; grid-template-columns: 176px minmax(0, 1fr);
+  margin-top: var(--sp-4); border: 1px solid var(--border-soft); border-radius: var(--r7);
+  overflow: hidden; background: var(--preview-bg);
 }
-.seg-btn {
-  display: inline-flex; align-items: center; gap: var(--sp-3); height: 28px; padding: 0 var(--sp-5);
-  border-radius: var(--r5); font-size: var(--fs-ui-s); color: var(--text-2);
-  transition: background var(--dur-ui) var(--ease-standard), color var(--dur-ui) var(--ease-standard);
+:root[data-theme="eink"] .provider-layout { border-color: var(--border); }
+.provider-rail {
+  display: flex; flex-direction: column; min-height: 300px;
+  border-right: 1px solid var(--border-soft); background: var(--preview-bg);
 }
-.seg-btn:hover { color: var(--text); }
-.seg-btn.is-on { background: var(--accent-tint); color: var(--accent); }
-:root[data-theme="eink"] .seg-btn.is-on { background: #000; color: #fff; }
-.seg-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); }
-.seg-dot.is-on { background: currentColor; }
-.seg-state { font-size: var(--fs-nano); color: var(--text-3); }
-.seg-btn.is-on .seg-state { color: currentColor; opacity: 0.75; }
+:root[data-theme="eink"] .provider-rail { border-right-color: var(--border); }
+.provider-rail-head {
+  padding: 8px 10px 5px; font-size: var(--fs-micro); letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.provider-list { display: flex; flex-direction: column; }
+.provider-item {
+  display: flex; align-items: center; gap: var(--sp-3); min-height: 34px; padding: 7px 9px 7px 10px;
+  border-left: 2px solid transparent; text-align: left; min-width: 0;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.provider-item:hover { background: var(--hover); }
+.provider-item.is-on { background: var(--accent-tint); border-left-color: var(--accent); }
+:root[data-theme="eink"] .provider-item.is-on { background: #000; color: #fff; }
+.provider-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); }
+.provider-dot.is-ok { background: var(--ok); }
+.provider-dot.is-warn { background: var(--pending); }
+:root[data-theme="eink"] .provider-dot { background: #000; }
+:root[data-theme="eink"] .provider-item.is-on .provider-dot { background: #fff; }
+.provider-name {
+  font-size: 12.5px; font-weight: var(--fw-medium); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.provider-preset { font-size: var(--fs-nano); color: var(--text-3); }
+:root[data-theme="eink"] .provider-item.is-on .provider-preset { color: #fff; opacity: 0.8; }
+.provider-current {
+  margin-left: auto; flex: none; padding: 0 5px; border: 1px solid var(--accent);
+  border-radius: var(--r-pill); font-size: 9.5px; color: var(--accent);
+}
+:root[data-theme="eink"] .provider-current { background: #000; color: #fff; border-color: #000; }
+:root[data-theme="eink"] .provider-item.is-on .provider-current { background: #fff; color: #000; border-color: #fff; }
+.provider-add {
+  margin-top: auto; padding: 8px 10px; border-top: 1px solid var(--border-soft);
+  text-align: left; font-size: var(--fs-label-s); color: var(--accent);
+}
+.provider-add:hover { background: var(--hover); }
+:root[data-theme="eink"] .provider-add { border-top-color: var(--border); }
+.provider-add:disabled { color: var(--text-3); }
+.provider-form { padding: 12px; min-width: 0; }
+.provider-head { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.provider-title { font-family: var(--font-mono); font-size: 14px; font-weight: var(--fw-bold); }
+.provider-sub { font-size: var(--fs-micro); color: var(--text-3); }
+.provider-status {
+  display: inline-flex; align-items: center; padding: 1px 6px; border-radius: var(--r-pill);
+  background: var(--hover); color: var(--text-3); font-size: var(--fs-nano);
+}
+.provider-status.is-ok { background: var(--ok-tint); color: var(--ok); }
+.provider-status.is-warn { background: var(--pending-tint); color: var(--pending); }
+:root[data-theme="eink"] .provider-status { border: 1px solid var(--border); background: transparent; color: #000; }
+.set-current { margin-left: auto; }
+.provider-ignore-note {
+  margin-top: var(--sp-4); padding: 8px 10px; border-left: 2px solid var(--danger);
+  background: var(--danger-tint); font-size: var(--fs-label-s); color: var(--text-2); line-height: 1.6;
+}
+
+/* 添加 provider（右列原地表单） */
+.add-card { border: 1px solid var(--border-soft); border-radius: var(--r7); padding: var(--sp-6); }
+:root[data-theme="eink"] .add-card { border-color: var(--border); }
+.add-title { font-size: var(--fs-ui); font-weight: var(--fw-semibold); }
+.add-sub { margin-top: 2px; font-size: var(--fs-label-s); color: var(--text-3); line-height: 1.55; }
+.preset-row { display: flex; gap: var(--sp-3); margin-top: var(--sp-3); flex-wrap: wrap; }
+.preset-btn {
+  flex: 1 1 0; min-width: 118px; padding: 7px 9px; text-align: left;
+  border: 1px solid var(--border); border-radius: var(--r5);
+  transition: border-color var(--dur-ui) var(--ease-standard), background var(--dur-ui) var(--ease-standard);
+}
+.preset-btn:hover { background: var(--hover); }
+.preset-btn.is-on { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); }
+:root[data-theme="eink"] .preset-btn.is-on { background: #000; color: #fff; border-color: #000; }
+.preset-name { display: block; font-size: var(--fs-meta); font-weight: var(--fw-medium); }
+.preset-desc { display: block; margin-top: 2px; font-size: var(--fs-nano); color: var(--text-3); line-height: 1.4; }
+:root[data-theme="eink"] .preset-btn.is-on .preset-desc { color: #fff; opacity: 0.8; }
+.add-actions { display: flex; justify-content: flex-end; gap: var(--sp-3); margin-top: var(--sp-6); }
+.add-actions .btn { height: 28px; }
+
+/* 空清单 */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--sp-3); min-height: 300px; padding: var(--sp-10) var(--sp-9); text-align: center;
+}
+.empty-state h3 { font-size: var(--fs-ui); font-weight: var(--fw-semibold); }
+.empty-state p { max-width: 330px; font-size: var(--fs-label-s); color: var(--text-3); line-height: 1.6; }
+.empty-state .btn { height: 30px; margin-top: var(--sp-2); }
+
+/* 删除确认 */
+.delete-card { border: 1px solid var(--border-soft); border-radius: var(--r7); padding: var(--sp-6); }
+:root[data-theme="eink"] .delete-card { border-color: var(--border); }
+.delete-title { font-size: var(--fs-ui); font-weight: var(--fw-semibold); }
+.delete-title .mono { font-family: var(--font-mono); }
+.delete-sub { margin-top: 2px; font-size: var(--fs-label-s); color: var(--text-3); line-height: 1.55; }
+.delete-block {
+  margin-top: var(--sp-4); padding: 8px 10px; border-left: 2px solid var(--pending);
+  background: var(--pending-tint); border-radius: 0 var(--r4) var(--r4) 0;
+  font-size: var(--fs-label-s); color: var(--text-2); line-height: 1.6;
+}
+:root[data-theme="eink"] .delete-block { border: 1px solid var(--border); border-left-width: 3px; }
+.delete-block strong { color: var(--text); font-weight: var(--fw-semibold); }
+.delete-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--sp-3); align-items: center; margin-top: var(--sp-3); }
+.delete-row label { font-size: var(--fs-label); color: var(--text-3); }
+.delete-row .select-input { margin-top: 0; }
+.delete-note { margin-top: var(--sp-2); font-size: var(--fs-label); color: var(--text-3); line-height: 1.55; }
+.delete-actions { display: flex; justify-content: flex-end; gap: var(--sp-3); margin-top: var(--sp-6); }
+.delete-actions .btn { height: 28px; }
+.btn.danger-solid { border-color: var(--danger); background: var(--danger); color: #fff; }
+.btn.danger-solid:hover { background: var(--danger); color: #fff; opacity: 0.9; }
+:root[data-theme="eink"] .btn.danger-solid { background: #000; color: #fff; border-color: #000; }
 
 /* 表单 */
 .field { margin-top: var(--sp-5); }
@@ -306,6 +405,15 @@ kbd {
 }
 :root[data-theme="eink"] .inline-warning { border: 1px solid var(--border); border-left-width: 3px; }
 
+/* 危险区 */
+.danger-zone {
+  margin-top: var(--sp-6); padding-top: var(--sp-4); border-top: 1px solid var(--border-soft);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4);
+}
+.danger-copy { min-width: 0; }
+.danger-title { font-size: var(--fs-label-s); font-weight: var(--fw-medium); color: var(--text-2); }
+.danger-desc { margin-top: 2px; font-size: var(--fs-label); color: var(--text-3); line-height: 1.5; }
+
 /* 诊断与横幅 */
 #model-diagnostics, #automation-diagnostics { margin-top: var(--sp-4); }
 .diag-callout {
@@ -328,6 +436,20 @@ kbd {
 
 /* 自动化（全局节，独立 pane） */
 #automation-note { margin-top: 0; margin-bottom: var(--sp-3); }
+.naming-readout {
+  margin-bottom: var(--sp-4); padding: 8px 10px; border: 1px solid var(--border-soft);
+  border-radius: var(--r6); background: var(--preview-bg);
+}
+:root[data-theme="eink"] .naming-readout { border-color: var(--border); }
+.naming-line {
+  display: grid; grid-template-columns: 64px minmax(0, 1fr) auto;
+  gap: var(--sp-3); align-items: baseline; padding: 2px 0; font-size: var(--fs-label-s);
+}
+.naming-label { color: var(--text-3); }
+.naming-target { font-family: var(--font-mono); font-size: var(--fs-label); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.naming-state { font-size: var(--fs-nano); color: var(--text-3); text-align: right; }
+.naming-state.is-bad { color: var(--pending); }
+.naming-note { margin-top: 4px; font-size: var(--fs-nano); color: var(--text-3); line-height: 1.5; }
 #automation-list { border-top: 1px solid var(--border-soft); }
 .auto-row {
   display: flex; align-items: center; justify-content: space-between; gap: var(--sp-6);
@@ -394,8 +516,8 @@ kbd {
 
 /* ============ 控制面板（硬规则：全部选项点击可达；panel=0 供截图隐藏） ============ */
 .cpanel {
-  position: fixed; left: var(--sp-4); bottom: var(--sp-4); z-index: 100; width: 264px;
-  max-height: 72vh; overflow: auto; padding: var(--sp-5) var(--sp-6);
+  position: fixed; left: var(--sp-4); bottom: var(--sp-4); z-index: 100; width: 286px;
+  max-height: 78vh; overflow: auto; padding: var(--sp-5) var(--sp-6);
   background: var(--preview-bg); border: 1px solid var(--border); border-radius: var(--r8);
   box-shadow: var(--shadow-raise); font-size: var(--fs-label-s);
 }
@@ -471,29 +593,31 @@ kbd {
       <section class="section" aria-labelledby="sec-model">
         <div class="section-head">
           <h2 class="section-title" id="sec-model">模型接入</h2>
-          <span class="section-note" data-provider-edit-note>按 provider 编辑接入参数 · 切换只换表单，不切换当前会话的 provider</span>
+          <span class="section-note" data-provider-edit-note>provider 由你管理 · 列表只换表单，「设为当前使用」才改变当前会话的 provider</span>
         </div>
         <div class="pane" id="model-pane">
-          <div class="tabs-row">
-            <div class="segment" role="tablist" aria-label="模型 provider" id="provider-tabs"></div>
-            <span class="badge" data-provider-fixed-badge>固定 2 项</span>
-          </div>
-          <p class="fixed-note" data-provider-fixed-note><strong>provider 固定两项</strong>：Kimi / DeepSeek（mock 不出现），不能增删；新增 provider 属于 schema 变更。</p>
+          <p class="fixed-note" data-model-source-note><strong>模型清单来源</strong>：只来自 <span class="mono">config.json</span> 的 <span class="mono">harness.providers.&lt;id&gt;.models</span>；Lumir 不内置任何模型表，本原型为合成数据。</p>
           <div id="model-diagnostics" hidden></div>
-          <div id="provider-panel" tabindex="-1"></div>
-          <p class="fixed-note" data-model-source-note><strong>模型清单来源</strong>：只来自 <span class="mono">config.json</span> 的 <span class="mono">harness.providers.&lt;id&gt;.models</span>；Lumir 不内置模型表。本原型为合成数据。</p>
+          <div class="provider-layout">
+            <aside class="provider-rail" aria-label="provider 列表">
+              <div class="provider-rail-head">Provider <span data-provider-count></span></div>
+              <div class="provider-list" id="provider-list" role="group" aria-label="provider 列表"></div>
+              <button type="button" class="provider-add" data-provider-add>+ 添加 provider</button>
+            </aside>
+            <div class="provider-form" id="provider-panel" tabindex="-1"></div>
+          </div>
         </div>
       </section>
       <section class="section" aria-labelledby="sec-auto">
         <div class="section-head">
           <h2 class="section-title" id="sec-auto">自动化</h2>
-          <span class="section-note" data-automation-scope>全局 · 与所选 provider 无关；切换 provider 不会复制或改变这里</span>
+          <span class="section-note" data-automation-scope>全局 · 与所选 provider 无关；增删或切换 provider 不会复制或改变这里</span>
         </div>
         <div class="pane" id="automation-pane" data-automation>
           <p class="fixed-note" id="automation-note" data-automation-note>四个开关是 <span class="mono">harness.*</span> 下的全局键，不属于任何 provider。命名调用的 provider / model 覆盖项留在配置文件。</p>
-          <p class="fixed-note" id="naming-target-note" data-naming-target-note>命名调用目标：默认跟随当前会话的 provider 与它的生效模型；可在 <span class="mono">config.json</span> 的 <span class="mono">harness.session_naming</span> / <span class="mono">harness.attachment_naming</span> 下单独覆盖。每次只发往一个目标，不会对每个 provider 各做一次。</p>
+          <div class="naming-readout" id="naming-readout" data-naming-readout></div>
           <div id="automation-diagnostics" hidden></div>
-          <div id="automation-list"></div>
+          <div id="automation-list" data-automation-switches></div>
         </div>
       </section>
     </div>
@@ -533,6 +657,9 @@ kbd {
   </div>
   <div class="cp-row"><span class="cp-label">场景</span>
     <button type="button" class="cp-btn" data-go="scene:configured">已配置</button>
+    <button type="button" class="cp-btn" data-go="scene:empty">空清单</button>
+    <button type="button" class="cp-btn" data-go="scene:add">添加（重复 id）</button>
+    <button type="button" class="cp-btn" data-go="scene:delete">删除保护</button>
     <button type="button" class="cp-btn" data-go="scene:unconfigured">未配置</button>
     <button type="button" class="cp-btn" data-go="scene:validation">校验错误</button>
     <button type="button" class="cp-btn" data-go="scene:warning">配置警告</button>
@@ -545,12 +672,15 @@ kbd {
   <div class="cp-row"><span class="cp-label">Provider</span>
     <button type="button" class="cp-btn" data-go="provider:kimi">kimi</button>
     <button type="button" class="cp-btn" data-go="provider:deepseek">deepseek</button>
+    <button type="button" class="cp-btn" data-go="provider:local-lab">local-lab</button>
   </div>
-  <div class="cp-row"><span class="cp-label">高级区</span>
-    <button type="button" class="cp-btn" data-toggle="advanced">展开 / 收起</button>
+  <div class="cp-row"><span class="cp-label">操作</span>
+    <button type="button" class="cp-btn" data-toggle="add">＋ 添加</button>
+    <button type="button" class="cp-btn" data-toggle="delete">删除选中</button>
+    <button type="button" class="cp-btn" data-toggle="advanced">高级区</button>
     <button type="button" class="cp-btn" data-toggle="reset">↺ 重置场景</button>
   </div>
-  <p class="cp-note">全部内容为合成数据：Key 只保留末 4 位提示，页面不含任何完整密钥；模型 id 也是合成数据，Lumir 不内置模型表。provider 固定两项、不能增删；四个自动化开关是全局键，不随 provider 切换变化。场景 / 主题 / provider 写回 URL 可刷新复现；页内交互不写 URL。截图用 <span class="mono">?panel=0</span> 关本面板。保存校验是为演示形态而模拟；实现里校验只在 Rust 一处（design §5）。</p>
+  <p class="cp-note">全部内容为合成数据：Key 只保留末 4 位提示，页面不含任何完整密钥；模型 id 也是合成数据，Lumir 不内置模型表。provider 可添加 / 删除 / 编辑（id 与预设创建后不可改），删除当前使用项或被命名引用的项必须选替代目标；四个自动化开关是全局键。场景 / 主题 / provider 写回 URL 可刷新复现；页内交互不写 URL。截图用 <span class="mono">?panel=0</span> 关本面板。保存校验是为演示形态而模拟；实现里校验只在 Rust 一处（design §6）。</p>
 </div>
 
 <script>
@@ -558,15 +688,33 @@ kbd {
 
 /* ── 常量与合成数据 ─────────────────────────────────────────────── */
 const THEMES = ["light", "dark", "eink"];
-const SCENE_IDS = ["configured", "unconfigured", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
+const SCENE_IDS = ["configured", "empty", "add", "delete", "unconfigured", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
 const SCENE_LABELS = {
-  configured: "已配置", unconfigured: "未配置", validation: "校验错误", warning: "配置警告",
-  saving: "保存中", saved: "已保存", conflict: "外部冲突", "file-invalid": "文件损坏", closed: "已关闭",
+  configured: "已配置", empty: "空清单", add: "添加（重复 id）", delete: "删除保护",
+  unconfigured: "未配置", validation: "校验错误", warning: "配置警告", saving: "保存中",
+  saved: "已保存", conflict: "外部冲突", "file-invalid": "文件损坏", closed: "已关闭",
 };
-const OFFICIAL = { kimi: "https://api.moonshot.cn/v1", deepseek: "https://api.deepseek.com" };
-const PROVIDER_NAMES = { kimi: "Kimi", deepseek: "DeepSeek" };
+const PRESETS = {
+  kimi: {
+    label: "Kimi", official: "https://api.moonshot.cn/v1", defaultWire: "responses",
+    wires: ["responses", "chat_completions"], requiresKey: true,
+    desc: "官方地址 · responses 缺省",
+  },
+  deepseek: {
+    label: "DeepSeek", official: "https://api.deepseek.com", defaultWire: "responses",
+    wires: ["responses", "chat_completions"], unsupported: ["chat_completions"], requiresKey: true,
+    desc: "官方地址 · responses（chat 档 v1 未实现）",
+  },
+  generic: {
+    label: "OpenAI 兼容", official: "", defaultWire: "chat_completions",
+    wires: ["chat_completions", "responses"], requiresKey: false,
+    desc: "需填 Base URL · chat_completions 缺省",
+  },
+};
 const WINDOW_MIN = 1;
 const WINDOW_MAX = 10000000;
+const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+const RESERVED_IDS = ["mock"];
 
 function model(id, effort, vision, window) {
   return { id, effort, vision, window, issues: [] };
@@ -575,15 +723,24 @@ function deepClone(value) { return JSON.parse(JSON.stringify(value)); }
 function esc(value) {
   return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 }
-function providerBase(id, hasKey, keyHint, models, baseUrl, wireApi, baseUrlPresent, wireApiPresent, wireApiRaw) {
+function presetOf(p) { return PRESETS[p.preset] || { label: p.preset || "未知", official: "", defaultWire: "responses", wires: [], requiresKey: true, desc: "未知预设（装载期已忽略）" }; }
+function providerBase(id, preset, opts) {
+  const conf = PRESETS[preset] || {};
+  const o = opts || {};
   return {
-    id, hasKey, keyHint, keyDraft: "",
-    models,
-    baseUrl: baseUrl || "",
-    baseUrlPresent: baseUrlPresent === true,
-    wireApi,
-    wireApiRaw: wireApiRaw === undefined ? wireApi : wireApiRaw,
-    wireApiPresent: wireApiPresent === true,
+    id, preset,
+    hasKey: o.hasKey === true,
+    keyHint: o.keyHint || null,
+    keyDraft: "",
+    models: o.models || [],
+    baseUrl: o.baseUrl || "",
+    baseUrlPresent: o.baseUrlPresent === true,
+    wireApi: o.wireApi || conf.defaultWire || "responses",
+    wireApiRaw: o.wireApiRaw === undefined ? (o.wireApi || conf.defaultWire || "responses") : o.wireApiRaw,
+    wireApiPresent: o.wireApiPresent === true,
+    ignored: o.ignored === true,
+    ignoreReason: o.ignoreReason || "",
+    draftDirty: o.draftDirty === true,
   };
 }
 
@@ -606,15 +763,27 @@ function duplicateIdErrors(models, providerId) {
   return errors;
 }
 
+function naming(provider, modelId) {
+  return { provider: provider || null, model: modelId || null };
+}
+
 function sceneSnapshot(scene) {
-  const configured = {
-    kimi: providerBase("kimi", true, "4f2c", [model("k3-256k", true, true, 262144), model("k3-128k", false, false, 131072)], "", "chat_completions", false, true, "chat_completions"),
-    deepseek: providerBase("deepseek", true, "91bd", [model("ds-chat", false, false, 131072)], "", "responses"),
-  };
-  const unconfigured = {
-    kimi: providerBase("kimi", false, null, [], "", "responses"),
-    deepseek: providerBase("deepseek", false, null, [], "", "responses"),
-  };
+  const configured = () => ({
+    kimi: providerBase("kimi", "kimi", {
+      hasKey: true, keyHint: "4f2c",
+      models: [model("k3-256k", true, true, 262144), model("k3-128k", false, false, 131072)],
+      wireApi: "chat_completions", wireApiRaw: "chat_completions", wireApiPresent: true,
+    }),
+    deepseek: providerBase("deepseek", "deepseek", {
+      hasKey: true, keyHint: "91bd",
+      models: [model("ds-chat", false, false, 131072)],
+    }),
+    "local-lab": providerBase("local-lab", "generic", {
+      models: [model("local-chat", false, false, 32768)],
+      baseUrl: "http://127.0.0.1:8080/v1", baseUrlPresent: true,
+      wireApi: "chat_completions", wireApiPresent: true,
+    }),
+  });
   const defaults = {
     auto_compact: { value: true, explicit: false },
     session_naming: { value: true, explicit: false },
@@ -622,75 +791,107 @@ function sceneSnapshot(scene) {
     subagents: { value: true, explicit: false },
   };
   const base = {
-    scene, provider: "kimi", advanced: false, dirty: false, mode: "clean",
+    scene, active: "kimi", selected: "kimi", advanced: false, dirty: false, mode: "clean",
     errors: [], diagnostics: [], banner: null, readonly: false, discard: false,
-    closed: false, attachmentTurnedOn: false,
+    closed: false, attachmentTurnedOn: false, add: null, deleteTarget: null, deletePlan: null,
+    removedIds: [],
+    naming: { session: naming(null, null), attachment: naming(null, null) },
   };
 
+  if (scene === "empty") {
+    return Object.assign(base, {
+      active: null, selected: null, providers: {}, automation: deepClone(defaults),
+    });
+  }
   if (scene === "unconfigured") {
-    return Object.assign(base, { providers: deepClone(unconfigured), automation: deepClone(defaults) });
+    return Object.assign(base, {
+      providers: {
+        kimi: providerBase("kimi", "kimi", {}),
+        deepseek: providerBase("deepseek", "deepseek", {}),
+      },
+      automation: deepClone(defaults),
+    });
+  }
+  if (scene === "add") {
+    const providers = configured();
+    return Object.assign(base, {
+      providers, automation: deepClone(defaults),
+      add: { open: true, id: "deepseek", preset: "kimi", error: "id 已存在：换一个 id，或选择已有 provider 编辑" },
+    });
+  }
+  if (scene === "delete") {
+    const providers = configured();
+    providers.kimi.draftDirty = true;
+    return Object.assign(base, {
+      providers, automation: deepClone(defaults),
+      naming: { session: naming("kimi", "k3-128k"), attachment: naming("kimi", null) },
+      dirty: true,
+      deleteTarget: "kimi",
+      deletePlan: { activeAfter: "deepseek", sessionAfter: "follow", attachmentAfter: "follow" },
+    });
   }
   if (scene === "validation") {
-    const s = Object.assign(base, {
-      providers: deepClone(configured),
-      automation: Object.assign(deepClone(defaults), { subagents: { value: false, explicit: true } }),
-      dirty: true, mode: "blocked",
-    });
-    s.providers.kimi.models = [
+    const providers = configured();
+    providers.kimi.models = [
       model("k3-256k", true, true, 262144),
       model("k3-256k", false, false, 131072),
       { id: "", effort: false, vision: false, window: 0, issues: [] },
     ];
-    s.errors = [
-      ...duplicateIdErrors(s.providers.kimi.models, "kimi"),
-      { path: "providers.kimi.models[2].id", message: "模型 id 不能为空" },
-      { path: "providers.kimi.models[2].window", message: "上下文窗口应为 1–10,000,000 的整数" },
-    ];
-    return s;
+    return Object.assign(base, {
+      providers,
+      automation: Object.assign(deepClone(defaults), { subagents: { value: false, explicit: true } }),
+      dirty: true, mode: "blocked",
+      errors: [
+        ...duplicateIdErrors(providers.kimi.models, "kimi"),
+        { path: "providers.kimi.models[2].id", message: "模型 id 不能为空" },
+        { path: "providers.kimi.models[2].window", message: "上下文窗口应为 1–10,000,000 的整数" },
+      ],
+    });
   }
   if (scene === "warning") {
-    const s = Object.assign(base, {
-      providers: deepClone(configured), automation: deepClone(defaults), dirty: true,
+    const providers = configured();
+    providers.kimi.models[1] = { id: "k3-128k", effort: null, vision: null, window: null, issues: [] };
+    providers.broken = providerBase("broken", "openai-x", {
+      ignored: true, ignoreReason: "preset「openai-x」不是合法预设；装载期已忽略该条目",
     });
-    s.providers.kimi.models[1] = { id: "k3-128k", effort: null, vision: null, window: null, issues: [] };
-    s.providers.kimi.wireApi = "responses";
-    s.providers.kimi.wireApiRaw = "chat";
-    s.providers.kimi.wireApiPresent = true;
-    s.diagnostics = [
-      { code: "harness_provider_model_not_in_list", path: "harness.providers.kimi.model", message: "当前模型 k3-256k 不在模型清单内：上下文窗口按 131072 保守估算，effort 与 vision 按不支持处理。" },
-      { code: "harness_session_naming_model_missing", path: "harness.session_naming.model", message: "会话命名的模型未在所选 provider 的清单内，已回落为当前生效模型。" },
-      { code: "harness_wire_api_invalid", path: "harness.providers.kimi.wire_api", message: "取值「chat」非法（可选：responses、chat_completions），已回落为 responses。" },
-    ];
-    return s;
+    return Object.assign(base, {
+      providers, automation: deepClone(defaults), dirty: true,
+      naming: { session: naming(null, null), attachment: naming("deleted-one", "vision-x") },
+      diagnostics: [
+        { code: "harness_provider_model_not_in_list", path: "harness.providers.kimi.model", message: "当前模型 k3-256k 不在模型清单内：上下文窗口按 131072 保守估算，effort 与 vision 按不支持处理。" },
+        { code: "harness_attachment_naming_provider_missing", path: "harness.attachment_naming.provider", message: "附件命名的 provider「deleted-one」不存在，已回落为当前使用项。" },
+        { code: "harness_wire_api_invalid", path: "harness.providers.kimi.wire_api", message: "取值「chat」非法（可选：responses、chat_completions），已回落为 chat_completions。" },
+      ],
+    });
   }
   if (scene === "saving") {
     return Object.assign(base, {
-      providers: deepClone(configured), automation: deepClone(defaults), dirty: true, mode: "saving",
+      providers: configured(), automation: deepClone(defaults), dirty: true, mode: "saving",
     });
   }
   if (scene === "saved") {
     return Object.assign(base, {
-      providers: deepClone(configured), automation: deepClone(defaults), mode: "saved",
+      providers: configured(), automation: deepClone(defaults), mode: "saved",
     });
   }
   if (scene === "conflict") {
     return Object.assign(base, {
-      providers: deepClone(configured), automation: deepClone(defaults), dirty: true, mode: "conflict", banner: "conflict",
+      providers: configured(), automation: deepClone(defaults), dirty: true, mode: "conflict", banner: "conflict",
     });
   }
   if (scene === "file-invalid") {
     return Object.assign(base, {
-      providers: deepClone(configured), automation: deepClone(defaults), mode: "fileInvalid", banner: "file", readonly: true,
+      providers: configured(), automation: deepClone(defaults), mode: "fileInvalid", banner: "file", readonly: true,
     });
   }
   if (scene === "closed") {
     return Object.assign(base, {
-      providers: deepClone(configured), automation: deepClone(defaults), closed: true,
+      providers: configured(), automation: deepClone(defaults), closed: true,
     });
   }
   // configured
   return Object.assign(base, {
-    providers: deepClone(configured),
+    providers: configured(),
     automation: {
       auto_compact: { value: true, explicit: false },
       session_naming: { value: true, explicit: true },
@@ -711,14 +912,77 @@ const appShell = $("#app-shell");
 const overlay = $("#settings-overlay");
 const closedState = $("#closed-state");
 
-function activeProvider() { return state.providers[state.provider]; }
-function isConfigured(p) { return (p.hasKey || p.keyDraft.trim() !== "") && p.models.length > 0; }
+function providerIds() {
+  const ids = Object.keys(state.providers);
+  return ids.sort((a, b) => {
+    const rank = (id) => {
+      const preset = state.providers[id].preset;
+      return preset === "kimi" ? 0 : preset === "deepseek" ? 1 : preset === "generic" ? 2 : 3;
+    };
+    const delta = rank(a) - rank(b);
+    return delta !== 0 ? delta : a.localeCompare(b);
+  });
+}
+function visibleProviderIds() { return providerIds().filter((id) => state.providers[id].preset !== "mock"); }
+function selectedProvider() { return state.selected ? state.providers[state.selected] || null : null; }
+function isConfigured(p) {
+  if (!p) return false;
+  if (p.preset === "mock") return true;
+  if (p.ignored) return false;
+  if (p.preset === "generic") return p.models.length > 0 && p.baseUrl.trim() !== "";
+  return (p.hasKey || p.keyDraft.trim() !== "") && p.models.length > 0;
+}
+function statusOf(p) {
+  if (p.ignored) return { text: "装载期已忽略", tone: "warn" };
+  if (isConfigured(p)) return { text: "已配置", tone: "ok" };
+  if (p.preset === "generic" && p.baseUrl.trim() === "") return { text: "缺 Base URL", tone: "warn" };
+  if (!p.hasKey && p.keyDraft.trim() === "" && p.preset !== "generic") return { text: "缺 API Key", tone: "warn" };
+  if (p.models.length === 0) return { text: "缺模型", tone: "warn" };
+  return { text: "未配置", tone: "warn" };
+}
+function effectiveModel(p) {
+  if (!p || p.models.length === 0) return "";
+  const declared = p.models.map((item) => String(item.id || "").trim()).filter(Boolean);
+  const explicit = p.modelId || "";
+  if (explicit && declared.includes(explicit)) return explicit;
+  return declared[0] || "";
+}
+function modelSpec(p, id) {
+  if (!p) return null;
+  return p.models.find((item) => String(item.id || "").trim() === id) || null;
+}
+function resolveNaming(kind) {
+  const override = state.naming[kind];
+  const dangling = Boolean(override.provider && !state.providers[override.provider]);
+  const providerId = override.provider && state.providers[override.provider] ? override.provider : state.active;
+  const p = providerId ? state.providers[providerId] || null : null;
+  const follows = !override.provider || dangling;
+  if (!p) return { provider: null, model: "", follows, dangling, eligible: false, badReason: "没有可用的 provider" };
+  const requested = override.model ? String(override.model).trim() : "";
+  const spec = requested ? modelSpec(p, requested) : null;
+  const modelId = requested ? (spec ? requested : "") : effectiveModel(p);
+  if (kind === "attachment") {
+    const targetSpec = modelId ? modelSpec(p, modelId) : null;
+    const eligible = Boolean(targetSpec && targetSpec.vision === true);
+    return {
+      provider: providerId, model: modelId, follows, dangling, eligible,
+      badReason: eligible ? "" : (requested && !spec ? `模型 ${requested} 不在清单内` : "生效模型未声明 vision"),
+    };
+  }
+  return {
+    provider: providerId, model: modelId, follows, dangling, eligible: Boolean(modelId),
+    badReason: modelId ? "" : "目标 provider 没有可用模型",
+  };
+}
 function normalizeUrl(value) { return String(value || "").trim().replace(/\/+$/, ""); }
 function isCustomBase(p) {
   const value = normalizeUrl(p.baseUrl);
-  return value !== "" && value !== normalizeUrl(OFFICIAL[p.id]);
+  if (value === "") return false;
+  const official = normalizeUrl(presetOf(p).official);
+  return official === "" || value !== official;
 }
 function errorFor(path) { return state.errors.find((entry) => entry.path === path); }
+function locked() { return state.readonly || state.mode === "saving"; }
 
 /* ── 渲染 ───────────────────────────────────────────────────────── */
 function render() {
@@ -735,8 +999,7 @@ function render() {
   closedState.hidden = true;
   appShell.setAttribute("inert", "");
   document.body.classList.add("is-modal");
-  renderTabs();
-  renderProviderPanel();
+  renderProviderPane();
   renderDiagnostics();
   renderAutomation();
   renderBanner();
@@ -746,22 +1009,162 @@ function render() {
   syncUrl();
 }
 
-function renderTabs() {
-  const locked = state.readonly || state.mode === "saving";
-  $("#provider-tabs").innerHTML = ["kimi", "deepseek"].map((id) => {
+function statusDotClass(p) {
+  const status = statusOf(p);
+  return status.tone === "ok" ? "is-ok" : status.tone === "warn" ? "is-warn" : "";
+}
+
+function renderProviderList() {
+  const ids = visibleProviderIds();
+  $("[data-provider-count]").textContent = ids.length ? `${ids.length}` : "";
+  $("#provider-list").innerHTML = ids.map((id) => {
     const p = state.providers[id];
-    const on = state.provider === id;
-    const configured = isConfigured(p);
-    return `<button type="button" role="tab" class="seg-btn${on ? " is-on" : ""}" data-provider-tab="${id}" aria-selected="${on}" tabindex="${on ? 0 : -1}" ${locked ? "disabled" : ""}>
-      <span class="seg-dot${configured ? " is-on" : ""}" aria-hidden="true"></span>${PROVIDER_NAMES[id]}
-      <span class="seg-state">${configured ? "已配置" : "未配置"}</span>
+    const on = state.selected === id;
+    const active = state.active === id;
+    return `<button type="button" class="provider-item${on ? " is-on" : ""}" data-provider-select="${esc(id)}"
+      aria-current="${on ? "true" : "false"}">
+      <span class="provider-dot ${statusDotClass(p)}" aria-hidden="true"></span>
+      <span class="provider-name">${esc(id)}</span>
+      <span class="provider-preset">· ${esc(presetOf(p).label)}</span>
+      ${active ? '<span class="provider-current" data-current-badge>当前</span>' : ""}
     </button>`;
   }).join("");
+  const addBtn = $("[data-provider-add]");
+  addBtn.disabled = locked();
+}
+
+function renderProviderPane() {
+  renderProviderList();
+  const panel = $("#provider-panel");
+  if (state.add && state.add.open) {
+    panel.innerHTML = renderAddForm();
+    return;
+  }
+  if (state.deleteTarget && state.providers[state.deleteTarget]) {
+    panel.innerHTML = renderDeleteCard(state.providers[state.deleteTarget]);
+    return;
+  }
+  const p = selectedProvider();
+  if (!p) {
+    panel.innerHTML = renderEmptyState();
+    return;
+  }
+  panel.innerHTML = renderProviderForm(p);
+  const keyInput = $("[data-api-key-input]");
+  if (keyInput && p.keyDraft) keyInput.value = p.keyDraft;
+}
+
+function renderEmptyState() {
+  return `<div class="empty-state" data-provider-empty>
+    <h3>还没有 provider</h3>
+    <p>添加一个 provider 后，才能为它声明模型、选择当前使用项并发送消息。模型清单只来自 <span class="mono">config.json</span>。</p>
+    <button type="button" class="btn primary" data-provider-add-empty ${locked() ? "disabled" : ""}>添加第一个 provider</button>
+  </div>`;
+}
+
+function renderAddForm() {
+  const add = state.add;
+  const error = add.error;
+  const ro = locked();
+  const presetButtons = ["kimi", "deepseek", "generic"].map((key) => {
+    const conf = PRESETS[key];
+    const on = add.preset === key;
+    return `<button type="button" class="preset-btn${on ? " is-on" : ""}" data-add-preset="${key}"
+      aria-pressed="${on}" ${ro ? "disabled" : ""}>
+      <span class="preset-name">${esc(conf.label)}</span>
+      <span class="preset-desc">${esc(conf.desc)}</span>
+    </button>`;
+  }).join("");
+  return `<div class="add-card" data-add-card>
+    <div class="add-title">添加 provider</div>
+    <p class="add-sub">id 是它的稳定身份，创建后不可修改；预设决定官方地址、wire 缺省与超限识别，创建后也不可修改。</p>
+    <div class="field">
+      <div class="field-head">
+        <label for="add-provider-id">provider id</label>
+        <span class="field-state">小写字母 / 数字 / - / _</span>
+      </div>
+      <input id="add-provider-id" class="text-input mono-input" type="text" data-add-id
+        value="${esc(add.id)}" placeholder="例如 kimi-work、local-lab" autocomplete="off" spellcheck="false"
+        aria-describedby="add-id-hint" ${ro ? "readonly" : ""}
+        ${error ? `aria-invalid="true" aria-errormessage="add-id-error"` : ""}>
+      <p class="hint" id="add-id-hint">1–32 个字符，以字母或数字开头，不含点（点分写回路径按 . 分段）。</p>
+      ${error ? `<p class="field-error" id="add-id-error" data-error-for="add:id">${esc(error)}</p>` : ""}
+    </div>
+    <div class="field">
+      <div class="field-head"><span class="label">预设</span></div>
+      <div class="preset-row" role="group" aria-label="provider 预设">${presetButtons}</div>
+    </div>
+    <div class="add-actions">
+      <button type="button" class="btn" data-add-cancel ${ro ? "disabled" : ""}>取消</button>
+      <button type="button" class="btn primary" data-add-confirm ${ro ? "disabled" : ""}>添加</button>
+    </div>
+  </div>`;
+}
+
+function renderDeleteCard(p) {
+  const others = visibleProviderIds().filter((id) => id !== p.id && !state.providers[id].ignored);
+  const refs = {
+    active: state.active === p.id,
+    session: state.naming.session.provider === p.id,
+    attachment: state.naming.attachment.provider === p.id,
+  };
+  const plan = state.deletePlan || {
+    activeAfter: others[0] || "",
+    sessionAfter: "follow",
+    attachmentAfter: "follow",
+  };
+  const ro = locked();
+  const options = (selected) => [
+    ...others.map((id) => `<option value="${esc(id)}" ${selected === id ? "selected" : ""}>${esc(id)}</option>`),
+  ].join("");
+  const namingOptions = (selected) => [
+    `<option value="follow" ${selected === "follow" ? "selected" : ""}>跟随当前 provider</option>`,
+    ...others.map((id) => `<option value="${esc(id)}" ${selected === id ? "selected" : ""}>${esc(id)}</option>`),
+  ].join("");
+  const activeBlock = refs.active
+    ? (others.length
+      ? `<div class="delete-block" data-delete-active><strong>它是当前使用的 provider。</strong>删除后切换到：
+          <div class="delete-row"><label>新的当前项</label>
+            <select class="select-input" data-delete-active-after aria-label="替代的当前 provider" ${ro ? "disabled" : ""}>${options(plan.activeAfter)}</select>
+          </div>
+        </div>`
+      : `<div class="delete-block" data-delete-last><strong>这是最后一个 provider。</strong>删除后将没有 provider，发送消息会被挡下，直到你添加新的 provider。</div>`)
+    : "";
+  const sessionBlock = refs.session
+    ? `<div class="delete-block" data-delete-session>
+        <strong>会话命名正在使用它。</strong>删除后：
+        <div class="delete-row"><label>会话命名</label>
+          <select class="select-input" data-delete-session-after aria-label="会话命名的新目标" ${ro ? "disabled" : ""}>${namingOptions(plan.sessionAfter)}</select>
+        </div>
+        <p class="delete-note">它的模型覆盖 <span class="mono">session_naming.model</span> 会一并清除（属于旧 provider 的清单）。</p>
+      </div>`
+    : "";
+  const attachmentBlock = refs.attachment
+    ? `<div class="delete-block" data-delete-attachment>
+        <strong>图片命名正在使用它。</strong>删除后：
+        <div class="delete-row"><label>图片命名</label>
+          <select class="select-input" data-delete-attachment-after aria-label="图片命名的新目标" ${ro ? "disabled" : ""}>${namingOptions(plan.attachmentAfter)}</select>
+        </div>
+        <p class="delete-note">模型覆盖会一并清除；新目标若没有声明 vision 的模型，粘贴图片会跳过命名。</p>
+      </div>`
+    : "";
+  const draftBlock = p.draftDirty
+    ? `<div class="delete-block" data-delete-draft><strong>该 provider 有未保存的修改。</strong>删除会一并丢弃这些修改。</div>`
+    : "";
+  return `<div class="delete-card" data-delete-card>
+    <div class="delete-title">删除 provider「<span class="mono">${esc(p.id)}</span>」？</div>
+    <p class="delete-sub">删除是草稿动作：点「保存」才写入 config.json；未保存前可以取消。</p>
+    ${activeBlock}${sessionBlock}${attachmentBlock}${draftBlock}
+    <div class="delete-actions">
+      <button type="button" class="btn" data-delete-cancel ${ro ? "disabled" : ""}>取消</button>
+      <button type="button" class="btn danger-solid" data-delete-confirm ${ro ? "disabled" : ""}>删除</button>
+    </div>
+  </div>`;
 }
 
 function modelRowsHtml(p) {
   const id = p.id;
-  const ro = state.readonly || state.mode === "saving";
+  const ro = locked();
   return p.models.map((m, index) => {
     const idError = errorFor(`providers.${id}.models[${index}].id`);
     const windowError = errorFor(`providers.${id}.models[${index}].window`);
@@ -795,39 +1198,69 @@ function missingNote(m, index) {
   return `<p class="row-note" data-missing-row="${index}">未声明 ${missing.join(" / ")}；保存后按默认值显式写入（false / false / 131072）</p>`;
 }
 
-function renderProviderPanel() {
-  const p = activeProvider();
+function renderProviderForm(p) {
   const id = p.id;
-  const locked = state.readonly || state.mode === "saving";
+  const ro = locked();
+  const ignored = p.ignored;
+  const conf = presetOf(p);
+  const count = visibleProviderIds().length;
   const keyError = errorFor(`providers.${id}.api_key`);
   const providerError = errorFor(`providers.${id}`);
   const baseError = errorFor(`providers.${id}.base_url`);
   const keyPlaceholder = p.hasKey ? `已配置 · …${p.keyHint || "????"}` : "未配置";
-  const keyRowValue = p.keyDraft || "";
   const rawWireDiffers = p.wireApiPresent && String(p.wireApiRaw ?? "") !== p.wireApi;
+  const status = statusOf(p);
+  const isGeneric = p.preset === "generic";
+  const official = conf.official;
+  const active = state.active === id;
 
-  $("#provider-panel").innerHTML = `
+  if (ignored) {
+    return `<div class="provider-head">
+        <span class="provider-title">${esc(id)}</span>
+        <span class="provider-sub">preset ${esc(p.preset)}</span>
+        <span class="provider-status is-warn" data-provider-status>装载期已忽略</span>
+      </div>
+      <div class="provider-ignore-note" data-ignore-note>${esc(p.ignoreReason || "该条目的预设或字段非法，装载期已忽略。")}<br>
+      它是冻结状态：不能在这里编辑；可以去 <span class="mono">config.json</span> 修正，或直接删除它。</div>
+      <div class="danger-zone">
+        <div class="danger-copy">
+          <div class="danger-title">删除此 provider</div>
+          <div class="danger-desc">从 config.json 的 providers 表里移除这一条。</div>
+        </div>
+        <button type="button" class="btn danger" data-provider-delete ${ro ? "disabled" : ""}>删除…</button>
+      </div>`;
+  }
+
+  return `<div class="provider-head">
+      <span class="provider-title">${esc(id)}</span>
+      <span class="provider-sub">${esc(conf.label)} 预设</span>
+      <span class="provider-status ${status.tone === "ok" ? "is-ok" : "is-warn"}" data-provider-status>${esc(status.text)}</span>
+      ${active
+        ? '<span class="badge" data-active-badge>当前使用</span>'
+        : `<button type="button" class="btn ghost set-current" data-set-active ${ro ? "disabled" : ""}>设为当前使用</button>`}
+    </div>
+
     <div class="field">
       <div class="field-head">
         <label for="api-key-input">API Key</label>
-        <span class="field-state" data-api-key-state>${p.hasKey ? "已配置" : "未配置"}</span>
+        <span class="field-state" data-api-key-state>${p.hasKey ? (p.keyDraft ? "待保存" : "已配置") : "未配置"}</span>
       </div>
       <div class="key-row">
         <input id="api-key-input" class="text-input" type="password" data-api-key-input
           placeholder="${esc(keyPlaceholder)}" aria-describedby="api-key-note" autocomplete="off"
-          spellcheck="false" ${locked ? "readonly" : ""}
+          spellcheck="false" ${ro ? "readonly" : ""}
           ${keyError ? `aria-invalid="true" aria-errormessage="err-api-key"` : ""}>
-        <button type="button" class="btn ghost" data-api-key-replace ${locked ? "disabled" : ""}>替换</button>
-        <button type="button" class="btn ghost" data-api-key-clear ${(!p.hasKey && !p.keyDraft) || locked ? "disabled" : ""}>清除</button>
+        <button type="button" class="btn ghost" data-api-key-replace ${ro ? "disabled" : ""}>替换</button>
+        <button type="button" class="btn ghost" data-api-key-clear ${((!p.hasKey && !p.keyDraft) || ro) ? "disabled" : ""}>清除</button>
       </div>
-      <p class="hint" id="api-key-note">明文存储在 <span class="mono">config.json</span> 中；任何能读该文件的人都能读到它。已配置的 Key 不会在这里回显。</p>
+      <p class="hint" id="api-key-note">${isGeneric ? "可留空：本地端点通常不需要 Key，空 = 请求不发送 Authorization 头。若填写，明文存储在 config.json 中；任何能读该文件的人都能读到它。" : "明文存储在 config.json 中；任何能读该文件的人都能读到它。已配置的 Key 不会在这里回显。"}</p>
       ${keyError ? `<p class="field-error" id="err-api-key" data-error-for="providers.${id}.api_key">${esc(keyError.message)}</p>` : ""}
     </div>
 
     <div class="field models-field">
       <div class="models-head">
         <span class="label">模型清单</span>
-        <button type="button" class="btn ghost" data-model-add ${locked ? "disabled" : ""}>+ 添加模型</button>
+        <button type="button" class="btn ghost" data-model-add ${ro ? "disabled" : ""}>+ 添加模型</button>
       </div>
       <div class="model-table">
         <div class="model-table-head" aria-hidden="true">
@@ -841,47 +1274,61 @@ function renderProviderPanel() {
 
     <div class="advanced">
       <button type="button" class="adv-toggle" data-advanced-toggle aria-expanded="${state.advanced}" aria-controls="advanced-body">
-        <span class="chev" aria-hidden="true"></span> 高级 · Base URL / Wire 方言
+        <span class="chev" aria-hidden="true"></span> 高级 · 预设 / Base URL / Wire 方言
       </button>
       <div class="adv-body" id="advanced-body" data-advanced ${state.advanced ? "" : "hidden"}>
         <div class="field">
           <div class="field-head">
+            <span class="label">预设</span>
+            <span class="field-state">创建后不可修改</span>
+          </div>
+          <input class="text-input mono-input" type="text" value="${esc(p.preset)}（${esc(conf.label)}）" readonly
+            aria-label="provider 预设（只读）" data-preset-readonly>
+          <p class="hint">预设决定官方地址、是否发送 store:false、超限识别与 wire 缺省。换协议请新增一个 provider 再删除这个。</p>
+        </div>
+        <div class="field">
+          <div class="field-head">
             <label for="base-url">Base URL</label>
             <span class="field-head-right">
-              <span class="field-state" data-base-url-state>${isCustomBase(p) ? "自定义" : "官方地址"}</span>
-              <button type="button" class="link-btn" data-base-url-reset ${p.baseUrlPresent ? "" : "hidden"} ${locked ? "disabled" : ""}>恢复默认</button>
+              <span class="field-state" data-base-url-state>${isCustomBase(p) ? "自定义" : (isGeneric ? "未填" : "官方地址")}</span>
+              <button type="button" class="link-btn" data-base-url-reset ${p.baseUrlPresent ? "" : "hidden"} ${ro ? "disabled" : ""}>恢复默认</button>
             </span>
           </div>
           <input id="base-url" class="text-input mono-input" type="text" data-base-url
-            value="${esc(p.baseUrl)}" placeholder="${esc(OFFICIAL[id])}（官方地址）"
-            aria-describedby="base-url-hint" ${locked ? "readonly" : ""}
+            value="${esc(p.baseUrl)}" placeholder="${isGeneric ? "必填，例如 http://127.0.0.1:8080/v1" : esc(official + "（官方地址）")}"
+            aria-describedby="base-url-hint" ${ro ? "readonly" : ""}
             ${baseError ? 'aria-invalid="true"' : ""}>
-          <p class="hint" id="base-url-hint">留空 = 使用官方地址（${esc(OFFICIAL[id])}）。</p>
-          <p class="inline-warning" data-base-url-warning ${isCustomBase(p) ? "" : "hidden"}>带密钥的请求会发往这个地址。非官方地址意味着把它交给了该主机的运维者。</p>
+          <p class="hint" id="base-url-hint">${isGeneric
+            ? "generic 预设在已有 Key 或模型时必填；完全空的条目可以先保存，之后再补。"
+            : `留空 = 使用官方地址（${esc(official)}）。`}</p>
+          <p class="inline-warning" data-base-url-warning ${isCustomBase(p) ? "" : "hidden"}>${p.hasKey || p.keyDraft ? "带密钥的请求会发往这个地址。非官方地址意味着把它交给了该主机的运维者。" : "请求会发往这个地址。请确认这是你信任的主机。"}</p>
           ${baseError ? `<p class="field-error" data-error-for="providers.${id}.base_url">${esc(baseError.message)}</p>` : ""}
         </div>
         <div class="field">
           <div class="field-head">
             <label for="wire-api">Wire 方言</label>
             <span class="field-head-right">
-              <button type="button" class="link-btn" data-wire-reset ${p.wireApiPresent ? "" : "hidden"} ${locked ? "disabled" : ""}>恢复默认</button>
+              <button type="button" class="link-btn" data-wire-reset ${p.wireApiPresent ? "" : "hidden"} ${ro ? "disabled" : ""}>恢复默认</button>
             </span>
           </div>
-          <select id="wire-api" class="select-input" data-wire-api ${locked ? "disabled" : ""}>
-            <option value="responses" ${p.wireApi === "responses" ? "selected" : ""}>responses</option>
-            <option value="chat_completions" ${p.wireApi === "chat_completions" ? "selected" : ""} ${id === "deepseek" ? "disabled" : ""}>chat_completions</option>
+          <select id="wire-api" class="select-input" data-wire-api ${ro ? "disabled" : ""}>
+            ${conf.wires.map((wire) => `<option value="${wire}" ${p.wireApi === wire ? "selected" : ""} ${(conf.unsupported || []).includes(wire) ? "disabled" : ""}>${wire}</option>`).join("")}
           </select>
-          <p class="hint">${id === "deepseek"
+          <p class="hint">${p.preset === "deepseek"
             ? "deepseek 的 chat 档在 v1 未实现，选项已置灰；强行写入会在装载期回落 responses 并告警。"
-            : "responses = POST {base}/responses；chat_completions = POST {base}/chat/completions。"}</p>
-          ${rawWireDiffers ? `<p class="inline-warning" data-wire-raw-note>文件中的值是「${esc(p.wireApiRaw)}」，不是合法方言；装载期已回落为 ${p.wireApi}，保存后写为 ${p.wireApi}。</p>` : ""}
+            : `缺省是 ${conf.defaultWire}。responses = POST {base}/responses；chat_completions = POST {base}/chat/completions。`}</p>
+          ${rawWireDiffers ? `<p class="inline-warning" data-wire-raw-note>文件中的值是「${esc(p.wireApiRaw)}」，不是合法方言；装载期已回落为 ${esc(p.wireApi)}，保存后写为 ${esc(p.wireApi)}。</p>` : ""}
         </div>
       </div>
     </div>
-  `;
 
-  const keyInput = $("[data-api-key-input]");
-  if (keyInput && keyRowValue) keyInput.value = keyRowValue;
+    <div class="danger-zone">
+      <div class="danger-copy">
+        <div class="danger-title">删除此 provider</div>
+        <div class="danger-desc">${count > 1 ? "会从 config.json 的 providers 表里移除这一条。" : "这是最后一个 provider；删除后将没有可用的 provider。"}</div>
+      </div>
+      <button type="button" class="btn danger" data-provider-delete ${ro ? "disabled" : ""}>删除…</button>
+    </div>`;
 }
 
 function isAutomationDiagnostic(path) {
@@ -916,7 +1363,7 @@ const AUTOMATION = [
     "上下文接近上限时压缩并开启新会话，旧会话文件完整保留。",
     "全局 · 下一回合生效 · 产生一次模型调用"],
   ["session_naming", "会话命名",
-    "首轮生成；此后每 5 轮重估，话题漂移可提前（两次评估至少隔 3 轮）。失败按自然节奏重试，单飞行，结果异步落盘。",
+    "首轮生成；此后每 5 轮重估，话题漂移可提前（两次评估至少隔 3 轮）。初始生成失败后，在满足 3 轮间隔的下一个正常完成轮重试；已有标题时失败不立即重试，按自然节奏再来。单飞行，结果异步落盘。",
     "全局 · 从下一次触发点起生效 · 内容出域 + 一次便宜档调用"],
   ["attachment_naming", "图片命名",
     "每次粘贴新图时异步生成语义文件名；目标模型未声明 vision 时跳过、保留暂存名，不换模型。",
@@ -926,15 +1373,40 @@ const AUTOMATION = [
     "全局 · 下一回合生效 · 每个子代理独立计费"],
 ];
 
-function renderAutomation() {
-  const locked = state.readonly || state.mode === "saving";
+function renderNamingReadout() {
+  const session = resolveNaming("session");
+  const attachment = resolveNaming("attachment");
+  const line = (label, target, stateText, bad) => `<div class="naming-line">
+      <span class="naming-label">${label}</span>
+      <span class="naming-target" data-naming-target="${label === "会话命名" ? "session" : "attachment"}">${target}</span>
+      <span class="naming-state${bad ? " is-bad" : ""}">${stateText}</span>
+    </div>`;
+  const targetText = (res) => res.provider ? `${esc(res.provider)} / ${esc(res.model || "（无模型）")}` : "（无可用 provider）";
+  const followText = (res) => !res.provider
+    ? "无可用 provider"
+    : res.dangling
+      ? "覆盖项悬空 · 已回落当前 provider"
+      : res.follows ? "跟随当前 provider · 下一次触发生效" : "配置文件覆盖 · 下一次触发生效";
+  const attachmentState = !attachment.provider
+    ? "无可用 provider"
+    : attachment.dangling
+      ? "覆盖项悬空 · 已回落"
+      : attachment.eligible ? "✓ vision · 下一次粘贴生效" : `会跳过：${attachment.badReason}`;
+  $("#naming-readout").innerHTML =
+    line("会话命名", targetText(session), followText(session), !session.eligible) +
+    line("图片命名", targetText(attachment), attachmentState, !attachment.eligible) +
+    `<div class="naming-note" data-naming-target-note>默认跟随当前会话的 provider 与它的生效模型；可在 <span class="mono">config.json</span> 的 <span class="mono">harness.session_naming</span> / <span class="mono">harness.attachment_naming</span> 下单独覆盖。每次只发往一个目标，不会对每个 provider 各做一次；本页不改覆盖项。</div>`;
+}
+
+function renderAutomationSwitches() {
+  const ro = locked();
   $("#automation-list").innerHTML = AUTOMATION.map(([key, title, desc, meta]) => {
     const item = state.automation[key];
     const badge = item.explicit ? "" : '<span class="badge" data-default-badge>默认</span>';
     const restart = key === "attachment_naming" && state.attachmentTurnedOn
       ? '<p class="auto-restart" data-restart>重新开启需重启应用</p>' : "";
     const restore = item.explicit
-      ? `<button type="button" class="link-btn" data-switch-reset="${key}" ${locked ? "disabled" : ""}>恢复默认</button>`
+      ? `<button type="button" class="link-btn" data-switch-reset="${key}" ${ro ? "disabled" : ""}>恢复默认</button>`
       : "";
     return `<div class="auto-row" data-auto-row="${key}">
       <div class="auto-copy">
@@ -947,10 +1419,15 @@ function renderAutomation() {
         ${restore}
         <button type="button" role="switch" class="switch${item.value ? " is-on" : ""}"
           data-switch="${key}" aria-checked="${item.value}" aria-label="${title}"
-          ${locked ? "disabled" : ""}><span class="knob"></span></button>
+          ${ro ? "disabled" : ""}><span class="knob"></span></button>
       </div>
     </div>`;
   }).join("");
+}
+
+function renderAutomation() {
+  renderNamingReadout();
+  renderAutomationSwitches();
 }
 
 function renderBanner() {
@@ -999,11 +1476,10 @@ function renderStatus() {
   el.textContent = statusText();
   el.className = `status ${statusTone()}`.trim();
   const save = $("[data-save]");
-  const locked = state.readonly || ["saving", "saved", "conflict", "fileInvalid"].includes(state.mode);
-  save.disabled = locked || (!state.dirty && state.mode !== "blocked");
+  const saveLocked = state.readonly || ["saving", "saved", "conflict", "fileInvalid"].includes(state.mode);
+  save.disabled = saveLocked || (!state.dirty && state.mode !== "blocked");
   save.textContent = state.mode === "saving" ? "保存中…" : "保存";
-  const editingLocked = state.readonly || state.mode === "saving";
-  $("[data-reset-page]").disabled = editingLocked;
+  $("[data-reset-page]").disabled = locked();
   $("[data-cancel]").disabled = state.mode === "saving";
 }
 
@@ -1017,12 +1493,14 @@ function renderCpanel() {
     const [kind, value] = button.dataset.go.split(":");
     const on = kind === "theme" ? currentTheme === value
       : kind === "scene" ? (state.closed ? value === "closed" : state.scene === value)
-      : kind === "provider" ? state.provider === value
+      : kind === "provider" ? state.selected === value
       : false;
     button.classList.toggle("is-on", on);
   });
   const advancedButton = $('#cpanel [data-toggle="advanced"]');
-  if (advancedButton) advancedButton.textContent = state.advanced ? "收起" : "展开";
+  if (advancedButton) advancedButton.textContent = state.advanced ? "收起" : "高级区";
+  const deleteButton = $('#cpanel [data-toggle="delete"]');
+  if (deleteButton) deleteButton.disabled = !state.selected || Boolean(state.deleteTarget);
   $("#cpanel").hidden = panelOff;
 }
 
@@ -1032,82 +1510,205 @@ function clearErrorDom() {
   $$('[aria-invalid="true"]').forEach((el) => el.removeAttribute("aria-invalid"));
 }
 
-function markDirty() {
-  if (state.readonly || state.mode === "saving") return;
+function markDirty(p) {
+  if (locked()) return;
   state.dirty = true;
   state.mode = "dirty";
   state.errors = [];
+  if (p) p.draftDirty = true;
   clearErrorDom();
   renderStatus();
 }
 
-function setProvider(id) {
-  if (!["kimi", "deepseek"].includes(id) || state.provider === id || state.mode === "saving") return;
-  state.provider = id;
-  renderTabs();
-  renderProviderPanel();
+function selectProvider(id) {
+  if (!state.providers[id] || state.selected === id || state.mode === "saving") return;
+  state.selected = id;
+  state.add = null;
+  state.deleteTarget = null;
+  state.deletePlan = null;
+  renderProviderPane();
+  renderCpanel();
   syncUrl();
 }
 
+function setActive(id) {
+  if (locked() || !state.providers[id] || state.active === id) return;
+  if (state.providers[id].ignored) return;
+  state.active = id;
+  markDirty(null);
+  renderProviderPane();
+  renderNamingReadout();
+  renderCpanel();
+}
+
+function openAdd() {
+  if (locked()) return;
+  state.add = { open: true, id: "", preset: "kimi", error: null };
+  state.deleteTarget = null;
+  state.deletePlan = null;
+  renderProviderPane();
+  const input = $("[data-add-id]");
+  if (input) input.focus();
+}
+
+function cancelAdd() {
+  if (locked()) return;
+  state.add = null;
+  renderProviderPane();
+}
+
+function validateProviderId(id) {
+  const value = String(id || "").trim();
+  if (value === "") return "provider id 不能为空";
+  if (!ID_RE.test(value)) return "provider id 只能用小写字母 / 数字 / - / _，1–32 个字符，且以字母或数字开头（不含点）";
+  if (RESERVED_IDS.includes(value)) return "`mock` 是验收专用保留 id，不能新增为普通 provider";
+  if (Object.prototype.hasOwnProperty.call(state.providers, value)) return "id 已存在：换一个 id，或选择已有 provider 编辑";
+  if ((state.removedIds || []).includes(value)) return "该 id 本笔已删除：先保存删除，再新增同名 provider";
+  return null;
+}
+
+function confirmAdd() {
+  if (locked() || !state.add) return;
+  const error = validateProviderId(state.add.id);
+  if (error) {
+    state.add.error = error;
+    renderProviderPane();
+    const input = $("[data-add-id]");
+    if (input) input.focus();
+    return;
+  }
+  const id = String(state.add.id).trim();
+  const preset = state.add.preset;
+  state.providers[id] = providerBase(id, preset, {});
+  state.selected = id;
+  state.add = null;
+  if (!state.active) state.active = id;
+  markDirty(state.providers[id]);
+  renderProviderPane();
+  renderNamingReadout();
+  renderCpanel();
+}
+
+function openDelete(id) {
+  if (locked() || !state.providers[id]) return;
+  state.deleteTarget = id;
+  state.selected = id;
+  state.add = null;
+  const others = visibleProviderIds().filter((other) => other !== id && !state.providers[other].ignored);
+  state.deletePlan = {
+    activeAfter: others[0] || "",
+    sessionAfter: "follow",
+    attachmentAfter: "follow",
+  };
+  renderProviderPane();
+  renderCpanel();
+}
+
+function cancelDelete() {
+  if (locked()) return;
+  state.deleteTarget = null;
+  state.deletePlan = null;
+  renderProviderPane();
+  renderCpanel();
+}
+
+function confirmDelete() {
+  if (locked() || !state.deleteTarget) return;
+  const id = state.deleteTarget;
+  const p = state.providers[id];
+  if (!p) { cancelDelete(); return; }
+  const others = visibleProviderIds().filter((other) => other !== id && !state.providers[other].ignored);
+  const plan = state.deletePlan || {};
+  const isActive = state.active === id;
+  if (isActive && others.length && !others.includes(plan.activeAfter)) {
+    return;
+  }
+  delete state.providers[id];
+  state.removedIds = Array.from(new Set([...(state.removedIds || []), id]));
+  if (isActive) state.active = others.length ? plan.activeAfter : null;
+  if (state.naming.session.provider === id) {
+    state.naming.session.model = null;
+    state.naming.session.provider = plan.sessionAfter === "follow" ? null : plan.sessionAfter;
+  } else if (state.naming.session.provider === null && isActive) {
+    // 跟随 active 的目标隐式换到了替代项；模型覆盖属于旧 provider，清除。
+    state.naming.session.model = null;
+  }
+  if (state.naming.attachment.provider === id) {
+    state.naming.attachment.model = null;
+    state.naming.attachment.provider = plan.attachmentAfter === "follow" ? null : plan.attachmentAfter;
+  } else if (state.naming.attachment.provider === null && isActive) {
+    state.naming.attachment.model = null;
+  }
+  if (state.selected === id) state.selected = state.active || providerIds()[0] || null;
+  state.deleteTarget = null;
+  state.deletePlan = null;
+  markDirty(null);
+  renderProviderPane();
+  renderNamingReadout();
+  renderCpanel();
+}
+
 function addModel() {
-  if (state.readonly || state.mode === "saving") return;
-  activeProvider().models.push({ id: "", effort: false, vision: false, window: NaN, issues: [] });
-  markDirty();
-  renderProviderPanel();
+  const p = selectedProvider();
+  if (!p || locked() || p.ignored) return;
+  p.models.push({ id: "", effort: false, vision: false, window: NaN, issues: [] });
+  markDirty(p);
+  renderProviderPane();
   const inputs = $$("[data-model-field='id']");
   if (inputs.length) inputs[inputs.length - 1].focus();
 }
 
 function removeModel(index) {
-  if (state.readonly || state.mode === "saving") return;
-  activeProvider().models.splice(index, 1);
-  markDirty();
-  renderProviderPanel();
+  const p = selectedProvider();
+  if (!p || locked()) return;
+  p.models.splice(index, 1);
+  markDirty(p);
+  renderProviderPane();
 }
 
 function clearKey() {
-  if (state.readonly || state.mode === "saving") return;
-  const p = activeProvider();
+  const p = selectedProvider();
+  if (!p || locked()) return;
   p.hasKey = false;
   p.keyHint = null;
   p.keyDraft = "";
-  markDirty();
-  renderProviderPanel();
+  markDirty(p);
+  renderProviderPane();
 }
 
 function resetBaseUrl() {
-  if (state.readonly || state.mode === "saving") return;
-  const p = activeProvider();
+  const p = selectedProvider();
+  if (!p || locked()) return;
   p.baseUrl = "";
   p.baseUrlPresent = false;
-  markDirty();
-  renderProviderPanel();
+  markDirty(p);
+  renderProviderPane();
 }
 
 function resetWireApi() {
-  if (state.readonly || state.mode === "saving") return;
-  const p = activeProvider();
-  p.wireApi = "responses";
+  const p = selectedProvider();
+  if (!p || locked()) return;
+  p.wireApi = presetOf(p).defaultWire || "responses";
   p.wireApiRaw = null;
   p.wireApiPresent = false;
-  markDirty();
-  renderProviderPanel();
+  markDirty(p);
+  renderProviderPane();
 }
 
 function resetSwitch(key) {
-  if (state.readonly || state.mode === "saving") return;
+  if (locked()) return;
   state.automation[key] = { value: true, explicit: false };
-  markDirty();
-  renderAutomation();
+  markDirty(null);
+  renderAutomationSwitches();
 }
 
 function toggleSwitch(key) {
-  if (state.readonly || state.mode === "saving") return;
+  if (locked()) return;
   const item = state.automation[key];
   item.value = !item.value;
   item.explicit = true;
   if (key === "attachment_naming") state.attachmentTurnedOn = item.value;
-  markDirty();
+  markDirty(null);
   const switchEl = $(`[data-switch="${key}"]`);
   if (switchEl) {
     switchEl.setAttribute("aria-checked", String(item.value));
@@ -1127,22 +1728,30 @@ function toggleSwitch(key) {
 }
 
 function resetPage() {
-  if (state.readonly || state.mode === "saving") return;
-  ["kimi", "deepseek"].forEach((id) => {
+  if (locked()) return;
+  Object.keys(state.providers).forEach((id) => {
     const p = state.providers[id];
     p.hasKey = false;
     p.keyHint = null;
     p.keyDraft = "";
+    p.models = [];
     p.baseUrl = "";
     p.baseUrlPresent = false;
-    p.wireApi = "responses";
+    p.wireApi = presetOf(p).defaultWire || "responses";
     p.wireApiRaw = null;
     p.wireApiPresent = false;
-    p.models = [];
+    p.draftDirty = false;
   });
+  state.active = null;
+  state.selected = providerIds()[0] || null;
+  state.naming = { session: naming(null, null), attachment: naming(null, null) };
   Object.keys(state.automation).forEach((key) => {
     state.automation[key] = { value: true, explicit: false };
   });
+  state.add = null;
+  state.deleteTarget = null;
+  state.deletePlan = null;
+  state.removedIds = [];
   state.dirty = true;
   state.mode = "dirty";
   state.errors = [];
@@ -1152,7 +1761,7 @@ function resetPage() {
 }
 
 function normalizeMissingFields() {
-  ["kimi", "deepseek"].forEach((id) => {
+  Object.keys(state.providers).forEach((id) => {
     state.providers[id].models.forEach((m) => {
       if (m.effort === null) m.effort = false;
       if (m.vision === null) m.vision = false;
@@ -1163,9 +1772,14 @@ function normalizeMissingFields() {
 
 function validateDraft() {
   const errors = [];
-  ["kimi", "deepseek"].forEach((id) => {
+  Object.keys(state.providers).forEach((id) => {
     const p = state.providers[id];
+    if (p.ignored) return;
     const hasKey = p.hasKey || p.keyDraft.trim() !== "";
+    const hasContent = hasKey || p.models.length > 0;
+    if (p.preset === "generic" && hasContent && p.baseUrl.trim() === "") {
+      errors.push({ path: `providers.${id}.base_url`, message: "generic 预设已填 Key 或模型，必须填 Base URL；留空时无法构造请求。" });
+    }
     if (hasKey && p.models.length === 0) {
       errors.push({ path: `providers.${id}`, message: "已填写 API Key，但模型清单为空：添加至少一个模型，或清除 Key。" });
     }
@@ -1186,7 +1800,7 @@ function validateDraft() {
       }
     });
     if (p.baseUrl.trim() !== "" && !/^https?:\/\//i.test(p.baseUrl.trim())) {
-      errors.push({ path: `providers.${id}.base_url`, message: "Base URL 必须是 http(s) 绝对地址；留空表示使用官方地址" });
+      errors.push({ path: `providers.${id}.base_url`, message: "Base URL 必须是 http(s) 绝对地址；留空表示使用官方地址（generic 除外）" });
     }
   });
   return errors;
@@ -1198,31 +1812,36 @@ function focusFirstError() {
 }
 
 function save() {
-  if (state.readonly || ["saving", "saved", "conflict", "fileInvalid"].includes(state.mode)) return;
+  if (locked() || ["saved", "conflict", "fileInvalid"].includes(state.mode)) return;
   normalizeMissingFields();
   const errors = validateDraft();
   if (errors.length) {
     state.errors = errors;
     state.dirty = true;
     state.mode = "blocked";
-    renderProviderPanel();
+    renderProviderPane();
     renderStatus();
     focusFirstError();
     return;
   }
-  const providerId = state.provider;
+  const touched = state.selected;
   state.mode = "saving";
   state.errors = [];
   render();
   window.setTimeout(() => {
-    const p = state.providers[providerId];
-    if (p.keyDraft) {
-      p.hasKey = true;
-      p.keyHint = p.keyDraft.slice(-4);
-      p.keyDraft = "";
-    }
+    Object.keys(state.providers).forEach((id) => {
+      const p = state.providers[id];
+      if (p.keyDraft) {
+        p.hasKey = true;
+        p.keyHint = p.keyDraft.slice(-4);
+        p.keyDraft = "";
+      }
+      p.draftDirty = false;
+    });
     state.mode = "saved";
     state.dirty = false;
+    state.removedIds = [];
+    if (touched && state.providers[touched]) state.selected = touched;
     render();
   }, 520);
 }
@@ -1257,7 +1876,11 @@ function reopen() {
 }
 
 function reloadExternal() {
-  state.providers.kimi.models = [model("k3-external", false, false, 131072)];
+  if (state.providers.kimi) {
+    state.providers.kimi.models = [model("k3-external", false, false, 131072)];
+  } else if (state.providers.deepseek) {
+    state.providers.deepseek.models = [model("ds-external", false, false, 131072)];
+  }
   state.banner = null;
   state.mode = "clean";
   state.dirty = false;
@@ -1276,15 +1899,17 @@ function forceSave() {
 
 function focusInitial() {
   if (state.closed) return;
-  const target = $('[data-provider-tab][aria-selected="true"]') || $("[data-close]");
+  const target = $('#provider-list .provider-item.is-on')
+    || $("[data-provider-add-empty]")
+    || $("[data-add-id]")
+    || $("[data-delete-cancel]")
+    || $("[data-close]");
   if (target) target.focus();
 }
 
 function loadScene(id) {
-  const keepProvider = state ? state.provider : "kimi";
   const keepAdvanced = state ? state.advanced : false;
   state = sceneSnapshot(id);
-  state.provider = keepProvider;
   state.advanced = keepAdvanced;
   render();
   focusInitial();
@@ -1303,7 +1928,7 @@ function syncUrl() {
     const params = new URLSearchParams();
     params.set("theme", currentTheme);
     params.set("scene", state.scene);
-    params.set("provider", state.provider);
+    if (state.selected) params.set("provider", state.selected);
     if (state.advanced) params.set("advanced", "1");
     if (panelOff) params.set("panel", "0");
     history.replaceState(null, "", `${location.pathname}?${params.toString()}`);
@@ -1322,7 +1947,7 @@ document.addEventListener("click", (event) => {
     const [kind, value] = go.dataset.go.split(":");
     if (kind === "theme") setTheme(value);
     if (kind === "scene") loadScene(value);
-    if (kind === "provider") setProvider(value);
+    if (kind === "provider") selectProvider(value);
     renderCpanel();
     return;
   }
@@ -1330,13 +1955,13 @@ document.addEventListener("click", (event) => {
   if (toggle) {
     if (toggle.dataset.toggle === "advanced") {
       state.advanced = !state.advanced;
-      renderProviderPanel();
+      renderProviderPane();
       renderCpanel();
       syncUrl();
     }
-    if (toggle.dataset.toggle === "reset") {
-      loadScene(state.scene);
-    }
+    if (toggle.dataset.toggle === "add") { openAdd(); }
+    if (toggle.dataset.toggle === "delete" && state.selected) { openDelete(state.selected); }
+    if (toggle.dataset.toggle === "reset") { loadScene(state.scene); }
     return;
   }
   if (target.closest("[data-close]")) { requestClose(); return; }
@@ -1346,11 +1971,24 @@ document.addEventListener("click", (event) => {
   if (target.closest("[data-discard-continue]")) { state.discard = false; renderFooterFlags(); return; }
   if (target.closest("[data-discard-confirm]")) { closeOverlay(); return; }
   if (target.closest("[data-reopen]")) { reopen(); return; }
-  const tab = target.closest("[data-provider-tab]");
-  if (tab) { setProvider(tab.dataset.providerTab); return; }
+  const providerSelect = target.closest("[data-provider-select]");
+  if (providerSelect) { selectProvider(providerSelect.dataset.providerSelect); return; }
+  if (target.closest("[data-provider-add]") || target.closest("[data-provider-add-empty]")) { openAdd(); return; }
+  if (target.closest("[data-set-active]")) { setActive(state.selected); return; }
+  if (target.closest("[data-add-cancel]")) { cancelAdd(); return; }
+  if (target.closest("[data-add-confirm]")) { confirmAdd(); return; }
+  const addPreset = target.closest("[data-add-preset]");
+  if (addPreset) {
+    if (state.add) state.add.preset = addPreset.dataset.addPreset;
+    renderProviderPane();
+    return;
+  }
+  if (target.closest("[data-provider-delete]")) { openDelete(state.selected); return; }
+  if (target.closest("[data-delete-cancel]")) { cancelDelete(); return; }
+  if (target.closest("[data-delete-confirm]")) { confirmDelete(); return; }
   if (target.closest("[data-advanced-toggle]")) {
     state.advanced = !state.advanced;
-    renderProviderPanel();
+    renderProviderPane();
     renderCpanel();
     syncUrl();
     return;
@@ -1380,58 +2018,86 @@ overlay.addEventListener("click", (event) => {
 
 document.addEventListener("input", (event) => {
   const target = event.target;
-  if (!(target instanceof Element) || state.readonly || state.mode === "saving") return;
+  if (!(target instanceof Element) || locked()) return;
+  if (target.matches("[data-add-id]")) {
+    if (!state.add) return;
+    state.add.id = target.value;
+    state.add.error = null;
+    const error = $("#add-id-error");
+    if (error) { error.hidden = true; error.textContent = ""; }
+    if (target.hasAttribute("aria-invalid")) target.removeAttribute("aria-invalid");
+    return;
+  }
   if (target.matches("[data-api-key-input]")) {
-    const provider = activeProvider();
+    const provider = selectedProvider();
+    if (!provider) return;
     provider.keyDraft = target.value;
     const stateEl = $("[data-api-key-state]");
     if (stateEl) stateEl.textContent = target.value ? "待保存" : (provider.hasKey ? "已配置" : "未配置");
     const clear = $("[data-api-key-clear]");
     if (clear) clear.disabled = !(provider.hasKey || target.value);
-    markDirty();
+    markDirty(provider);
     return;
   }
   if (target.matches("[data-base-url]")) {
-    const provider = activeProvider();
+    const provider = selectedProvider();
+    if (!provider) return;
     provider.baseUrl = target.value;
     provider.baseUrlPresent = target.value !== "";
     const warning = $("[data-base-url-warning]");
     if (warning) warning.hidden = !isCustomBase(provider);
     const stateEl = $("[data-base-url-state]");
-    if (stateEl) stateEl.textContent = isCustomBase(provider) ? "自定义" : "官方地址";
+    if (stateEl) stateEl.textContent = isCustomBase(provider) ? "自定义" : (provider.preset === "generic" ? "未填" : "官方地址");
     const reset = $("[data-base-url-reset]");
     if (reset) reset.hidden = !provider.baseUrlPresent;
-    markDirty();
+    markDirty(provider);
     return;
   }
   const field = target.dataset.modelField;
   if (field === "id" || field === "window") {
-    const row = activeProvider().models[Number(target.dataset.modelIndex)];
+    const provider = selectedProvider();
+    if (!provider) return;
+    const row = provider.models[Number(target.dataset.modelIndex)];
     if (!row) return;
     if (field === "id") row.id = target.value;
     else row.window = target.value === "" ? NaN : Number(target.value);
-    markDirty();
+    markDirty(provider);
   }
 });
 
 document.addEventListener("change", (event) => {
   const target = event.target;
-  if (!(target instanceof Element) || state.readonly || state.mode === "saving") return;
+  if (!(target instanceof Element) || locked()) return;
   if (target.matches("[data-wire-api]")) {
-    const provider = activeProvider();
+    const provider = selectedProvider();
+    if (!provider) return;
     provider.wireApi = target.value;
     provider.wireApiRaw = target.value;
     provider.wireApiPresent = true;
-    markDirty();
-    renderProviderPanel();
+    markDirty(provider);
+    renderProviderPane();
+    return;
+  }
+  if (target.matches("[data-delete-active-after]")) {
+    if (state.deletePlan) state.deletePlan.activeAfter = target.value;
+    return;
+  }
+  if (target.matches("[data-delete-session-after]")) {
+    if (state.deletePlan) state.deletePlan.sessionAfter = target.value;
+    return;
+  }
+  if (target.matches("[data-delete-attachment-after]")) {
+    if (state.deletePlan) state.deletePlan.attachmentAfter = target.value;
     return;
   }
   const field = target.dataset.modelField;
   if (field === "effort" || field === "vision") {
-    const row = activeProvider().models[Number(target.dataset.modelIndex)];
+    const provider = selectedProvider();
+    if (!provider) return;
+    const row = provider.models[Number(target.dataset.modelIndex)];
     if (!row) return;
     row[field] = target.checked;
-    markDirty();
+    markDirty(provider);
   }
 });
 
@@ -1448,7 +2114,6 @@ document.addEventListener("keydown", (event) => {
       renderFooterFlags();
       return;
     }
-    if (state.discard) return;
     requestClose();
     return;
   }
@@ -1485,7 +2150,8 @@ document.addEventListener("keydown", (event) => {
 
   state = sceneSnapshot(scene);
   state.scene = scene;
-  state.provider = query.get("provider") === "deepseek" ? "deepseek" : "kimi";
+  const wanted = query.get("provider");
+  if (wanted && state.providers[wanted] && !state.providers[wanted].ignored) state.selected = wanted;
   state.advanced = query.get("advanced") === "1";
   render();
   focusInitial();
