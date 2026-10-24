@@ -139,7 +139,8 @@
       含 3.6 的 `escape-admission` 结构场景）。**tower 批准 A 后**把 `typography.spec.ts` 的
       「窗口级 keydown 监听只有一条」判据改为「一条分发器 + 一条 Escape 安全消费者」，并按 tower
       要求补两条功能判据（⌘= 只放大一档 / 无层 Escape 不关层不移焦）；RV：摘掉兜底后该判据与
-      `escape-admission` 的 body 用例同批变红。原文 GATE RESULT 见完工报告。
+      `escape-admission` 的 body 用例同批变红。原文：`GATE RESULT: 15/15 PASS（SKIP 0）`（833 passed /
+      1 skipped / 0 failed，9.0m）。
 - [x] 6.5 `node scripts/acceptance/run.mjs --check` 通过（237 个场景）（场景语法与断言形态）
 - [x] 6.6 反向验证记录写进完工报告：去掉窗口级兜底 → 238 必须变红（附红跑读数）；去掉重建保焦
       → 4.3 单测必须变红；把兜底改成「层栈为空不阻止默认行为」→ 2.3 的 body 用例必须变红；把
