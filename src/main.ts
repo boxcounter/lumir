@@ -143,6 +143,7 @@ import type { VaultListEntry } from "./bindings/VaultListEntry";
 import { extensionOf, codeLanguageOfPath, isEditablePath, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
 import { createHarnessPanel } from "./harness-panel";
+import { installEscapeRouter } from "./escape-router";
 import type { HarnessBlockFullscreenPort } from "./harness-panel";
 import { openPathAtLine } from "./harness-path-link";
 import type { PathJumpPlan } from "./harness-path-link";
@@ -3482,6 +3483,15 @@ function codeBlockCommandTarget() {
 }
 let detachKeymap = new Keymap().attach(window, commands, keymapContext);
 
+/** 窗口级 Escape 兜底（change fix-escape-overlay-close-oct24，design §3.1 的装配点）。
+ *
+ *  **顺序是硬约束**：必须在 `Keymap.attach` **之后**装，使它成为 window 冒泡阶段最后一个
+ *  keydown 监听器。判据是「谁都没要」——键位表里的绑定（如 `editor.widget-escape`）命中时会
+ *  `preventDefault`（src/keys.ts 的 handle），兜底排在它前面就会抢走在位绑定。配置重绑会
+ * `detach` + 重新 `attach`，那时兜底也必须**先解绑再重装**（见 applyKeyConfig），否则它排到
+ * 新分发器之前——顺序反了不会报错，只会静默抢键。 */
+let detachEscapeRouter = installEscapeRouter(window);
+
 /** 应用配置里的 [keys] 覆盖（M132）：先挂默认表、配置到位后重挂，避免「启动瞬间按键
  *  无响应」的竞态。覆盖只换「键 → 命令」的对应（作用域随命令归属，见 keys.ts）；
  *  未知命令 / 非法键位 / 多段 chord 都给 warning 并忽略该条，MUST NOT 抛错打断启动。
@@ -3497,7 +3507,10 @@ function applyKeyConfig(overrides: KeyOverrides | undefined): void {
   effectiveBindings = bindings; // 面板渲染这份产物，不自己重新合并一遍默认表
   if (Object.keys(overrides ?? {}).length === 0) return; // 无覆盖：默认表已在分发
   detachKeymap();
+  // 兜底同样先解绑再重装：保持「最后装」（理由见上面 detachEscapeRouter 的注释）。
+  detachEscapeRouter();
   detachKeymap = new Keymap(bindings).attach(window, commands, keymapContext);
+  detachEscapeRouter = installEscapeRouter(window);
 }
 
 // ---------------------------------------------------------------------------

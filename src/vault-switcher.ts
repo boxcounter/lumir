@@ -38,6 +38,7 @@ import type { EditorSession, ScrollSnapshot } from "./editor";
 // 键位 token 走 keys.ts 的同一份归一化实现：浮层就地消费 ↑↓ / ⌃N⌃P / Enter / Esc 时也要用
 // 统一口径判断按键（自写一份解析是 REVIEW.md 「同一语义两处真源」条那类漂移的温床）。
 import { keyToken } from "./keys";
+import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
 import { errorText, formatRelative, t, tPlural } from "./copy";
 // 诊断读数出口（见本文件 diagnostics）：前端唯一的日志通道，落盘在 Rust 侧。
@@ -1030,6 +1031,8 @@ class VaultSwitcher implements VaultSwitcherHandle {
         this.render(rows);
         this.open = true;
         this.popover.hidden = false;
+        // 层栈登记与开合同源（change fix-escape-overlay-close-oct24）：注销在 close()。
+        registerEscapeLayer("vault-switcher", () => this.close());
         this.deps.expanded(true);
         this.place(entry);
         // 焦点落到输入框（不是列表）：打开即可打字，且就地键经它的冒泡照常生效。
@@ -1047,6 +1050,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
   close(restoreFocus = true): void {
     if (!this.open) return;
     this.open = false;
+    unregisterEscapeLayer("vault-switcher");
     this.popover.hidden = true;
     this.deps.expanded(false);
     // 查询与游标随关闭丢弃（spec）：下次打开从空查询与全量态起点开始。
@@ -1425,6 +1429,9 @@ class VaultSwitcher implements VaultSwitcherHandle {
   }
 
   private onKeydown(event: KeyboardEvent): void {
+    // Escape 归共享准入（change fix-escape-overlay-close-oct24）：无修饰才关层；带修饰键只消费
+    // 默认行为、不关层；组合期归输入法。这套判断与窗口级兜底同源，MUST NOT 在本文件重写。
+    if (handleEscapeKey(event, () => this.close())) return;
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {
@@ -1452,9 +1459,6 @@ class VaultSwitcher implements VaultSwitcherHandle {
         }
         break;
       }
-      case "Escape":
-        this.close();
-        break;
       default:
         return; // 其余键不消费：浮层不是模态，Tab 等照常走原生焦点路径
     }

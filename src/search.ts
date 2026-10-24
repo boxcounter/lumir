@@ -43,14 +43,17 @@ import {
   setSearchQuery,
 } from "@codemirror/search";
 import { keyToken } from "./keys";
+import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { focusPreservingReadingPosition } from "./scroll-position-view";
 
 /** 计数上限：与官方 selectMatches / 高亮器同一量级（1000）。超过就只报下界（显示 1000+），
  *  不为一篇超大文档的精确计数拖住每次按键。 */
 const MATCH_COUNT_LIMIT = 1000;
 
-/** panel 自己的关闭键（token 口径与 keys.ts 同源，不另写一套匹配规则）。 */
-const PANEL_CLOSE_TOKENS = new Set(["Escape", "Ctrl-G"]);
+/** panel 自己的关闭键里**不属于 Escape 准入**的那一支（token 口径与 keys.ts 同源，不另写一套
+ *  匹配规则）。Escape 自 change fix-escape-overlay-close-oct24 起走共享准入
+ *  `handleEscapeKey`——带修饰键只消费默认行为、组合期归输入法，那套判断不在本文件重写。 */
+const PANEL_CLOSE_TOKENS = new Set(["Ctrl-G"]);
 
 interface MatchTally {
   /** 当前选区落在第几个匹配上（0 起）；选区不在任何匹配上时 -1。 */
@@ -213,6 +216,9 @@ class LumirSearchPanel implements Panel {
   }
 
   private onKeydown(event: KeyboardEvent): void {
+    // Escape 归共享准入（change fix-escape-overlay-close-oct24）：本处理器的 ⇧/⌘/⌃/⌥+Escape
+    // 与组合期判断与窗口级兜底同源，MUST NOT 在这里再判一次「是不是关闭意图」。
+    if (handleEscapeKey(event, () => closeSearch(this.view))) return;
     const token = keyToken(event);
     if (token === null) return;
     if (PANEL_CLOSE_TOKENS.has(token)) {
@@ -240,6 +246,9 @@ export function lumirSearch(): Extension {
 /** ⌘F 入口（keys.ts 的 app.search-open）：打开 panel，已打开则把焦点与选区移回输入框。 */
 export function openSearch(view: EditorView): void {
   openSearchPanel(view);
+  // 层栈登记与开合同源（change fix-escape-overlay-close-oct24）：关闭那一侧的注销在
+  // closeSearch——Esc / ⌃G / × 三条关闭路径都经过它。
+  registerEscapeLayer("search", () => closeSearch(view));
 }
 
 /** 关闭 panel 并把焦点交还编辑器（Esc / ⌃G / × 的落点）。
@@ -250,6 +259,7 @@ export function openSearch(view: EditorView): void {
  *  （条款见 docs/design-parity-contract/overlay-close-reading-position.md。） */
 function closeSearch(view: EditorView): void {
   if (!searchPanelOpen(view.state)) return;
+  unregisterEscapeLayer("search");
   // 先交焦点再关：官方 closeSearchPanel 只在「焦点在 panel 内」时才还原焦点，这里显式
   // 还原，把「Esc 之后手不离键盘继续编辑」变成不依赖时序的保证。
   focusPreservingReadingPosition(view);

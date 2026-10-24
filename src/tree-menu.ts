@@ -20,6 +20,7 @@
 // 归因误报，判定做成无 DOM 的纯逻辑，便于单测。
 
 import { keyToken } from "./keys";
+import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 
 // ---------------------------------------------------------------------------
 // 文案（编号见 文案-Copy.md 的 D125 起；本模块是它们唯一一份字面量）
@@ -202,6 +203,8 @@ class TreeContextMenu implements TreeContextMenuHandle {
     this.render(target.kind);
     this.open_ = true;
     this.menu.hidden = false;
+    // 层栈登记与开合同源（change fix-escape-overlay-close-oct24）：注销在 close()。
+    registerEscapeLayer("tree-menu", () => this.close());
     // 先落到原点再量尺寸：菜单在别处量到的 offsetWidth 取决于上一次打开的内容。
     this.menu.style.left = "0px";
     this.menu.style.top = "0px";
@@ -215,6 +218,7 @@ class TreeContextMenu implements TreeContextMenuHandle {
     if (!this.open_) return;
     this.open_ = false;
     this.menu.hidden = true;
+    unregisterEscapeLayer("tree-menu");
     this.menu.replaceChildren();
     this.items = [];
     this.actions = [];
@@ -316,6 +320,8 @@ class TreeContextMenu implements TreeContextMenuHandle {
   }
 
   private onKeydown(event: KeyboardEvent): void {
+    // Escape 归共享准入（change fix-escape-overlay-close-oct24）。
+    if (handleEscapeKey(event, () => this.close())) return;
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {
@@ -331,9 +337,6 @@ class TreeContextMenu implements TreeContextMenuHandle {
         break;
       case "Enter":
         this.activate(this.activeIndex);
-        break;
-      case "Escape":
-        this.close();
         break;
       default:
         return; // 其余键不消费：菜单不是模态，Tab 等照常走原生焦点路径
@@ -419,6 +422,9 @@ class ConfirmDialog implements ConfirmDialogHandle {
       deps.onConfirm();
     });
     overlay.addEventListener("keydown", (event) => {
+      // Escape 归共享准入（change fix-escape-overlay-close-oct24）：这个模态也是层栈里的
+      // 一层，关闭路径与兜底共用同一份实现。
+      if (handleEscapeKey(event, () => this.dismiss())) return;
       const token = keyToken(event);
       if (token === null) return;
       if (token === "Tab" || token === "Shift-Tab") {
@@ -426,9 +432,6 @@ class ConfirmDialog implements ConfirmDialogHandle {
         event.preventDefault();
         return;
       }
-      if (token !== "Escape") return;
-      event.preventDefault();
-      this.dismiss();
     });
 
     this.overlay = overlay;
@@ -445,6 +448,8 @@ class ConfirmDialog implements ConfirmDialogHandle {
     this.confirmBtn.textContent = request.confirmLabel;
     this.cancelBtn.textContent = request.cancelLabel;
     this.overlay.hidden = false;
+    // 层栈登记与开合同源（change fix-escape-overlay-close-oct24）：注销在 close()。
+    registerEscapeLayer("tree-confirm", () => this.close());
     // 初始焦点给「取消」：破坏性动作的默认落点必须是安全的那一个（回车不会误删）。
     this.cancelBtn.focus();
   }
@@ -452,6 +457,7 @@ class ConfirmDialog implements ConfirmDialogHandle {
   close(): void {
     if (this.overlay.hidden) return;
     this.overlay.hidden = true;
+    unregisterEscapeLayer("tree-confirm");
     this.deps.restoreFocus();
   }
 

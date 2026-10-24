@@ -35,6 +35,7 @@
 import type { EditorHandle, EditorSession } from "./editor";
 import { isDocSession } from "./session-kind";
 import { TAB_GOTO_IDS, keyToken } from "./keys";
+import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import type { CommandRunner } from "./keys";
 import { baseName } from "./tree";
 import { onRelabel, t } from "./copy";
@@ -670,6 +671,8 @@ class TabContextMenu implements TabContextMenuHandle {
     this.render();
     this.open_ = true;
     this.menu.hidden = false;
+    // 层栈登记与开合同源（change fix-escape-overlay-close-oct24）：注销在 close()。
+    registerEscapeLayer("tab-menu", () => this.close());
     // 先落到原点再量尺寸：菜单在别处量到的 offsetWidth / offsetHeight 取决于上一次打开的内容。
     this.menu.style.left = "0px";
     this.menu.style.top = "0px";
@@ -683,6 +686,7 @@ class TabContextMenu implements TabContextMenuHandle {
     if (!this.open_) return;
     this.open_ = false;
     this.menu.hidden = true;
+    unregisterEscapeLayer("tab-menu");
     this.menu.replaceChildren();
     this.items = [];
     this.actions = [];
@@ -775,6 +779,9 @@ class TabContextMenu implements TabContextMenuHandle {
   }
 
   private onKeydown(event: KeyboardEvent): void {
+    // Escape 归共享准入（change fix-escape-overlay-close-oct24）：无修饰才关菜单，带修饰键只
+    // 消费默认行为、组合期归输入法。
+    if (handleEscapeKey(event, () => this.close())) return;
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {
@@ -790,9 +797,6 @@ class TabContextMenu implements TabContextMenuHandle {
         break;
       case "Enter":
         this.activate(this.activeIndex);
-        break;
-      case "Escape":
-        this.close();
         break;
       default:
         return; // 其余键不消费：菜单不是模态，Tab 等照常走原生焦点路径

@@ -30,6 +30,7 @@
 //      解析次序与 vault 内完全同构。
 import { NO_MATCH_TEXT, filterIndices, foldCase } from "./list-filter";
 import { keyToken } from "./keys";
+import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { t, tPlural } from "./copy";
 import { lineSuffixAt } from "./harness-path-link";
 
@@ -580,9 +581,13 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     probing = false;
   }
 
-  /** 收起 DOM 与状态，**不碰焦点**（焦点去哪由调用方决定）。 */
+  /** 收起 DOM 与状态，**不碰焦点**（焦点去哪由调用方决定）。
+   *
+   *  层栈注销与这条跃迁同源（change fix-escape-overlay-close-oct24）：Enter 打开、⌃G、失焦、
+   *  浮层外点击、窗口级兜底五条关闭路径都经过它。 */
   function dismiss(): void {
     opened = false;
+    unregisterEscapeLayer("quick-open");
     popover.hidden = true;
     input.value = "";
     input.removeAttribute("aria-activedescendant");
@@ -984,6 +989,9 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
   //（留给原生焦点遍历，spec 明写）。
   popover.addEventListener("keydown", (event) => {
     if (event.isComposing || event.keyCode === 229) return;
+    // Escape 归共享准入（change fix-escape-overlay-close-oct24）：无修饰才关层，带修饰键只消费
+    // 默认行为，组合期归输入法——那套判断不在本文件重写。
+    if (handleEscapeKey(event, () => close())) return;
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {
@@ -991,7 +999,6 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
         event.preventDefault();
         void confirm();
         return;
-      case "Escape":
       case "Ctrl-G":
         event.preventDefault();
         close();
@@ -1057,6 +1064,7 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       dismiss();
       opened = true;
       popover.hidden = false;
+      registerEscapeLayer("quick-open", () => close());
       render();
       input.focus();
     },

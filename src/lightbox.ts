@@ -30,6 +30,7 @@
 // preventDefault 后，window 上的分发器对已消费事件让路——与面板 / 浮层同款。
 
 import { keyToken } from "./keys";
+import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 
 /** 遮罩对外的唯一入口（放大图的打开）。关闭的四条路径都在遮罩内部自治：调用方没有任何
  *  「关掉它」的场景要表达——焦点离开遮罩时它会自己退场（design §4.2）。 */
@@ -51,6 +52,9 @@ export interface LightboxSurface {
   focus(): void;
   /** 交还焦点给编辑器（装配层注入 `editor.view.focus`）。 */
   restoreFocus(): void;
+  /** 层栈 id（change fix-escape-overlay-close-oct24）：给了就在 open / close 上同步登记 / 注销。
+   *  层是运行期概念（同一遮罩可开关多次），静态扫描查不到，故 id 由消费者声明。 */
+  escapeLayerId?: string;
 }
 
 /** 四条关闭路径。前三条是用户路径（关闭后交还焦点），`blur` 是焦点兜底（不抢焦点）。 */
@@ -81,10 +85,15 @@ export function createLightboxState(surface: LightboxSurface): LightboxState {
       surface.show();
       surface.focus();
       open = true;
+      if (surface.escapeLayerId !== undefined) {
+        // 层栈登记与开合同源：注销在 close()——四条关闭路径（Esc / 点遮罩 / 点图 / blur）都经过它。
+        registerEscapeLayer(surface.escapeLayerId, () => state.close("escape"));
+      }
     },
     close(reason) {
       if (!open) return;
       open = false;
+      if (surface.escapeLayerId !== undefined) unregisterEscapeLayer(surface.escapeLayerId);
       surface.hide();
       if (reason !== "blur") surface.restoreFocus();
     },
@@ -133,6 +142,7 @@ export function createImageLightbox(options: ImageLightboxOptions): ImageLightbo
       hide: () => void (overlay.hidden = true),
       focus: () => overlay.focus(),
       restoreFocus: () => options.restoreFocus(),
+      escapeLayerId: "lightbox",
     });
 
     // 点击遮罩（图片以外的区域）关闭。MUST preventDefault：点击非可聚焦元素会让遮罩失焦，
@@ -154,8 +164,13 @@ export function createImageLightbox(options: ImageLightboxOptions): ImageLightbo
     // 关闭键就地消费（Esc）；Tab 挡在遮罩内——遮罩没有可聚焦子元素，放行 Tab 会让焦点走进编辑器
     // 内容区，而遮罩还开着，后续按键就又能穿透到文档（aria-modal 的语义当场失效）。
     overlay.addEventListener("keydown", (event) => {
+      // Escape 归共享准入（change fix-escape-overlay-close-oct24）：无修饰才是关闭意图；带修饰键
+      // 只消费默认行为、不关遮罩；组合期归输入法。就地判据与窗口级兜底同源，本文件不再自判。
+      if (handleEscapeKey(event, () => created.close("escape"))) return;
       const token = keyToken(event);
       if (token === null) return;
+      // 组合期的 Escape 不消费也不关（上面那条返回 false 才走到这里）；其余 token 照旧。
+      if (token === "Escape") return;
       if (token === "Tab" || token === "Shift-Tab") {
         event.preventDefault();
         return;
