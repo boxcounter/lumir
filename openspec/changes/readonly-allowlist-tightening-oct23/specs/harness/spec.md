@@ -2,14 +2,28 @@
 
 > 起草注记（非规格正文）：本 change 只改一条 requirement——「cli_run 命令分类与 vault 写重定向」。
 > 机制、逐成员处置与实测证据见 [design.md](../../design.md)；与 M649（`harness-permission-rules-oct23`）
-> 的 delta 合并口径见 design §7。MODIFIED 块基于当前 living spec（`openspec/specs/harness/spec.md`，
-> master `40e6ae01`）的原文整块复制后修改，未改动的段落逐字保留。
+> 的 delta 合并口径见 design §7。
+>
+> **MODIFIED 块的基线（2026-10-24 重写）**：按 `harness-permission-rules-oct23` **归档后**的 living
+> 形态撰写——即当前 living 原文 + M649 的两层权限 / 受限解包段（归档评审确认的顺序为
+> permission-rules → 本 change → `rg-zip-flags-dangerous-oct24`，M649 排在本 change 之前）；本
+> change 的收紧段叠加在其上。`openspec archive` 对 MODIFIED 是整块替换，少抄的段
+> 会在归档时静默消失，故下方 = M649 归档后的整条 requirement + 本 change 的收紧。
+>
+> **归档顺序**：`harness-permission-rules-oct23` → 本 change → `rg-zip-flags-dangerous-oct24`
+> （后者以本 change 归档后的形态为基线，见其 delta 的起草注记）。
+>
+> **段落对账（M649 → 本块）**：M649 的 3 段正文与 11 个 Scenario 全部在场——其中第一段（分类口径）
+> 按本 change 改写（白名单成员的「可接受形态」指向下方能力断言、危险层补「白名单成员的可执行参数
+> 形态」），解包段逐字保留；另 2 段正文逐字保留。本块新增「只读分类的能力断言」与 `git` 两段、
+> 新增 5 个 Scenario（写形态 / `sed` 脚本 / 可执行形态 / git 只读族 / git 全局 flag）⇒ 归档后
+> living 为 5 段正文 + 16 个 Scenario。逐段核对见 design §7 的对账表。
 
 ## MODIFIED Requirements
 
 ### Requirement: cli_run 命令分类与 vault 写重定向
 
-系统 SHALL 在权限判定前对每次 `cli_run` 调用做命令分类：按命令名白名单与参数形态判定为**只读**（如 `ls` / `cat` / `rg` / `git` 的只读子命令族 / 静态度量后可证明不含写与执行命令的 `sed` / `jq` 等；白名单成员的具体清单与每成员的可接受形态以本条下方「只读分类的能力断言」为准）、**危险**（rm / shutdown·reboot·halt·poweroff / mkfs 系 / dd / `git reset --hard` / `git clean` / shell 包装器类，以及白名单成员的可执行参数形态，见本条下方「只读分类的能力断言」）或**写**（其余一切，含未知命令——保守默认）。shell 包装器命令（`sh` / `bash` / `zsh` / `dash` / `fish` / `csh` / `ksh` / `cmd` / `powershell` / `pwsh` / `osascript` / `eval` / `exec` 等）SHALL 归为危险——内容不可知即视同潜在危险，任何档都逐个问（tower 已裁决，Alex「危险命令任何档都问」分界的推论）。任一参数含 shell 元字符（`|` `;` `&&` `||` `>` `>>` `<` 等）的调用 SHALL 保守归为写。三者均 MUST NOT 按命令名白名单放行。
+系统 SHALL 在权限判定前对每次 `cli_run` 调用做命令分类：按命令名白名单与参数形态判定为**只读**（如 `ls` / `cat` / `rg` / `git` 的只读子命令族 / 静态度量后可证明不含写与执行命令的 `sed` / `jq` 等；白名单成员的具体清单与每成员的可接受形态以本条下方「只读分类的能力断言」为准）、**危险**（rm / shutdown·reboot·halt·poweroff / mkfs 系 / dd / `git reset --hard` / `git clean` / shell 包装器类，以及白名单成员的可执行参数形态，见本条下方「只读分类的能力断言」）或**写**（其余一切，含未知命令——保守默认）。shell 包装器命令（`sh` / `bash` / `zsh` / `dash` / `fish` / `csh` / `ksh` / `cmd` / `powershell` / `pwsh` / `osascript` / `eval` / `exec` 等）SHALL 默认归为危险——内容不可知即视同潜在危险，任何档都逐个问（2026-10-23 Alex 裁决 D1 起，下述**受限解包**是唯一例外）。`sh` / `bash` / `zsh` / `dash` 的 `-c` / `-lc` / `-cl` 形态（恰好一个脚本参数、无其它参数）SHALL 做受限解包：脚本只由 `;` / `&&` / `||` / `|` 分隔的线性子命令组成、参数为字面量（单 / 双引号内不发散）、只允许 `2>/dev/null` / `>/dev/null` / `1>/dev/null` / `2>&1` 四种整 token 的无害重定向，且**每一个**子命令经本条既有分类判定为只读时，整条调用 SHALL 按只读处理；否则 MUST 维持危险。以下任一形态 MUST 解包失败并维持危险：脚本含变量 / 反引号 / `$( )` / `${ }` / `<` / `>`（白名单外）/ `&`（后台）/ `( )` / `{ }` / here-doc / 换行 / 反斜杠转义；子命令数超过 16、脚本超过 4096 字节；包装器嵌套超过 2 层；`bash script.sh`（脚本文件）形态、多重 flag 形态、裸包装器。解包失败时 MUST NOT 降为「写」——落点只有「只读」与「危险」两种，否则 `full_access` 会静默放行包装脚本；子命令分类 MUST 复用本条的分类判定，MUST NOT 引入第二套分类语义。解包形态下，下述 shell 元字符保守归写规则 MUST NOT 先行适用（由逐子命令判定取代）；非解包形态下该规则不变。任一参数含 shell 元字符（`|` `;` `&&` `||` `>` `>>` `<` 等）的调用 SHALL 保守归为写。三者均 MUST NOT 按命令名白名单放行。
 
 **只读分类的能力断言**：一次 `cli_run` 调用被判为只读，SHALL 意味着按该调用的 argv 与其执行环境，这次调用不写文件、也不执行外部程序（不由该命令自行启动任何程序）。这是一条对任意 argv 成立的能力断言，MUST NOT 以「该命令的常见用法是只读」为放行依据；形态判定不明确时 SHALL 归为写，MUST NOT 归为只读。判据的输入 SHALL 是 argv 与执行环境中可由 argv 静态判定的部分；运行环境中既存的、由用户或外部进程写入的配置文件不在此列——`git` 的仓库配置面按本条下方 git 一段处理。白名单成员出现写文件形态时 SHALL 归为写：`base64` 的 `-o` / `--output`，`xxd` 的第二个位置参数（输出文件；`-r` 与普通 dump 形态相同），`file` 的 `-C` / `--compile`，`tree` 的 `-o` / `-R`，`less` 的 `-o` / `-O` / `--log-file`，`find` 的 `-fprint` / `-fprint0` / `-fprintf` / `-fls`，`sed` 脚本的 `w` / `W` 命令与 `s///w` 标志。白名单成员出现执行外部程序的形态时 SHALL 归为危险：`rg` 的 `--pre` / `--pre-glob` / `--hostname-bin`，`sed` 脚本的 `e` 命令与 `s///e` 标志——危险层任何权限档都逐个问，MUST NOT 被 allow 规则或会话缓存解锁。`sed` 的脚本源（`-e` / `--expression=` / 无 `-e`·`-f` 时的第一个非 flag 参数）SHALL 经静态扫描判定；`-f` / `--file` 形态（脚本体在分类时不可见）与无法完整解析的脚本 SHALL 归为写。`sed` 的就地写判定 SHALL 按短旗标簇展开（`-i` 与 `-ni` 一类捆绑形态同等命中）。
 
@@ -55,6 +69,26 @@
 - **THEN** 调用进入批准闸，MUST NOT 自动放行——被包装命令是黑名单成员，视同直接调用；用户 allow 规则与「本会话不再问」缓存 MUST NOT 解锁本层
 - **AND** 同模式下调用 `cli_run("sudo", ["ls", "-la"])` 直接放行（被包装命令是只读白名单，不得误伤）
 - **AND** 调用 `cli_run("sudo", [])`（取不出被包装命令）进入批准闸——保守归危险，宁多问勿漏拦
+
+#### Scenario: 只读脚本解包放行
+
+- **WHEN** 默认 `vault_write` 档下模型调用 `cli_run("bash", ["-lc", "ls -la 2>/dev/null; echo ---; ls docs | tail -5"])`
+- **THEN** 调用直接执行、不进批准闸——全部子命令（`ls` / `echo` / `ls` / `tail`）都在只读白名单、分隔符与重定向都在安全集内
+
+#### Scenario: 混合脚本仍按危险处理
+
+- **WHEN** 模式为 `full_access`，模型调用 `cli_run("bash", ["-lc", "ls; rm -rf /tmp/x"])` 或 `cli_run("bash", ["-lc", "mkdir docs/new"])`
+- **THEN** 调用进入批准闸，MUST NOT 自动放行——存在非只读子命令时整条维持危险（MUST NOT 降为「写」）
+
+#### Scenario: 非白名单重定向与变量使解包失败
+
+- **WHEN** 模型调用 `cli_run("bash", ["-lc", "ls > docs/a.md"])`、`cli_run("bash", ["-lc", "cat < /etc/passwd"])` 或 `cli_run("bash", ["-lc", "echo $HOME"])`
+- **THEN** 调用进入批准闸（危险），MUST NOT 因含只读命令 `ls` / `cat` / `echo` 而放行
+
+#### Scenario: 包装器形态不满足或嵌套过深时维持在危险
+
+- **WHEN** 模型调用 `cli_run("bash", ["script.sh"])`、`cli_run("bash", ["-x", "-c", "ls"])` 或三层嵌套的 `bash -lc "bash -lc \"bash -c 'ls'\""`
+- **THEN** 调用进入批准闸，MUST NOT 解包放行
 
 #### Scenario: 白名单成员的写形态归写
 

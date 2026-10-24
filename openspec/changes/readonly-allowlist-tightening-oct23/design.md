@@ -80,9 +80,8 @@ argv 花招**的形态是仓库自身 config——`core.fsmonitor` 让 `git stat
 - **实现增量（超出 design §2.4 字面、同属既有承诺）**：`git` 的危险子命令识别跳过全局 flag
   及其分写取值（`git -C <path> clean -fd` 不会因 `-C` 落写而在 `full_access` 免闸）；
   `write_targets` 的 `sed -i` 目标提取改用同一份 sed 参数解析。
-- **一致性边界（3.2 未做，不得提前做）**：本 delta 的 MODIFIED 块仍以 master 原文为基线，
-  **不含** M649 的受限解包段；M649 未归档，归档前必须按 §7 第 3 条重写（否则整块替换会静默
-  抹掉解包段）。本批只核对本 change 自身四者一致，不动这段并集。
+- **一致性边界（3.2 已完成，2026-10-24）**：delta 的 MODIFIED 块已按「M649 归档后的 living」（两层
+  权限 + 受限解包段）+ 本 change 的收紧段重写，不再以 master 原文为基线；逐段对账见 §7 第 3 条。
 
 ## 1. 不变量（判据的唯一表述）
 
@@ -338,8 +337,9 @@ sub = args[i]
 
 ## 7. 与 M649 的对齐（同改一条 requirement）
 
-M649（`harness-permission-rules-oct23`）在起草基线（`40e6ae01`）上尚未并入 master；2026-10-23
-r1 评审时它已合并 master（merge `9e783038`）但未归档，living spec 仍是本 delta 的基线原文。
+M649（`harness-permission-rules-oct23`）已合并 master；归档评审确认的归档链为
+`harness-permission-rules-oct23` → 本 change → `rg-zip-flags-dangerous-oct24`（M649 排在本
+change 之前）。
 两条 change 都 MODIFIED「cli_run 命令分类与 vault 写重定向」，归档时 `openspec archive` 对
 MODIFIED 是**整块替换**，因此：
 
@@ -350,9 +350,19 @@ MODIFIED 是**整块替换**，因此：
    在 Q1 改裁（2026-10-24）后仍是只读（§2.4），解包照旧放行；其 spec delta 对「`git` 只读子命令族」
    的措辞也无需收缩。M649 只需继承本 change 的全局 flag 白名单：`bash -lc "git -c … status"`
    因表外全局 flag 归写而解包失败 ⇒ 危险，该变化由既有递归自动生效。
-3. **归档顺序**：本 delta 以 master 原文为基线。若 M649 先归档，本 change 的 MODIFIED 块必须在
-   归档前重写为「master 原文 + M649 的解包段 + 本 change 的收紧段」；反之同理。tasks 第 3 组
-   有对应项。
+3. **归档顺序与段落对账（2026-10-24 已完成重写）**：本 delta 已改为以「M649 归档后的 living」为
+   基线（不是当前 living 原文），归档顺序 `harness-permission-rules-oct23` → 本 change →
+   `rg-zip-flags-dangerous-oct24`。段落对账（逐段核对，脚本口径为「去空白后逐字相等」）：
+
+   | 来源 | 段 | 场景 | 在本 delta 里的处置 |
+   |---|---|---|---|
+   | M649 的 cli_run 块 | 3 段正文 | 11 个 | 第 1 段（分类口径）按本 change 改写；第 2/3 段逐字保留；11 个场景逐字保留 |
+   | 本 change 的收紧 | +2 段（能力断言 / git） | +5 个 | 全部新增 |
+   | 合计（= 归档后 living） | 5 段正文 | 16 个 | — |
+
+   M649 → 本 delta：只改第一段 + 新增，无一段被删；`openspec-archive-check --change` 与逐段脚本
+   核对均无静默丢段（证据见任务项 3.2 的注记）。rg-zip 再以本 delta 归档后的形态为基线，
+   对账见其 delta 的起草注记。
 4. M649 的 Non-goals 已把 `sed w` / `base64 -o` / `rg --pre` / git 配置面显式留给「另行处理」，
    本 change 就是那个另行处理。
 

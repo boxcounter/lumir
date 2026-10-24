@@ -565,11 +565,15 @@ reload 时对每条新增任务：
   Revisit 路径（「探针能力清单需要扩张 … → Alex 显式裁决后修订本 ADR」），节点 1 即裁决点；
   ADR 的修订与实现同批提交（同 `task` 的 2026-10-18 先例）。
 - **`add-cron-runtime-daemon`**：本 change 复用它的判定函数、状态文件、通知链路与运行交接，
-  **不改**它们。它的 delta 是本 change 三个 MODIFIED requirement 的基线。
+  **不改**它们。它的 delta 是本 change 三个 MODIFIED requirement 的基线（已归档，2026-10-24）。
 - **`add-harness-subagents`**：本 change 的「工具循环」MODIFIED 块必须同时包含 `task` 与本 change
-  的三件工具——按两者**都已归档**后的 living 形态撰写。归档顺序是本 change 的前置条件
-  （proposal Impact 已列）：它先归档，本 change 后归档；反序会让「工具清单」在这两份 delta 的整块
-  替换之间来回丢项。
+  的三件工具——按两者**都已归档**后的 living 形态撰写（已归档，2026-10-24）。反序会让「工具清单」
+  在这两份 delta 的整块替换之间来回丢项。
+- **`harness-permission-rules-oct23`**：本 change 的「权限机制」MODIFIED 块按它**归档后**的 living
+  撰写（两层权限规则 allow / deny + 受限解包例外 + allow 规则持久化治理引用），并在其上追加 3 件
+  调度工具的档位 / 批准卡 / 缓存主体串口径。它 MUST 先归档——它把 living 从三层权限换成两层；
+  反序归档会让本 change 的整块替换把权限条目回退成三层并抹掉受限解包例外（`openspec-archive-check`
+  对这类「整段替换」看不出语义回退，只能靠顺序与重写保证）。2026-10-24 已按此重写。
 - **REVIEW.md「同一语义两处真源」条**：本设计的三条集中化（任务表 / 状态写者 / 校验函数）就是这
   条的正面落地；§4.3 与 §3.1 的「不带载荷」「工具不写状态」是它的具体约束。
 - **`docs/process/openspec-workflow.md`「改权限 / 闸语义的 change 必须回扫既有验收场景的闸期望」**：

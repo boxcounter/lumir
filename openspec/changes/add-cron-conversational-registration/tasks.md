@@ -7,8 +7,10 @@
 > 修订）、`scripts/acceptance/scenarios/**`、本 change 目录。
 >
 > **前置**：① 节点 1（提案评审）通过——含 ADR 0007 Decision 7 的扩张裁决（proposal 裁决点 1 / 2）；
-> ② `add-cron-runtime-daemon` 与 `add-harness-subagents` 先归档（本 change 的 MODIFIED 块按两者归档后
-> 的 living 形态撰写；反序会让「工具循环」的整块替换来回丢项）。
+> ② 归档顺序：`add-cron-runtime-daemon` → `add-harness-subagents`（两者**均已归档**，2026-10-24 核）
+> → `harness-permission-rules-oct23`（**尚未归档，必须排在本 change 之前**）→ 本 change。两个
+> MODIFIED 块已按各自前置 change 归档后的 living 形态重写（2026-10-24）；反序归档会让「工具循环」
+> 与「权限机制」的整块替换来回丢项 / 把权限条目回退成三层。
 >
 > **裁决口径**：三件独立工具（不是单工具多 op）；`create` / `remove` 在 `read_only` / `vault_write`
 > 档逐个问、`full_access` 档放行；不做任务面板；运行期注册引入且「注册时已过点」的新任务当日不补
@@ -172,3 +174,22 @@
   首跑的一条 FAIL 与本轮另两次环境/判据修正的现场留在 `pre-run-invalid/` 与 run.log 里。）
 - [ ] 9.7 归档顺序核对：`openspec list` 确认 `add-cron-runtime-daemon` / `add-harness-subagents`
   已归档（否则本 change 不归档，并在报告里点名）。
+      —— **2026-10-24 已核，事实成立**：两者均已在 `openspec/changes/archive/`
+      （`2026-10-24-add-cron-runtime-daemon` / `2026-10-24-add-harness-subagents`），本 change 的
+      「工具循环」块已含 `task` 且段落与 living 逐字对齐。**刻意保留未勾**：本 change 现有 58 项、
+      勾上 9.7 即 58/58，机器口径变「已完成」，`openspec-archive-check` 会要求 `docs/backlog.md`
+      有且仅有一条归档跟踪条目，而该文件不在本 mission 的改动面内。归档批或 tower 补上队列条目后
+      即可勾选（条目建议：`- **序 N · add-cron-conversational-registration**（实现 M616，58/58）：
+      节点 2 待裁；归档顺序须排在 harness-permission-rules-oct23 之后`）。
+- [x] 9.8 权限链顺序核对（2026-10-24 新增，对应 `harness-permission-rules-oct23` 归档评审的 P1 项）：
+  `harness-permission-rules-oct23` MUST 先于本 change 归档。本 change 的「权限机制」块已按它归档后
+  的 living 重写（两层权限 allow / deny + 受限解包例外 + allow 规则持久化治理引用 + cron 工具档位 /
+  批准卡 / 缓存主体串），逐段核对：M649 的 2 段正文与 11 个场景逐字在场（第 1 段按 cron 追加改写），
+  本 change 另加 2 个场景。`openspec-archive-check --change add-cron-conversational-registration`
+  PASS（2 份 delta / 5 条 MODIFIED / 70 段）——但它对比的是当前 living，看不到「M649 未归档」这一层，
+  顺序仍是硬前置。
+  —— 同日复跑：`validate --all --strict` → `Totals: 37 passed, 0 failed (37 items)`，EXIT=0；
+  `bash scripts/docs-check.sh` → `docs-check: PASS`（605 条相对链接 / 归档对账 287 段 / COVERAGE
+  235 场景），EXIT=0；门禁模式 `openspec-archive-check` → PASS（14 份 delta / 21 条 MODIFIED /
+  287 段；归档队列 2 项已完成 change 均有唯一条目）。本 mission 未改产品代码，未跑 `gate.sh`，
+  也未执行归档。

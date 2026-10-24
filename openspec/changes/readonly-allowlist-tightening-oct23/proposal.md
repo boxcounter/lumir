@@ -178,7 +178,7 @@ Alex 2026-10-23 对一条 finding 的处置原话：
     实施顺序 M656 → 本 change（tasks 3.4）。
   - `docs/process/openspec-workflow.md`「改权限 / 闸语义的 change：tasks 必须含回扫既有验收场景的
     闸期望」——tasks 第 2 组。
-  - M649（`harness-permission-rules-oct23`）与本 change 同改一条 requirement。起草基线
-    （`40e6ae01`）上该提案尚未并入；2026-10-23 r1 评审时它已合并 master（merge `9e783038`）但
-    未归档，living spec 仍是本 delta 的基线原文。delta 以 master 原文为基线，合并顺序处置见
-    design §7。
+  - M649（`harness-permission-rules-oct23`）与本 change 同改一条 requirement。M649 已合并 master；
+    归档评审确认的归档链为 `harness-permission-rules-oct23` → 本 change →
+    `rg-zip-flags-dangerous-oct24`。本 delta 已于 2026-10-24 按「M649 归档后的 living（两层权限 +
+    受限解包）」重写，不再是 master 原文基线；段落对账与合并口径见 design §7。
