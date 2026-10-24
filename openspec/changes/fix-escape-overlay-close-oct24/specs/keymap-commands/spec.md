@@ -26,9 +26,15 @@ hover 泡 / 全屏遮罩 / 面板，含 harness pane、搜索面板、键位面�
 为此关闭键的消费 SHALL 有一条**窗口级兜底**：未被下游处理器消费的 `Escape` MUST 在到达原生窗口
 之前被消费（`preventDefault`），MUST NOT 依赖「焦点恰好落在某一层的容器内」这个前提。兜底 SHALL
 挂在 `window` 的冒泡阶段并排在统一键位分发器之后；MUST NOT 在 `KEY_BINDINGS` 为 `Escape` 注册第
-二条绑定（「一个 token 一条绑定」不变量不变）；MUST NOT 处理已消费（`defaultPrevented`）的事件；
-输入法组合期（`isComposing` / `keyCode === 229`）MUST NOT 由它消费。带修饰键的 `Escape`
-（⇧ / ⌘ / ⌃ / ⌥ 的组合）SHALL 同样被消费默认行为以免落到原生关闭路径，但 MUST NOT 关闭任何层。
+二条绑定（「一个 token 一条绑定」不变量不变）；MUST NOT 处理已消费（`defaultPrevented`）的事件。
+
+「一次 `Escape` 是否归关闭路由」SHALL 由**同一份准入判断**决定，各层的就地键处理器与窗口级兜底
+MUST 共用它，MUST NOT 各写一份：仅**无修饰**的 `Escape` 归关闭；输入法组合期（`isComposing` /
+`keyCode === 229`）不归关闭、不消费、不关层；带修饰键的 `Escape`（⇧ / ⌘ / ⌃ / ⌥ 的组合）只消费
+默认行为，MUST NOT 关闭任何层。就地键处理器先于兜底运行，因此它 MUST 执行同一份准入——MUST NOT
+只看 `event.key === "Escape"` 就关层：否则带修饰键与组合期的按键在兜底看到之前就已经关了层，合同
+在真实监听链上不成立（兜底只处理「没人要」的按键）。就地处理器同样 MUST 对已消费
+（`defaultPrevented`）的事件让路。
 
 每层的关闭与焦点回还 SHALL 只有一份实现：层自己的就地键处理器与窗口级兜底 MUST 调用同一个关闭
 函数，MUST NOT 各写一份；层在打开 / 关闭时 SHALL 同步在层栈登记 / 注销，MUST NOT 出现「层已关闭
@@ -59,10 +65,15 @@ hover 泡 / 全屏遮罩 / 面板，含 harness pane、搜索面板、键位面�
 - **WHEN** 焦点在表格 / 代码块的块级横滚容器内按 `Escape`
 - **THEN** 仍执行 `editor.widget-escape`（焦点交还编辑器），与兜底引入前逐键一致；应用不退出
 
-#### Scenario: 输入法组合期不归兜底
+#### Scenario: 就地处理器执行同一准入
+
+- **WHEN** 权限浮层打开、焦点在档位按钮上，依次按 `⇧Escape`、`⌘Escape`（或 ⌃ / ⌥ 组合）
+- **THEN** 浮层保持打开、焦点不动、应用不退出；随后按无修饰的 `Escape` 才收起浮层——就地处理器与兜底对「什么算关闭意图」的判断一致
+
+#### Scenario: 输入法组合期不关层
 
 - **WHEN** 中文输入法组合期（`isComposing` 为真）按 `Escape`
-- **THEN** 按键归输入法处理（取消组合），兜底不消费、不关层；应用不退出、当前层保持
+- **THEN** 按键归输入法处理（取消组合）；就地处理器与兜底都不消费、不关层；应用不退出、当前层保持
 
 #### Scenario: 退出路径不受影响
 

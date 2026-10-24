@@ -39,16 +39,18 @@
       正常退出都是既有行为）；①在应用存活一项上可能绿、在「不出现退出拦截提示」一项上红——两种
       结果都要如实写进证据，不得把①整条记成绿
 
-## 2. 窗口级兜底（纯逻辑）
+## 2. 准入判断与窗口级兜底（纯逻辑）
 
-- [ ] 2.1 新增 `src/escape-router.ts`：`EscapeLayer { id, close }`、层栈（`push` 幂等置顶 /
-      `remove` 幂等 / `top` 按打开序）、`handle(event)` 决策表（非 Escape / 组合期 / 已消费 /
-      带修饰键 / 有层 / 无层六分支，见 design §3.1）
+- [ ] 2.1 新增 `src/escape-router.ts`：`escapeDisposition(event) -> "ignore" | "swallow" | "close"`
+      （唯一准入：非 Escape / 组合期 → ignore；带修饰键 → swallow；无修饰 → close）、
+      `EscapeLayer { id, close }`、层栈（`push` 幂等置顶 / `remove` 幂等 / `top` 按打开序）、
+      `handle(event)`（先按 `defaultPrevented` 让路，再按 disposition 分派，见 design §3.1）
 - [ ] 2.2 `installEscapeRouter(win, router)`：`window` 冒泡阶段挂一个 keydown，返回解绑函数；
       文件头注释写明「必须最后装」的理由（design §3.1 的弃案）
-- [ ] 2.3 `tests/unit/escape-router.test.ts`：决策矩阵（键 × 组合期 × 已消费 × 层数 0/1/2 ×
-      焦点位置）+ 幂等 + 顺序（假 window：消费型监听在前 / 路由在后不重复关层；路由在前时用例
-      变红）+ 反向验证两条（去掉「无层也消费」→ body 用例红；栈顶改栈底 → 两层用例红）
+- [ ] 2.3 `tests/unit/escape-router.test.ts`：准入矩阵（键 × 修饰键 × 组合期 × 已消费）+ 层栈
+      决策（0/1/2 层，关栈顶、关闭恰一次）+ 幂等 + 顺序（假 window：消费型监听在前 / 路由在后
+      不重复关层；路由在前时用例变红）+ 反向验证（去掉「无层也消费」→ body 用例红；栈顶改栈底
+      → 两层用例红；把 `swallow` 改成 `close` → 修饰键用例红）
 - [ ] 2.4 `pnpm test` 绿（只这一层，不接装配时其余用例不受影响）
 
 ## 3. 层栈与装配
@@ -56,37 +58,53 @@
 - [ ] 3.1 `src/main.ts`：首次 `Keymap.attach`（`:3483`）与配置重绑后的 `attach`（`:3500`）
       之后各调一次 `installEscapeRouter`；重绑时先解绑旧的再装，保持「最后装」
 - [ ] 3.2 `src/harness-panel.ts`：抽出 `closeTopHarnessLayer()`（权限 / 合并 / 会话 / ctx 泡 /
-      面板本体的关闭与焦点回还，按层栈取最上层），面板就地键处理器（`:9896-9915`）与段级会话
-      浮层处理器（`:9869-9875`）改为调用它——**同一份关闭实现**，不留第二份检查顺序
+      effort 提示 / 面板本体的关闭与焦点回还，按层栈取最上层）；面板就地键处理器
+      （`:9896-9915`）与段级会话浮层处理器（`:9869-9875`）改为**先调 `escapeDisposition`、再调
+      它**——MUST NOT 保留「只看 `event.key === "Escape"` 就关层」的写法（组合期与 ⇧/⌘/⌃/⌥
+      组合在兜底看到之前就会被它们关层；见 design §3.1 与 §6），也 MUST NOT 保留第二份检查顺序
       （REVIEW.md「同一语义两处真源」条）
 - [ ] 3.3 登记点与开合点同源：`setPermPop` / `setSelPop` / `setSessPop` / `ctxPop` 的显示切换 /
-      `deps.togglePane` 的收起路径（含装配层 `disposePaneHandle`）各登记 / 注销一次；面板收起走
-      装配层而非组件 `setXxx` 的那条路径必须单独核对（design §6「层栈泄漏」）
+      `effHint` 的 `mouseenter` / `mouseleave` / `deps.togglePane` 的收起路径（含装配层
+      `disposePaneHandle`）各登记 / 注销一次；面板收起走装配层而非组件 `setXxx` 的那条路径必须
+      单独核对（design §6「层栈泄漏」）
 - [ ] 3.4 其余层按 design §3.5 清单登记：⌘P、大纲、vault 切换器、跳转行、搜索面板、键位面板、
       文件树菜单、标签菜单、lightbox、表格全屏、代码块全屏；每处只调用既有 `close()`，不写第二
-      份关闭
+      份关闭；这些组件的就地 Escape 处理器同样换成共享准入（组合期 / 带修饰键不关层）——逐文件
+      核 `quick-open.ts` / `toc.ts` / `vault-switcher.ts` / `goto-line.ts` / `search.ts` /
+      `bindings-panel.ts` / `tree-menu.ts` / `tabs.ts` / `lightbox.ts` / `table-fullscreen.ts` /
+      `code-block-fullscreen.ts`，`--check` 与 3.6 场景守
 - [ ] 3.5 `tests/unit/escape-router.test.ts` 增补：层 `close` 抛错时栈仍前进（不让一次异常卡死
       后续 Esc）；同一 id 重复 `push` 后 `top` 指向最新一次打开
+- [ ] 3.6 **真实监听链**（不以 router 单测代替）：新增 `tests/visual/scenes/escape-admission.spec.ts`
+      （chromium 真实 DOM + tauri-stub 装配）——①权限浮层持焦时 `⇧/⌘/⌃/⌥+Escape` 各不关层、焦点
+      不动，裸 `Escape` 才关；②派发 `KeyboardEvent{ key: "Escape", isComposing: true }` 不关层；
+      ③会话浮层的 `seg` 监听器重复①②；④effort 提示悬停打开后按 Escape 只收提示、焦点不动；
+      ⑤反向验证：把 `panel` / `seg` 监听器改回字面判断 → 对应组必须变红（记录读数）。
+      CI 的 `LUMIR_VISUAL_STRUCTURAL=1` 照跑（纯结构断言）
 
 ## 4. 重建保焦（根因修复）
 
 - [ ] 4.1 `src/harness-panel.ts` 的 `buildPermPop` 调用方：重建前记 `permMode`（语义键），重建后
-      焦点落回选中项；找不到回落 `permChip`（`isConnected` 守卫，见 design §6）
-- [ ] 4.2 合并选择器同口径：语义键 = 当前 provider id / effort id；重建后按同一键找回，找不到
-      回落 `modelChip`
-- [ ] 4.3 单测（`tests/unit/harness-panel-control.test.ts` 或同目录新文件）：给定旧语义键与重建
-      后的项列表，断言落点；语义键缺失 → 回落触发钮；反向验证：实现返回 `null`（丢焦点）时用例
-      变红
+      焦点落回选中项；找不到回落 `permChip`（`isConnected` 守卫，见 design §6）；条目补
+      `data-mode`
+- [ ] 4.2 合并选择器同口径：语义键 = **段 + 该项 id**（provider 段取 provider id、model 段取
+      `models[当前 provider].current`、effort 段取 `thinkLevel`）；键按**重建时的当前状态**取，
+      不按点击目标取——成功路径落回新项、写回失败回滚后的重建落回旧项；条目补 `data-seg` /
+      `data-id`，找回顺序 = 对应项 → 该段当前项（`is-current` / `aria-checked`）→ `modelChip`
+- [ ] 4.3 单测（`tests/unit/harness-panel-control.test.ts` 或同目录新文件）：三段各自的选择 →
+      重建落点；写回失败回滚后的重建落点（不是失败的新项）；语义键缺失 → 回落触发钮；反向验证：
+      实现返回 `null`（丢焦点）或用点击目标当键（回滚用例落错项）时用例 MUST 变红
 - [ ] 4.4 真机复跑 235 → **后绿**，同一份场景文件、同一批步骤，证据目录
       `.local/acceptance/<日期>/235-escape-overlay-close/GREEN-after-fix/`；报告里逐条给出
-      1.2 的五条断言与 PASS 计数
+      1.2 的五条断言与 PASS 计数；同场景的 `shift+escape` 反例段一并跑绿
 
 ## 5. 同类路径回归与退出反例
 
 - [ ] 5.1 其他浮层回归（同批新增或扩充场景，逐类一条，每步断言「应用仍在 + 层已收 + 焦点落点」）：
-      ①会话浮层选中后按 Esc；②合并选择器切 provider 后按 Esc；③⌘P 输入筛选后按 Esc；④大纲浮层按
-      Esc；⑤搜索面板按 Esc；⑥图片 / 表格 / 代码块全屏遮罩按 Esc；⑦面板内 Context hover 泡出现时
-      按 Esc
+      ①会话浮层选中后按 Esc；②合并选择器分别选 provider / model / effort 后按 Esc（每次选择后先
+      断言焦点落在刚选中的那一项）；③⌘P 输入筛选后按 Esc；④大纲浮层按 Esc；⑤搜索面板按 Esc；
+      ⑥图片 / 表格 / 代码块全屏遮罩按 Esc；⑦面板内 Context hover 泡出现时按 Esc；⑧effort 提示
+      悬停打开后按 Esc（只收提示、焦点不动）
 - [ ] 5.2 编辑器既有归属回归：表格 / 代码块横滚容器持焦按 Esc 仍走 `editor.widget-escape`（焦点
       交还编辑器）；文档内容、dirty、撤销栈不变
 - [ ] 5.3 `236-escape-quit-guard.md` 的三条反例：①dirty 文档按 Esc → 应用在、dirty 标记在、
@@ -101,10 +119,13 @@
 - [ ] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [ ] 6.2 `bash scripts/docs-check.sh` 通过（MODIFIED 段落逐字落定、覆盖表与场景一致、backlog 出口合规）
 - [ ] 6.3 `bash scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行与退出码，不复述成 X/Y PASS）
-- [ ] 6.4 `bash scripts/gate.sh visual` 全绿（动过焦点 / 浮层行为，本地必跑；CI 绿不代表像素层没回归）
+- [ ] 6.4 `bash scripts/gate.sh visual` 全绿（动过焦点 / 浮层行为，本地必跑；CI 绿不代表像素层没回归；
+      含 3.6 的 `escape-admission` 结构场景）
 - [ ] 6.5 `node scripts/acceptance/run.mjs --check` 通过（场景语法与断言形态）
 - [ ] 6.6 反向验证记录写进完工报告：去掉窗口级兜底 → 235 必须变红（附红跑读数）；去掉重建保焦
-      → 4.3 单测必须变红；把兜底改成「层栈为空不消费」→ 2.3 的 body 用例必须变红
+      → 4.3 单测必须变红；把兜底改成「层栈为空不消费」→ 2.3 的 body 用例必须变红；把 `panel` /
+      `seg` 监听器改回「只看 `key === "Escape"`」→ 3.6 的修饰键 / 组合期组必须变红（这是 r1
+      P1 的防线）
 
 ## 7. 收尾
 

@@ -82,11 +82,17 @@ finding 把系统日志里的 `windowShouldClose: prevented close` 读作「产�
 
 ## 3. 方案
 
-### 3.1 窗口级兜底（`src/escape-router.ts`）
+### 3.1 准入判断与窗口级兜底（`src/escape-router.ts`）
 
-一个纯逻辑模块 + 一个装配函数。核心是「在事件生命周期的最后一个可靠点上做决定」：
+一个纯逻辑模块 + 一个装配函数。核心是「一次 Escape 是否归关闭路由」只有一份判断，层的就地键
+处理器与窗口兜底共用它：
 
 ```ts
+export type EscapeDisposition = "ignore" | "swallow" | "close";
+
+/** 唯一准入判断：就地键处理器与窗口级兜底共用（MUST NOT 各判一次）。 */
+export function escapeDisposition(event: EscapeKeyEvent): EscapeDisposition;
+
 export interface EscapeLayer {
   id: string;
   /** 关闭该层（含焦点回还）。MUST 与组件自己的就地键处理器共用同一份实现。 */
@@ -99,29 +105,34 @@ export interface EscapeRouter {
   /** 层关闭时注销；不存在时静默（关闭是幂等的）。 */
   remove(id: string): void;
   top(): EscapeLayer | null;
-  /** 决策入口：true = 已消费（调用方 preventDefault）。 */
+  /** 已消费时返回 false；true = 调用方 preventDefault。 */
   handle(event: EscapeKeyEvent): boolean;
 }
 
 export function installEscapeRouter(win: Window, router: EscapeRouter): () => void;
 ```
 
-`handle` 的决策表（按顺序短路）：
+准入与分派（同一张表，就地处理器与兜底共用准入，只有「谁被关」不同）：
 
-| 输入 | 输出 |
-|---|---|
-| `event.key !== "Escape"` | 不消费 |
-| 输入法组合期（`isComposing` / `keyCode === 229`） | 不消费（归输入法） |
-| 已被下游消费（`defaultPrevented`） | 不消费（不重复关层） |
-| 带修饰键的 Escape（⇧ / ⌘ / ⌃ / ⌥） | 消费默认行为、**不关层**（它同样会落到原生取消路径） |
-| 层栈非空 | 消费默认行为 + 关闭栈顶层 |
-| 层栈为空 | 消费默认行为（无操作，保证不落到原生关窗） |
+| 输入 | `escapeDisposition` | 就地键处理器 | 窗口级兜底 |
+|---|---|---|---|
+| 非 `Escape` | `ignore` | 不动作 | 不动作 |
+| 组合期（`isComposing` / `keyCode === 229`） | `ignore` | 不动作、不 `preventDefault` | 不动作 |
+| 带修饰键（⇧ / ⌘ / ⌃ / ⌥） | `swallow` | `preventDefault`、**不关层** | `preventDefault` |
+| 无修饰、有层 | `close` | `preventDefault` + 关闭**本层**（统一关闭函数） | `preventDefault` + 关闭**栈顶** |
+| 无修饰、无层 | `close` | —（没有处理器） | `preventDefault`（无操作） |
+| `defaultPrevented` 已置 | — | 让路 | 让路 |
+
+**为什么就地处理器必须走同一份准入**：它先于兜底运行。若它仍只看 `event.key === "Escape"` 就
+关层，带修饰键与组合期的按键在兜底看到之前就已经关了层——兜底只能处理「没人要」的按键，补救
+不了这个顺序。因此 `src/harness-panel.ts` 的 `panel` / `seg` 监听器以及其余层的就地处理器
+MUST 改为先调用 `escapeDisposition`，MUST NOT 保留各自的 Escape 字面判断。
 
 装配点与顺序：`installEscapeRouter` 在 `src/main.ts` 每次 `Keymap.attach` 之后调用
 （`:3483` 的首次装配与 `:3500` 的配置重绑都要），使它成为 **window 冒泡阶段最后一个** keydown
 监听器。这样统一键位分发器先取值（命中绑定会 `preventDefault`，见 `src/keys.ts:1103-1105`），
 兜底只处理「没人要」的按键。若将来有代码在它之后再挂 window 监听，顺序由单测（假 window 上
-断言监听器调用序）与真机回归场景共同守住。
+断言监听器调用序）与 §5.1 的真实监听链场景共同守住。
 
 为什么不是 capture 阶段：capture 会先于各层的就地键处理器运行，一旦在「无层」时无条件消费，
 就会抢走 `editor.widget-escape`（表格 / 代码块容器的 Escape 是键位表里的既有绑定）；兜底必须
@@ -135,6 +146,8 @@ export function installEscapeRouter(win: Window, router: EscapeRouter): () => vo
 - **`close` 复用组件的关闭函数**：例如 `permPop` 的层 `close` 就是「`setPermPop(false)` +
   `permChip.focus()`」，与面板就地处理器里那两段是**同一个函数**。就地处理器保留（它先于兜底
   运行，覆盖焦点在层内的常态），但两者 MUST 调同一个关闭实现——这正是 E5。
+- **就地处理器只做两件事**：准入（`escapeDisposition`）与关闭（层的统一 `close()` / 按层栈取
+  最上层的 `closeTop…`）；MUST NOT 自己再写「这个键是否关闭」的判断，也 MUST NOT 跳过准入。
 - **重复登记 = 提到栈顶**：同一个层被重新打开时，先 `remove` 再 `push`，保证「最近打开的在最上
   层」。
 - **关闭即注销**：`close()` 内部负责 `remove(id)`；兜底调用 `close()` 之后不需要再 `remove`，
@@ -147,11 +160,19 @@ export function installEscapeRouter(win: Window, router: EscapeRouter): () => vo
 
 - 权限浮层：语义键 = 档位 id（`read_only` / `vault_write` / `full_access`）。重建后找到
   `aria-checked` 所在的那一项（选中项），焦点落回它；找不到（理论上不会）回落 `permChip`。
-- 合并选择器：语义键 = 当前 provider id（provider 段）+ 当前 effort id（effort 段）。重建后
-  按同一语义键找回；找不到回落 `modelChip`。
+- 合并选择器：语义键 = **段 + 该项 id**，三段都要覆盖——provider 段取 `provider` id、model 段取
+  `models[当前 provider].current`、effort 段取 `thinkLevel`。重建后按 `data-seg` / `data-id`
+  找回；该段没有对应项（例如切 provider 后 model 段换了内容）时落在该段的当前项（`is-current`
+  / `aria-checked`）上；整段消失时回落 `modelChip`。
+- **键按重建时的当前状态取，不按点击目标取**：`selectProvider` / `selectModel` / `selectEffort`
+  的成功路径先在状态里写入新值再重建，失败路径先回滚旧值再重建
+  （`src/harness-panel.ts:6151-6202`）。按状态取键 ⇒ 成功时落回新项、回滚时落回旧项；按点击
+  目标取会把焦点留在失败的新项上，正是本次要修的形态。
 - 实现口径沿用 `docs/specs/overlay-visibility.md` O6 的收口方式（重建前收焦到不会被重建的元素 /
   重建后接回），不引入第二套「焦点看守」。落点集中在 `buildPermPop` / `buildSelPop` 的调用方，
   不在每一行 DOM 上补。
+- 实现期给每个可选条目补 `data-seg` / `data-id`（权限项补 `data-mode`），焦点找回只认这两个
+  属性 + `aria-checked`，MUST NOT 靠文本内容或行号推断。
 
 这条与兜底是**两层**：保焦修因（绝大多数情况下事件目标仍在层内，面板处理器正常运行），兜底修果
 （任何原因导致焦点不在层内时，Escape 仍只关层、不关窗）。
@@ -174,6 +195,7 @@ export function installEscapeRouter(win: Window, router: EscapeRouter): () => vo
 | 合并选择器 `selPop` | `setSelPop` | `setSelPop(false)` + `modelChip.focus()` | chip |
 | 会话浮层 `sessPop` | `setSessPop` | `setSessPop(false)` + `sessionButton.focus()` | 触发钮 |
 | Context hover 泡 `ctxPop` | `ctxPop.hidden = false/true` | 隐藏（无触发焦点） | 不移动焦点 |
+| effort 提示 `effHint` | `effReading` 的 `mouseenter` / `mouseleave`（`src/harness-panel.ts:6222-6229`） | 隐藏提示（无触发焦点） | 不移动焦点 |
 | ⌘P / 大纲 / vault 切换器 / 跳转行 | 各自 `close()` | 复用各自 `close()` | 各自既有回还 |
 | 搜索面板 / 键位面板 | 各自 `toggle()` | 复用 | 编辑器 / 触发钮 |
 | 文件树菜单 / 标签菜单 | 各自 `close()` | 复用 | 产生菜单的元素 |
@@ -213,8 +235,21 @@ export function installEscapeRouter(win: Window, router: EscapeRouter): () => vo
   两层用例 MUST 变红。
 
 `tests/unit/harness-panel-control.test.ts`（或同目录新文件）：重建保焦的纯模型——给定旧焦点语义键
-与重建后的项列表，断言返回的落点；语义键不存在时回落触发钮。反向验证：返回 `null`（丢弃焦点）
-时用例 MUST 变红。
+与重建后的项列表，断言返回的落点；语义键不存在时回落触发钮。覆盖三段（provider / model /
+effort）与「写回失败回滚后的重建」两条路径。反向验证：返回 `null`（丢弃焦点）时用例 MUST 变红。
+
+**实际监听链（不以 router 单测代替）**：`tests/visual/scenes/escape-admission.spec.ts`（chromium
+真实 DOM + 真实装配链，走 `tests/visual/scenes/tauri-stub.ts`，结构断言、CI 可跑）——
+
+1. 权限浮层持焦时分别按 `⇧Escape` / `⌘Escape` / `⌃Escape` / `⌥Escape`：浮层保持打开、焦点不动；
+   随后裸 `Escape` 才收起浮层；
+2. 向持焦项派发 `KeyboardEvent{ key: "Escape", isComposing: true }`（`KeyboardEventInit` 支持
+   `isComposing`）：浮层保持打开、焦点不动；
+3. 会话浮层的 `seg` 监听器重复第 1、2 组（它先于 `panel` 运行，是本次 P1 的另一处现场）；
+4. effort 提示：悬停 effort 读数使提示打开，派发 `Escape` → 只收提示、焦点不动、面板仍在；
+5. 反向验证：把 `panel` 监听器改回「只看 `event.key === "Escape"` 就关层」→ 第 1、2 组 MUST
+   变红；把 `seg` 监听器改回同样形态 → 第 3 组 MUST 变红。router 单测全绿时这一组仍能抓到 P1，
+   它判的就是「真实监听器顺序与准入」。
 
 ### 5.2 真机层：先红后绿（硬要求）
 
@@ -237,12 +272,18 @@ export function installEscapeRouter(win: Window, router: EscapeRouter): () => vo
 **红跑不得以「改场景 / 跳步 / 加 sleep」换绿**；实现后同一条场景（同一份文件、同一批步骤）跑绿，
 证据目录 `.../GREEN-after-fix/`。
 
+同一场景追加一段修饰键反例（真机层，覆盖就地处理器的准入）：重开权限浮层 → 注入
+`shift+escape` → 浮层保持打开、焦点不动、应用仍在 → 再注入裸 `escape` → 只收浮层。IME 组合期
+在真机层没有可靠注入通道（KimiCU 不能构造 `isComposing`），由 §5.1 第 2 条的真实 DOM 场景承担，
+两者合起来才算覆盖。
+
 ### 5.3 其他浮层回归（同类路径，逐类一条）
 
-同一批新增 / 扩充场景覆盖：①会话浮层选中后按 Esc；②合并选择器切 provider 后按 Esc；③⌘P 输入
-筛选后按 Esc；④大纲浮层按 Esc；⑤搜索面板按 Esc；⑥图片 / 表格 / 代码块全屏遮罩按 Esc；
-⑦harness 面板内 Context hover 泡出现时按 Esc。每一步都断言「应用仍在 + 层已收 + 焦点落点」，
-缺一不算覆盖（REVIEW.md「覆盖声明超出真实验证」条）。
+同一批新增 / 扩充场景覆盖：①会话浮层选中后按 Esc；②合并选择器分别选 provider / model / effort
+后按 Esc（每次选择后先断言焦点落在刚选中的那一项，再按 Esc 收浮层）；③⌘P 输入筛选后按 Esc；
+④大纲浮层按 Esc；⑤搜索面板按 Esc；⑥图片 / 表格 / 代码块全屏遮罩按 Esc；⑦harness 面板内
+Context hover 泡出现时按 Esc；⑧effort 提示悬停打开后按 Esc（只收提示、焦点不动）。每一步都断言
+「应用仍在 + 层已收 + 焦点落点」，缺一不算覆盖（REVIEW.md「覆盖声明超出真实验证」条）。
 
 ### 5.4 退出路径反例（E6）
 
@@ -270,6 +311,11 @@ export function installEscapeRouter(win: Window, router: EscapeRouter): () => vo
   装配点必须同时重装兜底；单测钉住顺序，真机场景 09（Emacs 键）与 235 的 widget 步骤回归。
 - **焦点回还的目标可能已不在 DOM**：`close()` 里先判 `isConnected` 再 `focus()`，否则回落触发钮
   ——否则 `focus()` 静默失败，焦点仍在 `body`。
+- **就地处理器绕过兜底**：层的监听器先于 window 兜底运行，只要它还保留「`event.key ===
+  "Escape"` 就关层」的写法，带修饰键与组合期（`isComposing`）的按键就会在兜底看到之前关层——
+  router 单测全绿也证明不了真实监听链正确。防线：准入只留 `escapeDisposition` 一份、就地处理器
+  必须调用它；§5.1 的 `escape-admission` 场景在真实 DOM 上判「修饰键 / 组合期不关层」，并用反向
+  验证（改回字面判断必须变红）钉住。
 - **层栈泄漏**：层在关闭时未注销会让下一次 Esc 去调一个已关闭层的 `close()`（无害但掩盖「谁在
   最上层」）。登记点与开合点同源 + `remove` 幂等 + 单测覆盖。除 harness 面板外，面板被装配层
   收起时不走组件自己的 `setXxx`，登记点必须挂在**装配层实际收起的那条路径**上（实现期逐个核对）。
@@ -284,10 +330,12 @@ export function installEscapeRouter(win: Window, router: EscapeRouter): () => vo
 ## 7. 实现顺序（每步都可独立验证）
 
 1. 写 235 场景 + 5.4 反例场景；在 master 代码上红跑，留证据（先红）。
-2. `src/escape-router.ts` 纯逻辑 + `tests/unit/escape-router.test.ts`；不接装配，`pnpm test` 绿。
-3. `src/main.ts` 接兜底（首次 attach 与重绑两处）+ 层栈；先登记 harness 面板与四个浮层。
-4. 重建保焦（权限 / 合并选择器）+ `harness-panel-control` 单测；跑 235 → 绿（后绿）。
-5. 登记其余层（§3.5 清单），跑 5.3 矩阵；补漏。
+2. `src/escape-router.ts` 纯逻辑（`escapeDisposition` + 层栈 + `handle`）+ `tests/unit/escape-router.test.ts`；不接装配，`pnpm test` 绿。
+3. `src/main.ts` 接兜底（首次 attach 与重绑两处）+ 层栈；先登记 harness 面板、四个浮层与 effort
+   提示；把 `panel` / `seg` 监听器改为「准入 + 统一关闭」。
+4. 重建保焦（权限 + 合并选择器的 provider / model / effort 三段与回滚）+ `harness-panel-control`
+   单测 + `tests/visual/scenes/escape-admission.spec.ts`（真实监听链）；跑 235 → 绿（后绿）。
+5. 登记其余层（§3.5 清单）并把各自的就地处理器换成共享准入，跑 5.3 矩阵；补漏。
 6. 5.4 退出反例；`gate quick` / `gate visual` / `docs-check` / 真机全量回归。
 7. 归档对账（MODIFIED 段落逐字落进 living spec；由 `docs-check` 机器判）。
 
@@ -297,6 +345,9 @@ export function installEscapeRouter(win: Window, router: EscapeRouter): () => vo
 |---|---|---|
 | 选定档位不关浮层、且会重建列表 | `src/harness-panel.ts:6046-6056`、`:6131-6136`、`:5953` | 代码直读 |
 | 面板 Escape 处理器挂在 `panel` 容器上 | `src/harness-panel.ts:9896-9915` | 代码直读 |
+| 就地 `panel` / `seg` 监听器当前只判 `event.key === "Escape"`，随即 `preventDefault` | `src/harness-panel.ts:9869-9875`、`:9896-9899` | 代码直读 |
+| 合并选择器重建 provider / model / effort 三段，三个选择函数都会触发重建 | `src/harness-panel.ts:5799-5907`、`:6151-6202` | 代码直读 |
+| effort 提示在 `effReading` 的 `mouseenter` / `mouseleave` 上显示 / 隐藏 | `src/harness-panel.ts:6222-6229` | 代码直读 |
 | 焦点在 `body` 时处理器不运行 | DOM 冒泡语义（事件目标不在 `panel` 子树内） | 稳定共识 |
 | 重建摘除持焦节点会把焦点送回 `body` | `docs/specs/overlay-visibility.md` O6 的实测记录（chromium / WebKit 两引擎） | 仓内实测 |
 | 未消费的 Escape 会走到窗口关闭链 | finding 的统一日志链（两次同形） | 外部实测 |
