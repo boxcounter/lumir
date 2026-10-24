@@ -8,8 +8,9 @@
 - [x] 0.1 起草 `proposal.md` / `design.md` / `specs/harness/spec.md` / `specs/ui-design-system/spec.md` / 本文件
 - [x] 0.2 依据 M699 只读 survey（`.local/reviews/harness-table-overflow-audit-oct24.md`）落 C1–C7、
       两半缺一不可的反例数字与测试矩阵；Alex 截图 `m3` 记为节点 1 来源
-- [ ] 0.3 Alex 节点 1 评审通过（D1–D4 一并裁决，未回的按提案里的倾向落地）
-- [ ] 0.4 裁决结果回填 proposal 的「评审记录」块，按裁决修正 design 与 delta
+- [x] 0.3 Alex 节点 1 评审通过：2026-10-24 回复原文「提案和截图都认可。」
+- [x] 0.4 裁决结果已回填 proposal 的「评审记录」块；D1–D4 未逐条反对，按提案倾向落地，
+      design 与 delta 无需修正
 
 ## 1. 结构（`src/harness-panel.ts`）
 

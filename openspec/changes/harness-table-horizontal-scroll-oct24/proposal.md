@@ -5,7 +5,8 @@
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
 > 评审记录
-> 节点 1（提案评审）：**待 Alex 裁决**（2026-10-24 起草，随 tower 立项批同批实现；未回的裁决点按本文倾向落地）。
+> 节点 1（提案评审）：**已通过**（2026-10-24）。Alex 查看本 proposal 与两张真机截图后回复原文：
+> 「提案和截图都认可。」D1–D4 未逐条反对，按本文倾向落地。
 > 来源是 Alex 的 dogfood 截图 `kimi-code-composer://attachments/m3`：harness 面板里的 Markdown 表格被
 > 挤压得很窄、单元格折行，Alex 要求「参考正文横向铺开、左右滑动」。只读 survey
 > `.local/reviews/harness-table-overflow-audit-oct24.md`（M699）用合成 DOM + 真实 CSS 逐值实测了根因与
