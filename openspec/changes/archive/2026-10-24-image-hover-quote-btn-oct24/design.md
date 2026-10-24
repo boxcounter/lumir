@@ -2,8 +2,8 @@
 
 - Change ID: `image-hover-quote-btn-oct24`
 - 依据：`.local/probes/m670-hover-probe.md`（真机 DOM 级探针，读数取自 AX 快照）
-- 基线：[openspec/specs/editor-live-preview/spec.md](../../specs/editor-live-preview/spec.md)
-  的「块级复制触发钮」hover 浮现条款；[场景 222](../../../scripts/acceptance/scenarios/222-image-quote-to-chat.md)
+- 基线：[openspec/specs/editor-live-preview/spec.md](../../../specs/editor-live-preview/spec.md)
+  的「块级复制触发钮」hover 浮现条款；[场景 222](../../../../scripts/acceptance/scenarios/222-image-quote-to-chat.md)
 
 ## D1 根因：判据的前提写错了——「窗口 key」应为「webview 有焦点」
 

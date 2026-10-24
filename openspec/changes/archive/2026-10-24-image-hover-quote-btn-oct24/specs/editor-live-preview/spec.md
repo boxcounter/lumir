@@ -1,7 +1,7 @@
 # editor-live-preview 增量规格（M670）
 
 > 起草注记（非规格正文）：一条 ADDED，基线是 living spec
-> [openspec/specs/editor-live-preview/spec.md](../../../../specs/editor-live-preview/spec.md)。
+> [openspec/specs/editor-live-preview/spec.md](../../../../../specs/editor-live-preview/spec.md)。
 > 与既有「块级复制触发钮」条款的关系：那条定的是**表格与代码块**两个消费者；图片引用钮
 > （change `add-image-quote-to-chat`，尚未归档）是共享形态类的第五个消费者，它的浮现判据此前只写在
 > 那份活跃 change 的 `harness` delta 里（「悬停其可视盒时浮现」一句）。本规格把**可见性双向**这一层
