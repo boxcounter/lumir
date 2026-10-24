@@ -30,7 +30,7 @@
 #    或换判据形态**，由 tower 呈 Alex 裁决——本场景文件保持原判据不动。**降级登记**（Alex
 #    2026-10-11 裁决）：HC3 的模型层语义由单测覆盖（`tests/unit/harness-composer.test.ts` 的边界
 #    光标位 / 物化段落用例），本场景的真机读数在通道修好前不再刷红；完整归因与修法方向见
-#    `docs/backlog.md`「验收套件注入通道」条。
+#    backlog「待修 findings」的「菜单 Paste 之后注入不落地」条与 README 的「原生剪贴板命令」已知边界。
 id: "134-harness-composer-intercard-caret"
 item: 134
 title: composer 两张相邻卡片之间：⌃B 落位 → 键入落在两卡之间 → 一次撤销回到前态（M450，HC3）

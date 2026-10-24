@@ -1,5 +1,5 @@
 ---
-# M312（现有缺陷修复，非 backlog「待真机验收」项 78 那个编号）：backlog「记录在案」①——harness
+# M312（现有缺陷修复，非 COVERAGE.md 的验收项 78）：长期口径见 docs/specs/standing-decisions.md 的 M312 条——harness
 # 事件流带 vault/会话标识、面板按当前 vault 过滤，与「切 vault 后面板不刷新」一并修。本场景是
 # 这条修复的**合同**：切 vault 后 harness 必须显示当前 vault 的会话（B 是空的就回空态），另一
 # vault 的对话（包括切走之后才到达的在途事件）不得串进来。

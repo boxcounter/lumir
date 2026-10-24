@@ -239,7 +239,7 @@ Alex 原话（2026-09-27）：「代码块也可以像表格那样，放大查�
   M280 试图为条款补两条真机场景（表格 ESC / 代码块 ESC），实测**做不出可证伪的判据**：
   器材三约束（无 `scrollTop` 读数、AX 文本窗口宽达 ~2500–3600px、命令入口的块定位范围
   `tableDiscoveryRange` 把「caret 在视口上方」的可用带子压到 ~2048 字符以内）逐条实测见
-  `docs/backlog.md` 的「验收套件表达不了 CL-1 的判据」条；那两条场景**未留在套件里**，
+  `docs/design-parity-contract/overlay-close-reading-position.md` 的 CL-1 第 3 条（器材三约束）；那两条场景**未留在套件里**，
   真机判据目前只能靠人肉复现。
 - **⌘J 只能发一次**：`code-block.toggle-fullscreen` 是 toggle，连发两次＝开了又关（与场景 61 的
   `block.copy` 不同——那条命令幂等，才可以用「发两次」抗丢键）。因此本场景的三条关闭路径各是一次

@@ -19,7 +19,7 @@
 # 套件 spawn 的 MCP 会话里也不落地（插件侧直调同 index 立刻落地）。本场景与 134 / 141 同因，
 # 真机读数**待注入通道修复**；模型层判据（`moveLineStart` / `moveLineEnd` 的段末档、写回落点
 # 的文本宿主阶梯）已由单测覆盖（`tests/unit/composer-nav.test.ts`、`tests/unit/harness-composer.test.ts`），
-# 「引擎层判不了」的两条（caret 几何、beforeinput 派发）登记在 docs/backlog.md 与 finding。
+# 「引擎层判不了」的两条（caret 几何、beforeinput 派发）登记在 backlog「待修 findings」的 M457 WebKit 探针条与 finding。
 id: "150-harness-composer-line-start-and-caret-geometry"
 item: 150
 title: composer 卡片后空行：⌃B 落前一行行末 + ⌃A 回行首（M457）
@@ -189,12 +189,12 @@ Alex 原话（2026-10-12）：「希望 Ctrl-A 回到行首」；「当光标在
 
 ## 已知边界（如实登记）
 
-- **注入通道阻塞**（`docs/backlog.md`「验收套件注入通道」条 + 场景头）：本场景的探针串注入与
+- **注入通道阻塞**（backlog「待修 findings」的「菜单 Paste 之后注入不落地」条 + README 的「原生剪贴板命令」已知边界 + 场景头）：本场景的探针串注入与
   ⌃B / ⌃A / ⌃N / ⌃P 注入在通道修好前不落地，读数**待复跑**；模型层判据已由单测覆盖
   （`tests/unit/composer-nav.test.ts` 的段末档与渲染行闸门、`tests/unit/harness-composer.test.ts`
   的写回落点阶梯），引擎层（caret 几何、`beforeinput` 是否派发、渲染行一步）由 M457 的 WebKit
   探针判（真实 app + WebKit，读数落 `.local/probes/m457-probe/`，git 外；永久化的回归判据缺位已
-  作为 finding / backlog 条登记）。
+  作为 finding 与 backlog「待修 findings」的 M457 WebKit 探针条登记）。
 - **⌃N / ⌃P 渲染行这一步的真机读数本场景只留截图**：AX 不暴露 contenteditable 内的光标位，
   「打字落点」在这里依赖折行点（脆判据），故两步只断言「导航不改文本」+ 截图给 Alex 人眼过目。
 - **⌃N/⌃P 的视觉行口径在 change 的 delta spec 里还没同步**（待归档 change `composer-emacs-nav`

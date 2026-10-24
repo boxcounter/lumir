@@ -160,8 +160,8 @@ steps:
 **只保留与形状无关的在场断言**（`ax.has` 匹配 alt 串，两种形状都命中），并删掉了原先两条形状相关断言：
 
 - `ax: { has: "svg 滚动夹具" }`（借 `20-image-fallback.md` 的规则，原意是证「图真的画出来了」）——
-  只在 `AXGroup` 形状下成立；它同时是 backlog M178 finding（`docs/backlog.md`）点名的坏模式**「AX 文本
-  可读 ≠ 元素可见」**的同族写法，删掉它同时消掉这条歧义；
+  只在 `AXGroup` 形状下成立；它同时是 M178 finding 点名的坏模式**「AX 文本
+  可读 ≠ 元素可见」**的同族写法（现行口径见 `scripts/acceptance/README.md` 的 `node` 断言条），删掉它同时消掉这条歧义；
 - `ax: { count: { pattern: "/AXImage … @… w×h/" } }`（宽度 = 栏宽、高度按固有比例）——只在 `AXImage`
   形状下成立（`26-calibration-runs…` 与 `26-pass…` 两次 run 里终态都是 `AXGroup`，这条会 FAIL）。
 

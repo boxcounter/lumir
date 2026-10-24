@@ -159,7 +159,7 @@ steps:
   「命令没发出」时也恒真——步名与本节措辞却声称「执行命令」，属 REVIEW.md 「覆盖声明超出真实验证」条的覆盖虚标。
   已按评审修法拆步补齐真触发。）
   **通道注意**：`press_key("tab")` 在 WKWebView 有一个已知通道缺口（M240 的全量批次发现，
-  见 `docs/backlog.md` 的验收套件条与 finding `…tab-shift-tab-wkwebview-m239-43-master.md`），
+  见 `scripts/acceptance/README.md` 的「Tab / Shift-Tab 不可达」条与 finding `…tab-shift-tab-wkwebview-m239-43-master.md`），
   ⌘J 这类 chord 不受它影响，但由此得一条纪律：**负向断言必须配一条通道可达的正观测**，
   否则丢键会让它静默恒真。
 - **焦点断言走解析结果**：`ax: { focused: "AXTextArea" }` 要求 AX 里恰有一个 focused 节点且 role
