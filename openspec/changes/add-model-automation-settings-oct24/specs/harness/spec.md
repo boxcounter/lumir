@@ -34,6 +34,8 @@
 
 composer 控制行 SHALL 提供模型选择 chip：列出**已配置**的 provider ∪ 当前 provider（闭集合 `kimi` / `deepseek` / `mock`；`mock` 恒被过滤、不上可选列表）。「已配置」SHALL 由后端派生读数 `harness.providers.<id>.configured` 判定：`api_key` 非空**且** `models` 清单非空，两者同时成立才为 `true`。前端 MUST NOT 用「provider 节是否存在」推断已配置——`HarnessProviders` 的三个字段恒序列化，该推断恒真。当前 provider 即使未配置 SHALL 保留在列表里（否则 chip 会从一个已知的坏配置上消失）。选择即切换当前 provider 并经运行期写回通道持久化（`config_set_value` 泛化口径，与 `[ui]` 写回同路）；切换对下一轮生效，MUST NOT 打断进行中的轮次。chip 文本过长 SHALL 截断（ellipsis），完整名称在 hover 呈现。配置缺失或非法时 chip SHALL 回落到默认 provider 且不报错（沿用 `[harness]` 配置节的回落纪律）。
 
+本 chip SHALL 是切换当前 provider 的**唯一入口**。设置面板里的 provider 表单切换只是编辑面选择器（见 `settings` 的「设置面板的形态与范围」条），MUST NOT 写回 `harness.provider`、MUST NOT 改变当前会话使用的 provider。
+
 #### Scenario: 切换 provider 并写回
 
 - **WHEN** 配置里 `kimi` 与 `deepseek` 两个 provider 均已配置，在控制行模型 chip 里从 `kimi` 切到 `deepseek`
@@ -98,7 +100,10 @@ SHALL 按**不支持**处理（保守默认，与 `effort` 同侧），SHALL 给
 ### Requirement: 模型清单声明
 
 `config.json` 的 `[harness].providers.<id>.models` SHALL 是模型能力与上下文窗口的**唯一**声明源；
-系统 MUST NOT 内置任何模型 id、能力或窗口数值，MUST NOT 出厂回落内置模型表。清单每项 SHALL 是对象，
+系统 MUST NOT 内置任何模型 id、能力或窗口数值，MUST NOT 出厂回落内置模型表，MUST NOT 提供
+「可用模型目录 / 推荐模型」这类第二来源。provider 集合 SHALL 是闭集合（`kimi` / `deepseek` /
+`mock`），本 requirement MUST NOT 被理解为提供新增 / 删除 provider 的能力；新增 provider 须
+另立 schema change（Rust 枚举、运行时装配与设置表单三处都要改）。清单每项 SHALL 是对象，
 字段与处置如下：
 
 | 字段 | 类型 | 缺省 | 非法处置 |
@@ -112,9 +117,9 @@ SHALL 按**不支持**处理（保守默认，与 `effort` 同侧），SHALL 给
 忽略；经设置面板保存时 SHALL 按 `id` 保留（见 `settings` capability 的「设置写通道」条）。
 
 生效模型 SHALL 按以下顺序解析：显式 `providers.<id>.model`（须在清单内；不在清单内时保留该值、
-窗口按 `131072` 保守估算、effort 按不支持处理，并给 warning）→ 缺省 / 空串取清单首项 `id` →
-清单为空时为空串（不伪造，发送期返回人话错误 `harness_model_missing`）。上下文窗口、effort 能力、
-vision 能力 SHALL 都从本清单读取，MUST NOT 另立第二套表。
+窗口按 `131072` 保守估算、`effort` 与 `vision` 都按不支持处理，并给 warning）→ 缺省 / 空串取
+清单首项 `id` → 清单为空时为空串（不伪造，发送期返回人话错误 `harness_model_missing`）。
+上下文窗口、effort 能力、vision 能力 SHALL 都从本清单读取，MUST NOT 另立第二套表。
 
 #### Scenario: 合法清单生效
 

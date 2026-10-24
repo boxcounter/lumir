@@ -32,6 +32,12 @@
 | 键位表无 `Cmd-,`；原生菜单自建项只有 ⌘Q，预置项无 Preferences | `src/keys.ts:704-757`（全局绑定段）；`src-tauri/src/lib.rs:580` | `⌘,` 可用 |
 | 面板浮层的既有配方（遮罩 + 居中 modal + `--scrim` + `--shadow-raise`；eink 1.4px 无阴影） | `src/style.css:1745-1790` | 设置面板沿用同一配方 |
 | 浮层可见性合同 O1–O5 | `docs/specs/overlay-visibility.md` | 新面板适用 |
+| provider 是 Rust 闭集合 `kimi` / `deepseek` / `mock`，没有增删通道 | `config.rs:602-628`（`HarnessProvider`） | 设置页只有前两项视图；新增 provider = schema change |
+| 模型清单唯一来源是配置，无内置模型表 | `config.rs:959-999`（`HarnessProviderConfig.models`）、`:922-934`（`model_specs`） | 设置页不提供模型目录；文案必须写明来源 |
+| 会话命名调度：首轮 / 5 轮周期 / 3 轮下限 / 漂移提前 / 失败按自然节奏 / 单飞行 | `harness/title.rs:12-13`、`:474-520`（`TitleSchedule`） | 自动化行文案的唯一事实源 |
+| 会话命名目标：provider 缺省跟随会话当前 provider，model 缺省跟随该 provider 生效模型；非法 model 回落 + warning | `config.rs:1061-1081`（`title_target`） | 每次评估只调用一个目标 |
+| 图片命名目标：同上，另有 vision 资格闸；不满足即跳过、不换模型 | `config.rs:1088-1150`（`attachment_naming_target`）；`attachment_naming.rs:1-20` | 图片命名行必须写出「跳过」后果 |
+| 图片命名触发：每次粘贴新图异步一次，串行队列、粘贴路径不等待 | `attachment_naming.rs:1-20`；spec `add-semantic-image-naming` | 不是每轮、也不是每 provider |
 
 ## 1. 范围与信息架构
 
@@ -39,17 +45,30 @@
 
 ```
 设置
-├─ 模型接入
-│  ├─ provider 切换：Kimi | DeepSeek
+├─ 模型接入（按 provider 编辑；这里的 provider 切换只换表单）
+│  ├─ provider 切换：Kimi | DeepSeek（固定两项，不可增删）
+│  ├─ 来源说明：模型清单只来自 config.json 的 harness.providers.<id>.models
 │  ├─ 基础区：API Key（掩码）· 模型清单（id / effort / vision / window）
 │  └─ 高级区（默认折叠）：Base URL · Wire 方言
-└─ 自动化
+└─ 自动化（全局节，不属于任何 provider）
    ├─ 自动压缩
    ├─ 会话命名
    ├─ 图片命名
    └─ 子代理
 ```
 
+- **自动化是全局节，不是 provider 卡片的一部分**：四个开关的键都在 `harness.*` 下，只有一份。
+  `provider` 切换只换「模型接入」的表单，MUST NOT 复制、重排、重置自动化节，也 MUST NOT 生成
+  「Kimi 的会话命名 / DeepSeek 的会话命名」这类按 provider 的复本。
+- **模型接入的 provider 切换是编辑面选择器**：它不写 `harness.provider`，不改变当前会话使用的
+  provider；切换当前 provider 的唯一入口仍是 composer 的模型 chip（§7）。设置页里同时编辑
+  `kimi` 与 `deepseek` 的表单，互不覆盖。
+- **provider 集合固定**：面板只呈现 `kimi` / `deepseek` 两个网络 provider；`mock` 是验收专用档、
+  不出现。MUST NOT 提供添加 / 删除 / 重命名 provider 的入口或暗示。新增 provider 要动 Rust
+  闭集合（`HarnessProvider`）、运行时装配与设置表单，属 schema change，不在本页。
+- **模型清单只来自配置**：`models[]` 的唯一来源是 `config.json` 的
+  `harness.providers.<id>.models`，系统不内置任何模型 id / 能力 / 窗口表，页面也不提供可浏览的
+  模型目录。原型与截图里的 `k3-256k` / `ds-chat` 等是**合成数据**，不构成内置清单。
 - **不做的**：主题 / 语言 / 字号 / 折行 / 栏宽 / 权限 / 忽略规则 / 键位 / cron / 日志。
   这些键在设置页出现的代价不是「多一行」，而是同一读数出现两处写入口（盘点 §5.6）。
 - 页面是**固定两节**，不是通用 schema 表单：不做字段遍历 / 分页 / 过滤，也不读取
@@ -118,6 +137,9 @@ pub struct ModelDraft {
 - **raw vs 生效**：`FieldState` 的 `Absent` 与 `Present` 区分「键缺席（跟随默认）」与
   「显式写了值」；`effective` 单独给出装载后的读数。字段旁因此能显示「默认」徽标，
   「恢复默认」也有明确语义（删键，不是写死默认值）。
+- **`automation` 与 `providers` 平级，不挂在 provider 下**：四个开关的键在 `harness.*` 下，
+  快照里只有一份 `AutomationSettings`；provider 切换只替换前端的表单草稿，不触碰它。命名调用的
+  provider / model 覆盖项不在快照的可写面里（config-only），页面只显示说明，不提供控件。
 - **`wire_api` 的 raw 与生效分开**：raw 字段承载文件里的**原 JSON 值**（正常是
   `"responses"` / `"chat_completions"`；`"chat"` 这种闭集合外的字符串也原样保留），生效方言在
   `effective.wire_api`。前端选择控件显示生效值，并在 raw 非法时旁注「文件里是「chat」，装载期
@@ -322,11 +344,13 @@ REVIEW.md『同一语义两处真源』条。前端只做输入整形（`type="n
 |---|---|---|
 | api_key / models / base_url / wire_api | 下一回合（`harness.rs:1409` 每回合现读） | 「已保存 · 下一回合生效」 |
 | auto_compact | 下一回合 | 同上 |
-| session_naming.enabled | 下一轮完成后 | 同上 |
+| session_naming.enabled | 下一次评估触发点（首轮 / 5 轮周期 / 漂移提前；在途结果落盘前复核开关，关掉即丢弃） | 「已保存 · 下一次评估触发时生效」 |
 | subagents.enabled | 下一回合 | 同上 |
 | attachment_naming.enabled | 关→开需重启；开→关立即 | 命中「关→开」时提示「重启后生效」 |
 
-面板 MUST NOT 声称「已生效」：保存成功只代表文件写成功，运行期读数由下一回合的现读决定。
+面板 MUST NOT 声称「已生效」：保存成功只代表文件写成功，运行期读数由下一回合的现读 / 下一次
+触发点的判定决定。会话命名的结果还是**异步**的：后台调用完成、且会话空闲时才落盘；MUST NOT
+把保存状态写成「下一轮必定生效」或「每轮重新生成」。
 
 ## 6. 诊断单一来源
 
@@ -383,8 +407,14 @@ pub struct ConfigDiagnostic {
 | `window` | 整数 `1..=10_000_000` | `131072` + warning | 丢该项 + warning |
 
 - 未知子键：运行期忽略，设置页保存时按 §5.3 保留。
-- 生效清单 = 逐项校验后按原顺序保留的项；`model` 缺省取首项；当前 `model` 不在清单内时
-  窗口按 `FALLBACK_CONTEXT_WINDOW` 保守估算（既有行为）。
+- **来源唯一**：生效清单只来自 `config.json` 的 `harness.providers.<id>.models`；系统 MUST NOT
+  内置模型 id / 能力 / 窗口表，设置页 MUST NOT 提供「可用模型目录 / 推荐模型」这类第二来源。
+  原型与截图里的模型 id 是合成数据。
+- **provider 集合固定**：`kimi` / `deepseek` / `mock` 是 Rust 闭集合，设置页只呈现前两项视图；
+  新增 provider 须另立 schema change，本 requirement 不引入增删能力。
+- 生效清单 = 逐项校验后按原顺序保留的项；`model` 缺省 / 空串取首项；当前 `model` 不在清单内
+  时保留该值、窗口按 `FALLBACK_CONTEXT_WINDOW` 保守估算、`effort` 与 `vision` 都按不支持处理
+  （既有行为；图片发送与图片命名的资格闸随之关闭）。
 - 任何用户可见的模型声明指引（配置 warning、错误信封、设置页字段说明）SHALL 同时列出
   `id` / `effort` / `vision` / `window` 四项——`vision` 是图片发送与图片命名的唯一依据，
   漏掉它会让图片能力无声失效。
@@ -396,20 +426,63 @@ pub struct ConfigDiagnostic {
 
 ## 9. 自动化开关
 
-| 开关 | 键 | 默认 | 行为一句话 | 敏感 | 时机 |
-|---|---|---|---|---|---|
-| 自动压缩 | `harness.auto_compact` | `true` | 上下文接近上限时压缩并开新会话 | 费用 | 下一回合 |
-| 会话命名 | `harness.session_naming.enabled` | `true` | 每轮完成后生成会话名 | 出域 | 下一轮完成 |
-| 图片命名 | `harness.attachment_naming.enabled` | `true` | 粘贴图片时用视觉模型生成语义文件名 | 出域 | 关→开重启；开→关立即 |
-| 子代理 | `harness.subagents.enabled` | `true` | 允许主对话派生并行子代理 | 费用 | 下一回合 |
+四个开关是**全局键**（`harness.*`），不属于任何 provider：设置页只有一份，provider 切换不改变
+它们的值、归属或 DOM。开关行 MUST 显示默认徽标（键缺席 = 默认）与「恢复默认」动作；显式设置
+与默认在文件层不同，在 UI 层必须可区分。
 
-- 四个开关的**依赖细项**（`session_naming.provider/model`、`attachment_naming.provider/model`）
-  不搬进设置页；它们失效时 `validate` 产生的 warning 显示在自动化节顶部，文案指向
-  `config.json` 的具体路径。
-- 开关行 MUST 显示默认徽标（键缺席 = 默认）与「恢复默认」动作；显式设置与默认在文件层
-  不同，在 UI 层必须可区分。
-- 图片命名的重启不对称必须在**行内**写出，不能只画一个「需重启」角标就了事：
-  「关闭立即生效；重新开启需重启应用」。
+| 开关 | 键 | 默认 | 行为（可上屏的准确表述） | 敏感 | 时机 |
+|---|---|---|---|---|---|
+| 自动压缩 | `harness.auto_compact` | `true` | 上下文接近上限时压缩并开新会话 | 费用（多一次压缩调用） | 下一回合 |
+| 会话命名 | `harness.session_naming.enabled` | `true` | 首轮生成；此后 5 轮周期重估、漂移可提前、失败按自然节奏重试、单飞行、异步落盘（见下） | 出域 + 费用（一次便宜档调用） | 下一次评估触发点 |
+| 图片命名 | `harness.attachment_naming.enabled` | `true` | 每次粘贴新图异步命名；目标无 `vision` 时跳过、保留暂存名 | 出域 + 费用（一次视觉调用） | 关→开重启；开→关立即 |
+| 子代理 | `harness.subagents.enabled` | `true` | 允许主对话派生并行子代理（子代理调用的总开关） | 费用（独立计费） | 下一回合 |
+
+### 9.1 命名目标：一处解析、一次调用
+
+- 两个命名调用的目标都**默认跟随当前会话的 provider 与它的生效模型**：
+  `session_naming.provider` / `attachment_naming.provider` 缺省 = 会话当前 provider；
+  对应 `model` 缺省 = 该 provider 的生效模型（`config.rs` 的 `title_target` /
+  `attachment_naming_target` 是唯一解析口）。
+- `config.json` 的 `harness.session_naming.provider` / `.model` 与
+  `harness.attachment_naming.provider` / `.model` 可**单独覆盖**目标。每次触发只向解析出的
+  **一个** provider + 一个模型发起**一次**调用；MUST NOT 对每个 provider 各做一次，MUST NOT
+  把同一份命名结果按 provider 复制。两组 `provider` 取闭集合外的值都在装载期回落 `null`
+  （= 会话当前 provider）并给 warning；这是配置校验的既有口径。
+- 这两组覆盖项**不搬进设置页**：搬进来就会把一处全局行为变成「Kimi 一份 / DeepSeek 一份」的
+  多份配置。设置页用一行文案说明默认与覆盖路径，诊断里给键路径。
+- 两个命名的「目标失效」后果不同，文案 MUST NOT 混写：
+  - **会话命名**：`model` 不在该 provider 清单内 ⇒ 回落该 provider 的生效模型 + warning；
+    provider 的 key / 模型缺失 ⇒ 调用失败只进 stderr 与 `session_title` 的 `error` 记录，
+    用户面无错误、不阻塞对话。
+  - **图片命名**：`model` 必须在清单内且声明 `vision: true`；不满足 ⇒ **跳过命名、保留暂存名、
+    不发起请求、不弹失败 toast**，MUST NOT 换用清单里的其它模型（`config.rs` 的
+    `attachment_naming_target` 返回 `None`）。
+
+### 9.2 会话命名的触发节奏（文案唯一事实源）
+
+上屏文案 MUST 与 `harness/title.rs` 的 `TitleSchedule` 一致，MUST NOT 简化成「每轮生成」：
+
+- **首轮**：逻辑会话首个正常完成的轮即生成初始标题（`reason=first-turn`）。
+- **周期**：距上一次评估满 **5 轮**时重估（`cadence`）。
+- **漂移提前**：已有标题时，连续两条用户消息（各 ≥8 码点）与标题的确定性词元重合度 < 0.2
+  （标题词元 ≥3 个才判）即命中；但任两次评估 MUST 至少间隔 **3 轮**（`drift` 不压这个下限）。
+- **失败重试**：触发时即记一次评估，失败也算；尚无有效标题时在下一个满足 3 轮间隔的正常完成
+  轮重试初始生成。已有标题时失败不立即重试，按 5 轮周期 / 漂移的自然节奏再来。
+- **单飞行**：同一逻辑会话同时最多一个命名调用在途；在途期间的触发点直接跳过、不排队。
+- **异步落盘**：命名在 `release_turn` 之后的后台线程执行（锁外 HTTP）；落盘前重新取会话锁并
+  复核「同 vault / 同 session / 会话空闲 / 开关仍开」，任一不满足即丢弃；记录只在会话空闲时
+  追加，MUST NOT 插进一对 `llm_request` / `llm_response` 之间。
+- 因此面板 MUST NOT 写「每轮生成」或「下一轮必定生效」；正确表述是「从下一次评估触发点起
+  生效，结果在会话空闲时异步落盘」。
+
+### 9.3 图片命名的触发与资格
+
+- 每次粘贴**新写盘**的图片异步排一次命名（串行队列，同一文件至多一个任务；去重命中、已是
+  语义名、开关关闭时不投递）。粘贴路径只多一次 invoke 投递，MUST NOT 等待模型。
+- 目标模型必须由该 provider 的 `models` 声明 `vision: true`；不满足即跳过、保留暂存名。
+  `attachment_naming.enabled` 关→开需重启（前端投递闸读启动装载值），开→关立即（后端每次
+  调用现场读配置）。
+- 图片命名的重启不对称必须在**行内**写出：「关闭立即生效；重新开启需重启应用」。
 
 ## 10. 视觉保真（有原型，必填）
 
@@ -425,8 +498,9 @@ pub struct ConfigDiagnostic {
 - **头部**：标题 15px / 650；副标题 12px `var(--text-3)`（配置文件路径）；关闭钮 16px 图标，
   静息 `var(--text-3)`、hover `var(--text)`。原型副标题里的「本原型为合成数据」只存在于原型，
   产品文案不含此句；产品在 API Key 字段下方常驻明文说明（§10.2）。
-- **正文**：单列，节与节之间 16px + 1px `var(--border)` 分隔线；节标题 11px / 650、
-  `letter-spacing: 0.08em`、`var(--text-3)`。
+- **正文**：单列；节与节之间 16px 间距 + 1px `var(--border)` 分隔线；每节内容装在一张
+  1px `--border-soft` / `--r8` 的 pane 卡片里（自动化与模型接入各自独立，不嵌套）。节标题
+  11px / 650、`letter-spacing: 0.08em`、`var(--text-3)`；节标题右侧的节级说明 11px `--text-3`。
 - **底部**：粘在卡片底部，1px `var(--border)` 上边线，`padding: 12px 24px`；左「还原此页默认」
   （次级文本钮），右「取消」「保存」（保存 = `--accent-fill` 实底，28px 高，`--r5`）。
 - **焦点**：所有可聚焦控件 2px `--accent` 环 + 2px offset；eink 用 2px 黑环。
@@ -434,8 +508,18 @@ pub struct ConfigDiagnostic {
 
 ### 10.2 屏位 2：模型接入 · 基础区
 
+- **节容器**：模型接入与自动化各是一张独立的 `--pane` 卡片（1px `--border-soft`、`--r8`、
+  12px 内边距），自动化 MUST NOT 嵌在 provider 表单卡片里。节标题右侧是节级说明（11px
+  `--text-3`）：模型接入写「切换只换表单，不切换当前会话的 provider」，自动化写「全局 · 与所选
+  provider 无关」。
 - **provider 切换**：分段控件，两项等宽、28px 高；选中 = `--accent-tint` 底 + `--accent` 文字；
-  未选中 = 透明底 + `--text-2`；eink 选中 = 黑底白字。
+  未选中 = 透明底 + `--text-2`；eink 选中 = 黑底白字。控件旁固定一枚「固定 2 项」徽标；
+  **不渲染添加 / 删除 / 重命名 provider 的任何按钮、菜单项或「+」**。
+- **来源说明**（两条常驻 11.5px `--text-3`，位于 tabs 下 / 模型清单下）：
+  - `provider 固定两项：Kimi / DeepSeek（mock 是验收专用档，不在此出现）；不能增删——新增
+    provider 属于 schema 变更，不在设置页。`
+  - `模型清单只来自 config.json 的 harness.providers.<id>.models；Lumir 不内置任何模型表。
+    本原型为合成数据。`（前半句是产品文案，末句只存在于原型）
 - **字段标签**：11.5px `var(--text-3)`，标签在上、控件在下，间距 4px。
 - **输入框**：13px / 6px 8px 内边距 / 1px `var(--border)` / `--r5`；focus 边框 `--accent` +
   2px `--accent-tint` 外环；错误态边框 `--danger` + 行下 11.5px `--danger` 文本。
@@ -470,9 +554,20 @@ pub struct ConfigDiagnostic {
 
 ### 10.4 屏位 4：自动化节
 
-- 每行两列：左列标题 13px / 500 + 描述 12px `--text-2` + meta 11px `--text-3`（时机 · 敏感性）；
-  右列 = 逐项「恢复默认」（11px 文本钮）+ 开关，两者横排、间距 6px。行高 ≥ 56px，行间
-  1px `--border-soft` 分隔。
+- **独立的全局卡片**：自动化节是模型接入卡片的**兄弟**，不是 provider 表单的子块。节标题右侧
+  写「全局 · 与所选 provider 无关」；卡片顶部两句说明：①「四个开关是 `harness.*` 下的全局键，
+  不属于任何 provider；命名调用的 provider / model 覆盖项留在配置文件」；②「命名调用目标：
+  默认跟随当前会话的 provider 与它的生效模型；可在 `config.json` 的 `harness.session_naming` /
+  `harness.attachment_naming` 下单独覆盖；每次只发往一个目标」。provider 切换 MUST NOT
+  重渲染这张卡片（DOM 与开关值不变）。
+- 每行两列：左列标题 13px / 500 + 描述 12px `--text-2` + meta 11px `--text-3`（全局 · 时机 ·
+  敏感性）；右列 = 逐项「恢复默认」（11px 文本钮）+ 开关，两者横排、间距 6px。行高 ≥ 60px，
+  行间 1px `--border-soft` 分隔。
+- **会话命名行**：描述必须覆盖「首轮生成、5 轮周期、漂移可提前、两次评估至少隔 3 轮、失败按
+  自然节奏重试、同一会话同时只跑一个调用、结果异步落盘」；meta 写「从下一次触发点起生效」。
+  MUST NOT 出现「每轮生成」「下一轮必定生效」。
+- **图片命名行**：描述写「每次粘贴新图异步命名；目标模型未声明 vision 时跳过、保留暂存名、
+  不换模型」；meta 写「关闭立即生效；重新开启需重启应用」。MUST NOT 表述为「一定改名」。
 - **开关**：32×18 轨道、14px 圆钮；关 = `var(--border)` 轨道 + `var(--preview-bg)` 钮；
   开 = `--accent-fill` 轨道 + 白钮；eink 开 = 黑底白钮、关 = 白底 1px 黑边。焦点环同全局。
 - **默认徽标与逐项恢复默认**：键缺席时显示「默认」徽标、MUST NOT 显示恢复按钮；显式设置后
@@ -530,11 +625,19 @@ pub struct ConfigDiagnostic {
     按钮同步。
   - 诊断显示键路径；范围外 warning 不进入面板。
   - 开关 `role="switch"` + `aria-checked`；Space / Enter 可切换。
+  - **provider 切换只换编辑面**：切换 kimi / deepseek 后自动化节的 DOM、开关值与归属不变
+    （同一节点、同一顺序、仍只有四个），且不写 `harness.provider`。
+  - **反向文案断言**：自动化区不含「每轮生成」「下一轮必定生效」；会话命名的说明含首轮 / 5 轮 /
+    3 轮 / 异步；模型接入写清来源是 `config.json`；面板没有「添加 / 删除 provider」入口。
   - 关闭脏面板的两步确认；三条关闭路径。
   - 三主题 class / `data-theme` 切换不改变布局（结构性断言）。
 - **视觉场景**（`tests/visual`）：面板在 1280×800 与 900×700 下打开即完整可见
   （O1 / O2）、无水平溢出、遮罩覆盖全窗、三主题各一屏 + 保存中（控件禁用）一屏；逐项恢复
-  默认只在键显式存在时出现；键盘 Tab 不逃出面板。
+  默认只在键显式存在时出现；自动化是独立卡片（与模型接入不嵌套）；键盘 Tab 不逃出面板。
+- **原型语义回归**：`openspec/changes/add-model-automation-settings-oct24/evidence/prototype-semantics-check.mjs`
+  对原型跑静态 + 浏览器反向断言（含负向对照，见其文件头）：自动化不随 provider 切换重复或改
+  归属、无「每轮生成」、模型来源明确 `config.json`、无增删 provider 暗示。本 change 的
+  提案评审与后续实现评审都先跑它。
 - **验收场景**（真机套件）：
   - 打开设置 → 看到两个 provider 与四个开关；`⌘,` 与菜单两条入口都打开同一面板。
   - 未配置 Key 时发送 → 错误文案指向设置（不再是 `config.json`）。
@@ -560,6 +663,9 @@ pub struct ConfigDiagnostic {
 | 明文 Key 在界面泄露 | 快照只回末 4 位；输入框 `type="password"` 且不预填；不在 DOM 里放完整值（§3） |
 | Base URL 把 Key 指向恶意主机 | 高级区常驻目的地警示；非官方值保存后在面板上仍可见（§10.3） |
 | 设置页与既有 chip / modeline 读数分叉 | 设置页是写入面板，不在打开期间显示运行态；保存后关闭时 chip 重取一次（§7） |
+| 设置页的 provider 表单切换被误读为切换当前 provider | 节级说明 + 面板文案写死「只换编辑面」；provider 切换不写 `harness.provider`（§1 / §10.2 / settings spec） |
+| 自动化开关被误读成每个 provider 各一份 | 独立全局卡片 + 节级「与所选 provider 无关」+ 反向断言（§1 / §10.4 / evidence 脚本） |
+| 会话命名文案退回「每轮生成 / 下一轮必生效」 | 文案以 §9.2 的 `TitleSchedule` 为唯一事实源；反向断言禁掉这两句（§9.2 / §11） |
 | 诊断字符串变成第二份校验 | 诊断结构化、文案由同一 place 产出；前端只按 path 挂载（§6） |
 
 ## 13. 裁决点（与 proposal 的 Q1–Q6 对应）
