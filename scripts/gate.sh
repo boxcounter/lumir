@@ -129,19 +129,9 @@ fi
 # include 里，根 tsc 覆盖不到它）。
 run_gate tsc-unit pnpm exec tsc -p tests/unit/tsconfig.json
 run_gate unit-tests node tests/unit/run.mjs
-# 验收套件语法层（scripts/acceptance 入口与 lib/*.mjs）：`node --check` 只解析、不执行——不 import
-# 模块、不起 app、不建验收锁、不碰验收 vault，也不占 `LUMIR_ACCEPTANCE_PORT`，故与真机跑批的实例 /
-# 端口隔离互不干扰。lib 里除 execute / util（docs-check 的覆盖表校验会 import）之外，其余模块只有
-# 真机跑批 `node scripts/acceptance/run.mjs` 才会被 import，而套件不进 CI——语法错此前要等下一次
-# 真机跑批才暴露，整批起不来。`--check` 不解析 import 图，故只管语法（模块缺失 / 类型错不归它）。
-run_gate acceptance-syntax bash -c '
-  n=0
-  for f in scripts/acceptance/*.mjs scripts/acceptance/lib/*.mjs; do
-    node --check "$f" || exit 1
-    n=$((n + 1))
-  done
-  echo "acceptance-syntax: ${n} 个文件通过 node --check"
-'
+# 验收套件语法层：实现唯一一份在 scripts/acceptance/check-syntax.sh（docs-check / CI 共用同一实现，
+# REVIEW.md「同一语义两处真源」条），本行只调用。只解析不执行——不起 app、不占端口、不碰验收 vault。
+run_gate acceptance-syntax bash scripts/acceptance/check-syntax.sh
 # 制品门禁：与 CI 的 docs-check.yml 共用同一脚本（本地绿才等于 CI 绿）
 run_gate docs-check bash scripts/docs-check.sh
 run_gate openspec-validate npx --yes @fission-ai/openspec@1.12.0 validate --all --strict
