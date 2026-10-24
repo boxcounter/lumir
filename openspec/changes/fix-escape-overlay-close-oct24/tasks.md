@@ -135,7 +135,9 @@
 - [x] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（37 passed / 0 failed）
 - [x] 6.2 `bash scripts/docs-check.sh` 通过（MODIFIED 段落逐字落定、覆盖表与场景一致、backlog 出口合规）
 - [x] 6.3 `bash scripts/gate.sh quick` 全绿（`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0）（照抄 `GATE RESULT` 原文行与退出码，不复述成 X/Y PASS）
-- [ ] 6.4 `bash scripts/gate.sh visual` 全绿（动过焦点 / 浮层行为，本地必跑；CI 绿不代表像素层没回归；
+- [ ] 6.4 `bash scripts/gate.sh visual` 全绿（**现状 14/15**：唯一 FAIL 是 `typography.spec.ts` 的「窗口级 keydown 监听只有一条」不变量与 design §3.1 要求的第二条**消费者**监听正面冲突；已向 tower
+      报 scope 请求——需要 `tests/visual/scenes/typography.spec.ts` 的编辑权把判据改成「一条分发器 +
+      一条兜底消费者」；`src/keys.ts` / 该测试都不在本 mission scope，不擅自越界改）（动过焦点 / 浮层行为，本地必跑；CI 绿不代表像素层没回归；
       含 3.6 的 `escape-admission` 结构场景）
 - [x] 6.5 `node scripts/acceptance/run.mjs --check` 通过（237 个场景）（场景语法与断言形态）
 - [x] 6.6 反向验证记录写进完工报告：去掉窗口级兜底 → 238 必须变红（附红跑读数）；去掉重建保焦
