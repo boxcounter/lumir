@@ -870,8 +870,12 @@ export async function loadScenario(file) {
   // 闭合 `---` 之外」的形态。这里只做定位、不直接报错——报错口径归 checkScenario（`--check` 的
   // 唯一出口），只在 front-matter 里确实没有步骤表时报出（正文里的 YAML 示例不该误伤）。
   const bodyStepKeys = [...new Set([...body.matchAll(/^(steps|teardown):/gm)].map((mm) => mm[1]))];
-  const id = meta.id ?? path.basename(file, ".md");
-  return { ...meta, id, body, bodyStepKeys, file };
+  const idDeclared = typeof meta.id === "string" && meta.id.trim() !== "";
+  const id = idDeclared ? meta.id : path.basename(file, ".md");
+  // `idDeclared`（M690）：`id` 的回落（文件名）让「front-matter 没写 id」在运行期不可见——
+  // 覆盖表 COVERAGE.md 以 id 为场景唯一键，缺声明必须判红，故把「是否声明」单独带出来给校验面用
+  // （scripts/acceptance/coverage.mjs）。运行期继续用回落值，行为一字不变。
+  return { ...meta, id, idDeclared, body, bodyStepKeys, file };
 }
 
 /** 断言里的匹配：字符串按子串；/.../ 包起来按正则。 */

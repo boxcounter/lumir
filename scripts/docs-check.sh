@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# scripts/docs-check.sh — 制品门禁的唯一实现（docs/adr/ 的结构与索引 + openspec 相对链接可达性）。
+# scripts/docs-check.sh — 制品门禁的唯一实现（docs/adr/ 的结构与索引 + openspec 相对链接可达性
+# + 验收场景覆盖表生成一致性）。
 # 本地 `scripts/gate.sh quick` 与 CI 的 .github/workflows/docs-check.yml 调的是同一份脚本：
 # 「本地全绿才允许提交」要求本地跑的就是 CI 跑的那条命令，两处各写一遍必然漂移
 #（M153；REVIEW.md 「同一语义两处真源」条：同一语义不要两处真源）。
@@ -15,6 +16,10 @@
 #      整块替换，delta 少抄的段落在归档时静默消失，validate 与链接检查都看不见）
 #   5. 归档队列：tasks 全勾的活跃 change 是否在 docs/backlog.md 有且仅有一条归档跟踪条目
 #      （同一脚本的门禁模式顺带判；口径见 docs/process/openspec-workflow.md「批次收尾 checklist」）
+#   6. 验收场景覆盖表：scripts/acceptance/COVERAGE.md 与 scenarios/*.md 的 front-matter 是否一致，
+#      以及 id / item / title 的必填与唯一性（实现在 scripts/acceptance/coverage.mjs，本脚本调它——
+#      覆盖表是生成物，手维护或忘了重新生成都会静默失真；`node scripts/acceptance/run.mjs --check`
+#      调的是同一份实现）
 # 输出：失败时逐条打印问题（CI 上同时是 ::error:: 注解）并以 1 退出。
 #
 # 注意：OpenSpec 的 **结构 / 制品完整性** 校验不在这里——权威实现是 `openspec validate --all
@@ -116,10 +121,17 @@ fi
 # 挂这里两边同时继承（REVIEW.md「同一语义两处真源」条）。该脚本的门禁模式同时判两件事：
 # MODIFIED delta 的静默丢段面（第 4 条）与已完成 change 的归档队列条目（第 5 条）。
 if ! command -v node >/dev/null 2>&1; then
-  echo "::error::未找到 node，归档对账无法运行（环境要求见 README.md）"
+  echo "::error::未找到 node，归档对账与验收覆盖表校验无法运行（环境要求见 README.md）"
   fail=1
-elif ! node scripts/openspec-archive-check.mjs; then
-  fail=1
+else
+  if ! node scripts/openspec-archive-check.mjs; then
+    fail=1
+  fi
+  # 验收场景覆盖表（第 6 条）：生成物与场景 front-matter 的一致性 + 结构不变量。挂在本脚本上，
+  # 本地 gate.sh quick 与 CI 的 docs-check.yml 同时继承（REVIEW.md「同一语义两处真源」条）。
+  if ! node scripts/acceptance/coverage.mjs --check; then
+    fail=1
+  fi
 fi
 
 if [ "$fail" -ne 0 ]; then
@@ -127,4 +139,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达 + 归档对账无静默丢段 + 归档队列齐备）"
+echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达 + 归档对账无静默丢段 + 归档队列齐备 + 验收覆盖表与场景一致）"

@@ -12,7 +12,7 @@
 - **只记改变未来动作的信息**（2026-10-16 Alex 裁决）：条目内容限于结论 / 待办 / 裁决点 / 复现与操作口径；过程性状态（「某项验证跑完、PASS」类）不入账——过程与证据的居所在 git 历史、`.tower/comms/`、`.local/`。已有结论被新证据再次确认时不追加补记；仅当新证据**推翻或收窄**结论时才改写条目。HANDOFF.md 同口径。
 - **finding 落账率对账**：批次收尾核对本批 `.tower/comms/findings/` 新增文件数与 backlog 新增条目数一致，不等即查漏（漏落账的 finding 等于没登记）。
 - **体量红线 300 行**：全文超 300 行（Alex 2026-10-12 裁决，自 1000 下调）即触发一次结构清理，批次收尾检查一次（`wc -l docs/backlog.md`）。红线是闹钟不是删除规则：触发后若无核销/僵尸项可清，记一句「已查、无僵尸」即过，**不为压行数删活条目**（删除判据仍是核销/僵尸，不是行数本身）。
-- **引用 backlog 条目用主题关键词锚**（形如「backlog『内存合同存量超标』条」），MUST NOT 用编号或行号——编号会重排、行号每次改动都漂移（唯一例外：验收场景 front-matter 的 `item:` 字段指向「待真机验收」节的清单项，属套件机制，见该节）。
+- **引用 backlog 条目用主题关键词锚**（形如「backlog『内存合同存量超标』条」），MUST NOT 用编号或行号——编号会重排、行号每次改动都漂移（唯一例外：验收场景 front-matter 的 `item:` 字段是验收项号，属套件机制，编号映射见 [scripts/acceptance/COVERAGE.md](../scripts/acceptance/COVERAGE.md)）。
 
 ## 归档跟踪队列（oct24 批剩余：权限链 2 项，tower/agent 记账，不进待裁决区）
 
@@ -165,50 +165,26 @@
 
 ## 待真机验收
 
-行为判定已下沉为 agent 可执行场景（入口 [scripts/acceptance/](../scripts/acceptance/README.md)，设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感 / 审美项归 Alex。分类依据 = **证据目录里真实 PASS 的场景**；全量回归现场只留一行索引（报告正文与逐场景读数不进本文件）：
+行为判定已下沉为 agent 可执行场景（入口 [scripts/acceptance/](../scripts/acceptance/README.md)，设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感 / 审美项归 Alex。**场景清单与 item 编号映射由生成的 [scripts/acceptance/COVERAGE.md](../scripts/acceptance/COVERAGE.md) 承接**——它由 `node scripts/acceptance/coverage.mjs` 从场景 front-matter（`id` / `item` / `title`）生成，一致性与结构不变量由 docs-check 与 `run.mjs --check` 判；**MUST NOT** 在本文件或别处再手维护一份场景注册表。本文件只留机器判据到不了的行为限制与待 dogfood 项；全量回归现场与逐场景读数进 git 历史与 `.local/`（git 外）。
 
-- **M284 全量（2026-09-28，语言面修复批）**：65 场景 / 57 PASS / 8 FAIL、1685 断言、2496s → `.local/acceptance/2026-09-28/summary.md`；8 条红复跑 4/8 转绿、4 条稳定红（1 条产品缺陷已 file finding、2 条套件注入通道缺陷、1 条 M283 已定的窗口口径），**无一条由 M284 引入**（本批 `src/**`、`src-tauri/**` 零 diff）→ 复跑读数 `.local/acceptance/2026-09-28-rerun-reds/`。
-- **M256 全量（2026-09-27，M282 之前的现场）**：57 场景 / 49 PASS / 8 FAIL，**场景当时跑在 zh 面、读数不再可复现**，仅作沿革对照（与 M284 只有 28、47 两条红重合）。
-- **M240（2026-09-26）**：49 场景 / 47 PASS / 2 FAIL（`32-list-filter`、`43-list-tab-indent`）。**M164（2026-09-18，证据目录按 UTC 记为 `2026-09-17`）**：26/26 PASS。
-- **M296 的真机批（2026-09-29）**：场景 67 + 多 vault 回归 16 / 17 / 19 / 25 / 48 / 60 → **7/7 PASS**（`.local/acceptance/2026-09-29-final/`），读数 `.local/missions/m296/readings.md`。
-- **沿革：真机运行纪律（写场景前必读）**：就绪门入口读屏名是 `AXPopUpButton`（写死 `AXButton` 会让整套启动即超时）；窗口经 `--config` 钉主屏（否则窗口跑到屏幕外、键盘注入整批不落地）；每场景清 `workspaces/` 与 `vault-sessions/`；`seed` 预置注册表与会话并挂第二个合成 vault；无人值守用 `caffeinate -dimsu` 包住；`cargo build --features custom-protocol` 之前必须先 `pnpm build`。
-- **composer-intercard-caret 归档留下的探针尾巴（M519 归档对账，2026-10-15）**：场景 134 的复跑 2026-10-13/14 多轮仍失败于注入通道（红归族 A 族②，M456 老边界，非产品回归——同「M455 收尾尾巴」条的 134 复跑安排）；「是否启用方案 C」的登记对象已不存在——方案 C 键位层由 composer-emacs-nav（M447）节点 1 裁决吸收。归档件 tasks.md 1.2 的就地标注含全链证据。
+**未收口限制（COVERAGE.md 里有场景 ≠ 这些行为已验）**
 
-**已机验（行为判定落定，有 PASS 证据）**——证据目录统一在 `.local/acceptance/<批次>/<场景>/`（git 外）；叙述与读数明细看场景文件（`scripts/acceptance/scenarios/*.md` 的「已知边界」节）与 git 历史。
+- `02-math-click`（item 2）：「公式后 ⌃B 是否 1–2 次」仍待判定（AX 不暴露光标 / 选区）。
+- `03-table-ctrl-np`（item 3）：grid 表渲染成 `AXTable` + `AXRow`，逐 cell 落点不可回读。
+- `05-cell-math`（item 5）：「点击渲染态公式进编辑」不可机验（KaTeX span 既不进 AX 树也不带 bbox）。
+- `06-callout-and-width`（item 6）：「光标进该行后源码显露」不可机验；表格宽度只留截图证据。
+- `12-links`（item 12）/ `54-bare-url-cmd-click`（item 54）：引用式 `[text][ref]` 与无 scheme 字面仍保持原文（半覆盖，如实登记）。
+- `17-multi-vault-switch`（item 17）：「双击固定标签」在该套件不可表达（由视觉通道覆盖）。
+- `19-vault-switch-guard`（item 19）：**未覆盖**「保存能闭环 ⇒ 继续切换」那条顺路（由 chromium `mv-vault-switch-guard.spec.ts` 覆盖）——MUST NOT 把 19 的 PASS 读成每条顺路都在真机验过。
+- `27-document-end-marker`（item 27）：可见性不在真机通道判（AX 不给纯文本节点 bbox），由 chromium 几何断言 + 截图承担。
+- `34-restyle-theme-skeleton`（item 34）：eink 色值 / 对比无计算属性通道，只能给截图（手眼项）。
+- `35-restyle-three-themes`（item 35）：标题栏三项窗口级证据（traffic 灯 / 标题文字 / 拖拽）不在断言里，判定归 Alex。
+- 配色 / 几何类判据不进真机（无计算属性通道），由 `tests/visual` 承担——真机场景 PASS 不含这些面。
+- `08-autosave` / `08b-autosave-pause` 断言的是**已移除**的自动保存（M278 随 change `remove-autosave` 删除）——「编辑内容不丢」由 41 / 42 / 43 / 46 的显式保存断言承接。
 
-1. **Mermaid 点击进源码编辑** → `01-mermaid-click`：渲染态点击 ⇒ 源码显露、widget 让位；pending 态窗口极短、只留截图。
-7. **M124 三条恢复路径全部覆盖** → `07-recovery-paths`（冲突双动作 + 内存改动未丢 + 磁盘未被静默覆盖）、`07b-recovery-saveas`（真删除触发 `fs_not_found` ⇒ 另存为新文件真实落盘）、`07c-external-reload`（干净缓冲 + 外部改写 ⇒ 编辑器文本自动换成磁盘内容）。
-8. **M127 崩溃备份链路三条子行为** → `08c-crash-recovery`、`08d-crash-discard`、`08e-force-overwrite`；`08-autosave` / `08b-autosave-pause` 断言的是**已移除**的自动保存（M278 随 change `remove-autosave` 删除），「编辑内容不丢」由 41 / 42 / 43 / 46 的显式保存断言承接。
-9. **Emacs 键位 / ⌘Z / ⌘/ 面板 / `config.json` keys 表** → `09-emacs-keys`、`09b-keys-config`（⌘Z 未被 macOS 视图层级吃掉、⌘/ 面板打开期间文档逐字节不变、keys 表解绑 ⌘S 与重绑 ⌃S 生效）。
-10. **Markdown 渲染三件套**（M138）→ `render-markdown`；配色与几何不进真机，由视觉门禁守。
-11. **表格降级文案归因**（M138）→ `render-table-degrade`（M142 起降级只由多列 / 槽位不可映射触发；短行表按矩形渲染）。
-12. **文件内搜索 v0**（M139）→ `search-01-find`、`search-02-binding`。
-13. **链接渲染与激活（全形态）**（M144 起、M145 补齐；M272 扩面到裸 URL）→ `12-links`（53 断言）、`54-bare-url-cmd-click`；引用式 `[text][ref]` 与无 scheme 字面仍保持原文（半覆盖，如实登记）。
-14. **TOC 大纲 popover**（M148）→ `13-toc`；配色与几何由元素级基线守。
-15. **多标签**（M149；M238 扩两段）→ `14-tabs`（51 断言 / 21 步）；⌘W 从关窗改为关当前标签、切换 vault 升级为任一标签 dirty 即拦等语义变化见场景说明。
-16. **启动自动恢复 last_vault**（M159）→ `16-startup-restore`（10 断言）；恢复中态通常不可见，故断言的是「不残留」而非「看见」；不宣称性能改进（`LUMIR_READY` 出现时刻不变）。
-17. **多 vault 列表与切换**（M164）→ `17-multi-vault-switch`（38 断言，含直读盘的三条 `file` 断言）；「双击固定标签」在该套件不可表达（由视觉通道覆盖）。
-18. **启动恢复 vault 并一并恢复它的标签列表**（M164）→ `18-vault-session-restore`（7 断言）；与 16 的分工是「vault 恢复本身」vs「装载后紧接着的标签恢复」。
-19. **切换 vault 的 dirty 前置门三条出口**（M164）→ `19-vault-switch-guard`（35 断言）；**未覆盖**「保存能闭环 ⇒ 继续切换」那条顺路（由 chromium `mv-vault-switch-guard.spec.ts` 覆盖）——MUST NOT 把 19 的 PASS 读成每条顺路都在真机验过。
-20. **表格 cell 内 ⌃E→⌃F→⌃E 不再跳回前一 cell**（M185）→ `24-table-cell-ctrl-e-seq`；AX 逐 cell 落点不可回读，用插入字符的归属反推。
-21. **vault 列表 ESC 收起保持阅读位置**（M186）→ `25-vault-list-close-keeps-reading-position`；该缺陷在 chromium 与真机均未复现，修复是结构性的（如实登记）。
-22. **svg 倒序滚动终态稳定**（M187 / 场景修复 M190）→ `26-svg-scroll-stability`（17 断言）；两条通道语义（`AXTextArea.value` = CM 当前渲染区间；带 `<text>` 的 svg 在 AX 里的形状不稳）已写进套件 README 与场景说明。
-23. **文档末尾完读标记**（M189；M238 / M251 两处变化）→ `27-document-end-marker`（19 断言）；可见性不在真机通道判（AX 不给纯文本节点 bbox），由 chromium 几何断言 + 截图承担。
-24. **restyle 主题通道与骨架落位**（M213）→ `34-restyle-theme-skeleton`；eink 色值 / 对比无计算属性通道，只能给截图（手眼项）。
-25. **三主题真机呈现 + overlay 标题栏窗口级读数**（M213）→ `35-restyle-three-themes`；标题栏三项窗口级证据（traffic 灯 / 标题文字 / 拖拽）不在断言里，判定归 Alex。
-26. **主题运行期切换**（M237）→ `44-theme-live-switch`（34 断言，含反向验证）；色值 / eink 九条降级 / mermaid SVG 内联色三类视觉取值由 chromium 场景守。
-27. **文件树条目右键菜单的 M251 增量**（M251）→ `47-file-tree-context-menu` 新增「点在行右侧空白区也作用于该行」；**该批真机判据未取得**（`button: right` 取不到窗口截图，M244 / M249 同因），判定由 chromium 层承担；**待裁决**：两张菜单基线有 23px 真实差异未重建（`.local/missions/m251/baseline-review/tree-menu-menu-target/`）。
-93. **思考块三态（折叠默认 / 展开见原文 / 时长读数在场）**（M364）→ `93-harness-thinking-blocks`（真机 PASS / 22.5s）。
-94. **无 reasoning ⇒ 零思考块（反向验证）**（M364）→ `94-harness-thinking-absent`（真机 PASS / 23.4s）。
-95. **思考程度 chip 会话态（默认 High / 浮层三档 / 选 Max / 新会话回 High）**（M364）→ `95-harness-thinking-effort`（真机 PASS / 18.7s）；「档位 → 请求参数」那一段由 core 集成测试 `session_thinking_effort_reaches_request` 覆盖。
-96. **列表自动模式三态（「1. + 空格」进入 / Enter 续行 / 空项退出）+ IME 组合期不重复**（M461）→ `153-ordered-list-auto-mode`（**真机留 dogfood 批次跑**）；裸 DOM 变更形态不兜、留 dogfood，若复现另立项。
+**待 dogfood**
 
-**已机验到渲染/结构层，行为细节仍缺可观测面**
-
-2. 公式进编辑 → `02-math-click`；**「公式后 ⌃B 是否 1–2 次」仍待判定**（AX 不暴露光标 / 选区）。
-3. Ctrl+N/P 表格行为 → `03-table-ctrl-np`；grid 表渲染成 `AXTable` + `AXRow`，**逐 cell 落点不可回读**。
-5. cell 内公式 → `05-cell-math`；**「点击渲染态公式进编辑」不可机验**（KaTeX span 既不进 AX 树也不带 bbox）。
-6. Callout → `06-callout-and-width`；**「光标进该行后源码显露」不可机验**；表格宽度只留截图证据。
+- `153-ordered-list-auto-mode`（item 153）：列表自动模式三态（「1. + 空格」进入 / Enter 续行 / 空项退出）+ IME 组合期不重复，真机留 dogfood 批次跑；裸 DOM 变更形态不兜、留 dogfood，若复现另立项。
 
 ## 记录在案（无需动作）
 
@@ -271,12 +247,8 @@
 报告正文按维护规则移出本文件，一行一条留指针；原文见 git 历史（`git log -p -- docs/backlog.md`）。
 
 - **M455 遗留**（真机 FAIL 归因 + master 视觉门禁修复，2026-10-11，worker-m455）→ 138/140/142/144/145 五项与 m131/m133 两条红的逐项归因；**尾巴见「待 Alex 裁决」的 m133 基线条与「记录在案」的 M455 条**。指针 `.local/reviews/m455-m133-baseline/`、`tests/visual/scenes/m455-*.spec.ts`。
-- **M282 遗留**（change `ui-language-i18n` 实现批，2026-09-28）：D6 参数面已闭合、`picker_title()` 已按语言取值；残留 = 日志文本语言口径待确认 + 验收套件退出码分档（另条跟踪）→ 证据 `.local/missions/m282/`。
-- **M284**（验收套件语言面修复，2026-09-28）：机制 = `run.mjs` 的 `SUITE_LANGUAGE = "zh"`（套件不再依赖产品默认值）；顺带发现三件（`src/shell.ts:89` 标签段读屏名、preview `eq()` 语言盲区、启动恢复 notice 泄漏中文）已 file finding → `.local/missions/m284/inventory.json`。
+- **M282 遗留**（change `ui-language-i18n` 实现批，2026-09-28）：D6 参数面已闭合、`picker_title()` 已按语言取值；残留 = 日志文本语言口径待确认（验收套件退出码分档已由 M379 落地）→ 证据 `.local/missions/m282/`。
 - **M285**（选区自绘 + 标签段读屏名，2026-09-28）：装 CM `drawSelection()` + 标签段读屏名挂 `onRelabel`；新增真机取色通道 `lib/pixel.mjs`（口径见 `scripts/acceptance/README.md` 的 `pixel` 小节）→ `.local/missions/m285/{pre,post}-fix/`。
 - **M291 选区族对比度**（三主题，2026-09-28）：token 层拆 `--sel-band` + eink `--sel` 族整体重定；未收口面（in-flow 底色盖住选区带）见 finding `20260928-worker-selection-contrast-m291-improve-inline-surface-band-coverage` → `.local/missions/m291/{before,after}/steps.md`。
-- **M288 代码块内选区不可见**（2026-09-28，merge `eef2556`）：块底色搬到容器的负 z-index 伪元素 → `tests/visual/scenes/m288-codeblock-selection.spec.ts` + 真机场景 66。
-- **M293 eink 字面值归位 token**（2026-09-29，Alex 裁「改。你可以安排时就动手。」）：11 条规则归位、三主题渲染值逐值不变 → `.local/missions/m293/readings-{before,after}.txt`。
-- **M294「面」族与一处前景色归位**（2026-09-29，Alex 裁「1. 立；2，删。」）：5 处落点 + 两条 MUST NOT（行区带那一层不动）→ `.local/missions/m294/`。
 - **M295 行内 code 药丸选中态不可辨**（2026-09-29，Alex 裁「1. A。2. 顺手收 3. 认。」）：选中段换挡 `--sel-band`；真机场景 68 PASS；同机制未收口面（callout 行底色 / frontmatter 区 / code 模式变量底纹）另立。
 - **M296 大 vault 打开忽略集的验收半边**（2026-09-29）：场景 67 落地 + 真机 7/7 PASS + 套件新增 `do: waitFor`；未完成项见「承接残项」的 `vault-open-ignore-set` 条 → `.local/missions/m296/readings.md`。

@@ -53,6 +53,7 @@ import {
 } from "./lib/drive.mjs";
 import { Evidence, appendRunLog, writeSummary } from "./lib/evidence.mjs";
 import { checkScenario, loadScenario, runScenario } from "./lib/execute.mjs";
+import { checkCoverage } from "./coverage.mjs";
 import { envHome, InfraError, log, mkdirp, repoRoot, resultsRoot, sleep, vaultDir } from "./lib/util.mjs";
 
 const args = process.argv.slice(2);
@@ -125,10 +126,16 @@ const all = await listScenarios();
 if (args.includes("--check")) {
   // 静态校验：不真机、秒级，写场景时先用它挡掉 key 拼错、断言形态写错这类低级错。
   const problems = all.flatMap(checkScenario);
-  for (const s of all) log(`CHECK ${problems.some((p) => p.startsWith(`${s.id}:`)) ? "FAIL" : "PASS"} ${s.id}`);
-  if (problems.length) {
+  // 覆盖表（M690）：`scripts/acceptance/COVERAGE.md` 由场景 front-matter 生成，这里判它与场景
+  // 一致、以及 id/item/title 的必填与唯一性。实现只有一份（coverage.mjs），docs-check.sh 调的
+  // 是同一份——两处各写一遍必然漂移（REVIEW.md「同一语义两处真源」条）。
+  const coverageProblems = await checkCoverage({ scenarios: all });
+  const allProblems = [...problems, ...coverageProblems];
+  for (const s of all) log(`CHECK ${allProblems.some((p) => p.startsWith(`${s.id}:`)) ? "FAIL" : "PASS"} ${s.id}`);
+  log(`CHECK ${coverageProblems.length ? "FAIL" : "PASS"} COVERAGE.md（生成一致性 + id/item/title）`);
+  if (allProblems.length) {
     log("");
-    for (const p of problems) log(`  ✗ ${p}`);
+    for (const p of allProblems) log(`  ✗ ${p}`);
     process.exit(1);
   }
   log(`\n场景静态校验通过（${all.length} 个）`);
