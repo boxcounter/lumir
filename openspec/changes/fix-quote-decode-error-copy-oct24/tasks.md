@@ -31,9 +31,9 @@
 ## 4. 视觉与真机
 
 - [x] 4.1 `tests/visual/scenes/m633-image-quote.spec.ts` 新增用例：用桩的 `harnessImageFailures` 给 `image/png` 注入 `attachment_decode_failed` 信封，引用 pic.png → toast 是 D588 文案（不含「剪贴板」）、持久状态行「1 张图片未能引用」在场、composer 无图片卡片；同场景既有的 gif 用例仍断言 D585（两条互为反向区分）
-- [ ] 4.2 新增真机验收场景 `scripts/acceptance/scenarios/232-quote-decode-error-copy.md`（item 232）：合成 fixture（一篇短笔记 + 一个非 PNG 字节的 `.png`）→ 选中 `![[…]]` 源码 → 点「摘录到对话」→ AX 断言 toast 含「无法解码」、不含「剪贴板」、不含「暂不支持引用该格式」，状态行在场，composer 无图片卡片
-- [ ] 4.3 既有场景 222 零改动核验：svg 成功路径「不产失败留痕 / 不出 D585」的两条断言仍成立（本 change 不改成功路径）
-- [ ] 4.4 粘贴回归：场景 112 / 127 复跑仍绿（粘贴写入口与文案未变）。覆盖边界如实写进场景说明：粘贴侧解码失败在真机不可注入（AppleScript `«class PNGf»` 只产合法 PNG），由 3.3 的单测锁定
+- [x] 4.2 新增真机验收场景 `scripts/acceptance/scenarios/232-quote-decode-error-copy.md`（item 232）：合成 fixture（一篇短笔记 + 一个非 PNG 字节的 `.png`）→ 选中 `![[…]]` 源码 → 点「摘录到对话」→ AX 断言 toast 含「无法解码」、不含「剪贴板」、不含「暂不支持引用该格式」，状态行在场，composer 无图片卡片
+- [x] 4.3 既有场景 222 零改动核验：svg 成功路径「不产失败留痕 / 不出 D585」的两条断言仍成立（本 change 不改成功路径）
+- [x] 4.4 粘贴回归：场景 112 / 127 复跑仍绿（粘贴写入口与文案未变）。覆盖边界如实写进场景说明：粘贴侧解码失败在真机不可注入（AppleScript `«class PNGf»` 只产合法 PNG），由 3.3 的单测锁定
 
 ## 5. 验证
 
@@ -42,7 +42,7 @@
 - [x] 5.3 `scripts/gate.sh quick` 通过（报告照抄 `GATE RESULT` 原文行并附退出码，SKIP 单列）
 - [x] 5.4 动过 `tests/visual/scenes/**` 后本地跑 `scripts/gate.sh visual`（CI 绿不等于像素层没回归）；本 change 无基线更新
 - [x] 5.5 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与 `bash scripts/docs-check.sh` 通过
-- [ ] 5.6 `node scripts/acceptance/run.mjs --check` 通过；真机跑 `node scripts/acceptance/run.mjs 232 112 127`
+- [x] 5.6 `node scripts/acceptance/run.mjs --check` 通过；真机跑 `node scripts/acceptance/run.mjs 232 112 127`（实跑 232 112 127 222 四场景：4/4 PASS）
 
 ## 6. 明确不做
 

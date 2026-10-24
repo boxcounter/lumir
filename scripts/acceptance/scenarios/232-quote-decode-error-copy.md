@@ -32,6 +32,16 @@ steps:
   - name: ⌃⇧E 从行首扩选到行尾（选区覆盖整条 `![[…]]` 源码）
     do: keys
     keys: ["ctrl+shift+e"]
+
+  # 钮的 reveal 有一个 settle 窗口（src/quote-gesture.ts 的 GESTURE_SETTLE_MS）：按键后立刻读
+  # AX 可能早于按钮上屏——首跑（2026-10-24）就红在这里，而同一 expect 批次里的截图已经拍到了
+  # 按钮、随后的点击也点中了它。改成**状态驱动**的等待（waitFor 与 ax 断言同一 matcher），
+  # 不缩短任何断言、也不加盲 sleep。
+  - name: 等浮动摘录钮浮现（选区有效的可观测终态）
+    do: waitFor
+    waitFor:
+      has: ["/AXButton \\(摘录到对话\\)/"]
+    timeoutMs: 10000
     expect:
       - label: 浮动摘录钮浮现（选区有效）
         ax: { has: "/AXButton \\(摘录到对话\\)/" }
@@ -89,6 +99,11 @@ change `fix-quote-decode-error-copy-oct24` 的唯一在验行为：**引用路�
   （`tests/unit/quote-image.test.ts` 的「引用一张字节损坏的位图」）逐字锁定。
 - **负向断言「不含剪贴板」的区分度**：实现若退回 D438，正向断言与它同时红；若映射丢了（回落
   后端 message），toast 是「无法解码剪贴板图片：…」的 Rust message，同样红——三种错法都逃不掉。
+- **选区钮的等待是状态驱动，不是按键后立刻判**（2026-10-24 首跑实证）：浮动摘录钮的 reveal 有
+  一个 settle 窗口（`src/quote-gesture.ts` 的 `GESTURE_SETTLE_MS`），按键后立刻读 AX 会早于
+  按钮上屏——首跑就红在「钮浮现」这条，而同一 expect 批次的截图已经拍到钮、随后的点击也点中了
+  它（产品面全绿，是判据的时序竞态）。故钮的出现用 `do: waitFor`（与 `ax` 断言同一 matcher）
+  轮询到终态，断言本身一条不缩、也不加盲 sleep；后文的 toast 同理用 `waitFor` 抢 3.5s 窗口。
 - **覆盖边界（如实登记）**：粘贴侧的解码失败**不再真机验**——剪贴板只能经 AppleScript 的
   `«class PNGf»` 置图，只产合法 PNG，造不出「格式是 png、字节解不开」的现场。粘贴侧由单测
   （`tests/unit/error-text.test.ts`）锁定 D438 映射；粘贴写入口与文案本 change 未改，回归由
