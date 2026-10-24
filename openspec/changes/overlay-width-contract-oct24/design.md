@@ -109,11 +109,20 @@ DOM 侧的三个适配函数（同模块，单测只覆盖纯函数）：
 </div>
 ```
 
-- `.lumir-qo-dirs { flex: 0 999 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis }`；
-- `.lumir-qo-name { flex: 0 1 auto; min-width: 0; }`（目录先收缩；文件名只在目录归零后才截，
-  是「不可达上限 + title」的兜底）；
+- `.lumir-qo-dirs { flex: 0 9999 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis }`；
+- `.lumir-qo-prefix` / `.lumir-qo-suffix`（直接打开行的动作前缀与模板尾串）
+  `{ flex: 0 99 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis }`——**先于文件名
+  牺牲**：动作提示是辅助信息，文件名是身份主体；
+- `.lumir-qo-name { flex: 0 1 auto; min-width: 0; }`（目录与前缀归零后才截，是「不可达上限 +
+  title」的兜底）；
 - `.lumir-qo-item { display: flex; overflow: hidden }`，textContent 拼接后仍是完整路径
   （匹配语义与既有逐条文本断言不变）。
+
+**直接打开行的收缩次序**（M702 r1 的现场）：候选行只有目录 + 文件名；直接打开行多一段动作
+前缀（`按 Enter 打开` / `按 Enter 只读打开`），英文模板还可能有尾串（` read-only`）。1200×800
+正常窗口下，目录已归零后 224/231px 的文件名仍被裁 7px（前缀 `flex: none` 不可收缩）。修正后
+收缩次序是 `dirs(10⁷) → prefix/suffix(10⁵) → name(1)`：正常可用宽度下文件名完整，动作前缀
+出省略号；只有前缀也归零、宿主窄到放不下文件名本身时才轮到 `title` 兜底。
 
 **为什么不是「无条件折叠成 `…/文件名`」**：quick-open 的匹配语义是完整相对路径，同名文件
 （`a/plan.md` / `b/plan.md`）必须能在同一条列表里分辨；无条件折叠会让两条行文本相同。

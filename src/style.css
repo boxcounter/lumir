@@ -2184,8 +2184,15 @@ body {
    目录前缀先收缩、**文件名整体不先裁**——旧的单行尾省略会把文件名（路径的身份主体）
    整段吃掉（M698 实测：77 字符深层路径裁 42.5%，文件名消失）。两段拼接后的 textContent
    仍是完整相对路径，匹配语义与既有逐条文本断言不变；放不下时目录前缀出省略号
-   （`notes/2026/…/name.md` 的中间折叠形态），文件名只在目录归零后才截——那是 title
-   兜底前的最后一级，不是设计意图。shrink 比 999 : 1 是「先收谁」的唯一表达。 */
+   （`notes/2026/…/name.md` 的中间折叠形态）。
+   收缩次序 = `dirs → prefix/suffix → name`（shrink 比 10⁷ : 10⁵ : 1，比例越大前置项越先
+   吃满缺口）：
+   - 候选行只有 dirs + name，目录归零后才轮到文件名；
+   - **直接打开行多一段动作前缀（`按 Enter 打开` / 英文模板的 ` read-only` 尾串），它先被牺牲**
+     ——M702 r1 现场：1200×800 正常窗口下目录已归零，224/231px 的文件名仍被裁 7px，因为前缀
+     `flex: none` 不可收缩。前缀/后缀同样 `min-width: 0` + ellipsis，文件名只在它们归零后、
+     极端窄宿主里才截（title 兜底前的最后一级，不是设计意图）。中段比例（10⁵ 对 1）保证
+     前缀还有余量时文件名分到的缺口 < 0.1px，不会出现「前缀剩 15px、文件名仍差 2px」的残留。 */
 .lumir-qo-item,
 .lumir-qo-direct-path {
   display: flex;
@@ -2193,7 +2200,7 @@ body {
   min-width: 0;
 }
 .lumir-qo-dirs {
-  flex: 0 999 auto;
+  flex: 0 10000000 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2206,10 +2213,14 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 直接打开行的动作文本前缀（「按 Enter 打开」）与落点标记外的尾串不参与收缩。 */
+/* 直接打开行的动作文本前缀（「按 Enter 打开」/「按 Enter 只读打开」）与模板尾串（英文
+   ` read-only`）：放不下时**先于文件名**收缩并出省略号——动作提示是辅助信息，文件名是身份主体。 */
 .lumir-qo-prefix,
 .lumir-qo-suffix {
-  flex: none;
+  flex: 0 100000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 /* eink：选中项的前景取 `--sel-text`（当前段与键盘游标同底色，同一条规则）。

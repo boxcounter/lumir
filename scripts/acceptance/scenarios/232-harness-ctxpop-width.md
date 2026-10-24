@@ -8,15 +8,18 @@
 # （118k / 131k tokens（90%））当输入——旧形态 224px 下这个句子必折 2 行（M698 §3.2 的
 # 同族读数），新形态下气泡长到内容宽（≈ 237px）。
 #
-# 判据的落点说明：气泡没有自己的 AX 名字，geom 取气泡里的文本节点（`any` 匹配读数句）。
-# 真机上若文本节点的 bbox 报的是「换行后的盒宽」而不是未换行的整行宽，本条对旧形态同样会
-# 红（旧盒 224 < 232）——两个读法下 minWidth 232 都有区分度。
+# **本场景判什么、不判什么（M702 r1 校正）**：真机层只判「hover 翻出、三段内容齐全、
+# 确实绘制、mouseleave 收起」四条——WKWebView 的 AX 不给浮层 / tooltip / static text 提供
+# bbox，**气泡宽度与行数在真机层不可量**，故本文件没有任何 `geom` / `minWidth` 断言。
+# 宽度数字（1× 长读数、2.13×、窄 pane、resize 重夹）由
+# `tests/visual/scenes/m702-overlay-width.spec.ts` 的 chromium 结构矩阵与
+# `tests/unit/overlay-placement.test.ts` 的纯几何判。
 #
 # 不覆盖：字号 2.13 档的气泡宽度（真机步进 ⌘= 八次可复现，但本场景只判基线档；
 # 2.13 档的几何判据在 chromium 结构矩阵里，真机手感归 Alex）。
 id: "232-harness-ctxpop-width"
 item: 702
-title: Context 气泡宽度：长读数按内容展开（26em 时代的 224px 定值不再折行）
+title: Context 气泡：长读数 hover 翻出、三段内容齐全且确实绘制（P 档 34em 上限；宽度数字归 chromium 矩阵）
 open: harness-note.md
 marker: "HNL-ALPHA"
 config:
@@ -98,4 +101,5 @@ M698 实测（§3.2）：旧形态「定宽 224px + 只缩不放」下，越线�
 快照、没有截图」的通道缺口，已按 geom 段的同一纪律修掉）。因此真机层守「hover 翻出、
 三段内容齐全、确实绘制、mouseleave 收起」四条；**宽度数字**由
 `tests/visual/scenes/m702-overlay-width.spec.ts` 的 chromium 结构矩阵（1× / 2.13× / 窄 pane /
-resize 重夹）与 `tests/unit/overlay-placement.test.ts` 的纯几何判。
+resize 重夹）与 `tests/unit/overlay-placement.test.ts` 的纯几何判。本文件 MUST NOT 再出现
+`geom` / `minWidth` 的宽度断言——写了就是「覆盖声明超出真实验证」（REVIEW.md 同条）。

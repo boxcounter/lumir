@@ -30,16 +30,27 @@ const DEEP_DOC = "# Kickoff\n\nDEEP-702-MARKER\n";
 const NOTE_DOC = "# 宽度笔记\n\n第一段，给上下文 chip 一个视口口径。\n";
 const LONG_SESSION = "帮我整理这份笔记的第二章并核对全部引用来源";
 
+/** 直接打开行的中文深路径（M702 r1）：文件名比候选 fixture 更长，正常窗口下动作前缀必须让宽。 */
+const CN_PATH = "笔记/2026/项目/会议/2026-10-24-启动会纪要与行动项确认.md";
+const CN_NAME = "2026-10-24-启动会纪要与行动项确认.md";
+/** vault 外英文长路径：D590 的动作前缀（含「只读」）同样必须先于文件名收缩。 */
+const EXT_PATH = "/tmp/lumir-verify/2026-10-24-kickoff-notes-final-v2.md";
+const EXT_NAME = "2026-10-24-kickoff-notes-final-v2.md";
+
 const VAULT: VaultFixture = {
   entries: [
     { path: "harness-note.md", kind: "file", size: NOTE_DOC.length, mtime_ms: 0 },
     { path: "areas", kind: "dir", size: 0, mtime_ms: 0 },
     { path: DEEP_PATH, kind: "file", size: DEEP_DOC.length, mtime_ms: 0 },
+    { path: "笔记", kind: "dir", size: 0, mtime_ms: 0 },
+    { path: CN_PATH, kind: "file", size: DEEP_DOC.length, mtime_ms: 0 },
   ],
   files: {
     "harness-note.md": NOTE_DOC,
     [DEEP_PATH]: DEEP_DOC,
+    [CN_PATH]: DEEP_DOC,
   },
+  externalFiles: { [EXT_PATH]: DEEP_DOC },
   links: {},
 };
 
@@ -247,6 +258,68 @@ test("⌘P 长路径：浮层宽 26em、目录前缀中段省略、文件名完�
   await expect(shortDirs).toHaveCount(0); // 根目录文件没有目录前缀
 });
 
+/** 直接打开行（`.lumir-qo-direct`）的几何读数：文件名是否完整、谁先让了宽。 */
+function directRowMetrics(page: Page): Promise<{
+  rowOverflow: number;
+  pathOverflow: number;
+  prefixClipped: boolean;
+  dirsClipped: boolean;
+  nameOverflow: number;
+}> {
+  return page.evaluate(() => {
+    const row = document.querySelector(".lumir-qo-direct") as HTMLElement;
+    const path = row.querySelector(".lumir-qo-direct-path") as HTMLElement;
+    const prefix = row.querySelector(".lumir-qo-prefix") as HTMLElement;
+    const dirs = row.querySelector(".lumir-qo-dirs") as HTMLElement;
+    const name = row.querySelector(".lumir-qo-name") as HTMLElement;
+    return {
+      rowOverflow: row.scrollWidth - row.clientWidth,
+      pathOverflow: path.scrollWidth - path.clientWidth,
+      prefixClipped: prefix !== null && prefix.scrollWidth > prefix.clientWidth,
+      dirsClipped: dirs !== null && dirs.scrollWidth > dirs.clientWidth,
+      nameOverflow: name.scrollWidth - name.clientWidth,
+    };
+  });
+}
+
+/** 直接行的共同判据：文件名完整、行不溢出；动作前缀与目录先被牺牲（正观测）。 */
+async function expectDirectNameIntact(page: Page, name: string): Promise<void> {
+  const direct = page.locator(".lumir-qo-direct");
+  await expect(direct).toBeVisible();
+  await expect(direct.locator(".lumir-qo-name")).toHaveText(name);
+  const metrics = await directRowMetrics(page);
+  expect(metrics.nameOverflow, "直接打开行的文件名被裁——收缩优先级没有把动作前缀排到前面").toBeLessThanOrEqual(1);
+  expect(metrics.rowOverflow).toBeLessThanOrEqual(1);
+  expect(metrics.pathOverflow).toBeLessThanOrEqual(1);
+  expect(metrics.dirsClipped, "目录前缀应先于文件名收缩（本 fixture 的路径足够深）").toBe(true);
+  expect(metrics.prefixClipped, "动作前缀应先于文件名收缩（本 fixture 的正常窗口宽度下应已被牺牲）").toBe(true);
+}
+
+test("⌘P 直接打开行：vault 内中文深路径 + 行号后缀，文件名完整（动作前缀先让宽）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await expect(page.locator(".ft-row").first()).toBeVisible();
+  await page.keyboard.press("Meta+p");
+  await expect(page.locator(".lumir-qo")).toBeVisible();
+  // fill 处理中文（keyboard.type 对 CJK 依赖插入事件序列，这里只要一次完整输入）。
+  // `:12` 让直接行带落点标记（`.lumir-qo-direct-line`，flex:none 的第三个占位者）。
+  await page.locator(".lumir-qo-input").fill(`${CN_PATH}:12`);
+  await expect(page.locator(".lumir-qo-direct-line")).toHaveText("第 12 行");
+  await expectDirectNameIntact(page, CN_NAME);
+});
+
+test("⌘P 直接打开行：vault 外英文长路径，只读动作先让宽、文件名完整", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await expect(page.locator(".ft-row").first()).toBeVisible();
+  await page.keyboard.press("Meta+p");
+  await expect(page.locator(".lumir-qo")).toBeVisible();
+  await page.locator(".lumir-qo-input").fill(EXT_PATH);
+  // 外部路径的直接行文案 = D590（动作前缀把「只读」写进动作里；英文文件名是身份主体）。
+  await expect(page.locator(".lumir-qo-direct")).toContainText("只读打开");
+  await expectDirectNameIntact(page, EXT_NAME);
+});
+
 // ---------------------------------------------------------------------------
 // 2) Context 气泡：内容驱动 + em 上限
 // ---------------------------------------------------------------------------
@@ -388,7 +461,17 @@ test("resize 后重夹：仍打开的选择器浮层随 pane 收窄重新落进 
   await page.setViewportSize({ width: 760, height: 800 });
   await expect.poll(() => paneWidth(page)).toBeLessThan(400);
   // 浮层仍开着（resize 不是关闭信号），且宽度与落点已按新 pane 重算。
+  // ResizeObserver 与 pane 宽度落地不在同一个任务里：paneWidth 一变就断几何会抢在重夹之前
+  // （M702 r1 复跑实测的一次 flake：pane 已窄、selpop 右缘仍是旧值）。先 poll 到右缘进入
+  // pane，再断最终几何。
   await expect(selPop).toBeVisible();
+  await expect
+    .poll(async () => {
+      const pane = await boxOf(page, ".lumir-harness");
+      const pop = await boxOf(page, ".lumir-hp-selpop");
+      return Math.round(pop.right - (pane.right - 7.5));
+    })
+    .toBeLessThanOrEqual(0);
   await expectInsidePane(page, ".lumir-hp-selpop");
   const after = await boxOf(page, ".lumir-hp-selpop");
   expect(after.width).toBeLessThanOrEqual(before.width);
