@@ -86,10 +86,17 @@
       算「未变化」），故按 `-g "浮层：当前项" --update-snapshots=all` 只跑含该断言的那条用例，
       **其余基线一张未动**（`vault-entry` 时间戳不变、提交里只有这一个基线文件）；重截后复跑
       `run.sh scenes/mv-vault-switcher.spec.ts` → **7 passed**
-- [ ] 4.5 真机场景 `scripts/acceptance/scenarios/226-vault-remove.md` 落地并 PASS（design §4 七步；
+- [x] 4.5 真机场景 `scripts/acceptance/scenarios/226-vault-remove.md` 落地并 PASS（design §4 七步；
       含直读盘断言「vault 目录内文件不变」与撤销往返）—— 场景已落地且 `--check` PASS；
-      真机跑批需机器窗口，归 tower 排期
+      真机 PASS `226-vault-remove` 39 断言 0 失败（2026-10-24T01:48:50Z，
+      `.local/acceptance/2026-10-24/226-vault-remove/`，含 M668 焦点判据 `focused=AXComboBox`）。
+      直读盘两条（`unchangedSince` 仍为 `82a45f900f7c`、`mtimeUnchangedSince`）与撤销往返
+      （按原值写回、重开浮层该行仍在、再移除仍只删注册表项）全绿。
 - [x] 4.6 信息卫生：新增 fixture / 截图 / 文案里 MUST NOT 出现真实 vault 内容；改动面做一次 text 级
       grep 清扫 —— 已对改动面（含新场景文件）做绝对路径 / 真实目录名清扫，零命中；本批未新增截图
-- [ ] 4.7 真机复验登记的已知边界：`listbox` 内兄弟按钮在 WKWebView 读屏树里的实际形态，按场景 226
+- [x] 4.7 真机复验登记的已知边界：`listbox` 内兄弟按钮在 WKWebView 读屏树里的实际形态，按场景 226
       的 AX 读数如实登记（若按钮不可读，记边界并说明备选形态，不静默放过）
+      —— 已登记（2026-10-24 真机 PASS 的 AX dump）：`AXList (vault)` 内兄弟钮可读，形态
+      `AXButton (从列表移除 lumir-m102-acceptance-b)`（`help` 同文、`actions=[AXPress]`，
+      `ax/02-02-列表.txt`）；确认态 `AXButton (移除)` / `AXButton (取消)` 同样可读
+      （`ax/03-03-确认态.txt`）。WKWebView 未吞兄弟钮，design §3.1 的备选形态不需启用。
