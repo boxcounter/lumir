@@ -38,8 +38,8 @@ steps:
       has: ["要运行这条命令吗？"]
     timeoutMs: 30000
     expect:
-      - label: 卡上是这条查询（命令原文完整可见）
-        ax: { has: "tvly search prompt caching" }
+      - label: 卡上是这条查询（命令原文完整可见；参数带引号，与执行器的格式化一致）
+        ax: { has: 'tvly search "prompt caching"' }
       - label: 两枚次级动作并列——会话记忆带粒度（D565：第二词是参数 ⇒ 两词前缀）
         ax: { has: "采纳且本会话不再问（记住 tvly search）" }
       - label: 两枚次级动作并列——持久规则逐字显示将要写入的规则（D564，后端现算）
@@ -124,13 +124,18 @@ steps:
         ax: { not: "删除规则 cli(tvly search *)" }
       - shot: 05-删除后-段退场
 
-  - name: 关掉浮层（浮层外点击 / Esc 两条路之一）
-    do: key
-    key: escape
+  - name: 关掉浮层（再点权限 chip 收起——不用 Esc：删除钮重建后焦点落 body，Esc 收不到浮层、会落到 pane 层）
+    do: click
+    target: { name: "^权限模式：" }
+    expect:
+      - label: 浮层已收起（三档单选退场；chip 自己还在——它的读屏名不含「完全访问」）
+        ax: { not: "完全访问" }
+      - label: composer 仍在位（pane 没有被误收；正观测，后续键入有落点）
+        ax: { has: "问点什么" }
 
   - name: 第二条提问（验证规则确实删掉了）
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|rules" }
+    target: { role: AXTextArea, name: "问点什么|again" }
     text: "again"
   - name: 发送
     do: key
@@ -181,6 +186,15 @@ change `harness-permission-rules-oct23` 的三条用户可见行为（proposal �
 
 ## 断言口径与已知边界
 
+- **卡上的命令原文带引号**（M669 修正）：执行器的格式化把参数逐字加上引号——卡上实际是
+  `tvly search "prompt caching"`，不是 `tvly search prompt caching`。首跑（M667）的断言串漏了
+  引号，与产品行为无关地判红；断言照 ax dump 原文写。
+- **关浮层不用 Esc**（M669 修正）：删除一条规则会重建浮层（`permPop.replaceChildren()`），
+  被点的删除钮随之摘出 DOM、焦点落回 body；此时 `panel` 上的 Escape 处理器收不到事件
+  （它的收起判据是「焦点在面板内」），M667 首跑因此把整块 pane 拖进级联红。改为再点一次
+  权限 chip（代码注释里的三条关闭路径之一：chip 再点 / 浮层外点击 / Esc），并断言浮层的
+  三档单选退场（`not: "完全访问"`）+ composer 仍在位——两条都是正/负可判读数，不是「点完
+  就算」。
 - **危险卡「没有」两枚次级动作的判据是负向 AX 断言**：`ax: { not: "采纳且本会话不再问" }` 与
   `ax: { not: "以后都允许" }`。同一条不变量还有两层机器防线：Rust 侧判定级单测
   （`permissions.rs` 的 `reason_mapping_covers_every_gated_layer` 邻域与 `turn.rs` 的派生点）与
@@ -195,8 +209,11 @@ change `harness-permission-rules-oct23` 的三条用户可见行为（proposal �
 - **`bash -lc` 全只读段不判 stdout**：解包后走既有 cli_run 执行路径，`ls .` 在应用工作目录下
   可能非零退出（目录内容无关），本场景只判「没进闸」（call_id 在 wire 留存里）。
 - **两条用户消息**：第一段到「第一次的规则生效了。」收尾；浮层交互不消耗消息；第二条只发一个
-  短 ASCII 串（`again`，与已稳定的 109/110 同一键盘形态）。首跑若在第二条消息上遇到键盘注入
-  丢键（REVIEW.md 「键盘注入丢键」条），按该条的重试口径处理，不要判成产品缺陷。
+  短 ASCII 串（`again`，与已稳定的 109/110 同一键盘形态）。**第二段是本场景的主覆盖**：
+  「删规则后重新问」——规则删掉后同族调用必须重新进闸（第三张卡 + 两枚次级动作照旧），
+  M667 首跑被「关浮层用 Esc 收掉整个 pane」的级联挡掉，M669 修好关闭路径后才真正跑到。
+  首跑若在第二条消息上遇到键盘注入丢键（REVIEW.md 「键盘注入丢键」条），按该条的重试口径
+  处理，不要判成产品缺陷。
 - **`rm -rf /tmp/lumir-h229-nothing` 从不执行**：两条危险 / 混合卡都被拒绝；`mkdir` 类幂等命令
   本场景不使用，因此真机零副作用。
 - **配置写回的判据是 `env:config.json` 的字符串**：`config_set_value` / 规则写回都走同一份原子写，

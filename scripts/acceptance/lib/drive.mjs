@@ -632,8 +632,9 @@ export async function injectHover(pid, point) {
 }
 
 /** CGEvent 滚轮注入（M644，mode 8）：把光标移到 `point` 后按拍投 `scrollWheel`（单位 = 行）。
- *  **dy / dx 的正负指向尚未真机标定**（swift 侧 mode 8 的注释同口径）：首跑按场景 224 步骤 5
- *  的实测核对，方向若反，按实测结论回改两侧注释与场景，不按「与 KimiCU 同向」的假设下结论。
+ *  **dy / dx 的正负指向已真机标定（M669，M667 的同点位 A/B）**：**正数 = 上滚**——`dy: 20`
+ *  让视口离开底部、「回到底部」浮钮浮现，`dy: -20` 不产生任何位移（两张截图 sha256 相同）。
+ *  与 KimiCU legacy `dy` 的约定同向，调用方因此不取反。
  *
  *  为什么需要它：KimiCU 的 `scroll` 在本 app 上从未产出过位移（M252 / M379 的通道边界，
  *  见 README「已知边界」的滚动条）——`do: scroll` 因此在真机上层长期是死通道。滚轮注入走
@@ -642,7 +643,7 @@ export async function injectHover(pid, point) {
  *
  *  `point` 是 **Quartz 全局屏幕坐标**（与 injectClickWithClickState 同口径，换算由调用方做）；
  *  代价与那条通道一致：要 /usr/bin/swift + 辅助功能权限、**会移动真实光标**、要求目标窗口
- *  在前台且未被遮挡。 */
+ *  在前台且未被遮挡（`focusWindow click: true` 作前置，M669）。 */
 export async function injectWheel(point, { dy = 0, dx = 0 } = {}) {
   const script = new URL("./cgevent-click.swift", import.meta.url).pathname;
   const args = [

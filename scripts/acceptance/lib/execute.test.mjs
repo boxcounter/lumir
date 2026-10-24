@@ -40,10 +40,10 @@ function useTmpEnv(root) {
 }
 
 /** runScenario 的最小 ctx：证据面只留「落记录 / 出终态」两件事，AX 与截图写成桩路径。 */
-function stubCtx(root) {
+function stubCtx(root, opts = {}) {
   const records = [];
   return {
-    cu: {},
+    cu: opts.cu ?? {},
     pid: 0,
     repoRoot: repoRoot(),
     foregroundNote: undefined,
@@ -63,8 +63,8 @@ function stubCtx(root) {
   };
 }
 
-async function drive(root, scenario) {
-  const ctx = stubCtx(root);
+async function drive(root, scenario, opts = {}) {
+  const ctx = stubCtx(root, opts);
   const { status } = await runScenario(ctx, {
     id: "selfcheck",
     item: 0,
@@ -313,6 +313,89 @@ test("缺文件时内容类判据仍判 FAIL（不把「读不到」当「为空
     ["PASS 不该在［exists］", "FAIL 不该在［not］（文件不存在：nope.md）"],
     "exists:false 成立，而 not 判据在缺文件时必须红（读不到不当空，REVIEW.md 「读不到当成空」条）",
   );
+});
+
+/** 224 的现场（M669）：浮钮的可访问名同时出现在 transcript 正文里（AXStaticText 的 value）。 */
+const AX_BODY_TEXT_ONLY = [
+  "# Lumir App State",
+  "",
+  "- app: Lumir",
+  "- pid: 123",
+  "- window_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+  "",
+  "```text",
+  '- [0] AXApplication "Lumir"',
+  '  - [1] AXWindow "Lumir" @0,0 1200×800',
+  "    - [5] AXWebArea (Lumir)",
+  '      - [9] AXStaticText = "SLK-04 第四片：正文继续。 浮钮此时已经浮现。 它不随内容滚动。"',
+  "```",
+].join("\n");
+
+const AX_WITH_BUTTON = AX_BODY_TEXT_ONLY.replace(
+  '      - [9] AXStaticText',
+  '      - [20] AXButton (回到底部) @1044,600 84×28 actions=[AXPress]\n      - [9] AXStaticText',
+);
+
+test("node 断言走解析结果：正文里有判据串 ≠ 节点在场（M669 的 224 现场）", async () => {
+  const root = tmpRoot("node-presence");
+  useTmpEnv(root);
+  const scenario = {
+    steps: [
+      {
+        name: "正文里写着判据串、但没有浮钮节点",
+        expect: [
+          { label: "没钮（应绿）", node: { role: "AXButton", name: "回到底部", present: false } },
+          { label: "有钮（应红——正文串不构成节点）", node: { role: "AXButton", name: "回到底部", present: true } },
+        ],
+      },
+    ],
+  };
+  const bodyOnly = await drive(root, scenario, { cu: { state: async () => ({ text: AX_BODY_TEXT_ONLY, image: null }) } });
+  assert.deepEqual(
+    bodyOnly.records.map((r) => r.ok),
+    [true, false],
+    `正文里有「回到底部」而节点不在场时，present:true 必须红、present:false 必须绿；实际 ${JSON.stringify(bodyOnly.records)}`,
+  );
+  // 反向：钮真的在场时两条判据同时翻面——证明判据对「节点在不在」有区分度，而不是恒绿/恒红。
+  const withButton = await drive(root, scenario, { cu: { state: async () => ({ text: AX_WITH_BUTTON, image: null }) } });
+  assert.deepEqual(
+    withButton.records.map((r) => r.ok),
+    [false, true],
+    `钮在场时 present:false 必须红、present:true 必须绿；实际 ${JSON.stringify(withButton.records)}`,
+  );
+  // 退化快照（M667 的 229 现场：element_count=1、空树）上负向判据不许恒真——「读不到当成空」
+  // （REVIEW.md）在节点在场性上同样是假绿入口。
+  const degraded = await drive(root, {
+    steps: [{ name: "退化快照", expect: [{ label: "不在场（应红）", node: { role: "AXButton", name: "回到底部", present: false } }] }],
+  }, { cu: { state: async () => ({ text: "# App App State\n\n- pid: 1\n- element_count: 1\n", image: null }) } });
+  assert.deepEqual(
+    degraded.records.map((r) => r.ok),
+    [false],
+    `退化快照上 present:false 必须红（不在不可观测的窗口里下结论）；实际 ${JSON.stringify(degraded.records)}`,
+  );
+});
+
+test("node 断言静态校验：present 必填、角色名 / 未知键 / 坏正则都报 problem", () => {
+  const errs = (expect) => checkScenario({ id: "node-check", item: 0, steps: [{ name: "n", expect: [expect] }] });
+  assert.ok(
+    errs({ node: { name: "回到底部" } }).some((p) => p.includes("node.present 必填布尔")),
+    "缺 present 应报 problem（在场 / 不在场方向相反，缺省会静默变味）",
+  );
+  assert.ok(
+    errs({ node: { name: "x", present: true, role: "Button" } }).some((p) => p.includes("node.role 需要 AX 角色名")),
+    "role 不是 AX 形态应报 problem",
+  );
+  assert.ok(
+    errs({ node: { name: "x", present: true, bogus: 1 } }).some((p) => p.includes("未知键 bogus")),
+    "未知键应报 problem（拼错即静默不判）",
+  );
+  assert.ok(
+    errs({ node: { name: "(", present: true } }).some((p) => p.includes("node.name 不是合法正则")),
+    "name 编译不过应报 problem（findNode 会抛，真机上是整场报错）",
+  );
+  assert.deepEqual(errs({ node: { role: "AXButton", name: "回到底部", present: false } }), []);
+  // `node.name` 是裸正则源（与 target.name 同口径）：`\.` 在它里面是对的，不走「写成 /…/」那条检查。
+  assert.deepEqual(errs({ node: { role: "AXButton", name: "^回到底部\\.md$", present: true } }), []);
 });
 
 test("运行期兜底：零断言场景判 FAIL，不记绿", async () => {

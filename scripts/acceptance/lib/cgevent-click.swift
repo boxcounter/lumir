@@ -27,11 +27,12 @@
 //   mode 8 = 滚轮（需 dy [dx]，单位 = 行）：光标先移到 (x,y)，再按拍投 `CGEvent` 的
 //            scrollWheel（units = .line；wheel1 = 纵向、wheel2 = 横向）。**套件动作 `scroll`
 //            的 wheel 兜底用这条**（M644）：KimiCU 的 scroll 在本 app 上从未产出过位移
-//            （M252 / M379 的通道边界），滚轮注入因此是**候选**通道——swift + CGEvent 这条
-//            通路本身已被 doubleClick / drag / hover 验证，**但本 mode 能否产出位移、dy / dx
-//            的正负指向都尚未真机标定**。首跑（场景 224 步骤 5）按实测核对符号：若 `dy: -20`
-//            产出的位移方向与「上滚」相反，按实测结论回改本注释、execute.mjs 的说明与场景。
-//            会移动真实光标、要求目标窗口在前台。
+//            （M252 / M379 的通道边界），滚轮注入因此是唯一能真正滚起来的通道。**dy 符号已
+//            真机标定（M669；M667 的同点位 A/B）**：**正数 = 上滚**（视口向文档开头移动）——
+//            `dy: +20` 让视口离开底部、「回到底部」浮钮浮现，`dy: -20` 不产生任何位移
+//            （两张截图 sha256 相同）。与 KimiCU legacy `dy` 的约定同向，场景因此不取反。
+//            会移动真实光标、要求目标窗口在前台**且是 key window**（上滚前先 `focusWindow
+//            click: true`；M667 现场：启动即前台时窗口未必是 key，手势会整批不落地）。
 // 坐标是 Quartz 全局坐标（原点 = 主屏左上角，单位 pt）；KimiCU 的 AX dump 不给这个空间
 // （mode=ax 给窗口局部点、要加 window_bounds 原点；mode=full 给截图像素），换算在 execute.mjs 里。
 //
@@ -167,10 +168,9 @@ case 6:
     let count = args.count >= 6 ? (Int64(args[5]) ?? 1) : 1
     clickWithFlags(point, clickCount: count, flags: flags)
 case 8:
-    // 滚轮注入（M644）：按拍投 `scrollWheel`。dy / dx 的正负指向**尚未真机标定**（头注释
-    // 同口径）——首跑按场景 224 步骤 5 的实测核对，方向反了按实测回改。分多拍而不是单发
-    // 一个大 delta——单发在 WKWebView 的滚动容器里常被钳成一小段，多拍与真实滚轮的增量
-    // 序列更接近。
+    // 滚轮注入（M644）：按拍投 `scrollWheel`。dy / dx 的符号已真机标定（M669）：正数 = 上滚
+    // （头注释同口径）。分多拍而不是单发一个大 delta——单发在 WKWebView 的滚动容器里常被钳成
+    // 一小段，多拍与真实滚轮的增量序列更接近。
     guard args.count >= 5, let totalY = Int32(args[4]) else {
         FileHandle.standardError.write("mode 8 需要第 5 个参数：纵向行数 dy（可带第 6 个：横向 dx）\n".data(using: .utf8)!)
         exit(2)
