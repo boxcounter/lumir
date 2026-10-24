@@ -451,7 +451,9 @@ vault 装载完成后 webview SHALL 枚举当前 vault 的残留备份并逐个�
 - 重命名 SHALL 只支持同目录改末段名；目标已存在 MUST NOT 覆盖。
 - 新建 SHALL 使用原子创建语义（`create_new` 或等价），撞名即拒绝。
 - 新建/改名的末段名 SHALL 校验：非空、不含 `/`、不是 `.`/`..`、不命中 **`hidden` 档（含恒定临时文件模式）**。命中 `lazy` 档或用户规则的名字 MUST NOT 被拒绝（那是可见、可打开的名字，只是不进索引）。
-- **无名字级写操作特判**（2026-10-17 节点 1 裁决）：删除 / 重命名 / 移动 / 新建 MUST NOT 对特定名字（含 `.git`）做额外拦截——是否可操作只取决于该名字是否在可见集里。`.git` 默认在 `hidden` 档，因此默认没有行、写操作被末段名校验拒绝；用户把它配置成可见后，它就是普通条目。
+- **无名字级写操作特判**（2026-10-17 节点 1 裁决）：删除 / 重命名 / 移动 / 新建 MUST NOT 对特定名字（含 `.git`）做额外拦截——是否可操作只取决于该名字是否在可见集里。`.git` 默认在 `hidden` 档，因此默认没有行、写操作被末段名校验拒绝（**已存在的**条目见下一条）；用户把它配置成可见后，它就是普通条目。
+- **既有条目的 `hidden` 档判定**：删除的目标、重命名的**源**、移动的**源与目标路径**（含目标父段）命中 `hidden` 档 SHALL 返回 `fs_name_invalid`，文件系统不变。理由与上一条同源：这类条目在枚举结果里没有行，用户既看不到也点不到，删除 / 改名 / 移动它没有正当入口；这条判定同时是 `hidden` 档写入面的入口闸（隐藏的仓库配置文件可被改写 + 只读命令执行仓库配置 = 零批准执行链，2026-10-24 立项）。判定 SHALL 复用装载时那**一份**忽略策略，MUST NOT 自建名字名单（含 `.git` 的硬编码拦截）；用户把该名字配置成可见后，它与普通条目等价。
+- **判定按文件系统身份，不按显示名**：`hidden` 判定 SHALL **大小写不敏感**——macOS 默认文件系统大小写不敏感，`.GIT` 与 `.git` 是同一个条目，按字符串大小写敏感判定会让变体路径整体绕闸（2026-10-24 r1 实证）。这一条只约束写入口；枚举分类的名字匹配口径不变（大小写敏感，见「全类型递归枚举」的已知边界）。既有目标 SHALL 还按**解析后的真实路径**判一次（`resolve_in_vault` 的 canonical 结果折回 vault 相对路径）——vault 内的可见名字可以是指向 `hidden` 条目的符号链接，字符串判定看不出来；删除用的是 canonical 路径，只判字符串会把真的是 `hidden` 的目录搬进废纸篓。
 - 目标解析 SHALL 经新建变体（父目录沿用 `resolve_in_vault` 全部逃逸防护，末段名按上条校验），
   MUST NOT 为写操作放松 vault 边界。父目录补建时 SHALL 逐段拒绝 `hidden` 档名字；`lazy` 档名字允许作为父段（建出来的条目随该目录惰性）。
 - 失败 SHALL 返回人话 `CommandError`（区分 `fs_not_found` / `fs_already_exists` /
@@ -482,6 +484,36 @@ vault 装载完成后 webview SHALL 枚举当前 vault 的残留备份并逐个�
 
 - **WHEN** 新建 / 改名的末段名为 `node_modules`（缺省配置下属惰性档）
 - **THEN** 操作成功（该名字惰性可见、可打开，只是不进索引）
+
+#### Scenario: 既有隐藏条目的删除 / 改名 / 移动拒绝
+
+- **WHEN** 删除或改名的源、或移动的源路径命中 `hidden` 档（如 `.git/HEAD`、`sub/.git/x.md`、
+  `.DS_Store`）
+- **THEN** 返回 `fs_name_invalid`，源条目逐字节不变、目标路径不存在
+
+#### Scenario: 移进隐藏目录拒绝
+
+- **WHEN** 移动的目标路径某一段命中 `hidden` 档（如 `note.md` → `.git/objects/info`）
+- **THEN** 返回 `fs_name_invalid`，`note.md` 仍在原位，隐藏目录下不出现新条目
+
+#### Scenario: 配置成可见后既有条目按普通条目处理
+
+- **WHEN** 用户把 `.git` 从 `hidden` 档移出（`vault.ignore` 里不再列为 `hidden`），对 `.git/HEAD`
+  发起改名
+- **THEN** 改名照常成功（判定随装载时的忽略策略走，MUST NOT 是硬编码 `.git` 名单）
+
+#### Scenario: 大小写变体同样拒绝
+
+- **WHEN** 删除 / 改名 / 移动的目标或源写成大小写变体（如 `.GIT`、`.Git/HEAD`，或新建 / 移动
+  目标的父段写成 `.GIT`）
+- **THEN** 返回 `fs_name_invalid`，文件系统不变（大小写不敏感的文件系统上它与 `hidden` 档
+  命中是同一个条目）
+
+#### Scenario: 符号链接指向隐藏条目不穿透
+
+- **WHEN** vault 内的可见名字是指向 `hidden` 条目的符号链接（如 `repo-link` → `.git`、
+  `doc-link.md` → `.git/config`），对它们发起删除 / 改名 / 移动
+- **THEN** 返回 `fs_name_invalid`，链接与其真实目标都保持原样
 
 ### Requirement: app 内文件操作的 tab 联动
 
@@ -520,6 +552,8 @@ patch SHALL 携带调用方持有的 revision（SHA-256），与 `document_save`
 
 落盘 SHALL 走与保存**同一个写核心**（同目录 `.lumir-` 临时文件 + 原子 rename + ghost 重试），因此写入过程 MUST NOT 在文件树或 `fs:entry_changed` 事件流里产生临时条目（写盘方的自身标记被既有忽略集挡下）；patch 完成后 SHALL 有目标文件的一条 `modified` 增量进入事件流。被 patch 文件若有打开的编辑器会话，系统 SHALL 经该既有通路（`fs:entry_changed` 的外部变更分流：未 dirty 自动重载、dirty 交用户选择）同步编辑器内容，MUST NOT 绕过通路只改盘而不更新会话。
 
+patch 的目标路径 SHALL 按 **`hidden` 档（含恒定临时文件模式，含任一祖先段）** 判定：命中 SHALL 返回 `fs_name_invalid`，判定 MUST 在读取文件内容与任何写入之前。这类条目在枚举结果里没有行（见「全类型递归枚举」），改写它等于静默改动用户看不见的东西——隐藏的仓库配置文件被改写 + 只读命令执行仓库配置即经此处走通（2026-10-24 立项）。判定 SHALL 复用装载时那**一份**忽略策略，MUST NOT 自建名字名单；用户把该名字配置成可见后，patch 按普通文件处理。判定 SHALL 按文件系统身份做（大小写不敏感 + 按 canonical 真身再判一次，口径同「文件级操作（删除 / 重命名 / 新建 / 定位）」的对应条款）：`.GIT/config` 与「可见名字是指向 `.git/config` 的符号链接」两种形态都 MUST 被拒。
+
 #### Scenario: 唯一命中替换
 
 - **WHEN** 对文件应用一个 `old_string` 唯一命中的编辑
@@ -539,6 +573,29 @@ patch SHALL 携带调用方持有的 revision（SHA-256），与 `document_save`
 
 - **WHEN** 目标路径的扩展名属于 image/binary 拒绝清单（如 `.png` / `.pdf` / `.zip`）
 - **THEN** 返回 `fs_read_only`，不写入任何字节，且不因目标不存在而返回 `fs_not_found`
+
+#### Scenario: hidden 档既有文件拒绝 patch
+
+- **WHEN** patch 的目标路径命中 `hidden` 档（如 `.git/config`，或 `sub/.git/x.md` 这类祖先段命中）
+- **THEN** 返回 `fs_name_invalid`，文件逐字节不变、revision 不变，且不进入读取内容之后的任何步骤；
+  同一份策略下普通既有文件照常可 patch
+
+#### Scenario: hidden 档的大小写变体拒绝 patch
+
+- **WHEN** 目标写成大小写变体（如 `.GIT/config`；大小写不敏感的文件系统上它就是 `.git/config`）
+- **THEN** 返回 `fs_name_invalid`，目标文件逐字节不变、revision 不变
+
+#### Scenario: 符号链接指向隐藏文件拒绝 patch
+
+- **WHEN** patch 的目标是 vault 内的符号链接，其 canonical 落点命中 `hidden` 档（如
+  `doc-link.md` → `.git/config`）
+- **THEN** 返回 `fs_name_invalid`，链接与其真实目标都逐字节不变
+
+#### Scenario: 配置成可见后按普通文件 patch
+
+- **WHEN** 用户把 `.git` 从 `hidden` 档移出（`vault.ignore` 里不再列为 `hidden`），对 `.git/config`
+  发起 patch
+- **THEN** 编辑照常落盘、revision 前进（判定随装载时的忽略策略走，MUST NOT 是硬编码 `.git` 名单）
 
 #### Scenario: 临时条目不入事件流
 
@@ -649,9 +706,13 @@ patch SHALL 携带调用方持有的 revision（SHA-256），与 `document_save`
 MUST NOT 由调用方自觉保证；目录不存在时 SHALL 返回 `fs_not_found`，MUST NOT 隐式创建。
 
 剪贴板字节解码后超过 50MB（与「二进制附件读取」同口径）时 SHALL 返回人话错误，
-MUST NOT 分配对应内存。转码策略：默认目标格式为 **WebP 无损**（策略明细见 change
-design §4，`image/png` 输入转码、`image/jpeg` / `image/webp` 原样落盘、其余 `image/*`
- 子类型拒绝）；转码失败 SHALL 返回人话错误，MUST NOT 插引用留半截。
+MUST NOT 分配对应内存。格式判定 SHALL 先于解码与尺寸判定（「不支持的类型」与「太大」是两条
+互不遮盖的失败面）。转换策略：默认目标格式为 **WebP 无损**——`image/png` 输入转码、
+`image/jpeg` / `image/webp` 原样落盘、`image/svg+xml` 输入先**栅格化成位图**再转码（MUST NOT
+原样落盘 SVG 字节，安全边界见下方「SVG 源的栅格化与安全边界」），其余 `image/*` 子类型拒绝；
+转换失败 SHALL 返回人话错误，MUST NOT 插引用留半截。转换口径 SHALL 由写入口的格式表唯一决定，
+vault 附件写入与 harness 图片存储两条调用链 MUST 走同一个转换入口，MUST NOT 各自实现一遍转码
+策略。
 
 文件名 SHALL 为内容寻址形态 `pasted-<转码后字节 SHA-256 前 16 位十六进制>.<目标扩展名>`。
 写入前 SHALL 先全 vault 按文件名探测：已存在即 MUST NOT 重复写盘，返回既有路径
@@ -689,3 +750,83 @@ MUST NOT 覆盖，同样按去重命中收敛。写入 MUST 为原子替换：�
 
 - **WHEN** `source_mime` 为 `image/x-unknown` 等未支持子类型
 - **THEN** 返回人话错误，不猜扩展名、不落盘
+
+### Requirement: 附件图片格式表的单一真源
+
+vault 附件写入与 harness 图片存储共用的**可写入源图片格式** SHALL 由**一张表**定义（源 MIME →
+是否转码 / 落盘扩展名）：允许的源格式集合、落盘扩展名集合、读回名字的合法扩展名集合与读回 MIME
+SHALL 全部从这张表派生，MUST NOT 各自维护第二份清单。落盘扩展名之外的名字 MUST 被读回入口拒绝；
+表外扩展名 MUST NOT 被推回成「某个合法 MIME」。
+
+前端 SHALL 从同一张表的镜像派生「可引用格式」判定（引用路径的预检、缩略图读回的 MIME 映射），
+并由一条**跨层漂移断言**把前端派生的读数与后端表的源格式集合、落盘扩展名集合逐项对账：任一侧
+增删改一项而另一侧没跟，断言 SHALL 失败。引用路径的格式预检 SHALL 与后端表同口径，MUST NOT 在
+预检与后端之间留下「前端放行、后端拒绝」的合法输入差集（后端拒绝仍作为最后一道闸保留，但只能
+命中坏字节一类不可预检的失败）。
+
+#### Scenario: 两侧漂移即红
+
+- **WHEN** 后端表新增一个源格式（或改一个落盘扩展名），前端镜像没跟
+- **THEN** 漂移断言失败并指出两侧集合的差异，CI 的 `pnpm test` 判红
+
+#### Scenario: 落盘扩展名的读回面
+
+- **WHEN** 读回一个落盘扩展名不在表内的引用名（如 `pasted-<hash16>.png`）
+- **THEN** 名字形态校验拒绝它；MIME 推回返回「无」而不是猜一个子类型
+
+#### Scenario: 表内格式的行为不变
+
+- **WHEN** `image/png` / `image/jpeg` / `image/webp` 三种源格式各写一次
+- **THEN** 行为与收敛前逐字节一致：png 转码 WebP 无损、jpeg / webp 原样，落盘名 `pasted-<hash16>.<ext>`
+
+### Requirement: SVG 源的栅格化与安全边界
+
+写入口收到 `image/svg+xml` 时 SHALL 先把它**栅格化成位图**，再走既有的 png→WebP 转换与内容寻址
+落盘链路：落盘文件 SHALL 是 `pasted-<hash16>.webp`（位图），**MUST NOT 原样落盘 SVG 字节**，也
+MUST NOT 引入 SVG 专属的落盘扩展名 / 读回分支 / 缩略图分支（读回侧、投递与恢复因此零改动）。
+
+栅格化 SHALL 遵守以下安全边界：
+
+1. **外部资源 MUST NOT 被加载**：SVG 里的 `href` 一律不当文件路径解析——`file:` URI、绝对路径、
+   相对路径与 `http(s)` 引用 MUST NOT 触发任何文件读取或网络请求；解析器默认的「把 href 当本地
+   路径读取」行为 MUST NOT 保留。`data:` URI 是内联载荷（零 I/O），SHALL 照常渲染。
+2. **尺寸 MUST 有上限**：以 viewBox / width / height 换算出的位图尺寸 SHALL 把最长边夹到一个固定
+   上限（本实现取 4096 像素），短边按同一比例缩（不改变长宽比）。上限 MUST 在**分配位图之前**
+   生效——50MB 的输入字节上限拦不住「小字节、大画布」。
+3. **产物 MUST 是位图**：栅格化只产出 PNG 字节交回既有转换入口；任何路径 MUST NOT 把 SVG 源码
+   回传给前端、也 MUST NOT 用 `innerHTML` 内联 SVG。
+4. **字体是环境依赖**：`<text>` 的渲染 SHALL 使用系统字体，渲染结果是**引用那一刻的快照**
+   （与编辑器预览可能不同形），这属接受的语义，MUST NOT 当作缺陷处理。
+
+栅格化失败 SHALL 走写入口既有的错误码族（解析失败 / 画布尺寸非法 → `attachment_decode_failed`，
+PNG 编码失败 → `attachment_encode_failed`），MUST NOT 落盘任何文件、MUST NOT 插半截引用。
+
+#### Scenario: svg 转码写入并读回
+
+- **WHEN** `fs_write_attachment("", <合法 svg 的 base64>, "image/svg+xml")`，vault 根存在、
+  全 vault 无同名文件
+- **THEN** 落盘 `pasted-<hash16>.webp`：字节是 WebP 位图（不是 SVG 文本）、解码后尺寸等于
+  viewBox（未超上限时）；返回的 `path` / `name` 与该文件一致；同一份 svg 再写一次命中内容寻址
+  去重（`fresh = false`）
+
+#### Scenario: 巨大 viewBox 被夹取
+
+- **WHEN** svg 的 viewBox 是 `0 0 100000 100000`（输入字节很小）
+- **THEN** 位图最长边是上限值（4096），短边按同一比例缩；MUST NOT 按 viewBox 原尺寸分配内存
+
+#### Scenario: 外部 href 不被读取
+
+- **WHEN** svg 里是 `<image href="/绝对路径/某图.png">` 或 `href="../../x.png"`，且该文件真实存在
+- **THEN** 渲染结果里不含该文件的内容（不进位图）；`data:` URI 的内联图片照常渲染
+
+#### Scenario: 畸形 svg 被拒
+
+- **WHEN** `source_mime` 是 `image/svg+xml` 而字节不是合法 SVG（畸形 XML / 非 UTF-8 / 根元素不是
+  `svg`）
+- **THEN** 返回 `attachment_decode_failed`，目标目录零文件创建或修改
+
+#### Scenario: 位图三档行为不变
+
+- **WHEN** `image/png` / `image/jpeg` / `image/webp` 三种源格式各写一次
+- **THEN** 行为与本次改动前逐字节一致：png 转码 WebP 无损、jpeg / webp 原样，落盘名
+  `pasted-<hash16>.<ext>`

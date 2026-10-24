@@ -14,39 +14,16 @@
 - **体量红线 300 行**：全文超 300 行（Alex 2026-10-12 裁决，自 1000 下调）即触发一次结构清理，批次收尾检查一次（`wc -l docs/backlog.md`）。红线是闹钟不是删除规则：触发后若无核销/僵尸项可清，记一句「已查、无僵尸」即过，**不为压行数删活条目**（删除判据仍是核销/僵尸，不是行数本身）。
 - **引用 backlog 条目用主题关键词锚**（形如「backlog『内存合同存量超标』条」），MUST NOT 用编号或行号——编号会重排、行号每次改动都漂移（唯一例外：验收场景 front-matter 的 `item:` 字段指向「待真机验收」节的清单项，属套件机制，见该节）。
 
-## 归档跟踪队列（oct24 批 11 个 change，tower/agent 记账，不进待裁决区）
+## 归档跟踪队列（oct24 批剩余：权限链 2 项，tower/agent 记账，不进待裁决区）
 
-口径 = `docs/process/openspec-workflow.md` 的「批次收尾 checklist（归档跟踪）」：每条一行、可客观核对。**本批没有一个 change 满足节点 2 的机器判据替代**（每个都有 ADDED / REMOVED 或实质改动的 MODIFIED，`openspec archive` 不会打 `Specs already in sync`），全部走 Alex 人肉节点 2。**「序 N」即归档顺序**：同 requirement 多 change 时后归档者整块替换前者，删增段数相等时对账门禁按位置配对判「改写」放行（`openspec-workflow.md` 已知边界），顺序只能靠人盯。序 2 / 3 / 6 的节点 1 记录本批只按可追溯的 Alex 原话回填（见各自 proposal 的评审记录），均无独立的提案评审回执，节点 2 一并看。序 5 的两项归档前阻塞已随 master `c9f0aba5` 核销（delta 的 `svg` 失败示例改为「可引用格式表之外的图片（如 gif）」、节点 1 凭 M633 的 Alex 2026-10-23 原话回填为通过），故本节已无「需修 delta / 待机械补账」两类。
-
-**待 Alex 节点 2（tasks 与证据齐备）**
-
-- **序 1 · `cursor-visibility-oct23`**（M654/M661，36/37）：余 4.9 是 Alex 手感项（2px + 1.2s 闪烁在三主题 / eink 的观感，机器只证相位与宽度），随节点 2 一并确认。
-- **序 2 · `ui-polish-batch-oct24`**（M660，21/21）：**MUST 在序 3 之前**——它 MODIFIED `ui-design-system::阅读面横向滚动条`，序 3 把这条 REMOVED 后改名重写；反序时 docs-check 判 `modified-missing`。
-- **序 3 · `scrollbar-tiers-oct24`**（M663，19/19）：紧接序 2；D2（三档 + 原生 overlay 豁免白名单 + 右缘 12px 不变量）是 tower 裁决、Alex 可推翻，节点 2 一并确认。
-- **序 4 · `quote-card-composer-focus-oct24`**（M671，20/20）：无依赖。
-- **序 5 · `add-image-quote-to-chat`**（M633，32/32）：链头；**序 6 / 7 都排在它之后**（先后只为阅读连贯——三条触碰的 requirement 名各不相同，归档互不覆盖）。
-- **序 6 · `quote-pipeline-consistency-oct24`**（M662，35/35）：须在序 5 之后（链：5 → 6 → 7）。
-- **序 7 · `svg-image-quote-oct24`**（M666，26/26）：须在序 6 之后。
-- **序 8 · `image-hover-quote-btn-oct24`**（M670，19/19）：无依赖；排在序 5 之后阅读更顺（新条引用 add-image-quote 的「图片引用钮」语义）。
-- **序 9 · `vault-and-session-removal`**（M646/M668，24/25）：无依赖；归档动作含 3.4（改 `openspec/specs/vault-workspace/spec.md:5` 的 capability 概览句，活跃期禁止提前改）。
+口径 = `docs/process/openspec-workflow.md` 的「批次收尾 checklist（归档跟踪）」：每条一行、可客观核对。**「序 N」即批次原始归档顺序**：同 requirement 多 change 时后归档者整块替换前者，删增段数相等时对账门禁按位置配对判「改写」放行（`openspec-workflow.md` 已知边界），顺序只能靠人盯。oct24 批的序 1–9（9 项）与补登的 6 项已于 2026-10-24 归档（节点 2 = Alex 原话「第一组和第二组都可以归档了。」），台账随核销删除。剩余两项也都不满足节点 2 的机器判据替代（都有实质改动的 MODIFIED），节点 2 仍走 Alex 人肉评审。
 
 **权限链阻塞（顺序 M649 → 序 10 → 序 11）**
 
 - **序 10 · `readonly-allowlist-tightening-oct23`**（M664，16/22）：6 项未勾（1.11 安全前提 / 2.3 证据布局 / 3.1 四者一致 / 3.2 顺序处置 / 3.3 finding 落账 / 4.4 真机），场景 231 从未跑过、无证据目录；归档前 MUST 把 MODIFIED 块重写为「master 原文 + M649 解包段 + M664 收紧段」，否则 M649 的解包段会被按「改写」配对静默抹掉而门禁不判。
 - **序 11 · `rg-zip-flags-dangerous-oct24`**（M672，11/11）：delta = 序 10 全文 + `-z` / `--search-zip` 两段改写，**必须紧接序 10**；反序时 `-z` 同样被「改写」配对静默抹掉。
 
-**外部前置（不计入本批 11 项）**：`harness-permission-rules-oct23`（M649，33/36）须先归档——4.3 已至少被 229 真机 PASS（31 断言，2026-10-24T01:59Z）覆盖，是否足以勾选由 M649 属主按任务原文（「真机跑一遍套件」）裁定；6.2 是归档时改 Purpose。`add-harness-block-fullscreen`（✓ Complete）先归档可消掉序 2 的悬空引用（非硬约束）；`quick-open-file-oct23`（40/42）同理，其 delta 自注「归档顺序无关」；`semantic-selection-markdown-oct23`（1/29，节点 1 未过）不进队列。
-
-## 归档跟踪队列（补账：M684 引入门禁时补登 6 项）
-
-以下 6 个 change 在 `openspec list` 里已是 ✓ Complete（tasks 全勾），但此前从未进任何队列——M684 把「tasks 全勾的活跃 change 必须有且仅有一条队列条目」做成机器判据（`scripts/openspec-archive-check.mjs`，随 `scripts/docs-check.sh` 进 `gate.sh quick` 与 CI）后逐项补登。本小节只登台账与可核事实：不作归档顺序主张，同 requirement 冲突与先后由节点 2 / tower 排期时核对。
-
-- **`add-cron-runtime-daemon`**（M568–M625，48/48）：节点 1 通过（2026-10-18 Alex「通过。」）；待 Alex 节点 2。
-- **`add-image-file-preview`**（M629，33/33）：proposal 的节点 1 记录仍写「待 Alex 评审」（记录未回填，本条目不改评审记录）；待 Alex 节点 2。
-- **`add-sidebar-resize-hide-and-root-create`**（M631，31/31）：节点 1 通过（2026-10-23「change 提案都通过」）；待 Alex 节点 2。
-- **`add-harness-block-fullscreen`**（M634，24/24）：proposal 的节点 1 记录仍写「待 Alex 评审」（记录未回填）；上文「外部前置」段对它的提及不是台账条目，本条才是；待 Alex 节点 2。
-- **`surface-cron-notify-failure`**（M635，25/25）：节点 1 立项（2026-10-23 Alex「安排。」）；待 Alex 节点 2。
-- **`vault-patch-hidden-deny-oct24`**（M656，12/12）：节点 1「Alex 已点头立项」（2026-10-24「安排」）；待 Alex 节点 2。
+**外部前置（不计入本批）**：`harness-permission-rules-oct23`（M649，33/36）须先归档——4.3 已至少被 229 真机 PASS（31 断言，2026-10-24T01:59Z）覆盖，是否足以勾选由 M649 属主按任务原文（「真机跑一遍套件」）裁定；6.2 是归档时改 Purpose。`quick-open-file-oct23`（40/42）同样可先归档（其 delta 自注「归档顺序无关」）；`semantic-selection-markdown-oct23`（1/29，节点 1 未过）不进队列。
 
 ## 待 Alex 裁决
 
@@ -251,7 +228,7 @@
 - **kimi-cu `type_text` 走 AX 注入**：编辑器失焦时文本落陈旧原生选区——工具观测，非 app 缺陷。
 - **`config.json` 解绑 ≠ 关闭能力**（已录 spec）：解绑后 macOS 原生选择器可能接手（如 ⌃K ⇒ `deleteToEndOfLine:`）。
 - **js / ts 对象字面量键的复合 `property` token 有意不修**（M147，low）：{1: "x"} 的数字键取数字色、字符串键取字符串色（通行呈现）；伴一条 `Unknown highlighting tag property` console 噪声。若将来裁「对象键一律属性色」，做法见 finding。指针 `.tower/comms/findings/20260917-worker-jsonhl-improve-javascript-typescript-property-token-console-json-js-ts.md`。
-- **`scrollbar-gutter: stable` + 占位滚动条下 `scrollWidth` 恒等式必差 15px**（M177，low）：classic 滚动条环境（CI runner）预留 15px 沟槽；这类断言改用内容几何或行为判据（浏览器钳位是唯一真值）。**已收口**（M663）：仓内唯一的 `scrollbar-gutter: stable`（`.cm-lp-table-scroll`，其纵向本就 `overflow-y: hidden`）已删除，并写成规范禁则（横向细条容器 MUST NOT 声明它，见 change `scrollbar-tiers-oct24`）——MUST NOT 再加回来。指针 `.tower/comms/findings/20260918-worker-m132-m115-bug-scrollbar-gutter-stable-scrollwidth-15px.md`。
+- **`scrollbar-gutter: stable` + 占位滚动条下 `scrollWidth` 恒等式必差 15px**（M177，low）：classic 滚动条环境（CI runner）预留 15px 沟槽；这类断言改用内容几何或行为判据（浏览器钳位是唯一真值）。**已收口**（M663）：仓内唯一的 `scrollbar-gutter: stable`（`.cm-lp-table-scroll`，其纵向本就 `overflow-y: hidden`）已删除，并写成规范禁则（横向细条容器 MUST NOT 声明它，见 `openspec/specs/ui-design-system/spec.md`「滚动条分档与滚动容器注册表」）——MUST NOT 再加回来。指针 `.tower/comms/findings/20260918-worker-m132-m115-bug-scrollbar-gutter-stable-scrollwidth-15px.md`。
 - **toml 的表头 `[x]` / `[[x]]` 与布尔、日期共用 legacy mode 的同一 `atom` token，`tokenTable` 分不开**（M179，low）：接受现状并记进 living spec 的「已知例外」；要修只能 patch / fork vendored `mode/toml.js`（非目标）。
 - **仅大小写改名不可达（大小写不敏感文件系统）**（M244 r1 P2-3，tower 已裁「本批不做两步改名」）：方向 fail-safe（拒绝而非覆盖）；要修时的落点 `fs_io::rename_entry`（识别「目标存在且与源同一个文件」时先改临时名再改目标名，自带回滚与文案）。
 - **rename 的「撞名不覆盖」是复查 + 极窄窗口，不是原子保证**（M244 r1 P2-2）：零窗口需平台原子排他改名（macOS `renamex_np(RENAME_EXCL)` 等），引 libc 与平台分支收益与风险不成比例。
