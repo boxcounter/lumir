@@ -250,7 +250,7 @@
 
 **前端单测**（`tests/unit/harness-session-picker.test.ts` 等）：`SessionEntry.title` 宽容解析；显示优先级 title → firstUserText → D330；title 更新不重排 / 不改 transcript 的纯模型层断言。
 
-**门禁**：`cargo test`、`pnpm test`、`scripts/gate.sh quick`；动到视觉面（标题栏文本形态）后本地跑 `scripts/gate.sh visual`，像素基线按 [tests/visual/README.md](../../../tests/visual/README.md) 的纪律更新（基线更新是人肉裁决点）。
+**门禁**：`cargo test`、`pnpm test`、`scripts/gate.sh quick`；动到视觉面（标题栏文本形态）后本地跑 `scripts/gate.sh visual`，像素基线按 [tests/visual/README.md](../../../../tests/visual/README.md) 的纪律更新（基线更新是人肉裁决点）。
 
 ## 15. D14 真机验收场景计划
 

@@ -85,7 +85,7 @@
 - [x] 7.2 `cargo test` 全绿（含 §2 / §3 新增单测）
 - [x] 7.3 `pnpm test` 全绿（含 §4 前端用例）
 - [x] 7.4 `scripts/gate.sh quick` PASS（照抄 `GATE RESULT` 原文行 + 退出码）
-- [x] 7.5 `scripts/gate.sh visual` 本地 PASS；标题栏文本形态若改变像素基线，按 [tests/visual/README.md](../../../tests/visual/README.md) 的纪律先给 Alex 过目再 `--update`（基线更新是人肉裁决点）
+- [x] 7.5 `scripts/gate.sh visual` 本地 PASS；标题栏文本形态若改变像素基线，按 [tests/visual/README.md](../../../../tests/visual/README.md) 的纪律先给 Alex 过目再 `--update`（基线更新是人肉裁决点）
   - **不适用**（2026-10-24 复核，M710）：本 change 不改标题栏的文本形态，只决定填进会话名的字符串；本 change 的视觉面（mock `titles` 驱动的会话）在既有视觉场景的 fixture 里没有数据——`rg "titles" tests/visual/` 零命中，合入时像素基线逐字节不变、无需 `--update`。标题在场时的标题栏呈现另由后加的 `tests/visual/scenes/m662-session-title.spec.ts` 钉住；当前 master（含本 change）的 `scripts/gate.sh visual` 在 M700 跑过 `GATE RESULT: 13/13 PASS（SKIP 0）`（exit 0，零基线更新），故「本 change 在树时视觉门禁为绿」有读数、本轮不重复跑。基线更新仍是人肉裁决点。
 - [x] 7.6 §5.3 新增真机验收场景全 PASS（`node scripts/acceptance/run.mjs`），证据目录可 `ls`
   - **已跑**（2026-10-19，M605 真机批）：五个场景全 PASS——163（11 断言）/ 164（8）/ 165（10）/
