@@ -1,8 +1,9 @@
 # harness Specification
 
 ## Purpose
-定义 AI 探针（harness）的落地口径——ADR 0007 授权的探索期能力：应用骨架右栏 dock 的对话面板
-（唤起 / 收起、流式 Markdown 呈现、上下文用量常驻显示）；唤起时的编辑器上下文注入（当前路径 +
+定义 AI 探针（harness）的落地口径——ADR 0007 授权的探索期能力：旁侧 pane 的对话面板（pane 容器的
+内容件，见 `pane-layout` 的「harness pane」；唤起 / 收起、流式 Markdown 呈现、上下文用量常驻显示）；
+唤起时的编辑器上下文注入（当前路径 +
 视口行范围，发送前可核对）；AGENTS.md 三层（user-wide `~/.agents/AGENTS.md` + vault 根 +
 vault 根 `AGENTS.local.md` 本地覆盖层）与 Skill
 双根（user-wide + vault-wide）的自动装配；Rust core 的工具循环与固定工具集（8 件 vault 操作工具：
