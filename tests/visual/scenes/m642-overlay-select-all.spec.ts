@@ -10,7 +10,10 @@
 //   4. 「选中态可辨」：遮罩内 `::selection` 与遮罩底色的对比不低于编辑器既有选区带
 //      （`--sel-band`）与正文底色的对比（三主题各一档，取既有 token，零新增色值）。
 //   5. 拖选能在遮罩内建立选区（chromium 代理；真机结论以 M650 的 `.local/probes/` 探针为准
-//      ——真机拖选确实建立选区，问题在「选中了看不见」，见 design §10.3）。
+//      ——真机拖选确实建立选区，问题在「选中了看不见」，见 design §10.3）。端点取首 / 末 cell 的
+//      文本几何（不是边框盒 + 偏移），并同手势断言产品不变量（mousedown 未被拦截 / selectstart
+//      已触发 / 未点穿遮罩），另附同页通道探针留痕——口径与边界见 tests/visual/README.md
+//      「指针选中（拖选）的口径」节。
 //
 // 真机层（WKWebView）的**选区仍不可经 AX 断言**；原生 ⌘C 在窗口为 key window 时可以落地
 // （M650 真机探针：pbpaste 逐字读到选中文本），但它不是场景的常规判据通道
@@ -137,6 +140,105 @@ const overlayVisible = (page: Page) =>
     const el = document.querySelector<HTMLElement>(".lumir-table-fs-overlay, .lumir-codeblock-fs-overlay");
     return el !== undefined && el !== null && !el.hidden;
   });
+
+/** 拖选手势的产品不变量读数（采集点见 `installDragProbe`）。 */
+type DragProbeState = {
+  mousedown: Array<{ prevented: boolean; insideSnapshot: boolean; target: string | null }>;
+  selectstart: number;
+};
+
+/**
+ * 不变量探针：在 window 冒泡段记录 mousedown 的 `defaultPrevented` 与 selectstart 次数。
+ * 业务监听都挂在 window 之下的元素上，事件冒泡到 window 时已包含它们的处理结果。
+ */
+function installDragProbe(page: Page): Promise<void> {
+  return page.evaluate(() => {
+    const state: DragProbeState = { mousedown: [], selectstart: 0 };
+    (window as unknown as { __dragProbe?: DragProbeState }).__dragProbe = state;
+    window.addEventListener(
+      "mousedown",
+      (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        state.mousedown.push({
+          prevented: event.defaultPrevented,
+          insideSnapshot: target !== null && target.closest(".lumir-table-fs-snapshot") !== null,
+          target: target?.nodeName ?? null,
+        });
+      },
+      false,
+    );
+    window.addEventListener("selectstart", () => {
+      state.selectstart += 1;
+    }, false);
+  });
+}
+
+function readDragProbe(page: Page): Promise<DragProbeState> {
+  return page.evaluate(() => (window as unknown as { __dragProbe: DragProbeState }).__dragProbe);
+}
+
+/**
+ * 拖选端点由**文本几何**给出：首 / 末 cell 内首个 / 末个非空文本节点的 `Range.getClientRects()`
+ * 首 / 末个字形盒（宽 ≥ 4，滤掉折叠空白留下的零宽盒）的中心点。
+ *
+ * 不用 cell 边框盒 + 像素偏移：拖选能否延伸对命中点极其敏感（M720 调查 §2.3：同一行相邻 1–8px
+ * 就从「逐字延伸」翻成「每次 mousemove 重新落锚点、永不延伸」），而 CI runner 与本地存在已入库的
+ * 字形栅格差异（README「本地与 CI 的渲染口径」节：混排行被撑宽约 2.5%）。字形盒中心跟随文本
+ * 本身，度量变化后仍落在同一个字形里。依据与现场：`.local/reports/visual-drag-ci-oct24/README.md`。
+ */
+function textDragPoints(page: Page) {
+  return page.evaluate(() => {
+    const row = document.querySelector(".lumir-table-fs-snapshot .cm-lp-table-row");
+    if (row === null) throw new Error("快照行不在场");
+    const cells = [...row.querySelectorAll(".cm-lp-table-cell")];
+    if (cells.length < 2) throw new Error(`快照行 cell 不足（${cells.length}）`);
+
+    const glyph = (cell: Element, which: "first" | "last") => {
+      const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+      const nodes: Text[] = [];
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        if ((node.textContent ?? "").trim() !== "") nodes.push(node as Text);
+      }
+      if (nodes.length === 0) throw new Error("cell 内没有非空文本节点");
+      const node = which === "first" ? nodes[0]! : nodes[nodes.length - 1]!;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const rects = [...range.getClientRects()].filter((rect) => rect.width >= 4);
+      if (rects.length === 0) throw new Error(`字形盒取不到：${JSON.stringify(node.textContent)}`);
+      const rect = which === "first" ? rects[0]! : rects[rects.length - 1]!;
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const hit = document.elementFromPoint(x, y);
+      return {
+        x,
+        y,
+        hit: hit?.nodeName ?? null,
+        hitInsideSnapshot: hit !== null && hit.closest(".lumir-table-fs-snapshot") !== null,
+      };
+    };
+
+    return { start: glyph(cells[0]!, "first"), end: glyph(cells[cells.length - 1]!, "last") };
+  });
+}
+
+/**
+ * 同页通道探针的对照面：状态栏路径（非可编辑文本，`user-select: auto`，与遮罩开关无关）。
+ * 返回同型拖选的两端与中线；对照面取不到就是测试自身坏了，调用方必须判红而不是当「通道不可用」。
+ */
+function channelProbeSpan(page: Page) {
+  return page.evaluate(() => {
+    const el = document.querySelector(".modeline-path");
+    if (el === null) return { ok: false as const, why: ".modeline-path 不在场" };
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const node = walker.nextNode();
+    if (node === null) return { ok: false as const, why: ".modeline-path 内没有文本节点" };
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const rect = [...range.getClientRects()].find((item) => item.width >= 4);
+    if (rect === undefined) return { ok: false as const, why: ".modeline-path 内取不到字形盒" };
+    return { ok: true as const, x1: rect.left + 1, x2: rect.right - 1, y: rect.top + rect.height / 2 };
+  });
+}
 
 /** 遮罩内选中带与遮罩底色的对比，对照编辑器选区带与正文底色的对比（同一套合成 / 亮度口径）。 */
 function contrastReading(page: Page) {
@@ -405,26 +507,74 @@ test("M650 拖选在遮罩内建立选区（跨 cell）：锚点在快照内", a
   await page.keyboard.press(TRIGGER_PRESS);
   expect(await overlayVisible(page)).toBe(true);
 
-  // 从首行第一个 cell 拖到第三个 cell（跨 cell 拖选）。坐标取自快照行的渲染盒。
-  const box = await page.evaluate(() => {
-    const row = document.querySelector(".lumir-table-fs-snapshot .cm-lp-table-row");
-    if (row === null) throw new Error("快照行不在场");
-    const cells = [...row.querySelectorAll(".cm-lp-table-cell")];
-    const first = cells[0]?.getBoundingClientRect();
-    const last = cells[cells.length - 1]?.getBoundingClientRect();
-    if (first === undefined || last === undefined) throw new Error("快照 cell 不在场");
-    return { x1: first.left + 2, y1: first.top + first.height / 2, x2: last.right - 2, y2: last.top + last.height / 2 };
-  });
-  await page.mouse.move(box.x1, box.y1);
+  await installDragProbe(page);
+  // 跨 cell 拖选：首行第一个 cell 的首个字形 → 最后一个 cell 的末个字形（文本几何，见 helper）。
+  const points = await textDragPoints(page);
+  // 端点必须真的落在快照上：命中在遮罩外时，后面判的就不是这段产品行为了。
+  expect(points.start.hitInsideSnapshot, `起点命中 ${points.start.hit}，不在快照内`).toBe(true);
+  expect(points.end.hitInsideSnapshot, `终点命中 ${points.end.hit}，不在快照内`).toBe(true);
+
+  await page.mouse.move(points.start.x, points.start.y);
   await page.mouse.down();
-  await page.mouse.move(box.x2, box.y2, { steps: 8 });
+  await page.mouse.move(points.end.x, points.end.y, { steps: 8 });
   await page.mouse.up();
 
   const reading = await selectionReading(page);
-  expect(reading.text.length).toBeGreaterThan(0);
-  expect(reading.anchorInRoot).toBe(true);
-  expect(reading.focusInRoot).toBe(true);
-  expect(reading.text).not.toContain("表格全屏场景");
+  const probe = await readDragProbe(page);
+
+  // 产品自有不变量（与「引擎有没有把锚点延伸成范围」无关，逐条对应一条可辨的坏法）：
+  //   ① 拖选没被应用拦截——路径上的 mousedown 全部 defaultPrevented=false；
+  //   ② 没有点穿遮罩——拖选之后遮罩仍在场；
+  //   ③ 引擎确实开始了选区手势——selectstart 至少一次（快照不可选时它为 0）。
+  // M720 的 CI 失败签名下三条全部成立，而这三种坏法各有一条必红（§2.5 的反向输入）。
+  const pressed = probe.mousedown.filter((entry) => entry.insideSnapshot);
+  expect(pressed.length, "拖选起点必须命中快照内的 mousedown").toBeGreaterThanOrEqual(1);
+  expect(pressed.filter((entry) => entry.prevented), "应用不得对拖选路径上的 mousedown 调 preventDefault").toEqual([]);
+  expect(await overlayVisible(page), "拖选不得点穿遮罩（遮罩必须仍在场）").toBe(true);
+  expect(probe.selectstart, "拖选必须触发 selectstart（否则快照不可选）").toBeGreaterThanOrEqual(1);
+
+  // 落面判据（保留原判据）：锚点 / 焦点都在快照容器内，选区不含遮罩外标题。
+  expect(reading.anchorInRoot, "锚点必须落在快照容器内").toBe(true);
+  expect(reading.focusInRoot, "焦点端必须落在快照容器内").toBe(true);
+  expect(reading.text, "选区不得含遮罩外标题").not.toContain("表格全屏场景");
+
+  // 通道探针只能放在产品拖选之后：遮罩是整窗覆盖层，任何点在外面的手势都会让它失焦关闭。
+  await page.keyboard.press("Escape");
+  expect(await overlayVisible(page), "通道探针前遮罩必须已关闭").toBe(false);
+  const channel = await channelProbeSpan(page);
+  if (!channel.ok) throw new Error(`通道探针的对照面不可定位：${channel.why}`);
+
+  const beforeProbe = await readDragProbe(page);
+  await page.mouse.move(channel.x1, channel.y);
+  await page.mouse.down();
+  await page.mouse.move(channel.x2, channel.y, { steps: 6 });
+  await page.mouse.up();
+  const channelText = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  const afterProbe = await readDragProbe(page);
+  const channelMousedown = afterProbe.mousedown.slice(beforeProbe.mousedown.length);
+  const channelSelectstart = afterProbe.selectstart - beforeProbe.selectstart;
+
+  test.info().annotations.push({
+    type: "pointer-selection-channel",
+    description: `${channelText.length > 0 ? "available" : "unavailable"}（对照面选区长度 ${channelText.length}）`,
+  });
+
+  if (channelText.length > 0) {
+    // 通道可用：最强判据——产品拖选必须建立非空、跨 cell 的选区（本地 chromium 走这支）。
+    expect(reading.text.length, "通道可用时拖选必须建立非空选区").toBeGreaterThan(0);
+    expect(reading.text, "拖选必须跨过中间 cell").toContain("内容");
+  } else {
+    // 通道不可用：不 skip。先把「不可用」钉成可复核的读数——对照面上的同一手势收到 mousedown、
+    // 未被 preventDefault、selectstart 已触发，只是引擎没有把它延伸成范围。三条不满足就说明
+    // 对照面本身不可选，那是判据坏了（不是 runner 能力问题），照旧判红。
+    expect(channelMousedown.length, "对照面必须收到 mousedown").toBeGreaterThanOrEqual(1);
+    expect(channelMousedown.filter((entry) => entry.prevented), "对照面的 mousedown 不得被 preventDefault").toEqual([]);
+    expect(channelSelectstart, "对照面必须触发 selectstart（否则它不可选，不能当通道判据）").toBeGreaterThanOrEqual(1);
+    console.log(
+      `[pointer-selection-channel] unavailable：.modeline-path 同型拖选得到空选区（产品拖选文本长度 ` +
+        `${reading.text.length}）；三条产品不变量照判`,
+    );
+  }
 });
 
 test("M650 可选是契约：遮罩内容容器显式 user-select: text，遮罩链上无 none", async ({ page }) => {

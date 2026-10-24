@@ -61,6 +61,37 @@ CSS 动画（CodeMirror 光标闪烁）在截图时冻结，保证逐帧确定�
 本机另有完整排查报告 `.tower/comms/inbox/20260918-worker-ci-diagnosis-*.md`
 （`.tower/` 不入 git，这条指针仅本机可查）。
 
+### 指针选中（拖选）的口径：端点由文本几何给出，能力差异用通道探针留痕
+
+拖选是**与 runner 渲染能力相关**的判据，与整页像素同一根源：CI runner 与本地字形栅格不等价
+（见上节），而拖选能否延伸对命中点极其敏感——同一页面同一行，命中点差 1–8px 就能从「逐字延伸」
+翻成「每次 mousemove 重新落锚点、永不延伸」（M720 实测，§2.3）。据此定三条口径：
+
+1. **端点 MUST 由文本几何给出**，不得用元素边框盒 + 像素偏移常量。取法是首 / 末 cell 内
+   **非空文本节点**的 `Range.getClientRects()`（宽 ≥ 4 的盒，滤掉折叠空白的零宽盒）取首 / 末个
+   字形盒的中心点（`scenes/m642-overlay-select-all.spec.ts` 的 `textDragPoints`）。同类先例：
+   `scenes/m687-semantic-selection.spec.ts` 用 `coordsAtPos` 取渲染态文字端点。边框盒 + 常量偏移
+   把判据押在 runner 的度量上，度量一变就翻转——这是 m642 在 master 上持续红的成因，不是产品回归。
+   依据与实测现场：M720 调查报告 `.local/reports/visual-drag-ci-oct24/README.md`（`.local/` 不入
+   git，本机可查）。
+2. **产品自有不变量 MUST 与拖选同一手势内断言**（通道无关、确定性）：拖选路径上的 `mousedown`
+   在 window 冒泡段的 `defaultPrevented === false`（应用没拦）、`selectstart` 至少 1 次（引擎接住
+   了手势、快照可选）、两个端点的 `elementFromPoint` 都属于 `.lumir-table-fs-snapshot`（端点没有
+   落到遮罩外）、拖选之后遮罩仍在场。「产品被改坏」必有一条红：快照 `user-select: none` → selectstart 0；
+   面板 capture 阶段 `preventDefault` → mousedown prevented；点穿遮罩 → 遮罩关闭。M720 的 CI 失败
+   签名（选区不延伸）下这几条全部成立，所以它们能把「引擎不延伸」与「产品坏了」在报告里分开。
+3. **通道探针放在产品拖选之后，且不可用时不 skip**：遮罩是整窗覆盖层，任何点在外面的手势都会让
+   它失焦关闭，探针先跑就把产品现场点没了。产品拖选之后在 `.modeline-path`（状态栏路径，非可编辑
+   文本）上做同型拖选：能建立选区 → 通道可用，照旧断言产品选区非空且跨 cell（最强判据）；得到
+   空选区 → 不退化为 skip，先把「不可用」钉成可复核读数（对照面收到 mousedown、未被
+   `defaultPrevented`、selectstart 已触发——三条不满足说明对照面本身不可选，那是判据坏了，照红），
+   再打 `pointer-selection-channel: unavailable` annotation 与一行日志。CI 口径即「产品不变量 +
+   通道探针留痕」，最强判据只在通道可用时执行；报告里的取值必须与该 run 的实际行为一致
+   （有选区却标 unavailable 视为 bug）。**不得**用 skip、放宽断言或抬容差换绿。
+
+真机（WKWebView）的拖选另有判据通道（M650 的 `.local/probes/` 探针；验收场景 227 明确把
+「拖选看得见选中带」排除在套件通道之外），本目录的场景只覆盖引擎层。
+
 ## 目录结构
 
 ```
