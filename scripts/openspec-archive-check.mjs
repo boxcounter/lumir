@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// scripts/openspec-archive-check.mjs — OpenSpec 归档对账：MODIFIED requirement 的静默丢段面。
+// scripts/openspec-archive-check.mjs — OpenSpec 归档对账：MODIFIED requirement 的静默丢段面
+// + 归档队列面（tasks 全勾的活跃 change 是否已进 docs/backlog.md 的归档跟踪队列）。
 //
 // 背景（finding 20261018-worker-m566）：`openspec archive`（1.12.0，无 dry-run / diff，`archive --help`
 // 只有 --yes / --skip-specs / --no-validate / --json）对 MODIFIED requirement 的做法是**整块替换**——
@@ -32,9 +33,25 @@
 // 「删一段、同位置增一段无关内容」会被当作改写放行；这类改动在 PR diff 里是可见的，不属本脚本守的
 // 静默丢失面。
 //
+// 归档队列面（2026-10-24，M684）：规则出处是 docs/process/openspec-workflow.md「批次收尾 checklist
+// （归档跟踪）」的「每个 change 在实现 PR 合并时即落一条归档跟踪记录」。人读规则整批漏记过一次
+// （oct24 批 11 个 change 在 docs/backlog.md 里零条目，M682 补账；另有 6 个已完成 change 从未进过任何
+// 队列，M684 补登），故门禁模式同时判台账：
+//   - **完成判定**：tasks.md 的 checkbox 行（`- [x]` / `- [ ]`，`]` 之后是否紧跟正文不限——既有
+//     tasks 有 `- [ ]（归档时执行…）` 这种无空格写法）全部勾选且至少一项 ⇒ 完成。零任务项不判完成
+//     （避免空真放行；tasks.md 本身缺失才报红，制品完整性另有 validate 兜底）。
+//   - **条目判定**：docs/backlog.md 里一行列表项，加粗首段**恰好**是 `序 N · `<change-id>``（新批次可
+//     省略「序 N ·」，只写 `<change-id>`），即 `- **序 3 · `scrollbar-tiers-oct24`**（…）`。正文里的
+//     提及不算条目（如「外部前置」段落），否则判据退化成子串匹配（REVIEW.md「断言等价于子串，没有
+//     区分度」条）。同一 change 两条即判重复。
+//   - **活跃面按位置判**：只有 openspec/changes/ 的直接子目录是活跃 change；撤回件在
+//     changes/archive/<日期>-withdrawn-<id>/ 之下，天然不在扫描面。不按名字里的 `withdrawn` / `archive`
+//     字样过滤——活跃 id 恰好含这些字样时仍是活跃 change。
+//   - 本判据只判台账在场：不判节点 2 是否通过、不判归档顺序、不执行 archive。
+//
 // 依赖：node 内置模块 + git，不引入第三方包（CI 的 docs-check.yml 直接 `bash scripts/docs-check.sh`，
 // ubuntu runner 自带 node；同目录 openspec-links.sh 是纯 bash 的同类判据）。
-// 判据的区分度测试（真丢段 / 整段改写 / 声明认领 / 场景整块丢失，正反各一遍）：
+// 判据的区分度测试（真丢段 / 整段改写 / 声明认领 / 场景整块丢失 / 队列缺失与重复 / 撤回件与提及不误报）：
 //   node --test scripts/openspec-archive-check.test.mjs
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -270,15 +287,79 @@ function unlandedDeltaParagraphs(deltaText, afterText) {
   return unlanded;
 }
 
+// --- 归档队列 ---
+
+// checkbox 行；`]` 后是否紧跟正文不限（既有 tasks 有 `- [ ]（归档时执行…）` 的写法，REVIEW.md
+// 「断言等价于子串」条的近邻陷阱：要求 `]` 后有空格会把这类未勾项漏数成 0，进而把未完成判成完成）。
+const TASK_ITEM = /^\s*[-*]\s+\[([^\]]*)\]/;
+// 队列条目：列表项 + 加粗首段恰好是 `序 N · `<id>`` 或 `<id>`。正文提及不在判据内。
+const QUEUE_ENTRY = /^\s*[-*]\s+\*\*(?:序\s*\d+\s*·\s*)?`([^`]+)`\*\*/;
+
+export function taskProgress(text) {
+  let total = 0;
+  let done = 0;
+  for (const line of text.split('\n')) {
+    const m = TASK_ITEM.exec(line);
+    if (!m) continue;
+    total++;
+    if (/^[xX]$/.test(m[1].trim())) done++;
+  }
+  return { total, done, open: total - done, complete: total > 0 && total === done };
+}
+
+// change-id → 出现的行号（1 基）。行号供「重复条目」报错直接定位。
+export function archiveQueueEntries(text) {
+  const entries = new Map();
+  text.split('\n').forEach((line, idx) => {
+    const m = QUEUE_ENTRY.exec(line);
+    if (!m) return;
+    const lines = entries.get(m[1]) ?? [];
+    lines.push(idx + 1);
+    entries.set(m[1], lines);
+  });
+  return entries;
+}
+
+// changes: [{ id, tasks }]，tasks 为 tasks.md 全文，读不到时传 null。
+// 已完成（tasks 全勾）的活跃 change 必须有且仅有一条队列条目。
+export function queueProblems(changes, backlogText) {
+  const entries = archiveQueueEntries(backlogText);
+  const problems = [];
+  let checked = 0;
+  for (const { id, tasks } of changes) {
+    if (typeof tasks !== 'string') {
+      problems.push({ kind: 'tasks-missing', id });
+      continue;
+    }
+    const progress = taskProgress(tasks);
+    if (!progress.complete) continue;
+    checked++;
+    const lines = entries.get(id) ?? [];
+    if (lines.length === 0) problems.push({ kind: 'missing-entry', id, progress });
+    else if (lines.length > 1) problems.push({ kind: 'duplicate-entry', id, lines, progress });
+  }
+  return { problems, checked };
+}
+
 // --- 文件与 git ---
 
 const readFile = (p) => fs.readFileSync(p, 'utf8');
 
+// 活跃 change = openspec/changes/ 的直接子目录（`archive` 除外）。撤回件在
+// changes/archive/<日期>-withdrawn-<id>/ 之下，天然不在这里；不按名字里的 withdrawn / archive 字样判。
+export function listActiveChanges(changesRoot) {
+  if (!fs.existsSync(changesRoot)) return [];
+  return fs
+    .readdirSync(changesRoot, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && d.name !== 'archive')
+    .map((d) => d.name)
+    .sort();
+}
+
 function listDeltaFiles(changesRoot) {
   const files = [];
   if (!fs.existsSync(changesRoot)) return files;
-  for (const id of fs.readdirSync(changesRoot).sort()) {
-    if (id === 'archive') continue;
+  for (const id of listActiveChanges(changesRoot)) {
     const specsDir = path.join(changesRoot, id, 'specs');
     if (!fs.existsSync(specsDir)) continue;
     for (const cap of fs.readdirSync(specsDir).sort()) {
@@ -307,6 +388,35 @@ function reportProblems(problems, deltaPath) {
   }
 }
 
+function reportQueueProblems(problems, backlogRel) {
+  for (const p of problems) {
+    if (p.kind === 'missing-entry') {
+      console.log(`::error file=${backlogRel}::活跃 change「${p.id}」tasks 已全部完成（${p.progress.total}/${p.progress.total}），但没有任何归档跟踪条目——按 docs/process/openspec-workflow.md「批次收尾 checklist（归档跟踪）」补一条：`);
+      console.log(`    - **序 N · \`${p.id}\`**（M…，${p.progress.total}/${p.progress.total}）：<节点 2 状态 / 归档顺序 / 阻塞>`);
+    } else if (p.kind === 'duplicate-entry') {
+      console.log(`::error file=${backlogRel}::活跃 change「${p.id}」有 ${p.lines.length} 条归档跟踪条目（第 ${p.lines.join('、')} 行）——有且仅有一条，删到只剩一条`);
+    } else {
+      console.log(`::error file=openspec/changes/${p.id}/tasks.md::tasks.md 读不到，无法判定归档队列义务（该制品由 validate / docs-check.yml 的 openspec job 兜底）`);
+    }
+  }
+}
+
+// 归档队列面：已完成（tasks 全勾）的活跃 change 必须在 docs/backlog.md 有且仅有一条队列条目。
+function checkArchiveQueue(changesRoot, backlogPath, targetChange) {
+  if (!fs.existsSync(backlogPath)) {
+    console.log(`::error file=${path.relative(ROOT, backlogPath)}::找不到 docs/backlog.md，归档队列无法对账`);
+    return { problems: 1, checked: 0 };
+  }
+  const ids = listActiveChanges(changesRoot).filter((id) => !targetChange || id === targetChange);
+  const changes = ids.map((id) => {
+    const tasksPath = path.join(changesRoot, id, 'tasks.md');
+    return { id, tasks: fs.existsSync(tasksPath) ? readFile(tasksPath) : null };
+  });
+  const result = queueProblems(changes, readFile(backlogPath));
+  reportQueueProblems(result.problems, path.relative(ROOT, backlogPath));
+  return { problems: result.problems.length, checked: result.checked };
+}
+
 function gateMode(targetChange) {
   const changesRoot = path.join(ROOT, 'openspec/changes');
   let files = listDeltaFiles(changesRoot);
@@ -331,11 +441,15 @@ function gateMode(targetChange) {
       reportProblems(result.problems, path.relative(ROOT, f.delta));
     }
   }
+  const deltaProblems = problems;
+  const queue = checkArchiveQueue(changesRoot, path.join(ROOT, 'docs/backlog.md'), targetChange);
+  problems += queue.problems;
+  const scope = targetChange ? `（--change ${targetChange}）` : '';
   if (problems) {
-    console.log(`openspec-archive-check: FAIL（${problems} 处对账不通过 / 扫过 ${scanned} 份 delta，${checked} 条 MODIFIED，对比 ${compared} 段）`);
+    console.log(`openspec-archive-check: FAIL（${problems} 处：静默丢段面 ${deltaProblems} / 归档队列面 ${queue.problems}；扫过 ${scanned} 份 delta，${checked} 条 MODIFIED，对比 ${compared} 段；已完成 change ${queue.checked} 项${scope}）`);
     return 1;
   }
-  console.log(`openspec-archive-check: PASS（扫过 ${scanned} 份 delta，${checked} 条 MODIFIED，对比 ${compared} 段，无静默丢段）`);
+  console.log(`openspec-archive-check: PASS（扫过 ${scanned} 份 delta，${checked} 条 MODIFIED，对比 ${compared} 段，无静默丢段；归档队列 ${queue.checked} 项已完成 change 均有唯一条目${scope}）`);
   return 0;
 }
 
@@ -474,7 +588,8 @@ function main(argv) {
     else if (a === '--verbose') showRewrites = true;
     else if (a === '-h' || a === '--help') {
       console.log('用法：node scripts/openspec-archive-check.mjs [--change <active-change-id>] [--archived <change-id|归档目录>] [--verbose]');
-      console.log('  默认：门禁模式，扫所有活跃 change 的 delta 对账 living spec（scripts/docs-check.sh 调的就是这条）。');
+      console.log('  默认：门禁模式，扫所有活跃 change 的 delta 对账 living spec，并判已完成 change 的归档队列条目（scripts/docs-check.sh 调的就是这条）。');
+      console.log('  --change：把上面两条判据都收窄到单个活跃 change。');
       console.log('  --archived：事后审计，用 git 里归档提交的前后快照核对是否真的丢了段落。');
       return 0;
     } else {

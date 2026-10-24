@@ -93,14 +93,14 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 2. **自验**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 必须通过；CI 会重复此校验。
 3. **提案 PR**：提交并在 PR 描述中 @ Alex 请求节点 1 评审。未通过则按批注修订，保持 change 不进入实现。
 4. **实现**：按 `tasks.md` 逐项实现并勾选（`- [x]`）。发现 proposal 意图需要变更时，停下：更新 proposal 并重新走节点 1，不静默扩 scope。
-5. **归档评审**：tasks 全部勾选（或标注放弃原因）后提交 PR 请求节点 2 评审；delta 相对 living spec 无新增内容的纯目录移动按上文「节点 2 的机器判据替代」直接归档，不等人肉点头。
+5. **归档评审**：tasks 全部勾选（或标注放弃原因）后，同一 PR 在 `docs/backlog.md` 的归档跟踪队列落一条记录（判据见「批次收尾 checklist（归档跟踪）」下的「归档队列的机器判据」——缺条目 / 重复条目会让 docs-check 报红），再提交 PR 请求节点 2 评审；delta 相对 living spec 无新增内容的纯目录移动按上文「节点 2 的机器判据替代」直接归档，不等人肉点头。
 6. **归档**：节点 2 通过后执行 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，living spec 自动并入 `openspec/specs/`；随后按上文跑一次 `--archived` 事后审计。
 
 ## 批次收尾 checklist（归档跟踪）
 
 实测失效模式（M150 归档对账，2026-09-17）：**实现 PR 合并后没人跟进归档**——当时 11 个活跃 change 里 7 个已实现未归档（`add-wikilink` 积压 12 天），living spec 因此长期落后于实现，其间还出现 living spec 与实现直接矛盾（`editor-live-preview` 自称「M1 只读口径」而 md 模式早已可编辑）。防线是把它做成批次收尾的强制项：
 
-- [ ] **本批 merge 的 change 全部列入归档待办并跟踪到归档**：每个 change 在实现 PR 合并时即落一条归档跟踪记录（记在 `docs/backlog.md`；待归档属可客观核对的事项，由 tower 记账、不进「待 Alex 裁决」区），批次收尾时用 `npx --yes @fission-ai/openspec@1.12.0 list` 逐个核对——列表里出现 `✓ Complete` 却仍在活跃列表里的，就是漏跟踪的那个。
+- [ ] **本批 merge 的 change 全部列入归档待办并跟踪到归档**：每个 change 在实现 PR 合并时即落一条归档跟踪记录（记在 `docs/backlog.md`；待归档属可客观核对的事项，由 tower 记账、不进「待 Alex 裁决」区），批次收尾时用 `npx --yes @fission-ai/openspec@1.12.0 list` 逐个核对——列表里出现 `✓ Complete` 却仍在活跃列表里的，就是漏跟踪的那个。**这条已机器化**（2026-10-24，M684）：tasks 全勾的活跃 change 在 `docs/backlog.md` 没有条目或有多条，`scripts/openspec-archive-check.mjs` 直接报红（判据口径见下）。
 - [ ] **归档前逐条对账**（对账口径）：tasks 勾选状态 / spec 增量 / 当前实现三者一致才归档；任务未勾但有正当理由的，先就地标注放弃原因再归档；spec 增量与实现矛盾的，**不归档**，并在 `docs/backlog.md` 说明矛盾点。其中「spec 增量没丢掉 living spec 的既有段落」由机器判据兜底（`scripts/openspec-archive-check.mjs`，随 `scripts/docs-check.sh` 在 PR 阶段就跑）；归档完成后再对该 change 跑一次 `node scripts/openspec-archive-check.mjs --archived <change-id>` 复核。纯目录移动（delta 与 living 逐字相同）的归档按上文「节点 2 的机器判据替代」走，不等 Alex 点头。
 - [ ] **归档后核对新建 capability 的 Purpose**：`archive` 会为新建的 living spec 写入占位 Purpose（`TBD - created by archiving change …`），`validate --all --strict` 会因此报红——须手写替换为「这个 capability 是干什么的」，再跑一次 validate 确认全绿。
 - [ ] **backlog 卫生（2026-10-12 Alex 裁决）**：本批核销 / 裁决落地的条目**直接从 `docs/backlog.md` 删除、不留索引**（git 历史即台账；含仍在生效的长期口径时改移「承接残项」）；条目一律一行 gist + 证据指针，批次报告与全量回归总表只留指针；只记改变未来动作的信息（结论 / 待办 / 裁决点 / 复现口径）——过程性验证状态（「跑完、PASS」类）不入账（2026-10-16 Alex 裁决，口径见该文件头部「维护规则」）；顺带检查体量红线——`wc -l docs/backlog.md` 超 **300** 行即触发一次结构清理（口径见该文件头部的「维护规则」；无核销/僵尸项可清时记「已查」即过，不为压行数删活条目）。
@@ -108,6 +108,14 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 - [ ] **复发对账（2026-10-17 Alex 裁决）**：本批踩的坑若命中 REVIEW.md 已有条目（含已固化删除、只存于 git 历史的条目），复发 = 居所没拦住——先查防线该不该往更近的居所搬（人读 → tower 注入 → 机器门禁）或改写，不是只往该条证据里补一行现场。
 - [ ] **新条目准入与引用写法自检（2026-10-12 Alex 认可）**：本批新增的「待 Alex 裁决」条目只收**价值取舍 / 产品语义**类（答案客观可核的由 tower 直接裁并记录）；跨文件引用 backlog 条目一律用**主题关键词锚**，不用编号 / 行号。
 - [ ] **版本与打包（仅本批需要交付安装包时）**：按 `docs/process/release.md` 执行——semver 口径、bump 面（`src-tauri/tauri.conf.json` 的 `version` 为唯一真源，`package.json` / `Cargo.toml` / `Cargo.lock` 同步；视觉桩钉死 9.9.9 不跟随）、打包前置条件、产物路径与 sha256 记录惯例均以该文为 canonical（M522 落地，2026-10-15）。
+
+**归档队列的机器判据（2026-10-24，M684）**：上列第一条「每个 change 在实现 PR 合并时即落一条归档跟踪记录」已由 `scripts/openspec-archive-check.mjs` 的门禁模式执行（随 `scripts/docs-check.sh` 进本地 `gate.sh quick` 与 CI 的 docs-check.yml）；判据口径：
+
+- **活跃面按位置判**：`openspec/changes/` 的直接子目录才是活跃 change；撤回件在 `changes/archive/<日期>-withdrawn-<id>/` 之下，天然不在扫描面。不按名字里的 `withdrawn` / `archive` 字样过滤（活跃 id 恰好含这些字样时仍是活跃 change）。
+- **完成判定**：`tasks.md` 的 checkbox 行至少一项且全部勾选（`- [x]`）；`]` 之后是否紧跟正文不限（既有 `- [ ]（归档时执行…）` 写法同样算未勾）。零任务项不判完成——避免「没有任务 ⇒ 空真放行」；`tasks.md` 缺失或读不到才报红，制品完整性另由 `validate --all --strict` 兜底。
+- **条目判定**：`docs/backlog.md` 里一行列表项，加粗首段**恰好**是 ``序 N · `<change-id>` ``（新批次可省略「序 N ·」，只留反引号里的 change-id），即 ``- **序 3 · `scrollbar-tiers-oct24`**（…）``。完成 change 必须有且仅有一条：缺失报出补登模板，重复报出行号。**正文里的提及不算条目**（如「外部前置」段落里点名一个 change），否则判据会退化成子串匹配（REVIEW.md「断言等价于子串，没有区分度」条）。
+- 完成 change 的实现 PR 就须落这条记录（M 号用该实现 mission 的编号，只写可核事实与节点 2 状态；归档顺序与同 requirement 冲突由 tower 排期时核对）。
+- 本判据只判台账在场：**不判节点 2 是否通过、不判归档顺序、不执行 archive**——节点 2 仍是人肉硬门禁（或纯目录移动时的机器判据替代，见上文）。
 
 ## 撤回（withdrawn）：放弃一个 change
 

@@ -13,6 +13,8 @@
 #   4. OpenSpec 归档对账：活跃 change 的 MODIFIED delta 是否静默删掉了 living spec 的段落
 #      （实现在 scripts/openspec-archive-check.mjs，本脚本调它——`openspec archive` 对 MODIFIED 是
 #      整块替换，delta 少抄的段落在归档时静默消失，validate 与链接检查都看不见）
+#   5. 归档队列：tasks 全勾的活跃 change 是否在 docs/backlog.md 有且仅有一条归档跟踪条目
+#      （同一脚本的门禁模式顺带判；口径见 docs/process/openspec-workflow.md「批次收尾 checklist」）
 # 输出：失败时逐条打印问题（CI 上同时是 ::error:: 注解）并以 1 退出。
 #
 # 注意：OpenSpec 的 **结构 / 制品完整性** 校验不在这里——权威实现是 `openspec validate --all
@@ -111,7 +113,8 @@ fi
 
 # --- OpenSpec 归档对账（实现见 scripts/openspec-archive-check.mjs） ---
 # 挂本脚本而不是 gate.sh：本脚本是 docs-check.yml 与 gate.sh quick 共用的唯一制品门禁入口，
-# 挂这里两边同时继承（REVIEW.md「同一语义两处真源」条）。
+# 挂这里两边同时继承（REVIEW.md「同一语义两处真源」条）。该脚本的门禁模式同时判两件事：
+# MODIFIED delta 的静默丢段面（第 4 条）与已完成 change 的归档队列条目（第 5 条）。
 if ! command -v node >/dev/null 2>&1; then
   echo "::error::未找到 node，归档对账无法运行（环境要求见 README.md）"
   fail=1
@@ -124,4 +127,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达 + 归档对账无静默丢段）"
+echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达 + 归档对账无静默丢段 + 归档队列齐备）"
