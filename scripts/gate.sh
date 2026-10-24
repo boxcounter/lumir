@@ -4,7 +4,8 @@
 #
 # 用法：
 #   scripts/gate.sh          # quick：fmt + clippy + cargo test + bindings 漂移 + gen/schemas 漂移
-#                            #        + tsc（根/视觉/单测）+ 单测 + docs-check + openspec validate
+#                            #        + tsc（根/视觉/单测）+ 单测 + acceptance 语法 + docs-check
+#                            #        + openspec validate
 #   scripts/gate.sh visual   # quick + 视觉套件隔离断言 + 视觉回归（默认 LUMIR_VISUAL_PORT=4273 隔离端口）
 #   scripts/gate.sh all      # visual + 性能合同（release 构建，首次分钟级；本地无滚动基线时
 #                            # 相对回归比较自动跳过，只 enforce 绝对阈值）
@@ -128,6 +129,19 @@ fi
 # include 里，根 tsc 覆盖不到它）。
 run_gate tsc-unit pnpm exec tsc -p tests/unit/tsconfig.json
 run_gate unit-tests node tests/unit/run.mjs
+# 验收套件语法层（scripts/acceptance 入口与 lib/*.mjs）：`node --check` 只解析、不执行——不 import
+# 模块、不起 app、不建验收锁、不碰验收 vault，也不占 `LUMIR_ACCEPTANCE_PORT`，故与真机跑批的实例 /
+# 端口隔离互不干扰。lib 里除 execute / util（docs-check 的覆盖表校验会 import）之外，其余模块只有
+# 真机跑批 `node scripts/acceptance/run.mjs` 才会被 import，而套件不进 CI——语法错此前要等下一次
+# 真机跑批才暴露，整批起不来。`--check` 不解析 import 图，故只管语法（模块缺失 / 类型错不归它）。
+run_gate acceptance-syntax bash -c '
+  n=0
+  for f in scripts/acceptance/*.mjs scripts/acceptance/lib/*.mjs; do
+    node --check "$f" || exit 1
+    n=$((n + 1))
+  done
+  echo "acceptance-syntax: ${n} 个文件通过 node --check"
+'
 # 制品门禁：与 CI 的 docs-check.yml 共用同一脚本（本地绿才等于 CI 绿）
 run_gate docs-check bash scripts/docs-check.sh
 run_gate openspec-validate npx --yes @fission-ai/openspec@1.12.0 validate --all --strict

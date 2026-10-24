@@ -52,7 +52,7 @@
 - `#check` **多 vault 聚合**（M164）→ 逐项对账：视觉容差、窗口屏外、`M-<` / `M->`、demo 脱节、D90、tauri test feature、目录选择、`commit_vault_open` 分支。
 - `#check` **restyle 聚合**（M215/M216）→ 逐项对账：0.001 容差、code 模式 150px、doc-meta mtime、eink keyword 700。
 - `#check` **M291 in-flow 底色盖住选区带 / 场景 68 标定待判（M514）** → 确认真机是否仍开；finding `20260928-worker-selection-contrast-m291-bug-in-flow-code-callout-frontmatter`。
-- `#hygiene` **机械收尾（文档 / 套件 / 配置）** → 下一动作：`.gitignore:2` 的 `node_modules/` 去尾斜杠；`gate quick` 加验收 lib 的 `node --check`；场景 123 改 `focusWindow` 为 `click:true` 口径；README 的 `(?![\\s\\S])` 双反斜杠示例改为单反斜杠；`run.mjs --help` 打印用法退出 0；`scripts/visual/table-probe72/matrix.mjs` 产出路径改指归档件；删除 `.tab-menu-item` 死选择器（`src/style.css:2529-2568`）并改 `tests/visual/scenes/tab-menu.spec.ts:358` 的 CSSOM 断言，或给 tabs 改类名（二选一）；M282 日志文本语言口径确认。
+- `#hygiene` **机械收尾（文档 / 套件 / 配置）** → 下一动作：场景 123 改 `focusWindow` 为 `click:true` 口径；README 的 `(?![\\s\\S])` 双反斜杠示例改为单反斜杠；`run.mjs --help` 打印用法退出 0；删除 `.tab-menu-item` 死选择器（`src/style.css:2529-2568`）并改 `tests/visual/scenes/tab-menu.spec.ts:358` 的 CSSOM 断言，或给 tabs 改类名（二选一）；M282 日志文本语言口径确认。
 - `#hygiene` **产品行为收尾** → 下一动作：外链失败加 toast（`src/harness-panel.ts:2805`）；`.lumir-toast` 加 `role="status"` / `aria-live="polite"`；补 composer 光标 reveal 的 chromium 断言；重启恢复门改动态分流（`stopApp` 前读 `restoredTabCount>0`）；加一条 `modifiers:["meta"]` 真机夹具；M280 ESC 三条残余（vault 切换器第二份 `scrollSnapshot` / 捕获锚在原点不写回 / lightbox 不随文档代际退出）；套件长 chain 注入（8–19 chord）可靠性与可点节点面；会话浮层快速关→再开重复历史行（M392）攒批处理。
 
 ## 承接残项（长期口径 + 未闭合尾巴）

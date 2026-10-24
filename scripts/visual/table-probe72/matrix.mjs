@@ -32,7 +32,7 @@ try {
 } finally {
  await browser.close();
  const output={engine:'Supplemental Chromium, not native WK',freshPagePerCase:true,faultInjected: fault,themeScope:'probe color variants only; fixed240px, not production themes/performance',passed:!failed,results};
- await writeFile(new URL(`../../../openspec/changes/complete-markdown-reading/table-probe72-matrix${fault?'-fault':''}.json`,import.meta.url),JSON.stringify(output,null,2)+'\n');
+ await writeFile(new URL(`../../../openspec/changes/archive/2026-09-17-withdrawn-complete-markdown-reading/table-probe72-matrix${fault?'-fault':''}.json`,import.meta.url),JSON.stringify(output,null,2)+'\n');
  console.log(JSON.stringify({cases:results.length,passed:results.filter(r=>r.pass).length,failed}));
  if(failed)process.exitCode=1;
 }
