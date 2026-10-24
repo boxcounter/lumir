@@ -1,7 +1,7 @@
 # fs-io 增量规格（M662）
 
 > 起草注记（非规格正文）：一条 ADDED，基线是 living spec
-> [openspec/specs/fs-io/spec.md](../../../../specs/fs-io/spec.md) 的「二进制附件写入」。写入
+> [openspec/specs/fs-io/spec.md](../../../../../specs/fs-io/spec.md) 的「二进制附件写入」。写入
 > **行为**不变（同一组源格式、同一转码策略），本增量只把「允许哪些源格式」收敛成一张表：读回
 > 侧与前端从它派生，跨层漂移由机器断言拦住。动机与取舍见 [design.md](../../design.md) D4。
 

@@ -1,7 +1,7 @@
 # harness 增量规格（M662）
 
 > 起草注记（非规格正文）：三条 ADDED，基线是 living spec
-> [openspec/specs/harness/spec.md](../../../../specs/harness/spec.md)。其中「引用失败的留痕与
+> [openspec/specs/harness/spec.md](../../../../../specs/harness/spec.md)。其中「引用失败的留痕与
 > 引用语境反馈」「引用卡片的含图读数」两条**依附于**活跃 change `add-image-quote-to-chat` 的
 > 「图片摘录到对话」requirement（该 change 尚未归档，故本 change 不能 MODIFIED 它）：它的「格式
 > 与失败」段写的是「失败只 toast」，本规格把失败面升级为**持久留痕 + 调用点文案**——归档顺序
