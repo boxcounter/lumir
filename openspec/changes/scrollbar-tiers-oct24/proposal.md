@@ -69,10 +69,12 @@ Alex 2026-10-24 原话（逐字）：
    与注册表**双向**比对：未登记即红（拦新增容器），登记了但源码里已不存在也红（拦改名 / 删除后的僵尸条目）。
    同一测试还按档位核验声明：细条 / 隐藏档消费者必须实际持有对应声明且全组共用一份规则，豁免档消费者
    MUST NOT 持有任何 `scrollbar-width` / `::-webkit-scrollbar` 声明。
-5. **验收判据**：新增 `tests/visual/scenes/m663-scrollbar-tiers.spec.ts`——四个预览横滚面在真实文档里
-   各自先断言「确实横向溢出」（区分度输入），再断言计算档 `scrollbar-width === "thin"` 与 CSSOM 的
-   `::-webkit-scrollbar` 4px 声明；`.cm-scroller` 断言「无滚动条声明」（豁免档的机器面）；宽表容器的
-   `scrollbar-gutter` 计算值为 `auto`（删除生效）。
+5. **验收判据**：新增 `tests/visual/scenes/m663-scrollbar-tiers.spec.ts`——三个可溢出的预览横滚面
+   （代码块 / 宽表 / 公式）各自先断言「确实横向溢出」（区分度输入），再断言计算档
+   `scrollbar-width === "thin"` 与 CSSOM 的 `::-webkit-scrollbar` 4px 声明；`.cm-lp-mermaid` 只断言
+   声明层（mermaid 自己的 `useMaxWidth` 把 svg 钳在容器宽内，横向溢出在当前渲染链上不可达，实测
+   `scrollWidth === clientWidth`，场景把这个事实也钉住）；`.cm-scroller` 断言「无滚动条声明」
+   （豁免档的机器面）；宽表容器的 `scrollbar-gutter` 计算值为 `auto`（删除生效）。
 6. **人肉防线**：`REVIEW.md` 加一条开工前 checklist（新增 / 修改 overflow 容器：先定档；右缘 12px 内
    别放常驻钮）。
 

@@ -217,7 +217,7 @@
 - **kimi-cu `type_text` 走 AX 注入**：编辑器失焦时文本落陈旧原生选区——工具观测，非 app 缺陷。
 - **`config.json` 解绑 ≠ 关闭能力**（已录 spec）：解绑后 macOS 原生选择器可能接手（如 ⌃K ⇒ `deleteToEndOfLine:`）。
 - **js / ts 对象字面量键的复合 `property` token 有意不修**（M147，low）：{1: "x"} 的数字键取数字色、字符串键取字符串色（通行呈现）；伴一条 `Unknown highlighting tag property` console 噪声。若将来裁「对象键一律属性色」，做法见 finding。指针 `.tower/comms/findings/20260917-worker-jsonhl-improve-javascript-typescript-property-token-console-json-js-ts.md`。
-- **`scrollbar-gutter: stable` + 占位滚动条下 `scrollWidth` 恒等式必差 15px**（M177，low）：classic 滚动条环境（CI runner）预留 15px 沟槽；这类断言改用内容几何或行为判据（浏览器钳位是唯一真值）。可选动作：重估 `scrollbar-gutter: stable` 的必要性。指针 `.tower/comms/findings/20260918-worker-m132-m115-bug-scrollbar-gutter-stable-scrollwidth-15px.md`。
+- **`scrollbar-gutter: stable` + 占位滚动条下 `scrollWidth` 恒等式必差 15px**（M177，low）：classic 滚动条环境（CI runner）预留 15px 沟槽；这类断言改用内容几何或行为判据（浏览器钳位是唯一真值）。**已收口**（M663）：仓内唯一的 `scrollbar-gutter: stable`（`.cm-lp-table-scroll`，其纵向本就 `overflow-y: hidden`）已删除，并写成规范禁则（横向细条容器 MUST NOT 声明它，见 change `scrollbar-tiers-oct24`）——MUST NOT 再加回来。指针 `.tower/comms/findings/20260918-worker-m132-m115-bug-scrollbar-gutter-stable-scrollwidth-15px.md`。
 - **toml 的表头 `[x]` / `[[x]]` 与布尔、日期共用 legacy mode 的同一 `atom` token，`tokenTable` 分不开**（M179，low）：接受现状并记进 living spec 的「已知例外」；要修只能 patch / fork vendored `mode/toml.js`（非目标）。
 - **仅大小写改名不可达（大小写不敏感文件系统）**（M244 r1 P2-3，tower 已裁「本批不做两步改名」）：方向 fail-safe（拒绝而非覆盖）；要修时的落点 `fs_io::rename_entry`（识别「目标存在且与源同一个文件」时先改临时名再改目标名，自带回滚与文案）。
 - **rename 的「撞名不覆盖」是复查 + 极窄窗口，不是原子保证**（M244 r1 P2-2）：零窗口需平台原子排他改名（macOS `renamex_np(RENAME_EXCL)` 等），引 libc 与平台分支收益与风险不成比例。

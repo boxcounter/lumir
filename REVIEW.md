@@ -80,6 +80,12 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 证据：`src/preview/table.ts:37`；现场 `.tower/comms/findings/20260912-worker-hygiene-improve-src-tauri-editorconfig-measure-css-measure.md`。
 - 防线：下次新增配置项、枚举值或字段时，同一 mission 内给出消费者或断言其功效；拿不出消费者的收进 `docs/backlog.md`，不要留在代码里冒充能力。
 
+**27. 新增 / 修改 overflow 容器没先定档，滚动条缺陷换个外壳再报一次**
+- 症状：同一个形态报了三轮——M406（cli_run 详情横向条太粗）、M628（代码块横向条太粗，同一批没覆盖到它）、M660（vault / 会话浮层纵向条压住行尾 ✕）。规范两档（细条 / 隐藏）写在「阅读面横向滚动条」名下，只写「阅读面」，机器判据只钉 m628 写死的 3 个选择器；盘点出 19 个滚动面，16 个未归挡，新容器换一个类名就绕过全部判据。另一条更隐蔽：真正伤人的不是「粗」而是「条压在可点件上」——容器右缘 0 留白 + 逐行常驻钮时，4px 细条照样盖住钮的右缘。
+- 根因：作用域写得比实现窄（只「阅读面」），判据钉的是已知消费者而不是「全部容器」，于是「新增容器先归挡」只是一句文字承诺；「右缘能放什么」没有判据。
+- 证据：三轮 dogfood（M406 / M628 / M660）；盘点报告 `.local/reports/scrollbar-audit-oct24.md`（19 面 / 16 未归挡，P1 三处 0 留白）；m628 场景只断言 `.lumir-hp-{codeblock,diff,argv}` 三处。收口：change `scrollbar-tiers-oct24`（三档 + 白名单 + 右缘 12px 不变量 + `tests/unit/scrollbar-registry.test.ts` 双向对账）。
+- 防线：动到 `overflow`（新容器 / 改轴 / 改品类）前先答两问——**①它归哪档**（细条 / 隐藏 / 原生 overlay 豁免白名单，写进 `tests/unit/scrollbar-registry.test.ts`，未登记即红）；**②容器右缘 12px 内有没有常驻可交互件**（有就归隐藏档，别只把条调细）。另：`::-webkit-scrollbar` 一写就把该容器两条轴一起翻成占位经典条，「只把横向改细」在 WKWebView 上不可达（M663 实测），别按轴想方案。
+
 **22. 设定类现状断言只读了 requirement 的一句话，把已过时的旧表述当现状引用**
 - 症状：worker-m445 起草方案时把「一个 vault 一个会话」当**现状**写进依据；而 M433（change `harness-sessions-per-vault`）落地后，盘上早已按 vault 分目录并存多份历史会话 JSONL、浮层可切换 / 新建 / 恢复，内存态也只是「一个 vault 一个活跃会话」（`RuntimeInner.sessions` 按 vault 键控、resume 铸新 id 替换槽位）。它引用的是 living spec 里**与新版表述并存的旧句**，且三处旧注释（`harness.rs` / `events.rs` / `permission_cache.rs` 模块头）同口径残留，读到任一处即可坐实这个错误印象。
 - 根因：现状断言的取证面太窄——只读了 requirement 里的**一句话**（恰好是 M433 没同步改到的那句），没读全条、也没 grep 最新 change 核对；同时 change 改设定时只落了**新增**表述，旧句与旧注释没同步清扫，living spec 里新旧并存，给「读到旧句」留了入口。

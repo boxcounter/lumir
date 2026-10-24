@@ -77,11 +77,13 @@ overlay 环境为 0）。浮层 / 列表类滚动容器的验收场景 SHALL 先
 
 #### Scenario: 预览横向滚动面是细条，且断言前先证明溢出
 
-- **WHEN** md 文档里同时出现「默认不折行」的超长代码行、宽于正文列的表、宽于正文列的块级公式与宽图
-- **THEN** 四个块级横滚容器（`.cm-lp-block-scroll` / `.cm-lp-table-scroll` / `.cm-lp-math-block` /
-  `.cm-lp-mermaid`）各自先满足 `scrollWidth − clientWidth > 0`（本场景的区分度输入），再各自取到
-  `scrollbar-width: thin` 的计算值与 `::-webkit-scrollbar` 的 4px 声明；宽表容器的
-  `scrollbar-gutter` 计算值为 `auto`（其声明已删除）
+- **WHEN** md 文档里同时出现「默认不折行」的超长代码行、宽于正文列的表、宽于正文列的块级公式
+- **THEN** 三个块级横滚容器（`.cm-lp-block-scroll` / `.cm-lp-table-scroll` / `.cm-lp-math-block`）各自先满足
+  `scrollWidth − clientWidth > 0`（本场景的区分度输入），再各自取到 `scrollbar-width: thin` 的计算值与
+  `::-webkit-scrollbar` 的 4px 声明；宽表容器的 `scrollbar-gutter` 计算值为 `auto`（其声明已删除）。
+  `.cm-lp-mermaid` 同样取到细条声明，但它的横向溢出**在当前渲染链上不可达**——mermaid 自己的
+  `useMaxWidth` 把 svg 钳在容器宽内（实测 `scrollWidth === clientWidth`），验收只断言声明层并钉住
+  「当前不溢出」这个事实，换渲染器时该断言会红并提醒重做判据
 
 #### Scenario: 编辑器主滚动保留平台 overlay 条
 
