@@ -83,11 +83,13 @@ export default defineConfig({
     // M361 2.3 起 IME 组合期 Enter 场景（m361-harness-ime-enter）同列：WKWebView 的
     // 组合/确认事件序在真 WebKit 引擎里跑一遍（chromium 事件序与 WebKit 不同，单跑 chromium
     // 证不了 WebKit 序分支）。
+    // M668 起 vault 移除后的浮层存续同行：缺陷来自引擎的焦点修复（持焦节点被移除 / 被禁用时
+    // 派发 focusout），真机 WKWebView 是缺陷现场，本条必须在真 WebKit 里也判一次。
     ...(webkitRealuaPresent
       ? [
           {
             name: "webkit-realua",
-            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts/,
+            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts/,
             use: { browserName: "webkit" as const, userAgent: REAL_WEBKIT_UA },
           },
         ]

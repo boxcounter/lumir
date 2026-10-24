@@ -881,6 +881,8 @@ class VaultSwitcher implements VaultSwitcherHandle {
   private openToken = 0;
   /** 当前 vault 的 id（列表里的当前项标记）。 */
   private currentId: string | undefined;
+  /** 浮层自身改行 DOM 的进行度（见 `rebuild`）：这期间收到的 `focusout` 不是用户意图。 */
+  private rebuilding = 0;
 
   constructor(deps: VaultSwitcherDeps) {
     this.deps = deps;
@@ -961,7 +963,10 @@ class VaultSwitcher implements VaultSwitcherHandle {
     });
     // 焦点离开**浮层**才收起（Tab 出去、点到别处、窗口失活都走这条）——挂点必须外移到容器：
     // 挂在列表上时焦点从输入框 Tab 出去会留下「浮层还在、焦点已在外」的状态。这条路径不抢焦点。
+    // 自身重建期间的 `focusout` 不算「离开」（见 `rebuild`）：浏览器在持焦节点被移除 / 被禁用时
+    // 把焦点送回 body 并派发它，那是浮层自己弄丢的焦点，不是用户的选择。
     popover.addEventListener("focusout", (event) => {
+      if (this.rebuilding > 0) return;
       const next = event.relatedTarget;
       if (next instanceof Node && popover.contains(next)) return;
       this.close(false);
@@ -1071,6 +1076,35 @@ class VaultSwitcher implements VaultSwitcherHandle {
   // -------------------------------------------------------------------------
 
   /**
+   * 浮层内部改行 DOM 的唯一收口（M668，缺陷现场见 M667 真机报告）：**先**把焦点收到不会被
+   * 重建的筛选输入框上，改完再核一次焦点是否还在浮层内，不在就接回输入框；期间的 `focusout`
+   * 一律不当作「用户离开浮层」（见构造期的监听）。
+   *
+   * 为什么必须这么做：浏览器在**持焦节点被移除 / 被禁用**时把焦点送回 body 并派发 `focusout`
+   *（chromium 与真机 WKWebView 都派发；Playwright WebKit 不派发——按引擎分支不是解，正确做法
+   * 是让重建根本不碰持焦节点）。不这么做时，确认移除后的 `reload`/`render` 用
+   * `list.replaceChildren(...)` 换掉整份行 DOM，那条 `focusout` 被「焦点离开即收起」读成用户
+   * 意图，浮层整个收起、撤销行随之不可达（M667 场景 226 的现场：截图里浮层不在，只剩提示）。
+   *
+   * **任何**浮层自身的行重建都走这里——确认态进入 / 取消还原 / 重拉列表 / 输入筛选是同一类
+   * 重建，漏掉任意一条，同一缺陷就会从那条路径再现。
+   */
+  private rebuild(action: () => void): void {
+    if (!this.open) {
+      action();
+      return;
+    }
+    this.input.focus();
+    this.rebuilding += 1;
+    try {
+      action();
+    } finally {
+      this.rebuilding -= 1;
+    }
+    if (!this.popover.contains(document.activeElement)) this.input.focus();
+  }
+
+  /**
    * 按当前查询重建结果集与它的行 DOM。
    *
    * `rowEntries` 是**完整列表**（本次拉取的全部行，顺序不动），筛选只决定哪些行进 DOM——它还有
@@ -1089,8 +1123,11 @@ class VaultSwitcher implements VaultSwitcherHandle {
       this.input.value,
       this.rowEntries.map((row) => row.name),
     );
-    this.list.replaceChildren(
-      ...this.visible.map((source) => this.renderRow(this.rowEntries[source] as VaultListEntry, source, now)),
+    // 换整份行 DOM 是浮层自己发起的最大的那次重建：走 `rebuild` 的收口（M668）。
+    this.rebuild(() =>
+      this.list.replaceChildren(
+        ...this.visible.map((source) => this.renderRow(this.rowEntries[source] as VaultListEntry, source, now)),
+      ),
     );
     // 无命中态：查询非空且结果集为空 → 浮层保持打开、列表区给一行提示（D117）；分隔线与
     // 「新增 vault…」不受筛选影响，仍照常给出（它是摆脱空结果的唯一入口）。
@@ -1222,7 +1259,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
     no.className = "vault-row-confirm-no";
     no.textContent = CANCEL_TEXT();
     const restoreRow = (): void => {
-      wrap.replaceChildren(switchButton, del);
+      this.rebuild(() => wrap.replaceChildren(switchButton, del));
       this.resumeRow(switchButton, position);
     };
     no.addEventListener("click", (event) => {
@@ -1235,10 +1272,14 @@ class VaultSwitcher implements VaultSwitcherHandle {
       // 一次确认只发一次请求：双击 / 连点不该排出第二个移除。`disabled` 在真实 DOM 上就
       // 不再派发 click，这一行是让「只一次」成为处理函数自己的不变量（不依赖浏览器）。
       if (yes.disabled) return;
-      yes.disabled = true;
+      // 禁用是**浮层自己的 DOM 改动**：持焦钮被禁用时浏览器同样把焦点送回 body 并派发
+      // focusout（chromium 实测），走同一条收口（见 rebuild）。
+      this.rebuild(() => {
+        yes.disabled = true;
+      });
       void this.commitRemove(row, position, restoreRow);
     });
-    wrap.replaceChildren(prompt, yes, no);
+    this.rebuild(() => wrap.replaceChildren(prompt, yes, no));
   }
 
   /** 确认后的收口：调装配层移除 → 成功按同一份口径重拉列表；失败把该行还原（人话提示由

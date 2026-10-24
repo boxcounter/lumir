@@ -214,7 +214,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; rel?: string; new_name?: string; parent_rel?: string; name?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; panes?: Array<{ tabs: string[]; active: string | null }>; pane_split_ratio?: number; entries?: Record<string, { pos: number; y: number; x: number; at: number }>; key?: string; value?: unknown; r?: number; g?: number; b?: number; data_base64?: string; source_mime?: string };
+    type Args = { path?: string; from?: string; rel?: string; new_name?: string; parent_rel?: string; name?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; panes?: Array<{ tabs: string[]; active: string | null }>; pane_split_ratio?: number; entries?: Record<string, { pos: number; y: number; x: number; at: number }>; key?: string; value?: unknown; r?: number; g?: number; b?: number; data_base64?: string; source_mime?: string; entry?: { id: string; path: string; last_opened_at: number | null; missing_since: number | null; archived_at: number | null } };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
@@ -234,6 +234,8 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     );
     /** 路径的目录名（vault_list 的 name 口径与 /_vaults 的缺省行共用）。 */
     const baseName = (p: string) => p.split("/").filter((s) => s !== "").pop() ?? p;
+    /** 被移除注册项的原下标（M668 视觉回归：撤销按原位置放回，与真后端的「视为从未移除」同形）。 */
+    const removedAt = new Map<string, number>();
     // 退出守卫桩：document_set_dirty 的上报记录（场景断言 dirty 已镜像给后端）。
     w.__dirtyReports = [] as boolean[];
     // window_set_background_color 的调用记录（M525，app-window「窗口底色跟随主题」）：
@@ -361,6 +363,43 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
       // 会话读（M163）：无记录等价于「没有标签历史」（与 vault_session::load_from 的五种
       // None 同义），前端据此走空 vault 首入态。
       vault_session_get: (args) => sessions.get(args.vault_id ?? "") ?? null,
+      // vault_remove / vault_restore（M668 视觉回归）：注册表在桩里就是 `current.vaults` 那份
+      // 数组——移除摘掉、撤销按原下标放回（真后端只删注册表项文件，桩没有文件面）。当前项
+      // 按后端契约拒绝（浮层本来就不给它移除入口，这条只是让越界请求如实失败）。
+      vault_remove: (args) => {
+        const rows = current?.vaults;
+        if (!rows) return null;
+        const index = rows.findIndex((row) => row.id === args.id);
+        if (index < 0) return null;
+        if (args.id === (current?.vault_id ?? "fixture-vault")) {
+          throw { code: "vault_remove_current", message: "current vault cannot be removed" };
+        }
+        const [row] = rows.splice(index, 1);
+        removedAt.set(row!.id, index);
+        return {
+          id: row!.id,
+          path: row!.path,
+          last_opened_at: row!.last_opened_at ?? null,
+          missing_since: row!.available ? null : 1757000000000,
+          archived_at: null,
+        };
+      },
+      vault_restore: (args) => {
+        const entry = args.entry;
+        const rows = current?.vaults;
+        if (!entry || !rows) return;
+        if (rows.some((row) => row.id === entry.id)) return; // 已存在不覆盖（幂等成功）
+        const at = Math.min(removedAt.get(entry.id) ?? rows.length, rows.length);
+        rows.splice(at, 0, {
+          id: entry.id,
+          path: entry.path,
+          name: baseName(entry.path),
+          available: entry.missing_since === null,
+          last_opened_at: entry.last_opened_at,
+          tab_count: 0,
+        });
+        removedAt.delete(entry.id);
+      },
       // 会话写（M163）：写失败在真后端只降级（warning 语义），桩按成功应答并把内容存进
       // 会话真源——「切走 → 切回 → 标签恢复」这条链路要能真的读回写入的内容。
       vault_session_put: (args) => {

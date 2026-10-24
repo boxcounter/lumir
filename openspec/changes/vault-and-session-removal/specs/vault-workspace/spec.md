@@ -32,12 +32,17 @@
 
 ### Requirement: vault 移除
 
-列表浮层 SHALL 为除当前项之外的每个注册项提供「从列表移除」入口；当前打开的 vault 那一行 MUST NOT 出现移除入口，系统对它的移除请求 SHALL 拒绝并给出人话提示（`vault_remove_current`）——移除当前 vault 要先决定「换到哪个上下文」，本能力不承担这个决定。移除 SHALL 走行内两步确认：第一次触发把该行换成点名该 vault 显示名的确认态（移除 / 取消），确认才执行、取消 SHALL 逐字还原该行。移除 SHALL 只删注册表里该 vault 的那一项（`<config_dir>/vault-registry/<vault-id>.json`）：MUST NOT 删除 vault 目录或其中任何文件，MUST NOT 删除按该 id 键控的标签会话、阅读位置与 harness 会话留存 / 附件。移除成功后浮层 SHALL 从 `vault_list` 重新拉取列表（MUST NOT 就地维护一份被改过的本地列表），该行因此不再出现；该注册项此后 SHALL 不再出现在 remap 候选里。移除 SHALL 给出一个带「撤销」动作的提示：撤销 SHALL 按移除前的原值（稳定 id、路径、上次打开时间、失效治理标记）把该注册项写回，列表视为从未移除。同一目录被重新加入（「新增 vault…」）时系统 SHALL 铸新的稳定 id，MUST NOT 复活被移除项的身份。
+列表浮层 SHALL 为除当前项之外的每个注册项提供「从列表移除」入口；当前打开的 vault 那一行 MUST NOT 出现移除入口，系统对它的移除请求 SHALL 拒绝并给出人话提示（`vault_remove_current`）——移除当前 vault 要先决定「换到哪个上下文」，本能力不承担这个决定。移除 SHALL 走行内两步确认：第一次触发把该行换成点名该 vault 显示名的确认态（移除 / 取消），确认才执行、取消 SHALL 逐字还原该行。移除 SHALL 只删注册表里该 vault 的那一项（`<config_dir>/vault-registry/<vault-id>.json`）：MUST NOT 删除 vault 目录或其中任何文件，MUST NOT 删除按该 id 键控的标签会话、阅读位置与 harness 会话留存 / 附件。移除成功后浮层 SHALL 从 `vault_list` 重新拉取列表（MUST NOT 就地维护一份被改过的本地列表），该行因此不再出现；浮层 SHALL 保持打开、焦点 SHALL 留在浮层内——移除流程**自身发起**的行重建（确认态换行、重拉列表、浮层开着时的 refresh）MUST NOT 被当成「焦点离开浮层」：浮层 MUST NOT 因此收起，焦点 MUST NOT 因此被送出浮层（重建涉及的节点若正持焦点，重建前 SHALL 先把焦点收到不会被重建的元素上，重建后焦点 SHALL 仍在浮层内），对其它 vault 的后续移除因此在同一个打开态浮层里可触达；提示上的「撤销」照常可点（点提示属于「点浮层外」，按既有规则收起浮层）。该注册项此后 SHALL 不再出现在 remap 候选里。移除 SHALL 给出一个带「撤销」动作的提示：撤销 SHALL 按移除前的原值（稳定 id、路径、上次打开时间、失效治理标记）把该注册项写回，列表视为从未移除。同一目录被重新加入（「新增 vault…」）时系统 SHALL 铸新的稳定 id，MUST NOT 复活被移除项的身份。
 
 #### Scenario: 移除一个非当前 vault
 
 - **WHEN** 列表里有 A（当前）与 B，用户点 B 行的移除钮并在确认态点「移除」
 - **THEN** B 从列表消失、浮层保持打开；磁盘上 B 的目录与其中全部文件逐字节不变（MUST NOT 有任何删除）；A 仍是当前项
+
+#### Scenario: 移除后浮层与焦点留在原地（可继续操作）
+
+- **WHEN** 用户在展开的浮层里对 B 完成两步确认（B 非当前项）
+- **THEN** B 从列表消失、浮层保持打开，焦点回到浮层的筛选输入框（键入筛选 / ↑↓ / Esc 等就地键照常生效）；用户能在同一个打开态浮层里继续移除另一个 vault——移除动作自身的行重建 MUST NOT 把浮层收起，也 MUST NOT 把焦点送回编辑器或 body
 
 #### Scenario: 当前项没有移除入口
 
