@@ -51,7 +51,7 @@ test('活项缺出口 ⇒ missing-exit FAIL；补「下一动作：」后放行'
   assert.equal(good.problems.length, 0);
 });
 
-test('「出口：」/「关闭条件」同样算出口', () => {
+test('「出口：」/「关闭条件：」同样算出口', () => {
   assert.equal(run(work('- `#fix` **甲**（M1）出口：配置迁移后删除。')).problems.length, 0);
   assert.equal(run(work('- `#fix` **乙**（M1）关闭条件：真机复跑 PASS。')).problems.length, 0);
 });
@@ -59,6 +59,27 @@ test('「出口：」/「关闭条件」同样算出口', () => {
 test('中文行文里的内联箭头（关→再开）不算出口——否则判据退化成含箭头就放行', () => {
   const result = run(work('- `#hygiene` **浮层**：会话浮层快速关→再开重复历史行。'));
   assert.equal(kinds(result, 'missing-exit').length, 1);
+});
+
+// M692 r1 P2-1：标记后没有内容 ⇒ 不算出口（否则空标记可整条绕过「活项缺出口」判据）。
+test('空「下一动作：」⇒ missing-exit（含箭头 + 空标记的链式写法）', () => {
+  assert.equal(kinds(run(work('- `#fix` **空下一动作** 下一动作：')), 'missing-exit').length, 1);
+  assert.equal(kinds(run(work('- `#fix` **空下一动作** → 下一动作：')), 'missing-exit').length, 1);
+});
+
+test('空「出口：」⇒ missing-exit', () => {
+  assert.equal(kinds(run(work('- `#fix` **空出口** 出口：')), 'missing-exit').length, 1);
+});
+
+test('空「关闭条件」/ 空「关闭条件：」⇒ missing-exit', () => {
+  assert.equal(kinds(run(work('- `#fix` **空关闭条件** 关闭条件')), 'missing-exit').length, 1);
+  assert.equal(kinds(run(work('- `#fix` **空关闭条件** 关闭条件：')), 'missing-exit').length, 1);
+});
+
+test('空箭头（`→ ` 后无内容）⇒ missing-exit；箭头后接标记仍需标记带内容', () => {
+  assert.equal(kinds(run(work('- `#fix` **空箭头** → ')), 'missing-exit').length, 1);
+  assert.equal(kinds(run(work('- `#fix` **链式空复核** → 复核：')), 'missing-exit').length, 1);
+  assert.equal(run(work('- `#fix` **链式** → 下一动作：查配置。')).problems.length, 0);
 });
 
 test('待真机验收按活项判出口：无出口 FAIL，补箭头后放行', () => {
@@ -158,6 +179,27 @@ test('记录在案里带出口的开放尾巴不需要 canonical 指针', () => 
   const result = run('# Backlog\n\n## 承接残项（长期口径 + 未闭合尾巴）\n\n- **某尾巴** → 下一动作：并成一个小验收 mission。\n');
   assert.equal(result.problems.length, 0);
   assert.equal(result.stats.recordWithExit, 1);
+});
+
+// M692 r1 P2-1：空复核标记同样不算合规形态，recordWithReview 也不得计入。
+test('空「复核：」⇒ missing-record-home，且不计入 recordWithReview', () => {
+  const result = run('# Backlog\n\n## 承接残项（长期口径 + 未闭合尾巴）\n\n- **空复核** 复核：\n');
+  assert.equal(kinds(result, 'missing-record-home').length, 1);
+  assert.equal(result.stats.recordWithReview, 0);
+});
+
+test('空「复核口径」/「复核口径：」⇒ missing-record-home，且不计入 recordWithReview', () => {
+  for (const marker of ['复核口径', '复核口径：']) {
+    const result = run(`# Backlog\n\n## 承接残项（长期口径 + 未闭合尾巴）\n\n- **空复核口径** ${marker}\n`);
+    assert.equal(kinds(result, 'missing-record-home').length, 1, marker);
+    assert.equal(result.stats.recordWithReview, 0, marker);
+  }
+});
+
+test('复核口径带内容（`复核口径：…`）⇒ 合规并计入 recordWithReview', () => {
+  const result = run('# Backlog\n\n## 承接残项（长期口径 + 未闭合尾巴）\n\n- **有内容** 复核口径：每次归档前重读一次。\n');
+  assert.equal(result.problems.length, 0);
+  assert.equal(result.stats.recordWithReview, 1);
 });
 
 // --- 行数上限 ---

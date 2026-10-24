@@ -119,8 +119,8 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 
 **backlog 出口的机器判据（2026-10-24，M692）**：`backlog 卫生` 一条里的「核销即删除 / 一行一个可关闭单元 / 80 行上限」已由 `scripts/backlog-check.mjs` 执行（随 `scripts/docs-check.sh` 进本地 `gate.sh quick` 与 CI 的 docs-check.yml）。判据按 `## ` 区块分类，口径：
 
-- **work（标题含 `待修` / `已立项` / `待真机验收`）**：每条必须有一处出口标记（`下一动作：` / `出口：` / `关闭条件` / `→` 后接空白）；出现完成标记（已修 / 已核销 / 已落地 / 已收口 / 已接账 / 已解决 / 已关闭 / 已完成）仍留条目 ⇒ 报红。修改类 PR 收掉的问题，条目在该 PR 里删掉，不要改写成「已修」。
-- **record（标题含 `记录在案` / `承接残项` / `长期口径`）**：长期口径必须有出口、canonical 指针（`docs/` `openspec/` `src/` `src-tauri/` `scripts/` `tests/` `demo/` `.github/` 下的仓内路径）或 `复核：` 口径之一；canonical 指针必须存在，死指针报红。
+- **work（标题含 `待修` / `已立项` / `待真机验收`）**：每条必须有一处**带内容**的出口标记（`下一动作：` / `出口：` / `关闭条件：` / `→` 后接空白，且标记后至少一个非空白字符——光写 `→ ` / `下一动作：` 不算出口）；出现完成标记（已修 / 已核销 / 已落地 / 已收口 / 已接账 / 已解决 / 已关闭 / 已完成）仍留条目 ⇒ 报红。修改类 PR 收掉的问题，条目在该 PR 里删掉，不要改写成「已修」。
+- **record（标题含 `记录在案` / `承接残项` / `长期口径`）**：长期口径必须有带内容的出口、canonical 指针（`docs/` `openspec/` `src/` `src-tauri/` `scripts/` `tests/` `demo/` `.github/` 下的仓内路径）或带内容的 `复核：` / `复核口径：` 口径之一（空标记不算）；canonical 指针必须存在，死指针报红。
 - **decision（标题含 `待 Alex 裁决` / `#decide`）与 queue（标题含 `归档跟踪队列`）**：不判出口——前者由 Alex 裁，后者由上面的归档队列判据判条目在场。
 - **finding 指针**：`` finding `<slug>` `` 或 `` `.tower/comms/findings/<slug>.md` `` 指向同一 slug 出现在多条 ⇒ 报红；文件不存在 ⇒ 报红。`.tower/` 不入 git，CI 检出与 worktree 没有该目录时只 INFO 跳过——不把「读不到」当「指针丢了」。
 - **`.local` 指针**：缺失只 WARN（本地证据桶随清理轮换，见 `.local/README.md`）；整个 `.local` 不存在（CI）时只 INFO 跳过。

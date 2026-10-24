@@ -7,12 +7,14 @@
 // docs-check.yml 同时继承同一份实现（REVIEW.md「同一语义两处真源」条）。
 //
 // 判据（区块由 `## ` 标题分类；一条 bullet 一行，续行不参与判定——backlog 维护规则「一行一题」）：
-//   - work（标题含 `待修` / `已立项` / `待真机验收`）：每条必须有一处出口标记（`下一动作：` /
-//     `出口：` / `关闭条件` / `→`），缺则 FAIL；出现完成标记（已修 / 已核销 / 已落地 / 已收口 /
-//     已接账 / 已解决 / 已关闭 / 已完成）仍留条目也 FAIL——「修好就删条目」不留给下一批清理。
+//   - work（标题含 `待修` / `已立项` / `待真机验收`）：每条必须有一处带内容的出口标记（`下一动作：` /
+//     `出口：` / `关闭条件：` / `→`，标记后至少一个非空白字符），缺则 FAIL；出现完成标记（已修 /
+//     已核销 / 已落地 / 已收口 / 已接账 / 已解决 / 已关闭 / 已完成）仍留条目也 FAIL——「修好就删
+//     条目」不留给下一批清理。
 //   - record（标题含 `记录在案` / `承接残项` / `长期口径`）：长期口径必须落到 canonical 居所——
-//     有出口，或至少一个 canonical 指针（docs/ openspec/ src/ src-tauri/ scripts/ tests/ demo/
-//     .github/ 下的仓内路径），或写 `复核：` 口径；canonical 指针不存在 ⇒ FAIL（死指针）。
+//     有带内容的出口，或至少一个 canonical 指针（docs/ openspec/ src/ src-tauri/ scripts/ tests/
+//     demo/ .github/ 下的仓内路径），或写带内容的 `复核：` 口径；canonical 指针不存在 ⇒ FAIL
+//     （死指针）。空标记（`→ ` / `下一动作：` / `复核：` 后面没有内容）不算合规形态。
 //   - decision（标题含 `待 Alex 裁决` / `#decide`）与 queue（标题含 `归档跟踪队列`）：不判出口。
 //     前者由 Alex 裁，后者由 scripts/openspec-archive-check.mjs 判条目在场。
 //   - 未识别区块：只 WARN，不判红——新区块须显式归类，否则出口判据会静默漏掉一整块。
@@ -40,12 +42,18 @@ export const LINE_CAP = 80;
 
 const CLOSURE_MARKERS = ['已修', '已核销', '已落地', '已收口', '已接账', '已解决', '已关闭', '已完成'];
 const CLOSURE_RE = new RegExp(CLOSURE_MARKERS.join('|'), 'g');
-// 出口标记：backlog 既有写法是 `→ 下一动作：…`（M691 统一过），`#check` 条目用 `）→ 真机复跑…`
-// 的简写；`出口：` / `关闭条件` 是新条目的显式口径。箭头后面必须是空白——中文行文里的
-// `关→再开` 这类内联箭头不是出口标记（否则判据退化成「含箭头就放行」，REVIEW.md「断言等价于
-// 子串，没有区分度」条）。
-const EXIT_RE = /下一动作[:：]|出口[:：]|关闭条件|→\s/;
-const REVIEW_RE = /复核[:：]|复核口径/;
+// 出口 / 复核标记：backlog 既有写法是 `→ 下一动作：…`（M691 统一过），`#check` 条目用
+// `）→ 真机复跑…` 的简写；`出口：` / `关闭条件：` / `复核：` 是新条目的显式口径。
+// 两条区分度要求（REVIEW.md「断言等价于子串，没有区分度」条）：
+//   1. 箭头后面必须是空白——中文行文里的 `关→再开` 这类内联箭头不是出口标记；
+//   2. 标记后必须至少有一个非空白内容字符——光写 `→ ` / `下一动作：` / `出口：` / `关闭条件` /
+//      `复核：` / `复核口径` 不构成出口，否则「活项缺下一动作」可被空标记整条绕过（M692 r1 P2-1）。
+//      箭头后允许接一个显式标记（`→ 下一动作：…`），但该标记同样必须带内容。
+const EXIT_MARKERS = /(?:下一动作|出口|关闭条件)[:：]|→(?=\s)/g;
+const REVIEW_MARKERS = /复核口径[:：]|复核[:：]/g;
+// 标记链：`→ 下一动作：` / `→ 复核：` 这种「标记 + 标记」的写法，剥掉整条链后再看有没有内容
+//（否则 `→ 复核：` 会因为「复核」两个字被当成内容而放行）。
+const MARKER_CHAIN = /^(?:\s*(?:下一动作|出口|关闭条件|复核口径|复核)[:：])*\s*/;
 const CANONICAL_ROOTS = /^(docs|openspec|src|src-tauri|scripts|tests|demo|\.github)\//;
 const FINDING_PATH_TOKEN = /`\.tower\/comms\/findings\/([^`]+)`/g;
 const FINDING_SLUG_TOKEN = /\bfinding\s+`([0-9]{8}-[a-z0-9-]+)(?:\.md)?`/g;
@@ -87,7 +95,17 @@ export function countLines(text) {
   return parts.length;
 }
 
-const hasExit = (text) => EXIT_RE.test(text);
+// 标记本身不算内容：剥掉「箭头 + 链式标记」后必须还剩非空白字符。
+function hasMarkerContent(text, markerRe) {
+  for (const m of text.matchAll(markerRe)) {
+    const tail = text.slice(m.index + m[0].length).replace(MARKER_CHAIN, '');
+    if (/\S/.test(tail)) return true;
+  }
+  return false;
+}
+
+export const hasExit = (text) => hasMarkerContent(text, EXIT_MARKERS);
+export const hasReview = (text) => hasMarkerContent(text, REVIEW_MARKERS);
 
 // `src/foo.ts:12-34` / `docs/x.md` 这类仓内路径；剥掉行号后缀与尾斜杠。
 export function canonicalPath(token) {
@@ -190,7 +208,7 @@ export function checkBacklog(text, options = {}) {
         }
         if (!hasExit(body)) {
           noExit++;
-          add('missing-exit', line, '活项缺少出口——没有「下一动作：」/「出口：」/「关闭条件」/「→」，条目无法判定何时关闭');
+          add('missing-exit', line, '活项缺少出口——没有带内容的「下一动作：」/「出口：」/「关闭条件：」/「→」（标记后必须至少有一个非空白字符），条目无法判定何时关闭');
         }
       }
 
@@ -198,15 +216,16 @@ export function checkBacklog(text, options = {}) {
         recordEntries++;
         const withExit = hasExit(body);
         if (withExit) recordWithExit++;
-        if (REVIEW_RE.test(body)) recordWithReview++;
+        const withReview = hasReview(body);
+        if (withReview) recordWithReview++;
         const pointers = [...body.matchAll(/`([^`]+)`/g)].map((m) => canonicalPath(m[1])).filter(Boolean);
         for (const p of pointers) {
           if (!fs.existsSync(path.join(root, p))) {
             add('dead-canonical-pointer', line, `记录在案条目的 canonical 指针「${p}」不存在（死指针）——指向真实居所，或删除该条目`);
           }
         }
-        if (!withExit && pointers.length === 0 && !REVIEW_RE.test(body)) {
-          add('missing-record-home', line, '记录在案条目既无出口、也无 canonical 指针 / 复核口径——长期口径必须落到 canonical 居所（docs/ 或 openspec/）');
+        if (!withExit && pointers.length === 0 && !withReview) {
+          add('missing-record-home', line, '记录在案条目既无带内容的出口、也无 canonical 指针 / 复核口径（「复核：」后须有内容）——长期口径必须落到 canonical 居所（docs/ 或 openspec/）');
         }
       }
 
