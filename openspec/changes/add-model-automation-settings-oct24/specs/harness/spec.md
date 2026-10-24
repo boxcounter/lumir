@@ -8,7 +8,7 @@
 
 ### Requirement: 配置节 [harness]
 
-`config.json` SHALL 支持 `[harness]` 节：`provider`（闭集合 `kimi` / `deepseek` / `mock`）、`providers` 表（各 provider 的 `api_key` / `model` / `models`——元素 schema 见本文件「模型清单声明」条 / 可选 `base_url` / 可选 `wire_api`——闭集合 `responses` / `chat_completions`，缺省 `responses`；v1 仅 kimi 实现 chat 档，其余 provider 配置 chat 档 SHALL 回落 `responses` 并给 warning；mock 为 `fixture` 路径）、`permissions`（`allow` / `deny` 规则表）、`permission_mode`（闭集合 `read_only` / `vault_write` / `full_access`，默认 `vault_write`）、`loop_max`、`warn_ctx_pct`。校验 SHALL 沿用既有模板：缺字段回落默认不告警；闭集合取值非法回落默认 + 人话 warning；类型不符整文件回落（ADR 0002 §5）。运行期写回 SHALL 经泛化的 `config_set_value(section, key, value)`，`ui` 表既有行为不变；设置面板的模型 / 自动化写回 SHALL 走 `settings_apply`（见 `settings` capability 的「设置写通道」条），MUST NOT 复用本命令。
+`config.json` SHALL 支持 `[harness]` 节：`provider`（闭集合 `kimi` / `deepseek` / `mock`）、`providers` 表（各 provider 的 `api_key` / `model` / 可选 `base_url` / `models` 模型清单（元素 schema 见本文件「模型清单声明」条）/ 可选 `wire_api`——闭集合 `responses` / `chat_completions`，缺省 `responses`；v1 仅 kimi 实现 chat 档，其余 provider 配置 chat 档 SHALL 回落 `responses` 并给 warning；mock 为 `fixture` 路径）、`permissions`（`allow` / `deny` 规则表）、`permission_mode`（闭集合 `read_only` / `vault_write` / `full_access`，默认 `vault_write`）、`loop_max`、`warn_ctx_pct`、`auto_compact`（默认 `true`）、`session_naming` 表（会话自动命名，三键都可省：`enabled`——默认 `true`，关闭后不发起任何命名调用、不写标题记录；`provider`——可选 provider id，缺省 `null` = 命名调用发往会话当前 provider，非空须是 `providers` 表内的 id（闭集合 `kimi` / `deepseek` / `mock`），闭集合外取值 SHALL 回落 `null` 并给一条人话 warning；`model`——可选模型 id，缺省 `null` = 选定 provider 的生效模型，非空须在选定 provider 的 `models` 清单内声明，未声明 SHALL 回落 `null` 并给一条人话 warning；mock provider 无模型清单，`model` 只能为 `null`）。命名调用的 provider / 模型 / wire 方言 / `api_key` / `base_url` SHALL 同出一个 provider 条目。校验 SHALL 沿用既有模板：缺字段回落默认不告警；闭集合取值非法回落默认 + 人话 warning；类型不符整文件回落（ADR 0002 §5）。运行期写回 SHALL 经泛化的 `config_set_value(section, key, value)`，`ui` 表既有行为不变；设置面板的模型 / 自动化写回 SHALL 走 `settings_apply`（见 `settings` capability 的「设置写通道」条），MUST NOT 复用本命令。
 
 #### Scenario: 非法 provider 回落
 
@@ -24,6 +24,31 @@
 
 - **WHEN** 某 provider 的 `wire_api` 为闭集合外的值
 - **THEN** 启动不失败，该 provider 的方言回落 `responses` 并产生一条人话 warning；deepseek 配置 `chat_completions` 同样回落并告警（v1 未实现其 chat 档）
+
+#### Scenario: session_naming.model 未声明回落
+
+- **WHEN** `session_naming.model` 非空、但不在选定 provider 的 `models` 清单内（或 mock provider 下非空）
+- **THEN** 启动不失败，命名调用回落该 provider 的生效模型并产生一条人话 warning；`session_naming.model` 类型不符时整文件回落
+
+#### Scenario: session_naming.provider 指向其他 provider
+
+- **WHEN** `session_naming = { "provider": "deepseek", "model": "deepseek-flash" }`，而会话当前 provider 为 `kimi`，且 deepseek 条目已配置 `api_key` / `base_url` 并声明了该模型
+- **THEN** 命名调用按 deepseek 条目的 `api_key` / `base_url` / wire 方言发出，模型取 deepseek 的 `deepseek-flash`；会话本身的请求仍走 kimi，两类调用的 provider 不混用
+
+#### Scenario: 非法 session_naming.provider 回落
+
+- **WHEN** `session_naming.provider` 为 `providers` 表外的值（如 `"openai"`），或 `session_naming` 表的 provider 写成非字符串值
+- **THEN** 闭集合外取值时启动不失败，命名调用回落会话当前 provider 并产生一条人话 warning；类型不符时整文件回落（ADR 0002 §5 既有模板），回落后的 `session_naming.provider` 缺省（`null` = 会话当前 provider）
+
+#### Scenario: session_naming.enabled 缺省与类型不符
+
+- **WHEN** 配置未写 `session_naming`（或未写其中的 `enabled`），或把 `enabled` 写成非布尔值
+- **THEN** 未写时按默认 `true` 生效、不告警；类型不符时整文件回落（ADR 0002 §5 既有模板），回落后的 `enabled` 为 `true`
+
+#### Scenario: 旧命名键静默忽略
+
+- **WHEN** 配置里只写了旧键 `auto_title` / `title_provider` / `providers.<id>.title_model`（未写 `session_naming`）
+- **THEN** 旧键按未知键口径静默忽略（无 warning、无兼容读取），自动命名按 `session_naming` 缺省值运行（开、provider 跟随会话、模型取生效模型）
 
 #### Scenario: 切换写回持久化
 
