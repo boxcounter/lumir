@@ -108,7 +108,7 @@
 
 ### 工具链
 
-- `scripts/perf/keypress-to-paint.mjs`：启动 Chrome（`--headless=new --remote-debugging-port=0`，二进制路径取 `$CHROME_PATH`，默认 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`），经 DevToolsActivePort 文件发现 CDP 端口，用 Node 内置 `WebSocket` 直连 CDP；`Runtime.evaluate` 注入采样 hook，`Input.dispatchKeyEvent` 派发按键，取回 `window.__ktp` 样本数组。
+- `scripts/perf/keypress-to-paint.mjs`：启动 Chrome（`--headless=new --remote-debugging-port=0`，二进制路径取 `$CHROME_PATH`，默认 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`），带一次性 `--user-data-dir`（`mkdtemp` 临时目录，退出即删）与 `--use-mock-keychain --password-store=basic` 两项 Chromium 隔离开关——不读写用户浏览器的 profile / Cookie / Keychain（启动口径见 [tests/visual/README.md](../../tests/visual/README.md)「浏览器启动口径与 Chromium 隔离」）；经 DevToolsActivePort 文件发现 CDP 端口，用 Node 内置 `WebSocket` 直连 CDP；`Runtime.evaluate` 注入采样 hook，`Input.dispatchKeyEvent` 派发按键，取回 `window.__ktp` 样本数组。
 
 ### 采样口径
 
