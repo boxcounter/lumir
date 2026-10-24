@@ -117,6 +117,14 @@ import { createHarnessDraftStore } from "./harness-draft";
 import { createFollowController } from "./harness-scroll-lock";
 import type { FollowState } from "./harness-scroll-lock";
 import {
+  applyOverlayPlacement,
+  isLayoutCapable,
+  measureOverlayNaturalWidth,
+  overlayFontSize,
+  placeOverlay,
+} from "./overlay-placement";
+import type { OverlayTier } from "./overlay-placement";
+import {
   findPathCandidates,
   isWellFormedVaultPath,
   parseToolArgs,
@@ -5897,11 +5905,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (open) buildSelPop();
     selPop.hidden = !open;
     modelChip.setAttribute("aria-expanded", String(open));
+    // M702：打开时补一次夹取（此前完全没有——越 pane 的现场见 placeSelPop 注释）。
+    if (open) placeSelPop();
   }
 
   /** 浮层开着时重建设（三维读数随选择刷新；选定不关浮层，重建就是它刷新的方式）。 */
   function rebuildSelPopIfOpen(): void {
-    if (!selPop.hidden) buildSelPop();
+    if (selPop.hidden) return;
+    buildSelPop();
+    placeSelPop();
   }
 
   // ── 权限 chip 与浮层（M414）────────────────────────────────────────────────
@@ -6042,32 +6054,67 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     clampPermPop();
   }
 
-  /** 权限浮层的边界收编（O1/O2，docs/specs/overlay-visibility.md；与 clampCtxPop 同款手法）：
-   *  浮层锚在权限 chip 上（`left: 0` 向右展开、最小宽 208px），而控制行的 chip 位置随 model
-   *  名长短浮动、祖先 .lumir-harness 有 overflow:hidden——chip 靠右时浮层右缘会被祖先裁掉
-   *  （打开态的可见区域小于包围盒 = O1 违规）。翻出时按面板可视边界收编：先按最大宽度收窄
-   *  （inline width 同时压掉 CSS 的 min-width——多一条 min-width 会让「收窄」静默失效，
-   *  M414 首跑实证：浮层仍 208px 宽、收编退化成单侧平移），再两侧各留 8px 移位（CSS
-   *  translate）。先复位后量测，重复调用幂等；未越界时零干预（默认形态不变）。 */
+  /**
+   * 浮层宽度与落点的统一入口（M702，change overlay-width-contract-oct24 的 W3 / W4）：
+   * 「收窄 → 换边 → 平移」只在这里实现，ctxpop / permpop / effhint / selpop / sesspop 共用
+   * （此前是三份近似复制、两处完全没有夹取——REVIEW.md「同一语义两处真源」条）。
+   *
+   * 宽度先量自然宽（CSS 的 `width: max-content` + 档位 `max-width: <N>em`），再由纯函数
+   * `placeOverlay` 裁决；跑在面板可见态内，未越界时写回的宽与量到的自然宽相同——静态形态
+   * 不因本函数改变。宿主取 pane（`.lumir-harness` 有 overflow:hidden，越界即被裁）或视口
+   * （`position: fixed` 的会话浮层）。
+   */
+  function placePop(
+    el: HTMLElement,
+    opts: {
+      tier: OverlayTier;
+      host: "pane" | "viewport";
+      preferred: "left" | "right";
+      leftOffset?: number;
+      rightOffset?: number;
+      minWidth?: number;
+    },
+  ): void {
+    // 单测的元素替身没有布局能力（无 style / 矩形）：定位在那一层不可观测，也不该由它断言。
+    if (!isLayoutCapable(el) || typeof panel.getBoundingClientRect !== "function") return;
+    const natural = measureOverlayNaturalWidth(el);
+    const hostRect =
+      opts.host === "pane" ? panel.getBoundingClientRect() : { left: 0, width: window.innerWidth };
+    const parent = el.parentElement;
+    const anchor =
+      parent !== null && typeof parent.getBoundingClientRect === "function"
+        ? parent.getBoundingClientRect()
+        : el.getBoundingClientRect();
+    const placement = placeOverlay({
+      tier: opts.tier,
+      natural,
+      host: hostRect.width,
+      hostLeft: hostRect.left,
+      fontSize: overlayFontSize(el),
+      anchor: { left: anchor.left, right: anchor.right },
+      preferred: opts.preferred,
+      leftOffset: opts.leftOffset,
+      rightOffset: opts.rightOffset,
+      minWidth: opts.minWidth,
+    });
+    applyOverlayPlacement(el, placement);
+  }
+
+  /** 权限浮层的边界收编（O1/O2 / W1–W4）：P 档、默认左锚（`left: 0`）向右展开。
+   *  旧形态的问题只有「缺可读上限、收窄靠手写」——现在宽度与换边 / 平移都走 placePop。 */
   function clampPermPop(): void {
-    permPop.style.translate = "";
-    permPop.style.width = "";
-    permPop.style.minWidth = "";
-    const panelRect = panel.getBoundingClientRect();
-    const maxWidth = Math.max(140, panelRect.width - 16);
-    if (permPop.offsetWidth > maxWidth) {
-      permPop.style.minWidth = "0";
-      permPop.style.width = `${maxWidth}px`;
-    }
-    const popRect = permPop.getBoundingClientRect();
-    const inset = 8;
-    let shift = 0;
-    if (popRect.left < panelRect.left + inset) {
-      shift = panelRect.left + inset - popRect.left;
-    } else if (popRect.right > panelRect.right - inset) {
-      shift = panelRect.right - inset - popRect.right;
-    }
-    if (shift !== 0) permPop.style.translate = `${shift}px 0`;
+    placePop(permPop, { tier: "prose", host: "pane", preferred: "left" });
+  }
+
+  /** 合并选择器浮层（L 档）：此前完全没有夹取——2.13 档 + 320px pane 实测越出面板 85px
+   *  并被祖先裁掉（M698 §3.4）。 */
+  function placeSelPop(): void {
+    placePop(selPop, { tier: "list", host: "pane", preferred: "left" });
+  }
+
+  /** effort 不支持 hint（P 档）：与 ctxpop 同款，此前定宽 224px、没有夹取。 */
+  function placeEffHint(): void {
+    placePop(effHint, { tier: "prose", host: "pane", preferred: "left" });
   }
 
   /** 选择权限档：chip 先更新读数（chip = 人侧可见面），写回失败则回滚——与 selectProvider
@@ -6165,7 +6212,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // effort 不支持的 hover hint：mouseenter 读数翻出（仅置灰态），mouseleave 收回——
   // 与 ctx 读数 hover 泡同一形态（M370）。键盘用户无 hover：不支持语义已由读屏名（D390）承担。
   effReading.addEventListener("mouseenter", () => {
-    if (effReading.classList.contains("is-disabled")) effHint.hidden = false;
+    if (!effReading.classList.contains("is-disabled")) return;
+    effHint.hidden = false;
+    // M702：翻出后按 pane 收编（此前定宽 224px、没有任何夹取）。
+    placeEffHint();
   });
   effReading.addEventListener("mouseleave", () => {
     effHint.hidden = true;
@@ -6325,25 +6375,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
-  /** hover 泡水平收编（M378，hint 显示不全的根因修复）：浮层默认锚 right:-18px、宽 224px，
-   *  向左探出 ~206px，祖先 .lumir-harness 有 overflow:hidden——面板窄时左缘被裁。翻出时
-   *  按面板可视边界收编：超宽先收窄（width），再两侧各留 8px 移位（CSS translate）。
-   *  先复位后量测，重复调用幂等；未越界时零干预（translate / width 均不动，默认形态不变）。 */
+  /** hover 泡边界收编（M378 起；M702 改走统一入口）：默认锚 `right: -18px`、P 档内容驱动
+   *  + 34em 上限，祖先 `.lumir-harness` 有 overflow:hidden——窄 pane 下先收窄、再换边、
+   *  最后才平移。旧形态「定宽 224 + 只缩不放」让真实读数与放大档必折行（M698 §3.2）。 */
   function clampCtxPop(): void {
-    ctxPop.style.translate = "";
-    ctxPop.style.width = "";
-    const panelRect = panel.getBoundingClientRect();
-    const maxWidth = Math.max(120, panelRect.width - 16);
-    if (ctxPop.offsetWidth > maxWidth) ctxPop.style.width = `${maxWidth}px`;
-    const popRect = ctxPop.getBoundingClientRect();
-    const inset = 8;
-    let shift = 0;
-    if (popRect.left < panelRect.left + inset) {
-      shift = panelRect.left + inset - popRect.left;
-    } else if (popRect.right > panelRect.right - inset) {
-      shift = panelRect.right - inset - popRect.right;
-    }
-    if (shift !== 0) ctxPop.style.translate = `${shift}px 0`;
+    placePop(ctxPop, { tier: "prose", host: "pane", preferred: "right", rightOffset: 18 });
   }
 
   // hover 浮层（M370 形态，M373 扩内容，M378 两行带值 + 边界收编）：mouseenter 读数翻出
@@ -6357,6 +6393,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   ctxWrap.addEventListener("mouseleave", () => {
     ctxPop.hidden = true;
   });
+
+  /** W6：pane / 视口尺寸变化后，仍打开的浮层重新夹取（幂等；隐藏的浮层不动）。
+   *  拖分隔条 / 窗口缩放都落在这里——旧实现只在翻出的那一刻算一次，pane 收窄后已开的浮层
+   *  会停在越界位置（`.lumir-harness` 的 overflow:hidden 会把越界部分裁掉）。面板单例长驻，
+   *  观察器在构造期注册、不随 attach / detach 增删（同 transcriptResize 的口径）。 */
+  function reclampOpenOverlays(): void {
+    if (!panel.isConnected || panel.hidden) return;
+    if (!ctxPop.hidden) clampCtxPop();
+    if (!permPop.hidden) clampPermPop();
+    if (!selPop.hidden) placeSelPop();
+    if (!effHint.hidden) placeEffHint();
+    if (!sessPop.hidden) placeSessPop();
+  }
+  const overlayResize = new ResizeObserver(() => reclampOpenOverlays());
+  overlayResize.observe(panel);
+  window.addEventListener("resize", () => reclampOpenOverlays());
 
   /** 发送钮相位施加：机器算出的每个新相位经这一处落 DOM（glyph 显隐 / 可读名 / 可点性 /
    *  进度条显隐），不第二处写按钮。running = 可点（点击 = 停止）；stopping = 禁用（连点幂等）。
@@ -9625,26 +9677,26 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     buildSessList(sessPopSeq);
   }
 
-  /** 会话浮层定位（M397）：浮层是 `position: fixed`（见 harness-panel.css 的同名规则），坐标按
-   *  **会话名钮的视口矩形**现算，并夹在视口内——不变量是「浮层包围盒完整落在视口内、且不被任何
-   *  祖先容器的 overflow 裁切」（docs/specs/overlay-visibility.md）。**揭示之后、清单已填充时
-   *  算一次**（调用点在 buildSessList 的 .then 里、applySessPop(true) 之后）：M442 起浮层只在
-   *  清单非空时揭示，揭示与定位因此同处「清单已就位」这一个时刻——显示与定位在同一次同步任务内
-   *  完成、中间不落空内容帧，纵向夹取也按最终高度一次算准（不再有「先按空盒夹、填清单后再重夹」
-   *  的两段，M397 r1 P2-1 的旧形态随之消失）。浮层是瞬时形态（点浮层外 / Esc / 选中即关），其
-   *  生命周期内不发生窗口尺寸变化，故不挂 resize 监听（与 vault 切换浮层同口径）。纵向 4px
-   *  沿用原 CSS `top: 30px` 减去钮高 26 的实测间距。 */
+  /** 会话浮层定位（M397；M702 起宽度与横向落点走统一入口）：浮层是 `position: fixed`
+   *  （见 harness-panel.css 的同名规则），坐标按**会话名钮的视口矩形**现算，并夹在视口内
+   *  ——不变量是「浮层包围盒完整落在视口内、且不被任何祖先容器的 overflow 裁切」
+   *  （docs/specs/overlay-visibility.md）。**揭示之后、清单已填充时算一次**（调用点在
+   *  buildSessList 的 .then 里、applySessPop(true) 之后）：M442 起浮层只在清单非空时揭示，
+   *  揭示与定位因此同处「清单已就位」这一个时刻——显示与定位在同一次同步任务内完成、中间
+   *  不落空内容帧，纵向夹取也按最终高度一次算准。宽度取 L 档（内容驱动 + 26em + 200px 下限），
+   *  旧定值 200px 在 2.13 档把名字裁掉 81%（M698 §3.3）；pane / 视口尺寸变化后的重夹见
+   *  reclampOpenOverlays。纵向 4px 沿用原 CSS `top: 30px` 减去钮高 26 的实测间距。 */
   function placeSessPop(): void {
     const gap = 4;
     const margin = 8;
+    // 宽度 + 横向落点（M702，L 档）：内容驱动 + 26em 上限，由 placePop 收窄并夹进视口。
+    // 宿主是**视口**——浮层是 position: fixed，包含块不落在任何裁切祖先里（O3），
+    // 与 pane 无关。横向仍与钮左缘对齐、右端不越出视口：placePop 的位移最小规则给出同形结果。
+    placePop(sessPop, { tier: "list", host: "viewport", preferred: "left" });
     const rect = sessionButton.getBoundingClientRect();
-    const w = sessPop.offsetWidth;
     const h = sessPop.offsetHeight;
-    // 横向：与钮左缘对齐，右端不越出视口；钮贴右缘时左移让整盒留在视口内。
-    const left = Math.min(Math.max(rect.left, margin), Math.max(margin, window.innerWidth - w - margin));
     // 纵向：钮下沿之下，下端不越出视口（长历史清单由 .lumir-hp-sesspop-list 的 max-height 兜住）。
     const top = Math.min(rect.bottom + gap, Math.max(margin, window.innerHeight - h - margin));
-    sessPop.style.left = `${left}px`;
     sessPop.style.top = `${top}px`;
   }
 

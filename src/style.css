@@ -2051,7 +2051,13 @@ body {
   z-index: 15;
   display: flex;
   flex-direction: column;
-  width: 300px;
+  /* 宽度（M702，change overlay-width-contract-oct24 的 L 档）：内容上限 26em，字体基准取
+     行文本字号（--fs-ui-s = 12.5px，故 26em = 325px）——M698 实测典型 48 字符 vault 路径
+     固有宽 302px，旧定值 300px 恰好裁掉 8.8%（文件名尾段）。右侧留 14px 与左端 --sp-7 对称，
+     窗口比浮层窄时按 100vw 收窄、不越出窗口。列表宽度 MUST NOT 随输入逐帧抖动：
+     深层路径的超长部分由行的两段结构（目录前缀可省略 + 文件名完整）承担。 */
+  width: min(26em, calc(100vw - 28px));
+  font-size: var(--fs-ui-s);
   max-height: 80vh;
   padding: var(--sp-3) 0 0;
   background: var(--preview-bg);
@@ -2174,6 +2180,38 @@ body {
   color: var(--text-3);
   font-size: var(--fs-label);
 }
+/* 快速打开行的路径两段（M702，change overlay-width-contract-oct24 design §4 / W5）：
+   目录前缀先收缩、**文件名整体不先裁**——旧的单行尾省略会把文件名（路径的身份主体）
+   整段吃掉（M698 实测：77 字符深层路径裁 42.5%，文件名消失）。两段拼接后的 textContent
+   仍是完整相对路径，匹配语义与既有逐条文本断言不变；放不下时目录前缀出省略号
+   （`notes/2026/…/name.md` 的中间折叠形态），文件名只在目录归零后才截——那是 title
+   兜底前的最后一级，不是设计意图。shrink 比 999 : 1 是「先收谁」的唯一表达。 */
+.lumir-qo-item,
+.lumir-qo-direct-path {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.lumir-qo-dirs {
+  flex: 0 999 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lumir-qo-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 直接打开行的动作文本前缀（「按 Enter 打开」）与落点标记外的尾串不参与收缩。 */
+.lumir-qo-prefix,
+.lumir-qo-suffix {
+  flex: none;
+  white-space: nowrap;
+}
 /* eink：选中项的前景取 `--sel-text`（当前段与键盘游标同底色，同一条规则）。
    M291 起不再排除 `:hover`（理由同 .ft-row.is-current：黑字下两种状态都可读）。 */
 :root[data-theme="eink"] .lumir-toc-item.is-current,
@@ -2270,7 +2308,9 @@ body {
   z-index: 15;
   display: flex;
   flex-direction: column;
-  width: 320px;
+  /* L 档（M702）：约定宽 320px + 视口夹取——窗口能缩到比浮层窄（本仓无最小窗口尺寸），
+     旧定值会越出窗口右缘。 */
+  width: min(320px, calc(100vw - 16px));
   max-height: 60vh;
   padding: var(--sp-3);
   background: var(--preview-bg);

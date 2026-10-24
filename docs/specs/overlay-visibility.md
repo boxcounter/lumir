@@ -5,7 +5,10 @@
 > [../process/rendering-defect-contract-first.md](../process/rendering-defect-contract-first.md)——
 > 定位到本文件某一条、配不变量级属性测试，两者与修复同 PR。
 > 浮层的**外观**（阴影 / 描边 / 圆角 / elevation 配方）不在本文件，见
-> [design-tokens-v1.md](design-tokens-v1.md) §浮层 elevation 与遮罩。本文件只管**可见性**。
+> [design-tokens-v1.md](design-tokens-v1.md) §浮层 elevation 与遮罩。**宽度与可读宽度**（三档、
+> em 上限、换边 / 平移、截断方向）也不在本文件，见 `openspec/specs/ui-design-system` 的
+> 「浮层宽度分档与可读宽度注册表」条（change `overlay-width-contract-oct24` 的 delta）。
+> 本文件只管**可见性**。
 
 ## 适用范围
 

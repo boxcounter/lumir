@@ -24,6 +24,8 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { declValues, parseCss } from "./css-rules.ts";
+import type { CssRule } from "./css-rules.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -96,76 +98,8 @@ const REGISTRY: RegistryEntry[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// 解析层
+// 解析层（机制在 `css-rules.ts`，与浮层宽度注册表共用同一份读法）
 // ---------------------------------------------------------------------------
-
-interface Decl {
-  prop: string;
-  value: string;
-}
-
-interface CssRule {
-  selector: string;
-  selectors: string[];
-  decls: Decl[];
-  source: string;
-}
-
-/** 注释剔除但保留换行：`/* … *\/` 里的 `overflow: auto` 不是声明（style.css 的注释里就有）。 */
-export function stripCssComments(css: string): string {
-  return css.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
-}
-
-/** 逗号切选择器，尊重括号（`:not(a, b)` / `:has(> .x)`）。 */
-export function splitSelectors(selector: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let buf = "";
-  for (const ch of selector) {
-    if (ch === "(" || ch === "[") depth++;
-    else if (ch === ")" || ch === "]") depth--;
-    if (ch === "," && depth === 0) {
-      out.push(buf.trim());
-      buf = "";
-    } else buf += ch;
-  }
-  if (buf.trim()) out.push(buf.trim());
-  return out.filter(Boolean);
-}
-
-function parseDecls(body: string): Decl[] {
-  return body
-    .split(";")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((d) => {
-      const i = d.indexOf(":");
-      return i < 0 ? { prop: d, value: "" } : { prop: d.slice(0, i).trim(), value: d.slice(i + 1).trim() };
-    });
-}
-
-/** 扁平化 CSS：`@media` / `@supports` 里的规则照收（被扫的三个文件里确有嵌套），at-rule 自身不收。 */
-export function parseCss(text: string, source: string): CssRule[] {
-  const src = stripCssComments(text);
-  const rules: CssRule[] = [];
-  const stack: string[] = [];
-  let buf = "";
-  for (const ch of src) {
-    if (ch === "{") {
-      stack.push(buf.trim());
-      buf = "";
-    } else if (ch === "}") {
-      const head = stack.pop() ?? "";
-      if (head && !head.startsWith("@")) {
-        rules.push({ selector: head, selectors: splitSelectors(head), decls: parseDecls(buf), source });
-      }
-      buf = "";
-    } else {
-      buf += ch;
-    }
-  }
-  return rules;
-}
 
 interface ThemeOverflow {
   selector: string;
@@ -281,20 +215,6 @@ function scrollContainers(world: World): Map<string, ScrollContainer> {
     add(d.selector, d.prop, d.value, "src/preview/theme.ts");
   }
   return found;
-}
-
-function rulesFor(rules: CssRule[], selector: string): CssRule[] {
-  return rules.filter((r) => r.selectors.includes(selector));
-}
-
-/** 同一 selector 上某属性的**全部**声明（按文档顺序）。多于一条 = 同一语义有两处真源，
- * 判据必须看见它——只取第一条会把「某消费者又抄了一份值」判成绿。 */
-function declValues(rules: CssRule[], selector: string, prop: string): { value: string; rule: CssRule }[] {
-  const out: { value: string; rule: CssRule }[] = [];
-  for (const rule of rulesFor(rules, selector)) {
-    for (const d of rule.decls) if (d.prop === prop) out.push({ value: d.value, rule });
-  }
-  return out;
 }
 
 function declValue(rules: CssRule[], selector: string, prop: string): { value: string; rule: CssRule } | null {
