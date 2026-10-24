@@ -49,7 +49,7 @@
 | D60 | toast 崩溃备份已恢复 | 作者 | 已恢复未保存内容，请保存（Cmd+S） | Unsaved content restored; press Cmd+S to save | 恢复后内容仍在内存缓冲，说明下一步动作。 |
 | D61 | toast 崩溃备份已丢弃 | 作者 | 已丢弃崩溃备份 | Crash backup discarded | 确认清理完成，提示不再出现。 |
 | D62 | toast 崩溃备份不存在 | 作者 | 崩溃备份已不存在 | The crash backup no longer exists | 用户恢复前备份已被别处清理，说明原因而非报错。 |
-| D63 | 键位面板标题 | 作者 | 键位（生效中） | Key bindings (active) | 明确列出的是当前生效的表（含配置覆盖），不是文档里的默认表。 |
+| D63 | 键位速查面板标题 | 作者 | 键位速查（生效中） | Keyboard shortcuts (active) | change improve-keybindings-lookup-oct24：措辞改为「键位速查（生效中）」——明确列出的是当前生效的表（含配置覆盖），不是文档里的默认表。 |
 | D64 | 键位面板分组标题 | 作者 | 移动与选择 / 扩选 / 删除 / kill-yank / 翻屏 / 撤销 / 列表缩进 / 块 / widget / 标签 / 全局 / 其他 | Movement & selection / Extend selection / Deletion / kill-yank / Scrolling / Undo / List indent / Blocks / Widget / Tabs / Global / Other | 按功能族分组便于扫读；「其他」是未归组命令的兜底，不让任何命令从视野里消失。 |
 | D65 | 键位面板未绑定标注 | 作者 | 未绑定 | Unbound | 被配置解绑的命令仍在面板里，标注它当前没有键位指向。 |
 | D66 | 键位面板未绑定的行说明 | 作者 | 默认不占键位（有意如此）——可在 [keys] 里绑定 / 已被配置解绑——可在 [keys] 里重新绑定 | Not bound by default — bind one in [keys] / Unbound in config — rebind it in [keys] | M180 扩写：两种成因**分开展示**并各自指出下一步。此前是一句「当前没有键位指向它（配置解绑或尚未绑定）」，把「有意不占键位」读成「尚未绑定」这种过渡态——用户看不出这是设计决定还是坏了，而这正是新命令（折行开关）的常态。编号沿用不改（先例：D86 于 M160 扩写）。 |
@@ -572,11 +572,119 @@
 | D591 | 快速打开 · 直接打开行的落点行标记 | 作者 | 第 {行号} 行 | Line {line} | M700：`path:行` 的直接行在路径之后追加这一段（第二个 span，不是拼进 D589 / D590 的模板——两段各有自己的可见形态，拼接会把格式逻辑塞进代码）。落点是后缀的起始行（`:起-止` 取起，与既有 `LINE_SUFFIX` 语义同一份）。消费点 `quickOpenDirectLineText`。 |
 | D592 | 快速打开 · 折叠多命中的两段式提示 | 作者 | 匹配到多个文件，用 ↑↓ 选择后按 Enter 打开 | This matches several files — use ↑↓ to pick one, then press Enter | M700：折叠等值多命中（`A.MD` 命中 `A.md` / `a.md`）时第一次 Enter **只揭示候选、不打开**（spec「MUST NOT 猜」），第二次 Enter 才打开游标行。此前这一格是键盘死路（`ambiguous` 分支提前 return，怎么按都不开）。消费点 `QUICK_OPEN_AMBIGUOUS`。 |
 
+### 键位速查（change improve-keybindings-lookup-oct24）
+
+71 条命令的人类标签 + 面板 UI。标签由 `src/command-meta.ts` 的 `COMMAND_META` 逐条引用；`tab.goto-1..9` 共用 D655 的 `{n}` 模板。标签是命令的「人类名」，新增命令必须同批写标签（`tests/unit/command-meta.test.ts` 键集对账）。
+
+| 编号 | 位置 | 角色 | 中文 | English | 设计意图 |
+| --- | --- | --- | --- | --- | --- |
+| D593 | 键位速查 · 命令标签 | 作者 | 上移一行 | Move up one line | 命令的人类标签；中英两列都进搜索语料。 |
+| D594 | 键位速查 · 命令标签 | 作者 | 下移一行 | Move down one line | 同上。 |
+| D595 | 键位速查 · 命令标签 | 作者 | 前移一个字符 | Move forward one character | 同上。 |
+| D596 | 键位速查 · 命令标签 | 作者 | 后移一个字符 | Move backward one character | 同上。 |
+| D597 | 键位速查 · 命令标签 | 作者 | 移到行首 | Move to line start | 同上。 |
+| D598 | 键位速查 · 命令标签 | 作者 | 移到行尾 | Move to line end | 同上。 |
+| D599 | 键位速查 · 命令标签 | 作者 | 全选 | Select all | 同上。 |
+| D600 | 键位速查 · 命令标签 | 作者 | 撤销 | Undo | 同上。 |
+| D601 | 键位速查 · 命令标签 | 作者 | 重做 | Redo | 同上。 |
+| D602 | 键位速查 · 命令标签 | 作者 | 删除后一个字符 | Delete the next character | 同上。 |
+| D603 | 键位速查 · 命令标签 | 作者 | 删除前一个字符 | Delete the previous character | 同上。 |
+| D604 | 键位速查 · 命令标签 | 作者 | 交换相邻字符 | Transpose characters | 同上。 |
+| D605 | 键位速查 · 命令标签 | 作者 | 删除后一个词 | Delete the next word | 同上。 |
+| D606 | 键位速查 · 命令标签 | 作者 | 删除前一个词 | Delete the previous word | 同上。 |
+| D607 | 键位速查 · 命令标签 | 作者 | 剪切到行尾 | Kill to line end | 同上。 |
+| D608 | 键位速查 · 命令标签 | 作者 | 粘贴（yank） | Paste (yank) | 同上。 |
+| D609 | 键位速查 · 命令标签 | 作者 | 取消选择 | Cancel selection | 同上。 |
+| D610 | 键位速查 · 命令标签 | 作者 | 向下翻页 | Scroll down one page | 同上。 |
+| D611 | 键位速查 · 命令标签 | 作者 | 向上翻页 | Scroll up one page | 同上。 |
+| D612 | 键位速查 · 命令标签 | 作者 | 光标居中 | Center the cursor | 同上。 |
+| D613 | 键位速查 · 命令标签 | 作者 | 跳到指定行 | Go to a line | 同上。 |
+| D614 | 键位速查 · 命令标签 | 作者 | 扩选后一个字符 | Extend selection one character forward | 同上。 |
+| D615 | 键位速查 · 命令标签 | 作者 | 扩选前一个字符 | Extend selection one character backward | 同上。 |
+| D616 | 键位速查 · 命令标签 | 作者 | 向下扩选一行 | Extend selection down one line | 同上。 |
+| D617 | 键位速查 · 命令标签 | 作者 | 向上扩选一行 | Extend selection up one line | 同上。 |
+| D618 | 键位速查 · 命令标签 | 作者 | 扩选到行首 | Extend selection to line start | 同上。 |
+| D619 | 键位速查 · 命令标签 | 作者 | 扩选到行尾 | Extend selection to line end | 同上。 |
+| D620 | 键位速查 · 命令标签 | 作者 | 向后扩选一个词 | Extend selection one word forward | 同上。 |
+| D621 | 键位速查 · 命令标签 | 作者 | 向前扩选一个词 | Extend selection one word backward | 同上。 |
+| D622 | 键位速查 · 命令标签 | 作者 | 缩进列表项 | Indent list item | 同上。 |
+| D623 | 键位速查 · 命令标签 | 作者 | 凸排列表项 | Outdent list item | 同上。 |
+| D624 | 键位速查 · 命令标签 | 作者 | 复制整块 | Copy the whole block | 同上。 |
+| D625 | 键位速查 · 命令标签 | 作者 | 聚焦块滚动区 | Focus the block scroll area | 同上。 |
+| D626 | 键位速查 · 命令标签 | 作者 | 块滚动到左侧 | Scroll the block left | 同上。 |
+| D627 | 键位速查 · 命令标签 | 作者 | 块滚动到右侧 | Scroll the block right | 同上。 |
+| D628 | 键位速查 · 命令标签 | 作者 | 块滚动到开头 | Scroll the block to the start | 同上。 |
+| D629 | 键位速查 · 命令标签 | 作者 | 块滚动到末尾 | Scroll the block to the end | 同上。 |
+| D630 | 键位速查 · 命令标签 | 作者 | 退出块滚动区 | Leave the block scroll area | 同上。 |
+| D631 | 键位速查 · 命令标签 | 作者 | 保存文件 | Save file | 同上。 |
+| D632 | 键位速查 · 命令标签 | 作者 | 打开链接 | Follow link | 同上。 |
+| D633 | 键位速查 · 命令标签 | 作者 | 键位速查 | Keyboard shortcuts | 同上。 |
+| D634 | 键位速查 · 命令标签 | 作者 | 文件内查找 | Find in file | 同上。 |
+| D635 | 键位速查 · 命令标签 | 作者 | 快速打开文件 | Quick open file | 同上。 |
+| D636 | 键位速查 · 命令标签 | 作者 | 打开大纲 | Toggle outline | 同上。 |
+| D637 | 键位速查 · 命令标签 | 作者 | 切换 vault | Switch vault | 同上。 |
+| D638 | 键位速查 · 命令标签 | 作者 | 表格全屏 | Fullscreen table | 同上。 |
+| D639 | 键位速查 · 命令标签 | 作者 | 代码块全屏 | Fullscreen code block | 同上。 |
+| D640 | 键位速查 · 命令标签 | 作者 | 切换折行 | Toggle line wrap | 同上。 |
+| D641 | 键位速查 · 命令标签 | 作者 | 切换代码块折行 | Toggle code block wrap | 同上。 |
+| D642 | 键位速查 · 命令标签 | 作者 | 放大文字 | Increase text size | 同上。 |
+| D643 | 键位速查 · 命令标签 | 作者 | 缩小文字 | Decrease text size | 同上。 |
+| D644 | 键位速查 · 命令标签 | 作者 | 重置字号 | Reset text size | 同上。 |
+| D645 | 键位速查 · 命令标签 | 作者 | 切换主题 | Cycle theme | 同上。 |
+| D646 | 键位速查 · 命令标签 | 作者 | 切换界面语言 | Cycle interface language | 同上。 |
+| D647 | 键位速查 · 命令标签 | 作者 | 收起或展开左栏 | Collapse or expand the sidebar | 同上。 |
+| D648 | 键位速查 · 命令标签 | 作者 | 打开或收起对话面板 | Toggle the chat panel | 同上。 |
+| D649 | 键位速查 · 命令标签 | 作者 | 拆分窗格 | Split pane | 同上。 |
+| D650 | 键位速查 · 命令标签 | 作者 | 切到另一个窗格 | Focus the other pane | 同上。 |
+| D651 | 键位速查 · 命令标签 | 作者 | 关闭窗格 | Close pane | 同上。 |
+| D652 | 键位速查 · 命令标签 | 作者 | 关闭标签 | Close tab | 同上。 |
+| D653 | 键位速查 · 命令标签 | 作者 | 下一个标签 | Next tab | 同上。 |
+| D654 | 键位速查 · 命令标签 | 作者 | 上一个标签 | Previous tab | 同上。 |
+| D655 | 键位速查 · 命令标签（模板） | 作者 | 跳到第 {n} 个标签 | Go to tab {n} | 九条 `tab.goto-N` 共用；序号经 `labelParams` 传入。 |
+| D657 | 键位速查 · 查询框读屏名 | 作者 | 查找命令 | Find a command | 显式 label（视觉隐藏），读屏能听出输入框用途。 |
+| D658 | 键位速查 · 查询框占位 | 作者 | 输入命令名称或键位 | Type a command name or key | 可发现性的主要出口：打开即看见「这里填什么」。 |
+| D659 | 键位速查 · 捕获按钮 | 作者 | 捕获按键 | Capture keys | 显式进入捕获态；不在输入框里自动吞键。 |
+| D660 | 键位速查 · 捕获按钮（等待态） | 作者 | 取消捕获 | Cancel capture | 按钮在等待态变成取消出口。 |
+| D661 | 键位速查 · 捕获等待提示 | 作者 | 按下组合键…（Esc 取消） | Press a key combination… (Esc to cancel) | 等待态的状态行 + 唯一退出键。 |
+| D662 | 键位速查 · 已捕获前缀 | 作者 | 已捕获 | Captured | 已捕获态的字形 chip 前的状态词。 |
+| D663 | 键位速查 · 清除捕获 | 作者 | 清除 | Clear | 已捕获态的清除钮（只清捕获，面板保持打开）。 |
+| D664 | 键位速查 · 空查询计数 | 作者 | {count} 条命令 · {groups} 组 | {count} commands · {groups} groups | 分母是**当前作用域筛选后**的命令数与组数。 |
+| D665 | 键位速查 · 查询计数 | 作者 | 命中 {count} / {total} | {count} of {total} match | `{total}` 是当前作用域筛选后的命令数，MUST NOT 固定为全量。 |
+| D666 | 键位速查 · 捕获计数 | 作者 | 按键 {glyph} · 命中 {count} | Key {glyph} · {count} matches | 捕获进入时作用域已重置为全部。 |
+| D667 | 键位速查 · 作用域组读屏名 | 作者 | 按作用域筛选 | Filter by scope | `role=radiogroup` 的名字。 |
+| D668 | 键位速查 · 作用域筛选 | 作者 | 全部 | All | 默认档；显示全部作用域。 |
+| D669 | 键位速查 · 作用域标签 | 作者 | 全局 | Global | 与 `SCOPE_LABEL_KEYS` 同源。 |
+| D670 | 键位速查 · 作用域标签 | 作者 | 编辑器 | Editor | 同上。 |
+| D671 | 键位速查 · 作用域标签 | 作者 | 文本 | Text | 同上。 |
+| D672 | 键位速查 · 作用域说明 | 作者 | 任意焦点下都生效 | Works with focus anywhere | 详情里的一句解释。 |
+| D673 | 键位速查 · 作用域说明 | 作者 | 焦点在编辑器内时生效 | Works when focus is in the editor | 同上。 |
+| D674 | 键位速查 · 作用域说明 | 作者 | 焦点在编辑器或对话输入框内时生效 | Works when focus is in the editor or the chat composer | 同上。 |
+| D675 | 键位速查 · 条件全文 | 作者 | 仅在块级横滚容器自身持有焦点时生效 | Only applies when the block's scroll container itself has focus | 绑定 `whenKey`（详情全文）；与函数同生同灭。 |
+| D676 | 键位速查 · 条件短徽标 | 作者 | 仅块滚动 | Block scroll only | 绑定 `whenShortKey`（行内）；MUST NOT 从全文截断。 |
+| D677 | 键位速查 · 查询空态标题 | 作者 | 没有匹配的命令 | No commands match | 按成因分开的空态之一。 |
+| D678 | 键位速查 · 查询空态说明 | 作者 | 试试命令标签、别名或 id | Try a command label, alias, or id | 给出下一步（来由不进语料，别让人试 mission 编号）。 |
+| D679 | 键位速查 · 查询空态动作 | 作者 | 清除查询 | Clear query | 空态动作钮。 |
+| D680 | 键位速查 · 捕获空态标题 | 作者 | 没有命令使用这个键位 | No command uses this key | 按成因分开的空态之二。 |
+| D681 | 键位速查 · 捕获空态说明 | 作者 | 换一个键，或用文本查找命令 | Try another key, or find the command by text | 下一步。 |
+| D682 | 键位速查 · 作用域空态标题 | 作者 | 这个作用域下没有命令 | No commands in this scope | 按成因分开的空态之三。 |
+| D683 | 键位速查 · 作用域空态说明 | 作者 | 切回「全部」查看所有命令 | Switch back to All to see every command | 下一步。 |
+| D684 | 键位速查 · 详情字段名 | 作者 | 命令 id | Command id | 调试信息移进详情后仍在。 |
+| D685 | 键位速查 · 详情字段名 | 作者 | 原始键位 | Raw key token | 排查 `[keys]` 配置用。 |
+| D686 | 键位速查 · 详情字段名 | 作者 | 作用域 | Scope | 同上。 |
+| D687 | 键位速查 · 详情字段名 | 作者 | 条件 | Condition | `when` 全文的字段名。 |
+| D688 | 键位速查 · 详情字段名 | 作者 | 来由 | Rationale | 维护者来由只在这里出现。 |
+| D689 | 键位速查 · 详情字段名 | 作者 | 绑定方法 | How to bind | 未绑定行的下一步。 |
+| D690 | 键位速查 · 详情空值 | 作者 | 无 | None | 没有 `when` 时显示「无」，不伪造条件。 |
+| D691 | 键位速查 · 未绑定绑定示例 | 作者 | 在 config.json 的 [keys] 里加一条 "{key}": "{command}"，再重启应用 | Add "{key}": "{command}" under [keys] in config.json, then restart the app | 合成示例（不读用户真实配置），说清写路径。 |
+| D692 | 键位速查 · 底部键盘提示 | 作者 | ↑↓ 选择 · Enter 详情 · Tab 切换焦点 · PageUp/Down 翻页 · Esc 清除/关闭 · ⌃G 关闭 | ↑↓ select · Enter details · Tab focus · PageUp/Down page · Esc clear/close · ⌃G close | 键盘全程可用的可发现性出口。 |
+| D693 | 键位速查 · 标题状态 | 作者 | 含 [keys] 覆盖 | Includes [keys] overrides | 标题旁的状态词：生效表含配置覆盖。 |
+| D694 | 键位速查 · 结果列表读屏名 | 作者 | 命令列表 | Commands | `role=listbox` 的名字。 |
+
 ## 编号沿革
 
-**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D592**（M700 的 quick-open 结果区与 Enter 同源 D589–D592：直接打开行（vault 内 / vault 外只读）/ 落点行标记 / 折叠多命中的两段式提示（接 D588 末位；change quick-open-file-oct23 的「结果区与 Enter 的判决同源」）。M686 的引用路径解码失败文案 D588：`attachment_decode_failed` 在引用语境读「无法解码这张图片」，粘贴语境仍读 D438（接 D587 末位；change fix-quote-decode-error-copy-oct24）。M662 的 quote 链路一致性修复 D585–D587：引用路径格式不支持的措辞 / 未引用留痕 / 引用卡片的含图派生读数（接 D584 末位）。change quick-open-file-oct23 的 M655 文案 D570–D583：浮层读屏名 / 占位 / 用法行 / 找不到 / 目录 / 命中总数 / 超上限 / modeline 只读段 / 标签的只读图标与读屏名 / 外部不支持文件类 / 打开失败 / 未装载 vault + ⌘P 绑定来由；r1 评审补齐 D584 = 外部只读会话的「编辑尝试一次性提示」（同上裁决 ③ 的兑现，接 D583 末位）。change harness-permission-rules-oct23 的权限规则文案 D564–D569：持久规则次级动作 / 带粒度的会话记忆 / 浮层规则段标题 / 删除钮读屏名 + 两条写回错误兜底（接 M646 的 D563 末位）。M644 的 harness「回到底部」浮钮两条可访问名 D555–D556；M646 的 vault 列表移除文案 D557–D563：行尾移除钮读屏名 / 行内确认句 / 确认钮 / 已移除提示 / 撤销钮 + 后端两条错误的人话（接 M644 的 D556 末位）。M635 的通知送不出去文案 D551–D554：D551–D552 是注册回执的两档成因，D553–D554 是投递连续失败 toast 的两档；D548–D550 是 change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
+**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D694**（change improve-keybindings-lookup-oct24 的键位速查 D593–D694：71 条命令的人类标签 + 面板 UI（标题 / 查询 / 捕获 / 计数 / 作用域 / 条件 / 空态 / 详情 / 提示），接 M700 的 D592 末位。M700 的 quick-open 结果区与 Enter 同源 D589–D592：直接打开行（vault 内 / vault 外只读）/ 落点行标记 / 折叠多命中的两段式提示（接 D588 末位；change quick-open-file-oct23 的「结果区与 Enter 的判决同源」）。M686 的引用路径解码失败文案 D588：`attachment_decode_failed` 在引用语境读「无法解码这张图片」，粘贴语境仍读 D438（接 D587 末位；change fix-quote-decode-error-copy-oct24）。M662 的 quote 链路一致性修复 D585–D587：引用路径格式不支持的措辞 / 未引用留痕 / 引用卡片的含图派生读数（接 D584 末位）。change quick-open-file-oct23 的 M655 文案 D570–D583：浮层读屏名 / 占位 / 用法行 / 找不到 / 目录 / 命中总数 / 超上限 / modeline 只读段 / 标签的只读图标与读屏名 / 外部不支持文件类 / 打开失败 / 未装载 vault + ⌘P 绑定来由；r1 评审补齐 D584 = 外部只读会话的「编辑尝试一次性提示」（同上裁决 ③ 的兑现，接 D583 末位）。change harness-permission-rules-oct23 的权限规则文案 D564–D569：持久规则次级动作 / 带粒度的会话记忆 / 浮层规则段标题 / 删除钮读屏名 + 两条写回错误兜底（接 M646 的 D563 末位）。M644 的 harness「回到底部」浮钮两条可访问名 D555–D556；M646 的 vault 列表移除文案 D557–D563：行尾移除钮读屏名 / 行内确认句 / 确认钮 / 已移除提示 / 撤销钮 + 后端两条错误的人话（接 M644 的 D556 末位）。M635 的通知送不出去文案 D551–D554：D551–D552 是注册回执的两档成因，D553–D554 是投递连续失败 toast 的两档；D548–D550 是 change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
 
-**不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377、D508–D513、D521、D578（M660 #7：可见文字后缀被锁形图标取代，零消费者，按「变更默认直接切断」退场）。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
+**不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377、D508–D513、D521、D578（M660 #7：可见文字后缀被锁形图标取代，零消费者，按「变更默认直接切断」退场）、**D656（起草期占位：实现批改用 D63，保留空号，不复用）**。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
 
 **分配记录**（批 → D 区间；未登记的批按「只追加」接末位，编号碰撞裁决见 `docs/backlog.md`）：
 
@@ -664,7 +772,8 @@
 
 **D 区间 → 归属文件 / 常量**（其余单元测试按 deck 表格行逐字断言，逐字漂移即红；「读 deck」= 直接解析 deck 表行）：
 
-- **D63–D67** — `src/main.ts` `createBindingsPanel`（键位来由由 `src/keys.ts` 键位表的 `doc` 字段产出，表即文档）
+- **D63–D67** — `src/bindings-panel.ts` `createBindingsPanel`（M151 起面板本体已从 main.ts 抽出；键位来由由 `src/keys.ts` 键位表的 `docKey` 产出，表即文档）
+- **D593–D694** — `src/command-meta.ts`（71 条命令的中英标签，`COMMAND_META` 逐条引用）+ `src/bindings-panel.ts`（标题 / 查询 / 捕获 / 计数 / 作用域 / 条件 / 空态 / 详情 / 提示）+ `src/keys.ts`（D675 / D676 是五条 widget 绑定的 `whenKey` / `whenShortKey`）；别名是搜索数据、不上屏，住 `command-meta.ts`
 - **D68–D72** — `src/search.ts` `LumirSearchPanel`（计数串三态由 `tallyLabel` 生成）
 - **D73–D75** — `src/preview/table.ts` `degradationNotice`；`src/preview/livePreview.ts` 单源写 `aria-label` / `data-degraded`；`src/style.css` `.cm-lp-table-degraded::after` 取 `attr(data-degraded)`
 - **D76** — `src/preview/livePreview.ts` `HorizontalRuleWidget`

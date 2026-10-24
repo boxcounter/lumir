@@ -41,7 +41,7 @@ steps:
     key: "cmd+/"
     expect:
       - label: 键位面板已打开
-        ax: { has: "键位（生效中）" }
+        ax: { has: "键位速查（生效中）" }
       - label: 面板列出首屏分组（生效表照常渲染）
         ax: { has: "移动与选择" }
       - shot: 键位面板

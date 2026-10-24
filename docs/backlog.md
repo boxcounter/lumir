@@ -64,6 +64,7 @@
 - `153-ordered-list-auto-mode`（item 153）→ 下一动作：留 dogfood 批次真机跑列表自动模式三态 + IME 组合期不重复；裸 DOM 变更形态不兜。
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
+- **`improve-keybindings-lookup-oct24`**（M715）：delta = keymap-commands 1 条 MODIFIED（键位面板行模型）+ 3 条 ADDED（查找/捕获/详情、非自指入口、命令元数据与字形单一来源），节点 2 走人肉；实现批附带新增真机场景 235 / 236 / 237（查询 / 捕获 / 键盘）与 m133 视觉场景重写——**像素基线待 Alex 过目后重截**（未经过目不得 `--update`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **序 10 · `readonly-allowlist-tightening-oct23`**（M664，20/22）：节点 2 材料齐——231（写形态 / 执行形态 / git 只读族，32 断言）与 231b（hidden 写入口拒绝，8 断言）真机 PASS，证据 `.local/acceptance/2026-10-24-m711/`；残留：3.2 待 M649 归档后把 MODIFIED 块重写为「master 原文 + M649 解包段 + M664 收紧段」（不得提前改，否则 M649 段会被整块替换静默抹掉）、3.3 finding 由 tower 记账；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **序 11 · `rg-zip-flags-dangerous-oct24`**（M672，11/11）：delta = 序 10 全文 + `-z` / `--search-zip` 改写，必须紧接序 10。
 - **`harness-permission-rules-oct23`**（M649/M653，35/36）：节点 2 材料齐——229 / 110 / 151 真机全 PASS（31 / 19 / 16 断言，证据 `.local/acceptance/2026-10-24-m711/`）、节点 1 已回填（Q1–Q7 全部「按倾向」）、6.3 不适用；残留仅 6.2（归档时把 living spec Purpose 的「三层」改两层）与归档期复核 M649 解包段相对 readonly / rg-zip 的 delta 合并顺序；归档前后各跑 `node scripts/openspec-archive-check.mjs`。

@@ -3553,6 +3553,9 @@ const MENU_COMMANDS: Record<string, CommandRunner | undefined> = {
   redo: commands["editor.redo"],
   close: commands["tab.close"],
   selectAll: selectAllByFocusedFace,
+  // change improve-keybindings-lookup-oct24：Help → Keyboard Shortcuts 走同一条命令实现
+  // （`app.describe-bindings` 的 toggle），不新开第二条分发路径或第二个面板实例。
+  "describe-bindings": () => bindingsPanel.toggle(),
 };
 onMenuCommand((payload) => {
   MENU_COMMANDS[payload]?.();

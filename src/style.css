@@ -1749,9 +1749,11 @@ body {
   padding-block: 3px;
 }
 
-/* 键位查看面板（M133，app.describe-bindings）：全屏遮罩 + 居中 modal。
-   浮层壳配方（tokens v1.1）= --preview-bg + 1px --border + --shadow-raise；
-   eink 升级到 1.4px 线宽强调档且无阴影（规则⑦⑧）。 */
+/* 键位速查面板（change improve-keybindings-lookup-oct24；前身 M133 的查看器）：
+   全屏遮罩 + 居中 modal。外壳配方不变（--preview-bg + 1px --border + --shadow-raise +
+   --r10；eink 1.4px、无阴影）。布局 = 固定头（标题 / 查询 / 捕获 / 作用域）+ 唯一滚动区
+   （.lumir-bindings-body，滚动条登记 native-overlay 档）+ 固定底部提示；详情行内展开，
+   不新增第二个 overflow 容器。 */
 .lumir-bindings-overlay {
   position: fixed;
   inset: 0;
@@ -1771,10 +1773,11 @@ body {
   flex-direction: column;
   width: 100%;
   /* 键位面板宽：**与正文栏宽 `--layout-doc-measure` 无关**，是 S15/S16 的有意偏离值
-     （680px 三列；定稿是 440px 两列，见 docs/specs/standing-decisions.md 的 S15/S16 条）。
+     （680px；定稿是 440px 两列，见 docs/specs/standing-decisions.md 的 S15/S16 条）。
      `rg 680` 清扫正文栏宽时不要动这一条。 */
   max-width: 680px;
-  max-height: 100%;
+  max-height: min(780px, 100%);
+  min-height: 0;
   padding: var(--sp-9) var(--sp-10) var(--sp-8);
   background: var(--preview-bg);
   color: var(--text);
@@ -1786,57 +1789,401 @@ body {
 :root[data-theme="eink"] .lumir-bindings-panel {
   border-width: 1.4px;
 }
+
+.lumir-bindings-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-6);
+}
 .lumir-bindings-title {
-  margin: 0 0 var(--sp-2);
+  margin: 0;
   font-family: var(--font-sans);
   font-size: var(--fs-body);
   font-weight: var(--fw-bold);
   letter-spacing: -0.004em;
 }
+.lumir-bindings-status {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.lumir-bindings-count {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 查询行：沿用快速打开 / 大纲浮层的下划线输入语汇，不另造「搜索框」形态。 */
+.lumir-bindings-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.lumir-bindings-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 var(--sp-1);
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-body-s);
+  outline: none;
+}
+.lumir-bindings-input:focus {
+  border-bottom-color: var(--accent);
+}
+:root[data-theme="eink"] .lumir-bindings-input:focus {
+  border-bottom-width: 2px;
+}
+.lumir-bindings-input::placeholder {
+  color: var(--text-3);
+}
+.lumir-bindings-capture {
+  flex: none;
+  height: 26px;
+  padding: 0 var(--sp-3);
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r4);
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.lumir-bindings-capture:hover {
+  background: var(--hover);
+}
+.lumir-bindings-capture[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--accent);
+}
+:root[data-theme="eink"] .lumir-bindings-capture[aria-pressed="true"] {
+  border-width: 2px;
+  font-weight: var(--fw-bold);
+}
+
+/* 捕获状态行：等待态是虚线提示，已捕获态是字形 chip + 清除。 */
+.lumir-bindings-capture-state {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin: var(--sp-3) 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.lumir-bindings-capture-state.is-waiting {
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px dashed var(--border-soft);
+}
+.lumir-bindings-captured-label {
+  color: var(--text-3);
+}
+.lumir-bindings-captured-glyph {
+  padding: 0 var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--text);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r4);
+}
+.lumir-bindings-clear {
+  height: 20px;
+  padding: 0 var(--sp-2);
+  background: transparent;
+  color: var(--text-2);
+  border: 1px dashed var(--accent);
+  border-radius: var(--r4);
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+:root[data-theme="eink"] .lumir-bindings-clear {
+  border-style: solid;
+  border-width: 2px;
+}
+
+/* 作用域筛选：单选（不是页签），选中项一档底色 + 1px 边框。 */
+.lumir-bindings-scope {
+  display: flex;
+  gap: 3px;
+  margin: var(--sp-3) 0 var(--sp-2);
+}
+.lumir-bindings-scope-button {
+  height: 22px;
+  padding: 0 var(--sp-3);
+  background: transparent;
+  color: var(--text-3);
+  border: 1px solid transparent;
+  border-radius: var(--r4);
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.lumir-bindings-scope-button:hover {
+  background: var(--hover);
+}
+.lumir-bindings-scope-button.is-selected {
+  color: var(--text);
+  background: var(--hover);
+  border-color: var(--border);
+}
+:root[data-theme="eink"] .lumir-bindings-scope-button.is-selected {
+  border-width: 1.4px;
+  border-color: var(--text);
+  font-weight: var(--fw-bold);
+}
+
+/* 唯一滚动容器（滚动条登记 native-overlay 档；类名 MUST NOT 改）。 */
 .lumir-bindings-body {
+  flex: 1;
   min-height: 0;
   overflow: auto;
+  padding: var(--sp-1) 0 var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+  outline: none;
+}
+.lumir-bindings-body:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+:root[data-theme="eink"] .lumir-bindings-body:focus-visible {
+  outline-color: var(--text);
+}
+
+/* 组头 sticky：滚动时组名与计数保持可见。 */
+.lumir-bindings-group-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  background: var(--preview-bg);
 }
 .lumir-bindings-group-title {
-  margin: var(--sp-7) 0 var(--sp-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 24px;
+  padding: 0 var(--sp-1);
+  background: transparent;
+  color: var(--text-3);
+  border: none;
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.lumir-bindings-group-title:hover {
+  color: var(--text-2);
+}
+.lumir-bindings-group-count {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 行：一条命令一行；标签 1fr / 键位 auto / 作用域与条件 auto。 */
+.lumir-bindings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  min-height: 28px;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r4);
+}
+/* author 的 display:flex 会盖掉 UA 的 [hidden] 规则（同 .lumir-bindings-overlay / .editor-notice） */
+.lumir-bindings-row[hidden],
+.lumir-bindings-capture-state[hidden] {
+  display: none;
+}
+.lumir-bindings-row:hover {
+  background: var(--hover);
+}
+.lumir-bindings-row.is-active {
+  background: var(--sel);
+}
+.lumir-bindings-label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-body-s);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.lumir-bindings-keys {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+  flex: none;
+  max-width: 45%;
+}
+.lumir-bindings-key {
+  padding: 0 var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  line-height: 18px;
+  color: var(--text);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r4);
+  white-space: nowrap;
+}
+.lumir-bindings-key.is-unbound {
+  color: var(--accent);
+  border: 1px dashed var(--accent);
+}
+:root[data-theme="eink"] .lumir-bindings-key.is-unbound {
+  color: var(--text);
+  border-color: var(--text);
+  border-style: solid;
+  border-width: 2px;
+}
+.lumir-bindings-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+  flex: none;
+  min-width: 7.5em;
+}
+.lumir-bindings-scope-badge {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.lumir-bindings-when {
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r4);
+  white-space: nowrap;
+}
+:root[data-theme="eink"] .lumir-bindings-when {
+  border-color: var(--text);
+}
+
+/* 行详情：手风琴，单列；长文换行，不做嵌套滚动。 */
+.lumir-bindings-detail {
+  margin: 0 0 var(--sp-2) var(--sp-7);
+  padding: var(--sp-3) var(--sp-5) var(--sp-5) var(--sp-6);
+  background: var(--frame);
+  border-left: 2px solid var(--border);
+  font-size: var(--fs-meta);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+:root[data-theme="eink"] .lumir-bindings-detail {
+  border-left-color: var(--text);
+  border-left-width: 2.4px;
+}
+.lumir-bindings-detail-labels {
+  margin: 0 0 var(--sp-3);
+  color: var(--text);
+  font-weight: var(--fw-bold);
+}
+.lumir-bindings-detail-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--sp-1) var(--sp-5);
+  margin: 0 0 var(--sp-3);
+}
+.lumir-bindings-detail-facts dt {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.lumir-bindings-detail-facts dd {
+  margin: 0;
+  color: var(--text-2);
+}
+.lumir-bindings-detail-section {
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--border-soft);
+}
+.lumir-bindings-detail-heading {
+  margin: 0 0 var(--sp-1);
   font-size: var(--fs-micro);
   font-weight: var(--fw-bold);
   letter-spacing: 0.08em;
   color: var(--text-3);
 }
-.lumir-bindings-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-5);
-  padding: var(--sp-1) 0;
+.lumir-bindings-detail-text {
+  margin: 0 0 var(--sp-1);
+  color: var(--text-2);
 }
-.lumir-bindings-key {
-  flex: none;
-  min-width: 9em;
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--text);
-}
-.lumir-bindings-command {
-  flex: none;
-  min-width: 13em;
+.lumir-bindings-detail-token {
   font-family: var(--font-mono);
   font-size: var(--fs-label);
-  color: var(--text-3);
+  color: var(--text);
 }
-.lumir-bindings-doc {
-  min-width: 0;
+
+/* 空态：三种成因各自的标题 / 说明 / 动作（不共用一句笼统的「没有结果」）。 */
+.lumir-bindings-empty {
+  padding: var(--sp-12) var(--sp-6);
+  text-align: center;
+}
+.lumir-bindings-empty-title {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-body-s);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+.lumir-bindings-empty-note {
+  margin: 0 0 var(--sp-6);
   font-size: var(--fs-meta);
   color: var(--text-2);
 }
-/* 未绑定行的 accent 语义保留（eink 下 = 黑，语义由「未绑定」文案承担）。 */
-.lumir-bindings-row.is-unbound .lumir-bindings-key {
-  color: var(--accent);
+.lumir-bindings-empty-query {
+  margin-left: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--text);
 }
+.lumir-bindings-empty-actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--sp-3);
+}
+.lumir-bindings-empty-action {
+  height: 26px;
+  padding: 0 var(--sp-3);
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r4);
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.lumir-bindings-empty-action:hover {
+  background: var(--hover);
+}
+
 .lumir-bindings-hint {
   margin: var(--sp-6) 0 0;
-  font-size: var(--fs-label);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--border-soft);
+  font-size: var(--fs-micro);
+  line-height: 1.6;
   color: var(--text-3);
+}
+
+/* 查询框的显式 label：视觉隐藏、读屏可达（spec 要求显式标签，不用占位符冒充）。 */
+.lumir-bindings-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* 图片放大查看（M184，change open-image-lightbox，双击内联图片）：全屏遮罩 + 裸图。

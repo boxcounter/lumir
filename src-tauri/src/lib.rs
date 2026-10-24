@@ -57,6 +57,11 @@ const CLOSE_WINDOW_MENU_ID: &str = "lumir.close_window";
 #[cfg(target_os = "macos")]
 const SELECT_ALL_MENU_ID: &str = "lumir.select_all";
 
+/// 自定义「键位速查」菜单项 id（change improve-keybindings-lookup-oct24）：Help 子菜单的
+/// 非自指入口。见 add_keyboard_shortcuts_item。
+#[cfg(target_os = "macos")]
+const KEYBOARD_SHORTCUTS_MENU_ID: &str = "lumir.keyboard_shortcuts";
+
 /// 菜单命令事件名（M131）：前端 main.ts 订阅它，把菜单点击交给统一键位层的命令实现。
 /// 载荷见 menu_command_of（菜单只说 undo / redo 这类平台术语，映射到前端命令 id 是前端的事）。
 #[cfg(target_os = "macos")]
@@ -384,11 +389,12 @@ fn work_area_size(window: &tauri::WebviewWindow) -> Option<(u32, u32)> {
 }
 
 /// macOS 菜单改造入口：一次 `Menu::default()` 内完成退出守卫（M101）、撤销/重做让位
-/// （M131）与关闭项让位（M149）三处手术，改完统一 set_menu。
+/// （M131）、关闭项让位（M149）、全选让位（M627）与键位速查入口
+/// （change improve-keybindings-lookup-oct24）五处手术，改完统一 set_menu。
 ///
-/// 为什么合成一个入口：三处改造都要基于 tauri 默认菜单做增删，各自 `Menu::default()`
+/// 为什么合成一个入口：改造都要基于 tauri 默认菜单做增删，各自 `Menu::default()`
 /// 再 set_menu 会让后装的那次覆盖掉前一次（退出守卫会静默失效）。返回值语义沿旧例——
-/// 只要有一处真改动了就 set_menu，三处都因结构假设不成立而放弃时保留默认菜单。
+/// 只要有一处真改动了就 set_menu，全部因结构假设不成立而放弃时保留默认菜单。
 #[cfg(target_os = "macos")]
 fn install_menu_overrides(app: &tauri::AppHandle) -> tauri::Result<()> {
     let menu = Menu::default(app)?;
@@ -396,10 +402,49 @@ fn install_menu_overrides(app: &tauri::AppHandle) -> tauri::Result<()> {
     let undo_redo_swapped = swap_undo_redo_items(&menu, app)?;
     let close_swapped = swap_close_window_items(&menu, app)?;
     let select_all_swapped = swap_select_all_item(&menu, app)?;
-    if quit_guarded || undo_redo_swapped || close_swapped || select_all_swapped {
+    let shortcuts_added = add_keyboard_shortcuts_item(&menu, app)?;
+    if quit_guarded || undo_redo_swapped || close_swapped || select_all_swapped || shortcuts_added {
         app.set_menu(menu)?;
     }
     Ok(())
+}
+
+/// Help → **Keyboard Shortcuts**（change improve-keybindings-lookup-oct24）：键位面板的
+/// 非自指入口——面板自己的 `⌘/` 只写在面板里面，要找到「告诉你快捷键是什么」的面板不能
+/// 先知道它的快捷键。
+///
+/// **不带 accelerator**：任何菜单键等价都会在 NSApplication 分发阶段截获物理键——既会让
+/// `⌘/` 的 `[keys]` 重绑变成假开关（菜单仍按旧键触发），也会形成「一个 token 两条分发
+/// 映射」（M131 / M149 / M627 是同一机制的三次实证）。键位仍只由 `src/keys.ts` 的
+/// `app.describe-bindings` 一条绑定承担；菜单点击经 MENU_COMMAND_EVENT 回到前端同一条
+/// 命令层（`app.describe-bindings` 的 toggle），MUST NOT 另开分发路径或第二个面板实例。
+///
+/// 文案锁 en（与原生 File / Edit / Help 一致，先例 D149–D151）。结构性假设（tauri 2.12.4
+/// `Menu::default`）：Help 子菜单文案为 "Help"；校验失败即保持默认菜单并打 stderr。
+/// 返回是否追加了菜单项。
+#[cfg(target_os = "macos")]
+fn add_keyboard_shortcuts_item<R: tauri::Runtime>(
+    menu: &Menu<R>,
+    app: &tauri::AppHandle<R>,
+) -> tauri::Result<bool> {
+    let help = menu.items()?.into_iter().find_map(|item| match item {
+        MenuItemKind::Submenu(submenu)
+            if submenu.text().map(|text| text == "Help").unwrap_or(false) =>
+        {
+            Some(submenu)
+        }
+        _ => None,
+    });
+    let Some(help) = help else {
+        eprintln!(
+            "lumir: keyboard shortcuts menu not installed: Menu::default() has no Help submenu (tauri menu structure changed)"
+        );
+        return Ok(false);
+    };
+    let item =
+        MenuItemBuilder::with_id(KEYBOARD_SHORTCUTS_MENU_ID, "Keyboard Shortcuts").build(app)?;
+    help.append(&item)?;
+    Ok(true)
 }
 
 /// 关闭菜单项让位（M149 多标签）：把 **File** 与 **Window** 两个子菜单里的**预置** Close
@@ -655,7 +700,8 @@ fn edit_items_are_predefined_undo_redo(texts: &[String]) -> bool {
 }
 
 /// 菜单命令事件载荷（前端 main.ts 的 MENU_COMMANDS 键）。菜单只说平台术语
-/// undo / redo / close，映射到前端命令 id 是前端的事——Rust 侧不持有前端的命令命名。
+/// undo / redo / close / describe-bindings，映射到前端命令 id 是前端的事——Rust 侧不持有
+/// 前端的命令命名。
 #[cfg(target_os = "macos")]
 fn menu_command_of(id: &str) -> Option<&'static str> {
     match id {
@@ -666,6 +712,10 @@ fn menu_command_of(id: &str) -> Option<&'static str> {
         // M627：全选（原预置 SelectAll 让出 ⌘A 后，菜单点击仍要能全选；落哪个面由前端按
         // 当前焦点决定）。
         SELECT_ALL_MENU_ID => Some("selectAll"),
+        // change improve-keybindings-lookup-oct24：Help 菜单的键位速查入口。载荷刻意用
+        // 前端命令 id 本身（`describe-bindings` 是 app.describe-bindings 的后半段）——
+        // 前端 MENU_COMMANDS 把它接到同一条 toggle 上。
+        KEYBOARD_SHORTCUTS_MENU_ID => Some("describe-bindings"),
         _ => None,
     }
 }
@@ -2208,10 +2258,17 @@ mod tests {
         assert_eq!(menu_command_of("lumir.close"), Some("close"));
         assert_eq!(menu_command_of("lumir.close_window"), Some("close"));
         assert_eq!(menu_command_of("lumir.select_all"), Some("selectAll"));
+        // change improve-keybindings-lookup-oct24：Help 菜单的键位速查入口映射到前端
+        // 命令 id 的后半段；菜单项本身不带 accelerator（结构上没有调用 `.accelerator()`）。
+        assert_eq!(
+            menu_command_of("lumir.keyboard_shortcuts"),
+            Some("describe-bindings")
+        );
         assert_eq!(menu_command_of("lumir.quit"), None);
         assert_eq!(menu_command_of("Undo"), None);
         assert_eq!(menu_command_of("Close"), None);
         assert_eq!(menu_command_of("Select All"), None);
+        assert_eq!(menu_command_of("Keyboard Shortcuts"), None);
         assert_eq!(menu_command_of(""), None);
     }
 }

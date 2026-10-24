@@ -4,8 +4,8 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title）。 -->
 
-- 场景：235
-- 验收项（不同 item 编号）：215
+- 场景：238
+- 验收项（不同 item 编号）：218
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07b` / `07c` 三条恢复路径），故表里一项一行、行内列出全部场景；
@@ -221,6 +221,9 @@
 | 231 | `231-harness-readonly-write-forms`<br>`231b-harness-hidden-write-refusal` | 只读白名单收紧：写形态进闸、执行形态在完全访问档仍问（change readonly-allowlist-tightening-oct23，mock provider）<br>hidden 档写入口拒绝（M656 前提）：vault_patch 指名 .git/config 被 fs_name_invalid 拒绝且文件逐字节不变（mock provider） |
 | 232 | `232-quote-decode-error-copy` | 引用坏图：解码失败读 D588（不含「剪贴板」）+ 持久状态行、零卡片 |
 | 233 | `233-semantic-selection-release-snap` | 双击粗体词松开后外扩到 `**…**` → 摘录卡片原文含定界符；文档逐字节不变 |
+| 235 | `235-keybindings-lookup-query` | 键位速查——每命令一行的内容模型、文本查询（标签 / 别名 / id）、来由零命中与查询空态 |
+| 236 | `236-keybindings-capture` | 键位速查——按键捕获（Home → 真实 when 绑定、被捕获的键不执行命令、⌃G 例外、无绑定空态） |
+| 237 | `237-keybindings-keyboard` | 键位速查——键盘全程：输入框焦点、Tab 循环、↑↓/Enter 详情、End 末行、Esc 分层与关闭 |
 | 252 | `49-vault-switch-feedback` | vault 切换的即时反馈（浮层收起 / 装载指示起止）与切换器浮层的完整可读 |
 | 423 | `121-harness-message-excerpt`<br>`122-harness-message-excerpt-exclusion` | harness 消息摘录 ① transcript 选区 → 浮动钮 → 卡片入 composer（+ 序列化结构 / 视口 skip / transcript 同构）<br>harness 消息摘录 ② 排除面：思考块内选区不出钮（消息体选区出钮为正向对照） |
 | 531 | `160-quote-button-viewport-clamp` | 摘录浮动钮落点钳制：选区并集盒越出挂载容器（长行）时钮仍在视口内 |
