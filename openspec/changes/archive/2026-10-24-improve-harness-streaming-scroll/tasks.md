@@ -119,15 +119,17 @@
       `tests/visual/scenes/m638-harness-scroll-lock.spec.ts`（5 条用例 + 反向必红 1702px 读数）、
       真机 224（19 断言 PASS，见 4.6）。文案 D555 / D556 在 `src/copy-data.ts:1751-1752` 与
       `文案-Copy.md:537-538` 两列同在。
-- [ ] 6.2 `node scripts/openspec-archive-check.mjs` 通过；归档后对 `<change-id>` 跑一次 `--archived`
+- [x] 6.2 `node scripts/openspec-archive-check.mjs` 通过；归档后对 `<change-id>` 跑一次 `--archived`
       —— **归档前半步已跑**（2026-10-24，M710）：门禁模式 `PASS`——该 delta 的**一条 MODIFIED**
       （「错误呈现」）逐段对比 living spec 通过、无静默丢段；delta 另有**一条 ADDED**（「transcript
       的跟随滚动与回到底部」，不在 MODIFIED 对账面，由 `validate --strict` 与归档并入承担）。
-      `--archived` 只能对已归档的 commit 跑，留给节点 2 归档后（动作记在
-      `docs/backlog.md` 的归档跟踪队列条目）。
-- [ ] 6.3 归档后核对 living spec 的 requirement 段落完整（MODIFIED 整块替换、ADDED 并入），并顺手
+      **归档后已跑**（2026-10-24，M713）：`node scripts/openspec-archive-check.mjs --archived
+      improve-harness-streaming-scroll` → `PASS`（1 条 MODIFIED，对比 3 段；人工恢复 0 段、声明认领
+      0 段）；归档提交后的全量门禁模式同样 `PASS`。
+- [x] 6.3 归档后核对 living spec 的 requirement 段落完整（MODIFIED 整块替换、ADDED 并入），并顺手
       核对本次两条文案的 deck 漂移门禁
-      —— **归档后步骤**：living spec 的 `harness/spec.md` 归档后才含「跟随滚动与回到底部」条，归档前
-      无从核对。文案 deck 漂移门禁本轮已跑：`node --experimental-strip-types --import
-      ./tests/unit/register.mjs --test tests/unit/copy.test.ts` → `pass 15 / fail 0`（含 D555 / D556
-      的取值门禁与两张表漂移对账）。
+      —— **归档后已核**（2026-10-24，M713）：`openspec/specs/harness/spec.md` 的 ADDED
+      「transcript 的跟随滚动与回到底部」（`:2140`）与 MODIFIED「错误呈现」的「脱离态下重复错误不拽
+      视口」条款都在场，两段与 delta 逐字一致（除提取器带出的分节标题）；文案 deck 漂移门禁
+      `node --experimental-strip-types --import ./tests/unit/register.mjs --test tests/unit/copy.test.ts`
+      → `pass 15 / fail 0`。
