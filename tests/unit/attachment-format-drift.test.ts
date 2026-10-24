@@ -26,10 +26,14 @@ import {
   quotableImageMimes,
 } from "../../src/preview/attachments.ts";
 
-/** `fs_io.rs` 的 ATTACHMENT_TARGETS：逐项 `(源 MIME, 是否转码, 落盘扩展名)`。 */
+/** `fs_io.rs` 的 ATTACHMENT_TARGETS：逐项 `(源 MIME, 转换口径, 落盘扩展名)`。
+ *  M666 把「是否转码」的 bool 升级成三档 `AttachmentConversion`（原样 / png→WebP / svg 栅格化），
+ *  因此解析面跟着换成正则取枚举名——**表形态变了这条断言也得变**，否则它会静默解析出 0 项。
+ *  转换口径本身不在前端镜像（前端只需要「能不能引用」与落盘扩展名），但 svg 那一档必须是
+ *  `RasterizeSvg`：安全条款要求 MUST NOT 原样存 SVG（见下面第三条用例）。 */
 interface RustTarget {
   source: string;
-  transcode: boolean;
+  conversion: string;
   extension: string;
 }
 
@@ -37,9 +41,11 @@ function parseRustTargets(source: string): RustTarget[] {
   const decl = /const ATTACHMENT_TARGETS:[^=]*=\s*&\[([\s\S]*?)\];/.exec(source);
   assert.ok(decl !== null, "fs_io.rs 里找不到 ATTACHMENT_TARGETS 的表声明");
   const body = decl[1]!;
-  const entries = [...body.matchAll(/\("([^"]+)",\s*(true|false),\s*"([^"]+)"\)/g)].map((match) => ({
+  const entries = [
+    ...body.matchAll(/\("([^"]+)",\s*AttachmentConversion::(\w+),\s*"([^"]+)"\)/g),
+  ].map((match) => ({
     source: match[1]!,
-    transcode: match[2] === "true",
+    conversion: match[2]!,
     extension: match[3]!,
   }));
   assert.ok(entries.length > 0, "ATTACHMENT_TARGETS 解析出 0 项（表形态变了？）");
@@ -60,10 +66,32 @@ test("可引用扩展名都是注册表里的图片，且 MIME 由同一张表�
     assert.equal(isQuotableImageName(`x.${ext}`), true);
     assert.ok(mimeTypeOf(ext) !== undefined, `${ext} 必须在 IMAGE_MIME 里（MIME 不另立表）`);
   }
-  // 预览层认、可引用层不认的（svg/gif/heic…）必须仍判 false：预览能力与引用能力不是一回事。
-  for (const ext of ["svg", "gif", "heic", "avif", "bmp", "ico"]) {
+  // 预览层认、可引用层不认的（gif/heic…）必须仍判 false：预览能力与引用能力不是一回事。
+  // M666：svg 从这份差集里移出（写入口栅格化后落盘），其余保持不可引用。
+  for (const ext of ["gif", "heic", "avif", "bmp", "ico"]) {
     assert.equal(isQuotableImageName(`x.${ext}`), false, `${ext} 目前不可引用`);
   }
+  // 反向输入：svg 必须判**可引用**——它回到差集里就等于 M666 被回滚（引用 svg 必然落盘拒绝）。
+  assert.equal(isQuotableImageName("x.svg"), true, "svg 走栅格化后可引用");
+});
+
+test("svg 的转换口径是栅格化，MUST NOT 原样落盘（安全条款的机器判据）", () => {
+  // 表里 svg 那一行必须是 `RasterizeSvg`。有人把它「简化」成 Passthrough 时这条判红——
+  // 原样落盘 SVG 等于把「解析用户 vault 里任意 XML」的入口留给每一个渲染点（survey §4.5 第 1 条）。
+  const rust = parseRustTargets(FS_IO_SOURCE);
+  const svg = rust.find((item) => item.source === "image/svg+xml");
+  assert.ok(svg !== undefined, "Rust 表里必须有 image/svg+xml 一行");
+  assert.equal(svg.conversion, "RasterizeSvg", "svg 只能是栅格化档");
+  assert.equal(svg.extension, "webp", "栅格化产物落盘为 webp（与位图同一条读回链路）");
+  // 位图三档的口径不受 M666 影响（反向用例）。
+  assert.deepEqual(
+    rust.filter((item) => item.source !== "image/svg+xml").map((item) => [item.source, item.conversion]),
+    [
+      ["image/png", "PngToWebp"],
+      ["image/jpeg", "Passthrough"],
+      ["image/webp", "Passthrough"],
+    ],
+  );
 });
 
 test("读回侧（前端缩略图 MIME 与 Rust 落盘扩展名）从同一张表的落盘列派生", () => {
@@ -84,8 +112,9 @@ test("读回侧（前端缩略图 MIME 与 Rust 落盘扩展名）从同一张�
 test("对账的反向输入：表少一项、多一项、改一项都必须判不等（断言有区分度）", () => {
   const rust = parseRustTargets(FS_IO_SOURCE);
   const expected = quotableImageMimes();
+  const webpRow = '    ("image/webp", AttachmentConversion::Passthrough, "webp"),\n';
   // 少一项（模拟「前端新增了可引用格式，Rust 没跟」）
-  const missing = FS_IO_SOURCE.replace('    ("image/webp", false, "webp"),\n', "");
+  const missing = FS_IO_SOURCE.replace(webpRow, "");
   assert.notEqual(missing, FS_IO_SOURCE, "反向输入的改写必须真的落到源码文本上");
   assert.notDeepEqual(
     parseRustTargets(missing)
@@ -95,8 +124,8 @@ test("对账的反向输入：表少一项、多一项、改一项都必须判�
   );
   // 多一项（模拟「Rust 扩了白名单，前端没跟」）
   const extra = FS_IO_SOURCE.replace(
-    '    ("image/webp", false, "webp"),\n',
-    '    ("image/webp", false, "webp"),\n    ("image/gif", false, "gif"),\n',
+    webpRow,
+    `${webpRow}    ("image/gif", AttachmentConversion::Passthrough, "gif"),\n`,
   );
   assert.notDeepEqual(
     parseRustTargets(extra)
@@ -110,6 +139,11 @@ test("对账的反向输入：表少一项、多一项、改一项都必须判�
       .map((item) => item.source)
       .sort(),
     expected,
+  );
+  // 改转换口径（不是源格式漂移，但表形态变了）：解析面必须能读出来，故断言口径集合逐项相等。
+  assert.deepEqual(
+    rust.map((item) => item.conversion).sort(),
+    ["Passthrough", "Passthrough", "PngToWebp", "RasterizeSvg"],
   );
   // 前端源扩展名比 Rust 表多（jpg / jpeg 两个扩展名共用一个源 MIME 是合法形态）：
   // 判据是 MIME 集合逐项相等，不是扩展名计数相等。

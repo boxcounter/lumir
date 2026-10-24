@@ -1,5 +1,5 @@
-// 图片摘录事务（change add-image-quote-to-chat design §3；M662 增失败读数与格式预检）：
-// vault → harness 存储 → 卡片。
+// 图片摘录事务（change add-image-quote-to-chat design §3；M662 增失败读数与格式预检；
+// M666 把 svg 接进栅格化路径）：vault → harness 存储 → 卡片。
 //
 // 跑的是仓里那份真代码（`src/quote-image.ts` + 真 `src/ipc.ts`），只有 Tauri 机器那一侧是假的
 //（`tests/unit/harness.ts` 的假后端）。这一层钉五条判据：
@@ -11,9 +11,11 @@
 //   4. 内容寻址去重是后端契约：同字节两次写回同一名字 ⇒ 前端不复制第二份文件；
 //   5. 格式预检：可引用格式（单一真源 = `src/preview/attachments.ts` 的表）之外的图**不走
 //      IPC**，失败文案是引用语境的 D585（不是粘贴语境的 D436「剪贴板」——Alex 现场）。
+//      M666：svg 在表**内**（写入口栅格化），因此它在预检处照常放行、两条 IPC 照常发出。
 //
-// 真转码（png→WebP）/ 50MB 上限 / 格式拒绝的最后一道闸在 Rust 侧（`harness::attachments`
-// 的单测），这里断言前端把 `source_mime` 原样交给既有写入口、错误信封按调用点渲染人话。
+// 真转码（png→WebP）/ svg 栅格化 / 50MB 上限 / 格式拒绝的最后一道闸在 Rust 侧
+//（`harness::attachments` 与 `fs_io` 的单测），这里断言前端把 `source_mime` 原样交给既有写入口、
+// 错误信封按调用点渲染人话。
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -121,27 +123,67 @@ test("内容寻址去重：同字节两次引用只回同一个名字（前端�
   assert.equal(backend.countOf("fs_write_attachment"), 0, "前端 MUST NOT 为去重自己走 vault 写路径");
 });
 
-test("不支持的格式（svg）：格式预检直接失败——零 IPC、引用语境文案（D585）、失败读数随结果返回", async () => {
+test("svg 引用走栅格化成功路径：预检放行、两条 IPC 照常、卡片拿到位图名（M666）", async () => {
   const backend = installBackend();
+  backend.handle("fs_read_attachment", (args) => {
+    assert.equal(args.path, "assets/logo.svg");
+    return "PHN2Zy8+"; // SVG 字节：栅格化在后端（前端只搬运字节与 MIME）
+  });
+  backend.handle("harness_write_image", (args) => {
+    // 前端把源 MIME 原样交给写入口——「svg 该怎么变成位图」是后端表 + `svg_raster` 的事，
+    // 前端 MUST NOT 自己判断（否则格式面又分叉成两处）。
+    assert.equal(args.source_mime, "image/svg+xml");
+    return { name: "pasted-0123456789abcdef.webp", width: 120, height: 60 };
+  });
   const toasts: string[] = [];
   const outcomes = await quoteImagesFromVault(
     [{ path: "assets/logo.svg", rawRef: "![[logo.svg]]" }],
     productionQuoteImagePorts((text) => toasts.push(text)),
   );
 
-  // 预检拦在 IPC 之前：预览层认 svg（可渲染），但它进不了 harness 存储——读 vault / 写 harness
-  // 都是白费，后端写原语仍是最后一道闸（这里断言没有白跑的命令）。
-  assert.deepEqual(backend.calls, [], "不可引用的格式不走 IPC");
+  // svg 在可引用表内 ⇒ 预检放行、两条命令照常（与 png 同一条路径，零分支差异）。
+  assert.deepEqual(backend.calls.map((call) => call.cmd), ["fs_read_attachment", "harness_write_image"]);
+  assert.deepEqual(toasts, [], "成功路径零 toast（D585 只留给真正不支持的类型）");
   assert.equal(outcomes.length, 1);
-  assert.ok(!outcomes[0]!.ok);
-  assert.equal(outcomes[0].failure.source.path, "assets/logo.svg");
-  assert.equal(toasts.length, 1);
-  assert.match(toasts[0]!, /image\/svg\+xml/, "原因带 MIME（与后端信封的 type 参数同形）");
-  assert.match(toasts[0]!, /暂不支持引用该格式/, "引用语境的人话（D585）");
-  assert.ok(!toasts[0]!.includes("剪贴板"), "MUST NOT 用粘贴语境的 D436「剪贴板」措辞（Alex 现场）");
+  assert.ok(outcomes[0]!.ok);
+  // 卡片拿到的是**位图**内容寻址名：缩略图 / 投递 / 恢复与 png 同一条链路（MUST NOT 存 SVG）。
+  assert.match(outcomes[0].image.card.name, /^pasted-[0-9a-f]{16}\.webp$/);
+  assert.deepEqual(
+    {
+      width: outcomes[0].image.card.width,
+      height: outcomes[0].image.card.height,
+      sourceMime: outcomes[0].image.card.sourceMime,
+    },
+    { width: 120, height: 60, sourceMime: "image/svg+xml" },
+    "尺寸取栅格化结果；sourceMime 仍是来源 MIME（与 png 卡片的既有语义一致：仅供显示 / 诊断）",
+  );
 });
 
-test("混合批次：可引用的一张照常走两条命令，svg 只留失败读数（顺序与输入一致）", async () => {
+test("栅格化失败按写入口既有码族回落：畸形 svg 只报该张、无卡片（M666）", async () => {
+  const backend = installBackend();
+  backend.handle("fs_read_attachment", () => "PHN2Zz48cmVjdA=="); // "<svg><rect"
+  backend.handle("harness_write_image", () => {
+    throw {
+      code: "attachment_decode_failed",
+      message: "无法解析 SVG 图片",
+      params: { reason: "unexpected end of stream" },
+    };
+  });
+  const toasts: string[] = [];
+  const outcomes = await quoteImagesFromVault(
+    [{ path: "assets/broken.svg", rawRef: "![[broken.svg]]" }],
+    productionQuoteImagePorts((text) => toasts.push(text)),
+  );
+
+  assert.equal(outcomes.length, 1);
+  assert.ok(!outcomes[0]!.ok, "解码失败不产卡片");
+  assert.equal(toasts.length, 1);
+  assert.deepEqual(failureTexts(outcomes), toasts, "失败读数与 toast 同一份渲染");
+  // 走 ERROR_COPY 的既有映射（D438 的模板），不是后端 message 的裸串。
+  assert.match(toasts[0]!, /无法解码/, "既有解码失败文案");
+});
+
+test("混合批次：可引用的照常走两条命令，不可引用的（gif）只留失败读数（顺序与输入一致）", async () => {
   const backend = installBackend();
   backend.handle("fs_read_attachment", (args) => {
     assert.equal(args.path, "assets/a.png");
@@ -156,7 +198,9 @@ test("混合批次：可引用的一张照常走两条命令，svg 只留失败�
   const outcomes = await quoteImagesFromVault(
     [
       { path: "assets/a.png", rawRef: "![a](assets/a.png)" },
-      { path: "assets/logo.svg", rawRef: "![[logo.svg]]" },
+      // gif 仍是「预览认、写入口不收」的差集成员（三维 provider 都收 gif，但落盘链路没扩格式，
+      // 扩格式没有裁决——M666 只把 svg 从差集里摘出来）。
+      { path: "assets/anim.gif", rawRef: "![[anim.gif]]" },
     ],
     productionQuoteImagePorts((text) => toasts.push(text)),
   );
@@ -167,6 +211,7 @@ test("混合批次：可引用的一张照常走两条命令，svg 只留失败�
   assert.ok(!outcomes[1]!.ok);
   assert.deepEqual(quotedSources(outcomes), ["assets/a.png"]);
   assert.equal(toasts.length, 1, "只有失败那一张说话");
+  assert.match(toasts[0]!, /image\/gif/, "失败原因是 gif");
 });
 
 test("后端仍拒绝时的兜底：写入口的 attachment_type_unsupported 也按引用语境渲染（D585）", async () => {

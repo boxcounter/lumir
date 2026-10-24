@@ -7,9 +7,13 @@
 #   ③ 一次 ⌘Z 撤掉整次引用（结构编辑步 = 撤销步）。
 # 判据的可读面：composer 图片卡片的编号徽标是裸数字（AX 无稳定形态），因此编号读数落在
 # transcript 的 `图片 1：<name>`（D447 含编号形态）与留存的 `lumir_label` 上（同源派生）。
+# ④（M666，change svg-image-quote-oct24）：svg 引用走**栅格化成功路径**——写入口把 SVG 渲成
+#    位图后走既有 png→WebP 链路，卡片拿到的是 `pasted-<hash16>.webp`（M662 那条 D585 失败面
+#    只留给真正不支持的类型，如 gif）。M662 时代本段断言的是「svg 引用失败 + D586 留痕」，
+#    M666 把 svg 移进可引用表后该断言与产品行为相反，故整段改写。
 id: "222-image-quote-to-chat"
 item: 222
-title: 图片摘录到对话：悬停引用钮 / 跨图选区 / 一次 ⌘Z
+title: 图片摘录到对话：悬停引用钮 / 跨图选区 / 一次 ⌘Z / svg 栅格化引用
 fixtures: [image-quote-note.md, lightbox-bitmap.png, image-quote-logo.svg]
 open: image-quote-note.md
 marker: "QALPHA"
@@ -114,13 +118,13 @@ steps:
         ax: { count: { pattern: "/AXButton \\(插入图片引用\\)/", exact: 0 } }
       - shot: 06-一次撤销后
 
-  # ④ svg 引用失败（M662，Alex 2026-10-24 反馈 #3）：引用语境的人话 + 持久留痕
+  # ④ svg 引用成功（M666）：栅格化 → 位图落盘 → 卡片入 composer（不再是 M662 的失败面）
   - name: 回到编辑器，光标移到文档末段（第 11 行是 svg 图片——图片须进视口才 hover 得到）
     do: clickEditor
   - name: ⌃N 逐行下移十次到第 11 行（第 1 行起，编辑器随光标滚动把图片带进视口）
     do: keys
     keys: ["ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n"]
-  - name: 悬停 svg 图片——引用钮应浮现（这张图预览渲染得出、但写入口不收）
+  - name: 悬停 svg 图片——引用钮应浮现（与位图那张同一份文案）
     do: hover
     target: { role: AXImage, any: "image-quote-logo.svg" }
     retries: 4
@@ -128,24 +132,27 @@ steps:
       - label: 悬停后出现「摘录到对话」钮（与位图那张同一份文案）
         ax: { has: "/AXButton \\(摘录到对话\\)/" }
       - shot: 07-悬停svg引用钮
-  - name: 点引用钮 → 格式预检拒绝（零 IPC）→ 输入区留持久状态行
+  - name: 点引用钮 → 栅格化后按位图落盘 → 图片卡片入 composer
     do: click
     target: { role: AXButton, name: "摘录到对话" }
     expect:
-      - label: toast 是引用语境的人话（D585；MUST NOT 落到粘贴语境的「剪贴板」措辞）
-        ax: { has: "/暂不支持引用该格式：image\\/svg\\+xml/" }
-      - label: 输入区状态行留下「1 张图片未能引用」（D586——持久可见，不是 3 秒 toast）
-        ax: { has: "1 张图片未能引用" }
-      - label: 没有图片卡片被插入（失败不产卡片；位图那张已在 ① 发出去、此处 composer 应为空）
-        ax: { count: { pattern: "/AXButton \\(插入图片引用\\)/", exact: 0 } }
-      - shot: 08-svg引用失败留痕
+      - label: composer 出现图片卡片，名字是内容寻址的 webp（栅格化产物——MUST NOT 是 svg 名）
+        ax: { has: "/pasted-[0-9a-f]{16}\\.webp/" }
+      - label: 图片卡片带 @ 插入引用钮（与位图引用同一形态）
+        ax: { has: "/AXButton \\(插入图片引用\\)/" }
+      - label: 成功路径不产失败留痕（D586 状态行不出现——它是持久的，缺席是稳态读数）
+        ax: { not: "张图片未能引用" }
+      - label: 不出现「暂不支持引用该格式」（D585 只留给真正不支持的类型）
+        ax: { not: "暂不支持引用该格式" }
+      - shot: 08-svg引用成功
 ---
 
 # 222-image-quote-to-chat —— 图片摘录到对话
 
 ## 本场景在验什么
 
-change add-image-quote-to-chat 的两条入口与一条结构性承诺；M662 起加一条失败面：
+change add-image-quote-to-chat 的两条入口与一条结构性承诺；M662 加失败面；M666 把 svg 从
+失败面移进成功路径：
 
 1. **悬停引用钮（单图）**：文档里已渲染的图片悬停浮现「摘录到对话」（D370，与文本选区钮
    同一份文案、同一形态家族）；点击把该图作为图片卡片插入 composer（与粘贴图片同一协议：
@@ -154,9 +161,14 @@ change add-image-quote-to-chat 的两条入口与一条结构性承诺；M662 �
 2. **跨图选区**：选区跨文字与图片时，一次手势产出「引用卡片 + 图片块」，出处行照旧
    （文档名 · 最近一级标题）。
 3. **一个撤销步**：整次引用是**一次**结构编辑（⌘Z 一次撤掉卡片与图片块）。
-4. **失败面（M662）**：引用一张预览能渲染、写入口不收的图（svg）时，toast 必须是**引用语境**
-   的人话（D585「暂不支持引用该格式」，MUST NOT 是粘贴语境的 D436「剪贴板」——Alex 2026-10-24
-   反馈 #3 的原文），并在输入区留下**持久**状态行「1 张图片未能引用」（D586）；失败不产卡片。
+4. **svg 栅格化引用（M666）**：引用一张 svg 时，写入口把 SVG 渲成位图再走既有 png→WebP
+   链路——卡片拿到的是 `pasted-<hash16>.webp`，与位图引用同一个形态；不产失败留痕、不出现
+   「暂不支持引用该格式」。方向裁决见 Alex 2026-10-24「好，采纳 A」，安全条款（不读外部引用 /
+   最长边夹 4096 / MUST NOT 原样存 SVG）落在 `src-tauri/src/svg_raster.rs` 的模块文档与 Rust
+   单测里，本场景只判人侧可见面（卡片 + @ 钮 + 无失败留痕）。
+   > M662 时代本段断言的是「svg 引用失败 + D585/D586 留痕」；M666 把 svg 移进可引用表后那段
+   > 断言与产品行为相反，故改写。D585/D586 本身仍在（gif 这类真不支持的格式照旧走那条路），
+   > 其视觉面判据见 `tests/visual/scenes/m633-image-quote.spec.ts`。
 
 ## 判据为什么这样写
 
