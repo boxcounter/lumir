@@ -1889,22 +1889,25 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       //     底色 / 字色的规则分工：底色在本文件（CM 自绘那一层），`::selection` 的前景在
       //     `src/style.css`（那里的 eink 值已是黑字，两条规则同值是刻意的一致，不是两处真源）。
       ".cm-selectionBackground": { backgroundColor: "var(--sel-band) !important" },
-      // 光标（change cursor-visibility-oct23 的 D2=A；合同 docs/specs/editor-caret.md）：
+      // 光标（change cursor-visibility-oct23 的 D2；2026-10-24 改裁恢复闪烁；合同 docs/specs/editor-caret.md）：
       //   · 宽度 2px 是**组件常量**，三主题同值——eink 没有颜色，线宽是它唯一的强调手段
       //     （tokens 文档规则⑧），2px 落在既有语汇内（1.2–1.6px 强调线宽 / 2px 引用块竖线）。
       //     颜色仍走 `--text`（三主题都是最高对比档）。宽度 3px、accent 变色、呼吸块光标均在
       //     提案 D2 里被否，别按「再粗一点更显眼」改回。
       //   · `marginLeft` 按宽度居中：CM 基础主题的 `-0.6px` 是 1.2px 的居中量，改宽必须同步，
       //     否则光标相对插入点右偏 0.4px。
-      //   · 常亮：基础主题给 `.cm-cursorLayer` 挂了 `steps(1) cm-blink 1.2s infinite`（一半时间
-      //     opacity 0）——「一眼扫不到」的第二个成因。用**同选择器 + 明确值**覆盖：base 与用户
-      //     主题的先后顺序不是可依赖的契约，计算样式断言（m647 场景）钉住 `animationName = none`。
+      //   · 闪烁：用 CM 原生口径（基础主题的 `steps(1) cm-blink 1.2s infinite`；周期由
+      //     `EditorView.cursorBlinkRate` facet 写进内联 `animationDuration`，默认 1200ms）。
+      //     M654 曾以 `animation: none !important` 取消闪烁；Alex 2026-10-24 反馈「光标可见性
+      //     调地有些过头了——现在光标不闪了，也不容易一眼扫到」⇒ 改回闪烁。闪烁是光标
+      //     可发现性的核心信号；宽度 / 对比度保留 M654 的增益。eink 同口径：M654 以残影为由
+      //     取消闪烁，本次改裁以「一眼扫到」为先，残影风险登记在 change 的 design §3.5。
+      //   · 因此本主题 **MUST NOT** 覆盖 `.cm-cursorLayer` 的 animation：CM 在光标移动时把
+      //     `animationName` 写成元素**内联样式**（`cm-blink` / `cm-blink2` 交替，用于免重排
+      //     重启相位），`!important` 会压住这条重启——光标在「灭」相位移动后要等半程才可见。
+      //     m647 场景钉住 `animationName = cm-blink*`、`animationDuration = 1.2s` 且动画运行中。
       // 本条此前是「声明了没有消费者」的存量，M285 装上 `drawSelection()` 后才是真的生效路径。
       ".cm-cursor, .cm-dropCursor": { borderLeft: "2px solid var(--text)", marginLeft: "-1px" },
-      // `!important` 不是可选：CM 在光标移动时把 `animationName` 直接写成元素的**内联样式**
-      // （`dom.style.animationName = "cm-blink" | "cm-blink2"`，用于免重排重启动画），
-      // 内联样式压过任何无 `!important` 的样式表声明。计算样式断言（m647 场景）钉住 none。
-      "&.cm-focused > .cm-scroller > .cm-cursorLayer": { animation: "none !important" },
     });
     // 可编辑性随会话标志装进 Compartment（editable-non-md-files）：此前硬绑
     // `mode === "md"`（M101 的只读合同），现在按**文件类**——md 与注册表文本类

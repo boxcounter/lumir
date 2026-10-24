@@ -5,7 +5,8 @@
 > [design](../../openspec/changes/cursor-visibility-oct23/design.md) §2 的条款原文落地）。
 > 来历：两条用户痛点——「当点击 frontmatter 时，光标特别高」「光标太细，不容易快速一眼扫到」。
 > 前者是渲染缺陷，按 [渲染缺陷合同先行规则](../process/rendering-defect-contract-first.md)
-> 处置：先定位不变量条款与属性测试，禁止只做案例级补丁；后者是视觉决策（D2=A：2px 常亮）。
+> 处置：先定位不变量条款与属性测试，禁止只做案例级补丁；后者是视觉决策（D2：2px 宽度 +
+> 1.2s 闪烁；原裁决 A「2px 常亮」于 2026-10-24 按 Alex 反馈 #6 改判为 B「恢复闪烁」）。
 >
 > 本文件是**不变量条款**的居所。条款不引用具体案例，实现与测试按条款的输入分布扫维度。
 
@@ -65,21 +66,25 @@ C1–C4 的显露、光标移动与装饰重建 MUST NOT 改写文档：`EditorS
 
 | 条款 | 落点 |
 |---|---|
-| C1 | `src/editor.ts` 的 `baseTheme`（光标宽度 / 常亮）；边界光标消除见 C2–C4 |
+| C1 | `src/editor.ts` 的 `baseTheme`（光标宽度 / 闪烁）；边界光标消除见 C2–C4 |
 | C2 | `src/preview/replaced-source.ts`（三类块共用的指针入口）；`FrontmatterWidget` 的 mousedown 路由（`src/preview/frontmatter.ts`） |
 | C3 | `firstBodyLineStart` / `normalizeFrontmatterCaret` / `frontmatterCaretSpecs`（`src/preview/frontmatter.ts`）；装载路径 `initialCaretState` / `normalizeInitialCaret`（`src/editor.ts`）；focus 处理器（`src/preview/livePreview.ts`） |
 | C4 | `clampAcrossBlockWidgets`（`src/editor.ts`）与 `frontmatterCaretSpecs` 的垂直移动分支 |
 | C5 | 全链路只 dispatch 选区，不改文档 |
 
-光标视觉的**组件常量**：宽度 2px、常亮（无闪烁）、三主题同值（eink 同宽同色）。颜色取
-`--text`，不新增 token；常亮覆盖的是 CM 基础主题挂在 `.cm-cursorLayer` 上的
-`steps(1) cm-blink 1.2s infinite`（一半时间 `opacity: 0`——「一眼扫不到」的第二个成因）。
-取值登记与理由见 [design-tokens-v1.md](design-tokens-v1.md) 的「阴影与 hairline」节。
+光标视觉的**组件常量**：宽度 2px、以约 1.2s 周期闪烁、三主题同值（eink 同宽同色、同样
+闪烁）。颜色取 `--text`，不新增 token；闪烁直接用 CM 基础主题挂在 `.cm-cursorLayer` 上的
+`steps(1) cm-blink 1.2s infinite`（半程 `opacity: 0`，周期取 `EditorView.cursorBlinkRate`
+的默认值），`src/editor.ts` **不写**任何 animation 覆盖——`!important` 会压住 CM 在光标
+移动时写入内联 `animationName` 的相位重启，让光标在「灭」相位移动后要等半程才可见。
+2026-10-24 改裁：原 D2=A「常亮（无闪烁）」被否（Alex 反馈 #6「光标不闪了，也不容易一眼
+扫到」）——闪烁是光标可发现性的核心信号。取值登记与理由见
+[design-tokens-v1.md](design-tokens-v1.md) 的「阴影与 hairline」节。
 
 ## 属性测试与验证层
 
 | 层 | 位置 | 判据 |
 |---|---|---|
 | 纯判定矩阵 | `tests/unit/frontmatter-caret.test.ts` | `firstBodyLineStart` 的输入网格；`frontmatterCaretSpecs` 的分流（边界 / 块内 / 块外 × 空 / 非空选区 × 垂直移动 / 普通事务 / 装载事务） |
-| 几何 / 计算样式 | `tests/visual/scenes/m647-caret-geometry.spec.ts` | 光标矩形高度 = 所在可见行行盒 ±1px，且小于 `.cm-lp-frontmatter-outer` 高度（区分度对照）；`borderLeftWidth` = 2px、颜色 = `--text`、`marginLeft` = -1px、`animationName` = none |
+| 几何 / 计算样式 | `tests/visual/scenes/m647-caret-geometry.spec.ts` | 光标矩形高度 = 所在可见行行盒 ±1px，且小于 `.cm-lp-frontmatter-outer` 高度（区分度对照）；`borderLeftWidth` = 2px、颜色 = `--text`、`marginLeft` = -1px、`animationName` ∈ {`cm-blink`, `cm-blink2`}、`animationDuration` = 1.2s 且动画运行中；暂停在 0ms / 700ms 时 `opacity` = 1 / 0（亮 / 灭相位） |
 | 真机 | `scripts/acceptance/scenarios/228-caret-visibility.md` | 点击 properties / doc-title 后 properties 撤下、标题让位、文档字节不变；光标高度归手感项（AX 不暴露 caret 几何） |

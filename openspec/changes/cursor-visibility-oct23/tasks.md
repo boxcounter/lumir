@@ -32,9 +32,10 @@
       ——修前红色读数：场景在 master 代码上 12/15 红（`.local/reviews/M654/prefix-red-readings.log`）；
       直接读数 `.local/reviews/M654/prefix-probe-reading.json`：光标高 205.2px = 块高 205.2px。
 - [x] 1.4 同一场景加光标计算样式断言：`borderLeftWidth` = 2px、颜色 = `--text`、
-      `marginLeft` = -1px、`.cm-cursorLayer` 的 `animationName` = none；非聚焦时 `.cm-cursor`
-      不可见
-      ——三主题各一条（light / dark / eink）。
+      `marginLeft` = -1px；非聚焦时 `.cm-cursor` 不可见
+      ——三主题各一条（light / dark / eink）。闪烁断言在 2026-10-24 改裁后改为
+      `animationName` ∈ {`cm-blink`, `cm-blink2`}、`animationDuration` = 1.2s、动画运行中，
+      并加亮 / 灭相位的 opacity 读数（见 5.2）。
 - [x] 1.5 反向验证断言有区分度：正文行光标高度等于正文行盒、H1 行光标高度等于 H1 行盒
       （不是常量）；构造一个「光标高度 = 块高度」的反例确认 §1.3 的断言会红
       ——「H1 > 正文行」用例 + 1.3 的修前红色读数（修前光标高度 = 块高度、≠ 行盒）。
@@ -81,12 +82,13 @@
 - [x] 2.9 `src/editor.ts` 的 `clampAcrossBlockWidgets`：返回块内最近源码位
       （forward `best + 1` / backward `best - 1`）取代块边界；同步改 `blockWidgetBoundaries`
       的注释与 `verticalTarget` 的行为说明（M110 意图保留：不一步跨块）
-- [x] 2.10 `src/editor.ts` 的光标视觉（D2=A）：`.cm-cursor, .cm-dropCursor` 改
-      `borderLeft: 2px solid var(--text)` + `marginLeft: -1px`；`.cm-cursorLayer` 取消动画；
-      注释指向 `docs/specs/editor-caret.md` 与 D2
-      ——取消动画必须 `!important`：CM 在光标移动时把 `animationName` 写成**内联样式**
-      （`dom.style.animationName = "cm-blink" | "cm-blink2"`），无 `!important` 的样式表声明
-      一律输给它。
+- [x] 2.10 `src/editor.ts` 的光标视觉：`.cm-cursor, .cm-dropCursor` 改
+      `borderLeft: 2px solid var(--text)` + `marginLeft: -1px`；注释指向
+      `docs/specs/editor-caret.md` 与 D2
+      ——原 D2=A 曾以 `animation: none !important` 取消闪烁（CM 在光标移动时把 `animationName`
+      写成**内联样式**，无 `!important` 的样式表声明一律输给它）；2026-10-24 改裁后该覆盖
+      **整条删除**：闪烁交回 CM 原生 `cm-blink`，任何 animation 覆盖——尤其 `!important`——
+      都会压住内联相位重启，MUST NOT 再加回（见 5.1）。
 - [x] 2.11 注释清扫：`src/preview/math.ts` / `mermaid.ts` / `frontmatter.ts` 里所有
       「与 frontmatter 的 selected 口径一致」类表述改准（改为「严格重叠即显露」）；
       `rg "frontmatter.*selected|selected.*frontmatter"` 零命中
@@ -98,9 +100,9 @@
 ## 3. 文档与值登记
 
 - [x] 3.1 `docs/specs/design-tokens-v1.md`：在「阴影与 hairline」节追加一行编辑器光标
-      组件常量——宽度 2px、常亮、三主题同值（含 eink）；不新增 token 计数（理由：与
-      1.2–1.6px 强调线宽 / 2px 引用块竖线同族，见规则⑧）；注明它是交互指示线、不参与
-      「三处粗 hairline 是装饰性结构线的全部」清单
+      组件常量——宽度 2px、1.2s 周期闪烁、三主题同值（含 eink；2026-10-24 改裁后由
+      「常亮」改准）；不新增 token 计数（理由：与 1.2–1.6px 强调线宽 / 2px 引用块竖线同族，
+      见规则⑧）；注明它是交互指示线、不参与「三处粗 hairline 是装饰性结构线的全部」清单
 - [x] 3.2 `docs/specs/editor-caret.md` 与 design §2 逐字对账；条款引用处（proposal / design）
       的相对链接全部可达
       ——`scripts/docs-check.sh` PASS（584 条相对链接全部可达）。
@@ -122,7 +124,7 @@
       `GATE RESULT: 11/11 PASS（SKIP 0）`（首轮 tsc-unit 红，修的是单测 helper 的
       `TransactionSpec` 类型标注，非产品代码；修复后含在 13/13 的复跑里）。
 - [x] 4.5 `bash scripts/gate.sh visual` 全绿；变化基线逐张列出并由 Alex 过目（光标宽度 /
-      常亮带来的像素变化 = 基线更新的人肉裁决点）
+      闪烁带来的像素变化 = 基线更新的人肉裁决点；截图冻结 CSS 动画 ⇒ 预期零变化）
       ——`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0；visual-regression 522s 全绿，
       **零像素基线变化**（没有需要 Alex 过目的基线更新；**未执行任何 `--update`**）。
 - [ ] 4.6 新增真机场景 `scripts/acceptance/scenarios/228-caret-visibility.md` 并 PASS：
@@ -139,5 +141,31 @@
       ——fixture 全合成（`示例笔记` / `示例` / `已确认` / `正文首行`）；无真实 vault 路径或人名。
 - [ ] 4.9 真机 dogfood（Alex 手感项）：`pnpm tauri dev` 起真实 app，打开带 frontmatter 的
       合成文档，逐项过——点击 properties 落点是否大致在点击行、编辑 YAML 期间标题让位是否
-      可接受、↑ 进入 YAML 是否自然、2px 常亮光标在三主题的观感、eink 下是否刺眼
+      可接受、↑ 进入 YAML 是否自然、2px + 1.2s 闪烁光标在三主题的观感（是否「一眼扫到」）、
+      eink 下闪烁的残影 / 刺眼程度
       ——归 Alex（手感项，agent 不代判）。
+
+## 5. 改裁：恢复光标闪烁（2026-10-24，Alex 反馈 #6）
+
+> 原 D2=A（2px 常亮）在 dogfood 后被 Alex 改判：「光标可见性调地有些过头了 —— 现在光标
+> 不闪了，也不容易一眼扫到。」D2 改判 **B**：保留 2px 宽度与 `--text` 颜色，恢复约 1.2s
+> 周期闪烁（CM 原生 `cm-blink`），三主题同口径（含 eink）。本节记录改裁的实际改动。
+
+- [x] 5.1 `src/editor.ts`：删除 `&.cm-focused > .cm-scroller > .cm-cursorLayer
+      { animation: none !important }` 整条覆盖，闪烁交回 CM 原生口径（基础主题 +
+      `cursorBlinkRate` facet + 内联相位重启）；注释写清「MUST NOT 用 `!important` 覆盖
+      animation」的机制与改裁来由
+- [x] 5.2 `tests/visual/scenes/m647-caret-geometry.spec.ts`：G 组断言从 `animationName = none`
+      改为 `animationName` ∈ {`cm-blink`, `cm-blink2`}、`animationDuration` = 1.2s、无限循环、
+      动画运行中；新增亮 / 灭相位读数（暂停在 0ms → opacity 1，700ms → opacity 0）——
+      该断言在 M654 的常亮实现上必红（没有可暂停的动画）
+- [x] 5.3 change 文档改准：`proposal.md` 评审记录 + D2 候选表、`design.md` §3.5 / §4.2 / §4.3 /
+      §5 / §6 / §8、`specs/ui-design-system/spec.md` 的 requirement 与两个场景、
+      `docs/specs/editor-caret.md`、`docs/specs/design-tokens-v1.md`、
+      `scripts/acceptance/scenarios/228-caret-visibility.md` 全部去掉「常亮 / 无闪烁」口径
+- [x] 5.4 可发现性证据：light / dark / eink 三主题的亮 / 灭相位截图与计算样式读数落
+      `.local/reviews/cursor-visibility-oct24/`（真机段挂起，截图证据来自 chromium 视觉套件）
+- [x] 5.5 `pnpm test` 与 `bash scripts/gate.sh quick` 全绿；`GATE RESULT` 原文行进完成报告
+      ——`GATE RESULT: 11/11 PASS（SKIP 0）`，exit 0；`scripts/visual/run.sh` 全量像素回归
+      780 passed / 1 skipped / 0 failed（9.0m，**零像素基线变化**，未执行 `--update`）。
+      改裁证据（三主题亮 / 灭相位截图 + 读数）在 `.local/reviews/cursor-visibility-oct24/`。

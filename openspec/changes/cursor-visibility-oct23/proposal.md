@@ -2,6 +2,7 @@
 
 - Change ID: `cursor-visibility-oct23`
 - 日期: 2026-10-23
+- 改裁: 2026-10-24（D2 由 A 改判 B：恢复 1.2s 闪烁；评审记录见下）
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
 > 评审记录
@@ -9,6 +10,10 @@
 > D1 = **A**（点击 properties 盒 → 显露 YAML 源码、光标落在点击对应的源行；doc-title / 纯装饰
 > padding 只聚焦、不进 YAML）、D2 = **A**（2px 实心竖线 + 取消闪烁，三主题同值）、
 > D3 = **按 design §2 的 C1–C5 原文**落地（`docs/specs/editor-caret.md`）。
+> **改裁（2026-10-24，实现后 dogfood 反馈 #6）**：D2 由 A 改判为 **B**——Alex 原话「光标
+> 可见性调地有些过头了 —— 现在光标不闪了，也不容易一眼扫到。」保留 2px 宽度与 `--text`
+> 颜色，**恢复约 1.2s 周期闪烁**（CM 原生 `steps(1) cm-blink`），三主题同口径（含 eink）。
+> D1 / D3 不变；原始缺陷（光标高度取整块、光标太细）的修复不回退。
 > 节点 2（归档评审）：待实现完成后填写。
 
 ## Why
@@ -111,8 +116,8 @@ doc-title 底端。加粗 / 调 CSS `line-height` 都改不了它——量错的
    最近的一条可见源码行并显露该块（frontmatter / 块级公式 / mermaid 三类同口径），避免
    「钳制到边界 = 整块高度光标」。这项对公式 / mermaid 也生效——它们此前同样会在该路径上
    留下边界光标（见 design §5）。
-6. **光标视觉**：按 D2 落地（倾向 2px + 常亮）；颜色保持 `--text`，宽度登记为组件常量
-   （不新增颜色 / 字号 token）；eink 同宽、常亮。
+6. **光标视觉**：按 D2 落地（2026-10-24 改裁后为 2px + 约 1.2s 闪烁）；颜色保持 `--text`，
+   宽度登记为组件常量（不新增颜色 / 字号 token）；eink 同宽、同样闪烁。
 7. **spec 增量**：`editor-live-preview` 新增「光标可见位置与替换块指针入口」requirement；
    `ui-design-system` 新增「编辑器光标视觉」requirement。
 8. **测试**：新增 `tests/visual/scenes/m647-caret-geometry.spec.ts` 的属性矩阵
@@ -142,14 +147,16 @@ doc-title 底端。加粗 / 调 CSS `line-height` 都改不了它——量错的
 
 | 候选 | 形态 | 可见性增益 | 代价 / eink |
 |---|---|---|---|
-| **A（倾向）** | 2px 实心竖线，`--text`，**取消闪烁** | 宽度 +67%，且不再有半程不可见 | 光标在聚焦期间常亮；`--text` 三主题已最高对比 |
-| B | 2px 实心竖线，保留 1.2s 闪烁 | 只来自加粗，半程仍不可见 | 改动最小；eink 仍闪烁（残影） |
+| **A（2026-10-23 原裁决）** | 2px 实心竖线，`--text`，**取消闪烁** | 宽度 +67%，且不再有半程不可见 | 光标在聚焦期间常亮；`--text` 三主题已最高对比 |
+| **B（2026-10-24 改裁，现行）** | 2px 实心竖线，保留 1.2s 闪烁 | 宽度增益 + 闪烁的运动信号（「一眼扫到」） | 半程仍不可见；eink 仍闪烁（残影），见 design §3.5 |
 | C | 3px 实心竖线，保留闪烁 | 最粗 | 3px 超出 eink 既有 1.2–1.6 强调线宽与 2 / 2.5px 粗 hairline 语汇，且半程不可见 |
 | 考虑过、不推荐 | accent 变色 | light / dark 有颜色增益 | eink 无色、退化为 1.2px；accent 与链接同色，语义撞车 |
 | 考虑过、不推荐 | 呼吸块光标（约 0.5em 半透明块 + opacity 呼吸） | 块面最显眼 | 与选区带混淆；eink 上是灰带 + 动画残影；CJK 字格宽度不一；实现要改光标层几何 |
 
-倾向 A：它同时命中「细」与「半程不可见」两个成因，且是三主题唯一同构的解（eink 没有颜色，
-只能靠宽度与常亮）。若 Alex 觉得常亮打扰，取 B（宽度保留、闪烁保留）。
+原倾向 A：它同时命中「细」与「半程不可见」两个成因，且是三主题唯一同构的解（eink 没有颜色，
+只能靠宽度与常亮）。**2026-10-24 改裁为 B**：Alex 反馈 #6「光标可见性调地有些过头了 —— 现在
+光标不闪了，也不容易一眼扫到。」——实测证明「取消闪烁」把可发现性的另一半（闪烁的运动信号）
+一起拿掉了；恢复闪烁，宽度 / 颜色 / 居中的增益全部保留。3px 与 C 的其他代价不变，仍不采纳。
 
 ### D3 合同条款原文过目
 
@@ -165,7 +172,7 @@ doc-title 底端。加粗 / 调 CSS `line-height` 都改不了它——量错的
 - 不改 properties 盒 / doc-title 的视觉（底色、圆角、字号、间距、key 列宽）。
 - 不改公式 / mermaid 的点击与显露语义；本 change 只让它们共享「键盘边界推进源码行」的同一
   条规范化（D1 外的派生改动，见 design §5）。
-- 不改 code 模式的任何光标行为（除共享的宽度 / 常亮视觉）。
+- 不改 code 模式的任何光标行为（除共享的宽度 / 闪烁视觉）。
 - 不改 reveal 的既有口径（强调范围含端点、链接严格重叠、callout 行严格重叠）。
 - 不引入新的 keybinding、不引入新的配置字段。
 - 不把 doc-title 从 frontmatter widget 拆出来（M222 的两岛拓扑约束不变；编辑 YAML 期间
@@ -178,7 +185,7 @@ doc-title 底端。加粗 / 调 CSS `line-height` 都改不了它——量错的
   `ui-design-system`（ADDED「编辑器光标视觉」）。
 - **新增文档**：`docs/specs/editor-caret.md`（质量合同，条款见 design §2）；
   [design-tokens-v1](../../../docs/specs/design-tokens-v1.md) 的「阴影与 hairline」节登记光标宽度
-  2px 与常亮口径。
+  2px 与 1.2s 闪烁口径（2026-10-24 改裁后由「常亮」改准）。
 - **代码**：`src/preview/livePreview.ts`（显露判据）、`src/preview/frontmatter.ts`（widget
   指针入口 / `selected` 退场）、`src/preview/theme.ts`（selected 样式删除）、
   `src/preview/math.ts` / `src/preview/mermaid.ts`（`enterReplacedSource` 迁到共享模块的
@@ -187,7 +194,7 @@ doc-title 底端。加粗 / 调 CSS `line-height` 都改不了它——量错的
 - **测试**：`tests/unit/doc-title-placement.test.ts`（FrontmatterWidget 构造参数变更）、
   新增 `tests/visual/scenes/m647-caret-geometry.spec.ts`、新增
   `scripts/acceptance/scenarios/228-caret-visibility.md`。
-- **视觉基线**：光标宽度 / 常亮若出现在既有整页基线里，需按
+- **视觉基线**：光标宽度 / 闪烁若出现在既有整页基线里，需按
   [tests/visual/README.md](../../../tests/visual/README.md) 的纪律重新截图并由 Alex 过目
   （基线更新是人肉裁决点）。
 - **关联约束**：ADR 0003 §3（不改写源文件）；ADR 0002 §6（打开 1MB <100ms；本 change 不
