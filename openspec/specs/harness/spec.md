@@ -126,7 +126,12 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 ### Requirement: 工具循环
 
-对话运行时 SHALL 支持工具循环：模型返回工具调用时，系统执行对应工具并将结果回送，直至模型不再调用工具或达到循环上限（默认 50，`[harness].loop_max` 可调；出厂值 M367 由 8 上调至 50，上界仍为 64）。达到上限 SHALL 终止循环并在面板给出明确提示。运行时 SHALL 维护会话状态于 Rust core，webview 重载 MUST NOT 丢失会话。工具集 SHALL 恰好为：`vault_read`、`vault_search`、`vault_patch`、`vault_create`、`vault_move`、`vault_delete`、`skill_load`、`cli_run`——清单外能力扩张须经 Alex 裁决（ADR 0007；本 change 的 `vault_move` / `vault_delete` 即该裁决的落地）。
+对话运行时 SHALL 支持工具循环：模型返回工具调用时，系统执行对应工具并将结果回送，直至模型不再调用工具或达到循环上限（默认 50，`[harness].loop_max` 可调；出厂值 M367 由 8 上调至 50，上界仍为 64）。达到上限 SHALL 终止循环并在面板给出明确提示。运行时 SHALL 维护会话状态于 Rust core，webview 重载 MUST NOT 丢失会话。工具集 SHALL 恰好为 8 件 vault 操作工具：`vault_read`、`vault_search`、`vault_patch`、`vault_create`、`vault_move`、`vault_delete`、`skill_load`、`cli_run`，另加 1 件编排工具 `task`（change `add-harness-subagents`）。`task` 属编排工具、不操作 vault，是模型按名字委派子代理的入口，其入参与结果契约见 `harness-subagents` capability；子运行的运行上下文 MUST NOT 获得 `task`（派生深度恰好 1 层，实现口径为工具白名单）。清单外能力扩张须经 Alex 裁决（ADR 0007；`vault_move` / `vault_delete` 的扩张即该裁决的既有落地，`task` 的分类见该 ADR 的修订）。
+
+同一条助手消息里的多个 `task` 调用 SHALL 并行执行，非 `task` 调用 SHALL 维持既有逐个执行口径；
+工具结果 SHALL 按原调用顺序回填（并行只影响执行时刻，不改变结果的排列），父请求的 `tool_calls`
+顺序 MUST NOT 因完成顺序变化。并行调用的并发上限、事件交错与配额语义见 `harness-subagents`
+capability。
 
 #### Scenario: 多轮工具往返
 
@@ -142,6 +147,16 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 - **WHEN** 模型连续调用工具达到 `loop_max`
 - **THEN** 循环终止，面板显示达到上限的提示，不产生进一步工具执行
+
+#### Scenario: 编排工具在册
+
+- **WHEN** 交互会话模型发起 `task` 调用
+- **THEN** 系统按 `harness-subagents` 的契约启动子运行；子运行的请求里 MUST NOT 出现 `task` 工具
+
+#### Scenario: 同回合并行与按序回填
+
+- **WHEN** 一条助手消息里模型连续发起两个 `task` 调用
+- **THEN** 两次子运行并行执行；两条工具结果按调用的原始顺序回填，与各自的完成先后无关
 
 ### Requirement: 权限机制
 
@@ -326,7 +341,7 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 
 ### Requirement: 配置节 [harness]
 
-`config.json` SHALL 支持 `[harness]` 节：`provider`（闭集合 `kimi` / `deepseek` / `mock`）、`providers` 表（各 provider 的 `api_key` / `model` / 可选 `base_url` / 可选 `wire_api`——闭集合 `responses` / `chat_completions`，缺省 `responses`；v1 仅 kimi 实现 chat 档，其余 provider 配置 chat 档 SHALL 回落 `responses` 并给 warning；mock 为 `fixture` 路径）、`permissions`（`allow` / `deny` 规则表）、`permission_mode`（闭集合 `read_only` / `vault_write` / `full_access`，默认 `vault_write`）、`loop_max`、`warn_ctx_pct`。校验 SHALL 沿用既有模板：缺字段回落默认不告警；闭集合取值非法回落默认 + 人话 warning；类型不符整文件回落（ADR 0002 §5）。运行期写回 SHALL 经泛化的 `config_set_value(section, key, value)`，`ui` 表既有行为不变。
+`config.json` SHALL 支持 `[harness]` 节：`provider`（闭集合 `kimi` / `deepseek` / `mock`）、`providers` 表（各 provider 的 `api_key` / `model` / 可选 `base_url` / `models` 模型清单（逐项 `{id, effort, vision, window}`；config-only，不内置模型表）/ 可选 `wire_api`——闭集合 `responses` / `chat_completions`，缺省 `responses`；v1 仅 kimi 实现 chat 档，其余 provider 配置 chat 档 SHALL 回落 `responses` 并给 warning；mock 为 `fixture` 路径）、`permissions`（`allow` / `deny` 规则表）、`permission_mode`（闭集合 `read_only` / `vault_write` / `full_access`，默认 `vault_write`）、`loop_max`、`warn_ctx_pct`、`auto_compact`（默认 `true`）、`session_naming` 表（会话自动命名，三键都可省：`enabled`——默认 `true`，关闭后不发起任何命名调用、不写标题记录；`provider`——可选 provider id，缺省 `null` = 命名调用发往会话当前 provider，非空须是 `providers` 表内的 id（闭集合 `kimi` / `deepseek` / `mock`），闭集合外取值 SHALL 回落 `null` 并给一条人话 warning；`model`——可选模型 id，缺省 `null` = 选定 provider 的生效模型，非空须在选定 provider 的 `models` 清单内声明，未声明 SHALL 回落 `null` 并给一条人话 warning；mock provider 无模型清单，`model` 只能为 `null`）。命名调用的 provider / 模型 / wire 方言 / `api_key` / `base_url` SHALL 同出一个 provider 条目。校验 SHALL 沿用既有模板：缺字段回落默认不告警；闭集合取值非法回落默认 + 人话 warning；类型不符整文件回落（ADR 0002 §5）。运行期写回 SHALL 经泛化的 `config_set_value(section, key, value)`，`ui` 表既有行为不变。
 
 #### Scenario: 非法 provider 回落
 
@@ -343,6 +358,31 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 - **WHEN** 某 provider 的 `wire_api` 为闭集合外的值
 - **THEN** 启动不失败，该 provider 的方言回落 `responses` 并产生一条人话 warning；deepseek 配置 `chat_completions` 同样回落并告警（v1 未实现其 chat 档）
 
+#### Scenario: session_naming.model 未声明回落
+
+- **WHEN** `session_naming.model` 非空、但不在选定 provider 的 `models` 清单内（或 mock provider 下非空）
+- **THEN** 启动不失败，命名调用回落该 provider 的生效模型并产生一条人话 warning；`session_naming.model` 类型不符时整文件回落
+
+#### Scenario: session_naming.provider 指向其他 provider
+
+- **WHEN** `session_naming = { "provider": "deepseek", "model": "deepseek-flash" }`，而会话当前 provider 为 `kimi`，且 deepseek 条目已配置 `api_key` / `base_url` 并声明了该模型
+- **THEN** 命名调用按 deepseek 条目的 `api_key` / `base_url` / wire 方言发出，模型取 deepseek 的 `deepseek-flash`；会话本身的请求仍走 kimi，两类调用的 provider 不混用
+
+#### Scenario: 非法 session_naming.provider 回落
+
+- **WHEN** `session_naming.provider` 为 `providers` 表外的值（如 `"openai"`），或 `session_naming` 表的 provider 写成非字符串值
+- **THEN** 闭集合外取值时启动不失败，命名调用回落会话当前 provider 并产生一条人话 warning；类型不符时整文件回落（ADR 0002 §5 既有模板），回落后的 `session_naming.provider` 缺省（`null` = 会话当前 provider）
+
+#### Scenario: session_naming.enabled 缺省与类型不符
+
+- **WHEN** 配置未写 `session_naming`（或未写其中的 `enabled`），或把 `enabled` 写成非布尔值
+- **THEN** 未写时按默认 `true` 生效、不告警；类型不符时整文件回落（ADR 0002 §5 既有模板），回落后的 `enabled` 为 `true`
+
+#### Scenario: 旧命名键静默忽略
+
+- **WHEN** 配置里只写了旧键 `auto_title` / `title_provider` / `providers.<id>.title_model`（未写 `session_naming`）
+- **THEN** 旧键按未知键口径静默忽略（无 warning、无兼容读取），自动命名按 `session_naming` 缺省值运行（开、provider 跟随会话、模型取生效模型）
+
 #### Scenario: 切换写回持久化
 
 - **WHEN** 在面板权限 chip 把模式从 `vault_write` 切到 `read_only`
@@ -350,7 +390,7 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 
 ### Requirement: 会话边界
 
-会话 SHALL 绑定 vault：内存态一个 vault 一个活跃会话（`RuntimeInner.sessions` 按 vault 键控、resume 铸新 id 替换槽位）；盘上按 vault 分目录并存多份历史会话 JSONL 留存，浮层可切换 / 新建 / 恢复（M433）。切 vault SHALL 切到该 vault 的会话，切回时恢复；关闭 vault 丢弃其会话；app 重启清空全部会话。每个逻辑会话 SHALL 有稳定 session id（`s<unix_millis>-<6 位随机>`，落 JSONL 文件名与 `session_open`）；会话建立、「新会话」重置、自动压缩、从历史会话恢复，四者 SHALL 各开一个 JSONL 文件，旧文件封闭不再追加（压缩前历史完整留存在旧文件，压缩摘要随新文件 `session_open` 留存；恢复新文件以 `opened_from=restore` + `restored_from` 标记源会话）。标题栏 harness 段 SHALL 提供「新会话」动作（面板在场时）：清空当前 vault 会话的消息历史并重新装配系统上下文（AGENTS.md / Skill 索引不变），旧会话 JSONL 文件不受影响。harness 段 SHALL 显示会话名——取首条用户消息截断（约 20 字），未发消息时显示「新会话」。探针期 SHALL 提供**最小恢复入口**：标题栏 harness 段的会话浮层 SHALL 列出本 vault 的历史会话（极简选择器，按时间序、会话名取该会话首条用户消息截断约 20 字；仅本 vault，只列不管理），选中一项 SHALL 从该会话 JSONL 重建会话并续写新会话文件——恢复 = 读文件最后一条 `llm_request` 的完整请求体，并折叠其后未入请求的末尾响应（算法见 design §6.2），system 与 input 原样灌回（**不重新装配**系统上下文）、不跨 provider 重写回放项。探针期 SHALL NOT 提供完整多会话管理 UI（会话重命名 / 搜索 / 分组等）与历史回看列表的完整形态；会话浮层每行已提供**单条删除**入口（行内两步确认、活跃会话拒删，M406 面板批次落地），它不属上述「完整管理 UI」。
+会话 SHALL 绑定 vault：内存态一个 vault 一个活跃会话（`RuntimeInner.sessions` 按 vault 键控、resume 铸新 id 替换槽位）；盘上按 vault 分目录并存多份历史会话 JSONL 留存，浮层可切换 / 新建 / 恢复（M433）。切 vault SHALL 切到该 vault 的会话，切回时恢复；关闭 vault 丢弃其会话；app 重启清空全部会话。每个逻辑会话 SHALL 有稳定 session id（`s<unix_millis>-<6 位随机>`，落 JSONL 文件名与 `session_open`）；会话建立、「新会话」重置、自动压缩、从历史会话恢复，四者 SHALL 各开一个 JSONL 文件，旧文件封闭不再追加（压缩前历史完整留存在旧文件，压缩摘要随新文件 `session_open` 留存；恢复新文件以 `opened_from=restore` + `restored_from` 标记源会话）。标题栏 harness 段 SHALL 提供「新会话」动作（面板在场时）：清空当前 vault 会话的消息历史并重新装配系统上下文（AGENTS.md / Skill 索引不变），旧会话 JSONL 文件不受影响。harness 段 SHALL 显示会话名——取**有效标题**（「会话本地留存」条的 last-wins 口径：最后一条带 `title` 的 `session_title` 记录），无标题记录时回落首条用户消息截断（约 20 字），两者皆无时显示「新会话」；生成标题的硬上限（20 码点）与显示截断长度相同，故标题显示不带省略号。会话标题变化 SHALL 即时反映到标题栏会话名与已打开的历史浮层行名，MUST NOT 要求 webview 重载；标题变化 MUST NOT 改变 transcript、session id、历史清单顺序或会话内容。自动压缩与从历史会话恢复开新逻辑会话时，源会话的有效标题 SHALL 随新文件继承（见「会话本地留存」条），使会话名在轮换后保持连续；「新会话」显式开始新对话，MUST NOT 继承。探针期 SHALL 提供**最小恢复入口**：标题栏 harness 段的会话浮层 SHALL 列出本 vault 的历史会话（极简选择器，按时间序、会话名取该会话的有效标题、无标题记录时回落该会话首条用户消息截断约 20 字；仅本 vault，只列不管理），选中一项 SHALL 从该会话 JSONL 重建会话并续写新会话文件——恢复 = 读文件最后一条 `llm_request` 的完整请求体，并折叠其后未入请求的末尾响应（算法见 design §6.2），system 与 input 原样灌回（**不重新装配**系统上下文）、不跨 provider 重写回放项。探针期 SHALL NOT 提供完整多会话管理 UI（会话重命名 / 搜索 / 分组等）与历史回看列表的完整形态；自动命名不属本禁令的「完整多会话管理 UI」——仍无手动重命名入口、无搜索、无分组。会话浮层每行已提供**单条删除**入口（行内两步确认、活跃会话拒删，M406 面板批次落地），它不属上述「完整管理 UI」。
 
 #### Scenario: 切 vault 切会话
 
@@ -380,18 +420,34 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 #### Scenario: 历史会话列举
 
 - **WHEN** 打开标题栏 harness 段的会话浮层
-- **THEN** 列出本 vault 的历史会话（极简选择器，按时间序、会话名取该会话首条用户消息截断约 20 字），不列其他 vault 的会话；「新建会话」动作是 harness 段段首的 ＋ 钮、不在浮层内（浮层只剩历史行，M406 起；空清单时浮层整层不开）
+- **THEN** 列出本 vault 的历史会话（极简选择器，按时间序、会话名取该会话的有效标题、无标题记录时回落该会话首条用户消息截断约 20 字），不列其他 vault 的会话；「新建会话」动作是 harness 段段首的 ＋ 钮、不在浮层内（浮层只剩历史行，M406 起；空清单时浮层整层不开）
 
 #### Scenario: 从历史会话恢复续聊
 
 - **WHEN** 在会话浮层选择一个历史会话
-- **THEN** 该会话的 system 与 input（最后一条 `llm_request` 的完整请求体，并折叠其后未入请求的末尾响应，算法见 design §6.2）原样灌回内存态、不重新装配系统上下文；开新 JSONL 文件（首行 `session_open` 标 `opened_from=restore`、`restored_from`=源会话 id），旧文件封闭；其后提问按恢复的历史续写；读数随留存重算灌回新会话（控制行显示源会话最近一次真实读数），并以读数种子（`usage` + `cache_totals`）落进新文件首行，供链式恢复起算
+- **THEN** 该会话的 system 与 input（最后一条 `llm_request` 的完整请求体，并折叠其后未入请求的末尾响应，算法见 design §6.2）原样灌回内存态、不重新装配系统上下文；开新 JSONL 文件（首行 `session_open` 标 `opened_from=restore`、`restored_from`=源会话 id），旧文件封闭；源会话有有效标题时新文件随之继承，会话名保持连续；其后提问按恢复的历史续写；读数随留存重算灌回新会话（控制行显示源会话最近一次真实读数），并以读数种子（`usage` + `cache_totals`）落进新文件首行，供链式恢复起算
+
+#### Scenario: 标题优先于首条消息
+
+- **WHEN** 某会话已有有效标题，另一会话没有标题记录但已有首条用户消息
+- **THEN** 前者在标题栏与历史浮层中显示标题（不带省略号）；后者显示首条用户消息截断约 20 字；两者均无时显示「新会话」
+
+#### Scenario: 标题更新不重排历史
+
+- **WHEN** 会话空闲时一次 rename 生效，历史浮层正打开
+- **THEN** 标题栏会话名与该行行名原地更新，浮层不重开、不跳位置、清单顺序不变；transcript 不变
 
 ### Requirement: 会话本地留存
 
-会话 SHALL 以 wire/input 形态落配置目录（MUST NOT 写入 vault），作为 ADR 0007 双向记录机制的一侧：每会话一个 append-only JSONL 文件（`<config_dir>/harness/sessions/<vault 稳定 id>/<session_id>.jsonl`），文件首行 SHALL 为 `session_open` 记录——含 session id、vault 根路径、provider / 模型 / 思考档位 / **wire 方言（`wire_api`，缺省值同样在场）**、**完整装配后 system prompt 全文**与装配清单（每个来源的路径、存在与否、字节数；不存在的来源 SHALL 同样在场）、**读数种子**（M526：恢复 / 压缩开文件时在场——`usage` 读数快照 + `cache_totals` 累计四元组；链式恢复从这里起算，全新会话不落这两键）。`<vault 稳定 id>` SHALL 是 vault 注册表 id（与 `vault-sessions/<id>.json`、`reading-positions/<id>.json` 同一份身份），MUST NOT 用 vault 路径派生的消毒名（消毒名有撞名面且无长度 / 字符集保证，M309 现场）。每次发给模型的请求（含工具循环的每次迭代与压缩调用）SHALL 落一条 `llm_request` 记录（完整请求体：system + messages + 参数，**另带本次实际发送体的字节数 `request_bytes`**——按 wire 展开后的尺寸算，省掉「按字节比外推请求多大」；不具备真实 HTTP body 的 mock 档省略该键），每次响应 SHALL 落一条 `llm_response` 记录（正文 / 思考归一回放项与展示文本 / 工具调用 / usage（SHALL 含 input / cached / output 与**缓存写入 `cache_write_tokens`**——provider 不提供时按 0 记录）/ 错误；思考 MUST 落盘——**回放项归一回放形状**（`{"type":"reasoning", summary, [content], [encrypted_content]}`：kimi 的明文载体是 `summary`、deepseek 的是 `content`，各按在场项保留；`encrypted_content` 有则在场），`id` 字段 MUST NOT 进入回放项（`store:false` 下重放 `rs_*` id 属非标用法），展示文本另存）；请求侧在 **Responses 方言**且模型声明支持思考档位时（判据 `HarnessConfig::effort_supported`，读配置 schema 的 per-model `effort` 声明）SHALL 带 `include:["reasoning.encrypted_content"]`（store:false 官方回放模式的前提——让服务端在 reasoning item 里回传密文，重放时无需 id 即可还原）；未声明 effort 的模型（含 deepseek 现役形态）MUST NOT 发该字段；**Chat Completions 方言 MUST NOT 发 `include` / `store`**，其 wire 形态与思考回放字段见「Chat Completions 方言」条；wire 不可推导的决策与事件（批准 / 拒绝、停止中断、LLM 错误、循环上限）SHALL 以 sidecar 记录留存——其中 **LLM 错误的 sidecar 记录 SHALL 另带 HTTP 面诊断**（非 2xx 时的 HTTP 状态码、原始响应 body——按固定上限截断防巨型 body 撑爆留存、服务端 request id 若响应头或 body 提供；不具备 HTTP 面的错误省略这些键），且**错误事件的既有形态（`type`/`code`/`message`）不变**（新诊断只进留存，不破坏既有消费方），被 wire 覆盖或失去意义的 11 类事件 kind（`user_message` / `assistant_text` / `tool_call` / `tool_result` / `usage` / `tool_denied` / `compact` / `session_reset` / `approval_overwritten` / `approval_withdrawn` / `turn_abort_requested`）SHALL NOT 再记（重复记录即第二事实源）。记录点 SHALL 与发送点同点，MUST NOT 经二次序列化产生第二事实源。验收口径 SHALL 为恢复充分性：仅凭 JSONL 能逐字节重建任意一轮发给模型的请求——wire 体由留存 + 代码版本 + `wire_api` 方言共同推导，`session_open` 的方言键是推导依据之一。
+会话 SHALL 以 wire/input 形态落配置目录（MUST NOT 写入 vault），作为 ADR 0007 双向记录机制的一侧：每会话一个 append-only JSONL 文件（`<config_dir>/harness/sessions/<vault 稳定 id>/<session_id>.jsonl`），文件首行 SHALL 为 `session_open` 记录——含 session id、vault 根路径、provider / 模型 / 思考档位 / **wire 方言（`wire_api`，缺省值同样在场）**、**完整装配后 system prompt 全文**与装配清单（每个来源的路径、存在与否、字节数；不存在的来源 SHALL 同样在场）、**读数种子**（M526：恢复 / 压缩开文件时在场——`usage` 读数快照 + `cache_totals` 累计四元组；链式恢复从这里起算，全新会话不落这两键）。`<vault 稳定 id>` SHALL 是 vault 注册表 id（与 `vault-sessions/<id>.json`、`reading-positions/<id>.json` 同一份身份），MUST NOT 用 vault 路径派生的消毒名（消毒名有撞名面且无长度 / 字符集保证，M309 现场）。每次发给模型的**会话请求**（含工具循环的每次迭代与压缩调用）SHALL 落一条 `llm_request` 记录（完整请求体：system + messages + 参数，**另带本次实际发送体的字节数 `request_bytes`**——按 wire 展开后的尺寸算，省掉「按字节比外推请求多大」；不具备真实 HTTP body 的 mock 档省略该键），每次响应 SHALL 落一条 `llm_response` 记录（正文 / 思考归一回放项与展示文本 / 工具调用 / usage（SHALL 含 input / cached / output 与**缓存写入 `cache_write_tokens`**——provider 不提供时按 0 记录）/ 错误；思考 MUST 落盘——**回放项归一回放形状**（`{"type":"reasoning", summary, [content], [encrypted_content]}`：kimi 的明文载体是 `summary`、deepseek 的是 `content`，各按在场项保留；`encrypted_content` 有则在场），`id` 字段 MUST NOT 进入回放项（`store:false` 下重放 `rs_*` id 属非标用法），展示文本另存）；请求侧在 **Responses 方言**且模型声明支持思考档位时（判据 `HarnessConfig::effort_supported`，读配置 schema 的 per-model `effort` 声明）SHALL 带 `include:["reasoning.encrypted_content"]`（store:false 官方回放模式的前提——让服务端在 reasoning item 里回传密文，重放时无需 id 即可还原）；未声明 effort 的模型（含 deepseek 现役形态）MUST NOT 发该字段；**Chat Completions 方言 MUST NOT 发 `include` / `store`**，其 wire 形态与思考回放字段见「Chat Completions 方言」条；wire 不可推导的决策与事件（批准 / 拒绝、停止中断、LLM 错误、循环上限）SHALL 以 sidecar 记录留存——其中 **LLM 错误的 sidecar 记录 SHALL 另带 HTTP 面诊断**（非 2xx 时的 HTTP 状态码、原始响应 body——按固定上限截断防巨型 body 撑爆留存、服务端 request id 若响应头或 body 提供；不具备 HTTP 面的错误省略这些键），且**错误事件的既有形态（`type`/`code`/`message`）不变**（新诊断只进留存，不破坏既有消费方），被 wire 覆盖或失去意义的 11 类事件 kind（`user_message` / `assistant_text` / `tool_call` / `tool_result` / `usage` / `tool_denied` / `compact` / `session_reset` / `approval_overwritten` / `approval_withdrawn` / `turn_abort_requested`）SHALL NOT 再记（重复记录即第二事实源）。记录点 SHALL 与发送点同点，MUST NOT 经二次序列化产生第二事实源。验收口径 SHALL 为恢复充分性：仅凭 JSONL 能逐字节重建任意一轮发给模型的请求——wire 体由留存 + 代码版本 + `wire_api` 方言共同推导，`session_open` 的方言键是推导依据之一；重建 MUST 忽略全部 sidecar 记录（含 `session_title`），旧文件缺失标题记录不改变重建结果。
 
 会话文件的 vault 归属 SHALL 仍以首行 `session_open.vault_root` 为**唯一**判据：列举、恢复、删除三处的归属过滤口径不变，目录只作组织维度，MUST NOT 成为归属判据的第二真源（文件被手工挪动 / 拷贝不改变其归属结论）。目录名 SHALL NOT 与保留目录名 `_orphaned` 相同。`sessions/<vault 稳定 id>/<session_id>.jsonl` SHALL 是**唯一布局**：新建会话 SHALL 只落其 vault 的目录，列举 / 恢复 / 删除 SHALL 只读该目录；产品运行时 MUST NOT 含任何迁移逻辑（无启动迁移入口、无旧布局读取路径），也 MUST NOT 读平铺在 `sessions/` 根下的 `*.jsonl`——MUST NOT 保留平铺布局的双读 / 双写过渡层（本仓无外部消费者，兼容层保护对象的举证责任在建层一方；REVIEW.md「消费者是谁」）。存量平铺文件（升级前遗留）的归位 SHALL 由**仓内一次性脚本**（`scripts/` 下，手动执行一次即弃，不进产品运行时）完成：脚本按各文件首行 `session_open.vault_root`（先规范化再查注册表）移入对应 vault 目录，`vault_root` 不可解析 / 在注册表里找不到 / 目标位置已有同名文件的 SHALL 移入保留目录 `sessions/_orphaned/`，MUST NOT 删除或改写任何文件，且 MUST be 幂等（重复执行零搬运）；脚本遇单文件失败时留原地并自报，重跑脚本收敛。上一代「按 vault 聚合的业务事件流水」形态（`<config_dir>/harness/<消毒名>.jsonl`）照旧不再续写、不做迁移（运行时 / 产品侧零读者，验收套件的 JSONL 断言随实现迁移至 wire 口径；M309 孤儿先例）。写失败不阻断对话的既有纪律不变。
+
+会话标题 SHALL 以 sidecar 记录 `session_title` 追加留存：`{"kind":"session_title","title":"…","decision":"initial|rename|keep|inherit|error","reason":"first-turn|cadence|drift|inherit","model":"…","ts":…}`。每次命名评估结束（含 keep 与失败）SHALL 追加一条——`initial` / `rename` 记录携带新标题，`keep` 记录携带当时生效的标题，`error` 记录不带 `title` 并带错误码 `code`（`harness_title_failed` / `harness_title_invalid`）；`inherit` 记录不是评估产物，在建新文件时写入（见下段）。`model` SHALL 记录本次调用实际使用的模型 id（`inherit` 记录不带该键——它没有发起调用，`reason=inherit`）。**有效标题** SHALL 是文件内最后一条带 `title` 的 `session_title` 记录的 `title`；没有该记录时回落首条用户消息（见「会话边界」条）。有效标题的解析 MUST 只有一处实现，列举 / 恢复 / 快照 / 事件四条出口 MUST NOT 各写一份 last-wins 逻辑。标题记录 SHALL 只在会话空闲（无在途轮次）时追加，MUST NOT 插在一条 `llm_request` 与它配对的 `llm_response` 之间——恢复的「折叠末尾未入请求的响应」判据依赖这对记录的相邻性。
+
+自动压缩与从历史会话恢复开新文件时，源会话的有效标题 SHALL 以一条 `decision=inherit` 的 `session_title` 记录写入新文件（源会话无标题记录时不写，回落口径自然成立）；「新会话」显式开始新对话，MUST NOT 继承。本 change 之前的会话文件不含 `session_title` 记录：列举、恢复、展示 SHALL 安静回落到首条用户消息口径，MUST NOT 告警、MUST NOT 回填或改写既有文件。
+
+自动命名调用是 **wire 外的辅助调用**：它 MUST NOT 落 `llm_request` / `llm_response`（它不属会话历史——落进去会使「最后一条会话 `llm_request`」判据指错请求、并打破请求 / 响应的配对口径），其 usage MUST NOT 进入会话读数（`UsageSnapshot` / `cache_totals` / ctx% / cache%）。`session_title` 记录是 wire 外的 sidecar，恢复充分性判据 MUST NOT 因它的在场或缺失而变化。
 
 #### Scenario: 留存落盘
 
@@ -430,8 +486,8 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 
 #### Scenario: 恢复充分性（属性级）
 
-- **WHEN** mock provider 跑完一轮含工具循环的对话（消息含 `<quote>` 块、响应含思考文本）
-- **THEN** 仅凭 JSONL 独立重建的每个请求与落盘 `llm_request` 深度相等（逐字节重建判据）；第 i 条响应的正文 / 思考 / 工具调用与第 i+1 条请求的历史对应项逐字节一致
+- **WHEN** mock provider 跑完一轮含工具循环的对话（消息含 `<quote>` 块、响应含思考文本），期间会话已产生 `session_title` 记录
+- **THEN** 仅凭 JSONL 独立重建的每个请求与落盘 `llm_request` 深度相等（逐字节重建判据，重建忽略 `session_title` 等全部 sidecar 记录）；第 i 条响应的正文 / 思考 / 工具调用与第 i+1 条请求的历史对应项逐字节一致
 
 #### Scenario: 思考落盘与回放
 
@@ -442,6 +498,26 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 
 - **WHEN** provider 的响应 usage 带回 `cache_write_tokens`，完成一轮对话
 - **THEN** 对应 `llm_response` 记录的 `usage` 块含 `cache_write_tokens` 原值；provider 不提供该字段时记为 0
+
+#### Scenario: 标题记录落盘与读取
+
+- **WHEN** 一次评估以 rename 结束，其后另一次评估以 keep 结束
+- **THEN** 文件追加两条 `session_title` 记录（各带 `decision` / `reason` / `model` / `ts`）；有效标题取最后一条带 `title` 的记录，与 rename 结果一致；keep 记录携带同一标题，不改变展示名
+
+#### Scenario: 标题调用不入 wire 留存
+
+- **WHEN** 完成若干轮对话并伴随一次成功的命名调用
+- **THEN** 文件内没有属于命名调用的 `llm_request` / `llm_response`（不存在 system 为命名指令的请求记录）；`llm_request` 与 `llm_response` 仍成对相邻，末尾响应的折叠判据不受影响
+
+#### Scenario: 压缩与恢复继承标题
+
+- **WHEN** 已有有效标题的会话触发自动压缩，或从历史会话恢复续聊
+- **THEN** 新 JSONL 文件在 `session_open` 之后追加一条 `decision=inherit` 的 `session_title` 记录，标题栏与历史浮层继续显示该标题；源会话无标题记录时不写 inherit，展示回落首条用户消息口径
+
+#### Scenario: 旧文件安静回落
+
+- **WHEN** 列举、恢复或展示本 change 之前落盘的会话文件（无 `session_title` 记录）
+- **THEN** 会话名回落该会话首条用户消息截断约 20 字；不产生 warning、不写任何回填记录、文件逐字节不变；恢复后的请求重建结果与不含标题记录时一致
 
 ### Requirement: mock provider
 
@@ -700,12 +776,20 @@ transcript 中的用户与 agent 消息 SHALL 带角色 + 时间读数 meta 行�
 
 ### Requirement: 错误呈现
 
-transcript 中的错误行 SHALL 同文案去重：新错误的文案与当前最后一条错误行逐字相同时 SHALL 就地替换该条（更新原行并滚到可见），SHALL NOT 追加堆叠；不同文案的错误照常追加。
+transcript 中的错误行 SHALL 同文案去重：新错误的文案与当前最后一条错误行逐字相同时 SHALL 就地替换
+该条（跟随态下滚到可见；用户已离开底部时 MUST NOT 改变滚动位，改由「回到底部」钮的未读提示承担），
+SHALL NOT 追加堆叠；不同文案的错误照常追加。
 
 #### Scenario: 同一错误不堆叠
 
 - **WHEN** 同一原因的错误连续发生多次（如后端尚未就绪时反复触发同一失败）
 - **THEN** transcript 中该文案的错误行始终只有一条，不发生追加堆叠
+
+#### Scenario: 脱离态下重复错误不拽走视口
+
+- **WHEN** 用户已上滚阅读、处于脱离态，transcript 中同一文案的错误再次发生
+- **THEN** 错误行仍只有一条（就地替换），`scrollTop` 变化 ≤ 1px（视口不回到末尾），「回到底部」钮的
+  未读提示在场
 
 ### Requirement: 浮层可访问性
 
@@ -1968,3 +2052,235 @@ harness 面板（触发钮仍在 DOM 时回到该钮，否则回到输入区）�
 
 - **WHEN** 打开并关闭代码块 / 表格全屏
 - **THEN** 消息文本、会话留存与配置逐字节不变；不产生任何发送、复制或文件写入
+
+### Requirement: 引用路径解码失败的文案
+
+引用路径（vault 图片 → harness 存储）的**解码失败** SHALL 上屏引用语境的人话：该文案 MUST NOT
+出现「剪贴板」（英文列 MUST NOT 出现 "clipboard"），MUST NOT 与格式不支持的文案混用——解码失败
+说的是「格式支持，但这份字节解不开（不是合法图片 / SVG 解析失败 / 画布尺寸非法）」，格式不支持
+说的是「这种格式还不支持」。两条文案 SHALL 互不为子串，使人侧一眼能分辨「换一张图就好」与
+「这个格式现在做不到」。
+
+错误码 SHALL 保持单一一族：MUST NOT 为引用语境新增后端 code。语境差异 SHALL 由前端在**调用点**
+渲染——同一个 `attachment_decode_failed` 在粘贴路径读粘贴语境条目、在引用路径读引用语境条目。
+粘贴路径的上屏文案 MUST NOT 因本条款改变任何字。
+
+引用语境的解码失败文案 SHALL 是文案表的一条独立条目（编号唯一；deck 与运行时表两列逐字一致，
+由既有漂移门禁强制）。参数 `{reason}` SHALL 来自后端错误信封，前端 MUST NOT 重算或改写它；
+信封缺该参数时上屏 SHALL 回落为后端提供的 message，MUST NOT 抛错，MUST NOT 出现未替换的占位符。
+
+该失败 SHALL 沿用引用事务既有的失败契约：该张不产图片卡片、其余张照常插入、失败读数随结果返回
+并在输入区持久留痕（见「引用失败的留痕与引用语境反馈」）。
+
+#### Scenario: 引用一张字节损坏的位图
+
+- **WHEN** 选中含 `![[broken.png]]` 的源码并摘录到对话（该文件的字节不是合法 png）
+- **THEN** toast 是引用语境的说法（含「无法解码」/ "decode"，不含「剪贴板」/ "clipboard"，
+  也不等于「暂不支持引用该格式」那一句）；输入区出现「1 张图片未能引用」的持久状态行，
+  composer 里没有该图的卡片
+
+#### Scenario: 畸形 SVG 的栅格化失败
+
+- **WHEN** 引用一张 XML 不完整或画布尺寸非法的 svg
+- **THEN** 上屏同一条引用语境解码失败文案；MUST NOT 出现粘贴语境文案，MUST NOT 出现格式不支持
+  文案
+
+#### Scenario: 真实粘贴路径逐字不变
+
+- **WHEN** 粘贴一张字节损坏的 png（与引用共用同一个写原语、同一个 `attachment_decode_failed`）
+- **THEN** 上屏仍是粘贴语境的「无法解码剪贴板图片：{reason}」，与本 change 之前逐字相同
+
+#### Scenario: 缺参不抛
+
+- **WHEN** 后端错误信封缺 `reason` 参数
+- **THEN** 提示不变成异常：上屏回落为后端提供的 message，MUST NOT 出现未替换的 `{reason}`
+
+### Requirement: 会话自动命名
+
+系统 SHALL 为每个逻辑会话维护一个**会话标题**，并按以下时机以辅助 LLM 调用完成生成或重估：①该会话首轮对话正常完成（首条用户消息得到最终响应）后生成初始标题；②距上一次完成的评估满 5 轮时重估（一轮 = 一条用户消息及其最终响应；工具循环中的多次模型请求不另计，`aborted` / 错误收尾的轮不计）；③话题漂移信号命中时重估——会话已有有效标题，且连续两条用户消息（各不少于 8 个码点）与当前标题的确定性词元重合度低于阈值（标题词元在消息中出现的比例 < 0.2；标题词元不足 3 个时不判漂移）。任何两次评估之间 MUST 至少间隔 3 轮，漂移信号 MUST NOT 把间隔压到更短；同一逻辑会话同时最多一个命名调用在途，在途期间的新触发点 SHALL 跳过（不排队）。尚无有效标题时（首个正常轮已过、初始生成失败或尚未成功），系统 SHALL 在下一个满足 3 轮下限的正常完成轮重试初始生成（`reason=first-turn`），直到成功——周期与漂移触发都以「已有有效标题」为前提，这条重试路径是唯一兜底。
+
+每次评估 SHALL 是一次**便宜档辅助调用**：不带工具；模型声明支持思考档时使用最低档 `Low`，未声明时不发该字段；素材只含当前标题、首轮问答与最近两轮问答的正文（剔除工具调用参数与结果、图片附件、思考文本与自动注入的编辑器上下文节）；首轮每条 ≤500 码点、最近两轮每条 ≤400 码点、整份素材 ≤3000 码点，超长按码点截断。输出由 prompt 约束为一行判定，不依赖 provider 的 `max_output_tokens`（该字段在 Responses 端点被忽略）。
+
+生成器 SHALL 输出 `keep` / `rename` 判定（JSON：`{"decision":"keep"}` 或 `{"decision":"rename","title":"…"}`）：当前标题仍能描述当前对话时 SHALL 输出 keep（拿不准一律 keep）；仅当当前标题已失真（话题已转移或标题明显错误）且新标题显著更好时才输出 rename。系统 MUST 只在 rename 且标题通过规范化校验时替换标题：规范化后须为单行、1–20 个码点、剥除包裹引号 / 反引号与句末标点，且与当前标题不同；keep、非法 JSON、空标题、超长、调用失败或超时一律保持当前标题不变（尚无当前标题的初始生成里，keep 无可保持的对象，SHALL 按 `invalid` 处理并走初始重试路径）。命名调用的失败或「不换名」结果 MUST NOT 向用户报错、MUST NOT 弹 toast、MUST NOT 中断或阻塞对话轮次。
+
+自动命名 SHALL 默认开启（`[harness].session_naming.enabled = true`）；关闭时 MUST NOT 发起任何命名调用、MUST NOT 写标题记录，既有标题记录照常展示。命名调用 SHALL 发往 `[harness].session_naming.provider` 指向的 provider（缺省 = 会话当前 provider，即 `null`），`api_key` / `base_url` / wire 方言与模型同出该 provider 条目；模型 SHALL 取 `[harness].session_naming.model`（缺省 = 该 provider 的生效模型），非空值须在**选定 provider** 的 `models` 清单内声明，未声明时 SHALL 回落该 provider 的生效模型并给一条人话 warning（此时便宜档只由调用形态保证——本仓无模型价格表，见 design D8）。
+
+标题 SHALL 只承担会话身份的展示：标题变化 SHALL 经状态快照与事件通道到达面板并即时更新标题栏会话名与已打开的历史浮层行名，MUST NOT 修改 transcript、session id、历史排序、会话内容或 vault 内任何文件。标题的留存、继承与回落口径见「会话本地留存」与「会话边界」条。
+
+#### Scenario: 首轮后生成标题
+
+- **WHEN** mock provider 完成一条用户消息及其最终响应，fixture 的 `titles` 脚本给出 `{"decision":"rename","title":"Rust 生命周期排查"}`
+- **THEN** 标题栏会话名显示「Rust 生命周期排查」；会话 JSONL 追加一条 `session_title` 记录（`decision=initial`、`reason=first-turn`、`model` 为本次调用模型）；历史浮层中该会话行显示同一标题
+
+#### Scenario: 每 5 轮重估
+
+- **WHEN** 距上一次完成的评估已满 5 轮，会话完成第 5 轮的响应
+- **THEN** 触发一次重估调用（`reason=cadence`）；keep 时标题不变，rename 且通过校验时标题更新
+
+#### Scenario: 初始生成失败后重试
+
+- **WHEN** 初始生成调用失败（尚无有效标题），其后又完成 3 轮正常对话
+- **THEN** 在第 3 轮结束时重试初始生成（`reason=first-turn`），不早于 3 轮、也不等 5 轮周期；成功前会话名保持回落口径
+
+#### Scenario: 话题漂移提前重估
+
+- **WHEN** 会话已有标题，其后连续两条用户消息（各 ≥8 个码点）与当前标题的词元重合度均低于 0.2，且距上次评估已满 3 轮
+- **THEN** 不等到 5 轮即触发重估（`reason=drift`）；重估结果仍受 keep / rename 防抖约束
+
+#### Scenario: 显著更好才换
+
+- **WHEN** 重估调用输出 keep，或输出的标题规范化后与当前标题相同
+- **THEN** 会话标题保持不变，标题栏会话名与历史列表不变；留存追加一条 `decision=keep` 的记录（携带当时生效的标题）
+
+#### Scenario: 非法输出不换名
+
+- **WHEN** 生成器输出非法 JSON、未知 decision、空标题、超过 20 个码点、初始生成时输出 keep（无当前标题可保持），或调用超时 / 返回错误
+- **THEN** 会话标题保持当前值，界面不出现错误提示或 toast；留存追加 `decision=error` 的记录并带错误码（`harness_title_invalid` / `harness_title_failed`），记录不含对话正文
+
+#### Scenario: 关闭自动命名
+
+- **WHEN** `[harness].session_naming.enabled = false` 并完成任意轮次对话
+- **THEN** 系统不发起任何命名调用、不写 `session_title` 记录；会话名按「会话边界」条的回落口径显示
+
+#### Scenario: 命名不阻塞对话
+
+- **WHEN** 命名调用在途时用户发送下一条消息
+- **THEN** 新一轮对话立即开始处理，不等命名调用结束；该结果若在新一轮进行中或会话已轮换后到达 SHALL 被丢弃（不写记录、不改标题）
+
+#### Scenario: 标题更新不扰动会话
+
+- **WHEN** 一次 rename 在会话空闲时生效
+- **THEN** 标题栏会话名与已打开的历史浮层行名同步更新；transcript、消息顺序、滚动位置、焦点、session id 与历史清单顺序均不变
+
+### Requirement: transcript 的跟随滚动与回到底部
+
+harness 面板的 transcript SHALL 区分**跟随态**与**脱离态**。跟随态下，新增内容（流式正文、思考块、
+工具行、通知、错误行、批准卡等）到达后视口 SHALL 停留在内容末尾，最新一行 MUST 在视口内；脱离态下，
+任何新增内容 MUST NOT 写滚动位——`scrollTop` 的变化 SHALL ≤ 1px，用户正在阅读的那一行 MUST 停在
+原处。
+
+两态 SHALL 由**几何位置**判定，MUST NOT 由显式开关、模式或超时判定：视口距内容底部不超过**回底容差**
+SHALL 视为在底部（跟随）；用户以任何方式把视口带离底部超过**脱离阈值**后 SHALL 立即进入脱离态——
+滚轮 / 触控板、拖动滚动条、以及任何把视口带离底部的动作（含「消息摘录卡」跳回旧消息的滚动定位）
+MUST 共用这一条判据，MUST NOT 按输入通道各写一份。视口回到距底 ≤ 回底容差时 SHALL 自动恢复跟随，
+MUST NOT 要求用户点击或按键。回底容差与脱离阈值之间 SHALL 是滞回区间：跟随态在距底 ≤ 脱离阈值内
+MUST NOT 脱离，脱离态在距底 > 回底容差内 MUST NOT 复跟（底部附近 MUST NOT 抖动）；两个值 SHALL 都
+小于一行正文的渲染高度。具体取值是实现精度（在 design 层定），场景断言 MUST NOT 写死像素值。
+
+脱离态下 SHALL 在 transcript 视口内浮现「回到底部」钮：钮 MUST NOT 随内容滚动（常驻视口右下角），
+点击 SHALL 把视口带回内容末尾、恢复跟随态，钮随之退场。脱离态期间 transcript 有新内容到达时，
+钮 SHALL 呈现未读提示；回底或恢复跟随态后提示 SHALL 清除。未读提示 MUST NOT 使用数字计数——流式
+增量不构成「消息」这种计数单位，任何数字都是伪造读数。
+
+**强制回底的白名单**：只有用户自己发起的动作 SHALL 强制回到末尾并恢复跟随——发送一条消息、切换 /
+恢复会话（含快照重建）、切换 vault、重新打开面板。其余事件（流式增量与轮次终态、工具行更新、通知、
+错误行、批准卡、自动回合）MUST NOT 强制改变滚动位，只更新未读提示。
+
+transcript 内容不足一屏（内容高度 ≤ 视口高度）时 MUST NOT 出现脱离态与「回到底部」钮。跟随态下面板
+尺寸变化（窗口缩放 / 分栏调整）SHALL 继续贴底；脱离态下尺寸变化 MUST NOT 写滚动位。
+
+「回到底部」钮 SHALL 是可键盘聚焦的按钮：可访问名取文案表（无新内容 / 有新内容两串），随界面语言
+重绘；配色 SHALL 只消费 token 层（三主题成立，eink 不引入彩色），`prefers-reduced-motion` 下
+MUST NOT 脉冲。面板 MUST NOT 为「回到底部」新增全局键位：composer 聚焦时 Space SHALL 仍然键入空格，
+Space / PgDn MUST NOT 被本需求解释为滚动或回底命令。
+
+跟随 / 脱离的判定与写滚动位的编排 SHALL 只有一份实现（纯模型层）：面板 DOM 接线、单测与验收场景
+MUST NOT 各自复制阈值或比较逻辑。
+
+#### Scenario: 流式期间上滚后阅读位置保持
+
+- **WHEN** 一轮回复正在流式增长，用户把 transcript 视口上滚离开底部（距底 > 脱离阈值）
+- **THEN** 后续增量到达时视口不移动（`scrollTop` 变化 ≤ 1px），阅读中的那一行仍在原处；「回到底部」
+  钮浮现
+
+#### Scenario: 回到底部恢复跟随
+
+- **WHEN** 脱离态下点击「回到底部」钮，或用户手动把视口滚回距底 ≤ 回底容差
+- **THEN** 视口到达内容末尾、「回到底部」钮退场；下一个增量到达后视口仍贴底（距底 ≤ 回底容差）
+
+#### Scenario: 跟随时增量贴底
+
+- **WHEN** 视口在底部（距底 ≤ 回底容差）且流式增量到达
+- **THEN** 每次增量落地后视口距底 ≤ 回底容差、最新一行在视口内，同一轮内不发生「越写越落后」
+
+#### Scenario: 脱离态的新内容提示
+
+- **WHEN** 脱离态期间 transcript 有新内容到达（流式正文 / 工具行 / 通知 / 错误行 / 批准卡任一）
+- **THEN** 「回到底部」钮呈现未读提示，且提示不是数字计数；回到跟随态后未读提示消失
+
+#### Scenario: 强制回底白名单
+
+- **WHEN** 脱离态下用户发送一条消息、切换 / 恢复会话、切换 vault 或重新打开面板
+- **THEN** 视口回到内容末尾并恢复跟随态（新消息 / 恢复内容可见），「回到底部」钮退场
+
+#### Scenario: 非用户事件不拽走视口
+
+- **WHEN** 脱离态下到达工具行更新、通知、错误行、批准卡或自动回合的增量
+- **THEN** `scrollTop` 不变（≤ 1px），只有未读提示可能变化；视口不回到末尾
+
+#### Scenario: 内容不足一屏
+
+- **WHEN** transcript 的内容高度不超过视口高度
+- **THEN** 不出现脱离态与「回到底部」钮，任何滚动调用都不产生可见位移
+
+#### Scenario: composer 键位不被劫持
+
+- **WHEN** composer 聚焦时按 Space 与 PgDn
+- **THEN** Space 正常落进 composer 文本、PgDn 只按既有归属处理，transcript 的滚动位不变，MUST NOT
+  触发回底动作
+
+#### Scenario: 钮的主题与语言纪律
+
+- **WHEN** 三主题（light / dark / eink）下钮可见，或界面语言为 zh / en
+- **THEN** 钮的配色与描边逐值来自 token 层（eink 无彩色、以描边区分层次），可访问名取对应语言的
+  文案（无新内容 / 有新内容两串）
+
+### Requirement: 运行公共层
+
+系统 SHALL 以一份运行契约描述每一次 harness 运行：触发来源（用户输入 / cron / 委托运行）、目标 vault、
+会话目标（交互会话 / 无人值守槽位 / 子运行）、投递内容、模型覆盖、工具白名单、预算、批准策略、
+用量归属与事件接收端。三类触发源 SHALL 各自只产出这一份契约（`RunSpec`），MUST NOT 定义第二套运行
+交接载荷或第二套预算语义。
+
+运行循环 SHALL 只有一份实现：其依赖面 SHALL 收敛为可替换的运行上下文（会话状态、事件接收端、工具
+定义、权限判定、批准等待、预算检查、留存写入），交互会话、无人值守槽位与子运行各提供一个实现。
+触发源之间的差异 SHALL 以契约中的枚举值（会话目标、批准策略）表达，MUST NOT 以「触发来源」在循环
+内部做行为分支。
+
+上下文装配（固定身份段 + AGENTS.md 三层 + Skill 索引）与会话 wire 留存 SHALL 沿用既有实现，MUST NOT
+为任一触发源另写一套装配或留存。交互会话路径的既有行为（事件形状、JSONL 形状、批准闸语义、循环
+上限提示）MUST 保持不变——回抽是参数化，不是语义改动。
+
+后台完成通知触发的自动回合 SHALL 走交互会话的既有入口，是一个普通交互回合：系统 MUST NOT 为此新增
+触发源，MUST NOT 在循环内新增按来源分叉的执行路径；唤醒的合并与链上限语义属 `harness-subagents`
+capability，不进入本契约。
+
+#### Scenario: 三类触发源共用一份契约
+
+- **WHEN** 分别由用户输入、cron 到点、委托运行发起一次 harness 运行
+- **THEN** 三者都构造同一份运行契约并进入同一个循环入口；MUST NOT 存在第二处工具循环实现，也 MUST
+  NOT 存在只服务于某一触发源的交接载荷格式
+
+#### Scenario: 交互路径行为不变
+
+- **WHEN** 回抽落地后跑既有单测与真机验收场景（含恢复充分性、批准闸、循环上限提示、图片投递）
+- **THEN** 全部通过且无需改写期望；交互会话的 JSONL 记录形状与会话读数口径不变
+
+#### Scenario: cron 接入后载荷形状统一
+
+- **WHEN** cron 的实现按本契约落地
+- **THEN** 其运行交接载荷是运行契约的序列化（触发来源 = cron、会话目标 = 无人值守槽位、批准策略 =
+  无人可批时中止），MUST NOT 保留自列的字段集
+
+#### Scenario: 差异以契约值表达
+
+- **WHEN** 审查循环实现
+- **THEN** 触发来源只用于诊断与事件归属；会话目标、批准策略、工具白名单、预算的差异全部来自契约值，
+  循环内部没有按触发来源分叉的执行路径
+
+#### Scenario: 工具白名单被执行
+
+- **WHEN** 一次运行的契约声明 `tool_policy.allow` 为 8 件 vault 操作工具（cron 交接的形状），且
+  `[harness.subagents].enabled = true`
+- **THEN** 该运行的模型请求只包含白名单内的工具定义，`task` MUST NOT 出现；同一配置下的交互发送
+  （没有交接契约）仍注册 `task`

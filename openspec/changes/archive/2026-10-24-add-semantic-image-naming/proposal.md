@@ -1,0 +1,183 @@
+# Proposal: 粘贴图片按语义自动命名（异步改名 + 解析式引用更新）
+
+- Change ID: `add-semantic-image-naming`
+- 日期: 2026-10-18
+- 角色: Alex Lee（评审/裁决），AI agent（起草）
+
+> **来源与既有裁决（原文，2026-10-18）**
+>
+> 设计真源：`.local/design/harness-vision.md`（git 外，2026-10-18 定稿的 harness 演进图景）
+> 的「就地增强 > 图片语义命名」节与「裁决记录」表。
+>
+> - 裁决「图片语义命名默认开关」：**默认开 + toast 撤销入口**。
+> - 裁决「命名形态」：**语义名 + 短哈希后缀（如 `harness-arch-a3f2c4.webp`）。保住既有内容
+>   寻址的同图去重性质，同时获得可读性。**
+> - 裁决「语义名字符集」（2026-10-18，原话）：「**纯 ASCII kebab-case.**」——否掉「允许
+>   Unicode 字母（含中日韩字符）」的推荐项，详见文末「裁决记录」第 3 条。
+> - 澄清「`[attachments]` 表」（2026-10-18，无异议）：= `config.json` 顶层新增一节（JSON
+>   对象键），不是数据库表、不改 TOML。**（后被同日「配置面重塑」裁决取代：表搬进
+>   `[harness].attachment_naming`，见「裁决记录」第 4 条。）**
+> - 澄清「`naming_model` 缺省」（2026-10-18，无异议）：缺省 = 会话当前模型。**（键名随后续
+>   重塑改为 `harness.attachment_naming.model`；缺省语义不变，见「裁决记录」第 4 条。）**
+> - 异步重命名防护（2026-10-18 复审改写后的口径）：不用字符串逐字节比对，改为「重命名时刻用
+>   wikilink-resolution 的解析能力重新做全 vault 扫描，按链接 target 匹配更新所有指向旧名的
+>   引用；目标文件在缺口内已被人工改名或移走则放弃；toast 撤销 = 反向对称操作」。
+> - 行动队列：「不依赖验证、随时可先开发：图片语义命名、会话自动命名（设计均已就绪；各自走
+>   OpenSpec change）」。
+>
+> 本 change 只到提案制品为止。节点 1（提案评审）通过前不进入实现；会话自动命名是独立 change，
+> 不在本 change 射程。
+
+## 评审记录
+
+- **节点 1（提案评审）——通过**。Alex 2026-10-18 原话：「接受。」。
+  - 该批准是在本 proposal「Impact」节的**隐私面**条目显式登记之后给出的：默认开意味着每次粘贴
+    新图都会把图片字节 + 光标前后各至多 500 字（合计约 1000 字）的笔记正文发往配置的模型
+    provider；不配置 vision 模型、或把 `harness.attachment_naming.enabled` 关掉即完全不发。「接受。」即对该代价
+    与「默认开」裁决的显式接受。
+  - 三项形态裁决（slug 字符集 = 纯 ASCII kebab-case，原话「纯 ASCII kebab-case.」；配置面归属
+    与命名模型缺省）在下方「裁决记录」段落已全部落槌，评审未推翻；实现照该口径执行，不再重开。
+    其中「配置面归属」与「命名模型缺省」的**键位形态**后被 2026-10-18 同日「配置面重塑」裁决
+    取代（`[harness].attachment_naming`，见「裁决记录」第 4 条），裁决意图不变。
+- **节点 2（归档评审）——通过**。2026-10-24，Alex 原话：「批准。」。评审包
+  `.local/reviews/archive-node2-wave1/README.md`（七项批次逐项批准；本 change 为包内第 7 项，含
+  「归档时执行 tasks 7.2、在 `clipboard-image-paste` 的 Purpose 补语义命名边界」的要求）。
+  本 change 由 M713 归档。
+
+## Why
+
+1. **hash 名不可读**。当前落盘名是内容寻址的 `pasted-<SHA-256 前 16 位>.webp`
+   （[clipboard-image-paste spec](../../../specs/clipboard-image-paste/spec.md)「落盘与命名去重」）。
+   这串名字在文件树、标签栏标题、链接补全和搜索结果里都是一个随机串：回到 vault 想找「上次那张
+   架构图」，只能逐个打开辨认。可读的文件名是图片类附件唯一的人可用的索引。
+2. **正文与检索不可锚**。笔记正文里的 `![[pasted-a3f2c4d5e6f70819.webp]]` 读起来不携带任何
+   信息；全文检索也只能命中这串哈希——想按「架构图」「白板」这类语义词找回图片引用，现在没有
+   任何入口。
+3. **代价可以压到零等待、可静默失败**。粘贴是编辑事务，受 keypress-to-paint <16ms 性能合同
+   约束（ADR 0002 第 6 条）。命名必须是**投递之后的异步任务**：粘贴先按现状落 hash 名、插引用，
+   模型返回后再改名；任何失败都保留 hash 名（即现状），不对粘贴链路产生可感知影响。
+4. **去重性质是既有能力，不能被可读性换掉**。同图跨笔记去重（首贴位置赢）建立在内容寻址上。
+   本 change 把「身份」与「文件名」拆开：身份仍是转码后字节哈希，文件名变成可读的语义名 + 短
+   哈希后缀，去重判据改按内容哈希复核，不依赖文件名形态。
+5. **引用更新用既有的解析能力，不新增第二份链接语义**。`link_graph` 是 wikilink 解析的唯一实现
+   （wikilink-resolution「单实现解析纪律」）。改名后按 target 解析结果全 vault 更新引用，天然
+   覆盖「同一文件被多篇笔记引用」「异步窗口内新增或手改的引用」；代码块与行内代码内不是链接，
+   解析器本就不认，无需字符串层面的排除规则。
+
+## What Changes
+
+对应 `specs/clipboard-image-paste/spec.md` 的 1 条 MODIFIED 与 3 条 ADDED。
+
+1. **图片语义命名（默认开，异步）**：粘贴仍先落 `pasted-<hash16>.<ext>` 并插入
+   `![[…]]` 引用（粘贴路径零改动、零模型等待）；随后异步调用 vision 模型，成功则把文件改名为
+   `<语义名>-<内容哈希前 6 位>.<同一扩展名>`。上下文取材 = 图片字节 + 粘贴时刻光标前后段落 +
+   笔记标题；模型取 `harness.attachment_naming.model`（`null` = 该 provider 的生效模型；
+   `provider` 可指向另一档，是显式的成本阀门）。无可用 vision 模型、调用失败、输出不可用时
+   **保留 hash 名**（静默降级，进诊断日志）。
+2. **内容寻址去重性质保留**：内容同一性仍由转码后字节的 SHA-256 判定；全 vault 去重探测同时覆盖
+   `pasted-<hash16>.<ext>` 与 `<语义名>-<hash6>.<ext>` 两种形态，后者以完整哈希复核（MUST NOT
+   只凭 6 位后缀相同即判同图）；改名撞名不覆盖，按扩展哈希后缀取得未占用名。
+3. **引用更新（Obsidian 语义）**：改名时刻用 `link_graph` 的解析能力重新全 vault 扫描，把所有
+   指向该文件的 wikilink 的**末段路径**替换为新文件名。`!` 前缀、目录前缀、`#heading`、`|alias`
+   与其余正文逐字节不动；代码块 / 行内代码 / frontmatter 内的文本不是链接，不碰。异步窗口内
+   新增、手改、移动的引用由同一判据覆盖（不做原始文本逐字节比对）。
+4. **放弃规则与撤销**：唯一放弃规则——目标文件在异步缺口内已被人工改名、移走或内容变化，则
+   完全放弃（不改名、不改引用、不弹 toast，不覆盖人的命名）。成功改名给一条 toast（新文件名 +
+   「撤销」），撤销是与改名对称的反向操作（改回 hash 名 + 全 vault 引用改回），窗口 = toast
+   可见期（既有 8 秒）。
+5. **配置面**：`[harness].attachment_naming` 表——`enabled`（boolean，默认 `true`）、
+   `provider`（`kimi` / `deepseek` / `mock` | null，默认 `null` = 当前生效 provider）、`model`
+   （string | null，默认 `null` = 该 provider 的生效模型）。缺省即默认、`provider` 闭集合外
+   回落 + 人话 warning、`model` 不可用只点名不回落（资格不通过即保留暂存名），沿用既有配置模板
+   （ADR 0002 第 5 条）。**布局判据**：配置跟随资源域——自动 LLM 行为的开关与模型选择归
+   `[harness]` 域（`providers` 所在）；触发位置（粘贴）是 UI 事实，不是配置域。
+
+## Non-goals
+
+- **不改粘贴链路的其余行为**：拦截判定、落盘目录、转码策略、失败反馈、非图片剪贴板降级、首贴
+  位置赢——全部保持 change `paste-clipboard-image` 归档后的现行文本。本 change 只在「落盘之后」
+  增加一次异步改名与随之而来的引用更新。
+- **不批量语义化存量文件**：vault 里既有的 `pasted-*` 文件保持原样，不做扫描改名。批量语义化
+  是后续扩展（harness-vision 列为典型 subagent 批量任务），不在本 change。
+- **不做 per-vault 命名风格配置**：命名形态固定为「语义名 + 6 位短哈希 + 原扩展名」；per-vault
+  风格是后续扩展。
+- **不覆盖标准 Markdown 图片链接**：`![alt](path)` 形态的引用不在更新射程内（本 change 的引用
+  更新只走 wikilink 解析；粘贴链路产出的引用始终是 `![[…]]`，见 spec「粘贴触发与引用插入」）。
+- **不覆盖 harness composer 附件**：`<config_dir>/harness/attachments/` 下的图片（harness
+  composer 贴图）不属于 vault 内容、不在本 capability 射程内，命名行为不变。
+- **不做非图片附件命名**：PDF / 音视频等不触发语义命名（本 change 只处理按 `image/*` 落盘的
+  附件）。
+- **不做会话自动命名**：属独立 change，本 change 只做图片。
+- **不提供手动改名入口 / 命名历史 / 回收站**：撤销窗口之外没有补偿通道。
+- **不改 ADR 0003 的兼容范围**：引用更新只改链接 target 文本（见 Impact 的关联约束）。
+
+## Impact
+
+- **影响的 specs**：`clipboard-image-paste`（1 条 MODIFIED「落盘与命名去重」+ 3 条 ADDED：
+  「图片语义命名（异步）」「异步重命名的引用更新」「异步缺口的放弃与撤销」）。
+  渲染侧（`attachment-display`）零改动——新文件名仍经既有路径解析与渲染链路。
+- **影响的代码/系统**（概述，细节见 design.md）：
+  - `src-tauri/src/config.rs`：新增 `[harness].attachment_naming` 表与校验（唯一解析口
+    `HarnessConfig::attachment_naming_target`，与会话自动命名的 `title_target` 同形）；
+    `src/bindings/**` 重导出。
+  - `src-tauri/src/fs_io.rs`：去重探测改为「两种文件名形态 + 全量哈希复核」；改名原语与撞名
+    扩展后缀。
+  - `src-tauri/src/link_graph.rs`：`WikiLink` 增 `path_span`（纯词法信息）；引用改写复用同一份
+    解析与大小写折叠规则。
+  - 新增后端命名任务模块（一次性 vision 调用；不建 harness 会话、不写会话 JSONL）。
+  - `src-tauri/src/commands.rs`：命名 / 撤销 / 文本级改写（打开文档对账用）三个 IPC 命令。
+  - `src/paste-image.ts` / `src/editor.ts` / `src/main.ts`：粘贴后排命名任务、打开文档对账、
+    toast 与撤销入口。
+  - `src/save-controller.ts`：被后台改写的打开文档须推进磁盘 revision 基准（避免保存时假 CAS
+    冲突）。
+  - `docs/specs/config-reference.md`：新增 `harness.attachment_naming` 节（含布局判据与两方向
+    生效时机）。
+  - `src/copy-data.ts` + `文案-Copy.md`：命名成功 toast 与撤销 / 失败文案。
+  - `scripts/acceptance/`：新增语义命名场景与 mock fixture；回扫既有贴图场景 112 / 113 / 116
+    的命名期望。
+- **隐私面（须在节点 1 显式接受）**：默认开意味着每次粘贴**新图**都会把图片字节与光标前后
+  至多约 1000 字（各 500 字上限）的笔记正文发往配置的模型 provider。不配置 vision 模型、或把
+  `harness.attachment_naming.enabled` 关掉即完全不发。这是「默认开」裁决的直接代价，在此显式登记；若有更严的
+  隐私口径（例如只发图片、不发正文），属于节点 1 可改的形态。
+- **关联约束**：
+  - ADR 0002 第 6 条（性能合同）：粘贴路径不等待模型；改名与扫描全部在投递之后，不进入
+    keypress-to-paint 或文档打开路径。
+  - ADR 0002 第 5 条（配置即数据 / schema 校验 / 非法值人话回落）：新增配置面走既有模板。
+  - ADR 0003 第 3 条铁律（永不改写源文件格式）：引用更新只把链接 target 的末段替换为新文件名，
+    `!` / 目录前缀 / 锚点 / 别名 / 其余正文逐字节不变，不改写文件格式、不改写文档语义；识别
+    链接用的是本仓冻结的 wikilink 解析实现。
+  - wikilink-resolution「单实现解析纪律」：解析与大小写折叠只有一份实现，引用更新复用；
+    前端 MUST NOT 复制解析语义。
+  - REVIEW.md「同一语义两处真源」：去重身份（内容哈希）、vision 能力判定、命名形态各只有一处
+    产出。
+
+## 裁决记录（2026-10-18，全部已落槌）
+
+三项形态选择已于 2026-10-18 由 Alex 全部落槌（第 3 项为原话，第 1 / 2 项为澄清后无异议）；
+本 change 不再重开这些决定，实现照本文、design.md 与 spec 增量的现行口径执行。
+
+1. **配置面落在哪张表**——已裁决：新增 `[attachments]` 表，位置是 `config.json` 顶层的
+   JSON 对象键（不是数据库表，也不改 TOML）。理由：开关与命名模型是附件行为，不是编辑器
+   显示口径；也避免 `[harness]` 继续承担非会话场景的配置。未采纳的备选：并入 `[harness]`。
+2. **`naming_model` 缺省**——已裁决：缺省 = 会话当前模型（`null` 即 `[harness]` 当前生效
+   provider 的当前 `model`）。理由：零配置可用、成本与用户当前选择一致；配置键是成本阀门
+   （harness-vision 的调度原则是「便宜档」，但配置里没有价格 / 档位字段，代码自动挑「最便宜」
+   只能靠猜，故不做自动挑选）。若希望默认就走便宜档，需要另加一档显式的默认值——那属于后续
+   产品取舍。
+3. **语义名字符集**——已裁决：**纯 ASCII kebab-case**。Alex 原话（2026-10-18）：
+   「纯 ASCII kebab-case.」；此前推荐的「允许 Unicode 字母（含中日韩字符）」项被否。口径：
+   字符集只有小写 ASCII 字母 `a-z`、数字 `0-9` 与连字符 `-`（如
+   `architecture-overview-a3f2c4.webp`）；ASCII 大写折叠为小写，空白与下划线折成 `-`，非
+   ASCII 字符一律剔除、不做音译，规整后为空即命名失败（保留暂存名）。代价（原提案随
+   「仅 ASCII kebab-case」备选一并写明）：中文笔记的图片名是模型的英文转述，可读性打折。
+4. **配置面重塑**——已裁决（Alex 2026-10-18，并入本 change 的实施分支）：配置面从顶层
+   `[attachments]` 表搬到 `[harness].attachment_naming { enabled, provider, model }`，与会话
+   自动命名统一。**布局判据（Alex 要求沉淀进 `docs/specs/config-reference.md`）**：「配置跟随
+   资源域——自动 LLM 行为的开关与模型选择归 harness 域（providers 所在）；触发位置是 UI 事实，
+   不是配置域。」三键缺省：`enabled` = `true`；`provider` = 会话当前 provider（闭集合外回落
+   缺省 + 人话 warning）；`model` = 该 provider 的生效模型。vision 约束保留：目标模型须在
+   **选定 provider** 的 models 清单且 `vision: true`，否则资格不通过、保留暂存名（MUST NOT
+   静默降级到别的模型）。解析口参照 `title_target`（五字段同出一个 provider 条目）。旧顶层
+   `[attachments]` 表**一次性切断**：它是本 change 自己引入、只有命名两个键、未发布（单用户），
+   旧键按未知键口径静默忽略、无兼容读取。本条第 1、2 条的**键位形态**由此取代（裁决意图——
+   零配置可用、成本阀门显式——不变）。
