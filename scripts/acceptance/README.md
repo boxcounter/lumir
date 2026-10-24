@@ -7,7 +7,7 @@
 
 ```bash
 node scripts/acceptance/run.mjs              # 全部场景
-node scripts/acceptance/run.mjs 01 08        # 按 id 前缀 / backlog 项号筛选
+node scripts/acceptance/run.mjs 01 08        # 按 id 前缀 / item 项号筛选
 node scripts/acceptance/run.mjs --list       # 列出场景
 node scripts/acceptance/run.mjs --check      # 静态校验场景（不真机，秒级；挡 key 拼错/断言形态错）
 node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手看现场
@@ -349,7 +349,7 @@ app 进程的定位用**进程组**（`pnpm tauri dev` 以 detached 起，自成
 ```markdown
 ---
 id: "01-mermaid-click"
-item: 1                      # 对应 backlog「待真机验收」项号
+item: 1                      # 验收项号（也是 run.mjs 的筛选键；多场景可共用一项）
 title: Mermaid 图表点击进源码编辑
 fixtures: [mermaid.md]       # 场景开始前覆盖进验收 vault 的 fixture
 open: mermaid.md             # 用左栏点击打开的文件
@@ -1174,6 +1174,28 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   `.local/probes/m537-probe/`）——那是 chromium 侧测试的边界，与本套件的真鼠标通道无关。
 - **场景维护权归实现者**：新功能 mission 的 tasks 必须带「新增/更新验收场景」一项（裁决点 3）。
 
+## 覆盖表 COVERAGE.md
+
+`scripts/acceptance/COVERAGE.md` 是全部场景的清单与 `item` 编号映射（一项一行，行内列出该项下所有
+场景 id 与标题）。它是**生成物**，唯一真源是 `scenarios/*.md` 的 front-matter（`id` / `item` /
+`title`）——不要手改，也 **MUST NOT** 另建手维护的场景注册表：
+
+```bash
+node scripts/acceptance/coverage.mjs           # 生成 / 更新 COVERAGE.md
+node scripts/acceptance/coverage.mjs --check   # 只校验（生成一致性 + 结构不变量）
+```
+
+判据（任一命中即 FAIL，反向测试见 `coverage.test.mjs`）：场景缺 `id` / `item` / `title`；`id` 重复或
+不是文件名字符面；`item` 不是正整数或 `8.12` 形态；覆盖表里同一 `item` 出现两行；漏场景 / 多出场景
+目录里不存在的 id；`COVERAGE.md` 与场景 front-matter 不一致（新增、改名、删场景后忘了重新生成）。
+`--check` 挂在 `scripts/docs-check.sh`（本地 `gate.sh quick` + CI 的 docs-check.yml）与
+`node scripts/acceptance/run.mjs --check` 上，两处调同一份实现。
+
+`item` 是**分组键**，不是场景级唯一键：同一验收项拆成多个场景（如 item 7 = 三条恢复路径）合法，
+`run.mjs 7` 靠它选中该项下全部场景；「一项一行」只约束表本身。覆盖表是场景清单、不是验收结论——
+真实 PASS 证据在 `.local/acceptance/<批次>/`（git 外），未收口的行为限制与待 dogfood 项在
+`docs/backlog.md`「待真机验收」节。
+
 ## 加一个场景
 
 1. 需要新文档就加 `fixtures/<名>.md`（短文档，标题行当 `marker`）。
@@ -1187,8 +1209,9 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
    正文里不写判据串（措辞换成「浮钮」这类非判据词），且**界面控件的在场性一律用 `node` 断言**
    （`findNode` 口径：正文里的字不是节点）。正文的**内容标记**（如场景 224 的 `SLK-07`）不在此
    列——它们正是「内容到了」的判据，本来就该在正文里。
-5. `node scripts/acceptance/run.mjs --check` 过静态校验（含「步骤表写在 front-matter 内」这条结构
-   校验），再 `node scripts/acceptance/run.mjs <id>` 跑通（FAIL 为零，失败项如实记录不硬凑）。
+5. `node scripts/acceptance/coverage.mjs` 重新生成覆盖表，再 `node scripts/acceptance/run.mjs --check`
+   过静态校验（含「步骤表写在 front-matter 内」与覆盖表一致性两条结构校验），最后
+   `node scripts/acceptance/run.mjs <id>` 跑通（FAIL 为零，失败项如实记录不硬凑）。
 
 ## 改套件实现时的自测
 
@@ -1197,6 +1220,7 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 ```bash
 node --test scripts/acceptance/lib/execute.test.mjs
 node --test scripts/acceptance/lib/app.test.mjs   # app.mjs 的纯函数：实例扫描 / 游离实例归属 / bundle 身份
+node --test scripts/acceptance/coverage.test.mjs  # 覆盖表生成器 / 检查器的必红反向测试
 ```
 
 纯 `node:test`、零新增依赖、不起真机（file 类断言与零断言兜底都不读 app / KimiCU，ctx 桩化即可）。
