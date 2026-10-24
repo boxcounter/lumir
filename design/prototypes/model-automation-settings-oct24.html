@@ -660,6 +660,7 @@ kbd {
     <button type="button" class="cp-btn" data-go="scene:naming-off">命名关闭</button>
     <button type="button" class="cp-btn" data-go="scene:naming-vision">图片无 vision</button>
     <button type="button" class="cp-btn" data-go="scene:naming-fallback">会话模型回落</button>
+    <button type="button" class="cp-btn" data-go="scene:naming-explicit">显式模型·空清单</button>
     <button type="button" class="cp-btn" data-go="scene:validation">校验错误</button>
     <button type="button" class="cp-btn" data-go="scene:warning">配置警告</button>
     <button type="button" class="cp-btn" data-go="scene:saving">保存中</button>
@@ -687,11 +688,11 @@ kbd {
 
 /* ── 常量与合成数据 ─────────────────────────────────────────────── */
 const THEMES = ["light", "dark", "eink"];
-const SCENE_IDS = ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "naming-fallback", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
+const SCENE_IDS = ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "naming-fallback", "naming-explicit", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
 const SCENE_LABELS = {
   configured: "已配置", empty: "空清单", add: "添加（重复 id）", delete: "删除保护",
   unconfigured: "未配置", "naming-off": "命名关闭", "naming-vision": "图片无 vision",
-  "naming-fallback": "会话模型回落",
+  "naming-fallback": "会话模型回落", "naming-explicit": "显式模型·空清单",
   validation: "校验错误", warning: "配置警告", saving: "保存中",
   saved: "已保存", conflict: "外部冲突", "file-invalid": "文件损坏", closed: "已关闭",
 };
@@ -734,6 +735,7 @@ function providerBase(id, preset, opts) {
     keyHint: o.keyHint || null,
     keyDraft: "",
     models: o.models || [],
+    modelId: o.modelId || "",
     baseUrl: o.baseUrl || "",
     baseUrlPresent: o.baseUrlPresent === true,
     wireApi: o.wireApi || conf.defaultWire || "responses",
@@ -832,6 +834,19 @@ function sceneSnapshot(scene) {
     return Object.assign(base, {
       providers: configured(), automation: deepClone(defaults),
       naming: { session: naming("deepseek", "k3-256k"), attachment: naming(null, null) },
+      dirty: true,
+    });
+  }
+  if (scene === "naming-explicit") {
+    // 显式 providers.<id>.model + 空模型清单：显式值仍是生效模型（空清单只影响缺省回落）。
+    return Object.assign(base, {
+      active: "kimi-exp", selected: "kimi-exp",
+      providers: {
+        "kimi-exp": providerBase("kimi-exp", "kimi", { hasKey: true, keyHint: "7a1c", models: [], modelId: "k3-legacy" }),
+        deepseek: providerBase("deepseek", "deepseek", { hasKey: true, keyHint: "91bd", models: [model("ds-chat", false, false, 131072)] }),
+      },
+      automation: deepClone(defaults),
+      naming: { session: naming(null, "ds-chat"), attachment: naming(null, null) },
       dirty: true,
     });
   }
@@ -964,11 +979,13 @@ function statusOf(p) {
   return { text: "未配置", tone: "warn" };
 }
 function effectiveModel(p) {
-  if (!p || p.models.length === 0) return "";
+  if (!p) return "";
   // 显式 providers.<id>.model 优先；即使不在清单内也保留该值（harness「模型清单声明」条：
-  // 保留 + warning、窗口保守估算）。缺省 / 空串才取清单首项。
+  // 保留 + warning、窗口保守估算）。空清单只影响缺省回落，不抹掉显式值 —— 判断顺序固定为
+  // 显式 → 清单首项 → 空串。
   const explicit = String(p.modelId || "").trim();
   if (explicit) return explicit;
+  if (p.models.length === 0) return "";
   const declared = p.models.map((item) => String(item.id || "").trim()).filter(Boolean);
   return declared[0] || "";
 }

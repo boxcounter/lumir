@@ -370,7 +370,7 @@ check("S8 控制面板覆盖全部场景与 provider 操作", () => {
   const cpanelStart = html.indexOf('id="cpanel"');
   const cpanel = html.slice(cpanelStart, html.indexOf("<script>", cpanelStart));
   const scenes = [...cpanel.matchAll(/data-go="scene:([a-z-]+)"/g)].map((m) => m[1]);
-  for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "naming-fallback", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
+  for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "naming-fallback", "naming-explicit", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
     assert(scenes.includes(scene), `control panel missing scene ${scene}`);
   }
   assert(/data-toggle="add"/.test(cpanel), "control panel must expose add");
@@ -410,6 +410,10 @@ check("S11 失效覆盖模型按 kind 分流：session 回落生效模型、atta
   const effectiveBody = functionBody(html, "effectiveModel");
   assert(/if \(explicit\) return explicit;/.test(effectiveBody), "effective model must keep an explicit providers.<id>.model");
   assert(!/declared\.includes\(explicit\)/.test(effectiveBody), "an explicit model must not be filtered by the declared list");
+  const explicitAt = effectiveBody.indexOf("if (explicit) return explicit;");
+  const emptyAt = effectiveBody.indexOf("p.models.length === 0");
+  assert(explicitAt >= 0 && emptyAt > explicitAt, "the empty-list short circuit must come after the explicit-model branch");
+  assert(/modelId: o\.modelId/.test(functionBody(html, "providerBase")), "provider fixtures must be able to carry an explicit providers.<id>.model");
 });
 
 // ── 浏览器交互断言（可选依赖 Playwright） ────────────────────────────────────
@@ -711,9 +715,30 @@ async function browserChecks() {
       assert((await page.locator('[data-naming-model="session"] option[value=""]').innerText()).includes("ds-chat"), "default model option must show the target provider's effective model");
     });
 
+    await checkAsync("B15 显式生效模型 + 空清单：session 回落 / 缺省与 attachment 缺省都用显式值", async () => {
+      await page.goto(url("theme=light&scene=naming-explicit&panel=0"));
+      // 失效覆盖 → 回落显式模型（空清单不抹掉它）
+      let session = await page.locator('[data-naming-effective="session"]').innerText();
+      assert(/kimi-exp \/ k3-legacy/.test(session), `session fallback must use the explicit model with an empty list, got ${session}`);
+      assert(/覆盖模型 ds-chat 不在清单，已回落生效模型/.test(session), `fallback must be named, got ${session}`);
+      assert(!/（无模型）|不会生成标题/.test(session), `session must not degrade to no-model, got ${session}`);
+      // 缺省（删键）→ 直接用显式模型
+      await page.selectOption('[data-naming-model="session"]', "");
+      session = await page.locator('[data-naming-effective="session"]').innerText();
+      assert(/kimi-exp \/ k3-legacy/.test(session), `session default must use the explicit model, got ${session}`);
+      assert(!/覆盖模型/.test(session), `default must not claim a fallback, got ${session}`);
+      assert(/下一次评估触发点生效/.test(session), `default must keep the timing, got ${session}`);
+      // attachment 缺省：显式模型 → 资格不通过 → 跳过
+      const attachment = await page.locator('[data-naming-effective="attachment"]').innerText();
+      assert(/kimi-exp \/ k3-legacy/.test(attachment), `attachment default must use the explicit model, got ${attachment}`);
+      assert(/未声明 vision/.test(attachment) && /不会改名/.test(attachment), `attachment must skip on vision, got ${attachment}`);
+      const defaultLabel = await page.locator('[data-naming-model="attachment"] option[value=""]').innerText();
+      assert(/k3-legacy/.test(defaultLabel), `default option label must show the explicit model, got ${defaultLabel}`);
+    });
+
     await checkAsync("B10 控制面板全部选项点击可达", async () => {
       await page.goto(url("theme=light&scene=configured"));
-      for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "naming-fallback", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
+      for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "naming-fallback", "naming-explicit", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
         await page.click(`[data-go="scene:${scene}"]`);
         const active = await page.evaluate(() => document.body.dataset.scene);
         assert(active === scene, `scene button ${scene} did not activate (got ${active})`);
@@ -740,7 +765,7 @@ async function browserChecks() {
     });
 
     await checkAsync("B11 全部场景 × 三主题无 JS 错误、无横向溢出", async () => {
-      const scenes = ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "naming-fallback", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
+      const scenes = ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "naming-fallback", "naming-explicit", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
       for (const theme of ["light", "dark", "eink"]) {
         for (const scene of scenes) {
           await page.goto(url(`theme=${theme}&scene=${scene}&panel=0`));

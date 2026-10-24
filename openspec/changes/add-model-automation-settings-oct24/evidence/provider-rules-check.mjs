@@ -5,7 +5,7 @@
 // 它不是产品代码的替代，而是**实现的测试 oracle**：提案评审时机器可复核这些规则自洽；
 // 实现 PR 把同一判定表移植成 Rust 单测（tasks 7.3），之后本脚本可删除。
 //
-// 判据有区分度（REVIEW.md「断言等价于子串，没有区分度」条）：关键规则组配 **17 个 mutant
+// 判据有区分度（REVIEW.md「断言等价于子串，没有区分度」条）：关键规则组配 **18 个 mutant
 // 对照**（迁移 R1/R2/R3/R4/R5、configured R6、回退顺序 R8/R9、命名目标编辑 R12b/R12e、
 // 失效模型回落 R12g、生效模型优先 R12h、删除 R13/R15/R16/R18、id R19），每个 mutant 都必须
 // 被对应检查抓红；不是「每条规则各有一个 mutant」。
@@ -513,6 +513,11 @@ check("R12h 显式生效模型优先于清单首项（对 session 回落与 atta
   eq(resolveNamingModel(EXPLICIT_ENTRY, "k3-256k", "attachment"), { model: "k3-256k", fallback: false, eligible: true }, "an explicit vision-capable override still wins");
   const outOfList = { preset: "kimi", api_key: "sk", model: "k3-legacy", models: [{ id: "k3-256k", vision: true }] };
   eq(resolveNamingModel(outOfList, null, "session").model, "k3-legacy", "an out-of-list explicit model is kept (spec: keep the value + warning)");
+  // 显式模型 + 空清单：空清单只影响缺省回落，不抹掉显式值。
+  const emptyList = { preset: "kimi", api_key: "sk", model: "k3-legacy", models: [] };
+  eq(resolveNamingModel(emptyList, null, "session"), { model: "k3-legacy", fallback: false, eligible: true }, "an explicit model survives an empty models list");
+  eq(resolveNamingModel(emptyList, "ds-chat", "session"), { model: "k3-legacy", fallback: true, eligible: true }, "session fallback uses the explicit model with an empty list");
+  eq(resolveNamingModel(emptyList, null, "attachment"), { model: "k3-legacy", fallback: false, eligible: false }, "attachment default uses the explicit model, then fails the vision gate");
 });
 
 function mutantSharedEmptyModel(entry, requested) {
@@ -539,6 +544,16 @@ function mutantFirstDeclaredEffective(entry, requested, kind) {
 check("R12m4 mutant（把清单首项当生效模型）被 R12h 抓住", () => {
   eq(mutantFirstDeclaredEffective(EXPLICIT_ENTRY, null, "session").model, "k3-256k", "mutant ignores the explicit entry.model");
   eq(resolveNamingModel(EXPLICIT_ENTRY, null, "session").model, "k3-128k", "correct resolution prefers the explicit entry.model");
+});
+
+function mutantEmptyListShortCircuit(entry) {
+  if (!entry || !Array.isArray(entry.models) || entry.models.length === 0) return "";
+  const explicit = String(entry.model || "").trim();
+  return explicit || String(entry.models[0].id || "").trim();
+}
+check("R12m5 mutant（空清单短路抹掉显式模型）被 R12h 抓住", () => {
+  eq(mutantEmptyListShortCircuit({ model: "k3-legacy", models: [] }), "", "mutant blanks the explicit model when the list is empty");
+  eq(resolveNamingModel({ model: "k3-legacy", models: [] }, null, "session").model, "k3-legacy", "correct resolution keeps the explicit model when the list is empty");
 });
 
 // ── 删除保护 ────────────────────────────────────────────────────────────────
@@ -669,7 +684,7 @@ check("R19m mutant（放过大写 / 点）被 R19 抓住", () => {
   assert(validateProviderId("Kimi.work", []) === "settings_provider_id_invalid", "correct implementation rejects");
 });
 
-// ── 其余关键规则组的 mutant 对照（共 17 个 mutant） ───────────────────────────
+// ── 其余关键规则组的 mutant 对照（共 18 个 mutant） ───────────────────────────
 
 function mutantNoLegacyMigration(providers) {
   return { providers: clone(providers), rewritten: false };

@@ -212,7 +212,7 @@ scope 必须包含 schema 迁移本身。
 |---|---|---|---|
 | `preset` | `kimi` / `deepseek` / `generic` / `mock` | 缺键 ⇒ `generic` + warning（迁移会把旧三档补上，见 §3） | 闭集合外 ⇒ **整条忽略** + 点名 warning（猜错协议比丢弃更危险） |
 | `api_key` | string | `""` | 非字符串 ⇒ 整条忽略 + warning |
-| `model` | string | 显式值优先（不在清单内也保留）+ warning；缺省取清单首项；清单空 ⇒ `""` | 非字符串 ⇒ 整条忽略 + warning；不在清单内 ⇒ 保留值 + warning（窗口 / 能力按保守默认） |
+| `model` | string | 显式值优先（不在清单内也保留；**清单为空也保留显式值**）+ warning；无显式值时取清单首项；两者皆无 ⇒ `""` | 非字符串 ⇒ 整条忽略 + warning；不在清单内 ⇒ 保留值 + warning（窗口 / 能力按保守默认） |
 | `models` | array | `[]` | 非数组 ⇒ 整条忽略 + warning；元素逐项校验（§9） |
 | `base_url` | string | kimi / deepseek 用预设官方地址；generic / mock 无 | 空串 ⇒ 视同缺省 + warning；generic 缺省 / 空 ⇒ 条目可用性为否 + warning |
 | `wire_api` | enum | kimi / deepseek：`responses`；generic：`chat_completions`；mock：`responses`（不消费） | 闭集合外 / 该 preset 不支持 ⇒ 回落 preset 缺省 + warning |
@@ -1083,8 +1083,9 @@ r4 移除了自动化节顶部的独立读数块。现在的唯一呈现是每�
   不可用；mock 只能 id=mock；id 字符集。
 - **active 回退**：显式合法保持（即使未配置，含显式 mock）；缺失 → 第一个 configured；
   全未配置 → 第一个合法非 mock 条目；空映射 / 只剩 mock → 无；悬空 → 回退 + warning。
-- **生效模型解析**：显式 `providers.<id>.model` 优先（非首项、不在清单也保留），缺省取清单
-  首项，清单空为空串；命名回落与图片命名缺省目标都用它。
+- **生效模型解析**：显式 `providers.<id>.model` 优先（非首项、不在清单也保留；**空清单不抹掉
+  显式值**），无显式值时取清单首项，两者皆无为空串；判断顺序固定为「显式 → 首项 → 空串」。
+  命名回落与图片命名缺省目标都用它。
 - **命名目标**：override 合法 / 悬空 / 缺省三种；model 覆盖与目标 provider 的清单对账；
   图片命名 vision 资格；**失效覆盖模型按 kind 分流**（会话命名回落生效模型 + warning，图片
   命名保留原值 + 资格跳闸，两类后果分别断言）；**编辑面**（r4）——Set 的目标必须是合法非
@@ -1131,21 +1132,21 @@ r4 移除了自动化节顶部的独立读数块。现在的唯一呈现是每�
 - 面板在 1280×800 与 900×700 下打开即完整可见（O1 / O2）、无水平溢出、Tab 不逃出面板。
 - 三主题各一屏（已配置 + 自动化），外加：空清单、添加表单（含重复 id 错误）、删除确认
   （active + 命名引用）、命名关闭（选择器禁用但保留）、图片命名无 vision、会话命名覆盖模型
-  回落、校验错误、保存中（控件禁用）各一屏。
+  回落、显式模型 + 空清单、校验错误、保存中（控件禁用）各一屏。
 - 左列 provider 列表的选中 / hover / 当前徽标三态；eink 下徽标黑底白字。
 
 ### 12.4 原型语义与规则回归（本 change 自带）
 
-- `evidence/prototype-semantics-check.mjs`：静态 + 浏览器断言，共 35 项。覆盖 provider 增删
+- `evidence/prototype-semantics-check.mjs`：静态 + 浏览器断言，共 36 项。覆盖 provider 增删
   流程、重复 id、删除保护控件、空清单、自动化全局性、内联命名目标（可编辑 / 跟随 / 覆盖 /
   悬空 / 会话失效覆盖模型回落 / vision 标记 / 关闭禁用但保留 / 一行生效说明含来源与时机 /
   无摘要框）、单页两节、高级区（DeepSeek 禁用档 / generic 条件文案）、会话命名完整节奏、
-  控制面板全选项点击、三主题 × 15 场景；文本 predicate 配负向对照（REVIEW.md『断言等价于
-  子串』条），交互路径由 B1–B14 实测。
+  控制面板全选项点击、三主题 × 16 场景；文本 predicate 配负向对照（REVIEW.md『断言等价于
+  子串』条），交互路径由 B1–B15 实测。
 - `evidence/provider-rules-check.mjs`：把 §2.5 / §3 / §4 / §2.3 / §10.2 的判定表写成可执行
-  纯函数，共 46 项检查；其中 **17 个 mutant 对照**覆盖关键规则组——迁移 R1/R2/R3/R4/R5、
+  纯函数，共 47 项检查；其中 **18 个 mutant 对照**覆盖关键规则组——迁移 R1/R2/R3/R4/R5、
   configured R6、回退顺序 R8/R9、命名目标编辑 R12b/R12e、失效模型回落 R12g、生效模型优先
-  R12h、删除 R13/R15/R16/R18、id R19。MUST NOT 宣称「每条规则各有一个 mutant」；其余检查是
+  R12h（含显式模型 + 空清单）、删除 R13/R15/R16/R18、id R19。MUST NOT 宣称「每条规则各有一个 mutant」；其余检查是
   正向判定表。它是实现的测试 oracle，不是产品代码的替代。
 - 两个脚本都不进 CI（提案期工具）；实现 PR 把同一判定表移植成 Rust 单测后再删掉
   `provider-rules-check.mjs`（或降级为文档，见 tasks）。
