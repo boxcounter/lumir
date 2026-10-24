@@ -15,9 +15,10 @@
 - **E3 窗口隔离**：`Escape` 在任何焦点位置（含 `body`、含层内持焦件已被摘除）MUST NOT 产生窗口
   关闭请求、MUST NOT 退出应用。窗口关闭的用户入口仍只有红灯按钮与 `⌘Q`。
 - **E4 既有归属不被改写**：有层时 `Escape` 归层；无层时 `Escape` 归焦点的既有归属（编辑器 widget
-  容器的 `editor.widget-escape`、输入条就地取消、面板收起），本要求**不额外消费**——不新增关闭 /
-  焦点 / 状态动作。`body` 这类没有归属的焦点上，兜底只阻止默认行为落到原生关窗（不关层、不移动
-  焦点），因此不构成新的 Esc 行为；现状是退出应用，那正是缺陷。
+  容器的 `editor.widget-escape`、输入条就地取消、面板收起），本要求 MUST NOT 新增任何**产品动作**
+  （不关层、不移动焦点、不改状态、不退出）。`body` 这类没有归属的焦点上，兜底 SHALL 调用
+  `preventDefault` 阻止原生默认关窗——这只是安全消费，**不是新增产品行为**（不关层、不移动焦点、
+  不改 dirty / 文档内容）；现状是退出应用，那正是缺陷。
 - **E5 单一关闭实现**：每层的关闭与焦点回还只有一份实现（组件已有的 `close()` / `setXxxPop(false)`）；
   就地键处理器与兜底 MUST 调用同一份，MUST NOT 各写一遍。
 - **E6 退出守卫不削弱**：`⌘Q` / 红灯按钮 / `ExitRequested` / `CloseRequested` 的既有权衡与提示
@@ -121,7 +122,7 @@ export function installEscapeRouter(win: Window, router: EscapeRouter): () => vo
 | 组合期（`isComposing` / `keyCode === 229`） | `ignore` | 不动作、不 `preventDefault` | 不动作 |
 | 带修饰键（⇧ / ⌘ / ⌃ / ⌥） | `swallow` | `preventDefault`、**不关层** | `preventDefault` |
 | 无修饰、有层 | `close` | `preventDefault` + 关闭**本层**（统一关闭函数） | `preventDefault` + 关闭**栈顶** |
-| 无修饰、无层 | `close` | —（没有处理器） | `preventDefault`：**不关层、不移动焦点、不改状态**，只阻止默认行为落到原生关窗（节点 1 的「无浮层时不额外消费」与「任何时候不能因此退出应用」在此接线） |
+| 无修饰、无层 | `close` | —（没有处理器） | `preventDefault`（安全消费）：**不关层、不移动焦点、不改状态、不退出**，只阻止原生默认关窗——**不是新增产品行为**（裁决 B） |
 | `defaultPrevented` 已置 | — | 让路 | 让路 |
 
 **为什么就地处理器必须走同一份准入**：它先于兜底运行。若它仍只看 `event.key === "Escape"` 就
