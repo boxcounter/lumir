@@ -486,7 +486,35 @@ async function browserChecks() {
       assert((await switchHtml()) === before, "switches changed after setting the active provider");
     });
 
-    await checkAsync("B10 全部场景 × 三主题无 JS 错误、无横向溢出", async () => {
+    await checkAsync("B10 控制面板全部选项点击可达", async () => {
+      await page.goto(url("theme=light&scene=configured"));
+      for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
+        await page.click(`[data-go="scene:${scene}"]`);
+        const active = await page.evaluate(() => document.body.dataset.scene);
+        assert(active === scene, `scene button ${scene} did not activate (got ${active})`);
+      }
+      await page.click('[data-go="scene:configured"]');
+      for (const theme of ["dark", "eink", "light"]) {
+        await page.click(`[data-go="theme:${theme}"]`);
+        const active = await page.evaluate(() => document.documentElement.dataset.theme);
+        assert(active === theme, `theme button ${theme} did not activate (got ${active})`);
+      }
+      await page.click('[data-go="provider:deepseek"]');
+      const selected = await page.locator(".provider-item.is-on").getAttribute("data-provider-select");
+      assert(selected === "deepseek", `provider button did not select deepseek (got ${selected})`);
+      await page.click('[data-toggle="add"]');
+      assert((await page.locator("[data-add-card]").count()) === 1, "add toggle did not open the add form");
+      await page.click("[data-add-cancel]");
+      await page.click('[data-toggle="delete"]');
+      assert((await page.locator("[data-delete-card]").count()) === 1, "delete toggle did not open the delete card");
+      await page.click("[data-delete-cancel]");
+      await page.click('[data-toggle="advanced"]');
+      assert((await page.locator("[data-advanced]").isVisible()), "advanced toggle did not expand");
+      await page.click('[data-toggle="advanced"]');
+      assert(!(await page.locator("[data-advanced]").isVisible()), "advanced toggle did not collapse");
+    });
+
+    await checkAsync("B11 全部场景 × 三主题无 JS 错误、无横向溢出", async () => {
       const scenes = ["configured", "empty", "add", "delete", "unconfigured", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
       for (const theme of ["light", "dark", "eink"]) {
         for (const scene of scenes) {
