@@ -1,12 +1,13 @@
 # settings 增量规格
 
-> 起草注记（非规格正文）：本 delta 新建 capability `settings`——应用内设置面板。它只有两节：
-> 模型接入（provider 的增删改 + 每个 provider 的 `api_key` / `models[]` 基础区 +
-> `base_url` / `wire_api` 高级区）与自动化（四个全局开关 + 命名目标只读读数）。
+> 起草注记（非规格正文）：本 delta 新建 capability `settings`——应用内设置面板。它是**单页
+> 两节**（不设 TAB / 侧边导航）：模型接入（provider 的增删改 + 每个 provider 的 `api_key` /
+> `models[]` 基础区 + `base_url` / `wire_api` 高级区）与自动化（四个全局开关 + 会话命名 /
+> 图片命名各自**内联可编辑**的目标选择与一行生效说明）。
 > provider 是**用户可管理的动态集合**：以稳定 id 为键，可添加 / 编辑 / 删除；id 与预设创建
 > 后不可改；`mock` 是保留 id、不上面板。模型清单只来自 `config.json` 的
 > `harness.providers.<id>.models`，系统不内置模型表。其余配置键 MUST NOT 进入本面板（它们
-> 各有更近的使用落点，见 proposal 的 Non-goals）。
+> 各有更近的落点，见 proposal 的 Non-goals），也不为编辑器 / 权限设置页预留空壳入口。
 >
 > 面板的写通道是本 capability 的核心：强类型 patch、Rust 单一校验来源、raw 与生效值分离、
 > 增删改与引用重定向同一笔原子完成、删键恢复默认、外部修改冲突、未知子键保留、原子写。
@@ -27,9 +28,13 @@
 面板 SHALL 只包含两节，顺序固定：**模型接入**与**自动化**。模型接入 SHALL 含 provider 列表
 （可添加 / 选择 / 删除）与选中项的编辑表单；表单含基础区（API Key 与模型清单）与默认折叠的
 高级区（预设、Base URL 与 Wire 方言），危险区提供删除该 provider。自动化 SHALL 含四个开关：
-自动压缩、会话命名、图片命名、子代理，以及两个命名调用的解析目标读数。其余配置键（主题、
+自动压缩、会话命名、图片命名、子代理，以及两个命名调用**各自内联**的目标选择（provider /
+模型）与一行生效说明。其余配置键（主题、
 语言、字号、折行、栏宽、权限模式与规则、vault 忽略规则、键位、cron、日志等级、`editor.*`）
 MUST NOT 在本面板渲染、MUST NOT 在本面板写回——本面板不是配置总览，也不是通用 schema 表单。
+
+面板 SHALL 是**单页两节**：两节自上而下排布，MUST NOT 引入 TAB、分段导航或侧边栏；MUST NOT
+渲染编辑器 / 权限设置页，也 MUST NOT 为未做的设置留空壳入口。
 
 模型接入里的 provider 列表 SHALL 同时是**管理面**与**编辑面选择器**：选择一行决定右列显示
 哪张表单；列表 SHALL 提供「+ 添加 provider」与每个 provider 的删除入口。列表 MAY 提供
@@ -59,8 +64,9 @@ MUST NOT 静默丢弃草稿。
 
 - **WHEN** 按 `⌘,` 打开设置面板
 - **THEN** 面板内只有「模型接入」与「自动化」两节；模型接入里能看到 provider 列表与选中项的
-  编辑表单，自动化节能看到四个开关；主题、语言、字号、权限、忽略规则、键位、cron 等配置
-  MUST NOT 出现在面板里
+  编辑表单，自动化节能看到四个开关及其内联目标选择；主题、语言、字号、权限、忽略规则、键位、
+  cron 等配置 MUST NOT 出现在面板里；面板没有 TAB / 侧边导航，也没有编辑器 / 权限设置页或
+  点不开的空壳入口
 
 #### Scenario: provider 列表与表单联动
 
@@ -221,7 +227,8 @@ cron 任务与子代理定义里的 `model` 覆盖是软引用：删除 provider
 - **WHEN** `session_naming.provider = "kimi-work"`、`session_naming.model` 已设置，用户删除
   `kimi-work` 并选择「跟随当前 provider」
 - **THEN** `session_naming.provider` 与 `session_naming.model` 两个键都被删除；保存成功后
-  自动化节的会话命名目标读数显示当前 provider 的生效模型
+  自动化节会话命名行的两个选择器回到「跟随当前 provider」/「生效模型」，那一行说明显示当前
+  provider 的生效模型
 
 #### Scenario: 删除被图片命名引用的 provider 并指定替代
 
@@ -285,7 +292,8 @@ Base URL、Wire 方言与四个自动化开关（见「自动化开关与命名�
 是把当前默认值写进文件。
 
 面板 SHALL 提供页级「还原此页默认」：把设置面拥有的键（所有 provider 的 Key / 模型清单 /
-Base URL / Wire 方言、当前使用项与四个自动化开关）全部标记为删除。该动作 MUST NOT 删除
+Base URL / Wire 方言、当前使用项、四个自动化开关、两个命名目标的 `provider` 与 `model` 覆盖）
+全部标记为删除。该动作 MUST NOT 删除
 provider 条目本身（id 与预设是身份，不是设置值）；还原后的空条目是可保存状态。该动作 SHALL
 只改草稿、MUST NOT 立即落盘；用户仍需「保存」才写入，取消 SHALL 能放弃这次还原。
 
@@ -365,13 +373,18 @@ provider 条目本身（id 与预设是身份，不是设置值）；还原后�
 写 SHALL 为一次强类型 patch：字段类型在 IPC 边界由 Rust 结构定义，未知字段 SHALL 被拒绝；
 patch SHALL 只携带本次改动的字段，MUST NOT 携带整份配置。patch SHALL 支持三类 provider 编辑：
 添加（id + 预设）、更新（Key / 模型清单 / Base URL / Wire 方言）、删除（含替代目标与命名
-目标重定向）；`harness.provider` SHALL 可作为同一笔 patch 的一部分设置或删除。同一笔 patch
+目标重定向）；`harness.provider` SHALL 可作为同一笔 patch 的一部分设置或删除。patch SHALL 另
+支持两个命名目标的 `provider` / `model` 覆盖键（写入或删键）：删 provider 键 = 跟随当前、
+删 model 键 = 用目标 provider 的生效模型；写入的 provider SHALL 是合法、非 `mock`、未被装载期
+忽略的条目，写入的 model SHALL 在目标 provider 的清单内；换 provider SHALL 清除该组 model
+覆盖（同一笔里显式写入的 model 按新目标校验）。开关关闭 MUST NOT 使 patch 删除或清空这两个
+键。同一笔 patch
 中，添加项的 id MUST NOT 等于本笔删除项的 id（id 复用 SHALL 拆成两次保存，MUST NOT 依赖处理
 顺序）。校验 SHALL 以 Rust 的装载期校验为唯一来源；前端 MUST NOT 在 TypeScript 里复制窗口
 区间、枚举表、id 规则或互斥关系，只做输入整形（数字输入、trim、按能力矩阵置灰选项）。
 
 保存 SHALL 在配置写锁内完成「严格读文件 → 校验 revision → 应用 patch（添加 / 更新 / 删除 /
-重定向 / active）→ 以装载同一路径重新解析并校验 → 原子写」这一整段，MUST NOT 出现
+重定向 / active / 命名目标 / 开关）→ 以装载同一路径重新解析并校验 → 原子写」这一整段，MUST NOT 出现
 check-then-write 窗口。文件缺失按空对象处理；文件不是合法 JSON、或结构解析在装载期会触发
 整文件回落时，保存 SHALL 被拒绝（面板只读并给出解析错误位置），MUST NOT 在不可 round-trip
 的文件上写入。
@@ -394,12 +407,12 @@ SHALL 在当前文件上重新应用同一 patch，MUST NOT 用打开时的旧�
 
 保存成功 SHALL 返回最新快照；面板 SHALL 以返回值重建草稿基线，MUST NOT 以本地推测值充当
 已保存状态。保存成功 MUST NOT 被表述为「已生效」：面板 SHALL 按每个字段的生效时机提示
-（provider 条目 / 当前使用项 / 自动压缩 / 子代理 = 下一回合；会话命名 = 下一次评估触发点，
-结果异步落盘；图片命名 = 关→开需重启、开→关立即）。MUST NOT 写「每轮生成」或「下一轮必定
-生效」。
+（provider 条目 / 当前使用项 / 自动压缩 / 子代理 = 下一回合；会话命名开关 = 下一次评估触发点，
+结果异步落盘；图片命名开关 = 关→开需重启、开→关立即；两个命名目标 = 下一次评估触发点 /
+下一次粘贴）。MUST NOT 写「每轮生成」或「下一轮必定生效」。
 
-保存请求进行中，面板 SHALL 禁用全部编辑控件（输入 / 选择 / 开关 / 模型行增删 / 添加 provider /
-删除 / 设为当前使用 / 逐项恢复默认 / 页级还原 / 取消），MUST NOT 允许请求期间的编辑被返回
+保存请求进行中，面板 SHALL 禁用全部编辑控件（输入 / 选择 / 开关 / 命名目标选择 / 模型行增删 /
+添加 provider / 删除 / 设为当前使用 / 逐项恢复默认 / 页级还原 / 取消），MUST NOT 允许请求期间的编辑被返回
 快照覆盖；保存完成（成功或进入需修正）后 SHALL 解锁。
 
 #### Scenario: 越界窗口被拒绝且文件不变
@@ -479,8 +492,8 @@ SHALL 在当前文件上重新应用同一 patch，MUST NOT 用打开时的旧�
 #### Scenario: 保存中编辑控件禁用
 
 - **WHEN** 点击保存、请求尚未返回
-- **THEN** 全部输入 / 选择 / 开关 / 模型行增删 / 添加 / 删除 / 设为当前使用 / 页级还原 /
-  provider 切换均为禁用或只读，取消也禁用；保存完成后解锁；MUST NOT 出现「请求期间的编辑被
+- **THEN** 全部输入 / 选择 / 开关 / 命名目标选择 / 模型行增删 / 添加 / 删除 / 设为当前使用 /
+  页级还原 / provider 切换均为禁用或只读，取消也禁用；保存完成后解锁；MUST NOT 出现「请求期间的编辑被
   返回快照覆盖」或「仍有未落盘修改却显示已保存」
 
 ### Requirement: 设置面的校验与警告呈现
@@ -534,14 +547,37 @@ MUST NOT 只用颜色或图标表达。
 
 面板 SHALL 显示两个命名调用的**解析后目标**：provider id + 模型 id、目标是否来自「跟随当前
 provider」还是显式覆盖、以及是否可执行（会话命名 = 模型非空；图片命名 = 模型声明
-`vision: true`）。该读数 SHALL 在 provider 增删 / 切换后重算。目标解析规则 SHALL 与
+`vision: true`）。目标 SHALL 在 provider 增删 / 切换后重算。目标解析规则 SHALL 与
 `harness` 的「配置节 [harness]」条一致；本面板 MUST NOT 另立一套解析或在前端重算模型清单。
 
-**命名调用的目标** SHALL 默认跟随当前会话的 provider 与它的生效模型；`config.json` 的
-`harness.session_naming.provider` / `.model` 与 `harness.attachment_naming.provider` / `.model`
-SHALL 可以单独覆盖目标。每次触发 SHALL 只向解析出的**一个**目标发起**一次**调用，MUST NOT
-对每个 provider 各调用一次，MUST NOT 按 provider 复制命名结果。这两组覆盖项 MUST NOT 搬进本
-面板（避免把一处全局行为变成按 provider 配置的多份）；面板 SHALL 用一行说明默认与覆盖路径。
+**命名调用的目标 SHALL 内联在各自的开关行里，并且可编辑。** 每个命名开关行 SHALL 提供两个
+选择控件：目标 provider 与目标模型；默认分别是「跟随当前 provider」与「目标 provider 的生效
+模型」。默认值 SHALL 以**删键**表达（`harness.session_naming.provider` / `.model` 与
+`harness.attachment_naming.provider` / `.model` 缺省），MUST NOT 把当前 provider 的 id 快照
+进配置。
+
+- provider 选择的选项 SHALL 是合法、非 `mock`、未被装载期忽略的 provider（规范顺序，当前使用
+  项带标记）；当前值悬空（文件里指向不存在的 id）时 SHALL 保留该原始值并标注「不存在，已
+  回落」，MUST NOT 静默改写。
+- 模型选择的选项 SHALL 只来自目标 provider 的 `models` 清单；图片命名的每个选项 SHALL 标出
+  `vision` 资格（声明 `vision: true` / 未声明）。MUST NOT 提供清单外的模型作为可选值，也
+  MUST NOT 另建「命名可用模型」清单。
+- 改变目标 provider 时，该组的 `model` 覆盖 SHALL 被清除（它属于旧 provider 的清单）；同一笔
+  保存里显式选择的模型 SHALL 按新目标的清单校验。
+- 面板 SHALL 在选择旁只显示**一行**实际生效说明：解析后的 provider / 模型、跟随当前还是指定
+  目标（含悬空回落）、生效时机；图片命名另含 vision 资格与跳过后果。MUST NOT 再渲染独立的
+  命名目标摘要框、表格或第二块读数——同一读数只允许一处。
+- 目标改变 SHALL 只改草稿，点「保存」才写入；生效时机 = 下一次评估触发点（会话命名）/
+  下一次粘贴（图片命名）。
+
+**关闭功能时 SHALL 禁用目标控件，但保留选择与配置**：两个选择控件置灰、不可编辑，当前值与
+草稿 MUST NOT 被清空或改成「跟随」，`config.json` 里的两个键 MUST NOT 被删除；那一行说明
+SHALL 写明「已关闭：不发起命名调用；选择保留，重新开启后按此目标执行」。重新开启后 SHALL
+仍是原目标。
+
+每次触发 SHALL 只向解析出的**一个**目标发起**一次**调用，MUST NOT 对每个 provider 各调用
+一次，MUST NOT 按 provider 复制命名结果。每组目标 SHALL 只有一份全局键；provider 的增删 /
+切换 MUST NOT 复制目标控件或生成按 provider 命名的复本，只 SHALL 刷新选项与该行说明。
 
 **会话命名的节奏文案** SHALL 与 change `add-session-auto-naming` 的「会话自动命名」条一致
 （本条只约束呈现，不重新定义行为），至少写出：首轮正常完成后生成；此后每 5 轮重估；话题漂移
@@ -553,17 +589,17 @@ SHALL 可以单独覆盖目标。每次触发 SHALL 只向解析出的**一个**
 **图片命名的资格与触发** SHALL 与 change `add-semantic-image-naming` 的「图片语义命名与异步
 重命名」条一致：每次粘贴新图异步触发一次（串行队列，同一文件至多一个任务）；目标模型必须在
 目标 provider 的 `models` 清单内且声明 `vision: true`；不满足时 SHALL 跳过命名、保留暂存名、
-不发起请求、不弹失败 toast，MUST NOT 换用清单里的其它模型。面板 SHALL 在行内写出这条资格与
-「跳过」后果，MUST NOT 表述为「一定改名」。
+不发起请求、不弹失败 toast，MUST NOT 换用清单里的其它模型。面板 SHALL 在模型选项与那一行
+说明里写出资格与「跳过」后果，MUST NOT 表述为「一定改名」。
 
 图片命名开关的方向不对称 SHALL 在行内写明（「关闭立即生效；重新开启需重启应用」），
-MUST NOT 只给一个笼统的「需重启」标记。两个命名开关的 provider / model 细项 MUST NOT 搬进
-本面板；它们失效时产生的诊断 SHALL 在自动化节顶部可见，并指明其配置文件路径。两类失效的
-后果 MUST NOT 混写：会话命名回落该 provider 的生效模型（并 warning），图片命名跳过、保留
-暂存名（不换模型）。
+MUST NOT 只给一个笼统的「需重启」标记。两个命名目标的失效诊断 SHALL 在自动化节内可见并带
+键路径。两类失效的后果 MUST NOT 混写：会话命名回落该 provider 的生效模型（并 warning），
+图片命名跳过、保留暂存名（不换模型）。
 
 每个开关 SHALL 在键显式存在时提供「恢复默认」（删键），MUST NOT 在键缺席时显示该动作；
-键缺席时 SHALL 显示「默认」徽标。
+键缺席时 SHALL 显示「默认」徽标。命名目标选择器的默认值由「跟随当前 provider」/「生效模型」
+两个选项表达（选中即删键），MUST NOT 另设「恢复默认」按钮。
 
 #### Scenario: 关闭自动压缩立即落盘
 
@@ -582,23 +618,40 @@ MUST NOT 只给一个笼统的「需重启」标记。两个命名开关的 prov
 - **THEN** 会话命名行说明首轮生成、5 轮周期、漂移提前与最少 3 轮间隔、失败重试、单飞行与
   异步落盘；文案 MUST NOT 出现「每轮生成」或「下一轮必定生效」这类承诺
 
-#### Scenario: 命名目标读数跟随当前 provider
+#### Scenario: 命名目标内联跟随当前 provider
 
 - **WHEN** 当前使用 `kimi-work`，两个命名目标都没有显式覆盖
-- **THEN** 自动化节的会话命名与图片命名读数都显示 `kimi-work` 与它的生效模型；标注「跟随
-  当前 provider」；说明一次触发只发一次调用，`deepseek` 不会被同时调用
+- **THEN** 会话命名与图片命名两行各自显示两个选择（provider =「跟随当前 provider（默认）」、
+  模型 =「生效模型（默认：<模型>）」）与一行「实际：kimi-work / <模型> · 跟随当前 provider ·
+  <时机>」；页面其他地方没有第二块命名目标读数；说明一次触发只发一次调用，`deepseek` 不会被
+  同时调用
 
-#### Scenario: 命名目标读数显示显式覆盖与资格
+#### Scenario: 命名目标内联可编辑并显示资格
 
-- **WHEN** `attachment_naming.provider = "local-lab"`，且 `local-lab` 的生效模型未声明
-  `vision: true`
-- **THEN** 图片命名读数显示 `local-lab` / 该模型，并标注「未声明 vision → 粘贴图片不会改名，
-  保留暂存名」；MUST NOT 改选清单里的其它模型
+- **WHEN** 在图片命名行把目标 provider 选为 `local-lab`，再选一个未声明 `vision: true` 的模型
+- **THEN** 模型选项只列 `local-lab` 的模型、每项标明 vision 资格；那一行说明写
+  「实际：local-lab / <模型> · 未声明 vision → 粘贴图片不会改名，保留暂存名」；保存后
+  `harness.attachment_naming.provider` 写为 `local-lab`；MUST NOT 改选清单里的其它模型
 
-#### Scenario: provider 增删后读数重算
+#### Scenario: 切换目标 provider 清除旧模型覆盖
+
+- **WHEN** `session_naming.provider = "kimi-work"`、`session_naming.model = "k3-128k"`，用户把
+  该行 provider 改为 `deepseek`
+- **THEN** 模型选择重置为「生效模型（默认：ds-chat）」；保存后 `session_naming.provider` 为
+  `deepseek`、`session_naming.model` 键被删除；同一笔里再显式选 `ds-chat` 时按 `deepseek` 的
+  清单校验（选 `k3-128k` 被拒）
+
+#### Scenario: 关闭命名只禁用、不清空
+
+- **WHEN** 会话命名的目标设为 `deepseek` / `ds-chat`，用户关闭会话命名开关
+- **THEN** 两个选择控件变为禁用，值仍是 `deepseek` / `ds-chat`；那一行说明写「已关闭：不发起
+  命名调用；选择保留…」；保存后 `config.json` 里两个键均未被删除；重新开启后选择不变
+
+#### Scenario: provider 增删后目标重算
 
 - **WHEN** 删除命名目标显式指向的 provider 并按删除保护改为「跟随当前」
-- **THEN** 自动化节的两个命名目标读数立即改为当前 provider 的目标；不出现旧 id
+- **THEN** 自动化节两行的目标与说明立即改为当前 provider 的目标；选择器不再显示旧 id；不出
+  现第二组按 provider 命名的复本
 
 #### Scenario: 默认与显式可区分
 

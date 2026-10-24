@@ -436,21 +436,18 @@ kbd {
 
 /* 自动化（全局节，独立 pane） */
 #automation-note { margin-top: 0; margin-bottom: var(--sp-3); }
-.naming-readout {
-  margin-bottom: var(--sp-4); padding: 8px 10px; border: 1px solid var(--border-soft);
-  border-radius: var(--r6); background: var(--preview-bg);
-}
-:root[data-theme="eink"] .naming-readout { border-color: var(--border); }
-.naming-line {
-  display: grid; grid-template-columns: 64px minmax(0, 1fr) auto;
-  gap: var(--sp-3); align-items: baseline; padding: 2px 0; font-size: var(--fs-label-s);
-}
-.naming-label { color: var(--text-3); }
-.naming-target { font-family: var(--font-mono); font-size: var(--fs-label); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.naming-state { font-size: var(--fs-nano); color: var(--text-3); text-align: right; }
-.naming-state.is-bad { color: var(--pending); }
-.naming-note { margin-top: 4px; font-size: var(--fs-nano); color: var(--text-3); line-height: 1.5; }
 #automation-list { border-top: 1px solid var(--border-soft); }
+.auto-target { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3); margin-top: 6px; }
+.auto-target-label { font-size: var(--fs-label); color: var(--text-3); }
+.naming-select {
+  height: 28px; max-width: 190px; padding: 0 6px;
+  border: 1px solid var(--border); border-radius: var(--r5);
+  background: var(--preview-bg); color: var(--text); font-size: var(--fs-label-s);
+}
+.naming-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.naming-select:disabled { opacity: 0.45; }
+.auto-effective { margin-top: 5px; font-size: var(--fs-nano); color: var(--text-3); line-height: 1.5; }
+.auto-effective.is-bad { color: var(--pending); }
 .auto-row {
   display: flex; align-items: center; justify-content: space-between; gap: var(--sp-6);
   padding: var(--sp-4) 0; border-bottom: 1px solid var(--border-soft);
@@ -611,11 +608,10 @@ kbd {
       <section class="section" aria-labelledby="sec-auto">
         <div class="section-head">
           <h2 class="section-title" id="sec-auto">自动化</h2>
-          <span class="section-note" data-automation-scope>全局 · 与所选 provider 无关；增删或切换 provider 不会复制或改变这里</span>
+          <span class="section-note" data-automation-scope>全局 · 与所选 provider 无关；增删或切换 provider 不会复制开关、也不会改变它们的值</span>
         </div>
         <div class="pane" id="automation-pane" data-automation>
-          <p class="fixed-note" id="automation-note" data-automation-note>四个开关是 <span class="mono">harness.*</span> 下的全局键，不属于任何 provider。命名调用的 provider / model 覆盖项留在配置文件。</p>
-          <div class="naming-readout" id="naming-readout" data-naming-readout></div>
+          <p class="fixed-note" id="automation-note" data-automation-note>四个开关是 <span class="mono">harness.*</span> 下的全局键，不属于任何 provider。会话命名与图片命名的目标默认跟随当前 provider，可在各自开关旁单独指定 provider 与模型；每组目标只有一份全局键，每次触发只发往解析出的一个目标。</p>
           <div id="automation-diagnostics" hidden></div>
           <div id="automation-list" data-automation-switches></div>
         </div>
@@ -661,6 +657,8 @@ kbd {
     <button type="button" class="cp-btn" data-go="scene:add">添加（重复 id）</button>
     <button type="button" class="cp-btn" data-go="scene:delete">删除保护</button>
     <button type="button" class="cp-btn" data-go="scene:unconfigured">未配置</button>
+    <button type="button" class="cp-btn" data-go="scene:naming-off">命名关闭</button>
+    <button type="button" class="cp-btn" data-go="scene:naming-vision">图片无 vision</button>
     <button type="button" class="cp-btn" data-go="scene:validation">校验错误</button>
     <button type="button" class="cp-btn" data-go="scene:warning">配置警告</button>
     <button type="button" class="cp-btn" data-go="scene:saving">保存中</button>
@@ -680,7 +678,7 @@ kbd {
     <button type="button" class="cp-btn" data-toggle="advanced">高级区</button>
     <button type="button" class="cp-btn" data-toggle="reset">↺ 重置场景</button>
   </div>
-  <p class="cp-note">全部内容为合成数据：Key 只保留末 4 位提示，页面不含任何完整密钥；模型 id 也是合成数据，Lumir 不内置模型表。provider 可添加 / 删除 / 编辑（id 与预设创建后不可改），删除当前使用项或被命名引用的项必须选替代目标；四个自动化开关是全局键。场景 / 主题 / provider 写回 URL 可刷新复现；页内交互不写 URL。截图用 <span class="mono">?panel=0</span> 关本面板。保存校验是为演示形态而模拟；实现里校验只在 Rust 一处（design §6）。</p>
+  <p class="cp-note">全部内容为合成数据：Key 只保留末 4 位提示，页面不含任何完整密钥；模型 id 也是合成数据，Lumir 不内置模型表。provider 可添加 / 删除 / 编辑（id 与预设创建后不可改），删除当前使用项或被命名引用的项必须选替代目标；四个自动化开关是全局键，会话命名 / 图片命名的目标在各自开关旁内联可编辑（默认跟随当前 provider，关闭时禁用但保留）。场景 / 主题 / provider 写回 URL 可刷新复现；页内交互不写 URL。截图用 <span class="mono">?panel=0</span> 关本面板。保存校验是为演示形态而模拟；实现里校验只在 Rust 一处（design §6）。</p>
 </div>
 
 <script>
@@ -688,10 +686,11 @@ kbd {
 
 /* ── 常量与合成数据 ─────────────────────────────────────────────── */
 const THEMES = ["light", "dark", "eink"];
-const SCENE_IDS = ["configured", "empty", "add", "delete", "unconfigured", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
+const SCENE_IDS = ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
 const SCENE_LABELS = {
   configured: "已配置", empty: "空清单", add: "添加（重复 id）", delete: "删除保护",
-  unconfigured: "未配置", validation: "校验错误", warning: "配置警告", saving: "保存中",
+  unconfigured: "未配置", "naming-off": "命名关闭", "naming-vision": "图片无 vision",
+  validation: "校验错误", warning: "配置警告", saving: "保存中",
   saved: "已保存", conflict: "外部冲突", "file-invalid": "文件损坏", closed: "已关闭",
 };
 const PRESETS = {
@@ -810,6 +809,20 @@ function sceneSnapshot(scene) {
         deepseek: providerBase("deepseek", "deepseek", {}),
       },
       automation: deepClone(defaults),
+    });
+  }
+  if (scene === "naming-off") {
+    return Object.assign(base, {
+      providers: configured(),
+      automation: Object.assign(deepClone(defaults), { session_naming: { value: false, explicit: true } }),
+      dirty: true,
+    });
+  }
+  if (scene === "naming-vision") {
+    return Object.assign(base, {
+      providers: configured(), automation: deepClone(defaults),
+      naming: { session: naming("deepseek", "ds-chat"), attachment: naming("kimi", "k3-128k") },
+      dirty: true,
     });
   }
   if (scene === "add") {
@@ -1359,48 +1372,128 @@ function renderDiagnostics() {
 }
 
 const AUTOMATION = [
-  ["auto_compact", "自动压缩",
-    "上下文接近上限时压缩并开启新会话，旧会话文件完整保留。",
-    "全局 · 下一回合生效 · 产生一次模型调用"],
-  ["session_naming", "会话命名",
-    "首轮生成；此后每 5 轮重估，话题漂移可提前（两次评估至少隔 3 轮）。初始生成失败后，在满足 3 轮间隔的下一个正常完成轮重试；已有标题时失败不立即重试，按自然节奏再来。单飞行，结果异步落盘。",
-    "全局 · 从下一次触发点起生效 · 内容出域 + 一次便宜档调用"],
-  ["attachment_naming", "图片命名",
-    "每次粘贴新图时异步生成语义文件名；目标模型未声明 vision 时跳过、保留暂存名，不换模型。",
-    "全局 · 关闭立即生效；重新开启需重启应用 · 出域 + 一次视觉调用"],
-  ["subagents", "子代理",
-    "允许主对话派生并行子代理；关闭后所有委派被拒绝（子代理调用的总开关）。",
-    "全局 · 下一回合生效 · 每个子代理独立计费"],
+  { key: "auto_compact", title: "自动压缩",
+    desc: "上下文接近上限时压缩并开启新会话，旧会话文件完整保留。",
+    meta: "全局 · 下一回合生效 · 产生一次模型调用" },
+  { key: "session_naming", title: "会话命名", kind: "session",
+    desc: "首轮生成；此后每 5 轮重估，话题漂移可提前（两次评估至少隔 3 轮）。初始生成失败后，在满足 3 轮间隔的下一个正常完成轮重试；已有标题时失败不立即重试，按自然节奏再来。单飞行，结果异步落盘。",
+    meta: "全局 · 从下一次触发点起生效 · 内容出域 + 一次便宜档调用" },
+  { key: "attachment_naming", title: "图片命名", kind: "attachment",
+    desc: "每次粘贴新图时异步生成语义文件名；目标模型未声明 vision 时跳过、保留暂存名，不换模型。",
+    meta: "全局 · 关闭立即生效；重新开启需重启应用 · 出域 + 一次视觉调用" },
+  { key: "subagents", title: "子代理",
+    desc: "允许主对话派生并行子代理；关闭后所有委派被拒绝（子代理调用的总开关）。",
+    meta: "全局 · 下一回合生效 · 每个子代理独立计费" },
 ];
 
-function renderNamingReadout() {
-  const session = resolveNaming("session");
-  const attachment = resolveNaming("attachment");
-  const line = (label, target, stateText, bad) => `<div class="naming-line">
-      <span class="naming-label">${label}</span>
-      <span class="naming-target" data-naming-target="${label === "会话命名" ? "session" : "attachment"}">${target}</span>
-      <span class="naming-state${bad ? " is-bad" : ""}">${stateText}</span>
+const NAMING_KINDS = {
+  session: { switchKey: "session_naming", label: "会话命名", timing: "下一次评估触发点生效" },
+  attachment: { switchKey: "attachment_naming", label: "图片命名", timing: "下一次粘贴生效" },
+};
+
+/** 目标 provider 的模型清单：来自草稿里的目标 provider 条目（不内置任何模型表）。 */
+function namingModels(kind) {
+  const res = resolveNaming(kind);
+  const p = res.provider ? state.providers[res.provider] : null;
+  return p ? p.models.filter((m) => String(m.id || "").trim()) : [];
+}
+
+/**
+ * 一个命名开关行内的目标控件 + 一行实际生效说明。
+ * provider 选择 = 覆盖键 harness.<kind>.provider；空值 = 跟随当前 provider（删键）。
+ * 模型选择 = 覆盖键 harness.<kind>.model；空值 = 目标 provider 的生效模型（删键）。
+ * 关闭功能时控件禁用，但草稿与选择原样保留（不清理、不写空）。
+ */
+function namingTargetHtml(kind) {
+  const conf = NAMING_KINDS[kind];
+  const override = state.naming[kind];
+  const res = resolveNaming(kind);
+  const isOn = state.automation[conf.switchKey].value;
+  const ids = visibleProviderIds().filter((id) => !state.providers[id].ignored);
+  const disabled = locked() || !isOn || ids.length === 0;
+  const models = namingModels(kind);
+  const declaredIds = models.map((m) => String(m.id).trim());
+  const rawProvider = override.provider && !state.providers[override.provider] ? override.provider : null;
+  const rawModel = override.model && !declaredIds.includes(override.model) ? override.model : null;
+
+  const providerOptions = [
+    `<option value=""${override.provider ? "" : " selected"}>跟随当前 provider（默认）</option>`,
+    ...ids.map((id) => `<option value="${esc(id)}"${override.provider === id ? " selected" : ""}>${esc(id)}${id === state.active ? " · 当前" : ""}</option>`),
+    rawProvider ? `<option value="${esc(rawProvider)}" selected>${esc(rawProvider)} · 不存在，已回落</option>` : "",
+  ].join("");
+  const modelOptions = [
+    `<option value=""${override.model ? "" : " selected"}>生效模型（默认${res.model ? `：${esc(res.model)}` : ""}）</option>`,
+    ...models.map((m) => {
+      const id = String(m.id).trim();
+      const visionTag = kind === "attachment" ? (m.vision === true ? " ✓ vision" : " · 未声明 vision") : "";
+      return `<option value="${esc(id)}"${override.model === id ? " selected" : ""}>${esc(id)}${visionTag}</option>`;
+    }),
+    rawModel ? `<option value="${esc(rawModel)}" selected>${esc(rawModel)} · 不在清单，会跳过</option>` : "",
+  ].join("");
+
+  const controls = `<div class="auto-target">
+      <span class="auto-target-label">发往</span>
+      <select class="naming-select" data-naming-provider="${kind}" aria-label="${conf.label}发往的 provider"${disabled ? " disabled" : ""}>${providerOptions}</select>
+      <select class="naming-select" data-naming-model="${kind}" aria-label="${conf.label}使用的模型"${disabled ? " disabled" : ""}>${modelOptions}</select>
     </div>`;
-  const targetText = (res) => res.provider ? `${esc(res.provider)} / ${esc(res.model || "（无模型）")}` : "（无可用 provider）";
-  const followText = (res) => !res.provider
-    ? "无可用 provider"
-    : res.dangling
-      ? "覆盖项悬空 · 已回落当前 provider"
-      : res.follows ? "跟随当前 provider · 下一次触发生效" : "配置文件覆盖 · 下一次触发生效";
-  const attachmentState = !attachment.provider
-    ? "无可用 provider"
-    : attachment.dangling
-      ? "覆盖项悬空 · 已回落"
-      : attachment.eligible ? "✓ vision · 下一次粘贴生效" : `会跳过：${attachment.badReason}`;
-  $("#naming-readout").innerHTML =
-    line("会话命名", targetText(session), followText(session), !session.eligible) +
-    line("图片命名", targetText(attachment), attachmentState, !attachment.eligible) +
-    `<div class="naming-note" data-naming-target-note>默认跟随当前会话的 provider 与它的生效模型；可在 <span class="mono">config.json</span> 的 <span class="mono">harness.session_naming</span> / <span class="mono">harness.attachment_naming</span> 下单独覆盖。每次只发往一个目标，不会对每个 provider 各做一次；本页不改覆盖项。</div>`;
+
+  const targetText = res.provider ? `${res.provider} / ${res.model || "（无模型）"}` : "无可用 provider";
+  let text;
+  let bad = !res.eligible;
+  if (!isOn) {
+    text = `已关闭：不发起命名调用；选择保留（${targetText}），重新开启后按此目标执行`;
+    bad = false;
+  } else if (!res.provider) {
+    text = kind === "attachment" ? "实际：无可用 provider · 粘贴图片不会改名" : "实际：无可用 provider · 不会生成标题";
+  } else if (kind === "attachment") {
+    text = res.eligible
+      ? `实际：${targetText} ✓ vision · ${res.follows ? "跟随当前 provider" : "指定目标"} · ${conf.timing}`
+      : `实际：${targetText} · ${res.dangling ? "覆盖项悬空，已回落当前 provider · " : ""}未声明 vision → 粘贴图片不会改名，保留暂存名`;
+  } else {
+    text = `实际：${targetText} · ${res.dangling ? "覆盖项悬空，已回落当前 provider" : res.follows ? "跟随当前 provider" : "指定目标"} · ${conf.timing}`;
+  }
+  return { controls, effective: { text, bad } };
+}
+
+/** 只重绘两个命名行里的目标控件与生效说明；开关行本身不动（provider 增删切换也不重排）。 */
+function renderNamingTargets() {
+  Object.keys(NAMING_KINDS).forEach((kind) => {
+    const { controls, effective } = namingTargetHtml(kind);
+    const slot = $(`[data-naming-targets="${kind}"]`);
+    if (slot) slot.innerHTML = controls;
+    const line = $(`[data-naming-effective="${kind}"]`);
+    if (line) {
+      line.textContent = effective.text;
+      line.classList.toggle("is-bad", effective.bad);
+    }
+  });
+}
+
+function setNamingProvider(kind, value) {
+  if (locked()) return;
+  const draft = state.naming[kind];
+  const next = value || null;
+  if (draft.provider === next) return;
+  draft.provider = next;
+  draft.model = null; // 模型覆盖属于旧目标 provider 的清单，换目标即清除
+  markDirty(null);
+  renderNamingTargets();
+}
+
+function setNamingModel(kind, value) {
+  if (locked()) return;
+  const draft = state.naming[kind];
+  const next = value || null;
+  if (draft.model === next) return;
+  draft.model = next;
+  markDirty(null);
+  renderNamingTargets();
 }
 
 function renderAutomationSwitches() {
   const ro = locked();
-  $("#automation-list").innerHTML = AUTOMATION.map(([key, title, desc, meta]) => {
+  $("#automation-list").innerHTML = AUTOMATION.map((itemDef) => {
+    const key = itemDef.key;
     const item = state.automation[key];
     const badge = item.explicit ? "" : '<span class="badge" data-default-badge>默认</span>';
     const restart = key === "attachment_naming" && state.attachmentTurnedOn
@@ -1408,25 +1501,29 @@ function renderAutomationSwitches() {
     const restore = item.explicit
       ? `<button type="button" class="link-btn" data-switch-reset="${key}" ${ro ? "disabled" : ""}>恢复默认</button>`
       : "";
+    const target = itemDef.kind
+      ? `<div data-naming-targets="${itemDef.kind}"></div><p class="auto-effective" data-naming-effective="${itemDef.kind}"></p>`
+      : "";
     return `<div class="auto-row" data-auto-row="${key}">
       <div class="auto-copy">
-        <div class="auto-title">${title}${badge}</div>
-        <p class="auto-desc">${desc}</p>
-        <p class="auto-meta">${meta}</p>
+        <div class="auto-title">${itemDef.title}${badge}</div>
+        <p class="auto-desc">${itemDef.desc}</p>
+        <p class="auto-meta">${itemDef.meta}</p>
         ${restart}
+        ${target}
       </div>
       <div class="auto-actions">
         ${restore}
         <button type="button" role="switch" class="switch${item.value ? " is-on" : ""}"
-          data-switch="${key}" aria-checked="${item.value}" aria-label="${title}"
+          data-switch="${key}" aria-checked="${item.value}" aria-label="${itemDef.title}"
           ${ro ? "disabled" : ""}><span class="knob"></span></button>
       </div>
     </div>`;
   }).join("");
+  renderNamingTargets();
 }
 
 function renderAutomation() {
-  renderNamingReadout();
   renderAutomationSwitches();
 }
 
@@ -1537,7 +1634,7 @@ function setActive(id) {
   state.active = id;
   markDirty(null);
   renderProviderPane();
-  renderNamingReadout();
+  renderNamingTargets();
   renderCpanel();
 }
 
@@ -1585,7 +1682,7 @@ function confirmAdd() {
   if (!state.active) state.active = id;
   markDirty(state.providers[id]);
   renderProviderPane();
-  renderNamingReadout();
+  renderNamingTargets();
   renderCpanel();
 }
 
@@ -1644,7 +1741,7 @@ function confirmDelete() {
   state.deletePlan = null;
   markDirty(null);
   renderProviderPane();
-  renderNamingReadout();
+  renderNamingTargets();
   renderCpanel();
 }
 
@@ -1724,6 +1821,10 @@ function toggleSwitch(key) {
     button.dataset.switchReset = key;
     button.textContent = "恢复默认";
     actions.prepend(button);
+  }
+  if (Object.keys(NAMING_KINDS).some((kind) => NAMING_KINDS[kind].switchKey === key)) {
+    // 关闭只禁用目标控件：选择与草稿原样保留，不清空、不写空。
+    renderNamingTargets();
   }
 }
 
@@ -2068,6 +2169,10 @@ document.addEventListener("input", (event) => {
 document.addEventListener("change", (event) => {
   const target = event.target;
   if (!(target instanceof Element) || locked()) return;
+  const namingProvider = target.closest("[data-naming-provider]");
+  if (namingProvider) { setNamingProvider(namingProvider.dataset.namingProvider, target.value); return; }
+  const namingModel = target.closest("[data-naming-model]");
+  if (namingModel) { setNamingModel(namingModel.dataset.namingModel, target.value); return; }
   if (target.matches("[data-wire-api]")) {
     const provider = selectedProvider();
     if (!provider) return;

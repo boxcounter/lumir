@@ -1,12 +1,15 @@
-// 原型产品语义反向断言（M716 r3，随 change add-model-automation-settings-oct24 提交）。
+// 原型产品语义反向断言（M716 r3 / M730 r4，随 change add-model-automation-settings-oct24 提交）。
 //
-// 守的不是视觉，而是 r3 的核心产品语义：
+// 守的不是视觉，而是核心产品语义：
 //   1) provider 可添加 / 删除 / 选择；id 冲突与非法字符被拒（不是固定两项的编辑器）；
 //   2) 删除当前使用项 / 被命名引用的项必须给替代目标，空清单有明确后果；
 //   3) 四个自动化开关仍是全局键：增删 / 切换 provider 不复制、不重排、不改变开关 DOM；
-//   4) 命名目标读数是「实际发往哪个 provider + 哪个模型」，含 vision 资格与悬空回落；
+//   4) 会话命名 / 图片命名的目标**内联在各自开关行**、可编辑（provider + 模型），默认跟随
+//      当前 provider；关闭功能时控件禁用但选择保留；图片命名的模型选项标 vision 资格；
+//      每行只有**一行**实际生效说明，独立的大摘要框已移除；
 //   5) 模型清单只来自 config.json，不能暗示内置模型表 / 模型目录；
-//   6) 会话命名不是每轮生成。
+//   6) 会话命名不是每轮生成；
+//   7) 设置是单页两节，没有编辑器 / 权限设置页，也没有 TAB 导航。
 //
 // 判据有区分度（REVIEW.md「断言等价于子串，没有区分度」条）：每条 predicate 都配一个
 // **必须让它 FAIL 的合成输入**（negative control）；另对「取到的文本为空 / 函数体没找到」
@@ -136,6 +139,36 @@ function idRuleViolation(id, existing) {
   return null;
 }
 
+/** 命名目标内联在各自开关行：两组可编辑选择、每行一条生效说明、无独立摘要框。 */
+function namingTargetInlineViolation({ readoutBlocks, providerSelects, modelSelects, effectiveLinesPerRow, followOptions, visionMarks }) {
+  return (
+    readoutBlocks > 0 ||
+    providerSelects !== 2 ||
+    modelSelects !== 2 ||
+    effectiveLinesPerRow.length !== 2 ||
+    effectiveLinesPerRow.some((count) => count !== 1) ||
+    followOptions !== 2 ||
+    visionMarks < 1
+  );
+}
+
+/** 关闭功能只禁用控件：选择与草稿原样保留，不清空、不写成空选择。 */
+function namingOffRetainOk({ disabled, providerBefore, providerAfter, modelBefore, modelAfter }) {
+  return disabled === true && providerAfter === providerBefore && modelAfter === modelBefore;
+}
+
+/** 独立大摘要框（旧 .naming-readout 块）必须不存在。 */
+function namingSummaryBoxPresent(markup) {
+  return /data-naming-readout|class="naming-readout"/.test(markup);
+}
+
+/** 设置是单页两节：没有 TAB 导航，也没有编辑器 / 权限设置页。 */
+function singlePageViolation(markup) {
+  const tabs = (markup.match(/role="tab"|data-tab=|aria-controls="[^"]*tabpanel/g) || []).length;
+  const sections = (markup.match(/<section class="section"/g) || []).length;
+  return tabs > 0 || sections !== 2;
+}
+
 // 负向对照：这些合成输入必须让 predicate 判红。任何一条没红，说明判据没有区分度。
 check("N0 负向对照：automationOwnershipViolation 能识别复制 / 改归属 / 顺序变化", () => {
   const keys = AUTOMATION_KEYS.slice();
@@ -183,6 +216,34 @@ check("N5 负向对照：idRuleViolation 能识别大写 / 点 / 保留 / 重复
   assert(idRuleViolation("kimi-work", existing) === null, "clean id must pass");
 });
 
+check("N6 负向对照：namingTargetInlineViolation 能识别摘要框 / 缺控件 / 多行说明 / 无 vision 标记", () => {
+  const clean = { readoutBlocks: 0, providerSelects: 2, modelSelects: 2, effectiveLinesPerRow: [1, 1], followOptions: 2, visionMarks: 1 };
+  assert(namingTargetInlineViolation(clean) === false, "clean must pass");
+  assert(namingTargetInlineViolation({ ...clean, readoutBlocks: 1 }) === true, "summary box must fail");
+  assert(namingTargetInlineViolation({ ...clean, providerSelects: 1 }) === true, "missing provider select must fail");
+  assert(namingTargetInlineViolation({ ...clean, modelSelects: 1 }) === true, "missing model select must fail");
+  assert(namingTargetInlineViolation({ ...clean, effectiveLinesPerRow: [1, 2] }) === true, "extra effective line must fail");
+  assert(namingTargetInlineViolation({ ...clean, followOptions: 1 }) === true, "missing follow option must fail");
+  assert(namingTargetInlineViolation({ ...clean, visionMarks: 0 }) === true, "missing vision mark must fail");
+});
+
+check("N7 负向对照：namingOffRetainOk 能识别「关闭即清空」与「关闭但没禁用」", () => {
+  const base = { disabled: true, providerBefore: "deepseek", providerAfter: "deepseek", modelBefore: "ds-chat", modelAfter: "ds-chat" };
+  assert(namingOffRetainOk(base) === true, "clean must pass");
+  assert(namingOffRetainOk({ ...base, providerAfter: "" }) === false, "cleared provider must fail");
+  assert(namingOffRetainOk({ ...base, modelAfter: "" }) === false, "cleared model must fail");
+  assert(namingOffRetainOk({ ...base, providerBefore: "deepseek", modelBefore: "ds-chat", providerAfter: "deepseek", modelAfter: "" }) === false, "partially cleared model must fail");
+  assert(namingOffRetainOk({ ...base, disabled: false }) === false, "enabled controls must fail");
+});
+
+check("N8 负向对照：namingSummaryBoxPresent / singlePageViolation 有区分度", () => {
+  assert(namingSummaryBoxPresent('<div id="naming-readout" data-naming-readout></div>') === true, "summary box snippet must be detected");
+  assert(namingSummaryBoxPresent('<div data-naming-targets="session"></div>') === false, "inline target snippet must pass");
+  assert(singlePageViolation('<section class="section"></section><section class="section"></section>') === false, "two sections must pass");
+  assert(singlePageViolation('<section class="section"></section><section class="section"></section><div role="tab">编辑器</div>') === true, "tab nav must fail");
+  assert(singlePageViolation('<section class="section"></section>') === true, "single section must fail");
+});
+
 // ── 静态源码断言 ──────────────────────────────────────────────────────────────
 
 function functionBody(source, name) {
@@ -206,9 +267,12 @@ const selectProviderBody = functionBody(html, "selectProvider");
 const confirmAddBody = functionBody(html, "confirmAdd");
 const confirmDeleteBody = functionBody(html, "confirmDelete");
 const validateIdBody = functionBody(html, "validateProviderId");
-const renderNamingBody = functionBody(html, "renderNamingReadout");
+const namingTargetBody = functionBody(html, "namingTargetHtml");
+const renderNamingTargetsBody = functionBody(html, "renderNamingTargets");
+const setNamingProviderBody = functionBody(html, "setNamingProvider");
+const setNamingModelBody = functionBody(html, "setNamingModel");
 
-check("S1 provider 路径不重渲染自动化开关", () => {
+check("S1 provider 路径不重渲染自动化开关，只刷新内联命名目标", () => {
   assert(providerPaneBody.length > 200, `renderProviderPane body too short (${providerPaneBody.length})`);
   assert(selectProviderBody.length > 50, `selectProvider body too short (${selectProviderBody.length})`);
   for (const [name, body] of [
@@ -217,7 +281,14 @@ check("S1 provider 路径不重渲染自动化开关", () => {
     ["confirmAdd", confirmAddBody],
     ["confirmDelete", confirmDeleteBody],
   ]) {
-    assert(!/renderAutomationSwitches|automation-list|data-auto-row/.test(body), `${name} must not touch automation switches`);
+    assert(!/renderAutomationSwitches|automation-list|data-auto-row|data-switch=/.test(body), `${name} must not touch automation switches`);
+  }
+  for (const [name, body] of [
+    ["setActive", functionBody(html, "setActive")],
+    ["confirmAdd", confirmAddBody],
+    ["confirmDelete", confirmDeleteBody],
+  ]) {
+    assert(/renderNamingTargets\(\)/.test(body), `${name} must refresh the inline naming targets`);
   }
 });
 
@@ -245,12 +316,13 @@ check("S3 自动化节在静态结构上与模型接入节平级、不在 provid
   const switchesAt = html.indexOf("data-automation-switches");
   assert(switchesAt > automationAt, "switches must live inside the automation pane");
   assert((html.match(/data-automation-switches/g) || []).length === 1, "switches marker must be unique");
+  assert(!namingSummaryBoxPresent(html), "standalone naming summary box must be gone");
 });
 
 check("S4 自动化文案：节奏准确、无「每轮」", () => {
   const autoStart = html.indexOf('id="sec-auto"');
   const autoSection = html.slice(autoStart, html.indexOf("</section>", autoStart));
-  const automationLiteral = html.slice(html.indexOf("const AUTOMATION = ["), html.indexOf("function renderNamingReadout"));
+  const automationLiteral = html.slice(html.indexOf("const AUTOMATION = ["), html.indexOf("function namingTargetHtml"));
   const text = `${autoSection}\n${automationLiteral}`;
   assert(text.length > 300, `automation text too short (${text.length})`);
   assert(namingCadenceCopyOk(text), "automation copy must state first-turn / 5-turn / 3-turn / async and must not say 每轮");
@@ -279,21 +351,25 @@ check("S6 provider 管理入口与 id 规则在源码里真实存在", () => {
   assert(/hasOwnProperty/.test(validateIdBody), "id validation must check duplicates");
 });
 
-check("S7 命名目标读数：跟随 / 覆盖 / 悬空 / vision 资格都有文案", () => {
-  assert(renderNamingBody.length > 300, `renderNamingReadout body too short (${renderNamingBody.length})`);
-  const text = `${renderNamingBody}\n${functionBody(html, "resolveNaming")}`;
-  assert(text.includes("跟随当前"), "must say follows current provider");
-  assert(text.includes("覆盖"), "must say override");
+check("S7 命名目标内联在各自开关行：可编辑、跟随 / 覆盖 / 悬空 / vision、一行生效说明", () => {
+  assert(namingTargetBody.length > 700, `namingTargetHtml body too short (${namingTargetBody.length})`);
+  const text = `${namingTargetBody}\n${functionBody(html, "resolveNaming")}`;
+  assert(text.includes("跟随当前"), "must offer follow-current as the default");
+  assert(text.includes("覆盖"), "must say what an override is");
   assert(text.includes("悬空"), "must handle dangling override");
-  assert(text.includes("vision"), "must show vision eligibility");
-  assert(text.includes("一个目标") || /不会对每个 provider 各做一次/.test(text), "must deny per-provider fan-out");
+  assert(text.includes("vision"), "must show vision eligibility per model");
+  assert(text.includes("data-naming-provider") && text.includes("data-naming-model"), "both selects must be inline in the row");
+  assert(/实际：|已关闭/.test(namingTargetBody), "row must render an effective line");
+  assert(!namingSummaryBoxPresent(html), "standalone summary box must be gone");
+  const autoSection = html.slice(html.indexOf('id="sec-auto"'), html.indexOf("</section>", html.indexOf('id="sec-auto"')));
+  assert(/一个目标/.test(autoSection), "must deny per-provider fan-out in one place");
 });
 
 check("S8 控制面板覆盖全部场景与 provider 操作", () => {
   const cpanelStart = html.indexOf('id="cpanel"');
   const cpanel = html.slice(cpanelStart, html.indexOf("<script>", cpanelStart));
   const scenes = [...cpanel.matchAll(/data-go="scene:([a-z-]+)"/g)].map((m) => m[1]);
-  for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
+  for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
     assert(scenes.includes(scene), `control panel missing scene ${scene}`);
   }
   assert(/data-toggle="add"/.test(cpanel), "control panel must expose add");
@@ -301,6 +377,24 @@ check("S8 控制面板覆盖全部场景与 provider 操作", () => {
   assert(/data-toggle="advanced"/.test(cpanel), "control panel must expose advanced");
   assert(/data-go="theme:light"/.test(cpanel) && /data-go="theme:dark"/.test(cpanel) && /data-go="theme:eink"/.test(cpanel), "control panel must expose all themes");
   assert((html.match(/data-go="theme:/g) || []).length >= 3, "theme buttons missing");
+});
+
+check("S9 关闭命名只禁用控件：不清空选择、不写空、不改草稿", () => {
+  const toggleBody = functionBody(html, "toggleSwitch");
+  assert(/state\.automation\[conf\.switchKey\]\.value/.test(namingTargetBody), "disabled state must follow the switch value");
+  assert(/选择保留/.test(namingTargetBody), "off copy must say the selection is retained");
+  assert(/disabled/.test(namingTargetBody), "controls must be rendered disabled when off");
+  assert(!/state\.naming/.test(toggleBody), "toggling must not touch the naming draft");
+  assert(!/\.model\s*=\s*null/.test(toggleBody), "toggling off must not clear the model override");
+  assert(!/draft\.provider\s*=/.test(setNamingModelBody), "changing the model must not touch the provider draft");
+  assert(/draft\.model = null/.test(setNamingProviderBody), "changing the target provider must clear the stale model override");
+});
+
+check("S10 单页两节：没有 TAB 导航，也没有编辑器 / 权限设置页", () => {
+  assert(singlePageViolation(html) === false, "must be a single page with exactly two sections and no tab nav");
+  const visibleText = html.replace(/<script[\s\S]*?<\/script>/g, "");
+  assert(!/编辑器设置|权限设置|编辑器与权限/.test(visibleText), "must not render an editor / permission settings page");
+  assert(!/data-go="tab:/.test(html), "control panel must not switch tabs");
 });
 
 // ── 浏览器交互断言（可选依赖 Playwright） ────────────────────────────────────
@@ -335,9 +429,19 @@ async function browserChecks() {
   const url = (query) => `${pathToFileURL(prototypePath).href}?${query}`;
   const switchSignature = () =>
     page.locator("[data-automation-switches] [data-auto-row]").evaluateAll((els) =>
-      els.map((el) => `${el.dataset.autoRow}:${el.querySelector("[data-switch]").getAttribute("aria-checked")}`),
+      els.map((el) => {
+        const sw = el.querySelector("[data-switch]");
+        return [
+          el.dataset.autoRow,
+          sw.getAttribute("aria-checked"),
+          el.querySelector("[data-default-badge]") ? "default" : "explicit",
+          el.querySelector("[data-switch-reset]") ? "reset" : "",
+        ].join(":");
+      }).join("|"),
     );
-  const switchHtml = () => page.locator("[data-automation-switches]").evaluate((el) => el.outerHTML);
+  // 开关域签名只含开关行的身份 / 值 / 徽标 / 恢复默认，不含行内命名目标的选项与生效说明
+  // ——provider 增删会合法地刷新后者，但 MUST NOT 改变开关本身。
+  const switchHtml = switchSignature;
 
   try {
     await page.goto(url("theme=light&scene=configured&panel=0"));
@@ -353,6 +457,9 @@ async function browserChecks() {
         !automationOwnershipViolation({ inProviderForm: 0, totalRows: keys.length, keys }),
         `automation rows must be the four global keys in order, got ${keys.join(",")}`,
       );
+      assert((await page.locator("[data-naming-provider]").count()) === 2, "both naming rows must carry an inline provider select");
+      assert((await page.locator("[data-naming-model]").count()) === 2, "both naming rows must carry an inline model select");
+      assert((await page.locator("#naming-readout, [data-naming-readout]").count()) === 0, "standalone summary box must be gone");
     });
 
     await checkAsync("B2 切换 provider 只换表单：开关 DOM 不变、读数为当前 provider", async () => {
@@ -361,8 +468,8 @@ async function browserChecks() {
       const after = await switchHtml();
       assert(before === after, "switches changed after provider selection");
       assert((await page.locator("#provider-panel .provider-title").innerText()) === "deepseek", "selected form did not switch");
-      const naming = await page.locator("[data-naming-target='session']").innerText();
-      assert(naming.includes("kimi") && naming.includes("k3-256k"), `naming target should follow active kimi, got ${naming}`);
+      const naming = await page.locator('[data-naming-effective="session"]').innerText();
+      assert(naming.includes("kimi") && naming.includes("k3-256k") && naming.includes("跟随当前 provider"), `naming target should follow active kimi, got ${naming}`);
       assert((await page.locator("[data-current-badge]").count()) === 1, "current badge must stay unique");
     });
 
@@ -414,8 +521,10 @@ async function browserChecks() {
         els.map((el) => el.parentElement.querySelector(".provider-name").textContent),
       );
       assert(current.join(",") === "local-lab", `active should move to local-lab, got ${current.join(",")}`);
-      const naming = await page.locator("[data-naming-readout]").innerText();
-      assert(!naming.includes("kimi"), "naming readout must not keep the deleted id");
+      const naming = await page.locator("[data-automation-switches]").innerText();
+      assert(!naming.includes("kimi"), "naming targets must not keep the deleted id");
+      assert((await page.locator('[data-naming-provider="session"]').inputValue()) === "", "retarget must clear the session provider override");
+      assert((await page.locator('[data-naming-provider="attachment"]').inputValue()) === "", "retarget must clear the attachment provider override");
       assert((await switchHtml()) === before, "switches changed after delete");
     });
 
@@ -429,20 +538,21 @@ async function browserChecks() {
       await page.click("[data-add-confirm]");
       assert((await page.locator("[data-provider-select]").count()) === 1, "first provider should appear");
       assert((await page.locator("[data-current-badge]").count()) === 1, "first provider should become active");
-      const naming = await page.locator("[data-naming-target='attachment']").innerText();
+      const naming = await page.locator('[data-naming-effective="attachment"]').innerText();
       assert(naming.includes("local-first"), `naming target should point to the new provider, got ${naming}`);
       await page.click("[data-save]");
       await page.waitForTimeout(700);
       assert((await page.locator("#save-status").innerText()).includes("已保存"), "an empty generic provider must be savable as a half-finished entry");
     });
 
-    await checkAsync("B6 命名目标读数：vision 资格与悬空回落", async () => {
+    await checkAsync("B6 命名目标行内：vision 资格与悬空回落", async () => {
       await page.goto(url("theme=light&scene=warning&panel=0"));
-      const attachment = await page.locator("[data-naming-target='attachment']").innerText();
-      const stateText = await page.locator(".naming-line").nth(1).locator(".naming-state").innerText();
+      const attachment = await page.locator('[data-naming-effective="attachment"]').innerText();
       assert(attachment.includes("kimi"), `dangling override should fall back to active kimi, got ${attachment}`);
-      assert(/悬空/.test(stateText), `dangling state must be visible, got ${stateText}`);
-      const session = await page.locator(".naming-line").nth(0).locator(".naming-state").innerText();
+      assert(/悬空/.test(attachment), `dangling state must be visible, got ${attachment}`);
+      const providerValue = await page.locator('[data-naming-provider="attachment"]').inputValue();
+      assert(providerValue === "deleted-one", `dangling raw id must stay visible in the select, got ${providerValue}`);
+      const session = await page.locator('[data-naming-effective="session"]').innerText();
       assert(!/悬空/.test(session), "session target should not be marked dangling");
     });
 
@@ -468,6 +578,9 @@ async function browserChecks() {
       assert((await page.locator("[data-provider-select]").count()) === 3, "reset must keep provider entries");
       assert((await page.locator("[data-current-badge]").count()) === 0, "reset must delete the active provider key");
       assert((await page.locator("[data-model-row]").count()) === 0, "reset must clear model rows");
+      assert((await page.locator('[data-naming-provider="session"]').inputValue()) === "", "reset must delete the naming provider override");
+      assert((await page.locator('[data-naming-model="attachment"]').inputValue()) === "", "reset must delete the naming model override");
+      assert((await page.locator('[data-naming-effective="session"]').innerText()).includes("无可用 provider"), "reset removes active, so naming has no target");
       assert((await page.locator("#save-status").innerText()).includes("有未保存的修改"), "reset should make the draft dirty");
       await page.click("[data-save]");
       await page.waitForTimeout(700);
@@ -503,14 +616,72 @@ async function browserChecks() {
         els.map((el) => el.parentElement.querySelector(".provider-name").textContent),
       );
       assert(current.join(",") === "deepseek", `active should move to deepseek, got ${current.join(",")}`);
-      const naming = await page.locator("[data-naming-target='session']").innerText();
-      assert(naming.includes("deepseek") && naming.includes("ds-chat"), `naming readout should follow the new active, got ${naming}`);
+      const naming = await page.locator('[data-naming-effective="session"]').innerText();
+      assert(naming.includes("deepseek") && naming.includes("ds-chat"), `naming target should follow the new active, got ${naming}`);
       assert((await switchHtml()) === before, "switches changed after setting the active provider");
+    });
+
+    await checkAsync("B12 命名目标内联可编辑：换 provider 清模型覆盖、关闭禁用但保留", async () => {
+      await page.goto(url("theme=light&scene=configured&panel=0"));
+      await page.selectOption('[data-naming-provider="session"]', "deepseek");
+      let text = await page.locator('[data-naming-effective="session"]').innerText();
+      assert(text.includes("deepseek") && text.includes("ds-chat") && text.includes("指定目标"), `provider override should retarget session naming, got ${text}`);
+      const options = await page.locator('[data-naming-model="session"] option').evaluateAll((els) => els.map((el) => el.value));
+      assert(options.join(",") === ",ds-chat", `model options must come from the target provider, got ${options.join(",")}`);
+      await page.selectOption('[data-naming-model="session"]', "ds-chat");
+      const before = {
+        provider: await page.locator('[data-naming-provider="session"]').inputValue(),
+        model: await page.locator('[data-naming-model="session"]').inputValue(),
+      };
+      await page.click('[data-switch="session_naming"]');
+      const after = {
+        provider: await page.locator('[data-naming-provider="session"]').inputValue(),
+        model: await page.locator('[data-naming-model="session"]').inputValue(),
+      };
+      const disabled = (await page.locator('[data-naming-provider="session"]').isDisabled())
+        && (await page.locator('[data-naming-model="session"]').isDisabled());
+      assert(
+        namingOffRetainOk({ disabled, providerBefore: before.provider, providerAfter: after.provider, modelBefore: before.model, modelAfter: after.model }),
+        `off must disable but retain the selection, got ${JSON.stringify({ before, after, disabled })}`,
+      );
+      const off = await page.locator('[data-naming-effective="session"]').innerText();
+      assert(/已关闭/.test(off) && /选择保留/.test(off), `off copy must state the selection is retained, got ${off}`);
+      await page.click('[data-switch="session_naming"]');
+      assert((await page.locator('[data-naming-provider="session"]').inputValue()) === before.provider, "turning the switch back on must keep the provider override");
+      assert((await page.locator('[data-naming-model="session"]').inputValue()) === before.model, "turning the switch back on must keep the model override");
+    });
+
+    await checkAsync("B13 图片命名的模型选项标 vision，每行仅一行生效说明", async () => {
+      await page.goto(url("theme=light&scene=naming-vision&panel=0"));
+      const labels = await page.locator('[data-naming-model="attachment"] option').evaluateAll((els) => els.map((el) => el.textContent));
+      assert(labels.some((item) => /✓ vision/.test(item)), `a vision-capable option must be marked, got ${labels.join(" | ")}`);
+      assert(labels.some((item) => /未声明 vision/.test(item)), `a non-vision option must be marked, got ${labels.join(" | ")}`);
+      const attachment = await page.locator('[data-naming-effective="attachment"]').innerText();
+      assert(/未声明 vision/.test(attachment) && /不会改名/.test(attachment), `non-vision target must state the skip, got ${attachment}`);
+      const session = await page.locator('[data-naming-effective="session"]').innerText();
+      assert(/deepseek/.test(session) && /ds-chat/.test(session) && /指定目标/.test(session), `session override must be visible inline, got ${session}`);
+      const perRow = await page.locator("[data-automation-switches] [data-auto-row]").evaluateAll((els) =>
+        els.map((el) => el.querySelectorAll(".auto-effective, [data-naming-effective]").length),
+      );
+      const followOptions = await page.locator('[data-naming-provider] option[value=""]').count();
+      const visionMarks = labels.filter((item) => /✓ vision/.test(item)).length;
+      const violation = namingTargetInlineViolation({
+        readoutBlocks: await page.locator("#naming-readout, [data-naming-readout]").count(),
+        providerSelects: await page.locator("[data-naming-provider]").count(),
+        modelSelects: await page.locator("[data-naming-model]").count(),
+        effectiveLinesPerRow: perRow.filter((count) => count > 0),
+        followOptions,
+        visionMarks,
+      });
+      assert(
+        !violation,
+        `inline naming targets need two selects, exactly one line per row, a follow option, a vision mark and no summary box: ${JSON.stringify({ perRow, followOptions, visionMarks })}`,
+      );
     });
 
     await checkAsync("B10 控制面板全部选项点击可达", async () => {
       await page.goto(url("theme=light&scene=configured"));
-      for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
+      for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
         await page.click(`[data-go="scene:${scene}"]`);
         const active = await page.evaluate(() => document.body.dataset.scene);
         assert(active === scene, `scene button ${scene} did not activate (got ${active})`);
@@ -537,7 +708,7 @@ async function browserChecks() {
     });
 
     await checkAsync("B11 全部场景 × 三主题无 JS 错误、无横向溢出", async () => {
-      const scenes = ["configured", "empty", "add", "delete", "unconfigured", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
+      const scenes = ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
       for (const theme of ["light", "dark", "eink"]) {
         for (const scene of scenes) {
           await page.goto(url(`theme=${theme}&scene=${scene}&panel=0`));

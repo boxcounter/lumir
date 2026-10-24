@@ -1,12 +1,13 @@
-// provider 规则判定表（M716 r3）：把 design.md §2.2–§4 的规范写成可执行纯函数，
-// 用合成输入断言迁移、默认回退、命名目标解析、删除保护与 id 规则。
+// provider 规则判定表（M716 r3 / M730 r4）：把 design.md §2.2–§4 与 §10.2 的规范写成可执行
+// 纯函数，用合成输入断言迁移、默认回退、命名目标解析与编辑、删除保护与 id 规则。
 //
 // 它不是产品代码的替代，而是**实现的测试 oracle**：提案评审时机器可复核这些规则自洽；
 // 实现 PR 把同一判定表移植成 Rust 单测（tasks 7.3），之后本脚本可删除。
 //
-// 判据有区分度（REVIEW.md「断言等价于子串，没有区分度」条）：关键规则组配 **13 个 mutant
-// 对照**（迁移 R1/R2/R3/R4/R5、configured R6、回退顺序 R8/R9、删除 R13/R15/R16/R18、id R19），
-// 每个 mutant 都必须被对应检查抓红；不是「每条规则各有一个 mutant」。
+// 判据有区分度（REVIEW.md「断言等价于子串，没有区分度」条）：关键规则组配 **15 个 mutant
+// 对照**（迁移 R1/R2/R3/R4/R5、configured R6、回退顺序 R8/R9、命名目标编辑 R12b/R12e、
+// 删除 R13/R15/R16/R18、id R19），每个 mutant 都必须被对应检查抓红；不是「每条规则各有一个
+// mutant」。
 //
 // 跑法：node openspec/changes/add-model-automation-settings-oct24/evidence/provider-rules-check.mjs
 
@@ -98,6 +99,46 @@ function resolveNamingTarget(providers, active, override) {
     return { provider: override, dangling: false, followsActive: false };
   }
   return { provider: active, dangling: Boolean(override), followsActive: true };
+}
+
+/**
+ * 命名目标编辑（design §6 / §10.2）。edit = { provider?: id|null, model?: id|null }，
+ * null = Reset（删键 → 跟随）。顺序固定 provider → model：换目标先清除旧模型覆盖，
+ * 同一笔里显式 Set 的 model 再按**新目标**的清单校验。目标必须是合法、非 mock 的条目。
+ */
+function applyNamingEdit(providers, active, draft, edit) {
+  const errors = [];
+  const next = { provider: draft.provider, model: draft.model };
+  const path = "harness.session_naming";
+  if (Object.prototype.hasOwnProperty.call(edit, "provider")) {
+    if (edit.provider === null) {
+      next.provider = null;
+      next.model = null; // 回跟随：旧模型覆盖属于旧目标
+    } else {
+      const entry = providers[edit.provider];
+      const valid = Boolean(entry) && validEntries(providers).some(([id]) => id === edit.provider) && entry.preset !== "mock";
+      if (!valid) {
+        errors.push({ code: "settings_naming_target_missing", path: `${path}.provider` });
+      } else {
+        next.provider = edit.provider;
+        next.model = null;
+      }
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(edit, "model")) {
+    if (edit.model === null) {
+      next.model = null;
+    } else {
+      const targetId = next.provider || active;
+      const target = targetId ? providers[targetId] : null;
+      const declared = target && Array.isArray(target.models)
+        ? target.models.filter((m) => m && typeof m.id === "string" && m.id.trim()).map((m) => m.id.trim())
+        : [];
+      if (!declared.includes(edit.model)) errors.push({ code: "settings_naming_model_missing", path: `${path}.model` });
+      else next.model = edit.model;
+    }
+  }
+  return errors.length ? { ok: false, errors } : { ok: true, next };
 }
 
 /** provider id 校验（design §2.3）。返回 null 或稳定错误码。 */
@@ -357,6 +398,73 @@ check("R12 命名目标的 mock 只认 id=mock", () => {
   eq(resolveNamingTarget(providers, "mock", "local-mock").provider, "mock", "local-mock is not a valid target");
 });
 
+check("R12b 命名目标编辑：换 provider 清旧模型覆盖，Reset 回跟随", () => {
+  const draft = { provider: null, model: null };
+  const overridden = applyNamingEdit(FULL, "kimi", draft, { provider: "deepseek" });
+  assert(overridden.ok === true, `expected ok, got ${JSON.stringify(overridden.errors)}`);
+  eq(overridden.next, { provider: "deepseek", model: null }, "provider override with no model uses the new target's effective model");
+  const stale = applyNamingEdit(FULL, "kimi", { provider: "deepseek", model: "ds-chat" }, { provider: "local-lab" });
+  eq(stale.next, { provider: "local-lab", model: null }, "changing the target clears the stale model override");
+  const followed = applyNamingEdit(FULL, "kimi", { provider: "deepseek", model: "ds-chat" }, { provider: null });
+  eq(followed.next, { provider: null, model: null }, "reset follows the active provider and clears the model");
+});
+
+check("R12c 命名目标编辑：目标必须是合法非 mock 条目", () => {
+  const providers = clone(FULL);
+  providers.mock = { preset: "mock", fixture: "/tmp/f" };
+  const ghost = applyNamingEdit(providers, "kimi", { provider: null, model: null }, { provider: "ghost" });
+  assert(ghost.ok === false && ghost.errors.some((e) => e.code === "settings_naming_target_missing"), "unknown target must be blocked");
+  const mock = applyNamingEdit(providers, "kimi", { provider: null, model: null }, { provider: "mock" });
+  assert(mock.ok === false && mock.errors.some((e) => e.code === "settings_naming_target_missing"), "mock must not be a naming target");
+});
+
+check("R12d 命名目标编辑：模型必须在目标 provider 的清单内", () => {
+  const draft = { provider: null, model: null };
+  const bad = applyNamingEdit(FULL, "kimi", draft, { model: "ds-chat" });
+  assert(bad.ok === false && bad.errors.some((e) => e.code === "settings_naming_model_missing"), "model from another provider must be blocked");
+  eq(applyNamingEdit(FULL, "kimi", draft, { model: "k3-256k" }).next, { provider: null, model: "k3-256k" }, "declared model is accepted");
+});
+
+check("R12e 同一笔 provider + model：按 provider → model 顺序、按新目标校验", () => {
+  const draft = { provider: null, model: null };
+  const both = applyNamingEdit(FULL, "kimi", draft, { provider: "deepseek", model: "ds-chat" });
+  assert(both.ok === true, `expected ok, got ${JSON.stringify(both.errors)}`);
+  eq(both.next, { provider: "deepseek", model: "ds-chat" }, "explicit model applies against the new target");
+  const wrong = applyNamingEdit(FULL, "kimi", draft, { provider: "deepseek", model: "k3-256k" });
+  assert(wrong.ok === false, "model from the old target must not survive a provider change");
+});
+
+check("R12f 命名目标编辑：没有编辑时草稿原样保留（关闭开关不清理选择）", () => {
+  const draft = { provider: "deepseek", model: "ds-chat" };
+  eq(applyNamingEdit(FULL, "kimi", draft, {}).next, draft, "no naming edit leaves the draft untouched");
+});
+
+function mutantKeepStaleModel(providers, active, draft, edit) {
+  const next = { ...draft };
+  if (edit.provider !== undefined) next.provider = edit.provider;
+  if (edit.model !== undefined) next.model = edit.model;
+  return { ok: true, next };
+}
+check("R12m mutant（换目标不清模型覆盖）被 R12b 抓住", () => {
+  const draft = { provider: "deepseek", model: "ds-chat" };
+  eq(mutantKeepStaleModel(FULL, "kimi", draft, { provider: "local-lab" }).next, { provider: "local-lab", model: "ds-chat" }, "mutant keeps the stale model");
+  eq(applyNamingEdit(FULL, "kimi", draft, { provider: "local-lab" }).next, { provider: "local-lab", model: null }, "correct edit clears it");
+});
+
+function mutantValidateModelAgainstOldTarget(providers, active, draft, edit) {
+  const target = providers[draft.provider || active];
+  const declared = (target.models || []).filter((m) => m && typeof m.id === "string" && m.id.trim()).map((m) => m.id.trim());
+  const next = { provider: draft.provider, model: draft.model };
+  if (edit.provider !== undefined) next.provider = edit.provider;
+  if (edit.model !== undefined) next.model = edit.model;
+  return declared.includes(edit.model) ? { ok: true, next } : { ok: false, errors: [{ code: "settings_naming_model_missing" }] };
+}
+check("R12m2 mutant（按旧目标校验模型）被 R12e 抓住", () => {
+  const draft = { provider: null, model: null };
+  assert(mutantValidateModelAgainstOldTarget(FULL, "kimi", draft, { provider: "deepseek", model: "k3-256k" }).ok === true, "mutant accepts the old target's model");
+  assert(applyNamingEdit(FULL, "kimi", draft, { provider: "deepseek", model: "k3-256k" }).ok === false, "correct edit validates against the new target");
+});
+
 // ── 删除保护 ────────────────────────────────────────────────────────────────
 
 const DELETE_STATE = {
@@ -485,7 +593,7 @@ check("R19m mutant（放过大写 / 点）被 R19 抓住", () => {
   assert(validateProviderId("Kimi.work", []) === "settings_provider_id_invalid", "correct implementation rejects");
 });
 
-// ── 其余关键规则组的 mutant 对照（共 13 个 mutant） ───────────────────────────
+// ── 其余关键规则组的 mutant 对照（共 15 个 mutant） ───────────────────────────
 
 function mutantNoLegacyMigration(providers) {
   return { providers: clone(providers), rewritten: false };
