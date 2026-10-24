@@ -245,13 +245,128 @@ pub enum CliClass {
     Dangerous,
 }
 
-/// 只读白名单（design §3.1，裁决点 2 按初始表落地）：任意参数形态皆为纯读。含条件形态的
-/// `find` / `sed` / `git` 不在本表（各自走到 [`classify_cli`] 的分支）。
+/// 只读白名单（design §3.1，裁决点 2 按初始表落地；change readonly-allowlist-tightening-oct23
+/// 起是**能力断言**下的成员清单，不再等于「任意参数形态皆为纯读」）。
+///
+/// 成员名只决定「值得做形态判定」，结论由 [`whitelist_write_form`] 给出：出现写文件形态的
+/// argv 降为写（design §2.2）。含条件形态的 `find` / `sed` / `git` 不在本表（各自走到
+/// [`classify_cli_at`] 的分支）。
 const READ_ONLY_COMMANDS: [&str; 28] = [
     "ls", "cat", "head", "tail", "wc", "file", "stat", "pwd", "which", "whereis", "echo", "printf",
     "date", "uname", "du", "df", "rg", "grep", "egrep", "fgrep", "tree", "less", "more", "jq",
     "xxd", "od", "hexdump", "base64",
 ];
+
+/// 白名单成员的写文件形态（change readonly-allowlist-tightening-oct23 design §2.2）：命中即写，
+/// 走模式默认分层（`full_access` 免闸，与 `cp` / `tee` 同档，D1）。
+///
+/// 判据是**参数形态**，不是命令名的常见用途——`base64` 在表内不等于 `base64 -o` 可放行。
+/// 逐成员依据（本机实测 / man）见 design §3 处置表：`base64 -o`、`xxd` 的第二位置参数、
+/// `file -C`、`tree -o`·`-R`、`less -o`·`-O`、`find -fprint` 系。
+///
+/// 短旗标簇按 design §2.2 末段处理：单 `-` 起首、非 `--`、写形态字母之前只出现该命令的
+/// 无值旗标字母；一旦遇到字母表外字符（值粘连形态）即停——只会落到「没命中」，不会误判。
+fn whitelist_write_form(name: &str, args: &[String]) -> bool {
+    match name {
+        // BSD base64：`-o file` 写出文件；无值旗标 `-d` / `-D` / `-h`，`-b` / `-i` 取值。
+        "base64" => args.iter().any(|arg| {
+            short_flag_cluster_hits(arg, "dDh", &['o'])
+                || arg == "--output"
+                || arg.starts_with("--output=")
+        }),
+        // xxd 的第二个位置参数是输出文件（普通 dump 与 `-r` 同形，实测）。
+        "xxd" => xxd_positionals(args).len() >= 2,
+        // file：`-C` 编译 magic 并在当前目录写 `magic.mgc`。
+        "file" => args.iter().any(|arg| {
+            short_flag_cluster_hits(arg, "bcdEhIiklLnNpPrsSvz0", &['C']) || arg == "--compile"
+        }),
+        // tree：`-o file` 写输出、`-R` 每层写 `00Tree.html`（tree(1) man；本机未安装）。
+        "tree" => args
+            .iter()
+            .any(|arg| short_flag_cluster_hits(arg, "adDfFghilnNpqrsStuUvxCAJ", &['o', 'R'])),
+        // less：`-o` / `-O` / `--log-file` 写日志（防御性——当前 spawn 非 tty，D3）。
+        "less" => args.iter().any(|arg| {
+            short_flag_cluster_hits(arg, "aABcCdDeEfFgGiIJKlLmMnNqQrRsSuUVvX", &['o', 'O'])
+                || arg == "--log-file"
+                || arg.starts_with("--log-file=")
+        }),
+        _ => false,
+    }
+}
+
+/// 短旗标簇里是否出现写形态字母：单 `-` 起首、非 `--`，逐字符扫描，命中 `write_letters` 即真；
+/// 遇到 `plain_flags`（该命令的无值旗标字母集）外字符即停——那是值粘连形态或未知字母，
+/// 判为「不命中」，由调用方的保守默认兜底（未知命令落写，不会因此误放行）。
+fn short_flag_cluster_hits(arg: &str, plain_flags: &str, write_letters: &[char]) -> bool {
+    let Some(cluster) = arg.strip_prefix('-') else {
+        return false;
+    };
+    if cluster.is_empty() || cluster.starts_with('-') {
+        return false;
+    }
+    for ch in cluster.chars() {
+        if write_letters.contains(&ch) {
+            return true;
+        }
+        if !plain_flags.contains(ch) {
+            return false;
+        }
+    }
+    false
+}
+
+/// xxd 的位置参数（design §2.2）：取值旗标按 **token 首字母** 判定——`-s` / `-s0` / `-c 16` /
+/// `-c16` 的 `-s` / `-c` 吞一个值；`-ps` 这类以非取值字母起首的簇是原子选项，不吞值。
+///
+/// MUST NOT 对簇做单字母展开：`xxd -ps a.txt out.hex` 若把 `a.txt` 读成 `-s` 的值，只剩一个
+/// 位置参数而漏判（实测该形态确实写文件，fail-open）。`-` 单独成 token 计为位置参数。
+fn xxd_positionals(args: &[String]) -> Vec<String> {
+    // xxd 的取值旗标（-c cols / -g group / -l len / -n name / -o offset / -s seek）。
+    const VALUE_FLAGS: [char; 6] = ['c', 'g', 'l', 'n', 'o', 's'];
+    let mut positionals = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if arg == "-" || !arg.starts_with('-') {
+            positionals.push(arg.clone());
+            index += 1;
+            continue;
+        }
+        let mut chars = arg.chars().skip(1);
+        if let Some(first) = chars.next() {
+            // 首字母是取值旗标且后面没有粘连值 ⇒ 吞掉下一个 token。
+            if VALUE_FLAGS.contains(&first) && chars.next().is_none() {
+                index += 1;
+            }
+        }
+        index += 1;
+    }
+    positionals
+}
+
+/// `rg` 的执行形态（proposal 第 3 条）：`--pre` / `--pre-glob` / `--hostname-bin` 会执行
+/// 指定程序——归危险，任何档都逐个问（危险层先于 allow 规则与会话缓存）。
+const RG_EXEC_FLAGS: [&str; 3] = ["--pre", "--pre-glob", "--hostname-bin"];
+
+fn rg_exec_form(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        RG_EXEC_FLAGS.iter().any(|flag| {
+            arg == flag
+                || arg
+                    .strip_prefix(flag)
+                    .is_some_and(|rest| rest.starts_with('='))
+        })
+    })
+}
+
+/// find 的写原语（GNU find；BSD find 无 `-fls` 等，分类器是文本级、跨平台）。
+/// 单一真源：`-exec` 递归路径与无 exec 的普通路径都从这里判（REVIEW.md 「同一语义两处真源」条）。
+const FIND_WRITE_PRIMARIES: [&str; 4] = ["-fprint", "-fprint0", "-fprintf", "-fls"];
+
+fn find_write_primitive(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| FIND_WRITE_PRIMARIES.contains(&arg.as_str()))
+}
 
 /// 已知写动词（design §3.2）：整 argv 落入写分类，走模式默认分层。原则是**拿不准就写**——
 /// 这张表的意义是把「我们认得的写」写明白，落表外的未知命令同样归写（默认保守），
@@ -578,32 +693,34 @@ fn classify_cli_at(argv: &[String], depth: u32) -> CliClass {
     }
     match name.as_str() {
         // find 的 `-exec` 可执行任意命令、`-delete` 直接删文件；`-execdir` / `-ok` / `-okdir`
-        // 是同一能力（分别在不同目录执行 / 交互确认），一并按写处理。
+        // 是同一能力（分别在不同目录执行 / 交互确认）。`-fprint` 系把输出写进文件
+        // （change readonly-allowlist-tightening-oct23 design §2.2），一并按写处理。
         "find" => {
             if args.iter().any(|arg| {
                 matches!(
                     arg.as_str(),
                     "-delete" | "-exec" | "-execdir" | "-ok" | "-okdir"
                 )
-            }) {
-                CliClass::Write
-            } else {
-                CliClass::ReadOnly
-            }
-        }
-        // sed 带 -i / --in-place（含 `-i.bak` 这类后缀形态）即就地写。
-        "sed" => {
-            if args
-                .iter()
-                .any(|arg| arg == "-i" || arg.starts_with("-i") || arg.starts_with("--in-place"))
+            }) || find_write_primitive(args)
             {
                 CliClass::Write
             } else {
                 CliClass::ReadOnly
             }
         }
+        // sed 的写 / 执行能力在脚本语言里：`w` / `W` / `s///w` 写文件、`e` / `s///e` 执行
+        // 命令、`-f` 把脚本藏进文件（design §2.3）。执行形态已由危险层先判，这里只剩只读 / 写。
+        "sed" => classify_sed(args),
         "git" => classify_git(args),
-        other if READ_ONLY_COMMANDS.contains(&other) => CliClass::ReadOnly,
+        // 白名单成员：能力断言（判只读 = 不写文件、不执行程序）——先查写形态表（design §2.2），
+        // 命中即写；未命中才只读。
+        other if READ_ONLY_COMMANDS.contains(&other) => {
+            if whitelist_write_form(other, args) {
+                CliClass::Write
+            } else {
+                CliClass::ReadOnly
+            }
+        }
         // 未知命令：保守归写（错误方向是多问一次，不是误放行）。
         _ => CliClass::Write,
     }
@@ -654,11 +771,20 @@ fn dangerous_kind(name: &str, args: &[String]) -> Option<DangerousKind> {
             .then_some(DangerousKind::Command);
     }
     if name == "git" {
-        return match git_subcommand(args).as_deref() {
+        return match git_effective_subcommand(args).as_deref() {
             Some("clean") => Some(DangerousKind::Command),
             Some("reset") if args.iter().any(|arg| arg == "--hard") => Some(DangerousKind::Command),
             _ => None,
         };
+    }
+    // 白名单成员的执行形态（change readonly-allowlist-tightening-oct23 design §2.1 / §2.3）：
+    // 归危险而不是写——「任意命令执行」与 shell 包装器同级，任何档都逐个问。放在危险层
+    // （而不是第 7 步）是必须的：危险层先于 allow 规则与会话缓存，full_access 也放不过。
+    if name == "rg" && rg_exec_form(args) {
+        return Some(DangerousKind::Command);
+    }
+    if name == "sed" && classify_sed(args) == CliClass::Dangerous {
+        return Some(DangerousKind::Command);
     }
     None
 }
@@ -788,14 +914,12 @@ fn classify_find_exec(args: &[String], depth: u32) -> Option<CliClass> {
         overall = max_class(overall, classify_cli_at(&argv, depth + 1));
         index = end + 1;
     }
-    // exec 子句之外的写形态折进 overall：`-delete` 直接删文件，`-fprint` / `-fprintf` 把输出
-    // 写进文件。master 上这些形态仅经「-exec 存在 ⇒ 写」兜底；递归后若只看护 exec 子句，它们
-    // 会被吞（`find . -exec ls {} \; -delete` 曾因此归 ReadOnly，在 read_only 档静默放行——
-    // M413 r1 P1-1 回归，修复即本段）。
-    if args
-        .iter()
-        .any(|arg| matches!(arg.as_str(), "-delete" | "-fprint" | "-fprintf"))
-    {
+    // exec 子句之外的写形态折进 overall：`-delete` 直接删文件，`-fprint` 系把输出写进文件。
+    // master 上这些形态仅经「-exec 存在 ⇒ 写」兜底；递归后若只看护 exec 子句，它们会被吞
+    // （`find . -exec ls {} \; -delete` 曾因此归 ReadOnly，在 read_only 档静默放行——M413 r1
+    // P1-1 回归，修复即本段）。写原语表与普通路径共用 [`find_write_primitive`]：`-fprint0` /
+    // `-fls` 在两条路径上必须同判（REVIEW.md 「同一语义两处真源」条）。
+    if args.iter().any(|arg| arg == "-delete") || find_write_primitive(args) {
         overall = max_class(overall, CliClass::Write);
     }
     if incomplete {
@@ -819,69 +943,549 @@ fn max_class(a: CliClass, b: CliClass) -> CliClass {
     }
 }
 
-/// git 子命令（跳过全局 flag 后的第一个非 flag 参数）。
-fn git_subcommand(args: &[String]) -> Option<String> {
-    args.iter()
-        .find(|arg| !arg.starts_with('-'))
-        .map(|arg| arg.to_lowercase())
+// ---------------------------------------------------------------------------
+// sed 保守脚本扫描（change readonly-allowlist-tightening-oct23 design §2.3）
+// ---------------------------------------------------------------------------
+
+/// 单脚本字符上限：超限按解析失败处理（归写，fail-closed）。
+const SED_SCRIPT_MAX_CHARS: usize = 4096;
+
+/// sed 的取值长选项（分写与等号两形态）：`--expression` 取脚本，`--file` 是不可见脚本，
+/// `--line-length` 只是取值——不识别它会把值误当脚本正文，后面真正的脚本反而漏扫。
+const SED_LONG_VALUE_FLAGS: [&str; 3] = ["--expression", "--file", "--line-length"];
+
+/// sed 的无值长选项；表外的长选项一律按解析失败归写（保守侧）。
+const SED_LONG_FLAGS: [&str; 12] = [
+    "--posix",
+    "--debug",
+    "--sandbox",
+    "--quiet",
+    "--silent",
+    "--regexp-extended",
+    "--separate",
+    "--unbuffered",
+    "--null-data",
+    "--follow-symlinks",
+    "--binary",
+    "--in-place",
+];
+
+/// sed 参数解析结果（design §2.3 第一步）。
+struct SedInvocation<'a> {
+    /// 脚本源：逐个 `-e` / `--expression`；无 `-e` / `-f` 时是第一个位置参数。
+    scripts: Vec<&'a str>,
+    /// `-f` / `--file`：脚本体在分类期不可见。
+    file_script: bool,
+    /// `-i` / `--in-place`（含短旗标簇形态，堵 GNU `-ni` / `-Ei` 绕过）。
+    in_place: bool,
+    /// 输入文件——就地写形态的重定向目标。
+    files: Vec<&'a str>,
 }
 
-/// git 白名单（design §3.1）：只读子命令族；`branch` / `tag` 仅列表形态、`stash list`、
-/// `remote -v`；其余子命令（`add` `commit` `push` `checkout` `reset` `clean` …）→ 写。
+/// 解析 sed 的 flag 与脚本源。`None` = 形态不明确（未知 flag / 缺取值 / 没有脚本源）→ 归写。
+fn parse_sed_args(args: &[String]) -> Option<SedInvocation<'_>> {
+    let mut scripts: Vec<&str> = Vec::new();
+    let mut file_script = false;
+    let mut in_place = false;
+    let mut operands: Vec<&str> = Vec::new();
+    let mut index = 0;
+    let mut options_ended = false;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        // `-` 单独成 token 是输入文件（stdin），不是 flag。
+        if options_ended || arg == "-" || !arg.starts_with('-') {
+            operands.push(arg);
+            index += 1;
+            continue;
+        }
+        if arg == "--" {
+            options_ended = true;
+            index += 1;
+            continue;
+        }
+        if arg.starts_with("--") {
+            let (flag, inline) = match arg.split_once('=') {
+                Some((flag, value)) => (flag, Some(value)),
+                None => (arg, None),
+            };
+            if SED_LONG_VALUE_FLAGS.contains(&flag) {
+                let takes_separate_value = inline.is_none();
+                match flag {
+                    "--expression" => {
+                        scripts.push(match inline {
+                            Some(value) => value,
+                            None => args.get(index + 1)?.as_str(),
+                        });
+                    }
+                    "--file" => file_script = true,
+                    _ => {}
+                }
+                if takes_separate_value {
+                    index += 1;
+                }
+                index += 1;
+                continue;
+            }
+            if SED_LONG_FLAGS.contains(&flag) && inline.is_none() {
+                if flag == "--in-place" {
+                    in_place = true;
+                }
+                index += 1;
+                continue;
+            }
+            return None;
+        }
+        // 短旗标簇：`-ni` / `-Ei` 是 `-n -i`，`-ne 's/x/y/'` 是 `-n -e …`。
+        let cluster = arg.as_bytes();
+        let mut position = 1;
+        while position < cluster.len() {
+            match cluster[position] {
+                b'n' | b'E' | b'r' | b's' | b'u' | b'z' => position += 1,
+                b'e' => {
+                    let rest = &arg[position + 1..];
+                    if rest.is_empty() {
+                        scripts.push(args.get(index + 1)?.as_str());
+                        index += 1;
+                    } else {
+                        scripts.push(rest);
+                    }
+                    position = cluster.len();
+                }
+                b'f' => {
+                    // 脚本体在分类期不可见：值（粘连或分写）已被吃掉，只记形态。
+                    file_script = true;
+                    if position + 1 == cluster.len() {
+                        args.get(index + 1)?;
+                        index += 1;
+                    }
+                    position = cluster.len();
+                }
+                b'i' => {
+                    // `-i` / `-i.bak` / 簇内 `i`：余下是备份后缀。
+                    in_place = true;
+                    position = cluster.len();
+                }
+                b'l' => {
+                    // `-l N`（GNU 行宽）取值：不识别会把它误当脚本源。
+                    if position + 1 == cluster.len() {
+                        args.get(index + 1)?;
+                        index += 1;
+                    }
+                    position = cluster.len();
+                }
+                _ => return None,
+            }
+        }
+        index += 1;
+    }
+    if file_script {
+        return Some(SedInvocation {
+            scripts,
+            file_script,
+            in_place,
+            files: operands,
+        });
+    }
+    if scripts.is_empty() {
+        // 没有 -e / -f 时第一个位置参数是脚本源。
+        let (script, rest) = operands.split_first()?;
+        scripts.push(script);
+        return Some(SedInvocation {
+            scripts,
+            file_script,
+            in_place,
+            files: rest.to_vec(),
+        });
+    }
+    Some(SedInvocation {
+        scripts,
+        file_script,
+        in_place,
+        files: operands,
+    })
+}
+
+/// sed 的三态分类（design §2.3）：`-f`（脚本不可见）与就地写归写；脚本里出现 `w` / `W` /
+/// `s///w` 归写、`e` / `s///e` 归危险；只有**完整解析成功且无写 / 执行命令**的脚本才只读。
+fn classify_sed(args: &[String]) -> CliClass {
+    let Some(invocation) = parse_sed_args(args) else {
+        return CliClass::Write;
+    };
+    let mut class = CliClass::ReadOnly;
+    for script in &invocation.scripts {
+        class = max_class(class, scan_sed_script(script));
+    }
+    if invocation.file_script || invocation.in_place {
+        class = max_class(class, CliClass::Write);
+    }
+    class
+}
+
+/// sed 脚本静态扫描（design §2.3 第二步）：只在命令位识别命令字母，地址段（数字 / `$` /
+/// `/…/` / `\c…c` / `~N` / `,` / `!`）先跳过——正则里的 `w` / `e` 不算命令。
+///
+/// 任何无法完整解析的形态（未闭合分隔符 / 未知字母 / 长度超限）归写：分类器无法证明它
+/// 会执行程序，所以不是危险；但也不能放行。
+fn scan_sed_script(script: &str) -> CliClass {
+    let chars: Vec<char> = script.chars().collect();
+    if chars.len() > SED_SCRIPT_MAX_CHARS {
+        return CliClass::Write;
+    }
+    let mut index = 0;
+    let mut class = CliClass::ReadOnly;
+    while index < chars.len() {
+        // 命令位：跳过分隔符与块尾。
+        while index < chars.len() && matches!(chars[index], ' ' | '\t' | ';' | '\n' | '\r' | '}') {
+            index += 1;
+        }
+        if index >= chars.len() {
+            break;
+        }
+        if chars[index] == '#' {
+            skip_sed_to_line_end(&chars, &mut index);
+            continue;
+        }
+        if skip_sed_addresses(&chars, &mut index).is_err() {
+            return max_class(class, CliClass::Write);
+        }
+        skip_sed_blanks(&chars, &mut index);
+        while chars.get(index) == Some(&'!') {
+            index += 1;
+            skip_sed_blanks(&chars, &mut index);
+        }
+        let Some(&letter) = chars.get(index) else {
+            // 只有地址没有命令：脚本非法，形态不可证。
+            return max_class(class, CliClass::Write);
+        };
+        index += 1;
+        match letter {
+            '{' => {}
+            's' | 'y' => match scan_sed_substitute(&chars, &mut index, letter) {
+                Ok(found) => class = max_class(class, found),
+                Err(()) => return max_class(class, CliClass::Write),
+            },
+            'w' | 'W' => {
+                class = max_class(class, CliClass::Write);
+                skip_sed_to_command_end(&chars, &mut index);
+            }
+            // GNU 的 `e` 把余下文本当 shell 命令执行。
+            'e' => {
+                class = max_class(class, CliClass::Dangerous);
+                skip_sed_to_line_end(&chars, &mut index);
+            }
+            // `r` / `R` 读文件（只读外泄与 `cat` 同级，不在本不变量范围内）。
+            'r' | 'R' => skip_sed_to_command_end(&chars, &mut index),
+            // `a` / `i` / `c` 的文本可能含 `;` `}`：按「到未转义换行」跳过。
+            'a' | 'i' | 'c' => skip_sed_text(&chars, &mut index),
+            ':' | 'b' | 't' | 'T' => skip_sed_to_command_end(&chars, &mut index),
+            'd' | 'D' | 'g' | 'G' | 'h' | 'H' | 'n' | 'N' | 'p' | 'P' | 'q' | 'Q' | 'x' | 'z'
+            | 'l' | 'F' | '=' | 'v' => skip_sed_to_command_end(&chars, &mut index),
+            // 未知字母：sed 语法非法或形态不可证。
+            _ => return max_class(class, CliClass::Write),
+        }
+    }
+    class
+}
+
+/// `s` / `y` 的字段与旗标：两个分隔字段后读旗标——`w` → 写，`e` → 危险（GNU `s///e`）。
+fn scan_sed_substitute(chars: &[char], index: &mut usize, letter: char) -> Result<CliClass, ()> {
+    let Some(&delim) = chars.get(*index) else {
+        return Err(());
+    };
+    // 分隔符不能是换行；反斜杠作分隔符的读法与转义歧义太大，按不可解析处理。
+    if delim == '\n' || delim == '\\' {
+        return Err(());
+    }
+    // `s/regexp/replacement/flags`：首分隔符只出现一次，两个字段共用中间那个分隔符。
+    *index += 1;
+    skip_sed_field(chars, index, delim)?;
+    *index += 1;
+    skip_sed_field(chars, index, delim)?;
+    *index += 1;
+    if letter == 'y' {
+        // `y` 没有旗标（POSIX / GNU 一致）。
+        skip_sed_to_command_end(chars, index);
+        return Ok(CliClass::ReadOnly);
+    }
+    let mut class = CliClass::ReadOnly;
+    while let Some(&flag) = chars.get(*index) {
+        match flag {
+            ';' | '\n' | '}' => break,
+            'w' => {
+                class = max_class(class, CliClass::Write);
+                skip_sed_to_command_end(chars, index);
+                break;
+            }
+            'e' => {
+                class = max_class(class, CliClass::Dangerous);
+                skip_sed_to_line_end(chars, index);
+                break;
+            }
+            'g' | 'p' | 'i' | 'I' | 'm' | 'M' | '0'..='9' | ' ' | '\t' => *index += 1,
+            _ => return Err(()),
+        }
+    }
+    Ok(class)
+}
+
+/// 跳过 `s` / `y` 的一个字段：从当前位置扫到下一个未转义分隔符（**不吞**终止分隔符）。
+fn skip_sed_field(chars: &[char], index: &mut usize, delim: char) -> Result<(), ()> {
+    while let Some(&ch) = chars.get(*index) {
+        match ch {
+            '\\' => *index += 2,
+            '\n' => return Err(()),
+            other if other == delim => return Ok(()),
+            _ => *index += 1,
+        }
+    }
+    Err(())
+}
+
+/// 跳过一个以 `delim` 包裹的字段（`\` 转义下一字符）；未闭合 / 遇换行即失败。
+fn skip_sed_delimited(chars: &[char], index: &mut usize, delim: char) -> Result<(), ()> {
+    if chars.get(*index) != Some(&delim) {
+        return Err(());
+    }
+    *index += 1;
+    while let Some(&ch) = chars.get(*index) {
+        match ch {
+            '\\' => *index += 2,
+            '\n' => return Err(()),
+            other if other == delim => {
+                *index += 1;
+                return Ok(());
+            }
+            _ => *index += 1,
+        }
+    }
+    Err(())
+}
+
+/// 地址段（design §2.3）：数字（含 `first~step`）、`$`、`/re/`、`\cre c`、`+N` / `~N`，
+/// 可用 `,` 连成范围。
+fn skip_sed_addresses(chars: &[char], index: &mut usize) -> Result<(), ()> {
+    if !skip_sed_address(chars, index)? {
+        return Ok(());
+    }
+    if chars.get(*index) == Some(&',') {
+        *index += 1;
+        skip_sed_blanks(chars, index);
+        if !skip_sed_address(chars, index)? {
+            return Err(());
+        }
+    }
+    Ok(())
+}
+
+/// 单个地址；`Ok(false)` = 当前位置不是地址（命令位），`Err` = 形态不可解析。
+fn skip_sed_address(chars: &[char], index: &mut usize) -> Result<bool, ()> {
+    let Some(&ch) = chars.get(*index) else {
+        return Ok(false);
+    };
+    match ch {
+        '0'..='9' => {
+            while chars.get(*index).is_some_and(|c| c.is_ascii_digit()) {
+                *index += 1;
+            }
+            if chars.get(*index) == Some(&'~') {
+                *index += 1;
+                let start = *index;
+                while chars.get(*index).is_some_and(|c| c.is_ascii_digit()) {
+                    *index += 1;
+                }
+                if *index == start {
+                    return Err(());
+                }
+            }
+            Ok(true)
+        }
+        '$' => {
+            *index += 1;
+            Ok(true)
+        }
+        // `,+N` / `,~N`（GNU 相对地址形态）。
+        '+' | '~' => {
+            *index += 1;
+            let start = *index;
+            while chars.get(*index).is_some_and(|c| c.is_ascii_digit()) {
+                *index += 1;
+            }
+            if *index == start {
+                return Err(());
+            }
+            Ok(true)
+        }
+        '/' => {
+            skip_sed_delimited(chars, index, '/')?;
+            Ok(true)
+        }
+        // `\c regex c`：任意非字母、非换行的分隔符。
+        '\\' => {
+            let Some(&delim) = chars.get(*index + 1) else {
+                return Err(());
+            };
+            if delim == '\n' || delim.is_alphanumeric() {
+                return Err(());
+            }
+            *index += 1;
+            skip_sed_delimited(chars, index, delim)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// 跳过一个命令的参数（`;` / 换行 / 块尾 `}` 三种终止符）。
+fn skip_sed_to_command_end(chars: &[char], index: &mut usize) {
+    while let Some(&ch) = chars.get(*index) {
+        if matches!(ch, ';' | '\n' | '}') {
+            return;
+        }
+        *index += 1;
+    }
+}
+
+/// 跳到行尾（`e` 的命令文本与注释可含 `;`）。
+fn skip_sed_to_line_end(chars: &[char], index: &mut usize) {
+    while let Some(&ch) = chars.get(*index) {
+        if ch == '\n' {
+            return;
+        }
+        *index += 1;
+    }
+}
+
+/// `a` / `i` / `c` 的文本：按「到未转义换行」跳过，`\` 转义下一字符（`\` + 换行是续行）。
+fn skip_sed_text(chars: &[char], index: &mut usize) {
+    while let Some(&ch) = chars.get(*index) {
+        match ch {
+            '\\' => *index += 2,
+            '\n' => {
+                *index += 1;
+                return;
+            }
+            _ => *index += 1,
+        }
+    }
+}
+
+fn skip_sed_blanks(chars: &[char], index: &mut usize) {
+    while chars.get(*index).is_some_and(|ch| matches!(ch, ' ' | '\t')) {
+        *index += 1;
+    }
+}
+
+/// git 全局 flag 白名单（design §2.4，Q1 2026-10-24 裁决）：只有这几枚可以出现在子命令之前；
+/// 表外全局 flag 一律归写——`-c` 在 argv 里直接注入配置，`--git-dir` / `--work-tree` / `-C`
+/// 把 git 指向信任范围之外（vault 之外）的仓库配置。
+const GIT_GLOBAL_PASSTHROUGH: [&str; 4] = [
+    "-P",
+    "--no-pager",
+    "--no-optional-locks",
+    "--no-replace-objects",
+];
+
+/// 跳过白名单全局 flag 后的子命令下标；表外全局 flag / 裸 git（没有子命令）都返回 `None`。
+fn git_subcommand_index(args: &[String]) -> Option<usize> {
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if !arg.starts_with('-') {
+            return Some(index);
+        }
+        if GIT_GLOBAL_PASSTHROUGH.contains(&arg.as_str()) {
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    None
+}
+
+/// 危险判定用的有效子命令：跳过全局 flag **及其分写取值**（`-C <path>` / `--git-dir <path>` …）。
+/// 与分类侧的全局 flag 白名单目的不同——这里要认出「`-C` 指向的仓库里跑的是 `clean`」，
+/// 不能因为子命令前面有表外全局 flag 就让 `git -C /tmp/x clean -fd` 在 `full_access` 档免闸。
+fn git_effective_subcommand(args: &[String]) -> Option<String> {
+    const VALUE_FLAGS: [&str; 8] = [
+        "-C",
+        "-c",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--config-env",
+        "--exec-path",
+        "--super-prefix",
+    ];
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if !arg.starts_with('-') {
+            return Some(arg.to_lowercase());
+        }
+        index += if VALUE_FLAGS.contains(&arg.as_str()) {
+            2
+        } else {
+            1
+        };
+    }
+    None
+}
+
+/// git 只读子命令族（design §2.4）：`status` / `diff` / `log` / `show` / `blame` 与既有保留族。
+/// 其余子命令（`add` / `commit` / `push` / `checkout` / `reset` / `clean` …）→ 写。
+fn git_read_only_subcommand(sub: &str, rest: &[String]) -> bool {
+    match sub {
+        "status" | "diff" | "log" | "show" | "blame" | "rev-parse" | "ls-files" | "describe"
+        | "shortlog" => true,
+        // `branch` / `tag` 只认纯列表形态。
+        "branch" => rest
+            .iter()
+            .all(|arg| GIT_BRANCH_LIST_FLAGS.contains(&arg.as_str())),
+        "tag" => rest
+            .iter()
+            .all(|arg| GIT_TAG_LIST_FLAGS.contains(&arg.as_str()) || arg.starts_with("--sort=")),
+        "stash" => rest.first().map(String::as_str) == Some("list"),
+        "remote" => {
+            !rest.is_empty()
+                && rest
+                    .iter()
+                    .all(|arg| matches!(arg.as_str(), "-v" | "--verbose"))
+        }
+        _ => false,
+    }
+}
+
+/// 只读子命令是否出现 `--output` / `--output=<file>` 形态（design §2.4）——**出现即写**，
+/// 不要求后面确实跟值（`--` 之后的同名 pathspec 也保守判写；孤立 `--output` 由 git 自己报错）。
+fn git_output_form(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| arg == "--output" || arg.starts_with("--output="))
+}
+
+/// 只读子命令的 `--output` 写目标（空格与等号两形态；`write_targets` 用）。
+fn git_output_target(args: &[String]) -> Option<String> {
+    option_values(args, &["--output"]).into_iter().next()
+}
+
+/// git 分类（design §2.4）：全局 flag 白名单 → 只读子命令族 → `--output` 写形态。
 fn classify_git(args: &[String]) -> CliClass {
     // `git --version` 无子命令，是纯读形态（单列一条，不与「裸 git」混判）。
     if args.iter().any(|arg| arg == "--version") {
         return CliClass::ReadOnly;
     }
-    let Some(index) = args.iter().position(|arg| !arg.starts_with('-')) else {
-        // 裸 `git`（无子命令）：拿不准就写（保守默认）。
+    let Some(index) = git_subcommand_index(args) else {
+        // 裸 `git`（无子命令）/ 表外全局 flag：拿不准就写（保守默认）。
         return CliClass::Write;
     };
     let sub = args[index].to_lowercase();
     let rest = &args[index + 1..];
-    match sub.as_str() {
-        "status" | "diff" | "log" | "show" | "ls-files" | "rev-parse" | "blame" | "describe"
-        | "shortlog" => CliClass::ReadOnly,
-        "branch" => {
-            if rest
-                .iter()
-                .all(|arg| GIT_BRANCH_LIST_FLAGS.contains(&arg.as_str()))
-            {
-                CliClass::ReadOnly
-            } else {
-                CliClass::Write
-            }
-        }
-        "tag" => {
-            if rest
-                .iter()
-                .all(|arg| GIT_TAG_LIST_FLAGS.contains(&arg.as_str()) || arg.starts_with("--sort="))
-            {
-                CliClass::ReadOnly
-            } else {
-                CliClass::Write
-            }
-        }
-        "stash" => {
-            if rest.first().map(String::as_str) == Some("list") {
-                CliClass::ReadOnly
-            } else {
-                CliClass::Write
-            }
-        }
-        "remote" => {
-            if !rest.is_empty()
-                && rest
-                    .iter()
-                    .all(|arg| matches!(arg.as_str(), "-v" | "--verbose"))
-            {
-                CliClass::ReadOnly
-            } else {
-                CliClass::Write
-            }
-        }
-        _ => CliClass::Write,
+    if !git_read_only_subcommand(&sub, rest) {
+        return CliClass::Write;
     }
+    if git_output_form(rest) {
+        return CliClass::Write;
+    }
+    CliClass::ReadOnly
 }
 
 /// `git branch` 的纯列表 flag；出现其余参数（名字 / `-d` / `-m` / `-c` …）即写形态。
@@ -978,13 +1582,15 @@ fn redirect_for(root: &Path, argv: &[String]) -> Option<Redirect> {
     if targets.is_empty() {
         return None;
     }
+    let suggested_tool = suggested_tool(argv, root, &targets);
     Some(Redirect {
         targets,
-        suggested_tool: suggested_tool(argv),
+        suggested_tool,
     })
 }
 
-/// 写目标提取（design §4.1，按命令族的参数形态取「被写的一侧」）。
+/// 写目标提取（design §4.1，按命令族的参数形态取「被写的一侧」；change
+/// readonly-allowlist-tightening-oct23 design §5 补新增写形态的目标）。
 fn write_targets(argv: &[String]) -> Vec<String> {
     let Some(command) = argv.first() else {
         return Vec::new();
@@ -995,16 +1601,13 @@ fn write_targets(argv: &[String]) -> Vec<String> {
     match name.as_str() {
         // cp / mv / ln：全部路径参数（源在 vault 内同样是 vault 资产）。
         "cp" | "mv" | "ln" => targets.extend(non_flag_args(args)),
-        // sed 仅就地形态（带 -i）才写；**非 flag 参数里的第一个是脚本**（`s/a/b/`），
-        // 被写的是其后的文件参数。
+        // sed 仅就地形态（带 -i，含 `-ni` 簇）才写；脚本源与输入文件由同一个解析器给出
+        // （`-e` 形态下没有位置参数脚本，MUST NOT 再用「跳过第一个非 flag 参数」的旧读法）。
         "sed" => {
-            if args
-                .iter()
-                .any(|arg| arg == "-i" || arg.starts_with("-i") || arg.starts_with("--in-place"))
-            {
-                let mut rest = non_flag_args(args);
-                rest.next();
-                targets.extend(rest);
+            if let Some(invocation) = parse_sed_args(args) {
+                if invocation.in_place {
+                    targets.extend(invocation.files.iter().map(|file| file.to_string()));
+                }
             }
         }
         "tee" | "truncate" | "touch" | "mkdir" => targets.extend(non_flag_args(args)),
@@ -1018,6 +1621,37 @@ fn write_targets(argv: &[String]) -> Vec<String> {
         // curl -o / --output（含 --output=path 形态）；wget -O / --output-document。
         "curl" => targets.extend(option_values(args, &["-o", "--output"])),
         "wget" => targets.extend(option_values(args, &["-O", "--output-document"])),
+        // base64：`-o` / `--output` 的取值（两种形态，复用 option_values）。
+        "base64" => targets.extend(option_values(args, &["-o", "--output"])),
+        // tree：`-o` 的取值；`-R` 写到每层的固定名 `00Tree.html`，无可提取目标。
+        "tree" => targets.extend(option_values(args, &["-o"])),
+        // xxd：第二个位置参数（不限于 `-r`；第一个是输入）。
+        "xxd" => {
+            if let Some(output) = xxd_positionals(args).get(1) {
+                targets.push(output.clone());
+            }
+        }
+        // find：写原语的下一个参数是目标文件。
+        "find" => {
+            for (index, arg) in args.iter().enumerate() {
+                if FIND_WRITE_PRIMARIES.contains(&arg.as_str()) {
+                    if let Some(value) = args.get(index + 1) {
+                        targets.push(value.clone());
+                    }
+                }
+            }
+        }
+        // git：只在只读子命令族出现 `--output` 时才有可重定向目标（写子命令的
+        // `--output` 不是它被归写的理由，避免误改道）。
+        "git" => {
+            if let Some(index) = git_subcommand_index(args) {
+                let sub = args[index].to_lowercase();
+                let rest = &args[index + 1..];
+                if git_read_only_subcommand(&sub, rest) {
+                    targets.extend(git_output_target(rest));
+                }
+            }
+        }
         _ => {}
     }
     // 字面重定向 token（`>` / `>>`）：argv 直传下它们是普通参数，但形态上就是写目标。
@@ -1073,13 +1707,18 @@ fn redirect_targets(args: &[String]) -> Vec<String> {
 }
 
 /// 建议的 vault 工具（design §4.2 的映射，含 M405 修订的 mkdir→vault_create）。
-fn suggested_tool(argv: &[String]) -> Option<&'static str> {
+///
+/// 新增写形态（`base64 -o` / `tree -o` / `xxd` 输出 / `find -fprint` / `git --output`）没有
+/// 固定的新建 / 覆盖语义：按目标在 vault 内是否存在分流——已存在 ⇒ `vault_patch`（覆盖），
+/// 否则 `vault_create`（design §5）。`targets` 是已经过 vault 内判定的相对路径。
+fn suggested_tool(argv: &[String], root: &Path, targets: &[String]) -> Option<&'static str> {
     let name = argv.first().map(|command| command_basename(command))?;
     match name.as_str() {
         "mv" | "cp" | "ln" => Some("vault_move"),
         "rm" | "rmdir" => Some("vault_delete"),
         "sed" | "tee" | "truncate" | "dd" | "curl" | "wget" => Some("vault_patch"),
         "touch" | "mkdir" => Some("vault_create"),
+        "base64" | "tree" | "xxd" | "find" | "git" => Some(overwrite_or_create(root, targets)),
         _ => {
             let args = &argv[1..];
             if args
@@ -1091,6 +1730,19 @@ fn suggested_tool(argv: &[String]) -> Option<&'static str> {
                 None
             }
         }
+    }
+}
+
+/// 写目标的建议工具：只要有一个目标已存在（覆盖语义成立）就建议 `vault_patch`，否则新建
+/// 产物建议 `vault_create`。目标存在性只看词法路径（`vault_relative` 已挡逃逸）。
+fn overwrite_or_create(root: &Path, targets: &[String]) -> &'static str {
+    if targets
+        .iter()
+        .any(|target| root.join(target).symlink_metadata().is_ok())
+    {
+        "vault_patch"
+    } else {
+        "vault_create"
     }
 }
 
@@ -1767,6 +2419,362 @@ mod tests {
             classify_cli(&argv(&["find", ".", "-name", "x"])),
             classify_cli(&argv(&["find", ".", "-name", "x", "-delete"]))
         );
+        // change readonly-allowlist-tightening-oct23 design §6.2 的拒判反向验证：每条拒判
+        // 配一条只差一个 token 的正例，确认断言真的在判形态而不是判命令名。
+        for (positive, negative) in [
+            (
+                vec!["base64", "-d", "a.txt"],
+                vec!["base64", "-o", "/tmp/out.b64", "a.txt"],
+            ),
+            (vec!["xxd", "a.bin"], vec!["xxd", "a.bin", "/tmp/out.hex"]),
+            (vec!["file", "a.md"], vec!["file", "-C", "-m", "magic"]),
+            (
+                vec!["tree", "-L", "2", "."],
+                vec!["tree", "-o", "/tmp/x", "."],
+            ),
+            (vec!["less", "a.md"], vec!["less", "-o", "/tmp/log", "a.md"]),
+            (
+                vec!["find", ".", "-name", "*.md"],
+                vec!["find", ".", "-name", "*.md", "-fprint", "/tmp/x"],
+            ),
+            (
+                vec!["sed", "s/a/b/", "a.md"],
+                vec!["sed", "w /tmp/x", "a.md"],
+            ),
+            (
+                vec!["rg", "needle", "."],
+                vec!["rg", "--pre", "/tmp/x", "needle", "."],
+            ),
+            (
+                vec!["git", "status"],
+                vec!["git", "-C", "/tmp/other", "status"],
+            ),
+            (vec!["git", "log"], vec!["git", "log", "--output=/tmp/x"]),
+        ] {
+            let positive = argv(&positive);
+            let negative = argv(&negative);
+            assert_eq!(classify_cli(&positive), CliClass::ReadOnly, "{positive:?}");
+            assert_ne!(
+                classify_cli(&negative),
+                CliClass::ReadOnly,
+                "拒判必须有区分度：{negative:?}"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 只读白名单的能力断言（change readonly-allowlist-tightening-oct23）
+    // -----------------------------------------------------------------------
+
+    /// 每个白名单成员的写形态 → 写（design §2.2 逐成员，含 `--flag=value`、短旗标簇与
+    /// 位置参数计数形态）。每条都在对应正例里有一条只差一个 token 的只读对照。
+    #[test]
+    fn whitelist_write_forms_downgrade_to_write() {
+        for items in [
+            // base64：`-o` / `--output`（实测写出文件；`-o -` 也保守拒判）。
+            vec!["base64", "-i", "a.txt", "-o", "/tmp/out.b64"],
+            vec!["base64", "-o", "/tmp/out.b64", "a.txt"],
+            vec!["base64", "--output", "/tmp/out.b64", "a.txt"],
+            vec!["base64", "--output=/tmp/out.b64", "a.txt"],
+            vec!["base64", "-do", "/tmp/out.b64", "a.txt"],
+            // xxd：第二个位置参数是输出文件（普通 dump 与 `-r` 同形）。
+            vec!["xxd", "in.bin", "out.hex"],
+            vec!["xxd", "-ps", "in.bin", "out.hex"],
+            vec!["xxd", "-r", "in.hex", "out.bin"],
+            vec!["xxd", "-", "out.hex"],
+            vec!["xxd", "-c", "16", "in.bin", "out.hex"],
+            vec!["xxd", "-c16", "in.bin", "out.hex"],
+            // file：`-C` 编译 magic 并写 `magic.mgc`。
+            vec!["file", "-C", "-m", "magic"],
+            vec!["file", "--compile", "-m", "magic"],
+            vec!["file", "-bC", "-m", "magic"],
+            // tree：`-o` 写输出、`-R` 每层写 `00Tree.html`。
+            vec!["tree", "-o", "out.txt", "."],
+            vec!["tree", "-R", "."],
+            vec!["tree", "-aR", "."],
+            // less：`-o` / `-O` / `--log-file`（防御性，当前 spawn 不可达）。
+            vec!["less", "-o", "log", "a.md"],
+            vec!["less", "-O", "log", "a.md"],
+            vec!["less", "--log-file", "log", "a.md"],
+            vec!["less", "--log-file=log", "a.md"],
+            // find：GNU 的四个写原语。
+            vec!["find", ".", "-name", "*.md", "-fprint", "/tmp/list.txt"],
+            vec!["find", ".", "-fprint0", "/tmp/list.txt"],
+            vec!["find", ".", "-fprintf", "/tmp/list.txt", "%p\n"],
+            vec!["find", ".", "-fls", "/tmp/list.txt"],
+            // exec 递归路径与普通路径必须同判（REVIEW.md「同一语义两处真源」条）。
+            vec![
+                "find",
+                ".",
+                "-exec",
+                "ls",
+                "{}",
+                ";",
+                "-fprint0",
+                "/tmp/list.txt",
+            ],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::Write, "{argv:?}");
+        }
+    }
+
+    /// 写形态的**对照正例**：只差一个 token / 一个字符，仍须只读（design §6.2 反向验证）。
+    #[test]
+    fn whitelist_non_write_forms_stay_read_only() {
+        for items in [
+            vec!["base64", "-d", "a.txt"],
+            vec!["base64", "-i", "a.txt"],
+            vec!["xxd", "a.bin"],
+            vec!["xxd", "-ps", "a.bin"],
+            vec!["xxd", "-c", "16", "a.bin"],
+            vec!["xxd", "-c16", "a.bin"],
+            vec!["xxd", "-l", "16", "a.bin"],
+            vec!["xxd", "-s", "0", "a.bin"],
+            vec!["xxd", "-o", "16", "a.bin"],
+            vec!["file", "a.md"],
+            vec!["file", "-m", "magic", "a.md"],
+            vec!["tree", "-L", "2", "."],
+            vec!["less", "a.md"],
+            vec!["find", ".", "-name", "*.md"],
+            vec!["rg", "needle", "."],
+            // `--pretty` 以 `--pre` 起首——前缀匹配会把只读查询误判危险，必须按完整 flag 判。
+            vec!["rg", "--pretty", "needle", "."],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::ReadOnly, "{argv:?}");
+        }
+    }
+
+    /// xxd 的位置参数计数专项（design §2.2 的取值旗标口径，tasks 1.9 点名项）：
+    /// `-ps` 是原子簇、不吞值；`-c` / `-s` 等取值旗标吞一个值（分写与粘连两形态）。
+    #[test]
+    fn xxd_positional_counting() {
+        assert_eq!(
+            classify_cli(&argv(&["xxd", "-ps", "in.bin", "out.hex"])),
+            CliClass::Write,
+            "原子簇 + 两个位置参数必须命中写形态"
+        );
+        assert_eq!(
+            classify_cli(&argv(&["xxd", "-ps", "in.bin"])),
+            CliClass::ReadOnly
+        );
+        assert_eq!(
+            classify_cli(&argv(&["xxd", "-c16", "in.bin"])),
+            CliClass::ReadOnly
+        );
+        assert_eq!(
+            classify_cli(&argv(&["xxd", "-c", "16", "in.bin"])),
+            CliClass::ReadOnly
+        );
+        // 反向：位置参数计数被改坏（少一个 token）时结论必须翻转。
+        let mut fewer = argv(&["xxd", "-ps", "in.bin", "out.hex"]);
+        fewer.pop();
+        assert_eq!(classify_cli(&fewer), CliClass::ReadOnly);
+        assert_eq!(
+            xxd_positionals(&argv(&["-ps", "in.bin", "out.hex"])),
+            vec!["in.bin", "out.hex"]
+        );
+    }
+
+    /// 执行形态 → 危险（design §2.1 / §2.3）：rg 的 `--pre` 系与 sed 脚本的 `e` / `s///e`。
+    #[test]
+    fn exec_forms_are_dangerous() {
+        for items in [
+            vec!["rg", "--pre", "/tmp/pre.sh", "needle", "."],
+            vec!["rg", "--pre=/tmp/pre.sh", "needle", "."],
+            vec!["rg", "--pre-glob", "*.md", "needle", "."],
+            vec!["rg", "--hostname-bin", "/tmp/bin", "needle", "."],
+            vec!["rg", "--hostname-bin=/tmp/bin", "needle", "."],
+            vec!["sed", "-n", "e ls", "a.md"],
+            vec!["sed", "s/a/b/e", "a.md"],
+            vec!["sed", "1e date", "a.md"],
+            vec!["sed", "/x/!e date", "a.md"],
+            vec!["sed", "-e", "s/a/b/", "-e", "e date", "a.md"],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::Dangerous, "{argv:?}");
+        }
+    }
+
+    /// sed 保守脚本扫描（design §2.3）：写命令 / 脚本文件 / 就地簇 / 解析失败。
+    #[test]
+    fn sed_script_scanner_cases() {
+        for items in [
+            // 脚本里的写命令。
+            vec!["sed", "-n", "w out.txt", "a.md"],
+            vec!["sed", "-n", "W out.txt", "a.md"],
+            vec!["sed", "s/a/b/w out.txt", "a.md"],
+            vec!["sed", "1w out.txt", "a.md"],
+            vec!["sed", "$w out.txt", "a.md"],
+            // 脚本文件：脚本体在分类期不可见（四种形态）。
+            vec!["sed", "-f", "script.sed", "a.md"],
+            vec!["sed", "-fscript.sed", "a.md"],
+            vec!["sed", "--file", "script.sed", "a.md"],
+            vec!["sed", "--file=script.sed", "a.md"],
+            vec!["sed", "-nf", "script.sed", "a.md"],
+            // 就地写的短旗标簇（GNU `-ni` / `-Ei` 绕过与 `-i.bak` 后缀）。
+            vec!["sed", "-ni", "s/a/b/", "a.md"],
+            vec!["sed", "-Ei", "s/a/b/", "a.md"],
+            vec!["sed", "-i.bak", "s/a/b/", "a.md"],
+            vec!["sed", "--in-place=.bak", "s/a/b/", "a.md"],
+            vec!["sed", "--in-place", "s/a/b/", "a.md"],
+            // `-l` 取值不能被当成脚本源（否则真脚本 `w /tmp/x` 漏扫）。
+            vec!["sed", "-l", "100", "w /tmp/x", "a.md"],
+            // 解析失败 → 写（不是危险：无法证明它会执行程序）。
+            vec!["sed", "s/a/b", "a.md"],
+            vec!["sed", "/unclosed", "a.md"],
+            vec!["sed", "o", "a.md"],
+            vec!["sed", "s/a/b/unknown-flag", "a.md"],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::Write, "{argv:?}");
+        }
+        // 对照正例：地址 / 正则里的同名次字母不算命令。
+        for items in [
+            vec!["sed", "s/a/b/", "a.md"],
+            vec!["sed", "/w/ p", "a.md"],
+            vec!["sed", "s/e/x/", "a.md"],
+            vec!["sed", "y/ab/cd/", "a.md"],
+            vec!["sed", "2d", "a.md"],
+            vec!["sed", "1,5d", "a.md"],
+            vec!["sed", "/a\\/b/p", "a.md"],
+            vec!["sed", "\\,foo,p", "a.md"],
+            vec!["sed", "1!d", "a.md"],
+            vec!["sed", "a text", "a.md"],
+            // 多行脚本（换行是分隔符，不触发 shell 元字符层）。
+            vec!["sed", "s/a/b/g\np", "a.md"],
+            vec!["sed", "-e", "s/a/b/", "-e", "p", "a.md"],
+            vec!["sed", "--expression=s/a/b/", "a.md"],
+            vec!["sed", "-ne", "s/a/b/", "a.md"],
+            vec!["sed", "-l", "100", "s/a/b/", "a.md"],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::ReadOnly, "{argv:?}");
+        }
+        // 扫描器专项：含 `;` 的多命令脚本在 argv 层会先落 shell 元字符的写分类，
+        // 扫描结论只能直接对它断言（design §6.6）。
+        for (script, expected) in [
+            ("s/a/b/g;p", CliClass::ReadOnly),
+            ("{p;}", CliClass::ReadOnly),
+            ("/w/ p; s/e/x/", CliClass::ReadOnly),
+            ("s/a/b/; w out", CliClass::Write),
+            ("w out; p", CliClass::Write),
+            ("s/a/b/g\ne date", CliClass::Dangerous),
+            ("e ls", CliClass::Dangerous),
+            ("1e date", CliClass::Dangerous),
+            // 反向验证：删掉一个字符后结论必须翻转（区分度）。
+            ("s/a/b", CliClass::Write),
+        ] {
+            assert_eq!(scan_sed_script(script), expected, "{script:?}");
+        }
+    }
+
+    /// git（Q1 2026-10-24 裁决）：常用只读子命令族保持只读、三档免闸；全局 flag 白名单，
+    /// 表外归写；只读子命令的 `--output` 归写。
+    #[test]
+    fn git_read_only_family_and_global_flag_whitelist() {
+        for items in [
+            vec!["git", "status"],
+            vec!["git", "diff"],
+            vec!["git", "log", "-1"],
+            vec!["git", "show", "HEAD"],
+            vec!["git", "blame", "a.md"],
+            vec!["git", "rev-parse", "HEAD"],
+            vec!["git", "ls-files"],
+            vec!["git", "describe", "--tags"],
+            vec!["git", "shortlog", "-sn"],
+            vec!["git", "stash", "list"],
+            vec!["git", "branch", "-a"],
+            vec!["git", "tag", "-l"],
+            vec!["git", "remote", "-v"],
+            vec!["git", "--version"],
+            // 白名单全局 flag：不改变只读结论。
+            vec!["git", "--no-pager", "status"],
+            vec!["git", "-P", "rev-parse", "HEAD"],
+            vec!["git", "--no-optional-locks", "status"],
+            vec!["git", "--no-replace-objects", "log", "-1"],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::ReadOnly, "{argv:?}");
+        }
+        for items in [
+            // 表外全局 flag：配置注入或指向 vault 之外的仓库。
+            vec!["git", "-C", "/tmp/other", "status"],
+            vec!["git", "--git-dir=/tmp/x/.git", "diff"],
+            vec!["git", "--git-dir", "/tmp/x/.git", "diff"],
+            vec!["git", "--work-tree=/tmp/x", "status"],
+            vec!["git", "-c", "diff.external=/tmp/x", "diff"],
+            vec!["git", "-cdiff.external=/tmp/x", "diff"],
+            vec!["git", "--config-env=diff.external=ENV", "diff"],
+            vec!["git", "--exec-path=/tmp/x", "status"],
+            vec!["git", "--bare", "status"],
+            vec!["git", "--namespace=foo", "log"],
+            // `-p` / `--paginate` 刻意不在白名单：分页器是 `core.pager` 指定的程序。
+            vec!["git", "-p", "status"],
+            vec!["git"],
+            // 只读子命令的 argv 级写形态。
+            vec!["git", "log", "--output=/tmp/x"],
+            vec!["git", "log", "--output", "/tmp/x"],
+            vec!["git", "diff", "--output=/tmp/v"],
+            vec!["git", "show", "--output=/tmp/x", "HEAD"],
+            vec!["git", "shortlog", "--output=/tmp/x", "-sn"],
+            vec!["git", "blame", "--output=/tmp/x", "a.md"],
+            // `--` 之后的同名参数（pathspec）也保守判写（design §2.4）。
+            vec!["git", "log", "--", "--output"],
+            // 写子命令仍按写分类。
+            vec!["git", "commit", "-m", "x"],
+            vec!["git", "push"],
+            vec!["git", "add", "."],
+            vec!["git", "checkout", "master"],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::Write, "{argv:?}");
+        }
+    }
+
+    /// 危险黑名单的子命令识别必须穿透全局 flag：`git -C /tmp/x clean -fd` 在 `full_access`
+    /// 档也不能免闸（否则「危险任何档都问」被一个全局 flag 绕开）。
+    #[test]
+    fn git_dangerous_hits_survive_global_flags() {
+        for items in [
+            vec!["git", "-C", "/tmp/x", "clean", "-fd"],
+            vec!["git", "--git-dir=/tmp/x/.git", "clean", "-fd"],
+            vec!["git", "-c", "x=y", "reset", "--hard"],
+            vec!["git", "-P", "clean", "-n"],
+            vec!["git", "reset", "--hard"],
+            vec!["git", "clean", "-fd"],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::Dangerous, "{argv:?}");
+        }
+    }
+
+    /// 包装器继承（design §6.5）：sudo / xargs / 受限解包复用同一个 `classify_cli`，
+    /// 被包装命令的写 / 执行形态自动继承。
+    #[test]
+    fn wrapper_recursion_inherits_new_forms() {
+        for items in [
+            vec!["sudo", "base64", "-o", "/tmp/x", "a.txt"],
+            vec!["sudo", "sed", "-n", "w /tmp/x", "a.md"],
+            vec!["xargs", "xxd", "in.bin", "out.hex"],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::Write, "{argv:?}");
+        }
+        for items in [
+            vec!["xargs", "rg", "--pre", "/tmp/x", "needle"],
+            vec!["bash", "-lc", "rg --pre /tmp/x needle ."],
+            vec!["sudo", "sed", "s/a/b/e", "a.md"],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::Dangerous, "{argv:?}");
+        }
+        // 对照正例：包装器内的只读成员不得误伤。
+        assert_eq!(
+            classify_cli(&argv(&["sudo", "base64", "-d", "a.txt"])),
+            CliClass::ReadOnly
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1825,6 +2833,74 @@ mod tests {
             write_targets(&argv(&["echo", "hi", ">>notes/a.md"])),
             vec!["notes/a.md"]
         );
+    }
+
+    /// 新增写形态的目标提取（change readonly-allowlist-tightening-oct23 design §5）：
+    /// vault 内写仍走重定向，而不是掉成普通写。
+    #[test]
+    fn write_target_extraction_for_new_forms() {
+        assert_eq!(
+            write_targets(&argv(&["base64", "-o", "notes/a.b64", "a.txt"])),
+            vec!["notes/a.b64"]
+        );
+        assert_eq!(
+            write_targets(&argv(&["base64", "--output=notes/a.b64", "a.txt"])),
+            vec!["notes/a.b64"]
+        );
+        assert_eq!(
+            write_targets(&argv(&["tree", "-o", "notes/tree.txt", "."])),
+            vec!["notes/tree.txt"]
+        );
+        assert_eq!(
+            write_targets(&argv(&["xxd", "in.bin", "notes/out.hex"])),
+            vec!["notes/out.hex"]
+        );
+        assert_eq!(
+            write_targets(&argv(&["xxd", "-r", "in.hex", "notes/out.bin"])),
+            vec!["notes/out.bin"]
+        );
+        assert_eq!(
+            write_targets(&argv(&["find", ".", "-fprint", "notes/list.txt"])),
+            vec!["notes/list.txt"]
+        );
+        assert_eq!(
+            write_targets(&argv(&["find", ".", "-fprintf", "notes/list.txt", "%p\\n"])),
+            vec!["notes/list.txt"]
+        );
+        assert_eq!(
+            write_targets(&argv(&["find", ".", "-fls", "notes/list.txt"])),
+            vec!["notes/list.txt"]
+        );
+        assert_eq!(
+            write_targets(&argv(&["git", "log", "--output=notes/out.txt"])),
+            vec!["notes/out.txt"]
+        );
+        assert_eq!(
+            write_targets(&argv(&["git", "diff", "--output", "notes/out.txt"])),
+            vec!["notes/out.txt"]
+        );
+        // 就地写的短旗标簇与 `-e` 形态（旧读法在 `-e` 下会漏掉输入文件）。
+        assert_eq!(
+            write_targets(&argv(&["sed", "-ni", "s/a/b/", "notes/a.md"])),
+            vec!["notes/a.md"]
+        );
+        assert_eq!(
+            write_targets(&argv(&["sed", "-i", "-e", "s/a/b/", "notes/a.md"])),
+            vec!["notes/a.md"]
+        );
+        // 反向：不含写形态时没有目标（不掉进重定向）。
+        for items in [
+            vec!["base64", "-d", "a.txt"],
+            vec!["xxd", "in.bin"],
+            vec!["tree", "-R", "."],
+            vec!["find", ".", "-name", "*.md"],
+            vec!["git", "commit", "--output=x"],
+        ] {
+            assert!(
+                write_targets(&argv(&items)).is_empty(),
+                "{items:?} 不应有写目标"
+            );
+        }
     }
 
     #[test]
@@ -1948,6 +3024,148 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// 新增写形态的重定向（change readonly-allowlist-tightening-oct23 §5）：vault 内目标仍按
+    /// 既有「写目标在 vault 内改道」条款处理，绝不掉成普通写；vault 外 / 无可提取目标落普通写。
+    #[test]
+    fn redirect_covers_new_write_forms() {
+        let root = fixture_root("redirect-new-forms");
+        let p = HarnessPermissions::default();
+        // (argv, 期望 targets, 期望 suggested_tool)。
+        let cases: Vec<(Vec<&str>, Vec<&str>, Option<&str>)> = vec![
+            (
+                vec!["base64", "-o", "notes/new.b64", "a.txt"],
+                vec!["notes/new.b64"],
+                Some("vault_create"),
+            ),
+            (
+                vec!["base64", "--output=notes/a.md", "a.txt"],
+                vec!["notes/a.md"],
+                Some("vault_patch"),
+            ),
+            (
+                vec!["tree", "-o", "notes/tree.txt", "."],
+                vec!["notes/tree.txt"],
+                Some("vault_create"),
+            ),
+            (
+                vec!["xxd", "in.bin", "notes/out.hex"],
+                vec!["notes/out.hex"],
+                Some("vault_create"),
+            ),
+            (
+                vec!["xxd", "-r", "in.hex", "notes/a.md"],
+                vec!["notes/a.md"],
+                Some("vault_patch"),
+            ),
+            (
+                vec!["find", ".", "-name", "*.md", "-fprint", "notes/list.txt"],
+                vec!["notes/list.txt"],
+                Some("vault_create"),
+            ),
+            (
+                vec!["git", "log", "--output=notes/out.txt"],
+                vec!["notes/out.txt"],
+                Some("vault_create"),
+            ),
+            (
+                vec!["git", "diff", "--output", "notes/a.md"],
+                vec!["notes/a.md"],
+                Some("vault_patch"),
+            ),
+            (
+                vec!["sed", "-ni", "s/a/b/", "notes/a.md"],
+                vec!["notes/a.md"],
+                Some("vault_patch"),
+            ),
+        ];
+        for (items, expected_targets, expected_tool) in cases {
+            let cli = argv(&items);
+            match decide(&p, "cli_run", "x", &judge(&root, Some(cli))) {
+                Decision::Redirect(redirect) => {
+                    assert_eq!(redirect.targets, expected_targets, "{items:?}");
+                    assert_eq!(redirect.suggested_tool, expected_tool, "{items:?}");
+                }
+                other => panic!("{items:?} 应重定向，得到 {other:?}"),
+            }
+        }
+        // vault 外目标 ⇒ 不重定向，落正常写分类（vault_write 档逐个问）。
+        for items in [
+            vec!["base64", "-o", "/tmp/lumir-outside.b64", "a.txt"],
+            vec!["xxd", "in.bin", "/tmp/lumir-outside.hex"],
+            vec!["git", "log", "--output=/tmp/lumir-outside.txt"],
+            // tree -R 无可提取目标（每层固定名 00Tree.html）⇒ 普通写。
+            vec!["tree", "-R", "."],
+            // file -C 写到 cwd 的固定名 magic.mgc ⇒ 普通写。
+            vec!["file", "-C", "-m", "magic"],
+        ] {
+            let cli = argv(&items);
+            assert_eq!(
+                decide(&p, "cli_run", "x", &judge(&root, Some(cli))),
+                Decision::Ask,
+                "{items:?}"
+            );
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 跨档矩阵（design §6.3）：写形态按模式分层（`read_only` / `vault_write` → Ask、
+    /// `full_access` → Allow）；执行形态三档全 Ask，且 allow 规则与会话缓存都绕不过。
+    #[test]
+    fn new_write_and_exec_forms_across_permission_modes() {
+        let root = fixture_root("modes-new-forms");
+        let p = HarnessPermissions::default();
+        for items in [
+            vec!["base64", "-o", "/tmp/lumir-x.b64", "a.txt"],
+            vec!["sed", "-n", "w /tmp/lumir-x.txt", "a.md"],
+            vec!["git", "log", "--output=/tmp/lumir-x.txt"],
+        ] {
+            for (mode, expected) in [
+                (PermissionMode::ReadOnly, Decision::Ask),
+                (PermissionMode::VaultWrite, Decision::Ask),
+                (PermissionMode::FullAccess, Decision::Allow),
+            ] {
+                let j = Judge {
+                    mode,
+                    ..judge(&root, Some(argv(&items)))
+                };
+                assert_eq!(
+                    decide(&p, "cli_run", "x", &j),
+                    expected,
+                    "{items:?} {mode:?}"
+                );
+            }
+        }
+        // 执行形态：任何档 + allow 规则 + 会话缓存都不解锁。
+        let permissive = HarnessPermissions {
+            allow: vec!["cli(*)".to_string(), "cli_run".to_string()],
+            deny: Vec::new(),
+        };
+        for items in [
+            vec!["rg", "--pre", "/tmp/lumir-pre.sh", "needle", "."],
+            vec!["sed", "s/a/b/e", "a.md"],
+        ] {
+            for mode in [
+                PermissionMode::ReadOnly,
+                PermissionMode::VaultWrite,
+                PermissionMode::FullAccess,
+            ] {
+                for cached in [false, true] {
+                    let j = Judge {
+                        mode,
+                        cached,
+                        ..judge(&root, Some(argv(&items)))
+                    };
+                    assert_eq!(
+                        decide(&permissive, "cli_run", "x", &j),
+                        Decision::Ask,
+                        "{items:?} {mode:?} cached={cached}"
+                    );
+                }
+            }
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     /// 载荷与说明逐字节钉死（含固定标记）；并做一次反向验证——改一个字符断言必红
     /// （REVIEW.md 「断言等价于子串」条：先造一个必须 FAIL 的输入）。
     #[test]
@@ -2003,29 +3221,51 @@ mod tests {
 
     #[test]
     fn redirect_suggested_tool_mapping() {
-        assert_eq!(suggested_tool(&argv(&["mv", "a", "b"])), Some("vault_move"));
-        assert_eq!(suggested_tool(&argv(&["cp", "a", "b"])), Some("vault_move"));
-        assert_eq!(suggested_tool(&argv(&["rm", "a"])), Some("vault_delete"));
-        assert_eq!(suggested_tool(&argv(&["rmdir", "a"])), Some("vault_delete"));
+        let root = fixture_root("suggested");
+        let no_targets: Vec<String> = Vec::new();
+        let suggest = |items: &[&str]| suggested_tool(&argv(items), &root, &no_targets);
+        assert_eq!(suggest(&["mv", "a", "b"]), Some("vault_move"));
+        assert_eq!(suggest(&["cp", "a", "b"]), Some("vault_move"));
+        assert_eq!(suggest(&["rm", "a"]), Some("vault_delete"));
+        assert_eq!(suggest(&["rmdir", "a"]), Some("vault_delete"));
         assert_eq!(
-            suggested_tool(&argv(&["sed", "-i", "s/a/b/", "a.md"])),
+            suggest(&["sed", "-i", "s/a/b/", "a.md"]),
             Some("vault_patch")
         );
-        assert_eq!(
-            suggested_tool(&argv(&["touch", "notes/a.md"])),
-            Some("vault_create")
-        );
+        assert_eq!(suggest(&["touch", "notes/a.md"]), Some("vault_create"));
         // mkdir 重定向到 vault_create（M405 修订：vault_create 自动建父目录，不再有 mkdir 缺口）。
+        assert_eq!(suggest(&["mkdir", "notes/x"]), Some("vault_create"));
+        assert_eq!(suggest(&["tee", "a.md"]), Some("vault_patch"));
+        assert_eq!(suggest(&["echo", "x", ">", "a.md"]), Some("vault_patch"));
+        assert_eq!(suggest(&["cargo", "build"]), None);
+        // 新增写形态（design §5）：目标已存在 ⇒ vault_patch，否则 vault_create。
+        let existing = vec!["notes/a.md".to_string()];
+        let fresh = vec!["notes/new.b64".to_string()];
         assert_eq!(
-            suggested_tool(&argv(&["mkdir", "notes/x"])),
-            Some("vault_create")
-        );
-        assert_eq!(suggested_tool(&argv(&["tee", "a.md"])), Some("vault_patch"));
-        assert_eq!(
-            suggested_tool(&argv(&["echo", "x", ">", "a.md"])),
+            suggested_tool(&argv(&["base64", "-o", "notes/a.md"]), &root, &existing),
             Some("vault_patch")
         );
-        assert_eq!(suggested_tool(&argv(&["cargo", "build"])), None);
+        assert_eq!(
+            suggested_tool(&argv(&["base64", "-o", "notes/new.b64"]), &root, &fresh),
+            Some("vault_create")
+        );
+        assert_eq!(
+            suggested_tool(
+                &argv(&["git", "log", "--output=notes/a.md"]),
+                &root,
+                &existing
+            ),
+            Some("vault_patch")
+        );
+        assert_eq!(
+            suggested_tool(
+                &argv(&["find", ".", "-fprint", "notes/new.txt"]),
+                &root,
+                &fresh
+            ),
+            Some("vault_create")
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 
     // -----------------------------------------------------------------------

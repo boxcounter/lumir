@@ -1222,6 +1222,18 @@ fn cli_run(args: &serde_json::Value) -> ToolOutput {
         .args(&input.args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // 注入型环境变量的防御性清空（change readonly-allowlist-tightening-oct23 取值 D3）：
+    // `RIPGREP_CONFIG_PATH` 能给 rg 注入 `--pre`、`LESSOPEN` / `LESSCLOSE` 能让 less 执行
+    // 过滤器、`GREP_OPTIONS` 能给 grep 塞旗标。这些变量由 app 进程继承、模型不能设置，
+    // **不是 argv 判据的一部分**（spec 不依赖它）——这里清空是给未来的 spawn 形态变化留防线。
+    for name in [
+        "RIPGREP_CONFIG_PATH",
+        "LESSOPEN",
+        "LESSCLOSE",
+        "GREP_OPTIONS",
+    ] {
+        command.env_remove(name);
+    }
     // 登录 shell PATH（change harness-cli-login-shell-path）：只在解析到结果时注入，
     // 解析失败什么都不做、子进程照常继承 app 的 PATH。权限判定不在此处、不受影响。
     if let Some(path) = cli_path() {

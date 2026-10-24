@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "先跑四条只读查询。",
+      "tool_calls": [
+        {
+          "id": "call_ro1",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"git\",\"args\":[\"status\"],\"purpose\":\"看仓库状态（只读）\"}"
+        },
+        {
+          "id": "call_ro2",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"git\",\"args\":[\"diff\"],\"purpose\":\"看工作区差异（只读）\"}"
+        },
+        {
+          "id": "call_ro3",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"git\",\"args\":[\"rev-parse\",\"HEAD\"],\"purpose\":\"取 HEAD 提交号（只读）\"}"
+        },
+        {
+          "id": "call_ro4",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"base64\",\"args\":[\"-d\",\"/dev/null\"],\"purpose\":\"解码空输入（只读）\"}"
+        }
+      ]
+    },
+    {
+      "text": "再试 base64 的写形态。",
+      "tool_calls": [
+        {
+          "id": "call_w1",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"base64\",\"args\":[\"-o\",\"/tmp/lumir-h231-out.b64\",\"harness-note.md\"],\"purpose\":\"把一份笔记编码写进临时文件（写形态）\"}"
+        }
+      ]
+    },
+    {
+      "text": "再试 git 的全局 flag。",
+      "tool_calls": [
+        {
+          "id": "call_w2",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"git\",\"args\":[\"--git-dir=/tmp/lumir-h231-repo/.git\",\"diff\"],\"purpose\":\"对另一个仓库取差异（表外全局 flag）\"}"
+        }
+      ]
+    },
+    {
+      "text": "再试只读子命令的写形态。",
+      "tool_calls": [
+        {
+          "id": "call_w3",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"git\",\"args\":[\"log\",\"--output=/tmp/lumir-h231-log.txt\"],\"purpose\":\"把 log 写进临时文件（只读子命令的写形态）\"}"
+        }
+      ]
+    },
+    {
+      "text": "写形态都进闸了。"
+    },
+    {
+      "text": "现在换完全访问档再试执行形态。",
+      "tool_calls": [
+        {
+          "id": "call_x1",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"rg\",\"args\":[\"--pre\",\"/tmp/lumir-h231-pre.sh\",\"needle\",\".\"],\"purpose\":\"用预处理器搜索（执行形态）\"}"
+        }
+      ]
+    },
+    {
+      "text": "执行形态在完全访问档也进闸。"
+    }
+  ]
+}
