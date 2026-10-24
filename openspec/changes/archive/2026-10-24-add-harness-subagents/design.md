@@ -924,7 +924,7 @@ mock provider 的脚本是单条线性序列（`MockClient`），父子客户端
 
 ## 19. UX：任务面板、批准卡透传、子代理清单
 
-原型：[`design/prototypes/subagents-tasks.html`](../../../design/prototypes/subagents-tasks.html)
+原型：[`design/prototypes/subagents-tasks.html`](../../../../design/prototypes/subagents-tasks.html)
 （Alex 看的裁决稿；页面内置控制面板可切场景 / 主题 / 面板状态，query 参数只作深链，`?panel=0`
 关面板供截图）。全部 fixture 合成，无真实 vault 内容。
 

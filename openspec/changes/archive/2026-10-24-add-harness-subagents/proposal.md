@@ -47,7 +47,7 @@
 > | 「我反对。我希望支持后台运行和并行。」（针对上一版「v1 串行、前台」） | 推翻裁决点 13：同一回合多个 `task` 调用并行、支持后台运行、并发上限进 `[harness.subagents]`；§D.6 重写，design §12 重写为「并发、后台与调度」 |
 > | 「确认。」（批准卡透传） | 推翻裁决点 7：子运行继承主会话权限档，ask 级调用照常弹批准卡并点名发起者 |
 > | 「同意。」（内建 explore 子代理） | 推翻「不做内建子代理」：内建只读 `explore`；用户 / vault 定义同名覆盖内建（§B.6） |
-> | 「这个应该包含 UX 改动，subagents 和 tasks 应该是用户可见的。所以需要出原型，我查看。」 | 新增 §G「UX：用户可见面」+ 原型 [`design/prototypes/subagents-tasks.html`](../../../design/prototypes/subagents-tasks.html) |
+> | 「这个应该包含 UX 改动，subagents 和 tasks 应该是用户可见的。所以需要出原型，我查看。」 | 新增 §G「UX：用户可见面」+ 原型 [`design/prototypes/subagents-tasks.html`](../../../../design/prototypes/subagents-tasks.html) |
 > | 「我希望 subagent 是可以通过配置项启用/禁用的，默认启用。」 | `[harness.subagents].enabled` 缺省 `true`，kill switch 语义如实写明（§F） |
 > | 「去掉反向扳机。也把 cron 的反向扳机去掉。」 | 反向扳机整节删除（cron 侧已由 M572 处理）；本稿只留「降级路径」 |
 > | 「那不同的模型的 token 使用量没有任何意义。」 | 用量归属从「折叠进父会话单一读数」改为**按模型分桶记账**（§E.1） |
@@ -253,7 +253,7 @@ schema 校验、非法项人话 warning + 夹取/缺省回落（ADR 0002 第 5 �
 
 ### G. UX：用户可见面（Alex 裁决「需要出原型」）
 
-原型：[`design/prototypes/subagents-tasks.html`](../../../design/prototypes/subagents-tasks.html)
+原型：[`design/prototypes/subagents-tasks.html`](../../../../design/prototypes/subagents-tasks.html)
 （页面内置可点击控制面板，全部合成数据，`?panel=0` 关面板供截图；场景 / 主题 / 面板位置全部点击
 可达）。用户可感知的行为，机制侧承诺：
 
