@@ -39,7 +39,7 @@ bump 提交信息惯例：`chore(release): X.Y.Z——<本批内容>，<MINOR bu
 - 条件：分支相对当前 master 的差异面就是本批的交付内容（bump+打包同 mission = 一条 bump 提交；带功能改动 = 已过评审、待合并的那批提交），且 worktree tracked 干净（没有不会进 master 的未提交改动）。bump+打包同 mission 的形态可机检：`git log --oneline master..HEAD` 只有一条 bump 提交，`git diff --stat master..HEAD` 只列版本号四文件、每文件 1 删 1 增（读数 `2 +-`）；master 在分支点之后前进过会破坏这个读数，先 `git rebase master` 再核。满足时 worktree 的 tracked 代码 = 合并后的 master，产物与主仓打包等价。
 - 先例：0.9.1（M618）在 worktree `wt-618` 内跑 `gate quick` 与 `pack-release.sh`（`PACK RESULT: PASS`，证据 `.local/releases/release-0.9.1/`）；0.8.0（M596）的依赖对齐分支更早也是 rebase 到 master 后在 worktree 内构建，该 tip 随后原样合并。
 - 注意点：
-  - worktree 不带 `.gitignore` 忽略的 `node_modules` 与 `src-tauri/target`：先装依赖（或从主仓复制 `node_modules`）；构建目录可 `CARGO_TARGET_DIR=<主仓>/src-tauri/target` 复用增量（0.9.1 因本机磁盘余量如此），代价是共享 target——按 `docs/backlog.md`「工具链与环境」第 9 条核对本轮确实重编译了 lumir 测试二进制，并独占 cargo 构建位。
+  - worktree 不带 `.gitignore` 忽略的 `node_modules` 与 `src-tauri/target`：先装依赖（或从主仓复制 `node_modules`）；构建目录可 `CARGO_TARGET_DIR=<主仓>/src-tauri/target` 复用增量（0.9.1 因本机磁盘余量如此），代价是共享 target——按 `scripts/acceptance/README.md`「起实例前的环境纪律」的 target 纪律核对本轮确实重编译了 lumir 测试二进制，并独占 cargo 构建位。
   - 版本闸照常生效：它经 `git rev-parse --git-common-dir` 查主仓 `.local`，worktree 缺 `.local` 不会假放行（`scripts/pack-release.sh` 头注释）。
   - 产物与证据仍落主仓 checkout：dmg 复制进主仓 `.local/releases/release-<version>/`，`index.md` 记明「worktree 打包 + 相对 master 的差异面」与源 commit——worktree 合并即清，留在里面的路径会失效；报给 Alex 的 `open` 路径也必须是主仓绝对路径（AGENTS.md「给 Alex 的路径必须当下可开」）。
   - 打包后 `git status --short` 应为空。`tauri build` 会按当前依赖重写 `src-tauri/gen/schemas/*.json`——改过依赖的批次（M596 现场）这里会多出三份改动，按 gate 的 schemas-drift 口径处置（依赖面变化才提交，否则 `git checkout --` 还原），不要混进 bump 提交。

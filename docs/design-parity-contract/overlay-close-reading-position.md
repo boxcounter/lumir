@@ -38,8 +38,7 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
    留着是因为「场景能跑、前提断言成立」本身也要有回归（fixture 或前提被改坏时它先红）。
 3. **真机层**：**暂无可用判据**。M280 试做过表格 / 代码块两条真机场景，因器材三约束做不出可证伪的
    判据（无 `scrollTop` 读数、AX 文本窗口宽达 ~2500–3600px、命令入口的块定位范围把「caret 在视口
-   上方」的可用带子压到 ~2048 字符以内），场景未留在套件里；逐条实测与补齐路径见 docs/backlog.md
-   的「验收套件表达不了 CL-1 的判据」条。在此之前真机结论只能由人肉复现给出。
+   上方」的可用带子压到 ~2048 字符以内），场景未留在套件里；逐条实测与补齐路径见本节第 3 条的器材三约束。在此之前真机结论只能由人肉复现给出。
 
 ## CL-2：应用自身造成的视口变动 MUST NOT 进入阅读位置（M286 增补）
 
@@ -74,7 +73,7 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
 3. **chromium 分支**：同一份 spec 照跑，作结构性护栏（`preventScroll` 挡住揭示 ⇒ 前提断言不成立，
    这一支只证明「场景能跑」，绿灯**不构成**条款通过证据）。
 4. **真机层（系统 WKWebView）**：**暂无可用判据**（套件无 `scrollTop` 读数、AX 文本窗口过宽，
-   与 CL-1 同族，见 docs/backlog.md 的「验收套件表达不了 CL-1 的判据」条）。真机上的间接观察是
+   与 CL-1 同族，见上文 CL-1 第 3 条的器材三约束）。真机上的间接观察是
    位置文件里不再出现 `pos 0`，但它不在套件判据内——如实登记为**未覆盖**。
 
 **判别层（CL-2）**：
@@ -119,11 +118,11 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
    AX 不暴露 `scrollTop`，因此「回到原处」是一对渲染行断言（与场景 28 同源）。
 3. **载荷侧的确定性实证**：把装载复位那段窗口也消融掉时，同一场景会如实写出
    `{"pos":0,"y":115.109375}`（finding 引用的真实 vault 是 `pos 0 / y 114`）——
-   读侧的恢复与写侧的让位是**两半独立防线**，读数与日志见 docs/backlog.md 的 M286 第 8 项。
+   读侧的恢复与写侧的让位是**两半独立防线**，读数与日志见本节的载荷侧实证（M286 对账第 8 项，原文见 git 历史）。
 
 **已知边界（如实登记）**：图片遮罩（`src/lightbox.ts`）**未**纳入第 2 条——`ImageLightbox` 的对外
 接口只有 `open`（没有关闭口子），且它的状态机是 M184 留下的第二份实现。它与另外两处是同一族
-（放大图复用内联 `<img>` 的 src），收口顺序与理由见 docs/backlog.md 的 M280 节第 7 项。
+（放大图复用内联 `<img>` 的 src），收口顺序与理由见 backlog「待修 findings」的 M280 残余条。
 
 ## 判别层（哪一层看得见这个缺陷）
 
@@ -132,7 +131,7 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
 | chromium（Playwright） | **看不见**——聚焦揭示被 `preventScroll` 挡住 | M274 §2.2 的消融 G（chromium 全绿、WebKit 跳） |
 | Playwright WebKit，**默认 UA**（带 `Version/26.x`） | **看不见**——CM6 据此关掉 `preventScroll`，改走它自己的同步回写栈，揭示被抹平 | M279 §0.2、`playwright.config.ts` 的 `REAL_WEBKIT_UA` 注释 |
 | Playwright WebKit，**真机同款 UA**（无 `Version/`） | **看得见**——走原生 `preventScroll` 分支、没有任何回写兜底；实测 `focus({preventScroll:true})` 把 `scrollTop` 从 1540 拽到 0 | M279 §2 的 T4/T4b、M280 的 `.local/missions/m280/before-fix-red.log` |
-| 系统 WKWebView（真机） | 机制上应当同第三行；M274 的离屏探针曾测得「`preventScroll` 被尊重」（与第三行相反，**两处结论互斥、未定性**） | M280 的真机批次只跑出场景 40/62 的 PASS（回归护栏，不判别）；真机判据**目前表达不了**——器材限制见 docs/backlog.md 的「验收套件表达不了 CL-1 的判据」条与 finding `20260927-worker-impl-esc-jump-improve-playwright-webkit-ua-wkwebview-preventscroll-webkit-playwrig.md` |
+| 系统 WKWebView（真机） | 机制上应当同第三行；M274 的离屏探针曾测得「`preventScroll` 被尊重」（与第三行相反，**两处结论互斥、未定性**） | M280 的真机批次只跑出场景 40/62 的 PASS（回归护栏，不判别）；真机判据**目前表达不了**——器材限制见上文 CL-1 第 3 条与 finding `20260927-worker-impl-esc-jump-improve-playwright-webkit-ua-wkwebview-preventscroll-webkit-playwrig.md` |
 
 ⇒ **条款通过的证据只能来自第三行与第四行**。前两行绿灯一律不作为条款通过的证据。
 
@@ -147,7 +146,7 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
 - 豁免（书面理由）：
   - `src/vault-switcher.ts` 的 `handOffFocus()`——它不是裸 focus：走 CM 自己的
     `scrollSnapshot` / 快照 effect 通道，M186 起就有保护且真机场景 25 PASS。两套通道并存是
-    已知的「同一语义两处实现」（REVIEW.md 「同一语义两处真源」条），收敛进原语列为 backlog 待办。
+    已知的「同一语义两处实现」（REVIEW.md 「同一语义两处真源」条），收敛进原语列为 backlog「待修 findings」的 M280 残余条。
   - `src/main.ts` 的 `focusEditor`（同上，vault 切换器的 dep）。
   - `src/preview/livePreview.ts` 的 Tab 进容器那条（`view.focus()` 之后立刻把焦点交给容器，
     是选区同步手法而非交还焦点）、`src/preview/math.ts` 的点击进源码（指针落点即 caret，
@@ -169,7 +168,7 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
 ## 已知边界（如实登记）
 
 - **捕获锚落在文档原点时运行期不写回**：锚 = 0（视口停在文档最上沿）且 caret 在下方时，
-  引擎若把视口拉下去，本条不修（沿用 M110 的「不做比做更稳」）。触发条件窄，列 backlog 待办。
+  引擎若把视口拉下去，本条不修（沿用 M110 的「不做比做更稳」）。触发条件窄，列为 backlog「待修 findings」的 M280 残余条。
 - **`blur` 兜底那条关闭路径不在本条射程**：它不抢焦点（语义 MUST NOT 改），焦点去向由触发它的
   一方决定；M274 的 E 用例证明那条路径在 WebKit 下也会跳，但它的修法属于「别处把焦点交还给
   编辑器」这一族，需单独立项。
