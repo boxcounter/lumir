@@ -1257,10 +1257,76 @@ body {
   display: none;
 }
 
+/* ── 滚动条分档（canonical：openspec/specs/ui-design-system 的「滚动条分档与滚动容器注册表」）──
+   细条 / 隐藏两档各只有一份共用声明组（消费者 MUST NOT 各抄一份值）；第三档「原生 overlay
+   豁免」一条声明都不写。分档登记表是可执行判据：
+   tests/unit/scrollbar-registry.test.ts 扫 style.css / harness-panel.css / preview/theme.ts
+   的 overflow 声明与这两组双向对账。
+   档位按**容器**分配、MUST NOT 按轴分配：WebKit 一旦为某容器自绘 ::-webkit-scrollbar，就把它
+   两条轴一起从 overlay 切成占位经典条——只写 height 时纵向仍变 17px 占位条、只写 width 时横向
+   同理；逐轴的 ::-webkit-scrollbar:horizontal 在 WKWebView 上是死规则（与不写声明逐字节相同），
+   scrollbar-width 也不改变 overlay 条的粗细（M663 实测，WebKit 26.5 / chromium 151）。
+   所以「只把横向改细」不可达，别试；纵向必须留 overlay 的容器归第三档「原生 overlay 豁免」，
+   一条滚动条声明都不写（白名单见规范条款）。 */
+
+/* 细条档（M406，Alex：cli_run 详情横向滚动条太粗、遮挡内容）：4px 细条 + 透明轨道，
+   两条声明都要（scrollbar-width 管标准通道，::-webkit-scrollbar 管 WKWebView/chromium——
+   只写前者时 WKWebView 仍是系统默认条）。
+   M628（Alex 2026-10-23「代码块横向滑动的滚动条很粗，影响阅读代码」）：配方扩到
+   `.lumir-hp-codeblock`，三个 harness 消费者共用这一份声明（tests/visual 的 m628 场景按
+   CSSOM 断言三处逐值一致）。
+   M663（Alex 2026-10-24「横向滚动条粗这个问题…是否应该沉淀成设计规范」）：组从
+   src/harness-panel.css 迁到本文件（放在它新增的四个消费者旁边；隐藏档组在标签栏区段，
+   同文件两处、各档只有一份），并扩到编辑器预览的四个块级横滚容器——它们的 overflow 声明
+   分散在 preview/theme.ts 与下方 `.cm-lp-block-scroll`，样式按 class 命中、值不再抄第二份。
+   代价（M663 实测）：自绘 ::-webkit-scrollbar 让容器在 WKWebView 里两条轴转占位经典条，
+   横向 +4px 高度；这四个容器的纵向要么显式 hidden、要么内容即块本体（不产生纵向溢出），
+   代价只落在横向。编辑器主滚动
+   `.cm-scroller` 因此**不在本组**（纵向必须留 overlay，见上）。 */
+.lumir-hp-codeblock,
+.lumir-hp-diff,
+.lumir-hp-argv,
+.cm-lp-block-scroll,
+.cm-lp-table-scroll,
+.cm-lp-math-block,
+.cm-lp-mermaid {
+  scrollbar-width: thin;
+}
+.lumir-hp-codeblock::-webkit-scrollbar,
+.lumir-hp-diff::-webkit-scrollbar,
+.lumir-hp-argv::-webkit-scrollbar,
+.cm-lp-block-scroll::-webkit-scrollbar,
+.cm-lp-table-scroll::-webkit-scrollbar,
+.cm-lp-math-block::-webkit-scrollbar,
+.cm-lp-mermaid::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.lumir-hp-codeblock::-webkit-scrollbar-thumb,
+.lumir-hp-diff::-webkit-scrollbar-thumb,
+.lumir-hp-argv::-webkit-scrollbar-thumb,
+.cm-lp-block-scroll::-webkit-scrollbar-thumb,
+.cm-lp-table-scroll::-webkit-scrollbar-thumb,
+.cm-lp-math-block::-webkit-scrollbar-thumb,
+.cm-lp-mermaid::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+.lumir-hp-codeblock::-webkit-scrollbar-track,
+.lumir-hp-diff::-webkit-scrollbar-track,
+.lumir-hp-argv::-webkit-scrollbar-track,
+.cm-lp-block-scroll::-webkit-scrollbar-track,
+.cm-lp-table-scroll::-webkit-scrollbar-track,
+.cm-lp-math-block::-webkit-scrollbar-track,
+.cm-lp-mermaid::-webkit-scrollbar-track {
+  background: transparent;
+}
 /* 块级横滚容器（M180）：表格与代码块共用同一套横滚机制与同一个 class——键位层的命中条件
    按它判定，两类容器必须同名（判据的单一来源在 src/keys.ts 的 BLOCK_SCROLL_CLASS）。
    表格容器**同时**带 cm-lp-table-scroll（既有选择器与断言按它定位，见下方规则）。
-   这里不带 scrollbar-gutter：共用规则一旦带上它，「默认不折行」的代码块会凭空缩进一栏。 */
+   这里不带 scrollbar-gutter：共用规则一旦带上它，「默认不折行」的代码块会凭空缩进一栏
+   （表格侧自己也没带：其纵向已 overflow-y:hidden，不存在「纵向条出现导致抖宽」的场景，
+   该声明只在 classic 滚动条环境换来常驻 15px 沟槽——M177 实测，M663 删除）。 */
 .cm-lp-block-scroll {
   display: block;
   max-inline-size: 100%;
@@ -1564,7 +1630,10 @@ body {
      显式 hidden 让横滚容器语义在所有引擎一致。 */
   overflow-y: hidden;
   overscroll-behavior-inline: contain;
-  scrollbar-gutter: stable;
+  /* M663（M177 实测收口）：此处原先声明 scrollbar-gutter: stable，防的是「纵向条出现导致
+     抖宽」——而本容器纵向已显式 hidden，那件事永远不会发生；该声明只在 classic 滚动条环境
+     换来常驻 15px 沟槽（offsetWidth − clientWidth = 15，overlay 环境为 0）。规范条款已把它
+     写成禁则（横向细条容器 MUST NOT 声明 scrollbar-gutter），MUST NOT 再加回来。 */
   outline-offset: 3px;
   /* 纵向间距必须用 padding 而非 margin（M110 缺陷 1）：CM6 经 getBoundingClientRect
      测量块高度，border-box 不含 margin——块级 margin 对 heightmap 不可见，
