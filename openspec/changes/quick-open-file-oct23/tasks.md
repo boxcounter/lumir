@@ -172,10 +172,17 @@
 - [x] 9.9 验证：`bash scripts/gate.sh quick` / `bash scripts/gate.sh visual` /
       `npx openspec validate --all --strict` / `bash scripts/docs-check.sh` /
       `node scripts/acceptance/run.mjs --check`（读数照抄 `GATE RESULT` 原文行 + 退出码，见下）。
-- [x] 9.10 真机：`node scripts/acceptance/run.mjs 230`（隔离 vault / 端口；读数见下）。
+- [x] 9.10 真机：`node scripts/acceptance/run.mjs 230` → `结论：1/1 PASS`（60 条断言 / 0 失败 /
+      168.8s，exit 0；隔离 vault `/tmp/lumir-m102-acceptance` + 隔离配置 + 端口 1430）。首次真机执行
+      暴露并修掉三处场景缺陷（AXTextField → AXComboBox、树里默认折叠读不到深层文件名、YAML 单引号里的
+      `\\(` 是两个反斜杠）与一处注入通道边界（`typeInNode` 的 `type_text` 对 focusout 收起的浮层不落地
+      → 改逐键 `keys`，冒号用 `shift+semicolon`；惰性目录改用 `dist/`，KimiCU 键名 DSL 没有 `_`）。
 - [x] 9.11 反向必红记录：把直接行删掉 / 放开 D117 分支 / 恢复 `ambiguous` 提前 return /
       恢复 `dir` 提前 return / 关掉探测 / 去掉渲染序号各实测一次，确认对应断言变红后还原。
 
-> M700 验证读数（2026-10-24）：`GATE RESULT: 13/13 PASS（SKIP 0）`（exit 0）、
-> `GATE RESULT: 14/14 PASS（SKIP 0）`（gate visual，exit 0）、`openspec validate --all --strict`
-> 43/43、`docs-check` PASS、`node scripts/acceptance/run.mjs --check` PASS、真机 230 见报告。
+> M700 验证读数（2026-10-24）：`GATE RESULT: 13/13 PASS（SKIP 0）`（`bash scripts/gate.sh visual`，
+> exit 0；含 quick 的 11 门 + isolation-runs + visual-regression 551s，单测 1338 pass，**零基线更新**）；
+> 独立 `bash scripts/gate.sh quick` 另跑一次 `GATE RESULT: 11/11 PASS（SKIP 0）`（exit 0）；
+> `openspec validate --all --strict` → `Totals: 39 passed, 0 failed (39 items)`；`docs-check` PASS；
+> `node scripts/acceptance/run.mjs --check` PASS（231 个场景）；真机 230 → `结论：1/1 PASS`（60 条断言 /
+> 0 失败 / 168.8s，exit 0）。

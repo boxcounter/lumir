@@ -29,12 +29,6 @@ steps:
     do: vaultWrite
     file: "notes/v1:2.md"
     content: "# 冒号文件名\n\nCOLON-655-MARKER\n"
-  - name: 等树把两个新文件收编（watcher 回响）
-    do: waitFor
-    waitFor:
-      has: ["plan.md", "v1:2.md"]
-    timeoutMs: 15000
-
   - name: 焦点在编辑器：⌘P 打开输入面（webview 未截获这条键的正观测）
     do: clickEditor
   - name: 按 ⌘P
@@ -42,17 +36,26 @@ steps:
     keys: ["cmd+p"]
     expect:
       - label: 输入面出现且输入框持焦（读屏名 = 浮层输入框的 aria-label）
-        ax: { has: "/AXTextField \\(按路径快速打开文件\\)/" }
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\)/" }
       - shot: 01-编辑器焦点下唤起
 
   - name: 输入深层路径并按 Enter（一次 Enter 打开，不再「先开文件再 ⌥G」）
-    do: typeInNode
-    target: { role: AXTextField, name: "按路径快速打开文件|notes/deep/plan.md" }
-    text: "notes/deep/plan.md"
+    do: keys
+    keys: ["n", "o", "t", "e", "s", "/", "d", "e", "e", "p", "/", "p", "l", "a", "n", ".", "m", "d"]
     expect:
-      - label: 路径落进输入框（注入落地的正观测）
+      - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: notes/deep/plan.md/" }
+      - label: 完整路径也出现在 AX 文本里（回读面之外的第二条正观测）
         ax: { has: "notes/deep/plan.md" }
-      - label: Enter 之前结果区就有直接打开行（与 Enter 同一份判决）
+  - name: 等结果区给出直接打开行（索引收编后才出现；探针命中也算）
+    do: waitFor
+    waitFor:
+      has: ["按 Enter 打开 notes/deep/plan.md"]
+    timeoutMs: 15000
+  - name: Enter 前的结果区
+    do: settle
+    expect:
+      - label: 直接打开行在场（与 Enter 同一份判决）
         ax: { has: "按 Enter 打开 notes/deep/plan.md" }
       - label: 有直接打开行时 MUST NOT 出现候选空态
         ax: { not: "没有匹配的条目" }
@@ -79,9 +82,11 @@ steps:
     do: keys
     keys: ["cmd+p"]
   - name: 输入一条不存在的 vault 内路径
-    do: typeInNode
-    target: { role: AXTextField, name: "按路径快速打开文件|notes/deep/nope.md" }
-    text: "notes/deep/nope.md"
+    do: keys
+    keys: ["n", "o", "t", "e", "s", "/", "d", "e", "e", "p", "/", "n", "o", "p", "e", ".", "m", "d"]
+    expect:
+      - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: notes/deep/nope.md/" }
   - name: 等候选为空的探测落定（存在探测是异步的，不能拿 settle 抢跑）
     do: waitFor
     waitFor:
@@ -110,26 +115,28 @@ steps:
     do: key
     key: escape
 
-  - name: 造一个惰性文件（node_modules 是默认 lazy 档：盘上有、索引里没有）
+  - name: 造一个惰性文件（dist 是默认 lazy 档：盘上有、索引里没有）
     do: vaultWrite
-    file: node_modules/quick-open-lazy.md
+    file: dist/quickopen-lazy.md
     content: "# 惰性文件\n\nLAZY-655-MARKER\n"
   - name: 等惰性行出现在树里（子树不进枚举）
     do: waitFor
     waitFor:
-      has: ["node_modules"]
+      has: ["dist"]
     timeoutMs: 15000
   - name: 按精确路径打开惰性文件（⌘P）
     do: keys
     keys: ["cmd+p"]
   - name: 输入惰性文件的精确路径
-    do: typeInNode
-    target: { role: AXTextField, name: "按路径快速打开文件|node_modules/quick-open-lazy.md" }
-    text: "node_modules/quick-open-lazy.md"
+    do: keys
+    keys: ["d", "i", "s", "t", "/", "q", "u", "i", "c", "k", "o", "p", "e", "n", "-", "l", "a", "z", "y", ".", "m", "d"]
+    expect:
+      - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: dist/quickopen-lazy.md/" }
   - name: 等存在探测补帧（索引不含它，直接行由探测命中给出）
     do: waitFor
     waitFor:
-      has: ["按 Enter 打开 node_modules/quick-open-lazy.md"]
+      has: ["按 Enter 打开 dist/quickopen-lazy.md"]
     timeoutMs: 5000
   - name: Enter
     do: key
@@ -143,7 +150,7 @@ steps:
     do: settle
     expect:
       - label: 惰性文件按精确路径可打开（候选里找不到它，但探测命中）
-        ax: { has: "/AXRadioButton \\(quick-open-lazy.md\\)/" }
+        ax: { has: "/AXRadioButton \\(quickopen-lazy.md\\)/" }
       - label: 打开的是 vault 内文件（可编辑，不是 vault 外只读）
         ax: { not: "vault 外 · 只读" }
       - shot: 03d-惰性文件
@@ -152,9 +159,11 @@ steps:
     do: keys
     keys: ["cmd+p"]
   - name: 输入含冒号的路径
-    do: typeInNode
-    target: { role: AXTextField, name: "按路径快速打开文件|notes/v1:2.md" }
-    text: "notes/v1:2.md"
+    do: keys
+    keys: ["n", "o", "t", "e", "s", "/", "v", "1", "shift+semicolon", "2", ".", "m", "d"]
+    expect:
+      - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: notes/v1:2.md/" }
   - name: Enter
     do: key
     key: enter
@@ -174,9 +183,11 @@ steps:
     do: keys
     keys: ["cmd+p"]
   - name: 输入带行号的路径
-    do: typeInNode
-    target: { role: AXTextField, name: "按路径快速打开文件|goto-line-long.md:39" }
-    text: "goto-line-long.md:39"
+    do: keys
+    keys: ["g", "o", "t", "o", "-", "l", "i", "n", "e", "-", "l", "o", "n", "g", ".", "m", "d", "shift+semicolon", "3", "9"]
+    expect:
+      - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: goto-line-long.md:39/" }
   - name: 等直接行补帧（存在探测是异步的：先探整串，再落到剥后缀那一级）
     do: waitFor
     waitFor:
@@ -217,10 +228,11 @@ steps:
     do: keys
     keys: ["cmd+p"]
   - name: 输入 vault 外路径
-    do: typeInNode
-    target: { role: AXTextField, name: "按路径快速打开文件|/etc/hosts" }
-    text: "/etc/hosts"
+    do: keys
+    keys: ["/", "e", "t", "c", "/", "h", "o", "s", "t", "s"]
     expect:
+      - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: /etc/hosts/" }
       - label: 直接打开行把「只读」写进动作里（vault 外、读取前判不了存在性）
         ax: { has: "按 Enter 只读打开 /etc/hosts" }
       - label: 有直接打开行时 MUST NOT 出现候选空态
@@ -239,7 +251,7 @@ steps:
       - label: modeline 右段出现只读段（vault 外 · 只读）
         ax: { has: "vault 外 · 只读" }
       - label: 标签页的读屏名带「vault 外只读」（可见侧是文件名前的锁形图标，M660 #7）
-        ax: { has: '/AXRadioButton \\(hosts（vault 外只读）\\)/' }
+        ax: { has: '/AXRadioButton \(hosts（vault 外只读）\)/' }
       - label: 内容可读（/etc/hosts 的正文进了编辑器）
         editor: { has: "localhost" }
       - shot: 06-vault 外只读
@@ -247,9 +259,9 @@ steps:
   - name: 记录只读文档的字节基线（编辑尝试 MUST NOT 改动它）
     do: recordEditor
     as: external-before-edit
-  - name: 在只读标签里键入一个字符（不生效 + 一次性提示）
-    do: keys
-    keys: ["x"]
+  - name: 在只读标签里键入一个字符（不生效 + 一次性提示；单键盲发——只读面的回读判据本来就是「没变」）
+    do: key
+    key: x
     expect:
       - label: 提示条说明「vault 外的文件以只读方式打开」（D2 追加裁决 ③ / D584）
         ax: { has: "vault 外的文件以只读方式打开" }
@@ -285,10 +297,11 @@ steps:
     do: keys
     keys: ["cmd+p"]
   - name: 输入一条不存在的外部路径
-    do: typeInNode
-    target: { role: AXTextField, name: "按路径快速打开文件|/tmp/lumir-655-missing/notes.md" }
-    text: "/tmp/lumir-655-missing/notes.md"
+    do: keys
+    keys: ["/", "t", "m", "p", "/", "l", "u", "m", "i", "r", "-", "6", "5", "5", "-", "m", "i", "s", "s", "i", "n", "g", "/", "n", "o", "t", "e", "s", ".", "m", "d"]
     expect:
+      - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: /tmp/lumir-655-missing/notes.md/" }
       - label: Enter 之前给的是**尝试行**（不断言它不存在——读取前判不了）
         ax: { has: "按 Enter 只读打开 /tmp/lumir-655-missing/notes.md" }
       - label: 尝试行在场时 MUST NOT 出现候选空态
@@ -310,13 +323,13 @@ steps:
 
   - name: 焦点在文件树：⌘P 同样命中（global 作用域）
     do: click
-    target: { role: AXRadioButton, name: "^v1:2\\.md$" }
+    target: { role: AXButton, name: "^block-copy\\.md$" }
   - name: 树焦点下按 ⌘P
     do: keys
     keys: ["cmd+p"]
     expect:
       - label: 树焦点下同样打开输入面
-        ax: { has: "/AXTextField \\(按路径快速打开文件\\)/" }
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\)/" }
       - shot: 09-树焦点下唤起
   - name: Esc 收起
     do: key
@@ -336,14 +349,14 @@ steps:
     keys: ["cmd+p"]
     expect:
       - label: composer 焦点下同样打开输入面
-        ax: { has: "/AXTextField \\(按路径快速打开文件\\)/" }
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\)/" }
       - shot: 10-composer 焦点下唤起
   - name: Esc 收起且不跳转
     do: key
     key: escape
     expect:
       - label: 收起后输入面不在场
-        ax: { not: "/AXTextField \\(按路径快速打开文件\\)/" }
+        ax: { not: "/AXComboBox \\(按路径快速打开文件\\)/" }
 ---
 
 # 230-quick-open —— 按路径快速打开（change quick-open-file-oct23 / M655）
@@ -369,9 +382,16 @@ Alex 2026-10-23 的需求原话：「快速便捷地查找、打开文件（类�
 
 ## 判据为什么这样写
 
-- **`/AXTextField \(按路径快速打开文件\)/`**：浮层输入框是原生 `<input>`，AX 里是 AXTextField；
-  空值时它的可访问名就是 aria-label（读屏名 D570）。**非空值**时 WKWebView 把可访问名换成值
-  ——因此 `typeInNode` 的 `target.name` 一律写成「读屏名|目标值」的交替正则（README 的 typeInNode 条）。
+- **输入用逐键 `keys`，不用 `typeInNode`**（M700 真机实测）：`typeInNode` 的无 index 通道
+  （`type_text`）对这个浮层的 `<input>` 不落地——工具回 `delivery_unverified`，且 `focusout`
+  把浮层收起（真实用户逐键键入不经过这条路径，浮层行为正确；同一场景的手工探针里逐键键入与
+  `set_value` 都正常）。逐键 `keys` 在本输入框上逐字符落地（含 `/` `.` 与字母），冒号没有键名
+  字面量，写 `shift+semicolon`（`semicolon` 是 KimiCU 的键名，实测产出 `:`）。回读面是 AX 的
+  `Value:` 字段，因此每一步都配一条 `Value: <路径>` 断言。
+- **`/AXComboBox \(按路径快速打开文件\)/`**（M700 修正）：旧断言按 `AXTextField` 写、从未跑过真机
+  ——带 `role="combobox"` 的原生 `<input>` 在 WKWebView 里是 **AXComboBox**（13 处 target /
+  断言因此首次真机执行时全部找不到节点；截图证明浮层当时是好的）。空值时读屏名是 aria-label
+  （D570）；非空值时值在 `Value:` 字段（读屏名不随之改变）。
 - **直接打开行的断言用动作文本，不用「有内容」**：`按 Enter 打开 <路径>` / `按 Enter 只读打开
   <路径>` 是结果区**判决**的措辞（D589 / D590），落点行是独立的 `第 N 行`（D591）。拿「界面变
   了」当判据挡不住「结果区仍然说没有匹配、Enter 却能打开」这个 M697 的原始缺陷。
@@ -404,10 +424,10 @@ Alex 2026-10-23 的需求原话：「快速便捷地查找、打开文件（类�
   `tests/visual/scenes/quick-open.spec.ts` 用真实 DOM 计数钉住（`.lumir-toast` 恰为 1 条）。
 - **输入法组合期**：本场景用 `typeInNode` 注入 ASCII 路径，中文查询串的组合期行为由
   `tests/visual/scenes/list-filter.spec.ts` 的同款事件序列覆盖。
-- **索引外的惰性文件不在真机层**：验收 vault 的忽略规则由套件统一生成（`ignoredDirs` 探针），
-  本场景造不出「单个文件不在索引、但盘上存在」的形态；这条由
-  `tests/visual/scenes/quick-open.spec.ts` 的 `fs_paths_exist` 桩与 `tests/unit/quick-open.test.ts`
-  的探测矩阵（相对 / vault 内绝对两形）覆盖。
+- **索引外的惰性文件**：真机用 `vaultWrite dist/quickopen-lazy.md` 造（`dist` 是默认 `lazy` 档：
+  盘上有、索引里没有），Enter 前的直接行由存在探测补帧给出；相对 / vault 内绝对两形的探测矩阵
+  在 `tests/unit/quick-open.test.ts`，chromium 层另有 `fs_paths_exist` 桩的同款断言。
+  文件名不用 `node_modules/` 是因为 KimiCU 的键名 DSL 没有 `_`（逐键注入的通道限制，见上）。
 - **只读标签的锁形图标是可见标记、不进 AX**（M660 #7）：真机层只判读屏名（`{名称}（vault 外
   只读）`）与可见文字不再带「只读」；图标在场 / `aria-hidden` / SVG 形态 / vault 内标签无图标
   由 `tests/visual/scenes/quick-open.spec.ts` 与 `tests/unit/tabs.test.ts` 钉住。
