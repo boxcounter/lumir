@@ -29,18 +29,21 @@
 
 ## 4. 真机复跑
 
-- [ ] 4.1 基线跑（改动前 + 仅改场景）：`node scripts/acceptance/run.mjs 163b` —— 焦点两条断言
-      PASS、浮动钮断言因时机门抢跑 FAIL（证据 `.local/acceptance/2026-10-24/163b-harness-quote-first-title/`）
-- [ ] 4.2 改动后复跑：`node scripts/acceptance/run.mjs 163b` 全绿（含新前置与 `waitFor`）
-- [ ] 4.3 证据落 `.local/acceptance/`，读数摘录进完成报告
+- [x] 4.1 基线跑（改动前 + 仅改场景）：`node scripts/acceptance/run.mjs 163b` —— 焦点两条断言
+      PASS、浮动钮断言因时机门抢跑 FAIL（证据 `.local/acceptance/2026-10-24/163b-harness-quote-first-title/`，
+      已被 4.2 覆盖）
+- [x] 4.2 改动后复跑：`node scripts/acceptance/run.mjs 163b` → **PASS**（17 条断言全绿，退出码 0；
+      含「问题落在 composer」与「编辑器正文逐字节未变（68 字节）」两条焦点判据）
+- [x] 4.3 证据落 `.local/acceptance/`，副本已复制到主仓同名目录（worktree 会被清理）
 
 ## 5. 规格与门禁
 
 - [x] 5.1 `specs/harness/spec.md` delta（MODIFIED「混排对话输入区」+ 一条新 Scenario）
-- [ ] 5.2 `openspec validate quote-card-composer-focus-oct24 --strict` 通过
-- [ ] 5.3 `scripts/gate.sh quick` 全绿（附 `GATE RESULT` 原文行与退出码）
+- [x] 5.2 `openspec validate quote-card-composer-focus-oct24 --strict` 通过
+- [x] 5.3 `scripts/gate.sh quick` 全绿：`GATE RESULT: 10/10 PASS（SKIP 1）`，退出码 0
+      （SKIP 为 `tsc-visual`：tests/visual 依赖未装，与本 change 无关）
 
 ## 6. 收尾
 
-- [ ] 6.1 证据副本落主仓 `.local/`（worktree 会被清理，指针不能落在 worktree 内）
-- [ ] 6.2 有越界发现才报 finding（本次预计无：装配层与粘贴/发送路径都在 non-goals 里）
+- [x] 6.1 证据副本落主仓 `.local/`（worktree 会被清理，指针不能落在 worktree 内）
+- [x] 6.2 有越界发现才报 finding（本次无：装配层与粘贴/发送路径都在 non-goals 里）
