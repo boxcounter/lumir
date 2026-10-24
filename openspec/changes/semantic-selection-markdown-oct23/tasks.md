@@ -96,11 +96,17 @@
       `GATE PASS docs-check`（同日，退出码 0）
 - [x] 5.3 `bash scripts/gate.sh quick` 全绿：`GATE RESULT: 11/11 PASS（SKIP 0）`，退出码 0
       （日志 `.local/probes/m687-semantic-release-snap/gate-quick-1.log`）
-- [ ] 5.4 动过 `src/preview/**` 或 `tests/visual/scenes/**` 后本地跑 `bash scripts/gate.sh visual`；
-      基线若有变化逐张列出并由 Alex 过目（视觉基线更新是人肉裁决点）
+- [x] 5.4 动过 `src/preview/**` 或 `tests/visual/scenes/**` 后本地跑 `bash scripts/gate.sh visual`：
+      `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（2026-10-24；视觉回归 542s，792 条用例含
+      webkit-realua 项目）。**基线零变化**——未执行 `--update`，无需 Alex 过目。
+      首跑 12/13（两条红：m259 双击对照的旧期望已随 D2=A 更新；`render-link` 一条是页面 session
+      被关掉的基建抖动，重跑通过），读数见 `.local/probes/m687-semantic-release-snap/`
+      `gate-visual-1.log` / `gate-visual-2.log`
 - [x] 5.5 信息卫生：新增 fixture / 场景素材 MUST NOT 含真实 vault 内容；改动面做一次 text 级
       grep 清扫（`/Users/` / `~/.config` / `.tower/` / 用户名 零命中；fixture 与场景文案全合成）
-- [ ] 5.6 归档前逐条对账（tasks / delta / 实现三者一致）；完成 change MUST 在 `docs/backlog.md`
-      落一条归档跟踪记录（新机器门禁 `scripts/openspec-archive-check.mjs` 随 docs-check，判据见
-      `docs/process/openspec-workflow.md`「归档队列的机器判据」）——本 change 一条，如实写
-      待 dogfood / 节点 2 状态；实现期新 finding 仍按「首选提议安排处理」规则处置
+- [x] 5.6 归档前逐条对账（tasks / delta / 实现三者一致）：delta 的四段（完整覆盖 / 逐层迭代 /
+      封闭集合 / 同上屏同事务）与 `src/preview/syntax-envelope.ts` + livePreview 的 mouseup 接线
+      逐条对上；`docs/backlog.md` 已按新机器门禁
+      （`scripts/openspec-archive-check.mjs` 随 docs-check）落一条归档跟踪记录，如实写
+      待 dogfood / 节点 2 状态；实现期新 finding 已走 TowerFinding（双击两字粗体词的落点位移，
+      出本 change 面）
