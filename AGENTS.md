@@ -75,6 +75,7 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 ### 操作流程（机器 / 工具 / 协作通道的使用）
 
 - **tower 操作**：worker 必须在 mission 分支提交；TowerMerge 前清 `.review-worktree` 残留（`git worktree remove --force`）；TowerPlan 分支 slug 须与历史分支（含 abandoned）逐一核对；resume reviewer 时核对 assigned reviewer 是否正确；批次收尾顺带 `git push origin master` 保持两端同步。
+- **CI 观察者是 tower 的批次收尾责任**（Alex 2026-10-24 裁决 A）：每次 `git push origin master` 后，tower 必须用 `gh run list --branch master`（或等价渠道）跟进该次 push 触发的**每条 workflow 的终态**——`success` / `failure` / `cancelled` / `timed_out` 都算终态，`queued` / `in_progress` 不算。任一失败须继续处理（修复重推，或查明原因并记录），并在批次报告里附 run 链接与原因；**未看到全绿前不得宣称批次完成**。本地门禁全绿（`scripts/gate.sh`）是提交合并请求的前置，远端 CI 是最终确认，两者分工不互替；Alex 不承担观察者职责。
 - **worktree 即合即清**：mission 合并后立即清掉对应 worktree（`git worktree remove`，残留仅 gitignore 产物如 node_modules/target 时加 `--force`），不攒到批次 teardown；TowerTeardown 只是批次收尾的兜底通道。磁盘占用自查：`du -sh .tower/worktrees/*`。
 - **视觉门禁卫生**：删除/移动 UI 元素后，核对该元素出现过的所有整页基线的时间戳是否随本次更新——容差收紧到 0.001 之前，「删左栏 UI」级变化曾静默假绿。
 - **真机复验**：`pnpm tauri dev` 起真实 app，用 KimiCU 操作（pid 用 `ps aux | grep target/debug/lumir` 找）；桌面验收 vault：`/tmp/lumir-m102-acceptance`；用户真实 vault **只读**（真实路径按信息卫生纪律不落库，需要时由 tower 在会话内提供）。**白屏陷阱**：`cargo test` 会把 `target/debug/lumir` 重编译为不带 `custom-protocol` 的 dev flavour，此后裸二进制起 app 会去加载 devUrl `http://127.0.0.1:1420` 而整窗白屏；起实例前须重新 `cargo build --features custom-protocol`（或直接用 `pnpm tauri dev`）。
