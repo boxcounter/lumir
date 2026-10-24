@@ -1,7 +1,7 @@
 # vault-workspace 增量规格
 
 > 起草注记（非规格正文）：本 delta 两条 MODIFIED，基线是 living spec
-> [openspec/specs/vault-workspace/spec.md](../../../../specs/vault-workspace/spec.md) 的「按 vault
+> [openspec/specs/vault-workspace/spec.md](../../../../../specs/vault-workspace/spec.md) 的「按 vault
 > 持久化标签列表」与「按 vault 持久化 pane 布局」两条——两者都写有「每一个有路径的标签 SHALL 被
 > 持久化 / MUST NOT 存在例外」的硬句，外部只读标签这**同一个例外**必须在两处同时认领，否则归档后同
 > 一 capability 自相矛盾。按 `openspec archive` 的整块替换语义，两块都**整条复制**现行正文后就地

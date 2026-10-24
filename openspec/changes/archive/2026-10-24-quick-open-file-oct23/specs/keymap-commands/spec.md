@@ -1,7 +1,7 @@
 # keymap-commands 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 ADDED，基线是 living spec
-> [openspec/specs/keymap-commands/spec.md](../../../../specs/keymap-commands/spec.md)。新增一条**有
+> [openspec/specs/keymap-commands/spec.md](../../../../../specs/keymap-commands/spec.md)。新增一条**有
 > 默认绑定**的全局命令（快速打开），形态与「侧栏开关命令与默认键位」「界面语言切换命令」同构：
 > 命令 id 进 `NON_TAB_GLOBAL_COMMAND_IDS`、默认键位单段无空白、可经 `[keys]` 重绑 / 解绑、键位
 > 占用三条独立来源核实。输入面与解析语义在 `quick-open` capability，本增量只锁定**键位层**的合同。

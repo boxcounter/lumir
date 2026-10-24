@@ -1,7 +1,7 @@
 # multi-tabs 增量规格
 
 > 起草注记（非规格正文）：本 delta 两条 MODIFIED，基线是 living spec
-> [openspec/specs/multi-tabs/spec.md](../../../../specs/multi-tabs/spec.md) 的「打开语义」与「打开
+> [openspec/specs/multi-tabs/spec.md](../../../../../specs/multi-tabs/spec.md) 的「打开语义」与「打开
 > 文档时恢复上次阅读位置」两条。按 `openspec archive` 的整块替换语义，两块都**整条复制**现行正文后
 > 就地增补（新增一条意图、外部只读标签的口径与若干 scenario），未改动的段落逐字保留。动机与裁决点
 > 见 [proposal.md](../../proposal.md)，落点编排见 [design.md](../../design.md) §4。

@@ -1,7 +1,7 @@
 # fs-io 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 ADDED，基线是 living spec
-> [openspec/specs/fs-io/spec.md](../../../../specs/fs-io/spec.md)。既有「vault 内路径约束」条
+> [openspec/specs/fs-io/spec.md](../../../../../specs/fs-io/spec.md)。既有「vault 内路径约束」条
 > **逐字不动**——本增量新增的是一条**只读、只按显式绝对路径、只读单个文件**的旁路通道，消费方只有
 > `quick-open` 的 vault 外只读会话；两者的边界必须能各自独立读懂，故不写进既有条款。设计与安全面
 > 见 [design.md](../../design.md) §5。
