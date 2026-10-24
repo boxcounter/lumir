@@ -93,6 +93,25 @@ export function toProcessDetails(procs) {
 }
 
 /**
+ * 一轮内所有样本的被归因进程明细，按 pid+lstart 去重后的并集（纯函数）。
+ * 为什么不是末样本：窗口中途出现、末样本前已退出的 helper 只存在于中间样本里，取末样本会把它的
+ * pid/ppid/lstart/comm 整条丢掉——而「新增后退出」正是集合稳定性判据要抓的现场。
+ * 同 pid 不同 lstart（pid 复用）是两个进程，不去重。
+ */
+export function mergeProcessDetails(samples) {
+  const byKey = new Map();
+  for (const sample of samples) {
+    for (const p of sample.processes ?? []) {
+      const key = `${p.pid}\u0000${p.lstart}`;
+      if (!byKey.has(key)) byKey.set(key, p);
+    }
+  }
+  return [...byKey.values()].sort(
+    (a, b) => a.pid - b.pid || String(a.lstart).localeCompare(String(b.lstart))
+  );
+}
+
+/**
  * app 的 ppid 子孙 ∪（当前 WebKit 进程 − 启动前基线）→ RSS 合计与 helper 集合。纯函数。
  * `webkitBaseline` 是基线快照里的 WebKit pid 集合（Set）：这些进程是别人家的 WebKit 客户端，排除。
  */
@@ -315,7 +334,12 @@ async function measureRound({ attempt, bin, spawnEnv, previousHelperPids }) {
     for (let i = 0; i < SAMPLES; i++) {
       const attribution = attribute(await procTable(), appPid, baselinePids);
       lastAttribution = attribution;
-      samples.push({ mb: attribution.mb, helperPids: attribution.helperPids });
+      // processes 是逐样本明细：整轮并集（mergeProcessDetails）靠它保留中途出现后又退出的 helper。
+      samples.push({
+        mb: attribution.mb,
+        helperPids: attribution.helperPids,
+        processes: attribution.processes,
+      });
       // 这一行的形状是 CI 日志解析的历史口径（report §2 的 dataset 抓取），保持逐字节不变。
       console.log(
         `[perf] memory sample ${i + 1}/${SAMPLES}: ${attribution.mb.toFixed(1)}MB ` +
@@ -339,6 +363,8 @@ async function measureRound({ attempt, bin, spawnEnv, previousHelperPids }) {
     });
   }
   const evaluation = evaluateRound(samples, { staleHelperPids: leftoverHelperPids });
+  // 全轮并集：末样本之前退出的 helper 只存在于中间样本，必须从并集里保留其 pid/ppid/lstart/comm。
+  const attributed = mergeProcessDetails(samples);
   return {
     attempt,
     contaminated: evaluation.contaminated,
@@ -348,13 +374,17 @@ async function measureRound({ attempt, bin, spawnEnv, previousHelperPids }) {
     helperPidsAtExit: lastAttribution ? lastAttribution.helperPids : [],
     leftoverHelperPids,
     samples,
-    attributedPids: lastAttribution ? lastAttribution.pids : [],
-    attributed: lastAttribution ? lastAttribution.processes : [],
+    attributedPids: [...new Set(attributed.map((p) => p.pid))].sort((a, b) => a - b),
+    attributed,
     excludedBaselineWebKit: toProcessDetails(baselineWebKit),
   };
 }
 
-function attemptSummary(a) {
+/**
+ * 单轮完整诊断摘要（纯函数）。meta.attempts[] 与连续污染诊断件共用这一份：
+ * 被丢弃的轮次也必须带齐 attributed（全轮并集）与该轮的 excludedBaselineWebKit。
+ */
+export function summarizeAttempt(a) {
   return {
     attempt: a.attempt,
     contaminated: a.contaminated,
@@ -364,11 +394,14 @@ function attemptSummary(a) {
     sampleHelperPids: a.sampleHelperPids,
     helperPidsAtExit: a.helperPidsAtExit,
     leftoverHelperPids: a.leftoverHelperPids,
+    attributedPids: a.attributedPids,
     attributed: a.attributed,
+    excludedBaselineWebKit: a.excludedBaselineWebKit,
   };
 }
 
-function buildMeta({ attempts, acceptedAttempt, panes, xdgConfigHome }) {
+/** 成功结果的 meta（纯函数，便于夹具测试与连续污染诊断共用的摘要形状）。 */
+export function buildMeta({ attempts, acceptedAttempt, panes, xdgConfigHome }) {
   const accepted = attempts[acceptedAttempt - 1];
   return {
     settleMs: SETTLE_MS,
@@ -379,7 +412,7 @@ function buildMeta({ attempts, acceptedAttempt, panes, xdgConfigHome }) {
     contaminationPolicy: CONTAMINATION_POLICY,
     attemptsUsed: attempts.length,
     acceptedAttempt,
-    attempts: attempts.map(attemptSummary),
+    attempts: attempts.map(summarizeAttempt),
     residualRisk: RESIDUAL_RISK,
     ...(panes === null ? {} : { panes, xdgConfigHome }),
     note:
@@ -389,19 +422,20 @@ function buildMeta({ attempts, acceptedAttempt, panes, xdgConfigHome }) {
   };
 }
 
-async function writeContaminatedDiagnostic({ metric, attempts, panes, xdgConfigHome, reason }) {
-  const outDir = resultsDir();
-  await mkdir(outDir, { recursive: true });
-  const file = path.join(outDir, `${metric}-contaminated.json`);
-  const payload = {
+/**
+ * 连续污染诊断件的内容（纯函数，便于夹具测试形状）。与成功结果的 meta 共用 summarizeAttempt，
+ * 因此被丢弃的每一轮都带齐 attributed（全轮并集）与该轮 excludedBaselineWebKit。
+ */
+export function buildContaminatedPayload({ metric, attempts, panes, xdgConfigHome, reason, now = new Date() }) {
+  return {
     metric,
     status: "contaminated",
     reason,
     gateEligible: false,
     attemptsUsed: attempts.length,
-    attempts: attempts.map(attemptSummary),
+    attempts: attempts.map(summarizeAttempt),
     meta: {
-      ts: new Date().toISOString(),
+      ts: now.toISOString(),
       platform: process.platform,
       arch: process.arch,
       node: process.version,
@@ -413,7 +447,13 @@ async function writeContaminatedDiagnostic({ metric, attempts, panes, xdgConfigH
       ...(panes === null ? {} : { panes, xdgConfigHome }),
     },
   };
-  await writeFile(file, JSON.stringify(payload, null, 2) + "\n");
+}
+
+async function writeContaminatedDiagnostic(args) {
+  const outDir = resultsDir();
+  await mkdir(outDir, { recursive: true });
+  const file = path.join(outDir, `${args.metric}-contaminated.json`);
+  await writeFile(file, JSON.stringify(buildContaminatedPayload(args), null, 2) + "\n");
   return file;
 }
 

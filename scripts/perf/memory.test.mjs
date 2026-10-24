@@ -9,7 +9,10 @@
 //   4) 有界重测：首轮污染 → 第二轮接受；连续污染 → failed(contaminated)，且最多只跑 2 轮；
 //   5) 污染轮读数绝不进最终样本（max 统计只取被接受那轮）；
 //   6) 反向验证：每条夹具在关掉对应判据后必须变干净、正常夹具注入噪声后必须判红——
-//      证明断言不是恒真（REVIEW.md「假绿」条的反向验证纪律）。
+//      证明断言不是恒真（REVIEW.md「假绿」条的反向验证纪律）；
+//   7) 诊断完整性（r1 P2-1）：被归因进程明细是「全轮并集」而非末样本；中途出现后于末样本前退出的
+//      helper 仍保留 pid/ppid/lstart/comm；每轮摘要与该轮的 excludedBaselineWebKit 共用同一形状，
+//      成功结果与被丢弃轮、连续污染诊断件都不丢字段。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -17,10 +20,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   attribute,
+  buildContaminatedPayload,
+  buildMeta,
   evaluateRound,
+  mergeProcessDetails,
   nextStep,
   parseProcTable,
   resolveRun,
+  summarizeAttempt,
   CONTAMINATION_REASON,
   MAX_ATTEMPTS,
   MAX_HELPERS,
@@ -260,4 +267,182 @@ test("parseProcTable：真实 ps 行格式（含单数字日期填充与带空�
   assert.equal(table[2].lstart, "Fri Oct 3 09:00:00 2026"); // 单数字日期归一化
   assert.equal(table[2].comm, "/Applications/Some App.app/Contents/MacOS/Some App");
   assert.ok(table[3].comm.includes("com.apple.WebKit.WebContent"));
+});
+
+// --- r1 P2-1：诊断完整性（全轮并集 + 每轮 excludedBaselineWebKit） ---
+
+const procDetail = (pid, lstart, comm, ppid = 1) => ({ pid, ppid, lstart, comm });
+const APP = () => procDetail(100, "Sat Oct 24 23:20:00 2026", "/repo/src-tauri/target/release/lumir", 0);
+const WEB_CONTENT = () => procDetail(101, "Sat Oct 24 23:20:01 2026", "/System/Library/WebKit/com.apple.WebKit.WebContent");
+const GPU = () => procDetail(102, "Sat Oct 24 23:20:01 2026", "/System/Library/WebKit/com.apple.WebKit.GPU");
+
+/**
+ * 造一轮采样：helper 在样本 2 出现、样本 3 起已退出（末样本没有它）。
+ * 这正是集合稳定性判据要抓的「新增后退出」现场，也是 r1 P2-1 指出的旧口径丢明细之处。
+ */
+function transientRoundSamples({ transientPid = 103 } = {}) {
+  const transient = procDetail(transientPid, "Sat Oct 24 23:20:02 2026", "/System/Library/WebKit/com.apple.WebKit.Networking");
+  const stable = [APP(), WEB_CONTENT(), GPU()];
+  return [
+    { mb: 230.1, helperPids: [101, 102], processes: stable },
+    { mb: 231.2, helperPids: [101, 102, transientPid], processes: [...stable, transient] },
+    { mb: 230.8, helperPids: [101, 102], processes: stable },
+    { mb: 230.4, helperPids: [101, 102], processes: stable },
+    { mb: 230.0, helperPids: [101, 102], processes: stable },
+  ];
+}
+
+// 测试侧独立实现的并集（不借生产函数），避免「用被测函数造夹具」的循环论证。
+function unionByPidLstart(samples) {
+  const out = [];
+  for (const sample of samples) {
+    for (const p of sample.processes ?? []) {
+      if (!out.some((q) => q.pid === p.pid && q.lstart === p.lstart)) out.push(p);
+    }
+  }
+  return out.sort((a, b) => a.pid - b.pid || a.lstart.localeCompare(b.lstart));
+}
+
+function attemptOf({ attempt = 1, samples, contaminated = false, excluded = [] }) {
+  const attributed = unionByPidLstart(samples);
+  return {
+    attempt,
+    contaminated,
+    reasons: contaminated ? [{ sample: 2, kind: "helper-set-changed", detail: { added: [103], removed: [] } }] : [],
+    samples,
+    helperCounts: samples.map((s) => s.helperPids.length),
+    sampleHelperPids: samples.map((s) => s.helperPids),
+    helperPidsAtExit: samples.at(-1).helperPids,
+    leftoverHelperPids: [],
+    attributedPids: [...new Set(attributed.map((p) => p.pid))].sort((a, b) => a - b),
+    attributed,
+    excludedBaselineWebKit: excluded,
+  };
+}
+
+test("mergeProcessDetails：按 pid+lstart 去重的全轮并集，保留中途出现后退出与 pid 复用", () => {
+  const samples = transientRoundSamples();
+  const merged = mergeProcessDetails(samples);
+  // 稳定进程在 5 个样本里各出现一次 → 并集只留一条
+  assert.equal(merged.filter((p) => p.pid === 101).length, 1);
+  // 中途出现（样本 2）且末样本已退出 → 仍在并集里，四字段齐全
+  assert.deepEqual(merged.find((p) => p.pid === 103), {
+    pid: 103,
+    ppid: 1,
+    lstart: "Sat Oct 24 23:20:02 2026",
+    comm: "/System/Library/WebKit/com.apple.WebKit.Networking",
+  });
+  // 反向：末样本确实没有 103——旧口径（只取末样本 processes）会把它整条丢掉
+  assert.equal(samples.at(-1).processes.some((p) => p.pid === 103), false);
+  // pid 复用：同 pid 不同 lstart 是两个进程，不去重
+  const reused = mergeProcessDetails([
+    { processes: [procDetail(101, "Sat Oct 24 10:00:00 2026", "a")] },
+    { processes: [procDetail(101, "Sat Oct 24 11:00:00 2026", "b")] },
+  ]);
+  assert.deepEqual(reused.map((p) => `${p.pid}@${p.lstart}`), [
+    "101@Sat Oct 24 10:00:00 2026",
+    "101@Sat Oct 24 11:00:00 2026",
+  ]);
+  // 并集排序稳定
+  assert.deepEqual(merged.map((p) => p.pid), [100, 101, 102, 103]);
+});
+
+test("summarizeAttempt：被丢弃轮也保留中途退出 helper 的明细与该轮 excludedBaselineWebKit", () => {
+  const excluded = [procDetail(501, "Fri Oct 24 09:00:00 2026", "/System/Library/WebKit/com.apple.WebKit.GPU")];
+  const attempt = attemptOf({ attempt: 1, samples: transientRoundSamples(), contaminated: true, excluded });
+  const summary = summarizeAttempt(attempt);
+
+  const transient = summary.attributed.find((p) => p.pid === 103);
+  assert.ok(transient, "全轮并集必须保留中途出现的 helper");
+  assert.equal(transient.ppid, 1);
+  assert.equal(transient.lstart, "Sat Oct 24 23:20:02 2026");
+  assert.match(transient.comm, /com\.apple\.WebKit\.Networking$/);
+  assert.ok(summary.sampleHelperPids[1].includes(103)); // 样本 2 出现
+  assert.ok(!summary.sampleHelperPids[4].includes(103)); // 末样本前已退出
+  assert.ok(summary.attributedPids.includes(103));
+  // r1 P2-1 的核心缺口：每轮必须带该轮基线排除明细
+  assert.deepEqual(summary.excludedBaselineWebKit, excluded);
+
+  // 反向：旧口径（末样本明细 + 无 excludedBaselineWebKit）在这两条上必红
+  const legacyShape = { attributed: attempt.samples.at(-1).processes };
+  assert.equal(legacyShape.attributed.some((p) => p.pid === 103), false);
+  assert.equal("excludedBaselineWebKit" in legacyShape, false);
+});
+
+test("buildMeta：成功结果同时保留被丢弃轮的完整摘要与该轮 excludedBaselineWebKit", () => {
+  const round1 = attemptOf({
+    attempt: 1,
+    contaminated: true,
+    samples: transientRoundSamples({ transientPid: 103 }),
+    excluded: [procDetail(501, "Fri Oct 24 09:00:00 2026", "/System/Library/WebKit/com.apple.WebKit.GPU")],
+  });
+  const round2 = attemptOf({
+    attempt: 2,
+    samples: [0, 1, 2, 3, 4].map(() => ({
+      mb: 230.0,
+      helperPids: [101, 102],
+      processes: [APP(), WEB_CONTENT(), GPU()],
+    })),
+    excluded: [procDetail(502, "Fri Oct 24 09:00:01 2026", "/System/Library/WebKit/com.apple.WebKit.Networking")],
+  });
+  const meta = buildMeta({ attempts: [round1, round2], acceptedAttempt: 2, panes: null, xdgConfigHome: undefined });
+
+  assert.equal(meta.attemptsUsed, 2);
+  assert.equal(meta.acceptedAttempt, 2);
+  assert.equal(meta.attempts[0].contaminated, true);
+  assert.deepEqual(meta.attempts[0].excludedBaselineWebKit, round1.excludedBaselineWebKit);
+  assert.ok(meta.attempts[0].attributed.some((p) => p.pid === 103));
+  assert.deepEqual(meta.attempts[1].excludedBaselineWebKit, round2.excludedBaselineWebKit);
+  assert.deepEqual(meta.excludedBaselineWebKit, round2.excludedBaselineWebKit);
+  assert.ok(!meta.attributed.some((p) => p.pid === 103)); // 接受轮不含被丢弃轮的 transient
+  // 成功结果与被丢弃轮共用同一摘要形状
+  assert.deepEqual(Object.keys(meta.attempts[0]).sort(), Object.keys(meta.attempts[1]).sort());
+});
+
+test("buildContaminatedPayload：连续污染诊断件两轮各带并集明细与自己的 excludedBaselineWebKit", () => {
+  const round1 = attemptOf({
+    attempt: 1,
+    contaminated: true,
+    samples: transientRoundSamples({ transientPid: 103 }),
+    excluded: [procDetail(501, "Fri Oct 24 09:00:00 2026", "/System/Library/WebKit/com.apple.WebKit.GPU")],
+  });
+  const round2 = attemptOf({
+    attempt: 2,
+    contaminated: true,
+    samples: transientRoundSamples({ transientPid: 203 }),
+    excluded: [procDetail(502, "Fri Oct 24 09:00:01 2026", "/System/Library/WebKit/com.apple.WebKit.Networking")],
+  });
+  const payload = buildContaminatedPayload({
+    metric: "resident-memory",
+    attempts: [round1, round2],
+    panes: null,
+    xdgConfigHome: undefined,
+    reason: "contaminated",
+    now: new Date("2026-10-24T15:40:00Z"),
+  });
+
+  assert.equal(payload.status, "contaminated");
+  assert.equal(payload.reason, "contaminated");
+  assert.equal(payload.gateEligible, false);
+  assert.equal(payload.attemptsUsed, 2);
+  assert.equal(payload.meta.ts, "2026-10-24T15:40:00.000Z");
+
+  const expectedKeys = Object.keys(summarizeAttempt(round1)).sort();
+  for (const [i, attempt] of [round1, round2].entries()) {
+    const summary = payload.attempts[i];
+    const transientPid = i === 0 ? 103 : 203;
+    assert.deepEqual(Object.keys(summary).sort(), expectedKeys);
+    assert.deepEqual(summary.excludedBaselineWebKit, attempt.excludedBaselineWebKit);
+    assert.ok(summary.excludedBaselineWebKit.length > 0);
+    assert.ok(summary.attributed.some((p) => p.pid === transientPid));
+    // 每轮只带自己的 transient，不串轮
+    assert.ok(!summary.attributed.some((p) => p.pid === (i === 0 ? 203 : 103)));
+    // 反向：该轮末样本没有这个 transient——若摘要退回末样本口径，上面的断言必红
+    assert.equal(attempt.samples.at(-1).processes.some((p) => p.pid === transientPid), false);
+  }
+
+  // 反向：旧摘要形状（末样本明细、无 excludedBaselineWebKit）不满足本测试的两个关键断言
+  const legacySummary = { attributed: round1.samples.at(-1).processes };
+  assert.equal(legacySummary.attributed.some((p) => p.pid === 103), false);
+  assert.equal("excludedBaselineWebKit" in legacySummary, false);
 });
