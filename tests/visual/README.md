@@ -104,6 +104,75 @@ LUMIR_VISUAL_STRUCTURAL=1 LUMIR_VISUAL_PORT=4273 scripts/visual/run.sh
 worktree 的 dist）：用 `LUMIR_VISUAL_PORT=<端口>` 指定独立端口隔离，例如
 `LUMIR_VISUAL_PORT=4273 pnpm --dir tests/visual test`。
 
+## 浏览器启动口径与 Chromium 隔离
+
+视觉门禁与临时探针只用合成 fixture，**不需要真实浏览器的登录态、Cookie 或 Keychain**。
+启动方式按优先级分两档；规则本体见 AGENTS.md 操作流程「Chromium 隔离」条。
+
+### 首选：Playwright 默认 launcher
+
+`scripts/visual/run.sh` / `pnpm --dir tests/visual test` 走 Playwright 自带的 chromium 启动器，
+隔离已经内置：
+
+- 没有显式 `userDataDir` 时，每次 launch 在 `os.tmpdir()` 下 `mkdtemp` 一次性 profile
+  （`playwright_<browser>dev_profile-*`），不读用户浏览器的 profile / Cookie；
+- 默认参数表带 `--use-mock-keychain` 与 `--password-store=basic`，不向系统钥匙串取密钥。
+
+证据（本仓安装的 playwright-core 1.62.1，可复跑）：
+`rg -n 'use-mock-keychain|password-store' tests/visual/node_modules/.pnpm/playwright-core@1.62.1/node_modules/playwright-core/lib/`
+命中 `chromiumSwitches` 默认参数表；临时 profile 的创建点在同包 `coreBundle.js` 的
+`playwright_${name}dev_profile-` 处。
+
+临时探针也优先走这条：脚本里 `chromium.launch()`（示例 `scripts/visual/table-probe72/matrix.mjs`）
+即继承上述默认参数。**没有明确理由不要自己拼 Chrome 命令行。**
+
+### 直接启动 Chrome：三项隔离硬要求
+
+只有 Playwright 起不来的场景（需要特定 Chrome 二进制、独立 CDP 注入等）才直接起进程。此时：
+
+| 要求 | 作用 |
+|---|---|
+| 独立临时 `--user-data-dir`（`mkdtemp`，用后删除） | 不碰真实 profile / Cookie / 扩展 / 登录态 |
+| `--use-mock-keychain` | macOS 上让 Chromium 用 mock keychain 代替登录钥匙串；上游 `os_crypt_switches.h` 的注释即写明这是测试用途、「prevents blocking dialogs from causing timeouts」 |
+| `--password-store=basic` | 密码库走 basic 实现（Linux/freedesktop 路径），不从系统密钥服务取密钥；对齐 Playwright 默认参数 |
+
+最低形态：
+
+```bash
+CHROME="${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
+PROFILE=$(mktemp -d /tmp/lumir-probe.XXXXXX)
+"$CHROME" --headless=new --no-first-run --disable-extensions \
+  --user-data-dir="$PROFILE" --use-mock-keychain --password-store=basic \
+  about:blank
+# 退出后删掉 $PROFILE
+```
+
+`$CHROME_PATH` 可换成 Playwright 缓存里的 `Google Chrome for Testing` 或其他构建。
+禁止指向用户默认 profile（如 `~/Library/Application Support/Google/Chrome`）、
+复用已登录的浏览器实例、把真实站点登录态复制进测试 profile。
+
+macOS 上真正拦住 Safe Storage 弹窗的是 `--use-mock-keychain`（Apple-only switch）；
+`--password-store=basic` 在这条路径上不生效。两项都带是为了与 Playwright 默认一致、
+同一行命令跨平台可用——不是「两项各自都必不可少」。
+
+### 授权框归因与处置
+
+**症状**：启动瞬间弹出 macOS 凭据框，标题形如 `Chromium Safe Storage` / `Chrome Safe Storage`。
+
+**归因**：Chromium 要给 profile 里的 Cookie / 密码库派生加密密钥，于是向登录钥匙串读取同名的
+通用密码（上游 `keychain_password_mac.mm` 的默认 service name：品牌版 `Chrome Safe Storage`，
+非品牌版 `Chromium Safe Storage`）。这是**启动参数缺隔离项**的信号，不是产品的安全闸，
+也不是「必须先授权才能跑测试」的环境前提。M699 现场即：直接启动的 `Google Chrome for Testing`
+（临时 profile）缺 `--use-mock-keychain --password-store=basic`；Playwright 标准进程不弹。
+
+**处置**（顺序固定）：
+
+1. **Deny / 取消**授权框。测试只用合成数据，不需要真实 Keychain；拒绝授权不是跳过产品安全校验——
+   真实凭据本就不该进测试进程，授予才是越界。
+2. 结束该探针进程，补齐上面三项后重启。
+3. **不得**输入登录密码，**不得**点「始终允许」。弹窗出现即判定启动配置错误，不是可继续的提示。
+4. 无人值守时直接 kill 进程、修参数重跑，不要等人工授权。
+
 ## 新增场景
 
 1. 在 `scenes/` 加一个 `.spec.ts`（或往现有 spec 加断言）；
