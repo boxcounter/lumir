@@ -4,7 +4,8 @@
 #
 # 用法：
 #   scripts/gate.sh          # quick：fmt + clippy + cargo test + bindings 漂移 + gen/schemas 漂移
-#                            #        + tsc（根/视觉/单测）+ 单测 + docs-check + openspec validate
+#                            #        + tsc（根/视觉/单测）+ 单测 + acceptance 语法 + docs-check
+#                            #        + openspec validate
 #   scripts/gate.sh visual   # quick + 视觉套件隔离断言 + 视觉回归（默认 LUMIR_VISUAL_PORT=4273 隔离端口）
 #   scripts/gate.sh all      # visual + 性能合同（release 构建，首次分钟级；本地无滚动基线时
 #                            # 相对回归比较自动跳过，只 enforce 绝对阈值）
@@ -128,6 +129,9 @@ fi
 # include 里，根 tsc 覆盖不到它）。
 run_gate tsc-unit pnpm exec tsc -p tests/unit/tsconfig.json
 run_gate unit-tests node tests/unit/run.mjs
+# 验收套件语法层：实现唯一一份在 scripts/acceptance/check-syntax.sh（docs-check / CI 共用同一实现，
+# REVIEW.md「同一语义两处真源」条），本行只调用。只解析不执行——不起 app、不占端口、不碰验收 vault。
+run_gate acceptance-syntax bash scripts/acceptance/check-syntax.sh
 # 制品门禁：与 CI 的 docs-check.yml 共用同一脚本（本地绿才等于 CI 绿）
 run_gate docs-check bash scripts/docs-check.sh
 run_gate openspec-validate npx --yes @fission-ai/openspec@1.12.0 validate --all --strict

@@ -1,5 +1,5 @@
-# dependencies
-node_modules/
+# dependencies（`node_modules` 不带尾斜杠：尾斜杠只匹配目录，软链形态的 node_modules 漏网）
+node_modules
 .pnpm-store/
 
 # build output

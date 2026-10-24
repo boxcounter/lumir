@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/docs-check.sh — 制品门禁的唯一实现（docs/adr/ 的结构与索引 + openspec 相对链接可达性
-# + 验收场景覆盖表生成一致性）。
+# + 验收场景覆盖表生成一致性 + 验收套件语法）。
 # 本地 `scripts/gate.sh quick` 与 CI 的 .github/workflows/docs-check.yml 调的是同一份脚本：
 # 「本地全绿才允许提交」要求本地跑的就是 CI 跑的那条命令，两处各写一遍必然漂移
 #（M153；REVIEW.md 「同一语义两处真源」条：同一语义不要两处真源）。
@@ -25,6 +25,10 @@
 #      记录在案无 canonical 指针 / 复核口径、全文超 80 行 ⇒ FAIL；条目年龄只进报告不判红（实现
 #      在 scripts/backlog-check.mjs，本脚本调它——规则出处是 Alex 2026-10-24 裁决与
 #      docs/process/openspec-workflow.md「backlog 出口的机器判据」节）
+#   8. 验收套件语法：scripts/acceptance 入口与 lib/*.mjs 逐文件 `node --check`（实现在
+#      scripts/acceptance/check-syntax.sh，本脚本与本地 gate.sh quick 的 acceptance-syntax 门调
+#      同一份——套件不进 CI，lib 里多数模块只有真机跑批才 import，语法错否则要等下一次真机跑批
+#      才暴露；只解析不执行，不占端口、不碰验收 vault）
 # 输出：失败时逐条打印问题（CI 上同时是 ::error:: 注解）并以 1 退出。
 #
 # 注意：OpenSpec 的 **结构 / 制品完整性** 校验不在这里——权威实现是 `openspec validate --all
@@ -126,7 +130,7 @@ fi
 # 挂这里两边同时继承（REVIEW.md「同一语义两处真源」条）。该脚本的门禁模式同时判两件事：
 # MODIFIED delta 的静默丢段面（第 4 条）与已完成 change 的归档队列条目（第 5 条）。
 if ! command -v node >/dev/null 2>&1; then
-  echo "::error::未找到 node，归档对账 / 验收覆盖表 / backlog 出口门禁无法运行（环境要求见 README.md）"
+  echo "::error::未找到 node，归档对账 / 验收覆盖表 / backlog 出口 / 验收套件语法无法运行（环境要求见 README.md）"
   fail=1
 else
   if ! node scripts/openspec-archive-check.mjs; then
@@ -142,6 +146,13 @@ else
   if ! node scripts/backlog-check.mjs; then
     fail=1
   fi
+  # 验收套件语法（第 8 条）：实现唯一一份在 scripts/acceptance/check-syntax.sh，本地 gate.sh quick
+  # 的 acceptance-syntax 门调同一份（REVIEW.md「同一语义两处真源」条）。挂这里让 CI 也继承——
+  # 套件不进 CI，lib 里多数模块只有真机跑批才 import，语法错否则要等下一次真机跑批才暴露。
+  if ! bash scripts/acceptance/check-syntax.sh; then
+    echo "::error::验收套件存在语法错（实现 scripts/acceptance/check-syntax.sh）"
+    fail=1
+  fi
 fi
 
 if [ "$fail" -ne 0 ]; then
@@ -149,4 +160,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达 + 归档对账无静默丢段 + 归档队列齐备 + 验收覆盖表与场景一致 + backlog 出口合规）"
+echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达 + 归档对账无静默丢段 + 归档队列齐备 + 验收覆盖表与场景一致 + backlog 出口合规 + 验收套件语法通过）"
