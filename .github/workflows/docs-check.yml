@@ -8,11 +8,14 @@ on:
     paths:
       - "docs/**"
       - "openspec/**"
-      # 验收覆盖表（M690）：场景改动必须同步重生成 COVERAGE.md，生成器与门禁脚本自身的改动
-      # 也要让这条校验跑起来（`scripts/acceptance/run.mjs --check` 调同一实现，但套件不进 CI）。
+      # 验收覆盖表（M690）：场景改动必须同步重生成 COVERAGE.md，生成器与它直接复用的
+      # 解析器（lib/execute.mjs）/ 运行期路径模块（lib/util.mjs）、门禁脚本自身的改动也要让
+      # 这条校验跑起来（`scripts/acceptance/run.mjs --check` 调同一实现，但套件不进 CI）。
       - "scripts/acceptance/scenarios/**"
       - "scripts/acceptance/COVERAGE.md"
       - "scripts/acceptance/coverage.mjs"
+      - "scripts/acceptance/lib/execute.mjs"
+      - "scripts/acceptance/lib/util.mjs"
       - "scripts/docs-check.sh"
       - ".github/workflows/docs-check.yml"
   push:
@@ -23,6 +26,8 @@ on:
       - "scripts/acceptance/scenarios/**"
       - "scripts/acceptance/COVERAGE.md"
       - "scripts/acceptance/coverage.mjs"
+      - "scripts/acceptance/lib/execute.mjs"
+      - "scripts/acceptance/lib/util.mjs"
       - "scripts/docs-check.sh"
       - ".github/workflows/docs-check.yml"
 
@@ -35,6 +40,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # 依赖（M690 r1）：覆盖表校验经 coverage.mjs → lib/execute.mjs 导入根 dependencies 的
+      # `js-yaml`。干净 runner 没有 node_modules，不装依赖会 ERR_MODULE_NOT_FOUND；口径与本仓
+      # visual.yml / perf.yml 一致（pnpm/action-setup + setup-node + frozen lockfile）。
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖（frozen lockfile）
+        run: pnpm install --frozen-lockfile
+
       # 校验实现只有一份：scripts/docs-check.sh —— 本地 scripts/gate.sh quick 调的是同一
       # 脚本（AI-only 模式下「本地全绿才允许提交」要求两边同一条命令；此前两处各写一遍，
       # 本地根本没有 ADR 结构校验，M153 收敛到这里）。
@@ -46,7 +67,8 @@ jobs:
       # （M684，同一脚本的门禁模式：tasks 全勾的活跃 change 必须在 docs/backlog.md 有且仅有一条归档
       # 跟踪条目，缺失或重复报红；口径见 docs/process/openspec-workflow.md「批次收尾 checklist」），
       # 以及验收场景覆盖表（M690，实现 scripts/acceptance/coverage.mjs：COVERAGE.md 必须与
-      # scenarios/*.md 的 front-matter 一致，id/item/title 必填且唯一）。
+      # scenarios/*.md 的 front-matter 一致；id / item / title 必填、id 唯一、item 在覆盖表内
+      # 一项一行（场景间共用 item 合法），title 不要求唯一）。
       # 六条都随本步继承。
       # job 名 `ADR 校验` 保持原样：它可能被 GitHub 的分支保护登记为必需检查，改名会让保护规则失配。
       - name: 制品校验（ADR 结构 / README 索引 / OpenSpec 相对链接 / 归档对账 / 归档队列 / 验收覆盖表，与本地 gate.sh 共用 scripts/docs-check.sh）

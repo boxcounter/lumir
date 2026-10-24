@@ -17,9 +17,9 @@
 #   5. 归档队列：tasks 全勾的活跃 change 是否在 docs/backlog.md 有且仅有一条归档跟踪条目
 #      （同一脚本的门禁模式顺带判；口径见 docs/process/openspec-workflow.md「批次收尾 checklist」）
 #   6. 验收场景覆盖表：scripts/acceptance/COVERAGE.md 与 scenarios/*.md 的 front-matter 是否一致，
-#      以及 id / item / title 的必填与唯一性（实现在 scripts/acceptance/coverage.mjs，本脚本调它——
-#      覆盖表是生成物，手维护或忘了重新生成都会静默失真；`node scripts/acceptance/run.mjs --check`
-#      调的是同一份实现）
+#      以及 id / item / title 必填、id 唯一、item 在覆盖表内一项一行（场景间共用 item 合法）
+#      （实现在 scripts/acceptance/coverage.mjs，本脚本调它——覆盖表是生成物，手维护或忘了重新
+#      生成都会静默失真；`node scripts/acceptance/run.mjs --check` 调的是同一份实现）
 # 输出：失败时逐条打印问题（CI 上同时是 ::error:: 注解）并以 1 退出。
 #
 # 注意：OpenSpec 的 **结构 / 制品完整性** 校验不在这里——权威实现是 `openspec validate --all

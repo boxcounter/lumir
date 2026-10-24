@@ -80,6 +80,30 @@ test("title 含运行期绝对路径判红（覆盖表入 git，必须机器无�
   assert.ok(problemsMatching(problems, /title 含运行期绝对路径/).length > 0);
 });
 
+test("$env 在自定义 results root 下仍判红（两个不同 root 均必红，覆盖表不得随环境变化）", async () => {
+  const dir = tmpRoot("env-token");
+  writeScenario(dir, { id: "env-token", item: 1, title: "$env/note.md" });
+  const roots = [path.join(tmpRoot("res-a"), "results"), path.join(tmpRoot("res-b"), "results")];
+  const seen = [];
+  try {
+    for (const root of roots) {
+      process.env.LUMIR_ACCEPTANCE_RESULTS = root;
+      const scenarios = await loadScenarios(dir);
+      seen.push({ root, envPath: path.join(path.dirname(root), "env"), ...buildCoverage(scenarios) });
+    }
+  } finally {
+    delete process.env.LUMIR_ACCEPTANCE_RESULTS;
+  }
+  assert.notEqual(seen[0].envPath, seen[1].envPath, "两个 root 必须解析出不同的 $env 路径");
+  for (const { root, envPath, markdown, problems } of seen) {
+    assert.ok(markdown.includes(envPath), `results root=${root} 时 $env 应替换成 ${envPath}（前置条件）`);
+    assert.ok(
+      problemsMatching(problems, /title 含运行期绝对路径/).length > 0,
+      `results root=${root} 时 $env 标题必须判红（否则覆盖表随环境变化）`,
+    );
+  }
+});
+
 test("id 重复判红并点名两个所有者文件", () => {
   const scenarios = [
     scenario("dup", 1, "甲", { file: "/tmp/first.md" }),

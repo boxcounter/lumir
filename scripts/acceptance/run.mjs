@@ -127,8 +127,9 @@ if (args.includes("--check")) {
   // 静态校验：不真机、秒级，写场景时先用它挡掉 key 拼错、断言形态写错这类低级错。
   const problems = all.flatMap(checkScenario);
   // 覆盖表（M690）：`scripts/acceptance/COVERAGE.md` 由场景 front-matter 生成，这里判它与场景
-  // 一致、以及 id/item/title 的必填与唯一性。实现只有一份（coverage.mjs），docs-check.sh 调的
-  // 是同一份——两处各写一遍必然漂移（REVIEW.md「同一语义两处真源」条）。
+  // 一致、以及 id / item / title 必填、id 唯一、item 在覆盖表内一项一行（场景间共用 item 合法）。
+  // 实现只有一份（coverage.mjs），docs-check.sh 调的是同一份——两处各写一遍必然漂移
+  // （REVIEW.md「同一语义两处真源」条）。
   const coverageProblems = await checkCoverage({ scenarios: all });
   const allProblems = [...problems, ...coverageProblems];
   for (const s of all) log(`CHECK ${allProblems.some((p) => p.startsWith(`${s.id}:`)) ? "FAIL" : "PASS"} ${s.id}`);

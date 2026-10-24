@@ -31,7 +31,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadScenario } from "./lib/execute.mjs";
-import { repoRoot, vaultDir } from "./lib/util.mjs";
+import { envHome, repoRoot, vaultDir } from "./lib/util.mjs";
 
 export const SCENARIOS_DIR = path.join(repoRoot(), "scripts/acceptance/scenarios");
 export const COVERAGE_PATH = path.join(repoRoot(), "scripts/acceptance/COVERAGE.md");
@@ -83,9 +83,13 @@ function compareItems(a, b) {
  * 覆盖表是入 git 的制品、检查是逐字节比对：标题里若带 `$vault` / `$fixtures` / `$env` 这类
  * 运行期 token（`loadScenario` 已替换成绝对路径），生成结果就会随机器变化、CI 上必然假红。
  * 这里按替换后的值反查，命中即判红（标题不该承载运行期路径）。
+ *
+ * `$env` 必须查 `envHome()` 本身而不能只靠 `repoRoot()` 兜：默认 results root 在仓库内时它确实
+ * 被 repoRoot 覆盖，但 `LUMIR_ACCEPTANCE_RESULTS` 指到仓库外时 `$env` 会落到那个外部目录
+ * （不同 root 生成不同表，见 coverage.test.mjs 的两 root 反向测试）。
  */
 function volatilePathIn(text) {
-  return [repoRoot(), vaultDir()].find((p) => p && text.includes(p)) ?? null;
+  return [repoRoot(), vaultDir(), envHome()].find((p) => p && text.includes(p)) ?? null;
 }
 
 /** 表格单元格：竖线转义（Markdown 表格的分隔符）、换行折成 `<br>`。 */
