@@ -59,8 +59,10 @@
 - [x] 3.3 `docs/specs/config-reference.md` §4 的 `vault-registry/` 行：补「用户在列表里可移除（只删
       本项文件，不删盘上数据与 per-id 数据，孤儿留在盘上）」；同批改 `src-tauri/src/vault_session.rs`
       模块头的「注册项只归档不删除」为同口径表述
-- [ ] 3.4 归档步骤：`openspec/specs/vault-workspace/spec.md:5` 的 capability 概览句「只归档不删除」
-      按归档时的实际行为改准（**不在 change 活跃期提前改**）
+- [x] 3.4 归档步骤：`openspec/specs/vault-workspace/spec.md:5` 的 capability 概览句「只归档不删除」
+      按归档时的实际行为改准（**不在 change 活跃期提前改**）——2026-10-24 归档时执行：Purpose 改为
+      「注册项可从列表移除——只删该项注册文件，盘上目录与按 id 键控的标签 / 阅读位置 / harness 会话
+      留存不动，重新加入铸新 id；失效项自动治理仍只打归档标记、不删注册项」，并补归档并入溯源句。
 
 ## 4. 验证
 
