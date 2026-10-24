@@ -22,11 +22,13 @@
 - [x] 1.2 chromium 探针：确认「外扩事务与 `pointerPressFrame.of(null)` 合并成一拍」时装饰只重建
       一次、上屏与选中底色同帧（design §4.1）——读数：`buildDecorations` 计数 = 1，同一次
       contentDOM mouseup 内行文本已变 `## …`；探针证据落 `.local/probes/`，不入 git
-- [x] 1.3 真机探针（WKWebView）：确认 mouseup 的事件顺序与 Quote 浮动钮的浮现时机——外扩后
-      **不得**多出一次 350ms 的 settle 延迟（design §4.3）。chromium 读数：基线本身就有一次
-      ~350ms 的 settle（mouseup 之后的同范围 selectionchange），外扩与该事件合并，读数与基线
-      逐项相同；真机侧由验收场景 233 的端到端判据兜住（顺序错位会让 composer 不含 `**…**`），
-      该场景与 dogfood 同批跑
+- [ ] 1.3 真机探针（WKWebView）：确认 mouseup 的事件顺序与 Quote 浮动钮的浮现时机——外扩后
+      **不得**多出一次 350ms 的 settle 延迟（design §4.3）。**不得**用场景 233 的最终文本 PASS
+      冒充（review r1 P2-3）：233 只证明 Quote 读到外扩后的选区，10s waitFor 对多一次 350ms 恒真。
+      做法：临时插桩记录 content-mouseup / quote-mouseup / reveal-gate-end / selectionchange /
+      按钮 show-hide 的时间戳，经 AX 可读节点断言 `order=ok` 且稳态可见 ≤550ms（多一次 350ms
+      会 >700ms）；再用「外扩推迟 300ms」的对照跑证明判据有区分度。插桩与探针场景跑完删除，
+      证据留 `.local/`。**待 Alex 真机实例释放后执行（2026-10-24 tower 通知）**
 - [x] 1.4 探针结论回写 design §4.2 / §4.3 / §4.4 / §7，并把探针读数路径登记在证据目录
       （`.local/probes/m687-semantic-release-snap/`，tower 合并前复制到主 checkout）
 
@@ -36,8 +38,10 @@
       （design §3.2，`src/preview/syntax-envelope.ts`），`src/preview/livePreview.ts` 的标题 /
       强调 / 链接 / 角括号分支改读它；行为逐字不变（`rg "HeaderMark|EndsWith(\"Mark\")"` 确认
       装饰层只剩这一处字面规则；视觉门禁逐场景比对见 §5.4）
-- [x] 2.2 实现外扩纯函数：完整覆盖判定、逐层迭代至不动点（8 轮上限）、幂等、多 range、方向保留；
-      只对封闭集合生效（`src/preview/syntax-envelope.ts` 的 `expandSelectionToSyntax`）
+- [x] 2.2 实现外扩纯函数：完整覆盖判定、逐层迭代至**真正不动点**（不设轮数上限：每轮至少一端
+      严格外扩、文档长度作上界，天然终止）、幂等、多 range、方向保留；只对封闭集合生效
+      （`src/preview/syntax-envelope.ts` 的 `expandSelectionToSyntax`）。r1 返修把旧 8 轮上限拿掉：
+      左右各 18 个 `*`（10 层 `StrongEmphasis`）的合法嵌套一次调用到最外层，二次调用返回同一个选区
 - [x] 2.3 单测矩阵（design §8 的输入表）：标题（1/6 级、缩进、闭合 `#`）× 选区形态（恰好覆盖 /
       少一字 / 多覆盖 / 整构造 / 多 range / 空光标）× 上下文（普通段落 / 表格 cell / callout 行内 /
       引用块标题 / frontmatter 之后 / 文档首行）——`tests/unit/syntax-envelope.test.ts`，19 条
@@ -57,7 +61,9 @@
       selectionchange 的 ~350ms settle；外扩与该事件合并，未新增排期）；`last` 记录的是外扩后选区
       ——`src/quote-gesture.ts` 零改动
 - [x] 3.4 code 模式与只读态不装/不触发：规则只挂在 `livePreview()`（`src/editor.ts` 的 md 分支），
-      code 模式不装该扩展组
+      code 模式不装该扩展组；只读门控取 `view.state.readOnly`（r1 P2-2 返修前只检查主键与非空选区）。
+      真实只读回归：⌘P 打开 vault 外只读 md → 拖选粗体词 → 选区保持渲染文字；去掉门控后该用例
+      如实变红（`scene-readonly-red.log`）
 - [x] 3.5 不改写文档、不滚动、不动阅读位置（dispatch 只带 selection + effect）；注释写明与
       M259 / M539 / M285 三条的边界（模块头 + mouseup 接线处）
 - [x] 3.6 注释与文档清扫：`rg` 搜「选中即复制纯文本」「选不到定界符」类旧表述——产品面零命中，
@@ -65,9 +71,10 @@
 
 ## 4. 测试与验收场景
 
-- [x] 4.1 新增 chromium 结构层场景 `tests/visual/scenes/m687-semantic-selection.spec.ts`（6 条）：
+- [x] 4.1 新增 chromium 结构层场景 `tests/visual/scenes/m687-semantic-selection.spec.ts`（7 条）：
       拖选整段标题 / 粗体 → 松开后选区覆盖定界符、上屏字符有选中底色；拖拽中途不变；
-      部分覆盖不外扩；双击外扩；三击不变；文档逐字节不变 + 阅读位置不变；程序化 / 键盘选区不外扩。
+      部分覆盖不外扩；双击外扩；三击不变；文档逐字节不变 + 阅读位置不变；程序化 / 键盘选区不外扩；
+      vault 外只读会话（真实 ⌘P 打开）的 mouseup 不外扩。
       既有场景 `tests/visual/scenes/m259-bold-click-selection.spec.ts` 的双击对照按 D2=A 更新终态
       期望（CM 的选词仍在，松开后外扩到 `*P斜*`；不是选词回归）
 - [x] 4.2 断言要有区分度：把 mouseup 接线临时短路后重跑 → 3 条外扩断言如实变红（部分覆盖 /
