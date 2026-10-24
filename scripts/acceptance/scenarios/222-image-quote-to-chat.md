@@ -31,9 +31,10 @@ steps:
     expect:
       - label: 焦点落在编辑器正文里
         ax: { focused: "AXTextArea" }
-  - name: 抢前台（hover 与后台注入的 chord 都要前台——README「hover 的前台是硬前提」）
+  - name: 抢前台并让窗口成为 key window（hover 的前台是硬前提；key 状态见下）
     do: focusWindow
     retries: 4
+    click: true
 
   # ① 悬停引用钮 → 图片卡片 → 发送
   - name: 悬停文档里的已渲染图片——引用钮应浮现（钮贴图片右下角内侧）
@@ -124,6 +125,10 @@ steps:
   - name: ⌃N 逐行下移十次到第 11 行（第 1 行起，编辑器随光标滚动把图片带进视口）
     do: keys
     keys: ["ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n"]
+  - name: 让窗口成为 key window（hover 的真实鼠标事件落在 key window 上；M669 的 222 首跑实证）
+    do: focusWindow
+    retries: 4
+    click: true
   - name: 悬停 svg 图片——引用钮应浮现（与位图那张同一份文案）
     do: hover
     target: { role: AXImage, any: "image-quote-logo.svg" }

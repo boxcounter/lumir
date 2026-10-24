@@ -27,8 +27,9 @@ steps:
     retries: 4
     click: true
 
-  - name: 点属性盒（编辑器顶边 dy=60 落在属性盒首行；dy=6 会落在顶部留白→光标归到正文）
+  - name: 点属性盒（dx=120 落进属性盒卡片内、dy=60 落在卡片首行；dx=40 落在卡片左侧留白 → 走合成面分支）
     do: clickEditor
+    dx: 120
     dy: 60
     expect:
       - label: 属性盒按下即进源码编辑态（围栏回到可见文本 = 属性盒已撤下、换成了 YAML 源码）
@@ -53,6 +54,7 @@ steps:
 
   - name: 点 doc-title（属性盒下方那行大标题；本 fixture 3 行属性盒下标定 dy=170）
     do: clickEditor
+    dx: 120
     dy: 170
     expect:
       - label: 合成面不是源码入口——属性盒 MUST NOT 撤下（围栏不进可见文本）
@@ -88,6 +90,7 @@ steps:
 
   - name: eink 档点属性盒
     do: clickEditor
+    dx: 120
     dy: 60
     expect:
       - label: eink 档同样按下即进源码（行为不随主题变化）
@@ -123,12 +126,14 @@ Alex 2026-10-23 原话：「1. 当点击 frontmatter 时，光标特别高（截
   frontmatter 已渲染）。渲染态下围栏与 YAML 原文都不在可见文本里；显露后它们逐字回来。
   因此 `not: "---"` / `has: "---"` 是「属性盒在场 / 撤下」的直接读数，而不是靠截图猜。
 - **点击入口只能按坐标**：编辑器内元素没有 AX bbox（README「编辑器内元素没有 AX bbox」），
-  所以用 `clickEditor` 从 AXTextArea 顶边往下取点（dy 是**截图像素**偏移，与 mode=full 的
-  bbox 同一空间）。本 fixture（1200×800 窗口、3 行属性盒）标定：
-  dy=60 落在属性盒首行、dy=300 落在正文、dy=170 落在属性盒下方那行大标题（合成面）。
-  **dy=6 是错的**（M667 实证）：AXTextArea 顶边往下 6px 还在编辑器顶部留白里，光标归到正文
-  首行、属性盒照旧渲染——修好产品也永远判红。这三条坐标是本场景唯一脆弱处：属性盒行高 /
-  间距变了就得重标（按截图对齐），改窗口尺寸同样要重取。
+  所以用 `clickEditor` 从 AXTextArea 顶边往下取点（`dx`/`dy` 都是**截图像素**偏移，与 mode=full
+  的 bbox 同一空间）。**两个轴都要落进属性盒卡片**（M669 探针实证）：
+  `dx=40`（缺省）落在 `.cm-lp-frontmatter-outer` 的**左侧留白**里——那一层不是
+  `.cm-lp-frontmatter` 卡片本体，mousedown 走的是「合成面」分支（不显露源码），
+  症状与「点了正文」一模一样；`dx=120` 才落在卡片内。`dy=60` 落在卡片首行（`dy=6` 在卡片
+  上方的顶部留白）。本 fixture 的标定：属性盒 `(dx=120, dy=60)`、正文 `dy=300`、
+  合成面大标题 `(dx=120, dy=170)`——这三条坐标是本场景唯一脆弱处，属性盒行高 / 间距 /
+  栏宽变了就得按截图重标。
 - **零写盘**：`file.unchangedSince`（sha256）+ `mtimeUnchangedSince`（mtime）成对用——
   写了同一份内容时 sha256 相同而 mtime 会推进。显露、光标归一与指针入口 MUST NOT 改文档
   （合同 C5 / ADR 0003 §3）。
