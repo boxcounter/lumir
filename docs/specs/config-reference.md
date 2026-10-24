@@ -436,8 +436,8 @@ change 的 [design §9](../../openspec/changes/add-harness-subagents/design.md)�
 - `ui.content_width` → 阅读栏宽拖拽松手（`src/main.ts:1525`）；
 - `ui.sidebar_width` → 左栏分隔条拖拽松手（`src/main.ts:1567`）；
 - `ui.language` → 语言切换（`view.language-cycle` / modeline 语言钮，`src/main.ts:2956`）；
-- `harness.provider` / `harness.providers.<id>.model` → 合并选择器的 provider / 模型切换（`src/harness-panel.ts:6102` / `:6124` 的 `configSetValue`）；
-- `harness.permission_mode` → 权限 chip 切换（`src/harness-panel.ts:6082`）；
+- `harness.provider` / `harness.providers.<id>.model` → 合并选择器的 provider / 模型切换（`src/harness-panel.ts` 的 `selectProvider` / `selectModel`）；
+- `harness.permission_mode` → 权限 chip 切换（`src/harness-panel.ts` 的 `selectPermissionMode`）；
 - `harness.permissions.allow` → 批准卡的「以后都允许」写规则、权限浮层的规则删除（`harness.rs:1783` / `:1812`）；
 - `cron.tasks` → **交互会话里的 agent 调度工具**注册 / 删除任务（§1.8.1；`cron.rs:1156-1160` / `:1226-1228`）。
 
