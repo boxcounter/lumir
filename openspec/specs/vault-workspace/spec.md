@@ -101,12 +101,12 @@ vault 实际打开成功后系统 SHALL 将 vault 绝对路径写入配置的 `l
 
 ### Requirement: 启动恢复的时序与可见性
 
-启动恢复（读取配置、校验 `last_vault` 路径、全量枚举与链接索引建立）SHALL 在 Tauri setup 的主线程之外执行；setup MUST NOT 同步等待其完成。`VaultStatus` SHALL 以 `restore_pending` 字段承载恢复进行态（`true` = 仍在进行；`false` = 终态：已打开 vault，或未打开且 `notice` 为可选人话提示）。前端在 `restore_pending` 为 `true` 时 SHALL 以未打开空态的布局呈现恢复中提示（文案见 `文案-Copy.md`），MUST NOT 将其呈现为「尚无 vault」的终态；恢复完成后 SHALL 无需用户操作自动进入该 vault。恢复流程的每一条结束路径（成功 / 无 `last_vault` / `last_vault` 失效 / 配置加载失败 / 打开 vault 失败）SHALL 使 `restore_pending` 转 `false`，并发出 `vault:restore_finished` 事件（无载荷，仅作唤醒信号）。前端 SHALL 以 `vault_current` 的返回值为权威状态、以该事件为唤醒信号：启动时 SHALL 先订阅该事件、再拉取一次状态，MUST NOT 依赖事件必然送达（webview 挂载晚于恢复完成时事件会丢失）。恢复进行期间文件树 pane 的「打开 vault」入口 SHALL 保持可用，用户此间的成功打开 SHALL 优先于本次恢复。`LUMIR_READY` 的发射位置与语义 SHALL 保持不变（事件循环可接管的标记）；恢复耗时 MUST NOT 计入该端点，也 MUST NOT 以「把该标记移到恢复之后」的方式让门禁覆盖恢复耗时。
+启动恢复（读取配置、校验 `last_vault` 路径、全量枚举与链接索引建立）SHALL 在 Tauri setup 的主线程之外执行；setup MUST NOT 同步等待其完成。`VaultStatus` SHALL 以 `restore_pending` 字段承载恢复进行态（`true` = 仍在进行；`false` = 终态：已打开 vault，或未打开且 `notice` 为可选人话提示）。前端在 `restore_pending` 为 `true` 时 SHALL 呈现启动态（见 `app-startup` 的「启动态的上屏与撤下」），其中的阶段行取恢复中提示文案（文案见 `文案-Copy.md`），MUST NOT 将其呈现为「尚无 vault」的终态；恢复完成后 SHALL 无需用户操作自动进入该 vault。恢复流程的每一条结束路径（成功 / 无 `last_vault` / `last_vault` 失效 / 配置加载失败 / 打开 vault 失败）SHALL 使 `restore_pending` 转 `false`，并发出 `vault:restore_finished` 事件（无载荷，仅作唤醒信号）。前端 SHALL 以 `vault_current` 的返回值为权威状态、以该事件为唤醒信号：启动时 SHALL 先订阅该事件、再拉取一次状态，MUST NOT 依赖事件必然送达（webview 挂载晚于恢复完成时事件会丢失）。恢复进行期间「打开 vault」入口 SHALL 保持可用（树已呈现时是文件树 pane 的入口；启动态期间由启动态内的同名入口承担），用户此间的成功打开 SHALL 优先于本次恢复。`LUMIR_READY` 的发射位置与语义 SHALL 保持不变（事件循环可接管的标记）；恢复耗时 MUST NOT 计入该端点，也 MUST NOT 以「把该标记移到恢复之后」的方式让门禁覆盖恢复耗时。
 
 #### Scenario: 大 vault 恢复不推迟首帧
 
 - **WHEN** `last_vault` 指向一个全量枚举与索引建立需要数百毫秒的 vault
-- **THEN** 窗口在恢复完成前即可绘制并可交互，界面先呈恢复中提示，恢复完成后无需用户操作自动进入该 vault
+- **THEN** 窗口在恢复完成前即可绘制并可拖动，界面先呈启动态（其中包含可用的「打开 vault」入口），恢复完成后无需用户操作自动进入该 vault，启动态随树装载完成撤下
 
 #### Scenario: 恢复期间用户另选 vault
 

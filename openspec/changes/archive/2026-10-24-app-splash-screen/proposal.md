@@ -28,18 +28,18 @@ Alex 2026-10-23 的需求原话（逐字）：
 
 | 阶段 | 谁在做 | 用户看到 | 证据 |
 |---|---|---|---|
-| S0 spawn → setup 完成 | macOS + Tauri | 什么都没有（窗口 `visible: false`），只有 Dock 图标 | `src-tauri/tauri.conf.json` 的 `app.windows[0].visible`；冷启动本机读数 median 174.0ms（n=20，[evidence/cold-start.json](../../../docs/design-parity-contract/evidence/cold-start.json)） |
+| S0 spawn → setup 完成 | macOS + Tauri | 什么都没有（窗口 `visible: false`），只有 Dock 图标 | `src-tauri/tauri.conf.json` 的 `app.windows[0].visible`；冷启动本机读数 median 174.0ms（n=20，[evidence/cold-start.json](../../../../docs/design-parity-contract/evidence/cold-start.json)） |
 | S1 `LUMIR_READY` + 施加尺寸 + `show()` | Rust setup | 窗口出现，**内容是空的**，只有原生底色 | `src-tauri/src/lib.rs`：`emit_ready`（:195）→ `window_state::init`（:200）→ `apply_startup_size`（:201，`show()` 在 :348） |
 | S2 页面装载 + 主模块执行 + 壳挂载 | webview | 仍是空窗，直到前端把 `.app-shell` 建出来 | `index.html` 只有一个空的 `#app`；`src/main.ts` 在模块顶层 `createShell`（:187），CSS 也由它 `import`（:142） |
 | S3 主题施加 | webview（异步 `configGet`） | 结构上，首个内容帧用的是 CSS 默认块（light），`[ui] theme` 要等 `configGet` 返回才施加——dark / eink 用户是否会看到一帧 light 属未实测（见 design §9 已知边界） | `src/style.css` 的 `:root, :root[data-theme="light"]`（:14）；`src/main.ts` 的 `configGet().then(...)`（:3731）里 `applyTheme`（:3808） |
-| S4 vault 状态落地 | Rust 恢复线程 + webview 拉 `vault_current` | 恢复中：未打开空态 + 一行「正在恢复上次打开的 vault……」（文案 D95）；无 vault：空态 | `src/main.ts` 的 `refreshVaultStatus`（:3682）；[vault-workspace 的「启动恢复的时序与可见性」](../../specs/vault-workspace/spec.md) |
+| S4 vault 状态落地 | Rust 恢复线程 + webview 拉 `vault_current` | 恢复中：未打开空态 + 一行「正在恢复上次打开的 vault……」（文案 D95）；无 vault：空态 | `src/main.ts` 的 `refreshVaultStatus`（:3682）；[vault-workspace 的「启动恢复的时序与可见性」](../../../specs/vault-workspace/spec.md) |
 | S5 树装载 | webview 主线程（同步整树重建） | 树出现 | `src/main.ts` 的 `applyVault`：「大 vault 上可能数百 ms」（:3586-3590） |
 | S6 标签恢复 | webview（异步） | 标签逐个建壳、激活项内容装载 | `src/main.ts` 的 `switcher.onVaultLoaded`（:3612-3615）；启动路径**不开** M252 的装载指示器（只有用户发起的装载才 `begin`，:1684） |
 
 **两个结构事实**（本提案的立论基础）：
 
 1. **用户真正等待的那几段既没有呈现，也没有读数。** 冷启动合同的端点是 spawn → `LUMIR_READY`，
-   只覆盖 S0–S1；S2–S6 全在端点之外（[docs/specs/perf-measurement.md](../../../docs/specs/perf-measurement.md)
+   只覆盖 S0–S1；S2–S6 全在端点之外（[docs/specs/perf-measurement.md](../../../../docs/specs/perf-measurement.md)
    §1 明写「前端首屏挂载暂不入端点」；归档件 `multi-vault-workspaces/tasks.md` 也登记了「标签恢复发生在
    `LUMIR_READY` 之后、不在任何被测量的端点里」）。
 2. **大 vault 的慢落在 S4–S6，而 S2 的空窗与 vault 规模无关。** 所以「只盖住空窗」的启动屏解决不了

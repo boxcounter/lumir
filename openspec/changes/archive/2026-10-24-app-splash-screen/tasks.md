@@ -142,8 +142,13 @@
       −8.1ms），§9 第 1 条已加实测指针
 - [x] 6.2 若 D1 裁品牌仪式：补原型截图 + `design.md`「视觉保真」一节（流程硬要求），再进入实现
       —— D1 裁感知性能，本条不适用（design §10 已写明）
-- [ ] 6.3 归档时为本 capability 手写 `Purpose`（`openspec archive` 会写占位 Purpose 并让 `validate --strict`
+- [x] 6.3 归档时为本 capability 手写 `Purpose`（`openspec archive` 会写占位 Purpose 并让 `validate --strict`
       报红）—— 归档评审阶段的事，不在实现 mission 内
+      —— 2026-10-24（M714）：`openspec/specs/app-startup/spec.md` 的 Purpose 已手写（首帧由启动层绘制 /
+      三种撤下条件与单帧撤下 / 期间保留标题栏拖拽与「打开 vault」入口 / 首帧前施主题并交接配置 /
+      不改 `LUMIR_READY` 与 setup、冷启动增量 ≤10ms / 两条诊断读数不进 CI）；占位串已清除，复跑
+      `validate --all --strict` 全绿。归档件里指向 design 的相对链接已随目录下沉改准
+      （`../changes/archive/2026-10-24-app-splash-screen/design.md`）
 - [x] 6.4 若实现期确认「窗口底色晚于 `show()` 施加」需要本 change 一并修：先回 proposal 改 Non-goals 并重走
       节点 1 —— 实现期未发现需要一并修的现场；仍按 Non-goals 另行登记
 

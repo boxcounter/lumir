@@ -1,7 +1,7 @@
 # vault-workspace 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 MODIFIED，基线是 living spec
-> [openspec/specs/vault-workspace/spec.md](../../../../specs/vault-workspace/spec.md) 的「启动恢复的时序与
+> [openspec/specs/vault-workspace/spec.md](../../../../../specs/vault-workspace/spec.md) 的「启动恢复的时序与
 > 可见性」。**整条复制现行正文再改**（`openspec archive` 对 MODIFIED 是整块替换，少抄的段落会静默消失）：
 > 改动只有三处——① 恢复中态的呈现面从「未打开空态布局 + 提示」改为「启动态 + 阶段行（同一句文案）」；
 > ② 「打开 vault」入口的承载面在启动态期间由启动态承担；③ 首个 scenario 的 THEN 随 ①② 对齐：既有判据
