@@ -43,10 +43,12 @@
 - [x] 4.1 视觉场景（`tests/visual/scenes/`，harness fixture）：回复正文含 `notes/x.md:3-5` → 整段是
       一个可点元素且文本逐字不变；点击 → 新标签打开、目标行文本进入视口（结构与计算属性断言即可，
       不需要新像素基线）
-- [ ] 4.2 真机验收：mock provider 回复放一条 `path:起-止` → 点击落点正确、文档未被选中；同时核一条
-      畸形形态仍按普通文本渲染（场景 221 + `harness-mock-path-line-range.json` 已落地、`--check`
-      静态校验通过；**真机执行待 tower 协调窗口**，本 change 不声称已真机跑过。「选中」在真机层不可判
-      ——AX 读不到选区，机器判据在 4.1 的视觉场景里）
+- [x] 4.2 真机验收：mock provider 回复放一条 `path:起-止` → 点击落点正确、文档未被选中；同时核一条
+      畸形形态仍按普通文本渲染（场景 221 + `harness-mock-path-line-range.json`）
+      —— **2026-10-24 真机 1/1 PASS（10 断言，0 FAIL）**：行范围整段可点、点后新标签打开并落到
+      第 39 行、原标签仍在、畸形 `:48-39` 只链路径（不吞半截）；证据
+      `.local/acceptance/2026-10-24-m711/221-harness-path-line-range/`。「选中」在真机层仍不可判
+      ——AX 读不到选区，机器判据在 4.1 的视觉场景里
 - [x] 4.3 回扫既有验收场景：grep 所有 harness fixture 里带 `:行号` 的文本，确认新后缀不改变既有
       AX 文本期望；`node scripts/acceptance/run.mjs --check` 通过
 - [x] 4.4 如实登记 prompt 遵从度为抽样观察（不进机器断言）

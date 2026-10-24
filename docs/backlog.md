@@ -42,14 +42,12 @@
 - `#check` **preview-tab 遗留**（M254）→ 逐条确认注释 / 字段说明是否仍有旧语义。
 - `#check` **math / mermaid 显露判定**（M259）→ 确认是否已接 `pointerPressFrame`（`src/preview/reveal-gate.ts`）。
 - `#check` **表格全屏聚合**（M240）→ 逐子项对账：长表 / visual README 22 处 / config theme / 计算属性 / typography Purpose / 32-list-filter / Lezer 包。
-- `#check` **编辑器 / 键位 / shell / 系统聚合**（M101–M186）→ 逐子项对账：Alt+Shift、warnings UI、toast z-index、`$` 转义、mathSpanCrossed、⌃B、grid 表、删浮条、D40、hidden pipe、cell 公式、构造函数属性；退出守卫、`{id}.json.tmp` 过滤、vault 滚动、焦点建议。
-- `#check` **验收套件表达力聚合**（M144）→ 逐项对账余下子项，明细见 git 历史。
-- `#check` **文档指针聚合** → 逐项对账：M205/M208 旧路径、M151 失准、D64 过期、HEAD==origin/master、ADR 0002 200MB vs 250MB。
+- `#check` **编辑器 / 键位 / shell / 系统聚合**（M101–M186）→ 逐子项对账：Alt+Shift、warnings UI、toast z-index、`$` 转义、mathSpanCrossed、⌃B、grid 表、删浮条、D40、hidden pipe、cell 公式、构造函数属性；退出守卫、`{id}.json.tmp` 过滤、vault 滚动、焦点建议；restyle 聚合（M215/M216）：0.001 容差、code 模式 150px、doc-meta mtime、eink keyword 700。
+- `#check` **验收套件表达力聚合**（M144）→ 逐项对账余下子项，明细见 git 历史；文档指针聚合 → 逐项对账：M205/M208 旧路径、M151 失准、D64 过期、HEAD==origin/master、ADR 0002 200MB vs 250MB。
 - `#check` **多 vault 聚合**（M164）→ 逐项对账：视觉容差、窗口屏外、`M-<` / `M->`、demo 脱节、D90、tauri test feature、目录选择、`commit_vault_open` 分支。
-- `#check` **restyle 聚合**（M215/M216）→ 逐项对账：0.001 容差、code 模式 150px、doc-meta mtime、eink keyword 700。
 - `#check` **M291 in-flow 底色盖住选区带 / 场景 68 标定待判（M514）** → 确认真机是否仍开；finding `20260928-worker-selection-contrast-m291-bug-in-flow-code-callout-frontmatter`。
 - `#hygiene` **机械收尾（文档 / 套件 / 配置）** → 下一动作：场景 123 改 `focusWindow` 为 `click:true` 口径；README 的 `(?![\\s\\S])` 双反斜杠示例改为单反斜杠；`run.mjs --help` 打印用法退出 0；删除 `.tab-menu-item` 死选择器（`src/style.css:2529-2568`）并改 `tests/visual/scenes/tab-menu.spec.ts:358` 的 CSSOM 断言，或给 tabs 改类名（二选一）；M282 日志文本语言口径确认。
-- `#hygiene` **产品行为收尾** → 下一动作：外链失败加 toast（`src/harness-panel.ts:2805`）；`.lumir-toast` 加 `role="status"` / `aria-live="polite"`；补 composer 光标 reveal 的 chromium 断言；重启恢复门改动态分流（`stopApp` 前读 `restoredTabCount>0`）；加一条 `modifiers:["meta"]` 真机夹具；M280 ESC 三条残余（vault 切换器第二份 `scrollSnapshot` / 捕获锚在原点不写回 / lightbox 不随文档代际退出）；套件长 chain 注入（8–19 chord）可靠性与可点节点面；会话浮层快速关→再开重复历史行（M392）攒批处理。
+- `#hygiene` **产品行为收尾** → 下一动作：外链失败加 toast（`src/harness-panel.ts:2805`）；`.lumir-toast` 加 `role="status"` / `aria-live="polite"`；补 composer 光标 reveal 的 chromium 断言；重启恢复门改动态分流（`stopApp` 前读 `restoredTabCount>0`）；加一条 `modifiers:["meta"]` 真机夹具；M280 ESC 三条残余（vault 切换器第二份 `scrollSnapshot` / 捕获锚在原点不写回 / lightbox 不随文档代际退出）；套件长 chain 注入（8–19 chord）可靠性与可点节点面；会话浮层快速关→再开重复历史行（M392）攒批处理；M455 收尾：真机复跑 138/140/144/145 与 hover 族 76/87/131/132/133/134，145 的 `mod+z` 同族观察留给 change 属主裁。
 
 ## 承接残项（长期口径 + 未闭合尾巴）
 
@@ -59,7 +57,6 @@
 - **`vault-open-ignore-set` 未完成项**（M327）：7.2 / 9.3①②⑤ 真机反向验证、10.4 visual 门禁、8.3 残余档复采；下一动作：并成一个小验收 mission。
 - **UX 重做批（攒批）**：demo 探针栏去留、宽表横向溢出裁切是否预期、Emacs 档 3 与全产品键位、会话名钮可发现性；下一动作：随 UX 重做会话一起做。
 - **dogfood 性能专项（攒批）**：内存合同存量超标（218–222MB vs <200MB，门禁 250MB）、`open-1mb-file` 端点仍是占位口径、vault 打开 / 切换仍同步；下一动作：专项立项时拍板。
-- **M455 收尾尾巴** → 下一动作：真机复跑 138/140/144/145 与 hover 族 76/87/131/132/133/134；145 的 `mod+z` 同族观察留给 change 属主裁。
 
 ## 待真机验收（未收口；场景清单与 item 编号见 COVERAGE.md）
 
@@ -67,14 +64,17 @@
 - `153-ordered-list-auto-mode`（item 153）→ 下一动作：留 dogfood 批次真机跑列表自动模式三态 + IME 组合期不重复；裸 DOM 变更形态不兜。
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
-- **序 10 · `readonly-allowlist-tightening-oct23`**（M664，16/22）：6 项未勾，场景 231 未跑；归档前 MUST 把 MODIFIED 块重写为「master 原文 + M649 解包段 + M664 收紧段」，否则 M649 段会被「改写」配对静默抹掉。
+- **序 10 · `readonly-allowlist-tightening-oct23`**（M664，20/22）：节点 2 材料齐——231（写形态 / 执行形态 / git 只读族，32 断言）与 231b（hidden 写入口拒绝，8 断言）真机 PASS，证据 `.local/acceptance/2026-10-24-m711/`；残留：3.2 待 M649 归档后把 MODIFIED 块重写为「master 原文 + M649 解包段 + M664 收紧段」（不得提前改，否则 M649 段会被整块替换静默抹掉）、3.3 finding 由 tower 记账；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **序 11 · `rg-zip-flags-dangerous-oct24`**（M672，11/11）：delta = 序 10 全文 + `-z` / `--search-zip` 改写，必须紧接序 10。
 - **`fix-quote-decode-error-copy-oct24`**（M686，tasks 全勾）：一条 ADDED requirement；节点 2 走人肉，归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`semantic-selection-markdown-oct23`**（M687，28/29）：一条 ADDED requirement；4.5 dogfood 归 Alex，节点 2 走人肉，归档前后各跑门禁。
 - **`add-harness-subagents`**（M708，90/90）：delta = `harness` 两条（ADDED 运行公共层 + MODIFIED 工具循环）+ 新建 `harness-subagents` capability；节点 2 走人肉（delta 有新增内容），归档前后各跑 `node scripts/openspec-archive-check.mjs`；归档后须手写新建 living spec 的 Purpose 占位并复跑 strict validate。
 - **`add-semantic-image-naming`**（M709，8.5 真机 PASS）：delta = `clipboard-image-paste` 1 条 MODIFIED（落盘与命名去重）+ 3 条 ADDED（语义命名 / 引用更新 / 放弃与撤销）；节点 2 走人肉（delta 有新增内容），归档时执行 tasks 7.2（living spec Purpose 补一句语义命名边界）并复跑 strict validate；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`quick-open-file-oct23`**（M655 实现 / M700 补修，53/53）：可先行归档；节点 2 材料齐——230 真机 `1/1 PASS`（60 断言）、delta 五份 spec 共 12 条 requirement 过 `validate --strict` 与 `openspec-archive-check`；残留：7.2 的「vault 外 绝对路径:行」只在 chromium / 单测层（是否补真机断言交节点 2 判），归档前后各跑 `node scripts/openspec-archive-check.mjs`。
-- **`harness-permission-rules-oct23`**（M649，33/36）：可先行归档；4.3「真机跑一遍套件」未勾——229 的 31 条断言只覆盖本 change 新增的三条场景（①②③），不能代表 4.1 回扫改准的 110 / 151 等既有场景；是否按 4.3 原文补跑整批交节点 2 判。
+- **`harness-permission-rules-oct23`**（M649/M653，35/36）：节点 2 材料齐——229 / 110 / 151 真机全 PASS（31 / 19 / 16 断言，证据 `.local/acceptance/2026-10-24-m711/`）、节点 1 已回填（Q1–Q7 全部「按倾向」）、6.3 不适用；残留仅 6.2（归档时把 living spec Purpose 的「三层」改两层）与归档期复核 M649 解包段相对 readonly / rg-zip 的 delta 合并顺序；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`add-session-auto-naming`**（M576 实现 / M579 配置面重塑 / M580 验收键改名，32/32）：节点 2 材料齐——五场景 163–167 真机全 PASS（41 断言，证据 `.local/acceptance/2026-10-19-m605/`）、7.7 的 delta 对账已完成；7.5 按零 `titles` 视觉 fixture 标注不适用；归档后复核 living spec 两条 requirement 同时含 `wire_api` 与 `session_title`。
 - **`improve-harness-streaming-scroll`**（M644，29/31）：节点 2 材料齐——224 真机 `1/1 PASS`（19 断言，`.local/acceptance/2026-10-24/224-harness-scroll-lock/`）、delta↔实现对账见其 tasks §6.1；残留：6.2 / 6.3 的「归档后」半步（`--archived` 复跑与 living spec 段完整核对，已就地标注）。
 - **`fullscreen-table-text-selection`**（M650，32/33）：节点 2 材料齐——227 真机 PASS（18 断言）、delta 一条 ADDED、`gate quick` / `visual` 读数在 tasks 文末；残留：5.2 的 harness 面同族条款 follow-up 已裁延后、本批不另立 change（M634 已归档）。
+- **`app-splash-screen`**（M645，34/36）：节点 2 材料齐——225 真机 PASS（11 断言，`.local/acceptance/2026-10-24-m711/225-app-splash-screen/`）；残留：2.7 真机拖窗留作 Alex 手感项、6.3 归档时为新建 `app-startup` capability 手写 Purpose；delta = app-startup 4 条 ADDED + vault-workspace 1 条 MODIFIED，归档前后各跑 `node scripts/openspec-archive-check.mjs`。
+- **`overlay-width-contract-oct24`**（M702，34/37）：节点 1 追认材料已备（D1–D5 落地 + 证据 + 否决回改面，见 proposal）；真机 231/232 PASS（5 + 11 断言，`.local/acceptance/2026-10-24-m711/`）；残留：0.3 / 0.4 待 Alex 追认、9.1 归档期执行；delta = ui-design-system 1 条 ADDED，归档前后各跑 `node scripts/openspec-archive-check.mjs`。
+- **`add-path-line-range-links`**（M552，19/19）：节点 2 走人肉（delta = harness 两条 MODIFIED）；221 真机 PASS（10 断言，`.local/acceptance/2026-10-24-m711/221-harness-path-line-range/`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。

@@ -9,20 +9,20 @@
 
 ## 0. 事实清单（起草时核对过原文 + 本机实测）
 
-| 事实 | 锚点（master `40e6ae01`） | 与本 change 的关系 |
+| 事实 | 锚点（master `152559fc`，2026-10-24 实现期回填） | 与本 change 的关系 |
 |---|---|---|
 | 只读分类在模式层三档一律 Allow | `src-tauri/src/harness/permissions.rs:191-205`（`mode_layer` 的 `cli_run` 分支） | 这是「白名单成员免闸」的实现位置；判据一错，三个档一起漏 |
-| 只读白名单 28 条（含 `base64`） | `permissions.rs:250-254`（`READ_ONLY_COMMANDS`） | 逐个成员的处置表见 §3 |
-| 已知写动词 24 条 / 解释器 / shell 包装器 / 危险黑名单 | `permissions.rs:259-284`、`:289`、`:294-308`、`:312`、`:315` | 本 change 不新增成员、不改层序，只补参数级形态 |
-| shell 元字符保守归写 | `permissions.rs:320`、`:352-357` | 写/执行形态都不含元字符，因此在这条之后仍会漏；拒判必须放在返回只读之前 |
-| 分类判序 | `permissions.rs:327-392`（`classify_cli`） | 落点：危险判定的参数级扩展 + 返回只读前的写形态检查 |
-| `sed` 现有判据只看 `-i` | `permissions.rs:377-386` | `w` / `W` / `e` 与 `-f` 全不在判据里；捆绑短选项也会绕过 `-i` |
-| `git` 子命令取「第一个非 flag 参数」 | `permissions.rs:604-609`（`git_subcommand`）、`:613-667`（`classify_git`） | `-c` 的值被误当子命令（巧合安全）；`--git-dir=` 等被放过 |
-| 写目标提取按命令族 | `permissions.rs:770-808`（`write_targets`） | 新增写形态要补提取，否则 vault 内写会掉成普通写（§5） |
-| 间接包装器递归复用 `classify_cli` | `permissions.rs:467-526`、`:542-587` | `sudo base64 -o …` 自动继承收紧，无需另写判据 |
-| `cli_run` spawn：stdout/stderr 管道，stdin 不设置（继承 app） | `src-tauri/src/harness/tools.rs:1209-1230` | `less` 非交互、stdin 非管道 ⇒ `-o` 与 `+cmd` 当前不可达（§3 的 less 行） |
-| 主体串 = argv 用空格拼接 | `src-tauri/src/harness/tools.rs:364-378`、`:387-393` | 参数级拒判必须看 argv；主体串拼接后无法可靠还原 argv |
-| `fs_patch_file` 不查 hidden 档 | `src-tauri/src/fs_io.rs:1559-1576`；对照 `:879-908`、`:803` | 与 git 可达链有关；已单列 finding，不在本 change scope |
+| 只读白名单 28 条（含 `base64`） | `permissions.rs:254-257`（`READ_ONLY_COMMANDS`） | 逐个成员的处置表见 §3 |
+| 已知写动词 24 条 / 解释器 / shell 包装器 / 危险黑名单 | `permissions.rs:402-460`（`WRITE_COMMANDS` / `INTERPRETERS` / `DANGEROUS_WRAPPERS` / `DANGEROUS_COMMANDS` / `DANGEROUS_DISK`） | 本 change 不新增成员、不改层序，只补参数级形态 |
+| shell 元字符保守归写 | `permissions.rs:467`（`SHELL_META`）、`:715`（分类时的元字符判定） | 写/执行形态都不含元字符，因此在这条之后仍会漏；拒判必须放在返回只读之前 |
+| 分类判序 | `permissions.rs:676-756`（`classify_cli` / `classify_cli_at`） | 落点：危险判定的参数级扩展 + 返回只读前的写形态检查 |
+| `sed` 现有判据只看 `-i` | `permissions.rs:1138-1415`（`classify_sed` 与脚本扫描） | `w` / `W` / `e` 与 `-f` 全不在判据里；捆绑短选项也会绕过 `-i` |
+| `git` 子命令取「第一个非 flag 参数」 | `permissions.rs:1417-1497`（`git_subcommand_index` / `git_effective_subcommand` / `git_read_only_subcommand`）、`:1499-1603`（`classify_git`） | `-c` 的值被误当子命令（巧合安全）；`--git-dir=` 等被放过 |
+| 写目标提取按命令族 | `permissions.rs:1622-1689`（`write_targets`） | 新增写形态要补提取，否则 vault 内写会掉成普通写（§5） |
+| 间接包装器递归复用 `classify_cli` | `permissions.rs:839-1136`（`classify_wrapped` 及 sudo / xargs / find -exec 分支） | `sudo base64 -o …` 自动继承收紧，无需另写判据 |
+| `cli_run` spawn：stdout/stderr 管道，stdin 不设置（继承 app） | `src-tauri/src/harness/tools.rs:1212-1250`（`cli_run`） | `less` 非交互、stdin 非管道 ⇒ `-o` 与 `+cmd` 当前不可达（§3 的 less 行） |
+| 主体串 = argv 用空格拼接 | `src-tauri/src/harness/tools.rs:387-422`（`permission_subject`） | 参数级拒判必须看 argv；主体串拼接后无法可靠还原 argv |
+| `fs_patch_file` 的 hidden 闸 | `src-tauri/src/fs_io.rs:1798-1912`（`fs_patch_file` 调用 `validate_not_hidden`）、`:1005-1035`（判定与两种命中形态） | M656 已落地（merge `c9a4d03`）：git 可达链的默认档免闸写入口已关闭；真机复核见场景 231b（2026-10-24 PASS） |
 
 ### 0.1 本机实测记录（2026-10-23 起草期；2026-10-24 补 git `--output` 探针；合成目录，无真实 vault 内容）
 
@@ -56,7 +56,8 @@
 
 finding 原文把 `git -c diff.external=/tmp/evil diff` 列为只读绕过。实测与代码对照：**按字面不成立**
 ——`git_subcommand` 取第一个非 flag 参数，`-c` 的取值 `diff.external=/tmp/evil` 被当成子命令，落
-「未知 ⇒ 写」（`permissions.rs:605-609`、`:665`）。粘连形态被 git 自己拒绝。
+「未知 ⇒ 写」（`permissions.rs:1417-1435` 的 `git_subcommand_index`、`:1499-1603` 的
+`classify_git`）。粘连形态被 git 自己拒绝。
 
 但该条指向的风险真实存在、且更强：`--config-env=` / `--git-dir=` / `--work-tree=` 这类「值在等号
 后」的全局 flag 不产生非 flag 参数，子命令仍被认成 `diff` / `status` ⇒ 判只读；而**不需要任何
@@ -64,6 +65,24 @@ argv 花招**的形态是仓库自身 config——`core.fsmonitor` 让 `git stat
 让 `git diff` 执行程序（§0.1 实测）。仓库 config 的内容不在 argv 可见范围内，这是 git 处置
 （Q1）必须回答的问题。2026-10-24 裁决把它答成「只读族保持只读 + 写入口（M656）关闭 +
 不可信仓库面登记为残余」，结论与论证见 §2.4。
+
+### 0.3 实现期回填（2026-10-24，M664 实现 / M711 真机）
+
+- **真机读数**：场景 231（写形态 / 执行形态 / git 只读族）32 断言 PASS；场景 231b（hidden 写
+  入口）8 断言 PASS。证据 `.local/acceptance/2026-10-24-m711/`。
+- **231 的关键读数**：`git status` / `git diff` / `git rev-parse` / `base64 -d` 四条只读调用在
+  `vault_write` 档确实执行（wire 留存 `call_ro1`–`call_ro4`）；三张写形态卡（`base64 -o` /
+  `--git-dir` / `git log --output`）确实进闸并以 `approval_rejected` 收尾；`rg --pre` 在
+  `full_access` 档仍进闸（`call_x1`）。
+- **231b 的关键读数**：`vault_patch(".git/config")` 被 `fs_name_invalid` 拒绝、原因点名 hidden
+  档，文件 sha256 与 mtime 均未变——§8 的 git 前提依赖因此有产品链路级证据，不只是 Rust 单测
+  （`fs_patch_file_refuses_hidden_target_and_respects_policy`）。
+- **实现增量（超出 design §2.4 字面、同属既有承诺）**：`git` 的危险子命令识别跳过全局 flag
+  及其分写取值（`git -C <path> clean -fd` 不会因 `-C` 落写而在 `full_access` 免闸）；
+  `write_targets` 的 `sed -i` 目标提取改用同一份 sed 参数解析。
+- **一致性边界（3.2 未做，不得提前做）**：本 delta 的 MODIFIED 块仍以 master 原文为基线，
+  **不含** M649 的受限解包段；M649 未归档，归档前必须按 §7 第 3 条重写（否则整块替换会静默
+  抹掉解包段）。本批只核对本 change 自身四者一致，不动这段并集。
 
 ## 1. 不变量（判据的唯一表述）
 
@@ -349,7 +368,9 @@ MODIFIED 是**整块替换**，因此：
   `log.showSignature` → `gpg.program` 会让 `git status` / `diff` / `log` 执行仓库配置指定的程序
   （§0.1 实测）。本 change 保留这些子命令为只读，前提是仓库配置在 vault 内没有默认档的免闸
   写入口——由 M656（`vault_patch` / `vault_move` / `vault_delete` 对隐藏路径直接拒绝）提供。
-  **M656 未落地前这条前提不成立**，默认档仍存在零批准链；实施顺序 M656 → 本 change（tasks 3.4）。
+  **M656 已落地**（merge `c9a4d03`）并有真机复核（场景 231b，2026-10-24 PASS：`vault_patch`
+  指名 `.git/config` 被 `fs_name_invalid` 拒绝且文件未变），前提成立；实施顺序 M656 → 本
+  change（tasks 3.4 已勾）。
   前提本身还依赖 `.git` 仍在忽略策略的 hidden 档（默认配置）：用户显式把 `.git` 配成可见即自行
   放开写入口（config 即数据，M656 不做名字级特判），这一用户选择不在本 change 的兜底范围内。
 - **不可信仓库**：vault 的仓库配置在成为 vault 之前已被写入、或由 vault 之外的进程改写时，

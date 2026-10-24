@@ -55,14 +55,18 @@
 - [x] 6.2 长说明 + 2.13 档（真实 `font_size: 32` 配置）：ctxpop 不折行、不越 pane
 - [x] 6.3 窄 pane（拖分隔条）+ selpop：包围盒 ⊂ pane
 - [x] 6.4 resize 后重夹：拖分隔条后浮层仍在 pane 内
-- [x] 6.5 ctxpop 既有像素基线：本方案靠组件下限 224px 保持零漂移；若实测有漂移，先给 Alex 过目，
+- [x] 6.5 ctxpop 既有像素基线：本方案靠组件下限 224px 兜住短内容；实测长读数档仍有漂移，
+      已先给 Alex 过目再重截——`m347-ctxpop-cache-metrics-chromium-darwin.png` 225×103 → 262×67
+      （同批 toc ×2 300→325，code-outline-popover 待确认后补；M702 提交 `18bc031e` / `22229b71`）。
       **禁止自行 `--update`**（`tests/visual/README.md` 的人肉裁决点）
 
 ## 7. 真机验收
 
 - [x] 7.1 `scripts/acceptance/scenarios/231-quick-open-long-path-width.md`：长路径 ⌘P，浮层宽度 +
       文件名可见的正观测
-- [x] 7.2 `scripts/acceptance/scenarios/232-harness-ctxpop-width.md`：长读数 hover，宽度下限 + `painted`
+- [x] 7.2 `scripts/acceptance/scenarios/232-harness-ctxpop-width.md`：长读数 hover——气泡翻出、
+      三段内容齐全、`painted` 绘制段、mouseleave 收起（M702 r1 校正：宽度数字在真机层不可量，
+      归 chromium 结构矩阵；本场景不含 `geom` / `minWidth` 断言）
 - [x] 7.3 重生成 `scripts/acceptance/COVERAGE.md`；`node scripts/acceptance/run.mjs --check` 绿
 
 ## 8. 门禁与证据
@@ -72,6 +76,9 @@
 - [x] 8.3 `scripts/gate.sh visual`（同上；像素层只看本地）
 - [x] 8.4 `bash scripts/docs-check.sh` / `npx openspec validate --all --strict`
 - [x] 8.5 真机跑 231 / 232，证据落 `.local/acceptance/`
+      —— **2026-10-24 两条场景真机 PASS（0 FAIL）**：231（⌘P 长路径，5 断言；输入面几何
+      ≥280 截图 px 的判据成立）、232（ctxpop 长读数，11 断言；绘制段亮度跨度 97 ≥ 60）；
+      证据 `.local/acceptance/2026-10-24-m711/{231-quick-open-long-path-width,232-harness-ctxpop-width}/`
 - [x] 8.6 证据与完工报告对账后提交（source only），TowerComplete
 
 ## 9. 归档（节点 2）

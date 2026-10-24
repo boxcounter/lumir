@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "试着改 hidden 档里的 .git/config。",
+      "tool_calls": [
+        {
+          "id": "call_hidden1",
+          "name": "vault_patch",
+          "arguments": "{\"path\":\".git/config\",\"edits\":[{\"old_string\":\"repositoryformatversion = 0\",\"new_string\":\"repositoryformatversion = 1\"}]}"
+        }
+      ]
+    },
+    {
+      "text": "hidden 写被拒了。"
+    }
+  ]
+}

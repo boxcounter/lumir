@@ -125,13 +125,27 @@ steps:
         file: { path: "env:config.json", has: "\"permission_mode\": \"full_access\"" }
       - shot: 05-完全访问档
 
-  - name: 收起浮层（Esc 关闭路径）
-    do: key
-    key: escape
+  - name: 收起浮层（再点权限 chip 走它自己的开合——不注入任何键：按钮持焦时 Esc 会走原生
+      关窗并退出 app；现场见 finding `20261024-worker-archive-rmachine-oct24-bug-harness-esc-app.md`）
+    do: click
+    target: { name: "^权限模式：" }
+  - name: 等浮层收起（点 chip 后 AX 会重建一拍，先 settle 再断言）
+    do: settle
+    expect:
+      - label: 浮层已收起（只读档的释义退场；chip 自身只带当前档，读不到这一行）
+        ax: { not: "读自动放行；写操作都先问你" }
+      - label: composer 仍在位（正观测：pane 没有被误收，后续注入有落点）
+        ax: { has: "问点什么" }
+  - name: 点 composer 建立落点（浮层万一仍在场，这一下也走「浮层外点击」的关闭路径）
+    do: clickInNode
+    target: { role: AXTextArea, name: "问点什么" }
+  - name: 等界面稳定（浮层收起 / 焦点落定后再注入）
+    do: settle
 
   - name: 第二条提问（执行形态在完全访问档）
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|tighten" }
+    # 注入前后都要能命中：空框读屏名 = 占位文案「问点什么」，非空 = 内容（这里注入的是 pre）
+    target: { role: AXTextArea, name: "问点什么|pre" }
     text: "pre"
   - name: 发送
     do: key
@@ -199,8 +213,21 @@ change `readonly-allowlist-tightening-oct23` 的三条用户可见行为，对�
   折叠，行是否进 AX 树与终态渲染无关）。`/tmp/lumir-h231-*` 因此不会被创建。
 - **`rg --pre` 指向不存在的脚本**：即便误放行也只会让 rg 报错；本段判的是「完全访问档是否仍出卡」，
   拒绝后不可能执行。
-- **批次说明**：本场景新增时真机段挂起（批次约定），首次跑批以现场为准；失败项按实际形态修场景
-  或修实现，不静默放宽断言。
+- **关浮层不用 Esc（2026-10-24 真机实证）**：选中档位后焦点落在权限浮层的按钮上，此时
+  `do: key { key: escape }` 会落到原生 `cancelOperation` → 关窗请求，整个 app 退出（AX 树随即
+  空掉，后续步骤全红）。两次独立复跑同形；AppKit 日志为 `windowShouldClose: prevented close`
+  后紧接 `WebPageProxy::close` 与进程退出；app.log 无 panic、同刻无崩溃报告。归因与现场见
+  finding `20261024-worker-archive-rmachine-oct24-bug-harness-esc-app.md`（产品面，单列处置）。
+  场景因此改用「再点一次权限 chip」这条既有开合路径（与 229 同一处置）：浮层收起与 composer
+  在位各有一条正/负判据，不是放宽断言。**Esc 收浮层这条路径因此不在本场景覆盖**；在缺陷修复前
+  MUST NOT 把它加回来。
+- **第二条提问的 target 要覆盖注入后状态**（2026-10-24 真机实证）：`typeInNode` 的 `target.name`
+  在注入前后都会被解析，`问点什么|tighten` 在注入 `pre` 之后两个分支都不命中（空框读屏名变了），
+  动作会在「回读目标消失」处判红。现写 `问点什么|pre`。
+- **真机执行记录**：初跑两次在第二条提问前被上述 Esc 路径挡下（保留现场
+  `.local/acceptance/2026-10-24-m711-flake-r1/231-harness-readonly-write-forms/`）；改用 chip
+  关闭并修正 target 后，2026-10-24 1/1 PASS（32 断言，0 FAIL，证据
+  `.local/acceptance/2026-10-24-m711/231-harness-readonly-write-forms/`）。
 
 ## 环境与副作用
 
