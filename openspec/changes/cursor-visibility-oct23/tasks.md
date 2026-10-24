@@ -144,11 +144,12 @@
 - [x] 4.8 信息卫生：新增 fixture / 截图 / 文案 MUST NOT 出现真实 vault 内容；改动面做一次
       text 级 grep 清扫（含 `cm-lp-frontmatter-selected`、`selected` 残留）
       ——fixture 全合成（`示例笔记` / `示例` / `已确认` / `正文首行`）；无真实 vault 路径或人名。
-- [ ] 4.9 真机 dogfood（Alex 手感项）：`pnpm tauri dev` 起真实 app，打开带 frontmatter 的
+- [x] 4.9 真机 dogfood（Alex 手感项）：`pnpm tauri dev` 起真实 app，打开带 frontmatter 的
       合成文档，逐项过——点击 properties 落点是否大致在点击行、编辑 YAML 期间标题让位是否
       可接受、↑ 进入 YAML 是否自然、2px + 1.2s 闪烁光标在三主题的观感（是否「一眼扫到」）、
       eink 下闪烁的残影 / 刺眼程度
-      ——归 Alex（手感项，agent 不代判）。
+      ——归 Alex（手感项，agent 不代判）。2026-10-24 节点 2 一并确认（Alex 原话「第一组和
+      第二组都可以归档了。」），按批准核销。
 
 ## 5. 改裁：恢复光标闪烁（2026-10-24，Alex 反馈 #6）
 

@@ -8,7 +8,7 @@
 > 节点 1（提案评审）：**Alex 已点头立项**（2026-10-24 对 finding 立项请示的原话「安排」；finding 全文见
 > `.tower/comms/findings/20261023-worker-proposal-readonly-allow-vuln-vault-patch-git-config-hidden-patch-git.md`）。
 > 本 proposal 按该裁决起草，无待裁裁决点。
-> 节点 2（归档评审）：实现完成后填写。
+> 节点 2（归档评审）：**通过**（2026-10-24 Alex 原话：「第一组和第二组都可以归档了。」）。
 
 ## Why
 
