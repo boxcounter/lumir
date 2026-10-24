@@ -56,11 +56,14 @@
 - [x] 2.6 启动面内含「打开 vault」入口，回调复用 `tree.showEmpty` 的 `onOpenVault` 与 `loadVault` 的 dirty
       守卫路径（不新开第二条打开链路）—— `setOpenHandler(() => requestAddVault())`（同一 dirty 前置门 +
       目录选择器）；`startup-restore.spec.ts` 第 4 条经它走完整让位链路
-- [ ] 2.7 标题栏占位带带 `data-tauri-drag-region`：启动态期间窗口可拖动；启动面容器不挂 `mousedown` /
+- [x] 2.7 标题栏占位带带 `data-tauri-drag-region`：启动态期间窗口可拖动；启动面容器不挂 `mousedown` /
       `preventDefault`（REVIEW.md『标题栏 mousedown preventDefault 打断拖拽』条），真机拖一次确认
       —— 结构判据已落（视觉场景断言属性在；容器零 `mousedown`）；**真机拖一次未做**：就绪门之前没有可
       执行步骤的通道（启动态在步骤开跑时必然已撤下，见 `scripts/acceptance/README.md` 的「已知边界」），
       留作 Alex 真机手感项
+      —— 2026-10-24 结项：Alex 原话「启动太快了，我人工测不了，不重要了，过。」。通过边界 = 真机拖窗
+      确认**判定不重要、不再补做**；结构判据（属性在场 + 容器零 `mousedown` / `preventDefault`）保持，
+      拖拽区与真实壳同源，不另立判据；本 change 随后由 M714 归档
 
 ## 3. 撤下与让位
 
