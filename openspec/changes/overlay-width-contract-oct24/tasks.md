@@ -69,10 +69,10 @@
 
 - [x] 8.1 `node tests/unit/run.mjs` + `npx tsc --noEmit`（根 / 单测 / 视觉三份 tsconfig）
 - [x] 8.2 `scripts/gate.sh quick`（照抄 `GATE RESULT` 与退出码）
-- [ ] 8.3 `scripts/gate.sh visual`（同上；像素层只看本地）
+- [x] 8.3 `scripts/gate.sh visual`（同上；像素层只看本地）
 - [x] 8.4 `bash scripts/docs-check.sh` / `npx openspec validate --all --strict`
 - [x] 8.5 真机跑 231 / 232，证据落 `.local/acceptance/`
-- [ ] 8.6 证据与完工报告对账后提交（source only），TowerComplete
+- [x] 8.6 证据与完工报告对账后提交（source only），TowerComplete
 
 ## 9. 归档（节点 2）
 
