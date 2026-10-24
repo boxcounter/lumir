@@ -386,9 +386,9 @@ change `ignore-tiers-config` 与 `ignore-tiers-map` 修订。本场景是它的*
   （`[".gitignore", ".git/info/exclude"]`）；套件的 `config:` 白名单不为它新增键，配置项语义
   （空列表 / 空地图 / 不存在跳过 / 非法项忽略 / 生效时点）由 `src-tauri` 的单测覆盖。
 - **本场景往验收 vault 的根写一份 `.gitignore`（用户规则探针）**：`.git` 与 `.local` /
-  `.excluded-dir` 都是目录，会被下一次 `resetVault` 连根清掉；`.gitignore` 是文件，不受那次清理
-  覆盖，会留到后面的场景（与既有场景 46 留下的那份同类，且残留内容是惰性的——它声明的目录届时
-  都不存在）。这条残留已记进 `docs/backlog.md`（验收 vault 根的非 md 残留没被清理）。
+  `.excluded-dir` 都是目录，`.gitignore` 是文件——M489 起 `resetVault` 清根下**全部**条目（含文件），
+  下一次重置会把它们一起清掉；本场景依赖的 fixture 由 `run.mjs` 在起 app 前重拷（口径见
+  `scripts/acceptance/README.md` 的「运行环境是隔离的」表）。
 - **不进 CI（v0）**：真机套件的既有口径。
 
 ## 环境与副作用

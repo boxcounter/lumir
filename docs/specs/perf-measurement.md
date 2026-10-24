@@ -148,12 +148,12 @@
 - **进程归属**：WKWebView 的 `com.apple.WebKit.*` XPC 进程由 launchd 托管（ppid=1），不出现在 app 的 ppid 子树里。归因规则 = app 的 ppid 子孙进程 ∪ （当前 `com.apple.WebKit.*` 进程 − 启动前的基线快照）。CI runner 为独占 VM，测量窗口内无其他 WebKit 消费者，差集归因无串扰；本地运行窗口内若恰好有其他 app 打开 webview 会有少量虚计（虚高方向，偏保守，可接受）。
 - **"常驻"（settle 条件）**：ready 信号出现后 idle 10 秒（无输入、无窗口操作），随后进入采样窗口。
 - **口径缺陷声明**：RSS 含 shared pages，多进程合计会重复计数共享区，读数系统性偏高（虚高方向，即偏保守）；`vmmap -summary` 的 Physical footprint 是更准的口径，但单进程采样耗时数秒、不适合 CI 高频采样。校准期若发现 RSS 口径把阈值顶死，允许以 OpenSpec 循环将口径修订为 phys_footprint——这属于测量方法学修订，不属于 ADR 0002 的一次性数字校准。
-- **CI 门禁阈值（2026-09-18 M174 提阈为 250MB）**：`tests/perf/thresholds.json` 的 `resident-memory.threshold` = **250MB**。依据：2026-09-16~18 抽样 9 次 master perf run，该项 **9/9 确定性超阈**、读数 206.50–215.28MB（非抖动；另见 backlog「记录在案」的「dogfood 性能专项」条——其中的「内存合同存量超标」记 2026-09-06 读数 218–222MB），而 2026-09-05 校准实测约 110MB——稳态相对校准值翻了一倍。250MB 相对实测最高读数 215.28MB 留 ≥16% 余量（稳态再涨 16% 即报警）。
+- **CI 门禁阈值（2026-09-18 M174 提阈为 250MB）**：`tests/perf/thresholds.json` 的 `resident-memory.threshold` = **250MB**。依据：2026-09-16~18 抽样 9 次 master perf run，该项 **9/9 确定性超阈**、读数 206.50–215.28MB（非抖动；另见 backlog「承接残项」的「dogfood 性能专项」条——其中的「内存合同存量超标」记 2026-09-06 读数 218–222MB），而 2026-09-05 校准实测约 110MB——稳态相对校准值翻了一倍。250MB 相对实测最高读数 215.28MB 留 ≥16% 余量（稳态再涨 16% 即报警）。
 - **提阈的性质（如实标注，勿混同于本 spec 的其他口径修正）**：这是改到了 ADR 0002 §6 的**数字之一**（常驻内存 200MB），不是「只改 CI 判据、不动合同值」那一类（对照总约定「性质声明（2026-09-18 M174）」）。它按 Alex 2026-09-18 的裁决落地，**不占用** 2026-09-05 的一次性校准额度（未在标准化环境重新测量），但也**不解除**「稳态为何翻倍」这个产品问题——提阈只让 CI 重新可用；归因与治理（或按上条改用 phys_footprint 口径）是独立议题。artifact 的 `contract` 字段仍记 200MB（ADR 合同值），CI 实际使用的门禁阈值记在 `.local/perf/gate-status.json` 的 `threshold` 字段；ADR 0002 §6 的文本修订登记为 follow-up。
 
 ### 工具链
 
-- `scripts/perf/memory.mjs`：spawn release 二进制，等 ready（读 stdout 前缀行），idle 10s 后每 2s 采样一次。每次采样用 `ps -axo pid=,ppid=,rss=,comm=` 取全量进程表，按上条归因规则求 RSS 合计。采样结束后 kill app 主进程（已验证 WebKit XPC 进程随主进程退出）。
+- `scripts/perf/memory.mjs`：spawn release 二进制，等 ready（读 stdout 前缀行），idle 10s 后每 2s 采样一次。每次采样用 `ps -axo pid=,ppid=,rss=,comm=` 取全量进程表，按上条归因规则求 RSS 合计。采样结束后 kill app 主进程（已验证 WebKit XPC 进程随主进程退出）。**非独占主机上 pid 差集归因不可靠**：窗口内别的 app 拉起的 WebKit helper 会整段进差集，读数虚高（实测一次 409.7MB）；本地读数只作参考，门禁读数以独占 CI runner 为准。
 
 ### 采样口径
 

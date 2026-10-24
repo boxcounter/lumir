@@ -37,6 +37,6 @@ steps:
 ---
 
 说明：配置走隔离的 `XDG_CONFIG_HOME`，绝不动用户的 `~/.config/lumir`；`keys` 表的形状校验在
-`src-tauri/src/config.rs`，命令 id 合法性由前端键位层判定（未知命令只进 console，无 UI 出口，
-backlog 记录在案）。注意：解绑 ⌃ 系键后 macOS 原生文本系统可能接手（如 ⌃K →
-`deleteToEndOfLine:`）——这是「解绑 ≠ 关闭能力」的已知口径，本场景只验 ⌘S/⌃S 这一对。
+`src-tauri/src/config.rs`，命令 id 合法性由前端键位层判定（未知命令只进 console，无 UI 出口——
+现行口径见 README 的「已知边界」）。注意：解绑 ⌃ 系键后 macOS 原生文本系统可能接手（如 ⌃K →
+`deleteToEndOfLine:`）——这是「解绑 ≠ 关闭能力」的已知口径（`openspec/specs/keymap-commands/spec.md`），本场景只验 ⌘S/⌃S 这一对。

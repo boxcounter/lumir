@@ -457,7 +457,7 @@ hairline 边缘 + bg 色阶三者各司其职，不靠堆叠模糊半径。
 仍在册未收口的（同一机制、同一批「in-flow 底色盖住负 z-index 选区层」）：**callout 行底色**
 （含族 tint）、**frontmatter 区**、**code 模式的变量绑定底纹**（`theme.ts` 的 `.cm-lp-code-binding`）
 ——三处与药丸同机制，但各自的选中态语义要先定（callout 行在选区内是整行染色还是随带？），
-未列入本版（backlog「批次报告索引」的 M291 条 + finding
+未列入本版（backlog「待修 findings」的 M291 `#check` 条 + finding
 `20260928-worker-selection-contrast-m291-bug-in-flow-code-callout-frontmatter`）。
 
 ### 选中态药丸（v1.6 增补，2026-09-29，M295）

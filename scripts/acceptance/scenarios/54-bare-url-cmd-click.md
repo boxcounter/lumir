@@ -210,9 +210,8 @@ Alex 原话（2026-09-27）：「普通链接（不是 markdown 标准语法 [ti
 
 ## 已知边界（如实登记）
 
-- **⌘-Click 在真机上不可表达**：套件的 `click` 动作不支持修饰键（`docs/backlog.md` 的既有条目），
-  因此鼠标路径由 chromium 场景覆盖（合成 `mousedown` + `metaKey`），本场景只能验 **⌘⏎**。
-  这不是本 change 引入的限制。
+- **⌘-Click**：`click` 动作自 M379 起支持 `target.modifiers`（见 README 的动作表），真机已可表达；
+  本场景仍只验 **⌘⏎**，鼠标路径由 chromium 场景覆盖（合成 `mousedown` + `metaKey`）。
 - **引用点仍是半覆盖**：`[正文][ref]` / `[ref]` 这类引用点**不可点**（lezer 不把定义处的 URL 挂到
   引用点），本 change 只让定义行那一侧的 URL 可点。另立 change 与否由 Alex 裁决。
 - **无 scheme 的字面 URL 保持原文**：`www.example.invalid` / 裸邮箱不装饰也不激活——它们没有

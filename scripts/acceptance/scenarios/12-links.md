@@ -258,9 +258,8 @@ steps:
   （同日线同一个 JSONL），里面可能有**上一次 run** 落下的事件。因此它不独立成立——与同步骤的
   正向/负向 UI 断言联合构成判定。真机上每轮全量只跑一次本场景，风险可接受；人工核对可直接
   `grep '"category":"asset"' .local/acceptance/env/lumir/logs/*.jsonl`。
-- **⌘-Click**：**本套件无法表达**。`click` 动作不支持修饰键（`lib/execute.mjs` 的 click 只有
-  target/count）——给 click 加修饰键是套件能力改造（已投 finding，记进 `docs/backlog.md`）。
-  因此该路径由视觉场景 `tests/visual/scenes/render-link.spec.ts` 覆盖（stub 记录
+- **⌘-Click**：`click` 动作自 M379 起支持 `target.modifiers`（见 README 的动作表），真机已可表达；
+  本场景仍只验 **⌘⏎**，鼠标路径由视觉场景 `tests/visual/scenes/render-link.spec.ts` 覆盖（stub 记录
   `open_external_url` / `link_open_path` 的调用参数，断言开的是哪个目标且不真开）。
 
 ## 环境与副作用

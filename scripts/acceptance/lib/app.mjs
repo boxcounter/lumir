@@ -195,7 +195,7 @@ export const SCENARIO_CONFIG_KEYS = [
   // 不在此保留别名：execute.mjs 的 REMOVED_CONFIG_KEYS 对它们出现即报错（静默丢弃正是 finding
   // 20261018-worker-m579 报告的现场）。
   "sessionNaming",
-  // `[editor]` 表整表透传（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）：snake_case 键写进 `editor` 表（`writeConfig`
+  // `[editor]` 表整表透传（M379；早期 backlog「验收套件表达力缺口」条，原文见 git 历史，现行口径见 README 的 `configWrite` 条）：snake_case 键写进 `editor` 表（`writeConfig`
   // 的同名参数），给「新增的 editor 配置项」构造**启动口径**用——不必每加一个键就回来改套件。
   // 形状校验见 execute.mjs 的 checkScenario（非表即报，避免静默丢半张表）。
   "editor",
@@ -228,7 +228,7 @@ export async function writeConfig({
   // 界面语言（M282，change ui-language-i18n）：与 theme / contentWidth 同形，缺省沿用当前值。
   language = undefined,
   keys = undefined,
-  // `[editor]` 表**整表透传**（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）：snake_case 键原样并入 `editor` 表，写在具名
+  // `[editor]` 表**整表透传**（M379；早期 backlog「验收套件表达力缺口」条，原文见 git 历史，现行口径见 README 的 `configWrite` 条）：snake_case 键原样并入 `editor` 表，写在具名
   // 参数**之前**——具名参数（mode / line_wrap / …）仍然优先，显式值不会被这张表吃掉。
   // 用途：场景 front-matter 的 `config: { editor: {…} }` 与 `configWrite` 动作的 `editor:` 都走它，
   // 于是「M180 这类新增的 editor 配置项」不必回来改套件就能构造启动口径。

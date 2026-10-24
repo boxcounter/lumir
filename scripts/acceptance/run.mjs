@@ -143,7 +143,7 @@ if (args.includes("--check")) {
   process.exit(0);
 }
 if (args.includes("--list")) {
-  for (const s of all) log(`${s.id}\t（backlog 项 ${s.item}）\t${s.title}`);
+  for (const s of all) log(`${s.id}\t（验收项 ${s.item}）\t${s.title}`);
   process.exit(0);
 }
 const selected = filters.length ? all.filter((s) => filters.some((f) => s.id.startsWith(f) || String(s.item) === f)) : all;
@@ -484,7 +484,7 @@ async function main() {
   let invalidCount = 0;
   for (const scenario of selected) {
     const t0 = Date.now();
-    log(`▶ ${scenario.id}（backlog 项 ${scenario.item}）${scenario.title}`);
+    log(`▶ ${scenario.id}（验收项 ${scenario.item}）${scenario.title}`);
     let fgNote = "";
     let out;
     // 本场景启动是否有会话恢复段（M516）：决定两次启动（首启 / `restart`）要不要先等恢复跑完
@@ -636,8 +636,8 @@ async function main() {
       // 基建错误（app 起不来 / 前端未就绪 / KimiCU AX 服务退化 / 动作内部的重启起不来）与产品
       // 判红分开表达：前者整场标 INVALID、整轮退出码升到 2（本次读数不可用于判产品缺陷，请复跑），
       // 后者照旧 FAIL（退出码 1）。混在一起时复盘只能靠人读步骤形态区分——M281 实证（finding
-      // `.tower/comms/findings/20260928-worker-impl-goto-line-c-improve-0-1-pass-1.md`，本批
-      // 的退出码分档见 backlog「批次报告索引」的 M282 遗留条）。
+      // `.tower/comms/findings/20260928-worker-impl-goto-line-c-improve-0-1-pass-1.md`，退出码
+      // 三档的现行口径见 README 开头「退出码」一节；M282 的残留尾巴在 backlog `#hygiene` 机械收尾组）。
       if (setupPhase || e instanceof InfraError) {
         invalidCount += 1;
         log(`  ⚠ 运行环境无效（非产品判红，请复跑）：${e.message}`);
@@ -677,7 +677,7 @@ async function main() {
 
 /**
  * 场景级基建错误的收尾（M379）：保证该场景仍有证据目录，且 `status.txt` 写成 `INVALID`
- * ——与产品判红的 `FAIL` 在目录里就能分开 grep（backlog M281 条要求两者可区分）。
+ * ——与产品判红的 `FAIL` 在目录里就能分开 grep（README 的「退出码」三档要求两者可区分）。
  *
  * 两种到达路径：① 基建阶段就抛（这时场景目录还没建，由这里补建）；② 场景跑了一半抛
  * InfraError（runScenario 已建目录、已记过一条 `[运行环境无效]`，这里只补终态，**不重开目录**

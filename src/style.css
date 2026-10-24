@@ -1764,7 +1764,7 @@ body {
   flex-direction: column;
   width: 100%;
   /* 键位面板宽：**与正文栏宽 `--layout-doc-measure` 无关**，是 S15/S16 的有意偏离值
-     （680px 三列；定稿是 440px 两列，见 docs/backlog.md 的「记录在案」）。
+     （680px 三列；定稿是 440px 两列，见 docs/specs/standing-decisions.md 的 S15/S16 条）。
      `rg 680` 清扫正文栏宽时不要动这一条。 */
   max-width: 680px;
   max-height: 100%;

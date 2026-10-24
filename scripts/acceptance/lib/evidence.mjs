@@ -17,12 +17,12 @@ export class Evidence {
     this.axSeq = 0;
     /** 显式终态（M379）：`INVALID` = 本次运行无效（基建错误，见 util.mjs 的 InfraError）。
      *  设了它就**压过**按失败项推出来的 PASS/FAIL——`status.txt` 是复盘时区分「产品判红」与
-     *  「这次白跑」的唯一机器可读入口（backlog M281 条要求两者分开表达）。 */
+     *  「这次白跑」的唯一机器可读入口（README 的「退出码」三档要求两者分开表达）。 */
     this.statusOverride = null;
   }
 
   /**
-   * 场景证据目录**整目录重建**（M379，backlog M182 finding）：`ax/` 与 `shots/` 早先只
+   * 场景证据目录**整目录重建**（M379；M182 finding，现行口径见 README「证据布局」）：`ax/` 与 `shots/` 早先只
    * `mkdirp`——同一天重复跑同一场景（迭代调试的常态）时序号重新计，旧文件被覆盖一半、留下一半，
    * 复盘时会把上一轮的 dump 当本轮结论（REVIEW.md 「读不到当成空 / 证据没落盘」条同族）。整目录清掉之后，一条不变式
    * 成立：**一个场景目录里的产物只属于一次 run**（README「证据布局」同条）。
@@ -94,8 +94,8 @@ function safe(s) {
 }
 
 /**
- * 写索引（`summary.md` / `results.json`）：**按场景 id 增量合并**（M379，backlog M254/M256
- * 现场）——同一天里跑多次（单场景迭代、多 mission 共用同一日期目录）是常态，早先每次 run 整份
+ * 写索引（`summary.md` / `results.json`）：**按场景 id 增量合并**（M379；M254 / M256 现场，
+ * 现行口径见 README「证据布局」与 `writeSummary`）——同一天里跑多次（单场景迭代、多 mission 共用同一日期目录）是常态，早先每次 run 整份
  * 重写，索引只反映最后一次 run，与磁盘上仍在的场景目录对不上（M256 的全量批把同一天早先三个
  * mission 的场景目录整个换掉，索引同样只剩本批）。
  *

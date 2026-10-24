@@ -584,7 +584,8 @@ export async function injectClickWithClickState(pid, point, { mode = 2 } = {}) {
  *
  *  为什么必须有它：KimiCU 的 `click` 没有修饰键参数（工具 schema 实测只有
  *  button/mouse_button/count/hold_ms），⌘-Click 这类路径（跟随链接）在真机上因此无法触发
- * （backlog「`click` 不支持修饰键」的 M144 现场：该路径只能退到 chromium 层）。
+ * （M144 现场；早期 backlog「`click` 不支持修饰键」条，原文见 git 历史；现行能力见 README 的
+ * `click.modifiers`：该路径在套件内可直接验，chromium 层不再是唯一判据）。
  *
  *  `point` 是 **Quartz 全局屏幕坐标**（与 injectClickWithClickState 同口径，换算由调用方做）；
  *  会移动真实光标、要求目标窗口在前台。`modifiers` 是别名集合（meta/cmd/control/ctrl/shift/

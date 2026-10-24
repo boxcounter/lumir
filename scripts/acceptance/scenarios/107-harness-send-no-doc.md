@@ -1,6 +1,6 @@
 ---
-# M398 追加（Alex 2026-10-09 下午裁决「修」）：backlog「不打开任何文件时 harness 发送直接失败：
-# context_json 传了 null」的验收防线。该状态下 activeSession().path 为 undefined ⇒ 前端组不出
+# M398 追加（Alex 2026-10-09 下午裁决「修」）：早期 backlog「不打开任何文件时 harness 发送直接失败：
+# context_json 传了 null」条（原文见 git 历史）的验收防线。该状态下 activeSession().path 为 undefined ⇒ 前端组不出
 # 上下文块，修复前给 harness_send 传 null（后端参数 string）→ `invalid type: null, expected a
 # string` 立刻报红。修复后无文档时传空串，后端 parse_context 走默认块（无上下文纯对话成立）。
 id: "107-harness-send-no-doc"
@@ -70,7 +70,7 @@ steps:
 
 ## 本场景在验什么
 
-backlog「不打开任何文件时 harness 发送直接失败：`context_json` 传了 null」（tower 复现期实测）：
+早期 backlog「不打开任何文件时 harness 发送直接失败：`context_json` 传了 null」条（原文见 git 历史；tower 复现期实测）：
 vault 里一个文件都没打开时——面板上下文行显示「上下文：无（未打开文件）」，UI 明示这是**合法状态**
 ——发消息立刻报红 `发送失败：invalid args 'context_json' for command 'harness_send': invalid type:
 null, expected a string`。前端在无上下文时给 `harness_send` 传了 null，而后端参数是 string。

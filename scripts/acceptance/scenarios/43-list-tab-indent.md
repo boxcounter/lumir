@@ -427,7 +427,7 @@ M240 那轮登记的红是**通道**问题（`Tab` 不落地，已由 M249 改�
   自身写盘的判据从「保存进行中」（`saving.has(path)`）改为「磁盘 revision == 会话已知基准」，
   并去掉它只作用于 clean 分支的限制，读取失败按「不是回声」降级。同时该竞态的高频触发面随自动保存
   移除一并消失（写盘只剩显式动作）。判据面上的护栏 `ax: { not: "检测到外部修改" }` **保留**——它
-  现在是常规判据，不再是绕窗口的权宜（detail 见 `docs/backlog.md` 的场景 43 条与
+  现在是常规判据，不再是绕窗口的权宜（detail 见 `scripts/acceptance/README.md` 的「Tab / Shift-Tab 不可达」条与
   `tests/unit/save-controller.test.ts` 的两条回声用例）。
 
 ## 已知边界
