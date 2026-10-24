@@ -5,8 +5,11 @@
 - 角色: Alex Lee（反馈 / 裁决），AI agent（起草）
 
 > 评审记录
-> 节点 1（提案评审）：**来源是 Alex 2026-10-24 的现场反馈 #2 / #3 与 tower 立项的修复批**
->（M662；调查结论见 `.local/reports/quote-image-pipeline-oct24.md`，git 外）。tower 在真机
+> 节点 1（提案评审）：**来源 = Alex 2026-10-24 现场反馈 #2 / #3 原话**（回填自 mission M662
+> Context 逐字：「Quote to chat 真的支持从选中包含图片的片段吗？……另外，我发现这个会话的标题没有
+> 自动命名。」「当我点击图片的 引用时，报错：Unsupported clipboard image format:
+> image/svg+xml」）；tower 据此立项、同批实现，**无独立的提案评审回执**。
+>（调查结论见 `.local/reports/quote-image-pipeline-oct24.md`，git 外）。tower 在真机
 > JSONL 里补了一条关键证据：出事的 quote 会话**自动命名其实成功了**（有 `session_title`
 > 记录），所以 #2b 的缺陷不在命名链路，而是呈现层的回落口径。本 proposal 无待裁裁决点；
 > SVG 栅格化（survey 方案 C/E）属新能力，**不在本 change 范围**。

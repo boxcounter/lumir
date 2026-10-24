@@ -14,6 +14,34 @@
 - **体量红线 300 行**：全文超 300 行（Alex 2026-10-12 裁决，自 1000 下调）即触发一次结构清理，批次收尾检查一次（`wc -l docs/backlog.md`）。红线是闹钟不是删除规则：触发后若无核销/僵尸项可清，记一句「已查、无僵尸」即过，**不为压行数删活条目**（删除判据仍是核销/僵尸，不是行数本身）。
 - **引用 backlog 条目用主题关键词锚**（形如「backlog『内存合同存量超标』条」），MUST NOT 用编号或行号——编号会重排、行号每次改动都漂移（唯一例外：验收场景 front-matter 的 `item:` 字段指向「待真机验收」节的清单项，属套件机制，见该节）。
 
+## 归档跟踪队列（oct24 批 11 个 change，tower/agent 记账，不进待裁决区）
+
+口径 = `docs/process/openspec-workflow.md` 的「批次收尾 checklist（归档跟踪）」：每条一行、可客观核对。**本批没有一个 change 满足节点 2 的机器判据替代**（每个都有 ADDED / REMOVED 或实质改动的 MODIFIED，`openspec archive` 不会打 `Specs already in sync`），全部走 Alex 人肉节点 2。**「序 N」即归档顺序**：同 requirement 多 change 时后归档者整块替换前者，删增段数相等时对账门禁按位置配对判「改写」放行（`openspec-workflow.md` 已知边界），顺序只能靠人盯。序 2 / 3 / 6 的节点 1 记录本批只按可追溯的 Alex 原话回填（见各自 proposal 的评审记录），均无独立的提案评审回执，节点 2 一并看。
+
+**待 Alex 节点 2（tasks 与证据齐备）**
+
+- **序 1 · `cursor-visibility-oct23`**（M654/M661，36/37）：余 4.9 是 Alex 手感项（2px + 1.2s 闪烁在三主题 / eink 的观感，机器只证相位与宽度），随节点 2 一并确认。
+- **序 2 · `ui-polish-batch-oct24`**（M660，21/21）：**MUST 在序 3 之前**——它 MODIFIED `ui-design-system::阅读面横向滚动条`，序 3 把这条 REMOVED 后改名重写；反序时 docs-check 判 `modified-missing`。
+- **序 3 · `scrollbar-tiers-oct24`**（M663，19/19）：紧接序 2；D2（三档 + 原生 overlay 豁免白名单 + 右缘 12px 不变量）是 tower 裁决、Alex 可推翻，节点 2 一并确认。
+- **序 4 · `quote-card-composer-focus-oct24`**（M671，20/20）：无依赖。
+- **序 8 · `image-hover-quote-btn-oct24`**（M670，19/19）：无依赖；排在序 5 之后阅读更顺（新条引用 add-image-quote 的「图片引用钮」语义）。
+- **序 9 · `vault-and-session-removal`**（M646/M668，24/25）：无依赖；归档动作含 3.4（改 `openspec/specs/vault-workspace/spec.md:5` 的 capability 概览句，活跃期禁止提前改）。
+
+**需修 delta（改完才可进节点 2）**
+
+- **序 5 · `add-image-quote-to-chat`**（M633，32/32）：delta 仍把 `svg` 当「不支持的格式」示例，与序 7（svg 走成功路径、MUST NOT 失败留痕）直接相反——归档前就地改准（属对既有「采纳 A」裁决的文本对齐，非新意图）；节点 1 记录仍写「待 Alex 评审」，M633 mission 留有 Alex 2026-10-23 原话「change 提案都通过」可回填。**序 6 / 7 都排在它之后**。
+- **序 6 · `quote-pipeline-consistency-oct24`**（M662，35/35）：须在序 5 之后（链：5 → 6 → 7）。
+- **序 7 · `svg-image-quote-oct24`**（M666，26/26）：须在序 6 之后；与序 5 的文本矛盾见上条。
+
+**权限链阻塞（顺序 M649 → 序 10 → 序 11）**
+
+- **序 10 · `readonly-allowlist-tightening-oct23`**（M664，16/22）：6 项未勾（1.11 安全前提 / 2.3 证据布局 / 3.1 四者一致 / 3.2 顺序处置 / 3.3 finding 落账 / 4.4 真机），场景 231 从未跑过、无证据目录；归档前 MUST 把 MODIFIED 块重写为「master 原文 + M649 解包段 + M664 收紧段」，否则 M649 的解包段会被按「改写」配对静默抹掉而门禁不判。
+- **序 11 · `rg-zip-flags-dangerous-oct24`**（M672，11/11）：delta = 序 10 全文 + `-z` / `--search-zip` 两段改写，**必须紧接序 10**；反序时 `-z` 同样被「改写」配对静默抹掉。
+
+**待机械补账**：仅余序 5 的节点 1 记录回填（不在本批 mission 的 scope 内；证据 = M633 mission 记录的 Alex 2026-10-23 原话「change 提案都通过」）。
+
+**外部前置（不计入本批 11 项）**：`harness-permission-rules-oct23`（M649，33/36）须先归档——4.3 已至少被 229 真机 PASS（31 断言，2026-10-24T01:59Z）覆盖，是否足以勾选由 M649 属主按任务原文（「真机跑一遍套件」）裁定；6.2 是归档时改 Purpose。`add-harness-block-fullscreen`（✓ Complete）先归档可消掉序 2 的悬空引用（非硬约束）；`quick-open-file-oct23`（40/42）同理，其 delta 自注「归档顺序无关」；`semantic-selection-markdown-oct23`（1/29，节点 1 未过）不进队列。
+
 ## 待 Alex 裁决
 
 只收**价值取舍 / 产品语义**类（客观可核的题由 tower 裁并记录，见维护规则）。
