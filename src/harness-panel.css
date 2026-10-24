@@ -533,9 +533,16 @@
 /* 面板表格的**结构**（合并边框 / 边框 / 内边距 / 表头字重）挂在 `.lumir-hp-table` 类上，
    不挂 `.lumir-hp-body` 祖先链（M634）：全屏遮罩深克隆的是 `<table>` 本身，克隆脱离 body
    之后这些结构必须随元素走——否则遮罩里是一张无框表。字号仍留在 body 作用域：遮罩里有自己
-   的读数口径（`.lumir-table-fs-snapshot` 的 --editor-font-size），不搬面板的缩放档。 */
+   的读数口径（`.lumir-table-fs-snapshot` 的 --editor-font-size），不搬面板的缩放档。
+
+   固有宽（change harness-table-horizontal-scroll-oct24）：表按内容自然宽布局，单元格不因
+   栏宽不足折行；窄表贴合内容、宽表的溢出由 `.lumir-hp-table-scroll` 承载。这条声明**同时**
+   服务面板与全屏遮罩——全屏按自然尺寸呈现（spec「按自然尺寸 + 双向滚动」）与面板固有宽是
+   同一语义，因此只在基类写一份，不另写 `.lumir-table-fs-snapshot .lumir-hp-table` 副本
+   （REVIEW.md「同一语义两处真源」条）。 */
 .lumir-hp-table {
   border-collapse: collapse;
+  width: max-content;
 }
 .lumir-hp-table th,
 .lumir-hp-table td {
@@ -546,12 +553,21 @@
 .lumir-hp-table th {
   font-weight: var(--fw-semibold);
 }
-/* 全屏遮罩里按**自然尺寸**呈现（spec「按自然尺寸 + 双向滚动」）：表格是块级元素，不显式给
-   max-content 就会被壳宽压回、宽表折行——与 content pane 表格全屏（.cm-lp-table 的
-   inline-size: max-content）同一口径。 */
-.lumir-table-fs-snapshot .lumir-hp-table {
-  width: max-content;
+/* 表格的局部横滚容器（与正文 `.cm-lp-table-scroll` 同一份宽度合同）：块级、以包含块为
+   上限、只滚横向；纵向永不滚动（内容即表本体，高度恰好贴合），显式 hidden 同时避开
+   `overflow-x:auto` + `overflow-y:visible` 在 WKWebView 上的裁切疑点（M119）。
+   MUST NOT 改回给 `<table>` 直接加 overflow：表是 auto 表布局的尺寸主体，容器必须处在
+   表与正文列之间才能把溢出截在局部。MUST NOT 声明 scrollbar-gutter（M177 / M663 禁则）。
+   嵌套在 blockquote / list item 内时 `max-inline-size:100%` 随包含块收缩，不假设自己是
+   body 的直接子节点。滚动条归细条档（共用声明组在 src/style.css）。 */
+.lumir-hp-table-scroll {
+  display: block;
+  max-inline-size: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
 }
+
 .lumir-hp-link {
   color: var(--accent);
   text-decoration: underline;
@@ -631,7 +647,8 @@
 }
 /* 纵向节奏（M634）：块被 slot 包住后 `pre:first-child` / `table:last-child` 这类结构选择器
    对所有块都成立，块自己的 margin 不再能表达「消息首末块贴边」。因此块的 margin 在 slot 内
-   归零，由 slot 承担——规则值与上面 `.lumir-hp-body pre / table` 那条逐值相同（sp-2，首末贴 0）。 */
+   归零，由 slot 承担——规则值与上面 `.lumir-hp-body pre / table` 那条逐值相同（sp-2，首末贴 0）。
+   M703 起表格多一层横滚容器，归零链路跟着穿透 wrapper 与 wrapper 内的表本身。 */
 .lumir-hp-msg-assistant .lumir-hp-body .lumir-hp-block-slot {
   margin: var(--sp-2) 0;
 }
@@ -642,7 +659,8 @@
   margin-bottom: 0;
 }
 .lumir-hp-msg-assistant .lumir-hp-body .lumir-hp-block-slot > .lumir-hp-codeblock,
-.lumir-hp-msg-assistant .lumir-hp-body .lumir-hp-block-slot > .lumir-hp-table {
+.lumir-hp-msg-assistant .lumir-hp-body .lumir-hp-block-slot > .lumir-hp-table-scroll,
+.lumir-hp-msg-assistant .lumir-hp-body .lumir-hp-block-slot > .lumir-hp-table-scroll > .lumir-hp-table {
   margin: 0;
 }
 

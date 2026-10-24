@@ -1282,10 +1282,14 @@ body {
    代价（M663 实测）：自绘 ::-webkit-scrollbar 让容器在 WKWebView 里两条轴转占位经典条，
    横向 +4px 高度；这四个容器的纵向要么显式 hidden、要么内容即块本体（不产生纵向溢出），
    代价只落在横向。编辑器主滚动
-   `.cm-scroller` 因此**不在本组**（纵向必须留 overlay，见上）。 */
+   `.cm-scroller` 因此**不在本组**（纵向必须留 overlay，见上）。
+   M703（change harness-table-horizontal-scroll-oct24）：harness 对话表格的横滚容器
+   `.lumir-hp-table-scroll` 是横向单轴（纵向显式 hidden），按容器归细条档并进同一份声明组
+   ——它右缘 6px 的全屏钮在容器右上角、横向条只占底带，与正文 `.cm-lp-table-scroll` 同构。 */
 .lumir-hp-codeblock,
 .lumir-hp-diff,
 .lumir-hp-argv,
+.lumir-hp-table-scroll,
 .cm-lp-block-scroll,
 .cm-lp-table-scroll,
 .cm-lp-math-block,
@@ -1295,6 +1299,7 @@ body {
 .lumir-hp-codeblock::-webkit-scrollbar,
 .lumir-hp-diff::-webkit-scrollbar,
 .lumir-hp-argv::-webkit-scrollbar,
+.lumir-hp-table-scroll::-webkit-scrollbar,
 .cm-lp-block-scroll::-webkit-scrollbar,
 .cm-lp-table-scroll::-webkit-scrollbar,
 .cm-lp-math-block::-webkit-scrollbar,
@@ -1305,6 +1310,7 @@ body {
 .lumir-hp-codeblock::-webkit-scrollbar-thumb,
 .lumir-hp-diff::-webkit-scrollbar-thumb,
 .lumir-hp-argv::-webkit-scrollbar-thumb,
+.lumir-hp-table-scroll::-webkit-scrollbar-thumb,
 .cm-lp-block-scroll::-webkit-scrollbar-thumb,
 .cm-lp-table-scroll::-webkit-scrollbar-thumb,
 .cm-lp-math-block::-webkit-scrollbar-thumb,
@@ -1315,6 +1321,7 @@ body {
 .lumir-hp-codeblock::-webkit-scrollbar-track,
 .lumir-hp-diff::-webkit-scrollbar-track,
 .lumir-hp-argv::-webkit-scrollbar-track,
+.lumir-hp-table-scroll::-webkit-scrollbar-track,
 .cm-lp-block-scroll::-webkit-scrollbar-track,
 .cm-lp-table-scroll::-webkit-scrollbar-track,
 .cm-lp-math-block::-webkit-scrollbar-track,

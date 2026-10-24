@@ -3172,8 +3172,16 @@ function renderBlock(
       }
       if (thead.childElementCount > 0) table.append(thead);
       if (tbody.childElementCount > 0) table.append(tbody);
+      // 固有宽 + 局部横滚（change harness-table-horizontal-scroll-oct24）：表按内容自然宽布局，
+      // 超出正文栏的部分只在 wrapper 内滚。两半缺一不可——只包 wrapper 时表仍被 auto 表布局
+      // 压回（wrapper 永不溢出），只给表加 max-content 时溢出抬高整个 transcript 列。
+      // 结构必须是 slot > wrapper > table：slot（全屏钮的定位容器）在横滚容器之外，横滚时钮不动；
+      // 全屏入口仍收 table 本身，遮罩快照里因此不出现 wrapper 层。
+      const scroller = document.createElement("div");
+      scroller.className = "lumir-hp-table-scroll";
+      scroller.append(table);
       container.append(
-        blockSlot(table, "table", (trigger, slot) => {
+        blockSlot(scroller, "table", (trigger, slot) => {
           openers?.table(table, blockFullscreenLabel(slot, "table"), trigger);
         }),
       );
