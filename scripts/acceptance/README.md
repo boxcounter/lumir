@@ -121,7 +121,7 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 |---|---|---|
 | KimiCU 可用 | 二进制不存在即报错并给安装命令 | 驱动通道缺失时跑也是白跑 |
 | 磁盘水位 | `< 2G` 拒绝启动（可选显式绕过，见下） | 真机实例触发 cargo/vite 时 ENOSPC 硬失败（批次四实证） |
-| 同机已有 Lumir 实例 | 检出**安装版**（`*.app/Contents/MacOS/lumir`）或**残留的开发实例**（`target/debug/lumir`）即拒绝启动，消息给出 pid 与逐个 `kill` 的清除方法（退出码 2） | 在场的第二个实例会与套件实例共用同一份 AX / 前台归属（bundle flavour 的 bundle id 自 M622 起已独立，但前台 / AX 归属仍是全机共享资源），**静默**改变「前台焦点归谁」这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 「键盘注入丢键」条；2026-10-13 的复跑就是在这样的现场上跑的） |
+| 同机已有 Lumir 实例 | 检出**安装版**（`*.app/Contents/MacOS/lumir`）或**残留的开发实例**（`target/debug/lumir`）即拒绝启动，消息给出 pid 与清除指引（退出码 2）；挡住之后怎么处理按「被挡住的非在途实例：可代为正常退出」判归属，不要一律 `kill` | 在场的第二个实例会与套件实例共用同一份 AX / 前台归属（bundle flavour 的 bundle id 自 M622 起已独立，但前台 / AX 归属仍是全机共享资源），**静默**改变「前台焦点归谁」这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 「键盘注入丢键」条；2026-10-13 的复跑就是在这样的现场上跑的） |
 | 打包实例身份 | bundle flavour 下从产物 `Contents/Info.plist` 读 `CFBundleIdentifier`，必须等于 `com.lumir.app.acceptance`（≠ 产品 id `com.lumir.app`），否则拒绝启动（退出码 2） | 同 bundle id 的验收副本点通知会被 LaunchServices 解析到安装版（M619 的根因）；漏了构建期 `--config` 的产物在这里就红，不留假绿（见「实例 flavour」） |
 | 1420 端口 | 只报告占用情况 | 全机同一时刻只能有一个 `pnpm tauri dev`（vite strictPort 1420）；本套件走独立端口，但仍先看一眼同机负载 |
 | 跑批独占锁 | 需持锁的真跑批先 `mkdir` 抢 `/tmp/lumir-acceptance-rmachine.lock`；已被别人持有时拒绝启动（退出码 2） | 合成 vault 与 dev 端口都是**全机共享**的，光靠人工约定会漏——两条跑批错开启动就能互相 `resetVault`（见下节） |
@@ -253,6 +253,59 @@ dev 端口是**全机共享**的，`reclaimPort()` 只在两个 app 实例同时
 下一次跑批的**起跑自检**先挡（同机任何 Lumir 实例在场都拒跑并给出 pid，见上表「同机已有 Lumir
 实例」行）；清掉之后 `reclaimPort` 仍按老口径回收**本 worktree** 的残留、对别的 worktree 的按错因
 报错（不静默）。⇒ `--keep-app` 之后想再跑批，得先自己退出那个实例。
+
+### 被挡住的非在途实例：可代为正常退出（M689，Alex 2026-10-24 裁决）
+
+起跑自检（`assertNoForeignLumir`）会把同机任何 Lumir 实例都挡住（见上表「同机已有 Lumir 实例」行）。
+挡住之后按**实例归属**分三档处理，不要一律 `kill`：
+
+| 情形 | 做法 |
+|---|---|
+| **自己的实例**（本 worktree / 本任务起的，含 `--keep-app` 留下的） | 自己退出：⌘Q（或应用「退出」菜单），核实进程退出；退不掉再按自己的进程组 `kill -- -<pgid>`（口径见「已知边界」的清理条） |
+| **非在途任务的 dev 实例**（别的 worktree 的 `target/debug/lumir`、别的批漏清的实例） | **可代为正常退出**（Alex 2026-10-24 裁决）：⌘Q / 应用「退出」菜单，**禁止 SIGKILL**；随后核实进程退出，并在完工报告 / 消息里登记（pid、二进制路径、起于何时、归属判据） |
+| **归属无法确认 / 可能有人正在用 / 可能属于在途任务** | **停手问 Alex**（经 tower），不自行退出 |
+
+**「非在途」怎么判**：三样证据一起看，缺一样或互相矛盾就归入「归属无法确认」——
+
+1. **它在哪个 worktree**：dev 实例的命令行只有 `target/debug/lumir` 这一段，不含 worktree（Tauri CLI
+   以相对路径起，裸二进制同理；见「运行环境是隔离的」节末段）——用 `lsof -a -p <pid> -d cwd` 读它的
+   cwd，落在哪个 worktree 的目录树里（根或 `src-tauri/`）就是哪个起的；再确认那个 worktree 没有
+   在途任务（不确定就问 tower；`mtime` 只能当线索、不能当依据）。
+2. **起于何时**：`ps -axo pid=,etime=,command=` 的 `etime`——几分钟前刚起的更可能是别人正在跑的批。
+3. **有没有人在用它**：前台是不是它、有没有近期键鼠输入（有人正在 dogfood / 演示时，退出会打断人）；
+   本机是否正有别的验收批（`/tmp/lumir-acceptance-rmachine.lock` 里的 `pid` / `cwd`）。
+
+**怎么正常退出**：判据只看结果——app 走**自己的退出路径**退出、进程真的消失；通道自选：KimiCU 按
+pid 发 `cmd+q`，或先按 pid 取前台（`System Events` 的
+`set frontmost of first process whose unix id is <pid> to true`）再发 ⌘Q。**MUST NOT** 用
+`osascript -e 'tell application "Lumir" to quit'` 这类**按名字**的 Apple Event：dev 实例没有自己的
+bundle 身份，按名字解析会落到安装版（`docs/backlog.md`「工具链与环境」第 12 条已就 activate 记过同一
+机制），而且 Apple Event 直连 `terminate:`、**不经过 ⌘Q 那条菜单守卫**——dirty 时它照样退出，正好是
+「丢数据」的那条路（`src-tauri/src/lib.rs` 的退出守卫注释：`applicationWillTerminate` 不产生
+`ExitRequested`）。
+
+**核实退出**（别只看窗口消失）：`ps -p <pid> -o pid=,command=` 空输出，且同一条扫描里该二进制路径
+不再在场（与起跑自检同一判据 `lib/app.mjs` 的 `listLumirInstances()`，不另写一套）；顺带看一眼有没有
+残留的 `pnpm tauri dev` 祖先进程——正常情况它随 app 退出一起结束，仍在场就按「正常退出未完成」停手，
+不要顺手收它。重跑套件时 `assertNoForeignLumir` 会再核一遍：预检过了是最硬的核实。
+
+**异常边界（任一命中即停手问 Alex，不得二选一）**：
+
+- **退出被未保存修改挡住**：dirty 时 ⌘Q 会被产品的退出守卫拦下并显示「当前有未保存修改，无法退出；
+  请先保存（Cmd+S）」（copy D232），关标签 / 切 vault 还会出现「保存并关闭 / 放弃修改并关闭 / 取消」
+  与「保存并切换 / 放弃修改并切换 / 取消」三出口卡片（D92/D93 与 D109/D110）。**不得选择丢弃更改**
+  ——不点「放弃修改」两个出口；也不要代点「保存」（真实 vault 仍只读，不能替人写盘）。把界面留在
+  原样交给 Alex；
+- **归属无法确认**（上面三样证据拿不齐或互相矛盾）；
+- **正常退出失败**（无窗口可 ⌘Q、应用无响应、发了 ⌘Q 进程仍在）：不要用 SIGTERM / SIGKILL 补刀。
+
+三条都要求「停下来问」，不是「挑一个损失小的选项接着干」。真实 vault 仍**只读**——代为退出不是
+碰用户数据的入口。
+
+**安装版实例不在本节授权内**：`/Applications/Lumir.app` 这类打包实例按 `docs/backlog.md`「工具链与
+环境」第 15 条——空闲 ≥10 分钟且前台是别的 app 时才可优雅退出（Apple Event quit）并登记；活跃使用
+时先问 tower。它同样受「不得丢数据」约束：Apple Event 不经过退出守卫，拿不准 dirty 状态就先停手问
+Alex，别把「空闲」当成「没有未保存修改」。
 
 ### 运行环境是隔离的（这些事一起保证可复现）
 
@@ -832,7 +885,9 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   命中用户的实例——同一个二进制路径，只有进程组不同（M164 实测：Alex 的 1420 会话连同它的 vite dev server
   一起退出）。套件自身就是这么隔离的：`findAppPid(pgid)` 只认 `launchApp` 起的那个进程组、`stopApp` 只对
   `-pgid` 发信号；手工清场照抄这个口径——先 `ps -o pid,pgid,command | grep target/debug/lumir` 找到自己的
-  pgid，再 `kill -- -<pgid>`（或按 pid 逐个 kill），不确定归属的就别动。
+  pgid，再 `kill -- -<pgid>`（或按 pid 逐个 kill），不确定归属的就别动。**被起跑自检挡住、又确认不属于
+  在途任务的 dev 实例走「被挡住的非在途实例：可代为正常退出」那一节（⌘Q，不用 kill）**：`kill` 只用于
+  自己起的进程组。
 - **无人值守批次要防休眠**（2026-09-18 M164 实测）：机器/显示休眠会让 app 窗口漂到屏幕外（实测
   `window_bounds y≈1076`，屏高只有 ~982pt），KimiCU 随即报
   「target WebArea did not acquire stable keyboard focus」，键盘注入整批不落地、场景里出现一串与产品无关的
