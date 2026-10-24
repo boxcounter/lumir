@@ -19,16 +19,16 @@ config:
     provider: mock
     fixture: "$fixtures/harness-mock-title-quote.json"
 steps:
+  - name: 抢前台并让窗口成为 key window（键盘注入 + 真实点击通道的前置；先做，避免它把编辑器焦点抢走）
+    do: focusWindow
+    retries: 4
+    click: true
+
   - name: 把光标放进编辑器第 1 行（键盘注入的前置）
     do: clickEditor
     expect:
       - label: 焦点落在编辑器正文里
         ax: { focused: "AXTextArea" }
-
-  - name: 抢前台并让窗口成为 key window（键盘注入 + 真实点击通道的前置）
-    do: focusWindow
-    retries: 4
-    click: true
 
   - name: 光标下移到第 3 行（标题行 + 空行之后）
     do: keys
