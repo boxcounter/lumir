@@ -52,3 +52,10 @@
 - [x] 6.1 SVG 栅格化 / SVG 源码按文本投递（survey 方案 C / E）：新能力，待 Alex 裁决；本 change 只保「失败可见、文案正确、格式判定一处」
 - [x] 6.2 扩格式白名单（gif 等）：无裁决不扩；表结构让扩格式只改一处
 - [x] 6.3 命名链路本身（prompt / 模型档 / 真机 163/167）：tower 真机证据表明命名成功，本 change 不碰 title 任务
+
+## 7. r1 评审处置（2026-10-24，verdict `p2-2items` / fix-then-merge）
+
+- [x] 7.1 **P2-1 状态行收口漏两条引用路径**：`insertQuoteCard`（文本摘录）与 `insertMessageQuoteCard`（消息摘录）各补 `applyQuoteFailureNotice(null)`——spec 写的是「存活到下一次引用」，这两条也是引用。视觉 `m633` 新增用例钉住：失败 → 状态行在场 → 文本摘录收口 → 再失败 → 消息摘录收口（判据有区分度，不是恒隐藏）。
+- [x] 7.2 **P2-2 `src/main.ts` 旧契约注释**：`insertQuotedImages` 的注释按新契约改准（失败项随结果数组返回 / 按调用点分码 D585 / 留痕是持久态 D586），**代码零改动**（scope 由 tower 限定到这三行注释）。
+- [x] 7.3 **rebase 解冲突**：本分支 rebase 到 master `4938aeb9`（含 M660/M661）。`文案-Copy.md` 三处冲突按「谁也别覆盖谁」解：①「编号规则」段取 M660 的措辞（「标签的只读图标与读屏名」）并接上本批 D585–D587 与末位 D587；②「分配记录」保留 M660 的 D578 退场记录 + 本批 M662 行；③「D 区间 → 归属文件」取 M660 的 D577 / D579（无 D578）并接上本批 D585 / D586–D587。`src/copy-data.ts` 自动合并干净（D578 退场 + D585–D587 并存）。
+- [x] 7.4 rebase 后复跑：`node tests/unit/run.mjs`（1280/0，含 deck↔表漂移门禁）、tsc root/unit/visual、`scripts/docs-check.sh`（32 份 delta / 27 条 MODIFIED / 355 段）、`openspec validate --all --strict`（46 items）、`acceptance --check`（227 场景）。Rust 源码本轮未动（rebase 干净合并、无冲突），按 tower 指示不占 cargo 锁。

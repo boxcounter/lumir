@@ -4873,6 +4873,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function insertMessageQuoteCard(card: MessageQuoteCard): void {
     const valid = createMessageQuoteCard(card); // role / 原文非空校验（取不到不得生成卡片）
     if (mountEl === null) deps.togglePane(); // 装配层开 pane 后焦点已落 composer
+    // 一次新的引用收口上一次引用的失败状态行（spec：读数存活到「下一次引用」——消息摘录也是
+    // 一次引用；r1 P2-1）。
+    applyQuoteFailureNotice(null);
     withModel((blocks) => {
       const sel = caretFromDom();
       const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
@@ -9896,6 +9899,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     insertQuoteCard(card: QuoteCard): void {
       const valid = createQuoteCard(card); // lines 非空校验（取不到行范围不得生成卡片）
       if (mountEl === null) deps.togglePane(); // 装配层开 pane 后焦点已落 composer
+      // 一次新的引用收口上一次引用的失败状态行（spec：读数存活到「下一次引用」——文本摘录
+      // 也是一次引用；r1 P2-1）。
+      applyQuoteFailureNotice(null);
       withModel((blocks) => {
         const sel = caretFromDom();
         const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;

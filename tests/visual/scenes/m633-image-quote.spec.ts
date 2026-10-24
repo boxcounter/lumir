@@ -254,6 +254,73 @@ test("不支持的格式：svg 引用在预检被拒——引用语境文案 + �
   expect((await attachmentReads(page)).filter((path) => path === LOGO)).toHaveLength(logoReadsBefore);
 });
 
+test("状态行的收口：文本摘录与消息摘录都是「下一次引用」（r1 P2-1）", async ({ page }) => {
+  await stubTauri(page, {
+    ...VAULT,
+    harnessImageFailures: {
+      "image/svg+xml": {
+        code: "attachment_type_unsupported",
+        message: "不支持的剪贴板图片格式",
+        params: { type: "image/svg+xml" },
+      },
+    },
+  });
+  await stubHarnessState(page);
+  // 本用例要一条 transcript 消息做「消息摘录」的收口判据：发送成功即可（不推进轮次）。
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: unknown) => unknown;
+    w.__TAURI_INTERNALS__.invoke = (cmd: string, args: unknown) =>
+      cmd === "harness_send" ? null : invoke(cmd, args);
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-image-quote.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+
+  // 先发一条消息：transcript 里有一条用户消息，供后面的消息摘录用。
+  await page.locator(".lumir-hp-composer").fill("上一轮的问题");
+  await page.locator(".lumir-hp-send").click();
+  await expect(page.locator(".lumir-hp-msg-user .lumir-hp-qtext")).toHaveText("上一轮的问题");
+
+  const note = page.locator(".lumir-hp-quote-note");
+  const logo = page.locator('.cm-lp-image img[alt*="logo.svg"]');
+  const triggerSvgQuote = async (): Promise<void> => {
+    await logo.scrollIntoViewIfNeeded();
+    await logo.hover();
+    await page.locator(".lumir-image-quote-trigger").last().click();
+    await expect(note).toBeVisible();
+    await expect(note).toContainText("1 张图片未能引用");
+  };
+
+  // 失败 → 状态行在场。
+  await triggerSvgQuote();
+
+  // 路径一：**文本摘录**（insertQuoteCard）收口。选区取一段纯文字（不含图片），走卡片路径。
+  await selectRange(page, "第一段文字", "第一段文字");
+  await page.locator(".editor-pane > .quote-gesture-btn").click();
+  await expect(page.locator(".lumir-hp-composer > .lumir-hp-qcard")).toHaveCount(1);
+  await expect(note).toBeHidden();
+
+  // 再失败一次 → 状态行重新在场（判据有区分度：不是一直隐藏）。
+  await triggerSvgQuote();
+
+  // 路径二：**消息摘录**（insertMessageQuoteCard）收口。
+  await page.evaluate(() => {
+    const el = document.querySelector(".lumir-hp-msg-user .lumir-hp-qtext");
+    if (!el) throw new Error("没有 transcript 用户消息");
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const selection = window.getSelection();
+    if (!selection) throw new Error("no selection");
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  await page.locator(".lumir-hp-transcript > .quote-gesture-btn").click();
+  await expect(page.locator(".lumir-hp-composer > .lumir-hp-msgquote")).toHaveCount(1);
+  await expect(note).toBeHidden();
+});
+
 /** 长图 fixture（600×2000）：它的右下水远在可视区之外——引用钮的钳制判据需要这个现场。 */
 const TALL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="2000" viewBox="0 0 600 2000"><rect width="600" height="2000" fill="#cfe0c8"/></svg>';
 const TALL_DOC = "# 长图\n\n![[tall.svg]]\n\n尾段。\n";
