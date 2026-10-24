@@ -86,8 +86,12 @@
       恢复后末条可见」的期望——语义不变（16 处分流保持原有「内容增长即贴底」（follow 态）与
       「恢复 / 发送 / 重开面板强制回底」）；`node scripts/acceptance/run.mjs --check` 通过
       （221 个场景，含 224）
-- [ ] 4.6 真机执行 4.3（需 tower 协调窗口），把证据落 `.local/acceptance/<日期>/` 并在报告里给
-      可 `ls` 的绝对路径——**本次未执行**，交 tower 排窗口
+- [x] 4.6 真机执行 4.3（需 tower 协调窗口），把证据落 `.local/acceptance/<日期>/` 并在报告里给
+      可 `ls` 的绝对路径——**已执行**（2026-10-24，M710 复核既有跑批）：`node scripts/acceptance/run.mjs 224`
+      → `结论：1/1 PASS`（19 断言 / 0 失败 / 26.3s，exit 0）；证据
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-24/224-harness-scroll-lock/`
+      （`steps.md` / `shots/` / `ax/` / `meta.json`）。断言覆盖：首片上屏、内容溢出、上滚后浮钮浮现、
+      流式收口期间钮始终在场（没有任何一次增量把视口拽回）、末片上屏后未读名在场、点钮退场并回底
 
 ## 5. 验证
 
@@ -103,7 +107,27 @@
 
 ## 6. 归档准备（节点 2）
 
-- [ ] 6.1 tasks 全部勾选或就地标注放弃原因；delta 与实现一致性逐条对账
+- [x] 6.1 tasks 全部勾选或就地标注放弃原因；delta 与实现一致性逐条对账
+      —— 2026-10-24（M710）对账：除 6.2 / 6.3 的「归档后」半步（归档动作本身，不是实现缺口）外全部
+      勾选或就地标注；delta 两条 requirement 与实现逐条对上——ADDED「transcript 的跟随滚动与回到底部」
+      = `src/harness-scroll-lock.ts`（`FOLLOW_ATTACH_PX = 6` / `FOLLOW_DETACH_PX = 16` 的双阈值滞回、
+      `contentGrew` 只排队不写、`contentReplaced`、白名单 `jumpToBottom` / `reset`）+ `src/harness-panel.ts`
+      的 16 处分流与 `ResizeObserver → viewportChanged()`（`:4180`）+ `src/harness-panel.css:326` 的
+      视口层与 `:357` 的 `.lumir-hp-jumpbottom`（`:376` 有 `[hidden]` 显式补条）；MODIFIED「错误呈现」
+      的「脱离态下重复错误不拽走视口」由 `contentReplaced()` 承担。判据面在场：单测
+      `tests/unit/harness-scroll-lock.test.ts`（含两条反向必红读数）、视觉
+      `tests/visual/scenes/m638-harness-scroll-lock.spec.ts`（5 条用例 + 反向必红 1702px 读数）、
+      真机 224（19 断言 PASS，见 4.6）。文案 D555 / D556 在 `src/copy-data.ts:1751-1752` 与
+      `文案-Copy.md:537-538` 两列同在。
 - [ ] 6.2 `node scripts/openspec-archive-check.mjs` 通过；归档后对 `<change-id>` 跑一次 `--archived`
+      —— **归档前半步已跑**（2026-10-24，M710）：门禁模式 `PASS`——该 delta 的**一条 MODIFIED**
+      （「错误呈现」）逐段对比 living spec 通过、无静默丢段；delta 另有**一条 ADDED**（「transcript
+      的跟随滚动与回到底部」，不在 MODIFIED 对账面，由 `validate --strict` 与归档并入承担）。
+      `--archived` 只能对已归档的 commit 跑，留给节点 2 归档后（动作记在
+      `docs/backlog.md` 的归档跟踪队列条目）。
 - [ ] 6.3 归档后核对 living spec 的 requirement 段落完整（MODIFIED 整块替换、ADDED 并入），并顺手
       核对本次两条文案的 deck 漂移门禁
+      —— **归档后步骤**：living spec 的 `harness/spec.md` 归档后才含「跟随滚动与回到底部」条，归档前
+      无从核对。文案 deck 漂移门禁本轮已跑：`node --experimental-strip-types --import
+      ./tests/unit/register.mjs --test tests/unit/copy.test.ts` → `pass 15 / fail 0`（含 D555 / D556
+      的取值门禁与两张表漂移对账）。
