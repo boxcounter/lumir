@@ -1,0 +1,1645 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>键位速查 · 提案原型（light）</title>
+<style>
+/* ============================================================
+   tokens（取值对齐 src/style.css 现行登记值；原型自包含）
+   ============================================================ */
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --fs-body: 13px; --fs-meta: 12px; --fs-label: 11px; --fs-micro: 10.5px;
+  --r4: 4px; --r6: 6px; --r8: 8px; --r10: 10px;
+  --entrybar-h: 30px;
+}
+:root, :root[data-theme="light"] {
+  --frame: #f4f4f1; --content-bg: #fdfdfc; --preview-bg: #ffffff;
+  --border: #e3e2dd; --border-soft: #edece7;
+  --text: #21201a; --text-2: #6e6c61; --text-3: #a9a79b;
+  --hover: rgba(0,0,0,0.038); --sel: #e8e7e1;
+  --accent: #3a5fcd; --accent-tint: #eef1fb;
+  --code-bg: #f2f1ec;
+  --shadow-raise: 0 4px 16px rgba(0,0,0,0.10);
+  --scrim: rgba(0,0,0,0.22);
+  --tl-close: #ff5f57; --tl-min: #febc2e; --tl-max: #28c840;
+}
+:root[data-theme="dark"] {
+  --frame: #1a1b1d; --content-bg: #222326; --preview-bg: #26272b;
+  --border: rgba(255,255,255,0.095); --border-soft: rgba(255,255,255,0.055);
+  --text: #e3e2db; --text-2: #9b9a91; --text-3: #62615b;
+  --hover: rgba(255,255,255,0.05); --sel: rgba(255,255,255,0.075);
+  --accent: #8ba3ef; --accent-tint: rgba(128,152,232,0.15);
+  --code-bg: rgba(255,255,255,0.05);
+  --shadow-raise: 0 4px 16px rgba(0,0,0,0.5);
+  --scrim: rgba(0,0,0,0.5);
+  --tl-close: #ff5f57; --tl-min: #febc2e; --tl-max: #28c840;
+}
+:root[data-theme="eink"] {
+  --frame: #ffffff; --content-bg: #ffffff; --preview-bg: #ffffff;
+  --border: #000000; --border-soft: #b9b9b9;
+  --text: #000000; --text-2: #3d3d3d; --text-3: #6e6e6e;
+  --hover: rgba(0,0,0,0.06); --sel: #b9b9b9;
+  --accent: #000000; --accent-tint: transparent;
+  --code-bg: #f0f0f0;
+  --shadow-raise: none;
+  --scrim: rgba(0,0,0,0.35);
+  --tl-close: #000; --tl-min: #000; --tl-max: #000;
+}
+
+/* ============================================================
+   base
+   ============================================================ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  font-family: var(--sans); font-size: var(--fs-body); color: var(--text); background: var(--frame);
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; overflow: hidden;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+b, strong { font-weight: 650; }
+.visually-hidden {
+  position: absolute !important; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ============================================================
+   原型入口示意条（原生菜单不在 webview 内，这条只作演示）
+   ============================================================ */
+#stage { display: flex; flex-direction: column; height: 100vh; }
+.entrybar {
+  flex: none; height: var(--entrybar-h); display: flex; align-items: center; gap: 14px;
+  padding: 0 14px; background: var(--frame); border-bottom: 1px dashed var(--border);
+}
+.entrybar-tag {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.03em; color: var(--text-3);
+  white-space: nowrap;
+}
+.menubar { display: flex; align-items: center; gap: 1px; margin-left: auto; }
+.menubar-app { font-size: 11px; font-weight: 650; color: var(--text); padding: 0 8px; }
+.menubar-item { font-size: 11px; color: var(--text-2); padding: 2px 7px; border-radius: var(--r4); }
+.menubar-item:hover { background: var(--hover); color: var(--text); }
+.menubar-item[disabled] { color: var(--text-3); cursor: default; }
+.menubar-item[disabled]:hover { background: none; }
+
+/* ============================================================
+   合成 app 背景（视觉语境；内容全为合成 fixture）
+   ============================================================ */
+.app { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--content-bg); }
+.titlebar {
+  flex: none; height: 42px; display: flex; align-items: center; gap: 16px; padding: 0 14px;
+  background: var(--frame); border-bottom: 1px solid var(--border);
+}
+.traffic { display: flex; gap: 8px; }
+.tl { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.tl-close { background: var(--tl-close); } .tl-min { background: var(--tl-min); } .tl-max { background: var(--tl-max); }
+.titlebar-name { font-size: 12px; font-weight: 650; color: var(--text); }
+.tabstrip { display: flex; gap: 2px; margin-left: 6px; }
+.tab { font-size: 12px; color: var(--text-2); padding: 4px 10px; border-radius: var(--r6); }
+.tab.is-active { color: var(--text); background: var(--preview-bg); box-shadow: inset 0 0 0 1px var(--border-soft); }
+.workarea { flex: 1; min-height: 0; display: flex; }
+.sidebar {
+  flex: none; width: 236px; background: var(--frame); border-right: 1px solid var(--border);
+  padding: 12px 8px; font-size: 12px; color: var(--text-2); overflow: auto;
+}
+.tree-head { font-size: 10.5px; letter-spacing: 0.08em; color: var(--text-3); padding: 0 8px 6px; }
+.tree-row { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: var(--r4); }
+.tree-row:hover { background: var(--hover); }
+.tree-row.is-active { background: var(--sel); color: var(--text); }
+.tree-dir { color: var(--text-3); }
+.tree-indent { padding-left: 22px; }
+.editor-pane { flex: 1; min-width: 0; overflow: auto; background: var(--content-bg); }
+.editor {
+  max-width: 700px; margin: 0 auto; padding: 30px 40px 90px;
+  font-size: 15px; line-height: 1.72; color: var(--text); outline: none;
+}
+.editor:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.editor h1 { font-size: 25px; line-height: 1.3; font-weight: 650; letter-spacing: -0.012em; margin: 4px 0 14px; }
+.editor h2 { font-size: 18px; line-height: 1.4; font-weight: 650; margin: 24px 0 8px; }
+.editor p { margin: 0 0 12px; }
+.editor ul { margin: 0 0 12px 20px; }
+.editor li { margin: 2px 0; }
+.editor blockquote {
+  margin: 14px 0; padding: 2px 0 2px 12px; border-left: 2px solid var(--border);
+  color: var(--text-2);
+}
+.editor code {
+  font-family: var(--mono); font-size: 0.9em; background: var(--code-bg);
+  padding: 1px 4px; border-radius: 3px; color: var(--text-2);
+}
+.editor .syn { color: var(--text-3); }
+.modeline {
+  flex: none; height: 25px; display: flex; align-items: center; gap: 12px; padding: 0 14px;
+  background: var(--frame); border-top: 1px solid var(--border);
+  font-size: 10.5px; color: var(--text-3);
+}
+.modeline-path { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.modeline-section { color: var(--text-3); }
+.modeline-right { margin-left: auto; white-space: nowrap; }
+
+/* ============================================================
+   键位速查面板
+   ============================================================ */
+.lookup-overlay {
+  position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center;
+  padding: 28px; background: var(--scrim);
+}
+.lookup-panel {
+  display: flex; flex-direction: column;
+  width: 680px; max-width: 100%; max-height: min(780px, calc(100vh - 56px));
+  padding: 20px 24px 16px;
+  background: var(--preview-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r10);
+  box-shadow: var(--shadow-raise); outline: none;
+}
+:root[data-theme="eink"] .lookup-panel { border-width: 1.4px; }
+.lk-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.lk-title { font-size: 15px; font-weight: 650; letter-spacing: -0.004em; }
+.lk-title-sub { margin-left: 6px; font-size: 10.5px; font-weight: 500; color: var(--text-3); }
+.lk-count { font-size: 10.5px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.lk-search { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.lk-searchrow { display: flex; align-items: center; gap: 8px; }
+#lookup-input {
+  flex: 1; min-width: 0; height: 30px; padding: 0 2px;
+  border: none; border-bottom: 1px solid var(--border); border-radius: 0;
+  background: transparent; color: var(--text); font: inherit; font-size: 13px;
+}
+#lookup-input::placeholder { color: var(--text-3); }
+#lookup-input:focus { outline: none; border-bottom-color: var(--accent); }
+:root[data-theme="eink"] #lookup-input:focus { border-bottom-width: 2px; }
+.lk-capture-btn {
+  flex: none; height: 26px; padding: 0 9px; border: 1px solid var(--border); border-radius: var(--r6);
+  font-size: 10.5px; color: var(--text-2); white-space: nowrap;
+}
+.lk-capture-btn:hover { background: var(--hover); color: var(--text); }
+.lk-capture-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-tint); }
+:root[data-theme="eink"] .lk-capture-btn[aria-pressed="true"] { background: #000; color: #fff; border-color: #000; }
+.lk-capture-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lk-capturerow { display: flex; align-items: center; gap: 7px; min-height: 18px; font-size: 10.5px; color: var(--text-3); }
+.lk-capturerow .lk-key { height: 18px; }
+.lk-capture-clear {
+  padding: 1px 5px; border: 1px solid var(--border); border-radius: var(--r4);
+  font-size: 10px; color: var(--text-3);
+}
+.lk-capture-clear:hover { color: var(--text); background: var(--hover); }
+.lk-capture-wait { font-family: var(--mono); letter-spacing: 0.02em; }
+
+.lk-scope { display: flex; align-items: center; gap: 3px; margin: 0 0 8px; }
+.lk-scope-label { font-size: 10.5px; color: var(--text-3); margin-right: 4px; }
+.lk-scope-btn {
+  height: 22px; padding: 0 8px; border: 1px solid transparent; border-radius: var(--r4);
+  font-size: 10.5px; color: var(--text-3);
+}
+.lk-scope-btn:hover { background: var(--hover); color: var(--text-2); }
+.lk-scope-btn[aria-checked="true"] {
+  color: var(--text); background: var(--hover); border-color: var(--border); font-weight: 600;
+}
+:root[data-theme="eink"] .lk-scope-btn[aria-checked="true"] { border: 1.4px solid #000; font-weight: 700; background: transparent; }
+.lk-scope-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.lk-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.lk-list {
+  flex: 1; min-height: 0; overflow: auto; outline: none;
+  padding: 2px 2px 8px; border-top: 1px solid var(--border-soft);
+}
+.lk-list:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r4); }
+.lk-group { margin-top: 6px; }
+.lk-group-head {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 24px; padding: 0 4px;
+  background: var(--preview-bg); color: var(--text-3); text-align: left;
+  font-size: 10.5px; font-weight: 650; letter-spacing: 0.08em; border-radius: var(--r4);
+}
+.lk-group-head:hover { background: var(--hover); color: var(--text-2); }
+.lk-group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lk-group-count { margin-left: auto; font-weight: 500; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.lk-caret { width: 10px; font-size: 9px; color: var(--text-3); }
+.lk-group-body { padding-top: 1px; }
+
+.lk-row { display: flex; flex-direction: column; border-radius: var(--r4); }
+.lk-row-main {
+  display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 10px;
+  min-height: 28px; padding: 2px 4px; border-radius: var(--r4);
+}
+.lk-row:hover .lk-row-main { background: var(--hover); }
+.lk-row.is-active .lk-row-main { background: var(--sel); }
+.lk-label {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; color: var(--text);
+}
+.lk-row.is-unbound .lk-label { color: var(--text-2); }
+.lk-keys { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.lk-key {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 5px;
+  border: 1px solid var(--border); border-radius: var(--r4); background: var(--preview-bg);
+  font-family: var(--mono); font-size: 11px; line-height: 1; color: var(--text); white-space: nowrap;
+}
+:root[data-theme="eink"] .lk-key { border-width: 1.4px; }
+.lk-key.is-unbound {
+  border-style: dashed; border-color: var(--accent); color: var(--accent);
+  font-family: var(--sans); font-size: 10.5px;
+}
+.lk-row-meta { display: inline-flex; align-items: center; gap: 8px; }
+.lk-when-badge { font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
+.lk-scope-badge { min-width: 30px; text-align: right; font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
+
+.lk-detail {
+  margin: 2px 0 6px; padding: 8px 10px 10px 12px;
+  background: var(--frame); border-left: 2px solid var(--border); border-radius: 0 var(--r4) var(--r4) 0;
+}
+:root[data-theme="eink"] .lk-detail { border-left-width: 2.4px; }
+.lk-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; margin: 0 0 8px; }
+.lk-detail-grid div { min-width: 0; }
+.lk-detail-grid dt { margin-bottom: 1px; font-size: 10.5px; color: var(--text-3); }
+.lk-detail-grid dd { font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
+.lk-detail-grid code { font-family: var(--mono); font-size: 11px; color: var(--text); }
+.lk-detail-doc { margin: 0 0 6px; font-size: 12px; line-height: 1.65; color: var(--text-2); }
+.lk-detail-doc code { font-family: var(--mono); font-size: 0.92em; background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
+.lk-detail-unbound { margin: 6px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--text-2); }
+.lk-detail-code {
+  margin: 6px 0 0; padding: 6px 8px; background: var(--code-bg); border-radius: var(--r4);
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.55; color: var(--text-2);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+.lk-empty {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 32px; text-align: center; border-top: 1px solid var(--border-soft);
+}
+.lk-empty-title { font-size: 13px; font-weight: 650; color: var(--text); }
+.lk-empty-sub { max-width: 430px; font-size: 12px; line-height: 1.65; color: var(--text-3); }
+.lk-empty-actions { display: flex; gap: 8px; margin-top: 4px; }
+.lk-empty-actions button {
+  height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--r6);
+  font-size: 11px; color: var(--text-2);
+}
+.lk-empty-actions button:hover { background: var(--hover); color: var(--text); }
+.lk-empty-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.lk-hint {
+  margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--border-soft);
+  font-size: 10.5px; line-height: 1.6; color: var(--text-3);
+}
+.lk-hint .k { color: var(--text-2); font-family: var(--mono); font-size: 10px; }
+
+/* ============================================================
+   菜单示意（macOS 原生菜单不在 webview 内，此浮层仅演示入口）
+   ============================================================ */
+.menu-pop {
+  position: fixed; top: calc(var(--entrybar-h) + 4px); right: 16px; z-index: 60;
+  min-width: 224px; padding: 4px;
+  background: var(--preview-bg); border: 1px solid var(--border); border-radius: var(--r8);
+  box-shadow: var(--shadow-raise);
+}
+.menu-head { padding: 4px 8px 6px; font-size: 10.5px; color: var(--text-3); }
+.menu-item {
+  display: flex; align-items: center; width: 100%; height: 26px; padding: 0 8px;
+  border-radius: var(--r4); font-size: 12px; color: var(--text); text-align: left;
+}
+.menu-item:hover { background: var(--accent-tint); color: var(--accent); }
+:root[data-theme="eink"] .menu-item:hover { background: #000; color: #fff; }
+.menu-item[disabled] { color: var(--text-3); cursor: default; }
+.menu-item[disabled]:hover { background: none; color: var(--text-3); }
+.menu-sep { height: 1px; margin: 4px 6px; background: var(--border-soft); }
+
+/* ============================================================
+   控制面板（硬规则：全部选项点击可达；panel=0 供截图隐藏）
+   ============================================================ */
+.cpanel {
+  position: fixed; right: 16px; bottom: 16px; z-index: 100; width: 372px;
+  max-height: calc(100vh - 32px); overflow: auto;
+  padding: 10px 12px; background: var(--preview-bg); border: 1px solid var(--border);
+  border-radius: var(--r8); box-shadow: var(--shadow-raise); font-size: var(--fs-meta);
+}
+.cp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.cp-head h2 { font-size: var(--fs-meta); font-weight: 650; }
+.cp-row { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.cp-label { flex: none; width: 62px; padding-top: 3px; color: var(--text-3); font-size: var(--fs-micro); }
+.cp-btn {
+  padding: 2px 7px; border: 1px solid var(--border); border-radius: var(--r4);
+  font-size: var(--fs-micro); color: var(--text-2);
+}
+.cp-btn:hover { background: var(--hover); color: var(--text); }
+.cp-btn.is-on { background: var(--accent-tint); color: var(--accent); border-color: var(--accent); }
+:root[data-theme="eink"] .cp-btn.is-on { background: #000; color: #fff; border-color: #000; }
+.cp-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cp-note { margin-top: 8px; font-size: var(--fs-micro); line-height: 1.55; color: var(--text-3); }
+.cp-note code { font-family: var(--mono); font-size: 0.95em; color: var(--text-2); background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
+.panel-restore {
+  position: fixed; right: 16px; bottom: 16px; z-index: 100;
+  padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--preview-bg); box-shadow: var(--shadow-raise);
+  font-size: var(--fs-micro); color: var(--text-2);
+}
+
+@media (max-width: 820px) {
+  .lookup-panel { padding: 16px; }
+  .lk-detail-grid { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+  .cpanel { width: 320px; }
+}
+</style>
+</head>
+<body>
+<h1 class="visually-hidden">Lumir 键位速查原型</h1>
+
+<div id="stage">
+  <!-- 原型示意：macOS 原生菜单不在 webview 内，这一条只演示「Help → Keyboard Shortcuts」 -->
+  <div class="entrybar" id="entrybar">
+    <span class="entrybar-tag">原型示意 · macOS 原生菜单入口（实际由原生菜单承载）</span>
+    <nav class="menubar" aria-label="菜单栏示意">
+      <span class="menubar-app">Lumir</span>
+      <button type="button" class="menubar-item" disabled>文件</button>
+      <button type="button" class="menubar-item" disabled>编辑</button>
+      <button type="button" class="menubar-item" disabled>显示</button>
+      <button type="button" class="menubar-item" disabled>窗口</button>
+      <button type="button" class="menubar-item" id="menu-help" aria-haspopup="menu" aria-expanded="false">帮助</button>
+    </nav>
+  </div>
+
+  <div class="app" id="app">
+    <header class="titlebar">
+      <div class="traffic" aria-hidden="true">
+        <span class="tl tl-close"></span><span class="tl tl-min"></span><span class="tl tl-max"></span>
+      </div>
+      <span class="titlebar-name">Lumir</span>
+      <div class="tabstrip">
+        <span class="tab is-active">季度回顾</span>
+        <span class="tab">阅读清单</span>
+      </div>
+    </header>
+
+    <div class="workarea">
+      <aside class="sidebar">
+        <p class="tree-head">合成 VAULT</p>
+        <div class="tree-row"><span class="tree-dir">▾</span> notes</div>
+        <div class="tree-row tree-indent is-active">meeting-notes.md</div>
+        <div class="tree-row tree-indent">reading-list.md</div>
+        <div class="tree-row"><span class="tree-dir">▸</span> projects</div>
+        <div class="tree-row"><span class="tree-dir">▸</span> daily</div>
+      </aside>
+
+      <main class="editor-pane">
+        <div class="editor" id="app-editor" tabindex="0" role="textbox" aria-multiline="true"
+             aria-label="合成示例文档" spellcheck="false" contenteditable="true">
+          <h1>合成笔记：季度回顾</h1>
+          <p>这是一份用于原型评审的合成文档，与任何真实 vault 无关。它只提供背景排版，让键位速查面板出现在真实的阅读语境里。</p>
+          <h2>本周进展</h2>
+          <ul>
+            <li>把「怎么打开速查」从速查自己里面解放出来。</li>
+            <li>每命令一行，多键合并；来由移进详情。</li>
+            <li>文本查询与按键捕获共用一条输入框。</li>
+          </ul>
+          <h2>待确认</h2>
+          <p>菜单入口的位置、字形顺序、详情是就地展开还是侧栏——见控制面板里的场景预设。</p>
+          <blockquote>原型只验证交互，不代表最终文案与像素。</blockquote>
+          <p>示例代码：<code>[keys]</code> 表里一行写一个 token 到命令 id 的映射。</p>
+        </div>
+      </main>
+    </div>
+
+    <footer class="modeline">
+      <span class="modeline-path">notes / meeting-notes.md</span>
+      <span class="modeline-section">季度回顾</span>
+      <span class="modeline-right">Markdown · 42 行 · UTF-8</span>
+    </footer>
+  </div>
+</div>
+
+<!-- ============================================================
+     键位速查面板
+     ============================================================ -->
+<div class="lookup-overlay" id="lookup-overlay" hidden>
+  <div class="lookup-panel" id="lookup-panel" role="dialog" aria-modal="true" aria-labelledby="lookup-title" data-capture="off">
+    <div class="lk-head">
+      <h2 class="lk-title" id="lookup-title">键位速查<span class="lk-title-sub">生效中 · 含 [keys] 覆盖</span></h2>
+      <span class="lk-count" id="lookup-count" aria-live="polite">27 条命令 · 6 组</span>
+    </div>
+
+    <search class="lk-search">
+      <div class="lk-searchrow">
+        <label class="visually-hidden" for="lookup-input">搜索命令</label>
+        <input id="lookup-input" type="text" autocomplete="off" spellcheck="false"
+               placeholder="搜索命令：标签、别名或 id" role="combobox" aria-expanded="true"
+               aria-controls="lookup-list" aria-autocomplete="list">
+        <button type="button" class="lk-capture-btn" id="lookup-capture" aria-pressed="false">捕获按键</button>
+      </div>
+      <div class="lk-capturerow" id="lookup-capturerow" hidden>
+        <span class="lk-capture-wait" id="lookup-capture-wait" hidden>按下组合键…（Esc 取消）</span>
+        <span class="lk-key" id="lookup-capture-key" hidden></span>
+        <button type="button" class="lk-capture-clear" id="lookup-capture-clear" hidden>清除</button>
+      </div>
+    </search>
+
+    <div class="lk-scope" role="radiogroup" aria-label="按作用域筛选">
+      <span class="lk-scope-label">作用域</span>
+      <button type="button" class="lk-scope-btn" id="lookup-scope-all" data-scope="all" role="radio" aria-checked="true" tabindex="0">全部</button>
+      <button type="button" class="lk-scope-btn" id="lookup-scope-global" data-scope="global" role="radio" aria-checked="false" tabindex="-1">全局</button>
+      <button type="button" class="lk-scope-btn" id="lookup-scope-editor" data-scope="editor" role="radio" aria-checked="false" tabindex="-1">编辑器</button>
+      <button type="button" class="lk-scope-btn" id="lookup-scope-text" data-scope="text" role="radio" aria-checked="false" tabindex="-1">文本</button>
+    </div>
+
+    <div class="lk-body">
+      <div class="lk-list" id="lookup-list" role="listbox" aria-label="命令" tabindex="0"></div>
+      <div class="lk-empty" id="lookup-empty" hidden>
+        <p class="lk-empty-title" id="lookup-empty-title">没有匹配的命令</p>
+        <p class="lk-empty-sub" id="lookup-empty-sub"></p>
+        <div class="lk-empty-actions">
+          <button type="button" id="lookup-empty-clear">清除查询</button>
+          <button type="button" id="lookup-empty-capture">捕获按键</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="lk-hint" id="lookup-hint">
+      <span class="k">↑↓</span> 选择 · <span class="k">Enter</span> 详情 · <span class="k">Tab</span> 切换焦点 ·
+      <span class="k">PageUp/Down</span> 翻页 · <span class="k">Esc</span> 清除 / 关闭 · <span class="k">⌃G</span> 关闭
+    </p>
+  </div>
+</div>
+
+<!-- ============================================================
+     菜单示意浮层
+     ============================================================ -->
+<div class="menu-pop" id="menu-pop" role="menu" aria-label="帮助" hidden>
+  <div class="menu-head">帮助</div>
+  <button type="button" class="menu-item" role="menuitem" disabled>Lumir 帮助</button>
+  <div class="menu-sep" role="separator"></div>
+  <button type="button" class="menu-item" role="menuitem" id="menu-item-lookup">Keyboard Shortcuts</button>
+</div>
+
+<div id="cpanel"></div>
+<button type="button" class="panel-restore" id="panelRestore" hidden>控制面板</button>
+
+<script>
+"use strict";
+
+/* ============================================================
+   1. 合成数据（27 条命令 / 6 组；标签与来由全为合成 fixture）
+   ============================================================ */
+
+const GROUPS = [
+  { id: "movement", zh: "移动与选择", en: "Movement & selection" },
+  { id: "editing", zh: "删除与撤销", en: "Deletion & undo" },
+  { id: "view", zh: "视图", en: "View" },
+  { id: "tabs", zh: "标签", en: "Tabs" },
+  { id: "blocks", zh: "块", en: "Blocks" },
+  { id: "files", zh: "文件与对话", en: "Files & chat" },
+];
+
+const SCOPES = {
+  all: { zh: "全部", desc: "不按作用域筛选。" },
+  global: { zh: "全局", desc: "焦点在窗口任意位置都生效。" },
+  editor: { zh: "编辑器", desc: "焦点在编辑器内容区内生效。" },
+  text: { zh: "文本", desc: "焦点在编辑器内容区或对话输入框内生效。" },
+};
+
+const COMMANDS = [
+  // ── 移动与选择
+  { id: "editor.cursor-up", group: "movement", label: { zh: "光标上移", en: "Move cursor up" },
+    aliases: ["上移", "up", "行上"], scope: "text", keys: ["ArrowUp", "Ctrl-p"],
+    detail: "合成来由：垂直移动按视觉行走，↑ 与 ⌃P 同一条命令；Emacs 的 previous-line 是 ⌃P。" },
+  { id: "editor.cursor-down", group: "movement", label: { zh: "光标下移", en: "Move cursor down" },
+    aliases: ["下移", "down", "行下"], scope: "text", keys: ["ArrowDown", "Ctrl-n"],
+    detail: "合成来由：与上移成对；Emacs 的 next-line 是 ⌃N。" },
+  { id: "editor.line-start", group: "movement", label: { zh: "移到行首", en: "Move to line start" },
+    aliases: ["行首", "home"], scope: "text", keys: ["Ctrl-a"],
+    detail: "合成来由：Emacs 的 C-a；不占 Home，Home 留给原生路径。" },
+  { id: "editor.line-end", group: "movement", label: { zh: "移到行尾", en: "Move to line end" },
+    aliases: ["行尾", "end"], scope: "text", keys: ["Ctrl-e"],
+    detail: "合成来由：Emacs 的 C-e；与行首成对。" },
+  { id: "editor.select-all", group: "movement", label: { zh: "全选", en: "Select all" },
+    aliases: ["全选", "select all"], scope: "text", keys: ["Cmd-a"],
+    detail: "合成来由：mac 惯例；菜单的原生 Select All 已让位给统一键位层。" },
+  { id: "editor.keyboard-quit", group: "movement", label: { zh: "取消选择", en: "Cancel selection" },
+    aliases: ["取消选择", "cancel", "quit"], scope: "text", keys: ["Ctrl-g"],
+    detail: "合成来由：Emacs 的 C-g；与 Esc 的层级语义不同，Esc 在浮层里另有就地含义。" },
+
+  // ── 删除与撤销
+  { id: "editor.delete-char-forward", group: "editing", label: { zh: "删除后一个字符", en: "Delete next character" },
+    aliases: ["删除字符", "delete char"], scope: "text", keys: ["Ctrl-d"],
+    detail: "合成来由：Emacs 的 C-d；与 Backspace 的原生路径分开。" },
+  { id: "editor.delete-word-backward", group: "editing", label: { zh: "删除前一个词", en: "Delete previous word" },
+    aliases: ["删除词", "delete word"], scope: "text", keys: ["Alt-Backspace"],
+    detail: "合成来由：mac 的 ⌥⌫ 惯例；含 Alt 的组合按物理键判定。" },
+  { id: "editor.kill-line", group: "editing", label: { zh: "删除到行尾", en: "Kill to line end" },
+    aliases: ["删除整行", "kill line"], scope: "text", keys: ["Ctrl-k"],
+    detail: "合成来由：Emacs 的 C-k；杀掉的文本进 kill 槽，可被 yank 取回。" },
+  { id: "editor.undo", group: "editing", label: { zh: "撤销", en: "Undo" },
+    aliases: ["撤销", "undo"], scope: "editor", keys: ["Cmd-z", "Ctrl-/", "Ctrl-_"],
+    detail: "合成来由：撤销沿用 Emacs 的两条别名（⌃/ 与 ⌃_），⌘Z 归 mac 惯例；回退历史由编辑器内核维护。" },
+  { id: "editor.redo", group: "editing", label: { zh: "重做", en: "Redo" },
+    aliases: ["重做", "redo"], scope: "editor", keys: ["Shift-Cmd-z", "Ctrl-Alt-Minus"],
+    detail: "合成来由：⇧⌘Z 是 macOS 惯例；⌃⌥- 是 Emacs 的 M-- 单段近亲。" },
+
+  // ── 视图
+  { id: "toc.toggle", group: "view", label: { zh: "打开大纲", en: "Open outline" },
+    aliases: ["目录", "大纲", "outline", "toc"], scope: "global", keys: ["Shift-Cmd-o"],
+    detail: "合成来由：⇧⌘O 取 Outline 首字母；作用域取全局，浮层打开后再按能收起。旧标题区已删除后，大纲指示段迁到 modeline。内部记录 M000（合成，仅原型演示）。" },
+  { id: "view.toggle-line-wrap", group: "view", label: { zh: "切换行折行", en: "Toggle line wrap" },
+    aliases: ["折行", "换行", "wrap", "line wrap"], scope: "global", keys: [],
+    detail: "合成来由：本版不为折行占用物理键位（Emacs 的规范键是多段 chord，本版键位层不支持）。" },
+  { id: "view.theme-cycle", group: "view", label: { zh: "切换主题", en: "Cycle theme" },
+    aliases: ["主题", "theme", "暗色", "dark", "亮色"], scope: "global", keys: ["Shift-Cmd-t"],
+    detail: "合成来由：⇧⌘T 取 Theme 首字母；三档循环 light → dark → eink。" },
+  { id: "view.toggle-sidebar", group: "view", label: { zh: "收起或展开侧栏", en: "Toggle sidebar" },
+    aliases: ["侧栏", "sidebar"], scope: "global", keys: ["Cmd-b"],
+    detail: "合成来由：⌘B 的 B 取 Bar；一次按下切换当前状态。" },
+  { id: "app.describe-bindings", group: "view", label: { zh: "键位速查", en: "Key look-up" },
+    aliases: ["快捷键", "键位", "帮助", "shortcuts", "keybindings", "keymap"], scope: "global", keys: ["Cmd-/"],
+    detail: "合成来由：⌘/ 是 Help 菜单 ⇧⌘? 的可用近亲（后者在原生菜单里会被系统 Help 截获）；本 change 另有菜单入口，因此不必再靠这个键发现它。" },
+
+  // ── 标签
+  { id: "tab.next", group: "tabs", label: { zh: "下一个标签", en: "Next tab" },
+    aliases: ["下一个标签", "next tab", "右标签"], scope: "global", keys: ["Ctrl-Tab", "Cmd-}", "Cmd->"],
+    detail: "合成来由：⌃⇥ 是浏览器惯例，⇧⌘] 与 ⇧⌘. 是 macOS 的循环切换近亲；三条同指一条命令。" },
+  { id: "tab.prev", group: "tabs", label: { zh: "上一个标签", en: "Previous tab" },
+    aliases: ["上一个标签", "previous tab", "左标签"], scope: "global", keys: ["Ctrl-Shift-Tab", "Cmd-{", "Cmd-<"],
+    detail: "合成来由：与下一个标签成对；所有键走同一条循环实现。" },
+  { id: "tab.close", group: "tabs", label: { zh: "关闭当前标签", en: "Close current tab" },
+    aliases: ["关闭标签", "close tab"], scope: "global", keys: ["Cmd-w"],
+    detail: "合成来由：⌘W 从「关窗」改为「关当前标签」；单窗口应用里关标签是更高频动作。" },
+  { id: "tab.goto-1", group: "tabs", label: { zh: "跳转到第 1 个标签", en: "Go to tab 1" },
+    aliases: ["标签", "tab"], scope: "global", keys: ["Cmd-1"],
+    detail: "合成来由：⌘1–9 直达是浏览器与 macOS 的共同惯例；序号落在命令 id 上。" },
+  { id: "tab.goto-2", group: "tabs", label: { zh: "跳转到第 2 个标签", en: "Go to tab 2" },
+    aliases: ["标签", "tab"], scope: "global", keys: ["Cmd-2"],
+    detail: "合成来由：同 tab.goto-1；标签数少于序号时是无操作。" },
+
+  // ── 块
+  { id: "editor.focus-block-scroll", group: "blocks", label: { zh: "聚焦块滚动", en: "Focus block scroll" },
+    aliases: ["块滚动", "scroll", "focus block"], scope: "editor", keys: ["Ctrl-Alt-KeyS"],
+    when: { zh: "仅在块滚动容器获得焦点时生效", en: "Only while the block scroll container has focus" },
+    whenShort: { zh: "仅块滚动", en: "Block focus" },
+    detail: "合成来由：焦点送进 caret 所在块的横滚容器，⌃⌥S 取 Scroll 首字母；条件绑定保证文本里的同名组合不受影响。" },
+  { id: "block.copy", group: "blocks", label: { zh: "复制整个块", en: "Copy block" },
+    aliases: ["复制块", "copy block"], scope: "editor", keys: [],
+    detail: "合成来由：鼠标入口是块上的 hover 复制钮；键盘入口默认不占键位。" },
+  { id: "table.toggle-fullscreen", group: "blocks", label: { zh: "表格全屏", en: "Fullscreen table" },
+    aliases: ["全屏", "fullscreen", "放大"], scope: "editor", keys: [],
+    detail: "合成来由：鼠标入口在表格 hover 触发钮；键盘入口默认不占键位。" },
+
+  // ── 文件与对话
+  { id: "harness.toggle", group: "files", label: { zh: "打开或收起对话", en: "Toggle chat pane" },
+    aliases: ["对话", "agent", "chat", "面板"], scope: "global", keys: ["Shift-Cmd-a"],
+    detail: "合成来由：⇧⌘A 取 Agent 首字母；无第二 pane 时自动分栏。" },
+  { id: "quick-open.toggle", group: "files", label: { zh: "按路径打开文件", en: "Open file by path" },
+    aliases: ["快速打开", "文件", "open file", "quick open"], scope: "global", keys: ["Cmd-p"],
+    detail: "合成来由：⌘P 是快速打开惯例；与键位速查是两个面，不复用动作。" },
+  { id: "file.save", group: "files", label: { zh: "保存文件", en: "Save file" },
+    aliases: ["保存", "save"], scope: "global", keys: ["Cmd-s"],
+    detail: "合成来由：⌘S 是 mac 惯例；由统一键位层分发到保存链路。" },
+];
+
+const TOTAL_COMMANDS = COMMANDS.length; // 27
+const COMMAND_BY_ID = new Map(COMMANDS.map((cmd) => [cmd.id, cmd]));
+
+/* ============================================================
+   2. 字形（token → ⌃⌥⇧⌘ 字形）与 token 归一化
+   —— 生产实现落 src/key-glyphs.ts，复用 keys.ts 的 normalizeKey；
+      原型把规则就地写一份，只为演示视觉与交互。
+   ============================================================ */
+
+const MOD_GLYPH = { Cmd: "⌘", Ctrl: "⌃", Alt: "⌥", Shift: "⇧" };
+const MOD_ORDER = ["Ctrl", "Alt", "Shift", "Cmd"]; // Apple HIG 的字形顺序
+const NAMED_GLYPH = {
+  ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→",
+  Escape: "Esc", Enter: "↵", Tab: "⇥", Backspace: "⌫", Delete: "⌦",
+  Home: "Home", End: "End", PageUp: "PgUp", PageDown: "PgDn", Space: "Space",
+  Minus: "-", Equal: "=", Slash: "/", Backslash: "\\", Semicolon: ";", Quote: "'",
+  Comma: ",", Period: ".", BracketLeft: "[", BracketRight: "]", Backquote: "`",
+};
+const SHIFTED_CHAR = {
+  "_": "-", "+": "=", "{": "[", "}": "]", "|": "\\", ":": ";", "\"": "'",
+  "<": ",", ">": ".", "?": "/", "~": "`", "!": "1", "@": "2", "#": "3", "$": "4",
+  "%": "5", "^": "6", "&": "7", "*": "8", "(": "9", ")": "0",
+};
+
+function glyphOf(token) {
+  const parts = token.split("-");
+  const mods = [];
+  let index = 0;
+  for (; index < parts.length; index += 1) {
+    if (MOD_GLYPH[parts[index]] === undefined) break;
+    mods.push(parts[index]);
+  }
+  let key = parts.slice(index).join("-");
+  if (key.startsWith("Key")) key = key.slice(3);
+  else if (key.startsWith("Digit")) key = key.slice(5);
+  else if (SHIFTED_CHAR[key] !== undefined) {
+    key = SHIFTED_CHAR[key];
+    if (!mods.includes("Shift")) mods.push("Shift");
+  } else if (NAMED_GLYPH[key] !== undefined) key = NAMED_GLYPH[key];
+  else if (key.length === 1) key = key.toUpperCase();
+  const prefix = MOD_ORDER.filter((mod) => mods.includes(mod)).map((mod) => MOD_GLYPH[mod]).join("");
+  return prefix + key;
+}
+
+const MOD_ALIASES = new Map([
+  ["cmd", "Cmd"], ["command", "Cmd"], ["meta", "Cmd"],
+  ["ctrl", "Ctrl"], ["control", "Ctrl"],
+  ["alt", "Alt"], ["option", "Alt"], ["shift", "Shift"],
+]);
+const NORMAL_MOD_ORDER = ["Cmd", "Ctrl", "Alt", "Shift"];
+const SHIFT_IMPLIED = new Set([..."_+{}|:\"<>?~!@#$%^&*()"]);
+
+function normalizeToken(raw) {
+  const parts = String(raw).split("-");
+  const mods = new Set();
+  let index = 0;
+  for (; index < parts.length; index += 1) {
+    const prefix = MOD_ALIASES.get(parts[index].toLowerCase());
+    if (prefix === undefined) break;
+    mods.add(prefix);
+  }
+  let key = parts.slice(index).join("-");
+  const named = key.length === 1 ? key.toUpperCase() : key;
+  if (SHIFT_IMPLIED.has(named)) mods.delete("Shift");
+  return [...NORMAL_MOD_ORDER.filter((mod) => mods.has(mod)), named].join("-");
+}
+
+const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta"]);
+
+function eventToken(event) {
+  if (MODIFIER_KEYS.has(event.key)) return null;
+  const mods = [];
+  if (event.metaKey) mods.push("Cmd");
+  if (event.ctrlKey) mods.push("Ctrl");
+  if (event.altKey) mods.push("Alt");
+  if (event.altKey && event.code) return normalizeToken([...mods, event.code].join("-"));
+  if (event.shiftKey) mods.push("Shift");
+  return normalizeToken([...mods, event.key].join("-"));
+}
+
+/* ============================================================
+   3. 搜索语料：标签（中英）+ 别名 + 命令 id；来由不进主搜索语料
+   ============================================================ */
+
+const SEARCH_TEXT = new Map(
+  COMMANDS.map((cmd) => [
+    cmd.id,
+    [cmd.label.zh, cmd.label.en, ...cmd.aliases, cmd.id].join(" ").toLowerCase(),
+  ]),
+);
+
+const TOKEN_MAP = new Map();
+for (const cmd of COMMANDS) {
+  for (const key of cmd.keys) TOKEN_MAP.set(normalizeToken(key), cmd.id);
+}
+
+/* ============================================================
+   4. 状态与场景（query 只作深链；一切选项在控制面板点击可达）
+   ============================================================ */
+
+const params = new URLSearchParams(location.search);
+const panelForcedOff = params.get("panel") === "0";
+const pick = (key, allowed, fallback) => (allowed.includes(params.get(key)) ? params.get(key) : fallback);
+
+const SCENES = {
+  default: {},
+  entry: { lookup: false, menu: true, entrybar: true },
+  p1: { query: "大纲" },
+  p2: { capture: "captured", token: "Ctrl-Alt-KeyS", detail: "editor.focus-block-scroll" },
+  p3: { scope: "global" },
+  p4: { query: "折行", detail: "view.toggle-line-wrap" },
+  p6: { active: "editor.cursor-up", focusList: true },
+  empty: { query: "M000" },
+  detail: { detail: "editor.undo" },
+  collapsed: { collapsed: true },
+};
+
+const sceneName = params.get("scene");
+const scene = (sceneName && SCENES[sceneName]) || {};
+
+const state = {
+  theme: pick("theme", ["light", "dark", "eink"], "light"),
+  panel: params.get("panel") !== "0",
+  lookup: params.has("lookup") ? params.get("lookup") !== "0" : (scene.lookup ?? true),
+  menu: params.has("menu") ? params.get("menu") !== "0" : (scene.menu ?? false),
+  entrybar: params.has("entrybar") ? params.get("entrybar") !== "0" : (scene.entrybar ?? true),
+  query: params.get("q") ?? scene.query ?? "",
+  scope: pick("scope", ["all", "global", "editor", "text"], scene.scope ?? "all"),
+  capture: pick("capture", ["off", "waiting", "captured"], scene.capture ?? "off"),
+  capturedToken: params.get("token") ?? scene.token ?? (scene.capture === "captured" ? "Ctrl-Alt-KeyS" : ""),
+  detail: params.get("detail") ?? scene.detail ?? null,
+  active: params.get("active") ?? scene.active ?? null,
+  collapsedGroups: new Set(scene.collapsed ? GROUPS.map((group) => group.id) : []),
+  queryCollapsed: new Set(),
+  scene: sceneName && SCENES[sceneName] ? sceneName : null,
+  focusList: scene.focusList === true,
+};
+if (state.capture === "captured" && state.capturedToken === "") state.capturedToken = "Ctrl-Alt-KeyS";
+if (state.detail !== null && !COMMAND_BY_ID.has(state.detail)) state.detail = null;
+if (state.active !== null && !COMMAND_BY_ID.has(state.active)) state.active = null;
+
+/* ============================================================
+   5. DOM 句柄
+   ============================================================ */
+
+const html = document.documentElement;
+const entrybar = document.getElementById("entrybar");
+const menuHelp = document.getElementById("menu-help");
+const menuPop = document.getElementById("menu-pop");
+const menuItemLookup = document.getElementById("menu-item-lookup");
+const editor = document.getElementById("app-editor");
+const overlay = document.getElementById("lookup-overlay");
+const panel = document.getElementById("lookup-panel");
+const input = document.getElementById("lookup-input");
+const captureBtn = document.getElementById("lookup-capture");
+const captureRow = document.getElementById("lookup-capturerow");
+const captureWait = document.getElementById("lookup-capture-wait");
+const captureKey = document.getElementById("lookup-capture-key");
+const captureClear = document.getElementById("lookup-capture-clear");
+const countEl = document.getElementById("lookup-count");
+const list = document.getElementById("lookup-list");
+const emptyEl = document.getElementById("lookup-empty");
+const emptyTitle = document.getElementById("lookup-empty-title");
+const emptySub = document.getElementById("lookup-empty-sub");
+const emptyClear = document.getElementById("lookup-empty-clear");
+const emptyCapture = document.getElementById("lookup-empty-capture");
+const scopeButtons = [...document.querySelectorAll(".lk-scope-btn")];
+const cpanel = document.getElementById("cpanel");
+const panelRestore = document.getElementById("panelRestore");
+
+let composing = false;
+let pendingFocusList = false;
+
+/* ============================================================
+   6. 渲染：chrome（主题 / 面板 / 捕获 / 作用域）
+   ============================================================ */
+
+function renderChrome() {
+  html.dataset.theme = state.theme;
+  entrybar.hidden = !state.entrybar;
+  overlay.hidden = !state.lookup;
+  menuPop.hidden = !state.menu;
+  menuHelp.setAttribute("aria-expanded", state.menu ? "true" : "false");
+  panel.dataset.capture = state.capture;
+
+  input.readOnly = state.capture === "waiting";
+  input.placeholder = state.capture === "waiting"
+    ? "按下组合键…"
+    : "搜索命令：标签、别名或 id";
+  if (input.value !== state.query) input.value = state.query;
+
+  captureBtn.textContent = state.capture === "off" ? "捕获按键" : "取消捕获";
+  captureBtn.setAttribute("aria-pressed", state.capture === "off" ? "false" : "true");
+  captureRow.hidden = state.capture === "off";
+  captureWait.hidden = state.capture !== "waiting";
+  captureKey.hidden = state.capture !== "captured";
+  captureClear.hidden = state.capture !== "captured";
+  if (state.capture === "captured") {
+    captureKey.textContent = glyphOf(state.capturedToken);
+    captureKey.title = state.capturedToken;
+  } else {
+    captureKey.textContent = "";
+    captureKey.removeAttribute("title");
+  }
+
+  for (const button of scopeButtons) {
+    const on = button.dataset.scope === state.scope;
+    button.setAttribute("aria-checked", on ? "true" : "false");
+    button.tabIndex = on ? 0 : -1;
+  }
+
+  cpanel.hidden = !state.panel;
+  panelRestore.hidden = state.panel || panelForcedOff;
+  document.title = `键位速查 · 提案原型（${state.theme}）`;
+}
+
+/* ============================================================
+   7. 渲染：列表（分组 / 折叠 / 作用域 / 捕获 / 详情 / 空结果）
+   ============================================================ */
+
+function corpusMatches(cmd) {
+  if (state.scope !== "all" && cmd.scope !== state.scope) return false;
+  if (state.capture === "captured") {
+    const token = normalizeToken(state.capturedToken);
+    return cmd.keys.some((key) => normalizeToken(key) === token);
+  }
+  if (state.query !== "") return SEARCH_TEXT.get(cmd.id).includes(state.query.toLowerCase());
+  return true;
+}
+
+function groupExpanded(groupId) {
+  const filtering = state.query !== "" || state.capture !== "off";
+  return filtering ? !state.queryCollapsed.has(groupId) : !state.collapsedGroups.has(groupId);
+}
+
+function buildRow(cmd) {
+  const row = document.createElement("div");
+  const unbound = cmd.keys.length === 0;
+  row.className = "lk-row" + (unbound ? " is-unbound" : "") + (state.active === cmd.id ? " is-active" : "");
+  row.dataset.command = cmd.id;
+  row.id = `lk-opt-${cmd.id}`;
+  row.setAttribute("role", "option");
+  row.setAttribute("aria-selected", state.active === cmd.id ? "true" : "false");
+  row.setAttribute("aria-expanded", state.detail === cmd.id ? "true" : "false");
+  row.setAttribute("aria-controls", `lk-detail-${cmd.id}`);
+
+  const main = document.createElement("div");
+  main.className = "lk-row-main";
+
+  const label = document.createElement("span");
+  label.className = "lk-label";
+  label.textContent = cmd.label.zh;
+
+  const keys = document.createElement("span");
+  keys.className = "lk-keys";
+  if (unbound) {
+    const chip = document.createElement("span");
+    chip.className = "lk-key is-unbound";
+    chip.textContent = "未绑定";
+    keys.append(chip);
+  } else {
+    for (const key of cmd.keys) {
+      const chip = document.createElement("span");
+      chip.className = "lk-key";
+      chip.textContent = glyphOf(key);
+      chip.title = key;
+      keys.append(chip);
+    }
+  }
+
+  const meta = document.createElement("span");
+  meta.className = "lk-row-meta";
+  if (cmd.when !== undefined) {
+    const when = document.createElement("span");
+    when.className = "lk-when-badge";
+    when.textContent = cmd.whenShort ? cmd.whenShort.zh : "条件";
+    when.title = cmd.when.zh;
+    meta.append(when);
+  }
+  const scope = document.createElement("span");
+  scope.className = "lk-scope-badge";
+  scope.textContent = SCOPES[cmd.scope].zh;
+  meta.append(scope);
+
+  main.append(label, keys, meta);
+  row.append(main);
+
+  if (state.detail === cmd.id) row.append(buildDetail(cmd));
+
+  main.addEventListener("click", (event) => {
+    if (event.target.closest(".lk-detail") !== null) return;
+    toggleDetail(cmd.id);
+  });
+  return row;
+}
+
+function buildDetail(cmd) {
+  const detail = document.createElement("div");
+  detail.className = "lk-detail";
+  detail.id = `lk-detail-${cmd.id}`;
+
+  const grid = document.createElement("dl");
+  grid.className = "lk-detail-grid";
+  const addMeta = (term, value, code) => {
+    const wrap = document.createElement("div");
+    const dt = document.createElement("dt");
+    dt.textContent = term;
+    const dd = document.createElement("dd");
+    if (code) {
+      const el = document.createElement("code");
+      el.textContent = value;
+      dd.append(el);
+    } else {
+      dd.textContent = value;
+    }
+    wrap.append(dt, dd);
+    grid.append(wrap);
+  };
+  addMeta("命令 id", cmd.id, true);
+  addMeta("标签", `${cmd.label.zh} / ${cmd.label.en}`);
+  addMeta("作用域", `${SCOPES[cmd.scope].zh} — ${SCOPES[cmd.scope].desc}`);
+  addMeta("条件", cmd.when ? cmd.when.zh : "无");
+  addMeta("原始键位", cmd.keys.length > 0 ? cmd.keys.join(" · ") : "—", cmd.keys.length > 0);
+  detail.append(grid);
+
+  if (cmd.keys.length === 0) {
+    const cause = document.createElement("p");
+    cause.className = "lk-detail-doc";
+    cause.textContent = "默认不占键位（有意如此）。在 config.json 的 [keys] 里绑定后即生效；绑定后这一行会显示你配置的键位。";
+    detail.append(cause);
+  }
+
+  const doc = document.createElement("p");
+  doc.className = "lk-detail-doc";
+  doc.textContent = cmd.detail;
+  detail.append(doc);
+
+  if (cmd.keys.length === 0) {
+    const pre = document.createElement("pre");
+    pre.className = "lk-detail-code";
+    pre.textContent = `// ~/.config/lumir/config.json\n[keys]\n"Ctrl-Alt-KeyW" = "${cmd.id}"`;
+    detail.append(pre);
+  }
+
+  return detail;
+}
+
+function visibleCommands() {
+  return COMMANDS.filter(corpusMatches);
+}
+
+function updateCount(visible) {
+  const n = visible.length;
+  if (state.capture === "captured") {
+    countEl.textContent = `按键 ${glyphOf(state.capturedToken)} · 命中 ${n}`;
+  } else if (state.query !== "") {
+    countEl.textContent = `命中 ${n} / ${TOTAL_COMMANDS}`;
+  } else {
+    const groups = new Set(visible.map((cmd) => cmd.group)).size;
+    countEl.textContent = `${TOTAL_COMMANDS} 条命令 · ${groups} 组`;
+  }
+}
+
+function updateEmpty(visible) {
+  const n = visible.length;
+  input.setAttribute("aria-expanded", n > 0 ? "true" : "false");
+  if (n > 0) {
+    list.hidden = false;
+    emptyEl.hidden = true;
+    return;
+  }
+  list.hidden = true;
+  emptyEl.hidden = false;
+  if (state.capture === "captured") {
+    emptyTitle.textContent = "没有命令使用这个键位";
+    emptySub.textContent = `按键 ${glyphOf(state.capturedToken)} 没有对应的命令。它可能未被绑定；换一个键，或用文本搜索。`;
+  } else if (state.scope !== "all") {
+    emptyTitle.textContent = "这个作用域下没有命令";
+    emptySub.textContent = `当前筛选为「${SCOPES[state.scope].zh}」。切换到「全部」再看一次。`;
+  } else {
+    emptyTitle.textContent = "没有匹配的命令";
+    emptySub.textContent = `查询「${state.query}」没有命中。试试命令标签、别名或 id；也可以按「捕获按键」反查。`;
+  }
+  if (document.activeElement === list) input.focus();
+}
+
+function setActiveAttrs() {
+  for (const row of list.querySelectorAll(".lk-row")) {
+    const on = row.dataset.command === state.active;
+    row.classList.toggle("is-active", on);
+    row.setAttribute("aria-selected", on ? "true" : "false");
+  }
+  const activeRow = state.active === null
+    ? null
+    : list.querySelector(`.lk-row[data-command="${state.active}"]`);
+  const id = activeRow === null ? null : activeRow.id;
+  for (const el of [input, list]) {
+    if (id === null) el.removeAttribute("aria-activedescendant");
+    else el.setAttribute("aria-activedescendant", id);
+  }
+}
+
+function renderList({ resetScroll = true } = {}) {
+  const focusWasList = document.activeElement === list;
+  const visible = visibleCommands();
+  if (state.active !== null && !visible.some((cmd) => cmd.id === state.active)) state.active = null;
+  if (state.detail !== null && !visible.some((cmd) => cmd.id === state.detail)) state.detail = null;
+
+  list.replaceChildren();
+  for (const group of GROUPS) {
+    const commands = visible.filter((cmd) => cmd.group === group.id);
+    if (commands.length === 0) continue;
+    const expanded = groupExpanded(group.id);
+
+    const section = document.createElement("section");
+    section.className = "lk-group";
+    section.dataset.group = group.id;
+
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "lk-group-head";
+    head.id = `lk-group-head-${group.id}`;
+    head.tabIndex = -1;
+    head.setAttribute("aria-expanded", expanded ? "true" : "false");
+    head.setAttribute("aria-controls", `lk-group-body-${group.id}`);
+    head.innerHTML = `<span class="lk-group-name">${group.zh}</span><span class="lk-group-count">${commands.length}</span><span class="lk-caret" aria-hidden="true">${expanded ? "▾" : "▸"}</span>`;
+
+    const body = document.createElement("div");
+    body.className = "lk-group-body";
+    body.id = `lk-group-body-${group.id}`;
+    body.setAttribute("role", "group");
+    body.setAttribute("aria-labelledby", head.id);
+    body.hidden = !expanded;
+
+    if (expanded) for (const cmd of commands) body.append(buildRow(cmd));
+
+    head.addEventListener("click", () => {
+      const filtering = state.query !== "" || state.capture !== "off";
+      const set = filtering ? state.queryCollapsed : state.collapsedGroups;
+      if (set.has(group.id)) set.delete(group.id);
+      else set.add(group.id);
+      renderList({ resetScroll: false });
+      const next = document.getElementById(head.id);
+      if (next !== null) next.focus();
+    });
+
+    section.append(head, body);
+    list.append(section);
+  }
+
+  updateCount(visible);
+  updateEmpty(visible);
+  setActiveAttrs();
+
+  if (resetScroll) list.scrollTop = 0;
+  if (state.active !== null) {
+    const activeRow = list.querySelector(`.lk-row[data-command="${state.active}"]`);
+    if (activeRow !== null) activeRow.scrollIntoView({ block: "nearest" });
+  }
+  if (focusWasList && !list.hidden) list.focus();
+  if (pendingFocusList && state.lookup && !list.hidden) {
+    pendingFocusList = false;
+    list.focus();
+  }
+}
+
+function renderAll(options = {}) {
+  renderChrome();
+  renderList(options);
+  renderControlPanel();
+  syncURL();
+}
+
+/* ============================================================
+   8. 交互：active 行、详情、分组、作用域、捕获
+   ============================================================ */
+
+function renderedIds() {
+  return [...list.querySelectorAll(".lk-row")].map((row) => row.dataset.command);
+}
+
+function moveActive(delta) {
+  const ids = renderedIds();
+  if (ids.length === 0) return;
+  let index = ids.indexOf(state.active);
+  if (index === -1) index = delta > 0 ? -1 : ids.length;
+  index = Math.max(0, Math.min(ids.length - 1, index + delta));
+  state.active = ids[index];
+  renderList({ resetScroll: false });
+}
+
+function moveActiveEdge(where) {
+  const ids = renderedIds();
+  if (ids.length === 0) return;
+  state.active = where === "first" ? ids[0] : ids[ids.length - 1];
+  renderList({ resetScroll: false });
+}
+
+function toggleActiveDetail() {
+  if (state.active === null) {
+    const ids = renderedIds();
+    if (ids.length === 0) return;
+    state.active = ids[0];
+  }
+  state.detail = state.detail === state.active ? null : state.active;
+  renderList({ resetScroll: false });
+}
+
+function toggleDetail(commandId) {
+  state.detail = state.detail === commandId ? null : commandId;
+  if (state.active !== commandId) state.active = commandId;
+  renderList({ resetScroll: false });
+}
+
+function toggleActiveGroup(expand) {
+  const ids = renderedIds();
+  if (ids.length === 0) return;
+  const activeId = state.active !== null && ids.includes(state.active) ? state.active : ids[0];
+  const cmd = COMMAND_BY_ID.get(activeId);
+  if (cmd === undefined) return;
+  const filtering = state.query !== "" || state.capture !== "off";
+  const set = filtering ? state.queryCollapsed : state.collapsedGroups;
+  if (expand) set.delete(cmd.group);
+  else set.add(cmd.group);
+  renderList({ resetScroll: false });
+  list.focus();
+}
+
+function scrollPage(direction) {
+  list.scrollTop += direction * Math.max(80, list.clientHeight * 0.88);
+}
+
+function setScope(scope) {
+  state.scope = scope;
+  state.queryCollapsed.clear();
+  state.detail = null;
+  renderAll({ resetScroll: true });
+  const button = scopeButtons.find((item) => item.dataset.scope === scope);
+  if (button !== undefined) button.focus();
+}
+
+function moveScope(token) {
+  const order = ["all", "global", "editor", "text"];
+  let index = order.indexOf(state.scope);
+  if (token === "ArrowRight" || token === "ArrowDown") index = (index + 1) % order.length;
+  else if (token === "ArrowLeft" || token === "ArrowUp") index = (index - 1 + order.length) % order.length;
+  else if (token === "Home") index = 0;
+  else if (token === "End") index = order.length - 1;
+  setScope(order[index]);
+}
+
+function enterCapture() {
+  state.capture = "waiting";
+  state.capturedToken = "";
+  state.query = "";
+  state.detail = null;
+  state.queryCollapsed.clear();
+  state.scope = "all";
+  input.value = "";
+  renderAll({ resetScroll: true });
+  input.focus();
+}
+
+function setCaptured(token) {
+  state.capture = "captured";
+  state.capturedToken = token;
+  state.query = "";
+  state.detail = null;
+  state.queryCollapsed.clear();
+  input.value = "";
+  renderAll({ resetScroll: true });
+  input.focus();
+}
+
+function clearCapture() {
+  state.capture = "off";
+  state.capturedToken = "";
+  renderAll({ resetScroll: true });
+  input.focus();
+}
+
+/* ============================================================
+   9. 交互：面板打开 / 关闭 / 焦点循环 / 键盘模型
+   ============================================================ */
+
+function openPanel({ reset = true } = {}) {
+  state.lookup = true;
+  state.menu = false;
+  if (reset) {
+    state.query = "";
+    state.capture = "off";
+    state.capturedToken = "";
+    state.detail = null;
+    state.active = null;
+    state.scope = "all";
+    state.collapsedGroups = new Set();
+    state.queryCollapsed.clear();
+  }
+  renderAll({ resetScroll: true });
+  input.focus();
+}
+
+function closePanel() {
+  if (!state.lookup) return;
+  state.lookup = false;
+  state.capture = "off";
+  state.capturedToken = "";
+  state.query = "";
+  state.detail = null;
+  state.active = null;
+  renderAll({ resetScroll: false });
+  editor.focus();
+}
+
+function togglePanel() {
+  if (state.lookup) closePanel();
+  else openPanel();
+}
+
+function focusStops() {
+  const selectedScope = scopeButtons.find((button) => button.dataset.scope === state.scope);
+  const stops = [input, captureBtn, selectedScope, list];
+  if (!emptyEl.hidden) stops.push(emptyClear, emptyCapture);
+  return stops.filter((el) => el !== undefined && !el.hidden && el.offsetParent !== null);
+}
+
+function cycleFocus(shift) {
+  const stops = focusStops();
+  if (stops.length === 0) return;
+  const current = stops.indexOf(document.activeElement);
+  const next = current === -1
+    ? (shift ? stops.length - 1 : 0)
+    : (current + (shift ? -1 : 1) + stops.length) % stops.length;
+  stops[next].focus();
+}
+
+function handleEscape() {
+  if (state.capture === "waiting" || state.capture === "captured") {
+    clearCapture();
+    return;
+  }
+  if (state.query !== "") {
+    state.query = "";
+    input.value = "";
+    state.queryCollapsed.clear();
+    renderChrome();
+    renderList({ resetScroll: true });
+    renderControlPanel();
+    syncURL();
+    input.focus();
+    return;
+  }
+  closePanel();
+}
+
+overlay.addEventListener("keydown", (event) => {
+  if (event.isComposing || event.keyCode === 229) return;
+  const token = eventToken(event);
+
+  if (state.capture === "waiting") {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      clearCapture();
+      return;
+    }
+    if (token === null) return; // 纯修饰键不构成一次捕获
+    event.preventDefault();
+    event.stopPropagation();
+    setCaptured(token);
+    return;
+  }
+
+  if (token === null) return;
+
+  if (token === "Tab" || token === "Shift-Tab") {
+    event.preventDefault();
+    cycleFocus(event.shiftKey);
+    return;
+  }
+  if (token === "Escape") {
+    event.preventDefault();
+    handleEscape();
+    return;
+  }
+  if (token === "Ctrl-G") {
+    event.preventDefault();
+    closePanel();
+    return;
+  }
+  if (token === "Cmd-/") {
+    event.preventDefault();
+    closePanel();
+    return;
+  }
+
+  // 已捕获后按组合键 = 重新捕获；可打印字符交给 input（input 事件会清掉捕获态）。
+  if (state.capture === "captured" && (event.metaKey || event.ctrlKey || event.altKey)) {
+    event.preventDefault();
+    event.stopPropagation();
+    setCaptured(token);
+    return;
+  }
+
+  const onScope = event.target.closest !== undefined && event.target.closest(".lk-scope-btn") !== null;
+  if (onScope && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(token)) {
+    event.preventDefault();
+    moveScope(token);
+    return;
+  }
+
+  if (token === "ArrowDown" || token === "Ctrl-N") {
+    event.preventDefault();
+    moveActive(1);
+    return;
+  }
+  if (token === "ArrowUp" || token === "Ctrl-P") {
+    event.preventDefault();
+    moveActive(-1);
+    return;
+  }
+  if (token === "Enter") {
+    if (event.target.tagName === "BUTTON") return; // 原生按钮的 Enter 行为
+    event.preventDefault();
+    toggleActiveDetail();
+    return;
+  }
+  if (event.key === " ") {
+    if (event.target.tagName === "BUTTON" || event.target.tagName === "INPUT") return;
+    event.preventDefault();
+    toggleActiveDetail();
+    return;
+  }
+  if (token === "PageDown" || token === "PageUp") {
+    event.preventDefault();
+    scrollPage(token === "PageDown" ? 1 : -1);
+    return;
+  }
+  if (event.target === list && token === "Home") {
+    event.preventDefault();
+    moveActiveEdge("first");
+    return;
+  }
+  if (event.target === list && token === "End") {
+    event.preventDefault();
+    moveActiveEdge("last");
+    return;
+  }
+  if (event.target === list && (token === "ArrowLeft" || token === "ArrowRight")) {
+    event.preventDefault();
+    toggleActiveGroup(token === "ArrowRight");
+  }
+});
+
+// 点击遮罩关闭；点在面板本身上不关（面板内要能选中文本）。
+overlay.addEventListener("mousedown", (event) => {
+  if (event.target === overlay) closePanel();
+});
+
+/* ============================================================
+   10. 输入、捕获按钮、空结果动作
+   ============================================================ */
+
+input.addEventListener("compositionstart", () => {
+  composing = true;
+});
+
+input.addEventListener("compositionend", () => {
+  composing = false;
+  renderList({ resetScroll: true });
+});
+
+input.addEventListener("input", (event) => {
+  if (composing || event.isComposing) return;
+  if (state.capture !== "off") {
+    state.capture = "off";
+    state.capturedToken = "";
+  }
+  state.query = input.value;
+  state.queryCollapsed.clear();
+  renderChrome();
+  renderList({ resetScroll: true });
+  renderControlPanel();
+  syncURL();
+});
+
+captureBtn.addEventListener("click", () => {
+  if (state.capture === "off") enterCapture();
+  else clearCapture();
+});
+
+captureClear.addEventListener("click", () => clearCapture());
+
+emptyClear.addEventListener("click", () => {
+  state.query = "";
+  state.capture = "off";
+  state.capturedToken = "";
+  input.value = "";
+  renderAll({ resetScroll: true });
+  input.focus();
+});
+
+emptyCapture.addEventListener("click", () => enterCapture());
+
+for (const button of scopeButtons) {
+  button.addEventListener("click", () => setScope(button.dataset.scope));
+}
+
+/* ============================================================
+   11. 菜单入口与全局分发（原型简化：token → 命令，不模拟 scope 判定）
+   ============================================================ */
+
+function openMenu() {
+  state.menu = true;
+  renderChrome();
+  syncURL();
+}
+
+function closeMenu() {
+  state.menu = false;
+  renderChrome();
+  syncURL();
+}
+
+menuHelp.addEventListener("click", () => {
+  if (state.menu) closeMenu();
+  else openMenu();
+});
+
+menuItemLookup.addEventListener("click", () => {
+  togglePanel();
+});
+
+document.addEventListener("mousedown", (event) => {
+  if (!state.menu) return;
+  if (event.target.closest("#menu-pop") !== null || event.target.closest("#menu-help") !== null) return;
+  closeMenu();
+});
+
+window.__executed = [];
+window.__prototype = { commands: COMMANDS.map((cmd) => cmd.id), total: TOTAL_COMMANDS };
+
+function nextTheme(theme) {
+  const order = ["light", "dark", "eink"];
+  return order[(order.indexOf(theme) + 1) % order.length];
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.defaultPrevented) return;
+  if (state.menu && event.key === "Escape") {
+    event.preventDefault();
+    closeMenu();
+    return;
+  }
+  const token = eventToken(event);
+  if (token === null) return;
+  const id = TOKEN_MAP.get(token);
+  if (id === undefined) return;
+
+  if (id === "app.describe-bindings") {
+    event.preventDefault();
+    togglePanel();
+    return;
+  }
+
+  const cmd = COMMAND_BY_ID.get(id);
+  // 面板打开时，editor / text 作用域的命令不会被分发（焦点在浮层里）；
+  // global 命令照常可达——这也让「捕获必须消费」可以被判别。
+  if (state.lookup && (cmd.scope === "editor" || cmd.scope === "text")) return;
+
+  event.preventDefault();
+  window.__executed.push(id);
+  if (id === "view.theme-cycle") {
+    state.theme = nextTheme(state.theme);
+    renderChrome();
+    renderControlPanel();
+    syncURL();
+  }
+});
+
+/* ============================================================
+   12. 控制面板（全部选项点击可达；panel=0 供截图隐藏）
+   ============================================================ */
+
+function cpButton(kind, value, label, on) {
+  return `<button type="button" class="cp-btn${on ? " is-on" : ""}" data-k="${kind}" data-v="${value}">${label}</button>`;
+}
+
+function renderControlPanel() {
+  const themeButtons = ["light", "dark", "eink"]
+    .map((theme) => cpButton("theme", theme, theme, state.theme === theme)).join("");
+  const sceneButtons = [
+    ["default", "默认"], ["p1", "P1 命令找键"], ["p2", "P2 键找命令"], ["p3", "P3 浏览"],
+    ["p4", "P4 未绑定"], ["p6", "P6 键盘"], ["empty", "空结果"], ["detail", "详情"],
+    ["collapsed", "全折叠"], ["entry", "菜单入口"],
+  ].map(([value, label]) => cpButton("scene", value, label, state.scene === value)).join("");
+  const queryButtons = [
+    ["", "清空"], ["大纲", "大纲"], ["折行", "折行"], ["关闭", "关闭"], ["删除", "删除"], ["M000", "M000"],
+  ].map(([value, label]) => cpButton("q", value, label, state.query === value && state.capture === "off")).join("");
+  const scopeButtonsHtml = ["all", "global", "editor", "text"]
+    .map((scope) => cpButton("scope", scope, SCOPES[scope].zh, state.scope === scope)).join("");
+  const captureButtons = [
+    ["off", "关闭"], ["waiting", "等待按键"], ["captured", "已捕获 ⌃⌥S"],
+  ].map(([value, label]) => cpButton("capture", value, label, state.capture === value)).join("");
+  const groupButtons = [
+    ["expanded", "展开全部"], ["collapsed", "折叠全部"],
+  ].map(([value, label]) => cpButton("groups", value, label,
+    value === "collapsed"
+      ? GROUPS.every((group) => state.collapsedGroups.has(group.id) || state.queryCollapsed.has(group.id))
+      : GROUPS.every((group) => !state.collapsedGroups.has(group.id) && !state.queryCollapsed.has(group.id)),
+  )).join("");
+  const detailButtons = [
+    ["", "关闭"], ["editor.undo", "撤销"], ["view.toggle-line-wrap", "折行"],
+  ].map(([value, label]) => cpButton("detail", value, label, (state.detail ?? "") === value)).join("");
+  const entryButtons = [
+    ["1", "显示"], ["0", "隐藏"],
+  ].map(([value, label]) => cpButton("entrybar", value, label, String(state.entrybar ? 1 : 0) === value)).join("");
+  const menuButtons = [
+    ["1", "打开"], ["0", "关闭"],
+  ].map(([value, label]) => cpButton("menu", value, label, String(state.menu ? 1 : 0) === value)).join("");
+  const lookupButtons = [
+    ["1", "打开"], ["0", "关闭"],
+  ].map(([value, label]) => cpButton("lookup", value, label, String(state.lookup ? 1 : 0) === value)).join("");
+
+  cpanel.className = "cpanel";
+  cpanel.innerHTML = `
+    <div class="cp-head"><h2>控制面板</h2><button type="button" class="cp-btn" data-k="panel" data-v="0">隐藏</button></div>
+    <div class="cp-row"><span class="cp-label">主题</span>${themeButtons}</div>
+    <div class="cp-row"><span class="cp-label">场景</span>${sceneButtons}</div>
+    <div class="cp-row"><span class="cp-label">查询</span>${queryButtons}</div>
+    <div class="cp-row"><span class="cp-label">作用域</span>${scopeButtonsHtml}</div>
+    <div class="cp-row"><span class="cp-label">按键捕获</span>${captureButtons}</div>
+    <div class="cp-row"><span class="cp-label">分组</span>${groupButtons}</div>
+    <div class="cp-row"><span class="cp-label">详情</span>${detailButtons}</div>
+    <div class="cp-row"><span class="cp-label">入口条</span>${entryButtons}</div>
+    <div class="cp-row"><span class="cp-label">菜单</span>${menuButtons}</div>
+    <div class="cp-row"><span class="cp-label">面板</span>${lookupButtons}</div>
+    <div class="cp-note">全部选项点击可达；当前选择写回 URL 作深链（<code>?theme=&amp;scene=&amp;q=&amp;scope=&amp;capture=&amp;detail=&amp;lookup=</code>）。截图用 <code>?panel=0</code> 关本面板。内容全为合成 fixture。</div>`;
+}
+
+function applyScene(name) {
+  const next = SCENES[name] ?? SCENES.default;
+  state.scene = name;
+  state.lookup = next.lookup ?? true;
+  state.menu = next.menu ?? false;
+  state.entrybar = next.entrybar ?? true;
+  state.query = next.query ?? "";
+  state.scope = next.scope ?? "all";
+  state.capture = next.capture ?? "off";
+  state.capturedToken = next.token ?? (next.capture === "captured" ? "Ctrl-Alt-KeyS" : "");
+  state.detail = next.detail ?? null;
+  state.active = next.active ?? null;
+  state.collapsedGroups = new Set(next.collapsed ? GROUPS.map((group) => group.id) : []);
+  state.queryCollapsed = new Set();
+  state.focusList = next.focusList === true;
+  pendingFocusList = state.focusList;
+  renderAll({ resetScroll: true });
+  if (state.lookup) {
+    if (state.focusList) list.focus();
+    else input.focus();
+  }
+}
+
+cpanel.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-k]");
+  if (button === null) return;
+  const kind = button.dataset.k;
+  const value = button.dataset.v;
+  state.scene = null;
+  switch (kind) {
+    case "theme": state.theme = value; break;
+    case "scene": applyScene(value); return;
+    case "q":
+      state.query = value;
+      state.capture = "off";
+      state.capturedToken = "";
+      state.queryCollapsed.clear();
+      state.detail = null;
+      break;
+    case "scope": state.scope = value; break;
+    case "capture":
+      state.scope = "all";
+      if (value === "off") { state.capture = "off"; state.capturedToken = ""; }
+      else if (value === "waiting") { state.capture = "waiting"; state.capturedToken = ""; state.query = ""; }
+      else { state.capture = "captured"; state.capturedToken = "Ctrl-Alt-KeyS"; state.query = ""; }
+      state.detail = null;
+      break;
+    case "groups":
+      state.collapsedGroups = new Set(value === "collapsed" ? GROUPS.map((group) => group.id) : []);
+      state.queryCollapsed = new Set(value === "collapsed" ? GROUPS.map((group) => group.id) : []);
+      break;
+    case "detail": state.detail = value === "" ? null : value; break;
+    case "entrybar": state.entrybar = value === "1"; break;
+    case "menu": state.menu = value === "1"; break;
+    case "lookup":
+      state.lookup = value === "1";
+      if (!state.lookup) { state.capture = "off"; state.capturedToken = ""; }
+      break;
+    case "panel":
+      state.panel = value === "1";
+      break;
+    default: break;
+  }
+  renderAll({ resetScroll: kind === "q" || kind === "scope" || kind === "capture" });
+  if (kind === "q" || kind === "capture") input.focus();
+});
+
+panelRestore.addEventListener("click", () => {
+  state.panel = true;
+  renderChrome();
+  renderControlPanel();
+  syncURL();
+});
+
+/* ============================================================
+   13. URL 深链（只在有值时写；panel=0 表示隐藏控制面板）
+   ============================================================ */
+
+function syncURL() {
+  const next = new URLSearchParams();
+  if (state.scene !== null) next.set("scene", state.scene);
+  if (state.theme !== "light") next.set("theme", state.theme);
+  if (!state.panel) next.set("panel", "0");
+  if (!state.lookup) next.set("lookup", "0");
+  if (state.menu) next.set("menu", "1");
+  if (!state.entrybar) next.set("entrybar", "0");
+  if (state.query !== "") next.set("q", state.query);
+  if (state.scope !== "all") next.set("scope", state.scope);
+  if (state.capture !== "off") next.set("capture", state.capture);
+  if (state.capturedToken !== "" && state.capture === "captured") next.set("token", state.capturedToken);
+  if (state.detail !== null) next.set("detail", state.detail);
+  if (state.active !== null) next.set("active", state.active);
+  if (GROUPS.every((group) => state.collapsedGroups.has(group.id))) next.set("groups", "collapsed");
+  const search = next.toString();
+  history.replaceState(null, "", location.pathname + (search === "" ? "" : "?" + search));
+}
+
+/* ============================================================
+   14. 启动
+   ============================================================ */
+
+renderAll({ resetScroll: true });
+if (state.lookup) {
+  if (state.focusList) list.focus();
+  else input.focus();
+}
+</script>
+</body>
+</html>

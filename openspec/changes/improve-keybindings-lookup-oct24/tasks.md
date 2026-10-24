@@ -1,0 +1,95 @@
+# Tasks: improve-keybindings-lookup-oct24
+
+> 阶段门：0.2（Alex 节点 1 评审）通过前 MUST NOT 改产品代码 / living spec。本 change 的提案批只交付
+> `proposal.md` / `design.md` / 本文件 / `specs/keymap-commands/spec.md` 与原型；实现批按本清单逐项勾选。
+> 实现期发现 proposal 意图需要变更时，停下更新 proposal 并重走节点 1，不静默扩 scope。
+
+## 0. 提案（节点 1）
+
+- [x] 0.1 起草 `proposal.md` / `design.md` / `specs/keymap-commands/spec.md` / 本文件
+- [x] 0.2 原型：`design/prototypes/keybindings-lookup-oct24.html`（自包含、控制面板、P1/P2/P3/P4/P6 场景、三主题）
+- [x] 0.3 断言先行：`.local/reviews/keybindings-lookup-oct24/assert.mjs` 红（17 条全红）→ 绿（17 条全绿），
+      两次输出留档（`assert-red.txt` / `assert-run3.txt`）
+- [ ] 0.4 Alex 节点 1 评审通过（硬门禁；D1–D6 一并裁决，未回的按提案里的倾向落地）
+- [ ] 0.5 裁决结果回填 proposal 的「评审记录」块（逐字），按裁决修正 design 与 delta
+
+## 1. 数据单一来源
+
+- [ ] 1.1 新增 `src/command-meta.ts`：`COMMAND_META: Record<CommandId, CommandMeta>`（`labelKey` /
+      `labelParams?` / `aliases?`）、`SCOPE_LABEL_KEYS`、`SCOPE_DESCRIPTION_KEYS`
+- [ ] 1.2 `文案-Copy.md` + `src/copy-data.ts`：71 条命令的中英标签（按功能族分批；`tab.goto-N` 用模板 +
+      `labelParams`）、面板标题 / 占位 / 捕获 / 计数 / 空态 / 详情 / scope / `when` / 菜单文案；D63 标题改
+      「键位速查（生效中）」
+- [ ] 1.3 `src/keys.ts`：5 条带 `when` 的绑定补 `whenKey`（共用一条文案）；零新命令 / 零新绑定
+- [ ] 1.4 新增 `src/key-glyphs.ts`：`glyphOfToken`（`normalizeKey` 同源；Apple 顺序 `⌃⌥⇧⌘`；SHIFT_IMPLIED
+      反解物理键；具名键表）
+- [ ] 1.5 单测 `tests/unit/command-meta.test.ts`：键集 = `COMMAND_IDS`、无幻影、`labelKey` 在 `COPY`、
+      中英非空、模板参数齐全；别名是字符串且不含空白
+- [ ] 1.6 单测 `tests/unit/key-glyphs.test.ts`：§2.3 矩阵 + 全部默认 token 不含 `Cmd-` / `Ctrl-` / `Alt-` /
+      `Shift-` / `Key` / `Digit` 字面（反向区分度）
+- [ ] 1.7 单测不变量：`when` ⇔ `whenKey`；`BINDING_GROUPS` 零兜底组仍成立；一条 token 一条绑定不变
+
+## 2. 面板本体（`src/bindings-panel.ts`）
+
+- [ ] 2.1 行聚合：`effectiveBindings` 按命令归桶；一行一条命令、多键合并；未绑定命令仍成行；scope 取
+      `scopeOfCommand`、条件取 `whenKey`；组与组序沿用 `BINDING_GROUPS`（含零兜底「其他」）
+- [ ] 2.2 搜索输入：显式 label + `role=combobox` / `aria-controls` / `aria-activedescendant`；空查询全量；
+      语料 = 中英标签 + 别名 + 命令 id；`filterIndices` 复用；来由 MUST NOT 进语料；计数 / 空态
+- [ ] 2.3 按键捕获：显式按钮、等待 / 已捕获两态；`keyToken` / `normalizeKey` 同源；捕获键不执行命令；
+      Esc 取消 / 清除分层；⌃G 在等待态作为待查询键被捕获；进入捕获时作用域重置为全部；无绑定空态
+- [ ] 2.4 详情：行内手风琴，一次一个；中英标签 / 命令 id / scope 说明 / `when` 全文 / 原始 token / 来由 /
+      未绑定成因 + `[keys]` 示例；无嵌套滚动；`aria-expanded` / `aria-controls`
+- [ ] 2.5 分组 / 折叠 / 作用域：sticky 组头；组头按钮 `aria-expanded`；查询时匹配组自动展开；手风琴折叠
+      在查询变化时清空；scope 单选组 `role=radiogroup` + roving tabindex
+- [ ] 2.6 键盘与焦点：打开聚焦输入框；Tab 四停循环（空态追加动作钮）；↑↓/⌃N⌃P、Enter/Space、←/→、
+      Home/End、PageUp/Down；Esc 分层；`⌃G` 关闭；IME 组合期不刷新；关闭走 `restoreFocus()`
+- [ ] 2.7 样式：重排面板区（标题 / 搜索 / scope / 列表 / 组头 / 行 / chip / 详情 / 空态 / 提示）；保留
+      `.lumir-bindings-overlay` / `.lumir-bindings-panel` / `.lumir-bindings-body` 与 `native-overlay` 滚动条档；
+      不新增色值 / 字号 / 圆角 token；eink 线宽与选中态按 design §4
+- [ ] 2.8 i18n：所有新文案经 `t()`；面板打开时语言切换经 `onRelabel` 重绘；关闭 / 重开不记忆语言相关状态
+
+## 3. 非自指入口
+
+- [ ] 3.1 `src-tauri/src/lib.rs`：在 `install_menu_overrides` 的 Help 子菜单追加 `Keyboard Shortcuts` 自定义项
+      （`MenuItemBuilder::with_id`，**不设 accelerator**）；`menu_command_of` 映射到 `describe-bindings`；
+      结构假设失败时按既有惯例打 stderr、保留默认菜单
+- [ ] 3.2 `src/main.ts`：菜单事件落到与 `app.describe-bindings` 同一条 toggle 路径（MUST NOT 新开第二条分发 /
+      第二个面板实例）；`[keys]` 重绑 / 解绑后菜单仍可打开
+- [ ] 3.3 文案：菜单项锁 en「Keyboard Shortcuts」（与原生 File / Edit / Help 一致；先例 D149–D151）
+- [ ] 3.4 Rust 单测：`menu_command_of("lumir.describe_bindings") == Some("describe-bindings")`；
+      菜单项无 accelerator；Help 子菜单结构变化时降级不 panic
+
+## 4. 测试与验收
+
+- [ ] 4.1 单测：语料不含来由（`M447` / 「已删除」零命中）；行聚合（多键一行 / 未绑定一行 / scope 来源）；
+      捕获归一化（含 Alt physical code）；空态三成因；`Tab` 四停的顺序
+- [ ] 4.2 视觉场景 `m133-*`：空查询行数 = `COMMAND_IDS` 数（71）、每命令一行、多键合并、scope / 条件徽标、
+      未绑定行、查询 / 捕获 / 空态 / 详情、三主题结构断言；`pnpm test` 与 `tests/visual` tsc 照旧
+- [ ] 4.3 像素基线：面板行模型变化会让整页 / 元素基线失效；`--update-snapshots` 前截图**先给 Alex 过目**
+      （人肉裁决点，见 AGENTS.md），逐张核对未受影响的场景没有被顺带改动
+- [ ] 4.4 真机验收场景（`scripts/acceptance/`）：菜单入口 + `[keys]` 重绑 / 解绑；查询「大纲」；查询「M447」
+      空态；捕获 `⌃⌥S` 且文档逐字节不变；同键面板外真实执行（反例）；Tab 四停 / PageDown / Esc 分层 / 焦点交还；
+      IME 组合期；同步更新 `scripts/acceptance/README.md` 的场景清单
+- [ ] 4.5 `bash scripts/gate.sh quick` 全绿；照抄 `GATE RESULT` 原文行与退出码
+- [ ] 4.6 `bash scripts/gate.sh visual` 全绿（动过 `src/style.css`，本地必须跑；CI 绿不代表像素层没回归）
+- [ ] 4.7 性能 / 手感：真机打开 71 行、滚到底、连续输入查询；无可感卡顿；面板不在 keypress-to-paint 路径上。
+      手感 / 密度归 Alex dogfood，不硬造机器判据
+
+## 5. 文档与登记
+
+- [ ] 5.1 `文案-Copy.md` 末尾「消费点」映射表补新条目；`tests/unit/copy.test.ts` 漂移门禁全绿
+- [ ] 5.2 `docs/specs/config-reference.md`：本 change 不改 `[keys]` schema；若实现批顺手改了面板相关说明，
+      只补「面板是只读速查，写仍走 `[keys]` + 重启」一句（不扩 scope）
+- [ ] 5.3 `docs/backlog.md`：实现 PR 合并时落一条归档跟踪记录（`序 N · improve-keybindings-lookup-oct24`），
+      批次收尾跟踪到归档；不在提案批提前写
+- [ ] 5.4 归档时 delta 相对 living spec 有新增内容，走人肉节点 2；归档后跑
+      `node scripts/openspec-archive-check.mjs --archived improve-keybindings-lookup-oct24`
+- [ ] 5.5 信息卫生：原型 / fixture / 截图 / 文案里 MUST NOT 出现真实 vault 内容；改动面做一次 text 级 grep 清扫；
+      原型 HTML 动过即重截对应截图
+
+## 6. 验证
+
+- [ ] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（提案阶段先跑一遍）
+- [ ] 6.2 `bash scripts/docs-check.sh` 通过（含相对链接与归档对账）
+- [ ] 6.3 `bash scripts/gate.sh quick` 通过；照抄 `GATE RESULT` 原文行与退出码
+- [ ] 6.4 节点 2 前逐条对账：tasks 勾选状态 / spec 增量 / 实现三者一致；未勾项就地标注放弃原因
