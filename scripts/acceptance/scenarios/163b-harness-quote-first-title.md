@@ -28,10 +28,12 @@ steps:
     real: true
     retries: 4
     # 本场景的键盘注入（⌃N / ⌃⇧N）与随后的真实点击都要求 webview 先有焦点。M670 实测：
-    # `focusWindow click: true` 打的是标题栏拖拽区（`data-tauri-drag-region="deep"`），那一下
-    # 只让 webview **失去**焦点，此后鼠标移动与键盘注入整批停投（finding
+    # 点**标题栏**（`data-tauri-drag-region="deep"` 拖拽区）只会让 webview **失去**焦点，此后
+    # 鼠标移动与键盘注入整批停投（finding
     # 20261024-worker-image-hover-quote-oct24-bug-focuswindow-click-true-wkwebview.md）；
-    # 建立焦点的确定手段是正文里的真实单击（与场景 222 同一条通道）。
+    # 建立焦点的确定手段是正文里的真实单击（与场景 222 同一条通道）——M678 起
+    # `focusWindow click: true` 也改走这条正文单击并自校验焦点，但本场景还要「光标放第 1 行」，
+    # 落点本身是步骤语义，故保留显式的 `clickEditor real: true`。
     expect:
       - label: 焦点落在编辑器正文里
         ax: { focused: "AXTextArea" }
@@ -176,8 +178,10 @@ M659/M662 的会话自动命名在**quote 首条消息**这条路径上的用户
   块（`firstUserTextOf` / 后端 `first_paragraph_text` 同口径），段落是 `qqmark`。因此浮层行
   在命名前应当显示 `qqmark`，而不是 XML 序列化文本（M662 修的现场）。
 - **前台前提**：正文真实单击同时建立 DOM 焦点、key window 与 webview 焦点——`focusWindow`
-  本身只保证 app 在前台，窗口未必是 key window；而 `focusWindow click: true` 的标题栏单击
-  会让 webview 失焦（M670）。键盘注入与真实点击的前台纪律以正文单击为准。
+  本身只保证 app 在前台，窗口未必是 key window。M678 起 `focusWindow click: true` 也改走
+  正文单击并自校验焦点（标题栏那条路径已删除，M670 的根因），但本场景要的是「光标落在第 1 行」，
+  落点属于步骤语义，因此用显式的 `clickEditor real: true`。键盘注入与真实点击的前台纪律以正文
+  单击为准。
 
 ## 已知边界
 

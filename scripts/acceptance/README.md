@@ -135,6 +135,13 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 | 1. `AXRaise`（M134 起） | 抬高自己那扇窗，**不改前台归属** | 对后台 app **无效**（M135 r2 实测：前台 pid 仍是别人的进程） |
 | 2. System Events `set frontmost`（按 unix id，M478 加） | **真的把 app 提到前台** | 会打断用户当前操作；套件跑批期间本就会把 Lumir 提到前台（见下「副作用」） |
 
+**前台 ≠ key window**（M667 现场，M678 收口）：`tryForeground` 只保证 **app 在前台**，「启动即在前台」时
+它直接早退、窗口未必是 **key window**——而真鼠标手势（`doubleClick` / `drag` / `hover` / `click.modifiers` /
+CGEvent 滚轮）落在 key window 上，第一次 mousedown 还可能被激活过程吃掉（M667：第一次 KimiCU 点击后
+红绿灯转灰）。这类步骤前要先 `focusWindow click: true`：它发一次**真实正文单击**并校验「webview/编辑器
+真的拿到了焦点、窗口是 key（app 的 `AXFocusedWindow`）」，见下文动作表——**不要**改回点标题栏
+（M670 的根因，见「已知边界」）。
+
 第 2 条是必需的，不是锦上添花：历史上「取得前台」靠的是 **app 启动时 macOS 自动置前**这个外部条件，
 而 `1184a17` 把窗口改成 `visible: false` 创建、在 `apply_startup_size` 里延迟 `show()`
 （`src-tauri/src/lib.rs`）之后 `show()` 不再激活 app，dev 实例又是 cargo 直接 exec（不走
@@ -453,13 +460,13 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `click` | `target: {role,name\|help\|any,nth,count,modifiers}` 或 `{x,y,count}`，两者都可带 `button`（`left`（默认）/`right`/`middle`）与 `dx`/`dy` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，那四条通道**产生不出 DOM 的 `dblclick`**（判据与修正见「已知边界」）——要双击类交互请用 `doubleClick`。**`button` 给非左键时改走坐标路径**（M244）：AX 索引路径发的是 AXPress（「按下这个元素」），产不出鼠标右键，而 DOM 的 `contextmenu` 靠真实指针事件；此时套件取该节点 bbox 的中心（`dx`/`dy` 按宽高比例偏移，默认 0.5）注入真实鼠标事件（**cursor-safe，不移动用户指针**）。因此**目标行必须落在窗口可视区内**——树/列表里靠下的条目 AX 报的是内容坐标（实测 40 个 fixture 时 y≈1300 而窗口高 800），出视口时套件按错因报错（「右键目标不在可视区内…请先用 open / 滚动把它带进视口」），不静默；另外该路径要求快照带截图，取不到时同样报错不静默。**`modifiers`（M379）**：给 `["meta"]`（或 `cmd`/`control`/`ctrl`/`shift`/`alt`/`option`）时改走 swift + CGEvent 通道投递**带修饰键 flags 的鼠标点击**（DOM 侧 `metaKey` 等为真，⌘-Click 跟随链接这类路径因此可在真机验）——KimiCU 的 click 没有修饰键参数。该路径与 `doubleClick` 同代价：**会移动真实光标、要求目标窗口在前台**，坐标用 `target` 的**窗口局部点**（`{x,y}` 也按这个空间给），并支持 `settleMs`（缺省 600）。**该通道恒为左键**（swift 侧的点击事件写死 `.left`）：`modifiers` 与 `button` **不能同写**，`--check` 会挡；要右键就单独写 `button: right` |
 | `clickNodeText` | `text` | 点 value/title **逐字等于** `text` 的节点（比 `name` 的正则更死板） |
 | `clickInNode` | `target`、`dx`、`dy`、`count` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`）；`count` 同上，未观察到 `dblclick`（判据限制见「已知边界」） |
-| `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标）。`dx` / `dy` 都是**截图像素**偏移（与 mode=full 的 AXTextArea bbox 同一空间，**不是**窗口点）：默认 `(40,6)` 只落在编辑器顶部留白（光标归到正文首行），**要落在某个渲染块上必须按现场标定两个轴**——场景 228 的属性盒是 `(dx=120, dy=60)`、大标题是 `(dx=120, dy=170)`（M669 真机探针）。`dx=40` 尤其容易踩：它落在 CM 块 widget 的**外层留白**里（`replace` widget 的 outer 不是渲染面本体），mousedown 会走「合成面」分支、看起来像「点了但没反应」。坐标随行高 / 间距 / 栏宽 / 窗口尺寸漂，改 fixture 后按截图重取 |
+| `clickEditor` | `dx`（默认 40）、`dy`（默认 6）、`real`、`retries`、`settleMs` | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标）。`dx` / `dy` 都是**截图像素**偏移（与 mode=full 的 AXTextArea bbox 同一空间，**不是**窗口点）：默认 `(40,6)` 只落在编辑器顶部留白（光标归到正文首行），**要落在某个渲染块上必须按现场标定两个轴**——场景 228 的属性盒是 `(dx=120, dy=60)`、大标题是 `(dx=120, dy=170)`（M669 真机探针）。`dx=40` 尤其容易踩：它落在 CM 块 widget 的**外层留白**里（`replace` widget 的 outer 不是渲染面本体），mousedown 会走「合成面」分支、看起来像「点了但没反应」。坐标随行高 / 间距 / 栏宽 / 窗口尺寸漂，改 fixture 后按截图重取。**`real: true`（M669）**改走 swift + CGEvent 真实左键单击（与 `doubleClick` / `drag` 同一通道，要前台、会移动真实光标）；M678 起它与 `focusWindow click: true` **共用同一份落点换算与注入实现**（`realContentClick`），但**不做焦点校验**——它承载的是「点到某个渲染块」的语义（落点可能正是会撤下渲染态的块）。要「key window + webview/编辑器焦点」用 `focusWindow click: true` |
 | `doubleClick` | `target`（`{role,name\|any,nth}` 或 `{x,y}`）、`dx`/`dy`、`mode`、`retries`、`settleMs` | **双击**（M209 起套件唯一的双击通道）：swift + `CGEvent` 显式设 `kCGMouseEventClickState`（详见「已知边界」）。`target` 取节点 bbox 中心、`dx`/`dy` 按其宽高比例偏移（默认 0.5）；`{x,y}` 给窗口局部坐标（遮罩这类没有 AX 节点的全屏层用）。动作内部先拿前台（**拿不到即报错**——真鼠标点击落在最上层那扇窗上），再把窗口局部点换算成 Quartz 屏幕坐标。**会移动真实光标**；目标窗口被遮挡或 KimiCU 的 AX 快照退化时按错因报错，不静默 |
 | `hover` | `target`（`{role,name\|any,nth}` / `{x,y}` / `{anchor:{role,any\|name,nth?}, offsetX, offsetY}`）、`retries`、`settleMs` | **鼠标悬停**（M443，change harness-cache-metrics）：只投 `mouseMoved`（不按鼠标键），驱动 hover 类 UI（当前消费者 = ctx 读数的含义气泡）。通道 = `cgevent-click.swift` 的 mode 0，坐标换算复用 `doubleClick` 的同一条函数，代价也一致（要 `/usr/bin/swift` + 辅助功能权限、**会移动真实光标**）。**前台是硬前提**：真鼠标事件落在该点最上层的那扇窗上，拿不到前台时动作抛 `InfraError`（整场标 INVALID、退出码 2——是环境项不是产品缺陷），复跑条件 = 把前台让给 Lumir（探针结论与两条被否决的替代路径见「已知边界」的 hover 条）。**`anchor` 形态**（M443）：以某个**有 bbox 的邻居节点**为基点，右缘中点 + `offsetX`/`offsetY` **像素**——给「在 AX 树里有节点但没有 bbox」的目标用（WKWebView 对 inline-flex 里的裸 span 不给框，ctx 读数即此例）。节点形态的 `dx`/`dy` 是 0..1 比例，与 `anchor` 的像素偏移不是一回事（同写由 `--check` 挡）。动作先 park 到窗口左上角再移到目标：`mouseenter` 只在 hover 目标**发生变化**时触发，光标恰好已在目标上时单次移动不产生事件 |
 | `drag` | `target`（`{role,name\|any,nth}` 节点须有 bbox、`{x,y}` 窗口局部坐标（M236 起，标题栏展示元素这类不一定有 AX bbox 的目标用），或 `{textareaEdge:"left"\|"right"}` 从编辑器列缘内侧起拖）、`dx`/`dy`（窗口局部点，UI 位移是**确定值**）、`allowOutOfBounds`、`retries`、`settleMs`、`selection`（M501，选区正观测，可选） | **拖拽**（M228 起，栏宽手柄这类「只能拖」的控件的唯一通道）：swift + `CGEvent` 显式投 `leftMouseDown → 插值 dragged ×24 → leftMouseUp`（与 `doubleClick` 同一通道——KimiCU 的 `drag` 工具在 WKWebView 里连文本选择都造不出来，M228 实测，见「已知边界」）。坐标换算与 `doubleClick` 同口径：先拿前台（**拿不到即报错**——真鼠标拖拽落在最上层那扇窗上），窗口局部点 + `window_bounds` 原点 → Quartz 屏幕坐标。**会移动真实光标**。起止点默认都必须在窗口内（防坐标空间错乱）；拖标题栏移动窗口时终点**故意**出窗，显式写 `allowOutOfBounds: true` 跳过终点检查。`textareaEdge` 形态存在的原因：WKWebView 把 `role=separator` 暴露成**无 bbox 的 AXSplitter**（M228 实测），栏宽手柄按节点定位不到，只能从 AXTextArea 的 bbox 边缘起拖。**只读静态文本的选区也走这一条**（M423 实证）：transcript 消息体这类文本在 AX 里是无 bbox 的 `AXStaticText`（节点定位报「找不到带 bbox 的节点」），而 `{x,y}` 真实拖拽会在它上面造出真实选区并触发 DOM `selectionchange`——KimiCU 的 `select_text` 看似更对口，但它只作用于 AX 选区层、**不产生 `selectionchange`**，驱动不了任何「选区驱动」的 UI（M423 用编辑器手势做过对照复验），故套件不引入该动词。**`selection`（M501，选区类步骤的正观测 + 有界重试）**：真实拖选偶发造不出选区（121 当日 4 跑 1 PASS 的独立 flake），选区本身 AX 读不到，可观测下游产物由本参数给出（与 `ax.has` 同一 matcher 口径：子串或 `/正则/`，如选区驱动的浮动钮 `/AXButton \(摘录到对话\)/`）。给了才启用：拖完即验，未命中重试拖选 ≤2 次（每次重选重新解析坐标）；重试耗尽仍无选区**如实判 FAIL**（不掩成绿，REVIEW.md 「键盘注入丢键」条同族纪律），重试次数落证据。不给的步骤（53 等）行为一字不变 |
 | `scroll` | `target`（`{role,name\|any,nth}` 滚动区节点，或 `{x,y}` 截图像素落点），或 step 上的 `page`（整页，正上负下）/ `dx` / `dy`（行式增量）/ `index`（快照节点序号） | **滚动**（M379 接入；「缺 `scroll` 动作」是 backlog「验收套件表达力缺口」条的一项——此前只有 `lib/cu.mjs` 的 MCP 封装，场景 DSL 里没有这个动作，「先滚动再把某行带进视口」类场景写不出来）。参数与 KimiCU 的 `scroll` 同形，**只透传写了的字段**（不补缺省值：KimiCU 侧「没给就是没给」）。定位方式：`target` 节点 → 取它的 index 滚那个滚动区；`target: {x,y}` → 在该截图像素点滚；`page`/`dx`/`dy` 直接透传。**`ok:false`（没检测到位移 / 已到末尾）一律报错**，不当成功静默放过——后面的「某行在视口内」类断言会对着没滚动的现场判红/假绿（REVIEW.md 「读不到当成空」条同族）。**读不到 scrollTop**：套件没有滚动位置读数（AX 不暴露），因此本动作只能证明「滚动调用生效链路通」，「滚到哪儿了」要靠视口内的可见元素间接判（见「已知边界」的滚动条）。**M644 起**：显式给 `dy` / `dx` 时，KimiCU 自报无位移会退到 swift + CGEvent 的滚轮注入（`lib/cgevent-click.swift` mode 8），证据里留一行自报；`page` 形态不换算成行数（见「已知边界」的滚动条）。**`wheel: true`（M669）**：跳过 KimiCU、**直接**投 CGEvent 滚轮——KimiCU 有一次自报成功却滚错了元素（转写面 scrollTop 没变、兜底因此没触发），要「真实滚轮」的场景（224）显式声明通道；需要 `dy`/`dx` + 可算落点，`page` 形态不适用。**dy 的符号与 KimiCU 一致：正数 = 上滚**（M669 真机标定，见「已知边界」的滚动条） |
 | `resizeWindow` | `width`（数值，必填）、`height`（缺省保持当前）、`settleMs` | **AX 直写窗口尺寸**（M236，窄窗退让这类「精确几何」验证）：`lib/ax-window.swift` 经 Accessibility API 设 AXSize，确定值通道（不拖窗口边缘——命中区与落点都不稳）。前提是调用进程有辅助功能权限（与 CGEvent 注入同）；窗口管理器的钳制会如实反映在回读值里，断言用 `window.width` 对生效值 |
-| `focusWindow` | `retries`、`click`（布尔，缺省 false）、`settleMs` | 确保目标窗口在前台（键盘场景的前台纪律，见上）。**`click: true`（M669）= key window 前置**：`tryForeground` 只保证 **app 在前台**，「启动即在前台」时它直接早退、窗口未必是 **key window**，而真鼠标点击（`doubleClick` / `drag` / `hover` / `click.modifiers`）与 CGEvent 滚轮落在 key window 上——第一次 mousedown 可能被激活过程吃掉（M667 现场：第一次 KimiCU 点击后红绿灯转灰、后续手势对着空转现场）。给了 `click` 就在拿前台之后发一次**真实标题栏单击**（窗口局部 `w/2,13`，窗口自报 `window_bounds` 现算；同点按下/抬起不移动窗口），这一次点击不承载任何语义。拿不到前台 / AX 快照缺 `window_bounds` 时抛 `InfraError`（整场 INVALID，环境项不是产品缺陷）。消费者：场景 224（滚轮前）、228（两次坐标点击前） |
+| `focusWindow` | `retries`、`click`（布尔，缺省 false）、`settleMs` | 确保目标窗口在前台（键盘场景的前台纪律，见上）。**`click: true`（M669 引入；M678 换落点并加自校验）= key window + webview 焦点前置**：`tryForeground` 只保证 **app 在前台**，「启动即在前台」时它直接早退、窗口未必是 **key window**，而真鼠标点击（`doubleClick` / `drag` / `hover` / `click.modifiers`）与 CGEvent 滚轮落在 key window 上——第一次 mousedown 可能被激活过程吃掉（M667 现场：第一次 KimiCU 点击后红绿灯转灰、后续手势对着空转现场）。给了 `click` 就在拿前台之后发一次**真实正文单击**（落在 AXTextArea 顶部留白 = `clickEditor` 的缺省落点 `dx=40/dy=6`；**不是标题栏**——标题栏整条是拖拽区，真实单击会让 webview 失去焦点，M670 的根因，见「已知边界」），随后**校验两条**：① AX 里恰有一个 focused 节点、且它就是编辑器的 `AXTextArea`（按节点身份区分编辑器与 harness composer——两者都是 `AXTextArea`，只看 role 会把「焦点还在 composer」判成通过）；② app 的 `AXFocusedWindow` 就是本套件的主窗口**且读数严格为 `true`**（= 窗口是 key；读数走 `lib/ax-key-window.swift`。`false`（确定读到了另一个窗口）、`unknown`（属性读取失败）、读数缺失**一律判未建立**，重试耗尽后 InfraError——不得把不可读当通过，否则 key-window 通道失效时动作静默退化成单判据，REVIEW.md「读不到当成空」条；M678 r1 评审 P1-1。**别改用窗口自己的 `AXFocused`**：该属性在本 app 上恒 false，M678 首轮因此把 224/228 误判成 INVALID，见「已知边界」）。未建立就**再点一次**（第一次可能被激活吃掉），上限 `retries`；耗尽抛 `InfraError`（整场 INVALID——焦点没建立时后续 hover / 键盘都不可信，读数是假红 / 假绿）。**合同**：窗口 key、webview/编辑器有焦点、单击**不写文档**；**副作用**：光标移到单击点（顶部留白 = 正文首行），可能撤下编辑器里的瞬时态（渲染块源码态、选区浮钮）——依赖这类状态的步骤在它之后建立；没有打开的文档（AX 里无 `AXTextArea`）时按普通 Error 报错（本动作点的是正文，不退化点标题栏）。消费者：场景 224（滚轮前）、228（两次坐标点击前）；同一条通道的直接使用者是 163b / 222（它们要「光标落在指定点」，故写 `clickEditor real: true`） |
 | `key` / `keys` | `key` / `keys: [...]`、`gapMs`、`retries`、`verify`（chord 副作用回读重试，M507） | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」）。**composer 目标的可打印序列默认不走这条**（M498 起迁 `typeInNode`）：press_key 逐键注入对 composer 丢键（字母 'e' 本机确定性丢失 + 随机连续丢键段，M497 归因定论），回读重试修不了确定性丢失。**例外：AXPress 插卡语境的素材注入，素材串不含 'e' 时可留在本动作**（M502 回退——该语境 `typeInNode` 的无 index / 带 index 两形态均不可靠，见 `typeInNode` 条「何时不迁」；82/83/85 的三个素材步即此）。**例外二（M518）：软断行之后的 composer 素材注入**（117/118/154 的 ⇧Enter 后文本）——`typeInNode` 的 AX 注入在软断行块上落点错位，故留回本动作，键串均不含 'e'（见 `typeInNode` 条的 M518 段）。**连字符写 `-` 即可**（M379；backlog「验收套件 `press_key` 键名 DSL 没有 `-` 的拼法」条）：KimiCU 的 DSL 把 `-` 当修饰键分隔符（与 `+` 同义），字面量原本没有拼法（`press_key("-")` 报 `error: empty key DSL`），套件在 `lib/cu.mjs` 侧把整串 `-` 与 `+` 分隔出的 `-` 段译为键名表里的 `minus`——因此 `keys: ["-"]` 仍走**可回读通道**，不降级成盲发。**空格写 `" "`**（M455）：空格同样没有字面量拼法（`press_key(" ")` 报 `error: empty key DSL`），`lib/cu.mjs` 把整串 `" "` 译为键名表里的 `space`，`lib/execute.mjs` 的可打印判定含空格 ⇒ `keys: [" ", …]` 也走可回读通道。**`verify`（M507，chord 的「副作用回读」重试，opt-in）**：给 `{ pattern, delta?, target? }` 时改走重试通道——注入前记 `pattern` 在回读值里的出现 N 次，落地要求恰为 N+delta（delta 缺省 1）、目标字节完全未变才重注（≤3 次）、partial/duplicated 直接判败（判据与 `type` / `keys` / `typeInNode` 同源，M143），重试与判败都落证据 note。回读目标 = `verify.target`（与 `clickInNode` 同解析、取 `node.value`），缺省走 `keysTarget`（focused 节点优先）。**只给「副作用在 AX 里可读」的 chord 挂**——⌘V 贴字这类「值里多出文本」的可以（134/150 即此）；**段末 ⇧Enter（AX 只在块之间插 `\n`、末尾空段落不产字符、几何又被 composer min-height 下限压住，1 块与 2 块 bbox 同值）、纯导航键（⌃B/⌃A/⌃P）、浮层内被列表消费的 ⌃N（overlay 游标不进 AX）都不能挂**：它们命中时目标字节不变，会被判「未落地」重注到上限后**假 FAIL**。判据与来历见 `lib/execute.mjs` 的 `runChordVerify` 注释（M507 的 dump 核查）。**不给 `verify` 的步行为一字不变**（仍按上面的判定边界盲发 / 回读） |
 | `typeInNode` | `target: {role, name\|any, nth}`（与 `clickInNode` 同一解析）、`text`（非空字符串）、`retries` | **素材注入：composer（M498）/ 原生输入框（M507）**：KimiCU `type_text` **不带 index**（当前焦点注入）整串**追加到目标末尾** + M143 口径回读重试（目标串出现 N→N+1；目标字节完全未变才重试 ≤3 次；partial/duplicated 直接判败给诊断，不在残段后重注）。**原生输入框适用面（M507）**：target 解析与回读（`node.value`）对 AXTextField（搜索框 / 树内联重命名框 / 新建文件·子目录名框）、AXComboBox（两处列表筛选框）、AXTextArea（拒绝原因等多行 textarea）一视同仁——M504 归因的「逐字符 `press_key` 对输入框丢键」（'e' 本机确定性丢失）在这些目标上改走本动作（场景 31/32/47/52/73）。`target.name` 要写**注入前与注入后两个状态都能命中**的交替正则（空框 = 读屏名如 `查找` / `新建文件的名称`，**非空 = 只剩 `= "值"`**，见「真机 AX 读不到非空值输入框的读屏名」条），如 `查找\|limit`。**通道是 M498 探针 1–7 毙掉其余三条后的唯一幸存者**：press_key 逐键对 composer 丢键（'e' 确定性丢失，M497）、press_key `cmd+v` 本机 8/9 不落地、`type_text` 带 index 点节点 bbox 中心不保留 caret（长单行落正文中段）；不带 index 的 `type_text` 4/4 落地、无点击。**语义 = 追加到末尾，不是在 caret 处键入**：caret 由键盘导航定位、落点即判据的步骤（141/154 的 ⌃B/⌃F 后落字）不适用、留在 `do: keys`（该形态现无可靠通道，finding 已报）；其余注入时 caret 本就在末尾的场景（空 composer 首问、发送后复问）与旧 `do: keys` 逐字等价。**软断行之后的注入不适用（M518 真机实测，2026-10-14）**：`text` 里含软断行块（`composerObserver` 从 DOM 回灌的模型与 DOM 已分叉）时，type_text 的 AX 注入落点错位、文本被折进上一块（117/118/154 十行折成五块、第二行与第一行同行拼接），三场景已改走 `do: keys`——「追加到末尾」只在目标内容**没有**软断行块时才与逐键键入等价。**何时不迁——AXPress 插卡语境（M502 回退）**：卡片钮是 AXPress，插卡后 `type_text` 无 index 的真实投递与 AX `(focused)` 标记可背离（标记在 composer、盲注却落进编辑器，82/83/85 三场景实证），而带 index 的注入又不进 composer 模型（后续读模型状态的步骤穿帮）；该语境的素材注入若**素材串无 'e'**（press_key 确定性丢 'e'，M497）即可保留 `do: keys`（82/83/85 的三个素材步即此，各自附 `editor.unchangedSince` 守卫）。前置：注入时 composer 须持 DOM 焦点（各自的 clickInNode / 发送后焦点 retained 建立），焦点在别处会漏进焦点元素——回读判未落地 + 场景侧 `editor.unchangedSince` 守卫。**attempt-1 焦点守卫（M501，M500 归因的落地）**：注入前解析目标节点，无 `(focused)` 标记时先点目标（AX 索引点击）再注——AXPress 插卡等动作后 AX 的 focused 标记与 type_text 无 index 走的「当前焦点」投递可能背离。焦点已在目标时零开销零行为变化（只读标记，不多点一下）；守卫动作与重试均落证据。**该守卫的适用边界（M502 改口）**：它只在本就迁到 `typeInNode` 的步骤里兜底，防不住 AXPress 插卡语境这一族（真机复跑实证仍漏注入编辑器——故 82/83/85 已回退 `do: keys`，见上「何时不迁」）；该语境的终防线是场景侧 `editor.unchangedSince` 守卫，不是这条焦点校验。**AX 注入改 DOM 但 composer 模型不可见**：composer 模型的内容输入走 keydown 路径，type_text 的 AX 注入不进模型——后续读**模型状态**的步骤（`@` 钮插入、按模型组装的留存）会穿帮（M498 三跑实证：模型把段落当空、引用插到段落首成「Image 1note-」）。**post-menu（原生菜单交互后）且后续读模型状态的步骤没有可靠套件通道**（M498 在 148 note- 步三通道全试：键盘注入 post-menu 死亡（M456）、type_text 模型不可见、剪贴板+原生菜单 Paste 文本在产品 paste 管线本可插入（模型一致）但两张卡片时 composer 达 max-height 滚动、右键 dy 落点命中卡片元信息行链接区开出 Look Up/Copy Link 菜单）——此类步骤留在 `do: keys` 并在场景内注释登记（148 note- 步即此先例，自 M454 从未转绿）。`target.name` 要写**注入前与注入后两个状态都能命中**的交替正则（composer 空 = 占位读屏名「问点什么…」，有内容 = 可访问名即内容），如 `问点什么\|qrefmark`；解析在每次回读时重做（AX index 是快照域的）。**注意 name 是裸正则源码、不带 `/…/` 包裹**（与 `clickInNode` 的 `target.name` 同口径；`/…/` 是 `ax.has` 断言的 matcher 约定，两套别混）。`gapMs` / `keys` 与本动作互斥（迁移残留，`--check` 挡） |
 | `type` | `text`（非空字符串）、`clear`、`retries` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区）；回读 + 有限重试与 `keys` **同一口径**：只在编辑器字节完全未变时重试（≤3），partial landing 直接报错不重试（判定边界见「已知边界」）。`text` 漏写在 `--check` 阶段即报（M379；此前会注入 `undefined`、连报 3 次未落地才暴露） |
@@ -708,9 +715,34 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   **dy 符号已真机标定（M669，场景 224 复跑）**：mode 8 的 `wheel1` **正数 = 上滚**，与 KimiCU
   legacy `dy` 的约定同向——场景里写 `dy: 20` 让视口离开底部、浮钮浮现；`dy: -20` 在本 app 上
   不产生任何位移（M667 同点位 A/B：两张截图 sha256 相同）。上滚类场景 MUST 先 `focusWindow
-  click: true` 把窗口做成 key window（见动作表），否则滚轮事件可能整批不落地。
+  click: true` 把窗口做成 key window、让 webview 拿到焦点（真实**正文**单击，动作自带焦点校验与
+  有限重试，见动作表），否则滚轮事件可能整批不落地。**MUST NOT 改回点标题栏**：标题栏是拖拽区，
+  那一下**建立不了** webview 焦点（窗口尚未激活时它就是被消耗掉的那次激活单击，M670，见下条）。
   另：**套件没有 scrollTop 读数**（AX 不暴露），本动作只能证明「滚动调用这条链路通」，
   「滚到哪儿了」只能靠视口内的可见元素间接判。
+- **「点标题栏买 key window」打死的是 hover 与键盘注入（M670 实测，M678 收口）**：M669 版的
+  `focusWindow click: true` 点的是标题栏空白带（窗口局部 `w/2,13`）。标题栏整条带
+  `data-tauri-drag-region="deep"`（`src/shell.ts:104`）：**窗口刚启动、webview 还没有焦点时**，
+  这一次单击被窗口激活消耗在拖拽区上，AX 快照里的 `AXWebArea (focused)` / 编辑器 `(focused)` 标记
+  随之消失，此后整页 `mouseMoved` 不再投递（DOM 探针的 `move` 计数冻结）、`:hover` 停在上一次
+  状态、键盘注入也整批不可靠——而点击本身"成功"、无报错、窗口看起来仍在前台（**静默失效**）。
+  场景 222 的长期红就是它：同批 87（无标题栏单击）hover PASS 作对照，去掉该单击改正文真实单击后
+  222 转绿（读数与 A/B 见 `.local/probes/m670-hover-probe.md`）。
+  **M678 起落点改为编辑器正文**（`execute.mjs` 的 `CONTENT_FOCUS_DX/DY`），并自校验
+  「编辑器拿到焦点 + 窗口是 key」；套件里不再有任何「点标题栏」的路径。写场景 / 改动作时 MUST NOT
+  把落点改回标题栏——这条缺陷只在真机层可见（chromium 视觉门禁与 CI 全绿），判据是 hover / 键盘类
+  场景本身。**两条实测边界（M678 探针，别按错误的方向理解）**：
+  ① **标题栏单击不是「任何状态下都会打散焦点」**：窗口已经激活、编辑器已有焦点时，同一发真实
+  标题栏单击之后 `(focused)` 仍在（`.local/probes/m678-focus-probe/out/probe.md` 的 B 段）——
+  它的问题是**建立不了**焦点（激活单击被拖拽区吃掉），不是会摧毁已有焦点；
+  ② **窗口自己的 `AXFocused` 不能当 key 判据**：该属性在本 app 上恒 `false`——编辑器有焦点、
+  滚轮与键盘都可用时仍报 `focused=false main=true`（同一次探针 A/C 段），M678 首轮拿它当判据把
+  224/228 误判成 INVALID。key window 的 AX 读数是 **app 级的 `AXFocusedWindow`**
+  （`lib/ax-key-window.swift`：`focusedWindowErr=0` 且就是 `AXWindows[0]` 时为 true）。
+  **读数的三态必须分开**（M678 r1）：`focusedWindow=true` 才通过；`false` = AX 读到了聚焦窗口但
+  不是主窗口（确定不是 key）；`unknown` = 属性读取失败 / 空值（环境问题，**不得**归一成 false）。
+  动作对后两者（以及根本没给读数通道）一律判未建立、重试耗尽抛 InfraError——不可读当通过就是
+  「读不到当成空」的假绿。`readKeyWindowState` 返回 `true / false / null(unknown)`，`null` 不是 false。
 - **不进 CI（v0）**：macos runner 跑真机 Tauri 成本高、失败模式多，稳定后再评。
 - **键盘注入通道的两类不可达（M249 固化；判据按类落通道）**：KimiCU 的 `press_key` 有两类键在
   WKWebView 上产不出期望的事件，用它们当判据的场景会得到假 FAIL（反过来，「按了也没变」这类**负向**
@@ -1117,9 +1149,15 @@ node --test scripts/acceptance/lib/app.test.mjs   # app.mjs 的纯函数：实�
 被丢弃、零断言判绿」「一条 `file` 断言只判优先级最高的键 ⇒ 多写的键静默失效（README 要求的
 `unchangedSince` + `mtimeUnchangedSince` 成对写法正好命中）」「裸串里写正则转义 ⇒ 按子串永远
 命中 0 次」（M556，逐字段覆盖 `matcher()` 的判据面，另有一条反向用例钉住 `/…/` 形态与
-`target.name` 这类裸正则源字段不误伤），以及 M669 的 `node` 断言（用「正文里有判据串、节点
+`target.name` 这类裸正则源字段不误伤），M669 的 `node` 断言（用「正文里有判据串、节点
 不在场」与「节点在场」两份 AX dump 证明正反两向都翻面——判据对「节点在不在」有区分度，而不是
-恒红 / 恒绿）。`app.test.mjs`（M619 / M622）钉
+恒红 / 恒绿），以及 M678 的焦点手势（焦点读数按**节点身份**区分编辑器与 composer：「焦点留在
+composer」「只剩 AXWebArea 焦点」两份坏态必须判失败；「编辑器有焦点但没有 key window」也必须判
+失败，`focusedWindow` 为 `false` / `unknown` / **缺失 reader** 三种形态都不得通过；落点换算的
+截图像素→Quartz 两段与「无编辑器 / 快照退化」两条边界；重试循环在坏态下耗尽后抛 InfraError、
+修好的第二次单击才结束；`parseKeyWindowState` 的 true / false / unknown 三态分开、unknown 不归一
+成 false）。
+`app.test.mjs`（M619 / M622）钉
 游离实例的三条归属（本次 pid / 同路径第二份副本 / pid 未知时的路径回退）与 bundle 身份门（产物 =
 产品 id、产物 = 别的 id 都必须红）。两者**不进 gate**，与 `scripts/migrate-harness-sessions.test.mjs`
 同例（跑法写在文件头）。

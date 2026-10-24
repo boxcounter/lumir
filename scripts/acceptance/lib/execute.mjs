@@ -26,6 +26,7 @@ import {
   openFile,
   pressKey,
   readAx,
+  readKeyWindowState,
   resizeWindowAX,
   screenWorkArea,
   settle,
@@ -51,12 +52,48 @@ export const ACTIONS = new Set([
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes", "node"]);
 
-/** `focusWindow` 的 `click: true` 打在标题栏的哪个高度（窗口局部点，M669）。
+/** 焦点读数（M678）：`ax: { focused: … }` 断言与 `focusWindow click` 的焦点校验**唯一**的实现
+ *  （同一条语义两处实现，会在下一次改判定时只改到一处——REVIEW.md「同一语义两处真源」条）。
  *
- *  13pt 落在 overlay 标题栏的空白带里（同一台机器 1200×800、`titleBarStyle: Overlay`）：避开
- *  左侧红绿灯（x<60）与中央拖拽区里的可点件——标题栏中央是 `data-tauri-drag-region="deep"`，
- *  单次按下/抬起（同一点）不会移动窗口。取值来自 M650 / M669 真机探针的 `realClick(600, 13)`。 */
-const KEY_WINDOW_CLICK_Y = 13;
+ *  `focused` 走**解析结果**而不是 AX 原始文本：原始文本上的正则没有节点边界意识，
+ *  `AXTextArea[\s\S]*?\(focused\)` 在 `(focused)` 落在后面的节点上时照样匹配（r1 评审实证：冲突
+ *  toast 的 AXButton 就在 AXTextArea 之后）。判定 = AX 里**恰有一个** focused 节点。
+ *
+ *  `isEditor` 必须按**节点身份**判、不能只看 role：编辑器与 harness composer 都是 `AXTextArea`
+ *  （224 的首个 dump 里 `[166]` 是编辑器、`[250]` 是 composer）。只看「恰有一个 AXTextArea 有
+ *  焦点」时，**单击没落地、焦点还留在 composer** 也判通过——正是本动作要防的假绿。编辑器节点
+ *  取 `ax.textarea`（与 `clickEditor` / `keys` 的「第一个 AXTextArea」同一口径）。 */
+export function focusedRoleReading(nodes, { editor = null } = {}) {
+  const focused = nodes.filter((n) => n.focused);
+  return {
+    count: focused.length,
+    roles: focused.map((n) => n.role),
+    role: focused.length === 1 ? focused[0].role : null,
+    isEditor: Boolean(editor) && focused.length === 1 && focused[0] === editor,
+  };
+}
+
+/** 真实正文单击的落点（相对 AXTextArea bbox 的**截图像素**偏移，M678）：`focusWindow click` 与
+ *  `clickEditor real` 共用同一份坐标口径。
+ *
+ *  **落点在编辑器正文里，绝不在标题栏**——这是本动作合同的核心。标题栏整条是
+ *  `data-tauri-drag-region="deep"` 拖拽区（`src/shell.ts:104`），真实单击打在那里会让 WKWebView
+ *  **失去**焦点（AX 的 `(focused)` 标记消失），此后整页 `mouseMoved` 不再投递、键盘注入也不可靠：
+ *  M669 给 222/224/228 加的「标题栏单击买 key window」因此买到的是相反的东西（M670 现场读数：
+ *  `.local/probes/m670-hover-probe.md`）。正文单击同一拍买到三样——窗口成为 key、webview 拿到
+ *  焦点、编辑器拿到 DOM 焦点（键盘有落点），且单击本身不写文档。
+ *
+ *  `dx=40` 落在正文行首前的顶部留白（`clickEditor` 多年的缺省落点；`dx=0` 在编辑器左缘的滚动 /
+ *  留白带上），`dy=6` 同理。文档以块 widget 开头时这两个偏移仍在 widget 之上的留白里——别把
+ *  它们改成会落进渲染块的点（落进块里可能撤下渲染态，那是场景没声明的副作用）。 */
+const CONTENT_FOCUS_DX = 40;
+const CONTENT_FOCUS_DY = 6;
+
+/** 焦点手势的重试与复读节拍（M678）：第一次真实单击可能被窗口激活过程吃掉（M667 现场：第一次
+ *  KimiCU 点击后红绿灯转灰、后续手势对着空转现场），所以「点一次就断言」不够——每轮单击后读
+ *  焦点，未建立再点一次。AX 的 focused 标记滞后于 DOM 焦点，故每轮补一次复读。 */
+const CONTENT_FOCUS_ATTEMPTS = 3;
+const CONTENT_FOCUS_REREAD_MS = 400;
 
 /** `do: click` 的 `target.modifiers` 允许的修饰键（M379，backlog「`click` 不支持修饰键」）：KimiCU 与 swift 两侧的
  *  别名都收（`meta`/`cmd` 是同一个键的两种说法），小写比较。 */
@@ -1023,6 +1060,140 @@ async function clickWithRetry(cu, pid, x, y, { retries = 3, count, button } = {}
   throw lastErr;
 }
 
+/**
+ * 真实正文单击的坐标换算（M678）：`focusWindow click` 与 `clickEditor real` 共用的**唯一**一份。
+ *
+ * 两个坐标空间在一处换算：AXTextArea 的 bbox（与 click/scroll 的 `{x,y}` 同空间 = mode=full 的
+ * **截图像素**）→ 窗口局部点（按 `window_bounds / 截图尺寸` 缩放）→ 加窗口原点 = Quartz 屏幕点
+ * （`injectClickWithClickState` 的口径）。截图尺寸与窗口尺寸差一个缩放比，混用会让点击落到别处
+ * （README「已知边界」的 doubleClick 条同款陷阱），所以两个读数都从**同一份**快照现取。
+ *
+ * 读不到编辑器 bbox = 文档没开（或快照退化）——这是场景/状态问题，普通 Error；
+ * 读不到 window_bounds / 截图尺寸 = 快照退化——环境问题，InfraError（整场 INVALID）。
+ */
+export function contentClickGeometry({ textarea, bounds, shot, dx = CONTENT_FOCUS_DX, dy = CONTENT_FOCUS_DY, label = "正文单击" }) {
+  if (!textarea?.bbox) {
+    throw new Error(
+      `${label}：AX 快照里没有带 bbox 的 AXTextArea（文档未打开 / modal 打开期间 / 快照退化），` +
+        "算不出正文落点——本动作点的是编辑器正文，不是标题栏",
+    );
+  }
+  if (!bounds || !shot) throw new InfraError(`${label}：读不到 window_bounds / 截图尺寸，算不出落点（快照退化）`);
+  const shotPoint = { x: textarea.bbox.x + dx, y: textarea.bbox.y + dy };
+  return {
+    shotPoint,
+    point: { x: bounds.x + (shotPoint.x * bounds.w) / shot.w, y: bounds.y + (shotPoint.y * bounds.h) / shot.h },
+    bounds,
+    shot,
+  };
+}
+
+/**
+ * 一次真实正文单击（M678）：拿前台 → 取几何 → swift + CGEvent mode 1 左键单击。
+ * `focusWindow click` 与 `clickEditor real` 都走这一条，**没有任何标题栏分支**——别再引回来：
+ * 标题栏是 `data-tauri-drag-region="deep"` 拖拽区，真实单击会让 webview 失焦（M670）。
+ *
+ * 前台是硬前提（真鼠标事件落在该点最上层那扇窗上），拿不到抛 InfraError（环境项）。
+ * 单击本身不写文档；它会移动光标 / 可能撤下编辑器里的瞬时态（渲染块源码态、选区浮钮）——
+ * 需要这类状态的场景应在手势之后重建，别把它当前的副作用当无副作用（README 动作表）。
+ */
+async function realContentClick(cu, p, { dx = CONTENT_FOCUS_DX, dy = CONTENT_FOCUS_DY, label = "正文单击", foregroundRetries = 2 } = {}) {
+  const fg = await tryForeground(cu, p, { retries: foregroundRetries });
+  if (!fg.frontmost) {
+    throw new InfraError(
+      `${label} 需要目标窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：真鼠标事件落在最上层那扇窗上。` +
+        `激活尝试：${foregroundWhy(fg)}`,
+    );
+  }
+  const ax = await readAx(cu, p, { mode: "full" });
+  const geometry = contentClickGeometry({
+    textarea: ax.textarea,
+    bounds: windowBounds(ax.text),
+    shot: screenshotSize(ax.text),
+    dx,
+    dy,
+    label,
+  });
+  const out = await injectClickWithClickState(p, geometry.point, { mode: 1 });
+  return { ...geometry, out, fg };
+}
+
+/**
+ * 建立「窗口是 key window + webview 拿到焦点 + 编辑器拿到 DOM 焦点」的正文单击手势（M678）。
+ *
+ * 判定（MUST 同时成立）：
+ *   1. 真实单击落在**编辑器正文**里（不是标题栏拖拽区——M670 的根因）；
+ *   2. 单击后 AX 里**恰有一个** focused 节点，且它就是编辑器的 `AXTextArea`（`isEditor`）——
+ *      role 级判定不够：composer 也是 `AXTextArea`，「焦点还留在 composer」会假绿；
+ *   3. app 的 `AXFocusedWindow` 就是本套件的主窗口且**读数严格为 true** = 窗口是 key：
+ *      DOM 焦点可以留在非 key 窗口上，第 2 条证明不了「窗口是 key」。**别改用窗口自己的
+ *      `AXFocused`**——该属性在本 app 上恒 false（M678 首轮 224/228 的 INVALID 现场）。
+ *      `false`（确定不是主窗口）、`unknown`（AX 读取失败）、读数缺失一律**判未建立**——
+ *      把不可读当通过就是 REVIEW.md「读不到当成空」的假绿形态（r1 评审 P1-1）；
+ *   4. 建立不起来就**再点一次**（第一次可能被窗口激活吃掉，M667），上限 `attempts`；
+ *   5. 耗尽仍不成立 → InfraError（本场读数不算数）：此时后续 hover / 键盘注入都不可信，
+ *      继续跑只会产出与产品缺陷无法区分的假红 / 假绿。
+ *
+ * 为什么必须自校验：上一版「单击标题栏」的失败形态是**静默**的——点击"成功"、窗口看起来也在
+ * 前台，但 webview 失去焦点，之后整页 mouseMoved 停投、`:hover` 不更新、键盘注入整批不可靠
+ * （222 长期红的直接原因）。没有这条校验，动作本身只能证明「点了一下」。
+ *
+ * 依赖注入（`clickOnce` / `readFocus` / `readKeyWindow` / `sleepFn`）只为套件自测能在不起真机的
+ * 情况下驱动「重试 + 判据翻面」——判定逻辑不依赖 KimiCU。
+ */
+export async function establishEditorFocus({
+  clickOnce,
+  readFocus,
+  readKeyWindow = null,
+  attempts = CONTENT_FOCUS_ATTEMPTS,
+  rereadMs = CONTENT_FOCUS_REREAD_MS,
+  sleepFn = sleep,
+  label = "focusWindow.click",
+}) {
+  const tries = [];
+  const readOnce = async (attempt, click) => {
+    const reading = await readFocus();
+    // key window（M678）：编辑器焦点证明不了「窗口是 key」，所以再读一次 app 的 AXFocusedWindow
+    // （**不是**窗口自己的 AXFocused——那个属性在本 app 上恒 false，见 `readKeyWindowState`）。
+    // 未给 reader / 读数为 null（unknown / 读取失败）不在这里归一成可通过——判据要求严格 true。
+    const key = readKeyWindow ? await readKeyWindow() : null;
+    const entry = { attempt, click, reading, key };
+    tries.push(entry);
+    return entry;
+  };
+  // 两条判据必须同时为真（r1 评审 P1-1）：`focused` 严格 `=== true`——false / null（unknown /
+  // 读不到）/ 缺失 reader 一律判未建立。旧写法 `!== false` 会让 key-window 通道失效时静默退化成
+  // 单判据（REVIEW.md「读不到当成空」的假绿形态），重试也不触发。
+  const established = (entry) => entry.reading.isEditor && entry.key?.focused === true;
+
+  for (let i = 1; i <= attempts; i++) {
+    const click = await clickOnce(i);
+    const first = await readOnce(i, click);
+    if (established(first)) return { attempt: i, reading: first.reading, key: first.key, tries };
+    // focused 标记可能滞后于 DOM 焦点：每轮补一次复读再判定（不把「读早了」当成「没建立」）。
+    await sleepFn(rereadMs);
+    const second = await readOnce(i, click);
+    if (established(second)) return { attempt: i, reading: second.reading, key: second.key, tries };
+  }
+  const last = tries.at(-1) ?? { reading: { count: 0, roles: [] }, key: null };
+  // 三种失败形态分开写：确定不是主窗口 / 读数不可用 / 根本没给 reader——环境归因不能混。
+  const keyNote =
+    last.key?.focused === false
+      ? "窗口 AXfocusedWindow=false（AX 读到了聚焦窗口，但不是主窗口）"
+      : last.key?.focused === true
+        ? "窗口 AXfocusedWindow=true（key 成立，但编辑器焦点未建立）"
+        : last.key
+          ? "窗口 AXfocusedWindow=unknown（AX 读数不可用 / 读取失败，不得当成通过）"
+          : "窗口 AXfocusedWindow=未读（没有提供 key 读数通道，不得当成通过）";
+  throw new InfraError(
+    `${label}：真实正文单击 ${attempts} 次仍未建立「key window + 编辑器焦点」` +
+      `（最后一次 focused=${last.reading.roles.join(",") || "无"}，共 ${last.reading.count} 个节点；${keyNote}）。` +
+      "这个状态下的后续 hover 与键盘注入都不可信——本次运行该场景读数不算数（环境项，非产品缺陷）；" +
+      "先把前台让给 Lumir 再复跑。",
+  );
+}
+
+
 /** 可读的原生输入框角色（WKWebView 的 `<input>` 在 AX 里落成这几类）。
  *  `AXComboBox` 是 ARIA 组合框（`<input role="combobox">`，change list-filter 的筛选输入框）——
  *  它是真正的可编辑文本宿主，键盘落进去的字在 AXValue 里。M199 实测：漏了它时 `keys` 的回读盯在
@@ -1281,15 +1452,14 @@ export async function runScenario(ctx, scenario) {
       state.ax = ax;
       const spec = expect.ax;
       if (spec.focused !== undefined) {
-        // 焦点断言走**解析结果**而不是 AX 原始文本：原始文本上的正则没有节点边界意识，
-        // `AXTextArea[\s\S]*?\(focused\)` 这类写法在 `(focused)` 落在后面的节点上时照样匹配
-        // （r1 评审实证：冲突 toast 的 AXButton 就在 AXTextArea 之后）。
-        // 判定：AX 里**恰有一个** focused 节点，且它的 role 命中 spec.focused（子串或 /…/ 正则）。
+        // 判定逻辑与 `focusWindow click` 的焦点校验同源（`focusedRoleReading`，M678）：
+        // AX 里**恰有一个** focused 节点，且它的 role 命中 spec.focused（子串或 /…/ 正则）。
+        // 不直接用 AX 原始文本做正则——没有节点边界，`(focused)` 落在别的节点上照样匹配。
         const m = matcher(spec.focused);
-        const focused = ax.nodes.filter((n) => n.focused);
-        const roles = focused.map((n) => n.role).join(",") || "无";
-        if (focused.length === 1 && m.test(focused[0].role)) return pass(label, `focused=${roles}`);
-        return fail(`${label}（期望唯一 focused 节点为 ${m.show}，实际 focused=${roles}，共 ${focused.length} 个）`, "", ax);
+        const reading = focusedRoleReading(ax.nodes);
+        const roles = reading.roles.join(",") || "无";
+        if (reading.count === 1 && m.test(reading.role)) return pass(label, `focused=${roles}`);
+        return fail(`${label}（期望唯一 focused 节点为 ${m.show}，实际 focused=${roles}，共 ${reading.count} 个）`, "", ax);
       }
       if (spec.has !== undefined) {
         const m = matcher(spec.has);
@@ -2923,32 +3093,32 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // doubleClick / drag 同一条通道）。两个动因：① 真实点击同时把窗口做成 key，KimiCU 的
       // 坐标点击在实测里会让窗口**失去 key**（随后 `do: keys` 的键盘整批不落地——场景 163b
       // 的选区手势即此）；② 需要「真的能在渲染块上落下」的判据（228 的属性盒）时，真实
-      // 点击与用户手势同形。坐标换算与 doubleClick 同口径：full 的 bbox/点是**截图像素**，
-      // 先换算成窗口局部点（按 window_bounds / 截图尺寸），再加窗口原点。
+      // 点击与用户手势同形。坐标换算与 `focusWindow click` 共用 `realContentClick`（M678 起
+      // 唯一实现；落点**永远在正文里**，没有标题栏分支——M670 的根因见 `CONTENT_FOCUS_DX` 注释）。
+      // 本动作**不做焦点校验**（M678）：它承载的是「点到某个渲染块」的语义，落点可能正是会撤下
+      // 渲染态的块；要「建立 key window + webview/编辑器焦点」用 `focusWindow click: true`。
+      const dx = step.dx ?? CONTENT_FOCUS_DX;
+      const dy = step.dy ?? CONTENT_FOCUS_DY;
+      if (step.real === true) {
+        const c = await realContentClick(cu, p, {
+          dx,
+          dy,
+          label: "clickEditor(real)",
+          foregroundRetries: step.retries ?? 4,
+        });
+        evidence.record({
+          kind: "note",
+          text:
+            `clickEditor(real)：截图 ${Math.round(c.shotPoint.x)},${Math.round(c.shotPoint.y)} → ` +
+            `屏幕 ${Math.round(c.point.x)},${Math.round(c.point.y)}｜${c.out}`,
+        });
+        await sleep(step.settleMs ?? 500);
+        return `真实点击 @截图 ${Math.round(c.shotPoint.x)},${Math.round(c.shotPoint.y)}｜${c.out}`;
+      }
       const ax = await readAx(cu, p, { mode: "full" });
       const ta = ax.textarea;
       if (!ta?.bbox) throw new Error("编辑器节点没有 bbox，无法定位点击");
-      const x = ta.bbox.x + (step.dx ?? 40);
-      const y = ta.bbox.y + (step.dy ?? 6);
-      if (step.real !== true) return clickWithRetry(cu, p, x, y);
-      const fg = await tryForeground(cu, p, { retries: step.retries ?? 4 });
-      if (!fg.frontmost) {
-        throw new InfraError(
-          `clickEditor(real) 需要目标窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：` +
-            `真鼠标事件落在最上层那扇窗上。激活尝试：${foregroundWhy(fg)}`,
-        );
-      }
-      const bounds = windowBounds((await readAx(cu, p, { mode: "ax" })).text);
-      const shot = screenshotSize(ax.text);
-      if (!bounds || !shot) throw new InfraError("clickEditor(real)：读不到 window_bounds / 截图尺寸，算不出落点");
-      const point = { x: bounds.x + (x * bounds.w) / shot.w, y: bounds.y + (y * bounds.h) / shot.h };
-      const out = await injectClickWithClickState(p, point, { mode: 1 });
-      evidence.record({
-        kind: "note",
-        text: `clickEditor(real)：截图 ${Math.round(x)},${Math.round(y)} → 屏幕 ${Math.round(point.x)},${Math.round(point.y)}｜${out}`,
-      });
-      await sleep(step.settleMs ?? 500);
-      return `真实点击 @截图 ${Math.round(x)},${Math.round(y)}｜${out}`;
+      return clickWithRetry(cu, p, ta.bbox.x + dx, ta.bbox.y + dy);
     }
     case "open":
       return openFile(cu, p, step.file, { marker: step.marker });
@@ -3231,27 +3401,66 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // M478：这一步的结果（手段与失败原因）就是它的产出，直接写进证据，不再只回一句「已取得 / 未取得」。
       const note = foregroundNote(fg);
       if (step.click !== true) return note;
-      // key window 前置（M669，首个消费者：场景 224 / 228）。`tryForeground` 只保证 **app 在前台**，
-      // 而真鼠标点击与 CGEvent 滚轮落在 **key window** 上；「启动即在前台」时它直接早退、窗口未必
-      // 是 key（M667：随后第一次 KimiCU 点击被激活吃掉、截图里红绿灯转灰，之后每一步都对着空转
-      // 现场判红/假绿）。真实标题栏单击是让窗口成为 key 的确定手段（M650 / M667 探针里同一手法
-      // 先行，后续 KimiCU 点击与滚轮都落地）。这一次点击**不承载任何语义**——它本身可能就是被
-      // 激活过程吃掉的那一下，正是因此才把它单独提供成前置步骤。
+      // key window 前置 + webview 焦点（M669 引入，M678 换落点并加校验）。`tryForeground` 只保证
+      // **app 在前台**，而真鼠标点击与 CGEvent 滚轮落在 **key window** 上；「启动即在前台」时它
+      // 直接早退、窗口未必是 key（M667：随后第一次 KimiCU 点击被激活吃掉、截图里红绿灯转灰）。
+      //
+      // **单击落在编辑器正文里，不是标题栏**（M670 的实证）：标题栏整条是
+      // `data-tauri-drag-region="deep"` 拖拽区，真实单击打在那里让 WKWebView **失去**焦点——
+      // 此后整页 mouseMoved 停投、`:hover` 不更新、键盘注入整批不可靠，而点击本身"成功"且无报错。
+      // 正文单击同一拍买到三样：窗口 key、webview 焦点、编辑器焦点（键盘有落点），且不写文档。
+      //
+      // 动作**自校验**（M678）：只证明「点了一下」不够——每次单击后读 AX，要求恰有一个 focused
+      // 节点且它就是编辑器的 AXTextArea；未建立就再点（第一次可能被激活吃掉），上限 `retries`；
+      // 耗尽抛 InfraError（本场读数不算数，因为后续 hover / 键盘都不可信）。
       if (!fg.frontmost) {
         throw new InfraError(
           `focusWindow.click 需要窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：` +
             `真鼠标事件落在最上层那扇窗上。激活尝试：${foregroundWhy(fg)}`,
         );
       }
-      const ax = await readAx(cu, p);
-      const bounds = windowBounds(ax.text);
-      if (!bounds) throw new InfraError("focusWindow.click：AX 快照缺 window_bounds，算不出标题栏落点（快照退化）");
-      const local = { x: Math.round(bounds.w / 2), y: KEY_WINDOW_CLICK_Y };
-      const point = { x: bounds.x + local.x, y: bounds.y + local.y };
-      const out = await injectClickWithClickState(p, point, { mode: 1 });
-      await sleep(step.settleMs ?? 500);
-      evidence.record({ kind: "note", text: `focusWindow.click：真实标题栏单击 → 屏幕 ${point.x},${point.y}｜${out}` });
-      return `${note}｜key window：标题栏单击 @窗口 ${local.x},${local.y} → 屏幕 ${point.x},${point.y}｜${out}`;
+      const result = await establishEditorFocus({
+        label: "focusWindow.click",
+        attempts: step.retries ?? CONTENT_FOCUS_ATTEMPTS,
+        clickOnce: async (attempt) => {
+          const c = await realContentClick(cu, p, {
+            dx: CONTENT_FOCUS_DX,
+            dy: CONTENT_FOCUS_DY,
+            label: "focusWindow.click",
+            foregroundRetries: step.retries ?? 2,
+          });
+          evidence.record({
+            kind: "note",
+            text:
+              `focusWindow.click：第 ${attempt} 次真实正文单击 @截图 ` +
+              `${Math.round(c.shotPoint.x)},${Math.round(c.shotPoint.y)} → ` +
+              `屏幕 ${Math.round(c.point.x)},${Math.round(c.point.y)}｜${c.out}`,
+          });
+          await sleep(step.settleMs ?? 500);
+          return c;
+        },
+        readFocus: async () => {
+          const ax = await readAx(cu, p);
+          return focusedRoleReading(ax.nodes, { editor: ax.textarea });
+        },
+        readKeyWindow: async () => readKeyWindowState(p),
+      });
+      const last = result.tries.at(-1).click;
+      const keyText = result.key
+        ? `窗口 AXfocusedWindow=${result.key.focused ?? "unknown"}`
+        : "窗口 AXfocusedWindow=未读";
+      evidence.record({
+        kind: "note",
+        text:
+          `focusWindow.click：焦点已建立（第 ${result.attempt} 次单击）｜focused=${result.reading.roles.join(",")}` +
+          `｜${keyText}｜落点 截图 ${Math.round(last.shotPoint.x)},${Math.round(last.shotPoint.y)}`,
+      });
+      return (
+        `${note}｜key window + webview 焦点：真实正文单击 @截图 ` +
+        `${Math.round(last.shotPoint.x)},${Math.round(last.shotPoint.y)} → 屏幕 ` +
+        `${Math.round(last.point.x)},${Math.round(last.point.y)}｜focused=${result.reading.roles.join(",")}` +
+        `｜${keyText}（第 ${result.attempt} 次）`
+      );
     }
     case "vaultWrite": {
       const file = path.join(vaultDir(), step.file);

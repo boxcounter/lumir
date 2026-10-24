@@ -21,8 +21,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { checkScenario, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, runScenario } from "./execute.mjs";
-import { repoRoot } from "./util.mjs";
+import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, runScenario } from "./execute.mjs";
+import { parseNodes } from "./ax.mjs";
+import { parseKeyWindowState } from "./drive.mjs";
+import { InfraError, repoRoot } from "./util.mjs";
 
 /** 临时根（每个用例一份，跑完不清也无妨——全在 `os.tmpdir()` 下）。 */
 function tmpRoot(name) {
@@ -712,6 +714,211 @@ test("通知定位判据：title 与 body 必须同时命中，且只认 AXGroup
     "2",
     "同文条目按出现次数计入基线（集合语义会把两条压成一条）",
   );
+});
+
+/** 合成一份含两个 `AXTextArea` 的 AX dump（M678）：编辑器在前、composer 在后——224 的现场形态
+ *  （`[166]` 是编辑器正文、`[250]` 是 composer）。`marks` 里的角色带 `(focused)` 标记。 */
+function focusDump(...marks) {
+  const mark = (k) => (marks.includes(k) ? " (focused)" : "");
+  return [
+    "# Lumir App State",
+    "",
+    "- app: Lumir",
+    "- pid: 1",
+    "- element_count: 5",
+    "- window_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+    "- screenshot: 1152×768 px",
+    "",
+    "```text",
+    '- [0] AXApplication "Lumir"',
+    '  - [1] AXWindow "Lumir" @0,0 1152×768',
+    `    - [5] AXWebArea (Lumir)${mark("webview")}`,
+    `    - [166] AXTextArea = "# 文档正文" @0,100 600×500${mark("editor")}`,
+    `    - [250] AXTextArea (问点什么…) @700,600 400×40${mark("composer")}`,
+    "```",
+  ].join("\n");
+}
+
+/** 从一份 dump 取焦点读数：编辑器按「第一个 AXTextArea」定位（与 clickEditor / keys 同一口径）。 */
+function readDump(marked) {
+  const nodes = parseNodes(focusDump(...marked));
+  return focusedRoleReading(nodes, { editor: nodes.find((n) => n.role === "AXTextArea") });
+}
+
+test("焦点读数（M678）：必须先区分「哪个 AXTextArea 有焦点」——composer 有焦点 ≠ 焦点已建立", () => {
+  // 正观测：编辑器拿到焦点。
+  const onEditor = readDump(["editor"]);
+  assert.deepEqual(
+    { count: onEditor.count, role: onEditor.role, isEditor: onEditor.isEditor },
+    { count: 1, role: "AXTextArea", isEditor: true },
+  );
+
+  // 反向验证 ①：**单击没落地、焦点还留在 composer**。composer 也是 AXTextArea，只看 role 会判通过
+  //（224 的现场：焦点原本就在 composer）——必须判「未建立」。
+  const onComposer = readDump(["composer"]);
+  assert.equal(onComposer.count, 1, "composer 是 AXTextArea，role 面与编辑器不可分辨");
+  assert.equal(onComposer.role, "AXTextArea");
+  assert.equal(onComposer.isEditor, false, "焦点在 composer 上 = 单击没把焦点搬进编辑器，不得判通过");
+
+  // 反向验证 ②：M670 的坏态——标题栏单击之后 webview 失去焦点，AX 里只剩 AXWebArea（或没有）。
+  const onWebview = readDump(["webview"]);
+  assert.equal(onWebview.role, "AXWebArea");
+  assert.equal(onWebview.isEditor, false, "webview 级焦点不是编辑器焦点（键盘没有落点）");
+  assert.equal(readDump([]).count, 0, "无 focused 标记 = 0 个");
+  assert.equal(readDump(["editor", "composer"]).count, 2, "两个 focused 节点不是「唯一焦点」");
+  assert.equal(readDump(["editor", "composer"]).isEditor, false, "多个 focused 节点一律判「未建立」");
+});
+
+test("正文单击落点（M678）：截图像素 → 窗口局部 → Quartz 的换算，以及两条不可算的边界", () => {
+  const textarea = { bbox: { x: 100, y: 200, w: 600, h: 500 } };
+  const bounds = { x: 8, y: 40, w: 1200, h: 800 };
+  const shot = { w: 1152, h: 768 };
+
+  const g = contentClickGeometry({ textarea, bounds, shot });
+  assert.deepEqual(g.shotPoint, { x: 140, y: 206 }, "缺省落点 = bbox 原点 + (40,6)（截图像素）");
+  assert.ok(Math.abs(g.point.x - (8 + (140 * 1200) / 1152)) < 1e-9, `x 换算错：${g.point.x}`);
+  assert.ok(Math.abs(g.point.y - (40 + (206 * 800) / 768)) < 1e-9, `y 换算错：${g.point.y}`);
+
+  const custom = contentClickGeometry({ textarea, bounds, shot, dx: 120, dy: 60 });
+  assert.deepEqual(custom.shotPoint, { x: 220, y: 260 }, "clickEditor 的 dx/dy 原样生效");
+
+  // 没有编辑器 bbox（文档没开 / modal / 快照退化）：普通 Error，且点明「本动作点的是正文」——
+  // 不得退化成点标题栏或点 (0,0)，那是 M670 的旧形态。
+  assert.throws(
+    () => contentClickGeometry({ textarea: null, bounds, shot }),
+    (e) => e instanceof Error && !(e instanceof InfraError) && /标题栏/.test(e.message),
+  );
+  // 快照退化（缺 window_bounds / 截图尺寸）：InfraError（本场读数不算数）。
+  assert.throws(() => contentClickGeometry({ textarea, bounds: null, shot }), (e) => e instanceof InfraError);
+  assert.throws(() => contentClickGeometry({ textarea, bounds, shot: null }), (e) => e instanceof InfraError);
+});
+
+test("focusWindow click 的重试与判败（M678）：双判据严格为真才通过，坏态与不可读一律判失败", async () => {
+  let clicks = 0;
+  let current = ["webview"];
+  const keyOk = async () => ({ focused: true, raw: "focusedWindow=true title=Lumir" });
+  const clickOnce = async () => {
+    clicks += 1;
+    return { shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } };
+  };
+  const readFocus = async () => readDump(current);
+
+  // ① 第一次单击被激活吃掉（仍是 M670 的 webview 级焦点），第二次落地 ⇒ 恰好点两次后成功。
+  //    成功路径必须显式注入 `focused: true`（r1 评审 P1-1：缺省 reader / null 不得通过）。
+  const ok = await establishEditorFocus({
+    clickOnce: async (i) => {
+      current = i === 1 ? ["webview"] : ["editor"];
+      return clickOnce(i);
+    },
+    readFocus,
+    readKeyWindow: keyOk,
+    attempts: 3,
+    sleepFn: async () => {},
+  });
+  assert.equal(ok.attempt, 2, `应在第 2 次单击后建立焦点，实际 ${ok.attempt}`);
+  assert.equal(clicks, 2, `应恰好点两次，实际 ${clicks}`);
+  assert.equal(ok.reading.isEditor, true);
+  assert.equal(ok.key.focused, true, "成功路径必须带上 key 读数（true）");
+
+  // ② 单击一直不落地、焦点留在 composer（最像假绿的状态）⇒ 耗尽 attempts 后判失败，不静默放行。
+  let stuckClicks = 0;
+  await assert.rejects(
+    establishEditorFocus({
+      clickOnce: async () => {
+        stuckClicks += 1;
+        return { shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } };
+      },
+      readFocus: async () => readDump(["composer"]),
+      readKeyWindow: keyOk,
+      attempts: 3,
+      sleepFn: async () => {},
+    }),
+    (e) => e instanceof InfraError && /仍未建立「key window \+ 编辑器焦点」/.test(e.message),
+    "composer 有焦点时必须判「未建立」，且耗尽重试后抛 InfraError",
+  );
+  assert.equal(stuckClicks, 3, `重试上限应恰好用满 3 次，实际 ${stuckClicks}`);
+
+  // ③ 编辑器有焦点、但 AX 明确读到聚焦窗口是**另一个**窗口（false）⇒ 判失败。
+  let notKeyClicks = 0;
+  await assert.rejects(
+    establishEditorFocus({
+      clickOnce: async () => {
+        notKeyClicks += 1;
+        return { shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } };
+      },
+      readFocus: async () => readDump(["editor"]),
+      readKeyWindow: async () => ({ focused: false, raw: "focusedWindow=false title=Agent" }),
+      attempts: 2,
+      sleepFn: async () => {},
+    }),
+    (e) => e instanceof InfraError && /AXfocusedWindow=false/.test(e.message),
+    "编辑器有焦点但 AXFocusedWindow=false 时必须判「未建立」，且在错误里给出窗口读数",
+  );
+  assert.equal(notKeyClicks, 2, `窗口不是 key 时应把重试用满，实际 ${notKeyClicks}`);
+
+  // ④ 第一次就成立（编辑器焦点 + 窗口是 key=true）⇒ 只点一次（不多点、不多等）。
+  let firstClicks = 0;
+  const first = await establishEditorFocus({
+    clickOnce: async () => {
+      firstClicks += 1;
+      return { shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } };
+    },
+    readFocus: async () => readDump(["editor"]),
+    readKeyWindow: keyOk,
+    attempts: 3,
+    sleepFn: async () => {},
+  });
+  assert.equal(first.attempt, 1);
+  assert.equal(firstClicks, 1);
+  assert.equal(first.key.focused, true);
+
+  // ⑤ 窗口读数 **unknown**（AX 读取失败）⇒ 必须判失败（r1 评审 P1-1 的核心反向用例）：
+  //    旧写法 `!== false` 会在这里静默通过，key-window 通道失效时退化成单判据。
+  let unknownClicks = 0;
+  await assert.rejects(
+    establishEditorFocus({
+      clickOnce: async () => {
+        unknownClicks += 1;
+        return { shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } };
+      },
+      readFocus: async () => readDump(["editor"]),
+      readKeyWindow: async () => ({ focused: null, raw: "focusedWindow=unknown err=-10005 title=Lumir" }),
+      attempts: 2,
+      sleepFn: async () => {},
+    }),
+    (e) => e instanceof InfraError && /AXfocusedWindow=unknown/.test(e.message),
+    "key 读数 unknown 时必须判「未建立」并在错误里点明读数不可用",
+  );
+  assert.equal(unknownClicks, 2, `unknown 应把重试用满（不得提前放行），实际 ${unknownClicks}`);
+
+  // ⑥ **根本没给 reader** ⇒ 同样必须判失败：两条判据不能因为通道缺席而退化成单判据。
+  let missingClicks = 0;
+  await assert.rejects(
+    establishEditorFocus({
+      clickOnce: async () => {
+        missingClicks += 1;
+        return { shotPoint: { x: 40, y: 6 }, point: { x: 48, y: 46 } };
+      },
+      readFocus: async () => readDump(["editor"]),
+      attempts: 2,
+      sleepFn: async () => {},
+    }),
+    (e) => e instanceof InfraError && /AXfocusedWindow=未读/.test(e.message),
+    "没有 key 读数通道时必须判「未建立」，不得当成通过",
+  );
+  assert.equal(missingClicks, 2, `缺 reader 应把重试用满，实际 ${missingClicks}`);
+});
+
+test("key window 读数解析（M678 r1）：true / false / unknown 三态分开，unknown 不归一成 false", () => {
+  assert.equal(parseKeyWindowState("focusedWindow=true title=Lumir"), true);
+  assert.equal(parseKeyWindowState("focusedWindow=false title=Agent"), false, "读到另一个窗口 = 确定不是主窗口");
+  assert.equal(
+    parseKeyWindowState("focusedWindow=unknown err=-10005 title=Lumir"),
+    null,
+    "属性读取失败 = unknown，必须与确定状态分开",
+  );
+  assert.equal(parseKeyWindowState("focusedWindow=unknown err=no-window-value title=Lumir"), null);
+  assert.equal(parseKeyWindowState("garbage output"), null, "输出无法解析同样是 unknown");
 });
 
 test("全库场景静态校验通过（--check 的真实通道）", () => {

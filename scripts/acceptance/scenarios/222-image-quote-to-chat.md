@@ -38,9 +38,11 @@ steps:
     # `AXWebArea (…)(focused)` 在场时，注入的 mouseMoved 才投递、`:hover` 才更新；不在场时
     # 整页的移动事件整批停投（探针 `move` 计数冻结），钮停在 `visibility: hidden`。
     # 建立焦点的确定手段是**在正文里真实单击一次**（与本步落点同一手法，与场景 163b 同一条
-    # 通道/理由）。MUST NOT 改用「真实标题栏单击」（`focusWindow click: true`）：标题栏整条是
-    # 拖拽区（`data-tauri-drag-region="deep"`，src/shell.ts），那一下只让 webview **失去**焦点
-    # （M669 给本场景加过，正是 222 长期红的直接原因；读数见 `.local/probes/m670-hover-probe.md`）。
+    # 通道/理由）；M678 起 `focusWindow click: true` 也走同一条正文单击并自校验焦点，但它固定点
+    # 编辑器顶部留白，本场景要「光标在第 1 行」，故直接用 `clickEditor real: true`。
+    # MUST NOT 拿真实单击去打**标题栏**：标题栏整条是拖拽区（`data-tauri-drag-region="deep"`，
+    # src/shell.ts），那一下只让 webview **失去**焦点——M669 版的 `focusWindow click` 正是如此，
+    # 它是本场景长期红的直接原因（读数见 `.local/probes/m670-hover-probe.md`；M678 已删除该落点）。
     expect:
       - label: 焦点落在编辑器正文里
         ax: { focused: "AXTextArea" }
@@ -215,10 +217,10 @@ change add-image-quote-to-chat 的两条入口与一条结构性承诺；M662 �
   鼠标移动事件，注入点落对（AX bbox 中心）还不够——AX 快照里 `AXWebArea (…)(focused)` 在场时
   移动事件才投递、`:hover` 才更新；不在场时整页的移动事件整批停投，钮停在 `visibility: hidden`
   （既不绘制、也不进读屏树）。建立焦点的**确定手段是正文里的真实单击**
-  （`clickEditor real: true`，swift + CGEvent）。M669 曾用「真实标题栏单击」（`focusWindow
-  click: true`）买 key window：标题栏整条是拖拽区（`data-tauri-drag-region="deep"`），那一下
-  反而让 webview **失去**焦点——它正是本场景长期红的直接原因（读数与 A/B 见
-  `.local/probes/m670-hover-probe.md`）。
+  （`clickEditor real: true`，swift + CGEvent；M678 起 `focusWindow click: true` 共用同一条
+  正文单击通道并自校验焦点）。**标题栏单击会反过来让 webview 失焦**：M669 用真实标题栏单击
+  买 key window 正是本场景长期红的直接原因（读数与 A/B 见 `.local/probes/m670-hover-probe.md`；
+  M678 已把该落点从套件删除）。
 - **每条 hover 正观测都配一条紧邻的负观测**（M670，防假绿）：① 悬停前断言钮不在读屏树；
   ④ 悬停 svg 前先把指针移到非图片目标（标题栏的 vault 切换钮）并断言钮**退回**静止态。
   后者同时是产品判据「可见性双向」——通道半死时「悬停后钮在场」会因陈旧 hover 状态恒真，
