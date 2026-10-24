@@ -469,16 +469,35 @@ test("焦点在左栏文件树上：⌘= 同样命中（作用域 global）", as
   expect(await contentFontSize(page)).toBe(BASE_FONT_SIZE);
 });
 
-test("键位通路唯一：窗口级 keydown 监听只有统一键位表这一条", async ({ page }) => {
+test("键位通路唯一：一条分发器 + 一条 Escape 安全消费者（两者职责由功能判据分开）", async ({ page }) => {
   await countWindowKeydownListeners(page);
   await open(page);
   const listeners = await page.evaluate(() => [...((window as never as { __windowKeydownListeners: string[] }).__windowKeydownListeners ?? [])]);
   // Tauri 的 webview 缩放热键（zoom_hotkeys_enabled）正是 window 级 keydown 监听：启用它，
-  // 这里立刻变成 2（同一物理键两条分发路径）。统一键位表只有一处 attach（src/main.ts）。
-  expect(listeners.length, `窗口级 keydown 监听：${listeners.join(", ")}`).toBe(1);
+  // 这里是「同一物理键两条**分发**路径」。
+  //
+  // 2026-10-25（change fix-escape-overlay-close-oct24，tower 批准 A）：Esc 合同要求在统一分发器
+  // **之后**再挂一条 window 冒泡监听作**安全消费者**（`src/escape-router.ts` 的
+  // `installEscapeRouter`：非 Escape 立刻返回；Escape 只在「没人消费」时 `preventDefault` + 关
+  // 最上层）。「必须最后装」只能靠第二条监听实现，因此条数由 1 变 2 是**合同要求**，不是新增
+  // 分发路径。旧判据（条数恒等于 1）因此过时——但不能只把 1 改成 2（那等于改测试就过关）：
+  // 下面两条功能判据分别钉住「分发仍唯一」与「第二条只做安全消费」。
+  expect(listeners.length, `窗口级 keydown 监听：${listeners.join(", ")}`).toBe(2);
+
+  // ① 分发仍唯一：⌘= 只放大一档（15 → 17）。若第二条监听也分发键位，这里会变成两档（19）。
   await page.locator(".cm-content").click();
   await page.keyboard.press("Meta+Equal");
-  expect(await contentFontSize(page), "唯一那条监听就是统一键位表（⌘= 命中放大一档）").toBe(17);
+  expect(await contentFontSize(page), "唯一那条分发器仍是统一键位表（⌘= 只放大一档，未被重复施加）").toBe(17);
+
+  // ② 第二条是**安全消费者**不是第二个分发器：无层时按 Escape 只挡原生默认行为——
+  //    字号不动（消费者不分发键位）、焦点不动（不关层也不移焦点）、没有层被凭空打开。
+  await page.keyboard.press("Escape");
+  expect(await contentFontSize(page), "Escape 不经过放大路径（消费者不分发键位）").toBe(17);
+  expect(
+    await page.evaluate(() => document.activeElement?.classList.contains("cm-content") ?? false),
+    "无层 Escape 不移动焦点（消费者只消费默认行为）",
+  ).toBe(true);
+  await expect(page.locator(".lumir-harness"), "无层 Escape 不打开任何层").toBeHidden();
 });
 
 // ---------------------------------------------------------------------------
