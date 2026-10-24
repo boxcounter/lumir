@@ -60,14 +60,16 @@ const REGISTRY: RegistryEntry[] = [
       ".lumir-hp-codeblock",
       ".lumir-hp-diff",
       ".lumir-hp-argv",
+      ".lumir-hp-table-scroll",
       ".cm-lp-block-scroll",
       ".cm-lp-table-scroll",
       ".cm-lp-math-block",
       ".cm-lp-mermaid",
     ],
     note:
-      "harness 的代码块 / diff / argv（M406 / M628）+ 编辑器预览的四个块级横滚容器（M663）。" +
-      "配方（4px / --border thumb / 透明轨道 / scrollbar-width: thin）全档只有一份共用规则。",
+      "harness 的代码块 / diff / argv（M406 / M628）、harness 对话表格的横滚容器（M703）+ 编辑器" +
+      "预览的四个块级横滚容器（M663）。配方（4px / --border thumb / 透明轨道 / scrollbar-width: thin）" +
+      "全档只有一份共用规则。",
   },
   {
     tier: "native-overlay",
@@ -357,7 +359,7 @@ test("滚动条注册表与源码双向对齐，且各档声明实际成立", ()
   );
 });
 
-test("注册表覆盖盘点出的全部滚动容器（19 个面 = 20 个选择器）", () => {
+test("注册表覆盖盘点出的全部滚动容器（20 个面 = 21 个选择器）", () => {
   const scanned = scrollContainers(realWorld());
   assert.deepEqual(
     [...scanned.keys()].sort(),
@@ -374,6 +376,7 @@ test("注册表覆盖盘点出的全部滚动容器（19 个面 = 20 个选择�
       ".lumir-hp-diff",
       ".lumir-hp-permpop-rules",
       ".lumir-hp-sesspop-list",
+      ".lumir-hp-table-scroll",
       ".lumir-hp-transcript",
       ".lumir-qo-list",
       ".lumir-table-fs-panel",
@@ -389,6 +392,11 @@ test("注册表覆盖盘点出的全部滚动容器（19 个面 = 20 个选择�
     [...scanned.get(".cm-lp-table-scroll")!.axes].sort(),
     ["x"],
     "宽表容器只应横向滚动（纵向 hidden）——纵向一旦变成滚动，细条档的两轴代价判断要重做",
+  );
+  assert.deepEqual(
+    [...scanned.get(".lumir-hp-table-scroll")!.axes].sort(),
+    ["x"],
+    "harness 表格的横滚容器只应横向滚动（纵向 hidden），与正文 .cm-lp-table-scroll 同口径",
   );
 });
 

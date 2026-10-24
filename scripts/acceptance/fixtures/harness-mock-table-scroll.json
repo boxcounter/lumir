@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "TABLE-SCROLL 回复：下面是一张宽表。\n\n| 名称 | 说明 | 状态 | 备注 |\n| --- | --- | --- | --- |\n| TABLE-SCROLL-首列-甲 | 第二列的说明文字写得再长一点才够宽 | 进行中状态 | TABLE-SCROLL-末列-甲 |\n| TABLE-SCROLL-首列-乙 | 第二列的说明文字同样很长才够宽 | 已完成状态 | TABLE-SCROLL-末列-乙 |\n",
+      "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 40 }
+    }
+  ]
+}
