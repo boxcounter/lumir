@@ -55,6 +55,28 @@ saphyr = { version = "0.2", default-features = false }
 # 本 change 用不到的重依赖，开着会白付编译与二进制体积。两条链路都是纯 Rust（`image-webp` +
 # `png`），零 C 依赖、零外部进程，不引入构建面。
 image = { version = "0.25", default-features = false, features = ["png", "webp"] }
+# SVG 引用的栅格化（change svg-image-quote-oct24；方向裁决：Alex 2026-10-24「好，采纳 A」）：
+# 预览层认 svg，而三家 provider（Kimi / DeepSeek / OpenAI）的图片输入都不收 SVG，写入口又只收
+# 位图——svg 引用因此必然走「枚举成功、落盘拒绝」的半成功路径（survey 报告
+# .local/reports/quote-image-pipeline-oct24.md §4.3 / §4.4）。resvg 把 SVG 渲成位图，再走既有
+# png→WebP 链路：落盘名仍是 `pasted-<hash16>.webp`，缩略图 / 投递 / 恢复零改动。
+#
+# **为什么 default-features = false**：默认档带 svgz（flate2 解压）、memmap-fonts（memmap2）与
+# raster-images（gif / image-webp / zune-jpeg 三个解码器）。本仓只需要 `<text>` 的字体（fontdb
+# 装系统字体：`text` + `system-fonts`）、纯矢量渲染与**内嵌位图**（`raster-images`）。关掉的两项
+# 是：gzip 过的 svg 不在图片注册表里（`.svgz` 不是图片扩展名）；内存映射字体是纯加载优化
+# （字体一次性装进内存，几十毫秒，不是瓶颈）。
+#
+# **为什么 raster-images 必须开着**：resvg 在缺这个 feature 时会把 `<image>` 的**全部位图**丢弃
+# （`render_inner` 的 `not(raster-images)` 分支只打一条 warn）——包括 `data:` URI 里的内嵌 PNG。
+# 那会让「SVG 里内嵌一张图」悄悄少一块，且没有任何人侧提示。`data:` 是**内联载荷**：零 I/O、
+# 零外部引用，与本 change 要关的「外部资源加载」是两件事（后者关在 `svg_raster` 的
+# `resolve_string` 上）。代价是 `gif` + `zune-jpeg` 两个解码器进依赖树（`image-webp` 已在
+# `image` 的 webp feature 里）。
+#
+# 安全边界落在 `src-tauri/src/svg_raster.rs`：外部 href 恒拒（不读 file: / http(s) / 相对路径）、
+# viewBox→位图最长边夹 4096、产物只出位图（MUST NOT 原样存 SVG）。
+resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts", "raster-images"] }
 # 系统通知（change add-cron-runtime-daemon §4）：cron 的「到点 / 已完成 / 运行失败」投递与
 # 点击唤起。三平台统一走 notify-rust 直连：投递点是 `lumir-cron` 线程、点击等待在进程侧，都是
 # Rust 侧调用而不经 webview——capabilities 因此零增量（与 opener / rfd 同一取舍先例）。

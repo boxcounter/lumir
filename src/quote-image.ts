@@ -3,7 +3,8 @@
 // 三步、零新后端命令：
 //   1. 读 vault 字节：`fs_read_attachment`（既有；只读，50MB 上限在 Rust 侧）；
 //   2. 写 harness 侧存储：`harness_write_image`（既有；png→WebP 无损 / jpeg / webp 原样 /
-//      其余子类型拒绝；内容寻址 + 去重——同一张图引用两次不会产生两份文件）；
+//      svg 栅格化成位图再转码（M666）/ 其余子类型拒绝；内容寻址 + 去重——同一张图引用两次
+//      不会产生两份文件）；
 //   3. 交调用方在**一次**结构编辑步里插块（本模块只做 I/O 与卡片装配，不碰 composer）。
 //
 // 两条硬约束（design §3）：
@@ -20,6 +21,15 @@
 //     而不是粘贴语境的 D436（「不支持的剪贴板图片格式」）——引用不是粘贴，见 quoteImageErrorText。
 //   - **格式预检**：可引用格式的单一真源在 `src/preview/attachments.ts`（与 Rust 写入口对账），
 //     不可引用的格式不走 IPC（读 vault + 写 harness 都是白费）；后端写原语仍是最后一道闸。
+//
+// M666（change svg-image-quote-oct24，Alex 2026-10-24「好，采纳 A」）：
+//   - **svg 从「预检拒绝」移进可引用表**：写入口先把 SVG 栅格化成位图再走既有 png→WebP 链路
+//     （`src-tauri/src/svg_raster.rs`），因此引用一张 svg 与引用一张 png 在这里没有分支差异——
+//     预检放行、两条 IPC 照常、卡片拿到的是 `pasted-<hash16>.webp`。
+//   - **D585 仍然只在真正不支持的类型上出现**（gif / heic / avif / bmp / ico）：那段失败面没有
+//     被删掉，只是不再命中 svg。
+//   - 栅格化自身的失败（畸形 XML / 尺寸非法）按写入口既有码族回落（`attachment_decode_failed`
+//     → D438），走的是 `quoteImageErrorText` 的通用分支。
 //
 // 本模块是纯 I/O 编排（零 DOM）：tests/unit 用假 Tauri 后端直接跑真 ipc + 真转码面契约
 //（`tests/unit/quote-image.test.ts`）。

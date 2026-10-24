@@ -173,22 +173,21 @@ fn image_dimensions(bytes: &[u8]) -> Result<(u32, u32), CommandError> {
 }
 
 /// 写原语核心（给定目标目录；`write_image` 的落点解析后的形态）：链路与 vault 附件
-/// [`fs_io::write_attachment`] 同族——base64 解码 + 50MB 上限（转码前）→ 转码
-/// （png → WebP 无损；jpeg / webp 原样，其余拒绝）→ 内容寻址命名 → 原子写；差异只在
-/// 落点与去重范围（本目录内 `exists` 判定即可，同名即同内容；同一张图贴进两个 vault
-/// 各存一份是分层布局的诚实代价，design §5.2）与回传尺寸。
+/// [`fs_io::write_attachment`] 同族——格式查表 → base64 解码 + 50MB 上限（转换前）→ 转换
+/// （png → WebP 无损；jpeg / webp 原样；svg 栅格化成位图再转码；其余拒绝）→ 内容寻址命名 →
+/// 原子写；差异只在落点与去重范围（本目录内 `exists` 判定即可，同名即同内容；同一张图贴进两个
+/// vault 各存一份是分层布局的诚实代价，design §5.2）与回传尺寸。
+///
+/// 转换走 [`fs_io::convert_attachment`]（M666）：转换口径只在 `fs_io::ATTACHMENT_TARGETS` 那一处
+/// 定义，本函数 MUST NOT 自己 if 一遍转码策略——svg 栅格化就是靠这一条接进引用链路的。
 fn write_image_to(
     dir: &Path,
     data_base64: &str,
     source_mime: &str,
 ) -> Result<HarnessWrittenImage, CommandError> {
-    let (transcode, extension) = fs_io::attachment_target(source_mime)?;
+    let (conversion, extension) = fs_io::attachment_target(source_mime)?;
     let raw = fs_io::decode_attachment_base64(data_base64)?;
-    let bytes = if transcode {
-        fs_io::transcode_png_to_webp(&raw)?
-    } else {
-        raw
-    };
+    let bytes = fs_io::convert_attachment(conversion, &raw)?;
     let (width, height) = image_dimensions(&bytes)?;
     let name = format!("pasted-{}.{extension}", fs_io::short_hash(&bytes));
     if dir.join(&name).exists() {
@@ -568,6 +567,43 @@ mod tests {
         let written2 =
             write_image_to(&dir, &fs_io::base64_encode(&read_back), "image/webp").unwrap();
         assert_eq!(written2.name, written.name, "同内容同寻址名");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// M666（change svg-image-quote-oct24）：`harness_write_image` 的写路径接住 svg——
+    /// 栅格化成位图后落盘，名字仍是内容寻址 webp、尺寸来自栅格化结果。
+    #[test]
+    fn write_image_rasterizes_svg() {
+        let dir = tmpdir("svg");
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="12" viewBox="0 0 24 12">
+  <rect width="24" height="12" fill="#336699"/>
+</svg>"##;
+        let written =
+            write_image_to(&dir, &fs_io::base64_encode(svg.as_bytes()), "image/svg+xml").unwrap();
+        assert!(
+            written.name.starts_with("pasted-") && written.name.ends_with(".webp"),
+            "落盘名是内容寻址 webp：{}",
+            written.name
+        );
+        assert_eq!(
+            (written.width, written.height),
+            (24, 12),
+            "尺寸取栅格化结果"
+        );
+        let bytes = read_image_bytes_from(&dir, &written.name).unwrap();
+        assert!(
+            !bytes.starts_with(b"<svg") && !bytes.starts_with(b"<?xml"),
+            "MUST NOT 原样落盘 SVG 字节"
+        );
+        assert_eq!(
+            image::load_from_memory(&bytes).unwrap().width(),
+            24,
+            "产物是可解码的位图"
+        );
+        // 同一份 svg 再写：内容寻址同名（栅格化确定性 ⇒ 去重命中）。
+        let again =
+            write_image_to(&dir, &fs_io::base64_encode(svg.as_bytes()), "image/svg+xml").unwrap();
+        assert_eq!(again.name, written.name);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

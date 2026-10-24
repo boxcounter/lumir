@@ -10,8 +10,9 @@ import { attachmentReads, harnessImageWrites, stubTauri, type VaultFixture } fro
 //      引用正文保留图片源码（design §5），一次 ⌘Z 全撤。
 //   3. **占位不可引用**：读取失败的图片占位没有 `<img>` ⇒ 没有引用钮（结构性事实，
 //      不是开关）；笔记嵌入与未解析引用同样没有钮。
-//   4. **不支持的格式（M662）**：svg 引用在预检就失败（零 IPC）——toast 是引用语境的
-//      D585「暂不支持引用该格式」、输入区留持久状态行 D586「1 张图片未能引用」，不插卡片。
+//   4. **可引用格式的边界（M662 / M666）**：svg 走栅格化**成功**路径（卡片拿到位图内容寻址名、
+//      无失败留痕）；D585「暂不支持引用该格式」/ D586「1 张图片未能引用」的失败面留给**真正不
+//      支持**的格式（本场景用 gif 判——它在可引用格式表之外，预览仍渲染得出）。
 //   5. **含图读数（M662）**：引用卡片的出处行带派生角标「含 N 张图片」（人侧读数，不进投递）。
 //
 // 本场景刻意**不做像素基线**（零新基线、零既有基线更新）：钮的浮现手感 / 图片卡片观感归 Alex
@@ -20,6 +21,13 @@ import { attachmentReads, harnessImageWrites, stubTauri, type VaultFixture } fro
 const PIC = "assets/pic.png";
 const LOGO = "assets/logo.svg";
 const BROKEN = "assets/broken.png";
+/** 合成 96×48 纯色 GIF（信息卫生：纯色、无内容）。M666 起 svg 已可引用，D586 的失败面需要一个新的
+ *  「预览渲染得出、可引用表里没有」的格式夹具——gif 是那组差集里最普通的一个（三家 provider 都收
+ *  gif，但落盘链路没扩格式，扩格式没有裁决）。base64 由一张纯色 PNG 经 `sips -s format gif`
+ *  转出后钉成常量（tests/visual 不引 Buffer / 无图像编码依赖）。 */
+const ANIM = "assets/anim.gif";
+const ANIM_BASE64 =
+  "R0lGODdhYAAwAJEAAAAAAMh4PP///wAAACH5BAQAAAAALAAAAABgADAAAAJJjI+py+0Po5y02ouz3rz7D4biSJbmiabqyrbuC8fyTNf2jef6zvf+DwwKh8Si8YhMKpfMpvMJjUqn1Kr1is1qt9yu9wsOi8e0AgA7";
 
 const DOC = [
   "# 图片摘录",
@@ -33,6 +41,8 @@ const DOC = [
   "![坏图](assets/broken.png)",
   "",
   "![[assets/logo.svg]]",
+  "",
+  "![[anim.gif]]",
   "",
   "![[note]]",
   "",
@@ -65,18 +75,27 @@ const VAULT: VaultFixture = {
     { path: "assets", kind: "dir", size: 0, mtime_ms: 0 },
     { path: PIC, kind: "file", size: 69, mtime_ms: 0 },
     { path: LOGO, kind: "file", size: SVG.length, mtime_ms: 0 },
+    { path: ANIM, kind: "file", size: 120, mtime_ms: 0 },
     { path: BROKEN, kind: "file", size: 4, mtime_ms: 0 },
   ],
-  files: { "harness-image-quote.md": DOC, [PIC]: "", [LOGO]: "", [BROKEN]: "" },
+  files: {
+    "harness-image-quote.md": DOC,
+    [PIC]: "",
+    [LOGO]: "",
+    [ANIM]: "",
+    [BROKEN]: "",
+  },
   links: {
     "![[pic.png]]": resolved(PIC),
     "![[assets/logo.svg]]": resolved(LOGO),
+    "![[anim.gif]]": resolved(ANIM),
   },
   // 坏图的字节可读、却解不出像素：终态是可见占位（没有 <img>）。
   // 合成 96×48 的 PNG 字节给主图（避免 1×1 时引用钮盖住整张图，见 PIC_BASE64 的注释）。
   attachments: {
     [PIC]: PIC_BASE64,
     [LOGO]: SVG_BASE64,
+    [ANIM]: ANIM_BASE64,
     [BROKEN]: "QUJD",
   },
 };
@@ -106,8 +125,8 @@ async function openDoc(page: Page): Promise<void> {
   await page.goto("/");
   await page.locator('.ft-row[title="harness-image-quote.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("第一段文字");
-  // 终态：合成 PNG 与 SVG 都渲染出 <img>（坏图不留 <img>，由它的用例单独判）。
-  await expect(page.locator(".cm-lp-image img")).toHaveCount(2);
+  // 终态：合成 PNG / SVG / GIF 都渲染出 <img>（坏图不留 <img>，由它的用例单独判）。
+  await expect(page.locator(".cm-lp-image img")).toHaveCount(3);
 }
 
 /** 程序化选区（m345 同手法）：CM 在 focused 时把选区写进 DOM，摘录手势的 selectionchange 因此触发。 */
@@ -209,40 +228,64 @@ test("占位不可引用：读取失败的图片 / 笔记嵌入 / 未解析引�
   await expect(broken.locator(".lumir-image-quote-trigger")).toHaveCount(0);
   // 笔记嵌入 / 未解析引用走 AttachmentNoticeWidget（不是图片替换区），同样没有钮。
   await expect(page.locator(".cm-lp-embed-unsupported .lumir-image-quote-trigger")).toHaveCount(0);
-  // 反向验证：同一文档里的两张终态图片各有且只有一个钮（坏图缺席不是选择器写错）。
-  await expect(page.locator(".cm-lp-image img")).toHaveCount(2);
-  await expect(page.locator(".lumir-image-quote-trigger")).toHaveCount(2);
+  // 反向验证：同一文档里的三张终态图片各有且只有一个钮（坏图缺席不是选择器写错）。
+  await expect(page.locator(".cm-lp-image img")).toHaveCount(3);
+  await expect(page.locator(".lumir-image-quote-trigger")).toHaveCount(3);
 });
 
-test("不支持的格式：svg 引用在预检被拒——引用语境文案 + 持久状态行，零 IPC、不插卡片", async ({ page }) => {
-  await stubTauri(page, {
-    ...VAULT,
-    harnessImageFailures: {
-      "image/svg+xml": {
-        code: "attachment_type_unsupported",
-        message: "不支持的剪贴板图片格式",
-        params: { type: "image/svg+xml" },
-      },
-    },
-  });
-  await stubHarnessState(page);
-  await page.goto("/");
-  await page.locator('.ft-row[title="harness-image-quote.md"]').click();
+test("svg 引用走栅格化成功路径（M666）：卡片是位图内容寻址名、无失败留痕", async ({ page }) => {
+  await openDoc(page);
+  const logoBox = page.locator(".cm-lp-image").filter({ has: page.locator('img[alt*="logo.svg"]') });
+  await expect(logoBox.locator("img")).toBeVisible();
+  await logoBox.locator("img").hover();
+  const trigger = logoBox.locator(".lumir-image-quote-trigger");
+  await expect(trigger).toBeVisible();
+  await trigger.click();
 
-  const logo = page.locator('.cm-lp-image img[alt*="logo.svg"]');
-  await expect(logo).toBeVisible();
-  // 预览渲染这张 svg 时本来就读过它的字节（附件 provider）；判据是「点引用之后没有新读取」。
-  const logoReadsBefore = (await attachmentReads(page)).filter((path) => path === LOGO).length;
-  await logo.hover();
-  // 悬停到 svg 那张图上的钮（两张终态图片各有一个钮，按文档序 pic 在前、logo 在后；
-  // 只有正被悬停的那一个可见——`.last()` 命中 svg 这一张）。
-  await expect(page.locator(".lumir-image-quote-trigger")).toHaveCount(2);
-  await page.locator(".lumir-image-quote-trigger").last().click();
+  const composer = page.locator(".lumir-hp-composer");
+  const imageCard = composer.locator(".lumir-hp-imgcard");
+  await expect(imageCard).toHaveCount(1);
+  // 卡片引用的是**位图**内容寻址名（桩名的形态就是真后端的落盘形态 pasted-<hash16>.webp）——
+  // 栅格化的产出走既有链路，卡片上不出现 svg 名、也不出现 SVG 字节（MUST NOT 原样存 SVG）。
+  await expect(imageCard.locator(".lumir-hp-qc-src")).toContainText(
+    "pasted-633ab12cd34ef567.webp",
+  );
+  await expect(imageCard.locator(".lumir-hp-qc-src")).not.toContainText(".svg");
+  // 缩略图照常读回（与位图同一路径），来源仍只落 hover title。
+  await expect(imageCard.locator(".lumir-hp-qc-thumb")).toHaveAttribute("title", LOGO);
+  // 写请求带的是**源** MIME：栅格化在后端（前端只搬运字节与 MIME，格式面不在这里分叉）。
+  const writes = await harnessImageWrites(page);
+  expect(writes).toHaveLength(1);
+  expect(writes[0]?.source_mime).toBe("image/svg+xml");
+  // 成功路径没有失败留痕、没有格式不支持的 toast（D585 / D586 只留给真正不支持的类型）。
+  // 状态行的元素是**常驻**的（`hidden = true` 即收起，见 `applyQuoteFailureNotice`），
+  // 因此判据是「收起」而不是「没有这个元素」。
+  await expect(page.locator(".lumir-hp-quote-note")).toBeHidden();
+  await expect(imageCard.locator(".lumir-hp-qc-actions button[aria-label='插入图片引用']")).toHaveCount(1);
+  await expect(page.locator(".lumir-toast", { hasText: "暂不支持引用该格式" })).toHaveCount(0);
+
+  // 一次 ⌘Z 仍撤掉整次引用（svg 与位图同一撤销语义）。
+  await page.keyboard.press("Meta+z");
+  await expect(composer.locator(".lumir-hp-imgcard")).toHaveCount(0);
+});
+
+test("不支持的格式：gif 引用在预检被拒——引用语境文案 + 持久状态行，零 IPC、不插卡片", async ({
+  page,
+}) => {
+  await openDoc(page);
+  const gifBox = page.locator(".cm-lp-image").filter({ has: page.locator('img[alt*="anim.gif"]') });
+  await expect(gifBox.locator("img")).toBeVisible();
+  // 预览渲染这张 gif 时本来就读过它的字节（附件 provider）；判据是「点引用之后没有新读取」。
+  const gifReadsBefore = (await attachmentReads(page)).filter((path) => path === ANIM).length;
+  await gifBox.locator("img").hover();
+  const trigger = gifBox.locator(".lumir-image-quote-trigger");
+  await expect(trigger).toBeVisible();
+  await trigger.click();
 
   // 文案是引用语境（D585），不是粘贴语境的 D436「剪贴板」（Alex 现场的原句）。
   const toast = page.locator(".lumir-toast", { hasText: "暂不支持引用该格式" });
   await expect(toast).toBeVisible();
-  await expect(toast).toContainText("image/svg+xml");
+  await expect(toast).toContainText("image/gif");
   await expect(toast).not.toContainText("剪贴板");
   // 持久留痕（D586）：不是 3 秒 toast 能代替的那条——输入区状态行在场。
   await expect(page.locator(".lumir-hp-quote-note")).toBeVisible();
@@ -251,20 +294,11 @@ test("不支持的格式：svg 引用在预检被拒——引用语境文案 + �
   // 预检拦在 IPC 之前：既没读 vault 字节，也没发写请求（后端写原语仍是最后一道闸，
   // 但可引用的判定面在 `src/preview/attachments.ts` 一处，见 M662 的格式对账）。
   expect(await harnessImageWrites(page)).toHaveLength(0);
-  expect((await attachmentReads(page)).filter((path) => path === LOGO)).toHaveLength(logoReadsBefore);
+  expect((await attachmentReads(page)).filter((path) => path === ANIM)).toHaveLength(gifReadsBefore);
 });
 
 test("状态行的收口：文本摘录与消息摘录都是「下一次引用」（r1 P2-1）", async ({ page }) => {
-  await stubTauri(page, {
-    ...VAULT,
-    harnessImageFailures: {
-      "image/svg+xml": {
-        code: "attachment_type_unsupported",
-        message: "不支持的剪贴板图片格式",
-        params: { type: "image/svg+xml" },
-      },
-    },
-  });
+  await stubTauri(page, VAULT);
   await stubHarnessState(page);
   // 本用例要一条 transcript 消息做「消息摘录」的收口判据：发送成功即可（不推进轮次）。
   await page.addInitScript(() => {
@@ -283,17 +317,20 @@ test("状态行的收口：文本摘录与消息摘录都是「下一次引用�
   await expect(page.locator(".lumir-hp-msg-user .lumir-hp-qtext")).toHaveText("上一轮的问题");
 
   const note = page.locator(".lumir-hp-quote-note");
-  const logo = page.locator('.cm-lp-image img[alt*="logo.svg"]');
-  const triggerSvgQuote = async (): Promise<void> => {
-    await logo.scrollIntoViewIfNeeded();
-    await logo.hover();
-    await page.locator(".lumir-image-quote-trigger").last().click();
+  // 失败夹具 = gif（可引用格式表之外的格式）：M666 起 svg 走成功路径，不能再拿它造失败现场。
+  // 预检在 IPC 之前失败 ⇒ 零写请求、零卡片，只留 D586 状态行——正是本用例要的收口对象。
+  const gifBox = page.locator(".cm-lp-image").filter({ has: page.locator('img[alt*="anim.gif"]') });
+  const triggerFailedQuote = async (): Promise<void> => {
+    const img = gifBox.locator("img");
+    await img.scrollIntoViewIfNeeded();
+    await img.hover();
+    await gifBox.locator(".lumir-image-quote-trigger").click();
     await expect(note).toBeVisible();
     await expect(note).toContainText("1 张图片未能引用");
   };
 
   // 失败 → 状态行在场。
-  await triggerSvgQuote();
+  await triggerFailedQuote();
 
   // 路径一：**文本摘录**（insertQuoteCard）收口。选区取一段纯文字（不含图片），走卡片路径。
   await selectRange(page, "第一段文字", "第一段文字");
@@ -302,7 +339,7 @@ test("状态行的收口：文本摘录与消息摘录都是「下一次引用�
   await expect(note).toBeHidden();
 
   // 再失败一次 → 状态行重新在场（判据有区分度：不是一直隐藏）。
-  await triggerSvgQuote();
+  await triggerFailedQuote();
 
   // 路径二：**消息摘录**（insertMessageQuoteCard）收口。
   await page.evaluate(() => {

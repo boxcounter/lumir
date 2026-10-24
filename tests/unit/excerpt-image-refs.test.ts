@@ -86,8 +86,9 @@ test("引用块（blockquote）里的图片算（渲染层会画出来）", () =
   assert.equal(countExcerptImageRefs("> 引用里的图 ![a](attachments/a.png)"), 1);
 });
 
-test("svg 这类「预览渲染得出、可引用不了」的格式照样计数（角标说的是摘录里有什么）", () => {
-  // 这是 Alex 现场的形态：摘录里有 `![[logo.svg]]`，引用事务会失败（失败读数另出 D586）。
+test("svg 照样计数（角标说的是摘录里有什么，与能不能引用无关）", () => {
+  // 读数是**派生**的：`![[logo.svg]]` 先由 M662 的失败面覆盖，M666 起 svg 走栅格化成功路径——
+  // 两条路径下这条读数都不变（它只回答「摘录里原本有几张图」）。
   assert.equal(countExcerptImageRefs("![[logo.svg]]"), 1);
   assert.equal(countExcerptImageRefs("![](attachments/logo.svg)"), 1);
 });

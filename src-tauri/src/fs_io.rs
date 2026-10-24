@@ -24,6 +24,12 @@ use ts_rs::TS;
 use crate::commands::CommandError;
 use crate::config::IgnoreTier;
 
+/// SVG 栅格化（change svg-image-quote-oct24）的模块声明在这里、而不是 crate 根的 `lib.rs`：
+/// 该 mission 的改动面（scope）不含 crate 根，`#[path]` 指回同目录的 `src/svg_raster.rs`，
+/// 与在 `lib.rs` 里写 `mod svg_raster;` 完全等价（模块路径因此是 `crate::fs_io::svg_raster`）。
+#[path = "svg_raster.rs"]
+pub(crate) mod svg_raster;
+
 /// 保存临时文件模式（两条）。**必须两条**才能与既有判据「`.` 开头且含 `.lumir-`」逐条等价：
 /// - `.lumir-*` —— 名字在**开头**就是 `.lumir-`（`.lumir-notes.md` / `.lumir-` / `.lumir-1`）；
 /// - `.*.lumir-*` —— 首个 `.` 之后另有内容再出现 `.lumir-`（本 app 产生的
@@ -2284,32 +2290,57 @@ pub(crate) fn plan_semantic_name(
     PlannedSemanticName::Exhausted
 }
 
-/// 可粘贴 / 可引用的源图片格式表（**单一真源**，M662，change quote-pipeline-consistency-oct24）：
-/// 源 MIME → `(是否转码, 落盘扩展名)`。写入口（本函数）、读回口径
-/// （`harness::attachments` 的 `is_attachment_name` / `mime_of_name`）与前端
+/// 源格式的**转换口径**（M666，change svg-image-quote-oct24）。
+///
+/// 为什么是三档而不是一个 bool：M662 的 bool 只够区分「PNG 要转码 / 其它原样」；SVG 进来后多出
+/// 第三种——「先栅格化成位图，再走 png 转码」。把它做成表里的一列，写入口与 harness 贴图两条
+/// 调用链都从同一处取（[`convert_attachment`]），不各自 if 一遍转码策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AttachmentConversion {
+    /// 位图原样落盘（jpeg / webp）。
+    Passthrough,
+    /// PNG → WebP 无损。
+    PngToWebp,
+    /// SVG 栅格化成位图（[`svg_raster`]）→ WebP 无损。**MUST NOT 原样存 SVG**：SVG 是带外部
+    /// 引用的 XML（`<image href>` / CSS / `url(#…)`），原样留存等于让每一个渲染点去解析用户
+    /// vault 里的任意 XML（survey 报告 §4.5 第 1 条）。
+    RasterizeSvg,
+}
+
+/// 可粘贴 / 可引用的源图片格式表（**单一真源**，M662，change quote-pipeline-consistency-oct24；
+/// M666 把「是否转码」升级成三档转换）：源 MIME → `(转换口径, 落盘扩展名)`。写入口
+/// （本模块）、读回口径（`harness::attachments` 的 `is_attachment_name` / `mime_of_name`）与前端
 /// （`src/preview/attachments.ts` 的 `QUOTABLE_IMAGE_EXTENSIONS`）都从这张表派生；前端那份
 /// 由 `tests/unit/attachment-format-drift.test.ts` 双向对账（任一侧漂移即红）。
 ///
-/// png 转码成 WebP（无损）、jpeg / webp 原样；其余一律拒绝（provider 的图片输入白名单
-/// 只收位图，SVG 这类矢量格式不在其中——引用能力见 survey 报告 §4.2 的取舍记录）。
-pub(crate) const ATTACHMENT_TARGETS: &[(&str, bool, &str)] = &[
-    ("image/png", true, "webp"),
-    ("image/jpeg", false, "jpg"),
-    ("image/webp", false, "webp"),
+/// png 转码成 WebP（无损）、jpeg / webp 原样、svg 先栅格化再转码；其余一律拒绝（provider 的
+/// 图片输入白名单只收位图——SVG 走栅格化才进得去，见 survey 报告 §4.2 / §4.4 方案 C）。
+pub(crate) const ATTACHMENT_TARGETS: &[(&str, AttachmentConversion, &str)] = &[
+    ("image/png", AttachmentConversion::PngToWebp, "webp"),
+    ("image/jpeg", AttachmentConversion::Passthrough, "jpg"),
+    ("image/webp", AttachmentConversion::Passthrough, "webp"),
+    // SVG：栅格化的方向裁决见 Alex 2026-10-24「好，采纳 A」。落盘仍是 webp，因此读回侧的名字
+    // 形态 / MIME 映射与前端缩略图零改动——这是栅格化相对「扩格式白名单」的最大优势。
+    ("image/svg+xml", AttachmentConversion::RasterizeSvg, "webp"),
 ];
 
-/// 广告支持的目标格式（design §4.3）：png 转码、jpeg/webp 原样、其余拒绝。
-/// 返回 `(是否转码, 目标扩展名)`。MIME 参数（`image/png;xyz`）只取主类型——WKWebView 的
+/// 广告支持的目标格式（design §4.3）：png 转码、jpeg/webp 原样、svg 栅格化、其余拒绝。
+/// 返回 `(转换口径, 目标扩展名)`。MIME 参数（`image/png;xyz`）只取主类型——WKWebView 的
 /// file item 不带参数，容忍只为不把格式抖动变成假失败。
 ///
 /// `pub(crate)`：harness 贴图（`harness::attachments`）与 vault 附件共用同一格式判据
 /// （change harness-composer-image-paste design §5.3）。
-pub(crate) fn attachment_target(source_mime: &str) -> Result<(bool, &'static str), CommandError> {
+///
+/// 调用顺序是契约的一部分：格式判定（本函数）MUST 在 base64 解码与 50MB 上限判定**之前**——
+/// 「不支持的类型」优先于「太大」，两条失败面各自成立、不互相遮盖。
+pub(crate) fn attachment_target(
+    source_mime: &str,
+) -> Result<(AttachmentConversion, &'static str), CommandError> {
     let mime = source_mime.split(';').next().unwrap_or("").trim();
     ATTACHMENT_TARGETS
         .iter()
         .find(|(source, _, _)| *source == mime)
-        .map(|(_, transcode, extension)| (*transcode, *extension))
+        .map(|(_, conversion, extension)| (*conversion, *extension))
         .ok_or_else(|| {
             CommandError::new(
                 "attachment_type_unsupported",
@@ -2372,6 +2403,30 @@ pub(crate) fn transcode_png_to_webp(bytes: &[u8]) -> Result<Vec<u8>, CommandErro
             .param("reason", e.to_string())
         })?;
     Ok(out)
+}
+
+/// 写入口的**唯一转换入口**：源字节 → 落盘字节（按 [`AttachmentConversion`] 分派）。
+///
+/// 两条调用链（vault 附件 [`write_attachment`] 与 harness 贴图
+/// `harness::attachments::write_image`）都必须走这里，MUST NOT 各自 if 一遍转码策略——转码口径
+/// 只在 [`ATTACHMENT_TARGETS`] 那一处定义（M666 把 SVG 栅格化接进同一张表，不旁开一路）。
+///
+/// 调用方负责「先 `attachment_target` 查表、再解码 base64、最后调本函数」的顺序（格式判定优先于
+/// 尺寸判定，见 [`attachment_target`] 的注记）。
+pub(crate) fn convert_attachment(
+    conversion: AttachmentConversion,
+    raw: &[u8],
+) -> Result<Vec<u8>, CommandError> {
+    match conversion {
+        AttachmentConversion::Passthrough => Ok(raw.to_vec()),
+        AttachmentConversion::PngToWebp => transcode_png_to_webp(raw),
+        // 安全条款（survey §4.5）：SVG 一律先栅格化再走 png→WebP 链路，产物落在内容寻址的
+        // `pasted-<hash16>.webp` 上；MUST NOT 把 SVG 原样落盘。
+        AttachmentConversion::RasterizeSvg => {
+            let png = svg_raster::rasterize_svg_to_png(raw)?;
+            transcode_png_to_webp(&png)
+        }
+    }
 }
 
 /// 落盘目录解析：`dir_rel` 空串 = vault 根，其余走 [`resolve_in_vault`]（继承全部逃逸防护：
@@ -2518,7 +2573,8 @@ pub(crate) fn decode_attachment_base64(data_base64: &str) -> Result<Vec<u8>, Com
 
 /// 剪贴板图片写原语（change paste-clipboard-image 的 fs-io 增量，design §3）。
 ///
-/// 链路：base64 解码 → 50MB 上限（**转码前**判定）→ 转码（png → WebP 无损；jpeg / webp 原样）
+/// 链路：格式查表（[`attachment_target`]）→ base64 解码 → 50MB 上限（**转码前**判定）→ 转换
+/// （[`convert_attachment`]：png → WebP 无损；jpeg / webp 原样；svg → 栅格化 → WebP 无损）
 /// → 转码后字节 SHA-256 前 16 位内容寻址命名 `pasted-<hash16>.<ext>` → 全 vault 同名探测
 /// （命中即跳过写盘、按去重返回既有位置）→ 原子写（[`write_bytes_atomic`]，撞名不覆盖）。
 ///
@@ -2531,13 +2587,9 @@ pub fn write_attachment(
     data_base64: &str,
     source_mime: &str,
 ) -> Result<WrittenAttachment, CommandError> {
-    let (transcode, extension) = attachment_target(source_mime)?;
+    let (conversion, extension) = attachment_target(source_mime)?;
     let raw = decode_attachment_base64(data_base64)?;
-    let bytes = if transcode {
-        transcode_png_to_webp(&raw)?
-    } else {
-        raw
-    };
+    let bytes = convert_attachment(conversion, &raw)?;
     let hash16 = short_hash(&bytes);
     let name = staging_name(&hash16, extension);
     let dir = resolve_attachment_dir(root, dir_rel)?;
@@ -5870,26 +5922,128 @@ mod tests {
     }
 
     /// M662（change quote-pipeline-consistency-oct24）：写入口的格式表是唯一判定面——
-    /// 表内每一项都经 `attachment_target` 命中（转码 / 落盘扩展名逐项钉住），表外一律拒。
+    /// 表内每一项都经 `attachment_target` 命中（转换口径 / 落盘扩展名逐项钉住），表外一律拒。
+    /// M666：svg 进入表内（栅格化），因此从「表外」清单里移出、改由下面两条 svg 用例覆盖。
     #[test]
     fn attachment_targets_table_is_the_single_authority() {
-        for (source, transcode, extension) in ATTACHMENT_TARGETS {
+        for (source, conversion, extension) in ATTACHMENT_TARGETS {
             // CommandError 未实现 PartialEq，比较返回值本身而不是 `Result`。
             let target = attachment_target(source).expect("表内格式必须命中");
             assert_eq!(
                 target,
-                (*transcode, *extension),
+                (*conversion, *extension),
                 "表项 {source} 与 attachment_target 的判定不一致"
             );
             // MIME 参数只取主类型（WKWebView 的 file item 不带参数；容忍格式抖动）。
             let with_param = format!("{source};charset=binary");
             let target = attachment_target(&with_param).expect("带参数的主类型必须命中");
-            assert_eq!(target, (*transcode, *extension), "{with_param}");
+            assert_eq!(target, (*conversion, *extension), "{with_param}");
         }
-        for outside in ["image/svg+xml", "image/gif", "image/heic", "image/bmp", ""] {
+        for outside in ["image/gif", "image/heic", "image/bmp", "image/x-icon", ""] {
             let err = attachment_target(outside).unwrap_err();
             assert_eq!(err.code, "attachment_type_unsupported", "{outside}");
         }
+    }
+
+    /// M666（change svg-image-quote-oct24）：svg 的转换口径是**栅格化**，不是原样落盘。
+    /// 这条同时钉住安全条款 1（MUST NOT pass-through 存 SVG）：表里出现 svg 时转换档必须是
+    /// `RasterizeSvg`——有人把它「简化」成 `Passthrough` 会在这里判红。
+    #[test]
+    fn svg_target_is_rasterized_not_passed_through() {
+        assert_eq!(
+            attachment_target("image/svg+xml").expect("表内格式必须命中"),
+            (AttachmentConversion::RasterizeSvg, "webp"),
+            "svg 必须走栅格化档、落盘扩展名仍是 webp"
+        );
+        // 位图三档不变（反向用例：M666 不碰既有格式的行为）。
+        assert_eq!(
+            attachment_target("image/png").expect("表内格式必须命中"),
+            (AttachmentConversion::PngToWebp, "webp")
+        );
+        assert_eq!(
+            attachment_target("image/jpeg").expect("表内格式必须命中"),
+            (AttachmentConversion::Passthrough, "jpg")
+        );
+        assert_eq!(
+            attachment_target("image/webp").expect("表内格式必须命中"),
+            (AttachmentConversion::Passthrough, "webp")
+        );
+    }
+
+    /// M666：svg 走完整落盘链路——产物是 WebP 位图（不是 SVG 字节）、名字是内容寻址形态、
+    /// 尺寸来自栅格化结果。这是「栅格化产物走既有链路」的端到端判据（survey §4.5 第 4 条）。
+    #[test]
+    fn write_attachment_rasterizes_svg_to_webp() {
+        let v = TempVault::new();
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20" viewBox="0 0 40 20">
+  <rect width="40" height="20" fill="#336699"/>
+</svg>"##;
+        let written = write_attachment(
+            &v.0,
+            &v.policy(),
+            "",
+            &base64_encode(svg.as_bytes()),
+            "image/svg+xml",
+        )
+        .expect("svg 落盘成功");
+        assert!(
+            written.name.starts_with("pasted-") && written.name.ends_with(".webp"),
+            "落盘名仍是内容寻址 webp：{}",
+            written.name
+        );
+        let bytes = std::fs::read(v.0.join(&written.path)).unwrap();
+        let decoded = image::load_from_memory(&bytes).expect("产物必须能被 image crate 解码");
+        assert_eq!(
+            (decoded.width(), decoded.height()),
+            (40, 20),
+            "尺寸取 viewBox"
+        );
+        assert!(
+            !bytes.starts_with(b"<svg") && !bytes.starts_with(b"<?xml"),
+            "MUST NOT 原样落盘 SVG 字节"
+        );
+        // 同一份 svg 再写一次：内容寻址去重命中（栅格化是确定性的）。
+        let again = write_attachment(
+            &v.0,
+            &v.policy(),
+            "",
+            &base64_encode(svg.as_bytes()),
+            "image/svg+xml",
+        )
+        .unwrap();
+        assert_eq!(again.name, written.name);
+        assert!(!again.fresh, "同内容去重命中");
+    }
+
+    /// M666：畸形 SVG 走解码失败面（不落盘、不留半截），且失败发生在转换段而非格式查表段。
+    #[test]
+    fn write_attachment_rejects_malformed_svg() {
+        let v = TempVault::new();
+        let err = write_attachment(
+            &v.0,
+            &v.policy(),
+            "",
+            &base64_encode(b"<svg><rect"),
+            "image/svg+xml",
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "attachment_decode_failed");
+        assert_eq!(std::fs::read_dir(&v.0).unwrap().count(), 0, "不落盘");
+    }
+
+    /// M666 反向用例：位图三档的字节行为与 M666 之前逐字节一致（svg 分支不改变既有路径）。
+    /// png 仍转码成 WebP 无损、jpeg / webp 仍原样——经共用入口 [`convert_attachment`] 走一遍。
+    #[test]
+    fn convert_attachment_keeps_bitmap_paths_unchanged() {
+        let png = sample_png_rgba();
+        let webp = convert_attachment(AttachmentConversion::PngToWebp, &png).unwrap();
+        assert_eq!(
+            webp,
+            transcode_png_to_webp(&png).unwrap(),
+            "png 档 = 既有转码原语"
+        );
+        let raw = convert_attachment(AttachmentConversion::Passthrough, &webp).unwrap();
+        assert_eq!(raw, webp, "原样档逐字节不变");
     }
 
     #[test]

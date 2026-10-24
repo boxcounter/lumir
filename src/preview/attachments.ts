@@ -246,15 +246,20 @@ export function isImageName(name: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// 可引用格式（M662，change quote-pipeline-consistency-oct24）：能落进 harness 内容寻址存储的
-// 源图片格式。**这是前端唯一的「可引用」判定面**——预览层认 10 种图片（`IMAGE_MIME`，渲染
-// 能力），可引用只是其中一个子集（写原语只收 png / jpeg / webp）。枚举认 10 种、落盘认 3 种
-// 时，中间那 7 种必然走「枚举成功 → 落盘拒绝」的半成功路径（survey §4.3 的结构问题）。
+// 可引用格式（M662，change quote-pipeline-consistency-oct24；M666 加入 svg 的栅格化路径）：
+// 能落进 harness 内容寻址存储的源图片格式。**这是前端唯一的「可引用」判定面**——预览层认
+// 10 种图片（`IMAGE_MIME`，渲染能力），可引用只是其中一个子集（写原语收 png / jpeg / webp /
+// svg）。枚举认 10 种、落盘认 3 种时，中间那 7 种必然走「枚举成功 → 落盘拒绝」的半成功路径
+// （survey §4.3 的结构问题）；M666 把 svg 从那个差集里摘出来——它在写入口栅格化成位图后落盘。
 //
 // 单一真源在 Rust 的 `fs_io::ATTACHMENT_TARGETS`（写入口的判定面，后端必须自证）；这里逐项
 // 镜像，并由 `tests/unit/attachment-format-drift.test.ts` 双向对账（任一侧漂移即红）。跨语言
 // 共享不了内存，能共享的是同一份清单 + 一条机器判据——与 `SAVE_REJECTED_EXTENSIONS` 的处置
 // 同款（REVIEW.md「同一语义两处真源」条）。
+//
+// 表里**不镜像转换口径**（栅格化 / 转码 / 原样）：那是后端实现细节，前端只需要「能不能引用」
+// 与「落盘是什么扩展名」。转换口径本身由 Rust 侧单测钉住（`svg_target_is_rasterized_not_passed_through`
+// 断言 svg 档必须是 `RasterizeSvg`，防有人把它「简化」成原样落盘）。
 // ---------------------------------------------------------------------------
 
 /** 可引用格式表（源扩展名 → 落盘扩展名）：镜像 Rust `fs_io::ATTACHMENT_TARGETS` 的两列
@@ -264,6 +269,9 @@ const QUOTABLE_TARGETS: ReadonlyArray<{ readonly source: string; readonly stored
   { source: "jpg", stored: "jpg" },
   { source: "jpeg", stored: "jpg" },
   { source: "webp", stored: "webp" },
+  // svg：写入口先栅格化成位图再转码（M666，方向裁决 Alex 2026-10-24「好，采纳 A」）。
+  // 落盘仍是 webp ⇒ 缩略图 / 投递 / 恢复与位图同一条路；MUST NOT 原样落盘 SVG。
+  { source: "svg", stored: "webp" },
 ];
 
 /** 可引用的源图片扩展名（小写、不含点）。 */
