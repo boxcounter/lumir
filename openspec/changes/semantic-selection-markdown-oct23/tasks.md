@@ -22,13 +22,14 @@
 - [x] 1.2 chromium 探针：确认「外扩事务与 `pointerPressFrame.of(null)` 合并成一拍」时装饰只重建
       一次、上屏与选中底色同帧（design §4.1）——读数：`buildDecorations` 计数 = 1，同一次
       contentDOM mouseup 内行文本已变 `## …`；探针证据落 `.local/probes/`，不入 git
-- [ ] 1.3 真机探针（WKWebView）：确认 mouseup 的事件顺序与 Quote 浮动钮的浮现时机——外扩后
+- [x] 1.3 真机探针（WKWebView）：确认 mouseup 的事件顺序与 Quote 浮动钮的浮现时机——外扩后
       **不得**多出一次 350ms 的 settle 延迟（design §4.3）。**不得**用场景 233 的最终文本 PASS
       冒充（review r1 P2-3）：233 只证明 Quote 读到外扩后的选区，10s waitFor 对多一次 350ms 恒真。
-      做法：临时插桩记录 content-mouseup / quote-mouseup / reveal-gate-end / selectionchange /
-      按钮 show-hide 的时间戳，经 AX 可读节点断言 `order=ok` 且稳态可见 ≤550ms（多一次 350ms
-      会 >700ms）；再用「外扩推迟 300ms」的对照跑证明判据有区分度。插桩与探针场景跑完删除，
-      证据留 `.local/`。**待 Alex 真机实例释放后执行（2026-10-24 tower 通知）**
+      **2026-10-24 真机读数（临时插桩 + 临时场景 900，跑完均已删除，证据 `.local/`）**：
+      shipped `M687PROBE|order=ok|dc=1|dw=1|sels=1|shows=2|hides=1|steady=354|within550=yes|
+      selEntry=12-15|selAfter=10-17`（content→document→window 顺序成立；扩展在 content mouseup
+      内完成；浮动钮稳态 354ms = 现状那一次 settle）；对照（外扩推迟 300ms，模拟落在手势之后）
+      `steady=658|within550=no`，判据如实判红——能区分新增 350ms。产品代码无探针残留
 - [x] 1.4 探针结论回写 design §4.2 / §4.3 / §4.4 / §7，并把探针读数路径登记在证据目录
       （`.local/probes/m687-semantic-release-snap/`，tower 合并前复制到主 checkout）
 
@@ -108,7 +109,10 @@
       webkit-realua 项目）。**基线零变化**——未执行 `--update`，无需 Alex 过目。
       首跑 12/13（两条红：m259 双击对照的旧期望已随 D2=A 更新；`render-link` 一条是页面 session
       被关掉的基建抖动，重跑通过），读数见 `.local/probes/m687-semantic-release-snap/`
-      `gate-visual-1.log` / `gate-visual-2.log`
+      `gate-visual-1.log` / `gate-visual-2.log`。**r1 返修后复跑**（2026-10-24，干净树、探针已删）：
+      `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（`gate-visual-r1.log`；m687 场景 8 条全绿）。
+      另：r1 第一次 quick 的 `cargo-test` 红是 `auto_turn_loop_max…` 的并行时序抖动（单跑/全量
+      重跑均绿），已 file finding；第二次 quick `GATE RESULT: 11/11 PASS（SKIP 0）`
 - [x] 5.5 信息卫生：新增 fixture / 场景素材 MUST NOT 含真实 vault 内容；改动面做一次 text 级
       grep 清扫（`/Users/` / `~/.config` / `.tower/` / 用户名 零命中；fixture 与场景文案全合成）
 - [x] 5.6 归档前逐条对账（tasks / delta / 实现三者一致）：delta 的四段（完整覆盖 / 逐层迭代 /
@@ -116,4 +120,6 @@
       逐条对上；`docs/backlog.md` 已按新机器门禁
       （`scripts/openspec-archive-check.mjs` 随 docs-check）落一条归档跟踪记录，如实写
       待 dogfood / 节点 2 状态；实现期新 finding 已走 TowerFinding（双击两字粗体词的落点位移，
-      出本 change 面）
+      出本 change 面）。**r1 对账**：review 三项 P2 全部落到实现 / 测试 / 证据——去轮数上限
+      （深层嵌套回归）、只读门控（真实只读会话用例 + delta 规则）、WKWebView 时序探针
+      （shipped 354ms / 对照 658ms）；临时探针与场景 900 已删除，`git status` 无残留

@@ -164,7 +164,9 @@ document / window，是为了让 Quote 手势只看到一次「选区已定」�
 **WKWebView 不能由端点文本 PASS 代替（review r1 P2-3）**：chromium 读数只证明实现形态；真机
 用一次性时间戳探针（临时插桩、跑完删除）判 content→document→window 的顺序与浮动钮「稳态可见」
 的时间（≤550ms；多一次 settle 会 >700ms），并用推迟外扩的对照跑证明判据有区分度，读数落
-`.local/probes/`。
+`.local/probes/`。**2026-10-24 实测**：shipped `order=ok|sels=1|hides=1|steady=354|within550=yes`
+（扩展在 content mouseup 内完成：selEntry=渲染文字 12-15、selAfter=节点 10-17）；对照（推迟
+300ms）`order=ok|steady=658|within550=no`，判据有区分度。
 
 ### 4.4 双击
 
@@ -268,7 +270,7 @@ document / window，是为了让 Quote 手势只看到一次「选区已定」�
 | 纯函数 | `tests/unit/syntax-envelope.test.ts`（19 条，无 DOM，直接驱动外扩器） | 输入矩阵见下；含反向区分度（部分覆盖不外扩、已含定界符不变）；envelope 的节点 / 可见区间 / 隐藏 span 逐值钉住 |
 | chromium 结构层 | `tests/visual/scenes/m687-semantic-selection.spec.ts`（6 条） | ① 拖选整段标题 / 粗体 → 松开后 `EditorState.selection` 覆盖定界符；② 上屏的定界符字符都有 `.cm-selectionBackground` 覆盖（M285 口径）；③ 拖拽中途（mouseup 前）选区范围不变、标记仍隐藏；④ 部分选择不外扩；⑤ 双击粗体词外扩、三击无变化；⑥ 文档逐字节不变、阅读位置不变；⑦ 程序化 / 键盘选区不被隐式外扩 |
 | 真机（WKWebView） | 验收场景 233（`scripts/acceptance/scenarios/233-semantic-selection-release-snap.md`） | **双击**粗体词 → 摘录浮动钮 → 点钮 → composer 文本含 `**…**`（composer 是 AX 可读面）；文档逐字节不变。**只判功能，不判时序** |
-| 真机时序（WKWebView） | 一次性时间戳探针（临时插桩，AX 读读数；不入库） | content→document→window 顺序；浮动钮稳态可见 ≤550ms（多一次 settle 会 >700ms）；「外扩推迟 300ms」的对照跑证明判据有区分度 |
+| 真机时序（WKWebView） | 一次性时间戳探针（临时插桩，AX 读读数；不入库；2026-10-24 实测） | content→document→window 顺序；浮动钮稳态可见 ≤550ms（shipped 354ms / 对照 658ms）；「外扩推迟 300ms」的对照跑证明判据有区分度 |
 | 手感 | Alex dogfood | 拖选标题 / 粗体的松开观感、引用卡片可读性（尤其带 URL 的链接） |
 
 真机通道的硬边界（照实登记，来源 `scripts/acceptance/README.md`「已知边界」）：
