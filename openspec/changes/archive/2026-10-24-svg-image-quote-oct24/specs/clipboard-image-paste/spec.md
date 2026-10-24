@@ -1,7 +1,7 @@
 # clipboard-image-paste 增量规格（M666）
 
 > 起草注记（非规格正文）：一条 MODIFIED，基线是 living spec
-> [openspec/specs/clipboard-image-paste/spec.md](../../../../specs/clipboard-image-paste/spec.md)。
+> [openspec/specs/clipboard-image-paste/spec.md](../../../../../specs/clipboard-image-paste/spec.md)。
 > 为什么这个 change 要改粘贴链路的规格：**粘贴与引用共用同一个写入口**（`fs_write_attachment` /
 > `harness_write_image` 背后的 `fs_io::ATTACHMENT_TARGETS`），「哪些源格式可写、各自怎么转码」这
 > 句话在 living spec 里同时出现在 fs-io 与本文两处。只改 fs-io 会留下「规格说拒绝 svg、代码在

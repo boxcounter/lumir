@@ -74,9 +74,10 @@ RGBA，1280×960 逻辑尺寸实测达 18.8MB），系统 SHALL **转码压缩�
 原样落盘剪贴板字节。默认目标格式 SHALL 为 **WebP 无损**：截图含文字，有损 JPEG
 不适合；WebP 无损逐像素保真且体积显著小于 PNG；质量档位或有损选项首版 MUST NOT
 开放配置。`image/png` 输入 SHALL 转码 WebP 无损；`image/jpeg` 与 `image/webp` SHALL
-原样落盘（已是压缩格式，再编码只损画质）；其余 `image/*` 子类型 SHALL 拒绝并给人话
-反馈。转码失败 MUST NOT 插入引用、MUST NOT 留半截文件。分辨率 MUST NOT 降采样
-（保留原始像素）。
+原样落盘（已是压缩格式，再编码只损画质）；`image/svg+xml` 输入 SHALL 先栅格化成位图再
+转码（MUST NOT 原样落盘 SVG 字节；安全边界与失败面见 fs-io 的「SVG 源的栅格化与安全
+边界」）；其余 `image/*` 子类型 SHALL 拒绝并给人话反馈。转码失败 MUST NOT 插入引用、
+MUST NOT 留半截文件。分辨率 MUST NOT 降采样（保留原始像素）。
 
 #### Scenario: 大图转码后显著变小
 

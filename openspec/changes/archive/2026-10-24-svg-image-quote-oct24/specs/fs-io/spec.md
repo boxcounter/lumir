@@ -1,7 +1,7 @@
 # fs-io 增量规格（M666）
 
 > 起草注记（非规格正文）：一条 MODIFIED + 一条 ADDED，基线是 living spec
-> [openspec/specs/fs-io/spec.md](../../../../specs/fs-io/spec.md)。MODIFIED 是**整块替换**，下面
+> [openspec/specs/fs-io/spec.md](../../../../../specs/fs-io/spec.md)。MODIFIED 是**整块替换**，下面
 > 的正文逐段抄自 living「二进制附件写入」，只把「转码策略」一段改写为三档转换（其余段落与四个
 > 场景逐字未动，供 `scripts/openspec-archive-check.mjs` 对账）。动机与取舍见
 > [design.md](../../design.md) D1–D4。

@@ -1,7 +1,7 @@
 # harness 增量规格（M666）
 
 > 起草注记（非规格正文）：一条 ADDED，基线是 living spec
-> [openspec/specs/harness/spec.md](../../../../specs/harness/spec.md)。本规格**依附于**两个活跃
+> [openspec/specs/harness/spec.md](../../../../../specs/harness/spec.md)。本规格**依附于**两个活跃
 > change 的增量（都未归档，故本 change 不能 MODIFIED 它们）：
 > `add-image-quote-to-chat` 的「图片摘录到对话」与 `quote-pipeline-consistency-oct24` 的
 > 「引用失败的留痕与引用语境反馈」。后者的 **`Scenario: svg 引用失败`** 与本规格**相反**——
