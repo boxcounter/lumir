@@ -67,7 +67,9 @@
 
 - [x] 4.1 新增 chromium 结构层场景 `tests/visual/scenes/m687-semantic-selection.spec.ts`（6 条）：
       拖选整段标题 / 粗体 → 松开后选区覆盖定界符、上屏字符有选中底色；拖拽中途不变；
-      部分覆盖不外扩；双击外扩；三击不变；文档逐字节不变 + 阅读位置不变；程序化 / 键盘选区不外扩
+      部分覆盖不外扩；双击外扩；三击不变；文档逐字节不变 + 阅读位置不变；程序化 / 键盘选区不外扩。
+      既有场景 `tests/visual/scenes/m259-bold-click-selection.spec.ts` 的双击对照按 D2=A 更新终态
+      期望（CM 的选词仍在，松开后外扩到 `*P斜*`；不是选词回归）
 - [x] 4.2 断言要有区分度：把 mouseup 接线临时短路后重跑 → 3 条外扩断言如实变红（部分覆盖 /
       文档不变两条保持绿，符合预期）；恢复接线后 5/5 绿。读数
       `.local/probes/m687-semantic-release-snap/scene-red-run.log`
