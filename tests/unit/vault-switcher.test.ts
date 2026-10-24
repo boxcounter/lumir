@@ -1412,6 +1412,8 @@ class FakeEl {
     this.classes.clear();
     for (const name of value.split(/\s+/).filter(Boolean)) this.classes.add(name);
   }
+  /** 父链（焦点修复要沿它派发 focusout；`append` / `replaceChildren` 维护）。 */
+  parent: FakeEl | null = null;
   textContent = "";
   title = "";
   type = "";
@@ -1425,17 +1427,49 @@ class FakeEl {
   placeholder = "";
   autocomplete = "";
   spellcheck = false;
+  private disabledFlag = false;
+
+  /**
+   * `disabled` 的**焦点副作用**按 chromium 实测建模（M668 探针
+   * `.local/probes/m668/focus-semantics.mjs`）：持焦控件被禁用时，浏览器把焦点送回 body
+   * 并在它（仍在文档里）的祖先链上派发 `focusout`（relatedTarget 为 null）。
+   * 浮层的「焦点离开即收起」正是被这条派发误判的——`yes.disabled = true` 因此必须走
+   * `rebuild()`（先收焦点再禁用）。Playwright WebKit 不派发这条，这里取更严的那一支。
+   */
+  get disabled(): boolean {
+    return this.disabledFlag;
+  }
+
+  set disabled(value: boolean) {
+    this.disabledFlag = value;
+    if (value && fakeActive === this) dropFocus(this);
+  }
 
   constructor(tagName: string) {
     this.tagName = tagName;
   }
 
   append(...nodes: FakeEl[]): void {
-    this.children.push(...nodes);
+    for (const node of nodes) {
+      if (node.parent !== null) node.parent.children = node.parent.children.filter((child) => child !== node);
+      node.parent = this;
+      this.children.push(node);
+    }
   }
 
   replaceChildren(...nodes: FakeEl[]): void {
-    this.children = nodes;
+    // 焦点修复（同 disabled 的说明）：持焦节点随这次替换离开文档时，浏览器把焦点送回
+    // body，并在它的**原**祖先链上派发 focusout。祖先链必须先取、后断——断开之后就取不到了。
+    const active = fakeActive;
+    const lost = active !== null && this.children.some((child) => child === active || child.contains(active));
+    const chain = lost && active !== null ? ancestorChain(active) : [];
+    for (const child of this.children) child.parent = null;
+    this.children = [];
+    if (lost && active !== null) {
+      fakeActive = fakeBody;
+      for (const node of chain) node.fire("focusout", { target: active, relatedTarget: null });
+    }
+    this.append(...nodes);
   }
 
   setAttribute(name: string, value: string): void {
@@ -1466,8 +1500,29 @@ class FakeEl {
     return this.children.some((child) => child.contains(node));
   }
 
+  /** 焦点转移（浏览器口径）：旧持焦节点的祖先链上派发 focusout（relatedTarget = 新焦点）。
+   *  游离节点不可聚焦（浏览器同样忽略）——**重建期间把老节点捡回来聚焦**这种假绿要拦住。 */
   focus(): void {
+    if (fakeActive === this) {
+      this.focused = true;
+      return;
+    }
+    if (!this.isConnected()) return;
+    const previous = fakeActive;
+    fakeActive = this;
     this.focused = true;
+    if (previous !== null && previous !== fakeBody) {
+      for (const node of ancestorChain(previous)) node.fire("focusout", { target: previous, relatedTarget: this });
+    }
+  }
+
+  isConnected(): boolean {
+    let cursor: FakeEl | null = this;
+    while (cursor !== null) {
+      if (cursor === fakeBody) return true;
+      cursor = cursor.parent;
+    }
+    return false;
   }
 
   scrollIntoView(): void {}
@@ -1485,14 +1540,48 @@ class FakeEl {
   }
 }
 
+/** 假 DOM 的焦点真源（`document.activeElement` 的替身）：每次 installFakeDocument 重置。 */
+let fakeBody: FakeEl | null = null;
+let fakeActive: FakeEl | null = null;
+
+/** 从节点到 `body` 的祖先链（含自身）。 */
+function ancestorChain(node: FakeEl): FakeEl[] {
+  const chain: FakeEl[] = [];
+  let cursor: FakeEl | null = node;
+  while (cursor !== null) {
+    chain.push(cursor);
+    if (cursor === fakeBody) break;
+    cursor = cursor.parent;
+  }
+  return chain;
+}
+
+/** 焦点丢失（节点被移除 / 被禁用）：焦点退回 body，并在原祖先链上派发 focusout。 */
+function dropFocus(from: FakeEl): void {
+  const chain = ancestorChain(from);
+  fakeActive = fakeBody;
+  for (const node of chain) node.fire("focusout", { target: from, relatedTarget: null });
+}
+
 interface FakeDocument {
+  /** 挂点根（测试里 `mounts` 挂上来之后，浮层里的节点才算「在文档里」、才可聚焦）。 */
+  body: FakeEl;
+  /** 当前持焦元素（`document.activeElement` 的替身）。 */
+  activeElement(): FakeEl | null;
   /** 手动派发挂在 document 上的监听（浮层的「点浮层外收起」走这条）。 */
   fire(type: string, event: FakeEvent): void;
 }
 
 function installFakeDocument(): FakeDocument {
   const listeners = new Map<string, Array<(event: FakeEvent) => void>>();
+  const body = new FakeEl("body");
+  fakeBody = body;
+  fakeActive = body;
   (globalThis as unknown as Record<string, unknown>).document = {
+    body,
+    get activeElement() {
+      return fakeActive ?? body;
+    },
     createElement: (tag: string) => new FakeEl(tag),
     addEventListener: (type: string, listener: (event: FakeEvent) => void) => {
       const list = listeners.get(type) ?? [];
@@ -1504,6 +1593,8 @@ function installFakeDocument(): FakeDocument {
   // 顶替，判定的语义（「这个目标是不是元素」）保持不变。
   (globalThis as unknown as Record<string, unknown>).Node = FakeEl;
   return {
+    body,
+    activeElement: () => fakeActive,
     fire: (type, event) => {
       for (const listener of listeners.get(type) ?? []) listener(event);
     },
@@ -1550,6 +1641,8 @@ interface SwitcherRig {
 function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
   const doc = installFakeDocument();
   const mounts = new FakeEl("div");
+  // 挂点挂到 body 下：只有「在文档里」的节点才可聚焦、才谈得上被移除时丢焦点（同浏览器）。
+  doc.body.append(mounts);
   const entry = new FakeEl("button");
   let notify: ((rows: VaultListEntry[]) => void) | null = null;
   const editor = { scrollTop: 0, caretTop: 0, calls: [] as string[] };
@@ -2263,4 +2356,152 @@ test("refresh()：浮层关着是 no-op（不拉列表），开着按同一份�
     ["notes", "gone-vault"],
     "列表按重新拉取的结果重建",
   );
+});
+
+// ---------------------------------------------------------------------------
+// 浮层在自身重建中的存续性（M668）：不变量级属性测试
+//
+// 条款（openspec/changes/vault-and-session-removal「vault 移除」）：浮层**自身发起**的行重建
+//（确认态进入 / 取消还原 / 确认后的重拉 / 撤销后的 refresh）MUST NOT 改变浮层的开闭状态，
+// 焦点 MUST 留在浮层内——撤销提示与随后的再次移除因此始终可触达。
+//
+// 反例形态（M667 真机场景 226 现场）：确认移除后浮层整个收起，撤销行不可达，随后两次点击
+// 全落空。成因不是 `requestRemove`（它不收起浮层），而是重建把持焦节点从 DOM 上换掉了：
+// 浏览器把焦点送回 body 并派发 focusout，浮层的「焦点离开即收起」把它读成用户意图。
+//
+// 输入分布（条款引用分布、不引用那一个案例）：
+//   - 持焦节点：浮层内任一可聚焦件（真机点击会把焦点落在钮上；筛选输入框、× 钮、确认 / 取消钮）
+//   - 重建触发：进入确认态、取消还原、确认成功后重拉、确认失败还原、撤销后的 refresh
+//   - 被移除行的位置：中间行 / 末行 / 失效行（失效行是可清理的主用例）
+// ---------------------------------------------------------------------------
+
+/** 四行：notes（当前）、alpha、beta、gone-vault（失效）。移除任一非当前行都该满足条款。 */
+const FOCUS_ROWS = (): VaultListEntry[] => [
+  listRow({ id: "notes", path: "/Users/alex/notes" }),
+  listRow({ id: "alpha", path: "/Users/alex/alpha" }),
+  listRow({ id: "beta", path: "/Users/alex/beta" }),
+  listRow({ id: "gone-vault", path: "/Volumes/gone", available: false, name: "gone-vault" }),
+];
+
+/** 条款的两条终态：浮层还开着，焦点还在浮层里（任一可聚焦件，不锚定某一个元素）。 */
+function assertOpenWithFocus(rig: SwitcherRig, where: string): void {
+  assert.equal(rig.popover().hidden, false, `${where}：浮层 MUST 保持打开（被自身重建收起了）`);
+  const active = rig.doc.activeElement();
+  assert.ok(active !== null, `${where}：文档里必须有一个持焦元素`);
+  assert.ok(
+    active !== null && rig.popover().contains(active),
+    `${where}：焦点 MUST 留在浮层内——持焦节点被重建移除后浏览器把焦点送回了 body`,
+  );
+}
+
+test("属性：确认移除不改变浮层的开闭与焦点归属（持焦节点 × 被移除行）", async () => {
+  // 每个用例两段焦点：点 × 之前、点「移除」之前（真机点 × 不夺焦，第二段的持焦节点是
+  // 第一段那个控件被换下 DOM 之后浏览器给出的落点，或用户自己按 Tab 走到的确认钮）。
+  const holders = [
+    {
+      label: "行尾移除钮",
+      beforeConfirm: (rig: SwitcherRig, wrap: FakeEl) => wrap.find("vault-row-del")[0].focus(),
+      beforeYes: () => {}, // × 被换下后焦点由浮层自己接回输入框（第一段的重建已经验过）
+    },
+    {
+      label: "确认「移除」钮",
+      beforeConfirm: () => {},
+      beforeYes: (rig: SwitcherRig, wrap: FakeEl) => wrap.find("vault-row-confirm-yes")[0].focus(),
+    },
+    {
+      label: "确认「取消」钮",
+      beforeConfirm: () => {},
+      beforeYes: (rig: SwitcherRig, wrap: FakeEl) => wrap.find("vault-row-confirm-no")[0].focus(),
+    },
+  ];
+
+  for (const rowId of ["alpha", "beta", "gone-vault"]) {
+    for (const holder of holders) {
+      const where = `移除 ${rowId} / 持焦：${holder.label}`;
+      const rig = await openRemoveRig(FOCUS_ROWS());
+      const wrap = rowWrap(rig, rowId);
+      holder.beforeConfirm(rig, wrap);
+      wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+      // 进入确认态后焦点仍按用例设定（持焦节点可能是刚被换下 DOM 的 ×，那正是本条要覆盖的形态）。
+      holder.beforeYes(rig, wrap);
+      wrap.find("vault-row-confirm-yes")[0].fire("click", { stopPropagation: () => {} });
+      await flush();
+
+      assertOpenWithFocus(rig, where);
+      assert.deepEqual(
+        rig.list().find("vault-row").map((row) => row.dataset.vault),
+        ["notes", "alpha", "beta", "gone-vault"].filter((id) => id !== rowId),
+        `${where}：列表按重新拉取的结果重建（被移除行消失，其余行在）`,
+      );
+      // 撤销行可达的前提：撤销触发的 refresh 在同一个打开态浮层里生效（见下一条用例）。
+      // 这里判「浮层仍可交互」——再次移除另一行仍然点得进确认态（M667 级联红的第三点）。
+      const other = rowId === "beta" ? "alpha" : "beta";
+      const otherWrap = rowWrap(rig, other);
+      otherWrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+      assert.equal(
+        otherWrap.find("vault-row-confirm").length,
+        1,
+        `${where}：浮层仍可操作——再次移除另一行照常进入确认态`,
+      );
+    }
+  }
+});
+
+test("属性：取消还原 / 确认失败 / 撤销刷新 都不改变浮层的开闭与焦点归属", async () => {
+  // 取消：持焦节点是被换下 DOM 的「取消」钮，还原动作再换一次行壳。
+  {
+    const rig = await openRemoveRig(FOCUS_ROWS());
+    const wrap = rowWrap(rig, "alpha");
+    wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+    wrap.find("vault-row-confirm-no")[0].focus();
+    wrap.find("vault-row-confirm-no")[0].fire("click", { stopPropagation: () => {} });
+    assertOpenWithFocus(rig, "取消还原");
+    assert.equal(rowWrap(rig, "alpha").find("vault-row").length, 1, "取消后该行逐字还原");
+  }
+
+  // 确认失败：行还原 + 装配层提示，浮层不收起。
+  {
+    const rig = await openRemoveRig(FOCUS_ROWS());
+    rig.removeFails = true;
+    const wrap = rowWrap(rig, "beta");
+    wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+    wrap.find("vault-row-confirm-yes")[0].focus();
+    wrap.find("vault-row-confirm-yes")[0].fire("click", { stopPropagation: () => {} });
+    await flush();
+    assertOpenWithFocus(rig, "确认失败还原");
+    assert.equal(rowWrap(rig, "beta").find("vault-row").length, 1, "失败后该行还原");
+  }
+
+  // refresh()：装配层在浮层开着时刷新列表（`VaultSwitcherHandle` 的公开口径），整份重建不得
+  // 收起浮层、也不得把焦点送出浮层。（撤销那条链路上点提示本身属于「点浮层外」，会先按既有
+  // 规则收起浮层——那是另一条规则，本条只钉 refresh 自己的重建。）
+  {
+    const rig = await openRemoveRig(FOCUS_ROWS());
+    rowWrap(rig, "alpha").find("vault-row")[0].focus();
+    rig.switcher.refresh();
+    await flush();
+    assertOpenWithFocus(rig, "浮层开着时的 refresh");
+    assert.equal(rig.list().find("vault-row").length, 4, "刷新后四行都在（注册表写回后重拉）");
+  }
+});
+
+test("属性：移除最后一个可移除行后列表仍有当前项，浮层与焦点照旧", async () => {
+  const rig = await openRemoveRig(FOCUS_ROWS());
+  for (const rowId of ["alpha", "beta", "gone-vault"]) {
+    const wrap = rowWrap(rig, rowId);
+    wrap.find("vault-row-del")[0].fire("click", { stopPropagation: () => {} });
+    wrap.find("vault-row-confirm-yes")[0].focus();
+    wrap.find("vault-row-confirm-yes")[0].fire("click", { stopPropagation: () => {} });
+    await flush();
+    assertOpenWithFocus(rig, `逐个清空到 ${rowId}`);
+  }
+  assert.deepEqual(
+    rig.list().find("vault-row").map((row) => row.dataset.vault),
+    ["notes"],
+    "只剩当前项：它不可移除，列表不会空",
+  );
+  // 只剩当前项时浮层仍可用：输入筛选照常走同一份重建路径。
+  rig.input().value = "note";
+  rig.input().fire("input", {});
+  assertOpenWithFocus(rig, "清空后的输入筛选");
 });
