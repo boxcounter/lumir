@@ -82,6 +82,24 @@ test('空箭头（`→ ` 后无内容）⇒ missing-exit；箭头后接标记仍
   assert.equal(run(work('- `#fix` **链式** → 下一动作：查配置。')).problems.length, 0);
 });
 
+// M692 r2 P2-1：连续空标记（标记 + 空箭头）必须剥完整的前导链，箭头本身不算内容。
+test('双空箭头 `→ →` ⇒ missing-exit（箭头字符不得被当成内容）', () => {
+  assert.equal(kinds(run(work('- `#fix` **双空箭头** → → ')), 'missing-exit').length, 1);
+  assert.equal(kinds(run(work('- `#fix` **三空箭头** → → → ')), 'missing-exit').length, 1);
+});
+
+test('`出口： →` / `下一动作： →` 的混合空链 ⇒ missing-exit', () => {
+  assert.equal(kinds(run(work('- `#fix` **出口接空箭头** 出口： → ')), 'missing-exit').length, 1);
+  assert.equal(kinds(run(work('- `#fix` **下一动作接空箭头** 下一动作： → ')), 'missing-exit').length, 1);
+  assert.equal(kinds(run(work('- `#fix` **混合链** → 出口： → ')), 'missing-exit').length, 1);
+  assert.equal(kinds(run(work('- `#fix` **混合链二** → 下一动作： → ')), 'missing-exit').length, 1);
+});
+
+test('正文里的箭头不被误剥：`出口：A → B` / `→ A → B` 仍有内容、放行', () => {
+  assert.equal(run(work('- `#fix` **正文箭头** 出口：A → B。')).problems.length, 0);
+  assert.equal(run(work('- `#fix` **前导箭头后正文** → A → B。')).problems.length, 0);
+});
+
 test('待真机验收按活项判出口：无出口 FAIL，补箭头后放行', () => {
   const section = (body) => `# Backlog\n\n## 待真机验收（未收口）\n\n${body}\n`;
   assert.equal(kinds(run(section('- `02-math-click`（item 2）：「公式后 ⌃B 是否 1–2 次」仍待判定。')), 'missing-exit').length, 1);
@@ -182,10 +200,12 @@ test('记录在案里带出口的开放尾巴不需要 canonical 指针', () => 
 });
 
 // M692 r1 P2-1：空复核标记同样不算合规形态，recordWithReview 也不得计入。
-test('空「复核：」⇒ missing-record-home，且不计入 recordWithReview', () => {
-  const result = run('# Backlog\n\n## 承接残项（长期口径 + 未闭合尾巴）\n\n- **空复核** 复核：\n');
-  assert.equal(kinds(result, 'missing-record-home').length, 1);
-  assert.equal(result.stats.recordWithReview, 0);
+test('空「复核：」与「复核： →」⇒ missing-record-home，且不计入 recordWithReview', () => {
+  for (const marker of ['复核：', '复核： → ']) {
+    const result = run(`# Backlog\n\n## 承接残项（长期口径 + 未闭合尾巴）\n\n- **空复核** ${marker}\n`);
+    assert.equal(kinds(result, 'missing-record-home').length, 1, marker);
+    assert.equal(result.stats.recordWithReview, 0, marker);
+  }
 });
 
 test('空「复核口径」/「复核口径：」⇒ missing-record-home，且不计入 recordWithReview', () => {

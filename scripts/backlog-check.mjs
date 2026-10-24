@@ -51,9 +51,10 @@ const CLOSURE_RE = new RegExp(CLOSURE_MARKERS.join('|'), 'g');
 //      箭头后允许接一个显式标记（`→ 下一动作：…`），但该标记同样必须带内容。
 const EXIT_MARKERS = /(?:下一动作|出口|关闭条件)[:：]|→(?=\s)/g;
 const REVIEW_MARKERS = /复核口径[:：]|复核[:：]/g;
-// 标记链：`→ 下一动作：` / `→ 复核：` 这种「标记 + 标记」的写法，剥掉整条链后再看有没有内容
-//（否则 `→ 复核：` 会因为「复核」两个字被当成内容而放行）。
-const MARKER_CHAIN = /^(?:\s*(?:下一动作|出口|关闭条件|复核口径|复核)[:：])*\s*/;
+// 标记链：`→ 下一动作：` / `→ 复核：` / `→ →` / `出口： →` 这类「标记 + 标记」的写法，剥掉
+// **整条前导链**（含所有空箭头）后再看有没有内容——否则 `→ →` 里的箭头字符会被当成内容
+//（M692 r2 P2-1）。链只在尾部开头匹配：正文里的 `A → B` 在第一个非标记 token 处停下，不会被剥。
+const MARKER_CHAIN = /^(?:\s*(?:(?:下一动作|出口|关闭条件|复核口径|复核)[:：]|→(?=\s|$)))*\s*/;
 const CANONICAL_ROOTS = /^(docs|openspec|src|src-tauri|scripts|tests|demo|\.github)\//;
 const FINDING_PATH_TOKEN = /`\.tower\/comms\/findings\/([^`]+)`/g;
 const FINDING_SLUG_TOKEN = /\bfinding\s+`([0-9]{8}-[a-z0-9-]+)(?:\.md)?`/g;
