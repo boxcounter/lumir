@@ -120,8 +120,10 @@
       真机 224（19 断言 PASS，见 4.6）。文案 D555 / D556 在 `src/copy-data.ts:1751-1752` 与
       `文案-Copy.md:537-538` 两列同在。
 - [ ] 6.2 `node scripts/openspec-archive-check.mjs` 通过；归档后对 `<change-id>` 跑一次 `--archived`
-      —— **归档前半步已跑**（2026-10-24，M710）：门禁模式 `PASS`（该 delta 的两条 MODIFIED 逐段对比
-      living spec，无静默丢段）；`--archived` 只能对已归档的 commit 跑，留给节点 2 归档后（动作记在
+      —— **归档前半步已跑**（2026-10-24，M710）：门禁模式 `PASS`——该 delta 的**一条 MODIFIED**
+      （「错误呈现」）逐段对比 living spec 通过、无静默丢段；delta 另有**一条 ADDED**（「transcript
+      的跟随滚动与回到底部」，不在 MODIFIED 对账面，由 `validate --strict` 与归档并入承担）。
+      `--archived` 只能对已归档的 commit 跑，留给节点 2 归档后（动作记在
       `docs/backlog.md` 的归档跟踪队列条目）。
 - [ ] 6.3 归档后核对 living spec 的 requirement 段落完整（MODIFIED 整块替换、ADDED 并入），并顺手
       核对本次两条文案的 deck 漂移门禁
