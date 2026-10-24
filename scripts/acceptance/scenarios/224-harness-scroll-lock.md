@@ -81,7 +81,7 @@ steps:
       - label: 到达这里仍在跟随态（还没上滚，钮不该出现）
         node: { role: AXButton, name: "回到底部", present: false }
 
-  - name: 让窗口成为 key window（真实标题栏单击；首个 mousedown 会被激活吃掉）
+  - name: 让窗口成为 key window 并把焦点放回 webview（真实正文单击；首个 mousedown 会被激活吃掉）
     do: focusWindow
     retries: 4
     click: true
@@ -186,7 +186,9 @@ AI 的输出，因为在快速滚屏，用鼠标往上滚动也不行，立刻�
   产品缺陷。
 - **key window 前置**：滚轮注入落在 key window 上；「启动即在前台」时窗口未必是 key（M667：
   第一次 KimiCU 点击被激活吃掉、红绿灯转灰）。上滚步之前因此有一次 `focusWindow click: true`
-  （真实标题栏单击，不承载语义）。
+  ——它发一次**真实正文单击**（落在编辑器顶部留白）并在 AX 里校验「编辑器真的拿到了焦点」
+  （M678；建立不起来就再点，耗尽按 INVALID 收场）。**MUST NOT 改回点标题栏**：标题栏是拖拽区，
+  真实单击会让 webview 失焦，M670 的根因——本场景的滚轮与浮钮判据都在那条通道上。
 - **末片标记不参与判据**：这条消息较长（首片 24 段撑满视口 + 7 片），KimiCU 的 AX dump 会
   按 fanout_cap 截断转写面子树（末片串与浮钮节点都可能读不到——截断量与内容长度相关）。收口判据改用「中段片在场 + 停止钮退场」（两条可判读数），
   README「已知边界」的 AX 截断条同口径。

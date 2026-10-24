@@ -697,6 +697,29 @@ export async function resizeWindowAX(pid, width, height) {
   }
 }
 
+/** key window 读数（M678）：与 `resizeWindowAX` 同一条 AX 通道，读 app 的 **AXFocusedWindow** 并
+ *  核对它就是本套件操作的主窗口（`AXWindows[0]`）。
+ *
+ *  为什么需要它：`focusWindow click: true` 的合同里有「窗口成为 key window」，而编辑器焦点证明不了
+ *  窗口是 key。**但窗口自己的 `AXFocused` 属性在本 app 上恒 false**——M678 真机实测：编辑器有焦点、
+ *  滚轮与键盘都可用时仍报 `focused=false main=true`，拿它当判据会把正常跑批判成 INVALID（首轮
+ *  224/228 的现场）。`AXFocusedWindow` 是 AX 侧的 key window 读数：同一次探针在可用现场读到
+ *  `focusedWindowErr=0 … isFirstWindow=true`。
+ *
+ *  返回 `{ focused: true|false|null, raw }`；`null` = 读不到（读 AXWindows 失败 / swift 失败），
+ *  **不猜成 false**——判定方对 unknown 只记录、不据此判败（读不到不等于不是 key）。
+ */
+export function readKeyWindowState(pid) {
+  const script = new URL("./ax-key-window.swift", import.meta.url).pathname;
+  try {
+    const raw = execFileSync("/usr/bin/swift", [script, String(pid)], { encoding: "utf8" }).trim();
+    const m = /focusedWindow=(true|false)/.exec(raw);
+    return { focused: m ? m[1] === "true" : null, raw };
+  } catch (e) {
+    return { focused: null, raw: `读取失败：${e.message}` };
+  }
+}
+
 /** 启动后把窗口钉到固定尺寸（M491）：产品侧 `apply_startup_size`（src-tauri/src/lib.rs:242-322）
  *  把首启尺寸设为工作区 90%、静默盖过 tauri.conf 的 1200×800 占位（且该行为本身是场景 126 的
  *  判据本体），坐标/像素敏感场景（53、122 等）因此拿到不确定几何。本函数在就绪门之后把窗口经

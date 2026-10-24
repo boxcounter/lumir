@@ -22,7 +22,7 @@ steps:
     file: caret-fm.md
     as: 文档基线
 
-  - name: 让窗口成为 key window（真实标题栏单击；首个 mousedown 会被激活吃掉）
+  - name: 让窗口成为 key window（真实正文单击；首个 mousedown 会被激活吃掉）
     do: focusWindow
     retries: 4
     click: true
@@ -83,7 +83,7 @@ steps:
         editor: { not: "---" }
       - shot: eink-起点-属性盒渲染态
 
-  - name: 让重启后的窗口成为 key window（真实标题栏单击——同上，首个 mousedown 会被激活吃掉）
+  - name: 让重启后的窗口成为 key window（真实正文单击——同上，首个 mousedown 会被激活吃掉）
     do: focusWindow
     retries: 4
     click: true
@@ -144,7 +144,9 @@ Alex 2026-10-23 原话：「1. 当点击 frontmatter 时，光标特别高（截
   源码时才成立，正是这条手势要守的不变量。
 - **key window 前置**：`clickEditor` 走 KimiCU 的坐标点击，第一次 mousedown 可能被窗口激活
   吃掉（M667：截图里红绿灯在第一次点击后转灰），因此起手有一次 `focusWindow click: true`
-  （真实标题栏单击，不承载语义）；eink 段重启后同理再补一次。
+  ——它发一次**真实正文单击**（编辑器顶部留白，落在属性盒上方，不撤下渲染态）并在 AX 里校验
+  「编辑器真的拿到了焦点」（M678；建立不起来就再点，耗尽按 INVALID 收场）；eink 段重启后
+  同理再补一次。**MUST NOT 改回点标题栏**：标题栏是拖拽区，真实单击会让 webview 失焦（M670）。
 
 ## 覆盖边界（如实记账）
 
