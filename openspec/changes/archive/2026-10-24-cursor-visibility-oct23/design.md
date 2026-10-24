@@ -6,7 +6,7 @@
 
 本文只写「怎么做到 proposal 里已裁的行为」与「为什么这样做」。代码锚点是起草时在本分支
 （基于 master `1e148cb9`）逐一读过原文的位置；行号会漂，实现前以符号名为准。
-本合同先行规则见 [rendering-defect-contract-first.md](../../../docs/process/rendering-defect-contract-first.md)。
+本合同先行规则见 [rendering-defect-contract-first.md](../../../../docs/process/rendering-defect-contract-first.md)。
 
 ## 0. 事实清单（起草时核对过原文）
 
@@ -404,7 +404,7 @@ ADR 0002 §6）。
    ADR 0002 §6 的打开路径阈值。
 6. **视觉基线**：光标宽度 / 闪烁可能改变既有整页基线里的光标像素。视觉套件的截图设置
    冻结 CSS 动画（`animations: "disabled"`，无限动画归位到初始态 = 光标可见），因此预期
-   零基线变化；按 [tests/visual/README.md](../../../tests/visual/README.md) 的纪律，任何
+   零基线变化；按 [tests/visual/README.md](../../../../tests/visual/README.md) 的纪律，任何
    变化基线都须 Alex 过目后再更新。
 7. **code 模式**：光标宽度 / 闪烁是 mode 无关的 baseTheme 改动，code 模式同步生效；C1–C4
    只在 md 模式（livePreview）生效，code 模式没有 replace 装饰，行为不变。

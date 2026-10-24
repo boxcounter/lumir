@@ -26,7 +26,7 @@ Alex 2026-10-23 的需求原话（逐字）：
 > 2. 光标太细，不容易快速一眼扫到」
 
 两条分属两类问题：第 1 条是**渲染缺陷**（光标几何取错了量），按
-[渲染缺陷合同先行规则](../../../docs/process/rendering-defect-contract-first.md) 处置；
+[渲染缺陷合同先行规则](../../../../docs/process/rendering-defect-contract-first.md) 处置；
 第 2 条是**视觉决策**（光标粗细 / 闪烁 / 颜色的呈现档位），给候选取值 + 倾向交 Alex 裁决。
 两者同批落地，因为它们都落在同一个「光标呈现」面上。
 
@@ -87,7 +87,7 @@ doc-title 底端。加粗 / 调 CSS `line-height` 都改不了它——量错的
   （同文件 `:6880-6887`），一半时间 opacity 0——「一眼扫到」的难度不只来自细，也来自
   **半程不可见**。
 - **颜色**：`--text`（light `#21201a` / dark `#e3e2db` / eink `#000000`，见
-  [design-tokens-v1](../../../docs/specs/design-tokens-v1.md) 的 `--text` 行，`:57`）在三主题
+  [design-tokens-v1](../../../../docs/specs/design-tokens-v1.md) 的 `--text` 行，`:57`）在三主题
   都是最高对比档，不存在「看不清颜色」的问题。
 - **eink 的约束**：eink 没有颜色，线宽是它唯一的强调手段（tokens 文档规则⑧，
   `design-tokens-v1.md:284-288`）；现有强调线宽是 1.2–1.6px，另有 2px 引用块竖线 /
@@ -161,7 +161,7 @@ doc-title 底端。加粗 / 调 CSS `line-height` 都改不了它——量错的
 
 ### D3 合同条款原文过目
 
-按 [渲染缺陷合同先行规则](../../../docs/process/rendering-defect-contract-first.md) 的
+按 [渲染缺陷合同先行规则](../../../../docs/process/rendering-defect-contract-first.md) 的
 「Alex 介入点」，新增 / 修订的不变量条款本身要过目。条款原文在 design §2 的 C1–C5
 （光标高度 = 可见行行盒；替换块四个入口不留光标；显露不改文档；键盘不把光标留在块边界）。
 倾向：按原文落地；需要改措辞直接批注。
@@ -185,7 +185,7 @@ doc-title 底端。加粗 / 调 CSS `line-height` 都改不了它——量错的
 - **影响的 specs**：`editor-live-preview`（ADDED「光标可见位置与替换块指针入口」）、
   `ui-design-system`（ADDED「编辑器光标视觉」）。
 - **新增文档**：`docs/specs/editor-caret.md`（质量合同，条款见 design §2）；
-  [design-tokens-v1](../../../docs/specs/design-tokens-v1.md) 的「阴影与 hairline」节登记光标宽度
+  [design-tokens-v1](../../../../docs/specs/design-tokens-v1.md) 的「阴影与 hairline」节登记光标宽度
   2px 与 1.2s 闪烁口径（2026-10-24 改裁后由「常亮」改准）。
 - **代码**：`src/preview/livePreview.ts`（显露判据）、`src/preview/frontmatter.ts`（widget
   指针入口 / `selected` 退场）、`src/preview/theme.ts`（selected 样式删除）、
@@ -196,9 +196,9 @@ doc-title 底端。加粗 / 调 CSS `line-height` 都改不了它——量错的
   新增 `tests/visual/scenes/m647-caret-geometry.spec.ts`、新增
   `scripts/acceptance/scenarios/228-caret-visibility.md`。
 - **视觉基线**：光标宽度 / 闪烁若出现在既有整页基线里，需按
-  [tests/visual/README.md](../../../tests/visual/README.md) 的纪律重新截图并由 Alex 过目
+  [tests/visual/README.md](../../../../tests/visual/README.md) 的纪律重新截图并由 Alex 过目
   （基线更新是人肉裁决点）。
 - **关联约束**：ADR 0003 §3（不改写源文件）；ADR 0002 §6（打开 1MB <100ms；本 change 不
-  新增全量装饰构建，显露判据仍只看选区）；[rendering-defect-contract-first.md](../../../docs/process/rendering-defect-contract-first.md)
+  新增全量装饰构建，显露判据仍只看选区）；[rendering-defect-contract-first.md](../../../../docs/process/rendering-defect-contract-first.md)
   （合同先行 + 属性测试）；M259 按压快照（frontmatter 显露判据继续走 `revealSelection`）；
   M222 单岛拓扑（不拆 doc-title）。
