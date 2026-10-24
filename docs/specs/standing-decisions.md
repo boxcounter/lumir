@@ -18,9 +18,10 @@
 - **rename 的「撞名不覆盖」是复查 + 极窄窗口，不是原子保证**（M244 r1 P2-2）：零窗口需平台原子排他改名（macOS `renamex_np(RENAME_EXCL)` 等），引 libc 与平台分支收益与风险不成比例。复核：需要跨进程原子保证时。
 - **`applyListIndent` 的 `state.readOnly` 守卫当前无可达入口**（M249，tower 裁「保留守卫」）：文档 / 场景只许写成「不可达、不构成覆盖声明」。复核：`applyListIndent` 的调用面变化时。
 - **`vault_append`（追加工具）视盘点后补**（2026-10-09，change `add-harness-permission-modes` 的 Non-goal）：触发条件 = vault 写工具的 dogfood 盘点出现「追加」类高频缺口；届时按 ADR 0007 Decision 7 的边界原则判断是否立项。
-- **harness 会话键 = vault 根路径字符串**（M312，不修）：`VaultScope::key()` 返回根路径字符串，同一 vault 的两种路径拼写各成一个会话；会话留存目录名另用注册表 id（`sessions/<id>/`），两者不是一回事。复核：改会话键时须同时迁移留存目录与恢复路径。
+- **harness 会话键 = vault 根路径字符串**（M312，不修）：`VaultScope::key()` 返回根路径字符串，同一 vault 的两种路径拼写各成一个会话；会话留存目录名另用注册表 id（`sessions/<id>/`），运行时 key 与留存目录**解耦**。复核：仅改运行时 key（规范化 / 换键）**不要求**迁移 `sessions/<id>/`，要复核的是恢复归属匹配（归属判据读留存首行 `session_open.vault_root`）；只有改 vault 稳定 id 或存储布局时才涉及目录迁移。
 - **wire 原生增量留存：未来评估**（M394，2026-10-08）：现行为全量落盘；是否改 Claude Code / Kimi Code 形态的增量记录，等留存体积成为实测问题。
 - **js / ts 对象字面量键的复合 `property` token 有意不修**（M147，low）：`{1: "x"}` 的数字键取数字色、字符串键取字符串色（通行呈现）；伴一条 `Unknown highlighting tag property` console 噪声。若将来裁「对象键一律属性色」，做法见 finding `20260917-worker-jsonhl-improve-javascript-typescript-property-token-console-json-js-ts`。
+- **`format_argv` / `formatArgv` 的空白字符类边际分叉**（M528 r1 P2-2，low）：Rust `char::is_whitespace` 按 Unicode White_Space，JS `\s` 额外含 U+FEFF——含 U+FEFF 的参数一侧加引号、另一侧不加，与 `src-tauri/src/harness/turn.rs` 声明两处产出「必须逐字一致」相悖（Rust 在 `:1592-1595`，前端在 `src/harness-panel.ts:2504-2508`）。现实 CLI 参数路径不可达（无含 BOM 的现实来源），只登记不改；复核：CLI 参数面出现 BOM / 不可见字符来源，或两处 `format_argv` 实现被改动时，二选一——Rust 显式排除 U+FEFF，或前端不再把 U+FEFF 当空白，并同步两处 doc comment。
 
 ## 二、UI / 设计长期口径
 
