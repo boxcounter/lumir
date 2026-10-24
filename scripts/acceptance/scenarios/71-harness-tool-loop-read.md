@@ -32,7 +32,10 @@ steps:
       has: ["HNL 读完了：阿尔法行在，贝塔行在，伽马行在。"]
     expect:
       - label: 工具行带人话化参数（M406 三段式：名徽章 + 参数——vault_read 上屏路径，JSON 原文不上屏）
-        ax: { has: '/vault_read\s*harness-note\.md/' }
+        # change harness-path-link 起路径渲染为独立 AXButton chip：名徽章与路径分属两行 AX 节点，
+        # `/vault_read\s*harness-note\.md/` 因此恒不命中（M708 实测，产品行为正常——AX 与 JSONL
+        # 都证明工具执行）。判据改为「名徽章行的下一行即该路径 chip」，仍钉两者同属一条工具行。
+        ax: { has: '/vault_read"\n[^\n]*AXButton \(harness-note\.md\)/' }
       - label: 参数摘要的 JSON 原文不上屏（人话化取代摘要原文；区分度锚——旧形态必带这段 JSON）
         ax: { not: '{"path":"harness-note.md"}' }
       - label: 最终回答渲染
@@ -55,3 +58,12 @@ vault_read 上屏提取出的路径，参数 JSON 原文不上屏；人话化判
 tests/unit/harness-restore.test.ts 的 humanizeToolArgs 系）；读类工具默认 allow 不进
 批准闸。工具循环的两段响应都编在 harness-mock-read.json 里（mock 每次发送从头弹脚本，
 一个场景只发一次问）。
+
+## 判据修正（M708，2026-10-24）
+
+change `harness-path-link` 起，工具行的路径参数渲染为独立 `AXButton` chip（读屏名
+`harness-note.md`），名徽章文本节点与路径 chip 分属两行 AX 节点——旧判据
+`/vault_read\s*harness-note\.md/` 因此恒不命中（M708 实跑：产品行为正常，AX 里徽章与 chip
+都在，JSONL 证明工具执行）。判据改为「名徽章行的下一行即该路径 chip」，仍钉两者同属一条
+工具行；JSON 原文不上屏的区分度锚不变。同一陈旧形态在 103 / 104-thinking 与 201
+（负向断言，静默假绿）仍在，归 finding 收口。

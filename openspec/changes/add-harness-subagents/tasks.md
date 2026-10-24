@@ -64,7 +64,7 @@
   （实现口径：会话以 `with_session` 闭包暴露而非 `&mut Session`——会话由 `Runtime` 的锁托管，
   直接交出可变引用会破坏「只在读写会话那一刻持锁」；压缩的会话轮换经
   `begin_compacted_session` 留在上下文实现里。）
-- [ ] 1.3 `build_request` 的工具定义改由 `ctx.tool_definitions()` 提供；交互上下文按当前定义快照
+- [x] 1.3 `build_request` 的工具定义改由 `ctx.tool_definitions()` 提供；交互上下文按当前定义快照
   生成 `task` 描述（含清单）；`enabled=false` 时输出与既有 8 件清单深度相等（单测钉死）。
   **部分完成（M586）**：`build_request` 已走 `ctx.tool_definitions()`；`enabled` 的 kill switch
   已落（`run.rs` 的 `gate_tool_definitions` + 合成 `task` 定义的单测）。**M587 已补**：定义快照
@@ -72,15 +72,38 @@
   `enabled=false` 的 8 件基线断言保持绿。**执行入口仍归 §3（M588）**——本棒只注册定义（tower
   scope 裁决：tools.rs 只有描述与注册条件，执行严格留 M588），因此「第 9 件可执行」这条要等
   M588 合入后才真正闭环。
+  **M708 闭环（2026-10-24，实现未改动）**：逐项核对——`turn::build_request` 取
+  `ctx.tool_definitions()`（`turn.rs:921`）；交互上下文 `SessionContext::tool_definitions`
+  （`run.rs:502`）= 定义快照 `tools::definitions_with_subagents` + `gate_tool_definitions`
+  单点开关 + 交互路径三件调度工具 + 契约白名单；第 9 件执行入口已落地
+  （`SessionContext::orchestrate`，`run.rs:681` → `subagents::start_task` /
+  `start_task_inner`，经 `turn::execute_calls` 的 `ctx.orchestrate`，`turn.rs:749` 接线）。
+  证据：`cargo test` 全绿（lib 839 / abort_turn 7 / harness_runtime 41 / link_graph 2 /
+  session_recording 17；含 `disabled_subagents_keep_the_eight_tool_baseline`、
+  `enabled_subagents_register_task_with_the_catalog`、
+  `cron_tool_policy_hides_task_even_when_subagents_enabled`、`disabled_subagents_reject_the_call`）；
+  真机场景 `180-subagent-delegate-discovery` PASS（定义清单 → 模型委派 → 摘要回父会话；
+  证据 `.local/acceptance/2026-10-24/180-subagent-delegate-discovery/`）。
 - [x] 1.4 `llm::client_at` 增加模型覆盖参数；`LlmClient` 增加 `external_consumed()` / `skip(n)`
   （真 provider 恒 0 / no-op），供 mock 父子游标编排（design §18）。
   （另加 `LlmClient::model()`：发送点 `llm_request.model` 取覆盖后的实际值，避免「覆盖参数与
   留存值两处各说各的」。）
 - [x] 1.5 交互路径回归：既有 `cargo test` 零改写通过（含恢复充分性、事件形状、批准闸、循环上限）；
   `sessions/` JSONL 形状不变；`rg -n "fn run_turn_for" src-tauri/src` 仍只有一处循环实现。
-- [ ] 1.6 真机跑一轮既有交互对话（mock 与真 provider 各一次），确认发送、工具调用、批准卡、停止、
+- [x] 1.6 真机跑一轮既有交互对话（mock 与真 provider 各一次），确认发送、工具调用、批准卡、停止、
   压缩与读数均无变化；证据路径写进完成报告。
   （归 M590 验收批执行；本棒用既有 `cargo test` 全绿兜底。）
+  **M708 闭环（2026-10-24）**：mock 回归 5 条既有真机场景 PASS（71 发送+工具调用 / 72 批准卡
+  采纳 / 76 读数 / 104 停止 / 180 子代理委派；合计 79 断言 0 红，证据
+  `.local/acceptance/2026-10-24/`）；真 provider 普通对话一轮（隔离 XDG + 合成 vault，现有配置
+  经只读软链使用；provider deepseek / model deepseek-flash / wire_api responses）：发送 →
+  `vault_read` 工具调用 → 最终回答 `REAL-OK-708 / MARK-708-REAL-PROVIDER`，读数 `1% · 98%`，
+  留存两轮请求的 usage 见证据 `.local/real-provider-m708/`（`summary.json` +
+  `retention-metadata.json`，不含 api_key / 完整 prompt）。压缩路径由既有 `cargo test` 钉住
+  （`auto_compact_triggers_over_threshold` / `session_cache_reading_restarts_after_auto_compact`
+  / `context_overflow_compacts_and_retries_once`）。附带修正：两处既有「工具名+路径邻接」断言
+  因 change `harness-path-link` 的路径 chip 失效（71 / 104-stop 已就地改准并复跑绿；
+  103 / 104-thinking / 201 的同类形态已报 finding）。
 - [x] 1.7 工具循环的并行编排：同一条助手消息里的多个 `task` 调用并行启动、非 `task` 调用维持逐个
   执行；结果收进 `BTreeMap<call_index, ToolResult>`，全部收敛后按调用顺序回填；单测断言「完成顺序
   与回填顺序无关」（让第二个调用先完成，断言结果仍是 0,1）。
