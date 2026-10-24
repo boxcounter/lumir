@@ -31,6 +31,19 @@
 >    `openspec validate --all --strict` → `Totals: 35 passed, 0 failed`；归档跟踪队列有且仅有一条。
 >
 > 归档后项见本块末尾的「归档后」追加段。
+>
+> **归档后（2026-10-25，M729）**：归档提交 `2a475dfb`（归档目录 + 并入的 living spec +
+> `docs/backlog.md` 队列条目核销同批提交）。`openspec archive` 实际输出：`harness: update`、
+> `+ 0, ~ 1, - 0, → 0`、`Change 'rg-zip-flags-dangerous-oct24' archived as
+> '2026-10-25-rg-zip-flags-dangerous-oct24'.`。紧随其后
+> `node scripts/openspec-archive-check.mjs --archived rg-zip-flags-dangerous-oct24` →
+> `PASS（openspec/changes/archive/2026-10-25-rg-zip-flags-dangerous-oct24：1 条 MODIFIED，对比 37
+> 段；人工恢复 0 段，声明认领 0 段）`，EXIT=0（2026-10-25 07:27 CST）。
+> 同批复跑：门禁模式 `openspec-archive-check` → `PASS（11 份 delta / 14 条 MODIFIED / 191 段）`；
+> `openspec validate --all --strict` → `Totals: 34 passed, 0 failed`；`bash scripts/docs-check.sh`
+> → `docs-check: PASS`。不回退复核：归档后 living 里「受限解包」2 处、「只读分类的能力断言」2 处、
+> 「git 全局 flag」1 处、「search-zip」3 处、「两层权限规则」2 处——权限链前两环的增量与本环的
+> `-z` 枚举同时在场。
 
 ## Why
 
