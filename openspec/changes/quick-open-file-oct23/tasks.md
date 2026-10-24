@@ -140,3 +140,42 @@
 > 一次」的负向判据留在 chromium 层，AX 数不到条数）。**P2-1**（tasks 3.3 的「重绑与解绑各一条」
 > 专项单测缺席）已补：`tests/unit/keys.test.ts` 加 `app.quick-open` 两条用例（token 形态 /
 > 作用域 / 不绑键清单对账 + 重绑与解绑各一条）。
+
+## 9. 结果区与 Enter 同源（M700 / M697 缺陷修复，归档前就地修订）
+
+> 缺陷：Alex 实测真实存在的绝对路径在结果区显示「没有匹配的条目」，Enter 却能打开（截图
+> `kimi-code-composer://attachments/m1`）。根因是 render 与 confirm 各持一套判据（render =
+> 索引 + 子串；confirm = 索引 → 折叠 → 目录 → 探测）。修复方向是**两端共用一份 resolver**，
+> 不新建第二套解析；另外修掉折叠多命中 / 目录输入的键盘死路（两段式，不猜目标）。
+
+- [x] 9.1 抽纯函数 resolver：`classifyVaultPath`（同步段，`lookupVaultPath` 与 resolver 共用）+
+      `resolveQuickOpenSync`（阶梯同步段，遇需探测的一级返回 `undecided`）+ `resolveQuickOpen`
+      （同一次序 + 异步探测，探测不成立才进入下一级）。MUST NOT 复制路径解析。
+- [x] 9.2 结果区接判决：判决 `open` 时画独立 class 的直接打开行（`.lumir-qo-direct`，几何复用
+      `.lumir-qo-item` 选择器列表）；D117 收窄为「候选为空且没有直接行」；异步探测去抖 120ms +
+      渲染序号（在途不落空态、迟到结果丢弃）。
+- [x] 9.3 直接行与候选统一游标 / ARIA / 点击：直接行 `role="option"`、默认游标位、`↑↓` 与
+      `⌃N⌃P` 跨两者移动、Enter 打开游标行、点击同一动作；直接行不占 `CANDIDATE_LIMIT`。
+- [x] 9.4 两段式：折叠多命中第一次 Enter 只揭示（D592），目录第一次 Enter 给原因（D574），
+      第二次 Enter 打开游标行（输入一变即复位「已揭示」状态）。
+- [x] 9.5 文案 D589–D592（接 D588 末位，全仓核撞无占用）：直接行（vault 内）/ 直接行（vault 外
+      只读）/ 落点行标记 / 折叠多命中两段式提示；`src/copy-data.ts` + `文案-Copy.md` 两列 + 归属表同批。
+- [x] 9.6 单测：resolver 判决矩阵（索引精确 / 整串优先（索引里真有 `path:12`）/ 折叠唯一 /
+      折叠多命中 / 目录 / 惰性探测命中（相对 + vault 内绝对）/ 真负例 / 探测失败 / 外部尝试入口 /
+      非法与空输入 / 分类器同源），并做反向必红（见 9.11）。
+- [x] 9.7 视觉矩阵：外部存在 / 外部不存在 / 外部带行号 / 索引内 / 折叠唯一 / 折叠多命中两段式 /
+      目录两段式 / 惰性相对与绝对（桩补 `fs_paths_exist` 路由）/ 探测迟到 / 真负例 / 候选上限 /
+      直接行点击；每条都做反向必红（见 9.11）。
+- [x] 9.8 验收场景 230：Enter 前断言直接行（动作文本 + 落点行）与「没有匹配的条目」不在场；
+      补 vault 内真负例（空态 + 找不到）与惰性文件（`vaultWrite node_modules/...`，默认 lazy 档，
+      按精确路径打开）。
+- [x] 9.9 验证：`bash scripts/gate.sh quick` / `bash scripts/gate.sh visual` /
+      `npx openspec validate --all --strict` / `bash scripts/docs-check.sh` /
+      `node scripts/acceptance/run.mjs --check`（读数照抄 `GATE RESULT` 原文行 + 退出码，见下）。
+- [x] 9.10 真机：`node scripts/acceptance/run.mjs 230`（隔离 vault / 端口；读数见下）。
+- [x] 9.11 反向必红记录：把直接行删掉 / 放开 D117 分支 / 恢复 `ambiguous` 提前 return /
+      恢复 `dir` 提前 return / 关掉探测 / 去掉渲染序号各实测一次，确认对应断言变红后还原。
+
+> M700 验证读数（2026-10-24）：`GATE RESULT: 13/13 PASS（SKIP 0）`（exit 0）、
+> `GATE RESULT: 14/14 PASS（SKIP 0）`（gate visual，exit 0）、`openspec validate --all --strict`
+> 43/43、`docs-check` PASS、`node scripts/acceptance/run.mjs --check` PASS、真机 230 见报告。

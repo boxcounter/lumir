@@ -52,6 +52,10 @@ steps:
     expect:
       - label: 路径落进输入框（注入落地的正观测）
         ax: { has: "notes/deep/plan.md" }
+      - label: Enter 之前结果区就有直接打开行（与 Enter 同一份判决）
+        ax: { has: "按 Enter 打开 notes/deep/plan.md" }
+      - label: 有直接打开行时 MUST NOT 出现候选空态
+        ax: { not: "没有匹配的条目" }
       - shot: 02-路径输入
   - name: Enter
     do: key
@@ -70,6 +74,79 @@ steps:
       - label: 原标签仍在（新标签意图，不是替换当前标签）
         ax: { has: "/AXRadioButton \\(goto-line-long.md\\)/" }
       - shot: 03-深层路径打开
+
+  - name: 真负例：vault 内不存在的路径（⌘P）
+    do: keys
+    keys: ["cmd+p"]
+  - name: 输入一条不存在的 vault 内路径
+    do: typeInNode
+    target: { role: AXTextField, name: "按路径快速打开文件|notes/deep/nope.md" }
+    text: "notes/deep/nope.md"
+  - name: 等候选为空的探测落定（存在探测是异步的，不能拿 settle 抢跑）
+    do: waitFor
+    waitFor:
+      has: ["没有匹配的条目"]
+    timeoutMs: 5000
+  - name: 真负例现场
+    do: settle
+    expect:
+      - label: 候选空态在场（这是**真实**的零命中：索引与探测都不成立）
+        ax: { has: "没有匹配的条目" }
+      - label: 没有直接打开行（判据是那条动作文本，不是任意文本）
+        ax: { not: "按 Enter 打开" }
+      - shot: 03b-真负例空态
+  - name: Enter
+    do: key
+    key: enter
+  - name: 真负例的 Enter 现场
+    do: settle
+    expect:
+      - label: 按「找不到」处置并点名输入串（输入内容保留）
+        ax: { has: "找不到：notes/deep/nope.md" }
+      - label: 没有为它留下标签
+        ax: { not: "/AXRadioButton \\(nope.md\\)/" }
+      - shot: 03c-真负例找不到
+  - name: Esc 收起
+    do: key
+    key: escape
+
+  - name: 造一个惰性文件（node_modules 是默认 lazy 档：盘上有、索引里没有）
+    do: vaultWrite
+    file: node_modules/quick-open-lazy.md
+    content: "# 惰性文件\n\nLAZY-655-MARKER\n"
+  - name: 等惰性行出现在树里（子树不进枚举）
+    do: waitFor
+    waitFor:
+      has: ["node_modules"]
+    timeoutMs: 15000
+  - name: 按精确路径打开惰性文件（⌘P）
+    do: keys
+    keys: ["cmd+p"]
+  - name: 输入惰性文件的精确路径
+    do: typeInNode
+    target: { role: AXTextField, name: "按路径快速打开文件|node_modules/quick-open-lazy.md" }
+    text: "node_modules/quick-open-lazy.md"
+  - name: 等存在探测补帧（索引不含它，直接行由探测命中给出）
+    do: waitFor
+    waitFor:
+      has: ["按 Enter 打开 node_modules/quick-open-lazy.md"]
+    timeoutMs: 5000
+  - name: Enter
+    do: key
+    key: enter
+  - name: 等惰性文件装载
+    do: waitFor
+    waitFor:
+      has: ["LAZY-655-MARKER"]
+    timeoutMs: 15000
+  - name: 惰性文件打开现场
+    do: settle
+    expect:
+      - label: 惰性文件按精确路径可打开（候选里找不到它，但探测命中）
+        ax: { has: "/AXRadioButton \\(quick-open-lazy.md\\)/" }
+      - label: 打开的是 vault 内文件（可编辑，不是 vault 外只读）
+        ax: { not: "vault 外 · 只读" }
+      - shot: 03d-惰性文件
 
   - name: 含冒号的文件名：整串优先（MUST NOT 被拆成路径 + 行号）
     do: keys
@@ -100,6 +177,21 @@ steps:
     do: typeInNode
     target: { role: AXTextField, name: "按路径快速打开文件|goto-line-long.md:39" }
     text: "goto-line-long.md:39"
+  - name: 等直接行补帧（存在探测是异步的：先探整串，再落到剥后缀那一级）
+    do: waitFor
+    waitFor:
+      has: ["第 39 行"]
+    timeoutMs: 5000
+  - name: Enter 前的结果区
+    do: settle
+    expect:
+      - label: 直接打开行标明落点行（与 Enter 同一份判决）
+        ax: { has: "按 Enter 打开 goto-line-long.md" }
+      - label: 落点行读数在场
+        ax: { has: "第 39 行" }
+      - label: 有直接打开行时 MUST NOT 出现候选空态
+        ax: { not: "没有匹配的条目" }
+      - shot: 04b-带行号的直接行
   - name: Enter
     do: key
     key: enter
@@ -128,6 +220,11 @@ steps:
     do: typeInNode
     target: { role: AXTextField, name: "按路径快速打开文件|/etc/hosts" }
     text: "/etc/hosts"
+    expect:
+      - label: 直接打开行把「只读」写进动作里（vault 外、读取前判不了存在性）
+        ax: { has: "按 Enter 只读打开 /etc/hosts" }
+      - label: 有直接打开行时 MUST NOT 出现候选空态
+        ax: { not: "没有匹配的条目" }
   - name: Enter
     do: key
     key: enter
@@ -191,6 +288,11 @@ steps:
     do: typeInNode
     target: { role: AXTextField, name: "按路径快速打开文件|/tmp/lumir-655-missing/notes.md" }
     text: "/tmp/lumir-655-missing/notes.md"
+    expect:
+      - label: Enter 之前给的是**尝试行**（不断言它不存在——读取前判不了）
+        ax: { has: "按 Enter 只读打开 /tmp/lumir-655-missing/notes.md" }
+      - label: 尝试行在场时 MUST NOT 出现候选空态
+        ax: { not: "没有匹配的条目" }
   - name: Enter
     do: key
     key: enter
@@ -250,7 +352,7 @@ steps:
 
 Alex 2026-10-23 的需求原话：「快速便捷地查找、打开文件（类似 Emacs C-x C-f）……增加这个功能后，
 我就可以复制文件路径（不包含开头的 open 命令），然后在 Lumir 里打开了」「最好也可以支持打开
-`{path}{:line}` 路径，如 `apps/api/package.json:71`」。本场景把需求里**只能在真机判**的四件事
+`{path}{:line}` 路径，如 `apps/api/package.json:71`」。本场景把需求里**只能在真机判**的五件事
 钉住：
 
 1. **⌘P 不被 WKWebView / 原生菜单截获**（design §6 第 ③ 条明写的待验项）：三个焦点位（编辑器 /
@@ -261,12 +363,20 @@ Alex 2026-10-23 的需求原话：「快速便捷地查找、打开文件（类�
    第 2 行——这是「整串优先」在真机侧的判据。
 4. **vault 外只读**：`/etc/hosts` 以只读打开、标签页标题带「只读」标记、modeline 右段有
    「vault 外 · 只读」、`⌘S` 不写盘也不出保存失败提示、重启后标签不回来。
+5. **结果区与 Enter 同源**（M700）：vault 外路径 / 带行号的路径 / 索引内的路径在 Enter **之前**
+   就给「直接打开」行（动作文本 + 落点行），且 MUST NOT 同时出现「没有匹配的条目」；真实的
+   零命中（`notes/deep/nope.md`）仍然落空态、Enter 后报「找不到」。
 
 ## 判据为什么这样写
 
 - **`/AXTextField \(按路径快速打开文件\)/`**：浮层输入框是原生 `<input>`，AX 里是 AXTextField；
   空值时它的可访问名就是 aria-label（读屏名 D570）。**非空值**时 WKWebView 把可访问名换成值
   ——因此 `typeInNode` 的 `target.name` 一律写成「读屏名|目标值」的交替正则（README 的 typeInNode 条）。
+- **直接打开行的断言用动作文本，不用「有内容」**：`按 Enter 打开 <路径>` / `按 Enter 只读打开
+  <路径>` 是结果区**判决**的措辞（D589 / D590），落点行是独立的 `第 N 行`（D591）。拿「界面变
+  了」当判据挡不住「结果区仍然说没有匹配、Enter 却能打开」这个 M697 的原始缺陷。
+- **负例配正向断言**：`ax: { not: "按 Enter 打开" }` 单独写有恒真风险（结果区没渲染这块也成立），
+  因此同一步里配 `没有匹配的条目` 在场（D117）——两边一起才说明「这是真的零命中」。
 - **`⌘S` 用 `file: { unchangedSince }` 判**：只读的判据不是「按了没反应」，而是「文件字节与
   mtime 都没变」——真正的写盘调用即使被后端拒绝也可能碰 mtime，这条判据能分辨。
 - **重启后的对照**：`ax: { not: "vault 外 · 只读" }` 单独写是恒真风险（界面根本没渲染这块），
@@ -294,6 +404,10 @@ Alex 2026-10-23 的需求原话：「快速便捷地查找、打开文件（类�
   `tests/visual/scenes/quick-open.spec.ts` 用真实 DOM 计数钉住（`.lumir-toast` 恰为 1 条）。
 - **输入法组合期**：本场景用 `typeInNode` 注入 ASCII 路径，中文查询串的组合期行为由
   `tests/visual/scenes/list-filter.spec.ts` 的同款事件序列覆盖。
+- **索引外的惰性文件不在真机层**：验收 vault 的忽略规则由套件统一生成（`ignoredDirs` 探针），
+  本场景造不出「单个文件不在索引、但盘上存在」的形态；这条由
+  `tests/visual/scenes/quick-open.spec.ts` 的 `fs_paths_exist` 桩与 `tests/unit/quick-open.test.ts`
+  的探测矩阵（相对 / vault 内绝对两形）覆盖。
 - **只读标签的锁形图标是可见标记、不进 AX**（M660 #7）：真机层只判读屏名（`{名称}（vault 外
   只读）`）与可见文字不再带「只读」；图标在场 / `aria-hidden` / SVG 形态 / vault 内标签无图标
   由 `tests/visual/scenes/quick-open.spec.ts` 与 `tests/unit/tabs.test.ts` 钉住。
