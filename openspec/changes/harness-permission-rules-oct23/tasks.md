@@ -85,9 +85,13 @@
 ## 6. 提示词与文档
 
 - [x] 6.1 `src-tauri/src/harness/prompts/identity.md`：工具纪律段补三句（`design.md §7` 原文）
-- [ ] 6.2 **归档提交时**：把 `openspec/specs/harness/spec.md` Purpose 的「三层权限规则（allow / ask /
+- [x] 6.2 **归档提交时**：把 `openspec/specs/harness/spec.md` Purpose 的「三层权限规则（allow / ask /
       deny）」改为两层口径（Purpose 不是 requirement、不进 delta，只能归档时手改；同「归档后核对
       Purpose」通道）
+      —— **2026-10-25 归档批（M729）已执行**：Purpose 首段的三层句改为「两层权限规则（allow /
+      deny）之上的**三档权限模式**…」；同段 M725 的 pane 定位句与「8 件 vault 操作工具 … 另加
+      1 件编排工具 `task`」计数句逐字保留。`openspec/specs/harness/spec.md` 全文件复核：「三层
+      权限规则」零命中，「两层权限规则」命中 Purpose 与本 change delta 替换后的「权限机制」条。
 - [x] 6.3 若实现期发现 proposal 的意图需要变更，停下改 proposal 并重走节点 1，不静默扩 scope
       —— **不适用（N/A）**：实现期与 r1 返修都未改 proposal 的 What Changes / 裁决点（r1 处置是
       实现层修正与 scope 外 finding 登记，见评审 r1 的逐项核对），没有重走节点 1 的触发条件

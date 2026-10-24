@@ -14,7 +14,26 @@
 > 裁决依据原话（Alex，2026-10-23，逐字）：「permission level 用起来体验很奇怪，明明是读操作，
 > 却也要 approve」「我有点警觉，为什么 Lumir harness 会使用 bash -lc，是不是 harness 本身
 > 有什么不足」。
-> 节点 2（归档评审）：实现完成后填写。
+> 节点 2（归档评审）：**机器 + 独立评审放行（五要件）**，2026-10-25。放行口径见
+> `docs/process/openspec-workflow.md`「节点 2」节；本 change 是该节列明的权限链首批适用现场
+> （permission-rules → readonly → rg-zip），归档批 M729 执行。归档前读数：
+> 1. **方案已批准**：节点 1 于 2026-10-23 裁决，Q1–Q7 全部「按倾向」（见上方评审记录与「裁决点」）；
+>    实现期未静默扩 scope（tasks 6.3 就地标 N/A）。
+> 2. **独立 reviewer clean / merge**：`review-feat-impl-harness-permission-rules-oct23-reviewer-impl-permission-rules-r1-2.md`
+>    （reviewer-impl-permission-rules-oct23-r2，`status: clean` / `merge: merge`，评审 tip `471bf6c6`）。
+>    该 tip 之后 delta 逐字未改——`git diff 471bf6c6 HEAD -- openspec/changes/harness-permission-rules-oct23/specs/`
+>    空输出；后续提交只补本文件与 tasks.md 的证据注记。
+> 3. **tasks 完成**：36/36（6.2 在本归档提交内执行后勾选；6.3 就地标注 N/A 放弃理由）。
+> 4. **门禁与真机证据**：tasks 7.3 `GATE RESULT: 11/11 PASS（SKIP 0）`、7.4 `GATE RESULT: 13/13 PASS
+>    （SKIP 0）`（实现批读数，delta 此后未改）；真机 229（31 断言）/ 110（19）/ 151（16）
+>    2026-10-24 全 PASS，证据
+>    `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-24-m711/{229-harness-permission-rules,110-harness-approval-purpose-remember,151-harness-approval-reason}/`
+>    （各自 `status.txt` = PASS、`steps.md` 无 FAIL 行）。
+> 5. **规格对账**：`node scripts/openspec-archive-check.mjs --change harness-permission-rules-oct23`
+>    → PASS（1 份 delta / 5 条 MODIFIED / 66 段，无静默丢段）；`openspec validate --all --strict`
+>    → `Totals: 37 passed, 0 failed`；归档跟踪队列有且仅有一条（`docs/backlog.md`）。
+>
+> 归档后项（归档提交 hash、`openspec archive` 输出、`--archived` 读数）见本块末尾的「归档后」追加段。
 
 ## Why
 
