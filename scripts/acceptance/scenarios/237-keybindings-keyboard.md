@@ -32,6 +32,33 @@ steps:
         ax: { has: "71 条命令 · 11 组" }
       - shot: 打开-输入框焦点
 
+  - name: 滚动前的视口读数（AX 的 offscreen_filter 只暴露视口内的行）
+    expect:
+      - label: 首行「上移一行」在视口内（正向锚点）
+        ax: { has: "上移一行" }
+      - label: 末尾命令「关闭窗格」不在视口内（负向基线，后面出现才说明真滚动）
+        ax: { not: "关闭窗格" }
+
+  - name: 连续 PageDown：列表真的滚动（行集变化，不是只移动焦点）
+    do: keys
+    keys: ["pagedown", "pagedown", "pagedown", "pagedown", "pagedown"]
+    expect:
+      - label: 末尾命令「关闭窗格」进入视口（PageDown 改变了滚动位置）
+        ax: { has: "关闭窗格" }
+      - label: 首行「上移一行」离开视口（不是「按了但没滚」）
+        ax: { not: "上移一行" }
+      - shot: PageDown-滚到底
+
+  - name: 连续 PageUp 回到顶部
+    do: keys
+    keys: ["pageup", "pageup", "pageup", "pageup", "pageup"]
+    expect:
+      - label: 首行重新进入视口
+        ax: { has: "上移一行" }
+      - label: 末尾命令离开视口
+        ax: { not: "关闭窗格" }
+      - shot: PageUp-回顶
+
   - name: 不点任何东西直接键入 toc（焦点在查询框才有这个结果）
     do: keys
     keys: ["t", "o", "c"]
@@ -115,15 +142,25 @@ steps:
         ax: { has: "关闭窗格" }
       - shot: End-最后一行详情
 
-  - name: Esc 清查询 / Esc 关闭（当前查询为空，第一下即关闭）
+  - name: Esc 关闭（当前查询为空，第一下即关闭）
     do: key
     key: escape
     expect:
       - label: 面板已关闭
         ax: { not: "键位速查（生效中）" }
-      - label: 关闭后焦点交还编辑器（再按 ⌃D 能删字符 → 文档变化）
-        editor: { has: "纯文本基线" }
+      - label: 关闭后焦点交还编辑器（focused 节点是 AXTextArea）
+        ax: { focused: "AXTextArea" }
+      - label: 键盘全程文档逐字节不变（关闭前）
+        editor: { unchangedSince: beforeKeyboard }
       - shot: 关闭后-焦点交还
+
+  - name: 在编辑器里按 ⌃D：焦点确实回到编辑器、命令真的执行
+    do: key
+    key: "ctrl+d"
+    expect:
+      - label: 文档发生变化（⌃D 到达编辑器并删掉一个字符）
+        editor: { changedSince: beforeKeyboard }
+      - shot: ctrl-d-删字符
 
   - name: ⌃G 关闭路径
     do: key
@@ -137,8 +174,6 @@ steps:
     expect:
       - label: ⌃G 关闭面板
         ax: { not: "键位速查（生效中）" }
-      - label: 键盘全程文档逐字节不变
-        editor: { unchangedSince: beforeKeyboard }
 ---
 
 # 键位速查：键盘全程（change improve-keybindings-lookup-oct24）
@@ -150,14 +185,16 @@ steps:
    `toc` 仍能过滤。
 3. **↑↓ / Enter**：↓ 选择第二行、Enter 展开详情，命令 id `editor.cursor-down` 只在详情里出现。
 4. **End**：焦点在列表时 End 落到最后一行（`pane.close`），Enter 展开其详情。
-5. **Esc / ⌃G**：Esc 清查询 → 关闭；⌃G 关闭；关闭后焦点交还编辑器；全程文档逐字节不变。
+5. **Esc / ⌃G**：Esc 清查询 → 关闭；关闭后 AX 焦点是 `AXTextArea`，并在编辑器里按 `⌃D` 看到文档
+   真的变化（焦点交还的可执行判据）；⌃G 关闭；关闭前文档逐字节不变。
+6. **PageDown / PageUp**：AX 的 `offscreen_filter` 只暴露视口行——滚动前末行不在、PageDown 后末行
+   出现且首行消失、PageUp 后反向，证明列表真的滚动而不是只移动焦点。
 
 ## 已知边界（如实登记）
 
-- **PageDown 的真实滚动量不可机判**：WKWebView 的 AX 不暴露滚动容器的 `scrollTop`，本场景不把
-  「按了 PageDown」写成「滚到了哪里」；滚动截图留证，滚动量归 Alex dogfood。列表滚动容器的
-  键盘可滚性由视觉场景的结构断言（焦点在 `.lumir-bindings-body`）与实现（显式 scrollTop）共同
-  保证。
+- **PageDown 的滚动量仍不可机读，但滚动位置可判**：WKWebView 的 AX 不暴露 `scrollTop`，且快照带
+  `offscreen_filter`——只列当前视口内的行。本场景因此用「滚动前末尾命令不在 AX、PageDown 后末尾
+  命令出现且首行消失、PageUp 后反向」判「列表真的滚动了」；滚了多少像素仍归 Alex dogfood。
 - **Tab 四停的顺序**由视觉场景逐停断言（`toBeFocused` 四次）；本场景只判「循环后回到输入框」
   与「不逃出面板」两条真机可读的行为。
 - **shift+Tab 反向**未单列：正向循环已覆盖「焦点不逃出」，反向路径与正向共用同一份

@@ -217,6 +217,37 @@ test("按键捕获：定位真实 when 绑定、被捕获的键不执行命令�
   await expect(panel(page)).toBeHidden();
 });
 
+test("已捕获态：带修饰键组合重新捕获（不执行命令），关闭键仍关闭", async ({ page }) => {
+  await openVault(page);
+  await focusEditor(page, DOC.length);
+  await openPanel(page);
+  const theme = () => page.evaluate(() => document.documentElement.dataset.theme ?? "light");
+  const beforeTheme = await theme();
+
+  await page.locator(".lumir-bindings-capture").click();
+  await page.keyboard.press("Home");
+  await expect(page.locator(".lumir-bindings-captured-glyph")).toHaveText("Home");
+
+  // design §3.3：已捕获态按带修饰键的组合 = 重新捕获，不是执行命令。
+  await page.keyboard.press("Meta+Shift+T");
+  await expect(page.locator(".lumir-bindings-captured-glyph")).toHaveText("⇧⌘T");
+  await expect(rowOf(page, "view.theme-cycle")).toBeVisible();
+  await expect(page.locator(".lumir-bindings-count")).toHaveText("按键 ⇧⌘T · 命中 1");
+  expect(await theme(), "被重新捕获的 ⇧⌘T 不得执行 view.theme-cycle").toBe(beforeTheme);
+
+  // 关闭例外一：已捕获态 ⌃G 照常关闭。
+  await page.keyboard.press("Control+g");
+  await expect(panel(page)).toBeHidden();
+
+  // 关闭例外二：已捕获态当前 app.describe-bindings 键（默认 ⌘/）照常关闭。
+  await openPanel(page);
+  await page.locator(".lumir-bindings-capture").click();
+  await page.keyboard.press("Home");
+  await expect(page.locator(".lumir-bindings-captured-glyph")).toHaveText("Home");
+  await page.keyboard.press("Meta+/");
+  await expect(panel(page)).toBeHidden();
+});
+
 test("键盘全程：Tab 四停、方向键 / Enter / PageDown / Home-End、Esc 分层、焦点交还", async ({ page }) => {
   await openVault(page);
   await focusEditor(page, DOC.length);
@@ -336,17 +367,24 @@ test("详情：原始 token / 命令 id / 来由 / 未绑定成因与 [keys] 示
   await focusEditor(page, DOC.length);
   await openPanel(page);
 
-  // 默认不占键位：折行命令。
+  // 默认不占键位：折行命令。aria-expanded 与 expanded 同源：false → true → false。
   await input(page).fill("折行");
   const wrap = rowOf(page, "view.toggle-line-wrap");
   await expect(wrap).toHaveClass(/is-unbound/);
   await expect(wrap.locator(".lumir-bindings-key")).toHaveText("未绑定");
+  await expect(wrap).toHaveAttribute("aria-expanded", "false");
   await wrap.click();
+  await expect(wrap).toHaveAttribute("aria-expanded", "true");
   const wrapDetail = page.locator(".lumir-bindings-detail");
   await expect(wrapDetail).toContainText("默认不占键位");
   await expect(wrapDetail).toContainText("[keys]");
   await expect(wrapDetail).toContainText("config.json");
   await expect(wrapDetail).toContainText("view.toggle-line-wrap");
+  await wrap.click();
+  await expect(wrap).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".lumir-bindings-detail")).toHaveCount(0);
+  await wrap.click();
+  await expect(wrap).toHaveAttribute("aria-expanded", "true");
 
   // 一次只开一个：点另一行，前一行的详情收起。
   await rowOf(page, "view.toggle-code-block-wrap").click();
@@ -362,6 +400,15 @@ test("详情：原始 token / 命令 id / 来由 / 未绑定成因与 [keys] 示
   await expect(undoDetail).toContainText("命令 id");
   await expect(undoDetail).toContainText("来由");
   await expect(rowOf(page, "editor.undo").locator(".lumir-bindings-label")).toHaveText("撤销");
+
+  // 模板标签（tab.goto-N）：详情同样经 labelParams 插值，不显示 {n}。
+  await input(page).fill("跳到");
+  const goto1 = rowOf(page, "tab.goto-1");
+  await expect(goto1.locator(".lumir-bindings-label")).toHaveText("跳到第 1 个标签");
+  await goto1.click();
+  const gotoDetail = page.locator(".lumir-bindings-detail");
+  await expect(gotoDetail).toContainText("跳到第 1 个标签 · Go to tab 1");
+  await expect(gotoDetail).not.toContainText("{n}");
 });
 
 test("生效表：配置重绑 / 解绑后按生效表渲染", async ({ page }) => {

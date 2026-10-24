@@ -20,6 +20,9 @@
 // 模态边界：面板只挡 editor 作用域的键；global 键照常分发（既有 spec 边界）。捕获等待态是
 // 唯一「消费所有键」的状态——被捕获的键 MUST NOT 执行任何命令，Esc 是唯一退出键；`⌃G` 在该
 // 状态下被当作待查询的键捕获（否则无法反查 `⌃G`），已捕获态与其余状态 `⌃G` 照常关闭。
+// **已捕获态**按 design §3.3 处理：打印字符转文本查询，带修饰键的组合**重新捕获**（不执行
+// 命令），关闭例外仍交回分发器——`⌃G` 就地关闭、当前 `app.describe-bindings` 生效键（默认
+// `⌘/`，可被 `[keys]` 重绑）由面板放行给 window 分发器执行同一条 toggle。
 //
 // 关闭键（Escape / ⌃G）由面板就地消费，不进 KEY_BINDINGS：统一表是「一个 token 一条绑定」，
 // 这两个 token 已被 editor 作用域占用（`editor.widget-escape` / `editor.keyboard-quit`），
@@ -369,6 +372,20 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
     return currentCollapsed().has(index);
   }
 
+  /** 当前生效表中 `app.describe-bindings` 的 token 集（可被 `[keys]` 重绑 / 解绑）。 */
+  function describeBindingsTokens(): Set<string> {
+    const tokens = new Set<string>();
+    for (const binding of options.bindings()) {
+      if (binding.command === "app.describe-bindings") tokens.add(normalizeKey(binding.key));
+    }
+    return tokens;
+  }
+
+  /** 带修饰键的组合（⌘ / ⌃ / ⌥）：已捕获态下这些组合用于重新捕获，而不是执行命令。 */
+  function isModifierChord(event: KeyboardEvent): boolean {
+    return event.metaKey || event.ctrlKey || event.altKey;
+  }
+
   function setScope(scope: ScopeFilter): void {
     if (capture.kind === "waiting") return; // 等待态只接受「被查询的键」，筛选不参与
     scopeFilter = scope;
@@ -499,6 +516,7 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
     node.dataset.command = row.command;
     node.setAttribute("role", "option");
     node.setAttribute("aria-selected", "false");
+    node.setAttribute("aria-expanded", String(expanded === row.command));
     node.setAttribute("aria-controls", detailDomId(row.command));
 
     node.append(element("span", "lumir-bindings-label", labelText(row.command)));
@@ -524,7 +542,10 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
     detail.setAttribute("role", "group");
     detail.setAttribute("aria-label", labelText(row.command));
 
-    detail.append(element("p", "lumir-bindings-detail-labels", `${entry.zh} · ${entry.en}`));
+    const params = meta.labelParams;
+    const zh = params === undefined ? entry.zh : interpolate(entry.zh, meta.labelKey, params);
+    const en = params === undefined ? entry.en : interpolate(entry.en, meta.labelKey, params);
+    detail.append(element("p", "lumir-bindings-detail-labels", `${zh} · ${en}`));
 
     const list = element("dl", "lumir-bindings-detail-facts");
     const fact = (name: string, value: string): void => {
@@ -807,9 +828,26 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
       toggle();
       return;
     }
+    // 当前 app.describe-bindings 的生效键（默认 ⌘/，可被 [keys] 重绑）：交给分发器执行同一条
+    // toggle（关闭例外）。等待态已在上面消费所有键，不走这里。
+    if (describeBindingsTokens().has(token)) return;
     if (token === "Tab" || token === "Shift-Tab") {
       event.preventDefault();
       moveFocus(token === "Shift-Tab");
+      return;
+    }
+    // 已捕获态：带修饰键的组合用于**重新捕获**（design §3.3），不落到 window 分发器执行命令。
+    // 关闭例外已在上面处理（⌃G / 当前 app.describe-bindings 键）。
+    if (capture.kind === "captured" && isModifierChord(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      capture = { kind: "captured", token };
+      collapsedInFilter = new Set();
+      expanded = null;
+      activeIndex = 0;
+      relabelStatic();
+      render({ resetScroll: true });
+      input.focus();
       return;
     }
 

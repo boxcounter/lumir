@@ -63,19 +63,23 @@
 - [x] 4.1 单测：语料不含来由（`M447` / 「已删除」零命中）；别名允许自然短语；行聚合（多键一行 / 未绑定
       一行 / scope 来源）；捕获归一化（含 Alt physical code）；空态三成因；计数分母 = 作用域筛选后的命令数
 - [x] 4.2 视觉场景 `m133-*`：空查询行数 = `COMMAND_IDS` 数（71）、每命令一行、多键合并、scope / 条件徽标、
-      未绑定行、查询 / 捕获 / 空态 / 详情、三主题结构断言；结构化模式 14/14 PASS
+      未绑定行、查询 / 捕获 / 空态 / 详情、三主题结构断言；另含已捕获态重捕获、详情 `labelParams`
+      插值与 `aria-expanded` false→true→false；结构化模式 15/15 PASS
 - [ ] 4.3 像素基线：面板行模型变化让整页基线失效；before / after / diff 已备
       （`.local/reviews/keybindings-lookup-oct24-M715/`），**等 Alex 过目后重截**，未过目不得 `--update`
-- [x] 4.4 真机验收场景（`scripts/acceptance/`）：新增 235（查询）/ 236（捕获）/ 237（键盘），同步
-      `COVERAGE.md`；真机 PASS 证据 `.local/acceptance/2026-10-24-m715/`（235 27 断言 / 236 42 断言 /
-      237 31 断言，全部 PASS）。登记边界：菜单栏在 AX 通道点不到、Home 的容器滚动量不可读、
-      PageDown 的滚动量与 IME 组合期由视觉场景覆盖（真机 AX 无这两个读数），分别在场景文末如实写明
+- [ ] 4.4 真机验收场景（`scripts/acceptance/`）：新增 235（查询）/ 236（捕获）/ 237（键盘），同步
+      `COVERAGE.md`；r1 返修后真机 **3/3 PASS**，断言数按 `steps.md` 实际口径 **26 / 54 / 40**
+      （235 / 236 / 237），证据 `.local/acceptance/2026-10-24-m715/`。**未勾满，明确未验范围**：
+      ① 菜单栏在 AX 通道点不到，菜单点击 → toggle 由 Rust 单测 + 视觉 `fireMenuCommand` 覆盖；
+      ② `Home` 在块级横滚容器持焦时对 `scrollLeft` 的效果不可机读（AX 不暴露滚动偏移），场景 21
+      只覆盖 End / Home 被容器消费；③ 已捕获态重捕获、⌃G/⌘/ 关闭例外、PageDown/PageUp 的视口行集
+      变化与 ⌃D 焦点交还可执行判据已补进 236/237
 - [x] 4.5 `bash scripts/gate.sh quick` 全绿：`GATE RESULT: 12/12 PASS（SKIP 0）`，退出码 0（日志
       `/tmp/m715-gate-quick-final.log`；12 项含 cargo fmt/clippy/test、tsc/unit、acceptance 语法、
       docs-check、openspec validate）
 - [ ] 4.6 `bash scripts/gate.sh visual` 全绿（待基线裁决；结构化层已绿，像素层只剩 m133 一张预期红）
       —— 已跑：`GATE RESULT: 13/14 PASS（SKIP 0）`（833 passed / 1 failed / 1 skipped，唯一红是
-      m133 的预期像素变化）；m133 结构层在最终代码上 14/14 PASS。像素基线按 4.3 等 Alex 过目。
+      m133 的预期像素变化）；m133 结构层在最终代码上 15/15 PASS。像素基线按 4.3 等 Alex 过目。
       材料：`.local/reviews/keybindings-lookup-oct24-M715/`
 - [x] 4.7 性能 / 手感：真机 235 / 237 打开 71 行、连续输入查询与键盘导航无运行失败；手感 / 密度归 Alex
 
