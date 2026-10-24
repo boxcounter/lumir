@@ -37,7 +37,7 @@ steps:
     expect:
       - shot: 键位面板
       - label: 面板打开（dialog 就位）
-        ax: { has: "键位（生效中）" }
+        ax: { has: "键位速查（生效中）" }
       - label: 面板列出命令与键位
         ax: { has: "移动与选择" }
       - label: 面板打开期间 AX 里确实没有编辑器节点（说明该窗口不可读文档）
@@ -47,7 +47,7 @@ steps:
     keys: ["ctrl+n", "x", "ctrl+d"]
     expect:
       - label: 注入后面板仍在（没有被按键关掉）
-        ax: { has: "键位（生效中）" }
+        ax: { has: "键位速查（生效中）" }
       - shot: 注入之后
   - name: 再按 ⌘/ 关闭面板
     do: key
@@ -55,7 +55,7 @@ steps:
     expect:
       - shot: 面板已关闭
       - label: 面板已关闭
-        ax: { not: "键位（生效中）" }
+        ax: { not: "键位速查（生效中）" }
   - name: 关面板后与基线逐字节比较（真正验证不穿透）
     expect:
       - label: 面板打开期间文档逐字节不变（作用域键与可打印字符都没穿透）

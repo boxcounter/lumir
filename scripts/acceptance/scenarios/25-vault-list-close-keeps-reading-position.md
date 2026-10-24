@@ -78,14 +78,14 @@ steps:
     key: "cmd+/"
     expect:
       - label: 面板已打开
-        ax: { has: "键位（生效中）" }
+        ax: { has: "键位速查（生效中）" }
 
   - name: 对照：Esc 收起键位面板后阅读位置同样不变
     do: key
     key: "escape"
     expect:
       - label: 面板已收起（面板内容不在 AX 里）
-        ax: { not: "键位（生效中）" }
+        ax: { not: "键位速查（生效中）" }
       - label: 阅读位置不变（第 1 章两行仍不在渲染行里）
         ax: { not: "第 1 章 概览 第 1 章概览正文。" }
       - label: 尾部章节两行仍在渲染行里

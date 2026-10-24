@@ -528,6 +528,14 @@ export interface KeyBinding {
   docKey: CopyKey;
   /** 来由模板的插值参数（只有需要序号的模板用得上——⌘1–⌘9 九条绑定共用 D259）。 */
   docParams?: Record<string, string | number>;
+  /**
+   * `when` 的**全文**说明（change improve-keybindings-lookup-oct24；详情里用）。
+   * 与 `when` 同生同灭：面板不能把一个函数渲染成人话，也不许在面板里另写一份条件描述。
+   * `applyKeyOverrides` 合成的绑定没有 `when`，三者都缺省。
+   */
+  whenKey?: CopyKey;
+  /** `when` 的**短徽标**说明（速查行内用）；与 `whenKey` / `when` 同生同灭。 */
+  whenShortKey?: CopyKey;
 }
 
 /** 块级横滚容器的 class（M180）：livePreview 的表格滚动容器与代码块滚动容器**共用**它——
@@ -671,11 +679,11 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // when 把命中限定在「容器自身持有这次按键的焦点」：文本编辑中的 Home / End / 左右方向键 /
   // Escape 必须照旧走原生 caret 路径，光标落在块内文本时（事件目标在容器内、但活动元素是
   // 编辑器内容区）也归 caret。
-  { key: "ArrowLeft", command: "editor.widget-scroll-left", scope: "editor", when: isWidgetKeyTarget, docKey: "D294" },
-  { key: "ArrowRight", command: "editor.widget-scroll-right", scope: "editor", when: isWidgetKeyTarget, docKey: "D295" },
-  { key: "Home", command: "editor.widget-scroll-home", scope: "editor", when: isWidgetKeyTarget, docKey: "D296" },
-  { key: "End", command: "editor.widget-scroll-end", scope: "editor", when: isWidgetKeyTarget, docKey: "D297" },
-  { key: "Escape", command: "editor.widget-escape", scope: "editor", when: isWidgetKeyTarget, docKey: "D298" },
+  { key: "ArrowLeft", command: "editor.widget-scroll-left", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D294" },
+  { key: "ArrowRight", command: "editor.widget-scroll-right", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D295" },
+  { key: "Home", command: "editor.widget-scroll-home", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D296" },
+  { key: "End", command: "editor.widget-scroll-end", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D297" },
+  { key: "Escape", command: "editor.widget-escape", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D298" },
 
   // ── 编辑器内：块级横滚容器的**焦点入口**（M474，backlog「块级横滚容器失去焦点入口」候选①，
   // tower 2026-10-12 裁决；与上面五条的关系见 `EDITOR_CORE_COMMAND_IDS` 那条 id 的注释）。
@@ -880,8 +888,9 @@ const MODIFIER_ALIASES = new Map<string, string>([
 /** 表内修饰前缀的规范顺序。 */
 const MODIFIER_ORDER = ["Cmd", "Ctrl", "Alt", "Shift"] as const;
 
-/** US 布局需 Shift 才能打出的符号：Shift 已隐含在字符本身，token 里不再重复。 */
-const SHIFT_IMPLIED_KEYS = new Set([..."_+{}|:\"<>?~!@#$%^&*()"]);
+/** US 布局需 Shift 才能打出的符号：Shift 已隐含在字符本身，token 里不再重复。
+ *  `src/key-glyphs.ts` 反解物理键时读同一份集合（单一来源，MUST NOT 另抄一份）。 */
+export const SHIFT_IMPLIED_KEYS = new Set([..."_+{}|:\"<>?~!@#$%^&*()"]);
 
 /**
  * 规范化一个键位 token：修饰前缀按 Cmd/Ctrl/Alt/Shift 定序、键名单字符大写。
