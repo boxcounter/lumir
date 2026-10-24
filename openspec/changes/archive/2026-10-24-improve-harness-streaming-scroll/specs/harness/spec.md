@@ -1,7 +1,7 @@
 # harness 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 ADDED、一条 MODIFIED，基线是 living spec
-> [openspec/specs/harness/spec.md](../../../../specs/harness/spec.md)。
+> [openspec/specs/harness/spec.md](../../../../../specs/harness/spec.md)。
 > ① ADDED「transcript 的跟随滚动与回到底部」= 本 change 的主体（两态判据、浮钮、白名单）；
 > ② MODIFIED「错误呈现」= 既有「滚到可见」在脱离态下会重新制造「拽到底部」，按同一几何判据收口，
 > 去重行为本身逐字不动。
