@@ -31,6 +31,19 @@
 >    `openspec validate --all --strict` → `Totals: 36 passed, 0 failed`；归档跟踪队列有且仅有一条。
 >
 > 归档后项见本块末尾的「归档后」追加段。
+>
+> **归档后（2026-10-25，M729）**：归档提交 `2ff57a68`（归档目录 + 并入的 living spec +
+> `docs/backlog.md` 队列条目核销同批提交）。`openspec archive` 实际输出：`harness: update`、
+> `+ 0, ~ 1, - 0, → 0`、`Change 'readonly-allowlist-tightening-oct23' archived as
+> '2026-10-25-readonly-allowlist-tightening-oct23'.`。紧随其后
+> `node scripts/openspec-archive-check.mjs --archived readonly-allowlist-tightening-oct23` →
+> `PASS（openspec/changes/archive/2026-10-25-readonly-allowlist-tightening-oct23：1 条 MODIFIED，
+> 对比 25 段；人工恢复 0 段，声明认领 0 段）`，EXIT=0（2026-10-25 07:27 CST）。
+> 同批复跑：门禁模式 `openspec-archive-check` → `PASS（12 份 delta / 15 条 MODIFIED / 228 段）`；
+> `openspec validate --all --strict` → `Totals: 35 passed, 0 failed`；`bash scripts/docs-check.sh`
+> → `docs-check: PASS`。不解包回退复核：归档后 living 仍含「受限解包」2 处（「权限机制」的危险
+> 例外句 + 「cli_run 命令分类与 vault 写重定向」的解包段）、「只读分类的能力断言」2 处、
+> 「git 全局 flag」1 处——M649 的解包段与本 change 的收紧段同时在 living 里。
 
 ## Why
 
