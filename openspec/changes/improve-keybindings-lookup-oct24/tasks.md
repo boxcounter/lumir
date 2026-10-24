@@ -65,8 +65,12 @@
 - [x] 4.2 视觉场景 `m133-*`：空查询行数 = `COMMAND_IDS` 数（71）、每命令一行、多键合并、scope / 条件徽标、
       未绑定行、查询 / 捕获 / 空态 / 详情、三主题结构断言；另含已捕获态重捕获、详情 `labelParams`
       插值与 `aria-expanded` false→true→false；结构化模式 15/15 PASS
-- [ ] 4.3 像素基线：面板行模型变化让整页基线失效；before / after / diff 已备
-      （`.local/reviews/keybindings-lookup-oct24-M715/`），**等 Alex 过目后重截**，未过目不得 `--update`
+- [x] 4.3 像素基线：面板行模型变化让整页基线失效；before / after / diff 已备
+      （`.local/reviews/keybindings-lookup-oct24-M715/`）。Alex 2026-10-25 对该材料明确回复
+      「批准。」，授权更新这一张基线；已用
+      `scripts/visual/run.sh --update scenes/m133-describe-bindings.spec.ts` 仅重截
+      `describe-bindings-panel-chromium-darwin.png`，其 sha256（c32d1aa4…）与批准材料的 after
+      **逐字节相同**；其余 76 张基线的 sha256 与 mtime 均未变化
 - [ ] 4.4 真机验收场景（`scripts/acceptance/`）：新增 235（查询）/ 236（捕获）/ 237（键盘），同步
       `COVERAGE.md`；r1 返修后真机 **3/3 PASS**，断言数按 `steps.md` 实际口径 **26 / 54 / 40**
       （235 / 236 / 237），证据 `.local/acceptance/2026-10-24-m715/`。**未勾满，明确未验范围**：
@@ -74,13 +78,13 @@
       ② `Home` 在块级横滚容器持焦时对 `scrollLeft` 的效果不可机读（AX 不暴露滚动偏移），场景 21
       只覆盖 End / Home 被容器消费；③ 已捕获态重捕获、⌃G/⌘/ 关闭例外、PageDown/PageUp 的视口行集
       变化与 ⌃D 焦点交还可执行判据已补进 236/237
-- [x] 4.5 `bash scripts/gate.sh quick` 全绿：`GATE RESULT: 12/12 PASS（SKIP 0）`，退出码 0（日志
-      `/tmp/m715-gate-quick-r1fix.log`；12 项含 cargo fmt/clippy/test、tsc/unit、acceptance 语法、
-      docs-check、openspec validate）
-- [ ] 4.6 `bash scripts/gate.sh visual` 全绿（待基线裁决；结构化层已绿，像素层只剩 m133 一张预期红）
-      —— r1 返修后已跑：`GATE RESULT: 13/14 PASS（SKIP 0）`（834 passed / 1 failed / 1 skipped，
-      唯一红是 m133 的预期像素变化；gate 判定失败，退出码 1）；m133 结构层在最终代码上 15/15 PASS。
-      像素基线按 4.3 等 Alex 过目。材料：`.local/reviews/keybindings-lookup-oct24-M715/`
+- [x] 4.5 `bash scripts/gate.sh quick` 全绿：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（日志
+      `/tmp/m715-gate-quick-baseline.log`；13 项含 cargo fmt/clippy/test、tsc/unit、perf fixture、
+      acceptance 语法、docs-check、openspec validate）
+- [x] 4.6 `bash scripts/gate.sh visual` 全绿：Alex 批准后重截 m133 基线，完整视觉门禁
+      `GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0（835 passed / 1 skipped / 0 failed，日志
+      `/var/folders/z5/r89bpbqn13v64t09ngnk03200000gn/T/lumir-gate-visual-regression.aNikpNG2HO`）；
+      m133 基线 update 后全量复跑，未再出现任何像素红
 - [x] 4.7 性能 / 手感：真机 235 / 237 打开 71 行、连续输入查询与键盘导航无运行失败；手感 / 密度归 Alex
 
 ## 5. 文档与登记
@@ -98,5 +102,5 @@
 - [x] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（含在 gate quick 的
       `GATE PASS openspec-validate` 一行）
 - [x] 6.2 `bash scripts/docs-check.sh` 通过（含在 gate quick 的 `GATE PASS docs-check` 一行）
-- [x] 6.3 `bash scripts/gate.sh quick` 通过：`GATE RESULT: 12/12 PASS（SKIP 0）`，退出码 0
+- [x] 6.3 `bash scripts/gate.sh quick` 通过：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0
 - [ ] 6.4 节点 2 前逐条对账：tasks 勾选状态 / spec 增量 / 实现三者一致；未勾项就地标注放弃原因
