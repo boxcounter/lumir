@@ -4,8 +4,8 @@
 #
 # 用法：
 #   scripts/gate.sh          # quick：fmt + clippy + cargo test + bindings 漂移 + gen/schemas 漂移
-#                            #        + tsc（根/视觉/单测）+ 单测 + acceptance 语法 + docs-check
-#                            #        + openspec validate
+#                            #        + tsc（根/视觉/单测）+ 单测 + perf 夹具测试 + acceptance 语法
+#                            #        + docs-check + openspec validate
 #   scripts/gate.sh visual   # quick + 视觉套件隔离断言 + 视觉回归（默认 LUMIR_VISUAL_PORT=4273 隔离端口）
 #   scripts/gate.sh all      # visual + 性能合同（release 构建，首次分钟级；本地无滚动基线时
 #                            # 相对回归比较自动跳过，只 enforce 绝对阈值）
@@ -69,7 +69,7 @@ skip_gate() {
   skip=$((skip + 1))
 }
 
-# --- quick 层（对应 rust.yml + docs-check.yml + visual.yml 的 tsc 步） ---
+# --- quick 层（对应 rust.yml + docs-check.yml + visual.yml 的 tsc 步 + perf.yml 的夹具测试 step） ---
 
 run_gate cargo-fmt cargo fmt --check --manifest-path src-tauri/Cargo.toml
 run_gate cargo-clippy cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
@@ -129,6 +129,9 @@ fi
 # include 里，根 tsc 覆盖不到它）。
 run_gate tsc-unit pnpm exec tsc -p tests/unit/tsconfig.json
 run_gate unit-tests node tests/unit/run.mjs
+# perf 脚本的纯函数夹具层（scripts/perf/memory.test.mjs 的归因污染判定）：它是 resident-memory
+# 门禁读数可信度的前提，坏掉时不该等下一次 perf run 才暴露。node:test 零依赖、毫秒级，放 quick。
+run_gate perf-fixture-tests node --test scripts/perf/memory.test.mjs
 # 验收套件语法层：实现唯一一份在 scripts/acceptance/check-syntax.sh（docs-check / CI 共用同一实现，
 # REVIEW.md「同一语义两处真源」条），本行只调用。只解析不执行——不起 app、不占端口、不碰验收 vault。
 run_gate acceptance-syntax bash scripts/acceptance/check-syntax.sh

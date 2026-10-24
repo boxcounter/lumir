@@ -59,14 +59,16 @@
 | `scripts/perf/cold-start.mjs` | 冷启动测量 |
 | `scripts/perf/keypress-to-paint.mjs` | keypress-to-paint 测量（headless 注入近似） |
 | `scripts/perf/open-file.mjs` | 打开 1MB 文件测量（占位口径） |
-| `scripts/perf/memory.mjs` | 常驻内存测量 |
+| `scripts/perf/memory.mjs` | 常驻内存测量（含归因污染护栏、有界重测与诊断落盘；纯函数可被夹具测试 import，直接执行才跑测量） |
+| `scripts/perf/memory.test.mjs` | 常驻内存污染护栏的纯函数夹具测试（`node --test scripts/perf/memory.test.mjs`） |
 | `scripts/perf/check-thresholds.mjs` | 阈值比较（绝对模式 + 相对回归模式） |
 | `scripts/perf/lib/stats.mjs` | 统计与结果落盘 |
 | `scripts/perf/update-baseline.mjs` | 滚动基线追加与裁剪（仅 master push 调用，判据取 `gate-status.json`；逐指标推进） |
 | `tests/perf/fixtures/markdown-1mb.md` | 1MB Markdown fixture（提交入库） |
 | `tests/perf/fixtures/gen-fixture.mjs` | fixture 确定性再生成器 |
+| `tests/perf/fixtures/memory-contamination-cases.json` | 常驻内存污染判定夹具：11 次 CI 异常形态 + 正常 2/3 helper + 窗口内新增/退出/换人 |
 | `tests/perf/thresholds.json` | 阈值、门禁模式、相对回归参数与 enforce 开关 |
-| `.local/perf/`（CI artifact） | 四项指标 JSON + 原始样本 + `gate-status.json`（逐指标判据） |
+| `.local/perf/`（CI artifact） | 四项指标 JSON + 原始样本 + `gate-status.json`（逐指标判据）+ `resident-memory-contaminated.json`（连续污染时的诊断件，`gateEligible: false`） |
 | `.local/perf/gate-status.json`（CI artifact） | `check-thresholds.mjs` 落盘的逐指标判据（`pass`/`fail`/`skip` + 门禁值、基线值、回退%、容忍线、基线条数、理由），供 `update-baseline.mjs` 逐指标裁决 |
 | `.local/perf/baseline/baseline.json`（CI cache） | 滚动基线（相对回归模式用，不入库） |
 
@@ -145,7 +147,15 @@
 ### 端点定义
 
 - **"内存"**：app 全进程树的 **RSS 合计**（主进程 + WebContent/GPU/Networking 等所有归属进程），单位 MB（1 MB = 1,048,576 bytes）。
-- **进程归属**：WKWebView 的 `com.apple.WebKit.*` XPC 进程由 launchd 托管（ppid=1），不出现在 app 的 ppid 子树里。归因规则 = app 的 ppid 子孙进程 ∪ （当前 `com.apple.WebKit.*` 进程 − 启动前的基线快照）。CI runner 为独占 VM，测量窗口内无其他 WebKit 消费者，差集归因无串扰；本地运行窗口内若恰好有其他 app 打开 webview 会有少量虚计（虚高方向，偏保守，可接受）。
+- **进程归属**：WKWebView 的 `com.apple.WebKit.*` XPC 进程由 launchd 托管（ppid=1），不出现在 app 的 ppid 子树里。归因规则 = app 的 ppid 子孙进程 ∪ （当前 `com.apple.WebKit.*` 进程 − 启动前的基线快照）。**差集归因不校验 helper 的归属**：测量窗口内任何其他 WKWebView 客户端拉起的 helper 都会被整段计入。此前「CI runner 为独占 VM、测量窗口内无其他 WebKit 消费者」的假设已被证伪——2026-09-16 → 10-24 的 122 次 perf run 中 11 次出现被归因进程 4–8 个、读数 306.7–356.6MB（干净 run 恒为 app 主进程 + 2 helper、203.8–250.1MB），进程数变化与读数跳变严格同步；受控注入第二个 WKWebView 客户端可逐项复现（+3 进程 / +121.0MB）。证据：`.local/reports/perf-memory-ci-oct24/report.md`（M721）。故归因面必须带**污染护栏**（下条），且不能再假定任何 runner 是独占的。
+- **污染护栏（M723）**：每一轮采样后按三条判据判定该轮是否被污染，任一命中即整轮作废：
+  1. **helper 计数**：任一样本被归因的 WebKit helper 数 > 3。3 = 单窗口 app 的 WebContent/GPU/Networking 上限（本地同二进制实测 3 个）；CI 干净 run 恒为「主进程 + 2 helper」（推断为 custom-protocol 无 Networking，survey 已标注该点是从本地形态反推、非 CI 直接证据）。该不变量绑定「单窗口 app」——产品若引入多窗口 / 多 webview，本上限必须随实现重定（不是放宽，而是重新论证）。
+  2. **集合稳定性**：首个样本（ready + settle 后）的 helper pid 集合必须与之后每个样本逐一相等。窗口内新增、退出、换人都算污染——「退出」方向尤其重要：它会让读数假低，而假低比虚高更危险。
+  3. **残留 helper**：重测前上一轮被归因的 helper 若在超时（15s）内仍未退出，**无法区分**它是本 app 的残留（排除会让新一轮读数假低）还是跨轮存活的外来客户端（排除其实正确）；一律记 `stale-helper` 污染。方向是保守的：宁可红，也不在无法证明时给出可能假低的读数。
+- **有界重测与失败语义**：污染轮次的样本**整轮丢弃、不进任何统计**（尤其不进门禁的 max）。整轮最多重测 **1 次**（首测 + 1 次重测，禁止无界重试）；重测重新取基线快照。两轮都污染 ⇒ `memory.mjs` 以 `reason=contaminated` 非零退出、**不写** `resident-memory.json`（只写 `resident-memory-contaminated.json` 诊断件，`gateEligible: false`）。`check-thresholds.mjs` 因此把该项判为**结果缺失**（`result-missing`）而非**超阈**（`over-threshold`）——测量问题与产品回归在 CI 输出和 `gate-status.json` 里分得开，不让测量问题伪装成产品红。每次运行开始先删掉该 metric 的陈旧结果文件，防止上一轮读数在本轮无结果时被误读为本次读数（REVIEW.md「假绿」条）。
+- **诊断落盘**：`result.meta` 记录每个被归因进程与基线排除进程的 `pid/ppid/lstart/comm`：`attributed`（被接受轮**全部样本的并集**，按 `pid+lstart` 去重——窗口中途出现、末样本前已退出的 helper 也保留四字段）、`excludedBaselineWebKit`（启动前就存在、被差集排除的 WebKit 进程）、`attempts[]`（每轮摘要：污染判据、逐样本 helper pid 集合与读数、该轮的 `attributed` 并集与 `excludedBaselineWebKit`）。成功结果与被丢弃轮、连续污染诊断件（`resident-memory-contaminated.json`）共用同一份摘要形状，被丢弃轮不丢字段。污染现场可直接从 `lstart` + `ppid` + `comm` 指名 helper 的 owner。
+- **残余归属风险（必须随读数一起引用）**：外来 helper 若 ≤3 个且与本 app 的 helper 在首个样本之前同时存在，计数与集合两条判据都无法区分（用户态没有可靠的 helper→client 归属信号：`ps args` / `env` / `lsof` / `launchctl print` 均不携带；`launchctl procinfo` 需 root）。此时读数仍可能虚高（方向保守）。护栏用有界重测压低该概率，并把诊断字段留给事后指名；它不声称能「精确归因」。
+- **本护栏不改阈值、不改量纲**：250MB 门禁阈值、ADR 0002 §6 的 200MB 合同值、RSS 计数口径全部不动；phys_footprint 口径是独立的待裁决项（report §4 B），不在本护栏范围内。
 - **"常驻"（settle 条件）**：ready 信号出现后 idle 10 秒（无输入、无窗口操作），随后进入采样窗口。
 - **口径缺陷声明**：RSS 含 shared pages，多进程合计会重复计数共享区，读数系统性偏高（虚高方向，即偏保守）；`vmmap -summary` 的 Physical footprint 是更准的口径，但单进程采样耗时数秒、不适合 CI 高频采样。校准期若发现 RSS 口径把阈值顶死，允许以 OpenSpec 循环将口径修订为 phys_footprint——这属于测量方法学修订，不属于 ADR 0002 的一次性数字校准。
 - **CI 门禁阈值（2026-09-18 M174 提阈为 250MB）**：`tests/perf/thresholds.json` 的 `resident-memory.threshold` = **250MB**。依据：2026-09-16~18 抽样 9 次 master perf run，该项 **9/9 确定性超阈**、读数 206.50–215.28MB（非抖动；另见 backlog「承接残项」的「dogfood 性能专项」条——其中的「内存合同存量超标」记 2026-09-06 读数 218–222MB），而 2026-09-05 校准实测约 110MB——稳态相对校准值翻了一倍。250MB 相对实测最高读数 215.28MB 留 ≥16% 余量（稳态再涨 16% 即报警）。
@@ -153,11 +163,11 @@
 
 ### 工具链
 
-- `scripts/perf/memory.mjs`：spawn release 二进制，等 ready（读 stdout 前缀行），idle 10s 后每 2s 采样一次。每次采样用 `ps -axo pid=,ppid=,rss=,comm=` 取全量进程表，按上条归因规则求 RSS 合计。采样结束后 kill app 主进程（已验证 WebKit XPC 进程随主进程退出）。**非独占主机上 pid 差集归因不可靠**：窗口内别的 app 拉起的 WebKit helper 会整段进差集，读数虚高（实测一次 409.7MB）；本地读数只作参考，门禁读数以独占 CI runner 为准。
+- `scripts/perf/memory.mjs`：spawn release 二进制，等 ready（读 stdout 前缀行），idle 10s 后每 2s 采样一次。每次采样用 `ps -axo pid=,ppid=,rss=,lstart=,comm=` 取全量进程表（`LC_ALL=C` 固定 `lstart` 格式），按「进程归属」的归因规则求 RSS 合计与 helper 集合，并逐样本打印 `[perf] memory helpers i/N (attempt k): <n> webkit [pids]`。每轮结束按「污染护栏」判定；污染则在 1s 退避后整轮重测（重新取基线快照，见「有界重测与失败语义」），最多 2 轮。采样结束后 kill app 主进程并等到进程真正退出（已验证 WebKit XPC 进程随主进程退出；重测前还会等上一轮的 helper pid 消失，超时即判 `stale-helper`）。**任何主机（含 CI runner）上 pid 差集归因都可能被外来 WebKit helper 污染**：本地实测一次 409.7MB、CI 11/122 次 306.7–356.6MB；本地读数绝对值仍只作参考，但「污染」这件事不再假定只发生在本地——护栏在 CI 与本地同一条代码路径上生效。
 
 ### 采样口径
 
-- 采样窗口内取 5 个样本（ready+10s 起，每 2s 一次）。上报全部样本；门禁取 **max**（内存是峰值敏感指标，p95 会漏掉单调爬升）。本条是绝对模式"p95 判定口径"的唯一例外。
+- 采样窗口内取 5 个样本（ready+10s 起，每 2s 一次）。上报全部样本；门禁取 **max**（内存是峰值敏感指标，p95 会漏掉单调爬升）。本条是绝对模式"p95 判定口径"的唯一例外。**max 只在被接受的那一轮样本上取**：污染轮整轮丢弃（见「有界重测与失败语义」）；若无任何干净轮，则不产出 `resident-memory.json`，由 `check-thresholds.mjs` 判「结果缺失」，不得用任何一轮污染读数凑 max。
 
 ### Fixture
 
@@ -168,4 +178,6 @@
 - 工作流 `.github/workflows/perf.yml`：`macos-15` runner，先经 `actions/cache/restore` 取回滚动基线（`.local/perf/baseline/`，`restore-keys: perf-baseline-`），release 构建后依次跑四项脚本，`.local/perf/` 整目录上传为 artifact（保留 30 天），随后 `check-thresholds.mjs` 对照 `tests/perf/thresholds.json` 比较。
 - **现阶段（2026-09-05 校准 + 2026-09-18 M174 修正后）**：`thresholds.json` 的 `enforce` 为 `true`，门禁拒合已启用。绝对模式指标超阈即 CI 红（resident-memory 的门禁阈值为 250MB，见 §4）；相对模式指标回退超**该指标容忍线**（默认 40%、`keypress-to-paint` 60%，并随基线窗口实测散布浮动；基线历史不足 `minRuns=5` 时降级为 `::warning::` 不拒合）即 CI 红；任一指标的本次结果文件缺失或不可读亦 CI 红（exit 1，缺数据即红）；基线缺失、薄基线、统计口径迁移只 warning 不拒合。`check-thresholds.mjs` 同时把逐指标判据落盘 `.local/perf/gate-status.json`（随 artifact 上传，可复核每次 run 用的是哪条基线、哪个容忍线）。
 - **基线写回**：`push` 到 master 时，`update-baseline.mjs` 以 `if: always()` 运行（**不再**要求整轮全绿，缘由见「基线更新规则」），按 `gate-status.json` **逐指标**把「判据非 `fail` 且读数可读」的门禁值追加进 `.local/perf/baseline/baseline.json`（裁剪到最近 10 次），再由 `actions/cache/save` 以 `perf-baseline-<run_id>` 为 key 写回。某指标自身拒合、结果缺失或判据缺失时，只有该指标的历史不动（fail-closed：判据文件整体缺失则一条都不推进）。
+- **污染轮的 CI 路径（M723）**：`memory.mjs` 连续两轮污染时以退出码 1 失败、打印 `::error::`（reason=`contaminated`）并写 `resident-memory-contaminated.json` 诊断件，该 step 红；`check-thresholds.mjs` 因 step 失败不阻塞（`if: always()`）仍会运行，读取不到 `resident-memory.json` 即把该项记为 `fail` / `result-missing`——**不是** `over-threshold`，artifact 照常上传（含诊断件，可复核是哪个外来 helper 被计入）。重测成功时 `resident-memory.json` 正常产出，`meta.attempts` 保留被丢弃轮的诊断，CI 日志另有 `::warning::` 标注；门禁的 max 只取被接受轮。判定「结果缺失」而非「超阈」是本护栏的硬要求：否则测量问题会以产品回归的形态出现，导致按超阈去做产品侧处置。
+- **纯函数夹具测试**：`node --test scripts/perf/memory.test.mjs`（零新增依赖，node:test）。覆盖 M721 report §2.2 的全部 11 次异常形态、正常 2/3 helper、窗口内新增/退出/换人、有界重测与 contaminated 退出原因，并对每条夹具做反向验证（关掉对应判据后必须变干净、正常夹具注入噪声后必须判红）。**已接入两处机器门禁**（M723 收尾）：`scripts/gate.sh` quick 层的 `perf-fixture-tests`（零依赖、毫秒级，紧邻 `unit-tests`），以及 `.github/workflows/perf.yml` 的 `常驻内存归因护栏夹具测试（node:test，零依赖）` step（在构建与四项测量之前执行，失败即整轮 perf 红，job 名与既有测量步骤不变）。perf workflow 的 `paths` 已含 `scripts/perf/**`、`tests/perf/**` 与 workflow 自身，改 `memory.mjs`、`memory.test.mjs`、`tests/perf/fixtures/**` 或 `perf.yml` 都会触发。
 - 触发路径：`src/**`、`src-tauri/**`、`scripts/perf/**`、`tests/perf/**`、workflow 自身的 PR 与 master push，外加 `workflow_dispatch`（手动跑数/验证门禁行为）。

@@ -1,0 +1,227 @@
+{
+  "_comment": "常驻内存归因污染判定的夹具（M723）。来源：.local/reports/perf-memory-ci-oct24/report.md §2.2 的 11 次异常 run（helper 数 = 被归因进程数 − 1 个 app 主进程）与 §3.1/§3.2 的正常/受控注入形态。helpersPerSample 只列 com.apple.WebKit.* helper 的 pid（不含 app 主进程），按采样顺序 1..5。pid 取报告原文者已在 source 里注明，其余按其 pid 结构合成。expect.firstViolationSample 从 1 起。",
+  "maxHelpers": 3,
+  "cases": [
+    {
+      "id": "abnormal-36263249904-window-growth",
+      "kind": "abnormal",
+      "source": "report §2.2 run 36263249904（09-26）：被归因进程数 3→5→5→8→8；pid 取自原文（4297/4298/4299 起，后加 4535/4536、4581/4582/4586）",
+      "helpersPerSample": [
+        [4298, 4299],
+        [4298, 4299, 4535, 4536],
+        [4298, 4299, 4535, 4536],
+        [4298, 4299, 4535, 4536, 4581, 4582, 4586],
+        [4298, 4299, 4535, 4536, 4581, 4582, 4586]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 2, "kinds": ["helper-count", "helper-set-changed"] }
+    },
+    {
+      "id": "abnormal-38206033773-stable-8",
+      "kind": "abnormal",
+      "source": "report §2.2 run 38206033773（10-12）：被归因进程数 8×5；原文 pid 批次 4305/4306、4491/4492/4496",
+      "helpersPerSample": [
+        [4301, 4302, 4305, 4306, 4491, 4492, 4496],
+        [4301, 4302, 4305, 4306, 4491, 4492, 4496],
+        [4301, 4302, 4305, 4306, 4491, 4492, 4496],
+        [4301, 4302, 4305, 4306, 4491, 4492, 4496],
+        [4301, 4302, 4305, 4306, 4491, 4492, 4496]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 1, "kinds": ["helper-count"] }
+    },
+    {
+      "id": "abnormal-38250854636-stable-6",
+      "kind": "abnormal",
+      "source": "report §2.2 run 38250854636（10-12）：被归因进程数 6×5；原文 5025/5050/5055 之后多出 5095/5096/5099",
+      "helpersPerSample": [
+        [5050, 5055, 5095, 5096, 5099],
+        [5050, 5055, 5095, 5096, 5099],
+        [5050, 5055, 5095, 5096, 5099],
+        [5050, 5055, 5095, 5096, 5099],
+        [5050, 5055, 5095, 5096, 5099]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 1, "kinds": ["helper-count"] }
+    },
+    {
+      "id": "abnormal-38913202391-stable-8",
+      "kind": "abnormal",
+      "source": "report §2.2 run 38913202391（10-16）：被归因进程数 8×5",
+      "helpersPerSample": [
+        [6101, 6102, 6120, 6121, 6122, 6130, 6131],
+        [6101, 6102, 6120, 6121, 6122, 6130, 6131],
+        [6101, 6102, 6120, 6121, 6122, 6130, 6131],
+        [6101, 6102, 6120, 6121, 6122, 6130, 6131],
+        [6101, 6102, 6120, 6121, 6122, 6130, 6131]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 1, "kinds": ["helper-count"] }
+    },
+    {
+      "id": "abnormal-38990499713-stable-8",
+      "kind": "abnormal",
+      "source": "report §2.2 run 38990499713（10-17）：被归因进程数 8×5",
+      "helpersPerSample": [
+        [6201, 6202, 6220, 6221, 6222, 6230, 6231],
+        [6201, 6202, 6220, 6221, 6222, 6230, 6231],
+        [6201, 6202, 6220, 6221, 6222, 6230, 6231],
+        [6201, 6202, 6220, 6221, 6222, 6230, 6231],
+        [6201, 6202, 6220, 6221, 6222, 6230, 6231]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 1, "kinds": ["helper-count"] }
+    },
+    {
+      "id": "abnormal-39034019168-late-growth",
+      "kind": "abnormal",
+      "source": "report §2.2 run 39034019168（10-17）：被归因进程数 3→3→5→5→8",
+      "helpersPerSample": [
+        [6300, 6301],
+        [6300, 6301],
+        [6300, 6301, 6310, 6311],
+        [6300, 6301, 6310, 6311],
+        [6300, 6301, 6310, 6311, 6320, 6321, 6322]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 3, "kinds": ["helper-count", "helper-set-changed"] }
+    },
+    {
+      "id": "abnormal-39111874899-stable-8",
+      "kind": "abnormal",
+      "source": "report §2.2 run 39111874899（10-18）：被归因进程数 8×5",
+      "helpersPerSample": [
+        [6401, 6402, 6420, 6421, 6422, 6430, 6431],
+        [6401, 6402, 6420, 6421, 6422, 6430, 6431],
+        [6401, 6402, 6420, 6421, 6422, 6430, 6431],
+        [6401, 6402, 6420, 6421, 6422, 6430, 6431],
+        [6401, 6402, 6420, 6421, 6422, 6430, 6431]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 1, "kinds": ["helper-count"] }
+    },
+    {
+      "id": "abnormal-39142073257-stable-8",
+      "kind": "abnormal",
+      "source": "report §2.2 run 39142073257（10-18）：被归因进程数 8×5",
+      "helpersPerSample": [
+        [6501, 6502, 6520, 6521, 6522, 6530, 6531],
+        [6501, 6502, 6520, 6521, 6522, 6530, 6531],
+        [6501, 6502, 6520, 6521, 6522, 6530, 6531],
+        [6501, 6502, 6520, 6521, 6522, 6530, 6531],
+        [6501, 6502, 6520, 6521, 6522, 6530, 6531]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 1, "kinds": ["helper-count"] }
+    },
+    {
+      "id": "abnormal-39954982802-late-growth",
+      "kind": "abnormal",
+      "source": "report §2.2 run 39954982802（10-23）：被归因进程数 5→5→5→8→8",
+      "helpersPerSample": [
+        [6600, 6601, 6610, 6611],
+        [6600, 6601, 6610, 6611],
+        [6600, 6601, 6610, 6611],
+        [6600, 6601, 6610, 6611, 6620, 6621, 6622],
+        [6600, 6601, 6610, 6611, 6620, 6621, 6622]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 1, "kinds": ["helper-count", "helper-set-changed"] }
+    },
+    {
+      "id": "abnormal-40046641986-late-exit",
+      "kind": "abnormal",
+      "source": "report §2.2 run 40046641986（10-24）：被归因进程数 6→6→6→6→4（末样本两个 helper 退出）",
+      "helpersPerSample": [
+        [6700, 6701, 6710, 6711, 6712],
+        [6700, 6701, 6710, 6711, 6712],
+        [6700, 6701, 6710, 6711, 6712],
+        [6700, 6701, 6710, 6711, 6712],
+        [6700, 6701, 6710]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 1, "kinds": ["helper-count", "helper-set-changed"] }
+    },
+    {
+      "id": "abnormal-40053920045-stable-8",
+      "kind": "abnormal",
+      "source": "report §2.2 run 40053920045（10-24）：被归因进程数 8×5；原文 4121/4122/4123 之后是 4129/4130、4135/4136、4138",
+      "helpersPerSample": [
+        [4122, 4123, 4129, 4130, 4135, 4136, 4138],
+        [4122, 4123, 4129, 4130, 4135, 4136, 4138],
+        [4122, 4123, 4129, 4130, 4135, 4136, 4138],
+        [4122, 4123, 4129, 4130, 4135, 4136, 4138],
+        [4122, 4123, 4129, 4130, 4135, 4136, 4138]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 1, "kinds": ["helper-count"] }
+    },
+    {
+      "id": "normal-ci-2-helpers",
+      "kind": "normal",
+      "source": "report §2.1 干净形态：CI 上恒为 1 主进程 + 2 helper（custom-protocol 无 Networking）",
+      "helpersPerSample": [
+        [7001, 7002],
+        [7001, 7002],
+        [7001, 7002],
+        [7001, 7002],
+        [7001, 7002]
+      ],
+      "expect": { "contaminated": false }
+    },
+    {
+      "id": "normal-local-3-helpers",
+      "kind": "normal",
+      "source": "report §3.1 本地对照：恒为 1 主进程 + 3 helper（WebContent/GPU/Networking）",
+      "helpersPerSample": [
+        [7101, 7102, 7103],
+        [7101, 7102, 7103],
+        [7101, 7102, 7103],
+        [7101, 7102, 7103],
+        [7101, 7102, 7103]
+      ],
+      "expect": { "contaminated": false }
+    },
+    {
+      "id": "normal-3-helpers-order-insensitive",
+      "kind": "normal",
+      "source": "集合判据的比较对象是 pid 集合而非 ps 输出顺序，采样顺序抖动不得判红",
+      "helpersPerSample": [
+        [7101, 7102, 7103],
+        [7103, 7101, 7102],
+        [7102, 7103, 7101],
+        [7101, 7103, 7102],
+        [7103, 7102, 7101]
+      ],
+      "expect": { "contaminated": false }
+    },
+    {
+      "id": "window-new-helper-2-to-3",
+      "kind": "window",
+      "source": "窗口内新增第 3 个 helper：计数仍 ≤3，只有集合稳定性判据能抓到（规则 2 的独立价值）",
+      "helpersPerSample": [
+        [7201, 7202],
+        [7201, 7202],
+        [7201, 7202, 7203],
+        [7201, 7202, 7203],
+        [7201, 7202, 7203]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 3, "kinds": ["helper-set-changed"] }
+    },
+    {
+      "id": "window-helper-exit-3-to-2",
+      "kind": "window",
+      "source": "窗口内一个 helper 退出：计数下降但读数会假低，必须判污染",
+      "helpersPerSample": [
+        [7301, 7302, 7303],
+        [7301, 7302, 7303],
+        [7301, 7302, 7303],
+        [7301, 7302],
+        [7301, 7302]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 4, "kinds": ["helper-set-changed"] }
+    },
+    {
+      "id": "window-helper-replace-2-to-2",
+      "kind": "window",
+      "source": "窗口内退出一个、新增一个：计数与上限都不变，只有集合判据能抓到",
+      "helpersPerSample": [
+        [7401, 7402],
+        [7401, 7402],
+        [7401, 7403],
+        [7401, 7403],
+        [7401, 7403]
+      ],
+      "expect": { "contaminated": true, "firstViolationSample": 3, "kinds": ["helper-set-changed"] }
+    }
+  ]
+}
