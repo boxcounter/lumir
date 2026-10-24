@@ -34,5 +34,5 @@
 
 - [x] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 6.2 `pnpm test` 全绿（含新注册表单测）
-- [ ] 6.3 `scripts/gate.sh quick` 全绿，报告照抄 `GATE RESULT` 原文行 + 退出码
-- [ ] 6.4 `LUMIR_VISUAL_STRUCTURAL=1 scripts/visual/run.sh`（或 `scripts/gate.sh visual`）全绿；像素层本地跑一次确认四个新消费者零差异
+- [x] 6.3 `scripts/gate.sh quick` 全绿：`GATE RESULT: 11/11 PASS（SKIP 0）`，退出码 0
+- [x] 6.4 本地全量视觉套件（含整页像素）全绿：786 passed / 1 skipped，退出码 0——四个新消费者在 chromium 侧零像素差，未 `--update` 任何基线
