@@ -1,7 +1,7 @@
 # harness 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 ADDED，基线是 living spec
-> [openspec/specs/harness/spec.md](../../../../specs/harness/spec.md)。既有条款（「摘录引用卡片」
+> [openspec/specs/harness/spec.md](../../../../../specs/harness/spec.md)。既有条款（「摘录引用卡片」
 > 「图片粘贴卡片」「图片消息投递协议」「图片编号与引用」）逐字不动——本增量只补**图片作为摘录来源**
 > 的两条入口，并明确新来源的图片走**同一条**块协议与投递协议。实现形态、格式面与失败处置见
 > [design.md](../../design.md) §2–§5；四个起草期取值见其 §6。
