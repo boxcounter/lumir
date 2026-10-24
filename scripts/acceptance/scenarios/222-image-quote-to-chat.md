@@ -179,6 +179,11 @@ change add-image-quote-to-chat 的两条入口与一条结构性承诺；M662 �
 
 - **hover 的前台前提**：`do: hover` 走真实鼠标事件，落点必须在前台窗口上——`focusWindow`
   是硬前置（README 的 hover 条：拿不到前台时动作抛 InfraError、整场 INVALID）。
+  **M669 加档**：两次 hover 前都再补一次 `focusWindow click: true`（真实标题栏单击）。
+  首跑（2026-10-24）两次 hover 都没出钮，当时的截图里窗口红绿灯为灰（app 非活动、窗口
+  不是 key），而同一轮里 KimiCU 的键盘与 AX 读取都正常——鼠标 move 不产生 DOM `:hover`
+  是「窗口不在前台 / 不是 key」这一层的可解释症状，因此把 key window 前置写进场景，
+  而不把它当产品缺陷（复跑读数见 `.local/acceptance/2026-10-24/222-image-quote-to-chat/`）。
 - **编号读数落在两处**：composer 的序号徽标是图上的裸数字（AX 无稳定形态，归视觉场景
   `m633-image-quote.spec.ts` 与 Alex 手感）；可判的编号读数 = transcript 卡片的
   `图片 1：<name>`（D447）与留存的 `lumir_label`——两者同源（`imageOrdinals` 的派生读数）。
