@@ -23,7 +23,10 @@ Alex 2026-10-24 四条 dogfood 反馈（原话）：
 四条都不是新能力，是既有表面的形态缺陷；共同根因是**呈现层没有把设计规则落到底**：
 
 - 滚动条：`ui-design-system` 的「阅读面横向滚动条」已给出细条 / 隐藏两档，但 vault 切换浮层的
-  列表一直走系统默认条——overlay 形态下粗条压在行尾移除钮上（截图可见）。
+  列表一直走系统默认条——overlay 形态下粗条压在行尾移除钮上（Alex 截图）。2026-10-24 tower 复核
+  M658 滚动条盘点报告时发现同批另两处浮层列表有同款缺陷（右缘 0~6px 留白 + 逐行常驻钮，粗条压住
+  或半遮删除钮）：harness 会话浮层 `.lumir-hp-sesspop-list` 与权限规则段 `.lumir-hp-permpop-rules`，
+  一并收口。
 - 全屏钮：harness 面板的块级 slot 是满宽块容器，而 `<table>` 按内容自然宽收紧；钮钉在 slot 的
   `right: 6px`，窄表时钮与表之间隔着一整段空白（几何实测 318px）。content pane 的钮锚在**块可视盒**
   上是既有裁决（`table-fullscreen-view` 的 D3），面板侧漏掉了同一条口径。
@@ -36,19 +39,20 @@ Alex 2026-10-24 四条 dogfood 反馈（原话）：
 
 | 切片 | 用户可见行为 | spec 增量 |
 |---|---|---|
-| U1 vault 列表滚动条 | 切换浮层的列表改 4px 细条（与 harness 代码块 / diff / argv 同一份配方）；行壳右缘让出同宽 lane，任何内容长度下滚动条都不压移除钮 / 确认钮 | 修改「阅读面横向滚动条」（`ui-design-system`） |
+| U1 浮层列表滚动条 | vault 切换浮层、harness 会话浮层、权限规则段三处列表归隐藏档（`scrollbar-width: none` + `::-webkit-scrollbar { display: none }`，三处共用一份声明）；任何内容长度下滚动条都不压行尾移除 / 删除钮 | 修改「阅读面横向滚动条」（`ui-design-system`） |
 | U2 harness 表格全屏钮 | 表格块的 slot 贴合表格自身宽度（上限 = 面板正文宽），钮落回表格右上角内侧 6px；代码块 slot 仍满宽 | 新增「面板块级全屏钮的锚点」（`harness`） |
 | U3 全屏代码块居中 | 内容窄于浮层可用宽时水平居中（两侧余量相等）；宽内容 / 折行档行为逐值不变 | 新增「全屏浮层窄内容的水平居中」（`editor-live-preview`） |
 | U4 只读标签图形化 | vault 外只读标签的可见标记从「· 只读」文字换成 10×10 锁形图标（细线 SVG、`aria-hidden`、排在文件名前）；读屏名仍是「{名称}（vault 外只读）」；可见文字不再出现「只读」二字 | 新增「vault 外只读标签的可见标记」（`multi-tabs`） |
 | U4 文案退场 | 可见文字后缀的文案条目 D578 零消费者，按「变更默认直接切断」从 `文案-Copy.md` 与 `src/copy-data.ts` 删除，编号不复用 | 无（文案 deck 维护，不占 capability requirement） |
 
-### U1 · vault 列表滚动条
+### U1 · 浮层列表滚动条（三处）
 
-浮层列表（`.vault-list`，`overflow: auto`）并入 `src/harness-panel.css` 的细条选择器组：`scrollbar-width:
-thin` + `::-webkit-scrollbar { width/height: 4px }` + thumb `--border` + 透明轨道。行壳
-（`.vault-row-wrap`）加 `margin-right: 4px`（`--sp-2`）——经典条在 lane 里占位、overlay 条压在
-lane 上，两种渲染形态下移除钮 / 确认态按钮都不与滑道重叠。不给列表本身加右内边距：lane 只属于
-行壳，列表的滚动区域不因此缩窄。
+`.vault-list`、`.lumir-hp-sesspop-list`、`.lumir-hp-permpop-rules` 三处列表归**隐藏档**：并入
+`src/style.css` 的隐藏档共用声明组（与标签栏同一份）——`scrollbar-width: none` +
+`::-webkit-scrollbar { display: none }`。三处共同形态是「容器右缘 0~6px 留白 + 逐行常驻钮」
+（✕ / × / 删除），4px 细条仍会压住钮的右缘，因此取隐藏档而非细条档；滚动能力保留（滚轮 /
+触控板 / 键盘游标 / 程序化对齐），只是不占位、不上屏。行壳与按钮不做任何内缩——也不需要
+「让出 lane」：条根本不绘制。
 
 ### U2 · harness 表格全屏钮
 
@@ -75,7 +79,7 @@ D579。样式在 `src/style.css`（`--text-2`，eink 由 token 体系覆盖）�
 - **不动 content pane 的表格全屏钮几何**：它是既有裁决与基线的落点（M240），本次只修 harness 面板
   的锚点；content pane 的窄表观感若仍不满意，另开裁决。
 - **不改滚动条的两档配方**（4px / 隐藏）本身，也不做全仓滚动面普查——普查是同期 survey 的活；
-  本 change 只把 vault 列表并入已裁决的细条档。
+  本 change 只把上述三处「右缘有常驻钮」的浮层列表归入已裁决的隐藏档。
 - **不引入新的图标 token / 色值 / 字号**：锁图标取既有 currentColor 工艺，颜色用 `--text-2`。
 - **不改全屏浮层的面板宽 / 内边距 / 主题规则**：只加内容容器的水平居中。
 - **不做真机手感裁决**：滚动条观感、锁图标大小、居中后的留白观感归 Alex 过目（像素基线更新是
@@ -86,7 +90,8 @@ D579。样式在 `src/style.css`（`--text-2`，eink 由 token 体系覆盖）�
 - 影响的 specs：`ui-design-system`（修改一条）、`harness`（新增一条）、`editor-live-preview`（新增
   一条）、`multi-tabs`（新增一条）
 - 影响的代码/系统：`src/style.css` / `src/harness-panel.css` / `src/tabs.ts` / `src/copy-data.ts` /
-  `文案-Copy.md`；测试面 `tests/visual/scenes/{mv-vault-switcher,m634-harness-block-fullscreen,m277-code-block-fullscreen,quick-open}.spec.ts`、
-  `tests/unit/tabs.test.ts`；验收场景 17 / 62 / 223 / 226 / 230 的叙述与证据步
+  `文案-Copy.md`；测试面
+  `tests/visual/scenes/{mv-vault-switcher,m303-harness-panel,m347-harness-composer,m634-harness-block-fullscreen,m277-code-block-fullscreen,quick-open}.spec.ts`、
+  `tests/unit/tabs.test.ts`；验收场景 17 / 62 / 106 / 223 / 226 / 229 / 230 的叙述与证据步
 - 关联约束：`ui-design-system` 的两档滚动条配方（本 change 不改值，只加消费者）；「变更默认直接
   切断」（D578 零消费者即删）；视觉基线更新是人肉裁决点（`tests/visual/README.md`）
