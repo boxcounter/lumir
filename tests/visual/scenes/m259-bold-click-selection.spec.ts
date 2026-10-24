@@ -192,7 +192,11 @@ test("区分度对照：真实拖拽必须出选区（证明上面的断言不�
   expect(await readDocument(page)).toBe(DOC);
 });
 
-test("区分度对照：同一落点双击仍选整个词（CM 的鼠标词选不回归）", async ({ page }) => {
+// M687（change semantic-selection-markdown-oct23，D2=A）：双击的「选词」这一拍仍由 CM 给出，
+// 但松开时外扩规则会把选区推到强调节点的源码范围（两侧 `*` 一并纳入）。本对照的判据因此从
+// 「恰是词」改为「恰是整段 `*P斜*`」——它仍证明 CM 的按词选择与按布局落点没有回归（只选一个字母
+// 或错词都会红），只是终态多了外扩这一步。规则本身见 tests/unit/syntax-envelope.test.ts。
+test("区分度对照：同一落点双击仍选出整个词，松开后按 M687 外扩到整段 `*P斜*`", async ({ page }) => {
   await openDoc(page);
   const line = lineOf(page, "段落里有");
   await reset(page);
@@ -207,7 +211,7 @@ test("区分度对照：同一落点双击仍选整个词（CM 的鼠标词选�
   expect(await page.evaluate(([from, to]) => {
     const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
     return view.state.sliceDoc(Math.min(from, to), Math.max(from, to));
-  }, [sel.anchor, sel.head] as const)).toBe("P斜");
+  }, [sel.anchor, sel.head] as const)).toBe("*P斜*");
   expect(await readDocument(page)).toBe(DOC);
 });
 

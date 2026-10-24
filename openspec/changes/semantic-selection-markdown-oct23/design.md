@@ -92,11 +92,12 @@ gate(N)     = 该构造的**显露判据**（标题行级 / 强调节点含端�
 再判一次显露——但**测试要断言**它（否则将来谁改了判据，外扩就会静默产出「选中了但没上屏」）。
 
 **实现纪律**：`node` 与 `visible` 的判定 MUST 与本文件 §2 第 1–6 条的装饰层实现同源。
-建议把「构造 → (node 范围, 可见区间)」抽成一个纯函数模块（例如 `src/preview/syntax-envelope.ts`），
-装饰层的隐藏分支与新的外扩器都从它取值；MUST NOT 在外扩器里另写一份「`#` 后面跟一个空格」
+实现落点为 `src/preview/syntax-envelope.ts`：`headingEnvelope` / `emphasisEnvelope` /
+`standardLinkEnvelope` / `autolinkEnvelope` 各自给出节点范围与可见区间，`hidden` 由二者之差
+推导；装饰层的隐藏分支与外扩器都从它取值。MUST NOT 在外扩器里另写一份「`#` 后面跟一个空格」
 这类字面规则（REVIEW.md「同一语义两处真源」条：同一条语义两处实现，改一处必漏另一处）。
-抽取的边界由实现者定：可以只抽「标记 span 枚举」这一层，装饰层继续负责视口与上下文排除
-（frontmatter / 表格 / callout），外扩器负责构造识别与迭代。
+抽取的边界由实现者定：这个模块只抽「构造 → 节点范围 + 可见区间」这一层，装饰层继续负责视口
+与上下文排除（frontmatter / 表格 / callout），外扩器负责构造识别与迭代。
 
 ### 3.3 为什么不用 transactionFilter
 
@@ -131,8 +132,13 @@ M539 的 `hiddenInlineTailCaretFilter`（`src/preview/hidden-tail-caret.ts:122-1
   是模式无关的基础设施，把 Markdown 语法语义塞进去会破坏它的分层（文件头写明它只管
   「判据选区」与「相接口径」）。
 
-倾向 ①。**顺序假设必须由探针确认**（tasks §1）：CM 的 `MouseSelection` 与 Quote 手势
-分别挂在什么节点、谁先收到 mouseup，决定了外扩是否会在手势读取选区之后才落地。
+倾向 ①。**顺序已由探针确认（2026-10-24，读数见 `.local/probes/m687-semantic-release-snap/`）**：
+contentDOM 的 mouseup（扩展的 handler）先于 document 层 Quote 手势的 mouseup、也先于 window
+层的按压窗口关闭；外扩在 contentDOM 这一拍落地后，document 层读到的 `document.getSelection()`
+已经是外扩后的范围（CM 在 dispatch 内同步 DOM 选区）。松开这一拍挂 contentDOM 而非
+document / window，是为了让 Quote 手势只看到一次「选区已定」的 mouseup。已知边界：指针在
+编辑器**外**松开时 mouseup 不落在 contentDOM，这一路径不外扩（选区本身已由 CM 的 document
+层监听收尾）；dogfood 走一遍真实拖拽即可确认这条边界不影响手感。
 
 ### 4.3 与 Quote 手势的时序（本 change 最容易回归的一处）
 
@@ -144,22 +150,26 @@ M539 的 `hiddenInlineTailCaretFilter`（`src/preview/hidden-tail-caret.ts:122-1
 `dragging` 已是 false，状态机会把它当成键盘选区，排期 `now + GESTURE_SETTLE_MS`（350ms）
 ——浮动钮会先消失再在 350ms 后出现，是一次肉眼可见的闪动。
 
-判据（验收场景要能抓到）：**拖选 / 双击后松开，浮动钮的浮现不得晚于现状**（不引入 350ms
-延迟）。实现选项：
-- 首选：把外扩放在手势 mouseup **之前**（4.2 候选 ①），使手势只看到一次「选区已定」的
-  mouseup，不产生额外的 selection-change 收口；
-- 备选：外扩事务带一个专用 annotation（如 `semanticSnap`），手势侧在计算 `last` 时读它——
-  但这会把「Markdown 语法」的概念漏进 `quote-gesture`，除非必须，不采用。
+**探针读数（2026-10-24，chromium）**：这条 350ms 的 settle **在现状里已经存在**——基线拖拽
+（不外扩）同样在 mouseup 后收到一次同范围的 selectionchange，按钮浮现一帧后消失、约 350ms
+后再出现。把外扩放进 **contentDOM 的 mouseup**（手势之前）后，外扩 dispatch 的 DOM 选区同步
+与 mouseup 的选区终态被浏览器合并成**同一个**任务末 selectionchange：读数与基线逐项相同
+（一次 settle、无第二次排期），手势读到的选区已是外扩后的范围。因此本 change 不改
+`quote-gesture.ts`（预期零改动成立）。
 
-`last` 的更新走 `currentSelectionRect()`（`:455-482`）——它从 DOM 选区读 anchor/focus 再
-`view.posAtDOM`，因此外扩后的 DOM 选区必须已同步（CM 在 dispatch 内同步 DOM 选区）。
-探针项：外扩后立刻读 `document.getSelection()`，确认它已覆盖新范围。
+判据（验收场景要能抓到）：**拖选 / 双击后松开，浮动钮的浮现不得晚于现状**（不新增一次
+350ms 延迟）。实现选 contentDOM mouseup（4.2 候选 ①）；备选的专用 annotation 不再需要。
 
 ### 4.4 双击
 
 双击产生的选区由 `rangeForClick(view, pos, bias, 2)` → `groupAt`（按词）给出
 （`node_modules/@codemirror/view/dist/index.js:5000-5015`）。它同样走 mouseup；外扩规则与拖选
 一致（词恰好覆盖某构造全部渲染文本时才外扩）。双击不改变 CM 的选词行为，只在结束时补一拍。
+
+探针实测（chromium，2026-10-24）：三字粗体词 `**粗体词**` 上双击 → 选区 `[32,39)`，即整段源码。
+两字词 `**P粗**` 的中心双击会选中 `**` 两个星号——第一次点击已把光标放进范围、M168 显露 `**`
+使第二次点击的同一坐标落到定界符上（本 change 之前就如此，不是外扩造成的）；规则此时不外扩
+（未覆盖渲染文本）。真机场景因此用三字词，见 §7 第 11 条。
 
 ### 4.5 三击
 
@@ -227,14 +237,27 @@ M539 的 `hiddenInlineTailCaretFilter`（`src/preview/hidden-tail-caret.ts:122-1
    观感上是一次「跳」。这是 D1=A 的固有形态：不跳的替代方案（拖拽中实时扩）已被证伪（§9）。
    手感归 dogfood；若 Alex 认为跳得生硬，可讨论的方向是「外扩时不动画、直接落定」这类节奏项，
    而不是改回实时外扩。
+11. **双击两字粗体词的落点会被第一次点击的显露位移带偏**（探针实测，2026-10-24）：第一次
+   mousedown 把光标放进 `**P粗**` 范围（M168 显露），`**` 重新占宽，第二次点击的同一坐标落到
+   两个星号上——CM 选中的是 `**` 而不是词。这是本 change 之前就有的行为（外扩只在「完整覆盖
+   渲染文本」时触发，此时不外扩）。三字及以上的粗体词在字内双击不受影响；真机场景用三字词
+   （task 4.3）。两字词的观感列为 dogfood 留意项，是否另立缺陷由 Alex 裁决。
+12. **指针在编辑器外松开**：mouseup 不落在 contentDOM，外扩不触发（选区由 CM 的 document 层
+   监听收尾）。「拖到侧栏再松开」的形态保留现状；dogfood 时留意即可。
+13. **mouseup 时语法树未推进到选区末端**：`treeCovering` 只在快照未覆盖 `to` 时同步推进一次
+   （25ms 上限，与 links.ts 的激活路径同口径）。大文档长时间自动滚动后松开的极端形态可能不
+   外扩——宁可不动，也不在 mouseup 上花无界时间。
+14. **Quote 钮的 350ms settle 是现状既有行为**（探针实测，2026-10-24）：mouseup 之后浏览器补发
+   一次同范围的 selectionchange，手势把它当键盘路径排期 `GESTURE_SETTLE_MS`。本 change 不改变
+   它（外扩与那一次事件合并，读数与基线相同），也不在本次修它——若 Alex 觉得闪，另立缺陷。
 
 ## 8. 验证计划与真机通道的能力边界
 
 | 层 | 手段 | 判据 |
 |---|---|---|
-| 纯函数 | 单测（无 DOM，直接驱动外扩器） | 输入矩阵见下；含反向区分度（部分覆盖不外扩、已含定界符不变） |
-| chromium 结构层 | Playwright（`tests/visual/scenes/`） | ① 拖选整段标题 / 粗体 → 松开后 `EditorState.selection` 覆盖定界符；② 上屏的定界符字符都有 `.cm-selectionBackground` 覆盖（M285 口径）；③ 拖拽中途（mouseup 前）选区范围不变、标记仍隐藏；④ 部分选择不外扩；⑤ 双击粗体词外扩；⑥ 三击无变化；⑦ 文档逐字节不变 |
-| 真机（WKWebView） | 验收场景（`scripts/acceptance/`，编号见 tasks；227 / 228 已被在途 mission 占用） | **双击**粗体词 → 摘录浮动钮 → 点钮 → composer 文本含 `**…**`（composer 是 AX 可读面）；文档逐字节不变 |
+| 纯函数 | `tests/unit/syntax-envelope.test.ts`（19 条，无 DOM，直接驱动外扩器） | 输入矩阵见下；含反向区分度（部分覆盖不外扩、已含定界符不变）；envelope 的节点 / 可见区间 / 隐藏 span 逐值钉住 |
+| chromium 结构层 | `tests/visual/scenes/m687-semantic-selection.spec.ts`（6 条） | ① 拖选整段标题 / 粗体 → 松开后 `EditorState.selection` 覆盖定界符；② 上屏的定界符字符都有 `.cm-selectionBackground` 覆盖（M285 口径）；③ 拖拽中途（mouseup 前）选区范围不变、标记仍隐藏；④ 部分选择不外扩；⑤ 双击粗体词外扩、三击无变化；⑥ 文档逐字节不变、阅读位置不变；⑦ 程序化 / 键盘选区不被隐式外扩 |
+| 真机（WKWebView） | 验收场景 233（`scripts/acceptance/scenarios/233-semantic-selection-release-snap.md`；2026-10-24 PASS） | **双击**粗体词 → 摘录浮动钮 → 点钮 → composer 文本含 `**…**`（composer 是 AX 可读面）；文档逐字节不变 |
 | 手感 | Alex dogfood | 拖选标题 / 粗体的松开观感、引用卡片可读性（尤其带 URL 的链接） |
 
 真机通道的硬边界（照实登记，来源 `scripts/acceptance/README.md`「已知边界」）：

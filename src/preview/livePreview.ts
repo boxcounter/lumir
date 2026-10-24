@@ -41,6 +41,13 @@ import {
   rangeRevealsSource,
   touchesSource,
 } from "./reveal-gate";
+import {
+  autolinkEnvelope,
+  emphasisEnvelope,
+  expandSelectionToSyntax,
+  headingEnvelope,
+  standardLinkEnvelope,
+} from "./syntax-envelope";
 import { hiddenInlineTailCaretFilter } from "./hidden-tail-caret";
 import { docTitleForFrontmatter, docTitleTop } from "./doc-title";
 import { sampleCallback } from "../diagnostics";
@@ -722,6 +729,31 @@ export function livePreview(ctx: PreviewContext) {
         });
         return true;
       },
+      // 指针手势结束时的语法包裹外扩（M687，change semantic-selection-markdown-oct23）。
+      //
+      // 时机是**契约**：contentDOM 的 mouseup 早于 document 层 Quote 手势的 mouseup、也早于
+      // window 层的按压窗口关闭（reveal-gate）——外扩因此落在两者之前，Quote 手势读到的
+      // 就是外扩后的选区（探针读数见 design §4.2/§4.3）。拖拽期间 MUST NOT 外扩：
+      // 隐藏段零宽时实时外扩没有视觉收益，中途改写选区又会与 CM 的鼠标选区状态机打架
+      // （M259 的按压窗口就是为「布局在按压期间不动」而存在的）。
+      //
+      // 选区与 `pointerPressFrame.of(null)` 合并进**同一事务**：装饰只重建一次，撤下装饰
+      // 与选中底色落在同一帧——分开两次 dispatch 会短暂出现「标记上屏但尚未进入选区」，
+      // 正是本 change 要消除的形态（M285：选区可见范围 MUST 等于编辑器选区范围）。
+      // 事务刻意不标 `select.pointer`：M539 的过滤器以该标注识别「指针落点」，这次改写不是
+      // 一次新的落点；标成同类会给将来加判据的人埋歧义。
+      //
+      // 只装在 md 的 live preview 扩展组里（code 模式没有这层扩展，规则因此不生效）；
+      // 只听 mouseup，键盘 / 程序化选区 MUST NOT 经过这里（delta 的「只适用于指针选区」）。
+      mouseup(event, view) {
+        if (event.button !== 0) return false;
+        const selection = view.state.selection;
+        if (selection.ranges.every((range) => range.empty)) return false;
+        const expanded = expandSelectionToSyntax(view.state, selection);
+        if (expanded.eq(selection)) return false;
+        view.dispatch({ selection: expanded, effects: pointerPressFrame.of(null) });
+        return false;
+      },
       focusin(event, view) {
         // M180：容器 class 泛化后，代码块的横滚容器同样享有一条——「同判据同行为」，
         // 表格与代码块不允许出现一个能 Tab 聚焦保住选区、另一个不能。
@@ -1175,17 +1207,9 @@ function collectSyntaxDecorations(
         // 只 gate 标记隐藏：标题的字号 / 字重 / 字距等层级样式在显露态照常保留（编辑时仍
         // 看得出这是几级标题）——与「强调范围显露时撤下样式」的差别在于标题的样式不遮蔽字符。
         if (!revealRangeSource(headingLine.from, headingLine.to)) {
-          const cursor = ref.node.cursor();
-          if (cursor.firstChild()) {
-            const marks: { from: number; to: number }[] = [];
-            do {
-              if (cursor.name === "HeaderMark") marks.push({ from: cursor.from, to: cursor.to });
-            } while (cursor.nextSibling());
-            marks.forEach((m, i) => {
-              // 首个标记吃掉后面的空格，其余（结尾标记）吃掉前面的空格。
-              hideMark(view, m.from, m.to, decos, i === 0, i !== 0);
-            });
-          }
+          // 隐藏 span 的单一出处：syntax-envelope 与外扩共用同一份节点 / 可见区间判据。
+          const env = headingEnvelope(ref.node, doc);
+          if (env !== null) for (const h of env.hidden) decos.push(Decoration.replace({}).range(h.from, h.to));
         }
         return;
       }
@@ -1202,15 +1226,9 @@ function collectSyntaxDecorations(
               ? "cm-lp-em"
               : "cm-lp-strike";
         decos.push(Decoration.mark({ class: cls }).range(ref.from, ref.to));
-        // 隐藏定界标记（EmphasisMark / StrikethroughMark，防御性按 *Mark 后缀匹配）。
-        const cursor = ref.node.cursor();
-        if (cursor.firstChild()) {
-          do {
-            if (cursor.name.endsWith("Mark")) {
-              decos.push(Decoration.replace({}).range(cursor.from, cursor.to));
-            }
-          } while (cursor.nextSibling());
-        }
+        // 隐藏定界标记（单一出处：syntax-envelope；EmphasisMark / StrikethroughMark 同源判定）。
+        const env = emphasisEnvelope(ref.node);
+        if (env !== null) for (const h of env.hidden) decos.push(Decoration.replace({}).range(h.from, h.to));
         return false;
       }
 
@@ -1343,8 +1361,9 @@ function collectSyntaxDecorations(
             Decoration.mark({ class: "cm-lp-link", attributes: { title } }).range(parts.labelFrom, parts.labelTo),
           );
         }
-        decos.push(Decoration.replace({}).range(ref.from, parts.labelFrom));
-        decos.push(Decoration.replace({}).range(parts.labelTo, ref.to));
+        // 隐藏 span 的单一出处：syntax-envelope（与「标准链接」的外扩目标同一份判据）。
+        const env = standardLinkEnvelope(ref.node, doc);
+        if (env !== null) for (const h of env.hidden) decos.push(Decoration.replace({}).range(h.from, h.to));
         decos.push(
           Decoration.widget({
             widget: new LinkMarkWidget(internal ? INTERNAL_LINK_MARK : EXTERNAL_LINK_MARK),
@@ -1378,7 +1397,9 @@ function collectSyntaxDecorations(
             attributes: { title: literal.form.url },
           }).range(literal.from, literal.to),
         );
-        for (const mark of literal.angleMarks) hideMark(view, mark.from, mark.to, decos, false, false);
+        // 角括号的隐藏 span 与「角括号字面链接」的外扩目标同源（Autolink 节点 → envelope）。
+        const autolink = ref.node.parent?.name === "Autolink" ? autolinkEnvelope(ref.node.parent, doc) : null;
+        if (autolink !== null) for (const h of autolink.hidden) decos.push(Decoration.replace({}).range(h.from, h.to));
         decos.push(
           Decoration.widget({
             widget: new LinkMarkWidget(EXTERNAL_LINK_MARK),
