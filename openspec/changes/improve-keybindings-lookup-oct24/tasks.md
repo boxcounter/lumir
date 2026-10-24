@@ -75,12 +75,12 @@
       只覆盖 End / Home 被容器消费；③ 已捕获态重捕获、⌃G/⌘/ 关闭例外、PageDown/PageUp 的视口行集
       变化与 ⌃D 焦点交还可执行判据已补进 236/237
 - [x] 4.5 `bash scripts/gate.sh quick` 全绿：`GATE RESULT: 12/12 PASS（SKIP 0）`，退出码 0（日志
-      `/tmp/m715-gate-quick-final.log`；12 项含 cargo fmt/clippy/test、tsc/unit、acceptance 语法、
+      `/tmp/m715-gate-quick-r1fix.log`；12 项含 cargo fmt/clippy/test、tsc/unit、acceptance 语法、
       docs-check、openspec validate）
 - [ ] 4.6 `bash scripts/gate.sh visual` 全绿（待基线裁决；结构化层已绿，像素层只剩 m133 一张预期红）
-      —— 已跑：`GATE RESULT: 13/14 PASS（SKIP 0）`（833 passed / 1 failed / 1 skipped，唯一红是
-      m133 的预期像素变化）；m133 结构层在最终代码上 15/15 PASS。像素基线按 4.3 等 Alex 过目。
-      材料：`.local/reviews/keybindings-lookup-oct24-M715/`
+      —— r1 返修后已跑：`GATE RESULT: 13/14 PASS（SKIP 0）`（834 passed / 1 failed / 1 skipped，
+      唯一红是 m133 的预期像素变化；gate 判定失败，退出码 1）；m133 结构层在最终代码上 15/15 PASS。
+      像素基线按 4.3 等 Alex 过目。材料：`.local/reviews/keybindings-lookup-oct24-M715/`
 - [x] 4.7 性能 / 手感：真机 235 / 237 打开 71 行、连续输入查询与键盘导航无运行失败；手感 / 密度归 Alex
 
 ## 5. 文档与登记
