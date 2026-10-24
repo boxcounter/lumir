@@ -3,8 +3,8 @@
 > 提案阶段（本 mission）只到制品为止：以下任务在 Alex 节点 1（提案评审）通过后由实现批执行，逐项勾选。任务的可核对判据写在条内（测试名 / 命令 / 文件），不写「已验」这类无法对账的表述。
 >
 > 实现批（M576）对账说明：§1–§4、§5.1/5.2/5.3（场景**只写不跑**，本轮无真机段）、§5.4、§6、
-> §7.1–7.4 已完成；§7.5（视觉）/ §7.6（真机跑新场景）/ §7.7（归档对账）不在本 mission 面内，
-> 原因逐条写在条内。
+> §7.1–7.4 已完成；§7.5（视觉）/ §7.6（真机跑新场景）/ §7.7（归档对账）不在该 mission 面内——三者
+> 已于 2026-10-24 由 M710 收口（7.5 标注不适用、7.6 / 7.7 勾选，理由与证据见条内）。
 >
 > **配置面重塑（2026-10-18，M579）**：Alex 裁决把 §1 的三处旧键（`harness.auto_title` /
 > `harness.title_provider` / `providers.<id>.title_model`）收成一张表
@@ -66,7 +66,7 @@
 - [x] 5.2b **重塑后验收配置键同步改名**（M580，2026-10-18）：`scripts/acceptance/lib/app.mjs` / `execute.mjs` 的 `autoTitle` / `titleProvider` / `titleModel` 改为 `sessionNaming: { enabled, provider, model }` 直落 `harness.session_naming`；场景 166（关闭开关）与 167（provider 非法值回落）的配置、标题与正文键名随之改准（163/164/165 本就没有旧键）。`--check` 的 `REMOVED_CONFIG_KEYS` 补三处旧键（出现即报错、文案点名 `config.sessionNaming.*`）；配置文件原生的 `config.harness.session_naming` 写法同样被拒绝（`harness` 表只认白名单子键，写在那里会被静默丢弃）。判据：`node scripts/acceptance/run.mjs --check` 全绿；反向验证——临时场景写旧键时 `--check` 如实 FAIL 且文案点名新键位，清理后复绿。
   - 来历：M579 的 finding `.tower/comms/findings/20261018-worker-m579-bug-session-naming-164-167.md`（finding 里「场景 164」是笔误，实际写旧键的是 166 与 167）；`scripts/acceptance/**` 不在 M579 的 scope 内，故单独立项。
 - [x] 5.3 新增真机验收场景（编号取落地时最大号 +1，文件名 `16x-harness-auto-title-*.md`）：①首轮命名（标题栏 + 浮层行名 + JSONL `decision=initial`）；②keep 防抖（5 轮后标题不变 + `decision=keep` 记录）；③旧文件安静回落（预置无标题记录的 JSONL，行名回落且无告警）；④关闭开关（`sessionNaming.enabled: false` 时不写记录）；⑤naming provider 非法值回落（会话 provider 为 mock、`sessionNaming.provider: "openai"` → 首轮后仍按 mock 的 `titles` 写出 `session_title` 记录，标题正常显示）。判据：`node scripts/acceptance/run.mjs <新编号…>` 全 PASS，证据落 `.local/acceptance/`（git 外）。
-  - 落点：场景 163 / 164 / 165 / 166 / 167（+ fixture `harness-mock-title-{initial,keep,fallback}.json`）；**本轮只写不跑**（mission 无真机段），`--check` 全绿即静态判据；真机 PASS 证据待真机批次（§7.6）。④⑤ 的配置键名按 5.2b（M580）改名落地为 `sessionNaming.{enabled, provider}`。
+  - 落点：场景 163 / 164 / 165 / 166 / 167（+ fixture `harness-mock-title-{initial,keep,fallback}.json`）；实现批当轮只写不跑，真机 PASS 证据已于 2026-10-19 补齐（见 §7.6）。④⑤ 的配置键名按 5.2b（M580）改名落地为 `sessionNaming.{enabled, provider}`。
   - 补充：②的轮数是 6 轮（初始评估在第 1 轮，周期口径「距上一次完成的评估满 5 轮」⇒ 第 6 轮触发），场景正文写明了理由。
   - 新增套件能力：`seed.harnessSessions`（预置新布局的会话留存，目录 id 取 `seed.registry` 的 id）——场景 ③ 的旧文件现场只能由磁盘状态表达。
 - [x] 5.4 全量回扫既有验收场景里「会话名 = 首条用户消息截断」的期望（`rg "会话名|新会话" scripts/acceptance/scenarios/`），逐条确认：fixture 未声明 `titles` 时行为逐字节不变；有期望变化的逐条改准（口径：openspec-workflow 的「改闸 / 改语义须回扫既有场景」）。判据：回扫清单写进实现批的完成报告，未改的场景给出「行为不变」的理由。
@@ -85,9 +85,12 @@
 - [x] 7.2 `cargo test` 全绿（含 §2 / §3 新增单测）
 - [x] 7.3 `pnpm test` 全绿（含 §4 前端用例）
 - [x] 7.4 `scripts/gate.sh quick` PASS（照抄 `GATE RESULT` 原文行 + 退出码）
-- [ ] 7.5 `scripts/gate.sh visual` 本地 PASS；标题栏文本形态若改变像素基线，按 [tests/visual/README.md](../../../tests/visual/README.md) 的纪律先给 Alex 过目再 `--update`（基线更新是人肉裁决点）
-  - **本 mission 未跑**：本轮无真机段，且标题只在 mock `titles` 驱动的会话里出现（既有视觉场景的 fixture 不声明 `titles`，标题栏文本形态逐字节不变）；mission 的验证口径只要求 `gate.sh quick`。基线更新仍是人肉裁决点，若后续真机批次发现像素变化，先给 Alex 过目。
-- [ ] 7.6 §5.3 新增真机验收场景全 PASS（`node scripts/acceptance/run.mjs`），证据目录可 `ls`
-  - **本 mission 未跑**（只写场景 + `--check`）：mission 明确「本轮无真机段」。真机证据待 dogfood 批次的验收段。
-- [ ] 7.7 归档前与 change `add-harness-chat-completions-dialect` 对账：living spec 的「配置节 [harness]」「会话本地留存」须同时保留 wire 方言条款与本 change 的标题条款，MUST NOT 任一方在归档时被静默回退（design D17）。判据：归档 PR 的 diff 中两条 requirement 同时含 `wire_api` 与 `session_title`。
-  - **归档时执行**（本 mission 不归档）。本 change 的 spec 增量正文已按 D17 写成并集（含 `wire_api` 与标题条款两方）。
+- [x] 7.5 `scripts/gate.sh visual` 本地 PASS；标题栏文本形态若改变像素基线，按 [tests/visual/README.md](../../../tests/visual/README.md) 的纪律先给 Alex 过目再 `--update`（基线更新是人肉裁决点）
+  - **不适用**（2026-10-24 复核，M710）：本 change 不改标题栏的文本形态，只决定填进会话名的字符串；本 change 的视觉面（mock `titles` 驱动的会话）在既有视觉场景的 fixture 里没有数据——`rg "titles" tests/visual/` 零命中，合入时像素基线逐字节不变、无需 `--update`。标题在场时的标题栏呈现另由后加的 `tests/visual/scenes/m662-session-title.spec.ts` 钉住；当前 master（含本 change）的 `scripts/gate.sh visual` 在 M700 跑过 `GATE RESULT: 13/13 PASS（SKIP 0）`（exit 0，零基线更新），故「本 change 在树时视觉门禁为绿」有读数、本轮不重复跑。基线更新仍是人肉裁决点。
+- [x] 7.6 §5.3 新增真机验收场景全 PASS（`node scripts/acceptance/run.mjs`），证据目录可 `ls`
+  - **已跑**（2026-10-19，M605 真机批）：五个场景全 PASS——163（11 断言）/ 164（8）/ 165（10）/
+    166（6）/ 167（6），失败 0。证据 `.local/acceptance/2026-10-19-m605/` 下各场景目录
+    （`steps.md` / `shots/` / `ax/` / `meta.json` 齐备）。场景 163 于 2026-10-24 又跑一次同样 PASS
+    （`.local/acceptance/2026-10-24/163-harness-auto-title-first-turn/`）。
+- [x] 7.7 归档前与 change `add-harness-chat-completions-dialect` 对账：living spec 的「配置节 [harness]」「会话本地留存」须同时保留 wire 方言条款与本 change 的标题条款，MUST NOT 任一方在归档时被静默回退（design D17）。判据：归档 PR 的 diff 中两条 requirement 同时含 `wire_api` 与 `session_title`。
+  - **已对账**（2026-10-24，M710）：delta 的 MODIFIED「配置节 [harness]」（`specs/harness/spec.md:66-113`）与「会话本地留存」（`:164-244`）逐块复读，两条都同时在场——`wire_api` 在 `:68` / `:166`，本 change 的标题条款在 `:68` 的 `session_naming` 表、`:166` 的「重建忽略 `session_title` 侧车」与 `:170` 的 `session_title` 记录条；「会话边界」（`:115-162`）也带标题口径。`node scripts/openspec-archive-check.mjs` 对这两条 MODIFIED 逐段对比 living spec，报「无静默丢段」。**归档后仍须复核**：归档提交后的 living spec 两条 requirement 同时含 `wire_api` 与 `session_title`（本批不归档，动作记在 `docs/backlog.md` 的归档跟踪队列条目）。

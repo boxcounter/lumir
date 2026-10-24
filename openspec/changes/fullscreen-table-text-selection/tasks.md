@@ -88,9 +88,24 @@
 
 ## 5. 收尾
 
-- [ ] 5.1 tower 在批次收尾登记归档跟踪；归档前逐条对账 tasks / spec 增量 / 实现
+- [x] 5.1 tower 在批次收尾登记归档跟踪；归档前逐条对账 tasks / spec 增量 / 实现
+      —— 2026-10-24（M710）：`docs/backlog.md` 的归档跟踪队列已落唯一条目；对账结果——tasks 除本条与
+      5.2 外全勾（5.2 就地标注延后），delta 只有 `editor-live-preview` 一条 ADDED requirement，实现
+      四处可核：`src/overlay-select.ts:12` 的 `selectAllOf`、`src/table-fullscreen.ts:182`（键）/ `:219`
+      （菜单）、`src/code-block-fullscreen.ts:176` / `:209`（同形）、`src/main.ts:3526` 的
+      `selectAllByFocusedFace` 遮罩分支；`src/style.css:1933` 的 `user-select: text`。判据面在场：
+      视觉 `tests/visual/scenes/m642-overlay-select-all.spec.ts`（含反向必红）、真机场景
+      `scripts/acceptance/scenarios/227-fullscreen-select-esc.md` → PASS 18 断言
+      （`.local/acceptance/2026-10-24/227-fullscreen-select-esc/`）；`gate quick` / `gate visual` 读数见
+      文末实施记录。
 - [ ] 5.2 M634（`add-harness-block-fullscreen`）归档后，另立一条微型 change 把 harness 面的同族条款
       补进 living spec（design §8；MUST NOT 在本 change 里伪造 MODIFIED）
+      —— **裁决：延后，本批不另立 change**（2026-10-24，M710）。M634 已于 2026-10-24 归档
+      （`openspec/changes/archive/2026-10-24-add-harness-block-fullscreen/`，归档提交 `6cddb65f`，
+      节点 2 已过），living spec 现含「对话里的代码块与表格全屏查看」条；harness 面的「遮罩内文本
+      可选中」条款仍只由 `editor-live-preview` 的 ADDED requirement 覆盖。实现侧 harness 面复用同一份
+      遮罩模块，本 change 的修法已自动生效，缺的只是 harness living spec 的措辞——follow-up 延后到
+      后续批次，不在本 change 里伪造 MODIFIED，也不在本批单开 change。
 
 ## 实施记录（2026-10-23，M650）
 

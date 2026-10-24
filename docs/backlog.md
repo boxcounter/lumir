@@ -1,16 +1,13 @@
 # Backlog — findings 与待裁决队列
-唯一的积压载体。**一条 = 一个可关闭单元**：只留结论 gist + 证据指针 + 出口 / 下一动作；叙述与过程状态进 git 历史、`.tower/comms/`、`.local/`。场景清单见 [COVERAGE.md](../scripts/acceptance/COVERAGE.md)，长期口径与已裁暂缓见 [standing-decisions.md](specs/standing-decisions.md)，运行纪律见 [scripts/acceptance/README.md](../scripts/acceptance/README.md)。
-维护规则：`#decide` 只收价值取舍 / 产品语义（客观可核的由 tower 裁并记录）；`#fix` 客观可核；`#probe` 需实验；`#check` 证据不足；`#hygiene` 已定案的小收尾。**核销即删除、不留索引**（2026-10-12 Alex 裁决），**修复 PR 同批删除对应条目、reviewer 合并前核对**（2026-10-24）；含长期口径时迁 standing-decisions，不留在本文件。
-维护规则续：**只记改变未来动作的信息**（2026-10-16 Alex 裁决）；**体量红线 80 行**（Alex 2026-10-24，自 300 下调），不为压行数删活条目；引用用主题关键词锚，MUST NOT 用编号或行号；finding 落账率由批次收尾核对（`.tower/comms/findings/` 新增数 = 新增条目数）。出口由 `scripts/backlog-check.mjs` 机器判定（完成标记 / 缺出口 / 重复或死 finding 指针 / 记录在案无 canonical 居所 / 80 行硬上限，无 ratchet、无既有豁免；随 docs-check 跑）。
+唯一的积压载体。**一条 = 一个可关闭单元**：只留结论 gist + 证据指针 + 出口 / 下一动作；叙述与过程状态进 git 历史、`.tower/comms/`、`.local/`。场景清单见 [COVERAGE.md](../scripts/acceptance/COVERAGE.md)，长期口径与已裁暂缓见 [standing-decisions.md](specs/standing-decisions.md)，运行纪律见 [scripts/acceptance/README.md](../scripts/acceptance/README.md)。维护规则：`#decide` 只收价值取舍 / 产品语义（客观可核的由 tower 裁并记录）；`#fix` 客观可核；`#probe` 需实验；`#check` 证据不足；`#hygiene` 已定案的小收尾。**核销即删除、不留索引**（2026-10-12 Alex 裁决），**修复 PR 同批删除对应条目、reviewer 合并前核对**（2026-10-24）；含长期口径时迁 standing-decisions，不留在本文件。**只记改变未来动作的信息**（2026-10-16 Alex 裁决）；**体量红线 80 行**（Alex 2026-10-24，自 300 下调），不为压行数删活条目；引用用主题关键词锚，MUST NOT 用编号或行号；finding 落账率由批次收尾核对（`.tower/comms/findings/` 新增数 = 新增条目数）。出口由 `scripts/backlog-check.mjs` 机器判定（完成标记 / 缺出口 / 重复或死 finding 指针 / 记录在案无 canonical 居所 / 80 行硬上限，无 ratchet、无既有豁免；随 docs-check 跑）。
 
 ## 待 Alex 裁决（`#decide`，一行一题）
 
 - **harness 默认 `wire_api` 是否切 `chat_completions`**（M463/M464，2026-10-17 定论；当前默认仍 `responses`）：Responses 路径有 ~41.7 万字节请求体闸，chat 方言下 `input_tokens ÷ 262,144` 才诚实、85% 预警才可达；开关 `[harness].providers.<id>.wire_api`，回退成本为零。
 - **超限那轮 meter 是否同步读数**（2026-10-18）：错误路径 return 早于 `record_usage`，超限轮读数停在旧值；改不改、读什么数。
-- **M251 两张菜单基线（23px 差异）是否重建**（2026-09-27）：菜单左上圆角透底变化；基线更新是人肉裁决点。
+- **两处整页基线是否重建**（M251 菜单左上圆角透底 23px 差异 / M281 标签栏·标题栏文字行陈旧）：都在 0.001 档静默；基线更新是人肉裁决点。
 - **共享 `CARGO_TARGET_DIR` 与 dev-only 脚本化驱动入口是否立项**（M372，合并原两条）：复用旧测试二进制曾致假绿；驱动入口是另一条长期候选。
 - **vault 切换是否设 perf 门禁端点**（M283）：绝对阈值还是相对回归；端点属性能合同扩张（草案 `openspec/changes/archive/2026-09-28-vault-switch-restore-perf/design.md` §6.4）。
-- **整页基线在标签栏 / 标题栏文字行陈旧是否重建**（M281）：0.001 档静默；人肉基线裁决点。
 - **`gh run list` 观察者规则是否写进 AGENTS.md 硬规则**（M150）：CI 无观察者的结构问题；需 Alex 过目。
 - **82/83/85 注入通道：产品 reconcile 还是套件新通道**（M497/M498/M500/M502）：AXPress 插卡语境三通道全死、焦点标记与投递背离；产品侧回归面高，套件通道未验证。
 - **场景 148 残红三案选哪条**（M523）：P1 产品 reconcile（模型 / DOM 对账）/ P2 套件自有 CGEvent 探针 / P3 click + 剪贴板 Paste。
@@ -45,8 +42,7 @@
 - `#check` **preview-tab 遗留**（M254）→ 逐条确认注释 / 字段说明是否仍有旧语义。
 - `#check` **math / mermaid 显露判定**（M259）→ 确认是否已接 `pointerPressFrame`（`src/preview/reveal-gate.ts`）。
 - `#check` **表格全屏聚合**（M240）→ 逐子项对账：长表 / visual README 22 处 / config theme / 计算属性 / typography Purpose / 32-list-filter / Lezer 包。
-- `#check` **编辑器 / 键位聚合**（M101–M186）→ 逐子项对账：Alt+Shift、warnings UI、toast z-index、`$` 转义、mathSpanCrossed、⌃B、grid 表、删浮条、D40、hidden pipe、cell 公式、构造函数属性。
-- `#check` **shell / 系统聚合**（M101–M186）→ 逐子项对账：退出守卫、`{id}.json.tmp` 过滤、vault 滚动、焦点建议。
+- `#check` **编辑器 / 键位 / shell / 系统聚合**（M101–M186）→ 逐子项对账：Alt+Shift、warnings UI、toast z-index、`$` 转义、mathSpanCrossed、⌃B、grid 表、删浮条、D40、hidden pipe、cell 公式、构造函数属性；退出守卫、`{id}.json.tmp` 过滤、vault 滚动、焦点建议。
 - `#check` **验收套件表达力聚合**（M144）→ 逐项对账余下子项，明细见 git 历史。
 - `#check` **文档指针聚合** → 逐项对账：M205/M208 旧路径、M151 失准、D64 过期、HEAD==origin/master、ADR 0002 200MB vs 250MB。
 - `#check` **多 vault 聚合**（M164）→ 逐项对账：视觉容差、窗口屏外、`M-<` / `M->`、demo 脱节、D90、tauri test feature、目录选择、`commit_vault_open` 分支。
@@ -77,4 +73,8 @@
 - **`semantic-selection-markdown-oct23`**（M687，28/29）：一条 ADDED requirement；4.5 dogfood 归 Alex，节点 2 走人肉，归档前后各跑门禁。
 - **`add-harness-subagents`**（M708，90/90）：delta = `harness` 两条（ADDED 运行公共层 + MODIFIED 工具循环）+ 新建 `harness-subagents` capability；节点 2 走人肉（delta 有新增内容），归档前后各跑 `node scripts/openspec-archive-check.mjs`；归档后须手写新建 living spec 的 Purpose 占位并复跑 strict validate。
 - **`add-semantic-image-naming`**（M709，8.5 真机 PASS）：delta = `clipboard-image-paste` 1 条 MODIFIED（落盘与命名去重）+ 3 条 ADDED（语义命名 / 引用更新 / 放弃与撤销）；节点 2 走人肉（delta 有新增内容），归档时执行 tasks 7.2（living spec Purpose 补一句语义命名边界）并复跑 strict validate；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
-- 外部前置：`harness-permission-rules-oct23`（33/36）与 `quick-open-file-oct23`（40/42）可先归档；前者 4.3 已由 229 真机 PASS 覆盖，是否勾选由 M649 属主按任务原文裁定。
+- **`quick-open-file-oct23`**（M655 实现 / M700 补修，53/53）：可先行归档；节点 2 材料齐——230 真机 `1/1 PASS`（60 断言）、delta 五条 requirement 过 `validate --strict` 与 `openspec-archive-check`；残留：7.2 的「vault 外 绝对路径:行」只在 chromium / 单测层（是否补真机断言交节点 2 判），归档前后各跑 `node scripts/openspec-archive-check.mjs`。
+- **`harness-permission-rules-oct23`**（M649，33/36）：可先行归档；4.3「真机跑一遍套件」未勾——229 的 31 条断言只覆盖本 change 新增的三条场景（①②③），不能代表 4.1 回扫改准的 110 / 151 等既有场景；是否按 4.3 原文补跑整批交节点 2 判。
+- **`add-session-auto-naming`**（M576 实现 / M579 配置面重塑 / M580 验收键改名，32/32）：节点 2 材料齐——五场景 163–167 真机全 PASS（41 断言，证据 `.local/acceptance/2026-10-19-m605/`）、7.7 的 delta 对账已完成；7.5 按零 `titles` 视觉 fixture 标注不适用；归档后复核 living spec 两条 requirement 同时含 `wire_api` 与 `session_title`。
+- **`improve-harness-streaming-scroll`**（M644，29/31）：节点 2 材料齐——224 真机 `1/1 PASS`（19 断言，`.local/acceptance/2026-10-24/224-harness-scroll-lock/`）、delta↔实现对账见其 tasks §6.1；残留：6.2 / 6.3 的「归档后」半步（`--archived` 复跑与 living spec 段完整核对，已就地标注）。
+- **`fullscreen-table-text-selection`**（M650，32/33）：节点 2 材料齐——227 真机 PASS（18 断言）、delta 一条 ADDED、`gate quick` / `visual` 读数在 tasks 文末；残留：5.2 的 harness 面同族条款 follow-up 已裁延后、本批不另立 change（M634 已归档）。

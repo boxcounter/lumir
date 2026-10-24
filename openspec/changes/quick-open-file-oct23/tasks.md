@@ -54,7 +54,10 @@
 - [x] 3.2 `src/main.ts`：命令实现——已打开则收起（toggle），否则打开浮层；焦点进输入框
 - [x] 3.3 单测：`tests/unit/keys.test.ts` 的三项对账（有绑定 / 无孤儿 / 清单与表无交集）原样通过；
       `[keys]` 重绑与解绑各一条
-- [ ] 3.4 真机核验 `⌘P` 不被 WKWebView / 原生菜单截获（design §6 第 3 条），失败则回报并停下等裁
+- [x] 3.4 真机核验 `⌘P` 不被 WKWebView / 原生菜单截获（design §6 第 3 条），失败则回报并停下等裁
+      —— 2026-10-24 真机复核（M700，场景 230）：编辑器 / 文件树 / harness composer 三处焦点各按一次
+      `⌘P` 都打开输入面（`AXComboBox（按路径快速打开文件）` 在场），无截获；证据
+      `.local/reviews/m700/steps.md` 的「焦点在文件树」「焦点在 harness composer」两段 + `run-summary.md`
 
 ## 4. 打开编排与行跳转
 
@@ -99,9 +102,18 @@
 - [x] 7.1 新增 `scripts/acceptance/scenarios/<号>-quick-open.md` + 合成 fixture（深层路径文件、
       含冒号的文件名、一个外部文本文件——**全部合成，不含真实内容**）；场景号按实现时批次的分配
       （M647 已占 228、M650 占 227，本 change 预计 229 起，实现期与 tower 核一次）
-- [ ] 7.2 断言：粘贴 `深层/路径.md:行` → 一次 Enter 落行；粘贴 vault 外绝对路径 → 只读打开 +
+- [x] 7.2 断言：粘贴 `深层/路径.md:行` → 一次 Enter 落行；粘贴 vault 外绝对路径 → 只读打开 +
       `⌘S` 无反应 + modeline 只读段在场；粘贴 vault 外 `绝对路径:行` → 只读打开并落该行；重启后
       外部标签不回来；`⌘P` 在编辑器 / 树 / composer 三处各按一次都能开
+      —— 2026-10-24 真机执行（M700，场景 230）：`结论：1/1 PASS`（60 断言 / 0 失败 / 168.8s，exit 0；
+      证据 `.local/reviews/m700/` 的 `run-summary.md` + `steps.md` + `shots/`）。逐组证据：路径:行一次
+      落行（「行号后缀」段，落点行读数在场）；vault 外只读 + `⌘S` 不写盘 + modeline 只读段（「vault 外
+      只读现场」「⌘S 无落点」段，`/etc/hosts` 字节与 mtime 未变）；重启后外部标签不回来（「重启后的
+      标签栏」段，对照 `v1:2.md` 照常恢复）；`⌘P` 三处焦点（「焦点在文件树」「焦点在 harness composer」段）。
+      **覆盖边界**：`vault 外 绝对路径:行 → 只读打开并落该行` 不在 230 的断言面内——现有判据在
+      chromium 层（`tests/visual/scenes/quick-open.spec.ts` 的「vault 外路径带行号」用例）与 resolver
+      单测（`tests/unit/quick-open.test.ts` 的 `/tmp/x/draft.md:12` 判决矩阵）；真机补这条断言要改
+      `scripts/acceptance/scenarios/230-quick-open.md`（不在本 mission scope），是否必需交节点 2 判
 - [x] 7.3 回扫既有验收场景：`grep` 所有对 `⌘P` / 快速打开 / 标签持久化标签数的期望，逐条确认
       仍然成立；`node scripts/acceptance/run.mjs --check` 通过
 - [x] 7.4 如实登记覆盖边界（候选列表的滚动手感、浮层弹出节奏归 Alex 手感裁决，不进机器判据）
@@ -115,11 +127,12 @@
 - [x] 8.5 信息卫生清扫：新增 fixture / 场景 / 文档对改动面做一次 text 级 grep，真实 vault 内容、
       真实路径、真实人名零命中
 
-> 实现期记录（2026-10-23/24）：3.4 与 7.2 的**真机执行**未跑——macOS 的屏幕录制授权弹窗
-> 未处理，KimiCU 的截图 / 读屏动作受阻（tower 明确要求受阻即跳过并如实登记，MUST NOT 点任何
-> 系统授权弹窗）。场景 `230-quick-open.md` 已写好并通过 `--check` 静态校验（断言覆盖三处焦点的
-> ⌘P、路径:行、冒号文件名、vault 外只读的四处标记、重启后不恢复、找不到的提示），待弹窗处理后
-> 补跑。其余各档门的读数：`GATE RESULT: 11/11 PASS（SKIP 0）`（退出码 0）；视觉套件本地全量
+> 实现期记录（2026-10-23/24）：首次真机执行被 macOS 屏幕录制授权弹窗挡住（KimiCU 的截图 / 读屏
+> 动作受阻；tower 明确要求受阻即跳过并如实登记，MUST NOT 点任何系统授权弹窗），当轮 3.4 / 7.2 只
+> 登记为未跑，场景 `230-quick-open.md` 只过 `--check` 静态校验。**2026-10-24 已补跑**（M700）：
+> `node scripts/acceptance/run.mjs 230` → `结论：1/1 PASS`（60 断言 / 0 失败 / 168.8s，exit 0），
+> 3.4 / 7.2 各按条内证据指针勾选（7.2 的「vault 外 绝对路径:行」一组仍是 chromium / 单测层，见条内
+> 覆盖边界）。其余各档门的读数：`GATE RESULT: 11/11 PASS（SKIP 0）`（退出码 0）；视觉套件本地全量
 > `743 passed / 1 skipped`（含整页像素对比，零基线更新）；`openspec validate --all --strict`
 > 43/43；`docs-check` PASS。
 >
