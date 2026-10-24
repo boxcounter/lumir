@@ -1538,8 +1538,12 @@ export async function runScenario(ctx, scenario) {
       // 像素断言（M285）：在**窗口截图**上按窗口局部点取底色。通道与边界见 lib/pixel.mjs。
       // 取不到图 / 取不到坐标口径一律 FAIL——不许在不可观测的窗口里下结论（REVIEW.md 「读不到当成空」条：
       // 「读不到」被当成「空」时负向断言会退化成恒真）。
+      //
+      // **恒自取 mode=full 快照，MUST NOT 复用 state.ax**（M702 实证）：同一 expect 列表里前面的
+      // `ax` 断言会把 state.ax 钉成 mode=ax 的口径——那份快照没有图，像素断言因此报「取不到窗口
+      // 截图」而同一帧的 `shot` 却拍得到图。与 geom 段同一条纪律（见下方 geom 的注释），修法也相同。
       const spec = expect.pixel;
-      const ax = state.ax ?? (await readAxWithScreenshot(cu, ctx.pid));
+      const ax = await readAxWithScreenshot(cu, ctx.pid);
       state.ax = ax;
       if (!ax.image) return fail(`${label}（取不到窗口截图，像素断言无法判定）`, "按 README「已知边界」的 KimiCU 截图通道条处理", ax);
       const bounds = windowBounds(ax.text);

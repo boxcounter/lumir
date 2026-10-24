@@ -15,9 +15,12 @@ import {
   lookupVaultPath,
   normalizeQuickOpenInput,
   quickOpenAttempts,
+  quickOpenDirectExternalText,
+  quickOpenDirectText,
   resolveQuickOpen,
   resolveQuickOpenSync,
   splitLineSuffix,
+  splitPathRowText,
 } from "../../src/quick-open.ts";
 import type { VaultLookupEnv } from "../../src/quick-open.ts";
 import { filterIndices } from "../../src/list-filter.ts";
@@ -408,4 +411,61 @@ test("判决：结果区与 confirm 共用同一个分类器（精确 / 折叠 /
   assert.deepEqual(classifyVaultPath("A.MD", e), { kind: "ambiguous", paths: ["A.md", "a.md"] });
   assert.deepEqual(classifyVaultPath("notes", e), { kind: "dir" });
   assert.deepEqual(classifyVaultPath("nope.md", e), { kind: "unknown" });
+});
+
+// ---------------------------------------------------------------------------
+// 结果区行的展示拆分（M702，change overlay-width-contract-oct24 的 W5 / design §4）
+//
+// 缺陷形态（M698 实测）：行是单段文本 + 尾部省略，77 字符深层路径裁掉 42.5%——**文件名整段
+// 消失**。拆分后目录前缀先收缩、文件名后收缩，拼接文本仍是完整路径。断言同时钉住
+// 「拼接回原文」这条不变量（拆分只改收缩次序，不改语义 / 匹配 / ARIA）。
+// ---------------------------------------------------------------------------
+
+test("行展示：深路径拆成目录前缀 + 文件名（文件名不被先裁）", () => {
+  const path = "areas/work/clients/acme/2026/q4/meetings/2026-10-24-kickoff-notes-final-v2.md";
+  assert.deepEqual(splitPathRowText(path, path), {
+    prefix: "",
+    dirs: "areas/work/clients/acme/2026/q4/meetings/",
+    name: "2026-10-24-kickoff-notes-final-v2.md",
+    suffix: "",
+  });
+});
+
+test("行展示：根目录文件没有目录前缀；vault 外绝对路径的目录以 `/` 开头", () => {
+  assert.deepEqual(splitPathRowText("README.md", "README.md"), {
+    prefix: "",
+    dirs: "",
+    name: "README.md",
+    suffix: "",
+  });
+  assert.deepEqual(splitPathRowText("/tmp/lumir-verify/draft.md", "/tmp/lumir-verify/draft.md"), {
+    prefix: "",
+    dirs: "/tmp/lumir-verify/",
+    name: "draft.md",
+    suffix: "",
+  });
+});
+
+test("行展示：直接打开行动作前缀与路径分离（两种语言模板都按实际位置切）", () => {
+  const path = "notes/2026/projects/lumir/weekly-notes.md";
+  const zh = splitPathRowText(quickOpenDirectText(path), path);
+  assert.equal(zh.prefix, "按 Enter 打开 ");
+  assert.equal(zh.dirs, "notes/2026/projects/lumir/");
+  assert.equal(zh.name, "weekly-notes.md");
+  assert.equal(zh.suffix, "");
+  // 拼接回原文：拆分的唯一语义是收缩次序，文本不变。
+  assert.equal(zh.prefix + zh.dirs + zh.name + zh.suffix, quickOpenDirectText(path));
+  const en = splitPathRowText(quickOpenDirectExternalText(path), path);
+  assert.equal(en.prefix + en.dirs + en.name + en.suffix, quickOpenDirectExternalText(path));
+  assert.equal(en.name, "weekly-notes.md");
+});
+
+test("行展示：文本里没有路径 ⇒ 整段作前缀，不抛错、不猜位置", () => {
+  assert.deepEqual(splitPathRowText("没有匹配的条目", "notes/a.md"), {
+    prefix: "没有匹配的条目",
+    dirs: "",
+    name: "",
+    suffix: "",
+  });
+  assert.deepEqual(splitPathRowText("", "notes/a.md"), { prefix: "", dirs: "", name: "", suffix: "" });
 });

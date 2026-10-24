@@ -94,3 +94,6 @@ reject，避免「测试没实现的命令」变成静默怪现象。
 - 类型剥离只认**可擦除语法**：`enum`、构造函数参数属性之类会在运行期直接抛
   `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。本层没开 `tsc` 的 `erasableSyntaxOnly`——`src/preview/*`
   里已有参数属性，开了会让这一层因为别处的写法而红；踩到时按报错改写法即可。
+| `src/overlay-placement.ts`（浮层宽度 / 落点纯几何，M702） | change overlay-width-contract-oct24：`resolveOverlayWidth` 的 `clamp(内容固有宽, 下限, min(em 上限, 宿主可用宽))`（短内容不拉伸、极窄宿主收敛到可用宽、组件下限覆盖档位下限）、`placeOverlay` 的两侧锚定边取位移最小者（换边优先于长距平移、位移相同回落到组件默认边）、落点恒在宿主 inset 内、幂等与非法读数不制造 NaN。网格 host 240/320/420/700 × natural 140/240/490 × fontSize 12/25.56 同时覆盖「抬高 / 恰好放下 / 必须收窄」三类样本 |
+| `src/style.css` + `src/harness-panel.css`（浮层宽度分档注册表，M702） | change overlay-width-contract-oct24：浮层壳 = 同时声明 `position: absolute\|fixed` 与 `box-shadow: var(--shadow-raise)`；与注册表双向对账（未登记即红 / 僵尸条目即红），再按档位核验声明——L / P 档 MUST NOT 持有裸 px `width`、文字随 `--lumir-hp-scale` 缩放的条目 MUST 有 `em` 上限、豁免档（健康反例）的宽度形态漂移即红、同一属性两条声明视为两处真源。反向输入逐条造红：未登记浮层 / ctxpop 定值回潮 / 删 em 上限 / 僵尸条目 / 重复登记 / 豁免档被改成定值 / 注释里的声明 |
+| `src/quick-open.ts`（结果区行的展示拆分，M702） | `splitPathRowText`：一行文本按其中的路径拆成 prefix / dirs / name / suffix——目录前缀先收缩、文件名后收缩（单行尾省略会先吃掉文件名，M698 实测裁 42.5%）；直接打开行的中英模板按路径实际位置切，拼接后与原文逐字相同；文本里没有路径时整段作前缀，不抛错、不猜位置 |

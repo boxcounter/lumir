@@ -205,10 +205,12 @@ test("浮层：层级缩进、当前段高亮、键盘导航与跳转落点", as
   expect(await docText(page)).toBe(beforeText);
 });
 
-test("几何：浮层 300px 宽、贴指示段左端与 modeline 上沿，条目 26px 行高 / 18px 层级步进", async ({ page }) => {
+test("几何：浮层宽 26em（325px）、贴指示段左端与 modeline 上沿，条目 26px 行高 / 18px 层级步进", async ({ page }) => {
   // M217 新 TOC 表面的几何层钉（结构断言抓不到定位漂移）：浮层宽度、锚点（place() 横向对
   // 指示段左端、CSS `bottom: 100%` 纵向贴 modeline 上沿）与条目行几何（定稿 .pop-row：
   // h26 / 左 padding = --sp-4 + depth×18px，index.html:697-704）。
+  // M702 起宽度走 L 档 `min(26em, 100vw − 28px)`：容器 font-size = 行文本 12.5px ⇒ 325px，
+  // 旧定值 300px 在典型 48 字符路径上恰好裁掉 8.8%（M698 §3.1）。
   await openToc(page);
   await page.locator(".modeline-section").click();
   await expect(page.locator(".lumir-toc-list")).toBeVisible();
@@ -226,7 +228,7 @@ test("几何：浮层 300px 宽、贴指示段左端与 modeline 上沿，条目
       modelineTop: modeline.getBoundingClientRect().top,
     };
   });
-  expect(geo.width).toBe(300);
+  expect(geo.width).toBe(325);
   expect(Math.abs(geo.popoverBottom - geo.modelineTop)).toBeLessThanOrEqual(1); // 向上展开贴上沿
   expect(Math.abs(geo.popoverLeft - geo.indicatorLeft)).toBeLessThanOrEqual(1); // place() 对左端
 

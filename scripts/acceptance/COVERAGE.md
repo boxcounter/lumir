@@ -4,8 +4,8 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title）。 -->
 
-- 场景：231
-- 验收项（不同 item 编号）：213
+- 场景：233
+- 验收项（不同 item 编号）：214
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07b` / `07c` 三条恢复路径），故表里一项一行、行内列出全部场景；
@@ -228,3 +228,4 @@
 | 553 | `162-harness-dir-link` | harness 输出里的 vault 目录引用可点击（左栏定位） |
 | 554 | `168-paste-image-semantic-name` | 贴图后异步语义改名 + 正文引用同步 + toast 撤销（change add-semantic-image-naming） |
 | 655 | `230-quick-open` | 按路径快速打开（⌘P）：路径:行一次落行 / 冒号文件名整串优先 / vault 外只读 / 重启不回来 |
+| 702 | `231-quick-open-long-path-width`<br>`232-harness-ctxpop-width` | 快速打开浮层宽度：长路径下输入面按 26em 展开、路径全文仍在 AX 里<br>Context 气泡：长读数 hover 翻出、三段内容齐全且确实绘制（P 档 34em 上限；宽度数字归 chromium 矩阵） |

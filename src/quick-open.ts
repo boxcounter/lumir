@@ -434,6 +434,66 @@ function rowKey(row: QuickOpenRow | undefined): string | undefined {
   return row.kind === "direct" ? `direct:${row.path}:${row.line ?? ""}` : `candidate:${row.path}`;
 }
 
+/** 一行路径文本的展示拆分（M702，change overlay-width-contract-oct24 的 W5 / design §4）。 */
+export interface PathRowText {
+  /** 路径之前的固定文本（直接打开行的动作前缀；候选行为空）。 */
+  prefix: string;
+  /** 目录前缀（含末尾 `/`；根目录文件为空串）。 */
+  dirs: string;
+  /** 文件名（路径的身份主体）。空串 = 文本里找不到路径，按整段 prefix 渲染。 */
+  name: string;
+  /** 路径之后的固定文本（当前模板都没有尾串；留字段是为了不假设模板形状）。 */
+  suffix: string;
+}
+
+/**
+ * 把「一行文本 + 其中的路径」拆成可独立收缩的四段：**目录前缀先让宽、文件名不先裁**
+ * ——单行尾省略会先吃掉文件名（M698 实测：77 字符深层路径裁 42.5%，文件名整段不可见）。
+ *
+ * 口径与 `collapseMiddleDirs`（M606，`src/harness-context.ts`）同源：**文件名是路径的身份
+ * 主体，目录只是消歧辅助**。本模块**不调用**它，是因为 quick-open 的列表必须保留目录前缀
+ * 供同名文件消歧（无条件折成 `…/文件名` 会让 `a/plan.md` 与 `b/plan.md` 的两条行文本相同）：
+ * 这里只做「目录 / 文件名」的切分，中间的折叠由 CSS 的省略号在**放不下时**才发生，
+ * 文件名因此不会被先裁。目录部分没有第二份折叠算法——MUST NOT 在本模块再写一份。
+ *
+ * 用 `lastIndexOf` 定位路径而不是按模板切：直接打开行的文案由 deck 模板（D589/D590）拼出，
+ * 前缀随语言变化；路径逐字出现在模板里（`quickOpenDirectText` 的插值就是原文），找不到时
+ * 退回「整段 prefix」而不是抛错或猜位置。纯函数、零 DOM，单测直接钉边界。
+ */
+export function splitPathRowText(text: string, path: string): PathRowText {
+  const at = path === "" ? -1 : text.lastIndexOf(path);
+  if (at < 0) return { prefix: text, dirs: "", name: "", suffix: "" };
+  const slash = path.lastIndexOf("/");
+  return {
+    prefix: text.slice(0, at),
+    dirs: path.slice(0, slash + 1),
+    name: path.slice(slash + 1),
+    suffix: text.slice(at + path.length),
+  };
+}
+
+/**
+ * 把一行文本按 [`splitPathRowText`] 落成两段 DOM：目录前缀（`.lumir-qo-dirs`，可中段省略）
+ * 与文件名（`.lumir-qo-name`，最后才截）。两段拼接后的 `textContent` 仍是完整原文——
+ * 匹配语义、ARIA 与既有逐条文本断言都不变；全路径另落 `title`（W5 的全文通道）。
+ */
+function fillPathText(element: HTMLElement, text: string, path: string): void {
+  const parts = splitPathRowText(text, path);
+  const segments: Array<[string, string]> = [
+    ["lumir-qo-prefix", parts.prefix],
+    ["lumir-qo-dirs", parts.dirs],
+    ["lumir-qo-name", parts.name],
+    ["lumir-qo-suffix", parts.suffix],
+  ];
+  for (const [className, value] of segments) {
+    if (value === "") continue;
+    const span = document.createElement("span");
+    span.className = className;
+    span.textContent = value;
+    element.append(span);
+  }
+}
+
 export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
   const popover = document.createElement("div");
   // 几何/配色/滚动全部来自 `src/style.css` 里与 `.lumir-toc` 共用的那一组选择器（见文件头）；
@@ -669,15 +729,20 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       element.id = `${ITEM_ID_PREFIX}${row.kind === "direct" ? "direct" : index}`;
       element.setAttribute("role", "option");
       element.setAttribute("aria-selected", "false");
+      // 全路径落 title（W5 的全文通道）：行放不下时目录前缀出省略号，文件名只在极端窄的
+      // 宿主里才截——两种情形的全文都在这里可达。
+      element.title = row.path;
       if (row.kind === "direct") {
         // 直接行用独立 class：既有视觉断言钉的是 `.lumir-qo-item` 的逐条文本，直接行复用
         // 会把「候选集合」的判据混进一条动作提示（M700）。
         element.className = "lumir-qo-direct";
         const primary = document.createElement("span");
         primary.className = "lumir-qo-direct-path";
-        primary.textContent = row.external
-          ? quickOpenDirectExternalText(row.path)
-          : quickOpenDirectText(row.path);
+        fillPathText(
+          primary,
+          row.external ? quickOpenDirectExternalText(row.path) : quickOpenDirectText(row.path),
+          row.path,
+        );
         element.append(primary);
         if (row.line !== undefined) {
           const line = document.createElement("span");
@@ -688,8 +753,9 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       } else {
         element.className = "lumir-qo-item";
         // 匹配对象是完整相对路径（spec「候选列表与匹配语义」），展示也逐字用它——
-        // 「只显示文件名」会让同名文件在同一条列表里不可分辨。
-        element.textContent = row.path;
+        // 「只显示文件名」会让同名文件在同一条列表里不可分辨。两段结构只改**收缩次序**
+        // （目录先让宽、文件名后让），拼接后的文本仍是完整路径。
+        fillPathText(element, row.path, row.path);
       }
       // 点击路径与键盘路径落同一个动作上；mousedown 不夺焦（照 TOC：否则先 blur 关闭、
       // 再重开，点击落空）。

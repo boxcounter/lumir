@@ -192,7 +192,13 @@
   position: fixed;
   top: 0;
   left: 0;
-  width: 200px;
+  /* 宽度（M702，L 档）：内容驱动 + 26em 上限 + 既有 200px 作下限。旧定值 200px 在 2.13 档
+     把会话名裁掉 81%（M698 实测）；宽度与横向落点由 placePop 现算并夹进视口，这里只给
+     未定位前的自然形态。font-size 与行文本同源，26em 的上限才与「行有多长」对齐。 */
+  width: max-content;
+  min-width: 200px;
+  max-width: 26em;
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   padding: var(--sp-2);
   background: var(--preview-bg);
   border: 1px solid var(--border);
@@ -1241,13 +1247,16 @@
   background: var(--hover);
   color: var(--text);
 }
-/* effort 不支持的 hover hint 泡（D394）：ctxPop 同款配方（上展、右缘对齐、224px、
-   r6、fs-meta），锚在 chip wrapper 上——读数那一格悬停才翻出。 */
+/* effort 不支持的 hover hint 泡（D394）：ctxPop 同款配方（上展、右缘对齐、r6、fs-meta），
+   锚在 chip wrapper 上——读数那一格悬停才翻出。宽度走 P 档（M702）：内容驱动 + 34em 上限 +
+   既有 224px 作下限；旧定值在放大档会折成三行（M698 §3.2 的同族读数）。 */
 .lumir-hp-effhint {
   position: absolute;
   bottom: calc(100% + 6px);
   left: 0;
-  width: 224px;
+  width: max-content;
+  min-width: 224px;
+  max-width: 34em;
   padding: var(--sp-2) var(--sp-3);
   background: var(--preview-bg);
   border: 1px solid var(--border);
@@ -1272,7 +1281,13 @@
   position: absolute;
   bottom: calc(100% + 4px);
   left: 0;
+  /* 宽度（M702，L 档）：内容驱动 + 26em 上限 + 既有 188px 下限。旧形态没有夹取——2.13 档
+     + 320px pane 实测 391px 宽、右缘越出 pane 85px 被祖先裁掉（M698 §3.4）。font-size 与
+     行文本同源（--fs-meta × 面板缩放），26em 的上限才跟着字号走。 */
+  width: max-content;
   min-width: 188px;
+  max-width: 26em;
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   padding: var(--sp-2);
   background: var(--preview-bg);
   border: 1px solid var(--border);
@@ -1415,7 +1430,13 @@
   position: absolute;
   bottom: calc(100% + 4px);
   left: 0;
+  /* 宽度（M702，P 档）：内容驱动 + 34em 上限 + 既有 208px 下限。旧形态是「内容驱动 + 到
+     边界才收窄」，缺的只是可读上限——宽屏上释义行长可达 560px+，放大档又直接顶满面板
+     （M698 §3.5）。34em 随面板字号缩放，窄 pane 的收窄仍交给 placePop。 */
+  width: max-content;
   min-width: 208px;
+  max-width: 34em;
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   padding: var(--sp-2);
   background: var(--preview-bg);
   border: 1px solid var(--border);
@@ -1575,16 +1596,21 @@
 }
 /* 读数 hover 泡（M370 = D335 的 hover 形态；M373 起常驻含义句；M378 改两行带当时实际值
    ——第一行 context window usage（D395）、第二行 cache hit rate（D401，cache 缺失不渲染）、
-   越线时警示句 D335 追加为第三行）：向上展开，右缘对齐读数右缘（原型 224px——M347 的
+   越线时警示句 D335 追加为第三行）：向上展开，默认右缘对齐读数右缘（原型 224px——M347 的
    240px 按视觉还原收紧）。显隐由 hover 翻转（harness-panel.ts 的 mouseenter/leave），
-   hidden 仍是结构兜底。M378 起翻出时经 clampCtxPop 按面板边界收编（默认锚向右探出、
-   向左延 ~206px，面板 overflow:hidden 会把溢出左缘裁掉）——translate / width 只在越界时
-   由 JS 写，未越界保持本表默认形态。 */
+   hidden 仍是结构兜底。
+   **M702 起宽度走 P 档**（change overlay-width-contract-oct24）：内容驱动 + 34em 上限 +
+   既有 224px 作下限。旧形态「定宽 224 + 只缩不放」有两个实测缺陷：真实读数 237px 必折 2 行、
+   2.13 档首行 482px 折 3 行（M698 §3.2）；下限取 224 而不是档位默认 200，是为了让既有
+   短内容 fixture 的像素零漂移——本次只修「放不下时不能变宽」，不重排短内容。
+   收窄 / 换边 / 平移统一由 harness-panel.ts 的 placePop 现算（W3）。 */
 .lumir-hp-ctxpop {
   position: absolute;
   bottom: calc(100% + 6px);
   right: -18px;
-  width: 224px;
+  width: max-content;
+  min-width: 224px;
+  max-width: 34em;
   padding: var(--sp-2) var(--sp-3);
   background: var(--preview-bg);
   border: 1px solid var(--border);
