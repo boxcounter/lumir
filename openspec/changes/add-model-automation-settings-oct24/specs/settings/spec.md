@@ -562,10 +562,14 @@ provider」还是显式覆盖、以及是否可执行（会话命名 = 模型非
 - 模型选择的选项 SHALL 只来自目标 provider 的 `models` 清单；图片命名的每个选项 SHALL 标出
   `vision` 资格（声明 `vision: true` / 未声明）。MUST NOT 提供清单外的模型作为可选值，也
   MUST NOT 另建「命名可用模型」清单。
+- 文件里已有、但不在目标清单的覆盖模型：会话命名 SHALL **回落**目标 provider 的生效模型并在
+  那一行写明回落；图片命名 SHALL 原样保留该值、按 `vision` 资格跳过。两类后果 MUST NOT 混写，
+  会话命名 MUST NOT 显示成「无模型 / 会跳过」。
 - 改变目标 provider 时，该组的 `model` 覆盖 SHALL 被清除（它属于旧 provider 的清单）；同一笔
   保存里显式选择的模型 SHALL 按新目标的清单校验。
 - 面板 SHALL 在选择旁只显示**一行**实际生效说明：解析后的 provider / 模型、跟随当前还是指定
-  目标（含悬空回落）、生效时机；图片命名另含 vision 资格与跳过后果。MUST NOT 再渲染独立的
+  目标（含悬空回落）、生效时机；图片命名另含 vision 资格与跳过后果。该行的每一条分支（含
+  跳过 / 回落）MUST 同时含来源与生效时机。MUST NOT 再渲染独立的
   命名目标摘要框、表格或第二块读数——同一读数只允许一处。
 - 目标改变 SHALL 只改草稿，点「保存」才写入；生效时机 = 下一次评估触发点（会话命名）/
   下一次粘贴（图片命名）。
@@ -623,7 +627,7 @@ MUST NOT 只给一个笼统的「需重启」标记。两个命名目标的失�
 - **WHEN** 当前使用 `kimi-work`，两个命名目标都没有显式覆盖
 - **THEN** 会话命名与图片命名两行各自显示两个选择（provider =「跟随当前 provider（默认）」、
   模型 =「生效模型（默认：<模型>）」）与一行「实际：kimi-work / <模型> · 跟随当前 provider ·
-  <时机>」；页面其他地方没有第二块命名目标读数；说明一次触发只发一次调用，`deepseek` 不会被
+  <时机>」；页面其他地方没有第二块目标说明；说明一次触发只发一次调用，`deepseek` 不会被
   同时调用
 
 #### Scenario: 命名目标内联可编辑并显示资格
@@ -640,6 +644,14 @@ MUST NOT 只给一个笼统的「需重启」标记。两个命名目标的失�
 - **THEN** 模型选择重置为「生效模型（默认：ds-chat）」；保存后 `session_naming.provider` 为
   `deepseek`、`session_naming.model` 键被删除；同一笔里再显式选 `ds-chat` 时按 `deepseek` 的
   清单校验（选 `k3-128k` 被拒）
+
+#### Scenario: 会话命名的覆盖模型不在目标清单时回落
+
+- **WHEN** `session_naming.provider = "deepseek"`、`session_naming.model = "k3-256k"`（该模型只
+  属于另一个 provider）
+- **THEN** 行内说明显示 `deepseek` 与它的生效模型 `ds-chat`，并写「覆盖模型 k3-256k 不在清单，
+  已回落生效模型 · 下一次评估触发点生效」；模型选择器保留原值并标「不在清单，已回落生效
+  模型」；MUST NOT 显示「会跳过」或「无模型」
 
 #### Scenario: 关闭命名只禁用、不清空
 

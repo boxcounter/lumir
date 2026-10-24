@@ -6,7 +6,8 @@
 //   3) 四个自动化开关仍是全局键：增删 / 切换 provider 不复制、不重排、不改变开关 DOM；
 //   4) 会话命名 / 图片命名的目标**内联在各自开关行**、可编辑（provider + 模型），默认跟随
 //      当前 provider；关闭功能时控件禁用但选择保留；图片命名的模型选项标 vision 资格；
-//      每行只有**一行**实际生效说明，独立的大摘要框已移除；
+//      每行只有**一行**实际生效说明（含来源与生效时机），独立的大摘要框已移除；失效覆盖模型
+//      的后果按 kind 分流——会话命名回落生效模型，图片命名原样保留、资格不通过即跳过；
 //   5) 模型清单只来自 config.json，不能暗示内置模型表 / 模型目录；
 //   6) 会话命名不是每轮生成；
 //   7) 设置是单页两节，没有编辑器 / 权限设置页，也没有 TAB 导航。
@@ -369,7 +370,7 @@ check("S8 控制面板覆盖全部场景与 provider 操作", () => {
   const cpanelStart = html.indexOf('id="cpanel"');
   const cpanel = html.slice(cpanelStart, html.indexOf("<script>", cpanelStart));
   const scenes = [...cpanel.matchAll(/data-go="scene:([a-z-]+)"/g)].map((m) => m[1]);
-  for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
+  for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "naming-fallback", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
     assert(scenes.includes(scene), `control panel missing scene ${scene}`);
   }
   assert(/data-toggle="add"/.test(cpanel), "control panel must expose add");
@@ -395,6 +396,17 @@ check("S10 单页两节：没有 TAB 导航，也没有编辑器 / 权限设置�
   const visibleText = html.replace(/<script[\s\S]*?<\/script>/g, "");
   assert(!/编辑器设置|权限设置|编辑器与权限/.test(visibleText), "must not render an editor / permission settings page");
   assert(!/data-go="tab:/.test(html), "control panel must not switch tabs");
+});
+
+check("S11 失效覆盖模型按 kind 分流：session 回落生效模型、attachment 原样跳过", () => {
+  const resolveBody = functionBody(html, "resolveNaming");
+  assert(/kind === "session"/.test(resolveBody), "resolveNaming must branch on kind");
+  assert(/modelFallback/.test(resolveBody), "session fallback must be flagged for the line copy");
+  assert(/requested \? \(spec \? requested : effective\) : effective/.test(resolveBody), "session must fall back to the effective model");
+  assert(/const modelId = requested \|\| effective;/.test(resolveBody), "attachment must keep the raw value (or the effective model when unset)");
+  assert(/不在清单，已回落生效模型/.test(namingTargetBody), "session raw option must describe the fallback");
+  assert(/不在清单，会跳过/.test(namingTargetBody), "attachment raw option must describe the skip");
+  assert(!/requested \? \(spec \? requested : ""\)/.test(resolveBody), "the shared empty-model branch must be gone");
 });
 
 // ── 浏览器交互断言（可选依赖 Playwright） ────────────────────────────────────
@@ -549,7 +561,9 @@ async function browserChecks() {
       await page.goto(url("theme=light&scene=warning&panel=0"));
       const attachment = await page.locator('[data-naming-effective="attachment"]').innerText();
       assert(attachment.includes("kimi"), `dangling override should fall back to active kimi, got ${attachment}`);
-      assert(/悬空/.test(attachment), `dangling state must be visible, got ${attachment}`);
+      assert(/覆盖项悬空，已回落当前 provider/.test(attachment), `dangling provenance must be visible, got ${attachment}`);
+      assert(/未声明 vision/.test(attachment) && /不会改名/.test(attachment), `non-vision consequence must be visible, got ${attachment}`);
+      assert(/下一次粘贴生效/.test(attachment), `pasted-timing must be in the same line, got ${attachment}`);
       const providerValue = await page.locator('[data-naming-provider="attachment"]').inputValue();
       assert(providerValue === "deleted-one", `dangling raw id must stay visible in the select, got ${providerValue}`);
       const session = await page.locator('[data-naming-effective="session"]').innerText();
@@ -658,6 +672,8 @@ async function browserChecks() {
       assert(labels.some((item) => /未声明 vision/.test(item)), `a non-vision option must be marked, got ${labels.join(" | ")}`);
       const attachment = await page.locator('[data-naming-effective="attachment"]').innerText();
       assert(/未声明 vision/.test(attachment) && /不会改名/.test(attachment), `non-vision target must state the skip, got ${attachment}`);
+      assert(/指定目标/.test(attachment), `non-vision line must still state the provenance, got ${attachment}`);
+      assert(/下一次粘贴生效/.test(attachment), `non-vision line must state the timing, got ${attachment}`);
       const session = await page.locator('[data-naming-effective="session"]').innerText();
       assert(/deepseek/.test(session) && /ds-chat/.test(session) && /指定目标/.test(session), `session override must be visible inline, got ${session}`);
       const perRow = await page.locator("[data-automation-switches] [data-auto-row]").evaluateAll((els) =>
@@ -679,9 +695,22 @@ async function browserChecks() {
       );
     });
 
+    await checkAsync("B14 会话命名的失效覆盖模型回落生效模型（不说会跳过）", async () => {
+      await page.goto(url("theme=light&scene=naming-fallback&panel=0"));
+      const session = await page.locator('[data-naming-effective="session"]').innerText();
+      assert(/deepseek \/ ds-chat/.test(session), `session naming must fall back to the effective model, got ${session}`);
+      assert(/覆盖模型 k3-256k 不在清单，已回落生效模型/.test(session), `fallback must be named in the line, got ${session}`);
+      assert(/指定目标/.test(session) && /下一次评估触发点生效/.test(session), `provenance and timing must be present, got ${session}`);
+      assert(!/会跳过|（无模型）/.test(session), `session naming must not be described as skipped or model-less, got ${session}`);
+      const rawOption = await page.locator('[data-naming-model="session"] option[value="k3-256k"]').innerText();
+      assert(/已回落生效模型/.test(rawOption), `session raw option must describe the fallback, got ${rawOption}`);
+      assert(!/会跳过/.test(rawOption), `session raw option must not describe a skip, got ${rawOption}`);
+      assert((await page.locator('[data-naming-model="session"] option[value=""]').innerText()).includes("ds-chat"), "default model option must show the target provider's effective model");
+    });
+
     await checkAsync("B10 控制面板全部选项点击可达", async () => {
       await page.goto(url("theme=light&scene=configured"));
-      for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
+      for (const scene of ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "naming-fallback", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"]) {
         await page.click(`[data-go="scene:${scene}"]`);
         const active = await page.evaluate(() => document.body.dataset.scene);
         assert(active === scene, `scene button ${scene} did not activate (got ${active})`);
@@ -708,7 +737,7 @@ async function browserChecks() {
     });
 
     await checkAsync("B11 全部场景 × 三主题无 JS 错误、无横向溢出", async () => {
-      const scenes = ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
+      const scenes = ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "naming-fallback", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
       for (const theme of ["light", "dark", "eink"]) {
         for (const scene of scenes) {
           await page.goto(url(`theme=${theme}&scene=${scene}&panel=0`));

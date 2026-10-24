@@ -440,7 +440,7 @@ kbd {
 .auto-target { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3); margin-top: 6px; }
 .auto-target-label { font-size: var(--fs-label); color: var(--text-3); }
 .naming-select {
-  height: 28px; max-width: 190px; padding: 0 6px;
+  height: 28px; max-width: 240px; padding: 0 6px;
   border: 1px solid var(--border); border-radius: var(--r5);
   background: var(--preview-bg); color: var(--text); font-size: var(--fs-label-s);
 }
@@ -659,6 +659,7 @@ kbd {
     <button type="button" class="cp-btn" data-go="scene:unconfigured">未配置</button>
     <button type="button" class="cp-btn" data-go="scene:naming-off">命名关闭</button>
     <button type="button" class="cp-btn" data-go="scene:naming-vision">图片无 vision</button>
+    <button type="button" class="cp-btn" data-go="scene:naming-fallback">会话模型回落</button>
     <button type="button" class="cp-btn" data-go="scene:validation">校验错误</button>
     <button type="button" class="cp-btn" data-go="scene:warning">配置警告</button>
     <button type="button" class="cp-btn" data-go="scene:saving">保存中</button>
@@ -686,10 +687,11 @@ kbd {
 
 /* ── 常量与合成数据 ─────────────────────────────────────────────── */
 const THEMES = ["light", "dark", "eink"];
-const SCENE_IDS = ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
+const SCENE_IDS = ["configured", "empty", "add", "delete", "unconfigured", "naming-off", "naming-vision", "naming-fallback", "validation", "warning", "saving", "saved", "conflict", "file-invalid", "closed"];
 const SCENE_LABELS = {
   configured: "已配置", empty: "空清单", add: "添加（重复 id）", delete: "删除保护",
   unconfigured: "未配置", "naming-off": "命名关闭", "naming-vision": "图片无 vision",
+  "naming-fallback": "会话模型回落",
   validation: "校验错误", warning: "配置警告", saving: "保存中",
   saved: "已保存", conflict: "外部冲突", "file-invalid": "文件损坏", closed: "已关闭",
 };
@@ -822,6 +824,14 @@ function sceneSnapshot(scene) {
     return Object.assign(base, {
       providers: configured(), automation: deepClone(defaults),
       naming: { session: naming("deepseek", "ds-chat"), attachment: naming("kimi", "k3-128k") },
+      dirty: true,
+    });
+  }
+  if (scene === "naming-fallback") {
+    // 会话命名的覆盖模型只属于 kimi：目标 provider 是 deepseek，必须回落 ds-chat（不是空模型）。
+    return Object.assign(base, {
+      providers: configured(), automation: deepClone(defaults),
+      naming: { session: naming("deepseek", "k3-256k"), attachment: naming(null, null) },
       dirty: true,
     });
   }
@@ -970,21 +980,31 @@ function resolveNaming(kind) {
   const providerId = override.provider && state.providers[override.provider] ? override.provider : state.active;
   const p = providerId ? state.providers[providerId] || null : null;
   const follows = !override.provider || dangling;
-  if (!p) return { provider: null, model: "", follows, dangling, eligible: false, badReason: "没有可用的 provider" };
+  if (!p) {
+    return { provider: null, model: "", follows, dangling, eligible: false, modelFallback: false, requestedModel: "", badReason: "没有可用的 provider" };
+  }
   const requested = override.model ? String(override.model).trim() : "";
   const spec = requested ? modelSpec(p, requested) : null;
-  const modelId = requested ? (spec ? requested : "") : effectiveModel(p);
-  if (kind === "attachment") {
-    const targetSpec = modelId ? modelSpec(p, modelId) : null;
-    const eligible = Boolean(targetSpec && targetSpec.vision === true);
+  const effective = effectiveModel(p);
+  if (kind === "session") {
+    // 会话命名：覆盖模型不在目标清单时回落该 provider 的生效模型（与 config.rs 的
+    // title_target_of 同口径），MUST NOT 变成「无模型 / 会跳过」。
+    const fallback = Boolean(requested && !spec);
+    const modelId = requested ? (spec ? requested : effective) : effective;
     return {
-      provider: providerId, model: modelId, follows, dangling, eligible,
-      badReason: eligible ? "" : (requested && !spec ? `模型 ${requested} 不在清单内` : "生效模型未声明 vision"),
+      provider: providerId, model: modelId, follows, dangling,
+      eligible: Boolean(modelId), modelFallback: fallback, requestedModel: requested,
+      badReason: modelId ? "" : "目标 provider 没有可用模型",
     };
   }
+  // 图片命名：覆盖值原样保留；资格不通过时跳过、保留暂存名、不换模型。
+  const modelId = requested || effective;
+  const targetSpec = modelId ? modelSpec(p, modelId) : null;
+  const eligible = Boolean(targetSpec && targetSpec.vision === true);
   return {
-    provider: providerId, model: modelId, follows, dangling, eligible: Boolean(modelId),
-    badReason: modelId ? "" : "目标 provider 没有可用模型",
+    provider: providerId, model: modelId, follows, dangling, eligible,
+    modelFallback: false, requestedModel: requested,
+    badReason: eligible ? "" : (requested && !spec ? `模型 ${requested} 不在清单内` : "生效模型未声明 vision"),
   };
 }
 function normalizeUrl(value) { return String(value || "").trim().replace(/\/+$/, ""); }
@@ -1412,9 +1432,13 @@ function namingTargetHtml(kind) {
   const ids = visibleProviderIds().filter((id) => !state.providers[id].ignored);
   const disabled = locked() || !isOn || ids.length === 0;
   const models = namingModels(kind);
+  const targetProvider = res.provider ? state.providers[res.provider] : null;
+  const defaultModel = targetProvider ? effectiveModel(targetProvider) : "";
   const declaredIds = models.map((m) => String(m.id).trim());
   const rawProvider = override.provider && !state.providers[override.provider] ? override.provider : null;
   const rawModel = override.model && !declaredIds.includes(override.model) ? override.model : null;
+  // 失效覆盖模型的后果按 kind 分流：会话命名回落生效模型，图片命名原样保留、资格不通过即跳过。
+  const rawModelNote = kind === "attachment" ? "不在清单，会跳过" : "不在清单，已回落生效模型";
 
   const providerOptions = [
     `<option value=""${override.provider ? "" : " selected"}>跟随当前 provider（默认）</option>`,
@@ -1422,13 +1446,13 @@ function namingTargetHtml(kind) {
     rawProvider ? `<option value="${esc(rawProvider)}" selected>${esc(rawProvider)} · 不存在，已回落</option>` : "",
   ].join("");
   const modelOptions = [
-    `<option value=""${override.model ? "" : " selected"}>生效模型（默认${res.model ? `：${esc(res.model)}` : ""}）</option>`,
+    `<option value=""${override.model ? "" : " selected"}>生效模型（默认${defaultModel ? `：${esc(defaultModel)}` : ""}）</option>`,
     ...models.map((m) => {
       const id = String(m.id).trim();
       const visionTag = kind === "attachment" ? (m.vision === true ? " ✓ vision" : " · 未声明 vision") : "";
       return `<option value="${esc(id)}"${override.model === id ? " selected" : ""}>${esc(id)}${visionTag}</option>`;
     }),
-    rawModel ? `<option value="${esc(rawModel)}" selected>${esc(rawModel)} · 不在清单，会跳过</option>` : "",
+    rawModel ? `<option value="${esc(rawModel)}" selected>${esc(rawModel)} · ${rawModelNote}</option>` : "",
   ].join("");
 
   const controls = `<div class="auto-target">
@@ -1438,6 +1462,8 @@ function namingTargetHtml(kind) {
     </div>`;
 
   const targetText = res.provider ? `${res.provider} / ${res.model || "（无模型）"}` : "无可用 provider";
+  // 每行只有一条说明，且必须同时含目标来源（跟随 / 指定 / 悬空回落）与生效时机。
+  const provenance = res.dangling ? "覆盖项悬空，已回落当前 provider" : res.follows ? "跟随当前 provider" : "指定目标";
   let text;
   let bad = !res.eligible;
   if (!isOn) {
@@ -1447,10 +1473,12 @@ function namingTargetHtml(kind) {
     text = kind === "attachment" ? "实际：无可用 provider · 粘贴图片不会改名" : "实际：无可用 provider · 不会生成标题";
   } else if (kind === "attachment") {
     text = res.eligible
-      ? `实际：${targetText} ✓ vision · ${res.follows ? "跟随当前 provider" : "指定目标"} · ${conf.timing}`
-      : `实际：${targetText} · ${res.dangling ? "覆盖项悬空，已回落当前 provider · " : ""}未声明 vision → 粘贴图片不会改名，保留暂存名`;
+      ? `实际：${targetText} ✓ vision · ${provenance} · ${conf.timing}`
+      : `实际：${targetText} · ${provenance} · 未声明 vision → 粘贴图片不会改名，保留暂存名 · ${conf.timing}`;
+  } else if (!res.model) {
+    text = `实际：${targetText} · ${provenance} · 不会生成标题 · ${conf.timing}`;
   } else {
-    text = `实际：${targetText} · ${res.dangling ? "覆盖项悬空，已回落当前 provider" : res.follows ? "跟随当前 provider" : "指定目标"} · ${conf.timing}`;
+    text = `实际：${targetText} · ${provenance}${res.modelFallback ? ` · 覆盖模型 ${res.requestedModel} 不在清单，已回落生效模型` : ""} · ${conf.timing}`;
   }
   return { controls, effective: { text, bad } };
 }
