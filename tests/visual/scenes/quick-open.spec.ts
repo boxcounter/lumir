@@ -274,6 +274,10 @@ test("粘贴 path:行 一次落行；越界钳制到末行；Esc 收起后阅读
   await page.keyboard.type("long.md:120");
   // 候选按**剥掉合法后缀**后的路径筛（`:120` 不参与匹配）
   await expect(page.locator(".lumir-qo-item")).toHaveText(["long.md"]);
+  // 直接行由探测补帧给出（同步层先探整串）；没动过游标时它必须成为默认游标位
+  await expect(page.locator(".lumir-qo-direct-path")).toHaveText("按 Enter 打开 long.md");
+  await expect(page.locator(".lumir-qo-direct-line")).toHaveText("第 120 行");
+  await expect(page.locator(".lumir-qo-direct")).toHaveClass(/is-active/);
   await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
   await expect.poll(() => editorFacts(page).then((facts) => facts.line)).toBe(120);
@@ -581,6 +585,9 @@ test("真负例：没有匹配的条目在场、没有直接行；Enter 后仍�
   await expect(page.locator(".lumir-qo")).toBeVisible();
   await expect(page.locator(".lumir-qo-hint")).toHaveText("找不到：notes/nope.md");
   await expect(page.locator(".tab-open")).toHaveCount(0);
+  // Enter 的判决是终态：补帧（同一输入的探测缓存）MUST NOT 把提示覆盖回用法行
+  await page.waitForTimeout(300);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("找不到：notes/nope.md");
 });
 
 test("候选上限：直接行不占候选名额，候选只渲染 100 条并显示总数，游标不越第 100 条", async ({ page }) => {

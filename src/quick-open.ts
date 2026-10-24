@@ -494,6 +494,11 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
   let probeTimer: ReturnType<typeof setTimeout> | undefined;
   /** 存在探测在途：空态先不落（I4：异步不抢先落终态）。 */
   let probing = false;
+  /**
+   * 当前输入已经**走完探测**的完整判决（`confirm` 或补帧产出）。同一输入的后续重画直接复用它：
+   * 既不重复 probe，也不会让补帧把 Enter 已经给出的提示（「找不到」）覆盖回用法行。
+   */
+  let settled: { raw: string; resolution: QuickOpenResolution } | null = null;
 
   /** 解析所需的三个只读口（与 confirm 共用同一份 env 形状）。 */
   const lookupEnv = (): VaultLookupEnv => ({
@@ -524,6 +529,7 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     // 作废在途探测（关闭之后到达的结果不得再画到任何输入上）。
     clearProbe();
     ++renderSeq;
+    settled = null;
     list.replaceChildren();
     rows = [];
     items = [];
@@ -580,10 +586,13 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       input.removeAttribute("aria-activedescendant");
       return;
     }
-    const res = resolveQuickOpenSync(raw, options.root(), lookupEnv());
+    const res =
+      settled !== null && settled.raw === raw
+        ? settled.resolution
+        : resolveQuickOpenSync(raw, options.root(), lookupEnv());
     const files = options.files();
     const hits = res.plan.kind === "ok" ? filterIndices(files, res.plan.query) : [];
-    const probe = shouldProbe(res, hits);
+    const probe = (settled === null || settled.raw !== raw) && shouldProbe(res, hits);
     probing = probe;
     apply(res, files, hits, { preserveCursor: false });
     if (probe) scheduleProbe(raw, seq);
@@ -606,7 +615,9 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     hits: readonly number[],
     opts: { preserveCursor: boolean },
   ): void {
-    const activeKey = opts.preserveCursor ? rowKey(rows[activeIndex]) : undefined;
+    // 异步补帧：用户**主动移动过**游标时按行身份保留位置（直接行插到最前时下标会平移）；
+    // 没动过时直接行一出现就要成为默认位（spec「游标默认停在直接打开行」）。
+    const activeKey = opts.preserveCursor && userMoved ? rowKey(rows[activeIndex]) : undefined;
     rows = [];
     if (res.verdict.kind === "open") {
       rows.push({
@@ -708,6 +719,7 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
         // 迟到结果：输入已改 / 结果区已重画 ⇒ 整份丢弃（MUST NOT 覆盖新输入）。
         if (seq !== renderSeq || input.value.trim() !== raw) return;
         probing = false;
+        settled = { raw, resolution: res };
         const files = options.files();
         const hits = res.plan.kind === "ok" ? filterIndices(files, res.plan.query) : [];
         apply(res, files, hits, { preserveCursor: true });
@@ -848,6 +860,8 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
       return;
     }
     if (seq !== request) return; // 过期结果：用户已经改了输入
+    // 这次判决已经走完探测，同一输入的后续重画复用它（不再 probe、不再覆盖提示）。
+    settled = { raw, resolution: res };
     const verdict = res.verdict;
     const activeRow = rows[activeIndex];
     switch (verdict.kind) {
