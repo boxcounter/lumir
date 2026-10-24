@@ -135,7 +135,7 @@ steps:
 
   - name: 第二条提问（验证规则确实删掉了）
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|rules" }
+    target: { role: AXTextArea, name: "问点什么|again" }
     text: "again"
   - name: 发送
     do: key
