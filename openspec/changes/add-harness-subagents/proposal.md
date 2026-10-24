@@ -74,6 +74,12 @@
 > ——节点 1（提案评审）正式通过，提案其余部分无异议；唯一改值：链式失控闸的连续自动回合上限
 > `AUTO_WAKE_CHAIN_MAX` 由 3 改为 **5**（设计取舍 19、design §12.6.3；spec、design 与 tasks 中
 > 「链内放行回合数 / 触顶轮次」的表述同步改为「五回合放行、第 6 次触顶」）。
+>
+> **节点 2（归档评审）：通过**（2026-10-24，Alex 原话：「批准。」）。评审包
+> `.local/reviews/archive-node2-wave1/README.md`（七项批次逐项批准；本 change 为包内第 6 项——mock
+> 五场景 79 断言，真实 provider 已验证发送 / `vault_read` / 读数且证据已脱敏；批准 / 停止 / 压缩分别
+> 由 mock 与 Rust 测试承担）。归档时为新建 capability `harness-subagents` 手写 Purpose。本 change 由
+> M713 归档。
 
 ## 参照系：与 Claude Code subagents 的逐项对照
 

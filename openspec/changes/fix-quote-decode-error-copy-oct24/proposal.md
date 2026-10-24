@@ -13,7 +13,9 @@
 > 实现期补记（2026-10-24）：**Impact 原清单漏列 `src/copy.ts`**——design §D4 的两条单点兜底形态
 > （`errorText` 的可选覆盖表 / 抽内部函数共用）都落在 `errorText` 所属文件，实现采用前者，已补进
 > 下面的 Impact 清单（tower 已同步扩 scope）。
-> 节点 2（归档评审）：实现完成后填写。
+> 节点 2（归档评审）：**通过**（2026-10-24，Alex 原话：「批准。」）。评审包
+> `.local/reviews/archive-node2-wave1/README.md`（七项批次逐项批准；本 change 为包内第 1 项，无特殊
+> 后续动作）。本 change 由 M713 归档。
 
 ## Why
 

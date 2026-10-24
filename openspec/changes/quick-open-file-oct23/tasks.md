@@ -193,6 +193,11 @@
 - [x] 9.11 反向必红记录：把直接行删掉 / 放开 D117 分支 / 恢复 `ambiguous` 提前 return /
       恢复 `dir` 提前 return / 关掉探测 / 去掉渲染序号各实测一次，确认对应断言变红后还原。
 
+## 10. 归档（节点 2 通过后，M713 执行）
+
+- [ ] 10.1 归档时为新建 capability `quick-open` 手写 living spec 的 Purpose（`archive` 只写占位
+      `TBD - created by archiving change …`），写完复跑 `validate --all --strict` 确认全绿
+
 > M700 验证读数（2026-10-24）：`GATE RESULT: 13/13 PASS（SKIP 0）`（`bash scripts/gate.sh visual`，
 > exit 0；含 quick 的 11 门 + isolation-runs + visual-regression 551s，单测 1338 pass，**零基线更新**）；
 > 独立 `bash scripts/gate.sh quick` 另跑一次 `GATE RESULT: 11/11 PASS（SKIP 0）`（exit 0）；

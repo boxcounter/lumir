@@ -37,9 +37,11 @@
 > 含义：提案与 design 冻结，实现批按 tasks.md 照章落地（参数、边界、失败路径已钉死，
 > 不再重新设计；design 未覆盖的决策点走 tower 上报）。
 >
-> **节点 2（归档评审）：待 Alex 评审**（2026-10-24 登记材料）：`tasks.md` 32/32 全勾（7.5 按零
-> `titles` 视觉 fixture 标注不适用；7.6 凭五场景真机 PASS；7.7 的 delta 对账已完成）；归档跟踪条目
-> 在 `docs/backlog.md` 的归档跟踪队列。
+> **节点 2（归档评审）：通过**（2026-10-24，Alex 原话：「批准。」）。评审包
+> `.local/reviews/archive-node2-wave1/README.md`（七项批次逐项批准；本 change 为包内第 3 项，含
+> 「归档后复核 living spec 中 `wire_api` 与 `session_title` 同时存在」的复核要求）。登记材料：
+> `tasks.md` 32/32 全勾（7.5 按零 `titles` 视觉 fixture 标注不适用；7.6 凭五场景真机 PASS；7.7 的
+> delta 对账已完成）。本 change 由 M713 归档。
 
 ## Why
 

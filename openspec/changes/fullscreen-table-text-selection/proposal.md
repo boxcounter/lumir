@@ -10,9 +10,11 @@
 > 都修、D2 ⌘A 遮罩就地消费（Esc 同一先例）、D3 菜单全选同口径、D4 复制=原生纯文本。」D5（与 M634
 > 的关系：实现覆盖、条款分两次）在这句原话里未被逐字点名，按「按倾向」+ `design.md §8` 的既定形态
 > 执行，不补造未记录的裁决原话；兑现记录见 `tasks.md` §0.2 与 §3 / §5。
-> 节点 2（归档评审）：**待 Alex 评审**（2026-10-24 登记材料）：`tasks.md` 除 5.2 就地标注延后外全勾、
-> delta 一条 ADDED requirement、`gate quick` / `gate visual` 读数在 `tasks.md` 文末实施记录；归档跟踪
-> 条目在 `docs/backlog.md` 的归档跟踪队列。
+> 节点 2（归档评审）：**通过**（2026-10-24，Alex 原话：「批准。」）。评审包
+> `.local/reviews/archive-node2-wave1/README.md`（七项批次逐项批准；本 change 为包内第 5 项——harness
+> 同族条款的后续补充已裁延后、本批不另立 change，与本 change 的 5.2 一致）。登记材料：`tasks.md`
+> 除 5.2 就地标注延后外全勾、delta 一条 ADDED requirement、`gate quick` / `gate visual` 读数在
+> `tasks.md` 文末实施记录。本 change 由 M713 归档。
 
 ## Why
 

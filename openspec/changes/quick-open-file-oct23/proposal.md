@@ -10,10 +10,13 @@
 > 追加裁决（原话）：「我希望能在 TAB 上区分——modeline 平常我很少看，而且它的字是灰色、不容易
 > 看清楚。」→ vault 外只读文件的呈现口径：① 标签页标题带可见的只读区分标记（tooltip 显示完整
 > 绝对路径）；② modeline 显示完整绝对路径作辅助；③ 尝试编辑不生效并给一次性提示。
-> 节点 2（归档评审）：**待 Alex 评审**（2026-10-24 登记材料）：`tasks.md` 53/53 全勾（3.4 / 7.2 凭场景
-> 230 的 60 断言真机 PASS 勾选；7.2 的「vault 外 绝对路径:行」一组只在 chromium / 单测层，边界写在
-> 条内）；delta 五份 spec（12 条 requirement）过 `validate --strict` 与 `openspec-archive-check`；
-> 归档跟踪条目在 `docs/backlog.md` 的归档跟踪队列。
+> 节点 2（归档评审）：**通过**（2026-10-24，Alex 原话：「批准。」）。评审包
+> `.local/reviews/archive-node2-wave1/README.md`（七项批次逐项批准；本 change 为包内第 2 项——一并
+> 接受「vault 外 `绝对路径:行` 的落行只有 chromium 与单测证据、无真机证据」这条覆盖边界，并批准
+> 归档时为新建 capability `quick-open` 手写 Purpose）。登记材料：`tasks.md` 53/53 全勾（3.4 / 7.2 凭
+> 场景 230 的 60 断言真机 PASS 勾选；7.2 的「vault 外 绝对路径:行」一组只在 chromium / 单测层，边界
+> 写在条内）；delta 五份 spec（12 条 requirement）过 `validate --strict` 与
+> `openspec-archive-check`；归档跟踪条目在 `docs/backlog.md` 的归档跟踪队列。本 change 由 M713 归档。
 
 ## Why
 

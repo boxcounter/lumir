@@ -539,3 +539,8 @@
   （M590：`autoWakeAlertText` 是两种文案的唯一产出点；「继续」= `harness_subagent_continue`
   命令 → `SubagentHub::continue_wake`。提示行独立于 `taskList`、不参与计数。
   验收：场景 203（chain_limit + 继续）/ 204（stopped）。）
+
+## 11. 归档（节点 2 通过后，M713 执行）
+
+- [ ] 11.1 归档时为新建 capability `harness-subagents` 手写 living spec 的 Purpose（`archive` 只写
+      占位 `TBD - created by archiving change …`），写完复跑 `validate --all --strict` 确认全绿
