@@ -5,9 +5,10 @@
 （唤起 / 收起、流式 Markdown 呈现、上下文用量常驻显示）；唤起时的编辑器上下文注入（当前路径 +
 视口行范围，发送前可核对）；AGENTS.md 三层（user-wide `~/.agents/AGENTS.md` + vault 根 +
 vault 根 `AGENTS.local.md` 本地覆盖层）与 Skill
-双根（user-wide + vault-wide）的自动装配；Rust core 的工具循环与固定工具集（`vault_read` /
-`vault_search` / `vault_patch` / `vault_create` / `vault_move` / `vault_delete` / `skill_load` /
-`cli_run`，共 8 件）；三层权限规则（allow / ask / deny）之上的**三档权限模式**（`read_only` /
+双根（user-wide + vault-wide）的自动装配；Rust core 的工具循环与固定工具集（8 件 vault 操作工具：
+`vault_read` / `vault_search` / `vault_patch` / `vault_create` / `vault_move` / `vault_delete` /
+`skill_load` / `cli_run`，另加 1 件编排工具 `task`）；
+三层权限规则（allow / ask / deny）之上的**三档权限模式**（`read_only` /
 `vault_write` / `full_access`）与五层判定管线（deny 规则 > vault 内写重定向 > 危险黑名单 > allow
 规则 > 模式默认分层），以及写类 / CLI 的批准闸（含 cli_run 用途句与会话内「采纳且本会话不再问」
 缓存）；上下文触顶的自动压缩（可见压缩标记 + wire 完整留存）；`[harness]` 配置节；会话边界
@@ -18,7 +19,9 @@ parts 交错的形态进上下文，逐模型 `vision` 能力声明把关）；�
 入（2026-10-03，实现 M301–M306）；change `add-harness-permission-modes` 与
 `reshape-harness-session-recording` 归档并入（2026-10-10）叠加上述权限模式、vault 移动 / 删除工具与
 wire 留存 / 最小恢复口径；change `harness-composer-image-paste` 与 `harness-sessions-per-vault`
-归档并入（2026-10-11）叠加 composer 图片粘贴 / 投递协议与按 vault 分目录的会话留存。
+归档并入（2026-10-11）叠加 composer 图片粘贴 / 投递协议与按 vault 分目录的会话留存；change
+`add-harness-subagents` 归档并入（2026-10-24）叠加 `task` 编排工具与子代理委托能力（见
+`harness-subagents` capability）。
 
 ## Requirements
 
