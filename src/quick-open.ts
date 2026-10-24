@@ -2,10 +2,17 @@
 //
 // 分层与本仓既有同族模块一致（`src/goto-line.ts` / `src/toc.ts`）：
 //   - **纯函数层**（零 DOM / 零 IPC）：输入解析 [`quickOpenAttempts`]、行号后缀
-//     [`splitLineSuffix`]、vault 内存在性裁决 [`lookupVaultPath`]——`tests/unit/quick-open.test.ts`
-//     直接驱动 design §2.4 的解析表；
+//     [`splitLineSuffix`]、vault 内存在性裁决 [`classifyVaultPath`] / [`lookupVaultPath`]，
+//     以及**结果区与 Enter 共用的**判决 [`resolveQuickOpenSync`] / [`resolveQuickOpen`]
+//     ——`tests/unit/quick-open.test.ts` 直接驱动 design §2.4 的解析表；
 //   - **DOM 适配层**：[`createQuickOpen`] 的浮层、就地键与异步打开编排；打开动作、存在探测与
 //     提示出口全部由装配层经 deps 注入（本模块不持第二份打开链路）。
+//
+// **判决同源（M700）**：结果区画什么（直接打开行 / 候选 / 空态）与 Enter 打开哪个目标，
+// 都消费 [`resolveQuickOpen`] 的同一份判决。结果区 MUST NOT 另写一套「有没有这个文件」的判据
+// （REVIEW.md「同一语义两处真源」条）：此前 render 只用「索引 + 子串」判空，confirm 却用
+// 「索引 → 折叠 → 目录 → 探测」，于是 vault 外绝对路径与索引外的惰性文件同时出现
+// 「没有匹配的条目」与 Enter 能打开。
 //
 // 形态复用 `.lumir-toc` 的**几何**（design §8：挂 `shell.modeline`、`bottom: 100%` 向上展开、
 // 列表是唯一滚动容器、下划线输入框；MUST NOT 新增色值 / 字号 / 圆角 token）——`src/style.css`
@@ -158,6 +165,13 @@ export function quickOpenAttempts(raw: string, root: string | undefined): QuickO
 // 纯函数：vault 内存在性裁决（索引 → 折叠等值 → 批量存在探测）
 // ---------------------------------------------------------------------------
 
+/** 一条路径在 vault 内的**同步**裁决结果（`unknown` = 索引与目录都说不了，只能异步探测）。 */
+export type VaultPathSync =
+  | { kind: "hit"; path: string }
+  | { kind: "ambiguous"; paths: readonly string[] }
+  | { kind: "dir" }
+  | { kind: "unknown" };
+
 /** 一条路径在 vault 内的裁决结果。 */
 export type VaultPathLookup =
   | { kind: "hit"; path: string }
@@ -176,18 +190,20 @@ export interface VaultLookupEnv {
 }
 
 /**
- * 路径存在性裁决（design §2.3 的第 6 条）：
- *   逐字精确命中 → 打开它；无精确命中时按**大小写折叠等值**回退（唯一命中才打开，多命中
- *   **不猜**、转列候选）；仍不中且是目录 → 目录提示；最后经批量存在探测兜底（惰性目录里的
- *   文件因此可按精确路径打开）。
+ * 路径存在性裁决的**同步段**（design §2.3 的第 6 条）：
+ *   逐字精确命中 → 命中它；无精确命中时按**大小写折叠等值**回退（唯一命中才命中，多命中
+ *   **不猜**、转候选）；仍不中且是目录 → 目录；其余交给异步探测（`unknown`）。
  *
  * 目录判定排在探测**之前**：`fs_paths_exist` 对目录同样报「存在」（它只 canonicalize），
  * 排在后面会让目录被当成文件去打开。
+ *
+ * `lookupVaultPath` 与 result-area resolver 共用这一份——MUST NOT 在别处再判一次
+ * 「这个路径在不在 vault 里」。
  */
-export async function lookupVaultPath(
+export function classifyVaultPath(
   path: string,
-  env: VaultLookupEnv,
-): Promise<VaultPathLookup> {
+  env: Pick<VaultLookupEnv, "files" | "isDir">,
+): VaultPathSync {
   const files = env.files();
   if (files.includes(path)) return { kind: "hit", path };
   const folded = foldCase(path);
@@ -195,6 +211,16 @@ export async function lookupVaultPath(
   if (equals.length === 1) return { kind: "hit", path: equals[0] as string };
   if (equals.length > 1) return { kind: "ambiguous", paths: equals };
   if (env.isDir(path)) return { kind: "dir" };
+  return { kind: "unknown" };
+}
+
+/** 完整裁决（同步段 + 批量存在探测兜底）：惰性目录里的文件因此可按精确路径打开。 */
+export async function lookupVaultPath(
+  path: string,
+  env: VaultLookupEnv,
+): Promise<VaultPathLookup> {
+  const sync = classifyVaultPath(path, env);
+  if (sync.kind !== "unknown") return sync;
   // 探测失败（后端不可用 / 未注册该命令 / IPC 级错误）按「不存在」处置：存在性兜底本来就是
   // 一条**尽力而为**的补集（索引才是主判据），让它把整个解析掀翻会让浮层卡在打开态。
   let existing: readonly string[] = [];
@@ -204,6 +230,113 @@ export async function lookupVaultPath(
     existing = [];
   }
   return existing.includes(path) ? { kind: "hit", path } : { kind: "missing" };
+}
+
+// ---------------------------------------------------------------------------
+// 纯函数：输入 → 判决（结果区与 Enter 的**同一份**解析）
+// ---------------------------------------------------------------------------
+
+/** 结果区与 Enter 共用的判决。 */
+export type QuickOpenVerdict =
+  | { kind: "empty" }
+  /** 输入非法（反斜杠 / `..` / vault 根本身）：没有任何候选级。 */
+  | { kind: "invalid" }
+  /** 可直接打开：vault 内解析到的文件，或 vault 外路径的**尝试入口**（读取前判不了存在性）。 */
+  | { kind: "open"; path: string; line?: number; external: boolean }
+  /** 折叠等值多命中：不猜，转候选（两段式的第一段）。 */
+  | { kind: "ambiguous"; path: string; paths: readonly string[] }
+  /** 解析到目录：不打开目录本身（两段式的第一段）。 */
+  | { kind: "dir"; path: string }
+  /** 没有任何一级成立。 */
+  | { kind: "missing" }
+  /**
+   * 同步层判不了（索引不含、不是目录）：需要异步存在探测。
+   * `attempt` 是**当前这一级**（探测不成立才轮到后一级）。
+   */
+  | { kind: "undecided"; attempt: QuickOpenAttempt };
+
+export interface QuickOpenResolution {
+  plan: QuickOpenPlan;
+  verdict: QuickOpenVerdict;
+}
+
+const NO_MISSING: ReadonlySet<string> = new Set();
+
+/** 构造 `open` 判决（`line` 缺省时不带这个键——判决对象是逐项比对的测试面）。 */
+function openVerdict(path: string, line: number | undefined, external: boolean): QuickOpenVerdict {
+  return line === undefined
+    ? { kind: "open", path, external }
+    : { kind: "open", path, line, external };
+}
+
+/**
+ * 判决的**同步段**：按 [`quickOpenAttempts`] 的阶梯逐级判，遇到同步判不了的一级就停下
+ * 返回 `undecided`（MUST NOT 越过它去用后一级——「整串优先」是 spec 的合同）。
+ *
+ * `knownMissing` 是 `resolveQuickOpen` 探测之后回填的「已证实不存在」集合，让同一份阶梯
+ * 在探测之后能**从下一级继续**，不必复制一份次序。
+ *
+ * vault 外路径没有同步判据（唯一能读绝对路径的后端命令是读取命令）：整条阶梯都是**尝试
+ * 入口**，判决取阶梯末级——带合法行号后缀时那就是「剥后缀 + 落点行」的一级（整串只是同一
+ * 个文件名的字面形态）。
+ */
+export function resolveQuickOpenSync(
+  raw: string,
+  root: string | undefined,
+  env: Pick<VaultLookupEnv, "files" | "isDir">,
+  knownMissing: ReadonlySet<string> = NO_MISSING,
+): QuickOpenResolution {
+  const plan = quickOpenAttempts(raw, root);
+  if (plan.kind === "empty") return { plan, verdict: { kind: "empty" } };
+  if (plan.attempts.length === 0) return { plan, verdict: { kind: "invalid" } };
+  if (plan.attempts[0]!.external) {
+    const target = plan.attempts[plan.attempts.length - 1]!;
+    return { plan, verdict: openVerdict(target.path, target.line, true) };
+  }
+  for (const attempt of plan.attempts) {
+    const sync = classifyVaultPath(attempt.path, env);
+    if (sync.kind === "hit") {
+      return { plan, verdict: openVerdict(sync.path, attempt.line, false) };
+    }
+    if (sync.kind === "ambiguous") {
+      return { plan, verdict: { kind: "ambiguous", path: attempt.path, paths: sync.paths } };
+    }
+    if (sync.kind === "dir") return { plan, verdict: { kind: "dir", path: attempt.path } };
+    if (!knownMissing.has(attempt.path)) {
+      return { plan, verdict: { kind: "undecided", attempt } };
+    }
+  }
+  return { plan, verdict: { kind: "missing" } };
+}
+
+/**
+ * 完整判决（允许异步存在探测）：按 [`resolveQuickOpenSync`] 的**同一次序**走，遇到同步判不了
+ * 的一级就探测，探测不成立才进入下一级。`confirm()` 与结果区的探查补帧都用这一份。
+ */
+export async function resolveQuickOpen(
+  raw: string,
+  root: string | undefined,
+  env: VaultLookupEnv,
+): Promise<QuickOpenResolution> {
+  const knownMissing = new Set<string>();
+  for (;;) {
+    const resolution = resolveQuickOpenSync(raw, root, env, knownMissing);
+    if (resolution.verdict.kind !== "undecided") return resolution;
+    const attempt = resolution.verdict.attempt;
+    let existing: readonly string[] = [];
+    try {
+      existing = await env.probe([attempt.path]);
+    } catch {
+      existing = [];
+    }
+    if (existing.includes(attempt.path)) {
+      return {
+        plan: resolution.plan,
+        verdict: openVerdict(attempt.path, attempt.line, false),
+      };
+    }
+    knownMissing.add(attempt.path);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +361,14 @@ export const quickOpenTruncatedText = (count: number): string =>
   tPlural("D576", count, { count, limit: CANDIDATE_LIMIT });
 /** 打开失败而打开链路自己已上屏原因时的一行指路。 */
 export const QUICK_OPEN_FAILED = (): string => t("D581");
+/** 结果区的「直接打开」行（vault 内解析到的文件）。 */
+export const quickOpenDirectText = (path: string): string => t("D589", { path });
+/** 结果区的「直接打开」行（vault 外：读取前判不了存在性，这一行是**尝试入口**）。 */
+export const quickOpenDirectExternalText = (path: string): string => t("D590", { path });
+/** 直接打开行的落点行标记（带合法行号后缀时附在路径之后）。 */
+export const quickOpenDirectLineText = (line: number): string => t("D591", { line });
+/** 折叠等值多命中的两段式第一段：只揭示、不猜（第二次 Enter 才打开游标行）。 */
+export const QUICK_OPEN_AMBIGUOUS = (): string => t("D592");
 
 // ---------------------------------------------------------------------------
 // DOM 适配层：浮层 + 就地键 + 异步打开编排
@@ -276,6 +417,22 @@ export interface QuickOpenHandle {
 const LIST_ID = "lumir-qo-list";
 /** 条目 id 前缀（`aria-activedescendant` 用）。 */
 const ITEM_ID_PREFIX = "lumir-qo-opt-";
+/**
+ * 结果区补帧的探测去抖：输入停稳 120ms 后才发一次存在探测。探测只在「候选为空」或
+ * 「输入带合法行号后缀」时发起（见 `shouldProbe`），所以普通打字不会把每个字符变成一次 IPC。
+ */
+const PROBE_DEBOUNCE_MS = 120;
+
+/** 结果区的一行：直接打开行（至多一条，恒在最前）或候选。 */
+type QuickOpenRow =
+  | { kind: "direct"; path: string; line?: number; external: boolean }
+  | { kind: "candidate"; path: string };
+
+/** 行身份（异步补帧后按它把游标留在同一行上）。 */
+function rowKey(row: QuickOpenRow | undefined): string | undefined {
+  if (row === undefined) return undefined;
+  return row.kind === "direct" ? `direct:${row.path}:${row.line ?? ""}` : `candidate:${row.path}`;
+}
 
 export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
   const popover = document.createElement("div");
@@ -312,24 +469,55 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
   options.mount.append(popover);
 
   let opened = false;
-  /** 当前候选的源下标（升序，最多 `CANDIDATE_LIMIT` 条）。 */
-  let visible: readonly number[] = [];
-  /** 候选 DOM（下标空间 = `visible` 的下标）。 */
+  /** 结果区的行：第 0 行可能是「直接打开」行，其后是候选（共用一个键盘 / ARIA / 点击游标）。 */
+  let rows: QuickOpenRow[] = [];
+  /** 行 DOM（下标空间 = `rows`）。 */
   let items: HTMLElement[] = [];
-  /** 候选对应的完整相对路径（与 `items` 逐项对应；点击 / Enter 直接用这一份，不重读索引）。 */
-  let entryPaths: string[] = [];
   /** 键盘游标（`items` 的下标；-1 = 没有游标）。 */
   let activeIndex = -1;
+  /** 用户动过游标：没动过时 Enter 走**默认行**（有直接行即直接行，否则首条候选）。 */
+  let userMoved = false;
+  /** 两段式的「已揭示」输入值：折叠多命中 / 目录的第一次 Enter 只揭示、第二次才打开游标行。 */
+  let revealedFor: string | null = null;
   /** 输入法组合进行中：组合期不刷新（拼音串必然零命中，刷新只会闪一下）。 */
   let composing = false;
   /**
-   * 请求序号：Enter 连按 / 存在性探测在途时改输入，都靠它丢弃过期结果
+   * 打开请求序号：Enter 连按 / 打开在途时改输入，都靠它丢弃过期结果
    *（失败与过期都 MUST NOT 留空标签、MUST NOT 用迟到结果覆盖新输入）。
    */
   let request = 0;
+  /**
+   * 结果区刷新序号：异步存在探测的迟到结果靠它丢弃（I4：迟到结果 MUST NOT 覆盖新输入）。
+   * 与 `request` 分开——一个是「打开」，一个是「画结果区」，两者的在途窗口互不相关。
+   */
+  let renderSeq = 0;
+  let probeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** 存在探测在途：空态先不落（I4：异步不抢先落终态）。 */
+  let probing = false;
+  /**
+   * 当前输入已经**走完探测**的完整判决（`confirm` 或补帧产出）。同一输入的后续重画直接复用它：
+   * 既不重复 probe，也不会让补帧把 Enter 已经给出的提示（「找不到」）覆盖回用法行。
+   */
+  let settled: { raw: string; resolution: QuickOpenResolution } | null = null;
+
+  /** 解析所需的三个只读口（与 confirm 共用同一份 env 形状）。 */
+  const lookupEnv = (): VaultLookupEnv => ({
+    files: () => options.files(),
+    isDir: (path) => options.isDir(path),
+    probe: (paths) => options.probe(paths),
+  });
 
   function setHint(text: string): void {
     hint.textContent = text;
+  }
+
+  /** 取消在途的存在探测（改输入 / 收起 / 重开都走这一条）。 */
+  function clearProbe(): void {
+    if (probeTimer !== undefined) {
+      clearTimeout(probeTimer);
+      probeTimer = undefined;
+    }
+    probing = false;
   }
 
   /** 收起 DOM 与状态，**不碰焦点**（焦点去哪由调用方决定）。 */
@@ -338,11 +526,16 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     popover.hidden = true;
     input.value = "";
     input.removeAttribute("aria-activedescendant");
+    // 作废在途探测（关闭之后到达的结果不得再画到任何输入上）。
+    clearProbe();
+    ++renderSeq;
+    settled = null;
     list.replaceChildren();
+    rows = [];
     items = [];
-    entryPaths = [];
-    visible = [];
     activeIndex = -1;
+    userMoved = false;
+    revealedFor = null;
     setHint(QUICK_OPEN_USAGE());
     empty.hidden = true;
     list.hidden = false;
@@ -372,71 +565,181 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     item.scrollIntoView({ block: "nearest" });
   }
 
-  /** 按当前输入重建候选（空查询不列全量，只给用法提示；超上限截断并显示总数）。 */
+  /**
+   * 按当前输入重建结果区：同步判决 → 直接打开行 + 候选（空态只在两者都没有、且没有在途探测
+   * 时出现）。异步探测只做**补帧**：先画一版同步能判的，去抖后再补一版完整的。
+   */
   function render(): void {
-    list.replaceChildren();
-    items = [];
-    entryPaths = [];
-    activeIndex = -1;
+    const seq = ++renderSeq;
+    clearProbe();
     const raw = input.value.trim();
+    if (raw !== revealedFor) revealedFor = null;
     if (raw === "") {
-      visible = [];
+      rows = [];
+      items = [];
+      activeIndex = -1;
+      userMoved = false;
+      list.replaceChildren();
       list.hidden = true;
       empty.hidden = true;
       setHint(QUICK_OPEN_USAGE());
       input.removeAttribute("aria-activedescendant");
       return;
     }
-    const plan = quickOpenAttempts(raw, options.root());
-    const query = plan.kind === "ok" ? plan.query : raw;
+    const res =
+      settled !== null && settled.raw === raw
+        ? settled.resolution
+        : resolveQuickOpenSync(raw, options.root(), lookupEnv());
     const files = options.files();
-    const hits = plan.kind === "ok" ? filterIndices(files, query) : [];
-    visible = hits.slice(0, CANDIDATE_LIMIT);
-    list.hidden = visible.length === 0;
-    empty.hidden = visible.length !== 0;
-    // 列表区那一行只说「没有匹配」——与两处既有浮层共用同一句（D117，`list-filter` 的唯一来源）。
-    // 「找不到：{输入}」是**Enter 之后**的判决，不在这里出现：边打字边报「找不到」会报假话
-    //（用户可能正打到一半）。
+    const hits = res.plan.kind === "ok" ? filterIndices(files, res.plan.query) : [];
+    const probe = (settled === null || settled.raw !== raw) && shouldProbe(res, hits);
+    probing = probe;
+    apply(res, files, hits, { preserveCursor: false });
+    if (probe) scheduleProbe(raw, seq);
+  }
+
+  /** 是否要为这一版结果补一次存在探测（见 `PROBE_DEBOUNCE_MS` 的理由）。 */
+  function shouldProbe(res: QuickOpenResolution, hits: readonly number[]): boolean {
+    if (res.verdict.kind !== "undecided") return false;
+    // 候选为空：空态的判据只能等探测落地（I4：异步不抢先落终态）。
+    if (hits.length === 0) return true;
+    // 带合法行号后缀：`path:行` 是完整的粘贴形态，直接行要标明落点行。普通路径前缀不探，
+    // 否则每敲一个字符就是一次 IPC。
+    return res.plan.kind === "ok" && res.plan.attempts.length > 1;
+  }
+
+  /** 把一份判决画成结果区（直接行恒在最前；候选按索引序、至多 `CANDIDATE_LIMIT` 条）。 */
+  function apply(
+    res: QuickOpenResolution,
+    files: readonly string[],
+    hits: readonly number[],
+    opts: { preserveCursor: boolean },
+  ): void {
+    // 异步补帧：用户**主动移动过**游标时按行身份保留位置（直接行插到最前时下标会平移）；
+    // 没动过时直接行一出现就要成为默认位（spec「游标默认停在直接打开行」）。
+    const activeKey = opts.preserveCursor && userMoved ? rowKey(rows[activeIndex]) : undefined;
+    rows = [];
+    if (res.verdict.kind === "open") {
+      rows.push({
+        kind: "direct",
+        path: res.verdict.path,
+        line: res.verdict.line,
+        external: res.verdict.external,
+      });
+    }
+    for (const source of hits.slice(0, CANDIDATE_LIMIT)) {
+      rows.push({ kind: "candidate", path: files[source] as string });
+    }
+    fillRows();
+    list.hidden = rows.length === 0;
+    // 「没有匹配的条目」只表示**候选列表为空**，且只在没有直接行、也没有在途探测时出现——
+    // 它 MUST NOT 用来否认一条可打开的直接行（D117 的原话是「没有匹配」，不是「打不开」）。
     empty.textContent = NO_MATCH_TEXT();
+    empty.hidden = rows.length !== 0 || probing;
     if (hits.length === 0) {
-      // 零命中：列表区给 D117，提示行退回用法（「命中 0 条」与「无匹配」是同一句话，不重复）。
       setHint(QUICK_OPEN_USAGE());
-      input.removeAttribute("aria-activedescendant");
+    } else {
+      setHint(
+        hits.length > CANDIDATE_LIMIT
+          ? quickOpenTruncatedText(hits.length)
+          : quickOpenCountText(hits.length),
+      );
+    }
+    if (rows.length === 0) {
+      setActive(-1);
       return;
     }
-    setHint(
-      hits.length > CANDIDATE_LIMIT
-        ? quickOpenTruncatedText(hits.length)
-        : quickOpenCountText(hits.length),
-    );
-    items = visible.map((source, index) => {
-      const path = files[source] as string;
-      entryPaths.push(path);
+    if (activeKey !== undefined) {
+      // 异步补帧：把游标留在原来那一行上（直接行插到最前时下标会平移）。
+      const at = rows.findIndex((row) => rowKey(row) === activeKey);
+      setActive(at >= 0 ? at : 0);
+      return;
+    }
+    // 游标默认停在直接行（没有直接行时就是首条候选）。
+    setActive(0);
+    userMoved = false;
+  }
+
+  /** 行 DOM：直接行与候选共用一套 role / id / mousedown / click（同一个游标空间）。 */
+  function fillRows(): void {
+    list.replaceChildren();
+    items = [];
+    rows.forEach((row, index) => {
       const element = document.createElement("div");
-      element.className = "lumir-qo-item";
-      element.id = `${ITEM_ID_PREFIX}${source}`;
+      element.id = `${ITEM_ID_PREFIX}${row.kind === "direct" ? "direct" : index}`;
       element.setAttribute("role", "option");
       element.setAttribute("aria-selected", "false");
-      // 匹配对象是完整相对路径（spec「候选列表与匹配语义」），展示也逐字用它——
-      // 「只显示文件名」会让同名文件在同一条列表里不可分辨。
-      element.textContent = path;
+      if (row.kind === "direct") {
+        // 直接行用独立 class：既有视觉断言钉的是 `.lumir-qo-item` 的逐条文本，直接行复用
+        // 会把「候选集合」的判据混进一条动作提示（M700）。
+        element.className = "lumir-qo-direct";
+        const primary = document.createElement("span");
+        primary.className = "lumir-qo-direct-path";
+        primary.textContent = row.external
+          ? quickOpenDirectExternalText(row.path)
+          : quickOpenDirectText(row.path);
+        element.append(primary);
+        if (row.line !== undefined) {
+          const line = document.createElement("span");
+          line.className = "lumir-qo-direct-line";
+          line.textContent = quickOpenDirectLineText(row.line);
+          element.append(line);
+        }
+      } else {
+        element.className = "lumir-qo-item";
+        // 匹配对象是完整相对路径（spec「候选列表与匹配语义」），展示也逐字用它——
+        // 「只显示文件名」会让同名文件在同一条列表里不可分辨。
+        element.textContent = row.path;
+      }
       // 点击路径与键盘路径落同一个动作上；mousedown 不夺焦（照 TOC：否则先 blur 关闭、
       // 再重开，点击落空）。
       element.addEventListener("mousedown", (event) => event.preventDefault());
       element.addEventListener("click", () => {
-        void openCandidate(index);
+        userMoved = true;
+        setActive(index);
+        void openRow(index);
       });
       list.append(element);
-      return element;
+      items.push(element);
     });
-    // 游标落在首条命中（与 `list-filter` 的 `cursorStart` 口径一致：查询非空即首条）。
-    setActive(0);
+  }
+
+  /** 去抖后的补帧：用完整判决重画一次结果区（迟到结果按 `renderSeq` 丢弃）。 */
+  function scheduleProbe(raw: string, seq: number): void {
+    probeTimer = setTimeout(() => {
+      probeTimer = undefined;
+      void (async () => {
+        let res: QuickOpenResolution;
+        try {
+          res = await resolveQuickOpen(raw, options.root(), lookupEnv());
+        } catch {
+          probing = false;
+          return;
+        }
+        // 迟到结果：输入已改 / 结果区已重画 ⇒ 整份丢弃（MUST NOT 覆盖新输入）。
+        if (seq !== renderSeq || input.value.trim() !== raw) return;
+        probing = false;
+        settled = { raw, resolution: res };
+        const files = options.files();
+        const hits = res.plan.kind === "ok" ? filterIndices(files, res.plan.query) : [];
+        apply(res, files, hits, { preserveCursor: true });
+      })();
+    }, PROBE_DEBOUNCE_MS);
+  }
+
+  /** 打开结果区的第 `index` 行（键盘 Enter 与鼠标点击共用）。 */
+  async function openRow(index: number): Promise<void> {
+    const row = rows[index];
+    if (row === undefined) return;
+    if (row.kind === "candidate") {
+      await openCandidate(row.path);
+      return;
+    }
+    await openDirect(row);
   }
 
   /** 选中一条候选打开：**不过路径解析**（候选的路径已由索引校验）。 */
-  async function openCandidate(index: number): Promise<void> {
-    const path = entryPaths[index];
-    if (path === undefined) return;
+  async function openCandidate(path: string): Promise<void> {
     const seq = ++request;
     let success = false;
     try {
@@ -454,75 +757,160 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     setHint(QUICK_OPEN_FAILED());
   }
 
-  /** Enter：**路径优先**（spec「输入解析」的次序是合同的一部分），不成立时才落到游标候选。
+  /**
+   * 打开一条「直接打开」行：vault 内走唯一打开链路；vault 外走只读通道。
    *
-   *  整段包在 try/catch 里：打开 / 存在探测的意外失败**不得**把浮层卡在打开态（未捕获的
-   *  rejection 会让 Enter 看起来毫无反应）。失败按 D581 给一行指路——真正的原因由打开链路
-   *  自己在正文区上屏。 */
-  async function confirm(): Promise<void> {
-    const plan = quickOpenAttempts(input.value, options.root());
-    if (plan.kind === "empty") return;
+   * vault 外读取之前判不了存在性：`missing` 时才回退到同一阶梯里的另一形态（`path:行` 的
+   * 字面整串 / 剥后缀那一级），这一步保住「文件名本身以 `:行` 结尾」这个角落在改动前也能
+   * 打开（顺序理由见 design §2.1 的已知边界）。
+   */
+  async function openDirect(target: {
+    path: string;
+    line?: number;
+    external: boolean;
+  }): Promise<void> {
     const seq = ++request;
+    const plan = quickOpenAttempts(input.value, options.root());
+    const missingText = (): string =>
+      quickOpenMissingText(plan.kind === "ok" ? plan.query : input.value.trim());
     try {
-      if (plan.kind === "ok") {
-        for (const attempt of plan.attempts) {
-          if (attempt.external) {
-            const outcome = await options.openExternalPath(attempt.path, attempt.line);
-            if (seq !== request) return; // 过期结果：用户已经改了输入
-            if (outcome.kind === "opened") {
-              close();
-              return;
-            }
-            if (outcome.kind === "missing") continue; // 这一级不成立，试下一级
-            setHint(outcome.kind === "dir" ? quickOpenDirText(attempt.path) : outcome.message);
-            return;
-          }
-          const lookup = await lookupVaultPath(attempt.path, {
-            files: () => options.files(),
-            isDir: (path) => options.isDir(path),
-            probe: (paths) => options.probe(paths),
-          });
-          if (seq !== request) return;
-          if (lookup.kind === "dir") {
-            setHint(quickOpenDirText(attempt.path));
-            return;
-          }
-          if (lookup.kind === "ambiguous") {
-            // 折叠多命中：不猜，转候选（查询换成这条路径，列表里就是那几个折叠等值项）。
-            input.value = attempt.path;
-            render();
-            return;
-          }
-          if (lookup.kind === "missing") continue;
-          const success = await options.openVaultPath(lookup.path, attempt.line);
-          if (seq !== request) return;
-          if (success) {
-            close();
-            return;
-          }
-          setHint(QUICK_OPEN_FAILED());
+      if (!target.external) {
+        const success = await options.openVaultPath(target.path, target.line);
+        if (seq !== request) return;
+        if (success) {
+          close();
           return;
         }
-      }
-      // 全部候选级都不成立：候选列表里若有游标，Enter 落到它（spec「选中候选即打开」）；
-      // 否则刷新候选并给「找不到」（输入内容保留，浮层不收起）。
-      const cursor = visible[activeIndex];
-      if (cursor !== undefined) {
-        await openCandidate(activeIndex);
+        setHint(QUICK_OPEN_FAILED());
         return;
       }
-      render();
-      setHint(quickOpenMissingText(plan.query));
-    } catch {
+      const outcome = await options.openExternalPath(target.path, target.line);
       if (seq !== request) return;
-      setHint(QUICK_OPEN_FAILED());
+      if (outcome.kind === "opened") {
+        close();
+        return;
+      }
+      if (outcome.kind === "missing") {
+        const alternate =
+          plan.kind === "ok"
+            ? plan.attempts.find(
+                (attempt) =>
+                  attempt.external &&
+                  (attempt.path !== target.path || attempt.line !== target.line),
+              )
+            : undefined;
+        if (alternate === undefined) {
+          setHint(missingText());
+          return;
+        }
+        const fallback = await options.openExternalPath(alternate.path, alternate.line);
+        if (seq !== request) return;
+        if (fallback.kind === "opened") {
+          close();
+          return;
+        }
+        if (fallback.kind === "missing") {
+          setHint(missingText());
+          return;
+        }
+        setHint(fallback.kind === "dir" ? quickOpenDirText(alternate.path) : fallback.message);
+        return;
+      }
+      setHint(outcome.kind === "dir" ? quickOpenDirText(target.path) : outcome.message);
+    } catch {
+      if (seq === request) setHint(QUICK_OPEN_FAILED());
+    }
+  }
+
+  /** 两段式的第一段：揭示原因 / 候选，**不猜**任何目标（第二次 Enter 才打开游标行）。 */
+  function reveal(
+    verdict: { kind: "ambiguous"; path: string } | { kind: "dir"; path: string },
+  ): void {
+    revealedFor = input.value.trim();
+    // 先按同一输入重画一遍（候选 / 游标 / 计数），再把提示行换成原因——两段式的第二段因此
+    // 一定有一个真实的游标行可打开。
+    render();
+    setHint(verdict.kind === "ambiguous" ? QUICK_OPEN_AMBIGUOUS() : quickOpenDirText(verdict.path));
+    if (rows.length > 0) setActive(0);
+    userMoved = false;
+  }
+
+  /**
+   * Enter：消费与结果区**同一份**判决（`resolveQuickOpen`）。
+   *
+   *   1. `open`：打开直接行；用户已用 ↑↓ / 点击把游标移到候选上时打开**游标行**
+   *      （spec「选中候选即打开」——直接行与候选共用一个游标空间）。
+   *   2. `ambiguous` / `dir`：两段式——第一次只揭示原因 / 候选，第二次才打开游标行；
+   *      MUST NOT 在同一次按键里猜一个目标。
+   *   3. `missing`：游标行是候选就打开它，否则给「找不到」。
+   *
+   * 整段包在 try/catch 里：打开 / 存在探测的意外失败**不得**把浮层卡在打开态（未捕获的
+   * rejection 会让 Enter 看起来毫无反应）。失败按 D581 给一行指路——真正的原因由打开链路
+   * 自己在正文区上屏。
+   */
+  async function confirm(): Promise<void> {
+    const raw = input.value.trim();
+    if (raw === "") return;
+    const seq = ++request;
+    let res: QuickOpenResolution;
+    try {
+      res = await resolveQuickOpen(raw, options.root(), lookupEnv());
+    } catch {
+      if (seq === request) setHint(QUICK_OPEN_FAILED());
+      return;
+    }
+    if (seq !== request) return; // 过期结果：用户已经改了输入
+    // 这次判决已经走完探测，同一输入的后续重画复用它（不再 probe、不再覆盖提示）。
+    settled = { raw, resolution: res };
+    const verdict = res.verdict;
+    const activeRow = rows[activeIndex];
+    switch (verdict.kind) {
+      case "empty":
+        return;
+      case "open":
+        // 游标在候选上且用户**主动**移过去 ⇒ 打开候选；否则按结果区的默认位打开直接行
+        //（异步补帧尚未画上直接行时，游标只是默认停在首条候选，不算「移过去」）。
+        if (activeRow?.kind === "candidate" && userMoved) {
+          await openCandidate(activeRow.path);
+          return;
+        }
+        await openDirect(verdict);
+        return;
+      case "ambiguous":
+      case "dir":
+        if (revealedFor !== raw) {
+          reveal(verdict);
+          return;
+        }
+        if (activeRow !== undefined) {
+          await openRow(activeIndex);
+          return;
+        }
+        reveal(verdict);
+        return;
+      case "missing":
+      case "invalid":
+        // 输入非法（反斜杠 / `..` / 尾斜杠）与「找不到」在这里同权：候选列表照常按原文筛过，
+        // 游标行是候选就打开它（spec「选中候选即打开」），否则给「找不到」。
+        if (activeRow?.kind === "candidate") {
+          await openCandidate(activeRow.path);
+          return;
+        }
+        render();
+        setHint(quickOpenMissingText(res.plan.kind === "ok" ? res.plan.query : raw));
+        return;
+      case "undecided":
+        // `resolveQuickOpen` 会把每一级探测走完；防御性分支：保持结果区原状。
+        return;
     }
   }
 
   function move(delta: number): void {
     if (items.length === 0) return;
     const next = Math.min(items.length - 1, Math.max(0, activeIndex + delta));
-    if (next !== activeIndex) setActive(next);
+    if (next === activeIndex) return;
+    userMoved = true;
+    setActive(next);
   }
 
   // 就地键（浮层容器上）：输入框持焦时事件目标在浮层里，`editor` / `text` 作用域的绑定不命中，

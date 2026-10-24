@@ -11,9 +11,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   CANDIDATE_LIMIT,
+  classifyVaultPath,
   lookupVaultPath,
   normalizeQuickOpenInput,
   quickOpenAttempts,
+  resolveQuickOpen,
+  resolveQuickOpenSync,
   splitLineSuffix,
 } from "../../src/quick-open.ts";
 import type { VaultLookupEnv } from "../../src/quick-open.ts";
@@ -203,16 +206,22 @@ interface FakeEnv {
   files?: string[];
   dirs?: string[];
   present?: string[];
+  /** 探测失败（后端不可用 / 未注册命令）：`lookupVaultPath` 与 resolver 都按「不存在」处置。 */
+  probeFails?: boolean;
 }
 
-function env(over: FakeEnv): VaultLookupEnv {
+function env(over: FakeEnv, probes: string[] = []): VaultLookupEnv {
   const files = over.files ?? [];
   const dirs = new Set(over.dirs ?? []);
   const present = new Set(over.present ?? []);
   return {
     files: () => files,
     isDir: (path) => dirs.has(path),
-    probe: async (paths) => paths.filter((path) => present.has(path)),
+    probe: async (paths) => {
+      probes.push(...paths);
+      if (over.probeFails === true) throw new Error("probe unavailable");
+      return paths.filter((path) => present.has(path));
+    },
   };
 }
 
@@ -259,4 +268,144 @@ test("候选过滤：匹配对象是完整相对路径（路径片段可命中�
   // 索引顺序即结果顺序（不重排、不打分）
   assert.deepEqual(filterIndices(files, "notes/"), [1, 2]);
   assert.equal(CANDIDATE_LIMIT, 100);
+});
+
+// ---------------------------------------------------------------------------
+// 判决（M700）：结果区与 Enter 共用同一份解析
+//
+// 这一层是「结果区不再自成一套判空判据」的机器判据：每条用例同时给出**同步判决**（结果区
+// 先画的那一版）与**完整判决**（探测之后的最终版），两者的差异就是异步补帧的全部空间。
+// ---------------------------------------------------------------------------
+
+test("判决：索引精确命中 ⇒ 直接打开", () => {
+  const e = env({ files: ["notes/plan.md"] });
+  assert.deepEqual(resolveQuickOpenSync("notes/plan.md", ROOT, e).verdict, {
+    kind: "open",
+    path: "notes/plan.md",
+    external: false,
+  });
+  // 归一化后的 vault 内绝对路径与相对路径同形
+  assert.deepEqual(resolveQuickOpenSync("/v/notes/plan.md", ROOT, e).verdict, {
+    kind: "open",
+    path: "notes/plan.md",
+    external: false,
+  });
+});
+
+test("判决：整串优先——索引里真有 `plan.md:12` 时它赢，且一次探测都不发", async () => {
+  const probes: string[] = [];
+  const e = env({ files: ["notes/plan.md:12", "notes/plan.md"] }, probes);
+  assert.deepEqual((await resolveQuickOpen("notes/plan.md:12", ROOT, e)).verdict, {
+    kind: "open",
+    path: "notes/plan.md:12",
+    external: false,
+  });
+  assert.deepEqual(probes, []);
+});
+
+test("判决：同步层不越过待探测的一级（先探整串，整串不成立才落到剥后缀那一级）", async () => {
+  const probes: string[] = [];
+  const e = env({ files: ["notes/plan.md"] }, probes);
+  assert.equal(resolveQuickOpenSync("notes/plan.md:12", ROOT, e).verdict.kind, "undecided");
+  assert.deepEqual((await resolveQuickOpen("notes/plan.md:12", ROOT, e)).verdict, {
+    kind: "open",
+    path: "notes/plan.md",
+    line: 12,
+    external: false,
+  });
+  assert.deepEqual(probes, ["notes/plan.md:12"]);
+});
+
+test("判决：折叠等值唯一命中 ⇒ 直接打开索引里的那个路径；多命中 ⇒ 不猜", async () => {
+  const unique = env({ files: ["notes/plan.md"] });
+  assert.deepEqual((await resolveQuickOpen("NOTES/PLAN.md", ROOT, unique)).verdict, {
+    kind: "open",
+    path: "notes/plan.md",
+    external: false,
+  });
+  const many = env({ files: ["A.md", "a.md"] });
+  assert.deepEqual((await resolveQuickOpen("A.MD", ROOT, many)).verdict, {
+    kind: "ambiguous",
+    path: "A.MD",
+    paths: ["A.md", "a.md"],
+  });
+});
+
+test("判决：目录 ⇒ dir（不打开目录本身）；目录判定排在探测之前", async () => {
+  const probes: string[] = [];
+  const e = env({ dirs: ["notes"], present: ["notes"] }, probes);
+  assert.deepEqual((await resolveQuickOpen("notes", ROOT, e)).verdict, {
+    kind: "dir",
+    path: "notes",
+  });
+  assert.deepEqual(probes, []);
+});
+
+test("判决：索引外的惰性文件经探测命中 ⇒ 直接打开（相对 / vault 内绝对两形）", async () => {
+  const probes: string[] = [];
+  const e = env({ files: [], present: [".local/notes.md"] }, probes);
+  assert.equal(resolveQuickOpenSync(".local/notes.md", ROOT, e).verdict.kind, "undecided");
+  assert.deepEqual((await resolveQuickOpen(".local/notes.md", ROOT, e)).verdict, {
+    kind: "open",
+    path: ".local/notes.md",
+    external: false,
+  });
+  assert.deepEqual((await resolveQuickOpen("/v/.local/notes.md", ROOT, e)).verdict, {
+    kind: "open",
+    path: ".local/notes.md",
+    external: false,
+  });
+  assert.deepEqual(probes, [".local/notes.md", ".local/notes.md"]);
+});
+
+test("判决：真负例 ⇒ missing（探测过后仍不成立）", async () => {
+  const e = env({ files: ["notes/plan.md"] });
+  assert.deepEqual((await resolveQuickOpen("notes/nope.md", ROOT, e)).verdict, {
+    kind: "missing",
+  });
+});
+
+test("判决：探测失败按不存在处置（与 lookupVaultPath 同一口径）", async () => {
+  const e = env({ files: [], probeFails: true });
+  assert.deepEqual((await resolveQuickOpen("notes/plan.md", ROOT, e)).verdict, {
+    kind: "missing",
+  });
+  assert.deepEqual(await lookupVaultPath("notes/plan.md", e), { kind: "missing" });
+});
+
+test("判决：vault 外绝对路径是尝试入口，带行号时取剥后缀那一级", () => {
+  const probes: string[] = [];
+  const e = env({ files: ["notes/plan.md"] }, probes);
+  assert.deepEqual(resolveQuickOpenSync("/tmp/x/draft.md", ROOT, e).verdict, {
+    kind: "open",
+    path: "/tmp/x/draft.md",
+    external: true,
+  });
+  assert.deepEqual(resolveQuickOpenSync("/tmp/x/draft.md:12", ROOT, e).verdict, {
+    kind: "open",
+    path: "/tmp/x/draft.md",
+    line: 12,
+    external: true,
+  });
+  // 外部路径不 probe（`fs_paths_exist` 只接受 vault 相对路径）
+  assert.deepEqual(probes, []);
+});
+
+test("判决：非法输入 / 空输入不产生任何候选级", () => {
+  const e = env({ files: ["notes/plan.md"] });
+  assert.deepEqual(resolveQuickOpenSync("notes\\a.md", ROOT, e).verdict, { kind: "invalid" });
+  assert.deepEqual(resolveQuickOpenSync("../outside/x.md", ROOT, e).verdict, { kind: "invalid" });
+  assert.deepEqual(resolveQuickOpenSync("  ", ROOT, e).verdict, { kind: "empty" });
+});
+
+test("判决：结果区与 confirm 共用同一个分类器（精确 / 折叠 / 多命中 / 目录 / 未知）", () => {
+  const e = env({ files: ["A.md", "a.md", "notes/plan.md"], dirs: ["notes"] });
+  assert.deepEqual(classifyVaultPath("a.md", e), { kind: "hit", path: "a.md" });
+  assert.deepEqual(classifyVaultPath("NOTES/PLAN.md", e), {
+    kind: "hit",
+    path: "notes/plan.md",
+  });
+  assert.deepEqual(classifyVaultPath("A.MD", e), { kind: "ambiguous", paths: ["A.md", "a.md"] });
+  assert.deepEqual(classifyVaultPath("notes", e), { kind: "dir" });
+  assert.deepEqual(classifyVaultPath("nope.md", e), { kind: "unknown" });
 });

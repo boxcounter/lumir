@@ -2112,9 +2112,12 @@ body {
   color: var(--text-3);
 }
 /* 列表行（定稿 .opop .pop-row，index.html:697-704、:715-719）：h26 / radius 6 / 左 padding
-   d0 8、d1 26（步进 18px，随 --toc-depth 归一后的层差；--toc-depth 由 src/toc.ts 写入）。 */
+   d0 8、d1 26（步进 18px，随 --toc-depth 归一后的层差；--toc-depth 由 src/toc.ts 写入）。
+   结果区的「直接打开」行（M700 的 `.lumir-qo-direct`）复用这一份几何——它是同一条列表里的
+   另一种行，不是第二种行高 / 字号（MUST NOT 为它新增 token）。 */
 .lumir-toc-item,
-.lumir-qo-item {
+.lumir-qo-item,
+.lumir-qo-direct {
   height: 26px;
   line-height: 26px;
   padding: 0 var(--sp-4) 0
@@ -2137,21 +2140,46 @@ body {
   font-weight: var(--fw-emphasis);
 }
 .lumir-toc-item.is-active,
-.lumir-qo-item.is-active {
+.lumir-qo-item.is-active,
+.lumir-qo-direct.is-active {
   background: var(--sel);
   box-shadow: inset 0 0 0 1px currentColor;
 }
 /* hover 与选中同族（design §2.7 #1 的类推行：is-active = 树选中态、hover = --hover）——
    声明在选中态之后，与 .ft-row 的次序一致（同一心智模型：悬停反馈压过常驻选中底色）。 */
 .lumir-toc-item:hover,
-.lumir-qo-item:hover {
+.lumir-qo-item:hover,
+.lumir-qo-direct:hover {
   background: var(--hover);
+}
+/* 结果区的「直接打开」行（M700）：几何与候选同一份（上面那条选择器列表），这里只加**两段
+   文本**横排的布局——动作文本（D589 / D590）压掉溢出，落点行标记（D591）不压缩。独立 class
+   是判据分离的需要：既有视觉断言钉的是 `.lumir-qo-item` 的逐条候选文本，直接行复用会让
+   「候选集合」的判据混进一条动作提示。不新增色值 / 字号 / 圆角（落点行取提示行同档的
+   --text-3 / --fs-label）。 */
+.lumir-qo-direct {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.lumir-qo-direct-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lumir-qo-direct-line {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-size: var(--fs-label);
 }
 /* eink：选中项的前景取 `--sel-text`（当前段与键盘游标同底色，同一条规则）。
    M291 起不再排除 `:hover`（理由同 .ft-row.is-current：黑字下两种状态都可读）。 */
 :root[data-theme="eink"] .lumir-toc-item.is-current,
 :root[data-theme="eink"] .lumir-toc-item.is-active,
-:root[data-theme="eink"] .lumir-qo-item.is-active {
+:root[data-theme="eink"] .lumir-qo-item.is-active,
+:root[data-theme="eink"] .lumir-qo-direct.is-active {
   color: var(--sel-text);
 }
 /* eink 规则⑧：filter 输入的聚焦强调走**线宽**档（下划线形态在 eink 无颜色可用）——

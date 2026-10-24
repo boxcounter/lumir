@@ -1891,6 +1891,18 @@ const COPY_TABLE = {
     zh: "无法解码这张图片：{reason}",
     en: "Couldn't decode this image: {reason}",
   },
+  // D589–D592：quick-open 的结果区与 Enter 同源（M700，change quick-open-file-oct23 的
+  // 「结果区与 Enter 的判决同源」requirement）。D589 = vault 内的直接打开行；D590 = vault 外
+  // （读取前判不了存在性，这一行是**尝试入口**，措辞因此把「只读」写在动作里）；D591 = 直接行
+  // 的落点行标记（第二个 span，不拼进 D589 / D590 的模板）；D592 = 折叠等值多命中的两段式
+  // 第一段（只揭示、不猜，第二次 Enter 才打开游标行）。
+  D589: { zh: "按 Enter 打开 {path}", en: "Press Enter to open {path}" },
+  D590: { zh: "按 Enter 只读打开 {path}", en: "Press Enter to open {path} read-only" },
+  D591: { zh: "第 {line} 行", en: "Line {line}" },
+  D592: {
+    zh: "匹配到多个文件，用 ↑↓ 选择后按 Enter 打开",
+    en: "This matches several files — use ↑↓ to pick one, then press Enter",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
