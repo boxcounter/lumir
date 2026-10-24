@@ -9,7 +9,28 @@
 > 来源是 M664（`readonly-allowlist-tightening-oct23`）worker 发现的 finding：
 > `.tower/comms/findings/20261024-worker-readonly-allowlist-oct2-vuln-rg-z-search-zip-readonly-allowlist.md`。
 > 本 proposal 按该裁决起草，无待裁裁决点。
-> 节点 2（归档评审）：实现完成后填写。
+> 节点 2（归档评审）：**机器 + 独立评审放行（五要件）**，2026-10-25。放行口径见
+> `docs/process/openspec-workflow.md`「节点 2」节；本 change 是权限链第三环（permission-rules →
+> readonly → rg-zip），归档批 M729 执行。归档前读数：
+> 1. **方案已批准**：节点 1 于 2026-10-24 由 Alex 批准立项（原话「好，可以。」，见上）；本 proposal
+>    无待裁裁决点，实现与提案同批提交。
+> 2. **独立 reviewer clean / merge**：实现批
+>    `review-feat-rg-zip-flags-dangerous-tier-oct24-reviewer-rg-zip-flags-oct24-r1.md`
+>    （`status: clean` / `merge: merge`，评审 tip `a9635767`，M672）；delta 的 2026-10-24 重写另经
+>    `review-feat-align-permission-followup-deltas-oct24-reviewer-permission-deltas-oct-r1.md`
+>    （`status: clean` / `merge: merge`，评审 tip `31603339`，M724）。该 tip 之后本 change 目录逐字
+>    未改（`git diff 31603339 HEAD -- openspec/changes/rg-zip-flags-dangerous-oct24` 空）。
+> 3. **tasks 完成**：13/13（无未勾项）。
+> 4. **门禁与证据**：tasks 3.3 `GATE RESULT: 10/10 PASS（SKIP 1）`、退出码 0（SKIP = `tsc-visual`，
+>    worktree 未装 `tests/visual` 依赖）；tasks 3.4 `cargo test` 逐 target 839 + 7 + 41 + 2 + 17 + 6 +
+>    22 pass / 0 failed。本 change **未声明真机场景**——它只改分类器枚举，判据落在 Rust 单测（正向
+>    `-z`/`--search-zip`/`-zH`·`-nz`、反向 `--no-search-zip`/`-ez`/裸 `rg`）、包装器继承用例与三档
+>    决策矩阵；tasks 无真机项，故无真机证据缺口。
+> 5. **规格对账**：`node scripts/openspec-archive-check.mjs --change rg-zip-flags-dangerous-oct24` →
+>    PASS（1 份 delta / 1 条 MODIFIED / 25 段，无静默丢段；基线已是 readonly 归档后的 living）；
+>    `openspec validate --all --strict` → `Totals: 35 passed, 0 failed`；归档跟踪队列有且仅有一条。
+>
+> 归档后项见本块末尾的「归档后」追加段。
 
 ## Why
 
@@ -58,8 +79,10 @@ M664 建立的「只读分类的能力断言」是：一次被判只读的 `cli_
 - 影响的 specs：`harness`（一条 requirement 的整块 MODIFIED）。
 - 影响的代码/系统：`src-tauri/src/harness/permissions.rs`（`RG_EXEC_FLAGS` / `rg_exec_form` 与单测）；
   分类是纯 argv 文本判定，无新增 IO，不触及性能合同。
-- **归档顺序（2026-10-24 已按此重写）**：`harness-permission-rules-oct23` → `readonly-allowlist-
-  tightening-oct23`（M664）→ 本 change。M664 已并入 master 但未归档，其 delta 已按「M649 归档后的
-  living（两层权限 + 受限解包）」重写；本 delta 以「M664 归档后的形态（5 段正文 + 16 场景）」为基线，
-  只在该基线上追加 `-z` / `--search-zip` 枚举项与对应场景正反例，其余逐字保留。前两者归档后本
-  change 归档即纯改动，不会回退权限层数、受限解包或写形态收紧。
+- **归档顺序（2026-10-24 已按此重写；2026-10-25 实际执行完毕）**：`harness-permission-rules-oct23` →
+  `readonly-allowlist-tightening-oct23`（M664）→ 本 change。M664 已于 2026-10-25 归档
+  （`openspec/changes/archive/2026-10-25-readonly-allowlist-tightening-oct23`；本节原写「已并入 master
+  但未归档」，那是 2026-10-24 重写时的现状），其 delta 已按「M649 归档后的 living（两层权限 + 受限
+  解包）」重写；本 delta 以「M664 归档后的形态（5 段正文 + 16 场景）」为基线，只在该基线上追加
+  `-z` / `--search-zip` 枚举项与对应场景正反例，其余逐字保留。前两者归档后本 change 归档即纯改动，
+  不会回退权限层数、受限解包或写形态收紧。
