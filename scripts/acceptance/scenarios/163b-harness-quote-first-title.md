@@ -24,8 +24,9 @@ steps:
     retries: 4
     click: true
 
-  - name: 把光标放进编辑器第 1 行（键盘注入的前置）
+  - name: 把光标放进编辑器第 1 行（真实鼠标点击：同时建立 DOM 焦点与 key window）
     do: clickEditor
+    real: true
     expect:
       - label: 焦点落在编辑器正文里
         ax: { focused: "AXTextArea" }
@@ -50,13 +51,21 @@ steps:
       - label: 卡片带出处行（文档名 · 最近一级标题）
         ax: { has: "harness-quote.md · 摘录卡片验收" }
 
+  - name: 真实点 composer 末尾的空段落（contenteditable 的 DOM 焦点靠真实 mousedown；卡片本身不搬焦点）
+    do: clickInNode
+    target: { role: AXTextArea, name: "问点什么|harness-quote\\.md · 摘录卡片验收" }
+    dx: 0.5
+    dy: 0.88
+
   - name: 键入问题（卡片之外的那段正文正是回落名的数据源；串里不含 'e'）
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|摘录|quote" }
+    target: { role: AXTextArea, name: "问点什么|harness-quote\\.md · 摘录卡片验收" }
     text: "qqmark"
     expect:
       - label: 问题落在 composer
         ax: { has: "qqmark" }
+      - label: 编辑器正文没被写脏（注入若漏到焦点元素上，这里必红——M669 首跑的真实现场）
+        editor: { not: "qqmark" }
 
   - name: 发送（mock 响应刻意延迟 8s，留出「浮层先开、命名事件后到」的窗口）
     do: key

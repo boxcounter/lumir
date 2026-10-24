@@ -486,6 +486,11 @@ export function checkScenario(scenario) {
       pushBare(`${at} 的 waitForFile.count.pattern`, spec?.count?.pattern);
     }
     if (step.do === "doubleClick" && !step.target) push(`${at} do=doubleClick 需要 target（节点或 {x,y} 窗口局部坐标）`);
+    // `clickEditor.real`（M669）：只在 clickEditor 上有意义；非布尔会在 `=== true` 上静默不生效。
+    if (step.real !== undefined && step.do !== "clickEditor")
+      push(`${at} real 参数只属于 do=clickEditor（真实鼠标通道），当前 do=${step.do}`);
+    if (step.do === "clickEditor" && step.real !== undefined && typeof step.real !== "boolean")
+      push(`${at} do=clickEditor 的 real 需要布尔值，实际 ${JSON.stringify(step.real)}`);
     // focusWindow 的 `click`（M669，key window 前置）：它只在这一条动作上有意义；写成别的动作
     // 会静默无效（场景以为做了前置、实际没做），写成非布尔会在 `=== true` 上静默不执行——都挡掉。
     if (step.click !== undefined && step.do !== "focusWindow")
@@ -538,6 +543,11 @@ export function checkScenario(scenario) {
       if (step.target && step.target.x !== undefined && typeof step.target.y !== "number")
         push(`${at} do=scroll 的 target 给了 x 就必须给数值 y（截图像素落点）`);
     }
+    // `wheel`（M669）：只在 do=scroll 上有意义；非布尔会在 `=== true` 上静默不生效。
+    if (step.wheel !== undefined && step.do !== "scroll")
+      push(`${at} wheel 参数只属于 do=scroll（强制走 CGEvent 滚轮通道），当前 do=${step.do}`);
+    if (step.do === "scroll" && step.wheel !== undefined && typeof step.wheel !== "boolean")
+      push(`${at} do=scroll 的 wheel 需要布尔值，实际 ${JSON.stringify(step.wheel)}`);
     if (step.do === "configWrite" && step.editor !== undefined && !isPlainTable(step.editor))
       push(`${at} do=configWrite 的 editor 需要对象（[editor] 表，snake_case 键），实际 ${JSON.stringify(step.editor)}`);
     if (step.do === "configWrite" && step.mode !== undefined && typeof step.mode !== "string")
@@ -2354,6 +2364,28 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         };
       })();
       const scrollOrExplain = async (args) => {
+        // `wheel: true`（M669）：**跳过 KimiCU、直接用 CGEvent 滚轮**。起因是 224 的实测：
+        // KimiCU 的 scroll 有时自报「成功」（无异常）却滚的是别的元素——转写面（transcript）
+        // 自己的 scrollTop 没变，于是「脱离态 → 浮钮浮现」判据整条红，而证据里没有兜底自报行
+        // （兜底只在 KimiCU 报错时启用）。显式声明通道，场景要的「真实滚轮」就不再取决于
+        // KimiCU 自报的真假。
+        if (step.wheel === true) {
+          if (wheelPlan === null) {
+            throw new Error(
+              "do=scroll 的 wheel: true 需要 dy 或 dx（行数）+ 可算出的落点（target 的 {x,y} 或带 bbox 的节点）：" +
+                "滚轮注入按行投递，`page` 形态不换算行数（套件不猜视口高度）。",
+            );
+          }
+          const out = await injectWheel(wheelPlan.point, { dy: wheelPlan.dy, dx: wheelPlan.dx });
+          evidence.record({
+            kind: "note",
+            text:
+              `scroll：按 step.wheel 直接走 swift + CGEvent 滚轮注入 ` +
+              `(dy=${wheelPlan.dy}, dx=${wheelPlan.dx} @屏幕 ${Math.round(wheelPlan.point.x)},${Math.round(wheelPlan.point.y)})｜${out}`,
+          });
+          await sleep(step.settleMs ?? 700);
+          return out;
+        }
         try {
           return (await cu.scroll(p, args)).json;
         } catch (e) {
@@ -2886,12 +2918,37 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // 编辑器内没有可点节点（AX 里正文节点无 bbox），只能按坐标点：
       // 取 AXTextArea 的 bbox（full 模式下的坐标即截图像素，与 click x/y 同空间），
       // 从顶边往下 dy 像素落点，再用 ⌃N 逐行下行定位——比猜行高可靠。
+      //
+      // `real: true`（M669）：同一落点改走 **swift + CGEvent 真实左键单击**（mode 1，与
+      // doubleClick / drag 同一条通道）。两个动因：① 真实点击同时把窗口做成 key，KimiCU 的
+      // 坐标点击在实测里会让窗口**失去 key**（随后 `do: keys` 的键盘整批不落地——场景 163b
+      // 的选区手势即此）；② 需要「真的能在渲染块上落下」的判据（228 的属性盒）时，真实
+      // 点击与用户手势同形。坐标换算与 doubleClick 同口径：full 的 bbox/点是**截图像素**，
+      // 先换算成窗口局部点（按 window_bounds / 截图尺寸），再加窗口原点。
       const ax = await readAx(cu, p, { mode: "full" });
       const ta = ax.textarea;
       if (!ta?.bbox) throw new Error("编辑器节点没有 bbox，无法定位点击");
       const x = ta.bbox.x + (step.dx ?? 40);
       const y = ta.bbox.y + (step.dy ?? 6);
-      return clickWithRetry(cu, p, x, y);
+      if (step.real !== true) return clickWithRetry(cu, p, x, y);
+      const fg = await tryForeground(cu, p, { retries: step.retries ?? 4 });
+      if (!fg.frontmost) {
+        throw new InfraError(
+          `clickEditor(real) 需要目标窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：` +
+            `真鼠标事件落在最上层那扇窗上。激活尝试：${foregroundWhy(fg)}`,
+        );
+      }
+      const bounds = windowBounds((await readAx(cu, p, { mode: "ax" })).text);
+      const shot = screenshotSize(ax.text);
+      if (!bounds || !shot) throw new InfraError("clickEditor(real)：读不到 window_bounds / 截图尺寸，算不出落点");
+      const point = { x: bounds.x + (x * bounds.w) / shot.w, y: bounds.y + (y * bounds.h) / shot.h };
+      const out = await injectClickWithClickState(p, point, { mode: 1 });
+      evidence.record({
+        kind: "note",
+        text: `clickEditor(real)：截图 ${Math.round(x)},${Math.round(y)} → 屏幕 ${Math.round(point.x)},${Math.round(point.y)}｜${out}`,
+      });
+      await sleep(step.settleMs ?? 500);
+      return `真实点击 @截图 ${Math.round(x)},${Math.round(y)}｜${out}`;
     }
     case "open":
       return openFile(cu, p, step.file, { marker: step.marker });
