@@ -72,9 +72,9 @@
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
-
 - **序 10 · `readonly-allowlist-tightening-oct23`**（M664，16/22）：6 项未勾，场景 231 未跑；归档前 MUST 把 MODIFIED 块重写为「master 原文 + M649 解包段 + M664 收紧段」，否则 M649 段会被「改写」配对静默抹掉。
 - **序 11 · `rg-zip-flags-dangerous-oct24`**（M672，11/11）：delta = 序 10 全文 + `-z` / `--search-zip` 改写，必须紧接序 10。
 - **`fix-quote-decode-error-copy-oct24`**（M686，tasks 全勾）：一条 ADDED requirement；节点 2 走人肉，归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`semantic-selection-markdown-oct23`**（M687，28/29）：一条 ADDED requirement；4.5 dogfood 归 Alex，节点 2 走人肉，归档前后各跑门禁。
+- **`add-harness-subagents`**（M708，90/90）：delta = `harness` 两条（ADDED 运行公共层 + MODIFIED 工具循环）+ 新建 `harness-subagents` capability；节点 2 走人肉（delta 有新增内容），归档前后各跑 `node scripts/openspec-archive-check.mjs`；归档后须手写新建 living spec 的 Purpose 占位并复跑 strict validate。
 - 外部前置：`harness-permission-rules-oct23`（33/36）与 `quick-open-file-oct23`（40/42）可先归档；前者 4.3 已由 229 真机 PASS 覆盖，是否勾选由 M649 属主按任务原文裁定。

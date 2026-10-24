@@ -105,11 +105,13 @@ steps:
         ax: { has: "NEXT-第二轮回答。" }
       - label: 新一轮的工具循环真实执行（vault_read 行在场）——被取消轮没执行的那个调用，
           由这一轮补上：JSONL 只在新一轮落一条 function_call_output（被取消轮未执行工具）
-        ax: { has: '/vault_read\s*harness-note\.md/' }
+        # change harness-path-link 起路径渲染为独立 AXButton chip：名徽章与路径不再相邻于同一
+        # 文本节点，`\s*` 邻接恒不命中（M708 实测）。改为「名徽章行的下一行即路径 chip」。
+        ax: { has: '/vault_read"\n[^\n]*AXButton \(harness-note\.md\)/' }
       - label: 有序性：被取消轮的「已停止」在新一轮工具行之前（被取消轮封闭在前、
           新一轮内容在后，不插队不复活）
         ax:
-          has: '/已停止[\s\S]*vault_read\s*harness-note\.md[\s\S]*NEXT-第二轮回答。/'
+          has: '/已停止[\s\S]*vault_read"\n[^\n]*AXButton \(harness-note\.md\)[\s\S]*NEXT-第二轮回答。/'
       - label: 「已停止」标记恰好一个（被取消轮的那一个；新一轮正常完成不标）
         ax: { count: { pattern: "已停止", exact: 1 } }
       - label: JSONL 记下新一轮的工具调用结果（function_call_output）——配合停止步的
@@ -168,3 +170,11 @@ Alex 2026-10-07 原话：「点击停止后，要等几秒到十秒才真正地�
 
 - 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；只发问与停止，
   不写 vault 文件。1420 全程不碰（实例走 `LUMIR_ACCEPTANCE_PORT=1430`）。
+
+## 判据修正（M708，2026-10-24）
+
+change `harness-path-link` 起，工具行的路径参数渲染为独立 `AXButton` chip，名徽章与路径
+分属两行 AX 节点——`/vault_read\s*harness-note\.md/` 与其在有序性正则里的同形邻接恒不命中
+（M708 实跑：停止时长上界、`已停止`、JSONL 三组断言全绿，只有这条陈旧邻接断言红）。判据
+改为「名徽章行的下一行即该路径 chip」；有序性仍钉「已停止 → 新一轮工具行 → NEXT」的先后。
+同一陈旧形态在 103 / 104-thinking 与 201（负向断言，静默假绿）仍在，归 finding 收口。
