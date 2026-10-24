@@ -152,13 +152,23 @@ export interface ErrorEnvelope {
  * 后端错误的**上屏**文本（change ui-language-i18n 的 D6 裁决）：按 `code` 取文案表的条目并插
  * 参数；表里没有这个 code 时回落到 `message`（后端的人话，兜底存在但由完整性门禁保证不可达）。
  *
+ * `overrides` 是**按调用点分码**的覆盖表（M686，change fix-quote-decode-error-copy-oct24 的
+ * design §D4）：同一个后端 code 在不同调用点有语境差异时（引用不是粘贴），调用点只换「code → 键」
+ * 这一层，其余仍是同一张 `ERROR_COPY`。它 MUST 只登记该调用点确实要改道的 code；键的解析与下面的
+ * 缺参兜底都只有本函数这一份实现（MUST NOT 在调用点再写一份 try/catch 或参数在场判断）。当前
+ * 唯一消费者是引用路径的 `quoteImageErrorText`（`attachment_decode_failed` → D588）。
+ *
  * 缺参不抛给用户：Rust 侧某个构造点忘了补参数时，`t()` 会因缺参抛错——这里接住并回落到
  * `message`，同时留一条 console 线索（诊断面，不进 UI）。宁可显示一句中文，也不让一次
  * 「忘了补参数」把提示变成异常。日志与诊断面仍走 `message`（`errorMessage`），不随语言变。
  */
-export function errorText(e: unknown, lang: Language = currentLanguage()): string {
+export function errorText(
+  e: unknown,
+  lang: Language = currentLanguage(),
+  overrides?: Readonly<Record<string, CopyKey>>,
+): string {
   if (!isErrorEnvelope(e)) return messageOf(e);
-  const key = ERROR_COPY[e.code];
+  const key = overrides?.[e.code] ?? ERROR_COPY[e.code];
   if (key === undefined) return e.message;
   try {
     return t(key, e.params ?? undefined, lang);

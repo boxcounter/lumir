@@ -28,13 +28,21 @@
 //     预检放行、两条 IPC 照常、卡片拿到的是 `pasted-<hash16>.webp`。
 //   - **D585 仍然只在真正不支持的类型上出现**（gif / heic / avif / bmp / ico）：那段失败面没有
 //     被删掉，只是不再命中 svg。
-//   - 栅格化自身的失败（畸形 XML / 尺寸非法）按写入口既有码族回落（`attachment_decode_failed`
-//     → D438），走的是 `quoteImageErrorText` 的通用分支。
+//   - 栅格化自身的失败（畸形 XML / 尺寸非法）按写入口既有码族回落（`attachment_decode_failed`），
+//     引用语境的措辞见 M686 一段。
+//
+// M686（change fix-quote-decode-error-copy-oct24，Alex 2026-10-24 节点 1「好，我理解了，我没有
+// 异议，请你安排处理。」）：
+//   - **解码失败也按调用点分码**：`attachment_decode_failed` 在引用语境读 D588（「无法解码这张
+//     图片」）——引用一张字节解不开的 vault 图时用户根本没碰过剪贴板，M666 之前它借的是粘贴语境的
+//     D438。粘贴路径（`ERROR_COPY`）一字不动，仍是 D438。
+//   - 分码走 `errorText` 的可选覆盖表（`QUOTE_ERROR_COPY`）：只换「code → 键」这一层，缺
+//     `{reason}` 时的回落（后端 message + console 线索）仍是 `errorText` 那一份实现。
 //
 // 本模块是纯 I/O 编排（零 DOM）：tests/unit 用假 Tauri 后端直接跑真 ipc + 真转码面契约
 //（`tests/unit/quote-image.test.ts`）。
 
-import { errorText, t } from "./copy";
+import { errorText, t, type CopyKey } from "./copy";
 import { fsReadAttachment, harnessWriteImage } from "./ipc";
 import { extensionOf, isQuotableImageName, mimeTypeOf } from "./preview/attachments";
 import type { HarnessWrittenImage } from "./bindings/HarnessWrittenImage";
@@ -89,10 +97,12 @@ export function productionQuoteImagePorts(toast: (text: string) => void): QuoteI
 }
 
 /**
- * 引用路径的失败人话（M662 的按调用点分码）：写原语与粘贴路径共用，但**措辞随语境走**——
+ * 引用路径的失败人话（M662 / M686 的按调用点分码）：写原语与粘贴路径共用，但**措辞随语境走**——
  *   - `attachment_type_unsupported` → D585（引用语境；粘贴语境仍读 D436 的「剪贴板」措辞）。
  *     这是 survey §4.3 记的现场：Alex 点图片「引用」看到「不支持的剪贴板图片格式」。
- *   - 其余 code 与粘贴路径同一张 `ERROR_COPY` 表（尺寸 / 解码 / 写失败与语境无关）。
+ *   - `attachment_decode_failed` → D588（M686；粘贴语境仍读 D438 的「剪贴板」措辞）。引用一张
+ *     字节损坏的 vault 图时用户没碰过剪贴板，`QUOTE_ERROR_COPY` 只改道这一条。
+ *   - 其余 code 与粘贴路径同一张 `ERROR_COPY` 表（尺寸 / 写失败与语境无关）。
  *
  *  `fallbackMime` 只在后端信封缺 `type` 参数时兜底（预检路径直接给 MIME，不经信封）。
  */
@@ -102,8 +112,16 @@ export function quoteImageErrorText(error: unknown, fallbackMime: string): strin
     const type = envelope.params?.type;
     return t("D585", { type: typeof type === "string" ? type : fallbackMime });
   }
-  return errorText(error);
+  // 覆盖表只换「code → 键」：缺 `{reason}` 的回落仍是 errorText 那一份（不在这里另写 try/catch）。
+  return errorText(error, undefined, QUOTE_ERROR_COPY);
 }
+
+/** 引用路径的 `code → 文案键` 覆盖表（M686，design §D4）：只登记本调用点确有语境差异的 code。
+ *  `attachment_decode_failed` 在粘贴语境是「剪贴板」（D438，用户刚按过 ⌘V），在引用语境不成立
+ *  ——这正是本表存在的唯一理由；其余失败码的措辞与语境无关，留给 `ERROR_COPY`。 */
+const QUOTE_ERROR_COPY: Readonly<Record<string, CopyKey>> = {
+  attachment_decode_failed: "D588",
+};
 
 /**
  * 按文档序把若干 vault 图搬进 harness 存储，返回逐张结果（成功项可插入、失败项留痕）；

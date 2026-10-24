@@ -21,6 +21,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { quoteImagesFromVault, productionQuoteImagePorts } from "../../src/quote-image.ts";
 import type { QuoteImageOutcome } from "../../src/quote-image.ts";
+import { COPY } from "../../src/copy-data.ts";
 import { installBackend } from "./harness.ts";
 
 /** 成功项（按输入序）的来源列表。 */
@@ -159,7 +160,7 @@ test("svg 引用走栅格化成功路径：预检放行、两条 IPC 照常、�
   );
 });
 
-test("栅格化失败按写入口既有码族回落：畸形 svg 只报该张、无卡片（M666）", async () => {
+test("栅格化失败按写入口既有码族回落：畸形 svg 只报该张、无卡片（M666 / M686 读 D588）", async () => {
   const backend = installBackend();
   backend.handle("fs_read_attachment", () => "PHN2Zz48cmVjdA=="); // "<svg><rect"
   backend.handle("harness_write_image", () => {
@@ -179,8 +180,102 @@ test("栅格化失败按写入口既有码族回落：畸形 svg 只报该张、
   assert.ok(!outcomes[0]!.ok, "解码失败不产卡片");
   assert.equal(toasts.length, 1);
   assert.deepEqual(failureTexts(outcomes), toasts, "失败读数与 toast 同一份渲染");
-  // 走 ERROR_COPY 的既有映射（D438 的模板），不是后端 message 的裸串。
-  assert.match(toasts[0]!, /无法解码/, "既有解码失败文案");
+  // 引用语境的解码失败读 D588（M686）：不再借用粘贴语境的「剪贴板」措辞，也不是格式不支持那句。
+  assert.equal(toasts[0], COPY.D588.zh.replace("{reason}", "unexpected end of stream"));
+  assert.match(toasts[0]!, /无法解码/);
+  assert.ok(!toasts[0]!.includes("剪贴板"), "引用语境 MUST NOT 出现粘贴语境的限定词");
+  assert.ok(!toasts[0]!.includes("暂不支持"), "与 D585 的格式不支持不是同一条失败面");
+});
+
+test("引用一张字节损坏的位图：解码失败读引用语境的 D588（M686）", async () => {
+  const backend = installBackend();
+  backend.handle("fs_read_attachment", () => "QUJD"); // 不是合法 PNG 字节（转码失败在后端）
+  backend.handle("harness_write_image", () => {
+    throw {
+      code: "attachment_decode_failed",
+      message: "无法解码图片：invalid PNG signature",
+      params: { reason: "invalid PNG signature" },
+    };
+  });
+  const toasts: string[] = [];
+  const outcomes = await quoteImagesFromVault(
+    [{ path: "assets/broken.png", rawRef: "![[broken.png]]" }],
+    productionQuoteImagePorts((text) => toasts.push(text)),
+  );
+
+  assert.equal(outcomes.length, 1);
+  assert.ok(!outcomes[0]!.ok, "解码失败不产卡片");
+  assert.equal(toasts.length, 1, "一张失败恰好一条原因 toast");
+  assert.deepEqual(failureTexts(outcomes), toasts, "失败读数与 toast 同一份渲染");
+  // 引用语境（D588）：含「无法解码」、不含「剪贴板」——用户刚才没碰过剪贴板。
+  assert.equal(toasts[0], COPY.D588.zh.replace("{reason}", "invalid PNG signature"));
+  assert.match(toasts[0]!, /无法解码/);
+  assert.ok(!toasts[0]!.includes("剪贴板"));
+  assert.ok(!toasts[0]!.includes("暂不支持"), "解码失败 ≠ 格式不支持（D585）");
+});
+
+test("按调用点分码的区分度：同一引用路径，解码失败读 D588、格式不支持读 D585、超限读 D437", async () => {
+  // 反向判据（design §D5）：只改道了解码失败这一条——把 code 换成另外两条，文案必须跟着变。
+  const backend = installBackend();
+  backend.handle("fs_read_attachment", (args) => `bytes-of-${String(args.path)}`);
+  backend.handle("harness_write_image", (args) => {
+    const data = String(args.data_base64);
+    if (data.endsWith("broken.png")) {
+      throw {
+        code: "attachment_decode_failed",
+        message: "后端人话（解码）",
+        params: { reason: "bad signature" },
+      };
+    }
+    if (data.endsWith("fake.png")) {
+      throw {
+        code: "attachment_type_unsupported",
+        message: "后端人话（格式）",
+        params: { type: "image/png" },
+      };
+    }
+    throw { code: "attachment_too_large", message: "后端人话（超限）", params: { mb: 80, limit: 50 } };
+  });
+  const toasts: string[] = [];
+  const outcomes = await quoteImagesFromVault(
+    [
+      { path: "assets/broken.png", rawRef: "![[broken.png]]" },
+      { path: "assets/fake.png", rawRef: "![[fake.png]]" },
+      { path: "assets/huge.png", rawRef: "![[huge.png]]" },
+    ],
+    productionQuoteImagePorts((text) => toasts.push(text)),
+  );
+
+  assert.deepEqual(failureTexts(outcomes), [
+    COPY.D588.zh.replace("{reason}", "bad signature"),
+    COPY.D585.zh.replace("{type}", "image/png"),
+    COPY.D437.zh.replace("{mb}", "80").replace("{limit}", "50"),
+  ]);
+  assert.deepEqual(toasts, failureTexts(outcomes), "三条失败各自一条 toast");
+  // 三条文案互不为子串：解码 / 格式 / 超限各说各的失败面。
+  assert.ok(!toasts[0]!.includes("暂不支持"));
+  assert.ok(!toasts[0]!.includes("图片过大"));
+  assert.ok(!toasts[1]!.includes("解码"));
+  assert.ok(!toasts[1]!.includes("剪贴板"), "引用语境的格式不支持不读粘贴语境的 D436");
+  assert.ok(!toasts[2]!.includes("剪贴板"));
+});
+
+test("缺参不抛：引用路径的信封缺 {reason} 时回落后端 message，不留未替换占位符（M686）", async () => {
+  const backend = installBackend();
+  backend.handle("fs_read_attachment", () => "QUJD");
+  backend.handle("harness_write_image", () => {
+    throw { code: "attachment_decode_failed", message: "无法解码图片（后端人话）" };
+  });
+  const toasts: string[] = [];
+  const outcomes = await quoteImagesFromVault(
+    [{ path: "assets/broken.png", rawRef: "![[broken.png]]" }],
+    productionQuoteImagePorts((text) => toasts.push(text)),
+  );
+
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0], "无法解码图片（后端人话）", "缺参走 errorText 的同一份兜底：回落 message");
+  assert.ok(!toasts[0]!.includes("{reason}"), "MUST NOT 出现未替换的占位符");
+  assert.deepEqual(failureTexts(outcomes), toasts);
 });
 
 test("混合批次：可引用的照常走两条命令，不可引用的（gif）只留失败读数（顺序与输入一致）", async () => {
