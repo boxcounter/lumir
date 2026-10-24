@@ -201,6 +201,11 @@ steps:
 - 撤销提示 8s 后自消，因此撤销步骤紧跟在移除之后（中间只隔一轮 `waitFor` 与读盘断言）。
 - 第二次移除后不再撤销：收尾不处理「重开浮层仍在」之外的持久化形态，下一次运行由
   `resetRegistry` 清空隔离配置目录。
+- **列表滚动条不在本场景判**（M660 #1）：AX 读不到滚动条，也读不到「条与钮是否重叠」；
+  本场景的注册表只有两项（列表不溢出），浮层列表因此取隐藏档（`scrollbar-width: none` +
+  `::-webkit-scrollbar { display: none }`，右缘有常驻 ✕ 的容器一律隐藏）。溢出态下的判据在
+  `tests/visual/scenes/mv-vault-switcher.spec.ts` 的 M660 #1 用例：先构造 14 行真实溢出，再断言
+  两条通道的声明与 `offsetWidth === clientWidth`。
 - 不覆盖：只有一个 vault 时移除入口整体不可达（D1 = A 的代价，spec 明写「除当前项之外」）；
   移除失败（权限 / IO）的提示走 `vault_remove_failed`（D563），真机上造不出稳定的权限失败，
   该档只在后端单测与 `ERROR_COPY` 的完整性门禁里验。

@@ -119,6 +119,42 @@ test("块级全屏入口：代码块与表格各有 hover 钮，表格读屏名�
   await expect(tableButtons.first()).toHaveAttribute("aria-label", "放大查看表格");
 });
 
+test("表格全屏钮锚在表格自身右缘：slot 贴合表宽，不再悬在面板右缘（M660 #4）", async ({ page }) => {
+  // Alex 2026-10-24 反馈原话：「harness pane 里的 table 的全屏查看按钮距离 table 太远了，
+  // 不容易看到。」根因是面板里的 slot 是块级满宽容器，而 `<table>` 按内容自然宽收紧——
+  // 钮钉在 slot 的 `right: 6px`，窄表因此与钮之间隔着一整段空白。修法 = 让表格的 slot 贴合
+  // 表格自身宽度（`width: max-content; max-width: 100%`），钮的 right 仍落在表格右缘内侧 6px。
+  // 代码块不走这条：它的底色是整行形态，slot 继续吃满面板宽（下一段的正观测）。
+  await openPanel(page);
+
+  const geometry = await page.evaluate(() => {
+    const slot = document.querySelector<HTMLElement>('.lumir-hp-block-slot[data-hp-block="table"]')!;
+    const table = slot.querySelector<HTMLElement>(".lumir-hp-table")!;
+    const body = slot.closest<HTMLElement>(".lumir-hp-body")!;
+    const codeSlot = document.querySelector<HTMLElement>('.lumir-hp-block-slot[data-hp-block="code"]')!;
+    const button = slot.querySelector<HTMLElement>(".lumir-hp-block-fs-trigger")!;
+    const rect = (el: Element) => el.getBoundingClientRect();
+    return {
+      slot: rect(slot),
+      table: rect(table),
+      body: rect(body),
+      codeSlot: rect(codeSlot),
+      code: rect(codeSlot.querySelector<HTMLElement>(".lumir-hp-codeblock")!),
+      buttonGap: rect(slot).right - rect(button).right,
+    };
+  });
+
+  // 区分度前提：这张表明显窄于面板（否则「贴合表宽」与「悬在面板右缘」读数无差别）。
+  expect(geometry.body.width - geometry.table.width).toBeGreaterThan(80);
+  expect(Math.abs(geometry.slot.right - geometry.table.right)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.slot.width - geometry.table.width)).toBeLessThanOrEqual(1);
+  // 位置公式不变：钮仍贴 slot（= 表格）右缘内侧 6px。
+  expect(geometry.buttonGap).toBeCloseTo(6, 0);
+  // 代码块的 slot 不受影响：仍与面板正文同宽，块底色维持整行形态。
+  expect(Math.abs(geometry.codeSlot.width - geometry.body.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.code.width - geometry.body.width)).toBeLessThanOrEqual(1);
+});
+
 test("表格全屏：快照逐 cell 相同、无钮副本、读屏名 1/2、Esc 关闭且焦点回触发钮", async ({ page }) => {
   await openPanel(page);
 

@@ -202,6 +202,9 @@ change `harness-permission-rules-oct23` 的三条用户可见行为（proposal �
 - **配置写回的判据是 `env:config.json` 的字符串**：`config_set_value` / 规则写回都走同一份原子写，
   pretty JSON 里规则长这样：`"cli(tvly search *)"`。删除后同一文件里 `not` 该串（同时列表段
   退场，两条互证）。
+- **规则段的滚动条不在本场景判**（M660 #1 追加）：本场景只落一条规则、列表不溢出；规则段已归
+  隐藏档（右缘有 16px 删除钮），溢出态判据（10 条规则）在
+  `tests/visual/scenes/m347-harness-composer.spec.ts` 的 M660 #1 追加用例。
 
 ## 环境与副作用
 

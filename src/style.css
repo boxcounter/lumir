@@ -399,17 +399,32 @@ body {
      可滚动区，margin 在两个引擎里都同样生效。 */
   margin-right: var(--sp-3);
   /* 溢出：v1 只做横向滚动（不做拖拽排序 / 不折叠成下拉）。溢出时标签自身宽度不变，
-     正文列宽也不受影响。
-     M257（Alex dogfood 报告的红箭头缺陷：横向滚动条不美观、悬浮态下遮挡标签下缘）：
-     滚动条整个不显示——与浏览器标签条同形态（Safari / Chrome 的标签条都没有滚动条）。
-     滚动能力保留：触控板横向手势照走，键盘切换由 ensureActiveVisible 程序化对齐
-     （src/tabs.ts）。两条声明都要：scrollbar-width 管标准通道，::-webkit-scrollbar
-     兜 WKWebView 与 chromium 的经典滚动条（缺了它，chromium 的 thin 条仍占布局高度）。 */
+     正文列宽也不受影响。滚动条形态归下面的「隐藏档」共用组（M257 起的口径，M660 扩到
+     三处浮层列表），本规则不再各写一份 scrollbar-width。 */
   overflow-x: auto;
   overflow-y: hidden;
+}
+/* 滚动条隐藏档（M257 标签栏；M660 扩到三处「右缘有常驻钮」的浮层列表）。
+   M257（Alex dogfood 报告的红箭头缺陷：横向滚动条不美观、悬浮态下遮挡标签下缘）：
+   滚动条整个不显示——与浏览器标签条同形态（Safari / Chrome 的标签条都没有滚动条）。
+   滚动能力保留：触控板手势照走，键盘切换由 ensureActiveVisible 程序化对齐（src/tabs.ts）。
+   M660（Alex 2026-10-24「vault switch 的滚动条遮挡了移除 vault 按钮」）：细条（4px）仍会压住
+   行尾 20px 常驻钮的右缘，因此这三处列表取**隐藏档**而非细条档——vault 切换浮层的
+   `.vault-list`、harness 会话浮层的 `.lumir-hp-sesspop-list`、权限规则段的
+   `.lumir-hp-permpop-rules`。三处共同形态 = 容器右缘 0 留白 + 逐行常驻钮（× / 删除），
+   overlay 条与钮占同一条带（M658 滚动条盘点的 P1 结论）。
+   两条声明都要：scrollbar-width 管标准通道，::-webkit-scrollbar 兜 WKWebView 与 chromium 的
+   经典滚动条（缺了它，chromium 的经典条仍占布局宽）。配方只有这一份，消费者 MUST NOT 各抄。 */
+.tabstrip,
+.vault-list,
+.lumir-hp-sesspop-list,
+.lumir-hp-permpop-rules {
   scrollbar-width: none;
 }
-.tabstrip::-webkit-scrollbar {
+.tabstrip::-webkit-scrollbar,
+.vault-list::-webkit-scrollbar,
+.lumir-hp-sesspop-list::-webkit-scrollbar,
+.lumir-hp-permpop-rules::-webkit-scrollbar {
   display: none;
 }
 /* author 的 display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .editor-notice） */
@@ -555,6 +570,19 @@ body {
 }
 .tab-dirty[hidden] {
   display: none;
+}
+/* vault 外只读标签的锁形图标（M660 #7，Alex 2026-10-24：「TAB 上显示 read-only，但区分度不够，
+   是否有其他图像化表达」）：字形与画笔在 src/tabs.ts 的 READONLY_LOCK_SVG；10×10、排在文件名
+   之前、flex 不伸缩。色取 --text-2（比 --text-3 的 meta 灰更清楚，又不抢 --text 的文件名）——
+   eink 档由 token 体系自动覆盖。图标只表达状态：可访问名由按钮的 aria-label（D579）承担。 */
+.tab-readonly {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-2);
+}
+.tab-readonly svg {
+  display: block;
 }
 .tab-close {
   flex: none;
@@ -1891,10 +1919,15 @@ body {
   box-shadow: none;
 }
 /* 内容容器：底板与圆角取文档内代码块横滚容器的同一视觉语言（--code-bg + r8 + 同一份内边距），
-   字体 / 字号 / 行高取编辑器作用域 token（与运行期字号步进同源，不各写一份常量）。 */
+   字体 / 字号 / 行高取编辑器作用域 token（与运行期字号步进同源，不各写一份常量）。
+   水平居中（M660 #5，Alex 2026-10-24：「code block 比较窄，会靠左显示。不好看，是否能居中？」）：
+   内容宽 = max-content 时 `margin-inline: auto` 吃下两侧余量、块居中；宽于可用宽时 max-width
+   把宽度钳到 100%，两侧余量为 0，行为与居中前逐值相同（超长行仍由壳横滚到达）。折行档
+   `width: 100%` 同理不受影响。 */
 .lumir-codeblock-fs-content {
   width: max-content;
   max-width: 100%;
+  margin-inline: auto;
   padding: 9px var(--sp-7) var(--sp-5);
   background-color: var(--code-bg);
   border-radius: var(--r8);

@@ -336,3 +336,105 @@ test("行内两步确认：点 × 换成确认句 + 两个按钮，取消逐字�
   await expect(page.locator(".vault-row-wrap")).toHaveCount(3);
   await expect(page.locator(".vault-pop")).toBeVisible();
 });
+
+/** 长注册表：14 行足够把 60vh 的列表顶出滚动（每行两行文本），当前项是第 0 行。 */
+const LONG_REGISTRY: VaultListRow[] = Array.from({ length: 14 }, (_, i) => ({
+  id: i === 0 ? "fixture-vault" : `fixture-vault-${String(i).padStart(2, "0")}`,
+  path: `/Users/alex/vaults/demo-vault-${i}`,
+  name: `demo-vault-${String(i).padStart(2, "0")}`,
+  available: true,
+  last_opened_at: i === 0 ? 1757000002000 : 1757000000000 - i * 1000,
+  tab_count: 0,
+}));
+
+/** 审阅证据（git 外）：像素基线更新前给 Alex 过目的对照图。 */
+const REVIEW_DIR = new URL("../../../.local/reviews/ui-polish-oct24/", import.meta.url);
+async function captureReview(page: Page, name: string): Promise<void> {
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(REVIEW_DIR, { recursive: true });
+  await page.locator(".vault-pop").screenshot({ path: new URL(name, REVIEW_DIR).pathname });
+}
+
+test("浮层列表滚动条：走隐藏档，任何长度下都不压行尾移除钮（M660 #1）", async ({ page }) => {
+  // Alex 2026-10-24 反馈原话：「vault switch 的滚动条遮挡了移除 vault 按钮，按照我们的设计约定，
+  // 滚动条有设计规则，请你修改。」设计规则 = `ui-design-system` 的「滚动条」两档（细条 4px /
+  // 隐藏）；浮层列表取**隐藏档**——容器右缘 0 留白 + 逐行常驻 ✕，overlay 条与钮占同一条带，
+  // 细条仍会压住钮的右缘（M658 滚动条盘点的 P1 结论；同批三处列表同档：本浮层 + harness 会话
+  // 浮层 + 权限规则段）。
+  //
+  // 判据分两层，缺一条就会留下假绿：
+  //   ① 必须**真的溢出**（scrollHeight > clientHeight）——浮层 fixture 只有两三行时滚动条不出现，
+  //      任何「不遮挡」断言都测不到东西（M658 明确指出 vault-popover 像素基线因此结构性看不见
+  //      本缺陷）；
+  //   ② 两条通道的声明都在：`scrollbar-width: none`（标准通道）+ `.vault-list::-webkit-scrollbar
+  //      { display: none }`（WKWebView / chromium 的经典通道）；再配一条实测占位读数
+  //      `offsetWidth === clientWidth`（不许退回占布局的系统条）。
+  await stubTauri(page, { ...DEMO_VAULT, vaults: LONG_REGISTRY });
+  await page.goto("/");
+  await openSwitcher(page);
+
+  const reading = await page.evaluate(() => {
+    const list = document.querySelector<HTMLElement>(".vault-list");
+    if (list === null) throw new Error("浮层列表不在场");
+    const cs = getComputedStyle(list);
+    const buttons = [...list.querySelectorAll<HTMLElement>(".vault-row-del")];
+    // 滚动能力保留的正观测：程序化滚到底（触控板 / 键盘游标走的是同一条原生滚动通道）。
+    list.scrollTop = list.scrollHeight;
+    const scrolledTop = list.scrollTop;
+    // CSSOM：按精确选择器取声明值（子串匹配会漏进 `.lumir-hp-*` 一类名字，m628 同口径）。
+    const rules: Array<{ selector: string; display: string }> = [];
+    const walk = (ruleList: CSSRuleList) => {
+      for (const rule of Array.from(ruleList)) {
+        const anyRule = rule as unknown as {
+          selectorText?: string;
+          style?: CSSStyleDeclaration;
+          cssRules?: CSSRuleList;
+        };
+        if (anyRule.cssRules !== undefined) walk(anyRule.cssRules);
+        if (anyRule.selectorText?.includes("-webkit-scrollbar")) {
+          rules.push({
+            selector: anyRule.selectorText,
+            display: anyRule.style?.display ?? "",
+          });
+        }
+      }
+    };
+    for (const sheet of Array.from(document.styleSheets)) {
+      let sheetRules: CSSRuleList;
+      try {
+        sheetRules = sheet.cssRules;
+      } catch {
+        continue;
+      }
+      walk(sheetRules);
+    }
+    return {
+      scrollbarWidth: cs.scrollbarWidth,
+      scrollHeight: list.scrollHeight,
+      clientHeight: list.clientHeight,
+      offsetWidth: list.offsetWidth,
+      clientWidth: list.clientWidth,
+      scrolledTop,
+      buttons: buttons.length,
+      rules,
+    };
+  });
+
+  // ① 区分度前提：列表真的溢出。
+  expect(reading.scrollHeight).toBeGreaterThan(reading.clientHeight + 40);
+  // 当前项没有移除钮，其余 13 行各一枚。
+  expect(reading.buttons).toBe(13);
+  // 滚动能力保留（隐藏条不是「禁用滚动」）。
+  expect(reading.scrolledTop).toBeGreaterThan(0);
+
+  // ② 标准通道：none。
+  expect(reading.scrollbarWidth).toBe("none");
+  // ③ 经典通道：display: none。
+  const bar = reading.rules.find((r) => r.selector === ".vault-list::-webkit-scrollbar");
+  expect(bar, "缺 .vault-list::-webkit-scrollbar 声明").toBeTruthy();
+  expect(bar!.display).toBe("none");
+  // ④ 实测占位：隐藏档不占宽（任何非零值都意味着某条通道没生效）。
+  expect(reading.offsetWidth - reading.clientWidth).toBe(0);
+
+  await captureReview(page, "01-vault-popover-scrollbar-after.png");
+});

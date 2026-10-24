@@ -608,6 +608,16 @@
      .cm-lp-table-slot 同一条理由，见 src/preview/block-trigger.ts 的文件头）。 */
   position: relative;
 }
+/* 表格的 slot 贴合表格自身宽度（M660 #4，Alex 2026-10-24：「harness pane 里的 table 的全屏
+   查看按钮距离 table 太远了，不容易看到」）：面板里的 `<table>` 按内容自然宽收紧，而 slot 是
+   满宽块容器——钮钉在 slot 的 `right: 6px`，窄表时钮与表之间因此隔着一整段空白。收紧到表宽
+   （max-content，宽表仍以面板正文宽为上限）后，钮落回表格右上角内侧；代码块的 slot 不走这条
+   ——它的底色是整行形态，继续满宽（`.lumir-hp-codeblock` 是块级、宽度 auto）。
+   tests/visual 的 m634 场景按「slot 右缘 == 表格右缘」断言本条款。 */
+.lumir-hp-block-slot[data-hp-block="table"] {
+  width: max-content;
+  max-width: 100%;
+}
 .lumir-hp-block-fs-trigger {
   position: absolute;
   top: 6px;
@@ -961,7 +971,9 @@
    M628（Alex 2026-10-23「代码块横向滑动的滚动条很粗，影响阅读代码」）：配方扩到
    `.lumir-hp-codeblock`——它一直漏在这条之外，横向溢出时走系统默认粗条。三个消费者
    （代码块 / diff / argv）共用这一份声明，MUST NOT 各自再写一份（tests/visual 的 m628
-   场景按 CSSOM 断言三处逐值一致）。 */
+   场景按 CSSOM 断言三处逐值一致）。
+   浮层列表（vault 切换 / harness 会话 / 权限规则段）**不在本组**：它们的右缘有常驻钮，
+   细条仍会压住钮的右缘，归 src/style.css 的隐藏档（M660）。 */
 .lumir-hp-codeblock,
 .lumir-hp-diff,
 .lumir-hp-argv {

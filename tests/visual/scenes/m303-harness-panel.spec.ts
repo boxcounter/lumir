@@ -31,8 +31,14 @@ const VAULT: VaultFixture = {
  * 的空会话形态（HP1 起用量读数随头部栏退场，本条桩只为 messages 空态服务）。
  * M406 起补两条会话清单桩：harness_list_sessions 返回两份合成留存（浮层只列历史会话），
  * harness_delete_session 记录参数并成功返回（行内删除的确认路径）。 */
-async function stubHarnessState(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+async function stubHarnessState(
+  page: Page,
+  sessions: Array<{ session_id: string; first_user_text: string; ts: number }> = [
+    { session_id: "s1759912345678-k3x9ab", first_user_text: "帮我整理这份笔记", ts: 1759912345 },
+    { session_id: "s1759912000000-a1b2c3", first_user_text: "旧会话草稿", ts: 1759912000 },
+  ],
+): Promise<void> {
+  await page.addInitScript((rows) => {
     const w = window as unknown as Record<string, any>;
     const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: unknown) => unknown;
     w.__deletedSessions = [] as string[];
@@ -45,19 +51,14 @@ async function stubHarnessState(page: Page): Promise<void> {
           warn_ctx_pct: 85,
         });
       }
-      if (cmd === "harness_list_sessions") {
-        return JSON.stringify([
-          { session_id: "s1759912345678-k3x9ab", first_user_text: "帮我整理这份笔记", ts: 1759912345 },
-          { session_id: "s1759912000000-a1b2c3", first_user_text: "旧会话草稿", ts: 1759912000 },
-        ]);
-      }
+      if (cmd === "harness_list_sessions") return JSON.stringify(rows);
       if (cmd === "harness_delete_session") {
         w.__deletedSessions.push(args.session_id as string);
         return null;
       }
       return invoke(cmd, args);
     };
-  });
+  }, sessions);
 }
 
 test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", async ({ page }) => {
@@ -171,4 +172,80 @@ test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", asy
   await expect(page.locator(".cm-content")).toContainText("第一段");
   await expect(toggle).toBeVisible();
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
+});
+
+test("会话浮层列表滚动条：隐藏档，溢出态下每行 × 不被压住（M660 #1 追加）", async ({ page }) => {
+  // 同一缺陷类的第二处（M658 滚动条盘点 P1）：会话浮层的列表行尾是 20×20 ×，行壳右缘
+  // 0 留白——overlay 条与钮占同一条带。按 tower 2026-10-24 追加，与 vault 浮层同档（隐藏）。
+  // 判据同 mv-vault-switcher 的对应用例：先构造 24 行**确实溢出**，再断言两条通道的声明与
+  // 实测占位；滚动能力保留（scrollTop 可推进）是隐藏档不是禁用滚动的正观测。
+  const many = Array.from({ length: 24 }, (_, i) => ({
+    session_id: `s1759912${String(i).padStart(6, "0")}-m660`,
+    first_user_text: `会话 ${i + 1}`,
+    ts: 1759912345 - i * 60,
+  }));
+  await stubTauri(page, VAULT);
+  await stubHarnessState(page, many);
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await page.locator(".lumir-hp-session").click();
+  await expect(page.locator(".lumir-hp-sesspop")).toBeVisible();
+  await expect(page.locator(".lumir-hp-sesspop-row")).toHaveCount(24);
+
+  const reading = await page.evaluate(() => {
+    const list = document.querySelector<HTMLElement>(".lumir-hp-sesspop-list");
+    if (list === null) throw new Error("会话浮层列表不在场");
+    const cs = getComputedStyle(list);
+    list.scrollTop = list.scrollHeight;
+    let webkitDisplay = "";
+    const walk = (ruleList: CSSRuleList) => {
+      for (const rule of Array.from(ruleList)) {
+        const anyRule = rule as unknown as {
+          selectorText?: string;
+          style?: CSSStyleDeclaration;
+          cssRules?: CSSRuleList;
+        };
+        if (anyRule.cssRules !== undefined) walk(anyRule.cssRules);
+        if (anyRule.selectorText === ".lumir-hp-sesspop-list::-webkit-scrollbar") {
+          webkitDisplay = anyRule.style?.display ?? "";
+        }
+      }
+    };
+    for (const sheet of Array.from(document.styleSheets)) {
+      let sheetRules: CSSRuleList;
+      try {
+        sheetRules = sheet.cssRules;
+      } catch {
+        continue;
+      }
+      walk(sheetRules);
+    }
+    return {
+      scrollbarWidth: cs.scrollbarWidth,
+      overflowY: cs.overflowY,
+      scrollHeight: list.scrollHeight,
+      clientHeight: list.clientHeight,
+      offsetWidth: list.offsetWidth,
+      clientWidth: list.clientWidth,
+      scrolledTop: list.scrollTop,
+      rows: list.querySelectorAll(".lumir-hp-sesspop-row").length,
+      dels: list.querySelectorAll(".lumir-hp-sesspop-del").length,
+      webkitDisplay,
+    };
+  });
+
+  // 区分度前提：列表真的溢出（24 行 × 约 26px > 320px 上限；12 行只有 2px 溢出，不足以判滚动）。
+  expect(reading.overflowY).toBe("auto");
+  expect(reading.scrollHeight).toBeGreaterThan(reading.clientHeight + 40);
+  expect(reading.scrolledTop).toBeGreaterThan(0);
+  expect(reading.rows).toBe(24);
+  expect(reading.dels).toBe(24);
+
+  // 隐藏档：标准通道 + 经典通道 + 实测零占位。
+  expect(reading.scrollbarWidth).toBe("none");
+  expect(reading.webkitDisplay).toBe("none");
+  expect(reading.offsetWidth - reading.clientWidth).toBe(0);
 });
