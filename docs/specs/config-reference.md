@@ -18,7 +18,7 @@
 | 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
 |---|---|---|---|---|---|
 | `version` | number | `1` | 当前 schema 版本 `1`；更高值 → 一条 warning + 按 v1 解释 | 启动装载读一次；写回时按写入纪律补齐（见 §3） | `config.rs:63`、`validate()` |
-| `last_vault` | string \| null | `null` | vault 绝对路径 | 启动时由 `restore_last_vault` 恢复（`lib.rs:776`）；每次**打开 vault 成功**后回写（`commands.rs` 的 `remember_last_vault`） | `config.rs:149`、`commands.rs:708-726` |
+| `last_vault` | string \| null | `null` | vault 绝对路径 | 启动时由 `restore_last_vault` 恢复（`lib.rs:880`）；每次**打开 vault 成功**后回写（`commands.rs:731` 的 `remember_last_vault`） | `config.rs:149` |
 | `keys` | 对象：键位 → 命令 id（字符串）\| `null`（解绑） | `{}` | 键位非空且**不含空白**（含空白即多段 chord，本版不支持）；命令 id 非空字符串 | 启动装载读一次，覆盖到位后重挂键位分发器 | `config.rs:79`、`validate_keys()` |
 | `log.level` | string 枚举 | `"info"` | `"info"` \| `"off"` | 启动装载读一次（消费方 `logging.rs`，`off` 时事件丢弃不写盘） | `config.rs:245`、`validate_log()` |
 
@@ -156,25 +156,64 @@ token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定�
 
 ### 1.5 `[harness]` 表
 
-本表只收录**改变客户端 wire 行为**的键；`[harness]` 的其余键（`provider` /
-`providers.<id>.api_key` / `model` / `base_url` / `models` / `permissions` / `permission_mode` /
-`loop_max` / `warn_ctx_pct` / `auto_compact`）的规格归
+本表收录**改变客户端 wire / 模型装配行为**的键；`[harness]` 的其余键（`permissions` /
+`permission_mode` / `loop_max` / `warn_ctx_pct` / `auto_compact` / `subagents`）的规格归
 [openspec/specs/harness/spec.md](../../openspec/specs/harness/spec.md) 的「配置节 [harness]」条
-（change `add-harness-chat-completions-dialect` 起生效），本文档不复制第二份真源。
+（change `add-harness-chat-completions-dialect` 起生效），本文档不复制第二份真源。provider 映射与
+两个命名表在本节给出**字段面**（取值与非法处置）；行为真源（回退顺序、生效模型解析、命名资格闸）
+仍以上述 spec 为准。
 
-| 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
-|---|---|---|---|---|---|
-| `harness.providers.<id>.wire_api` | string 枚举 | `"responses"` | `"responses"` \| `"chat_completions"` | 每轮请求装配 client 时读一次（会话建立 / 每轮发送的配置快照）；改动下一次发送生效 | `config.rs` 的 `WireApi`、`validate_wire_api` |
+#### 1.5.1 `harness.providers` 表（provider 映射）
 
-`wire_api` 选择该 provider 的 wire 方言：`responses` = `POST {base_url}/responses`（缺省，既有行为
-逐字节不变）；`chat_completions` = `POST {base_url}/chat/completions`。**v1 仅 kimi 实现 chat 档**：
-deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条人话 warning（v1 未实现其 chat 档）；
-`mock` 没有该键（fixture 驱动，不经过真实 HTTP body）。闭集合外取值回落 `responses` + warning，
-类型不符走整文件回落。
+`providers` 是**以 provider id 为键的动态映射**：没有内置条目、没有数量上限，`kimi` / `deepseek`
+这类 id 只是用户起名（change `add-model-automation-settings-oct24`；旧的三档固定结构 `kimi` /
+`deepseek` / `mock` 已删除，旧配置由一次性迁移补 `preset`，见本节末）。
 
-会话留存的首行 `session_open.wire_api` 记录当次实际方言（缺省值同样在场）；恢复旧会话（无该键）按
-`responses` 解释。历史项不随方言改写——items → chat messages 的翻译发生在发送边界，因此改配置后
-恢复续聊即可切到 chat 方言（回退 = 删掉该键，见 change `add-harness-chat-completions-dialect`）。
+| 键 | 类型 | 默认 | 取值范围 / 非法处置 | 真源 |
+|---|---|---|---|---|
+| `providers.<id>` | 对象 | 无（映射项本身可选） | `<id>` 须匹配 `^[a-z0-9][a-z0-9_-]{0,31}$`；`mock` 是验收专用**保留 id** | `config.rs` 的 `provider_id_valid` / `RESERVED_PROVIDER_ID` |
+| `.preset` | string 枚举 | 缺键按 `generic` 处理 + warning | `kimi` \| `deepseek` \| `generic` \| `mock`；闭集合外 / 非字符串 ⇒ **丢该条目** + warning；`mock` 预设只允许 id 为 `mock` | `ProviderPreset`、`validate_provider_entry` |
+| `.api_key` | string | `""` | `kimi` / `deepseek` 空白 = 未配置；`generic` 可空（不发 `Authorization` 头）；mock 不经过 HTTP | `derive_configured` |
+| `.models` | 数组 | `[]` | 逐项模型声明，元素 schema 见 harness spec 的「模型清单声明」条；坏项只丢自己，非数组 ⇒ 丢该条目 + warning | `validate_harness_model_specs` |
+| `.model` | string | 缺省 = 清单首项 | 生效模型。不在 `.models` 内时**保留该值**、窗口按 131072 保守估算、effort / vision 按不支持 + warning；空串按缺省处理 | `model_specs` / `context_window` |
+| `.base_url` | string | 预设官方地址 | 覆盖预设地址；`generic` 没有官方地址，填了 Key 或模型却没写它 ⇒ 装载 warning、`configured = false` | `official_base_url` |
+| `.wire_api` | string 枚举 | 随预设（见下表） | `responses` \| `chat_completions`；该预设不支持的档位回落缺省 + warning | `WireApi`、`supports_wire_api` |
+| `.fixture` | string | 无 | 仅 `mock` 预设消费（fixture 脚本路径）；其余预设该键无效 | `HarnessProviderConfig` |
+| 未知子键 | — | — | 装载期忽略；经设置面板保存时**原样保留**（模型项按 `id` 匹配保留），MUST NOT 被静默删除 | `settings.rs` |
+
+预设是条目行为的**唯一**依据（`preset` 决定 Base URL、是否要求 Key、`store:false`、wire 档位；
+MUST NOT 按 id 字面量推断——id 叫 `kimi` 不构成任何协议保证）。同一预设可被多个条目复用
+（工作 / 个人两把 Key 各建一条）。
+
+| 预设 | 官方 Base URL | 要求 Key | 缺省 wire | 支持 wire | `store:false` | `configured` 判据（派生、不落盘） |
+|---|---|---|---|---|---|---|
+| `kimi` | `https://api.moonshot.cn/v1` | 是 | `responses` | 两档 | 发 | Key 去空白非空 且 清单非空 |
+| `deepseek` | `https://api.deepseek.com` | 是 | `responses` | 仅 `responses`（chat 档 v1 未实现） | 不发 | 同上 |
+| `generic` | 无（须自填 `base_url`） | 否 | `chat_completions` | 两档 | 不发 | 清单非空 且 `base_url` 非空 |
+| `mock` | 无 | 否 | `responses`（不消费 wire） | 仅 `responses` | 不发 | `fixture` 非空 |
+
+`wire_api` 选择该 provider 的 wire 方言：`responses` = `POST {base_url}/responses`；
+`chat_completions` = `POST {base_url}/chat/completions`。缺省随预设（上表），未写该键不告警；
+闭集合外取值或该预设不支持的档位（deepseek / mock 配 `chat_completions`）回落预设缺省 + 一条人话
+warning；类型不符 ⇒ 丢该条目 + warning。会话留存的首行 `session_open.wire_api` 记录当次实际方言
+（缺省值同样在场）；恢复旧会话（无该键）按 `responses` 解释。历史项不随方言改写——items → chat
+messages 的翻译发生在发送边界，因此改配置后恢复续聊即可切到 chat 方言（回退 = 删掉该键，见 change
+`add-harness-chat-completions-dialect`）。
+
+**当前使用项**（`harness.provider`，provider id 字符串，键可省）：显式值合法且在映射内 ⇒ 用它
+（即使 `configured = false`，不替用户改选）；缺省 ⇒ 按预设顺序 `kimi` → `deepseek` → `generic`
+（同组内按 id 字典序）取第一个 `configured` 的**非 mock** 条目，没有则取第一个合法非 mock 条目；
+映射为空（或只剩 mock）⇒ 无当前使用项；悬空值 ⇒ 按缺省规则回退 + 一条点名 warning。`mock` MUST
+NOT 被缺省回退自动选中。`configured` 决定模型 chip 的可选 provider 列表（只列 configured 的条目
+加当前项，mock 恒不上列表）。
+
+**逐条宽容**：单个条目不是对象 / id 非法 / 预设非法 / 字段类型不符 ⇒ **只丢该条目** + 点名
+warning，其余条目与整份配置照常生效（与 `vault.ignore` 地图、`permissions.allow` 清单同族的逐项
+口径；不同于 §2 的整文件回落）。
+
+**一次性迁移**：旧格式（无 `preset`）的 `kimi` / `deepseek` / `mock` 条目在装载时按 id 补上对应
+预设——显式 `preset` 不覆盖、未知 id 不迁移、幂等；与退役 model 迁移合并为**同一次原子写**，写
+失败只给 warning、内存值仍生效。
 
 ### 1.6 `harness.attachment_naming` 表（图片语义命名）
 
@@ -191,14 +230,15 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
 | 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
 |---|---|---|---|---|---|
 | `harness.attachment_naming.enabled` | boolean | `true` | `true` / `false` | **关 → 开：需重启**（前端投递闸取启动装载值，关着时前端根本不投递任务）；**开 → 关：立即生效**（后端命令每次调用现场 `config::load()`，读到 `false` 即跳过）。方向不对称是隐私面的有意取舍——关是更严的方向 | `config.rs` 的 `AttachmentNamingConfig`、`validate_attachment_naming` |
-| `harness.attachment_naming.provider` | string \| null | `null` | `"kimi"` / `"deepseek"` / `"mock"`；`null` = 会话当前 provider | 后端每次命名现场读一次 ⇒ 改动**下一次粘贴即生效**；闭集合外取值装载期回落 `null` + 人话 warning | `config.rs` 的 `HarnessConfig::attachment_naming_target` |
+| `harness.attachment_naming.provider` | string \| null | `null` | `providers` 表内的任意 provider id（须非 `mock`）；`null` = 会话当前 provider | 后端每次命名现场读一次 ⇒ 改动**下一次粘贴即生效**；id 不在映射内（含条目被装载期忽略）⇒ 装载期回落 `null` + 人话 warning | `config.rs` 的 `HarnessConfig::attachment_naming_target` |
 | `harness.attachment_naming.model` | string \| null | `null` | 非空字符串，且必须是**选定 provider** 的 `harness.providers.<id>.models` 清单内声明 `vision: true` 的 id；`null` = 该 provider 的生效模型 | 同上（下一次粘贴生效）；运行期切 provider 后，发起命名时按**当时选定**的 provider 重新核对 | 同上 |
 
 口径：
 
 - **缺省即默认**：整表缺席 / 单键缺席 = 出厂值；`model: null` 与缺席同义。表内类型不符
   （`"enabled": "yes"`、`"model": 3`、整表写成字符串）走整文件回落（与 `[harness]` 其余字段同路）。
-- **非法 `provider` 回落缺省**：闭集合外取值 ⇒ 回落 `null`（= 会话当前 provider）+ 一条人话 warning。
+- **悬空 `provider` 回落缺省**：id 不在 `providers` 表内（含被装载期忽略的条目）⇒ 回落 `null`
+  （= 会话当前 provider）+ 一条人话 warning。
 - **非法 `model` 只点名、不回落**：未在清单内 / 未声明 `vision` / mock provider 下的非空值 ⇒ 装载期
   一条点名 warning，**值原样保留**；随后资格不通过 ⇒ **不发起命名、保留暂存名**。MUST NOT 静默换成
   该 provider 的生效模型——那等于替用户选模型。空串按「未配置」归一为 `null` + warning。
@@ -227,14 +267,15 @@ deepseek 配 `chat_completions` 会在装载时回落 `responses` 并给一条�
 | 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
 |---|---|---|---|---|---|
 | `harness.session_naming.enabled` | boolean | `true` | `true` / `false` | 每次轮完成点触发判定时读一次；结果落盘前**重读**，在途期间关掉即丢弃（不写记录、不改标题） | `config.rs` 的 `SessionNamingConfig`、`validate_session_naming` |
-| `harness.session_naming.provider` | string \| null | `null` | `"kimi"` / `"deepseek"` / `"mock"`；`null` = 会话当前 provider | 每次评估取配置快照 ⇒ 改动**下一次评估**生效；闭集合外取值装载期回落 `null` + 人话 warning | `config.rs` 的 `HarnessConfig::title_target` |
+| `harness.session_naming.provider` | string \| null | `null` | `providers` 表内的任意 provider id（须非 `mock`）；`null` = 会话当前 provider | 每次评估取配置快照 ⇒ 改动**下一次评估**生效；id 不在映射内（含条目被装载期忽略）⇒ 装载期回落 `null` + 人话 warning | `config.rs` 的 `HarnessConfig::title_target` |
 | `harness.session_naming.model` | string \| null | `null` | 非空字符串，且须在**选定 provider** 的 `harness.providers.<id>.models` 清单内声明；`null` = 该 provider 的生效模型 | 同上 | 同上 |
 
 口径：
 
 - **缺省即默认**：整表缺席 / 单键缺席 = 出厂值；`model: null` 与缺席同义。表内类型不符
   （`"enabled": "yes"`、`"model": 3`、整表写成字符串）走整文件回落（与 `[harness]` 其余字段同路）。
-- **非法 `provider` 回落缺省**：闭集合外取值 ⇒ 回落 `null`（= 会话当前 provider）+ 一条人话 warning。
+- **悬空 `provider` 回落缺省**：id 不在 `providers` 表内（含被装载期忽略的条目）⇒ 回落 `null`
+  （= 会话当前 provider）+ 一条人话 warning。
 - **非法 `model` 回落生效模型**：未在选定 provider 的清单内 ⇒ 回落 `null`（= 该 provider 的生效
   模型）+ 一条人话 warning；空串按「未配置」归一为 `null` + warning。这一点与 §1.6 的
   `attachment_naming.model`（只点名、值原样保留）**不同且有理由**：附件命名有资格闸（vision
@@ -415,6 +456,8 @@ change 的 [design §9](../../openspec/changes/add-harness-subagents/design.md)�
   一条 warning（连 `last_vault` 一起丢）。这是既有解析模型的性质（不等同于逐字段回落），单测逐条钉住
   （`config.rs` 的 `wrong_type_*_falls_back_entire_file` 族）。本仓**不提供**「逐字段类型容忍」。
   `[cron]` 的 `tasks` **表内**元素是逐项校验的例外：坏一项只丢那一项（见 §1.8）。
+  `harness.providers` 的**条目**同理逐条校验：坏条目只丢自己 + 一条点名 warning，其余条目照常
+  生效（见 §1.5.1）。
   `harness.subagents` 是**整节回落**的例外：该节类型不符只把它自己回落为出厂值 + warning，
   其余 `[harness]` 键照常生效（见 §1.9）。注意这**不同于** §1.6 / §1.7 的命名表——那两节
   沿用本条的整文件回落口径。
@@ -422,24 +465,55 @@ change 的 [design §9](../../openspec/changes/add-harness-subagents/design.md)�
 
 ## 3. 写回纪律：合并写，不写全量默认
 
-应用回写 `config.json` 时只做**单键合并**：读入整份 JSON → 改这一个键 → tmp 文件 + `rename` 原子替换
-（表级入口是 `commands.rs:570-574` 的 `write_last_vault_to` 与 `:637-703` 的 `write_config_value_to`；
-落盘实现是 `config.rs:1831-1884` 的 `write_json_atomic` / `update_json_atomic`）。由此两条性质：
+应用回写 `config.json` 有两类通道，共同点是**只改本次涉及的键**、以同目录 tmp 文件 + `rename`
+原子替换：
 
-1. **未知键原样保留**——写通道不认识 `future_field` 也不会把它删掉；
-2. **没写过的键始终缺席**，因此永远跟随出厂默认（而不是被钉死成写入当时的旧值）。
+1. **单键合并**（运行期写回）：读入整份 JSON → 改这一个键 → 原子替换。表级入口是
+   `commands.rs:598` 的 `write_last_vault_to` 与 `:660` 的 `write_config_value_to`（支持点分嵌套键，
+   如 `providers.<id>.model`）；落盘实现是 `config.rs:2300` 的 `write_json_atomic` 与 `:2332` 的
+   `update_json_atomic`——后者的读、改、写在同一把进程内写锁内完成，不存在「读发生在取锁之前」的
+   丢更新窗口。
+2. **设置面板整笔 patch**（命令 `settings_apply` → `settings.rs:1758` 的 `apply_at`）：一笔 patch 可
+   同时改 provider 条目、`harness.provider`、自动化开关与两个命名目标，整段在读—改—写同一把锁内
+   完成，落盘走 `config.rs:2361` 的 `update_json_atomic_strict`（严格读：文件存在但不可解析时返回
+   解析错误，MUST NOT 按 `{}` 起）。
+
+由此三类性质：
+
+1. **未知键原样保留**——写通道不认识 `future_field` 也不会把它删掉；模型清单按 `id` 匹配保留该项
+   上的未知子键，provider 条目上不在本次改动路径的未知键同样保留，装载期被忽略的非法条目不被其它
+   条目的保存改写。
+2. **没写过的键始终缺席**，因此永远跟随出厂默认（而不是被钉死成写入当时的旧值）；设置面板把某项
+   恢复默认 = **删掉该键**（Reset），不写默认值；开关关闭不清空两个命名目标的 `provider` / `model`
+   键（关闭表达「不调用」，不表达「忘掉目标」）。
+3. **写不成立时文件逐字节不变**——设置通道在锁内完成「严格读 → 比对 revision → 应用 patch → 以
+   装载同一路径复解析校验 → 非回归判据（与改动路径相交的阻断级诊断一律拒绝整笔，不看 baseline 是否
+   已有同一条）→ 引用完整性复核 → 原子写」；Blocked / Conflict 走「不写」返回，不靠抛错中止。文件
+   缺失按空对象处理（首次接入的主路径）；文件不可解析时保存禁用，MUST NOT 在无法 round-trip 的
+   文件上写入。
+
+**revision（CAS）**：设置快照顶层带 `revision`（sha256 over 规范化后的设置面键集合：provider 条目的
+`preset` / `api_key` / `models` / `base_url` / `wire_api` / `fixture` 与条目上的其它未知键、
+`harness.provider`、`auto_compact`、两个命名表的 `enabled` / `provider` / `model`、`subagents.enabled`；
+**不含** composer 模型 chip 写回的 `providers.<id>.model`——否则「面板打开时切一次模型」会变成无意义
+的冲突）。锁内现读的 revision 不一致时返回冲突、文件不动；「以本页为准」在当前文件上重新应用同一
+patch，MUST NOT 用打开时的旧快照整份覆盖。
 
 当前运行期会回写 `config.json` 的键（键 → 触发点）：
 
-- `last_vault` → 打开 vault 成功（`commands.rs` 的 `remember_last_vault`，`:708-726`；remap 短路不算打开）；
-- `ui.theme` → 主题切换（`view.theme-cycle` / modeline 主题钮，`src/main.ts:2908` 的 `configSetUiValue`）；
-- `ui.content_width` → 阅读栏宽拖拽松手（`src/main.ts:1525`）；
-- `ui.sidebar_width` → 左栏分隔条拖拽松手（`src/main.ts:1567`）；
-- `ui.language` → 语言切换（`view.language-cycle` / modeline 语言钮，`src/main.ts:2956`）；
-- `harness.provider` / `harness.providers.<id>.model` → 合并选择器的 provider / 模型切换（`src/harness-panel.ts` 的 `selectProvider` / `selectModel`）；
+- `last_vault` → 打开 vault 成功（`commands.rs:731` 的 `remember_last_vault`；remap 短路不算打开）；
+- `ui.theme` → 主题切换（`view.theme-cycle` / modeline 主题钮，`src/main.ts:2912` 的 `configSetUiValue`）；
+- `ui.content_width` → 阅读栏宽拖拽松手（`src/main.ts:1529`）；
+- `ui.sidebar_width` → 左栏分隔条拖拽松手（`src/main.ts:1571`）；
+- `ui.language` → 语言切换（`view.language-cycle` / modeline 语言钮，`src/main.ts:2960`）；
+- `harness.provider` / `harness.providers.<id>.model` → 合并选择器的 provider / 模型切换（`src/harness-panel.ts` 的 `selectProvider` / `selectModel`；单键合并通道）；
 - `harness.permission_mode` → 权限 chip 切换（`src/harness-panel.ts` 的 `selectPermissionMode`）；
-- `harness.permissions.allow` → 批准卡的「以后都允许」写规则、权限浮层的规则删除（`harness.rs:1783` / `:1812`）；
-- `cron.tasks` → **交互会话里的 agent 调度工具**注册 / 删除任务（§1.8.1；`cron.rs:1156-1160` / `:1226-1228`）。
+- `harness.permissions.allow` → 批准卡的「以后都允许」写规则、权限浮层的规则删除（`harness.rs:1787` / `:1816`）；
+- `cron.tasks` → **交互会话里的 agent 调度工具**注册 / 删除任务（§1.8.1；`cron.rs:1160` / `:1228`）；
+- **设置面板整笔 patch** → provider 增删改、`harness.provider`、四个自动化开关（`auto_compact` /
+  `session_naming.enabled` / `attachment_naming.enabled` / `subagents.enabled`）、两个命名目标的
+  `provider` / `model`。删除 provider 时同一笔完成替代目标重定向（`harness.provider` 改写或删键、
+  两个命名目标改指或删键）与对应 model 覆盖清除，中途任一校验失败时文件逐字节不变。
 
 `harness.permissions.allow` 与 `cron.tasks` 的读、改、替换在同一把进程内写锁内完成（避免与其余键的
 并发写互相顶掉）。`version` 由写通道补齐，纪律是「仅在缺失或不高于当前 schema 时写入」（高版本配置不降回）。

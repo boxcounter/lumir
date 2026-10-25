@@ -10,6 +10,8 @@ config:
     fixture: "$fixtures/harness-mock-basic.json"
     # M381 config-only：切到 kimi 后 chip 的 model 读数来自 kimi 节显式声明（内置
     # 出厂默认已彻底删除）——声明单模型，读数即它（缺 model 键时清单首项即默认）。
+    # change add-model-automation-settings-oct24：provider 段只列 configured 的条目，kimi 因此
+    # 需要一个非空 Key（套件在声明清单时补合成 Key，见 lib/app.mjs 的 kimiModels 分支）。
     kimiModels:
       - { id: "kimi-k3", effort: true, window: 1048576 }
 steps:
@@ -28,10 +30,10 @@ steps:
     do: click
     target: { name: "^模型：" }
     expect:
-      - label: Provider 段列 kimi / deepseek（mock 按 Alex 裁决「界面上隐藏」从可选列表过滤，数据保留）
+      - label: Provider 段只列已配置的 kimi——动态映射不恒列三档（未声明的 deepseek 不出现；mock 按 Alex 裁决「界面上隐藏」从可选列表过滤，数据保留）
         ax: { has: "/[(\"]kimi[)]/" }
-      - label: deepseek 档在场
-        ax: { has: "/[(\"]deepseek[)]/" }
+      - label: 未声明的 deepseek 不在可选列表（旧固定三档会把 deepseek 恒列出来——这条是动态映射的区分度判据）
+        ax: { not: "/[(\"]deepseek[)]/" }
       - label: mock 档不在可选列表（ASCII 括号锚节点名；chip 读屏名里的「mock」不带括号、不误命中）
         ax: { not: "/[(\"]mock[)]/" }
       - label: effort 段三裸档在场
@@ -65,12 +67,16 @@ M373 起双 chip（模型 + 思考）合并为**一个选择器 chip**（`src/ha
 
 - **chip 读数 = 「model · effort」双读数**（U+00B7），provider 不进 chip（Alex 裁决
   「不需要显示 provider，只需要 model · effort」）。当前 provider = mock（验收
-  fixture 驱动档）时没有模型维度（Rust 侧 `HarnessMockConfig` 只有 fixture），model
-  读数回落 provider id 本身——chip 形态保持「model · effort」不变形。读屏名 = D393
+  fixture 驱动档）时没有模型维度（mock 条目只有 `fixture`），model 读数回落
+  provider id 本身——chip 形态保持「model · effort」不变形。读屏名 = D393
   「模型：{model} · 思考程度：{level}（点击切换）」。
-- **浮层 = 单浮层三维分段**（Provider / 模型 / 思考程度）：provider 段只列
-  `kimi` / `deepseek`——**mock 按 Alex 裁决「界面上隐藏，代码保留」在可选列表层过滤**
-  （数据保留在 config 里）。当前 provider 无模型维度时模型段不渲染，故本场景浮层两段。
+- **浮层 = 单浮层三维分段**（Provider / 模型 / 思考程度）：provider 段列**配置里可用**的
+  条目——动态映射下只有「`configured = true` 的条目 + 当前项」进列表（change
+  `add-model-automation-settings-oct24` 起；旧实现按固定 `HarnessProviders` 三字段恒列
+  `kimi` / `deepseek`）。本场景合成 config 只声明 kimi（带清单）与 mock，因此列表只有
+  `kimi`——`deepseek` 不再出现，这条负向断言正是动态映射的区分度判据（旧实现必红）。
+  **mock 按 Alex 裁决「界面上隐藏，代码保留」在可选列表层过滤**（条目仍在 config 里）。
+  当前 provider 无模型维度时模型段不渲染，故本场景浮层两段。
 - **选择写回**：点 `kimi` 档 → `config_set_value("harness","provider","kimi")` 落盘，
   `env:config.json` 含 `"provider": "kimi"`；chip 读数翻成 kimi 节的 model（M381 config-only：
   本场景合成 config 显式声明 `kimiModels` 单模型 `kimi-k3`，model 键缺省 → 清单首项——

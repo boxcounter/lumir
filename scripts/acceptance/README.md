@@ -401,9 +401,9 @@ flavour」）。这类场景在 front-matter 写 `requires: bundle`：dev 下 ru
 
 `harness`（M304，change add-harness-probe §11）是唯一的**嵌套**键：
 
-`rawProviders`（change add-model-automation-settings-oct24 tasks §7.8）是 `config.harness` 下的一个**原样透传**入口：`{ <id>: { ...条目 } }` 直接并入 `providers` 表、放在具名键（`kimiModel` / `kimiModels` / `fixture`）之后，因此可以写**旧格式条目**（不带 `preset`）来验一次性迁移——具名键会先替条目补好 `preset`，构造不出迁移现场。
-`{ provider, fixture, permissions: { allow, deny }, permission_mode, loopMax, warnCtxPct, autoCompact, kimiModel, kimiModels }` → `[harness]` 节
-（camelCase 键名映射到配置文件的 snake_case；`permission_mode` 与配置文件同形，不是多词驼峰）。
+`rawProviders`（change add-model-automation-settings-oct24 tasks §7.8）是 `config.harness` 下的一个**原样透传**入口：`{ <id>: { ...条目 } }` 直接并入 `providers` 表、放在具名键（`kimiModel` / `kimiModels` / `fixture`）之后，因此可以写**旧格式条目**（不带 `preset`）来验一次性迁移——具名键会先替条目补好 `preset`，构造不出迁移现场。**只验迁移时才省 `preset`**：新场景写条目一律显式声明 `preset`（`kimi` / `deepseek` / `generic` / `mock`），缺键会被装载期按 `generic` 处理并给 warning（条目仍在，但行为已不是你以为的那个预设）。
+`{ provider, fixture, permissions: { allow, deny }, permission_mode, loopMax, warnCtxPct, autoCompact, kimiModel, kimiModels, rawProviders }` → `[harness]` 节
+（另有 `subagents` / `attachment_naming` 两个整表键，见下文各条；camelCase 键名映射到配置文件的 snake_case；`permission_mode` 与配置文件同形，不是多词驼峰）。
 `permission_mode`（M481，change add-harness-permission-modes）是三档**闭集合**——`read_only`
 = 读自动放行、一切写逐个问（写类批准闸场景 72/73/74 显式钉它），`vault_write`（缺省）= 库内写
 自动放行，`full_access` = 全自动（仅危险命令仍问）；非法值在应用侧会**静默**回落 `vault_write`
@@ -421,7 +421,10 @@ flavour」）。这类场景在 front-matter 写 `requires: bundle`：dev 下 ru
 清单写进 `providers.kimi.models`——schema 的 model 维度：浮层模型段按声明清单列项，
 effort 能力 / 上下文窗口按声明现算。**M381 起内置 preset 表彻底删除**：不写 `kimiModels`
 = 空清单（+ 加载 warning + 浮层 D402 提示态）——场景 99 / 101 的配置链必须连带声明
-`kimiModels`，能力判定才有输入。mock provider 跑一轮会把**会话 wire 留存**写入隔离配置目录的
+`kimiModels`，能力判定才有输入。**只写 `kimiModels` 也会补上同一个占位 `api_key`**
+（change add-model-automation-settings-oct24 起）：`configured` 要求 kimi 的 Key 非空，
+没有 Key 的条目不会出现在模型 chip 的 provider 列表里（场景 90 正是「声明清单 → 切到
+kimi」的形态）；显式写下的 Key 不被覆盖。mock provider 跑一轮会把**会话 wire 留存**写入隔离配置目录的
 `harness/sessions/<vault 稳定 id>/<session_id>.jsonl`（首行 `session_open` 装配记录，其后逐对 `llm_request` /
 `llm_response`，决策类落 sidecar）——留存断言写 `env:harness/sessions/*/*.jsonl`（`*` 是 per-vault 的
 `<vault 稳定 id>` 目录层；schema 见 change
@@ -445,9 +448,14 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 / `codeBlockWrap` / `autoIndent` / 排版三项 / `mode`）优先。`configWrite` 动作的 `editor:` 是同一
 张表的运行期形态。
 
-> **provider 选项表与 model 选项表的收窄口径（M373 起分化）**：provider 段仍收不窄——
-> `config_get` 回的是 Rust 侧 `HarnessProviders` 结构体（`kimi` / `deepseek` / `mock`
-> 三个字段恒序列化），浮层恒列三档（mock 按 Alex 裁决「界面上隐藏」在 UI 层过滤）。
+> **provider 选项表与 model 选项表的口径（change add-model-automation-settings-oct24 起）**：
+> provider 段是**动态列表**——`harness.providers` 映射里 `configured = true` 的条目 + 当前项，
+> 按预设顺序（`kimi` → `deepseek` → `generic`）再按 id 字典序；mock 按 Alex 裁决「界面上隐藏」
+> 在可选列表层过滤（条目仍在 config 里）。**不再恒列三档**：配置里没声明 / 没配置的 id 不出现，
+> 因此「deepseek 恒在场」这类旧断言会红——写「未声明的 id 不在列表」的负向断言才有区分度。
+> 没有任何可用条目时浮层给空态（一行说明 + 「去设置」动作，D861/D862），不是空列表。
+> `configured` 判据：kimi / deepseek = Key 非空 且 清单非空；generic = 清单非空 且 Base URL
+> 非空；mock = fixture 非空（派生读数，MUST NOT 写进 config.json）。
 > model 段**就是声明清单**（M381 config-only）：`kimiModels` 写什么列什么，不写 = 空清单
 > 提示态（D402）——内置 preset 已彻底删除，场景 102 的负向断言钉「不伪造条目」语义。
 

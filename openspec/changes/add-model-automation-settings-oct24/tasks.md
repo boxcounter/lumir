@@ -5,10 +5,10 @@
 - [x] 1.1 盘点固定 `HarnessProviders` 的全部消费者（`HarnessProvider` 精确引用 30 个文件 / 255 处；去掉 ts-rs 生成物 21 / 233；产品源码 13 / 211；另列 11 个不含类型名的形状级消费者）与四级影响面，落 design §0；设计可扩展 provider 映射（id / preset / 条目校验 / active 回退 / 命名目标解析）
 - [x] 1.2 重写 `proposal.md` / `design.md` / `tasks.md` 与 `specs/{settings,harness,keymap-commands}` delta 为完整 provider 管理（增删改、删除保护与替代目标、preset、一次性迁移、CAS 写通道、未知字段保留、全局自动化与**内联可编辑**的命名目标）
 - [x] 1.3 重做自包含可点击原型 `design/prototypes/model-automation-settings-oct24.html`：provider 列表 + 添加 / 编辑 / 删除、删除保护（当前使用 / 命名引用 / 未保存草稿）、重复 id、空清单、模型清单、高级区（预设只读 / Base URL / Wire）、全局自动化与两个命名行的内联目标选择（provider + 模型、默认跟随、关闭禁用但保留、图片标 vision、一行生效说明、无独立摘要框）；控制面板覆盖全部场景 / 主题 / provider / 操作，合成数据
-- [x] 1.4 新增机器断言并跑绿：`evidence/prototype-semantics-check.mjs`（36 项：增删流程、id 冲突、删除保护、空清单、自动化全局性、内联命名目标可编辑 / 跟随 / 覆盖 / 悬空 / 会话失效覆盖模型回落 / 显式模型 + 空清单 / 关闭禁用但保留 / vision / 一行说明含来源与时机 / 无摘要框、单页无 TAB；含负向对照与 8 个 mutant 实测）与 `evidence/provider-rules-check.mjs`（47 项：迁移、默认回退、命名目标解析与编辑、失效模型按 kind 回落 / 跳过、显式生效模型优先于清单首项（含显式模型 + 空清单）、删除计划、id 规则的纯函数判定表；含 18 个 mutant 对照）
+- [x] 1.4 新增机器断言并跑绿：`evidence/prototype-semantics-check.mjs`（36 项：增删流程、id 冲突、删除保护、空清单、自动化全局性、内联命名目标可编辑 / 跟随 / 覆盖 / 悬空 / 会话失效覆盖模型回落 / 显式模型 + 空清单 / 关闭禁用但保留 / vision / 一行说明含来源与时机 / 无摘要框、单页无 TAB；含负向对照与 8 个 mutant 实测）与 `evidence/provider-rules-check.mjs`（47 项：迁移、默认回退、命名目标解析与编辑、失效模型按 kind 回落 / 跳过、显式生效模型优先于清单首项（含显式模型 + 空清单）、删除计划、id 规则的纯函数判定表；含 18 个 mutant 对照）。**后者已于 M743 删除**：判定表由 Rust 单测接管（映射见 7.11 与文末「收尾批记录」）。
 - [x] 1.5 重截三主题关键屏（已配置 / 自动化 / 命名关闭 / 图片无 vision / 空清单 / 添加 / 删除保护），同步 `.local/reviews/model-automation-settings-oct24/`（proposal / design / tasks / specs / prototype / index 副本 / 断言日志 / 截图）
 - [x] 1.6 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与 `scripts/docs-check.sh` 通过；`design/prototypes/index.html` 的本原型条目改准（只改本条目）
-- [ ] 1.7 等 Alex 节点 1 裁决；未通过前不进入实现
+- [x] 1.7 等 Alex 节点 1 裁决；未通过前不进入实现（**已通过**：Alex「通过，请你安排开发。」，2026-10-25，经 tower 转达并记入 M732 的 mission context；实现批 M732–M734 据此启动）
 
 ## 2. 配置 schema 与迁移（Rust）
 
@@ -60,26 +60,26 @@
 
 ## 6. 文档与规格
 
-- [ ] 6.1 `docs/specs/config-reference.md` §1.5：`providers` 改为动态映射、补 `preset` 与条目 schema；§1.6 / §1.7 的 provider 取值从闭集合改为「`providers` 表内的 id」
-- [ ] 6.2 `docs/specs/config-reference.md` §1.5 的 `models[]` 指向新增的「模型清单声明」requirement；§3 补设置面的写回路径（CAS / revision / 删键）与新描述
-- [ ] 6.3 `scripts/acceptance/README.md` 的 provider 段读取口径从「恒列三档」改为「动态列表 + 空态」；场景 front-matter 的 `config.harness` 写法补 `preset`（迁移可兜底，但新场景应显式写）
-- [ ] 6.4 `design/prototypes/index.html` 的本原型条目改为完整 provider 管理 + 内联命名目标（只改本条目）
-- [ ] 6.5 实现 PR 合并时在 `docs/backlog.md` 落该 change 的归档跟踪条目（判据见 `docs/process/openspec-workflow.md`）
-- [ ] 6.6 归档时把新建 capability `settings` 的占位 Purpose 替换为「应用内设置面板：provider 管理与自动化开关的可见编辑面」，再跑一次 `validate --all --strict`
+- [x] 6.1 `docs/specs/config-reference.md` §1.5：`providers` 改为动态映射、补 `preset` 与条目 schema；§1.6 / §1.7 的 provider 取值从闭集合改为「`providers` 表内的 id」
+- [x] 6.2 `docs/specs/config-reference.md` §1.5 的 `models[]` 指向新增的「模型清单声明」requirement；§3 补设置面的写回路径（CAS / revision / 删键）与新描述
+- [x] 6.3 `scripts/acceptance/README.md` 的 provider 段读取口径从「恒列三档」改为「动态列表 + 空态」；场景 front-matter 的 `config.harness` 写法补 `preset`（迁移可兜底，但新场景应显式写）
+- [x] 6.4 `design/prototypes/index.html` 的本原型条目改为完整 provider 管理 + 内联命名目标（只改本条目）
+- [x] 6.5 实现 PR 合并时在 `docs/backlog.md` 落该 change 的归档跟踪条目（判据见 `docs/process/openspec-workflow.md`）
+- [x] 6.6 归档时把新建 capability `settings` 的占位 Purpose 替换为「应用内设置面板：provider 管理与自动化开关的可见编辑面」，再跑一次 `validate --all --strict`（M743 改为**在 delta 写入最终 Purpose**，由 openspec 1.12.0 归档时携带，见文末记录）
 
 ## 7. 验证
 
-- [ ] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 7.2 `scripts/docs-check.sh` 通过（含 `openspec-archive-check.mjs` 的 MODIFIED 段落对账）
-- [ ] 7.3 Rust 单测：迁移（补齐 / 幂等 / 显式值优先 / 写失败 / 未知 id / 与退役 model 同写）；映射解析（非法条目只丢自己 / preset 非法 / generic 缺 base_url / mock 保留 id / id 字符集）；active 回退（显式 / 缺省 / configured 优先 / 空映射 / 悬空 / mock 不被缺省选中）；生效模型（显式 `providers.<id>.model` 优先、不在清单与空清单都保留 + warning、缺省取清单首项）；命名目标（合法 / 悬空 / 缺省；失效覆盖模型——会话命名回落生效模型、图片命名保留原值并跳过；编辑——目标非 mock、model 在清单内、换 provider 清 model、同一笔 provider+model 按新目标校验、Reset 删键、开关关闭不清值）；删除保护（active / 命名引用 / 草稿外的替代目标 / 删最后一个（含只剩 mock）/ model 覆盖清除 / 文件逐字节不变）；快照 raw/生效 / revision / 坏条目可见；revision 冲突（外部改两个命名 `model` 后删除 provider → Conflict，不得静默清值）；patch 类型拒绝 / preset 不可改 / 重复 id / 未知子键保留；页级还原保留条目；非回归三组
+- [x] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
+- [x] 7.2 `scripts/docs-check.sh` 通过（含 `openspec-archive-check.mjs` 的 MODIFIED 段落对账）
+- [x] 7.3 Rust 单测：迁移（补齐 / 幂等 / 显式值优先 / 写失败 / 未知 id / 与退役 model 同写）；映射解析（非法条目只丢自己 / preset 非法 / generic 缺 base_url / mock 保留 id / id 字符集）；active 回退（显式 / 缺省 / configured 优先 / 空映射 / 悬空 / mock 不被缺省选中）；生效模型（显式 `providers.<id>.model` 优先、不在清单与空清单都保留 + warning、缺省取清单首项）；命名目标（合法 / 悬空 / 缺省；失效覆盖模型——会话命名回落生效模型、图片命名保留原值并跳过；编辑——目标非 mock、model 在清单内、换 provider 清 model、同一笔 provider+model 按新目标校验、Reset 删键、开关关闭不清值）；删除保护（active / 命名引用 / 草稿外的替代目标 / 删最后一个（含只剩 mock）/ model 覆盖清除 / 文件逐字节不变）；快照 raw/生效 / revision / 坏条目可见；revision 冲突（外部改两个命名 `model` 后删除 provider → Conflict，不得静默清值）；patch 类型拒绝 / preset 不可改 / 重复 id / 未知子键保留；页级还原保留条目；非回归三组（**已验**：覆盖在 `config.rs` / `settings.rs` 的对应测试族，M743 的 `cargo test`（gate.sh visual 内）全绿；**R17 的覆盖边界**如实保留——删非引用项不动 active / 命名由删除计划的结构性保证 + `deleting_an_ignored_entry_is_allowed` 覆盖，无逐键断言，见文末「收尾批记录」的 7.11 对账）
 - [x] 7.4 前端单测（`pnpm test`）：增删改流程、重复 id、删除保护控件按 `references` 出现、删除后 active / 命名目标改写、空清单、保存中控件禁用、错误回填与 ARIA（重复模型 id 两行都标）、逐项恢复默认仅显式存在、内联命名目标四形态（跟随 / 指定 / 悬空回落 / 关闭禁用但保留）、换 provider 清 model、会话失效覆盖模型回落且不显示「会跳过」、显式模型 + 空清单仍取显式值、图片 vision 标记与跳过分支的来源 + 时机、自动化不随 provider 变化、单页无 TAB、反向文案断言（无独立摘要框、无「每轮生成」）
 - [x] 7.5 视觉场景：1280×800 与 900×700 下打开即完整可见（O1/O2）、无水平溢出、Tab 不逃出面板；三主题各一屏 + 空清单 / 添加（重复 id 错误）/ 删除确认 / 命名关闭（选择禁用但保留）/ 图片无 vision / 会话覆盖模型回落 / 显式模型 + 空清单 / 校验错误 / 保存中各一屏
-- [ ] 7.6 `scripts/gate.sh quick` 与本地 `scripts/gate.sh visual` 通过
+- [x] 7.6 `scripts/gate.sh quick` 与本地 `scripts/gate.sh visual` 通过（`GATE RESULT: 14/14 PASS（SKIP 1）`；SKIP 为 tsc-visual 环境缺依赖，依赖装好后单跑退出码 0——见文末记录）
 - [x] 7.7 回扫既有验收场景里对 provider 选项、模型 chip、D402–D404、模型清单空态、`harness_model_missing` 的期望，逐条改准（只新增场景不算完成）
 - [x] 7.8 新增验收场景：`⌘,` 与菜单打开同一面板；添加 provider 后 chip 出现；重复 id 被拒且文件不变；删除当前 provider 需替代目标；删除被命名引用项后读数更新；删除最后一个 provider 的空态与发送错误；旧格式配置启动后补齐 preset 且二次启动不再写
-- [ ] 7.9 真机验收套件全量跑一遍，证据落 `.local/acceptance/`
+- [x] 7.9 真机验收套件全量跑一遍，证据落 `.local/acceptance/`（242 场景：PASS 211 / FAIL 24 / INVALID 7；本 change 相关场景全绿，其余逐条归因见文末记录）
 - [x] 7.10 全程只用合成 Key（形如 `test-key-…`）；MUST NOT 读取或写入真实 `~/.config/lumir` 与真实 vault
-- [ ] 7.11 原型回归：`node openspec/changes/add-model-automation-settings-oct24/evidence/prototype-semantics-check.mjs`（36 项）与 `node .../evidence/provider-rules-check.mjs`（47 项）全绿；实现 PR 把规则判定表移植成 Rust 单测后删除 `provider-rules-check.mjs`
+- [x] 7.11 原型回归：`node openspec/changes/add-model-automation-settings-oct24/evidence/prototype-semantics-check.mjs`（36 项）与 `node .../evidence/provider-rules-check.mjs`（47 项）全绿；实现 PR 把规则判定表移植成 Rust 单测后删除 `provider-rules-check.mjs`（M743 已执行：47/47 复跑留档后删除脚本，映射见文末记录）
 
 ## 实现批记录（M734 前端批，2026-10-25）
 
@@ -110,7 +110,8 @@
   3. **菜单入口的真机点击**：套件无菜单栏动作，菜单与 ⌘, 共用 `app.settings-open` 的 toggle
      由代码结构保证（`MENU_COMMANDS.settings`），真机手点归 Alex 的手感项。
   4. `provider-rules-check.mjs` 的退役（7.11 后半句）未在本批执行：规则表已在 M732/M733 的
-     Rust 单测里覆盖，但删除脚本需要一次独立的“规则表已全部移植”对账，留给归档前的收口。
+     Rust 单测里覆盖，但删除脚本需要一次独立的“规则表已全部移植”对账，留给归档前的收口
+     （**M743 已执行并对账，见文末「收尾批记录」**）。
 
 ## r1 返修记录（2026-10-25，review r1 p1-6items / merge hold）
 
@@ -244,3 +245,156 @@ P1-1、P1-2 正向、P2-3、P2-4、P2-5 各按预期判红；「改第二笔」�
 读数：`pnpm test` 1467 passed；三处 tsc 通过；设置面板视觉 **29 passed**（含 11 张已批基线）；
 `scripts/gate.sh quick` → `GATE RESULT: 13/13 PASS（SKIP 0）`；`openspec validate --all --strict`
 33 passed；`docs-check` PASS；`acceptance --check` 242 场景。
+
+## 收尾批记录（M743，2026-10-25）
+
+**范围**：tasks §6.1–§6.6 与 §7.1 / 7.2 / 7.6 / 7.9 / 7.11（文档、回扫、门禁、真机全量）。
+不动产品代码，不扩产品范围。
+
+### 文档（§6）
+
+- `docs/specs/config-reference.md`：§1.5 拆出 **§1.5.1 `harness.providers`（provider 映射）**——
+  id 规则 / preset 入口 / 条目字段表 / 预设行为表（官方 Base URL、Key 要求、缺省与支持的 wire、
+  `store:false`、`configured` 判据）/ 当前使用项解析 / 逐条宽容 / 一次性迁移；§1.6 / §1.7 的
+  `provider` 取值从闭集合改为「`providers` 表内的 id」；§2 补「provider 条目逐条校验」例外；
+  §3 重写为两类写通道（单键合并 + 设置面整笔 patch：严格读 / CAS revision / 非回归 / 删键 /
+  未知键保留），并把全部行号改到现值（`write_last_vault_to` :598、`write_config_value_to` :660、
+  `write_json_atomic` :2300、`update_json_atomic` :2332、`update_json_atomic_strict` :2361、
+  `remember_last_vault` :731、`harness.rs` :1787 / :1816、`cron.rs` :1160 / :1228、
+  `main.ts` :2912 / :1529 / :1571 / :2960）。
+- `scripts/acceptance/README.md`：`rawProviders` 条补「只验迁移才省 `preset`，新场景显式写」；
+  `config.harness` 键表补 `rawProviders` 并指向 `subagents` / `attachment_naming` 两节；
+  `kimiModels` 条登记「只写清单也补合成 Key」；原「provider 段恒列三档」块替换为**动态列表 +
+  空态 + `configured` 判据**。
+- `design/prototypes/index.html`：条目已在 1.6 改准；本轮逐条核对描述与原型一致（16 场景、内联
+  命名目标、无摘要框、预设只读、Base URL 密钥目的地警示、`?panel=0`），无漂移，未改。
+- `docs/backlog.md`：归档跟踪队列落该 change 一条（M743）。
+
+### 回扫（7.7 的补漏 + 本轮复核）
+
+- **场景 90 的旧断言在动态映射下必红**：它只声明 kimi（清单）与 mock，却断言 Provider 段
+  「kimi / deepseek」都在——`deepseek` 已不是可选条目。改为「kimi 在场 + deepseek 不在场」的
+  负向判据（旧固定三档实现必红，有区分度）。同时 kimi 条目必须有非空 Key 才 `configured`
+  （否则不进可选列表），`lib/app.mjs` 的 `kimiModels` 分支在缺省时补合成 Key（与 `kimiModel`
+  同族；显式写下的 Key 不覆盖）。
+- **场景 230 / 231**：`config.harness.provider: mock` 但无 fixture ⇒ mock 条目不存在、provider
+  悬空。230 只用 harness composer 聚焦（不发送）、231 完全不用 harness，两条断言都不依赖
+  provider 读数，保持原样；全量真机跑作为验证（读数见下）。
+- 其余 provider 场景：99 / 101 / 102 / 128 / 138 都有 `kimiModel`（合成 Key）或 fixture，102 的
+  「模型段只列声明项」断言不受影响。
+
+### 7.11 后半句：`provider-rules-check.mjs` 退役对账
+
+- 删除前复跑 **47/47 PASS**（日志 `.local/reviews/m743-finalize/provider-rules-check-before-delete.log`）；
+  36 项原型语义断言同期复跑 **36/36 PASS**。脚本已删除；`design.md` §12.4 与 tasks 1.4 的指针
+  已同步标注。
+- 29 条正向判定 → Rust 单测映射（18 条 mutant 是脚本自检，不移植）：
+  - R1 / R5 → `config::harness_preset_migration_adds_only_preset`；R2 → `..._is_idempotent`；
+    R3 → `..._keeps_explicit_preset`；R4 → `..._skips_unknown_ids`
+  - R6 → `config::harness_configured_follows_preset`；R7 / R8 / R9 / R10 / R10b →
+    `config::harness_active_provider_resolution`
+  - R11 → `config::naming_target_resolution` / `naming_override_dangling_falls_back_to_active`；
+    R12 → `config::harness_mock_preset_requires_reserved_id` +
+    `settings::naming_target_rejects_mock_and_unknown_provider`
+  - R12b / R12e → `settings::naming_provider_change_clears_model_and_accepts_same_patch_model`；
+    R12c → `settings::naming_target_rejects_mock_and_unknown_provider`；R12d →
+    `settings::naming_model_must_be_in_target_list_and_reset_deletes_keys`；R12f →
+    `settings::switching_off_naming_keeps_the_target_keys`
+  - R12g → `config::session_naming_model_falls_back_when_undeclared` +
+    `attachment_naming_keeps_undeclared_model_and_names_the_gate`；R12h →
+    `config::naming_defaults_use_explicit_entry_model` + `harness_effective_model_resolution`
+  - R13 → `settings::deleting_active_requires_replacement_target`；R14 →
+    `deleting_naming_referenced_provider_requires_retarget`；R15 →
+    `deleting_active_with_target_rewrites_active_and_clears_following_model`；R16 / R16b →
+    `deleting_last_provider_removes_active_and_naming_keys_but_keeps_mock`；R18 / R18b →
+    `delete_retarget_must_be_a_valid_non_mock_candidate`；R19 → `config::harness_provider_id_rules`
+  - **R17（删非引用项不动 active / 命名）如实登记为唯一薄弱点**：删除计划只在命中 active /
+    raw active / 命名引用时才改写，`settings::deleting_an_ignored_entry_is_allowed` 覆盖「删
+    非引用条目成功、其余条目不变」，但**没有逐键断言 active / 命名不变**。不宣称 29/29 逐条直断。
+- 说明：判据的可执行副本在提案期承担的是「规则自洽」；实现期的真源是 Rust 装载与写通道代码 +
+  上述单测，脚本继续留着会成为第二份手抄规则（REVIEW.md「同一语义两处真源」条）。
+
+### 6.6 的落地方式
+
+openspec 1.12.0 归档新 capability 时会携带 delta 的 `## Purpose`（不足 50 字符会告警、strict
+判红）。本轮把最终 Purpose 直接写进 `specs/settings/spec.md`（含 6.6 指定句 + 范围说明，>50
+字符），并在临时副本上实跑 `archive` + `validate --all --strict`：Purpose 原样进入
+`openspec/specs/settings/spec.md`，**33 passed / 0 failed**。归档步骤因此无需再替换占位。
+
+### 门禁与真机读数
+
+**门禁（本地）**
+
+- `scripts/gate.sh visual`（本 worktree 首个全量跑，`CARGO_TARGET_DIR` 指向主仓 warm target）：
+  `GATE RESULT: 14/14 PASS（SKIP 1）`，退出码 0。逐项：cargo-fmt 1s / cargo-clippy 12s /
+  cargo-test 59s / bindings-drift 0s / schemas-drift 0s / tsc-root 2s / tsc-unit 2s /
+  unit-tests 3s / perf-fixture-tests 1s / acceptance-syntax 0s / docs-check 2s /
+  openspec-validate 2s / isolation-runs 1s / visual-regression 576s。
+- **SKIP 1 = `tsc-visual`**：起跑时 `tests/visual/node_modules` 尚未装好（视觉回归随后由
+  `scripts/visual/run.sh` 自行补齐）。依赖装好后单跑 `cd tests/visual && ../../node_modules/.bin/tsc
+  --noEmit` → **退出码 0**；`visual-regression` 本身 875 项全绿，SKIP 不是覆盖缺口。
+- `docs-check` 与 `openspec validate --all --strict`（33 passed / 0 failed）在 gate 内各有一行 PASS；
+  `node scripts/acceptance/run.mjs --check` = 242 场景静态校验通过。
+
+**真机全量（7.9）**
+
+- 命令：`LUMIR_ACCEPTANCE_RESULTS=.local/acceptance/2026-10-25-m743 node scripts/acceptance/run.mjs`
+  （dev flavour；证据目录 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-25-m743/`，
+  `summary.md` + 242 个场景目录 + `run.log` + `app.log`）。
+- 读数：**242 个场景：PASS 211、FAIL 24、INVALID 7**（run 08:33:53 → 10:57:24，约 2h23m；
+  结束行 `结论：211/242 PASS`；退出码 1）。
+- **本 change 直接相关的场景全绿**：90-harness-model-chip（本轮改准的断言：Provider 段只列 kimi、
+  deepseek 不在可选列表）、99 / 101 / 102 / 128 / 138（provider / model 维度 / 能力闸）、
+  250-settings-panel-provider-crud（41 断言）、251-settings-panel-legacy-preset-migration（10 断言）。
+- **INVALID 7 条**（读数不算数，非产品面）：
+  - 170 / 171 / 213：`requires: bundle`，dev flavour 按设计直接标 INVALID（通知点击/冷启动投递
+    只能在验收 bundle 上判，见套件 README「实例 flavour」）。
+  - 189 / 190 / 191 / 206：`config.harness.fixture` 指向 `$env/subagent-fixtures/*.json`，而该文件
+    由场景自己的第一个 `envWrite` 步骤写入——配置在启动前就要读 fixture，干净 env 下必然 ENOENT。
+    共享 env 目录里残留旧文件时才通过。已作为 finding 上报（`20261025-worker-provider-docs-checks-oc-bug-189-190-191-mock-fixture-env-invalid.md`，
+    206 同因）。
+- **FAIL 24 条的归因**（没有一条落在 provider / 设置面代码路径上；逐条指针见
+  `.local/reviews/m743-finalize/README.md`）：
+  - **工具行路径按钮化导致的旧断言**（确定性）：103 / 104 / 111 / 96。工具参数里的文件路径已渲染
+    成 `AXButton (…)`，而断言仍按「同一段静态文本里 `vault_read` 后紧跟路径」写正则。已 filed
+    finding（`…-bug-103-104-111-path-link.md`，96 同因）。
+  - **CGEvent / 键盘注入通道**（环境，README 已登记「已知边界」）：32 / 47 / 52 / 134 / 150 / 230。
+    失败形态都是「注入过程中目标消失 / 字符缺失 / 3 次注入后 pattern 0 次」，不是产品读数。
+    47 与 52 的复跑仍红（rename 输入在注入期被 AX 重新挂载），但 `src/tree.ts` 自本 change 之前
+    未被改动（`git log -1 -- src/tree.ts` = `2ded688b`），归因环境。
+  - **固定坐标拖选漂移**：121 / 81。拖选起手点写死 `(900,130)`，当前布局里 assistant 正文在
+    `y≈126–133`（截图 `121-…/shots/01-01-两条消息.jpeg`），起手点落在正文下缘 1–2px 内，
+    反复 3 次造不出选区。属「断言写死会随布局漂移的坐标」，非产品缺陷。
+  - **AX role 漂移**：220。vault 入口现在是 `AXPopUpButton (vault：…（点击查看全部 vault）)`
+    （`aria-haspopup` 自多 vault 切换器起就有），断言仍按 `role: AXButton` 找。
+  - **已知 backlog 项**：68（`#check` 选区对比度标定）、82 / 83 / 85（backlog 明写的 quote-card
+    探针族）、148（同族的 CGEvent 探针项）。
+- **复跑**（同机、独立证据目录 `.local/acceptance/2026-10-25-m743-retry/`，15 个场景）：
+  131 / 231 / 235 / 236 / 237 **转 PASS**；121 / 134 / 150 / 220 / 223 / 230 / 47 / 52 / 81 / 96
+  仍红（形态与首跑一致，归入上面各类）。
+  - 其中 235 / 236 / 237 是本 change **直接造成**的期望漂移：新增全局命令 `app.settings-open`
+    让键位速查面板的全量计数从 71 变 72。已把三条场景里所有 `71 条命令 · 11 组` / `命中 1 / 71`
+    改成 72，复跑三条全绿。
+- **24 条 FAIL 的完整账**：5 条复跑转绿（131 / 231 / 235 / 236 / 237）；19 条持续红 = 工具行路径
+  按钮化 4（103 / 104 / 111 / 96）+ 注入通道 6（32 / 47 / 52 / 134 / 150 / 230）+ 固定坐标拖选 2
+  （121 / 81）+ AX role 漂移 1（220）+ hover 拿不到 bbox 1（223）+ 已知 backlog 5（68 / 82 / 83 /
+  85 / 148）。**没有一条落在 provider / 模型 chip / 设置面代码路径上**。
+- 合成 Key only：全部场景只用 `acceptance-dummy` / `test-key-…` 形合成串；真实
+  `~/.config/lumir` 与真实 vault 全程未读写（套件自带的隔离 `XDG_CONFIG_HOME` 与合成 vault）。
+
+### r1 修复（2026-10-25，review r1 p1-1items / fix-then-merge）
+
+- **finding**：`tasks.md` 的 **1.7**（等 Alex 节点 1 裁决）与 **7.3**（Rust 单测）仍未勾选，
+  而 proposal 写「tasks 全勾」；归档实测 `Task status` 为 58/60、有 2 条 incomplete 警告。
+- **处置**：
+  - 1.7 按既定事实勾选——Alex「通过，请你安排开发。」（2026-10-25，经 tower 转达、记入 M732 的
+    mission context），实现批 M732–M734 据此启动。
+  - 7.3 按「Rust 单测已存在且本轮 `cargo test` 通过」勾选——本轮 gate 的 cargo-test 读数
+    **1010 passed / 0 failed / 5 ignored**（13 个测试二进制）。**保留 R17 覆盖边界**：删非引用项
+    不动 active / 命名由删除计划的结构性保证 + `deleting_an_ignored_entry_is_allowed` 覆盖，
+    无逐键断言；不扩大声明为「29/29 逐条直断」。
+- **复验**：`bash scripts/docs-check.sh` → PASS（归档对账 2 项已完成 change 均有唯一条目）；
+  `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → 33 passed / 0 failed；
+  在临时副本上跑 `openspec archive add-model-automation-settings-oct24 --yes` →
+  `Task status: ✓ Complete`（不再报 incomplete），归档后 strict 仍 33 passed（Purpose 原样携带）。
+  **没有在真实仓执行 archive**（归档由 tower 处理）。
