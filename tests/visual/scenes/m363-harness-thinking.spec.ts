@@ -17,6 +17,9 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { providerEntry, standardProviders } from "./provider-config";
+
+const PROVIDERS = { mock: providerEntry("mock", { fixture: "f.json" }) };
 
 const DOC = "# 思考笔记\n\n第一段，给上下文 chip 一个视口口径。\n";
 
@@ -29,6 +32,9 @@ const VAULT: VaultFixture = {
 /** M363 场景桩：在 m347 桩的基础上补 thinking 字段与 harness_set_thinking_effort 记录。
  *  thinking 缺省 { level: "high", supported: true }（空态快照同形——chip 空态照显）。 */
 async function stubHarnessThinking(page: Page, thinking?: unknown): Promise<void> {
+  await page.addInitScript((providers) => {
+    (window as unknown as Record<string, unknown>).__VISUAL_PROVIDERS = providers;
+  }, PROVIDERS);
   await page.addInitScript((thinkingSnapshot) => {
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
@@ -64,7 +70,7 @@ async function stubHarnessThinking(page: Page, thinking?: unknown): Promise<void
       if (cmd === "config_get" && result?.config) {
         result.config.harness = {
           provider: "mock",
-          providers: { mock: { fixture: "f.json" } },
+          providers: (window as unknown as Record<string, any>).__VISUAL_PROVIDERS,
           permissions: { allow: [], deny: [] },
           // M414：权限 chip 在场（本场景只断言控制行顺序，档位取默认档）。
           permission_mode: "vault_write",

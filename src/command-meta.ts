@@ -85,6 +85,7 @@ export const COMMAND_META: Record<CommandId, CommandMeta> = {
   "app.quick-open": { labelKey: "D635", aliases: ["quick open", "open file", "goto file"] },
   "toc.toggle": { labelKey: "D636", aliases: ["outline", "toc", "table of contents"] },
   "vault.switcher": { labelKey: "D637", aliases: ["switch vault", "vaults"] },
+  "app.settings-open": { labelKey: "D864", aliases: ["settings", "preferences", "providers"] },
   "table.toggle-fullscreen": { labelKey: "D638", aliases: ["fullscreen table", "table fullscreen"] },
   "code-block.toggle-fullscreen": {
     labelKey: "D639",

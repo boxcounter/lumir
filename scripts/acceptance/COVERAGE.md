@@ -4,8 +4,8 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title）。 -->
 
-- 场景：240
-- 验收项（不同 item 编号）：220
+- 场景：242
+- 验收项（不同 item 编号）：222
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07b` / `07c` 三条恢复路径），故表里一项一行、行内列出全部场景；
@@ -226,6 +226,8 @@
 | 237 | `237-keybindings-keyboard` | 键位速查——键盘全程：输入框焦点、Tab 循环、↑↓/Enter 详情、End 末行、Esc 分层与关闭 |
 | 238 | `238-escape-overlay-close` | Escape 只收最上层浮层且永不退出应用（change fix-escape-overlay-close-oct24）：权限浮层重建失焦后按 Esc、修饰键准入、焦点回还 |
 | 239 | `239-escape-quit-guard` | Escape 不削弱退出守卫（change fix-escape-overlay-close-oct24）：dirty 文档按 Esc 不退出且不弹提示、⌘Q 仍被拦下、保存后 ⌘Q 正常放行 |
+| 250 | `250-settings-panel-provider-crud` | 设置面板：⌘, 打开、增删 provider、重复 id 被拒且文件不变、删除保护与空清单 |
+| 251 | `251-settings-panel-legacy-preset-migration` | 设置面板：旧格式 provider（无 preset）首次启动补齐迁移，二次启动不再写盘（mtime 不变） |
 | 252 | `49-vault-switch-feedback` | vault 切换的即时反馈（浮层收起 / 装载指示起止）与切换器浮层的完整可读 |
 | 423 | `121-harness-message-excerpt`<br>`122-harness-message-excerpt-exclusion` | harness 消息摘录 ① transcript 选区 → 浮动钮 → 卡片入 composer（+ 序列化结构 / 视口 skip / transcript 同构）<br>harness 消息摘录 ② 排除面：思考块内选区不出钮（消息体选区出钮为正向对照） |
 | 531 | `160-quote-button-viewport-clamp` | 摘录浮动钮落点钳制：选区并集盒越出挂载容器（长行）时钮仍在视口内 |

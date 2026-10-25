@@ -1,5 +1,18 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { providerEntry, standardProviders } from "./provider-config";
+
+const PROVIDERS = {
+  kimi: providerEntry("kimi", {
+    api_key: "test-key-visual",
+    model: "kimi-k3-extended-context-experimental",
+    models: [
+      { id: "kimi-k3-extended-context-experimental", effort: true, window: 1048576 },
+      { id: "k2", effort: false, window: 262144 },
+    ],
+  }),
+  mock: providerEntry("mock", { fixture: "f.json" }),
+};
 
 // 浮层宽度合同的结构矩阵（M702，change overlay-width-contract-oct24）。
 //
@@ -56,6 +69,9 @@ const VAULT: VaultFixture = {
 
 /** 通用桩之外的 harness 面：状态、会话清单、配置里的长模型名、事件注入钩子。 */
 async function stubHarness(page: Page): Promise<void> {
+  await page.addInitScript((providers) => {
+    (window as unknown as Record<string, unknown>).__VISUAL_PROVIDERS = providers;
+  }, PROVIDERS);
   await page.addInitScript((sessionName) => {
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
@@ -83,16 +99,7 @@ async function stubHarness(page: Page): Promise<void> {
       if (cmd === "config_get" && result?.config) {
         result.config.harness = {
           provider: "kimi",
-          providers: {
-            kimi: {
-              model: "kimi-k3-extended-context-experimental",
-              models: [
-                { id: "kimi-k3-extended-context-experimental", effort: true, window: 1048576 },
-                { id: "k2", effort: false, window: 262144 },
-              ],
-            },
-            mock: { fixture: "f.json" },
-          },
+          providers: (window as unknown as Record<string, any>).__VISUAL_PROVIDERS,
           permissions: { allow: [], deny: [] },
           permission_mode: "vault_write",
           loop_max: 8,

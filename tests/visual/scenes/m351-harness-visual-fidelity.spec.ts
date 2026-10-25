@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { providerEntry, standardProviders } from "./provider-config";
+
+const PROVIDERS = standardProviders();
 
 // M351（change harness-pane-visual-fidelity）：harness pane 视觉保真还原的结构断言与
 // 元素级基线。原型 = 已退役的 design/prototypes/phase2-harness-chat（提取细节见 change
@@ -33,6 +36,9 @@ const VAULT: VaultFixture = {
 /** M351 场景桩（m347 同构）：config_get 补 [harness] 段；harness_send 只记录不回复
  *  （回复经 __fireHarnessEvent 注入）；harness_abort 吞掉不发终态。 */
 async function stubHarness(page: Page, state: unknown): Promise<void> {
+  await page.addInitScript((providers) => {
+    (window as unknown as Record<string, unknown>).__VISUAL_PROVIDERS = providers;
+  }, PROVIDERS);
   await page.addInitScript((snapshot) => {
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
@@ -48,7 +54,7 @@ async function stubHarness(page: Page, state: unknown): Promise<void> {
       if (cmd === "config_get" && result?.config) {
         result.config.harness = {
           provider: "mock",
-          providers: { kimi: { model: "k2" }, deepseek: { model: "d" }, mock: { fixture: "f.json" } },
+          providers: (window as unknown as Record<string, any>).__VISUAL_PROVIDERS,
           permissions: { allow: [], deny: [] },
           loop_max: 8,
           warn_ctx_pct: 85,

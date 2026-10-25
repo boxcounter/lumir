@@ -683,6 +683,17 @@ export function checkScenario(scenario) {
               push(`${at} expect[${j}] file.jsonl.${k} 需要标量（字符串 / 数值 / 布尔），实际 ${JSON.stringify(v)}`);
           }
       }
+      else if (
+        (kinds[0] === "ax" || kinds[0] === "file") &&
+        ["has", "not"].some((k) => Array.isArray(exp[kinds[0]]?.[k]))
+      ) {
+        // 数组形态只属于 `waitFor.has`（逐项判）。`ax.has` / `file.has` 走 `matcher()`：数组会被
+        // `String()` 拼成「a,b,c」一个字面串，恒不命中——判据看着在、实际不判任何东西
+        // （场景 250/251 首次真跑即此形态，2026-10-25 实测）。
+        push(
+          `${at} expect[${j}] ${kinds[0]}.has/not 只收单个字符串或 /…/ 正则；数组让 matcher() 拼成「a,b,c」一个字面串而恒不命中——多项判据请拆成多条 expect（数组只有 waitFor.has 支持）`,
+        );
+      }
       else if (kinds[0] === "glob" && (!exp.glob.dir || !exp.glob.pattern)) push(`${at} expect[${j}] glob 断言缺 dir/pattern`);
       else if (kinds[0] === "bytes" && !exp.bytes.path) push(`${at} expect[${j}] bytes 断言缺 path`);
       else if (kinds[0] === "bytes" && exp.bytes.magic === undefined && exp.bytes.nameHash === undefined)

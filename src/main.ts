@@ -98,6 +98,7 @@ import { createLinkFollow } from "./link-follow";
 import { createTabs } from "./tabs";
 import type { TabsHandle } from "./tabs";
 import { createBindingsPanel } from "./bindings-panel";
+import { createSettingsPanel } from "./settings-panel";
 import { WIDTH_HANDLE_LABEL, WIDTH_SAVE_FAILED_TEXT, createContentWidthDrag } from "./content-width";
 import {
   DEFAULT_SIDEBAR_WIDTH,
@@ -158,6 +159,8 @@ import "./style.css";
 import "./search-panel.css";
 // harness 对话面板的样式同理单列（M303，change add-harness-probe）。
 import "./harness-panel.css";
+// 设置面板的样式单列一个文件（change add-model-automation-settings-oct24 tasks §5.10）。
+import "./settings-panel.css";
 
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) {
@@ -3045,6 +3048,9 @@ const harnessPanel = createHarnessPanel({  shell,
     if (!treeReady) return;
     tree.revealDir(path);
   },
+  // 模型 chip 空态的「去设置」（design §8）：与 ⌘, 走同一条面板入口（settingsPanel 在下方
+  // 声明；这条回调只在用户点击时求值，没有初始化顺序依赖）。
+  openSettings: () => settingsPanel.open(),
 });
 
 // ---------------------------------------------------------------------------
@@ -3313,6 +3319,9 @@ const commands: CommandRuntime = {
   "link.follow": () => linkFollow.followAt(editor.view.state.selection.main.head),
   // 键位查看面板（M133）：列出**生效中**的键位表（含 [keys] 覆盖的产物）。
   "app.describe-bindings": () => bindingsPanel.toggle(),
+  // 设置面板（change add-model-automation-settings-oct24 tasks §5.1）：⌘, 与菜单「设置…」
+  // 是同一条命令的键盘 / 鼠标两条路径（菜单项不带 accelerator，否则 [keys] 重绑会失效）。
+  "app.settings-open": () => settingsPanel.toggle(),
   // 文件内搜索（M139）：能力与 panel 在 src/search.ts，此处只把编辑器视图交过去。
   // 作用域 global——焦点在文件树 / 搜索框里时同样要能开（⌘F 的 mac 惯例，理由见 keys.ts）。
   // M317 2.7：交出的是**活跃 pane** 的视图；panel 在构造期绑死这一个 view、此后只用它
@@ -3530,6 +3539,28 @@ const bindingsPanel = createBindingsPanel({
   restoreFocus: () => editor.focusPreservingReadingPosition(),
 });
 
+// ---------------------------------------------------------------------------
+// 设置面板（change add-model-automation-settings-oct24 tasks §5；capability `settings`）
+// ---------------------------------------------------------------------------
+//
+// 面板本体（两节内容、草稿状态机、删除保护、内联命名目标、ARIA / 焦点）在
+// `src/settings-panel.ts`；这里只装三样它看不到的东西：挂点、背景 inert 的根、关闭后的
+// chip 重取。
+//
+// **挂 `document.body` 而不是 `shell.root`**：spec 要求面板打开期间背景（编辑器 / 文件树 /
+// composer / modeline）整体 `inert`；面板若挂在 `#app` 里，`inert` 会连面板自己一起关掉。
+// 因此遮罩是 `#app` 的兄弟节点，`inertRoot` 指向 `#app`。
+const settingsPanel = createSettingsPanel({
+  mount: document.body,
+  inertRoot: app,
+  restoreFocus: () => editor.focusPreservingReadingPosition(),
+  // design §8：面板关闭时发一次既有 configGet 重取（provider / configured 可能已变），
+  // 不引入全局配置状态层。
+  onClosed: () => {
+    void harnessPanel.refreshConfigSelection();
+  },
+});
+
 /** 菜单「全选」的落面（M627；M650 加遮罩档）：菜单点击没有键盘事件可判面，按**当前焦点**
  *  路由——全屏遮罩开着 → 选遮罩内容（与遮罩内 ⌘A 同一落面，D3）；composer 持焦 → composer
  *  全选；其余 → 编辑器全选（与让位前的原生 selectAll 在编辑器里的结果等价）。
@@ -3569,6 +3600,9 @@ const MENU_COMMANDS: Record<string, CommandRunner | undefined> = {
   // change improve-keybindings-lookup-oct24：Help → Keyboard Shortcuts 走同一条命令实现
   // （`app.describe-bindings` 的 toggle），不新开第二条分发路径或第二个面板实例。
   "describe-bindings": () => bindingsPanel.toggle(),
+  // change add-model-automation-settings-oct24：应用菜单「设置…」与 ⌘, 走同一条命令实现
+  // （`app.settings-open` 的 toggle）；菜单项本身不带 accelerator（spec「设置面板入口」）。
+  settings: () => settingsPanel.toggle(),
 };
 onMenuCommand((payload) => {
   MENU_COMMANDS[payload]?.();

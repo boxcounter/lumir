@@ -223,6 +223,9 @@ export interface HarnessPanelDeps {
    * 高亮）。**不打开文档、不切标签、不创建条目**——目录不是文档，落点归树。
    */
   revealVaultDir(path: string): void;
+  /** 「去设置」的落面（design §8）：打开设置面板（与 ⌘, 同一条命令路径；面板本体、写通道与
+   *  焦点交还全在 settings-panel / 装配层，面板不自己实现第二套设置入口）。 */
+  openSettings(): void;
 }
 
 export interface HarnessPanelHandle {
@@ -231,6 +234,10 @@ export interface HarnessPanelHandle {
   toggle(): void;
   /** 面板是否已挂进 harness pane（= pane 在场）。 */
   isOpen(): boolean;
+  /** 重新读一次 `config_get` 里的 provider / configured 读数（设置面板关闭后由装配层调用，
+   *  design §8：面板保存可能改了 provider 条目或当前项，chip 必须立即跟上；不引入全局配置
+   *  状态层，也不重建 transcript）。 */
+  refreshConfigSelection(): void;
   /** 挂载 / 摘除：装配层在 harness pane 分栏时把该 pane 的挂载元素传入（面板挂进去并显形），
    *  收起时传 null（面板摘出 DOM、长驻内存——订阅与流式态不丢，下次 attach 续用）。 */
   attachTo(mount: HTMLElement | null): void;
@@ -1561,10 +1568,12 @@ export function imageDimensionsFromNatural(
 // tests/unit/harness-panel-control.test.ts），DOM 只是渲染面。
 // ---------------------------------------------------------------------------
 
-/** 模型 provider 闭集合（与 src/bindings/HarnessProvider.ts 的同值域——ts-rs 生成的联合
- *  类型只是编译期别名，运行期判定要一份可遍历的表；后端取值校验在 Rust 侧完成）。 */
-export const PROVIDER_IDS = ["kimi", "deepseek", "mock"] as const;
-export type ProviderId = (typeof PROVIDER_IDS)[number];
+/** provider 的规范顺序（design §5.1 / §8：预设顺序 `kimi` → `deepseek` → `generic`，同组内按
+ *  id 字典序；`mock` 不参与列表）。这条顺序与 Rust `canonical_provider_ids` 同一条规则——前端
+ *  手里只有 `config_get` 的 raw 对象，没有后端排好序的列表，因此在这里镜像一次；取值域本身
+ *  （有哪些 preset）仍来自配置与 `ProviderPreset`，MUST NOT 在前端再写一份预设表。
+ *  `tests/unit/harness-panel-control.test.ts` 钉住它。 */
+const PRESET_RANK: Record<string, number> = { kimi: 0, deepseek: 1, generic: 2, mock: 3 };
 
 /** 模型维度的一条可选项（与 Rust 侧 `HarnessModelSpec` 同形的宽容提取：id 必须是非空
  *  字符串；effort 严格取 true；window 取有限正数——缺键 / 坏形状的那一项不上屏）。 */
@@ -1584,73 +1593,117 @@ export interface ModelSelection {
   options: ModelOption[];
 }
 
+/** 一个 provider 的读数（动态 id 之后唯一真源是配置对象本身：id 是映射键，协议由条目自带的
+ *  `preset` 决定；`configured` 是后端派生读数，前端只读不重算）。 */
+export interface ProviderSelection {
+  id: string;
+  preset: string | null;
+  /** 后端 `derive_configured` 的读数；缺键（旧桩 / 手改）按未配置处理，不猜。 */
+  configured: boolean;
+  model: string;
+  models: ModelOption[];
+  isMock: boolean;
+}
+
 /** 合并选择器的提取结果（`harnessSelection` 的返回形）。 */
 export interface HarnessSelection {
-  /** 当前 provider（配置值即读数；不在闭集合时照实显示）。 */
+  /** 当前 provider（配置值即读数；指向不存在的 id 时照实显示）。 */
   provider: string;
-  /** 可选 provider 档 = 闭集合 ∩ 已配置键，**UI 层过滤 mock**（Alex 裁决「界面上隐藏，
-   *  代码保留」——mock 数据留在配置里，只是不进可选列表）。 */
-  providerOptions: ProviderId[];
-  /** 各 provider 的 model 维度（kimi / deepseek 存在即收录；mock 无模型维度不出现）。 */
-  models: Partial<Record<ProviderId, ModelSelection>>;
+  /** 全部合法条目（规范顺序；mock 也在这里——当前项可能正是它。可选列表另见
+   *  `providerOptions`，那里才过滤 mock）。 */
+  providers: ProviderSelection[];
+  /** chip 浮层的可选 provider 档 = configured ∪ 当前项，按规范顺序；mock 恒被过滤。
+   *  当前项即使未配置也保留——否则 chip 会消失，用户看不到自己正处在一个坏配置上。 */
+  providerOptions: string[];
+  /** 各 provider 的 model 维度（按 id 键控，mock 不出现）。 */
+  models: Record<string, ModelSelection>;
+  /** 当前 provider 的条目（可能未配置；不存在时为 null）。 */
+  current: ProviderSelection | null;
+  /** 没有任何可用 provider（没有任何条目，或没有 configured 条目且无当前项）——chip 空态。 */
+  empty: boolean;
 }
 
 /**
  * 合并选择器的读数与选项（`config.harness` 的宽容提取，配置即数据、缺键不伪造）：
  * - harness 段缺失 / providers 不是对象 → null（桩环境、旧配置、config_get 失败）——
  *   调用方隐藏 chip，不显示一个读不到的读数；
- * - providerOptions 只取闭集合内的键（配置里混入的其它键不上屏），mock 恒被过滤；
- * - models 逐项宽容提取：坏的项丢弃，整段缺失 → 该 provider 无模型维度（options 空）。
+ * - 条目逐个宽容提取：坏的项丢弃（id 必须是非空字符串），`preset` / `configured` 只读；
+ * - mock（`preset === "mock"` 或保留 id）在可选列表与模型维度里被过滤（Alex 裁决
+ *   「界面上隐藏，代码保留」）。
  */
 export function harnessSelection(harness: unknown): HarnessSelection | null {
   if (typeof harness !== "object" || harness === null) return null;
-  const providers = (harness as { providers?: unknown }).providers;
-  if (typeof providers !== "object" || providers === null) return null;
-  const configured = providers as Record<string, unknown>;
-  const providerOptions = PROVIDER_IDS.filter((id) => id !== "mock" && id in configured);
-  const models: Partial<Record<ProviderId, ModelSelection>> = {};
-  for (const id of PROVIDER_IDS) {
-    if (id === "mock" || !(id in configured)) continue;
-    const entry = configured[id];
-    if (typeof entry !== "object" || entry === null) continue;
-    const current = (entry as { model?: unknown }).model;
-    const rawModels = (entry as { models?: unknown }).models;
+  const rawProviders = (harness as { providers?: unknown }).providers;
+  if (typeof rawProviders !== "object" || rawProviders === null || Array.isArray(rawProviders)) return null;
+  const currentValue = (harness as { provider?: unknown }).provider;
+  const provider = typeof currentValue === "string" ? currentValue : "";
+
+  const providers: ProviderSelection[] = [];
+  const models: Record<string, ModelSelection> = {};
+  for (const [id, raw] of Object.entries(rawProviders as Record<string, unknown>)) {
+    if (id.trim() === "" || typeof raw !== "object" || raw === null) continue;
+    const entry = raw as { preset?: unknown; configured?: unknown; model?: unknown; models?: unknown };
+    const preset = typeof entry.preset === "string" ? entry.preset : null;
+    const isMock = preset === "mock" || id === "mock";
+    const model = typeof entry.model === "string" ? entry.model : "";
     const options: ModelOption[] = [];
-    if (Array.isArray(rawModels)) {
-      for (const item of rawModels) {
+    if (Array.isArray(entry.models)) {
+      for (const item of entry.models) {
         if (typeof item !== "object" || item === null) continue;
         const spec = item as { id?: unknown; effort?: unknown; window?: unknown };
         if (typeof spec.id !== "string" || spec.id.trim() === "") continue;
-        const window = typeof spec.window === "number" && Number.isFinite(spec.window) && spec.window > 0
-          ? spec.window
-          : 0;
+        const window =
+          typeof spec.window === "number" && Number.isFinite(spec.window) && spec.window > 0 ? spec.window : 0;
         options.push({ id: spec.id, effort: spec.effort === true, window });
       }
     }
-    models[id] = { current: typeof current === "string" ? current : "", options };
+    if (!isMock) models[id] = { current: model, options };
+    providers.push({ id, preset, configured: entry.configured === true, model, models: options, isMock });
   }
-  const provider = (harness as { provider?: unknown }).provider;
+  providers.sort((left, right) => {
+    const rank = (PRESET_RANK[left.preset ?? ""] ?? 4) - (PRESET_RANK[right.preset ?? ""] ?? 4);
+    return rank !== 0 ? rank : left.id.localeCompare(right.id);
+  });
+  const visible = providers.filter((item) => !item.isMock);
+  const current = providers.find((item) => item.id === provider) ?? null;
+  const providerOptions = visible.filter((item) => item.configured || item.id === provider).map((item) => item.id);
   return {
-    provider: typeof provider === "string" ? provider : "",
+    provider,
+    providers,
     providerOptions,
     models,
+    current,
+    // 空态判据（design §8）：没有任何条目，或没有任何 configured 条目且无当前项。只剩 mock
+    // 条目不算空态——当前项仍在（chip 保持读数），只是它不进可选列表。
+    empty: providers.length === 0 || (visible.every((item) => !item.configured) && current === null),
   };
 }
 
 /**
  * chip 的 model 读数（合并 chip = 「model · effort」，model 名的上屏值）：
- * - provider 有 model 维度 → 当前 model 配置值；为空（宽容提取的缺值）回落首选项 id
- *   （该回落值也来自配置声明）；
- * - provider 有维度但声明清单为空（M381 config-only 的空态）→ 空串：不伪造读数——
- *   调用方收起 model 名与分隔符，读屏名改走 D403，浮层模型段给 D402 提示态；
- * - provider 无模型维度（mock——验收专用档）→ 回落 provider id 本身（配置值即读数，
- *   chip 形态因此保持「model · effort」双读数不变形）。
+ * - 生效模型 = 显式 `providers.<id>.model` 优先（不在清单里也照实显示），否则清单首项；
+ * - 两者皆无（清单为空，或 mock 这类没有模型维度的条目）→ 空串：不伪造读数——调用方收起
+ *   model 名与分隔符，读屏名改走 D403，浮层模型段给 D402 提示态。
  */
+/** 当前 provider 的条目（按 `provider` 现算，不读 `current` 快照）：切 provider 只改
+ *  `provider` 一个字段，派生读数随之重算——两处各存一份就会出现「切了但 chip 还显示旧值」。 */
+export function currentProvider(selection: HarnessSelection): ProviderSelection | null {
+  return selection.providers.find((item) => item.id === selection.provider) ?? null;
+}
+
 export function chipModelReading(selection: HarnessSelection): string {
-  const dim = selection.models[selection.provider as ProviderId];
-  if (dim === undefined) return selection.provider;
-  if (dim.current !== "") return dim.current;
-  return dim.options[0]?.id ?? "";
+  const current = currentProvider(selection);
+  if (current === null) return "";
+  // `models` 记录是模型维度的**可变读数面**（selectModel 只改那里）；`ProviderSelection.model`
+  // 是提取时的快照。读数优先取记录，切模型后 chip 立即翻转。
+  const dim = selection.models[current.id];
+  const modelValue = dim?.current ?? current.model;
+  if (modelValue !== "") return modelValue;
+  const first = dim?.options[0]?.id ?? current.models[0]?.id;
+  if (first !== undefined) return first;
+  // mock 是验收专用档、没有模型维度：回落 provider id 本身，保持「model · effort」双读数
+  // 不变形（M373 的既有口径；验收场景 90 按它断言）。
+  return current.isMock ? current.id : "";
 }
 
 // ── 权限模式的纯模型层（M414，change add-harness-permission-modes design §7）──────────
@@ -5784,16 +5837,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       return;
     }
     modelChip.hidden = false;
-    const model = chipModelReading(selSelection);
+    // 空态（design §8）：没有任何 provider / 没有 configured 且无当前项 → chip 显示
+    // 「未配置模型」，点开浮层给「去设置」。此时不显示 effort 读数——那会被读成「有模型」。
+    const empty = selSelection.empty;
+    const model = empty ? t("D859") : chipModelReading(selSelection);
     modelName.textContent = model;
-    // M381 空清单态：model 名收起（不伪造读数），分隔符随之收起——裸 effort 读数不留
-    // 悬空小圆点。
-    modelName.hidden = model === "";
-    modelSep.hidden = model === "" || !thinkConfigured;
-    effReading.textContent = thinkConfigured ? effortLabel(thinkLevel) : "";
-    effReading.classList.toggle("is-disabled", thinkConfigured && !thinkSupported);
-    const label =
-      model === ""
+    // 空清单态：model 名收起（不伪造读数）；空态改显式文案，名字不收起。
+    modelName.hidden = !empty && model === "";
+    modelSep.hidden = empty || model === "" || !thinkConfigured;
+    effReading.hidden = empty;
+    effReading.textContent = empty || !thinkConfigured ? "" : effortLabel(thinkLevel);
+    effReading.classList.toggle("is-disabled", !empty && thinkConfigured && !thinkSupported);
+    const label = empty
+      ? t("D860")
+      : model === ""
         ? t("D403", { level: effortLabel(thinkLevel) })
         : !thinkConfigured
           ? t("D399", { model })
@@ -5802,8 +5859,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             : t("D390");
     modelChip.title = label;
     modelChip.setAttribute("aria-label", label);
-    effHint.textContent =
-      model === ""
+    effHint.textContent = empty
+      ? ""
+      : model === ""
         ? t("D402", { provider: selSelection.provider })
         : t("D394", { model });
   }
@@ -5848,6 +5906,28 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     provLabel.className = "lumir-hp-selpop-label";
     provLabel.textContent = t("D396");
     provSec.append(provLabel);
+    // 空态（design §8）：没有任何可用 provider → 一行说明 + 「去设置」动作。动作与 ⌘, 走
+    // 同一条入口（deps.openSettings），面板关闭后由装配层重取一次 config_get。
+    if (selSelection.providerOptions.length === 0) {
+      const hint = document.createElement("div");
+      hint.className = "lumir-hp-selpop-hint";
+      hint.textContent = t("D862");
+      provSec.append(hint);
+      const goSettings = document.createElement("button");
+      goSettings.type = "button";
+      goSettings.className = "lumir-hp-selpop-item";
+      goSettings.setAttribute("role", "menuitem");
+      const name = document.createElement("span");
+      name.className = "lumir-hp-selpop-name";
+      name.textContent = t("D861");
+      goSettings.append(name);
+      goSettings.addEventListener("click", (event) => {
+        event.stopPropagation();
+        closeSelPop();
+        deps.openSettings();
+      });
+      provSec.append(goSettings);
+    }
     for (const id of selSelection.providerOptions) {
       const item = document.createElement("button");
       item.type = "button";
@@ -5875,7 +5955,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     selPop.append(provSec);
     // 段二：模型（当前 provider 的 model 维度；无维度（mock）→ 整段不渲染；M381 config-only：
     // 声明清单为空 → 段照渲染但只含 D402 提示态——不得伪造模型条目）。
-    const dim = selSelection.models[cur as ProviderId];
+    const dim = selSelection.models[cur];
     if (dim !== undefined) {
       const modelSec = document.createElement("div");
       modelSec.className = "lumir-hp-selpop-sec";
@@ -5980,7 +6060,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function selSegmentKey(seg: RebuildSegment): string | null {
     if (selSelection === null) return null;
     if (seg === "provider") return selSelection.provider;
-    if (seg === "model") return selSelection.models[selSelection.provider as ProviderId]?.current ?? null;
+    if (seg === "model") return selSelection.models[selSelection.provider]?.current ?? null;
     if (seg === "effort") return thinkLevel;
     return null;
   }
@@ -6301,7 +6381,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  provider 的 model 是各自配置键，切回即恢复）。写回成功后重取思考能力标记
    *  （`thinking.supported` 按当前 provider + model 现算——只读快照的 thinking 字段，
    *  不回放消息，不重渲 transcript）。 */
-  function selectProvider(id: ProviderId): void {
+  function selectProvider(id: string): void {
     if (selSelection === null || id === selSelection.provider) return;
     const previous = selSelection.provider;
     selSelection.provider = id;
@@ -6324,7 +6404,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  selectProvider。写回成功后重取思考能力标记（换模型可能换 effort 能力）。 */
   function selectModel(id: string): void {
     if (selSelection === null) return;
-    const dim = selSelection.models[selSelection.provider as ProviderId];
+    const dim = selSelection.models[selSelection.provider];
     if (dim === undefined || id === dim.current) return;
     const provider = selSelection.provider;
     const previous = dim.current;
@@ -6334,7 +6414,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     configSetValue("harness", `providers.${provider}.model`, id).then(() => {
       refreshThinkingState();
     }).catch((e: unknown) => {
-      const dimBack = selSelection!.models[provider as ProviderId];
+      const dimBack = selSelection!.models[provider];
       if (dimBack !== undefined) dimBack.current = previous;
       applySelChip();
       // 回滚后的重建：键取回滚后的当前 model（不是失败的新 model）——焦点因此落回旧项。
@@ -6388,19 +6468,26 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 控制行数据装载：config_get 宽容提取——合并选择器（harness 段缺失 / providers 不合形
   // → chip 隐藏，不伪造读数）与权限档（harness 段在场即显示；档位本身有缺省，见
   // harnessPermissionMode）。两条独立判据：providers 不合形不该连带隐藏权限 chip。
-  configGet()
-    .then((snapshot) => {
-      const harness = snapshot.config.harness;
-      permissionConfigured = typeof harness === "object" && harness !== null;
-      permMode = harnessPermissionMode(harness);
-      applyPermChip();
-      const selection = harnessSelection(harness);
-      if (selection === null) return;
-      selSelection = selection;
-      modelChip.hidden = false;
-      applySelChip();
-    })
-    .catch(() => {});
+  function loadConfigSelection(): Promise<void> {
+    return configGet()
+      .then((snapshot) => {
+        const harness = snapshot.config.harness;
+        permissionConfigured = typeof harness === "object" && harness !== null;
+        permMode = harnessPermissionMode(harness);
+        applyPermChip();
+        const selection = harnessSelection(harness);
+        if (selection === null) {
+          selSelection = null;
+          applySelChip();
+          return;
+        }
+        selSelection = selection;
+        modelChip.hidden = false;
+        applySelChip();
+      })
+      .catch(() => {});
+  }
+  void loadConfigSelection();
 
   /** 轻量重取思考状态（provider / model 切换后）：只读快照的 thinking 字段应用进 chip，
    *  不回放消息、不动 transcript（快照准入判据与全量恢复同一条——迟到的旧 vault
@@ -10185,6 +10272,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       composer.focus();
     },
     titlebarSegment: () => seg,
+    // 设置面板关闭后的一次重取（design §8）：chip / 权限 chip 重新读 config_get，不引入
+    // 全局配置状态层。面板保存后 provider / configured 可能已变，这条是唯一刷新入口。
+    refreshConfigSelection: () => void loadConfigSelection(),
     vaultChanged,
     beginCronRun,
     reloadSession,

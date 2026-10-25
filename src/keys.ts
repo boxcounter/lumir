@@ -430,6 +430,14 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   // composer 内时都要能按。它**有**默认绑定（⌘B，冲突核实三条独立来源见表条目 D548），
   // 因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。
   "view.toggle-sidebar",
+  // change add-model-automation-settings-oct24 tasks §5.1：设置面板（能力与面板在
+  // src/settings-panel.ts，装配在 main.ts）。取 `app.` 前缀（与 app.describe-bindings /
+  // app.search-open / app.quick-open 同族：作用于应用级入口，不是编辑器内核）。
+  // 作用域 global：焦点在编辑器 / 文件树 / 浮层 / composer 里都要能开，且面板打开时
+  // 「再按一次 ⌘, 关闭」必须命中（面板持焦时焦点不在 contentDOM 内）。默认绑定 ⌘,（macOS
+  // 的设置约定键）；菜单项「设置…」不带 accelerator——菜单若占该键，[keys] 重绑之后原键仍会
+  // 经菜单分发，等于重绑失效（spec「设置面板入口」）。
+  "app.settings-open",
   // M303：harness 对话面板唤起 / 收起（change add-harness-probe；HP1 语义改「旁侧 pane
   // 打开/收起 harness」，change move-harness-to-pane-chat-frame）。前缀取 `harness.`：它作用的
   // 对象是**那块面板**，不属于 `editor.*`（编辑器内核）/ `view.*`（应用运行期显示口径）任何一族
@@ -741,6 +749,10 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Cmd-p", command: "app.quick-open", scope: "global", docKey: "D583" },
   { key: "Cmd-Shift-o", command: "toc.toggle", scope: "global", docKey: "D305" },
   { key: "Cmd-o", command: "vault.switcher", scope: "global", docKey: "D306" },
+  // change add-model-automation-settings-oct24 tasks §5.1：⌘, 打开 / 关闭设置面板。macOS 的
+  // 「设置」约定键（系统不给任何菜单预置它）；表内与原生自建菜单的 accelerator 集合均无占用，
+  // 理由写在条目 D865 的正文里（表即文档，本文件不另抄一份）。
+  { key: "Cmd-,", command: "app.settings-open", scope: "global", docKey: "D865" },
 
   // ── 全局：编辑器内容字号步进（M195，change typography-and-zoom）
   // 语义取自 Emacs 的 text-scale-adjust（C-x C-= / C-x C-- / C-x C-0，步进倍率 1.1、钳 [12,32]、

@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { providerEntry, standardProviders } from "./provider-config";
+
+const PROVIDERS = standardProviders();
 
 // M454（change composer-image-mention）：harness 图片卡片的编号徽标、`@` 插入引用钮与
 // transcript 可访问名（含编号）的结构 / 计算属性断言与新增表面基线。
@@ -56,6 +59,9 @@ const EMPTY_STATE = {
 };
 
 async function stubHarness(page: Page, opts: { snapshot?: unknown } = {}): Promise<void> {
+  await page.addInitScript((providers) => {
+    (window as unknown as Record<string, unknown>).__VISUAL_PROVIDERS = providers;
+  }, PROVIDERS);
   await page.addInitScript(
     ({ snapshot, written }) => {
       const w = window as unknown as Record<string, any>;
@@ -83,7 +89,7 @@ async function stubHarness(page: Page, opts: { snapshot?: unknown } = {}): Promi
         if (cmd === "config_get" && result?.config) {
           result.config.harness = {
             provider: "mock",
-            providers: { kimi: { model: "k2" }, deepseek: { model: "d" }, mock: { fixture: "f.json" } },
+            providers: (window as unknown as Record<string, any>).__VISUAL_PROVIDERS,
             permissions: { allow: [], deny: [] },
             loop_max: 8,
             warn_ctx_pct: 85,

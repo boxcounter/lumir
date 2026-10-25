@@ -18,6 +18,9 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { providerEntry, standardProviders } from "./provider-config";
+
+const PROVIDERS = { mock: providerEntry("mock", { fixture: "f.json" }) };
 
 const DOC = "# 顺序笔记\n\n第一段，给面板一个视口口径。\n";
 
@@ -29,6 +32,9 @@ const VAULT: VaultFixture = {
 
 /** 与 m363 同机制的桩：harness_state 空态 + harness_send 只记录 + 事件注入通道。 */
 async function stubHarness(page: Page): Promise<void> {
+  await page.addInitScript((providers) => {
+    (window as unknown as Record<string, unknown>).__VISUAL_PROVIDERS = providers;
+  }, PROVIDERS);
   await page.addInitScript(() => {
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
@@ -52,7 +58,7 @@ async function stubHarness(page: Page): Promise<void> {
       if (cmd === "config_get" && result?.config) {
         result.config.harness = {
           provider: "mock",
-          providers: { mock: { fixture: "f.json" } },
+          providers: (window as unknown as Record<string, any>).__VISUAL_PROVIDERS,
           permissions: { allow: [], deny: [] },
           loop_max: 8,
           warn_ctx_pct: 85,

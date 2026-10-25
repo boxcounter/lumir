@@ -126,6 +126,9 @@ const PX = /^\d+(\.\d+)?px$/;
 interface World {
   styleCss: string;
   harnessCss: string;
+  /** 设置面板样式（change add-model-automation-settings-oct24）：与滚动条注册表同一条覆盖
+   *  理由——新 CSS 文件必须进同一套浮层宽度判据，否则换个类名就绕过夹取要求。 */
+  settingsCss: string;
   registry: RegistryEntry[];
 }
 
@@ -145,7 +148,11 @@ export interface Problem {
 }
 
 function rulesOf(world: World): CssRule[] {
-  return [...parseCss(world.styleCss, "src/style.css"), ...parseCss(world.harnessCss, "src/harness-panel.css")];
+  return [
+    ...parseCss(world.styleCss, "src/style.css"),
+    ...parseCss(world.harnessCss, "src/harness-panel.css"),
+    ...parseCss(world.settingsCss, "src/settings-panel.css"),
+  ];
 }
 
 /** 浮层壳 = 同时有「绝对 / 固定定位」与 elevation 配方（`box-shadow: var(--shadow-raise)`）。 */
@@ -279,6 +286,7 @@ function realWorld(): World {
   return {
     styleCss: readFileSync(path.join(root, "src/style.css"), "utf8"),
     harnessCss: readFileSync(path.join(root, "src/harness-panel.css"), "utf8"),
+    settingsCss: readFileSync(path.join(root, "src/settings-panel.css"), "utf8"),
     registry: REGISTRY,
   };
 }
@@ -346,6 +354,7 @@ function fixture(overrides: Partial<World> = {}): World {
   return {
     styleCss: FIXTURE,
     harnessCss: "",
+    settingsCss: "",
     registry: [
       { tier: "prose", shape: "em-capped", scaledText: true, selectors: [".a-pop"], note: "fixture" },
       { tier: "list", shape: "relative", selectors: [".b-pop"], note: "fixture" },

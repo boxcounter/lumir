@@ -77,6 +77,7 @@ const REGISTRY: RegistryEntry[] = [
       ".tree-pane",
       ".pane",
       ".lumir-bindings-body",
+      ".lumir-set-body",
       ".lumir-table-fs-panel",
       ".lumir-codeblock-fs-panel",
       ".lumir-toc-list",
@@ -168,6 +169,10 @@ function scrollingAxes(prop: string, rawValue: string): Axis[] {
 interface World {
   styleCss: string;
   harnessCss: string;
+  /** 设置面板样式（change add-model-automation-settings-oct24）：新 CSS 文件同样在注册表
+   *  的覆盖范围内——只扫两个文件时，换一个类名的滚动容器就能绕过全部门禁（REVIEW.md
+   *  『新增 / 修改 overflow 容器没先定档』条）。 */
+  settingsCss: string;
   themeTs: string;
   registry: RegistryEntry[];
 }
@@ -202,6 +207,7 @@ function scrollContainers(world: World): Map<string, ScrollContainer> {
   for (const [text, source] of [
     [world.styleCss, "src/style.css"],
     [world.harnessCss, "src/harness-panel.css"],
+    [world.settingsCss, "src/settings-panel.css"],
   ] as const) {
     for (const rule of parseCss(text, source)) {
       for (const sel of rule.selectors) {
@@ -332,7 +338,11 @@ export function audit(world: World): Problem[] {
     }
   }
   // ③④ 档位声明与禁则。
-  const rules = [...parseCss(world.styleCss, "src/style.css"), ...parseCss(world.harnessCss, "src/harness-panel.css")];
+  const rules = [
+    ...parseCss(world.styleCss, "src/style.css"),
+    ...parseCss(world.harnessCss, "src/harness-panel.css"),
+    ...parseCss(world.settingsCss, "src/settings-panel.css"),
+  ];
   for (const entry of world.registry) problems.push(...checkDeclarations(rules, entry));
   return problems;
 }
@@ -345,6 +355,7 @@ function realWorld(): World {
   return {
     styleCss: readFileSync(path.join(root, "src/style.css"), "utf8"),
     harnessCss: readFileSync(path.join(root, "src/harness-panel.css"), "utf8"),
+    settingsCss: readFileSync(path.join(root, "src/settings-panel.css"), "utf8"),
     themeTs: readFileSync(path.join(root, "src/preview/theme.ts"), "utf8"),
     registry: REGISTRY,
   };
@@ -359,7 +370,7 @@ test("滚动条注册表与源码双向对齐，且各档声明实际成立", ()
   );
 });
 
-test("注册表覆盖盘点出的全部滚动容器（20 个面 = 21 个选择器）", () => {
+test("注册表覆盖盘点出的全部滚动容器（21 个面 = 22 个选择器）", () => {
   const scanned = scrollContainers(realWorld());
   assert.deepEqual(
     [...scanned.keys()].sort(),
@@ -379,6 +390,7 @@ test("注册表覆盖盘点出的全部滚动容器（20 个面 = 21 个选择�
       ".lumir-hp-table-scroll",
       ".lumir-hp-transcript",
       ".lumir-qo-list",
+      ".lumir-set-body",
       ".lumir-table-fs-panel",
       ".lumir-toc-list",
       ".pane",
@@ -421,6 +433,7 @@ function fixture(overrides: Partial<World> = {}): World {
   return {
     styleCss: FIXTURE_STYLE,
     harnessCss: "",
+    settingsCss: "",
     themeTs: "",
     registry: [
       { tier: "thin", selectors: [".a", ".b", ".c", ".d"], note: "fixture" },
