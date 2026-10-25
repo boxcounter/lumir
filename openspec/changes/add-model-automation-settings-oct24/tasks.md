@@ -220,3 +220,10 @@
 六条新视觉用例里的五条做了**反向验证**（把 `src/settings-panel.ts` 换回 r2 tip `7fee3c1f` 的版本：
 P1-1、P1-2 正向、P2-3、P2-4、P2-5 各按预期判红；「改第二笔」那条是方向覆盖、旧实现不判红，
 如实标注），恢复后 28 条全绿。
+
+**r3 验证读数**（rebase 到 `origin/master` `1e93bb74`，含 M741 无 sudo 测试修复之后）：
+`pnpm test` 1465 passed；三处 tsc 通过；设置面板视觉 28 passed；`scripts/gate.sh visual` →
+**`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0**（`cargo-test 40s`、`visual-regression 565s`，
+视觉套件 874 passed / 1 skipped / 0 failed）；真机 `run.mjs 250 251` → **2/2 PASS，退出码 0**
+（250：41 PASS / 0 FAIL；251：10 PASS / 0 FAIL）；`openspec validate --all --strict` 33 passed；
+`docs-check` PASS；`acceptance --check` 242 场景。证据见 `.local/reviews/m734-settings-r3/`。
