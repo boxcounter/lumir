@@ -172,7 +172,7 @@
 - [x] 9.6 真机跑 §8.1–8.6，证据落 `.local/acceptance/<日期>/`；失败 / 跳过项逐条写明原因，
   INVALID 不并进 PASS。（2026-10-20 真机批 6/6 PASS，证据镜像在 `.local/acceptance/2026-10-20-m616/`；
   首跑的一条 FAIL 与本轮另两次环境/判据修正的现场留在 `pre-run-invalid/` 与 run.log 里。）
-- [ ] 9.7 归档顺序核对：`openspec list` 确认 `add-cron-runtime-daemon` / `add-harness-subagents`
+- [x] 9.7 归档顺序核对：`openspec list` 确认 `add-cron-runtime-daemon` / `add-harness-subagents`
   已归档（否则本 change 不归档，并在报告里点名）。
       —— **2026-10-24 已核，事实成立**：两者均已在 `openspec/changes/archive/`
       （`2026-10-24-add-cron-runtime-daemon` / `2026-10-24-add-harness-subagents`），本 change 的
@@ -181,6 +181,10 @@
       有且仅有一条归档跟踪条目，而该文件不在本 mission 的改动面内。归档批或 tower 补上队列条目后
       即可勾选（条目建议：`- **序 N · add-cron-conversational-registration**（实现 M616，58/58）：
       节点 2 待裁；归档顺序须排在 harness-permission-rules-oct23 之后`）。
+      —— **2026-10-25（M729 归档批）勾选**：两个前置 change 已归档的事实继续成立；本批先在
+      `docs/backlog.md` 补登本 change 的归档跟踪条目（使「勾选 → 完成 → 有唯一条目」三步同时
+      成立），随后按 permission-rules → readonly → rg-zip → 本 change 的链序归档，条目随归档提交
+      核销。9.8 的链序核对已在归档前逐环复跑。
 - [x] 9.8 权限链顺序核对（2026-10-24 新增，对应 `harness-permission-rules-oct23` 归档评审的 P1 项）：
   `harness-permission-rules-oct23` MUST 先于本 change 归档。本 change 的「权限机制」块已按它归档后
   的 living 重写（两层权限 allow / deny + 受限解包例外 + allow 规则持久化治理引用 + cron 工具档位 /

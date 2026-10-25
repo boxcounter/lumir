@@ -32,6 +32,60 @@
 >    `crontab -l` 一类合法只读查询不进危险命令表。
 >
 > 以上五条即实现期的裁决口径；实现中发现意图需变更时停下重走节点 1。
+>
+> **节点 2（归档评审）：机器 + 独立评审放行（五要件）**，2026-10-25。放行口径见
+> `docs/process/openspec-workflow.md`「节点 2」节；本 change 是该节列明的权限链末环（排在
+> `harness-permission-rules-oct23` 之后），归档批 M729 执行。归档前读数：
+> 1. **方案已批准**：立项（2026-10-20「好，请你动手。」）与节点 1（2026-10-20「全按推荐。」，五条
+>    设计取舍逐条定案，见上）均已回填；实现期无静默扩 scope。
+> 2. **独立 reviewer clean / merge**：三段实现各有一份 clean/merge 评审——
+>    `review-feat-implement-cron-core-config-and-scheduler-reviewer-m583-r1.md`（tip `354f1746`，
+>    M583）、`review-feat-implement-cron-registration-tools-backen-reviewer-m614-r3-r1.md`
+>    （tip `3d2de834`，M614）、
+>    `review-feat-implement-cron-registration-frontend-and-reviewer-m615-reanchor-r1.md`
+>    （tip `0024fa31`，M615）；delta 的 2026-10-24 重写另经
+>    `review-feat-align-permission-followup-deltas-oct24-reviewer-permission-deltas-oct-r1.md`
+>    （`status: clean` / `merge: merge`，tip `31603339`，M724）。该 tip 之后本 change 目录逐字未改
+>    （`git diff 31603339 HEAD -- openspec/changes/add-cron-conversational-registration` 空）。
+> 3. **tasks 完成**：58/58（9.7 在本批勾选：两个前置 change 已归档的事实成立，归档跟踪条目随本批
+>    补登并在归档提交里核销）。
+> 4. **门禁与真机证据**：quick 读数引实现批评审在各自 tip 的复跑——M615 tip `0024fa31`
+>    `GATE RESULT: 11/11 PASS（SKIP 0）`、退出码 0（cargo-fmt / clippy / test、bindings-drift、
+>    schemas-drift、tsc×3、unit-tests、docs-check、openspec-validate）；M614 `GATE RESULT: 10/10
+>    PASS（SKIP 1）`；M583 `GATE RESULT: 9/9 PASS（SKIP 1）`（SKIP 均为 `tsc-visual` 的环境性跳过）。
+>    真机 207–212 六场景 2026-10-20 全 PASS（24 / 17 / 16 / 18 / 14 / 10 断言，共 99 条，0 FAIL），
+>    证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-20-m616/run/`（各场景
+>    `status.txt` = PASS，`run/summary.md` 记 6/6 PASS）。**一处如实登记的记录缺口**：tasks 9.5 的
+>    visual 门禁只写「本地全绿」、未抄 `GATE RESULT` 原文行；归档批尝试在 master `9967f535` 补跑
+>    `scripts/visual/run.sh` 未采到终态读数（批次收尾时限内主动中止，进程与端口已清理），故**本次
+>    归档不以该补跑为证据**，visual 判据仍以实现批记录为准；需要逐字读数时由 reviewer 本地跑
+>    `bash scripts/gate.sh visual`（本批零代码改动，主仓与分支代码面相同）。
+> 5. **规格对账**：`node scripts/openspec-archive-check.mjs --change add-cron-conversational-registration`
+>    → PASS（2 份 delta / 5 条 MODIFIED / 74 段，无静默丢段；基线已是 permission-rules → readonly →
+>    rg-zip 归档后的 living）；`openspec validate --all --strict` → `Totals: 34 passed, 0 failed`；
+>    归档跟踪队列有且仅有一条。
+>
+> 归档后项见本块末尾的「归档后」追加段。
+>
+> **归档后（2026-10-25，M729）**：归档提交 `eedb5303`（归档目录 + 并入的 living spec
+> （`openspec/specs/cron/spec.md` 与 `openspec/specs/harness/spec.md`）+ Purpose 工具集手改 +
+> `docs/backlog.md` 队列条目核销同批提交）。`openspec archive` 实际输出：`cron: update`、
+> `harness: update`、`+ 3 added, ~ 5 modified, - 0, → 0`、`Change
+> 'add-cron-conversational-registration' archived as
+> '2026-10-25-add-cron-conversational-registration'.`。紧随其后
+> `node scripts/openspec-archive-check.mjs --archived add-cron-conversational-registration` →
+> `PASS（openspec/changes/archive/2026-10-25-add-cron-conversational-registration：5 条 MODIFIED，
+> 对比 74 段；人工恢复 0 段，声明认领 0 段）`，EXIT=0（2026-10-25 07:32 CST）。
+> 同批复跑：门禁模式 `openspec-archive-check` → `PASS（9 份 delta / 9 条 MODIFIED / 117 段）`；
+> `openspec validate --all --strict` → `Totals: 33 passed, 0 failed`；`bash scripts/docs-check.sh`
+> → `docs-check: PASS`。
+>
+> **Purpose 工具集手改（同一提交）**：`Purpose` 不是 requirement、不进 delta，故与 6.2 同一处置
+> 通道手改——句中的「另加 1 件编排工具 `task`」改为「另加 2 类不操作 vault 的工具：1 件编排工具
+> `task` 与 3 件调度工具 `cron_task_create` / `cron_task_list` / `cron_task_remove`」，M725 已改准的
+> pane 定位句与「8 件 vault 操作工具」计数句逐字保留。改前的 Purpose 只列 8 + 1 件工具，与本
+> change 并入「工具循环」requirement 后的 8 + 1 + 3 件相矛盾（living spec 里新旧表述并存的入口，
+> 见 REVIEW.md「设定类现状断言」条），故在本次归档提交里一并改准。
 
 ## Why
 
@@ -194,6 +248,10 @@ cron 机制已在 0.9.0 交付并 dogfood（`add-cron-runtime-daemon` 已实现�
     `harness-permission-rules-oct23` → 本 change。本 change 的两个 MODIFIED 块已按各自前置
     change 归档后的 living 形态重写（2026-10-24）。`rg-zip-flags-dangerous-oct24` 只改 `cli_run`
     一条，与本 change 无 requirement 交集，顺序互不影响。
+    —— **2026-10-25（M729 归档批）执行结果**：链序按上句兑现，
+    `harness-permission-rules-oct23` 已于 2026-10-25 归档
+    （`openspec/changes/archive/2026-10-25-harness-permission-rules-oct23`，随之 readonly、
+    rg-zip 两环亦已归档），本 change 在其后归档；上句「尚未归档」为 2026-10-24 当时的现状。
   - REVIEW.md「同一语义两处真源」条：任务表只有 `config.json` 一处真源（工具写它、线程读它），
     去重状态只有 `lumir-cron` 线程一个写者。
   - AGENTS.md「变更默认直接切断」：无兼容层——不存在「旧的不热重载行为」需要保留，也没有旧工具名。
