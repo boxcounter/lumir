@@ -617,9 +617,12 @@ pub const RETIRED_KIMI_MODEL: &str = "kimi-k2";
 /// **闭集合**：取值校验在 Rust 侧完成（与 `UiTheme` / `PermissionMode` 同一形态）；条目声明
 /// 闭集合外的预设时整条忽略（猜错协议比丢弃更危险，design §2.1）。
 ///
+/// `Deserialize` 只服务设置 patch 的强类型契约（`settings::ProviderEdit::Add`）；装载期仍走
+/// [`ProviderPreset::parse`]——那条路径要产出点名 warning，MUST NOT 由 serde 错误替代。
+///
 /// 变体顺序即规范顺序（`kimi` → `deepseek` → `generic` → `mock`）：列表展示、active 回退与
 /// revision 遍历共用它，因此 `Ord` 的派生顺序承载语义，MUST NOT 重排。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../src/bindings/")]
 pub enum ProviderPreset {
@@ -706,7 +709,10 @@ impl ProviderPreset {
 ///
 /// v1 仅 kimi 实现 `ChatCompletions`；deepseek 配该档在配置校验期回落 `Responses` 并告警
 /// （design D1 的 v1 范围），因此运行时装配点可以只按 kimi 建 chat 客户端。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, TS)]
+///
+/// `Deserialize` 只服务设置 patch 的强类型契约（`settings::FieldEdit<WireApi>`）；装载期仍走
+/// [`WireApi::parse`] + preset 支持面判定，那条路径要产出点名 warning。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export, export_to = "../../src/bindings/")]
 pub enum WireApi {
@@ -1046,8 +1052,19 @@ pub fn provider_id_valid(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
+/// provider id 的**正则形态**（设置面能力矩阵下发用）：与 [`provider_id_valid`] 同源派生，
+/// 前端 MUST NOT 另写一份字符集（REVIEW.md『同一语义两处真源』条）。
+pub fn provider_id_pattern() -> String {
+    format!("^[a-z0-9][a-z0-9_-]{{0,{}}}$", PROVIDER_ID_MAX - 1)
+}
+
 /// 保留 id：mock 是验收专用的 fixture 档，设置面不呈现、不可新增 / 不可删除（配置仍可手写）。
 pub const RESERVED_PROVIDER_ID: &str = "mock";
+
+/// 模型上下文窗口的合法区间（tokens）：逐项校验与设置面能力矩阵共用这一份，
+/// MUST NOT 在别处另写区间（设置面只下发、前端不复制）。
+pub const MODEL_WINDOW_MIN: u64 = 1;
+pub const MODEL_WINDOW_MAX: u64 = 10_000_000;
 
 /// 测试与验收桩的 provider 构造（`#[doc(hidden)]`；产品代码不使用）：`configured` 按字段
 /// 派生，避免每个用例各拼一遍字面量时漏掉派生读数。
@@ -2322,30 +2339,38 @@ pub(crate) fn update_json_atomic(
             read_config_json_into(value, path);
             Ok(())
         },
-        f,
+        |value| {
+            f(value)?;
+            Ok(Some(std::mem::take(value)))
+        },
     )
+    .map(|_| ())
 }
 
-/// [`update_json_atomic`] 的**严格读**变体（change add-model-automation-settings-oct24 §2.8）：
-/// 文件存在但不可解析 / 不是对象时返回解析错误，MUST NOT 按 `{}` 起——写通道拿宽容读入写作
-/// 等于用一份用户没看见的默认状态盖掉坏文件。
+/// [`update_json_atomic`] 的**严格读 + 可放弃写**变体（change
+/// add-model-automation-settings-oct24 §2.8 / §6.1）：文件存在但不可解析 / 不是对象时返回解析
+/// 错误，MUST NOT 按 `{}` 起——写通道拿宽容读入写作等于用一份用户没看见的默认状态盖掉坏文件。
 ///
-/// 与宽容版共用同一把锁与同一个 [`write_file_atomic`]（不新增第二套原子写）；文件不存在仍按
-/// 空对象处理（首次接入的主路径）。
-#[cfg_attr(not(test), allow(dead_code))]
+/// 闭包的返回值就是**写不写**的判据：
+/// - `Ok(Some(candidate))` → 补 `version` 后原子写 `candidate`；
+/// - `Ok(None)` → **不落盘**（文件逐字节不变），本函数返回 `Ok(None)`。
+///
+/// 第二种形态是设置面的 CAS 主路径（Blocked / Conflict 必须拿到「文件没动」的保证，而不是靠
+/// 抛一个内部错误来中止写）；它与装载期写走同一把锁与同一个 [`write_file_atomic`]，不新增第二
+/// 套原子写。文件不存在仍按空对象处理（首次接入的主路径）。
 pub(crate) fn update_json_atomic_strict(
     path: &Path,
-    f: impl FnOnce(&mut serde_json::Value) -> Result<(), CommandError>,
-) -> Result<(), CommandError> {
+    f: impl FnOnce(&mut serde_json::Value) -> Result<Option<serde_json::Value>, CommandError>,
+) -> Result<Option<serde_json::Value>, CommandError> {
     update_json_atomic_with(path, |value| read_config_json_strict_into(value, path), f)
 }
 
-/// 两个读入口共用的落盘骨架：建目录 → 取锁 → 读 → 改 → 补 version → 原子写。
+/// 两个读入口共用的落盘骨架：建目录 → 取锁 → 读 → 闭包决定写不写 → 补 version → 原子写。
 fn update_json_atomic_with(
     path: &Path,
     read: impl FnOnce(&mut serde_json::Value) -> Result<(), CommandError>,
-    f: impl FnOnce(&mut serde_json::Value) -> Result<(), CommandError>,
-) -> Result<(), CommandError> {
+    f: impl FnOnce(&mut serde_json::Value) -> Result<Option<serde_json::Value>, CommandError>,
+) -> Result<Option<serde_json::Value>, CommandError> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| {
             CommandError::new(
@@ -2359,10 +2384,14 @@ fn update_json_atomic_with(
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut value = serde_json::json!({});
     read(&mut value)?;
-    f(&mut value)?;
-    crate::commands::bump_config_version(&mut value);
-    let body = serde_json::to_string_pretty(&value).expect("配置 Value 一定可序列化");
-    write_file_atomic(path, body.as_bytes()).map_err(|failure| failure.into_command_error(path))
+    let Some(mut candidate) = f(&mut value)? else {
+        return Ok(None);
+    };
+    crate::commands::bump_config_version(&mut candidate);
+    let body = serde_json::to_string_pretty(&candidate).expect("配置 Value 一定可序列化");
+    write_file_atomic(path, body.as_bytes())
+        .map_err(|failure| failure.into_command_error(path))
+        .map(|()| Some(candidate))
 }
 
 /// 宽容读入的就地形态（缺失 / 不可解析 / 非对象一律按 `{}`，未知顶层键原样保留）。
@@ -2379,7 +2408,6 @@ fn read_config_json_into(target: &mut serde_json::Value, path: &Path) {
 
 /// 严格读入的就地形态：文件不存在 → 空对象；读失败 / JSON 不合法 / 非对象 → 解析错误
 /// （错误带行号 / 列号，供设置面横幅显示）。
-#[cfg_attr(not(test), allow(dead_code))]
 fn read_config_json_strict_into(
     target: &mut serde_json::Value,
     path: &Path,
@@ -2574,6 +2602,21 @@ fn write_file_atomic(path: &Path, body: &[u8]) -> Result<(), AtomicWriteFailure>
         return Ok(());
     }
     Err(AtomicWriteFailure::NoUniqueTmp)
+}
+
+/// 设置写通道的「同一装载路径」校验入口（change add-model-automation-settings-oct24 design
+/// §6.1 步 3 / 7）：从**已读出**的 JSON 值解析 [`RawConfig`] 并跑 [`validate()`]——与
+/// [`load_from`] 的解析 / 校验同源，但不起第二次文件读取、不跑迁移、不写盘。
+///
+/// `Err` = 结构解析失败（装载期会整文件回落），文案带字段级原因；设置面据此把文件判为
+/// `Invalid` 并禁用保存（MUST NOT 在一份不可 round-trip 的文件上写入）。
+pub(crate) fn validate_value(
+    value: &serde_json::Value,
+) -> Result<(AppConfig, Vec<ConfigDiagnostic>), String> {
+    let raw: RawConfig =
+        serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+    let (config, diagnostics, _cron_issues) = validate(raw);
+    Ok((config, diagnostics))
 }
 
 /// 逐字段校验：非法值落回该字段默认值并附人话 warning。
@@ -4123,9 +4166,6 @@ fn validate_harness_model_specs(
     path: &str,
     sink: &mut DiagnosticSink,
 ) -> Vec<HarnessModelSpec> {
-    /// 窗口合法上限（tokens）：现役最大 1M，放宽一个数量级容纳未来大窗模型；
-    /// 超出视为笔误（多写一个 0 就是 10 倍）。
-    const WINDOW_MAX: u64 = 10_000_000;
     let mut specs = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
         let at = format!("{path}.models 的第 {} 项", index + 1);
@@ -4212,14 +4252,14 @@ fn validate_harness_model_specs(
             Some(value) => {
                 let parsed = value
                     .as_u64()
-                    .filter(|window| *window > 0 && *window <= WINDOW_MAX);
+                    .filter(|window| *window >= MODEL_WINDOW_MIN && *window <= MODEL_WINDOW_MAX);
                 match parsed {
                     Some(window) => window,
                     None => {
                         sink.warn(
                             "harness_model_window_invalid",
                             Some(item_path.clone()),
-                            format!("配置项 {at}（id \"{id}\"）的 window 应为 1..={WINDOW_MAX} 的整数，已忽略该项"),
+                            format!("配置项 {at}（id \"{id}\"）的 window 应为 {MODEL_WINDOW_MIN}..={MODEL_WINDOW_MAX} 的整数，已忽略该项"),
                         );
                         continue;
                     }
@@ -6996,7 +7036,7 @@ mod tests {
         // 不存在 ⇒ 正常写入。
         update_json_atomic_strict(&path, |value| {
             value["ui"] = serde_json::json!({"theme": "dark"});
-            Ok(())
+            Ok(Some(std::mem::take(value)))
         })
         .expect("首次接入应可写");
         let stored: serde_json::Value =
@@ -7007,7 +7047,7 @@ mod tests {
         std::fs::write(&path, b"{not json").expect("播种坏文件");
         let error = update_json_atomic_strict(&path, |value| {
             value["ui"] = serde_json::json!({"theme": "eink"});
-            Ok(())
+            Ok(Some(std::mem::take(value)))
         })
         .expect_err("坏文件必须拒绝写入");
         assert_eq!(error.code, "config_parse_failed");
@@ -7020,9 +7060,26 @@ mod tests {
 
         // 顶层不是对象 ⇒ Err。
         std::fs::write(&path, b"[1,2,3]").expect("播种数组文件");
-        let error = update_json_atomic_strict(&path, |_| Ok(())).expect_err("非对象必须拒绝");
+        let error = update_json_atomic_strict(&path, |_| Ok(None)).expect_err("非对象必须拒绝");
         assert_eq!(error.code, "config_parse_failed");
         assert_eq!(std::fs::read(&path).unwrap(), b"[1,2,3]");
+    }
+
+    /// `Ok(None)` = 本次不写（设置面 Blocked / Conflict 的主路径）：文件逐字节不变，且不补
+    /// `version`、不留 tmp 残留。
+    #[test]
+    fn strict_write_can_decline_without_touching_the_file() {
+        let dir = TempDir::new("strict-decline");
+        let path = dir.config_path();
+        std::fs::write(&path, b"{\"ui\":{\"theme\":\"dark\"}}").expect("播种配置");
+        let result = update_json_atomic_strict(&path, |_| Ok(None)).expect("放弃写不是错误");
+        assert_eq!(result, None);
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"{\"ui\":{\"theme\":\"dark\"}}",
+            "Ok(None) 时文件逐字节不变"
+        );
+        assert_eq!(dir.entries(), vec!["config.json".to_string()], "不留 tmp");
     }
 
     /// 宽容读仍然是既有的宽容口径（坏文件按 `{}` 起）：两条读入口的分工不许互相污染。

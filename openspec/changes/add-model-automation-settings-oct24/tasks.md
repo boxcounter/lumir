@@ -24,15 +24,15 @@
 
 ## 3. 设置写通道（Rust）
 
-- [ ] 3.1 新增 `src-tauri/src/settings.rs`：`SettingsSnapshot`（顶层 revision；providers 规范顺序；raw vs 生效；`wire_api` raw 原 JSON 值 + `effective.wire_api`；Key 只回末 4 位；`references` 三个布尔；命名目标解析读数；文件状态；能力矩阵含预设表 / id 规则 / 保留 id）
-- [ ] 3.2 实现 `SettingsPatch`：Add（id + preset）/ Update（Key / models / base_url / wire_api）/ Delete（`active_after` + 两个命名重定向）/ `active_provider` / automation / **naming（两组 `NamingEdit { provider, model }`，Set 与 Reset）**；`deny_unknown_fields`；`preset` 不出现在 Update
-- [ ] 3.3 实现 apply 算法：锁内 revision 比对 → 添加 / 更新 / 删除 / 重定向 / active / 命名目标（provider 先、model 后，换 provider 清 model）/ 开关按序应用 → 严格复解析 → 非回归判据（candidate × changed paths）→ 引用完整性复核 → 原子写
-- [ ] 3.4 实现删除计划：锁内按现读文件计算 active / 两个命名目标引用；缺替代目标 / 目标不存在 / 目标等于被删项 → Blocked；目标变化时清除对应 `model` 覆盖；删最后一个时删除 active 与命名 provider 键
-- [ ] 3.5 revision 口径：覆盖 provider 条目（不含 chip 写回的 `providers.<id>.model`）、`harness.provider`、四开关、两个命名 `provider` 与两个命名 `model`（删除会清它们，外部改动必须触发冲突）；`Missing` 按空对象、`Invalid` 为 None
-- [ ] 3.6 未知字段保留：provider 条目只改提交路径；models 按 `id` 保留未知子键；装载期被忽略的非法条目不被其它条目的保存改写
-- [ ] 3.7 设置快照 / patch / 结果类型经 ts-rs 导出，重导出 `src/bindings/**` 并随实现提交
-- [ ] 3.8 半配置与最小可保存状态：Key 非空 + models 空 → Blocked；generic 已有 Key 或模型但缺 base_url → Blocked；完全空的 generic 条目允许保存、`configured = false`
-- [ ] 3.9 命名目标编辑：快照下发 `NamingTargetState`（两个 override 的 raw 值、provider / 模型选项、解析结果与 vision 资格）；patch 校验（目标合法非 mock、model 在目标清单内、换 provider 清 model、Reset 删键）；开关关闭时快照与 patch 都不清空值
+- [x] 3.1 新增 `src-tauri/src/settings.rs`：`SettingsSnapshot`（顶层 revision；providers 规范顺序；raw vs 生效；`wire_api` raw 原 JSON 值 + `effective.wire_api`；Key 只回末 4 位；`references` 三个布尔；命名目标解析读数；文件状态；能力矩阵含预设表 / id 规则 / 保留 id）
+- [x] 3.2 实现 `SettingsPatch`：Add（id + preset）/ Update（Key / models / base_url / wire_api）/ Delete（`active_after` + 两个命名重定向）/ `active_provider` / automation / **naming（两组 `NamingEdit { provider, model }`，Set 与 Reset）**；`deny_unknown_fields`；`preset` 不出现在 Update
+- [x] 3.3 实现 apply 算法：锁内 revision 比对 → 添加 / 更新 / 删除 / 重定向 / active / 命名目标（provider 先、model 后，换 provider 清 model）/ 开关按序应用 → 严格复解析 → 非回归判据（candidate × changed paths）→ 引用完整性复核 → 原子写
+- [x] 3.4 实现删除计划：锁内按现读文件计算 active / 两个命名目标引用；缺替代目标 / 目标不存在 / 目标等于被删项 → Blocked；目标变化时清除对应 `model` 覆盖；删最后一个时删除 active 与命名 provider 键
+- [x] 3.5 revision 口径：覆盖 provider 条目（不含 chip 写回的 `providers.<id>.model`）、`harness.provider`、四开关、两个命名 `provider` 与两个命名 `model`（删除会清它们，外部改动必须触发冲突）；`Missing` 按空对象、`Invalid` 为 None
+- [x] 3.6 未知字段保留：provider 条目只改提交路径；models 按 `id` 保留未知子键；装载期被忽略的非法条目不被其它条目的保存改写
+- [x] 3.7 设置快照 / patch / 结果类型经 ts-rs 导出，重导出 `src/bindings/**` 并随实现提交
+- [x] 3.8 半配置与最小可保存状态：Key 非空 + models 空 → Blocked；generic 已有 Key 或模型但缺 base_url → Blocked；完全空的 generic 条目允许保存、`configured = false`
+- [x] 3.9 命名目标编辑：快照下发 `NamingTargetState`（两个 override 的 raw 值、provider / 模型选项、解析结果与 vision 资格）；patch 校验（目标合法非 mock、model 在目标清单内、换 provider 清 model、Reset 删键）；开关关闭时快照与 patch 都不清空值
 
 ## 4. 运行时消费者
 

@@ -7,5 +7,8 @@
  *
  * v1 仅 kimi 实现 `ChatCompletions`；deepseek 配该档在配置校验期回落 `Responses` 并告警
  * （design D1 的 v1 范围），因此运行时装配点可以只按 kimi 建 chat 客户端。
+ *
+ * `Deserialize` 只服务设置 patch 的强类型契约（`settings::FieldEdit<WireApi>`）；装载期仍走
+ * [`WireApi::parse`] + preset 支持面判定，那条路径要产出点名 warning。
  */
 export type WireApi = "responses" | "chat_completions";

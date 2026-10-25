@@ -114,6 +114,30 @@ pub fn config_get() -> Result<ConfigSnapshot, CommandError> {
 }
 
 // ---------------------------------------------------------------------------
+// settings（change add-model-automation-settings-oct24 tasks §3）
+// ---------------------------------------------------------------------------
+
+/// 设置面读快照：只含设置面的键（provider 条目 raw / 生效、revision、引用面、命名目标、
+/// 文件状态与能力矩阵）。**完整 API Key 不经本命令回传**，至多带末 4 位；既有的
+/// [`config_get`] 契约不变（它仍返回整份生效配置，设置面不消费它的 `api_key`）。
+#[tauri::command]
+pub fn settings_get() -> Result<crate::settings::SettingsSnapshot, CommandError> {
+    let path = config::config_dir()?.join("config.json");
+    Ok(crate::settings::snapshot_at(&path))
+}
+
+/// 设置面保存：强类型 patch（未知字段整笔拒绝），锁内「严格读 → 比对 revision → 应用 →
+/// 严格复解析 → 非回归判据 → 引用完整性 → 原子写」。Blocked / Conflict / FileInvalid 都是
+/// `Ok(outcome)`（附最新快照与字段级错误）；只有写盘失败这类命令级失败才 `Err`。
+#[tauri::command]
+pub fn settings_apply(
+    patch: serde_json::Value,
+) -> Result<crate::settings::SettingsApplyOutcome, CommandError> {
+    let path = config::config_dir()?.join("config.json");
+    crate::settings::apply_at(&path, patch)
+}
+
+// ---------------------------------------------------------------------------
 // vault-workspace / fs-io（add-vault-workspace）
 // ---------------------------------------------------------------------------
 

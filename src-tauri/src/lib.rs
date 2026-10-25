@@ -18,6 +18,7 @@ pub mod logging;
 pub mod reading_position;
 pub mod ready;
 pub mod recovery;
+pub mod settings;
 pub mod vault_registry;
 pub mod vault_session;
 pub mod window_chrome;
@@ -94,6 +95,10 @@ pub fn run() {
             commands::config_set_ui_value,
             // M301 泛化的单键合并写（任意表名；`config_set_ui_value` ≡ section="ui"）。
             commands::config_set_value,
+            // 设置面板的窄接口读写（change add-model-automation-settings-oct24 tasks §3）：
+            // 读只回设置面快照（Key 只带末 4 位），写走强类型 patch + 锁内 CAS（revision）。
+            commands::settings_get,
+            commands::settings_apply,
             commands::vault_open,
             commands::vault_open_path,
             commands::vault_current,

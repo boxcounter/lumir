@@ -11,6 +11,9 @@ import type { ReadSnapshot } from "./bindings/ReadSnapshot";
 import type { ExternalTextSnapshot } from "./bindings/ExternalTextSnapshot";
 import type { FsFileMeta } from "./bindings/FsFileMeta";
 import type { ConfigSnapshot } from "./bindings/ConfigSnapshot";
+import type { SettingsSnapshot } from "./bindings/SettingsSnapshot";
+import type { SettingsPatch } from "./bindings/SettingsPatch";
+import type { SettingsApplyOutcome } from "./bindings/SettingsApplyOutcome";
 import type { FsChange } from "./bindings/FsChange";
 import type { FsEntryChangedEvent } from "./bindings/FsEntryChangedEvent";
 import type { ReadingPositions } from "./bindings/ReadingPositions";
@@ -79,6 +82,24 @@ export function configSetUiValue(key: string, value: unknown): Promise<void> {
  * 写失败抛 CommandError（`config_write_failed`），调用方负责降级（面板回滚读数 + 错误行）。 */
 export function configSetValue(section: string, key: string, value: unknown): Promise<void> {
   return invoke<void>("config_set_value", { section, key, value });
+}
+
+/**
+ * 读设置面快照（change add-model-automation-settings-oct24 tasks §3）：只含设置面的键——
+ * provider 条目 raw / 生效、顶层 `revision`（保存时的 CAS 基准）、引用面布尔、两个命名目标
+ * 的解析读数、文件状态与能力矩阵。**完整 API Key 永不回传**，至多末 4 位。
+ */
+export function settingsGet(): Promise<SettingsSnapshot> {
+  return invoke<SettingsSnapshot>("settings_get");
+}
+
+/**
+ * 保存一笔设置 patch（强类型：未知字段整笔拒绝）。返回最新快照 + 状态
+ * （`applied` / `blocked` / `conflict` / `file_invalid`）与字段级错误；
+ * 只有写盘失败这类命令级失败才 reject（CommandError `config_write_failed`）。
+ */
+export function settingsApply(patch: SettingsPatch): Promise<SettingsApplyOutcome> {
+  return invoke<SettingsApplyOutcome>("settings_apply", { patch });
 }
 
 /** 调系统目录选择器打开 vault；用户取消 resolve 为 null（非错误）。 */
