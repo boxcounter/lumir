@@ -196,8 +196,12 @@ steps:
   - name: 恢复后的内容面：工具行摘要、失败状态、正文与相对时间都在
     do: settle
     expect:
-      - label: 恢复的成功行 = 工具徽章 + 人话化参数（M406：restoredAssistantToolRow 走 humanizeToolArgs）
-        ax: { has: '/vault_create\s*harness-created\.md/' }
+      - label: 恢复的成功行 = 工具徽章 + 人话化参数（M406：restoredAssistantToolRow 走 humanizeToolArgs；
+          参数里的路径渲染成可点按钮）
+        # 恢复路径与 live 路径的渲染形态**不同**（M745 实测）：live 时路径与徽章同在一段静态文本
+        # （上一组断言仍是 `vault_create\s*harness-created\.md`），恢复后路径是独立
+        # `AXButton (harness-created.md)` 节点（change add-path-line-range-links）。按跨节点窗口匹配。
+        ax: { has: '/vault_create[\s\S]{0,200}?AXButton \(harness-created\.md\)/' }
       - label: 恢复的参数 JSON 原文不上屏（M406 人话化分层在恢复路径同样生效）
         ax: { not: '{"path":"harness-created.md"' }
       - label: "失败行保留细分错误码（恢复尾注 = failureTextOf 的 `{code}: {message}`，M406 起无 `error · ` 前缀）"
@@ -255,6 +259,15 @@ core 侧的两处修复（M367）已把「空轮次不落面板消息」与「to
   尾注 `error · fs_already_exists: …`（后端 `summarize_result` 的失败形状原文作尾注），失败
   （恢复）= ✕ 行 + 尾注 `fs_already_exists: …`（`failureTextOf` 从记录 text 的输出 JSON 取
   `{code}: {message}` 全文，不带 `error · ` 前缀）。两串都由本场景的 mock 脚本唯一产出，不与别的场景串。
+- **路径的可点化只落在恢复路径上（M745 实测，两处断言因此形态不同）**：change
+  `add-path-line-range-links` 之后，**恢复**渲染里的工具参数路径是独立的 `AXButton (…)` 节点，
+  而 **live** 渲染里路径仍与徽章同在一段静态文本。M743 全量跑因此只有恢复那一条恒红
+  （`vault_create harness-created.md` 在 live dump 里读到、在恢复 dump 里读不到），
+  finding `.tower/comms/findings/20261025-worker-provider-docs-checks-oc-bug-103-104-111-path-link.md` 记的是同一条。
+  两条断言按各自的渲染形态写：live 保持 `vault_create\s*harness-created\.md`，恢复改成跨节点窗口
+  `vault_create[\s\S]{0,200}?AXButton \(harness-created\.md\)`（M743 现场实测间距 22 字符）。
+  **不要**把两条统一成「两种形态都接受」的宽松正则——那会让「恢复路径退化成纯文本」这一形态
+  静默通过（本场景判的就是恢复渲染的保真）。
 - **消息数** = AX 里 `AXButton (复制消息)` 的**行数**（= 元素数；每条消息一个复制钮：用户 1 +
   assistant 记录 3 = 4）。空正文记录若被渲染出来就会多一个消息元素（多一个复制钮 ⇒ 5 即红），
   这条判据同时是「空消息 MUST NOT 挂复制钮」的直接落点。**为什么不用「数 who 行文本」**：AX 会把

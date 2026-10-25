@@ -8,6 +8,12 @@ config:
   harness:
     provider: mock
     fixture: "$env/subagent-fixtures/resume.json"
+seed:
+  # 模板必须在**起 app 之前**就位（M745）：`config.harness.fixture` 在 launchApp 里先被读一遍，
+  # 而 `${run_id}` 是运行期才有的（mockFill 就地替换这份副本）。仓库 fixtures 只读、原文不改。
+  envFiles:
+    - path: subagent-fixtures/resume.json
+      from: "$fixtures/subagent-fixtures/resume.json"
 steps:
   - name: 写入定义 .lumir/agents/research.md
     do: vaultWrite
@@ -20,53 +26,6 @@ steps:
       ---
       
 
-  - name: 写入运行期 fixture 模板（${run_id} 由 mockFill 在运行期填充）
-    do: envWrite
-    file: "subagent-fixtures/resume.json"
-    content: |
-      {
-        "version": 1,
-        "responses": [
-          {
-            "text": "先派 research。",
-            "tool_calls": [
-              {
-                "id": "call_r1",
-                "name": "task",
-                "arguments": "{\"agent\": \"research\", \"prompt\": \"跑一半停住\", \"description\": \"续跑段一\"}"
-              }
-            ]
-          },
-          {
-            "text": "半截结论。",
-            "usage": {
-              "input_tokens": 60,
-              "output_tokens": 40
-            }
-          },
-          {
-            "text": "SGH2-RESUMED-CHILD 续跑后的完整结论。"
-          },
-          {},
-          {
-            "text": "SGF-RESUME-PARENT 父会话：第一段触顶。"
-          },
-          {
-            "text": "续跑刚才那段。",
-            "tool_calls": [
-              {
-                "id": "call_r2",
-                "name": "task",
-                "arguments": "{\"agent\": \"research\", \"prompt\": \"继续跑完\", \"description\": \"续跑段二\", \"resume\": \"${run_id}\"}"
-              }
-            ]
-          },
-          {
-            "text": "SGF-RESUME2-PARENT 父会话：续跑完成。"
-          }
-        ],
-        "subrun_span": 3
-      }
   - name: ⌘⇧A 打开 harness pane
     do: keys
     keys: ["cmd+shift+a"]
@@ -141,8 +100,16 @@ steps:
 # 189 —— 8.8 resume 续跑
 
 第一段以 `max_tokens: 1` 触顶，第二段用 `task(resume=<真实 run_id>)` 续跑。run_id 是运行期
-产物（审计文件名 `<run_id>.jsonl`），静态 fixture 写不出来——本场景先用 `envWrite` 铺一份带
-`${run_id}` 占位的**副本**，两步之间用 `mockFill` 就地替换（仓库 fixture 原文不动）。
+产物（审计文件名 `<run_id>.jsonl`），静态 fixture 写不出来——模板放在仓库 fixtures 里
+（`fixtures/subagent-fixtures/resume.json`，含 `${run_id}` 占位），由 front-matter 的
+`seed.envFiles` 在**起 app 之前**预置成 `$env` 下的副本，运行到第二步时用 `mockFill` 就地替换
+（仓库 fixture 原文不动）。
+
+> **为什么模板必须靠 seed 而不是第一个 `envWrite` 步骤（M745）**：`config.harness.fixture` 在
+> `launchApp()` 里先被读一遍，`envWrite` 是起 app **之后**才跑的步骤——干净 `env/` 下启动即
+> ENOENT、整场 INVALID；此前只有共享 env 里残留上一次运行的文件时才「通过」（M743 全量跑的
+> 189/190/191/206，finding `20261025-worker-provider-docs-checks-oc-bug-189-190-191-mock-fixture-env-invalid.md`）。
+> 预置与 `seed.registry` / `seed.sessions` 同一语义：只能由磁盘状态表达的前置条件都在起 app 前落盘。
 
 判据：`segment=2`（同一 run 的第二段）、续跑段 terminal completed、审计同文件追加
 （`run_open` 一次 + `run_segment`）、两段 sidecar 都进父会话留存（用量归桶不断档）。

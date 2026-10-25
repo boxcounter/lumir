@@ -5,6 +5,7 @@
 // 一条断言失败不阻断后续步骤，好让一次运行把该场景的问题一次暴露齐。
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { appendFile, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -36,7 +37,7 @@ import {
   typeInNode,
   waitUntil,
 } from "./drive.mjs";
-import { envHome, InfraError, mkdirp, readText, repoRoot, secondVaultDir, sleep, vaultDir } from "./util.mjs";
+import { envHome, envRelPath, InfraError, mkdirp, readText, repoRoot, secondVaultDir, sleep, vaultDir } from "./util.mjs";
 
 /** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
 export const ACTIONS = new Set([
@@ -214,6 +215,41 @@ export function checkScenario(scenario) {
         if (p?.active !== null && p?.active !== undefined && typeof p.active !== "string")
           push(`seed.sessions.${id}.panes[${i}].active 需要字符串或 null`);
       }
+  }
+  // 隔离配置目录的文件预置（M745，`seed.envFiles`）：mock fixture 模板必须在**起 app 之前**就位
+  // ——`config.harness.fixture` 在 launchApp 里先被读一遍（时刻记号展开），模板晚到就在启动处
+  // ENOENT、整场 INVALID。静态层把两种写错形态都挡住：路径不合纪律（`envRelPath` 同一判定点），
+  // 以及 `from` 指向的文件不存在（这正是 M743 里「只有共享 env 有残留时才通过」的根因）。
+  for (const [i, e] of (scenario.seed?.envFiles ?? []).entries()) {
+    try {
+      envRelPath(e?.path, `seed.envFiles[${i}].path`);
+    } catch (err) {
+      push(err.message);
+    }
+    if (typeof e?.from !== "string" || e.from === "") {
+      push(`seed.envFiles[${i}] 需要 from（仓库 fixture 路径，场景里通常写 $fixtures/...）`);
+    } else if (!existsSync(e.from)) {
+      push(`seed.envFiles[${i}].from 指向的文件不存在：${e.from}（预置源缺失 = 起 app 前 ENOENT、整场 INVALID）`);
+    }
+  }
+  // mock fixture 的可达性（M745）：`config.harness.fixture` 在 `launchApp()` 之前就被读一遍
+  // （`materializeMockFixture` 的时刻记号展开），文件不在场就在启动处 ENOENT、整场 INVALID。
+  // 「谁在什么时候把它写进去」从 front-matter 上看不出来——189/190/191/206 就是靠共享 env 里
+  // 上一次运行的残留文件「通过」的（M743）。静态层因此要求：此刻在盘上，或由 `seed.envFiles`
+  // 预置到同一路径。`$env` 记号在加载期已换成 `<envHome>/lumir`，与预置落点是同一套换算。
+  const fixture = scenario.config?.harness?.fixture;
+  if (typeof fixture === "string" && fixture !== "") {
+    const seeded = new Set(
+      (scenario.seed?.envFiles ?? [])
+        .filter((e) => typeof e?.path === "string")
+        .map((e) => path.join(envHome(), "lumir", e.path)),
+    );
+    if (!existsSync(fixture) && !seeded.has(fixture)) {
+      push(
+        `config.harness.fixture 指向的文件不存在、也没有 seed.envFiles 预置它：${fixture}` +
+          "（起 app 时会 ENOENT、整场 INVALID——运行期才写的模板必须由 seed.envFiles 在启动前预置）",
+      );
+    }
   }
   // 批量真实形状 vault（M283）：形状参数写错会静默退化成缺省值（生成出来不是那个规模），
   // 与「断言字段名写错 = 恒真」同类，因此在静态检查里挡住。
@@ -835,9 +871,10 @@ async function appMetaTokens() {
     // 不清这类文件，场景 28/65 的「vault 里无 json/tmp 产物」断言会被串红）。
     $fixtures: fixturesDir(),
     // 隔离配置目录下的场景工作区（M590）：`<envHome>/lumir`。给「运行期需要被改写的 fixture」
-    // 用（子运行 resume 场景的 run_id 是运行期才产生的，静态 fixture 写不出来）——场景先用
-    // `do: envWrite` 落一份模板，再由 `do: mockFill` 就地替换占位；仓库里的 fixture 原文
-    // 不被改写（场景可重复跑）。
+    // 用（子运行 resume 场景的 run_id 是运行期才产生的，静态 fixture 写不出来）——模板由
+    // front-matter 的 `seed.envFiles` 在**起 app 之前**预置到 `$env` 下（M745：`config.harness.fixture`
+    // 在 launchApp 里先被读一遍，运行期才写的模板会让干净 env 直接 INVALID），再由
+    // `do: mockFill` 就地替换占位；仓库里的 fixture 原文不被改写（场景可重复跑）。
     $env: path.join(envHome(), "lumir"),
   };
 }
@@ -3492,11 +3529,9 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // 运行期把 mock fixture 里的 `${run_id}` 占位替换为最近一段子运行审计的 run_id
       // （M590）：resume 语义（§8.8 / §8.9）要求调用参数带上真实 run_id，而 mock 脚本是
       // 静态文件——run_id 只存在于运行期（审计文件名 = `<run_id>.jsonl`，真源一处）。
-      // 落点是 `$env` 工作区下的副本（场景先用 envWrite 铺模板），仓库 fixtures 原文不动。
-      const rel = step.file;
-      if (typeof rel !== "string" || rel === "" || path.isAbsolute(rel) || rel.split(/[\\/]/).includes("..")) {
-        throw new Error(`do=mockFill 需要相对 <隔离配置>/lumir 的路径，收到 ${JSON.stringify(rel)}`);
-      }
+      // 落点是 `$env` 工作区下的副本（M745 起模板由 front-matter 的 `seed.envFiles` 在起 app
+      // **之前**预置，见 app.mjs 的 writeSeedEnvFile），仓库 fixtures 原文不动。
+      const rel = envRelPath(step.file, "do=mockFill");
       const target = path.join(envHome(), "lumir", rel);
       const runsRoot = path.join(envHome(), "lumir", "harness", "subruns");
       const entries = [];
@@ -3525,11 +3560,9 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     case "envWrite": {
       // 隔离配置目录下的写入（change add-harness-subagents §8.4 的现场需要：用户级子代理定义
       // 落在 `<config_dir>/agents/`，`vaultWrite` 只能写 vault）。路径相对 `<隔离配置>/lumir`，
-      // 绝对路径与 `..` 一律拒绝——允许逃逸就等于给场景开了写用户 HOME 的口子。
-      const rel = step.file;
-      if (typeof rel !== "string" || rel === "" || path.isAbsolute(rel) || rel.split(/[\\/]/).includes("..")) {
-        throw new Error(`do=envWrite 需要相对 <隔离配置>/lumir 的路径（拒绝绝对路径与 ..），收到 ${JSON.stringify(rel)}`);
-      }
+      // 绝对路径与 `..` 一律拒绝——允许逃逸就等于给场景开了写用户 HOME 的口子（判定点唯一：
+      // util.mjs 的 envRelPath）。
+      const rel = envRelPath(step.file, "do=envWrite");
       const target = path.join(envHome(), "lumir", rel);
       await mkdirp(path.dirname(target));
       await writeFile(target, step.content ?? "");

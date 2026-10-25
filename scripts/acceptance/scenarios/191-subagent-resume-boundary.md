@@ -8,6 +8,12 @@ config:
   harness:
     provider: mock
     fixture: "$env/subagent-fixtures/boundary.json"
+seed:
+  # 模板在起 app 之前预置（M745，口径与 189 同条）：`${run_id}` 由 mockFill 在运行期就地替换；
+  # 场景后面的两个 envWrite 是**运行期改写**同一份副本（重启前后各一段脚本），与预置不冲突。
+  envFiles:
+    - path: subagent-fixtures/boundary.json
+      from: "$fixtures/subagent-fixtures/boundary.json"
 steps:
   - name: 写入定义 .lumir/agents/research.md
     do: vaultWrite
@@ -28,46 +34,6 @@ steps:
       description: 复核样本
       ---
       
-
-  - name: 写入运行期 fixture 模板 subagent-fixtures/boundary.json
-    do: envWrite
-    file: "subagent-fixtures/boundary.json"
-    content: |
-      {
-        "version": 1,
-        "responses": [
-          {
-            "text": "先跑一段。",
-            "tool_calls": [
-              {
-                "id": "call_n1",
-                "name": "task",
-                "arguments": "{\"agent\": \"research\", \"prompt\": \"跑一段\", \"description\": \"边界段一\"}"
-              }
-            ]
-          },
-          {
-            "text": "SGH3-FIRST-CHILD 第一段完成。"
-          },
-          {
-            "text": "SGF-BOUNDARY-PARENT 父会话：第一段完成。"
-          },
-          {
-            "text": "换个 agent 续跑。",
-            "tool_calls": [
-              {
-                "id": "call_n2",
-                "name": "task",
-                "arguments": "{\"agent\": \"reviewer\", \"prompt\": \"换人续跑\", \"description\": \"agent 不匹配\", \"resume\": \"${run_id}\"}"
-              }
-            ]
-          },
-          {
-            "text": "SGF-BOUNDARY2-PARENT 父会话：续跑被拒。"
-          }
-        ],
-        "subrun_span": 1
-      }
 
   - name: ⌘⇧A 打开 harness pane
     do: keys

@@ -43,8 +43,9 @@ steps:
     expect:
       - label: 首轮正文保留（ORD1 与 ORD2 同轮共存）
         ax: { has: "TTO-ORD1-先读文件再回答。" }
-      - label: 工具行 = 徽章 + 人话化参数在场（M406 起成功行口径，同场景 103）
-        ax: { has: '/vault_read\s*harness-note\.md/' }
+      - label: 工具行 = 徽章 + 人话化参数在场（M406 起成功行口径，同场景 103；参数里的路径
+          渲染成可点按钮，故按跨节点窗口匹配）
+        ax: { has: '/vault_read[\s\S]{0,200}?AXButton \(harness-note\.md\)/' }
       - label: 两个折叠行都在场（两段思考各成一块）
         ax: { has: "/思考过程 · \\d+ 秒/" }
 
@@ -65,8 +66,10 @@ steps:
       - label: 有序性判据（整树正则）：ALPHA → ORD1 → 工具行 → BETA → ORD2——思考块 /
           工具块 / 正文段严格按事件到达序排列（M383；旧实现呈现为 ALPHA → BETA →
           ORD1 → 工具，本正则必红）
+        # 路径是可点按钮（change add-path-line-range-links）：徽章与路径是两个节点，
+        # `\s*` 跨不过节点标记，故用跨节点窗口（M745；口径与场景 103 同一条）。
         ax:
-          has: '/TTO-THINK-ALPHA 先读文件。[\s\S]*TTO-ORD1-先读文件再回答。[\s\S]*vault_read\s*harness-note\.md[\s\S]*TTO-THINK-BETA 读完再答。[\s\S]*TTO-ORD2-答案在第二段思考之前。/'
+          has: '/TTO-THINK-ALPHA 先读文件。[\s\S]*TTO-ORD1-先读文件再回答。[\s\S]*vault_read[\s\S]{0,200}?AXButton \(harness-note\.md\)[\s\S]*TTO-THINK-BETA 读完再答。[\s\S]*TTO-ORD2-答案在第二段思考之前。/'
       - label: 反向判据：第二段思考原文不出现在工具行之前（旧实现的倒挂形态）
         ax:
           not: '/TTO-THINK-BETA 读完再答。[\s\S]*vault_read/'
@@ -116,6 +119,11 @@ tool vault_read 然后才是第二个 thinking」。根因：`ensureThinkingView
   既有写法对齐后转绿）。
 - **`nth` 锚定**：两个折叠行文案相同（「思考过程 · N 秒」），按 DOM 位次 `nth: 0/1`
   逐个点开。
+- **工具行的路径是可点按钮（M745）**：change `add-path-line-range-links` 之后，工具参数里的
+  路径是独立的 `AXButton (…)` 节点，与徽章之间隔着节点标记——「`vault_read\s*harness-note.md`」
+  这类同一段静态文本里的相邻串断言恒不命中（M743 全量跑的 104 恒红即此）。判据改成跨节点窗口
+  `vault_read[\s\S]{0,200}?AXButton \(harness-note\.md\)`（实测间距 22 字符，上界只容 2–3 个
+  节点行）。完整口径与反向自证见场景 103 的「断言口径」同条。
 - **反向判据**：`not` 正则钉死「BETA 不出现在工具行之前」——正向有序正则单看可能被
   「BETA 在两处都出现」之类形态糊弄，负向判据把倒挂形态直接判红。
 - **时长读数在 mock 下恒为 0 秒**：同场景 93 的口径（`turn.rs` 连发分片，墙钟差为 0），
