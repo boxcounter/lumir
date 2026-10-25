@@ -129,9 +129,12 @@ fi
 # include 里，根 tsc 覆盖不到它）。
 run_gate tsc-unit pnpm exec tsc -p tests/unit/tsconfig.json
 run_gate unit-tests node tests/unit/run.mjs
-# perf 脚本的纯函数夹具层（scripts/perf/memory.test.mjs 的归因污染判定）：它是 resident-memory
-# 门禁读数可信度的前提，坏掉时不该等下一次 perf run 才暴露。node:test 零依赖、毫秒级，放 quick。
-run_gate perf-fixture-tests node --test scripts/perf/memory.test.mjs
+# perf 脚本的纯函数夹具层，一条 gate 跑两个文件：
+#   - memory.test.mjs：常驻内存归因污染判定（resident-memory 门禁读数可信度的前提）；
+#   - keypress-startup.test.mjs：keypress-to-paint 的注入起点门禁时序（readyState complete 但产品
+#     未挂载时不得开始采样）。两者坏掉都只能在读数上伪装成产品回归，因此都不该等下一次 perf run
+#     才暴露。node:test 零依赖、毫秒级，放 quick；任一文件失败即整条 gate 红。
+run_gate perf-fixture-tests node --test scripts/perf/memory.test.mjs scripts/perf/keypress-startup.test.mjs
 # 验收套件语法层：实现唯一一份在 scripts/acceptance/check-syntax.sh（docs-check / CI 共用同一实现，
 # REVIEW.md「同一语义两处真源」条），本行只调用。只解析不执行——不起 app、不占端口、不碰验收 vault。
 run_gate acceptance-syntax bash scripts/acceptance/check-syntax.sh
