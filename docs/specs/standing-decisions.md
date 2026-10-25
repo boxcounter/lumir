@@ -22,6 +22,9 @@
 - **wire 原生增量留存：未来评估**（M394，2026-10-08）：现行为全量落盘；是否改 Claude Code / Kimi Code 形态的增量记录，等留存体积成为实测问题。
 - **js / ts 对象字面量键的复合 `property` token 有意不修**（M147，low）：`{1: "x"}` 的数字键取数字色、字符串键取字符串色（通行呈现）；伴一条 `Unknown highlighting tag property` console 噪声。若将来裁「对象键一律属性色」，做法见 finding `20260917-worker-jsonhl-improve-javascript-typescript-property-token-console-json-js-ts`。
 - **`format_argv` / `formatArgv` 的空白字符类边际分叉**（M528 r1 P2-2，low）：Rust `char::is_whitespace` 按 Unicode White_Space，JS `\s` 额外含 U+FEFF——含 U+FEFF 的参数一侧加引号、另一侧不加，与 `src-tauri/src/harness/turn.rs` 声明两处产出「必须逐字一致」相悖（Rust 在 `:1592-1595`，前端在 `src/harness-panel.ts:2504-2508`）。现实 CLI 参数路径不可达（无含 BOM 的现实来源），只登记不改；复核：CLI 参数面出现 BOM / 不可见字符来源，或两处 `format_argv` 实现被改动时，二选一——Rust 显式排除 U+FEFF，或前端不再把 U+FEFF 当空白，并同步两处 doc comment。
+- **共享 `CARGO_TARGET_DIR` 不采纳；dev-only 脚本化驱动入口另议**（Alex 2026-10-25 裁）：跨 worktree 复用 target 曾致假绿（M372，旧二进制被判成本轮产物），防线只做「测试二进制 mtime 晚于本轮最早源码改动」的机器判据，不做共享目录；脚本化驱动入口留作长期候选，本轮不立项。复核：门禁判据退化到无法机器判定「本轮确实重编译」，或驱动入口出现明确消费者（同类假绿再次发生）时。
+- **82/83/85 与场景 148：产品侧 reconcile 暂缓**（Alex 2026-10-25 裁）：先由套件自有 CGEvent 探针（P2）定性 post-menu 态的注入通道；产品 reconcile（P1）不按首批立项，P3（click 落点参数 + 剪贴板 Paste）留备选。实施项见 `docs/backlog.md` 的 CGEvent 探针条。复核：探针结论出来、或菜单 Paste 注入族（134/141/150）再次阻塞验收时。
+- **vault 切换 perf 门禁取相对回归**（Alex 2026-10-25 裁）：新增 `vault-switch` 端点，判据沿用 `docs/specs/perf-measurement.md`「相对回归门禁」的既有统计口径（当次 median vs 滚动基线 median + 逐指标容忍线），不设绝对阈值。端点与读数实现见 `docs/backlog.md` 的 vault perf 端点条。复核：该指标噪声带稳定后仍掩盖真实回归时，再评估绝对阈值。
 
 ## 二、UI / 设计长期口径
 

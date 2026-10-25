@@ -1,52 +1,58 @@
 # Backlog — findings 与待裁决队列
-唯一的积压载体。**一条 = 一个可关闭单元**：只留结论 gist + 证据指针 + 出口 / 下一动作；叙述与过程状态进 git 历史、`.tower/comms/`、`.local/`。场景清单见 [COVERAGE.md](../scripts/acceptance/COVERAGE.md)，长期口径与已裁暂缓见 [standing-decisions.md](specs/standing-decisions.md)，运行纪律见 [scripts/acceptance/README.md](../scripts/acceptance/README.md)。维护规则：`#decide` 只收价值取舍 / 产品语义（客观可核的由 tower 裁并记录）；`#fix` 客观可核；`#probe` 需实验；`#check` 证据不足；`#hygiene` 已定案的小收尾。**核销即删除、不留索引**（2026-10-12 Alex 裁决），**修复 PR 同批删除对应条目、reviewer 合并前核对**（2026-10-24）；含长期口径时迁 standing-decisions，不留在本文件。**只记改变未来动作的信息**（2026-10-16 Alex 裁决）；**体量红线 80 行**（Alex 2026-10-24，自 300 下调），不为压行数删活条目；引用用主题关键词锚，MUST NOT 用编号或行号；finding 落账率由批次收尾核对（`.tower/comms/findings/` 新增数 = 新增条目数）。出口由 `scripts/backlog-check.mjs` 机器判定（完成标记 / 缺出口 / 重复或死 finding 指针 / 记录在案无 canonical 居所 / 80 行硬上限，无 ratchet、无既有豁免；随 docs-check 跑）。
+唯一的积压载体。**一条 = 一个可关闭单元**：只留结论 gist + 证据指针 + 出口 / 下一动作；叙述与过程状态进 git 历史、`.tower/comms/`、`.local/`。场景清单见 [COVERAGE.md](../scripts/acceptance/COVERAGE.md)，长期口径与已裁暂缓见 [standing-decisions.md](specs/standing-decisions.md)，运行纪律见 [scripts/acceptance/README.md](../scripts/acceptance/README.md)。维护规则：`#decide` 只收价值取舍 / 产品语义（客观可核的由 tower 裁并记录）；**已裁项不留在 `#decide`**——裁决结论随实施条目走（工作项点名裁决与日期），长期口径迁 standing-decisions；`#fix` 客观可核；`#probe` 需实验；`#check` 证据不足；`#hygiene` 已定案的小收尾。**核销即删除、不留索引**（2026-10-12 Alex 裁决），**修复 PR 同批删除对应条目、reviewer 合并前核对**（2026-10-24）；含长期口径时迁 standing-decisions，不留在本文件。**只记改变未来动作的信息**（2026-10-16 Alex 裁决）；**体量红线 80 行**（Alex 2026-10-24，自 300 下调），不为压行数删活条目；引用用主题关键词锚，MUST NOT 用编号或行号；finding 落账率由批次收尾核对（`.tower/comms/findings/` 新增数 = 新增条目数）。出口由 `scripts/backlog-check.mjs` 机器判定（完成标记 / 缺出口 / 重复或死 finding 指针 / 记录在案无 canonical 居所 / 80 行硬上限，无 ratchet、无既有豁免；随 docs-check 跑）。
 
 ## 待 Alex 裁决（`#decide`，一行一题）
 
-- **harness 默认 `wire_api` 是否切 `chat_completions`**（M463/M464，2026-10-17 定论；当前默认仍 `responses`）：Responses 路径有 ~41.7 万字节请求体闸，chat 方言下 `input_tokens ÷ 262,144` 才诚实、85% 预警才可达；开关 `[harness].providers.<id>.wire_api`，回退成本为零。
-- **超限那轮 meter 是否同步读数**（2026-10-18）：错误路径 return 早于 `record_usage`，超限轮读数停在旧值；改不改、读什么数。
-- **两处整页基线是否重建**（M251 菜单左上圆角透底 23px 差异 / M281 标签栏·标题栏文字行陈旧）：都在 0.001 档静默；基线更新是人肉裁决点。
-- **共享 `CARGO_TARGET_DIR` 与 dev-only 脚本化驱动入口是否立项**（M372，合并原两条）：复用旧测试二进制曾致假绿；驱动入口是另一条长期候选。
-- **vault 切换是否设 perf 门禁端点**（M283）：绝对阈值还是相对回归；端点属性能合同扩张（草案 `openspec/changes/archive/2026-09-28-vault-switch-restore-perf/design.md` §6.4）。
-- **82/83/85 注入通道：产品 reconcile 还是套件新通道**（M497/M498/M500/M502）：AXPress 插卡语境三通道全死、焦点标记与投递背离；产品侧回归面高，套件通道未验证。
-- **场景 148 残红三案选哪条**（M523）：P1 产品 reconcile（模型 / DOM 对账）/ P2 套件自有 CGEvent 探针 / P3 click + 剪贴板 Paste。
+- **「末尾之后」空段落 / 卡片两子档的呈现**（M457/M473）：末尾空段落是否渲染成可键入的空行、卡片两子档的模型语义——口径草案见 `docs/specs/harness-composer.md` 的 HC3，需 Alex 定表现。
+- **「未保存新文档」是否提供创建入口**（M416）：当前无路径产生「无路径、可编辑」文档；做不做、做成什么形态，待 Alex 定义。
 
-## 待修 findings（`#fix` / `#probe` / `#check` / `#hygiene`）
+## 待修 findings（`#fix` / `#probe` / `#check` / `#hygiene`；★ = 首批六项，无需 Alex 即可立项，按行序执行）
 
-- `#fix` **两条配置写入口读—改—写未同锁**（M615，medium）→ 下一动作：`commands::write_last_vault_to` / `write_config_value_to` 迁 `config::update_json_atomic`（`src-tauri/src/config.rs:1826-1860`）。
-- `#fix` **harness usage 六键跨层收口**（M533，low）→ 下一动作：核对 `src/harness-panel.ts:1964-1975` 消费点后裁剪或结案；Rust + 前端映射同批，留存不动。
-- `#fix` **孪生探测助手收敛**（M546 后，low）→ 下一动作：抽共享模块，`reading-position.ts` / `vault-switcher.ts` 改 import。
-- `#fix` **登录 shell PATH 解析失败静默回退**（M466，low）→ 下一动作：加可观测信号，或作为 idea 关闭。
-- `#fix` **「末尾之后」空段落 / 卡片两子档**（M457/M473）→ 下一动作：需模型语义或 Alex 裁表现；口径见 `docs/specs/harness-composer.md` HC3。
+- ★ `#fix` **harness 默认 `wire_api` 切 `chat_completions`**（Alex 2026-10-25 裁）→ 下一动作：`src-tauri/src/config.rs` 的 provider 缺省 `wire_api` 改 `ChatCompletions`；实施项注明支持矩阵（v1 仅 kimi 实现 chat 档，DeepSeek 回落 `responses`，回落告警口径随默认值调整），同步 `openspec/specs/harness/spec.md` / `docs/specs/config-reference.md` 与 `session_open.wire_api` 用例。
+- ★ `#fix` **超限轮 usage 读数**（Alex 2026-10-25 裁）→ 下一动作：错误路径拿得到 usage 时同样 `record_usage` 并 emit `usage`；补一条超限轮读数用例（`src-tauri/src/harness/turn.rs` 成功分支之外）。
+- ★ `#probe` **82/83/85 与场景 148：套件自有 CGEvent 探针**（Alex 2026-10-25 裁，见 `docs/specs/standing-decisions.md`）→ 下一动作：先落一条套件自有 CGEvent **键盘**注入原语（照 `scripts/acceptance/lib/cgevent-click.swift` 的通道形态；M509 的 `cgevent-key.swift` 探针已证可行）并拿 post-menu 态定性；产品 reconcile（P1）不按首批立项，P3 留备选；结论决定「菜单 Paste 之后注入不落地」条的去向。
+- ★ `#probe` **vault 切换 perf 端点**（Alex 2026-10-25 裁：用相对回归，见 `docs/specs/standing-decisions.md`）→ 下一动作：按 M283 草案 §6.4（`openspec/changes/archive/2026-09-28-vault-switch-restore-perf/design.md`）加 `vault-switch` 端点（≈2500 项合成 vault + 40 标签会话，记总时长与三段 `phaseMs`），判据沿用 `docs/specs/perf-measurement.md`「相对回归门禁」的既有口径（当次 median vs 滚动基线 median + 逐指标容忍线），不设绝对阈值。
+- ★ `#hygiene` **两处整页基线重建**（Alex 2026-10-25 裁）→ 下一动作：先重截出 diff（M251 菜单左上圆角透底 23px / M281 标签栏·标题栏文字行陈旧），diff 交 Alex 过目后再 `--update`；人肉基线闸不变。
+- ★ `#hygiene` **`CARGO_TARGET_DIR` 防假绿防线**（Alex 2026-10-25 裁，见 `docs/specs/standing-decisions.md`）→ 下一动作：把「测试二进制 mtime 晚于本轮最早源码改动」做成门禁判据（跑前 `touch` 目标源码，或核对 binary mtime 二选一）。
+- `#fix` **配置写入口读—改—写未同锁**（M615，medium）→ 下一动作：`commands::write_last_vault_to` 迁 `config::update_json_atomic`（`write_config_value_to` 已走同锁入口，只剩这一条）。
+- `#fix` **harness usage 六键无消费点**（M533，low）→ 下一动作：核对 `currentUsageReadings` 下游后裁掉六键（`cacheTurn` / `cacheNote` / `cacheWrite` / `cacheWriteSession` / `cachedTokens` / `cachedTokensSession`）与映射、`last*` 转存；Rust 载荷与 JSONL 留存不动。
+- `#fix` **孪生探测助手收敛**（M546 后，low）→ 下一动作：抽共享模块（`probeErrorCode` / 批量存在探测 / 失败重试口径），`reading-position.ts` / `vault-switcher.ts` 改 import；finding `20261016-worker-readpos-improve-reading-position-vault-switcher`。
+- `#fix` **登录 shell PATH 解析失败静默回退**（M466，low）→ 下一动作：回落时发一条 `log_event`（解析超时 / 标记缺失 / 旗标不支持分类）并扩 `src-tauri/src/logging.rs` 白名单，别只留「继承 PATH」的静默降级。
 - `#fix` **两卡相邻间 IME 组合**（M457，medium）→ 下一动作：设计可编辑行内宿主；边界位只派 `beforeinput`、`Range(composer,N)` 量不出 caret。
-- `#fix` **M457 的 WebKit 探针未入 git**（medium）→ 下一动作：把 DOM 回归探针入库；形状见 `.local/probes/m462-probe/`。
-- `#fix` **click / drag 坐标语义不同**（M490，low）→ 下一动作：统一坐标空间或改名；`click {x,y}` 是截图像素、`drag {x,y}` 是窗口局部点。
-- `#fix` **菜单 Paste 之后注入不落地**（M456/M498，high）→ 下一动作：阻塞等 DECIDE「82/83/85」「148 三案」，不另开修法；134/141/150 同族。
-- `#fix` **「未保存新文档」无 UI 入口**（M416，medium）→ 下一动作：产品缺口，待 Alex 定义；当前无路径产生「无路径、可编辑」文档。
-- `#fix` **lazy continuation 引用块 / 1–3 空格两档未覆盖**（M421，low）→ 下一动作：补这两档覆盖；`docs/specs/lists.md` 已登记为 v1 边界。
-- `#fix` **living spec 与实现矛盾无机器防线**（M418，low）→ 下一动作：提议 `docs-check` 增加现状断言检查（先例：harness ctx ⓘ 已是 hover 浮层）。
-- `#fix` **decision 回填按「第 N 次出现」错配**（M413，low）→ 下一动作：回填键改为（工具名 + 调用 id）。
-- `#fix` **权限档位表前后端两份手抄**（M414，low）→ 下一动作：单一来源（Rust 生成或前端共享类型）。
-- `#fix` **极端矮窗会话浮层越界**（M397，low）→ 下一动作：收紧 `placeSessPop` 纵向夹取（≲392px）。
+- `#fix` **M457 的 WebKit 探针未入 git**（medium）→ 下一动作：把 `.local/probes/m462-probe/m462-probe.spec.ts` 入库（选 `tests/unit` 或 `tests/visual` 落点并跑通）。
+- `#fix` **click / drag 坐标语义不同**（M490，low）→ 下一动作：README「已知边界」加坐标空间表（哪个动作收截图像素 / 窗口局部点、换算系数）并给 `target: {x,y}` 两种语义改名（`point` / `shotPixel`）；统一换算需先全量统计 `click {x,y}` 用法。
+- `#fix` **菜单 Paste 之后注入不落地**（M456/M498，high）→ 阻塞等 82/83/85 与 148 的 CGEvent 探针结论，不另开修法；134/141/150 同族。
+- `#fix` **lazy continuation 引用块 / 1–3 空格两档未覆盖**（M421，low）→ 下一动作：补这两档覆盖（几何 + 归属两侧）；`docs/specs/lists.md` 已登记为 v1 已知边界。
+- `#fix` **living spec 与实现矛盾无机器防线**（M418，low）→ 下一动作：提议 `docs-check` 增加「现状断言」检查（先例：harness ctx ⓘ 已是 hover 浮层）。
+- `#fix` **decision 回填次序启发式**（M413，low）→ 下一动作：恢复路径改用面板记录的 `decision`（或按 call_id 配对），删 `src-tauri/src/harness.rs` 的 `restored_panel_messages` 里「同工具第 N 次」消费 approval sidecar 的启发式。
+- `#fix` **权限档位表前后端两份手抄**（M414，low）→ 下一动作：单一来源（Rust 生成或前端共享类型）；现值 `src/harness-panel.ts` 的 `PERMISSION_MODES` 与 Rust 校验表各一份。
+- `#fix` **极端矮窗会话浮层越界**（M397，low）→ 下一动作：收紧 `placeSessPop` 纵向夹取（≲392px 时高度也要夹，现在只夹 top）。
 - `#fix` **m303 `toBeVisible()` 对祖先裁切无区分度**（M397，low）→ 下一动作：补 overflow 祖先裁切断言（`geom.painted` 已有通道）。
 - `#fix` **md 行含 inline widget 时高度表差**（M281，medium）→ 下一动作：定测量通道；只在 gutter 在场时复现。
 - `#fix` **路径拼接同形副本**（M258，low）→ 下一动作：`src/main.ts` 的内联「父路径 + 末段名」改用 `src/tree.ts` 的 `relativePathOf`。
-- `#fix` **Rust 锁内磁盘 IO**（M154）→ 下一动作：先在锁外读成 `Vec<(path, Option<String>)>` 再取锁 upsert；收窄锁不移 IO 出主线程。
-- `#fix` **启动恢复让位判定 / `commit_vault_open -> bool`**（M171）→ 下一动作：补 `root.is_some()` 测试；删恒真返回值。
-- `#fix` **pendingMove 单槽双写者**（M530，low）→ 下一动作：登记口改队列，或改名回响未消费时 drop 排队。
+- `#fix` **启动恢复让位判定 / `commit_vault_open -> bool`**（M171）→ 下一动作：补 `root.is_some()` 测试；删恒真返回值（`src-tauri/src/commands.rs` 的 `commit_vault_open` 恒 `true`）。
+- `#fix` **pendingMove 单槽双写者**（M530，low）→ 下一动作：登记口改队列，或改名回响未消费时 drop 排队（`src/tree.ts`）。
 - `#probe` **在途停止丢 reasoning 回放项是否触发 400**（M369，medium）→ 下一动作：下批排真 API 探针；在此之前 MUST NOT 当缺陷修。
-- `#check` **切 vault 后新 harness pane 缺标题栏会话段**（M433）→ 真机复跑或查标题栏装配。
-- `#check` **会话留存路径两处真源**（M433）→ 对照 `session.rs` doc 与 `ipc.ts` 注释，收一份。
-- `#check` **gutter 1px 右缘**（M281）→ 先确认原缺陷指 md 还是 code；`src/preview/theme.ts:440-455` 的 `border:none` 是 md 侧有意口径。
-- `#check` **preview-tab 遗留**（M254）→ 逐条确认注释 / 字段说明是否仍有旧语义。
-- `#check` **math / mermaid 显露判定**（M259）→ 确认是否已接 `pointerPressFrame`（`src/preview/reveal-gate.ts`）。
-- `#check` **表格全屏聚合**（M240）→ 逐子项对账：长表 / visual README 22 处 / config theme / 计算属性 / typography Purpose / 32-list-filter / Lezer 包。
-- `#check` **编辑器 / 键位 / shell / 系统聚合**（M101–M186）→ 逐子项对账：Alt+Shift、warnings UI、toast z-index、`$` 转义、mathSpanCrossed、⌃B、grid 表、删浮条、D40、hidden pipe、cell 公式、构造函数属性；退出守卫、`{id}.json.tmp` 过滤、vault 滚动、焦点建议；restyle 聚合（M215/M216）：0.001 容差、code 模式 150px、doc-meta mtime、eink keyword 700。
-- `#check` **验收套件表达力聚合**（M144）→ 逐项对账余下子项，明细见 git 历史；文档指针聚合 → 逐项对账：M205/M208 旧路径、M151 失准、D64 过期、HEAD==origin/master、ADR 0002 200MB vs 250MB。
-- `#check` **多 vault 聚合**（M164）→ 逐项对账：视觉容差、窗口屏外、`M-<` / `M->`、demo 脱节、D90、tauri test feature、目录选择、`commit_vault_open` 分支。
-- `#check` **M291 in-flow 底色盖住选区带 / 场景 68 标定待判（M514）** → 确认真机是否仍开；finding `20260928-worker-selection-contrast-m291-bug-in-flow-code-callout-frontmatter`。
-- `#hygiene` **机械收尾（文档 / 套件 / 配置）** → 下一动作：场景 123 改 `focusWindow` 为 `click:true` 口径；README 的 `(?![\\s\\S])` 双反斜杠示例改为单反斜杠；`run.mjs --help` 打印用法退出 0；删除 `.tab-menu-item` 死选择器（`src/style.css:2529-2568`）并改 `tests/visual/scenes/tab-menu.spec.ts:358` 的 CSSOM 断言，或给 tabs 改类名（二选一）；M282 日志文本语言口径确认。
-- `#hygiene` **产品行为收尾** → 下一动作：外链失败加 toast（`src/harness-panel.ts:2805`）；`.lumir-toast` 加 `role="status"` / `aria-live="polite"`；补 composer 光标 reveal 的 chromium 断言；重启恢复门改动态分流（`stopApp` 前读 `restoredTabCount>0`）；加一条 `modifiers:["meta"]` 真机夹具；M280 ESC 三条残余（vault 切换器第二份 `scrollSnapshot` / 捕获锚在原点不写回 / lightbox 不随文档代际退出）；套件长 chain 注入（8–19 chord）可靠性与可点节点面；会话浮层快速关→再开重复历史行（M392）攒批处理；M455 收尾：真机复跑 138/140/144/145 与 hover 族 76/87/131/132/133/134，145 的 `mod+z` 同族观察留给 change 属主裁。
+- `#check` **切 vault 后新 harness pane 缺标题栏会话段**（M433）→ 下一动作：真机复跑或查标题栏装配。
+- `#check` **会话留存路径两处真源**（M433）→ 下一动作：对照 `src-tauri/src/harness/session.rs` doc 与 `src/ipc.ts` 注释，收一份（两处现都写 `sessions/<vault 稳定 id>/<id>.jsonl`）。
+- `#check` **gutter 1px 右缘**（M281）→ 下一动作：先确认原缺陷指 md 还是 code；`src/preview/theme.ts` 的 `border:none` 是 md 侧有意口径。
+- `#check` **preview-tab 遗留**（M254）→ 下一动作：`rg "预览标签|preview tab"` 逐条确认注释 / 字段说明无旧语义。
+- `#check` **math / mermaid 显露判定**（M259）→ 下一动作：确认是否已接 `pointerPressFrame`（`src/preview/reveal-gate.ts`）。
+- `#check` **M291 in-flow 底色盖住选区带 / 场景 68 标定待判**（M514）→ 下一动作：确认真机是否仍开；finding `20260928-worker-selection-contrast-m291-bug-in-flow-code-callout-frontmatter`。
+- `#check` **历史聚合逐项对账**（M240 表格全屏 / M101–M186 编辑器·键位·shell·系统 / M144 套件表达力与文档指针 / M164 多 vault）→ 下一动作：一个对账 mission，逐子项给三分类（现覆盖 / 失效 / 转独立条目），未分类项不得删；子项明细见 git 历史。
+- `#hygiene` **验收套件 README 的双反斜杠示例** → 下一动作：`scripts/acceptance/README.md` 的 `(?![\\s\\S])` 示例改单反斜杠（代码跨度内无需二次转义），并核对该段其它正则示例的转义层数。
+- `#hygiene` **`run.mjs --help` 退出码** → 下一动作：加 `--help` 分支打印用法并 `exit 0`（现无该分支），本地跑一次确认退出码与用法文本。
+- `#hygiene` **日志文本语言口径**（M282 遗留）→ 下一动作：按 M267 裁决「日志固定英文、存量中文不改写」把口径写进 `src-tauri/src/logging.rs` 模块头，并核对 M282 之后新增的日志文本无中文。
+- `#hygiene` **tabs 菜单死选择器** → 下一动作：删 `.tab-menu-item`（`src/style.css` 现 2962–2985）并改 `tests/visual/scenes/tab-menu.spec.ts` 的 CSSOM 断言，或给 tabs 改类名（二选一）。
+- `#hygiene` **外链打开失败无可感知反馈** → 下一动作：`src/harness-panel.ts` 的 `openExternalUrl(href).catch(() => {})` 改为失败给 toast（文案走 deck）。
+- `#hygiene` **`.lumir-toast` 缺读屏语义** → 下一动作：toast 工厂（`src/main.ts`）加 `role="status"` / `aria-live="polite"`，不打断既有 dismiss 行为。
+- `#hygiene` **composer 光标 reveal 无 chromium 断言** → 下一动作：补一条断言（`tests/visual/scenes/` composer 族：光标进入视口后被 reveal）。
+- `#hygiene` **缺 `modifiers:["meta"]` 真机夹具** → 下一动作：加一条带 meta 修饰的真机夹具（`scripts/acceptance/`，覆盖 meta+键的落点）。
+- `#hygiene` **重启恢复门改动态分流** → 下一动作：`stopApp` 前读 `restoredTabCount>0`，按是否有恢复内容决定是否走恢复门。
+- `#fix` **捕获锚在文档原点时运行期不写回**（M280 残余）→ 下一动作：`src/scroll-position-view.ts` 的 `anchor === 0` 提前返回也写回，补判据。
+- `#fix` **lightbox 不随文档代际退出**（M280 残余）→ 下一动作：给 `ImageLightbox` 加关闭口子并接入 `closeDocumentOverlays` 的代际信号（`src/main.ts:1408` 已登记），顺手收编它的重复状态机。
+- `#probe` **长 chain 注入（8–19 chord）可靠性** → 下一动作：跑一轮量落地率与「可点节点」判定边界，结论落 `scripts/acceptance/README.md`「已知边界」。
+- `#fix` **会话浮层快速关→再开重复历史行**（M392）→ 下一动作：复现并定位重复行来源后修，补一条真机判据。
 
 ## 承接残项（长期口径 + 未闭合尾巴）
 
@@ -62,6 +68,7 @@
 - `02-math-click`（item 2）→ 下一动作：真机判定「公式后 ⌃B 是否 1–2 次」（AX 不暴露光标 / 选区）。
 - `153-ordered-list-auto-mode`（item 153）→ 下一动作：留 dogfood 批次真机跑列表自动模式三态 + IME 组合期不重复；裸 DOM 变更形态不兜。
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
+- `M455 收尾复跑`（138/140/144/145 与 hover 族 76/87/131/132/133/134）→ 下一动作：真机复跑并登记读数（145 的 `mod+z` 同族观察留给 change 属主裁）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
 - **`improve-keybindings-lookup-oct24`**（M715）：delta = keymap-commands 1 条 MODIFIED（键位面板行模型）+ 3 条 ADDED（查找/捕获/详情、非自指入口、命令元数据与字形单一来源），节点 2 走人肉；实现批附带新增真机场景 235 / 236 / 237（查询 / 捕获 / 键盘）与 m133 视觉场景重写——**像素基线待 Alex 过目后重截**（未经过目不得 `--update`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`overlay-width-contract-oct24`**（M702，34/37）：节点 1 追认材料已备（D1–D5 落地 + 证据 + 否决回改面，见 proposal）；真机 231/232 PASS（5 + 11 断言，`.local/acceptance/2026-10-24-m711/`）；残留：0.3 / 0.4 待 Alex 追认、9.1 归档期执行；delta = ui-design-system 1 条 ADDED，归档前后各跑 `node scripts/openspec-archive-check.mjs`。
