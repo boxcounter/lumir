@@ -400,6 +400,8 @@ flavour」）。这类场景在 front-matter 写 `requires: bundle`：dev 下 ru
 的同名参数一一对应，`--check` 用同一份挡拼错），缺省不写 = 走应用出厂口径。
 
 `harness`（M304，change add-harness-probe §11）是唯一的**嵌套**键：
+
+`rawProviders`（change add-model-automation-settings-oct24 tasks §7.8）是 `config.harness` 下的一个**原样透传**入口：`{ <id>: { ...条目 } }` 直接并入 `providers` 表、放在具名键（`kimiModel` / `kimiModels` / `fixture`）之后，因此可以写**旧格式条目**（不带 `preset`）来验一次性迁移——具名键会先替条目补好 `preset`，构造不出迁移现场。
 `{ provider, fixture, permissions: { allow, deny }, permission_mode, loopMax, warnCtxPct, autoCompact, kimiModel, kimiModels }` → `[harness]` 节
 （camelCase 键名映射到配置文件的 snake_case；`permission_mode` 与配置文件同形，不是多词驼峰）。
 `permission_mode`（M481，change add-harness-permission-modes）是三档**闭集合**——`read_only`

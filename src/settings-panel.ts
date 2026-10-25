@@ -206,6 +206,9 @@ const C = {
   saveFailed: "D854",
   providerListAria: "D855",
   providerRowAria: "D866",
+  generalErrorsTitle: "D867",
+  statusLoadFailed: "D868",
+  loadFailedTitle: "D869",
   presetGroupAria: "D856",
   unknownPreset: "D857",
   providerIgnoredBody: "D858",
@@ -272,6 +275,10 @@ export interface DraftProvider {
   wireValue: WireApi;
   wireEdit: DraftFieldEdit<WireApi> | null;
   presetCapability: DraftPresetCapability | null;
+  /** 仅 `added` 有意义：加入草稿前的 active 值（撤销这次新增时恢复它，P1-1 r1）。 */
+  activeBeforeAdd: string | null;
+  /** 后端拒绝这条新增的 id 时的错误（挂在条目自己的 id 输入上，不丢已填字段，P1-1 r1）。 */
+  idError: string | null;
 }
 
 export interface DraftPresetCapability {
@@ -312,6 +319,9 @@ export interface Draft {
   naming: Record<NamingKind, DraftNamingTarget>;
   namingTouched: Record<NamingKind, { provider: boolean; model: boolean }>;
   selection: string | null;
+  /** 表单正在编辑的 provider 的**草稿下标**（id 可能重复：新增撞已有 id 时两条草稿同 id，
+   *  按 id 查会稳定命中第一条，P1-1 r1 实测）。`null` = 按 `selection` 反查。 */
+  focusedIndex: number | null;
   add: DraftAddForm | null;
   remove: DraftDeleteForm | null;
   /** 页级「还原此页默认」已把全部条目字段标为删键。 */
@@ -384,6 +394,8 @@ export function createDraft(snapshot: SettingsSnapshot): Draft {
       wireValue: provider.effective.wire_api,
       wireEdit: null,
       presetCapability: capabilityOf(snapshot, provider.preset),
+      activeBeforeAdd: null,
+      idError: null,
     })),
     active: snapshot.active,
     activeTouched: false,
@@ -408,6 +420,7 @@ export function createDraft(snapshot: SettingsSnapshot): Draft {
       attachment: { provider: false, model: false },
     },
     selection: defaultSelection(snapshot.providers),
+    focusedIndex: null,
     add: null,
     remove: null,
     pageReset: false,
@@ -457,10 +470,18 @@ export function deleteCandidates(draft: Draft, exclude: string): string[] {
 
 /** provider 的生效模型（草稿态）：显式 `providers.<id>.model` 优先（不在清单也保留），
  *  否则清单首项，否则空串（design §9.1）。 */
-export function draftEffectiveModel(provider: DraftProvider): string {
+export function draftEffectiveModel(
+  provider: DraftProvider,
+  options: { validOnly?: boolean } = {},
+): string {
   const explicit = provider.effectiveModel.trim();
   if (explicit !== "") return explicit;
-  return provider.models.map((row) => row.id.trim()).find((id) => id !== "") ?? "";
+  return (
+    provider.models
+      .filter((row) => options.validOnly !== true || row.valid !== false)
+      .map((row) => row.id.trim())
+      .find((id) => id !== "") ?? ""
+  );
 }
 
 export function draftProviderDirty(provider: DraftProvider): boolean {
@@ -536,18 +557,29 @@ function providerUpdate(provider: DraftProvider): ProviderEdit | null {
   return touched ? edit : null;
 }
 
+/** 当前**草稿**的引用面（P1-3 r1）：删除保护块与删除计划的默认值都必须看用户此刻的 active /
+ *  命名选择，而不是打开面板时的快照（用户可能先切了 active / 命名目标再删）。 */
+export function draftReferences(draft: Draft, id: string): ProviderReferences {
+  return {
+    active: draft.active === id,
+    session_naming: draft.naming.session.provider === id,
+    attachment_naming: draft.naming.attachment.provider === id,
+  };
+}
+
 function providerDelete(provider: DraftProvider, draft: Draft): ProviderEdit {
   const candidates = deleteCandidates(draft, provider.id);
   const plan = draft.remove?.id === provider.id ? draft.remove : null;
+  const refs = draftReferences(draft, provider.id);
   const edit: Extract<ProviderEdit, { action: "delete" }> = { action: "delete", id: provider.id };
-  if (provider.references.active && candidates.length > 0) {
+  if (refs.active && candidates.length > 0) {
     edit.active_after =
       plan !== null && candidates.includes(plan.activeAfter) ? plan.activeAfter : candidates[0]!;
   }
-  if (provider.references.session_naming) {
+  if (refs.session_naming) {
     edit.session_naming_after = retargetOf(plan?.sessionAfter ?? "follow", candidates);
   }
-  if (provider.references.attachment_naming) {
+  if (refs.attachment_naming) {
     edit.attachment_naming_after = retargetOf(plan?.attachmentAfter ?? "follow", candidates);
   }
   return edit;
@@ -559,28 +591,44 @@ function retargetOf(value: string, candidates: readonly string[]): NamingRetarge
     : { kind: "follow_active" };
 }
 
-/** 草稿 + revision → 一笔强类型 patch（design §6）。`baseRevision` 是 CAS 基准：正常保存用
- *  快照里的 revision；「仍然保存」用冲突返回的新 revision 重新应用同一批意图。 */
-export function buildPatch(draft: Draft, snapshot: SettingsSnapshot, baseRevision: string): SettingsPatch {
-  const providers: ProviderEdit[] = [];
-  for (const provider of draft.providers) {
+/** provider 编辑序列 + 每条 `Add` 在 `patch.providers` 里的下标（P1-1 r1：后端拒绝 Add 时
+ *  错误路径是 `providers[<patch 下标>].id`，必须能定位到**具体哪一条**草稿新增）。 */
+export interface ProviderEditsPlan {
+  edits: ProviderEdit[];
+  /** 每条 `Add` 的位置：`index` = `patch.providers` 下标，`providerIndex` = 草稿 providers 下标。
+   *  用**草稿下标**而不是 id 关联——草稿里可能出现同 id 的两条（新增撞已有 id 时），按 id 查
+   *  会命中错的那一条（r1 P1-1 实测）。 */
+  adds: Array<{ index: number; providerIndex: number; id: string }>;
+}
+
+export function planProviderEdits(draft: Draft): ProviderEditsPlan {
+  const edits: ProviderEdit[] = [];
+  const adds: ProviderEditsPlan["adds"] = [];
+  draft.providers.forEach((provider, providerIndex) => {
     if (provider.removed) {
       // 从未落盘的新增项被删掉 = 草稿里的一次撤销，不是文件的 delete（后端会报 not_found）。
-      if (!provider.added) providers.push(providerDelete(provider, draft));
-      continue;
+      if (!provider.added) edits.push(providerDelete(provider, draft));
+      return;
     }
     if (provider.added) {
       if (provider.preset !== null) {
-        providers.push({ action: "add", id: provider.id, preset: provider.preset });
+        adds.push({ index: edits.length, providerIndex, id: provider.id });
+        edits.push({ action: "add", id: provider.id, preset: provider.preset });
         const edit = providerUpdate(provider);
-        if (edit !== null) providers.push(edit);
+        if (edit !== null) edits.push(edit);
       }
-      continue;
+      return;
     }
     const update = providerUpdate(provider);
-    if (update !== null) providers.push(update);
-  }
+    if (update !== null) edits.push(update);
+  });
+  return { edits, adds };
+}
 
+/** 草稿 + revision → 一笔强类型 patch（design §6）。`baseRevision` 是 CAS 基准：正常保存用
+ *  快照里的 revision；「仍然保存」用冲突返回的新 revision 重新应用同一批意图。 */
+export function buildPatch(draft: Draft, snapshot: SettingsSnapshot, baseRevision: string): SettingsPatch {
+  const { edits: providers } = planProviderEdits(draft);
   const patch: SettingsPatch = {
     base_revision: baseRevision,
     providers,
@@ -671,8 +719,12 @@ export function addProviderDraft(
     wireValue: capability?.defaultWire ?? "responses",
     wireEdit: null,
     presetCapability: capability,
+    activeBeforeAdd: null,
+    idError: null,
   };
+  provider.activeBeforeAdd = draft.active;
   draft.providers.push(provider);
+  draft.focusedIndex = draft.providers.length - 1;
   draft.selection = id;
   if (draft.active === null) {
     draft.active = id;
@@ -691,11 +743,27 @@ export function applyDraftDelete(draft: Draft): void {
     draft.remove = null;
     return;
   }
-  // 从未落盘的新增项：直接从草稿里摘掉（= 撤销这次添加），既不进 patch 也不算脏。
+  // 从未落盘的新增项：直接从草稿里摘掉（= 撤销这次添加），既不进 patch 也不算脏。active 若
+  // 指向它，回到「加入草稿前」的值（P1-1 r1：空配置里加第一项再撤销，不能留下指向已删 id 的
+  // `active_provider = Set(...)`）。
   if (provider.added) {
     draft.providers = draft.providers.filter((item) => item !== provider);
     draft.remove = null;
-    if (draft.selection === provider.id) draft.selection = defaultSelection(visibleProviders(draft));
+    if (draft.active === provider.id) {
+      const previous = provider.activeBeforeAdd;
+      const previousAlive =
+        previous !== null && draft.providers.some((item) => item.id === previous && !item.removed);
+      const baseAlive =
+        draft.baseline.active !== null &&
+        draft.providers.some((item) => item.id === draft.baseline.active && !item.removed);
+      draft.active = previousAlive ? previous : baseAlive ? draft.baseline.active : null;
+      draft.activeTouched = draft.active !== draft.baseline.active;
+    }
+    if (draft.selection === provider.id) {
+      draft.selection = defaultSelection(visibleProviders(draft));
+      draft.focusedIndex = null;
+    }
+    if (draft.focusedIndex !== null && draft.providers[draft.focusedIndex] === provider) draft.focusedIndex = null;
     return;
   }
   const candidates = deleteCandidates(draft, provider.id);
@@ -713,17 +781,28 @@ export function applyDraftDelete(draft: Draft): void {
     draft.activeTouched = true;
   }
   for (const kind of NAMING_KINDS) {
-    if (draft.naming[kind].provider !== provider.id) continue;
-    const target = kind === "session" ? plan.sessionAfter : plan.attachmentAfter;
-    draft.naming[kind].provider = target === "follow" ? null : target;
-    draft.naming[kind].model = null;
-    draft.namingTouched[kind].provider = true;
-    draft.namingTouched[kind].model = true;
+    if (draft.naming[kind].provider === provider.id) {
+      const target = kind === "session" ? plan.sessionAfter : plan.attachmentAfter;
+      draft.naming[kind].provider = target === "follow" ? null : target;
+      draft.naming[kind].model = null;
+      draft.namingTouched[kind].provider = true;
+      draft.namingTouched[kind].model = true;
+      continue;
+    }
+    // 删除的是当前使用项、该命名目标是「跟随当前」：目标随之隐式变化，旧 model 覆盖属于旧
+    // provider 的清单，必须**当场**清掉（design §4.1 / §10.5；不能等后端保存后再清，否则草稿
+    // 与说明还停在旧读数，P1-3 r1）。
+    if (wasActive && draft.naming[kind].provider === null && draft.naming[kind].model !== null) {
+      draft.naming[kind].model = null;
+      draft.namingTouched[kind].model = true;
+    }
   }
   draft.remove = null;
   if (draft.selection === provider.id) {
     draft.selection = draft.active ?? visibleProviders(draft)[0]?.id ?? null;
+    draft.focusedIndex = null;
   }
+  if (draft.focusedIndex !== null && draft.providers[draft.focusedIndex] === provider) draft.focusedIndex = null;
 }
 
 /** 页级「还原此页默认」（spec「页级还原默认只改草稿」）：把设置面拥有的键全部标为删键；
@@ -797,14 +876,62 @@ export interface NamingRowInput {
   draft: Draft;
   enabled: boolean;
   locked: boolean;
+  /** 打开 / 上次保存时的快照：**未编辑状态**直接消费后端解析出的 `resolved` 与两个选项表
+   *  （后端用装载后的有效清单与 `vision_supported` 判资格，P1-2 r1）。草稿改过时才做预览，
+   *  预览同样只把 `valid !== false` 的行当作有效声明。 */
+  snapshot?: SettingsSnapshot | null;
 }
 
-/** 一行命名目标的选择器选项 + 唯一一行生效说明。
- *
- *  会话命名的覆盖模型不在清单时是**回落**（写「已回落生效模型」），MUST NOT 写成
- *  「无模型 / 会跳过」；图片命名保留原值、按 vision 资格跳过（design §2.6 / §10.2）。 */
-export function namingRowModel(input: NamingRowInput): NamingRowModel {
-  const { kind, draft, enabled, locked } = input;
+interface NamingOptionView {
+  id: string;
+  vision: boolean;
+  isEffective: boolean;
+}
+
+interface NamingResolutionView {
+  provider: string | null;
+  model: string;
+  follows: boolean;
+  dangling: boolean;
+  eligible: boolean;
+  requested: string | null;
+  inList: boolean;
+  /** 目标 provider 的生效模型（「生效模型（默认：…）」标签用）。 */
+  effective: string;
+  /** 目标 provider 的有效模型清单（后端已逐项校验；草稿预览过滤 `valid:false`）。 */
+  options: NamingOptionView[];
+  /** provider 选择器的候选（不含「跟随」那一项）。 */
+  providerChoices: Array<{ id: string; isActive: boolean }>;
+}
+
+/** 未编辑状态：后端的已保存解析结果。（`reference` 只用于判定 `inList` 与回落文案。） */
+function backendResolution(
+  state: SettingsSnapshot["naming"]["session"],
+  kind: NamingKind,
+): NamingResolutionView {
+  void kind;
+  const options = state.model_options.map((item) => ({
+    id: item.id,
+    vision: item.vision,
+    isEffective: item.is_effective,
+  }));
+  const requested = state.override_model;
+  return {
+    provider: state.resolved.provider,
+    model: state.resolved.model,
+    follows: state.resolved.follows_active,
+    dangling: state.resolved.dangling,
+    eligible: state.resolved.eligible,
+    requested,
+    inList: requested !== null && options.some((item) => item.id === requested),
+    effective: options.find((item) => item.isEffective)?.id ?? "",
+    options,
+    providerChoices: state.provider_options.map((item) => ({ id: item.id, isActive: item.is_active })),
+  };
+}
+
+/** 草稿预览：从草稿的 provider / 有效模型行现算（只用于用户改过命名或改过 provider 的场合）。 */
+function draftResolution(draft: Draft, kind: NamingKind): NamingResolutionView {
   const target = draft.naming[kind];
   const providers = visibleProviders(draft).filter((provider) => !provider.ignored);
   const providerById = new Map(providers.map((provider) => [provider.id, provider]));
@@ -812,100 +939,172 @@ export function namingRowModel(input: NamingRowInput): NamingRowModel {
   const follows = target.provider === null || danglingProvider;
   const resolvedId = danglingProvider ? draft.active : (target.provider ?? draft.active);
   const resolved = resolvedId === null ? null : (providerById.get(resolvedId) ?? null);
-  const declared = resolved === null ? [] : resolved.models.filter((row) => row.id.trim() !== "");
-  const effective = resolved === null ? "" : draftEffectiveModel(resolved);
-  const declaredIds = declared.map((row) => row.id.trim());
+  // `valid === false` 的行会被装载期丢弃：预览不得把它们当成有效声明（否则 vision / 清单
+  // 资格会给出与后端相反的结论，P1-2 r1）。
+  const declared = resolved === null ? [] : resolved.models.filter((row) => row.id.trim() !== "" && row.valid !== false);
+  const options: NamingOptionView[] = declared.map((row) => ({
+    id: row.id.trim(),
+    vision: row.vision === true,
+    isEffective: false,
+  }));
+  const effective = resolved === null ? "" : draftEffectiveModel(resolved, { validOnly: true });
+  for (const item of options) item.isEffective = item.id === effective;
   const requested = target.model;
-  const inList = requested !== null && declaredIds.includes(requested);
-  const danglingModel = requested !== null && !inList;
-  const modelForSession = requested === null ? effective : inList ? requested : effective;
-  const requestedVision = requested === null ? false : declared.find((row) => row.id.trim() === requested)?.vision === true;
-  const effectiveVision = declared.find((row) => row.id.trim() === effective)?.vision === true;
+  return {
+    provider: resolvedId,
+    model:
+      resolved === null
+        ? ""
+        : kind === "session"
+          ? modelForSessionOf(requested, options, effective)
+          : (requested ?? effective),
+    follows,
+    dangling: danglingProvider,
+    eligible:
+      resolved !== null &&
+      (kind === "session"
+        ? modelForSessionOf(requested, options, effective) !== ""
+        : options.find((item) => item.id === (requested ?? effective))?.vision === true),
+    requested,
+    inList: requested !== null && options.some((item) => item.id === requested),
+    effective,
+    options,
+    providerChoices: providers.map((provider) => ({ id: provider.id, isActive: provider.id === draft.active })),
+  };
+}
+
+function modelForSessionOf(
+  requested: string | null,
+  options: readonly NamingOptionView[],
+  effective: string,
+): string {
+  if (requested === null) return effective;
+  return options.some((item) => item.id === requested) ? requested : effective;
+}
+
+/** 一行命名目标的选择器选项 + 唯一一行生效说明。
+ *
+ *  会话命名的覆盖模型不在清单时是**回落**（写「已回落生效模型」），MUST NOT 写成
+ *  「无模型 / 会跳过」；图片命名保留原值、按 vision 资格跳过（design §2.6 / §10.2）。
+ *  **未编辑状态消费后端 `resolved` / `model_options`**：草稿预览与后端解析只有一份规则在
+ *  生效——用户没改过命名目标、也没改过 provider 时，读数就是后端算出来的那一份。 */
+export function namingRowModel(input: NamingRowInput): NamingRowModel {
+  const { kind, draft, enabled, locked, snapshot = null } = input;
+  const touched = draft.namingTouched[kind];
+  const providersDirty = draft.providers.some(
+    (provider) => provider.added || provider.removed || draftProviderDirty(provider),
+  );
+  const clean =
+    !touched.provider && !touched.model && !draft.activeTouched && !providersDirty && snapshot !== null;
+  const view =
+    clean && snapshot !== null
+      ? backendResolution(kind === "session" ? snapshot.naming.session : snapshot.naming.attachment, kind)
+      : draftResolution(draft, kind);
+  const target = draft.naming[kind];
+  const providerValue = clean && snapshot !== null
+    ? (kind === "session" ? snapshot.naming.session.override_provider : snapshot.naming.attachment.override_provider) ?? ""
+    : target.provider ?? "";
+  const modelValue = clean && snapshot !== null
+    ? (kind === "session" ? snapshot.naming.session.override_model : snapshot.naming.attachment.override_model) ?? ""
+    : target.model ?? "";
 
   const providerOptions: NamingOptionModel[] = [{ value: "", label: t(C.followActiveOption) }];
-  for (const provider of providers) {
+  for (const choice of view.providerChoices) {
     providerOptions.push({
-      value: provider.id,
-      label: provider.id === draft.active ? t(C.providerOptionCurrent, { id: provider.id }) : provider.id,
+      value: choice.id,
+      label: choice.isActive ? t(C.providerOptionCurrent, { id: choice.id }) : choice.id,
     });
   }
-  if (danglingProvider && target.provider !== null) {
-    providerOptions.push({ value: target.provider, label: t(C.providerOptionDangling, { id: target.provider }) });
+  const danglingProvider = providerValue !== "" && !view.providerChoices.some((item) => item.id === providerValue);
+  if (danglingProvider) {
+    providerOptions.push({ value: providerValue, label: t(C.providerOptionDangling, { id: providerValue }) });
   }
 
   const modelOptions: NamingOptionModel[] = [
     {
       value: "",
       label:
-        effective === ""
+        view.effective === ""
           ? t(C.effectiveModelOptionPlain)
-          : t(C.effectiveModelOption, { model: effective }),
+          : t(C.effectiveModelOption, { model: view.effective }),
     },
   ];
-  for (const row of declared) {
-    const id = row.id.trim();
+  for (const item of view.options) {
+    if (item.isEffective) continue; // 「生效模型（默认）」那一项已经覆盖它
     const suffix =
-      kind === "attachment" ? (row.vision === true ? t(C.visionTag) : t(C.noVisionTag)) : "";
-    modelOptions.push({ value: id, label: `${id}${suffix}` });
+      kind === "attachment" ? (item.vision ? t(C.visionTag) : t(C.noVisionTag)) : "";
+    modelOptions.push({ value: item.id, label: `${item.id}${suffix}` });
   }
-  if (danglingModel && requested !== null) {
+  // raw 覆盖值必须能在选择器里显示出来（MUST NOT 静默规范化）：两种情况——
+  //   ① 覆盖值就是生效模型（清单里被「生效模型（默认）」那一项吸收了）；
+  //   ② 覆盖值不在有效清单（悬空 / 会被丢弃的坏行）。
+  if (modelValue !== "" && !modelOptions.some((item) => item.value === modelValue)) {
+    // 「是生效模型」只在它确实出现在**有效清单**里时才算数；否则（被装载期丢弃的坏行 / 悬空
+    // 覆盖）按「不在清单」标注，资格一律不通过。
+    const known = view.options.some((item) => item.id === modelValue);
+    const isEffective = known && modelValue === view.effective;
+    const vision = view.options.find((item) => item.id === modelValue)?.vision === true;
+    const suffix = kind === "attachment" ? (vision ? t(C.visionTag) : t(C.noVisionTag)) : "";
     modelOptions.push({
-      value: requested,
-      label:
-        kind === "attachment"
-          ? t(C.modelOptionSkipped, { id: requested })
-          : t(C.modelOptionDangling, { id: requested }),
+      value: modelValue,
+      label: isEffective
+        ? `${modelValue}${suffix}`
+        : kind === "attachment"
+          ? t(C.modelOptionSkipped, { id: modelValue })
+          : t(C.modelOptionDangling, { id: modelValue }),
     });
   }
 
   const timing = kind === "session" ? t(C.timingSession) : t(C.timingAttachment);
-  const provenance = danglingProvider
+  const provenance = view.dangling
     ? t(C.provenanceDangling)
-    : follows
+    : view.follows
       ? t(C.provenanceFollow)
       : t(C.provenanceExplicit);
-  const targetText = resolved === null ? "" : `${resolved.id} / ${effective === "" ? t(C.targetNone) : effective}`;
+  const targetText =
+    view.provider === null ? "" : `${view.provider} / ${view.model === "" ? t(C.targetNone) : view.model}`;
 
   let note: string;
   let bad = false;
   if (!enabled) {
-    note = resolved === null ? t(C.namingClosedNoTarget) : t(C.namingClosed, { target: targetText });
-  } else if (resolved === null) {
+    note = view.provider === null ? t(C.namingClosedNoTarget) : t(C.namingClosed, { target: targetText });
+  } else if (view.provider === null) {
     bad = true;
     note = kind === "attachment" ? t(C.namingNoProviderAttachment) : t(C.namingNoProviderSession);
   } else if (kind === "attachment") {
-    const eligible = requested === null ? effectiveVision : requestedVision;
-    const target = `${resolved.id} / ${modelForSession === "" ? t(C.targetNone) : modelForSession}`;
-    if (eligible) {
+    const target = `${view.provider} / ${view.model === "" ? t(C.targetNone) : view.model}`;
+    if (view.eligible) {
       note = t(C.namingAttachmentEligible, { target, source: provenance, timing });
     } else {
       bad = true;
       note = t(C.namingAttachmentSkip, { target, source: provenance, timing });
     }
-  } else if (modelForSession === "") {
+  } else if (view.model === "") {
     bad = true;
     note = t(C.namingSessionNoModel, {
-      target: `${resolved.id} / ${t(C.targetNone)}`,
+      target: `${view.provider} / ${t(C.targetNone)}`,
       source: provenance,
       timing,
     });
   } else {
     note = t(C.namingLine, {
-      target: `${resolved.id} / ${modelForSession}`,
+      target: `${view.provider} / ${view.model}`,
       source: provenance,
       timing,
     });
-    if (danglingModel) note += t(C.namingSessionFallback, { model: requested ?? "" });
+    if (view.requested !== null && !view.inList) {
+      note += t(C.namingSessionFallback, { model: view.requested });
+    }
   }
 
   return {
     providerOptions,
     modelOptions,
-    providerValue: target.provider ?? "",
-    modelValue: target.model ?? "",
+    providerValue,
+    modelValue,
     note,
     bad,
-    disabled: locked || !enabled || providers.length === 0,
+    disabled: locked || !enabled || view.providerChoices.length === 0,
   };
 }
 
@@ -916,6 +1115,8 @@ export function namingRowModel(input: NamingRowInput): NamingRowModel {
 export interface FieldErrors {
   /** `providers[<n>].id`（新增表单）。 */
   addId: string | null;
+  /** 该错误的 patch 下标（定位到具体哪一条草稿新增；P1-1 r1）。 */
+  addIdIndex: number | null;
   /** `harness.provider`。 */
   active: string | null;
   provider: Record<string, string>;
@@ -932,6 +1133,7 @@ export interface FieldErrors {
 export function emptyFieldErrors(): FieldErrors {
   return {
     addId: null,
+    addIdIndex: null,
     active: null,
     provider: {},
     apiKey: {},
@@ -947,7 +1149,7 @@ export function emptyFieldErrors(): FieldErrors {
 
 const MODEL_FIELD = /^harness\.providers\.([^.]+)\.models\[(\d+)\](?:\.(.+))?$/;
 const PROVIDER_FIELD = /^harness\.providers\.([^.]+)(?:\.(.+))?$/;
-const ADD_PATH = /^providers\[\d+\]\.id$/;
+const ADD_PATH = /^providers\[(\d+)\]\.id$/;
 
 /** 字段级错误按 path 归类：patch 相对路径（新增表单）与配置绝对路径（校验诊断）都要认。 */
 export function mapFieldErrors(errors: readonly SettingsFieldError[]): FieldErrors {
@@ -962,8 +1164,10 @@ export function mapFieldErrors(errors: readonly SettingsFieldError[]): FieldErro
       out.conflict ??= error.message;
       continue;
     }
-    if (ADD_PATH.test(path)) {
+    const addPath = ADD_PATH.exec(path);
+    if (addPath !== null) {
       out.addId ??= error.message;
+      out.addIdIndex ??= Number(addPath[1]);
       continue;
     }
     if (path === "harness.provider" || path === "active_provider") {
@@ -1010,6 +1214,8 @@ export function errorCount(errors: FieldErrors): number {
   let count = 0;
   if (errors.addId !== null) count += 1;
   if (errors.active !== null) count += 1;
+  if (errors.sessionNaming !== null) count += 1;
+  if (errors.attachmentNaming !== null) count += 1;
   if (errors.fileLevel !== null) count += 1;
   count += Object.keys(errors.provider).length;
   count += Object.keys(errors.apiKey).length;
@@ -1249,6 +1455,9 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
 
   // ── 渲染 ────────────────────────────────────────────────────────────────
   function render(): void {
+    // 横幅先渲染且**不依赖快照**：`settings_get` 失败时 snapshot 为 null，若只在快照就绪后
+    // 才画横幅，用户会一直停在「正在读取配置文件…」（r1 P2-4）。
+    renderBanner();
     if (draft === null || snapshot === null) {
       renderLoading();
       return;
@@ -1257,7 +1466,6 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     // 取数落地后必须在这里补一次，否则整个面板会停在没有路径 / 没有来源说明的状态。
     subtitle.textContent = t(C.subtitle, { path: snapshot.path });
     modelSource.textContent = t(C.modelSource, { path: snapshot.path });
-    renderBanner();
     renderModelPane();
     renderAutomation();
     renderDiagnostics();
@@ -1277,8 +1485,9 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
 
   function renderFooter(): void {
     if (snapshot === null) {
-      statusLine.textContent = t(C.statusLoading);
-      statusLine.dataset.tone = "clean";
+      const failed = lastError !== null;
+      statusLine.textContent = failed ? t(C.statusLoadFailed) : t(C.statusLoading);
+      statusLine.dataset.tone = failed ? "error" : "clean";
       resetPageButton.disabled = true;
       cancelButton.disabled = true;
       saveButton.disabled = true;
@@ -1303,7 +1512,16 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
 
   function renderBanner(): void {
     bannerSlot.replaceChildren();
-    if (snapshot === null) return;
+    if (snapshot === null) {
+      if (lastError === null) return;
+      const banner = element("div", "lumir-set-banner is-danger lumir-set-error-outlet");
+      banner.dataset.banner = "load-error";
+      banner.tabIndex = -1;
+      banner.append(element("div", "lumir-set-banner-title", t(C.loadFailedTitle)));
+      banner.append(element("p", "lumir-set-banner-body", lastError));
+      bannerSlot.append(banner);
+      return;
+    }
     if (snapshot.file.state === "invalid") {
       const banner = element("div", "lumir-set-banner is-danger");
       banner.dataset.banner = "file";
@@ -1339,8 +1557,30 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       return;
     }
     if (lastError !== null) {
-      const banner = element("div", "lumir-set-banner is-danger");
+      const banner = element("div", "lumir-set-banner is-danger lumir-set-error-outlet");
+      banner.dataset.banner = "save-error";
+      banner.tabIndex = -1;
       banner.append(element("p", "lumir-set-banner-body", lastError));
+      bannerSlot.append(banner);
+    }
+    // 没有专属控件的字段错误（当前使用项 / 文件级）集中在这里：计数之外还要能读到具体消息
+    // （r1 P2-4）。命名目标的错误挂在各自那一行（更近的入口），不在这里重复。
+    const general: Array<{ path: string; message: string }> = [];
+    if (errors.active !== null) general.push({ path: "harness.provider", message: errors.active });
+    if (errors.fileLevel !== null) general.push({ path: "", message: errors.fileLevel });
+    if (general.length > 0) {
+      const banner = element("div", "lumir-set-banner is-danger lumir-set-error-outlet");
+      banner.dataset.banner = "field-errors";
+      banner.tabIndex = -1;
+      banner.append(element("div", "lumir-set-banner-title", t(C.generalErrorsTitle)));
+      const list = element("ul", "lumir-set-diag-list");
+      for (const item of general) {
+        const row = element("li", "lumir-set-diag-item");
+        if (item.path !== "") row.append(element("span", "lumir-set-diag-path", item.path));
+        row.append(document.createTextNode(item.message));
+        list.append(row);
+      }
+      banner.append(list);
       bannerSlot.append(banner);
     }
   }
@@ -1401,15 +1641,18 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
 
   function renderModelPane(): void {
     if (draft === null) return;
+    const currentDraft = draft;
     providerList.replaceChildren();
     const providers = visibleProviders(draft);
     railHead.textContent = providers.length === 0 ? t(C.providerRail) : `${t(C.providerRail)} ${providers.length}`;
     addButton.disabled = locked();
-    for (const provider of providers) {
+    providers.forEach((provider) => {
+      const providerIndex = currentDraft.providers.indexOf(provider);
       const row = element("button", "lumir-set-provider-row");
       row.type = "button";
       row.dataset.providerId = provider.id;
-      row.setAttribute("aria-current", String(draft.selection === provider.id));
+      row.dataset.providerIndex = String(providerIndex);
+      row.setAttribute("aria-current", String(currentDraft.selection === provider.id));
       // 可用状态对辅助技术可达（视觉面是状态点 + 表单头徽标；读屏名把 id / 预设 / 状态一次说全）。
       row.setAttribute(
         "aria-label",
@@ -1421,16 +1664,16 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       );
       // 保存中禁用 provider 切换（design §11.7：避免请求期间的编辑被返回快照覆盖）。
       row.disabled = locked();
-      if (draft.selection === provider.id) row.classList.add("is-on");
+      if (currentDraft.selection === provider.id) row.classList.add("is-on");
       const dot = element("span", "lumir-set-dot");
       dot.classList.add(provider.status === "ok" ? "is-ok" : "is-warn");
       dot.setAttribute("aria-hidden", "true");
       row.append(dot, element("span", "lumir-set-pname", provider.id));
       row.append(element("span", "lumir-set-ppreset", `· ${presetLabel(provider.preset)}`));
-      if (draft.active === provider.id) row.append(element("span", "lumir-set-current", t(C.currentBadge)));
-      row.addEventListener("click", () => selectProvider(provider.id));
+      if (currentDraft.active === provider.id) row.append(element("span", "lumir-set-current", t(C.currentBadge)));
+      row.addEventListener("click", () => selectProvider(providerIndex));
       providerList.append(row);
-    }
+    });
     renderForm();
   }
 
@@ -1445,7 +1688,8 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       renderDeleteForm();
       return;
     }
-    const provider = findProvider(draft, draft.selection);
+    const focused = draft.focusedIndex === null ? null : (draft.providers[draft.focusedIndex] ?? null);
+    const provider = focused !== null && !focused.removed ? focused : findProvider(draft, draft.selection);
     if (provider === null) renderEmptyState();
     else renderProviderForm(provider);
   }
@@ -1554,7 +1798,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     addProviderDraft(draft, id, preset, capabilityOf(snapshot, preset));
     markDirty();
     render();
-    focusAfterRender(`.lumir-set-provider-row[data-provider-id="${id}"]`);
+    focusAfterRender(`.lumir-set-provider-row[data-provider-index="${draft.focusedIndex}"]`);
   }
 
   function renderProviderForm(provider: DraftProvider): void {
@@ -1610,11 +1854,49 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       return;
     }
 
+    if (provider.added) wrap.append(renderDraftIdField(provider));
     wrap.append(renderKeyField(provider));
     wrap.append(renderModelsField(provider));
     wrap.append(renderAdvanced(provider));
     wrap.append(renderDangerZone(provider));
     form.append(wrap);
+  }
+
+  /** 尚未落盘的新增条目的 id 编辑面（P1-1 r1）：新增被后端按 id 拒绝时，用户在这里就地改名，
+   *  已填的 Key / 模型 / Base URL 全部保留。落盘后 id 不可变，本控件不再出现。 */
+  function renderDraftIdField(provider: DraftProvider): HTMLElement {
+    const field = element("div", "lumir-set-field");
+    const head = element("div", "lumir-set-field-head");
+    const label = element("label", "lumir-set-label", t(C.addIdLabel));
+    label.htmlFor = "lumir-set-draft-id";
+    head.append(label, element("span", "lumir-set-field-state", t(C.addIdState)));
+    const input = element("input", "lumir-set-input lumir-set-mono");
+    input.id = "lumir-set-draft-id";
+    input.type = "text";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.placeholder = t(C.addIdPlaceholder);
+    input.value = provider.id;
+    input.readOnly = locked();
+    input.addEventListener("input", () => {
+      renameDraftProvider(provider, input.value);
+      input.removeAttribute("aria-invalid");
+      input.removeAttribute("aria-errormessage");
+      const existing = field.querySelector(".lumir-set-field-error");
+      if (existing !== null) existing.remove();
+    });
+    // 不在 change / blur 上整页重绘：重绘会把用户紧接着点向的按钮从 DOM 里换掉，
+    // 那一次点击（mousedown 落在旧节点、mouseup 落在新节点）就静默丢失（r1 DOM 回归实测）。
+    input.addEventListener("blur", () => renderFooter());
+    field.append(head, input, element("p", "lumir-set-hint", t(C.addIdHint)));
+    if (provider.idError !== null) {
+      input.setAttribute("aria-invalid", "true");
+      input.setAttribute("aria-errormessage", "lumir-set-draft-id-error");
+      const node = element("p", "lumir-set-field-error", provider.idError);
+      node.id = "lumir-set-draft-id-error";
+      field.append(node);
+    }
+    return field;
   }
 
   function renderKeyField(provider: DraftProvider): HTMLElement {
@@ -1624,13 +1906,12 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     label.htmlFor = "lumir-set-api-key";
     head.append(label);
     const pending = provider.keyEdit?.kind === "replace";
-    head.append(
-      element(
-        "span",
-        "lumir-set-field-state",
-        pending ? t(C.keyStatePending) : provider.hasKey ? t(C.keyStateSet) : t(C.keyStateUnset),
-      ),
+    const state = element(
+      "span",
+      "lumir-set-field-state",
+      pending ? t(C.keyStatePending) : provider.hasKey ? t(C.keyStateSet) : t(C.keyStateUnset),
     );
+    head.append(state);
     const row = element("div", "lumir-set-key-row");
     const input = element("input", "lumir-set-input");
     input.id = "lumir-set-api-key";
@@ -1644,10 +1925,15 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     input.readOnly = locked();
     input.addEventListener("input", () => {
       provider.keyEdit = input.value === "" ? null : { kind: "replace", value: input.value };
+      state.textContent =
+        input.value !== ""
+          ? t(C.keyStatePending)
+          : provider.hasKey
+            ? t(C.keyStateSet)
+            : t(C.keyStateUnset);
       markDirty();
       renderFooter();
     });
-    input.addEventListener("change", () => render());
     const replace = button("lumir-set-btn lumir-set-btn-ghost", t(C.keyReplace));
     replace.disabled = locked();
     replace.addEventListener("click", () => {
@@ -1658,6 +1944,9 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     clear.disabled = locked() || (!provider.hasKey && provider.keyEdit === null);
     clear.addEventListener("click", () => {
       provider.keyEdit = { kind: "clear", value: "" };
+      // 草稿显示同步：清掉后就是「未配置」，不能还挂着「已配置 · …末 4 位」（P2-6 r1）。
+      provider.hasKey = false;
+      provider.keyHint = null;
       markDirty();
       render();
     });
@@ -1862,15 +2151,20 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     baseHead.append(baseLabel);
     const baseRight = element("span", "lumir-set-field-head-right");
     const custom = isCustomBase(provider);
-    baseRight.append(
-      element(
-        "span",
-        "lumir-set-field-state",
-        custom ? t(C.baseCustom) : provider.preset === "generic" ? t(C.baseMissing) : t(C.baseOfficial),
-      ),
+    const baseState = element(
+      "span",
+      "lumir-set-field-state",
+      custom ? t(C.baseCustom) : provider.preset === "generic" ? t(C.baseMissing) : t(C.baseOfficial),
     );
+    baseRight.append(baseState);
     const baseReset = button("lumir-set-btn-link", t(C.restoreDefault));
-    baseReset.hidden = !provider.baseUrlPresent && provider.baseUrlEdit === null;
+    const baseResetVisible = (): boolean =>
+      provider.baseUrlEdit?.kind === "reset"
+        ? false
+        : provider.baseUrlPresent || provider.baseUrlEdit?.kind === "set";
+    // 显式值才给「恢复默认」：键存在、或草稿里刚填了值；点了恢复默认（reset）后按钮消失
+    // （P2-6 r1：此前 hidden 只看 present，reset 之后仍然挂着）。
+    baseReset.hidden = !baseResetVisible();
     baseReset.disabled = locked();
     baseReset.addEventListener("click", () => {
       provider.baseUrlEdit = { kind: "reset", value: "" };
@@ -1893,10 +2187,17 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     baseInput.addEventListener("input", () => {
       provider.baseUrlValue = baseInput.value;
       provider.baseUrlEdit = { kind: "set", value: baseInput.value };
+      const customNow = isCustomBase(provider);
+      baseState.textContent = customNow
+        ? t(C.baseCustom)
+        : provider.preset === "generic"
+          ? t(C.baseMissing)
+          : t(C.baseOfficial);
+      warning.hidden = !customNow;
+      baseReset.hidden = !baseResetVisible();
       markDirty();
       renderFooter();
     });
-    baseInput.addEventListener("change", () => render());
     baseField.append(baseHead, baseInput);
     baseField.append(
       element(
@@ -1907,15 +2208,13 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
           : t(C.baseHintOfficial, { url: provider.presetCapability?.officialBaseUrl ?? "" }),
       ),
     );
-    if (custom) {
-      baseField.append(
-        element(
-          "p",
-          "lumir-set-inline-warning",
-          provider.hasKey || provider.keyEdit !== null ? t(C.baseWarnKey) : t(C.baseWarnPlain),
-        ),
-      );
-    }
+    const warning = element(
+      "p",
+      "lumir-set-inline-warning",
+      provider.hasKey || provider.keyEdit !== null ? t(C.baseWarnKey) : t(C.baseWarnPlain),
+    );
+    warning.hidden = !custom;
+    baseField.append(warning);
     const baseError = errors.baseUrl[provider.id];
     if (baseError !== undefined) {
       baseInput.setAttribute("aria-invalid", "true");
@@ -1932,7 +2231,9 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     wireLabel.htmlFor = "lumir-set-wire";
     wireHead.append(wireLabel);
     const wireReset = button("lumir-set-btn-link", t(C.restoreDefault));
-    wireReset.hidden = !provider.wirePresent && provider.wireEdit === null;
+    wireReset.hidden = provider.wireEdit?.kind === "reset"
+      ? true
+      : !(provider.wirePresent || provider.wireEdit?.kind === "set");
     wireReset.disabled = locked();
     wireReset.addEventListener("click", () => {
       provider.wireEdit = { kind: "reset", value: provider.wireEffective };
@@ -1950,12 +2251,15 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       node.disabled = !(provider.presetCapability?.supportedWires.includes(wire) ?? false);
       wireSelect.append(node);
     }
+    const wireResetVisible = (): boolean =>
+      provider.wireEdit?.kind === "reset" ? false : provider.wirePresent || provider.wireEdit?.kind === "set";
     wireSelect.addEventListener("change", () => {
       const value = wireSelect.value as WireApi;
       provider.wireValue = value;
       provider.wireEdit = { kind: "set", value };
+      wireReset.hidden = !wireResetVisible();
       markDirty();
-      render();
+      renderFooter();
     });
     wireField.append(wireHead, wireSelect);
     wireField.append(
@@ -2019,7 +2323,8 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     wrap.append(element("div", "lumir-set-form-title", t(C.deleteTitle, { id: provider.id })));
     wrap.append(element("p", "lumir-set-hint", t(C.deleteSub)));
 
-    if (provider.references.active) {
+    const refs = draftReferences(draft, provider.id);
+    if (refs.active) {
       const block = element("div", "lumir-set-delete-block");
       block.dataset.deleteBlock = "active";
       if (candidates.length > 0) {
@@ -2040,8 +2345,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       wrap.append(block);
     }
     for (const kind of NAMING_KINDS) {
-      const referenced =
-        kind === "session" ? provider.references.session_naming : provider.references.attachment_naming;
+      const referenced = kind === "session" ? refs.session_naming : refs.attachment_naming;
       if (!referenced) continue;
       const block = element("div", "lumir-set-delete-block");
       block.dataset.deleteBlock = kind;
@@ -2104,6 +2408,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     };
     draft.add = null;
     draft.selection = id;
+    draft.focusedIndex = draft.providers.indexOf(provider);
     render();
   }
 
@@ -2230,7 +2535,8 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
   function renderNamingRow(kind: NamingKind, targets: HTMLElement, note: HTMLElement): void {
     if (draft === null) return;
     const enabled = draft.automation[kind === "session" ? "session_naming" : "attachment_naming"].value;
-    const model = namingRowModel({ kind, draft, enabled, locked: locked() });
+    // 未编辑状态直接消费后端 resolved / model_options（P1-2 r1）。
+    const model = namingRowModel({ kind, draft, enabled, locked: locked(), snapshot });
     targets.replaceChildren();
     const label = kind === "session" ? t(C.sessionNaming) : t(C.attachmentNaming);
     const providerSelect = element("select", "lumir-set-naming-select");
@@ -2250,6 +2556,15 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     targets.append(providerSelect, modelSelect);
     note.textContent = model.note;
     note.classList.toggle("is-bad", model.bad);
+    // 命名目标的后端错误挂在这一行（最近的入口）；同时是「首错」的可见出口之一（P2-4 r1）。
+    const rowError =
+      kind === "session" ? errors.sessionNaming : errors.attachmentNaming;
+    if (rowError !== null) {
+      const outlet = element("p", "lumir-set-field-error lumir-set-error-outlet", rowError);
+      outlet.tabIndex = -1;
+      outlet.dataset.errorOutlet = kind;
+      note.after(outlet);
+    }
   }
 
   function setNamingProvider(kind: NamingKind, value: string): void {
@@ -2269,9 +2584,12 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
   }
 
   // ── 交互 ────────────────────────────────────────────────────────────────
-  function selectProvider(id: string): void {
+  function selectProvider(providerIndex: number): void {
     if (draft === null || locked()) return;
-    draft.selection = id;
+    const provider = draft.providers[providerIndex];
+    if (provider === undefined) return;
+    draft.focusedIndex = providerIndex;
+    draft.selection = provider.id;
     draft.add = null;
     draft.remove = null;
     renderModelPane();
@@ -2377,29 +2695,58 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       render();
       return;
     }
-    // blocked：文件逐字节不变，草稿保留；错误按 path 挂到控件，焦点落第一个错误控件。
+    // blocked：文件逐字节不变，草稿保留；错误按 path 挂到控件，焦点落第一个错误控件
+    // （没有绑到控件的错误 → 落第一个错误出口，P2-4 r1）。
     mode = "blocked";
     errors = mapFieldErrors(outcome.errors);
-    if (errors.addId !== null) reopenRejectedAdd(errors.addId);
+    if (errors.addId !== null && errors.addIdIndex !== null) {
+      applyRejectedAdd(errors.addIdIndex, errors.addId);
+    }
     render();
-    card.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    const invalid = card.querySelector<HTMLElement>('[aria-invalid="true"]');
+    if (invalid !== null) invalid.focus();
+    else card.querySelector<HTMLElement>(".lumir-set-error-outlet")?.focus();
   }
 
-  /** 新增被后端拒绝（id 重复 / 非法 / 保留 id）时，把那条草稿新增撤回并重开添加表单，把错误
-   *  回填到 id 输入框（spec「重复 id 被拒绝」：id 输入框标 aria-invalid 并显示原因）。新增项
-   *  刚建出来、还没有用户填的内容，撤回不丢东西；不撤回的话错误会挂在一条「看起来已添加」
-   *  的草稿行上，而添加表单已经关了，用户没有可修改的入口。 */
-  function reopenRejectedAdd(message: string): void {
+  /** 新增被后端拒绝（id 重复 / 非法 / 保留 id）：**按 patch 下标**定位那条草稿新增（P1-1 r1），
+   *  保留它已经填好的 Key / 模型 / Base URL，把错误挂到它自己的 id 输入上——用户就地改名即可
+   *  再存，不必重填。MUST NOT 猜「最后一条新增」或整条丢弃。 */
+  function applyRejectedAdd(patchIndex: number, message: string): void {
     if (draft === null) return;
-    const index = [...draft.providers].reverse().findIndex((provider) => provider.added && !provider.removed);
-    if (index < 0) return;
-    const realIndex = draft.providers.length - 1 - index;
-    const rejected = draft.providers[realIndex]!;
-    draft.providers.splice(realIndex, 1);
-    if (rejected.preset !== null) {
-      draft.add = { id: rejected.id, preset: rejected.preset, error: message };
+    const { adds } = planProviderEdits(draft);
+    const rejected = adds.find((item) => item.index === patchIndex);
+    if (rejected === undefined) return;
+    const provider = draft.providers[rejected.providerIndex] ?? null;
+    if (provider === null) return;
+    provider.idError = message;
+    draft.add = null;
+    draft.focusedIndex = rejected.providerIndex;
+    draft.selection = provider.id;
+  }
+
+  /** 给「尚未落盘的新增项」改 id：仅这一处允许改 id（落盘后 id 不可变）。同步 active、选中项与
+   *  命名目标的引用，改完即清错误。 */
+  function renameDraftProvider(provider: DraftProvider, raw: string): void {
+    if (draft === null) return;
+    const next = raw;
+    const previous = provider.id;
+    if (next === previous) return;
+    provider.id = next;
+    provider.idError = null;
+    errors.addId = null;
+    for (const kind of NAMING_KINDS) {
+      if (draft.naming[kind].provider === previous) {
+        draft.naming[kind].provider = next;
+        draft.namingTouched[kind].provider = true;
+      }
     }
-    if (draft.selection === rejected.id) draft.selection = defaultSelection(visibleProviders(draft));
+    if (draft.active === previous) {
+      draft.active = next;
+      draft.activeTouched = next !== draft.baseline.active;
+    }
+    if (draft.selection === previous) draft.selection = next;
+    if (draft.remove?.id === previous) draft.remove.id = next;
+    markDirty();
   }
 
   function focusAfterRender(selector: string): void {

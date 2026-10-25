@@ -111,3 +111,30 @@
      由代码结构保证（`MENU_COMMANDS.settings`），真机手点归 Alex 的手感项。
   4. `provider-rules-check.mjs` 的退役（7.11 后半句）未在本批执行：规则表已在 M732/M733 的
      Rust 单测里覆盖，但删除脚本需要一次独立的“规则表已全部移植”对账，留给归档前的收口。
+
+## r1 返修记录（2026-10-25，review r1 p1-6items / merge hold）
+
+按 review `.tower/comms/reviews/review-feat-implement-settings-panel-frontend-oct25-reviewer-settings-panel-fronte-r1.md`：
+
+1. **P1-1** 新增被拒：`planProviderEdits` 产出「每条 Add 在 patch 里的下标」，`mapFieldErrors` 带
+   `addIdIndex`，按**草稿下标**（`focusedIndex`）定位被拒条目并保留其 Key / 模型 / Base URL；id 在
+   条目自己的输入里可改（`#lumir-set-draft-id`），落盘后不再出现。撤销未落盘新增恢复
+   `activeBeforeAdd`（空配置首项 → active 回到 null 且不写 `active_provider`）。
+2. **P1-2** 命名行未编辑时直接消费后端 `resolved` / `model_options`（`namingRowModel` 的 clean
+   分支）；草稿预览只把 `valid !== false` 的行当有效声明，raw 坏行的 vision 一律判不合格。
+3. **P1-3** 删除保护与删除计划改读**当前草稿**的引用面（`draftReferences`）；选中态按草稿下标
+   而不是 id（同 id 两条草稿不再命中第一条）；删 active 且命名目标是「跟随」时当场清 model 覆盖。
+4. **P2-4** `active` / 两个命名 / 文件级错误有可见出口（通用错误横幅 + 命名行内错误）并计入
+   「需要修正」计数与首错焦点；`settings_get` 失败显示真实错误横幅与「读取设置失败，保存已禁用」
+   状态，不再停在加载文案。
+5. **P2-5** 场景 250 主链在重复 id 被拒后先删掉那条草稿新增再继续；新增场景
+   `251-settings-panel-legacy-preset-migration`（旧格式补 preset + 二次启动 `unchangedSince`
+   覆盖 sha256/mtime）；`app.mjs` 增加 `rawProviders` 原样透传入口（README 同条记录）。
+6. **P2-6** 清 Key 同步 `hasKey=false`（显示未配置）；Base URL / Wire 恢复默认后按钮消失。
+
+附带修掉两处 DOM 级问题（r1 回归实测）：输入框 `change` 时的整页重绘会吃掉紧接着的一次点击
+（改为就地更新状态），以及 `flex: 1` 在自动高度列里把正文压成 0 高度（改 `flex: 1 1 auto`）。
+
+**基线状态（merge hold 未解除）**：`06-delete-confirm` 仍按修正后渲染（实底白字）待 Alex 追认；
+`05-add-duplicate` 因 r1 的行为变化（被拒新增改为在条目自己的 id 输入上就地改名）**已撤掉像素
+断言**，其旧基线同时删除，待重新过目后再补。其余 9 张仍与批准候选逐像素一致。

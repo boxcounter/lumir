@@ -2374,6 +2374,11 @@ const COPY_TABLE = {
     zh: "{id}，{preset}，{status}",
     en: "{id}, {preset}, {status}",
   },
+  // D867–D869：保存期通用错误出口与读取失败（P2-4 r1）。此前 active / 命名目标 / 文件级的
+  // 字段错误只计数不显示，读取失败又停在加载文案上。
+  D867: { zh: "保存未生效：需要修正以下问题", en: "Nothing was saved: fix these first" },
+  D868: { zh: "读取设置失败，保存已禁用", en: "Couldn't load settings; saving is disabled" },
+  D869: { zh: "设置面读取失败", en: "Couldn't load the settings surface" },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

@@ -63,23 +63,47 @@ function provider(id: string, preset: string, fields: Json = {}): Json {
   };
 }
 
-function namingTarget(providers: Array<{ id: string; active: boolean }>, override: { provider: string | null; model: string | null }): Json {
-  const target = override.provider ?? providers.find((item) => item.active)?.id ?? providers[0]?.id ?? null;
+/** 后端视角的命名目标状态：**从同一份 provider 数据**推出选项与 resolved（有效行才算，
+ *  vision 资格按目标模型声明）。夹具必须与真后端同源，否则「未编辑状态读后端」的场景会
+ *  拿一份自相矛盾的快照去断言。 */
+function namingTarget(
+  providers: Json[],
+  kind: "session" | "attachment",
+  override: { provider: string | null; model: string | null },
+): Json {
+  const activeId = (providers.find((item) => (item.references as Json | undefined)?.active === true)?.id as string | undefined) ?? null;
+  const targetId = override.provider !== null && providers.some((item) => item.id === override.provider) ? override.provider : activeId;
+  const target = providers.find((item) => item.id === targetId) ?? null;
+  const declared = ((target?.models as Json[] | undefined) ?? []).filter(
+    (row) => row.valid !== false && String(row.id ?? "").trim() !== "",
+  );
+  const effective = (target?.model as string | undefined) ?? (declared[0]?.id as string | undefined) ?? "";
+  const modelOptions = declared.map((row) => ({
+    id: row.id,
+    vision: row.vision === true,
+    is_effective: row.id === effective,
+  }));
+  const requested = override.model;
+  const inList = requested !== null && modelOptions.some((row) => row.id === requested);
+  const model = kind === "session" ? (inList ? (requested as string) : effective) : (requested ?? effective);
+  const vision = modelOptions.find((row) => row.id === model)?.vision === true;
+  const eligible = target === null ? false : kind === "session" ? model !== "" : vision;
   return {
     override_provider: override.provider,
     override_model: override.model,
-    provider_options: providers.map((item) => ({ id: item.id, is_active: item.active, configured: true })),
-    model_options: [
-      { id: "k3-256k", vision: true, is_effective: true },
-      { id: "k3-128k", vision: false, is_effective: false },
-    ],
+    provider_options: providers.map((item) => ({
+      id: item.id,
+      is_active: item.id === activeId,
+      configured: true,
+    })),
+    model_options: modelOptions,
     resolved: {
-      provider: target,
-      model: "k3-256k",
+      provider: targetId,
+      model,
       follows_active: override.provider === null,
-      dangling: false,
-      eligible: true,
-      reason: null,
+      dangling: override.provider !== null && targetId !== override.provider,
+      eligible,
+      reason: eligible ? null : model === "" ? "no_model" : "no_vision",
     },
   };
 }
@@ -101,7 +125,6 @@ function settingsSnapshot(overrides: Json = {}): Json {
   ];
   const active = activeOverride !== undefined ? (activeOverride as string | null) : ((providers[0]?.id as string) ?? null);
   const namingOverrides = (namingOverride ?? {}) as { session?: Json; attachment?: Json };
-  const identities = providers.map((item) => ({ id: item.id as string, active: item.id === active }));
   const withRefs = providers.map((item) => ({
     ...item,
     references: {
@@ -124,11 +147,11 @@ function settingsSnapshot(overrides: Json = {}): Json {
       subagents: { value: true, explicit: false },
     },
     naming: {
-      session: namingTarget(identities, {
+      session: namingTarget(withRefs, "session", {
         provider: (namingOverrides.session?.provider as string | null | undefined) ?? null,
         model: (namingOverrides.session?.model as string | null | undefined) ?? null,
       }),
-      attachment: namingTarget(identities, {
+      attachment: namingTarget(withRefs, "attachment", {
         provider: (namingOverrides.attachment?.provider as string | null | undefined) ?? null,
         model: (namingOverrides.attachment?.model as string | null | undefined) ?? null,
       }),
@@ -160,10 +183,12 @@ function settingsSnapshot(overrides: Json = {}): Json {
 
 interface SettingsStubOptions {
   snapshot: Json;
-  /** applied（默认）→ 返回同一份快照；blocked → 带 errors；conflict → revision 已变；
-   *  pending → 永不 resolve（保存中）。 */
-  apply?: "applied" | "blocked" | "conflict" | "pending";
+  /** applied（默认）→ 返回同一份快照；blocked → 每次带 errors；blocked-once → 第一次 blocked、
+   *  之后 applied（改对后能存进去）；conflict → revision 已变；pending → 永不 resolve（保存中）。 */
+  apply?: "applied" | "blocked" | "blocked-once" | "conflict" | "pending";
   errors?: Array<{ path: string; code: string; message: string }>;
+  /** settings_get 失败（错误信封形状）：用来验「读取失败显示真实错误」，而不是停在加载文案。 */
+  getError?: { code: string; message: string };
 }
 
 /** 在 `stubTauri` 之后包一层 invoke：设置面两条命令由这里提供。 */
@@ -172,11 +197,22 @@ async function stubSettings(page: Page, options: SettingsStubOptions): Promise<v
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
     const original = internals.invoke;
+    let applyCalls = 0;
     internals.invoke = async (cmd: string, args: any) => {
-      if (cmd === "settings_get") return config.snapshot;
+      if (cmd === "settings_get") {
+        if (config.getError !== undefined) throw config.getError;
+        return config.snapshot;
+      }
       if (cmd === "settings_apply") {
+        applyCalls += 1;
+        const patches = (w.__settingsPatches as unknown[] | undefined) ?? [];
+        patches.push(JSON.parse(JSON.stringify(args?.patch ?? null)));
+        w.__settingsPatches = patches;
         if (config.apply === "pending") return new Promise(() => {});
-        if (config.apply === "blocked") {
+        if (config.apply === "blocked-once" && applyCalls > 1) {
+          return { status: "applied", snapshot: config.snapshot, errors: [], warnings: [] };
+        }
+        if (config.apply === "blocked" || config.apply === "blocked-once") {
           return {
             status: "blocked",
             snapshot: config.snapshot,
@@ -346,24 +382,45 @@ test("设置面板：空清单只给空态卡（不渲染空表单骨架）+「�
   await panelScreenshot(page, "04-empty");
 });
 
-test("设置面板：新增 id 冲突 → 后端 blocked 按 path 回填到 id 输入框（aria-invalid + 错误文本）", async ({ page }) => {
+test("设置面板：新增 id 被拒 → 条目与其字段保留、id 就地可改，改对后可保存（r1 P1-1）", async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 800 });
   await openSettings(page, {
     snapshot: settingsSnapshot(),
-    apply: "blocked",
+    apply: "blocked-once",
     errors: [{ path: "providers[0].id", code: "settings_provider_id_duplicate", message: "provider id \"kimi-work\" 已存在" }],
   });
   await page.locator(".lumir-set-add").click();
   await page.locator("#lumir-set-add-id").fill("kimi-work");
   await page.locator(".lumir-set-add-card .lumir-set-btn-primary").click();
-  // 添加是草稿动作：保存时后端才拒绝重复 id，错误回填到重开的添加表单。
+  // 先填两样东西（Key 与模型）：被拒后必须还在。
+  await page.locator("#lumir-set-api-key").fill("test-key-rejected-add");
+  await page.locator(".lumir-set-models-field .lumir-set-btn-ghost").click();
+  await page.locator(".lumir-set-model-row input[type=text]").first().fill("k3-256k");
   await page.locator(".lumir-set-btn-primary").click();
-  const input = page.locator("#lumir-set-add-id");
-  await expect(input).toHaveAttribute("aria-invalid", "true");
-  await expect(input).toHaveAttribute("aria-errormessage", "lumir-set-add-id-error");
-  await expect(page.locator("#lumir-set-add-id-error")).toContainText("已存在");
+  // 条目没有被丢掉；错误挂在这条新增自己的 id 输入上（不是重开一个空白添加表单）。
+  const idInput = page.locator("#lumir-set-draft-id");
+  await expect(idInput).toHaveCount(1);
+  await expect(idInput).toHaveAttribute("aria-invalid", "true");
+  await expect(idInput).toHaveAttribute("aria-errormessage", "lumir-set-draft-id-error");
+  await expect(page.locator("#lumir-set-draft-id-error")).toContainText("已存在");
   await expect(page.locator(".lumir-set-status")).toContainText("需要修正");
-  await panelScreenshot(page, "05-add-duplicate");
+  await expect(page.locator("#lumir-set-api-key")).toHaveValue("test-key-rejected-add");
+  await expect(page.locator(".lumir-set-model-row input[type=text]").first()).toHaveValue("k3-256k");
+  // 就地改名后再存：走 applied 分支，第二笔 patch 里 Add 的 id 是改后的值，且 Key / 模型都在
+  // （桩不会把新条目写回快照，因此判据落在请求形状上，而不是列表会不会多一行）。
+  await idInput.fill("kimi-personal");
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator(".lumir-set-status")).toContainText("已保存");
+  const patches = await page.evaluate(
+    () => (window as unknown as { __settingsPatches: Array<{ providers: Array<Record<string, unknown>> }> }).__settingsPatches,
+  );
+  const second = patches[1]!;
+  expect(second.providers[0]).toMatchObject({ action: "add", id: "kimi-personal", preset: "kimi" });
+  expect(second.providers[1]).toMatchObject({
+    action: "update",
+    id: "kimi-personal",
+    api_key: { kind: "replace", value: "test-key-rejected-add" },
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -436,10 +493,11 @@ test("设置面板：图片命名的模型选项标 vision；不合格分支写�
       providers: [
         provider("kimi-work", "kimi"),
         provider("local-lab", "generic", {
-          model: "local-vision",
+          model: "local-chat",
           models: [
             modelDraft("local-vision", false, true, 131072),
             modelDraft("local-chat", false, false, 131072),
+            modelDraft("local-image", false, false, 131072),
           ],
         }),
       ],
@@ -564,4 +622,192 @@ test("设置面板：装载期被忽略的条目仍可见、只读、诊断挂�
   await expect(page.locator(".lumir-set-ignore-note")).toContainText("harness.providers.legacy.preset");
   await expect(page.locator(".lumir-set-ignore-note")).toContainText("不是合法取值");
   await expect(page.locator(".lumir-set-danger .lumir-set-btn-danger")).toBeVisible();
+});
+
+// ---------------------------------------------------------------------------
+// 7）r1 返修回归：命名后端口径、删除保护以草稿为准、错误出口、显示状态
+// ---------------------------------------------------------------------------
+
+test("设置面板：命名未编辑时消费后端 resolved/model_options（不按 raw 自算，r1 P1-2）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  const snapshot = settingsSnapshot();
+  // 后端解析：目标 provider 的生效模型是 backend-effective（与草稿按清单首项自算的 k3-256k 不同）。
+  snapshot.naming = {
+    ...(snapshot.naming as Json),
+    session: {
+      override_provider: "kimi-work",
+      override_model: "k3-256k",
+      provider_options: [
+        { id: "kimi-work", is_active: true, configured: true },
+        { id: "local-lab", is_active: false, configured: true },
+      ],
+      model_options: [
+        { id: "backend-effective", vision: false, is_effective: true },
+        { id: "k3-256k", vision: true, is_effective: false },
+      ],
+      resolved: {
+        provider: "kimi-work",
+        model: "backend-effective",
+        follows_active: false,
+        dangling: false,
+        eligible: true,
+        reason: null,
+      },
+    },
+  };
+  await openSettings(page, { snapshot });
+  const sessionRow = page.locator('[data-auto-row="session_naming"]');
+  await expect(sessionRow.locator(".lumir-set-auto-effective")).toContainText("kimi-work / backend-effective");
+  await expect(sessionRow.locator(".lumir-set-auto-effective")).toContainText("下一次评估触发点生效");
+  await expect(sessionRow.locator("select.lumir-set-naming-select").nth(1)).toHaveValue("k3-256k");
+});
+
+test("设置面板：valid:false 的 raw 模型行不算有效声明——图片命名按后端资格跳过（r1 P1-2）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  const snapshot = settingsSnapshot({
+    providers: [
+      provider("kimi-work", "kimi", {
+        model: "broken-vision",
+        models: [
+          { id: "broken-vision", effort: true, vision: true, window: 0, valid: false, diagnostics: ["窗口非法"], unknown_keys: [] },
+        ],
+      }),
+    ],
+  });
+  snapshot.naming = {
+    ...(snapshot.naming as Json),
+    attachment: {
+      override_provider: "kimi-work",
+      override_model: "broken-vision",
+      provider_options: [{ id: "kimi-work", is_active: true, configured: true }],
+      model_options: [{ id: "backend-effective", vision: false, is_effective: true }],
+      resolved: {
+        provider: "kimi-work",
+        model: "broken-vision",
+        follows_active: false,
+        dangling: false,
+        eligible: false,
+        reason: "no_vision",
+      },
+    },
+  };
+  await openSettings(page, { snapshot });
+  const row = page.locator('[data-auto-row="attachment_naming"]');
+  const note = row.locator(".lumir-set-auto-effective");
+  await expect(note).toContainText("未声明 vision → 粘贴图片不会改名，保留暂存名");
+  await expect(note).not.toContainText("✓ vision");
+  await expect(row.locator("select.lumir-set-naming-select").nth(1)).toHaveValue("broken-vision");
+});
+
+test("设置面板：先切 active / 命名目标再删除——保护块按当前草稿出现（r1 P1-3）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, { snapshot: settingsSnapshot() });
+  // 切 active 到 local-lab。
+  await page.locator('.lumir-set-provider-row[data-provider-id="local-lab"]').click();
+  await page.locator(".lumir-set-provider-head .lumir-set-btn-ghost").click();
+  await expect(page.locator('.lumir-set-provider-row[data-provider-id="local-lab"] .lumir-set-current')).toHaveCount(1);
+  // 会话命名切到 local-lab。
+  await page.locator('[data-auto-row="session_naming"] select.lumir-set-naming-select').nth(0).selectOption("local-lab");
+  // 删除 local-lab：当前使用 + 会话命名两块都必须出现（不能被旧快照引用吞掉）。
+  await page.locator(".lumir-set-danger .lumir-set-btn-danger").click();
+  await expect(page.locator('[data-delete-block="active"]')).toHaveCount(1);
+  await expect(page.locator('[data-delete-block="session"]')).toHaveCount(1);
+  await expect(page.locator('[data-delete-block="attachment"]')).toHaveCount(0);
+});
+
+test("设置面板：删 active 且命名跟随 → 旧 model 覆盖当场清掉（r1 P1-3）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, {
+    snapshot: settingsSnapshot({
+      providers: [
+        provider("kimi-work", "kimi"),
+        provider("local-lab", "generic", {
+          model: "local-chat",
+          models: [modelDraft("local-chat", false, false, 131072)],
+        }),
+      ],
+      naming: {
+        session: { provider: null, model: "k3-256k" },
+        attachment: { provider: null, model: "k3-256k" },
+      },
+    }),
+  });
+  await page.locator(".lumir-set-danger .lumir-set-btn-danger").click();
+  await page.locator(".lumir-set-delete-card .lumir-set-btn-danger").click();
+  const sessionSelect = page.locator('[data-auto-row="session_naming"] select.lumir-set-naming-select').nth(1);
+  await expect(sessionSelect).toHaveValue("");
+  await expect(page.locator('[data-auto-row="session_naming"] .lumir-set-auto-effective')).toContainText("local-lab / local-chat");
+});
+
+test("设置面板：active / 命名 / 文件级错误有可见出口并计入「需要修正」（r1 P2-4）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, {
+    snapshot: settingsSnapshot(),
+    apply: "blocked",
+    errors: [
+      { path: "harness.provider", code: "settings_active_provider_missing", message: "替代的当前使用项不可用" },
+      { path: "harness.session_naming.provider", code: "settings_naming_target_missing", message: "会话命名的新目标不可用" },
+      { path: "harness.attachment_naming.model", code: "settings_naming_model_missing", message: "图片命名模型不在清单" },
+      { path: "", code: "settings_patch_invalid", message: "文件级校验失败" },
+    ],
+  });
+  await page.locator('[data-auto-row="auto_compact"] [role="switch"]').click();
+  await page.locator(".lumir-set-btn-primary").click();
+  const banner = page.locator('[data-banner="field-errors"]');
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText("harness.provider");
+  await expect(banner).toContainText("替代的当前使用项不可用");
+  await expect(banner).toContainText("文件级校验失败");
+  await expect(page.locator('[data-auto-row="session_naming"] .lumir-set-error-outlet')).toContainText("会话命名的新目标不可用");
+  await expect(page.locator('[data-auto-row="attachment_naming"] .lumir-set-error-outlet')).toContainText("图片命名模型不在清单");
+  await expect(page.locator(".lumir-set-status")).toContainText("需要修正（4 项）");
+});
+
+test("设置面板：settings_get 失败显示真实错误（横幅 + 状态行），不停在加载文案（r1 P2-4）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  // 读取失败的路径没有 provider 行可等（面板正确地停在错误态），因此不走 openSettings 的
+  // 「等到列表出现」门槛，直接开面板后等错误横幅。
+  await stubTauri(page, VAULT);
+  await stubSettings(page, {
+    snapshot: settingsSnapshot(),
+    getError: { code: "config_parse_failed", message: "配置文件（合成路径）无法解析" },
+  });
+  await page.goto("/");
+  await page.locator(".modeline-language").waitFor({ state: "visible" });
+  await page.keyboard.press("Meta+Comma");
+  await expect(page.locator(".lumir-set-panel")).toBeVisible();
+  await expect(page.locator('[data-banner="load-error"]')).toContainText("设置面读取失败");
+  await expect(page.locator('[data-banner="load-error"]')).toContainText("无法解析");
+  await expect(page.locator(".lumir-set-status")).toHaveText("读取设置失败，保存已禁用");
+  await expect(page.locator(".lumir-set-status")).not.toHaveText("正在读取配置文件…");
+});
+
+test("设置面板：清 Key 后显示未配置；Base URL / Wire 恢复默认后按钮消失（r1 P2-6）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, {
+    snapshot: settingsSnapshot({
+      providers: [
+        provider("kimi-work", "kimi", {
+          base_url: { kind: "present", value: "https://example.invalid/v1" },
+          wire_api: { kind: "present", value: { kind: "string", text: "chat_completions" } },
+        }),
+      ],
+    }),
+  });
+  const keyField = page.locator(".lumir-set-field").filter({ has: page.locator("#lumir-set-api-key") });
+  await expect(keyField.locator(".lumir-set-field-state")).toHaveText("已配置");
+  await keyField.locator(".lumir-set-btn-ghost", { hasText: "清除" }).click();
+  await expect(keyField.locator(".lumir-set-field-state")).toHaveText("未配置");
+  // 高级区：恢复默认按钮在显式值存在时可见，点掉后消失。
+  await page.locator(".lumir-set-adv-toggle").click();
+  const baseReset = page.locator(".lumir-set-field").filter({ has: page.locator("#lumir-set-base-url") }).locator(".lumir-set-btn-link");
+  await expect(baseReset).toBeVisible();
+  await baseReset.click();
+  await expect(baseReset).toBeHidden();
+  const wireReset = page.locator(".lumir-set-field").filter({ has: page.locator("#lumir-set-wire") }).locator(".lumir-set-btn-link");
+  await expect(wireReset).toBeVisible();
+  await wireReset.click();
+  await expect(wireReset).toBeHidden();
+  // 恢复默认 = 删键：保存后这两个键被删除（由单测覆盖 patch 形状），这里只验显示面。
+  await expect(page.locator("#lumir-set-base-url")).toHaveValue("");
 });

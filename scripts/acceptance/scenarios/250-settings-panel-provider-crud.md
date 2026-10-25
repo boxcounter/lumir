@@ -107,6 +107,24 @@ steps:
         file: { path: "env:config.json", unchangedSince: after-save }
       - shot: 03-重复-id-被拒
 
+  - name: 收拾被拒的那条草稿新增（它还留在列表里，危险区可以删）
+    do: click
+    target: { name: "^删除…$" }
+    expect:
+      - label: 删除确认就地展开（草稿条目没有引用面，只有删除动作）
+        ax: { has: ["删除 provider", "删除是草稿动作"] }
+  - name: 确认删除被拒的草稿条目
+    do: click
+    target: { name: "^删除$" }
+  - name: 保存（撤销这次新增，回到已保存的现场）
+    do: click
+    target: { name: "^保存$" }
+    expect:
+      - label: 撤销新增后文件逐字节不变（从未落盘的新增项不发 delete）
+        file: { path: "env:config.json", unchangedSince: after-save }
+      - label: 列表只剩一条 kimi-work
+        ax: { has: "provider 由你管理" }
+
   - name: 删除当前使用项且它是最后一个 provider——保护文案在位
     do: click
     target: { name: "^删除…$" }

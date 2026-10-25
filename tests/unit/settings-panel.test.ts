@@ -23,6 +23,10 @@ import {
   draftEffectiveModel,
   draftIsDirty,
   draftProviderDirty,
+  draftReferences,
+  emptyFieldErrors,
+  errorCount,
+  planProviderEdits,
   findProvider,
   mapFieldErrors,
   namingRowModel,
@@ -299,12 +303,12 @@ test("buildPatch：Key 清除 = 删键（不是写空串）", () => {
 
 test("buildPatch：删除当前使用项 → 带 active_after；删除被命名引用项 → 带重定向（follow / 指定）", () => {
   const base = snapshot({
-    providers: [
-      provider("kimi-work", { references: { active: true, session_naming: true, attachment_naming: true } }),
-      provider("deepseek", { preset: "deepseek" }),
-    ],
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
   });
   const draft = createDraft(base);
+  // 引用面以**当前草稿**为准（P1-3 r1）：用户已把两个命名目标显式指到 kimi-work。
+  draft.naming.session = { provider: "kimi-work", model: "k3-256k" };
+  draft.naming.attachment = { provider: "kimi-work", model: "k3-256k" };
   findProvider(draft, "kimi-work")!.removed = true;
   draft.remove = {
     id: "kimi-work",
@@ -457,14 +461,16 @@ test("namingRowModel：图片命名按 vision 资格分流——合格写 ✓ vi
             modelDraft("local-vision", { vision: true }),
             modelDraft("local-chat", { vision: false }),
           ],
-          model: "local-vision",
+          // effective = local-chat：它占「生效模型（默认）」那一项，不再重复列出；
+          // local-vision 作为可选的其它模型带 ✓ vision 后缀。
+          model: "local-chat",
         }),
       ],
     }),
   );
   const optionLabels = namingRowModel(namingInput(draft, "attachment")).modelOptions.map((item) => item.label);
   assert.ok(optionLabels.some((label) => label.includes("local-vision") && label.includes("✓ vision")));
-  assert.ok(optionLabels.some((label) => label.includes("local-chat") && label.includes("未声明 vision")));
+  assert.ok(optionLabels.some((label) => label.includes("生效模型（默认：local-chat）")));
   draft.naming.attachment = { provider: "local-lab", model: "local-chat" };
   const row = namingRowModel(namingInput(draft, "attachment"));
   assert.equal(row.bad, true);
@@ -743,4 +749,190 @@ test("applyDraftDelete：替代目标失效时回落到第一个候选，不留�
   draft.remove = { id: "kimi-work", activeAfter: "gone", sessionAfter: "follow", attachmentAfter: "follow" };
   applyDraftDelete(draft);
   assert.equal(draft.active, "deepseek");
+});
+
+// ── r1 返修回归：新增被拒 / 撤销 / 引用面 / 命名后端口径 ─────────────────
+
+test("planProviderEdits：Add 的 patch 下标能被定位（后端错误路径 providers[<n>].id 的锚点）", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+  });
+  const draft = createDraft(base);
+  draft.providers[0]!.keyEdit = { kind: "replace", value: "k" }; // 一条 Update 插在最前
+  addProviderDraft(draft, "first-new", "kimi", metaOf("first-new", "kimi"));
+  addProviderDraft(draft, "second-new", "deepseek", metaOf("second-new", "deepseek"));
+  const plan = planProviderEdits(draft);
+  assert.deepEqual(
+    plan.adds.map((item) => ({ index: item.index, id: item.id })),
+    [
+      { index: 1, id: "first-new" },
+      { index: 2, id: "second-new" },
+    ],
+  );
+  assert.equal(plan.edits[1]?.action, "add");
+});
+
+test("mapFieldErrors：Add 的 id 错误带 patch 下标（不靠「最后一条新增」猜）", () => {
+  const mapped = mapFieldErrors([{ path: "providers[2].id", code: "settings_provider_id_duplicate", message: "已存在" }]);
+  assert.equal(mapped.addId, "已存在");
+  assert.equal(mapped.addIdIndex, 2);
+});
+
+test("applyDraftDelete：撤销未落盘新增恢复 active 基线（空配置加第一项再删）", () => {
+  const base = snapshot({ providers: [], active: null });
+  const draft = createDraft(base);
+  addProviderDraft(draft, "first", "kimi", metaOf("first", "kimi"));
+  assert.equal(draft.active, "first");
+  draft.remove = { id: "first", activeAfter: "", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  assert.equal(draft.providers.length, 0);
+  assert.equal(draft.active, null);
+  assert.equal(draft.activeTouched, false);
+  const patch = buildPatch(draft, base, base.revision!);
+  assert.equal(patch.active_provider, undefined, "不能留下指向已删 id 的 active_provider");
+  assert.deepEqual(patch.providers, []);
+});
+
+test("applyDraftDelete：新增前的 active 仍有条目时撤销回到它（不是 null）", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+    active: "kimi-work",
+  });
+  const draft = createDraft(base);
+  addProviderDraft(draft, "tmp-lab", "generic", metaOf("tmp-lab", "generic"));
+  // 用户在新增后把 active 切到新条目，再撤销它。
+  draft.active = "tmp-lab";
+  draft.activeTouched = true;
+  draft.remove = { id: "tmp-lab", activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  assert.equal(draft.active, "kimi-work");
+  assert.equal(draft.activeTouched, false);
+});
+
+test("draftReferences：引用面读当前草稿（先切 active / 命名再删除仍有保护块）", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+  });
+  const draft = createDraft(base);
+  draft.active = "deepseek";
+  draft.activeTouched = true;
+  draft.naming.session = { provider: "deepseek", model: null };
+  draft.naming.attachment = { provider: "deepseek", model: null };
+  assert.deepEqual(draftReferences(draft, "deepseek"), {
+    active: true,
+    session_naming: true,
+    attachment_naming: true,
+  });
+  // 删除计划据此带替代目标，而不是按打开时的快照静默 follow / 首个候选。
+  findProvider(draft, "deepseek")!.removed = true;
+  draft.remove = { id: "deepseek", activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "kimi-work" };
+  assert.deepEqual(buildPatch(draft, base, base.revision!).providers[0], {
+    action: "delete",
+    id: "deepseek",
+    active_after: "kimi-work",
+    session_naming_after: { kind: "follow_active" },
+    attachment_naming_after: { kind: "provider", value: "kimi-work" },
+  });
+});
+
+test("applyDraftDelete：删 active 且命名 follow 时当场清掉旧 model 覆盖", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+  });
+  const draft = createDraft(base);
+  // 两个命名目标都是「跟随当前」，但文件里有旧 model 覆盖（属于 kimi-work 的清单）。
+  draft.naming.session = { provider: null, model: "k3-256k" };
+  draft.naming.attachment = { provider: null, model: "k3-256k" };
+  draft.remove = { id: "kimi-work", activeAfter: "deepseek", sessionAfter: "follow", attachmentAfter: "follow" };
+  findProvider(draft, "kimi-work")!.removed = true;
+  applyDraftDelete(draft);
+  assert.deepEqual(draft.naming.session, { provider: null, model: null });
+  assert.deepEqual(draft.naming.attachment, { provider: null, model: null });
+  assert.equal(draft.namingTouched.session.model, true);
+  assert.equal(draft.namingTouched.attachment.model, true);
+});
+
+test("namingRowModel：未编辑状态消费后端 resolved / model_options（与草稿自算结果不同时以后端为准）", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+    active: "deepseek",
+  });
+  // 后端解析：显式 provider kimi-work，但 model 因清单/资格回落成 k3-256k（草稿层看到的是同一份
+  // 数据也未必同结论——这里刻意让后端的 model 与草稿首项不同，钉住「读后端」这条）。
+  base.naming.session = {
+    override_provider: "kimi-work",
+    override_model: "k3-256k",
+    provider_options: [
+      { id: "kimi-work", is_active: false, configured: true },
+      { id: "deepseek", is_active: true, configured: true },
+    ],
+    model_options: [
+      { id: "backend-effective", vision: false, is_effective: true },
+      { id: "k3-256k", vision: true, is_effective: false },
+    ],
+    resolved: {
+      provider: "kimi-work",
+      model: "backend-effective",
+      follows_active: false,
+      dangling: false,
+      eligible: true,
+      reason: null,
+    },
+  };
+  const draft = createDraft(base);
+  const row = namingRowModel({ kind: "session", draft, enabled: true, locked: false, snapshot: base });
+  assert.match(row.note, /kimi-work \/ backend-effective/);
+  assert.match(row.note, /指定目标/);
+  assert.equal(row.modelValue, "k3-256k");
+  assert.ok(row.modelOptions.some((item) => item.label === "生效模型（默认：backend-effective）"));
+});
+
+test("namingRowModel：valid:false 的 raw 行不算有效声明——vision 不得假绿（会话回落 / 图片跳过）", () => {
+  const base = snapshot({
+    providers: [
+      provider("kimi-work", {
+        models: [modelDraft("broken-vision", { vision: true, window: 0 })],
+        model: "broken-vision",
+      }),
+    ],
+  });
+  // 草稿里这一行会被装载期丢弃（valid = false）。
+  const draft = createDraft(base);
+  draft.providers[0]!.models = [
+    { id: "broken-vision", effort: true, vision: true, window: 0, notes: ["窗口非法"], valid: false },
+  ];
+  draft.providers[0]!.effectiveModel = "broken-vision";
+  draft.naming.attachment = { provider: "kimi-work", model: "broken-vision" };
+  draft.namingTouched.attachment.provider = true;
+  draft.namingTouched.attachment.model = true;
+  const attachment = namingRowModel({ kind: "attachment", draft, enabled: true, locked: false });
+  assert.match(attachment.note, /未声明 vision → 粘贴图片不会改名/);
+  assert.equal(/✓ vision/.test(attachment.note), false);
+  assert.ok(attachment.modelOptions.some((item) => item.label.includes("不在清单，会跳过")));
+  // 会话命名：覆盖模型不在（有效）清单 → 回落生效模型，而不是显示「无模型」。
+  draft.naming.session = { provider: "kimi-work", model: "broken-vision" };
+  draft.namingTouched.session.provider = true;
+  draft.namingTouched.session.model = true;
+  const session = namingRowModel({ kind: "session", draft, enabled: true, locked: false });
+  assert.match(session.note, /覆盖模型 broken-vision 不在清单，已回落生效模型/);
+});
+
+test("draftEffectiveModel(validOnly)：跳过 valid:false 的行", () => {
+  const base = snapshot();
+  const draft = createDraft(base);
+  draft.providers[0]!.models = [
+    { id: "bad", effort: true, vision: false, window: 1, notes: [], valid: false },
+    { id: "good", effort: true, vision: false, window: 1, notes: [], valid: true },
+  ];
+  draft.providers[0]!.effectiveModel = "";
+  assert.equal(draftEffectiveModel(draft.providers[0]!, { validOnly: true }), "good");
+});
+
+test("errorCount：命名目标的两个错误也计入「需要修正」的计数", () => {
+  const counted = errorCount({
+    ...emptyFieldErrors(),
+    sessionNaming: "a",
+    attachmentNaming: "b",
+  });
+  assert.equal(counted, 2);
 });

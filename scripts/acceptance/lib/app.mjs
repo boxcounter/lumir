@@ -235,7 +235,7 @@ export async function writeConfig({
   editor = undefined,
   // [harness] 节（M304，change add-harness-probe §11）：传了才写。形状：
   // { provider, fixture, permissions: { allow, deny }, permission_mode, loopMax, warnCtxPct,
-  //   autoCompact, kimiModel, kimiModels }——
+  //   autoCompact, kimiModel, kimiModels, rawProviders }——
   // fixture 路径在场景加载期已被 token 替换为绝对路径（mock 脚本用 $fixtures 只读引用套件
   // fixtures 目录，不拷进 vault——拷进 vault 会留下非 .md 残留，串红场景 28/65 的
   // 「vault 里无 json/tmp 产物」断言）；$vault / $vault2 精确记号仍可经 resolveSeedPath 解析。
@@ -312,6 +312,12 @@ export async function writeConfig({
     if (harness.kimiModels !== undefined) {
       h.providers = h.providers ?? {};
       h.providers.kimi = { preset: "kimi", ...(h.providers.kimi ?? {}), models: normalizeModels(harness.kimiModels) };
+    }
+    // 原样写入的 provider 条目（场景 251，change add-model-automation-settings-oct24 tasks §7.8）：
+    // 给「旧格式 / 手写形状」构造入口——条目**不带 preset** 时触发的是一次性迁移，套件不能
+    // 用具名键先替它补好 preset。放在最后，显式覆盖上面的具名键产物。
+    if (harness.rawProviders !== undefined) {
+      h.providers = { ...(h.providers ?? {}), ...harness.rawProviders };
     }
     if (harness.permissions !== undefined) h.permissions = harness.permissions;
     // 权限模式（M481，change add-harness-permission-modes）：三档闭集合 `read_only` / `vault_write`
