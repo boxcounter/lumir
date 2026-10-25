@@ -31,7 +31,30 @@
 > 解析、每次只调用一个目标。r2 的第 ⑤ 条「provider 固定不可增删」在 r3 被**推翻**：
 > provider 由用户增删改，这正是本版的核心。
 >
-> 节点 2（归档评审）：实现完成后填写。
+> 节点 2（归档评审）：**机器 + 独立评审放行**（`docs/process/openspec-workflow.md` 节点 2 五要件；
+> 归档前读数由 M743 整理，评审项待本次 docs 批的 assigned reviewer 落章）。
+>
+> 1. **方案已批准**：Alex 节点 1 对完整 provider 提案「通过，请你安排开发。」（2026-10-25，经 tower
+>    转达并记入 M732 的 mission context）。实现期无静默扩 scope：M732 / M733 / M734 只落 tasks
+>    §2–§5；M743 只落 §6–§7（文档、回扫、门禁、真机证据），未改产品代码。
+> 2. **独立 reviewer**：实现批已获 clean / merge（M742 承载评审，tip `49ec1613`；评审文件见
+>    `.tower/comms/reviews/`）。**本 docs 收尾批的 reviewer verdict 与 tip 由 tower 在合并前补记**
+>    ——本条未齐之前不构成放行。
+> 3. **tasks**：§1–§7 全部勾选（原「未完成 / 待裁决」四项的处置见文末「实现批记录」与「收尾批记录」；
+>    像素基线 11 张已获 Alex「批准。」）。
+> 4. **门禁与真机**：`scripts/gate.sh visual` = `GATE RESULT: 14/14 PASS（SKIP 1）`（SKIP 为
+>    tsc-visual 的环境缺依赖，依赖装好后单跑 `tsc --noEmit` 退出码 0）；真机全量 242 场景 =
+>    **PASS 211 / FAIL 24 / INVALID 7**（证据 `.local/acceptance/2026-10-25-m743/`，复跑
+>    `.local/acceptance/2026-10-25-m743-retry/`）。本 change 直接相关的场景
+>    （90/99/101/102/128/138/250/251）全绿；24 条 FAIL 逐条归因为工具行路径按钮化的旧断言（4）、
+>    CGEvent/键盘注入通道（6）、固定坐标拖选漂移（2）、AX role 漂移（1）、hover bbox（1）、
+>    已知 backlog 项（5），另有 5 条复跑转绿（131/231/235/236/237，其中 235–237 是本 change 新增
+>    命令导致的计数 71→72 期望漂移，已在本批改准）；INVALID 7 条 = bundle-only 3 + 环境 fixture
+>    缺口 4。没有一条红落在 provider / 设置面代码路径上。
+> 5. **规格对账**：`scripts/openspec-archive-check.mjs` 门禁模式 PASS（9 份 delta / 117 段对账）；
+>    `validate --all --strict` 33 passed / 0 failed；`docs/backlog.md` 归档跟踪队列有且仅有一条
+>    本 change 条目。`specs/settings/spec.md` 已写最终 Purpose（1.12.0 归档时携带，临时副本实跑
+>    archive 后 strict 仍 33 passed）。
 
 ## Why
 

@@ -308,10 +308,15 @@ export async function writeConfig({
     }
     // M373（场景 102；M381 起 config-only）：schema 的 model 维度——逐项 { id, effort, vision,
     // window } 清单写进 providers.kimi.models（不写 = 空清单 + 应用侧 warning + 浮层 D402 提示态
-    // ——内置 preset 已彻底删除；写了即声明清单，能力/窗口按声明现算）。
+    // ——内置 preset 已彻底删除；写了即声明清单，能力/窗口按声明现算）。**声明清单的条目必须可用**：
+    // `configured` 要求 kimi 的 Key 非空（change add-model-automation-settings-oct24 §2.4），
+    // 只写清单不写 Key 的条目不进模型 chip 的 provider 列表（场景 90 即此形态——它要用 kimi 作
+    // 可选项）。与 `kimiModel` 同族的合成 Key 在缺省时补上；显式写下的 Key（含空串）不覆盖。
     if (harness.kimiModels !== undefined) {
       h.providers = h.providers ?? {};
-      h.providers.kimi = { preset: "kimi", ...(h.providers.kimi ?? {}), models: normalizeModels(harness.kimiModels) };
+      const entry = { preset: "kimi", ...(h.providers.kimi ?? {}), models: normalizeModels(harness.kimiModels) };
+      if (entry.api_key === undefined) entry.api_key = "acceptance-dummy";
+      h.providers.kimi = entry;
     }
     // 原样写入的 provider 条目（场景 251，change add-model-automation-settings-oct24 tasks §7.8）：
     // 给「旧格式 / 手写形状」构造入口——条目**不带 preset** 时触发的是一次性迁移，套件不能

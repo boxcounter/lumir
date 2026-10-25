@@ -93,7 +93,7 @@ steps:
       - label: 面板仍在
         ax: { has: "键位速查（生效中）" }
       - label: 捕获态已清（回到全量计数）
-        ax: { has: "71 条命令 · 11 组" }
+        ax: { has: "72 条命令 · 11 组" }
       - shot: 清除捕获后
 
   - name: 等待态 ⌃G 被当作待查询的键（唯一例外：不关闭面板）
@@ -116,7 +116,7 @@ steps:
     key: escape
     expect:
       - label: 回到全量
-        ax: { has: "71 条命令 · 11 组" }
+        ax: { has: "72 条命令 · 11 组" }
 
   - name: 已捕获态 ⌃G 照常关闭（关闭例外）
     do: click
@@ -187,7 +187,7 @@ steps:
     key: escape
     expect:
       - label: 清掉 F12 捕获
-        ax: { has: "71 条命令 · 11 组" }
+        ax: { has: "72 条命令 · 11 组" }
   - name: 进入等待态并按下 ⇧⌘T
     do: click
     target: { any: "捕获按键" }

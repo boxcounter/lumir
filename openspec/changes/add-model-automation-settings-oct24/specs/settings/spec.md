@@ -16,6 +16,12 @@
 > `add-session-auto-naming` / `add-semantic-image-naming`，本 delta 只要求面板如实呈现，
 > 不重新定义行为。
 
+## Purpose
+
+应用内设置面板：provider 管理与自动化开关的可见编辑面。用户在单页两节里增删改 provider
+（预设、Key、模型清单、Base URL、Wire 方言）、选择当前使用项、开关四个自动化能力，并在
+会话命名与图片命名各自的行内就地编辑目标；写入经强类型 patch 在配置写锁内整笔原子完成。
+
 ## ADDED Requirements
 
 ### Requirement: 设置面板的形态与范围

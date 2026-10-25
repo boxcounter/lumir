@@ -28,8 +28,8 @@ steps:
     expect:
       - label: 面板打开
         ax: { has: "键位速查（生效中）" }
-      - label: 打开即全量（71 条命令 · 11 组）
-        ax: { has: "71 条命令 · 11 组" }
+      - label: 打开即全量（72 条命令 · 11 组）
+        ax: { has: "72 条命令 · 11 组" }
       - shot: 打开-输入框焦点
 
   - name: 滚动前的视口读数（AX 的 offscreen_filter 只暴露视口内的行）
@@ -63,8 +63,8 @@ steps:
     do: keys
     keys: ["t", "o", "c"]
     expect:
-      - label: 查询生效：命中 1 / 71
-        ax: { has: "命中 1 / 71" }
+      - label: 查询生效：命中 1 / 72
+        ax: { has: "命中 1 / 72" }
       - label: 别名 toc 命中「打开大纲」
         ax: { has: "打开大纲" }
       - shot: 键盘查询-toc
@@ -73,14 +73,14 @@ steps:
     do: key
     key: tab
     expect:
-      - label: 焦点离开输入框后查询串没有被追加（仍是命中 1 / 71）
-        ax: { has: "命中 1 / 71" }
+      - label: 焦点离开输入框后查询串没有被追加（仍是命中 1 / 72）
+        ax: { has: "命中 1 / 72" }
   - name: 在按钮上键入 x（按钮不接收文本，查询不应变化）
     do: key
     key: x
     expect:
       - label: 查询串未被追加（仍是 toc 的唯一命中）
-        ax: { has: "命中 1 / 71" }
+        ax: { has: "命中 1 / 72" }
       - label: 目标行仍是「打开大纲」
         ax: { has: "打开大纲" }
 
@@ -89,7 +89,7 @@ steps:
     key: escape
     expect:
       - label: 回到全量
-        ax: { has: "71 条命令 · 11 组" }
+        ax: { has: "72 条命令 · 11 组" }
       - label: 面板仍在
         ax: { has: "键位速查（生效中）" }
 
@@ -104,7 +104,7 @@ steps:
     keys: ["t", "o", "c"]
     expect:
       - label: 查询生效（Tab 循环回到输入框）
-        ax: { has: "命中 1 / 71" }
+        ax: { has: "命中 1 / 72" }
       - shot: Tab-四停后回到输入框
 
   - name: Esc 清查询；用 ↓ + Enter 展开第二行详情
@@ -112,7 +112,7 @@ steps:
     key: escape
     expect:
       - label: 回到全量
-        ax: { has: "71 条命令 · 11 组" }
+        ax: { has: "72 条命令 · 11 组" }
   - name: ↓ 选择第二行（下移一行）并 Enter 展开
     do: keys
     keys: ["down", "enter"]
