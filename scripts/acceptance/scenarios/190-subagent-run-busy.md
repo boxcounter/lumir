@@ -8,6 +8,11 @@ config:
   harness:
     provider: mock
     fixture: "$env/subagent-fixtures/run-busy.json"
+seed:
+  # 模板在起 app 之前预置（M745，口径与 189 同条）：`${run_id}` 由 mockFill 在运行期就地替换。
+  envFiles:
+    - path: subagent-fixtures/run-busy.json
+      from: "$fixtures/subagent-fixtures/run-busy.json"
 steps:
   - name: 写入定义 .lumir/agents/research.md
     do: vaultWrite
@@ -19,46 +24,6 @@ steps:
       ---
       
 
-  - name: 写入运行期 fixture 模板
-    do: envWrite
-    file: "subagent-fixtures/run-busy.json"
-    content: |
-      {
-        "version": 1,
-        "responses": [
-          {
-            "text": "放到后台跑。",
-            "tool_calls": [
-              {
-                "id": "call_b1",
-                "name": "task",
-                "arguments": "{\"agent\": \"research\", \"prompt\": \"慢任务\", \"description\": \"后台慢任务\", \"background\": true}"
-              }
-            ]
-          },
-          {
-            "text": "后台慢响应。",
-            "delay_ms": 20000
-          },
-          {
-            "text": "SGF-BUSY-PARENT 父会话：后台已启动。"
-          },
-          {
-            "text": "试着续跑后台那段。",
-            "tool_calls": [
-              {
-                "id": "call_b2",
-                "name": "task",
-                "arguments": "{\"agent\": \"research\", \"prompt\": \"续跑运行中的段\", \"description\": \"续跑在跑段\", \"resume\": \"${run_id}\"}"
-              }
-            ]
-          },
-          {
-            "text": "SGF-BUSY2-PARENT 父会话：续跑被拒。"
-          }
-        ],
-        "subrun_span": 1
-      }
   - name: ⌘⇧A 打开 harness pane
     do: keys
     keys: ["cmd+shift+a"]

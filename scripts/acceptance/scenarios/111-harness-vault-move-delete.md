@@ -51,7 +51,10 @@ steps:
         file: { path: harness-renamed.md, has: "HNL-ALPHA" }
       - label: vault_move 行内参数 = 「源 → 目标」路径对（M414 的面板呈现；此刻批准卡还没批、
           整轮未收尾，工具行是行内展开的，不必点折叠摘要钮）
-        ax: { has: "/harness-note\\.md → harness-renamed\\.md/" }
+        # 路径对同样按钮化（change add-path-line-range-links）：源是 `AXButton (harness-note.md)`
+        # 节点，目标落在紧随其后的 `→ harness-renamed.md` 文本里——旧的同段相邻串断言恒红
+        # （M743，M745 修）。窗口 200 字符见正文「断言口径」。
+        ax: { has: '/AXButton \(harness-note\.md\)[\s\S]{0,200}?→ harness-renamed\.md/' }
       - shot: 01-改道链与-vault_move
 
   - name: 等 vault_delete 的批准卡（vault_write 档下删除逐个问）
@@ -91,7 +94,7 @@ steps:
       - label: cli_run 行保留改道失败尾注
         ax: { has: "/cli_redirected_to_vault_tool/" }
       - label: vault_move 行内参数 = 「源 → 目标」路径对（M414 的面板呈现）
-        ax: { has: "/harness-note\\.md → harness-renamed\\.md/" }
+        ax: { has: '/AXButton \(harness-note\.md\)[\s\S]{0,200}?→ harness-renamed\.md/' }
       - shot: 05-工具行-路径对
 ---
 
@@ -129,6 +132,13 @@ change `add-harness-permission-modes` 的验收面（tasks 6.7 的后两条）�
   了场景 75 的形态（那条 fixture 在同一响应里发两个 cli_run，才凑出 2 行并折叠）——判红是场景
   写错，不是产品缺陷。批准卡挂起期间同样不折叠（folding 只发生在轮次终态 / 新用户消息时），
   故路径对在卡挂着时就能读到。
+- **工具行的路径是可点按钮（M745）**：change `add-path-line-range-links` 把工具参数里的路径渲染成
+  `AXButton (…)` 节点。本场景的「源 → 目标」因此横跨两个节点：源是 `AXButton (harness-note.md)`、
+  目标落在紧随其后的 `AXStaticText = "→ harness-renamed.md …"` 里，旧的同段相邻串
+  `/harness-note\.md → harness-renamed\.md/` 恒不命中（M743 全量跑 111 恒红即此）。判据改为
+  `/AXButton \(harness-note\.md\)[\s\S]{0,200}?→ harness-renamed\.md/`——上界 200 只容 2–3 个
+  节点行（M743 现场实测间距 94 字符，含 bbox 与 actions 字段），既吸收索引位数 / 几何读数变化，
+  又不会跨到无关区域；反向自证（改回纯文本形态必红）见场景 103 的「断言口径」同条。
 - **`vault_delete` 的批准问句取回落句 D415**：M406 只给 vault_patch / vault_create / cli_run 三句
   专句，vault_move / vault_delete 落回落句（工具名进问句）。
 - **删除的终态判据是「文件不在 vault 里」**：底层走系统废纸篓，套件读不到废纸篓内容，因此只断言

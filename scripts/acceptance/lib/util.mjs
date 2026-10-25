@@ -92,3 +92,15 @@ export async function listFiles(dir) {
 export async function rmrf(p) {
   await rm(p, { recursive: true, force: true });
 }
+
+/** 场景动作 / 种子写**隔离配置目录**时的路径纪律（`<envHome>/lumir/<rel>`，唯一判定点）。
+ *
+ *  `envWrite` / `mockFill` / `seed.envFiles` 三处都往隔离配置目录里写，此前各自抄一份
+ *  「相对路径 + 拒绝绝对路径与 `..`」的检查（REVIEW.md「同一语义两处真源」条同族）。收敛到这里：
+ *  写错一处就漏一处——而这条检查是「场景不得写用户 HOME」的唯一闸门，不能靠抄。 */
+export function envRelPath(rel, tag) {
+  if (typeof rel !== "string" || rel === "" || path.isAbsolute(rel) || rel.split(/[\\/]/).includes("..")) {
+    throw new Error(`${tag} 需要相对 <隔离配置>/lumir 的路径（拒绝绝对路径与 ..），收到 ${JSON.stringify(rel)}`);
+  }
+  return rel;
+}

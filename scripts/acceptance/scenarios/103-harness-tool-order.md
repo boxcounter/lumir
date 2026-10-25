@@ -42,10 +42,14 @@ steps:
       - shot: 01-定稿后顺序
       - label: 有序性三判据（整树正则）：ORD1 → 工具行 → ORD2——工具行保持在它发生的
           文本段之前的原位（M374；旧实现工具块挂消息末尾，本正则必红）
+        # 工具参数里的路径自 change add-path-line-range-links 起是可点按钮（`AXButton (…)` 是
+        # 独立节点），不再是「徽章 + 路径」同一段静态文本：`\s*` 跨不过节点标记（`- [193] `），
+        # 故徽章→路径改用跨节点窗口 `[\s\S]{0,200}?`（实测间距 22 字符，见正文「断言口径」）。
         ax:
-          has: '/ORD1-先读文件再回答。[\s\S]*vault_read\s*harness-note\.md[\s\S]*ORD2-最终答案在工具之后。/'
-      - label: 工具行 = 徽章 + 人话化参数（M406 起成功行上屏形态，JSON 原文不上屏）
-        ax: { has: '/vault_read\s*harness-note\.md/' }
+          has: '/ORD1-先读文件再回答。[\s\S]*vault_read[\s\S]{0,200}?AXButton \(harness-note\.md\)[\s\S]*ORD2-最终答案在工具之后。/'
+      - label: 工具行 = 徽章 + 人话化参数（M406 起成功行上屏形态，JSON 原文不上屏；参数里的路径
+          渲染成可点按钮）
+        ax: { has: '/vault_read[\s\S]{0,200}?AXButton \(harness-note\.md\)/' }
       - label: 首轮正文保留（ORD1 与 ORD2 同轮共存）
         ax: { has: "ORD1-先读文件再回答。" }
       - label: JSONL 记下这次工具调用（wire 口径：llm_response 的 tool_calls）
@@ -69,8 +73,17 @@ sealedToolBlocks），定稿按段全量重渲、工具块位置不动。本场�
 
 - **有序性**：`ax.text` 是整棵 AX 树的扁平文本，有序正则 `/ORD1…[\s\S]*vault_read…[\s\S]*ORD2…/`
   一次读取里钉死三段相对位置（REVIEW.md 「断言等价于子串」条的写法：先造必红输入——旧实现工具在
-  ORD2 之后，本正则必红；区分度已自证）。相邻 span 在 AX 树里会被合并、分隔形态不固定，
-  徽章名与参数之间用 `\s*` 容错（M406 口径）。
+  ORD2 之后，本正则必红；区分度已自证）。相邻 span 在 AX 树里会被合并、分隔形态不固定——
+  路径按钮化之前这里用 `\s*` 容错（M406 口径），按钮化之后改用下一节的跨节点窗口（M745）。
+- **工具行的路径是可点按钮，断言不得假设连续文本（M745）**：change `add-path-line-range-links`
+  把工具参数里的路径渲染成 `AXButton (path)`——它与工具徽章**是两个节点**，dump 里中间夹着
+  节点标记（`- [193] `），旧的「`vault_read\s*harness-note\.md`」在同一段静态文本里找相邻串，
+  永远不命中（M743 全量跑的 103/104/111/96 恒红即此，finding
+  `.tower/comms/findings/20261025-worker-provider-docs-checks-oc-bug-103-104-111-path-link.md`）。
+  判据因此改成跨节点窗口 `vault_read[\s\S]{0,200}?AXButton \(harness-note\.md\)`：上界 200
+  只容 2–3 个节点行（M743 现场实测徽章→按钮间距 22 字符），足够吸收 bbox / 索引位数变化，又
+  不会跨到无关区域。**区分度已用 M743 的原始 dump 反向自证**：把该按钮改回「同一段静态文本」的
+  旧形态，新正则必红、旧正则必绿（旧口径的盲区）。
 - **工具行形态**：M406 起成功行 = 工具徽章 + `humanizeToolArgs` 人话化参数（71 号场景同锚），
   参数 JSON 原文不再上屏。
 - **单工具行不折叠**：≥2 行才折叠成摘要钮，本场景恰好 1 行，行本体就是断言锚。

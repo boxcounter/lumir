@@ -8,6 +8,12 @@ config:
   harness:
     provider: mock
     fixture: "$env/subagent-fixtures/notice.json"
+seed:
+  # 模板在起 app 之前预置（M745，口径与 189 同条）：本场景的模板无 `${run_id}`，
+  # 运行期的第二份 envWrite（重启后再投递一段）照旧改写这份副本。
+  envFiles:
+    - path: subagent-fixtures/notice.json
+      from: "$fixtures/subagent-fixtures/notice.json"
 steps:
   - name: 写入定义
     do: vaultWrite
@@ -17,34 +23,6 @@ steps:
       name: research
       description: 通知恢复样本
       ---
-
-  - name: 写入运行期 fixture 模板
-    do: envWrite
-    file: "subagent-fixtures/notice.json"
-    content: |
-      {
-        "version": 1,
-        "responses": [
-          {
-            "text": "放到后台跑。",
-            "tool_calls": [
-              {
-                "id": "call_nr",
-                "name": "task",
-                "arguments": "{\"agent\": \"research\", \"prompt\": \"后台跑\", \"description\": \"后台跑\", \"background\": true}"
-              }
-            ]
-          },
-          {
-            "text": "SGU-CHILD 后台结论。",
-            "delay_ms": 300
-          },
-          {
-            "text": "SGU-PARENT 父会话：后台已启动。"
-          }
-        ],
-        "subrun_span": 1
-      }
 
   - name: ⌘⇧A 打开 harness pane
     do: keys

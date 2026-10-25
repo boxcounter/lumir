@@ -496,6 +496,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `seed.sessions{}` | v1：`{ <id>: { tabs: [...], active } }`；v2（`panes` 给了）：`{ <id>: { panes: [{ tabs, active }], ratio?, harnessPane? } }` | `<隔离配置>/lumir/vault-sessions/<id>.json`。`harnessPane: true`（M349）预置「harness 面板在场」的 v2 会话（ADR 0008 Decision 6 的 `harness_pane` 位，恢复时重新装配面板、内容不持久化）——场景 91 与 96 是样例（91 判布局位、96 判面板内容的恢复渲染） |
 | `seed.harnessFlatSessions[]` | `{ name, vaultRoot? , raw? }`（`name` 须 `*.jsonl`；`vaultRoot` 给 `$vault` / `$vault2` 记号或绝对路径，`raw` 给了就原样落盘） | `<隔离配置>/lumir/harness/sessions/<name>.jsonl`（**旧布局**的平铺留存，场景 125 的现场）：这些文件是「升级前遗留」，产品运行时只按新布局读写（`sessions/<vault 稳定 id>/`），根下平铺的 `*.jsonl` 不参与列举 / 恢复 / 删除；归位由场景动作 `migrateHarnessSessions` 跑一次仓内脚本完成。`vaultRoot` **刻意不做 realpath**（`/tmp/...` vs 注册表里的 `/private/tmp/...`）——脚本的规范化一步因此是承重的（M433） |
 | `seed.harnessSessions[]` | `{ vaultId, name, vaultRoot?, firstUserText?, raw? }`（`vaultId` 须与 `seed.registry` 的某个 `id` 同名；`name` 须 `*.jsonl`；`raw` 给了就原样落盘） | `<隔离配置>/lumir/harness/sessions/<vaultId>/<name>.jsonl`（**新布局**的会话留存）：预置「本 change 之前的旧会话文件」这类只能由磁盘状态表达的现场（场景 165 的旧文件回落）。缺省合成 `session_open` + 一条问答（**没有** `session_title` 记录）；`vault_root` 走 `resolveSeedPath` 且不做 realpath（归属判据是逐字比较） |
+| `seed.envFiles[]` | `{ path, from }`：`path` 相对 `<隔离配置>/lumir`（与 `envWrite` / `mockFill` 同一判定点 `envRelPath`，拒绝绝对路径与 `..`）；`from` 是仓库 fixture（场景里通常写 `$fixtures/...`） | 把 `from` 的内容**预置**到 `<隔离配置>/lumir/<path>`（M745）。给「`config.harness.fixture` 指向运行期才会被改写的副本」这类场景用：`config` 在 `launchApp()` 之前就要读一遍 fixture，模板晚到（由运行期第一个 `envWrite` 写）在干净 `env/` 下会 ENOENT、整场 INVALID——189/190/191/206 的现场。预置之后 `mockFill` 照旧就地替换副本里的 `${run_id}`，仓库 fixture 原文不动。`from` 读不到即抛（不静默跳过）；`--check` 也挡「`from` 指向的文件不存在」 |
 | `seed.bulkVault` | `true` 或 `{ markdown?, files?, dirs?, mdBytes?, maxMdBytes?, ignoredMd?, ignoredDirs?, lazyDirs? }` | **生成**到验收 vault（`$vault`）里（M283）：复刻真实 vault 的 scan-visible 形状——默认 `2142` 文件 / `426` 目录 / `1341` 个 md / ≈`7MB`、行长正常（约 78 字符/行，含标题与 wikilink）、根下带一个 `node_modules`（验证默认 `lazy` 档出惰性行）。前六个参数与 Rust 侧读数 harness（`src-tauri/tests/vault_open_readings.rs`）同形状，**改形状时两边一起改** |
 | ↑ 的两类忽略探针（M296，change `vault-open-ignore-set`） | `ignoredDirs: { <根下目录名>: <md 条数> }`（默认 `lazy` 档的构建产物族）；`lazyDirs: { gitignore: [...], gitignoreNegations: [...], exclude: [...] }`（用户规则：写根 `.gitignore` / 根 `.git/info/exclude`，各目录带一个 `tutorial.md`，正文含 marker「本地教程正文」） | 只服务**可见性判据**（场景 67），不参与任何读数口径，因此**只在 JS 侧**——Rust 读数 harness 不生成它们。探针一律落在 vault **根**下：树的默认态才断得到「这一行在不在」（`ignoredDirs` 命中默认 `lazy` 档 ⇒ 出惰性行；`lazyDirs` 命中用户规则 ⇒ **行在树里**、展开才枚举）。默认不生成，既有调用方（如场景 60 的 `bulkVault: {}`）逐字节不变 |
 
@@ -728,6 +729,10 @@ id 并入——同一场景取最近一次 run 的行（表里的 `跑于` 列�
 
 Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `shots/`。手感项只看截图。
 `status.txt` 写 `INVALID` 的场景是**本次运行无效**（基建错误，见「退出码」），它的红不代表产品问题。
+头部那一行的计数按 **PASS / FAIL / INVALID 三态分列**（M745），与 `results.json` 逐条计数一致：
+此前用 `status !== "PASS"` 把 INVALID 并进 FAIL（M743 全量跑的头部写「FAIL 31」而 JSON 实为
+FAIL 24 / INVALID 7，finding `20261025-worker-archive-model-settings-improve-summary-md-invalid-fail-results-json-readme.md`）；
+INVALID 为 0 时该项省略。台账判据在 `lib/evidence.test.mjs`。
 
 ## 已知边界（写清楚，别当成 bug 去追）
 
@@ -757,7 +762,20 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   模型 chip 都在此列），`role="menuitemradio"` 的项也不一定映射 `AXButton`。`click` 的 target
   对这类控件**不要锁 `role: AXButton`**——只给裸正则源 `name`（`findNode` 对 title/label/value
   逐一匹配）；同名钮消歧优先用 role 分流（如场景 92：会话名钮是 AXPopUpButton、新建钮是
-  AXButton），其次才用 `nth`（DOM 序与 dump 序同源但脆）。
+  AXButton），其次才用 `nth`（DOM 序与 dump 序同源但脆）。**动作面不锁 role、语义面单独钉**
+  （M745，场景 220 的收口形态）：需要证明「这个控件是什么」时写一条 `ax.has
+  '/AXPopUpButton \(vault：…（点击查看全部 vault）\)/'`，动作的 `target` 仍只给 `any`——
+  锁死 popup role 会把同一批动作绑在映射细节上，下一次映射变化就整批红。
+- **工具行的参数路径是可点按钮，整树断言不得假设连续文本（M745，change
+  `add-path-line-range-links` 的验收面）**：工具参数里的文件路径渲染成 `AXButton (…)` 节点，
+  与工具徽章（`AXStaticText` 里的 `vault_read` / `vault_create` / `vault_move` 字样）**分属两个
+  节点**，dump 里中间夹着节点标记（`- [193] `）——因此 `/vault_read\s*harness-note\.md/` 这类
+  「同一段静态文本里相邻」的正则恒不命中（M743 全量跑的 96/103/104/111 恒红，
+  finding `20261025-worker-provider-docs-checks-oc-bug-103-104-111-path-link.md`）。判据写成
+  跨节点窗口：`/vault_read[\s\S]{0,200}?AXButton \(harness-note\.md\)/`——上界只容 2–3 个节点行
+  （实测间距 22–94 字符），既吸收 bbox / 索引位数变化，又不会跨到无关区域。**同一场景里 live 与
+  恢复两条渲染路径的形态可能不同**（96 的实证：live 时路径仍与徽章同段，恢复后才是按钮），
+  两条断言各按各的形态写，不要合成一条「两种都接受」的宽松正则——那会让退化形态静默通过。
 - **`aria-expanded` / `aria-checked` 不进 AX 文本（M364 实证，2026-10-07）**：KimiCU 的 AX
   dump 只给 role + 可访问名（+ `Value:`/`help`/`actions`），**不暴露展开态与选中态**——带
   `aria-expanded` 的钮（模型 chip、思考 chip、浮层项）与 `aria-checked` 的 `menuitemradio`
@@ -1246,6 +1264,7 @@ node scripts/acceptance/coverage.mjs --check   # 只校验（生成一致性 + �
 ```bash
 node --test scripts/acceptance/lib/execute.test.mjs
 node --test scripts/acceptance/lib/app.test.mjs   # app.mjs 的纯函数：实例扫描 / 游离实例归属 / bundle 身份
+node --test scripts/acceptance/lib/evidence.test.mjs  # summary.md 头部的三态计数（INVALID 不并进 FAIL）
 node --test scripts/acceptance/coverage.test.mjs  # 覆盖表生成器 / 检查器的必红反向测试
 ```
 
@@ -1264,5 +1283,8 @@ composer」「只剩 AXWebArea 焦点」两份坏态必须判失败；「编辑�
 成 false）。
 `app.test.mjs`（M619 / M622）钉
 游离实例的三条归属（本次 pid / 同路径第二份副本 / pid 未知时的路径回退）与 bundle 身份门（产物 =
-产品 id、产物 = 别的 id 都必须红）。两者**不进 gate**，与 `scripts/migrate-harness-sessions.test.mjs`
-同例（跑法写在文件头）。
+产品 id、产物 = 别的 id 都必须红）。`evidence.test.mjs`（M745）钉证据索引头部的三态计数：
+INVALID（本次运行无效）不得并进 FAIL——拿一份「2 PASS / 1 FAIL / 1 INVALID」的输入，头部必须写
+`FAIL 1`（旧口径 `status !== "PASS"` 在这份输入上写 `FAIL 2`），跨 run 合并后的累计行同样三态；
+INVALID 为 0 时整项省略（既有小样本头部逐字不变）。三者**不进 gate**，与
+`scripts/migrate-harness-sessions.test.mjs` 同例（跑法写在文件头）。

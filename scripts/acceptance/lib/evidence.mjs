@@ -102,6 +102,12 @@ function safe(s) {
  * 合并口径：同一 id 取**本次**的行（该场景的最新一次结果），其余 id 保留上一次的行，顺序按
  * 「先出现者在先」（Map 语义：改已存在的键不挪位置）。每行带 `at`（该场景最近一次跑的时间），
  * 让「这一行是哪次跑的」在索引里可读——这是把陈旧读数与本次读数分辨开的唯一线索。
+ *
+ * **头部三态分列（M745）**：PASS / FAIL / INVALID 各计各的，INVALID 不并进 FAIL。它是「本次运行
+ * 无效」（基建错误，README「退出码」节），`run.mjs` 的收尾结论与 `results.json` 都按三态记账，
+ * 头部此前却用 `status !== "PASS"` 当 FAIL——M743 全量跑的头部写「FAIL 31」而 JSON 实为
+ * FAIL 24 / INVALID 7（finding `20261025-worker-archive-model-settings-improve-summary-md-invalid-fail-results-json-readme.md`）。
+ * INVALID 为 0 时省略该项，既有小样本 run 的头部逐字不变。台账判据见 `evidence.test.mjs`。
  */
 export async function writeSummary(root, results) {
   const prev = await readResults(root);
@@ -114,13 +120,11 @@ export async function writeSummary(root, results) {
     (r) =>
       `| ${r.id} | ${r.title} | ${r.status} | ${r.asserts} | ${r.failed} | ${r.seconds.toFixed(1)}s | ${fmtAt(r.at)} |`,
   );
-  const pass = merged.filter((r) => r.status === "PASS").length;
   const md = [
     `# 真机验收执行报告（索引更新于 ${at}）`,
     "",
-    `本次 run ${results.length} 个场景（PASS ${results.filter((r) => r.status === "PASS").length}、` +
-      `FAIL ${results.filter((r) => r.status !== "PASS").length}）；索引累计 ${merged.length} 个场景：` +
-      `PASS ${pass}、FAIL ${merged.length - pass}。`,
+    `本次 run ${results.length} 个场景（${statusTallyText(results)}）；索引累计 ${merged.length} 个场景：` +
+      `${statusTallyText(merged)}。`,
     "",
     "同一场景多次跑只保留**最近一次**的行；`跑于` 是该场景最近一次跑的时间（同一天多次 run 共用本目录）。",
     "",
@@ -141,6 +145,17 @@ function fmtAt(at) {
   if (!at) return "—";
   const m = /T(\d\d:\d\d)/.exec(at);
   return m ? m[1] : at;
+}
+
+/** 头部用的三态计数文案（PASS / FAIL / INVALID 分列）。
+ *
+ *  `PASS` 与 `INVALID` 各自成档，**其余一律记 FAIL**（`run.mjs` 只产这三种状态；这条兜底只为
+ *  让未知值不被静默吞掉，与旧口径 `status !== "PASS"` 的记账方向一致）。INVALID 为 0 时整项
+ *  省略——`PASS 2、FAIL 0` 这样的既有小样本头部因此逐字不变。 */
+function statusTallyText(rows) {
+  const counts = { PASS: 0, FAIL: 0, INVALID: 0 };
+  for (const r of rows) counts[r.status === "PASS" || r.status === "INVALID" ? r.status : "FAIL"] += 1;
+  return `PASS ${counts.PASS}、FAIL ${counts.FAIL}${counts.INVALID ? `、INVALID ${counts.INVALID}` : ""}`;
 }
 
 /** 上一次的索引（缺文件 / 读不动都当空——首次跑或人工删过都不该让本次 run 失败）。 */

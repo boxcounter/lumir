@@ -11,6 +11,9 @@ steps:
     expect:
       - label: 树头部入口在场（已装载 vault）
         ax: { has: "点击查看全部 vault" }
+      - label: vault 入口的 AX role = AXPopUpButton（M745：自带 aria-haspopup 的钮在 WKWebView 里
+          不是 AXButton，见 README「已知边界」的 aria-haspopup 条；下面各步的 target 因此不锁 role）
+        ax: { has: '/AXPopUpButton \(vault：lumir-m102-acceptance（点击查看全部 vault）\)/' }
       - label: 树里有 fixture 行
         ax: { has: "sidebar-probe.md" }
       - label: 文档已打开（marker 在场）
@@ -56,7 +59,7 @@ steps:
         # .ft-header 内边距 16+12）。236 → ≈192、316 → ≈272：240 这条下限有区分度。
         # painted 段另证「这块区域真的有字形」（不是被祖先裁掉的空盒子）。
         geom:
-          target: { role: AXButton, any: "点击查看全部 vault" }
+          target: { any: "点击查看全部 vault" }
           minWidth: 240
           minHeight: 12
           painted: { min: 60 }
@@ -64,7 +67,7 @@ steps:
 
   - name: 打开根菜单后按 ⌘B：侧栏收起、菜单关闭、焦点回到文档
     do: click
-    target: { role: AXButton, any: "点击查看全部 vault", button: right }
+    target: { any: "点击查看全部 vault", button: right }
     expect:
       - label: 根菜单在场（本 change 新增的入口）
         ax: { has: "新建文件…" }
@@ -105,7 +108,7 @@ steps:
         ax: { has: "sidebar-probe.md" }
       - label: 宽度仍是拖出来的值（token 未被收起改写）：入口包围盒宽 > 240
         geom:
-          target: { role: AXButton, any: "点击查看全部 vault" }
+          target: { any: "点击查看全部 vault" }
           minWidth: 240
           minHeight: 12
           painted: { min: 60 }
@@ -123,13 +126,13 @@ steps:
         ax: { has: "点击查看全部 vault" }
       - label: 宽度仍是 ≈ 316（宽度持久化与收起不持久化是两条独立口径）
         geom:
-          target: { role: AXButton, any: "点击查看全部 vault" }
+          target: { any: "点击查看全部 vault" }
           minWidth: 240
           minHeight: 12
 
   - name: vault 根右键：树头部弹出根级菜单（只有两条新建项）
     do: click
-    target: { role: AXButton, any: "点击查看全部 vault", button: right }
+    target: { any: "点击查看全部 vault", button: right }
     expect:
       - label: 菜单里有「新建文件…」
         ax: { has: "新建文件…" }
@@ -174,7 +177,7 @@ steps:
 
   - name: 根下新建子目录：输入 new-folder-probe 并回车
     do: click
-    target: { role: AXButton, any: "点击查看全部 vault", button: right }
+    target: { any: "点击查看全部 vault", button: right }
     expect:
       - label: 根菜单再次在场
         ax: { has: "新建子目录…" }
@@ -211,6 +214,19 @@ teardown:
 ---
 
 ## 已知边界（如实登记，不包装成覆盖）
+
+- **vault 入口的 AX role 是 `AXPopUpButton`，不是 `AXButton`（M745）**：入口带
+  `aria-haspopup="menu"`（多 vault 切换器），WKWebView 把它映射成 `AXPopUpButton`——旧 target
+  `{ role: AXButton, any: "点击查看全部 vault" }` 因此在 M743 全量跑里找不到节点：那一跑本场景
+  19 条 FAIL 里有 6 条是入口节点定位直接落空（3 条宽度几何 + 3 处以入口为 target 的根右键 /
+  根菜单动作），其余 13 条是它们的连带（焦点没交回文档、根下新建的前置没建立）。M745 修后同一
+  场景入口相关的 6 条全部转 PASS（证据 `.local/acceptance/2026-10-25-m745/run2/220-…/steps.md`）；
+  残余 10 条属**另一族**——行内输入框 `typeInNode` 注入中 AX 目标消失、⌘Z 只回退一部分，与
+  32 / 47 / 52 同形态（M743 评审已归到键盘注入 / `src/tree.ts` 的 AX 重挂），不在本场景的 role
+  判据内。现在两步走：**语义面**由首步的一条 `ax.has '/AXPopUpButton \(vault：…\)/'` 正向钉住
+  role；**动作面**的 target 一律不锁 role（只给 `any`）——README「已知边界」的 aria-haspopup 口径
+  正是「不要锁 `role: AXButton`」，锁死 popup role 会让下一次映射变化再把同一批动作打红。同一条
+  口径的先例：场景 17 / 19 / 26 / 48 的同一入口 target 早已只写 `any`。
 
 - **拖拽通道精度**：dx 是窗口局部点，CGEvent 通道有 ±1–2px 抖动；侧栏宽度是 1× 位移（不是栏宽
   的 2×），因此抖动不被放大，断言仍留 ±4px 的区间（`3(1[2-9]|2[0-8])` = 312–328）。精确值

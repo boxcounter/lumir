@@ -12,7 +12,7 @@ import { appendFileSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { cp, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CuError } from "./cu.mjs";
-import { envHome, exists, InfraError, log, mkdirp, readText, repoRoot, secondVaultDir, sleep, stripAnsi, vaultDir } from "./util.mjs";
+import { envHome, envRelPath, exists, InfraError, log, mkdirp, readText, repoRoot, secondVaultDir, sleep, stripAnsi, vaultDir } from "./util.mjs";
 
 /**
  * 验收副本的 bundle id（M622，Alex 2026-10-21 裁决的 B 方案）：构建期用 `tauri build --config`
@@ -900,7 +900,7 @@ function resolveSeedPath(p) {
  *  `legacyRegistry`（M248）写进**旧名**目录 `workspaces/`，供迁移场景 48 构造「升级前现场」，
  *  与其他块同一时点、同一纪律。 */
 export async function prepareSeed(seed) {
-  const written = { registry: [], legacyRegistry: [], sessions: [], harnessFlat: [], harnessSessions: [], bulkVault: null };
+  const written = { registry: [], legacyRegistry: [], sessions: [], harnessFlat: [], harnessSessions: [], envFiles: [], bulkVault: null };
   if (!seed) return written;
   // 复刻真实形状的批量内容（M283）：先重置（调用方已做）再生成，之后才是注册表 / 会话
   // ——会话里的路径必须指向真实存在的文件，否则恢复时会按「不在 vault 内」跳过。
@@ -947,7 +947,40 @@ export async function prepareSeed(seed) {
   for (const e of seed.harnessSessions ?? []) {
     written.harnessSessions.push(await writeHarnessSession(e));
   }
+  for (const e of seed.envFiles ?? []) {
+    written.envFiles.push(await writeSeedEnvFile(e));
+  }
   return written;
+}
+
+/**
+ * 把一份**仓库 fixture** 预置进隔离配置目录（`<env>/lumir/<path>`），**起 app 之前**（M745）。
+ *
+ * 为什么必须有它：`config.harness.fixture` 在 `launchApp()` 之前就会被 `materializeMockFixture`
+ * 读一遍（`writeConfig` 的时刻记号展开），而子代理 resume / 通知恢复四条场景的模板要带运行期才
+ * 产生的 `${run_id}`——模板原本由场景**自己的第一个 `envWrite` 步骤**写入，那一步在起 app 之后：
+ * 干净 `env/` 下启动即 ENOENT，整场 INVALID；只有共享 env 里残留上一次运行的文件时才「通过」
+ * （M743 全量跑的 189/190/191/206，finding
+ * `.tower/comms/findings/20261025-worker-provider-docs-checks-oc-bug-189-190-191-mock-fixture-env-invalid.md`）。
+ * 预置把「初始状态」挪回 front-matter 该在的位置（与 `seed.registry` / `seed.sessions` 同一语义），
+ * `mockFill` 之后照旧就地改这份副本，仓库 fixtures 原文不动。
+ *
+ * `path` 走 `envRelPath`（与 `envWrite` / `mockFill` 同一判定点）；`from` 是仓库 fixture 路径，
+ * 场景里通常写 `$fixtures/...`（加载期已换成绝对路径）。**源文件读不到即抛**——不静默跳过，
+ * 跳过就等于回到「靠残留文件通过」的老现场。
+ */
+export async function writeSeedEnvFile({ path: rel, from }) {
+  const safeRel = envRelPath(rel, "seed.envFiles");
+  const target = path.join(envHome(), "lumir", safeRel);
+  let content;
+  try {
+    content = await readText(from);
+  } catch (e) {
+    throw new Error(`seed.envFiles 的源文件读不到：${from}（${e.code ?? e.message}）——预置源必须是仓库 fixtures 里的文件`);
+  }
+  await mkdirp(path.dirname(target));
+  await writeFile(target, content);
+  return target;
 }
 
 /**
