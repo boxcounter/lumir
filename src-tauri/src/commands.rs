@@ -567,16 +567,15 @@ pub fn write_last_vault(root: &Path) -> Result<(), CommandError> {
 }
 
 /// 指定配置文件路径的写回（可测：不依赖真实配置目录）。
+///
+/// **读在锁内**（change add-model-automation-settings-oct24 task 2.9）：旧实现先宽容读、再
+/// 取 [`config::CONFIG_WRITE_LOCK`] 落盘，两个写者会各自读到旧版本并互相顶掉（丢键）。现在
+/// 整段读—改—写走同一把锁与同一个原子写（`update_json_atomic`），不新增第二套实现。
 pub(crate) fn write_last_vault_to(path: &Path, root: &Path) -> Result<(), CommandError> {
-    let mut value = read_config_json(path);
-    merge_last_vault(&mut value, root);
-    config::write_json_atomic(path, &value)
-}
-
-/// 应用侧写 config.json 的共用读入：单一实现在 [`config::read_config_json`]（change
-/// add-cron-conversational-registration 让新的「读—改—写同锁」入口复用同一份宽容读入）。
-fn read_config_json(path: &Path) -> serde_json::Value {
-    config::read_config_json(path)
+    config::update_json_atomic(path, |value| {
+        merge_last_vault(value, root);
+        Ok(())
+    })
 }
 
 /// version 的写入纪律（merge_last_vault / merge_ui_value / [`config::update_json_atomic`]
@@ -1862,11 +1861,21 @@ mod tests {
         let file = TempFile::new(
             r#"{"version":1,"last_vault":"/tmp/vault","ui":{"content_width":920},"future_field":7}"#,
         );
+        // 先落一个合法的 mock 条目，再写 active id：provider 映射化之后，active 只在
+        // 指向映射内条目时生效（悬空会回退 + warning）。
+        write_config_value_to(
+            &file.0,
+            "harness",
+            "providers.mock",
+            &serde_json::json!({"preset": "mock", "fixture": "/tmp/fixture.json"}),
+        )
+        .expect("写回 provider 条目");
         write_config_value_to(&file.0, "harness", "provider", &serde_json::json!("mock"))
             .expect("写回 provider");
 
         let snap = config::load_from(&file.0);
-        assert_eq!(snap.config.harness.provider, config::HarnessProvider::Mock);
+        assert_eq!(snap.config.harness.provider, "mock");
+        assert!(snap.config.harness.providers["mock"].configured);
         assert!(
             snap.warnings.is_empty(),
             "写回产物必须是干净配置：{:?}",

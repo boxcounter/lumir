@@ -12,15 +12,15 @@
 
 ## 2. 配置 schema 与迁移（Rust）
 
-- [ ] 2.1 删除 `HarnessProvider` 枚举与 `HarnessProviders` 固定三字段：`HarnessConfig.provider` 改为 `String`（active id）、`providers` 改为 `BTreeMap<String, HarnessProviderConfig>`；`HarnessMockConfig.fixture` 并入统一条目（`preset = mock`），独立结构删除
-- [ ] 2.2 新增 `ProviderPreset { Kimi, Deepseek, Generic, Mock }` 与条目 schema（`preset` 必需、`fixture` 仅 mock）；`RawHarnessProviders` 改为「对象 → 逐条解析」，条目级宽容（非法条目只丢自己 + 点名 warning，不拖垮整文件）
-- [ ] 2.3 实现 `configured` 派生读数（mock / generic / kimi / deepseek 四条判据）与 active 解析 / 默认回退（显式优先、configured 优先、预设顺序、空映射、悬空 + warning）
-- [ ] 2.4 两张命名表的 `provider` 从枚举改为 id：目标在映射内即用，悬空回落 active + warning；`model` 覆盖仍按目标 provider 的清单校验（会话命名回落、图片命名保留值 + 资格闸）
-- [ ] 2.5 一次性迁移：旧三档条目补 `preset`（显式值不覆盖、未知 id 不迁移、幂等），与退役 model 迁移合并为同一次原子写；写失败只 warning、内存值仍生效
-- [ ] 2.6 能力读取 `model_specs` / `context_window` / `effort_supported` / `wire_api` / `vision_supported` 改为按 id 查条目；未命中走既有保守默认（空清单 / `FALLBACK_CONTEXT_WINDOW` / 不支持）
-- [ ] 2.7 `validate()` 的 warning 生产改为结构化诊断（`ConfigDiagnostic { code, path, severity, message }`），`ConfigSnapshot.warnings` 由诊断的 `message` 派生、文案逐字不变；建立阻断级词表（含 provider id / preset / 删除引用 / 命名目标）
-- [ ] 2.8 新增严格读 + `update_json_atomic_strict`（与既有原子写共用锁与 `write_file_atomic`）；文件不可解析时返回解析错误而非按 `{}` 处理
-- [ ] 2.9 把 `write_config_value_to` / `write_last_vault_to` 改为在 `update_json_atomic` 闭包内读—改—写，关闭「读发生在取锁之前」的丢更新窗口
+- [x] 2.1 删除 `HarnessProvider` 枚举与 `HarnessProviders` 固定三字段：`HarnessConfig.provider` 改为 `String`（active id）、`providers` 改为 `BTreeMap<String, HarnessProviderConfig>`；`HarnessMockConfig.fixture` 并入统一条目（`preset = mock`），独立结构删除
+- [x] 2.2 新增 `ProviderPreset { Kimi, Deepseek, Generic, Mock }` 与条目 schema（`preset` 必需、`fixture` 仅 mock）；`RawHarnessProviders` 改为「对象 → 逐条解析」，条目级宽容（非法条目只丢自己 + 点名 warning，不拖垮整文件）
+- [x] 2.3 实现 `configured` 派生读数（mock / generic / kimi / deepseek 四条判据）与 active 解析 / 默认回退（显式优先、configured 优先、预设顺序、空映射、悬空 + warning）
+- [x] 2.4 两张命名表的 `provider` 从枚举改为 id：目标在映射内即用，悬空回落 active + warning；`model` 覆盖仍按目标 provider 的清单校验（会话命名回落、图片命名保留值 + 资格闸）
+- [x] 2.5 一次性迁移：旧三档条目补 `preset`（显式值不覆盖、未知 id 不迁移、幂等），与退役 model 迁移合并为同一次原子写；写失败只 warning、内存值仍生效
+- [x] 2.6 能力读取 `model_specs` / `context_window` / `effort_supported` / `wire_api` / `vision_supported` 改为按 id 查条目；未命中走既有保守默认（空清单 / `FALLBACK_CONTEXT_WINDOW` / 不支持）
+- [x] 2.7 `validate()` 的 warning 生产改为结构化诊断（`ConfigDiagnostic { code, path, severity, message }`），`ConfigSnapshot.warnings` 由诊断的 `message` 派生、文案逐字不变；建立阻断级词表（含 provider id / preset / 删除引用 / 命名目标）
+- [x] 2.8 新增严格读 + `update_json_atomic_strict`（与既有原子写共用锁与 `write_file_atomic`）；文件不可解析时返回解析错误而非按 `{}` 处理
+- [x] 2.9 把 `write_config_value_to` / `write_last_vault_to` 改为在 `update_json_atomic` 闭包内读—改—写，关闭「读发生在取锁之前」的丢更新窗口
 
 ## 3. 设置写通道（Rust）
 
@@ -36,13 +36,13 @@
 
 ## 4. 运行时消费者
 
-- [ ] 4.1 `harness/llm.rs`：`preset` 改为按 `ProviderPreset` 查表；`client_at` / `network_client` / `title_client` / `naming_client` 改为按 id 查条目；`store:false` 按预设；generic 空 Key 不发送 Authorization 头
-- [ ] 4.2 `harness/llm.rs::active_model` 改为按 active id 查条目（mock 返回空串，不再借 kimi 的 model）；`turn.rs` 的 ctx% 窗口读取随之走 `context_window` 的保守默认
-- [ ] 4.3 `harness.rs::with_model_override` 改写 `providers.<active>.model`；cron / 子代理的模型覆盖校验按 active 条目
-- [ ] 4.4 `harness/scheduler.rs` 的 provider 闸键从 `&'static str` 改为 `String`（动态 id），测试 introspection 同步
-- [ ] 4.5 mock 判定统一为「条目 `preset == Mock`」：`harness/subagents.rs`、`harness/agents.rs`、`attachment_naming.rs` 三处条件与错误文案
-- [ ] 4.6 `harness/turn.rs` 的 `session_open.provider` 仍是 id 字符串（形状不变）；恢复路径不按枚举解析历史值；`harness.rs` 每回合现读配置的路径不变
-- [ ] 4.7 发送期缺失态：无 active provider → `harness_provider_missing`；generic 缺 base_url → `harness_base_url_missing`；kimi / deepseek 缺 Key → `harness_api_key_missing`（文案指向设置）
+- [x] 4.1 `harness/llm.rs`：`preset` 改为按 `ProviderPreset` 查表；`client_at` / `network_client` / `title_client` / `naming_client` 改为按 id 查条目；`store:false` 按预设；generic 空 Key 不发送 Authorization 头
+- [x] 4.2 `harness/llm.rs::active_model` 改为按 active id 查条目（mock 返回空串，不再借 kimi 的 model）；`turn.rs` 的 ctx% 窗口读取随之走 `context_window` 的保守默认
+- [x] 4.3 `harness.rs::with_model_override` 改写 `providers.<active>.model`；cron / 子代理的模型覆盖校验按 active 条目
+- [x] 4.4 `harness/scheduler.rs` 的 provider 闸键从 `&'static str` 改为 `String`（动态 id），测试 introspection 同步
+- [x] 4.5 mock 判定统一为「条目 `preset == Mock`」：`harness/subagents.rs`、`harness/agents.rs`、`attachment_naming.rs` 三处条件与错误文案
+- [x] 4.6 `harness/turn.rs` 的 `session_open.provider` 仍是 id 字符串（形状不变）；恢复路径不按枚举解析历史值；`harness.rs` 每回合现读配置的路径不变
+- [x] 4.7 发送期缺失态：无 active provider → `harness_provider_missing`；generic 缺 base_url → `harness_base_url_missing`；kimi / deepseek 缺 Key → `harness_api_key_missing`（文案指向设置）
 
 ## 5. 前端
 

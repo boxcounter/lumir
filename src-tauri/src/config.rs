@@ -6,10 +6,13 @@
 //! - 校验：逐字段校验，非法值落回该字段默认值并附人话 warning；
 //!   整文件不是合法 JSON 时才整体落回默认配置。
 //! - 未知字段忽略（向前兼容：新版写入的字段旧版读取不报错）。
-//! - 退役值迁移（M365，M381 改目标）：`harness.providers.kimi.model` 命中 [`RETIRED_KIMI_MODEL`]
-//!   时改写为该 provider **已声明 models 清单的首项 id**（模型名一律来自配置，不内置替补值）
-//!   并落盘——这是本模块唯一的**写**副作用，只改那一个字符串，其余键（含未知字段）逐键保留；
-//!   清单未声明任何模型时不改写、不伪造，只给一条人话 warning。
+//! - 装载期的**写**副作用只有一次性迁移，两条串在同一份 JSON 上、最多写盘一次（都幂等、
+//!   都只改自己负责的键、其余键与未知字段逐键保留）：
+//!   ① `harness.providers` 的旧条目（`kimi` / `deepseek` / `mock`）缺 `preset` 时补齐
+//!   （change add-model-automation-settings-oct24 §3.1，显式值不覆盖、未知 id 不迁移）；
+//!   ② `harness.providers.kimi.model` 命中 [`RETIRED_KIMI_MODEL`] 时改写为该条目**已声明
+//!   models 清单的首项 id**（M365，M381 改目标；模型名一律来自配置，不内置替补值）。
+//!   写失败只多一条 warning、不阻断加载（本次生效值已按改写后的形态给出，下次加载再试）。
 //!
 //! ## keys 表（M132）：形状校验在此，命令 id 校验在前端
 //!
@@ -58,13 +61,20 @@
 //!
 //! ## harness 表（change add-harness-probe §11，M301）
 //!
-//! `{"harness": {"provider": "kimi" | "deepseek" | "mock", "providers": {…},` +
+//! `{"harness": {"provider": "<provider id>", "providers": {…},` +
 //! `"permissions": {"allow": [], "deny": []}, "permission_mode": "vault_write",` +
 //! `"loop_max": 50, "warn_ctx_pct": 85, "auto_compact": true}}`——对话运行时（harness）的配置面，
 //! 取值模板与 `editor` / `ui` 同路：表内字段缺失 → 默认（不告警）；闭集合取值非法 → 回落
 //! 默认 + 人话 warning（ADR 0002 §5：非法配置不导致启动失败）；表内字段**类型不符**
 //! （`"loop_max": "50"`）与整表错形状（`"harness": "kimi"`）都在 serde 解析期失败 →
 //! **整文件回落**（与 `editor.font_size` / `ui.content_width` 同路，不发明逐字段类型容忍）。
+//!
+//! `provider` 是 **active provider id**，`providers` 是**以稳定 id 为键的映射**（change
+//! add-model-automation-settings-oct24 §2.1）：条目的协议行为由自己的 `preset`
+//! （`kimi` / `deepseek` / `generic` / `mock`）决定，**不由 id 猜**；id 创建后不可改。
+//! 条目级宽容：单个条目形状非法只丢该条 + 点名 warning，MUST NOT 拖垮整份配置（`providers`
+//! 整键不是对象才走整文件回落）。active 解析 / 默认回退见 [`resolve_active_provider`]：
+//! 显式优先（未配置也不换）→ 第一个 configured → 预设顺序 → 空；`mock` 不参与缺省回退。
 //!
 //! `permissions.allow` / `deny` 是**逐项**校验的例外（与 `vault.rule_files` 同形）：清单元素
 //! 收成 `serde_json::Value` 再逐项判定，非法项丢弃并各给一条 warning，其余项照常生效——一项
@@ -74,8 +84,9 @@
 //!
 //! `api_key` 明文（Alex 裁决点 2）：自用探针期威胁模型低（单机、本人），配置即数据要求人可读
 //! 可改；Revisit 点（任何对外发布动作前改系统钥匙串）记在 ADR 0007 的出域口径里。
-//! 空 `api_key` = 未配置（出厂状态），不是笔误，因此**不告警**；`model` / `base_url` /
-//! `mock.fixture` 的空串是显式的空值输入，回落默认 + warning。
+//! 空 `api_key` = 未配置（出厂状态），不是笔误，因此**不告警**（generic 预设还允许它为空 =
+//! 不发 `Authorization` 头）；`model` / `base_url` / `fixture` 的空串是显式的空值输入，
+//! 回落默认 + warning。
 //!
 //! M373 起 `[harness].providers.<id>` 暴露 **model 维度**：`models` 清单逐项 =
 //! `{ "id": "k3-256k", "effort": true, "vision": true, "window": 262144 }`（effort = 是否支持
@@ -91,7 +102,8 @@
 //!
 //! 会话自动命名（change add-session-auto-naming）的配置面是 `[harness].session_naming` 表：
 //! `enabled`（bool，默认 `true`，关闭后不发起任何命名调用）、`provider`（可选 provider id，
-//! 缺省 = 会话当前 provider；闭集合外取值回落缺省 + 人话 warning）与 `model`（可选模型，
+//! 缺省 = 会话当前 provider；不在 `providers` 映射内的 id 回落缺省 + 人话 warning）与
+//! `model`（可选模型，
 //! 须在**选定 provider** 的 `models` 清单内声明，未声明回落该 provider 的生效模型 + warning；
 //! mock 是 fixture 驱动档，没有模型清单，该键只能是 null）。**2026-10-18 配置面重塑**：原
 //! `auto_title` / `title_provider` / `providers.<id>.title_model` 三处旧键已废除，按未知键口径
@@ -599,43 +611,97 @@ pub const RETIRED_KIMI_MODEL: &str = "kimi-k2";
 // 窗口数值一律只从 `[harness].providers.<id>.models` 读取，本模块不再持有任何内置
 // 模型清单或出厂模型常量（llm.rs 的窗口表与 thinking.rs 的能力判定已退役为 schema 读取）。
 
-/// 对话 provider 三档（change add-harness-probe §11）：`kimi` / `deepseek` 均 OpenAI 兼容契约，
-/// `mock` 是验收专用的 fixture 驱动档（真机验收不依赖真实外部 API）。**闭集合**：取值校验在
-/// Rust 侧完成，运行时拿到的必是三档之一（与 `UiTheme` / `EditorMode` / `LogLevel` 同一形态）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+/// provider 预设四档（change add-model-automation-settings-oct24 design §2.2）：**行为由 preset
+/// 决定，不由 id 猜**——id 叫 `kimi` 不代表协议是 kimi。
+///
+/// **闭集合**：取值校验在 Rust 侧完成（与 `UiTheme` / `PermissionMode` 同一形态）；条目声明
+/// 闭集合外的预设时整条忽略（猜错协议比丢弃更危险，design §2.1）。
+///
+/// 变体顺序即规范顺序（`kimi` → `deepseek` → `generic` → `mock`）：列表展示、active 回退与
+/// revision 遍历共用它，因此 `Ord` 的派生顺序承载语义，MUST NOT 重排。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../src/bindings/")]
-pub enum HarnessProvider {
+pub enum ProviderPreset {
+    /// 官方 Kimi 端点：要求 Key；`responses` / `chat_completions` 两档；Responses 发送 `store:false`。
     Kimi,
+    /// 官方 DeepSeek 端点：要求 Key；v1 只实现 `responses`。
     Deepseek,
+    /// 任意 OpenAI 兼容端点（本地 Ollama / LM Studio、公司网关）：Base URL 必填才可用；
+    /// 允许空 Key（空 = 不发 `Authorization` 头）；缺省 wire 是 `chat_completions`。
+    Generic,
+    /// 验收专用的 fixture 驱动档（保留 id `mock`）：不经过 HTTP，wire 不消费。
     Mock,
 }
 
-impl HarnessProvider {
-    /// 配置字面量（config.json 的 `harness.provider` / `harness.session_naming.provider` /
-    /// `harness.attachment_naming.provider` 取值；也是校验 warning 文案的取值表来源，避免
-    /// 第二处真源）。
+impl ProviderPreset {
+    /// 配置字面量（`harness.providers.<id>.preset` 的取值；也是校验 warning 文案的取值表来源，
+    /// 避免第二处真源）。
     pub fn as_str(self) -> &'static str {
         match self {
-            HarnessProvider::Kimi => "kimi",
-            HarnessProvider::Deepseek => "deepseek",
-            HarnessProvider::Mock => "mock",
+            ProviderPreset::Kimi => "kimi",
+            ProviderPreset::Deepseek => "deepseek",
+            ProviderPreset::Generic => "generic",
+            ProviderPreset::Mock => "mock",
         }
     }
 
-    /// 闭集合解析：未知取值返回 `None`（由 [`validate_harness`] 回落默认 + 人话 warning）。
+    /// 闭集合解析：未知取值返回 `None`（由 [`validate_provider_entry`] 整条忽略 + 人话 warning）。
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            "kimi" => Some(HarnessProvider::Kimi),
-            "deepseek" => Some(HarnessProvider::Deepseek),
-            "mock" => Some(HarnessProvider::Mock),
+            "kimi" => Some(ProviderPreset::Kimi),
+            "deepseek" => Some(ProviderPreset::Deepseek),
+            "generic" => Some(ProviderPreset::Generic),
+            "mock" => Some(ProviderPreset::Mock),
             _ => None,
         }
+    }
+
+    /// 官方 base URL：kimi / deepseek 有官方地址；generic / mock 没有（generic 必须自己写）。
+    /// **唯一写值处**——运行时装配（`llm::client_at` / `title_client` / `naming_client`）只读
+    /// 这里，不另留一份预设地址表（REVIEW.md『同一语义两处真源』条）。
+    pub fn official_base_url(self) -> Option<&'static str> {
+        match self {
+            ProviderPreset::Kimi => Some("https://api.moonshot.cn/v1"),
+            ProviderPreset::Deepseek => Some("https://api.deepseek.com"),
+            ProviderPreset::Generic | ProviderPreset::Mock => None,
+        }
+    }
+
+    /// 缺省 wire 方言（未写 `wire_api` 键时用它，不告警）。
+    pub fn default_wire_api(self) -> WireApi {
+        match self {
+            ProviderPreset::Generic => WireApi::ChatCompletions,
+            ProviderPreset::Kimi | ProviderPreset::Deepseek | ProviderPreset::Mock => {
+                WireApi::Responses
+            }
+        }
+    }
+
+    /// 该预设支持的 wire 档位（闭集合外 / 不支持的档位在装载期回落缺省 + warning）。
+    /// deepseek 的 chat 档在 v1 未实现；mock 不消费 wire（只认缺省的 `responses`）。
+    pub fn supports_wire_api(self, wire_api: WireApi) -> bool {
+        !matches!(
+            (self, wire_api),
+            (ProviderPreset::Mock, WireApi::ChatCompletions)
+                | (ProviderPreset::Deepseek, WireApi::ChatCompletions)
+        )
+    }
+
+    /// 是否要求 `api_key`（决定「未配置 Key 是否可用」与命名调用的前置校验）：
+    /// generic 允许空 Key（本地模型不发 `Authorization` 头，design Q9）；mock 不经过 HTTP。
+    pub fn requires_api_key(self) -> bool {
+        matches!(self, ProviderPreset::Kimi | ProviderPreset::Deepseek)
+    }
+
+    /// Responses 请求是否显式发送 `store:false`（只有支持 `store` 的 kimi 需要声明；其余不发）。
+    pub fn store_false(self) -> bool {
+        matches!(self, ProviderPreset::Kimi)
     }
 }
 
 /// harness 的 wire 方言两档（change add-harness-chat-completions-dialect，design D1）。
-/// **闭集合**：取值校验在 Rust 侧完成（与 [`HarnessProvider`] / [`PermissionMode`] 同一形态），
+/// **闭集合**：取值校验在 Rust 侧完成（与 [`ProviderPreset`] / [`PermissionMode`] 同一形态），
 /// 运行时拿到的必是两档之一。`Responses` 是缺省档——未写该键的既有配置行为逐字节不变。
 ///
 /// v1 仅 kimi 实现 `ChatCompletions`；deepseek 配该档在配置校验期回落 `Responses` 并告警
@@ -661,7 +727,7 @@ impl WireApi {
         }
     }
 
-    /// 闭集合解析：未知取值返回 `None`（由 [`validate_harness_provider`] 回落默认 + 人话 warning）。
+    /// 闭集合解析：未知取值返回 `None`（由 [`validate_wire_api`] 回落该预设缺省 + 人话 warning）。
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "responses" => Some(WireApi::Responses),
@@ -672,7 +738,7 @@ impl WireApi {
 }
 
 /// harness 权限模式三档（change add-harness-permission-modes，design §2）。**闭集合**：取值
-/// 校验在 Rust 侧完成（与 [`HarnessProvider`] / `UiTheme` 同一形态），运行时拿到的必是三档之一。
+/// 校验在 Rust 侧完成（与 [`ProviderPreset`] / `UiTheme` 同一形态），运行时拿到的必是三档之一。
 ///
 /// 档位只替换判定管线**最底层**的「默认分层」（design §1：前四层——deny 规则 / vault 内写
 /// 重定向 / 危险黑名单 / allow 规则——与模式无关），不是一道独立闸门。默认档 `vault_write`：
@@ -740,9 +806,10 @@ pub struct AttachmentNamingConfig {
     /// 字节与粘贴时刻光标前后各至多 500 字的正文发往配置的模型 provider（proposal「隐私面」，
     /// Alex 2026-10-18 显式接受）。
     pub enabled: bool,
-    /// 命名调用发往哪个 provider（`None` = 会话当前 provider）。闭集合外取值在校验期回落
-    /// `None` + 人话 warning（与 `session_naming.provider` 同模板）。
-    pub provider: Option<HarnessProvider>,
+    /// 命名调用发往哪个 provider id（`None` = 会话当前 provider）。悬空 id（不在
+    /// `providers` 映射内 / 条目被装载期忽略）在校验期回落 `None` + 人话 warning
+    /// （与 `session_naming.provider` 同模板）。
+    pub provider: Option<String>,
     /// 命名调用使用的模型 id（`None` = 选定 provider 的生效模型）。非空值 MUST 是该 provider
     /// 的 `models` 清单内、声明 `vision: true` 的 id；不满足时**资格不通过**（保留暂存名），
     /// MUST NOT 静默换成清单里的别的模型——那等于替用户选模型。装载期会给一条点名 warning，
@@ -781,9 +848,9 @@ pub struct SessionNamingConfig {
     /// 会话自动命名开关（出厂 `true`）：false 时不发起任何命名调用、不写标题记录；既有标题
     /// 记录照常展示。默认开意味着每轮对话的受限素材（design D2）会发往选定 provider。
     pub enabled: bool,
-    /// 命名调用发往哪个 provider（`None` = 会话当前 provider，即旧行为仍是缺省值）。闭集合外
-    /// 取值在校验期回落 `None` + 人话 warning。
-    pub provider: Option<HarnessProvider>,
+    /// 命名调用发往哪个 provider id（`None` = 会话当前 provider，即旧行为仍是缺省值）。
+    /// 悬空 id（不在 `providers` 映射内 / 条目被装载期忽略）在校验期回落 `None` + 人话 warning。
+    pub provider: Option<String>,
     /// 命名调用使用的模型 id（`None` = 选定 provider 的生效模型）。非空值须在选定 provider 的
     /// `models` 清单内声明，未声明时校验期回落 `None`（= 生效模型）+ 人话 warning——不把未声明
     /// 的模型发给 API。mock 是 fixture 驱动档、没有模型清单，该键只能是 null。
@@ -870,10 +937,14 @@ impl SubagentsConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct HarnessConfig {
-    /// 当前生效的 provider；其余两档的参数照旧保留在 `providers` 里（切回即恢复）。
-    pub provider: HarnessProvider,
-    /// 三家 provider 各自的参数表：`provider` 键切换生效项。
-    pub providers: HarnessProviders,
+    /// 当前生效的 provider **id**（`providers` 映射里的键；空串 = 没有可用 provider）。
+    /// 显式选中但未配置完整的 provider **不会被自动换掉**——那是用户的选择，发送时给
+    /// 「该 provider 未配置完整」的人话错误（design §2.5）。
+    pub provider: String,
+    /// 以稳定 id 为键的 provider 映射（design §2.1）：`provider` 键切换生效项，其余条目
+    /// 照旧保留（切回即恢复）。被装载期判为非法的条目**不在**本映射里（只存在于 raw JSON，
+    /// 设置面以「装载期已忽略」行呈现）。
+    pub providers: BTreeMap<String, HarnessProviderConfig>,
     /// 权限规则表（design §6）：deny > allow > 默认分层（读 allow / 写与 CLI ask）。
     pub permissions: HarnessPermissions,
     /// 权限模式（change add-harness-permission-modes，design §2/§7）：`read_only` /
@@ -898,8 +969,10 @@ pub struct HarnessConfig {
 impl Default for HarnessConfig {
     fn default() -> Self {
         Self {
-            provider: HarnessProvider::Kimi,
-            providers: HarnessProviders::default(),
+            // 空映射 + 无 active：provider 由用户增删（design §4.4 允许删到一个不剩）。
+            // 出厂不内置任何 provider——首次接入走设置面板，不靠内置替身。
+            provider: String::new(),
+            providers: BTreeMap::new(),
             permissions: HarnessPermissions::default(),
             permission_mode: PermissionMode::default(),
             loop_max: DEFAULT_LOOP_MAX,
@@ -913,32 +986,22 @@ impl Default for HarnessConfig {
 }
 
 /// 一次命名调用的完整目标（change add-session-auto-naming，design D8 的「唯一解析口」）：
-/// 五个字段**同出 `session_naming.provider` 指向的那一个 provider 条目**——模型取 A、key 取 B
+/// 所有字段**同出 `session_naming.provider` 指向的那一个 provider 条目**——模型取 A、key 取 B
 /// 的混用形态在设计不变量 8 里被明确禁止，故调用方只该持有本结构、不再回读配置。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TitleTarget {
-    /// 实际发往的 provider（= `session_naming.provider`，缺省 / 非法回落会话当前 provider）。
-    pub provider: HarnessProvider,
+    /// 实际发往的 provider id（= `session_naming.provider`，缺省 / 悬空回落会话当前 provider）。
+    pub provider: String,
+    /// 该 provider 的预设（协议行为按 preset 查表，不由 id 猜）。
+    pub preset: ProviderPreset,
     /// 本次调用实际使用的模型 id。mock 是 fixture 驱动档、没有模型维度，此处为空串（记录侧
     /// 不伪造一个不存在的模型 id）；`session_naming.model` 未配置时 = 该 provider 的生效模型。
     pub model: String,
     /// wire 方言（与 `api_key` / `base_url` 同出该 provider 条目）。
     pub wire_api: WireApi,
     pub api_key: String,
-    /// `None` = 该 provider 的官方地址（与 `HarnessProviderConfig.base_url` 同义）。
+    /// `None` = 该 provider 的官方地址（与 [`HarnessProviderConfig::base_url`] 同义）。
     pub base_url: Option<String>,
-}
-
-/// `[harness].providers` 表：三家 provider 各一段参数，**都保留**（切 provider 不丢配置）。
-/// M381 config-only：`Default` 直接派生（三家都是各自结构的 Default = 空串/空清单/
-/// None——不内置任何出厂模型，与单独 `impl` 手写同值，交给派生不留两份）。
-#[derive(Debug, Clone, PartialEq, Default, Serialize, TS)]
-#[ts(export, export_to = "../../src/bindings/")]
-pub struct HarnessProviders {
-    pub kimi: HarnessProviderConfig,
-    pub deepseek: HarnessProviderConfig,
-    /// mock 是 fixture 驱动档，没有网络参数（验收专用）。
-    pub mock: HarnessMockConfig,
 }
 
 /// 单个模型声明（M373，schema 暴露的 model 维度）：思考程度能力 + 上下文窗口。
@@ -963,54 +1026,209 @@ pub struct HarnessModelSpec {
     pub window: u64,
 }
 
+/// provider id 规则的唯一写值处（design §2.3）：小写 ASCII / 数字 / `-` / `_`，**不含点**
+/// （点分写回路径按 `.` 分段，点会在写通道里制造第二级键），1..=32 字符。
+/// 装载期命中非法 id 的条目整条忽略（它无法被任何写通道寻址）。
+const PROVIDER_ID_MAX: usize = 32;
+
+/// provider id 是否合法（装载体与设置写通道共用同一判据，MUST NOT 各写一份）。
+pub fn provider_id_valid(id: &str) -> bool {
+    let mut chars = id.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
+        return false;
+    }
+    id.chars().count() <= PROVIDER_ID_MAX
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+/// 保留 id：mock 是验收专用的 fixture 档，设置面不呈现、不可新增 / 不可删除（配置仍可手写）。
+pub const RESERVED_PROVIDER_ID: &str = "mock";
+
+/// 测试与验收桩的 provider 构造（`#[doc(hidden)]`；产品代码不使用）：`configured` 按字段
+/// 派生，避免每个用例各拼一遍字面量时漏掉派生读数。
+#[doc(hidden)]
+pub fn test_provider(
+    preset: ProviderPreset,
+    api_key: &str,
+    models: &[(&str, bool, bool, u64)],
+) -> HarnessProviderConfig {
+    let mut entry = HarnessProviderConfig::empty(preset);
+    entry.api_key = api_key.to_string();
+    entry.models = models
+        .iter()
+        .map(|(id, effort, vision, window)| HarnessModelSpec {
+            id: (*id).to_string(),
+            effort: *effort,
+            vision: *vision,
+            window: *window,
+        })
+        .collect();
+    entry.model = entry
+        .models
+        .first()
+        .map(|spec| spec.id.clone())
+        .unwrap_or_default();
+    entry.recompute_configured();
+    entry
+}
+
+/// 测试与验收桩的 harness 构造（`#[doc(hidden)]`）：把 `entry` 装成唯一 provider 并设为 active。
+#[doc(hidden)]
+pub fn test_harness(id: &str, entry: HarnessProviderConfig) -> HarnessConfig {
+    let mut config = HarnessConfig::default();
+    let mut entry = entry;
+    entry.recompute_configured();
+    config.providers.insert(id.to_string(), entry);
+    config.provider = id.to_string();
+    config
+}
+
+/// 测试与验收桩的 mock 档配置（`#[doc(hidden)]`）：`fixture` 为 `None` = 未配置。
+#[doc(hidden)]
+pub fn test_mock(fixture: Option<&str>) -> HarnessConfig {
+    let mut entry = HarnessProviderConfig::empty(ProviderPreset::Mock);
+    entry.fixture = fixture.map(str::to_string);
+    test_harness(RESERVED_PROVIDER_ID, entry)
+}
+
 /// 上下文窗口的保守回落值（tokens）：生效 model 不在声明清单内（或清单为空）时 ctx%
 /// 读数的分母用它（读数宁可偏小偏保守，不猜窗口）。**唯一写值处**，运行时的窗口查表
 /// 未命中都回落这里。它不是模型知识——不声明任何模型的能力/身份，只是「未知窗口」的
 /// 度量兜底（与「未列出 = 不支持 effort」同一保守侧）。
 pub const FALLBACK_CONTEXT_WINDOW: u64 = 131_072;
 
-/// 单个网络 provider 的参数。
+/// 单个 provider 条目（change add-model-automation-settings-oct24 §2.1）：id 是映射键，条目
+/// 自带 `preset`（协议行为由 preset 决定，不由 id 猜）。
 ///
 /// M381 起（config-only）`Default` 的 `model` 是空串、`models` 是空清单：**不内置任何
 /// 出厂模型**——模型清单、当前 model、逐模型能力/窗口一律只来自 config.json 的
 /// `[harness].providers.<id>` 声明（`model` 缺省/空时由 validate 解析为声明清单首项 id，
 /// 清单为空则保持空串，发送时由运行时给出人话错误）。`api_key` 出厂为空串（未配置）、
 /// `base_url` 出厂为 `None`（官方地址）。
-#[derive(Debug, Clone, PartialEq, Default, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct HarnessProviderConfig {
-    /// API key 明文（裁决点 2）。空串 = 未配置（出厂状态）——发送时由运行时给出人话错误。
+    /// 协议预设（`kimi` / `deepseek` / `generic` / `mock`）：官方地址、是否发 `store:false`、
+    /// 超限特征串、支持的 wire 与是否要求 Key 全由它决定。**创建后不可改**（换协议请新增
+    /// provider 再删旧的，design §2.2）。
+    pub preset: ProviderPreset,
+    /// API key 明文（裁决点 2）。空串 = 未配置：kimi / deepseek 发送时给 `harness_api_key_missing`，
+    /// generic 允许空（= 不发 `Authorization` 头，design Q9）。
     pub api_key: String,
     /// 模型 id（配置值即读数）。缺省 / 空串 → 声明清单首项 id；清单为空 → 空串（不伪造）。
     pub model: String,
-    /// API base URL；`None` = 用该 provider 的官方地址（官方值在运行时的预设表里，M302）。
+    /// API base URL；`None` = 用该 preset 的官方地址（[`ProviderPreset::official_base_url`]）。
+    /// generic 预设没有官方地址，有 Key 或模型时必填。
     pub base_url: Option<String>,
     /// 可选模型清单 + 每模型能力声明（M373；M381 起 config-only）：**唯一真源是配置
     /// 声明**——不写 `models` 键 = 空清单（provider 节已配置时给一条人话 warning +
     /// 前端提示态），绝不回落内置表。这是浮层模型段与 ctx% 窗口 / effort 能力判定的
     /// 共同数据源。
     pub models: Vec<HarnessModelSpec>,
-    /// wire 方言（change add-harness-chat-completions-dialect，design D1）：缺省
-    /// `responses`；kimi 可配 `chat_completions`。deepseek 配 chat 档在校验期回落并告警
-    /// （v1 未实现），运行时看到的 deepseek 恒为 `responses`。
+    /// wire 方言（change add-harness-chat-completions-dialect，design D1）：缺省随 preset
+    /// （kimi / deepseek / mock = `responses`，generic = `chat_completions`）；该预设不支持的
+    /// 档位（deepseek 的 chat / mock 的 chat）在校验期回落缺省 + warning。
     pub wire_api: WireApi,
+    /// mock 专用的 fixture 文件路径（`preset = mock` 之外的条目按未知键保留、运行期忽略）。
+    pub fixture: Option<String>,
+    /// 派生读数（不落盘）：该条目是否已配置完整（design §2.4）。快照与模型 chip 都消费它，
+    /// 前端 MUST NOT 自己拼这个判据（REVIEW.md『同一语义两处真源』条）。
+    ///
+    /// `mock` = fixture 非空；`generic` = 模型清单非空且 Base URL 非空；`kimi` / `deepseek` =
+    /// Key 非空且模型清单非空。
+    pub configured: bool,
+}
+
+impl HarnessProviderConfig {
+    /// 按预设构造一个空条目：`wire_api` 取该预设缺省，其余字段为零值（`configured = false`）。
+    /// 装载期之外的自定义构造从这里起步——手写字面量会漏掉 wire 缺省与派生读数。
+    pub fn empty(preset: ProviderPreset) -> Self {
+        Self {
+            preset,
+            api_key: String::new(),
+            model: String::new(),
+            base_url: None,
+            models: Vec::new(),
+            wire_api: preset.default_wire_api(),
+            fixture: None,
+            configured: false,
+        }
+    }
+
+    /// 依当前字段重新派生 `configured`（改过字段后调用；装载期、写通道与测试共用）。
+    pub fn recompute_configured(&mut self) {
+        self.configured = self.derive_configured();
+    }
+
+    /// 可用性判据（design §2.4，**唯一**实现）。派生读数，不落盘。
+    fn derive_configured(&self) -> bool {
+        match self.preset {
+            ProviderPreset::Mock => self
+                .fixture
+                .as_deref()
+                .is_some_and(|fixture| !fixture.trim().is_empty()),
+            ProviderPreset::Generic => {
+                !self.models.is_empty()
+                    && self
+                        .base_url
+                        .as_deref()
+                        .is_some_and(|url| !url.trim().is_empty())
+            }
+            ProviderPreset::Kimi | ProviderPreset::Deepseek => {
+                !self.api_key.trim().is_empty() && !self.models.is_empty()
+            }
+        }
+    }
+}
+
+impl Default for HarnessProviderConfig {
+    /// 出条目 = generic 预设、其余字段零值（`configured = false`）。**不内置任何出厂 provider**
+    /// ——新增条目一律由设置面显式创建。
+    fn default() -> Self {
+        Self::empty(ProviderPreset::Generic)
+    }
 }
 
 impl HarnessConfig {
-    /// 指定 provider 的生效模型清单（schema 读取点，M373；M381 起 config-only）：kimi /
-    /// deepseek 各读各的 `models`（配置没写 = 空表，不回落内置 preset）；mock 是 fixture
-    /// 驱动档，没有模型维度（UI 层隐藏、ctx% 借壳 kimi 读数），返回空表。
-    pub fn model_specs(&self, provider: &HarnessProvider) -> &[HarnessModelSpec] {
-        match provider {
-            HarnessProvider::Kimi => &self.providers.kimi.models,
-            HarnessProvider::Deepseek => &self.providers.deepseek.models,
-            HarnessProvider::Mock => &[],
+    /// 按 id 查条目（未命中 = `None`：被装载期忽略 / 已删除 / active 为空）。
+    pub fn provider_entry(&self, provider: &str) -> Option<&HarnessProviderConfig> {
+        self.providers.get(provider)
+    }
+
+    /// 该 id 是否为 mock 档（mock 判定**只**看条目预设，不看 id 字面量——`preset = mock`
+    /// 只允许 id 恰好是 `mock`，装载期已把其它 id 的 mock 声明整条忽略）。
+    /// 未命中（无该条目）= 不是 mock。
+    pub fn is_mock(&self, provider: &str) -> bool {
+        self.provider_entry(provider)
+            .is_some_and(|entry| entry.preset == ProviderPreset::Mock)
+    }
+
+    /// 当前生效条目（active id 查表；空串 / 悬空 = `None`）。
+    pub fn active_provider(&self) -> Option<(&str, &HarnessProviderConfig)> {
+        if self.provider.is_empty() {
+            return None;
         }
+        self.providers
+            .get_key_value(&self.provider)
+            .map(|(id, entry)| (id.as_str(), entry))
+    }
+
+    /// 指定 provider 的生效模型清单（schema 读取点，M373；M381 起 config-only）：按 id 查
+    /// 条目；未命中（无该 id / 被装载期忽略 / 无 active）返回空表，不回落任何内置表。
+    pub fn model_specs(&self, provider: &str) -> &[HarnessModelSpec] {
+        self.provider_entry(provider)
+            .map(|entry| entry.models.as_slice())
+            .unwrap_or(&[])
     }
 
     /// 模型上下文窗口（tokens）：生效清单精确匹配，未列出回落 [`FALLBACK_CONTEXT_WINDOW`]
     /// （保守默认——ctx% 的分母宁可偏小读数偏保守，不猜窗口）。
-    pub fn context_window(&self, provider: &HarnessProvider, model: &str) -> u64 {
+    pub fn context_window(&self, provider: &str, model: &str) -> u64 {
         self.model_specs(provider)
             .iter()
             .find(|spec| spec.id == model)
@@ -1021,27 +1239,24 @@ impl HarnessConfig {
     /// 该 provider + model 是否支持思考程度调节（前端置灰判据，schema 读取点）：
     /// 生效清单精确匹配取声明值；未列出 = 不支持（保守默认，与 M372 前「kimi 非 k3 系
     /// 置灰」同一安全侧）；mock 恒定支持（fixture 驱动，验收要断言档位到达请求）。
-    pub fn effort_supported(&self, provider: &HarnessProvider, model: &str) -> bool {
-        match provider {
-            HarnessProvider::Mock => true,
-            HarnessProvider::Kimi | HarnessProvider::Deepseek => self
-                .model_specs(provider)
-                .iter()
-                .find(|spec| spec.id == model)
-                .is_some_and(|spec| spec.effort),
+    pub fn effort_supported(&self, provider: &str, model: &str) -> bool {
+        if self.is_mock(provider) {
+            return true;
         }
+        self.model_specs(provider)
+            .iter()
+            .find(|spec| spec.id == model)
+            .is_some_and(|spec| spec.effort)
     }
 
     /// 当前 provider 的 wire 方言（change add-harness-chat-completions-dialect）：**单一来源**
     /// ——client 装配（`llm::client_at`）与 `session_open.wire_api` 留存都读这一处，MUST NOT
-    /// 各写一份 match。mock 是 fixture 驱动档，没有 wire 面：恒 `Responses`（= 缺省值在场，
-    /// 留存字段不缺席；它的请求不经任何真实 HTTP body）。
+    /// 各写一份 match。无 active / 悬空 = 缺省 `Responses`（留存字段不缺席）；mock 是 fixture
+    /// 驱动档，没有 wire 面（装载期已把它的 wire 归一为 `Responses`）。
     pub fn wire_api(&self) -> WireApi {
-        match self.provider {
-            HarnessProvider::Kimi => self.providers.kimi.wire_api,
-            HarnessProvider::Deepseek => self.providers.deepseek.wire_api,
-            HarnessProvider::Mock => WireApi::Responses,
-        }
+        self.provider_entry(&self.provider)
+            .map(|entry| entry.wire_api)
+            .unwrap_or_default()
     }
 
     /// 该 provider + model 是否接受图片输入（change harness-composer-image-paste，
@@ -1049,46 +1264,73 @@ impl HarnessConfig {
     /// 未列出 = 不支持（保守默认，与 `effort` 同侧）；mock 恒定支持（fixture 驱动，
     /// 验收要断言含图消息正常入队）。能力语义只有这一处产出——前端 MUST NOT 另立判定
     /// （REVIEW.md 「同一语义两处真源」条）。
-    pub fn vision_supported(&self, provider: &HarnessProvider, model: &str) -> bool {
-        match provider {
-            HarnessProvider::Mock => true,
-            HarnessProvider::Kimi | HarnessProvider::Deepseek => self
-                .model_specs(provider)
-                .iter()
-                .find(|spec| spec.id == model)
-                .is_some_and(|spec| spec.vision),
+    pub fn vision_supported(&self, provider: &str, model: &str) -> bool {
+        if self.is_mock(provider) {
+            return true;
         }
+        self.model_specs(provider)
+            .iter()
+            .find(|spec| spec.id == model)
+            .is_some_and(|spec| spec.vision)
     }
 
-    /// 命名调用的唯一解析口（change add-session-auto-naming，design D8 / 不变量 8）：
-    /// `provider` = `session_naming.provider`（缺省 = 会话当前 provider），其余四字段与 `model`
+    /// 命名调用的唯一解析口（change add-session-auto-naming，design D8 / 不变量 8；
+    /// change add-model-automation-settings-oct24 §2.6 改为按 provider id）：`provider` =
+    /// `session_naming.provider`（缺省 = 会话当前 provider id），其余字段与 `model`
     /// **同出该 provider 条目**——MUST NOT 混用会话 provider 与 title provider 的字段。
     ///
     /// `model` 读 `session_naming.model`（`None` = 用该条目的生效模型）。mock 是 fixture 驱动档：
     /// 没有 `api_key` / `base_url` / 模型维度，`model` 留空串（记录侧不伪造模型 id），命名调用
     /// 走 fixture 的 `titles` 队列。
-    pub fn title_target(&self, session_provider: HarnessProvider) -> TitleTarget {
-        let provider = self.session_naming.provider.unwrap_or(session_provider);
-        let model = self.session_naming.model.as_deref();
-        match provider {
-            HarnessProvider::Kimi => title_target_of(&self.providers.kimi, provider, model),
-            HarnessProvider::Deepseek => title_target_of(&self.providers.deepseek, provider, model),
-            HarnessProvider::Mock => TitleTarget {
-                provider,
+    ///
+    /// 目标 id 查不到条目（无 active provider / active 在装载期被忽略）时返回一个空目标：
+    /// `provider` 为空串、各字段为零值，由 `llm::title_client` 给出 `harness_provider_missing`。
+    pub fn title_target(&self, session_provider: &str) -> TitleTarget {
+        let provider = self
+            .session_naming
+            .provider
+            .as_deref()
+            .unwrap_or(session_provider);
+        let Some(entry) = self.provider_entry(provider) else {
+            return TitleTarget {
+                provider: String::new(),
+                preset: ProviderPreset::Generic,
                 model: String::new(),
                 wire_api: WireApi::Responses,
                 api_key: String::new(),
                 base_url: None,
-            },
+            };
+        };
+        if entry.preset == ProviderPreset::Mock {
+            return TitleTarget {
+                provider: provider.to_string(),
+                preset: entry.preset,
+                model: String::new(),
+                wire_api: WireApi::Responses,
+                api_key: String::new(),
+                base_url: None,
+            };
+        }
+        TitleTarget {
+            provider: provider.to_string(),
+            preset: entry.preset,
+            model: self
+                .session_naming
+                .model
+                .clone()
+                .unwrap_or_else(|| entry.model.clone()),
+            wire_api: entry.wire_api,
+            api_key: entry.api_key.clone(),
+            base_url: entry.base_url.clone(),
         }
     }
 
     /// 图片语义命名的**唯一解析口**（change add-semantic-image-naming，design §1 / §4.2；
-    /// 2026-10-18 配置面重塑后与 [`HarnessConfig::title_target`] 同口径）：`None` = 没有
-    /// 满足条件的 vision 模型（或选定 provider 没有模型维度），调用方跳过命名、保留暂存名、
-    /// 不发任何请求、不弹失败 toast。
+    /// 2026-10-18 配置面重塑后与 [`HarnessConfig::title_target`] 同口径；§2.6 改为按 provider
+    /// id）：`None` = 没有满足条件的 vision 模型（或目标 provider 不存在 / 没有模型维度），
+    /// 调用方跳过命名、保留暂存名、不发任何请求、不弹失败 toast。
     ///
-    /// 五字段**同出 `attachment_naming.provider` 指向的那一个 provider 条目**——模型取 A、
+    /// 全字段**同出 `attachment_naming.provider` 指向的那一个 provider 条目**——模型取 A、
     /// key 取 B 的混用形态与会话自动命名同样被禁止（design 不变量 8），调用方只该持有本结构、
     /// 不再回读配置。
     ///
@@ -1103,87 +1345,63 @@ impl HarnessConfig {
     /// 因此由调用方先判（`attachment_naming::run`）。
     pub fn attachment_naming_target(
         &self,
-        session_provider: HarnessProvider,
+        session_provider: &str,
     ) -> Option<AttachmentNamingTarget> {
-        let provider = self.attachment_naming.provider.unwrap_or(session_provider);
+        let provider = self
+            .attachment_naming
+            .provider
+            .as_deref()
+            .unwrap_or(session_provider);
+        let entry = self.provider_entry(provider)?;
         let requested = self
             .attachment_naming
             .model
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty());
-        match provider {
-            HarnessProvider::Mock => requested.is_none().then(|| AttachmentNamingTarget {
-                provider,
+        if entry.preset == ProviderPreset::Mock {
+            return requested.is_none().then(|| AttachmentNamingTarget {
+                provider: provider.to_string(),
+                preset: entry.preset,
                 model: String::new(),
                 wire_api: WireApi::Responses,
                 api_key: String::new(),
                 base_url: None,
-            }),
-            HarnessProvider::Kimi | HarnessProvider::Deepseek => {
-                let entry = match provider {
-                    HarnessProvider::Kimi => &self.providers.kimi,
-                    _ => &self.providers.deepseek,
-                };
-                let model = match requested {
-                    Some(value) => value.to_string(),
-                    None => entry.model.clone(),
-                };
-                if model.trim().is_empty() || !self.vision_supported(&provider, &model) {
-                    return None;
-                }
-                Some(AttachmentNamingTarget {
-                    provider,
-                    model,
-                    wire_api: entry.wire_api,
-                    api_key: entry.api_key.clone(),
-                    base_url: entry.base_url.clone(),
-                })
-            }
+            });
         }
+        let model = match requested {
+            Some(value) => value.to_string(),
+            None => entry.model.clone(),
+        };
+        if model.trim().is_empty() || !self.vision_supported(provider, &model) {
+            return None;
+        }
+        Some(AttachmentNamingTarget {
+            provider: provider.to_string(),
+            preset: entry.preset,
+            model,
+            wire_api: entry.wire_api,
+            api_key: entry.api_key.clone(),
+            base_url: entry.base_url.clone(),
+        })
     }
 }
 
 /// 一次图片语义命名调用的完整目标（change add-semantic-image-naming，2026-10-18 配置面重塑）：
-/// 与会话自动命名的 [`TitleTarget`] 同形同口径——五个字段同出**一个** provider 条目。
+/// 与会话自动命名的 [`TitleTarget`] 同形同口径——所有字段同出**一个** provider 条目。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachmentNamingTarget {
-    /// 实际发往的 provider（`attachment_naming.provider`，缺省 = 会话当前 provider）。
-    pub provider: HarnessProvider,
+    /// 实际发往的 provider id（`attachment_naming.provider`，缺省 = 会话当前 provider）。
+    pub provider: String,
+    /// 该 provider 的预设（协议行为按 preset 查表，不由 id 猜）。
+    pub preset: ProviderPreset,
     /// 本次调用实际使用的模型 id。mock 无模型维度，此处为空串（不伪造模型 id）。
     pub model: String,
     /// wire 方言（与 `api_key` / `base_url` 同出该 provider 条目）。
     pub wire_api: WireApi,
     pub api_key: String,
-    /// `None` = 该 provider 的官方地址（与 `HarnessProviderConfig.base_url` 同义）。
+    /// `None` = 该 provider 的官方地址（与 [`HarnessProviderConfig::base_url`] 同义）。
     pub base_url: Option<String>,
-}
-
-/// 网络 provider 的 `TitleTarget` 装配（两个网络 provider 共用一份，MUST NOT 各写一遍）：
-/// 五个字段全部取自**同一个** [`HarnessProviderConfig`] 条目；`model` 取
-/// `session_naming.model`（`None` = 该条目的生效模型，即 `entry.model`）。
-fn title_target_of(
-    entry: &HarnessProviderConfig,
-    provider: HarnessProvider,
-    model: Option<&str>,
-) -> TitleTarget {
-    TitleTarget {
-        provider,
-        model: model
-            .map(str::to_string)
-            .unwrap_or_else(|| entry.model.clone()),
-        wire_api: entry.wire_api,
-        api_key: entry.api_key.clone(),
-        base_url: entry.base_url.clone(),
-    }
-}
-
-/// mock provider 的参数（验收专用，design §13）：脚本化响应的 fixture 文件路径。
-/// `None` = 未配置（用 mock 档而未配 fixture 时由运行时给出人话错误）。
-#[derive(Debug, Clone, PartialEq, Default, Serialize, TS)]
-#[ts(export, export_to = "../../src/bindings/")]
-pub struct HarnessMockConfig {
-    pub fixture: Option<String>,
 }
 
 /// `[harness].permissions` 表（design §6）：规则语法 `tool` 或 `tool(模式)` 的字符串清单。
@@ -1379,14 +1597,131 @@ pub struct CronTaskIssue {
     pub reason: String,
 }
 
+/// 一条结构化配置诊断（change add-model-automation-settings-oct24 §7.1）：`validate()` 的
+/// **唯一** warning 生产形态。
+///
+/// `ConfigSnapshot.warnings` 由 `message` 逐条派生（文案与结构出现之前逐字一致，既有 warning
+/// 断言、诊断日志、console 出口零改动）；`code` / `path` / `severity` 供设置面分类、挂字段与
+/// 判断「写这笔 patch 会不会引入阻断级问题」——MUST NOT 在前端另写一份判定
+/// （REVIEW.md『同一语义两处真源』条）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct ConfigDiagnostic {
+    /// 稳定 code（前端分类 / 计数 / 阻断表用；同一判定点只有一份）。
+    pub code: String,
+    /// 键路径（`harness.providers.kimi.models`）；文件级诊断（整文件回落等）为 `None`。
+    pub path: Option<String>,
+    pub severity: DiagnosticSeverity,
+    /// 现有的人话文案（逐字沿用，`ConfigSnapshot.warnings` 由它派生）。
+    pub message: String,
+}
+
+/// 诊断的严重度（design §6.3）：
+/// - `Warning`：只提示，不阻断保存；
+/// - `RejectOnWrite`：设置面写入的候选配置里出现、且路径与本笔改动相交时，整笔拒绝。
+///
+/// 分级由 code 在**构造点**决定（[`diagnostic_severity`] 是唯一分级表），设置面不二次判定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum DiagnosticSeverity {
+    Warning,
+    RejectOnWrite,
+}
+
+/// 阻断级 code 词表（design §6.3 的显式表；**唯一**分级真源）。
+///
+/// 只收「写进文件就等于把配置写坏」的判定：模型清单的元素约束、半配置、wire / base_url 的
+/// 显式非法输入、provider id 与删除引用完整性。路径相交判据（candidate × changed paths）由
+/// 设置写通道用本表 + `ConfigDiagnostic.path` 计算，这里只分级。
+const REJECT_ON_WRITE_CODES: [&str; 21] = [
+    "harness_model_id_empty",
+    "harness_model_id_duplicate",
+    "harness_model_window_invalid",
+    "harness_model_effort_invalid",
+    "harness_model_vision_invalid",
+    "harness_models_empty_when_configured",
+    "harness_wire_api_invalid",
+    "harness_wire_api_unsupported",
+    "harness_base_url_empty",
+    "harness_base_url_required",
+    "harness_provider_preset_invalid",
+    "harness_provider_id_invalid",
+    "settings_provider_id_invalid",
+    "settings_provider_id_duplicate",
+    "settings_provider_reserved_id",
+    "settings_provider_not_found",
+    "settings_provider_preset_immutable",
+    "settings_active_provider_missing",
+    "settings_provider_delete_active_requires_target",
+    "settings_provider_delete_referenced",
+    "settings_naming_target_missing",
+];
+
+/// `settings_naming_model_missing` / `settings_unknown_field` 同为阻断级（design §6.3 的完整
+/// 词表），与上面那张表分开判只为避免数组长度写死在类型里时漏项；两处都只读本函数。
+fn diagnostic_severity(code: &str) -> DiagnosticSeverity {
+    if REJECT_ON_WRITE_CODES.contains(&code)
+        || matches!(
+            code,
+            "settings_naming_model_missing" | "settings_unknown_field"
+        )
+    {
+        DiagnosticSeverity::RejectOnWrite
+    } else {
+        DiagnosticSeverity::Warning
+    }
+}
+
+/// 逐字段校验期间的诊断收集器（`validate()` 内部）：`warn(code, path, message)` 是**唯一**
+/// 生产点，`&mut Vec<String>` 的旧形态已整体替换（不存在第二份校验逻辑）。
+///
+/// `messages()` 保序派生 `ConfigSnapshot.warnings`——顺序与结构出现之前逐条一致。
+#[derive(Debug, Default)]
+struct DiagnosticSink {
+    diagnostics: Vec<ConfigDiagnostic>,
+}
+
+impl DiagnosticSink {
+    fn warn(&mut self, code: &str, path: Option<String>, message: String) {
+        self.diagnostics.push(ConfigDiagnostic {
+            code: code.to_string(),
+            path,
+            severity: diagnostic_severity(code),
+            message,
+        });
+    }
+
+    /// 便捷形态：`path` 为静态键路径时用它（与 [`Self::warn`] 同一出口）。
+    fn warn_at(&mut self, code: &str, path: &str, message: String) {
+        self.warn(code, Some(path.to_string()), message);
+    }
+
+    /// 合并子校验器产出的诊断（保序）。
+    fn extend(&mut self, diagnostics: Vec<ConfigDiagnostic>) {
+        self.diagnostics.extend(diagnostics);
+    }
+
+    fn into_diagnostics(self) -> Vec<ConfigDiagnostic> {
+        self.diagnostics
+    }
+}
+
 /// 一次配置加载的结果：生效配置 + 人话 warning 列表 + 实际读取路径。
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct ConfigSnapshot {
     pub config: AppConfig,
-    /// 逐字段回退时产生的人话提示；为空表示完全干净。
+    /// 逐字段回退时产生的人话提示；为空表示完全干净。**由 `diagnostics` 的 message 派生**
+    /// （顺序一致、文案逐字不变）。
     pub warnings: Vec<String>,
     pub path: String,
+    /// 结构化诊断（change add-model-automation-settings-oct24 §7.1）：warning 的唯一真源，
+    /// `warnings` 是它的投影。不进序列化面——IPC 契约里的 `warnings` 形状保持不变，设置面走
+    /// 独立的设置快照（另一个 change 的写通道）。
+    #[serde(skip)]
+    #[ts(skip)]
+    pub diagnostics: Vec<ConfigDiagnostic>,
     /// `[cron].tasks` 里被丢弃的任务项（结构化，供调度线程启动时落 `cron_task_invalid`）。
     /// 不进序列化面：warning 文本已经承载同一事实，前端不需要第二个形状。
     #[serde(skip)]
@@ -1517,9 +1852,10 @@ struct RawUiConfig {
 #[serde(default)]
 struct RawHarnessConfig {
     provider: Option<String>,
-    /// 嵌套表也是结构化的：`"providers": "kimi"` 这种错形状 → 整文件回落；
-    /// `api_key` / `model` / `base_url` 给错类型（如 `"api_key": 1`）同路。
-    providers: RawHarnessProviders,
+    /// 以 id 为键的映射（change add-model-automation-settings-oct24 §2.1）：值收成 `Value`
+    /// 后**逐条**解析（条目级宽容，见 [`validate_provider_entry`]）。`"providers": "kimi"`
+    /// 这种错形状仍是整文件回落（design §2.1 沿用 ADR 0002 §5 的既有模板）。
+    providers: Option<serde_json::Map<String, serde_json::Value>>,
     permissions: RawHarnessPermissions,
     /// 权限模式（change add-harness-permission-modes，design §7）：闭集合取值，非法值到不了
     /// 这里——在 `validate()` 里回落默认 + warning；类型不符在 serde 解析期失败 → 整文件回落。
@@ -1576,37 +1912,6 @@ struct RawAttachmentNamingConfig {
     model: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct RawHarnessProviders {
-    kimi: RawHarnessProviderConfig,
-    deepseek: RawHarnessProviderConfig,
-    mock: RawHarnessMockConfig,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct RawHarnessProviderConfig {
-    api_key: Option<String>,
-    model: Option<String>,
-    base_url: Option<String>,
-    /// 可选模型清单（M373；M381 起 config-only 唯一真源）：逐项校验（与 permissions 清单
-    /// 同形的逐项容忍——一项写坏只丢该项 + warning，不拖垮整份配置）。字段收成 Value 逐项
-    /// 判定：直接结构化会让一项类型不符在 serde 解析期失败，走整文件回落。缺键 = 空清单
-    /// （不回落内置表——M381 起内置 preset 已彻底删除）。
-    models: Option<Vec<serde_json::Value>>,
-    /// wire 方言（change add-harness-chat-completions-dialect）：闭集合取值，缺键 ⇒ 默认
-    /// `responses` 不告警；非法值 / v1 未实现的 provider 档位在 `validate()` 里回落 + warning；
-    /// 类型不符（`"wire_api": 2`）在 serde 解析期失败 → 整文件回落（与 `permission_mode` 同路）。
-    wire_api: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct RawHarnessMockConfig {
-    fixture: Option<String>,
-}
-
 /// `[harness].permissions` 表的解析镜像：`allow` / `deny` 收成 `Vec<serde_json::Value>` 再
 /// **逐项**校验——直接写成 `Vec<String>` 会让一个非字符串元素在解析期失败，把整份配置（含
 /// `last_vault`）打回默认。与 `[vault].rule_files` 完全同形（含「整个字段给错类型
@@ -1642,11 +1947,13 @@ pub fn load() -> Result<ConfigSnapshot, CommandError> {
 
 /// 从指定路径加载。文件不存在不算错误（首次启动常态），返回默认配置。
 ///
-/// **一次写副作用（M365，M381 改目标）**：JSON 里 `harness.providers.kimi.model` 命中
-/// [`RETIRED_KIMI_MODEL`] 时改写为该 provider 已声明 models 清单的首项 id 并落盘（只改这
-/// 一个键，其余键与未知字段逐键保留，见 [`migrate_retired_kimi_model`]）；本次生效值就是改写
-/// 后的值。清单未声明任何模型时不改写、不落盘，只给一条人话 warning。写失败只多一条
-/// warning，不阻断加载（下次加载会再试一次，改写本身的判据是幂等的）。
+/// **一次写副作用**（M365 退役值迁移 + change add-model-automation-settings-oct24 §3 的
+/// preset 迁移）：两份迁移串在**同一份** `serde_json::Value` 上，最多写盘一次。
+/// - 旧三档条目（`kimi` / `deepseek` / `mock`）缺 `preset` 时补上（已有值不覆盖）；
+/// - `harness.providers.kimi.model` 命中 [`RETIRED_KIMI_MODEL`] 时改写为该条目的生效模型。
+///
+/// 两条都只改自己负责的键、其余键与未知字段逐键保留、判据幂等；本次生效值就是改写后的值。
+/// 写失败只多一条 warning，不阻断加载（下次加载会再试一次）。
 pub fn load_from(path: &Path) -> ConfigSnapshot {
     let path_str = path.display().to_string();
     let text = match std::fs::read_to_string(path) {
@@ -1656,6 +1963,7 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
                 config: AppConfig::default(),
                 warnings: vec![],
                 path: path_str,
+                diagnostics: vec![],
                 cron_issues: vec![],
                 // 文件不存在不是「读失败」：空配置就是它的有效语义（首次启动常态）。
                 fallback: false,
@@ -1666,6 +1974,7 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
                 config: AppConfig::default(),
                 warnings: vec![format!("无法读取配置文件 {path_str}：{e}，已使用默认配置")],
                 path: path_str,
+                diagnostics: vec![],
                 cron_issues: vec![],
                 fallback: true,
             };
@@ -1683,6 +1992,7 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
                     e
                 )],
                 path: path_str,
+                diagnostics: vec![],
                 cron_issues: vec![],
                 fallback: true,
             };
@@ -1690,8 +2000,9 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
     };
 
     // 迁移先于结构解析：下面解析的就是「改写后」的那份，本次生效值与落盘内容同值。
+    let preset_migration = migrate_provider_presets(&mut value);
     let migration = migrate_retired_kimi_model(&mut value);
-    let parse_text = if migration.rewritten() {
+    let parse_text = if preset_migration.rewritten() || migration.rewritten() {
         serde_json::to_string(&value).expect("serde_json::Value 一定可序列化")
     } else {
         // 未命中走原文解析：类型不符时的报错行号仍是原文件里的行
@@ -1700,31 +2011,65 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
 
     match serde_json::from_str::<RawConfig>(&parse_text) {
         Ok(raw) => {
-            let (config, mut warnings, cron_issues) = validate(raw);
+            let (config, mut diagnostics, cron_issues) = validate(raw);
+            let mut write_failed = None;
+            if preset_migration.rewritten() {
+                diagnostics.push(ConfigDiagnostic {
+                    code: "harness_provider_preset_migrated".to_string(),
+                    path: Some("harness.providers".to_string()),
+                    severity: DiagnosticSeverity::Warning,
+                    message: format!(
+                        "配置项 harness.providers 的旧条目已补齐 preset（{}）",
+                        preset_migration.entries.join("、")
+                    ),
+                });
+            }
+            let retired_rewritten = migration.rewritten();
             match migration {
                 RetiredKimiMigration::Rewritten { replacement } => {
-                    warnings.push(format!(
-                        "配置项 harness.providers.kimi.model 的 {RETIRED_KIMI_MODEL} 已退役，已自动改写为 {replacement}"
-                    ));
-                    if let Err(e) = write_json_atomic(path, &value) {
-                        warnings.push(format!(
-                            "改写后的配置未能落盘（{}），下次启动会再试一次",
-                            e.message
-                        ));
-                    }
+                    diagnostics.push(ConfigDiagnostic {
+                        code: "harness_model_retired_migrated".to_string(),
+                        path: Some("harness.providers.kimi.model".to_string()),
+                        severity: DiagnosticSeverity::Warning,
+                        message: format!(
+                            "配置项 harness.providers.kimi.model 的 {RETIRED_KIMI_MODEL} 已退役，已自动改写为 {replacement}"
+                        ),
+                    });
                 }
                 RetiredKimiMigration::NoReplacement => {
                     // 清单未声明任何模型：不内置替补值，只把话说清楚。
-                    warnings.push(format!(
-                        "配置项 harness.providers.kimi.model 的 {RETIRED_KIMI_MODEL} 已退役，但 models 清单未声明任何模型，无法自动改写——请在 config.json 中更新该配置"
-                    ));
+                    diagnostics.push(ConfigDiagnostic {
+                        code: "harness_model_retired_unreplaceable".to_string(),
+                        path: Some("harness.providers.kimi.model".to_string()),
+                        severity: DiagnosticSeverity::Warning,
+                        message: format!(
+                            "配置项 harness.providers.kimi.model 的 {RETIRED_KIMI_MODEL} 已退役，但 models 清单未声明任何模型，无法自动改写——请在 config.json 中更新该配置"
+                        ),
+                    });
                 }
                 RetiredKimiMigration::NoHit => {}
             }
+            if preset_migration.rewritten() || retired_rewritten {
+                if let Err(e) = write_json_atomic(path, &value) {
+                    write_failed = Some(e.message);
+                }
+            }
+            if let Some(message) = write_failed {
+                diagnostics.push(ConfigDiagnostic {
+                    code: "config_migration_write_failed".to_string(),
+                    path: None,
+                    severity: DiagnosticSeverity::Warning,
+                    message: format!("改写后的配置未能落盘（{message}），下次启动会再试一次"),
+                });
+            }
             ConfigSnapshot {
                 config,
-                warnings,
+                warnings: diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic.message.clone())
+                    .collect(),
                 path: path_str,
+                diagnostics,
                 cron_issues,
                 fallback: false,
             }
@@ -1737,10 +2082,61 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
                 e
             )],
             path: path_str,
+            diagnostics: vec![],
             cron_issues: vec![],
             fallback: true,
         },
     }
+}
+
+/// preset 一次性迁移（change add-model-automation-settings-oct24 §3.1，纯函数，可测）：
+/// **不搬字段、不改 id、不改值**，只给旧三档条目补 `preset`。
+///
+/// - `providers` 不是对象 → 不做任何事（留给整文件回落）；
+/// - 条目不是对象 → 跳过（校验侧给 warning）；
+/// - `preset` 已存在 → 不动（用户显式值优先，含非法值——校验侧按整条忽略处置）；
+/// - id 恰好是 `kimi` / `deepseek` / `mock` → 补对应预设；其它 id 不写（校验侧按
+///   generic + warning 解释，design §3.1「未知 id 不迁移」）；
+/// - **幂等**：第二次加载三个条目都已有 preset，`rewritten = false`，不再写盘。
+struct ProviderPresetMigration {
+    rewritten: bool,
+    /// 本次补齐的 id（告警文案点名用；按映射键顺序）。
+    entries: Vec<String>,
+}
+
+impl ProviderPresetMigration {
+    fn rewritten(&self) -> bool {
+        self.rewritten
+    }
+}
+
+fn migrate_provider_presets(value: &mut serde_json::Value) -> ProviderPresetMigration {
+    let mut result = ProviderPresetMigration {
+        rewritten: false,
+        entries: Vec::new(),
+    };
+    let Some(providers) = value
+        .get_mut("harness")
+        .and_then(|harness| harness.get_mut("providers"))
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return result;
+    };
+    for (id, entry) in providers.iter_mut() {
+        let Some(entry) = entry.as_object_mut() else {
+            continue;
+        };
+        if entry.contains_key("preset") {
+            continue;
+        }
+        if !matches!(id.as_str(), "kimi" | "deepseek" | "mock") {
+            continue;
+        }
+        entry.insert("preset".to_string(), serde_json::Value::String(id.clone()));
+        result.rewritten = true;
+        result.entries.push(id.clone());
+    }
+    result
 }
 
 /// 退役值迁移（纯函数，可测）的结果形态。
@@ -1854,10 +2250,10 @@ pub(crate) fn write_json_atomic(
 
 /// config.json 的「读—改—写同锁」入口（change add-cron-conversational-registration design §4.1）。
 ///
-/// 现状的两条写入口 `commands::write_config_value_to` / `write_last_vault_to` 的读发生在取
+/// 旧形态的两条写入口 `commands::write_config_value_to` / `write_last_vault_to` 的读发生在取
 /// [`CONFIG_WRITE_LOCK`] **之前**：两个写者可以各自读到旧版本，后写者把前者的改动顶掉（丢键）。
-/// 本函数把读、改、原子替换放进同一把锁，供新写者（调度工具）使用；**不新增第二套原子写实现**
-/// ——锁内只做一次读 + 一次 [`write_file_atomic`]。
+/// 本函数把读、改、原子替换放进同一把锁；**不新增第二套原子写实现**——锁内只做一次读 +
+/// 一次 [`write_file_atomic`]。
 ///
 /// - 读是宽容读入（缺失 / 不可解析 / 非对象一律按 `{}`）：与既有写回纪律同口径，未知顶层键在
 ///   可解析时逐键保留；
@@ -1865,6 +2261,36 @@ pub(crate) fn write_json_atomic(
 /// - `version` 由 [`crate::commands::bump_config_version`] 统一补齐（不降高版本）。
 pub(crate) fn update_json_atomic(
     path: &Path,
+    f: impl FnOnce(&mut serde_json::Value) -> Result<(), CommandError>,
+) -> Result<(), CommandError> {
+    update_json_atomic_with(
+        path,
+        |value| {
+            read_config_json_into(value, path);
+            Ok(())
+        },
+        f,
+    )
+}
+
+/// [`update_json_atomic`] 的**严格读**变体（change add-model-automation-settings-oct24 §2.8）：
+/// 文件存在但不可解析 / 不是对象时返回解析错误，MUST NOT 按 `{}` 起——写通道拿宽容读入写作
+/// 等于用一份用户没看见的默认状态盖掉坏文件。
+///
+/// 与宽容版共用同一把锁与同一个 [`write_file_atomic`]（不新增第二套原子写）；文件不存在仍按
+/// 空对象处理（首次接入的主路径）。
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn update_json_atomic_strict(
+    path: &Path,
+    f: impl FnOnce(&mut serde_json::Value) -> Result<(), CommandError>,
+) -> Result<(), CommandError> {
+    update_json_atomic_with(path, |value| read_config_json_strict_into(value, path), f)
+}
+
+/// 两个读入口共用的落盘骨架：建目录 → 取锁 → 读 → 改 → 补 version → 原子写。
+fn update_json_atomic_with(
+    path: &Path,
+    read: impl FnOnce(&mut serde_json::Value) -> Result<(), CommandError>,
     f: impl FnOnce(&mut serde_json::Value) -> Result<(), CommandError>,
 ) -> Result<(), CommandError> {
     if let Some(dir) = path.parent() {
@@ -1878,19 +2304,16 @@ pub(crate) fn update_json_atomic(
     let _serialized = CONFIG_WRITE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut value = read_config_json(path);
+    let mut value = serde_json::json!({});
+    read(&mut value)?;
     f(&mut value)?;
     crate::commands::bump_config_version(&mut value);
     let body = serde_json::to_string_pretty(&value).expect("配置 Value 一定可序列化");
     write_file_atomic(path, body.as_bytes()).map_err(|failure| failure.into_command_error(path))
 }
 
-/// 应用侧写 config.json 的共用读入（ADR 0002 §5 配置即数据）：读整份 JSON 为 `Value`，
-/// 解析失败或不是对象按 `{}` 起——与写回纪律配套的宽容读入，未知字段原样保留在 `Value` 里。
-///
-/// 单一实现：`commands::write_config_value_to` / `write_last_vault_to` 与
-/// [`update_json_atomic`] 共用（REVIEW.md「同一语义两处真源」条）。
-pub(crate) fn read_config_json(path: &Path) -> serde_json::Value {
+/// 宽容读入的就地形态（缺失 / 不可解析 / 非对象一律按 `{}`，未知顶层键原样保留）。
+fn read_config_json_into(target: &mut serde_json::Value, path: &Path) {
     let mut value: serde_json::Value = match std::fs::read_to_string(path) {
         Ok(text) => serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({})),
         Err(_) => serde_json::json!({}),
@@ -1898,6 +2321,70 @@ pub(crate) fn read_config_json(path: &Path) -> serde_json::Value {
     if !value.is_object() {
         value = serde_json::json!({});
     }
+    *target = value;
+}
+
+/// 严格读入的就地形态：文件不存在 → 空对象；读失败 / JSON 不合法 / 非对象 → 解析错误
+/// （错误带行号 / 列号，供设置面横幅显示）。
+#[cfg_attr(not(test), allow(dead_code))]
+fn read_config_json_strict_into(
+    target: &mut serde_json::Value,
+    path: &Path,
+) -> Result<(), CommandError> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            *target = serde_json::json!({});
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(CommandError::new(
+                "config_parse_failed",
+                format!("无法读取配置文件 {}：{e}", path.display()),
+            )
+            .param("path", path.display().to_string()))
+        }
+    };
+    let mut value: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(e) => {
+            return Err(CommandError::new(
+                "config_parse_failed",
+                format!(
+                    "配置文件 {} 不是合法 JSON（第 {} 行，第 {} 列）：{}",
+                    path.display(),
+                    e.line(),
+                    e.column(),
+                    e
+                ),
+            )
+            .param("path", path.display().to_string())
+            .param("line", e.line().to_string())
+            .param("column", e.column().to_string()))
+        }
+    };
+    if !value.is_object() {
+        return Err(CommandError::new(
+            "config_parse_failed",
+            format!(
+                "配置文件 {} 的顶层不是对象（JSON 对象才是一份配置）",
+                path.display()
+            ),
+        )
+        .param("path", path.display().to_string()));
+    }
+    *target = std::mem::take(&mut value);
+    Ok(())
+}
+
+/// 应用侧写 config.json 的共用读入（ADR 0002 §5 配置即数据）：读整份 JSON 为 `Value`，
+/// 解析失败或不是对象按 `{}` 起——与写回纪律配套的宽容读入，未知字段原样保留在 `Value` 里。
+///
+/// 单一实现：[`update_json_atomic`] 与 `commands::write_last_vault_to` 共用
+/// （REVIEW.md「同一语义两处真源」条）。
+pub(crate) fn read_config_json(path: &Path) -> serde_json::Value {
+    let mut value = serde_json::json!({});
+    read_config_json_into(&mut value, path);
     value
 }
 
@@ -2040,16 +2527,20 @@ fn write_file_atomic(path: &Path, body: &[u8]) -> Result<(), AtomicWriteFailure>
 ///
 /// 第三项 `cron_issues` 是 `[cron].tasks` 里**被丢弃**任务项的结构化记录（供调度线程启动
 /// 时落 `cron_task_invalid` 诊断事件）；它不进 `AppConfig`、不序列化给前端。
-fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
+fn validate(raw: RawConfig) -> (AppConfig, Vec<ConfigDiagnostic>, Vec<CronTaskIssue>) {
     let defaults = AppConfig::default();
-    let mut warnings = Vec::new();
+    let mut sink = DiagnosticSink::default();
 
     let version = match raw.version {
         None => defaults.version,
         Some(v) if v > SCHEMA_VERSION => {
-            warnings.push(format!(
-                "配置文件版本 v{v} 高于本应用支持的 v{SCHEMA_VERSION}，已按 v{SCHEMA_VERSION} 解释；请升级应用"
-            ));
+            sink.warn_at(
+                "config_version_newer",
+                "version",
+                format!(
+                    "配置文件版本 v{v} 高于本应用支持的 v{SCHEMA_VERSION}，已按 v{SCHEMA_VERSION} 解释；请升级应用"
+                ),
+            );
             SCHEMA_VERSION
         }
         Some(v) => v,
@@ -2059,7 +2550,11 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
         None | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::String(s)) => Some(s),
         Some(_) => {
-            warnings.push("配置项 last_vault 应为字符串或 null，已忽略该值".to_string());
+            sink.warn_at(
+                "config_last_vault_invalid",
+                "last_vault",
+                "配置项 last_vault 应为字符串或 null，已忽略该值".to_string(),
+            );
             defaults.last_vault
         }
     };
@@ -2073,9 +2568,11 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
         match raw_mode {
             "md" => mode = EditorMode::Md,
             "code" => mode = EditorMode::Code,
-            other => warnings.push(format!(
-                "配置项 editor.mode 取值 \"{other}\" 非法（可选：md、code），已回退为 md"
-            )),
+            other => sink.warn_at(
+                "editor_mode_invalid",
+                "editor.mode",
+                format!("配置项 editor.mode 取值 \"{other}\" 非法（可选：md、code），已回退为 md"),
+            ),
         }
     }
     // 折行两项（line-wrap-options）：bool 只有两种取值，缺字段即回落到 Default，不产生
@@ -2106,8 +2603,11 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
     let font_family = match raw.editor.font_family.as_deref().map(str::trim) {
         None => None,
         Some("") => {
-            warnings
-                .push("配置项 editor.font_family 为空（或纯空白），已回退为基线字体".to_string());
+            sink.warn_at(
+                "editor_font_family_empty",
+                "editor.font_family",
+                "配置项 editor.font_family 为空（或纯空白），已回退为基线字体".to_string(),
+            );
             None
         }
         Some(value) => Some(value.to_string()),
@@ -2115,7 +2615,9 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
     let mono_font_family = match raw.editor.mono_font_family.as_deref().map(str::trim) {
         None => None,
         Some("") => {
-            warnings.push(
+            sink.warn_at(
+                "editor_mono_font_family_empty",
+                "editor.mono_font_family",
                 "配置项 editor.mono_font_family 为空（或纯空白），已回退为基线等宽字体".to_string(),
             );
             None
@@ -2129,9 +2631,13 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
         if (FONT_SIZE_MIN..=FONT_SIZE_MAX).contains(&value) {
             font_size = value;
         } else {
-            warnings.push(format!(
-                "配置项 editor.font_size 取值 {value} 超出合法区间 [{FONT_SIZE_MIN}, {FONT_SIZE_MAX}]，已回退为 {DEFAULT_FONT_SIZE}"
-            ));
+            sink.warn_at(
+                "editor_font_size_range",
+                "editor.font_size",
+                format!(
+                    "配置项 editor.font_size 取值 {value} 超出合法区间 [{FONT_SIZE_MIN}, {FONT_SIZE_MAX}]，已回退为 {DEFAULT_FONT_SIZE}"
+                ),
+            );
         }
     }
 
@@ -2144,9 +2650,11 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
             "light" => theme = UiTheme::Light,
             "dark" => theme = UiTheme::Dark,
             "eink" => theme = UiTheme::Eink,
-            other => warnings.push(format!(
-                "配置项 ui.theme 取值 \"{other}\" 非法（可选：light、dark、eink），已回退为 light"
-            )),
+            other => sink.warn_at(
+                "ui_theme_invalid",
+                "ui.theme",
+                format!("配置项 ui.theme 取值 \"{other}\" 非法（可选：light、dark、eink），已回退为 light"),
+            ),
         }
     }
 
@@ -2157,9 +2665,13 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
         if (CONTENT_WIDTH_MIN..=CONTENT_WIDTH_MAX).contains(&value) {
             content_width = value;
         } else {
-            warnings.push(format!(
-                "配置项 ui.content_width 取值 {value} 超出合法区间 [{CONTENT_WIDTH_MIN}, {CONTENT_WIDTH_MAX}]，已回退为 {DEFAULT_CONTENT_WIDTH}"
-            ));
+            sink.warn_at(
+                "ui_content_width_range",
+                "ui.content_width",
+                format!(
+                    "配置项 ui.content_width 取值 {value} 超出合法区间 [{CONTENT_WIDTH_MIN}, {CONTENT_WIDTH_MAX}]，已回退为 {DEFAULT_CONTENT_WIDTH}"
+                ),
+            );
         }
     }
 
@@ -2171,9 +2683,13 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
         if (SIDEBAR_WIDTH_MIN..=SIDEBAR_WIDTH_MAX).contains(&value) {
             sidebar_width = value;
         } else {
-            warnings.push(format!(
-                "配置项 ui.sidebar_width 取值 {value} 超出合法区间 [{SIDEBAR_WIDTH_MIN}, {SIDEBAR_WIDTH_MAX}]，已回退为 {DEFAULT_SIDEBAR_WIDTH}"
-            ));
+            sink.warn_at(
+                "ui_sidebar_width_range",
+                "ui.sidebar_width",
+                format!(
+                    "配置项 ui.sidebar_width 取值 {value} 超出合法区间 [{SIDEBAR_WIDTH_MIN}, {SIDEBAR_WIDTH_MAX}]，已回退为 {DEFAULT_SIDEBAR_WIDTH}"
+                ),
+            );
         }
     }
 
@@ -2186,9 +2702,11 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
             "on-demand" => markdown_line_numbers = MarkdownLineNumbers::OnDemand,
             "always" => markdown_line_numbers = MarkdownLineNumbers::Always,
             "off" => markdown_line_numbers = MarkdownLineNumbers::Off,
-            other => warnings.push(format!(
-                "配置项 ui.markdown_line_numbers 取值 \"{other}\" 非法（可选：on-demand、always、off），已回退为 on-demand"
-            )),
+            other => sink.warn_at(
+                "ui_markdown_line_numbers_invalid",
+                "ui.markdown_line_numbers",
+                format!("配置项 ui.markdown_line_numbers 取值 \"{other}\" 非法（可选：on-demand、always、off），已回退为 on-demand"),
+            ),
         }
     }
 
@@ -2200,25 +2718,27 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
         match raw_language {
             "en" => language = UiLanguage::En,
             "zh" => language = UiLanguage::Zh,
-            other => warnings.push(format!(
-                "配置项 ui.language 取值 \"{other}\" 非法（可选：en、zh），已回退为 en"
-            )),
+            other => sink.warn_at(
+                "ui_language_invalid",
+                "ui.language",
+                format!("配置项 ui.language 取值 \"{other}\" 非法（可选：en、zh），已回退为 en"),
+            ),
         }
     }
 
-    let (keys, mut key_warnings) = validate_keys(raw.keys);
-    warnings.append(&mut key_warnings);
+    let (keys, key_diagnostics) = validate_keys(raw.keys);
+    sink.extend(key_diagnostics);
 
-    let (log, mut log_warnings) = validate_log(raw.log);
-    warnings.append(&mut log_warnings);
+    let (log, log_diagnostics) = validate_log(raw.log);
+    sink.extend(log_diagnostics);
 
-    let (vault, mut vault_warnings) = validate_vault(raw.vault);
-    warnings.append(&mut vault_warnings);
+    let (vault, vault_diagnostics) = validate_vault(raw.vault);
+    sink.extend(vault_diagnostics);
 
-    let (harness, mut harness_warnings) = validate_harness(raw.harness);
-    warnings.append(&mut harness_warnings);
+    let (harness, harness_diagnostics) = validate_harness(raw.harness);
+    sink.extend(harness_diagnostics);
 
-    let (cron, cron_issues) = validate_cron(raw.cron, &mut warnings);
+    let (cron, cron_issues) = validate_cron(raw.cron, &mut sink);
 
     (
         AppConfig {
@@ -2247,7 +2767,7 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
             harness,
             cron,
         },
-        warnings,
+        sink.into_diagnostics(),
         cron_issues,
     )
 }
@@ -2270,18 +2790,18 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>, Vec<CronTaskIssue>) {
 /// 配置里演化，运行期解析并给 `config_warning`，任务不丢）。
 fn validate_cron(
     raw: RawCronConfig,
-    warnings: &mut Vec<String>,
+    sink: &mut DiagnosticSink,
 ) -> (CronConfig, Vec<CronTaskIssue>) {
     let Some(items) = raw.tasks else {
         return (CronConfig::default(), Vec::new());
     };
-    validate_cron_items(&items, warnings)
+    validate_cron_items(&items, sink)
 }
 
 /// 逐项校验的循环体（装载期与只读读取 [`read_cron_tasks_at`] 共用）。
 fn validate_cron_items(
     items: &[serde_json::Value],
-    warnings: &mut Vec<String>,
+    sink: &mut DiagnosticSink,
 ) -> (CronConfig, Vec<CronTaskIssue>) {
     let mut tasks: Vec<CronTask> = Vec::with_capacity(items.len());
     let mut issues: Vec<CronTaskIssue> = Vec::new();
@@ -2292,11 +2812,11 @@ fn validate_cron_items(
         let existing_ids: Vec<String> = tasks.iter().map(|task| task.id.clone()).collect();
         match validate_cron_task(item, &position_label, &id_label, &existing_ids) {
             Ok(validated) => {
-                warnings.extend(validated.warnings);
+                sink.extend(validated.diagnostics);
                 tasks.push(validated.task);
             }
             Err(rejection) => {
-                reject_cron_task(warnings, &mut issues, &rejection.label, rejection.issue);
+                reject_cron_task(sink, &mut issues, &rejection.label, rejection.issue);
             }
         }
     }
@@ -2320,9 +2840,9 @@ pub(crate) struct CronTaskRejection {
 /// 单条任务校验的结果：生效任务 + 非致命回落。
 pub(crate) struct ValidatedCronTask {
     pub task: CronTask,
-    /// 非致命回落的人话 warning（装载期逐条进 `ConfigSnapshot.warnings`；文案与
-    /// 回落前的实现逐字节一致）。
-    pub warnings: Vec<String>,
+    /// 非致命回落的诊断（装载期逐条进 `ConfigSnapshot.diagnostics`；文案与回落前的实现
+    /// 逐字节一致）。
+    pub diagnostics: Vec<ConfigDiagnostic>,
     /// 非致命回落项（工具侧据此拒绝写入：模型可以改对，不像手改配置那样只能保留）。
     pub degraded: Vec<CronTaskIssue>,
 }
@@ -2468,10 +2988,15 @@ pub(crate) fn validate_cron_task(
 
     // 非致命三项：回落 / 丢键，任务保留。warning 文案与回落前的实现逐字节一致；同时记一条
     // 结构化回落项（工具侧据此拒绝写入——模型可以改对，手改配置的作者只能等下一次 warning）。
-    let mut warnings = Vec::new();
+    let mut diagnostics = Vec::new();
     let mut degraded: Vec<CronTaskIssue> = Vec::new();
-    let mut degrade = |field: &str, reason: String, warning: String| {
-        warnings.push(warning);
+    let mut degrade = |code: &str, field: &str, reason: String, warning: String| {
+        diagnostics.push(ConfigDiagnostic {
+            code: code.to_string(),
+            path: Some(format!("cron.tasks.{id}.{field}")),
+            severity: DiagnosticSeverity::Warning,
+            message: warning,
+        });
         degraded.push(CronTaskIssue {
             task: id.clone(),
             field: field.to_string(),
@@ -2484,6 +3009,7 @@ pub(crate) fn validate_cron_task(
             Some(policy) => policy,
             None => {
                 degrade(
+                    "cron_task_delivery_invalid",
                     "delivery",
                     format!(
                         "取值 \"{text}\" 非法（可选：notify-then-run、run-then-notify、silent-run）"
@@ -2497,6 +3023,7 @@ pub(crate) fn validate_cron_task(
         },
         Some(_) => {
             degrade(
+                "cron_task_delivery_invalid",
                 "delivery",
                 "不是字符串（期望闭集合取值）".to_string(),
                 format!("配置项 {label} 的 delivery 不是字符串，已回退为 notify-then-run"),
@@ -2510,6 +3037,7 @@ pub(crate) fn validate_cron_task(
             Some(shape) => shape,
             None => {
                 degrade(
+                    "cron_task_session_invalid",
                     "session",
                     format!("取值 \"{text}\" 非法（可选：new、dedicated）"),
                     format!(
@@ -2521,6 +3049,7 @@ pub(crate) fn validate_cron_task(
         },
         Some(_) => {
             degrade(
+                "cron_task_session_invalid",
                 "session",
                 "不是字符串（期望闭集合取值）".to_string(),
                 format!("配置项 {label} 的 session 不是字符串，已回退为 new"),
@@ -2534,6 +3063,7 @@ pub(crate) fn validate_cron_task(
             let trimmed = text.trim();
             if trimmed.is_empty() {
                 degrade(
+                    "cron_task_model_invalid",
                     "model",
                     "为空（期望模型 id 字符串）".to_string(),
                     format!("配置项 {label} 的 model 为空，已按未配置处理（该任务保留）"),
@@ -2545,6 +3075,7 @@ pub(crate) fn validate_cron_task(
         }
         Some(_) => {
             degrade(
+                "cron_task_model_invalid",
                 "model",
                 "应为模型 id 字符串".to_string(),
                 format!("配置项 {label} 的 model 应为模型 id 字符串，已忽略该键（该任务保留）"),
@@ -2564,7 +3095,7 @@ pub(crate) fn validate_cron_task(
             session,
             model,
         },
-        warnings,
+        diagnostics,
         degraded,
     })
 }
@@ -2572,12 +3103,16 @@ pub(crate) fn validate_cron_task(
 /// 丢弃一条任务项：人话 warning 给人读，[`CronTaskIssue`] 供调度线程落诊断事件——两者同源
 /// 同刻产生，避免「warning 说丢了一项、事件里没有」这类两处真源。
 fn reject_cron_task(
-    warnings: &mut Vec<String>,
+    sink: &mut DiagnosticSink,
     issues: &mut Vec<CronTaskIssue>,
     label: &str,
     issue: CronTaskIssue,
 ) {
-    warnings.push(format!("配置项 {label} {}，已丢弃该任务", issue.reason));
+    sink.warn(
+        "cron_task_invalid",
+        Some(format!("cron.tasks.{}", issue.task)),
+        format!("配置项 {label} {}，已丢弃该任务", issue.reason),
+    );
     issues.push(issue);
 }
 
@@ -2601,7 +3136,7 @@ pub(crate) fn read_cron_tasks_at(path: &Path) -> Vec<CronTask> {
     else {
         return Vec::new();
     };
-    let (config, _issues) = validate_cron_items(items, &mut Vec::new());
+    let (config, _issues) = validate_cron_items(items, &mut DiagnosticSink::default());
     config.tasks
 }
 
@@ -2615,56 +3150,69 @@ pub(crate) fn read_cron_tasks_at(path: &Path) -> Vec<CronTask> {
 ///
 /// 所有非法项都逐项丢弃并各给一条人话 warning，其余项照常生效（ADR 0002 §5：逐字段校验、
 /// 非法值人话 warning、不得导致启动失败，也 MUST NOT 因为一项非法把其余字段一起回退）。
-fn validate_vault(raw: RawVaultConfig) -> (VaultConfig, Vec<String>) {
+fn validate_vault(raw: RawVaultConfig) -> (VaultConfig, Vec<ConfigDiagnostic>) {
     let defaults = VaultConfig::default();
-    let mut warnings = Vec::new();
+    let mut sink = DiagnosticSink::default();
 
     let rule_files = match raw.rule_files {
         None => defaults.rule_files,
-        Some(items) => validate_rule_files(items, &mut warnings),
+        Some(items) => validate_rule_files(items, &mut sink),
     };
     let ignore = match raw.ignore {
         None => defaults.ignore,
-        Some(map) => validate_ignore_map(map, &mut warnings),
+        Some(map) => validate_ignore_map(map, &mut sink),
     };
 
-    (VaultConfig { rule_files, ignore }, warnings)
+    (VaultConfig { rule_files, ignore }, sink.into_diagnostics())
 }
 
 /// `rule_files` 的逐项校验（change vault-open-ignore-set §2.9）：合法项 = 非空、相对路径、
 /// 不含 `..` 组件的 vault 相对路径。「文件是否存在」不在这里判定——那是装载时按 vault 根
 /// 逐个探测的事，且「不存在」是常态（`.git/info/exclude` 在非 git vault 里就没有），
 /// MUST NOT 报错、MUST NOT 给 warning。
-fn validate_rule_files(items: Vec<serde_json::Value>, warnings: &mut Vec<String>) -> Vec<String> {
+fn validate_rule_files(items: Vec<serde_json::Value>, sink: &mut DiagnosticSink) -> Vec<String> {
     let mut rule_files = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
         let Some(text) = item.as_str() else {
-            warnings.push(format!(
-                "配置项 vault.rule_files 的第 {} 项不是字符串，已忽略",
-                index + 1
-            ));
+            sink.warn_at(
+                "vault_rule_file_invalid",
+                "vault.rule_files",
+                format!(
+                    "配置项 vault.rule_files 的第 {} 项不是字符串，已忽略",
+                    index + 1
+                ),
+            );
             continue;
         };
         if text.trim().is_empty() {
-            warnings.push(format!(
-                "配置项 vault.rule_files 的第 {} 项为空，已忽略",
-                index + 1
-            ));
+            sink.warn_at(
+                "vault_rule_file_invalid",
+                "vault.rule_files",
+                format!("配置项 vault.rule_files 的第 {} 项为空，已忽略", index + 1),
+            );
             continue;
         }
         if Path::new(text).is_absolute() {
-            warnings.push(format!(
-                "配置项 vault.rule_files 的 \"{text}\" 是绝对路径（规则文件必须是 vault 相对路径），已忽略"
-            ));
+            sink.warn_at(
+                "vault_rule_file_invalid",
+                "vault.rule_files",
+                format!(
+                    "配置项 vault.rule_files 的 \"{text}\" 是绝对路径（规则文件必须是 vault 相对路径），已忽略"
+                ),
+            );
             continue;
         }
         if Path::new(text)
             .components()
             .any(|c| matches!(c, std::path::Component::ParentDir))
         {
-            warnings.push(format!(
-                "配置项 vault.rule_files 的 \"{text}\" 含 ..（不允许越出 vault 根），已忽略"
-            ));
+            sink.warn_at(
+                "vault_rule_file_invalid",
+                "vault.rule_files",
+                format!(
+                    "配置项 vault.rule_files 的 \"{text}\" 含 ..（不允许越出 vault 根），已忽略"
+                ),
+            );
             continue;
         }
         rule_files.push(text.to_string());
@@ -2679,29 +3227,37 @@ fn validate_rule_files(items: Vec<serde_json::Value>, warnings: &mut Vec<String>
 /// 反序列化会把一个错值升级成整文件回落（见 [`IgnoreTier`] 的注释）。
 fn validate_ignore_map(
     map: serde_json::Map<String, serde_json::Value>,
-    warnings: &mut Vec<String>,
+    sink: &mut DiagnosticSink,
 ) -> BTreeMap<String, IgnoreTier> {
     let mut ignore = BTreeMap::new();
     for (name, value) in map {
         if let Err(reason) = validate_ignore_name(&name) {
-            warnings.push(format!(
-                "配置项 vault.ignore 的名字 \"{name}\" {reason}，已忽略"
-            ));
+            sink.warn(
+                "vault_ignore_name_invalid",
+                Some(format!("vault.ignore.{name}")),
+                format!("配置项 vault.ignore 的名字 \"{name}\" {reason}，已忽略"),
+            );
             continue;
         }
         let tier = match value.as_str() {
             Some("hidden") => IgnoreTier::Hidden,
             Some("lazy") => IgnoreTier::Lazy,
             Some(other) => {
-                warnings.push(format!(
-                    "配置项 vault.ignore 的 \"{name}\" 档位取值 \"{other}\" 非法（可选：hidden、lazy），已忽略"
-                ));
+                sink.warn(
+                    "vault_ignore_tier_invalid",
+                    Some(format!("vault.ignore.{name}")),
+                    format!(
+                        "配置项 vault.ignore 的 \"{name}\" 档位取值 \"{other}\" 非法（可选：hidden、lazy），已忽略"
+                    ),
+                );
                 continue;
             }
             None => {
-                warnings.push(format!(
-                    "配置项 vault.ignore 的 \"{name}\" 档位不是字符串，已忽略"
-                ));
+                sink.warn(
+                    "vault_ignore_tier_invalid",
+                    Some(format!("vault.ignore.{name}")),
+                    format!("配置项 vault.ignore 的 \"{name}\" 档位不是字符串，已忽略"),
+                );
                 continue;
             }
         };
@@ -2743,27 +3299,26 @@ fn validate_ignore_name(name: &str) -> Result<(), &'static str> {
 /// `attachment_naming`（图片语义命名）与 `session_naming`（会话自动命名）都在 2026-10-18
 /// 配置面重塑后落进 harness 域，校验各走一个函数，形态对称：
 /// [`validate_session_naming`] / [`validate_attachment_naming`]。
-fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
+fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<ConfigDiagnostic>) {
     let defaults = HarnessConfig::default();
-    let mut warnings = Vec::new();
+    let mut sink = DiagnosticSink::default();
 
-    let mut provider = defaults.provider;
-    if let Some(raw_provider) = raw.provider.as_deref() {
-        match HarnessProvider::parse(raw_provider) {
-            Some(parsed) => provider = parsed,
-            None => warnings.push(format!(
-                "配置项 harness.provider 取值 \"{raw_provider}\" 非法（可选：kimi、deepseek、mock），已回退为 kimi"
-            )),
+    // provider 映射：**逐条**解析——一个手写条目的笔误只丢它自己 + warning，MUST NOT 拖垮
+    // 整份配置（design §2.1 的「条目级宽容」，与 `vault.ignore` 地图、`permissions.allow`
+    // 清单的逐项口径同族）。被丢弃的条目只存在于 raw JSON，不参与 active / 命名 / wire 解析。
+    let mut providers: BTreeMap<String, HarnessProviderConfig> = BTreeMap::new();
+    for (id, value) in raw.providers.unwrap_or_default() {
+        if let Some(entry) = validate_provider_entry(&id, &value, &mut sink) {
+            providers.insert(id, entry);
         }
     }
 
-    let kimi = validate_harness_provider(raw.providers.kimi, "kimi", &mut warnings);
-    let deepseek = validate_harness_provider(raw.providers.deepseek, "deepseek", &mut warnings);
-    let mock = validate_harness_mock(raw.providers.mock, &mut warnings);
+    // 生效 provider：按「显式 → configured 优先 → 预设顺序 → 空」解析（design §2.5）。
+    let provider = resolve_active_provider(&providers, raw.provider.as_deref(), &mut sink);
 
     let permissions = HarnessPermissions {
-        allow: validate_harness_rules(raw.permissions.allow, "allow", &mut warnings),
-        deny: validate_harness_rules(raw.permissions.deny, "deny", &mut warnings),
+        allow: validate_harness_rules(raw.permissions.allow, "allow", &mut sink),
+        deny: validate_harness_rules(raw.permissions.deny, "deny", &mut sink),
     };
 
     // 权限模式（change add-harness-permission-modes）：闭集合，缺字段 ⇒ 默认 `vault_write`
@@ -2772,9 +3327,11 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
     if let Some(raw_mode) = raw.permission_mode.as_deref() {
         match PermissionMode::parse(raw_mode) {
             Some(mode) => permission_mode = mode,
-            None => warnings.push(format!(
-                "配置项 harness.permission_mode 取值 \"{raw_mode}\" 非法（可选：read_only、vault_write、full_access），已回退为 vault_write"
-            )),
+            None => sink.warn_at(
+                "harness_permission_mode_invalid",
+                "harness.permission_mode",
+                format!("配置项 harness.permission_mode 取值 \"{raw_mode}\" 非法（可选：read_only、vault_write、full_access），已回退为 vault_write"),
+            ),
         }
     }
 
@@ -2783,9 +3340,13 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
         if (LOOP_MAX_MIN..=LOOP_MAX_MAX).contains(&value) {
             loop_max = value;
         } else {
-            warnings.push(format!(
-                "配置项 harness.loop_max 取值 {value} 超出合法区间 [{LOOP_MAX_MIN}, {LOOP_MAX_MAX}]，已回退为 {DEFAULT_LOOP_MAX}"
-            ));
+            sink.warn_at(
+                "harness_loop_max_range",
+                "harness.loop_max",
+                format!(
+                    "配置项 harness.loop_max 取值 {value} 超出合法区间 [{LOOP_MAX_MIN}, {LOOP_MAX_MAX}]，已回退为 {DEFAULT_LOOP_MAX}"
+                ),
+            );
         }
     }
 
@@ -2795,9 +3356,13 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
         if (WARN_CTX_PCT_MIN..=WARN_CTX_PCT_MAX).contains(&value) {
             warn_ctx_pct = value;
         } else {
-            warnings.push(format!(
-                "配置项 harness.warn_ctx_pct 取值 {value} 超出合法区间 [{WARN_CTX_PCT_MIN}, {WARN_CTX_PCT_MAX}]，已回退为 {DEFAULT_WARN_CTX_PCT}"
-            ));
+            sink.warn_at(
+                "harness_warn_ctx_pct_range",
+                "harness.warn_ctx_pct",
+                format!(
+                    "配置项 harness.warn_ctx_pct 取值 {value} 超出合法区间 [{WARN_CTX_PCT_MIN}, {WARN_CTX_PCT_MAX}]，已回退为 {DEFAULT_WARN_CTX_PCT}"
+                ),
+            );
         }
     }
 
@@ -2807,33 +3372,19 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
 
     // 两个命名配置面（会话自动命名 / 图片语义命名，2026-10-18 配置面重塑）：校验要对照
     // **选定 provider** 的模型清单，因此排在 providers 校验之后。
-    let session_naming = validate_session_naming(
-        raw.session_naming,
-        provider,
-        &kimi,
-        &deepseek,
-        &mut warnings,
-    );
-    let attachment_naming = validate_attachment_naming(
-        raw.attachment_naming,
-        provider,
-        &kimi,
-        &deepseek,
-        &mut warnings,
-    );
+    let session_naming =
+        validate_session_naming(raw.session_naming, &provider, &providers, &mut sink);
+    let attachment_naming =
+        validate_attachment_naming(raw.attachment_naming, &provider, &providers, &mut sink);
 
     // 子代理运行（change add-harness-subagents design §14）：独立解析 —— 类型不符只回落本节，
     // 不拖垮其余 `[harness]` 配置（理由见 `RawHarnessConfig::subagents` 的注释）。
-    let subagents = validate_subagents(raw.subagents, &mut warnings);
+    let subagents = validate_subagents(raw.subagents, &mut sink);
 
     (
         HarnessConfig {
             provider,
-            providers: HarnessProviders {
-                kimi,
-                deepseek,
-                mock,
-            },
+            providers,
             permissions,
             permission_mode,
             loop_max,
@@ -2843,8 +3394,313 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
             attachment_naming,
             subagents,
         },
-        warnings,
+        sink.into_diagnostics(),
     )
+}
+
+/// 生效 provider 的解析（design §2.5，**唯一**实现）：
+///
+/// 1. 显式 id 是有效条目 → 用它（**不因未配置而换**——那是用户的选择）；
+/// 2. 缺省 → 按 `kimi → deepseek → generic`（组内 id 字典序）取第一个 **configured** 的条目；
+/// 3. 没有 configured 条目 → 按同一顺序取第一个合法非 mock 条目；
+/// 4. 映射为空（或只剩 mock）→ 空串（= 没有可用 provider）；
+/// 5. 显式 id 悬空（不在有效映射内）→ 按 2/3 回退 + warning（点名原值与落点）。
+///
+/// **mock 不参与缺省回退**：它只在显式写 `provider: "mock"` 时生效——否则一份只剩 mock 的
+/// 配置会在用户不知情时让整个应用进入 fixture 驱动模式。
+fn resolve_active_provider(
+    providers: &BTreeMap<String, HarnessProviderConfig>,
+    raw: Option<&str>,
+    sink: &mut DiagnosticSink,
+) -> String {
+    let requested = raw.map(str::trim).unwrap_or("");
+    if requested.is_empty() {
+        // 空字符串按「未写」处理 + warning（显式写空没有额外语义，design §2.5）。
+        if raw.is_some() {
+            sink.warn_at(
+                "harness_provider_empty",
+                "harness.provider",
+                "配置项 harness.provider 为空，已按未写处理（按已配置的 provider 回退）"
+                    .to_string(),
+            );
+        }
+        return default_active_provider(providers);
+    }
+    if providers.contains_key(requested) {
+        return requested.to_string();
+    }
+    let fallback = default_active_provider(providers);
+    let landing = if fallback.is_empty() {
+        "无可用 provider".to_string()
+    } else {
+        fallback.clone()
+    };
+    sink.warn_at(
+        "harness_provider_unknown",
+        "harness.provider",
+        format!(
+            "配置项 harness.provider 取值 \"{requested}\" 不在 harness.providers 表内，已回退为 {landing}"
+        ),
+    );
+    fallback
+}
+
+/// 缺省回退的落点（design §2.5 的 2/3/4 步）：非 mock、按预设顺序 → configured 优先。
+fn default_active_provider(providers: &BTreeMap<String, HarnessProviderConfig>) -> String {
+    let ordered: Vec<(&String, &HarnessProviderConfig)> = providers
+        .iter()
+        .filter(|(_, entry)| entry.preset != ProviderPreset::Mock)
+        .collect();
+    // BTreeMap 已按 id 升序；再按 (preset, id) 稳定排序即规范顺序（kimi → deepseek → generic，
+    // 组内 id 字典序）。
+    let mut ordered = ordered;
+    ordered.sort_by(|a, b| (a.1.preset, a.0.as_str()).cmp(&(b.1.preset, b.0.as_str())));
+    ordered
+        .iter()
+        .find(|(_, entry)| entry.configured)
+        .or_else(|| ordered.first())
+        .map(|(id, _)| (*id).clone())
+        .unwrap_or_default()
+}
+
+/// 单个 provider 条目的解析（design §2.1 / §2.2 的「非法处置」表）：任何一处形状非法都
+/// **只丢该条 + 点名 warning**，返回 `None`；合法条目返回派生好的生效形态。
+fn validate_provider_entry(
+    id: &str,
+    value: &serde_json::Value,
+    sink: &mut DiagnosticSink,
+) -> Option<HarnessProviderConfig> {
+    let path = format!("harness.providers.{id}");
+    let Some(map) = value.as_object() else {
+        sink.warn(
+            "harness_provider_invalid",
+            Some(path.clone()),
+            format!("配置项 {path} 不是对象，已忽略该 provider"),
+        );
+        return None;
+    };
+    if !provider_id_valid(id) {
+        sink.warn(
+            "harness_provider_id_invalid",
+            Some(path.clone()),
+            format!(
+                "配置项 {path} 的 id 非法（小写字母 / 数字 / - / _，至多 {PROVIDER_ID_MAX} 字符、不含点），已忽略该 provider"
+            ),
+        );
+        return None;
+    }
+    // preset：缺键 ⇒ generic + warning（迁移会补上旧三档）；闭集合外 / 非字符串 ⇒ 整条忽略。
+    let preset = match map.get("preset") {
+        None => {
+            sink.warn(
+                "harness_provider_preset_missing",
+                Some(format!("{path}.preset")),
+                format!(
+                    "配置项 {path}.preset 缺失，按 generic 处理；请显式声明 kimi、deepseek、generic 或 mock"
+                ),
+            );
+            ProviderPreset::Generic
+        }
+        Some(serde_json::Value::String(text)) => match ProviderPreset::parse(text.trim()) {
+            Some(preset) => preset,
+            None => {
+                sink.warn(
+                    "harness_provider_preset_invalid",
+                    Some(format!("{path}.preset")),
+                    format!(
+                        "配置项 {path}.preset 取值 \"{text}\" 非法（可选：kimi、deepseek、generic、mock），已忽略该 provider"
+                    ),
+                );
+                return None;
+            }
+        },
+        Some(_) => {
+            sink.warn(
+                "harness_provider_preset_invalid",
+                Some(format!("{path}.preset")),
+                format!(
+                    "配置项 {path}.preset 应为字符串（可选：kimi、deepseek、generic、mock），已忽略该 provider"
+                ),
+            );
+            return None;
+        }
+    };
+    // 保留 id：mock 预设只允许 id 恰好是 mock（design §2.2）。
+    if preset == ProviderPreset::Mock && id != RESERVED_PROVIDER_ID {
+        sink.warn(
+            "harness_provider_preset_invalid",
+            Some(format!("{path}.preset")),
+            format!(
+                "配置项 {path}.preset 为 mock，但 mock 是保留 id（只有 id 为 \"mock\" 的条目可使用该预设），已忽略该 provider"
+            ),
+        );
+        return None;
+    }
+
+    let api_key = match provider_string_field(map, "api_key", &path, sink) {
+        Ok(value) => value.unwrap_or_default(),
+        Err(()) => return None,
+    };
+    let explicit_model = match provider_string_field(map, "model", &path, sink) {
+        Ok(value) => value,
+        Err(()) => return None,
+    };
+    let base_url = match provider_string_field(map, "base_url", &path, sink) {
+        Ok(None) => None,
+        Ok(Some(value)) => {
+            if value.is_empty() {
+                sink.warn(
+                    "harness_base_url_empty",
+                    Some(format!("{path}.base_url")),
+                    format!(
+                        "配置项 {path}.base_url 为空，已回退为{}",
+                        preset
+                            .official_base_url()
+                            .map(|url| format!("官方地址 {url}"))
+                            .unwrap_or_else(|| "未配置（该预设没有官方地址）".to_string())
+                    ),
+                );
+                None
+            } else {
+                Some(value)
+            }
+        }
+        Err(()) => return None,
+    };
+    let models = match map.get("models") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(serde_json::Value::Array(items)) => validate_harness_model_specs(items, &path, sink),
+        Some(_) => {
+            sink.warn(
+                "harness_provider_invalid",
+                Some(format!("{path}.models")),
+                format!("配置项 {path}.models 应为数组，已忽略该 provider"),
+            );
+            return None;
+        }
+    };
+    let wire_api = match map.get("wire_api") {
+        None | Some(serde_json::Value::Null) => preset.default_wire_api(),
+        Some(serde_json::Value::String(text)) => validate_wire_api(preset, text, &path, sink),
+        Some(_) => {
+            sink.warn(
+                "harness_wire_api_invalid",
+                Some(format!("{path}.wire_api")),
+                format!("配置项 {path}.wire_api 应为字符串（可选：responses、chat_completions），已忽略该 provider"),
+            );
+            return None;
+        }
+    };
+    let fixture = match provider_string_field(map, "fixture", &path, sink) {
+        Ok(value) => value.filter(|value| !value.is_empty()),
+        Err(()) => return None,
+    };
+
+    // generic 的 Base URL 是构造请求的唯一依据（该预设没有官方地址）：条目已填 Key 或模型
+    // 却没写 Base URL 即阻断级（design §6.4）。完全空的条目例外——那是「刚点添加、还没填」
+    // 的合法半成品，`configured = false`。
+    if preset == ProviderPreset::Generic
+        && base_url.is_none()
+        && (!api_key.trim().is_empty() || !models.is_empty())
+    {
+        sink.warn(
+            "harness_base_url_required",
+            Some(format!("{path}.base_url")),
+            format!(
+                "配置项 {path} 是 OpenAI 兼容预设且已填写 api_key 或模型：请填写 base_url（该预设没有官方地址）"
+            ),
+        );
+    }
+
+    // 半配置（有 Key、无模型）是阻断级：保存进去就是一个用不了的 provider。
+    if !api_key.trim().is_empty() && models.is_empty() {
+        sink.warn(
+            "harness_models_empty_when_configured",
+            Some(path.clone()),
+            format!(
+                "配置项 {path} 已配置 api_key 但没有声明任何模型：请至少声明一个模型，或清除 api_key"
+            ),
+        );
+    }
+
+    // 生效模型（design §2.1 的 `model` 行）：显式值优先（不在清单内也保留 + warning；清单为空
+    // 也保留）→ 缺省取清单首项 → 两者皆无为空串。
+    let model = match explicit_model {
+        Some(value) if !value.is_empty() => {
+            if !models.is_empty() && !models.iter().any(|spec| spec.id == value) {
+                sink.warn(
+                    "harness_model_not_declared",
+                    Some(format!("{path}.model")),
+                    format!(
+                        "配置项 {path}.model 的值 \"{value}\" 不在 models 清单内：上下文窗口按 {FALLBACK_CONTEXT_WINDOW} 保守估算，思考程度与图片能力按不支持处理；请在 models 中声明该模型或修正 model 值"
+                    ),
+                );
+            }
+            value
+        }
+        Some(_) => {
+            match models.first() {
+                Some(spec) => {
+                    sink.warn(
+                        "harness_model_empty",
+                        Some(format!("{path}.model")),
+                        format!(
+                            "配置项 {path}.model 为空，已按 models 清单首项解析为 {}",
+                            spec.id
+                        ),
+                    );
+                    spec.id.clone()
+                }
+                None => {
+                    sink.warn(
+                    "harness_model_empty",
+                    Some(format!("{path}.model")),
+                    format!("配置项 {path}.model 为空，且 models 清单未声明任何模型，当前无可用模型"),
+                );
+                    String::new()
+                }
+            }
+        }
+        None => models
+            .first()
+            .map(|spec| spec.id.clone())
+            .unwrap_or_default(),
+    };
+
+    let mut entry = HarnessProviderConfig {
+        preset,
+        api_key,
+        model,
+        base_url,
+        models,
+        wire_api,
+        fixture,
+        configured: false,
+    };
+    entry.configured = entry.derive_configured();
+    Some(entry)
+}
+
+/// 条目内一个可选字符串字段的读取：缺键 / null ⇒ `Ok(None)`；字符串 ⇒ `Ok(Some(trim))`；
+/// 其它类型 ⇒ 记一条诊断 + `Err(())`（调用方整条忽略该 provider，design §2.1 的条目级宽容）。
+fn provider_string_field(
+    map: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    path: &str,
+    sink: &mut DiagnosticSink,
+) -> Result<Option<String>, ()> {
+    match map.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(text)) => Ok(Some(text.trim().to_string())),
+        Some(_) => {
+            sink.warn(
+                "harness_provider_invalid",
+                Some(format!("{path}.{field}")),
+                format!("配置项 {path}.{field} 应为字符串，已忽略该 provider"),
+            );
+            Err(())
+        }
+    }
 }
 
 /// `harness.subagents` 的校验（change add-harness-subagents design §14）：缺节 / 空节 ⇒ 出厂值
@@ -2853,7 +3709,7 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
 /// 上限类旋钮贴着用户意图走，理由见模块内常量注释）。合法边界值原样接受。
 fn validate_subagents(
     raw: Option<serde_json::Value>,
-    warnings: &mut Vec<String>,
+    sink: &mut DiagnosticSink,
 ) -> SubagentsConfig {
     let defaults = SubagentsConfig::default();
     let Some(raw) = raw else {
@@ -2862,15 +3718,21 @@ fn validate_subagents(
     // 非对象（字符串 / 数组 / 数字）一律整节回落：serde 允许「空序列 → 全默认结构体」，
     // 不先挡的话 `"subagents": []` 会静默变成缺省值而不是「形状非法」。
     if !raw.is_object() {
-        warnings.push("配置项 harness.subagents 不是对象，已整节回退为缺省值".to_string());
+        sink.warn_at(
+            "harness_subagents_invalid",
+            "harness.subagents",
+            "配置项 harness.subagents 不是对象，已整节回退为缺省值".to_string(),
+        );
         return defaults;
     }
     let parsed: RawSubagentsConfig = match serde_json::from_value(raw) {
         Ok(parsed) => parsed,
         Err(error) => {
-            warnings.push(format!(
-                "配置项 harness.subagents 形状非法（{error}），已整节回退为缺省值"
-            ));
+            sink.warn_at(
+                "harness_subagents_invalid",
+                "harness.subagents",
+                format!("配置项 harness.subagents 形状非法（{error}），已整节回退为缺省值"),
+            );
             return defaults;
         }
     };
@@ -2882,7 +3744,7 @@ fn validate_subagents(
             DEFAULT_SUBAGENT_MAX_TURNS,
             SUBAGENT_MAX_TURNS_MIN,
             SUBAGENT_MAX_TURNS_MAX,
-            warnings,
+            sink,
         ),
         max_tokens: clamp_subagent_value(
             "max_tokens",
@@ -2890,7 +3752,7 @@ fn validate_subagents(
             DEFAULT_SUBAGENT_MAX_TOKENS,
             SUBAGENT_MAX_TOKENS_MIN,
             SUBAGENT_MAX_TOKENS_MAX,
-            warnings,
+            sink,
         ),
         timeout_secs: clamp_subagent_value(
             "timeout_secs",
@@ -2898,7 +3760,7 @@ fn validate_subagents(
             DEFAULT_SUBAGENT_TIMEOUT_SECS,
             SUBAGENT_TIMEOUT_SECS_MIN,
             SUBAGENT_TIMEOUT_SECS_MAX,
-            warnings,
+            sink,
         ),
         max_subruns_per_turn: clamp_subagent_value(
             "max_subruns_per_turn",
@@ -2906,7 +3768,7 @@ fn validate_subagents(
             DEFAULT_MAX_SUBRUNS_PER_TURN,
             MAX_SUBRUNS_PER_TURN_MIN,
             MAX_SUBRUNS_PER_TURN_MAX,
-            warnings,
+            sink,
         ),
         max_concurrent: clamp_subagent_value(
             "max_concurrent",
@@ -2914,7 +3776,7 @@ fn validate_subagents(
             DEFAULT_MAX_CONCURRENT,
             MAX_CONCURRENT_MIN,
             MAX_CONCURRENT_MAX,
-            warnings,
+            sink,
         ),
     }
 }
@@ -2927,20 +3789,28 @@ fn clamp_subagent_value<T: Copy + PartialOrd + std::fmt::Display>(
     default: T,
     min: T,
     max: T,
-    warnings: &mut Vec<String>,
+    sink: &mut DiagnosticSink,
 ) -> T {
     let Some(value) = value else {
         return default;
     };
     if value < min {
-        warnings.push(format!(
-            "配置项 harness.subagents.{key} 取值 {value} 小于合法下限 {min}，已夹取为 {min}"
-        ));
+        sink.warn_at(
+            "harness_subagents_clamped",
+            "harness.subagents",
+            format!(
+                "配置项 harness.subagents.{key} 取值 {value} 小于合法下限 {min}，已夹取为 {min}"
+            ),
+        );
         min
     } else if value > max {
-        warnings.push(format!(
-            "配置项 harness.subagents.{key} 取值 {value} 大于合法上限 {max}，已夹取为 {max}"
-        ));
+        sink.warn_at(
+            "harness_subagents_clamped",
+            "harness.subagents",
+            format!(
+                "配置项 harness.subagents.{key} 取值 {value} 大于合法上限 {max}，已夹取为 {max}"
+            ),
+        );
         max
     } else {
         value
@@ -2959,63 +3829,70 @@ fn clamp_subagent_value<T: Copy + PartialOrd + std::fmt::Display>(
 /// 只会让调用失败，回落生效模型是唯一诚实的可执行解。空串按「未配置」归一为 `None` + warning。
 fn validate_session_naming(
     raw: RawSessionNamingConfig,
-    session_provider: HarnessProvider,
-    kimi: &HarnessProviderConfig,
-    deepseek: &HarnessProviderConfig,
-    warnings: &mut Vec<String>,
+    session_provider: &str,
+    providers: &BTreeMap<String, HarnessProviderConfig>,
+    sink: &mut DiagnosticSink,
 ) -> SessionNamingConfig {
     let defaults = SessionNamingConfig::default();
     // bool 只有两种取值，缺键即回落默认、不告警（与 `auto_compact` 同路）；
     // 类型不符到不了这里（解析期整文件回落，单测钉住）。
     let enabled = raw.enabled.unwrap_or(defaults.enabled);
 
-    // provider：缺键 / 空串 ⇒ 会话当前 provider（不告警）；闭集合外 ⇒ 回落缺省 + 人话 warning
-    // （与 `harness.provider` 同模板）。
-    let mut provider = None;
-    if let Some(raw_provider) = raw.provider.as_deref() {
-        let value = raw_provider.trim();
-        if !value.is_empty() {
-            match HarnessProvider::parse(value) {
-                Some(parsed) => provider = Some(parsed),
-                None => warnings.push(format!(
-                    "配置项 harness.session_naming.provider 取值 \"{value}\" 非法（可选：kimi、deepseek、mock），已回退为会话当前 provider"
-                )),
-            }
-        }
-    }
+    let provider = validate_naming_provider(
+        raw.provider.as_deref(),
+        "harness.session_naming.provider",
+        "会话命名",
+        providers,
+        sink,
+    );
 
     let model = match raw.model.as_deref().map(str::trim) {
         None => None,
         Some("") => {
-            warnings.push(
+            sink.warn_at(
+                "harness_naming_model_empty",
+                "harness.session_naming.model",
                 "配置项 harness.session_naming.model 为空，已按 null（跟随该 provider 的生效模型）处理"
                     .to_string(),
             );
             None
         }
         Some(value) => {
-            let target = provider.unwrap_or(session_provider);
-            match target {
-                HarnessProvider::Mock => {
-                    warnings.push(format!(
-                        "配置项 harness.session_naming.model 的值 \"{value}\" 无效：mock provider 没有模型清单，该键只能是 null；已按 null（跟随该 provider 的生效模型）处理"
-                    ));
+            let target = provider.as_deref().unwrap_or(session_provider);
+            match providers.get(target) {
+                Some(entry) if entry.preset == ProviderPreset::Mock => {
+                    sink.warn_at(
+                        "harness_naming_model_invalid",
+                        "harness.session_naming.model",
+                        format!(
+                            "配置项 harness.session_naming.model 的值 \"{value}\" 无效：mock provider 没有模型清单，该键只能是 null；已按 null（跟随该 provider 的生效模型）处理"
+                        ),
+                    );
                     None
                 }
-                _ => {
-                    let entry = match target {
-                        HarnessProvider::Kimi => kimi,
-                        _ => deepseek,
-                    };
-                    if entry.models.iter().any(|spec| spec.id == value) {
-                        Some(value.to_string())
-                    } else {
-                        warnings.push(format!(
-                            "配置项 harness.session_naming.model 的值 \"{value}\" 不在 provider（{target_name}）的 models 清单内：命名调用已回落为 {target_name} 的生效模型；请在 harness.providers.{target_name}.models 中声明该模型",
-                            target_name = target.as_str()
-                        ));
-                        None
-                    }
+                Some(entry) if entry.models.iter().any(|spec| spec.id == value) => {
+                    Some(value.to_string())
+                }
+                Some(_) => {
+                    sink.warn_at(
+                        "harness_naming_model_invalid",
+                        "harness.session_naming.model",
+                        format!(
+                            "配置项 harness.session_naming.model 的值 \"{value}\" 不在 provider（{target}）的 models 清单内：命名调用已回落为 {target} 的生效模型；请在 harness.providers.{target}.models 中声明该模型"
+                        ),
+                    );
+                    None
+                }
+                // 目标 provider 不存在（无 active provider）：值保留不了，按 null 处理 + 点名。
+                None => {
+                    sink.warn_at(
+                        "harness_naming_model_invalid",
+                        "harness.session_naming.model",
+                        format!(
+                            "配置项 harness.session_naming.model 的值 \"{value}\" 没有可用的目标 provider（会话当前 provider 为空），已按 null 处理"
+                        ),
+                    );
+                    None
                 }
             }
         }
@@ -3026,6 +3903,31 @@ fn validate_session_naming(
         provider,
         model,
     }
+}
+
+/// 命名目标 `provider` 键的解析（两组命名表共用一份，MUST NOT 各写一遍）：
+/// 缺键 / 空串 ⇒ `None`（跟随会话当前 provider，不告警）；有效条目 id ⇒ `Some(id)`
+/// （**显式 `mock` 也算有效**——loader 层只认条目是否存在；设置面板另行禁止把 mock 设为
+/// 目标）；悬空 id（不在映射内 / 被装载期忽略）⇒ `None` + 点名 warning（不阻断启动）。
+fn validate_naming_provider(
+    raw: Option<&str>,
+    key: &str,
+    label: &str,
+    providers: &BTreeMap<String, HarnessProviderConfig>,
+    sink: &mut DiagnosticSink,
+) -> Option<String> {
+    let value = raw.map(str::trim).filter(|value| !value.is_empty())?;
+    if providers.contains_key(value) {
+        return Some(value.to_string());
+    }
+    sink.warn(
+        "harness_naming_provider_unknown",
+        Some(key.to_string()),
+        format!(
+            "配置项 {key} 取值 \"{value}\" 不在 harness.providers 表内，{label}已回退为会话当前 provider"
+        ),
+    );
+    None
 }
 
 /// `harness.attachment_naming` 的校验（change add-semantic-image-naming，2026-10-18 配置面
@@ -3040,63 +3942,70 @@ fn validate_session_naming(
 /// 后重新核对）；不满足即保留暂存名、不发请求。空串按「未配置」归一为 `None` + warning。
 fn validate_attachment_naming(
     raw: RawAttachmentNamingConfig,
-    session_provider: HarnessProvider,
-    kimi: &HarnessProviderConfig,
-    deepseek: &HarnessProviderConfig,
-    warnings: &mut Vec<String>,
+    session_provider: &str,
+    providers: &BTreeMap<String, HarnessProviderConfig>,
+    sink: &mut DiagnosticSink,
 ) -> AttachmentNamingConfig {
     let defaults = AttachmentNamingConfig::default();
     // bool 只有两种取值，缺键即回落默认、不告警（与 `auto_compact` 同路）；
     // 类型不符到不了这里（解析期整文件回落，单测钉住）。
     let enabled = raw.enabled.unwrap_or(defaults.enabled);
 
-    // provider：缺键 / 空串 ⇒ 会话当前 provider（不告警）；闭集合外 ⇒ 回落缺省 + 人话 warning
-    // （与 `harness.session_naming.provider` 同模板）。
-    let mut provider = None;
-    if let Some(raw_provider) = raw.provider.as_deref() {
-        let value = raw_provider.trim();
-        if !value.is_empty() {
-            match HarnessProvider::parse(value) {
-                Some(parsed) => provider = Some(parsed),
-                None => warnings.push(format!(
-                    "配置项 harness.attachment_naming.provider 取值 \"{value}\" 非法（可选：kimi、deepseek、mock），已回退为会话当前 provider"
-                )),
-            }
-        }
-    }
+    let provider = validate_naming_provider(
+        raw.provider.as_deref(),
+        "harness.attachment_naming.provider",
+        "图片语义命名",
+        providers,
+        sink,
+    );
 
     let model = match raw.model.as_deref().map(str::trim) {
         None => None,
         Some("") => {
-            warnings.push(
+            sink.warn_at(
+                "harness_naming_model_empty",
+                "harness.attachment_naming.model",
                 "配置项 harness.attachment_naming.model 为空，已按 null（跟随该 provider 的生效模型）处理"
                     .to_string(),
             );
             None
         }
         Some(value) => {
-            let target = provider.unwrap_or(session_provider);
-            match target {
-                HarnessProvider::Mock => warnings.push(format!(
-                    "配置项 harness.attachment_naming.model 的值 \"{value}\" 无效：mock provider 没有模型清单，该键只能是 null；语义命名将不会发起"
-                )),
-                _ => {
-                    let entry = match target {
-                        HarnessProvider::Kimi => kimi,
-                        _ => deepseek,
-                    };
-                    match entry.models.iter().find(|spec| spec.id == value) {
-                        None => warnings.push(format!(
-                            "配置项 harness.attachment_naming.model 的值 \"{value}\" 不在 provider（{}）的 models 清单内；语义命名将不会发起——请在 harness.providers.{}.models 中声明该模型",
-                            target.as_str(),
-                            target.as_str()
-                        )),
-                        Some(spec) if !spec.vision => warnings.push(format!(
+            let target = provider.as_deref().unwrap_or(session_provider);
+            match providers.get(target) {
+                Some(entry) if entry.preset == ProviderPreset::Mock => sink.warn_at(
+                    "harness_naming_model_invalid",
+                    "harness.attachment_naming.model",
+                    format!(
+                        "配置项 harness.attachment_naming.model 的值 \"{value}\" 无效：mock provider 没有模型清单，该键只能是 null；语义命名将不会发起"
+                    ),
+                ),
+                Some(entry) => match entry.models.iter().find(|spec| spec.id == value) {
+                    None => sink.warn_at(
+                        "harness_naming_model_invalid",
+                        "harness.attachment_naming.model",
+                        format!(
+                            "配置项 harness.attachment_naming.model 的值 \"{value}\" 不在 provider（{target}）的 models 清单内；语义命名将不会发起——请在 harness.providers.{target}.models 中声明该模型"
+                        ),
+                    ),
+                    Some(spec) if !spec.vision => sink.warn_at(
+                        "harness_naming_model_invalid",
+                        "harness.attachment_naming.model",
+                        format!(
                             "配置项 harness.attachment_naming.model 的值 \"{value}\" 未声明 vision 能力；语义命名将不会发起"
-                        )),
-                        Some(_) => {}
-                    }
-                }
+                        ),
+                    ),
+                    Some(_) => {}
+                },
+                // 目标 provider 不存在（无 active provider）：值原样保留（不静默换模型），
+                // 运行期资格闸会跳过——装载期只点名一次。
+                None => sink.warn_at(
+                    "harness_naming_model_invalid",
+                    "harness.attachment_naming.model",
+                    format!(
+                        "配置项 harness.attachment_naming.model 的值 \"{value}\" 没有可用的目标 provider（会话当前 provider 为空）；语义命名将不会发起"
+                    ),
+                ),
             }
             // 值原样保留（不静默换成别的模型）。
             Some(value.to_string())
@@ -3110,185 +4019,141 @@ fn validate_attachment_naming(
     }
 }
 
-/// 单个 provider 参数的校验（M381 起 config-only）：`api_key` 去空白后原样保留（空 = 未配置，
-/// 不告警）；`models` **唯一真源是配置声明**——缺键 / 空清单 / 逐项校验后为空 = 空清单，
-/// provider 节已配置（任一子键出现）时给一条人话 warning（不回落内置表，不伪造条目）；
-/// `model` 显式值照实生效（不在清单内 → warning：窗口按保守默认估算、effort 按不支持），
-/// 缺省 / 空串 → 声明清单首项 id（清单为空 → 空串 + warning）；`base_url` 空 → `None`
-/// （官方地址）+ warning。URL 是否可用不在这里判定——那是网络层的事（reqwest 的报错更准），
-/// 与「形状在此、语义在外」同路。
-fn validate_harness_provider(
-    raw: RawHarnessProviderConfig,
-    provider: &str,
-    warnings: &mut Vec<String>,
-) -> HarnessProviderConfig {
-    let api_key = raw
-        .api_key
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or("")
-        .to_string();
-    // 节是否「已配置」：任一子键出现即算（与空 api_key = 未配置不告警的出厂口径同理——
-    // 整节没写是出厂状态，写了 models 就要负责）。
-    let section_configured = raw.api_key.is_some()
-        || raw.model.is_some()
-        || raw.base_url.is_some()
-        || raw.models.is_some()
-        || raw.wire_api.is_some();
-    let models = match &raw.models {
-        None => Vec::new(),
-        Some(items) => validate_harness_model_specs(items, provider, warnings),
-    };
-    if section_configured && models.is_empty() {
-        warnings.push(format!(
-            "配置项 harness.providers.{provider}.models 未声明任何可用模型：模型选择器将显示提示态，请在 config.json 的 harness.providers.{provider}.models 下逐项声明（{{\"id\", \"effort\", \"vision\", \"window\"}}）"
-        ));
-    }
-    let model = match raw.model.as_deref().map(str::trim) {
-        Some(value) if !value.is_empty() => {
-            if !models.is_empty() && !models.iter().any(|spec| spec.id == value) {
-                warnings.push(format!(
-                    "配置项 harness.providers.{provider}.model 的值 \"{value}\" 不在 models 清单内：上下文窗口按 {FALLBACK_CONTEXT_WINDOW} 保守估算，思考程度按不支持处理；请在 models 中声明该模型或修正 model 值"
-                ));
-            }
-            value.to_string()
-        }
-        // 显式空串：空值输入，回落清单首项 + warning。
-        Some(_) => match models.first() {
-            Some(spec) => {
-                warnings.push(format!(
-                    "配置项 harness.providers.{provider}.model 为空，已按 models 清单首项解析为 {spec_id}",
-                    spec_id = spec.id
-                ));
-                spec.id.clone()
-            }
-            None => {
-                warnings.push(format!(
-                    "配置项 harness.providers.{provider}.model 为空，且 models 清单未声明任何模型，当前无可用模型"
-                ));
-                String::new()
-            }
-        },
-        // 缺键：清单首项即默认（不告警）；清单也空 = 整节未配置的出厂态，由上面的
-        // models  warning（节已配置时）或静默出厂默认承担。
-        None => models
-            .first()
-            .map(|spec| spec.id.clone())
-            .unwrap_or_default(),
-    };
-    let base_url = match raw.base_url.as_deref().map(str::trim) {
-        None => None,
-        Some("") => {
-            warnings.push(format!(
-                "配置项 harness.providers.{provider}.base_url 为空，已回退为 {provider} 官方地址"
-            ));
-            None
-        }
-        Some(value) => Some(value.to_string()),
-    };
-    let wire_api = validate_wire_api(raw.wire_api.as_deref(), provider, warnings);
-    HarnessProviderConfig {
-        api_key,
-        model,
-        base_url,
-        models,
-        wire_api,
-    }
-}
-
-/// wire 方言校验（change add-harness-chat-completions-dialect，design D1）：缺键 ⇒ `responses`
-/// 不告警；闭集合外取值 / v1 未实现的 provider 档位 ⇒ 回落 `responses` + 人话 warning。
-/// 类型不符到不了这里（解析期整文件回落，见 [`RawHarnessProviderConfig`]）。
-fn validate_wire_api(raw: Option<&str>, provider: &str, warnings: &mut Vec<String>) -> WireApi {
-    let Some(value) = raw.map(str::trim) else {
-        return WireApi::default();
-    };
+/// wire 方言校验（change add-harness-chat-completions-dialect，design D1；change
+/// add-model-automation-settings-oct24 §2.2 起按 preset 判支持面）：缺键由调用方取
+/// [`ProviderPreset::default_wire_api`]（不告警）；闭集合外取值 / 该预设不支持的档位 ⇒
+/// 回落预设缺省 + 人话 warning。
+fn validate_wire_api(
+    preset: ProviderPreset,
+    raw: &str,
+    path: &str,
+    sink: &mut DiagnosticSink,
+) -> WireApi {
+    let value = raw.trim();
+    let fallback = preset.default_wire_api();
     match WireApi::parse(value) {
-        // v1 仅 kimi 实现 chat 方言（design D1）：其余 provider 配该档照实告警并回落——
-        // 静默忽略会让用户以为请求已走 chat 路径。
-        Some(WireApi::ChatCompletions) if provider != "kimi" => {
-            warnings.push(format!(
-                "配置项 harness.providers.{provider}.wire_api 取值 \"chat_completions\" 当前未实现（v1 仅 kimi 支持），已回退为 responses"
-            ));
-            WireApi::Responses
+        Some(api) if preset.supports_wire_api(api) => api,
+        // 该预设不支持这一档：照实告警并回落——静默忽略会让用户以为请求已走该路径。
+        Some(_) => {
+            sink.warn(
+                "harness_wire_api_unsupported",
+                Some(format!("{path}.wire_api")),
+                format!(
+                    "配置项 {path}.wire_api 取值 \"{value}\" 当前不受 {} 预设支持，已回退为 {}",
+                    preset.as_str(),
+                    fallback.as_str()
+                ),
+            );
+            fallback
         }
-        Some(api) => api,
         None => {
-            warnings.push(format!(
-                "配置项 harness.providers.{provider}.wire_api 取值 \"{value}\" 非法（可选：responses、chat_completions），已回退为 responses"
-            ));
-            WireApi::Responses
+            sink.warn(
+                "harness_wire_api_invalid",
+                Some(format!("{path}.wire_api")),
+                format!(
+                    "配置项 {path}.wire_api 取值 \"{value}\" 非法（可选：responses、chat_completions），已回退为 {}",
+                    fallback.as_str()
+                ),
+            );
+            fallback
         }
     }
 }
 
 /// 模型清单的**逐项**校验（M373，与 permissions 清单同形）：每项必须是对象，含非空
-/// `id` 字符串；`effort` 缺省 → false（保守默认）+ warning，类型不符 → 丢该项 + warning；
-/// `window` 缺省 → [`FALLBACK_CONTEXT_WINDOW`] + warning，非正整数 / 超上限 → 丢该项 +
+/// `id` 字符串；`effort` / `vision` 缺省 → false（保守默认）+ warning，类型不符 → 丢该项 +
+/// warning；`window` 缺省 → [`FALLBACK_CONTEXT_WINDOW`] + warning，非正整数 / 超上限 → 丢该项 +
 /// warning；重复 `id` → 保留先出现的，丢重项 + warning。合法项按原顺序生效，
 /// 一项写坏不拖垮清单的其余项。
 fn validate_harness_model_specs(
     items: &[serde_json::Value],
-    provider: &str,
-    warnings: &mut Vec<String>,
+    path: &str,
+    sink: &mut DiagnosticSink,
 ) -> Vec<HarnessModelSpec> {
     /// 窗口合法上限（tokens）：现役最大 1M，放宽一个数量级容纳未来大窗模型；
     /// 超出视为笔误（多写一个 0 就是 10 倍）。
     const WINDOW_MAX: u64 = 10_000_000;
     let mut specs = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
-        let at = format!("harness.providers.{provider}.models 的第 {} 项", index + 1);
+        let at = format!("{path}.models 的第 {} 项", index + 1);
+        let item_path = format!("{path}.models[{index}]");
         let Some(map) = item.as_object() else {
-            warnings.push(format!("配置项 {at} 不是对象，已忽略"));
+            sink.warn(
+                "harness_model_invalid",
+                Some(item_path),
+                format!("配置项 {at} 不是对象，已忽略"),
+            );
             continue;
         };
         let Some(id) = map.get("id").and_then(|v| v.as_str()).map(str::trim) else {
-            warnings.push(format!("配置项 {at} 缺少 id（或 id 不是字符串），已忽略"));
+            sink.warn(
+                "harness_model_id_empty",
+                Some(item_path),
+                format!("配置项 {at} 缺少 id（或 id 不是字符串），已忽略"),
+            );
             continue;
         };
         if id.is_empty() {
-            warnings.push(format!("配置项 {at} 的 id 为空，已忽略"));
+            sink.warn(
+                "harness_model_id_empty",
+                Some(item_path),
+                format!("配置项 {at} 的 id 为空，已忽略"),
+            );
             continue;
         }
         if specs.iter().any(|spec: &HarnessModelSpec| spec.id == id) {
-            warnings.push(format!("配置项 {at} 的 id \"{id}\" 重复，已忽略"));
+            sink.warn(
+                "harness_model_id_duplicate",
+                Some(item_path),
+                format!("配置项 {at} 的 id \"{id}\" 重复，已忽略"),
+            );
             continue;
         }
         let effort = match map.get("effort") {
             None => {
-                warnings.push(format!(
-                    "配置项 {at}（id \"{id}\"）未声明 effort 能力，已按不支持处理"
-                ));
+                sink.warn(
+                    "harness_model_effort_missing",
+                    Some(item_path.clone()),
+                    format!("配置项 {at}（id \"{id}\"）未声明 effort 能力，已按不支持处理"),
+                );
                 false
             }
             Some(serde_json::Value::Bool(value)) => *value,
             Some(_) => {
-                warnings.push(format!(
-                    "配置项 {at}（id \"{id}\"）的 effort 应为布尔值，已忽略该项"
-                ));
+                sink.warn(
+                    "harness_model_effort_invalid",
+                    Some(item_path.clone()),
+                    format!("配置项 {at}（id \"{id}\"）的 effort 应为布尔值，已忽略该项"),
+                );
                 continue;
             }
         };
         let vision = match map.get("vision") {
             None => {
-                warnings.push(format!(
-                    "配置项 {at}（id \"{id}\"）未声明 vision 能力，已按不支持处理"
-                ));
+                sink.warn(
+                    "harness_model_vision_missing",
+                    Some(item_path.clone()),
+                    format!("配置项 {at}（id \"{id}\"）未声明 vision 能力，已按不支持处理"),
+                );
                 false
             }
             Some(serde_json::Value::Bool(value)) => *value,
             Some(_) => {
-                warnings.push(format!(
-                    "配置项 {at}（id \"{id}\"）的 vision 应为布尔值，已忽略该项"
-                ));
+                sink.warn(
+                    "harness_model_vision_invalid",
+                    Some(item_path.clone()),
+                    format!("配置项 {at}（id \"{id}\"）的 vision 应为布尔值，已忽略该项"),
+                );
                 continue;
             }
         };
         let window = match map.get("window") {
             None => {
-                warnings.push(format!(
-                    "配置项 {at}（id \"{id}\"）未声明 window，已回退为 {FALLBACK_CONTEXT_WINDOW}"
-                ));
+                sink.warn(
+                    "harness_model_window_missing",
+                    Some(item_path.clone()),
+                    format!("配置项 {at}（id \"{id}\"）未声明 window，已回退为 {FALLBACK_CONTEXT_WINDOW}"),
+                );
                 FALLBACK_CONTEXT_WINDOW
             }
             Some(value) => {
@@ -3298,9 +4163,11 @@ fn validate_harness_model_specs(
                 match parsed {
                     Some(window) => window,
                     None => {
-                        warnings.push(format!(
-                            "配置项 {at}（id \"{id}\"）的 window 应为 1..={WINDOW_MAX} 的整数，已忽略该项"
-                        ));
+                        sink.warn(
+                            "harness_model_window_invalid",
+                            Some(item_path.clone()),
+                            format!("配置项 {at}（id \"{id}\"）的 window 应为 1..={WINDOW_MAX} 的整数，已忽略该项"),
+                        );
                         continue;
                     }
                 }
@@ -3316,28 +4183,12 @@ fn validate_harness_model_specs(
     specs
 }
 
-/// mock 档参数：`fixture` 空 → `None`（未配置）+ warning，与 `base_url` 同口径。
-fn validate_harness_mock(
-    raw: RawHarnessMockConfig,
-    warnings: &mut Vec<String>,
-) -> HarnessMockConfig {
-    let fixture = match raw.fixture.as_deref().map(str::trim) {
-        None => None,
-        Some("") => {
-            warnings.push("配置项 harness.providers.mock.fixture 为空，已按未配置处理".to_string());
-            None
-        }
-        Some(value) => Some(value.to_string()),
-    };
-    HarnessMockConfig { fixture }
-}
-
 /// 权限规则清单的**逐项**校验（与 `vault.rule_files` 同形）：非字符串 / 空串逐项丢弃并各给一条
 /// warning，其余项按原顺序保留。规则的**匹配语义**不在这里判定（见 [`HarnessPermissions`]）。
 fn validate_harness_rules(
     items: Option<Vec<serde_json::Value>>,
     key: &str,
-    warnings: &mut Vec<String>,
+    sink: &mut DiagnosticSink,
 ) -> Vec<String> {
     let Some(items) = items else {
         return Vec::new(); // 缺键 ⇒ 空规则表（= 只有默认分层），不告警
@@ -3345,18 +4196,26 @@ fn validate_harness_rules(
     let mut rules = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
         let Some(text) = item.as_str() else {
-            warnings.push(format!(
-                "配置项 harness.permissions.{key} 的第 {} 项不是字符串，已忽略",
-                index + 1
-            ));
+            sink.warn_at(
+                "harness_permission_rule_invalid",
+                "harness.permissions",
+                format!(
+                    "配置项 harness.permissions.{key} 的第 {} 项不是字符串，已忽略",
+                    index + 1
+                ),
+            );
             continue;
         };
         let trimmed = text.trim();
         if trimmed.is_empty() {
-            warnings.push(format!(
-                "配置项 harness.permissions.{key} 的第 {} 项为空，已忽略",
-                index + 1
-            ));
+            sink.warn_at(
+                "harness_permission_rule_invalid",
+                "harness.permissions",
+                format!(
+                    "配置项 harness.permissions.{key} 的第 {} 项为空，已忽略",
+                    index + 1
+                ),
+            );
             continue;
         }
         rules.push(trimmed.to_string());
@@ -3367,23 +4226,32 @@ fn validate_harness_rules(
 /// [keys] 表的形状校验（M132）：逐项判定，非法项丢弃并附人话 warning，其余项照常生效。
 /// 只判形状——键位非空且不含空白（含空白即多段 chord，本版不支持）、值是非空字符串或
 /// null；命令 id 是否已知由前端键位层判定（模块头有理由）。
-fn validate_keys(raw: serde_json::Value) -> (HashMap<String, Option<String>>, Vec<String>) {
+fn validate_keys(
+    raw: serde_json::Value,
+) -> (HashMap<String, Option<String>>, Vec<ConfigDiagnostic>) {
     let mut keys = HashMap::new();
-    let mut warnings = Vec::new();
+    let mut sink = DiagnosticSink::default();
     let map = match raw {
-        serde_json::Value::Null => return (keys, warnings),
+        serde_json::Value::Null => return (keys, sink.into_diagnostics()),
         serde_json::Value::Object(map) => map,
         _ => {
-            warnings
-                .push("配置项 keys 应为对象（键位 → 命令 id，或 null 解绑），已忽略".to_string());
-            return (keys, warnings);
+            sink.warn_at(
+                "keys_invalid",
+                "keys",
+                "配置项 keys 应为对象（键位 → 命令 id，或 null 解绑），已忽略".to_string(),
+            );
+            return (keys, sink.into_diagnostics());
         }
     };
     for (key, value) in map {
         if key.trim().is_empty() || key.chars().any(char::is_whitespace) {
-            warnings.push(format!(
-                "配置项 keys 的键位 \"{key}\" 非法（空或含空白；多段 chord 暂不支持），已忽略"
-            ));
+            sink.warn_at(
+                "keys_invalid",
+                "keys",
+                format!(
+                    "配置项 keys 的键位 \"{key}\" 非法（空或含空白；多段 chord 暂不支持），已忽略"
+                ),
+            );
             continue;
         }
         match value {
@@ -3393,51 +4261,65 @@ fn validate_keys(raw: serde_json::Value) -> (HashMap<String, Option<String>>, Ve
             serde_json::Value::String(command) if !command.trim().is_empty() => {
                 keys.insert(key, Some(command));
             }
-            serde_json::Value::String(_) => warnings.push(format!(
-                "配置项 keys.{key} 的命令为空，已忽略（解绑请写 null）"
-            )),
-            _ => warnings.push(format!(
-                "配置项 keys.{key} 的值应为命令 id 字符串或 null（解绑），已忽略"
-            )),
+            serde_json::Value::String(_) => sink.warn(
+                "keys_invalid",
+                Some(format!("keys.{key}")),
+                format!("配置项 keys.{key} 的命令为空，已忽略（解绑请写 null）"),
+            ),
+            _ => sink.warn(
+                "keys_invalid",
+                Some(format!("keys.{key}")),
+                format!("配置项 keys.{key} 的值应为命令 id 字符串或 null（解绑），已忽略"),
+            ),
         }
     }
-    (keys, warnings)
+    (keys, sink.into_diagnostics())
 }
 
 /// [log] 表的形状校验（add-diagnostics-logging）：与 keys 表同口径——整表非法只丢这一项
 /// 并附人话 warning，`level` 取值非法只回退该字段到默认 `info`（ADR 0002 §5：非法配置不
 /// 导致启动失败）。未知键忽略（向前兼容）。
-fn validate_log(raw: serde_json::Value) -> (LogConfig, Vec<String>) {
+fn validate_log(raw: serde_json::Value) -> (LogConfig, Vec<ConfigDiagnostic>) {
     let defaults = LogConfig::default();
-    let mut warnings = Vec::new();
+    let mut sink = DiagnosticSink::default();
     let map = match raw {
-        serde_json::Value::Null => return (defaults, warnings),
+        serde_json::Value::Null => return (defaults, sink.into_diagnostics()),
         serde_json::Value::Object(map) => map,
         _ => {
-            warnings.push(
+            sink.warn_at(
+                "log_invalid",
+                "log",
                 "配置项 log 应为对象（如 {\"log\": {\"level\": \"info\"}}），已忽略".to_string(),
             );
-            return (defaults, warnings);
+            return (defaults, sink.into_diagnostics());
         }
     };
     let level = match map.get("level") {
         None | Some(serde_json::Value::Null) => defaults.level,
-        Some(serde_json::Value::String(text)) => match text.as_str() {
-            "info" => LogLevel::Info,
-            "off" => LogLevel::Off,
-            other => {
-                warnings.push(format!(
-                    "配置项 log.level 取值 \"{other}\" 非法（可选：info、off），已回退为 info"
-                ));
-                defaults.level
+        Some(serde_json::Value::String(text)) => {
+            match text.as_str() {
+                "info" => LogLevel::Info,
+                "off" => LogLevel::Off,
+                other => {
+                    sink.warn_at(
+                    "log_level_invalid",
+                    "log.level",
+                    format!("配置项 log.level 取值 \"{other}\" 非法（可选：info、off），已回退为 info"),
+                );
+                    defaults.level
+                }
             }
-        },
+        }
         Some(_) => {
-            warnings.push("配置项 log.level 应为字符串（info / off），已回退为 info".to_string());
+            sink.warn_at(
+                "log_level_invalid",
+                "log.level",
+                "配置项 log.level 应为字符串（info / off），已回退为 info".to_string(),
+            );
             defaults.level
         }
     };
-    (LogConfig { level }, warnings)
+    (LogConfig { level }, sink.into_diagnostics())
 }
 
 #[cfg(test)]
@@ -4666,171 +5548,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // `[harness]` 表（change add-harness-probe §11，M301）
+    // `[harness]` 表（change add-harness-probe §11，M301；
+    // change add-model-automation-settings-oct24 起 provider 是动态映射）
     // -----------------------------------------------------------------------
-
-    /// 语义①：缺节 / 缺键 ⇒ 出厂默认（provider = kimi、loop_max = 50、warn_ctx_pct = 85、
-    /// auto_compact = true、空规则表），且不产生任何 warning（与 `editor` / `ui` 同口径）。
-    /// M381 config-only：出厂默认 = 空模型清单 + 空 model（不内置任何模型——清单严格只来自
-    /// 配置声明，providers 整节未写是出厂状态，与空 api_key 不告警同口径）。
-    #[test]
-    fn harness_missing_section_takes_factory_defaults() {
-        for raw in [
-            r#"{"version":1,"last_vault":"/tmp/vault"}"#,
-            r#"{"version":1,"last_vault":"/tmp/vault","harness":{}}"#,
-            r#"{"version":1,"last_vault":"/tmp/vault","harness":{"future":1}}"#,
-        ] {
-            let snap = load_from(&TempFile::new(raw).0);
-            assert_eq!(snap.config.harness, HarnessConfig::default(), "{raw}");
-            assert_eq!(snap.config.harness.provider, HarnessProvider::Kimi, "{raw}");
-            assert_eq!(snap.config.harness.loop_max, 50, "{raw}");
-            assert_eq!(snap.config.harness.warn_ctx_pct, 85.0, "{raw}");
-            assert!(snap.config.harness.auto_compact, "{raw}");
-            // config-only 出厂态：没有内置模型。
-            assert!(snap.config.harness.providers.kimi.model.is_empty(), "{raw}");
-            assert!(
-                snap.config.harness.providers.kimi.models.is_empty(),
-                "{raw}"
-            );
-            assert!(
-                snap.config.harness.providers.deepseek.model.is_empty(),
-                "{raw}"
-            );
-            assert!(
-                snap.config.harness.providers.deepseek.models.is_empty(),
-                "{raw}"
-            );
-            assert!(
-                snap.config.harness.providers.kimi.api_key.is_empty(),
-                "{raw}"
-            );
-            assert!(
-                snap.config.harness.providers.mock.fixture.is_none(),
-                "{raw}"
-            );
-            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
-        }
-    }
-
-    /// 退役值迁移（M365，M381 改目标）：存 `kimi-k2` ⇒ 改写为 **已声明 models 清单的首项
-    /// id**（模型名一律来自配置，不内置替补值）+ 落盘，其余键（含未知字段、同一表内别的键、
-    /// 其他 provider、models 清单本身）逐键保留；再启动不重复触发（幂等）。
-    #[test]
-    fn harness_retired_kimi_model_is_migrated_and_persisted() {
-        let f = TempFile::new(
-            r#"{"version":1,"last_vault":"/tmp/vault","harness":{"providers":{"kimi":{"api_key":"sk-x","model":" kimi-k2 ","base_url":"https://k.example/v1","models":[{"id":"my-model","effort":true,"window":32768},{"id":"second","effort":false,"window":1000}]},"deepseek":{"model":"deepseek-v4-pro"}},"loop_max":4},"future_table":{"keep":true}}"#,
-        );
-        let snap = load_from(&f.0);
-        // 本次生效值就是改写后的值（清单首项，不是内置常量）。
-        assert_eq!(snap.config.harness.providers.kimi.model, "my-model");
-        assert_eq!(snap.config.harness.loop_max, 4);
-        assert!(
-            snap.warnings
-                .iter()
-                .any(|w| w.contains(RETIRED_KIMI_MODEL) && w.contains("my-model")),
-            "{:?}",
-            snap.warnings
-        );
-
-        // 落盘：只有 model 变了，其余键逐键保留（含未知字段与 models 清单）。
-        let persisted: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&f.0).expect("读回配置"))
-                .expect("配置仍是合法 JSON");
-        assert_eq!(
-            persisted["harness"]["providers"]["kimi"]["model"],
-            "my-model"
-        );
-        assert_eq!(persisted["harness"]["providers"]["kimi"]["api_key"], "sk-x");
-        assert_eq!(
-            persisted["harness"]["providers"]["kimi"]["base_url"],
-            "https://k.example/v1"
-        );
-        assert_eq!(
-            persisted["harness"]["providers"]["kimi"]["models"],
-            serde_json::json!([
-                {"id":"my-model","effort":true,"window":32768},
-                {"id":"second","effort":false,"window":1000}
-            ])
-        );
-        assert_eq!(
-            persisted["harness"]["providers"]["deepseek"]["model"],
-            "deepseek-v4-pro"
-        );
-        assert_eq!(persisted["harness"]["loop_max"], 4);
-        assert_eq!(persisted["future_table"]["keep"], true);
-        assert_eq!(persisted["last_vault"], "/tmp/vault");
-
-        // 幂等：把文件改成「改写后 + 一点格式差异」，再加载应逐字节未动（判据是「没有第二次写」，
-        // 不是「内容碰巧一样」）
-        let rewritten = format!("{}\n", std::fs::read_to_string(&f.0).expect("读回配置"));
-        std::fs::write(&f.0, &rewritten).expect("写入探针配置");
-        let again = load_from(&f.0);
-        assert_eq!(again.config.harness.providers.kimi.model, "my-model");
-        assert_eq!(
-            std::fs::read_to_string(&f.0).expect("读回配置"),
-            rewritten,
-            "第二次加载不应再写文件"
-        );
-        assert!(
-            !again
-                .warnings
-                .iter()
-                .any(|w| w.contains(RETIRED_KIMI_MODEL)),
-            "{:?}",
-            again.warnings
-        );
-    }
-
-    /// 退役迁移的负向（M381 config-only）：命中退役值但 models 清单未声明任何模型时，
-    /// **不改写、不落盘、不伪造**——只给一条人话 warning 说明无法自动迁移。
-    #[test]
-    fn harness_retired_kimi_model_without_models_is_not_rewritten() {
-        let raw = r#"{"harness":{"providers":{"kimi":{"api_key":"sk-x","model":"kimi-k2"}}}}"#;
-        let f = TempFile::new(raw);
-        let snap = load_from(&f.0);
-        assert_eq!(snap.config.harness.providers.kimi.model, RETIRED_KIMI_MODEL);
-        assert!(
-            snap.warnings
-                .iter()
-                .any(|w| { w.contains(RETIRED_KIMI_MODEL) && w.contains("无法自动改写") }),
-            "{:?}",
-            snap.warnings
-        );
-        assert_eq!(
-            std::fs::read_to_string(&f.0).expect("读回配置"),
-            raw,
-            "未声明清单时不应改写落盘"
-        );
-    }
-
-    /// 迁移的边界（M365）：只认 `kimi-k2` 这一个本仓写出过的退役值——现役 id、同样已退役但
-    /// 我们从没写出过的 id（如 `kimi-k2.5`）、用户手填的任意 id 都原样保留、不写文件、不告警。
-    #[test]
-    fn harness_other_kimi_model_values_are_left_alone() {
-        for stored in [
-            "kimi-k2.6",
-            "kimi-k2.7-code",
-            "kimi-k2.5",
-            "my-router/model-x",
-        ] {
-            let raw = format!(r#"{{"harness":{{"providers":{{"kimi":{{"model":"{stored}"}}}}}}}}"#);
-            let f = TempFile::new(&raw);
-            let snap = load_from(&f.0);
-            assert_eq!(snap.config.harness.providers.kimi.model, stored);
-            assert_eq!(
-                std::fs::read_to_string(&f.0).expect("读回配置"),
-                raw,
-                "{stored} 不应被改写"
-            );
-            assert!(
-                snap.warnings
-                    .iter()
-                    .all(|w| !w.contains(RETIRED_KIMI_MODEL)),
-                "{stored}: {:?}",
-                snap.warnings
-            );
-        }
-    }
 
     /// 旧实现的固定 tmp 名（`config.json.tmp`）不再被踩（M592）：崩溃残留的同名文件既不是
     /// 本次写的半成品，也不该被截断复用——落盘后它原样保留，正式配置照常更新。
@@ -4896,9 +5616,9 @@ mod tests {
         );
     }
 
-    /// 多线程同时命中退役值迁移（M592 的现场：`restore_outcome` / `cron_loop` / 前端
-    /// `config_get` 的 load 时间窗重叠），同时还有一个运行期回写在跑：配置不许被写坏，
-    /// 落盘内容必须是「迁移后的配置」或「回写内容」之一的完整版本，且不留 tmp 残留。
+    /// 多线程同时命中迁移（M592 的现场：`restore_outcome` / `cron_loop` / 前端 `config_get`
+    /// 的 load 时间窗重叠），同时还有一个运行期回写在跑：配置不许被写坏，落盘内容必须是
+    /// 「迁移后的配置」或「回写内容」之一的完整版本，且不留 tmp 残留。
     #[test]
     fn concurrent_load_migrations_do_not_corrupt_config() {
         let dir = TempDir::new("migrate-race");
@@ -4911,6 +5631,7 @@ mod tests {
             let mut value: serde_json::Value =
                 serde_json::from_str(&retired).expect("播种内容必须是合法 JSON");
             value["harness"]["providers"]["kimi"]["model"] = serde_json::json!("my-model");
+            value["harness"]["providers"]["kimi"]["preset"] = serde_json::json!("kimi");
             value
         };
         let other = serde_json::json!({
@@ -4928,7 +5649,13 @@ mod tests {
                         // 读到的要么是播种原文（命中迁移并写回），要么是别人已落盘的版本；
                         // 两种都是合法配置，模型读数只可能是迁移值或默认空串。
                         let snap = load_from(path);
-                        let model = snap.config.harness.providers.kimi.model.as_str();
+                        let model = snap
+                            .config
+                            .harness
+                            .providers
+                            .get("kimi")
+                            .map(|entry| entry.model.as_str())
+                            .unwrap_or("");
                         assert!(
                             model == "my-model" || model.is_empty(),
                             "第 {round} 轮读到的模型读数异常：{model:?}"
@@ -4962,1466 +5689,1236 @@ mod tests {
         }
     }
 
-    /// 闭集合取值非法 ⇒ 只回退该字段 + 人话 warning，其余字段（含 last_vault）不受影响。
+    // ── 装载期的映射解析（design §2.1 / §2.2） ─────────────────────────────
+
+    /// 缺节 / 缺键 ⇒ 出厂默认（**空映射 + 无 active**：出厂不内置任何 provider），且不告警。
     #[test]
-    fn harness_illegal_provider_warns_and_falls_back() {
-        let f = TempFile::new(
-            r#"{"last_vault":"/tmp/vault","harness":{"provider":"openai","loop_max":3}}"#,
-        );
-        let snap = load_from(&f.0);
-        assert_eq!(snap.config.harness.provider, HarnessProvider::Kimi);
-        assert_eq!(snap.config.harness.loop_max, 3, "合法字段不回退");
-        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
-        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
-        assert!(
-            snap.warnings[0].contains("harness.provider"),
-            "{:?}",
-            snap.warnings
-        );
-        assert!(snap.warnings[0].contains("openai"), "{:?}", snap.warnings);
-    }
-
-    /// 闭集合三档都能被读到（写回产物必须是干净配置）。
-    #[test]
-    fn harness_provider_accepts_closed_set() {
-        for (raw, expected) in [
-            ("kimi", HarnessProvider::Kimi),
-            ("deepseek", HarnessProvider::Deepseek),
-            ("mock", HarnessProvider::Mock),
-        ] {
-            let f = TempFile::new(&format!(r#"{{"harness":{{"provider":"{raw}"}}}}"#));
-            let snap = load_from(&f.0);
-            assert_eq!(snap.config.harness.provider, expected, "{raw}");
-            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
-        }
-    }
-
-    /// 完整合法配置：三档 provider 参数、规则表、三个标量都按写值读到，零 warning。
-    /// M381 config-only：网络 provider 的 models 清单是模型维度的唯一真源——本测试的
-    /// 两个 provider 都显式声明（缺了会给「未声明任何可用模型」warning，见负向用例）。
-    #[test]
-    fn harness_full_section_round_trips() {
-        let raw = r#"{
-            "last_vault": "/tmp/vault",
-            "harness": {
-                "provider": "deepseek",
-                "providers": {
-                    "kimi": {"api_key": "sk-kimi", "model": "kimi-custom", "base_url": "https://k.example/v1",
-                             "models": [{"id":"kimi-custom","effort":true,"vision":true,"window":1048576}]},
-                    "deepseek": {"api_key": "sk-deep",
-                                 "models": [{"id":"deepseek-x","effort":false,"vision":false,"window":131072}]},
-                    "mock": {"fixture": "/tmp/fixture.json"}
-                },
-                "permissions": {"allow": ["cli(ls *)", "vault_patch"], "deny": ["cli(rm *)"]},
-                "loop_max": 4,
-                "warn_ctx_pct": 70,
-                "auto_compact": false
-            }
-        }"#;
-        let snap = load_from(&TempFile::new(raw).0);
-        let harness = &snap.config.harness;
-        assert_eq!(harness.provider, HarnessProvider::Deepseek);
-        assert_eq!(harness.providers.kimi.api_key, "sk-kimi");
-        assert_eq!(harness.providers.kimi.model, "kimi-custom");
-        assert_eq!(
-            harness.providers.kimi.base_url.as_deref(),
-            Some("https://k.example/v1")
-        );
-        assert_eq!(
-            harness.providers.kimi.models,
-            vec![HarnessModelSpec {
-                id: "kimi-custom".into(),
-                effort: true,
-                vision: true,
-                window: 1_048_576
-            }]
-        );
-        assert_eq!(harness.providers.deepseek.api_key, "sk-deep");
-        // deepseek 缺 model 键 → 清单首项即默认。
-        assert_eq!(harness.providers.deepseek.model, "deepseek-x");
-        assert!(harness.providers.deepseek.base_url.is_none());
-        assert_eq!(
-            harness.providers.mock.fixture.as_deref(),
-            Some("/tmp/fixture.json")
-        );
-        assert_eq!(harness.permissions.allow, vec!["cli(ls *)", "vault_patch"]);
-        assert_eq!(harness.permissions.deny, vec!["cli(rm *)"]);
-        assert_eq!(harness.loop_max, 4);
-        assert_eq!(harness.warn_ctx_pct, 70.0);
-        assert!(!harness.auto_compact);
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-    }
-
-    /// 权限模式（change add-harness-permission-modes，design §7）：缺字段 ⇒ 默认 `vault_write`
-    /// 且不告警；三档合法值照实生效；闭集合外取值 ⇒ 回落默认 + 一条人话 warning（取值表在
-    /// warning 文案里列出）。**整字段给错类型**（`"permission_mode": 1`）走解析期失败 → 整文件
-    /// 回落（与 `provider` 同一边界）。
-    #[test]
-    fn harness_permission_mode_closed_set() {
-        // 缺字段 = 默认档，不告警。
-        let snap = load_from(&TempFile::new(r#"{"harness":{}}"#).0);
-        assert_eq!(
-            snap.config.harness.permission_mode,
-            PermissionMode::VaultWrite
-        );
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-
-        for (raw, mode) in [
-            (
-                r#"{"harness":{"permission_mode":"read_only"}}"#,
-                PermissionMode::ReadOnly,
-            ),
-            (
-                r#"{"harness":{"permission_mode":"vault_write"}}"#,
-                PermissionMode::VaultWrite,
-            ),
-            (
-                r#"{"harness":{"permission_mode":"full_access"}}"#,
-                PermissionMode::FullAccess,
-            ),
-        ] {
-            let snap = load_from(&TempFile::new(raw).0);
-            assert_eq!(snap.config.harness.permission_mode, mode, "{raw}");
-            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
-        }
-
-        // 闭集合外：回落默认 + warning（含取值表）。
+    fn harness_missing_section_takes_factory_defaults() {
         for raw in [
-            r#"{"harness":{"permission_mode":"yolo"}}"#,
-            r#"{"harness":{"permission_mode":""}}"#,
+            r#"{"version":1,"last_vault":"/tmp/vault"}"#,
+            r#"{"version":1,"last_vault":"/tmp/vault","harness":{}}"#,
+            r#"{"version":1,"last_vault":"/tmp/vault","harness":{"future":1}}"#,
         ] {
             let snap = load_from(&TempFile::new(raw).0);
-            assert_eq!(
-                snap.config.harness.permission_mode,
-                PermissionMode::VaultWrite,
-                "{raw}"
-            );
-            assert_eq!(snap.warnings.len(), 1, "{raw}: {:?}", snap.warnings);
-            let warning = &snap.warnings[0];
-            assert!(warning.contains("harness.permission_mode"), "{warning}");
-            assert!(
-                warning.contains("read_only") && warning.contains("full_access"),
-                "{warning}"
-            );
-        }
-
-        // 类型不符 ⇒ 整文件回落默认（`last_vault` 也一起丢，与 provider 给错类型同路）。
-        let snap = load_from(
-            &TempFile::new(r#"{"last_vault":"/tmp/v","harness":{"permission_mode":1}}"#).0,
-        );
-        assert_eq!(snap.config, AppConfig::default());
-    }
-
-    /// 写回：`config_set_value("harness", "permission_mode", …)` 的落点（commands 的「表 + 键」
-    /// 合并写）——写入后重新加载读到该档、其他键不动；写通道**不校验**，非法值由下次加载回落
-    /// 默认 + warning（与 `ui.theme` 同款既有边界）。
-    #[test]
-    fn harness_permission_mode_write_back_round_trips() {
-        let f = TempFile::new(r#"{"version":1,"last_vault":"/tmp/vault","harness":{}}"#);
-        crate::commands::write_config_value_to(
-            &f.0,
-            "harness",
-            "permission_mode",
-            &serde_json::json!("full_access"),
-        )
-        .expect("写回成功");
-        let snap = load_from(&f.0);
-        assert_eq!(
-            snap.config.harness.permission_mode,
-            PermissionMode::FullAccess
-        );
-        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-        let persisted: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&f.0).expect("读回配置")).unwrap();
-        assert_eq!(persisted["harness"]["permission_mode"], "full_access");
-
-        // 非法值：写通道照写，下次加载回落默认 + 一条 warning（ADR 0002 §5：不导致启动失败）。
-        crate::commands::write_config_value_to(
-            &f.0,
-            "harness",
-            "permission_mode",
-            &serde_json::json!("yolo"),
-        )
-        .expect("写回成功");
-        let snap = load_from(&f.0);
-        assert_eq!(
-            snap.config.harness.permission_mode,
-            PermissionMode::VaultWrite
-        );
-        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
-    }
-
-    /// `as_str` / `parse` 是同一份闭集合取值表的两面（配置字面量与 warning 文案共用一个真源）。
-    #[test]
-    fn permission_mode_str_roundtrip() {
-        for mode in [
-            PermissionMode::ReadOnly,
-            PermissionMode::VaultWrite,
-            PermissionMode::FullAccess,
-        ] {
-            assert_eq!(PermissionMode::parse(mode.as_str()), Some(mode));
-        }
-        assert_eq!(PermissionMode::parse("read-only"), None);
-        assert_eq!(PermissionMode::default(), PermissionMode::VaultWrite);
-    }
-
-    /// 数值字段越界 ⇒ 回落默认 + warning；区间端点在界内（照 `font_size` / `content_width` 模板）。
-    #[test]
-    fn harness_numeric_ranges_fall_back_and_endpoints_hold() {
-        for (raw, loop_max) in [
-            (r#"{"harness":{"loop_max":0}}"#, 50),
-            (r#"{"harness":{"loop_max":999}}"#, 50),
-            (r#"{"harness":{"loop_max":1}}"#, 1),
-            (r#"{"harness":{"loop_max":64}}"#, 64),
-        ] {
-            let snap = load_from(&TempFile::new(raw).0);
-            assert_eq!(snap.config.harness.loop_max, loop_max, "{raw}");
-            let expect_warning = loop_max == 50 && raw.contains("loop_max");
-            assert_eq!(
-                snap.warnings.len(),
-                usize::from(expect_warning),
-                "{raw}: {:?}",
-                snap.warnings
-            );
-        }
-        for (raw, pct, warn) in [
-            (r#"{"harness":{"warn_ctx_pct":0}}"#, 85.0, true),
-            (r#"{"harness":{"warn_ctx_pct":101}}"#, 85.0, true),
-            (r#"{"harness":{"warn_ctx_pct":1}}"#, 1.0, false),
-            (r#"{"harness":{"warn_ctx_pct":100}}"#, 100.0, false),
-            (r#"{"harness":{"warn_ctx_pct":42.5}}"#, 42.5, false),
-        ] {
-            let snap = load_from(&TempFile::new(raw).0);
-            assert_eq!(snap.config.harness.warn_ctx_pct, pct, "{raw}");
-            assert_eq!(
-                snap.warnings.len(),
-                usize::from(warn),
-                "{raw}: {:?}",
-                snap.warnings
-            );
+            assert_eq!(snap.config.harness, HarnessConfig::default(), "{raw}");
+            assert_eq!(snap.config.harness.provider, "", "{raw}");
+            assert!(snap.config.harness.providers.is_empty(), "{raw}");
+            assert_eq!(snap.config.harness.loop_max, 50, "{raw}");
+            assert_eq!(snap.config.harness.warn_ctx_pct, 85.0, "{raw}");
+            assert!(snap.config.harness.auto_compact, "{raw}");
+            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
         }
     }
 
-    /// 空串的三种口径：`api_key` 空 = 未配置（不告警）；`model` / `base_url` / `mock.fixture`
-    /// 空 = 显式的空值输入，回落 + warning（见模块头）。M381 config-only：kimi 节配了键但
-    /// 没声明 models 清单 → 一条「未声明任何可用模型」warning；model 空串 + 空清单 →
-    /// 「当前无可用模型」warning（model 解析为空串，不伪造）。
+    /// 条目级宽容（design §2.1）：一个手写条目的笔误只丢它自己 + 点名 warning，
+    /// MUST NOT 拖垮整份配置（`last_vault` 与其他条目照常生效）。
     #[test]
-    fn harness_blank_strings_fall_back_with_documented_warnings() {
-        let raw = r#"{"harness":{"providers":{
-            "kimi":{"api_key":"  ","model":"","base_url":""},
-            "mock":{"fixture":"   "}}}}"#;
+    fn harness_bad_entry_only_drops_itself() {
+        let raw = r#"{"last_vault":"/tmp/vault","harness":{"provider":"kimi","providers":{
+            "kimi":{"preset":"kimi","api_key":"sk-a","models":[{"id":"k3","effort":true,"vision":true,"window":1000}]},
+            "broken":"not-an-object",
+            "bad-preset":{"preset":"openai","api_key":"sk-b"},
+            "bad-key":{"preset":"kimi","api_key":42},
+            "bad-models":{"preset":"kimi","models":{"id":"x"}}
+        }}}"#;
         let snap = load_from(&TempFile::new(raw).0);
-        assert!(snap.config.harness.providers.kimi.api_key.is_empty());
-        assert!(snap.config.harness.providers.kimi.model.is_empty());
-        assert!(snap.config.harness.providers.kimi.models.is_empty());
-        assert!(snap.config.harness.providers.kimi.base_url.is_none());
-        assert!(snap.config.harness.providers.mock.fixture.is_none());
-        // 四条 warning：models 未声明 / model 空且无清单 / base_url / fixture；api_key 不产生。
-        assert_eq!(snap.warnings.len(), 4, "{:?}", snap.warnings);
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        let providers = &snap.config.harness.providers;
+        assert_eq!(
+            providers.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["kimi"],
+            "非法条目逐条丢弃：{providers:?}"
+        );
+        assert_eq!(snap.config.harness.provider, "kimi", "显式 active 仍有效");
         for needle in [
-            "harness.providers.kimi.models",
-            "harness.providers.kimi.model",
-            "harness.providers.kimi.base_url",
-            "harness.providers.mock.fixture",
+            "harness.providers.broken 不是对象",
+            "harness.providers.bad-preset.preset 取值 \"openai\" 非法",
+            "harness.providers.bad-key.api_key 应为字符串",
+            "harness.providers.bad-models.models 应为数组",
         ] {
             assert!(
-                snap.warnings.iter().any(|w| w.contains(needle)),
-                "缺少 {needle} 的 warning：{:?}",
+                snap.warnings.iter().any(|warning| warning.contains(needle)),
+                "缺少 {needle}：{:?}",
                 snap.warnings
             );
         }
     }
 
-    /// 规则清单**逐项**校验：非字符串 / 空串（含纯空白）逐项丢弃并各给一条 warning，其余项
-    /// 按原顺序保留（前后空白去掉）；`deny` 与其余字段不受影响。
+    /// `providers` 不是对象 ⇒ 整文件回落（design §2.1 沿用 ADR 0002 §5 的既有模板）。
     #[test]
-    fn harness_permission_rules_drop_invalid_items_one_by_one() {
-        let raw = r#"{"last_vault":"/tmp/vault","harness":{"permissions":{
-            "allow":["cli(ls *)","",42,"   ","vault_patch","  cli(demo *)  "],
-            "deny":[null,"cli(rm *)"]}}}"#;
-        let snap = load_from(&TempFile::new(raw).0);
-        assert_eq!(
-            snap.config.harness.permissions.allow,
-            vec!["cli(ls *)", "vault_patch", "cli(demo *)"]
-        );
-        assert_eq!(snap.config.harness.permissions.deny, vec!["cli(rm *)"]);
-        // 4 条 warning：allow 的第 2 / 3 / 4 项 + deny 的第 1 项
-        assert_eq!(snap.warnings.len(), 4, "{:?}", snap.warnings);
-        assert!(
-            snap.warnings
-                .iter()
-                .all(|w| w.contains("harness.permissions")),
-            "{:?}",
-            snap.warnings
-        );
-        // 其余字段不回退
-        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
-        assert_eq!(snap.config.editor, EditorConfig::default());
-    }
-
-    /// 边界如实记录（与 `wrong_type_vault_rule_files_*` / `wrong_type_font_size_*` 同路）：
-    /// `[harness]` 表**整体**给错类型、或表内标量给错类型（`"loop_max": "50"`），都在 serde
-    /// 解析期失败 → 整文件回落（连 `last_vault` 一起丢）。逐项校验解决的是「一个元素非法」，
-    /// 不是「字段本身形状错」——后者是既有解析模型的性质，不发明逐字段类型容忍。
-    #[test]
-    fn harness_wrong_types_fall_back_entire_file() {
-        for raw in [
-            r#"{"last_vault":"/tmp/vault","harness":"kimi"}"#,
-            r#"{"last_vault":"/tmp/vault","harness":42}"#,
-            r#"{"last_vault":"/tmp/vault","harness":{"provider":2}}"#,
-            r#"{"last_vault":"/tmp/vault","harness":{"loop_max":"50"}}"#,
-            r#"{"last_vault":"/tmp/vault","harness":{"warn_ctx_pct":"85"}}"#,
-            r#"{"last_vault":"/tmp/vault","harness":{"auto_compact":"yes"}}"#,
-            r#"{"last_vault":"/tmp/vault","harness":{"providers":"kimi"}}"#,
-            r#"{"last_vault":"/tmp/vault","harness":{"providers":{"kimi":{"api_key":1}}}}"#,
-            r#"{"last_vault":"/tmp/vault","harness":{"permissions":{"allow":"cli(ls)"}}}"#,
-        ] {
-            let snap = load_from(&TempFile::new(raw).0);
-            assert_eq!(snap.config, AppConfig::default(), "{raw} 应整份落回默认");
-            assert_eq!(snap.config.last_vault, None, "{raw}");
-            assert_eq!(snap.warnings.len(), 1, "{raw}: {:?}", snap.warnings);
-            assert!(snap.warnings[0].contains("不是合法 JSON"), "{raw}");
-        }
-    }
-
-    /// 显式 `false` / 缺键两种配置的差别要能被分辨：`auto_compact` 缺键 = 出厂 `true`，
-    /// 显式 `false` 必须原样读到（否则用户关不掉自动压缩）。
-    #[test]
-    fn harness_auto_compact_explicit_false_is_kept() {
-        let snap = load_from(&TempFile::new(r#"{"harness":{"auto_compact":false}}"#).0);
-        assert!(!snap.config.harness.auto_compact);
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-    }
-
-    // -----------------------------------------------------------------------
-    // `[harness.subagents]`（change add-harness-subagents design §14）：缺节 / 空节 / 类型错 /
-    // 每键越界与合法边界 / 定义值夹取 / 并发不是预算。
-    // -----------------------------------------------------------------------
-
-    /// 缺节与空节都取出厂值，且不告警（缺省即默认，与 `[harness]` 其余节同路）。
-    /// `enabled` 出厂为 true 是本条的判据核心：关掉子代理必须是用户显式写入，不能靠缺省。
-    #[test]
-    fn harness_subagents_defaults_when_section_missing_or_empty() {
-        for raw in [r#"{"harness":{}}"#, r#"{"harness":{"subagents":{}}}"#] {
-            let snap = load_from(&TempFile::new(raw).0);
-            assert_eq!(
-                snap.config.harness.subagents,
-                SubagentsConfig::default(),
-                "{raw}"
-            );
-            assert!(snap.config.harness.subagents.enabled, "{raw}");
-            assert_eq!(snap.config.harness.subagents.max_turns, 20, "{raw}");
-            assert_eq!(snap.config.harness.subagents.max_tokens, 200_000, "{raw}");
-            assert_eq!(snap.config.harness.subagents.timeout_secs, 300, "{raw}");
-            assert_eq!(
-                snap.config.harness.subagents.max_subruns_per_turn, 8,
-                "{raw}"
-            );
-            assert_eq!(snap.config.harness.subagents.max_concurrent, 4, "{raw}");
-            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
-        }
-    }
-
-    /// 类型不符**只回落本节**：`subagents` 里的键写坏时，`[harness]` 其余键照常生效——
-    /// 这是与「整文件回落」的关键区别（REVIEW.md「覆盖声明超出真实验证」条：断言同时钉住
-    /// 另一节的存活，否则「整节回落」与「整文件回落」在这条上不可区分）。
-    #[test]
-    fn harness_subagents_type_error_falls_back_section_only() {
-        for raw in [
-            r#"{"harness":{"loop_max":7,"subagents":{"max_turns":"20"}}}"#,
-            r#"{"harness":{"loop_max":7,"subagents":{"enabled":"yes"}}}"#,
-            r#"{"harness":{"loop_max":7,"subagents":"on"}}"#,
-            r#"{"harness":{"loop_max":7,"subagents":[]}}"#,
-        ] {
-            let snap = load_from(&TempFile::new(raw).0);
-            assert_eq!(snap.config.harness.loop_max, 7, "{raw} 其余节不得被拖垮");
-            assert_eq!(
-                snap.config.harness.subagents,
-                SubagentsConfig::default(),
-                "{raw}"
-            );
-            assert_eq!(snap.warnings.len(), 1, "{raw}: {:?}", snap.warnings);
-            assert!(
-                snap.warnings[0].contains("harness.subagents"),
-                "{raw}: {:?}",
-                snap.warnings
-            );
-        }
-    }
-
-    /// 数值越界**夹取到最近边界**（不是回落默认）：每键各判上下两侧，warning 数 = 越界键数。
-    #[test]
-    fn harness_subagents_out_of_range_values_are_clamped() {
-        // 低侧：0 / 小于下限。
-        let raw = r#"{"harness":{"subagents":{"max_turns":0,"max_tokens":0,
-            "timeout_secs":0,"max_subruns_per_turn":0,"max_concurrent":0}}}"#;
-        let snap = load_from(&TempFile::new(raw).0);
-        let config = &snap.config.harness.subagents;
-        assert_eq!(config.max_turns, SUBAGENT_MAX_TURNS_MIN);
-        assert_eq!(config.max_tokens, SUBAGENT_MAX_TOKENS_MIN);
-        assert_eq!(config.timeout_secs, SUBAGENT_TIMEOUT_SECS_MIN);
-        assert_eq!(config.max_subruns_per_turn, MAX_SUBRUNS_PER_TURN_MIN);
-        assert_eq!(config.max_concurrent, MAX_CONCURRENT_MIN);
-        assert_eq!(snap.warnings.len(), 5, "{:?}", snap.warnings);
-        for key in [
-            "max_turns",
-            "max_tokens",
-            "timeout_secs",
-            "max_subruns_per_turn",
-            "max_concurrent",
-        ] {
-            assert!(
-                snap.warnings
-                    .iter()
-                    .any(|warning| warning.contains(&format!("harness.subagents.{key}"))),
-                "缺少 {key} 的 warning：{:?}",
-                snap.warnings
-            );
-        }
-
-        // 高侧：超出上限。
-        let raw = r#"{"harness":{"subagents":{"max_turns":65,"max_tokens":10000001,
-            "timeout_secs":3601,"max_subruns_per_turn":65,"max_concurrent":17}}}"#;
-        let snap = load_from(&TempFile::new(raw).0);
-        let config = &snap.config.harness.subagents;
-        assert_eq!(config.max_turns, SUBAGENT_MAX_TURNS_MAX);
-        assert_eq!(config.max_tokens, SUBAGENT_MAX_TOKENS_MAX);
-        assert_eq!(config.timeout_secs, SUBAGENT_TIMEOUT_SECS_MAX);
-        assert_eq!(config.max_subruns_per_turn, MAX_SUBRUNS_PER_TURN_MAX);
-        assert_eq!(config.max_concurrent, MAX_CONCURRENT_MAX);
-        assert_eq!(snap.warnings.len(), 5, "{:?}", snap.warnings);
-    }
-
-    /// 合法边界值原样接受、零 warning（判据是 `<=` / `>=`，不是开区间）。
-    #[test]
-    fn harness_subagents_accepts_boundary_values() {
-        let raw = r#"{"harness":{"subagents":{"max_turns":64,"max_tokens":1,
-            "timeout_secs":3600,"max_subruns_per_turn":1,"max_concurrent":16}}}"#;
-        let snap = load_from(&TempFile::new(raw).0);
-        assert_eq!(
-            snap.config.harness.subagents,
-            SubagentsConfig {
-                enabled: true,
-                max_turns: 64,
-                max_tokens: 1,
-                timeout_secs: 3600,
-                max_subruns_per_turn: 1,
-                max_concurrent: 16,
-            }
-        );
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-    }
-
-    /// 显式 `enabled=false` 必须原样读到（kill switch 关得掉）：缺节默认 true 的反面。
-    #[test]
-    fn harness_subagents_explicit_disable_is_kept() {
-        let snap = load_from(&TempFile::new(r#"{"harness":{"subagents":{"enabled":false}}}"#).0);
-        assert!(!snap.config.harness.subagents.enabled);
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-    }
-
-    /// 定义值夹取到配置上限（design §14「冲突取小」）：返回夹取后的值与「是否发生夹取」，
-    /// 后者是定义装载期 warning 的判据（原本就小于上限的定义不得告警）。
-    /// `max_concurrent` **不是预算**：它没有夹取口，改它不影响三个预算键的夹取结果。
-    #[test]
-    fn subagents_definition_budgets_clamp_to_config_limits() {
-        let config = SubagentsConfig {
-            max_turns: 10,
-            max_tokens: 1000,
-            timeout_secs: 60,
-            ..SubagentsConfig::default()
-        };
-        assert_eq!(config.clamp_turns(20), (10, true));
-        assert_eq!(config.clamp_turns(10), (10, false));
-        assert_eq!(config.clamp_turns(5), (5, false));
-        assert_eq!(config.clamp_tokens(5000), (1000, true));
-        assert_eq!(config.clamp_tokens(1000), (1000, false));
-        assert_eq!(config.clamp_timeout_secs(120), (60, true));
-        assert_eq!(config.clamp_timeout_secs(60), (60, false));
-
-        // 并发是许可数，不是预算：把它调到最紧，三个预算键的夹取结果逐项不变。
-        let strict_concurrency = SubagentsConfig {
-            max_concurrent: 1,
-            ..config.clone()
-        };
-        assert_eq!(strict_concurrency.clamp_turns(20), (10, true));
-        assert_eq!(strict_concurrency.clamp_tokens(5000), (1000, true));
-        assert_eq!(strict_concurrency.clamp_timeout_secs(120), (60, true));
-        assert_eq!(strict_concurrency.max_concurrent, 1);
-    }
-
-    // -----------------------------------------------------------------------
-    // `[harness].providers.<id>.models` 模型维度（M373；M381 起 config-only——内置 preset
-    // 表彻底删除，清单严格只来自配置声明）：逐项校验、窗口 / 能力读取、缺省 / 空清单的
-    // 负向用例（替代 llm.rs 窗口表与 thinking.rs 词元判定）。
-    // -----------------------------------------------------------------------
-
-    /// config-only 正观测：不写 models 键 = 空清单（不回落内置表、不告警——providers 整节
-    /// 未写是出厂状态）；写了 model 键（单 model 配置形态）照字生效，即使它不在（空的）
-    /// 清单里——honest reading，配合「不在清单内」warning 的负向用例见下。
-    #[test]
-    fn harness_models_are_config_only_with_empty_default() {
-        // 完全缺省：空清单、空 model、零 warning（出厂状态，与空 api_key 不告警同口径）。
-        let snap = load_from(&TempFile::new(r#"{"harness":{}}"#).0);
-        let harness = &snap.config.harness;
-        assert!(harness.providers.kimi.models.is_empty());
-        assert!(harness.providers.kimi.model.is_empty());
-        assert!(harness.providers.deepseek.models.is_empty());
-        assert!(harness.providers.deepseek.model.is_empty());
-        assert!(harness.model_specs(&HarnessProvider::Mock).is_empty());
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-        // 单 model 配置形态（无 models 键）：model 键照旧逐字生效；节已配置但清单缺失
-        // → 一条「未声明任何可用模型」warning（不伪造清单条目）。
+    fn harness_providers_wrong_shape_falls_back_entire_file() {
         let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"providers":{"kimi":{"model":"k3-256k","api_key":"sk-x"}}}}"#,
-            )
-            .0,
+            &TempFile::new(r#"{"last_vault":"/tmp/vault","harness":{"providers":"kimi"}}"#).0,
         );
-        assert_eq!(snap.config.harness.providers.kimi.model, "k3-256k");
-        assert!(snap.config.harness.providers.kimi.models.is_empty());
-        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
-        assert!(
-            snap.warnings[0].contains("harness.providers.kimi.models"),
-            "{:?}",
-            snap.warnings
-        );
-    }
-
-    /// 用户显式声明 models → 逐项生效（配置即数据，声明什么读什么）；model 缺省 →
-    /// 清单首项 id（worker 定夺并记录的默认模型取值规则）；显式空列表 = 空清单 +
-    /// 「未声明任何可用模型」warning（用户的合法选择，但界面上要给提示态）。
-    #[test]
-    fn harness_models_user_declaration_is_the_only_source() {
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"providers":{"kimi":{"models":[{"id":"my-model","effort":false,"vision":false,"window":32768},{"id":"second","effort":true,"vision":true,"window":1000}]}}}}"#,
-            )
-            .0,
-        );
-        let kimi = &snap.config.harness.providers.kimi;
-        assert_eq!(
-            kimi.models,
-            vec![
-                HarnessModelSpec {
-                    id: "my-model".into(),
-                    effort: false,
-                    vision: false,
-                    window: 32_768
-                },
-                HarnessModelSpec {
-                    id: "second".into(),
-                    effort: true,
-                    vision: true,
-                    window: 1_000
-                },
-            ]
-        );
-        // model 缺省 → 清单首项。
-        assert_eq!(kimi.model, "my-model");
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-        // 显式空列表 = 没有可选模型 + warning（节已配置）。
-        let snap =
-            load_from(&TempFile::new(r#"{"harness":{"providers":{"kimi":{"models":[]}}}}"#).0);
-        assert!(snap.config.harness.providers.kimi.models.is_empty());
-        assert!(snap.config.harness.providers.kimi.model.is_empty());
-        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
-        assert!(
-            snap.warnings[0].contains("未声明任何可用模型"),
-            "{:?}",
-            snap.warnings
-        );
-    }
-
-    /// 逐项校验（与 permissions 同形）：坏项只丢自己 + warning，合法项照常生效；
-    /// 缺 effort / window 的子键回落保守默认 + warning；逐项校验后清单为空 → 按空清单处理。
-    #[test]
-    fn harness_models_invalid_items_dropped_one_by_one() {
-        let raw = r#"{"harness":{"providers":{"kimi":{"models":[
-            {"id":"ok","effort":true,"window":262144},
-            "not-an-object",
-            {"effort":true,"window":100},
-            {"id":"","effort":true,"window":100},
-            {"id":"bad-effort","effort":"yes","window":100},
-            {"id":"bad-vision","effort":true,"vision":"yes","window":100},
-            {"id":"bad-window","effort":true,"window":"262144"},
-            {"id":"zero-window","effort":true,"window":0},
-            {"id":"huge-window","effort":true,"window":99999999},
-            {"id":"ok","effort":false,"window":1000},
-            {"id":"defaults-missing"}
-        ]}}}}"#;
-        let snap = load_from(&TempFile::new(raw).0);
-        let models = &snap.config.harness.providers.kimi.models;
-        assert_eq!(
-            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-            vec!["ok", "defaults-missing"],
-            "合法项（首个 ok + defaults-missing）保留，重复 id 的重项丢弃"
-        );
-        assert!(models[0].effort && models[0].window == 262_144);
-        // defaults-missing：effort 回落 false、window 回落保守默认。
-        assert!(!models[1].effort);
-        assert_eq!(models[1].window, FALLBACK_CONTEXT_WINDOW);
-        // warning 逐条点名（不是对象 / 缺 id / 空 id / effort 类型 / vision 类型 / window 类型 / 0 窗 / 超大窗 / 重复）。
-        for needle in [
-            "不是对象",
-            "缺少 id",
-            "id 为空",
-            "effort 应为布尔值",
-            "vision 应为布尔值",
-            "window 应为",
-            "重复",
-        ] {
-            assert!(
-                snap.warnings.iter().any(|w| w.contains(needle)),
-                "缺少点名 {needle} 的 warning：{:?}",
-                snap.warnings
-            );
-        }
-        // 清单整体错形状（不是数组）仍走 serde 解析期失败 → 整文件回落（逐项容忍的边界，
-        // 与 vault.rule_files  precedent 同）。
-        let snap = load_from(
-            &TempFile::new(r#"{"harness":{"providers":{"kimi":{"models":"kimi-k3"}}}}"#).0,
-        );
-        assert_eq!(snap.config, AppConfig::default());
+        assert!(snap.fallback, "整文件回落");
+        assert!(snap.config.last_vault.is_none(), "回落连 last_vault 一起丢");
         assert_eq!(snap.warnings.len(), 1);
-        // 逐项校验后清单为空（全是坏项）→ 按空清单处理：一条「未声明任何可用模型」。
-        let snap = load_from(
-            &TempFile::new(r#"{"harness":{"providers":{"kimi":{"models":["bad",{"id":""}]}}}}"#).0,
-        );
-        assert!(snap.config.harness.providers.kimi.models.is_empty());
-        assert!(
-            snap.warnings
-                .iter()
-                .any(|w| w.contains("未声明任何可用模型")),
-            "{:?}",
-            snap.warnings
-        );
     }
 
-    /// schema 读取点：窗口查表（未列出回落保守默认）与 effort 能力判定
-    /// （未列出 = 不支持；mock 恒定支持）——全部从配置声明读取。
+    /// 缺 preset ⇒ generic + warning（迁移会补上旧三档）；显式非法 preset ⇒ 整条忽略。
     #[test]
-    fn harness_context_window_and_effort_read_from_schema() {
-        // 声明清单后逐项读取：表内精确匹配。
+    fn harness_missing_preset_is_generic_and_invalid_preset_drops_entry() {
         let snap = load_from(
             &TempFile::new(
                 r#"{"harness":{"providers":{
-                    "kimi":{"model":"kimi-k3","models":[
-                        {"id":"kimi-k3","effort":true,"vision":true,"window":1048576},
-                        {"id":"k3-256k","effort":true,"window":262144},
-                        {"id":"kimi-k2.6","effort":false,"vision":false,"window":262144}]},
-                    "deepseek":{"models":[
-                        {"id":"deepseek-flash","effort":true,"window":1048576}]}}}}"#,
+                    "local":{"api_key":"sk-x","models":[{"id":"m","effort":false,"vision":false,"window":1024}]},
+                    "weird":{"preset":"ollama"}
+                }}}"#,
             )
             .0,
         );
-        let harness = &snap.config.harness;
+        let local = snap
+            .config
+            .harness
+            .providers
+            .get("local")
+            .expect("缺 preset 的条目按 generic 保留");
+        assert_eq!(local.preset, ProviderPreset::Generic);
         assert_eq!(
-            harness.context_window(&HarnessProvider::Kimi, "kimi-k3"),
-            1_048_576
+            local.wire_api,
+            WireApi::ChatCompletions,
+            "generic 缺省 wire"
         );
-        assert_eq!(
-            harness.context_window(&HarnessProvider::Kimi, "k3-256k"),
-            262_144
+        assert!(
+            !local.configured,
+            "generic 缺 base_url ⇒ 不可用（design §2.4）"
         );
-        assert_eq!(
-            harness.context_window(&HarnessProvider::Deepseek, "deepseek-flash"),
-            1_048_576
-        );
-        // 未列出（未声明的 id / 用户自填未知模型）→ 保守默认 131_072。
-        assert_eq!(
-            harness.context_window(&HarnessProvider::Kimi, "kimi-k2"),
-            FALLBACK_CONTEXT_WINDOW
-        );
-        assert_eq!(
-            harness.context_window(&HarnessProvider::Kimi, "whatever"),
-            FALLBACK_CONTEXT_WINDOW
-        );
-        // effort：声明值。
-        assert!(harness.effort_supported(&HarnessProvider::Kimi, "kimi-k3"));
-        assert!(harness.effort_supported(&HarnessProvider::Kimi, "k3-256k"));
-        assert!(!harness.effort_supported(&HarnessProvider::Kimi, "kimi-k2.6"));
-        assert!(!harness.effort_supported(&HarnessProvider::Kimi, "kimi-k2"));
-        // 前缀不宽容：kimi-k30 不在清单内 ⇒ 不支持（与 M372 词元判定退役后的口径一致）。
-        assert!(!harness.effort_supported(&HarnessProvider::Kimi, "kimi-k30"));
-        assert!(harness.effort_supported(&HarnessProvider::Deepseek, "deepseek-flash"));
-        // mock：恒定支持（fixture 驱动，验收断言档位到达请求）；模型维度空表。
-        assert!(harness.effort_supported(&HarnessProvider::Mock, "whatever"));
-        assert_eq!(
-            harness.context_window(&HarnessProvider::Mock, "whatever"),
-            FALLBACK_CONTEXT_WINDOW
-        );
-        // vision（图片输入能力，harness-composer-image-paste）：声明值 / 缺键 / 未列出四档。
-        assert!(harness.vision_supported(&HarnessProvider::Kimi, "kimi-k3"));
-        assert!(!harness.vision_supported(&HarnessProvider::Kimi, "kimi-k2.6"));
-        // k3-256k 缺 vision 键 → 按不支持 + warning（保守默认，与 effort 同侧）。
-        assert!(!harness.vision_supported(&HarnessProvider::Kimi, "k3-256k"));
+        assert!(!snap.config.harness.providers.contains_key("weird"));
         assert!(
             snap.warnings
                 .iter()
-                .any(|w| w.contains("未声明 vision 能力")),
+                .any(|warning| warning.contains("local.preset 缺失")),
             "{:?}",
             snap.warnings
         );
-        // deepseek-flash 缺 vision 键 → 不支持；未列出的 id 同样不支持。
-        assert!(!harness.vision_supported(&HarnessProvider::Deepseek, "deepseek-flash"));
-        assert!(!harness.vision_supported(&HarnessProvider::Kimi, "kimi-k30"));
-        // mock：恒定支持（验收要断言含图消息正常入队）。
-        assert!(harness.vision_supported(&HarnessProvider::Mock, "whatever"));
-        // 用户覆盖后读取点跟着覆盖走。
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"providers":{"deepseek":{"models":[{"id":"deepseek-x","effort":false,"vision":true,"window":131072}]}}}}"#,
-            )
-            .0,
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|warning| warning.contains("weird.preset 取值 \"ollama\" 非法")),
+            "{:?}",
+            snap.warnings
         );
-        let harness = &snap.config.harness;
-        assert_eq!(
-            harness.context_window(&HarnessProvider::Deepseek, "deepseek-x"),
-            131_072
-        );
-        assert!(!harness.effort_supported(&HarnessProvider::Deepseek, "deepseek-x"));
-        assert!(!harness.effort_supported(&HarnessProvider::Deepseek, "deepseek-flash"));
-        assert!(harness.vision_supported(&HarnessProvider::Deepseek, "deepseek-x"));
-        assert!(!harness.vision_supported(&HarnessProvider::Deepseek, "deepseek-flash"));
     }
 
-    /// model 键与 models 清单的关系（M381 worker 定夺并记录的解析规则）：
-    /// 显式 model 值照实生效；缺省 / 空串 → 清单首项 id；model 不在清单内 → 照实生效 +
-    /// 「不在清单内」warning（窗口保守估算、effort 按不支持）。
+    /// mock 是保留 id：`preset = mock` 只允许 id 恰好是 `mock`，其它 id 声明 mock 整条忽略。
     #[test]
-    fn harness_model_key_resolution_rules() {
-        // 显式值不在清单内：照实生效 + warning（honest reading——不静默改写用户配置）。
+    fn harness_mock_preset_requires_reserved_id() {
         let snap = load_from(
             &TempFile::new(
-                r#"{"harness":{"providers":{"kimi":{"model":"stray-model","api_key":"sk-x","models":[{"id":"declared","effort":true,"vision":true,"window":1000}]}}}}"#,
+                r#"{"harness":{"providers":{
+                    "mock":{"preset":"mock","fixture":"/tmp/fixture.json"},
+                    "local-mock":{"preset":"mock","fixture":"/tmp/fixture.json"}
+                }}}"#,
             )
             .0,
         );
-        let kimi = &snap.config.harness.providers.kimi;
-        assert_eq!(kimi.model, "stray-model");
+        assert!(snap.config.harness.providers.contains_key("mock"));
+        assert!(
+            !snap.config.harness.providers.contains_key("local-mock"),
+            "非保留 id 的 mock 声明必须整条忽略"
+        );
         assert!(
             snap.warnings
                 .iter()
-                .any(|w| w.contains("不在 models 清单内")),
+                .any(|warning| warning.contains("mock 是保留 id")),
             "{:?}",
             snap.warnings
+        );
+    }
+
+    /// provider id 规则（design §2.3）：小写字母 / 数字 / `-` / `_`，1..=32 字符、不含点；
+    /// 装载期命中非法 id 的条目整条忽略（它无法被任何写通道寻址）。
+    #[test]
+    fn harness_provider_id_rules() {
+        assert!(provider_id_valid("kimi-work"));
+        assert!(provider_id_valid("kimi_personal_2"));
+        assert!(provider_id_valid("a"));
+        assert!(provider_id_valid(&"a".repeat(PROVIDER_ID_MAX)));
+        assert!(!provider_id_valid(""));
+        assert!(!provider_id_valid("Kimi Work"));
+        assert!(!provider_id_valid("kimi.work"), "点会制造第二级写回路径");
+        assert!(!provider_id_valid("kimi/work"));
+        assert!(!provider_id_valid("-kimi"), "首字符必须是字母或数字");
+        assert!(!provider_id_valid(&"a".repeat(PROVIDER_ID_MAX + 1)));
+
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"providers":{
+                    "Kimi":{"preset":"kimi","api_key":"sk"},
+                    "kimi.work":{"preset":"kimi","api_key":"sk"}
+                }}}"#,
+            )
+            .0,
+        );
+        assert!(
+            snap.config.harness.providers.is_empty(),
+            "非法 id 的条目整条忽略"
+        );
+        assert_eq!(
+            snap.diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == "harness_provider_id_invalid")
+                .count(),
+            2
+        );
+    }
+
+    /// 可用性判据（design §2.4，R6）：按预设分叉，是派生读数而不是「键是否存在」。
+    #[test]
+    fn harness_configured_follows_preset() {
+        let configured = |id: &str, json: &str| {
+            let mut providers = serde_json::Map::new();
+            providers.insert(
+                id.to_string(),
+                serde_json::from_str::<serde_json::Value>(json).unwrap(),
+            );
+            let (harness, _diagnostics) = validate_harness(RawHarnessConfig {
+                providers: Some(providers),
+                ..Default::default()
+            });
+            harness
+                .providers
+                .get(id)
+                .map(|entry| entry.configured)
+                .unwrap_or(false)
+        };
+        assert!(configured(
+            "probe",
+            r#"{"preset":"kimi","api_key":"sk","models":[{"id":"m","effort":false,"vision":false,"window":1024}]}"#
+        ));
+        assert!(!configured(
+            "probe",
+            r#"{"preset":"kimi","api_key":"sk","models":[]}"#
+        ));
+        assert!(!configured(
+            "probe",
+            r#"{"preset":"kimi","api_key":"","models":[{"id":"m","effort":false,"vision":false,"window":1024}]}"#
+        ));
+        assert!(configured(
+            "probe",
+            r#"{"preset":"deepseek","api_key":"sk","models":[{"id":"m","effort":false,"vision":false,"window":1024}]}"#
+        ));
+        assert!(configured(
+            "probe",
+            r#"{"preset":"generic","base_url":"http://x/v1","models":[{"id":"m","effort":false,"vision":false,"window":1024}]}"#
+        ));
+        assert!(!configured(
+            "probe",
+            r#"{"preset":"generic","base_url":"","models":[{"id":"m","effort":false,"vision":false,"window":1024}]}"#
+        ));
+        assert!(!configured(
+            "probe",
+            r#"{"preset":"generic","base_url":"http://x/v1","models":[]}"#
+        ));
+        assert!(configured(
+            "mock",
+            r#"{"preset":"mock","fixture":"/tmp/f"}"#
+        ));
+        assert!(!configured("mock", r#"{"preset":"mock","fixture":""}"#));
+    }
+
+    /// 半配置（有 Key、无模型）是阻断级诊断；完全空的 generic 条目允许存在（可保存）。
+    #[test]
+    fn harness_half_configured_entry_is_reject_on_write() {
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"providers":{
+                    "kimi":{"preset":"kimi","api_key":"sk-only"},
+                    "empty":{"preset":"generic"}
+                }}}"#,
+            )
+            .0,
+        );
+        let diagnostic = snap
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.path.as_deref() == Some("harness.providers.kimi"))
+            .expect("半配置必须有一条诊断");
+        assert_eq!(diagnostic.code, "harness_models_empty_when_configured");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::RejectOnWrite);
+        assert!(!snap.config.harness.providers["kimi"].configured);
+        // 完全空的条目：没有诊断、可保存（configured = false）。
+        assert!(
+            snap.config.harness.providers.contains_key("empty"),
+            "空条目保留"
         );
         assert!(!snap
-            .config
-            .harness
-            .effort_supported(&HarnessProvider::Kimi, "stray-model"));
-        // 空串 → 清单首项 + warning。
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"providers":{"kimi":{"model":"  ","models":[{"id":"first","effort":true,"window":1000},{"id":"second","effort":false,"window":2000}]}}}}"#,
-            )
-            .0,
-        );
-        assert_eq!(snap.config.harness.providers.kimi.model, "first");
-        assert!(
-            snap.warnings
-                .iter()
-                .any(|w| w.contains("model 为空") && w.contains("first")),
-            "{:?}",
-            snap.warnings
-        );
-        // 缺键 → 清单首项，不告警。
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"providers":{"kimi":{"models":[{"id":"first","effort":true,"vision":false,"window":1000}]}}}}"#,
-            )
-            .0,
-        );
-        assert_eq!(snap.config.harness.providers.kimi.model, "first");
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.path.as_deref() == Some("harness.providers.empty")));
     }
 
-    /// wire 方言（change add-harness-chat-completions-dialect，design D1）：
-    /// 缺省 `responses` 不告警；kimi 两档合法；闭集合外回落 + 人话 warning；
-    /// deepseek 配 chat 档（v1 未实现）回落 + warning；类型不符整文件回落。
+    /// generic 的 Base URL：已填 Key 或模型时缺失是**阻断级**；完全空的条目是合法半成品。
     #[test]
-    fn harness_wire_api_validation_and_fallback() {
-        // 缺键 ⇒ responses（缺省），不产生与该键相关的 warning。
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"providers":{"kimi":{"api_key":"sk-x","models":[{"id":"k3-256k","effort":true,"vision":false,"window":262144}]}}}}"#,
-            )
-            .0,
-        );
+    fn harness_generic_requires_base_url_when_partially_filled() {
+        let (harness, diagnostics) = validate_harness(RawHarnessConfig {
+            providers: Some(
+                serde_json::from_value(serde_json::json!({
+                    "with-key": {"preset":"generic","api_key":"sk-x"},
+                    "with-models": {"preset":"generic","models":[{"id":"m"}]},
+                    "empty": {"preset":"generic"},
+                }))
+                .unwrap(),
+            ),
+            ..Default::default()
+        });
+        assert_eq!(harness.providers.len(), 3, "三条都保留（条目级宽容）");
+        let required: Vec<&str> = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "harness_base_url_required")
+            .filter_map(|diagnostic| diagnostic.path.as_deref())
+            .collect();
         assert_eq!(
-            snap.config.harness.providers.kimi.wire_api,
-            WireApi::Responses
+            required,
+            vec![
+                "harness.providers.with-key.base_url",
+                "harness.providers.with-models.base_url"
+            ]
         );
-        assert_eq!(snap.config.harness.wire_api(), WireApi::Responses);
+        assert!(diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "harness_base_url_required")
+            .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::RejectOnWrite));
+        assert!(!harness.providers["with-key"].configured);
+        assert!(!harness.providers["with-models"].configured);
         assert!(
-            !snap.warnings.iter().any(|w| w.contains("wire_api")),
-            "{:?}",
-            snap.warnings
+            !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.path.as_deref()
+                    == Some("harness.providers.empty.base_url")),
+            "完全空的 generic 条目不该被阻断（可保存的半成品）"
+        );
+    }
+
+    /// active 解析（design §2.5 / R7–R10b）：显式优先（未配置也不换）、缺省取第一个
+    /// configured、全未配置按预设顺序、空映射无 active、悬空回落 + warning、mock 不参与回退。
+    #[test]
+    fn harness_active_provider_resolution() {
+        let load = |raw_provider: Option<&str>, providers: serde_json::Value| {
+            validate_harness(RawHarnessConfig {
+                provider: raw_provider.map(str::to_string),
+                providers: Some(
+                    serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(providers)
+                        .unwrap(),
+                ),
+                ..Default::default()
+            })
+        };
+
+        // ① 显式合法（即使未配置）保持不变。
+        let (harness, diagnostics) = load(
+            Some("deepseek"),
+            serde_json::json!({
+                "kimi": {"preset":"kimi","api_key":"sk","models":[{"id":"m","effort":false,"vision":false,"window":1024}]},
+                "deepseek": {"preset":"deepseek","api_key":"","models":[]},
+            }),
+        );
+        assert_eq!(harness.provider, "deepseek", "显式选中不因未配置而换");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+        // ② 缺省：第一个 **configured**（不是字典序第一个）。
+        let (harness, _) = load(
+            None,
+            serde_json::json!({
+                "kimi": {"preset":"kimi","api_key":"","models":[]},
+                "deepseek": {"preset":"deepseek","api_key":"sk","models":[{"id":"m","effort":false,"vision":false,"window":1024}]},
+                "local-lab": {"preset":"generic","base_url":"http://x/v1","models":[{"id":"m","effort":false,"vision":false,"window":1024}]},
+            }),
+        );
+        assert_eq!(harness.provider, "deepseek");
+
+        // ③ 全未配置：按预设顺序（kimi 优先于 generic，与 id 字典序无关）。
+        let (harness, _) = load(
+            None,
+            serde_json::json!({
+                "aaa-generic": {"preset":"generic","base_url":"","models":[]},
+                "kimi": {"preset":"kimi","api_key":"","models":[]},
+            }),
+        );
+        assert_eq!(harness.provider, "kimi");
+
+        // ④ 空映射 / 只剩 mock ⇒ 无 active。
+        assert_eq!(load(None, serde_json::json!({})).0.provider, "");
+        assert_eq!(
+            load(
+                None,
+                serde_json::json!({"mock": {"preset":"mock","fixture":"/tmp/f"}})
+            )
+            .0
+            .provider,
+            ""
         );
 
-        // kimi 两档都合法（显式 responses 与 chat_completions）。
-        for (raw, want) in [
-            ("responses", WireApi::Responses),
-            ("chat_completions", WireApi::ChatCompletions),
-        ] {
-            let snap = load_from(
-                &TempFile::new(&format!(
-                    r#"{{"harness":{{"provider":"kimi","providers":{{"kimi":{{"api_key":"sk-x","wire_api":"{raw}","models":[{{"id":"k3-256k","effort":true,"vision":false,"window":262144}}]}}}}}}}}"#
-                ))
-                .0,
+        // ⑤ mock 不被缺省回退选中，但显式写它仍生效。
+        let (harness, _) = load(
+            None,
+            serde_json::json!({
+                "mock": {"preset":"mock","fixture":"/tmp/f"},
+                "kimi": {"preset":"kimi","api_key":"","models":[]},
+            }),
+        );
+        assert_eq!(harness.provider, "kimi");
+        let (harness, _) = load(
+            Some("mock"),
+            serde_json::json!({"mock": {"preset":"mock","fixture":"/tmp/f"}}),
+        );
+        assert_eq!(harness.provider, "mock");
+
+        // ⑥ 悬空 ⇒ 回退 + 点名 warning。
+        let (harness, diagnostics) = load(
+            Some("deleted-one"),
+            serde_json::json!({
+                "kimi": {"preset":"kimi","api_key":"sk","models":[{"id":"m","effort":false,"vision":false,"window":1024}]},
+            }),
+        );
+        assert_eq!(harness.provider, "kimi");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "harness_provider_unknown"
+                    && diagnostic.path.as_deref() == Some("harness.provider")),
+            "{diagnostics:?}"
+        );
+
+        // ⑦ 显式空串：按未写处理 + warning。
+        let (harness, diagnostics) = load(
+            Some(""),
+            serde_json::json!({
+                "kimi": {"preset":"kimi","api_key":"sk","models":[{"id":"m","effort":false,"vision":false,"window":1024}]},
+            }),
+        );
+        assert_eq!(harness.provider, "kimi");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "harness_provider_empty"),
+            "{diagnostics:?}"
+        );
+    }
+
+    /// 生效模型的解析顺序固定为「显式 → 清单首项 → 空串」（design §2.1 / R12h）：
+    /// 显式值不在清单内也保留 + warning，**清单为空也不抹掉显式值**。
+    #[test]
+    fn harness_effective_model_resolution() {
+        let parse = |json: &str| {
+            let mut providers = serde_json::Map::new();
+            providers.insert(
+                "kimi".to_string(),
+                serde_json::from_str::<serde_json::Value>(json).unwrap(),
             );
-            assert_eq!(snap.config.harness.providers.kimi.wire_api, want, "{raw}");
-            // `wire_api()` 是消费点唯一读数：provider 为 kimi 时与字段一致。
-            assert_eq!(snap.config.harness.wire_api(), want, "{raw}");
-            assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-        }
+            validate_harness(RawHarnessConfig {
+                providers: Some(providers),
+                ..Default::default()
+            })
+        };
 
-        // 闭集合外取值 ⇒ 回落 responses + 人话 warning（点名键与可选值）。
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"providers":{"kimi":{"api_key":"sk-x","wire_api":"chatcompletions","models":[{"id":"k3-256k","effort":true,"vision":false,"window":262144}]}}}}"#,
-            )
-            .0,
+        // 显式值优先（非首项）。
+        let (harness, diagnostics) = parse(
+            r#"{"preset":"kimi","api_key":"sk","model":"k3-128k","models":[{"id":"k3-256k","effort":false,"vision":false,"window":1000},{"id":"k3-128k","effort":false,"vision":false,"window":1000}]}"#,
         );
-        assert_eq!(
-            snap.config.harness.providers.kimi.wire_api,
-            WireApi::Responses
-        );
-        assert!(
-            snap.warnings.iter().any(|w| w.contains("wire_api")
-                && w.contains("chatcompletions")
-                && w.contains("chat_completions")),
-            "{:?}",
-            snap.warnings
-        );
+        assert_eq!(harness.providers["kimi"].model, "k3-128k");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
 
-        // deepseek 配 chat 档（v1 仅 kimi 实现）⇒ 回落 responses + 专属 warning。
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"provider":"deepseek","providers":{"deepseek":{"api_key":"sk-x","wire_api":"chat_completions","models":[{"id":"deepseek-flash","effort":true,"vision":false,"window":1048576}]}}}}"#,
-            )
-            .0,
+        // 显式值不在清单内：保留 + warning（窗口 / 能力按保守默认）。
+        let (harness, diagnostics) = parse(
+            r#"{"preset":"kimi","api_key":"sk","model":"k3-legacy","models":[{"id":"k3-256k","effort":false,"vision":false,"window":1000}]}"#,
         );
-        assert_eq!(
-            snap.config.harness.providers.deepseek.wire_api,
-            WireApi::Responses
-        );
-        assert!(
-            snap.warnings.iter().any(|w| w.contains("deepseek")
-                && w.contains("wire_api")
-                && w.contains("当前未实现")),
-            "{:?}",
-            snap.warnings
-        );
+        assert_eq!(harness.providers["kimi"].model, "k3-legacy");
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "harness_model_not_declared"));
 
-        // mock 没有该键：硬塞也不识别（未知键忽略，不进入 mock 参数面）。
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"provider":"mock","providers":{"mock":{"fixture":"/tmp/x.json"}}}}"#,
-            )
-            .0,
-        );
-        assert_eq!(snap.config.harness.wire_api(), WireApi::Responses);
+        // 显式模型 + 空清单：保留显式值（空清单只影响缺省回落）。
+        let (harness, _) =
+            parse(r#"{"preset":"generic","base_url":"http://x/v1","model":"k3-legacy"}"#);
+        assert_eq!(harness.providers["kimi"].model, "k3-legacy");
 
-        // 类型不符（`"wire_api": 2`）⇒ 整文件回落（与 permission_mode 同路）。
-        let snap =
-            load_from(&TempFile::new(r#"{"harness":{"providers":{"kimi":{"wire_api":2}}}}"#).0);
-        assert_eq!(snap.config, AppConfig::default());
-        assert_eq!(snap.warnings.len(), 1);
+        // 缺省 ⇒ 清单首项。
+        let (harness, diagnostics) = parse(
+            r#"{"preset":"kimi","api_key":"sk","models":[{"id":"first","effort":false,"vision":false,"window":1000},{"id":"second","effort":false,"vision":false,"window":1000}]}"#,
+        );
+        assert_eq!(harness.providers["kimi"].model, "first");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+        // 两者皆无 ⇒ 空串。
+        let (harness, _) = parse(r#"{"preset":"kimi","api_key":"sk"}"#);
+        assert_eq!(harness.providers["kimi"].model, "");
     }
 
-    // -----------------------------------------------------------------------
-    // `harness.session_naming` 与 title_target（change add-session-auto-naming；
-    // 2026-10-18 配置面重塑：从 `auto_title` / `title_provider` /
-    // `providers.<id>.title_model` 三处旧键收成一张表）
-    // -----------------------------------------------------------------------
-
-    /// 模型清单的一项（字段齐全，不触发 `models` 的逐项 warning）。
-    fn spec_json(id: &str, window: u64) -> String {
-        format!(r#"{{"id":"{id}","effort":false,"vision":false,"window":{window}}}"#)
-    }
-
-    /// `session_naming.enabled` 三态：缺键 ⇒ true（不告警）、显式 false 生效、类型不符 ⇒
-    /// 整文件回落；整表错形状同路。
+    /// 能力读取按 id 查条目（task 2.6）：未命中走既有保守默认（空清单 / FALLBACK_CONTEXT_WINDOW /
+    /// 不支持）；mock 恒定支持 effort 与 vision。
     #[test]
-    fn session_naming_defaults_and_type_fallback() {
-        let snap = load_from(&TempFile::new(r#"{"harness":{}}"#).0);
+    fn harness_capabilities_read_by_id() {
+        let (harness, _) = validate_harness(RawHarnessConfig {
+            provider: Some("kimi".to_string()),
+            providers: Some(
+                serde_json::from_value(serde_json::json!({
+                    "kimi": {"preset":"kimi","api_key":"sk","models":[
+                        {"id":"k3-256k","effort":true,"vision":true,"window":262144},
+                        {"id":"k3-128k","effort":false,"vision":false,"window":131072}
+                    ]}
+                }))
+                .unwrap(),
+            ),
+            ..Default::default()
+        });
+        assert_eq!(harness.model_specs("kimi").len(), 2);
+        assert!(harness.model_specs("unknown").is_empty());
+        assert_eq!(harness.context_window("kimi", "k3-256k"), 262_144);
         assert_eq!(
-            snap.config.harness.session_naming,
-            SessionNamingConfig::default()
+            harness.context_window("kimi", "missing"),
+            FALLBACK_CONTEXT_WINDOW
         );
-        assert!(snap.config.harness.session_naming.enabled);
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        assert_eq!(
+            harness.context_window("unknown", "k3-256k"),
+            FALLBACK_CONTEXT_WINDOW
+        );
+        assert!(harness.effort_supported("kimi", "k3-256k"));
+        assert!(!harness.effort_supported("kimi", "k3-128k"));
+        assert!(!harness.effort_supported("kimi", "missing"));
+        assert!(!harness.effort_supported("unknown", "k3-256k"));
+        assert!(harness.vision_supported("kimi", "k3-256k"));
+        assert!(!harness.vision_supported("kimi", "missing"));
+        assert_eq!(harness.wire_api(), WireApi::Responses);
 
-        let snap =
-            load_from(&TempFile::new(r#"{"harness":{"session_naming":{"enabled":false}}}"#).0);
-        assert!(!snap.config.harness.session_naming.enabled);
-        assert_eq!(snap.config.harness.session_naming.provider, None);
-        assert_eq!(snap.config.harness.session_naming.model, None);
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        // 无 active provider：wire 走缺省，能力读取全保守。
+        let empty = HarnessConfig::default();
+        assert_eq!(empty.wire_api(), WireApi::Responses);
+        assert!(empty.model_specs("").is_empty());
+        assert_eq!(empty.context_window("", ""), FALLBACK_CONTEXT_WINDOW);
+        assert!(!empty.effort_supported("", ""));
+        assert!(!empty.vision_supported("", ""));
+        assert!(!empty.is_mock(""));
+    }
 
-        // 类型不符到不了 validate（解析期整文件回落）——回落后的值仍是出厂 true。
-        for raw in [
-            r#"{"harness":{"session_naming":{"enabled":"no"}}}"#,
-            r#"{"harness":{"session_naming":{"model":3}}}"#,
-            r#"{"harness":{"session_naming":"on"}}"#,
+    /// mock 档：effort / vision 恒定支持，wire 归一为 `responses`，`configured` 看 fixture。
+    #[test]
+    fn harness_mock_capability_and_wire() {
+        let (harness, _) = validate_harness(RawHarnessConfig {
+            provider: Some("mock".to_string()),
+            providers: Some(
+                serde_json::from_value(serde_json::json!({
+                    "mock": {"preset":"mock","fixture":"/tmp/fixture.json","wire_api":"chat_completions"}
+                }))
+                .unwrap(),
+            ),
+            ..Default::default()
+        });
+        assert!(harness.is_mock("mock"));
+        assert!(harness.effort_supported("mock", "whatever"));
+        assert!(harness.vision_supported("mock", "whatever"));
+        assert_eq!(
+            harness.wire_api(),
+            WireApi::Responses,
+            "mock 不消费 wire，装载期归一为缺省"
+        );
+        assert!(harness.providers["mock"].configured);
+    }
+
+    /// wire 方言（design §2.2）：缺键取**预设**缺省；闭集合外 / 该预设不支持 ⇒ 回落缺省 + warning。
+    #[test]
+    fn harness_wire_api_by_preset() {
+        let harness = |json: &str| {
+            let mut providers = serde_json::Map::new();
+            providers.insert(
+                "probe".to_string(),
+                serde_json::from_str::<serde_json::Value>(json).unwrap(),
+            );
+            validate_harness(RawHarnessConfig {
+                providers: Some(providers),
+                ..Default::default()
+            })
+        };
+        // generic 缺省 chat_completions；显式 responses 也支持。
+        assert_eq!(
+            harness(r#"{"preset":"generic","base_url":"http://x/v1"}"#)
+                .0
+                .providers["probe"]
+                .wire_api,
+            WireApi::ChatCompletions
+        );
+        assert_eq!(
+            harness(r#"{"preset":"generic","base_url":"http://x/v1","wire_api":"responses"}"#)
+                .0
+                .providers["probe"]
+                .wire_api,
+            WireApi::Responses
+        );
+        // kimi / deepseek 缺省 responses；kimi 支持 chat。
+        assert_eq!(
+            harness(r#"{"preset":"kimi","api_key":"sk"}"#).0.providers["probe"].wire_api,
+            WireApi::Responses
+        );
+        assert_eq!(
+            harness(r#"{"preset":"kimi","api_key":"sk","wire_api":"chat_completions"}"#)
+                .0
+                .providers["probe"]
+                .wire_api,
+            WireApi::ChatCompletions
+        );
+        // deepseek 的 chat 档 v1 未实现 ⇒ 回落 + warning。
+        let (deepseek, diagnostics) =
+            harness(r#"{"preset":"deepseek","api_key":"sk","wire_api":"chat_completions"}"#);
+        assert_eq!(deepseek.providers["probe"].wire_api, WireApi::Responses);
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code
+            == "harness_wire_api_unsupported"
+            && diagnostic.severity == DiagnosticSeverity::RejectOnWrite));
+        // 闭集合外 ⇒ 回落缺省 + warning。
+        let (generic, diagnostics) =
+            harness(r#"{"preset":"generic","base_url":"http://x/v1","wire_api":"grpc"}"#);
+        assert_eq!(
+            generic.providers["probe"].wire_api,
+            WireApi::ChatCompletions
+        );
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "harness_wire_api_invalid"));
+    }
+
+    /// base_url：空串视为缺省 + warning（可保存的显式输入非法值，阻断级）。
+    #[test]
+    fn harness_blank_base_url_falls_back_with_reject_on_write() {
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"providers":{"kimi":{"preset":"kimi","api_key":"sk","base_url":"   ","models":[{"id":"m","effort":false,"vision":false,"window":1024}]}}}}"#,
+            )
+            .0,
+        );
+        assert_eq!(snap.config.harness.providers["kimi"].base_url, None);
+        let diagnostic = snap
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "harness_base_url_empty")
+            .expect("空 base_url 必须点名");
+        assert_eq!(
+            diagnostic.severity,
+            DiagnosticSeverity::RejectOnWrite,
+            "显式空串是错误输入（要用官方地址应删键）"
+        );
+        assert_eq!(
+            ProviderPreset::Kimi.official_base_url(),
+            Some("https://api.moonshot.cn/v1")
+        );
+        assert_eq!(ProviderPreset::Generic.official_base_url(), None);
+    }
+
+    /// 预设语义表（design §2.2）：官方地址 / 缺省 wire / 支持的 wire / 是否要求 Key / store。
+    #[test]
+    fn preset_semantics_table() {
+        assert_eq!(
+            ProviderPreset::Deepseek.official_base_url(),
+            Some("https://api.deepseek.com")
+        );
+        assert!(ProviderPreset::Mock.official_base_url().is_none());
+        assert_eq!(ProviderPreset::Kimi.default_wire_api(), WireApi::Responses);
+        assert_eq!(
+            ProviderPreset::Deepseek.default_wire_api(),
+            WireApi::Responses
+        );
+        assert_eq!(
+            ProviderPreset::Generic.default_wire_api(),
+            WireApi::ChatCompletions
+        );
+        assert_eq!(ProviderPreset::Mock.default_wire_api(), WireApi::Responses);
+        assert!(ProviderPreset::Kimi.supports_wire_api(WireApi::ChatCompletions));
+        assert!(!ProviderPreset::Deepseek.supports_wire_api(WireApi::ChatCompletions));
+        assert!(ProviderPreset::Generic.supports_wire_api(WireApi::Responses));
+        assert!(!ProviderPreset::Mock.supports_wire_api(WireApi::ChatCompletions));
+        assert!(ProviderPreset::Kimi.requires_api_key());
+        assert!(ProviderPreset::Deepseek.requires_api_key());
+        assert!(!ProviderPreset::Generic.requires_api_key());
+        assert!(!ProviderPreset::Mock.requires_api_key());
+        assert!(ProviderPreset::Kimi.store_false());
+        assert!(!ProviderPreset::Deepseek.store_false());
+        assert!(!ProviderPreset::Generic.store_false());
+        assert!(!ProviderPreset::Mock.store_false());
+        for preset in [
+            ProviderPreset::Kimi,
+            ProviderPreset::Deepseek,
+            ProviderPreset::Generic,
+            ProviderPreset::Mock,
         ] {
-            let snap = load_from(&TempFile::new(raw).0);
-            assert_eq!(snap.config, AppConfig::default(), "{raw}");
-            assert!(snap.config.harness.session_naming.enabled, "{raw}");
-            assert_eq!(snap.warnings.len(), 1, "{raw}");
+            assert_eq!(ProviderPreset::parse(preset.as_str()), Some(preset));
         }
+        assert_eq!(ProviderPreset::parse("openai"), None);
+        // 规范顺序 = 变体顺序（列表展示与 active 回退共用）。
+        let mut presets = vec![
+            ProviderPreset::Mock,
+            ProviderPreset::Generic,
+            ProviderPreset::Deepseek,
+            ProviderPreset::Kimi,
+        ];
+        presets.sort();
+        assert_eq!(
+            presets,
+            vec![
+                ProviderPreset::Kimi,
+                ProviderPreset::Deepseek,
+                ProviderPreset::Generic,
+                ProviderPreset::Mock
+            ]
+        );
     }
 
-    /// `session_naming.provider`：缺省 / 空串 = 会话当前 provider（不告警）；合法值进闭集合；
-    /// 闭集合外取值 ⇒ 回落缺省 + 人话 warning（启动不失败）；类型不符 ⇒ 整文件回落。
+    // ── 一次性迁移（design §3） ────────────────────────────────────────────
+
+    /// R1 / R5：旧三档补齐 preset，其余键（含条目与模型项上的未知子键）逐字不变。
     #[test]
-    fn session_naming_provider_invalid_falls_back_to_session_provider() {
-        let snap = load_from(&TempFile::new(r#"{"harness":{"provider":"mock"}}"#).0);
-        assert_eq!(snap.config.harness.session_naming.provider, None);
+    fn harness_preset_migration_adds_only_preset() {
+        let raw = r#"{"version":1,"last_vault":"/tmp/vault","harness":{"providers":{
+            "kimi":{"api_key":"sk-a","models":[{"id":"k3","effort":true,"vision":true,"window":1000,"future":1}],"extra":{"keep":true}},
+            "deepseek":{"api_key":"sk-b","models":[{"id":"ds"}]},
+            "mock":{"fixture":"/tmp/fixture.json"}
+        },"loop_max":4},"future_table":{"keep":true}}"#;
+        let f = TempFile::new(raw);
+        let snap = load_from(&f.0);
+        for (id, preset) in [("kimi", "kimi"), ("deepseek", "deepseek"), ("mock", "mock")] {
+            assert_eq!(
+                snap.config.harness.providers[id].preset.as_str(),
+                preset,
+                "{id}"
+            );
+        }
+        // 其余键逐键保留（未知字段、模型项未知子键、其他表）。
+        let persisted: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&f.0).expect("读回配置"))
+                .expect("配置仍是合法 JSON");
+        assert_eq!(persisted["harness"]["providers"]["kimi"]["api_key"], "sk-a");
         assert_eq!(
-            snap.config
-                .harness
-                .title_target(snap.config.harness.provider)
-                .provider,
-            HarnessProvider::Mock,
-            "缺省 = 会话当前 provider"
-        );
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"provider":"kimi","session_naming":{"provider":"deepseek"}}}"#,
-            )
-            .0,
+            persisted["harness"]["providers"]["kimi"]["extra"]["keep"],
+            true
         );
         assert_eq!(
-            snap.config.harness.session_naming.provider,
-            Some(HarnessProvider::Deepseek)
+            persisted["harness"]["providers"]["kimi"]["models"][0]["future"],
+            1
         );
-
-        let snap = load_from(&TempFile::new(r#"{"harness":{"session_naming":{"provider":""}}}"#).0);
-        assert_eq!(snap.config.harness.session_naming.provider, None);
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-
-        // 闭集合外取值：回落 None + 一条点名键与取值的 warning，其余配置照常生效。
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"provider":"mock","session_naming":{"provider":"openai"}}}"#,
-            )
-            .0,
-        );
-        assert_eq!(snap.config.harness.provider, HarnessProvider::Mock);
-        assert_eq!(snap.config.harness.session_naming.provider, None);
+        assert_eq!(persisted["harness"]["loop_max"], 4);
+        assert_eq!(persisted["future_table"]["keep"], true);
+        assert_eq!(persisted["last_vault"], "/tmp/vault");
         assert!(
             snap.warnings
                 .iter()
-                .any(|w| w.contains("session_naming.provider")
-                    && w.contains("openai")
-                    && w.contains("会话当前 provider")),
+                .any(|warning| warning.contains("已补齐 preset")),
             "{:?}",
             snap.warnings
         );
-        assert_eq!(
-            snap.config
-                .harness
-                .title_target(snap.config.harness.provider)
-                .provider,
-            HarnessProvider::Mock,
-            "非法值回落后的实际发往方 = 会话当前 provider"
-        );
-
-        let snap = load_from(&TempFile::new(r#"{"harness":{"session_naming":{"provider":2}}}"#).0);
-        assert_eq!(snap.config, AppConfig::default());
-        assert_eq!(snap.warnings.len(), 1);
     }
 
-    /// `session_naming.model`：已声明 ⇒ 原样生效；未声明 ⇒ 回落 None（= 该 provider 的生效
-    /// 模型）+ 人话 warning；空串 ⇒ None + warning（按未配置归一）。
+    /// R2：迁移幂等——第二次加载不再写文件。
+    #[test]
+    fn harness_preset_migration_is_idempotent() {
+        let f = TempFile::new(
+            r#"{"harness":{"providers":{"kimi":{"api_key":"sk-a"},"deepseek":{},"mock":{}}}}"#,
+        );
+        let _ = load_from(&f.0);
+        let rewritten = format!("{}\n", std::fs::read_to_string(&f.0).expect("读回配置"));
+        std::fs::write(&f.0, &rewritten).expect("写入探针配置");
+        let again = load_from(&f.0);
+        assert_eq!(
+            std::fs::read_to_string(&f.0).expect("读回配置"),
+            rewritten,
+            "第二次加载不应再写文件"
+        );
+        assert!(
+            !again
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("已补齐 preset")),
+            "{:?}",
+            again.warnings
+        );
+    }
+
+    /// R3：显式 preset 是用户值，迁移不覆盖。
+    #[test]
+    fn harness_preset_migration_keeps_explicit_preset() {
+        let f = TempFile::new(
+            r#"{"harness":{"providers":{"kimi":{"preset":"generic","base_url":"http://127.0.0.1:8080/v1"}}}}"#,
+        );
+        let snap = load_from(&f.0);
+        assert_eq!(
+            snap.config.harness.providers["kimi"].preset,
+            ProviderPreset::Generic
+        );
+        let persisted: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&f.0).expect("读回配置")).unwrap();
+        assert_eq!(
+            persisted["harness"]["providers"]["kimi"]["preset"],
+            "generic"
+        );
+        assert!(
+            !snap
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("已补齐 preset")),
+            "没有改写就不该有迁移 warning"
+        );
+    }
+
+    /// R4：未知 id 不迁移，按 generic + warning 解释，且不可用（缺 base_url）。
+    #[test]
+    fn harness_preset_migration_skips_unknown_ids() {
+        let f = TempFile::new(
+            r#"{"harness":{"providers":{"openai":{"api_key":"sk-x","models":[{"id":"m","effort":false,"vision":false,"window":1024}]}}}}"#,
+        );
+        let snap = load_from(&f.0);
+        let persisted: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&f.0).expect("读回配置")).unwrap();
+        assert!(
+            persisted["harness"]["providers"]["openai"]
+                .get("preset")
+                .is_none(),
+            "未知 id 不补 preset"
+        );
+        let entry = &snap.config.harness.providers["openai"];
+        assert_eq!(entry.preset, ProviderPreset::Generic);
+        assert!(!entry.configured, "generic 缺 base_url ⇒ 不可用");
+        assert!(snap
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("openai.preset 缺失")));
+    }
+
+    /// 退役 model 迁移与 preset 迁移**同一次原子写**（design §3.2）：两条 warning 都出现，
+    /// 文件里两个改写同时可见；读回不再写盘。
+    #[test]
+    fn harness_retired_model_and_preset_migrate_in_one_write() {
+        let f = TempFile::new(&format!(
+            r#"{{"harness":{{"providers":{{"kimi":{{"model":"{RETIRED_KIMI_MODEL}","models":[{{"id":"my-model"}}]}}}}}}}}"#
+        ));
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.harness.providers["kimi"].model, "my-model");
+        assert_eq!(
+            snap.config.harness.providers["kimi"].preset,
+            ProviderPreset::Kimi
+        );
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|warning| warning.contains(RETIRED_KIMI_MODEL)
+                    && warning.contains("my-model")),
+            "{:?}",
+            snap.warnings
+        );
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|warning| warning.contains("已补齐 preset")),
+            "{:?}",
+            snap.warnings
+        );
+        let persisted: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&f.0).expect("读回配置")).unwrap();
+        assert_eq!(
+            persisted["harness"]["providers"]["kimi"]["model"],
+            "my-model"
+        );
+        assert_eq!(persisted["harness"]["providers"]["kimi"]["preset"], "kimi");
+        let rewritten = format!("{}\n", std::fs::read_to_string(&f.0).expect("读回配置"));
+        std::fs::write(&f.0, &rewritten).expect("写入探针配置");
+        let _ = load_from(&f.0);
+        assert_eq!(
+            std::fs::read_to_string(&f.0).expect("读回配置"),
+            rewritten,
+            "第二次加载不再写盘"
+        );
+    }
+
+    /// 迁移写失败只 warning、内存值仍生效（design §3.1）：父目录只读 ⇒ tmp 建不出来，
+    /// 本次生效值已是补齐后的形态，下次加载再试。
+    #[test]
+    fn harness_preset_migration_write_failure_only_warns() {
+        let dir = TempDir::new("migration-write-failed");
+        let path = dir.config_path();
+        std::fs::write(
+            &path,
+            r#"{"harness":{"providers":{"kimi":{"api_key":"sk-a"}}}}"#,
+        )
+        .expect("播种旧格式配置");
+        let original = std::fs::metadata(&dir.0)
+            .expect("读目录元数据")
+            .permissions();
+        let mut readonly = original.clone();
+        readonly.set_readonly(true);
+        std::fs::set_permissions(&dir.0, readonly).expect("目录设为只读");
+        let snap = load_from(&path);
+        // 立刻复原权限（TempDir 的 Drop 要能删目录；断言失败时也不留只读残留）。
+        std::fs::set_permissions(&dir.0, original).expect("复原目录权限");
+
+        assert_eq!(
+            snap.config.harness.providers["kimi"].preset,
+            ProviderPreset::Kimi,
+            "落盘失败不影响本次生效值"
+        );
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|warning| warning.contains("未能落盘")),
+            "{:?}",
+            snap.warnings
+        );
+        let persisted = std::fs::read_to_string(&path).expect("读回配置");
+        assert!(
+            !persisted.contains("preset"),
+            "落盘失败时文件不该被改写：{persisted}"
+        );
+    }
+
+    /// 退役值迁移的两条负向（M381 config-only）保持不变：
+    /// 无清单 ⇒ 不改写、不落盘、只 warning；非退役值 ⇒ 一律不动。
+    #[test]
+    fn harness_retired_kimi_model_negatives() {
+        let raw = r#"{"harness":{"providers":{"kimi":{"preset":"kimi","api_key":"sk-x","model":"kimi-k2"}}}}"#;
+        let f = TempFile::new(raw);
+        let snap = load_from(&f.0);
+        assert_eq!(
+            snap.config.harness.providers["kimi"].model,
+            RETIRED_KIMI_MODEL
+        );
+        assert!(snap.warnings.iter().any(
+            |warning| warning.contains(RETIRED_KIMI_MODEL) && warning.contains("无法自动改写")
+        ));
+        let persisted = std::fs::read_to_string(&f.0).expect("读回配置");
+        assert!(
+            persisted.contains(RETIRED_KIMI_MODEL),
+            "未声明清单时不应改写"
+        );
+
+        for stored in ["kimi-k2.6", "kimi-k2.7-code", "my-router/model-x"] {
+            let raw = format!(
+                r#"{{"harness":{{"providers":{{"kimi":{{"preset":"kimi","model":"{stored}"}}}}}}}}"#
+            );
+            let f = TempFile::new(&raw);
+            let snap = load_from(&f.0);
+            assert_eq!(snap.config.harness.providers["kimi"].model, stored);
+            assert_eq!(
+                std::fs::read_to_string(&f.0).expect("读回配置"),
+                raw,
+                "{stored} 不应被改写"
+            );
+        }
+    }
+
+    // ── 两张命名表（design §2.6 / §10.2） ─────────────────────────────────
+
+    /// 命名目标解析：覆盖合法 ⇒ 用它；悬空 ⇒ 回落 active + warning；缺省 ⇒ active。
+    #[test]
+    fn naming_target_resolution() {
+        let (harness, diagnostics) = validate_harness(RawHarnessConfig {
+            provider: Some("kimi".to_string()),
+            session_naming: RawSessionNamingConfig {
+                provider: Some("deepseek".to_string()),
+                ..Default::default()
+            },
+            attachment_naming: RawAttachmentNamingConfig {
+                provider: Some("deleted-one".to_string()),
+                ..Default::default()
+            },
+            providers: Some(
+                serde_json::from_value(serde_json::json!({
+                    "kimi": {"preset":"kimi","api_key":"sk","models":[{"id":"k3-256k"}]},
+                    "deepseek": {"preset":"deepseek","api_key":"sk","models":[{"id":"ds-chat"}]},
+                }))
+                .unwrap(),
+            ),
+            ..Default::default()
+        });
+        assert_eq!(harness.session_naming.provider.as_deref(), Some("deepseek"));
+        assert_eq!(harness.attachment_naming.provider, None, "悬空回落 active");
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic.code
+                == "harness_naming_provider_unknown"
+                && diagnostic.path.as_deref() == Some("harness.attachment_naming.provider")),
+            "{diagnostics:?}"
+        );
+        let target = harness.title_target(&harness.provider);
+        assert_eq!(target.provider, "deepseek");
+        assert_eq!(target.model, "ds-chat", "缺省 = 目标条目的生效模型");
+        assert_eq!(target.api_key, "sk");
+        assert_eq!(target.preset, ProviderPreset::Deepseek);
+    }
+
+    /// 会话命名：覆盖模型不在清单 ⇒ 回落生效模型 + warning（**不**保留原值）。
     #[test]
     fn session_naming_model_falls_back_when_undeclared() {
-        let raw = format!(
-            r#"{{"harness":{{"session_naming":{{"model":"kimi-cheap"}},"providers":{{"kimi":{{"api_key":"sk-x","model":"k3-256k","models":[{},{}]}}}}}}}}"#,
-            spec_json("k3-256k", 262_144),
-            spec_json("kimi-cheap", 131_072),
+        let f = TempFile::new(
+            r#"{"harness":{"provider":"kimi","providers":{"kimi":{"preset":"kimi","api_key":"sk","models":[{"id":"k3-256k"}]}},"session_naming":{"model":"other-provider-model"}}}"#,
         );
-        let snap = load_from(&TempFile::new(&raw).0);
-        assert_eq!(
-            snap.config.harness.session_naming.model.as_deref(),
-            Some("kimi-cheap")
-        );
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-        let target = snap.config.harness.title_target(HarnessProvider::Kimi);
-        assert_eq!(target.model, "kimi-cheap");
-        assert_eq!(target.provider, HarnessProvider::Kimi);
-        assert_eq!(target.api_key, "sk-x");
-
-        // 未在清单内：归一为 None（= 生效模型）+ warning；命名调用实际用生效模型。
-        let raw = format!(
-            r#"{{"harness":{{"session_naming":{{"model":"gpt-cheap"}},"providers":{{"kimi":{{"api_key":"sk-x","model":"k3-256k","models":[{}]}}}}}}}}"#,
-            spec_json("k3-256k", 262_144),
-        );
-        let snap = load_from(&TempFile::new(&raw).0);
+        let snap = load_from(&f.0);
         assert_eq!(snap.config.harness.session_naming.model, None);
-        assert!(
-            snap.warnings
-                .iter()
-                .any(|w| w.contains("session_naming.model")
-                    && w.contains("gpt-cheap")
-                    && w.contains("生效模型")),
-            "{:?}",
-            snap.warnings
-        );
-        assert_eq!(
-            snap.config
-                .harness
-                .title_target(HarnessProvider::Kimi)
-                .model,
-            "k3-256k"
-        );
-
-        // 空串 = 未配置（归一为 None + 一条 warning，用生效模型）。
-        let raw = format!(
-            r#"{{"harness":{{"session_naming":{{"model":"  "}},"providers":{{"kimi":{{"model":"k3-256k","models":[{}]}}}}}}}}"#,
-            spec_json("k3-256k", 262_144),
-        );
-        let snap = load_from(&TempFile::new(&raw).0);
-        assert_eq!(snap.config.harness.session_naming.model, None);
-        assert!(
-            snap.warnings
-                .iter()
-                .any(|w| w.contains("session_naming.model") && w.contains("为空")),
-            "{:?}",
-            snap.warnings
-        );
-        assert_eq!(
-            snap.config
-                .harness
-                .title_target(HarnessProvider::Kimi)
-                .model,
-            "k3-256k"
-        );
+        assert!(snap
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("不在 provider（kimi）的 models 清单内")));
+        let target = snap.config.harness.title_target("kimi");
+        assert_eq!(target.model, "k3-256k", "回落该 provider 的生效模型");
     }
 
-    /// mock 是 fixture 驱动档：没有模型清单 ⇒ `session_naming.model` 只能是 null（非空值
-    /// 归一为 None + warning）；`title_target` 的模型 / key / base_url 全空、方言恒
-    /// `responses`——五字段不向网络 provider 借用。
+    /// 会话命名：mock 目标下 `model` 只能是 null（mock 没有模型清单）。
     #[test]
     fn session_naming_rejects_non_null_model_for_mock() {
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"provider":"mock","session_naming":{"model":"anything"},"providers":{"mock":{"fixture":"/tmp/x.json"}}}}"#,
-            )
-            .0,
+        let f = TempFile::new(
+            r#"{"harness":{"provider":"mock","providers":{"mock":{"preset":"mock","fixture":"/tmp/f"}},"session_naming":{"model":"anything"}}}"#,
         );
-        assert_eq!(
-            snap.config.harness.providers.mock.fixture.as_deref(),
-            Some("/tmp/x.json")
-        );
+        let snap = load_from(&f.0);
         assert_eq!(snap.config.harness.session_naming.model, None);
-        assert!(
-            snap.warnings
-                .iter()
-                .any(|w| w.contains("session_naming.model") && w.contains("mock")),
-            "{:?}",
-            snap.warnings
-        );
-        let target = snap.config.harness.title_target(HarnessProvider::Mock);
-        assert_eq!(target.provider, HarnessProvider::Mock);
-        assert_eq!(target.model, "", "mock 没有模型维度：不伪造模型 id");
+        assert!(snap
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("mock provider 没有模型清单")));
+        let target = snap.config.harness.title_target("mock");
+        assert_eq!(target.provider, "mock");
+        assert_eq!(target.model, "", "mock 不伪造模型 id");
         assert_eq!(target.api_key, "");
-        assert_eq!(target.base_url, None);
-        assert_eq!(target.wire_api, WireApi::Responses);
+        assert_eq!(target.preset, ProviderPreset::Mock);
     }
 
-    /// 旧键按未知键口径静默忽略（2026-10-18 配置面重塑「直接切断」）：`auto_title` /
-    /// `title_provider` / `providers.<id>.title_model` 都不再生效、也不产生 warning。
+    /// 图片命名：覆盖模型不在清单 / 未声明 vision ⇒ **原样保留** + 只点名（不回落）。
     #[test]
-    fn session_naming_legacy_keys_are_ignored() {
+    fn attachment_naming_keeps_undeclared_model_and_names_the_gate() {
         let snap = load_from(
             &TempFile::new(
-                r#"{"harness":{"auto_title":false,"title_provider":"deepseek","providers":{"kimi":{"title_model":"kimi-cheap"}}}}"#,
+                r#"{"harness":{"provider":"kimi","providers":{"kimi":{"preset":"kimi","api_key":"sk","model":"k3-text","models":[{"id":"k3-text","vision":false},{"id":"k3-vision","vision":true}]}},"attachment_naming":{"model":"not-declared"}}}"#,
             )
             .0,
         );
         assert_eq!(
-            snap.config.harness.session_naming,
-            SessionNamingConfig::default(),
-            "旧键不参与解析：开关仍出厂 true、provider / model 仍为 None"
+            snap.config.harness.attachment_naming.model.as_deref(),
+            Some("not-declared"),
+            "值原样保留（不静默换成别的模型）"
         );
-        assert!(snap.config.harness.session_naming.enabled);
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-    }
+        assert!(snap
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("不在 provider（kimi）的 models 清单内")));
+        assert!(
+            snap.config
+                .harness
+                .attachment_naming_target("kimi")
+                .is_none(),
+            "资格不通过 ⇒ 不发起"
+        );
 
-    /// `title_target` 的七态（任务 1.2）：缺省 = 会话 provider / 跨 provider / 非法值回落 /
-    /// `session_naming.model` 已声明 / 未声明 / 空串 / mock。核心判据是**五字段同出一条
-    /// provider 条目**——跨 provider 时模型 / key / base_url / 方言一处都不许取会话 provider 的。
-    #[test]
-    fn title_target_resolves_all_five_fields_from_one_provider_entry() {
-        let raw = format!(
-            r#"{{"harness":{{"provider":"kimi","session_naming":{{"provider":"deepseek","model":"deepseek-flash"}},"providers":{{
-                "kimi":{{"api_key":"sk-kimi","model":"k3-256k","base_url":"https://kimi.example/v1",
-                         "models":[{}]}},
-                "deepseek":{{"api_key":"sk-deep","model":"deepseek-v4-pro","base_url":"https://deep.example/v1",
-                            "models":[{},{}]}}}}}}}}"#,
-            spec_json("k3-256k", 262_144),
-            spec_json("deepseek-v4-pro", 1_048_576),
-            spec_json("deepseek-flash", 1_048_576),
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"provider":"kimi","providers":{"kimi":{"preset":"kimi","api_key":"sk","model":"k3-text","models":[{"id":"k3-text","vision":false},{"id":"k3-vision","vision":true}]}},"attachment_naming":{"model":"k3-text"}}}"#,
+            )
+            .0,
         );
-        let snap = load_from(&TempFile::new(&raw).0);
+        assert!(snap
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("未声明 vision 能力")));
+        assert!(snap
+            .config
+            .harness
+            .attachment_naming_target("kimi")
+            .is_none());
+        // 缺省（无覆盖）= 该条目的生效模型；生效模型有 vision 才通过。
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"provider":"kimi","providers":{"kimi":{"preset":"kimi","api_key":"sk","model":"k3-vision","models":[{"id":"k3-text","vision":false},{"id":"k3-vision","vision":true}]}}}}"#,
+            )
+            .0,
+        );
         let target = snap
             .config
             .harness
-            .title_target(snap.config.harness.provider);
-        assert_eq!(
-            target,
-            TitleTarget {
-                provider: HarnessProvider::Deepseek,
-                model: "deepseek-flash".into(),
-                wire_api: WireApi::Responses,
-                api_key: "sk-deep".into(),
-                base_url: Some("https://deep.example/v1".into()),
-            },
-            "跨 provider：五字段同出 deepseek 条目"
-        );
-        // 区分度（REVIEW.md「断言等价于子串」条）：会话 provider 的 key / base_url 一个都不许进来。
-        assert_ne!(target.api_key, "sk-kimi");
-        assert_ne!(target.base_url.as_deref(), Some("https://kimi.example/v1"));
+            .attachment_naming_target("kimi")
+            .expect("生效模型声明了 vision");
+        assert_eq!(target.model, "k3-vision");
+        assert_eq!(target.preset, ProviderPreset::Kimi);
+    }
 
-        // wire 方言同样随 session_naming.provider 条目走（kimi 的 chat 档，会话 provider 是 deepseek）。
-        let raw = format!(
-            r#"{{"harness":{{"provider":"deepseek","session_naming":{{"provider":"kimi"}},"providers":{{
-                "kimi":{{"api_key":"sk-kimi","model":"k3-256k","wire_api":"chat_completions",
-                         "models":[{}]}},
-                "deepseek":{{"api_key":"sk-deep","model":"deepseek-v4-pro",
-                            "models":[{}]}}}}}}}}"#,
-            spec_json("k3-256k", 262_144),
-            spec_json("deepseek-v4-pro", 1_048_576),
+    /// 会话命名用**显式** `providers.<id>.model`（非首项）作为回落与缺省，图片命名同理——
+    /// 两条链都读同一个生效模型读数（R12h）。
+    #[test]
+    fn naming_defaults_use_explicit_entry_model() {
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"provider":"kimi","providers":{"kimi":{"preset":"kimi","api_key":"sk","model":"k3-vision","models":[{"id":"k3-text","vision":false},{"id":"k3-vision","vision":true}]}},"session_naming":{"model":"stale"}}}"#,
+            )
+            .0,
         );
-        let snap = load_from(&TempFile::new(&raw).0);
+        let target = snap.config.harness.title_target("kimi");
+        assert_eq!(
+            target.model, "k3-vision",
+            "会话命名的失效覆盖回落显式生效模型"
+        );
         let target = snap
             .config
             .harness
-            .title_target(snap.config.harness.provider);
-        assert_eq!(target.wire_api, WireApi::ChatCompletions);
-        assert_eq!(target.api_key, "sk-kimi");
-
-        // 缺省（session_naming.provider 不写）= 会话当前 provider：五字段取会话条目。
-        let raw = format!(
-            r#"{{"harness":{{"provider":"deepseek","providers":{{
-                "deepseek":{{"api_key":"sk-deep","model":"deepseek-v4-pro","base_url":"https://deep.example/v1",
-                            "models":[{}]}}}}}}}}"#,
-            spec_json("deepseek-v4-pro", 1_048_576),
-        );
-        let snap = load_from(&TempFile::new(&raw).0);
-        assert_eq!(
-            snap.config.harness.title_target(HarnessProvider::Deepseek),
-            TitleTarget {
-                provider: HarnessProvider::Deepseek,
-                model: "deepseek-v4-pro".into(),
-                wire_api: WireApi::Responses,
-                api_key: "sk-deep".into(),
-                base_url: Some("https://deep.example/v1".into()),
-            }
-        );
+            .attachment_naming_target("kimi")
+            .expect("显式生效模型有 vision");
+        assert_eq!(target.model, "k3-vision");
     }
 
-    // -----------------------------------------------------------------------
-    // `harness.attachment_naming` 与语义命名资格（change add-semantic-image-naming；
-    // 2026-10-18 配置面重塑：从顶层 `[attachments]` 表搬进 harness 域）
-    // -----------------------------------------------------------------------
-
-    /// 带 vision 声明的模型清单项。
-    fn vision_spec_json(id: &str, vision: bool) -> String {
-        format!(r#"{{"id":"{id}","effort":false,"vision":{vision},"window":131072}}"#)
-    }
-
-    /// 缺省即默认：整表缺席 / 表内键缺席都是出厂值（开、provider 跟随会话、模型跟随生效模型），
-    /// 且不产生 warning。
+    /// 已有 provider 被删除后，命名覆盖悬空 ⇒ 回落到当前 provider + 点名 warning（装载期兜底）。
     #[test]
-    fn attachment_naming_defaults_without_warnings() {
-        let snap = load_from(&TempFile::new(r#"{"version":1}"#).0);
-        assert_eq!(
-            snap.config.harness.attachment_naming,
-            AttachmentNamingConfig {
-                enabled: true,
-                provider: None,
-                model: None,
-            }
+    fn naming_override_dangling_falls_back_to_active() {
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"provider":"deepseek","providers":{"deepseek":{"preset":"deepseek","api_key":"sk","models":[{"id":"ds-chat"}]}},"session_naming":{"provider":"kimi"},"attachment_naming":{"provider":"kimi"}}}"#,
+            )
+            .0,
         );
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-
-        let snap =
-            load_from(&TempFile::new(r#"{"harness":{"attachment_naming":{"enabled":false}}}"#).0);
-        assert!(!snap.config.harness.attachment_naming.enabled);
+        assert_eq!(snap.config.harness.session_naming.provider, None);
         assert_eq!(snap.config.harness.attachment_naming.provider, None);
-        assert_eq!(snap.config.harness.attachment_naming.model, None);
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        assert_eq!(
+            snap.warnings
+                .iter()
+                .filter(|warning| warning.contains("不在 harness.providers 表内"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            snap.config.harness.title_target("deepseek").provider,
+            "deepseek"
+        );
     }
 
-    /// 顶层 `attachments` 表已废除：旧键按未知键口径**静默忽略**（无兼容读取、无 warning）。
+    // ── 结构化诊断（design §7.1） ──────────────────────────────────────────
+
+    /// `ConfigSnapshot.warnings` 是 `diagnostics` 的 message 投影（保序、逐字一致），
+    /// 每条诊断带 code / path / severity；阻断级词表只由 Rust 一处分级。
     #[test]
-    fn legacy_attachments_table_is_ignored() {
+    fn diagnostics_project_to_warnings_and_carry_severity() {
         let snap = load_from(
             &TempFile::new(
-                r#"{"attachments":{"semantic_naming":false,"naming_model":"kimi-cheap"},"last_vault":"/tmp/v"}"#,
-            )
-            .0,
-        );
-        assert!(
-            snap.config.harness.attachment_naming.enabled,
-            "旧键 MUST NOT 生效"
-        );
-        assert_eq!(snap.config.harness.attachment_naming.model, None);
-        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/v"));
-        assert!(
-            snap.warnings.is_empty(),
-            "未知键静默忽略：{:?}",
-            snap.warnings
-        );
-    }
-
-    /// 合法三键：`provider` 闭集合值 + 清单内声明 vision 的 `model` 原样生效，解析口按选定
-    /// provider 出五字段。
-    #[test]
-    fn attachment_naming_accepts_declared_provider_and_vision_model() {
-        let raw = format!(
-            r#"{{"harness":{{"provider":"kimi","attachment_naming":{{"enabled":true,"provider":"deepseek","model":"deepseek-vision"}},"providers":{{
-                "kimi":{{"api_key":"sk-kimi","model":"k3-256k","base_url":"https://kimi.example/v1","models":[{}]}},
-                "deepseek":{{"api_key":"sk-deep","model":"deepseek-vision","base_url":"https://deep.example/v1","models":[{},{}]}}}}}}}}"#,
-            vision_spec_json("k3-256k", true),
-            vision_spec_json("deepseek-vision", true),
-            vision_spec_json("deepseek-plain", false),
-        );
-        let snap = load_from(&TempFile::new(&raw).0);
-        assert_eq!(
-            snap.config.harness.attachment_naming.provider,
-            Some(HarnessProvider::Deepseek)
-        );
-        assert_eq!(
-            snap.config.harness.attachment_naming.model.as_deref(),
-            Some("deepseek-vision")
-        );
-        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
-        let target = snap
-            .config
-            .harness
-            .attachment_naming_target(snap.config.harness.provider)
-            .expect("资格通过");
-        assert_eq!(
-            target,
-            AttachmentNamingTarget {
-                provider: HarnessProvider::Deepseek,
-                model: "deepseek-vision".into(),
-                wire_api: WireApi::Responses,
-                api_key: "sk-deep".into(),
-                base_url: Some("https://deep.example/v1".into()),
-            },
-            "五字段同出选定 provider 条目，MUST NOT 混用会话 provider"
-        );
-        assert_ne!(target.api_key, "sk-kimi");
-    }
-
-    /// `provider` 闭集合外 ⇒ 回落 `None`（= 会话当前 provider）+ 人话 warning；`model` 的
-    /// 不可用形态只点名、**值原样保留**（不静默降级到别的模型）。
-    #[test]
-    fn attachment_naming_invalid_values_warn_without_silent_downgrade() {
-        // provider 非法。
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"provider":"kimi","attachment_naming":{"provider":"openai"}}}"#,
-            )
-            .0,
-        );
-        assert_eq!(snap.config.harness.attachment_naming.provider, None);
-        assert!(
-            snap.warnings
-                .iter()
-                .any(|w| w.contains("attachment_naming.provider") && w.contains("openai")),
-            "{:?}",
-            snap.warnings
-        );
-
-        // model 不在清单内：warning 但值保留 ⇒ 资格不通过（不替用户换模型）。
-        let raw = format!(
-            r#"{{"harness":{{"providers":{{"kimi":{{"model":"k3-256k","models":[{}]}}}},"attachment_naming":{{"model":"gpt-vision"}}}}}}"#,
-            vision_spec_json("k3-256k", true),
-        );
-        let snap = load_from(&TempFile::new(&raw).0);
-        assert_eq!(
-            snap.config.harness.attachment_naming.model.as_deref(),
-            Some("gpt-vision"),
-            "值原样保留（MUST NOT 静默换成生效模型）"
-        );
-        assert!(
-            snap.warnings
-                .iter()
-                .any(|w| w.contains("attachment_naming.model") && w.contains("gpt-vision")),
-            "{:?}",
-            snap.warnings
-        );
-        assert_eq!(
-            snap.config
-                .harness
-                .attachment_naming_target(snap.config.harness.provider),
-            None,
-            "未声明的模型 ⇒ 资格不通过（保留暂存名）"
-        );
-
-        // model 在清单内但未声明 vision：同样只点名 + 保留值。
-        let raw = format!(
-            r#"{{"harness":{{"providers":{{"kimi":{{"model":"k3-256k","models":[{}]}}}},"attachment_naming":{{"model":"k3-256k"}}}}}}"#,
-            vision_spec_json("k3-256k", false),
-        );
-        let snap = load_from(&TempFile::new(&raw).0);
-        assert_eq!(
-            snap.config.harness.attachment_naming.model.as_deref(),
-            Some("k3-256k")
-        );
-        assert!(
-            snap.warnings
-                .iter()
-                .any(|w| w.contains("attachment_naming.model") && w.contains("vision")),
-            "{:?}",
-            snap.warnings
-        );
-        assert_eq!(
-            snap.config
-                .harness
-                .attachment_naming_target(snap.config.harness.provider),
-            None
-        );
-
-        // 空串：归一为 null（= 跟随生效模型）+ warning。
-        let snap =
-            load_from(&TempFile::new(r#"{"harness":{"attachment_naming":{"model":"  "}}}"#).0);
-        assert_eq!(snap.config.harness.attachment_naming.model, None);
-        assert!(
-            snap.warnings
-                .iter()
-                .any(|w| w.contains("attachment_naming.model")),
-            "{:?}",
-            snap.warnings
-        );
-    }
-
-    /// mock provider 没有模型清单：非空 `model` 只点名 + 保留，资格不通过。
-    #[test]
-    fn attachment_naming_rejects_non_null_model_for_mock() {
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"provider":"mock","attachment_naming":{"model":"anything"}}}"#,
+                r#"{"version":99,"harness":{"providers":{"kimi":{"preset":"kimi","api_key":"sk","models":[{"id":"m","effort":true,"vision":true,"window":0}]}}}}"#,
             )
             .0,
         );
         assert_eq!(
-            snap.config.harness.attachment_naming.model.as_deref(),
-            Some("anything"),
-            "值保留（不静默改）"
-        );
-        assert!(
-            snap.warnings
+            snap.warnings,
+            snap.diagnostics
                 .iter()
-                .any(|w| w.contains("attachment_naming.model") && w.contains("mock")),
-            "{:?}",
-            snap.warnings
+                .map(|diagnostic| diagnostic.message.clone())
+                .collect::<Vec<_>>(),
+            "warnings 必须是 diagnostics 的保序投影"
+        );
+        let window = snap
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "harness_model_window_invalid")
+            .expect("window 越界必须有一条结构化诊断");
+        assert_eq!(
+            window.path.as_deref(),
+            Some("harness.providers.kimi.models[0]")
+        );
+        assert_eq!(window.severity, DiagnosticSeverity::RejectOnWrite);
+        let version = snap
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "config_version_newer")
+            .expect("版本告警");
+        assert_eq!(version.path.as_deref(), Some("version"));
+        assert_eq!(
+            version.severity,
+            DiagnosticSeverity::Warning,
+            "版本告警不阻断保存"
         );
         assert_eq!(
-            snap.config
-                .harness
-                .attachment_naming_target(HarnessProvider::Mock),
-            None
+            diagnostic_severity("settings_naming_model_missing"),
+            DiagnosticSeverity::RejectOnWrite
         );
-        // 模型为 null 时 mock 恒可用（记录侧不伪造模型 id）。
-        let snap = load_from(&TempFile::new(r#"{"harness":{"provider":"mock"}}"#).0);
-        let target = snap
-            .config
-            .harness
-            .attachment_naming_target(HarnessProvider::Mock)
-            .expect("mock 恒支持 vision");
-        assert_eq!(target.model, "");
-        assert_eq!(target.provider, HarnessProvider::Mock);
+        assert_eq!(
+            diagnostic_severity("settings_unknown_field"),
+            DiagnosticSeverity::RejectOnWrite
+        );
+        assert_eq!(
+            diagnostic_severity("harness_model_not_declared"),
+            DiagnosticSeverity::Warning
+        );
     }
 
-    /// 类型不符走整文件回落（与 `[harness]` 的既有解析模型同路，单测钉住）。
+    // ── 严格读 + 原子写（design §6.1 / task 2.8） ─────────────────────────
+
+    /// 严格读：文件不存在 ⇒ 空对象可写；JSON 非法 / 顶层非对象 ⇒ 解析错误且**文件逐字节不变**。
     #[test]
-    fn attachment_naming_wrong_type_falls_back_entire_file() {
-        let snap =
-            load_from(&TempFile::new(r#"{"harness":{"attachment_naming":{"enabled":"yes"}}}"#).0);
-        assert_eq!(snap.config, AppConfig::default());
-        assert!(snap.config.harness.attachment_naming.enabled);
-        assert_eq!(snap.warnings.len(), 1);
+    fn strict_read_rejects_invalid_json_without_touching_the_file() {
+        let dir = TempDir::new("strict-read");
+        let path = dir.config_path();
+        // 不存在 ⇒ 正常写入。
+        update_json_atomic_strict(&path, |value| {
+            value["ui"] = serde_json::json!({"theme": "dark"});
+            Ok(())
+        })
+        .expect("首次接入应可写");
+        let stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(stored["ui"]["theme"], "dark");
 
-        let snap = load_from(&TempFile::new(r#"{"harness":{"attachment_naming":{"model":3}}}"#).0);
-        assert_eq!(snap.config, AppConfig::default());
-        assert_eq!(snap.warnings.len(), 1);
+        // JSON 非法 ⇒ Err，文件不变。
+        std::fs::write(&path, b"{not json").expect("播种坏文件");
+        let error = update_json_atomic_strict(&path, |value| {
+            value["ui"] = serde_json::json!({"theme": "eink"});
+            Ok(())
+        })
+        .expect_err("坏文件必须拒绝写入");
+        assert_eq!(error.code, "config_parse_failed");
+        assert!(error.message.contains("不是合法 JSON"), "{error}");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"{not json",
+            "拒绝时文件逐字节不变"
+        );
+
+        // 顶层不是对象 ⇒ Err。
+        std::fs::write(&path, b"[1,2,3]").expect("播种数组文件");
+        let error = update_json_atomic_strict(&path, |_| Ok(())).expect_err("非对象必须拒绝");
+        assert_eq!(error.code, "config_parse_failed");
+        assert_eq!(std::fs::read(&path).unwrap(), b"[1,2,3]");
     }
 
-    /// 资格判定四档（design §4.2 的实现面）：有 vision / 无 vision / 缺省跟随 / mock。
-    /// `None` 一律表示「不发起命名、保留暂存名」。断言的是 [`HarnessConfig::attachment_naming_target`]
-    /// 的实返值（`run` 与它同构），不再另设封装函数（评审 r1 P2-1）。
+    /// 宽容读仍然是既有的宽容口径（坏文件按 `{}` 起）：两条读入口的分工不许互相污染。
     #[test]
-    fn attachment_naming_target_qualification() {
-        let raw = format!(
-            r#"{{"harness":{{"provider":"kimi","providers":{{"kimi":{{"api_key":"sk-x","model":"k3-256k","models":[{},{}]}}}}}}}}"#,
-            vision_spec_json("k3-256k", true),
-            vision_spec_json("k2-plain", false),
-        );
-        let snap = load_from(&TempFile::new(&raw).0);
-        let harness = &snap.config.harness;
-        // 缺省：跟随会话当前 provider 的生效模型。
-        assert_eq!(
-            harness
-                .attachment_naming_target(harness.provider)
-                .map(|t| t.model),
-            Some("k3-256k".to_string())
-        );
-        // 显式指定一个未声明 vision 的模型：不发请求。
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"providers":{"kimi":{"model":"k3-256k","models":[{"id":"k3-256k","effort":false,"vision":true,"window":131072},{"id":"k2-plain","effort":false,"vision":false,"window":131072}]}},"attachment_naming":{"model":"k2-plain"}}}"#,
-            )
-            .0,
-        );
-        assert_eq!(
-            snap.config
-                .harness
-                .attachment_naming_target(snap.config.harness.provider),
-            None
-        );
-        // 清单外的模型：不发请求（MUST NOT 替用户选模型）。
-        let snap = load_from(
-            &TempFile::new(
-                r#"{"harness":{"providers":{"kimi":{"model":"k3-256k","models":[{"id":"k3-256k","effort":false,"vision":true,"window":131072}]}},"attachment_naming":{"model":"gpt-vision"}}}"#,
-            )
-            .0,
-        );
-        assert_eq!(
-            snap.config
-                .harness
-                .attachment_naming_target(snap.config.harness.provider),
-            None
-        );
-        // 当前模型本身没有 vision 声明：缺省档同样不发请求。
-        let raw = format!(
-            r#"{{"harness":{{"providers":{{"kimi":{{"model":"k2-plain","models":[{}]}}}}}}}}"#,
-            vision_spec_json("k2-plain", false),
-        );
-        let snap = load_from(&TempFile::new(&raw).0);
-        assert_eq!(
-            snap.config
-                .harness
-                .attachment_naming_target(snap.config.harness.provider),
-            None
-        );
+    fn lenient_read_still_starts_from_empty_object() {
+        let dir = TempDir::new("lenient-read");
+        let path = dir.config_path();
+        std::fs::write(&path, b"{not json").expect("播种坏文件");
+        update_json_atomic(&path, |value| {
+            value["ui"] = serde_json::json!({"theme": "dark"});
+            Ok(())
+        })
+        .expect("宽容读按空对象起");
+        let stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(stored["ui"]["theme"], "dark");
     }
 
-    // -----------------------------------------------------------------------
-    // [cron] 表（change add-cron-runtime-daemon §7.2 的每个形态各一条）
-    // -----------------------------------------------------------------------
+    /// 锁内读—改—写：并发的两个写者各写自己的键，不丢更新（task 2.9 的判据）。
+    #[test]
+    fn locked_read_modify_write_keeps_both_writers() {
+        let dir = TempDir::new("rmw");
+        let path = dir.config_path();
+        std::fs::write(&path, br#"{"version":1}"#).expect("播种");
+        std::thread::scope(|scope| {
+            let path = path.as_path();
+            scope.spawn(move || {
+                for _ in 0..50 {
+                    update_json_atomic(path, |value| {
+                        value["ui"] = serde_json::json!({"theme": "dark"});
+                        Ok(())
+                    })
+                    .expect("写者 A");
+                }
+            });
+            scope.spawn(move || {
+                for _ in 0..50 {
+                    update_json_atomic(path, |value| {
+                        value["last_vault"] = serde_json::json!("/tmp/vault");
+                        Ok(())
+                    })
+                    .expect("写者 B");
+                }
+            });
+        });
+        let stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(stored["ui"]["theme"], "dark");
+        assert_eq!(stored["last_vault"], "/tmp/vault");
+    }
 
     #[test]
     fn cron_valid_task_takes_the_declared_defaults() {

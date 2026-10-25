@@ -11,7 +11,7 @@
 //! 绝不打印、绝不写入任何日志 / 断言消息 / JSONL；断言失败时只输出事件 code。
 //! 模型 id 可用 `LUMIR_DEEPSEEK_MODEL` 临时覆盖（不改 Alex 的 config 文件）。
 
-use lumir_lib::config::{HarnessConfig, HarnessProvider};
+use lumir_lib::config;
 use lumir_lib::fs_io::IgnorePolicy;
 use lumir_lib::harness::events::EventSink;
 use lumir_lib::harness::{turn, Runtime, VaultScope};
@@ -105,13 +105,15 @@ fn real_deepseek_two_turns_tool_call_and_reasoning_replay() {
             .filter(|m| !m.trim().is_empty())
             .unwrap_or(configured_model);
 
-        let mut config = HarnessConfig {
-            provider: HarnessProvider::Deepseek,
-            ..Default::default()
-        };
-        config.providers.deepseek.api_key = api_key;
-        config.providers.deepseek.model = model.clone();
-        config.providers.deepseek.base_url = base_url;
+        let mut config = config::test_harness(
+            "deepseek",
+            config::test_provider(config::ProviderPreset::Deepseek, &api_key, &[]),
+        );
+        {
+            let entry = config.providers.get_mut("deepseek").unwrap();
+            entry.model = model.clone();
+            entry.base_url = base_url;
+        }
 
         let mut client = lumir_lib::harness::llm::client(&config, "vault-test-1")
             .map_err(|e| format!("client 装配失败：code={}", e.code))?;
@@ -249,13 +251,15 @@ fn real_deepseek_multi_call_round_replays_grouped() {
             .ok()
             .filter(|m| !m.trim().is_empty())
             .unwrap_or(configured_model);
-        let mut config = HarnessConfig {
-            provider: HarnessProvider::Deepseek,
-            ..Default::default()
-        };
-        config.providers.deepseek.api_key = api_key;
-        config.providers.deepseek.model = model.clone();
-        config.providers.deepseek.base_url = base_url;
+        let mut config = config::test_harness(
+            "deepseek",
+            config::test_provider(config::ProviderPreset::Deepseek, &api_key, &[]),
+        );
+        {
+            let entry = config.providers.get_mut("deepseek").unwrap();
+            entry.model = model.clone();
+            entry.base_url = base_url;
+        }
 
         let mut client = lumir_lib::harness::llm::client(&config, "vault-test-1")
             .map_err(|e| format!("client 装配失败：code={}", e.code))?;

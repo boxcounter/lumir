@@ -9,7 +9,7 @@
 //! env 进程全局故静态锁串行）。
 
 use lumir_lib::commands::CommandError;
-use lumir_lib::config::{HarnessConfig, HarnessProvider};
+use lumir_lib::config::{self, HarnessConfig};
 use lumir_lib::fs_io::IgnorePolicy;
 use lumir_lib::harness::events::EventSink;
 use lumir_lib::harness::llm::{LlmClient, MockClient};
@@ -130,10 +130,7 @@ impl CollectSink {
 }
 
 fn mock_config() -> HarnessConfig {
-    HarnessConfig {
-        provider: HarnessProvider::Mock,
-        ..Default::default()
-    }
+    config::test_mock(None)
 }
 
 /// 给 Fixture 挂一个 Runtime（默认不建，谁用谁挂）。

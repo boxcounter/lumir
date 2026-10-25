@@ -679,6 +679,9 @@
 | D692 | 键位速查 · 底部键盘提示 | 作者 | ↑↓ 选择 · Enter 详情 · Tab 切换焦点 · PageUp/Down 翻页 · Esc 清除/关闭 · ⌃G 关闭 | ↑↓ select · Enter details · Tab focus · PageUp/Down page · Esc clear/close · ⌃G close | 键盘全程可用的可发现性出口。 |
 | D693 | 键位速查 · 标题状态 | 作者 | 含 [keys] 覆盖 | Includes [keys] overrides | 标题旁的状态词：生效表含配置覆盖。 |
 | D694 | 键位速查 · 结果列表读屏名 | 作者 | 命令列表 | Commands | `role=listbox` 的名字。 |
+| D695 | 后端错误信封（按 code 渲染） | 作者 | 还没有可用的 provider：请在设置面板添加一个 provider | No provider is available yet: add one in the settings panel | M732（动态 provider 映射）：发送 / 命名时 provider 映射为空、或全部条目在装载期被忽略（`harness_provider_missing`）——文案指向设置面板，不再让用户去翻 config.json。无占位名。 |
+| D696 | 后端错误信封（按 code 渲染） | 作者 | provider（{provider}）是 OpenAI 兼容预设，必须先填写 Base URL 才能发送 | Provider ({provider}) is an OpenAI-compatible preset and needs a Base URL before it can send | M732：generic 预设没有官方地址，缺 `base_url` 时无法构造任何请求（`harness_base_url_missing`）；占位名 `provider` 在全部构造点由 `.param("provider", …)` 提供。 |
+| D697 | 后端错误信封（按 code 渲染） | 作者 | 配置文件（{path}）无法解析，请先修正 JSON 后再保存 | The config file ({path}) cannot be parsed: fix the JSON before saving | M732：严格读失败（`config_parse_failed`——JSON 不合法 / 顶层不是对象）；设置面据此进入只读态。占位名 `path` 在全部构造点提供。 |
 
 ## 编号沿革
 

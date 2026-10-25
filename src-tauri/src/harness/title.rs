@@ -657,7 +657,7 @@ pub fn job_after_turn(
                 material: material(session.input(), current_title.as_deref()),
                 current_title,
                 config: config.clone(),
-                target: config.title_target(config.provider),
+                target: config.title_target(&config.provider),
                 naming_enabled: config.session_naming.enabled,
                 mock_start: session.title_cursor(),
             })
@@ -838,7 +838,7 @@ fn record_client_failure(runtime: &Runtime, scope: &VaultScope, job: &TitleJob) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{HarnessProvider, SessionNamingConfig};
+    use crate::config::{self, ProviderPreset, SessionNamingConfig};
     use crate::fs_io::IgnorePolicy;
     use crate::harness::events::{EventSink, StreamSink};
     use crate::harness::llm::{MockClient, Request, TurnError, Usage};
@@ -886,12 +886,7 @@ mod tests {
     }
 
     fn mock_config(fixture: Option<&Path>) -> HarnessConfig {
-        let mut config = HarnessConfig {
-            provider: HarnessProvider::Mock,
-            ..HarnessConfig::default()
-        };
-        config.providers.mock.fixture = fixture.map(|p| p.display().to_string());
-        config
+        config::test_mock(fixture.map(|path| path.display().to_string()).as_deref())
     }
 
     fn write_fixture(root: &Path, titles: &[&str]) -> PathBuf {
@@ -977,7 +972,7 @@ mod tests {
             material,
             current_title,
             config: config.clone(),
-            target: config.title_target(config.provider),
+            target: config.title_target(&config.provider),
             naming_enabled: config.session_naming.enabled,
             mock_start,
         }
@@ -1478,19 +1473,25 @@ mod tests {
             &[r#"{"decision":"rename","title":"来自 mock 的标题"}"#],
         );
         let mut config = HarnessConfig {
-            provider: HarnessProvider::Kimi,
             session_naming: SessionNamingConfig {
-                provider: Some(HarnessProvider::Mock),
+                provider: Some("mock".to_string()),
                 ..SessionNamingConfig::default()
             },
-            ..HarnessConfig::default()
+            ..config::test_harness(
+                "kimi",
+                config::test_provider(ProviderPreset::Kimi, "sk-session-provider", &[]),
+            )
         };
-        config.providers.kimi.api_key = "sk-session-provider".into();
-        config.providers.kimi.model = "k3-256k".into();
-        config.providers.mock.fixture = Some(fixture.display().to_string());
+        config.providers.get_mut("kimi").unwrap().model = "k3-256k".into();
+        config.providers.insert("mock".to_string(), {
+            let mut entry = config::HarnessProviderConfig::empty(ProviderPreset::Mock);
+            entry.fixture = Some(fixture.display().to_string());
+            entry.recompute_configured();
+            entry
+        });
 
-        let target = config.title_target(config.provider);
-        assert_eq!(target.provider, HarnessProvider::Mock);
+        let target = config.title_target(&config.provider);
+        assert_eq!(target.provider, "mock");
         let mut client = llm::title_client(&config, &target, "vault-title-1", 0).unwrap();
         assert_eq!(
             evaluate(client.as_mut(), "素材", None),
@@ -1500,18 +1501,21 @@ mod tests {
         // 网络 provider 跨条目：会话 provider 有 key，title provider 没 key ⇒ 报的是 title
         // provider 的缺失（不混用会话 provider 的 api_key）。
         let mut config = HarnessConfig {
-            provider: HarnessProvider::Kimi,
             session_naming: SessionNamingConfig {
-                provider: Some(HarnessProvider::Deepseek),
+                provider: Some("deepseek".to_string()),
                 ..SessionNamingConfig::default()
             },
-            ..HarnessConfig::default()
+            ..config::test_harness(
+                "kimi",
+                config::test_provider(ProviderPreset::Kimi, "sk-kimi", &[]),
+            )
         };
-        config.providers.kimi.api_key = "sk-kimi".into();
-        config.providers.kimi.model = "k3-256k".into();
-        config.providers.deepseek.model = "deepseek-v4-pro".into();
-        config.providers.deepseek.api_key = String::new();
-        let target = config.title_target(config.provider);
+        config.providers.get_mut("kimi").unwrap().model = "k3-256k".into();
+        let mut deepseek = config::test_provider(ProviderPreset::Deepseek, "", &[]);
+        deepseek.model = "deepseek-v4-pro".into();
+        deepseek.recompute_configured();
+        config.providers.insert("deepseek".to_string(), deepseek);
+        let target = config.title_target(&config.provider);
         let error = match llm::title_client(&config, &target, "vault-title-1", 0) {
             Ok(_) => panic!("缺 api_key 时必须报错"),
             Err(error) => error,

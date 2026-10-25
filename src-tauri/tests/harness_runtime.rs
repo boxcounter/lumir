@@ -8,7 +8,7 @@
 //! 因为 env 是进程全局。
 
 use lumir_lib::commands::CommandError;
-use lumir_lib::config::{HarnessConfig, HarnessModelSpec, HarnessPermissions, HarnessProvider};
+use lumir_lib::config::{self, HarnessConfig, HarnessModelSpec, HarnessPermissions};
 use lumir_lib::fs_io::IgnorePolicy;
 use lumir_lib::harness::events::EventSink;
 use lumir_lib::harness::llm::{LlmClient, MockClient};
@@ -130,10 +130,7 @@ impl CollectSink {
 }
 
 fn mock_config() -> HarnessConfig {
-    HarnessConfig {
-        provider: HarnessProvider::Mock,
-        ..Default::default()
-    }
+    config::test_mock(None)
 }
 
 /// 给 Fixture 挂一个 Runtime（默认不建，谁用谁挂）。
@@ -1623,10 +1620,12 @@ fn snapshot_thinking_capability_follows_provider_and_model() {
     // kimi 侧声明清单：k3 系 effort=true、k2 系 effort=false（声明驱动，与模型名的任何
     // 内在属性无关——同一个 id 换个声明读数跟着翻，见 config.rs 单测）。
     let kimi = |model: &str| {
-        let mut config = mock_config();
-        config.provider = HarnessProvider::Kimi;
-        config.providers.kimi.model = model.to_string();
-        config.providers.kimi.models = vec![
+        let mut config = config::test_harness(
+            "kimi",
+            config::test_provider(config::ProviderPreset::Kimi, "sk", &[]),
+        );
+        config.providers.get_mut("kimi").unwrap().model = model.to_string();
+        config.providers.get_mut("kimi").unwrap().models = vec![
             HarnessModelSpec {
                 id: "kimi-k3".into(),
                 effort: true,
@@ -1675,8 +1674,10 @@ fn snapshot_thinking_capability_follows_provider_and_model() {
         assert_eq!(snapshot.thinking.level, ThinkingEffort::High, "{model}");
     }
     // 空清单（config-only 缺省形态）：任何模型都不支持。
-    let mut empty = mock_config();
-    empty.provider = HarnessProvider::Kimi;
+    let empty = config::test_harness(
+        "kimi",
+        config::test_provider(config::ProviderPreset::Kimi, "sk", &[]),
+    );
     assert!(!runtime.snapshot(&f.scope(), &empty).thinking.supported);
 }
 

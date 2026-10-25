@@ -2,7 +2,7 @@
 
 /**
  * harness 权限模式三档（change add-harness-permission-modes，design §2）。**闭集合**：取值
- * 校验在 Rust 侧完成（与 [`HarnessProvider`] / `UiTheme` 同一形态），运行时拿到的必是三档之一。
+ * 校验在 Rust 侧完成（与 [`ProviderPreset`] / `UiTheme` 同一形态），运行时拿到的必是三档之一。
  *
  * 档位只替换判定管线**最底层**的「默认分层」（design §1：前四层——deny 规则 / vault 内写
  * 重定向 / 危险黑名单 / allow 规则——与模式无关），不是一道独立闸门。默认档 `vault_write`：

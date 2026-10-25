@@ -2014,6 +2014,24 @@ const COPY_TABLE = {
   },
   D693: { zh: "含 [keys] 覆盖", en: "Includes [keys] overrides" },
   D694: { zh: "命令列表", en: "Commands" },
+  // D695–D697：动态 provider 映射（change add-model-automation-settings-oct24）的三条后端
+  // 错误信封。前端按 code 渲染、参数来自 Rust 的 `.param()`；只有全部构造点都提供的占位名
+  // 才进模板（与 D349 同一条纪律）。
+  // D695：发送 / 命名时没有任何可用 provider（映射为空，或全部条目在装载期被忽略）。
+  D695: {
+    zh: "还没有可用的 provider：请在设置面板添加一个 provider",
+    en: "No provider is available yet: add one in the settings panel",
+  },
+  // D696：generic 预设没有官方地址，缺 Base URL 时无法构造任何请求。
+  D696: {
+    zh: "provider（{provider}）是 OpenAI 兼容预设，必须先填写 Base URL 才能发送",
+    en: "Provider ({provider}) is an OpenAI-compatible preset and needs a Base URL before it can send",
+  },
+  // D697：严格读失败——配置文件不是合法 JSON / 顶层不是对象（设置面的只读态来源）。
+  D697: {
+    zh: "配置文件（{path}）无法解析，请先修正 JSON 后再保存",
+    en: "The config file ({path}) cannot be parsed: fix the JSON before saving",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -2122,6 +2140,11 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_fixture_unreadable: "D351",
   harness_fixture_invalid: "D352",
   harness_api_key_missing: "D353",
+  // 动态 provider 映射（change add-model-automation-settings-oct24 task 4.7 / 2.8）：
+  // 没有 active provider / generic 缺 Base URL / 配置文件解析失败。
+  harness_provider_missing: "D695",
+  harness_base_url_missing: "D696",
+  config_parse_failed: "D697",
   harness_model_missing: "D404",
   harness_http_failed: "D354",
   harness_network_failed: "D355",

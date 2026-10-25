@@ -30,7 +30,7 @@
 //! 绝不打印、绝不写入任何日志 / 断言消息 / JSONL；HTTP 失败只输出状态码与错误 code，
 //! 不输出响应体（防回显）。
 
-use lumir_lib::config::{HarnessConfig, HarnessProvider};
+use lumir_lib::config;
 use lumir_lib::harness::llm::{self, DiscardStreamSink, Request};
 
 /// 从 `~/.config/lumir/config.json` 原地读 kimi 配置（key 不落任何输出）。
@@ -192,13 +192,15 @@ fn real_kimi_reports_cache_write_tokens_path() {
         //    ——provider 侧第一次把该前缀写进缓存，第二次必须全命中，解析层的 `cached_tokens`
         //    因此必须带上非零值（判据是「解析层真的把 provider 报的缓存命中带出来了」）。
         //    注：system 段（instructions）也参与前缀，故必须连 system 一起逐字节相同才命中。
-        let mut config = HarnessConfig {
-            provider: HarnessProvider::Kimi,
-            ..HarnessConfig::default()
-        };
-        config.providers.kimi.api_key = api_key.clone();
-        config.providers.kimi.model = model.clone();
-        config.providers.kimi.base_url = Some(base.clone());
+        let mut config = config::test_harness(
+            "kimi",
+            config::test_provider(config::ProviderPreset::Kimi, &api_key, &[]),
+        );
+        {
+            let entry = config.providers.get_mut("kimi").unwrap();
+            entry.model = model.clone();
+            entry.base_url = Some(base.clone());
+        }
         let mut client = llm::client(&config, "vault-smoke-1")
             .map_err(|e| format!("client 装配失败：{}", e.code))?;
         let make_request = || Request {

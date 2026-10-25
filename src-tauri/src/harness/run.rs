@@ -714,7 +714,7 @@ impl RunContext for SessionContext<'_> {
             scheduler::RequestPriority::Parent
         };
         Some(scheduler::acquire_provider_request(
-            self.config.provider,
+            &self.config.provider,
             self.config.subagents.max_concurrent,
             priority,
         ))
@@ -859,8 +859,6 @@ fn filter_tool_definitions(
 mod tests {
     use super::*;
 
-    use crate::config::HarnessProvider;
-
     struct NullSink;
 
     impl EventSink for NullSink {
@@ -903,10 +901,7 @@ mod tests {
             },
             vault_id: "vault-test-1".to_string(),
         };
-        let mut config = HarnessConfig {
-            provider: HarnessProvider::Mock,
-            ..Default::default()
-        };
+        let mut config = crate::config::test_mock(Some("/tmp/fixture.json"));
         config.subagents.enabled = false;
 
         let runtime = Runtime::default();
@@ -969,10 +964,7 @@ mod tests {
             },
             vault_id: "vault-test-2".to_string(),
         };
-        let config = HarnessConfig {
-            provider: HarnessProvider::Mock,
-            ..Default::default()
-        };
+        let config = crate::config::test_mock(Some("/tmp/fixture.json"));
         assert!(config.subagents.enabled);
 
         let runtime = Runtime::default();
@@ -1024,10 +1016,7 @@ mod tests {
             },
             vault_id: "vault-test-3".to_string(),
         };
-        let config = HarnessConfig {
-            provider: HarnessProvider::Mock,
-            ..Default::default()
-        };
+        let config = crate::config::test_mock(Some("/tmp/fixture.json"));
         assert!(config.subagents.enabled);
 
         let task = crate::config::CronTask {

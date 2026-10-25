@@ -1408,6 +1408,9 @@ pub fn harness_send(
     let scope = vault_scope(&vault)?;
     let config = config::load()?.config.harness;
     let parts = attachments::parse_delivery_parts(&parts_json)?;
+    // 发送期缺失态（task 4.7）：没有 provider / 缺 Key / 缺 Base URL / 没有模型时在建会话之前
+    // 给出人话错误——顺序在图片闸之前，否则「没有 provider 却附了图」会报成图片不支持。
+    llm::send_preflight(&config)?;
     // 发送闸（design §6，能力判据的唯一产出点）：不建会话、不入队。
     if let Some(error) = image_gate_error(&parts, &config) {
         return Err(error);
@@ -1607,6 +1610,8 @@ pub fn harness_cron_run(
     if let Some(warning) = warning {
         crate::logging::config_warning("cron", &warning);
     }
+    // 发送期缺失态（task 4.7）：无人值守运行同样在建会话之前失败并回执人话错误。
+    llm::send_preflight(&config)?;
     // 会话形态（design §6.3）：`new` 新建；`dedicated` 用状态里的 session_id 续写（缺少即新建）。
     // 续写失败（源文件缺失 / 损坏）回落新建——任务不因历史留存缺失而停摆。
     match (shape, session_id.as_deref()) {
@@ -1675,11 +1680,13 @@ pub fn harness_cron_run(
     Ok(())
 }
 
-/// 任务 `model` 覆盖的解析（change add-cron-runtime-daemon §3.7）：按运行时
-/// `[harness].providers.<provider>.models` 的声明解析；已声明 ⇒ 本次会话用该模型；
+/// 任务 `model` 覆盖的解析（change add-cron-runtime-daemon §3.7；change
+/// add-model-automation-settings-oct24 §4.3 改为按 active **条目**）：按运行时
+/// `[harness].providers.<active>.models` 的声明解析；已声明 ⇒ 本次会话用该模型；
 /// 未声明 ⇒ 回落该 provider 的生效模型 + 一条 warning，任务不丢。
 ///
 /// mock 是 fixture 驱动档、没有模型维度：覆盖被忽略且不告警（不伪造一个不存在的模型 id）。
+/// 没有 active provider 时覆盖无处可写：同样忽略（发送期会给 `harness_provider_missing`）。
 pub fn with_model_override(
     config: &HarnessConfig,
     model: Option<&str>,
@@ -1687,28 +1694,25 @@ pub fn with_model_override(
     let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) else {
         return (config.clone(), None);
     };
-    if config.provider == config::HarnessProvider::Mock {
+    let Some(entry) = config.provider_entry(&config.provider) else {
+        return (config.clone(), None);
+    };
+    if entry.preset == config::ProviderPreset::Mock {
         return (config.clone(), None);
     }
-    if !config
-        .model_specs(&config.provider)
-        .iter()
-        .any(|spec| spec.id == model)
-    {
+    if !entry.models.iter().any(|spec| spec.id == model) {
         let fallback = llm::active_model(config).to_string();
         return (
             config.clone(),
             Some(format!(
                 "任务声明的模型 {model} 未在 [harness].providers.{}.models 中声明，本次回落 {fallback}",
-                config.provider.as_str(),
+                config.provider,
             )),
         );
     }
     let mut resolved = config.clone();
-    match resolved.provider {
-        config::HarnessProvider::Kimi => resolved.providers.kimi.model = model.to_string(),
-        config::HarnessProvider::Deepseek => resolved.providers.deepseek.model = model.to_string(),
-        config::HarnessProvider::Mock => {}
+    if let Some(entry) = resolved.providers.get_mut(&resolved.provider) {
+        entry.model = model.to_string();
     }
     (resolved, None)
 }
@@ -2343,15 +2347,15 @@ mod tests {
             window: 262_144,
         };
         // kimi + vision:true → 放行（含图消息正常入队）。
-        let mut config = HarnessConfig {
-            provider: config::HarnessProvider::Kimi,
-            ..HarnessConfig::default()
-        };
-        config.providers.kimi.model = "kimi-vision-probe".into();
-        config.providers.kimi.models = vec![model_spec(true)];
+        let mut config = config::test_harness(
+            "kimi",
+            config::test_provider(config::ProviderPreset::Kimi, "sk", &[]),
+        );
+        config.providers.get_mut("kimi").unwrap().model = "kimi-vision-probe".into();
+        config.providers.get_mut("kimi").unwrap().models = vec![model_spec(true)];
         assert!(image_gate_error(&with_image, &config).is_none());
         // kimi + vision:false → 拒绝，code/param 形状钉住。
-        config.providers.kimi.models = vec![model_spec(false)];
+        config.providers.get_mut("kimi").unwrap().models = vec![model_spec(false)];
         let error = image_gate_error(&with_image, &config).expect("vision:false 必须拒");
         assert_eq!(error.code, "harness_image_unsupported");
         assert_eq!(
@@ -2359,17 +2363,13 @@ mod tests {
             Some("kimi-vision-probe")
         );
         // 缺键（空清单 = 未列出）→ 同样拒绝（保守默认）。
-        config.providers.kimi.models = vec![];
+        config.providers.get_mut("kimi").unwrap().models = vec![];
         assert!(image_gate_error(&with_image, &config).is_some());
         // 纯文本消息不受闸影响（vision:false 也放行）。
-        config.providers.kimi.models = vec![model_spec(false)];
+        config.providers.get_mut("kimi").unwrap().models = vec![model_spec(false)];
         assert!(image_gate_error(&text_only, &config).is_none());
         // mock 恒放行（fixture 驱动，验收要断言含图消息正常入队）。
-        let mut mock_config = HarnessConfig {
-            provider: config::HarnessProvider::Mock,
-            ..HarnessConfig::default()
-        };
-        mock_config.providers.kimi.model = "mock-model".into();
+        let mock_config = config::test_mock(Some("/tmp/fixture.json"));
         assert!(image_gate_error(&with_image, &mock_config).is_none());
     }
 
@@ -2408,10 +2408,7 @@ mod tests {
             },
             vault_id: "vault-cron-slot".to_string(),
         };
-        let config = HarnessConfig {
-            provider: config::HarnessProvider::Mock,
-            ..HarnessConfig::default()
-        };
+        let config = config::test_mock(Some("/tmp/fixture.json"));
 
         // 交互槽位：一条用户消息 + 会话 id 作为基线。
         let interactive = Runtime::default();
@@ -2508,10 +2505,7 @@ mod tests {
             },
             vault_id: "vault-subagent-region".to_string(),
         };
-        let config = HarnessConfig {
-            provider: config::HarnessProvider::Mock,
-            ..HarnessConfig::default()
-        };
+        let config = config::test_mock(Some("/tmp/fixture.json"));
         let runtime = Runtime::default();
         runtime.acquire_turn(&scope, &config).unwrap();
         let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -2589,17 +2583,14 @@ mod tests {
     /// 覆盖被忽略且不告警。
     #[test]
     fn model_override_resolves_declared_models_only() {
-        let mut config = HarnessConfig {
-            provider: config::HarnessProvider::Kimi,
-            ..HarnessConfig::default()
-        };
-        config.providers.kimi.model = "default-model".into();
-        config.providers.kimi.models = vec![crate::config::HarnessModelSpec {
-            id: "declared-model".into(),
-            effort: true,
-            vision: false,
-            window: 65_536,
-        }];
+        let config = config::test_harness(
+            "kimi",
+            config::test_provider(
+                config::ProviderPreset::Kimi,
+                "sk",
+                &[("declared-model", true, false, 65_536)],
+            ),
+        );
 
         let (resolved, warning) = with_model_override(&config, Some("declared-model"));
         assert_eq!(llm::active_model(&resolved), "declared-model");
@@ -2608,18 +2599,15 @@ mod tests {
         let (fallback, warning) = with_model_override(&config, Some("undeclared-model"));
         assert_eq!(
             llm::active_model(&fallback),
-            "default-model",
-            "未声明 ⇒ 回落 provider 生效模型"
+            "declared-model",
+            "未声明 ⇒ 回落 provider 生效模型（清单首项）"
         );
         assert!(
             warning.unwrap_or_default().contains("undeclared-model"),
             "未声明必须给一条人话 warning"
         );
 
-        let mock = HarnessConfig {
-            provider: config::HarnessProvider::Mock,
-            ..HarnessConfig::default()
-        };
+        let mock = config::test_mock(Some("/tmp/fixture.json"));
         let (resolved, warning) = with_model_override(&mock, Some("ignored-model"));
         assert_eq!(resolved, mock);
         assert!(warning.is_none(), "mock 没有模型维度，不应告警");
@@ -2696,17 +2684,19 @@ mod tests {
             fn emit(&self, _payload: serde_json::Value) {}
         }
 
-        // 选 Kimi：本仓库的调度器用例走 Deepseek、其余运行用例走 Mock，避免共享闸互相干扰。
-        let provider = config::HarnessProvider::Kimi;
+        // 选 kimi：本仓库的调度器用例走 deepseek、其余运行用例走 mock，避免共享闸互相干扰。
         // 许可数 = max_concurrent + 1 = 1：占住唯一许可即可观察另一侧的等待。
         let config = HarnessConfig {
-            provider,
             subagents: config::SubagentsConfig {
                 max_concurrent: 0,
                 ..Default::default()
             },
-            ..Default::default()
+            ..config::test_harness(
+                "kimi",
+                config::test_provider(config::ProviderPreset::Kimi, "sk", &[]),
+            )
         };
+        let provider = "kimi";
         let root = std::env::temp_dir().join(format!(
             "lumir-cron-gate-{}-{}",
             std::process::id(),

@@ -562,7 +562,7 @@ fn resolve_model(
     // 与调用级解析同口径（`subagents::resolve_model`）：mock 的模型清单开放，任意 id 视为
     // 已声明——否则 mock provider 下定义里的 model 永远被回落 inherit（M590 真机场景 186
     // 现场：两轮 `subagent_started.model` 都是 "mock"）。生产 provider 的判定不变。
-    let declared = config.provider == crate::config::HarnessProvider::Mock
+    let declared = config.is_mock(&config.provider)
         || config
             .model_specs(&config.provider)
             .iter()
@@ -707,7 +707,7 @@ fn definition_location(definition: &AgentDefinition) -> String {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use crate::config::{HarnessModelSpec, HarnessProvider};
+    use crate::config::{self, HarnessModelSpec};
 
     use super::*;
 
@@ -725,11 +725,11 @@ mod tests {
     }
 
     fn config_with_models(models: &[&str]) -> HarnessConfig {
-        let mut config = HarnessConfig {
-            provider: HarnessProvider::Kimi,
-            ..Default::default()
-        };
-        config.providers.kimi.models = models
+        let mut config = config::test_harness(
+            "kimi",
+            config::test_provider(config::ProviderPreset::Kimi, "sk", &[]),
+        );
+        config.providers.get_mut("kimi").unwrap().models = models
             .iter()
             .map(|id| HarnessModelSpec {
                 id: (*id).to_string(),
@@ -757,10 +757,7 @@ mod tests {
             mapping_get(mapping, "model").expect("model 字段").clone()
         }
 
-        let mock_config = HarnessConfig {
-            provider: HarnessProvider::Mock,
-            ..Default::default()
-        };
+        let mock_config = config::test_mock(Some("/tmp/fixture.json"));
         let mut warnings = Vec::new();
         let resolved = resolve_model(
             Some(&model_field("model: mock-fast")),
