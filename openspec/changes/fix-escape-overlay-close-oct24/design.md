@@ -114,14 +114,14 @@ export interface EscapeRouter {
 export function installEscapeRouter(win: Window, router: EscapeRouter): () => void;
 ```
 
-准入与分派（同一张表，就地处理器与兜底共用准入，只有「谁被关」不同）：
+准入与分派（同一张表，就地处理器与兜底共用**同一条** `escapeRouter.handle`：准入、「谁是最上层」与关闭实现都只有一份，两列只在**由谁先跑到**上不同）：
 
 | 输入 | `escapeDisposition` | 就地键处理器 | 窗口级兜底 |
 |---|---|---|---|
 | 非 `Escape` | `ignore` | 不动作 | 不动作 |
 | 组合期（`isComposing` / `keyCode === 229`） | `ignore` | 不动作、不 `preventDefault` | 不动作 |
 | 带修饰键（⇧ / ⌘ / ⌃ / ⌥） | `swallow` | `preventDefault`、**不关层** | `preventDefault` |
-| 无修饰、有层 | `close` | `preventDefault` + 关闭**本层**（统一关闭函数） | `preventDefault` + 关闭**栈顶** |
+| 无修饰、有层 | `close` | `preventDefault` + 关闭**栈顶**（与兜底同一条 `escapeRouter.handle`；关闭实现复用该层登记时的既有 `close`） | `preventDefault` + 关闭**栈顶** |
 | 无修饰、无层 | `close` | —（没有处理器） | `preventDefault`（安全消费）：**不关层、不移动焦点、不改状态、不退出**，只阻止原生默认关窗——**不是新增产品行为**（裁决 B） |
 | `defaultPrevented` 已置 | — | 让路 | 让路 |
 
@@ -129,6 +129,13 @@ export function installEscapeRouter(win: Window, router: EscapeRouter): () => vo
 关层，带修饰键与组合期的按键在兜底看到之前就已经关了层——兜底只能处理「没人要」的按键，补救
 不了这个顺序。因此 `src/harness-panel.ts` 的 `panel` / `seg` 监听器以及其余层的就地处理器
 MUST 改为先调用 `escapeDisposition`，MUST NOT 保留各自的 Escape 字面判断。
+
+**就地处理器也必须按栈顶分派，而不是关「事件所在的那一层」**（M718 r2 P1-1 的实现更正）：焦点
+在哪一层**不等于**哪一层在栈顶——不持焦的 hover 层（Context 泡、effort 提示）可以在下层保持焦点
+时后开。若就地处理器各自调自己的 `close()`，先开的下层会被后开的提示「抢走」这一拍 Escape（实现
+前的实测：⌘P 先开、effort 提示后开，按一次 Esc 收掉的是 ⌘P、提示还在）。因此就地路径与兜底一样
+委托 `escapeRouter.handle(event)`，两处只是「谁先跑到」不同；**关闭实现仍复用各层登记时的既有
+`close`**（E5 不变）。行为合同（spec 的「一次只关最上层」）自始如此，本次只更正实现与其表述。
 
 装配点与顺序：`installEscapeRouter` 在 `src/main.ts` 每次 `Keymap.attach` 之后调用
 （`:3483` 的首次装配与 `:3500` 的配置重绑都要），使它成为 **window 冒泡阶段最后一个** keydown
@@ -148,8 +155,9 @@ MUST 改为先调用 `escapeDisposition`，MUST NOT 保留各自的 Escape 字�
 - **`close` 复用组件的关闭函数**：例如 `permPop` 的层 `close` 就是「`setPermPop(false)` +
   `permChip.focus()`」，与面板就地处理器里那两段是**同一个函数**。就地处理器保留（它先于兜底
   运行，覆盖焦点在层内的常态），但两者 MUST 调同一个关闭实现——这正是 E5。
-- **就地处理器只做两件事**：准入（`escapeDisposition`）与关闭（层的统一 `close()` / 按层栈取
-  最上层的 `closeTop…`）；MUST NOT 自己再写「这个键是否关闭」的判断，也 MUST NOT 跳过准入。
+- **就地处理器只做一件事**：`escapeRouter.handle(event)`（让路 → 准入 → 按打开序关栈顶，关闭
+  实现是该层登记时的既有 `close`）。MUST NOT 自己再写「这个键是否关闭」的判断，MUST NOT 跳过
+  准入，也 MUST NOT 保留第二套「关本层」的分派（r2 P1-1）。
 - **重复登记 = 提到栈顶**：同一个层被重新打开时，先 `remove` 再 `push`，保证「最近打开的在最上
   层」。
 - **关闭即注销**：`close()` 内部负责 `remove(id)`；兜底调用 `close()` 之后不需要再 `remove`，

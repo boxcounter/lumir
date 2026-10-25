@@ -30,7 +30,7 @@
 //      解析次序与 vault 内完全同构。
 import { NO_MATCH_TEXT, filterIndices, foldCase } from "./list-filter";
 import { keyToken } from "./keys";
-import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
+import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { t, tPlural } from "./copy";
 import { lineSuffixAt } from "./harness-path-link";
 
@@ -991,7 +991,7 @@ export function createQuickOpen(options: QuickOpenOptions): QuickOpenHandle {
     if (event.isComposing || event.keyCode === 229) return;
     // Escape 归共享准入（change fix-escape-overlay-close-oct24）：无修饰才关层，带修饰键只消费
     // 默认行为，组合期归输入法——那套判断不在本文件重写。
-    if (handleEscapeKey(event, () => close())) return;
+    if (escapeRouter.handle(event)) return;
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {

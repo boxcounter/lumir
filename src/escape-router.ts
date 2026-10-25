@@ -153,32 +153,6 @@ export function createEscapeRouter(): EscapeRouter {
  */
 export const escapeRouter: EscapeRouter = createEscapeRouter();
 
-/**
- * 就地键处理器的公共落点：让路 + 准入 + 关闭，三件事都只在这里写一次（design §3.2「就地处理器
- * 只做两件事」，准入与关闭之外的第一件事是**让路**）。返回 `true` = 本处理器已消费该事件
- * （调用方直接 `return`）。
- *
- * 为什么就地处理器必须走它：它们**先于**窗口兜底运行（事件从焦点元素向上冒泡，兜底挂在
- * window）。只看 `event.key === "Escape"` 就关层的写法会在兜底看到之前把 ⇧/⌘/⌃/⌥+Escape 与
- * 输入法组合期的按键当成关闭意图——兜底只能处理「没人要」的按键，补救不了这个顺序。
- *
- * 为什么第一件事必须是 `defaultPrevented` 让路（M718 r1 P1-1）：更靠近事件目标的处理器
- * （widget 内的滚动键、输入框自己的就地键、以及**本函数所在的容器自己的上游处理器**）可能已经
- * 消费了这一拍按键。已消费的按键不再归关闭路由——合同（keymap-commands 的「Escape 的顶层关闭
- * 语义与窗口隔离」条）MUST 让路，`createEscapeRouter().handle` 也是同一口径。少了这一句，两条
- * 公共入口的语义就会分叉：同一个已消费的裸 Escape 走兜底不关层、走就地把层关掉。
- */
-export function handleEscapeKey(event: EscapeKeyEvent, close: () => void): boolean {
-  // 已消费即让路：不重复消费、不关层（与 router.handle 的首行同口径，MUST NOT 各判一次）。
-  if (event.defaultPrevented) return false;
-  const disposition = escapeDisposition(event);
-  if (disposition === "ignore") return false;
-  event.preventDefault();
-  if (disposition === "swallow") return true;
-  close();
-  return true;
-}
-
 /** 层打开时登记（与组件的开合点同源；重复登记 = 提到栈顶）。 */
 export function registerEscapeLayer(id: string, close: () => void): void {
   escapeRouter.push({ id, close });

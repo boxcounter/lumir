@@ -64,7 +64,7 @@ import type { EditorMode } from "./bindings/EditorMode";
 import { itemIndexAt, itemPath, peekStructureEntries, structureEntries, supportsStructure } from "./code-structure";
 import type { StructureEntry } from "./code-structure";
 import { keyToken } from "./keys";
-import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
+import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
 import { onRelabel, t } from "./copy";
 import type { ListFilter } from "./list-filter";
@@ -695,9 +695,11 @@ class Toc implements TocHandle {
   }
 
   private onKeydown(event: KeyboardEvent): void {
-    // Escape 归共享准入（change fix-escape-overlay-close-oct24）：无修饰才关层；带修饰键只消费
+    // Escape 归**窗口级兜底同一个** `escapeRouter.handle`（change fix-escape-overlay-close-oct24）：
+    // 按层的打开序关**栈顶**（不持焦的 hover 提示可以后开在下层之上），关闭实现是该层登记时的
+    // 既有 close；准入（无修饰才关、组合期让路、已消费让路）也只有那一份。无修饰才关层；带修饰键只消费
     // 默认行为、不关层；组合期归输入法。这套判断与窗口级兜底同源，MUST NOT 在本文件重写。
-    if (handleEscapeKey(event, () => this.close())) return;
+    if (escapeRouter.handle(event)) return;
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {

@@ -20,7 +20,7 @@
 // 归因误报，判定做成无 DOM 的纯逻辑，便于单测。
 
 import { keyToken } from "./keys";
-import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
+import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 
 // ---------------------------------------------------------------------------
 // 文案（编号见 文案-Copy.md 的 D125 起；本模块是它们唯一一份字面量）
@@ -321,7 +321,7 @@ class TreeContextMenu implements TreeContextMenuHandle {
 
   private onKeydown(event: KeyboardEvent): void {
     // Escape 归共享准入（change fix-escape-overlay-close-oct24）。
-    if (handleEscapeKey(event, () => this.close())) return;
+    if (escapeRouter.handle(event)) return;
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {
@@ -422,9 +422,11 @@ class ConfirmDialog implements ConfirmDialogHandle {
       deps.onConfirm();
     });
     overlay.addEventListener("keydown", (event) => {
-      // Escape 归共享准入（change fix-escape-overlay-close-oct24）：这个模态也是层栈里的
+      // Escape 归**窗口级兜底同一个** `escapeRouter.handle`（change fix-escape-overlay-close-oct24）：
+    // 按层的打开序关**栈顶**（不持焦的 hover 提示可以后开在下层之上），关闭实现是该层登记时的
+    // 既有 close；准入（无修饰才关、组合期让路、已消费让路）也只有那一份。这个模态也是层栈里的
       // 一层，关闭路径与兜底共用同一份实现。
-      if (handleEscapeKey(event, () => this.dismiss())) return;
+      if (escapeRouter.handle(event)) return;
       const token = keyToken(event);
       if (token === null) return;
       if (token === "Tab" || token === "Shift-Tab") {

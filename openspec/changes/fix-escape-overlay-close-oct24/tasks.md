@@ -75,7 +75,8 @@
       单独核对（design §6「层栈泄漏」）
 - [x] 3.4 其余层按 design §3.5 清单登记：⌘P、大纲、vault 切换器、跳转行、搜索面板、键位面板、
       文件树菜单、标签菜单、lightbox、表格全屏、代码块全屏；每处只调用既有 `close()`，不写第二
-      份关闭；这些组件的就地 Escape 处理器同样换成共享准入（组合期 / 带修饰键不关层）——逐文件
+      份关闭；这些组件的就地 Escape 处理器同样换成**共享路由** `escapeRouter.handle(event)`
+      （按打开序关栈顶、组合期 / 带修饰键 / 已消费一律不关层）——逐文件
       核 `quick-open.ts` / `toc.ts` / `vault-switcher.ts` / `goto-line.ts` / `search.ts` /
       `bindings-panel.ts` / `tree-menu.ts` / `tabs.ts` / `lightbox.ts` / `table-fullscreen.ts` /
       `code-block-fullscreen.ts`，`--check` 与 3.6 场景守
@@ -83,7 +84,7 @@
       后续 Esc）；同一 id 重复 `push` 后 `top` 指向最新一次打开
 - [x] 3.6 **真实监听链**（不以 router 单测代替）：新增 `tests/visual/scenes/escape-admission.spec.ts`
       （chromium 真实 DOM + tauri-stub 装配，共 8 条；r1 P1-1 起补第 8 条「已被上游消费的 Escape
-      不关层」）——①权限浮层持焦时 `⇧/⌘/⌃/⌥+Escape` 各不关层、焦点
+      不关层」、r2 P1-1 起补第 9 条「⌘P 先开 + effort 提示后开」）——①权限浮层持焦时 `⇧/⌘/⌃/⌥+Escape` 各不关层、焦点
       不动，裸 `Escape` 才关；②派发 `KeyboardEvent{ key: "Escape", isComposing: true }` 不关层；
       ③会话浮层的 `seg` 监听器重复①②；④effort 提示悬停打开后按 Escape 只收提示、焦点不动；
       ⑤反向验证：把 `panel` / `seg` 监听器改回字面判断 → 对应组必须变红（记录读数）。

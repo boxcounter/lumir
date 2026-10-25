@@ -43,7 +43,7 @@ import {
   setSearchQuery,
 } from "@codemirror/search";
 import { keyToken } from "./keys";
-import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
+import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { focusPreservingReadingPosition } from "./scroll-position-view";
 
 /** 计数上限：与官方 selectMatches / 高亮器同一量级（1000）。超过就只报下界（显示 1000+），
@@ -52,7 +52,8 @@ const MATCH_COUNT_LIMIT = 1000;
 
 /** panel 自己的关闭键里**不属于 Escape 准入**的那一支（token 口径与 keys.ts 同源，不另写一套
  *  匹配规则）。Escape 自 change fix-escape-overlay-close-oct24 起走共享准入
- *  `handleEscapeKey`——带修饰键只消费默认行为、组合期归输入法，那套判断不在本文件重写。 */
+ *  `escapeRouter.handle`——按打开序关栈顶，带修饰键只消费默认行为、组合期归输入法，
+ *  那套判断不在本文件重写。 */
 const PANEL_CLOSE_TOKENS = new Set(["Ctrl-G"]);
 
 interface MatchTally {
@@ -216,9 +217,11 @@ class LumirSearchPanel implements Panel {
   }
 
   private onKeydown(event: KeyboardEvent): void {
-    // Escape 归共享准入（change fix-escape-overlay-close-oct24）：本处理器的 ⇧/⌘/⌃/⌥+Escape
+    // Escape 归**窗口级兜底同一个** `escapeRouter.handle`（change fix-escape-overlay-close-oct24）：
+    // 按层的打开序关**栈顶**（不持焦的 hover 提示可以后开在下层之上），关闭实现是该层登记时的
+    // 既有 close；准入（无修饰才关、组合期让路、已消费让路）也只有那一份。本处理器的 ⇧/⌘/⌃/⌥+Escape
     // 与组合期判断与窗口级兜底同源，MUST NOT 在这里再判一次「是不是关闭意图」。
-    if (handleEscapeKey(event, () => closeSearch(this.view))) return;
+    if (escapeRouter.handle(event)) return;
     const token = keyToken(event);
     if (token === null) return;
     if (PANEL_CLOSE_TOKENS.has(token)) {

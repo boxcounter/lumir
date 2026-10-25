@@ -35,7 +35,7 @@
 // 的守卫）；本文件只保留表格侧的 surface 与遮罩 DOM 装配。
 
 import { keyToken } from "./keys";
-import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
+import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { clearSelectionWithin, selectAllOf } from "./overlay-select";
 import { createOverlayState } from "./overlay-state";
 import type { OverlayCloseReason, OverlayState, OverlaySurface } from "./overlay-state";
@@ -185,9 +185,11 @@ export function createTableFullscreen(options: TableFullscreenOptions): TableFul
     // Tab 挡在遮罩内——快照里没有可聚焦元素，放行 Tab 会让焦点走进编辑器内容区，而遮罩还开着，
     // 后续按键就又能穿透到文档（aria-modal 的语义当场失效）。
     overlay.addEventListener("keydown", (event) => {
-      // Escape 归共享准入（change fix-escape-overlay-close-oct24）：无修饰才是关闭意图；带修饰键
+      // Escape 归**窗口级兜底同一个** `escapeRouter.handle`（change fix-escape-overlay-close-oct24）：
+    // 按层的打开序关**栈顶**（不持焦的 hover 提示可以后开在下层之上），关闭实现是该层登记时的
+    // 既有 close；准入（无修饰才关、组合期让路、已消费让路）也只有那一份。无修饰才是关闭意图；带修饰键
       // 只消费默认行为、不关遮罩；组合期归输入法。就地判据与窗口级兜底同源，本文件不再自判。
-      if (handleEscapeKey(event, closeByEscape)) return;
+      if (escapeRouter.handle(event)) return;
       const token = keyToken(event);
       if (token === null) return;
       // 组合期的 Escape 不消费也不关（上面那条返回 false 才走到这里）；其余 token 照旧。

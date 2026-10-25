@@ -328,3 +328,43 @@ test("就地入口：已被上游消费的 Escape 不关层（handleEscapeKey �
   await expect(permPop(page)).toBeHidden();
   await expect(permChip(page)).toBeFocused();
 });
+
+test("就地路径按打开序关栈顶：⌘P 先开、后开的 hover 提示才被第一拍收掉", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await page.goto("/");
+  await openPane(page);
+
+  const qo = page.locator(".lumir-qo");
+  const hint = page.locator(".lumir-hp-effhint");
+  const ctxPop = page.locator(".lumir-hp-ctxpop");
+  const qoInput = page.locator(".lumir-qo-input");
+
+  // 打开序 = 栈序：面板（已在场）→ ⌘P → 不持焦的 hover 提示。焦点始终在 ⌘P 的输入框里。
+  await page.keyboard.press("Meta+p");
+  await expect(qo).toBeVisible();
+  await expect(qoInput).toBeFocused();
+  await page.locator(".lumir-hp-eff-reading").hover();
+  await expect(hint).toBeVisible();
+
+  // 第一拍：只收**后开**的提示；⌘P 与焦点都不动（M718 r2 P1-1 的缺陷形态：这一拍会收掉 ⌘P）。
+  await page.keyboard.press("Escape");
+  await expect(hint, "第一拍只收后开的 effort 提示").toBeHidden();
+  await expect(qo, "先开的 ⌘P 必须保持打开").toBeVisible();
+  await expect(qoInput, "这一拍不移动焦点").toBeFocused();
+
+  // 第二拍：栈顶变成 ⌘P，才收它。
+  await page.keyboard.press("Escape");
+  await expect(qo, "第二拍才收 ⌘P").toBeHidden();
+
+  // Context hover 泡同形（同一份登记与同一条就地路径，换一个不持焦的层）。
+  await page.keyboard.press("Meta+p");
+  await expect(qo).toBeVisible();
+  await page.locator(".lumir-hp-ctx").hover();
+  await expect(ctxPop).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(ctxPop, "第一拍只收后开的 Context 泡").toBeHidden();
+  await expect(qo).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(qo).toBeHidden();
+});

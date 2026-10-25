@@ -35,7 +35,7 @@
 import type { EditorHandle, EditorSession } from "./editor";
 import { isDocSession } from "./session-kind";
 import { TAB_GOTO_IDS, keyToken } from "./keys";
-import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
+import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import type { CommandRunner } from "./keys";
 import { baseName } from "./tree";
 import { onRelabel, t } from "./copy";
@@ -779,9 +779,11 @@ class TabContextMenu implements TabContextMenuHandle {
   }
 
   private onKeydown(event: KeyboardEvent): void {
-    // Escape 归共享准入（change fix-escape-overlay-close-oct24）：无修饰才关菜单，带修饰键只
+    // Escape 归**窗口级兜底同一个** `escapeRouter.handle`（change fix-escape-overlay-close-oct24）：
+    // 按层的打开序关**栈顶**（不持焦的 hover 提示可以后开在下层之上），关闭实现是该层登记时的
+    // 既有 close；准入（无修饰才关、组合期让路、已消费让路）也只有那一份。无修饰才关菜单，带修饰键只
     // 消费默认行为、组合期归输入法。
-    if (handleEscapeKey(event, () => this.close())) return;
+    if (escapeRouter.handle(event)) return;
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {

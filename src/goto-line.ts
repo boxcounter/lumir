@@ -12,7 +12,7 @@
 // Emacs echo area 的位置语义在「不占常驻布局」约束下的对应物（design §3.2）。
 import { keyToken } from "./keys";
 import { t, tPlural } from "./copy";
-import { handleEscapeKey, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
+import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 
 /** 输入框的读屏名（文案 deck D152）。输入框只有数字、没有可见标签，读屏需要一个动作说明。
  *  **函数**而不是常量：浮层每次打开重写这两个属性，语言切换后新开的浮层自然是新语言。 */
@@ -141,7 +141,7 @@ export function createGotoLinePrompt(options: GotoLinePromptOptions): GotoLinePr
     }
     // Escape 归共享准入（change fix-escape-overlay-close-oct24）：无修饰才是关闭意图；带修饰键
     // 只消费默认行为、不关层；组合期归输入法。准入判断不在本文件另写一份。
-    if (handleEscapeKey(event, () => close())) return;
+    if (escapeRouter.handle(event)) return;
     if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === "g") {
       event.preventDefault();
       close();

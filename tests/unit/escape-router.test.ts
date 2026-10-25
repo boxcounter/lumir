@@ -11,7 +11,6 @@ import assert from "node:assert/strict";
 import {
   createEscapeRouter,
   escapeDisposition,
-  handleEscapeKey,
   installEscapeRouter,
   type EscapeKeyEvent,
   type EscapeLayer,
@@ -320,53 +319,59 @@ test("handle：栈顶层的 close 只由 `handle` 调一次（就地处理器与
   assert.equal(calls, 1, "层自己注销后，下一拍不得再调它");
 });
 
-// ── 就地键处理器的公共入口（handleEscapeKey）：与 router.handle 同口径 ──
+// ── 就地键路径：与窗口兜底**同一条** `escapeRouter.handle`（M718 r1 P1-1 / r2 P1-1）──
 //
-// M718 r1 P1-1 的现场：所有非 harness 浮层共用这个入口，而它原先缺 `defaultPrevented` 让路，
-// 于是「同一个已消费的裸 Escape」走窗口兜底不关层、走就地把层关掉——两条公共入口语义分叉，
-// 而 router 单测全绿（此前整棵树没有一处直接调 handleEscapeKey）。下面这组直接钉这个入口。
+// 这条组钉两件曾经各错一次的事：
+//   - r1：就地路径必须对已消费（`defaultPrevented`）的事件让路，不重复消费、不关层；
+//   - r2：就地路径必须按**层的打开序关栈顶**，不是「关事件所在的那一层」——不持焦的 hover
+//     提示可以在下层保持焦点时后开（⌘P 先开、effort 提示后开），此时栈顶是提示。
+// 实现上两者是同一个入口（组件不再各持一份「关本层」的分派），因此这组测试直接驱动
+// `escapeRouter.handle` 并断言「谁被关」。
 
-test("handleEscapeKey：已消费（defaultPrevented）的裸 Escape 让路——不重复消费、不关层", () => {
-  let closes = 0;
-  const event = keyEvent({ defaultPrevented: true });
-  assert.equal(handleEscapeKey(event, () => (closes += 1)), false, "已消费即让路（返回 false）");
-  assert.equal(closes, 0, "MUST NOT 关层——下游已经消费了这一拍按键");
-  assert.equal(event.defaultPrevented, true, "状态保持（不再多调一次 preventDefault 也无副作用）");
-});
-
-test("handleEscapeKey：未消费的裸 Escape 关层且消费它（正向对照，证明上一条不是恒假）", () => {
-  let closes = 0;
-  const event = keyEvent();
-  assert.equal(handleEscapeKey(event, () => (closes += 1)), true);
-  assert.equal(closes, 1);
-  assert.equal(event.defaultPrevented, true);
-});
-
-test("handleEscapeKey：带修饰键只消费默认行为、不关层；组合期与别键一律让路", () => {
-  let closes = 0;
-  const shift = keyEvent({ shiftKey: true });
-  assert.equal(handleEscapeKey(shift, () => (closes += 1)), true);
-  assert.equal(closes, 0, "⇧Escape 不是关闭意图");
-  const composing = keyEvent({ isComposing: true });
-  assert.equal(handleEscapeKey(composing, () => (closes += 1)), false, "组合期归输入法");
-  assert.equal(composing.defaultPrevented, false, "组合期不 preventDefault");
-  const enter = keyEvent({ key: "Enter" });
-  assert.equal(handleEscapeKey(enter, () => (closes += 1)), false);
-  assert.equal(closes, 0);
-});
-
-test("两条公共入口同口径：同一个已消费的裸 Escape 在 router.handle 与 handleEscapeKey 上都不关层", () => {
+test("就地路径：已消费（defaultPrevented）的裸 Escape 让路——不重复消费、不关层", () => {
   const router = createEscapeRouter();
-  let routerCloses = 0;
-  router.push({ id: "probe", close: () => (routerCloses += 1) });
-  let directCloses = 0;
+  let closes = 0;
+  router.push({ id: "quick-open", close: () => (closes += 1) });
+  const event = keyEvent({ defaultPrevented: true });
+  assert.equal(router.handle(event), false, "已消费即让路（返回 false）");
+  assert.equal(closes, 0, "MUST NOT 关层——更靠近目标的处理器已经消费了这一拍按键");
+  assert.equal(event.defaultPrevented, true, "状态保持");
+  assert.equal(router.top()?.id, "quick-open", "层栈原样");
+});
 
-  const viaRouter = keyEvent({ defaultPrevented: true });
-  assert.equal(router.handle(viaRouter), false);
-  const viaInPlace = keyEvent({ defaultPrevented: true });
-  assert.equal(handleEscapeKey(viaInPlace, () => (directCloses += 1)), false);
+test("就地路径：关**栈顶**而不是事件所在层——⌘P 先开、effort 提示后开时第一拍只收提示", () => {
+  const router = createEscapeRouter();
+  let quickOpenCloses = 0;
+  let hintCloses = 0;
+  // 打开序即栈序：⌘P 先开，不持焦的 effort 提示后开（焦点仍在 ⌘P 的输入框里）。
+  router.push({ id: "quick-open", close: () => (quickOpenCloses += 1) });
+  router.push({ id: "harness-eff-hint", close: () => (hintCloses += 1) });
 
-  assert.equal(routerCloses, 0, "兜底：已消费不让路以外的行为");
-  assert.equal(directCloses, 0, "就地把层关掉 = P1-1 的缺陷形态");
-  assert.equal(router.top()?.id, "probe", "层栈原样（两条入口都没动它）");
+  assert.equal(router.handle(keyEvent()), true);
+  assert.equal(hintCloses, 1, "第一拍只收后开的提示");
+  assert.equal(quickOpenCloses, 0, "先开的 ⌘P 必须保持（r2 P1-1 的缺陷形态是这里被关）");
+  assert.equal(router.top()?.id, "quick-open");
+
+  assert.equal(router.handle(keyEvent()), true);
+  assert.equal(quickOpenCloses, 1, "第二拍才收 ⌘P");
+  assert.equal(router.top(), null);
+});
+
+test("就地路径：修饰键只消费默认行为、不关层；组合期与别键一律让路（与兜底同一条判据）", () => {
+  const router = createEscapeRouter();
+  let closes = 0;
+  router.push({ id: "probe", close: () => (closes += 1) });
+  for (const init of [{ shiftKey: true }, { metaKey: true }, { ctrlKey: true }, { altKey: true }]) {
+    const event = keyEvent(init);
+    assert.equal(router.handle(event), true, JSON.stringify(init));
+    assert.equal(event.defaultPrevented, true);
+  }
+  assert.equal(closes, 0, "⇧/⌘/⌃/⌥+Escape 不是关闭意图");
+  for (const init of [{ isComposing: true }, { keyCode: 229 }, { key: "Enter" }]) {
+    const event = keyEvent(init);
+    assert.equal(router.handle(event), false, JSON.stringify(init));
+    assert.equal(event.defaultPrevented, false);
+  }
+  assert.equal(closes, 0);
+  assert.equal(router.top()?.id, "probe", "让路的几拍都没动层栈");
 });
