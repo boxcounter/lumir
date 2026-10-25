@@ -63,11 +63,14 @@ jobs:
       - name: 安装前端依赖
         run: pnpm install --frozen-lockfile
 
-      # 常驻内存归因护栏的纯函数夹具（node:test，零依赖、毫秒级）：护栏守的是 resident-memory
-      # 门禁读数的可信度，坏掉时必须在构建与测量之前失败，而不是等读数出来才发现。
+      # 常驻内存归因护栏与 keypress 注入起点门禁的纯函数夹具（node:test，零依赖、毫秒级）：
+      # 前者守 resident-memory 门禁读数可信度，后者守 keypress-to-paint 的注入起点（readyState
+      # complete 但产品未挂载时不得开始采样——启动期样本会把主 chunk 装载算进按键读数）。
+      # 两者都必须在构建与测量之前失败，而不是等读数出来才发现；任一文件失败即本 step 红。
+      # step 名沿用 M723 的叫法（口径见 docs/specs/perf-measurement.md §5），内容以 run 行为准。
       # fixture 在 tests/perf/fixtures/memory-contamination-cases.json；paths 已含 scripts/perf/** 与 tests/perf/**。
       - name: 常驻内存归因护栏夹具测试（node:test，零依赖）
-        run: node --test scripts/perf/memory.test.mjs
+        run: node --test scripts/perf/memory.test.mjs scripts/perf/keypress-startup.test.mjs
 
       - name: 构建前端产物（dist/，keypress-to-paint 的负载）
         run: pnpm build
