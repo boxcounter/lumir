@@ -2,7 +2,6 @@ import { expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import type { ConfigSnapshot } from "../../../src/bindings/ConfigSnapshot";
 import type { HarnessProviderConfig } from "../../../src/bindings/HarnessProviderConfig";
-import type { ProviderPreset } from "../../../src/bindings/ProviderPreset";
 import { setLanguageRoot } from "../../../src/copy";
 import { providerEntry as visualProviderEntry } from "./provider-config";
 
@@ -207,6 +206,18 @@ export interface VaultFixture {
 }
 
 export async function stubTauri(page: Page, vault: VaultFixture | null): Promise<void> {
+  // 出厂 provider 条目在 **Node 侧**算好再注入：`page.addInitScript` 只序列化函数体，
+  // 闭包里引用的模块导入（`providerEntry`）在页面里是未定义标识符——直接调用会在
+  // config_get 时抛 ReferenceError（实测：boot 的 applyLanguage 不落地、`.modeline-language`
+  // 永远 hidden，整批视觉场景全红）。派生规则仍是 `provider-config.ts` 的唯一一份。
+  const defaultProviders = {
+    kimi: visualProviderEntry("kimi"),
+    deepseek: visualProviderEntry("deepseek"),
+    mock: visualProviderEntry("mock"),
+  };
+  await page.addInitScript((providers) => {
+    (window as unknown as Record<string, unknown>).__stubProviders = providers;
+  }, defaultProviders);
   await page.addInitScript((v: VaultFixture | null) => {
     const w = window as unknown as Record<string, unknown>;
     const callbacks = new Map<number, (data: unknown) => void>();
@@ -343,10 +354,13 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
       });
       if (kind === "file" && vault.files) vault.files[path] = "";
     };
-    // provider 条目构造：唯一实现在 `./provider-config.ts`（视觉场景与桩共用同一份派生规则，
-    // REVIEW.md『同一语义两处真源』条）。桩这里只组装**出厂空条目**（无 Key / 无模型 /
-    // 无 fixture ⇒ `configured = false`），与 Rust `HarnessProviderConfig::empty(preset)` 同态。
-    const providerEntry = (preset: ProviderPreset): HarnessProviderConfig => visualProviderEntry(preset);
+    // provider 条目：由 Node 侧算好注入（见 stubTauri 入口的说明）。桩这里只消费
+    // **出厂空条目**（无 Key / 无模型 / 无 fixture ⇒ `configured = false`），与 Rust
+    // `HarnessProviderConfig::empty(preset)` 同态。
+    const defaultProviders = (window as unknown as Record<string, unknown>).__stubProviders as Record<
+      string,
+      HarnessProviderConfig
+    >;
 
     const handlers: Record<string, (args: Args) => unknown> = {
       // vault_list 桩（M163）：缺省派生**一条**「当前 fixture 那一行」——列表浮层在单 vault
@@ -587,9 +601,9 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
               // 键，不是闭集合——桩不恢复旧的三档枚举。出厂全部未配置（api_key / models /
               // fixture 均为零值 ⇒ `configured` 派生为 false），与 Rust `Default` 同态。
               providers: {
-                kimi: providerEntry("kimi"),
-                deepseek: providerEntry("deepseek"),
-                mock: providerEntry("mock"),
+                kimi: defaultProviders.kimi,
+                deepseek: defaultProviders.deepseek,
+                mock: defaultProviders.mock,
               },
               permissions: { allow: [], deny: [] },
               permission_mode: "vault_write",

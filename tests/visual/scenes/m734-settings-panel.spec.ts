@@ -18,6 +18,7 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { expectScreenshot } from "./expect-screenshot";
 
 const DOC = "# 设置面板\n\n合成文档，只给面板一个背景。\n";
 
@@ -211,17 +212,17 @@ async function openSettings(page: Page, options: SettingsStubOptions): Promise<v
   await page.locator(".lumir-set-provider-row, .lumir-set-empty").first().waitFor();
 }
 
-/** 评审截图（`.local/reviews/m734-settings/`，git 外）：只在 `LUMIR_SETTINGS_CAPTURE=1` 时落盘。
- *  像素基线要 Alex 过目后才提交，这之前靠这批候选图评审观感；门禁只跑结构断言。 */
-async function capture(page: Page, name: string): Promise<void> {
-  if (process.env.LUMIR_SETTINGS_CAPTURE !== "1") return;
-  const dir = join(process.cwd(), "../../.local/reviews/m734-settings");
-  mkdirSync(dir, { recursive: true });
-  // 评审图固定从正文顶部开始（交互过程中的焦点滚动会把画面停在半截）。
+/** 面板的元素级像素基线（Alex 已批准 11 张候选：已配置 / 两个窄窗 / eink / 空清单 /
+ *  重复 id / 删除确认 / 命名关闭 / 图片无 vision / 校验错误 / 保存中）。基线更新是人肉裁决点
+ *  （tests/visual/README.md）：新增断言前必须先拿到过目批准，本批的批准记录见 change tasks
+ *  的「实现批记录」。 */
+async function panelScreenshot(page: Page, name: string): Promise<void> {
+  // 固定从正文顶部出图：交互过程中的焦点滚动（Tab 到最后一行的开关）会把画面停在半截，
+  // 那样同一场景每次跑出来的基线都不一样（Alex 过目的候选就是按顶部口径截的）。
   await page.locator(".lumir-set-body").evaluate((node) => {
     (node as HTMLElement).scrollTop = 0;
   });
-  await page.locator(".lumir-set-panel").screenshot({ path: `${dir}/${name}.png` });
+  await expectScreenshot(page.locator(".lumir-set-panel"), `${name}.png`);
 }
 
 async function setTheme(page: Page, theme: "light" | "dark" | "eink"): Promise<void> {
@@ -261,7 +262,7 @@ test("设置面板：单页两节、O1/O2 落位、无 TAB、背景 inert、焦�
   const inside = await page.evaluate(() => document.querySelector(".lumir-set-panel")!.contains(document.activeElement));
   expect(inside).toBe(true);
 
-  await capture(page, "01-configured");
+  await panelScreenshot(page, "01-configured");
   // Escape 关闭（干净态直接关），焦点回编辑器；背景解除 inert。
   await page.keyboard.press("Escape");
   await expect(page.locator(".lumir-set-panel")).toBeHidden();
@@ -284,7 +285,7 @@ test("设置面板：1280×800 与 900×700 下打开即完整可见（含窄窗
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
     expect(overflow).toBeLessThanOrEqual(0);
-    await capture(page, `02-narrow-${size.width}x${size.height}`);
+    await panelScreenshot(page, `02-narrow-${size.width}x${size.height}`);
     await page.keyboard.press("Escape");
     await expect(page.locator(".lumir-set-panel")).toBeHidden();
   }
@@ -304,7 +305,6 @@ test("设置面板：light / dark 同几何；eink 面板 1.4px 描边、无阴�
   };
   const light = await geometry();
   await setTheme(page, "dark");
-  await capture(page, "03-dark");
   const dark = await geometry();
   expect(dark.width).toBe(light.width);
   expect(dark.height).toBe(light.height);
@@ -327,7 +327,7 @@ test("设置面板：light / dark 同几何；eink 面板 1.4px 描边、无阴�
   });
   expect(declared).toEqual({ borderWidth: "1.4px", boxShadow: "none" });
   expect((await geometry()).width).toBe(light.width);
-  await capture(page, "03-eink");
+  await panelScreenshot(page, "03-eink");
 });
 
 // ---------------------------------------------------------------------------
@@ -343,7 +343,7 @@ test("设置面板：空清单只给空态卡（不渲染空表单骨架）+「�
   await expect(page.locator(".lumir-set-empty .lumir-set-btn-primary")).toHaveText("添加第一个 provider");
   await expect(page.locator(".lumir-set-provider-row")).toHaveCount(0);
   await expect(page.locator(".lumir-set-api-key")).toHaveCount(0);
-  await capture(page, "04-empty");
+  await panelScreenshot(page, "04-empty");
 });
 
 test("设置面板：新增 id 冲突 → 后端 blocked 按 path 回填到 id 输入框（aria-invalid + 错误文本）", async ({ page }) => {
@@ -363,7 +363,7 @@ test("设置面板：新增 id 冲突 → 后端 blocked 按 path 回填到 id �
   await expect(input).toHaveAttribute("aria-errormessage", "lumir-set-add-id-error");
   await expect(page.locator("#lumir-set-add-id-error")).toContainText("已存在");
   await expect(page.locator(".lumir-set-status")).toContainText("需要修正");
-  await capture(page, "05-add-duplicate");
+  await panelScreenshot(page, "05-add-duplicate");
 });
 
 // ---------------------------------------------------------------------------
@@ -387,7 +387,7 @@ test("设置面板：删除当前使用项 + 两个命名引用 → 三块替代
   // 只有一层 dialog：没有二级 modal（面板内没有第二个 dialog）。
   await expect(page.locator(".lumir-set-panel")).toHaveCount(1);
   await expect(page.locator('.lumir-set-panel [role="dialog"]')).toHaveCount(0);
-  await capture(page, "06-delete-confirm");
+  await panelScreenshot(page, "06-delete-confirm");
 });
 
 // ---------------------------------------------------------------------------
@@ -426,7 +426,7 @@ test("设置面板：切换 provider 不重排开关行；命名关闭时选择�
   await page.locator('.lumir-set-provider-row[data-provider-id="local-lab"]').click();
   expect(await rowOrder()).toEqual(before);
   await expect(page.locator('[data-auto-row="session_naming"] .lumir-set-auto-effective')).toContainText("选择保留");
-  await capture(page, "07-naming-closed");
+  await panelScreenshot(page, "07-naming-closed");
 });
 
 test("设置面板：图片命名的模型选项标 vision；不合格分支写跳过并保留暂存名", async ({ page }) => {
@@ -456,7 +456,7 @@ test("设置面板：图片命名的模型选项标 vision；不合格分支写�
   expect(labels.some((label) => label.includes("不在清单，会跳过"))).toBe(true);
   await expect(row.locator(".lumir-set-auto-effective")).toContainText("未声明 vision → 粘贴图片不会改名，保留暂存名");
   await expect(row.locator(".lumir-set-auto-effective")).toContainText("下一次粘贴生效");
-  await capture(page, "08-image-no-vision");
+  await panelScreenshot(page, "08-image-no-vision");
 });
 
 // ---------------------------------------------------------------------------
@@ -486,7 +486,7 @@ test("设置面板：重复模型 id → 两行都标 aria-invalid；焦点落�
   await expect(invalid).toHaveCount(2);
   await expect(invalid.nth(0)).toBeFocused();
   await expect(page.locator(".lumir-set-status")).toContainText("需要修正（2 项）");
-  await capture(page, "09-validation-error");
+  await panelScreenshot(page, "09-validation-error");
 });
 
 test("设置面板：保存中禁用全部编辑控件（含取消 / 设置当前使用 / 恢复默认）", async ({ page }) => {
@@ -514,7 +514,7 @@ test("设置面板：保存中禁用全部编辑控件（含取消 / 设置当�
       { timeout: 5000 },
     )
     .toEqual([]);
-  await capture(page, "10-saving");
+  await panelScreenshot(page, "10-saving");
 });
 
 test("设置面板：外部冲突 → 横幅给「重新载入 / 仍然保存」两动作；底栏保存禁用", async ({ page }) => {
@@ -530,7 +530,6 @@ test("设置面板：外部冲突 → 横幅给「重新载入 / 仍然保存」
   // 冲突态只走横幅动作：底栏保存用的是旧 revision，不能让它再点出一次冲突。
   await expect(page.locator(".lumir-set-actions .lumir-set-btn-primary")).toBeDisabled();
   await expect(page.locator(".lumir-set-status")).toContainText("外部冲突");
-  await capture(page, "11-conflict");
   // 重新载入 → 横幅消失、回到干净态（外部值落地）。
   await banner.locator(".lumir-set-btn").first().click();
   await expect(banner).toBeHidden();

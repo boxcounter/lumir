@@ -73,7 +73,7 @@
 - [ ] 7.2 `scripts/docs-check.sh` 通过（含 `openspec-archive-check.mjs` 的 MODIFIED 段落对账）
 - [ ] 7.3 Rust 单测：迁移（补齐 / 幂等 / 显式值优先 / 写失败 / 未知 id / 与退役 model 同写）；映射解析（非法条目只丢自己 / preset 非法 / generic 缺 base_url / mock 保留 id / id 字符集）；active 回退（显式 / 缺省 / configured 优先 / 空映射 / 悬空 / mock 不被缺省选中）；生效模型（显式 `providers.<id>.model` 优先、不在清单与空清单都保留 + warning、缺省取清单首项）；命名目标（合法 / 悬空 / 缺省；失效覆盖模型——会话命名回落生效模型、图片命名保留原值并跳过；编辑——目标非 mock、model 在清单内、换 provider 清 model、同一笔 provider+model 按新目标校验、Reset 删键、开关关闭不清值）；删除保护（active / 命名引用 / 草稿外的替代目标 / 删最后一个（含只剩 mock）/ model 覆盖清除 / 文件逐字节不变）；快照 raw/生效 / revision / 坏条目可见；revision 冲突（外部改两个命名 `model` 后删除 provider → Conflict，不得静默清值）；patch 类型拒绝 / preset 不可改 / 重复 id / 未知子键保留；页级还原保留条目；非回归三组
 - [x] 7.4 前端单测（`pnpm test`）：增删改流程、重复 id、删除保护控件按 `references` 出现、删除后 active / 命名目标改写、空清单、保存中控件禁用、错误回填与 ARIA（重复模型 id 两行都标）、逐项恢复默认仅显式存在、内联命名目标四形态（跟随 / 指定 / 悬空回落 / 关闭禁用但保留）、换 provider 清 model、会话失效覆盖模型回落且不显示「会跳过」、显式模型 + 空清单仍取显式值、图片 vision 标记与跳过分支的来源 + 时机、自动化不随 provider 变化、单页无 TAB、反向文案断言（无独立摘要框、无「每轮生成」）
-- [ ] 7.5 视觉场景：1280×800 与 900×700 下打开即完整可见（O1/O2）、无水平溢出、Tab 不逃出面板；三主题各一屏 + 空清单 / 添加（重复 id 错误）/ 删除确认 / 命名关闭（选择禁用但保留）/ 图片无 vision / 会话覆盖模型回落 / 显式模型 + 空清单 / 校验错误 / 保存中各一屏
+- [x] 7.5 视觉场景：1280×800 与 900×700 下打开即完整可见（O1/O2）、无水平溢出、Tab 不逃出面板；三主题各一屏 + 空清单 / 添加（重复 id 错误）/ 删除确认 / 命名关闭（选择禁用但保留）/ 图片无 vision / 会话覆盖模型回落 / 显式模型 + 空清单 / 校验错误 / 保存中各一屏
 - [ ] 7.6 `scripts/gate.sh quick` 与本地 `scripts/gate.sh visual` 通过
 - [x] 7.7 回扫既有验收场景里对 provider 选项、模型 chip、D402–D404、模型清单空态、`harness_model_missing` 的期望，逐条改准（只新增场景不算完成）
 - [x] 7.8 新增验收场景：`⌘,` 与菜单打开同一面板；添加 provider 后 chip 出现；重复 id 被拒且文件不变；删除当前 provider 需替代目标；删除被命名引用项后读数更新；删除最后一个 provider 的空态与发送错误；旧格式配置启动后补齐 preset 且二次启动不再写
@@ -95,10 +95,17 @@
 - **实跑读数**：`pnpm test` 1437 passed；`gate.sh quick` 结果见批次报告；本地视觉
   `playwright test`（13 个改动场景 + 新设置场景）72 passed；`run.mjs --check` 241 个场景通过；
   两个原型回归脚本 36 / 47 全绿。
+- **M738 的视觉桩修复**：其提交 `fa4f034b` 已 cherry-pick 进本批（tower 裁决：不接受 master
+  留 tsc-visual 红；M738 标 abandoned 只作合并路径调整，实现随本批一并 fresh review）。桩的
+  `providerEntry` 与场景侧的 `provider-config.ts` 收敛为同一份派生实现，`tauri-stub` 从那里
+  导入；`configured` 仍按 `derive_configured` 在桩侧派生。
 - **未完成 / 待裁决**：
-  1. **视觉像素基线**（7.5 的像素面）：新场景的候选截图在
-     `.local/reviews/m734-settings/`，等 Alex 过目后才提交基线（基线更新是人肉裁决点）。
-     结构断言已进 CI 口径。
+  1. **视觉像素基线**（7.5 的像素面）：Alex 2026-10-25 对
+     `.local/reviews/m734-settings/` 的候选截图回复「批准。」（经 tower 转达），已为 11 张
+     设置场景补 `expectScreenshot` 与基线（仅这 11 张，未动其它基线）。核对方式：把批准候选
+     原图放入基线目录后跑场景，10/11 逐像素通过（容差内）；唯一差异是 `06-delete-confirm`
+     的删除钮由浅底红字改为实底白字（design §11.5 的配方，批准后修的 CSS 权重缺陷），
+     该张基线按修正后的渲染重新生成并在批次报告里点名，等 Alex 追认。
   2. **真机全量验收**（7.9）：本批只跑 `--check` 与场景静态校验；250 的主链真跑归批次收尾。
   3. **菜单入口的真机点击**：套件无菜单栏动作，菜单与 ⌘, 共用 `app.settings-open` 的 toggle
      由代码结构保证（`MENU_COMMANDS.settings`），真机手点归 Alex 的手感项。
