@@ -227,3 +227,20 @@ P1-1、P1-2 正向、P2-3、P2-4、P2-5 各按预期判红；「改第二笔」�
 视觉套件 874 passed / 1 skipped / 0 failed）；真机 `run.mjs 250 251` → **2/2 PASS，退出码 0**
 （250：41 PASS / 0 FAIL；251：10 PASS / 0 FAIL）；`openspec validate --all --strict` 33 passed；
 `docs-check` PASS；`acceptance --check` 242 场景。证据见 `.local/reviews/m734-settings-r3/`。
+
+## r4 返修记录（2026-10-25，review r4 p1-1items）
+
+**P1-1 删除未落盘新增时把同 id 的幸存新增也排除了**：`deleteCandidates` 按 **id** 排除整组同 id
+条目，「mock 基线 + 两笔同 id 新增 + 删当前第一笔」因此候选为空 → active 回落到 `mock`、patch 不带
+`active_provider`（后端缺该字段即不改配置，保存后盘上继续用 mock），删除确认还把「列表里仍有另一笔」
+写成「这是最后一个 provider」。修：新增 `replacementCandidates(draft, provider)`——**未落盘条目只
+排除它自己**（同 id 的幸存新增保存后就是该 id 的实体），已保存条目仍按 id 排除（`deleteCandidates`
+保持原语义：后端按 id 删）；`applyDraftDelete` / `renderDeleteForm` / `openDelete` / 危险区「还有
+别的 provider」判据统一走它；候选 id 去重。
+回归：单测 ×2（候选清单按身份排除；mock 基线两笔同 id 删第一笔 → patch 同时含幸存
+`{action:"add", id:"same"}` 与 `active_provider = set("same")`、`activeOwner` 落到幸存条目）+
+视觉「mock 基线 + 两笔同 id 新增，删当前第一笔——替代选择出现且 patch 带幸存 Add 与 active」
+（对 r3 tip `48dac6d7` 反向验证：旧实现按「最后一个 provider」判红）。
+读数：`pnpm test` 1467 passed；三处 tsc 通过；设置面板视觉 **29 passed**（含 11 张已批基线）；
+`scripts/gate.sh quick` → `GATE RESULT: 13/13 PASS（SKIP 0）`；`openspec validate --all --strict`
+33 passed；`docs-check` PASS；`acceptance --check` 242 场景。
