@@ -761,6 +761,8 @@ test("设置面板：active / 命名 / 文件级错误有可见出口并计入�
   await expect(page.locator('[data-auto-row="session_naming"] .lumir-set-error-outlet')).toContainText("会话命名的新目标不可用");
   await expect(page.locator('[data-auto-row="attachment_naming"] .lumir-set-error-outlet')).toContainText("图片命名模型不在清单");
   await expect(page.locator(".lumir-set-status")).toContainText("需要修正（4 项）");
+  // 没有绑定到控件的错误：首错焦点落到通用错误横幅（而不是留在保存钮上）。
+  await expect(banner).toBeFocused();
 });
 
 test("设置面板：settings_get 失败显示真实错误（横幅 + 状态行），不停在加载文案（r1 P2-4）", async ({ page }) => {
