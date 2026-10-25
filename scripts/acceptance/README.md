@@ -687,6 +687,11 @@ chord `verify.pattern`、`drag.selection`，以及节点定位里走 `matcher()`
 的「`click` / `clickInNode` 的 `target` 与断言里的匹配器不是同一套口径」条）；`\int` / `\\` /
 JSONL 里的 `\n` 这类**字面反斜杠**同样不判。
 
+**数组形态只属于 `waitFor.has` / `waitFor.not`**（逐项判、全部命中才成立）：`ax.has` / `file.has`
+写数组会被 `matcher()` 按 `String(array)` 拼成 `a,b,c` 一个字面串——判据看着在、实际恒不命中
+（2026-10-25 场景 250/251 首次真跑即此形态：三条断言同时假红，看着像产品缺陷）。多项判据请拆成
+多条 `expect`；`--check` 对这种写法直接判 problem。
+
 ## 证据布局（`.local/acceptance/<日期>/`，git 外）
 
 ```
@@ -973,6 +978,13 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   嵌套括号**（M379 修，M184 finding：图片节点的 AX label 是整条 Markdown 引用原文 `![alt](path)`，
   旧正则截在第一个 `)` 上，`target.name` 照原文写永远匹配不上）。要精确匹配仍请用 `^…$` 锚定
   ——`AXTextArea.value` 是整个文档文本，不加锚点的模式会把它也命中。
+- **真机 AX 读不到非空值输入框的读屏名；密码框连值都是遮罩**（2026-10-25 场景 250 实测）：WKWebView
+  把 `<input>` 的读屏名从 label / aria-label 切到**值**之后，节点上只剩 `= "值"` 可命中，因此
+  `typeInNode` 的 `target.name` 必须写「注入前后都能命中」的交替正则（`provider id|kimi-work`、
+  `第 1 行模型 id|k3-256k`）。更硬的边界是 `type=password`：注入后 AX 值只有圆点遮罩（`= "••••"`），
+  `typeInNode` 的「目标串出现 N→N+1」回读判据**永远对不上**——实测注入本身落地了、回读却报
+  target-lost。密码类字段不要走 `typeInNode`：写盘真值用 `file` 断言判，patch 形状归单测
+  （设置面板的 API Key 即此，见场景 250 的「已知边界」）。
 - **AX 的 `(focused)` 标记**：KimiCU 在 AX 文本里给当前聚焦节点标 `(focused)`（多行 value 落在**末行**上，
   故 `lib/ax.mjs` 在合并后的整段里找），解析成 `node.focused`——`keys` 动作的落点判定与
   `ax: { focused: "AXTextArea" }` 断言都读它。**不要用 AX 原始文本上的正则做落点断言**：正则没有节点

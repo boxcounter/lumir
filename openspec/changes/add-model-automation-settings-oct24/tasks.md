@@ -128,8 +128,9 @@
    「需要修正」计数与首错焦点；`settings_get` 失败显示真实错误横幅与「读取设置失败，保存已禁用」
    状态，不再停在加载文案。
 5. **P2-5** 场景 250 主链在重复 id 被拒后先删掉那条草稿新增再继续；新增场景
-   `251-settings-panel-legacy-preset-migration`（旧格式补 preset + 二次启动 `unchangedSince`
-   覆盖 sha256/mtime）；`app.mjs` 增加 `rawProviders` 原样透传入口（README 同条记录）。
+   `251-settings-panel-legacy-preset-migration`（旧格式补 preset + 二次启动；r1 只写了
+   `unchangedSince` = sha256，mtime 判据是 r2 才补上的，见下条 r2 记录）；`app.mjs` 增加
+   `rawProviders` 原样透传入口（README 同条记录）。
 6. **P2-6** 清 Key 同步 `hasKey=false`（显示未配置）；Base URL / Wire 恢复默认后按钮消失。
 
 附带修掉两处 DOM 级问题（r1 回归实测）：输入框 `change` 时的整页重绘会吃掉紧接着的一次点击
@@ -142,3 +143,44 @@
   `64225bf7…a19c`）；其它基线未动。
 - `06-delete-confirm`：保持当前实底白字基线（与批准候选同源，sha256 `25e5267d…a74e8`）。
 - 其余 9 张仍与最早批准的候选逐像素一致。
+
+## r2 返修记录（2026-10-25，review r2 p1-2items / merge hold）
+
+按 review `.tower/comms/reviews/review-feat-implement-settings-panel-frontend-oct25-reviewer-settings-panel-fronte-r1-2.md`：
+
+1. **P1-1 删除计划按草稿身份**：`DraftDeleteForm` 只带**草稿下标**（`index`），`openDelete` /
+   `renderDeleteForm` / `applyDraftDelete` / `providerDelete` 全按下标定位，不再用
+   `findProvider(draft, id)` 取第一条同 id 条目。同 id 的已保存条目 + 被拒新增里，从新增条目点
+   「删除…」删掉的是新增那条（= 撤销添加），已保存条目不动、patch 里不出现 provider 编辑、
+   active 不被改写；撤销后 `focusedIndex` 随数组前移修正。
+   回归：单测 ×2（删新增 / 删已保存）+ 视觉「被拒的重复新增按草稿身份删除」。
+2. **P1-2 改名只改归属它的引用**：新增 `renameDraftProviderId`——草稿里若另有同 id 且未删的条目，
+   active / 两个命名目标 / selection 一律不动（引用按 id 字面寻址，这个 id 的实体是盘上那条）。
+   回归：单测 ×2（同 id 不动 / 唯一持有者跟着改）+ 视觉「重复 id 新增改名不动…」（断言「当前」
+   徽标留在已保存条目、两个命名选择器仍指 kimi-work，第二笔 patch 无 `active_provider` / `naming`）。
+3. **P2-3 场景 251 的 mtime 判据**：二次启动断言改成**两条同写**——`unchangedSince`（sha256）+
+   `mtimeUnchangedSince`（mtime）。执行器里 `unchangedSince` 只比 sha256，写回同一份字节照样 PASS；
+   本条目 r1 记录里「`unchangedSince` 覆盖 sha256/mtime」的表述已改准。
+4. **P2-4 命名行错误节点可移除**：节点由 `AutomationRow.error` 持有，每次重绘先移除再挂；
+   `markDirty`（任何就地编辑都经过它）同步移除，不再出现「计数清零、错误文字还在」。
+   回归：视觉「命名行的后端错误在编辑清错后从持久行里移除」（输入框就地编辑 → 节点消失；
+   再整页重绘不复活）。
+
+三条新视觉用例都做了**反向验证**：把 `src/settings-panel.ts` 换回 r1 tip 的版本后各按预期判红
+（删除确认缺「有未保存的修改」块 / 已保存条目丢「当前」徽标 / 旧错误节点仍在），恢复后 22 条全绿。
+
+5. **真跑 250/251 暴露的产品缺陷（随本条一并修掉）**——两处都只在真机上才看得见
+   （视觉桩的 snapshot 恒有「列表内的当前使用项」）：
+   - `addProviderDraft` 只在 `active === null` 时才把新增项设为当前使用。配置原本是
+     `provider: "mock"`（mock 不呈现、也不在设置面列表里）时，新增的第一条 provider **不会**
+     成为当前使用——正是 design §4.4 要避免的「添加成功但还不能用」。改为：当前使用项不可用
+     （没设 / 指向列表外的 id / 只剩 mock）时由新增项接管；撤销这条新增时 active 回到**盘上的
+     原值**（含 mock），不发一笔把用户显式选择删掉的 `active_provider = reset`。
+   - `markDirty` 无条件把状态置为 dirty：撤销一条从未落盘的新增后草稿已经干净、保存钮已灰，
+     状态行却仍写「有未保存的修改」。改为按 `draftIsDirty()` 取 dirty / clean。
+6. **场景 250/251 自身的执行缺陷（首次真跑全部暴露）**：`ax.has` / `file.has` 写成数组（数组只有
+   `waitFor.has` 支持，`matcher()` 会把数组拼成 `a,b,c` 一个字面串而恒不命中）；`typeInNode` 的
+   目标名没写「注入前（label / 占位）与注入后（值）都能命中」的交替正则；撤销新增后点了一个
+   **已禁用**的保存钮；`providers: {}` 的期望（保留的 mock 条目仍在文件里）；251 的恢复标签写成
+   `settings-note.md`（本场景打开的是 `harness-note.md`）。`--check` 补一条静态规则：
+   `ax.has/not`、`file.has/not` 写数组即报 problem（同一份假绿形态不再靠人读发现）。

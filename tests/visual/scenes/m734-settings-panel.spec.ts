@@ -815,3 +815,120 @@ test("设置面板：清 Key 后显示未配置；Base URL / Wire 恢复默认�
   // 恢复默认 = 删键：保存后这两个键被删除（由单测覆盖 patch 形状），这里只验显示面。
   await expect(page.locator("#lumir-set-base-url")).toHaveValue("");
 });
+
+// ---------------------------------------------------------------------------
+// 8）r2 返修回归：重复 id 的草稿身份（删除 / 改名）、命名行错误节点
+// ---------------------------------------------------------------------------
+
+const DUPLICATE_ID_ERROR = {
+  path: "providers[0].id",
+  code: "settings_provider_id_duplicate",
+  message: 'provider id "kimi-work" 已存在',
+};
+
+/** 打开面板 → 新增一条与已保存 kimi-work 同 id 的条目、填 Key → 保存被后端拒绝。
+ *  回到「右列停在这条被拒新增自己的表单上」的现场。 */
+async function openRejectedDuplicateAdd(page: Page): Promise<void> {
+  await openSettings(page, { snapshot: settingsSnapshot(), apply: "blocked-once", errors: [DUPLICATE_ID_ERROR] });
+  await page.locator(".lumir-set-add").click();
+  await page.locator("#lumir-set-add-id").fill("kimi-work");
+  await page.locator(".lumir-set-add-card .lumir-set-btn-primary").click();
+  await page.locator("#lumir-set-api-key").fill("test-key-duplicate");
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator("#lumir-set-draft-id")).toHaveAttribute("aria-invalid", "true");
+}
+
+async function settingsPatches(page: Page): Promise<Array<Record<string, any>>> {
+  return page.evaluate(
+    () => (window as unknown as { __settingsPatches: Array<Record<string, any>> }).__settingsPatches,
+  );
+}
+
+test("设置面板：被拒的重复新增按草稿身份删除——已保存条目仍在、撤销不写进 patch（r2 P1-1）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openRejectedDuplicateAdd(page);
+
+  // 右列是那条被拒新增（它有脏字段）：删除确认必须选中**它**，不是同 id 的已保存条目——
+  // 「有未保存的修改」块只有带字段修改的那条才会出现，用它判定靶子选对了。
+  await page.locator(".lumir-set-danger .lumir-set-btn-danger").click();
+  await expect(page.locator(".lumir-set-delete-card")).toBeVisible();
+  await expect(page.locator('[data-delete-block="draft"]')).toHaveCount(1);
+  await page.locator(".lumir-set-delete-card .lumir-set-btn-danger").click();
+
+  // 撤销后：已保存的 kimi-work 与 local-lab 都还在（前者没有被标成删除）。
+  await expect(page.locator(".lumir-set-provider-row")).toHaveCount(2);
+  await expect(page.locator('.lumir-set-provider-row[data-provider-id="kimi-work"]')).toHaveCount(1);
+  await expect(page.locator(".lumir-set-delete-card")).toHaveCount(0);
+  await expect(page.locator("#lumir-set-base-url, #lumir-set-api-key").first()).toBeVisible();
+
+  // 再做一次真实改动并保存：撤销从未落盘的新增项不该产生任何 provider 编辑，active 也不动。
+  await page.locator('[data-auto-row="auto_compact"] [role="switch"]').click();
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator(".lumir-set-status")).toContainText("已保存");
+  const second = (await settingsPatches(page))[1]!;
+  expect(second.providers).toEqual([]);
+  expect(second.active_provider).toBeUndefined();
+});
+
+test("设置面板：重复 id 新增改名不动已保存 provider 的 active 与两个命名目标（r2 P1-2）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, {
+    snapshot: settingsSnapshot({
+      naming: {
+        session: { provider: "kimi-work", model: "k3-256k" },
+        attachment: { provider: "kimi-work", model: "k3-256k" },
+      },
+    }),
+    apply: "blocked-once",
+    errors: [DUPLICATE_ID_ERROR],
+  });
+  await page.locator(".lumir-set-add").click();
+  await page.locator("#lumir-set-add-id").fill("kimi-work");
+  await page.locator(".lumir-set-add-card .lumir-set-btn-primary").click();
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator("#lumir-set-draft-id")).toHaveAttribute("aria-invalid", "true");
+
+  // 只改正这条新增的 id。引用按 id 寻址：该 id 的实体是盘上那条已保存 provider。
+  await page.locator("#lumir-set-draft-id").fill("kimi-personal");
+  // 触发一次整页重绘再看界面口径：当前使用徽标留在已保存的 kimi-work 上（点开另一条再点回来）。
+  await page.locator('.lumir-set-provider-row[data-provider-id="local-lab"]').click();
+  await page.locator('.lumir-set-provider-row[data-provider-id="kimi-personal"]').click();
+  await expect(page.locator('.lumir-set-provider-row[data-provider-id="kimi-work"] .lumir-set-current')).toHaveCount(1);
+  await expect(page.locator('.lumir-set-provider-row[data-provider-id="kimi-personal"] .lumir-set-current')).toHaveCount(0);
+  const sessionSelect = page.locator('[data-auto-row="session_naming"] select.lumir-set-naming-select').nth(0);
+  const attachmentSelect = page.locator('[data-auto-row="attachment_naming"] select.lumir-set-naming-select').nth(0);
+  await expect(sessionSelect).toHaveValue("kimi-work");
+  await expect(attachmentSelect).toHaveValue("kimi-work");
+
+  // 保存：patch 里只有这条新增（id 已改正），active 与命名目标都不带编辑。
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator(".lumir-set-status")).toContainText("已保存");
+  const second = (await settingsPatches(page))[1]!;
+  expect(second.providers[0]).toMatchObject({ action: "add", id: "kimi-personal", preset: "kimi" });
+  expect(second.active_provider).toBeUndefined();
+  expect(second.naming).toBeUndefined();
+});
+
+test("设置面板：命名行的后端错误在编辑清错后从持久行里移除（r2 P2-4）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, {
+    snapshot: settingsSnapshot(),
+    apply: "blocked",
+    errors: [{ path: "harness.session_naming.provider", code: "settings_naming_target_missing", message: "会话命名的新目标不可用" }],
+  });
+  await page.locator('[data-auto-row="auto_compact"] [role="switch"]').click();
+  await page.locator(".lumir-set-btn-primary").click();
+  const outlet = page.locator('[data-auto-row="session_naming"] .lumir-set-error-outlet');
+  await expect(outlet).toHaveCount(1);
+  await expect(outlet).toContainText("会话命名的新目标不可用");
+  await expect(page.locator(".lumir-set-status")).toContainText("需要修正");
+
+  // 就地编辑（输入框 input 不走整页重绘）：错误出口与「需要修正」计数必须同时消失，
+  // 不能只剩计数清零、错误文字还挂在持久行上。
+  await page.locator("#lumir-set-api-key").fill("test-key-clears-error");
+  await expect(outlet).toHaveCount(0);
+  await expect(page.locator(".lumir-set-status")).not.toContainText("需要修正");
+  // 再走一次整页重绘（切开关）：也不能把旧错误重新画出来。
+  await page.locator('[data-auto-row="subagents"] [role="switch"]').click();
+  await expect(page.locator('[data-auto-row="session_naming"] .lumir-set-error-outlet')).toHaveCount(0);
+});

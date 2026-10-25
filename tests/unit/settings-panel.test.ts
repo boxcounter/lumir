@@ -31,6 +31,7 @@ import {
   mapFieldErrors,
   namingRowModel,
   pageResetDraft,
+  renameDraftProviderId,
   setNamingModelDraft,
   setNamingProviderDraft,
 } from "../../src/settings-panel.ts";
@@ -311,7 +312,7 @@ test("buildPatch：删除当前使用项 → 带 active_after；删除被命名�
   draft.naming.attachment = { provider: "kimi-work", model: "k3-256k" };
   findProvider(draft, "kimi-work")!.removed = true;
   draft.remove = {
-    id: "kimi-work",
+    index: 0,
     activeAfter: "deepseek",
     sessionAfter: "follow",
     attachmentAfter: "deepseek",
@@ -336,7 +337,7 @@ test("buildPatch：删除最后一个 provider → 不带 active_after（后端�
   findProvider(draft, "kimi-work")!.removed = true;
   draft.active = null;
   draft.activeTouched = true;
-  draft.remove = { id: "kimi-work", activeAfter: "", sessionAfter: "follow", attachmentAfter: "follow" };
+  draft.remove = { index: 0, activeAfter: "", sessionAfter: "follow", attachmentAfter: "follow" };
   const patch = buildPatch(draft, base, base.revision!);
   assert.deepEqual(patch.providers, [{ action: "delete", id: "kimi-work" }]);
   assert.deepEqual(patch.active_provider, { kind: "reset" });
@@ -356,7 +357,7 @@ test("applyDraftDelete：命名目标被引用时改写为计划目标，并清�
   draft.naming.session = { provider: "kimi-work", model: "k3-256k" };
   draft.naming.attachment = { provider: "kimi-work", model: "k3-256k" };
   draft.remove = {
-    id: "kimi-work",
+    index: 0,
     activeAfter: "deepseek",
     sessionAfter: "follow",
     attachmentAfter: "deepseek",
@@ -383,7 +384,7 @@ test("applyDraftDelete：未被引用的 provider 删除不影响 active / 命�
   const draft = createDraft(base);
   draft.naming.session = { provider: "kimi-work", model: null };
   draft.namingTouched.session.provider = false;
-  draft.remove = { id: "deepseek", activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "follow" };
+  draft.remove = { index: 1, activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "follow" };
   applyDraftDelete(draft);
   assert.equal(draft.active, "kimi-work");
   assert.deepEqual(draft.naming.session, { provider: "kimi-work", model: null });
@@ -558,7 +559,7 @@ test("自动化不随 provider 增删改：开关值与显式状态在草稿操�
   draft.automation.session_naming = { value: false, explicit: true };
   const before = JSON.stringify(draft.automation);
   addProviderDraft(draft, "local-lab", "generic", metaOf("local-lab", "generic"));
-  draft.remove = { id: "deepseek", activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "follow" };
+  draft.remove = { index: 1, activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "follow" };
   applyDraftDelete(draft);
   assert.equal(JSON.stringify(draft.automation), before);
 });
@@ -733,7 +734,7 @@ test("buildPatch：删掉一条从未落盘的新增项 = 草稿撤销，不发 
   const draft = createDraft(base);
   addProviderDraft(draft, "tmp-lab", "generic", metaOf("tmp-lab", "generic"));
   draft.selection = "tmp-lab";
-  draft.remove = { id: "tmp-lab", activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "follow" };
+  draft.remove = { index: 1, activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "follow" };
   applyDraftDelete(draft);
   const patch = buildPatch(draft, base, base.revision!);
   assert.deepEqual(patch.providers, []);
@@ -746,7 +747,7 @@ test("applyDraftDelete：替代目标失效时回落到第一个候选，不留�
     providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" }), provider("local-lab", { preset: "generic" })],
   });
   const draft = createDraft(base);
-  draft.remove = { id: "kimi-work", activeAfter: "gone", sessionAfter: "follow", attachmentAfter: "follow" };
+  draft.remove = { index: 0, activeAfter: "gone", sessionAfter: "follow", attachmentAfter: "follow" };
   applyDraftDelete(draft);
   assert.equal(draft.active, "deepseek");
 });
@@ -783,7 +784,7 @@ test("applyDraftDelete：撤销未落盘新增恢复 active 基线（空配置�
   const draft = createDraft(base);
   addProviderDraft(draft, "first", "kimi", metaOf("first", "kimi"));
   assert.equal(draft.active, "first");
-  draft.remove = { id: "first", activeAfter: "", sessionAfter: "follow", attachmentAfter: "follow" };
+  draft.remove = { index: 0, activeAfter: "", sessionAfter: "follow", attachmentAfter: "follow" };
   applyDraftDelete(draft);
   assert.equal(draft.providers.length, 0);
   assert.equal(draft.active, null);
@@ -803,7 +804,7 @@ test("applyDraftDelete：新增前的 active 仍有条目时撤销回到它（�
   // 用户在新增后把 active 切到新条目，再撤销它。
   draft.active = "tmp-lab";
   draft.activeTouched = true;
-  draft.remove = { id: "tmp-lab", activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "follow" };
+  draft.remove = { index: 2, activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "follow" };
   applyDraftDelete(draft);
   assert.equal(draft.active, "kimi-work");
   assert.equal(draft.activeTouched, false);
@@ -825,7 +826,7 @@ test("draftReferences：引用面读当前草稿（先切 active / 命名再删�
   });
   // 删除计划据此带替代目标，而不是按打开时的快照静默 follow / 首个候选。
   findProvider(draft, "deepseek")!.removed = true;
-  draft.remove = { id: "deepseek", activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "kimi-work" };
+  draft.remove = { index: 1, activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "kimi-work" };
   assert.deepEqual(buildPatch(draft, base, base.revision!).providers[0], {
     action: "delete",
     id: "deepseek",
@@ -843,13 +844,114 @@ test("applyDraftDelete：删 active 且命名 follow 时当场清掉旧 model �
   // 两个命名目标都是「跟随当前」，但文件里有旧 model 覆盖（属于 kimi-work 的清单）。
   draft.naming.session = { provider: null, model: "k3-256k" };
   draft.naming.attachment = { provider: null, model: "k3-256k" };
-  draft.remove = { id: "kimi-work", activeAfter: "deepseek", sessionAfter: "follow", attachmentAfter: "follow" };
+  draft.remove = { index: 0, activeAfter: "deepseek", sessionAfter: "follow", attachmentAfter: "follow" };
   findProvider(draft, "kimi-work")!.removed = true;
   applyDraftDelete(draft);
   assert.deepEqual(draft.naming.session, { provider: null, model: null });
   assert.deepEqual(draft.naming.attachment, { provider: null, model: null });
   assert.equal(draft.namingTouched.session.model, true);
   assert.equal(draft.namingTouched.attachment.model, true);
+});
+
+// ── r2 返修回归：重复 id 的草稿身份（删除 / 改名都按条目、不按 id 字面） ─────────
+
+test("addProviderDraft：当前使用项指向列表外（只剩 mock 的配置）时，新增的第一条同一笔成为当前使用", () => {
+  // mock 不出现在快照的 providers 里，但可是显式写下的 active（`provider: "mock"`）。
+  const base = snapshot({ providers: [], active: "mock" });
+  const draft = createDraft(base);
+  const added = addProviderDraft(draft, "kimi-work", "kimi", metaOf("kimi-work", "kimi"));
+  assert.equal(draft.active, "kimi-work");
+  assert.equal(draft.activeTouched, true);
+  assert.deepEqual(buildPatch(draft, base, base.revision!).active_provider, { kind: "set", value: "kimi-work" });
+  // 撤销这条新增：active 回到盘上的 mock（不是 null，也不发一笔把 mock 删掉的 reset）。
+  draft.remove = { index: draft.providers.indexOf(added), activeAfter: "", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  assert.equal(draft.active, "mock");
+  assert.equal(draft.activeTouched, false);
+  assert.equal(buildPatch(draft, base, base.revision!).active_provider, undefined);
+});
+
+test("addProviderDraft：当前使用项指向列表内条目时不改写它（新增不抢当前使用）", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+    active: "kimi-work",
+  });
+  const draft = createDraft(base);
+  addProviderDraft(draft, "local-lab", "generic", metaOf("local-lab", "generic"));
+  assert.equal(draft.active, "kimi-work");
+  assert.equal(draft.activeTouched, false);
+});
+
+test("applyDraftDelete：同 id 的已保存条目 + 被拒新增，计划按草稿下标删掉的是新增那条", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+    active: "kimi-work",
+  });
+  const draft = createDraft(base);
+  // 新增撞上已有 id（后端会按重复 id 拒绝，草稿里于是两条同 id：0 = 已保存，2 = 新增）。
+  addProviderDraft(draft, "kimi-work", "kimi", metaOf("kimi-work", "kimi"));
+  assert.equal(draft.focusedIndex, 2);
+  draft.remove = { index: 2, activeAfter: "deepseek", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  assert.equal(draft.providers.length, 2, "只撤销新增那条");
+  assert.equal(draft.providers[0]!.id, "kimi-work");
+  assert.equal(draft.providers[0]!.removed, false, "已保存的 kimi-work 不能被标成删除");
+  assert.equal(draft.active, "kimi-work", "active 指的是盘上那条，撤销新增不得改写它");
+  assert.equal(draft.activeTouched, false);
+  assert.deepEqual(buildPatch(draft, base, base.revision!).providers, []);
+});
+
+test("applyDraftDelete：同 id 时计划指向已保存条目 → 删的是它（不误删新增草稿）", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+    active: "kimi-work",
+  });
+  const draft = createDraft(base);
+  addProviderDraft(draft, "kimi-work", "kimi", metaOf("kimi-work", "kimi"));
+  draft.remove = { index: 0, activeAfter: "deepseek", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  assert.equal(draft.providers[0]!.removed, true, "计划指向 0 = 已保存条目");
+  assert.equal(draft.providers[2]!.added, true, "同 id 的新增草稿还在");
+  assert.equal(draft.providers[2]!.removed, false);
+  assert.equal(draft.active, "deepseek");
+});
+
+test("renameDraftProviderId：草稿里另有同 id 条目时，改名不动 active 与两个命名目标", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+    active: "kimi-work",
+  });
+  const draft = createDraft(base);
+  draft.naming.session = { provider: "kimi-work", model: "k3-256k" };
+  draft.naming.attachment = { provider: "kimi-work", model: "k3-256k" };
+  const added = addProviderDraft(draft, "kimi-work", "kimi", metaOf("kimi-work", "kimi"));
+  renameDraftProviderId(draft, added, "kimi-personal");
+  assert.equal(added.id, "kimi-personal");
+  // 引用按 id 字面寻址：这个 id 的实体是盘上那条已保存条目，改新增项的 id 不能把它带走。
+  assert.equal(draft.active, "kimi-work");
+  assert.deepEqual(draft.naming.session, { provider: "kimi-work", model: "k3-256k" });
+  assert.deepEqual(draft.naming.attachment, { provider: "kimi-work", model: "k3-256k" });
+  assert.equal(draft.namingTouched.session.provider, false);
+  assert.equal(draft.namingTouched.attachment.provider, false);
+  const patch = buildPatch(draft, base, base.revision!);
+  assert.equal(patch.active_provider, undefined);
+  assert.equal(patch.naming, undefined);
+  assert.deepEqual(
+    patch.providers,
+    [{ action: "add", id: "kimi-personal", preset: "kimi" }],
+    "同一笔仍是这条新增，只是 id 换成了改正后的值",
+  );
+});
+
+test("renameDraftProviderId：草稿是该 id 的唯一持有者时，active 与命名目标跟着改名", () => {
+  const base = snapshot({ providers: [], active: null });
+  const draft = createDraft(base);
+  const added = addProviderDraft(draft, "first", "kimi", metaOf("first", "kimi"));
+  assert.equal(draft.active, "first", "空配置首项自动成为当前使用");
+  draft.naming.session = { provider: "first", model: null };
+  renameDraftProviderId(draft, added, "renamed");
+  assert.equal(draft.active, "renamed");
+  assert.equal(draft.naming.session.provider, "renamed");
 });
 
 test("namingRowModel：未编辑状态消费后端 resolved / model_options（与草稿自算结果不同时以后端为准）", () => {

@@ -24,20 +24,30 @@ steps:
     expect:
       - label: 迁移补齐 preset（旧三档 id 之一 → kimi）
         file: { path: "env:config.json", has: '"preset": "kimi"' }
-      - label: 旧条目的其余字段逐字保留（迁移只补 preset，不改用户值）
-        file: { path: "env:config.json", has: ['"model": "k3-256k"', '"acceptance-dummy"'] }
+      # `file.has` 只收单个字符串 / 正则（数组是 `waitFor.has` 的形态），逐条写。
+      - label: 旧条目的 model 逐字保留（迁移只补 preset，不改用户值）
+        file: { path: "env:config.json", has: '"model": "k3-256k"' }
+      - label: 旧条目的 Key 逐字保留
+        file: { path: "env:config.json", has: '"acceptance-dummy"' }
 
   - name: 记录迁移后的文件基线（sha256 + mtime）
     do: record
     as: migrated
     file: "env:config.json"
 
-  - name: 打开设置面板：迁移后的条目按「已配置」出现在列表里
+  - name: ⌘,（与菜单项同一条命令）
     do: keys
     keys: ["cmd+,"]
+  - name: 等面板落到可观测终态（菜单跟踪期间 AX 只读得到菜单栏，抢跑会拿菜单树判面板）
+    do: waitFor
+    waitFor:
+      has: ["模型接入与自动化 · 配置文件", "kimi，Kimi，已配置"]
+    timeoutMs: 20000
     expect:
-      - label: 面板打开且能看到该 provider（预设标签 Kimi）
-        ax: { has: ["设置", "kimi", "Kimi", "已配置"] }
+      - label: 面板打开（副标题写明配置文件来源）
+        ax: { has: "模型接入与自动化 · 配置文件" }
+      - label: 迁移后的条目在列表里，读屏名带预设标签 Kimi 与「已配置」
+        ax: { has: "kimi，Kimi，已配置" }
       - shot: 01-迁移后-设置面板
   - name: 关闭面板（看文件是否被动过）
     do: keys
@@ -46,13 +56,17 @@ steps:
   - name: 二次启动（同一份已迁移的配置）
     do: restart
     expect:
-      - label: 启动恢复落定
-        ax: { has: "settings-note.md" }
+      - label: 启动恢复落定（本场景打开的是 harness-note.md）
+        ax: { has: "关闭 harness-note.md" }
 
   - name: 二次启动不重写文件（迁移幂等：sha256 与 mtime 都不变）
     expect:
-      - label: 配置文件逐字节与 mtime 都未变化（一次性迁移只写一次）
+      - label: 配置文件逐字节未变化（一次性迁移只写一次）
         file: { path: "env:config.json", unchangedSince: migrated }
+      # unchangedSince 只比 sha256（execute.mjs 的独立分支），「写回同一份字节」照样 PASS；
+      # mtime 是另一条判据，必须同写才判得到「没写过」（执行器注释与 M543 的口径）。
+      - label: mtime 未推进（不是把同一份字节重写了一遍）
+        file: { path: "env:config.json", mtimeUnchangedSince: migrated }
       - label: 文件里仍只有一份 preset（没有被重复补写 / 无重复条目）
         file: { path: "env:config.json", has: '"preset": "kimi"' }
 ---
@@ -65,8 +79,9 @@ change `add-model-automation-settings-oct24` tasks §2.5 / §7.8：
 
 1. **旧格式（无 `preset`）的 provider 条目在首次启动时被迁移**：旧三档 id（`kimi` /
    `deepseek` / `mock`）按 id 补上对应 `preset`，其余字段逐字保留（Key / model / models）。
-2. **迁移是幂等的**：第二次启动不再写盘——用 `record` + `unchangedSince` 同时核对 sha256 与
-   mtime（只比内容会在「写回同一份字节」时假绿；mtime 一起比才判得出「没写」）。
+2. **迁移是幂等的**：第二次启动不再写盘——`record` 之后**两条判据同写**：`unchangedSince`
+   比 sha256、`mtimeUnchangedSince` 比 mtime。只比内容会在「写回同一份字节」时假绿，只比
+   mtime 又认不出别处的等价改写；两条一起才判得出「没写过」。
 3. **迁移后的条目在设置面板里可用**：打开面板能看到该 provider 与「已配置」状态，预设标签
    取自迁移补上的 `preset`（不是按 id 猜的运行时行为）。
 

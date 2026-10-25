@@ -248,6 +248,24 @@ test("file.jsonl 静态校验：空表 / 非标量值 / 非 JSONL 解析输入�
   );
 });
 
+test("ax / file 的 has·not 写数组即报 problem（数组只有 waitFor.has 支持）", () => {
+  const errs = (expect) => checkScenario({ id: "array-has", item: 0, steps: [{ name: "校验", expect: [expect] }] });
+  assert.ok(
+    errs({ ax: { has: ["设置", "模型接入"] } }).some((p) => p.includes("ax.has/not 只收单个字符串")),
+    "ax.has 数组应报 problem（matcher() 会拼成「设置,模型接入」恒不命中）",
+  );
+  assert.ok(
+    errs({ file: { path: "config.json", not: ["a", "b"] } }).some((p) => p.includes("file.has/not 只收单个字符串")),
+    "file.not 数组同样要挡",
+  );
+  assert.deepEqual(errs({ ax: { has: "设置" } }), [], "单个字符串形态不该报 problem");
+  // waitFor.has 的数组是合法形态（逐项判），不能被这条规则误伤。
+  assert.deepEqual(
+    checkScenario({ id: "waitfor-array", item: 0, steps: [{ name: "校验", do: "waitFor", waitFor: { has: ["a", "b"] } }] }),
+    [],
+  );
+});
+
 test("do: waitForFile：已落盘的事件立即成立，等不到的事件如实判 FAIL（M616）", async () => {
   const root = tmpRoot("wait-for-file");
   useTmpEnv(root);

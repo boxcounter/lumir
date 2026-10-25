@@ -295,7 +295,10 @@ export interface DraftAddForm {
 }
 
 export interface DraftDeleteForm {
-  id: string;
+  /** 被删条目在 `draft.providers` 里的**草稿下标**——删除计划的唯一身份。id 可以被复制（新增撞上
+   *  已有 id 被后端拒绝时，草稿里同时有一条已保存条目和一条 `added` 条目同 id），按 id 反查会
+   *  稳定命中前面那条已保存条目：用户在新增条目上点「删除…」会误删既有配置（P1-1 r2）。 */
+  index: number;
   activeAfter: string;
   sessionAfter: string;
   attachmentAfter: string;
@@ -567,9 +570,10 @@ export function draftReferences(draft: Draft, id: string): ProviderReferences {
   };
 }
 
-function providerDelete(provider: DraftProvider, draft: Draft): ProviderEdit {
+function providerDelete(provider: DraftProvider, draft: Draft, providerIndex: number): ProviderEdit {
   const candidates = deleteCandidates(draft, provider.id);
-  const plan = draft.remove?.id === provider.id ? draft.remove : null;
+  // 删除计划按**草稿下标**认领（id 可能重复，见 `DraftDeleteForm`）。
+  const plan = draft.remove?.index === providerIndex ? draft.remove : null;
   const refs = draftReferences(draft, provider.id);
   const edit: Extract<ProviderEdit, { action: "delete" }> = { action: "delete", id: provider.id };
   if (refs.active && candidates.length > 0) {
@@ -607,7 +611,7 @@ export function planProviderEdits(draft: Draft): ProviderEditsPlan {
   draft.providers.forEach((provider, providerIndex) => {
     if (provider.removed) {
       // 从未落盘的新增项被删掉 = 草稿里的一次撤销，不是文件的 delete（后端会报 not_found）。
-      if (!provider.added) edits.push(providerDelete(provider, draft));
+      if (!provider.added) edits.push(providerDelete(provider, draft, providerIndex));
       return;
     }
     if (provider.added) {
@@ -726,11 +730,42 @@ export function addProviderDraft(
   draft.providers.push(provider);
   draft.focusedIndex = draft.providers.length - 1;
   draft.selection = id;
-  if (draft.active === null) {
+  // 当前使用项**不可用**（没有 / 指向列表外的 id——典型是只剩 mock 的配置：mock 不呈现、
+  // 也不该被缺省选中）时，新增的这条同一笔成为当前使用，否则用户体验是「添加成功但还不能用，
+  // 得再去找 chip」（design §4.4）。
+  const activeListed =
+    draft.active !== null &&
+    draft.providers.some((item) => item.id === draft.active && !item.removed && !item.ignored);
+  if (!activeListed) {
     draft.active = id;
     draft.activeTouched = true;
   }
   return provider;
+}
+
+/** 给「尚未落盘的新增项」改 id（新增被后端按 id 拒绝后，用户就地改正）。
+ *
+ *  active 与两个命名目标按 **id 字面**寻址，所以只有这条草稿是**该 id 的唯一持有者**时，引用才
+ *  跟着改名。草稿里若另有同 id 且未被删的条目（典型是已保存的 provider —— 新增的 id 撞上了
+ *  它），那些引用指的是盘上那一条：改新增项的 id MUST NOT 静默把既有配置的当前使用项 / 命名目标
+ *  切走（P1-2 r2）。 */
+export function renameDraftProviderId(draft: Draft, provider: DraftProvider, next: string): void {
+  const previous = provider.id;
+  if (next === previous) return;
+  const shared = draft.providers.some((item) => item !== provider && !item.removed && item.id === previous);
+  provider.id = next;
+  if (shared) return;
+  for (const kind of NAMING_KINDS) {
+    if (draft.naming[kind].provider === previous) {
+      draft.naming[kind].provider = next;
+      draft.namingTouched[kind].provider = true;
+    }
+  }
+  if (draft.active === previous) {
+    draft.active = next;
+    draft.activeTouched = next !== draft.baseline.active;
+  }
+  if (draft.selection === previous) draft.selection = next;
 }
 
 /** 删除确认的确认侧（design §4.3 / §11.5）：只改草稿——标记移除、按计划改写 active 与两个
@@ -738,7 +773,8 @@ export function addProviderDraft(
 export function applyDraftDelete(draft: Draft): void {
   const plan = draft.remove;
   if (plan === null) return;
-  const provider = findProvider(draft, plan.id);
+  // 按草稿下标取，不按 id：同 id 的两条草稿（已保存 + 被拒新增）里，只有下标能指出用户点的是哪一条。
+  const provider = draft.providers[plan.index] ?? null;
   if (provider === null) {
     draft.remove = null;
     return;
@@ -747,23 +783,38 @@ export function applyDraftDelete(draft: Draft): void {
   // 指向它，回到「加入草稿前」的值（P1-1 r1：空配置里加第一项再撤销，不能留下指向已删 id 的
   // `active_provider = Set(...)`）。
   if (provider.added) {
+    const removedIndex = draft.providers.indexOf(provider);
+    // 同 id 的**另一条**条目还活着：active 这个 id 指的是它（盘上真实的那个），撤销新增不得
+    // 顺带改写既有配置的当前使用项（P1-2 r2 的同一条身份规则）。
+    const activeBelongsToAnother = draft.providers.some(
+      (item) => item !== provider && !item.removed && item.id === provider.id,
+    );
     draft.providers = draft.providers.filter((item) => item !== provider);
     draft.remove = null;
-    if (draft.active === provider.id) {
+    if (!activeBelongsToAnother && draft.active === provider.id) {
+      // 「可用」= 草稿里还活着，或它本来就是盘上的取值（例如 `provider: "mock"`：mock 不在
+      // 设置面的列表里，但它是真实存在且显式写下的值，撤销新增必须还回去，而不是补一笔 reset
+      // 把用户的显式选择删掉）。
+      const restorable = (candidate: string | null): boolean =>
+        candidate !== null &&
+        (draft.providers.some((item) => item.id === candidate && !item.removed) ||
+          candidate === draft.baseline.active);
       const previous = provider.activeBeforeAdd;
-      const previousAlive =
-        previous !== null && draft.providers.some((item) => item.id === previous && !item.removed);
-      const baseAlive =
-        draft.baseline.active !== null &&
-        draft.providers.some((item) => item.id === draft.baseline.active && !item.removed);
-      draft.active = previousAlive ? previous : baseAlive ? draft.baseline.active : null;
+      draft.active = restorable(previous)
+        ? previous
+        : restorable(draft.baseline.active)
+          ? draft.baseline.active
+          : null;
       draft.activeTouched = draft.active !== draft.baseline.active;
     }
     if (draft.selection === provider.id) {
       draft.selection = defaultSelection(visibleProviders(draft));
-      draft.focusedIndex = null;
     }
-    if (draft.focusedIndex !== null && draft.providers[draft.focusedIndex] === provider) draft.focusedIndex = null;
+    // 摘掉一条后，后面的下标整体前移：focusedIndex 跟着修正（否则表单会落到邻居条目上）。
+    if (draft.focusedIndex !== null) {
+      if (draft.focusedIndex === removedIndex) draft.focusedIndex = null;
+      else if (draft.focusedIndex > removedIndex) draft.focusedIndex -= 1;
+    }
     return;
   }
   const candidates = deleteCandidates(draft, provider.id);
@@ -1408,6 +1459,9 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     targets: HTMLElement | null;
     note: HTMLElement | null;
     restart: HTMLElement | null;
+    /** 该行当前挂着的后端错误节点（命名行才有）。行是持久 DOM，节点必须自己持有才能在下一次
+     *  重绘 / 编辑清错时移除（P2-4 r2）。 */
+    error: HTMLElement | null;
   }
 
   let snapshot: SettingsSnapshot | null = null;
@@ -2304,7 +2358,12 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     copy.append(element("div", "lumir-set-danger-desc", others.length === 0 ? t(C.dangerLast) : t(C.dangerDesc)));
     const remove = button("lumir-set-btn lumir-set-btn-danger", t(C.dangerButton));
     remove.disabled = locked();
-    remove.addEventListener("click", () => openDelete(provider.id));
+    // 传**草稿下标**而不是 id：同 id 的两条草稿（已保存 + 被拒新增）里，id 会指向前面那条。
+    remove.addEventListener("click", () => {
+      if (draft === null) return;
+      const index = draft.providers.indexOf(provider);
+      if (index >= 0) openDelete(index);
+    });
     zone.append(copy, remove);
     return zone;
   }
@@ -2312,8 +2371,8 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
   function renderDeleteForm(): void {
     if (draft === null || draft.remove === null) return;
     const plan = draft.remove;
-    const provider = findProvider(draft, plan.id);
-    if (provider === null) {
+    const provider = draft.providers[plan.index] ?? null;
+    if (provider === null || provider.removed) {
       draft.remove = null;
       renderForm();
       return;
@@ -2395,20 +2454,20 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     form.append(wrap);
   }
 
-  function openDelete(id: string): void {
+  function openDelete(index: number): void {
     if (draft === null) return;
-    const provider = findProvider(draft, id);
-    if (provider === null) return;
-    const candidates = deleteCandidates(draft, id);
+    const provider = draft.providers[index] ?? null;
+    if (provider === null || provider.removed) return;
+    const candidates = deleteCandidates(draft, provider.id);
     draft.remove = {
-      id,
+      index,
       activeAfter: candidates[0] ?? "",
       sessionAfter: "follow",
       attachmentAfter: "follow",
     };
     draft.add = null;
-    draft.selection = id;
-    draft.focusedIndex = draft.providers.indexOf(provider);
+    draft.selection = provider.id;
+    draft.focusedIndex = index;
     render();
   }
 
@@ -2458,7 +2517,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       if (row.restart !== null) row.restart.hidden = !(key === "attachment_naming" && attachmentTurnedOn);
       const kind = namingKindOf(key);
       if (kind !== null && row.targets !== null && row.note !== null) {
-        renderNamingRow(kind, row.targets, row.note);
+        renderNamingRow(kind, row);
       }
     }
   }
@@ -2523,7 +2582,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       actionsCol.append(switchEl);
       root.append(copyCol, actionsCol);
       automationList.append(root);
-      automationRows.set(key, { switchEl, badge, restore, targets, note, restart });
+      automationRows.set(key, { switchEl, badge, restore, targets, note, restart, error: null });
     }
   }
 
@@ -2532,8 +2591,9 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     return snapshot.defaults[FLAG_KEYS[key]];
   }
 
-  function renderNamingRow(kind: NamingKind, targets: HTMLElement, note: HTMLElement): void {
-    if (draft === null) return;
+  function renderNamingRow(kind: NamingKind, row: AutomationRow): void {
+    if (draft === null || row.targets === null || row.note === null) return;
+    const { targets, note } = row;
     const enabled = draft.automation[kind === "session" ? "session_naming" : "attachment_naming"].value;
     // 未编辑状态直接消费后端 resolved / model_options（P1-2 r1）。
     const model = namingRowModel({ kind, draft, enabled, locked: locked(), snapshot });
@@ -2557,6 +2617,10 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     note.textContent = model.note;
     note.classList.toggle("is-bad", model.bad);
     // 命名目标的后端错误挂在这一行（最近的入口）；同时是「首错」的可见出口之一（P2-4 r1）。
+    // 行是持久 DOM：每次都先撤掉上一次的节点，否则 `errors` 已清零、错误文字还留在屏幕上
+    // （P2-4 r2 —— 只在有错时追加、从不在重绘前移除的写法会一直叠旧内容）。
+    row.error?.remove();
+    row.error = null;
     const rowError =
       kind === "session" ? errors.sessionNaming : errors.attachmentNaming;
     if (rowError !== null) {
@@ -2564,6 +2628,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       outlet.tabIndex = -1;
       outlet.dataset.errorOutlet = kind;
       note.after(outlet);
+      row.error = outlet;
     }
   }
 
@@ -2608,10 +2673,22 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
    *  重绘，漏掉这一次刷新就是死按钮（本 mission 的场景实测踩到）。 */
   function markDirty(): void {
     if (draft === null) return;
-    if (mode !== "saving") mode = "dirty";
+    // 编辑也可能把草稿改回干净态（典型：撤销一条从未落盘的新增）。此时状态行必须回到
+    // 「没有未保存的修改」——否则保存钮已灰、状态行还声称有未保存的修改（真机场景 250 实测）。
+    if (mode !== "saving") mode = draftIsDirty(draft) ? "dirty" : "clean";
     errors = emptyFieldErrors();
     lastError = null;
+    // 清 `errors` 的同时把已上屏的错误出口撤掉：就地编辑（输入框 input）不走整页重绘，光清状态
+    // 会把旧错误文字留在持久行里（P2-4 r2）。
+    clearErrorOutlets();
     renderFooter();
+  }
+
+  function clearErrorOutlets(): void {
+    for (const row of automationRows.values()) {
+      row.error?.remove();
+      row.error = null;
+    }
   }
 
   function resetDraftFrom(next: SettingsSnapshot): void {
@@ -2724,28 +2801,14 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     draft.selection = provider.id;
   }
 
-  /** 给「尚未落盘的新增项」改 id：仅这一处允许改 id（落盘后 id 不可变）。同步 active、选中项与
-   *  命名目标的引用，改完即清错误。 */
+  /** 给「尚未落盘的新增项」改 id：仅这一处允许改 id（落盘后 id 不可变）。引用面（active / 命名
+   *  目标）是否跟着改由 `renameDraftProviderId` 按「这条草稿是否该 id 的唯一持有者」判定；这里
+   *  只负责清掉回填的错误。 */
   function renameDraftProvider(provider: DraftProvider, raw: string): void {
     if (draft === null) return;
-    const next = raw;
-    const previous = provider.id;
-    if (next === previous) return;
-    provider.id = next;
+    renameDraftProviderId(draft, provider, raw);
     provider.idError = null;
     errors.addId = null;
-    for (const kind of NAMING_KINDS) {
-      if (draft.naming[kind].provider === previous) {
-        draft.naming[kind].provider = next;
-        draft.namingTouched[kind].provider = true;
-      }
-    }
-    if (draft.active === previous) {
-      draft.active = next;
-      draft.activeTouched = next !== draft.baseline.active;
-    }
-    if (draft.selection === previous) draft.selection = next;
-    if (draft.remove?.id === previous) draft.remove.id = next;
     markDirty();
   }
 
