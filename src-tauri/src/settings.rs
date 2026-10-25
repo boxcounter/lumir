@@ -2136,15 +2136,24 @@ fn apply_provider_edits(
                 )]));
             }
         }
+        // 命名目标「跟随当前」是否**实际换目标**，只看本笔删除后生效 active 是否变化（design
+        // §4.1）：它与「被删 id 是否等于删除前的生效 active」不是同一件事——raw active 悬空时
+        // 用 `active_after` 重定向会把生效 active 从回退项改到另一个 provider，跟随目标的 model
+        // 覆盖同样属于旧 provider 的清单，必须清除；而只清除 raw active（不带替代目标）时生效
+        // active 不变，MUST NOT 多清。
+        let previous_active = effective.provider.clone();
+        let mut next_active = previous_active.clone();
         if deleting_active {
             match active_after {
                 Some(after) => {
                     harness_object_mut(value)
                         .insert("provider".to_string(), Value::String(after.clone()));
+                    next_active = after.clone();
                     changes.field("harness.provider");
                 }
                 None if candidates.is_empty() => {
                     harness_object_mut(value).remove("provider");
+                    next_active.clear();
                     changes.field("harness.provider");
                 }
                 None => {
@@ -2165,6 +2174,7 @@ fn apply_provider_edits(
                 Some(after) => {
                     harness_object_mut(value)
                         .insert("provider".to_string(), Value::String(after.clone()));
+                    next_active = after.clone();
                 }
                 None => {
                     harness_object_mut(value).remove("provider");
@@ -2174,8 +2184,10 @@ fn apply_provider_edits(
         } else if let Some(after) = active_after {
             // 非当前使用项的删除不必带替代目标；带了就按显式意图切换 active。
             harness_object_mut(value).insert("provider".to_string(), Value::String(after.clone()));
+            next_active = after.clone();
             changes.field("harness.provider");
         }
+        let active_target_changed = next_active != previous_active;
 
         for (kind, after) in [
             (NamingKind::Session, session_after),
@@ -2187,7 +2199,7 @@ fn apply_provider_edits(
                 id,
                 after,
                 &candidates,
-                deleting_active,
+                active_target_changed,
                 changes,
             )?;
         }
@@ -2205,7 +2217,7 @@ fn apply_naming_delete(
     deleted_id: &str,
     after: Option<&NamingRetarget>,
     candidates: &[String],
-    deleting_active: bool,
+    active_target_changed: bool,
     changes: &mut AppliedChanges,
 ) -> Result<(), ApplyStop> {
     // 替代目标本身的合法性先于「当前是否引用」判定：给了一个不存在的 / 等于被删 id / mock 的
@@ -2252,8 +2264,9 @@ fn apply_naming_delete(
                 )]));
             }
         }
-    } else if deleting_active && current.is_none() {
-        // 目标是「跟随当前」，删除 active 会让目标隐式变化：清除属于旧 provider 的 model 覆盖。
+    } else if active_target_changed && current.is_none() {
+        // 目标是「跟随当前」且本笔删除**实际改变了生效 active**（含删 active、以及 raw active
+        // 悬空时用 active_after 重定向）：目标隐式变化，清除属于旧 provider 的 model 覆盖。
         // 只在该键确实存在时动表——否则会往一份没有命名节的文件里塞一句空对象。
         let has_model =
             raw_naming_table(value, kind).is_some_and(|table| table.contains_key("model"));
@@ -3507,6 +3520,102 @@ mod tests {
         assert_eq!(
             value["harness"]["provider"],
             Value::String("deepseek".into())
+        );
+    }
+
+    /// raw active 悬空（broken 被装载忽略）+ 两个命名目标「跟随当前」且各带 model 覆盖；
+    /// 生效 active 回退到 `deepseek`（`ds-chat` 属于它的清单），另一个候选是 `local-lab`。
+    fn write_raw_active_naming_fixture(dir: &TempDir) {
+        dir.write(
+            r#"{"harness":{"provider":"broken","providers":{
+                "broken":{"preset":"nope"},
+                "deepseek":{"preset":"deepseek","api_key":"test-key-2222","models":[{"id":"ds-chat","effort":false,"vision":false,"window":1024}]},
+                "local-lab":{"preset":"generic","base_url":"http://127.0.0.1:8080/v1","models":[{"id":"local-chat","effort":false,"vision":false,"window":32768}]}
+            },"session_naming":{"enabled":true,"model":"ds-chat"},
+               "attachment_naming":{"enabled":true,"model":"ds-chat"}}}"#,
+        );
+    }
+
+    #[test]
+    fn redirecting_raw_active_clears_following_naming_model_overrides() {
+        let dir = TempDir::new("raw-active-redirect-models");
+        write_raw_active_naming_fixture(&dir);
+        assert_eq!(snapshot(&dir).active.as_deref(), Some("deepseek"));
+
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"providers": [{"action": "delete", "id": "broken",
+                    "active_after": "local-lab"}]}),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        let value = file_json(&dir);
+        assert_eq!(
+            value["harness"]["provider"],
+            Value::String("local-lab".into()),
+            "重定向把生效 active 从回退项 deepseek 改到 local-lab"
+        );
+        assert!(
+            value["harness"]["session_naming"].get("model").is_none(),
+            "跟随当前的目标实际变化 → 会话命名的 model 覆盖必须清除"
+        );
+        assert!(
+            value["harness"]["attachment_naming"].get("model").is_none(),
+            "跟随当前的目标实际变化 → 图片命名的 model 覆盖必须清除"
+        );
+    }
+
+    #[test]
+    fn clearing_raw_active_without_changing_effective_active_keeps_naming_models() {
+        // 不带替代目标：只清 raw 键，生效 active 仍是回退项 deepseek（`ds-chat` 属于它）。
+        let dir = TempDir::new("raw-active-clear-models");
+        write_raw_active_naming_fixture(&dir);
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"providers": [{"action": "delete", "id": "broken"}]}),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        let value = file_json(&dir);
+        assert!(value["harness"].get("provider").is_none());
+        assert_eq!(
+            value["harness"]["session_naming"]["model"],
+            Value::String("ds-chat".into()),
+            "生效 active 未变：MUST NOT 额外清 model 覆盖"
+        );
+        assert_eq!(
+            value["harness"]["attachment_naming"]["model"],
+            Value::String("ds-chat".into())
+        );
+
+        // 替代目标恰好等于原回退项：raw 值被改写，但生效 active 没变 → 同样不清。
+        let dir = TempDir::new("raw-active-same-target");
+        write_raw_active_naming_fixture(&dir);
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"providers": [{"action": "delete", "id": "broken",
+                    "active_after": "deepseek"}]}),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        let value = file_json(&dir);
+        assert_eq!(
+            value["harness"]["provider"],
+            Value::String("deepseek".into())
+        );
+        assert_eq!(
+            value["harness"]["session_naming"]["model"],
+            Value::String("ds-chat".into())
+        );
+        assert_eq!(
+            value["harness"]["attachment_naming"]["model"],
+            Value::String("ds-chat".into())
         );
     }
 
