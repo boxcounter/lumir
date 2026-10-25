@@ -7,6 +7,9 @@
  * **闭集合**：取值校验在 Rust 侧完成（与 `UiTheme` / `PermissionMode` 同一形态）；条目声明
  * 闭集合外的预设时整条忽略（猜错协议比丢弃更危险，design §2.1）。
  *
+ * `Deserialize` 只服务设置 patch 的强类型契约（`settings::ProviderEdit::Add`）；装载期仍走
+ * [`ProviderPreset::parse`]——那条路径要产出点名 warning，MUST NOT 由 serde 错误替代。
+ *
  * 变体顺序即规范顺序（`kimi` → `deepseek` → `generic` → `mock`）：列表展示、active 回退与
  * revision 遍历共用它，因此 `Ord` 的派生顺序承载语义，MUST NOT 重排。
  */
