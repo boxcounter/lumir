@@ -1,6 +1,8 @@
 import { expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import type { ConfigSnapshot } from "../../../src/bindings/ConfigSnapshot";
+import type { HarnessProviderConfig } from "../../../src/bindings/HarnessProviderConfig";
+import type { ProviderPreset } from "../../../src/bindings/ProviderPreset";
 import { setLanguageRoot } from "../../../src/copy";
 
 // 场景**在 Node 侧**解析文案时的语言档（M282，change ui-language-i18n）：locale 的决定权在
@@ -340,6 +342,38 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
       });
       if (kind === "file" && vault.files) vault.files[path] = "";
     };
+    /** provider 条目构造（change add-model-automation-settings-oct24 §2.1 / §2.4）：照 Rust
+     *  `HarnessProviderConfig::empty(preset)` + `recompute_configured()` 的同一口径组装——
+     *  id 只是映射键，协议行为全由条目自带的 `preset` 决定（桩不提供固定 provider 枚举）；
+     *  `wire_api` 缺省随 preset（kimi / deepseek / mock = `responses`，generic =
+     *  `chat_completions`）。`configured` 是**后端派生读数**，前端 MUST NOT 自己拼
+     *（REVIEW.md『同一语义两处真源』条）；桩在这里扮演后端，因此按 `derive_configured`
+     *  的同一规则从字段算出来，而不是手写字面量。 */
+    const providerEntry = (
+      preset: ProviderPreset,
+      fields: Partial<
+        Pick<HarnessProviderConfig, "api_key" | "model" | "base_url" | "models" | "wire_api" | "fixture">
+      > = {},
+    ): HarnessProviderConfig => {
+      const entry: HarnessProviderConfig = {
+        preset,
+        api_key: fields.api_key ?? "",
+        model: fields.model ?? "",
+        base_url: fields.base_url ?? null,
+        models: fields.models ?? [],
+        wire_api: fields.wire_api ?? (preset === "generic" ? "chat_completions" : "responses"),
+        fixture: fields.fixture ?? null,
+        configured: false,
+      };
+      // src-tauri/src/config.rs 的 `HarnessProviderConfig::derive_configured` 逐条镜像。
+      entry.configured =
+        preset === "mock"
+          ? (entry.fixture ?? "").trim() !== ""
+          : preset === "generic"
+            ? entry.models.length > 0 && (entry.base_url ?? "").trim() !== ""
+            : entry.api_key.trim() !== "" && entry.models.length > 0;
+      return entry;
+    };
 
     const handlers: Record<string, (args: Args) => unknown> = {
       // vault_list 桩（M163）：缺省派生**一条**「当前 fixture 那一行」——列表浮层在单 vault
@@ -575,10 +609,14 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
             },
             harness: {
               provider: "kimi",
+              // 统一条目形状（change add-model-automation-settings-oct24 §2.1）：三档都经
+              // `providerEntry` 组装，mock 不再是「只有 fixture 一个键」的特例；id 只是映射
+              // 键，不是闭集合——桩不恢复旧的三档枚举。出厂全部未配置（api_key / models /
+              // fixture 均为零值 ⇒ `configured` 派生为 false），与 Rust `Default` 同态。
               providers: {
-                kimi: { api_key: "", model: "", base_url: null, models: [], wire_api: "responses" },
-                deepseek: { api_key: "", model: "", base_url: null, models: [], wire_api: "responses" },
-                mock: { fixture: null },
+                kimi: providerEntry("kimi"),
+                deepseek: providerEntry("deepseek"),
+                mock: providerEntry("mock"),
               },
               permissions: { allow: [], deny: [] },
               permission_mode: "vault_write",
