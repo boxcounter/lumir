@@ -32,18 +32,28 @@
 > provider 由用户增删改，这正是本版的核心。
 >
 > 节点 2（归档评审）：**机器 + 独立评审放行**（`docs/process/openspec-workflow.md` 节点 2 五要件；
-> 归档前读数由 M743 整理，评审项待本次 docs 批的 assigned reviewer 落章）。
+> 归档前读数由 M743 整理，docs 批的 reviewer 落章于 tip `72a32313`（见第 2 条），归档由 M744 执行）。
 >
 > 1. **方案已批准**：Alex 节点 1 对完整 provider 提案「通过，请你安排开发。」（2026-10-25，经 tower
 >    转达并记入 M732 的 mission context）。实现期无静默扩 scope：M732 / M733 / M734 只落 tasks
 >    §2–§5；M743 只落 §6–§7（文档、回扫、门禁、真机证据），未改产品代码。
-> 2. **独立 reviewer**：实现批已获 clean / merge（M742 承载评审，tip `49ec1613`；评审文件见
->    `.tower/comms/reviews/`）。**本 docs 收尾批的 reviewer verdict 与 tip 由 tower 在合并前补记**
->    ——本条未齐之前不构成放行。
-> 3. **tasks**：§1–§7 全部勾选（原「未完成 / 待裁决」四项的处置见文末「实现批记录」与「收尾批记录」；
->    像素基线 11 张已获 Alex「批准。」）。
-> 4. **门禁与真机**：`scripts/gate.sh visual` = `GATE RESULT: 14/14 PASS（SKIP 1）`（SKIP 为
->    tsc-visual 的环境缺依赖，依赖装好后单跑 `tsc --noEmit` 退出码 0）；真机全量 242 场景 =
+> 2. **独立 reviewer clean / merge**：实现批
+>    `review-feat-land-settings-panel-frontend-oct25-reviewer-settings-panel-land-o-r1.md`
+>    （`status: clean` / `merge: merge`，reviewed_commit `49ec1613414b99430cf2c58e194881422bf34497`，
+>    M742；与 M734 r5 评审同一 commit，其 11 张像素基线由 tower 消息 `…-m734-alex-05-06.md` 记录
+>    Alex「确认」）；docs 收尾批
+>    `review-feat-finalize-provider-docs-checks-oct25-reviewer-provider-docs-final-r-r1.md`
+>    （`status: clean` / `merge: merge`，reviewed_commit `72a3231368ecd712ec3b94030a76caf61bbd1eed`，
+>    M743 r1 的 1.7 / 7.3 未勾选修复后复审；评审文件均在 `.tower/comms/reviews/`）。该 tip 之后本
+>    change 目录逐字未改（`git diff 72a32313 9150da9 -- openspec/changes/add-model-automation-settings-oct24`
+>    空）；M744 只追加本归档记录，不改 delta / tasks / 实现。
+> 3. **tasks**：§1–§7 全部勾选（60/60；原「未完成 / 待裁决」四项的处置见文末「实现批记录」与
+>    「收尾批记录」；像素基线 11 张已获 Alex「批准。」）。
+> 4. **门禁与真机**：实现批 tip `49ec1613` 的 `scripts/gate.sh visual`（M742）=
+>    `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0（`.local/reviews/m742-land/gate-visual-run.log`）；
+>    docs 批 `51d75de3` 由 reviewer 独立复跑同档 = `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0
+>    （`.local/reviews/m743-finalize/reviewer-gate-visual.log`）；M743 本机首跑为 14/14 PASS（SKIP 1）
+>    ——SKIP 为 tsc-visual 的环境缺依赖，依赖装好后单跑 `tsc --noEmit` 退出码 0。真机全量 242 场景 =
 >    **PASS 211 / FAIL 24 / INVALID 7**（证据 `.local/acceptance/2026-10-25-m743/`，复跑
 >    `.local/acceptance/2026-10-25-m743-retry/`）。本 change 直接相关的场景
 >    （90/99/101/102/128/138/250/251）全绿；24 条 FAIL 逐条归因为工具行路径按钮化的旧断言（4）、
@@ -51,10 +61,37 @@
 >    已知 backlog 项（5），另有 5 条复跑转绿（131/231/235/236/237，其中 235–237 是本 change 新增
 >    命令导致的计数 71→72 期望漂移，已在本批改准）；INVALID 7 条 = bundle-only 3 + 环境 fixture
 >    缺口 4。没有一条红落在 provider / 设置面代码路径上。
-> 5. **规格对账**：`scripts/openspec-archive-check.mjs` 门禁模式 PASS（9 份 delta / 117 段对账）；
->    `validate --all --strict` 33 passed / 0 failed；`docs/backlog.md` 归档跟踪队列有且仅有一条
->    本 change 条目。`specs/settings/spec.md` 已写最终 Purpose（1.12.0 归档时携带，临时副本实跑
->    archive 后 strict 仍 33 passed）。
+> 5. **规格对账**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（9 份 delta / 9 条
+>    MODIFIED / 对比 117 段，无静默丢段；归档队列 2 项已完成 change 均有唯一条目）；
+>    `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` = `Totals: 33 passed, 0 failed`；
+>    `bash scripts/docs-check.sh` = PASS。以上三项由 M744 在 master `9150da9`（含 M743 `72a32313`）
+>    复跑，读数与 M743 记录一致。`docs/backlog.md` 归档跟踪队列有且仅有一条本 change 条目。
+>    `specs/settings/spec.md` 已写最终 Purpose（1.12.0 归档时携带，临时副本实跑 archive 后 strict
+>    仍 33 passed）。
+>
+> 归档后项见本块末尾的「归档后」追加段。
+>
+> **归档后（2026-10-25，M744）**：归档提交 `5784940a`（归档目录
+> `openspec/changes/archive/2026-10-25-add-model-automation-settings-oct24/` + 并入后的 living spec
+> （`openspec/specs/harness/spec.md`、`openspec/specs/keymap-commands/spec.md`、新建
+> `openspec/specs/settings/spec.md`）+ `docs/backlog.md` 队列条目核销 + 本节点 2 块补记，同批提交）。
+> `openspec archive` 实际输出：`Task status: ✓ Complete`；`harness: update`（`+ 3 added` / `~ 3
+> modified`）、`keymap-commands: update`（`+ 1 added`）、`settings: create`（`+ 7 added`）、
+> `Totals: + 11, ~ 3, - 0, → 0`、`Change 'add-model-automation-settings-oct24' archived as
+> '2026-10-25-add-model-automation-settings-oct24'.`。新建 capability 的 Purpose 由 delta 携带，
+> 归档后的 `openspec/specs/settings/spec.md` 无 `TBD - created by archiving` 占位。
+>
+> 紧随其后 `node scripts/openspec-archive-check.mjs --archived add-model-automation-settings-oct24`
+> → `PASS（openspec/changes/archive/2026-10-25-add-model-automation-settings-oct24：3 条 MODIFIED，
+> 对比 32 段；人工恢复 0 段，声明认领 0 段）`，EXIT=0（2026-10-25 19:44 CST）；`settings` 是新建
+> capability、归档提交前没有 living 基线，脚本按设计只报 INFO。
+>
+> 归档后复跑：`bash scripts/docs-check.sh` → `docs-check: PASS`（含归档对账门禁模式、归档队列与
+> backlog 出口；`docs/backlog.md` 76/80 行）；`npx --yes @fission-ai/openspec@1.12.0 validate --all
+> --strict` → `Totals: 33 passed, 0 failed`。另做一次逐段落地核对（`--archived` 对新建 capability
+> 无 before 基线）：delta 的 14 条 requirement / 280 段全部逐字出现在归档后的 living spec。
+> 本次归档的原始读数留档 `.local/reviews/m744-archive/`（`archive-output.log` /
+> `archived-audit.log` / `final-checks.log`，2026-10-25 19:45 CST）。
 
 ## Why
 
