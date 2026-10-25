@@ -535,3 +535,33 @@ test("设置面板：外部冲突 → 横幅给「重新载入 / 仍然保存」
   await expect(banner).toBeHidden();
   await expect(page.locator(".lumir-set-status")).toHaveText("没有未保存的修改");
 });
+
+test("设置面板：装载期被忽略的条目仍可见、只读、诊断挂在该条目上", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, {
+    snapshot: settingsSnapshot({
+      providers: [
+        provider("kimi-work", "kimi"),
+        provider("legacy", null as unknown as string, { status: "invalid", configured: false, raw_preset: "openai" }),
+      ],
+      diagnostics: [
+        {
+          code: "harness_provider_preset_invalid",
+          path: "harness.providers.legacy.preset",
+          severity: "warning",
+          message: "预设 \"openai\" 不是合法取值",
+        },
+      ],
+    }),
+  });
+  const row = page.locator('.lumir-set-provider-row[data-provider-id="legacy"]');
+  await expect(row).toHaveCount(1);
+  await expect(row).toHaveAttribute("aria-label", /装载期已忽略/);
+  await row.click();
+  // 只读：没有 API Key / 模型清单编辑面，只有删除入口。
+  await expect(page.locator("#lumir-set-api-key")).toHaveCount(0);
+  await expect(page.locator(".lumir-set-models-field")).toHaveCount(0);
+  await expect(page.locator(".lumir-set-ignore-note")).toContainText("harness.providers.legacy.preset");
+  await expect(page.locator(".lumir-set-ignore-note")).toContainText("不是合法取值");
+  await expect(page.locator(".lumir-set-danger .lumir-set-btn-danger")).toBeVisible();
+});

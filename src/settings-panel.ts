@@ -1409,6 +1409,11 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       row.type = "button";
       row.dataset.providerId = provider.id;
       row.setAttribute("aria-current", String(draft.selection === provider.id));
+      // 可用状态对辅助技术可达（视觉面是状态点 + 表单头徽标；读屏名把 id / 预设 / 状态一次说全）。
+      row.setAttribute(
+        "aria-label",
+        `${provider.id}，${presetLabel(provider.preset)}，${statusLabel(provider.status)}`,
+      );
       // 保存中禁用 provider 切换（design §11.7：避免请求期间的编辑被返回快照覆盖）。
       row.disabled = locked();
       if (draft.selection === provider.id) row.classList.add("is-on");
@@ -1579,6 +1584,21 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       note.append(element("p", "lumir-set-hint", t(C.providerIgnoredBody)));
       const reason = errors.provider[provider.id];
       if (reason !== undefined) note.append(element("p", "lumir-set-field-error", reason));
+      // 装载期诊断挂在这一条上（键路径 + 原因，spec「provider 条目诊断挂在条目上」）：
+      // 只取 `harness.providers.<id>` 及其后代的诊断，其它条目的问题不串到这一行。
+      const prefix = `harness.providers.${provider.id}`;
+      const scoped =
+        snapshot === null
+          ? []
+          : snapshot.diagnostics.filter(
+              (entry) => entry.path !== null && (entry.path === prefix || entry.path.startsWith(`${prefix}.`)),
+            );
+      for (const entry of scoped) {
+        const line = element("p", "lumir-set-hint");
+        line.append(element("span", "lumir-set-diag-path", entry.path ?? ""));
+        line.append(document.createTextNode(entry.message));
+        note.append(line);
+      }
       wrap.append(note);
       wrap.append(renderDangerZone(provider));
       form.append(wrap);
