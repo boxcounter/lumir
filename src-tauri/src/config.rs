@@ -1853,8 +1853,14 @@ struct RawUiConfig {
 struct RawHarnessConfig {
     provider: Option<String>,
     /// 以 id 为键的映射（change add-model-automation-settings-oct24 §2.1）：值收成 `Value`
-    /// 后**逐条**解析（条目级宽容，见 [`validate_provider_entry`]）。`"providers": "kimi"`
-    /// 这种错形状仍是整文件回落（design §2.1 沿用 ADR 0002 §5 的既有模板）。
+    /// 后**逐条**解析（条目级宽容，见 [`validate_provider_entry`]）。
+    ///
+    /// **键缺席 ≠ 显式 `null`**：缺席是「没写这一节」（= 空映射，不告警）；显式 `null` 与
+    /// 字符串 / 数组等其它非对象形状同档——`deserialize_providers` 在解析期报错，走整文件
+    /// 回落（design §2.1 沿用 ADR 0002 §5 的既有模板）。Serde 原生的 `Option<Map>` 会把
+    /// `null` 折叠成 `None`，那样一份手写 `"providers": null` 会静默变成「空清单」并保住
+    /// 其余配置，把一次形状笔误伪装成合法状态。
+    #[serde(default, deserialize_with = "deserialize_providers")]
     providers: Option<serde_json::Map<String, serde_json::Value>>,
     permissions: RawHarnessPermissions,
     /// 权限模式（change add-harness-permission-modes，design §7）：闭集合取值，非法值到不了
@@ -1876,6 +1882,36 @@ struct RawHarnessConfig {
     /// 是「一个键写坏不拖垮 provider / 权限等其它节的配置」，直接结构化会退回整文件回落。
     /// 形状与字段在 [`validate_subagents`] 里解析。
     subagents: Option<serde_json::Value>,
+}
+
+/// `harness.providers` 的字段反序列化（见 [`RawHarnessConfig::providers`]）：缺席由
+/// `#[serde(default)]` 填 `None`；只要键出现就必须是 JSON 对象——`null` / 字符串 / 数组 /
+/// 数字一律报解析错误，交给 [`load_from`] 的整文件回落分支。
+fn deserialize_providers<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde_json::Map<String, serde_json::Value>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Object(map) => Ok(Some(map)),
+        other => Err(serde::de::Error::custom(format!(
+            "harness.providers 必须是对象（以 provider id 为键），实际是 {}",
+            json_type_name(&other)
+        ))),
+    }
+}
+
+/// JSON 值的类型名（诊断文案用；`null` 不说成「空」——它与「没写」是两件事）。
+fn json_type_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "布尔值",
+        serde_json::Value::Number(_) => "数字",
+        serde_json::Value::String(_) => "字符串",
+        serde_json::Value::Array(_) => "数组",
+        serde_json::Value::Object(_) => "对象",
+    }
 }
 
 /// `harness.subagents` 的解析镜像：六个字段都是「缺席 → 用默认；显式给出 → 校验 / 夹取」。
@@ -1970,32 +2006,26 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
             };
         }
         Err(e) => {
-            return ConfigSnapshot {
-                config: AppConfig::default(),
-                warnings: vec![format!("无法读取配置文件 {path_str}：{e}，已使用默认配置")],
-                path: path_str,
-                diagnostics: vec![],
-                cron_issues: vec![],
-                fallback: true,
-            };
+            return failed_snapshot(
+                &path_str,
+                "config_read_failed",
+                format!("无法读取配置文件 {path_str}：{e}，已使用默认配置"),
+            );
         }
     };
 
     let mut value: serde_json::Value = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(e) => {
-            return ConfigSnapshot {
-                config: AppConfig::default(),
-                warnings: vec![format!(
+            return failed_snapshot(
+                &path_str,
+                "config_invalid_json",
+                format!(
                     "配置文件 {path_str} 不是合法 JSON（第 {} 行）：{}，已整体使用默认配置",
                     e.line(),
                     e
-                )],
-                path: path_str,
-                diagnostics: vec![],
-                cron_issues: vec![],
-                fallback: true,
-            };
+                ),
+            );
         }
     };
 
@@ -2074,18 +2104,41 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
                 fallback: false,
             }
         }
-        Err(e) => ConfigSnapshot {
-            config: AppConfig::default(),
-            warnings: vec![format!(
+        // 结构不符（字段类型 / `providers` 非对象 …）：文案沿用既有那句（它已是「整文件回落」
+        // 的唯一人话来源），诊断 code 与读取 / JSON 两类分开，前端可按 code 分类。
+        Err(e) => failed_snapshot(
+            &path_str,
+            "config_invalid_structure",
+            format!(
                 "配置文件 {path_str} 不是合法 JSON（第 {} 行）：{}，已整体使用默认配置",
                 e.line(),
                 e
-            )],
-            path: path_str,
-            diagnostics: vec![],
-            cron_issues: vec![],
-            fallback: true,
-        },
+            ),
+        ),
+    }
+}
+
+/// **装载失败**的快照（读失败 / JSON 不合法 / 结构不符三类共用）：与成功路径同一条派生——
+/// 一条文件级 `ConfigDiagnostic`（`path: None`）→ `warnings` 是它 message 的保序投影。
+/// MUST NOT 手工拼 `warnings` 而把 `diagnostics` 留空：那会让 `ConfigSnapshot` 的
+/// 「warnings 恒等于 diagnostics 的 message 投影」这条契约在失败分叉上失效。
+fn failed_snapshot(path: &str, code: &str, message: String) -> ConfigSnapshot {
+    let diagnostics = vec![ConfigDiagnostic {
+        code: code.to_string(),
+        path: None,
+        severity: DiagnosticSeverity::Warning,
+        message,
+    }];
+    ConfigSnapshot {
+        config: AppConfig::default(),
+        warnings: diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.clone())
+            .collect(),
+        path: path.to_string(),
+        diagnostics,
+        cron_issues: vec![],
+        fallback: true,
     }
 }
 
@@ -5744,15 +5797,116 @@ mod tests {
         }
     }
 
-    /// `providers` 不是对象 ⇒ 整文件回落（design §2.1 沿用 ADR 0002 §5 的既有模板）。
+    /// `providers` 出现但**不是对象** ⇒ 整文件回落（design §2.1 沿用 ADR 0002 §5 的既有模板）。
+    /// 覆盖字符串 / 数组 / 数字 / **显式 `null`**：`null` 与别的非对象形状同档——它不是
+    /// 「没写这一节」，而是形状笔误（`Option<Map>` 的 Serde 默认会把两者折叠成同一态）。
     #[test]
     fn harness_providers_wrong_shape_falls_back_entire_file() {
-        let snap = load_from(
-            &TempFile::new(r#"{"last_vault":"/tmp/vault","harness":{"providers":"kimi"}}"#).0,
+        for shape in [r#""kimi""#, "[]", "7", "null", "true"] {
+            let raw = format!(r#"{{"last_vault":"/tmp/vault","harness":{{"providers":{shape}}}}}"#);
+            let snap = load_from(&TempFile::new(&raw).0);
+            assert!(snap.fallback, "{shape}: 整文件回落");
+            assert!(
+                snap.config.last_vault.is_none(),
+                "{shape}: 回落连 last_vault 一起丢"
+            );
+            assert!(snap.config.harness.providers.is_empty(), "{shape}");
+            assert_eq!(snap.warnings.len(), 1, "{shape}: {:?}", snap.warnings);
+            assert_eq!(
+                snap.warnings,
+                snap.diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic.message.clone())
+                    .collect::<Vec<_>>(),
+                "{shape}: warnings 必须是 diagnostics 的保序投影"
+            );
+            assert_eq!(
+                snap.diagnostics[0].code, "config_invalid_structure",
+                "{shape}"
+            );
+            assert_eq!(snap.diagnostics[0].path, None, "{shape}: 文件级诊断");
+        }
+    }
+
+    /// 对照：`providers` **键缺席**是「没写这一节」——空映射、不告警、不回落。
+    /// 与上一条合起来钉住「缺席 ≠ null」这条边界。
+    #[test]
+    fn harness_providers_absent_is_not_null() {
+        let snap = load_from(&TempFile::new(r#"{"last_vault":"/tmp/vault","harness":{}}"#).0);
+        assert!(!snap.fallback, "缺键不是回落");
+        assert_eq!(
+            snap.config.last_vault.as_deref(),
+            Some("/tmp/vault"),
+            "其余配置照常生效"
         );
-        assert!(snap.fallback, "整文件回落");
-        assert!(snap.config.last_vault.is_none(), "回落连 last_vault 一起丢");
-        assert_eq!(snap.warnings.len(), 1);
+        assert!(snap.config.harness.providers.is_empty());
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        assert!(snap.diagnostics.is_empty());
+    }
+
+    /// 装载失败的三条分叉（读失败 / JSON 不合法 / 结构不符）与成功路径同一条契约：
+    /// 一条文件级诊断 → `warnings` 是它的保序 message 投影（MUST NOT「warnings 有值、
+    /// diagnostics 为空」），code 三类分开。区分度：任一分支把 `diagnostics` 留空即红。
+    #[test]
+    fn load_failures_project_diagnostics_into_warnings() {
+        // ① 读失败：把 config.json 做成目录（`read_to_string` 报 EISDIR）。
+        let dir = TempDir::new("read-failed");
+        let path = dir.config_path();
+        std::fs::create_dir_all(&path).expect("把 config.json 做成目录");
+        let snap = load_from(&path);
+        assert!(snap.fallback, "读失败必须回落");
+        assert_eq!(snap.diagnostics.len(), 1);
+        assert_eq!(snap.diagnostics[0].code, "config_read_failed");
+        assert_eq!(snap.diagnostics[0].path, None, "文件级诊断");
+        assert_eq!(
+            snap.warnings,
+            snap.diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.clone())
+                .collect::<Vec<_>>(),
+            "读失败：warnings 必须是 diagnostics 的保序投影"
+        );
+
+        // ② JSON 不合法。
+        let f = TempFile::new("{not json");
+        let snap = load_from(&f.0);
+        assert!(snap.fallback);
+        assert_eq!(snap.diagnostics.len(), 1);
+        assert_eq!(snap.diagnostics[0].code, "config_invalid_json");
+        assert!(snap.diagnostics[0].message.contains("不是合法 JSON"));
+        assert_eq!(
+            snap.warnings,
+            snap.diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.clone())
+                .collect::<Vec<_>>(),
+            "JSON 不合法：warnings 必须是 diagnostics 的保序投影"
+        );
+
+        // ③ 结构不符（JSON 合法、字段类型不对）。
+        let f = TempFile::new(r#"{"last_vault":"/tmp/vault","editor":{"line_wrap":"yes"}}"#);
+        let snap = load_from(&f.0);
+        assert!(snap.fallback);
+        assert!(snap.config.last_vault.is_none());
+        assert_eq!(snap.diagnostics.len(), 1);
+        assert_eq!(snap.diagnostics[0].code, "config_invalid_structure");
+        assert_eq!(
+            snap.warnings,
+            snap.diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.clone())
+                .collect::<Vec<_>>(),
+            "结构不符：warnings 必须是 diagnostics 的保序投影"
+        );
+
+        // 三条分叉的 code 互不相同（前端可按 code 分类），且都不产生阻断级诊断。
+        for code in [
+            "config_read_failed",
+            "config_invalid_json",
+            "config_invalid_structure",
+        ] {
+            assert_eq!(diagnostic_severity(code), DiagnosticSeverity::Warning);
+        }
     }
 
     /// 缺 preset ⇒ generic + warning（迁移会补上旧三档）；显式非法 preset ⇒ 整条忽略。
