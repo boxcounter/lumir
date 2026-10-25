@@ -40,11 +40,19 @@
 - `#check` **math / mermaid 显露判定**（M259）→ 下一动作：确认是否已接 `pointerPressFrame`（`src/preview/reveal-gate.ts`）。
 - `#check` **M291 in-flow 底色盖住选区带 / 场景 68 标定待判**（M514）→ 下一动作：确认真机是否仍开；finding `20260928-worker-selection-contrast-m291-bug-in-flow-code-callout-frontmatter`。
 - `#check` **历史聚合逐项对账**（M240 表格全屏 / M101–M186 编辑器·键位·shell·系统 / M144 套件表达力与文档指针 / M164 多 vault）→ 下一动作：一个对账 mission，逐子项给三分类（现覆盖 / 失效 / 转独立条目），未分类项不得删；子项明细见 git 历史。
-- `#fix` **验收套件 `focusWindow click:true` 打死 hover / 键盘**（finding `20261024-worker-image-hover-quote-oct24-bug-focuswindow-click-true-wkwebview`）→ 下一动作：拿窗口 key 改用正文真实单击（`clickEditor real: true` 手法）或新增 `focusContent` 动作，复跑 163b / 224 / 228 并在 README 写清「标题栏单击会打死移动通道」；场景 123 的 `focusWindow` 同批按新口径处理，不改成标题栏单击。
-- `#hygiene` **验收套件机械项** → 下一动作：README 的 `(?![\\s\\S])` 双反斜杠示例改单反斜杠；`run.mjs --help` 打印用法退出 0；M282 日志文本语言口径确认。
+- `#hygiene` **验收套件 README 的双反斜杠示例** → 下一动作：`scripts/acceptance/README.md` 的 `(?![\\s\\S])` 示例改单反斜杠（代码跨度内无需二次转义），并核对该段其它正则示例的转义层数。
+- `#hygiene` **`run.mjs --help` 退出码** → 下一动作：加 `--help` 分支打印用法并 `exit 0`（现无该分支），本地跑一次确认退出码与用法文本。
+- `#hygiene` **日志文本语言口径**（M282 遗留）→ 下一动作：按 M267 裁决「日志固定英文、存量中文不改写」把口径写进 `src-tauri/src/logging.rs` 模块头，并核对 M282 之后新增的日志文本无中文。
 - `#hygiene` **tabs 菜单死选择器** → 下一动作：删 `.tab-menu-item`（`src/style.css` 现 2962–2985）并改 `tests/visual/scenes/tab-menu.spec.ts` 的 CSSOM 断言，或给 tabs 改类名（二选一）。
-- `#hygiene` **产品反馈补齐** → 下一动作：外链失败加 toast（`src/harness-panel.ts` 的 `openExternalUrl` 空 catch）；`.lumir-toast` 加 `role="status"` / `aria-live="polite"`（`src/main.ts` 的 toast 工厂）；补 composer 光标 reveal 的 chromium 断言；加一条 `modifiers:["meta"]` 真机夹具。
-- `#hygiene` **重启恢复与浮层收尾** → 下一动作：重启恢复门改动态分流（`stopApp` 前读 `restoredTabCount>0`）；M280 ESC 三条残余（vault 切换器第二份 `scrollSnapshot` / 捕获锚在原点不写回 / lightbox 不随文档代际退出）；长 chain 注入（8–19 chord）可靠性与可点节点面；会话浮层快速关→再开重复历史行（M392）；M455 收尾真机复跑 138/140/144/145 与 hover 族 76/87/131/132/133/134（145 的 `mod+z` 同族观察留给 change 属主裁）。
+- `#hygiene` **外链打开失败无可感知反馈** → 下一动作：`src/harness-panel.ts` 的 `openExternalUrl(href).catch(() => {})` 改为失败给 toast（文案走 deck）。
+- `#hygiene` **`.lumir-toast` 缺读屏语义** → 下一动作：toast 工厂（`src/main.ts`）加 `role="status"` / `aria-live="polite"`，不打断既有 dismiss 行为。
+- `#hygiene` **composer 光标 reveal 无 chromium 断言** → 下一动作：补一条断言（`tests/visual/scenes/` composer 族：光标进入视口后被 reveal）。
+- `#hygiene` **缺 `modifiers:["meta"]` 真机夹具** → 下一动作：加一条带 meta 修饰的真机夹具（`scripts/acceptance/`，覆盖 meta+键的落点）。
+- `#hygiene` **重启恢复门改动态分流** → 下一动作：`stopApp` 前读 `restoredTabCount>0`，按是否有恢复内容决定是否走恢复门。
+- `#fix` **捕获锚在文档原点时运行期不写回**（M280 残余）→ 下一动作：`src/scroll-position-view.ts` 的 `anchor === 0` 提前返回也写回，补判据。
+- `#fix` **lightbox 不随文档代际退出**（M280 残余）→ 下一动作：给 `ImageLightbox` 加关闭口子并接入 `closeDocumentOverlays` 的代际信号（`src/main.ts:1408` 已登记），顺手收编它的重复状态机。
+- `#probe` **长 chain 注入（8–19 chord）可靠性** → 下一动作：跑一轮量落地率与「可点节点」判定边界，结论落 `scripts/acceptance/README.md`「已知边界」。
+- `#fix` **会话浮层快速关→再开重复历史行**（M392）→ 下一动作：复现并定位重复行来源后修，补一条真机判据。
 
 ## 承接残项（长期口径 + 未闭合尾巴）
 
@@ -60,6 +68,7 @@
 - `02-math-click`（item 2）→ 下一动作：真机判定「公式后 ⌃B 是否 1–2 次」（AX 不暴露光标 / 选区）。
 - `153-ordered-list-auto-mode`（item 153）→ 下一动作：留 dogfood 批次真机跑列表自动模式三态 + IME 组合期不重复；裸 DOM 变更形态不兜。
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
+- `M455 收尾复跑`（138/140/144/145 与 hover 族 76/87/131/132/133/134）→ 下一动作：真机复跑并登记读数（145 的 `mod+z` 同族观察留给 change 属主裁）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
 - **`improve-keybindings-lookup-oct24`**（M715）：delta = keymap-commands 1 条 MODIFIED（键位面板行模型）+ 3 条 ADDED（查找/捕获/详情、非自指入口、命令元数据与字形单一来源），节点 2 走人肉；实现批附带新增真机场景 235 / 236 / 237（查询 / 捕获 / 键盘）与 m133 视觉场景重写——**像素基线待 Alex 过目后重截**（未经过目不得 `--update`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`overlay-width-contract-oct24`**（M702，34/37）：节点 1 追认材料已备（D1–D5 落地 + 证据 + 否决回改面，见 proposal）；真机 231/232 PASS（5 + 11 断言，`.local/acceptance/2026-10-24-m711/`）；残留：0.3 / 0.4 待 Alex 追认、9.1 归档期执行；delta = ui-design-system 1 条 ADDED，归档前后各跑 `node scripts/openspec-archive-check.mjs`。
