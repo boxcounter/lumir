@@ -152,7 +152,9 @@ pub struct ProviderReferences {
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct ProviderSettings {
     pub id: String,
-    /// `None` = 预设非法 / 未知（该条目被装载期忽略，`status = Invalid`）。
+    /// 条目预设：装载成功后取生效值；被忽略的条目取文件里能解析到的值。
+    /// `None` = 预设非法 / 未知；`status = Invalid` 的条目仍可能带 `Some`（例如 `mock` 预设
+    /// 写在非保留 id 上——预设本身合法，但与 id 规则冲突而被整条忽略）。
     pub preset: Option<ProviderPreset>,
     /// 文件里的预设原文（含非法值与缺席的空串），供「装载期已忽略」行显示。
     pub raw_preset: String,
@@ -520,6 +522,8 @@ enum ApplyStop {
 
 /// 本笔 patch 里一条删除项的三个引用参数（借用 patch；避免把四元组散在循环里）。
 struct ProviderDeleteRef<'a> {
+    /// patch 内的位置（错误路径回填用）。
+    index: usize,
     id: &'a str,
     active_after: Option<&'a String>,
     session_naming_after: Option<&'a NamingRetarget>,
@@ -745,11 +749,10 @@ fn build_providers(
                 diagnostics,
             )
         })
-        // mock 是验收专用档、不上面板（design §2.2）；误把 mock 声明在其它 id 上的条目
-        // 仍是「装载期已忽略」行，保留展示。
-        .filter(|provider| {
-            provider.id != RESERVED_PROVIDER_ID && provider.preset != Some(ProviderPreset::Mock)
-        })
+        // 只过滤**保留 id `mock` 的验收档**（design §2.2：它不上面板、不可新增 / 删除）。
+        // 别的 id 上写了 `preset: mock` 是装载期被忽略的坏条目——必须保留展示（status=Invalid），
+        // 否则用户既看不见也删不掉（design §6.6 的「坏条目 MUST 可见」）。
+        .filter(|provider| provider.id != RESERVED_PROVIDER_ID)
         .collect();
     providers.sort_by(|a, b| {
         (preset_rank(a.preset), a.id.as_str()).cmp(&(preset_rank(b.preset), b.id.as_str()))
@@ -2058,13 +2061,15 @@ fn apply_provider_edits(
     let deletes: Vec<ProviderDeleteRef<'_>> = patch
         .providers
         .iter()
-        .filter_map(|edit| match edit {
+        .enumerate()
+        .filter_map(|(index, edit)| match edit {
             ProviderEdit::Delete {
                 id,
                 active_after,
                 session_naming_after,
                 attachment_naming_after,
             } => Some(ProviderDeleteRef {
+                index,
                 id: id.as_str(),
                 active_after: active_after.as_ref(),
                 session_naming_after: session_naming_after.as_ref(),
@@ -2074,12 +2079,22 @@ fn apply_provider_edits(
         })
         .collect();
     for ProviderDeleteRef {
+        index,
         id,
         active_after,
         session_naming_after: session_after,
         attachment_naming_after: attachment_after,
     } in deletes
     {
+        // mock 是验收专用的保留 id：设置面不呈现、不可新增、也不可删除（design §2.2/§2.3，
+        // settings spec「mock 不可经面板新增或删除」）。与 Add 分支用同一条 code。
+        if id == RESERVED_PROVIDER_ID {
+            return Err(ApplyStop::Blocked(vec![field_error(
+                format!("providers[{index}].id"),
+                "settings_provider_reserved_id",
+                format!("{RESERVED_PROVIDER_ID} 是验收专用的保留 id，不能删除"),
+            )]));
+        }
         let effective = effective_harness(value)?;
         // 删除的对象是**文件里的条目**，不是「有效条目」：装载期被忽略的坏条目也必须能删
         // （设置面只能删它或去配置文件修，design §6.6）。Update 相反，只接受有效条目。
@@ -2106,6 +2121,11 @@ fn apply_provider_edits(
             .map(|(other, _)| other.clone())
             .collect();
         let deleting_active = effective.provider == id;
+        // raw `harness.provider` 也参与判断：它可能指向一个被装载期忽略的条目（此时 effective
+        // active 已回退到别的 provider）。删除该条目时不清 raw 值就会留下悬空硬引用
+        // （design §4.1「删除后 MUST NOT 留下任何硬引用」）。
+        let deleting_raw_active =
+            raw_trimmed(raw_harness(value), "provider").as_deref() == Some(id);
 
         if let Some(after) = active_after {
             if !candidates.contains(after) {
@@ -2138,6 +2158,19 @@ fn apply_provider_edits(
                     )]));
                 }
             }
+        } else if deleting_raw_active {
+            // raw active 指向被删条目、但它已不是生效 active（装载期把悬空值回退了）：必须清除
+            // 或重定向这个 raw 值，否则 Applied 之后 `harness.provider` 仍指向刚删掉的 id。
+            match active_after {
+                Some(after) => {
+                    harness_object_mut(value)
+                        .insert("provider".to_string(), Value::String(after.clone()));
+                }
+                None => {
+                    harness_object_mut(value).remove("provider");
+                }
+            }
+            changes.field("harness.provider");
         } else if let Some(after) = active_after {
             // 非当前使用项的删除不必带替代目标；带了就按显式意图切换 active。
             harness_object_mut(value).insert("provider".to_string(), Value::String(after.clone()));
@@ -2781,6 +2814,46 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_shows_mock_preset_on_other_ids_as_invalid_and_deletable() {
+        let dir = TempDir::new("mock-wrong-id");
+        dir.write(
+            r#"{"harness":{"provider":"kimi-work","providers":{
+                "kimi-work":{"preset":"kimi","api_key":"test-key-1111","models":[{"id":"k3-256k","effort":false,"vision":false,"window":1024}]},
+                "broken":{"preset":"mock"},
+                "mock":{"preset":"mock","fixture":"/tmp/fixture.json"}
+            }}}"#,
+        );
+        let snapshot = snapshot(&dir);
+        assert!(
+            snapshot
+                .providers
+                .iter()
+                .all(|provider| provider.id != "mock"),
+            "保留 id mock 的验收档不上面板"
+        );
+        let broken = only_provider(&snapshot, "broken");
+        assert_eq!(broken.status, ProviderStatus::Invalid);
+        assert_eq!(broken.raw_preset, "mock");
+        assert_eq!(broken.preset, Some(ProviderPreset::Mock));
+
+        // 坏条目必须可删除（用户只能删它或去配置文件修）。
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"providers": [{"action": "delete", "id": "broken"}]}),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        let value = file_json(&dir);
+        assert!(value["harness"]["providers"].get("broken").is_none());
+        assert!(
+            value["harness"]["providers"]["mock"].is_object(),
+            "删别的坏条目 MUST NOT 动保留 mock 档"
+        );
+    }
+
+    #[test]
     fn snapshot_references_follow_effective_active_and_raw_overrides() {
         let dir = TempDir::new("refs");
         dir.write(
@@ -3353,6 +3426,88 @@ mod tests {
         );
         assert!(value["harness"]["session_naming"].get("provider").is_none());
         assert!(value["harness"]["session_naming"].get("model").is_none());
+    }
+
+    #[test]
+    fn deleting_the_reserved_mock_provider_is_rejected() {
+        let dir = TempDir::new("delete-mock");
+        dir.write(BASE);
+        let before = dir.read();
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"providers": [{"action": "delete", "id": "mock"}]}),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Blocked);
+        assert_eq!(outcome.errors[0].code, "settings_provider_reserved_id");
+        assert_eq!(outcome.errors[0].path, "providers[0].id");
+        assert_eq!(dir.read(), before, "Blocked 时文件逐字节不变");
+        // 保留条目仍在，且快照里不呈现 mock。
+        assert!(file_json(&dir)["harness"]["providers"]["mock"].is_object());
+        assert!(outcome.snapshot.providers.iter().all(|p| p.id != "mock"));
+    }
+
+    #[test]
+    fn deleting_raw_active_ignored_entry_leaves_no_dangling_reference() {
+        let dir = TempDir::new("delete-raw-active");
+        dir.write(
+            r#"{"harness":{"provider":"broken","providers":{
+                "broken":{"preset":"nope"},
+                "deepseek":{"preset":"deepseek","api_key":"test-key-2222","models":[{"id":"ds-chat","effort":false,"vision":false,"window":1024}]}
+            }}}"#,
+        );
+        // 前置：raw active 悬空，生效 active 已回退到 deepseek。
+        let before = snapshot(&dir);
+        assert_eq!(before.active.as_deref(), Some("deepseek"));
+
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"providers": [{"action": "delete", "id": "broken"}]}),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        let value = file_json(&dir);
+        assert!(value["harness"]["providers"].get("broken").is_none());
+        assert!(
+            value["harness"].get("provider").is_none(),
+            "raw active 指向被删条目时必须清除，MUST NOT 留下悬空硬引用"
+        );
+        assert_eq!(outcome.snapshot.active.as_deref(), Some("deepseek"));
+        assert!(outcome
+            .snapshot
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { diagnostic.code != "harness_provider_unknown" }));
+    }
+
+    #[test]
+    fn deleting_raw_active_ignored_entry_can_redirect_instead_of_clearing() {
+        let dir = TempDir::new("delete-raw-active-redirect");
+        dir.write(
+            r#"{"harness":{"provider":"broken","providers":{
+                "broken":{"preset":"nope"},
+                "deepseek":{"preset":"deepseek","api_key":"test-key-2222","models":[{"id":"ds-chat","effort":false,"vision":false,"window":1024}]}
+            }}}"#,
+        );
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({"providers": [{"action": "delete", "id": "broken",
+                    "active_after": "deepseek"}]}),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        let value = file_json(&dir);
+        assert!(value["harness"]["providers"].get("broken").is_none());
+        assert_eq!(
+            value["harness"]["provider"],
+            Value::String("deepseek".into())
+        );
     }
 
     // -----------------------------------------------------------------

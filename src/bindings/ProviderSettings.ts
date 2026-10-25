@@ -13,7 +13,9 @@ import type { RawJsonValue } from "./RawJsonValue";
  */
 export type ProviderSettings = { id: string, 
 /**
- * `None` = 预设非法 / 未知（该条目被装载期忽略，`status = Invalid`）。
+ * 条目预设：装载成功后取生效值；被忽略的条目取文件里能解析到的值。
+ * `None` = 预设非法 / 未知；`status = Invalid` 的条目仍可能带 `Some`（例如 `mock` 预设
+ * 写在非保留 id 上——预设本身合法，但与 id 规则冲突而被整条忽略）。
  */
 preset: ProviderPreset | null, 
 /**
