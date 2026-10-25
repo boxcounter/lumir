@@ -90,6 +90,8 @@
 > backlog 出口；`docs/backlog.md` 76/80 行）；`npx --yes @fission-ai/openspec@1.12.0 validate --all
 > --strict` → `Totals: 33 passed, 0 failed`。另做一次逐段落地核对（`--archived` 对新建 capability
 > 无 before 基线）：delta 的 14 条 requirement / 280 段全部逐字出现在归档后的 living spec。
+> 本次归档的原始读数留档 `.local/reviews/m744-archive/`（`archive-output.log` /
+> `archived-audit.log` / `final-checks.log`，2026-10-25 19:45 CST）。
 
 ## Why
 
