@@ -6,6 +6,7 @@ import type { AppConfig } from "./AppConfig";
  */
 export type ConfigSnapshot = { config: AppConfig, 
 /**
- * 逐字段回退时产生的人话提示；为空表示完全干净。
+ * 逐字段回退时产生的人话提示；为空表示完全干净。**由 `diagnostics` 的 message 派生**
+ * （顺序一致、文案逐字不变）。
  */
 warnings: Array<string>, path: string, };

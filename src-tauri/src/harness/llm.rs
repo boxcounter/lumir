@@ -142,7 +142,7 @@
 use std::io::BufRead;
 
 use crate::commands::CommandError;
-use crate::config::{AttachmentNamingTarget, HarnessConfig, HarnessProvider, TitleTarget, WireApi};
+use crate::config::{AttachmentNamingTarget, HarnessConfig, TitleTarget, WireApi};
 
 use super::events::StreamSink;
 use super::thinking::{self, ThinkingEffort};
@@ -298,7 +298,7 @@ fn parse_request_id(text: &str) -> Option<String> {
 
 /// 非 2xx 响应 → [`TurnError`]（含 wire 面字段）。抽成纯函数，便于单测（不必起 HTTP 服务）。
 fn http_error_turn_error(
-    preset: &ProviderPreset,
+    preset: &ProtocolPreset,
     status: u16,
     header_request_id: Option<String>,
     text: &str,
@@ -325,24 +325,23 @@ fn http_error_turn_error(
     }
 }
 
-/// provider 预设表（design §11 双预设）：base_url 默认、超限特征串。
+/// provider 协议层预设表（change add-model-automation-settings-oct24 §2.2 起由
+/// [`crate::config::ProviderPreset`] 索引）：本表只剩**超限特征串**。
 ///
 /// M373 起窗口表 / 能力表退役：模型清单与每模型 effort / window 声明归配置 schema
 /// （`HarnessProviderConfig.models`）。M381 起（Alex 终裁「彻底不使用内置表」）预设表
-/// 连出厂 model 字段也移除——模型 id 严格只来自配置，本表只剩网络层参数（base_url）
-/// 与协议层参数（store / 超限特征串）。
-pub struct ProviderPreset {
-    /// base_url 默认值（未核实，验收批对真 API 验证；配置可覆盖）。
-    pub base_url: &'static str,
+/// 连出厂 model 字段也移除；r3 起 **base_url 也归配置层**
+/// （[`crate::config::ProviderPreset::official_base_url`]，官方地址的唯一写值处），
+/// 本表因此不再持有任何地址。
+pub struct ProtocolPreset {
     /// 上下文超限错误特征串（小写子串匹配 code+message）。
     pub overflow_indicators: &'static [&'static str],
 }
 
 /// kimi 预设（[官方 Responses schema](https://platform.kimi.ai/docs/api/responses)）：
-/// store 支持 ⇒ 显式 `store:false`；usage 含 `cache_write_tokens`（M443 起进留存与面板，
-/// 解析路径见 [`collect_final_response`] 的注释）。
-const KIMI_PRESET: ProviderPreset = ProviderPreset {
-    base_url: "https://api.moonshot.cn/v1", // 未核实（验收批对真 API 验证；config 可覆盖）
+/// usage 含 `cache_write_tokens`（M443 起进留存与面板，解析路径见
+/// [`collect_final_response`] 的注释）。
+const KIMI_PRESET: ProtocolPreset = ProtocolPreset {
     overflow_indicators: &[
         "context_length_exceeded",
         "maximum context length",
@@ -362,9 +361,8 @@ const KIMI_PRESET: ProviderPreset = ProviderPreset {
 };
 
 /// deepseek 预设（[官方 Responses 文档](https://api-docs.deepseek.com/guides/responses_api/)）：
-/// 无状态（恒 `store:false`）；超窗请求返回 400；不支持参数静默忽略。
-const DEEPSEEK_PRESET: ProviderPreset = ProviderPreset {
-    base_url: "https://api.deepseek.com",
+/// 超窗请求返回 400；不支持参数静默忽略。
+const DEEPSEEK_PRESET: ProtocolPreset = ProtocolPreset {
     overflow_indicators: &[
         "maximum context length",
         "context length",
@@ -372,16 +370,35 @@ const DEEPSEEK_PRESET: ProviderPreset = ProviderPreset {
     ],
 };
 
-pub fn preset(provider: &HarnessProvider) -> &'static ProviderPreset {
-    match provider {
-        HarnessProvider::Kimi => &KIMI_PRESET,
-        HarnessProvider::Deepseek => &DEEPSEEK_PRESET,
-        HarnessProvider::Mock => &DEEPSEEK_PRESET, // mock 只消费 usage，预设仅作 fallback
+/// generic 预设（任意 OpenAI 兼容端点）：**已知话术的并集**——保守识别，不承诺覆盖任意
+/// 厂商；识别不到的超限只会退化成一次普通错误，不会误判。
+const GENERIC_PRESET: ProtocolPreset = ProtocolPreset {
+    overflow_indicators: &[
+        "context_length_exceeded",
+        "maximum context length",
+        "context window",
+        "token limit",
+        "total message size",
+        "supports only 256k context",
+        "context length",
+        "too many tokens",
+    ],
+};
+
+/// 按预设取协议表（**唯一**入口）：行为由 preset 决定，不由 id 猜。mock 不经过 HTTP，
+/// 它的错误判定走 [`is_overflow_any`]（脚本要能模拟任一家方言），这里给并集表只为让
+/// 装配路径有一个确定值。
+pub fn protocol_preset(preset: crate::config::ProviderPreset) -> &'static ProtocolPreset {
+    use crate::config::ProviderPreset;
+    match preset {
+        ProviderPreset::Kimi => &KIMI_PRESET,
+        ProviderPreset::Deepseek => &DEEPSEEK_PRESET,
+        ProviderPreset::Generic | ProviderPreset::Mock => &GENERIC_PRESET,
     }
 }
 
 /// 判定错误是否上下文超限（按 provider 特征串）。
-fn is_overflow(preset: &ProviderPreset, code: &str, message: &str) -> bool {
+fn is_overflow(preset: &ProtocolPreset, code: &str, message: &str) -> bool {
     let haystack = format!("{code} {message}").to_lowercase();
     preset
         .overflow_indicators
@@ -394,7 +411,7 @@ fn is_overflow(preset: &ProviderPreset, code: &str, message: &str) -> bool {
 /// 两串列表（第二事实源，REVIEW.md 「同一语义两处真源」条），且漏掉了 M463 给 kimi 补的 coding 端点话术
 /// 「model token limit」——那条形态在 mock 驱动下因此永远判不出 overflow。
 fn is_overflow_any(code: &str, message: &str) -> bool {
-    [&KIMI_PRESET, &DEEPSEEK_PRESET]
+    [&KIMI_PRESET, &DEEPSEEK_PRESET, &GENERIC_PRESET]
         .iter()
         .any(|preset| is_overflow(preset, code, message))
 }
@@ -504,14 +521,20 @@ pub fn is_quota_error(error: &TurnError) -> bool {
     NEEDLES.iter().any(|needle| haystack.contains(needle))
 }
 
+/// mock fixture 文件的路径（`harness.providers.mock.fixture`；未配置 = `None`）。
+///
+/// **唯一**读法：会话 client / 标题 client / 语义命名 client / 子运行区间都从这里取，
+/// MUST NOT 各拼一份字段下钻。
+pub fn mock_fixture(config: &HarnessConfig) -> Option<&str> {
+    config
+        .provider_entry(crate::config::RESERVED_PROVIDER_ID)
+        .and_then(|entry| entry.fixture.as_deref())
+}
+
 /// fixture 顶层声明的子运行区间长度（design §18；缺省 1）。子运行启动时按它分配不重叠的
 /// 脚本区间——读的是**同一份 fixture**，不在调用侧另拿一个常量。
 pub fn mock_region_span(config: &HarnessConfig) -> usize {
-    config
-        .providers
-        .mock
-        .fixture
-        .as_deref()
+    mock_fixture(config)
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
         .and_then(|value| value["subrun_span"].as_u64())
@@ -568,76 +591,110 @@ pub fn client_at(
     mock_start: usize,
     model_override: Option<&str>,
 ) -> Result<Box<dyn LlmClient>, CommandError> {
-    match config.provider {
-        HarnessProvider::Mock => {
-            let fixture = config.providers.mock.fixture.clone().ok_or_else(|| {
-                CommandError::new(
-                    "harness_fixture_missing",
-                    "provider 为 mock 但 harness.providers.mock.fixture 未配置",
-                )
-            })?;
-            MockClient::from_file(std::path::Path::new(&fixture)).map(|c| {
-                Box::new(c.for_vault(vault_id).with_start(mock_start)) as Box<dyn LlmClient>
-            })
-        }
-        HarnessProvider::Kimi | HarnessProvider::Deepseek => {
-            let (api_key, configured_model, base_url) = match config.provider {
-                HarnessProvider::Kimi => (
-                    &config.providers.kimi.api_key,
-                    &config.providers.kimi.model,
-                    config.providers.kimi.base_url.as_deref(),
-                ),
-                _ => (
-                    &config.providers.deepseek.api_key,
-                    &config.providers.deepseek.model,
-                    config.providers.deepseek.base_url.as_deref(),
-                ),
-            };
-            // 调用级覆盖只接**非空**值：空串是「未覆盖」的等价输入（上层把未配置归一为
-            // None，这里再挡一次手写空串，免得把空 model 当成显式选择）。
-            let model = model_override
-                .map(str::trim)
-                .filter(|model| !model.is_empty())
-                .unwrap_or(configured_model.as_str());
-            if api_key.trim().is_empty() {
-                return Err(CommandError::new(
-                    "harness_api_key_missing",
-                    "当前 provider 的 api_key 未配置（config.json 的 harness.providers 节）",
-                ));
-            }
-            // M381 config-only：模型 id 严格只来自配置——清单为空 / model 解析为空时
-            // 在这里挡人话错误，不把空 model 发给 API（配置加载时已有 warning + 前端提示态）。
-            if model.trim().is_empty() {
-                let name = match config.provider {
-                    HarnessProvider::Kimi => "kimi",
-                    _ => "deepseek",
-                };
-                return Err(CommandError::new(
-                    "harness_model_missing",
-                    format!(
-                        "当前 provider（{name}）未配置任何模型：请在 config.json 的 harness.providers.{name}.models 下逐项声明（{{\"id\", \"effort\", \"vision\", \"window\"}}）"
-                    ),
-                ));
-            }
-            let preset = preset(&config.provider);
-            let base = base_url.unwrap_or(preset.base_url).trim_end_matches('/');
-            let http = http_client(SESSION_TIMEOUT)?;
-            // 方言选择（change add-harness-chat-completions-dialect，design D1）：配置显式
-            // 声明、无嗅探。`config.wire_api()` 是唯一读数（deepseek 的 chat 档在校验期已回落，
-            // 因此这里只可能是 kimi 命中 chat 分支）。
-            Ok(network_client(
-                config,
-                config.provider,
-                model,
-                api_key,
-                base,
-                config.wire_api(),
-                vault_id,
-                http,
-                preset,
-            ))
-        }
+    send_preflight(config)?;
+    let entry = config
+        .provider_entry(&config.provider)
+        .expect("send_preflight 已确认 active provider 存在");
+    if entry.preset == crate::config::ProviderPreset::Mock {
+        let fixture = entry.fixture.clone().ok_or_else(|| {
+            CommandError::new(
+                "harness_fixture_missing",
+                "provider 为 mock 但 harness.providers.mock.fixture 未配置",
+            )
+        })?;
+        return MockClient::from_file(std::path::Path::new(&fixture))
+            .map(|c| Box::new(c.for_vault(vault_id).with_start(mock_start)) as Box<dyn LlmClient>);
     }
+    // 调用级覆盖只接**非空**值：空串是「未覆盖」的等价输入（上层把未配置归一为
+    // None，这里再挡一次手写空串，免得把空 model 当成显式选择）。
+    let model = model_override
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .unwrap_or(entry.model.as_str());
+    let base = entry
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .or_else(|| entry.preset.official_base_url())
+        .expect("send_preflight 已确认 base_url 可解析");
+    let preset = protocol_preset(entry.preset);
+    let base = base.trim_end_matches('/');
+    let http = http_client(SESSION_TIMEOUT)?;
+    // 方言选择（change add-harness-chat-completions-dialect，design D1）：配置显式
+    // 声明、无嗅探。`config.wire_api()` 是唯一读数（不支持的档位在校验期已回落）。
+    Ok(network_client(
+        config,
+        &config.provider,
+        entry.preset,
+        model,
+        &entry.api_key,
+        base,
+        config.wire_api(),
+        vault_id,
+        http,
+        preset,
+    ))
+}
+
+/// 发送期缺失态的**唯一**前置校验（change add-model-automation-settings-oct24 task 4.7）：
+/// 没有 active provider / 缺 Key / 缺 Base URL / 没有可用模型，四档各自一个稳定 code，
+/// 文案都指向设置面板（而不是让用户去翻 config.json）。
+///
+/// 两个发送入口（`harness_send` / `harness_cron_run`）在**建会话之前**调用它——用户拿到的是
+/// 同步的人话错误，而不是一轮起步后才在流里炸开；`client_at` 也调它，因此「什么算配好」只有
+/// 这一份判据（REVIEW.md『同一语义两处真源』条）。mock 档不在这里校验 fixture（它有自己的
+/// `harness_fixture_missing`，且 fixture 只在装配点读）。
+pub fn send_preflight(config: &HarnessConfig) -> Result<(), CommandError> {
+    let Some(entry) = config.provider_entry(&config.provider) else {
+        return Err(CommandError::new(
+            "harness_provider_missing",
+            "还没有可用的 provider：请在设置面板添加一个 provider（或检查 config.json 的 harness.providers 条目是否合法）",
+        ));
+    };
+    if entry.preset == crate::config::ProviderPreset::Mock {
+        return Ok(());
+    }
+    let name = config.provider.as_str();
+    // generic 允许空 Key（本地模型不发 Authorization 头，design Q9）；kimi / deepseek 要求 Key。
+    if entry.preset.requires_api_key() && entry.api_key.trim().is_empty() {
+        return Err(CommandError::new(
+            "harness_api_key_missing",
+            format!(
+                "provider（{name}）的 api_key 未配置：请在设置面板填写 API Key（或检查 config.json 的 harness.providers.{name}.api_key）"
+            ),
+        )
+        .param("provider", name));
+    }
+    // generic 没有官方地址：缺 base_url 时无法构造任何请求。
+    if entry
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .or_else(|| entry.preset.official_base_url())
+        .is_none()
+    {
+        return Err(CommandError::new(
+            "harness_base_url_missing",
+            format!(
+                "provider（{name}）是 OpenAI 兼容预设，必须先填写 Base URL 才能发送：请在设置面板填写（或检查 config.json 的 harness.providers.{name}.base_url）"
+            ),
+        )
+        .param("provider", name));
+    }
+    // M381 config-only：模型 id 严格只来自配置——清单为空 / model 解析为空时挡人话错误，
+    // 不把空 model 发给 API（配置加载时已有 warning + 前端提示态）。
+    if active_model(config).trim().is_empty() {
+        return Err(CommandError::new(
+            "harness_model_missing",
+            format!(
+                "provider（{name}）未配置任何模型：请在设置面板的模型清单里声明（或检查 config.json 的 harness.providers.{name}.models）"
+            ),
+        )
+        .param("provider", name));
+    }
+    Ok(())
 }
 
 /// 网络 provider 的 client 装配（三个装配口共用一份：会话 [`client_at`] / 会话自动命名的
@@ -649,18 +706,19 @@ pub fn client_at(
 #[allow(clippy::too_many_arguments)]
 fn network_client(
     config: &HarnessConfig,
-    provider: HarnessProvider,
+    provider: &str,
+    provider_preset: crate::config::ProviderPreset,
     model: &str,
     api_key: &str,
     base: &str,
     wire_api: WireApi,
     vault_id: &str,
     http: reqwest::blocking::Client,
-    preset: &'static ProviderPreset,
+    preset: &'static ProtocolPreset,
 ) -> Box<dyn LlmClient> {
     // 思考程度能力按 provider + model 从配置 schema 现算（M373：`models` 的逐模型声明，
     // config-only——M381 起缺省不回落内置表）——client 构建时冻结进 client。
-    let effort_supported = config.effort_supported(&provider, model);
+    let effort_supported = config.effort_supported(provider, model);
     match wire_api {
         WireApi::ChatCompletions => Box::new(ChatCompletionsClient {
             http,
@@ -677,8 +735,8 @@ fn network_client(
             endpoint: format!("{base}/responses"),
             api_key: api_key.to_string(),
             model: model.to_string(),
-            // store:false 只由**该 provider** 决定（kimi 支持该字段；deepseek 不发）。
-            store_false: matches!(provider, HarnessProvider::Kimi),
+            // store:false 只由**该预设**决定（kimi 支持该字段；其余不发）。
+            store_false: provider_preset.store_false(),
             effort_supported,
             vault_id: vault_id.to_string(),
             preset,
@@ -687,14 +745,15 @@ fn network_client(
 }
 
 /// 当前生效的模型名：ctx% 的窗口查表与思考档位能力判定都用它（**单一来源**——两处各写一份
-/// match 必然漂移，REVIEW.md 「同一语义两处真源」条）。mock 档没有自己的模型，沿用 kimi 侧读数
-///（与 [`preset`] 对 mock 回落 deepseek 预设是同一「mock 只借壳」的口径）。
+/// 必然漂移，REVIEW.md 「同一语义两处真源」条）。按 active id 查条目；**mock 返回空串**
+/// （fixture 驱动档没有模型维度，不再借别的 provider 的读数）；没有 active provider 时也是
+/// 空串（ctx% 因此走 [`crate::config::FALLBACK_CONTEXT_WINDOW`] 的保守默认）。
 pub fn active_model(config: &HarnessConfig) -> &str {
-    match config.provider {
-        HarnessProvider::Kimi => &config.providers.kimi.model,
-        HarnessProvider::Deepseek => &config.providers.deepseek.model,
-        HarnessProvider::Mock => &config.providers.kimi.model,
-    }
+    config
+        .provider_entry(&config.provider)
+        .filter(|entry| entry.preset != crate::config::ProviderPreset::Mock)
+        .map(|entry| entry.model.as_str())
+        .unwrap_or("")
 }
 
 /// 命名调用的 client（change add-session-auto-naming，design D8 / D12）：**只**消费
@@ -712,59 +771,75 @@ pub fn title_client(
     vault_id: &str,
     mock_start: usize,
 ) -> Result<Box<dyn LlmClient>, CommandError> {
-    match target.provider {
-        HarnessProvider::Mock => {
-            let fixture = config.providers.mock.fixture.clone().ok_or_else(|| {
+    if target.provider.is_empty() {
+        return Err(CommandError::new(
+            "harness_provider_missing",
+            "命名调用没有可用的 provider：请在设置面板添加一个 provider",
+        ));
+    }
+    if target.preset == crate::config::ProviderPreset::Mock {
+        let fixture = config
+            .provider_entry(&target.provider)
+            .and_then(|entry| entry.fixture.clone())
+            .ok_or_else(|| {
                 CommandError::new(
                     "harness_fixture_missing",
                     "provider 为 mock 但 harness.providers.mock.fixture 未配置",
                 )
             })?;
-            MockClient::titles_from_file(std::path::Path::new(&fixture)).map(|client| {
-                Box::new(client.for_vault(vault_id).with_title_start(mock_start))
-                    as Box<dyn LlmClient>
-            })
-        }
-        HarnessProvider::Kimi | HarnessProvider::Deepseek => {
-            let name = target.provider.as_str();
-            if target.api_key.trim().is_empty() {
-                return Err(CommandError::new(
-                    "harness_api_key_missing",
-                    format!(
-                        "命名调用所用 provider（{name}）的 api_key 未配置（config.json 的 harness.providers 节）"
-                    ),
-                )
-                .param("provider", name));
-            }
-            if target.model.trim().is_empty() {
-                return Err(CommandError::new(
-                    "harness_model_missing",
-                    format!(
-                        "命名调用所用 provider（{name}）未配置任何模型：请在 config.json 的 harness.providers.{name}.models 下逐项声明"
-                    ),
-                )
-                .param("provider", name));
-            }
-            let preset = preset(&target.provider);
-            let base = target
-                .base_url
-                .as_deref()
-                .unwrap_or(preset.base_url)
-                .trim_end_matches('/');
-            let http = http_client(TITLE_TIMEOUT)?;
-            Ok(network_client(
-                config,
-                target.provider,
-                &target.model,
-                &target.api_key,
-                base,
-                target.wire_api,
-                vault_id,
-                http,
-                preset,
-            ))
-        }
+        return MockClient::titles_from_file(std::path::Path::new(&fixture)).map(|client| {
+            Box::new(client.for_vault(vault_id).with_title_start(mock_start)) as Box<dyn LlmClient>
+        });
     }
+    let name = target.provider.as_str();
+    if target.preset.requires_api_key() && target.api_key.trim().is_empty() {
+        return Err(CommandError::new(
+            "harness_api_key_missing",
+            format!(
+                "命名调用所用 provider（{name}）的 api_key 未配置：请在设置面板填写 API Key（或检查 config.json 的 harness.providers.{name}.api_key）"
+            ),
+        )
+        .param("provider", name));
+    }
+    if target.model.trim().is_empty() {
+        return Err(CommandError::new(
+            "harness_model_missing",
+            format!(
+                "命名调用所用 provider（{name}）未配置任何模型：请在设置面板的模型清单里声明（或检查 config.json 的 harness.providers.{name}.models）"
+            ),
+        )
+        .param("provider", name));
+    }
+    let Some(base) = target
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .or_else(|| target.preset.official_base_url())
+    else {
+        return Err(CommandError::new(
+            "harness_base_url_missing",
+            format!(
+                "命名调用所用 provider（{name}）是 OpenAI 兼容预设，必须先填写 Base URL：请在设置面板填写（或检查 config.json 的 harness.providers.{name}.base_url）"
+            ),
+        )
+        .param("provider", name));
+    };
+    let preset = protocol_preset(target.preset);
+    let base = base.trim_end_matches('/');
+    let http = http_client(TITLE_TIMEOUT)?;
+    Ok(network_client(
+        config,
+        &target.provider,
+        target.preset,
+        &target.model,
+        &target.api_key,
+        base,
+        target.wire_api,
+        vault_id,
+        http,
+        preset,
+    ))
 }
 
 /// 图片语义命名的 client（change add-semantic-image-naming，design §4；2026-10-18 配置面重塑
@@ -780,48 +855,59 @@ pub fn naming_client(
     target: &AttachmentNamingTarget,
     vault_id: &str,
 ) -> Result<Box<dyn LlmClient>, CommandError> {
-    match target.provider {
-        HarnessProvider::Mock => {
-            let fixture = config.providers.mock.fixture.clone().ok_or_else(|| {
+    if target.preset == crate::config::ProviderPreset::Mock {
+        let fixture = config
+            .provider_entry(&target.provider)
+            .and_then(|entry| entry.fixture.clone())
+            .ok_or_else(|| {
                 CommandError::new(
                     "harness_fixture_missing",
                     "provider 为 mock 但 harness.providers.mock.fixture 未配置",
                 )
             })?;
-            MockClient::naming_from_file(std::path::Path::new(&fixture))
-                .map(|client| Box::new(client.for_vault(vault_id)) as Box<dyn LlmClient>)
-        }
-        provider @ (HarnessProvider::Kimi | HarnessProvider::Deepseek) => {
-            let name = provider.as_str();
-            if target.api_key.trim().is_empty() {
-                return Err(CommandError::new(
-                    "harness_api_key_missing",
-                    format!(
-                        "语义命名所用 provider（{name}）的 api_key 未配置（config.json 的 harness.providers 节）"
-                    ),
-                )
-                .param("provider", name));
-            }
-            let preset = preset(&provider);
-            let base = target
-                .base_url
-                .as_deref()
-                .unwrap_or(preset.base_url)
-                .trim_end_matches('/');
-            let http = http_client(TITLE_TIMEOUT)?;
-            Ok(network_client(
-                config,
-                provider,
-                &target.model,
-                &target.api_key,
-                base,
-                target.wire_api,
-                vault_id,
-                http,
-                preset,
-            ))
-        }
+        return MockClient::naming_from_file(std::path::Path::new(&fixture))
+            .map(|client| Box::new(client.for_vault(vault_id)) as Box<dyn LlmClient>);
     }
+    let name = target.provider.as_str();
+    if target.preset.requires_api_key() && target.api_key.trim().is_empty() {
+        return Err(CommandError::new(
+            "harness_api_key_missing",
+            format!(
+                "语义命名所用 provider（{name}）的 api_key 未配置：请在设置面板填写 API Key（或检查 config.json 的 harness.providers.{name}.api_key）"
+            ),
+        )
+        .param("provider", name));
+    }
+    let Some(base) = target
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .or_else(|| target.preset.official_base_url())
+    else {
+        return Err(CommandError::new(
+            "harness_base_url_missing",
+            format!(
+                "语义命名所用 provider（{name}）是 OpenAI 兼容预设，必须先填写 Base URL：请在设置面板填写（或检查 config.json 的 harness.providers.{name}.base_url）"
+            ),
+        )
+        .param("provider", name));
+    };
+    let preset = protocol_preset(target.preset);
+    let base = base.trim_end_matches('/');
+    let http = http_client(TITLE_TIMEOUT)?;
+    Ok(network_client(
+        config,
+        &target.provider,
+        target.preset,
+        &target.model,
+        &target.api_key,
+        base,
+        target.wire_api,
+        vault_id,
+        http,
+        preset,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -841,7 +927,7 @@ struct ResponsesClient {
     /// 当前会话作用域的 vault 稳定 id：wire 展开（附件引用 → data URL）的落点解析
     /// （design §4.3——只在发送前展开一次，JSONL 留存恒为引用形态）。
     vault_id: String,
-    preset: &'static ProviderPreset,
+    preset: &'static ProtocolPreset,
 }
 
 impl LlmClient for ResponsesClient {
@@ -925,16 +1011,17 @@ impl ResponsesClient {
         sink: &dyn StreamSink,
     ) -> Result<TurnOutput, CommandError> {
         let body = self.wire_body(request)?;
-        let response = self
-            .http
-            .post(&self.endpoint)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .map_err(|e| {
-                CommandError::new("harness_network_failed", format!("LLM 请求发送失败：{e}"))
-                    .param("reason", e.to_string())
-            })?;
+        let request = self.http.post(&self.endpoint);
+        // 空 Key（generic 预设的本地模型，design Q9）⇒ **不发** Authorization 头。
+        let request = if self.api_key.trim().is_empty() {
+            request
+        } else {
+            request.bearer_auth(&self.api_key)
+        };
+        let response = request.json(&body).send().map_err(|e| {
+            CommandError::new("harness_network_failed", format!("LLM 请求发送失败：{e}"))
+                .param("reason", e.to_string())
+        })?;
         let status = response.status();
         if !status.is_success() {
             // M463 错误路径可观察性：wire 面三件（状态码 / 原始 body / request id）一并带出，
@@ -980,7 +1067,7 @@ fn parse_error_body(text: &str) -> Option<(String, String)> {
 ///（在途停止：用户点了停止，不再等后续事件）。非 JSON 的数据行忽略（厂商 keep-alive 注释行）。
 fn parse_sse(
     response: reqwest::blocking::Response,
-    preset: &ProviderPreset,
+    preset: &ProtocolPreset,
     sink: &dyn StreamSink,
 ) -> Result<TurnOutput, CommandError> {
     Ok(parse_sse_reader(
@@ -1064,7 +1151,7 @@ fn pump_sse<R: BufRead + Send + 'static>(
 /// 协议层行为因此可用字节流直接钉死。
 fn parse_sse_reader<R: BufRead + Send + 'static>(
     reader: R,
-    preset: &ProviderPreset,
+    preset: &ProtocolPreset,
     sink: &dyn StreamSink,
 ) -> TurnOutput {
     let mut output = TurnOutput::default();
@@ -1085,7 +1172,7 @@ fn dispatch_event(
     event: &str,
     data: &str,
     output: &mut TurnOutput,
-    preset: &ProviderPreset,
+    preset: &ProtocolPreset,
     sink: &dyn StreamSink,
 ) {
     if data == "[DONE]" {
@@ -1319,7 +1406,7 @@ struct ChatCompletionsClient {
     effort_supported: bool,
     /// 当前会话作用域的 vault 稳定 id：wire 展开（附件引用 → data URL）的落点解析。
     vault_id: String,
-    preset: &'static ProviderPreset,
+    preset: &'static ProtocolPreset,
     /// 最近一次发送体的翻译期诊断（[`WireDiagnostic`]），由 `complete` 填充、
     /// [`LlmClient::take_wire_diagnostics`] 取走落 sidecar。
     diagnostics: Vec<WireDiagnostic>,
@@ -1406,16 +1493,17 @@ impl ChatCompletionsClient {
     ) -> Result<TurnOutput, CommandError> {
         let (body, diagnostics) = self.build_wire_body(request)?;
         self.diagnostics = diagnostics;
-        let response = self
-            .http
-            .post(&self.endpoint)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .map_err(|e| {
-                CommandError::new("harness_network_failed", format!("LLM 请求发送失败：{e}"))
-                    .param("reason", e.to_string())
-            })?;
+        let request = self.http.post(&self.endpoint);
+        // 空 Key（generic 预设的本地模型，design Q9）⇒ **不发** Authorization 头。
+        let request = if self.api_key.trim().is_empty() {
+            request
+        } else {
+            request.bearer_auth(&self.api_key)
+        };
+        let response = request.json(&body).send().map_err(|e| {
+            CommandError::new("harness_network_failed", format!("LLM 请求发送失败：{e}"))
+                .param("reason", e.to_string())
+        })?;
         let status = response.status();
         if !status.is_success() {
             // 错误路径与 Responses 同一份（design D7）：不做方言特判。
@@ -1806,7 +1894,7 @@ struct ChatCallAccum {
 
 impl ChatStreamState {
     /// 处理一帧 `data:`；返回 `true` 表示终态（不再读流）。
-    fn handle(&mut self, data: &str, preset: &ProviderPreset, sink: &dyn StreamSink) -> bool {
+    fn handle(&mut self, data: &str, preset: &ProtocolPreset, sink: &dyn StreamSink) -> bool {
         let data = data.trim();
         if data.is_empty() {
             return false;
@@ -1914,7 +2002,7 @@ impl ChatStreamState {
 
 fn parse_chat_sse(
     response: reqwest::blocking::Response,
-    preset: &ProviderPreset,
+    preset: &ProtocolPreset,
     sink: &dyn StreamSink,
 ) -> TurnOutput {
     parse_chat_sse_reader(std::io::BufReader::new(response), preset, sink)
@@ -1925,7 +2013,7 @@ fn parse_chat_sse(
 /// `pump_sse` 的轮询收流，**已产出的 text / reasoning 分片保留在返回值里**。
 fn parse_chat_sse_reader<R: BufRead + Send + 'static>(
     reader: R,
-    preset: &ProviderPreset,
+    preset: &ProtocolPreset,
     sink: &dyn StreamSink,
 ) -> TurnOutput {
     let mut state = ChatStreamState::default();
@@ -2405,10 +2493,10 @@ mod tests {
     /// 出厂值）必 FAIL：旧代码 model 永远非空，第一条断言就红——区分度自证。
     #[test]
     fn client_rejects_missing_api_key_and_empty_model() {
-        let mut config = crate::config::HarnessConfig {
-            provider: HarnessProvider::Kimi,
-            ..crate::config::HarnessConfig::default()
-        };
+        let mut config = crate::config::test_harness(
+            "kimi",
+            crate::config::test_provider(crate::config::ProviderPreset::Kimi, "", &[]),
+        );
         // 空 api_key（出厂态）→ api_key 错误先挡。
         let error = match client(&config, "vault-test-1") {
             Err(error) => error,
@@ -2416,7 +2504,7 @@ mod tests {
         };
         assert_eq!(error.code, "harness_api_key_missing");
         // 有 key 无模型（config-only 空清单、model 空串）→ model 错误。
-        config.providers.kimi.api_key = "sk-x".into();
+        config.providers.get_mut("kimi").unwrap().api_key = "sk-x".into();
         let error = match client(&config, "vault-test-1") {
             Err(error) => error,
             Ok(_) => panic!("空 model 必须被拒"),
@@ -2428,8 +2516,8 @@ mod tests {
             error.message
         );
         // 声明清单 + model 解析成功 → 装配通过（reqwest client 构建无副作用）。
-        config.providers.kimi.model = "k3-256k".into();
-        config.providers.kimi.models = vec![crate::config::HarnessModelSpec {
+        config.providers.get_mut("kimi").unwrap().model = "k3-256k".into();
+        config.providers.get_mut("kimi").unwrap().models = vec![crate::config::HarnessModelSpec {
             id: "k3-256k".into(),
             effort: true,
             vision: false,
@@ -2696,7 +2784,7 @@ mod tests {
 
     #[test]
     fn overflow_indicators_match_provider_dialects() {
-        let kimi = preset(&HarnessProvider::Kimi);
+        let kimi = protocol_preset(crate::config::ProviderPreset::Kimi);
         assert!(is_overflow(kimi, "context_length_exceeded", ""));
         // M463：coding 端点的真实超限话术（原文来自真机会话 JSONL 的 llm_error）——
         // 修前三条特征串一条都不命中，这条断言对修前的预设必 FAIL（区分度自证）。
@@ -2705,7 +2793,7 @@ mod tests {
             "harness_http_error",
             "Your request exceeded k3-256k model token limit: 262144"
         ));
-        let deepseek = preset(&HarnessProvider::Deepseek);
+        let deepseek = protocol_preset(crate::config::ProviderPreset::Deepseek);
         assert!(is_overflow(
             deepseek,
             "invalid_request_error",
@@ -2730,7 +2818,7 @@ mod tests {
     /// 非 2xx → TurnError 带 wire 面三件；code/message 与超限判定沿用原口径。
     #[test]
     fn http_error_carries_wire_diagnostics() {
-        let kimi = preset(&HarnessProvider::Kimi);
+        let kimi = protocol_preset(crate::config::ProviderPreset::Kimi);
         let err = http_error_turn_error(
             kimi,
             400,
@@ -2779,7 +2867,7 @@ mod tests {
     /// 内嵌完整 body，本断言必 FAIL（区分度自证）。
     #[test]
     fn http_error_fallback_message_is_capped_too() {
-        let kimi = preset(&HarnessProvider::Kimi);
+        let kimi = protocol_preset(crate::config::ProviderPreset::Kimi);
         let huge = "x".repeat(ERROR_BODY_MAX_CHARS * 2);
         let err = http_error_turn_error(kimi, 502, None, &huge);
         assert_eq!(err.code, "harness_http_error");
@@ -2864,7 +2952,7 @@ mod tests {
     fn sse_parse_with(bytes: &str, sink: &dyn StreamSink) -> TurnOutput {
         parse_sse_reader(
             std::io::Cursor::new(bytes.as_bytes().to_vec()),
-            preset(&HarnessProvider::Deepseek),
+            protocol_preset(crate::config::ProviderPreset::Deepseek),
             sink,
         )
     }
@@ -3385,7 +3473,7 @@ data: {"response":{"output":[],"usage":{"input_tokens":10,"output_tokens":3}}}
         let started = std::time::Instant::now();
         let output = parse_sse_reader(
             std::io::BufReader::new(reader),
-            preset(&HarnessProvider::Kimi),
+            protocol_preset(crate::config::ProviderPreset::Kimi),
             &stream,
         );
         let elapsed = started.elapsed();
@@ -3889,7 +3977,7 @@ data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3}}
     /// 256k context` 是 M562 新增）；Responses 既有文案回归不破。
     #[test]
     fn chat_overflow_indicators_cover_three_dialect_messages() {
-        let kimi = preset(&HarnessProvider::Kimi);
+        let kimi = protocol_preset(crate::config::ProviderPreset::Kimi);
         assert!(is_overflow(
             kimi,
             "invalid_request_error",

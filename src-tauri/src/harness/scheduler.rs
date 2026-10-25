@@ -17,8 +17,6 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use serde::Serialize;
 
-use crate::config::HarnessProvider;
-
 /// 连续自动回合上限（design §12.6.3，Alex 2026-10-18 节点 1 终审定为 5）。代码常量，
 /// 不进 `SubagentsConfig`：可调大会直接抬高「不在场烧配额」的上界，需要继续时用户发言即可清零。
 pub const AUTO_WAKE_CHAIN_MAX: u32 = 5;
@@ -137,9 +135,10 @@ impl ProviderGate {
     }
 }
 
-/// 进程内 provider → 闸的映射（`OnceLock` 单例；键 = provider 的稳定字面量）。
-fn provider_gates() -> &'static Mutex<HashMap<&'static str, Arc<ProviderGate>>> {
-    static GATES: OnceLock<Mutex<HashMap<&'static str, Arc<ProviderGate>>>> = OnceLock::new();
+/// 进程内 provider → 闸的映射（`OnceLock` 单例；键 = provider id，动态字符串——每个 provider
+/// 各自一把闸，同名 id 跨回合复用同一把）。
+fn provider_gates() -> &'static Mutex<HashMap<String, Arc<ProviderGate>>> {
+    static GATES: OnceLock<Mutex<HashMap<String, Arc<ProviderGate>>>> = OnceLock::new();
     GATES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -147,15 +146,14 @@ fn provider_gates() -> &'static Mutex<HashMap<&'static str, Arc<ProviderGate>>> 
 /// `max_concurrent + 1` 传入——闸内部只认这个数，不反向读配置（cron 与交互读的是同一份
 /// 配置，接入点各自传同一口径即可）。
 pub fn acquire_provider_request(
-    provider: HarnessProvider,
+    provider: &str,
     max_concurrent: u32,
     priority: RequestPriority,
 ) -> RequestPermit {
-    let key = provider.as_str();
     let gate = {
         let mut gates = provider_gates().lock().unwrap_or_else(|e| e.into_inner());
         gates
-            .entry(key)
+            .entry(provider.to_string())
             .or_insert_with(|| Arc::new(ProviderGate::new()))
             .clone()
     };
@@ -164,9 +162,9 @@ pub fn acquire_provider_request(
 
 /// 单测 introspection：`(active, waiting_parents, waiting_children)`。生产路径不读它。
 #[cfg(test)]
-pub fn provider_gate_state(provider: HarnessProvider) -> (usize, usize, usize) {
+pub fn provider_gate_state(provider: &str) -> (usize, usize, usize) {
     let gates = provider_gates().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(gate) = gates.get(provider.as_str()) else {
+    let Some(gate) = gates.get(provider) else {
         return (0, 0, 0);
     };
     let state = gate.state.lock().unwrap_or_else(|e| e.into_inner());

@@ -10,10 +10,7 @@
 //! 环境隔离与 harness_runtime.rs 同口径：XDG_CONFIG_HOME + HOME 指向临时目录，
 //! 多测串行（静态锁，env 是进程全局；REVIEW.md 「测试污染真实环境」条）。
 
-use lumir_lib::config::{
-    HarnessConfig, HarnessModelSpec, HarnessPermissions, HarnessProvider, HarnessProviderConfig,
-    HarnessProviders, WireApi,
-};
+use lumir_lib::config::{self, HarnessConfig, HarnessPermissions, ProviderPreset, WireApi};
 use lumir_lib::fs_io::IgnorePolicy;
 use lumir_lib::harness::events::EventSink;
 use lumir_lib::harness::jsonl;
@@ -133,34 +130,22 @@ impl EventSink for CollectSink {
 }
 
 fn mock_config() -> HarnessConfig {
-    HarnessConfig {
-        provider: HarnessProvider::Mock,
-        ..Default::default()
-    }
+    config::test_mock(None)
 }
 
 /// chat 方言的 kimi 配置（change add-harness-chat-completions-dialect）：只用于恢复 /
 /// 留存路径的方言读数——本测试的 client 仍是注入的 mock（不发真实 HTTP）。
 fn kimi_chat_config() -> HarnessConfig {
-    HarnessConfig {
-        provider: HarnessProvider::Kimi,
-        providers: HarnessProviders {
-            kimi: HarnessProviderConfig {
-                api_key: "sk-test".into(),
-                model: "k3-256k".into(),
-                base_url: None,
-                models: vec![HarnessModelSpec {
-                    id: "k3-256k".into(),
-                    effort: true,
-                    vision: false,
-                    window: 262_144,
-                }],
-                wire_api: WireApi::ChatCompletions,
-            },
-            ..Default::default()
-        },
-        ..Default::default()
-    }
+    let mut config = config::test_harness(
+        "kimi",
+        config::test_provider(
+            ProviderPreset::Kimi,
+            "sk-test",
+            &[("k3-256k", true, false, 262_144)],
+        ),
+    );
+    config.providers.get_mut("kimi").unwrap().wire_api = WireApi::ChatCompletions;
+    config
 }
 
 fn drive_turn(

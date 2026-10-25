@@ -543,7 +543,7 @@ pub fn run(
     if !harness.attachment_naming.enabled {
         return NamingOutcome::skipped(&path, CODE_DISABLED);
     }
-    let Some(target) = harness.attachment_naming_target(harness.provider) else {
+    let Some(target) = harness.attachment_naming_target(&harness.provider) else {
         // 无可用 vision 模型：不发起任何请求（design §4.2）。
         return NamingOutcome::skipped(&path, CODE_NO_MODEL);
     };
@@ -972,17 +972,24 @@ mod tests {
     /// 已删除；测试与 `run` 读同一组判据，也就没有第二处真源。
     #[test]
     fn naming_qualification_covers_four_tiers() {
-        use crate::config::{HarnessConfig, HarnessModelSpec, HarnessProvider};
+        use crate::config::{self, HarnessConfig, HarnessModelSpec, ProviderPreset};
         let qualifies = |harness: &HarnessConfig| {
             harness.attachment_naming.enabled
-                && harness.attachment_naming_target(harness.provider).is_some()
+                && harness
+                    .attachment_naming_target(&harness.provider)
+                    .is_some()
         };
-        // 出厂 harness（kimi、空模型清单）：没有 vision 模型 ⇒ 命名不生效。
+        // 出厂 harness（空映射 = 没有 provider）：没有 vision 模型 ⇒ 命名不生效。
         let bare = HarnessConfig::default();
         assert!(!qualifies(&bare));
-        let mut vision = bare.clone();
-        vision.providers.kimi.model = "k3-256k".to_string();
-        vision.providers.kimi.models = vec![HarnessModelSpec {
+        // 有 provider 但没有 vision 模型 ⇒ 同样不生效。
+        let mut vision = config::test_harness(
+            "kimi",
+            config::test_provider(ProviderPreset::Kimi, "sk", &[]),
+        );
+        assert!(!qualifies(&vision), "空模型清单 ⇒ 不发起");
+        vision.providers.get_mut("kimi").unwrap().model = "k3-256k".to_string();
+        vision.providers.get_mut("kimi").unwrap().models = vec![HarnessModelSpec {
             id: "k3-256k".to_string(),
             effort: false,
             vision: true,
@@ -995,8 +1002,7 @@ mod tests {
         let mut bad_model = vision.clone();
         bad_model.attachment_naming.model = Some("not-declared".to_string());
         assert!(!qualifies(&bad_model), "指定了未声明的模型 ⇒ 不发起");
-        let mut mock = vision.clone();
-        mock.provider = HarnessProvider::Mock;
+        let mut mock = config::test_mock(Some("/tmp/fixture.json"));
         assert!(qualifies(&mock), "mock 恒支持 vision");
         mock.attachment_naming.model = Some("anything".to_string());
         assert!(!qualifies(&mock), "mock 下 model 只能是 null");

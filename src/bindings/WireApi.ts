@@ -2,7 +2,7 @@
 
 /**
  * harness 的 wire 方言两档（change add-harness-chat-completions-dialect，design D1）。
- * **闭集合**：取值校验在 Rust 侧完成（与 [`HarnessProvider`] / [`PermissionMode`] 同一形态），
+ * **闭集合**：取值校验在 Rust 侧完成（与 [`ProviderPreset`] / [`PermissionMode`] 同一形态），
  * 运行时拿到的必是两档之一。`Responses` 是缺省档——未写该键的既有配置行为逐字节不变。
  *
  * v1 仅 kimi 实现 `ChatCompletions`；deepseek 配该档在配置校验期回落 `Responses` 并告警

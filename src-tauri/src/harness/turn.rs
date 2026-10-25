@@ -1781,7 +1781,6 @@ impl EventSink for TerminalSink {
 mod tests {
     use super::*;
 
-    use crate::config::HarnessProvider;
     use crate::fs_io::IgnorePolicy;
 
     fn block_with_selection(text: &str) -> ContextBlock {
@@ -1904,10 +1903,7 @@ mod tests {
             },
             vault_id: "vault-test-1".to_string(),
         };
-        let config = HarnessConfig {
-            provider: HarnessProvider::Mock,
-            ..Default::default()
-        };
+        let config = crate::config::test_mock(Some("/tmp/fixture.json"));
 
         let runtime = Runtime::default();
         runtime.acquire_turn(&scope, &config).unwrap();
@@ -1993,10 +1989,7 @@ mod tests {
             },
             vault_id: "vault-test-1".to_string(),
         };
-        let config = HarnessConfig {
-            provider: HarnessProvider::Mock,
-            ..Default::default()
-        };
+        let config = crate::config::test_mock(Some("/tmp/fixture.json"));
 
         let runtime = Runtime::default();
         runtime.acquire_turn(&scope, &config).unwrap();
@@ -2193,10 +2186,7 @@ mod tests {
             },
             vault_id: "vault-test-1".to_string(),
         };
-        let config = HarnessConfig {
-            provider: HarnessProvider::Mock,
-            ..Default::default()
-        };
+        let config = crate::config::test_mock(Some("/tmp/fixture.json"));
 
         let runtime = Runtime::default();
         runtime.acquire_turn(&scope, &config).unwrap();
@@ -2513,10 +2503,9 @@ mod tests {
             vault_id: "vault-test-1".to_string(),
         };
         let config = HarnessConfig {
-            provider: HarnessProvider::Mock,
             // 只读档：vault_patch 进 Ask 档（默认 vault_write 会直接放行写工具，到不了批准闸）。
             permission_mode: crate::config::PermissionMode::ReadOnly,
-            ..Default::default()
+            ..crate::config::test_mock(Some("/tmp/fixture.json"))
         };
 
         // 无人值守槽（cron）：ask 档调用 + 预览失败（目标文件不存在 ⇒ fs_not_found）。

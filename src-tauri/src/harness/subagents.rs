@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::commands::CommandError;
-use crate::config::{HarnessConfig, HarnessProvider};
+use crate::config::HarnessConfig;
 use crate::fs_io::IgnorePolicy;
 
 use super::agents::{AgentCatalog, AgentDefinition};
@@ -1683,7 +1683,7 @@ fn start_task_inner(
     // resume 沿用同一 `run_id`（run 标识整段对话，`segment` 才标第几次调用，design §5.3）。
     let run_id = args.resume.clone().unwrap_or_else(|| new_run_id(hub));
     let segment = retained.as_ref().map(|run| run.segment + 1).unwrap_or(1);
-    let mock_span = if config.provider == HarnessProvider::Mock {
+    let mock_span = if config.is_mock(&config.provider) {
         llm::mock_region_span(config)
     } else {
         1
@@ -1871,8 +1871,10 @@ fn resolve_model(
     retained_model: Option<&str>,
     definition_model: Option<&str>,
 ) -> Result<String, String> {
+    // mock 判定按条目 `preset == Mock`（design §4.5）：fixture 驱动档的清单开放，任意 id 视为
+    // 已声明；其余预设按该条目的模型清单精确匹配。
     let declared = |model: &str| {
-        config.provider == HarnessProvider::Mock
+        config.is_mock(&config.provider)
             || config
                 .model_specs(&config.provider)
                 .iter()
@@ -2865,7 +2867,7 @@ impl RunContext for ChildContext {
 
     fn request_permit(&self) -> Option<scheduler::RequestPermit> {
         Some(scheduler::acquire_provider_request(
-            self.config.provider,
+            &self.config.provider,
             self.config.subagents.max_concurrent,
             RequestPriority::Child,
         ))
@@ -2937,7 +2939,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::config::{HarnessModelSpec, PermissionMode};
+    use crate::config::{self, PermissionMode};
 
     /// 事件收集器（与 `event_sink` 的测试替身同形）。
     #[derive(Default)]
@@ -3000,11 +3002,7 @@ mod tests {
             let fixture = root.join("mock.json");
             std::fs::write(&fixture, script).unwrap();
 
-            let mut config = HarnessConfig {
-                provider: HarnessProvider::Mock,
-                ..Default::default()
-            };
-            config.providers.mock.fixture = Some(fixture.display().to_string());
+            let mut config = config::test_mock(Some(&fixture.display().to_string()));
             tweak(&mut config);
 
             let defaults = crate::config::VaultConfig::default();
@@ -3195,15 +3193,14 @@ mod tests {
 
         // 调用级模型非法 ⇒ model_not_configured（真实 provider 才有模型清单）。
         let f = Fixture::new("validation-model", r#"{"responses":[]}"#, |config| {
-            config.provider = HarnessProvider::Kimi;
-            config.providers.kimi.api_key = "test-key".to_string();
-            config.providers.kimi.models = vec![HarnessModelSpec {
-                id: "model-a".to_string(),
-                effort: false,
-                vision: false,
-                window: 100_000,
-            }];
-            config.providers.kimi.model = "model-a".to_string();
+            *config = config::test_harness(
+                "kimi",
+                config::test_provider(
+                    config::ProviderPreset::Kimi,
+                    "test-key",
+                    &[("model-a", false, false, 100_000)],
+                ),
+            );
         });
         f.research("");
         let mut call = args("research", "做点什么");
@@ -4790,7 +4787,7 @@ mod tests {
     fn provider_gate_prioritises_parent_requests() {
         // 用 Deepseek 键：本模块其它用例都走 Mock，避免共享闸互相干扰。
         // 接口语义：`max_concurrent` 传入 0 ⇒ 许可数 = 0 + 1 = 1。
-        let provider = HarnessProvider::Deepseek;
+        let provider = "deepseek";
         let permits = 0u32;
         // 占住唯一许可。
         let held = scheduler::acquire_provider_request(provider, permits, RequestPriority::Parent);

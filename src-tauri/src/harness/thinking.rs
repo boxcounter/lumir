@@ -37,7 +37,7 @@ use ts_rs::TS;
 
 /// 思考程度三档（Alex 2026-10-06 裁决：Low / High / Max，默认 High）。
 ///
-/// **闭集合**：取值校验在 Rust 侧完成，前端拿到的必是三档之一（与 `UiTheme` / `HarnessProvider`
+/// **闭集合**：取值校验在 Rust 侧完成，前端拿到的必是三档之一（与 `UiTheme` / `WireApi`
 /// 同一形态）。档位名作为专有名词，zh/en 两档界面均保持英文原文，故序列化为小写英文原词。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
@@ -158,21 +158,15 @@ mod tests {
 
     #[test]
     fn effort_supported_reads_schema_declarations() {
-        use crate::config::{
-            HarnessConfig, HarnessModelSpec, HarnessProvider, HarnessProviderConfig,
-            HarnessProviders,
-        };
+        use crate::config::{self, HarnessModelSpec, ProviderPreset};
         // M381 config-only：能力表严格来自配置声明（内置 preset 已彻底删除）——同一批
         // 模型 id，声明与否、声明成什么，读数跟着走；未列出 = 不支持（保守默认）。
-        let declared = |specs: Vec<HarnessModelSpec>| HarnessConfig {
-            providers: HarnessProviders {
-                kimi: HarnessProviderConfig {
-                    models: specs,
-                    ..HarnessProviderConfig::default()
-                },
-                ..HarnessProviders::default()
-            },
-            ..HarnessConfig::default()
+        let declared = |specs: Vec<HarnessModelSpec>| {
+            let mut entry = config::HarnessProviderConfig::empty(ProviderPreset::Kimi);
+            entry.models = specs;
+            let mut harness = config::test_harness("kimi", entry);
+            harness.provider = "kimi".to_string();
+            harness
         };
         let spec = |id: &str, effort: bool| HarnessModelSpec {
             id: id.into(),
@@ -195,19 +189,19 @@ mod tests {
             ("kimi-k2", false),
         ] {
             assert_eq!(
-                harness.effort_supported(&HarnessProvider::Kimi, model),
+                harness.effort_supported("kimi", model),
                 want,
                 "kimi/{model}"
             );
         }
         // 声明翻转：同一个 id 换个声明，读数跟着翻（真源是配置，不是模型名的内在属性）。
         let harness = declared(vec![spec("kimi-k2.6", true)]);
-        assert!(harness.effort_supported(&HarnessProvider::Kimi, "kimi-k2.6"));
+        assert!(harness.effort_supported("kimi", "kimi-k2.6"));
         // 空清单：一切模型都不支持。
         let harness = declared(Vec::new());
-        assert!(!harness.effort_supported(&HarnessProvider::Kimi, "kimi-k3"));
+        assert!(!harness.effort_supported("kimi", "kimi-k3"));
         // mock 恒定支持（fixture 驱动，验收断言档位到达请求）——与声明无关。
-        assert!(harness.effort_supported(&HarnessProvider::Mock, "whatever"));
+        assert!(config::test_mock(None).effort_supported("mock", "whatever"));
     }
 
     // ---- 输出侧：reasoning 文本提取 ----

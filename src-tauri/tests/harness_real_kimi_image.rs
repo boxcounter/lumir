@@ -11,7 +11,7 @@
 //! **key 纪律**：只从 `~/.config/lumir/config.json` 原地读（`LUMIR_CONFIG_JSON` 可改路径），
 //! 绝不打印、绝不写入任何日志 / 断言消息 / JSONL；断言失败时只输出事件 code。
 
-use lumir_lib::config::{HarnessConfig, HarnessProvider};
+use lumir_lib::config;
 use lumir_lib::fs_io;
 use lumir_lib::harness::llm::{self};
 use lumir_lib::harness::thinking::ThinkingEffort;
@@ -69,13 +69,15 @@ fn real_kimi_accepts_input_image_data_url() {
             .filter(|m| !m.trim().is_empty())
             .unwrap_or(configured_model);
 
-        let mut config = HarnessConfig {
-            provider: HarnessProvider::Kimi,
-            ..HarnessConfig::default()
-        };
-        config.providers.kimi.api_key = api_key;
-        config.providers.kimi.model = model.clone();
-        config.providers.kimi.base_url = base_url;
+        let mut config = config::test_harness(
+            "kimi",
+            config::test_provider(config::ProviderPreset::Kimi, &api_key, &[]),
+        );
+        {
+            let entry = config.providers.get_mut("kimi").unwrap();
+            entry.model = model.clone();
+            entry.base_url = base_url;
+        }
 
         let mut client = llm::client(&config, "vault-smoke-1")
             .map_err(|e| format!("client 装配失败：code={}", e.code))?;
