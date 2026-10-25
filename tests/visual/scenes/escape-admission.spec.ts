@@ -282,14 +282,14 @@ test("重建保焦：写回失败回滚后，焦点落在回滚项（不是失�
   await expect(permPop(page)).toBeVisible();
 });
 
-test("就地入口：已被上游消费的 Escape 不关层（handleEscapeKey 与兜底同口径）", async ({ page }) => {
+test("同一条路由：已被上游消费的 Escape 不关层（组件就地处理器与 harness 面板同口径）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await stubHarness(page);
   await page.goto("/");
 
   // 模拟「更靠近事件目标的处理器已经消费了这一拍」：window **capture** 阶段的监听先于任何容器
   // 冒泡处理运行，`defaultPrevented` 因此在我们测的两条入口看到事件之前就是 true。这正是
-  // M718 r1 P1-1 的现场——修复前 `handleEscapeKey` 不看这个标志，照样把容器层关掉。
+  // M718 r1 P1-1 的现场——修复前非 harness 的就地入口不看这个标志，照样把容器层关掉。
   const consumeNextKeydown = async (): Promise<void> => {
     await page.evaluate(() => {
       window.addEventListener(
@@ -302,7 +302,7 @@ test("就地入口：已被上游消费的 Escape 不关层（handleEscapeKey �
     });
   };
 
-  // ① 走 `handleEscapeKey` 的层（⌘P 快速打开）：已消费 → 不关；再按一次（没人消费）→ 关。
+  // ① 组件就地路径（⌘P 快速打开，它的 keydown 监听）：已消费 → 不关；再按一次（没人消费）→ 关。
   await page.locator('.ft-row[title="escape-admission.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("EADM-ALPHA");
   await page.locator(".cm-content").click();
@@ -315,7 +315,7 @@ test("就地入口：已被上游消费的 Escape 不关层（handleEscapeKey �
   await page.keyboard.press("Escape");
   await expect(qo, "没人消费时同一拍才关层（正向对照，证明上一条不是恒真）").toBeHidden();
 
-  // ② 走 `escapeRouter.handle` 的层（harness 权限浮层）：同口径——两条公共入口语义一致。
+  // ② harness 面板自己的监听（权限浮层）：同一条 `escapeRouter.handle`，语义一致。
   await expect(page.locator(".cm-content")).toBeFocused();
   await page.keyboard.press("Meta+Shift+A");
   await expect(page.locator(".lumir-harness")).toBeVisible();
