@@ -281,3 +281,50 @@ test("重建保焦：写回失败回滚后，焦点落在回滚项（不是失�
   await expect(item("vault_write")).toBeFocused();
   await expect(permPop(page)).toBeVisible();
 });
+
+test("就地入口：已被上游消费的 Escape 不关层（handleEscapeKey 与兜底同口径）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await page.goto("/");
+
+  // 模拟「更靠近事件目标的处理器已经消费了这一拍」：window **capture** 阶段的监听先于任何容器
+  // 冒泡处理运行，`defaultPrevented` 因此在我们测的两条入口看到事件之前就是 true。这正是
+  // M718 r1 P1-1 的现场——修复前 `handleEscapeKey` 不看这个标志，照样把容器层关掉。
+  const consumeNextKeydown = async (): Promise<void> => {
+    await page.evaluate(() => {
+      window.addEventListener(
+        "keydown",
+        (event) => {
+          event.preventDefault();
+        },
+        { capture: true, once: true },
+      );
+    });
+  };
+
+  // ① 走 `handleEscapeKey` 的层（⌘P 快速打开）：已消费 → 不关；再按一次（没人消费）→ 关。
+  await page.locator('.ft-row[title="escape-admission.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("EADM-ALPHA");
+  await page.locator(".cm-content").click();
+  const qo = page.locator(".lumir-qo");
+  await page.keyboard.press("Meta+p");
+  await expect(qo).toBeVisible();
+  await consumeNextKeydown();
+  await page.keyboard.press("Escape");
+  await expect(qo, "已被上游消费的 Escape MUST NOT 关层（就地入口要让路）").toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(qo, "没人消费时同一拍才关层（正向对照，证明上一条不是恒真）").toBeHidden();
+
+  // ② 走 `escapeRouter.handle` 的层（harness 权限浮层）：同口径——两条公共入口语义一致。
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.press("Meta+Shift+A");
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await focusPermItem(page, "full_access");
+  await consumeNextKeydown();
+  await page.keyboard.press("Escape");
+  await expect(permPop(page), "已消费的 Escape 不得关浮层").toBeVisible();
+  await expect(page.locator('.lumir-hp-permpop-item[data-id="full_access"]')).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(permPop(page)).toBeHidden();
+  await expect(permChip(page)).toBeFocused();
+});

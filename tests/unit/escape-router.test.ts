@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import {
   createEscapeRouter,
   escapeDisposition,
+  handleEscapeKey,
   installEscapeRouter,
   type EscapeKeyEvent,
   type EscapeLayer,
@@ -317,4 +318,55 @@ test("handle：栈顶层的 close 只由 `handle` 调一次（就地处理器与
   assert.equal(calls, 1);
   router.handle(keyEvent());
   assert.equal(calls, 1, "层自己注销后，下一拍不得再调它");
+});
+
+// ── 就地键处理器的公共入口（handleEscapeKey）：与 router.handle 同口径 ──
+//
+// M718 r1 P1-1 的现场：所有非 harness 浮层共用这个入口，而它原先缺 `defaultPrevented` 让路，
+// 于是「同一个已消费的裸 Escape」走窗口兜底不关层、走就地把层关掉——两条公共入口语义分叉，
+// 而 router 单测全绿（此前整棵树没有一处直接调 handleEscapeKey）。下面这组直接钉这个入口。
+
+test("handleEscapeKey：已消费（defaultPrevented）的裸 Escape 让路——不重复消费、不关层", () => {
+  let closes = 0;
+  const event = keyEvent({ defaultPrevented: true });
+  assert.equal(handleEscapeKey(event, () => (closes += 1)), false, "已消费即让路（返回 false）");
+  assert.equal(closes, 0, "MUST NOT 关层——下游已经消费了这一拍按键");
+  assert.equal(event.defaultPrevented, true, "状态保持（不再多调一次 preventDefault 也无副作用）");
+});
+
+test("handleEscapeKey：未消费的裸 Escape 关层且消费它（正向对照，证明上一条不是恒假）", () => {
+  let closes = 0;
+  const event = keyEvent();
+  assert.equal(handleEscapeKey(event, () => (closes += 1)), true);
+  assert.equal(closes, 1);
+  assert.equal(event.defaultPrevented, true);
+});
+
+test("handleEscapeKey：带修饰键只消费默认行为、不关层；组合期与别键一律让路", () => {
+  let closes = 0;
+  const shift = keyEvent({ shiftKey: true });
+  assert.equal(handleEscapeKey(shift, () => (closes += 1)), true);
+  assert.equal(closes, 0, "⇧Escape 不是关闭意图");
+  const composing = keyEvent({ isComposing: true });
+  assert.equal(handleEscapeKey(composing, () => (closes += 1)), false, "组合期归输入法");
+  assert.equal(composing.defaultPrevented, false, "组合期不 preventDefault");
+  const enter = keyEvent({ key: "Enter" });
+  assert.equal(handleEscapeKey(enter, () => (closes += 1)), false);
+  assert.equal(closes, 0);
+});
+
+test("两条公共入口同口径：同一个已消费的裸 Escape 在 router.handle 与 handleEscapeKey 上都不关层", () => {
+  const router = createEscapeRouter();
+  let routerCloses = 0;
+  router.push({ id: "probe", close: () => (routerCloses += 1) });
+  let directCloses = 0;
+
+  const viaRouter = keyEvent({ defaultPrevented: true });
+  assert.equal(router.handle(viaRouter), false);
+  const viaInPlace = keyEvent({ defaultPrevented: true });
+  assert.equal(handleEscapeKey(viaInPlace, () => (directCloses += 1)), false);
+
+  assert.equal(routerCloses, 0, "兜底：已消费不让路以外的行为");
+  assert.equal(directCloses, 0, "就地把层关掉 = P1-1 的缺陷形态");
+  assert.equal(router.top()?.id, "probe", "层栈原样（两条入口都没动它）");
 });

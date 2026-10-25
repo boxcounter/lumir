@@ -82,7 +82,8 @@
 - [x] 3.5 `tests/unit/escape-router.test.ts` 增补：层 `close` 抛错时栈仍前进（不让一次异常卡死
       后续 Esc）；同一 id 重复 `push` 后 `top` 指向最新一次打开
 - [x] 3.6 **真实监听链**（不以 router 单测代替）：新增 `tests/visual/scenes/escape-admission.spec.ts`
-      （chromium 真实 DOM + tauri-stub 装配）——①权限浮层持焦时 `⇧/⌘/⌃/⌥+Escape` 各不关层、焦点
+      （chromium 真实 DOM + tauri-stub 装配，共 8 条；r1 P1-1 起补第 8 条「已被上游消费的 Escape
+      不关层」）——①权限浮层持焦时 `⇧/⌘/⌃/⌥+Escape` 各不关层、焦点
       不动，裸 `Escape` 才关；②派发 `KeyboardEvent{ key: "Escape", isComposing: true }` 不关层；
       ③会话浮层的 `seg` 监听器重复①②；④effort 提示悬停打开后按 Escape 只收提示、焦点不动；
       ⑤反向验证：把 `panel` / `seg` 监听器改回字面判断 → 对应组必须变红（记录读数）。
@@ -108,13 +109,14 @@
 
 - [ ] 5.1 其他浮层回归（同批新增或扩充场景，逐类一条，每步断言「应用仍在 + 层已收 + 焦点落点」）：
       **覆盖登记（2026-10-25，M718）**：③⌘P / 会话浮层 / ⑧effort 提示 / ②权限浮层已在
-      `tests/visual/scenes/escape-admission.spec.ts`（真实 DOM，7 条用例全绿）覆盖；真机层
+      `tests/visual/scenes/escape-admission.spec.ts`（真实 DOM，8 条用例全绿）覆盖；真机层
       逐类复跑：13（大纲）PASS、17（vault 切换器）PASS、109（权限 chip）PASS、
       search-01（搜索面板）PASS、227（表格全屏：Esc 关闭 + 焦点回编辑器）PASS、09（Emacs 键 /
       键位面板）PASS；223（代码块全屏）在**本分支与 master 同形 FAIL**（hover 通道取不到 bbox，
       归因见完工报告）；230（⌘P）本轮 FAIL 在**键盘注入丢键**（`nots/dp/plan.`，M497 的同族
-      通道缺陷，与 Escape 无关）。**未覆盖**：⑦Context hover 泡、②合并选择器三段在真机层的
-      「选后先断言焦点落在刚选中项」逐段复跑——两者在 chromium 场景里有判据、真机层留待下一批。
+      通道缺陷，与 Escape 无关）。**未覆盖**：⑦Context hover 泡与②合并选择器三段的「选后先断言
+      焦点落在刚选中项」逐段复跑——两者在**真机层与真实 DOM 层都还没有判据**（`escape-admission`
+      只覆盖权限浮层 / 会话浮层 / effort 提示 / ⌘P / 两层顺序 / body 兜底 / 重建保焦两条），留待下一批。
       ①会话浮层选中后按 Esc；②合并选择器分别选 provider / model / effort 后按 Esc（每次选择后先
       断言焦点落在刚选中的那一项）；③⌘P 输入筛选后按 Esc；④大纲浮层按 Esc；⑤搜索面板按 Esc；
       ⑥图片 / 表格 / 代码块全屏遮罩按 Esc；⑦面板内 Context hover 泡出现时按 Esc；⑧effort 提示
