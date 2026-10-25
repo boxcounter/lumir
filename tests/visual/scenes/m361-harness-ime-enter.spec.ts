@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { providerEntry, standardProviders } from "./provider-config";
+
+const PROVIDERS = standardProviders();
 
 // M361 2.3 行为不变量：IME 组合期 Enter 不触发发送。WKWebView 下「确认候选」那拍 Enter 的
 // keydown.isComposing 不可靠（WebKit 先派 compositionend 再派确认 keydown），实现改用
@@ -22,6 +25,9 @@ const VAULT: VaultFixture = {
 
 /** 桩：harness_state 零态 + harness_send 调用记录 + harness:event listen 记录（同 m347 口径）。 */
 async function stubHarnessIme(page: Page): Promise<void> {
+  await page.addInitScript((providers) => {
+    (window as unknown as Record<string, unknown>).__VISUAL_PROVIDERS = providers;
+  }, PROVIDERS);
   await page.addInitScript(() => {
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
@@ -49,7 +55,7 @@ async function stubHarnessIme(page: Page): Promise<void> {
       if (cmd === "config_get" && result?.config) {
         result.config.harness = {
           provider: "mock",
-          providers: { kimi: { model: "k2" }, deepseek: { model: "d" }, mock: { fixture: "f.json" } },
+          providers: (window as unknown as Record<string, any>).__VISUAL_PROVIDERS,
           permissions: { allow: [], deny: [] },
           loop_max: 8,
           warn_ctx_pct: 85,

@@ -1154,15 +1154,15 @@ const COPY_TABLE = {
   // 读数的 hover hint。{provider} = 当前 provider id（配置值读数，不译文）。配置加载时
   // Rust 侧已给同名 warning，本句是界面上的可见出口。
   D402: {
-    zh: "配置未声明任何模型：请在 config.json 的 harness.providers.{provider}.models 下逐项声明（id / effort / vision / window）",
-    en: "No models declared in config: add entries under harness.providers.{provider}.models in config.json (id / effort / vision / window)",
+    zh: "配置未声明任何模型：请在设置面板的「模型接入」里为该 provider 添加模型（id / effort / vision / window）",
+    en: "No models declared in config: add models for this provider under Model access in the settings panel (id / effort / vision / window)",
   },
   // 合并 chip 读屏名的空清单态（D403，M381）：当前 provider 无可用模型（models 清单
   // 为空——见 D402）时 chip 的读屏名。可见面同口径：model 名与分隔符收起，只留
   // effort 读数——MUST NOT 伪造 model 读数（回落 provider id 是 M381 删除的伪造形态）。
   D403: {
-    zh: "模型未配置 · 思考程度：{level}（点击切换）",
-    en: "No model configured · Thinking effort: {level} (click to switch)",
+    zh: "模型未配置 · 思考程度：{level}（点击打开设置）",
+    en: "No model configured · Thinking effort: {level} (click to open settings)",
   },
   // 后端错误信封（D404，M381 config-only）：发送前检查发现当前 provider 未配置任何
   // 模型（harness_model_missing）——models 清单为空 / model 解析为空串时的人话报错，
@@ -1170,8 +1170,8 @@ const COPY_TABLE = {
   // 渲染本句）。配置加载时的 warning（models 未声明）与界面提示态（D402）是它的
   // 同伴出口，三处同一语义。
   D404: {
-    zh: "当前 provider 未配置任何模型：请在 config.json 的 harness.providers 下为该 provider 的 models 逐项声明（id / effort / vision / window）",
-    en: "The active provider has no models configured: declare entries under its models list in config.json (id / effort / vision / window)",
+    zh: "当前 provider 未配置任何模型：请在设置面板的「模型接入」里为该 provider 添加模型（id / effort / vision / window）",
+    en: "The active provider has no models configured: add models for it under Model access in the settings panel (id / effort / vision / window)",
   },
   // 批准闸终态记录（D405–D408，M384）：决策后卡片收敛为一行记录（工具名 + 结果词 +
   // 相对时间戳，实现 src/harness-panel.ts settleApprovalRecord）——待决标题（D339/D340）与
@@ -2031,6 +2031,343 @@ const COPY_TABLE = {
   D697: {
     zh: "配置文件（{path}）无法解析，请先修正 JSON 后再保存",
     en: "The config file ({path}) cannot be parsed: fix the JSON before saving",
+  },
+  // -------------------------------------------------------------------------
+  // D698–D858：设置面板（change add-model-automation-settings-oct24 tasks §5）。
+  // 消费点 `src/settings-panel.ts`；provider 名 / 模型 id / 预设技术名是读数不译文。
+  // -------------------------------------------------------------------------
+  D698: { zh: "设置", en: "Settings" },
+  D699: {
+    zh: "模型接入与自动化 · 配置文件 {path}",
+    en: "Model access and automation · Config file {path}",
+  },
+  D700: { zh: "关闭设置（Escape）", en: "Close settings (Escape)" },
+  D701: { zh: "模型接入", en: "Model access" },
+  D702: {
+    zh: "provider 由你管理 · 列表只换表单；「设为当前使用」才改变当前会话的 provider",
+    en: "Providers are yours to manage · selecting a row only switches the form; “Set as current” is what changes this session's provider",
+  },
+  D703: {
+    zh: "模型清单只来自 {path} 的 harness.providers.<id>.models；Lumir 不内置任何模型表。",
+    en: "The model list comes only from harness.providers.<id>.models in {path}; Lumir ships no built-in model table.",
+  },
+  D704: { zh: "Provider", en: "Provider" },
+  D705: { zh: "+ 添加 provider", en: "+ Add provider" },
+  D706: { zh: "还没有 provider", en: "No providers yet" },
+  D707: {
+    zh: "添加一个 provider 后，才能为它声明模型、选择当前使用项并发送消息。模型清单只来自 config.json。",
+    en: "Add a provider before you can declare models, pick the current one, and send messages. The model list comes only from config.json.",
+  },
+  D708: { zh: "添加第一个 provider", en: "Add the first provider" },
+  D709: { zh: "已配置", en: "Configured" },
+  D710: { zh: "缺 API Key", en: "Missing API key" },
+  D711: { zh: "缺模型", en: "Missing models" },
+  D712: { zh: "缺 Base URL", en: "Missing base URL" },
+  D713: { zh: "装载期已忽略", en: "Ignored at load" },
+  D714: { zh: "当前", en: "Current" },
+  D715: { zh: "设为当前使用", en: "Set as current" },
+  D716: { zh: "添加 provider", en: "Add provider" },
+  D717: {
+    zh: "id 是稳定身份，创建后不可修改；预设决定官方地址、wire 缺省与超限识别，创建后也不可修改。",
+    en: "The id is the stable identity and cannot change after creation; the preset determines the official URL, the default wire API, and over-limit detection, and cannot change either.",
+  },
+  D718: { zh: "provider id", en: "Provider id" },
+  D719: { zh: "小写字母 / 数字 / - / _", en: "lowercase letters / digits / - / _" },
+  D720: {
+    zh: "1–32 个字符，以字母或数字开头，不含点（点分写回路径按 . 分段）。",
+    en: "1–32 characters, starting with a letter or digit, no dots (dotted write paths split on .).",
+  },
+  D721: { zh: "例如 kimi-work、local-lab", en: "for example kimi-work, local-lab" },
+  D722: { zh: "预设", en: "Preset" },
+  D723: { zh: "Kimi", en: "Kimi" },
+  D724: { zh: "DeepSeek", en: "DeepSeek" },
+  D725: { zh: "OpenAI 兼容", en: "OpenAI-compatible" },
+  D726: { zh: "官方地址 + responses 缺省", en: "Official URL + responses by default" },
+  D727: { zh: "官方地址 + responses", en: "Official URL + responses" },
+  D728: {
+    zh: "需填 Base URL + chat_completions 缺省",
+    en: "Base URL required + chat_completions by default",
+  },
+  D729: { zh: "添加", en: "Add" },
+  D730: { zh: "API Key", en: "API key" },
+  D731: { zh: "已配置", en: "Configured" },
+  D732: { zh: "未配置", en: "Not configured" },
+  D733: { zh: "待保存", en: "Pending save" },
+  D734: { zh: "已配置 · …{hint}", en: "Configured · …{hint}" },
+  D735: { zh: "未配置", en: "Not configured" },
+  D736: { zh: "替换", en: "Replace" },
+  D737: { zh: "清除", en: "Clear" },
+  D738: {
+    zh: "明文存储在 config.json 中；任何能读该文件的人都能读到它。已配置的 Key 不会在这里回显。",
+    en: "Stored in plain text in config.json; anyone who can read that file can read it. A configured key is never echoed here.",
+  },
+  D739: {
+    zh: "可留空：本地端点通常不需要 Key，空 = 请求不发送 Authorization 头。若填写，明文存储在 config.json 中；任何能读该文件的人都能读到它。",
+    en: "May stay empty: local endpoints usually need no key, and empty means no Authorization header is sent. If filled in, it is stored in plain text in config.json and anyone who can read that file can read it.",
+  },
+  D740: { zh: "模型清单", en: "Model list" },
+  D741: { zh: "+ 添加模型", en: "+ Add model" },
+  D742: { zh: "模型 id", en: "Model id" },
+  D743: { zh: "effort", en: "effort" },
+  D744: { zh: "vision", en: "vision" },
+  D745: { zh: "window", en: "window" },
+  D746: {
+    zh: "还没有声明任何模型。至少添加一个模型后，这个 provider 才可用。",
+    en: "No models declared yet. Add at least one model before this provider can be used.",
+  },
+  D747: { zh: "window 单位是 tokens（{min}–{max}）。", en: "window is in tokens ({min}–{max})." },
+  D748: {
+    zh: "未声明 {fields}；保存后按默认值显式写入（false / false / 131072）",
+    en: "{fields} not declared; saving writes the defaults explicitly (false / false / 131072)",
+  },
+  D749: { zh: "第 {n} 行模型 id", en: "Model id in row {n}" },
+  D750: { zh: "第 {n} 行 effort 能力", en: "Effort capability in row {n}" },
+  D751: { zh: "第 {n} 行 vision 能力", en: "Vision capability in row {n}" },
+  D752: { zh: "第 {n} 行上下文窗口", en: "Context window in row {n}" },
+  D753: { zh: "删除第 {n} 行模型", en: "Remove model in row {n}" },
+  D754: {
+    zh: "高级 · 预设 / Base URL / Wire 方言",
+    en: "Advanced · preset / base URL / wire API",
+  },
+  D755: { zh: "创建后不可修改", en: "Cannot change after creation" },
+  D756: {
+    zh: "预设决定官方地址、是否发送 store:false、超限识别与 wire 缺省。换协议请新增一个 provider 再删除这个。",
+    en: "The preset determines the official URL, whether store:false is sent, over-limit detection, and the default wire API. To switch protocols, add a provider and delete this one.",
+  },
+  D757: { zh: "Base URL", en: "Base URL" },
+  D758: { zh: "自定义", en: "Custom" },
+  D759: { zh: "官方地址", en: "Official URL" },
+  D760: { zh: "未填", en: "Not set" },
+  D761: { zh: "恢复默认", en: "Restore default" },
+  D762: { zh: "必填，例如 http://127.0.0.1:8080/v1", en: "Required, for example http://127.0.0.1:8080/v1" },
+  D763: { zh: "{url}（官方地址）", en: "{url} (official URL)" },
+  D764: {
+    zh: "generic 预设在已有 Key 或模型时必填；完全空的条目可以先保存，之后再补。",
+    en: "The generic preset requires a base URL once a key or model exists; a completely empty entry can be saved first and filled in later.",
+  },
+  D765: { zh: "留空 = 使用官方地址（{url}）。", en: "Empty means the official URL ({url})." },
+  D766: {
+    zh: "带密钥的请求会发往这个地址。非官方地址意味着把它交给了该主机的运维者。",
+    en: "Requests carrying your key go to this address. A non-official address hands it to that host's operator.",
+  },
+  D767: {
+    zh: "请求会发往这个地址。请确认这是你信任的主机。",
+    en: "Requests go to this address. Make sure you trust this host.",
+  },
+  D768: { zh: "Wire 方言", en: "Wire API" },
+  D769: {
+    zh: "deepseek 的 chat 档在 v1 未实现，选项已置灰；强行写入会在装载期回落 responses 并告警。",
+    en: "The deepseek chat dialect is not implemented in v1, so the option is disabled; forcing it falls back to responses at load time with a warning.",
+  },
+  D770: {
+    zh: "缺省是 {wire}。responses = POST {base}/responses；chat_completions = POST {base}/chat/completions。",
+    en: "The default is {wire}. responses = POST {base}/responses; chat_completions = POST {base}/chat/completions.",
+  },
+  D771: {
+    zh: "文件中的值是「{raw}」，不是合法方言；装载期已回落为 {effective}，保存后写为 {effective}。",
+    en: "The file contains “{raw}”, which is not a valid dialect; it fell back to {effective} at load time and will be written as {effective} when saved.",
+  },
+  D772: { zh: "删除此 provider", en: "Delete this provider" },
+  D773: {
+    zh: "会从 config.json 的 providers 表里移除这一条。",
+    en: "Removes this entry from the providers table in config.json.",
+  },
+  D774: {
+    zh: "这是最后一个 provider；删除后将没有可用的 provider。",
+    en: "This is the last provider; after deleting it there will be none left.",
+  },
+  D775: { zh: "删除…", en: "Delete…" },
+  D776: { zh: "删除 provider「{id}」？", en: "Delete provider “{id}”?" },
+  D777: {
+    zh: "删除是草稿动作：点「保存」才写入 config.json；未保存前可以取消。",
+    en: "Deleting is a draft action: nothing is written to config.json until you press Save, and you can cancel before that.",
+  },
+  D778: { zh: "它是当前使用的 provider。删除后切换到：", en: "It is the current provider. After deleting it, switch to:" },
+  D779: { zh: "新的当前项", en: "New current provider" },
+  D780: {
+    zh: "这是最后一个 provider。删除后将没有 provider，发送消息会被挡下，直到你添加新的 provider。",
+    en: "This is the last provider. After deleting it there will be none, and sending messages will be blocked until you add a new provider.",
+  },
+  D781: { zh: "会话命名正在使用它。删除后：", en: "Session naming uses it. After deleting it:" },
+  D782: { zh: "图片命名正在使用它。删除后：", en: "Image naming uses it. After deleting it:" },
+  D783: {
+    zh: "它的模型覆盖 session_naming.model 会一并清除（属于旧 provider 的清单）。",
+    en: "Its model override session_naming.model is cleared as well (it belongs to the old provider's list).",
+  },
+  D784: {
+    zh: "模型覆盖会一并清除；新目标若没有声明 vision 的模型，粘贴图片会跳过命名。",
+    en: "The model override is cleared as well; if the new target declares no vision model, pasted images skip naming.",
+  },
+  D785: {
+    zh: "该 provider 有未保存的修改，删除会一并丢弃这些修改。",
+    en: "This provider has unsaved changes; deleting discards them too.",
+  },
+  D786: { zh: "跟随当前 provider", en: "Follow the current provider" },
+  D787: { zh: "自动化", en: "Automation" },
+  D788: {
+    zh: "全局 · 与所选 provider 无关；增删或切换 provider 不会复制开关、也不会改变它们的值",
+    en: "Global · independent of the selected provider; adding, removing, or switching providers neither copies these switches nor changes their values",
+  },
+  D789: {
+    zh: "四个开关是 harness.* 下的全局键，不属于任何 provider。会话命名与图片命名的目标默认跟随当前 provider，可在各自开关旁单独指定 provider 与模型；每组目标只有一份全局键，每次触发只发往解析出的一个目标。",
+    en: "The four switches are global harness.* keys and belong to no provider. Naming targets follow the current provider by default, and each switch can target a specific provider and model; each target is a single global key and every trigger goes to exactly one resolved target.",
+  },
+  D790: { zh: "自动压缩", en: "Auto-compact" },
+  D791: {
+    zh: "上下文接近上限时压缩并开启新会话，旧会话文件完整保留。",
+    en: "Compacts and starts a new session when context nears its limit; the old session file is kept intact.",
+  },
+  D792: {
+    zh: "全局 · 下一回合生效 · 产生一次模型调用",
+    en: "Global · takes effect next turn · one extra model call",
+  },
+  D793: { zh: "会话命名", en: "Session naming" },
+  D794: {
+    zh: "首轮生成；此后每 5 轮重估，话题漂移可提前（两次评估至少隔 3 轮）。初始生成失败后，在满足 3 轮间隔的下一个正常完成轮重试；已有标题时失败不立即重试，按自然节奏再来。单飞行，结果异步落盘。",
+    en: "Generated on the first turn; re-evaluated every 5 turns, earlier on topic drift (at least 3 turns between evaluations). After a failed initial generation, retried on the next normally completed turn that satisfies the 3-turn gap; with an existing title, failures wait for the natural cadence. Single-flight, written asynchronously.",
+  },
+  D795: {
+    zh: "全局 · 从下一次触发点起生效 · 内容出域 + 一次便宜档调用",
+    en: "Global · takes effect from the next evaluation trigger · content leaves the app + one cheap call",
+  },
+  D796: { zh: "图片命名", en: "Image naming" },
+  D797: {
+    zh: "每次粘贴新图时异步生成语义文件名；目标模型未声明 vision 时跳过、保留暂存名，不换模型。",
+    en: "Generates a semantic filename asynchronously whenever a new image is pasted; if the target model does not declare vision, naming is skipped and the temporary name is kept without switching models.",
+  },
+  D798: {
+    zh: "全局 · 关闭立即生效；重新开启需重启应用 · 出域 + 一次视觉调用",
+    en: "Global · turning it off takes effect immediately; turning it back on needs an app restart · content leaves the app + one vision call",
+  },
+  D799: { zh: "子代理", en: "Subagents" },
+  D800: {
+    zh: "允许主对话派生并行子代理；关闭后所有委派被拒绝（子代理调用的总开关）。",
+    en: "Lets the main conversation spawn parallel subagents; when off, every delegation is refused (the master switch for subagent calls).",
+  },
+  D801: {
+    zh: "全局 · 下一回合生效 · 每个子代理独立计费",
+    en: "Global · takes effect next turn · each subagent is billed separately",
+  },
+  D802: { zh: "默认", en: "Default" },
+  D803: { zh: "重新开启需重启应用", en: "Turning it back on needs an app restart" },
+  D804: { zh: "发往", en: "Send to" },
+  D805: { zh: "{label}发往的 provider", en: "Provider that {label} sends to" },
+  D806: { zh: "{label}使用的模型", en: "Model that {label} uses" },
+  D807: { zh: "跟随当前 provider（默认）", en: "Follow the current provider (default)" },
+  D808: { zh: "{id} · 当前", en: "{id} · current" },
+  D809: { zh: "{id} · 不存在，已回落", en: "{id} · does not exist, fell back" },
+  D810: { zh: "生效模型（默认：{model}）", en: "Effective model (default: {model})" },
+  D811: { zh: "生效模型（默认）", en: "Effective model (default)" },
+  D812: {
+    zh: "{id} · 不存在，已回落生效模型",
+    en: "{id} · not in the list, fell back to the effective model",
+  },
+  D813: { zh: "{id} · 不在清单，会跳过", en: "{id} · not in the list, will be skipped" },
+  D814: { zh: "✓ vision", en: "✓ vision" },
+  D815: { zh: "· 未声明 vision", en: "· vision not declared" },
+  D816: {
+    zh: "已关闭：不发起命名调用；选择保留（{target}），重新开启后按此目标执行",
+    en: "Off: no naming calls; the selection is kept ({target}) and will be used again after you turn it back on",
+  },
+  D817: {
+    zh: "已关闭：不发起命名调用；当前没有可用目标",
+    en: "Off: no naming calls; there is no usable target right now",
+  },
+  D818: { zh: "（无模型）", en: "(no model)" },
+  D819: {
+    zh: "实际：无可用 provider · 粘贴图片不会改名",
+    en: "Effective: no usable provider · pasted images will not be renamed",
+  },
+  D820: {
+    zh: "实际：无可用 provider · 不会生成标题",
+    en: "Effective: no usable provider · no title will be generated",
+  },
+  D821: {
+    zh: "实际：{target} ✓ vision · {source} · {timing}",
+    en: "Effective: {target} ✓ vision · {source} · {timing}",
+  },
+  D822: {
+    zh: "实际：{target} · {source} · 未声明 vision → 粘贴图片不会改名，保留暂存名 · {timing}",
+    en: "Effective: {target} · {source} · vision not declared → pasted images keep their temporary names · {timing}",
+  },
+  D823: {
+    zh: "实际：{target} · {source} · 不会生成标题 · {timing}",
+    en: "Effective: {target} · {source} · no title will be generated · {timing}",
+  },
+  D824: {
+    zh: "实际：{target} · {source} · {timing}",
+    en: "Effective: {target} · {source} · {timing}",
+  },
+  D825: {
+    zh: "· 覆盖模型 {model} 不在清单，已回落生效模型",
+    en: "· override model {model} is not in the list, fell back to the effective model",
+  },
+  D826: { zh: "跟随当前 provider", en: "Follows the current provider" },
+  D827: { zh: "指定目标", en: "Explicit target" },
+  D828: {
+    zh: "覆盖项悬空，已回落当前 provider",
+    en: "the override is dangling and fell back to the current provider",
+  },
+  D829: { zh: "下一次评估触发点生效", en: "takes effect at the next evaluation trigger" },
+  D830: { zh: "下一次粘贴生效", en: "takes effect on the next paste" },
+  D831: { zh: "还原此页默认", en: "Restore page defaults" },
+  D832: { zh: "没有未保存的修改", en: "No unsaved changes" },
+  D833: { zh: "有未保存的修改", en: "Unsaved changes" },
+  D834: { zh: "保存中…", en: "Saving…" },
+  D835: {
+    zh: "已保存 · 按各行说明的时机生效",
+    en: "Saved · takes effect at the timing each line describes",
+  },
+  D836: { zh: "已保存 · 重启后生效", en: "Saved · takes effect after a restart" },
+  D837: { zh: "需要修正（{count} 项）", en: "Needs fixes ({count})" },
+  D838: {
+    zh: "外部冲突：配置文件已在外部修改",
+    en: "Conflict: the config file was changed externally",
+  },
+  D839: { zh: "文件无法解析，保存已禁用", en: "The file cannot be parsed; saving is disabled" },
+  D840: { zh: "正在读取配置文件…", en: "Reading the config file…" },
+  D841: { zh: "保存", en: "Save" },
+  D842: { zh: "放弃未保存的修改？", en: "Discard unsaved changes?" },
+  D843: { zh: "继续编辑", en: "Keep editing" },
+  D844: { zh: "放弃修改", en: "Discard" },
+  D845: { zh: "配置文件已在外部修改", en: "The config file was changed externally" },
+  D846: {
+    zh: "打开面板之后，config.json 在别处被改动过。保存会以本页的值为准覆盖这些字段；重新载入会丢弃本页草稿。",
+    en: "config.json was changed elsewhere after this panel opened. Saving overwrites those fields with this page's values; reloading discards this page's draft.",
+  },
+  D847: { zh: "重新载入", en: "Reload" },
+  D848: { zh: "仍然保存", en: "Save anyway" },
+  D849: { zh: "config.json 无法解析", en: "config.json cannot be parsed" },
+  D850: { zh: "第 {line} 行：{message}", en: "Line {line}: {message}" },
+  D851: {
+    zh: "{path} 当前无法按配置读取，生效的是默认配置；先修复该文件再回来保存。字段暂为只读。",
+    en: "{path} cannot be read as config right now and the defaults are in effect; fix the file before saving. Fields are read-only for now.",
+  },
+  D852: { zh: "配置提示", en: "Config notes" },
+  D853: { zh: "设置面板读取失败：{message}", en: "Couldn't load settings: {message}" },
+  D854: { zh: "保存失败：{message}", en: "Couldn't save: {message}" },
+  D855: { zh: "provider 列表", en: "Provider list" },
+  D856: { zh: "provider 预设", en: "Provider presets" },
+  D857: { zh: "未知预设（装载期已忽略）", en: "Unknown preset (ignored at load)" },
+  D858: {
+    zh: "该条目的预设或字段非法，装载期已忽略。它是冻结状态：不能在这里编辑；可以去 config.json 修正，或直接删除它。",
+    en: "This entry has an invalid preset or field and was ignored at load. It is frozen: it cannot be edited here; fix it in config.json or delete it.",
+  },
+  // D859–D862：composer 模型 chip 的动态 provider 空态（design §8；消费点
+  // `src/harness-panel.ts` 的 applySelChip / buildSelPop）。
+  D859: { zh: "未配置模型", en: "No model configured" },
+  D860: {
+    zh: "当前没有可用的 provider（点击打开设置）",
+    en: "No usable provider right now (click to open settings)",
+  },
+  D861: { zh: "去设置", en: "Open settings" },
+  D862: { zh: "还没有可用的 provider", en: "No usable provider yet" },
+  // D864–D865：设置面板入口命令（change add-model-automation-settings-oct24 tasks §5.1；
+  // 消费点 src/command-meta.ts 与 src/keys.ts 的 docKey）。
+  D864: { zh: "设置面板", en: "Settings panel" },
+  D865: {
+    zh: "设置面板（change add-model-automation-settings-oct24 tasks §5.1）：⌘, 是 macOS 的「设置」约定键，表内与原生菜单 accelerator 均无占用；菜单项「设置…」不带 accelerator（菜单若占 ⌘,，[keys] 重绑之后原键仍会经菜单分发，等于重绑失效）。面板打开时再按一次 ⌘, 关闭；有未保存修改时先转「放弃未保存的修改？」两步确认。",
+    en: "The settings panel (change add-model-automation-settings-oct24 tasks §5.1): ⌘, is the macOS convention for settings, free both in the table and among the native menu accelerators; the “Settings…” menu item carries no accelerator (if the menu took ⌘, the old key would still fire through it after a [keys] rebind, making the rebind pointless). Pressing ⌘, again closes the panel; with unsaved changes it first switches to a two-step “Discard unsaved changes?” confirmation.",
   },
 } satisfies Record<string, CopyEntry>;
 

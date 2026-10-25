@@ -63,6 +63,11 @@ const SELECT_ALL_MENU_ID: &str = "lumir.select_all";
 #[cfg(target_os = "macos")]
 const KEYBOARD_SHORTCUTS_MENU_ID: &str = "lumir.keyboard_shortcuts";
 
+/// 自定义「设置…」菜单项 id（change add-model-automation-settings-oct24 tasks §5.1）：应用
+/// 菜单（第一个子菜单）里的鼠标入口。见 add_settings_item。
+#[cfg(target_os = "macos")]
+const SETTINGS_MENU_ID: &str = "lumir.settings";
+
 /// 菜单命令事件名（M131）：前端 main.ts 订阅它，把菜单点击交给统一键位层的命令实现。
 /// 载荷见 menu_command_of（菜单只说 undo / redo 这类平台术语，映射到前端命令 id 是前端的事）。
 #[cfg(target_os = "macos")]
@@ -408,7 +413,14 @@ fn install_menu_overrides(app: &tauri::AppHandle) -> tauri::Result<()> {
     let close_swapped = swap_close_window_items(&menu, app)?;
     let select_all_swapped = swap_select_all_item(&menu, app)?;
     let shortcuts_added = add_keyboard_shortcuts_item(&menu, app)?;
-    if quit_guarded || undo_redo_swapped || close_swapped || select_all_swapped || shortcuts_added {
+    let settings_added = add_settings_item(&menu, app)?;
+    if quit_guarded
+        || undo_redo_swapped
+        || close_swapped
+        || select_all_swapped
+        || shortcuts_added
+        || settings_added
+    {
         app.set_menu(menu)?;
     }
     Ok(())
@@ -449,6 +461,40 @@ fn add_keyboard_shortcuts_item<R: tauri::Runtime>(
     let item =
         MenuItemBuilder::with_id(KEYBOARD_SHORTCUTS_MENU_ID, "Keyboard Shortcuts").build(app)?;
     help.append(&item)?;
+    Ok(true)
+}
+
+/// App 菜单 → **Settings…**（change add-model-automation-settings-oct24 tasks §5.1）：设置面板的
+/// 鼠标入口。**不带 accelerator**——菜单键等价会在 NSApplication 分发阶段截获物理键，`⌘,` 的
+/// `[keys]` 重绑会因此变成假开关（M131 / M149 / M627 同一机制的三次实证）；键位仍只由
+/// `src/keys.ts` 的 `app.settings-open` 一条绑定承担。点击经 MENU_COMMAND_EVENT 回到前端同一条
+/// 命令层（`app.settings-open` 的 toggle），MUST NOT 另开分发路径或第二个面板实例。
+///
+/// 文案锁 en（与原生菜单 File / Edit / Help 及 "Keyboard Shortcuts" 一致，先例 D149–D151）。
+/// 结构性假设（tauri 2.12.4 `Menu::default`）：macOS 上第一个菜单项是应用子菜单，其前两项是
+/// About 与分隔符（`menu.rs:182-196`）——本项插在 About 之后的 macOS 惯例位置（index 2）；
+/// 结构不符即保持默认菜单并打 stderr，`⌘,` 与命令仍可用。
+#[cfg(target_os = "macos")]
+fn add_settings_item<R: tauri::Runtime>(
+    menu: &Menu<R>,
+    app: &tauri::AppHandle<R>,
+) -> tauri::Result<bool> {
+    let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.into_iter().next() else {
+        eprintln!(
+            "lumir: settings menu not installed: Menu::default() has no app submenu (tauri menu structure changed)"
+        );
+        return Ok(false);
+    };
+    let items = app_menu.items()?;
+    if items.len() < 2 {
+        eprintln!(
+            "lumir: settings menu not installed: app submenu has {} items (tauri menu structure changed)",
+            items.len()
+        );
+        return Ok(false);
+    }
+    let item = MenuItemBuilder::with_id(SETTINGS_MENU_ID, "Settings…").build(app)?;
+    app_menu.insert(&item, 2)?;
     Ok(true)
 }
 
@@ -721,6 +767,9 @@ fn menu_command_of(id: &str) -> Option<&'static str> {
         // 前端命令 id 本身（`describe-bindings` 是 app.describe-bindings 的后半段）——
         // 前端 MENU_COMMANDS 把它接到同一条 toggle 上。
         KEYBOARD_SHORTCUTS_MENU_ID => Some("describe-bindings"),
+        // change add-model-automation-settings-oct24：Settings… 与 ⌘, 走同一条命令实现
+        // （前端 MENU_COMMANDS 把它接到 app.settings-open 的 toggle 上）。
+        SETTINGS_MENU_ID => Some("settings"),
         _ => None,
     }
 }

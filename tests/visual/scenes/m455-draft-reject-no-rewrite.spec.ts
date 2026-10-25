@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { providerEntry, standardProviders } from "./provider-config";
+
+const PROVIDERS = standardProviders();
 
 // M455 回归：harness composer **发送被能力闸拒绝**时，回滚必须把输入区连同光标一起还原。
 //
@@ -29,6 +32,9 @@ const EMPTY_STATE = {
 
 /** 场景桩：harness_send 回能力闸拒绝信封（`rejectGate`）；草稿读回 null、写盘按次记录。 */
 async function stubDraftReject(page: Page): Promise<void> {
+  await page.addInitScript((providers) => {
+    (window as unknown as Record<string, unknown>).__VISUAL_PROVIDERS = providers;
+  }, PROVIDERS);
   await page.addInitScript((snapshot) => {
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
@@ -53,7 +59,7 @@ async function stubDraftReject(page: Page): Promise<void> {
       if (cmd === "config_get" && result?.config) {
         result.config.harness = {
           provider: "mock",
-          providers: { kimi: { model: "k2" }, deepseek: { model: "d" }, mock: { fixture: "f.json" } },
+          providers: (window as unknown as Record<string, any>).__VISUAL_PROVIDERS,
           permissions: { allow: [], deny: [] },
           loop_max: 8,
           warn_ctx_pct: 85,

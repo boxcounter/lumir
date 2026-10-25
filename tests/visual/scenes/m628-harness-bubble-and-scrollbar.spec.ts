@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { providerEntry, standardProviders } from "./provider-config";
+
+const PROVIDERS = standardProviders();
 
 // M628（Alex 2026-10-23 两条视觉调整）：
 //
@@ -51,6 +54,9 @@ const THEMES: Theme[] = ["light", "dark", "eink"];
 /** M351 场景桩（同构）：config_get 补 [harness] 段；harness_send 只记录不回复
  *  （回复经 __fireHarnessEvent 注入）。 */
 async function stubHarness(page: Page, state: unknown): Promise<void> {
+  await page.addInitScript((providers) => {
+    (window as unknown as Record<string, unknown>).__VISUAL_PROVIDERS = providers;
+  }, PROVIDERS);
   await page.addInitScript((snapshot) => {
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
@@ -66,7 +72,7 @@ async function stubHarness(page: Page, state: unknown): Promise<void> {
       if (cmd === "config_get" && result?.config) {
         result.config.harness = {
           provider: "mock",
-          providers: { kimi: { model: "k2" }, deepseek: { model: "d" }, mock: { fixture: "f.json" } },
+          providers: (window as unknown as Record<string, any>).__VISUAL_PROVIDERS,
           permissions: { allow: [], deny: [] },
           loop_max: 8,
           warn_ctx_pct: 85,

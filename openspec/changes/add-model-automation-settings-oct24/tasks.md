@@ -46,17 +46,17 @@
 
 ## 5. 前端
 
-- [ ] 5.1 命令 `app.settings-open`（global、默认 `⌘,`）+ 应用菜单「设置…」项（无 accelerator、结构假设失败降级）
-- [ ] 5.2 `src/settings-panel.ts`：模态面板、provider 列表（顺序 / 状态 / 当前徽标 / 选中）、添加表单（id + 预设 + 重复 id / 字符集错误）、编辑表单（基础区 / 高级区 / 危险区）、空清单态
-- [ ] 5.3 删除确认（右列原地，不弹二级 modal）：当前使用替代选择、两个命名目标的「跟随当前 / 指定」、未保存草稿提示、删最后一个的后果文案；删除只改草稿
-- [ ] 5.4 草稿状态机：clean / dirty / saving / saved / blocked / conflict / fileInvalid；保存中禁用全部编辑控件（输入 / 选择 / 开关 / 行增删 / 添加 / 删除 / 设为当前使用 / 页级还原 / 取消）
-- [ ] 5.5 可访问性：背景 `inert`、`role="dialog"` + `aria-modal`、焦点圈定与交还、三条关闭路径、脏面板两步确认、`role="status"` polite live region
-- [ ] 5.6 字段错误按 path 回填、`aria-invalid` / `aria-errormessage`、首错聚焦；重复模型 id **两行**都标错；provider 条目诊断挂在条目上；顶部横幅（回落 / 文件不可解析 / 冲突 + 两个动作）
-- [ ] 5.7 自动化节独立成全局卡片，`renderAutomation` 与 provider 路径解耦；会话命名 / 图片命名两行内联两个目标选择（provider + 模型，默认跟随 / 生效模型 = 删键）与**一行**生效说明；关闭功能时禁用但保留选择与草稿；图片命名的模型选项标 vision；删除 provider 后重算选项与说明；**不渲染独立摘要框**
-- [ ] 5.8 `src/harness-panel.ts`：删除 `PROVIDER_IDS` 闭集合推断；`harnessSelection` 读动态 id 与 `configured` 读数；chip 空态「未配置模型」+「去设置」；选中写 `harness.provider`、模型写 `providers.<id>.model`
-- [ ] 5.9 `src/copy-data.ts`：D402 / D403 / D404 改为「去设置面板」并补 `vision`；新增 provider 缺失 / 空清单 / generic 缺 Base URL 的文案；会话命名节奏、图片命名资格与跳过、命名目标「跟随当前 / 指定 / 已关闭但保留」文案按 design §10
-- [ ] 5.10 样式按 design §11 落地（provider 列表选中 / 当前徽标 / 添加表单 / 删除确认 / 空态；eink 1.4px 边框、无阴影、黑白实底）
-- [ ] 5.11 面板关闭后 chip 重新取数一次（沿用 `configGet`），不引入全局配置状态层
+- [x] 5.1 命令 `app.settings-open`（global、默认 `⌘,`）+ 应用菜单「设置…」项（无 accelerator、结构假设失败降级）
+- [x] 5.2 `src/settings-panel.ts`：模态面板、provider 列表（顺序 / 状态 / 当前徽标 / 选中）、添加表单（id + 预设 + 重复 id / 字符集错误）、编辑表单（基础区 / 高级区 / 危险区）、空清单态
+- [x] 5.3 删除确认（右列原地，不弹二级 modal）：当前使用替代选择、两个命名目标的「跟随当前 / 指定」、未保存草稿提示、删最后一个的后果文案；删除只改草稿
+- [x] 5.4 草稿状态机：clean / dirty / saving / saved / blocked / conflict / fileInvalid；保存中禁用全部编辑控件（输入 / 选择 / 开关 / 行增删 / 添加 / 删除 / 设为当前使用 / 页级还原 / 取消）
+- [x] 5.5 可访问性：背景 `inert`、`role="dialog"` + `aria-modal`、焦点圈定与交还、三条关闭路径、脏面板两步确认、`role="status"` polite live region
+- [x] 5.6 字段错误按 path 回填、`aria-invalid` / `aria-errormessage`、首错聚焦；重复模型 id **两行**都标错；provider 条目诊断挂在条目上；顶部横幅（回落 / 文件不可解析 / 冲突 + 两个动作）
+- [x] 5.7 自动化节独立成全局卡片，`renderAutomation` 与 provider 路径解耦；会话命名 / 图片命名两行内联两个目标选择（provider + 模型，默认跟随 / 生效模型 = 删键）与**一行**生效说明；关闭功能时禁用但保留选择与草稿；图片命名的模型选项标 vision；删除 provider 后重算选项与说明；**不渲染独立摘要框**
+- [x] 5.8 `src/harness-panel.ts`：删除 `PROVIDER_IDS` 闭集合推断；`harnessSelection` 读动态 id 与 `configured` 读数；chip 空态「未配置模型」+「去设置」；选中写 `harness.provider`、模型写 `providers.<id>.model`
+- [x] 5.9 `src/copy-data.ts`：D402 / D403 / D404 改为「去设置面板」并补 `vision`；新增 provider 缺失 / 空清单 / generic 缺 Base URL 的文案；会话命名节奏、图片命名资格与跳过、命名目标「跟随当前 / 指定 / 已关闭但保留」文案按 design §10
+- [x] 5.10 样式按 design §11 落地（provider 列表选中 / 当前徽标 / 添加表单 / 删除确认 / 空态；eink 1.4px 边框、无阴影、黑白实底）
+- [x] 5.11 面板关闭后 chip 重新取数一次（沿用 `configGet`），不引入全局配置状态层
 
 ## 6. 文档与规格
 
@@ -72,11 +72,35 @@
 - [ ] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [ ] 7.2 `scripts/docs-check.sh` 通过（含 `openspec-archive-check.mjs` 的 MODIFIED 段落对账）
 - [ ] 7.3 Rust 单测：迁移（补齐 / 幂等 / 显式值优先 / 写失败 / 未知 id / 与退役 model 同写）；映射解析（非法条目只丢自己 / preset 非法 / generic 缺 base_url / mock 保留 id / id 字符集）；active 回退（显式 / 缺省 / configured 优先 / 空映射 / 悬空 / mock 不被缺省选中）；生效模型（显式 `providers.<id>.model` 优先、不在清单与空清单都保留 + warning、缺省取清单首项）；命名目标（合法 / 悬空 / 缺省；失效覆盖模型——会话命名回落生效模型、图片命名保留原值并跳过；编辑——目标非 mock、model 在清单内、换 provider 清 model、同一笔 provider+model 按新目标校验、Reset 删键、开关关闭不清值）；删除保护（active / 命名引用 / 草稿外的替代目标 / 删最后一个（含只剩 mock）/ model 覆盖清除 / 文件逐字节不变）；快照 raw/生效 / revision / 坏条目可见；revision 冲突（外部改两个命名 `model` 后删除 provider → Conflict，不得静默清值）；patch 类型拒绝 / preset 不可改 / 重复 id / 未知子键保留；页级还原保留条目；非回归三组
-- [ ] 7.4 前端单测（`pnpm test`）：增删改流程、重复 id、删除保护控件按 `references` 出现、删除后 active / 命名目标改写、空清单、保存中控件禁用、错误回填与 ARIA（重复模型 id 两行都标）、逐项恢复默认仅显式存在、内联命名目标四形态（跟随 / 指定 / 悬空回落 / 关闭禁用但保留）、换 provider 清 model、会话失效覆盖模型回落且不显示「会跳过」、显式模型 + 空清单仍取显式值、图片 vision 标记与跳过分支的来源 + 时机、自动化不随 provider 变化、单页无 TAB、反向文案断言（无独立摘要框、无「每轮生成」）
+- [x] 7.4 前端单测（`pnpm test`）：增删改流程、重复 id、删除保护控件按 `references` 出现、删除后 active / 命名目标改写、空清单、保存中控件禁用、错误回填与 ARIA（重复模型 id 两行都标）、逐项恢复默认仅显式存在、内联命名目标四形态（跟随 / 指定 / 悬空回落 / 关闭禁用但保留）、换 provider 清 model、会话失效覆盖模型回落且不显示「会跳过」、显式模型 + 空清单仍取显式值、图片 vision 标记与跳过分支的来源 + 时机、自动化不随 provider 变化、单页无 TAB、反向文案断言（无独立摘要框、无「每轮生成」）
 - [ ] 7.5 视觉场景：1280×800 与 900×700 下打开即完整可见（O1/O2）、无水平溢出、Tab 不逃出面板；三主题各一屏 + 空清单 / 添加（重复 id 错误）/ 删除确认 / 命名关闭（选择禁用但保留）/ 图片无 vision / 会话覆盖模型回落 / 显式模型 + 空清单 / 校验错误 / 保存中各一屏
 - [ ] 7.6 `scripts/gate.sh quick` 与本地 `scripts/gate.sh visual` 通过
-- [ ] 7.7 回扫既有验收场景里对 provider 选项、模型 chip、D402–D404、模型清单空态、`harness_model_missing` 的期望，逐条改准（只新增场景不算完成）
-- [ ] 7.8 新增验收场景：`⌘,` 与菜单打开同一面板；添加 provider 后 chip 出现；重复 id 被拒且文件不变；删除当前 provider 需替代目标；删除被命名引用项后读数更新；删除最后一个 provider 的空态与发送错误；旧格式配置启动后补齐 preset 且二次启动不再写
+- [x] 7.7 回扫既有验收场景里对 provider 选项、模型 chip、D402–D404、模型清单空态、`harness_model_missing` 的期望，逐条改准（只新增场景不算完成）
+- [x] 7.8 新增验收场景：`⌘,` 与菜单打开同一面板；添加 provider 后 chip 出现；重复 id 被拒且文件不变；删除当前 provider 需替代目标；删除被命名引用项后读数更新；删除最后一个 provider 的空态与发送错误；旧格式配置启动后补齐 preset 且二次启动不再写
 - [ ] 7.9 真机验收套件全量跑一遍，证据落 `.local/acceptance/`
-- [ ] 7.10 全程只用合成 Key（形如 `test-key-…`）；MUST NOT 读取或写入真实 `~/.config/lumir` 与真实 vault
+- [x] 7.10 全程只用合成 Key（形如 `test-key-…`）；MUST NOT 读取或写入真实 `~/.config/lumir` 与真实 vault
 - [ ] 7.11 原型回归：`node openspec/changes/add-model-automation-settings-oct24/evidence/prototype-semantics-check.mjs`（36 项）与 `node .../evidence/provider-rules-check.mjs`（47 项）全绿；实现 PR 把规则判定表移植成 Rust 单测后删除 `provider-rules-check.mjs`
+
+## 实现批记录（M734 前端批，2026-10-25）
+
+- **已完成**：tasks §5.1–§5.11（面板 `src/settings-panel.ts` / `.css`、⌘, 与 App 菜单
+  「Settings…」、chip 动态 id / `configured` / 「去设置」、copy D402–D404 与 D698–D865）。
+- **测试**：`tests/unit/settings-panel.test.ts`（32 项：草稿 / patch / 命名目标四形态 / 错误按
+  path 回填 / 页级还原 / 反向文案）；`tests/unit/harness-panel-control.test.ts` 改写为动态
+  schema；`tests/visual/scenes/m734-settings-panel.spec.ts`（10 项结构 / 几何 / 三主题 /
+  删除保护 / 保存中禁用）；13 个既有 harness 视觉场景的 provider 桩收敛到
+  `tests/visual/scenes/provider-config.ts`（M738 finding 的视觉侧）；验收
+  `scripts/acceptance/lib/app.mjs` 的 mock / kimi 条目补 `preset`；新增场景
+  `scripts/acceptance/scenarios/250-settings-panel-provider-crud.md`。
+- **实跑读数**：`pnpm test` 1437 passed；`gate.sh quick` 结果见批次报告；本地视觉
+  `playwright test`（13 个改动场景 + 新设置场景）72 passed；`run.mjs --check` 241 个场景通过；
+  两个原型回归脚本 36 / 47 全绿。
+- **未完成 / 待裁决**：
+  1. **视觉像素基线**（7.5 的像素面）：新场景的候选截图在
+     `.local/reviews/m734-settings/`，等 Alex 过目后才提交基线（基线更新是人肉裁决点）。
+     结构断言已进 CI 口径。
+  2. **真机全量验收**（7.9）：本批只跑 `--check` 与场景静态校验；250 的主链真跑归批次收尾。
+  3. **菜单入口的真机点击**：套件无菜单栏动作，菜单与 ⌘, 共用 `app.settings-open` 的 toggle
+     由代码结构保证（`MENU_COMMANDS.settings`），真机手点归 Alex 的手感项。
+  4. `provider-rules-check.mjs` 的退役（7.11 后半句）未在本批执行：规则表已在 M732/M733 的
+     Rust 单测里覆盖，但删除脚本需要一次独立的“规则表已全部移植”对账，留给归档前的收口。

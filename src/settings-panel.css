@@ -1,0 +1,1121 @@
+/* 设置面板（change add-model-automation-settings-oct24 design §11；capability `settings`）。
+ *
+ * 只消费 token，不新增色值；三主题下布局几何一致（border-box，外框尺寸不随主题变）。
+ * eink：面板描边 1.4px、无阴影；按钮 / 开关 / 分段控件用黑白实底。
+ *
+ * 滚动分档（REVIEW.md『新增 / 修改 overflow 容器没先定档』条）：唯一滚动容器是
+ * `.lumir-set-body`（纵向阅读面，右缘 ≥8px 留白、无逐行常驻钮）⇒ native-overlay 档，
+ * 已在 `tests/unit/scrollbar-registry.test.ts` 登记；本文件不写任何 `::-webkit-scrollbar`，
+ * 否则该容器的两条轴会一起翻成占位经典条（M663 实测）。
+ */
+
+.lumir-set-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: var(--scrim);
+}
+
+/* author 的 display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .lumir-bindings-overlay）。 */
+.lumir-set-overlay[hidden] {
+  display: none;
+}
+
+.lumir-set-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 780px;
+  max-height: calc(100vh - 64px);
+  min-height: 0;
+  background: var(--preview-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r10);
+  box-shadow: var(--shadow-raise);
+  outline: none;
+  opacity: 1;
+  transition: opacity 120ms ease;
+}
+
+:root[data-theme="eink"] .lumir-set-panel {
+  border-width: 1.4px;
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lumir-set-panel {
+    transition: none;
+  }
+}
+
+/* ── 头部 ─────────────────────────────────────────────────────────────── */
+.lumir-set-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 24px 12px;
+}
+
+.lumir-set-titles {
+  min-width: 0;
+}
+
+.lumir-set-title {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.004em;
+}
+
+.lumir-set-sub {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.lumir-set-close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--r5);
+  background: transparent;
+  color: var(--text-3);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lumir-set-close:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+/* ── 正文 ─────────────────────────────────────────────────────────────── */
+/* `flex: 1 1 auto`（basis auto）而不是 `flex: 1`（basis 0）：卡片高度是内容驱动的，basis 0
+   的 flex-grow 项在「没有自由空间」的列里会被压成 0 高度——整块正文不可见、不可点，而且
+   innerText 为空（实测：改前正文高度 0）。max-height 命中的时候由 flex-shrink + min-height:0
+   把正文收进滚动区。 */
+.lumir-set-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lumir-set-banner-slot:empty {
+  display: none;
+}
+
+.lumir-set-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lumir-set-section + .lumir-set-section {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.lumir-set-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lumir-set-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.lumir-set-section-note {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.lumir-set-pane {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r8);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lumir-set-source {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.lumir-set-diags[hidden] {
+  display: none;
+}
+
+.lumir-set-diag {
+  border: 1px solid var(--border-soft);
+  border-left: 2px solid var(--pending);
+  border-radius: var(--r6);
+  background: var(--pending-tint);
+  padding: 8px 12px;
+}
+
+.lumir-set-diag-title {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.lumir-set-diag-list {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.lumir-set-diag-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  margin-right: 6px;
+}
+
+/* ── provider 列表 + 表单 ─────────────────────────────────────────────── */
+.lumir-set-provider-layout {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+}
+
+.lumir-set-rail {
+  flex: none;
+  width: 176px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-soft);
+  padding-right: 0;
+}
+
+.lumir-set-rail-head {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 0 8px 6px;
+}
+
+.lumir-set-provider-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.lumir-set-provider-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lumir-set-provider-row:hover {
+  background: var(--hover);
+}
+
+.lumir-set-provider-row.is-on {
+  background: var(--accent-tint);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.lumir-set-provider-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.lumir-set-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--text-3);
+  background: transparent;
+}
+
+.lumir-set-dot.is-ok {
+  border-color: var(--ok);
+  background: var(--ok);
+}
+
+.lumir-set-pname {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumir-set-ppreset {
+  font-size: 10px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lumir-set-current {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+:root[data-theme="eink"] .lumir-set-current {
+  background: #000;
+  color: #fff;
+  padding: 0 4px;
+  border-radius: var(--r4);
+}
+
+.lumir-set-add {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--accent);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lumir-set-add:hover {
+  background: var(--hover);
+}
+
+.lumir-set-form {
+  flex: 1;
+  min-width: 0;
+  padding-left: 14px;
+  outline: none;
+}
+
+.lumir-set-form-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.lumir-set-provider-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.lumir-set-provider-title {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.lumir-set-provider-sub {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.lumir-set-provider-status {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.lumir-set-provider-status[data-tone="ok"] {
+  color: var(--ok);
+}
+
+.lumir-set-provider-status[data-tone="warn"] {
+  color: var(--pending);
+}
+
+.lumir-set-provider-head .lumir-set-current {
+  margin-left: 0;
+}
+
+.lumir-set-provider-head > .lumir-set-btn {
+  margin-left: auto;
+}
+
+/* ── 表单件 ───────────────────────────────────────────────────────────── */
+.lumir-set-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.lumir-set-field:last-child {
+  margin-bottom: 0;
+}
+
+.lumir-set-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lumir-set-field-head-right {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.lumir-set-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.lumir-set-field-state {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.lumir-set-input,
+.lumir-set-select {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r5);
+  background: var(--preview-bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.lumir-set-mono {
+  font-family: var(--font-mono);
+}
+
+.lumir-set-input:focus-visible,
+.lumir-set-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+:root[data-theme="eink"] .lumir-set-input:focus-visible,
+:root[data-theme="eink"] .lumir-set-select:focus-visible {
+  outline-color: #000;
+}
+
+.lumir-set-input[aria-invalid="true"],
+.lumir-set-select[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.lumir-set-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+.lumir-set-field-error {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--danger);
+}
+
+.lumir-set-inline-warning {
+  margin: 0;
+  padding: 6px 12px;
+  border-left: 1px solid var(--pending);
+  background: var(--pending-tint);
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.lumir-set-key-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+/* ── 按钮 ─────────────────────────────────────────────────────────────── */
+.lumir-set-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r5);
+  background: var(--preview-bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lumir-set-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.lumir-set-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.lumir-set-btn:focus-visible,
+.lumir-set-btn-link:focus-visible,
+.lumir-set-icon-btn:focus-visible,
+.lumir-set-adv-toggle:focus-visible,
+.lumir-set-close:focus-visible,
+.lumir-set-add:focus-visible,
+.lumir-set-preset:focus-visible,
+.lumir-set-switch:focus-visible,
+.lumir-set-provider-row:focus-visible,
+.lumir-set-naming-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+:root[data-theme="eink"] .lumir-set-btn:focus-visible,
+:root[data-theme="eink"] .lumir-set-btn-link:focus-visible,
+:root[data-theme="eink"] .lumir-set-icon-btn:focus-visible,
+:root[data-theme="eink"] .lumir-set-adv-toggle:focus-visible,
+:root[data-theme="eink"] .lumir-set-close:focus-visible,
+:root[data-theme="eink"] .lumir-set-add:focus-visible,
+:root[data-theme="eink"] .lumir-set-preset:focus-visible,
+:root[data-theme="eink"] .lumir-set-switch:focus-visible,
+:root[data-theme="eink"] .lumir-set-naming-select:focus-visible {
+  outline-color: #000;
+}
+
+.lumir-set-btn-primary {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--accent-fill-text);
+}
+
+.lumir-set-btn-primary:hover:not(:disabled) {
+  background: var(--accent-fill);
+  filter: brightness(1.05);
+}
+
+.lumir-set-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-2);
+}
+
+.lumir-set-btn-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: transparent;
+}
+
+.lumir-set-btn-danger.lumir-set-btn-danger:not(:disabled) {
+  background: var(--danger-tint);
+}
+
+.lumir-set-btn-link {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.lumir-set-btn-link:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.lumir-set-icon-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r4);
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lumir-set-icon-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
+}
+
+/* 危险实底：白字（eink 黑底白字） */
+.lumir-set-btn-danger.lumir-set-danger-solid,
+.lumir-set-delete-card .lumir-set-btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+:root[data-theme="eink"] .lumir-set-delete-card .lumir-set-btn-danger {
+  background: #000;
+  border-color: #000;
+  color: #fff;
+}
+
+/* ── 添加表单 / 预设分段 ─────────────────────────────────────────────── */
+.lumir-set-add-card,
+.lumir-set-delete-card {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r8);
+  padding: 12px 14px;
+}
+
+.lumir-set-preset-row {
+  display: flex;
+  gap: 8px;
+}
+
+.lumir-set-preset {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 28px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r6);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.lumir-set-preset.is-on {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.lumir-set-preset-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lumir-set-preset-desc {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+:root[data-theme="eink"] .lumir-set-preset.is-on {
+  background: #000;
+  border-color: #000;
+  color: #fff;
+}
+
+:root[data-theme="eink"] .lumir-set-preset.is-on .lumir-set-preset-desc {
+  color: #fff;
+}
+
+.lumir-set-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ── 模型清单 ─────────────────────────────────────────────────────────── */
+.lumir-set-models-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lumir-set-model-table {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r6);
+  overflow: hidden;
+}
+
+.lumir-set-model-head,
+.lumir-set-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px 64px 110px 28px;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 6px;
+}
+
+.lumir-set-model-head {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.lumir-set-model-head-cell {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.lumir-set-model-row + .lumir-set-model-row {
+  border-top: 1px solid var(--border-soft);
+}
+
+.lumir-set-mi {
+  height: 26px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r4);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.lumir-set-mi:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.lumir-set-mi[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.lumir-set-cb {
+  width: 14px;
+  height: 14px;
+  margin: 0 auto;
+  accent-color: var(--accent-fill);
+}
+
+.lumir-set-row-del {
+  justify-self: center;
+}
+
+.lumir-set-row-note,
+.lumir-set-row-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.lumir-set-row-error {
+  color: var(--danger);
+}
+
+.lumir-set-models-empty {
+  margin: 0;
+  padding: 8px 6px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+/* ── 高级区 / 危险区 ─────────────────────────────────────────────────── */
+.lumir-set-advanced {
+  margin-top: 12px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+}
+
+.lumir-set-adv-toggle {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.lumir-set-adv-toggle::before {
+  content: "▸ ";
+}
+
+.lumir-set-adv-toggle[aria-expanded="true"]::before {
+  content: "▾ ";
+}
+
+.lumir-set-adv-body {
+  padding-top: 10px;
+}
+
+.lumir-set-danger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+}
+
+.lumir-set-danger-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lumir-set-danger-desc {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.lumir-set-ignore-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-left: 1px solid var(--pending);
+  background: var(--pending-tint);
+  padding: 8px 12px;
+}
+
+/* ── 删除确认 ─────────────────────────────────────────────────────────── */
+.lumir-set-delete-block {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-left: 1px solid var(--pending);
+  background: var(--pending-tint);
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.lumir-set-delete-block strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.lumir-set-delete-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.lumir-set-delete-row .lumir-set-select {
+  max-width: 220px;
+}
+
+.lumir-set-delete-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.lumir-set-delete-card[data-delete-block="draft"] {
+  color: var(--pending);
+}
+
+/* ── 空态 ─────────────────────────────────────────────────────────────── */
+.lumir-set-empty {
+  max-width: 360px;
+  margin: 12px auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.lumir-set-empty-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lumir-set-empty-body {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+/* ── 自动化 ───────────────────────────────────────────────────────────── */
+.lumir-set-auto-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.lumir-set-auto-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.lumir-set-auto-row + .lumir-set-auto-row {
+  border-top: 1px solid var(--border-soft);
+}
+
+.lumir-set-auto-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lumir-set-badge {
+  font-size: 10px;
+  color: var(--text-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r4);
+  padding: 0 4px;
+  font-weight: 400;
+}
+
+.lumir-set-auto-desc {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+.lumir-set-auto-meta {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.lumir-set-auto-restart {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--pending);
+}
+
+.lumir-set-auto-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.lumir-set-target-label {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.lumir-set-target-slots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lumir-set-naming-select {
+  height: 28px;
+  max-width: 240px;
+  min-width: 0;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r5);
+  background: var(--preview-bg);
+  color: var(--text);
+  font-size: 11.5px;
+  font-family: inherit;
+}
+
+.lumir-set-naming-select:disabled {
+  opacity: 0.45;
+}
+
+.lumir-set-auto-effective {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+.lumir-set-auto-effective.is-bad {
+  color: var(--danger);
+}
+
+.lumir-set-auto-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lumir-set-switch {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.lumir-set-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: transform 120ms ease;
+}
+
+.lumir-set-switch.is-on {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+}
+
+.lumir-set-switch.is-on .lumir-set-knob {
+  background: #fff;
+  transform: translateX(14px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lumir-set-knob {
+    transition: none;
+  }
+}
+
+:root[data-theme="eink"] .lumir-set-switch {
+  background: #fff;
+  border: 1px solid #000;
+}
+
+:root[data-theme="eink"] .lumir-set-switch .lumir-set-knob {
+  background: #000;
+}
+
+:root[data-theme="eink"] .lumir-set-switch.is-on {
+  background: #000;
+  border-color: #000;
+}
+
+:root[data-theme="eink"] .lumir-set-switch.is-on .lumir-set-knob {
+  background: #fff;
+}
+
+/* ── 顶部横幅 ─────────────────────────────────────────────────────────── */
+.lumir-set-banner {
+  border-radius: var(--r6);
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  font-size: 12px;
+  margin-top: 12px;
+}
+
+.lumir-set-banner.is-danger {
+  border-color: var(--danger);
+  background: var(--danger-tint);
+}
+
+.lumir-set-banner.is-warn {
+  border-color: var(--pending);
+  background: var(--pending-tint);
+}
+
+.lumir-set-banner-title {
+  font-weight: 600;
+}
+
+.lumir-set-banner-body {
+  margin: 2px 0 0;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.lumir-set-banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ── 底部 ─────────────────────────────────────────────────────────────── */
+.lumir-set-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding: 12px 24px;
+}
+
+.lumir-set-spacer {
+  flex: 1;
+}
+
+.lumir-set-status {
+  font-size: 11.5px;
+  color: var(--text-3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumir-set-status[data-tone="dirty"] {
+  color: var(--text-2);
+}
+
+.lumir-set-status[data-tone="saved"] {
+  color: var(--ok);
+}
+
+.lumir-set-status[data-tone="error"] {
+  color: var(--danger);
+}
+
+.lumir-set-status[data-tone="warn"] {
+  color: var(--pending);
+}
+
+.lumir-set-actions,
+.lumir-set-discard {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lumir-set-discard[hidden],
+.lumir-set-actions[hidden] {
+  display: none;
+}
+
+.lumir-set-discard-title {
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+:root[data-theme="eink"] .lumir-set-btn-primary,
+:root[data-theme="eink"] .lumir-set-switch.is-on {
+  filter: none;
+}

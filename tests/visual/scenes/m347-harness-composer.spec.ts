@@ -1,6 +1,19 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { providerEntry, standardProviders } from "./provider-config";
+
+const PROVIDERS = {
+  kimi: providerEntry("kimi", {
+    model: "k2",
+    models: [
+      { id: "k2", effort: false, window: 262144 },
+      { id: "kimi-k3", effort: true, window: 1048576 },
+    ],
+  }),
+  deepseek: providerEntry("deepseek", { models: [{ id: "d", effort: true, window: 131072 }] }),
+  mock: providerEntry("mock", { fixture: "f.json" }),
+};
 
 // M347 composer 控制行 + 复制 + 进度：合并选择器 chip（M373：model · effort 双读数 +
 // 三维单浮层 + mock 可选列表隐藏 + effort 不支持置灰/段禁用/hover hint）、ctx% 读数
@@ -62,6 +75,9 @@ const VAULT: VaultFixture = {
  *   4. harness:event 注入钩子（记录 listen 的 handler id，经 runCallback 送达）；
  *   5. 剪贴板 writeText 桩（__copied 记录写入内容——复制源的判据面）。 */
 async function stubHarnessComposer(page: Page): Promise<void> {
+  await page.addInitScript((providers) => {
+    (window as unknown as Record<string, unknown>).__VISUAL_PROVIDERS = providers;
+  }, PROVIDERS);
   await page.addInitScript(() => {
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
@@ -115,17 +131,7 @@ async function stubHarnessComposer(page: Page): Promise<void> {
       if (cmd === "config_get" && result?.config) {
         result.config.harness = {
           provider: "mock",
-          providers: {
-            kimi: {
-              model: "k2",
-              models: [
-                { id: "k2", effort: false, window: 262144 },
-                { id: "kimi-k3", effort: true, window: 1048576 },
-              ],
-            },
-            deepseek: { model: "d", models: [{ id: "d", effort: true, window: 131072 }] },
-            mock: { fixture: "f.json" },
-          },
+          providers: (window as unknown as Record<string, any>).__VISUAL_PROVIDERS,
           permissions: { allow: [], deny: [] },
           // M414：权限 chip 的读数来自 `permission_mode`（闭集合；控制行第三位）。
           permission_mode: "vault_write",

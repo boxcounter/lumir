@@ -269,24 +269,49 @@ export async function writeConfig({
   if (keys !== undefined) cfg.keys = keys;
   const h = {};
   const now = Date.now();
+  /** 模型清单条目补齐四项显式声明（缺 vision / window 时按 schema 默认写死，避免场景配置
+   *  只写两项就依赖装载期 warning 兜底；`id` 原样）。 */
+  const normalizeModels = (items) =>
+    (items ?? []).map((item) => ({
+      id: item.id,
+      effort: item.effort === true,
+      vision: item.vision === true,
+      window: item.window ?? 131072,
+    }));
   if (harness !== undefined) {
     if (harness.provider !== undefined) h.provider = harness.provider;
     // mock fixture 里的时刻记号（M616）：`$nextMinute` / `$nowMinute` / `$pastMinute` 与
     // `[cron]` 表同一份换算（同一个 `now`），脚本里因此可以写「注册时未到点 / 今日已过点」——
     // 对话式注册的 `at` 由**模型给出的工具参数**决定，仓库里的 fixture 是静态 JSON，写死时刻
     // 会让场景随当天时段漂到另一种语义。无记号的 fixture 原样引用（既有场景逐字节不变）。
-    if (harness.fixture !== undefined)
-      h.providers = { mock: { fixture: await materializeMockFixture(resolveSeedPath(harness.fixture), now) } };
+    // 动态 provider 附（change add-model-automation-settings-oct24 §2.1，M738 finding 的验收侧
+    // 收口）：条目必须显式带 `preset`——缺键会被装载期回落成 generic + warning（场景 90 的
+    // mock 回放因此会变成真实请求）。`configured` 是后端派生读数，MUST NOT 写进 config.json。
+    if (harness.fixture !== undefined) {
+      h.providers = {
+        mock: { preset: "mock", fixture: await materializeMockFixture(resolveSeedPath(harness.fixture), now) },
+      };
+    }
     // M372（场景 99）：kimiModel 写了就构造 kimi provider 节（model + 占位 api_key）——
     // k3-256k 等自定义模型的能力判定（思考 chip 置灰判据）按 config 现算，不发消息就验得到；
     // 发消息的场景不会配这个键（真 api_key 不进验收环境）。
-    if (harness.kimiModel !== undefined) h.providers = { kimi: { model: harness.kimiModel, api_key: "acceptance-dummy" } };
-    // M373（场景 102；M381 起 config-only）：schema 的 model 维度——逐项 { id, effort, window }
-    // 清单写进 providers.kimi.models（不写 = 空清单 + 应用侧 warning + 浮层 D402 提示态——
-    // 内置 preset 已彻底删除；写了即声明清单，能力/窗口按声明现算）。
+    if (harness.kimiModel !== undefined) {
+      h.providers = {
+        ...(h.providers ?? {}),
+        kimi: {
+          preset: "kimi",
+          model: harness.kimiModel,
+          api_key: "acceptance-dummy",
+          models: normalizeModels(harness.kimiModels ?? []),
+        },
+      };
+    }
+    // M373（场景 102；M381 起 config-only）：schema 的 model 维度——逐项 { id, effort, vision,
+    // window } 清单写进 providers.kimi.models（不写 = 空清单 + 应用侧 warning + 浮层 D402 提示态
+    // ——内置 preset 已彻底删除；写了即声明清单，能力/窗口按声明现算）。
     if (harness.kimiModels !== undefined) {
       h.providers = h.providers ?? {};
-      h.providers.kimi = { ...(h.providers.kimi ?? {}), models: harness.kimiModels };
+      h.providers.kimi = { preset: "kimi", ...(h.providers.kimi ?? {}), models: normalizeModels(harness.kimiModels) };
     }
     if (harness.permissions !== undefined) h.permissions = harness.permissions;
     // 权限模式（M481，change add-harness-permission-modes）：三档闭集合 `read_only` / `vault_write`

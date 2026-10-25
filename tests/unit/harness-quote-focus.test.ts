@@ -531,6 +531,7 @@ async function mountPanel(paneOpen: boolean): Promise<Mounted> {
     openVaultPath: () => {},
     isVaultDir: () => false,
     revealVaultDir: () => {},
+    openSettings: () => {},
   });
   if (paneOpen) openPane();
   await flush();

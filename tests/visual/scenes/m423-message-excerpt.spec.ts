@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { providerEntry, standardProviders } from "./provider-config";
+
+const PROVIDERS = standardProviders();
 
 // M423（change harness-message-excerpt）：harness transcript 消息摘录的结构 / 行为断言与新表面基线。
 //
@@ -54,6 +57,9 @@ const STATE = {
 };
 
 async function stubHarness(page: Page, snapshot: typeof STATE = STATE): Promise<void> {
+  await page.addInitScript((providers) => {
+    (window as unknown as Record<string, unknown>).__VISUAL_PROVIDERS = providers;
+  }, PROVIDERS);
   await page.addInitScript((snapshot) => {
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
@@ -74,7 +80,7 @@ async function stubHarness(page: Page, snapshot: typeof STATE = STATE): Promise<
       if (cmd === "config_get" && result?.config) {
         result.config.harness = {
           provider: "mock",
-          providers: { kimi: { model: "k2" }, deepseek: { model: "d" }, mock: { fixture: "f.json" } },
+          providers: (window as unknown as Record<string, any>).__VISUAL_PROVIDERS,
           permissions: { allow: [], deny: [] },
           loop_max: 8,
           warn_ctx_pct: 85,

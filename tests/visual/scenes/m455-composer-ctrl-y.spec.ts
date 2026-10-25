@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { providerEntry, standardProviders } from "./provider-config";
+
+const PROVIDERS = standardProviders();
 
 // M455 回归：composer 内的 **⌃Y 必须命中统一键位表的 `editor.yank`**（`text` 作用域），
 // 把编辑器侧 ⌃K 写进**跨面共用** kill 槽的内容插回来。
@@ -28,6 +31,9 @@ const EMPTY_STATE = {
 };
 
 async function stubHarness(page: Page): Promise<void> {
+  await page.addInitScript((providers) => {
+    (window as unknown as Record<string, unknown>).__VISUAL_PROVIDERS = providers;
+  }, PROVIDERS);
   await page.addInitScript((snapshot) => {
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
@@ -41,7 +47,7 @@ async function stubHarness(page: Page): Promise<void> {
       if (cmd === "config_get" && result?.config) {
         result.config.harness = {
           provider: "mock",
-          providers: { kimi: { model: "k2" }, deepseek: { model: "d" }, mock: { fixture: "f.json" } },
+          providers: (window as unknown as Record<string, any>).__VISUAL_PROVIDERS,
           permissions: { allow: [], deny: [] },
           loop_max: 8,
           warn_ctx_pct: 85,
