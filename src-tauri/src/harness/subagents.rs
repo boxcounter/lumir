@@ -127,9 +127,13 @@ struct WakeState {
     /// 已收敛、尚未被某个回合消费的通知。**链触顶 / 停止时不清空**（design §12.6.3
     /// 「`pending` 保留」）——「继续」要据此起回合；只有回合真正起成 / 用户回合并入后才消费。
     pending: Vec<NoticeRun>,
-    /// `pending` 里已经写进父会话历史（上屏）的 run id：链触顶时先上屏但保留 pending，
-    /// 「继续」或用户回合不得把同一条通知再插一次（「同一语义两处真源」的反面：历史里
-    /// 只能有一份）。
+    /// `pending` 里已经认领上屏的 run id：链触顶时先上屏但保留 pending，「继续」或用户
+    /// 回合不得把同一条通知再插一次（「同一语义两处真源」的反面：历史里只能有一份）。
+    ///
+    /// 标记**不等价于**「已经在历史里」，两个分支的顺序不同：触顶分支先标 `delivered`
+    /// 再放锁、随后才 `insert_notices_into_session`（评审 r3 P2-1 窗口 A 的取舍），标记
+    /// 之后、insert 之前的窗口对任何读者可见；起回合分支才是 insert 成功之后才标。故判
+    /// 「已上屏」不能只看本集合，必须等落定（测试侧口径见夹具 `wait_blocked_settled`）。
     delivered: HashSet<String>,
     /// 当前批次 id（pending 为空时下一次入队重新铸）。
     batch: Option<String>,
@@ -794,7 +798,9 @@ fn process_wake(hub: &Arc<HubInner>) {
     wake.deadline = None;
     wake.force = false;
     // 链闸：触顶不起回合，但通知照常上屏 + 投递标记（标记在收敛时已写）；`pending` 保留
-    // （design §12.6.3），`delivered` 只在真实写进历史后标。
+    // （design §12.6.3）。本分支的 `delivered` 是**先标后写**（先标、放锁后才
+    // `insert_notices_into_session`）：标记与 insert 之间的窗口对读者可见，判「已上屏」
+    // 必须等落定，不能只看标记。
     let blocked = wake.blocked;
     if blocked.is_some() || wake.chain >= AUTO_WAKE_CHAIN_MAX {
         let reason = match blocked {
@@ -3155,6 +3161,32 @@ mod tests {
             }
             f()
         }
+
+        /// 触顶 / 停止分支的落定态：通知**恰一条**已上屏、`pending` 保留、`blocked` 已记。
+        ///
+        /// 这三个结果由唤醒线程或测试线程中的任意一个产生（`on_background_finished` 会起
+        /// 调度线程），而触顶分支先标 `delivered`、放锁后才 `insert_notices_into_session`
+        /// ——标记到写入之间的窗口对读者可见，此刻直接读会话会读到 0。断言前必须等落定；
+        /// 判据要求恰好一条，所以丢通知（0）与重复上屏（2 及更多）都等不到、一律判红。
+        ///
+        /// 锁序是 sessions → wake（`process_wake` 先读会话再取唤醒锁）：这里先读会话
+        /// （`notice_inputs` 取 sessions 锁，读完即放）再取 wake 锁，两把锁不嵌套持有。
+        fn wait_blocked_settled(&self, hub: &SubagentHub, expected: &'static str) {
+            let observe = || {
+                let notices = self.notice_inputs().len();
+                let wake = hub.inner.wake.lock().unwrap_or_else(|e| e.into_inner());
+                (wake.blocked, wake.pending.len(), notices)
+            };
+            assert!(
+                self.wait(Duration::from_secs(3), || {
+                    let (blocked, pending, notices) = observe();
+                    blocked == Some(expected) && pending == 1 && notices == 1
+                }),
+                "触顶 / 停止分支未在 3s 内落定：期望 blocked={expected:?} / pending=1 / 通知=1，\
+                 实际 (blocked, pending, 通知) = {:?}",
+                observe()
+            );
+        }
     }
 
     impl Drop for Fixture {
@@ -3923,6 +3955,9 @@ mod tests {
         });
         hub.inner.wake.lock().unwrap().deadline = Some(Instant::now() - Duration::from_millis(1));
         process_wake(&hub.inner);
+        // 触顶分支可能由唤醒线程驱动（`on_background_finished` 起了调度线程）：等落定再读
+        // 会话，否则会读到「已标 delivered、尚未 insert」的窗口。
+        f.wait_blocked_settled(&hub, "chain_limit");
         let snapshot = hub.wake_snapshot();
         assert_eq!(snapshot.blocked, Some("chain_limit"));
         assert_eq!(snapshot.chain, AUTO_WAKE_CHAIN_MAX);
@@ -3970,6 +4005,8 @@ mod tests {
         });
         hub.inner.wake.lock().unwrap().deadline = Some(Instant::now() - Duration::from_millis(1));
         process_wake(&hub.inner);
+        // 同上：等触顶分支落定，通知恰一条上屏后再断言，并据此起「继续」回合。
+        f.wait_blocked_settled(&hub, "chain_limit");
         assert_eq!(hub.wake_snapshot().blocked, Some("chain_limit"));
         assert_eq!(f.notice_inputs().len(), 1);
 
@@ -4530,6 +4567,8 @@ mod tests {
         });
         hub.inner.wake.lock().unwrap().deadline = Some(Instant::now() - Duration::from_millis(1));
         process_wake(&hub.inner);
+        // 停止分支与触顶同形：可能由唤醒线程驱动，等落定（通知恰一条 + pending 保留）再读。
+        f.wait_blocked_settled(&hub, "stopped");
         assert_eq!(f.notice_inputs().len(), 1);
         assert_eq!(f.events("subagent_notified")[0]["wake"], "blocked_stopped");
         assert_eq!(hub.wake_snapshot().chain, 0, "停止不推进链");
