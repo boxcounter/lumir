@@ -57,7 +57,8 @@
 | 路径 | 内容 |
 |---|---|
 | `scripts/perf/cold-start.mjs` | 冷启动测量 |
-| `scripts/perf/keypress-to-paint.mjs` | keypress-to-paint 测量（headless 注入近似） |
+| `scripts/perf/keypress-to-paint.mjs` | keypress-to-paint 测量（headless 注入近似；产品挂载门禁 + 双帧稳定期，纯函数可被机器测试 import，直接执行才跑测量） |
+| `scripts/perf/keypress-startup.test.mjs` | 注入起点的机器测试（假页面时序 + `node:vm` 跑页面侧探针：`node --test scripts/perf/keypress-startup.test.mjs`） |
 | `scripts/perf/open-file.mjs` | 打开 1MB 文件测量（占位口径） |
 | `scripts/perf/memory.mjs` | 常驻内存测量（含归因污染护栏、有界重测与诊断落盘；纯函数可被夹具测试 import，直接执行才跑测量） |
 | `scripts/perf/memory.test.mjs` | 常驻内存污染护栏的纯函数夹具测试（`node --test scripts/perf/memory.test.mjs`） |
@@ -105,16 +106,38 @@
 - **下界声明（必须随读数一起引用）**：
   1. 不含 OS 输入管道（IOHID → WindowServer → app 事件队列）与合成器/vsync 开销——真实按键路径在 macOS 上另有数毫秒到一帧的延迟；
   2. CI 用 Chrome/Blink 测量，产品运行时是 WKWebView/WebKit，引擎差异不归零；
-  3. M0 空壳编辑器为只读，按键不触发文档更新路径，测得的是"事件 → 帧调度"的结构下界；M1 编辑器可写后本端点不变，读数自然覆盖文档更新开销。
+  3. 被测页面是 release 前端产物在**纯 Chrome、无 Tauri 后端**下的降级态（`invoke` 全失败、编辑器存在但不持焦），按键只走「事件 → 帧调度」，不进编辑器文本写入路径，测得的是结构下界；真实文档的写入与重绘开销**不在本端点内**，读数不能当作端到端按键延迟。
 - 以上即评审 finding 第 2 条要求的"CDP 注入近似并注明是下界"。
+
+### 注入起点：产品挂载门禁 + 短暂稳定期（2026-10-25 M737）
+
+- **起点不是页面加载完成**。`document.readyState === "complete"` 只表示文档与子资源就绪；产品此刻还没挂载——启动层（`src/boot.ts`）在它之后才读配置、画启动面、`await import("./main")`（release 主 chunk 1.72MB），此刻 window 上 **0 个 `keydown` 监听器**（探针实测，见下条证据链第 3 点）。在旧起点注入，前若干样本量的是主 chunk 的装载与执行，不是按键 → 帧。
+- **门禁三条件**（顺序即实现顺序）：
+  1. `document.readyState === "complete"`——只作诊断基线，单独不再构成注入许可；
+  2. 收到产品自报的 `lumir:app-ready`（`src/main.ts:4201` 的 `emitReadiness("app-ready")`，在 `main.ts` 顶层执行完后发出：窗口键位表 `Keymap.attach` 与窗口级 Escape 兜底都在它之前装好）；
+  3. 编辑器在 DOM（`.cm-editor`）——app-ready 到了而编辑器缺失说明被测页面形态已变，harness 报错退出，不继续量一个本 spec 不再描述的东西。
+- **短暂稳定期**：门禁通过后再等**两个渲染帧**（与指标自身同一套双 rAF 原语，不是固定 sleep），让挂载那一帧的绘制落地。帧源不派发时以 2000ms 上界收口并打 `::warning::`，随后由样本数下限校验（<90% 即失败）报缺样本——「等帧」不会变成无限等待。
+- **fail-closed**：`lumir:app-ready` 15s 内不出现即非零退出、**不写** `<metric>.json`；`check-thresholds.mjs` 因此把本次判为「结果缺失」而不是「超阈」，测量问题不伪装成产品回归（同 §4 污染轮的口径）。
+- **本次不动的东西**：指标定义（keydown → 第二帧）、样本数 N=50、按键间隔 100ms、CI 判据的 median 统计量与 60% 容忍线、ADR 0002 的 <16ms 合同值。只移动注入起点。
+- **未修的部分（另待裁决）**：median 在双峰混合分布上是「模态开关」而不是位置估计——慢样本占比跨过 50% 时读数会在两个模态之间跳变（M736 按历史 10 次窗口估计 P ≈ 14%/run）。把门禁统计量换成「快模态中位 + 慢占比单列上报」属结构性修复，**不在本条范围内**（R2，待 Alex 裁决；候选与依据见 `.local/reports/escape-keypress-perf-oct25/README.md` §4–§5）。本次只消除启动污染这一段。
+- **启动污染证据链（M737 的来历；原始数据 `.local/reports/escape-keypress-perf-oct25/`，本机复跑证据 `.local/reports/keypress-startup-sampling-oct25/`，均在 git 外）**：
+  1. 11 次 master run 的原始采样是**双峰**（快模态 18–28ms / 慢模态 60–120ms，两模态中心不随代码变化），而门禁取整批 median：慢占比 12%–48%（历史 10 次）时 median 落在快模态，本次 56% 就跳到慢模态（82.25ms = 第 25/26 位的两个慢样本均值）。
+  2. 判红的 82.25ms **不是产品回退**：Esc 改动在测量路径上净增 1 个 window `keydown` 监听器，其非 Escape 分支是一行 `key === "Escape"` 比较；产品处理器链实测 0.0–0.1ms（Chrome `performance.now()` 的粗化粒度）；同机同工具链交替 A/B（各 8 轮 × 50 样本）run-median 10.67 vs 10.75ms = **+0.5%**。
+  3. 启动污染的现场：`readyState=complete` + 1ms 时页面只有启动面、window 上 0 个监听器；同批采样里首样本可达 **1005.1ms**、前 10 条有 9 条落进慢模态。切掉前 10 条后该次稳态 median 是 34.80ms（比历史 10 次里 5 次还低）、稳态慢占比 47.5%。
+  4. 修复后本机实测 `readyState complete → app-ready` **107.4 / 111.8 / 116.9 / 131.2ms**（4 次 × 50 样本）：即旧起点把约 0.1s 的主 chunk 装载算进了按键读数。稳定期选 2 帧而不是更长，依据是一次性 8 帧实验——首样本 31.4 / 31.2ms 与 2 帧的 30.5 / 31.2 / 30.8 / 30.8ms 完全同量级，加长等待不改变读数。读数与分布见 `.local/reports/keypress-startup-sampling-oct25/README.md`（同机同 dist 交替 A/B，新门禁 4 轮 / 旧门禁 2 轮）。
+  5. 单次 82.25ms **不得**当作产品回退的证据引用；本项读数只在与同一统计量、同一窗口的历史值比较时有意义。
 
 ### 工具链
 
-- `scripts/perf/keypress-to-paint.mjs`：启动 Chrome（`--headless=new --remote-debugging-port=0`，二进制路径取 `$CHROME_PATH`，默认 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`），带一次性 `--user-data-dir`（`mkdtemp` 临时目录，退出即删）与 `--use-mock-keychain --password-store=basic` 两项 Chromium 隔离开关——不读写用户浏览器的 profile / Cookie / Keychain（启动口径见 [tests/visual/README.md](../../tests/visual/README.md)「浏览器启动口径与 Chromium 隔离」）；经 DevToolsActivePort 文件发现 CDP 端口，用 Node 内置 `WebSocket` 直连 CDP；`Runtime.evaluate` 注入采样 hook，`Input.dispatchKeyEvent` 派发按键，取回 `window.__ktp` 样本数组。
+- `scripts/perf/keypress-to-paint.mjs`：启动 Chrome（`--headless=new --remote-debugging-port=0`，二进制路径取 `$CHROME_PATH`，默认 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`），带一次性 `--user-data-dir`（`mkdtemp` 临时目录，退出即删）与 `--use-mock-keychain --password-store=basic` 两项 Chromium 隔离开关——不读写用户浏览器的 profile / Cookie / Keychain（启动口径见 [tests/visual/README.md](../../tests/visual/README.md)「浏览器启动口径与 Chromium 隔离」）；经 DevToolsActivePort 文件发现 CDP 端口，用 Node 内置 `WebSocket` 直连 CDP。
+- **启动探针的装法（顺序是硬约束）**：先 `Target.createTarget` 开 `about:blank`、`Page.addScriptToEvaluateOnNewDocument` 注入探针、再 `Page.navigate` 到被测页。探针注册在 document 创建时、页面任何脚本之前，所以 `lumir:app-ready` 不会漏；反过来先导航再补探针会丢掉这次导航里的事件。探针只读状态（不包 `addEventListener`、不写 DOM），唯一副作用是把状态挂到 `window.__ktpStartup`。
+- 门禁通过后才 `Runtime.evaluate` 注入采样 hook，随后 `Input.dispatchKeyEvent` 逐键派发，取回 `window.__ktp` 样本数组；`result.meta.startupGate` 落盘门禁诊断（轮询次数、`readyState complete → app-ready` 时长、编辑器是否在 DOM、稳定期走了帧还是超时），CI artifact 里可复核门禁确实生效、没有回退成「加载完就测」。
+- `scripts/perf/keypress-startup.test.mjs`：注入起点的机器测试（`node --test scripts/perf/keypress-startup.test.mjs`，零新增依赖）。用假页面复现「readyState 已 complete、产品未挂载」的三段时序，断言那个窗口里不装 hook、不发键，app-ready 之后才计时；反向验证同一套假页面下旧门禁会在产品挂载前开门；fail-closed 路径（app-ready 等不到 / 编辑器缺失 / 探针未装上）断言零采样；页面侧探针在 `node:vm` 里跑与页面同一份源码，证明它不把 readyState 当挂载信号。
 
 ### 采样口径
 
 - N=50 次按键，间隔 100ms（避免事件合并与帧堆积）。上报全部样本；CI 相对回归门禁取 **median**（口径见总约定「相对回归门禁」；2026-09-05 修正前为 p95——p95 在绿 run 间即有 3 倍以上散布，是 9 次 run 8 次红的结构性误报源）。绝对合同值 <16ms 在标准化环境（裁决者本机）按 ADR 0002 第 6 条裁决。
+- **注入起点**见上节「注入起点：产品挂载门禁 + 短暂稳定期」：N、间隔、统计量、容忍线都未变，只把「从哪一刻开始发第一个键」推到产品挂载且绘制落定之后。**不设 warm-up 样本**：任何「丢弃前 k 条」的写法都会改动样本集与 n，属另一条口径修订，不在本次范围。
 - **本项 CI 判据（2026-09-18 M174 修正）**：把「本次 median」与「最近 10 次 master 门禁值的 median」比较，容忍线 **60%**（总约定「相对回归门禁」的逐指标 `maxRegressionPct`；60% 的算术见该节 M174 证据链第 3 条），并受 `minRuns=5` 的薄基线降级保护（历史不足 5 条时 `::warning::` 不拒合）。**修正前的病根不在这条容忍线**：基线被冻结成单样本 28.15ms（9 次实测的 median 是 39.80ms），40% 判红线随之落在实测散布内部；容忍线 40%→60% 是为覆盖「窗口 median 落在低端（33.70ms）而本次读数落在高端（53.20ms）」这一角落，同时保留对 +100% 量级真实劣化的拒合能力。
 
 ### Fixture
