@@ -406,6 +406,8 @@ test("设置面板：新增 id 被拒 → 条目与其字段保留、id 就地�
   await expect(page.locator(".lumir-set-status")).toContainText("需要修正");
   await expect(page.locator("#lumir-set-api-key")).toHaveValue("test-key-rejected-add");
   await expect(page.locator(".lumir-set-model-row input[type=text]").first()).toHaveValue("k3-256k");
+  // Alex 2026-10-25 确认的候选图即这一屏（被拒新增留在自己的 id 输入上，Key / 模型保留）。
+  await panelScreenshot(page, "05-add-duplicate");
   // 就地改名后再存：走 applied 分支，第二笔 patch 里 Add 的 id 是改后的值，且 Key / 模型都在
   // （桩不会把新条目写回快照，因此判据落在请求形状上，而不是列表会不会多一行）。
   await idInput.fill("kimi-personal");
