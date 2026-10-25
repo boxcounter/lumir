@@ -205,6 +205,7 @@ const C = {
   loadFailed: "D853",
   saveFailed: "D854",
   providerListAria: "D855",
+  providerRowAria: "D866",
   presetGroupAria: "D856",
   unknownPreset: "D857",
   providerIgnoredBody: "D858",
@@ -1412,7 +1413,11 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       // 可用状态对辅助技术可达（视觉面是状态点 + 表单头徽标；读屏名把 id / 预设 / 状态一次说全）。
       row.setAttribute(
         "aria-label",
-        `${provider.id}，${presetLabel(provider.preset)}，${statusLabel(provider.status)}`,
+        t(C.providerRowAria, {
+          id: provider.id,
+          preset: presetLabel(provider.preset),
+          status: statusLabel(provider.status),
+        }),
       );
       // 保存中禁用 provider 切换（design §11.7：避免请求期间的编辑被返回快照覆盖）。
       row.disabled = locked();

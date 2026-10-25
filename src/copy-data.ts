@@ -2369,6 +2369,11 @@ const COPY_TABLE = {
     zh: "设置面板（change add-model-automation-settings-oct24 tasks §5.1）：⌘, 是 macOS 的「设置」约定键，表内与原生菜单 accelerator 均无占用；菜单项「设置…」不带 accelerator（菜单若占 ⌘,，[keys] 重绑之后原键仍会经菜单分发，等于重绑失效）。面板打开时再按一次 ⌘, 关闭；有未保存修改时先转「放弃未保存的修改？」两步确认。",
     en: "The settings panel (change add-model-automation-settings-oct24 tasks §5.1): ⌘, is the macOS convention for settings, free both in the table and among the native menu accelerators; the “Settings…” menu item carries no accelerator (if the menu took ⌘, the old key would still fire through it after a [keys] rebind, making the rebind pointless). Pressing ⌘, again closes the panel; with unsaved changes it first switches to a two-step “Discard unsaved changes?” confirmation.",
   },
+  // D866：provider 行的读屏名（id / 预设 / 可用状态一次说全；视觉面是状态点 + 徽标）。
+  D866: {
+    zh: "{id}，{preset}，{status}",
+    en: "{id}, {preset}, {status}",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
