@@ -70,6 +70,26 @@
 >    仍 33 passed）。
 >
 > 归档后项见本块末尾的「归档后」追加段。
+>
+> **归档后（2026-10-25，M744）**：归档提交 `5784940a`（归档目录
+> `openspec/changes/archive/2026-10-25-add-model-automation-settings-oct24/` + 并入后的 living spec
+> （`openspec/specs/harness/spec.md`、`openspec/specs/keymap-commands/spec.md`、新建
+> `openspec/specs/settings/spec.md`）+ `docs/backlog.md` 队列条目核销 + 本节点 2 块补记，同批提交）。
+> `openspec archive` 实际输出：`Task status: ✓ Complete`；`harness: update`（`+ 3 added` / `~ 3
+> modified`）、`keymap-commands: update`（`+ 1 added`）、`settings: create`（`+ 7 added`）、
+> `Totals: + 11, ~ 3, - 0, → 0`、`Change 'add-model-automation-settings-oct24' archived as
+> '2026-10-25-add-model-automation-settings-oct24'.`。新建 capability 的 Purpose 由 delta 携带，
+> 归档后的 `openspec/specs/settings/spec.md` 无 `TBD - created by archiving` 占位。
+>
+> 紧随其后 `node scripts/openspec-archive-check.mjs --archived add-model-automation-settings-oct24`
+> → `PASS（openspec/changes/archive/2026-10-25-add-model-automation-settings-oct24：3 条 MODIFIED，
+> 对比 32 段；人工恢复 0 段，声明认领 0 段）`，EXIT=0（2026-10-25 19:44 CST）；`settings` 是新建
+> capability、归档提交前没有 living 基线，脚本按设计只报 INFO。
+>
+> 归档后复跑：`bash scripts/docs-check.sh` → `docs-check: PASS`（含归档对账门禁模式、归档队列与
+> backlog 出口；`docs/backlog.md` 76/80 行）；`npx --yes @fission-ai/openspec@1.12.0 validate --all
+> --strict` → `Totals: 33 passed, 0 failed`。另做一次逐段落地核对（`--archived` 对新建 capability
+> 无 before 基线）：delta 的 14 条 requirement / 280 段全部逐字出现在归档后的 living spec。
 
 ## Why
 
