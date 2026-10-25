@@ -115,9 +115,10 @@
       search-01（搜索面板）PASS、227（表格全屏：Esc 关闭 + 焦点回编辑器）PASS、09（Emacs 键 /
       键位面板）PASS；223（代码块全屏）在**本分支与 master 同形 FAIL**（hover 通道取不到 bbox，
       归因见完工报告）；230（⌘P）本轮 FAIL 在**键盘注入丢键**（`nots/dp/plan.`，M497 的同族
-      通道缺陷，与 Escape 无关）。**未覆盖**：⑦Context hover 泡与②合并选择器三段的「选后先断言
-      焦点落在刚选中项」逐段复跑——两者在**真机层与真实 DOM 层都还没有判据**（`escape-admission`
-      只覆盖权限浮层 / 会话浮层 / effort 提示 / ⌘P / 两层顺序 / body 兜底 / 重建保焦两条），留待下一批。
+      通道缺陷，与 Escape 无关）。**真实 DOM 层补充（r2/r3）**：`escape-admission` 第 9 条已把
+      ⑦Context hover 的**栈序组合**覆盖（先 ⌘P 后开 Context 泡：第一拍只收泡、⌘P 保持），第 10 条把
+      widget 持焦 + 后开 hover 的组合覆盖（含 Context 同形）——但⑦与②的**独立真机**逐段复跑仍留开；
+      ②合并选择器三段的「选后先断言焦点落在刚选中项」在真机层与真实 DOM 层都还没有判据。
       ①会话浮层选中后按 Esc；②合并选择器分别选 provider / model / effort 后按 Esc（每次选择后先
       断言焦点落在刚选中的那一项）；③⌘P 输入筛选后按 Esc；④大纲浮层按 Esc；⑤搜索面板按 Esc；
       ⑥图片 / 表格 / 代码块全屏遮罩按 Esc；⑦面板内 Context hover 泡出现时按 Esc；⑧effort 提示

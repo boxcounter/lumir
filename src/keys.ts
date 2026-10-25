@@ -216,6 +216,7 @@
 // 键位来由的文本住在文案表（M282，change ui-language-i18n 的 D8 裁决）——本文件只留
 // 「绑定 → 文案表键」的引用，因此是纯类型导入（类型剥离后不留任何运行期依赖）。
 import type { CopyKey } from "./copy-data";
+import { escapeRouter } from "./escape-router";
 
 /**
  * 绑定作用域（M447 起三值）：
@@ -560,6 +561,23 @@ function isWidgetKeyTarget(event: KeyboardEvent): boolean {
   return container !== null && container.ownerDocument.activeElement === container;
 }
 
+/** `editor.widget-escape` 的命中条件：容器持焦**且层栈为空**（change fix-escape-overlay-close-oct24
+ *  的 r3 返修）。
+ *
+ *  为什么要把「层栈为空」并进命中条件：统一键位分发器先于窗口兜底运行，命中即 `preventDefault`
+ *  （src/keys.ts 的 handle）——若 widget 的 Escape 照旧优先，焦点在表格 / 代码块横滚容器、又用鼠标
+ *  后开了不持焦的 hover 层（effort 提示 / Context 泡）时，这一拍会先被 keymap 吃掉并把焦点交还
+ *  编辑器：栈顶 hover 不收、焦点还被送出（r3 P1-1 的实测现场）。
+ *
+ *  有层时不命中 ⇒ 不 `preventDefault` ⇒ 按键落到窗口级兜底，由层栈按**打开序**关栈顶（hover 层
+ *  关闭不移动焦点）；无层时照旧命中，走 `editor.widget-escape` 的既有交还
+ *  （`focusPreservingReadingPosition`，焦点回编辑器）。**判据只有一处**：`escapeRouter.size()`
+ *  ——层栈是「有没有可关闭层」的唯一真源，MUST NOT 在这里另判一遍「哪些层算层」。
+ *  不把兜底改成 capture、也不让兜底一律抢在 keymap 前：那会破坏无层时 widget 的既有归属。 */
+function widgetEscapeApplies(event: KeyboardEvent): boolean {
+  return isWidgetKeyTarget(event) && escapeRouter.size() === 0;
+}
+
 /** 表格滚动容器内左右方向键的步进（原 livePreview 手柄口径，迁移不改行为）。 */
 export const WIDGET_SCROLL_STEP_PX = 120;
 
@@ -683,7 +701,11 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "ArrowRight", command: "editor.widget-scroll-right", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D295" },
   { key: "Home", command: "editor.widget-scroll-home", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D296" },
   { key: "End", command: "editor.widget-scroll-end", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D297" },
-  { key: "Escape", command: "editor.widget-escape", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D298" },
+  // Escape 的命中条件多一条「层栈为空」（M718 r3）：有层时让给窗口兜底按打开序关栈顶，
+  // 见 widgetEscapeApplies 的说明；上面四条滚动键仍是单纯 isWidgetKeyTarget。面板里显示的
+  // 条件短徽标 / 全文（D676 / D675）只描述「容器自身持焦」这一半——「有层时让路」不是 widget
+  // 自身的条件，而是「这一拍按键归别的层」的保留，读法写进该行的来由 D298。
+  { key: "Escape", command: "editor.widget-escape", scope: "editor", when: widgetEscapeApplies, whenKey: "D675", whenShortKey: "D676", docKey: "D298" },
 
   // ── 编辑器内：块级横滚容器的**焦点入口**（M474，backlog「块级横滚容器失去焦点入口」候选①，
   // tower 2026-10-12 裁决；与上面五条的关系见 `EDITOR_CORE_COMMAND_IDS` 那条 id 的注释）。

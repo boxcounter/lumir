@@ -59,7 +59,7 @@ export interface EscapeKeyEvent {
  * | 组合期（`isComposing` / `keyCode === 229`） | `ignore` | 不动作、不 `preventDefault` | 不动作 |
  * | 带修饰键（⇧ / ⌘ / ⌃ / ⌥） | `swallow` | `preventDefault`、**不关层** | `preventDefault` |
  * | 无修饰、无层 | `close` | —（无处理器） | `preventDefault`（安全消费，不关层 / 不移焦点 / 不改状态） |
- * | 无修饰、有层 | `close` | `preventDefault` + 关**本层** | `preventDefault` + 关**栈顶** |
+ * | 无修饰、有层 | `close` | 与兜底同一条 `handle`（关**栈顶**、关闭实现复用该层登记时的 `close`） | `preventDefault` + 关**栈顶** |
  *
  * 组合期归输入法（取消组合），带修饰键只消费默认行为——两者**都不关层**：它们不是「收起」的
  * 意图，把 ⇧Escape 当关闭会让「本来想撤销选区 / 换档」的按键关掉正在用的浮层。
@@ -88,13 +88,16 @@ export interface EscapeRouter {
   top(): EscapeLayer | null;
   /** 已消费时返回 `false`；`true` = 调用方 `preventDefault`（本实现已代为调用）。 */
   handle(event: EscapeKeyEvent): boolean;
-  /** 栈深度（诊断与单测用；运行期没人按它分支）。 */
+  /** 栈深度。运行期消费者只有一处：`src/keys.ts` 的 `editor.widget-escape` 命中条件——**有层时
+   *  让给本路由**（否则 keymap 会先 `preventDefault` 并把焦点交还编辑器，栈顶 hover 既不收、
+   *  焦点也被送出；r3 P1-1）。其余分支仍只用于单测与诊断。 */
   size(): number;
 }
 
 /**
- * 层栈 + 分派。就地处理器与兜底共用这一份实例上的 `handle`：前者只关「本层」，后者关「栈顶」，
- * 准入与 `defaultPrevented` 让路的判断因此不可能分叉。
+ * 层栈 + 分派。就地处理器与兜底共用这一份 `handle`：两者都只关**栈顶**（按层的打开序），准入与
+ * `defaultPrevented` 让路的判断因此不可能分叉（r2 P1-1：就地路径曾各关「本层」，后开的不持焦
+ * hover 层在场时会关错层）。
  */
 export function createEscapeRouter(): EscapeRouter {
   // 打开序：数组尾 = 栈顶。同 id 不重复出现（重复登记先摘再追加 = 提到栈顶）。

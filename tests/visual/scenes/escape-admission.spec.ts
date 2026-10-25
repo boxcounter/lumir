@@ -26,6 +26,11 @@ const DOC = `# Escape 准入笔记
 
 EADM-ALPHA 第一段，给编辑器一个可断言的读者位置。
 EADM-BETA 第二段，全程逐字节不变。
+
+| 列 | 值 |
+| --- | --- |
+| A | 1 |
+| B | 2 |
 `;
 
 const VAULT: VaultFixture = {
@@ -367,4 +372,51 @@ test("就地路径按打开序关栈顶：⌘P 先开、后开的 hover 提示�
   await expect(qo).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(qo).toBeHidden();
+});
+
+test("widget 持焦 + 后开 hover 层：第一拍只收层且焦点不动；无层时既有的交还照旧", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await page.goto("/");
+  await page.locator('.ft-row[title="escape-admission.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("EADM-ALPHA");
+  await page.keyboard.press("Meta+Shift+A");
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+
+  const hint = page.locator(".lumir-hp-effhint");
+  const ctxPop = page.locator(".lumir-hp-ctxpop");
+  const container = page.locator(".cm-lp-block-scroll").first();
+
+  /** 把焦点交给表格的块级横滚容器：点进表格（caret 进块）→ 生产键位 ⌃⌥S。 */
+  const focusWidget = async (): Promise<void> => {
+    await page.locator(".cm-lp-table").first().click();
+    await page.keyboard.press("Control+Alt+s");
+    await expect(container, "容器自身持焦（widget 的既有 Escape 归属前提）").toBeFocused();
+  };
+
+  await focusWidget();
+
+  // ① widget 持焦 + 后开的 effort 提示：第一拍只收提示，**焦点不动**。
+  //    修复前：keymap 的 editor.widget-escape 先命中并 preventDefault，焦点被交还编辑器、提示不收。
+  await page.locator(".lumir-hp-eff-reading").hover();
+  await expect(hint).toBeVisible();
+  await expect(container).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(hint, "第一拍只收后开的提示").toBeHidden();
+  await expect(container, "关 hover 层 MUST NOT 移动焦点").toBeFocused();
+
+  // ② Context 泡同形。
+  await page.locator(".lumir-hp-ctx").hover();
+  await expect(ctxPop).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(ctxPop, "第一拍只收后开的 Context 泡").toBeHidden();
+  await expect(container).toBeFocused();
+
+  // ③ 无层对照：收起面板（它自己的关闭路径会按既有口径交还编辑器）后重新把焦点交给容器，
+  //    这一拍没有层 ⇒ `editor.widget-escape` 的既有「交还编辑器」照旧。
+  await page.keyboard.press("Meta+Shift+A");
+  await expect(page.locator(".lumir-harness")).toBeHidden();
+  await focusWidget();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".cm-content"), "无层时既有归属不变：焦点交还编辑器").toBeFocused();
 });
