@@ -20,10 +20,12 @@ import {
   createDraft,
   defaultSelection,
   deleteCandidates,
+  deleteReferences,
   draftEffectiveModel,
   draftIsDirty,
   draftProviderDirty,
   draftReferences,
+  keyEditForInput,
   emptyFieldErrors,
   errorCount,
   planProviderEdits,
@@ -32,6 +34,7 @@ import {
   namingRowModel,
   pageResetDraft,
   renameDraftProviderId,
+  setActiveDraft,
   setNamingModelDraft,
   setNamingProviderDraft,
 } from "../../src/settings-panel.ts";
@@ -801,13 +804,13 @@ test("applyDraftDelete：新增前的 active 仍有条目时撤销回到它（�
   });
   const draft = createDraft(base);
   addProviderDraft(draft, "tmp-lab", "generic", metaOf("tmp-lab", "generic"));
-  // 用户在新增后把 active 切到新条目，再撤销它。
-  draft.active = "tmp-lab";
-  draft.activeTouched = true;
+  // 用户在新增后把 active 切到新条目（引用持有者随之落到它身上），再撤销它。
+  setActiveDraft(draft, draft.providers[2]!);
   draft.remove = { index: 2, activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "follow" };
   applyDraftDelete(draft);
-  assert.equal(draft.active, "kimi-work");
-  assert.equal(draft.activeTouched, false);
+  assert.equal(draft.active, "kimi-work", "删除确认里选的替代项生效");
+  assert.equal(draft.activeTouched, false, "回到基线值就不必再写一笔 active_provider");
+  assert.equal(draft.providers.length, 2, "未落盘的新增从草稿里摘掉");
 });
 
 test("draftReferences：引用面读当前草稿（先切 active / 命名再删除仍有保护块）", () => {
@@ -922,8 +925,11 @@ test("renameDraftProviderId：草稿里另有同 id 条目时，改名不动 act
     active: "kimi-work",
   });
   const draft = createDraft(base);
+  // 引用持有者是**已保存**那条（盘上这个 id 的实体就是它）。
   draft.naming.session = { provider: "kimi-work", model: "k3-256k" };
   draft.naming.attachment = { provider: "kimi-work", model: "k3-256k" };
+  draft.namingOwner.session = draft.providers[0]!;
+  draft.namingOwner.attachment = draft.providers[0]!;
   const added = addProviderDraft(draft, "kimi-work", "kimi", metaOf("kimi-work", "kimi"));
   renameDraftProviderId(draft, added, "kimi-personal");
   assert.equal(added.id, "kimi-personal");
@@ -948,7 +954,9 @@ test("renameDraftProviderId：草稿是该 id 的唯一持有者时，active 与
   const draft = createDraft(base);
   const added = addProviderDraft(draft, "first", "kimi", metaOf("first", "kimi"));
   assert.equal(draft.active, "first", "空配置首项自动成为当前使用");
-  draft.naming.session = { provider: "first", model: null };
+  assert.equal(draft.activeOwner, added, "持有者身份跟着 active 一起记");
+  setNamingProviderDraft(draft, "session", "first");
+  assert.equal(draft.namingOwner.session, added);
   renameDraftProviderId(draft, added, "renamed");
   assert.equal(draft.active, "renamed");
   assert.equal(draft.naming.session.provider, "renamed");
@@ -1037,4 +1045,152 @@ test("errorCount：命名目标的两个错误也计入「需要修正」的计�
     attachmentNaming: "b",
   });
   assert.equal(counted, 2);
+});
+
+// ── r3 返修回归：多笔未落盘新增的删除替代与改名归属、Key 草稿意图 ─────────────
+
+test("applyDraftDelete：mock 基线下两笔新增，删除**当前**那笔时兑现替代项（不回落到 mock）", () => {
+  const base = snapshot({ providers: [], active: "mock" });
+  const draft = createDraft(base);
+  addProviderDraft(draft, "first", "kimi", metaOf("first", "kimi"));
+  const second = addProviderDraft(draft, "second", "deepseek", metaOf("second", "deepseek"));
+  assert.equal(draft.active, "first", "第一笔接管了不可用的 mock");
+  assert.equal(draft.activeOwner, draft.providers[0]);
+
+  // 删除当前使用项 first：确认里选 second 作为替代（design §4.2）。
+  draft.remove = { index: 0, activeAfter: "second", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  assert.equal(draft.providers.length, 1, "未落盘的 first 从草稿里摘掉");
+  assert.equal(draft.providers[0], second);
+  assert.equal(draft.active, "second");
+  assert.equal(draft.activeOwner, second);
+  const patch = buildPatch(draft, base, base.revision!);
+  assert.deepEqual(
+    patch.providers.map((edit) => [edit.action, edit.id]),
+    [["add", "second"]],
+  );
+  assert.deepEqual(patch.active_provider, { kind: "set", value: "second" }, "用户选的替代项必须落进 patch");
+});
+
+test("applyDraftDelete：未落盘新增未被引用时仍是纯撤销——active 与命名都不动", () => {
+  const base = snapshot({ providers: [], active: "mock" });
+  const draft = createDraft(base);
+  addProviderDraft(draft, "first", "kimi", metaOf("first", "kimi"));
+  addProviderDraft(draft, "second", "deepseek", metaOf("second", "deepseek"));
+  // 删第二笔（它没接管 active、也没被命名引用）。
+  draft.remove = { index: 1, activeAfter: "first", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  assert.deepEqual(
+    draft.providers.map((item) => item.id),
+    ["first"],
+  );
+  assert.equal(draft.active, "first");
+  assert.equal(draft.activeTouched, true, "第一笔接管 active 的那一笔写入仍然要在");
+});
+
+test("applyDraftDelete：被命名引用的新增删除时兑现命名重定向并清掉 model 覆盖", () => {
+  const base = snapshot({ providers: [], active: "mock" });
+  const draft = createDraft(base);
+  addProviderDraft(draft, "first", "kimi", metaOf("first", "kimi"));
+  addProviderDraft(draft, "second", "deepseek", metaOf("second", "deepseek"));
+  setNamingProviderDraft(draft, "session", "second");
+  setNamingModelDraft(draft, "session", "k3-256k");
+  // 删除被会话命名引用的 second（它不是当前使用项）。
+  draft.remove = { index: 1, activeAfter: "first", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  assert.deepEqual(draft.naming.session, { provider: null, model: null }, "follow + 清掉旧 provider 的 model 覆盖");
+  assert.equal(draft.namingOwner.session, null);
+  assert.equal(draft.active, "first", "未被删除的当前使用项不动");
+  const patch = buildPatch(draft, base, base.revision!);
+  assert.deepEqual(patch.naming, { session: { provider: { kind: "reset" } }, attachment: undefined });
+});
+
+test("deleteReferences：未落盘新增只看持有者身份，同 id 的已保存条目不算它", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+    active: "kimi-work",
+  });
+  const draft = createDraft(base);
+  const added = addProviderDraft(draft, "kimi-work", "kimi", metaOf("kimi-work", "kimi"));
+  assert.deepEqual(deleteReferences(draft, added), { active: false, session_naming: false, attachment_naming: false });
+  assert.equal(deleteReferences(draft, draft.providers[0]!).active, true, "已保存条目仍按 id 认领");
+});
+
+test("renameDraftProviderId：两笔同 id 新增，改第一笔时引用跟着它走（不转给第二笔）", () => {
+  const base = snapshot({ providers: [], active: null });
+  const draft = createDraft(base);
+  const first = addProviderDraft(draft, "same", "kimi", metaOf("same", "kimi"));
+  const second = addProviderDraft(draft, "same", "deepseek", metaOf("same", "deepseek"));
+  assert.equal(draft.active, "same");
+  assert.equal(draft.activeOwner, first);
+  setNamingProviderDraft(draft, "session", "same");
+  assert.equal(draft.namingOwner.session, first, "没有已保存条目时，id 的实体是第一笔持有者");
+
+  renameDraftProviderId(draft, first, "renamed");
+  assert.equal(draft.active, "renamed");
+  assert.equal(draft.activeOwner, first);
+  assert.equal(draft.naming.session.provider, "renamed");
+  assert.equal(second.id, "same", "第二笔不被改名");
+});
+
+test("renameDraftProviderId：两笔同 id 新增，改第二笔时第一笔的 active / 命名留在原 id", () => {
+  const base = snapshot({ providers: [], active: null });
+  const draft = createDraft(base);
+  const first = addProviderDraft(draft, "same", "kimi", metaOf("same", "kimi"));
+  const second = addProviderDraft(draft, "same", "deepseek", metaOf("same", "deepseek"));
+  setNamingProviderDraft(draft, "attachment", "same");
+  assert.equal(draft.namingOwner.attachment, first);
+
+  renameDraftProviderId(draft, second, "other");
+  assert.equal(draft.active, "same");
+  assert.equal(draft.activeOwner, first);
+  assert.equal(draft.naming.attachment.provider, "same");
+});
+
+test("renameDraftProviderId：引用被显式切到第二笔后，改第一笔不再带走它（按持有者判）", () => {
+  const base = snapshot({ providers: [], active: null });
+  const draft = createDraft(base);
+  const first = addProviderDraft(draft, "same", "kimi", metaOf("same", "kimi"));
+  const second = addProviderDraft(draft, "same", "deepseek", metaOf("same", "deepseek"));
+  // 同 id 两条草稿里，用户用「设为当前使用」明确选了第二笔。
+  setActiveDraft(draft, second);
+  renameDraftProviderId(draft, first, "renamed");
+  assert.equal(draft.active, "same", "引用持有者是第二笔，改第一笔不能把它带走");
+  assert.equal(draft.activeOwner, second);
+  // 改第二笔（真正的持有者）时跟着改名。
+  renameDraftProviderId(draft, second, "renamed-second");
+  assert.equal(draft.active, "renamed-second");
+  assert.equal(draft.activeOwner, second);
+});
+
+test("keyEditForInput：清除 → 输入替换 → 再清空，草稿意图仍是 clear（盘上原 Key 必须删掉）", () => {
+  const base = snapshot();
+  const draft = createDraft(base);
+  const entry = draft.providers[0]!;
+  assert.equal(entry.keyWasSet, true);
+  // 清除按钮
+  entry.keyEdit = { kind: "clear", value: "" };
+  entry.hasKey = false;
+  // 输入替换值
+  entry.keyEdit = keyEditForInput(entry, "new-key");
+  assert.deepEqual(entry.keyEdit, { kind: "replace", value: "new-key" });
+  // 再清空输入：盘上有 Key ⇒ 清除意图（不是 null）
+  entry.keyEdit = keyEditForInput(entry, "");
+  assert.deepEqual(entry.keyEdit, { kind: "clear", value: "" });
+  assert.deepEqual(buildPatch(draft, base, base.revision!).providers[0], {
+    action: "update",
+    id: "kimi-work",
+    api_key: { kind: "clear" },
+  });
+});
+
+test("keyEditForInput：盘上没有 Key 时输入后清空 = 什么都不改（不发空的 clear）", () => {
+  const base = snapshot({ providers: [provider("bare", { api_key: { state: "unset" } })] });
+  const draft = createDraft(base);
+  const entry = draft.providers[0]!;
+  assert.equal(entry.keyWasSet, false);
+  assert.deepEqual(keyEditForInput(entry, "x"), { kind: "replace", value: "x" });
+  entry.keyEdit = keyEditForInput(entry, "");
+  assert.equal(entry.keyEdit, null);
+  assert.equal(buildPatch(draft, base, base.revision!).providers[0], undefined, "没有改动就不发 update");
 });

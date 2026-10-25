@@ -189,6 +189,9 @@ interface SettingsStubOptions {
   errors?: Array<{ path: string; code: string; message: string }>;
   /** settings_get 失败（错误信封形状）：用来验「读取失败显示真实错误」，而不是停在加载文案。 */
   getError?: { code: string; message: string };
+  /** 第一次 settings_apply **抛错**（IPC 拒绝的形态，不是 blocked）：用来验「保存失败横幅」的
+   *  出现与就地编辑后的撤销；之后的 apply 按 `apply` 的语义走。 */
+  applyThrowsOnce?: { code: string; message: string };
 }
 
 /** 在 `stubTauri` 之后包一层 invoke：设置面两条命令由这里提供。 */
@@ -208,6 +211,7 @@ async function stubSettings(page: Page, options: SettingsStubOptions): Promise<v
         const patches = (w.__settingsPatches as unknown[] | undefined) ?? [];
         patches.push(JSON.parse(JSON.stringify(args?.patch ?? null)));
         w.__settingsPatches = patches;
+        if (config.applyThrowsOnce !== undefined && applyCalls === 1) throw config.applyThrowsOnce;
         if (config.apply === "pending") return new Promise(() => {});
         if (config.apply === "blocked-once" && applyCalls > 1) {
           return { status: "applied", snapshot: config.snapshot, errors: [], warnings: [] };
@@ -931,4 +935,142 @@ test("设置面板：命名行的后端错误在编辑清错后从持久行里�
   // 再走一次整页重绘（切开关）：也不能把旧错误重新画出来。
   await page.locator('[data-auto-row="subagents"] [role="switch"]').click();
   await expect(page.locator('[data-auto-row="session_naming"] .lumir-set-error-outlet')).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// 9）r3 返修回归：多笔未落盘新增的删除替代 / 改名归属、横幅撤销、冲突守住、Key 草稿意图
+// ---------------------------------------------------------------------------
+
+test("设置面板：mock 基线下两笔新增，删掉当前使用那笔时替代项写进 patch（r3 P1-1）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  // 只剩 mock 的配置：列表为空、当前使用项指向列表外的 mock（新增的第一条接管它）。
+  await openSettings(page, { snapshot: settingsSnapshot({ providers: [], active: "mock" }) });
+  for (const id of ["first", "second"]) {
+    await page.locator(".lumir-set-add, .lumir-set-empty .lumir-set-btn-primary").first().click();
+    await page.locator("#lumir-set-add-id").fill(id);
+    await page.locator(".lumir-set-add-card .lumir-set-btn-primary").click();
+    await expect(page.locator(`.lumir-set-provider-row[data-provider-id="${id}"]`)).toHaveCount(1);
+  }
+  // 删当前使用项 first：确认里给替代项（second），而不是静默回落到 mock。
+  await page.locator('.lumir-set-provider-row[data-provider-id="first"]').click();
+  await page.locator(".lumir-set-danger .lumir-set-btn-danger").click();
+  await expect(page.locator('[data-delete-block="active"]')).toHaveCount(1);
+  await expect(page.locator(".lumir-set-delete-card select").first()).toHaveValue("second");
+  await page.locator(".lumir-set-delete-card .lumir-set-btn-danger").click();
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator(".lumir-set-status")).toContainText("已保存");
+
+  const first = (await settingsPatches(page))[0]!;
+  expect(first.active_provider).toEqual({ kind: "set", value: "second" });
+  expect(first.providers.map((edit: any) => [edit.action, edit.id])).toEqual([["add", "second"]]);
+});
+
+test("设置面板：两笔同 id 新增改第一笔，active 跟着它走（不静默转给第二笔，r3 P1-2）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, { snapshot: settingsSnapshot({ providers: [], active: null }) });
+  for (let i = 0; i < 2; i += 1) {
+    await page.locator(".lumir-set-add, .lumir-set-empty .lumir-set-btn-primary").first().click();
+    await page.locator("#lumir-set-add-id").fill("same");
+    await page.locator(".lumir-set-add-card .lumir-set-btn-primary").click();
+  }
+  await expect(page.locator(".lumir-set-provider-row")).toHaveCount(2);
+  // 选中第一笔并改名（两笔同 id，按行序取第一条）。
+  await page.locator(".lumir-set-provider-row").nth(0).click();
+  await page.locator("#lumir-set-draft-id").fill("renamed");
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator(".lumir-set-status")).toContainText("已保存");
+
+  const patch = (await settingsPatches(page))[0]!;
+  expect(patch.providers.map((edit: any) => edit.id)).toEqual(["renamed", "same"]);
+  expect(patch.active_provider).toEqual({ kind: "set", value: "renamed" });
+});
+
+test("设置面板：两笔同 id 新增改第二笔，第一笔的 active 留在原 id（反方向，r3 P1-2）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, { snapshot: settingsSnapshot({ providers: [], active: null }) });
+  for (let i = 0; i < 2; i += 1) {
+    await page.locator(".lumir-set-add, .lumir-set-empty .lumir-set-btn-primary").first().click();
+    await page.locator("#lumir-set-add-id").fill("same");
+    await page.locator(".lumir-set-add-card .lumir-set-btn-primary").click();
+  }
+  // 第一笔接管了 active（空配置新增首项）。改**第二笔**的 id：引用持有者是第一笔，不能被带走。
+  await page.locator(".lumir-set-provider-row").nth(1).click();
+  await page.locator("#lumir-set-draft-id").fill("other");
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator(".lumir-set-status")).toContainText("已保存");
+  const patch = (await settingsPatches(page))[0]!;
+  expect(patch.providers.map((edit: any) => edit.id)).toEqual(["same", "other"]);
+  expect(patch.active_provider).toEqual({ kind: "set", value: "same" });
+});
+
+test("设置面板：字段错误 / 保存失败横幅在输入框就地编辑后撤销（r3 P2-3）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  // ① 后端 blocked 的字段错误（active + 文件级）→ 通用错误横幅。
+  await openSettings(page, {
+    snapshot: settingsSnapshot(),
+    apply: "blocked",
+    errors: [
+      { path: "harness.provider", code: "settings_active_provider_missing", message: "替代的当前使用项不可用" },
+      { path: "", code: "settings_patch_invalid", message: "文件级校验失败" },
+    ],
+  });
+  await page.locator('[data-auto-row="auto_compact"] [role="switch"]').click();
+  await page.locator(".lumir-set-btn-primary").click();
+  const fieldBanner = page.locator('[data-banner="field-errors"]');
+  await expect(fieldBanner).toBeVisible();
+  await page.locator("#lumir-set-api-key").fill("test-key-clears-banner");
+  await expect(fieldBanner).toHaveCount(0);
+
+  // ② 保存失败（IPC 抛错）→ save-error 横幅，同样在就地编辑后撤销。
+  await openSettings(page, {
+    snapshot: settingsSnapshot(),
+    applyThrowsOnce: { code: "ipc_write_failed", message: "写入失败（合成）" },
+  });
+  await page.locator('[data-auto-row="auto_compact"] [role="switch"]').click();
+  await page.locator(".lumir-set-btn-primary").click();
+  const saveBanner = page.locator('[data-banner="save-error"]');
+  await expect(saveBanner).toBeVisible();
+  await expect(saveBanner).toContainText("写入失败（合成）");
+  await page.locator("#lumir-set-api-key").fill("test-key-clears-save-error");
+  await expect(saveBanner).toHaveCount(0);
+});
+
+test("设置面板：冲突后继续编辑仍守住 conflict 与两个动作，底栏保存不再启用（r3 P2-4）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, { snapshot: settingsSnapshot(), apply: "conflict" });
+  await page.locator('[data-auto-row="auto_compact"] [role="switch"]').click();
+  await page.locator(".lumir-set-btn-primary").click();
+  const banner = page.locator('[data-banner="conflict"]');
+  await expect(banner).toBeVisible();
+
+  // 冲突未解决时就地编辑：横幅与两个动作必须在，模式仍是 conflict（底栏保存保持禁用）。
+  await page.locator("#lumir-set-api-key").fill("test-key-after-conflict");
+  await expect(banner).toBeVisible();
+  await expect(banner.locator(".lumir-set-btn")).toHaveText(["重新载入", "仍然保存"]);
+  await expect(page.locator(".lumir-set-status")).toContainText("外部冲突");
+  await expect(page.locator(".lumir-set-actions .lumir-set-btn-primary")).toBeDisabled();
+
+  // 整页重绘同样不丢：切一次开关后横幅仍在、动作仍可用。
+  await page.locator('[data-auto-row="subagents"] [role="switch"]').click();
+  await expect(banner).toBeVisible();
+  await expect(banner.locator(".lumir-set-btn").last()).toBeEnabled();
+});
+
+test("设置面板：清除 Key → 输入替换 → 再清空，仍发 api_key.clear 且显示未配置（r3 P2-5）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, { snapshot: settingsSnapshot() });
+  const keyField = page.locator(".lumir-set-field").filter({ has: page.locator("#lumir-set-api-key") });
+  const state = keyField.locator(".lumir-set-field-state");
+  await expect(state).toHaveText("已配置");
+  await keyField.locator(".lumir-set-btn-ghost", { hasText: "清除" }).click();
+  await expect(state).toHaveText("未配置");
+  // 输入替换值再整个删掉：草稿意图必须回到「清除」，界面同步回「未配置」。
+  await page.locator("#lumir-set-api-key").fill("replacement-key");
+  await expect(state).toHaveText("待保存");
+  await page.locator("#lumir-set-api-key").fill("");
+  await expect(state).toHaveText("未配置");
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator(".lumir-set-status")).toContainText("已保存");
+  const patch = (await settingsPatches(page))[0]!;
+  expect(patch.providers[0].api_key).toEqual({ kind: "clear" });
 });

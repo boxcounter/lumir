@@ -184,3 +184,39 @@
    **已禁用**的保存钮；`providers: {}` 的期望（保留的 mock 条目仍在文件里）；251 的恢复标签写成
    `settings-note.md`（本场景打开的是 `harness-note.md`）。`--check` 补一条静态规则：
    `ax.has/not`、`file.has/not` 写数组即报 problem（同一份假绿形态不再靠人读发现）。
+
+## r3 返修记录（2026-10-25，review r3 p1-2items / merge hold）
+
+按 review `.tower/comms/reviews/review-feat-implement-settings-panel-frontend-oct25-reviewer-settings-panel-fronte-r1-3.md`：
+
+1. **P1-1 多笔未落盘新增的删除要兑现替代目标**：`applyDraftDelete` 拆成两条语义——**未被任何引用
+   指着的新增** = 撤销添加（从草稿里摘掉，不改写引用）；**被 active / 命名指着的新增**（含已保存
+   条目）仍走替代目标逻辑：`activeAfter` 有效就采用、无效回落第一个候选、没有候选时未落盘新增
+   回到 `activeBeforeAdd`（`mock` 不会被一笔 reset 删掉）；命名目标按计划改成 follow / 指定并
+   clear 掉旧 provider 的 model 覆盖。回归：单测 ×3（mock 基线删当前项 → patch 带
+   `active_provider = set(second)` 与 `[add second]`；未被引用的新增仍是纯撤销；被命名引用的
+   新增删除时兑现重定向）+ 视觉「mock 基线下两笔新增，删掉当前使用那笔时替代项写进 patch」。
+2. **P1-2 引用归属按持有者身份**：`Draft` 增加 `activeOwner` / `namingOwner`（草稿条目对象身份），
+   `createDraft`（快照引用 → 已保存条目）、`addProviderDraft`（接管 active）、`setActiveDraft`、
+   `setNamingProviderDraft`、`applyDraftDelete`（重定向后的新持有者）、`pageResetDraft` 各自维护；
+   `renameDraftProviderId` 只在**持有者是这条草稿**时改写引用，不再用「存在另一个同 id」推断。
+   回归：单测 ×4（同 id 两笔改第一笔 → 引用跟着走；改第二笔 → 留在第一笔；显式把 active 切到
+   第二笔后改第一笔不动它、改第二笔才跟着走；`deleteReferences` 只看持有者身份）+ 视觉 ×2
+   （两笔同 id 改第一笔 / 改第二笔两个方向）。
+3. **P2-3 通用字段错误与保存失败横幅**：`markDirty` 里补 `renderBanner()`——就地编辑（输入框
+   input 不走整页重绘）后 `[data-banner="field-errors"]` / `[data-banner="save-error"]` 与
+   `errors` / `lastError` 同步消失。回归：视觉「字段错误 / 保存失败横幅在输入框就地编辑后撤销」
+   （桩新增 `applyThrowsOnce`：第一次 `settings_apply` 抛 IPC 错误的形态）。
+4. **P2-4 冲突未解决时守住 conflict**：`markDirty` 不再把 `conflict` 降级成 dirty；`save(false)` 在
+   conflict 态直接拒绝（唯一可写路径是横幅里的「仍然保存」，用冲突返回的新 revision）。回归：
+   视觉「冲突后继续编辑仍守住 conflict 与两个动作，底栏保存不再启用」（就地编辑 + 整页重绘两种
+   路径都断言横幅、两个动作、状态行「外部冲突」与底栏禁用）。
+5. **P2-5 清除 Key 后的草稿意图**：`DraftProvider` 增加 `keyWasSet`（快照事实，草稿的清除 / 替换
+   不改它）；新增纯函数 `keyEditForInput`——空输入按「盘上有没有 Key」决定 `clear` 还是 null，
+   输入框处理器同步 `hasKey` 显示，不再出现「界面说未配置、patch 却没有 `api_key.clear`」。
+   回归：单测 ×2（清除 → 替换 → 再清空仍发 clear；盘上无 Key 时输入后清空 = 什么都不改）+
+   视觉「清除 Key → 输入替换 → 再清空，仍发 api_key.clear 且显示未配置」。
+
+六条新视觉用例里的五条做了**反向验证**（把 `src/settings-panel.ts` 换回 r2 tip `7fee3c1f` 的版本：
+P1-1、P1-2 正向、P2-3、P2-4、P2-5 各按预期判红；「改第二笔」那条是方向覆盖、旧实现不判红，
+如实标注），恢复后 28 条全绿。

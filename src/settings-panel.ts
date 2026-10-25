@@ -260,6 +260,9 @@ export interface DraftProvider {
   /** Key 的可见状态：完整值永不回传，至多末 4 位。 */
   hasKey: boolean;
   keyHint: string | null;
+  /** **盘上**是否有 Key（快照事实，草稿里的清除 / 替换都不改它）。输入框清空时「= 清除」还是
+   *  「= 什么都没改」只能按它判：`hasKey` 是显示态，清过一次之后就不再是盘上事实（P2-5 r3）。 */
+  keyWasSet: boolean;
   keyEdit: DraftKeyEdit | null;
   /** 模型清单草稿（含未声明字段与会被丢弃的坏行）。 */
   models: DraftModelRow[];
@@ -318,6 +321,11 @@ export interface Draft {
   providers: DraftProvider[];
   active: string | null;
   activeTouched: boolean;
+  /** `active` / 两个命名目标各自的**持有者条目**（草稿对象身份，不是 id 字面）。id 可以被多条草稿
+   *  复用（两笔未落盘的同 id 新增），改名与删除都必须按持有者改引用：「存在另一个同 id 条目」
+   *  推不出归属（P1-2 r3）。`null` = 引用指向盘上 / 列表外的值（`mock`、悬空 id）或没有引用。 */
+  activeOwner: DraftProvider | null;
+  namingOwner: Record<NamingKind, DraftProvider | null>;
   automation: Record<AutomationKey, DraftAutomationFlag>;
   naming: Record<NamingKind, DraftNamingTarget>;
   namingTouched: Record<NamingKind, { provider: boolean; model: boolean }>;
@@ -363,44 +371,54 @@ function capabilityOf(snapshot: SettingsSnapshot, preset: ProviderPreset | null)
 
 /** 快照 → 草稿（打开面板 / 保存成功 / 重新载入后的唯一入口）。 */
 export function createDraft(snapshot: SettingsSnapshot): Draft {
-  return {
-    providers: snapshot.providers.map((provider) => ({
-      id: provider.id,
-      preset: provider.preset,
-      rawPreset: provider.raw_preset,
-      ignored: provider.status === "invalid",
-      added: false,
-      removed: false,
-      status: provider.status,
-      configured: provider.configured,
-      references: provider.references,
-      effectiveModel: provider.model,
-      hasKey: provider.api_key.state === "set",
-      keyHint: provider.api_key.state === "set" ? provider.api_key.hint : null,
-      keyEdit: null,
-      models: provider.models.map((model) => ({
-        id: model.id,
-        effort: model.effort,
-        vision: model.vision,
-        window: model.window === null ? null : Number(model.window),
-        notes: model.diagnostics,
-        valid: model.valid,
-      })),
-      modelsEdit: null,
-      baseUrlPresent: provider.base_url.kind === "present",
-      baseUrlValue: provider.base_url.kind === "present" ? provider.base_url.value : "",
-      baseUrlEffective: provider.effective.base_url,
-      baseUrlEdit: null,
-      wirePresent: provider.wire_api.kind === "present",
-      wireRawText: provider.wire_api.kind === "present" ? provider.wire_api.value.text : null,
-      wireEffective: provider.effective.wire_api,
-      wireValue: provider.effective.wire_api,
-      wireEdit: null,
-      presetCapability: capabilityOf(snapshot, provider.preset),
-      activeBeforeAdd: null,
-      idError: null,
+  const providers: DraftProvider[] = snapshot.providers.map((provider) => ({
+    id: provider.id,
+    preset: provider.preset,
+    rawPreset: provider.raw_preset,
+    ignored: provider.status === "invalid",
+    added: false,
+    removed: false,
+    status: provider.status,
+    configured: provider.configured,
+    references: provider.references,
+    effectiveModel: provider.model,
+    hasKey: provider.api_key.state === "set",
+    keyHint: provider.api_key.state === "set" ? provider.api_key.hint : null,
+    keyWasSet: provider.api_key.state === "set",
+    keyEdit: null,
+    models: provider.models.map((model) => ({
+      id: model.id,
+      effort: model.effort,
+      vision: model.vision,
+      window: model.window === null ? null : Number(model.window),
+      notes: model.diagnostics,
+      valid: model.valid,
     })),
+    modelsEdit: null,
+    baseUrlPresent: provider.base_url.kind === "present",
+    baseUrlValue: provider.base_url.kind === "present" ? provider.base_url.value : "",
+    baseUrlEffective: provider.effective.base_url,
+    baseUrlEdit: null,
+    wirePresent: provider.wire_api.kind === "present",
+    wireRawText: provider.wire_api.kind === "present" ? provider.wire_api.value.text : null,
+    wireEffective: provider.effective.wire_api,
+    wireValue: provider.effective.wire_api,
+    wireEdit: null,
+    presetCapability: capabilityOf(snapshot, provider.preset),
+    activeBeforeAdd: null,
+    idError: null,
+  }));
+  // 快照里的引用只可能指向已保存条目（或列表外的 `mock` / 悬空 id → 无持有者）。
+  const ownerOf = (id: string | null): DraftProvider | null =>
+    id === null ? null : (providers.find((item) => item.id === id) ?? null);
+  return {
+    providers,
     active: snapshot.active,
+    activeOwner: ownerOf(snapshot.active),
+    namingOwner: {
+      session: ownerOf(snapshot.naming.session.override_provider),
+      attachment: ownerOf(snapshot.naming.attachment.override_provider),
+    },
     activeTouched: false,
     automation: {
       auto_compact: { ...snapshot.automation.auto_compact },
@@ -471,6 +489,14 @@ export function deleteCandidates(draft: Draft, exclude: string): string[] {
     .map((provider) => provider.id);
 }
 
+/** 把「当前使用」切给某一条草稿（`id` 与**持有者**一起写）：同 id 的另一条不能被当成同一个引用
+ *  （P1-2 r3）。UI 的「设为当前使用」与测试都走这里。 */
+export function setActiveDraft(draft: Draft, provider: DraftProvider): void {
+  draft.active = provider.id;
+  draft.activeOwner = provider;
+  draft.activeTouched = true;
+}
+
 /** provider 的生效模型（草稿态）：显式 `providers.<id>.model` 优先（不在清单也保留），
  *  否则清单首项，否则空串（design §9.1）。 */
 export function draftEffectiveModel(
@@ -494,6 +520,15 @@ export function draftProviderDirty(provider: DraftProvider): boolean {
     provider.baseUrlEdit !== null ||
     provider.wireEdit !== null
   );
+}
+
+/** 输入框内容 → Key 的草稿编辑意图。空串的含义取决于**盘上**是否有 Key：有 ⇒ 清除（删键），
+ *  没有 ⇒ 什么都不改。判据用 `keyWasSet`（快照事实）而不是 `hasKey`（显示态）——
+ *  「清除 → 输入替换值 → 再清空」这条链里 `hasKey` 早就是 false 了，按它判会把清除意图丢掉，
+ *  界面说「未配置」而盘上原 Key 留着（P2-5 r3）。 */
+export function keyEditForInput(provider: DraftProvider, value: string): DraftKeyEdit | null {
+  if (value !== "") return { kind: "replace", value };
+  return provider.keyWasSet ? { kind: "clear", value: "" } : null;
 }
 
 /** 草稿是否有未保存的修改（保存钮启用 / 关闭两步确认的判据）。 */
@@ -710,6 +745,7 @@ export function addProviderDraft(
     effectiveModel: "",
     hasKey: false,
     keyHint: null,
+    keyWasSet: false,
     keyEdit: null,
     models: [],
     modelsEdit: null,
@@ -738,104 +774,122 @@ export function addProviderDraft(
     draft.providers.some((item) => item.id === draft.active && !item.removed && !item.ignored);
   if (!activeListed) {
     draft.active = id;
+    draft.activeOwner = provider;
     draft.activeTouched = true;
   }
   return provider;
 }
 
+/** 按 id 字面寻址时「这个 id 的实体」是哪一条：**已保存条目优先**（它在盘上，后端解析的就是它），
+ *  否则取第一条未删的草稿条目。用户在选择器里选的引用与删除计划给的替代目标都按这条落到具体
+ *  条目上（引用持有者的初始值 / 重定向后的新持有者）。 */
+export function referenceOwner(draft: Draft, id: string | null): DraftProvider | null {
+  if (id === null) return null;
+  const holders = draft.providers.filter((provider) => provider.id === id && !provider.removed);
+  return holders.find((provider) => !provider.added) ?? holders[0] ?? null;
+}
+
 /** 给「尚未落盘的新增项」改 id（新增被后端按 id 拒绝后，用户就地改正）。
  *
- *  active 与两个命名目标按 **id 字面**寻址，所以只有这条草稿是**该 id 的唯一持有者**时，引用才
- *  跟着改名。草稿里若另有同 id 且未被删的条目（典型是已保存的 provider —— 新增的 id 撞上了
- *  它），那些引用指的是盘上那一条：改新增项的 id MUST NOT 静默把既有配置的当前使用项 / 命名目标
- *  切走（P1-2 r2）。 */
+ *  引用是否跟着改名只看**持有者身份**（`activeOwner` / `namingOwner`）：这条草稿是不是该引用的
+ *  持有者。按 id 字面推（「有别的同 id 条目 ⇒ 引用属于它」）会在两笔同 id 未落盘新增上把引用
+ *  静默转给另一条（P1-2 r3）——第一笔取了 active、用户也可能把它选成命名目标。 */
 export function renameDraftProviderId(draft: Draft, provider: DraftProvider, next: string): void {
   const previous = provider.id;
   if (next === previous) return;
-  const shared = draft.providers.some((item) => item !== provider && !item.removed && item.id === previous);
   provider.id = next;
-  if (shared) return;
   for (const kind of NAMING_KINDS) {
-    if (draft.naming[kind].provider === previous) {
+    if (draft.namingOwner[kind] === provider) {
       draft.naming[kind].provider = next;
       draft.namingTouched[kind].provider = true;
     }
   }
-  if (draft.active === previous) {
+  if (draft.activeOwner === provider) {
     draft.active = next;
     draft.activeTouched = next !== draft.baseline.active;
   }
-  if (draft.selection === previous) draft.selection = next;
+  // 选中态只是「哪一行高亮」，不是配置语义：焦点确实在这条草稿上（或它没有同 id 邻居）时跟着改。
+  if (draft.selection === previous) {
+    const focused = draft.focusedIndex === null ? null : (draft.providers[draft.focusedIndex] ?? null);
+    const hasNeighbour = draft.providers.some(
+      (item) => item !== provider && !item.removed && item.id === previous,
+    );
+    if (focused === provider || (focused === null && !hasNeighbour)) draft.selection = next;
+  }
+}
+
+/** 这个条目的引用面（按**持有者身份**判，不按 id 字面）：同 id 的其它草稿条目可能有自己的引用，
+ *  两者不能互相顶替（P1-2 r3）。删除确认的三块说明与删除计划都读它。 */
+function ownedReferences(draft: Draft, provider: DraftProvider): ProviderReferences {
+  return {
+    active: draft.activeOwner === provider,
+    session_naming: draft.namingOwner.session === provider,
+    attachment_naming: draft.namingOwner.attachment === provider,
+  };
+}
+
+/** 删除确认要展示、也是删除时要兑现的引用面：已保存条目按 id 字面（盘上那个 id 就是它），
+ *  未落盘的新增项按持有者身份（它可能只是与别人同 id）。 */
+export function deleteReferences(draft: Draft, provider: DraftProvider): ProviderReferences {
+  return provider.added ? ownedReferences(draft, provider) : draftReferences(draft, provider.id);
 }
 
 /** 删除确认的确认侧（design §4.3 / §11.5）：只改草稿——标记移除、按计划改写 active 与两个
- *  命名目标、清掉属于旧 provider 的 model 覆盖，并把选中态落到替代项或列表首项。 */
+ *  命名目标、清掉属于旧 provider 的 model 覆盖，并把选中态落到替代项或列表首项。
+ *
+ *  两条不同的语义（r3 才拆开）：**未被任何引用指着的未落盘新增** = 撤销这次添加（从草稿里摘掉，
+ *  不进 patch）；**被 active / 命名指着的**（含未落盘的新增）仍是「删除当前/被引用项」，必须兑现
+ *  删除确认里选的替代目标（design §4.2：删后仍有 provider 时采用所选替代项）。 */
 export function applyDraftDelete(draft: Draft): void {
   const plan = draft.remove;
   if (plan === null) return;
-  // 按草稿下标取，不按 id：同 id 的两条草稿（已保存 + 被拒新增）里，只有下标能指出用户点的是哪一条。
+  // 按草稿下标取，不按 id：同 id 的多条草稿里，只有下标能指出用户点的是哪一条。
   const provider = draft.providers[plan.index] ?? null;
   if (provider === null) {
     draft.remove = null;
     return;
   }
-  // 从未落盘的新增项：直接从草稿里摘掉（= 撤销这次添加），既不进 patch 也不算脏。active 若
-  // 指向它，回到「加入草稿前」的值（P1-1 r1：空配置里加第一项再撤销，不能留下指向已删 id 的
-  // `active_provider = Set(...)`）。
+  const refs = deleteReferences(draft, provider);
+  const candidates = deleteCandidates(draft, provider.id);
+  // 计划里的替代目标可能已失效（例如打开确认后另一个 provider 也被删了）：回落第一个候选。
+  const activeAfter =
+    plan.activeAfter !== "" && candidates.includes(plan.activeAfter) ? plan.activeAfter : (candidates[0] ?? "");
+
   if (provider.added) {
+    // 从未落盘的条目：**从草稿里摘掉**（它从来没进过文件，后端也没有它可删）。引用重定向照旧
+    // 兑现——它是当前使用项 / 命名目标时，删除确认里选的替代项必须生效（design §4.2 / P1-1 r3）；
+    // 没有任何引用指着它时，这就是一次纯粹的「撤销添加」，不改写任何引用、patch 里也不留东西。
     const removedIndex = draft.providers.indexOf(provider);
-    // 同 id 的**另一条**条目还活着：active 这个 id 指的是它（盘上真实的那个），撤销新增不得
-    // 顺带改写既有配置的当前使用项（P1-2 r2 的同一条身份规则）。
-    const activeBelongsToAnother = draft.providers.some(
-      (item) => item !== provider && !item.removed && item.id === provider.id,
-    );
     draft.providers = draft.providers.filter((item) => item !== provider);
-    draft.remove = null;
-    if (!activeBelongsToAnother && draft.active === provider.id) {
-      // 「可用」= 草稿里还活着，或它本来就是盘上的取值（例如 `provider: "mock"`：mock 不在
-      // 设置面的列表里，但它是真实存在且显式写下的值，撤销新增必须还回去，而不是补一笔 reset
-      // 把用户的显式选择删掉）。
-      const restorable = (candidate: string | null): boolean =>
-        candidate !== null &&
-        (draft.providers.some((item) => item.id === candidate && !item.removed) ||
-          candidate === draft.baseline.active);
-      const previous = provider.activeBeforeAdd;
-      draft.active = restorable(previous)
-        ? previous
-        : restorable(draft.baseline.active)
-          ? draft.baseline.active
-          : null;
-      draft.activeTouched = draft.active !== draft.baseline.active;
-    }
-    if (draft.selection === provider.id) {
-      draft.selection = defaultSelection(visibleProviders(draft));
-    }
-    // 摘掉一条后，后面的下标整体前移：focusedIndex 跟着修正（否则表单会落到邻居条目上）。
     if (draft.focusedIndex !== null) {
       if (draft.focusedIndex === removedIndex) draft.focusedIndex = null;
       else if (draft.focusedIndex > removedIndex) draft.focusedIndex -= 1;
     }
-    return;
+  } else {
+    provider.removed = true;
+    provider.keyEdit = null;
+    provider.modelsEdit = null;
+    provider.baseUrlEdit = null;
+    provider.wireEdit = null;
   }
-  const candidates = deleteCandidates(draft, provider.id);
-  const wasActive = draft.active === provider.id;
-  // 计划里的替代目标可能已失效（例如打开确认后另一个 provider 也被删了）：回落第一个候选。
-  const activeAfter =
-    plan.activeAfter !== "" && candidates.includes(plan.activeAfter) ? plan.activeAfter : (candidates[0] ?? "");
-  provider.removed = true;
-  provider.keyEdit = null;
-  provider.modelsEdit = null;
-  provider.baseUrlEdit = null;
-  provider.wireEdit = null;
-  if (wasActive) {
-    draft.active = candidates.length > 0 ? activeAfter : null;
-    draft.activeTouched = true;
+  if (refs.active) {
+    if (candidates.length > 0) {
+      draft.active = activeAfter;
+    } else {
+      // 没有替代项：未落盘的新增回到「加入草稿前」的值（可能是 `mock` / null）；已保存条目删到
+      // 零则不留当前使用项（design §4.4 的删键）。
+      draft.active = provider.added ? provider.activeBeforeAdd : null;
+    }
+    draft.activeOwner = referenceOwner(draft, draft.active);
+    draft.activeTouched = draft.active !== draft.baseline.active;
   }
   for (const kind of NAMING_KINDS) {
-    if (draft.naming[kind].provider === provider.id) {
+    const referenced = kind === "session" ? refs.session_naming : refs.attachment_naming;
+    if (referenced) {
       const target = kind === "session" ? plan.sessionAfter : plan.attachmentAfter;
       draft.naming[kind].provider = target === "follow" ? null : target;
       draft.naming[kind].model = null;
+      draft.namingOwner[kind] = referenceOwner(draft, draft.naming[kind].provider);
       draft.namingTouched[kind].provider = true;
       draft.namingTouched[kind].model = true;
       continue;
@@ -843,7 +897,7 @@ export function applyDraftDelete(draft: Draft): void {
     // 删除的是当前使用项、该命名目标是「跟随当前」：目标随之隐式变化，旧 model 覆盖属于旧
     // provider 的清单，必须**当场**清掉（design §4.1 / §10.5；不能等后端保存后再清，否则草稿
     // 与说明还停在旧读数，P1-3 r1）。
-    if (wasActive && draft.naming[kind].provider === null && draft.naming[kind].model !== null) {
+    if (refs.active && draft.naming[kind].provider === null && draft.naming[kind].model !== null) {
       draft.naming[kind].model = null;
       draft.namingTouched[kind].model = true;
     }
@@ -877,11 +931,13 @@ export function pageResetDraft(
     provider.wireEdit = { kind: "reset", value: provider.wireEffective };
   }
   draft.active = null;
+  draft.activeOwner = null;
   draft.activeTouched = true;
   draft.pageReset = true;
   for (const key of AUTOMATION_KEYS) draft.automation[key] = { value: defaults[key], explicit: false };
   for (const kind of NAMING_KINDS) {
     draft.naming[kind] = { provider: null, model: null };
+    draft.namingOwner[kind] = null;
     draft.namingTouched[kind] = { provider: true, model: true };
   }
   draft.add = null;
@@ -892,6 +948,7 @@ export function pageResetDraft(
 export function setNamingProviderDraft(draft: Draft, kind: NamingKind, value: string): void {
   draft.naming[kind].provider = value === "" ? null : value;
   draft.naming[kind].model = null;
+  draft.namingOwner[kind] = referenceOwner(draft, draft.naming[kind].provider);
   draft.namingTouched[kind].provider = true;
   draft.namingTouched[kind].model = true;
 }
@@ -1873,8 +1930,8 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       setCurrent.disabled = locked();
       setCurrent.addEventListener("click", () => {
         if (draft === null) return;
-        draft.active = provider.id;
-        draft.activeTouched = true;
+        // 引用持有者是**这一条**（同 id 的另一条不算），改名 / 删除时按它判。
+        setActiveDraft(draft, provider);
         markDirty();
         render();
       });
@@ -1978,9 +2035,11 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       : t(C.keyPlaceholderUnset);
     input.readOnly = locked();
     input.addEventListener("input", () => {
-      provider.keyEdit = input.value === "" ? null : { kind: "replace", value: input.value };
+      provider.keyEdit = keyEditForInput(provider, input.value);
+      // 显示与实际草稿一致：替换中 = 待保存；空输入 = 按草稿意图（清除 / 未改）回到盘上事实。
+      provider.hasKey = provider.keyEdit === null && provider.keyWasSet;
       state.textContent =
-        input.value !== ""
+        provider.keyEdit?.kind === "replace"
           ? t(C.keyStatePending)
           : provider.hasKey
             ? t(C.keyStateSet)
@@ -2382,7 +2441,8 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     wrap.append(element("div", "lumir-set-form-title", t(C.deleteTitle, { id: provider.id })));
     wrap.append(element("p", "lumir-set-hint", t(C.deleteSub)));
 
-    const refs = draftReferences(draft, provider.id);
+    // 与删除确认的实际动作同源：已保存条目按 id、未落盘新增按持有者身份（P1-2 r3）。
+    const refs = deleteReferences(draft, provider);
     if (refs.active) {
       const block = element("div", "lumir-set-delete-block");
       block.dataset.deleteBlock = "active";
@@ -2673,14 +2733,22 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
    *  重绘，漏掉这一次刷新就是死按钮（本 mission 的场景实测踩到）。 */
   function markDirty(): void {
     if (draft === null) return;
-    // 编辑也可能把草稿改回干净态（典型：撤销一条从未落盘的新增）。此时状态行必须回到
-    // 「没有未保存的修改」——否则保存钮已灰、状态行还声称有未保存的修改（真机场景 250 实测）。
-    if (mode !== "saving") mode = draftIsDirty(draft) ? "dirty" : "clean";
+    // 冲突未解决时**守住 conflict 模式**：老 revision 的底栏保存仍要禁用，两个动作只留在冲突横幅
+    // 里（重新载入 / 仍然保存）。把模式改回 dirty 会让用户拿旧 revision 再撞一次冲突、并把横幅
+    // 连同「仍然保存」一起弄丢（P2-4 r3）。
+    // 其余情况按草稿真实脏态取：编辑也可能把草稿改回干净态（典型：撤销一条从未落盘的新增），
+    // 那时状态行必须回到「没有未保存的修改」（真机场景 250 实测）。
+    if (mode !== "saving") {
+      mode = mode === "conflict" ? "conflict" : draftIsDirty(draft) ? "dirty" : "clean";
+    }
     errors = emptyFieldErrors();
     lastError = null;
     // 清 `errors` 的同时把已上屏的错误出口撤掉：就地编辑（输入框 input）不走整页重绘，光清状态
     // 会把旧错误文字留在持久行里（P2-4 r2）。
     clearErrorOutlets();
+    // 通用字段错误 / 保存失败横幅同理：它们只描述上一次保存的结果，编辑即失效（P2-3 r3）。
+    // 冲突横幅不会被这条抹掉——上面守住了 conflict 模式，renderBanner 会照 mode 重画它。
+    renderBanner();
     renderFooter();
   }
 
@@ -2719,6 +2787,10 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
   async function save(force: boolean): Promise<void> {
     if (draft === null || snapshot === null) return;
     if (mode === "saving" || mode === "fileInvalid") return;
+    // 冲突未解决时普通保存一律拒绝：唯一可写的是横幅里的「仍然保存」（force，用冲突返回的新
+    // revision）。否则拿打开时的旧 revision 再存只会再冲突一次，并丢掉已经拿到的「仍然保存」
+    // （P2-4 r3）。
+    if (mode === "conflict" && !force) return;
     const revision = force ? conflictRevision : snapshot.revision;
     if (revision === null) return;
     const patch = buildPatch(draft, snapshot, revision);
