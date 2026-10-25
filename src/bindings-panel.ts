@@ -48,7 +48,7 @@ import {
 } from "./keys";
 import type { CommandId, KeyBinding, KeyScope } from "./keys";
 import { t, onRelabel, interpolate } from "./copy";
-import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
+import { escapeDisposition, escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import type { CopyKey } from "./copy-data";
 import { COPY } from "./copy-data";
 import { COMMAND_META, SCOPE_DESCRIPTION_KEYS, SCOPE_LABEL_KEYS } from "./command-meta";
@@ -818,24 +818,42 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
 
   overlay.addEventListener("keydown", (event) => {
     if (event.isComposing || event.keyCode === 229) return;
+    // ① 已消费即让路（M718 的公共口径，fresh review rebase-r1 P1-1 的回归修复）：更靠近事件目标的
+    //    处理器已经消费了这一拍，面板的任何级联（捕获复位 / 查询清理 / 关闭）都 MUST NOT 再跑。
+    //    这一条必须在**最前面**——尤其不能把「其它层在栈顶时 handle() 返回 false」当作继续级联的
+    //    许可：`handle` 对已消费事件的返回就是 false（让路本身），不是「没人要」。
+    if (event.defaultPrevented) return;
     if (capture.kind === "waiting") {
       handleCaptureKey(event);
       return;
     }
-    // 层栈分流（见文件头）：**别的层开在本面板之上**时，这一拍 Escape 归路由（只关栈顶）。
-    // 只在本面板不是栈顶时委派——栈顶是本面板时走下面的三段级联（清捕获 / 清查询 / 关面板）。
+    // ② 层栈分流（见文件头）：**别的层开在本面板之上**时，这一拍 Escape 归路由（只关栈顶）。
+    //    栈顶是本面板时交给下面的共享准入 + 三段级联。
     const topLayer = escapeRouter.top();
-    if (topLayer !== null && topLayer.id !== "bindings-panel" && escapeRouter.handle(event)) return;
-    const token = keyToken(event);
-    if (token === null) return;
-
-    if (token === "Escape") {
+    if (topLayer !== null && topLayer.id !== "bindings-panel") {
+      if (escapeRouter.handle(event)) return;
+      // handle 返回 false 且事件未被消费（已消费的情形在 ① 已返回）：说明这一拍不归关闭路由
+      // （非 Escape / 组合期），继续走本面板的普通按键处理。
+    }
+    // ③ 共享准入（栈顶是本面板时也用同一份判断，不另写 `token === "Escape"`）：
+    //    `close` = 无修饰裸 Escape → M715 三段级联（清捕获 / 清查询 / 关面板，级联本身不关层）；
+    //    `swallow` = 带修饰键 → 只消费默认行为、不级联；**已捕获态例外**：带修饰的组合按 M715
+    //    design §3.3 走「重新捕获」（捕获本身不关层），因此放行到下面的 chord 分支。
+    const disposition = escapeDisposition(event);
+    if (disposition === "close") {
       event.preventDefault();
       if (capture.kind === "captured") clearCaptured();
       else if (query !== "") clearQuery();
       else toggle();
       return;
     }
+    if (disposition === "swallow" && capture.kind !== "captured") {
+      event.preventDefault();
+      return;
+    }
+    const token = keyToken(event);
+    if (token === null) return;
+
     if (token === "Ctrl-G") {
       event.preventDefault();
       toggle();

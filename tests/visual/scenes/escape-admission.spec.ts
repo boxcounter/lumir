@@ -420,3 +420,64 @@ test("widget 持焦 + 后开 hover 层：第一拍只收层且焦点不动；无
   await page.keyboard.press("Escape");
   await expect(page.locator(".cm-content"), "无层时既有归属不变：焦点交还编辑器").toBeFocused();
 });
+
+test("键位面板：已消费的 Escape 不跑级联（面板栈顶 / 后开 hover 栈顶两条反例 + 未消费对照）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await page.goto("/");
+  await page.locator('.ft-row[title="escape-admission.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("EADM-ALPHA");
+  // harness 面板在场，才有「不持焦的 hover 层」可以后开到键位面板之上。
+  await page.keyboard.press("Meta+Shift+A");
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+
+  const panel = page.locator(".lumir-bindings-panel");
+  const input = page.locator(".lumir-bindings-input");
+  const hint = page.locator(".lumir-hp-effhint");
+
+  await page.keyboard.press("Meta+/");
+  await expect(panel).toBeVisible();
+  await input.fill("撤");
+  await expect(input).toHaveValue("撤");
+
+  /** 模拟「更靠近事件目标的处理器已经消费了这一拍」：window capture 阶段先 preventDefault。 */
+  const consumeNextKeydown = async (): Promise<void> => {
+    await page.evaluate(() => {
+      window.addEventListener(
+        "keydown",
+        (event) => {
+          event.preventDefault();
+        },
+        { capture: true, once: true },
+      );
+    });
+  };
+
+  // ① 面板自身是栈顶：已消费的 Escape MUST NOT 清查询 / 关面板（rebase-r1 P1-1 的现场之一）。
+  await consumeNextKeydown();
+  await page.keyboard.press("Escape");
+  await expect(input, "已消费的 Escape MUST NOT 清查询").toHaveValue("撤");
+  await expect(panel).toBeVisible();
+
+  // ② 后开的不持焦 hover 层为栈顶：已消费的 Escape 既不收栈顶、也不落下清面板查询
+  //    （另一处现场：`handle()` 因已消费返回 false 不能当成「继续级联」的许可）。
+  //    面板是模态遮罩，真实指针到不了面板外的读数，这里直接派发 `mouseenter`——本判据要的是
+  //    「层栈分流 + 已消费让路」，hover 通道本身归第 3 条用例。
+  await page.locator(".lumir-hp-eff-reading").dispatchEvent("mouseenter");
+  await expect(hint).toBeVisible();
+  await consumeNextKeydown();
+  await page.keyboard.press("Escape");
+  await expect(hint, "已消费的 Escape 不得收栈顶 hover").toBeVisible();
+  await expect(input, "也不得清面板查询").toHaveValue("撤");
+  await expect(panel).toBeVisible();
+
+  // ③ 未消费正向对照：第一拍只收 hover（面板级联不动），第二拍清查询，第三拍关面板。
+  await page.keyboard.press("Escape");
+  await expect(hint, "未消费时第一拍只收后开的 hover").toBeHidden();
+  await expect(input, "第一拍不清查询").toHaveValue("撤");
+  await page.keyboard.press("Escape");
+  await expect(input, "第二拍清查询").toHaveValue("");
+  await expect(panel).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(panel, "第三拍关面板").toBeHidden();
+});
