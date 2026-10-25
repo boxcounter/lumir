@@ -20,11 +20,18 @@ use std::sync::{Arc, Mutex};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-/// 隔离环境的测试夹具：临时 XDG_CONFIG_HOME + HOME + 合成 vault。
+/// 隔离环境的测试夹具：临时 XDG_CONFIG_HOME + HOME + SHELL + 合成 vault。
+///
+/// SHELL 也隔离（M741）：cli_run 首次调用时经「用户登录 shell」解析一份 PATH 并缓存在进程级
+/// `OnceLock` 里（`harness/tools.rs` 的 `cli_path`），此后每条命令都用这份缓存——命令解析
+/// 因此取决于开发者的 shell 配置，而缓存先于任何单个用例落定，用例无法再用自己的 PATH 影子
+/// 替身（如 `sudo`）。把 SHELL 指向末段既非 zsh 也非 bash 的不存在路径，解析直接失败、回退
+/// 「继承进程 PATH」，命令解析回到用例可控制的状态，也不再起交互式 shell 子进程。
 struct Fixture {
     root: PathBuf,
     previous_xdg: Option<std::ffi::OsString>,
     previous_home: Option<std::ffi::OsString>,
+    previous_shell: Option<std::ffi::OsString>,
     _guard: std::sync::MutexGuard<'static, ()>,
 }
 
@@ -39,8 +46,10 @@ impl Fixture {
         std::fs::create_dir_all(&root).unwrap();
         let previous_xdg = std::env::var_os("XDG_CONFIG_HOME");
         let previous_home = std::env::var_os("HOME");
+        let previous_shell = std::env::var_os("SHELL");
         std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
         std::env::set_var("HOME", root.join("home"));
+        std::env::set_var("SHELL", root.join("no-login-shell"));
         std::fs::create_dir_all(root.join("xdg")).unwrap();
         std::fs::create_dir_all(root.join("home")).unwrap();
         std::fs::create_dir_all(root.join("vault")).unwrap();
@@ -48,6 +57,7 @@ impl Fixture {
             root,
             previous_xdg,
             previous_home,
+            previous_shell,
             _guard: guard,
         }
     }
@@ -91,6 +101,10 @@ impl Drop for Fixture {
         match &self.previous_home {
             Some(v) => std::env::set_var("HOME", v),
             None => std::env::remove_var("HOME"),
+        }
+        match &self.previous_shell {
+            Some(v) => std::env::set_var("SHELL", v),
+            None => std::env::remove_var("SHELL"),
         }
         std::fs::remove_dir_all(&self.root).ok();
     }
@@ -2494,11 +2508,96 @@ fn approval_remember_writes_cache_and_decision_visible() {
     permission_cache::clear();
 }
 
+/// 进程 PATH 的临时前缀（只在持锁的用例里生效，别的用例看不见）：让 `sudo` 这类裸命令名
+/// 先命中测试自己的替身。Drop 复原——用例 panic 时也不会把改过的 PATH 留给下一个用例。
+struct PathPrefix {
+    previous: Option<std::ffi::OsString>,
+}
+
+impl PathPrefix {
+    fn new(dir: &Path) -> Self {
+        let previous = std::env::var_os("PATH");
+        let mut segments = vec![dir.to_path_buf()];
+        if let Some(old) = previous.as_deref() {
+            segments.extend(std::env::split_paths(old));
+        }
+        std::env::set_var(
+            "PATH",
+            std::env::join_paths(&segments).expect("PATH 段合法：来自系统 PATH 与临时目录"),
+        );
+        Self { previous }
+    }
+}
+
+impl Drop for PathPrefix {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+}
+
+/// 合成 sudo 替身（M741）：把每次调用的 argv 追加进日志、回显标记、以 0 退出，从不提权。
+///
+/// 它不是 sudo 的模拟实现，只回答一个问题——「这条命令到底由哪个可执行文件执行了」：
+/// `$0` 记的是 PATH 解析出的完整路径，落在系统 sudo 上时与替身路径对不上。
+struct SudoStandIn {
+    dir: PathBuf,
+    bin: PathBuf,
+    log: PathBuf,
+}
+
+impl SudoStandIn {
+    fn install(root: &Path) -> Self {
+        let dir = root.join("fake-bin");
+        let bin = dir.join("sudo");
+        let log = root.join("fake-sudo-argv.log");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log_literal = log.display().to_string();
+        assert!(
+            !log_literal.contains('\''),
+            "夹具路径含单引号，替身脚本无法安全引用：{log_literal}"
+        );
+        std::fs::write(
+            &bin,
+            format!(
+                r#"#!/bin/sh
+# M741 合成 sudo 替身：只记录 argv 并发标记，从不提权。
+{{ printf 'argv0=%s' "$0"; for arg in "$@"; do printf ' arg=%s' "$arg"; done; printf '\n'; }} >> '{log_literal}'
+printf 'LUMIR-FAKE-SUDO %s\n' "$*"
+exit 0
+"#
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Self { dir, bin, log }
+    }
+
+    /// 替身记录的调用，每次调用一行（`argv0=… arg=…`）。读不到即没有任何调用发生过。
+    fn calls(&self) -> Vec<String> {
+        std::fs::read_to_string(&self.log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+}
+
 /// 黑名单 wrapper 递归的整合用例（backlog 2026-10-10 Alex 裁决「堵」）：full_access 档下
 /// `sudo rm` 仍进批准闸（自动放行被黑名单递归层拦住）；`sudo ls` 不误伤（只读放行）。
+///
+/// 用例里的 sudo 一律先命中 PATH 最前的合成替身（M741）：M734 现场是有 TTY 时 `sudo ls`
+/// 真的起了一次提权进程，密码提示把用例拖到 60 秒超时（无 TTY / CI 才绿）。替身不提权、
+/// 不读 stdin，用例因此与终端形态无关；`sudo rm` 那条若闸门将来回归成放行，执行的也是替身，
+/// 系统 sudo 在本用例里没有任何一条路径能被执行到。
 #[test]
 fn wrapper_recursion_gates_sudo_rm_in_full_access() {
     let f = Fixture::new("wrapper-sudo");
+    let stand_in = SudoStandIn::install(&f.root);
+    let _path = PathPrefix::new(&stand_in.dir);
     let mut config = mock_config();
     config.permission_mode = lumir_lib::config::PermissionMode::FullAccess;
     let runtime = f.runtime();
@@ -2584,6 +2683,25 @@ fn wrapper_recursion_gates_sudo_rm_in_full_access() {
     let tool = &tools[1];
     assert_eq!(tool.status.as_deref(), Some("done"));
     assert_eq!(tool.decision, None, "免闸路径没有批准决定");
+
+    // 被执行的是替身、不是系统 sudo：标记只有替身会打，真实 sudo 打不出这一行。
+    let envelope: serde_json::Value =
+        serde_json::from_str(tool.text.as_deref().unwrap()).expect("结果信封是 JSON");
+    assert_eq!(envelope["exit_code"], 0, "{envelope}");
+    let stdout = envelope["stdout"].as_str().unwrap_or_default();
+    assert!(
+        stdout.contains("LUMIR-FAKE-SUDO ls -la"),
+        "sudo ls 必须由 PATH 上的替身执行：{stdout}"
+    );
+    // 替身自己记的 argv：恰好一次调用（被拒的 sudo rm 从未起过进程），参数逐字保留，
+    // `$0` 是 PATH 解析出的完整路径——落到系统 sudo 上这里就对不上。
+    let calls = stand_in.calls();
+    assert_eq!(calls.len(), 1, "替身应恰好被调用一次：{calls:?}");
+    assert_eq!(
+        calls[0],
+        format!("argv0={} arg=ls arg=-la", stand_in.bin.display()),
+        "被执行的必须是替身本身"
+    );
 }
 
 /// vault_move 工具（design §5.1）：跨目录移动成立（目标父目录已存在）+ 撞名不覆盖
