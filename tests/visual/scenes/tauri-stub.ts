@@ -4,6 +4,7 @@ import type { ConfigSnapshot } from "../../../src/bindings/ConfigSnapshot";
 import type { HarnessProviderConfig } from "../../../src/bindings/HarnessProviderConfig";
 import type { ProviderPreset } from "../../../src/bindings/ProviderPreset";
 import { setLanguageRoot } from "../../../src/copy";
+import { providerEntry as visualProviderEntry } from "./provider-config";
 
 // 场景**在 Node 侧**解析文案时的语言档（M282，change ui-language-i18n）：locale 的决定权在
 // 浏览器里（`<html lang>` 由被测应用按 `ui.language` 写），而场景对纯函数 / 常量的断言发生在
@@ -342,38 +343,10 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
       });
       if (kind === "file" && vault.files) vault.files[path] = "";
     };
-    /** provider 条目构造（change add-model-automation-settings-oct24 §2.1 / §2.4）：照 Rust
-     *  `HarnessProviderConfig::empty(preset)` + `recompute_configured()` 的同一口径组装——
-     *  id 只是映射键，协议行为全由条目自带的 `preset` 决定（桩不提供固定 provider 枚举）；
-     *  `wire_api` 缺省随 preset（kimi / deepseek / mock = `responses`，generic =
-     *  `chat_completions`）。`configured` 是**后端派生读数**，前端 MUST NOT 自己拼
-     *（REVIEW.md『同一语义两处真源』条）；桩在这里扮演后端，因此按 `derive_configured`
-     *  的同一规则从字段算出来，而不是手写字面量。 */
-    const providerEntry = (
-      preset: ProviderPreset,
-      fields: Partial<
-        Pick<HarnessProviderConfig, "api_key" | "model" | "base_url" | "models" | "wire_api" | "fixture">
-      > = {},
-    ): HarnessProviderConfig => {
-      const entry: HarnessProviderConfig = {
-        preset,
-        api_key: fields.api_key ?? "",
-        model: fields.model ?? "",
-        base_url: fields.base_url ?? null,
-        models: fields.models ?? [],
-        wire_api: fields.wire_api ?? (preset === "generic" ? "chat_completions" : "responses"),
-        fixture: fields.fixture ?? null,
-        configured: false,
-      };
-      // src-tauri/src/config.rs 的 `HarnessProviderConfig::derive_configured` 逐条镜像。
-      entry.configured =
-        preset === "mock"
-          ? (entry.fixture ?? "").trim() !== ""
-          : preset === "generic"
-            ? entry.models.length > 0 && (entry.base_url ?? "").trim() !== ""
-            : entry.api_key.trim() !== "" && entry.models.length > 0;
-      return entry;
-    };
+    // provider 条目构造：唯一实现在 `./provider-config.ts`（视觉场景与桩共用同一份派生规则，
+    // REVIEW.md『同一语义两处真源』条）。桩这里只组装**出厂空条目**（无 Key / 无模型 /
+    // 无 fixture ⇒ `configured = false`），与 Rust `HarnessProviderConfig::empty(preset)` 同态。
+    const providerEntry = (preset: ProviderPreset): HarnessProviderConfig => visualProviderEntry(preset);
 
     const handlers: Record<string, (args: Args) => unknown> = {
       // vault_list 桩（M163）：缺省派生**一条**「当前 fixture 那一行」——列表浮层在单 vault

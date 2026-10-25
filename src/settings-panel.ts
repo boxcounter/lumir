@@ -1292,7 +1292,9 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     resetPageButton.hidden = mode === "fileInvalid";
     cancelButton.disabled = mode === "saving";
     closeButton.disabled = mode === "saving";
-    saveButton.disabled = locked() || !dirty();
+    // 冲突态只走横幅里的两个动作（重新载入 / 仍然保存）；底栏的保存按钮用的是打开时的旧
+    // revision，再点只会再冲突一次。
+    saveButton.disabled = locked() || !dirty() || mode === "conflict";
     saveButton.textContent = mode === "saving" ? t(C.statusSaving) : t(C.save);
     discardBox.hidden = !discardPending;
     actions.hidden = discardPending;
@@ -2185,7 +2187,6 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
         const flag = draft.automation[key];
         flag.value = !flag.value;
         flag.explicit = true;
-        if (key === "attachment_naming") attachmentTurnedOn = flag.value;
         markDirty();
         render();
       });
@@ -2301,12 +2302,17 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     const revision = force ? conflictRevision : snapshot.revision;
     if (revision === null) return;
     const patch = buildPatch(draft, snapshot, revision);
+    // 图片命名的方向不对称只认**落盘前后**的取值：落盘前关、落盘后开 ⇒ 重启后生效。
+    // 用「用户点过开关」当判据会把「关掉再开回来」误报成需要重启。
+    const restartNeeded =
+      snapshot.automation.attachment_naming.value === false &&
+      draft.automation.attachment_naming.value === true;
     mode = "saving";
     errors = emptyFieldErrors();
     lastError = null;
     render();
     try {
-      applyOutcome(await settingsApply(patch));
+      applyOutcome(await settingsApply(patch), restartNeeded);
     } catch (error) {
       mode = dirty() ? "dirty" : "clean";
       lastError = t(C.saveFailed, { message: messageOf(error) });
@@ -2314,7 +2320,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     }
   }
 
-  function applyOutcome(outcome: SettingsApplyOutcome): void {
+  function applyOutcome(outcome: SettingsApplyOutcome, restartNeeded: boolean): void {
     if (draft === null) return;
     if (outcome.status === "applied") {
       const selection = draft.selection;
@@ -2324,14 +2330,16 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       mode = "saved";
       errors = emptyFieldErrors();
       conflictRevision = null;
-      attachmentTurnedOn = false;
+      attachmentTurnedOn = restartNeeded;
       automationRows.clear();
       render();
       return;
     }
     if (outcome.status === "conflict") {
+      // 只换 CAS 基准，**不换快照**：草稿的 diff 必须仍以打开（或上次保存）时那份为基线，
+      // 否则「仍然保存」会拿用户没编辑过的外部值重算出一笔不同的 patch（design §6 的
+      // 「以本页为准」= 在当前文件上重新应用同一 patch）。重新载入走 settingsGet 现读。
       conflictRevision = outcome.snapshot.revision;
-      snapshot = { ...outcome.snapshot, revision: outcome.snapshot.revision };
       mode = "conflict";
       errors = mapFieldErrors(outcome.errors);
       render();

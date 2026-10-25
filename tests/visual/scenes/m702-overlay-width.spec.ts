@@ -4,6 +4,7 @@ import { providerEntry, standardProviders } from "./provider-config";
 
 const PROVIDERS = {
   kimi: providerEntry("kimi", {
+    api_key: "test-key-visual",
     model: "kimi-k3-extended-context-experimental",
     models: [
       { id: "kimi-k3-extended-context-experimental", effort: true, window: 1048576 },

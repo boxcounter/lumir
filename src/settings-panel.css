@@ -580,15 +580,16 @@
   background: var(--hover);
 }
 
-/* 危险实底：白字（eink 黑底白字） */
-.lumir-set-btn-danger.lumir-set-danger-solid,
-.lumir-set-delete-card .lumir-set-btn-danger {
+/* 危险实底：白字（eink 黑底白字）。`:not(:disabled)` 与上一条 tint 规则的权重对齐后再靠
+   位置取胜——只写两个类会被 `.lumir-set-btn-danger.lumir-set-btn-danger:not(:disabled)`
+   （0,3,0）压回去，删除钮会变成浅底红字（原型是实底白字）。 */
+.lumir-set-delete-card .lumir-set-btn-danger:not(:disabled) {
   background: var(--danger);
   border-color: var(--danger);
   color: #fff;
 }
 
-:root[data-theme="eink"] .lumir-set-delete-card .lumir-set-btn-danger {
+:root[data-theme="eink"] .lumir-set-delete-card .lumir-set-btn-danger:not(:disabled) {
   background: #000;
   border-color: #000;
   color: #fff;

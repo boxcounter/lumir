@@ -11,9 +11,8 @@
 // models 均非空）。**桩在这里扮演后端**，因此由它算 `configured` 是正确的分工；产品代码
 // MUST NOT 自己拼这条判据（REVIEW.md『同一语义两处真源』条）。
 //
-// M738 已在 `tests/visual/scenes/tauri-stub.ts` 里落了一份同规则的局部 `providerEntry`
-// （它不在本 mission 的 scope 内）。两处应在 M738 合并后收敛成「stub 从本文件导入」——已按
-// finding 上报，本条只保证视觉场景这一侧不再各抄一份。
+// 唯一实现：`tauri-stub.ts` 的出厂条目也从这个模块导入（M738 的修复以 cherry-pick 落进本
+// mission，两处收敛成一份派生规则——桩扮演后端产出空条目，场景按需覆写字段）。
 
 import type { HarnessProviderConfig } from "../../../src/bindings/HarnessProviderConfig";
 import type { ProviderPreset } from "../../../src/bindings/ProviderPreset";
@@ -39,9 +38,9 @@ export function providerEntry(preset: ProviderPreset, fields: ProviderFields = {
   }));
   const entry: HarnessProviderConfig = {
     preset,
-    // kimi / deepseek 的空 Key 会让条目「未配置」；场景要的是「后端已配置」的常见形态，
-    // 因此给一把合成 Key（真后端从不回传完整 Key，这里只驱动前端读数）。
-    api_key: fields.api_key ?? (preset === "kimi" || preset === "deepseek" ? "test-key-visual" : ""),
+    // 出厂空条目的 Key 是空串（与 Rust `HarnessProviderConfig::empty` 同态，桩的默认
+    // providers 走这一档）；场景要「后端已配置」时显式给一把合成 Key。
+    api_key: fields.api_key ?? "",
     model,
     base_url: fields.base_url ?? null,
     models,
@@ -60,9 +59,10 @@ export function providerEntry(preset: ProviderPreset, fields: ProviderFields = {
 
 /** 视觉场景里最常见的三档 provider 映射（kimi / deepseek 各一个模型 + mock fixture）。 */
 export function standardProviders(): Record<string, HarnessProviderConfig> {
+  const key = "test-key-visual";
   return {
-    kimi: providerEntry("kimi", { model: "k2" }),
-    deepseek: providerEntry("deepseek", { model: "d" }),
+    kimi: providerEntry("kimi", { api_key: key, model: "k2" }),
+    deepseek: providerEntry("deepseek", { api_key: key, model: "d" }),
     mock: providerEntry("mock", { fixture: "f.json" }),
   };
 }

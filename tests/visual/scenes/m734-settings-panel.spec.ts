@@ -159,8 +159,9 @@ function settingsSnapshot(overrides: Json = {}): Json {
 
 interface SettingsStubOptions {
   snapshot: Json;
-  /** applied（默认）→ 返回同一份快照；blocked → 带 errors；pending → 永不 resolve（保存中）。 */
-  apply?: "applied" | "blocked" | "pending";
+  /** applied（默认）→ 返回同一份快照；blocked → 带 errors；conflict → revision 已变；
+   *  pending → 永不 resolve（保存中）。 */
+  apply?: "applied" | "blocked" | "conflict" | "pending";
   errors?: Array<{ path: string; code: string; message: string }>;
 }
 
@@ -179,6 +180,14 @@ async function stubSettings(page: Page, options: SettingsStubOptions): Promise<v
             status: "blocked",
             snapshot: config.snapshot,
             errors: config.errors ?? [],
+            warnings: [],
+          };
+        }
+        if (config.apply === "conflict") {
+          return {
+            status: "conflict",
+            snapshot: { ...config.snapshot, revision: "rev-visual-external" },
+            errors: [{ path: "base_revision", code: "settings_revision_conflict", message: "配置文件已在外部修改" }],
             warnings: [],
           };
         }
@@ -295,6 +304,7 @@ test("设置面板：light / dark 同几何；eink 面板 1.4px 描边、无阴�
   };
   const light = await geometry();
   await setTheme(page, "dark");
+  await capture(page, "03-dark");
   const dark = await geometry();
   expect(dark.width).toBe(light.width);
   expect(dark.height).toBe(light.height);
@@ -505,4 +515,24 @@ test("设置面板：保存中禁用全部编辑控件（含取消 / 设置当�
     )
     .toEqual([]);
   await capture(page, "10-saving");
+});
+
+test("设置面板：外部冲突 → 横幅给「重新载入 / 仍然保存」两动作；底栏保存禁用", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, { snapshot: settingsSnapshot(), apply: "conflict" });
+  // 制造一次脏改动再保存（干净态保存是空动作）。
+  await page.locator('[data-auto-row="auto_compact"] [role="switch"]').click();
+  await page.locator(".lumir-set-btn-primary").click();
+  const banner = page.locator('[data-banner="conflict"]');
+  await expect(banner).toBeVisible();
+  await expect(banner.locator(".lumir-set-banner-title")).toHaveText("配置文件已在外部修改");
+  await expect(banner.locator(".lumir-set-btn")).toHaveText(["重新载入", "仍然保存"]);
+  // 冲突态只走横幅动作：底栏保存用的是旧 revision，不能让它再点出一次冲突。
+  await expect(page.locator(".lumir-set-actions .lumir-set-btn-primary")).toBeDisabled();
+  await expect(page.locator(".lumir-set-status")).toContainText("外部冲突");
+  await capture(page, "11-conflict");
+  // 重新载入 → 横幅消失、回到干净态（外部值落地）。
+  await banner.locator(".lumir-set-btn").first().click();
+  await expect(banner).toBeHidden();
+  await expect(page.locator(".lumir-set-status")).toHaveText("没有未保存的修改");
 });

@@ -5,13 +5,17 @@ import { providerEntry, standardProviders } from "./provider-config";
 
 const PROVIDERS = {
   kimi: providerEntry("kimi", {
+    api_key: "test-key-visual",
     model: "k2",
     models: [
       { id: "k2", effort: false, window: 262144 },
       { id: "kimi-k3", effort: true, window: 1048576 },
     ],
   }),
-  deepseek: providerEntry("deepseek", { models: [{ id: "d", effort: true, window: 131072 }] }),
+  deepseek: providerEntry("deepseek", {
+    api_key: "test-key-visual",
+    models: [{ id: "d", effort: true, window: 131072 }],
+  }),
   mock: providerEntry("mock", { fixture: "f.json" }),
 };
 
