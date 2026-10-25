@@ -21,7 +21,7 @@
 // 可访问性：`role="dialog"` + `aria-modal`、背景 `inert`、焦点圈定与交还、三条关闭路径
 // （Escape / 点遮罩 / 再按 ⌘,）、脏面板两步确认、`role="status"` 的 polite live region。
 
-import { t, onRelabel } from "./copy";
+import { errorText, t, onRelabel } from "./copy";
 import type { CopyKey } from "./copy-data";
 import { escapeDisposition, escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { settingsApply, settingsGet } from "./ipc";
@@ -2316,7 +2316,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       resetDraftFrom(await settingsGet());
       focusInitial();
     } catch (error) {
-      lastError = t(C.loadFailed, { message: messageOf(error) });
+      lastError = t(C.loadFailed, { message: errorText(error) });
       render();
     }
   }
@@ -2340,7 +2340,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       applyOutcome(await settingsApply(patch), restartNeeded);
     } catch (error) {
       mode = dirty() ? "dirty" : "clean";
-      lastError = t(C.saveFailed, { message: messageOf(error) });
+      lastError = t(C.saveFailed, { message: errorText(error) });
       render();
     }
   }
@@ -2402,12 +2402,6 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     if (draft.selection === rejected.id) draft.selection = defaultSelection(visibleProviders(draft));
   }
 
-  function messageOf(error: unknown): string {
-    if (error instanceof Error) return error.message;
-    if (typeof error === "string") return error;
-    return String(error);
-  }
-
   function focusAfterRender(selector: string): void {
     queueMicrotask(() => {
       card.querySelector<HTMLElement>(selector)?.focus();
@@ -2452,12 +2446,14 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     queueMicrotask(() => {
       settingsGet()
         .then((next) => {
+          if (overlay.hidden) return; // 取数落地前面板已被关掉：不渲染、也不抢焦点
           resetDraftFrom(next);
           focusInitial();
         })
         .catch((error: unknown) => {
+          if (overlay.hidden) return;
           mode = "fileInvalid";
-          lastError = t(C.loadFailed, { message: messageOf(error) });
+          lastError = t(C.loadFailed, { message: errorText(error) });
           render();
           closeButton.focus();
         });
