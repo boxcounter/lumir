@@ -115,6 +115,7 @@ import {
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
 import { createFollowController } from "./harness-scroll-lock";
+import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import type { FollowState } from "./harness-scroll-lock";
 import {
   applyOverlayPlacement,
@@ -1361,6 +1362,41 @@ export function createUndoHistory<T>(options: {
       return redoStack.length;
     },
   };
+}
+
+/** 重建保焦的「段」：权限档、provider、model、effort（change fix-escape-overlay-close-oct24
+ *  design §3.3 / 裁决 D3）。 */
+export type RebuildSegment = "perm" | "provider" | "model" | "effort";
+
+/** 重建后的一项（纯值）：段名、该项 id、是否为该段的当前项。 */
+export interface RebuildItem {
+  seg: RebuildSegment;
+  id: string;
+  current: boolean;
+}
+
+/** 语义键：段 + 该项 id。 */
+export interface RebuildKey {
+  seg: RebuildSegment;
+  id: string;
+}
+
+/**
+ * 重建后应当落焦的那一项（纯逻辑，单测直接断言；DOM 映射在 `focusRebuiltItem`）：
+ *
+ * 1. 先按「段 + 该项 id」精确找——成功路径上 id 已写进状态，找到的就是**新选中**的那一项；
+ * 2. 找不到（切 provider 后 model 段换了内容、或该 id 已不存在）时落回**该段的当前项**
+ *    （`aria-checked` / `is-current` 的同一读数）；
+ * 3. 整段都不在（没有这个段）时返回 `null`——调用方回落触发钮。
+ *
+ * 键 MUST 由**重建时的当前状态**产出（`permMode` / `selSelection.provider` /
+ * `models[provider].current` / `thinkLevel`），MUST NOT 用点击目标：写回失败回滚后的重建要落回
+ * 回滚项，用点击目标会把焦点留在失败的新项上——正是本 change 要修的那种形态。
+ */
+export function pickRebuildFocus<T extends RebuildItem>(items: readonly T[], key: RebuildKey): T | null {
+  const exact = items.find((item) => item.seg === key.seg && item.id === key.id);
+  if (exact !== undefined) return exact;
+  return items.find((item) => item.seg === key.seg && item.current) ?? null;
 }
 
 // ── 序列化消息的解析（transcript 快照恢复用） ──────────────────────────────
@@ -3962,6 +3998,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const selPop = document.createElement("div");
   selPop.className = "lumir-hp-selpop";
   selPop.setAttribute("role", "menu");
+  // 可聚焦但不在 Tab 序里（-1）：重建窗口内的焦点停靠点，见 rebuildFocusKey 的说明。
+  selPop.tabIndex = -1;
   selPop.hidden = true;
   // effort 不支持的 hover hint（D394，ctxPop 同款 hover 泡）：只挂读数那一格，mouseenter
   // 翻出、mouseleave 收回。
@@ -3998,6 +4036,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const permPop = document.createElement("div");
   permPop.className = "lumir-hp-permpop";
   permPop.setAttribute("role", "menu");
+  // 可聚焦但不在 Tab 序里（-1）：重建窗口内的焦点停靠点，见 rebuildFocusKey 的说明。
+  permPop.tabIndex = -1;
   permPop.hidden = true;
   permChip.append(permName, permChev);
   permWrap.append(permChip, permPop);
@@ -5814,6 +5854,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       item.className = "lumir-hp-selpop-item";
       item.setAttribute("role", "menuitemradio");
       item.setAttribute("aria-checked", String(id === cur));
+      // 重建保焦的语义键（change fix-escape-overlay-close-oct24 design §3.3）：段 + 该项 id。
+      // MUST NOT 靠文本内容或行号推断——重建后行号会变、文本随语言变。
+      item.dataset.seg = "provider";
+      item.dataset.id = id;
       appendCheck(item, id === cur);
       const name = document.createElement("span");
       name.className = "lumir-hp-selpop-name";
@@ -5852,6 +5896,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           item.className = "lumir-hp-selpop-item";
           item.setAttribute("role", "menuitemradio");
           item.setAttribute("aria-checked", String(checked));
+          item.dataset.seg = "model";
+          item.dataset.id = option.id;
           appendCheck(item, checked);
           const name = document.createElement("span");
           name.className = "lumir-hp-selpop-name";
@@ -5882,6 +5928,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       item.className = "lumir-hp-selpop-item";
       item.setAttribute("role", "menuitemradio");
       item.setAttribute("aria-checked", String(checked));
+      item.dataset.seg = "effort";
+      item.dataset.id = id;
       appendCheck(item, checked);
       const name = document.createElement("span");
       name.className = "lumir-hp-selpop-name";
@@ -5913,15 +5961,103 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (open) buildSelPop();
     selPop.hidden = !open;
     modelChip.setAttribute("aria-expanded", String(open));
+    // 层栈登记与开合同源（change fix-escape-overlay-close-oct24 design §3.2）：注销在同一函数
+    // 的另一支——所有关闭路径都经过 setSelPop(false)，MUST NOT 在别处补一次。
+    if (open) registerEscapeLayer("harness-sel-pop", closeSelPop);
+    else unregisterEscapeLayer("harness-sel-pop");
     // M702：打开时补一次夹取（此前完全没有——越 pane 的现场见 placeSelPop 注释）。
     if (open) placeSelPop();
   }
 
-  /** 浮层开着时重建设（三维读数随选择刷新；选定不关浮层，重建就是它刷新的方式）。 */
-  function rebuildSelPopIfOpen(): void {
+  /** 合并选择器关闭的唯一实现（就地键处理器与窗口级兜底共用，E5）：收起 + 焦点回模型 chip。 */
+  function closeSelPop(): void {
+    setSelPop(false);
+    if (modelChip.isConnected) modelChip.focus();
+  }
+
+  /** 该段当前项的 id（重建保焦的语义键「id」那一半；键按**重建时的当前状态**取，见
+   *  `pickRebuildFocus` 的说明）。 */
+  function selSegmentKey(seg: RebuildSegment): string | null {
+    if (selSelection === null) return null;
+    if (seg === "provider") return selSelection.provider;
+    if (seg === "model") return selSelection.models[selSelection.provider as ProviderId]?.current ?? null;
+    if (seg === "effort") return thinkLevel;
+    return null;
+  }
+
+  /** 重建保焦的**第一步**：只在「重建前焦点确实在这个浮层里」时动作——鼠标点 chip 打开浮层的
+   *  路径里焦点不在项上，那时抢焦点是第二条缺陷（design §3.3 的口径）。`seg` 已知时键取状态里的
+   *  当前值（成功落新项、回滚落旧项）；未知（能力标记翻转这类非用户动作的重建）时退回焦点项
+   *  自己的键。
+   *
+   *  **把焦点先收到浮层容器上**是本函数承重的一步（`docs/specs/overlay-visibility.md` O6 的
+   *  实测分叉）：重建会把持焦项从 DOM 摘除，而引擎对「持焦节点被移除」的修复**时机不同**——
+   *  chromium 同步把焦点送回 `body`、WebKit 异步补一次。同步写完的 `focus()` 因此会在 WebKit 上
+   *  被那次迟到的修复盖掉（真机场景 238 的 GREEN 首跑即此形态：重建后 AX 里 0 个 focused 节点）。
+   *  容器不在重建面上，焦点在重建窗口内既不丢、也不触发 `focusout`；重建后的 `focus()` 才是
+   *  落在新节点上的第一笔。 */
+  function rebuildFocusKey(pop: HTMLElement, seg: RebuildSegment | undefined, keyOf: (s: RebuildSegment) => string | null): RebuildKey | null {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement) || !pop.contains(active)) return null;
+    const key = focusKeyFrom(pop, active, seg, keyOf);
+    if (key === null) return null;
+    pop.focus();
+    return key;
+  }
+
+  /** 语义键的取值：段已知时取状态里的当前值，未知时退回焦点项自己的 `data-seg` / `data-id`。 */
+  function focusKeyFrom(
+    pop: HTMLElement,
+    active: HTMLElement,
+    seg: RebuildSegment | undefined,
+    keyOf: (s: RebuildSegment) => string | null,
+  ): RebuildKey | null {
+    if (seg !== undefined) {
+      const id = keyOf(seg);
+      return id === null ? null : { seg, id };
+    }
+    const activeSeg = active.dataset.seg;
+    const activeId = active.dataset.id;
+    if (activeSeg !== undefined && activeId !== undefined) {
+      return { seg: activeSeg as RebuildSegment, id: activeId };
+    }
+    // 焦点落在不带语义键的件上（权限规则删除钮这类动作件）：锚到浮层里的「当前项」，至少不把
+    // 焦点送出浮层（O6 的终态约束：重建后焦点仍在浮层内）。
+    const current = pop.querySelector<HTMLElement>('[data-seg][data-id][aria-checked="true"]');
+    if (current?.dataset.seg !== undefined && current.dataset.id !== undefined) {
+      return { seg: current.dataset.seg as RebuildSegment, id: current.dataset.id };
+    }
+    return null;
+  }
+
+  /** 重建后落焦：精确项 → 该段当前项 → 触发钮（`isConnected` 守卫；`focus()` 对已摘除节点
+   *  是静默失败，会把焦点留在 body——design §6）。 */
+  function focusRebuiltItem(pop: HTMLElement, key: RebuildKey, fallback: HTMLElement): void {
+    const items = [...pop.querySelectorAll<HTMLElement>("[data-seg][data-id]")].map((el) => ({
+      el,
+      seg: el.dataset.seg as RebuildSegment,
+      id: el.dataset.id as string,
+      current: el.getAttribute("aria-checked") === "true",
+    }));
+    const hit = pickRebuildFocus(items, key);
+    if (hit !== null) {
+      hit.el.focus();
+      return;
+    }
+    if (fallback.isConnected) fallback.focus();
+  }
+
+  /** 浮层开着时重建设（三维读数随选择刷新；选定不关浮层，重建就是它刷新的方式）。
+   *
+   *  `seg` 是刚被用户改动的那一段（provider / model / effort）：重建前记下「焦点是否在浮层内
+   *  + 语义键」，重建后按语义键落回同一项——重建把持焦件摘除后焦点送回 `body`，这条修复是
+   *  本缺陷的根因面（兜底只修果）。 */
+  function rebuildSelPopIfOpen(seg?: RebuildSegment): void {
     if (selPop.hidden) return;
+    const key = rebuildFocusKey(selPop, seg, selSegmentKey);
     buildSelPop();
     placeSelPop();
+    if (key !== null) focusRebuiltItem(selPop, key, modelChip);
   }
 
   // ── 权限 chip 与浮层（M414）────────────────────────────────────────────────
@@ -5959,6 +6095,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       item.className = "lumir-hp-permpop-item";
       item.setAttribute("role", "menuitemradio");
       item.setAttribute("aria-checked", String(checked));
+      // 语义键 = 段 + 该项 id；权限段里「id」就是权限档（read_only / vault_write / full_access），
+      // 不再另立一个 `data-mode`（同一值两个属性 = 两份真源，REVIEW.md「同一语义两处真源」条）。
+      item.dataset.seg = "perm";
+      item.dataset.id = mode;
       appendCheck(item, checked, "lumir-hp-permpop-check");
       const body = document.createElement("span");
       body.className = "lumir-hp-permpop-body";
@@ -6053,13 +6193,26 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     permPop.hidden = !open;
     permChip.setAttribute("aria-expanded", String(open));
+    // 层栈登记与开合同源（change fix-escape-overlay-close-oct24 design §3.2）。
+    if (open) registerEscapeLayer("harness-perm-pop", closePermPop);
+    else unregisterEscapeLayer("harness-perm-pop");
     if (open) clampPermPop();
   }
 
+  /** 权限浮层关闭的唯一实现（就地键处理器与窗口级兜底共用，E5）：收起 + 焦点回权限 chip。 */
+  function closePermPop(): void {
+    setPermPop(false);
+    if (permChip.isConnected) permChip.focus();
+  }
+
+  /** 权限浮层重建（选定一档 / 规则列表刷新 / 写回失败回滚都走这里）：重建前记焦点语义键
+   *  （段 perm + 当前档 id），重建后落回同一项——设计 §3.3 的根因面修复。 */
   function rebuildPermPopIfOpen(): void {
     if (permPop.hidden) return;
+    const key = rebuildFocusKey(permPop, "perm", () => permMode);
     buildPermPop();
     clampPermPop();
+    if (key !== null) focusRebuiltItem(permPop, key, permChip);
   }
 
   /**
@@ -6153,13 +6306,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const previous = selSelection.provider;
     selSelection.provider = id;
     applySelChip();
-    rebuildSelPopIfOpen();
+    // 段 = provider：键的 id 取**状态里的当前值**（成功 = 新 provider；回滚后 = 旧 provider）——
+    // MUST NOT 用点击目标（design D3）。
+    rebuildSelPopIfOpen("provider");
     configSetValue("harness", "provider", id).then(() => {
       refreshThinkingState();
     }).catch((e: unknown) => {
       selSelection!.provider = previous;
       applySelChip();
-      rebuildSelPopIfOpen();
+      rebuildSelPopIfOpen("provider");
       appendError(t("D348", { message: errorMessage(e) }));
     });
   }
@@ -6175,14 +6330,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const previous = dim.current;
     dim.current = id;
     applySelChip();
-    rebuildSelPopIfOpen();
+    rebuildSelPopIfOpen("model");
     configSetValue("harness", `providers.${provider}.model`, id).then(() => {
       refreshThinkingState();
     }).catch((e: unknown) => {
       const dimBack = selSelection!.models[provider as ProviderId];
       if (dimBack !== undefined) dimBack.current = previous;
       applySelChip();
-      rebuildSelPopIfOpen();
+      // 回滚后的重建：键取回滚后的当前 model（不是失败的新 model）——焦点因此落回旧项。
+      rebuildSelPopIfOpen("model");
       appendError(t("D348", { message: errorMessage(e) }));
     });
   }
@@ -6195,11 +6351,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const previous = thinkLevel;
     thinkLevel = id;
     applySelChip();
-    rebuildSelPopIfOpen();
+    rebuildSelPopIfOpen("effort");
     harnessSetThinkingEffort(id).catch((e: unknown) => {
       thinkLevel = previous;
       applySelChip();
-      rebuildSelPopIfOpen();
+      rebuildSelPopIfOpen("effort");
       appendError(t("D348", { message: errorMessage(e) }));
     });
   }
@@ -6221,12 +6377,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 与 ctx 读数 hover 泡同一形态（M370）。键盘用户无 hover：不支持语义已由读屏名（D390）承担。
   effReading.addEventListener("mouseenter", () => {
     if (!effReading.classList.contains("is-disabled")) return;
-    effHint.hidden = false;
+    setEffHintVisible(true);
     // M702：翻出后按 pane 收编（此前定宽 224px、没有任何夹取）。
     placeEffHint();
   });
   effReading.addEventListener("mouseleave", () => {
-    effHint.hidden = true;
+    setEffHintVisible(false);
   });
 
   // 控制行数据装载：config_get 宽容提取——合并选择器（harness 段缺失 / providers 不合形
@@ -6338,6 +6494,44 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     };
   }
 
+  // ── 不持焦的两层：Context hover 泡与 effort 提示（change fix-escape-overlay-close-oct24）──
+  //
+  // 它们也登记进层栈（design §3.5）：Escape 要能只收它们、且**不动焦点**（E2）。可见态因此
+  // 只能经这两个函数改写——`hidden` 的裸赋值会让层栈与真实可见态脱节（「层已关还在栈里」）。
+
+  /** Context hover 泡可见态（唯一写入口；登记 / 注销与之同源）。 */
+  function setCtxPopVisible(visible: boolean): void {
+    ctxPop.hidden = !visible;
+    if (visible) registerEscapeLayer("harness-ctx-pop", closeCtxPop);
+    else unregisterEscapeLayer("harness-ctx-pop");
+  }
+
+  /** Context hover 泡关闭的唯一实现：只隐藏，不移动焦点（本就不持焦）。 */
+  function closeCtxPop(): void {
+    setCtxPopVisible(false);
+  }
+
+  /** effort 提示可见态（唯一写入口；登记 / 注销与之同源）。 */
+  function setEffHintVisible(visible: boolean): void {
+    effHint.hidden = !visible;
+    if (visible) registerEscapeLayer("harness-eff-hint", closeEffHint);
+    else unregisterEscapeLayer("harness-eff-hint");
+  }
+
+  /** effort 提示关闭的唯一实现：只隐藏，不移动焦点。 */
+  function closeEffHint(): void {
+    setEffHintVisible(false);
+  }
+
+  /** 面板本体关闭的唯一实现（层栈里 harness-panel 那一层的 close）：走装配层 `deps.togglePane`
+   *  ——账本收 pane + 焦点归还都在那边，MUST NOT 在这里直接 `panel.remove()`（那会绕开账本，
+   *  留下一个「已摘出 DOM 但账本仍记为在场」的 pane）。已收起时是空动作：层注销也由
+   *  `attachTo(null)` 负责，兜底在它之后再调一次不得把面板重新打开。 */
+  function closeHarnessPanel(): void {
+    if (mountEl === null) return;
+    deps.togglePane();
+  }
+
   /** ctx% 读数重渲（usage 事件 / 快照 / relabel 的共用出口）。M370：读数 = D334 双读数
    *  「{ctx}% · {cache}%」（分隔符 U+00B7，cache 缺失回落单读数）；越线高亮不动。
    *  M373：hover 浮层常驻含义句；M378 改两行带值形态（D395 第一行 + D401 第二行，
@@ -6351,7 +6545,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function applyUsage(): void {
     if (lastUsage === null || lastHasUsage === false) {
       ctxWrap.hidden = true;
-      ctxPop.hidden = true;
+      setCtxPopVisible(false);
       return;
     }
     ctxWrap.hidden = false;
@@ -6395,11 +6589,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 无 hover：警示语义已由读数高亮承担，含义句是补充说明，不挂 focusable 入口。
   ctxWrap.addEventListener("mouseenter", () => {
     buildCtxPop();
-    ctxPop.hidden = false;
+    setCtxPopVisible(true);
     clampCtxPop();
   });
   ctxWrap.addEventListener("mouseleave", () => {
-    ctxPop.hidden = true;
+    setCtxPopVisible(false);
   });
 
   /** W6：pane / 视口尺寸变化后，仍打开的浮层重新夹取（幂等；隐藏的浮层不动）。
@@ -9665,7 +9859,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function applySessPop(visible: boolean): void {
     const dom = sessPopDom(visible);
     sessPop.hidden = dom.hidden;
+    // 层栈登记与真实可见态同源（change fix-escape-overlay-close-oct24）：**按揭示后的状态**登记，
+    // 不按「想展开」的意图——空清单不揭示，那时登记会让栈顶指向一个不可见的层。
+    if (dom.hidden) unregisterEscapeLayer("harness-sess-pop");
+    else registerEscapeLayer("harness-sess-pop", closeSessPop);
     sessionButton.setAttribute("aria-expanded", dom.ariaExpanded);
+  }
+
+  /** 会话浮层关闭的唯一实现（就地键处理器与窗口级兜底共用，E5）：收起 + 焦点回会话名钮。 */
+  function closeSessPop(): void {
+    setSessPop(false);
+    if (sessionButton.isConnected) sessionButton.focus();
   }
 
   /** 每轮展开分配一个序号；取数回调只认自己那一次。迟到的旧取数（取数期间浮层被收起 /
@@ -9865,14 +10069,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     event.stopPropagation();
     setSessPop(sessPop.hidden);
   });
-  // 段上 Escape 收会话浮层（stopPropagation：浮层开着时这拍 Escape 不落到面板/窗口层）。
+  // 段上的 Escape：段在标题栏里、不在 panel 子树内，所以它单独挂一条监听。自 change
+  // fix-escape-overlay-close-oct24 起它不再自判「是不是关闭意图」，而是调**窗口级兜底同一个**
+  // `escapeRouter.handle`——准入（无修饰才关、组合期让路）、「谁是最上层」（层栈）与关闭实现
+  // （各层自己的 close）都只有一份（design §3.1/§3.2、E5）。tower r1 P1 的现场正是这里：
+  // 只看 `event.key === "Escape"` 会把 ⇧/⌘/⌃/⌥+Escape 与组合期当成关闭意图。
   seg.addEventListener("keydown", (event: KeyboardEvent) => {
-    if (event.key === "Escape" && !sessPop.hidden) {
-      event.preventDefault();
-      event.stopPropagation();
-      setSessPop(false);
-      sessionButton.focus();
-    }
+    escapeRouter.handle(event);
   });
   // 浮层外交互（点击其他处）收起：会话浮层、合并选择器浮层、权限浮层、ctx hover 泡共用一条出口。
   document.addEventListener("click", (event) => {
@@ -9886,31 +10089,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (event.target instanceof Node && permChip.contains(event.target)) return;
     setPermPop(false);
     if (event.target instanceof Node && ctxWrap.contains(event.target)) return;
-    ctxPop.hidden = true;
+    setCtxPopVisible(false);
   });
 
   // 面板内 Escape（就地消费，不进键位表：Escape token 已被 editor.widget-escape
   // 占用，面板在 contentDOM 之外，那条绑定不命中——与 M139 搜索 panel 同先例同判词）。
-  // 两段式（M351 a11y，design §5）：任一浮层开着时只收浮层，无浮层时才经 deps.togglePane
-  // 收面板（收起是装配层动作：账本收 pane + 焦点归还）。
+  //
+  // change fix-escape-overlay-close-oct24：这段**不再自己排一遍「先浮层后面板」的检查顺序**
+  // （那正是本 change 要收掉的第二份实现——面板与会话浮层同时打开时那个顺序会越过去），改为调
+  // 与窗口级兜底**同一个** `escapeRouter.handle`：层栈是「谁最上层」的唯一判据，各层的关闭实现
+  // 复用组件自己的 close（E1/E5、design §3.2）。无浮层时栈顶就是面板本体，`handle` 因此照旧
+  // 经 deps.togglePane 收面板（装配层动作：账本收 pane + 焦点归还）。
   panel.addEventListener("keydown", (event: KeyboardEvent) => {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    if (!selPop.hidden) {
-      setSelPop(false);
-      modelChip.focus();
-      return;
-    }
-    if (!permPop.hidden) {
-      setPermPop(false);
-      permChip.focus();
-      return;
-    }
-    if (!ctxPop.hidden) {
-      ctxPop.hidden = true;
-      return;
-    }
-    deps.togglePane();
+    escapeRouter.handle(event);
   });
 
   // ── 唤起 / 收起（装配层执行；面板只维护挂载态与派生表现）───────────────────
@@ -9928,6 +10119,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }
       mount.append(panel);
       panel.hidden = false;
+      // 面板本体也是层栈里的一层（design §3.5 第一行）：它的关闭实现就是装配层那条
+      // `deps.togglePane`（账本收 pane + 焦点归还），就地处理器与兜底都调这一条。
+      registerEscapeLayer("harness-panel", closeHarnessPanel);
       refreshChip();
       // M644：重新打开面板 = 白名单动作（D5）——强制回底并恢复跟随。同时覆盖「隐藏期间
       // 布局读数不可信」的现场（元素摘下时 clientHeight 为 0）；挂载后的真实尺寸由
@@ -9946,11 +10140,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       // 不在屏幕上，用户不会再「顺手」给它一次防抖机会）——草稿没写走就再也没有第二次机会。
       flushDraft();
       panel.remove();
+      // 注销先于各浮层的 setXxx(false)：栈序无关紧要（remove 幂等），但面板本体必须离开
+      // 栈顶之后，下一次 Escape 才不会去调一个已收起的 pane。
+      unregisterEscapeLayer("harness-panel");
       setSessPop(false);
       setSelPop(false);
       setPermPop(false);
-      effHint.hidden = true;
-      ctxPop.hidden = true;
+      setEffHintVisible(false);
+      setCtxPopVisible(false);
       if (whenTimer !== null) {
         window.clearInterval(whenTimer);
         whenTimer = null;

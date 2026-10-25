@@ -35,6 +35,7 @@
 // 的守卫）；本文件只保留表格侧的 surface 与遮罩 DOM 装配。
 
 import { keyToken } from "./keys";
+import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { clearSelectionWithin, selectAllOf } from "./overlay-select";
 import { createOverlayState } from "./overlay-state";
 import type { OverlayCloseReason, OverlayState, OverlaySurface } from "./overlay-state";
@@ -120,6 +121,15 @@ export function createTableFullscreen(options: TableFullscreenOptions): TableFul
   /** 快照容器（全选的落面）。菜单路径与遮罩内 ⌘A 共用一处内容根，MUST NOT 由装配层查 DOM。 */
   let selectRoot: HTMLElement | null = null;
 
+  /** 层栈里的「关闭这一层」唯一实现（change fix-escape-overlay-close-oct24）：注销 + 状态机的
+   *  `close("escape")`（含交还焦点）。就地键处理器与窗口级兜底都调它——两层路径共用一份实现，
+   *  且**注销必须在这里**：状态机本身不碰层栈（它是共享的纯逻辑模块），只在 handle 的 close() 里
+   *  注销会让「按 Esc 关闭」这条路径留下一个已关闭的层占着栈顶，下一拍 Escape 被它静默吞掉。 */
+  function closeByEscape(): void {
+    unregisterEscapeLayer("table-fullscreen");
+    state?.close("escape");
+  }
+
   function ensureState(): TableFullscreenState {
     if (state !== null) return state;
 
@@ -175,8 +185,15 @@ export function createTableFullscreen(options: TableFullscreenOptions): TableFul
     // Tab 挡在遮罩内——快照里没有可聚焦元素，放行 Tab 会让焦点走进编辑器内容区，而遮罩还开着，
     // 后续按键就又能穿透到文档（aria-modal 的语义当场失效）。
     overlay.addEventListener("keydown", (event) => {
+      // Escape 归**窗口级兜底同一个** `escapeRouter.handle`（change fix-escape-overlay-close-oct24）：
+    // 按层的打开序关**栈顶**（不持焦的 hover 提示可以后开在下层之上），关闭实现是该层登记时的
+    // 既有 close；准入（无修饰才关、组合期让路、已消费让路）也只有那一份。无修饰才是关闭意图；带修饰键
+      // 只消费默认行为、不关遮罩；组合期归输入法。就地判据与窗口级兜底同源，本文件不再自判。
+      if (escapeRouter.handle(event)) return;
       const token = keyToken(event);
       if (token === null) return;
+      // 组合期的 Escape 不消费也不关（上面那条返回 false 才走到这里）；其余 token 照旧。
+      if (token === "Escape") return;
       if (token === "Cmd-A") { // token 归一化把单字符键名大写（键位表里写 Cmd-a）
         event.preventDefault();
         selectAllOf(snapshot);
@@ -207,8 +224,13 @@ export function createTableFullscreen(options: TableFullscreenOptions): TableFul
   return {
     open(source, label) {
       ensureState().open(source, label);
+      // 层栈登记与开合同源（change fix-escape-overlay-close-oct24）：注销在 close()——五条
+      // 关闭路径（Esc / 点遮罩 / toggle / blur / 文档换代）都经过它。关闭实现复用状态机的
+      // `close("escape")`（含交还焦点），MUST NOT 在兜底里另写一份。
+      registerEscapeLayer("table-fullscreen", closeByEscape);
     },
     close(reason) {
+      if (state?.isOpen() === true) unregisterEscapeLayer("table-fullscreen");
       state?.close(reason);
     },
     isOpen() {

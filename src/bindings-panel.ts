@@ -27,6 +27,14 @@
 // 关闭键（Escape / ⌃G）由面板就地消费，不进 KEY_BINDINGS：统一表是「一个 token 一条绑定」，
 // 这两个 token 已被 editor 作用域占用（`editor.widget-escape` / `editor.keyboard-quit`），
 // 面板打开时它们因作用域与 when 条件都不命中。匹配复用 `keyToken`，不另写一套口径。
+//
+// Escape 与层栈（change fix-escape-overlay-close-oct24 接入，M718 r4 rebase 合并）：面板本身是
+// 层栈里的一层（打开登记 / 关闭注销，见 `close` / `toggle`）。**不持焦的 hover 层可以在本面板
+// 之上后开**（Context 泡、effort 提示），那一拍 Escape 归它们——这里交给统一路由
+// `escapeRouter.handle`，只关栈顶，本面板的查询清理 / 捕获复位 / 关闭级联一律不动（与全部浮层
+// 的就地路径同一条分派，r2 P1-1）。**栈顶是本面板自己时**才走 M715 的三段级联：
+// 捕获态 → 只清捕获；查询非空 → 只清查询；其余 → 关面板（这条级联是层内状态复位，不关任何层，
+// 因此与「一次只关最上层」不冲突）。
 
 import {
   COMMAND_IDS,
@@ -40,6 +48,7 @@ import {
 } from "./keys";
 import type { CommandId, KeyBinding, KeyScope } from "./keys";
 import { t, onRelabel, interpolate } from "./copy";
+import { escapeDisposition, escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import type { CopyKey } from "./copy-data";
 import { COPY } from "./copy-data";
 import { COMMAND_META, SCOPE_DESCRIPTION_KEYS, SCOPE_LABEL_KEYS } from "./command-meta";
@@ -809,20 +818,42 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
 
   overlay.addEventListener("keydown", (event) => {
     if (event.isComposing || event.keyCode === 229) return;
+    // ① 已消费即让路（M718 的公共口径，fresh review rebase-r1 P1-1 的回归修复）：更靠近事件目标的
+    //    处理器已经消费了这一拍，面板的任何级联（捕获复位 / 查询清理 / 关闭）都 MUST NOT 再跑。
+    //    这一条必须在**最前面**——尤其不能把「其它层在栈顶时 handle() 返回 false」当作继续级联的
+    //    许可：`handle` 对已消费事件的返回就是 false（让路本身），不是「没人要」。
+    if (event.defaultPrevented) return;
     if (capture.kind === "waiting") {
       handleCaptureKey(event);
       return;
     }
-    const token = keyToken(event);
-    if (token === null) return;
-
-    if (token === "Escape") {
+    // ② 层栈分流（见文件头）：**别的层开在本面板之上**时，这一拍 Escape 归路由（只关栈顶）。
+    //    栈顶是本面板时交给下面的共享准入 + 三段级联。
+    const topLayer = escapeRouter.top();
+    if (topLayer !== null && topLayer.id !== "bindings-panel") {
+      if (escapeRouter.handle(event)) return;
+      // handle 返回 false 且事件未被消费（已消费的情形在 ① 已返回）：说明这一拍不归关闭路由
+      // （非 Escape / 组合期），继续走本面板的普通按键处理。
+    }
+    // ③ 共享准入（栈顶是本面板时也用同一份判断，不另写 `token === "Escape"`）：
+    //    `close` = 无修饰裸 Escape → M715 三段级联（清捕获 / 清查询 / 关面板，级联本身不关层）；
+    //    `swallow` = 带修饰键 → 只消费默认行为、不级联；**已捕获态例外**：带修饰的组合按 M715
+    //    design §3.3 走「重新捕获」（捕获本身不关层），因此放行到下面的 chord 分支。
+    const disposition = escapeDisposition(event);
+    if (disposition === "close") {
       event.preventDefault();
       if (capture.kind === "captured") clearCaptured();
       else if (query !== "") clearQuery();
       else toggle();
       return;
     }
+    if (disposition === "swallow" && capture.kind !== "captured") {
+      event.preventDefault();
+      return;
+    }
+    const token = keyToken(event);
+    if (token === null) return;
+
     if (token === "Ctrl-G") {
       event.preventDefault();
       toggle();
@@ -1028,8 +1059,12 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
     composing = false;
   }
 
+  /** 关闭面板并交还焦点。幂等：层栈的兜底可能在「已经关了」之后再调一次，那时重跑收尾会把
+   *  焦点再抢一次（空动作才是正确语义）。注销与关闭同源——这是层栈里本面板那一层的 `close`。 */
   function close(): void {
+    if (overlay.hidden) return;
     overlay.hidden = true;
+    unregisterEscapeLayer("bindings-panel");
     resetState();
     relabelStatic();
     options.restoreFocus();
@@ -1043,6 +1078,8 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
     resetState();
     relabel(); // 每次打开重读生效表（配置重挂后不留旧表）
     overlay.hidden = false;
+    // 层栈登记与开合同源：注销在 close()（Esc 级联、点遮罩、⌘/ 再按都经过它）。
+    registerEscapeLayer("bindings-panel", close);
     render({ resetScroll: true });
     input.focus();
   }

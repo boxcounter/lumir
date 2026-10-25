@@ -114,14 +114,14 @@ export interface EscapeRouter {
 export function installEscapeRouter(win: Window, router: EscapeRouter): () => void;
 ```
 
-准入与分派（同一张表，就地处理器与兜底共用准入，只有「谁被关」不同）：
+准入与分派（同一张表，就地处理器与兜底共用**同一条** `escapeRouter.handle`：准入、「谁是最上层」与关闭实现都只有一份，两列只在**由谁先跑到**上不同）：
 
 | 输入 | `escapeDisposition` | 就地键处理器 | 窗口级兜底 |
 |---|---|---|---|
 | 非 `Escape` | `ignore` | 不动作 | 不动作 |
 | 组合期（`isComposing` / `keyCode === 229`） | `ignore` | 不动作、不 `preventDefault` | 不动作 |
 | 带修饰键（⇧ / ⌘ / ⌃ / ⌥） | `swallow` | `preventDefault`、**不关层** | `preventDefault` |
-| 无修饰、有层 | `close` | `preventDefault` + 关闭**本层**（统一关闭函数） | `preventDefault` + 关闭**栈顶** |
+| 无修饰、有层 | `close` | `preventDefault` + 关闭**栈顶**（与兜底同一条 `escapeRouter.handle`；关闭实现复用该层登记时的既有 `close`） | `preventDefault` + 关闭**栈顶** |
 | 无修饰、无层 | `close` | —（没有处理器） | `preventDefault`（安全消费）：**不关层、不移动焦点、不改状态、不退出**，只阻止原生默认关窗——**不是新增产品行为**（裁决 B） |
 | `defaultPrevented` 已置 | — | 让路 | 让路 |
 
@@ -129,6 +129,13 @@ export function installEscapeRouter(win: Window, router: EscapeRouter): () => vo
 关层，带修饰键与组合期的按键在兜底看到之前就已经关了层——兜底只能处理「没人要」的按键，补救
 不了这个顺序。因此 `src/harness-panel.ts` 的 `panel` / `seg` 监听器以及其余层的就地处理器
 MUST 改为先调用 `escapeDisposition`，MUST NOT 保留各自的 Escape 字面判断。
+
+**就地处理器也必须按栈顶分派，而不是关「事件所在的那一层」**（M718 r2 P1-1 的实现更正）：焦点
+在哪一层**不等于**哪一层在栈顶——不持焦的 hover 层（Context 泡、effort 提示）可以在下层保持焦点
+时后开。若就地处理器各自调自己的 `close()`，先开的下层会被后开的提示「抢走」这一拍 Escape（实现
+前的实测：⌘P 先开、effort 提示后开，按一次 Esc 收掉的是 ⌘P、提示还在）。因此就地路径与兜底一样
+委托 `escapeRouter.handle(event)`，两处只是「谁先跑到」不同；**关闭实现仍复用各层登记时的既有
+`close`**（E5 不变）。行为合同（spec 的「一次只关最上层」）自始如此，本次只更正实现与其表述。
 
 装配点与顺序：`installEscapeRouter` 在 `src/main.ts` 每次 `Keymap.attach` 之后调用
 （`:3483` 的首次装配与 `:3500` 的配置重绑都要），使它成为 **window 冒泡阶段最后一个** keydown
@@ -148,8 +155,9 @@ MUST 改为先调用 `escapeDisposition`，MUST NOT 保留各自的 Escape 字�
 - **`close` 复用组件的关闭函数**：例如 `permPop` 的层 `close` 就是「`setPermPop(false)` +
   `permChip.focus()`」，与面板就地处理器里那两段是**同一个函数**。就地处理器保留（它先于兜底
   运行，覆盖焦点在层内的常态），但两者 MUST 调同一个关闭实现——这正是 E5。
-- **就地处理器只做两件事**：准入（`escapeDisposition`）与关闭（层的统一 `close()` / 按层栈取
-  最上层的 `closeTop…`）；MUST NOT 自己再写「这个键是否关闭」的判断，也 MUST NOT 跳过准入。
+- **就地处理器只做一件事**：`escapeRouter.handle(event)`（让路 → 准入 → 按打开序关栈顶，关闭
+  实现是该层登记时的既有 `close`）。MUST NOT 自己再写「这个键是否关闭」的判断，MUST NOT 跳过
+  准入，也 MUST NOT 保留第二套「关本层」的分派（r2 P1-1）。
 - **重复登记 = 提到栈顶**：同一个层被重新打开时，先 `remove` 再 `push`，保证「最近打开的在最上
   层」。
 - **关闭即注销**：`close()` 内部负责 `remove(id)`；兜底调用 `close()` 之后不需要再 `remove`，
@@ -255,8 +263,10 @@ effort）与「写回失败回滚后的重建」两条路径。反向验证：�
 
 ### 5.2 真机层：先红后绿（硬要求）
 
-新增 `scripts/acceptance/scenarios/235-escape-overlay-close.md`（id 235 当前未占用；实现批按
-`coverage.mjs` 重新生成 `COVERAGE.md`）。主路径（与 finding 的复现逐字对齐）：
+新增 `scripts/acceptance/scenarios/238-escape-overlay-close.md`（**id 调整**：起草时预留的
+235/236 已被并行 change `improve-keybindings-lookup-oct24` 的真机场景占用，实现批改用 238/239；
+只改编号，行为合同不变。实现批按 `coverage.mjs` 重新生成 `COVERAGE.md`）。主路径（与 finding 的
+复现逐字对齐）：
 
 1. ⌘⇧A 打开 harness 面板（旁侧分栏），点权限 chip 展开浮层；
 2. 点「完全访问」，等 chip 读数翻档、`config.json` 落 `full_access`，并断言**浮层仍然打开**
@@ -270,7 +280,7 @@ effort）与「写回失败回滚后的重建」两条路径。反向验证：�
 红跑（实现前，master 代码）：同一条场景必须在第 4 步判红，且证据里必须能区分「产品退出」与
 「普通过时」——记录 AX 快照退化成单节点、`ps -p <pid>` 空输出、统一日志里
 `windowShouldClose → WebPageProxy::close` 的同秒链。证据目录：
-`.local/acceptance/<日期>/235-escape-overlay-close/RED-before-fix/`。
+`.local/acceptance/<日期>/238-escape-overlay-close/RED-before-fix/`。
 **红跑不得以「改场景 / 跳步 / 加 sleep」换绿**；实现后同一条场景（同一份文件、同一批步骤）跑绿，
 证据目录 `.../GREEN-after-fix/`。
 
@@ -306,11 +316,11 @@ Context hover 泡出现时按 Esc；⑧effort 提示悬停打开后按 Esc（只
 ## 6. 风险与边界
 
 - **全局吞掉 Esc 的副作用**：无层时也会 `preventDefault`。可能影响的只有原生默认行为；输入法
-  组合期已排除；文本编辑的 Esc 在产品里没有默认语义（widget 交还由键位表先行消费）。用 235 与
+  组合期已排除；文本编辑的 Esc 在产品里没有默认语义（widget 交还由键位表先行消费）。用 238 与
   5.3 的编辑器 / 输入条场景回归。若真机发现某个原生浮层（自动填充等）依赖 Esc，按 finding 另行
   评估，不在本 change 里改回「放行」。
 - **监听顺序**：兜底必须最后装。配置重绑会 `detach` + 重新 `attach`（`src/main.ts:3500`），
-  装配点必须同时重装兜底；单测钉住顺序，真机场景 09（Emacs 键）与 235 的 widget 步骤回归。
+  装配点必须同时重装兜底；单测钉住顺序，真机场景 09（Emacs 键）与 238 的 widget 步骤回归。
 - **焦点回还的目标可能已不在 DOM**：`close()` 里先判 `isConnected` 再 `focus()`，否则回落触发钮
   ——否则 `focus()` 静默失败，焦点仍在 `body`。
 - **就地处理器绕过兜底**：层的监听器先于 window 兜底运行，只要它还保留「`event.key ===
@@ -331,12 +341,12 @@ Context hover 泡出现时按 Esc；⑧effort 提示悬停打开后按 Esc（只
 
 ## 7. 实现顺序（每步都可独立验证）
 
-1. 写 235 场景 + 5.4 反例场景；在 master 代码上红跑，留证据（先红）。
+1. 写 238 场景 + 5.4 反例场景（239）；在 master 代码上红跑，留证据（先红）。
 2. `src/escape-router.ts` 纯逻辑（`escapeDisposition` + 层栈 + `handle`）+ `tests/unit/escape-router.test.ts`；不接装配，`pnpm test` 绿。
 3. `src/main.ts` 接兜底（首次 attach 与重绑两处）+ 层栈；先登记 harness 面板、四个浮层与 effort
    提示；把 `panel` / `seg` 监听器改为「准入 + 统一关闭」。
 4. 重建保焦（权限 + 合并选择器的 provider / model / effort 三段与回滚）+ `harness-panel-control`
-   单测 + `tests/visual/scenes/escape-admission.spec.ts`（真实监听链）；跑 235 → 绿（后绿）。
+   单测 + `tests/visual/scenes/escape-admission.spec.ts`（真实监听链）；跑 238 → 绿（后绿）。
 5. 登记其余层（§3.5 清单）并把各自的就地处理器换成共享准入，跑 5.3 矩阵；补漏。
 6. 5.4 退出反例；`gate quick` / `gate visual` / `docs-check` / 真机全量回归。
 7. 归档对账（MODIFIED 段落逐字落进 living spec；由 `docs-check` 机器判）。

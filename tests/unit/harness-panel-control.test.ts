@@ -6,7 +6,9 @@
 //   - ctx% 读数高亮判据（usageOverWarn：≥ 阈值即高亮，边界取高亮侧；M370 起警示说明走
 //     hover 浮层，呈现面在 DOM 层，判词不变）；
 //   - 消息 when 的相对时间分档（relativeWhen，M351：<10s 刚刚 / N 秒前 / N 分钟前 /
-//     N 小时前 / 昨天，未来戳 clamp，zh/en 双档）。
+//     N 小时前 / 昨天，未来戳 clamp，zh/en 双档）；
+//   - 浮层重建后的焦点落点（pickRebuildFocus，change fix-escape-overlay-close-oct24
+//     design §3.3 / D3：语义键 = 段 + 该项 id，键按重建时的**当前状态**取）。
 // 合同：mission M347 任务 1 / 3 / 7 与 src/harness-panel.ts 控制行段的注释判词。
 // 这一层是零 DOM 环境（tests/unit/README.md）：只驱动 src/harness-panel.ts 导出的纯函数。
 
@@ -16,10 +18,12 @@ import {
   PROVIDER_IDS,
   chipModelReading,
   harnessSelection,
+  pickRebuildFocus,
   reduceSendPhase,
   relativeWhen,
   usageOverWarn,
 } from "../../src/harness-panel.ts";
+import type { RebuildItem } from "../../src/harness-panel.ts";
 
 // ── 发送钮两态状态机（M347 任务 3：两态 + stopping 幂等挡连点） ──
 
@@ -234,4 +238,60 @@ test("relativeWhen：≥24h 兜底「昨天」（会话是内存态，更老的�
   assert.equal(relativeWhen(WHEN_NOW - 24 * 3_600_000, WHEN_NOW, "zh"), "昨天");
   assert.equal(relativeWhen(WHEN_NOW - 24 * 3_600_000, WHEN_NOW, "en"), "yesterday");
   assert.equal(relativeWhen(WHEN_NOW - 96 * 3_600_000, WHEN_NOW, "zh"), "昨天");
+});
+
+// ── 重建保焦（change fix-escape-overlay-close-oct24：D3 的「段 + 该项 id」语义键）──
+//
+// 这一组判的是**落点算式**本身：给定重建前的语义键与重建后的项清单，焦点该落在哪一项。
+// 真实 DOM 上的「重建前记键、重建后 focus」在 tests/visual/scenes/escape-admission.spec.ts
+// 与真机场景 238 里判（那一层才看得见「持焦件被摘除 → body」这条 DOM 事实）。
+
+/** 项清单的简写：`[seg, id, current]`。 */
+function items(...rows: Array<[RebuildItem["seg"], string, boolean]>): RebuildItem[] {
+  return rows.map(([seg, id, current]) => ({ seg, id, current }));
+}
+
+test("pickRebuildFocus：同一段同一 id → 落回该项（成功路径：键取状态里的新值）", () => {
+  const list = items(["provider", "kimi", false], ["provider", "deepseek", true]);
+  const hit = pickRebuildFocus(list, { seg: "provider", id: "deepseek" });
+  assert.equal(hit?.id, "deepseek");
+});
+
+test("pickRebuildFocus：语义键不存在时落回该段的当前项（切 provider 后 model 段换了内容）", () => {
+  const list = items(["model", "k2-256k", true], ["model", "k3", false]);
+  const hit = pickRebuildFocus(list, { seg: "model", id: "k2-32k" });
+  assert.equal(hit?.id, "k2-256k", "旧 model 不在新清单里 ⇒ 落当前项，而不是丢焦点");
+});
+
+test("pickRebuildFocus：整段不在 → null（调用方回落触发钮）", () => {
+  const list = items(["effort", "high", true]);
+  assert.equal(pickRebuildFocus(list, { seg: "model", id: "k3" }), null);
+  assert.equal(pickRebuildFocus([], { seg: "perm", id: "full_access" }), null);
+});
+
+test("pickRebuildFocus：权限段（perm）与合并选择器三段共用同一份算式", () => {
+  const list = items(["perm", "read_only", false], ["perm", "full_access", true]);
+  assert.equal(pickRebuildFocus(list, { seg: "perm", id: "full_access" })?.id, "full_access");
+  assert.equal(pickRebuildFocus(list, { seg: "perm", id: "vault_write" })?.id, "full_access");
+});
+
+test("pickRebuildFocus：写回失败回滚后的重建落回回滚项（MUST NOT 用点击目标当键）", () => {
+  // 现场：用户点「deepseek」，写回失败 → 状态回滚到 kimi → 按当前状态重建。键因此是 kimi。
+  const list = items(["provider", "kimi", true], ["provider", "deepseek", false]);
+  assert.equal(pickRebuildFocus(list, { seg: "provider", id: "kimi" })?.id, "kimi");
+  // 反向：若实现拿点击目标（deepseek）当键，就会精确命中失败的那个新项——这条断言把那种实现判红。
+  assert.equal(pickRebuildFocus(list, { seg: "provider", id: "deepseek" })?.id, "deepseek");
+});
+
+test("pickRebuildFocus：id 相同但段不同不得命中（段是键的一半，缺了它跨段串项）", () => {
+  // 「high」既是 effort 档名也可能出现在别处：只看 id 的实现会在这里串段。
+  const list = items(["effort", "high", true], ["model", "high", false]);
+  const hit = pickRebuildFocus(list, { seg: "model", id: "high" });
+  assert.equal(hit?.seg, "model");
+  assert.equal(hit?.current, false, "命中的是 model 段那一项，不是 effort 段的当前项");
+});
+
+test("pickRebuildFocus：同一段里多个 current（异常现场）取第一个候选，不抛错", () => {
+  const list = items(["effort", "low", true], ["effort", "high", true]);
+  assert.equal(pickRebuildFocus(list, { seg: "effort", id: "gone" })?.id, "low");
 });

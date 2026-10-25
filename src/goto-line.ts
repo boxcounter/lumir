@@ -12,6 +12,7 @@
 // Emacs echo area 的位置语义在「不占常驻布局」约束下的对应物（design §3.2）。
 import { keyToken } from "./keys";
 import { t, tPlural } from "./copy";
+import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 
 /** 输入框的读屏名（文案 deck D152）。输入框只有数字、没有可见标签，读屏需要一个动作说明。
  *  **函数**而不是常量：浮层每次打开重写这两个属性，语言切换后新开的浮层自然是新语言。 */
@@ -99,13 +100,19 @@ export function createGotoLinePrompt(options: GotoLinePromptOptions): GotoLinePr
 
   /** 收起 DOM 与状态，**不碰焦点**（焦点该去哪由调用方决定：确认走 onJump、取消走 restoreFocus、
    *  失焦时谁都不碰）。只在真的从「在场」跃迁到「不在场」时通知装配层——`close()` 的 `!opened`
-   *  早退与重复 open 因此都不会重复通知。 */
+   *  早退与重复 open 因此都不会重复通知。
+   *
+   *  层栈登记与这条跃迁同源（change fix-escape-overlay-close-oct24）：不管关闭来自 Enter、⌃G、
+   *  失焦还是窗口级兜底，注销都在这一处发生，MUST NOT 在别处补一次。 */
   function dismiss(): void {
     const wasOpen = opened;
     opened = false;
     popover.hidden = true;
     input.value = "";
-    if (wasOpen) options.onVisibilityChange?.(false);
+    if (wasOpen) {
+      unregisterEscapeLayer("goto-line");
+      options.onVisibilityChange?.(false);
+    }
   }
 
   function close(restoreFocus = true): void {
@@ -132,10 +139,10 @@ export function createGotoLinePrompt(options: GotoLinePromptOptions): GotoLinePr
       confirm();
       return;
     }
-    if (
-      event.key === "Escape" ||
-      (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === "g")
-    ) {
+    // Escape 归共享准入（change fix-escape-overlay-close-oct24）：无修饰才是关闭意图；带修饰键
+    // 只消费默认行为、不关层；组合期归输入法。准入判断不在本文件另写一份。
+    if (escapeRouter.handle(event)) return;
+    if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === "g") {
       event.preventDefault();
       close();
       return;
@@ -189,6 +196,9 @@ export function createGotoLinePrompt(options: GotoLinePromptOptions): GotoLinePr
       input.value = String(defaultLine);
       popover.hidden = false;
       opened = true;
+      // 层栈登记与开合同源（change fix-escape-overlay-close-oct24）：关闭那一侧的注销在
+      // dismiss()——四条关闭路径（Enter / ⌃G / 失焦 / 兜底）都经过它。
+      registerEscapeLayer("goto-line", () => close());
       // 预填当前行号并全选：键入即替换（Emacs minibuffer 的默认值同款，「我现在第几行」也是
       // 这一下按出来的读数）。
       input.focus();
