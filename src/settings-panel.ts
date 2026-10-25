@@ -481,12 +481,31 @@ export function visibleProviders(draft: Draft): DraftProvider[] {
   return draft.providers.filter((provider) => !provider.removed);
 }
 
-/** 可替代候选：合法、非 mock、未被装载期忽略、未被本笔删除（与 Rust §4.2 同口径，只用于
- *  删除确认的选项渲染；后端在锁内重新计算）。 */
+/** 可替代候选（**已保存条目**的删除）：合法、非 mock、未被装载期忽略、未被本笔删除（与 Rust
+ *  §4.2 同口径，只用于删除确认的选项渲染；后端在锁内重新计算）。按 **id** 排除：后端就是按 id
+ *  删这一条，同 id 的条目不能被当成替代目标（那等于把 active 指回正在删除的 id）。 */
 export function deleteCandidates(draft: Draft, exclude: string): string[] {
-  return draft.providers
-    .filter((provider) => provider.id !== exclude && !provider.removed && !provider.ignored)
-    .map((provider) => provider.id);
+  return uniqueIds(
+    draft.providers
+      .filter((provider) => provider.id !== exclude && !provider.removed && !provider.ignored)
+      .map((provider) => provider.id),
+  );
+}
+
+/** 删除确认真正的候选清单：**未落盘的条目只排除它自己**——同 id 的幸存新增是合法替代目标
+ *  （它没进过文件、保存后就是这个 id 的实体）。按 id 排除会把整组同 id 一起丢掉，删掉当前的
+ *  那笔之后 active 只能回落到 `mock`、patch 里也不会带 `active_provider`（P1-1 r4）。 */
+export function replacementCandidates(draft: Draft, provider: DraftProvider): string[] {
+  if (!provider.added) return deleteCandidates(draft, provider.id);
+  return uniqueIds(
+    draft.providers
+      .filter((item) => item !== provider && !item.removed && !item.ignored)
+      .map((item) => item.id),
+  );
+}
+
+function uniqueIds(ids: string[]): string[] {
+  return [...new Set(ids)];
 }
 
 /** 把「当前使用」切给某一条草稿（`id` 与**持有者**一起写）：同 id 的另一条不能被当成同一个引用
@@ -850,7 +869,8 @@ export function applyDraftDelete(draft: Draft): void {
     return;
   }
   const refs = deleteReferences(draft, provider);
-  const candidates = deleteCandidates(draft, provider.id);
+  // 候选清单与删除确认里渲染的是同一份：未落盘的新增只排除它自己（同 id 的幸存新增仍可当替代）。
+  const candidates = replacementCandidates(draft, provider);
   // 计划里的替代目标可能已失效（例如打开确认后另一个 provider 也被删了）：回落第一个候选。
   const activeAfter =
     plan.activeAfter !== "" && candidates.includes(plan.activeAfter) ? plan.activeAfter : (candidates[0] ?? "");
@@ -2413,7 +2433,9 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     const zone = element("div", "lumir-set-danger");
     const copy = element("div", "lumir-set-danger-copy");
     copy.append(element("div", "lumir-set-danger-title", t(C.dangerTitle)));
-    const others = draft === null ? [] : deleteCandidates(draft, provider.id);
+    // 「还有别的 provider 吗」同样按条件候选判：同 id 的幸存新增算一个（否则会把「还有替代项」
+    // 误写成「这是最后一个 provider」，P1-1 r4）。
+    const others = draft === null ? [] : replacementCandidates(draft, provider);
     copy.append(element("div", "lumir-set-danger-desc", others.length === 0 ? t(C.dangerLast) : t(C.dangerDesc)));
     const remove = button("lumir-set-btn lumir-set-btn-danger", t(C.dangerButton));
     remove.disabled = locked();
@@ -2436,7 +2458,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       renderForm();
       return;
     }
-    const candidates = deleteCandidates(draft, provider.id);
+    const candidates = replacementCandidates(draft, provider);
     const wrap = element("div", "lumir-set-delete-card");
     wrap.append(element("div", "lumir-set-form-title", t(C.deleteTitle, { id: provider.id })));
     wrap.append(element("p", "lumir-set-hint", t(C.deleteSub)));
@@ -2518,7 +2540,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     if (draft === null) return;
     const provider = draft.providers[index] ?? null;
     if (provider === null || provider.removed) return;
-    const candidates = deleteCandidates(draft, provider.id);
+    const candidates = replacementCandidates(draft, provider);
     draft.remove = {
       index,
       activeAfter: candidates[0] ?? "",

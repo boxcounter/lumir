@@ -965,6 +965,33 @@ test("设置面板：mock 基线下两笔新增，删掉当前使用那笔时替
   expect(first.providers.map((edit: any) => [edit.action, edit.id])).toEqual([["add", "second"]]);
 });
 
+test("设置面板：mock 基线 + 两笔同 id 新增，删当前第一笔——替代选择出现且 patch 带幸存 Add 与 active（r4 P1-1）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, { snapshot: settingsSnapshot({ providers: [], active: "mock" }) });
+  for (let i = 0; i < 2; i += 1) {
+    await page.locator(".lumir-set-add, .lumir-set-empty .lumir-set-btn-primary").first().click();
+    await page.locator("#lumir-set-add-id").fill("same");
+    await page.locator(".lumir-set-add-card .lumir-set-btn-primary").click();
+  }
+  await expect(page.locator(".lumir-set-provider-row")).toHaveCount(2);
+
+  // 第一笔接管了当前使用。危险区不能把「列表里还有另一笔同 id 新增」说成「这是最后一个 provider」。
+  await page.locator(".lumir-set-provider-row").nth(0).click();
+  await expect(page.locator(".lumir-set-danger-desc")).not.toContainText("最后一个");
+
+  await page.locator(".lumir-set-danger .lumir-set-btn-danger").click();
+  await expect(page.locator('[data-delete-block="active"]')).toHaveCount(1);
+  await expect(page.locator(".lumir-set-delete-card select").first()).toHaveValue("same");
+  await expect(page.locator(".lumir-set-delete-card")).not.toContainText("这是最后一个 provider");
+  await page.locator(".lumir-set-delete-card .lumir-set-btn-danger").click();
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator(".lumir-set-status")).toContainText("已保存");
+
+  const patch = (await settingsPatches(page))[0]!;
+  expect(patch.providers).toEqual([{ action: "add", id: "same", preset: "kimi" }]);
+  expect(patch.active_provider).toEqual({ kind: "set", value: "same" });
+});
+
 test("设置面板：两笔同 id 新增改第一笔，active 跟着它走（不静默转给第二笔，r3 P1-2）", async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 800 });
   await openSettings(page, { snapshot: settingsSnapshot({ providers: [], active: null }) });

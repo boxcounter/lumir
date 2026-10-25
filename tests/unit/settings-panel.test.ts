@@ -34,6 +34,7 @@ import {
   namingRowModel,
   pageResetDraft,
   renameDraftProviderId,
+  replacementCandidates,
   setActiveDraft,
   setNamingModelDraft,
   setNamingProviderDraft,
@@ -1114,6 +1115,38 @@ test("deleteReferences：未落盘新增只看持有者身份，同 id 的已保
   const added = addProviderDraft(draft, "kimi-work", "kimi", metaOf("kimi-work", "kimi"));
   assert.deepEqual(deleteReferences(draft, added), { active: false, session_naming: false, attachment_naming: false });
   assert.equal(deleteReferences(draft, draft.providers[0]!).active, true, "已保存条目仍按 id 认领");
+});
+
+test("replacementCandidates：未落盘新增只排除自己——同 id 的幸存新增仍是合法替代（r4 P1-1）", () => {
+  const base = snapshot({ providers: [], active: "mock" });
+  const draft = createDraft(base);
+  const first = addProviderDraft(draft, "same", "kimi", metaOf("same", "kimi"));
+  addProviderDraft(draft, "same", "deepseek", metaOf("same", "deepseek"));
+  assert.deepEqual(replacementCandidates(draft, first), ["same"], "同 id 的幸存新增算候选");
+  assert.deepEqual(deleteCandidates(draft, "same"), [], "按 id 的清单（已保存条目删除用）才是空");
+});
+
+test("applyDraftDelete：mock 基线 + 两笔同 id 新增，删当前第一笔——幸存 Add 与 active_provider 同时进 patch", () => {
+  const base = snapshot({ providers: [], active: "mock" });
+  const draft = createDraft(base);
+  const first = addProviderDraft(draft, "same", "kimi", metaOf("same", "kimi"));
+  const second = addProviderDraft(draft, "same", "deepseek", metaOf("same", "deepseek"));
+  assert.equal(draft.active, "same");
+  assert.equal(draft.activeOwner, first);
+  // 计划里不带替代项（评审复现的最小形态）：也必须回落到候选首项，而不是「没有候选 → mock」。
+  draft.remove = { index: 0, activeAfter: "", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  assert.deepEqual(
+    draft.providers.map((item) => item.id),
+    ["same"],
+  );
+  assert.equal(draft.providers[0], second, "幸存的是第二笔");
+  assert.equal(draft.active, "same");
+  assert.equal(draft.activeOwner, second, "引用持有者落到幸存条目");
+  assert.equal(draft.activeTouched, true);
+  const patch = buildPatch(draft, base, base.revision!);
+  assert.deepEqual(patch.providers, [{ action: "add", id: "same", preset: "deepseek" }], "幸存 Add 仍在 patch 里");
+  assert.deepEqual(patch.active_provider, { kind: "set", value: "same" }, "active 必须一并写，不能留在 mock");
 });
 
 test("renameDraftProviderId：两笔同 id 新增，改第一笔时引用跟着它走（不转给第二笔）", () => {
