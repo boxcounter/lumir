@@ -82,7 +82,7 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 - **阻挡验收的非在途 Lumir dev 实例可代为正常退出**（Alex 2026-10-24 裁决）：验收套件被**非本任务**的 Lumir dev 实例（`target/debug/lumir`）挡住（起跑自检 `assertNoForeignLumir` 拒跑、退出码 2）时，先确认该实例**不属于任何在途任务**（判据、核实与登记口径见 [scripts/acceptance/README.md](scripts/acceptance/README.md) 的「被挡住的非在途实例：可代为正常退出」节）；确认后 agent 可代为**正常退出**——⌘Q / 应用「退出」菜单，随后核实进程真的退出。禁止 SIGKILL、禁止 `pkill -f` 这类模式匹配、禁止改代码或环境变量绕过 `assertNoForeignLumir`；安装版实例不在本授权内（口径见 README 同节）。**异常边界（任一命中即停手问 Alex，不得代为选择丢弃更改）**：退出被未保存修改挡住、实例归属无法确认、正常退出失败。真实 vault 仍**只读**；代为退出必须登记进完工报告（pid / 二进制路径 / 起于何时 / 归属判据）。
 - **Chromium 隔离**：浏览器探针 / 截图优先用 Playwright 默认 launcher；必须直接启动 Chrome 时，MUST 用独立临时 `--user-data-dir` 并带 `--use-mock-keychain`、`--password-store=basic`，MUST NOT 挂真实浏览器 profile / Cookie / Keychain。出现凭据授权框（如 `Chromium Safe Storage`）一律 Deny、结束进程并修正启动参数——不得输入密码或点 Always Allow。参数用途、授权框归因与处置见 [tests/visual/README.md](tests/visual/README.md)。
 - **机器窗口申报口径**：向 Alex 申请/报告真机时段时，报的是**整个任务队列的总窗口**（含已知后续任务的构建与验证耗时），不是单项任务的耗时；执行中长出新真机任务**不停工、继续用**，但要重新向 Alex 申报新的总时长（申报是义务，停工不是——超窗继续使用是对的，只要知会）。
-- **配额全瘫 runbook**：tower 主模型与 managed worker/reviewer 同一 Kimi 配额，耗尽即全瘫。恢复：改 `~/.kimi-code/config.toml` 顶层 `default_model = "deepseek/deepseek-flash"`（或 `kimi -m deepseek/deepseek-flash` 起新会话）→ resume 原会话 → tower 从 `.tower/comms/` + `HANDOFF.md` 恢复上下文。
+- **配额全瘫 runbook**：tower 主模型与 K3.1 Pro 子智能体都解析 `k3.1-pro` alias，provider 额度耗尽即全瘫。恢复（按序）：① 把 `~/.kimi-code/config.toml` 的 `[models."k3.1-pro"]` 里 `provider` 切到另一个 provider，重启 Kimi Code 后 resume 原会话；② 两个 provider 都不可用时改顶层 `default_model = "deepseek/deepseek-flash"`（或 `kimi -m deepseek/deepseek-flash` 起新会话）→ resume 原会话 → tower 从 `.tower/comms/` + `HANDOFF.md` 恢复上下文。
 - **worker 等待纪律**：等自己的后台任务一律用 `WaitFor`（挂起零 LLM 请求、完成即唤醒）或结束 turn（回复经 resume 送达）；禁止前台分钟级 `sleep` 盲等轮询。只有无事件源的外部状态（锁文件、磁盘水位）允许 ≤60s 短采样，且采样须带诊断负载。tower 每次 spawn/resume worker 时在 instructions 里显式写入本条，不靠 worker 自觉。
 
 ## 子代理模型调度
@@ -95,10 +95,9 @@ CI 的 `visual.yml` 跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURA
 | 视觉机械改动：样式值替换、视觉场景断言 / 文案 / fixture 调整、基线重截执行、原型 HTML——派发前先要求把期望效果写成机器断言（断言先行） | `deepseek/deepseek-flash` |
 | 机械核验与证据复跑：mission tasks 对账、门禁输出比对、scope 越界检查、gate / 验收套件复跑、截图归档 | `deepseek/deepseek-flash` |
 | 无机器验收的判断类开发（交互手感、新功能设计、结构调整）；探针 / 探错类步骤（结果未知、需设计退路，探针通过后的照章实现段仍归 deepseek） | `deepseek/deepseek-flash` |
-| 复杂任务、review 判断层、像素表现本身的改动（`src/style.css` 全局面、`src/preview/**` 渲染语义）——「看着对不对」是唯一判据的活 | managed provider 的 K3.1 Pro（`kimi-code/k3.1-pro`，Agent 工具里用 alias `primary`） |
-| `Kimi For Coding` provider 的任何模型（含 `Kimi For Coding/k3.1-pro`） | **禁用** |
+| 复杂任务、review 判断层、像素表现本身的改动（`src/style.css` 全局面、`src/preview/**` 渲染语义）——「看着对不对」是唯一判据的活 | K3.1 Pro（provider 无关的稳定 alias `k3.1-pro`；Agent 工具里也可用 alias `primary`） |
 
-K3.1 Pro 的 provider 纪律（Alex 2026-10-24 裁决）：调动 K3.1 Pro 时**只用 managed provider**（`kimi-code/k3.1-pro`，与 tower 主模型同配额），**不用 `Kimi For Coding` provider** 的同名模型。根治手法：`~/.kimi-code/config.toml` 的 `[secondary_model.models]` 池里的 K3.1 Pro 键为 `kimi-code/k3.1-pro`——`TowerSpawn` 无 model 参数，其 worker / reviewer 的模型从该池解析（worker 取池默认、reviewer 取池内 K3.1 Pro 项），改池即改落点；Agent 工具的 K3.1 Pro 派发改用池键 `kimi-code/k3.1-pro` 或 alias `primary`。
+K3.1 Pro 的 provider 纪律（2026-10-25 更新，取代 2026-10-24 的「只用 managed」裁决）：统一引用 provider 无关的稳定 alias `k3.1-pro`（定义在 `~/.kimi-code/config.toml` 的 `[models."k3.1-pro"]`）。要在 managed（`managed:kimi-code`）与 `Kimi For Coding` 之间切换，只改该 alias 条目的 `provider`（模型 id 不同时同改 `model`）一处，然后重启 Kimi Code；`default_model`、`[secondary_model.models]` 池键、Agent 工具派发一律引用 `k3.1-pro` / `primary`，不写 provider 前缀。`TowerSpawn` 的 worker 取池默认模型、reviewer 跟随调用方主模型（传 `primary`）；主模型为 `k3.1-pro` 时 reviewer 自动落到同一 provider。配置不热加载，改完必须重启。
 
 执行规则：
 
