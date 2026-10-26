@@ -379,6 +379,10 @@ steps:
 ---
 ```
 
+**失败后的推进口径**：`do` 动作抛错时记录一条 `[动作]` FAIL 并跳过本场景后续 steps，避免失去前提的
+步骤继续等待并制造级联失败；`expect` 断言失败仍继续收集，teardown 始终执行。`InfraError` 不走这条
+分支，仍按「本次运行无效」抛回 runner 标 INVALID。
+
 **实例 flavour 声明（`requires: bundle`，M605）**：通知点击类场景（170 / 171）在 dev flavour 下
 物理上验不到——点击响应按 `com.apple.Terminal` 路由，本进程的点击等待收不到（见上「实例
 flavour」）。这类场景在 front-matter 写 `requires: bundle`：dev 下 runner 直接把该场景标
@@ -534,7 +538,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `resizeWindow` | `width`（数值，必填）、`height`（缺省保持当前）、`settleMs` | **AX 直写窗口尺寸**（M236，窄窗退让这类「精确几何」验证）：`lib/ax-window.swift` 经 Accessibility API 设 AXSize，确定值通道（不拖窗口边缘——命中区与落点都不稳）。前提是调用进程有辅助功能权限（与 CGEvent 注入同）；窗口管理器的钳制会如实反映在回读值里，断言用 `window.width` 对生效值 |
 | `focusWindow` | `retries`、`click`（布尔，缺省 false）、`settleMs` | 确保目标窗口在前台（键盘场景的前台纪律，见上）。**`click: true`（M669 引入；M678 换落点并加自校验）= key window + webview 焦点前置**：`tryForeground` 只保证 **app 在前台**，「启动即在前台」时它直接早退、窗口未必是 **key window**，而真鼠标点击（`doubleClick` / `drag` / `hover` / `click.modifiers`）与 CGEvent 滚轮落在 key window 上——第一次 mousedown 可能被激活过程吃掉（M667 现场：第一次 KimiCU 点击后红绿灯转灰、后续手势对着空转现场）。给了 `click` 就在拿前台之后发一次**真实正文单击**（落在 AXTextArea 顶部留白 = `clickEditor` 的缺省落点 `dx=40/dy=6`；**不是标题栏**——标题栏整条是拖拽区，真实单击会让 webview 失去焦点，M670 的根因，见「已知边界」），随后**校验两条**：① AX 里恰有一个 focused 节点、且它就是编辑器的 `AXTextArea`（按节点身份区分编辑器与 harness composer——两者都是 `AXTextArea`，只看 role 会把「焦点还在 composer」判成通过）；② app 的 `AXFocusedWindow` 就是本套件的主窗口**且读数严格为 `true`**（= 窗口是 key；读数走 `lib/ax-key-window.swift`。`false`（确定读到了另一个窗口）、`unknown`（属性读取失败）、读数缺失**一律判未建立**，重试耗尽后 InfraError——不得把不可读当通过，否则 key-window 通道失效时动作静默退化成单判据，REVIEW.md「读不到当成空」条；M678 r1 评审 P1-1。**别改用窗口自己的 `AXFocused`**：该属性在本 app 上恒 false，M678 首轮因此把 224/228 误判成 INVALID，见「已知边界」）。未建立就**再点一次**（第一次可能被激活吃掉），上限 `retries`；耗尽抛 `InfraError`（整场 INVALID——焦点没建立时后续 hover / 键盘都不可信，读数是假红 / 假绿）。**合同**：窗口 key、webview/编辑器有焦点、单击**不写文档**；**副作用**：光标移到单击点（顶部留白 = 正文首行），可能撤下编辑器里的瞬时态（渲染块源码态、选区浮钮）——依赖这类状态的步骤在它之后建立；没有打开的文档（AX 里无 `AXTextArea`）时按普通 Error 报错（本动作点的是正文，不退化点标题栏）。消费者：场景 224（滚轮前）、228（两次坐标点击前）；同一条通道的直接使用者是 163b / 222（它们要「光标落在指定点」，故写 `clickEditor real: true`） |
 | `key` / `keys` | `key` / `keys: [...]`、`gapMs`、`retries`、`verify`（chord 副作用回读重试，M507） | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」）。**composer 目标的可打印序列默认不走这条**（M498 起迁 `typeInNode`）：press_key 逐键注入对 composer 丢键（字母 'e' 本机确定性丢失 + 随机连续丢键段，M497 归因定论），回读重试修不了确定性丢失。**例外：AXPress 插卡语境的素材注入，素材串不含 'e' 时可留在本动作**（M502 回退——该语境 `typeInNode` 的无 index / 带 index 两形态均不可靠，见 `typeInNode` 条「何时不迁」；82/83/85 的三个素材步即此）。**例外二（M518）：软断行之后的 composer 素材注入**（117/118/154 的 ⇧Enter 后文本）——`typeInNode` 的 AX 注入在软断行块上落点错位，故留回本动作，键串均不含 'e'（见 `typeInNode` 条的 M518 段）。**连字符写 `-` 即可**（M379；早期「`press_key` 键名 DSL 没有 `-` 的拼法」缺口）：KimiCU 的 DSL 把 `-` 当修饰键分隔符（与 `+` 同义），字面量原本没有拼法（`press_key("-")` 报 `error: empty key DSL`），套件在 `lib/cu.mjs` 侧把整串 `-` 与 `+` 分隔出的 `-` 段译为键名表里的 `minus`——因此 `keys: ["-"]` 仍走**可回读通道**，不降级成盲发。**空格写 `" "`**（M455）：空格同样没有字面量拼法（`press_key(" ")` 报 `error: empty key DSL`），`lib/cu.mjs` 把整串 `" "` 译为键名表里的 `space`，`lib/execute.mjs` 的可打印判定含空格 ⇒ `keys: [" ", …]` 也走可回读通道。**`verify`（M507，chord 的「副作用回读」重试，opt-in）**：给 `{ pattern, delta?, target? }` 时改走重试通道——注入前记 `pattern` 在回读值里的出现 N 次，落地要求恰为 N+delta（delta 缺省 1）、目标字节完全未变才重注（≤3 次）、partial/duplicated 直接判败（判据与 `type` / `keys` / `typeInNode` 同源，M143），重试与判败都落证据 note。回读目标 = `verify.target`（与 `clickInNode` 同解析、取 `node.value`），缺省走 `keysTarget`（focused 节点优先）。**只给「副作用在 AX 里可读」的 chord 挂**——⌘V 贴字这类「值里多出文本」的可以（134/150 即此）；**段末 ⇧Enter（AX 只在块之间插 `\n`、末尾空段落不产字符、几何又被 composer min-height 下限压住，1 块与 2 块 bbox 同值）、纯导航键（⌃B/⌃A/⌃P）、浮层内被列表消费的 ⌃N（overlay 游标不进 AX）都不能挂**：它们命中时目标字节不变，会被判「未落地」重注到上限后**假 FAIL**。判据与来历见 `lib/execute.mjs` 的 `runChordVerify` 注释（M507 的 dump 核查）。**不给 `verify` 的步行为一字不变**（仍按上面的判定边界盲发 / 回读） |
-| `typeInNode` | `target: {role, name\|any, nth}`（与 `clickInNode` 同一解析）、`text`（非空字符串）、`retries` | **素材注入：composer（M498）/ 原生输入框（M507）**：KimiCU `type_text` **不带 index**（当前焦点注入）整串**追加到目标末尾** + M143 口径回读重试（目标串出现 N→N+1；目标字节完全未变才重试 ≤3 次；partial/duplicated 直接判败给诊断，不在残段后重注）。**原生输入框适用面（M507）**：target 解析与回读（`node.value`）对 AXTextField（搜索框 / 树内联重命名框 / 新建文件·子目录名框）、AXComboBox（两处列表筛选框）、AXTextArea（拒绝原因等多行 textarea）一视同仁——M504 归因的「逐字符 `press_key` 对输入框丢键」（'e' 本机确定性丢失）在这些目标上改走本动作（场景 31/32/47/52/73）。`target.name` 要写**注入前与注入后两个状态都能命中**的交替正则（空框 = 读屏名如 `查找` / `新建文件的名称`，**非空 = 只剩 `= "值"`**，见「真机 AX 读不到非空值输入框的读屏名」条），如 `查找\|limit`。**通道是 M498 探针 1–7 毙掉其余三条后的唯一幸存者**：press_key 逐键对 composer 丢键（'e' 确定性丢失，M497）、press_key `cmd+v` 本机 8/9 不落地、`type_text` 带 index 点节点 bbox 中心不保留 caret（长单行落正文中段）；不带 index 的 `type_text` 4/4 落地、无点击。**语义 = 追加到末尾，不是在 caret 处键入**：caret 由键盘导航定位、落点即判据的步骤（141/154 的 ⌃B/⌃F 后落字）不适用、留在 `do: keys`（该形态现无可靠通道，finding 已报）；其余注入时 caret 本就在末尾的场景（空 composer 首问、发送后复问）与旧 `do: keys` 逐字等价。**软断行之后的注入不适用（M518 真机实测，2026-10-14）**：`text` 里含软断行块（`composerObserver` 从 DOM 回灌的模型与 DOM 已分叉）时，type_text 的 AX 注入落点错位、文本被折进上一块（117/118/154 十行折成五块、第二行与第一行同行拼接），三场景已改走 `do: keys`——「追加到末尾」只在目标内容**没有**软断行块时才与逐键键入等价。**何时不迁——AXPress 插卡语境（M502 回退）**：卡片钮是 AXPress，插卡后 `type_text` 无 index 的真实投递与 AX `(focused)` 标记可背离（标记在 composer、盲注却落进编辑器，82/83/85 三场景实证），而带 index 的注入又不进 composer 模型（后续读模型状态的步骤穿帮）；该语境的素材注入若**素材串无 'e'**（press_key 确定性丢 'e'，M497）即可保留 `do: keys`（82/83/85 的三个素材步即此，各自附 `editor.unchangedSince` 守卫）。前置：注入时 composer 须持 DOM 焦点（各自的 clickInNode / 发送后焦点 retained 建立），焦点在别处会漏进焦点元素——回读判未落地 + 场景侧 `editor.unchangedSince` 守卫。**attempt-1 焦点守卫（M501，M500 归因的落地）**：注入前解析目标节点，无 `(focused)` 标记时先点目标（AX 索引点击）再注——AXPress 插卡等动作后 AX 的 focused 标记与 type_text 无 index 走的「当前焦点」投递可能背离。焦点已在目标时零开销零行为变化（只读标记，不多点一下）；守卫动作与重试均落证据。**该守卫的适用边界（M502 改口）**：它只在本就迁到 `typeInNode` 的步骤里兜底，防不住 AXPress 插卡语境这一族（真机复跑实证仍漏注入编辑器——故 82/83/85 已回退 `do: keys`，见上「何时不迁」）；该语境的终防线是场景侧 `editor.unchangedSince` 守卫，不是这条焦点校验。**AX 注入改 DOM 但 composer 模型不可见**：composer 模型的内容输入走 keydown 路径，type_text 的 AX 注入不进模型——后续读**模型状态**的步骤（`@` 钮插入、按模型组装的留存）会穿帮（M498 三跑实证：模型把段落当空、引用插到段落首成「Image 1note-」）。**post-menu（原生菜单交互后）且后续读模型状态的步骤没有可靠套件通道**（M498 在 148 note- 步三通道全试：键盘注入 post-menu 死亡（M456）、type_text 模型不可见、剪贴板+原生菜单 Paste 文本在产品 paste 管线本可插入（模型一致）但两张卡片时 composer 达 max-height 滚动、右键 dy 落点命中卡片元信息行链接区开出 Look Up/Copy Link 菜单）——此类步骤留在 `do: keys` 并在场景内注释登记（148 note- 步即此先例，自 M454 从未转绿）。`target.name` 要写**注入前与注入后两个状态都能命中**的交替正则（composer 空 = 占位读屏名「问点什么…」，有内容 = 可访问名即内容），如 `问点什么\|qrefmark`；解析在每次回读时重做（AX index 是快照域的）。**注意 name 是裸正则源码、不带 `/…/` 包裹**（与 `clickInNode` 的 `target.name` 同口径；`/…/` 是 `ax.has` 断言的 matcher 约定，两套别混）。`gapMs` / `keys` 与本动作互斥（迁移残留，`--check` 挡） |
+| `typeInNode` | `target: {role, name\|any, nth}`（与 `clickInNode` 同一解析）、`text`（非空字符串）、`retries` | **素材注入：composer（M498）/ 原生输入框（M507）**：composer 用 KimiCU `type_text` 不带 index（当前焦点注入）整串**追加到目标末尾**；`AXTextField` / `AXComboBox` 用 `lib/cgevent-key.swift` 的真实 Unicode keyDown/keyUp，避免 `type_text` 触发失焦取消。回读重试保持 M143 口径（目标串出现 N→N+1；目标字节完全未变才重试 ≤3 次；partial/duplicated 直接判败给诊断，不在残段后重注）。**原生输入框适用面（M507）**：target 解析与回读（`node.value`）对 AXTextField（搜索框 / 树内联重命名框 / 新建文件·子目录名框）、AXComboBox（两处列表筛选框）、AXTextArea（拒绝原因等多行 textarea）一视同仁——M504 归因的「逐字符 `press_key` 对输入框丢键」（'e' 本机确定性丢失）在这些目标上改走本动作（场景 31/32/47/52/73）。`target.name` 要写**注入前与注入后两个状态都能命中**的交替正则（空框 = 读屏名如 `查找` / `新建文件的名称`，**非空 = 只剩 `= "值"`**，见「真机 AX 读不到非空值输入框的读屏名」条），如 `查找\|limit`。**通道是 M498 探针 1–7 毙掉其余三条后的唯一幸存者**：press_key 逐键对 composer 丢键（'e' 确定性丢失，M497）、press_key `cmd+v` 本机 8/9 不落地、`type_text` 带 index 点节点 bbox 中心不保留 caret（长单行落正文中段）；不带 index 的 `type_text` 4/4 落地、无点击。**语义 = 追加到末尾，不是在 caret 处键入**：caret 由键盘导航定位、落点即判据的步骤（141/154 的 ⌃B/⌃F 后落字）不适用、留在 `do: keys`（该形态现无可靠通道，finding 已报）；其余注入时 caret 本就在末尾的场景（空 composer 首问、发送后复问）与旧 `do: keys` 逐字等价。**软断行之后的注入不适用（M518 真机实测，2026-10-14）**：`text` 里含软断行块（`composerObserver` 从 DOM 回灌的模型与 DOM 已分叉）时，type_text 的 AX 注入落点错位、文本被折进上一块（117/118/154 十行折成五块、第二行与第一行同行拼接），三场景已改走 `do: keys`——「追加到末尾」只在目标内容**没有**软断行块时才与逐键键入等价。**何时不迁——AXPress 插卡语境（M502 回退）**：卡片钮是 AXPress，插卡后 `type_text` 无 index 的真实投递与 AX `(focused)` 标记可背离（标记在 composer、盲注却落进编辑器，82/83/85 三场景实证），而带 index 的注入又不进 composer 模型（后续读模型状态的步骤穿帮）；该语境的素材注入若**素材串无 'e'**（press_key 确定性丢 'e'，M497）即可保留 `do: keys`（82/83/85 的三个素材步即此，各自附 `editor.unchangedSince` 守卫）。前置：注入时 composer 须持 DOM 焦点（各自的 clickInNode / 发送后焦点 retained 建立），焦点在别处会漏进焦点元素——回读判未落地 + 场景侧 `editor.unchangedSince` 守卫。**attempt-1 焦点守卫（M501，M500 归因的落地）**：注入前解析目标节点，无 `(focused)` 标记时先点目标（AX 索引点击）再注——AXPress 插卡等动作后 AX 的 focused 标记与 type_text 无 index 走的「当前焦点」投递可能背离。焦点已在目标时零开销零行为变化（只读标记，不多点一下）；守卫动作与重试均落证据。**该守卫的适用边界（M502 改口）**：它只在本就迁到 `typeInNode` 的步骤里兜底，防不住 AXPress 插卡语境这一族（真机复跑实证仍漏注入编辑器——故 82/83/85 已回退 `do: keys`，见上「何时不迁」）；该语境的终防线是场景侧 `editor.unchangedSince` 守卫，不是这条焦点校验。**AX 注入改 DOM 但 composer 模型不可见**：composer 模型的内容输入走 keydown 路径，type_text 的 AX 注入不进模型——后续读**模型状态**的步骤（`@` 钮插入、按模型组装的留存）会穿帮（M498 三跑实证：模型把段落当空、引用插到段落首成「Image 1note-」）。**post-menu（原生菜单交互后）且后续读模型状态的步骤没有可靠套件通道**（M498 在 148 note- 步三通道全试：键盘注入 post-menu 死亡（M456）、type_text 模型不可见、剪贴板+原生菜单 Paste 文本在产品 paste 管线本可插入（模型一致）但两张卡片时 composer 达 max-height 滚动、右键 dy 落点命中卡片元信息行链接区开出 Look Up/Copy Link 菜单）——此类步骤留在 `do: keys` 并在场景内注释登记（148 note- 步即此先例，自 M454 从未转绿）。`target.name` 要写**注入前与注入后两个状态都能命中**的交替正则（composer 空 = 占位读屏名「问点什么…」，有内容 = 可访问名即内容），如 `问点什么\|qrefmark`；解析在每次回读时重做（AX index 是快照域的）。**注意 name 是裸正则源码、不带 `/…/` 包裹**（与 `clickInNode` 的 `target.name` 同口径；`/…/` 是 `ax.has` 断言的 matcher 约定，两套别混）。`gapMs` / `keys` 与本动作互斥（迁移残留，`--check` 挡） |
 | `type` | `text`（非空字符串）、`clear`、`retries` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区）；回读 + 有限重试与 `keys` **同一口径**：只在编辑器字节完全未变时重试（≤3），partial landing 直接报错不重试（判定边界见「已知边界」）。`text` 漏写在 `--check` 阶段即报（M379；此前会注入 `undefined`、连报 3 次未落地才暴露） |
 | `clipboardRead` | — | 读**系统剪贴板**（M244）：固定 `osascript -e 'the clipboard'`，不接受命令与参数——套件刻意不引入通用 shell 通道（这条口径见 `38-content-width-drag.md` 的登记），只开这一个可断言的读数出口。返回命令 stdout 并做**行尾归一**（`\r\n` / `\r` → `\n`，再去掉一个尾换行）——AppleScript 把粘贴板文本按经典 Mac 行尾（CR）返回，不归一的话多行内容的 `exact` 断言必然假红（app 侧写的是 LF；M277 实测）；命令失败即**报错**（不把「读不到」当空）。日常断言用 `clipboard` 断言形态，本动作用于把读数写进证据 |
 | `sleep` | `ms` | 等待 |
@@ -733,6 +737,12 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 此前用 `status !== "PASS"` 把 INVALID 并进 FAIL（M743 全量跑的头部写「FAIL 31」而 JSON 实为
 FAIL 24 / INVALID 7，finding `20261025-worker-archive-model-settings-improve-summary-md-invalid-fail-results-json-readme.md`）；
 INVALID 为 0 时该项省略。台账判据在 `lib/evidence.test.mjs`。
+
+`results.json` 的每个场景行另带 `phases`（毫秒）：`reset`（复位）/ `stop`（退出旧实例）/
+`launch`（进程启动）/ `ready`（就绪、恢复、钉窗与前台激活）/ `scenario`（场景动作，含场景内
+restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.md` 表格不变。每场景与整轮合计也写进
+`run.log`，用于判断优化收益落在哪一段。启动后直接走既有就绪门，不再固定等 1.2s；退出按 50ms
+侦测进程消失，原 2s / 0.5s 上界与 SIGKILL 兜底不变。
 
 ## 已知边界（写清楚，别当成 bug 去追）
 
@@ -1259,14 +1269,15 @@ node scripts/acceptance/coverage.mjs --check   # 只校验（生成一致性 + �
 
 ## 改套件实现时的自测
 
-动过 `lib/` 的 loader / 静态校验 / 断言判定之后，除 `--check` 外另跑一次套件自测：
+动过 `lib/` 的 loader / 静态校验 / 断言判定之后，跑统一契约检查（quick 与 docs CI 也调同一入口）：
 
 ```bash
-node --test scripts/acceptance/lib/execute.test.mjs
-node --test scripts/acceptance/lib/app.test.mjs   # app.mjs 的纯函数：实例扫描 / 游离实例归属 / bundle 身份
-node --test scripts/acceptance/lib/evidence.test.mjs  # summary.md 头部的三态计数（INVALID 不并进 FAIL）
-node --test scripts/acceptance/coverage.test.mjs  # 覆盖表生成器 / 检查器的必红反向测试
+bash scripts/acceptance/check-suite.sh
 ```
+
+它依次覆盖 JS 语法、全部场景静态校验、覆盖表一致性，以及 `lib/execute.test.mjs`、
+`lib/app.test.mjs`、`lib/evidence.test.mjs`、`coverage.test.mjs` 四组 `node:test` 自测。
+需要单文件迭代时仍可直接 `node --test <文件>`。
 
 纯 `node:test`、零新增依赖、不起真机（file 类断言与零断言兜底都不读 app / KimiCU，ctx 桩化即可）。
 `execute.test.mjs` 钉的是这一层最容易重犯的**静默**缺陷——「步骤表写在闭合 `---` 之外 ⇒ 整表
@@ -1286,5 +1297,5 @@ composer」「只剩 AXWebArea 焦点」两份坏态必须判失败；「编辑�
 产品 id、产物 = 别的 id 都必须红）。`evidence.test.mjs`（M745）钉证据索引头部的三态计数：
 INVALID（本次运行无效）不得并进 FAIL——拿一份「2 PASS / 1 FAIL / 1 INVALID」的输入，头部必须写
 `FAIL 1`（旧口径 `status !== "PASS"` 在这份输入上写 `FAIL 2`），跨 run 合并后的累计行同样三态；
-INVALID 为 0 时整项省略（既有小样本头部逐字不变）。三者**不进 gate**，与
-`scripts/migrate-harness-sessions.test.mjs` 同例（跑法写在文件头）。
+INVALID 为 0 时整项省略（既有小样本头部逐字不变）。四组自测经 `check-suite.sh` 进入 quick 与 docs CI；
+`scripts/migrate-harness-sessions.test.mjs` 仍是单独手跑的迁移脚本测试，不在本入口内。

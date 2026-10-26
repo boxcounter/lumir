@@ -5,7 +5,7 @@
 // 于子串」「同一语义两处真源」条）。故按本仓惯例构造**必须让它 FAIL 的输入**逐条实测：缺字段、重复 id、
 // 非法 item、表内同一 item 两行、漏场景 / 多 id、手改后与场景不一致。
 //
-// 跑法（与 execute.test.mjs 同例，不进常驻门禁；改过生成器或检查器后手跑一次）：
+// 跑法（与 execute.test.mjs 同例，经 scripts/acceptance/check-suite.sh 接入 quick 与 docs CI）：
 //   node --test scripts/acceptance/coverage.test.mjs
 //
 // 纪律：全程对临时目录（`os.tmpdir()`）跑——不碰验收 vault、不写仓库里的 COVERAGE.md。

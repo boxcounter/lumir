@@ -1,7 +1,7 @@
 // scripts/acceptance/lib/app.test.mjs —— app.mjs 的纯函数自测（M619：bundle 启动方式与
 // 实例扫描）。不起真机、不需要 app、不碰验收 vault / 用户的 ~/.config/lumir。
 //
-// 跑法（与 execute.test.mjs 同例：套件自测不进常驻门禁，改过相关实现后手跑）：
+// 跑法（与 execute.test.mjs 同例，经 scripts/acceptance/check-suite.sh 接入 quick 与 docs CI）：
 //   node --test scripts/acceptance/lib/app.test.mjs
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -12,7 +12,9 @@ import {
   listLumirInstances,
   parseElapsedSeconds,
   readBundleId,
+  stopApp,
   straysInClickWindow,
+  waitForProcessExit,
 } from "./app.mjs";
 
 test("parseElapsedSeconds：[[dd-]hh:]mm:ss → 秒；解析不出给 null", () => {
@@ -190,4 +192,83 @@ test("assertAcceptanceBundleIdentity：只有构建产物带验收 id 才放行"
     /与验收 id com\.lumir\.app\.acceptance 不一致/,
     "换了别的 id 同样判红：通知授权按 bundle id 记账，id 漂了就不可复现",
   );
+});
+
+test("waitForProcessExit：立即退出零等待、延迟退出提前返回、耗尽上界如实报失败", async () => {
+  let clock = 0;
+  const options = {
+    everyMs: 50,
+    now: () => clock,
+    sleepFn: async (ms) => {
+      clock += ms;
+    },
+  };
+  assert.equal(await waitForProcessExit(async () => false, { ...options, timeoutMs: 2000 }), true);
+  assert.equal(clock, 0);
+
+  assert.equal(await waitForProcessExit(async () => clock < 120, { ...options, timeoutMs: 2000 }), true);
+  assert.equal(clock, 150, "50ms 轮询在 150ms 首次看到 120ms 后的退出态");
+
+  clock = 0;
+  assert.equal(await waitForProcessExit(async () => true, { ...options, timeoutMs: 200 }), false);
+  assert.equal(clock, 200, "仍在运行时最多等到原上界");
+});
+
+test("stopApp：dev 已退出时只发 SIGTERM，不付兜底等待", async () => {
+  const kills = [];
+  await stopApp(
+    { flavour: "dev", child: { pid: 42 } },
+    { kill: (target, signal) => kills.push([target, signal]), findDevPid: () => null },
+  );
+  assert.deepEqual(kills, [[-42, "SIGTERM"]]);
+});
+
+test("stopApp：dev 超过退出上界仍保留 SIGKILL 兜底", async () => {
+  const kills = [];
+  await stopApp(
+    { flavour: "dev", child: { pid: 42 } },
+    {
+      kill: (target, signal) => kills.push([target, signal]),
+      findDevPid: () => 123,
+      wait: async () => false,
+    },
+  );
+  assert.deepEqual(kills, [
+    [-42, "SIGTERM"],
+    [123, "SIGKILL"],
+  ]);
+});
+
+test("stopApp：退出探测异常不继续 SIGKILL", async () => {
+  const kills = [];
+  await assert.rejects(
+    stopApp(
+      { flavour: "dev", child: { pid: 42 } },
+      {
+        kill: (target, signal) => kills.push([target, signal]),
+        findDevPid: () => 123,
+        wait: async () => {
+          throw new Error("ps failed");
+        },
+      },
+    ),
+    /ps failed/,
+  );
+  assert.deepEqual(kills, [[-42, "SIGTERM"]]);
+});
+
+test("stopApp：bundle 已退出仍撤销本副本 LaunchServices 记录", async () => {
+  const kills = [];
+  const unregistered = [];
+  await stopApp(
+    { flavour: "bundle", child: { pid: 43 }, binary: "/tmp/Lumir.app/Contents/MacOS/lumir", appPath: "/tmp/Lumir.app" },
+    {
+      kill: (target, signal) => kills.push([target, signal]),
+      findBundlePid: () => null,
+      unregister: (cmd, args) => unregistered.push([cmd, args]),
+    },
+  );
+  assert.deepEqual(kills, [[-43, "SIGTERM"]]);
+  assert.equal(unregistered.length, 1);
+  assert.deepEqual(unregistered[0][1], ["-u", "/tmp/Lumir.app"]);
 });

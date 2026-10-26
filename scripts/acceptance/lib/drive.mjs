@@ -469,9 +469,19 @@ export async function typeInEditor(cu, pid, text, { clear = false } = {}) {
  * 匹配注入前（composer 空 = 占位读屏名「问点什么…」）与注入后（可访问名 = 内容）两种形态，
  * 如 `问点什么|qrefmark`。
  *
+ * AXTextField / AXComboBox 用 CGEvent Unicode 键盘输入，composer 保持 type_text 通道。
  * 返回判定报告（不直接抛业务错）：{ attempts, verdict, baselineValue, lastValue, focused, focusClicked }。
  * verdict ∈ landed | unchanged | partial | duplicated | target-lost（结构错误抛 StepError）。
  */
+export function injectTextCGEvent(text) {
+  const script = new URL("./cgevent-key.swift", import.meta.url).pathname;
+  try {
+    return execFileSync("/usr/bin/swift", [script, text], { encoding: "utf8" }).trim();
+  } catch (e) {
+    throw new StepError(`CGEvent Unicode 注入失败（${e.message}）`);
+  }
+}
+
 export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = "" } = {}) {
   if (typeof resolve !== "function") throw new StepError("typeInNode：缺少 resolve(ax) 目标解析函数");
   const countOf = (v) => (text ? v.split(text).length - 1 : 0);
@@ -490,23 +500,17 @@ export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = 
   let focusClicked = false;
   for (let attempt = 1; attempt <= max; attempt++) {
     used = attempt;
-    // 投递策略：第 1 次不带 index（向当前焦点元素整串注入，不点击、不污染 caret），但先过
-    // M501 焦点守卫——目标无 (focused) 标记时点它一下（AXPress 索引点击），把渲染层焦点
-    // 交给目标再注；重试起带**当次重新解析的**节点 index——原生菜单 Paste 交互后 window 级
-    // 键盘焦点会丢（M456 实测；148 的 note- 步即此现场），此时无 index 的焦点投递路径不落地，
-    // 而带 index 的 AX-focus + editing-command 路径照落（M498 探针 1 stage 7 实测）。代价是
-    // 带 index 会先点节点 bbox 中心（caret 移到该处）——只发生在重试上，且 typeInNode 的语义
-    // 本就是「追加」，caret 落点由后续步骤自己重建。
-    const axPre = await readAx(cu, pid);
+    const axPre = attempt === 1 ? first : await readAx(cu, pid);
     const targetNow = resolve(axPre);
-    if (attempt === 1) {
-      if (targetNow && !targetNow.focused) {
-        focusClicked = true;
-        await cu.click(pid, { index: targetNow.index });
-        await sleep(500); // 点击到焦点投递之间有一拍
-      }
-      await cu.typeText(pid, text);
-    } else if (!targetNow) {
+    if (attempt === 1 && targetNow && !targetNow.focused) {
+      focusClicked = true;
+      await cu.click(pid, { index: targetNow.index });
+      await sleep(500);
+    }
+    const nativeInput = targetNow && (targetNow.role === "AXTextField" || targetNow.role === "AXComboBox");
+    if (nativeInput) {
+      injectTextCGEvent(text);
+    } else if (attempt === 1 || !targetNow) {
       await cu.typeText(pid, text);
     } else {
       await cu.typeText(pid, text, { index: targetNow.index });

@@ -8,8 +8,7 @@
 // 只能靠**构造必须红的输入**来证明判据真的成立（REVIEW.md 「断言等价于子串」条）：「同内容重写、mtime 推进」
 // 那个现场必须判红，且它落在哪一条记录上一眼可辨。
 //
-// 跑法（gate 不含本文件——套件自测不进常驻门禁，与 `scripts/migrate-harness-sessions.test.mjs`
-// 同例；改过 loader / 断言实现后手跑一次）：
+// 跑法（经 scripts/acceptance/check-suite.sh 接入 quick 与 docs CI；改过 loader / 断言实现后也可单跑）：
 //   node --test scripts/acceptance/lib/execute.test.mjs
 //
 // 纪律（REVIEW.md 「测试污染真实环境」条）：全程对临时目录（`os.tmpdir()`）跑——不碰验收 vault、不碰用户的
@@ -937,6 +936,23 @@ test("key window 读数解析（M678 r1）：true / false / unknown 三态分开
   );
   assert.equal(parseKeyWindowState("focusedWindow=unknown err=no-window-value title=Lumir"), null);
   assert.equal(parseKeyWindowState("garbage output"), null, "输出无法解析同样是 unknown");
+});
+
+test("动作失败即停止后续步骤，teardown 仍执行", async () => {
+  const root = tmpRoot("action-fail-fast");
+  useTmpEnv(root);
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "坏动作", do: "waitFor", waitFor: { has: [], not: [] } },
+      { name: "不应执行", do: "vaultWrite", file: "should-not-exist.md", content: "不可落盘\n" },
+    ],
+    teardown: [{ label: "收尾仍执行", file: { path: "missing-teardown.md", exists: false } }],
+  });
+  assert.equal(status, "FAIL");
+  assert.equal(fs.existsSync(path.join(process.env.LUMIR_ACCEPTANCE_VAULT, "should-not-exist.md")), false);
+  const labels = records.map((r) => `${r.ok ? "PASS" : "FAIL"} ${r.label}`);
+  assert.ok(labels.some((label) => label === "FAIL [动作] 坏动作"), JSON.stringify(labels));
+  assert.ok(labels.includes("PASS 收尾仍执行"), JSON.stringify(labels));
 });
 
 test("全库场景静态校验通过（--check 的真实通道）", () => {

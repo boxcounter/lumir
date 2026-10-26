@@ -4,7 +4,7 @@
 #
 # 用法：
 #   scripts/gate.sh          # quick：fmt + clippy + cargo test + bindings 漂移 + gen/schemas 漂移
-#                            #        + tsc（根/视觉/单测）+ 单测 + perf 夹具测试 + acceptance 语法
+#                            #        + tsc（根/视觉/单测）+ 单测 + perf 夹具测试 + acceptance 契约/自测
 #                            #        + docs-check + openspec validate
 #   scripts/gate.sh visual   # quick + 视觉套件隔离断言 + 视觉回归（默认 LUMIR_VISUAL_PORT=4273 隔离端口）
 #   scripts/gate.sh all      # visual + 性能合同（release 构建，首次分钟级；本地无滚动基线时
@@ -135,9 +135,10 @@ run_gate unit-tests node tests/unit/run.mjs
 #     未挂载时不得开始采样）。两者坏掉都只能在读数上伪装成产品回归，因此都不该等下一次 perf run
 #     才暴露。node:test 零依赖、毫秒级，放 quick；任一文件失败即整条 gate 红。
 run_gate perf-fixture-tests node --test scripts/perf/memory.test.mjs scripts/perf/keypress-startup.test.mjs
-# 验收套件语法层：实现唯一一份在 scripts/acceptance/check-syntax.sh（docs-check / CI 共用同一实现，
-# REVIEW.md「同一语义两处真源」条），本行只调用。只解析不执行——不起 app、不占端口、不碰验收 vault。
-run_gate acceptance-syntax bash scripts/acceptance/check-syntax.sh
+# 验收套件契约层：JS 语法 + 全部场景静态校验 + 覆盖表 + 套件自测。实现唯一一份在
+# scripts/acceptance/check-suite.sh（docs-check / CI 共用同一实现，REVIEW.md「同一语义两处真源」条）。
+# 不起 app、不占端口、不碰验收 vault。
+run_gate acceptance-suite bash scripts/acceptance/check-suite.sh
 # 制品门禁：与 CI 的 docs-check.yml 共用同一脚本（本地绿才等于 CI 绿）
 run_gate docs-check bash scripts/docs-check.sh
 run_gate openspec-validate npx --yes @fission-ai/openspec@1.12.0 validate --all --strict

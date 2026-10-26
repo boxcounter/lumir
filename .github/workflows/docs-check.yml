@@ -1,7 +1,7 @@
 name: docs-check
 
-# 制品门禁：ADR 与 OpenSpec 的结构与合法性校验 + 验收场景覆盖表生成一致性 + backlog 出口门禁
-# + 验收套件语法（`node --check`）。
+# 制品门禁：ADR 与 OpenSpec 的结构与合法性校验 + 验收场景静态契约与覆盖表 + backlog 出口门禁
+# + 验收套件语法与自测（不起真机）。
 # 口径本体见 docs/process/adr-lifecycle.md 与 docs/process/openspec-workflow.md。
 
 on:
@@ -9,15 +9,14 @@ on:
     paths:
       - "docs/**"
       - "openspec/**"
-      # 验收套件（M690 覆盖表 / M705 语法层）：场景改动必须同步重生成 COVERAGE.md；覆盖表校验
-      # 经 lib/execute.mjs / lib/util.mjs，语法层覆盖 scripts/acceptance/*.mjs 与 lib/**——
-      # 三者的改动都要让这条校验跑起来（`scripts/acceptance/run.mjs --check` 调同一实现，
-      # 但套件不进 CI）。
+      # 验收套件：场景、覆盖表、runner / lib、静态契约与自测入口的改动都必须触发本 job；
+      # 真机行为不进 CI，秒级契约检查与 node:test 自测经 check-suite.sh 统一执行。
       - "scripts/acceptance/scenarios/**"
       - "scripts/acceptance/COVERAGE.md"
       - "scripts/acceptance/*.mjs"
       - "scripts/acceptance/lib/**"
       - "scripts/acceptance/check-syntax.sh"
+      - "scripts/acceptance/check-suite.sh"
       - "scripts/docs-check.sh"
       # backlog 出口门禁（M692）：判据实现自身的改动同样要触发 docs-check。
       - "scripts/backlog-check.mjs"
@@ -32,6 +31,7 @@ on:
       - "scripts/acceptance/*.mjs"
       - "scripts/acceptance/lib/**"
       - "scripts/acceptance/check-syntax.sh"
+      - "scripts/acceptance/check-suite.sh"
       - "scripts/docs-check.sh"
       - "scripts/backlog-check.mjs"
       - ".github/workflows/docs-check.yml"
@@ -71,20 +71,15 @@ jobs:
       # MODIFIED requirement 整块替换，delta 少抄的段落会被静默删除、validate 看不见）、归档队列
       # （M684，同一脚本的门禁模式：tasks 全勾的活跃 change 必须在 docs/backlog.md 有且仅有一条归档
       # 跟踪条目，缺失或重复报红；口径见 docs/process/openspec-workflow.md「批次收尾 checklist」）、
-      # 验收场景覆盖表（M690，实现 scripts/acceptance/coverage.mjs：COVERAGE.md 必须与
-      # scenarios/*.md 的 front-matter 一致；id / item / title 必填、id 唯一、item 在覆盖表内
-      # 一项一行（场景间共用 item 合法），title 不要求唯一）、backlog 出口门禁（M692，实现
-      # scripts/backlog-check.mjs：待修 / 已立项 / 待真机验收区出现完成标记仍留条目、活项缺下一动作 /
+      # 验收场景契约与覆盖表（全部场景经 checkScenario；COVERAGE.md 与 front-matter 一致）、
+      # backlog 出口门禁（M692，实现 scripts/backlog-check.mjs：待修 / 已立项 / 待真机验收区出现完成标记仍留条目、活项缺下一动作 /
       # 关闭条件、同一 finding 指针重复、finding 指针不存在、记录在案无 canonical 指针 / 复核口径、
       # 全文超 80 行 ⇒ 报红；条目年龄只进报告。无 ratchet、无既有豁免；口径见
-      # docs/process/openspec-workflow.md「backlog 出口的机器判据」），以及
-      # 验收套件语法（M705，实现 scripts/acceptance/check-syntax.sh：scripts/acceptance 入口与
-      # lib/*.mjs 逐文件 `node --check`；本地 gate.sh quick 的 acceptance-syntax 门调的是同一份
-      # 实现。套件不进 CI、lib 里多数模块只有真机跑批才 import，没有这条语法错要等下一次真机跑批
-      # 才暴露；只解析不执行，不占端口、不碰验收 vault）。
-      # 八条都随本步继承。
+      # docs/process/openspec-workflow.md「backlog 出口的机器判据」），以及验收套件语法与四组自测。
+      # 验收部分统一走 scripts/acceptance/check-suite.sh，与本地 gate.sh quick 的 acceptance-suite
+      # 门共用；不起 app、不占端口、不碰验收 vault。八条都随本步继承。
       # job 名 `ADR 校验` 保持原样：它可能被 GitHub 的分支保护登记为必需检查，改名会让保护规则失配。
-      - name: 制品校验（ADR 结构 / README 索引 / OpenSpec 相对链接 / 归档对账 / 归档队列 / 验收覆盖表 / backlog 出口 / 验收套件语法，与本地 gate.sh 共用 scripts/docs-check.sh）
+      - name: 制品校验（ADR / OpenSpec / 归档 / backlog / 验收场景契约与套件自测，与本地 gate.sh 共用 scripts/docs-check.sh）
         run: bash scripts/docs-check.sh
 
   openspec:

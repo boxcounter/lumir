@@ -1553,22 +1553,45 @@ export async function quiesceStrayBundleInstances({
   return cleaned;
 }
 
+export async function waitForProcessExit(
+  alive,
+  { timeoutMs = 2000, everyMs = 50, sleepFn = sleep, now = Date.now } = {},
+) {
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    if (!(await alive())) return true;
+    const remaining = deadline - now();
+    if (remaining <= 0) return false;
+    await sleepFn(Math.min(everyMs, remaining));
+  }
+}
+
 /**
- * 停 app。
+ * 停 app。进程退出即返回；原 2s / 0.5s 上界与 SIGKILL 兜底不变。
  * - dev：先整组 SIGTERM，再兜底 SIGKILL 残留（只在本次运行的进程组内）。
  * - bundle（M619）：app 由 launchd 启动、**不在本进程组里**，按本次跑批自己的二进制路径精确定位
  *   后再收；`open -W` 等待者单独收（它收到 SIGTERM 不会波及 app）。绝不按 `.app` 通配 kill
  *   ——安装版路径不同，结构上碰不到用户实例。
  */
-export async function stopApp(handle) {
+export async function stopApp(
+  handle,
+  {
+    findDevPid = findAppPid,
+    findBundlePid = findBundleAppPid,
+    kill = process.kill,
+    wait = waitForProcessExit,
+    unregister = spawnSyncText,
+  } = {},
+) {
   if (!handle) return;
   handle.stopLogPump?.();
   if (handle.flavour === "bundle") {
+    const ownPid = () => findBundlePid(handle.binary);
     const killOwn = (signal) => {
-      const pid = findBundleAppPid(handle.binary);
+      const pid = ownPid();
       if (pid === null) return false;
       try {
-        process.kill(pid, signal);
+        kill(pid, signal);
         return true;
       } catch {
         return false;
@@ -1576,19 +1599,20 @@ export async function stopApp(handle) {
     };
     killOwn("SIGTERM");
     try {
-      process.kill(-handle.child.pid, "SIGTERM");
+      kill(-handle.child.pid, "SIGTERM");
     } catch {
       /* open 已退出 */
     }
-    await sleep(2000);
-    killOwn("SIGKILL");
-    await sleep(500);
+    if (!(await wait(() => ownPid() !== null, { timeoutMs: 2000 }))) {
+      killOwn("SIGKILL");
+      await wait(() => ownPid() !== null, { timeoutMs: 500 });
+    }
     // 撤销本次跑批经 `open` 写进 LaunchServices 的本副本记录（M619）：只按本 .app 路径撤销，
     // 同 id 的其他副本不受影响；不撤的话 worktree 副本会以验收 id 的身份留在 LS 数据库里，
     // 指向一个随后被清理的路径。
     if (handle.appPath) {
       try {
-        spawnSyncText(LSREGISTER, ["-u", handle.appPath]);
+        unregister(LSREGISTER, ["-u", handle.appPath]);
       } catch {
         /* 未注册 / 系统已清理：无副作用 */
       }
@@ -1598,23 +1622,23 @@ export async function stopApp(handle) {
     return;
   }
   const pgid = handle?.child?.pid;
-  if (pgid) {
-    try {
-      process.kill(-pgid, "SIGTERM");
-    } catch {
-      /* 组已不在 */
-    }
+  if (!pgid) return;
+  try {
+    kill(-pgid, "SIGTERM");
+  } catch {
+    /* 组已不在 */
   }
-  await sleep(2000);
-  const pid = findAppPid(pgid);
-  if (pid) {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      /* 已退出 */
+  if (!(await wait(() => findDevPid(pgid) !== null, { timeoutMs: 2000 }))) {
+    const pid = findDevPid(pgid);
+    if (pid) {
+      try {
+        kill(pid, "SIGKILL");
+      } catch {
+        /* 已退出 */
+      }
     }
+    await wait(() => findDevPid(pgid) !== null, { timeoutMs: 500 });
   }
-  await sleep(500);
 }
 
 /** KimiCU 的 app 清单里确认 `pid` 就是本次跑批的验收副本（bundle id 从构建产物现读，M622）。

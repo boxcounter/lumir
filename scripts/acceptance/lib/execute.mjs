@@ -2014,7 +2014,8 @@ export async function runScenario(ctx, scenario) {
         // 分档与 README）——否则无效运行与产品判红在读数上无法区分（README 的「退出码」三档）。
         if (e instanceof InfraError) throw e;
         await fail(`[动作] ${step.name}`, e.message, await readAx(cu, ctx.pid).catch(() => null));
-        continue;
+        evidence.record({ kind: "note", text: "动作失败，后续步骤跳过；teardown 仍执行" });
+        break;
       }
       for (const expect of step.expect ?? []) {
         await check(expect, state);

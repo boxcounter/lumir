@@ -9,7 +9,7 @@
 // 记录与批次报告。三态判据因此要有区分度：拿一份「2 PASS / 1 FAIL / 1 INVALID」的输入，
 // 头部必须写 FAIL 1（旧口径在这份输入上写 FAIL 2，本文件的第二条用例正是它）。
 //
-// 跑法（与 execute / app 自测同例：不进常驻门禁，改过 evidence.mjs 后手跑一次）：
+// 跑法（与 execute / app 自测同例，经 scripts/acceptance/check-suite.sh 接入 quick 与 docs CI）：
 //   node --test scripts/acceptance/lib/evidence.test.mjs
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -74,4 +74,15 @@ test("跨 run 合并后的累计计数同样三态（上一轮 INVALID 不被本
       ["new-fail", "FAIL"],
     ],
   );
+});
+
+test("phases 随最新场景行保留，旧结果缺字段仍可合并", async () => {
+  const root = await tmpRoot();
+  await writeFile(path.join(root, "results.json"), `${JSON.stringify([row("a", "PASS")], null, 2)}\n`);
+  const phases = { reset: 10, stop: 20, launch: 30, ready: 40, scenario: 50 };
+  await writeSummary(root, [{ ...row("a", "FAIL"), phases }, row("b", "PASS")]);
+  const merged = JSON.parse(await readFile(path.join(root, "results.json"), "utf8"));
+  assert.deepEqual(merged.find((r) => r.id === "a").phases, phases);
+  assert.equal(merged.find((r) => r.id === "b").phases, undefined);
+  assert.equal(await headerLine(root), "本次 run 2 个场景（PASS 1、FAIL 1）；索引累计 2 个场景：PASS 1、FAIL 1。");
 });

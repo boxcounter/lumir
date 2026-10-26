@@ -437,6 +437,28 @@ function assertNoForeignLumir() {
   );
 }
 
+const PHASE_LABELS = {
+  reset: "复位",
+  stop: "退出",
+  launch: "启动",
+  ready: "就绪",
+  scenario: "场景",
+};
+
+function formatPhases(phases) {
+  return Object.entries(PHASE_LABELS)
+    .map(([key, label]) => `${label} ${((phases[key] ?? 0) / 1000).toFixed(1)}s`)
+    .join(" / ");
+}
+
+function sumPhases(results) {
+  const totals = Object.fromEntries(Object.keys(PHASE_LABELS).map((key) => [key, 0]));
+  for (const result of results) {
+    for (const key of Object.keys(totals)) totals[key] += result.phases?.[key] ?? 0;
+  }
+  return totals;
+}
+
 async function main() {
   const targets = assertSafeTargets();
   // 锁要在任何动共享资源的动作之前拿（reclaimPort 会杀进程、resetVault 会删文件）。
@@ -484,6 +506,14 @@ async function main() {
   let invalidCount = 0;
   for (const scenario of selected) {
     const t0 = Date.now();
+    const phases = Object.fromEntries(Object.keys(PHASE_LABELS).map((key) => [key, 0]));
+    let phaseName = "reset";
+    let phaseAt = t0;
+    const markPhase = () => {
+      const now = Date.now();
+      phases[phaseName] += now - phaseAt;
+      phaseAt = now;
+    };
     log(`▶ ${scenario.id}（验收项 ${scenario.item}）${scenario.title}`);
     let fgNote = "";
     let out;
@@ -553,9 +583,14 @@ async function main() {
         language: SUITE_LANGUAGE,
         ...scenarioConfig,
       });
+      markPhase();
+      phaseName = "stop";
       if (handle) await stopApp(handle);
+      markPhase();
+      phaseName = "launch";
       handle = await launchApp({ logFile: appLogFile });
-      await sleep(1200);
+      markPhase();
+      phaseName = "ready";
       await waitAppReady(cu, handle.pid); // 前端就绪门：左栏文件树 + 编辑器节点就位再开跑
       // M516：钉窗口之前先等**启动会话恢复**跑完（只有会恢复标签的场景才有这一段，见
       // seedHasRestoredTabs）。就绪门判的是「树 + 编辑器就位」，而产品在树渲染**之后**才起
@@ -600,7 +635,6 @@ async function main() {
           // 预置会被那次 flush 覆盖（`do: restart` 的 `windowState:` 参数走这条钩子）。
           if (beforeLaunch) await beforeLaunch();
           handle = await launchApp({ logFile: appLogFile });
-          await sleep(1200);
           // requireVault: false = 本步期待「未打开空态」（如 last_vault 失效），就绪门放宽为
           // 「树 pane 任一形态 + 编辑器在位」。默认仍是严格门（树里有 .md 行）。
           await waitAppReady(cu, handle.pid, { requireVault });
@@ -630,9 +664,13 @@ async function main() {
           ctx.pid = handle.pid;
         },
       };
+      markPhase();
+      phaseName = "scenario";
       setupPhase = false; // 越过这一行，异常才是场景自己的事（产品面）
       out = await runScenario(ctx, scenario);
+      markPhase();
     } catch (e) {
+      markPhase();
       // 基建错误（app 起不来 / 前端未就绪 / KimiCU AX 服务退化 / 动作内部的重启起不来）与产品
       // 判红分开表达：前者整场标 INVALID、整轮退出码升到 2（本次读数不可用于判产品缺陷，请复跑），
       // 后者照旧 FAIL（退出码 1）。混在一起时复盘只能靠人读步骤形态区分——M281 实证（finding
@@ -657,13 +695,20 @@ async function main() {
       asserts: out.records.filter((r) => r.kind === "assert").length,
       failed: out.records.filter((r) => r.kind === "assert" && !r.ok).length,
       seconds,
+      phases,
       at: new Date().toISOString(),
     });
     log(`  ${out.status}  ${seconds.toFixed(1)}s  ${path.join(root, scenario.id)}`);
+    log(`  分段 ${formatPhases(phases)}`);
     for (const f of out.records.filter((r) => r.kind === "assert" && !r.ok)) log(`    ✗ ${f.label}${f.detail ? ` — ${f.detail}` : ""}`);
-    await appendRunLog(root, `${new Date().toISOString()} ${scenario.id} ${out.status}`);
+    await appendRunLog(root, `${new Date().toISOString()} ${scenario.id} ${out.status} | ${formatPhases(phases)}`);
   }
 
+  const phaseTotals = sumPhases(results);
+  const totalSeconds = results.reduce((sum, result) => sum + result.seconds, 0);
+  const timing = `本轮分段合计：${formatPhases(phaseTotals)}；场景总计 ${totalSeconds.toFixed(1)}s`;
+  log(`\n${timing}`);
+  await appendRunLog(root, `${new Date().toISOString()} ${timing}`);
   const summary = await writeSummary(root, results);
   log(`\n结论：${summary.pass}/${summary.total} PASS。报告：${summary.summaryPath}`);
   if (invalidCount) {
