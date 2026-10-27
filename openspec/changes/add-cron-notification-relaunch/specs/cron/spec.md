@@ -77,8 +77,9 @@ NOT 产生第二次运行或第二次模型请求；同一条通知的两次响�
 MUST NOT 因本 change 而声称它可用。
 
 **诊断**：`cron_click` SHALL 带 `source` 字段区分来源（`in-process` / `relaunch`）；保留待重放
-SHALL 落 `cron_click_deferred`（与 `cron_click` 共用任务与来源字段，另带闭集合 `reason`）。两者
-MUST NOT 记录通知正文、任务 prompt 或 vault 绝对路径。
+SHALL 落 `cron_click_deferred`（与 `cron_click` 共用任务与来源字段，另带 `request_id` 与闭集合
+`reason`——有了 request id 才能在日志里分辨「哪条通知被保留了」）。两者 MUST NOT 记录通知正文、
+任务 prompt 或 vault 绝对路径。
 
 #### Scenario: 应用退出后点击到点通知发起运行
 

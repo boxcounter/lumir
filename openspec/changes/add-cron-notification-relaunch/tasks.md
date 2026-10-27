@@ -59,7 +59,7 @@
 ## 4. 诊断与文案
 
 - [ ] 4.1 `cron_click` 增加 `source`（`in-process` / `relaunch`）；新增 `cron_click_deferred`
-      （任务、来源、闭集合 `reason`）；同步 `log_event` 字段白名单与
+      （任务、request_id、来源、闭集合 `reason`）；同步 `log_event` 字段白名单与
       `src/bindings/LogEventName.ts` 重导出（先 `git add` 重导出产物再跑门禁）
 - [ ] 4.2 新增两条人话提示的 copy 条目（任务已删除 / 提醒已过期），后端只给 code + 参数
 - [ ] 4.3 单测：字段白名单与事件名一致性；提示 code 在 copy 表里登记

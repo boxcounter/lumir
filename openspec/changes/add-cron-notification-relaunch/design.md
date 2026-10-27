@@ -222,7 +222,7 @@ struct ClickContext {
 | 跨天 | 拒绝 | `notice_stale` | 一句「这条提醒已过期，今天到点会再提醒」 |
 | 重复点击同一条 | 走既有同日幂等分支：只聚焦 + 打开已有会话 | `cron_click(ok=true, action=run, source=relaunch)` | 窗口聚焦、会话打开，不产生第二次模型请求 |
 | 同一任务两条通知并发 | 至多一次运行（`clicked_today` + 在途表）；后到者只聚焦 | 同上 | 同上 |
-| 界面未就绪 | **保留**该次点击，`bridge_ready` 后重放 | `cron_click_deferred{task, source, reason: not_ready}`；真正放弃（保留被同任务新点击覆盖、或进程退出）时补一条 `cron_click(ok=false, error=not_ready)` | 无（用户已经看到窗口） |
+| 界面未就绪 | **保留整份上下文**，`bridge_ready` 后重放 | `cron_click_deferred{task, request_id, source, reason: not_ready}`；真正放弃（保留被同任务新点击覆盖、或进程退出）时补一条 `cron_click(ok=false, error=not_ready)` | 无（用户已经看到窗口） |
 | dirty vault（目标 vault ≠ 当前且有未保存修改） | 走**既有** dirty 前置门（三出口）；未被继续时这次运行不落地，点击本身已被接受 | `cron_click(ok=true, action=run, source=relaunch)` + 运行未落地的回执 `cron_run_finished(ok=false, error=vault_not_open)` | 既有的脏标签守卫浮条 + 一条提示 |
 | 运行失败 | 走既有终态路径，不自动重跑 | `cron_run_finished(ok=false)` | 面板上的失败态 + 提示一次 |
 | 台账写失败 | 投递照常、`last_fired` 照写、warning | 投递路径 `config_warning` | 无（到点通知仍在） |
