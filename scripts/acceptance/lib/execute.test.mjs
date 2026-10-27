@@ -21,7 +21,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, runScenario, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
-import { coordsSpace, mainWindowPlan, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
+import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { parseKeyWindowState, readAx } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
 
@@ -1580,4 +1580,205 @@ test("多窗口反例（M761）：主窗不可判定 / window_id 没生效 / 标
     { mode: "full" },
   );
   assert.deepEqual(singleCalls, [{ mode: "full" }], "单窗不该转发 window_id");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AX 多行 UI 文本的转义还原（M763）
+//
+// 上游 KimiCU 0.6.8 起换了 dump 的渲染口径：**一份 dump 仍是「一行一个元素」**，UI 文本里的
+// 换行被写成两个字符 `\` + `n`。规则出自工具自身的说明（`get_app_state` 的 description，
+// 逐字：`AX text is one element per line; a line break inside UI text is shown as the two
+// characters \n.`），不是我们从样本上猜的。
+//
+// 现场（M762 的 117，证据 `.local/acceptance/2026-10-28-m762-calibration/`）：composer 的 value
+// 从「真实换行、续行展开」变成 `"hnl-brk-aa\nhnl-brk-cd"`——同一份像素证据全绿、产品正常，
+// 只有跨行 AX 判据判红（`ax: { has: '/…[\r\n]+…/' }` 在字面 `\n` 上命中 0 次）。
+//
+// **只解 `\n` 这一条**，理由是三份一手读数：
+//   ① tab 没被转义（0.6.8 的 `title\t纯文本基线` 里 `\t` 是真 tab，与 0.6.8 之前的 dump 一致）；
+//   ② 反斜杠与引号没被转义（0.6.8 之前的同类文本里它们原样出现，渲染层也没有反斜杠转义层的痕迹）；
+//   ③ 上游说明只提换行。
+// 于是这里绝不能顺手把 `\t` / `\"` / `\\` 也解掉：`\textbf{}`、`\times`、`\int_0^1` 这些 LaTeX
+// 正文会因此被吃掉反斜杠（下面有必红反例）。编码本身**有损**——正文真的写着两个字符 `\n` 时
+// 与换行不可区分，这是上游的损失，套件不猜（用测试把当前行为钉住，避免下一个人拿启发式「修」）。
+
+/** 一份 0.6.8 形态的 dump：真实 header（`captured_bounds` + `coords: …screenshot pixels`）+ 节点行。 */
+function m763Dump(nodeLines) {
+  return [
+    headerFull(),
+    "",
+    "```text",
+    '- [0] AXApplication "Lumir"',
+    '  - [1] AXWindow "Lumir" @0,0 2048×1365',
+    ...nodeLines,
+    "```",
+  ].join("\n");
+}
+
+/** 逐字取自 `2026-10-28-m762-calibration/117-harness-composer-soft-break/ax/02-*.txt:115`。 */
+const M763_COMPOSER_LINE =
+  '            - [189] AXTextArea = "hnl-brk-aa\\nhnl-brk-cd" @1242,1170 790×82 actions=[AXPress] (focused)';
+
+/** 逐字取自 `2026-10-28-m761-header-geometry/233-semantic-selection-release-snap/ax/02-*.txt:105`。 */
+const M763_EDITOR_LINE =
+  '- [170] AXTextArea = "语义选中验收\\n\\n**粗体词** 是本行的加粗短语，供双击摘录用。\\n\\n末尾段落：真机判据只走双击通道。" @577,258 1297×1065 actions=[AXPress] (focused)';
+
+/** 逐字取自 `2026-10-27-m755/230c-restart-and-focus-scopes/ax/04-*.txt:111`（mermaid 源码作 help）。 */
+const M763_HELP_LINE = '- [176] AXGroup actions=[AXPress] help="```mermaid\\ngraph TD;\\n  Start-->Stop;\\n```"';
+
+test("AX 转义还原（M763）：0.6.8 的单行 + 字面 \\n 还原成真换行，结构字段一字不动", () => {
+  const nodes = parseNodes(m763Dump([M763_COMPOSER_LINE]));
+  const composer = nodes.find((n) => n.role === "AXTextArea");
+  assert.ok(composer, "composer 节点应在树里");
+  assert.equal(
+    composer.value,
+    "hnl-brk-aa\nhnl-brk-cd",
+    "composer 的 value 必须是**真换行**——不还原时这里是字面 `\\n`，117 的跨行判据在它上面命中 0 次",
+  );
+  assert.equal(composer.title, composer.value, "title 与 value 同源（`= \"…\"` 形态），一并还原");
+  // 结构字段必须仍从**未还原**的原文里取：还原若发生在抽取之前，bbox / actions 会被换行拆走。
+  assert.deepEqual(composer.bbox, { x: 1242, y: 1170, w: 790, h: 82 });
+  assert.deepEqual(composer.actions, ["AXPress"]);
+  assert.equal(composer.focused, true, "`(focused)` 标记在行尾，不受还原影响");
+  assert.match(composer.raw, /hnl-brk-aa\\nhnl-brk-cd/, "raw 保留原文（证据 dump 看的是原文，不做二次改写）");
+  // 真实 header 照旧可读（还原不能漏到 header 段去）。
+  assert.deepEqual(windowBounds(m763Dump([M763_COMPOSER_LINE])), { x: 8, y: 40, w: 1200, h: 800 });
+
+  // 区分度（REVIEW.md「断言等价于子串」条）：按名字找节点时，跨行形态命中、同行拼接形态不命中。
+  assert.ok(
+    findNode(nodes, { role: "AXTextArea", name: "hnl-brk-aa\nhnl-brk-cd" }),
+    "还原之后 `findNode` 的跨行正则应命中（117 同步后的判据形态就是它）",
+  );
+  assert.equal(
+    findNode(nodes, { role: "AXTextArea", name: "hnl-brk-aahnl-brk-cd" }),
+    null,
+    "同一份树里「无换行的拼接形态」不得命中——否则跨行判据等价于子串匹配",
+  );
+});
+
+test("AX 转义还原（M763）：编辑器 value 的空行（\\n\\n）还原成两行，`nodeName` 读到的是真文本", () => {
+  const nodes = parseNodes(m763Dump([M763_EDITOR_LINE]));
+  const editor = nodes.find((n) => n.role === "AXTextArea");
+  const want = "语义选中验收\n\n**粗体词** 是本行的加粗短语，供双击摘录用。\n\n末尾段落：真机判据只走双击通道。";
+  assert.equal(editor.value, want, "空行（连续两个 `\\n`）必须还原成两个真换行——`editor.has` 的跨段判据靠它");
+  assert.equal(nodeName(editor), want, "nodeName 走 title/value，同样应是还原后的文本");
+  // 反向：拿缺陷形态（同行拼接、没有换行痕迹）去匹配必须落空——判据对「有没有换行」有区分度。
+  assert.equal(
+    findNode(nodes, { role: "AXTextArea", name: "语义选中验收\\*\\*粗体词" }),
+    null,
+    "同行拼接的形态不得命中（否则跨行断言就是恒真）",
+  );
+});
+
+test("AX 转义还原（M763）：help / label 里的多行 UI 文本同样还原（mermaid 与快捷键面板的真实 dump）", () => {
+  // help：0.6.8 把整段 mermaid 源码压成一行（真实 dump，见 M763_HELP_LINE 的出处）。
+  const [helpNode] = parseNodes(m763Dump([M763_HELP_LINE])).filter((n) => n.role === "AXGroup");
+  assert.equal(
+    helpNode.help,
+    "```mermaid\ngraph TD;\n  Start-->Stop;\n```",
+    "help 是 UI 文本、走同一套编码；不还原时 `target.help` 里带换行的定位串永远匹配不上",
+  );
+  // label：形态取自 0.6.6 的快捷键面板（`2026-10-26-runner-efficiency/236-keybindings-capture/ax/02-捕获等待态.txt:30`
+  // 里它是真实续行），0.6.8 起同样压成一行 + 字面 `\n`。
+  const [labelNode] = parseNodes(m763Dump(['- [31] AXStaticText (块滚动到开头 Home\\n上移一行 ↑ ⌃P)'])).filter(
+    (n) => n.role === "AXStaticText",
+  );
+  assert.equal(labelNode.label, "块滚动到开头 Home\n上移一行 ↑ ⌃P", "label 也要还原（括号内的可访问名同样是 UI 文本）");
+});
+
+test("AX 转义还原（M763）反例：只有 `\\n` 是转义——`\\t` / LaTeX / 引号 / 行尾反斜杠一律原样保留", () => {
+  const text = (value) => parseNodes(m763Dump([`- [7] AXStaticText = "${value}"`])).find((n) => n.index === 7).value;
+
+  // ① tab 没被上游转义（0.6.8 的 `title\t纯文本基线` 里 `\t` 是真 tab）。把 `\t` 也解掉会吃掉
+  //    LaTeX 命令名：`\textbf`、`\times`、`\tan` 全变成「制表符 + 残词」。
+  const latex = "公式 \\int_0^1 x^2 与 \\textbf{粗} 与 \\times 与 \\alpha";
+  assert.equal(text(latex), latex, "LaTeX 正文里的每一个反斜杠都必须原样留着（`\\t` 不是制表符）");
+  assert.ok(!text(latex).includes("\t"), "反例：`\\textbf` 绝不能被解成制表符 + `extbf`");
+
+  // ② 引号没被转义（反斜杠没有转义层，`\"` 就是「反斜杠 + 引号」这两个字符本身）。
+  const quoted = '他说 \\"你好\\" 然后离开';
+  assert.equal(text(quoted), quoted, "`\\\"` 必须原样保留（上游没有引号转义层）");
+
+  // ③ 行尾 / 词间的孤立反斜杠（真实文本：git diff 的 `\\ No newline at end of file`）。
+  const diff = "--- a/harness-note.md +++ b/harness-note.md +HNC-SHOULD-NOT-LAND 不应落盘 \\ No newline at end of file";
+  assert.equal(text(diff), diff, "孤立反斜杠（后面是空格）不得被吞");
+
+  // ④ 负向对照：真正的 `\n` 仍然要还原——上面三条反例不得把判据整体关掉。
+  assert.equal(text("甲\\n乙"), "甲\n乙", "`\\n` 是唯一的转义：这条绿说明反例没有把功能一起关掉");
+
+  // ⑤ 已知损失（上游编码有损，钉住行为，别拿启发式「修」）：正文真的写着两个字符 `\n` 时
+  //    与换行不可区分，套件按上游语义还原（不猜、也不额外吞反斜杠）。
+  assert.equal(
+    text("文档里写着 换行符\\n就是这么写的"),
+    "文档里写着 换行符\n就是这么写的",
+    "字面 `\\n` 与换行不可区分：按上游语义还原（这是上游编码的损失，不是套件能补的）",
+  );
+});
+
+test("AX 转义还原（M763）：0.6.8 之前的多行续行格式仍按原口径解析（真实换行 + 真实 tab）", () => {
+  // 逐字取自 `2026-10-26-runner-efficiency/60-vault-switch-restore/ax/05-05-切回A.txt:204-215`：
+  // 换行是真的换行、续行展开；同一个 tab 在同一位置仍是真 tab。两类格式必须同时活。
+  const old = [
+    '          - [291] AXTextArea = "title\t纯文本基线',
+    "plain",
+    "12 lines",
+    "·",
+    "Edited October 26",
+    "",
+    "纯文本基线",
+    "",
+    "第一行内容。",
+    "",
+    "第二行内容。",
+    "M283 写盘段",
+    '第三行内容。" @324,40 730×704 actions=[AXPress]',
+  ].join("\n");
+  const [node] = parseNodes(m763Dump([old])).filter((n) => n.role === "AXTextArea");
+  assert.equal(
+    node.value,
+    "title\t纯文本基线\nplain\n12 lines\n·\nEdited October 26\n\n纯文本基线\n\n第一行内容。\n\n第二行内容。\nM283 写盘段\n第三行内容。",
+    "旧格式（真实换行续行）必须原样解析：还原逻辑不能把续行合并出来的真换行再动一次",
+  );
+  assert.deepEqual(node.bbox, { x: 324, y: 40, w: 730, h: 704 }, "续行合并后 bbox 仍从末行取到");
+});
+
+test("AX 转义还原（M763）：117 的新判据形态（node 走解析值）在两种 dump 形态上各自翻面", async () => {
+  // 117 的两条正向断言从 `ax.has`（匹配**原文**，因此绑死上游的换行表示法）改成 `node`
+  // （匹配 `parseNodes` 的 value）。这条用例证明改判据之后仍然**有区分度**：
+  //   0.6.8 的单行 + 字面 `\n`  ⇒ 还原成真换行 ⇒ present:true 绿、present:false 红；
+  //   缺陷形态（同行拼接、根本没有换行）⇒ 两条翻面。
+  const schemaAssert = (present) => ({
+    steps: [
+      {
+        name: "composer 两段之间是否有换行",
+        expect: [{ label: `跨行断言（present=${present}）`, node: { role: "AXTextArea", name: "hnl-brk-aa\nhnl-brk-cd", present } }],
+      },
+    ],
+  });
+  const cuFor = (line) => ({ state: async () => ({ text: m763Dump([line]), image: null }) });
+
+  const root = tmpRoot("m763-node-assert");
+  useTmpEnv(root);
+  const twoLines = await drive(root, schemaAssert(true), { cu: cuFor(M763_COMPOSER_LINE) });
+  assert.deepEqual(twoLines.records.map((r) => r.ok), [true], `转义形态应命中断言，实际 ${JSON.stringify(twoLines.records)}`);
+
+  const twoLinesNegative = await drive(root, schemaAssert(false), { cu: cuFor(M763_COMPOSER_LINE) });
+  assert.deepEqual(
+    twoLinesNegative.records.map((r) => r.ok),
+    [false],
+    "同一份树里 present:false 必须红——否则这条判据对「有换行」没有区分度",
+  );
+
+  // 缺陷形态：⇧Enter 没落地，两串同行拼接（真机见过的 `hnl-brk-aahnl-brk-cd`）。
+  // 搜索串在源码里写 `\\n` = 运行时「反斜杠 + n」两个字符（与 fixture 里的字面转义逐字相同）。
+  const joined = M763_COMPOSER_LINE.replace("hnl-brk-aa\\nhnl-brk-cd", "hnl-brk-aahnl-brk-cd");
+  assert.ok(joined.includes("hnl-brk-aahnl-brk-cd"), "fixture 自检：拼接形态确实替换成功");
+  const defect = await drive(root, schemaAssert(true), { cu: cuFor(joined) });
+  assert.deepEqual(
+    defect.records.map((r) => r.ok),
+    [false],
+    "同行拼接的缺陷形态必须判红（这正是 117 要拦的那次 ⇧Enter 没落地）",
+  );
+  const defectNegative = await drive(root, schemaAssert(false), { cu: cuFor(joined) });
+  assert.deepEqual(defectNegative.records.map((r) => r.ok), [true], "缺陷形态下 present:false 应绿");
 });
