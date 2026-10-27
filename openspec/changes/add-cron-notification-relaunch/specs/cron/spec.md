@@ -34,6 +34,19 @@ warning：MUST NOT 阻断启动与投递，MUST NOT 影响其它平台的点击�
 
 识别 MUST NOT 依赖 request id 的字符串形状（任务 id 允许含分隔符），MUST NOT 凭通知正文推断任务。
 
+**判据的输出是一份已校验点击上下文**：四条判据全过时 SHALL 产出
+`{request id, 任务 id, 通知种类, 台账快照会话标识, 派发本地日期}`；进程内与跨进程两个入口 SHALL
+把**同一份上下文**交给同一段处置实现。来源（`in-process` / `relaunch`）与「未就绪时保留还是退回」
+是这份上下文的**附加参数**，MUST NOT 替代上下文本身，MUST NOT 把入口简化成「只传任务 id」。
+
+处置层的数据来源按通知种类分开，两处 MUST NOT 互相顶替：
+
+- **结果 / 失败通知**（`run-then-notify`）：MUST 用上下文里的**快照会话标识**恢复；MUST NOT 改用
+  任务的 `tasks.<task>.session_id`（那是**最新**一次运行，同一任务可以有多条台账条目、各自持有
+  不同的会话标识）；
+- **到点通知**（`notify-then-run`）：上下文不带会话，按既有同日幂等判据处置（当日已跑过 → 打开
+  那次运行的会话；否则发起运行）——那条判据回答的是「今天跑没跑」，不是「点的是哪条通知」。
+
 **拒绝语义**：
 
 - 台账里没有该 request id ⇒ `cron_click(ok=false, error=notice_unknown)`；不发起运行、不打开会话，
@@ -42,10 +55,11 @@ warning：MUST NOT 阻断启动与投递，MUST NOT 影响其它平台的点击�
 - 跨天（台账的派发日期不是今天）⇒ `cron_click(ok=false, error=notice_stale)` + 一句人话提示；
   MUST NOT 发起运行，MUST NOT 影响当日本任务正常的到点派发与去重记录。
 
-**界面未就绪**：恢复的点击若在前端接线层就绪之前被接受，SHALL 保留并在接线层就绪后重放（落
-`cron_click_deferred`）；MUST NOT 按「界面尚未就绪，请稍后重试」退回——用户手里没有第二次点击的
-机会。保留 SHALL 有界（同一任务只留最新一条，总数有上限），进程退出即丢弃。只有保留被覆盖或进程
-退出时，才补一条 `cron_click(ok=false, error=not_ready)`。
+**界面未就绪**：恢复的点击若在前端接线层就绪之前被接受，SHALL 保留**整份已校验上下文**并在接线层
+就绪后重放（落 `cron_click_deferred`）；MUST NOT 按「界面尚未就绪，请稍后重试」退回——用户手里没有
+第二次点击的机会，MUST NOT 退化成「只留任务 id 再按最新会话重算」。保留 SHALL 有界（同一任务只留
+最新一条，总数有上限），进程退出即丢弃。只有保留被覆盖或进程退出时，才补一条
+`cron_click(ok=false, error=not_ready)`。
 
 **dirty vault**：目标 vault 与当前不同且当前有未保存修改时，SHALL 走既有 vault 切换前置门（三
 出口由用户选择），MUST NOT 自动丢弃修改；用户未选择继续时运行不落地，SHALL 以既有的「运行未落地」
@@ -72,6 +86,19 @@ MUST NOT 记录通知正文、任务 prompt 或 vault 绝对路径。
 - **THEN** 系统拉起应用；新进程落一条 `cron_click(ok=true, action=run, source=relaunch)`，目标
   vault 被打开、窗口被唤起，交互会话槽位发起一次运行（`cron_run_started(trigger=click)`），运行
   终态落 `cron_run_finished`
+
+#### Scenario: 快照会话优先于任务的最新会话
+
+- **WHEN** 一条 `run-then-notify` 的结果（或失败）通知被点击，处置层收到的上下文里快照会话标识为
+  A，而此刻 `tasks.<task>.session_id` 为 B
+- **THEN** 恢复的是 A 而不是 B——两份数据不一致时以上下文为准（快照是那条通知的事实），处置层
+  MUST NOT 回读任务的最新会话
+
+#### Scenario: 同一任务两条条目按各自快照恢复
+
+- **WHEN** 同一任务的台账里存在两条条目、各自持有不同的会话标识，用户分别点击它们
+- **THEN** 每次恢复的都是**被点那条**条目快照里的会话；两个入口（进程内 / 跨进程）走同一段处置，
+  只按上下文分叉，不按「当前最新会话」分叉
 
 #### Scenario: 结果通知的跨进程恢复
 
@@ -170,7 +197,8 @@ MUST NOT 记录通知正文、任务 prompt 或 vault 绝对路径。
 通道共用同一段「收到点击之后」的处置实现，MUST NOT 各写一套。收到点击（`actionId` 为通知本体，
 即 `tap`）后，系统 SHALL 按该任务的触达策略执行：`notify-then-run` → 唤起并聚焦主窗口、必要时经
 既有 vault 打开链路打开目标 vault、在交互会话槽位发起运行；`run-then-notify` → 唤起并聚焦主窗口、
-恢复该次运行的会话。任一步失败 SHALL 落一条诊断事件并给人话反馈，MUST NOT 静默。诊断事件 SHALL
+恢复**该条通知对应的那次运行**的会话（取自该条通知的台账快照，MUST NOT 用任务的最新会话）。任一
+步失败 SHALL 落一条诊断事件并给人话反馈，MUST NOT 静默。诊断事件 SHALL
 带 `source` 字段区分来源（进程内 / 跨进程恢复）。
 
 重复点击同一通知 SHALL 幂等：当日该任务已有运行会话时，只聚焦并打开该会话，MUST NOT 重复发起
@@ -195,7 +223,8 @@ MUST NOT 记录通知正文、任务 prompt 或 vault 绝对路径。
 #### Scenario: 两种来源共用同一段处置
 
 - **WHEN** 一条通知在投递它的进程内被点击，另一条在进程退出后被点击
-- **THEN** 两者落到同一段处置实现：vault 打开、窗口唤起、发起运行或恢复会话的行为逐项相同；
+- **THEN** 两者落到同一段处置实现，并交出同一形状的已校验点击上下文（request id、任务、通知
+  种类、快照会话标识、派发日期）：vault 打开、窗口唤起、发起运行或恢复会话的行为逐项相同；
   诊断里仅以 `cron_click.source` 区分来源
 
 #### Scenario: 权限被拒

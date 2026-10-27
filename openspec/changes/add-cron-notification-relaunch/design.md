@@ -12,7 +12,7 @@
 | 投递 | `src-tauri/src/lib.rs:1862` `deliver_notification` | macOS 打包实例走 `notify_rust::Notification::show()`，随后用 `get_delivered_notification_ids` 自查系统是否收下；dev flavour 走 legacy 投递。返回 `Result<(), String>`——request id 只存在于函数内部 |
 | 结果 / 失败通知的投递 | `src-tauri/src/lib.rs:1575-1581` `finish` | 只对 `run-then-notify` 投递；成功分支只记 `cron_notified`（**没有**台账写入点）；`session_id` 在投递**之前**已单独落盘（`:1566-1569`），`last_fired` 更早在派发时写入（`:1537`） |
 | 点击等待 | `src-tauri/src/lib.rs:2011` `spawn_notification_click_waiter` | 每条通知投递成功后起一个线程跑 `handle.wait_for_response(cb)`，回调里投 `CronMessage::Click` 给守护线程 |
-| 点击处置 | `src-tauri/src/lib.rs:1593` `handle_click` | 校验任务在场 → 聚焦窗口 → 前端接线层未就绪则 `not_ready` 退回 → 按触达策略发起运行 / 恢复会话；同日重复点击只打开已有会话 |
+| 点击处置 | `src-tauri/src/lib.rs:1593` `handle_click` | 校验任务在场 → 聚焦窗口 → 前端接线层未就绪则 `not_ready` 退回 → 按触达策略发起运行 / 恢复会话；同日重复点击只打开已有会话。**入参只有任务 id**：`run-then-notify` 分支在 `:1704-1710` 直接读 `self.state.session_id(task)`——任务**最新**会话，不区分「点的是哪条通知」 |
 | 守护线程 | `src-tauri/src/lib.rs:1183` `start_cron` / `:1201` `cron_loop` | `setup` 内起线程，自己装载配置与 `cron-state.json`，随后 `poke(Startup)` |
 | 前端接线 | `src/main.ts:3163` `installCronBridge` | 四条监听装好后 `invoke("cron_bridge_ready")`；Rust 侧 `mark_bridge_ready`（`lib.rs:999`）置位并补一次启动触发 |
 | 切换 vault 的 dirty 门 | `src/main.ts:3091` `ensureCronVault` / `:3779` `guardVaultSwitch` | 目标 vault ≠ 当前时走 `switchToVault`；dirty 时由既有闸给出三出口（保存并切换 / 放弃并切换 / 取消），未被继续则 `ensureCronVault` 抛 `vault_not_open` |
@@ -154,18 +154,21 @@ delegate(didReceive)            ← 主线程 run loop，可能发生在 setup �
    ▼
 校验（§5.1）——全部纯函数，单测覆盖
    ├─ 拒绝 → cron_click(ok=false, error=<码>) + 视情形人话提示；结束
-   └─ 接受 → 与进程内点击**同一段**处置（handle_click 的既有分支）
-               │
-               ├─ 前端接线层未就绪 → 保留（不进 clicked_today），就绪后重放
-               └─ 就绪 → 聚焦窗口 / 打开目标 vault / 发起运行或恢复会话
+   └─ 接受 → 产出**已校验点击上下文**（§5.2）
+               └─ 交给与进程内点击**同一段**处置：handle_click(ctx, source, not_ready_policy)
+                     │
+                     ├─ 前端接线层未就绪 → 保留（不进 clicked_today），就绪后重放
+                     └─ 就绪 → 聚焦窗口 / 打开目标 vault / 发起运行或恢复**上下文快照里的**会话
 ```
 
 **为什么先缓冲**：响应只有一次投递机会。delegate 可能在 `setup` 之前（系统拉起时立刻回调）或
 守护线程装载完成之前到达，此时既没有 `CronRuntime` 也没有任务集——直接丢弃就是本次要修的那个 bug
 的翻版。缓冲是**进程内**的，不落盘：进程不在了就没有「待处理点击」，这是运行时机制的定义。
 
-**与进程内点击的合流**：接受后的处置 MUST 复用 `handle_click` 的实现（聚焦 → vault → 运行 /
-会话），不写第二套。差异只在两个入口参数：来源（`source`）与「未就绪时保留还是退回」。
+**与进程内点击的合流**：两个入口（进程内 delegate 回调、跨进程恢复流水线）MUST 把同一形状的
+**已校验点击上下文**（§5.2）交给同一个 `handle_click(ctx, source, not_ready_policy)`，不写第二套
+处置。来源与「未就绪时保留还是退回」只是附加参数——**MUST NOT** 把入口简化成「只传任务 id」，
+也 MUST NOT 让处置层自己回读任务的最新会话。
 
 ### 5.1 接收判据（全部满足才算「被接受的点击」）
 
@@ -179,12 +182,41 @@ delegate(didReceive)            ← 主线程 run loop，可能发生在 setup �
 判据 2、3、4 是**独立**的：台账裁剪掉的旧通知走 2，任务删除走 3，跨天走 4——三者的用户提示
 不同，诊断码也不同（不合并成一类「失败」）。
 
-### 5.2 落地语义（与 spec 场景一一对应）
+### 5.2 已校验点击上下文（判据的输出，处置的入参）
+
+```rust
+struct ClickContext {
+    request_id: String,        // 台账的键；诊断与去重都用它
+    task: String,              // 台账里的任务 id（已校验仍在当前任务集）
+    kind: NoticeKind,          // trigger / result / failure —— 决定「发起运行」还是「恢复会话」
+    session_id: Option<String>,// 该条通知的**快照**会话标识（trigger 为 None）
+    date: String,              // 派发本地日期（已校验等于今天）
+}
+```
+
+**进程内入口**（delegate 收到 `tap`）与**跨进程入口**（启动期缓冲 drain）MUST 走同一个构造函数：
+先用 §5.1 判据校验，通过即产出上面这份上下文。`handle_click` 的数据来源按 `kind` 分开：
+
+- `kind ∈ {result, failure}`：只用 `ctx.session_id`（快照），**MUST NOT** 回读
+  `self.state.session_id(task)`——那是任务**最新**会话，同一任务可以有多条台账条目、各自持有不同
+  会话（现有实现在 `lib.rs:1704-1710` 正是这样读的，本 change 要改掉它，而不是只给它加一个
+  `source` 参数）；
+- `kind = trigger`：上下文没有会话，走既有同日幂等判据（`clicked_today` / `session_started_today`）
+  ——它回答「今天跑没跑」，不回答「点的是哪条通知」，两者不冲突。
+
+**可达性说明（为什么快照必须消费、而不能只写不读）**：在默认语义下（跨天点击被拒，§5.1 判据 4），
+同一任务的两条可点条目持有不同会话且都合法，当日是不可达的——一天的派发去重只允许一条通知。快照
+合同仍然必要，理由有二：① 决策点 1 若改判「跨天点击照跑」，跨天点击立刻需要按条目快照恢复，否则
+会把昨天的通知落到今天的会话上；② 约束处置层的数据来源，避免实现退化成「读最新会话」而在任何
+未来的多通知来源（失败通知与重试、专用会话切换等）上恢复错会话。因此回归写成**状态级**用例
+（§8.1），而不是依赖端到端不可达的组合。
+
+### 5.3 落地语义（与 spec 场景一一对应）
 
 | 情形 | 行为 | 诊断 | 用户可见 |
 |---|---|---|---|
 | 正常恢复（`notify-then-run`） | 聚焦窗口 → 打开目标 vault → 交互槽位发起运行 | `cron_click(ok=true, action=run, source=relaunch)` + `cron_run_started(trigger=click)` + `cron_run_finished` | 面板出现 prompt 并在同会话跑完 |
-| 正常恢复（`run-then-notify` 结果通知） | 聚焦窗口 → 打开目标 vault → 恢复台账里的会话 | `cron_click(ok=true, action=open-session, source=relaunch)` | 会话被恢复，不重跑 |
+| 正常恢复（`run-then-notify` 结果通知） | 聚焦窗口 → 打开目标 vault → 恢复**上下文快照里**的会话（非 `tasks.<task>.session_id` 的最新值） | `cron_click(ok=true, action=open-session, source=relaunch)` | 会话被恢复，不重跑 |
 | 台账外 request id | 拒绝 | `notice_unknown` | 无提示（不打扰；旧版本遗留通知属正常噪声） |
 | 任务已删除 | 拒绝 | `task_unknown` | 一句「这条提醒对应的任务已被删除」 |
 | 跨天 | 拒绝 | `notice_stale` | 一句「这条提醒已过期，今天到点会再提醒」 |
@@ -205,7 +237,8 @@ delegate(didReceive)            ← 主线程 run loop，可能发生在 setup �
 - `clicked_today`（既有）继续是「同日已跑过」的唯一内存判据；恢复的点击与进程内点击**共用**它，
   因此重复 / 并发点击天然幂等。
 - `session_started_today`（既有，`lib.rs:2178`）继续兜底「进程重启后 `clicked_today` 丢失」的
-  场景——本次的恢复点击正好落在这条兜底上：台账 `session_id` 若是今天的会话，则只打开、不重跑。
+  **到点通知**场景（`kind = trigger`）：判据是「今天跑过没有」，因此按今日会话打开、不重跑；它
+  MUST NOT 被用来回答「点的是哪条结果通知」——那个问题只由上下文快照回答（§5.2）。
 - 在途表 `inflight` 继续是「同一任务同一时刻至多一个运行」的判据；恢复点击也登记进去，终态照旧
   走 `finish`。
 - **保留中的点击**（界面未就绪）最多 4 条（不同任务各一条，同任务后到者覆盖前者）；超出丢最旧并落
@@ -227,7 +260,11 @@ delegate(didReceive)            ← 主线程 run loop，可能发生在 setup �
 
 - 台账的写入 / 裁剪 / 读取降级（复用 `cron.rs` 既有 `CronState` 测试风格）。
 - 接收判据的四条判据逐条真值表（含「任务 id 含 `-` 也不影响识别」的用例——因为不解析 request id）。
-- 恢复点击与进程内点击的合流参数（来源 / 保留 vs 退回）。
+- **点击上下文的构造与消费（区分度用例，§5.2 的可达性说明）**：给处置层喂一份快照会话为 A、而
+  `tasks.<task>.session_id` 为 B 的上下文，断言它打开 A；同一个任务的两条条目各持不同会话时，点哪
+  条开哪条的会话。这条用例必须能让「读最新会话」的实现判红——它是这份合同的唯一机器判据，不能只
+  断言「打开了某个会话」。
+- 恢复点击与进程内点击的合流参数（同一份上下文 + 来源 / 保留 vs 退回两个附加参数）。
 - 诊断字段白名单（`cron_click` 新增 `source`、新增 `cron_click_deferred` 后，日志字段表与测试同步）。
 
 ### 8.2 真机（bundle 场景，新增 `scripts/acceptance/scenarios/252-cron-click-after-exit.md`）
@@ -249,7 +286,10 @@ delegate(didReceive)            ← 主线程 run loop，可能发生在 setup �
 8. 台账外 request id：从 `cron-state.json` 里删掉那条台账条目后点击同一通知：
    `cron_click{error: notice_unknown}`，不运行、不上屏提示；
 9. 结果通知的跨进程恢复（`run-then-notify`，exit 后点结果通知）：`cron_click{action: open-session,
-   source: relaunch}`，会话被恢复，`cron_run_started` 不增加。
+   source: relaunch}`，会话被恢复，`cron_run_started` 不增加；**恢复的是该条通知的会话，不是
+   `tasks.<task>.session_id`**——做法：退出后用状态 fixture 把 `tasks.<task>.session_id` 改成本场
+   景另造的一个真实会话（交互面板里发一条消息得到的 id），点击后断言面板显示的是结果通知那次运行
+   的内容；若断言只能看到「会话被恢复」而分不出是哪一条，这条判据不算数。
 
 **验收隔离：失败关闭（fail-closed），不得靠拉起后探测**。本仓配置目录取 `XDG_CONFIG_HOME` 或
 `$HOME/.config`（`src-tauri/src/config.rs:1980`），而**被系统重新拉起的进程不继承套件的环境
