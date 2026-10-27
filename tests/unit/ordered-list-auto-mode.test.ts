@@ -21,7 +21,7 @@ import type { EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { bareListMarkerLine } from "../../src/preview/lists.ts";
+import { bareListMarkerLine, markerTokenAtStart } from "../../src/preview/lists.ts";
 import {
   enterWithAutoIndent,
   isDuplicateMarkerInsertion,
@@ -489,5 +489,60 @@ test("M753 回归：单项有序列表行末 Enter + 各形状重复 marker 读�
   ];
   for (const [label, from, to, text] of shapes) {
     assert.equal(isDuplicateMarkerInsertion(state.doc, from, to, text), true, `${label}：应判重复`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// H. M753 r1 P2：marker token 识别与 markerTextAt 同一份语法 + 明确左边界
+// ---------------------------------------------------------------------------
+//
+// 回归现场（reviewer r1 P2）：判据的粗筛曾用一条独立正则 `MARKER_TOKEN_IN_TEXT`
+// （`/(?:\d{1,9}[.)]|[-+*])[ \t]/`）——既复制了 marker 语法（违反 living spec 的
+// 「marker 语法与 markerTextAt 同一份，MUST NOT 另写一套」），又没有左边界：十位数字
+// `1234567890. ` 会从第二位起命中「九位子串 + `.` + 空格」，于是把它当成合法 token，
+// 接着在结果行判据里因「行首不再是 marker」被吞——非法序号因此能静默吃掉用户变更。
+// 修法：token 识别下沉到 `src/preview/lists.ts` 的 `markerTokenAtStart`，直接复用
+// `markerTextAt`（同一份 BARE_MARKER_RE），左边界取文本起点（DOM 读回里认的 token 只能
+// 是浏览器塞进去那一段的开头）。`\d{1,9}` 后必须紧跟 `.` / `)`，十位数字因此不成 token。
+
+test("marker token 识别：与 markerTextAt 同源、左边界为文本起点（十位数字不是 token）", () => {
+  const tokens: string[] = ["3. ", "3)\t", "- ", "* ", "+ ", " 3. ", "> 3. ", "123456789. ", "0. "];
+  for (const text of tokens) {
+    assert.equal(markerTokenAtStart(text), true, `${JSON.stringify(text)}：应认作 token`);
+  }
+  const notTokens: string[] = [
+    "1234567890. ", // 十位：\d{1,9} 后不是 . / ) ⇒ 非法，且右移一位的九位子串也不算
+    "1234567890123. ",
+    "\n3. ", // 换行开头不是本行的 marker（整段续行形态）
+    "见 3. ", // token 不在文本起点 ⇒ 没有左边界内
+    "3.乙", // marker 后没有空白
+    "乙项",
+    "",
+  ];
+  for (const text of notTokens) {
+    assert.equal(markerTokenAtStart(text), false, `${JSON.stringify(text)}：MUST NOT 认作 token`);
+  }
+});
+
+test("读回拦截：非法长序号的九位子串 MUST NOT 触发拦截（marker 区替换的误吞回归）", () => {
+  const doc = "1. 甲项\n2. "; // 第二行行首 6、marker 区 6..8、内容起点 9
+  const state = EditorState.create({ doc, extensions: MD });
+  // 合法九位 marker：仍是「换掉序号」⇒ 按重复丢弃（一正）。
+  const swallow: Array<[label: string, from: number, to: number, text: string]> = [
+    ["合法九位序号替换 marker 区", 6, 9, "123456789. "],
+    ["合法九位序号插在内容起点", 9, 9, "123456789. "],
+  ];
+  for (const [label, from, to, text] of swallow) {
+    assert.equal(isDuplicateMarkerInsertion(state.doc, from, to, text), true, `${label}：应判重复`);
+  }
+  // 十位 / 更长数字不是合法 marker（CommonMark 上限 9 位）：MUST 放行（一反）。
+  const pass: Array<[label: string, from: number, to: number, text: string]> = [
+    ["十位数字替换 marker 区", 6, 9, "1234567890. "],
+    ["十位数字插在内容起点", 9, 9, "1234567890. "],
+    ["更长数字串替换 marker 区", 6, 9, "1234567890123. "],
+    ["十位数字带内容替换 marker 区", 6, 9, "1234567890. 乙项"],
+  ];
+  for (const [label, from, to, text] of pass) {
+    assert.equal(isDuplicateMarkerInsertion(state.doc, from, to, text), false, `${label}：应放行`);
   }
 });

@@ -40,7 +40,7 @@ import { insertNewlineAndIndent } from "@codemirror/commands";
 import { insertNewlineContinueMarkupCommand } from "@codemirror/lang-markdown";
 import { syntaxTree } from "@codemirror/language";
 import type { Text } from "@codemirror/state";
-import { bareListMarkerLine, markerTextAt } from "./preview/lists";
+import { bareListMarkerLine, markerTextAt, markerTokenAtStart } from "./preview/lists";
 import type { EditorMode } from "./bindings/EditorMode";
 
 /**
@@ -181,8 +181,10 @@ export function swallowNativeListBeforeInput(event: {
 // 判定（纯函数，可单测）：三条同时成立 = WebKit 重复序号，吞掉。
 //   ① 变更**落在该行行首 marker 的区域**（marker 起点 … 内容起点，`to >= markerFrom &&
 //      from <= contentFrom`，即纯插入 / marker 区内插入 / 覆盖该区的替换都算）；
-//   ② 插入文本里带一个**列表 marker token**（与 lists.ts 的 marker 语法同源：读它是先过
-//      「可选引用前缀 + marker + 空白」的解析）；
+//   ② 插入文本**以一个列表 marker token 开头**——token 识别走 lists.ts 的
+//      `markerTokenAtStart`（与 `markerTextAt` 同一份语法，左边界 = 插入文本起点）；
+//      MUST NOT 在本模块另写正则：M753 r1 P2 就是另写一条无左边界等价正则，把非法十位
+//      序号 `1234567890. ` 里的九位子串当成 token，进而以「行首不再是 marker」误吞变更；
 //   ③ 把变更套进该行后，结果行首**被破坏或变样**——行首不再是 marker（`2.3. `）、marker
 //      字面被换掉（`2.` → `3.`），或 marker 之后紧跟另一个 marker（`2. 3. `）。
 // 判据按**结果行**判而不是按读回的编码判（M753）：M529 的判据把落点钉死成「纯插入、
@@ -196,21 +198,16 @@ export function swallowNativeListBeforeInput(event: {
 // 剪贴板事件不经 DOM 读回；IME 组合提交是 CJK 文本；内容区（内容起点之后）的插入与替换
 // 一律不碰 marker 区域；「\n + marker」的整段续行在内容行尾也不命中——MUST NOT 被误吞。
 
-/** 读回文本里是否带一个列表 marker token（`1.` / `2)` / `-` / `+` / `*` 后随空白）。
- *  逐字符键入的单字符永远不满足；「3. 乙项」这类带内容的 bulk 插入满足——它落在 marker
- *  区时同样会把该行变成「2. 3. 」，见下方 ③。形态本身仍归 lists.ts 的 marker 语法，
- *  这里只做「含不含」的粗筛，精确解析走 `markerTextAt`。 */
-const MARKER_TOKEN_IN_TEXT = /(?:\d{1,9}[.)]|[-+*])[ \t]/;
-
 /** M529② 重复 marker 插入判定：DOM 读回变更是否会在这行造出重复序号（见上方三条件）。
  *
- *  行首 marker 的文本解析取 lists.ts 的 `markerTextAt`（与渲染 / Enter 特判同一份语法），
- *  结果行的「marker 之后是否紧跟另一个 marker」也用它判（切片再解析一次，不另写正则）。 */
+ *  判据三处都取 lists.ts 同一份 marker 语法（`markerTextAt` / `markerTokenAtStart`），
+ *  MUST NOT 在本地另写正则——M753 r1 P2 正是另写一条无左边界等价正则，把非法十位序号
+ *  `1234567890. ` 里的九位子串当成 token，进而以「行首不再是 marker」误吞用户变更。 */
 export function isDuplicateMarkerInsertion(doc: Text, from: number, to: number, text: string): boolean {
   const line = doc.lineAt(from);
   const marker = markerTextAt(line.text, line.from);
   if (marker === null) return false;
-  if (!MARKER_TOKEN_IN_TEXT.test(text)) return false;
+  if (!markerTokenAtStart(text)) return false;
   if (to < marker.markerFrom || from > marker.contentFrom) return false;
   // 结果行（只取第一行：带换行的读回属于「新行」而不是本行的 marker）。
   const head = line.text.slice(0, from - line.from) + text + line.text.slice(to - line.from);

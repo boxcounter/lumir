@@ -127,6 +127,20 @@ export function markerTextAt(text: string, from = 0): ListMarkerText | null {
   };
 }
 
+/** `text` 是否**以**一个列表 marker token 开头（`markerTextAt` 同一份 BARE_MARKER_RE：
+ *  可选引用前缀 + 行首缩进 + `\d{1,9}[.)]` / `-` `+` `*` + 后随空白）。
+ *
+ *  左边界就是文本起点，理由有两条：①DOM 读回的插入文本就是浏览器塞进 contenteditable
+ *  的那一段，序号只能是它的开头，没有「夹在中间」的合法形态；②`\d{1,9}` 后必须紧跟
+ *  `.` / `)`，从第二位起截出的九位子串因此认不出来——`1234567890. `（十位，非法 marker）
+ *  MUST NOT 被当成 token（M753 r1 P2 的误吞现场）。
+ *
+ *  用途：`src/enter-indent.ts` 重复 marker 判定的粗筛。语法 MUST 与本文件的 `markerTextAt`
+ *  同源（REVIEW.md『同一语义两处真源』条）——另写一条等价正则就是 P2 的成因。 */
+export function markerTokenAtStart(text: string): boolean {
+  return markerTextAt(text) !== null;
+}
+
 /** 裸 marker 行判定：null = 不是（含语法树已接管的全部形态）。纯函数，只读树与行文本。 */
 export function bareListMarkerLine(tree: Tree, doc: Text, line: Line): ListMarkerText | null {
   // 文本级形态（marker 字面 / 位置 / 前缀）取 markerTextAt 这一份，本函数只加树侧排除。

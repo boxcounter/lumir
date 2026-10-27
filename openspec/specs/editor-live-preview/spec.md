@@ -1500,8 +1500,11 @@ SHALL 被丢弃：
 
 1. 变更落在**该行行首 marker 的区域**（marker 起点 … 内容起点：纯插入、该区内的插入、
    覆盖该区的替换都算）；
-2. 插入文本里带一个**列表 marker token**（有序 `\d{1,9}[.)]` / 无序 `-` `+` `*`，后随
-   空白；marker 语法与渲染层的 `markerTextAt` 同一份，MUST NOT 另写一套）；
+2. 插入文本**以一个列表 marker token 开头**（有序 `\d{1,9}[.)]` / 无序 `-` `+` `*`，后随
+   空白；marker 语法与渲染层的 `markerTextAt` 同一份、识别走 `markerTokenAtStart`，
+   MUST NOT 另写一套正则）。左边界取插入文本起点：DOM 读回的插入文本就是浏览器塞进
+   contenteditable 的那一段，序号只能是它的开头；`\d{1,9}` 后必须紧跟 `.` / `)`，
+   因此十位数字（`1234567890. `，非法 marker）里的九位子串 MUST NOT 被当成 token；
 3. 把变更套进该行后，行首**不再是 marker**（如 `2.3. `）、marker 字面**被换掉**
    （`2.` → `3.`），或 marker 之后**紧跟另一个 marker**（`2. 3. `）——即这次读回让该行
    多出 / 换掉了一个序号。
@@ -1538,12 +1541,12 @@ SHALL 被丢弃：
 
 #### Scenario: 造出重复序号的裸 DOM 读回被丢弃（M529② / M753）
 
-- **WHEN** 该行行首已有一个列表 marker（如 CM 续行刚产出「2. 」），DOM 读回变更落在它的 marker 区域（marker 起点 … 内容起点）、插入文本里带 marker token，且套进该行后行首多出 / 换掉一个序号——如 WebKit smart-list 把下一序号「3. 」作为裸文本插在同一光标位（结果「2. 3. 」）、插进 marker 区内（「2.3. 」）、或整段替换 marker 区（「3. 」）
+- **WHEN** 该行行首已有一个列表 marker（如 CM 续行刚产出「2. 」），DOM 读回变更落在它的 marker 区域（marker 起点 … 内容起点）、插入文本以一个 marker token 开头，且套进该行后行首多出 / 换掉一个序号——如 WebKit smart-list 把下一序号「3. 」作为裸文本插在同一光标位（结果「2. 3. 」）、插进 marker 区内（「2.3. 」）、或整段替换 marker 区（「3. 」）
 - **THEN** 该读回变更被丢弃：文档逐字节不变、无撤销步，编辑器 DOM 自愈回文档状态；行末 Enter 只产生一个新 item
 
 #### Scenario: 普通 DOM 读回变更不被误拦（M529② 放行面）
 
-- **WHEN** DOM 读回变更不满足「落在行首 marker 区域」+「带 marker token」+「结果行首变样」三条——逐字符键入、内容区（内容起点之后）的插入与替换、无 marker 行上的 marker 形插入、`换行 + marker` 的整段续行、粘贴或 IME 组合提交文本
+- **WHEN** DOM 读回变更不满足「落在行首 marker 区域」+「插入文本以 marker token 开头」+「结果行首变样」三条——逐字符键入、内容区（内容起点之后）的插入与替换、无 marker 行上的 marker 形插入、以十位数字为首的非法序号文本（`1234567890. `）、`换行 + marker` 的整段续行、粘贴或 IME 组合提交文本
 - **THEN** 变更原样应用为文档变更，判定层 MUST NOT 拦截
 
 ### Requirement: 光标可见位置与替换块指针入口
