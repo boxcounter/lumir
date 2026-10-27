@@ -31,6 +31,7 @@ import {
   resizeWindowAX,
   screenWorkArea,
   settle,
+  snapshotBody,
   StepError,
   tryForeground,
   typeInEditor,
@@ -2064,7 +2065,12 @@ async function noteIfFocusLost(ctx, pid) {
     `${foregroundNote(fg)}；若后续键盘断言 FAIL，先按 tower 纪律排除 frontmost-required 因素再判 app 缺陷`;
 }
 
-/** `do: settle` 的真实语义（M249）：**连续两次 AX 快照逐字节一致**才算界面已落定。
+/** `do: settle` 的真实语义（M249）：**连续两次 AX 快照正文逐字节一致**才算界面已落定。
+ *
+ * 「正文」= 原始快照剥掉 KimiCU 的快照产物 id 行（`AX snapshot_id=…` / `Screenshot: … screenshot_id=…`，
+ * 见 `drive.mjs` 的 `snapshotBody`，M759）。M751 起每次读取都换快照 id，比整份原文会让「连续两次
+ * 一致」永远不成立（post-M751 观察到的 settle 全部 15s 超时，2026-10-27 调查报告
+ * `.local/reports/settle-stability-oct27/README.md`）；剥掉的是句柄，不是任何界面状态。
  *
  * 为什么改（finding 20260927-worker-watch-mkdir-improve-vaultwrite-ax-do-settle-60）：旧实现
  * 是单次 `readAx`，与动作名不符——写场景的人按名字理解成「等界面稳定」，于是
@@ -2086,7 +2092,7 @@ async function settleAction(cu, pid, evidence) {
       evidence?.record({
         kind: "note",
         text:
-          `do: settle：界面在 ${SETTLE_TIMEOUT_MS}ms 内没有连续两次一致的 AX 快照（${e.message}）——` +
+          `do: settle：界面在 ${SETTLE_TIMEOUT_MS}ms 内没有连续两次一致的 AX 快照正文（${e.message}）——` +
           "已退回单次读取继续，本步不因此判 FAIL",
       });
       return readAx(cu, pid);
@@ -2099,22 +2105,26 @@ async function settleAction(cu, pid, evidence) {
  *
  * 两种终态（都是正观测，见 waitAppReady）：已装载 vault 但一个标签都没有（D107 引导层盖住
  * 正文，M163 起的启动常态）、未打开 vault 的空态。两者里 `AXTextArea` 都不存在，`drive.mjs`
- * 的 `settle()` 的编辑器门因此永远不成立。等待口径与它一致（连续两次 AX 快照逐字节相同），
- * 只是不带编辑器门；超时同样只落 note、不抛错。 */
-async function settleEditorless(cu, pid, evidence) {
-  const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+ * 的 `settle()` 的编辑器门因此永远不成立。等待口径与它一致（连续两次 AX **快照正文**相同，
+ * 产物 id 行除外——与 `settle()` 共用 `drive.mjs` 的 `snapshotBody`，避免下次只改一处），
+ * 只是不带编辑器门；超时同样只落 note、不抛错。
+ *
+ * `timeoutMs` 只为自测放开（execute.test.mjs 用短超时构造必红的正文抖动现场），生产路径
+ * 一律取 `SETTLE_TIMEOUT_MS`。 */
+export async function settleEditorless(cu, pid, evidence, { timeoutMs = SETTLE_TIMEOUT_MS } = {}) {
+  const deadline = Date.now() + timeoutMs;
   let prev = await readAx(cu, pid);
   while (Date.now() < deadline) {
     await sleep(700);
     const ax = await readAx(cu, pid);
-    if (prev.text === ax.text) return ax;
+    if (snapshotBody(prev.text) === snapshotBody(ax.text)) return ax;
     prev = ax;
   }
   evidence?.record({
     kind: "note",
     text:
-      `do: settle：界面（本步无编辑器节点）在 ${SETTLE_TIMEOUT_MS}ms 内没有连续两次一致的 AX 快照——` +
-      "已退回最后一次读取继续，本步不因此判 FAIL",
+      `do: settle：界面（本步无编辑器节点）在 ${timeoutMs}ms 内没有连续两次一致的 AX 快照正文` +
+      "（快照产物 id 行除外）——已退回最后一次读取继续，本步不因此判 FAIL",
   });
   return prev;
 }

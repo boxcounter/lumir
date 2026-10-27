@@ -583,7 +583,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | 动作 | 参数 | 说明 |
 |---|---|---|
 | （省略） | — | 只做断言 |
-| `settle` | — | **真 settle**（M249）：连续两次 AX 快照**逐字节一致**才返回，用于纯断言步骤前的稳定。编辑器在位时直接复用 `lib/drive.mjs` 的 `settle()`；「还没打开文件」的两类引导态走同口径的无编辑器门版本。15s 未收敛则退回单次读取并在证据里落一条 note，**不**因此判 FAIL。语义与「外部写入后先留一拍」的口径见下节。**它判的是「界面此刻静止」，不是「异步的活儿干完了」**——要等装载 / 等按键生效请用 `waitFor`（见下条与「已知边界」） |
+| `settle` | — | **真 settle**（M249）：连续两次 AX **快照正文逐字节一致**才返回（快照产物 id 行除外，见下节），用于纯断言步骤前的稳定。编辑器在位时直接复用 `lib/drive.mjs` 的 `settle()`；「还没打开文件」的两类引导态走同口径的无编辑器门版本。15s 未收敛则退回单次读取并在证据里落一条 note，**不**因此判 FAIL。语义与「外部写入后先留一拍」的口径见下节。**它判的是「界面此刻静止」，不是「异步的活儿干完了」**——要等装载 / 等按键生效请用 `waitFor`（见下条与「已知边界」） |
 | `waitFor` | `waitFor: { has: [...], not: [...] }`（至少一项，非空字符串数组）、`timeoutMs`（缺省 60000） | **轮询一个可观测终态直到成立**（M296）：每轮读一次 AX，全部 `has` 命中且全部 `not` 不命中即返回（成立时把「第几次读取成立 / 耗时」记进证据）；超时**抛错判 FAIL**（不静默放过）。判据形态与 `ax` 断言同源（`matcher()`）。**为什么必须有它**：change `vault-open-ignore-set` 把打开段移出 IPC 主线程之后，装载期间界面保持响应、AX 快照逐字节不变 ⇒ `settle` 会在装载**途中**返回（M296 首跑实测：返回时 AX 里还是旧 vault 的标签栏 + 装载指示在场，于是后面所有断言都对着旧状态判红）。场景里凡是「等某件事发生」的地方都用它，**不要**用 `sleep` 猜时长、也不要用 `settle` 冒充 |
 | `waitForFile` | `waitForFile: { path, has?, jsonl?, count? }`（至少一项判据）、`timeoutMs`（缺省 120000） | **轮询磁盘事实直到成立**（M616）：路径口径与 `file` 断言同源（`env:` / vault 相对 / 绝对 / `*` 取 mtime 最新一份），`has` / `jsonl` / `count` 写多个时**同时成立**才返回；文件不存在 = 未成立（继续轮询，每 500ms 一次）。超时**抛错判 FAIL**，成立时把「第几次读取成立 / 耗时」记进证据。**为什么需要它**：等日志事件（`cron_notified` 这类投递成功后才写的事件）此前只能靠 `sleep` 猜时长，或借 `waitForNotification`——而那时的通知等待还没有新鲜度判据，横幅会被**更早一次 run 的同标题通知**满足（2026-10-20 M616 实测：到点前 56s 就命中了上一批的横幅），拿它当「本次事件已发生」的等待条件会让随后的日志断言抢跑（场景 207/210 的假红现场）。M617 已给通知等待补上新鲜度基线（见 `waitForNotification` 条），但**等日志事件仍应直接读那份日志**：等待与判定同源，判据就是最终要断言的文件内容 |
 | `waitForNotification` | `title`（必填，通知标题 = cron 任务 id）、`body`（可选，通知正文）、`timeoutMs`（缺省 20000）、`fresh`（缺省 true；false = 接受动作开始前已在场的匹配条目，**只给冷启动投递用**） | **等系统通知横幅出现**（change add-cron-runtime-daemon §7.7 的可点击化）：横幅由 `NotificationCenter.app` 渲染，不在 Lumir 的 AX 树 / 窗口截图里，因此本动作按进程名取通知中心的 pid，轮询它自己的 AX 树，命中「`AXGroup` 的 label 同时含 title 与 body」即返回（读取次数与条目原文落证据）。**横幅只在屏上停留数秒**——「先 sleep 再点」必然点空，等待必须由本动作完成。**新鲜度判据（M617）**：动作开始时先快照当前匹配 title/body 的条目作**基线**（条数与原文记入证据），等待期间**只认基线之外新出现的条目**——更早一次 run 投递的同标题条目在通知列表里存活数分钟（M616 实测约 6 分钟后仍被命中，等待因此提前约 56s 返回、随后的日志断言抢跑判红），基线把它挡在外面。同一条任务的新旧通知在 AX 里**逐字相同**（label 只有 `(Lumir, <task>, <body>)`，没有时间戳 / 投递 id），因此判据落在多重集合上：同签名条目比基线**多出来的那条**才算新投递；旧条目恰在同一刻被系统清掉、新条目又同文时这条会等不到——方向安全（超时判 FAIL，不把旧条目当新投递放行）。**M617 真机探针实测过这个保守角落**（2026-10-21 07:38–07:40：基线 1 条旧条目 → 旧条目在等待中过期 → 新投递到达时同签名，等待超时判 FAIL；旧条目全程没有让等待提前返回）；同文替换场景一律改用 `waitForFile` 判 `cron_notified` 落盘。**等日志事件请用 `waitForFile`**（判据就是最终要断言的产物）。超时抛错判 FAIL，错误里附带基线读数与最后一份通知中心 AX 树（DND 抑制时只有菜单栏，可据此区分环境问题）。**`fresh: false`（M620，场景 213）**：冷启动投递发生在套件开始轮询**之前**，条目已经躺在通知中心里——默认基线会把唯一那条当旧条目挡掉、等待必然超时。这一档显式接受已在场的匹配条目，代价是不再区分新旧：用它的场景 MUST 另配一条**本轮才可能成立**的判据（日志按场景重置，如 `cron_notified(trigger=startup)`）来排除上一轮残留条目的假绿；`clickNotification` 不接受该键（点击仍按基线挑新条目） |
@@ -619,12 +619,26 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 
 ### `do: settle` 的真实语义与「外部写入后先留一拍」（M249）
 
-`do: settle` = **真 settle**：连续两次 AX 快照逐字节一致才返回（编辑器在位时直接复用
+`do: settle` = **真 settle**：连续两次 AX **快照正文**逐字节一致才返回（编辑器在位时直接复用
 `lib/drive.mjs` 的 `settle()`；「已装载 vault 但一个标签都没有」与「未打开空态」这两类合法终态
 里 `AXTextArea` 本就不存在，走同口径的无编辑器门版本）。15s 仍未收敛时退回最后一次读取、在证据
 里落一条 note，**不**把这一步升级成 FAIL——settle 只是断言前的稳定等待，界面是否真的收敛由场景
 自己的断言证明。改口径前的旧实现是**单次** `readAx`（名实不符），来历与现场见 finding
 `20260927-worker-watch-mkdir-improve-vaultwrite-ax-do-settle-60`。
+
+**「正文」= 原始快照剥掉快照产物 id 行，其余逐字节比较（M759）**：KimiCU 的 `get_app_state`
+首行带 `AX snapshot_id=<UUID>`（mode=full 另有末行 `Screenshot: … screenshot_id=…`），而 M751 起
+套件每次请求都带 `disable_diff: true`（取全树，见「已知边界」的 M751 条），KimiCU 因此**每次
+调用都新建快照**、这两个 id 每次读都换。逐字节比整份原文会让「连续两次一致」永远不成立——
+post-M751 观察到的 25 次 settle 执行**全部** 15s 超时（全仓 129 个 settle 步骤，最坏白等约 32
+分钟；连 47b 的静态启动屏都超时，证明不是界面还在变），调查报告
+`.local/reports/settle-stability-oct27/README.md`。两处实现（`lib/drive.mjs` 的 `settle()` 与
+`lib/execute.mjs` 的 `settleEditorless()`）因此共用 `lib/drive.mjs` 的 `snapshotBody()`：**只剥
+行首这两行产物 id**，节点行、`[N]` 索引、bbox、`(focused)`、`element_count`、`truncated`、
+`window_bounds` 仍逐字节参与比较——断言没有放宽，只是不再把「换了个句柄」当成界面变化。返回给
+场景与证据 dump 的仍是**原始**快照（`ax.has` 断言看原文）。回归测试 `lib/drive.test.mjs`（id 变化
+⇒ 快速稳定；节点 / `element_count` / `truncated` 变化 ⇒ 仍判未稳定；无 `AXTextArea` ⇒ 编辑器门
+不放宽）与 `lib/execute.test.mjs` 的 settleEditorless 用例把它钉成机器判据。
 
 **外部写入后先留一拍（≥1s）再读 AX**：`vaultWrite` / `vaultAppend` / `vaultRm` / `vaultSparse`
 之后紧跟的**第一次** AX 读取会与那次 DOM 刷新抢——M245 五轮真机探针实测：写盘后立刻读会漏掉新增
@@ -637,11 +651,11 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 
 ### `settle` 不是「等异步活儿干完」——要等状态就用 `do: waitFor`（M296）
 
-`settle` 的判据是「连续两次 AX 快照逐字节一致」，因此它只回答「界面**此刻**静止」。在
+`settle` 的判据是「连续两次 AX **快照正文**逐字节一致（产物 id 行除外，见上节）」，因此它只回答「界面**此刻**静止」。在
 change `vault-open-ignore-set` 之前，`vault_open_path` 是**同步 command**：装载期间主线程被占住，
 `get_app_state` 只回 `element_count: 1`（没有 `AXTextArea`）⇒ `drive.mjs` 的 `settle()` 的编辑器门
 不成立，于是它**顺带**变成了「等装载跑完」。`#[command(async)]` 落地后界面在装载期间保持响应，
-那个副作用消失——两次快照逐字节一致（旧 vault 的树 + 装载指示在场）⇒ `settle` 在装载**途中**
+那个副作用消失——正文逐字节一致（旧 vault 的树 + 装载指示在场）⇒ `settle` 在装载**途中**
 就返回。
 
 **现场（M296 首跑，2026-09-29，`.local/acceptance/2026-09-29/`）**：场景 60 与 67 在切换
@@ -1195,13 +1209,18 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
   的缺省行为改成「返回与上一次快照的增量 diff」，对应开关是 `disable_diff`（工具 schema 原文
   "Return the full tree instead of the default session diff"）。只给 pid/mode 时**第二次读取拿到
   的是一份空 diff**，而空 diff 与「这个 app 真的没有节点」在 markdown 文本上无法区分：`settle`
-  （连续两次快照逐字节一致）会在第二次就判「一致」、`waitFor` 轮询与 `ax.has` / `ax.not` 断言则
-  对着空树判红/假绿——REVIEW.md「读不到当成空」条的同族形态，且更隐蔽（不是读不到，是读到了
-  「没变化」）。因此 `lib/cu.mjs` 的 `CuClient.state` **每次**请求都带 `disable_diff: true`，无条件
-  取全树、不做「第二次才补」；`get_app_state` 也只有这一个发出点。回归测试 `lib/cu.test.mjs` 断言
-  的是实际写到 MCP stdio 上的 `tools/call` 帧：删掉该字段、或改动 pid / mode / `window_id` /
-  `ax_filter` 的既有形态都会判红。手工排查真机读数时同样带 `disable_diff: true` 重观察（KimiCU
-  自己的建议也是「diff 基线失效后这样重观察」）。
+  （连续两次**快照正文**逐字节一致，见上节）会在第二次就判「一致」、`waitFor` 轮询与
+  `ax.has` / `ax.not` 断言则对着空树判红/假绿——REVIEW.md「读不到当成空」条的同族形态，且更隐蔽
+  （不是读不到，是读到了「没变化」）。因此 `lib/cu.mjs` 的 `CuClient.state` **每次**请求都带
+  `disable_diff: true`，无条件取全树、不做「第二次才补」；`get_app_state` 也只有这一个发出点。
+  回归测试 `lib/cu.test.mjs` 断言的是实际写到 MCP stdio 上的 `tools/call` 帧：删掉该字段、或改动
+  pid / mode / `window_id` / `ax_filter` 的既有形态都会判红。手工排查真机读数时同样带
+  `disable_diff: true` 重观察（KimiCU 自己的建议也是「diff 基线失效后这样重观察」）。
+  **副作用（M759）**：`disable_diff: true` 让 KimiCU **每次调用都新建快照**——首行
+  `AX snapshot_id=<UUID>`（mode=full 另有末行 `Screenshot: … screenshot_id=…`）**每次读都换**。
+  任何逐字节比较（`settle` / `settleEditorless`）因此必须先剥这两行产物 id（`lib/drive.mjs` 的
+  `snapshotBody()`），否则「连续两次一致」永远不成立：post-M751 观察到的 25 次 settle 执行全部
+  15s 超时（见上节与 `.local/reports/settle-stability-oct27/README.md`）。
 - **AX 快照可能退化**：`get_app_state` 偶尔只返回菜单栏（`truncated: [..., cycle]`）。这通常是
   KimiCU 后台服务进了坏状态，表现为**全局**退化（Finder、别的 app 一起坏）。此时全套会一起报
   「前端未就绪」，处理办法是**重注册 KimiCU 服务**（`/Applications/KimiCU.app/Contents/MacOS/kimi-cu install`），不是改场景；服务龄期 >1 天或 CPU 时间十几小时时先看一眼（`ps -Ao pid,etime,time,command | grep -i kimi-cu`），老化服务也会污染注入的修饰键状态（press_key 字母全大写而系统级修饰键读数干净）。退化的树**没有 `window_bounds`**，
@@ -1396,8 +1415,9 @@ bash scripts/acceptance/check-suite.sh
 ```
 
 它依次覆盖 JS 语法、全部场景静态校验、覆盖表一致性，以及 `lib/execute.test.mjs`、
-`lib/app.test.mjs`、`lib/cu.test.mjs`、`lib/evidence.test.mjs`、`lib/batches.test.mjs`、
-`coverage.test.mjs` 六组 `node:test` 自测。需要单文件迭代时仍可直接 `node --test <文件>`。
+`lib/app.test.mjs`、`lib/cu.test.mjs`、`lib/drive.test.mjs`、`lib/evidence.test.mjs`、
+`lib/batches.test.mjs`、`coverage.test.mjs` 七组 `node:test` 自测。需要单文件迭代时仍可直接
+`node --test <文件>`。
 
 纯 `node:test`、零新增依赖、不起真机（file 类断言与零断言兜底都不读 app / KimiCU，ctx 桩化即可）。
 `execute.test.mjs` 钉的是这一层最容易重犯的**静默**缺陷——「步骤表写在闭合 `---` 之外 ⇒ 整表
@@ -1431,5 +1451,10 @@ INVALID 为 0 时整项省略（既有小样本头部逐字不变）。`cu.test.
 对账里 13x 组一条都不得被选中）、`47` / `230` 拆分组必须照旧选全组、精确 id 压过 item 与前缀、
 无命中（含空串 / 纯空白）不得放大成前缀或全量、混合词取并集且按场景顺序去重、`--batch` 只做交集
 不改解析级（`--batch core 13` 必须是空的 + `outOfBatch`，不能退回前缀在批内凑数）。
-六组自测经 `check-suite.sh` 进入 quick 与 docs CI；
+`lib/drive.test.mjs`（M759）钉 `settle()` 的比较口径：正文相同、`AX snapshot_id` /
+`screenshot_id` 每次读都变 ⇒ 必须快速稳定（改前必红：整份原文比较永不成立、15s 超时）；任一
+节点行、`element_count`、`truncated` 变化 ⇒ 仍判未稳定（证明剥的是快照产物 id，不是正文）；
+正文恒定但没有 `AXTextArea` ⇒ 编辑器门不放宽；返回的仍是原始快照（证据 dump / `ax.has` 看
+原文）。`settleEditorless` 的同类正反用例与动作级接线在 `execute.test.mjs`。
+七组自测经 `check-suite.sh` 进入 quick 与 docs CI；
 `scripts/migrate-harness-sessions.test.mjs` 仍是单独手跑的迁移脚本测试，不在本入口内。
