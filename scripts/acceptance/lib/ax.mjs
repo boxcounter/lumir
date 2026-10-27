@@ -42,6 +42,38 @@ function valueStart(rest) {
   return m ? m.index + m[0].length : -1;
 }
 
+/** UI 文本里的换行还原（KimiCU ≥ 0.6.8 的编码）。
+ *
+ *  上游从 0.6.8 起把一份 dump 渲染成**一行一个元素**，UI 文本里的换行写成**两个字符** `\` + `n`。
+ *  规则出处是工具自己的说明（`get_app_state` 的 description，逐字：`AX text is one element per
+ *  line; a line break inside UI text is shown as the two characters \n.`），不是从样本上反推的。
+ *
+ *  **只解这一条**，逐字符扫一遍：`\` 后跟 `n` 才换成真换行，其余一切（`\t`、`\"`、`\\`、LaTeX 的
+ *  `\int` / `\textbf`、行尾孤立反斜杠）原样保留。三份一手读数（M763）：
+ *    - tab **没有**被转义：0.6.8 的 `AXTextArea = "title<TAB>纯文本基线\nplain\n…"` 里 tab 是真
+ *      tab，与 0.6.8 之前同一份文档的 dump 逐字一致；
+ *    - 反斜杠与引号**没有**被转义：0.6.8 之前的同类文本里它们原样出现（git diff 的
+ *      `\ No newline at end of file`），上游说明也只提换行；
+ *    - 因此别顺手把 `\t` / `\"` / `\\` 也解掉——`\textbf{}`、`\times` 这类 LaTeX 正文会丢掉反斜杠
+ *      （execute.test.mjs 的 M763 反例组是这条的必红防线）；也别写成「先 `\\`→`\`、再 `\n`→换行」
+ *      的两遍替换——那是给「带反斜杠转义层」的编码准备的，等于凭空发明一层上游没有的语义。
+ *
+ *  已知损失：编码本身**有损**——正文真的写着两个字符 `\n` 时与换行不可区分，这里按上游语义
+ *  还原（不猜、不发明启发式）。只作用于**取出来的文本字段**：`node.raw` 与证据 dump 仍是原文。 */
+function decodeAxText(text) {
+  if (text == null || !text.includes("\\")) return text;
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\\" && text[i + 1] === "n") {
+      out += "\n";
+      i += 1;
+      continue;
+    }
+    out += text[i];
+  }
+  return out;
+}
+
 /** value 的续行候选：不是节点行，也不是 AX dump 的**收尾围栏**（正文里合法出现的 ``` 不算，
  *  只有全文最后那一行才按落点判定——它恒是 dump 的收尾，不是任何 value 的一部分）。 */
 function isContinuation(line, index, tailFence) {
@@ -84,29 +116,36 @@ export function parseNodes(axText) {
     // 正文里的半角引号即截断（M180 finding）——负断言在截断文本上反而「通过」。取不到闭合
     // 引号时判 null（不可读），不把半截文本当值。
     const start = valueStart(rest);
+    // 文本字段（value / title / label / help）取出后过一遍 `decodeAxText`：0.6.8 起换行是字面
+    // `\n`（见该函数的注释），不还原就会让「跨行」类判据在任何多行 UI 文本上恒不命中。
+    // **先取后还原**：结构字段（bbox / actions）与 `raw` 仍从原文取——还原若发生在抽取之前，
+    // 换行会把后面的结构字段拆成另一行（真换行参与 `^\s*` 类判据时语义也变了）。
     const value =
       start >= 0
         ? (() => {
             const end = findValueEnd(rest.slice(start));
-            return end >= 0 ? rest.slice(start, start + end) : null;
+            return end >= 0 ? decodeAxText(rest.slice(start, start + end)) : null;
           })()
-        : (/Value:\s*(.*?)(?=\s+@|\s+actions=|$)/.exec(rest)?.[1] ?? null);
+        : decodeAxText(/Value:\s*(.*?)(?=\s+@|\s+actions=|$)/.exec(rest)?.[1] ?? null);
     nodes.push({
       index: Number(idx),
       role,
       // 有 `= "…"` 值的节点：title 与 value 同源（渲染里紧随角色之后的那段引号文本就是它，
       // 今天也是这么取的，只是旧正则在含引号时同样截断）。其余形态保持「第一段引号文本」
       // 的旧口径，不动既有抓取行为。
-      title: start >= 0 ? value : (/"([^"]*)"/.exec(rest)?.[1] ?? null),
+      title: start >= 0 ? value : decodeAxText(/"([^"]*)"/.exec(rest)?.[1] ?? null),
       // label 允许**一层嵌套括号**（M184 finding）：图片节点的 AX label 是整条 Markdown 引用
       // 原文 `![alt](path)`，`/\(([^)]*)\)/` 会截在第一个 `)` 上，于是 `target.name` 照原文写
       // 永远匹配不上（按名定位图片节点必报「找不到带 bbox 的节点」）。
-      label: /\(((?:[^()]|\([^()]*\))*)\)/.exec(rest)?.[1] ?? null,
+      label: decodeAxText(/\(((?:[^()]|\([^()]*\))*)\)/.exec(rest)?.[1] ?? null),
       value,
       bbox: bbox ? { x: +bbox[1], y: +bbox[2], w: +bbox[3], h: +bbox[4] } : null,
       actions: /actions=\[([^\]]*)\]/.exec(rest)?.[1]?.split(",").map((s) => s.trim()) ?? [],
-      help: /help="([^"]*)"/.exec(rest)?.[1] ?? null,
-      // KimiCU 在 AX 文本末尾标 `(focused)`（多行 value 的**末行**上，故在合并后的 raw 里找）：
+      // help 也是 UI 文本、走同一套编码（真机 dump：mermaid 源码整段压在 help 里，换行是字面 `\n`）
+      // ——不还原时 `target.help` 里带换行的定位串永远匹配不上。
+      help: decodeAxText(/help="([^"]*)"/.exec(rest)?.[1] ?? null),
+      // KimiCU 在 AX 文本末尾标 `(focused)`：旧格式下多行 value 的标记在**末行**、0.6.8 起
+      // value 压成一行则在同一行末。两种情况都在合并后的 raw 里找（合并期已把续行拼回来）。
       // 键盘注入落点就是它——keys 动作的回读目标判定要靠这个标记（见 execute.mjs 的 keysTarget）。
       focused: /\(focused\)/.test(raw),
       depth,

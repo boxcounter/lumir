@@ -64,8 +64,14 @@ steps:
         pixel:
           contrast:
             - { x: 780, y: 702, as: "第一行行位（hnl-brk-aa 的字形）", min: 60 }
+      # M763：正向判据走**解析值**（`node` 断言 → `parseNodes` 的 value），不走 `ax.has`。
+      # 来历：KimiCU 0.6.8 起把 UI 文本的换行渲染成两个字符 `\n`（一份 dump 仍是一行一个元素），
+      # `ax.has` 匹配的是 dump **原文**，`[\r\n]+` 在字面转义上命中 0 次 ⇒ M762 真机假红（产品与
+      # 像素全绿）。`ax.mjs` 的 `parseNodes` 现在把这条编码还原成真换行，因此 node 断言表达的是
+      # 场景真正要的东西（「两串之间有没有换行」），和对上游表示法无关；改回 `ax.has` 会把
+      # KimiCU 的转义表示写进场景，上游下次再改格式又全体失效。
       - label: composer 文本里两串之间有换行（第二段在第一段的下一行，不是同行拼接）
-        ax: { has: '/hnl-brk-aa[\r\n]+hnl-brk-cd/' }
+        node: { role: AXTextArea, name: 'hnl-brk-aa\n+hnl-brk-cd', present: true }
       - label: 缺陷签名串不在场（同行拼接 = 那一次 ⇧Enter 没落地）
         ax: { not: "hnl-brk-aahnl-brk-cd" }
       - shot: 01-一次shift-enter-两行
@@ -104,7 +110,7 @@ steps:
           contrast:
             - { x: 780, y: 723, as: "第三行行位（hnl-brk-gg 的字形）", min: 60 }
       - label: AX：探针串另起一行接在第二行之后（换行 = 新空段落块落在末行之后）
-        ax: { has: '/hnl-brk-cd[\r\n]+hnl-brk-gg/' }
+        node: { role: AXTextArea, name: 'hnl-brk-cd\n+hnl-brk-gg', present: true }
       - label: 缺陷签名串不在场（探针串接在 `cd` **行首** = 空行插到了当前行之前）
         ax: { not: "hnl-brk-gghnl-brk-cd" }
       - shot: 02-末行行末shift-enter-新行落在末行之后
@@ -168,6 +174,15 @@ Alex 原话（2026-10-10）：「Harness composer 里按两次 SHIFT + Enter 才
 - **AX 换行断言是第二把锁**，不是唯一判据：真机 AX 对多段落 contenteditable 的文本拼接方式
   依赖 WKWebView 的文本提取（块之间是否插换行），实测**会插**（本条因此可判；换行是主判据的
   补强，不是唯一依据）。
+- **AX 换行判据走解析值、不走 dump 原文（M763）**：KimiCU 0.6.8 起把 UI 文本里的换行渲染成
+  **两个字符** `\n`（一份 dump 仍是一行一个元素；规则出自 `get_app_state` 的工具说明），而
+  `ax.has` / `ax.not` 匹配的是 dump **原文**——M762 真机里 `ax: { has: '/…[\r\n]+…/' }` 在字面
+  转义上命中 0 次，产品与像素却全绿（假红，`2026-10-28-m762-calibration/117-*`）。现在两条正向
+  判据写 `node: { role: AXTextArea, name: '…\n+…', present: true }`：`ax.mjs` 的 `parseNodes`
+  把这条编码还原成真换行，判据因此表达的是「两串之间有没有换行」，与上游怎么表示无关。**别改回
+  `ax.has` 里的 `[\r\n]+`**——那是把 KimiCU 的转义表示写进场景，上游下次再改格式又全体失效。
+  两条负向判据（「缺陷签名串不在场」）仍走 `ax.not`：签名串本身是同行拼接、不含任何换行，
+  原文与解析值上判据等价。
 - **区分度实测（反向验证，2026-10-10）**：把 `insertSoftBreakAtCaret` 临时改回缺陷形态（段末
   追加尾随 `\n`）后重跑本场景——像素条读到第二行行位**亮度跨度 0**（修后 186）、AX 两条变红
   （文本是同行拼接的 `hnl-brk-aahnl-brk-cd`），第一行对照条照旧绿。断言对缺陷有区分度。
@@ -183,7 +198,7 @@ Alex 原话（2026-10-10）：「Harness composer 里按两次 SHIFT + Enter 才
   而三行态**第三行（y≈723）**在缺陷形态（`gg` 与 `cd` 挤在同一行）与修后（`gg` 自成一行）下
   **各自都有字形**——它只防「字被挤没」的空转；真正有区分度的是**第二行（y≈702）**那条（修后
   `cd` 在、缺陷是空行），而它只覆盖「`cd` 被挤下去」这一半，另一半（`cd` 与 `gg` 是否同一行）
-  只有 AX 的分层串能判：`/hnl-brk-cd[\r\n]+hnl-brk-gg/` 命中 + `hnl-brk-gghnl-brk-cd` 不在场。
+  只有 AX 的分层串能判：`node` 的 `hnl-brk-cd\n+hnl-brk-gg` 命中 + `hnl-brk-gghnl-brk-cd` 不在场。
   两条一起才是完整判据，缺一不可。
 
 ## 注入通道（M518）
