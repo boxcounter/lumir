@@ -3,7 +3,7 @@ id: "13-toc"
 item: 13
 tier: full
 title: 轻量大纲：位置指示 / 浮层条目 / 键盘（↑↓ / ⌃N⌃P）与鼠标跳转 / 关闭 / 空标题与 frontmatter 边界
-fixtures: [toc-outline.md, toc-frontmatter.md, toc-plain.md, toc-long.md]
+fixtures: [toc-outline.md, toc-frontmatter.md, toc-plain.md, toc-long.md, toc-long-code.md]
 open: toc-outline.md
 marker: "第一部分说明段落"
 steps:
@@ -254,6 +254,64 @@ steps:
         ax: { has: "这份文档还没有标题" }
       - label: 不弹空浮层
         ax: { not: "⌃N⌃P 选择" }
+
+  # M754：长文里「点了条目但没跳过去」。**起跳点必须离开文档原点**——阅读位置的写回对
+  # 锚 = 0 提前返回，缺陷只在「视口已经滚过一段」时才发作，这正是用户说的「有时候」。
+  # AX 不暴露 scrollTop（见 README「已知边界」），判据取组合证据：指示段的标题链是
+  # 「光标在视口内取光标、否则取视口顶部」的函数（`src/toc.ts` 的 `anchorPos`）——跳转后链条
+  # 落在目标的完整链上 ⟺ 光标与视口都在目标处；视口若留在原处，光标已被滚出视口，链条给出的
+  # 是原处那一节。本形状与视觉场景 `tests/visual/scenes/toc-outline.spec.ts` 的长文用例同一份
+  # fixture（那边直接读几何量判「视口揭示」，这边判真机 WKWebView 上的同一条不变量）。
+  - name: 打开标题之间夹长代码块的长文（360 行：1 H1 + 15 H2 + 3 H3 + 15 个 16 行代码块）
+    do: open
+    file: toc-long-code.md
+    marker: "第 1 节正文说明。"
+    expect:
+      - label: 编辑器已装载长文
+        editor: { has: "第 1 节正文说明。" }
+
+  - name: 点正文建立编辑器焦点（⌃V 是 editor 作用域，焦点还在文件树按钮上时不命中）
+    do: clickEditor
+
+  - name: ⌃V 连按四次把视口推到文档中段
+    do: keys
+    keys: ["ctrl+v", "ctrl+v", "ctrl+v", "ctrl+v"]
+
+  - name: 判视口真的离开了文档原点
+    do: settle
+    expect:
+      - shot: 翻屏之后（视口停在文档中段）
+      - label: 指示段给出章节链——`›` 分隔符只可能由指示段产生（文档正文里没有它），停在原点时链条只有 H1 一段
+        ax: { has: "长文总览 › " }
+
+  - name: ⌘⇧O 打开浮层
+    do: key
+    key: "cmd+shift+o"
+    expect:
+      - label: 浮层已展开、焦点落在筛选框上
+        ax: { has: "⌃N⌃P 选择" }
+      - label: 焦点在可编辑的输入框上（AXComboBox 的读屏名恒为「筛选」）
+        ax: { focused: "AXComboBox" }
+
+  - name: 用筛选框把远端条目收成唯一一条（M507 通道：原生输入原子注入，不逐字符丢键）
+    do: typeInNode
+    target: { role: AXComboBox, name: "筛选" }
+    text: "第 2 节 标题"
+    expect:
+      - label: 查询串逐字落在输入框里（AXValue 是 typeInNode 的回读字段）
+        ax: { has: "/AXComboBox \\(筛选\\) Value: 第 2 节 标题/" }
+
+  - name: Enter 跳到筛选出来的那一条（结果集只剩一条，游标就是它）
+    do: key
+    key: "return"
+    expect:
+      - shot: 从中段跳到远端之后的现场
+      - label: 浮层已收起（Enter 是跳转）
+        ax: { not: "⌃N⌃P 选择" }
+      - label: 链条落在「第 2 节」上——视口若留在中段，这里会是中段那一节的链
+        ax: { has: "长文总览 › 第 2 节 标题" }
+      - label: 跳转只改选区与视口，不改文档
+        editor: { has: "第 1 节正文说明。" }
 ---
 
 轻量大纲（TOC popover）的**行为**判定（M148）。规格见 `openspec/specs/toc-outline/spec.md`
@@ -302,6 +360,11 @@ modeline 显示当前标题路径（兼作位置指示），点击它或按 ⌘�
   退化为视口顶部」（`src/toc.ts` 的 `anchorPos`）。跳转是 `selection` + `scrollIntoView` 一次
   dispatch，跳转后光标必在可见范围内——所以「链条含父级」这条断言只有在光标真落到目标标题段时
   才成立；只滚动不改选区的实现会停在上一段（或链条缺一层）而 FAIL。
+- **长文跳转必须从中段起跳（M754）**：用户报的「点了条目但没跳过去」只在视口已经离开文档原点
+  时发作——阅读位置的写回对锚 = 0 提前返回，从顶端起跳永远是好的（这正是「有时候」的来源）。
+  该块的判据是组合证据：先判视口真的动了（`长文总览 › ` 这条不带章节名的链只在视口落在章节里时
+  成立），再判跳转后链条落在目标那一节（视口留在原处时链条给出的是原处那一节，因为光标已被
+  滚出视口）。视觉侧同一份 fixture 的几何断言见 `tests/visual/scenes/toc-outline.spec.ts`。
 - **⌃K 在行尾连带换行**（`src/editor.ts:648` 的 Emacs 口径）：光标恰在 `## 乙小节` 行尾时 ⌃K
   把下一行并进标题行，标题文本变成 `乙小节乙小节正文。`；光标在行首会删掉整行、在行中会截断
   ——三种结果各不相同。断言写成**带父级的链条** `第一部分 › 乙小节乙小节正文。`（联合串只可能
@@ -319,8 +382,9 @@ modeline 显示当前标题路径（兼作位置指示），点击它或按 ⌘�
   ——AXTextArea 的 value 是整个文档文本，不加锚点会让它也被命中（它的 value 里含 `乙小节` 那一行）。
 - **`editor` 作用域的键要先让编辑器拿到焦点**：`do: open` 是点左栏行，焦点留在树按钮上，此时
   ⌃K 这类 `editor` 作用域命令不命中（作用域判定看事件目标是否在 contentDOM 内），按键会落到别处。
-  本场景依赖「跳转的 `close()` 把焦点交还编辑器」，故 ⌃K 紧跟跳转；若把 ⌃K 挪到别的上下文，需要
-  先 `clickEditor` 或先做一次跳转。
+  本场景依赖「跳转自己把焦点交还编辑器」（`src/toc.ts` 的 `jumpTo`：收起浮层 → `view.focus()` →
+  落点，M754 起与 `editor.jumpToLine` 同一交接口径），故 ⌃K 紧跟跳转；若把 ⌃K 挪到别的上下文，
+  需要先 `clickEditor` 或先做一次跳转。
 - **鼠标跳转**：点浮层条目走的是与键盘同一跳转实现（`src/toc.ts` 的 `jumpTo`）。
 
 ## 环境与副作用

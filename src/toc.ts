@@ -639,8 +639,9 @@ class Toc implements TocHandle {
 
   /**
    * 收起浮层。`restoreFocus` 为假时不抢焦点——焦点本来就去了别处（Tab 到别的控件、点了别的
-   * 窗口）时把焦点拽回编辑器是无礼的；Esc / Enter / 再按一次 ⌘⇧O 这些「在浮层里做的关闭」
-   * 才需要交还焦点。
+   * 窗口）时把焦点拽回编辑器是无礼的；Esc / 再按一次 ⌘⇧O 这些「在浮层里做的关闭」才需要
+   * 交还焦点。**跳转（Enter / 点条目）不走这里交还焦点**：它自己 `view.focus()` 并落点（见
+   * `jumpTo`，M754）——本方法的默认分支会把跳转前的阅读位置在下一帧写回，覆盖跳转本身。
    *
    * 交还焦点走 `focusPreservingReadingPosition`（M280 收口）：把焦点放进编辑器是浏览器接管的
    * 视口动作，裸 `view.focus()` 会把视口拽回光标处——光标在视口外时表现为「收起大纲，正文
@@ -665,19 +666,31 @@ class Toc implements TocHandle {
    * `index` 是**结果集下标**（键盘游标与点击路径给的都在这一个空间里）；源下标只在这里出现一次
    * ——`visible[index]`。少了这一步映射就会跳到「结果集里第 i 条」在全文里的另一个标题上（一次
    * 静默的跳错位置，design §2.4）。
+   *
+   * **收起浮层时 MUST NOT 走「交还焦点保持阅读位置」那条路径**（M754 的根因）：`close()` 默认
+   * 分支的 `focusPreservingReadingPosition` 会在下一帧把**跳转前**捕获的阅读位置再写回一次
+   *（`if (view.hasFocus)` 在跳转后恒真），把下面刚发出的 `scrollIntoView(目标)` 覆盖掉——光标
+   * 落在目标标题行尾、视口却留在原处，即用户报的「点了条目但没跳过去」。写回对锚 = 0 提前
+   * 返回，所以从文档顶端跳正常、从文档中段跳才复发（「有时候」）。跳转本来就要移动视口，
+   * 这里的交接口径与 `src/editor.ts` 的 `jumpToLine`（⌥G 跳行）一致：收起（不抢焦点）→
+   * `view.focus()` → 落点。spec 的判据见 openspec/specs/toc-outline/spec.md「跳转 SHALL 只改变
+   * 选区与视口：光标落在目标标题行行尾，该行 SHALL 滚到视口居中」，回归见
+   * tests/visual/scenes/toc-outline.spec.ts 的长文用例（选区与视口成对断言）。
    */
   private jumpTo(index: number): void {
     const source = this.visible[index];
     const item = source === undefined ? undefined : this.entries[source];
     if (!item) return;
     // 落点取**当前活跃 pane** 的视图（浮层此刻展示的就是它的 outline）。先取视图再收起：
-    // close() 会让焦点回到同一个视图，不改变活跃 pane，因此两者等价，取在前面更直观。
+    // 收起不改变活跃 pane，因此两者等价，取在前面更直观。
     const view = this.view();
-    this.close();
+    this.close(false);
     const pos = Math.min(item.jumpTo, view.state.doc.length);
     // 行跳转是应用自己推动视口（change harness-path-link 与 harness 路径点击对齐捕获语义）：
     // 经转场窗口，中间态滚动不被阅读位置捕获（CL-2；窗口边界由写回落地定义，不用时长量）。
+    // 焦点交还（引擎的聚焦揭示）也在窗内：它同样是应用自推的中间态。
     duringViewportTransition(() => {
+      view.focus();
       view.dispatch({
         selection: { anchor: pos },
         effects: EditorView.scrollIntoView(pos, { y: "center" }),

@@ -86,6 +86,26 @@ const LEVELS_DOC = [
 /** frontmatter 里的 YAML 注释行：lezer 会把它解析成 ATXHeading1，大纲必须按 frontmatter 边界排除。 */
 const FRONTMATTER_DOC = ["---", "title: 边界", "# 幽灵标题", "---", "", "# 前言下的真标题", "真标题正文。", ""].join("\n");
 
+// 用户报告的形状（M754）：长文里标题之间夹着长代码块，相邻标题相距一到两屏——从文档中段
+// 跳到另一处必须真有视口位移，才谈得上「跳过去了没有」。真实文档（342 行）只读、正文不得入库，
+// 这里按形状重建：1 个 H1 + 15 个 H2 + 3 个 H3 + 15 个 16 行代码块（360 行），
+// 与 `scripts/acceptance/fixtures/toc-long-code.md` 逐字节同形（两套套件各自持有 fixture：
+// 视觉套件走 chromium 直连，读不到验收 vault）。
+const LONG_CODE_DOC = (() => {
+  const parts = ["# 长文总览", "", "总览正文说明。", ""];
+  for (let chapter = 1; chapter <= 15; chapter++) {
+    const code = Array.from(
+      { length: 16 },
+      (_, index) => `const 常量${chapter}_${index + 1} = 计算(${index + 1});`,
+    ).join("\n");
+    parts.push(`## 第 ${chapter} 节 标题`, "", `第 ${chapter} 节正文说明。`, "", "```ts", code, "```", "");
+    if (chapter === 3 || chapter === 9 || chapter === 13) {
+      parts.push(`### 第 ${chapter} 节 细节`, "", `第 ${chapter} 节细节说明。`, "");
+    }
+  }
+  return parts.join("\n");
+})();
+
 const VAULT: VaultFixture = {
   entries: [
     { path: "toc.md", kind: "file", size: DOC.length, mtime_ms: 0 },
@@ -93,6 +113,7 @@ const VAULT: VaultFixture = {
     { path: "toc-long.md", kind: "file", size: LONG_DOC.length, mtime_ms: 0 },
     { path: "levels.md", kind: "file", size: LEVELS_DOC.length, mtime_ms: 0 },
     { path: "frontmatter.md", kind: "file", size: FRONTMATTER_DOC.length, mtime_ms: 0 },
+    { path: "toc-long-code.md", kind: "file", size: LONG_CODE_DOC.length, mtime_ms: 0 },
   ],
   files: {
     "toc.md": DOC,
@@ -100,6 +121,7 @@ const VAULT: VaultFixture = {
     "toc-long.md": LONG_DOC,
     "levels.md": LEVELS_DOC,
     "frontmatter.md": FRONTMATTER_DOC,
+    "toc-long-code.md": LONG_CODE_DOC,
   },
   links: {},
 };
@@ -400,4 +422,181 @@ test("浮层总高上限：窗口高 80%（含底部提示），列表在浮层�
   expect(geo.listScroll).toBeGreaterThan(geo.listClient);
   await expect(popover).toBeVisible();
   await expect(hint).toBeVisible();
+});
+
+// ---------------------------------------------------------------------------
+// M754：长文里「点了条目但没跳过去」——跳转必须同时钉**选区**与**实际视口**
+// ---------------------------------------------------------------------------
+//
+// 缺陷形态：`jumpTo` 先 `close()`，而 `close()` 走「交还焦点保持阅读位置」的原语——它会把
+// **跳转前**捕获的位置在下一帧再写回一次，于是刚发出的 `scrollIntoView(目标标题)` 被覆盖：
+// 光标落在目标标题行尾、视口却留在原处（= 用户说的「点了没跳过去」）。写回对锚 = 0 提前
+// 返回，所以从文档顶端跳永远正常、从文档中段跳才复发——这就是「有时候」。
+//
+// 判据取 spec（openspec/specs/toc-outline/spec.md 的「跳转 SHALL 只改变选区与视口」条款）：
+// 光标落在目标标题行行尾 + 该行滚到视口居中。**只断言选区会漏掉整个缺陷**（选区那一半一直
+// 是对的），因此这里两条成对断言。读数一律取几何量（`coordsAtPos` × 滚动容器 rect），
+// MUST NOT 用「浮层已收起」当跳转成功的证据（浮层收起在两条路径上都成立，零区分度）。
+//
+// 时序（REVIEW.md「断言等价于子串」条同族的时序假绿）：缺陷是「先跳到目标 → 下一帧被拽回」，
+// 所以判据 MUST 在滚动**停稳之后**读，不能 poll——poll 会撞上中间态而假绿。
+
+/** 滚动容器的 scrollTop（几何读数，不判函数被调用过）。 */
+function scrollTop(page: Page): Promise<number> {
+  return page.locator(".cm-scroller").evaluate((el) => el.scrollTop);
+}
+
+/** 把视口摆到含 `needle` 的那一行（arrange，不参与判据；坐标取 CM 自己的行块，与字体布局无关）。 */
+async function scrollToText(page: Page, needle: string): Promise<void> {
+  await page.evaluate((text) => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile
+      .root.view;
+    const doc: string = view.state.doc.toString();
+    const at = doc.indexOf(text);
+    if (at < 0) throw new Error(`文档里没有「${text}」`);
+    view.scrollDOM.scrollTop = view.lineBlockAt(at).top;
+  }, needle);
+}
+
+/**
+ * 等滚动停稳：连续 5 帧 `scrollTop` 不变才返回（上限 40 帧）。
+ * 本次缺陷的第二拍（阅读位置写回）落在跳转后的 1–2 帧，判据必须等它落地再读。
+ */
+async function settleScroll(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        const scroller = document.querySelector(".cm-scroller") as HTMLElement;
+        let last = scroller.scrollTop;
+        let stable = 0;
+        let frames = 0;
+        const tick = (): void => {
+          frames += 1;
+          const now = scroller.scrollTop;
+          stable = Math.abs(now - last) < 0.5 ? stable + 1 : 0;
+          last = now;
+          if (stable >= 5 || frames >= 40) resolve();
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }),
+  );
+}
+
+interface ViewportReading {
+  scrollTop: number;
+  viewportTop: number;
+  viewportBottom: number;
+  /** 目标标题行字符盒的上下沿（视口坐标）；`coordsAtPos` 读不到时为 null——调用方按 FAIL 处理
+   *  （「读不到」不等于「不在视口里」，REVIEW.md「读不到当成空」条）。 */
+  headingTop: number | null;
+  headingBottom: number | null;
+  /** 标题行中心相对视口中心的偏移（`scrollIntoView({y:"center"})` 的落点判据）。 */
+  centerOffset: number;
+  /** 视口顶那一行原文（高度 = scrollTop 的行块，与阅读位置的捕获口径同一算式）。 */
+  topLine: string;
+}
+
+/** 读「目标标题行相对视口」的几何读数。 */
+function viewportReading(page: Page, needle: string): Promise<ViewportReading> {
+  return page.evaluate((text) => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile
+      .root.view;
+    const scroller = view.scrollDOM as HTMLElement;
+    const box = scroller.getBoundingClientRect();
+    const doc: string = view.state.doc.toString();
+    const at = doc.indexOf(text);
+    if (at < 0) throw new Error(`文档里没有「${text}」`);
+    const line = view.state.doc.lineAt(at);
+    const from = view.coordsAtPos(line.from);
+    const to = view.coordsAtPos(line.to);
+    return {
+      scrollTop: scroller.scrollTop,
+      viewportTop: box.top,
+      viewportBottom: box.bottom,
+      headingTop: from === null ? null : from.top,
+      headingBottom: to === null ? null : to.bottom,
+      centerOffset:
+        from === null || to === null ? Number.NaN : (from.top + to.bottom) / 2 - (box.top + box.bottom) / 2,
+      topLine: view.state.doc.lineAt(view.lineBlockAtHeight(scroller.scrollTop + 2).from).text as string,
+    };
+  }, needle);
+}
+
+/** 跳转落点判据（成对）：选区落在标题行行尾 + 视口揭示该行并把它放在居中位置。 */
+async function expectJumpLanded(page: Page, doc: string, needle: string): Promise<void> {
+  const expected = lineEnd(doc, lineNumberAt(doc, needle));
+  await expect
+    .poll(() => caret(page), { message: `跳转后光标应落在「${needle}」标题行尾` })
+    .toEqual({ head: expected, line: lineNumberAt(doc, needle) });
+
+  const reading = await viewportReading(page, needle);
+  // 读不到（coordsAtPos 为 null）判 FAIL：负向断言不得在「读不到」上恒真。
+  expect(reading.headingTop, `「${needle}」在渲染窗口里读不到字符盒`).not.toBeNull();
+  expect(reading.headingTop as number).toBeGreaterThanOrEqual(reading.viewportTop - 1);
+  expect(reading.headingBottom as number).toBeLessThanOrEqual(reading.viewportBottom + 1);
+  // 「滚到视口居中」——与 ⌥G 跳行（m281）同一容差（±30px）。
+  expect(Math.abs(reading.centerOffset), `「${needle}」没有滚到视口居中（偏移 ${reading.centerOffset}px）`).toBeLessThan(30);
+}
+
+/** 从浮层里跳到 `target`：`mouse` = 点条目，`keyboard` = 筛选后 Enter（同一 `jumpTo` 的两个入口）。 */
+async function jumpViaPopover(page: Page, entry: "mouse" | "keyboard", target: string): Promise<void> {
+  await page.keyboard.press("Meta+Shift+o");
+  await expect(page.locator(".lumir-toc-list")).toBeVisible();
+  if (entry === "mouse") {
+    await page.locator(".lumir-toc-item", { hasText: target }).click();
+  } else {
+    // 筛选框打开即持焦：输入目标标题的唯一定位串，结果集只剩它，游标落在它上面，Enter 跳过去。
+    await page.locator(".lumir-toc-input").fill(target);
+    await expect(page.locator(".lumir-toc-item")).toHaveCount(1);
+    await expect(page.locator(".lumir-toc-item.is-active")).toHaveText(target);
+    await page.keyboard.press("Enter");
+  }
+  await expect(page.locator(".lumir-toc")).toBeHidden();
+  await settleScroll(page);
+}
+
+test("长文跳转：从任意起跳位置点击 / Enter 远处条目，选区与视口都到目标标题", async ({ page }) => {
+  await openToc(page);
+  await page.locator('.ft-row[title="toc-long-code.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第 1 节正文说明。");
+
+  // 前提：这份文档真的跨多屏（否则「视口揭示」与「没揭示」在几何上分不开）。
+  const span = await page.evaluate(() => {
+    const scroller = document.querySelector(".cm-scroller") as HTMLElement;
+    return { scrollHeight: scroller.scrollHeight, clientHeight: scroller.clientHeight };
+  });
+  expect(span.scrollHeight).toBeGreaterThan(span.clientHeight * 4);
+
+  // --- 起跳点在文档中段（锚 ≠ 文档原点：唯一会让阅读位置写回提前返回的一档之外）---
+  await scrollToText(page, "第 12 节正文说明。");
+  await settleScroll(page);
+  const before = await viewportReading(page, "第 3 节 标题");
+  expect(before.scrollTop, "arrange 失败：视口还在文档原点").toBeGreaterThan(0);
+  expect(before.topLine, "arrange 失败：视口顶仍停在首行").not.toBe("# 长文总览");
+  expect(
+    before.headingTop === null || before.headingTop > before.viewportBottom,
+    "目标标题在起跳时就已经在视口里——这条判据没有输入",
+  ).toBe(true);
+
+  // 鼠标路径：向上跳数屏。
+  await jumpViaPopover(page, "mouse", "第 3 节 标题");
+  await expectJumpLanded(page, LONG_CODE_DOC, "第 3 节 标题");
+  // 反向输入：起跳点那一节已经离开视口（「视口根本没动」不可能同时满足上面两条与这条）。
+  expect((await viewportReading(page, "第 12 节正文说明。")).topLine).not.toBe("第 12 节正文说明。");
+
+  // --- 键盘路径：同一 jumpTo，起跳点重新摆回中段，向下跳到另一处 ---
+  await scrollToText(page, "第 12 节正文说明。");
+  await settleScroll(page);
+  await jumpViaPopover(page, "keyboard", "第 14 节 标题");
+  await expectJumpLanded(page, LONG_CODE_DOC, "第 14 节 标题");
+
+  // --- 起跳点在文档原点（写回提前返回的那一档）：同样必须揭示目标 ---
+  await page.evaluate(() => {
+    (document.querySelector(".cm-scroller") as HTMLElement).scrollTop = 0;
+  });
+  await settleScroll(page);
+  expect(await scrollTop(page)).toBe(0);
+  await jumpViaPopover(page, "mouse", "第 15 节 标题");
+  await expectJumpLanded(page, LONG_CODE_DOC, "第 15 节 标题");
 });
