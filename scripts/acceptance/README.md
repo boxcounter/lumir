@@ -1138,6 +1138,19 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
   1.39MB 文档只给出从第 9966 行起的窗口、快照 `truncated: true`，节点级断言也会因此假过/假红）。
   ⇒ 两端的写法：**别用「行在不在 AX 里」当视口判据**（改用被测功能自己产出的读数，如场景 13 的
   标题链条、场景 56 的输入条预填值）；**别把 1MB 级文档交给 AX 断言**（那一段只能靠截图与真机观感）。
+  **还有一条形态依赖（M769 真机实测，2026-10-28）**：value 随渲染 widget 的**可见态**变。块级钮
+  （表格的「复制表格 / 放大查看表格」、代码块动作钮……共用 `.lumir-block-trigger` 一族）静止态是
+  `visibility: hidden`——`src/style.css` 的注释写明「隐去（而非仅透明）是刻意的：静止态不进读屏
+  树」——只在各类 slot 的 hover 规则（`.cm-lp-table-slot` / `.cm-lp-codeblock-slot` /
+  `.cm-lp-image-box` / `.lumir-hp-block-slot`，四条一次列全）与 `.lumir-block-trigger:focus-visible`
+  下可见。可见后它作为一行参与文本聚合：同一份**未改动**的文档，表头块钮未浮现时 value 95 字符、
+  浮现后 96 字符（这一对读数在表格表头实测，其余块族按同一机制推定、未逐族复测）。注意按钮**文案
+  不一定**进 value（实测 value 里查不到「复制表格」），变化可能落在换行 / 结构上——「grep 不到钮的
+  文案 ⇒ value 没变」是错的口径。⇒ 写「编辑器内容未变」这类逐字节断言时，基线与比较时刻 MUST 处于
+  **同一形态**（同 hover / 同焦点），或用 `do: waitFor` 等形态到位再采样；跨形态比较会把 widget 形态
+  变化记成文档变化（场景 227 的现场：磁盘 sha256 与标签干净度都证明文档没变，红的是比较跨了
+  `clickInNode` 那次真实点击造成的 hover 翻转；修法 = 基线记在「表头块钮已浮现」之后 + 终点加一条
+  「采样形态与基线同形」断言，见 `scenarios/227-fullscreen-select-esc.md` 的「断言口径」）。
 - **AX 解析：`= "…"` 的 value 走结构判据，不看「引号奇偶」**（M379 修掉；原缺口见 M180 finding
   `.tower/comms/findings/20260918-worker-wrap-impl-bug-acceptance-ax-value-editor-not.md`）：
   `AXTextArea` 的文档文本跨行展开，解析器要判「值到哪一行结束」。旧实现按**引号奇偶**吞续行、再用
