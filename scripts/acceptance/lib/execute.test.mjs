@@ -854,6 +854,53 @@ test("scroll 落点（M762）：`target {x,y}` 是窗口点——同一份标定
   assert.ok(Math.abs(a.y / (768 / 800) - b.y / (1365 / 800)) <= 0.5, `y 物理点漂了：${a.y} vs ${b.y}`);
 });
 
+test("clickEditor 的非 real 通道（M762，r1 评审 P2-1）：同一份窗口点标定在两代截图密度下落到同一物理点", async () => {
+  // 53 的原始故障就发生在**这条通道**（KimiCU 坐标点击），而它此前自己算一份 `bbox + dx*scale`：
+  // 把那份公式退回旧式 `bbox + dx` 时，只测 `contentClickGeometry` 的用例照样全绿——防线没落在
+  // 出过事的那条路径上。这里跑**动作本身**（runScenario → case "clickEditor"）：桩 cu 记录真实
+  // 下发的 click 坐标，两代密度各点一次，再断两点都等于「bbox + 窗口点×缩放比」且折回窗口点同值。
+  const clickOnceAt = async (shot) => {
+    const clicks = [];
+    const { text, bbox } = clickEditorDump({ shot });
+    const cu = {
+      state: async () => ({ text, image: null }),
+      click: async (_pid, opts) => {
+        clicks.push(opts);
+        return "ok";
+      },
+    };
+    const { status } = await drive(
+      tmpRoot(`clickeditor-${shot.w}`),
+      { steps: [{ name: "点编辑器", do: "clickEditor", dx: 115, dy: 62 }] },
+      { cu },
+    );
+    assert.equal(status, "PASS", `clickEditor 步骤应成功，实际 ${status}`);
+    assert.equal(clicks.length, 1, `应恰好点一次，实际 ${clicks.length} 次`);
+    return { click: clicks[0], bbox };
+  };
+  const a = await clickOnceAt({ w: 1152, h: 768 });
+  const b = await clickOnceAt({ w: 2048, h: 1365 });
+  const ax = 1152 / 1200;
+  const ay = 768 / 800;
+  const bx = 2048 / 1200;
+  const by = 1365 / 800;
+  // 落点 = 文本框 bbox（该密度的截图像素）+ 窗口点 × 缩放比
+  assert.ok(Math.abs(a.click.x - (a.bbox.x + 115 * ax)) < 1e-6, `1152 密度落点 x 错：${a.click.x}`);
+  assert.ok(Math.abs(a.click.y - (a.bbox.y + 62 * ay)) < 1e-6, `1152 密度落点 y 错：${a.click.y}`);
+  assert.ok(
+    Math.abs(b.click.x - (b.bbox.x + 115 * bx)) < 1e-6,
+    `2048 密度落点 x 错：${b.click.x}（退回 bbox+dx 会给 ${b.bbox.x + 115}）`,
+  );
+  assert.ok(
+    Math.abs(b.click.y - (b.bbox.y + 62 * by)) < 1e-6,
+    `2048 密度落点 y 错：${b.click.y}（退回 bbox+dy 会给 ${b.bbox.y + 62}）`,
+  );
+  // 折回窗口点：两代密度必须同值 = 同一物理落点（KimiCU 的 click 只吃截图像素，这份换算是唯一出口）。
+  // 容差 1pt：两代 dump 的 bbox 各自取整，亚像素差不是判据。
+  assert.ok(Math.abs(a.click.x / ax - b.click.x / bx) < 1, `同一落点在两代密度下漂了：${a.click.x} vs ${b.click.x}`);
+  assert.ok(Math.abs(a.click.y / ay - b.click.y / by) < 1, `同一落点在两代密度下漂了：${a.click.y} vs ${b.click.y}`);
+});
+
 test("像素采样方块（M762）：patch 是窗口点，同一邻域在两代截图密度下覆盖同一物理边长", () => {
   // 与正文单击同一条纪律（M761 的 64 现场）：patch 原先是**截图像素**，7px 的物理边长从
   // 7.3pt（1152 密度）缩到 4.1pt（2048 密度），eink 的字形采样因此落进行间、亮度跨度塌到 10。
@@ -1275,6 +1322,24 @@ const TREE_AX_DIALOG = [
 const AX_MAIN_DUMP = `${headerAx()}\n\n${TREE_AX_MAIN}`;
 const FULL_DUMP = `${headerFull()}\n\n${TREE_AX_MAIN}`;
 const AX_DIALOG_DUMP = `${[headerAx({ windowTitle: "Window", elementCount: 18 }), ...WINDOW_DIR_DIALOG_PRIMARY].join("\n")}\n\n${TREE_AX_DIALOG}`;
+
+/** 同一份**物理现场**、只换截图密度的 mode=full dump（M762）：文本框（基准 `@220,300 900×600`）
+ *  与窗口矩形（1200×800pt）不动，截图像素按比例缩放（bbox 取整——真实 dump 就是整数，而解析器
+ *  也只认整数几何）。返回 `{ text, bbox }`：`bbox` 是该密度下文本框的截图像素框，供用例算期望落点。
+ *  用途见 `clickEditor 的非 real 通道` 那条用例：它跑的是动作路径，不吃 `contentClickGeometry`
+ *  的单元输入，因此要一份完整的 dump。 */
+function clickEditorDump({ shot }) {
+  const kx = shot.w / 2048;
+  const ky = shot.h / 1365;
+  const bbox = { x: Math.round(220 * kx), y: Math.round(300 * ky), w: Math.round(900 * kx), h: Math.round(600 * ky) };
+  return {
+    text: FULL_DUMP.replace("- screenshot: 2048×1365 px", `- screenshot: ${shot.w}×${shot.h} px`).replace(
+      "@220,300 900×600",
+      `@${bbox.x},${bbox.y} ${bbox.w}×${bbox.h}`,
+    ),
+    bbox,
+  };
+}
 
 test("窗口矩形（M761）：captured_bounds（mode=full）与 window_bounds（mode=ax）都认，正文里的同形行不算", () => {
   const want = { x: 8, y: 40, w: 1200, h: 800 };

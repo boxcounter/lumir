@@ -3232,20 +3232,24 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         await sleep(step.settleMs ?? 500);
         return `真实点击 @截图 ${Math.round(c.shotPoint.x)},${Math.round(c.shotPoint.y)}｜${c.out}`;
       }
+      // 非 `real` 分支走**同一份**换算（`contentClickGeometry`，r1 评审 P2-1）：KimiCU 的
+      // `click x,y` 是截图像素，而 `dx`/`dy` 是窗口点——`shotPoint` 就是「窗口点标定 → 截图像
+      // 素落点」的产物。**不要在这里另写一份 `bbox + dx*scale` 公式**：两条通道各写一份，
+      // 下次改口径必然只改到一处，而 53 的原始故障恰恰发生在这条通道（真机口径错了、单测
+      // 全绿的形态，REVIEW.md「同一语义两处真源」条）。
+      //
+      // 这份 mode=full 快照本身也不能省：KimiCU 的 `click x,y` 要求「最近一次 get_app_state
+      // 带图」（见 `readAxWithScreenshot` 的注释），它同时是落点换算的几何来源。
       const ax = await readAx(cu, p, { mode: "full" });
-      const ta = ax.textarea;
-      if (!ta?.bbox) throw new Error("编辑器节点没有 bbox，无法定位点击");
-      // KimiCU 的 `click x,y` 是**截图像素**，而 dx/dy 是**窗口点**（M762）：这里把窗口点折成
-      // 截图像素，两个通道（KimiCU 坐标点击 / swift 真实点击）才落到同一个物理点。
-      const bounds = windowBounds(ax.text);
-      const shot = screenshotSize(ax.text);
-      if (!bounds || !shot) {
-        throw new Error(
-          "clickEditor：AX 快照缺窗口矩形（captured_bounds）或截图尺寸，算不出「窗口点 → 截图像素」的换算" +
-            "（dx/dy 的单位是窗口点，不是截图像素）",
-        );
-      }
-      return clickWithRetry(cu, p, ta.bbox.x + dx * (shot.w / bounds.w), ta.bbox.y + dy * (shot.h / bounds.h));
+      const { shotPoint } = contentClickGeometry({
+        textarea: ax.textarea,
+        bounds: windowBounds(ax.text),
+        shot: screenshotSize(ax.text),
+        dx,
+        dy,
+        label: "clickEditor",
+      });
+      return clickWithRetry(cu, p, shotPoint.x, shotPoint.y);
     }
     case "open":
       return openFile(cu, p, step.file, { marker: step.marker });
