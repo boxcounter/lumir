@@ -11,20 +11,29 @@
       跨进程查询；安装失败只降级为 warning，不影响启动与投递
 - [ ] 1.3 `deliver_notification` 的 macOS 分支改走本仓实现：请求 id 形状、启动窗口内的本地早退
       重试、同 id 重投、`getDeliveredNotificationIds` 自查（M620 语义）逐项保留
-- [ ] 1.4 删除 `notify-rust` 的 `preview-macos-un` feature 与 `mac-usernotifications` 直接依赖，
+- [ ] 1.4 投递端口契约：`deliver_notification` 返回该条通知的 request id（现状 `Result<(),
+      String>`，id 只在函数内部；非 macOS 由本仓显式指定 id 保证返回值与系统标识一致），到点与
+      结果 / 失败两条路径都用它做台账键
+- [ ] 1.5 删除 `notify-rust` 的 `preview-macos-un` feature 与 `mac-usernotifications` 直接依赖，
       更新 `Cargo.toml` 的注释（说明 macOS 已自持、`notify-rust` 只服务 Linux / Windows、
       `mac-notification-sys` 仍供 dev flavour）
-- [ ] 1.5 单测 / 结构断言：delegate 安装点在 `run()` 入口且先于窗口创建；dev flavour 不触 UN
+- [ ] 1.6 单测 / 结构断言：delegate 安装点在 `run()` 入口且先于窗口创建；dev flavour 不触 UN；
+      安装失败只降级（不阻断启动与投递，且**不**声称保留 macOS 进程内点击通道）
 
 ## 2. 通知台账与接收判据（纯函数）
 
 - [ ] 2.1 `cron.rs` 的 `CronState` 增加 `notices`（request id → 任务 / 种类 / 派发日期 / 会话
-      标识），`#[serde(default)]`，读取纪律与 `tasks` 段一致
-- [ ] 2.2 台账写入与 `last_fired` 共用同一次原子替换；有界裁剪（保留窗口 + 条数上限），裁剪不触碰
-      `tasks` 段；写失败降级为 warning
-- [ ] 2.3 接收判据写成纯函数：tap 动作 / 台账命中 / 任务仍在 / 派发日期为今天，四条独立返回分类
+      标识），`#[serde(default)]`，读取纪律与 `tasks` 段一致；条目写入即快照，后续运行不改写
+- [ ] 2.2 **到点通知路径**：台账条目与 `last_fired` 共用同一次原子替换（扩展现有 `mark_fired`
+      调用点，不加第二次写）；有界裁剪（保留窗口 + 条数上限），裁剪不触碰 `tasks` 段；写失败降级
+      为 warning
+- [ ] 2.3 **结果 / 失败通知路径**：改 `finish` 的 `run-then-notify` 成功分支（`lib.rs:1575-1581`）
+      ——投递成功后把新台账条目与当时的完整状态一次原子落盘，条目 `session_id` 与同次落盘里
+      `tasks.<task>.session_id` 逐字相同；MUST NOT 出现「会话已更新、台账缺失」
+- [ ] 2.4 接收判据写成纯函数：tap 动作 / 台账命中 / 任务仍在 / 派发日期为今天，四条独立返回分类
       原因（`notice_unknown` / `task_unknown` / `notice_stale`）；不解析 request id 字符串
-- [ ] 2.4 单测：判据真值表（含任务 id 含 `-` 的用例）、台账裁剪、读取降级、旧文件读入为空台账
+- [ ] 2.5 单测：判据真值表（含任务 id 含 `-` 的用例）、两条写入路径各自的原子性判据、台账裁剪、
+      快照不被改写、读取降级（旧文件读入为空台账）
 
 ## 3. 恢复流水线（守护线程 + 前端保留重放）
 
@@ -46,17 +55,23 @@
 
 ## 5. 验收套件与真机证据
 
-- [ ] 5.1 探针：被 LaunchServices 拉起的验收实例如何拿到套件的 `XDG_CONFIG_HOME`
-      （`Info.plist` 的 `LSEnvironment` 优先，不成立则用包装可执行文件 `exec` 真二进制）；
-      判据 = 拉起后的进程写入的是套件 `env/` 下的 `cron-state.json`，不是用户真实配置目录
-- [ ] 5.2 套件动作：新增「正常退出应用」与「点击后按验收 bundle id 重新附着到新进程」两条能力
+- [ ] 5.1 验收 bundle 改成 fail-closed 隔离：`CFBundleExecutable` 指向包装脚本，脚本在 `exec` 真
+      二进制**之前**导出隔离的 `XDG_CONFIG_HOME` **与** `HOME`（缺 XDG 时 `config.rs:1980` 会回落
+      `$HOME/.config`，两个都要）；`LSEnvironment` 若仍要加，只能作冗余加强，不得作为唯一依据
+- [ ] 5.2 静态前置门（任何一次 LaunchServices 拉起之前）：断言 bundle 的 `CFBundleExecutable` 是
+      包装脚本、脚本内容把两个变量都指向套件目录；不成立即判 INVALID 且不发起拉起（拉起后才知道
+      就晚了——`logging::init` / vault 恢复 / cron 装载已经跑过）
+- [ ] 5.3 套件动作：新增「正常退出应用」与「点击后按验收 bundle id 重新附着到新进程」两条能力
       （附着必须校验 `CFBundleIdentifier` 与二进制路径，沿用 M619/M622 的隔离口径）
-- [ ] 5.3 新增场景 `scripts/acceptance/scenarios/252-cron-click-after-exit.md`（`tier: bundle`、
-      `requires: bundle`），覆盖 design §8.2 的七条判据：跨进程运行全链路、仅拉起不点击的负向
-      控制、重复点击、删除任务、跨天、台账外 request id、结果通知的会话恢复
-- [ ] 5.4 更新 `scripts/acceptance/COVERAGE.md` 与场景索引，登记新场景及其覆盖点
-- [ ] 5.5 回扫既有通知类场景（169 / 170 / 171 / 213）在新接收模型下的期望：逐条确认断言仍成立，
-      需要改动的就地改准（`cron_click` 新增字段不得让既有 jsonl 断言失配）
+- [ ] 5.4 新增场景 `scripts/acceptance/scenarios/252-cron-click-after-exit.md`（`tier: bundle`、
+      `requires: bundle`），逐条覆盖 design §8.2 的判据清单（1–9；清单只在 design 维护，本文件
+      不另抄一份）
+- [ ] 5.5 更新 `scripts/acceptance/COVERAGE.md` 与场景索引，登记新场景及其覆盖点
+- [ ] 5.6 拉起后的正向验证（不充当防线）：新进程写入的 `cron-state.json` 落在套件 `env/` 下；真实
+      `~/.config/lumir` 的只读 stat（mtime / size / inode）前后无变化
+- [ ] 5.7 回扫既有通知类场景（169 / 170 / 171 / 213）在新接收模型下的期望：逐条确认断言仍成立，
+      需要改动的就地改准（`cron_click` 新增字段不得让既有 jsonl 断言失配）；补一条结果 / 失败通知
+      的台账回归断言（`run-then-notify` 通知投递成功后台账在场、`session_id` 与 `tasks` 段一致）
 
 ## 6. 验证
 

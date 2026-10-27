@@ -9,7 +9,8 @@
 
 | 环节 | 位置 | 现行行为 |
 |---|---|---|
-| 投递 | `src-tauri/src/lib.rs:1862` `deliver_notification` | macOS 打包实例走 `notify_rust::Notification::show()`，随后用 `get_delivered_notification_ids` 自查系统是否收下；dev flavour 走 legacy 投递 |
+| 投递 | `src-tauri/src/lib.rs:1862` `deliver_notification` | macOS 打包实例走 `notify_rust::Notification::show()`，随后用 `get_delivered_notification_ids` 自查系统是否收下；dev flavour 走 legacy 投递。返回 `Result<(), String>`——request id 只存在于函数内部 |
+| 结果 / 失败通知的投递 | `src-tauri/src/lib.rs:1575-1581` `finish` | 只对 `run-then-notify` 投递；成功分支只记 `cron_notified`（**没有**台账写入点）；`session_id` 在投递**之前**已单独落盘（`:1566-1569`），`last_fired` 更早在派发时写入（`:1537`） |
 | 点击等待 | `src-tauri/src/lib.rs:2011` `spawn_notification_click_waiter` | 每条通知投递成功后起一个线程跑 `handle.wait_for_response(cb)`，回调里投 `CronMessage::Click` 给守护线程 |
 | 点击处置 | `src-tauri/src/lib.rs:1593` `handle_click` | 校验任务在场 → 聚焦窗口 → 前端接线层未就绪则 `not_ready` 退回 → 按触达策略发起运行 / 恢复会话；同日重复点击只打开已有会话 |
 | 守护线程 | `src-tauri/src/lib.rs:1183` `start_cron` / `:1201` `cron_loop` | `setup` 内起线程，自己装载配置与 `cron-state.json`，随后 `poke(Startup)` |
@@ -88,8 +89,10 @@ Tauri 的 `.setup(...)`（`lib.rs:212`）就在这条链上执行。因此 setup
 - MUST NOT 在 delegate 回调里做 IO、聚焦窗口或 `emit`——回调在主线程 run loop 上。
 - MUST NOT 在 dev flavour 调用 UN（无 bundle 身份会 `abort`，M608 现场）。
 
-**降级**：安装失败（无 bundle / 系统拒绝）只落一条 warning，不影响启动与投递；此时跨进程点击
-不可用，进程内点击照旧（非 macOS 通道）。
+**降级**：安装失败（无 bundle / 系统拒绝）只落一条 warning：MUST NOT 阻断启动与投递，MUST NOT
+影响其它平台。**macOS 上点击接收只有 delegate 一条通道**——安装失败时进程内点击与跨进程点击
+**一起不可用**（旧的一次性等待通道在本 change 里已随平台层替换而删除，不存在「进程内照旧」这条
+退路）。这条降级方向的判据是「应用仍能用、通知仍能投递」，不是「点击仍有第二条路」。
 
 ## 4. 通知台账（识别与校验的唯一依据）
 
@@ -111,9 +114,23 @@ Tauri 的 `.setup(...)`（`lib.rs:212`）就在这条链上执行。因此 setup
 }
 ```
 
-**写入时机**：投递被系统确认之后，与 `last_fired` 的写入**同一次落盘**（`mark_fired` 的调用点
-已在那条路径上）。写失败降级为 warning（投递仍然成立），该条通知随后按「台账查不到」被拒绝——
-这是可接受的降级方向：宁可拒绝一次点击，也不按猜测执行。
+**写入时机（两条路径，MUST 分别满足）**：
+
+- **到点通知（`Plan::Notify`）**：投递被系统确认之后，台账条目与 `last_fired` 在**同一次**原子
+  替换里落盘（现行 `mark_fired` 的调用点就在这条路径上，扩展它而不是加第二次写）。
+- **结果 / 失败通知（`finish` 的 `run-then-notify` 投递）**：这条路径**没有** `last_fired` 可写
+  （派发时已写死），因此合同的判据换成「新台账条目与**当时的完整状态**在同一次原子替换里落盘」：
+  台账条目的 `session_id` MUST 与同一次落盘里 `tasks.<task>.session_id` 逐字相同，MUST NOT 出现
+  「会话标识已更新、台账条目缺失」或两者不一致。现行实现在投递前先 `persist_state` 落会话
+  （`lib.rs:1566-1569`）、投递成功只记 `cron_notified`（`:1575-1581`），因此这里要新增一次写入
+  ——**一次完整状态写**，不是补丁式追加。
+
+**投递端口契约**：`deliver_notification` 现在返回 `Result<(), String>`，拿到 request id 的只有它
+自己——台账无从落键。端口 SHALL 改为返回该条通知的 request id（平台不提供时由本仓显式指定 id，
+保证返回值与系统里的请求标识是同一个）；到点与结果 / 失败两条路径都用这个返回值做台账键。
+
+**写失败**：两条路径都降级为 warning（投递仍然成立，`last_fired` 与 `session_id` 照旧成立），该条
+通知随后按「台账查不到」被拒绝——这是可接受的降级方向：宁可拒绝一次点击，也不按猜测执行。
 
 **有界**：每次写入时裁掉「派发日期早于今天 − 7 天」的条目，并保留最多 32 条（超出按
 `date` + `request_id` 排序丢最旧）。裁剪 MUST NOT 触碰 `tasks` 段。
@@ -218,7 +235,7 @@ delegate(didReceive)            ← 主线程 run loop，可能发生在 setup �
 场景骨架：`notify-then-run` 任务 `$nextMinute` → 等横幅 → 等 `cron_notified` 落盘 → **正常退出
 应用** → 点横幅（系统拉起应用）→ 断言新进程的日志与界面。
 
-**判据（每条都要 PASS，不拿「进程起来了」当点击成立）**：
+**判据清单（唯一定义在此；tasks 只按编号引用，不另抄一份）**：
 
 1. 新进程日志里 `cron_click{source: relaunch, ok: true, action: run}` 恰好一条；
 2. `cron_run_started{trigger: click}` 与 `cron_run_finished{ok: true}` 各一条；
@@ -228,20 +245,33 @@ delegate(didReceive)            ← 主线程 run loop，可能发生在 setup �
 5. 第二次点击同一条通知：`cron_click` 增加一条但 `cron_run_started` 仍为 1；
 6. 删除任务后再点旧通知：`cron_click{error: task_unknown}`，`cron_run_started` 不增加；
 7. 跨天：把台账里那条的 `date` 改成昨天（套件直接改 `cron-state.json` 的 fixture 手段）后点击：
-   `cron_click{error: notice_stale}`，不运行。
+   `cron_click{error: notice_stale}`，不运行；
+8. 台账外 request id：从 `cron-state.json` 里删掉那条台账条目后点击同一通知：
+   `cron_click{error: notice_unknown}`，不运行、不上屏提示；
+9. 结果通知的跨进程恢复（`run-then-notify`，exit 后点结果通知）：`cron_click{action: open-session,
+   source: relaunch}`，会话被恢复，`cron_run_started` 不增加。
 
-**验收隔离的关键约束（必须先在实现期探针解决）**：本仓配置目录取
-`XDG_CONFIG_HOME` 或 `$HOME/.config`（`src-tauri/src/config.rs:1980`）。**被系统重新拉起的进程不再
-继承套件的环境变量**，因此「点击 → 拉起」的那一轮会读用户真实配置目录——这违反套件「绝不读写
-用户 `~/.config/lumir`」的既有约束。两条候选（实现期按探针结果取其一，取先成立者）：
+**验收隔离：失败关闭（fail-closed），不得靠拉起后探测**。本仓配置目录取 `XDG_CONFIG_HOME` 或
+`$HOME/.config`（`src-tauri/src/config.rs:1980`），而**被系统重新拉起的进程不继承套件的环境
+变量**——若不加干预，那一轮会立刻回落到用户真实配置：`logging::init`、vault 恢复与 cron 装载都会
+先行，真实配置可能被读、日志与状态可能被写、真实任务甚至可能被判定。**拉起之后再断言目录，只能
+事后发现污染，不能防污染**，因此不构成防线。
 
-- **LSEnvironment**：验收 bundle 的 `Info.plist` 注入 `LSEnvironment.XDG_CONFIG_HOME=<套件 env>`，
-  由 LaunchServices 在拉起时注入环境变量；
-- **包装可执行文件**：`CFBundleExecutable` 指向一个把环境变量导出后 `exec` 真二进制的脚本。
-
-探针判据：点击拉起后的新进程，其 `config_dir()` 解析结果落在套件 `env/` 下（用 `cron-state.json`
-的 mtime 与内容变化证明写的是套件目录，而不是用户目录）。探针不成立 ⇒ 本场景**不得**上真机跑，
-先把隔离方案做实；MUST NOT 用「先备份用户配置目录」这类会碰真实数据的手段绕过。
+- **主路线（采用）：包装可执行文件 + 隔离 `HOME`**。验收 bundle 的 `CFBundleExecutable` 指向一个
+  包装脚本；它在 `exec` 真二进制**之前**导出隔离的 `XDG_CONFIG_HOME` **与** `HOME`（两者都要：
+  缺 `XDG` 时会回落 `$HOME/.config`）。隔离在「任何 Lumir 代码运行之前」生效——这是唯一与
+  「污染即违规」同强的机制。
+- **静态前置门（在任何一次 LaunchServices 拉起之前）**：检查 bundle 的 `CFBundleExecutable` 是
+  包装脚本、且脚本内容把两个变量都指向套件目录。不成立 ⇒ 场景判 INVALID 并**不发起任何拉起**。
+- **`LSEnvironment` 不作为独立方案**：它只能注入 `XDG_CONFIG_HOME`（`HOME` 无保证），且不同
+  launch 路径下是否生效不稳定；最多作为包装之外的冗余加强，MUST NOT 被当作隔离的唯一依据。
+- **不采用「验收专用启动 guard」**（配置目录不等于预期就退出）：它把测试专用逻辑放进产品二进制，
+  而且它需要的「预期路径」仍来自会丢的同一份上下文——防线与它要防的对象同源。
+- **拉起后的目录断言保留为正向验证（不是防线）**：新进程写入的 `cron-state.json` 落在套件
+  `env/` 下；同时对真实 `~/.config/lumir` 做**只读** stat（mtime / size / inode）前后对比，出现
+  任何变化即判环境项失败。这条只能证明「没写」，不能替代包装。
+- **探针不成立时**：场景保持 INVALID、不上真机，由 tower 定替代方案；MUST NOT 用「先跑一次看有没有
+  污染」试错，MUST NOT 备份 / 改写用户配置目录来绕过。
 
 ### 8.3 「系统拉起 ≠ 点击已接受」的判据链
 
@@ -257,7 +287,7 @@ delegate(didReceive)            ← 主线程 run loop，可能发生在 setup �
 | delegate 安装早于 `NSApplicationMain` 的兼容性 | 响应收不到 | 实现期真机探针（先 `run()` 入口，再 `setup` 起点），以「点击拉起后能收到回调」为判据 |
 | 冷启动预算 | <300ms 合同 | 安装路径零 IO、零 XPC；用既有 perf 读数核对 |
 | 依赖库升级 / 回退 | A 不依赖其内部时序，风险面缩小到「我们自己写的实现」 | `notify-rust` 仅剩 Linux / Windows，`preview-macos-un` 在本 change 内删除 |
-| 验收环境读真实配置 | 违反套件隔离红线 | §8.2 的探针先行；不成立则场景不上真机 |
+| 验收环境读真实配置 | 违反套件隔离红线 | §8.2 的 fail-closed 包装（拉起前导出 `XDG_CONFIG_HOME` + `HOME`）+ 静态前置门；探针不成立则场景不上真机 |
 | 通知仍留在通知中心被反复点击 | 重复运行 | `clicked_today` + `session_started_today` + 在途表三重判据；跨天按 §5.1 拒绝 |
 
 ## 10. 不做（与 proposal 的 Non-goals 对应）

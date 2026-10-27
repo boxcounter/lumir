@@ -22,7 +22,8 @@ NOT 出现「应用被拉起、点击没有任何后果」的形态。
 响应落点），由守护线程在装载完成之后取走处理，MUST NOT 在缓冲阶段按「界面未就绪」之类的原因丢弃
 响应。缓冲 SHALL 有界（超出上限时丢最旧的一条并落一条 warning），SHALL 只存在于进程内（进程退出
 即无待处理点击，MUST NOT 落盘）。delegate 安装失败（无 bundle 身份、系统拒绝）SHALL 只降级为
-warning：MUST NOT 阻断启动与投递，MUST NOT 影响进程内点击通道。
+warning：MUST NOT 阻断启动与投递，MUST NOT 影响其它平台的点击接收。macOS 上点击接收只有 delegate
+一条通道——安装失败时进程内点击与跨进程点击**一起不可用**，MUST NOT 声称存在第二条 macOS 通道。
 
 **接收判据**：一次响应只有同时满足以下四条才算「被接受的点击」，缺一按分类原因拒绝：
 
@@ -57,8 +58,9 @@ NOT 产生第二次运行或第二次模型请求；同一条通知的两次响�
 **运行失败**：恢复的点击发起的运行以失败终态结束时，SHALL 走既有终态路径
 （`cron_run_finished(ok=false)` + 一次人话提示），MUST NOT 在同一本地日期内自动重跑。
 
-**平台范围**：以上 SHALL 只适用于 macOS 打包实例。macOS dev flavour（无 bundle 身份，点击响应
-路由给别的身份）与非 macOS 平台 MUST NOT 声称跨进程恢复能力，其点击仍走进程内接收通道。
+**平台范围**：以上 SHALL 只适用于 macOS 打包实例。非 macOS 平台 MUST NOT 声称跨进程恢复能力，
+其点击仍走进程内接收通道；macOS dev flavour 的点击本就不可达（响应路由给别的身份，M608 已知边界），
+MUST NOT 因本 change 而声称它可用。
 
 **诊断**：`cron_click` SHALL 带 `source` 字段区分来源（`in-process` / `relaunch`）；保留待重放
 SHALL 落 `cron_click_deferred`（与 `cron_click` 共用任务与来源字段，另带闭集合 `reason`）。两者
@@ -135,8 +137,14 @@ MUST NOT 记录通知正文、任务 prompt 或 vault 绝对路径。
 #### Scenario: 其它环境不声称跨进程能力
 
 - **WHEN** 在 macOS dev flavour 或非 macOS 平台上投递并点击通知
-- **THEN** 点击仍走进程内接收通道（`cron_click.source` 为 `in-process`）；不出现针对跨进程恢复
-  的断言或提示
+- **THEN** 非 macOS 平台的点击仍走进程内接收通道（`cron_click.source` 为 `in-process`）；dev
+  flavour 不声称点击可用；两者都不出现针对跨进程恢复的断言或提示
+
+#### Scenario: delegate 不可用时的降级
+
+- **WHEN** macOS 打包实例的 delegate 安装失败（无 bundle 身份 / 系统拒绝）
+- **THEN** 应用照常启动、通知照常投递，落一条 warning；点击接收（进程内与跨进程）一起不可用，
+  不声称存在第二条通道
 
 #### Scenario: 启动期安装不拖慢冷启动
 
@@ -207,11 +215,24 @@ MUST NOT 记录通知正文、任务 prompt 或 vault 绝对路径。
 惯例）；MUST NOT 写入 `config.json`，MUST NOT 写入任何 vault。存档 SHALL 记录每个任务最近一次触发的
 本地日期（`last_fired`）与最近一次运行的会话标识（`session_id`，在场时），并携带 schema 版本号。
 
-存档 SHALL 另记一份**通知台账**（`notices`）：每条已投递的通知一行——request id、任务 id、通知
-种类、派发的本地日期、该次运行的会话标识（结果通知在场时）。台账 SHALL 只服务「进程退出后的通知
-点击恢复」的识别与校验，MUST NOT 被当作第二份任务表：它的键是 request id，不含调度要素，也不参与
-派发判定。台账 SHALL 有界（按派发日期与条数上限裁剪），裁剪 MUST NOT 触碰 `tasks` 段；台账写失败
-SHALL 降级为 warning（投递与 `last_fired` 仍然成立），对应通知随后不可被校验。
+存档 SHALL 另记一份**通知台账**（`notices`；只在 macOS 打包实例上写入——唯一消费者是「进程退出后的
+通知点击恢复」，其它平台没有消费者，MUST NOT 写没有消费者的台账）：每条已投递的通知一行——request
+id、任务 id、通知种类、派发的本地日期、该次运行的会话标识（结果 / 失败通知在场时）。台账 SHALL
+只服务点击的识别与校验，MUST NOT 被当作第二份任务表：它的键是 request id，不含调度要素，也不参与
+派发判定；条目 SHALL 在写入时快照，后续运行 MUST NOT 改写既有条目。
+
+投递端口 SHALL 返回该条通知的 request id（平台不提供时由本仓显式指定），台账以它为键。台账的写入
+SHALL 分两条路径，各自的原子性判据不同：
+
+- 到点通知（`notify-then-run` 的派发）：台账条目 SHALL 与 `last_fired` 在**同一次**原子替换里
+  落盘；
+- 结果 / 失败通知（`run-then-notify` 的运行终态之后）：该路径不写 `last_fired`（派发时已写），
+  台账条目 SHALL 在投递成功后与**当时的完整状态**在同一次原子替换里落盘，且条目的 `session_id`
+  MUST 与同一次落盘里 `tasks.<task>.session_id` 逐字相同——MUST NOT 出现「会话标识已更新、台账
+  条目缺失」或两者不一致。
+
+台账 SHALL 有界（按派发日期与条数上限裁剪），裁剪 MUST NOT 触碰 `tasks` 段；两条路径的台账写失败
+SHALL 降级为 warning（投递、`last_fired` 与 `session_id` 仍然成立），对应通知随后不可被校验。
 
 `last_fired` 的语义 SHALL 是「该任务在这一本地日期不再派发」——它 SHALL 在两个时机写入：① 派发
 成功（通知投递成功，或运行交接被接受）；② 运行期注册引入的新任务在**注册时已过点**时写入当日
@@ -256,11 +277,22 @@ SHALL 降级为 warning（投递与 `last_fired` 仍然成立），对应通知�
 - **WHEN** 一次运行到达终态并回执成功
 - **THEN** `cron-state.json` 中该任务的 `session_id` 为本次运行的会话；点击结果通知可据此恢复
 
-#### Scenario: 通知台账随投递写入
+#### Scenario: 到点通知的台账与去重同次落盘
 
-- **WHEN** 一条通知被投递并被系统确认送达
-- **THEN** 同一次落盘里写入该通知的台账条目（request id、任务、种类、派发本地日期、会话标识）；
-  台账条目与 `last_fired` 出自同一次原子替换
+- **WHEN** 一条「到点」通知被投递并被系统确认送达
+- **THEN** 同一次原子替换里既有该通知的台账条目（request id、任务、种类、派发本地日期），也有该
+  任务的当日 `last_fired`
+
+#### Scenario: 结果通知的台账与完整状态同次落盘
+
+- **WHEN** `run-then-notify` 的运行终态之后结果（或失败）通知被投递成功
+- **THEN** 一次原子替换写入该通知的台账条目与当时的完整状态；条目里的 `session_id` 与
+  `tasks.<task>.session_id` 逐字相同；`last_fired` 保持派发时写入的值不变
+
+#### Scenario: 台账条目是快照，不被后续运行改写
+
+- **WHEN** 同一任务次日再次运行并写入新的台账条目
+- **THEN** 前一条目的各字段逐字不变；两条条目独立存在
 
 #### Scenario: 台账有界且不碰去重字段
 
