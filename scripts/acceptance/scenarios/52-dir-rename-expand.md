@@ -63,6 +63,10 @@ steps:
         ax: { has: '/AXTextField = "rensub" /' }
       - label: 输入框持焦点（下一步的注入落在它身上）
         ax: { focused: "AXTextField" }
+  # M768 通道审计（保留 AX，不切 cgevent）：⌘A 打在**目录重命名的原生 `<input>`** 上，不在应用的
+  # 键位层作用域里（`src/keys.ts` 的 `Cmd-a → editor.select-all` 属 `text` 面，只认编辑器 / composer
+  # 两个事件源；原生输入框里由 WebKit 自己的 selectAll 处理）。判据只要求「文本被选中」让下一条
+  # typeInNode 替换之，AX 全选在同一个原生控件上给出的正是这个语义 ⇒ 保留 KimiCU 的 `cmd+a`。
   - name: 全选原名（chord 盲发不重试；typeInNode 的整串注入会替换选区）
     do: key
     key: "cmd+a"
@@ -107,6 +111,7 @@ steps:
         ax: { has: '/AXTextField = "rendir" /' }
       - label: 输入框持焦点
         ax: { focused: "AXTextField" }
+  # M768 通道审计（保留 AX）：同本场景第一处 ⌘A——原生输入框的全选，判据只要求文本被选中。
   - name: 全选并输入原名（M507 原子注入）
     do: key
     key: "cmd+a"

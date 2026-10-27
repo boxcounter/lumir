@@ -19,9 +19,24 @@ steps:
       - label: 文档已装载
         editor: { has: "HNL-ALPHA" }
 
-  - name: ⌃A 归位后 ⌃N 两次到第三行（HNL-ALPHA 那一行）
+  # M768 通道审计：两条 ⌃A 都是应用自己的 `editor.line-start`（Emacs 行首），KimiCU 0.6.8 的
+  # press_key 对 ctrl+a 走 AX 全选兼容路径（零键盘事件 ⇒ 键位层命中不到）——那会让本步变成
+  # 「全选」而不是「归位」，后面 ⌃K 杀掉的就不是第三行。两条 ⌃A 因此各自成步、显式走真键盘事件
+  # （channel: cgevent）；中间两拍 ⌃N 保持原通道（M766 的兼容路径只覆盖 ctrl+a / cmd+a），
+  # 断言一条未动。
+  - name: ⌃A 归位到第一行行首
     do: keys
-    keys: ["ctrl+a", "ctrl+n", "ctrl+n", "ctrl+a"]
+    channel: cgevent
+    keys: ["ctrl+a"]
+    gapMs: 150
+  - name: ⌃N 两次下移到第三行（HNL-ALPHA 那一行）
+    do: keys
+    keys: ["ctrl+n", "ctrl+n"]
+    gapMs: 150
+  - name: ⌃A 到第三行行首
+    do: keys
+    channel: cgevent
+    keys: ["ctrl+a"]
     gapMs: 150
 
   - name: ⌃K 杀掉第三行整行文本（并入 kill 槽）

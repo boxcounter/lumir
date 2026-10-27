@@ -13,9 +13,19 @@ steps:
     expect:
       - label: 文档已装载（目标词出现三次的短文档）
         editor: { has: "NEEDLE" }
-  - name: 光标归位到文档首行行首（⌘↑ 原生到文档头 + ⌃A 行首，后者走统一键位层）
+  # M768 通道审计：⌘↑ 是引擎原生「到文档头」，保持原通道；⌃A 走的是**统一键位层**
+  # （`editor.line-start`）——本步的用意正是后者。KimiCU 0.6.8 的 press_key 对 ctrl+a 走 AX 全选
+  # 兼容路径（零键盘事件）：那会留下一个全文选区，下一步 ⌥⇧F 的「按词扩选」于是变成「整篇已选」，
+  # 带进搜索框的查询词不再是 NEEDLE（`/AXTextField = "NEEDLE"/` 必红，假红）。⌃A 因此单独成步、
+  # 走真键盘事件；断言一条未动。
+  - name: 光标归位到文档头（⌘↑ 原生）
     do: keys
-    keys: ["cmd+up", "ctrl+a"]
+    keys: ["cmd+up"]
+    gapMs: 250
+  - name: ⌃A 到行首（统一键位层，真键盘事件）
+    do: keys
+    channel: cgevent
+    keys: ["ctrl+a"]
     gapMs: 250
     expect:
       - label: 光标归位后文档未变

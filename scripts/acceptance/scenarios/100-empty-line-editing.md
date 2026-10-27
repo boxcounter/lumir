@@ -16,8 +16,13 @@ steps:
       - label: 起点没有任何空行（下面那条 /^$/ 因此有区分度）
         file: { path: empty-line-start.md, not: '/^$/' }
       - shot: 起点
+  # M768 通道审计：⌃A 是应用自己的 `editor.line-start`（Emacs 行首），必须由键位层处理——
+  # KimiCU 0.6.8 的 press_key 对 ctrl+a 走 AX 全选兼容路径（零键盘事件），会变成「全选 + Enter
+  # 覆写全文」，下一条「原内容行逐字节还在」必红（假红）。channel: cgevent 只接 chord 键，
+  # 同一行的 return 仍走 KimiCU。判据一条未动。
   - name: 光标移到行首（⌃A）并按 Enter
     do: keys
+    channel: cgevent
     keys: ["ctrl+a", "return"]
   - name: 落盘（⌘S 发两次换一次丢键的容错）
     do: keys

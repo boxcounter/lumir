@@ -71,11 +71,19 @@ steps:
     do: focusWindow
     retries: 4
 
-  - name: ⌃A 到行首 + ⌃⇧N ×14 向下扩选（扩到文末；多出来的按键幂等，装置因此不依赖行数精确对齐）
+  # M768 通道审计：⌃A 是应用自己的 `editor.line-start`——选区起点必须落在第 1 行行首，三条
+  # 「选区内 / 选区外」的像素判据才有区分度。KimiCU 0.6.8 的 press_key 对 ctrl+a 走 AX 全选
+  # 兼容路径（零键盘事件）：选区一下变成「全文已全选」，⌃⇧N 的扩选装置与判据全部失去意义
+  # （假红）。⌃A 因此单独成步、走真键盘事件；⌃⇧N 序列保持原通道（M766 的兼容路径只覆盖
+  # ctrl+a / cmd+a）。断言一条未动。
+  - name: ⌃A 到行首（真键盘事件）
+    do: keys
+    channel: cgevent
+    keys: ["ctrl+a"]
+  - name: ⌃⇧N ×14 向下扩选（扩到文末；多出来的按键幂等，装置因此不依赖行数精确对齐）
     do: keys
     keys:
       [
-        "ctrl+a",
         "ctrl+shift+n",
         "ctrl+shift+n",
         "ctrl+shift+n",
@@ -147,11 +155,15 @@ steps:
   - name: (dark) 抢前台
     do: focusWindow
     retries: 4
+  # M768：同 light 档的 ⌃A 段（真键盘事件），理由见本场景第一段扩选前的注释。
+  - name: (dark) ⌃A 到行首（真键盘事件）
+    do: keys
+    channel: cgevent
+    keys: ["ctrl+a"]
   - name: (dark) 同一条扩选
     do: keys
     keys:
       [
-        "ctrl+a",
         "ctrl+shift+n",
         "ctrl+shift+n",
         "ctrl+shift+n",
@@ -219,11 +231,15 @@ steps:
   - name: (eink) 抢前台
     do: focusWindow
     retries: 4
+  # M768：同 light 档的 ⌃A 段（真键盘事件），理由见本场景第一段扩选前的注释。
+  - name: (eink) ⌃A 到行首（真键盘事件）
+    do: keys
+    channel: cgevent
+    keys: ["ctrl+a"]
   - name: (eink) 同一条扩选
     do: keys
     keys:
       [
-        "ctrl+a",
         "ctrl+shift+n",
         "ctrl+shift+n",
         "ctrl+shift+n",

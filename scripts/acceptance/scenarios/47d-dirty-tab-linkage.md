@@ -72,6 +72,8 @@ steps:
         ax: { has: '/AXTextField = "aab-tab.md" /' }
       - label: 输入框持焦点
         ax: { focused: "AXTextField" }
+  # M768 通道审计（保留 AX）：⌘A 打在重命名输入框（原生 `<input>`）上，判据只要求「文本被选中」
+  # 让下一条 typeInNode 替换之——理由见本场景第一处 ⌘A 步的注释。
   - name: 全选并输入新名
     do: key
     key: "cmd+a"

@@ -49,6 +49,11 @@ steps:
       - label: 输入框持焦点（下一步的注入落在它身上）
         ax: { focused: "AXTextField" }
       - shot: 内联重命名输入框
+  # M768 通道审计（保留 AX，不切 cgevent）：这里的 ⌘A 打在**树内联重命名的原生 `<input>`** 上，
+  # 不在应用的键位层作用域里——`src/keys.ts` 的 `Cmd-a → editor.select-all` 属 `text` 面，分发时
+  # 只认编辑器 / composer 两个事件源，原生输入框里由 WebKit 自己的 selectAll 处理。本步的判据只
+  # 要求「文本被选中」（下一条 typeInNode 整串替换选区、回读值恰为新名），AX 全选在同一个原生控件
+  # 上给出的正是这个语义 ⇒ 保留 KimiCU 的 `cmd+a`（`ax_select_all`）。替成真键盘事件不增加区分度。
   - name: 全选原名（chord 盲发不重试）
     do: key
     key: "cmd+a"
@@ -93,6 +98,7 @@ steps:
         ax: { has: '/AXTextField = "aaaren.md" /' }
       - label: 输入框持焦点
         ax: { focused: "AXTextField" }
+  # M768 通道审计（保留 AX）：同第一处 ⌘A——原生输入框的全选，判据只要求文本被选中。
   - name: 全选并输入撞名
     do: key
     key: "cmd+a"
@@ -113,6 +119,8 @@ steps:
         file: { path: aaaren.md, exists: true }
       - shot: 撞名拒绝
 
+  # M768 通道审计（保留 AX）：同本场景第一处 ⌘A——原生输入框的全选，判据只要求文本被选中
+  # （随后逐字符键入 `.git`，无 typeInNode 的整串替换）。
   - name: 忽略集名也拒绝（.git）——前端不再预检，判定只在 Enter 之后由后端给（change ignore-tiers-config）
     do: key
     key: "cmd+a"

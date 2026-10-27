@@ -63,9 +63,18 @@ steps:
     expect:
       - label: (定位前的稳定) 焦点在编辑器
         ax: { focused: "AXTextArea" }
-  - name: 光标下移到 QANCHOR 行首（同两拍 ⌃N，再 ⌃A 归行首）
+  # M768 通道审计：本步要的是「光标在 QANCHOR 行首」——⌃N 两拍下移 + **应用自己的**
+  # `editor.line-start`（⌃A）。KimiCU 0.6.8 的 press_key 对 ctrl+a 走 AX 全选兼容路径（零键盘
+  # 事件），键位层命中不到：那一步之后「行首插入 x」会变成「全文被选中后被 x 覆写」，
+  # `xQANCHOR …` 必红（假红）。⌃A 单独成步走真键盘事件；⌃N 两拍保持原通道（M766 的兼容路径只
+  # 覆盖 ctrl+a / cmd+a）。断言一条未动。
+  - name: 光标下移到 QANCHOR 行（同两拍 ⌃N）
     do: keys
-    keys: ["ctrl+n", "ctrl+n", "ctrl+a"]
+    keys: ["ctrl+n", "ctrl+n"]
+  - name: ⌃A 归行首（真键盘事件）
+    do: keys
+    channel: cgevent
+    keys: ["ctrl+a"]
   - name: 行首插入 x（行号不变、前缀失配 ⇒ 第一层应失败、落到第二层）
     do: keys
     keys: ["x"]
