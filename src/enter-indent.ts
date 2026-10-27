@@ -40,7 +40,7 @@ import { insertNewlineAndIndent } from "@codemirror/commands";
 import { insertNewlineContinueMarkupCommand } from "@codemirror/lang-markdown";
 import { syntaxTree } from "@codemirror/language";
 import type { Text } from "@codemirror/state";
-import { bareListMarkerLine, isBareMarkerText } from "./preview/lists";
+import { bareListMarkerLine, markerTextAt, markerTokenAtStart } from "./preview/lists";
 import type { EditorMode } from "./bindings/EditorMode";
 
 /**
@@ -161,13 +161,15 @@ export function swallowNativeListBeforeInput(event: {
 // M529②：DOM 读回入口拦 WebKit 裸 DOM 变更的重复 marker（inputHandler 层）
 // ---------------------------------------------------------------------------
 //
-// 背景（探针证据 test-results/m529-probe/readings.md）：M461② 的 beforeinput 拒收名单
+// 背景（探针证据 .local/probes/m529-probe/readings.md）：M461② 的 beforeinput 拒收名单
 // 只覆盖 insertOrderedList / insertUnorderedList 两个 inputType；Alex 2026-10-15 dogfood
 // 踩到的逃逸形态是 WebKit smart-list 在 CM 已消费 Enter、续行「2. 」已渲染后，又把下一
 // 序号「3. 」作为**裸 DOM 文本**插进 contenteditable（无上述 inputType）——CM 的
 // MutationObserver 把它读回成文档变更，与 CM 自己的续行叠加成「2. 3.」。本机合成键盘
 // 进不了组合态（M461 探针已登记），M529 探针以等价注入（probe-hook F11）复现其落点
-// 形状：读回变更 = 纯插入，插入文本恰为裸 marker，落点行首至光标恰为裸 marker。
+// 形状：读回变更 = 纯插入，插入文本恰为裸 marker，落点行首至光标恰为裸 marker。M529
+// 据此把判据写成「纯插入 + 行首至插入点恰为裸 marker」——M753 的复发证明这个落点假设
+// 太窄（见下），判据因此改成按结果行判。
 //
 // 修复落在 CM 的 EditorView.inputHandler 扩展点：浏览器发起的 DOM 变更在读回成文档
 // 变更之前先过 inputHandler（@codemirror/view applyDOMChangeInner），返回 true = 已
@@ -176,18 +178,44 @@ export function swallowNativeListBeforeInput(event: {
 // 自愈的：脏 DOM 被重置、无文档变更、无撤销步。键位层（Enter 续行）仍是唯一合法的
 // 列表续行来源，本层 MUST NOT 产生任何文档变更。
 //
-// 判定（纯函数，可单测）：读回变更为纯插入（from === to）、插入文本恰是一个裸 marker
-//（isBareMarkerText，与 lists.ts 的 BARE_MARKER_RE 同源）、且行首至光标恰是一个裸
-// marker（该行是空列表项、光标在 marker 之后）——三条件同时成立 = WebKit 重复续行。
-// 放行面逐条核过：普通键入是逐字符 insertText（单字符不匹配裸 marker 整串）；粘贴走
-// 剪贴板事件不经 DOM 读回；IME 组合提交是 CJK 文本；「\n + marker」的整段续行插入
-//（纯 IME 路径下光标在内容行尾，行首至光标含内容，不命中）——MUST NOT 被误吞。
+// 判定（纯函数，可单测）：三条同时成立 = WebKit 重复序号，吞掉。
+//   ① 变更**落在该行行首 marker 的区域**（marker 起点 … 内容起点，`to >= markerFrom &&
+//      from <= contentFrom`，即纯插入 / marker 区内插入 / 覆盖该区的替换都算）；
+//   ② 插入文本**以一个列表 marker token 开头**——token 识别走 lists.ts 的
+//      `markerTokenAtStart`（与 `markerTextAt` 同一份语法，左边界 = 插入文本起点）；
+//      MUST NOT 在本模块另写正则：M753 r1 P2 就是另写一条无左边界等价正则，把非法十位
+//      序号 `1234567890. ` 里的九位子串当成 token，进而以「行首不再是 marker」误吞变更；
+//   ③ 把变更套进该行后，结果行首**被破坏或变样**——行首不再是 marker（`2.3. `）、marker
+//      字面被换掉（`2.` → `3.`），或 marker 之后紧跟另一个 marker（`2. 3. `）。
+// 判据按**结果行**判而不是按读回的编码判（M753）：M529 的判据把落点钉死成「纯插入、
+// 插入点恰在内容起点」，而 markdown 列表 marker 在 DOM 里被 ListLayout 的 widget **整段
+// 替换**（`[行首, 内容起点)` 连尾随空白一起换成 ListMarker，DOM 里已没有「2. 」这串文本，
+// 见 src/preview/lists.ts 的 build）——裸插入落在 widget 邻位时，CM 按 DOM 最小 diff 读回
+// 出来的落点会落在 marker **区内**（`2.3. `）、表现为覆盖该区的替换，或夹带一个前排空白
+// （`2.  3. `），全都不满足「插入点 == 内容起点」，于是从那条缝里逃逸。按结果行判就不必
+// 枚举编码：只要读回让「行首已有 marker 的行」多出一个相邻序号、或把它的序号换掉，就吞。
+// 放行面逐条核过：普通键入是逐字符 insertText（单字符凑不出「marker + 空白」）；粘贴走
+// 剪贴板事件不经 DOM 读回；IME 组合提交是 CJK 文本；内容区（内容起点之后）的插入与替换
+// 一律不碰 marker 区域；「\n + marker」的整段续行在内容行尾也不命中——MUST NOT 被误吞。
 
-/** M529② 重复 marker 插入判定：DOM 读回变更是否为 WebKit 裸插入的重复列表 marker。 */
+/** M529② 重复 marker 插入判定：DOM 读回变更是否会在这行造出重复序号（见上方三条件）。
+ *
+ *  判据三处都取 lists.ts 同一份 marker 语法（`markerTextAt` / `markerTokenAtStart`），
+ *  MUST NOT 在本地另写正则——M753 r1 P2 正是另写一条无左边界等价正则，把非法十位序号
+ *  `1234567890. ` 里的九位子串当成 token，进而以「行首不再是 marker」误吞用户变更。 */
 export function isDuplicateMarkerInsertion(doc: Text, from: number, to: number, text: string): boolean {
-  if (from !== to) return false;
-  if (!isBareMarkerText(text)) return false;
-  return isBareMarkerText(doc.sliceString(doc.lineAt(from).from, from));
+  const line = doc.lineAt(from);
+  const marker = markerTextAt(line.text, line.from);
+  if (marker === null) return false;
+  if (!markerTokenAtStart(text)) return false;
+  if (to < marker.markerFrom || from > marker.contentFrom) return false;
+  // 结果行（只取第一行：带换行的读回属于「新行」而不是本行的 marker）。
+  const head = line.text.slice(0, from - line.from) + text + line.text.slice(to - line.from);
+  const after = head.split("\n")[0];
+  const afterMarker = markerTextAt(after);
+  if (afterMarker === null || afterMarker.marker !== marker.marker) return true;
+  // marker 之后紧跟另一个 marker（`2. 3. ` / `3. 2. ` / `2.  3. `）：切片从内容起点起解析。
+  return markerTextAt(after.slice(afterMarker.contentFrom)) !== null;
 }
 
 /** inputHandler 入口：命中重复 marker 插入时返回 true 吞掉（不 dispatch，DOM 由 CM
