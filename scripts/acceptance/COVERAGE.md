@@ -4,7 +4,7 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title）。 -->
 
-- 场景：242
+- 场景：247
 - 验收项（不同 item 编号）：222
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
@@ -80,7 +80,7 @@
 | 44 | `44-theme-live-switch` | 主题运行期切换：⌘⇧T 与 modeline 钮三档循环、逐档写回 config.json、重启后首帧持久 |
 | 45 | `45-tab-cycle-keys` | 标签循环键——⌃⇥ / ⌃⇧⇥ 的真机循环语义（末端 / 首端回卷、单标签无操作）＋ ⌘} / ⌘{ 的通道限制登记 |
 | 46 | `46-dotfile-jsonc-highlight` | dotfile 与 JSONC 高亮——.gitignore / .gitattributes / x.jsonc 逐字节回读与语言登记，.secret 对照组仍纯文本；三类可编辑（编辑 → 回读 → ⌘S 落盘） |
-| 47 | `47-file-tree-context-menu` | 文件树条目右键菜单——右键出菜单与项集分流、删除进废纸篓、树内联重命名（含撞名 / 忽略集拒绝）、复制绝对路径、在 Finder 中显示、目录下新建文件与子目录、打开中 tab 的改名联动与删除处置 |
+| 47 | `47a-menu-basics`<br>`47b-rename-validation`<br>`47c-create-and-delete`<br>`47d-dirty-tab-linkage` | 文件树右键菜单：文件行 / 目录行项集分流、行空白区命中、Esc 收起、复制完整路径（绝对路径）、在 Finder 中显示（只读弱断言）<br>树内联重命名与校验：预填 + 获焦、改名落盘与 watcher 收敛、撞名拒绝、忽略集名拒绝、Esc 退出编辑态<br>文件删除与新建：移到废纸篓（文件 / 目录两档确认文案）、目录下新建文件（自动打开）与子目录<br>打开中 dirty 文件的改名联动与删除处置：标签就地换名、未保存内容不丢、两种误报都不出现 |
 | 48 | `48-vault-registry-migration` | 注册表目录更名迁移——预置旧目录 workspaces/ 与注册项，启动后整个目录被原子搬进 vault-registry/、身份不丢、vault 照常恢复打开、迁移记一条诊断事件 |
 | 50 | `50-tab-context-menu` | 标签右键菜单——Close / Close Other Tabs / Close Tabs to the Right 三条关闭路径，脏标签走既有确认流（取消即停手） |
 | 51 | `51-tab-overflow` | TAB 溢出态——13 个长名标签下键盘直达 / 循环切换（活跃标签程序化对齐可见）＋ 右键菜单英文上屏（Close / Close Other Tabs / Close Tabs to the Right） |
@@ -234,6 +234,6 @@
 | 552 | `161-harness-path-link`<br>`221-harness-path-line-range` | harness 输出里的 vault 路径可点击（新标签 + 行号锚定 + 卡片路径）<br>harness 输出里的行范围路径可点击（:起-止 落到起始行，畸形形态不吞半截） |
 | 553 | `162-harness-dir-link` | harness 输出里的 vault 目录引用可点击（左栏定位） |
 | 554 | `168-paste-image-semantic-name` | 贴图后异步语义改名 + 正文引用同步 + toast 撤销（change add-semantic-image-naming） |
-| 655 | `230-quick-open` | 按路径快速打开（⌘P）：路径:行一次落行 / 冒号文件名整串优先 / vault 外只读 / 重启不回来 |
+| 655 | `230a-path-forms`<br>`230b-lazy-and-external-readonly`<br>`230c-restart-and-focus-scopes` | 按路径快速打开（⌘P）之一：深层路径一次 Enter 落文件 / 冒号文件名整串优先 / path:line 落点不重开 / vault 内零命中<br>按路径快速打开（⌘P）之二：索引外惰性文件按精确路径打开 / vault 外只读打开（⌘S 不写盘、键入不生效）/ 外部路径不存在按找不到处置<br>按路径快速打开（⌘P）之三：重启后 vault 外标签不回来、vault 内标签照常恢复、文件树与 harness composer 焦点下同样命中 |
 | 702 | `231-quick-open-long-path-width`<br>`232-harness-ctxpop-width` | 快速打开浮层宽度：长路径下输入面按 26em 展开、路径全文仍在 AX 里<br>Context 气泡：长读数 hover 翻出、三段内容齐全且确实绘制（P 档 34em 上限；宽度数字归 chromium 矩阵） |
 | 703 | `234-harness-table-horizontal-scroll` | harness 对话宽表：固有宽铺开、横向滚轮在表格区域执行、滚动前后截图（几何归 chromium 矩阵） |
