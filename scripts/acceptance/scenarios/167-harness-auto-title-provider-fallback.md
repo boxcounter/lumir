@@ -1,6 +1,7 @@
 ---
 id: "167-harness-auto-title-provider-fallback"
 item: 167
+tier: full
 title: 会话自动命名⑤：sessionNaming.provider 非法值回落会话 provider（启动不失败，命名调用仍走 mock）
 open: harness-note.md
 marker: "HNL-ALPHA"

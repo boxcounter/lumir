@@ -1,6 +1,7 @@
 ---
 id: "23-image-first-open-width"
 item: 23
+tier: full
 title: 图片显示宽度不依赖加载时序（首开 vs 切走切回两态收敛到栏宽）
 fixtures: [image-width-probe.md, image-width-probe-other.md, image-width-probe-wide.svg, image-width-probe-narrow.svg, image-width-probe-percent.svg]
 open: image-width-probe.md

@@ -5,6 +5,7 @@
 # 判据口径见正文「判据为什么这样写」。
 id: "140-harness-composer-nav-move"
 item: 140
+tier: full
 title: composer 内 Emacs 移动族落点：⌃B/⌃F/⌃A/⌃E/⌃N/⌃P（M447）
 open: harness-note.md
 marker: "HNL-ALPHA"

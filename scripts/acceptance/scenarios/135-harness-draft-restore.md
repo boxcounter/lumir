@@ -15,6 +15,7 @@
 #   赌窗口。
 id: "135-harness-draft-restore"
 item: 135
+tier: core
 title: composer 草稿：编辑 + 贴图后重启，输入区按块序还原（图片卡片引用 round-trip、草稿无 base64）
 open: harness-note.md
 marker: "HNL-ALPHA"

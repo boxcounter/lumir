@@ -1,6 +1,7 @@
 ---
 id: "151-harness-approval-reason"
 item: 151
+tier: full
 title: 批准卡判定依据行（M459）：危险黑名单 / 模式默认分层 / deny 规则原文三类拦截各说得出理由（mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

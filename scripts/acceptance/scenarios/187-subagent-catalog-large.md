@@ -1,6 +1,7 @@
 ---
 id: "187-subagent-catalog-large"
 item: "8.6"
+tier: full
 title: 子代理 8.6 描述超阈值：catalog_large + warning，清单不截断
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "123-harness-agents-local-md"
 item: 123
+tier: full
 title: vault 根 AGENTS.local.md 自动装配为第三层（本地覆盖层排在 vault 根 AGENTS.md 之后）
 open: harness-note.md
 marker: "HNL-ALPHA"

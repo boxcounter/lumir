@@ -1,6 +1,7 @@
 ---
 id: "19-vault-switch-guard"
 item: 19
+tier: full
 title: 切换 vault 的 dirty 前置门——「取消 / 保存并切换 / 放弃修改并切换」三条出口各自闭环
 fixtures: [tabs-a.md, tabs-b.md]
 open: tabs-a.md

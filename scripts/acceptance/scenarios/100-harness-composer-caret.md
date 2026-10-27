@@ -1,6 +1,7 @@
 ---
 id: "100-harness-composer-caret"
 item: 100
+tier: full
 title: 发送后焦点回 composer：点击发送钮后焦点落回输入区，续打字进 composer 不进文档
 open: harness-note.md
 marker: "HNL-ALPHA"

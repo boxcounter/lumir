@@ -8,6 +8,7 @@
 # （见 openspec/specs/harness/spec.md 与本 change 的 MODIFIED 增量）。
 id: "149-harness-image-mention-quote-exception"
 item: 149
+tier: full
 title: 编号禁令边界：引用卡片零编号、图片块带 Image N 标签（同消息并存的例外口径）
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "208-cron-register-skip-today"
 item: 208
+tier: full
 title: 注册日不补触发：已过点注册写当日种子，切前台 / 重启都不投递（tasks §8.2）
 open: harness-note.md
 marker: "HNL-ALPHA"

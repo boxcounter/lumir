@@ -1,6 +1,7 @@
 ---
 id: "93-harness-thinking-blocks"
 item: 93
+tier: full
 title: 思考块三态（live：折叠默认 / 展开见原文 / 时长读数）+ 会话恢复重建的思考块默认收起、折叠行取无时长变体、点开见原文
 open: harness-note.md
 marker: "HNL-ALPHA"

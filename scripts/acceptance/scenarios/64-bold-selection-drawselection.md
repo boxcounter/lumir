@@ -1,6 +1,7 @@
 ---
 id: "64-bold-selection-drawselection"
 item: 64
+tier: core
 title: 选中跨粗体：选区底色由编辑器自绘（drawSelection），粗体段不漏画、行尾空白也涂满
 steps:
   - name: 造 fixture（场景自建，不动 fixtures 目录）

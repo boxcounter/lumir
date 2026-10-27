@@ -8,6 +8,7 @@ bash scripts/acceptance/check-syntax.sh
 node scripts/acceptance/run.mjs --check
 node --test \
   scripts/acceptance/lib/app.test.mjs \
+  scripts/acceptance/lib/batches.test.mjs \
   scripts/acceptance/lib/cu.test.mjs \
   scripts/acceptance/lib/execute.test.mjs \
   scripts/acceptance/lib/evidence.test.mjs \

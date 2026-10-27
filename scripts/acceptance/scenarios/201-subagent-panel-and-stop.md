@@ -1,6 +1,7 @@
 ---
 id: "201-subagent-panel-and-stop"
 item: "8.19"
+tier: full
 title: 子代理 8.19 任务面板可见（WKWebView AX）+ 停止单个 run
 open: harness-note.md
 marker: "HNL-ALPHA"

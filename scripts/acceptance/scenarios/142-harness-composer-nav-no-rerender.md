@@ -4,6 +4,7 @@
 #（导航之前那次键入），不是「导航」——导航若被当成一个撤销步，这次 ⌘Z 会空推一步、文本仍旧。
 id: "142-harness-composer-nav-no-rerender"
 item: 142
+tier: full
 title: composer 导航不是编辑：文本不变、不成撤销步（M447）
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "60-vault-switch-restore"
 item: 60
+tier: full
 title: vault 切换的写盘段反馈与「标签栏当帧齐、正文按需装载」
 # 界面语言**显式钉为 en**（本场景的断言里有几处是 chrome 文案：树头部、守卫浮条、dirty 标记、
 # 空 vault 引导，都取文案表的 en 列）。**套件默认面是 `zh`**（run.mjs 的 `SUITE_LANGUAGE`，理由与

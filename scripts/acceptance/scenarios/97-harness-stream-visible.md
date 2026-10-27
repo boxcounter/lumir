@@ -1,6 +1,7 @@
 ---
 id: "97-harness-stream-visible"
 item: 97
+tier: full
 title: 真流式与在途停止：分段到达时可见部分正文、片间隔内点停止能中断在途流并保留已产出正文
 open: harness-note.md
 marker: "HNL-ALPHA"

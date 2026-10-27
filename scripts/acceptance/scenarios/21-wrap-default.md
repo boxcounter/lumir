@@ -1,6 +1,7 @@
 ---
 id: "21-wrap-default"
 item: 21
+tier: full
 title: 折行口径默认值（文件折行、代码块不折行）与代码块横滚容器
 marker: "折行口径探针"
 steps:

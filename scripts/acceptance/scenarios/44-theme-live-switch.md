@@ -1,6 +1,7 @@
 ---
 id: "44-theme-live-switch"
 item: 44
+tier: full
 title: 主题运行期切换：⌘⇧T 与 modeline 钮三档循环、逐档写回 config.json、重启后首帧持久
 fixtures: [theme-mermaid.md]
 open: theme-mermaid.md

@@ -9,6 +9,7 @@
 # 由 47b 独立覆盖，本组不依赖它，组间不共享运行期状态。
 id: "47c-create-and-delete"
 item: 47
+tier: full
 title: 文件删除与新建：移到废纸篓（文件 / 目录两档确认文案）、目录下新建文件（自动打开）与子目录
 fixtures: [note.md]
 steps:

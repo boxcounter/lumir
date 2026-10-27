@@ -1,6 +1,7 @@
 ---
 id: "36-restyle-content"
 item: 36
+tier: full
 title: restyle 内容面真机呈现：doc-title 块（fm 后正文前 + meta 三要素）、callout 双段标签、文件树目录 chevron 与选中行
 fixtures: [callout.md]
 open: callout.md

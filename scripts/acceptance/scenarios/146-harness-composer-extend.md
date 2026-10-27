@@ -3,6 +3,7 @@
 # 停靠点后退；随后的 ⌃H 删掉**整个选区**（而不是一个字符）。
 id: "146-harness-composer-extend"
 item: 146
+tier: full
 title: composer 扩选族：⌃⇧B 扩选后 ⌃H 删整段选区（anchor 不动，M447）
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "122-harness-message-excerpt-exclusion"
 item: 423
+tier: full
 title: harness 消息摘录 ② 排除面：思考块内选区不出钮（消息体选区出钮为正向对照）
 open: harness-note.md
 marker: "HNL-ALPHA"

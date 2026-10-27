@@ -1,6 +1,7 @@
 ---
 id: "165-harness-auto-title-legacy-fallback"
 item: 165
+tier: full
 title: 会话自动命名③：无标题记录的旧会话文件安静回落首条用户消息（不告警、不改写）
 open: harness-note.md
 marker: "HNL-ALPHA"

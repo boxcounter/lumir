@@ -9,6 +9,7 @@
 # 边界态；而套件其余场景都在「已装载 vault」的前提下跑，构造不出这个起点。
 id: "139-harness-draft-no-vault"
 item: 139
+tier: full
 title: composer 草稿：无 vault 打开时只在内存工作（不落盘、不报错、不落兜底目录）
 steps:
   - name: 默认 config 启动（last_vault = 验收 vault）——先确认应用已就绪

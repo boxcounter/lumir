@@ -1,6 +1,7 @@
 ---
 id: "204-subagent-stopped"
 item: "8.21"
+tier: full
 title: 子代理 8.21 停止自动回合 ⇒ blocked_stopped（后续通知不再唤醒）
 open: harness-note.md
 marker: "HNL-ALPHA"

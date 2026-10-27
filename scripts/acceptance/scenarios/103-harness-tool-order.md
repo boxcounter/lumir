@@ -1,6 +1,7 @@
 ---
 id: "103-harness-tool-order"
 item: 103
+tier: full
 title: 工具行时序：先调工具后作答的轮次，定稿后工具行保持在最终回答之前（M374）
 open: harness-note.md
 marker: "HNL-ALPHA"

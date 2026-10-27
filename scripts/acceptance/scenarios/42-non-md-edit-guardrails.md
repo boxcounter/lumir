@@ -1,6 +1,7 @@
 ---
 id: "42-non-md-edit-guardrails"
 item: 42
+tier: core
 title: 非 md 可编辑的护栏矩阵——二进制仍「暂不支持预览」、非 UTF-8 打开即拒、文本类不受牵连
 fixtures: [binary-probe.pdf, invalid-utf8.bin, notes.txt]
 open: notes.txt

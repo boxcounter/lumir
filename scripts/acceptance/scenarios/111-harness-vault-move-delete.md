@@ -1,6 +1,7 @@
 ---
 id: "111-harness-vault-move-delete"
 item: 111
+tier: full
 title: vault 写重定向链 + vault_move / vault_delete 的面板呈现与批准卡（M414 验收面，mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

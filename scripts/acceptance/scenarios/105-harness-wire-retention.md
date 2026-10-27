@@ -1,6 +1,7 @@
 ---
 id: "105-harness-wire-retention"
 item: 105
+tier: full
 title: wire 留存：一轮含工具循环的对话后，sessions/<vault 稳定 id>/<id>.jsonl 首行装配记录（含来源存在与否）+ 每轮完整 llm_request / llm_response（思考文本 + usage）
 open: harness-note.md
 marker: "HNL-ALPHA"

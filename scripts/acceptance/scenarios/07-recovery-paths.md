@@ -1,6 +1,7 @@
 ---
 id: "07-recovery-paths"
 item: 7
+tier: core
 title: M124 三条恢复路径（冲突双动作 / 另存为 / 外部修改重载）
 fixtures: [plain.md]
 open: plain.md

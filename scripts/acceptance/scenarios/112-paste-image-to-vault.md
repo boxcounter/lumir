@@ -1,6 +1,7 @@
 ---
 id: "112-paste-image-to-vault"
 item: 112
+tier: core
 title: 贴剪贴板图片入 vault（落盘笔记同目录 + 转码 + 内容寻址命名 + 引用 + 渲染）
 steps:
   - name: 造 notes/s1.md（vaultWrite 支持嵌套路径）

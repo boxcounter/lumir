@@ -1,6 +1,7 @@
 ---
 id: "203-subagent-chain-limit"
 item: "8.21"
+tier: full
 title: 子代理 8.21 链上限（5）：第 6 条结果不起回合、通知上屏、提示行 +「继续」
 open: harness-note.md
 marker: "HNL-ALPHA"

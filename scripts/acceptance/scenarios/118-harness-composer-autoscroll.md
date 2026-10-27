@@ -1,6 +1,7 @@
 ---
 id: "118-harness-composer-autoscroll"
 item: 118
+tier: full
 title: composer 断行后视口自动滚到光标行：最下一行带 = 新断出的空行（M419，HC2）
 open: harness-note.md
 marker: "HNL-ALPHA"

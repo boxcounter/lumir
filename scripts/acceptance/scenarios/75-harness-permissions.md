@@ -1,6 +1,7 @@
 ---
 id: "75-harness-permissions"
 item: 75
+tier: full
 title: Harness ⑥ 权限规则：deny 命中直接拒绝（deny > allow）、allow 命中免闸（change add-harness-probe，mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -6,6 +6,7 @@
 # `node scripts/acceptance/run.mjs 47` 按 **id 前缀**或 item 号选中四组。
 id: "47d-dirty-tab-linkage"
 item: 47
+tier: full
 title: 打开中 dirty 文件的改名联动与删除处置：标签就地换名、未保存内容不丢、两种误报都不出现
 fixtures: [note.md]
 steps:

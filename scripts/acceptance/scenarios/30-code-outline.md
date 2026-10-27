@@ -1,6 +1,7 @@
 ---
 id: "30-code-outline"
 item: 30
+tier: full
 title: 代码文件的符号大纲：⌘⇧O 展开符号条目、跳转到声明、惰性解析（没按过 ⌘⇧O 就不解析、不出指示段）、两条新空态提示
 fixtures: [code-outline.js, code-outline-comments.py, code-outline.lua]
 open: code-outline.js

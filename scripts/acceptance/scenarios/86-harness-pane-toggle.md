@@ -1,6 +1,7 @@
 ---
 id: "86-harness-pane-toggle"
 item: 86
+tier: full
 title: ⌘⇧A 开合 harness pane：自动分栏默认 1:1、再按收起不丢标签、pane.close 于 harness pane 同义
 fixtures: [tabs-a.md]
 open: tabs-a.md

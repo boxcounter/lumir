@@ -1,6 +1,7 @@
 ---
 id: "250-settings-panel-provider-crud"
 item: 250
+tier: core
 title: 设置面板：⌘, 打开、增删 provider、重复 id 被拒且文件不变、删除保护与空清单
 open: harness-note.md
 marker: "HNL-ALPHA"

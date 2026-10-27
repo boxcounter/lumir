@@ -1,6 +1,7 @@
 ---
 id: "209-cron-register-reject"
 item: 209
+tier: full
 title: 拒绝注册不落盘：同一轮里另一条已采纳的任务必须在文件里（正观测）（tasks §8.3）
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "39-titlebar-identity"
 item: 39
+tier: core
 title: 标题栏产品标识块：版本号与 tauri.conf.json 逐字节一致、窄窗 ≈520px 退让 modeline、标识块上拖拽窗口成立、三主题截图
 fixtures: [identity.md]
 open: identity.md

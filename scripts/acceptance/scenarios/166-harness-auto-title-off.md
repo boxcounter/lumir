@@ -1,6 +1,7 @@
 ---
 id: "166-harness-auto-title-off"
 item: 166
+tier: full
 title: 会话自动命名④：sessionNaming.enabled=false 时不发起调用、不写标题记录（会话名走回落口径）
 open: harness-note.md
 marker: "HNL-ALPHA"

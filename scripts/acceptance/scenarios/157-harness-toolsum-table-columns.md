@@ -11,6 +11,7 @@
 # 空槽列位的判据落到单测（见正文「覆盖边界」）。
 id: "157-harness-toolsum-table-columns"
 item: 157
+tier: full
 title: "harness transcript：cli_run 长参数行显示命令本体、空单元格不在表格里丢列（M528）"
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "50-tab-context-menu"
 item: 50
+tier: full
 title: 标签右键菜单——Close / Close Other Tabs / Close Tabs to the Right 三条关闭路径，脏标签走既有确认流（取消即停手）
 fixtures: [tabs-a.md, tabs-b.md, tabs-long.md]
 seed:

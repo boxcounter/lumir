@@ -1,6 +1,7 @@
 ---
 id: "228-caret-visibility"
 item: 228
+tier: evidence
 title: 光标可见性——属性盒按下即进 YAML 源码（不再出现贯穿整块的竖线）、doc-title / 正文按下不改文档、光标 2px 且以约 1.2s 周期闪烁（light + eink 截图证据）
 fixtures: [caret-fm.md]
 open: caret-fm.md

@@ -1,6 +1,7 @@
 ---
 id: "235-keybindings-lookup-query"
 item: 235
+tier: full
 title: 键位速查——每命令一行的内容模型、文本查询（标签 / 别名 / id）、来由零命中与查询空态
 fixtures: [plain.md]
 open: plain.md

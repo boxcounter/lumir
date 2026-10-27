@@ -1,6 +1,7 @@
 ---
 id: "184-subagent-approval-reject"
 item: "8.3"
+tier: full
 title: 子代理 8.3 批准透传（拒绝 ⇒ denied_calls=1、文件未删、子运行继续）
 open: harness-note.md
 marker: "HNL-ALPHA"

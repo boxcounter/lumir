@@ -1,6 +1,7 @@
 ---
 id: "16-startup-restore"
 item: 16
+tier: full
 title: 启动自动恢复 last_vault（终态与失效路径）
 fixtures: [plain.md]
 steps:

@@ -1,6 +1,7 @@
 ---
 id: "37-heading-hierarchy"
 item: 37
+tier: full
 title: 标题六级阶梯（稿 A）真机呈现：H1–H6 全部渲染、编辑器源码不动、文档零写盘
 fixtures: [headings-ramp.md]
 open: headings-ramp.md

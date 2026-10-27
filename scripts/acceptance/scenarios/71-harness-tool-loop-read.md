@@ -1,6 +1,7 @@
 ---
 id: "71-harness-tool-loop-read"
 item: 71
+tier: core
 title: Harness ② 工具循环：vault_read 读文件并回答（change add-harness-probe，mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

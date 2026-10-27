@@ -6,6 +6,7 @@
 # （fixture 两轮都带着这些读数）+ 命中率行只出百分比。
 id: "131-harness-cache-session"
 item: 131
+tier: full
 title: Harness 缓存读数①：控制行显示会话累计命中率、气泡命中率行同源（单回合值 / 成因句 / 写入行不上屏）、切 vault 回来读数仍在
 open: harness-note.md
 marker: "HNL-ALPHA"

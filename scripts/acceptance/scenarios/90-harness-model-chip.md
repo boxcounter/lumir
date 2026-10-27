@@ -1,6 +1,7 @@
 ---
 id: "90-harness-model-chip"
 item: 90
+tier: full
 title: 合并选择器：读数 = model · effort、浮层三维分段（mock 隐藏）、provider 选择写回（M373 适配 chip 合并）
 open: harness-note.md
 marker: "HNL-ALPHA"

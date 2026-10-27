@@ -1,6 +1,7 @@
 ---
 id: "237-keybindings-keyboard"
 item: 237
+tier: full
 title: 键位速查——键盘全程：输入框焦点、Tab 循环、↑↓/Enter 详情、End 末行、Esc 分层与关闭
 fixtures: [plain.md]
 open: plain.md

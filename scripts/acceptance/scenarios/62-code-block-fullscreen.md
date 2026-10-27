@@ -1,6 +1,7 @@
 ---
 id: "62-code-block-fullscreen"
 item: 62
+tier: full
 title: 代码块放大全屏：命令打开遮罩、整块源码在场（含文档视口之外的行）、三条关闭路径关闭后阅读位置不变量成立、缩进块可放大、code 模式无入口、不改写源文件
 fixtures: [code-block-fullscreen.md, code-block-fullscreen.txt]
 open: code-block-fullscreen.md

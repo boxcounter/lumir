@@ -7,6 +7,7 @@
 # 判据在 src-tauri 的单测上（见正文「断言口径」）。
 id: "152-harness-transcript-link-and-time"
 item: 152
+tier: full
 title: harness transcript：裸 URL 在段落与表格里上屏为链接、恢复重放的消息带时间读数
 open: harness-note.md
 marker: "HNL-ALPHA"

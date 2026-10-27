@@ -1,6 +1,7 @@
 ---
 id: "183-subagent-approval-approve"
 item: "8.3"
+tier: full
 title: 子代理 8.3 批准透传（采纳 ⇒ 文件删除）
 open: harness-note.md
 marker: "HNL-ALPHA"

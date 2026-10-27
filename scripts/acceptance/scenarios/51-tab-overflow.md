@@ -1,6 +1,7 @@
 ---
 id: "51-tab-overflow"
 item: 51
+tier: full
 title: TAB 溢出态——13 个长名标签下键盘直达 / 循环切换（活跃标签程序化对齐可见）＋ 右键菜单英文上屏（Close / Close Other Tabs / Close Tabs to the Right）
 seed:
   registry:

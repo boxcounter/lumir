@@ -1,6 +1,7 @@
 ---
 id: "53-bold-click-selection"
 item: 53
+tier: core
 title: 点击粗体不产生幻影选区（M259）——指针按压期间的落点判定不跨布局
 steps:
   - name: 造 fixture（场景自建，不动 fixtures 目录）

@@ -12,9 +12,10 @@
 //   node scripts/acceptance/coverage.mjs --check   # 只校验、不写盘（docs-check 与 run.mjs --check 调它）
 //
 // 判据（任一命中即 FAIL）：
-//   - 场景 front-matter 缺 `id` / `item` / `title`；
+//   - 场景 front-matter 缺 `id` / `item` / `title` / `tier`；
 //   - `id` 不是合法标识符，或在场景之间重复（`id` 是场景的唯一键，也是 `run.mjs <id 前缀>` 的筛选键）；
 //   - `item` 形态非法（只接受正整数，或 `8.12` 这类「项号.子项号」）；
+//   - `tier` 不在闭集合 core / full / bundle / evidence（M749），或与 `requires: bundle` 不一致；
 //   - COVERAGE.md 里同一 `item` 出现两行（`item` 是覆盖表的行键）；
 //   - 覆盖表漏场景 / 多出场景目录里不存在的 id / 同一场景 id 出现两次；
 //   - COVERAGE.md 与生成结果不一致（新增、改名、删场景或手改文件后没重新生成）。
@@ -31,6 +32,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadScenario } from "./lib/execute.mjs";
+import { checkTiers, isTier, summarizeTiers, TIERS } from "./lib/batches.mjs";
 import { envHome, repoRoot, vaultDir } from "./lib/util.mjs";
 
 export const SCENARIOS_DIR = path.join(repoRoot(), "scripts/acceptance/scenarios");
@@ -105,7 +107,10 @@ function cell(value) {
  * 返回 `{ markdown, problems, items }`：`problems` 非空时调用方 MUST NOT 写盘（表会缺行）。
  */
 export function buildCoverage(scenarios) {
-  const problems = [];
+  // tier 的闭集合 / 缺标 / 与 `requires: bundle` 的一致性（M749）由 batches.mjs 单点判——批次筛选
+  // 与覆盖表用的是同一套声明校验，两处各判一遍必然漂移（REVIEW.md「同一语义两处真源」条）。
+  // 放在这里是因为「表里多一列 tier」与「声明必须合法」是同一件事：缺标就没有可渲染的单元格。
+  const problems = checkTiers(scenarios);
   const idOwners = new Map();
   const items = new Map();
 
@@ -114,6 +119,7 @@ export function buildCoverage(scenarios) {
     const id = typeof scenario.id === "string" ? scenario.id.trim() : "";
     const title = typeof scenario.title === "string" ? scenario.title.trim() : "";
     const item = normalizeItem(scenario.item);
+    const tier = isTier(scenario.tier) ? scenario.tier : String(scenario.tier ?? "?");
 
     if (scenario.idDeclared === false || id === "") problems.push(`${label}: 缺少 id（front-matter 必填）`);
     else if (!ID_PATTERN.test(id)) problems.push(`${label}: id '${id}' 形态非法（只允许字母 / 数字 / . _ -）`);
@@ -137,7 +143,7 @@ export function buildCoverage(scenarios) {
     // 三个字段齐全才进表：缺一个就无法定位 / 无法阅读，宁可整份生成失败也不产出缺行索引。
     if (!id || !ID_PATTERN.test(id) || item === null || !title) continue;
     const row = items.get(item) ?? { item, entries: [] };
-    row.entries.push({ id, title });
+    row.entries.push({ id, title, tier });
     items.set(item, row);
   }
 
@@ -159,26 +165,40 @@ function renderCoverage(rows, scenarioCount) {
     "",
     "<!-- 生成：node scripts/acceptance/coverage.mjs　　校验：同一命令加 --check",
     "     （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）",
-    "     唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title）。 -->",
+    "     唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->",
     "",
     `- 场景：${scenarioCount}`,
     `- 验收项（不同 item 编号）：${rows.length}`,
+    ...tierSummaryLines(rows),
     "",
     "`item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景",
     "文件是既有设计（如 item 7 = `07` / `07b` / `07c` 三条恢复路径），故表里一项一行、行内列出全部场景；",
-    "同一 item 出现在两行才会判红。本表是**场景清单**，不是验收结论——每个场景的真实 PASS 证据在",
-    "`.local/acceptance/<批次>/`（git 外），未收口的行为限制与待 dogfood 项在 `docs/backlog.md`",
+    "同一 item 出现在两行才会判红。`tier` 是场景所属批次（闭集合 core / full / bundle / evidence），",
+    "`node scripts/acceptance/run.mjs --batch <档>` 按它筛；`full` 是语义上的**全量**（含其余各档），",
+    "故 `--batch full` 与不带 `--batch` 跑的是同一批场景。本表是**场景清单**，不是验收结论——每个场景的真实 PASS",
+    "证据在 `.local/acceptance/<批次>/`（git 外），未收口的行为限制与待 dogfood 项在 `docs/backlog.md`",
     "「待真机验收」节。",
     "",
-    "| item | 场景 | 标题 |",
-    "| ---: | --- | --- |",
+    "| item | 场景 | 标题 | tier |",
+    "| ---: | --- | --- | --- |",
   ];
   for (const { item, entries } of rows) {
     const ids = entries.map((e) => `\`${e.id}\``).join("<br>");
     const titles = entries.map((e) => cell(e.title)).join("<br>");
-    lines.push(`| ${item} | ${ids} | ${titles} |`);
+    const tiers = entries.map((e) => e.tier).join("<br>");
+    lines.push(`| ${item} | ${ids} | ${titles} | ${tiers} |`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+/** 表头的分档条数（与 `run.mjs --check` 打印的那一行同源：都走 batches.mjs 的 summarizeTiers）。 */
+function tierSummaryLines(rows) {
+  const counts = summarizeTiers(rows.flatMap((row) => row.entries));
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  return [
+    `- 分档：${TIERS.map((tier) => `${tier} ${counts[tier]}`).join(" / ")}` +
+      `（full 批 = 全部 ${total} 个，含其余各档）`,
+  ];
 }
 
 /** 表格数据行按单元格拆（跳过表头与分隔行；`\|` 是转义过的竖线，不作分隔）。 */
@@ -191,7 +211,11 @@ function splitRow(line) {
 
 /**
  * 从 COVERAGE.md 文本里解析覆盖表（制品层，不信任生成器内存里的 rows）。
- * 返回 `{ rows: [{ item, ids }], problems }`。
+ * 返回 `{ rows: [{ item, ids, tiers }], problems }`。
+ *
+ * 列序固定为 `| item | 场景 | 标题 | tier |`（M749 在末尾追加 tier 列，前三列不变），故 item / ids
+ * 的取法与旧表逐字相同；tier 列按闭集合逐格校验——手改成不存在的档名时点名单行，而不是只留下
+ * 一句「与 front-matter 不一致」让人自己找。
  */
 export function parseCoverageTable(text) {
   const rows = [];
@@ -203,7 +227,7 @@ export function parseCoverageTable(text) {
       continue;
     }
     if (!inTable) {
-      // 表格以表头之后的分隔行为起点：`| ---: | --- | --- |`。
+      // 表格以表头之后的分隔行为起点：`| ---: | --- | --- | --- |`。
       if (/^\|\s*:?-{3,}/.test(line.trimStart())) inTable = true;
       continue;
     }
@@ -218,7 +242,21 @@ export function parseCoverageTable(text) {
       problems.push(`表格行列缺失（item='${item}'，场景 id 读不到）：${line.trim()}`);
       continue;
     }
-    rows.push({ item, ids });
+    const tiers = (cells[3] ?? "")
+      .split("<br>")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (tiers.length === 0) {
+      problems.push(`表格行缺 tier 列（item=${item}）：${line.trim()}——表头是 | item | 场景 | 标题 | tier |`);
+    } else if (tiers.length !== ids.length) {
+      problems.push(`表格行 tier 与场景数不符（item=${item}：${ids.length} 个场景 / ${tiers.length} 个 tier）`);
+    } else {
+      const bad = tiers.filter((t) => !isTier(t));
+      if (bad.length) {
+        problems.push(`表格行 tier 取值非法（item=${item}）：${bad.join("、")}——闭集合 ${TIERS.join(" / ")}`);
+      }
+    }
+    rows.push({ item, ids, tiers });
   }
   if (rows.length === 0) problems.push("没有找到覆盖表数据行（表头或表格缺失）");
   return { rows, problems };
@@ -289,6 +327,11 @@ export async function checkCoverage({ scenarios, coveragePath = COVERAGE_PATH } 
 async function main() {
   const check = process.argv.includes("--check");
   const scenarios = await loadScenarios();
+  // 分档条数（M749）：PASS 行里带上它，`--batch` 各档「该跑多少条」在同一条命令上可对账。
+  const tierLine = (() => {
+    const counts = summarizeTiers(scenarios);
+    return `${TIERS.map((tier) => `${tier} ${counts[tier]}`).join(" / ")}（full = 全部 ${scenarios.length} 个）`;
+  })();
 
   if (check) {
     const problems = await checkCoverage({ scenarios });
@@ -299,6 +342,7 @@ async function main() {
     }
     const { items } = buildCoverage(scenarios);
     console.log(`COVERAGE PASS（${scenarios.length} 个场景 / ${items.length} 个 item，与 COVERAGE.md 一致）`);
+    console.log(`分档：${tierLine}`);
     return;
   }
 
@@ -310,6 +354,7 @@ async function main() {
   }
   await writeFile(COVERAGE_PATH, markdown);
   console.log(`COVERAGE WRITE（${scenarios.length} 个场景 / ${items.length} 个 item）→ ${path.relative(repoRoot(), COVERAGE_PATH)}`);
+  console.log(`分档：${tierLine}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

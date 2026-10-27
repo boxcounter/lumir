@@ -1,6 +1,7 @@
 ---
 id: "03-table-ctrl-np"
 item: 3
+tier: full
 title: Ctrl+N/P 表格行为（M118 裁决）
 fixtures: [table.md]
 open: table.md

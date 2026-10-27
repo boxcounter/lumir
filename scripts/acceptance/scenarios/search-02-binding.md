@@ -1,6 +1,7 @@
 ---
 id: "search-02-binding"
 item: 10
+tier: full
 title: 搜索键位可重绑（config.json 的 keys 表）
 fixtures: [search-probe.md]
 open: search-probe.md

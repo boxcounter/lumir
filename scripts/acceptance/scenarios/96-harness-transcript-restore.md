@@ -6,6 +6,7 @@
 # JSON 原文不上屏）。
 id: "96-harness-transcript-restore"
 item: 96
+tier: core
 title: harness transcript 快照恢复保真：切 vault 回来后工具行带人话化参数、工具清单按消息分块、无光秃 Agent 头
 open: harness-note.md
 marker: "HNL-ALPHA"

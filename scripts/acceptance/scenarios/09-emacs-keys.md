@@ -1,6 +1,7 @@
 ---
 id: "09-emacs-keys"
 item: 9
+tier: core
 title: Emacs 键位行为 + ⌘Z 真机路径 + ⌘/ 键位面板
 fixtures: [keys.md]
 open: keys.md

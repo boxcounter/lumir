@@ -1,6 +1,7 @@
 ---
 id: "238-escape-overlay-close"
 item: 238
+tier: full
 title: Escape 只收最上层浮层且永不退出应用（change fix-escape-overlay-close-oct24）：权限浮层重建失焦后按 Esc、修饰键准入、焦点回还
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "65-external-reload-reading-position"
 item: 65
+tier: full
 title: 外部改写当前文档：重载后视口不回篇首（阅读位置恢复）+ 表格全屏遮罩退出
 fixtures: [reading-position-reload.md]
 open: reading-position-reload.md

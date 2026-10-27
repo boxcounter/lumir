@@ -1,6 +1,7 @@
 ---
 id: "08c-crash-recovery"
 item: 8
+tier: core
 title: 崩溃恢复——启动提示双动作与「恢复内容」
 fixtures: [plain.md]
 open: plain.md

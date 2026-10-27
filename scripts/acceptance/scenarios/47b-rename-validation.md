@@ -5,6 +5,7 @@
 # `node scripts/acceptance/run.mjs 47` 按 **id 前缀**或 item 号选中四组。
 id: "47b-rename-validation"
 item: 47
+tier: full
 title: 树内联重命名与校验：预填 + 获焦、改名落盘与 watcher 收敛、撞名拒绝、忽略集名拒绝、Esc 退出编辑态
 fixtures: [note.md]
 steps:

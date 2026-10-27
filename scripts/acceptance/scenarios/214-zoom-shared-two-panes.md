@@ -7,6 +7,7 @@
 # ——本场景只留截图供人眼复核（见正文「覆盖边界」）。
 id: "214-zoom-shared-two-panes"
 item: 214
+tier: full
 title: 一套字号两个 pane：焦点在 composer 内按 ⌘= / ⌘0，编辑器内容字号同步放大 / 复位（M627）
 fixtures: [toc-long.md, harness-note.md]
 open: toc-long.md

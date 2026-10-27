@@ -1,6 +1,7 @@
 ---
 id: "22-wrap-toggle"
 item: 22
+tier: full
 title: 折行开关运行期翻转（[keys] 绑定后生效、两轴独立、不落盘）
 config:
   keys: { "Cmd-Shift-J": "view.toggle-line-wrap", "Cmd-Shift-K": "view.toggle-code-block-wrap" }

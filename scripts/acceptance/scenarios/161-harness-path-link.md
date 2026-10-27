@@ -7,6 +7,7 @@
 # 套件没有 scrollTop 读数——与 CL-1 / CL-2 的同一已知边界，见正文「覆盖边界」）。
 id: "161-harness-path-link"
 item: 552
+tier: full
 title: harness 输出里的 vault 路径可点击（新标签 + 行号锚定 + 卡片路径）
 open: harness-note.md
 marker: "HNL-ALPHA"

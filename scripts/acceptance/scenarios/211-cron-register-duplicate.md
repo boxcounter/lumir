@@ -1,6 +1,7 @@
 ---
 id: "211-cron-register-duplicate"
 item: 211
+tier: full
 title: 重名拒绝：cron_task_exists、配置逐字节不变、面板工具行显示错误摘要（tasks §8.5）
 open: harness-note.md
 marker: "HNL-ALPHA"

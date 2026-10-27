@@ -1,6 +1,7 @@
 ---
 id: "20-image-fallback"
 item: 20
+tier: full
 title: 图片引用的可见回退（svg 正常显示 / 固有宽度不定者按栏宽填充 / 不可见即占位 / 脚本不执行）
 fixtures: [image-fallback.md, image-fallback-normal.svg, image-fallback-percent.svg, image-fallback-empty.png, image-fallback-script.svg]
 open: image-fallback.md

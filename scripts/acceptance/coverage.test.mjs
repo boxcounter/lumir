@@ -3,7 +3,8 @@
 // 为什么需要它（M690）：覆盖表取代了 backlog 里手维护的「已机验」注册表，一旦生成器或检查器失效，
 // 覆盖表会**静默**少行 / 多行 / 停在旧版本——没有红，只有一份看着完整的假索引（REVIEW.md「断言等价
 // 于子串」「同一语义两处真源」条）。故按本仓惯例构造**必须让它 FAIL 的输入**逐条实测：缺字段、重复 id、
-// 非法 item、表内同一 item 两行、漏场景 / 多 id、手改后与场景不一致。
+// 非法 item、表内同一 item 两行、漏场景 / 多 id、手改后与场景不一致；M749 起再加 tier 一列的四条——
+// 缺标 / 取值越出闭集合 / 与场景数不齐 / `tier: bundle` 与 `requires: bundle` 只写一边。
 //
 // 跑法（与 execute.test.mjs 同例，经 scripts/acceptance/check-suite.sh 接入 quick 与 docs CI）：
 //   node --test scripts/acceptance/coverage.test.mjs
@@ -18,9 +19,9 @@ import test from "node:test";
 import { buildCoverage, checkCoverage, checkCoverageText, loadScenarios, normalizeItem } from "./coverage.mjs";
 import { repoRoot } from "./lib/util.mjs";
 
-/** 最小场景对象：只带覆盖表要的三个字段 + 文件标签（与 loadScenario 的返回形状同源）。 */
+/** 最小场景对象：只带覆盖表要的字段 + 文件标签（与 loadScenario 的返回形状同源）。 */
 function scenario(id, item, title, extra = {}) {
-  return { id, item, title, file: path.join(os.tmpdir(), `${id || "no-id"}.md`), ...extra };
+  return { id, item, title, tier: "full", file: path.join(os.tmpdir(), `${id || "no-id"}.md`), ...extra };
 }
 
 function tmpRoot(name) {
@@ -30,11 +31,12 @@ function tmpRoot(name) {
   return dir;
 }
 
-function writeScenario(dir, { id, item, title }) {
+function writeScenario(dir, { id, item, title, tier = "full" }) {
   const lines = ["---"];
   if (id !== undefined) lines.push(`id: "${id}"`);
   if (item !== undefined) lines.push(`item: ${JSON.stringify(item)}`);
   if (title !== undefined) lines.push(`title: ${JSON.stringify(title)}`);
+  lines.push(`tier: ${tier}`);
   lines.push("steps:", "  - name: 占位", "    expect:", "      - shot: 占位", "---", "", "正文占位。");
   fs.writeFileSync(path.join(dir, `${id}.md`), `${lines.join("\n")}\n`);
 }
@@ -173,7 +175,7 @@ test("表与场景一致时通过；漏行 / 多 id / 同一 item 两行 / 同�
   );
 
   // ③ 多出场景目录里不存在的 id。
-  const extraRow = `${markdown}| 999 | \`ghost-note\` | 鬼 |\n`;
+  const extraRow = `${markdown}| 999 | \`ghost-note\` | 鬼 | full |\n`;
   assert.ok(problemsMatching(checkCoverageText(scenarios, extraRow), /不存在的 id：.*ghost-note/).length > 0);
 
   // ④ 同一场景 id 在同一行出现两次。
@@ -215,4 +217,44 @@ test("端到端：从磁盘场景生成、写到临时文件、再校验（新�
   // 重新生成后恢复绿。
   fs.writeFileSync(coveragePath, buildCoverage(grown).markdown);
   assert.deepEqual(await checkCoverage({ scenarios: grown, coveragePath }), []);
+});
+
+test("表格 tier 列与场景逐个对齐；缺列 / 取值非法 / 与场景数不符都逐行点名", () => {
+  const scenarios = [scenario("a-note", 1, "甲", { tier: "core" }), scenario("b-note", 1, "乙", { tier: "full" })];
+  const { markdown, problems } = buildCoverage(scenarios);
+  assert.deepEqual(problems, []);
+  const row = markdown.split("\n").find((line) => line.startsWith("| 1 |"));
+  assert.match(row, /\| `a-note`<br>`b-note` \| 甲<br>乙 \| core<br>full \|$/, "tier 顺序与 id 列逐个对齐");
+  assert.match(markdown, /- 分档：core 1 \/ full 1 \/ bundle 0 \/ evidence 0/);
+
+  const noTierCol = markdown.replace(row, "| 1 | `a-note`<br>`b-note` | 甲<br>乙 |");
+  assert.ok(problemsMatching(checkCoverageText(scenarios, noTierCol), /表格行缺 tier 列/).length > 0);
+
+  const badTier = markdown.replace(row, "| 1 | `a-note`<br>`b-note` | 甲<br>乙 | Core<br>full |");
+  assert.ok(problemsMatching(checkCoverageText(scenarios, badTier), /tier 取值非法.*Core/).length > 0);
+
+  const shortTiers = markdown.replace(row, "| 1 | `a-note`<br>`b-note` | 甲<br>乙 | core |");
+  assert.ok(problemsMatching(checkCoverageText(scenarios, shortTiers), /tier 与场景数不符/).length > 0);
+});
+
+test("tier 必填且在闭集合内；tier: bundle 与 requires: bundle 必须一一对应", () => {
+  assert.ok(
+    problemsMatching(buildCoverage([scenario("no-tier", 1, "甲", { tier: undefined })]).problems, /no-tier: 缺少 tier/)
+      .length > 0,
+  );
+  assert.ok(
+    problemsMatching(buildCoverage([scenario("bad-tier", 1, "甲", { tier: "Core" })]).problems, /tier "Core" 不在闭集合/)
+      .length > 0,
+  );
+  assert.ok(
+    problemsMatching(buildCoverage([scenario("t1", 1, "甲", { tier: "bundle" })]).problems, /tier=bundle 但没写 requires: bundle/)
+      .length > 0,
+  );
+  assert.ok(
+    problemsMatching(
+      buildCoverage([scenario("t2", 1, "甲", { tier: "full", requires: "bundle" })]).problems,
+      /声明了 requires: bundle 但 tier=full/,
+    ).length > 0,
+  );
+  assert.deepEqual(buildCoverage([scenario("t3", 1, "甲", { tier: "bundle", requires: "bundle" })]).problems, []);
 });

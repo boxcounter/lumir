@@ -3,6 +3,7 @@
 # ⌃D 在卡片前缘删整卡（与 Backspace / Delete 键同一份模型语义）。
 id: "143-harness-composer-nav-delete-family"
 item: 143
+tier: full
 title: composer 删除族按整卡：⌃H / ⌃D 删掉整张卡片（M447）
 open: harness-note.md
 marker: "HNL-ALPHA"

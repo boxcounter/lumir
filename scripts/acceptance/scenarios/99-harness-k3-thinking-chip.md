@@ -1,6 +1,7 @@
 ---
 id: "99-harness-k3-thinking-chip"
 item: 99
+tier: full
 title: k3-256k 思考程度可用（M373 合并 chip）：订阅模型配置下 chip 可点、浮层三档、选择写会话
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "31-code-variable-highlight"
 item: 31
+tier: full
 title: 双击标识符高亮同一变量：选区成立即判定（底纹在场留截图）、装饰不改文档、T3 与 md 静默
 fixtures: [var-highlight.js, var-highlight.lua, var-highlight.md]
 open: var-highlight.js

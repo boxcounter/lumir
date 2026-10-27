@@ -33,6 +33,7 @@
 #    backlog「待修 findings」的「菜单 Paste 之后注入不落地」条与 README 的「原生剪贴板命令」已知边界。
 id: "134-harness-composer-intercard-caret"
 item: 134
+tier: full
 title: composer 两张相邻卡片之间：⌃B 落位 → 键入落在两卡之间 → 一次撤销回到前态（M450，HC3）
 open: harness-note.md
 marker: "HNL-ALPHA"

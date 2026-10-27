@@ -11,6 +11,7 @@
 #      tests/visual/scenes/m242-tab-cycle-key-tokens.spec.ts。
 id: "215-composer-select-all-and-tab-keys"
 item: 215
+tier: full
 title: composer 全选（经同命令可达键）与 tab.prev / tab.next 的真机命令链路（M627）
 fixtures: [tabs-a.md, tabs-b.md, harness-note.md]
 open: tabs-a.md

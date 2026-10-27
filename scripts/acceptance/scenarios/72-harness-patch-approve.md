@@ -1,6 +1,7 @@
 ---
 id: "72-harness-patch-approve"
 item: 72
+tier: core
 title: Harness ③ patch 批准闸：采纳落盘、未触及部分逐字节不变、打开中会话同步（change add-harness-probe，mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

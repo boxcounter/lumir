@@ -1,6 +1,7 @@
 ---
 id: "02-math-click"
 item: 2
+tier: full
 title: 公式渲染态与进编辑路径（⌃B 次数仍待判定）
 fixtures: [math.md]
 open: math.md

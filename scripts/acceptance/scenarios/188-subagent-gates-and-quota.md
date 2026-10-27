@@ -1,6 +1,7 @@
 ---
 id: "188-subagent-gates-and-quota"
 item: "8.7"
+tier: full
 title: 子代理 8.7 三重闸触顶 + 配额（partial + stopped_by + 无追加调用）
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "80-pane-session-restore"
 item: 80
+tier: full
 title: 分栏会话恢复——双 pane 各一标签，启动恢复后归位原 pane（不挤到右栏）
 fixtures: [tabs-a.md, tabs-b.md]
 seed:

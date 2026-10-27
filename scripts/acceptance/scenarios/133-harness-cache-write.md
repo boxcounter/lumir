@@ -5,6 +5,7 @@
 # 留存面断言原样保留（这是该遥测现在唯一的可读入口）。
 id: "133-harness-cache-write"
 item: 133
+tier: full
 title: Harness 缓存读数③：缓存写入只进留存（本回合 + 按 0 记）、气泡不渲染写入行
 open: harness-note.md
 marker: "HNL-ALPHA"

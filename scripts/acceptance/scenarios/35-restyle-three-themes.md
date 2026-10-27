@@ -1,6 +1,7 @@
 ---
 id: "35-restyle-three-themes"
 item: 35
+tier: evidence
 title: 三主题真机呈现（light / dark / eink 各一张截图，重启生效）与 overlay 标题栏的窗口级读数
 fixtures: [keys.md]
 open: keys.md

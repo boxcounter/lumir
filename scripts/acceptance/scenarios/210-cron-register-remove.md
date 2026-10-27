@@ -1,6 +1,7 @@
 ---
 id: "210-cron-register-remove"
 item: 210
+tier: full
 title: 对话删除任务：配置退场、cron_task_removed、到点不再通知（对照组照常响）（tasks §8.4）
 open: harness-note.md
 marker: "HNL-ALPHA"

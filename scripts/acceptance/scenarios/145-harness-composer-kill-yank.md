@@ -3,6 +3,7 @@
 # 按 ⌃Y 能把它插出来（编辑器与 composer 是同一个槽、同一份相接判定）。
 id: "145-harness-composer-kill-yank"
 item: 145
+tier: full
 title: kill 槽跨面共用：编辑器 ⌃K → composer ⌃Y（M447）
 open: harness-note.md
 marker: "HNL-ALPHA"

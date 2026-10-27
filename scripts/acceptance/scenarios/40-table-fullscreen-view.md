@@ -1,6 +1,7 @@
 ---
 id: "40-table-fullscreen-view"
 item: 40
+tier: full
 title: 表格放大全屏查看：命令打开遮罩、快照在场、Esc 关闭焦点回编辑器、降级表无入口、不改写源文件
 fixtures: [table-fullscreen.md]
 open: table-fullscreen.md

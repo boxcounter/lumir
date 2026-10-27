@@ -13,6 +13,7 @@
 # （REVIEW.md 「断言等价于子串」条：先想清楚什么输入会让它红）。
 id: "136-harness-draft-vault-scope"
 item: 136
+tier: full
 title: composer 草稿按 vault 各留各的（含切走前 flush 最后一次编辑）+ vault 零写入
 open: harness-note.md
 marker: "HNL-ALPHA"

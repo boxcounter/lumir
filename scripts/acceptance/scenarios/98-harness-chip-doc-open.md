@@ -1,6 +1,7 @@
 ---
 id: "98-harness-chip-doc-open"
 item: 98
+tier: full
 title: "Harness ⑭ 上下文 chip 随文档打开即时刷新（不开 composer 也刷新；M370 修复「开着文件显示 Context: none」）"
 open: harness-note.md
 marker: "HNL-ALPHA"

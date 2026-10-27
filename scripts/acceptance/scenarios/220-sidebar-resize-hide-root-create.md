@@ -1,6 +1,7 @@
 ---
 id: "220-sidebar-resize-hide-root-create"
 item: 220
+tier: full
 title: 左栏拖宽 / ⌘B 收起 / vault 根右键新建（M631）：拖宽重启保持、收起不跨启动且焦点回到文档、根右键建文件自动打开与建目录不展开
 fixtures: [sidebar-probe.md]
 open: sidebar-probe.md

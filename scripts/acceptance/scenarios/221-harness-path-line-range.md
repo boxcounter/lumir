@@ -10,6 +10,7 @@
 # `JUMP-TARGET-39`，在 48 行文档里开篇一屏看不到、落点后居中——截图据此可判读。
 id: "221-harness-path-line-range"
 item: 552
+tier: full
 title: harness 输出里的行范围路径可点击（:起-止 落到起始行，畸形形态不吞半截）
 open: harness-note.md
 marker: "HNL-ALPHA"

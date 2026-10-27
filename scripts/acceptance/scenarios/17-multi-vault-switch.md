@@ -1,6 +1,7 @@
 ---
 id: "17-multi-vault-switch"
 item: 17
+tier: full
 title: 多 vault——树头部入口的列表浮层、切到未打开过的 vault 的空态引导、切回后按会话恢复标签
 fixtures: [tabs-a.md, tabs-b.md]
 seed:

@@ -1,6 +1,7 @@
 ---
 id: "168-paste-image-semantic-name"
 item: 554
+tier: full
 title: 贴图后异步语义改名 + 正文引用同步 + toast 撤销（change add-semantic-image-naming）
 config:
   # mock provider 恒支持 vision（design §10）：贴图即触发一次命名调用。mock 的 `naming` 队列

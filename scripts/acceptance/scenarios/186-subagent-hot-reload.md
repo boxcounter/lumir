@@ -1,6 +1,7 @@
 ---
 id: "186-subagent-hot-reload"
 item: "8.5"
+tier: full
 title: 子代理 8.5 热加载：回合间改定义的模型与工具，下一回合生效
 open: harness-note.md
 marker: "HNL-ALPHA"

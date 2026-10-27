@@ -1,6 +1,7 @@
 ---
 id: "196-subagent-concurrency-limit"
 item: "8.12"
+tier: full
 title: 子代理 8.12 并发闸：max_concurrent=1 时第二个后台委派被拒
 open: harness-note.md
 marker: "HNL-ALPHA"

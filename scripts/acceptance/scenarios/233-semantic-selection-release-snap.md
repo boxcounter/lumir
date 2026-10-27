@@ -11,6 +11,7 @@
 # 重新占宽（第二次点击的同一坐标不能落在定界符上，两字词会偏，故 fixture 用三字词）。
 id: "233-semantic-selection-release-snap"
 item: 233
+tier: core
 title: 双击粗体词松开后外扩到 `**…**` → 摘录卡片原文含定界符；文档逐字节不变
 fixtures: [semantic-selection-note.md]
 open: semantic-selection-note.md

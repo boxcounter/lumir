@@ -1,6 +1,7 @@
 ---
 id: "73-harness-patch-reject"
 item: 73
+tier: full
 title: Harness ④ patch 批准闸：拒绝不落盘（change add-harness-probe，mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

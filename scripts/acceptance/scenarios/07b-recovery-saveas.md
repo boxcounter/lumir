@@ -1,6 +1,7 @@
 ---
 id: "07b-recovery-saveas"
 item: 7
+tier: full
 title: M124 恢复路径之二——文件被外部删除后「另存为新文件」
 fixtures: [plain.md]
 open: plain.md

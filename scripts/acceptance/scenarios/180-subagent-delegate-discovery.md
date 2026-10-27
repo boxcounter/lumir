@@ -1,6 +1,7 @@
 ---
 id: "180-subagent-delegate-discovery"
 item: "8.1"
+tier: core
 title: 子代理 8.1 定义发现与自动委派（mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

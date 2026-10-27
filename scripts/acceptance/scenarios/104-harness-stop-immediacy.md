@@ -1,6 +1,7 @@
 ---
 id: "104-harness-stop-immediacy"
 item: 104
+tier: full
 title: 停止即时性与轮次封闭：片间隔内点停止亚秒级收口（时长上界断言），停止后继续提问不复活被取消轮的回复
 open: harness-note.md
 marker: "HNL-ALPHA"

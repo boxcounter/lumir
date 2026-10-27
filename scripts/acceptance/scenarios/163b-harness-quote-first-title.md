@@ -15,6 +15,7 @@
 # 哪一侧」就是产品焦点归属的判据（正文「当前状态」段记着假绿形态与判据分层）。
 id: "163b-harness-quote-first-title"
 item: 163
+tier: full
 title: 会话自动命名②：quote 首条消息 → 命名事件 → 标题栏与已开历史浮层行同步改名
 open: harness-quote.md
 marker: "QALPHA"

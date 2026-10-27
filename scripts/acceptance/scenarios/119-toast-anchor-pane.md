@@ -1,6 +1,7 @@
 ---
 id: "119-toast-anchor-pane"
 item: 119
+tier: full
 title: toast 锚定发起 pane 右下角（分栏态不跨 pane）
 fixtures: [plain.md]
 open: plain.md

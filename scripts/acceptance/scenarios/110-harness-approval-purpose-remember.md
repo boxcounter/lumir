@@ -1,6 +1,7 @@
 ---
 id: "110-harness-approval-purpose-remember"
 item: 110
+tier: core
 title: 批准卡（M414）：purpose 用途句 + 组合命令拆段 + 「采纳且本会话不再问」免闸（change add-harness-permission-modes，mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

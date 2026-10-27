@@ -1,6 +1,7 @@
 ---
 id: "251-settings-panel-legacy-preset-migration"
 item: 251
+tier: full
 title: 设置面板：旧格式 provider（无 preset）首次启动补齐迁移，二次启动不再写盘（mtime 不变）
 open: harness-note.md
 marker: "HNL-ALPHA"

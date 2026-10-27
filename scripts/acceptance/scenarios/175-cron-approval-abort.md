@@ -1,6 +1,7 @@
 ---
 id: "175-cron-approval-abort"
 item: 175
+tier: full
 title: 无人值守运行遇批准闸即中止（approval_required），不挂起、不放行（§3.5 / §6.4）
 config:
   harness:

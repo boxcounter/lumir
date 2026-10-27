@@ -1,6 +1,7 @@
 ---
 id: "82-quote-card-mixed-edit"
 item: 82
+tier: full
 title: 摘录卡片 ② 混排编辑区（光标落卡片下一行、一条消息挂两张卡片）
 open: harness-quote.md
 marker: "QALPHA"

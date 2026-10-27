@@ -1,6 +1,7 @@
 ---
 id: "200-subagent-explore"
 item: "8.18"
+tier: full
 title: 子代理 8.18 内建 explore 与其被同名定义覆盖
 open: harness-note.md
 marker: "HNL-ALPHA"

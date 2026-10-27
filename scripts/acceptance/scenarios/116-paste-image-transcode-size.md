@@ -1,6 +1,7 @@
 ---
 id: "116-paste-image-transcode-size"
 item: 116
+tier: evidence
 title: 转码体积实证（2560×1920 类截图：剪贴板字节 vs 落盘字节，证据型）
 steps:
   - name: 造笔记并打开（落盘目录 = 当前笔记同目录）

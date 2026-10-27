@@ -1,6 +1,7 @@
 ---
 id: "05-cell-math"
 item: 5
+tier: full
 title: 表格 cell 内公式渲染 + 点击编辑
 fixtures: [table.md]
 open: table.md

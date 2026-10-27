@@ -1,6 +1,7 @@
 ---
 id: "227-fullscreen-select-esc"
 item: 227
+tier: full
 title: 全屏遮罩内的选中动作不改变退出路径：遮罩内尝试 ⌘A 之后 Esc 仍关闭、焦点回编辑器、文档与磁盘零写入
 fixtures: [table-fullscreen.md]
 open: table-fullscreen.md

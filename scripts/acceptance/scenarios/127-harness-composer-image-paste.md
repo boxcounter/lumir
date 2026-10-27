@@ -11,6 +11,7 @@
 # （kimi + vision:false），⑦ 要第二个 vault。
 id: "127-harness-composer-image-paste"
 item: 127
+tier: core
 title: composer 贴图：落 harness 侧 attachments/<vault id>/（vault 零新增）+ 图片卡片 + wire 交错引用 + JSONL 无 base64 + 重启恢复 round-trip
 open: harness-note.md
 marker: "HNL-ALPHA"

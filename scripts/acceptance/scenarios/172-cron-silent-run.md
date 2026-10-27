@@ -1,6 +1,7 @@
 ---
 id: "172-cron-silent-run"
 item: 172
+tier: full
 title: silent-run：静默运行、全程零通知、会话留存可查（§7.4）
 config:
   harness:

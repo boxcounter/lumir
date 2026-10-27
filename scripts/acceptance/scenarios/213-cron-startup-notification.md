@@ -1,6 +1,7 @@
 ---
 id: "213-cron-startup-notification"
 item: 213
+tier: bundle
 title: 冷启动即到点的「到点」通知必须真实出现在通知中心（M620）
 # 通知投递的真实性只能在打包实例上判（dev flavour 走 com.apple.Terminal 归属，见 README「实例 flavour」）。
 requires: bundle

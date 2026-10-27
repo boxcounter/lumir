@@ -1,6 +1,7 @@
 ---
 id: "197-subagent-api-partial"
 item: "8.13"
+tier: full
 title: 子代理 8.13 API 中断 partial：已有文本 + stopped_by=error
 open: harness-note.md
 marker: "HNL-ALPHA"

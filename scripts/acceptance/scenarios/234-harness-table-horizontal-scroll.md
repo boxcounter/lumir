@@ -10,6 +10,7 @@
 # （chromium 结构矩阵），MUST NOT 把本场景读成「几何已机验」。
 id: "234-harness-table-horizontal-scroll"
 item: 703
+tier: full
 title: harness 对话宽表：固有宽铺开、横向滚轮在表格区域执行、滚动前后截图（几何归 chromium 矩阵）
 open: harness-note.md
 marker: "HNL-ALPHA"

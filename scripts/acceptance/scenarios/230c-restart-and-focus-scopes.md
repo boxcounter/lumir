@@ -13,6 +13,7 @@
 # 会话持久化的结构（tests/unit / Rust 侧）。
 id: "230c-restart-and-focus-scopes"
 item: 655
+tier: full
 title: 按路径快速打开（⌘P）之三：重启后 vault 外标签不回来、vault 内标签照常恢复、文件树与 harness composer 焦点下同样命中
 open: goto-line-long.md
 marker: "JUMP-TARGET-39"

@@ -4,6 +4,7 @@
 #（⌃Y 能整段插回）、裸 Backspace 仍是逐字符退格。
 id: "144-harness-composer-alt-backspace"
 item: 144
+tier: full
 title: composer ⌥⌫ 是词级删除（面板让位生效）、裸 Backspace 不变（M447）
 open: harness-note.md
 marker: "HNL-ALPHA"

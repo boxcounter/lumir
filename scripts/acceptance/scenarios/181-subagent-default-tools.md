@@ -1,6 +1,7 @@
 ---
 id: "181-subagent-default-tools"
 item: "8.2"
+tier: full
 title: 子代理 8.2 默认只读三件（未声明 tools）
 open: harness-note.md
 marker: "HNL-ALPHA"

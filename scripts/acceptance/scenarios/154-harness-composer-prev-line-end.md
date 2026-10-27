@@ -16,6 +16,7 @@
 # 落在上一行行末；夹在 `c` 与 `d` 之间（`hnl-brk-cxqzkd`）是缺陷签名；另起一行是另一形态。
 id: "154-harness-composer-prev-line-end"
 item: 154
+tier: full
 title: composer 末段空行行首 ⌃B 落上一行行末（M465，HC4 第 1 条）
 open: harness-note.md
 marker: "HNL-ALPHA"
