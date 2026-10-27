@@ -888,6 +888,19 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
 
 ## 已知边界（写清楚，别当成 bug 去追）
 
+- **cron 通知点击在当前 macOS 构建上不可自动驱动（M752，macOS 26.6.2 / 25G83，2026-10-28 实测）**：
+  `notify-then-run` 的通知是**瞬时**的——usernoted 有 `Delivering` + `Presenting` 记录，但它
+  **不驻留在通知中心列表里**（面板开着时列表始终没有该条目，`scroll` 报 `already at end`；
+  面板收起时它会以右上角横幅/气泡出现，几秒后消失）；条目在 AX 里**没有几何**（`ax` 与 `full`
+  快照都 `bbox: null`，只有窗口级 `window_bounds`），而 KimiCU 对条目发 `AXPress` 只等价于
+  **Dismiss**（错误文本写明「未发送动作」，条目随即消失、usernoted 无用户响应、app 侧无
+  `cron_click`）。三条任一条都足以让场景 170 / 171 的 `clickNotification` 判红，且与产品行为无关。
+  **因此**：这两条场景的**点击段**按人工验证处理（发布前由人在屏幕前、一次投递当场点，窗口只有
+  几秒，**经第三方中转不可行**）；机器段（投递发生、标题 = 本次唯一任务 id、`cron_notified` 落盘、
+  「未点击前零运行」、点击前 app 停在非目标 vault）仍由套件自动判定。判据不得为此放宽——把
+  「点不到」写成 PASS 等于放弃「click = intent」这条唯一判据。要恢复自动化，先确认系统侧能给出
+  「条目常驻 + 可点坐标」或「AXPress = 打开」，再改 `clickNotification` 的实现，而不是改断言。
+
 - **跑批环境会在场景中段整页重载（M359 已闭环）**：同机别的 agent 在自己的 worktree 里 checkout /
   构建时写 `.html` / `tsconfig.json`，验收实例的前端会在**同一个 Rust 进程**里整页重启，把正在跑的
   场景打断（菜单消失、行内输入框 DOM 被换掉、按键批次跨重载），产出与产品缺陷无法区分的级联假
