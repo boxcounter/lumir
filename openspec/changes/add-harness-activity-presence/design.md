@@ -25,7 +25,7 @@
 | F12 | **后端先发终态、后释放 busy**：正常完成 `done` 在 `:699`、`release_turn` 在 `:297`（`run_turn_core` 返回之后）；配置级错误 `:259-260` 先 error 再释放；自动唤醒回合 `:1729` 才释放 | `src-tauri/src/harness/turn.rs` |
 | F13 | 停止子态由既有 `reduceSendPhase` 承载（`running + stop-clicked → stopping`，重复点击幂等），点击路径在 `:6730-6735` | `src/harness-panel.ts:2368-2379`、`:6730-6735` |
 | F14 | `busy` 的**写点只有两个**（`acquire_turn` 置真、`release_turn` 置假）；读点六处：`acquire_turn` 拒绝、`request_abort`（`:360`）、`session_busy`（`:467`）、子运行 `parent_busy`（`subagents.rs:489`）、唤醒合并（`subagents.rs:1122`）、标题任务（`title.rs:727`） | `src-tauri/src/harness.rs:322` / `:396`、`src-tauri/src/harness/session.rs:757-763` |
-| F15 | 终态发射点全部集中在 `run_turn` / `run_turn_core` / `abort_turn`：`done` `:699`、配置级 `error` `:259`、panic `error` `:277`、入队失败 `:442`、压缩重试 `:573`、LLM `:581`、空响应 `:640`、中止 `:867-868`；每处都在 `release_turn` 之前 | `src-tauri/src/harness/turn.rs` |
+| F15 | 终态发射点**共 10 个位点 / 11 条发射语句**（与 r3 评审的「11 个调用点」同一口径：`:867` / `:868` 是同一个 `match` 的两个分支；早先只列普通回合的八处，漏了自动唤醒回合两处）：交互回合——配置级 `error` `:259`、panic `error` `:277`、入队失败 `:442`、压缩重试 `:573`、LLM `:581`、空响应 `:640`、正常 `done` `:699`、中止 `:867`（带原因 `error`）/`:868`（`aborted`）；**自动唤醒回合**——配置级 `error` `:1692`（释放 `:1693`）、panic `error` `:1714`（释放 `:1729`）。全部先于 `release_turn` | `src-tauri/src/harness/turn.rs` |
 
 ## 2. 落点：为什么是标题栏 toggle 钮（对应 proposal 的 D1）
 
@@ -132,9 +132,10 @@ type ActivityEvent =
 写点各一处，与今天 `busy` 的两个写点（F14）一一对应：
 
 - `acquire_turn`：`Idle → Running`；非 `Idle` 一律拒绝（`harness_busy` 语义逐字不变）。
-- **终态发射**：`Running → Finishing`。F15 列出的全部终态发射点（`done`、配置级 / panic / 入队失败 /
-  压缩重试 / LLM / 空响应的 `error`、中止的 `aborted` 或带原因 `error`）统一经**一个 helper** 置位后再发
-  事件——单一写点，漏一处就是假在途，由 Rust 用例逐条终态路径驱动断言守住。
+- **终态发射**：`Running → Finishing`。F15 的 10 个位点 / 11 条语句（交互回合八处 + **自动唤醒回合两处**：
+  配置级 `error` `turn.rs:1692`、panic `error` `:1714`）统一经**一个 helper** 置位后再发事件——单一写点，
+  漏一处就是假在途。自动回合这两处尤其容易漏：面板在 `auto_turn_started` 已经把相位置 running，而它们
+  直到 `:1729` 才释放，窗口与普通回合同形。
 - `release_turn`：任意 → `Idle`（保持它今天的幂等语义）。
 
 `is_busy()` 改为 `phase != Idle`，因此 F14 的六个读点语义**逐字不变**（`acquire_turn` 拒绝、`new_session`
@@ -260,13 +261,20 @@ type ActivityEvent =
 
 - `acquire_turn` ⇒ `is_busy()==true`、`in_flight()==true`；终态发射后 ⇒ `is_busy()==true`、
   `in_flight()==false`（`Finishing`）；`release_turn` 后 ⇒ 两者皆 false。
-- 终态路径全覆盖：正常 `done`、配置级 `error`、空响应 `error`、`aborted` 各驱动一次，断言此刻快照
-  `in_flight == false` 且 `is_busy() == true`——**这就是「终态已发、未释放」窗口的确定性复现**，不需要
-  定时等待。
+- 终态路径全覆盖（**按 F15 的 10 个位点逐条驱动，不只普通回合**）：可经既有测试入口驱动的六条各一条
+  行为用例——普通回合的正常 `done` / 配置级 `error` / 空响应 `error` / `aborted`；**自动唤醒回合
+  （`run_auto_turn_acquired`）的配置级 `error` `turn.rs:1692` 与 panic `error` `:1714`**。自动回合的两条
+  必须走真实入口（面板先在 `auto_turn_started` 置 running，此处才有「旧轮未释放」的窗口），MUST NOT 用
+  helper 直调代替。其余三条（入队失败 `:442`、压缩重试失败 `:573`、LLM 错误 `:581`）以 helper 级单测 +
+  §1.5 的源码断言兜底，并在测试注释里写明这是覆盖边界、不是漏项。每条行为用例断言终态已发、尚未释放时
+  `is_busy() == true` 且快照 `in_flight == false`——**这就是「终态已发、未释放」窗口的确定性复现**，
+  不需要定时等待。
 - 新轮：`Finishing → Idle → Running` 后 `in_flight` 回到 true。
 - 空态快照 `in_flight == false` 且键在场；序列化形状断言（面板读的是 JSON 键）。
 - 语义守卫：F14 的六个 `is_busy()` 读点行为不变（至少覆盖 `acquire_turn` 在世态下的拒绝与 `new_session`
   的拒绝各一条）。
+- **源码级断言只作静态兜底**（「终态只经 helper 发射」），MUST NOT 替代上面的逐路径行为用例——r3 的
+  现场正是：静态清单声称覆盖全部，实际漏了两条自动回合路径，只有行为用例能抓住。
 
 **第二类：前端状态模型（纯函数，必红）**
 
@@ -294,6 +302,7 @@ type ActivityEvent =
 | 8 | 终态对账快照（内容档位） | 相位 / `turnOpen` / 未读一律不动 |
 | 9 | 两轮连续终态（第二个是自动回合） | 未读仍只有一枚标记，不累计 |
 | 10 | 终态 → 心跳式重复进入快照（同 vault 重复装载） | 幂等：始终 `idle` |
+| 11 | **自动唤醒回合**在配置错误 / panic 上结束（`turn.rs:1692` / `:1714`，释放前）→ 进入快照 | `idle`（`in_flight:false`）；MUST NOT 因该回合的 `auto_turn_started` 曾置 running 而停在处理中 |
 
 **r1 P2-2 的确定性回归**（停止路径进全表，保持不变）：
 
@@ -327,8 +336,9 @@ type ActivityEvent =
   确定性用例见 §10 的两类回归与交错矩阵。
 - **改动 `busy` 的读点**：`is_busy()` 的定义改为 `phase != Idle`，六个既有读点逐条核对语义不变（F14）；
   漏一个读点就可能把 `Finishing` 当成 Idle，因此 Rust 用例必须覆盖 `acquire_turn` 与 `new_session` 的拒绝。
-- **终态发射点漏置 `Finishing`**：所有终态发射收敛到一个 helper（F15 的八处），漏一处就是假在途；用例
-  逐条终态路径驱动断言，且源码级断言终态发射只经该 helper。
+- **终态发射点漏置 `Finishing`**：所有终态发射收敛到一个 helper（F15 的 10 个位点 / 11 条语句，含自动唤醒
+  回合两处），漏一处就是假在途；用例逐条终态路径驱动断言，**源码级「只经 helper」断言只作静态兜底**；
+  两类用例都要有，缺一类就会重演 r3 现场（清单声称完整、实际漏了两条路径）。
 - **快照与事件互相打架**：`phaseEpoch` 世代守卫（§4）——它防「请求在发送前发出、响应在发送后回来」，
   与后端状态机互补（后者防「终态后读到旧在途」）。
 - ** stopping 的相位归属（r1 P2-2）**：相位只由 `reduceSendPhase` 产出、新模块逐条委托；停止中的快照

@@ -11,7 +11,7 @@
       （事实表见 `design.md` §1，逐条 file:line）
 - [x] 0.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 实跑通过：`✓ change/add-harness-activity-presence`，
       `Totals: 34 passed, 0 failed (34 items)`，退出码 0；`scripts/docs-check.sh` PASS；归档对账门禁 PASS
-      （r1、r2 两次修订后各复跑一次，读数相同）
+      （r1 / r2 / r3 三次修订后各复跑一次，读数相同）
 - [ ] 0.4 Alex 节点 1 评审：D1 提示形态 / D2 失败未读归类 / D3 跨 vault 未读是否要做；裁决结果回填
       proposal 的「评审记录」块
 
@@ -22,15 +22,21 @@
       不变；新增 `in_flight()`（仅 `Running` 为真），两个读口由同一状态派生，MUST NOT 各存一份
 - [ ] 1.2 写点各一处：`acquire_turn` 只接受 `Idle`（非 `Idle` 一律 `harness_busy`，语义逐字不变）；
       `release_turn` 任意状态 → `Idle`（幂等保持）；**终态发射收敛到一个 helper**（`Running → Finishing`
-      后再发事件）——F15 的八处发射点逐条改接，漏一处就是假在途
+      后再发事件）——F15 的 **10 个位点 / 11 条语句**逐条改接，其中**必须包含自动唤醒回合
+      `run_auto_turn_acquired` 的配置级 `error`（`turn.rs:1692`）与 panic `error`（`:1714`）**；漏一处就是
+      假在途
 - [ ] 1.3 `StateSnapshot` 增 `in_flight: bool`（空态同形 `false`，键恒在场）；`src-tauri/src/harness.rs`
       的 `harness_state` 走同一份 `Runtime::snapshot`，不新增第二条读值路径；MUST NOT 把 `busy` 也塞进快照
-- [ ] 1.4 Rust 用例（第一类确定性回归）：三态转移（`Idle→Running→Finishing→Idle`）与两读口分工
-      （`Finishing` 时 `is_busy()==true` 而 `in_flight()==false`）；**逐条终态路径**（正常 done / 配置级
-      error / 空响应 error / aborted）驱动后都进入 `Finishing` 且快照 `in_flight==false`；空态快照键在场；
-      序列化后的线上形状断言
-- [ ] 1.5 语义守卫：`Finishing` 下 `acquire_turn` 与 `new_session` 仍按 `harness_busy` 拒绝（协议不变）；
-      源码级断言「终态发射只经 1.2 的 helper」，防新增发射点漏置 `Finishing`
+- [ ] 1.4 Rust 用例（第一类确定性回归，行为层）：三态转移（`Idle→Running→Finishing→Idle`）与两读口分工
+      （`Finishing` 时 `is_busy()==true` 而 `in_flight()==false`）；**逐条终态路径**驱动后都进入 `Finishing`
+      且快照 `in_flight==false`——可驱动的六条各一条行为用例：普通回合的正常 done / 配置级 error /
+      空响应 error / aborted，**自动唤醒回合两条**（`run_auto_turn_acquired` 的配置级 `error` `:1692` 与
+      panic `:1714`，走真实入口、不走 helper 直调）；其余三条（入队失败 `:442`、压缩重试失败 `:573`、
+      LLM 错误 `:581`）以 helper 级单测 + 1.5 的源码断言兜底，测试注释写明这是覆盖边界而非漏项；
+      空态快照键在场；序列化后的线上形状断言
+- [ ] 1.5 语义守卫与静态兜底：`Finishing` 下 `acquire_turn` 与 `new_session` 仍按 `harness_busy` 拒绝
+      （协议不变）；源码级断言「终态发射只经 1.2 的 helper」——**只作静态兜底，MUST NOT 替代 1.4 的逐路径
+      行为用例**（r3 现场：清单声称完整、实际漏了两条自动回合路径，静态断言抓不到）
 
 ## 2. 前端：相位以后端呈现读为真源（且只在进入点回填）
 
@@ -82,12 +88,12 @@
       相位 / 闸门恢复、**对账路径只走内容档位且不读 `in_flight`**、三类终态传 `mounted`、停止点击经
       状态机、`harness_busy` 只触发快照重取不直接改相位、`attachTo(null)` 不复位、三态由唯一函数施加）
       ——同一层、同一理由见 `tests/unit/harness-cron-click-run.test.ts`
-- [ ] 5.2a **r2 P2-1 第二类回归 + 新轮/旧轮交错矩阵**（纯模型层，与 §1.4 的后端第一类回归成对）：
-      按 `design.md` §10 的 10 行矩阵逐行断言（旧轮已观察终态后快照报不在途 ⇒ 不复活；离开期间终态被
+- [ ] 5.2a **r2 / r3 P2-1 第二类回归 + 新轮/旧轮交错矩阵**（纯模型层，与 §1.4 的后端第一类回归成对）：
+      按 `design.md` §10 的 11 行矩阵逐行断言（旧轮已观察终态后快照报不在途 ⇒ 不复活；离开期间终态被
       过滤 ⇒ 进入快照收口；旧轮结束后新轮在途 ⇒ running；`stopping` 下两种 `in_flight` ⇒ 保持 stopping；
-      对账快照不动相位；自动回合两次终态未读只一枚；同 vault 重复进入快照幂等）；模型里 MUST NOT 存在
-      「`harness_busy` ⇒ running」这条转移（源码级断言），每条断言写明「实现改成直接改相位 / 靠本地
-      终态记忆时它必红」
+      对账快照不动相位；自动回合两次终态未读只一枚；同 vault 重复进入快照幂等；**自动回合在配置错误 /
+      panic 上结束后的进入快照 ⇒ idle**）；模型里 MUST NOT 存在「`harness_busy` ⇒ running」这条转移
+      （源码级断言），每条断言写明「实现改成直接改相位 / 靠本地终态记忆时它必红」
 - [ ] 5.2b **r1 P2-2 确定性回归（保持不变）**：`idle + stop_clicked ⇒ idle`、
       `running + stop_clicked ⇒ stopping`、`stopping + stop_clicked ⇒ stopping`（幂等）、
       `stopping + terminal ⇒ idle`、`stopping + enter_snapshot(inFlight:true|false) ⇒ stopping`；

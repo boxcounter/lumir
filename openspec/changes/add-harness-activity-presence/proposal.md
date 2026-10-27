@@ -20,6 +20,15 @@
 > 记忆与 `busy_rejected`，`harness_busy` 只触发一次快照重取。未采用「先 release 再发终态」——它会引入
 > 「旧轮终态落到新轮上」的反向竞态（论证见 design §4）。改动面：`proposal.md`、`design.md`
 > （§1 / §3 / §4 / §5 / §10 / §11 / §12）、`specs/harness/spec.md`、`tasks.md`（§1 / §2 / §5）。
+> **r3 修订（2026-10-27）**：reviewer 判 `p2-1items` / `fix-then-merge`——r2 的「全部终态发射点」清单只
+> 收了普通回合的八处，漏掉 **`run_auto_turn_acquired` 的配置级 `error`（`turn.rs:1692`）与 panic
+> `error`（`:1714`）**；两处都在 `auto_turn_started` 已把面板置 running 之后、`:1729` 才释放，窗口同形。
+> 本轮把 F15 改成完整清单（**10 个位点 / 11 条语句**），design §4 的 helper 改接与 §10 的第一类回归、
+> tasks 1.2 / 1.4 / 1.5 及 spec 的相关条款一并点名这两条路径；Rust 回归要求走 `run_auto_turn_acquired`
+> 真实入口各一条独立用例，并写明**源码级「只经 helper」断言不能替代行为用例**（r3 正是静态清单声称完整、
+> 实际漏路径的现场）；交错矩阵补一行「自动回合终态 → 进入快照」。改动面：`design.md`（§1 F15、§4、§10、
+> §12）、`specs/harness/spec.md`（在途判据段 + 新增 scenario）、`tasks.md`（1.2 / 1.4 / 1.5 / 5.2a）、
+> 本文件的评审记录。
 > 节点 2（归档评审）：实现完成后填写。
 
 ## Why
