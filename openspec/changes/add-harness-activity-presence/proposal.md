@@ -9,10 +9,17 @@
 > D2 失败未读的归类、D3 跨 vault 完成的未读是否要做）。未回按倾向落地。
 > **r1 修订（2026-10-27）**：reviewer 判 `p2-2items` / `fix-then-merge`，两条 P2 只改制品、不动生产代码。
 > P2-1 采用「终态对账只重建内容，不用该快照覆盖终态相位、不重开轮次闸门」+ 进入快照的 `afterTerminal`
-> 守门（**不改后端 busy 协议**），并补 done / error / aborted 之后读到 `busy:true` 不得复活 running 的
-> 确定性用例；P2-2 采用「新 reducer 增加 `stop_clicked` 输入、内部委托既有 `reduceSendPhase`」，保持
-> 相位只有一份投影，并补停止路径的全表用例。改动面：`proposal.md`、`design.md`（§1 / §3 / §4 / §5 /
-> §10 / §12）、`specs/harness/spec.md`、`tasks.md`（§2 / §3 / §4 / §5）。
+> 守门，并补 done / error / aborted 之后读到 `busy:true` 不得复活 running 的确定性用例；P2-2 采用「新
+> reducer 增加 `stop_clicked` 输入、内部委托既有 `reduceSendPhase`」，保持相位只有一份投影，并补停止路径
+> 的全表用例。（r1 的「不改后端 busy 协议」口径已被 r2 取代：协议**语义**仍不变，但后端内部真值升级为
+> 三态——见下。）
+> **r2 修订（2026-10-27）**：reviewer 判 `p2-1items` / `fix-then-merge`——本地 `afterTerminal` + 布尔
+> `busy` + 无条件 `busy_rejected` 仍分不清「新轮真在途」与「旧轮已发终态、busy 未释放」，反例是「终态在
+> 离开期间被过滤」与「终态后立即发送被拒」。采纳后端权威合同：`Session.busy` 升级为三态轮次状态机
+> （`Idle` / `Running` / `Finishing`），`is_busy()` 语义不变、新增 `in_flight()` 进快照；前端删掉终态
+> 记忆与 `busy_rejected`，`harness_busy` 只触发一次快照重取。未采用「先 release 再发终态」——它会引入
+> 「旧轮终态落到新轮上」的反向竞态（论证见 design §4）。改动面：`proposal.md`、`design.md`
+> （§1 / §3 / §4 / §5 / §10 / §11 / §12）、`specs/harness/spec.md`、`tasks.md`（§1 / §2 / §5）。
 > 节点 2（归档评审）：实现完成后填写。
 
 ## Why
@@ -76,20 +83,24 @@
 ## What Changes
 
 对应 spec delta：`harness` capability 新增一条 requirement「面板收起与跨 vault 的活动在场」。
-**新增行为，不改既有条款**（发送钮两态、busy 协议、cron 通知通道的语义均不动）。
+**新增行为，不改既有条款的语义**（发送钮两态、busy 协议语义、cron 通知通道均不动；后端内部真值升级为
+三态，见下第 2 条）。
 
 1. **标题栏 toggle 钮三态**：空闲（现状，零像素漂移）/ 在途 / 有未读结果。提示只承载在**始终在场**的
    那颗钮上，面板本体不新增常驻 UI。
-2. **在途 = 后端 `busy` 的唯一投影**：`harness_state` 快照新增在途读数，面板在装载 / 切回 vault /
-   恢复会话时按它恢复相位；MUST NOT 在前端另造第二份 busy 真源。**相位仍只由既有的
-   `reduceSendPhase` 产出**（`sent` / `stop-clicked` / `finished` 三个事件，`stopping` 子态与连点幂等
-   语义逐字不变）——新增的状态模型只负责未读与「快照能不能回填」的守门，不另立第二套相位状态机。
-3. **在途轮次的重连续**：切回一个仍在途的 vault 时，后续增量 SHALL 继续上屏（轮次闸门随相位恢复），
-   终态到达时以后端快照**只重建内容**一次——切走期间错过的正文不会以「残缺流式泡」的形式留在
-   transcript。对账那份快照 MUST NOT 参与相位判定：后端**先发终态、后释放 busy**
-   （`src-tauri/src/harness/turn.rs:699` 发 `done`、`:297` 才 `release_turn`；错误路径 `:259-260`、
-   自动回合 `:1729` 同理），终态之后读到的 `busy:true` 是合法时序，用它回填就会把已结束的轮次复活成
-   在途。进入快照的 `busy:true` 另受一条守门：见过终态、未见新一轮之前一律丢弃。
+2. **在途 = 后端轮次状态机的一个读口**：今天的 `busy` 是一位真值，把「轮次在跑」与「终态已发、尚未释放
+   会话」压成同一个值，前端靠本地记忆补不出二者的差别（r2 P2-1 的两条反例）。本 change 把后端 `Session`
+   的 `busy: bool` 升级为三态（`Idle` / `Running` / `Finishing`）：`is_busy()`（协议读）保持今天的语义
+   ——`phase != Idle`，六个既有读点逐字不变；新增 `in_flight()`（呈现读）= 只有 `Running` 为真。
+   `harness_state` 快照报 `in_flight`，面板在装载 / 切回 vault / 恢复会话时按它恢复相位；前端 MUST NOT
+   保存终态记忆，也 MUST NOT 把 `harness_busy` 拒绝当作在途证据。**相位仍只由既有的 `reduceSendPhase`
+   产出**（`sent` / `stop-clicked` / `finished`，`stopping` 子态与连点幂等语义逐字不变）。
+3. **在途轮次的重连续**：切回一个仍在途的 vault 时（`in_flight:true`），后续增量 SHALL 继续上屏（轮次闸门
+   随相位恢复）；进入快照报 `in_flight:false` 时界面直接收口（相位 idle、闸门关、清接管标志）——包括
+   「离开期间终态被事件过滤」的情形，不再等一个永远不会来的事件。终态到达时以后端快照**只重建内容**一次：
+   切走期间错过的正文不会以「残缺流式泡」的形式留在 transcript；对账那份快照 MUST NOT 参与相位判定。
+   **不改终态与释放的次序**：改成「先释放再发终态」会让旧轮终态落到新轮上（新轮被误收口、分片被闸门丢弃），
+   只是把窗口搬到反方向。
 4. **未读的分类与清算**：只由**轮次终态**产生，按终态种类分档（成功回复 / 失败）；用户主动停止不产生
    未读；**重新打开面板**即清算；MUST NOT 用数字计数。
 5. **作用域**：只呈现**当前 vault** 的会话活动；后台（无人值守 / 隔离 runtime）cron 运行不点亮
@@ -105,7 +116,8 @@
   能力（change `surface-cron-notify-failure`），本 change 不碰。
 - **不做未读计数、不做未读列表**：流式增量与工具行不构成可计数的「消息」单位，任何数字都是伪造读数
   （与 `harness` 既有「回到底部」钮的未读提示同一条纪律）。
-- **不改 busy 协议**：一轮一次、在途拒第二个 `send`、在途拒绝 `new_session` / 恢复，语义逐字不变。
+- **不改 busy 协议语义**：一轮一次、在途拒第二个 `send`、在途拒绝 `new_session` / 恢复，语义逐字不变
+  （只把后端内部的一位真值换成三态，见 What Changes 第 2 条）。
 - **不覆盖后台子代理的 `notice` 事件**：后台完成通知仍按既有形态上屏；它的未读由所触发/所属轮次的
   终态承载，本 change 不为单一 `notice` 点亮指示。
 - **不做窗口焦点态**（app 在后台 / 另一窗口在前台）：那会引入第二个事件源（窗口激活），本期只按
@@ -116,8 +128,9 @@
 
 - 影响的 specs：`harness`（1 条 ADDED requirement）。
 - 影响的代码 / 系统（概览，不写实现细节）：
-  - Rust：`src-tauri/src/harness/session.rs`（快照形状与空态一致性）、`src-tauri/src/harness.rs`
-    （`harness_state` 的读值来源，复用 `session_busy` 同一条判据）。
+  - Rust：`src-tauri/src/harness/session.rs`（`busy` 升级为三态轮次状态机 + 快照 `in_flight` 与空态
+    一致性）、`src-tauri/src/harness.rs`（`acquire_turn` / `release_turn` 的写点改接三态）、
+    `src-tauri/src/harness/turn.rs`（终态发射收敛到一个同时置 `Finishing` 的 helper）。
   - 前端：`src/harness-panel.ts`（相位恢复、未读状态机、toggle 三态、在途重连续与终态对账）、
     `src/harness-panel.css`（状态点）、`src/copy-data.ts`（状态文案 zh/en 双档）。
   - 测试：`tests/unit/harness-activity-presence.test.ts`（纯模型）、`tests/unit/harness-activity-wiring.test.ts`
