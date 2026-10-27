@@ -207,3 +207,57 @@ test("自身保存产生的 watch 事件经 revision 比对丢弃：不重载、
   await expect(page.locator(".lumir-toast", { hasText: "已自动重载" })).toHaveCount(0);
   await expect(content).toContainText("ZZZ");
 });
+
+test("强制覆盖成功后，第二轮外部改写再保存：冲突与强制覆盖动作仍可用，且再次落盘", async ({ page }) => {
+  // 原真机场景 08e 的第二轮判据是「覆盖动作没被用掉」。它的真机原文案靠残留 toast 才命中
+  // （`已强制覆盖保存` 与「已自动重载」两条同时在场 ⇒ 子串 `强制覆盖` 恒真，实际没有冲突），
+  // 这里按**真冲突**重建：成功覆盖后文档已 clean（`saveDocument` 对 clean 早退，⌘S 不写盘），
+  // 所以第二轮必须先让用户继续编辑使文档重新 dirty，再外部改写才会产生 CAS 冲突。
+  await stubTauri(page, VAULT);
+  const content = await openAndEdit(page);
+
+  /** 走完一轮「外部改写 → ⌘S → 强制覆盖 → 二次确认 → 落盘」。返回冲突提示 locator。 */
+  const forceOverwriteRound = async (external: string) => {
+    await externalWrite(page, "README.md", external);
+    await page.keyboard.press("Meta+s");
+    const conflict = page.locator(".lumir-toast", { hasText: "保存冲突" });
+    await expect(conflict).toBeVisible();
+    // 动作存在性用 toast 里的按钮判，不用子串（旧文案的假绿正是子串 `强制覆盖`）。
+    await expect(conflict.getByRole("button", { name: "强制覆盖保存" })).toBeVisible();
+    // 冲突处置前磁盘仍是外部版本（MUST NOT 静默覆盖）
+    expect(await fileText(page, "README.md")).toBe(external);
+    await conflict.getByRole("button", { name: "强制覆盖保存" }).click();
+    const confirm = page.locator(".lumir-toast", { hasText: "将覆盖磁盘上较新的内容" });
+    await expect(confirm).toBeVisible();
+    await confirm.getByRole("button", { name: "覆盖保存" }).click();
+    // 第一轮的「已强制覆盖保存」可能还在（toast 有存活窗口），第二轮会叠出第二条同名 toast
+    // ⇒ 取最后一条判「这一轮确实成功」，不用 strict 的裸定位器。
+    await expect(page.locator(".lumir-toast", { hasText: "已强制覆盖保存" }).last()).toBeVisible();
+    await expect.poll(() => fileText(page, "README.md")).toContain("ZZZ");
+    await expect(page.locator(".modeline-path")).not.toContainText("未保存");
+  };
+
+  // 第一轮：用户输入 → 外部改写 → 冲突 → 强制覆盖落盘。
+  await forceOverwriteRound("# External round 1\n");
+
+  // 反向样本：成功覆盖后文档是 clean（`saveDocument` 对 clean 早退），此时外部改写 + ⌘S
+  // 不产生任何冲突。旧真机场景的第二轮判据正是被这条路径上的残留 toast（`已强制覆盖保存`
+  // 与「已自动重载」并存 ⇒ 子串 `强制覆盖` 恒真）假满足——这一步把「有冲突 / 没冲突」两态
+  // 分开，证明下面的第二轮不是靠残留文案过关。
+  await externalWrite(page, "README.md", "# External probe\n");
+  await page.keyboard.press("Meta+s");
+  await expect(page.locator(".lumir-toast", { hasText: "保存冲突" })).toHaveCount(0);
+  expect(await fileText(page, "README.md")).toBe("# External probe\n");
+
+  // 第二轮：成功覆盖后用户继续编辑（重新 dirty），外部程序再改写同一文件。
+  await content.click();
+  await page.keyboard.type("ROUND2");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
+  await forceOverwriteRound("# External round 2\n");
+
+  // 第二轮落盘的是第二轮的内存内容（不是第一轮），且第一次的修改仍在（增量输入没丢）。
+  const finalText = await fileText(page, "README.md");
+  expect(finalText).toContain("ZZZ");
+  expect(finalText).toContain("ROUND2");
+  expect(finalText).not.toContain("External round");
+});

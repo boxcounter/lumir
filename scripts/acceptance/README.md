@@ -30,7 +30,7 @@ node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手�
 
 三条硬口径：
 
-- **`full` 不得被静默收窄**：`--batch full` 与不带 `--batch` 跑的是同一批场景（247 个），
+- **`full` 不得被静默收窄**：`--batch full` 与不带 `--batch` 跑的是同一批场景（230 个），
   各档都包含在内。不加 `--batch` 就是全量，这条由 `lib/batches.test.mjs` 的对账用例钉住。
 - **`bundle` 与 `requires: bundle` 一一对应**：两种错配都由 `--check` 判红。只写 `tier: bundle`
   漏写 `requires: bundle` —— 场景失去 dev flavour 下的 INVALID 保护（runner 按 `requires` 判环境，
@@ -1033,7 +1033,8 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
     因此 `17/19` 验的是**切换**，不是**首次加入**：真机上「第一次把某个目录加进列表」这一段
     **没有被验证过**——这是本条缺口的准确边界，不要读成「新增路径已验证」。
   - 原生**保存**面板同样不驱动；但「另存为新文件」的落盘路径由 app 自己决定文件名
-    （`07b-recovery-saveas` 断言首级产物 `plain-恢复.md`），不经对话框。
+    （首级产物 `plain-恢复.md`，判据已下沉到 `tests/visual/scenes/save-recovery.spec.ts` 的另存用例；
+    原真机场景 `07b-recovery-saveas` 于 M750 退役），不经对话框。
 - **合成鼠标拖拽会提交输入法的预编辑文本（M285 实测，三轮探针）**：本机跑着中文输入法时，`drag`
   （swift + CGEvent 的 down → 24 步 dragged → up）之后文档里可能出现**任何场景文本里都没有的拼音串**
   ——M285 探针里先（v1）把文档截断成 `…**粗体段wo`、后（v3）在文末追加 `hao`（两次都是拼音）。
@@ -1045,7 +1046,9 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
 - **光标/选区不可断言**：KimiCU 的 AX 输出不暴露 `AXSelectedTextRange`，因此「逐 cell 行移动」
   「kill 到 cell 尾不跨管道符」这类**光标位置**口径无法在真机断言；套件只验「序列按键后文档不被
   破坏、源码不泄漏」，精确语义由 chromium 侧视觉场景覆盖。
-  **派生证据**（2026-09-17，M148 的 `13-toc` 起）：确实必须判「跳转后光标落在哪」时，用被测功能
+  **派生证据**（2026-09-17，M148 的 `13-toc` 起；该场景本批**保留**——M754 为它新增了长文中段
+  跳转的选区 + 视口真机回归，视觉层的同义判据在 `tests/visual/scenes/toc-outline.spec.ts`）：
+  确实必须判「跳转后光标落在哪」时，用被测功能
   自己产出的、只可能由该位置生成的字符串当判据——`13-toc` 用两条联合断言：(1) masthead 的标题链
   （口径是「光标在可见范围内取光标」，跳转后光标必在可见范围内，链条因此是光标的函数）；(2) 在
   标题行尾按 ⌃K 会把下一行并进该行（`src/editor.ts` 的 Emacs 口径），断言「带父级的链条 + 合并后的
@@ -1206,9 +1209,11 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
   DOM `dblclick`：同一点位的正对照（单击树行 → 标签切到该文件）与负对照（单击图片 → 遮罩不开）
   同时成立，两条独立判据都亮——树行被固定（判据①）、图片 lightbox 遮罩打开（AX 树被 `aria-modal`
   接管、放大图 `AXImage` 几何读数 1120×374、`Esc` 关得掉）。套件动作 `doubleClick`（实现
-  `lib/{execute,drive}.mjs` + `lib/cgevent-click.swift`）走的就是这条；场景 33 是它的第一个消费者
+  `lib/{execute,drive}.mjs` + `lib/cgevent-click.swift`）走的就是这条；首个消费者是场景 33
   （三种引用形态各双击一次 + 三条关闭路径 + 两条 `unchangedSince`，PASS 现场
-  `.local/acceptance/<日期>/33-image-lightbox/`）。
+  `.local/acceptance/<日期>/33-image-lightbox/`）。**该场景于 M750 退役**——它的判据已全部下沉到
+  `tests/visual/scenes/markdown-combo.spec.ts` 的 M184 组（双击打开、三条关闭路径、焦点归还的行为
+  判据），真机侧保留 `doubleClick` 通道给当前使用者（`grep -l doubleClick scenarios/*.md`）。
   **用它的三条纪律**：
   - **目标窗口必须在前台且未被遮挡**：真鼠标点击落在该点最上层的那扇窗上，KimiCU 的键盘注入可以
     后台走、这条不行。`doubleClick` 拿到前台失败会**报错**（不是静默点到别处）。跑双击类场景时
@@ -1393,7 +1398,7 @@ INVALID 为 0 时整项省略（既有小样本头部逐字不变）。`cu.test.
 钉住 `get_app_state` 只有 `CuClient.state` 一个发出点——新开调用点会绕过这条口径。
 `lib/batches.test.mjs`（M749）钉批次这一层的两道静默失效：`--batch` 的取值被当成 id 前缀
 （批次实际只跑 0 条或跑成全量）、`tier` 拼错 / 漏写让场景悄悄退出所属批次——用 5 条合成场景
-逐档筛一遍（`full` 必须一条不少），再用真实 247 个场景对账「每个场景恰好一个档、四档都非空、
+逐档筛一遍（`full` 必须一条不少），再用真实 230 个场景对账「每个场景恰好一个档、四档都非空、
 bundle 批与 `requires: bundle` 逐条相同」。
 六组自测经 `check-suite.sh` 进入 quick 与 docs CI；
 `scripts/migrate-harness-sessions.test.mjs` 仍是单独手跑的迁移脚本测试，不在本入口内。

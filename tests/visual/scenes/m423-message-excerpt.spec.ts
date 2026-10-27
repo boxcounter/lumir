@@ -191,6 +191,20 @@ test("排除面：消息内引用卡片内部选区不出钮；消息体选区�
   await expect(btn, "思考块内部选区不得出钮").toBeHidden();
 });
 
+test("点钮：用户消息的摘录卡出处行是「对话 · 你」（真机场景 122 的出处行判据）", async ({ page }) => {
+  await openPanel(page);
+  const btn = page.locator(".lumir-hp-transcript > .quote-gesture-btn");
+  await selectTextIn(page, ".lumir-hp-msg-user .lumir-hp-qtext", 0);
+  await expect(btn).toBeVisible();
+  await btn.click();
+
+  const card = page.locator(".lumir-hp-composer > .lumir-hp-qcard");
+  await expect(card).toHaveCount(1);
+  // 出处行的角色来自来源消息的 role（不是固定串）：同一条通路在 Agent 消息上是「对话 · Agent」
+  // （上面两条用例），用户消息上必须是「对话 · 你」——只判前者会把写死角色的实现判绿。
+  await expect(card.locator(".lumir-hp-qc-src")).toHaveText("对话 · 你");
+});
+
 test("跳回高亮：点卡片 → 来源消息瞬态着色（~1.4s 退场）", async ({ page }) => {
   await openPanel(page);
   await selectTextIn(page, ".lumir-hp-msg-assistant .lumir-hp-body", 0);

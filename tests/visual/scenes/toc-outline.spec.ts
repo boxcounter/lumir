@@ -10,14 +10,15 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //      后迁到 modeline），而整页容差 `maxDiffPixelRatio: 0.001`（1200×800 ≈ 960 px）把它整个
 //      吞掉了——`--update` 跑完 15 张基线逐字节零变化、普通模式也照样绿。也就是说：只靠既有
 //      整页场景，指示段与浮层的视觉回归没有任何机器防线（REVIEW.md 「容差吞掉真实变化」条同族）。
-//   2. **真机套件验不了缩进与精确光标**：AX 不暴露缩进，也不暴露选区；13-toc 只能用派生证据
-//      间接判「光标落在标题行尾」。
+//   2. **真机套件验不了缩进与精确光标**：AX 不暴露缩进，也不暴露选区；`13-toc` 只能用
+//      派生证据间接判「光标落在标题行尾」。该场景**保留**（M754 为它新增了长文中段跳转的
+//      选区 + 视口真机回归），本文件补的是同语义的更精确判据。
 // 因此这里补一条 chromium 场景：浮层元素级截图（只钉浮层自身，容差按元素盒算）+ 直接读
-// CodeMirror 选区（`cmTile.root.view`，与 m131 场景同款）——精确断言「跳转落点 = 标题行尾」，
-// 与 13-toc 的真机口径互补。
+// CodeMirror 选区（`cmTile.root.view`，与 m131 场景同款）——精确断言「跳转落点 = 标题行尾」。
 //
 // 已知边界：键盘注入在这条通道上是可靠的（chromium 直连，不经 KimiCU），所以导航与跳转的
-// 语义在这里判；WKWebView 下的真实手感仍只看 13-toc 的截图与 Alex 的手感项。
+// 语义在这里判；WKWebView 下的真实手感仍归 Alex 的手感项（真机侧只留「⌘⇧O 在 WKWebView 里
+// 被前端截获」这一步，由核心批的键位场景家族覆盖）。
 
 const DOC = `# 第一部分
 第一部分说明段落。
@@ -59,13 +60,47 @@ const LONG_DOC = Array.from({ length: 15 }, (_, index) => {
   ].join("\n");
 }).join("\n");
 
+/** 六层标题各一条：真机场景 13-toc 断言 H1–H6 全覆盖，这里补同语义的精确判据
+ *  （真机 fixture `toc-outline.md` 只到 H3、`toc-long.md` 只到 H4，都用不上）。 */
+const LEVELS_DOC = [
+  "# 一级标题",
+  "一级正文。",
+  "",
+  "## 二级标题",
+  "二级正文。",
+  "",
+  "### 三级标题",
+  "三级正文。",
+  "",
+  "#### 四级标题",
+  "四级正文。",
+  "",
+  "##### 五级标题",
+  "五级正文。",
+  "",
+  "###### 六级标题",
+  "六级正文。",
+  "",
+].join("\n");
+
+/** frontmatter 里的 YAML 注释行：lezer 会把它解析成 ATXHeading1，大纲必须按 frontmatter 边界排除。 */
+const FRONTMATTER_DOC = ["---", "title: 边界", "# 幽灵标题", "---", "", "# 前言下的真标题", "真标题正文。", ""].join("\n");
+
 const VAULT: VaultFixture = {
   entries: [
     { path: "toc.md", kind: "file", size: DOC.length, mtime_ms: 0 },
     { path: "toc-plain.md", kind: "file", size: PLAIN_DOC.length, mtime_ms: 0 },
     { path: "toc-long.md", kind: "file", size: LONG_DOC.length, mtime_ms: 0 },
+    { path: "levels.md", kind: "file", size: LEVELS_DOC.length, mtime_ms: 0 },
+    { path: "frontmatter.md", kind: "file", size: FRONTMATTER_DOC.length, mtime_ms: 0 },
   ],
-  files: { "toc.md": DOC, "toc-plain.md": PLAIN_DOC, "toc-long.md": LONG_DOC },
+  files: {
+    "toc.md": DOC,
+    "toc-plain.md": PLAIN_DOC,
+    "toc-long.md": LONG_DOC,
+    "levels.md": LEVELS_DOC,
+    "frontmatter.md": FRONTMATTER_DOC,
+  },
   links: {},
 };
 
@@ -203,6 +238,71 @@ test("浮层：层级缩进、当前段高亮、键盘导航与跳转落点", as
     beforeCaret.line + 1,
   );
   expect(await docText(page)).toBe(beforeText);
+});
+
+// ---------------------------------------------------------------------------
+// 13-toc 的同语义补强（2026-10-27，M750）：真机那侧保留（M754 新增了长文中段跳转的选区 +
+// 视口回归）；下列语义在 chromium 上判得更精确——AX 不暴露条目缩进、也不暴露选区。
+// ---------------------------------------------------------------------------
+
+test("鼠标点条目跳转：浮层收起、光标落在标题行尾（真机的 AXPress 路径）", async ({ page }) => {
+  await openToc(page);
+  await page.locator(".modeline-section").click();
+  await expect(page.locator(".lumir-toc-item")).toHaveCount(5);
+
+  await page.locator(".lumir-toc-item", { hasText: /^乙小节$/ }).click();
+  await expect(page.locator(".lumir-toc")).toBeHidden();
+  const line = lineNumberAt(DOC, "## 乙小节");
+  await expect.poll(() => caret(page), { message: "鼠标跳转后光标应落在乙小节标题行尾" }).toEqual({
+    head: lineEnd(DOC, line),
+    line,
+  });
+  // 跳转只动光标与视口，不改文档
+  expect(await docText(page)).toBe(DOC);
+});
+
+test("H1–H6 全覆盖；frontmatter 里的 # 注释不混进大纲", async ({ page }) => {
+  await openToc(page);
+
+  // H1–H6 各一条：条目文本与归一深度逐条对（深度 = level − 最浅层 level）
+  await page.locator('.ft-row[title="levels.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("一级正文。");
+  await page.locator(".modeline-section").click();
+  await expect(page.locator(".lumir-toc-item")).toHaveText([
+    "一级标题",
+    "二级标题",
+    "三级标题",
+    "四级标题",
+    "五级标题",
+    "六级标题",
+  ]);
+  expect(
+    await page.locator(".lumir-toc-item").evaluateAll((els) =>
+      els.map((el) => (el as HTMLElement).style.getPropertyValue("--toc-depth")),
+    ),
+  ).toEqual(["0", "1", "2", "3", "4", "5"]);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".lumir-toc")).toBeHidden();
+
+  // frontmatter 边界：YAML 注释行（`# 幽灵标题`）在正文里不存在，也不得成为大纲条目。
+  // 打开 fm 文档时光标落在首部（指示段因此收起——链条为空），入口走 ⌘⇧O，与真机场景
+  // 13-toc「frontmatter 边界」一腿同形。
+  await page.locator('.ft-row[title="frontmatter.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("真标题正文。");
+  await expect(page.locator(".modeline-section")).toBeHidden();
+  await page.keyboard.press("Meta+Shift+o");
+  await expect(page.locator(".lumir-toc-item")).toHaveText(["前言下的真标题"]);
+  await expect(page.locator(".lumir-toc-item", { hasText: "幽灵标题" })).toHaveCount(0);
+});
+
+test("无标题文档：给提示、不弹空浮层（文案 D84）", async ({ page }) => {
+  await openToc(page);
+  await page.locator('.ft-row[title="toc-plain.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("纯文本文档");
+
+  await page.keyboard.press("Meta+Shift+o");
+  await expect(page.locator(".lumir-toast", { hasText: "这份文档还没有标题" })).toBeVisible();
+  await expect(page.locator(".lumir-toc")).toBeHidden();
 });
 
 test("几何：浮层宽 26em（325px）、贴指示段左端与 modeline 上沿，条目 26px 行高 / 18px 层级步进", async ({ page }) => {

@@ -450,3 +450,93 @@ test("CL-1 命令入口（⌘J）：关闭后 scrollTop 恒等", async ({ page }
   ).toBeLessThanOrEqual(TOLERANCE_PX);
   expect(after.editorFocused).toBe(true);
 });
+
+// ---------------------------------------------------------------------------
+// 键位面板 / 搜索面板：同一条 CL-1 不变量（关闭交还焦点 MUST NOT 改变阅读位置）。
+// 这两条是原真机场景 25 的「对照腿」——它分别断言过这两个面板关闭后阅读位置不变；此前
+// 只有 vault 列表有单测、浮层族有契约，这两条面板没有独立消费者用例。契约的输入分布
+// （docs/design-parity-contract/overlay-close-reading-position.md 的「浮层种类」行）本就
+// 点名了键位面板与大纲浮层，这两条用例把它落到实际断言上。// ---------------------------------------------------------------------------
+
+/** 长正文（无块级元素）的纯阅读面：把视口滚到中部而 caret 留在篇首附近。 */
+const PLAIN_DOC = `# 纯阅读面的阅读位置\n\n${INTRO}\n\n${TAIL}\n`;
+
+/** 打开纯正文并按 CL-1 的三条件布场（编辑器持焦、caret 在视口上方 ≥ 一屏、视口已离开顶部）。 */
+async function stagePlainReading(page: Page): Promise<Reading> {
+  await openDoc(page, PLAIN_DOC);
+  const content = (await page.locator(".cm-content").boundingBox())!;
+  await page.mouse.click(Math.round(content.x + content.width / 2), Math.round(content.y + 30));
+  await page.waitForTimeout(120);
+  const scroller = (await page.locator(".cm-scroller").boundingBox())!;
+  await page.mouse.move(scroller.x + scroller.width / 2, scroller.y + scroller.height / 2);
+  for (let i = 0; i < 6; i += 1) {
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(60);
+  }
+  await page.evaluate(() => window.__m280!.focus());
+  await page.waitForTimeout(200);
+  const staged = await reading(page);
+  expect(staged.scrollTop, "视口必须真的离开了文档顶部（否则「上方」没有意义）").toBeGreaterThan(0);
+  expect(
+    staged.caretAbovePx,
+    `caret 必须在视口上方 ≥ ${MIN_CARET_ABOVE_PX}px（实测 ${staged.caretAbovePx}px）——不足一屏时开关浮层不构成可揭示的现场`,
+  ).toBeGreaterThanOrEqual(MIN_CARET_ABOVE_PX);
+  expect(staged.editorFocused, "打开浮层前编辑器必须持焦").toBe(true);
+  return staged;
+}
+
+test("CL-1 键位面板：关闭交还焦点后 scrollTop 恒等", async ({ page }) => {
+  await stagePlainReading(page);
+  const before = await reading(page);
+
+  await page.keyboard.press("Meta+/");
+  const overlay = page.locator(".lumir-bindings-overlay");
+  await expect.poll(() => overlay.isVisible()).toBe(true);
+  const opened = await reading(page);
+  expect(opened.editorFocused, "键位面板打开时应接管焦点").toBe(false);
+  // 打开也不得改变阅读位置（原真机场景 25 同步断言过这一条）
+  expect(
+    Math.abs(opened.scrollTop - before.scrollTop),
+    `打开前 scrollTop=${before.scrollTop}、打开后=${opened.scrollTop}`,
+  ).toBeLessThanOrEqual(TOLERANCE_PX);
+
+  await page.keyboard.press("Escape");
+  await expect.poll(() => overlay.isVisible()).toBe(false);
+  await page.waitForTimeout(200);
+  const after = await reading(page);
+  console.log(`\n=== bindings-panel === before=${before.scrollTop} opened=${opened.scrollTop} after=${after.scrollTop}`);
+  expect(
+    Math.abs(after.scrollTop - before.scrollTop),
+    `关闭前 scrollTop=${before.scrollTop}、关闭后=${after.scrollTop}`,
+  ).toBeLessThanOrEqual(TOLERANCE_PX);
+  expect(Math.abs(after.scrollLeft - before.scrollLeft)).toBeLessThanOrEqual(TOLERANCE_PX);
+  expect(after.editorFocused, "关闭后焦点必须回到编辑器").toBe(true);
+});
+
+test("CL-1 搜索面板：关闭交还焦点后 scrollTop 恒等", async ({ page }) => {
+  await stagePlainReading(page);
+  const before = await reading(page);
+
+  await page.keyboard.press("Meta+f");
+  const panel = page.locator(".lumir-search");
+  await expect.poll(() => panel.count()).toBe(1);
+  await expect(panel).toBeVisible();
+  const opened = await reading(page);
+  expect(opened.editorFocused, "搜索面板打开后焦点应在输入框（不在编辑器）").toBe(false);
+  expect(
+    Math.abs(opened.scrollTop - before.scrollTop),
+    `打开前 scrollTop=${before.scrollTop}、打开后=${opened.scrollTop}`,
+  ).toBeLessThanOrEqual(TOLERANCE_PX);
+
+  await page.keyboard.press("Escape");
+  await expect.poll(() => panel.count()).toBe(0);
+  await page.waitForTimeout(200);
+  const after = await reading(page);
+  console.log(`\n=== search-panel === before=${before.scrollTop} opened=${opened.scrollTop} after=${after.scrollTop}`);
+  expect(
+    Math.abs(after.scrollTop - before.scrollTop),
+    `关闭前 scrollTop=${before.scrollTop}、关闭后=${after.scrollTop}`,
+  ).toBeLessThanOrEqual(TOLERANCE_PX);
+  expect(Math.abs(after.scrollLeft - before.scrollLeft)).toBeLessThanOrEqual(TOLERANCE_PX);
+  expect(after.editorFocused, "关闭后焦点必须回到编辑器").toBe(true);
+});

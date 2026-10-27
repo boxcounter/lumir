@@ -74,10 +74,10 @@ AI-only 模式下（ADR 0004）「待真机验收」清单只增不减，全部�
 | 1 Mermaid 点击进源码编辑 | `01-mermaid-click`（行为全验） |
 | 2 公式点击进编辑 | `02-math-click`（渲染层验；⌃B 次数待判定） |
 | 3 Ctrl+N/P 表格行为 | `03-table-ctrl-np`（表格结构 + 不破坏；逐 cell 落点不可回读） |
-| 5 cell 内公式渲染 + 点击编辑 | `05-cell-math`（渲染层验；点击进编辑不可回读） |
+| 5 cell 内公式渲染 + 点击编辑 | 已下沉（M750 退役 `05-cell-math`）：`tests/visual/scenes/m119-table-math.spec.ts` + `m113-table-math-cursor.spec.ts`；手感 Alex |
 | 6 Callout 显露 / cell 内 `$$` / 表格宽度 | `06-callout-and-width`（渲染层验；宽度只留证据） |
-| 7 M124 恢复路径 | `07-recovery-paths`、`07b-recovery-saveas`、`07c-external-reload`（三条全验） |
-| 8 M127 崩溃备份链路（M278 起不再含自动保存） | `08c-crash-recovery`、`08d-crash-discard`、`08e-force-overwrite`（三条全验）。`08-autosave` 与 `08b-autosave-pause` 断言的是**已移除**的自动保存（磁盘落盘、冲突期暂停），随 change `remove-autosave`（M278）一并删除；「编辑内容不丢」的覆盖由 `43`/`41`/`42`/`46` 的显式保存断言承接 |
+| 7 M124 恢复路径 | `07-recovery-paths`、`07c-external-reload`（两条全验）。`07b-recovery-saveas` 于 M750 退役——另存为的判据下沉到 `tests/visual/scenes/save-recovery.spec.ts` 与 `save-hardening-save-fallback.spec.ts` |
+| 8 M127 崩溃备份链路（M278 起不再含自动保存） | `08c-crash-recovery`、`08d-crash-discard`（两条全验）。`08e-force-overwrite` 于 M750 退役——强制覆盖的两轮确认与「覆盖后再冲突」下沉到 `save-recovery.spec.ts` / `save-hardening-save-fallback.spec.ts`。`08-autosave` 与 `08b-autosave-pause` 断言的是**已移除**的自动保存（磁盘落盘、冲突期暂停），随 change `remove-autosave`（M278）一并删除；「编辑内容不丢」的覆盖由 `43`/`41`/`42`/`46` 的显式保存断言承接 |
 | 9 Emacs 键位 / ⌘Z 真机路径 / ⌘/ 面板 / `[keys]` | `09-emacs-keys`、`09b-keys-config`（行为全验） |
 | 93 思考块三态（折叠默认 / 展开见原文 / 时长读数在场） | `93-harness-thinking-blocks`（行为全验，2026-10-07） |
 | 94 无 reasoning ⇒ 零思考块（反向验证） | `94-harness-thinking-absent`（行为全验，2026-10-07） |

@@ -5,7 +5,7 @@
 // 所以这里用**真 EditorState + 真 markdown 解析器**驱动（本层口径见 README：会话内容用真的
 // EditorState 承载）。view 侧只剩「落点是否可停靠」的回退——那需要真 DOM 坐标，归 chromium 场景
 // （tests/visual/scenes/m118-cursor-interaction.spec.ts、m168-table-cell-line-end.spec.ts）与真机套件
-// （scripts/acceptance/scenarios/24-table-cell-ctrl-e-seq.md）。
+// （`24-table-cell-ctrl-e-seq`，M750 退役——该场景的判据就是本文件的纯函数，逐条对应）。
 //
 // 形态矩阵里的一个关键事实（本层测不了、由 chromium 实测提供）：**⌃F 的落点**。从 cell 内容右缘
 // 按 ⌃F 走一步，落点是紧随其后的隐藏管道符左缘（= 该 cell slot 的 `to`），不是下一 cell 的内容

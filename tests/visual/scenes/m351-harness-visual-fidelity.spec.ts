@@ -309,6 +309,39 @@ test("composer：圆角卡片容器 + focus-within 强调框 + 图标发送钮",
   await expect(page.locator(".lumir-hp-send")).not.toHaveClass(/is-busy/);
 });
 
+test("发送后焦点回 composer：点击发送钮 → 回答到达后焦点在输入区，续打字不落文档（真机场景 100 的下沉面）", async ({
+  page,
+}) => {
+  await openPanel(page);
+  const composer = page.locator(".lumir-hp-composer");
+  await composer.click();
+  await page.keyboard.type("caretprobe1");
+  await expect(composer).toContainText("caretprobe1");
+
+  // 点击路径（真机缺陷现场：按钮拿到 DOM 焦点，焦点留在按钮上）
+  await page.locator(".lumir-hp-send").click();
+  await expect(page.locator(".lumir-hp-send")).toHaveClass(/is-busy/);
+  await fire(page, { type: "text_chunk", text: "CARET-ANSWER-01" });
+  await fire(page, { type: "done" });
+  await expect(page.locator(".lumir-hp-msg-assistant")).toContainText("CARET-ANSWER-01");
+  await expect(composer).toBeFocused();
+
+  // 续打字双锁：probe 进 composer，且文档逐字节未变（焦点真的不在编辑器）
+  const before = await page.locator(".cm-content").evaluate(
+    (el) =>
+      (el as unknown as { cmTile: { root: { view: { state: { doc: { toString(): string } } } } } }).cmTile.root.view
+        .state.doc.toString(),
+  );
+  await page.keyboard.type("caretback2");
+  await expect(composer).toContainText("caretback2");
+  const after = await page.locator(".cm-content").evaluate(
+    (el) =>
+      (el as unknown as { cmTile: { root: { view: { state: { doc: { toString(): string } } } } } }).cmTile.root.view
+        .state.doc.toString(),
+  );
+  expect(after).toBe(before);
+});
+
 test("composer 空态：与首行输入同高（2.1）+ 占位压首行行位（2.2）", async ({ page }) => {
   await openPanel(page);
 

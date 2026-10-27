@@ -28,6 +28,9 @@ test("cell 内同行 $$ 渲染为行内公式，点击进编辑，离开恢复",
   await expect(widget).toHaveCount(1);
   await expect(page.locator(".cm-lp-table-cell .katex")).toHaveCount(1);
   await expect(page.locator(".cm-lp-table-cell").nth(2)).not.toContainText("$$");
+  // 渲染后 cell 的可见文本只剩公式字符（真机场景 05 的「cell 文本 = y」判据；只判 $ 不显露
+  // 挡不住「widget 建了但内容空着」——KaTeX 的 HTML 分支才是用户看到的字形）。
+  await expect(page.locator(".cm-lp-table-cell").nth(2).locator(".katex-html")).toHaveText("y");
   // inline 显示样式：不产生 display 模式的 .katex-display / 块级 widget
   await expect(page.locator(".cm-lp-table .katex-display")).toHaveCount(0);
   await expect(page.locator(".cm-lp-table .cm-lp-math-block")).toHaveCount(0);

@@ -18,10 +18,22 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // 面板打开是纯前端路径（装配层 split + attachTo），不触后端 invoke，stub 环境下即可展开。
 
 const DOC = "# 面板基线笔记\n\n第一段，给上下文 chip 一个视口口径。\n";
+const DOC_TWO = "# 第二份笔记\n\n切换文档后 chip 必须跟着换读数。\n";
 
 const VAULT: VaultFixture = {
   entries: [{ path: "harness-note.md", kind: "file", size: DOC.length, mtime_ms: 0 }],
   files: { "harness-note.md": DOC },
+  links: {},
+};
+
+/** 两份文档的 vault：只给「chip 随文档切换刷新」用——整页基线那两条仍用单文件 VAULT，
+ *  否则左栏多一行会让 `harness-panel-open.png` 这条整页基线无故变红（假回归）。 */
+const VAULT_TWO: VaultFixture = {
+  entries: [
+    { path: "harness-note.md", kind: "file", size: DOC.length, mtime_ms: 0 },
+    { path: "harness-two.md", kind: "file", size: DOC_TWO.length, mtime_ms: 0 },
+  ],
+  files: { "harness-note.md": DOC, "harness-two.md": DOC_TWO },
   links: {},
 };
 
@@ -56,6 +68,8 @@ async function stubHarnessState(
         w.__deletedSessions.push(args.session_id as string);
         return null;
       }
+      // 新建会话的成功桩（M350 的幂等语义由 Rust 单测钉住；本层只判界面后果）。
+      if (cmd === "harness_new_session") return null;
       return invoke(cmd, args);
     };
   }, sessions);
@@ -248,4 +262,63 @@ test("会话浮层列表滚动条：隐藏档，溢出态下每行 × 不被压�
   expect(reading.scrollbarWidth).toBe("none");
   expect(reading.webkitDisplay).toBe("none");
   expect(reading.offsetWidth - reading.clientWidth).toBe(0);
+});
+
+test("上下文 chip 随文档切换刷新（真机场景 98 的下沉面）", async ({ page }) => {
+  await stubTauri(page, VAULT_TWO);
+  await stubHarnessState(page);
+  await page.goto("/");
+
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await page.locator(".lumir-hp-toggle").click();
+  const chip = page.locator(".lumir-hp-chip");
+  await expect(chip).toContainText("harness-note.md · 视口");
+
+  // 切到第二份文档：chip 换成新文件（旧现场是「开着文件却停在旧读数 / 无」）
+  await page.locator('.ft-row[title="harness-two.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("切换文档后 chip");
+  await expect(chip).toContainText("harness-two.md · 视口");
+  // 正反双判：旧文件名不得留在 chip 上（只判新值会被「两个都在」的拼接态骗过）
+  await expect(chip).not.toContainText("harness-note.md");
+
+  // 切回去同样刷新（不是「只认第一次切换」）
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await expect(chip).toContainText("harness-note.md · 视口");
+  await expect(chip).not.toContainText("harness-two.md");
+});
+
+test("新会话幂等（界面后果）：连续点击后空态仍在、无错误横幅、两个同名钮守恒", async ({ page }) => {
+  // 原真机场景 92 的界面一半：M350 的缺陷是「无会话时点新会话 → 报错 → 再点仍报错」。
+  // Rust 侧的状态机由 `harness::tests::new_session_is_idempotent_in_any_idle_state` 钉住；
+  // 这里判前端后果——成功调用后没 resetView、或重复点击把错误横幅堆上来，都必须红。
+  await stubTauri(page, VAULT);
+  await stubHarnessState(page);
+  await page.goto("/");
+
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await page.locator(".lumir-hp-toggle").click();
+
+  const empty = page.locator(".lumir-hp-empty");
+  const error = page.locator(".lumir-hp-error");
+  const nameButton = page.locator(".lumir-hp-sname");
+  const newButton = page.locator(".lumir-hp-seg-new");
+  await expect(empty).toContainText("与当前文档对话");
+  await expect(error).toHaveCount(0);
+  // 结构基线：两个同名「新会话」钮（会话名钮 + 新建钮）——「新会话」这个名字恰出现两次。
+  await expect(nameButton).toHaveText("新会话");
+  await expect(newButton).toHaveAttribute("aria-label", "新会话");
+
+  for (const round of [1, 2]) {
+    await newButton.click();
+    // 空态仍在（resetView 把视图回空白会话形态，而不是停在「正在重置」或错误现场）
+    await expect(empty, `第 ${round} 次点击后空态应仍在`).toContainText("与当前文档对话");
+    // 无错误横幅（M350 的缺陷形态：D348 错误行出现在 transcript 里）
+    await expect(error, `第 ${round} 次点击后不得出现错误横幅`).toHaveCount(0);
+    // 两个同名钮结构守恒（改名 / 掉一个都是回归）
+    await expect(nameButton, `第 ${round} 次点击后会话名钮应仍是未命名态`).toHaveText("新会话");
+    await expect(newButton, `第 ${round} 次点击后新建钮应仍在`).toHaveAttribute("aria-label", "新会话");
+  }
 });

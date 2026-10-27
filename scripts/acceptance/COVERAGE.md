@@ -4,12 +4,12 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：247
-- 验收项（不同 item 编号）：222
-- 分档：core 29 / full 211 / bundle 3 / evidence 4（full 批 = 全部 247 个，含其余各档）
+- 场景：230
+- 验收项（不同 item 编号）：209
+- 分档：core 29 / full 194 / bundle 3 / evidence 4（full 批 = 全部 230 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
-文件是既有设计（如 item 7 = `07` / `07b` / `07c` 三条恢复路径），故表里一项一行、行内列出全部场景；
+文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
 同一 item 出现在两行才会判红。`tier` 是场景所属批次（闭集合 core / full / bundle / evidence），
 `node scripts/acceptance/run.mjs --batch <档>` 按它筛；`full` 是语义上的**全量**（含其余各档），
 故 `--batch full` 与不带 `--batch` 跑的是同一批场景。本表是**场景清单**，不是验收结论——每个场景的真实 PASS
@@ -21,10 +21,9 @@
 | 1 | `01-mermaid-click` | Mermaid 图表点击进源码编辑 | full |
 | 2 | `02-math-click` | 公式渲染态与进编辑路径（⌃B 次数仍待判定） | full |
 | 3 | `03-table-ctrl-np` | Ctrl+N/P 表格行为（M118 裁决） | full |
-| 5 | `05-cell-math` | 表格 cell 内公式渲染 + 点击编辑 | full |
 | 6 | `06-callout-and-width` | Callout 光标行源码显露 / cell 内 $$y$$ / 表格宽度证据 | full |
-| 7 | `07-recovery-paths`<br>`07b-recovery-saveas`<br>`07c-external-reload` | M124 三条恢复路径（冲突双动作 / 另存为 / 外部修改重载）<br>M124 恢复路径之二——文件被外部删除后「另存为新文件」<br>M124 恢复路径之三——外部修改且缓冲干净时自动重载 | core<br>full<br>full |
-| 8 | `08c-crash-recovery`<br>`08d-crash-discard`<br>`08e-force-overwrite` | 崩溃恢复——启动提示双动作与「恢复内容」<br>崩溃恢复——「丢弃备份」动作<br>强制覆盖——二次确认，以及覆盖后再次冲突仍给同一组动作 | core<br>full<br>full |
+| 7 | `07-recovery-paths`<br>`07c-external-reload` | M124 三条恢复路径（冲突双动作 / 另存为 / 外部修改重载）<br>M124 恢复路径之三——外部修改且缓冲干净时自动重载 | core<br>full |
+| 8 | `08c-crash-recovery`<br>`08d-crash-discard` | 崩溃恢复——启动提示双动作与「恢复内容」<br>崩溃恢复——「丢弃备份」动作 | core<br>full |
 | 8.1 | `180-subagent-delegate-discovery` | 子代理 8.1 定义发现与自动委派（mock provider） | core |
 | 8.2 | `181-subagent-default-tools`<br>`182-subagent-explicit-write-tool` | 子代理 8.2 默认只读三件（未声明 tools）<br>子代理 8.2 显式写工具（声明 vault_patch） | full<br>full |
 | 8.3 | `183-subagent-approval-approve`<br>`184-subagent-approval-reject` | 子代理 8.3 批准透传（采纳 ⇒ 文件删除）<br>子代理 8.3 批准透传（拒绝 ⇒ denied_calls=1、文件未删、子运行继续） | full<br>full |
@@ -60,8 +59,6 @@
 | 21 | `21-wrap-default` | 折行口径默认值（文件折行、代码块不折行）与代码块横滚容器 | full |
 | 22 | `22-wrap-toggle` | 折行开关运行期翻转（[keys] 绑定后生效、两轴独立、不落盘） | full |
 | 23 | `23-image-first-open-width` | 图片显示宽度不依赖加载时序（首开 vs 切走切回两态收敛到栏宽） | full |
-| 24 | `24-table-cell-ctrl-e-seq` | 表格 cell 内 ⌃E→⌃F→⌃E 序列不把光标送回上一个 cell（M185） | full |
-| 25 | `25-vault-list-close-keeps-reading-position` | 打开 / 收起 vault 列表不改变正文阅读位置 | full |
 | 26 | `26-svg-scroll-stability` | 倒序滚动经过大尺寸 svg 图：图渲染完整、终态无自发位移（替换区尺寸的会话内一致性，M187） | full |
 | 27 | `27-document-end-marker` | 正文末尾的结束标记（文档超过一屏时显示、装得下时不显示） | full |
 | 28 | `28-remember-reading-position` | 记住文档阅读位置：重启后再次打开同一文件从上次位置继续 | full |
@@ -69,7 +66,6 @@
 | 30 | `30-code-outline` | 代码文件的符号大纲：⌘⇧O 展开符号条目、跳转到声明、惰性解析（没按过 ⌘⇧O 就不解析、不出指示段）、两条新空态提示 | full |
 | 31 | `31-code-variable-highlight` | 双击标识符高亮同一变量：选区成立即判定（底纹在场留截图）、装饰不改文档、T3 与 md 静默 | full |
 | 32 | `32-list-filter` | 两处列表浮层的输入筛选（大纲 / vault 切换器）：打字即筛、结果集里的游标与跳转落点、无命中保留浮层、Esc 一步丢弃查询 | full |
-| 33 | `33-image-lightbox` | 图片双击放大查看（lightbox）：三种引用形态打开遮罩、三条关闭路径、焦点归还、不改写源文件 | full |
 | 34 | `34-restyle-theme-skeleton` | restyle 收尾：ui.theme=eink 经配置通道生效、骨架几何与信息落位在场、masthead 指纹不在场、验收 vault 文件哈希不变 | core |
 | 35 | `35-restyle-three-themes` | 三主题真机呈现（light / dark / eink 各一张截图，重启生效）与 overlay 标题栏的窗口级读数 | evidence |
 | 36 | `36-restyle-content` | restyle 内容面真机呈现：doc-title 块（fm 后正文前 + meta 三要素）、callout 双段标签、文件树目录 chevron 与选中行 | full |
@@ -86,7 +82,6 @@
 | 47 | `47a-menu-basics`<br>`47b-rename-validation`<br>`47c-create-and-delete`<br>`47d-dirty-tab-linkage` | 文件树右键菜单：文件行 / 目录行项集分流、行空白区命中、Esc 收起、复制完整路径（绝对路径）、在 Finder 中显示（只读弱断言）<br>树内联重命名与校验：预填 + 获焦、改名落盘与 watcher 收敛、撞名拒绝、忽略集名拒绝、Esc 退出编辑态<br>文件删除与新建：移到废纸篓（文件 / 目录两档确认文案）、目录下新建文件（自动打开）与子目录<br>打开中 dirty 文件的改名联动与删除处置：标签就地换名、未保存内容不丢、两种误报都不出现 | full<br>full<br>full<br>full |
 | 48 | `48-vault-registry-migration` | 注册表目录更名迁移——预置旧目录 workspaces/ 与注册项，启动后整个目录被原子搬进 vault-registry/、身份不丢、vault 照常恢复打开、迁移记一条诊断事件 | core |
 | 50 | `50-tab-context-menu` | 标签右键菜单——Close / Close Other Tabs / Close Tabs to the Right 三条关闭路径，脏标签走既有确认流（取消即停手） | full |
-| 51 | `51-tab-overflow` | TAB 溢出态——13 个长名标签下键盘直达 / 循环切换（活跃标签程序化对齐可见）＋ 右键菜单英文上屏（Close / Close Other Tabs / Close Tabs to the Right） | full |
 | 52 | `52-dir-rename-expand` | 目录经树内右键重命名后仍可展开（子孙条目与展开态随目录搬到新路径，改回原名亦然） | full |
 | 53 | `53-bold-click-selection` | 点击粗体不产生幻影选区（M259）——指针按压期间的落点判定不跨布局 | core |
 | 54 | `54-bare-url-cmd-click` | 裸 URL / 链接定义行 / 角括号自动链接的装饰与 ⌘⏎ 打开（M272） | full |
@@ -102,7 +97,6 @@
 | 67 | `67-vault-open-ignore-set` | 大 vault 打开：hidden 档隐藏 / 其余名字惰性可见，且打开段不冻结界面 | core |
 | 68 | `68-selection-contrast` | 三主题编辑器选区带可辨（含 eink 选中区文字可读） | full |
 | 69 | `69-tab-reveal-in-tree` | TAB 右键菜单定位项（需求原话「在左栏中定位到此文件」，上屏 Reveal in File Tree）——展开祖先、目标行现身（真实 WKWebView + 真实右键通道） | full |
-| 70 | `70-harness-context-chip` | Harness ① 上下文 chip：视口口径（选区不再自动注入）+ 随消息注入路径与视口行号（不含原文） | full |
 | 71 | `71-harness-tool-loop-read` | Harness ② 工具循环：vault_read 读文件并回答（change add-harness-probe，mock provider） | core |
 | 72 | `72-harness-patch-approve` | Harness ③ patch 批准闸：采纳落盘、未触及部分逐字节不变、打开中会话同步（change add-harness-probe，mock provider） | core |
 | 73 | `73-harness-patch-reject` | Harness ④ patch 批准闸：拒绝不落盘（change add-harness-probe，mock provider） | full |
@@ -114,7 +108,6 @@
 | 79 | `79-pane-split` | 双栏 pane——⌥S 分栏（新 pane 空态）/ ⌥O 往返切活跃 / ⌥S 上限二无操作 / ⌥W 收起并入 / 跨 pane 打开已开文件是移动 | full |
 | 80 | `80-pane-session-restore` | 分栏会话恢复——双 pane 各一标签，启动恢复后归位原 pane（不挤到右栏） | full |
 | 81 | `81-quote-card-create` | 摘录卡片 ① 选区 → 浮动钮 → 卡片入 composer（harness pane 未开先开） | full |
-| 82 | `82-quote-card-mixed-edit` | 摘录卡片 ② 混排编辑区（光标落卡片下一行、一条消息挂两张卡片） | full |
 | 83 | `83-quote-card-serialization` | 摘录卡片 ③ 引用消息序列化结构（file/heading/lines 三属性、转义、协议无编号） | full |
 | 84 | `84-quote-card-anchor-loss` | 摘录卡片 ④ 失锚降级三层（行号命中 / 漂移后全文搜索 / 失锚 toast） | full |
 | 85 | `85-quote-card-transcript` | 摘录卡片 ⑤ transcript 同构沉淀（卡片与问题段落平铺、卡片变跳回按钮、无 ×） | full |
@@ -124,15 +117,13 @@
 | 89 | `89-harness-copy-message` | 复制消息：消息 hover 钮复制该消息 Markdown 源文本（剪贴板逐字断言） | full |
 | 90 | `90-harness-model-chip` | 合并选择器：读数 = model · effort、浮层三维分段（mock 隐藏）、provider 选择写回（M373 适配 chip 合并） | full |
 | 91 | `91-harness-pane-restore` | harness_pane 随 vault 往返恢复：启动装配出面板（空会话）、切走不泄漏、切回按存储重建 | full |
-| 92 | `92-harness-new-session-idempotent` | 新建会话幂等（M350）：空会话态连点「新会话」×3 不报错、视图保持空态 | full |
 | 93 | `93-harness-thinking-blocks` | 思考块三态（live：折叠默认 / 展开见原文 / 时长读数）+ 会话恢复重建的思考块默认收起、折叠行取无时长变体、点开见原文 | full |
 | 94 | `94-harness-thinking-absent` | 无 reasoning 的响应整条 agent 消息零思考块（块数为零的反向验证） | full |
 | 95 | `95-harness-thinking-effort` | 思考程度会话态（M373 并入合并 chip）：默认 High → 浮层三档 → 选 Max 读数翻转 → 新会话回 High | full |
 | 96 | `96-harness-transcript-restore` | harness transcript 快照恢复保真：切 vault 回来后工具行带人话化参数、工具清单按消息分块、无光秃 Agent 头 | core |
 | 97 | `97-harness-stream-visible` | 真流式与在途停止：分段到达时可见部分正文、片间隔内点停止能中断在途流并保留已产出正文 | full |
-| 98 | `98-harness-chip-doc-open` | Harness ⑭ 上下文 chip 随文档打开即时刷新（不开 composer 也刷新；M370 修复「开着文件显示 Context: none」） | full |
 | 99 | `99-harness-k3-thinking-chip` | k3-256k 思考程度可用（M373 合并 chip）：订阅模型配置下 chip 可点、浮层三档、选择写会话 | full |
-| 100 | `100-empty-line-editing`<br>`100-harness-composer-caret` | 空行编辑三连（M399）——有内容行行首 Enter 换行且新空行可见、空列表项 Enter 去标记留空行（不新增行）、删空项 marker 后行保留可见<br>发送后焦点回 composer：点击发送钮后焦点落回输入区，续打字进 composer 不进文档 | full<br>full |
+| 100 | `100-empty-line-editing` | 空行编辑三连（M399）——有内容行行首 Enter 换行且新空行可见、空列表项 Enter 去标记留空行（不新增行）、删空项 marker 后行保留可见 | full |
 | 101 | `101-harness-k2-chip-disabled` | kimi-k2.6 思考程度置灰（M373 合并 chip）：同一条配置链配 k2 系模型，能力按 schema 声明现算 | full |
 | 102 | `102-harness-model-dimension` | 合并选择器 model 维度（M373/M381 config-only）：schema models 清单进浮层、选择写回 providers.kimi.model、effort 能力随声明翻转 | full |
 | 103 | `103-harness-tool-order` | 工具行时序：先调工具后作答的轮次，定稿后工具行保持在最终回答之前（M374） | full |
@@ -159,7 +150,6 @@
 | 127 | `127-harness-composer-image-paste` | composer 贴图：落 harness 侧 attachments/<vault id>/（vault 零新增）+ 图片卡片 + wire 交错引用 + JSONL 无 base64 + 重启恢复 round-trip | core |
 | 128 | `128-harness-image-gate` | 图片能力闸：模型未声明 vision 时含图消息发送被挡（toast + 卡片标出 + 输入区保留 + 会话不推进） | full |
 | 129 | `129-harness-image-per-vault` | 贴图附件按 vault 分置：两 vault 各贴各落（attachments/<各自稳定 id>/），互不可见、留存互不污染 | full |
-| 130 | `130-harness-session-empty-flash` | 会话浮层空态不闪现（M442）：vault 只有旧布局平铺留存时点会话名钮不揭示浮层、给可感知反馈 | full |
 | 131 | `131-harness-cache-session` | Harness 缓存读数①：控制行显示会话累计命中率、气泡命中率行同源（单回合值 / 成因句 / 写入行不上屏）、切 vault 回来读数仍在 | full |
 | 132 | `132-harness-cache-dilution` | Harness 缓存读数②：大块摊薄回合——控制行仍显示会话累计、气泡只剩用量行与命中率行（本回合 / 成因 / 写入行不上屏） | full |
 | 133 | `133-harness-cache-write` | Harness 缓存读数③：缓存写入只进留存（本回合 + 按 0 记）、气泡不渲染写入行 | full |
@@ -178,7 +168,6 @@
 | 146 | `146-harness-composer-extend` | composer 扩选族：⌃⇧B 扩选后 ⌃H 删整段选区（anchor 不动，M447） | full |
 | 147 | `147-harness-composer-family-outside` | composer 族外键（⌥G / ⌃V / Tab）不回退（M447） | full |
 | 148 | `148-harness-image-mention` | composer 图片编号与 @ 引用：卡片编号 = 投递标签同源 + 留存文本面无标签 + 恢复后编号一致 + 移除位序重编 | full |
-| 149 | `149-harness-image-mention-quote-exception` | 编号禁令边界：引用卡片零编号、图片块带 Image N 标签（同消息并存的例外口径） | full |
 | 150 | `150-harness-composer-line-start-and-caret-geometry` | composer 卡片后空行：⌃B 落前一行行末 + ⌃A 回行首（M457） | full |
 | 151 | `151-harness-approval-reason` | 批准卡判定依据行（M459）：危险黑名单 / 模式默认分层 / deny 规则原文三类拦截各说得出理由（mock provider） | full |
 | 152 | `152-harness-transcript-link-and-time` | harness transcript：裸 URL 在段落与表格里上屏为链接、恢复重放的消息带时间读数 | full |
@@ -186,7 +175,6 @@
 | 154 | `154-harness-composer-prev-line-end` | composer 末段空行行首 ⌃B 落上一行行末（M465，HC4 第 1 条） | full |
 | 155 | `155-harness-ctxpop-tokens` | Harness 气泡读数：上下文已用/上限 tokens（k/m 单位）+ 会话命中率（只百分比）；本回合 / 写入行不渲染；空会话无假读数 | full |
 | 156 | `156-harness-composer-ime-composition-freeze` | composer IME 组合期结构冻结（M527，HC5）：第二行中文组合不折回第一行——手动复验 | evidence |
-| 157 | `157-harness-toolsum-table-columns` | harness transcript：cli_run 长参数行显示命令本体、空单元格不在表格里丢列（M528） | full |
 | 158 | `158-ordered-list-enter-no-duplicate-marker` | 有序列表行末 Enter 单 marker（M529）——真实列表项续行只出一个新序号、无「2. 3.」重复形态 | full |
 | 159 | `159-filetree-drag-move` | 文件树拖拽移动——拖文件入目录、拖目录入目录、撞名拒绝三态（人话提示 / 源不变 / 目标不变）、拖入自身子树与文件行均不可落、拖到 vault 名行 / 列表尾部空白落根 | core |
 | 163 | `163-harness-auto-title-first-turn`<br>`163b-harness-quote-first-title` | 会话自动命名①：首轮完成后生成标题（标题栏 + 历史浮层行名 + JSONL decision=initial）<br>会话自动命名②：quote 首条消息 → 命名事件 → 标题栏与已开历史浮层行同步改名 | full<br>full |
@@ -226,13 +214,12 @@
 | 233 | `233-semantic-selection-release-snap` | 双击粗体词松开后外扩到 `**…**` → 摘录卡片原文含定界符；文档逐字节不变 | core |
 | 235 | `235-keybindings-lookup-query` | 键位速查——每命令一行的内容模型、文本查询（标签 / 别名 / id）、来由零命中与查询空态 | full |
 | 236 | `236-keybindings-capture` | 键位速查——按键捕获（Home → 真实 when 绑定、被捕获的键不执行命令、⌃G 例外、无绑定空态） | full |
-| 237 | `237-keybindings-keyboard` | 键位速查——键盘全程：输入框焦点、Tab 循环、↑↓/Enter 详情、End 末行、Esc 分层与关闭 | full |
 | 238 | `238-escape-overlay-close` | Escape 只收最上层浮层且永不退出应用（change fix-escape-overlay-close-oct24）：权限浮层重建失焦后按 Esc、修饰键准入、焦点回还 | full |
 | 239 | `239-escape-quit-guard` | Escape 不削弱退出守卫（change fix-escape-overlay-close-oct24）：dirty 文档按 Esc 不退出且不弹提示、⌘Q 仍被拦下、保存后 ⌘Q 正常放行 | core |
 | 250 | `250-settings-panel-provider-crud` | 设置面板：⌘, 打开、增删 provider、重复 id 被拒且文件不变、删除保护与空清单 | core |
 | 251 | `251-settings-panel-legacy-preset-migration` | 设置面板：旧格式 provider（无 preset）首次启动补齐迁移，二次启动不再写盘（mtime 不变） | full |
 | 252 | `49-vault-switch-feedback` | vault 切换的即时反馈（浮层收起 / 装载指示起止）与切换器浮层的完整可读 | full |
-| 423 | `121-harness-message-excerpt`<br>`122-harness-message-excerpt-exclusion` | harness 消息摘录 ① transcript 选区 → 浮动钮 → 卡片入 composer（+ 序列化结构 / 视口 skip / transcript 同构）<br>harness 消息摘录 ② 排除面：思考块内选区不出钮（消息体选区出钮为正向对照） | full<br>full |
+| 423 | `121-harness-message-excerpt` | harness 消息摘录 ① transcript 选区 → 浮动钮 → 卡片入 composer（+ 序列化结构 / 视口 skip / transcript 同构） | full |
 | 531 | `160-quote-button-viewport-clamp` | 摘录浮动钮落点钳制：选区并集盒越出挂载容器（长行）时钮仍在视口内 | full |
 | 552 | `161-harness-path-link`<br>`221-harness-path-line-range` | harness 输出里的 vault 路径可点击（新标签 + 行号锚定 + 卡片路径）<br>harness 输出里的行范围路径可点击（:起-止 落到起始行，畸形形态不吞半截） | full<br>full |
 | 553 | `162-harness-dir-link` | harness 输出里的 vault 目录引用可点击（左栏定位） | full |

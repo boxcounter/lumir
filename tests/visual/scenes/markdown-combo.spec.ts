@@ -486,6 +486,29 @@ test("M184 双击打开遮罩、三条关闭路径与焦点归还", async ({ pag
   expect(await readDocument(page)).toBe(images);
 });
 
+test("M184 负对照：单击内联图不打开遮罩，同一张图双击才打开（配对判据）", async ({ page }) => {
+  // 原真机场景 33 的第一步就是这条负对照：先单击、断言遮罩没开，再双击。没有它，
+  // 「双击打开」无法排除「任何一次点击都会开」——把监听从 dblclick 错挂到 click 上，
+  // 上面那组双击用例仍可能全绿。
+  await page.route("**/example.invalid/**", (route) => route.abort());
+  await open(page, images, "images.md", undefined, imageAssets);
+  await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
+
+  const overlay = page.locator(LIGHTBOX_OVERLAY);
+  const target = inlineImage(page, REFS.fixed);
+  // 遮罩是惰性建立：没双击过时 DOM 里连节点都没有 ⇒ count 0 就是「没开」，不是「开了又隐藏」。
+  await expect(overlay).toHaveCount(0);
+  await target.click();
+  await expect(overlay, "单击内联图 MUST NOT 打开遮罩").toHaveCount(0);
+
+  // 同一张图、同一位置的双击正对照：上一条不是「图根本点不开」的空转。
+  await target.dblclick();
+  await expect(overlay, "双击同一张图应打开遮罩").toHaveCount(1);
+  await expect(overlay).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(overlay).toBeHidden();
+});
+
 test("M246 lightbox 元素级基线：遮罩 + 放大图的形态钉住", async ({ page }) => {
   // 默认 1200x800 视口（基线统一口径）；行为合同（三条关闭路径 / 焦点归还 / 适配口径）
   // 归上面 M184 组，本条只钉视觉形态——lightbox 是零基线覆盖的三个周边表面之一（M214 登记）。

@@ -21,7 +21,7 @@
 //   - COVERAGE.md 与生成结果不一致（新增、改名、删场景或手改文件后没重新生成）。
 //
 // **`item` 是分组键，不是场景级唯一键**（tower 2026-10-24 裁决）：同一验收项拆成多个场景文件是既有
-// 设计——item 7 = `07-recovery-paths` / `07b-recovery-saveas` / `07c-external-reload` 三条恢复路径，
+// 设计——item 7 = `07-recovery-paths` / `07c-external-reload` 两条恢复路径（`07b` 于 M750 下沉退役），
 // item「8.x」同理；`run.mjs 7` 靠 item 选中该项下全部场景。故「重复 item」判在**表**上：一项一行、
 // 行内列出该项全部场景；场景之间共用 item 合法。历史编号（含 item 100 / 104 这类无关特性共用同一号
 // 的既有碰撞）保持原样，由表本身如实暴露，不在生成器里重编或拆散。
@@ -172,7 +172,7 @@ function renderCoverage(rows, scenarioCount) {
     ...tierSummaryLines(rows),
     "",
     "`item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景",
-    "文件是既有设计（如 item 7 = `07` / `07b` / `07c` 三条恢复路径），故表里一项一行、行内列出全部场景；",
+    "文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；",
     "同一 item 出现在两行才会判红。`tier` 是场景所属批次（闭集合 core / full / bundle / evidence），",
     "`node scripts/acceptance/run.mjs --batch <档>` 按它筛；`full` 是语义上的**全量**（含其余各档），",
     "故 `--batch full` 与不带 `--batch` 跑的是同一批场景。本表是**场景清单**，不是验收结论——每个场景的真实 PASS",
