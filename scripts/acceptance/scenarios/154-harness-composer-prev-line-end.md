@@ -76,8 +76,10 @@ steps:
     do: key
     key: "shift+return"
     expect:
+      # 跨行判据走**解析值**（M765，与 117 同口径）：KimiCU 0.6.8 起 dump 原文里的换行是字面 `\n`，
+      # `ax.has` 的 `[\r\n]+` 命中 0 次（假红）；`node` 匹配 `parseNodes` 还原后的 value。
       - label: 两行文本各占一行（AX 里有换行分隔）
-        ax: { has: '/hnl-brk-aa[\r\n]+hnl-brk-cd/' }
+        node: { role: AXTextArea, name: 'hnl-brk-aa\n+hnl-brk-cd', present: true }
       - shot: 01-现场-两行文本加末尾空行-光标在空行行首
 
   - name: ⌃B（**待验动作**：空行行首回移一步 ⇒ 应落在上一行行末）
@@ -85,7 +87,7 @@ steps:
     key: "ctrl+b"
     expect:
       - label: 导航不改文本（不是编辑）
-        ax: { has: '/hnl-brk-aa[\r\n]+hnl-brk-cd/' }
+        node: { role: AXTextArea, name: 'hnl-brk-aa\n+hnl-brk-cd', present: true }
 
   # M498 迁移边界（如实登记）：⌃B/⌃F 后的落点即判据，typeInNode 的可靠通道是「追加到末尾」
   # ——语义不合，本步与下面第二个探针串留在 do:keys（探针串无 'e'，避开了确定性丢键；
@@ -99,8 +101,10 @@ steps:
         ax: { has: "hnl-brk-cdxqzk" }
       - label: 缺陷签名不在场（落点差一个字符：探针串夹在 `c` 与 `d` 之间）
         ax: { not: "hnl-brk-cxqzkd" }
+      # 负向形态同理走解析值：`ax.not` 的 `[\r\n]+` 在字面 `\n` 原文上命中 0 次 ⇒ 恒真（假绿）。
+      # `present: false` 要求**没有任何** AXTextArea 命中该跨行串，且退化快照（0 节点）一律 FAIL。
       - label: 缺陷形态之二不在场（探针串另起一行 = 光标没回到上一行）
-        ax: { not: '/hnl-brk-cd[\r\n]+xqzk/' }
+        node: { role: AXTextArea, name: 'hnl-brk-cd\n+xqzk', present: false }
       - label: 探针串没有漏进编辑器文档（焦点确在 composer）
         editor: { unchangedSince: doc-before-caret }
       - shot: 02-⌃B后落字-接在上一行行末
@@ -126,7 +130,7 @@ steps:
       - label: 第二个探针串接在第一个之后（同一行——⌃F / ⌃B 各一步、原地往返）
         ax: { has: "hnl-brk-cdxqzkyqzk" }
       - label: 缺陷签名不在场（⌃F 落到「末尾之后」后 ⌃B 只退到空段落前缘 ⇒ 探针串另起一行）
-        ax: { not: '/hnl-brk-cdxqzk[\r\n]+yqzk/' }
+        node: { role: AXTextArea, name: 'hnl-brk-cdxqzk\n+yqzk', present: false }
       - label: 两张探针串都落在 composer、没漏进编辑器文档
         editor: { unchangedSince: doc-before-caret }
       - shot: 03-⌃F⌃B往返后落字-仍在同一行

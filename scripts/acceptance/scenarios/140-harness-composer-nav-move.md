@@ -75,8 +75,11 @@ steps:
     keys: ["shift+return", "m", "n"]
     gapMs: 150
     expect:
+      # 跨行判据走**解析值**（M765，与 117 同口径）：KimiCU 0.6.8 起 dump 原文里的换行是字面 `\n`，
+      # `ax.has` 的 `[\r\n]+` 命中 0 次（假红）；`node` 匹配 `parseNodes` 还原后的 value。
+      # 别改回 `ax.has`——那是把上游的换行表示法写进场景（README「多行 UI 文本的换行编码」条）。
       - label: 第二段到位（两段分两行）
-        ax: { has: "/yabzcdw[\r\n]+mn/" }
+        node: { role: AXTextArea, name: 'yabzcdw\n+mn', present: true }
 
   - name: ⌃P 上移一行后键入 p
     do: keys

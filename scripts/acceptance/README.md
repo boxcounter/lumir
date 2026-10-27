@@ -747,8 +747,8 @@ UI 回执（「定时任务已注册。」/「任务已删除。」）出现时�
 
 | 形态 | 字段 | 说明 |
 |---|---|---|
-| `ax` | `has` / `not` / `count:{pattern,exact,min,max}` / `focused` | `has`/`not`/`count` 在 AX 树**文本**上匹配；`focused: "AXTextArea"` 走**解析结果**——要求 AX 里恰有一个 focused 节点且其 role 命中（键盘落点类断言用这个，别用跨节点的正则，见「已知边界」） |
-| `node` | `role`、`name`（裸正则源）、`present`（布尔，必填）、`nth` | **节点在场性断言**（M669）：走 `findNode` 的**解析结果**（`role` 精确匹配 + `name` 对 title / label / value 任一命中；`name` 是**裸正则源**，与 `target.name` 同口径，不是 `/…/`），`present: true` 要求找到、`false` 要求找不到。**什么时候必须用它**：判据串（钮的可访问名、状态串）一旦也可能出现在**正文**里，`ax.has` / `ax.not` 就在整棵树的文本上匹配正文——负向断言恒红、正向断言恒绿（场景 224 的实证：fixture 正文自带「回到底部」）。正文里的字不是节点，`node` 因此有区分度。两条边界：① 退化快照（0 个节点）一律判 FAIL，不在不可观测的窗口里下结论（REVIEW.md「读不到当成空」条）；② `fanout_cap` 截断会让真节点不在快照里，负向判据的完整性见证取被截断方向的反面（见「已知边界」的 AX 截断条）。消费者：224（回到底部 / 有新内容浮钮）、163b（浮层行 AXMenuItem 与标题栏 AXPopUpButton 的 role 分流） |
+| `ax` | `has` / `not` / `count:{pattern,exact,min,max}` / `focused` | `has`/`not`/`count` 在 AX 树**文本**上匹配；`focused: "AXTextArea"` 走**解析结果**——要求 AX 里恰有一个 focused 节点且其 role 命中（键盘落点类断言用这个，别用跨节点的正则，见「已知边界」）。**跨行判据不要写在这里**：KimiCU 0.6.8 起 dump 原文里的换行是**字面 `\n`**（`ax.text` 上没有真换行），`[\r\n]+` 在原文上正向恒不命中、负向恒真——用 `node`，见「已知边界」的「多行 UI 文本的换行编码」条 |
+| `node` | `role`、`name`（裸正则源）、`present`（布尔，必填）、`nth` | **节点在场性断言**（M669）：走 `findNode` 的**解析结果**（`role` 精确匹配 + `name` 对 title / label / value 任一命中；`name` 是**裸正则源**，与 `target.name` 同口径，不是 `/…/`），`present: true` 要求找到、`false` 要求找不到。**什么时候必须用它**：判据串（钮的可访问名、状态串）一旦也可能出现在**正文**里，`ax.has` / `ax.not` 就在整棵树的文本上匹配正文——负向断言恒红、正向断言恒绿（场景 224 的实证：fixture 正文自带「回到底部」）。正文里的字不是节点，`node` 因此有区分度。两条边界：① 退化快照（0 个节点）一律判 FAIL，不在不可观测的窗口里下结论（REVIEW.md「读不到当成空」条）；② `fanout_cap` 截断会让真节点不在快照里，负向判据的完整性见证取被截断方向的反面（见「已知边界」的 AX 截断条）。消费者：224（回到底部 / 有新内容浮钮）、163b（浮层行 AXMenuItem 与标题栏 AXPopUpButton 的 role 分流）、117 / 118 / 140 / 154 / 156（composer 的跨行判据：`name` 写 `'…\n+…'` 判「两串之间有没有换行」，`present: false` 是它的负向形态——匹配的是 `parseNodes` 还原后的文本，见「已知边界」的「多行 UI 文本的换行编码」条） |
 | `editor` | `has` / `not` / `unchangedSince` / `changedSince` | 在编辑器文档文本（AXTextArea.value）上匹配；`*Since` 引用 `recordEditor` 记的基线，做逐字节比较 |
 | `file` | `path`、`exists`、`has`、`not`、`count`、`jsonl`、`changedSince`、`unchangedSince`、`mtimeUnchangedSince`、`mtimeNewerThan` | `path` 相对验收 vault；`env:` 前缀指隔离配置目录；`xxxSince` 引用 `record` 记下的基线。`unchangedSince` 只比 sha256，`mtimeUnchangedSince` 比 mtime 精确相等——「不落盘」这类判据两个一起用（写了同一份内容时 sha256 相同而 mtime 会推进）。**一条断言里写多个判据键时逐键判、逐键落一条记录**（M543 起；此前是一条 `if` 链按优先级只判第一个命中的键、其余静默失效——照上面这句成对写 `unchangedSince` + `mtimeUnchangedSince` 时，mtime 那半从未执行。多键时每条记录的 label 冠 `［键名］`，steps.md 里一条判据一行）。`jsonl`（M612）是**字段序无关**的 JSONL 判据：`jsonl: { event: cron_click, ok: "true", action: run }`——逐行 `JSON.parse`，要求**存在一行**同时满足全部字段；值按日志的字符串化口径比较（`logging.rs` 的 `field_text` 把布尔 / 数值都写成字符串，故 `ok: true` 与 `"true"` 等价）。多字段日志断言用它，别按序列化顺序拼正则。`path` 含 `*` 时按 glob 在父目录里取**匹配文件里 mtime 最新的那一份**再断言（诊断日志按 UTC 日期命名、`env/` 目录跨天复用，写死日期的断言会在之后每天读到上次 run 的旧文件而永久空过——这条是给那类「按日期滚动、目录不重置」的产物用的）。**目录**（M324）：`exists` 对目录成立（只有它读得到目录——`fileInfo` 走 `stat` 的目录旁路，只回 mtime/size、**不读 sha256**）；目录上的 `has` / `not` 与 sha256 类判据（`changedSince` / `unchangedSince`）**一律判 FAIL**，那几项对目录没有可观测量（改动前它们分别抛 EISDIR 与在 `undefined === undefined` 上恒真） |
 | `glob` | `dir`、`pattern`、`min`/`exact` | 文件名由 app 决定的产物（崩溃备份、另存副本）用 glob 断言。`pattern` 用 `new RegExp(pattern)` 在**全路径**上匹配——**别写 `^` 锚**（它锚的是绝对路径的开头，永远不命中；要锚开头写成 `"/pasted-…"` 这类不含 `^` 的片段） |
@@ -1149,6 +1149,20 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
   focused / actions / help 全无差异（M379 的探针，现场 `/tmp/m379-probe/ax-classify.mjs`）。
   仍未覆盖：`title` 字段对**非** `= "…"` 形态的节点仍是「第一段引号文本」（今天的行为，未动）；
   文档正文含 `(focused)` 字样时该节点会被误标（同上，README 该条已有）。
+- **多行 UI 文本的换行编码：`ax.*` 匹配原文、`node` 匹配还原值**（M763 / M765）：KimiCU 0.6.8 起
+  把一份 dump 渲染成**一行一个元素**，UI 文本里的换行写成**两个字符** `\` + `n`（规则出自
+  `get_app_state` 的工具说明，不是从样本上反推的）——**`ax.text` 上因此没有真换行**。
+  `lib/ax.mjs` 的 `parseNodes` 在**取出的文本字段**（`value` / `title` / `label` / `help`）上做一次
+  还原，只把 `\` + `n` 换成真换行：`\t` / `\"` / `\\` / LaTeX 正文一律原样保留（上游没有这些转义
+  层，解掉会吃掉 `\textbf{}`、`\times` 这类正文反斜杠）；结构字段（bbox / actions / `(focused)` /
+  `raw`）仍取自原文；0.6.8 之前的多行续行格式（真换行、续行展开）照旧解析，两类 dump 同时可读。
+  ⇒ **「两串之间有没有换行」这类跨行判据一律写 `node`**：正向
+  `node: { role: AXTextArea, name: 'hnl-brk-aa\n+hnl-brk-cd', present: true }`（单引号里的 `\n`
+  由 `new RegExp` 解成换行、`+` 是「一个或多个」），负向用同一条串 + `present: false`。
+  **别写回 `ax.has` / `ax.not` 的 `[\r\n]+`**：原文上是字面 `\n`，正向**恒红**（M762 真机里 117
+  的假红，产品与像素全绿）、负向**恒真**（154 的两条缺陷签名，M765 一并迁走）——上游下次再改
+  换行表示法时，`node` 形态也不受影响。必红防线在 `lib/execute.test.mjs` 的
+  「AX 转义还原（M763）」节（真实 0.6.8 dump fixture + 同行拼接缺陷形态各自翻面）。
 - **`target.name` 匹配的是 title / label / value 三个字段的「任一命中」**，其中 label 允许**一层
   嵌套括号**（M379 修，M184 finding：图片节点的 AX label 是整条 Markdown 引用原文 `![alt](path)`，
   旧正则截在第一个 `)` 上，`target.name` 照原文写永远匹配不上）。要精确匹配仍请用 `^…$` 锚定
@@ -1160,8 +1174,9 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
   `typeInNode` 的「目标串出现 N→N+1」回读判据**永远对不上**——实测注入本身落地了、回读却报
   target-lost。密码类字段不要走 `typeInNode`：写盘真值用 `file` 断言判，patch 形状归单测
   （设置面板的 API Key 即此，见场景 250 的「已知边界」）。
-- **AX 的 `(focused)` 标记**：KimiCU 在 AX 文本里给当前聚焦节点标 `(focused)`（多行 value 落在**末行**上，
-  故 `lib/ax.mjs` 在合并后的整段里找），解析成 `node.focused`——`keys` 动作的落点判定与
+- **AX 的 `(focused)` 标记**：KimiCU 在 AX 文本里给当前聚焦节点标 `(focused)`（旧格式下多行 value 的
+  标记在**末行**；0.6.8 起 value 压成一行、标记落在同一行末——两种情况都在 `lib/ax.mjs` 合并后的
+  整段里找），解析成 `node.focused`——`keys` 动作的落点判定与
   `ax: { focused: "AXTextArea" }` 断言都读它。**不要用 AX 原始文本上的正则做落点断言**：正则没有节点
   边界，`AXTextArea[\s\S]*?\(focused\)` 在 `(focused)` 落在后面的节点（冲突 toast 的按钮等）上照样
   匹配（r1 评审实证）；`focused` 形态要求**恰一个** focused 节点且 role 命中，堵死这条假阳性路径。
