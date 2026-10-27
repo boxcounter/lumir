@@ -1247,6 +1247,11 @@ export async function establishEditorFocus({
   throw new InfraError(
     `${label}：真实正文单击 ${attempts} 次仍未建立「key window + 编辑器焦点」` +
       `（最后一次 focused=${last.reading.roles.join(",") || "无"}，共 ${last.reading.count} 个节点；${keyNote}）。` +
+      // 原始读数必须带出来（M761 真机实证）：`ax-key-window.swift` 打的是
+      // `focusedWindow=false err=0 title=<聚焦窗口标题>`，而「主窗口」的判据是 `AXWindows[0]`——
+      // 只写 false 时无法区分「焦点真在别处」与「多了一扇窗把 AXWindows[0] 挤走了」（后者是
+      // 套件自己的选窗假设坏了）。2026-10-28 的 224 两次 INVALID 就卡在这个分不清上。
+      `原始读数：${last.key?.raw ?? "无"}。` +
       "这个状态下的后续 hover 与键盘注入都不可信——本次运行该场景读数不算数（环境项，非产品缺陷）；" +
       "先把前台让给 Lumir 再复跑。",
   );

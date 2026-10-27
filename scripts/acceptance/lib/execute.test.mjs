@@ -873,8 +873,10 @@ test("focusWindow click 的重试与判败（M678）：双判据严格为真才�
       attempts: 2,
       sleepFn: async () => {},
     }),
-    (e) => e instanceof InfraError && /AXfocusedWindow=false/.test(e.message),
-    "编辑器有焦点但 AXFocusedWindow=false 时必须判「未建立」，且在错误里给出窗口读数",
+    // 原始读数（含 `title=`）必须活到错误文案里（M761 真机实证的归因缺口）：只写 false 时分不清
+    // 「焦点真在别处」与「多了一扇窗把 AXWindows[0] 挤走、套件的选窗假设坏了」。
+    (e) => e instanceof InfraError && /AXfocusedWindow=false/.test(e.message) && /title=Agent/.test(e.message),
+    "编辑器有焦点但 AXFocusedWindow=false 时必须判「未建立」，且把 key 读数的原始行（含聚焦窗口标题）带进错误",
   );
   assert.equal(notKeyClicks, 2, `窗口不是 key 时应把重试用满，实际 ${notKeyClicks}`);
 
