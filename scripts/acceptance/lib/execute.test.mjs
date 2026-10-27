@@ -20,9 +20,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, runScenario, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
+import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, runScenario, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
-import { parseKeyWindowState, readAx } from "./drive.mjs";
+import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
 
 /** 临时根（每个用例一份，跑完不清也无妨——全在 `os.tmpdir()` 下）。 */
@@ -1781,4 +1781,149 @@ test("AX 转义还原（M763）：117 的新判据形态（node 走解析值）�
   );
   const defectNegative = await drive(root, schemaAssert(false), { cu: cuFor(joined) });
   assert.deepEqual(defectNegative.records.map((r) => r.ok), [true], "缺陷形态下 present:false 应绿");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// cgevent chord 通道（M767）：⌃A / ⌘A / ⌃B 这类「必须由应用自己处理」的键走真键盘事件
+//
+// 背景（M766 探针，`.local/reports/ctrl-a-channel-oct28/README.md`）：KimiCU 0.6.8 的 press_key
+// 在文本控件上把 ctrl+a / cmd+a 特判成 AX「全选」兼容路径（`used_backend: ax_select_all*`），
+// **零键盘事件**——应用键位层命中不到 Ctrl-a，140 的 ⌃A 步因此变成「全选 + 覆写」。修法是换
+// 注入通道，不是放宽断言。这一节钉住三件事：
+//   ① 事件形态：键名 → keycode、修饰键 → CGEventFlags 的翻译（与 M766 的 tap 读数同口径）；
+//   ② 错误路径：无权限 / 无回读行 / 键名不认识一律判红（InfraError），**不静默降级**回 press_key；
+//   ③ 回归面：不写 channel 的 step 一个键都不走新通道（既有场景零变化）。
+// 全节不 spawn swift、不投任何真实键盘事件（测试机前台可能是用户的窗口）。
+
+test("cgevent chord 事件形态：⌃A / ⌘A / ⌃B 的 keycode+flags 与别名、多修饰键（M766 的 B1/D2 口径）", () => {
+  // 真 ⌃A 在 M766 的事件流里是 `kc=0 flags=0x…40000`（0x40000 = maskControl）；keycode 0 = A 键。
+  assert.deepEqual(parseChordSpec("ctrl+a"), { keycode: 0, flags: 0x00040000 }, "⌃A = keycode 0 + maskControl");
+  assert.deepEqual(parseChordSpec("cmd+a"), { keycode: 0, flags: 0x00100000 }, "⌘A = keycode 0 + maskCommand");
+  assert.deepEqual(parseChordSpec("ctrl+b"), { keycode: 11, flags: 0x00040000 }, "⌃B = keycode 11 + maskControl");
+  // 别名与多修饰键：control/meta/option 与 ctrl/cmd/alt 等价；大小写不敏感。
+  assert.deepEqual(parseChordSpec("control+a"), parseChordSpec("ctrl+a"));
+  assert.deepEqual(parseChordSpec("meta+a"), parseChordSpec("cmd+a"));
+  assert.deepEqual(parseChordSpec("CTRL+SHIFT+A"), { keycode: 0, flags: 0x00040000 | 0x00020000 });
+  // 无修饰键也是合法规格（flags 0）——真键位事件，只是不带 modifier。
+  assert.deepEqual(parseChordSpec("escape"), { keycode: 53, flags: 0 });
+});
+
+test("cgevent chord 错误路径：未知主键 / 未知修饰键 / 空段都抛 StepError，且在 spawn 之前判掉", () => {
+  const bad = [
+    ["ctrl+f13", /主键「f13」不在真键盘通道的键表里/],
+    ["hyper+a", /未知修饰键「hyper」/],
+    ["ctrl+", /缺少主键/],
+    ["+a", /空的修饰键段/],
+    ["", /非空字符串/],
+  ];
+  for (const [spec, re] of bad) {
+    assert.throws(() => parseChordSpec(spec), (e) => e instanceof StepError && re.test(e.message), `「${spec}」应判 StepError`);
+  }
+  // 键名不合法时**一次 swift 都不该起**：否则真机上会把「按原样盲发」当成通道失败。
+  let spawned = 0;
+  const run = () => {
+    spawned++;
+    return { ok: true, stdout: "key keycode=0 flags=0x40000", error: null, status: 0 };
+  };
+  assert.throws(() => injectChordCGEvent("ctrl+f13", { run }), StepError);
+  assert.equal(spawned, 0, "规格不合法必须在 spawn 之前判红，不能先投再报");
+});
+
+test("cgevent chord 错误路径：无权限 / 无回读行 ⇒ InfraError（环境项），不静默降级回 press_key", () => {
+  // 正常形态：参数是 keycode 与 flags 两个数值，脚本是同一份 cgevent-key.swift。
+  const calls = [];
+  const okRun = (args) => {
+    calls.push(args);
+    return { ok: true, stdout: "key keycode=0 flags=0x40000", error: null, status: 0 };
+  };
+  assert.equal(injectChordCGEvent("ctrl+a", { run: okRun }), "key keycode=0 flags=0x40000", "回读行原样返回（证据用）");
+  assert.match(calls[0][0], /\/swift$/, "通道是 /usr/bin/swift");
+  assert.match(calls[0][1], /cgevent-key\.swift$/, "翻译后的数值交给 cgevent-key.swift");
+  assert.deepEqual(calls[0].slice(2), ["--key", "0", "262144"], "⌃A 的 argv 形态：--key 0 262144（0x40000）");
+  injectChordCGEvent("cmd+a", { run: okRun });
+  assert.deepEqual(calls[1].slice(2), ["--key", "0", "1048576"], "⌘A 的 argv 形态：maskCommand = 0x100000");
+  injectChordCGEvent("ctrl+b", { run: okRun });
+  assert.deepEqual(calls[2].slice(2), ["--key", "11", "262144"], "⌃B 的 argv 形态：keycode 11");
+
+  // swift 退出 3 = 没有「辅助功能」投递权限（cgevent-key.swift 的判据）。整条通道不可用是环境项。
+  assert.throws(
+    () =>
+      injectChordCGEvent("ctrl+a", {
+        run: () => ({ ok: false, stdout: "", error: "没有「辅助功能」投递权限：CGPreflightPostEventAccess=false", status: 3 }),
+      }),
+    (e) =>
+      e instanceof InfraError &&
+      /swift 退出 3/.test(e.message) &&
+      /辅助功能/.test(e.message) &&
+      /不会回落到 KimiCU press_key/.test(e.message),
+    "无权限必须抛 InfraError 并写明「不回落」——回落会把「通道没投递」洗成产品假红 / 断言假绿",
+  );
+  // swift 退出 5 = chord 投递后修饰位没有复位（M767 真机：只带 flags 的合成 chord 会把事件源
+  // 修饰位留在 flags 上，后续普通按键被当成 ⌃ 组合）。这也是环境 / 通道项，逐条红。
+  assert.throws(
+    () =>
+      injectChordCGEvent("ctrl+a", {
+        run: () => ({ ok: false, stdout: "", error: "chord 投递后修饰位没有复位（残留：control）", status: 5 }),
+      }),
+    (e) => e instanceof InfraError && /swift 退出 5/.test(e.message) && /修饰位没有复位/.test(e.message),
+    "修饰位残留必须抛 InfraError，不能当成「已投递」继续跑",
+  );
+  // 退出 0 但没有回读行 = 通道没真的跑完（脚本换了 / 静默 no-op），不能当成「已投递」。
+  assert.throws(
+    () => injectChordCGEvent("ctrl+a", { run: () => ({ ok: true, stdout: "", error: null, status: 0 }) }),
+    (e) => e instanceof InfraError && /没有回读行/.test(e.message),
+    "无回读行必须判红（REVIEW.md「读不到当成空」条的同族形态）",
+  );
+});
+
+test("cgevent chord 回归面：不写 channel 的 step 全走 KimiCU；写了 channel 只路由 chord 键", () => {
+  // 既有场景的形态（140/145/154 等）——一个键都不该被新通道接走。
+  const legacy = { do: "keys", keys: ["ctrl+a", "y", "ctrl+b", "cmd+a", "shift+return"] };
+  for (const k of legacy.keys) assert.equal(keyChannel(legacy, k), "kimicu", `未写 channel 时「${k}」必须走 KimiCU`);
+  // 140 的 ⌃A 步：⌃A 走真键盘事件，同一行紧随的普通字符仍走 KimiCU（探针 A1：普通字符没有全选兼容路径）。
+  const chorded = { do: "keys", channel: "cgevent", keys: ["ctrl+a", "y"] };
+  assert.equal(keyChannel(chorded, "ctrl+a"), "cgevent");
+  assert.equal(keyChannel(chorded, "y"), "kimicu", "channel 只作用于 chord 键，普通字符不引入 keycode 的布局依赖");
+  assert.equal(keyChannel(chorded, "escape"), "kimicu", "无 + 的键名不算 chord");
+  // 未知 channel 值在运行期也抛：真机跑批不重跑 checkScenario，静默退回 KimiCU 就是 M766 的假红/假绿形态。
+  assert.throws(
+    () => keyChannel({ do: "keys", channel: "kimicu", keys: ["ctrl+a"] }, "ctrl+a"),
+    /不静默退回 KimiCU press_key/,
+    "拼错的 channel 值必须在运行期判红",
+  );
+  assert.equal(KEY_CHANNELS.has("cgevent"), true);
+});
+
+test("channel: cgevent 的静态校验（M767）：合法形态零问题，四类静默失效形态判红", () => {
+  const errs = (steps) => checkScenario({ id: "chord-check", item: 0, steps });
+  // 140 的真实形态（含同行普通字符与 gapMs）必须零问题。
+  assert.deepEqual(errs([{ name: "140 的 ⌃A 步", do: "keys", channel: "cgevent", keys: ["ctrl+a", "y"], gapMs: 150 }]), []);
+  // 不写 channel 的既有形态同样零问题（零变化不是靠「顺手也校验一下」实现的）。
+  assert.deepEqual(errs([{ name: "旧形态", do: "keys", keys: ["ctrl+a", "y"], gapMs: 150 }]), []);
+  assert.ok(
+    errs([{ name: "挂错动作", do: "key", key: "ctrl+a", channel: "cgevent" }]).some((p) =>
+      p.includes("channel 参数只属于 do=keys"),
+    ),
+    "channel 挂到别的动作上必须判红（没人读它 = 静默失效）",
+  );
+  assert.ok(
+    errs([{ name: "值拼错", do: "keys", channel: "cgevent!", keys: ["ctrl+a"] }]).some((p) => p.includes('只支持 "cgevent"')),
+    "channel 值拼错必须判红",
+  );
+  assert.ok(
+    errs([{ name: "没有 chord", do: "keys", channel: "cgevent", keys: ["y", "z"] }]).some((p) => p.includes("没有 chord")),
+    "写了 channel 却没有 chord 键必须判红（通道无事可做）",
+  );
+  assert.ok(
+    errs([{ name: "主键不认识", do: "keys", channel: "cgevent", keys: ["ctrl+f13"] }]).some((p) =>
+      p.includes("主键「f13」"),
+    ),
+    "主键不在键表里必须在 --check 判红（与运行期 parseChordSpec 同一份翻译）",
+  );
+  assert.ok(
+    errs([{ name: "修饰键不认识", do: "keys", channel: "cgevent", keys: ["hyper+a"] }]).some((p) =>
+      p.includes("未知修饰键「hyper」"),
+    ),
+    "修饰键不认识必须在 --check 判红",
+  );
 });

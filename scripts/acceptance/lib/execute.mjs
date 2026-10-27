@@ -21,10 +21,13 @@ import {
   frontmostPid,
   injectClickWithClickState,
   injectClickWithModifiers,
+  injectChordCGEvent,
   injectDrag,
   injectHover,
   injectWheel,
+  isChordSpec,
   openFile,
+  parseChordSpec,
   pressKey,
   readAx,
   readKeyWindowState,
@@ -447,6 +450,35 @@ export function checkScenario(scenario) {
     if (step.do !== undefined && !ACTIONS.has(step.do)) push(`${at} 未知动作 do=${step.do}`);
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
     if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
+    // `channel`（M767）：`do: keys` 的真键盘事件通道。三个形态都会**静默失效**，因此在静态期挡：
+    //   ① 挂在别的动作上（没人读它）；② 值拼错（运行期外的拼法会让通道不生效）；
+    //   ③ 写了 channel 但 keys 里没有 chord（通道无事可做，场景以为在验真键盘事件）。
+    // 键名 / 修饰键的合法性走 drive.mjs 的 `parseChordSpec`——与运行期同一份翻译（单一真源），
+    // 写错 `ctrl+f13` / `ctrl+hyper+a` 这类在 `--check` 就红，不必等真机。
+    if (step.channel !== undefined && step.do !== "keys")
+      push(`${at} channel 参数只属于 do=keys（真键盘事件通道），当前 do=${step.do}`);
+    if (step.do === "keys" && step.channel !== undefined) {
+      if (!KEY_CHANNELS.has(step.channel))
+        push(
+          `${at} do=keys 的 channel 只支持 ${[...KEY_CHANNELS].map((c) => JSON.stringify(c)).join(" / ")}` +
+            `（真键盘事件，keycode+flags），实际 ${JSON.stringify(step.channel)}`,
+        );
+      else if (Array.isArray(step.keys)) {
+        const chords = step.keys.filter(isChordSpec);
+        if (chords.length === 0)
+          push(
+            `${at} do=keys 写了 channel: ${JSON.stringify(step.channel)}，但 keys 里没有 chord（含 + 的键）` +
+              "——通道不会生效（普通字符仍走 KimiCU press_key）",
+          );
+        for (const k of chords) {
+          try {
+            parseChordSpec(k);
+          } catch (e) {
+            push(`${at} do=keys 的 channel: ${JSON.stringify(step.channel)} 无法投递「${k}」：${e.message}`);
+          }
+        }
+      }
+    }
     // verify（M507）：chord 步的「副作用回读」重试（`do: key` / `do: keys` 可选）。写错键名 /
     // 类型会**静默不生效**（与不挂 verify 同形，真机跑一整轮才发现），按「拼错即静默」的同一
     // 口径在这里挡。**换行写法提醒**：YAML 双引号 `"\n"` = 换行字符，单引号 `'\n'` = 反斜杠+n
@@ -1291,6 +1323,34 @@ const TEXT_FIELD_ROLES = new Set(["AXTextField", "AXSearchField", "AXSecureTextF
  *  （M455：场景 144 键入 `alpha beta gamma` 需要它；`lib/cu.mjs` 的 `keyDsl` 把 `" "` 译为
  *  键名 `space`）。 */
 const PRINTABLE_KEY_RE = /^[\x20-\x7e]$/;
+
+/** `do: keys` 的注入通道（M767）。缺省（不写 `channel`）= KimiCU `press_key`，行为一字不变；
+ *  `cgevent` = 真键盘事件（`lib/cgevent-key.swift --key`，keycode + flags）。
+ *
+ *  为什么需要它：KimiCU 0.6.8 的 `press_key` 在文本控件上把 `ctrl+a` / `cmd+a` 特判成 AX「全选」
+ *  兼容路径、**零键盘事件**，应用自己的键位层命中不到 `Ctrl-a`——「应用处理了 ⌃A」这类判据在
+ *  那条通道上根本不可验（M766 探针：`.local/reports/ctrl-a-channel-oct28/README.md`）。
+ *
+ *  **通道只作用于 chord 键**（规格里带 `+` 的，如 `ctrl+a`）；同一行里的普通字符仍走 KimiCU
+ *  ——探针 A1/C1 证明普通字符与 ⌃B 没有这条兼容路径，而 keycode 按物理布局映射，把任意可打印
+ *  字符也搬过来只会引入键盘布局依赖。这个语义由 `keyChannel` 一处判定，`keys` 分支与静态校验
+ *  共用（REVIEW.md「同一语义两处真源」条）。 */
+export const KEY_CHANNELS = new Set(["cgevent"]);
+
+/** 某个键在这条 step 上该走哪个通道：`kimicu` | `cgevent`。
+ *
+ *  未知的 `channel` 值在**运行期**也抛错（不只在 `--check`）：真机跑批不重跑 `checkScenario`，
+ *  静默退回 KimiCU 会让「场景以为在验真键盘事件、实际验的是全选兼容路径」——正是 M766 的假红 /
+ *  假绿形态（README「拼错即静默不生效」口径）。 */
+export function keyChannel(step, key) {
+  if (step.channel === undefined) return "kimicu";
+  if (!KEY_CHANNELS.has(step.channel))
+    throw new Error(
+      `do=keys 的 channel 只支持 ${[...KEY_CHANNELS].join(" / ")}（真键盘事件通道），实际 ` +
+        `${JSON.stringify(step.channel)}——不静默退回 KimiCU press_key`,
+    );
+  return isChordSpec(key) ? "cgevent" : "kimicu";
+}
 
 /** `do: settle` 的等待上限（M249）。15s 是「两次一致」的宽裕上界（每拍 700ms），同时给
  *  「界面一直不收敛」这种异常收一个可预期的代价——到点走兜底，不无限等。 */
@@ -2720,11 +2780,44 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       //      （目标怎么选见 keysTarget）。
       // 不满足就盲发 + 不重试（与加固前逐字一致）。
       await noteIfFocusLost(ctx, p);
-      /** 注入通道自报的结果（失败诊断用：KimiCU 的 press_key 会报 occluded/ok 等字段）。 */
+      /** 注入通道自报的结果（失败诊断用：KimiCU 的 press_key 会报 occluded/ok 等字段；cgevent
+       *  通道记 swift 的回读行）。 */
       const results = [];
+      // 通道路由（M767）：只对 chord 键生效，判定集中在 `keyChannel`（与静态校验同一份口径）。
+      // 未知 channel 值在这里就抛——真机跑批不重跑 checkScenario，静默退回 KimiCU 会把「以为在
+      // 验真键盘事件、实际验的是全选兼容路径」变成假红 / 假绿。
+      const chords = step.keys.filter((k) => keyChannel(step, k) === "cgevent");
+      if (step.channel !== undefined && chords.length === 0) {
+        throw new Error(
+          `do=keys 写了 channel: ${JSON.stringify(step.channel)} 但 keys 里没有 chord（含 + 的键）——` +
+            "通道不会生效：要么删掉 channel（普通字符本来就走 KimiCU），要么把目标键写成 ctrl+a 形态",
+        );
+      }
+      // 真键盘事件是 **HID tap → 前台 app**，不是 pid 寻址：Lumir 不在前台时 chord 会投给别的
+      // app（等于把 ⌃A 打进用户正在用的窗口），而场景断言只会莫名其妙地红。读不到前台（lsappinfo
+      // 失败）同样不算通过（REVIEW.md「读不到当成空」条）。两类都按环境项 InfraError 报——
+      // `noteIfFocusLost` 已经在前面尽力抢过一次前台。
+      if (chords.length) {
+        const front = frontmostPid();
+        if (front !== p) {
+          throw new InfraError(
+            `cgevent 通道要求 Lumir 在前台（HID tap 的键盘事件投给前台 app，不按 pid 寻址）：` +
+              `当前前台 = ${front === null ? "读不到（lsappinfo 失败）" : front}，Lumir pid = ${p}；` +
+              `拒绝投递 chord ${JSON.stringify(chords)}——真键位事件落进别的 app 是不可逆副作用。` +
+              "先把前台让给 Lumir（focusWindow）再跑本步。",
+          );
+        }
+      }
       const inject = async () => {
         for (const k of step.keys) {
-          results.push(await pressKey(cu, p, k));
+          if (keyChannel(step, k) === "cgevent") {
+            const out = injectChordCGEvent(k);
+            results.push({ channel: "cgevent", spec: k, out });
+            // 通道自证落证据：真机复跑时「走的是哪条通道、投了什么」一眼可查，不必从场景推断。
+            evidence.record({ kind: "note", text: `keys「${k}」走真键盘事件通道（cgevent: keycode+flags）｜${out}` });
+          } else {
+            results.push(await pressKey(cu, p, k));
+          }
           await sleep(step.gapMs ?? 250);
         }
       };
