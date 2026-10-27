@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, readAxForScreenPoint, runScenario, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
+import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, runScenario, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, mainWindowPlan, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { parseKeyWindowState, readAx } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -838,6 +838,20 @@ test("正文单击落点的密度无关性（M762）：同一份标定 + 同一�
   assert.ok(Math.abs(a.shotPoint.x - (340 + 115 * (1152 / 1200))) < 1e-9, `1152 证据行错：${a.shotPoint.x}`);
   assert.ok(Math.abs(b.shotPoint.x - ((2048 / 1152) * 340 + 115 * (2048 / 1200))) < 1e-9, `2048 证据行错：${b.shotPoint.x}`);
   assert.ok(b.shotPoint.x - a.shotPoint.x > 150, "两代密度的像素坐标必须明显不同（证明换算真的按密度算）");
+});
+
+test("scroll 落点（M762）：`target {x,y}` 是窗口点——同一份标定在两代截图密度下折成同一个物理点", () => {
+  // 224 的现场：`{x:900, y:350}` 在 1152 密度（0.96）落到窗口 (938,365)、正好在 harness pane 里；
+  // 截图像素口径在 2048 密度（1.707）只剩窗口 (527,205)——那是左侧编辑器，滚的是编辑器。
+  const bounds = { x: 8, y: 40, w: 1200, h: 800 };
+  const a = pointToShotPx({ pt: { x: 900, y: 350 }, bounds, shot: { w: 1152, h: 768 } });
+  const b = pointToShotPx({ pt: { x: 900, y: 350 }, bounds, shot: { w: 2048, h: 1365 } });
+  assert.deepEqual(a, { x: 864, y: 336 }, `1152 密度：900×0.96 / 350×0.96，实际 ${JSON.stringify(a)}`);
+  assert.deepEqual(b, { x: 1536, y: 597 }, `2048 密度：900×1.70667 / 350×1.70625，实际 ${JSON.stringify(b)}`);
+  // 关键判据：折回窗口点后两代密度必须同值（取整误差 ≤ 半个像素）。旧口径直接透传 900/350，
+  // 2048 密度下等于窗口 (527,205) —— 差 373pt，整条场景从此换个面滚。
+  assert.ok(Math.abs(a.x / (1152 / 1200) - b.x / (2048 / 1200)) <= 0.5, `x 物理点漂了：${a.x} vs ${b.x}`);
+  assert.ok(Math.abs(a.y / (768 / 800) - b.y / (1365 / 800)) <= 0.5, `y 物理点漂了：${a.y} vs ${b.y}`);
 });
 
 test("像素采样方块（M762）：patch 是窗口点，同一邻域在两代截图密度下覆盖同一物理边长", () => {

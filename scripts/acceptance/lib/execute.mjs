@@ -621,7 +621,7 @@ export function checkScenario(scenario) {
         if (!Number.isInteger(step[k])) push(`${at} do=scroll 的 ${k} 需要整数，实际 ${JSON.stringify(step[k])}`);
       if (step.page === 0) push(`${at} do=scroll 的 page 不能为 0（KimiCU 侧等价于「没滚」）`);
       if (step.target && step.target.x !== undefined && typeof step.target.y !== "number")
-        push(`${at} do=scroll 的 target 给了 x 就必须给数值 y（截图像素落点）`);
+        push(`${at} do=scroll 的 target 给了 x 就必须给数值 y（窗口点落点）`);
     }
     // `wheel`（M669）：只在 do=scroll 上有意义；非布尔会在 `=== true` 上静默不生效。
     if (step.wheel !== undefined && step.do !== "scroll")
@@ -2592,17 +2592,24 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // ⌘O 浮层被裁」这类定位缺陷，判据只能退回代码级复算）。
       //
       // 定位方式与 KimiCU 同形，**只透传写了的字段**：`target` 给节点（取 index，滚那个滚动区）
-      // 或 `{x,y}`（截图像素落点）；也可在 step 上直接写 `page`（整页，正上负下）/ `dx`/`dy`
+      // 或 `{x,y}`（**窗口点**，M762 起）；也可在 step 上直接写 `page`（整页，正上负下）/ `dx`/`dy`
       //（行式增量）/ `index`。自报 `ok:false`（没检测到位移 / 已到末尾）由 cu.scroll 一律抛错
       // ——不静默放过：后面的「某行在视口内」类断言会对着没滚动的现场判红/假绿（README 同条）。
       //
       // **先取一次 mode=full 快照**（M252 三轮探针的 ①：点路径不带图时报 `no cached geometry —
-      // call get_app_state first`，KimiCU 的 scroll 依赖最近一次快照的几何）。它同时定义了
-      // `target: {x,y}` 的坐标空间 = 该快照的截图像素（与 click / clickInNode 同一空间）。
+      // call get_app_state first`，KimiCU 的 scroll 依赖最近一次快照的几何）。它同时给出
+      // 「窗口点 → 截图像素」的换算比例（KimiCU 的 scroll 只吃截图像素）。
+      //
+      // **`{x,y}` 的单位是窗口点**（M762）：与 `clickEditor` 的 dx/dy、`pixel.patch` 同一条纪律——
+      // 落点是物理量，上游改截图长边（KimiCU 0.6.8：1152 → 2048）不该把它搬到别处。2026-10-28
+      // 的 224 现场：`{x:900, y:350}` 在 1152 密度落到窗口 (938,365)（harness pane 里），到 2048
+      // 密度只剩 (527,205)——那是左侧编辑器，滚的是编辑器、transcript 没动。KimiCU 的 scroll 通道
+      // 与滚轮兜底因此共用**同一份**换算（`pointToShotPx`），只有一处会错。
       const snapshot = await readAx(cu, p, { mode: "full" });
       const t = step.target;
       let index = step.index;
       let node = null;
+      let shotTarget;
       if (t && t.x === undefined) {
         node =
           t.any !== undefined
@@ -2610,6 +2617,16 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
             : findNode(snapshot.nodes, { role: t.role, name: t.name, nth: t.nth ?? 0 });
         if (!node) throw new Error(`scroll：找不到目标节点 ${JSON.stringify(t)}`);
         index = node.index;
+      } else if (t) {
+        const bounds = windowBounds(snapshot.text);
+        const shot = screenshotSize(snapshot.text);
+        if (!bounds || !shot) {
+          throw new Error(
+            "scroll：AX 快照缺窗口矩形（captured_bounds）或截图尺寸，算不出「窗口点 → 截图像素」的换算" +
+              "（target {x,y} 的单位是窗口点，不是截图像素）",
+          );
+        }
+        shotTarget = pointToShotPx({ pt: t, bounds, shot });
       }
 
       // wheel 兜底（M644）：KimiCU 的 scroll 在本 app 上从未产出过位移（M252 / M379 的通道
@@ -2625,7 +2642,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // 消失）。现在 `{ reason }` 一律落一条证据 note，并附在最终错误里。
       const wheelPlan = planWheelFallback({
         text: snapshot.text,
-        target: step.target,
+        target: shotTarget,
         node,
         page: step.page,
         dy: step.dy,
@@ -2681,7 +2698,8 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       };
       if (t && t.x !== undefined) {
         // 点形态也要带位移量：只给 x/y 时 KimiCU 报 `dy and dx both zero`（M379 探针实测）。
-        return await scrollOrExplain({ x: t.x, y: t.y, page: step.page, dx: step.dx, dy: step.dy });
+        // `shotTarget` 是窗口点折出来的截图像素（M762）：KimiCU 的 scroll 只吃这个空间。
+        return await scrollOrExplain({ x: shotTarget.x, y: shotTarget.y, page: step.page, dx: step.dx, dy: step.dy });
       }
       return await scrollOrExplain({ index, page: step.page, dx: step.dx, dy: step.dy });
     }
@@ -3763,6 +3781,20 @@ function patchToPx({ patch, bounds, shot }) {
   return Math.max(1, Math.round(patch * scale));
 }
 
+/** 窗口局部点 → 截图像素（M762）：**场景面的坐标一律是窗口点**，截图像素只在「取图 / KimiCU
+ *  坐标注入」这一层出现，换算集中在这一处。
+ *
+ *  为什么必须有这一层：截图的密度由上游决定（KimiCU 0.6.8 把长边从 1152 提到 2048，0.96 →
+ *  1.707 像素/点），同一组「截图像素」常量在上游改版后指向另一个物理点。已收口的三处消费者：
+ *  `sampleWindowPx`（像素断言）、`do: scroll` 的 `target {x,y}`（KimiCU scroll 与滚轮兜底共用）、
+ *  `clickEditor`（走 `contentClickGeometry` 的同一套算式）。 */
+export function pointToShotPx({ pt, bounds, shot }) {
+  return {
+    x: Math.round(pt.x * (shot.w / bounds.w)),
+    y: Math.round(pt.y * (shot.h / bounds.h)),
+  };
+}
+
 /** 一处采样窗口（M762）：采样点与方块边长都是**窗口点**，这里唯一一次折成截图像素。
  *
  *  为什么集中在一处：`pixel` 断言的三种形态（same / differ / contrast）与 `geom.painted` 的扫描
@@ -3770,11 +3802,8 @@ function patchToPx({ patch, bounds, shot }) {
  *  两处真源」条）。换算比例从**同一份** AX 快照的 header 现取（`screenshotSize` / `windowBounds`），
  *  不写死常数——上游改截图长边时这里跟着走。 */
 export function sampleWindowPx({ pt, patch, bounds, shot }) {
-  return {
-    px: Math.round(pt.x * (shot.w / bounds.w)),
-    py: Math.round(pt.y * (shot.h / bounds.h)),
-    patchPx: patchToPx({ patch, bounds, shot }),
-  };
+  const { x, y } = pointToShotPx({ pt, bounds, shot });
+  return { px: x, py: y, patchPx: patchToPx({ patch, bounds, shot }) };
 }
 
 /** scroll 的滚轮兜底方案（M644 / M761）。**不返回 null**：算不出来时给 `{ reason }`，让调用方把
