@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, runScenario, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, runScenario, runTag, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -1980,4 +1980,64 @@ test("`do: key` + channel 的运行期守卫（M768）：写错的形态在真�
   });
   assert.equal(typo.status, "FAIL");
   assert.match(typo.records[0].detail ?? "", /只支持 "cgevent"/);
+});
+
+// ── `$runTag`（M752）：跨运行唯一的占位符 ────────────────────────────────────
+//
+// 现场：场景 170 的 cron 任务 `id` **就是系统通知标题**。id 固定时，**上一次运行**留在通知
+// 中心里的同标题通知会满足 `waitForNotification` 的新鲜度基线，被当成这次投递的横幅（随后
+// 「等 `cron_notified` 落盘」必然超时）。三条判据：同次恒定、跨次不重复、占位符在 `config:`
+// 与 `steps:` 上替换成同一个值。
+
+test("runTag：同一次运行内恒定，且符合 cron 任务 id 的口径（非空、无空白）", () => {
+  const first = runTag();
+  assert.equal(runTag(), first, "同一进程内必须恒定：config: 与 steps: 靠它拿到同一个值");
+  assert.equal(first.trim(), first, "不得带首尾空白");
+  assert.match(first, /^[a-z0-9]+$/i, "只含字母数字（无空白 / 无 `/`）：可直接做 cron 任务的 id");
+});
+
+test("runTag：跨运行不重复（新进程拿到不同的记号）", () => {
+  const moduleUrl = new URL("./execute.mjs", import.meta.url).href;
+  const script = `import(${JSON.stringify(moduleUrl)}).then((m) => process.stdout.write(m.runTag()));`;
+  const other = execFileSync(process.execPath, ["-e", script], { encoding: "utf8" });
+  assert.match(other, /^[a-z0-9]+$/i, `新进程的记号口径应与本次一致，实际：${JSON.stringify(other)}`);
+  assert.notEqual(other, runTag(), "跨运行必须不同：否则上一次运行的通知会满足新鲜度基线");
+});
+
+test("$runTag 占位符：config 的 cron 任务 id 与 steps 的字段拿到同一个值，且不残留字面量", async () => {
+  const root = tmpRoot("runtag-substitute");
+  const file = path.join(root, "runtag.md");
+  fs.writeFileSync(
+    file,
+    [
+      '---\nid: "runtag"',
+      "item: 0",
+      "title: 占位符替换",
+      "config:",
+      "  cron:",
+      "    tasks:",
+      '      - id: "acc-$runTag"',
+      '        vault: "$vault"',
+      '        at: "$nextMinute"',
+      '        prompt: "占位符替换自测"',
+      "steps:",
+      "  - name: 一步",
+      "    do: waitFor",
+      "    waitFor:",
+      '      has: ["acc-$runTag"]',
+      "    title: acc-$runTag",
+      "---",
+      "",
+    ].join("\n"),
+  );
+  const scenario = await loadScenario(file);
+  const expected = runTag();
+  assert.equal(scenario.config.cron.tasks[0].id, `acc-${expected}`, "config: 块必须替换");
+  assert.equal(scenario.steps[0].title, `acc-${expected}`, "steps 的字段必须替换成同一个值");
+  assert.deepEqual(scenario.steps[0].waitFor.has, [`acc-${expected}`], "嵌套数组里的占位符同样要替换");
+  assert.equal(
+    JSON.stringify(scenario).includes("$runTag"),
+    false,
+    "整个 front-matter 不得残留占位符字面量",
+  );
 });

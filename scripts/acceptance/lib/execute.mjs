@@ -869,6 +869,22 @@ export function checkScenario(scenario) {
 }
 
 /**
+ * 本次运行唯一的短记号（**同一进程内恒定**）：给「跨运行不能重名」的场景用——典型是 cron
+ * 任务的 `id`，而它同时就是系统通知的标题（M752 的现场：上一次运行留在通知中心里的同标题
+ * 通知会满足 `waitForNotification` 的新鲜度基线，被当成这次投递的横幅，随后的「等
+ * `cron_notified` 落盘」必然超时）。
+ *
+ * 形状 = `<base36 时间戳><base36 pid>`：无空白、无 `/`，可直接做 cron 任务的 `id`
+ * （配置校验只要求非空且不含空白）；进程内取一次，于是同一次运行的 `config:` 与 `steps:`
+ * 拿到**同一个值**（占位符对整个 front-matter 生效，见 `loadScenario`）。
+ */
+const RUN_TAG = `${Date.now().toString(36)}${process.pid.toString(36)}`;
+
+export function runTag() {
+  return RUN_TAG;
+}
+
+/**
  * `$appName` / `$appVersion` 占位替换（M236）：期望值里要引用「当前构建的产品名 / 版本号」时
  * 写占位符，加载时从本仓 src-tauri/tauri.conf.json 读真值代入——场景 MUST NOT 硬编码一份
  * 版本号副本（真源唯一，REVIEW.md 「同一语义两处真源」条），版本 bump 后场景跟着真源走。
@@ -892,6 +908,9 @@ async function appMetaTokens() {
     // 在 launchApp 里先被读一遍，运行期才写的模板会让干净 env 直接 INVALID），再由
     // `do: mockFill` 就地替换占位；仓库里的 fixture 原文不被改写（场景可重复跑）。
     $env: path.join(envHome(), "lumir"),
+    // 本次运行唯一的记号（M752）：cron 任务的 `id` 就是系统通知标题，跨运行必须不同——
+    // 否则上一次运行留在通知中心里的同标题通知会让「新鲜度基线」失效（见 [`runTag`]）。
+    $runTag: runTag(),
   };
 }
 

@@ -17,7 +17,10 @@ config:
     tasks:
       # 任务的目标 vault 是第一个合成 vault；场景会**先切到第二个**再点通知（见 steps 首跳），
       # 「点击 → 打开目标 vault」这条交接因此有真判据（M752）。
-      - id: "acc-cron-click"
+      # 任务 id **就是系统通知标题**：必须跨运行唯一（`$runTag`）。写死 id 时，上一次运行
+      # 留在通知中心里的同标题通知会满足 `waitForNotification` 的新鲜度基线，被当成这次
+      # 投递的横幅（M752 现场）。
+      - id: "acc-cron-click-$runTag"
         vault: "$vault"
         at: "$nextMinute"
         prompt: "CRON-PROBE-CLICK 点击通知后应当运行这一条。"
@@ -62,7 +65,7 @@ steps:
 
   - name: 等「到点」通知横幅出现（到点后 30s tick 内投递；未点击前不运行）
     do: waitForNotification
-    title: "acc-cron-click"
+    title: "acc-cron-click-$runTag"
     body: "到点"
     # `$nextMinute` 最坏是「写入时刻 + 60s 再向上取整」≈120s，再加 30s tick 余量；90s 不够。
     timeoutMs: 180000
@@ -91,7 +94,7 @@ steps:
 
   - name: 点击通知横幅本体（系统通知中心 AXPress = 真实点击）
     do: clickNotification
-    title: "acc-cron-click"
+    title: "acc-cron-click-$runTag"
     body: "到点"
 
   - name: 等点击发起的运行完成（prompt 与 mock 回答出现在交互会话里）
@@ -105,7 +108,8 @@ steps:
           path: "env:logs/*.jsonl"
           # 字段序无关（M612）：serde_json 按字母序落盘（action→event→ok→task），写死顺序的正则
           # 永不命中。逐字段断言，别回到「按序列化顺序拼正则」的写法。
-          jsonl: { event: cron_click, task: acc-cron-click, ok: "true", action: run }
+          # `task` 逐字段严格相等（`findJsonlRecord`）：带 `$runTag` 等于判「本次运行的那个任务」。
+          jsonl: { event: cron_click, task: acc-cron-click-$runTag, ok: "true", action: run }
       - label: 点击后运行已发起（不是到点自动运行）
         file:
           path: "env:logs/*.jsonl"
@@ -158,7 +162,8 @@ app，响应没有任何接收方——用户看到的是「只拉起 app」。�
 
 横幅由系统进程 `NotificationCenter.app` 渲染，**不在 Lumir 的 AX 树 / 窗口截图里**。本场景经
 `do: clickNotification` 直接读 NotificationCenter 自己的 AX 树，按「标题 = 任务 id、正文 = 到点」
-定位条目（`AXGroup`，label 形如 `(Terminal, acc-cron-click, 到点)`），对条目发 `AXPress`——与用户
+定位条目（`AXGroup`，label 形如 `(Lumir, acc-cron-click-<本次运行记号>, 到点)`），对条目发
+`AXPress`——与用户
 点横幅是同一条系统默认动作。
 
 三个动作分工（横幅只在屏上停留数秒，先 sleep 再点必然点空）：
