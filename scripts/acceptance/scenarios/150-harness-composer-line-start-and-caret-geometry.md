@@ -116,8 +116,13 @@ steps:
         ax: { has: "360×200" }
       - shot: 02-⌃B后落字-接在前一行行末
 
+  # M768 通道审计：⌃A 是本场景的被测动作（「回当前行行首」= 应用自己的 `editor.line-start`）。
+  # KimiCU 0.6.8 的 press_key 对 ctrl+a 走 AX 全选兼容路径（零键盘事件），键位层命中不到，
+  # 下一条 ⌘V 的判据 `/yqzkhnl/`（字落在行首）会因「全文被选中」而必红（假红）。channel: cgevent
+  # 改走真键盘事件；断言一条未动。
   - name: ⌃A（回当前行行首——光标现在在该行行末）
     do: key
+    channel: cgevent
     key: "ctrl+a"
 
   - name: 探针串置剪贴板（第二个探针串，与上面那个可区分）

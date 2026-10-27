@@ -160,6 +160,9 @@ steps:
       - label: 查询非空 → 占位文案让位
         ax: { not: "输入以筛选" }
 
+  # M768 通道审计（保留 AX，不切 cgevent）：⌘A 打在筛选输入框（AXComboBox = 原生 `<input>`）上，
+  # 不在应用键位层的作用域里（`Cmd-a` 属 `text` 面，只认编辑器 / composer 的事件源）。本步只要求
+  # 「查询串被选中后被 ⌫ 删空」——判据是下一拍的占位文案回来，AX 全选给出的正是同一个语义。
   - name: ⌘A + ⌫ 清空查询
     do: keys
     keys: ["cmd+a", "Backspace"]

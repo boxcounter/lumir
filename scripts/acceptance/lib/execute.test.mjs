@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, runScenario, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, runScenario, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -1901,8 +1901,8 @@ test("channel: cgevent 的静态校验（M767）：合法形态零问题，四�
   // 不写 channel 的既有形态同样零问题（零变化不是靠「顺手也校验一下」实现的）。
   assert.deepEqual(errs([{ name: "旧形态", do: "keys", keys: ["ctrl+a", "y"], gapMs: 150 }]), []);
   assert.ok(
-    errs([{ name: "挂错动作", do: "key", key: "ctrl+a", channel: "cgevent" }]).some((p) =>
-      p.includes("channel 参数只属于 do=keys"),
+    errs([{ name: "挂错动作", do: "type", text: "x", channel: "cgevent" }]).some((p) =>
+      p.includes("channel 参数只属于 do=keys / do=key"),
     ),
     "channel 挂到别的动作上必须判红（没人读它 = 静默失效）",
   );
@@ -1926,4 +1926,58 @@ test("channel: cgevent 的静态校验（M767）：合法形态零问题，四�
     ),
     "修饰键不认识必须在 --check 判红",
   );
+});
+
+test("channel: cgevent 的 `do: key` 单数形态（M768）：117 / 150 的 ⌃A 步合法，四类写错判红", () => {
+  const errs = (steps) => checkScenario({ id: "single-key-channel", item: 0, steps });
+  // 117 / 150 的真实形态：单数 key + channel + 可选的 verify（150 的 ⌘V 步带 verify，本步不带）。
+  assert.deepEqual(errs([{ name: "117 的 ⌃A 步", do: "key", key: "ctrl+a", channel: "cgevent" }]), []);
+  assert.deepEqual(errs([{ name: "150 的 ⌃A 步", do: "key", key: "ctrl+a", channel: "cgevent" }]), []);
+  // 不写 channel 的既有单数步零变化。
+  assert.deepEqual(errs([{ name: "旧单数形态", do: "key", key: "ctrl+a" }]), []);
+  assert.deepEqual(errs([{ name: "旧单数普通键", do: "key", key: "return" }]), []);
+  // ① 值拼错 ② 单数步的键不是 chord（通道无事可做，运行期会静默退回 KimiCU）③ 主键不认识。
+  assert.ok(
+    errs([{ name: "值拼错", do: "key", key: "ctrl+a", channel: "cgevent!" }]).some((p) => p.includes('只支持 "cgevent"')),
+    "单数步的 channel 值拼错必须判红",
+  );
+  assert.ok(
+    errs([{ name: "非 chord", do: "key", key: "return", channel: "cgevent" }]).some((p) =>
+      p.includes("key「return」不是 chord"),
+    ),
+    "单数步写了 channel 但键不是 chord 必须判红（与 keys 的「没有 chord」同一口径）",
+  );
+  assert.ok(
+    errs([{ name: "主键不认识", do: "key", key: "ctrl+f13", channel: "cgevent" }]).some((p) =>
+      p.includes("主键「f13」"),
+    ),
+    "单数步的主键不在键表里必须在 --check 判红",
+  );
+  // 单一真源：静态校验与运行期共用 `channelSpecProblem`——同一形态两处给出同一句话。
+  assert.equal(channelSpecProblem({ do: "key", key: "ctrl+a", channel: "cgevent" }), null);
+  assert.match(channelSpecProblem({ do: "key", key: "return", channel: "cgevent" }), /不是 chord/);
+  assert.match(channelSpecProblem({ do: "key", key: "ctrl+a", channel: "kimicu" }), /只支持 "cgevent"/);
+  assert.match(channelSpecProblem({ do: "keys", channel: "cgevent", keys: ["y"] }), /没有 chord/);
+});
+
+test("`do: key` + channel 的运行期守卫（M768）：写错的形态在真机跑批里也判红，不静默退回 KimiCU", async () => {
+  // 真机跑批不重跑 checkScenario：静态层挡过的形态必须在动作入口同样判红，且**先于任何注入 /
+  // 抢前台**（stub ctx 里 cu 是空对象——若守卫晚一步，这里会先炸在 readAx / osascript 上，
+  // 断言就测不到本该报的那句话）。
+  const root = tmpRoot("single-key-channel-runtime");
+  useTmpEnv(root);
+  const bad = await drive(root, {
+    steps: [
+      { name: "单数步写了 channel 但键不是 chord", do: "key", key: "return", channel: "cgevent" },
+    ],
+  });
+  assert.equal(bad.status, "FAIL", "非 chord 的单数步必须判 FAIL（不静默退回 KimiCU）");
+  assert.match(bad.records[0].label, /单数步写了 channel 但键不是 chord/);
+  assert.match(bad.records[0].detail ?? "", /不是 chord/);
+
+  const typo = await drive(root, {
+    steps: [{ name: "channel 值拼错", do: "key", key: "ctrl+a", channel: "kimicu" }],
+  });
+  assert.equal(typo.status, "FAIL");
+  assert.match(typo.records[0].detail ?? "", /只支持 "cgevent"/);
 });
