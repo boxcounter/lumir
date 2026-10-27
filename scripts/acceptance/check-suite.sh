@@ -10,6 +10,7 @@ node --test \
   scripts/acceptance/lib/app.test.mjs \
   scripts/acceptance/lib/batches.test.mjs \
   scripts/acceptance/lib/cu.test.mjs \
+  scripts/acceptance/lib/drive.test.mjs \
   scripts/acceptance/lib/execute.test.mjs \
   scripts/acceptance/lib/evidence.test.mjs \
   scripts/acceptance/coverage.test.mjs

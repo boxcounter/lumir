@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, runScenario } from "./execute.mjs";
+import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, runScenario, settleEditorless } from "./execute.mjs";
 import { parseNodes } from "./ax.mjs";
 import { parseKeyWindowState } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -960,4 +960,94 @@ test("全库场景静态校验通过（--check 的真实通道）", () => {
     encoding: "utf8",
   });
   assert.match(out, /场景静态校验通过（\d+ 个）/, `--check 应全过，实际末尾：${out.slice(-300)}`);
+});
+
+// ---- `do: settle` 的无编辑器门版本（settleEditorless，M759）--------------------------------------
+//
+// `settle()` 的同类正反用例在 drive.test.mjs；这里守的是**另一条实现路径**：没有 AXTextArea 的
+// 两类合法终态（未打开空态 / 空 vault 引导层）走 settleEditorless，它原先同样比整份 AX 原文，
+// 会被每次读取都变的 `AX snapshot_id` 拖满 15s。修法是共用 drive.mjs 的 `snapshotBody`（单一
+// 真源），用例必须证明两条路径都改了——只改 settle() 时这里必红。
+
+/** 无编辑器节点的快照（两类合法终态的形态：窗口 + 树 / 空态文案，没有 AXTextArea）。 */
+function editorlessAx({ snapshotId, nodeLine = '- [5] AXStaticText = "打开一个目录作为 vault"' }) {
+  return [
+    `AX snapshot_id=${snapshotId}. Pass this ID with index-based actions; it is separate from the screenshot_id and diff revision.`,
+    "# Lumir App State",
+    "",
+    "- app: Lumir",
+    "- element_count: 2",
+    "- truncated: false",
+    "",
+    "```text",
+    '- [0] AXApplication "Lumir"',
+    '  - [1] AXWindow "Lumir" @0,0 1200×800',
+    "    - [2] AXScrollArea @0,0 1200×800",
+    nodeLine,
+    "```",
+  ].join("\n");
+}
+
+/** 循环返回文本的假 cu（读到底再从头开始——保证 id 每次读都换，旧口径的整份比较永远不成立）。 */
+function fakeStateCu(texts) {
+  let i = 0;
+  const reads = [];
+  return {
+    reads,
+    state: async () => {
+      reads.push(i);
+      const text = texts[i % texts.length];
+      i += 1;
+      return { text, image: null };
+    },
+  };
+}
+
+test("settleEditorless：正文相同、快照 id 每次变 ⇒ 稳定返回且不落 note（M759 正例）", async () => {
+  const cu = fakeStateCu([editorlessAx({ snapshotId: "AAAA" }), editorlessAx({ snapshotId: "BBBB" })]);
+  const notes = [];
+  const ax = await settleEditorless(cu, 0, { record: (r) => notes.push(r) });
+  assert.equal(cu.reads.length, 2, `正文相同时应在第二次读取就返回，实际读了 ${cu.reads.length} 次`);
+  assert.equal(notes.length, 0, `稳定收敛不得落 note，实际：${JSON.stringify(notes)}`);
+  assert.match(ax.text, /AX snapshot_id=BBBB/, "返回的仍是原始快照（证据 dump 看原文）");
+  assert.equal(ax.textarea, null, "本用例构造的是无编辑器终态：判据确实走的是 settleEditorless");
+});
+
+test("settleEditorless：正文抖动 ⇒ 超时落 note 并返回末次读取（反例，不静默判稳）", async () => {
+  const cu = fakeStateCu([
+    editorlessAx({ snapshotId: "AAAA", nodeLine: '- [5] AXStaticText = "打开一个目录作为 vault"' }),
+    editorlessAx({ snapshotId: "BBBB", nodeLine: '- [5] AXStaticText = "这个 vault 还没有打开的文件"' }),
+  ]);
+  const notes = [];
+  const ax = await settleEditorless(cu, 0, { record: (r) => notes.push(r) }, { timeoutMs: 600 });
+  assert.equal(notes.length, 1, `超时只落一条 note，实际：${JSON.stringify(notes)}`);
+  assert.match(notes[0].text, /do: settle：界面（本步无编辑器节点）/, "note 应按 settle 动作的既有前缀落证据");
+  assert.match(notes[0].text, /没有连续两次一致的 AX 快照正文/, "note 应说清比较的是快照正文");
+  assert.match(notes[0].text, /600ms/, "note 的时长应取本次超时（自测放开的 timeoutMs），不写死 15s");
+  assert.match(ax.text, /AX snapshot_id=BBBB/, "超时兜底返回的是末次读取");
+  assert.ok(cu.reads.length >= 2, `要读到两次才可能发现不一致，实际读了 ${cu.reads.length} 次`);
+});
+
+test("do: settle（动作级）：无编辑器终态 + 快照 id 每次变 ⇒ PASS 且证据里没有 settle 超时 note", async () => {
+  // 接线验证：settleAction 先探一次 AX，没有 AXTextArea 就交 settleEditorless。场景侧看不出用的是
+  // 哪条实现，因此用「证据里没有 `do: settle：` 开头的那条 note」+ PASS 判它真的复用了新口径。
+  const root = tmpRoot("settle-editorless-action");
+  useTmpEnv(root);
+  const cu = fakeStateCu([editorlessAx({ snapshotId: "AAAA" }), editorlessAx({ snapshotId: "BBBB" })]);
+  const ctx = stubCtx(root, { cu });
+  const { status } = await runScenario(ctx, {
+    id: "settle-editorless",
+    item: 0,
+    title: "无编辑器终态的 settle",
+    file: path.join(root, "settle-editorless.md"),
+    steps: [{ name: "等界面稳定", do: "settle" }],
+  });
+  assert.equal(status, "PASS", `settle 不应把稳定等待升级成 FAIL，实际：${JSON.stringify(ctx.evidence.records)}`);
+  const notes = ctx.evidence.records.filter((r) => r.kind === "note").map((r) => r.text);
+  assert.equal(
+    notes.filter((t) => t.startsWith("do: settle：")).length,
+    0,
+    `稳定收敛时不得落 settle 超时 note：${JSON.stringify(notes)}`,
+  );
+  assert.ok(cu.reads.length >= 3, `probe 一次 + 比较两次，实际读了 ${cu.reads.length} 次`);
 });

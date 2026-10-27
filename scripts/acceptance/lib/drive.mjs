@@ -31,13 +31,38 @@ export async function readAx(cu, pid, { mode = "ax" } = {}) {
   return { text, image, nodes, textarea, editor: textarea?.value ?? null };
 }
 
-/** 等界面稳定：连续两次 AX 文本一致，且编辑器节点已就位。 */
+/**
+ * 快照**正文**：剥掉 KimiCU 快照的**产物 id** 两行，其余逐字节保留（M759 的单一真源）。
+ *
+ * 为什么必须剥（2026-10-27 调查 `.local/reports/settle-stability-oct27/README.md`）：M751 让
+ * `CuClient.state` 每次请求都带 `disable_diff: true`（取全树，防空 diff 假绿），副作用是 KimiCU
+ * **每次调用都新建快照**——首行的 `AX snapshot_id=<UUID>` 每次读都换（mode=full 另有末行
+ * `Screenshot: … screenshot_id=…`）。`settle()` 原先比较整份原文，于是「连续两次一致」永远不
+ * 成立：post-M751 观察到的 25 次 settle 执行全部 15s 超时（全仓 129 个 settle 步骤，最坏白等约
+ * 32 分钟），连 47b 的静态启动屏（无文档、无异步在途）都超时——这不是界面还在变。
+ *
+ * 剥掉的是**本次抓取的句柄**（UUID），不承载任何界面状态；节点行、`[N]` 索引、bbox、
+ * `(focused)`、`element_count`、`truncated`、`window_bounds` 等正文仍逐字节比较——断言没有
+ * 放宽，只是不再把「换了个句柄」当成界面变化。确定性证据：全仓 3001 份 dump 里存在整份逐字节
+ * 相同的对（含 id 行），且剥 id 后 post-M751 的正文相同对大量出现（调查报告 §1/§2）。
+ *
+ * 只剥**行首**这两类元数据行：正文 / 节点 value 里出现的同名子串（例如文档恰好写了这串）不受
+ * 影响。`settle*` 返回的仍是**原始** `ax`——证据 dump 与 `ax.has` 断言继续看原文。
+ */
+export function snapshotBody(text) {
+  return text
+    .split("\n")
+    .filter((line) => !/^AX snapshot_id=/.test(line) && !/^Screenshot: .*screenshot_id=/.test(line))
+    .join("\n");
+}
+
+/** 等界面稳定：连续两次 AX **快照正文**一致（产物 id 行除外，见 `snapshotBody`），且编辑器节点已就位。 */
 export async function settle(cu, pid, { timeoutMs = 30_000 } = {}) {
   const deadline = Date.now() + timeoutMs;
   let prev = null;
   while (Date.now() < deadline) {
     const ax = await readAx(cu, pid);
-    if (prev && prev.text === ax.text && ax.textarea) return ax;
+    if (prev && snapshotBody(prev.text) === snapshotBody(ax.text) && ax.textarea) return ax;
     prev = ax;
     await sleep(700);
   }
