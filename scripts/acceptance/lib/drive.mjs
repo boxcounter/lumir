@@ -747,19 +747,113 @@ export async function injectDrag(from, to) {
   }
 }
 
-/** AX 直接设窗口尺寸（M236，窄窗退让的真机验证）：确定值通道，不拖窗口边缘（命中区与
- *  落点都不稳）。返回 swift 的回读行（`size=<w>x<h>`，窗口管理器钳制后的生效值）。 */
-export async function resizeWindowAX(pid, width, height) {
+/** AXSize 写通道的有界重试口径（M764）：至多 3 次尝试、尝试间隔 400ms。
+ *
+ *  为什么重试：`AXUIElementSetAttributeValue(AXSize)` 会**间歇性**报 `kAXErrorFailure`（-25200）
+ *  ——2026-10-28 的 117 连跑 4 次全部倒在第 1 步 `resizeWindow`，同一 pid、同一脚本的预检
+ *  `pinWindowSize` 却成功，run 结束后在同一实例上按 300ms 间隔手工调用 8/8 成功；2026-10-27 的
+ *  117 / 39 / 126 同族（finding
+ *  `.tower/comms/findings/20261028-worker-rmachine-multiline-ax-v-bug-resizewindow-axsize-25200-117-39-126-m763.md`）。
+ *  失败状态只存在于调用时刻，**不是产品缺陷**。修法是有界重试，不是加长固定 sleep（每次 resize
+ *  都付代价，且不解决瞬时性），也不是无限重试。400ms 的下限由 README 合同给出（≥300ms），
+ *  `drive.test.mjs` 钉住。 */
+const RESIZE_ATTEMPTS = 3;
+const RESIZE_RETRY_DELAY_MS = 400;
+
+/** 单次 `ax-window.swift` 调用，纯数据返回（`run` 可注入——测试用假 swift 覆盖重试分支）。 */
+function runAxWindowOnce(pid, width, height) {
   const script = new URL("./ax-window.swift", import.meta.url).pathname;
   const args = ["/usr/bin/swift", script, String(pid), String(Math.round(width)), String(Math.round(height))];
   try {
-    return execFileSync(args[0], args.slice(1), { encoding: "utf8" }).trim();
+    return { ok: true, stdout: execFileSync(args[0], args.slice(1), { encoding: "utf8" }).trim(), error: null };
   } catch (e) {
-    throw new StepError(
-      `swift + AX 窗口尺寸设置失败（${e.message}）。这条通道要 /usr/bin/swift（Xcode Command Line Tools）` +
-        `且进程要有辅助功能权限（与 CGEvent 注入同前提）。`,
+    return { ok: false, stdout: "", error: String(e.message ?? e) };
+  }
+}
+
+/** `size=<w>x<h>` 回读行的解析（M764）：`resizeWindowAX` 的成功判据与 `pinWindowSize` 的生效值
+ *  共用这一份——两处各写一遍正则就是「同一语义两处真源」（REVIEW.md 同名条）。 */
+export function parseWindowSizeLine(out) {
+  const m = /size=(\d+)x(\d+)/.exec(out);
+  return m ? { w: Number(m[1]), h: Number(m[2]) } : null;
+}
+
+function oneLine(text) {
+  return String(text).replace(/\s+/g, " ").trim();
+}
+
+/** 逐次尝试的证据串（写进错误与步骤证据）：err 与回读尺寸逐次留痕，归因不必回真机加探针。 */
+function formatResizeAttempts(history) {
+  return history
+    .map((a) => {
+      const readback = a.readback ? `回读 ${a.readback.w}×${a.readback.h}` : "回读 无";
+      return a.ok ? `#${a.attempt} 已写入（${readback}）` : `#${a.attempt} 失败（${oneLine(a.error)}）${readback}`;
+    })
+    .join("；");
+}
+
+/** 写窗口尺寸的核心（M764）：有界重试 + 成功判据只有一条——**回读等于请求值**。
+ *
+ *  每次尝试都记下 err 与回读尺寸（`history`）；三种结局：
+ *    1. 某次回读 == 请求值 → `{ pinned: true }`（**只有这一条算成功**）；
+ *    2. 写入被接受但回读始终 ≠ 请求值 → `{ pinned: false }`（窗口管理器钳制 / 写入未生效）；
+ *    3. 一次都没写进去（swift 非零退出 / 输出没有 `size=` 回读行）→ `InfraError`（通道/环境项，
+ *       runner 把整场标 INVALID、退出码 2，**不是场景断言 FAIL**）。
+ *
+ *  为什么第 2 类返回而不是抛错：钳制是**已登记的环境边界**（README「窗口几何的确定性」①：生效值
+ *  ≠ 请求值标 ⚠、坐标场景按生效值漂、几何断言对生效值判），把它升级成错误会让「屏幕放不下
+ *  1200×800」的机器整轮 INVALID，而它今天只是一条 ⚠ 证据。第 3 类没有可用的生效值，才按通道
+ *  失败归类——与本文件 `hover` 拿不到前台、`readAx` 主窗不可判定同一档（InfraError）。 */
+async function writeWindowSize(pid, width, height, { run = runAxWindowOnce, sleepFn = sleep } = {}) {
+  const want = { w: Math.round(width), h: Math.round(height) };
+  const history = [];
+  let lastAccepted = null;
+  for (let attempt = 1; attempt <= RESIZE_ATTEMPTS; attempt++) {
+    const raw = run(pid, want.w, want.h);
+    const readback = raw.ok ? parseWindowSizeLine(raw.stdout) : null;
+    const ok = raw.ok && readback !== null;
+    const error = !raw.ok ? raw.error : readback ? null : `回读行无法解析：${JSON.stringify(raw.stdout)}`;
+    const entry = { attempt, ok, error, readback, stdout: raw.stdout };
+    history.push(entry);
+    if (ok && readback.w === want.w && readback.h === want.h) {
+      return { pinned: true, want, readback, history, stdout: raw.stdout };
+    }
+    if (ok) lastAccepted = entry;
+    if (attempt < RESIZE_ATTEMPTS) await sleepFn(RESIZE_RETRY_DELAY_MS);
+  }
+  if (!lastAccepted) {
+    const last = history[history.length - 1];
+    throw new InfraError(
+      `AXSize 写通道失败（请求 ${want.w}×${want.h}，${RESIZE_ATTEMPTS} 次尝试全部没写进去、间隔 ` +
+        `${RESIZE_RETRY_DELAY_MS}ms）：这是通道 / 环境项（窗口 AX 写的瞬时 -25200 族，见 README` +
+        `「AXSize 写通道的瞬时 -25200」），不是场景断言失败。逐次：${formatResizeAttempts(history)}。` +
+        `最后一次原始错误：${last.error}`,
     );
   }
+  return { pinned: false, want, readback: lastAccepted.readback, history, stdout: lastAccepted.stdout };
+}
+
+/** AX 直接设窗口尺寸（M236，窄窗退让的真机验证）：确定值通道，不拖窗口边缘（命中区与
+ *  落点都不稳）。返回 swift 的回读行（`size=<w>x<h>`，窗口管理器钳制后的生效值）。
+ *
+ *  **成功只认回读等于请求值**（M764）：通道间歇性报 -25200 时按 `writeWindowSize` 重试（≤3 次、
+ *  间隔 400ms）；某次回读等于请求值就返回那一行，重试过的把逐次 err / 回读写进返回证据。写入被
+ *  接受但回读始终不同 = 钳制，返回行**明确标 ⚠ 并写出请求值与生效值**，不冒充成功；一次都没
+ *  写进去则抛 `InfraError`（通道/环境项）。首次即成功的返回行与旧格式一字不差（证据不膨胀）。 */
+export async function resizeWindowAX(pid, width, height, options = {}) {
+  const r = await writeWindowSize(pid, width, height, options);
+  if (r.pinned) {
+    if (r.history.length === 1) return r.stdout;
+    return (
+      `${r.stdout}（AXSize 写了 ${r.history.length} 次才回读到请求值 ${r.want.w}×${r.want.h}：` +
+      `${formatResizeAttempts(r.history)}）`
+    );
+  }
+  return (
+    `${r.stdout}（⚠ 请求 ${r.want.w}×${r.want.h}，${r.history.length} 次尝试后回读仍 ≠ 请求：写入被接受但` +
+    `尺寸没变过来——窗口管理器钳制（屏幕放不下该尺寸）或写入未生效；${formatResizeAttempts(r.history)}。` +
+    `回读生效值以窗口管理器为准，几何断言对生效值判，本行不得当成「已钉住」，见 README「AXSize 写通道的瞬时 -25200」）`
+  );
 }
 
 /** key window 读数（M678；主窗判据 M762）：与 `resizeWindowAX` 同一条 AX 通道，读 app 的
@@ -801,21 +895,25 @@ export function parseKeyWindowState(raw) {
 /** 启动后把窗口钉到固定尺寸（M491）：产品侧 `apply_startup_size`（src-tauri/src/lib.rs:242-322）
  *  把首启尺寸设为工作区 90%、静默盖过 tauri.conf 的 1200×800 占位（且该行为本身是场景 126 的
  *  判据本体），坐标/像素敏感场景（53、122 等）因此拿到不确定几何。本函数在就绪门之后把窗口经
- *  AXSize 直写钉回构建配置的占位尺寸，恢复确定性；通道即本文件 `resizeWindowAX`（M236 已验证），
- *  不在套件里新增第二条 resize 通道。
+ *  AXSize 直写钉回构建配置的占位尺寸，恢复确定性；通道是 `writeWindowSize`（M236 的
+ *  `resizeWindowAX` 通道，M764 起带 -25200 的有界重试），不在套件里新增第二条 resize 通道。
  *
  *  返回**证据行**（实际宽高取回读的生效值，不取请求值——窗口管理器可能钳制）；`prefix` 让重启
- *  路径写成「重启窗口钉尺寸：…」与首启区分。钉不上抛错（swift 缺失 / 无辅助功能权限 / 回读无法
- *  解析）——由调用方（run.mjs 的启动段）判基建 INVALID，不静默放行：钉不住尺寸的跑批与没钉一样，
- *  坐标场景照旧漂移。 */
-export async function pinWindowSize(cu, pid, { width, height }, { prefix = "" } = {}) {
+ *  路径写成「重启窗口钉尺寸：…」与首启区分。重试过的把逐次 err / 回读写进证据行（M764）。
+ *  钉不上抛 `InfraError`（swift 缺失 / 无辅助功能权限 / 3 次尝试一次都没写进去）——由调用方
+ *  （run.mjs 的启动段）判基建 INVALID，不静默放行：钉不住尺寸的跑批与没钉一样，坐标场景照旧漂移。
+ *  钳制（写入被接受、回读 ≠ 请求值）照旧只标 ⚠、不抛错（README「窗口几何的确定性」①）。
+ *
+ *  `run` / `sleepFn` 透传给 `writeWindowSize`：`drive.test.mjs` 用假 swift 与假窗口状态覆盖重试
+ *  与归类分支，生产调用点不传。 */
+export async function pinWindowSize(cu, pid, { width, height }, { prefix = "", ...resizeOptions } = {}) {
   const startMs = Date.now();
-  const out = await resizeWindowAX(pid, width, height);
-  const m = /size=(\d+)x(\d+)/.exec(out);
-  if (!m) throw new InfraError(`窗口钉尺寸：回读无法解析（${JSON.stringify(out)}，期望 size=<w>x<h>）`);
-  const actualW = Number(m[1]);
-  const actualH = Number(m[2]);
-  const clamped = actualW !== Math.round(width) || actualH !== Math.round(height);
+  const r = await writeWindowSize(pid, width, height, resizeOptions);
+  const actualW = r.readback.w;
+  const actualH = r.readback.h;
+  const clamped = actualW !== r.want.w || actualH !== r.want.h;
+  const retryNote =
+    r.history.length > 1 ? `；AXSize 共写 ${r.history.length} 次（${formatResizeAttempts(r.history)}）` : "";
   // 等 webview 跟随新尺寸重排：AXSize 写入后 webview 有一拍过渡（M491 探针实测钉后 +0ms 出现
   // 「webview 比窗口高 64px」的过渡态、+2s 内收敛成铺满）。轮询「铺满差 ≤4px」（判据与
   // assertOverlayChrome 同源）最多 6s；等不到不判死——残余差如实写进证据行，几何/像素断言
@@ -833,8 +931,8 @@ export async function pinWindowSize(cu, pid, { width, height }, { prefix = "" } 
       heightGap = win.bbox.h - area.bbox.h;
       if (topGap <= 4 && heightGap <= 4) {
         return (
-          `${prefix}窗口钉尺寸：请求 ${width}×${height}，回读生效 ${actualW}×${actualH}（AXSize 直写；` +
-          `webview 重排 settle ${Date.now() - startMs}ms）` +
+          `${prefix}窗口钉尺寸：请求 ${r.want.w}×${r.want.h}，回读生效 ${actualW}×${actualH}（AXSize 直写` +
+          `${retryNote}；webview 重排 settle ${Date.now() - startMs}ms）` +
           (clamped ? "；⚠ 生效值 ≠ 请求值——窗口管理器钳制（屏幕放不下该尺寸的已知环境边界），坐标场景按生效值漂" : "")
         );
       }
@@ -842,7 +940,7 @@ export async function pinWindowSize(cu, pid, { width, height }, { prefix = "" } 
     await sleep(400);
   } while (Date.now() < deadline);
   return (
-    `${prefix}窗口钉尺寸：请求 ${width}×${height}，回读生效 ${actualW}×${actualH}（AXSize 直写）；` +
+    `${prefix}窗口钉尺寸：请求 ${r.want.w}×${r.want.h}，回读生效 ${actualW}×${actualH}（AXSize 直写${retryNote}）；` +
     `⚠ webview 未在 6s 内铺满新尺寸（残余：顶边差 ${topGap}px / 高度差 ${heightGap}px）` +
     (clamped ? "；⚠ 生效值 ≠ 请求值——窗口管理器钳制" : "")
   );
