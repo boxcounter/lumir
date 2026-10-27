@@ -7,7 +7,7 @@
 //   3. KimiCU 的 type_text 传 index 时会先在后台做一次真实点击建立渲染层焦点——编辑器失焦时
 //      直接注入会落到陈旧选区，所以输入一律带 index。
 import { execFileSync } from "node:child_process";
-import { findNode, parseNodes } from "./ax.mjs";
+import { findNode, mainWindowPlan, parseNodes, windowDirectory, windowTitle } from "./ax.mjs";
 import { InfraError, sleep } from "./util.mjs";
 
 export class StepError extends Error {}
@@ -23,12 +23,47 @@ export async function waitUntil(fn, { timeoutMs = 15_000, everyMs = 400, label =
   throw new StepError(`等待「${label}」超时（${timeoutMs}ms）`);
 }
 
-/** 读一次 AX。mode=full 附带截图（证据用），ax 更省。 */
+/** 读一次 AX。mode=full 附带截图（证据用），ax 更省。
+ *
+ *  **多窗口时钉主窗**（M761，112 的现场）：KimiCU 把树作用在 primary 窗口上；屏幕上多出一扇辅助窗
+ *  （112 现场是 66×20 的 `AXDialog "Window"`= 窗口共享会话控件）抢走 primary 之后，整棵树被截在它
+ *  身上（18 个节点、没有主窗的按钮行），场景的节点断言因此判红，而产品当时完全正常。`mainWindowPlan`
+ *  判出「树不在主窗上」时，这里用 `window_id` 重读主窗，并核对重读的结果**真的是那扇窗**：
+ *    - 重读后 `[primary]` 仍是别的窗 ⇒ KimiCU 没按 window_id 取树；
+ *    - `window_title` 与目录里那扇窗的标题不符 ⇒ 钉窗未生效 / 两次读取之间换了窗。
+ *  两种都抛 `InfraError`（环境项，整场 INVALID），**不返回辅助窗口的树**。主窗不可判定（多窗口但
+ *  没有唯一的 `AXStandardWindow`）同样抛 `InfraError`：此时「读到的节点」≠「界面就是这些」，拿它
+ *  判红 / 判绿都是假读数（REVIEW.md「读不到当成空」条）。 */
 export async function readAx(cu, pid, { mode = "ax" } = {}) {
-  const { text, image } = await cu.state(pid, { mode });
-  const nodes = parseNodes(text);
+  let snap = await cu.state(pid, { mode });
+  const plan = mainWindowPlan(snap.text);
+  if (plan.error) {
+    throw new InfraError(`读取 AX 时无法判定主窗口（不退回 KimiCU 的 primary 选择）：${plan.error}`);
+  }
+  if (plan.pin) snap = await pinMainWindow(cu, pid, mode, plan.pin);
+  const nodes = parseNodes(snap.text);
   const textarea = nodes.find((n) => n.role === "AXTextArea") ?? null;
-  return { text, image, nodes, textarea, editor: textarea?.value ?? null };
+  return { text: snap.text, image: snap.image ?? null, nodes, textarea, editor: textarea?.value ?? null };
+}
+
+/** 按 `window_id` 重读主窗并核对重读结果（判据见 `readAx` 的注释）。 */
+async function pinMainWindow(cu, pid, mode, target) {
+  const pinned = await cu.state(pid, { mode, windowId: target.windowId });
+  const primary = windowDirectory(pinned.text)?.entries.find((e) => e.marker === "primary");
+  if (primary && primary.windowId !== target.windowId) {
+    throw new InfraError(
+      `转发 window_id=${target.windowId} 后 AX 树仍作用在窗口 ${primary.windowId}（${primary.role}）上：` +
+        "KimiCU 没按 window_id 取树，读到的主窗树不可信",
+    );
+  }
+  const title = windowTitle(pinned.text);
+  if (title !== null && target.title !== null && title !== target.title) {
+    throw new InfraError(
+      `转发 window_id=${target.windowId} 后读到的 window_title 是 ${JSON.stringify(title)}，` +
+        `而 windows 目录里该窗的标题是 ${JSON.stringify(target.title)}：钉窗未生效，或两次读取之间换了窗`,
+    );
+  }
+  return pinned;
 }
 
 /**
@@ -42,9 +77,9 @@ export async function readAx(cu, pid, { mode = "ax" } = {}) {
  * 32 分钟），连 47b 的静态启动屏（无文档、无异步在途）都超时——这不是界面还在变。
  *
  * 剥掉的是**本次抓取的句柄**（UUID），不承载任何界面状态；节点行、`[N]` 索引、bbox、
- * `(focused)`、`element_count`、`truncated`、`window_bounds` 等正文仍逐字节比较——断言没有
- * 放宽，只是不再把「换了个句柄」当成界面变化。确定性证据：全仓 3001 份 dump 里存在整份逐字节
- * 相同的对（含 id 行），且剥 id 后 post-M751 的正文相同对大量出现（调查报告 §1/§2）。
+ * `(focused)`、`element_count`、`truncated`、窗口矩形（`captured_bounds` / `window_bounds`）等正文
+ * 仍逐字节比较——断言没有放宽，只是不再把「换了个句柄」当成界面变化。确定性证据：全仓 3001 份
+ * dump 里存在整份逐字节相同的对（含 id 行），且剥 id 后 post-M751 的正文相同对大量出现（调查报告 §1/§2）。
  *
  * 只剥**行首**这两类元数据行：正文 / 节点 value 里出现的同名子串（例如文档恰好写了这串）不受
  * 影响。`settle*` 返回的仍是**原始** `ax`——证据 dump 与 `ax.has` 断言继续看原文。

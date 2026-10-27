@@ -10,7 +10,7 @@ import { appendFile, open, readdir, readFile, rm, stat, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
-import { findNode, nodeName, parseNodes, windowBounds } from "./ax.mjs";
+import { coordsSpace, findNode, nodeName, parseNodes, windowBounds } from "./ax.mjs";
 import { bundleBinary, fixturesDir, listOtherBundleInstances, quiesceStrayBundleInstances, SCENARIO_CONFIG_KEYS, writeWindowState } from "./app.mjs";
 import { encodePng, syntheticScreenshot } from "./png.mjs";
 import { DEFAULT_MIN_DIFF, DEFAULT_PATCH, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
@@ -1117,12 +1117,14 @@ async function clickWithRetry(cu, pid, x, y, { retries = 3, count, button } = {}
  * 真实正文单击的坐标换算（M678）：`focusWindow click` 与 `clickEditor real` 共用的**唯一**一份。
  *
  * 两个坐标空间在一处换算：AXTextArea 的 bbox（与 click/scroll 的 `{x,y}` 同空间 = mode=full 的
- * **截图像素**）→ 窗口局部点（按 `window_bounds / 截图尺寸` 缩放）→ 加窗口原点 = Quartz 屏幕点
+ * **截图像素**）→ 窗口局部点（按 `窗口矩形 / 截图尺寸` 缩放）→ 加窗口原点 = Quartz 屏幕点
  * （`injectClickWithClickState` 的口径）。截图尺寸与窗口尺寸差一个缩放比，混用会让点击落到别处
  * （README「已知边界」的 doubleClick 条同款陷阱），所以两个读数都从**同一份**快照现取。
+ * 窗口矩形来自 header 的 `captured_bounds`（mode=full）或 `window_bounds`（mode=ax）——两者都是
+ * 屏幕点上的同一件事，见 `ax.mjs` 的 `windowBounds`。
  *
  * 读不到编辑器 bbox = 文档没开（或快照退化）——这是场景/状态问题，普通 Error；
- * 读不到 window_bounds / 截图尺寸 = 快照退化——环境问题，InfraError（整场 INVALID）。
+ * 读不到窗口矩形 / 截图尺寸 = 快照退化——环境问题，InfraError（整场 INVALID）。
  */
 export function contentClickGeometry({ textarea, bounds, shot, dx = CONTENT_FOCUS_DX, dy = CONTENT_FOCUS_DY, label = "正文单击" }) {
   if (!textarea?.bbox) {
@@ -1131,7 +1133,11 @@ export function contentClickGeometry({ textarea, bounds, shot, dx = CONTENT_FOCU
         "算不出正文落点——本动作点的是编辑器正文，不是标题栏",
     );
   }
-  if (!bounds || !shot) throw new InfraError(`${label}：读不到 window_bounds / 截图尺寸，算不出落点（快照退化）`);
+  if (!bounds || !shot) {
+    throw new InfraError(
+      `${label}：读不到窗口矩形（header 的 captured_bounds / window_bounds）或截图尺寸，算不出落点（快照退化）`,
+    );
+  }
   const shotPoint = { x: textarea.bbox.x + dx, y: textarea.bbox.y + dy };
   return {
     shotPoint,
@@ -1599,8 +1605,8 @@ export async function runScenario(ctx, scenario) {
       const shot = screenshotSize(ax.text);
       if (!bounds || !shot) {
         return fail(
-          `${label}（AX 快照缺 window_bounds 或截图尺寸，算不出两点之间的换算）`,
-          `window_bounds=${JSON.stringify(bounds)} / screenshot=${JSON.stringify(shot)}`,
+          `${label}（AX 快照缺窗口矩形（captured_bounds / window_bounds）或截图尺寸，算不出两点之间的换算）`,
+          `窗口矩形=${JSON.stringify(bounds)} / screenshot=${JSON.stringify(shot)}`,
           ax,
         );
       }
@@ -1664,7 +1670,7 @@ export async function runScenario(ctx, scenario) {
       // 包围盒内扫描亮度跨度，等价于「这块区域里真有字形」，是唯一能证伪「被裁」的读数。
       //
       // 坐标空间：mode=full 的 bbox 与截图尺寸同为**截图像素**（README「断言」表的 M244 口径），
-      // 两侧读数取自同一份快照的 header，不与 window_bounds（屏幕点）混空间。
+      // 两侧读数取自同一份快照的 header，不与窗口矩形（屏幕点）混空间。
       const spec = expect.geom;
       // **恒自取 mode=full 快照，MUST NOT 复用 state.ax**：同一 expect 列表里前面的 `ax` 断言会把
       // state.ax 钉成 mode=ax 的口径——那份快照既没有图（`painted` 段无从取色），bbox 也是**窗口
@@ -1947,7 +1953,7 @@ export async function runScenario(ctx, scenario) {
       const spec = expect.window;
       const ax = await readAx(cu, ctx.pid);
       const bounds = windowBounds(ax.text);
-      if (!bounds) return fail(`${label}（读不到 window_bounds：AX 快照退化）`, "", ax);
+      if (!bounds) return fail(`${label}（读不到窗口矩形（captured_bounds / window_bounds）：AX 快照退化）`, "", ax);
       if (spec.moved !== undefined) {
         const before = state.boundsBefore;
         if (!before) return fail(`${label}（缺少动作前窗口位置基线——window.moved 断言的步骤必须有 do 动作）`, "", ax);
@@ -2577,30 +2583,21 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // mode 8，与 doubleClick / drag 同一条已验证通路）。只在 KimiCU 失败时启用、只在
       // dy / dx 显式给出时启用——`page` 是「视口页」语义，换算成行数要猜视口高度，套件不猜
       //（给 page 的步骤仍按原样报通道边界错误，场景改写成 dy）。
-      const wheelPlan = (() => {
-        if (step.page !== undefined) return null;
-        if (step.dy === undefined && step.dx === undefined) return null;
-        const bounds = windowBounds(snapshot.text);
-        const shot = screenshotSize(snapshot.text);
-        if (!bounds || !shot) return null;
-        let px;
-        let py;
-        if (t && t.x !== undefined) {
-          px = t.x;
-          py = t.y;
-        } else if (node?.bbox) {
-          px = node.bbox.x + node.bbox.w / 2;
-          py = node.bbox.y + node.bbox.h / 2;
-        } else {
-          return null;
-        }
-        // 截图像素 → 窗口局部点 → Quartz 屏幕点（与 windowLocalTarget 的换算同一把尺）。
-        return {
-          point: { x: bounds.x + (px * bounds.w) / shot.w, y: bounds.y + (py * bounds.h) / shot.h },
-          dy: step.dy ?? 0,
-          dx: step.dx ?? 0,
-        };
-      })();
+      //
+      // **算不出来的原因必须带出来（M761，`planWheelFallback`）**：此前「缺几何 ⇒ 返回 null」，
+      // 而 KimiCU 失败时 `if (wheelPlan !== null)` 把兜底分支整段跳过，最后落到一句「通道边界」
+      // 的文案——读者看不出「兜底压根没跑，因为几何读不到」。这正是 REVIEW.md「读不到当成空」条
+      // 禁止的形态，只是它藏在兜底路径里（2026-10-27 的 header 改名让 224/234 的滚轮兜底这样静默
+      // 消失）。现在 `{ reason }` 一律落一条证据 note，并附在最终错误里。
+      const wheelPlan = planWheelFallback({
+        text: snapshot.text,
+        target: step.target,
+        node,
+        page: step.page,
+        dy: step.dy,
+        dx: step.dx,
+      });
+      const wheelReady = wheelPlan.point !== undefined;
       const scrollOrExplain = async (args) => {
         // `wheel: true`（M669）：**跳过 KimiCU、直接用 CGEvent 滚轮**。起因是 224 的实测：
         // KimiCU 的 scroll 有时自报「成功」（无异常）却滚的是别的元素——转写面（transcript）
@@ -2608,11 +2605,8 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         // （兜底只在 KimiCU 报错时启用）。显式声明通道，场景要的「真实滚轮」就不再取决于
         // KimiCU 自报的真假。
         if (step.wheel === true) {
-          if (wheelPlan === null) {
-            throw new Error(
-              "do=scroll 的 wheel: true 需要 dy 或 dx（行数）+ 可算出的落点（target 的 {x,y} 或带 bbox 的节点）：" +
-                "滚轮注入按行投递，`page` 形态不换算行数（套件不猜视口高度）。",
-            );
+          if (!wheelReady) {
+            throw new Error(`do=scroll 的 wheel: true 不可用——${wheelPlan.reason}`);
           }
           const out = await injectWheel(wheelPlan.point, { dy: wheelPlan.dy, dx: wheelPlan.dx });
           evidence.record({
@@ -2627,7 +2621,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         try {
           return (await cu.scroll(p, args)).json;
         } catch (e) {
-          if (wheelPlan !== null) {
+          if (wheelReady) {
             const out = await injectWheel(wheelPlan.point, { dy: wheelPlan.dy, dx: wheelPlan.dx });
             evidence.record({
               kind: "note",
@@ -2638,13 +2632,15 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
             await sleep(step.settleMs ?? 700);
             return out;
           }
+          // 兜底不可用也要落证据：否则「KimiCU 说没位移」与「兜底根本没跑」在证据里同形。
+          evidence.record({ kind: "note", text: `scroll：滚轮兜底不可用——${wheelPlan.reason}` });
           throw new Error(
             `scroll 失败：${e.message}——KimiCU 的 scroll 在**本 app** 上产不出位移：M252 的三轮探针` +
               "（树行 bbox 中心 × page 正/负、左栏 padding 点、legacy dy）与 M379 在 299 行长文档上的复验" +
               "（编辑器中心点 + dy）都是 no movement / already at end；CM 的 .cm-scroller 与树滚动区都没有" +
               "作为可滚对象暴露给 KimiCU。这是通道边界不是产品缺陷，见 README「已知边界」的滚动条：" +
               "显式写 dy（或 dx）即可启用 M644 的滚轮兜底（lib/cgevent-click.swift mode 8）；" +
-              "`page` 形态不换算成行数（套件不猜视口高度）。finding " +
+              `本次滚轮兜底不可用：${wheelPlan.reason}。finding ` +
               "20260927-worker-vault-switch-fb-improve-scroll-m252。",
           );
         }
@@ -2942,8 +2938,8 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // `click({ modifiers })` 同形）。
       //
       // 代价与 doubleClick 相同（README「已知边界」）：会移动真实光标、要求目标窗口在前台，坐标用
-      // **窗口局部点**（mode=ax + window_bounds，与 doubleClick / drag 同一空间）——不是 KimiCU
-      // click 那套截图像素。
+      // **窗口局部点**（mode=ax 的口径，header 的 `coords:` 行自述 WINDOW-LOCAL POINTS，与
+      // doubleClick / drag 同一空间）——不是 KimiCU click 那套截图像素。
       const modifiers = t.modifiers ?? [];
       if (modifiers.length) {
         const { point } = await windowLocalTarget(cu, p, t, {
@@ -2988,9 +2984,9 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         // 例如 40 个 fixture 时靠后的行 y≈1300 而窗口高 800），此时注入坐标只会得到
         // KimiCU 的 `screenshot coordinate is outside the last get_app_state image`
         // ——那句错误看不出真实成因。这里提前给一句能指出下一步的话（M244 实测）。
-        // 可视区上界取**截图像素**（与 px/py 同空间）：带图的 dump 里 `screenshot: 1152×768 px`
-        // 才是坐标通道的边界，而 `window_bounds` 是屏幕点（1200×800）——两者混用会把
-        // 1152–1200 那一条带算成「在视口内」，KimiCU 仍会拒绝该坐标。
+        // 可视区上界取**截图像素**（与 px/py 同空间）：带图的 dump 里 `screenshot: 2048×1365 px`
+        // 才是坐标通道的边界，而窗口矩形（captured_bounds / window_bounds）是屏幕点（1200×800）
+        // ——两者混用会把 2048–1200 之外那一条带算成「在视口内」，KimiCU 仍会拒绝该坐标。
         const shot = screenshotSize(ax.text);
         const bounds = windowBounds(ax.text);
         const vw = shot?.w ?? bounds?.w;
@@ -3296,7 +3292,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         );
       }
       const performDrag = async () => {
-        const ax = await readAxForScreenPoint(cu, p);
+        const ax = await readAxForScreenPoint(cu, p, { label: "drag" });
         const bounds = windowBounds(ax.text);
         const t = step.target ?? {};
         let local;
@@ -3419,7 +3415,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // AX 直写窗口尺寸（M236，窄窗退让的真机验证）：确定值通道。高度缺省保持当前。
       const ax = await readAx(cu, p);
       const bounds = windowBounds(ax.text);
-      if (!bounds) throw new Error("resizeWindow：读不到 window_bounds（AX 快照退化）");
+      if (!bounds) throw new Error("resizeWindow：读不到窗口矩形（header 的 captured_bounds / window_bounds，AX 快照退化）");
       const out = await resizeWindowAX(p, step.width, step.height ?? bounds.h);
       await sleep(step.settleMs ?? 500); // matchMedia change → DOM 显隐切换有一拍
       return out;
@@ -3693,11 +3689,54 @@ async function readAxWithScreenshot(cu, pid, { retries = 3 } = {}) {
   );
 }
 
-/** 截图尺寸（header 的 `screenshot: 1152×768 px`）：坐标注入通道的可视区上界，与 bbox 同一空间。
- *  无图时 header 写的是 `screenshot: none — …`，解析不到即 null（调用方退到 window_bounds）。 */
-function screenshotSize(axText) {
+/** 截图尺寸（header 的 `screenshot: 2048×1365 px`）：坐标注入通道的可视区上界，与 bbox 同一空间。
+ *  无图时 header 写的是 `screenshot: none — …`，解析不到即 null（调用方退到窗口矩形）。
+ *  上游 0.6.8 起长边上限从 1152 提到 2048，缩放比例因此不再是「点 × 0.96」——套件一律按
+ *  `截图尺寸 ÷ 窗口矩形` 现算（见 `contentClickGeometry` / `pixel` 断言），不写死常数。 */
+export function screenshotSize(axText) {
   const m = /screenshot:\s*(\d+)×(\d+)\s*px/.exec(axText);
   return m ? { w: +m[1], h: +m[2] } : null;
+}
+
+/** scroll 的滚轮兜底方案（M644 / M761）。**不返回 null**：算不出来时给 `{ reason }`，让调用方把
+ *  「兜底为什么没跑」写进证据与错误；算得出时给 `{ point, dy, dx }`（`point` 是 Quartz 屏幕点）。
+ *
+ *  为什么强调这一点：旧实现「缺几何 ⇒ null」，而 KimiCU 通道失败时兜底分支按 `!== null` 跳过，
+ *  最终只报一句「通道边界」——2026-10-27 的 header 改名（`window_bounds` → `captured_bounds`）
+ *  让 224/234 的兜底这样静默消失，读证据的人分不出「兜底没跑」与「兜底跑了也没用」
+ *  （REVIEW.md「读不到当成空」条的同族形态，只是藏在兜底路径里）。
+ *
+ *  落点口径：`target: {x,y}` 与节点 bbox 都是**截图像素**（与 KimiCU 的 scroll / click 同空间），
+ *  再按 `窗口矩形 ÷ 截图尺寸` 换算成窗口局部点、加窗口原点 = Quartz 屏幕点（与 `windowLocalTarget`
+ *  同一把尺）。`page` 形态不换算行数（套件不猜视口高度）。 */
+export function planWheelFallback({ text, target, node, page, dy, dx }) {
+  if (page !== undefined) return { reason: "`page` 是视口页语义，套件不换算行数（不猜视口高度），要兜底请改写 dy / dx" };
+  if (dy === undefined && dx === undefined) return { reason: "没有显式写 dy / dx（滚轮按行投递）" };
+  const bounds = windowBounds(text);
+  const shot = screenshotSize(text);
+  if (!bounds || !shot) {
+    return {
+      reason:
+        `读不到窗口几何（窗口矩形=${JSON.stringify(bounds)} / 截图尺寸=${JSON.stringify(shot)}）——` +
+        "快照退化时兜底算不出落点",
+    };
+  }
+  let px;
+  let py;
+  if (target && target.x !== undefined) {
+    px = target.x;
+    py = target.y;
+  } else if (node?.bbox) {
+    px = node.bbox.x + node.bbox.w / 2;
+    py = node.bbox.y + node.bbox.h / 2;
+  } else {
+    return { reason: "落点不可定位：target 既没给 {x,y}，节点也没有 bbox" };
+  }
+  return {
+    point: { x: bounds.x + (px * bounds.w) / shot.w, y: bounds.y + (py * bounds.h) / shot.h },
+    dy: dy ?? 0,
+    dx: dx ?? 0,
+  };
 }
 
 /** 在一个包围盒内扫描亮度跨度的**最大值**（M397，`geom` 断言的绘制段）：证明「这块区域里真的
@@ -3729,30 +3768,40 @@ function maxLumaSpread(img, { x, y, w, h }, patch) {
   return best;
 }
 
-/** `doubleClick` 用的 AX 读数：必须是**窗口局部坐标口径**（mode=ax，带 window_bounds）。
+/** `doubleClick` / `drag` / `hover` / `click.modifiers` 用的 AX 读数：必须是**窗口局部坐标口径**
+ *（mode=ax，header 的 `coords:` 行自述 `… are WINDOW-LOCAL POINTS …`）。
  *
- *  两种拒绝情形分开报，别混成一句「找不到口径」：
- *  - KimiCU 的 AX 服务退化——实测会返回只剩菜单栏的树（`element_count` 十几个、没有
- *    `window_bounds`）。README「已知边界」记了这条，处理办法是重启 KimiCU 服务，不是改场景；
- *  - 口径变了——`mode=full`（截图像素）与 `mode=ax`（窗口局部点）混用会让点击落到别处，
- *    宁可报错也不猜。
+ *  口径按 `coordsSpace` 的语义判，**不按字面量**：KimiCU 0.6.8 起说明搬到了独立的 `coords:` 行且
+ *  全大写，按小写 `/window-local/` 匹配会把合格的 ax 快照拒成「口径不是它」——2026-10-27 core 批的
+ *  53 / 159 就是这么红的（快照完全正常：element_count 201~202、窗口矩形在场）。
+ *
+ *  三种拒绝情形分开报，别混成一句「找不到口径」：
+ *  - KimiCU 的 AX 服务退化——实测会返回只剩菜单栏的树（`element_count` 十几个、没有窗口矩形）。
+ *    README「已知边界」记了这条，处理办法是重启 KimiCU 服务，不是改场景；
+ *  - 口径是**截图像素**（mode=full）——两个坐标空间混用会让点击落到别处，宁可报错也不猜；
+ *  - 没有 `coords:` 行 / 那行的措辞认不出来——口径不可判定，同样报错。
  *  退化是偶发的，所以先重试几拍再判死。 */
-async function readAxForScreenPoint(cu, pid, { retries = 3 } = {}) {
+export async function readAxForScreenPoint(cu, pid, { retries = 3, label = "双击" } = {}) {
   let last = null;
   for (let i = 0; i < retries; i++) {
     const ax = await readAx(cu, pid);
     last = ax;
-    if (/window-local/.test(ax.text) && windowBounds(ax.text)) return ax;
+    if (coordsSpace(ax.text) === "window-local" && windowBounds(ax.text)) return ax;
     await sleep(700);
   }
   const bounds = last ? windowBounds(last.text) : null;
+  const space = last ? coordsSpace(last.text) : null;
   if (!bounds) {
     throw new Error(
-      "doubleClick 拿不到窗口坐标：AX 快照退化（只剩菜单栏/无 window_bounds）——KimiCU 的 AX 服务需要重启" +
+      `${label} 拿不到窗口坐标：AX 快照退化（只剩菜单栏/无窗口矩形）——KimiCU 的 AX 服务需要重启` +
         "（README「已知边界」的「AX 快照可能退化」条），不是产品问题",
     );
   }
-  throw new Error("doubleClick 需要 mode=ax 的窗口局部坐标口径（AX dump 的 header 里应有 window-local 说明），本次口径不是它");
+  throw new Error(
+    `${label} 需要 mode=ax 的窗口局部坐标口径（header 的 coords: 行应自述 WINDOW-LOCAL POINTS），` +
+      `本次读到 ${space === null ? "没有可识别的 coords: 行" : `「${space}」口径`}——` +
+      "两个坐标空间混用会让注入落到别处，套件不猜",
+  );
 }
 
 /**
@@ -3777,7 +3826,7 @@ async function windowLocalTarget(cu, pid, target, { retries = 4, label = "动作
         `激活尝试：${foregroundWhy(fg)}`, // M478：两条通道的成败与 osascript stderr 一并给出
     );
   }
-  const ax = await readAxForScreenPoint(cu, pid);
+  const ax = await readAxForScreenPoint(cu, pid, { label });
   const bounds = windowBounds(ax.text);
   let local;
   if (target?.x !== undefined) {
