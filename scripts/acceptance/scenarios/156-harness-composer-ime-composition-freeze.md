@@ -55,8 +55,10 @@ steps:
     keys: ["h", "n", "l", "-", "c", "j", "k", "-", "b"]
     gapMs: 60
     expect:
+      # 跨行判据走**解析值**（M765，与 117 同口径）：KimiCU 0.6.8 起 dump 原文里的换行是字面 `\n`，
+      # `ax.has` 的 `[\r\n]+` 命中 0 次（假红）；`node` 匹配 `parseNodes` 还原后的 value。
       - label: 两行态在 IME 之前可达：第二段接在第一段下一行（不是同行拼接）——手动复验的前置现场成立
-        ax: { has: '/hnl-cjk-a[\r\n]+hnl-cjk-b/' }
+        node: { role: AXTextArea, name: 'hnl-cjk-a\n+hnl-cjk-b', present: true }
       - label: 缺陷签名串不在场（同行拼接 = 拆行没落地，IME 手动复验无从谈起）
         ax: { not: "hnl-cjk-ahnl-cjk-b" }
       - shot: 01-IME前两行态
@@ -80,8 +82,10 @@ docs/specs/harness-composer.md 的 **HC5 — IME 组合期结构冻结**（norma
 
 ## 断言口径与区分度
 
-- 自动化段的两条 AX 断言只判「两行态在 IME 之前成立」：`/hnl-cjk-a[\r\n]+hnl-cjk-b/` 的正观测 +
-  同行拼接签名串的负向断言（与场景 117 同口径）。它对 HC5 的闸门**没有区分度**（英文路径不经过
+- 自动化段的两条 AX 断言只判「两行态在 IME 之前成立」：`node` 的 `hnl-cjk-a\n+hnl-cjk-b`
+  正观测（M765 起走解析值，与场景 117 同法：`ax.has` 的 `[\r\n]+` 在 0.6.8 的字面 `\n` 原文上
+  命中 0 次，见 README「多行 UI 文本的换行编码」条）+ 同行拼接签名串的负向断言（`ax.not`，签名串
+  本身不含换行，原文与解析值等价）。它对 HC5 的闸门**没有区分度**（英文路径不经过
   组合窗），区分度全部在 DOM 替身单测（闸门改回直通 ⇒ HC5 小节全红的反向验证已跑，见
   tests/unit/harness-ime-enter.test.ts 小节头注释）。
 - 自动化段的真实职责是**共改动守卫**：normalize 加了组合窗闸门后，正常拆行 / 键入路径

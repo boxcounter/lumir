@@ -116,8 +116,10 @@ steps:
         pixel:
           same:
             - [ { x: 748, y: 723, as: "最下一行带（新断出的空行）" }, { x: 1150, y: 723, as: "同一行带右侧空白" } ]
+      # 跨行判据走**解析值**（M765，与 117 同口径）：KimiCU 0.6.8 起 dump 原文里的换行是字面 `\n`，
+      # `ax.has` 的 `[\r\n]+` 命中 0 次（假红）；`node` 匹配 `parseNodes` 还原后的 value。
       - label: 十行内容逐行落地（换行真的存在，不是同行拼接）
-        ax: { has: "/l09[\r\n]+l10/" }
+        node: { role: AXTextArea, name: 'l09\n+l10', present: true }
       - shot: 01-断行后-视口在最末行
 ---
 
