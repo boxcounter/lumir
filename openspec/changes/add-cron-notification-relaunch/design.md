@@ -80,8 +80,13 @@ Tauri 的 `.setup(...)`（`lib.rs:212`）就在这条链上执行。因此 setup
 1. macOS 打包实例（`!tauri::is_dev()` 且进程有 bundle id）在 `run()` 入口安装 delegate，并在
    `static` 里持有**强引用**直到进程退出（属性是 `weak`）。
 2. `willPresent` 返回 `.banner | .sound`——保持「应用在前台也照常上屏」的现状。
-3. `didReceive` 只做三件极轻的事：取 `request id` 与 `actionIdentifier`；立刻调用完成处理器
-   （不让系统等）；把 `(request_id, action)` 推进一次性缓冲并尝试唤醒守护线程。
+3. `didReceive` 只做四件极轻的事：取 `request id`；把系统的 `actionIdentifier` **归一化为内部动作**
+   （`UNNotificationDefaultActionIdentifier` → `Tap`；dismiss / 自定义 → 各自的非处置值）；立刻
+   调用完成处理器（不让系统等）；把 `(request_id, action)` 推进一次性缓冲并尝试唤醒守护线程。
+   **归一化必须由本仓补上**：原先做这层转换的是依赖库（`mac-usernotifications` 的
+   `response.rs` 用系统常量识别默认动作，`notify-rust` 再转成 `NotificationResponse::Default`，
+   本仓 `lib.rs:2022-2026` 靠它进处置），方案 A 删掉这两层之后，若把原始字符串直接交给 `tap`
+   判据，**所有正文点击（含本 change 要修的跨进程点击）都会被当成非 tap 忽略**。
 
 **必须不做**：
 
@@ -172,12 +177,17 @@ delegate(didReceive)            ← 主线程 run loop，可能发生在 setup �
 
 ### 5.1 接收判据（全部满足才算「被接受的点击」）
 
-| # | 判据 | 不满足时 |
-|---|---|---|
-| 1 | `actionIdentifier` 是通知本体（`tap`） | 忽略（非 tap 动作照旧落 warning，不进处置） |
-| 2 | `request_id` 在台账里 | `cron_click(ok=false, error=notice_unknown)`，无提示 |
-| 3 | 台账里的任务仍在当前任务集里 | `cron_click(ok=false, error=task_unknown)` + 人话提示 |
-| 4 | 台账的 `date` 等于今天（本地日期） | `cron_click(ok=false, error=notice_stale)` + 人话提示 |
+判据按**通道**分列——两条通道的来源不同，不能互相套用：
+
+| # | 判据 | 适用通道 | 不满足时 |
+|---|---|---|---|
+| 1 | 动作**归一化后**是通知本体（`Tap`）；系统默认动作 `UNNotificationDefaultActionIdentifier` 先经平台层归一（§3），dismiss / 自定义动作不进处置 | 两条通道 | 忽略（落 warning） |
+| 2 | 上下文来源成立：**进程内通道** = `request_id` 在**进程内上下文表**里（投递点登记，存在即证明这条通知是本进程投递的）；**跨进程通道** = `request_id` 在台账里 | 各通道各用一条 | 进程内：理论上不可达（登记与投递同一步）；跨进程：`cron_click(ok=false, error=notice_unknown)`，无提示 |
+| 3 | 任务仍在当前任务集里 | 两条通道 | `task_unknown` + 人话提示 |
+| 4 | 派发的本地日期等于今天 | 两条通道 | `notice_stale` + 人话提示 |
+
+**没有台账的平台必须仍能点击**：判据 2 的跨进程分支只属于 macOS 打包实例；非 macOS 与 dev
+flavour 一律走进程内分支，台账为空不影响点击（这条是本 change 的适配边界，见 §7）。
 
 判据 2、3、4 是**独立**的：台账裁剪掉的旧通知走 2，任务删除走 3，跨天走 4——三者的用户提示
 不同，诊断码也不同（不合并成一类「失败」）。
@@ -186,16 +196,28 @@ delegate(didReceive)            ← 主线程 run loop，可能发生在 setup �
 
 ```rust
 struct ClickContext {
-    request_id: String,        // 台账的键；诊断与去重都用它
-    task: String,              // 台账里的任务 id（已校验仍在当前任务集）
+    request_id: String,        // 台账的键（进程内通道为投递时生成的 id）；诊断与去重都用它
+    task: String,              // 任务 id（已校验仍在当前任务集）
     kind: NoticeKind,          // trigger / result / failure —— 决定「发起运行」还是「恢复会话」
     session_id: Option<String>,// 该条通知的**快照**会话标识（trigger 为 None）
     date: String,              // 派发本地日期（已校验等于今天）
 }
 ```
 
-**进程内入口**（delegate 收到 `tap`）与**跨进程入口**（启动期缓冲 drain）MUST 走同一个构造函数：
-先用 §5.1 判据校验，通过即产出上面这份上下文。`handle_click` 的数据来源按 `kind` 分开：
+**上下文有两个来源，输出形状相同，且都源自投递点的那一次构造**：
+
+- **进程内上下文表（进程内通道，所有平台）**：投递成功那一刻，任务、通知种类与（结果 / 失败通知
+  的）会话快照都已确定，因此把整份上下文按 request id 登记进进程内表；点击时 macOS 的 delegate
+  回调与非 macOS 的等待回调**都按 request id 取**，**不读持久化台账**。实现 MAY 让逐条等待闭包
+  直接携带同一份上下文（判据是「按 request id 可取、不读台账」）；macOS 侧因为只有 delegate 一条
+  接收通道，必须走这张表。现有 `spawn_notification_click_waiter(app, task, handle)` 只带任务 id、
+  `finish` 的会话快照也没传进来，两处都要扩成登记完整上下文。
+- **台账（跨进程通道，仅 macOS 打包实例）**：delegate 在新进程里只拿到 `request_id`，任务 / 种类 /
+  快照会话必须从台账反查（§4）；台账写入与进程内表登记**共用投递点那一次构造**，MUST NOT 各自
+  重新推导（两处不一致就等于两个真源）。
+
+两个入口 MUST 走同一个构造函数产出同一份上下文，再交给 `handle_click(ctx, source,
+not_ready_policy)`。`handle_click` 的数据来源按 `kind` 分开：
 
 - `kind ∈ {result, failure}`：只用 `ctx.session_id`（快照），**MUST NOT** 回读
   `self.state.session_id(task)`——那是任务**最新**会话，同一任务可以有多条台账条目、各自持有不同
@@ -229,8 +251,8 @@ struct ClickContext {
 
 **为什么保留 / 放弃要单独一个事件**：`cron_click` 的 `ok` 是「这次点击有没有落地」的终局判据，
 不能同时承载「收到了、还在等界面」。`cron_click_deferred` 与 `cron_click` 共用 `task` 与
-`source` 两个字段，只多一个闭集合 `reason`——两个事件合起来才能把「点了没反应」在日志里区分成
-「没收到 / 收到了在等 / 收到了但失败」。
+`source` 两个字段，另带 `request_id` 与闭集合 `reason`（`request_id` 用来分辨「哪条通知被保留」）
+——两个事件合起来才能把「点了没反应」在日志里区分成「没收到 / 收到了在等 / 收到了但失败」。
 
 ## 6. 状态与并发
 
@@ -246,20 +268,28 @@ struct ClickContext {
 
 ## 7. 平台与 flavour 边界
 
-| 环境 | 投递 | 点击接收 | 跨进程恢复 |
-|---|---|---|---|
-| macOS 打包实例 | 本仓 UN 实现 | 本仓 delegate | **支持**（本 change 的合同） |
-| macOS dev flavour（`!custom-protocol`） | legacy（`mac-notification-sys`） | 不可达（响应路由给 Terminal，M608 已知边界） | 不声称 |
-| Linux / Windows | `notify-rust` 平台后端 | 逐条 `wait_for_response` | 不声称 |
+| 环境 | 投递 | 点击接收 | 上下文来源 | 跨进程恢复 |
+|---|---|---|---|---|
+| macOS 打包实例 | 本仓 UN 实现 | 本仓 delegate（系统默认动作归一为 `Tap`） | 进程内上下文表（同进程）+ 台账（新进程） | **支持**（本 change 的合同） |
+| macOS dev flavour（`!custom-protocol`） | legacy（`mac-notification-sys`） | 不可达（响应路由给 Terminal，M608 已知边界） | — | 不声称 |
+| Linux / Windows | `notify-rust` 平台后端 | 逐条 `wait_for_response` | 进程内上下文表（**不写台账**） | 不声称 |
 
-**MUST NOT 把「跨进程恢复」写成跨平台承诺**：其它平台的逐条等待照旧，诊断里 `source` 恒为进程内。
+**MUST NOT 把「跨进程恢复」写成跨平台承诺**：其它平台的逐条等待照旧，上下文由投递闭包携带，
+诊断里 `source` 恒为进程内。**「没有台账」不构成拒绝理由**——台账只是 macOS 跨进程通道的来源；
+进程内通道在台账为空时必须照常点击（这也是「保持其它平台既有语义」的判据）。
 
 ## 8. 可判定性
 
 ### 8.1 单测（纯函数，无 tauri 依赖）
 
 - 台账的写入 / 裁剪 / 读取降级（复用 `cron.rs` 既有 `CronState` 测试风格）。
-- 接收判据的四条判据逐条真值表（含「任务 id 含 `-` 也不影响识别」的用例——因为不解析 request id）。
+- 接收判据的四条判据逐条真值表（含「任务 id 含 `-` 也不影响识别」的用例——因为不解析 request id；
+  判据 2 按通道分别验：进程内通道不看台账，跨进程通道才查）。
+- **默认动作归一化**（§3 第 3 条）：系统默认动作标识归一为内部 `Tap`（正文点击因此进处置），
+  `dismiss` 与自定义动作归一为非处置值且只落 warning。这条必须是可判红的断言——把原始字符串直接
+  交给 `Tap` 判据的实现要判失败。
+- **无台账仍能构造上下文**：台账为空时，进程内通道仍从投递闭包产出完整上下文（任务 / 种类 / 快照
+  会话），点击恢复该次会话，MUST NOT 因 `notice_unknown` 拒绝。
 - **点击上下文的构造与消费（区分度用例，§5.2 的可达性说明）**：给处置层喂一份快照会话为 A、而
   `tasks.<task>.session_id` 为 B 的上下文，断言它打开 A；同一个任务的两条条目各持不同会话时，点哪
   条开哪条的会话。这条用例必须能让「读最新会话」的实现判红——它是这份合同的唯一机器判据，不能只

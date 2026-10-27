@@ -25,9 +25,11 @@ NOT 出现「应用被拉起、点击没有任何后果」的形态。
 warning：MUST NOT 阻断启动与投递，MUST NOT 影响其它平台的点击接收。macOS 上点击接收只有 delegate
 一条通道——安装失败时进程内点击与跨进程点击**一起不可用**，MUST NOT 声称存在第二条 macOS 通道。
 
-**接收判据**：一次响应只有同时满足以下四条才算「被接受的点击」，缺一按分类原因拒绝：
+**接收判据（跨进程响应）**：一次跨进程响应只有同时满足以下四条才算「被接受的点击」，缺一按分类
+原因拒绝：
 
-- 动作是通知本体（`tap`）——非 tap 动作 MUST NOT 进入处置，按既有防御性口径落一条 warning；
+- 动作**归一化后**是通知本体（`tap`）——归一化规则见「通知的投递与点击唤起」；其余动作 MUST NOT
+  进入处置，按既有防御性口径落一条 warning；
 - request id 在本机通知台账里（台账的落点与写入纪律见「触发去重状态与持久化」）；
 - 台账里的任务仍存在于当前任务集；
 - 台账记录的派发本地日期等于今天。
@@ -35,9 +37,10 @@ warning：MUST NOT 阻断启动与投递，MUST NOT 影响其它平台的点击�
 识别 MUST NOT 依赖 request id 的字符串形状（任务 id 允许含分隔符），MUST NOT 凭通知正文推断任务。
 
 **判据的输出是一份已校验点击上下文**：四条判据全过时 SHALL 产出
-`{request id, 任务 id, 通知种类, 台账快照会话标识, 派发本地日期}`；进程内与跨进程两个入口 SHALL
-把**同一份上下文**交给同一段处置实现。来源（`in-process` / `relaunch`）与「未就绪时保留还是退回」
-是这份上下文的**附加参数**，MUST NOT 替代上下文本身，MUST NOT 把入口简化成「只传任务 id」。
+`{request id, 任务 id, 通知种类, 台账快照会话标识, 派发本地日期}`。这份上下文与进程内通道产出的
+**形状相同**（见「通知的投递与点击唤起」），两者 SHALL 交给同一段处置实现。来源（`in-process` /
+`relaunch`）与「未就绪时保留还是退回」是这份上下文的**附加参数**，MUST NOT 替代上下文本身，
+MUST NOT 把入口简化成「只传任务 id」。
 
 处置层的数据来源按通知种类分开，两处 MUST NOT 互相顶替：
 
@@ -192,15 +195,26 @@ SHALL 落 `cron_click_deferred`（与 `cron_click` 共用任务与来源字段�
 一次（系统弹窗）；权限被拒 SHALL 给出一条人话 warning、MUST NOT 反复申请、MUST NOT 阻断守护的
 判定或非通知类功能。
 
-点击响应 SHALL 由进程内常驻的通知 delegate 接收并交守护线程处置；MUST NOT 把「逐条通知登记一个
-一次性等待」当作唯一接收通道——一次性等待与 delegate 都随进程退出失效，跨进程点击另由「进程退出
-后的通知点击恢复」定义。非 macOS 平台与 macOS dev flavour MAY 沿用逐条等待，但 MUST 与 delegate
-通道共用同一段「收到点击之后」的处置实现，MUST NOT 各写一套。收到点击（`actionId` 为通知本体，
-即 `tap`）后，系统 SHALL 按该任务的触达策略执行：`notify-then-run` → 唤起并聚焦主窗口、必要时经
-既有 vault 打开链路打开目标 vault、在交互会话槽位发起运行；`run-then-notify` → 唤起并聚焦主窗口、
-恢复**该条通知对应的那次运行**的会话（取自该条通知的台账快照，MUST NOT 用任务的最新会话）。任一
-步失败 SHALL 落一条诊断事件并给人话反馈，MUST NOT 静默。诊断事件 SHALL
-带 `source` 字段区分来源（进程内 / 跨进程恢复）。
+点击响应 SHALL 由两条通道接收，彼此不互为前提：macOS 打包实例由进程内常驻的 delegate 接收（跨进程
+恢复见「进程退出后的通知点击恢复」），非 macOS 平台与 macOS dev flavour 沿用投递时登记的等待回调。
+两条通道 MUST 交出**同一形状的已校验点击上下文**（request id、任务、通知种类、快照会话标识、派发
+本地日期）并进入同一段处置实现，MUST NOT 各写一套。
+
+上下文的来源按通道分，MUST NOT 互为前提：
+
+- **进程内通道**（所有平台）：投递时 SHALL 把该条通知的上下文按 request id 登记进**进程内上下文表**
+  ——任务、通知种类、结果 / 失败通知的会话快照在投递点都已知；点击时由 macOS 的 delegate 回调或
+  非 macOS 的等待回调按 request id 取用（实现 MAY 用逐条闭包携带同一份上下文，判据是「按 request
+  id 可取、不读持久化台账」）。MUST NOT 因为「本机没有台账」而降级成只传任务 id。
+- **跨进程通道**（仅 macOS 打包实例）：上下文由通知台账校验得出（台账只在 macOS 打包实例写入）。
+
+动作标识 SHALL 在平台层归一化：系统默认动作（`UNNotificationDefaultActionIdentifier`）归一为内部
+`tap`，MUST NOT 依赖任何依赖库的转换层（自持后那一层已不存在）；dismiss 与自定义动作 MUST 保持
+非处置路径。收到 `tap` 后，系统 SHALL 按上下文里的通知种类执行：`notify-then-run` → 唤起并聚焦主
+窗口、必要时经既有 vault 打开链路打开目标 vault、在交互会话槽位发起运行；`run-then-notify` →
+唤起并聚焦主窗口、恢复**该条通知对应的那次运行**的会话（取自上下文快照：进程内通道来自投递点构造
+的那份，跨进程通道来自台账，MUST NOT 用任务的最新会话）。任一步失败 SHALL 落一条诊断事件并给人话
+反馈，MUST NOT 静默。诊断事件 SHALL 带 `source` 字段区分来源（进程内 / 跨进程恢复）。
 
 重复点击同一通知 SHALL 幂等：当日该任务已有运行会话时，只聚焦并打开该会话，MUST NOT 重复发起
 运行，MUST NOT 产生重复的模型请求。
@@ -220,6 +234,21 @@ SHALL 落 `cron_click_deferred`（与 `cron_click` 共用任务与来源字段�
 
 - **WHEN** `run-then-notify` 的结果通知被点击
 - **THEN** 窗口被唤起，该次运行的会话被恢复并可继续对话；不产生第二次运行
+
+#### Scenario: 默认动作归一化为 tap
+
+- **WHEN** 用户点击通知正文，系统报告的 `actionIdentifier` 是
+  `UNNotificationDefaultActionIdentifier`
+- **THEN** 平台层把它归一化为内部 `tap`，该次点击进入处置（发起运行或恢复会话）；`dismiss` 与
+  自定义动作不进入处置，只按既有防御性口径落 warning
+
+#### Scenario: 非 macOS 无台账仍能点击恢复
+
+- **WHEN** 非 macOS 平台上一条 `run-then-notify` 的结果通知被点击，而本机没有任何持久化台账
+  （`notices` 段为空或不存在）
+- **THEN** 点击上下文由投递时登记的进程内上下文表构造（闭包携带同一份；任务、通知种类、该次运行
+  的会话快照），进入同一段处置并恢复该次会话；`cron_click.source` 为 `in-process`；MUST NOT 因
+  「台账查不到」而拒绝
 
 #### Scenario: 两种来源共用同一段处置
 

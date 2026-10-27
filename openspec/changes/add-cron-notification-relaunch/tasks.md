@@ -5,38 +5,49 @@
 ## 1. macOS 通知平台层（自持）
 
 - [ ] 1.1 新增 `src-tauri/src/notify/` 窄模块：macOS 实现（安装并持有 delegate 强引用、
-      `willPresent` 返回 banner+sound、`didReceive` 转成进程内缓冲）、非 macOS 透传既有
-      `notify-rust` 逐条等待；对外只暴露安全接口（投递、投递后自查、授权查询 / 申请、delegate 安装）
+      `willPresent` 返回 banner+sound、`didReceive` 经归一化后转成进程内缓冲）；非 macOS 分支的
+      逐条等待**携带整份已校验上下文**（见 2.5），不是只透传任务 id；对外只暴露安全接口（投递、
+      投递后自查、授权查询 / 申请、delegate 安装）
 - [ ] 1.2 在 `run()` 入口安装 delegate（`!tauri::is_dev()` 且有 bundle id 时），安装路径零 IO、零
       跨进程查询；安装失败只降级为 warning，不影响启动与投递
 - [ ] 1.3 `deliver_notification` 的 macOS 分支改走本仓实现：请求 id 形状、启动窗口内的本地早退
       重试、同 id 重投、`getDeliveredNotificationIds` 自查（M620 语义）逐项保留
 - [ ] 1.4 投递端口契约：`deliver_notification` 返回该条通知的 request id（现状 `Result<(),
       String>`，id 只在函数内部；非 macOS 由本仓显式指定 id 保证返回值与系统标识一致），到点与
-      结果 / 失败两条路径都用它做台账键
-- [ ] 1.5 删除 `notify-rust` 的 `preview-macos-un` feature 与 `mac-usernotifications` 直接依赖，
+      结果 / 失败两条路径都用它做台账键与上下文键
+- [ ] 1.5 **动作归一化**：平台层把系统的 `UNNotificationDefaultActionIdentifier` 归一为内部
+      `Tap`，`dismiss` / 自定义动作归一为非处置值（只落 warning）；补齐这一层是因为方案 A 删掉了
+      `mac-usernotifications` + `notify-rust` 的既有转换（`lib.rs:2022-2026` 原靠它）
+- [ ] 1.6 删除 `notify-rust` 的 `preview-macos-un` feature 与 `mac-usernotifications` 直接依赖，
       更新 `Cargo.toml` 的注释（说明 macOS 已自持、`notify-rust` 只服务 Linux / Windows、
       `mac-notification-sys` 仍供 dev flavour）
-- [ ] 1.6 单测 / 结构断言：delegate 安装点在 `run()` 入口且先于窗口创建；dev flavour 不触 UN；
-      安装失败只降级（不阻断启动与投递，且**不**声称保留 macOS 进程内点击通道）
+- [ ] 1.7 单测 / 结构断言：delegate 安装点在 `run()` 入口且先于窗口创建；dev flavour 不触 UN；
+      安装失败只降级（不阻断启动与投递，且**不**声称保留 macOS 进程内点击通道）；默认动作归一化
+      （把原始字符串直接交给 `Tap` 判据的写法必须判红）
 
 ## 2. 通知台账与接收判据（纯函数）
 
 - [ ] 2.1 `cron.rs` 的 `CronState` 增加 `notices`（request id → 任务 / 种类 / 派发日期 / 会话
-      标识），`#[serde(default)]`，读取纪律与 `tasks` 段一致；条目写入即快照，后续运行不改写
+      标识），`#[serde(default)]`，读取纪律与 `tasks` 段一致；条目写入即快照，后续运行不改写；
+      **只在 macOS 打包实例写入**（其它平台没有消费者，MUST NOT 写）
 - [ ] 2.2 **到点通知路径**：台账条目与 `last_fired` 共用同一次原子替换（扩展现有 `mark_fired`
       调用点，不加第二次写）；有界裁剪（保留窗口 + 条数上限），裁剪不触碰 `tasks` 段；写失败降级
       为 warning
 - [ ] 2.3 **结果 / 失败通知路径**：改 `finish` 的 `run-then-notify` 成功分支（`lib.rs:1575-1581`）
       ——投递成功后把新台账条目与当时的完整状态一次原子落盘，条目 `session_id` 与同次落盘里
       `tasks.<task>.session_id` 逐字相同；MUST NOT 出现「会话已更新、台账缺失」
-- [ ] 2.4 接收判据写成纯函数：tap 动作 / 台账命中 / 任务仍在 / 派发日期为今天，四条独立返回分类
-      原因（`notice_unknown` / `task_unknown` / `notice_stale`）；不解析 request id 字符串
-- [ ] 2.5 判据的**输出**是 `ClickContext { request_id, task, kind, session_id(快照), date }`：
-      进程内入口与跨进程 drain 调同一个构造函数产出它；两条入口不得各自拼装、不得只传任务 id
-- [ ] 2.6 单测：判据真值表（含任务 id 含 `-` 的用例）、上下文构造（结果 / 失败通知带快照会话、
-      到点通知不带）、两条写入路径各自的原子性判据、台账裁剪、快照不被改写、读取降级（旧文件
-      读入为空台账）
+- [ ] 2.4 接收判据写成纯函数，按通道分列：动作归一化 / 上下文来源（进程内 = 闭包在场；跨进程 =
+      台账命中）/ 任务仍在 / 派发日期为今天，各自独立返回分类原因（`notice_unknown` /
+      `task_unknown` / `notice_stale`）；不解析 request id 字符串
+- [ ] 2.5 判据的**输出**是 `ClickContext { request_id, task, kind, session_id(快照), date }`，
+      两个来源产出同一形状、且都派生自投递点那一次构造：① **进程内上下文表**（所有平台，按
+      request id 登记；扩 `spawn_notification_click_waiter` 与 `finish` 的调用点，把种类与会话
+      快照带进来，**不读台账**）；② **台账**（跨进程，仅 macOS 打包实例）。两条入口不得各自拼装、
+      不得只传任务 id
+- [ ] 2.6 单测：判据真值表（含任务 id 含 `-` 的用例；判据 2 按通道分别验）、上下文构造（结果 /
+      失败通知带快照会话、到点通知不带）、**台账为空时进程内通道仍能构造上下文并进入处置**（不得
+      报 `notice_unknown`）、两条写入路径各自的原子性判据、台账裁剪、快照不被改写、读取降级（旧
+      文件读入为空台账）
 
 ## 3. 恢复流水线（守护线程 + 前端保留重放）
 
