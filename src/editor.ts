@@ -1760,11 +1760,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     );
     // M461② + M529②：md 模式在 DOM 输入入口拒收 WebKit 原生自动列表——beforeinput 层
     // 拦 insertOrderedList / insertUnorderedList（M461②，组合期重复插入 marker 的命令形态，
-    // 探针证据 test-results/m461-probe/readings.md）；inputHandler 层拦裸 DOM 变更形态的
-    // 重复 marker 读回（M529② 逃逸形态：smart-list 把下一序号作为裸 DOM 文本插入，
-    // 探针证据 test-results/m529-probe/readings.md）。英文直输两条通道都无事件，拦截对
-    // 英文路径零影响；编辑器的列表语义只有裸 marker 行特判 + 上游续行 + TAB 缩进一条
-    // 合法路径。判定本体在 src/enter-indent.ts（可单测），这里只做装配。
+    // 探针证据 .local/probes/m461-probe/readings.md）；inputHandler 层拦裸 DOM 变更形态的
+    // 重复 marker 读回（M529② 逃逸形态：smart-list 把下一序号作为裸 DOM 文本插入，探针证据
+    // .local/probes/m529-probe/readings.md；M753 起落点判据是整个「行首 marker 区域」而不是
+    // 内容起点——marker 被 ListLayout 的 widget 整段替换，裸插入会落在该区之内，见
+    // src/enter-indent.ts）。英文直输两条通道都无事件，拦截对英文路径零影响；编辑器的列表
+    // 语义只有裸 marker 行特判 + 上游续行 + TAB 缩进一条合法路径。判定本体在
+    // src/enter-indent.ts（可单测），这里只做装配。
     const nativeListGuard =
       mode === "md"
         ? [

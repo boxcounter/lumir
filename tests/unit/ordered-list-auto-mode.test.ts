@@ -269,9 +269,10 @@ test("beforeinput 拦截：普通输入事件（insertText / 无 inputType）一
 // 缺陷形态（Alex 2026-10-15 dogfood）：有序列表行末 Enter 后新行出现「2. 3.」——
 // CM 键位续出「2. 」后，WebKit smart-list 又把下一序号作为**裸 DOM 文本**插进同一
 // 光标位（M461② beforeinput 拒收名单不兜的形态，探针以等价注入复现落点形状，
-// 证据 test-results/m529-probe/readings.md）。本组是属性测试：不变量 = 读回变更为
-// 「纯插入 + 插入文本恰为裸 marker + 行首至光标恰为裸 marker（空项 marker 之后）」
-// 时 MUST 被吞掉；其余读回形态 MUST NOT 被误吞。
+// 证据 .local/probes/m529-probe/readings.md）。本组是属性测试：不变量 = 读回变更落在
+// 该行行首 marker 的区域（marker 起点 → 内容起点）且会让行首多出 / 换掉一个 marker 时
+// MUST 被吞掉；其余读回形态 MUST NOT 被误吞。落点与结果口径的来历（M753：marker 被
+// widget 整段替换，落点可以是该区域里的任意一处）见下方 G 组。
 
 /** 以「光标在文档末（或显式 pos）」构造真 Text，跑生产判定。 */
 function dupInsertion(doc: string, text: string, pos?: number) {
@@ -281,7 +282,7 @@ function dupInsertion(doc: string, text: string, pos?: number) {
 }
 
 test("读回拦截：空项 marker 之后插入裸 marker MUST 判重复（有序同族）", () => {
-  // 行首至光标恰为裸 marker（空列表项、光标在 marker 之后）+ 插入文本恰为裸 marker。
+  // 空列表项（光标在 marker 之后）+ 插入文本里带 marker token。
   const cases: Array<[label: string, doc: string, text: string]> = [
     ["有序 .（Alex 现场形态）", "1. 甲项\n2. ", "3. "],
     ["任意序号", "1. 甲项\n2. ", "9. "],
@@ -301,12 +302,10 @@ test("读回拦截：空项 marker 之后插入裸 marker MUST 判重复（有�
   }
 });
 
-test("读回拦截：有内容行 / 行首 / 非纯插入 / 非 marker 文本 MUST NOT 判重复（放行面）", () => {
+test("读回拦截：内容区 / 无 marker 行 / 逐字符键入 MUST NOT 判重复（放行面）", () => {
   const cases: Array<[label: string, doc: string, text: string, pos?: number]> = [
-    ["插入文本带内容", "1. 甲项\n2. ", "3. 乙项"],
-    ["单字符不是整串 marker", "1. 甲项\n2. ", "3"],
+    ["单字符不是 marker token", "1. 甲项\n2. ", "3"],
     ["光标在内容之后（行首至光标含内容）", "1. 甲项\n2. 丙项", "3. "],
-    ["行首（行首至光标为空串）", "1. 甲项\n2. ", "3. ", 6],
     ["换行 + marker（纯 IME 续行形态，不兜）", "1. 甲项", "\n2. "],
     ["普通文本插入", "1. 甲项\n2. ", "x"],
     ["空串", "1. 甲项\n2. ", ""],
@@ -316,9 +315,12 @@ test("读回拦截：有内容行 / 行首 / 非纯插入 / 非 marker 文本 MU
   for (const [label, doc, text, pos] of cases) {
     assert.equal(dupInsertion(doc, text, pos), false, `${label}：应放行`);
   }
-  // 替换（from < to）不是纯插入，MUST 放行。
-  const state = EditorState.create({ doc: "1. 甲项\n2. ", extensions: MD });
-  assert.equal(isDuplicateMarkerInsertion(state.doc, 8, 9, "3. "), false, "替换变更：放行");
+  // 替换（from < to）：落点判据与插入同口径——落在**内容区**才放行。M753 之前这里断言的是
+  // 「替换一律放行」，其样例 (8, 9) 替换的正是 marker 的尾随空格，本身就是逃逸形状之一
+  // （替换后该行变成「2. 3. 」），因此改成内容区样例。
+  const state = EditorState.create({ doc: "1. 甲项\n2. 乙项", extensions: MD });
+  assert.equal(isDuplicateMarkerInsertion(state.doc, 10, 11, "3. "), false, "内容区替换成 marker 形文本：放行");
+  assert.equal(isDuplicateMarkerInsertion(state.doc, 9, 11, "丙"), false, "内容区普通替换：放行");
 });
 
 test("读回拦截：命中时吞掉 = 零 dispatch、文档逐字节不变（inputHandler 行为）", () => {
@@ -347,4 +349,138 @@ test("读回拦截：真实列表续行路径逐字节不回归（CM 自己的�
   assert.equal(result.handled, true);
   // 续行后的空项上，WebKit 裸插入下一序号 ⇒ 判重复（防御二次叠加）。
   assert.equal(dupInsertion(result.doc, "3. "), true);
+});
+
+// ---------------------------------------------------------------------------
+// G. M753：判据按**结果行**判，不按读回的编码判（marker 被 widget 替换后，裸 DOM 变更
+//    的落点不再恰好是内容起点）
+// ---------------------------------------------------------------------------
+//
+// 缺陷形态（Alex 2026-10-27 dogfood，经 tower 更正的现场）：「1. xxxxxxx」行末 Enter 后，
+// 第二行是**「2. 3. 」**——正常续行的「2. 」之外多出「3. 」，M529 的老问题复发。（tower
+// 2026-10-27 更正：不是「新行只有 3. 」；「只剩 3. 」那种序号被覆写的形态仍属同一家族，
+// 本组一并覆盖，但它不是主现场。）
+//
+// 为什么 M529 的判据兜不住：它把落点钉死成「纯插入 + 插入点恰在内容起点 + 行首至插入点
+// 恰为一个裸 marker」。而列表 marker 在 DOM 里是被 widget **整段替换**的
+// （`src/preview/lists.ts` 的 ListLayout：`[行首, 内容起点)` 连尾随空白一起换成
+// ListMarker widget，DOM 里已没有「2. 」这串文本）。WebKit 的裸插入落在 widget 邻位时，
+// CM 的 DOM 读回按最小 diff 映射出来的落点可以是 marker **区内**、覆盖 marker 区的
+// 替换、或夹带一个前排空白——全都不满足「插入点 == 内容起点」，于是从那条缝里逃逸。
+//
+// 不变量（本组钉住）：读回变更落在该行**行首 marker 的区域**（marker 起点 … 内容起点，
+// 含替换形态）且插入文本里带 marker token 时，若把变更套进该行会让行首 marker **变样**
+// （不再是 marker、字面被换掉、或 marker 之后紧跟另一个 marker），MUST 丢弃；区域之外
+// （内容里、无 marker 的行）与逐字符键入 MUST NOT 被误吞。按结果判而不是按编码判，
+// 是为了不再随 WebKit 的具体落点形状漏一种。
+
+/** 用例里显式写死落点，不用生产判定算位置：断言与被测判定互为独立证据
+ *  （REVIEW.md「假绿」条——用被测实现推导期望值等于自己证明自己）。 */
+test("读回拦截：marker 区内的各种读回编码只要造出重复序号 MUST 判重复（M753 逃逸形状）", () => {
+  const cases: Array<[label: string, doc: string, from: number, to: number, text: string]> = [
+    // doc = "1. 甲项\n2. "：第二行行首 6、marker 区 6..8、内容起点 9（widget 替换 6..9）
+    ["内容起点纯插入（M529 现场形态，结果「2. 3. 」）", "1. 甲项\n2. ", 9, 9, "3. "],
+    ["marker 区内插入（序号与分隔符之间，结果「2.3. 」）", "1. 甲项\n2. ", 7, 7, "3. "],
+    ["marker 区内插入（分隔符与尾随空格之间，结果「2.3. 」）", "1. 甲项\n2. ", 8, 8, "3. "],
+    ["覆盖 marker 区的替换（结果「2. 3. 」：widget 文本参与 diff 的形状）", "1. 甲项\n2. ", 6, 9, "2. 3. "],
+    ["覆盖 marker 区的替换（序号被覆写，结果「3. 」）", "1. 甲项\n2. ", 6, 9, "3. "],
+    ["只替换尾随空格（结果「2. 3. 」）", "1. 甲项\n2. ", 8, 9, " 3. "],
+    ["行首插入（结果「3. 2. 」：marker 之前又来一个）", "1. 甲项\n2. ", 6, 6, "3. "],
+    ["带内容的 marker 形批量插入（结果「2. 3. 乙项」）", "1. 甲项\n2. ", 9, 9, "3. 乙项"],
+    // 引用前缀 / 行首缩进 / 嵌套引用：同一区域口径（行首 8、marker 区 10..12、内容起点 13）
+    ["> 行：marker 区内插入", "> 1. 甲项\n> 2. ", 12, 12, "3. "],
+    ["> 行：覆盖 marker 区的替换", "> 1. 甲项\n> 2. ", 8, 13, "> 3. "],
+    ["缩进行：marker 区内插入", "  1. 甲项\n  2. ", 12, 12, "3. "],
+    ["缩进行：覆盖 marker 区的替换", "  1. 甲项\n  2. ", 8, 13, "3. "],
+    ["嵌套引用行：marker 区内插入", "1. 甲项\n> > 2. ", 12, 12, "3. "],
+    ["无序 marker 区内插入", "- 甲项\n- ", 6, 6, "- "],
+  ];
+  for (const [label, doc, from, to, text] of cases) {
+    const state = EditorState.create({ doc, extensions: MD });
+    assert.equal(isDuplicateMarkerInsertion(state.doc, from, to, text), true, `${label}：应判重复`);
+  }
+});
+
+test("读回拦截（属性）：任意序号 / 分隔符 / 前缀的续行行上，marker 区内插入与区域替换恒判重复", () => {
+  // 不变量对 marker 的字面形态与前缀无关：判定只读「该行行首已有 marker」「变更是否落在
+  // 它的区域」「套进去之后行首是否多出 / 换掉 marker」，不读具体序号 / 分隔符 / 前缀。
+  const variants: Array<[label: string, marker: string, prefix: string]> = [
+    ["单项续行「2. 」", "2.", ""],
+    ["多位序号「10. 」", "10.", ""],
+    ["分隔符「)」", "2)", ""],
+    ["两空格缩进", "2.", "  "],
+    ["引用前缀", "2.", "> "],
+    ["嵌套引用前缀", "2.", "> > "],
+  ];
+  for (const [label, marker, prefix] of variants) {
+    const doc = `1. 甲项\n${prefix}${marker} `;
+    const markerFrom = 6 + prefix.length;
+    const markerTo = markerFrom + marker.length;
+    const contentFrom = doc.length;
+    const state = EditorState.create({ doc, extensions: MD });
+    const shapes: Array<[label: string, from: number, to: number, text: string]> = [
+      ["marker 区内插入", markerTo, markerTo, "9. "],
+      ["内容起点插入", contentFrom, contentFrom, "9. "],
+      ["覆盖 marker 区的替换", 6, contentFrom, `${prefix}9. `],
+    ];
+    for (const [shape, from, to, text] of shapes) {
+      assert.equal(
+        isDuplicateMarkerInsertion(state.doc, from, to, text),
+        true,
+        `${label} × ${shape}：应判重复`,
+      );
+    }
+  }
+});
+
+test("读回拦截：marker 区域之外与逐字符键入的读回 MUST 放行（不误吞正常编辑）", () => {
+  const cases: Array<[label: string, doc: string, from: number, to: number, text: string]> = [
+    ["内容中间的插入", "1. 甲项\n2. 乙项", 10, 10, "3. "],
+    ["内容行行末的插入", "1. 甲项\n2. 乙项", 11, 11, "3. "],
+    ["无 marker 的行上插入（段落）", "甲项\n乙项", 5, 5, "3. "],
+    ["无 marker 的行上插入（文档首行）", "", 0, 0, "1. "],
+    ["marker 区内单字符键入", "1. 甲项\n2. ", 8, 8, "9"],
+    ["marker 区内中文组合提交", "1. 甲项\n2. ", 8, 8, "九"],
+    ["内容起点插入一个字符", "1. 甲项\n2. ", 9, 9, "3"],
+    ["内容起点插入的整串文本里 marker token 不在行首", "1. 甲项\n2. ", 9, 9, "见 3. 上文"],
+    ["换行 + marker（整段续行，落在内容行尾不算重复）", "1. 甲项\n2. ", 9, 9, "\n3. "],
+    ["marker 区替换成普通文本", "1. 甲项\n2. ", 6, 9, "乙项"],
+  ];
+  for (const [label, doc, from, to, text] of cases) {
+    const state = EditorState.create({ doc, extensions: MD });
+    assert.equal(isDuplicateMarkerInsertion(state.doc, from, to, text), false, `${label}：应放行`);
+  }
+});
+
+test("读回拦截：M753 形状被吞时零 dispatch、文档逐字节不变（inputHandler 行为）", () => {
+  const doc = "1. 甲项\n2. ";
+  const state = completeTree(EditorState.create({ doc, extensions: MD, selection: EditorSelection.cursor(doc.length) }));
+  let dispatches = 0;
+  const view = {
+    state,
+    dispatch: () => {
+      dispatches += 1;
+    },
+  } as unknown as EditorView;
+  // marker 区内的插入（M753 新判据的形状）与覆盖 marker 区的替换都必须零变更。
+  assert.equal(swallowDuplicateMarkerInput(view, 8, 8, "3. "), true, "marker 区内插入应被吞");
+  assert.equal(swallowDuplicateMarkerInput(view, 6, 9, "3. "), true, "覆盖 marker 区的替换应被吞");
+  assert.equal(dispatches, 0, "吞掉 MUST NOT dispatch（无文档变更、无撤销步）");
+});
+
+test("M753 回归：单项有序列表行末 Enter + 各形状重复 marker 读回，文档只留字面下一序号", () => {
+  // 用户现场：第一行「1. xxxxxxx」行末 Enter。期望第二行只有「2. 」，任何形状的
+  // 重复 marker 读回都不得把它变成「2. 3.」「3. 」或「2.3.」。
+  const continued = pressEnterAtEnd("1. xxxxxxx");
+  assert.equal(continued.doc, "1. xxxxxxx\n2. ", "续行只出一个新序号");
+  const state = EditorState.create({ doc: continued.doc, extensions: MD });
+  const markerFrom = continued.doc.indexOf("2. ");
+  const shapes: Array<[label: string, from: number, to: number, text: string]> = [
+    ["内容起点纯插入", continued.doc.length, continued.doc.length, "3. "],
+    ["marker 区内插入", markerFrom + 2, markerFrom + 2, "3. "],
+    ["覆盖 marker 区的替换", markerFrom, continued.doc.length, "3. "],
+  ];
+  for (const [label, from, to, text] of shapes) {
+    assert.equal(isDuplicateMarkerInsertion(state.doc, from, to, text), true, `${label}：应判重复`);
+  }
 });

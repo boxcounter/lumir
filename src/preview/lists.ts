@@ -64,18 +64,24 @@ export function listLineInfo(tree: Tree, doc: Text, line: Line): ListLineInfo {
   return { offset, item: node, first, rendered: first || (body && offset > 0) };
 }
 
-/** 裸 marker 行（文本模式特判，M461）：行首是合法列表标记、标记后只有空白到行尾（空项）
- *  或带内容但语法树不接管（lazy continuation），且语法树未把它认作列表项首行。典型形态
- *  `para\n1. `——空列表项按 CommonMark 不能打断段落，行被解析进段落，既有渲染与
+/** 行首列表 marker 的文本级解析结果（M461 起的两处消费者共用）。
+ *
+ *  消费者一：**裸 marker 行**（文本模式特判，M461）——行首是合法列表标记、标记后只有空白到
+ *  行尾（空项）或带内容但语法树不接管（lazy continuation），且语法树未把它认作列表项首行。
+ *  典型形态 `para\n1. `：空列表项按 CommonMark 不能打断段落，行被解析进段落，既有渲染与
  *  Enter 续行都不认它；Alex 2026-10-12 dogfood 裁决：该行在光标驻留时按列表项渲染、
  *  Enter 按列表语义分派（实现见 src/enter-indent.ts 与 ListLayout.build 的裸行分支）。
+ *  `bareListMarkerLine` 在这一份之上加树侧排除：判定是 `listLineInfo` 的**补集**而非替代，
+ *  语法树已认作项首行（真列表，含空行后的 `1. `、`- `、引用内 `> 1. `、列表自身的空续项）
+ *  一律不看——那些形态既有渲染与 M399 退出行为已覆盖，同语义不得两处抢（REVIEW.md
+ *  「同一语义两处真源」条）。排除面：setext 标题下线（`para\n- ` 的 `- `，与 Obsidian
+ *  同口径交给标题语义）、围栏 / 缩进代码块、HTMLBlock、表格——那些上下文里 marker 形文本
+ *  不是列表。
  *
- *  判定是 `listLineInfo` 的**补集**而非替代：语法树已认作项首行（真列表，含空行后的
- *  `1. `、`- `、引用内 `> 1. `、列表自身的空续项）一律返回 null——那些形态既有渲染与
- *  M399 退出行为已覆盖，同语义不得两处抢（REVIEW.md 「同一语义两处真源」条）。排除面：setext 标题
- *  下线（`para\n- ` 的 `- `，与 Obsidian 同口径交给标题语义）、围栏 / 缩进代码块、
- *  HTMLBlock、表格——那些上下文里 marker 形文本不是列表。 */
-export interface BareMarkerLine {
+ *  消费者二：**任意行首已有 marker 的行**（M529② / M753 的 DOM 读回判据）——那里的问题不是
+ *  「这行算不算列表」，而是「这一行的行首 marker 占着哪段区间」，带内容的行（`2. 乙项`）
+ *  同样适用，故本接口只描述区间，不带「空项 / 真列表」这类语义。 */
+export interface ListMarkerText {
   /** marker 起点（绝对位，= 行首 + 前缀宽）。 */
   readonly markerFrom: number;
   /** marker 终点（绝对位，`.` / `)` 之后）。 */
@@ -95,27 +101,39 @@ export interface BareMarkerLine {
 
 const BARE_MARKER_RE = /^((?:>[ \t]*)*)([ \t]*)((\d{1,9})([.)])|([-+*]))([ \t]+)(.*)$/;
 
-/** 裸 marker 文本判定（M529）：整串是「可选引用前缀 + 行首缩进 + marker + 尾随空白」、
- *  无任何内容（正则内容组为空串）——与 `bareListMarkerLine` 同一份 BARE_MARKER_RE，
- *  同语义不得两处真源（REVIEW.md 「同一语义两处真源」条）。用途：判定 WebKit 裸 DOM 变更重复插入的
- *  marker 文本（逃逸形态，探针证据 test-results/m529-probe/readings.md）。纯文本形态级
- *  判定，不读语法树：围栏代码块内「整串 marker 的 DOM 插入」没有合法产生通道（键入是
- *  逐字符 insertText），不参与本判定。 */
-export function isBareMarkerText(text: string): boolean {
+/** 从任意文本起点解析「行首列表 marker」：可选引用前缀 + 行首缩进 + 一个合法列表标记 +
+ *  其后空白。`bareListMarkerLine`（渲染 / Enter 特判）与 `src/enter-indent.ts` 的「DOM
+ *  读回入口的重复 marker 判定」（M529② / M753）共用这一份——同语义不得两处真源
+ *  （REVIEW.md『同一语义两处真源』条）。`from` 是文本在文档里的起点（行首时 = `line.from`；
+ *  判「marker 之后是否紧跟另一个 marker」时用切片起点 0 再自行换算）。
+ *  纯文本形态级：不读语法树，围栏 / 表格 / 标题等上下文由调用方各自排除。 */
+export function markerTextAt(text: string, from = 0): ListMarkerText | null {
   const m = BARE_MARKER_RE.exec(text);
-  return m !== null && m[8] === "";
+  if (!m) return null;
+  const prefix = m[1] + m[2];
+  const markerFrom = from + prefix.length;
+  const markerTo = markerFrom + m[3].length;
+  const ordered = m[4] !== undefined;
+  return {
+    markerFrom,
+    markerTo,
+    // 内容起点钳到文本末尾：空项行（`2. `）的 contentFrom = 文本末位。
+    contentFrom: Math.min(markerTo + m[7].length, from + text.length),
+    marker: m[3],
+    ordered,
+    number: ordered ? Number(m[4]) : null,
+    delimiter: ordered ? m[5] : "",
+    prefix,
+  };
 }
 
 /** 裸 marker 行判定：null = 不是（含语法树已接管的全部形态）。纯函数，只读树与行文本。 */
-export function bareListMarkerLine(tree: Tree, doc: Text, line: Line): BareMarkerLine | null {
-  const m = BARE_MARKER_RE.exec(line.text);
-  if (!m) return null;
-  const prefix = m[1] + m[2];
-  const markerText = m[3];
-  const ordered = m[4] !== undefined;
-  const markerFrom = line.from + prefix.length;
+export function bareListMarkerLine(tree: Tree, doc: Text, line: Line): ListMarkerText | null {
+  // 文本级形态（marker 字面 / 位置 / 前缀）取 markerTextAt 这一份，本函数只加树侧排除。
+  const marker = markerTextAt(line.text, line.from);
+  if (marker === null) return null;
   // resolve 取 marker 内的位置（markerFrom 的右邻 = marker 首字符），向上排除非列表上下文。
-  let node: Node | null = tree.resolveInner(markerFrom, 1);
+  let node: Node | null = tree.resolveInner(marker.markerFrom, 1);
   for (; node; node = node.parent) {
     const name = node.name;
     if (
@@ -130,18 +148,7 @@ export function bareListMarkerLine(tree: Tree, doc: Text, line: Line): BareMarke
   // 真源唯一：语法树已把本行认作列表项首行时，既有路径（渲染 + M399 退出）接管。
   const info = listLineInfo(tree, doc, line);
   if (info.item !== null && info.first) return null;
-  const markerTo = markerFrom + markerText.length;
-  const contentFrom = Math.min(markerTo + m[7].length, line.to);
-  return {
-    markerFrom,
-    markerTo,
-    contentFrom,
-    marker: markerText,
-    ordered,
-    number: ordered ? Number(m[4]) : null,
-    delimiter: ordered ? m[5] : "",
-    prefix,
-  };
+  return marker;
 }
 
 /** ol 复合多级编号（定稿 direction-c/index.html:250-270 的 counter 拼接）：L1 `1.`、
