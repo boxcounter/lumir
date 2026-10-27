@@ -101,12 +101,16 @@ test("done 收尾：cron 切屏态下按后端快照重载（专用会话历史�
   assert.match(doneBody, /if \(cronRunAdopted\) reloadSession\(\);/, "done 后必须按 cronRunAdopted 重载快照");
 });
 
-// ── 目标 vault 的打开交接（M752：点击通知没进目标 vault 的通用根因） ──────────
+// ── 目标 vault 的打开交接（M752：同一点击链路上另行发现的合同内交接缺陷） ──────────
 //
 // 这一层判的是「点击运行前的 vault 交接」的三条不变量。判据是源码里的**判据与顺序**，
 // 不是返回值（`ensureCronVault` 依赖整个装配层，零 DOM 单测跑不起来，理由同文件头）。
 // 每条都配一份「旧实现形态」的反向样本先证判据有区分度（REVIEW.md「断言等价于子串」
 // 条：没有区分度的断言写上去就是假绿）。
+//
+// **这不是 10-27 原事故的复现**：那次点击没有任何 `cron_click`，根因是投递进程已退出、
+// 点击无接收方（新合同，未在本 mission 解决）。这里的三个缺陷是同一条链路上另行发现的
+// 合同内问题——一旦点击真的到达，它们就会各自吃掉这次点击。
 
 const ENSURE_CRON_VAULT = functionBodyOf(MAIN_SOURCE, "ensureCronVault");
 
@@ -173,11 +177,11 @@ test("ensureCronVault：有未保存修改时不切换 vault（点击不得拿�
   );
 });
 
-test("ensureCronVault：同一 vault 的判据与切换链路同源（samePath，容忍尾斜杠），且命中即返回（标签状态原样保留）", () => {
+test("ensureCronVault：同一 vault 的判据与切换链路同源（samePath，只去尾斜杠），且命中即返回（标签状态原样保留）", () => {
   assert.match(
     ENSURE_CRON_VAULT,
     /samePath\(loadedRoot, root\)/,
-    "同 vault 的判定必须走同一份路径对比（samePath），MUST NOT 用 `===` 比配置原值：尾斜杠 / 软链下会误判成「另一个 vault」",
+    "同 vault 的判定必须走同一份路径对比（samePath），MUST NOT 用 `===` 比配置原值：尾斜杠差异下会误判成「另一个 vault」",
   );
   assert.equal(
     /loadedRoot === root/.test(ENSURE_CRON_VAULT),
@@ -189,6 +193,20 @@ test("ensureCronVault：同一 vault 的判据与切换链路同源（samePath�
   assert.ok(
     sameVault !== -1 && switched !== -1 && sameVault < switched,
     "同一 vault 必须提前返回：走到切换链路会重装树并作废全部标签（当前 TAB 状态必须原样保留）",
+  );
+  // `samePath` **只去尾斜杠**（`vault-switcher.ts` 的实现就是 strip + 字符串相等），不解析软链。
+  // 软链路径的正确性不靠这个 fast path，而靠三件事：①fast path 未命中时**仍然会切换**
+  // （不会被这层判成「另一个 vault」而拦下）；②切换后不再用 raw 值复判；③最终由后端
+  // `harness_cron_run` 的 canonicalize 判「目标 vault 是否当前 vault」。下面两条把 ①③ 钉住。
+  assert.match(
+    ENSURE_CRON_VAULT,
+    /await switchToVault\(root\)/,
+    "fast path 未命中必须照常切换：软链形态下 samePath 判不出来，靠这条兜住（前端不做软链解析，也不该做）",
+  );
+  assert.equal(
+    reJudgesVaultOpenAfterSwitch(ENSURE_CRON_VAULT),
+    false,
+    "切换后不得用 raw 值复判：软链错配的正确性由后端 canonicalize 终判（本条与上面一条共同构成「samePath 之外」的保障）",
   );
 });
 
