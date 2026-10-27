@@ -8,7 +8,9 @@
 // `disable_diff: true`，本文件钉住三件事：
 //   ① 每次 `state` 发出的 `tools/call` arguments 里都有 `disable_diff: true`（含第二次、第三次）；
 //   ② 既有参数（pid / mode / window_id / ax_filter）的字段集与条件写入形态逐字未变；
-//   ③ `get_app_state` 仍只有 `CuClient.state` 一个发出点——新开调用点会绕过这条口径。
+//   ③ `get_app_state` 仍只有 `CuClient.state` 一个发出点——新开调用点会绕过这条口径。扫描认的是
+//      **call 参数位**上的字面量，单引号 / 双引号 / 反引号三种写法都算（r1 评审 P2：只数双引号
+//      会漏掉 `cu.call('get_app_state', …)` 这类等价写法），并有反向用例证明三种写法都拦得住。
 //
 // 判据读的是**实际写到 stdio 上的帧**：假 MCP server（本文件在 os.tmpdir() 里现写）把收到的
 // `params.name` / `params.arguments` 原样回显成 text，断言对着回显做 `deepEqual`——字段缺失、
@@ -113,18 +115,60 @@ test("state：连续多次读取（含第二次）每一次都取全树，不落
   assert.deepEqual(frames[2], { pid: 9001, mode: "full", disable_diff: true });
 });
 
-test("get_app_state 只有 CuClient.state 一个发出点（新开调用点会绕过 disable_diff 口径）", async () => {
+/** `get_app_state` 出现在 **call 的参数位**（`x.call("get_app_state", …)`）的判据：单引号 / 双引号 /
+ *  反引号三种字面量写法都算。r1 评审 P2：先前只按双引号字面量做子串计数，`cu.call('get_app_state', …)`
+ *  与反引号写法会整条漏掉——扫描得看着「有区分度」、实际只拦一种拼法。 */
+const GET_APP_STATE_CALL = /\bcall\(\s*(["'`])get_app_state\1/g;
+
+/** 扫一组「相对路径 → 源码」，返回 `[路径, 次数]` 列表（次数 = call 参数位命中数）。
+ *  不剥注释：注释里万一写出 `call("get_app_state", …)` 会多报一条、需要人看一眼——失败方向安全
+ *  （多报 = 有人复核，漏报才是放行）。 */
+function getAppStateCallSites(sources) {
+  const hits = [];
+  for (const [file, src] of sources) {
+    const count = [...src.matchAll(GET_APP_STATE_CALL)].length;
+    if (count > 0) hits.push([file, count]);
+  }
+  return hits;
+}
+
+/** 套件自身的源码（`lib/*.mjs` 与 `scripts/acceptance/*.mjs`，排除 `*.test.mjs`），
+ *  key 用相对 `lib/` 的路径。 */
+async function repoSources() {
   const libDir = path.dirname(fileURLToPath(import.meta.url));
   const scriptsDir = path.dirname(libDir);
-  const sources = [
+  const files = [
     ...(await readdir(libDir)).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs")).map((f) => path.join(libDir, f)),
     ...(await readdir(scriptsDir)).filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs")).map((f) => path.join(scriptsDir, f)),
   ];
-  const hits = [];
-  for (const file of sources) {
-    // 只认**双引号字面量**：注释里以反引号提及 get_app_state 的地方不算发出点。
-    const count = (await readFile(file, "utf8")).split('"get_app_state"').length - 1;
-    if (count > 0) hits.push([path.relative(libDir, file), count]);
+  const sources = new Map();
+  for (const file of files) sources.set(path.relative(libDir, file), await readFile(file, "utf8"));
+  return sources;
+}
+
+test("get_app_state 只有 CuClient.state 一个发出点（新开调用点会绕过 disable_diff 口径）", async () => {
+  assert.deepEqual(getAppStateCallSites(await repoSources()), [["cu.mjs", 1]]);
+});
+
+test("发出点扫描有区分度：单引号 / 双引号 / 反引号写成的新调用都会拦住", async () => {
+  const sources = await repoSources();
+  const baseline = getAppStateCallSites(sources);
+  for (const quote of ["'", '"', "`"]) {
+    const withRogue = new Map(sources);
+    withRogue.set(
+      "probe-rogue.mjs",
+      `export async function rogue(cu, pid) {\n  return cu.call(${quote}get_app_state${quote}, { pid });\n}\n`,
+    );
+    // 只认探针文件自己的命中：真出现 rogue 时，仓库扫描那条用例才该单独报红，
+    // 这条不能跟着一起红（否则一个缺陷报两处，读者分不清是哪条判据在起作用）。
+    assert.deepEqual(
+      getAppStateCallSites(withRogue).filter(([file]) => file === "probe-rogue.mjs"),
+      [["probe-rogue.mjs", 1]],
+      `用 ${quote} 包裹 get_app_state 的新调用点必须被扫到（漏掉就等于放行绕过 disable_diff 的调用）`,
+    );
   }
-  assert.deepEqual(hits, [["cu.mjs", 1]]);
+  // 反向的另一面：注释 / 字符串里单纯提及工具名不是发出点——否则这条扫描恒红、变成噪音。
+  const withMention = new Map(sources);
+  withMention.set("note.mjs", '// 这里提一句 get_app_state 不算发出点\nconst doc = "调用 get_app_state 的地方在 cu.mjs";\n');
+  assert.deepEqual(getAppStateCallSites(withMention), baseline);
 });
