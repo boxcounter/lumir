@@ -542,6 +542,113 @@ export function injectTextCGEvent(text) {
   }
 }
 
+/** 真键盘事件通道的键表（M767）：键名 → macOS 虚拟键码（ANSI 布局的 `CGKeyCode`）。
+ *
+ *  **单一真源**：`parseChordSpec` 是「键名 → keycode、修饰键 → flags」的唯一翻译点；swift 侧
+ *  （`cgevent-key.swift --key`）只吃数值，不再维护第二张键表（REVIEW.md「同一语义两处真源」条）。
+ *  只收 chord 用得上的键（字母 / 数字 / 命名键 / 标点）；**任意可打印字符不在此表**——普通字符
+ *  继续走 KimiCU `press_key`（M766 探针 A1：它没有全选兼容路径），文本注入因此不引入键盘布局
+ *  依赖（keycode 是按物理布局映射的，只有 chord 的这一半需要它）。 */
+const CHORD_KEYCODES = new Map(
+  Object.entries({
+    a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9, b: 11, q: 12, w: 13, e: 14, r: 15, y: 16,
+    t: 17, 1: 18, 2: 19, 3: 20, 4: 21, 6: 22, 5: 23, 9: 25, 7: 26, 8: 28, 0: 29,
+    equal: 24, "=": 24, minus: 27, "-": 27, rightbracket: 30, "]": 30, leftbracket: 33, "[": 33,
+    return: 36, enter: 36, quote: 39, "'": 39, semicolon: 41, ";": 41, backslash: 42, "\\": 42,
+    comma: 43, ",": 43, slash: 44, "/": 44, period: 47, ".": 47, tab: 48, space: 49, grave: 50, "`": 50,
+    backspace: 51, delete: 51, escape: 53, esc: 53, help: 114, insert: 114, home: 115, pageup: 116,
+    forwarddelete: 117, end: 119, pagedown: 121, left: 123, right: 124, down: 125, up: 126,
+  }),
+);
+
+/** 修饰键别名 → `CGEventFlags` 原始值（与 `cgevent-click.swift` mode 6 的 `modifierFlags()` 同一套
+ *  别名：`meta`/`cmd` 都是 ⌘）。数值就是 `kCGEventFlagMask*`：shift 0x20000、control 0x40000、
+ *  alternate 0x80000、command 0x100000——M766 的 tap 里真 ⌃A 记作 `flags=0x…40000`，与这里同口径。 */
+const CHORD_MODIFIER_FLAGS = new Map(
+  Object.entries({
+    meta: 0x00100000, cmd: 0x00100000, command: 0x00100000, super: 0x00100000,
+    control: 0x00040000, ctrl: 0x00040000, shift: 0x00020000,
+    alt: 0x00080000, option: 0x00080000, opt: 0x00080000,
+  }),
+);
+
+/** chord 规格是否该走真键盘事件：含修饰键分隔符 `+`（`ctrl+a` / `cmd+shift+a`）。 */
+export function isChordSpec(key) {
+  return typeof key === "string" && key.includes("+");
+}
+
+/** `ctrl+a` 这类规格 → `{ keycode, flags }`（flags = CGEventFlags 原始值）。没有修饰键时 flags = 0。
+ *
+ *  未知主键 / 未知修饰键 / 空段一律抛 `StepError`——`execute.mjs` 的 `--check` 与真机运行期调的是
+ *  同一个函数，静态期判红的形态在运行期不会静默变成「按原样盲发」。 */
+export function parseChordSpec(spec) {
+  if (typeof spec !== "string" || spec === "") throw new StepError("chord 规格需要非空字符串");
+  const parts = spec.split("+");
+  const keyName = parts.pop();
+  if (!keyName) throw new StepError(`chord 规格「${spec}」缺少主键（形如 ctrl+a）`);
+  const keycode = CHORD_KEYCODES.get(keyName.toLowerCase());
+  if (keycode === undefined)
+    throw new StepError(
+      `chord 规格「${spec}」的主键「${keyName}」不在真键盘通道的键表里（支持 a–z / 0–9 与 ` +
+        "return / enter / tab / space / escape / backspace / delete / forwarddelete / left / right / up / down / " +
+        "home / end / pageup / pagedown / minus / equal / comma / period / slash / semicolon / quote / backslash / " +
+        "leftbracket / rightbracket / grave 及其标点写法）",
+    );
+  let flags = 0;
+  for (const name of parts) {
+    if (!name) throw new StepError(`chord 规格「${spec}」有空的修饰键段（检查 + 的写法）`);
+    const f = CHORD_MODIFIER_FLAGS.get(name.toLowerCase());
+    if (f === undefined)
+      throw new StepError(
+        `chord 规格「${spec}」含未知修饰键「${name}」（支持：meta / cmd / command / super / control / ctrl / shift / alt / option / opt）`,
+      );
+    flags |= f;
+  }
+  return { keycode, flags };
+}
+
+/** 单次 `cgevent-key.swift --key` 调用，纯数据返回（`run` 可注入——自测用假 swift 覆盖失败分支）。 */
+function runKeySwiftOnce(args) {
+  try {
+    return { ok: true, stdout: execFileSync(args[0], args.slice(1), { encoding: "utf8" }).trim(), error: null, status: 0 };
+  } catch (e) {
+    const detail = `${e.stderr ?? ""}${e.message ?? e}`;
+    return { ok: false, stdout: "", error: oneLine(detail), status: e.status ?? null };
+  }
+}
+
+/** 真键盘事件注入（M767）：`ctrl+a` / `cmd+a` / `ctrl+b` 这类 chord 必须走真键位事件。
+ *
+ *  为什么：KimiCU 0.6.8 的 `press_key` 在文本控件上把 `ctrl+a` / `cmd+a` 特判成 AX「全选」兼容
+ *  路径（运行期 `used_backend: ax_select_all_compat` / `ax_select_all`）、**零键盘事件**，应用自己
+ *  的键位层因此命中不到 `Ctrl-a`——140 的 ⌃A 步就成了「全选 + 覆写」（M766 探针的行为矩阵 A1；
+ *  证据 `.local/reports/ctrl-a-channel-oct28/README.md`）。
+ *
+ *  失败一律 `InfraError`（通道 / 环境项，整场 INVALID）：无「辅助功能」投递权限、swift 不可用、
+ *  CGEvent 构造失败、**退出 0 却没有回读行**（通道没真的跑完）。**不得静默降级**回 `press_key`
+ *  ——那会把「通道没投递」洗成产品假红，或把缺陷洗成假绿（README「cgevent chord 通道」条）。
+ *  调用方要保证 Lumir 在前台：HID tap 的事件投给**前台** app，不是 pid 寻址的。 */
+export function injectChordCGEvent(spec, { run = runKeySwiftOnce } = {}) {
+  const { keycode, flags } = parseChordSpec(spec);
+  const script = new URL("./cgevent-key.swift", import.meta.url).pathname;
+  const raw = run(["/usr/bin/swift", script, "--key", String(keycode), String(flags)]);
+  if (!raw.ok) {
+    throw new InfraError(
+      `真键盘事件注入失败（cgevent 通道，spec「${spec}」= keycode ${keycode} / flags ${flags}）：` +
+        `swift 退出 ${raw.status ?? "?"}——${raw.error}。这条通道要 /usr/bin/swift（Xcode Command Line ` +
+        `Tools）与「辅助功能」权限；**不会回落到 KimiCU press_key**（回落会把「通道没投递」洗成` +
+        "产品假红或断言假绿，见 README「cgevent chord 通道」条）。",
+    );
+  }
+  if (!/^key\b/.test(raw.stdout)) {
+    throw new InfraError(
+      `真键盘事件注入没有回读行（cgevent 通道，spec「${spec}」）：swift 退出 0 但 stdout=` +
+        `${JSON.stringify(raw.stdout)}——通道没真正跑完，不能当成「已投递」`,
+    );
+  }
+  return raw.stdout;
+}
+
 export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = "" } = {}) {
   if (typeof resolve !== "function") throw new StepError("typeInNode：缺少 resolve(ax) 目标解析函数");
   const countOf = (v) => (text ? v.split(text).length - 1 : 0);

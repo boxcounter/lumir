@@ -49,8 +49,14 @@ steps:
       - label: 打字没有漏进编辑器文档（焦点确在 composer）
         editor: { unchangedSince: doc-before-nav }
 
+  # M767：⌃A 走**真键盘事件**通道（`channel: cgevent` → keycode+flags，lib/cgevent-key.swift）。原因：
+  # KimiCU 0.6.8 的 press_key 在文本控件上把 ctrl+a 特判成 AX「全选」兼容路径（零键盘事件，应用
+  # 键位层命中不到 Ctrl-a），本步会变成「全选 + 覆写」。只切 chord 这一半，断言一条不动；同行紧随
+  # 的普通字符 y 仍走 KimiCU（探针 A1：普通字符没有这条兼容路径）。证据：M766 报告
+  # `.local/reports/ctrl-a-channel-oct28/README.md`（行为矩阵 A1 vs B1）。
   - name: ⌃A 到行首后键入 y
     do: keys
+    channel: cgevent
     keys: ["ctrl+a", "y"]
     gapMs: 150
     expect:
@@ -69,7 +75,8 @@ steps:
   # M507 裁决（勿迁）：本步是「⇧Enter + 可打印字符」的混合序列，chord 那一半的副作用在 AX 里
   # **逐次不可观测**（段末空段落不序列化 + bbox min-height 封顶）。**不要给本步加 `verify`**：命中会被判
   # 「未落地」重注后假 FAIL，重注还可能多落一个查不出来的空段落。判据与证据见 README「已知边界」的 chord
-  # verify 条（⇧Enter 族的根治方向 = 套件自有 CGEvent 键盘注入通道，M509 探针立项中）。
+  # verify 条（⇧Enter 族的根治方向 = 套件自有 CGEvent 键盘注入通道；M767 已落地 chord 形态
+  # `channel: cgevent`，但本步未迁移——末尾空段落不可观测的判据还没设计，仍保持盲发、不挂 verify）。
   - name: ⇧Enter 换行后键入第二段 mn
     do: keys
     keys: ["shift+return", "m", "n"]
@@ -123,6 +130,13 @@ change `composer-emacs-nav` 把 composer 的 Emacs 文本导航族收回统一�
   `ypabzcdw`（列 1，与「行尾在列 2」自相矛盾），并修好 ⌃P 在**段落末缘**丢列位的实现缺陷
   （`src/harness-panel.ts` 的 `moveLineVertical`：末缘光标被 `normalizeComposerCaret` 归一到
   边界位、列位随之丢失，⌃P 会落到上一行行首而非同列位）。
+
+- **⌃A 走真键盘事件通道（M767）**：KimiCU 0.6.8 的 `press_key` 在文本控件上把 `ctrl+a` 特判成
+  AX「全选」兼容路径、零键盘事件（应用键位层命中不到 `Ctrl-a`），本步会变成「全选 + 覆写」——
+  这正是 M766 探针行为矩阵 A1 的现场。因此这一步显式写 `channel: cgevent`（`lib/cgevent-key.swift
+  --key`，keycode+flags）；**通道只作用于 chord 键**，同行紧随的 `y` 仍走 KimiCU（A1：普通字符没有
+  这条路径）。**断言一条没动**：`yabzcd` 就是「y 落在行首」的判据，换成全选再覆写只会剩 `y`
+  （M766 报告 `.local/reports/ctrl-a-channel-oct28/README.md` 的 A1 vs B1）。
 
 ## 已知边界（如实登记）
 
