@@ -2384,6 +2384,73 @@ mod tests {
         }
     }
 
+    /// `new_session` 的状态机合同（验收场景 92 的低层判据）：
+    ///
+    /// **任意空闲会话状态下调用均成功，结果恒为新空会话**；busy 是唯一失败态。
+    /// 历史（M350）：旧实现无会话时被 `harness_no_session` 短路成错误——「新会话 → 报错 →
+    /// 再点仍报错」的根因。这条用例把三态一次钉死，防它被 `with_session` 的严格语义带回来。
+    #[test]
+    fn new_session_is_idempotent_in_any_idle_state() {
+        let _xdg = xdg_test_lock();
+        let root = std::env::temp_dir().join(format!(
+            "lumir-new-session-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-new-session".to_string(),
+        };
+        let config = config::test_mock(Some("/tmp/fixture.json"));
+        let runtime = Runtime::default();
+
+        // ① 无会话（从未提问 / 刚重置）：平凡成功，且不凭空建会话。
+        runtime.new_session(&scope).expect("无会话时 new_session 必须成功（M350 回归点）");
+        runtime.new_session(&scope).expect("重复调用同样成功");
+        assert!(
+            runtime.current_session_id(&scope).is_none(),
+            "无会话时重置不得凭空建立会话（懒建立语义）"
+        );
+
+        // ② 有会话：成功且会话被丢弃（下次访问按新会话装配）。
+        runtime.acquire_turn(&scope, &config).unwrap();
+        runtime
+            .with_session(&scope, |s| s.push_input(session::user_item("first-question")))
+            .unwrap();
+        runtime.release_turn(&scope);
+        let session_id = runtime.current_session_id(&scope).expect("一轮后应有会话");
+        runtime.new_session(&scope).expect("空闲会话状态下 new_session 必须成功");
+        assert!(
+            runtime.current_session_id(&scope).is_none(),
+            "重置后旧会话必须被丢弃（会话 id {session_id} 仍在 = 新会话没生效）"
+        );
+
+        // ③ 重置之后再重置：仍是成功（幂等，而不是「只能重置一次」）。
+        runtime.new_session(&scope).expect("重置后再重置必须成功");
+
+        // ④ busy（在途轮次）：唯一失败态，且错误码是机器可判定的 harness_busy。
+        runtime.acquire_turn(&scope, &config).unwrap();
+        let error = runtime.new_session(&scope).expect_err("在途轮次上重置必须被拒");
+        assert_eq!(error.code, "harness_busy");
+        // 失败不得改动会话（在途轮次的状态原样保留）。
+        assert!(
+            runtime.current_session_id(&scope).is_some(),
+            "被拒的新会话不得把在途会话清掉"
+        );
+        runtime.release_turn(&scope);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// 运行槽位与交互会话槽位分离（change add-cron-runtime-daemon §3.1 的契约测试）：
     /// 无人值守运行在独立的 runtime 实例上跑，交互槽位的会话 id、消息历史与内容**逐字节
     /// 不变**；后台运行自己的会话 id 不同、留存照常落 per-vault 目录。

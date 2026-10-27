@@ -84,6 +84,26 @@ async function openPanel(page: Page, snapshot: unknown, resume: unknown = { list
   await expect(page.locator(".lumir-harness")).toBeVisible();
 }
 
+test("消息正文：表格按列序渲染，空格位保留（真机场景 157 的下沉面）", async ({ page }) => {
+  // 真机那侧判的是「表头 / 表体的格文本按列序拼接」，AX 只能读到拼好的行名——
+  // 这里直接读 DOM 的每一格，空槽（首格空 / 中间空）也逐格对得上。
+  const TABLE_BODY = ["|  | 乙 | 丙 |", "|---|---|---|", "| 甲 |  | 丙 |"].join("\n");
+  await openPanel(page, {
+    messages: [{ role: "assistant", text: TABLE_BODY, ts: Math.floor(Date.now() / 1000) - 30 }],
+    usage: { ctx_pct: 0, cache_pct_session: 0 },
+    pending_approval: null,
+    warn_ctx_pct: 85,
+  });
+
+  const table = page.locator(".lumir-hp-msg-assistant .lumir-hp-body table.lumir-hp-table").first();
+  await expect(table).toHaveCount(1);
+  // 两行都在（表未渲染时下面两条先红，不会在空集合上空过）
+  await expect(table.locator("thead tr")).toHaveCount(1);
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  await expect(table.locator("thead th")).toHaveText(["", "乙", "丙"]);
+  await expect(table.locator("tbody td")).toHaveText(["甲", "", "丙"]);
+});
+
 test("消息正文：裸 URL 在段落与表格 cell 里都渲染为可点链接，标准链接的 URL 不重复上屏", async ({
   page,
 }) => {

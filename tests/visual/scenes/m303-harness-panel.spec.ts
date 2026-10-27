@@ -18,10 +18,14 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // 面板打开是纯前端路径（装配层 split + attachTo），不触后端 invoke，stub 环境下即可展开。
 
 const DOC = "# 面板基线笔记\n\n第一段，给上下文 chip 一个视口口径。\n";
+const DOC_TWO = "# 第二份笔记\n\n切换文档后 chip 必须跟着换读数。\n";
 
 const VAULT: VaultFixture = {
-  entries: [{ path: "harness-note.md", kind: "file", size: DOC.length, mtime_ms: 0 }],
-  files: { "harness-note.md": DOC },
+  entries: [
+    { path: "harness-note.md", kind: "file", size: DOC.length, mtime_ms: 0 },
+    { path: "harness-two.md", kind: "file", size: DOC_TWO.length, mtime_ms: 0 },
+  ],
+  files: { "harness-note.md": DOC, "harness-two.md": DOC_TWO },
   links: {},
 };
 
@@ -248,4 +252,29 @@ test("会话浮层列表滚动条：隐藏档，溢出态下每行 × 不被压�
   expect(reading.scrollbarWidth).toBe("none");
   expect(reading.webkitDisplay).toBe("none");
   expect(reading.offsetWidth - reading.clientWidth).toBe(0);
+});
+
+test("上下文 chip 随文档切换刷新（真机场景 98 的下沉面）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessState(page);
+  await page.goto("/");
+
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await page.locator(".lumir-hp-toggle").click();
+  const chip = page.locator(".lumir-hp-chip");
+  await expect(chip).toContainText("harness-note.md · 视口");
+
+  // 切到第二份文档：chip 换成新文件（旧现场是「开着文件却停在旧读数 / 无」）
+  await page.locator('.ft-row[title="harness-two.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("切换文档后 chip");
+  await expect(chip).toContainText("harness-two.md · 视口");
+  // 正反双判：旧文件名不得留在 chip 上（只判新值会被「两个都在」的拼接态骗过）
+  await expect(chip).not.toContainText("harness-note.md");
+
+  // 切回去同样刷新（不是「只认第一次切换」）
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await expect(chip).toContainText("harness-note.md · 视口");
+  await expect(chip).not.toContainText("harness-two.md");
 });
