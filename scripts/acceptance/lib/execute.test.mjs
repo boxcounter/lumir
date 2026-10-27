@@ -20,9 +20,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, runScenario, settleEditorless } from "./execute.mjs";
-import { parseNodes } from "./ax.mjs";
-import { parseKeyWindowState } from "./drive.mjs";
+import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, readAxForScreenPoint, runScenario, screenshotSize, settleEditorless } from "./execute.mjs";
+import { coordsSpace, mainWindowPlan, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
+import { parseKeyWindowState, readAx } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
 
 /** 临时根（每个用例一份，跑完不清也无妨——全在 `os.tmpdir()` 下）。 */
@@ -334,13 +334,16 @@ test("缺文件时内容类判据仍判 FAIL（不把「读不到」当「为空
   );
 });
 
-/** 224 的现场（M669）：浮钮的可访问名同时出现在 transcript 正文里（AXStaticText 的 value）。 */
+/** 224 的现场（M669）：浮钮的可访问名同时出现在 transcript 正文里（AXStaticText 的 value）。
+ *  header 取 mode=ax 的当前形态（窗口矩形键名 `window_bounds` + 独立 `coords:` 行）。 */
 const AX_BODY_TEXT_ONLY = [
   "# Lumir App State",
   "",
   "- app: Lumir",
   "- pid: 123",
   "- window_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+  "- screenshot: none — no image attached",
+  "- coords: bbox `@x,y w×h` are WINDOW-LOCAL POINTS (origin = window top-left, 1:1 points — NOT screenshot pixels)",
   "",
   "```text",
   '- [0] AXApplication "Lumir"',
@@ -734,7 +737,8 @@ test("通知定位判据：title 与 body 必须同时命中，且只认 AXGroup
 });
 
 /** 合成一份含两个 `AXTextArea` 的 AX dump（M678）：编辑器在前、composer 在后——224 的现场形态
- *  （`[166]` 是编辑器正文、`[250]` 是 composer）。`marks` 里的角色带 `(focused)` 标记。 */
+ *  （`[166]` 是编辑器正文、`[250]` 是 composer）。`marks` 里的角色带 `(focused)` 标记。
+ *  header 取 mode=full 的当前形态（`captured_bounds` + `coords: …screenshot pixels`，长边 2048）。 */
 function focusDump(...marks) {
   const mark = (k) => (marks.includes(k) ? " (focused)" : "");
   return [
@@ -743,12 +747,13 @@ function focusDump(...marks) {
     "- app: Lumir",
     "- pid: 1",
     "- element_count: 5",
-    "- window_bounds: x=8 y=40 w=1200 h=800 (screen points)",
-    "- screenshot: 1152×768 px",
+    "- captured_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+    "- screenshot: 2048×1365 px",
+    "- coords: bbox `@x,y w×h` and click/scroll/drag x,y are screenshot pixels (origin = top-left of the screenshot)",
     "",
     "```text",
     '- [0] AXApplication "Lumir"',
-    '  - [1] AXWindow "Lumir" @0,0 1152×768',
+    '  - [1] AXWindow "Lumir" @0,0 2048×1365',
     `    - [5] AXWebArea (Lumir)${mark("webview")}`,
     `    - [166] AXTextArea = "# 文档正文" @0,100 600×500${mark("editor")}`,
     `    - [250] AXTextArea (问点什么…) @700,600 400×40${mark("composer")}`,
@@ -868,8 +873,10 @@ test("focusWindow click 的重试与判败（M678）：双判据严格为真才�
       attempts: 2,
       sleepFn: async () => {},
     }),
-    (e) => e instanceof InfraError && /AXfocusedWindow=false/.test(e.message),
-    "编辑器有焦点但 AXFocusedWindow=false 时必须判「未建立」，且在错误里给出窗口读数",
+    // 原始读数（含 `title=`）必须活到错误文案里（M761 真机实证的归因缺口）：只写 false 时分不清
+    // 「焦点真在别处」与「多了一扇窗把 AXWindows[0] 挤走、套件的选窗假设坏了」。
+    (e) => e instanceof InfraError && /AXfocusedWindow=false/.test(e.message) && /title=Agent/.test(e.message),
+    "编辑器有焦点但 AXFocusedWindow=false 时必须判「未建立」，且把 key 读数的原始行（含聚焦窗口标题）带进错误",
   );
   assert.equal(notKeyClicks, 2, `窗口不是 key 时应把重试用满，实际 ${notKeyClicks}`);
 
@@ -1050,4 +1057,336 @@ test("do: settle（动作级）：无编辑器终态 + 快照 id 每次变 ⇒ P
     `稳定收敛时不得落 settle 超时 note：${JSON.stringify(notes)}`,
   );
   assert.ok(cu.reads.length >= 3, `probe 一次 + 比较两次，实际读了 ${cu.reads.length} 次`);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 快照 header 的解析 / 坐标口径 / 多窗口钉主窗（M761；2026-10-27 core 批 53/64/159/224/233 与 112）
+//
+// 上游 KimiCU 0.6.8（2026-10-27 08:54 装、16:44 服务重启）改了两处 header：
+//   ① mode=full 的窗口矩形从 `window_bounds:` 改名为 `captured_bounds:`（含义不变，仍是屏幕点）；
+//   ② mode=ax 的窗口局部说明从 `screenshot:` 行尾（小写）搬到独立的 `coords:` 行，且全大写
+//      `… are WINDOW-LOCAL POINTS …`。
+// 套件两处解析停在老形态，于是把**正确的快照**判成「退化 / 口径不对」——5 个场景红而套件自身全绿
+// （当时本文件的 fixture 也还是老 header，所以一条都没拦住）。112 是另一种形态：KimiCU 把树作用在
+// 一扇 66×20 的辅助 `AXDialog` 上，主窗整棵被截掉。
+//
+// 这一节钉住四类不变量：
+//   ① 窗口矩形两种键名都认，且只认 header 段（正文里的同形行不算）；
+//   ② 口径按 `coords:` 行的语义判（大小写不敏感、两种口径互斥、缺该行即不可判定）；
+//   ③ 几何换算与滚轮兜底的「读不到」必须是**响的**（不许静默返回 null 后跳过）；
+//   ④ 多窗口时钉 `AXStandardWindow` 主窗并转发 `window_id`；主窗不可判定 = 环境错误。
+// 下面两份 header 逐字取自当天的真机 dump（`2026-10-27/m747-split/...` 与 `2026-10-27-core-tier/...`），
+// 只换掉了 pid / snapshot id，窗口尺寸与措辞未动。
+
+const snapshotIdLine = (id) =>
+  `AX snapshot_id=${id}. Pass this ID with index-based actions; it is separate from the screenshot_id and diff revision.`;
+
+/** mode=ax 的窗口局部口径说明（当天 dump 的原文，一整行）。 */
+const COORDS_WINDOW_LOCAL =
+  "- coords: bbox `@x,y w×h` are WINDOW-LOCAL POINTS (origin = window top-left, 1:1 points — NOT screenshot pixels; they run LARGER than screenshot pixels by ~window_w/screenshot_w). Do NOT feed these to click/scroll/drag x,y — those still resolve as screenshot pixels against the most recent image observation's anchor (error if none). Use index-based actions, or re-observe with a screenshot (mode:\"full\"/\"image\") to get pixel coordinates";
+
+/** `- windows: N` 目录 + 两条条目（112 的逐字形态）。 */
+const WINDOW_DIR_DIALOG_PRIMARY = [
+  "- windows: 2 (tree scoped to primary; others via window_id)",
+  '  - [primary] window_id=11687 AXDialog "Window" @14,46 66×20',
+  '  - [main] window_id=11677 AXStandardWindow "Lumir" @8,40 1200×800',
+];
+
+/** mode=full 的 header（0.6.8 起）：`captured_bounds:` + `screenshot: 2048×1365 px` + 截图像素口径。 */
+function headerFull({ windowTitle = "Lumir" } = {}) {
+  return [
+    snapshotIdLine("00000000-0000-0000-0000-000000000000"),
+    "# Lumir App State",
+    "",
+    "- app: Lumir",
+    "- pid: 2806",
+    `- window_title: ${windowTitle}`,
+    "- element_count: 197",
+    "- is_electron: false",
+    "- truncated: true [closed_menu]",
+    "- captured_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+    "- screenshot: 2048×1365 px",
+    "- coords: bbox `@x,y w×h` and click/scroll/drag x,y are screenshot pixels (origin = top-left of the screenshot)",
+  ].join("\n");
+}
+
+/** mode=ax 的 header（0.6.8 起）：窗口矩形键名仍是 `window_bounds:`，口径在独立的 `coords:` 行。 */
+function headerAx({ windowTitle = "Lumir", elementCount = 205 } = {}) {
+  return [
+    snapshotIdLine("11111111-1111-1111-1111-111111111111"),
+    "# Lumir App State",
+    "",
+    "- app: Lumir",
+    "- pid: 68391",
+    `- window_title: ${windowTitle}`,
+    `- element_count: ${elementCount}`,
+    "- is_electron: false",
+    "- truncated: true [closed_menu]",
+    "- window_bounds: x=8 y=40 w=1200 h=800 (screen points)",
+    "- screenshot: none — no image attached",
+    COORDS_WINDOW_LOCAL,
+  ].join("\n");
+}
+
+/** 主窗的树（mode=ax：bbox 是窗口局部点）。 */
+const TREE_AX_MAIN = [
+  "```text",
+  '- [0] AXApplication "Lumir"',
+  '  - [1] AXWindow "Lumir" @0,0 1200×800 actions=[AXRaise]',
+  "    - [4] AXScrollArea @0,0 1200×800",
+  '      - [5] AXWebArea (Lumir) URL: http://127.0.0.1:1430/',
+  '        - [9] AXButton (notes) @300,600 120×24 actions=[AXPress]',
+  '      - [166] AXTextArea = "# 文档正文" @220,300 900×600 actions=[AXPress]',
+  "```",
+].join("\n");
+
+/** 112 那扇 66×20 的辅助窗口（只有一个窗口共享会话按钮）。 */
+const TREE_AX_DIALOG = [
+  "```text",
+  '- [0] AXApplication "Lumir"',
+  '  - [1] AXWindow "Window" @0,0 66×20 actions=[AXRaise]',
+  "    - [2] AXButton (WindowSharingSessionButton) @-1,-1 68×22 actions=[AXPress]",
+  "```",
+].join("\n");
+
+const AX_MAIN_DUMP = `${headerAx()}\n\n${TREE_AX_MAIN}`;
+const FULL_DUMP = `${headerFull()}\n\n${TREE_AX_MAIN}`;
+const AX_DIALOG_DUMP = `${[headerAx({ windowTitle: "Window", elementCount: 18 }), ...WINDOW_DIR_DIALOG_PRIMARY].join("\n")}\n\n${TREE_AX_DIALOG}`;
+
+test("窗口矩形（M761）：captured_bounds（mode=full）与 window_bounds（mode=ax）都认，正文里的同形行不算", () => {
+  const want = { x: 8, y: 40, w: 1200, h: 800 };
+  assert.deepEqual(
+    windowBounds(FULL_DUMP),
+    want,
+    "mode=full 的 captured_bounds 解析不出来——0.6.8 起就是这个名字（64/224/233 的根因）",
+  );
+  assert.deepEqual(windowBounds(AX_MAIN_DUMP), want, "mode=ax 的 window_bounds 仍要认（drag / doubleClick / hover 都靠它）");
+  // 反例：删掉 header 那行、在正文（``` 围栏之内）放一行逐字同形的文本——它不得被当成窗口矩形，
+  // 否则换算比例会跟着文档内容漂（这正是「只认 header 段」的那条判据）。
+  const moveIntoBody = (dump, key) =>
+    dump
+      .replace(new RegExp(`^- ${key}:.*$`, "m"), "")
+      .replace("```text\n", "```text\n- " + key + ": x=1 y=2 w=30 h=40 (screen points)\n");
+  assert.equal(windowBounds(moveIntoBody(AX_MAIN_DUMP, "window_bounds")), null, "正文里的 `- window_bounds:` 不是 header");
+  assert.equal(windowBounds(moveIntoBody(FULL_DUMP, "captured_bounds")), null, "正文里的 `- captured_bounds:` 不是 header");
+});
+
+test("坐标口径（M761）：按 coords: 行的语义判，大小写不敏感、两种口径互斥、缺行即不可判定", () => {
+  assert.equal(
+    coordsSpace(AX_MAIN_DUMP),
+    "window-local",
+    "mode=ax 的 coords: 行写的是全大写 WINDOW-LOCAL POINTS——判不出来就是把合格的 ax 快照拒成「口径不是它」（53/159 的现场）",
+  );
+  assert.equal(coordsSpace(FULL_DUMP), "screenshot-pixels", "mode=full 的 coords: 行自述截图像素");
+  assert.equal(
+    coordsSpace(AX_MAIN_DUMP),
+    "window-local",
+    "ax 那行里同时出现 `NOT screenshot pixels` 与 `those still resolve as screenshot pixels`，仍必须判成 window-local",
+  );
+  assert.equal(
+    coordsSpace(AX_MAIN_DUMP.replace("WINDOW-LOCAL POINTS", "window-local points")),
+    "window-local",
+    "大小写不敏感：上游改成小写时判据不该翻面",
+  );
+  // 反向：只有「提到 window-local」而不是「are <口径>」的句子判不出来——判据不是子串匹配。
+  assert.equal(
+    coordsSpace(AX_MAIN_DUMP.replace(/are WINDOW-LOCAL POINTS/, "are 1:1 pixels; see window-local docs")),
+    null,
+    "不是 `are <口径>` 的措辞一律判不可判定（别把子串命中当口径）",
+  );
+  assert.equal(
+    coordsSpace(AX_MAIN_DUMP.replace(/^- coords:.*$/m, "")),
+    null,
+    "没有 coords: 行 = 口径不可判定：返回 null 让调用方如实报错，不默认成任一种口径",
+  );
+});
+
+test("窗口局部口径的读数（M761）：新 header 直接放行；截图像素口径与退化快照都如实报错", async () => {
+  const cuReturning = (text) => ({ state: async () => ({ text, image: null }) });
+  const ok = await readAxForScreenPoint(cuReturning(AX_MAIN_DUMP), 1, { retries: 1, label: "drag" });
+  assert.equal(ok.text, AX_MAIN_DUMP, "新 header 的 ax 快照必须直接放行（53/159 的现场是把它拒成「口径不是它」）");
+
+  await assert.rejects(
+    readAxForScreenPoint(cuReturning(FULL_DUMP), 1, { retries: 1, label: "drag" }),
+    (e) => /坐标口径/.test(e.message) && /screenshot-pixels/.test(e.message),
+    "截图像素口径必须拒——两个坐标空间混用会让注入落到别处",
+  );
+
+  const degraded = "# Lumir App State\n\n- app: Lumir\n- pid: 1\n- element_count: 1\n";
+  await assert.rejects(
+    readAxForScreenPoint(cuReturning(degraded), 1, { retries: 1, label: "drag" }),
+    (e) => /退化/.test(e.message),
+    "退化快照（只剩菜单栏、没有窗口矩形）按退化报错，不拿菜单栏坐标去点",
+  );
+});
+
+test("正文单击落点（M761 新 header）：captured_bounds + 2048×1365 的换算用手算值钉住", () => {
+  const bounds = windowBounds(FULL_DUMP);
+  const shot = screenshotSize(FULL_DUMP);
+  assert.deepEqual(shot, { w: 2048, h: 1365 }, "0.6.8 起截图长边是 2048（写死 1152 会让换算比例算错）");
+  const g = contentClickGeometry({ textarea: { bbox: { x: 220, y: 300, w: 1500, h: 900 } }, bounds, shot });
+  assert.deepEqual(g.shotPoint, { x: 260, y: 306 }, "缺省落点 = bbox 原点 + (40,6)，截图像素");
+  // 手算：260 × 1200/2048 = 152.34375 → +8 = 160.34375；306 × 800/1365 ≈ 179.3407 → +40 ≈ 219.3407。
+  assert.equal(g.point.x, 160.34375, `x 换算错：${g.point.x}`);
+  assert.equal(g.point.y, 219.34065934065933, `y 换算错：${g.point.y}`);
+});
+
+test("滚轮兜底（M761）：新 header 算得出落点；读不到几何 / 落点时给原因而不是 null（不静默跳过兜底）", () => {
+  const node = { bbox: { x: 400, y: 500, w: 200, h: 100 } };
+  const plan = planWheelFallback({ text: FULL_DUMP, node, dy: -5 });
+  assert.equal(plan.dy, -5);
+  assert.equal(plan.dx, 0);
+  // 手算：节点中心 (500,550) 截图像素 → 500 × 1200/2048 + 8 = 300.96875；550 × 800/1365 + 40 ≈ 362.3443。
+  assert.equal(plan.point.x, 300.96875, `x 换算错：${plan.point.x}`);
+  assert.equal(plan.point.y, 362.34432234432234, `y 换算错：${plan.point.y}`);
+
+  const byTarget = planWheelFallback({ text: FULL_DUMP, target: { x: 10, y: 20 }, dy: 3 });
+  assert.equal(byTarget.point.x, 13.859375, "target 的 {x,y} 是截图像素（与 KimiCU 的 scroll 同空间）");
+  assert.equal(byTarget.point.y, 51.72161172161172, `y 换算错：${byTarget.point.y}`);
+
+  const noGeom = planWheelFallback({ text: FULL_DUMP.replace(/^- captured_bounds:.*$/m, ""), node, dy: -5 });
+  assert.equal(noGeom.point, undefined, "几何读不到时不得给出落点");
+  assert.match(
+    noGeom.reason,
+    /读不到窗口几何/,
+    "必须说明「读不到几何」——静默返回 null 会让兜底消失，而证据里看不出它压根没跑",
+  );
+
+  assert.match(planWheelFallback({ text: FULL_DUMP, node, page: 1 }).reason, /page/, "page 形态不换算行数");
+  assert.match(planWheelFallback({ text: FULL_DUMP, node }).reason, /dy \/ dx/, "没给位移量要说清");
+  assert.match(
+    planWheelFallback({ text: FULL_DUMP, target: {}, node: null, dy: 1 }).reason,
+    /落点不可定位/,
+    "既没有 {x,y} 也没有 bbox 时要说清落点不可定位",
+  );
+});
+
+test("多窗口（M761，112 的现场）：readAx 钉 AXStandardWindow 主窗并转发 window_id，辅助 AXDialog 不得截断主树", async () => {
+  assert.deepEqual(mainWindowPlan(AX_MAIN_DUMP), { pin: null }, "没有 windows 目录 = 单窗，不需要钉");
+  assert.equal(
+    mainWindowPlan(AX_DIALOG_DUMP).pin?.windowId,
+    11677,
+    "多窗口时选的是 [main] 的 AXStandardWindow（11677），不是 primary 的 AXDialog（11687）",
+  );
+
+  const calls = [];
+  const cu = {
+    state: async (pid, { mode, windowId } = {}) => {
+      calls.push({ pid, mode, windowId });
+      return { text: windowId === undefined ? AX_DIALOG_DUMP : AX_MAIN_DUMP, image: null };
+    },
+  };
+  const ax = await readAx(cu, 7, { mode: "ax" });
+  assert.deepEqual(
+    calls,
+    [
+      { pid: 7, mode: "ax", windowId: undefined },
+      { pid: 7, mode: "ax", windowId: 11677 },
+    ],
+    "第二次读取必须带 [main] 的 window_id（11677），且 mode 一并保留",
+  );
+  assert.equal(ax.text, AX_MAIN_DUMP, "返回的必须是主窗的树，不是辅助窗口那份");
+  assert.ok(
+    ax.nodes.some((n) => n.role === "AXButton" && n.label === "notes"),
+    "主窗的按钮行必须读得到（112 判红的就是它不在树里）",
+  );
+  assert.ok(ax.textarea, "主窗的编辑器节点也要在（辅助窗口的树里没有 AXTextArea）");
+});
+
+test("多窗口反例（M761）：主窗不可判定 / window_id 没生效 / 标题对不上，一律报环境错误而不是返回辅助窗的树", async () => {
+  const infra = (pattern) => (e) => e instanceof InfraError && pattern.test(e.message);
+
+  // ① 多窗口目录里没有 AXStandardWindow（主窗整棵不在 KimiCU 的窗口表里）⇒ 环境错误，不退回 primary。
+  const noStandard = [
+    headerAx({ windowTitle: "Window", elementCount: 18 }),
+    "- windows: 2 (tree scoped to primary; others via window_id)",
+    '  - [primary] window_id=11687 AXDialog "Window" @14,46 66×20',
+    '  - [main] window_id=11690 AXDialog "HUD" @100,100 200×80',
+    "",
+    TREE_AX_DIALOG,
+  ].join("\n");
+  assert.match(mainWindowPlan(noStandard).error, /没有 AXStandardWindow/, "纯辅助窗的窗口表判「主窗不可判定」");
+  let reads = 0;
+  await assert.rejects(
+    readAx(
+      {
+        state: async () => {
+          reads += 1;
+          return { text: noStandard, image: null };
+        },
+      },
+      7,
+      { mode: "ax" },
+    ),
+    infra(/无法判定主窗口/),
+    "多窗口但没有 AXStandardWindow ⇒ InfraError（不把辅助窗的 18 个节点当成界面）",
+  );
+  assert.equal(reads, 1, "不可判定时不得再发一次读数（也没有可用的 window_id）");
+
+  // ② KimiCU 忽略了 window_id：重读后 `[primary]` 仍是那扇辅助窗（把标题改成 Lumir，隔离出这一条判据）。
+  const ignored = AX_DIALOG_DUMP.replace("- window_title: Window", "- window_title: Lumir");
+  await assert.rejects(
+    readAx(
+      {
+        state: async (pid, { windowId } = {}) => ({ text: windowId === undefined ? AX_DIALOG_DUMP : ignored, image: null }),
+      },
+      7,
+      { mode: "ax" },
+    ),
+    infra(/仍作用在窗口 11687/),
+    "重读后树仍作用在别的窗口 ⇒ InfraError（读到的主窗树不可信）",
+  );
+
+  // ③ 钉窗生效但读到的不是那扇窗（window_title 与 windows 目录里的标题不符）。
+  await assert.rejects(
+    readAx(
+      {
+        state: async (pid, { windowId } = {}) => ({
+          text: windowId === undefined ? AX_DIALOG_DUMP : AX_MAIN_DUMP.replace("- window_title: Lumir", "- window_title: Agent"),
+          image: null,
+        }),
+      },
+      7,
+      { mode: "ax" },
+    ),
+    infra(/window_title/),
+    "钉窗后标题对不上 ⇒ InfraError（钉窗未生效 / 两次读取之间换了窗）",
+  );
+
+  // ④ 树已经作用在主窗上（primary 就是那扇标准窗）⇒ 不多读一次。
+  const alreadyMain = [
+    headerAx({ windowTitle: "Lumir", elementCount: 205 }),
+    "- windows: 2 (tree scoped to primary; others via window_id)",
+    '  - [primary] window_id=11677 AXStandardWindow "Lumir" @8,40 1200×800',
+    '  - [main] window_id=11687 AXDialog "Window" @14,46 66×20',
+    "",
+    TREE_AX_MAIN,
+  ].join("\n");
+  let alreadyReads = 0;
+  const already = await readAx(
+    {
+      state: async () => {
+        alreadyReads += 1;
+        return { text: alreadyMain, image: null };
+      },
+    },
+    7,
+    { mode: "ax" },
+  );
+  assert.equal(alreadyReads, 1, "树已作用在主窗上时不得多读一次（多一次往返就是多一份 flake 面）");
+  assert.equal(already.text, alreadyMain);
+
+  // ⑤ 单窗（没有 windows 目录）⇒ 一次读取，不转发 window_id。
+  const singleCalls = [];
+  await readAx(
+    {
+      state: async (pid, args = {}) => {
+        singleCalls.push(args);
+        return { text: AX_MAIN_DUMP, image: null };
+      },
+    },
+    7,
+    { mode: "full" },
+  );
+  assert.deepEqual(singleCalls, [{ mode: "full" }], "单窗不该转发 window_id");
 });
