@@ -1118,6 +1118,17 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
 - **编辑器不可读 ≠ 文档为空**：modal（⌘/ 键位面板、对话框）打开期间 AX 快照里**没有 AXTextArea**，
   此时 `editor.*` 一律记 FAIL，`recordEditor` 直接报错——否则负向断言与逐字节比较会在 `"" === ""`
   上空转假绿（r2 评审实证）。断言需要读文档时，基线要在 modal 打开前记录、关闭后比较。
+- **`get_app_state` 的缺省是增量 diff，套件必须显式取全树（M751）**：KimiCU 新版把 `get_app_state`
+  的缺省行为改成「返回与上一次快照的增量 diff」，对应开关是 `disable_diff`（工具 schema 原文
+  "Return the full tree instead of the default session diff"）。只给 pid/mode 时**第二次读取拿到
+  的是一份空 diff**，而空 diff 与「这个 app 真的没有节点」在 markdown 文本上无法区分：`settle`
+  （连续两次快照逐字节一致）会在第二次就判「一致」、`waitFor` 轮询与 `ax.has` / `ax.not` 断言则
+  对着空树判红/假绿——REVIEW.md「读不到当成空」条的同族形态，且更隐蔽（不是读不到，是读到了
+  「没变化」）。因此 `lib/cu.mjs` 的 `CuClient.state` **每次**请求都带 `disable_diff: true`，无条件
+  取全树、不做「第二次才补」；`get_app_state` 也只有这一个发出点。回归测试 `lib/cu.test.mjs` 断言
+  的是实际写到 MCP stdio 上的 `tools/call` 帧：删掉该字段、或改动 pid / mode / `window_id` /
+  `ax_filter` 的既有形态都会判红。手工排查真机读数时同样带 `disable_diff: true` 重观察（KimiCU
+  自己的建议也是「diff 基线失效后这样重观察」）。
 - **AX 快照可能退化**：`get_app_state` 偶尔只返回菜单栏（`truncated: [..., cycle]`）。这通常是
   KimiCU 后台服务进了坏状态，表现为**全局**退化（Finder、别的 app 一起坏）。此时全套会一起报
   「前端未就绪」，处理办法是**重注册 KimiCU 服务**（`/Applications/KimiCU.app/Contents/MacOS/kimi-cu install`），不是改场景；服务龄期 >1 天或 CPU 时间十几小时时先看一眼（`ps -Ao pid,etime,time,command | grep -i kimi-cu`），老化服务也会污染注入的修饰键状态（press_key 字母全大写而系统级修饰键读数干净）。退化的树**没有 `window_bounds`**，
@@ -1303,7 +1314,7 @@ bash scripts/acceptance/check-suite.sh
 ```
 
 它依次覆盖 JS 语法、全部场景静态校验、覆盖表一致性，以及 `lib/execute.test.mjs`、
-`lib/app.test.mjs`、`lib/evidence.test.mjs`、`coverage.test.mjs` 四组 `node:test` 自测。
+`lib/app.test.mjs`、`lib/cu.test.mjs`、`lib/evidence.test.mjs`、`coverage.test.mjs` 五组 `node:test` 自测。
 需要单文件迭代时仍可直接 `node --test <文件>`。
 
 纯 `node:test`、零新增依赖、不起真机（file 类断言与零断言兜底都不读 app / KimiCU，ctx 桩化即可）。
@@ -1324,5 +1335,11 @@ composer」「只剩 AXWebArea 焦点」两份坏态必须判失败；「编辑�
 产品 id、产物 = 别的 id 都必须红）。`evidence.test.mjs`（M745）钉证据索引头部的三态计数：
 INVALID（本次运行无效）不得并进 FAIL——拿一份「2 PASS / 1 FAIL / 1 INVALID」的输入，头部必须写
 `FAIL 1`（旧口径 `status !== "PASS"` 在这份输入上写 `FAIL 2`），跨 run 合并后的累计行同样三态；
-INVALID 为 0 时整项省略（既有小样本头部逐字不变）。四组自测经 `check-suite.sh` 进入 quick 与 docs CI；
+INVALID 为 0 时整项省略（既有小样本头部逐字不变）。`cu.test.mjs`（M751）钉 `get_app_state` 的取树
+口径：KimiCU 新版缺省回增量 diff，`CuClient.state` 每次请求都必须带 `disable_diff: true`——用例
+读的是实际写到 MCP stdio 上的 `tools/call` 帧（假 server 把 `name` / `arguments` 原样回显），
+最小调用、`window_id` / `ax_filter` 的条件写入、「连续三次读取每次都是全树」三面逐字段
+`deepEqual`（漏字段、多写、改名都红；第二、三次只回空 diff 正是要拦的形态），另有一条源码扫描
+钉住 `get_app_state` 只有 `CuClient.state` 一个发出点——新开调用点会绕过这条口径。
+五组自测经 `check-suite.sh` 进入 quick 与 docs CI；
 `scripts/migrate-harness-sessions.test.mjs` 仍是单独手跑的迁移脚本测试，不在本入口内。

@@ -159,9 +159,16 @@ export class CuClient {
     return json?.apps ?? [];
   }
 
-  /** AX 树 + 截图。mode: full | ax | image */
+  /** AX 树 + 截图。mode: full | ax | image。
+   *
+   *  `disable_diff: true` **无条件**随每次请求发出（M751）：KimiCU 新版缺省回「与上一次快照的
+   *  增量 diff」，只给 pid/mode 时第二次读取拿到空 diff——空 diff 与「真的没有节点」在文本上
+   *  无法区分，`settle` / `waitFor` 与 `ax.*` 断言会因此在空树上静默成立或静默判红。每一次
+   *  读取都要能独立断言整棵树，所以不做「第二次才补」。口径与现场见 scripts/acceptance/README.md
+   *  的「`get_app_state` 的缺省是增量 diff」条；回归测试 `cu.test.mjs` 读实际发到 MCP stdio 上的
+   *  `tools/call` 帧，删掉这个字段或改动既有参数都会判红。 */
   async state(pid, { mode = "full", windowId, axFilter } = {}) {
-    const args = { pid, mode };
+    const args = { pid, mode, disable_diff: true };
     if (windowId !== undefined) args.window_id = windowId;
     if (axFilter) args.ax_filter = axFilter;
     return this.call("get_app_state", args, { timeoutMs: 60_000 });
