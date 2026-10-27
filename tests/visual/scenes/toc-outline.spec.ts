@@ -10,8 +10,9 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //      后迁到 modeline），而整页容差 `maxDiffPixelRatio: 0.001`（1200×800 ≈ 960 px）把它整个
 //      吞掉了——`--update` 跑完 15 张基线逐字节零变化、普通模式也照样绿。也就是说：只靠既有
 //      整页场景，指示段与浮层的视觉回归没有任何机器防线（REVIEW.md 「容差吞掉真实变化」条同族）。
-//   2. **真机套件验不了缩进与精确光标**：AX 不暴露缩进，也不暴露选区；处置前的 `13-toc` 只能用
-//      派生证据间接判「光标落在标题行尾」。该场景已于 M750 退役——它的语义判据全部落在这里。
+//   2. **真机套件验不了缩进与精确光标**：AX 不暴露缩进，也不暴露选区；`13-toc` 只能用
+//      派生证据间接判「光标落在标题行尾」。该场景**保留**（M754 为它新增了长文中段跳转的
+//      选区 + 视口真机回归），本文件补的是同语义的更精确判据。
 // 因此这里补一条 chromium 场景：浮层元素级截图（只钉浮层自身，容差按元素盒算）+ 直接读
 // CodeMirror 选区（`cmTile.root.view`，与 m131 场景同款）——精确断言「跳转落点 = 标题行尾」。
 //
@@ -59,8 +60,8 @@ const LONG_DOC = Array.from({ length: 15 }, (_, index) => {
   ].join("\n");
 }).join("\n");
 
-/** 六层标题各一条：真机场景 13-toc（M750 退役）断言 H1–H6 全覆盖，判据搬到这里
- *  （原 fixture `toc-outline.md` 只到 H3、`toc-long.md` 只到 H4，都用不上）。 */
+/** 六层标题各一条：真机场景 13-toc 断言 H1–H6 全覆盖，这里补同语义的精确判据
+ *  （真机 fixture `toc-outline.md` 只到 H3、`toc-long.md` 只到 H4，都用不上）。 */
 const LEVELS_DOC = [
   "# 一级标题",
   "一级正文。",
@@ -240,8 +241,8 @@ test("浮层：层级缩进、当前段高亮、键盘导航与跳转落点", as
 });
 
 // ---------------------------------------------------------------------------
-// 真机场景 13-toc 的下沉面（2026-10-27，M750）：真机那侧只留「⌘⇧O 在 WKWebView 里被前端
-// 截获」这一步；下列语义在 chromium 上判得更精确——AX 不暴露条目缩进、也不暴露选区。
+// 13-toc 的同语义补强（2026-10-27，M750）：真机那侧保留（M754 新增了长文中段跳转的选区 +
+// 视口回归）；下列语义在 chromium 上判得更精确——AX 不暴露条目缩进、也不暴露选区。
 // ---------------------------------------------------------------------------
 
 test("鼠标点条目跳转：浮层收起、光标落在标题行尾（真机的 AXPress 路径）", async ({ page }) => {
@@ -284,8 +285,8 @@ test("H1–H6 全覆盖；frontmatter 里的 # 注释不混进大纲", async ({ 
   await expect(page.locator(".lumir-toc")).toBeHidden();
 
   // frontmatter 边界：YAML 注释行（`# 幽灵标题`）在正文里不存在，也不得成为大纲条目。
-  // 打开 fm 文档时光标落在首部（指示段因此收起——链条为空），入口走 ⌘⇧O，与退役前的
-  // 真机场景 13-toc「frontmatter 边界」一腿同形。
+  // 打开 fm 文档时光标落在首部（指示段因此收起——链条为空），入口走 ⌘⇧O，与真机场景
+  // 13-toc「frontmatter 边界」一腿同形。
   await page.locator('.ft-row[title="frontmatter.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("真标题正文。");
   await expect(page.locator(".modeline-section")).toBeHidden();

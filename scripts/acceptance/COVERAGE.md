@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：229
-- 验收项（不同 item 编号）：208
-- 分档：core 29 / full 193 / bundle 3 / evidence 4（full 批 = 全部 229 个，含其余各档）
+- 场景：230
+- 验收项（不同 item 编号）：209
+- 分档：core 29 / full 194 / bundle 3 / evidence 4（full 批 = 全部 230 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -49,6 +49,7 @@
 | 10 | `render-markdown`<br>`search-01-find`<br>`search-02-binding` | Markdown 渲染三件套：分隔线 / 代码块着色 / 引用内列表（M138）<br>文件内搜索（⌘F）：panel 出现、匹配计数、上一个/下一个导航、Esc 还原焦点<br>搜索键位可重绑（config.json 的 keys 表） | core<br>full<br>full |
 | 11 | `render-table-degrade` | 表格降级文案带上出错行号与原因（M138）/ 短行补空列不再降级（M142） | core |
 | 12 | `12-links` | 链接渲染与激活（外链 / 相对 md / 资产 / 锚点 / 不可用） | full |
+| 13 | `13-toc` | 轻量大纲：位置指示 / 浮层条目 / 键盘（↑↓ / ⌃N⌃P）与鼠标跳转 / 关闭 / 空标题与 frontmatter 边界 | full |
 | 14 | `14-tabs` | 多标签——单击即开标签 / 序号直达 / 循环切换 / 关闭确认 / 外部变更点名后台标签 | full |
 | 16 | `16-startup-restore` | 启动自动恢复 last_vault（终态与失效路径） | full |
 | 17 | `17-multi-vault-switch` | 多 vault——树头部入口的列表浮层、切到未打开过的 vault 的空态引导、切回后按会话恢复标签 | full |

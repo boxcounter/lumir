@@ -30,7 +30,7 @@ node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手�
 
 三条硬口径：
 
-- **`full` 不得被静默收窄**：`--batch full` 与不带 `--batch` 跑的是同一批场景（229 个），
+- **`full` 不得被静默收窄**：`--batch full` 与不带 `--batch` 跑的是同一批场景（230 个），
   各档都包含在内。不加 `--batch` 就是全量，这条由 `lib/batches.test.mjs` 的对账用例钉住。
 - **`bundle` 与 `requires: bundle` 一一对应**：两种错配都由 `--check` 判红。只写 `tier: bundle`
   漏写 `requires: bundle` —— 场景失去 dev flavour 下的 INVALID 保护（runner 按 `requires` 判环境，
@@ -1046,8 +1046,8 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
 - **光标/选区不可断言**：KimiCU 的 AX 输出不暴露 `AXSelectedTextRange`，因此「逐 cell 行移动」
   「kill 到 cell 尾不跨管道符」这类**光标位置**口径无法在真机断言；套件只验「序列按键后文档不被
   破坏、源码不泄漏」，精确语义由 chromium 侧视觉场景覆盖。
-  **派生证据**（2026-09-17，M148 的 `13-toc` 起；该场景于 M750 退役，判据下沉到
-  `tests/visual/scenes/toc-outline.spec.ts`，那里的视觉层直接读选区，不再需要派生证据）：
+  **派生证据**（2026-09-17，M148 的 `13-toc` 起；该场景本批**保留**——M754 为它新增了长文中段
+  跳转的选区 + 视口真机回归，视觉层的同义判据在 `tests/visual/scenes/toc-outline.spec.ts`）：
   确实必须判「跳转后光标落在哪」时，用被测功能
   自己产出的、只可能由该位置生成的字符串当判据——`13-toc` 用两条联合断言：(1) masthead 的标题链
   （口径是「光标在可见范围内取光标」，跳转后光标必在可见范围内，链条因此是光标的函数）；(2) 在
@@ -1055,7 +1055,7 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
   标题文本」联合串——该串只可能由指示段产生，文档正文里没有分隔符。写这类断言前先确认「别的位置
   会不会也产生同一个串」，并在场景正文里写清判据为什么只对目标成立。
 - **控件内的键盘游标可以顺手验**（同批实证）：WKWebView 会把 `aria-activedescendant` 指向的元素
-  带上 `(focused)` 标记（退役前的 `13-toc` 浮层条目即如此），于是「↓ 之后游标移到下一条」可以写成
+  带上 `(focused)` 标记（`13-toc` 的浮层条目即如此），于是「↓ 之后游标移到下一条」可以写成
   「同一行同时出现该条 label 与 `(focused)`」——比「面板还开着」这种恒真断言强得多。
 - **`click` / `clickInNode` 的 `target` 与断言里的匹配器不是同一套口径**（M148 实证，踩了一整轮）：
   `lib/ax.mjs` 的 `findNode` 把 `name` 直接当**裸正则源**（`new RegExp(name)`），只有 `help` 走
@@ -1398,7 +1398,7 @@ INVALID 为 0 时整项省略（既有小样本头部逐字不变）。`cu.test.
 钉住 `get_app_state` 只有 `CuClient.state` 一个发出点——新开调用点会绕过这条口径。
 `lib/batches.test.mjs`（M749）钉批次这一层的两道静默失效：`--batch` 的取值被当成 id 前缀
 （批次实际只跑 0 条或跑成全量）、`tier` 拼错 / 漏写让场景悄悄退出所属批次——用 5 条合成场景
-逐档筛一遍（`full` 必须一条不少），再用真实 229 个场景对账「每个场景恰好一个档、四档都非空、
+逐档筛一遍（`full` 必须一条不少），再用真实 230 个场景对账「每个场景恰好一个档、四档都非空、
 bundle 批与 `requires: bundle` 逐条相同」。
 六组自测经 `check-suite.sh` 进入 quick 与 docs CI；
 `scripts/migrate-harness-sessions.test.mjs` 仍是单独手跑的迁移脚本测试，不在本入口内。
