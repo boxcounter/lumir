@@ -58,8 +58,10 @@ steps:
     expect:
       - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
         ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: /etc/hosts/" }
-      - label: 直接打开行把「只读」写进动作里（vault 外、读取前判不了存在性）
-        ax: { has: "按 Enter 只读打开 /etc/hosts" }
+      - label: 直接打开行把「只读」写进动作里，且目标就是 /etc/hosts（vault 外、读取前判不了存在性；锚定整行，段边界 `\s*` 容错，见 230a 同名注释）
+        node: { name: "^按 Enter 只读打开\\s*/etc/\\s*hosts$", present: true }
+      - label: 该行的全路径通道（`title` → AX `help`）逐字是 /etc/hosts（零容差：属性不受分段空格影响）
+        ax: { has: '/help="\/etc\/hosts"/' }
   - name: Enter
     do: key
     key: enter
@@ -158,6 +160,11 @@ steps:
   composer 的聚焦用 `clickInNode`（AXPress 不建 DOM 焦点，M497 的硬知识）。
 - **`v1:2.md` 用 ⌘P 打开**：它是本组的对照标签；打开方式与路径形态一致（`notes/v1:2.md`），
   顺带让「vault 内标签恢复」的现场自带一条真实路径（含冒号的文件名在 APFS 上合法）。
+- **直接打开行的断言形态与 230a 同一条**（M755）：`/etc/hosts` 那一步判「只读」动作文本 +
+  目标路径时，改用段边界 `\s*` 容错的正则 + 锚定整行的 `node` 断言 + 全路径 `help` 属性零容差
+  判据；理由与现场见 230a 正文的同名条目。动作措辞 `只读` 本身仍是判据——vault 内路径的
+  直接行 MUST NOT 带这两个字（`按 Enter 打开` 与 `按 Enter 只读打开` 是两条不同的判决措辞，
+  D589 / D590）。
 
 ## 覆盖边界（如实登记；三组共用的边界见 230a）
 

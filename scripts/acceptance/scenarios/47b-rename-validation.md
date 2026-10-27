@@ -113,19 +113,25 @@ steps:
         file: { path: aaaren.md, exists: true }
       - shot: 撞名拒绝
 
-  - name: 忽略集名也拒绝（.git）
+  - name: 忽略集名也拒绝（.git）——前端不再预检，判定只在 Enter 之后由后端给（change ignore-tiers-config）
     do: key
     key: "cmd+a"
   - name: 输入 .git
     do: keys
     keys: [".", "g", "i", "t"]
     expect:
-      - label: 行内给出忽略集原因
-        ax: { has: "在忽略集内" }
-  - name: Enter 提交非法名（仍然拒绝）
+      - label: 输入框里是 .git（注入真的落地了——下一步的后端拒绝有输入可拒）
+        ax: { has: '/AXTextField = "\.git" /' }
+      - label: 输入阶段 MUST NOT 出现忽略集原因（spec「条目内联重命名」：前端 MUST NOT 维护第二份忽略名单，原因只在 Enter 后由后端回显）
+        ax: { not: "在忽略集内" }
+  - name: Enter 提交非法名（后端权威判定：拒绝句回显在该编辑行、保持编辑态）
     do: key
     key: "return"
     expect:
+      - label: 行内回显后端拒绝句（`fs_io` 的 `fs_name_invalid`：`{名称} 在忽略集内，建成后不会出现在文件树里`；长句在窄列里折行时 AX 会多出空白，故逐字 `\s*` 容错）
+        ax: { has: '/\.git\s*在\s*忽\s*略\s*集\s*内\s*，\s*建\s*成\s*后\s*不\s*会\s*出\s*现\s*在\s*文\s*件\s*树\s*里/' }
+      - label: 保持编辑态且提交的原名还在输入框里（后端拒绝后回填同一个名字，不是前端预检就地拦下）
+        ax: { has: '/AXTextField = "\.git" /' }
       - label: aaaren.md 仍在磁盘上（忽略集名不得改名成功）
         file: { path: aaaren.md, exists: true }
   - name: Esc 取消编辑态
@@ -155,7 +161,12 @@ teardown:
 1. **树内联重命名**：行名换成输入框（预填原名、持焦点）、提交后磁盘改名、watcher 回响收敛。
 2. **撞名被拒**：改名到既有 `note.md` 时行内给出原因（前端预检、提交前就说清），**磁盘逐字节
    不变**（MUST NOT 覆盖），原文件仍可改名。
-3. **忽略集名被拒**：`.git` 在忽略集内，行内给原因、提交后原文件仍在。
+3. **忽略集名被拒（后端权威）**：`.git` 在忽略集内。前端**不再预检**它——change
+   `ignore-tiers-config` 退役了第二份忽略名单（`hidden` / `lazy` 两档可由用户在 `config.json`
+   改，前端再抄一份必然漂移），判定只由后端 `fs_io::IgnorePolicy::validate_new_name` 在**提交时**
+   做；后端返回 `fs_name_invalid` 时其原因句回显在该编辑行、保持编辑态（spec「条目内联重命名」）。
+   因此本组在**输入阶段**判「没有原因」，在 **Enter 后**判「后端拒绝句 + 输入框里保留提交的原名 +
+   磁盘不变」。
 4. **Esc 退出编辑态**：负向断言写成 `ax: { not: "AXTextField" }`——浮层输入框是全应用唯一的
    `AXTextField`，常态不该有它（旧写法断言读屏名不在，而那条名字在真机通道上从来没渲染过，
    等于恒真）。
@@ -170,6 +181,7 @@ teardown:
 |---|---|---|
 | 内联编辑的输入框起来了 | **`/AXTextField = "<原名>" /` + `focused: AXTextField`** | 读屏名那条在真机通道上不可达（见「已知边界」1）；预填值就是读屏名里 `{名称}` 那一段，获焦则钉住「下一步的按键落进它」——两条一起给的是同一个信息，且「哪一行起来的」由值钉死 |
 | 改名 / 拒绝的结果 | **磁盘事实**（`file.exists` / `has`）+ **AX 树** | 命令返回值读不到（套件没有 IPC 读数通道）；磁盘是名实相符的最终判据 |
+| 忽略集名的拒绝（后端权威） | **输入阶段 `not` + Enter 后的后端原因句 + 输入框里保留提交名 + 磁盘不变** | 前端判定已随 change `ignore-tiers-config` 退役（spec「条目内联重命名」），原因句只可能来自后端 `fs_name_invalid`；「原因句回显在编辑行且保持编辑态」是 spec 的 SHALL，磁盘不变是最终判据 |
 | watcher 回响收敛 | **`do: waitFor`** + 树行断言 | 改名 = `deleted:old` + `created:new`；Enter 后的立即读会抢在回响之前（见正文「已知边界」2） |
 
 ## 已知边界（如实登记）
