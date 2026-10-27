@@ -469,16 +469,23 @@ test("读回拦截：M753 形状被吞时零 dispatch、文档逐字节不变（
 });
 
 test("M753 回归：单项有序列表行末 Enter + 各形状重复 marker 读回，文档只留字面下一序号", () => {
-  // 用户现场：第一行「1. xxxxxxx」行末 Enter。期望第二行只有「2. 」，任何形状的
-  // 重复 marker 读回都不得把它变成「2. 3.」「3. 」或「2.3.」。
+  // 用户现场（tower 转达 Alex 的更正）：第一行「1. xxxxxxx」行末 Enter。期望第二行只有
+  // 「2. 」，任何形状的重复 marker 读回都不得把它变成「2. 3. 」/「3. 」/「2.3. 」。
   const continued = pressEnterAtEnd("1. xxxxxxx");
   assert.equal(continued.doc, "1. xxxxxxx\n2. ", "续行只出一个新序号");
   const state = EditorState.create({ doc: continued.doc, extensions: MD });
   const markerFrom = continued.doc.indexOf("2. ");
+  const at = continued.doc.length;
+  // 一正：先证明「放行这条读回」确实产生 Alex 现场的「2. 3. 」——否则下面「吞掉了」
+  // 是在一个造不出缺陷的输入上空转（REVIEW.md「假绿」条）。
+  const leaked = state.update({ changes: { from: at, to: at, insert: "3. " } }).state.doc.toString();
+  assert.equal(leaked, "1. xxxxxxx\n2. 3. ", "读回若放行 = 现场形态「2. 3. 」");
+  // 一反：各形状都必须被判重复（inputHandler 吞掉 ⇒ 文档停在续行后的形态）。
   const shapes: Array<[label: string, from: number, to: number, text: string]> = [
-    ["内容起点纯插入", continued.doc.length, continued.doc.length, "3. "],
-    ["marker 区内插入", markerFrom + 2, markerFrom + 2, "3. "],
-    ["覆盖 marker 区的替换", markerFrom, continued.doc.length, "3. "],
+    ["内容起点纯插入（产生「2. 3. 」）", at, at, "3. "],
+    ["marker 区内插入（产生「2.3. 」）", markerFrom + 2, markerFrom + 2, "3. "],
+    ["覆盖 marker 区的替换（产生「2. 3. 」）", markerFrom, at, "2. 3. "],
+    ["覆盖 marker 区的替换（产生「3. 」）", markerFrom, at, "3. "],
   ];
   for (const [label, from, to, text] of shapes) {
     assert.equal(isDuplicateMarkerInsertion(state.doc, from, to, text), true, `${label}：应判重复`);
