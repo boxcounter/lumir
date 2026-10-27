@@ -75,6 +75,7 @@ import {
   createVaultSwitcher,
   createVaultSwitchGate,
   samePath,
+  vaultGuardText,
   vaultRemovedText,
 } from "./vault-switcher";
 import type { VaultSwitcherHandle } from "./vault-switcher";
@@ -3086,16 +3087,25 @@ type CronRunPayload = RunSpecPayload & {
 };
 
 /** 确保目标 vault 已打开（无人值守运行不切换 vault，点击运行是显式意图）：走既有切换链路
- *  `switchToVault`（内部的 `vaultOpenPath` + 唯一装载实现 `applyVault`，含 dirty 前置门）——
- *  本文件不出现第二条打开 / 装配通道。被 dirty 门拦下时 `loadedRoot` 不会变，按失败回执。 */
+ *  `switchToVault`（内部的 `vaultOpenPath` + 唯一装载实现 `applyVault`）。
+ *
+ *  三条判据都在这里：
+ *   - 同一 vault（`samePath`，与切换链路同一份路径对比）直接返回：不重装树、不作废标签，
+ *     当前 TAB 状态原样保留；
+ *   - 有未保存修改时**不切换**：`applyVault` 会 `editor.reset()` 掉全部标签，而点击通知是
+ *     无人值守意图，不能拿用户的未保存内容当代价。判据与提示复用既有守卫
+ *     （`vaultSwitchBlock` + D109 文案），本文件不写第二份；
+ *   - 切换之后**不再复判**：`harness_cron_run` 按 canonicalize 判「目标 vault 是否当前 vault」，
+ *     那是这条判定的单一真源（REVIEW.md「同一语义两处真源」条）。前端拿配置原值再判一次，
+ *     会在尾斜杠 / 软链下把一次成功的切换判成失败——配置里存的是绝对路径原值，而 vault 根是
+ *     后端规范化后的路径。 */
 async function ensureCronVault(root: string): Promise<void> {
-  if (loadedRoot === root) return;
-  await switchToVault(root);
-  if (loadedRoot !== root) {
-    // 复用既有错误码的上屏文案（D159「尚未打开 vault，请先选择目录」）——本文件不新增
-    // 中文串字面量（tests/unit/copy.test.ts 的迁移门禁），也不另立第二份文案表。
-    throw { code: "vault_not_open", message: "", params: {} };
+  if (loadedRoot !== undefined && samePath(loadedRoot, root)) return;
+  const blocked = save.vaultSwitchBlock();
+  if (blocked !== null) {
+    throw new Error(vaultGuardText(vaultName, blocked.dirtyCount));
   }
+  await switchToVault(root);
 }
 
 /** `cron:run` 处理器：点击发起 → 交互槽位（用户看得见）；定时 / 拉取 → 运行槽位（独立

@@ -100,3 +100,104 @@ test("done 收尾：cron 切屏态下按后端快照重载（专用会话历史�
   const doneBody = PANEL_SOURCE.slice(doneStart, doneEnd);
   assert.match(doneBody, /if \(cronRunAdopted\) reloadSession\(\);/, "done 后必须按 cronRunAdopted 重载快照");
 });
+
+// ── 目标 vault 的打开交接（M752：点击通知没进目标 vault 的通用根因） ──────────
+//
+// 这一层判的是「点击运行前的 vault 交接」的三条不变量。判据是源码里的**判据与顺序**，
+// 不是返回值（`ensureCronVault` 依赖整个装配层，零 DOM 单测跑不起来，理由同文件头）。
+// 每条都配一份「旧实现形态」的反向样本先证判据有区分度（REVIEW.md「断言等价于子串」
+// 条：没有区分度的断言写上去就是假绿）。
+
+const ENSURE_CRON_VAULT = functionBodyOf(MAIN_SOURCE, "ensureCronVault");
+
+/** 切换**之后**再判一次「打开成功了吗」的形态。判据只看 `switchToVault(` 之后的部分：
+ *  切换前的前置判定不在这个判据里。 */
+function reJudgesVaultOpenAfterSwitch(body: string): boolean {
+  const switched = body.indexOf("switchToVault(");
+  assert.notEqual(switched, -1, "ensureCronVault 必须仍走 switchToVault（既有唯一切换链路）");
+  const after = body.slice(switched + "switchToVault(".length);
+  return /loadedRoot\s*!==\s*root/.test(after) || /code:\s*"vault_not_open"/.test(after);
+}
+
+/** 切换前是否先过 dirty 前置门（`vaultSwitchBlock()` 的调用排在 `switchToVault(` 之前）。 */
+function gatesOnDirtyBeforeSwitch(body: string): boolean {
+  const gate = body.indexOf("vaultSwitchBlock()");
+  const switched = body.indexOf("switchToVault(");
+  return gate !== -1 && switched !== -1 && gate < switched;
+}
+
+/** 旧实现的形态（M752 之前的 `ensureCronVault`）：raw 字符串前置判 + 切完再判一次。
+ *  两份反向样本是上面两个判据的**区分度证明**——判据认不出它们，就没有资格判真实现。 */
+const LEGACY_ENSURE_VAULT = `
+async function ensureCronVault(root: string): Promise<void> {
+  if (loadedRoot === root) return;
+  await switchToVault(root);
+  if (loadedRoot !== root) {
+    throw { code: "vault_not_open", message: "", params: {} };
+  }
+}`;
+
+test("ensureCronVault 的判据有区分度：反向样本（旧实现）必须被判红", () => {
+  assert.equal(
+    reJudgesVaultOpenAfterSwitch(LEGACY_ENSURE_VAULT),
+    true,
+    "「切换后再判一次」的判据认不出旧实现的形态——这条断言没有区分度，等于没判",
+  );
+  assert.equal(
+    gatesOnDirtyBeforeSwitch(LEGACY_ENSURE_VAULT),
+    false,
+    "dirty 门的判据认不出旧实现的形态——这条断言没有区分度，等于没判",
+  );
+});
+
+test("ensureCronVault：切换成功后不再由前端复判「vault 是否已打开」（后端是这条判定的单一真源）", () => {
+  assert.equal(
+    reJudgesVaultOpenAfterSwitch(ENSURE_CRON_VAULT),
+    false,
+    "切换后 MUST NOT 再用配置原值判一次：`harness_cron_run` 已按 canonicalize 判同一件事，" +
+      "前端拿未经规范化的绝对路径比较会在 symlink / 尾斜杠下把一次成功的切换判成失败" +
+      "（REVIEW.md「同一语义两处真源」条）",
+  );
+});
+
+test("ensureCronVault：有未保存修改时不切换 vault（点击不得拿用户的未保存内容当代价）", () => {
+  assert.equal(
+    gatesOnDirtyBeforeSwitch(ENSURE_CRON_VAULT),
+    true,
+    "切换会 editor.reset() 掉全部标签：必须先过既有守卫判据 save.vaultSwitchBlock()，且拦下时不得切换",
+  );
+  assert.match(
+    ENSURE_CRON_VAULT,
+    /vaultGuardText\(vaultName, [^)]*dirtyCount\)/,
+    "拦下的理由要复用既有 D109 文案（点名当前 vault 与脏标签数）——不新增第二份文案",
+  );
+});
+
+test("ensureCronVault：同一 vault 的判据与切换链路同源（samePath，容忍尾斜杠），且命中即返回（标签状态原样保留）", () => {
+  assert.match(
+    ENSURE_CRON_VAULT,
+    /samePath\(loadedRoot, root\)/,
+    "同 vault 的判定必须走同一份路径对比（samePath），MUST NOT 用 `===` 比配置原值：尾斜杠 / 软链下会误判成「另一个 vault」",
+  );
+  assert.equal(
+    /loadedRoot === root/.test(ENSURE_CRON_VAULT),
+    false,
+    "`===` 判据已废止（见上一条）",
+  );
+  const sameVault = ENSURE_CRON_VAULT.search(/samePath\(loadedRoot, root\)\)?\s*return/);
+  const switched = ENSURE_CRON_VAULT.search(/await switchToVault\(/);
+  assert.ok(
+    sameVault !== -1 && switched !== -1 && sameVault < switched,
+    "同一 vault 必须提前返回：走到切换链路会重装树并作废全部标签（当前 TAB 状态必须原样保留）",
+  );
+});
+
+test("handleCronRun：先完成目标 vault 的交接再切面板屏（面板切屏属于已打开 vault 之内的事）", () => {
+  const vault = HANDLE_CRON_RUN.search(/await ensureCronVault\(/);
+  const adopt = HANDLE_CRON_RUN.search(/harnessPanel\.beginCronRun\(/);
+  assert.notEqual(vault, -1, "handleCronRun 必须经 ensureCronVault 完成 vault 交接");
+  assert.ok(
+    vault < adopt,
+    "vault 交接必须排在 beginCronRun 之前：切 vault 会重载面板的 vault 作用域，先切屏再换 vault 会把这次运行的渲染面丢掉",
+  );
+});

@@ -11,6 +11,8 @@
 //! - [`handoff`]：运行交接载荷（`RunSpec` + 任务载荷）的**唯一**合成点（change
 //!   add-harness-subagents design §2.4）。同样纯函数——定时派发与点击发起共用它，接线层只把
 //!   结果 emit 出去。
+//! - [`plan_click`]：点击通知的落点（`Defer` / `Run` / `OpenSession` / `FocusOnly` / `Reject`）
+//!   的唯一判定点（M752）。纯函数——接线层只执行，不再自行判「桥是否就绪 / 今日是否点过」。
 //! - [`DeliveryRetry`]：投递失败后的重试节奏（M637）。纯状态机——指数退避与当日失败上限都在
 //!   这里，时刻由调用方注入；重试动作与日志策略在接线层（`lib.rs`）。
 //! - `at` / `days` 解析与本地时间换算（[`chrono::Local`]；判定接受**注入**的 [`LocalNow`]，
@@ -310,6 +312,90 @@ pub fn plan(input: &PlanInput) -> Plan {
                 Some(_) => Plan::Handoff,
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 点击通知的落点（判定与副作用的分离点，M752）
+// ---------------------------------------------------------------------------
+
+/// 点击通知后该落到哪（副作用在执行层 `lib.rs::CronRunner`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClickPlan {
+    /// 前端接线层未就绪：**保留**这次点击，就绪后再执行。通知一经点掉，系统不会再给第二次
+    /// 点击，这里丢弃等于把「点击即意图」丢掉（M752）。
+    Defer,
+    /// 在交互会话槽位发起运行。
+    Run,
+    /// 已有该任务的会话：只打开它，不重复运行（重复点击幂等）。
+    OpenSession(String),
+    /// 首次点击发起的运行还没有回执：只聚焦窗口，不产生第二次运行。
+    FocusOnly,
+    /// 无法落地（`run-then-notify` 没有可恢复的会话 / `silent-run` 没有通知可点）。
+    Reject(&'static str),
+}
+
+/// [`plan_click`] 的输入：点击那一刻的全部运行时事实（全部注入，不读全局状态）。
+pub struct ClickInput<'a> {
+    pub delivery: DeliveryPolicy,
+    /// 前端接线层是否已就绪（`cron:run` 监听器已在场）：未就绪时 `app.emit` 返回 Ok 但事件
+    /// 无人接收，任何点击都不能当成已落地。
+    pub bridge_ready: bool,
+    /// 今日是否已有点击记录；`Some(None)` = 有记录但那次运行的回执还没带回会话 id。
+    pub clicked_today: Option<Option<&'a str>>,
+    /// 去重状态里的会话 id，且该会话是**今天**开始的：进程重启后 `clicked_today` 会丢，
+    /// 用它补「今天已经跑过」这一道判据。
+    pub state_session_today: Option<&'a str>,
+    /// 去重状态里的会话 id（`run-then-notify` 的结果通知点击用它恢复会话）。
+    pub state_session: Option<&'a str>,
+}
+
+/// 点击的落点判定：纯函数，接线层只执行。
+///
+/// 规则（design §4.5 / §4.6 / §5.1 / §5.2）：
+/// 1. 接线层未就绪 ⇒ `Defer`（保留点击，就绪后重放；不落失败诊断、不插点击去重）；
+/// 2. `notify-then-run`：今日已点击过 ⇒ 有会话就打开、回执未到就只聚焦；否则去重状态里
+///    今日开始的会话 ⇒ 打开；都没有 ⇒ 发起运行；
+/// 3. `run-then-notify`：有会话 ⇒ 打开，没有 ⇒ 拒绝（`session_missing`）；
+/// 4. `silent-run`：没有通知可点 ⇒ 拒绝（`no_notification`）。
+pub fn plan_click(input: &ClickInput<'_>) -> ClickPlan {
+    if !input.bridge_ready {
+        return ClickPlan::Defer;
+    }
+    match input.delivery {
+        DeliveryPolicy::NotifyThenRun => {
+            if let Some(clicked) = input.clicked_today {
+                return match clicked {
+                    Some(session_id) => ClickPlan::OpenSession(session_id.to_string()),
+                    None => ClickPlan::FocusOnly,
+                };
+            }
+            if let Some(session_id) = input.state_session_today {
+                return ClickPlan::OpenSession(session_id.to_string());
+            }
+            ClickPlan::Run
+        }
+        DeliveryPolicy::RunThenNotify => match input.state_session {
+            Some(session_id) => ClickPlan::OpenSession(session_id.to_string()),
+            None => ClickPlan::Reject("session_missing"),
+        },
+        DeliveryPolicy::SilentRun => ClickPlan::Reject("no_notification"),
+    }
+}
+
+/// 接线层未就绪期间被保留的点击（最多一条）：通知点掉后系统不会再给一次点击，丢弃等于把
+/// 用户意图丢掉；后到的点击覆盖先到的（用户点的永远是最后那条）。
+#[derive(Debug, Default)]
+pub struct DeferredClick(Option<String>);
+
+impl DeferredClick {
+    pub fn defer(&mut self, task: &str) {
+        self.0 = Some(task.to_string());
+    }
+
+    /// 取走待执行的点击（一次性：重放之后不再保留）。
+    pub fn take(&mut self) -> Option<String> {
+        self.0.take()
     }
 }
 
@@ -2575,5 +2661,132 @@ mod tests {
             },
             "跨日后的第一次失败按新的一天重新计数"
         );
+    }
+
+    // ── 点击通知的落点（M752） ─────────────────────────────────────────────
+    //
+    // 这四条形状是真实的现场来源：①冷启动期点掉通知（接线层还没装好）、②同一通知点两次、
+    // ③进程重启后点昨天的通知、④`run-then-notify` / `silent-run` 的点击落点。
+
+    fn click_input<'a>(delivery: DeliveryPolicy) -> ClickInput<'a> {
+        ClickInput {
+            delivery,
+            bridge_ready: true,
+            clicked_today: None,
+            state_session_today: None,
+            state_session: None,
+        }
+    }
+
+    #[test]
+    fn click_defers_while_the_bridge_is_not_ready() {
+        for delivery in [
+            DeliveryPolicy::NotifyThenRun,
+            DeliveryPolicy::RunThenNotify,
+            DeliveryPolicy::SilentRun,
+        ] {
+            let input = ClickInput {
+                bridge_ready: false,
+                ..click_input(delivery)
+            };
+            assert_eq!(
+                plan_click(&input),
+                ClickPlan::Defer,
+                "{delivery:?}：接线层未就绪时点击必须保留（通知点掉就没有第二次机会），不得按失败落地"
+            );
+        }
+    }
+
+    #[test]
+    fn first_click_runs_and_repeat_click_only_opens() {
+        let input = click_input(DeliveryPolicy::NotifyThenRun);
+        assert_eq!(plan_click(&input), ClickPlan::Run, "首次点击 = 发起运行");
+
+        let running = ClickInput {
+            clicked_today: Some(None),
+            ..click_input(DeliveryPolicy::NotifyThenRun)
+        };
+        assert_eq!(
+            plan_click(&running),
+            ClickPlan::FocusOnly,
+            "首次运行还没回执：只聚焦，不得起第二次运行"
+        );
+
+        let done = ClickInput {
+            clicked_today: Some(Some("s-today")),
+            ..click_input(DeliveryPolicy::NotifyThenRun)
+        };
+        assert_eq!(
+            plan_click(&done),
+            ClickPlan::OpenSession("s-today".to_string()),
+            "今日已跑过：只打开那次会话"
+        );
+    }
+
+    #[test]
+    fn yesterday_session_does_not_suppress_todays_run() {
+        // 进程重启丢了 `clicked_today`：今日开始的会话才作「今天已跑过」的判据。
+        let input = ClickInput {
+            state_session_today: None,
+            state_session: Some("s-yesterday"),
+            ..click_input(DeliveryPolicy::NotifyThenRun)
+        };
+        assert_eq!(
+            plan_click(&input),
+            ClickPlan::Run,
+            "去重状态里的会话属于昨天 ⇒ 今天照常发起运行（跨日重新允许）"
+        );
+
+        let today = ClickInput {
+            state_session_today: Some("s-today"),
+            state_session: Some("s-today"),
+            ..click_input(DeliveryPolicy::NotifyThenRun)
+        };
+        assert_eq!(
+            plan_click(&today),
+            ClickPlan::OpenSession("s-today".to_string()),
+            "今日已跑过（进程重启后靠去重状态补判）：只打开，不重复运行"
+        );
+    }
+
+    #[test]
+    fn result_and_silent_notifications_land_on_their_own_actions() {
+        let result = ClickInput {
+            state_session: Some("s-run"),
+            ..click_input(DeliveryPolicy::RunThenNotify)
+        };
+        assert_eq!(
+            plan_click(&result),
+            ClickPlan::OpenSession("s-run".to_string()),
+            "结果通知点击：恢复该次运行的会话，不重新运行"
+        );
+
+        let missing = click_input(DeliveryPolicy::RunThenNotify);
+        assert_eq!(
+            plan_click(&missing),
+            ClickPlan::Reject("session_missing"),
+            "没有可恢复的会话 ⇒ 拒绝并给人话反馈"
+        );
+
+        let silent = click_input(DeliveryPolicy::SilentRun);
+        assert_eq!(
+            plan_click(&silent),
+            ClickPlan::Reject("no_notification"),
+            "silent-run 没有通知可点"
+        );
+    }
+
+    #[test]
+    fn deferred_click_keeps_only_the_latest_and_is_one_shot() {
+        let mut deferred = DeferredClick::default();
+        assert_eq!(deferred.take(), None);
+        deferred.defer("first");
+        deferred.defer("second");
+        assert_eq!(
+            deferred.take().as_deref(),
+            Some("second"),
+            "后到的点击覆盖先到的：用户点的永远是最后那条"
+        );
+        assert_eq!(deferred.take(), None, "重放是一次性的，不得重复执行");
     }
 }
