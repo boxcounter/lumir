@@ -1,6 +1,7 @@
 ---
 id: "226-vault-remove"
 item: 226
+tier: full
 title: vault 列表移除（M646）：当前项无移除入口 / 行内两步确认 / 只删注册表项 / 8s 撤销
 fixtures: [tabs-a.md]
 seed:

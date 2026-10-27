@@ -1,6 +1,7 @@
 ---
 id: "223-harness-block-fullscreen"
 item: 223
+tier: full
 title: harness 面板里的代码块与表格全屏：hover 钮打开遮罩、内容只含该块、Esc 退出、焦点回到面板
 open: harness-note.md
 marker: "HNL-ALPHA"

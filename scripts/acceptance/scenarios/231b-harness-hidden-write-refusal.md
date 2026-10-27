@@ -13,6 +13,7 @@
 # 说明工具调用确实执行到了写入口并返回，而不是卡在批准闸上。
 id: "231b-harness-hidden-write-refusal"
 item: 231
+tier: full
 title: hidden 档写入口拒绝（M656 前提）：vault_patch 指名 .git/config 被 fs_name_invalid 拒绝且文件逐字节不变（mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

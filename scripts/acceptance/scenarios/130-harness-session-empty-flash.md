@@ -6,6 +6,7 @@
 # 本场景预置的正是这个现场（既有 106/124 都预置/产生新布局会话，清单恒非空 ⇒ 结构性看不见它）。
 id: "130-harness-session-empty-flash"
 item: 130
+tier: full
 title: 会话浮层空态不闪现（M442）：vault 只有旧布局平铺留存时点会话名钮不揭示浮层、给可感知反馈
 open: harness-note.md
 marker: "HNL-ALPHA"

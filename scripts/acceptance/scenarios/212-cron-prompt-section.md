@@ -1,6 +1,7 @@
 ---
 id: "212-cron-prompt-section"
 item: 212
+tier: full
 title: 提示词段在场：新会话的 system 含「定时任务」段、session_open.assembly 有 cron_reference 条目（tasks §8.6）
 open: harness-note.md
 marker: "HNL-ALPHA"

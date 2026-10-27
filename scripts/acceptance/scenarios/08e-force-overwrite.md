@@ -1,6 +1,7 @@
 ---
 id: "08e-force-overwrite"
 item: 8
+tier: full
 title: 强制覆盖——二次确认，以及覆盖后再次冲突仍给同一组动作
 fixtures: [plain.md]
 open: plain.md

@@ -1,6 +1,7 @@
 ---
 id: "34-restyle-theme-skeleton"
 item: 34
+tier: core
 title: restyle 收尾：ui.theme=eink 经配置通道生效、骨架几何与信息落位在场、masthead 指纹不在场、验收 vault 文件哈希不变
 fixtures: [keys.md]
 open: keys.md

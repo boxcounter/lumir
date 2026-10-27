@@ -1,6 +1,7 @@
 ---
 id: "55-ui-language-switch"
 item: 55
+tier: full
 title: 界面语言运行期切换：⌘⇧L 切到 en、chrome 文案上屏英文、写回 config.json、重启后首帧即配置语言
 fixtures: [ui-language.md]
 open: ui-language.md

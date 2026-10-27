@@ -1,6 +1,7 @@
 ---
 id: "46-dotfile-jsonc-highlight"
 item: 46
+tier: full
 title: dotfile 与 JSONC 高亮——.gitignore / .gitattributes / x.jsonc 逐字节回读与语言登记，.secret 对照组仍纯文本；三类可编辑（编辑 → 回读 → ⌘S 落盘）
 fixtures: [.gitignore, .gitattributes, x.jsonc, .secret]
 steps:

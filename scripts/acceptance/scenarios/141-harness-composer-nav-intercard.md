@@ -15,6 +15,7 @@
 # 完整归因与修法方向见 backlog「待修 findings」的「菜单 Paste 之后注入不落地」条与 README 的「原生剪贴板命令」已知边界。
 id: "141-harness-composer-nav-intercard"
 item: 141
+tier: full
 title: composer 相邻卡片：⌃B 一步跨过 → 探针落在两卡之前（M447）
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "70-harness-context-chip"
 item: 70
+tier: full
 title: Harness ① 上下文 chip：视口口径（选区不再自动注入）+ 随消息注入路径与视口行号（不含原文）
 open: harness-note.md
 marker: "HNL-ALPHA"

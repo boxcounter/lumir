@@ -1,6 +1,7 @@
 ---
 id: "87-harness-ctx-warn"
 item: 87
+tier: full
 title: ctx% 越警示阈值：读数高亮 + hover 读数浮出警示说明（ⓘ 钮已随 M370 移除）
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "104-harness-thinking-tool-order"
 item: 104
+tier: full
 title: 思考块与工具行的到达序：think→tool→think 交错按真实时序呈现（M383）
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "202-subagent-busy-merge"
 item: "8.20"
+tier: full
 title: 子代理 8.20 忙时合并：两个后台结果只起一个自动回合
 open: harness-note.md
 marker: "HNL-ALPHA"

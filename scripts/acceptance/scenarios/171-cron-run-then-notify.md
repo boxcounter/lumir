@@ -1,6 +1,7 @@
 ---
 id: "171-cron-run-then-notify"
 item: 171
+tier: bundle
 title: run-then-notify：到点静默运行、终态后投递结果通知、点击结果通知恢复会话（§7.3）
 # 同 170：点击结果通知恢复会话只能在打包实例上判（dev flavour 的点击响应路由到 Terminal）。
 requires: bundle

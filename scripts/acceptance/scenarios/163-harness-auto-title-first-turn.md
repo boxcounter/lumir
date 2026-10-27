@@ -1,6 +1,7 @@
 ---
 id: "163-harness-auto-title-first-turn"
 item: 163
+tier: full
 title: 会话自动命名①：首轮完成后生成标题（标题栏 + 历史浮层行名 + JSONL decision=initial）
 open: harness-note.md
 marker: "HNL-ALPHA"

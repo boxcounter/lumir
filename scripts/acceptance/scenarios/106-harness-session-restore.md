@@ -1,6 +1,7 @@
 ---
 id: "106-harness-session-restore"
 item: 106
+tier: core
 title: 会话恢复：会话浮层选择器列出历史会话 → 选中恢复续聊 → 新会话 JSONL 的 system/input 与原会话衔接
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "59-enter-auto-indent"
 item: 59
+tier: full
 title: Enter 换行自动缩进的真机链路——code 模式继承语法缩进、无缩进规则的语言沿用当前行、md 围栏内沿用当前行且不续列表标记、md 列表续行不变、auto_indent=false 回退
 fixtures: [enter-indent.js, enter-indent-off.js, enter-indent.toml, enter-indent.md, enter-indent-list.md, enter-indent-fence.md]
 open: enter-indent.js

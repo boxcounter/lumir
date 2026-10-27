@@ -8,6 +8,7 @@
 # mock 档不发网络请求、逐字节确定（同 127/134 的取向）。
 id: "137-harness-draft-send-clear"
 item: 137
+tier: full
 title: composer 草稿：发送成功后清除（草稿文件被删除、输入区清空）
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "92-harness-new-session-idempotent"
 item: 92
+tier: full
 title: 新建会话幂等（M350）：空会话态连点「新会话」×3 不报错、视图保持空态
 open: harness-note.md
 marker: "HNL-ALPHA"

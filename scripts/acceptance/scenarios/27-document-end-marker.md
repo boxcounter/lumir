@@ -1,6 +1,7 @@
 ---
 id: "27-document-end-marker"
 item: 27
+tier: full
 title: 正文末尾的结束标记（文档超过一屏时显示、装得下时不显示）
 fixtures: [end-marker-long.md, end-marker-short.md]
 open: end-marker-long.md

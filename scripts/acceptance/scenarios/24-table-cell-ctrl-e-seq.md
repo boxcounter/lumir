@@ -1,6 +1,7 @@
 ---
 id: "24-table-cell-ctrl-e-seq"
 item: 24
+tier: full
 title: 表格 cell 内 ⌃E→⌃F→⌃E 序列不把光标送回上一个 cell（M185）
 fixtures: [table.md]
 open: table.md

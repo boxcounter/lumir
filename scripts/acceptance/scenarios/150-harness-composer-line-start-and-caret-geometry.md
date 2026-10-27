@@ -22,6 +22,7 @@
 # 「引擎层判不了」的两条（caret 几何、beforeinput 派发）登记在 backlog「待修 findings」的 M457 WebKit 探针条与 finding。
 id: "150-harness-composer-line-start-and-caret-geometry"
 item: 150
+tier: full
 title: composer 卡片后空行：⌃B 落前一行行末 + ⌃A 回行首（M457）
 open: harness-note.md
 marker: "HNL-ALPHA"

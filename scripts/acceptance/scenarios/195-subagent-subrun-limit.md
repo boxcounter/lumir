@@ -1,6 +1,7 @@
 ---
 id: "195-subagent-subrun-limit"
 item: "8.12"
+tier: full
 title: 子代理 8.12 次数闸：max_subruns_per_turn=1 时第二个委派被拒
 open: harness-note.md
 marker: "HNL-ALPHA"

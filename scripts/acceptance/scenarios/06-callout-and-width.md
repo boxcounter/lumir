@@ -1,6 +1,7 @@
 ---
 id: "06-callout-and-width"
 item: 6
+tier: full
 title: Callout 光标行源码显露 / cell 内 $$y$$ / 表格宽度证据
 fixtures: [callout.md, table.md]
 open: callout.md

@@ -19,6 +19,7 @@
 # 2.13 档的几何判据在 chromium 结构矩阵里，真机手感归 Alex）。
 id: "232-harness-ctxpop-width"
 item: 702
+tier: full
 title: Context 气泡：长读数 hover 翻出、三段内容齐全且确实绘制（P 档 34em 上限；宽度数字归 chromium 矩阵）
 open: harness-note.md
 marker: "HNL-ALPHA"

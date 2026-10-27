@@ -7,6 +7,7 @@
 # 归位（存量平铺文件搬进 vault 目录）由一次性脚本负责，见场景 125（本场景不预置存量）。
 id: "124-harness-sessions-per-vault"
 item: 124
+tier: full
 title: 会话留存按 vault 分目录：两 vault 各落各目录（目录名 = 注册表 id），浮层只见当前 vault 的会话，根下零平铺
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "61-block-copy"
 item: 61
+tier: full
 title: 块级复制：表格复制含表头分隔行的源码、代码块复制纯内容（围栏行与语法缩进都不在结果里）、降级表与 code 模式不命中不消费、不改写源文件
 fixtures: [block-copy.md, block-copy.txt]
 open: block-copy.md

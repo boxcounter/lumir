@@ -1,6 +1,7 @@
 ---
 id: "158-ordered-list-enter-no-duplicate-marker"
 item: 158
+tier: full
 title: 有序列表行末 Enter 单 marker（M529）——真实列表项续行只出一个新序号、无「2. 3.」重复形态
 steps:
   # 判据与覆盖边界写在 front-matter 之后的正文里（本场景在验什么 / 断言口径 / 已知边界）。

@@ -1,6 +1,7 @@
 ---
 id: "69-tab-reveal-in-tree"
 item: 69
+tier: full
 title: TAB 右键菜单定位项（需求原话「在左栏中定位到此文件」，上屏 Reveal in File Tree）——展开祖先、目标行现身（真实 WKWebView + 真实右键通道）
 fixtures: [plain.md]
 steps:

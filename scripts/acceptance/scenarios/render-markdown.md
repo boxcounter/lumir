@@ -1,6 +1,7 @@
 ---
 id: "render-markdown"
 item: 10
+tier: core
 title: Markdown 渲染三件套：分隔线 / 代码块着色 / 引用内列表（M138）
 fixtures: [render-markdown.md]
 open: render-markdown.md

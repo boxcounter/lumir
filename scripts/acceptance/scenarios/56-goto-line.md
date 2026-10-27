@@ -1,6 +1,7 @@
 ---
 id: "56-goto-line"
 item: 56
+tier: full
 title: 跳转到行命令的真机链路——⌥G 打开输入条（预填当前行号 + `共 M 行`）、行号列随输入条出现并在收起后隐藏（`on-demand` 默认档）、Enter 落到目标行（落点由 modeline 指示段与预填值双证）、越界静默钳到末行、取消不动光标与文档、[keys] 重绑通道
 fixtures: [goto-line-long.md]
 open: goto-line-long.md

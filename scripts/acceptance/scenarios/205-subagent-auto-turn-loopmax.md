@@ -1,6 +1,7 @@
 ---
 id: "205-subagent-auto-turn-loopmax"
 item: "8.22"
+tier: full
 title: 子代理 8.22 自动回合内触顶 loop_max：按既有提示结束、链计数不变
 open: harness-note.md
 marker: "HNL-ALPHA"

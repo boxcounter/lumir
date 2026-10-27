@@ -1,6 +1,7 @@
 ---
 id: "236-keybindings-capture"
 item: 236
+tier: full
 title: 键位速查——按键捕获（Home → 真实 when 绑定、被捕获的键不执行命令、⌃G 例外、无绑定空态）
 fixtures: [plain.md]
 open: plain.md

@@ -1,6 +1,7 @@
 ---
 id: "114-paste-text-regression"
 item: 114
+tier: core
 title: 文本粘贴回归（剪贴板无图片时拦截层 MUST NOT 消费事件）
 steps:
   - name: 造笔记并打开

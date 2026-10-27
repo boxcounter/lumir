@@ -6,12 +6,44 @@
 ## 一条命令跑完
 
 ```bash
-node scripts/acceptance/run.mjs              # 全部场景
+node scripts/acceptance/run.mjs              # 全部场景（= --batch full）
+node scripts/acceptance/run.mjs --batch core # 核心批：每批合并后、Alex 验收前跑这一档
 node scripts/acceptance/run.mjs 01 08        # 按 id 前缀 / item 项号筛选
-node scripts/acceptance/run.mjs --list       # 列出场景
+node scripts/acceptance/run.mjs --list       # 列出场景（加 --batch 看该批有哪些、各档多少条）
 node scripts/acceptance/run.mjs --check      # 静态校验场景（不真机，秒级；挡 key 拼错/断言形态错）
 node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手看现场
 ```
+
+### 批次（tier）：core / full / bundle / evidence
+
+批次是 **runner 的能力**，不是第二份手维护的场景清单：每个场景在 front-matter 里声明 `tier:`
+（闭集合 `core` / `full` / `bundle` / `evidence`），`--batch <档>` 按这份声明筛。唯一真源因此仍是
+`scenarios/*.md`，`--check` 与覆盖表（`COVERAGE.md` 的 tier 列）都读同一份声明（实现
+`lib/batches.mjs`，自测 `lib/batches.test.mjs`）。
+
+| 档 | 含义 | 何时跑 |
+|---|---|---|
+| `core` | 判据本体只能在真机观测、且频次高 / 丢数据风险高（22 条）；另含 7 条「真栈接线 smoke」——判据主体已下沉到 visual / Rust，留真机只为证真栈仍把链路接起来 | 每批合并后、Alex 验收前 |
+| `full` | 其余全部场景（含待下沉 / 待拆分各档）；**`--batch full` 是语义上的全量** | 发布前、每周、或动过对应子系统后 |
+| `bundle` | `requires: bundle` 的通知点击链路 | `LUMIR_ACCEPTANCE_BUNDLE` 指向打包实例时（见下节） |
+| `evidence` | 只产出截图 / 读数供人抽审的场景 | 随发布批，不单独跑 |
+
+三条硬口径：
+
+- **`full` 不得被静默收窄**：`--batch full` 与不带 `--batch` 跑的是同一批场景（247 个），
+  各档都包含在内。不加 `--batch` 就是全量，这条由 `lib/batches.test.mjs` 的对账用例钉住。
+- **`bundle` 与 `requires: bundle` 一一对应**：标 `tier: bundle` 不写 `requires: bundle`（或反之）
+  由 `--check` 判红——前者会被 `--batch bundle` 静默漏掉，后者会在 dev flavour 下恒 INVALID。
+- **位置参数在批内再收窄**：`--batch core 07` = 核心批里匹配 `07` 前缀的那条；
+  `--batch core 47a` 空集（47a 属 full）⇒ 退出码 2 并打印该批可用 id。
+  批次取值不会被当成 id 前缀（`--batch core` 里的 `core` 不是筛选词，有专门用例钉住）。
+
+`--check` 与 `coverage.mjs --check` 都会打印各档条数（`core 29 / full 211 / bundle 3 / evidence 4`），
+写新场景后先用它确认档位没写错。分档的数量真源是场景声明本身，这里不抄第二份清单。
+
+**分档只决定「跑哪些」，不改判定与退出码**：`evidence` 档的场景今天仍照常判 PASS/FAIL、失败照样让
+退出码变 1。审计建议的「证据档不卡门禁（跑完归档即可）」是目标态，落地要改退出码与 summary 的判据
+（FAIL 计数要不要排除证据档），属独立裁决，未随本次分层实现——需要它时按裁决另立 mission。
 
 退出码（三档，M379 起）：**0 = 全 PASS，1 = 有场景判红（产品面），2 = 运行失败 / 运行环境无效**。
 第 2 档的含义是「**本次运行的读数不算数**」，不是产品缺陷：基建错误（app 起不来、前端未就绪、
@@ -19,6 +51,8 @@ node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手�
 `INVALID`（`status.txt` 同步写 INVALID）并让整轮退出码升到 2，同时按数量在结尾打印一行提醒复跑。
 此前两者都表达成「0/1 PASS + 退出码 1」，复盘时只能靠人读失败项的形态区分（M281 实证连续 4 次
 运行里 3 次属无效运行；finding `.tower/comms/findings/20260928-worker-impl-goto-line-c-improve-0-1-pass-1.md`）。
+批次参数写错（取值不在闭集合 / `--batch` 缺值 / 一次给两个批次）同样走退出码 2，且**在碰任何机器
+资源之前**退出——它挡的是「以为跑了核心批、实际一条没跑或跑成全量」。
 
 **真跑批串行**：`--check` / `--list` 不碰机器、也不建锁；起实例的真跑批先在
 `/tmp/lumir-acceptance-rmachine.lock` 抢锁，同机已有跑批时**拒绝启动**（见下文「跑批独占锁」）。
@@ -1276,29 +1310,36 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
 ## 覆盖表 COVERAGE.md
 
 `scripts/acceptance/COVERAGE.md` 是全部场景的清单与 `item` 编号映射（一项一行，行内列出该项下所有
-场景 id 与标题）。它是**生成物**，唯一真源是 `scenarios/*.md` 的 front-matter（`id` / `item` /
-`title`）——不要手改，也 **MUST NOT** 另建手维护的场景注册表：
+场景 id、标题与 `tier`）。它是**生成物**，唯一真源是 `scenarios/*.md` 的 front-matter（`id` / `item` /
+`title` / `tier`）——不要手改，也 **MUST NOT** 另建手维护的场景注册表：
 
 ```bash
 node scripts/acceptance/coverage.mjs           # 生成 / 更新 COVERAGE.md
 node scripts/acceptance/coverage.mjs --check   # 只校验（生成一致性 + 结构不变量）
 ```
 
-判据（任一命中即 FAIL，反向测试见 `coverage.test.mjs`）：场景缺 `id` / `item` / `title`；`id` 重复或
-不是文件名字符面；`item` 不是正整数或 `8.12` 形态；覆盖表里同一 `item` 出现两行；漏场景 / 多出场景
-目录里不存在的 id；`COVERAGE.md` 与场景 front-matter 不一致（新增、改名、删场景后忘了重新生成）。
+判据（任一命中即 FAIL，反向测试见 `coverage.test.mjs` 与 `lib/batches.test.mjs`）：场景缺 `id` / `item` /
+`title` / `tier`；`id` 重复或不是文件名字符面；`item` 不是正整数或 `8.12` 形态；`tier` 不在闭集合
+`core` / `full` / `bundle` / `evidence`，或与 `requires: bundle` 不一致；覆盖表里同一 `item` 出现两行；
+漏场景 / 多出场景目录里不存在的 id；覆盖表的 tier 列缺失 / 与场景数不齐 / 取值越出闭集合；
+`COVERAGE.md` 与场景 front-matter 不一致（新增、改名、删场景后忘了重新生成）。
 `--check` 挂在 `scripts/docs-check.sh`（本地 `gate.sh quick` + CI 的 docs-check.yml）与
-`node scripts/acceptance/run.mjs --check` 上，两处调同一份实现。
+`node scripts/acceptance/run.mjs --check` 上，两处调同一份实现；两条命令都会打印各档条数，档位声明
+写错时先看那一行。
 
 `item` 是**分组键**，不是场景级唯一键：同一验收项拆成多个场景（如 item 7 = 三条恢复路径）合法，
-`run.mjs 7` 靠它选中该项下全部场景；「一项一行」只约束表本身。覆盖表是场景清单、不是验收结论——
-真实 PASS 证据在 `.local/acceptance/<批次>/`（git 外），未收口的行为限制与待 dogfood 项在
+`run.mjs 7` 靠它选中该项下全部场景；「一项一行」只约束表本身。`tier` 是**批次键**（见上文「批次」节），
+同一 item 下的场景可以分属不同档，故 tier 列按场景逐个对齐（顺序与 id 列一致）。覆盖表是场景清单、
+不是验收结论——真实 PASS 证据在 `.local/acceptance/<批次>/`（git 外），未收口的行为限制与待 dogfood 项在
 `docs/backlog.md`「待真机验收」节。
 
 ## 加一个场景
 
 1. 需要新文档就加 `fixtures/<名>.md`（短文档，标题行当 `marker`）。
-2. 在 `scenarios/` 建 `<项号>-<短名>.md`，front-matter 里写清 `item` / `fixtures` / `open`。
+2. 在 `scenarios/` 建 `<项号>-<短名>.md`，front-matter 里写清 `item` / `tier` / `fixtures` / `open`。
+   `tier` 必填且取值在闭集合内——新场景默认 `full`（进全量批）；只有「判据本体只能在真机观测且
+   频次高 / 丢数据风险高」才标 `core`，`requires: bundle` 的通知点击链路标 `bundle`（两者必须同时写），
+   只产出截图 / 读数供抽审的标 `evidence`。拿不准就写 `full`：分层宁可保守，默认全量不能被静默收窄。
 3. 断言优先选**稳定子串**（文案单一来源是 `文案-Copy.md`）与**磁盘事实**（sha256/mtime），少依赖
    toast 停留时长。
 4. **判据串不得出现在 fixture 正文里**（M669，场景 224 的教训）：`ax.has` / `ax.not` 在 AX 树
@@ -1321,8 +1362,8 @@ bash scripts/acceptance/check-suite.sh
 ```
 
 它依次覆盖 JS 语法、全部场景静态校验、覆盖表一致性，以及 `lib/execute.test.mjs`、
-`lib/app.test.mjs`、`lib/cu.test.mjs`、`lib/evidence.test.mjs`、`coverage.test.mjs` 五组 `node:test` 自测。
-需要单文件迭代时仍可直接 `node --test <文件>`。
+`lib/app.test.mjs`、`lib/cu.test.mjs`、`lib/evidence.test.mjs`、`lib/batches.test.mjs`、
+`coverage.test.mjs` 六组 `node:test` 自测。需要单文件迭代时仍可直接 `node --test <文件>`。
 
 纯 `node:test`、零新增依赖、不起真机（file 类断言与零断言兜底都不读 app / KimiCU，ctx 桩化即可）。
 `execute.test.mjs` 钉的是这一层最容易重犯的**静默**缺陷——「步骤表写在闭合 `---` 之外 ⇒ 整表
@@ -1348,5 +1389,9 @@ INVALID 为 0 时整项省略（既有小样本头部逐字不变）。`cu.test.
 最小调用、`window_id` / `ax_filter` 的条件写入、「连续三次读取每次都是全树」三面逐字段
 `deepEqual`（漏字段、多写、改名都红；第二、三次只回空 diff 正是要拦的形态），另有一条源码扫描
 钉住 `get_app_state` 只有 `CuClient.state` 一个发出点——新开调用点会绕过这条口径。
-五组自测经 `check-suite.sh` 进入 quick 与 docs CI；
+`lib/batches.test.mjs`（M749）钉批次这一层的两道静默失效：`--batch` 的取值被当成 id 前缀
+（批次实际只跑 0 条或跑成全量）、`tier` 拼错 / 漏写让场景悄悄退出所属批次——用 5 条合成场景
+逐档筛一遍（`full` 必须一条不少），再用真实 247 个场景对账「每个场景恰好一个档、四档都非空、
+bundle 批与 `requires: bundle` 逐条相同」。
+六组自测经 `check-suite.sh` 进入 quick 与 docs CI；
 `scripts/migrate-harness-sessions.test.mjs` 仍是单独手跑的迁移脚本测试，不在本入口内。

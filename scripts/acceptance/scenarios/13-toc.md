@@ -1,6 +1,7 @@
 ---
 id: "13-toc"
 item: 13
+tier: full
 title: 轻量大纲：位置指示 / 浮层条目 / 键盘（↑↓ / ⌃N⌃P）与鼠标跳转 / 关闭 / 空标题与 frontmatter 边界
 fixtures: [toc-outline.md, toc-frontmatter.md, toc-plain.md, toc-long.md]
 open: toc-outline.md

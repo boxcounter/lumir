@@ -1,6 +1,7 @@
 ---
 id: "12-links"
 item: 12
+tier: full
 title: 链接渲染与激活（外链 / 相对 md / 资产 / 锚点 / 不可用）
 fixtures: [links.md, links-wiki.md, links-missing.md, links-relative.md, links-missing-relative.md, links-anchor.md, links-asset.md, links-blocked.md, notes.txt]
 open: links.md

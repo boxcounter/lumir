@@ -1,6 +1,7 @@
 ---
 id: "09b-keys-config"
 item: 9
+tier: full
 title: "「keys」配置实操——重绑与解绑"
 fixtures: [plain.md]
 open: plain.md

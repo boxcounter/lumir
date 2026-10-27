@@ -1,6 +1,7 @@
 ---
 id: "174-cron-daily-dedup"
 item: 174
+tier: full
 title: 当日去重：通知一次后重启 + 多次切前台不再投递（§7.6）
 config:
   harness:

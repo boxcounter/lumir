@@ -1,6 +1,7 @@
 ---
 id: "28-remember-reading-position"
 item: 28
+tier: full
 title: 记住文档阅读位置：重启后再次打开同一文件从上次位置继续
 fixtures: [toc-long.md]
 open: toc-long.md

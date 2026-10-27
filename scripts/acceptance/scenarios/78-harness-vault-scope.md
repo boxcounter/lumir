@@ -9,6 +9,7 @@
 # 形态）。因此本场景多一层：切到 B 先验布局不泄漏，再 ⌘⇧A 在 B 里打开面板验会话不串台。
 id: "78-harness-vault-scope"
 item: 78
+tier: full
 title: 切 vault 后 harness 显示当前 vault 的会话（另一 vault 的对话不串台）
 open: harness-note.md
 marker: "HNL-ALPHA"

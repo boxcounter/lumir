@@ -1,6 +1,7 @@
 ---
 id: "113-paste-image-dedupe-across-notes"
 item: 113
+tier: full
 title: 同图跨笔记再贴不产生副本（全 vault 内容寻址去重，首贴位置赢）
 steps:
   - name: 造两个不同目录下的笔记

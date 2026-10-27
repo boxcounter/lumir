@@ -1,6 +1,7 @@
 ---
 id: "160-quote-button-viewport-clamp"
 item: 531
+tier: full
 title: 摘录浮动钮落点钳制：选区并集盒越出挂载容器（长行）时钮仍在视口内
 open: code-block-fullscreen.md
 marker: "TOP-MARK"

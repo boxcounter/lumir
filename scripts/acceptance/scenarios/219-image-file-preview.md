@@ -1,6 +1,7 @@
 ---
 id: "219-image-file-preview"
 item: 219
+tier: full
 title: 左栏点开图片文件 → 内容区图片标签（M629）：查看面 / 双击放大 / ⌘S 无写入 / 重启恢复 / PDF 仍是 D25
 fixtures: [image-tab-note.md, image-tab-preview.png, binary-probe.pdf]
 open: image-tab-note.md

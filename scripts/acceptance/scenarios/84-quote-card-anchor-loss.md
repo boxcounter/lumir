@@ -1,6 +1,7 @@
 ---
 id: "84-quote-card-anchor-loss"
 item: 84
+tier: full
 title: 摘录卡片 ④ 失锚降级三层（行号命中 / 漂移后全文搜索 / 失锚 toast）
 open: harness-quote-anchor.md
 marker: "QANCHOR"

@@ -4,6 +4,7 @@
 # 高亮的节奏与观感由截图人工判读（套件没有行态读数），机器判据只覆盖「展开了 / 没打开 / 没新标签」。
 id: "162-harness-dir-link"
 item: 553
+tier: full
 title: harness 输出里的 vault 目录引用可点击（左栏定位）
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "100-empty-line-editing"
 item: 100
+tier: full
 title: 空行编辑三连（M399）——有内容行行首 Enter 换行且新空行可见、空列表项 Enter 去标记留空行（不新增行）、删空项 marker 后行保留可见
 fixtures: [empty-line-start.md, empty-line-list.md, empty-line-tight-two.md, empty-line-delete-marker.md]
 open: empty-line-start.md

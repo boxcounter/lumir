@@ -1,6 +1,7 @@
 ---
 id: "search-01-find"
 item: 10
+tier: full
 title: 文件内搜索（⌘F）：panel 出现、匹配计数、上一个/下一个导航、Esc 还原焦点
 fixtures: [search-probe.md]
 open: search-probe.md

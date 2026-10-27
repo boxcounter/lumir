@@ -1,6 +1,7 @@
 ---
 id: "94-harness-thinking-absent"
 item: 94
+tier: full
 title: 无 reasoning 的响应整条 agent 消息零思考块（块数为零的反向验证）
 open: harness-note.md
 marker: "HNL-ALPHA"

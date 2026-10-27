@@ -1,6 +1,7 @@
 ---
 id: "52-dir-rename-expand"
 item: 52
+tier: full
 title: 目录经树内右键重命名后仍可展开（子孙条目与展开态随目录搬到新路径，改回原名亦然）
 fixtures: [note.md]
 steps:

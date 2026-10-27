@@ -1,6 +1,7 @@
 ---
 id: "169-cron-notify-trigger"
 item: 169
+tier: full
 title: cron 到点通知：notify-then-run 只投通知、不写 vault、未点击不花 token（change add-cron-runtime-daemon §7.1）
 config:
   harness:

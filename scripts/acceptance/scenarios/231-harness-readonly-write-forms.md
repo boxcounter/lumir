@@ -1,6 +1,7 @@
 ---
 id: "231-harness-readonly-write-forms"
 item: 231
+tier: full
 title: 只读白名单收紧：写形态进闸、执行形态在完全访问档仍问（change readonly-allowlist-tightening-oct23，mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

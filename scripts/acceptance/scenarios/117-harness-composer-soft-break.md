@@ -1,6 +1,7 @@
 ---
 id: "117-harness-composer-soft-break"
 item: 117
+tier: core
 title: composer 一次 ⇧Enter 即换行：第二行落在下一行的行位（M419，HC1）
 open: harness-note.md
 marker: "HNL-ALPHA"

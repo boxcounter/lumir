@@ -6,6 +6,7 @@
 #   本 fixture 的数落在 1k 档（1000 → 1k、131072 → 131k）。
 id: "155-harness-ctxpop-tokens"
 item: 155
+tier: full
 title: "Harness 气泡读数：上下文已用/上限 tokens（k/m 单位）+ 会话命中率（只百分比）；本回合 / 写入行不渲染；空会话无假读数"
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "41-editable-non-md-files"
 item: 41
+tier: full
 title: 非 md 文本文件可编辑——键入 / dirty / ⌘S 落盘 / 撤销收窄，外部修改走同一组冲突双逃生口
 fixtures: [notes.txt, nonmd-config.yaml, LICENSE]
 open: notes.txt

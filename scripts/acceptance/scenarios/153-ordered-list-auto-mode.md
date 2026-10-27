@@ -1,6 +1,7 @@
 ---
 id: "153-ordered-list-auto-mode"
 item: 153
+tier: full
 title: 列表自动模式三态（M461）——「1. + 空格」进入列表编辑、Enter 续行、空项 Enter 退出；IME 组合期不重复的英文路径对照
 fixtures: [ordered-list-auto.md]
 open: ordered-list-auto.md

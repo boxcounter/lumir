@@ -1,6 +1,7 @@
 ---
 id: "77-harness-skill-load"
 item: 77
+tier: full
 title: Harness ⑧ Skill：索引发现 + skill_load 按需加载 + 根外名拒绝（change add-harness-probe，mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

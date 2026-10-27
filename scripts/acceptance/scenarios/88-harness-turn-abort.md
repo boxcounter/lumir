@@ -1,6 +1,7 @@
 ---
 id: "88-harness-turn-abort"
 item: 88
+tier: full
 title: 发送/停止两态：mock 长流在途时点停止 → 本轮中断、已产出保留并标「已停止」、composer 立即可用
 open: harness-note.md
 marker: "HNL-ALPHA"

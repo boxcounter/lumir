@@ -1,6 +1,7 @@
 ---
 id: "207-cron-conversational-register"
 item: 207
+tier: full
 title: 对话注册定时任务：批准卡（任务要素）→ 采纳落盘 → 注册即生效 → 过点通知、未点击零运行（tasks §8.1）
 open: harness-note.md
 marker: "HNL-ALPHA"

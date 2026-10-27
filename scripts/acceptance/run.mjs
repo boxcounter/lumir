@@ -2,9 +2,11 @@
 // Lumir 真机验收套件 —— runner。
 //
 // 用法：
-//   node scripts/acceptance/run.mjs                 # 跑全部场景
+//   node scripts/acceptance/run.mjs                 # 跑全部场景（= --batch full）
+//   node scripts/acceptance/run.mjs --batch core    # 只跑核心批（front-matter 的 tier: core）
+//   node scripts/acceptance/run.mjs --batch bundle  # 只跑 requires: bundle 的通知点击链路
 //   node scripts/acceptance/run.mjs 01 08           # 只跑 id 前缀匹配的场景
-//   node scripts/acceptance/run.mjs --list          # 列出场景
+//   node scripts/acceptance/run.mjs --list          # 列出场景（配合 --batch 看该批有哪些）
 //   node scripts/acceptance/run.mjs --keep-app      # 跑完保留 app（人工接手看现场）
 //   node scripts/acceptance/run.mjs --check         # 静态校验场景（不真机、不建锁）
 //
@@ -53,12 +55,23 @@ import {
 } from "./lib/drive.mjs";
 import { Evidence, appendRunLog, writeSummary } from "./lib/evidence.mjs";
 import { checkScenario, loadScenario, runScenario } from "./lib/execute.mjs";
+import { DEFAULT_BATCH, parseBatchArgs, selectBatch, summarizeTiers, TIERS } from "./lib/batches.mjs";
 import { checkCoverage } from "./coverage.mjs";
 import { envHome, InfraError, log, mkdirp, repoRoot, resultsRoot, sleep, vaultDir } from "./lib/util.mjs";
 
 const args = process.argv.slice(2);
 const keepApp = args.includes("--keep-app");
-const filters = args.filter((a) => !a.startsWith("--"));
+// `--batch <档>`（M749）：批次的唯一真源是场景 front-matter 的 `tier:`，这里只解析与筛选
+// （实现见 lib/batches.mjs，参数解析放在纯函数里才能钉住「批次取值不会被当成 id 前缀」）。
+// 缺省 `full` 是**全量**：不带 --batch 的跑批与分层前逐条相同，分层不得静默收窄默认行为。
+const batchArgs = parseBatchArgs(args);
+const batch = batchArgs.batch;
+if (batchArgs.problems.length) {
+  for (const p of batchArgs.problems) log(`✗ ${p}`);
+  log(`\n批次参数不合法：--batch 取 ${TIERS.join(" / ")} 之一（缺省 ${DEFAULT_BATCH}，= 全量）`);
+  process.exit(2);
+}
+const filters = batchArgs.positional;
 const scenariosDir = path.join(repoRoot(), "scripts/acceptance/scenarios");
 
 /**
@@ -123,17 +136,25 @@ async function listScenarios() {
 }
 
 const all = await listScenarios();
+// 批次池（M749）：`--batch` 只决定**从哪里取场景**，不动单个场景的判据。位置参数（id 前缀 /
+// item 项号）在同一批内进一步收窄——两者是「先分批、再筛选」的与关系，与不带 --batch 时相同。
+const pool = selectBatch(all, batch);
 if (args.includes("--check")) {
   // 静态校验：不真机、秒级，写场景时先用它挡掉 key 拼错、断言形态写错这类低级错。
   const problems = all.flatMap(checkScenario);
   // 覆盖表（M690）：`scripts/acceptance/COVERAGE.md` 由场景 front-matter 生成，这里判它与场景
   // 一致、以及 id / item / title 必填、id 唯一、item 在覆盖表内一项一行（场景间共用 item 合法）。
   // 实现只有一份（coverage.mjs），docs-check.sh 调的是同一份——两处各写一遍必然漂移
-  // （REVIEW.md「同一语义两处真源」条）。
+  // （REVIEW.md「同一语义两处真源」条）。tier 的闭集合 / 缺标 / 与 requires 的一致性（M749）同在
+  // 这份实现里判，故这里不另判一遍（同一件事两处判会给出两套报错格式）。
   const coverageProblems = await checkCoverage({ scenarios: all });
   const allProblems = [...problems, ...coverageProblems];
   for (const s of all) log(`CHECK ${allProblems.some((p) => p.startsWith(`${s.id}:`)) ? "FAIL" : "PASS"} ${s.id}`);
-  log(`CHECK ${coverageProblems.length ? "FAIL" : "PASS"} COVERAGE.md（生成一致性 + id/item/title）`);
+  log(`CHECK ${coverageProblems.length ? "FAIL" : "PASS"} COVERAGE.md（生成一致性 + id/item/title + tier）`);
+  // 分档条数（M749）：`--check` 是能秒级回答「各批各有多少条」的唯一入口，写进 PASS 输出让
+  // 「批次筛选有没有漏」可对账（full 是全量，故它的条数恒等于场景数）。
+  const counts = summarizeTiers(all);
+  log(`批次条数：${TIERS.map((tier) => `${tier} ${counts[tier]}`).join(" / ")}（full 批跑全部 ${all.length} 个）`);
   if (allProblems.length) {
     log("");
     for (const p of allProblems) log(`  ✗ ${p}`);
@@ -143,12 +164,13 @@ if (args.includes("--check")) {
   process.exit(0);
 }
 if (args.includes("--list")) {
-  for (const s of all) log(`${s.id}\t（验收项 ${s.item}）\t${s.title}`);
+  for (const s of pool) log(`${s.id}\t（验收项 ${s.item}）\t${s.tier}\t${s.title}`);
+  log(`\n批次 ${batch}：${pool.length} 个（全部 ${all.length} 个；--batch ${TIERS.join("|")}）`);
   process.exit(0);
 }
-const selected = filters.length ? all.filter((s) => filters.some((f) => s.id.startsWith(f) || String(s.item) === f)) : all;
+const selected = filters.length ? pool.filter((s) => filters.some((f) => s.id.startsWith(f) || String(s.item) === f)) : pool;
 if (selected.length === 0) {
-  log(`没有匹配的场景（可用：${all.map((s) => s.id).join(", ")}）`);
+  log(`没有匹配的场景（批次 ${batch} 内 ${pool.length} 个；可用：${pool.map((s) => s.id).join(", ")}）`);
   process.exit(2);
 }
 
@@ -486,7 +508,7 @@ async function main() {
   // results.json 的合并口径见 evidence.mjs 的 writeSummary）。
   const appLogFile = path.join(root, "app.log");
   const runHeader =
-    `===== run ${new Date().toISOString()} pid=${process.pid} 场景 ${selected.length} 个：` +
+    `===== run ${new Date().toISOString()} pid=${process.pid} 批次 ${batch} 场景 ${selected.length} 个：` +
     `${selected.map((s) => s.id).join(" ")} =====`;
   await appendRunLog(root, runHeader);
   appendFileSync(appLogFile, `${runHeader}\n`);

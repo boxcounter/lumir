@@ -1,6 +1,7 @@
 ---
 id: "239-escape-quit-guard"
 item: 239
+tier: core
 title: Escape 不削弱退出守卫（change fix-escape-overlay-close-oct24）：dirty 文档按 Esc 不退出且不弹提示、⌘Q 仍被拦下、保存后 ⌘Q 正常放行
 open: harness-note.md
 marker: "HNL-ALPHA"

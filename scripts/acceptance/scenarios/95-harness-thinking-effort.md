@@ -1,6 +1,7 @@
 ---
 id: "95-harness-thinking-effort"
 item: 95
+tier: full
 title: 思考程度会话态（M373 并入合并 chip）：默认 High → 浮层三档 → 选 Max 读数翻转 → 新会话回 High
 open: harness-note.md
 marker: "HNL-ALPHA"

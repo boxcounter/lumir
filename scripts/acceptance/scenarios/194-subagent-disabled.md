@@ -1,6 +1,7 @@
 ---
 id: "194-subagent-disabled"
 item: "8.12"
+tier: full
 title: 子代理 8.12 关停：task 不注册、任务区不出现、定义保留
 open: harness-note.md
 marker: "HNL-ALPHA"

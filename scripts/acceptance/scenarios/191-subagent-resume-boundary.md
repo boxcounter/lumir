@@ -1,6 +1,7 @@
 ---
 id: "191-subagent-resume-boundary"
 item: "8.9"
+tier: full
 title: 子代理 8.9 resume 边界：agent 不匹配、重启后不可续跑
 open: harness-note.md
 marker: "HNL-ALPHA"

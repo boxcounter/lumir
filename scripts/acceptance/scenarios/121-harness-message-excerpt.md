@@ -1,6 +1,7 @@
 ---
 id: "121-harness-message-excerpt"
 item: 423
+tier: full
 title: harness 消息摘录 ① transcript 选区 → 浮动钮 → 卡片入 composer（+ 序列化结构 / 视口 skip / transcript 同构）
 open: harness-note.md
 marker: "HNL-ALPHA"

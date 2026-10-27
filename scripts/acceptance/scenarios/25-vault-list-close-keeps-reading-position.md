@@ -1,6 +1,7 @@
 ---
 id: "25-vault-list-close-keeps-reading-position"
 item: 25
+tier: full
 title: 打开 / 收起 vault 列表不改变正文阅读位置
 fixtures: [toc-long.md]
 open: toc-long.md

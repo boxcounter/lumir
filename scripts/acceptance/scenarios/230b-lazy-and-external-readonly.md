@@ -13,6 +13,7 @@
 # 提示条计数（chromium 层）、Rust 侧读取拒绝矩阵（cargo test）。
 id: "230b-lazy-and-external-readonly"
 item: 655
+tier: full
 title: 按路径快速打开（⌘P）之二：索引外惰性文件按精确路径打开 / vault 外只读打开（⌘S 不写盘、键入不生效）/ 外部路径不存在按找不到处置
 open: goto-line-long.md
 marker: "JUMP-TARGET-39"

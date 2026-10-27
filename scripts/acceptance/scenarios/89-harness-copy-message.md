@@ -1,6 +1,7 @@
 ---
 id: "89-harness-copy-message"
 item: 89
+tier: full
 title: 复制消息：消息 hover 钮复制该消息 Markdown 源文本（剪贴板逐字断言）
 open: harness-note.md
 marker: "HNL-ALPHA"

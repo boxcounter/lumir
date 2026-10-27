@@ -1,6 +1,7 @@
 ---
 id: "156-harness-composer-ime-composition-freeze"
 item: 156
+tier: evidence
 title: "composer IME 组合期结构冻结（M527，HC5）：第二行中文组合不折回第一行——手动复验"
 open: harness-note.md
 marker: "HNL-ALPHA"

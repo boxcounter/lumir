@@ -1,6 +1,7 @@
 ---
 id: "185-subagent-definition-validation"
 item: "8.4"
+tier: full
 title: 子代理 8.4 定义校验与优先级（坏定义告警、vault 覆盖用户级、同层字典序）
 open: harness-note.md
 marker: "HNL-ALPHA"

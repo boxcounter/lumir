@@ -1,6 +1,7 @@
 ---
 id: "49-vault-switch-feedback"
 item: 252
+tier: full
 title: vault 切换的即时反馈（浮层收起 / 装载指示起止）与切换器浮层的完整可读
 fixtures: [callout.md, end-marker-long.md, end-marker-short.md, headings-ramp.md, identity.md, image-fallback.md, image-width-probe-other.md, image-width-probe.md, keys.md, lightbox.md, links-anchor.md, links-asset.md, links-blocked.md, links-missing-relative.md, links-missing.md, links-relative.md, links-wiki.md, links.md, list-filter.md, list-indent-bullet.md, list-indent-nested.md, list-indent-ordered.md, list-indent-paragraph.md, list-indent-quote.md, math.md, mermaid.md, note.md, plain.md, render-markdown.md, render-table-degrade.md, search-probe.md, svg-scroll.md, table-fullscreen.md, table.md, tabs-a.md, tabs-b.md, tabs-long.md, theme-mermaid.md, toc-frontmatter.md, toc-long.md, toc-outline.md, toc-plain.md, var-highlight.md, x.jsonc, var-highlight.js, var-highlight.lua]
 seed:

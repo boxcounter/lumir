@@ -1,6 +1,7 @@
 ---
 id: "189-subagent-resume"
 item: "8.8"
+tier: full
 title: 子代理 8.8 resume 续跑：同 run、segment=2、审计追加、用量继续归桶
 open: harness-note.md
 marker: "HNL-ALPHA"

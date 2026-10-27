@@ -1,6 +1,7 @@
 ---
 id: "08d-crash-discard"
 item: 8
+tier: full
 title: 崩溃恢复——「丢弃备份」动作
 fixtures: [plain.md]
 open: plain.md

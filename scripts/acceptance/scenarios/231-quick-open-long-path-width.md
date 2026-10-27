@@ -16,6 +16,7 @@
 # 结构断言（.lumir-qo-dirs 出省略号 + .lumir-qo-name 不溢出）与 title 全路径承担。
 id: "231-quick-open-long-path-width"
 item: 702
+tier: full
 title: 快速打开浮层宽度：长路径下输入面按 26em 展开、路径全文仍在 AX 里
 open: goto-line-long.md
 marker: "JUMP-TARGET-39"

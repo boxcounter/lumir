@@ -1,6 +1,7 @@
 ---
 id: "170-cron-click-run"
 item: 170
+tier: bundle
 title: 点击通知发起运行：click = intent（通知中心 AXPress 点横幅；§7.2）
 # 通知点击只能判在打包实例上：dev flavour 把通知归属写成 com.apple.Terminal，点击响应到不了
 # 本进程（README「实例 flavour」）。dev 下 runner 直接标 INVALID，不产出假 FAIL。

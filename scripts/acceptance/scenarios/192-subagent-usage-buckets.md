@@ -1,6 +1,7 @@
 ---
 id: "192-subagent-usage-buckets"
 item: "8.10"
+tier: full
 title: 子代理 8.10 用量按模型分桶 + 恢复后相等
 open: harness-note.md
 marker: "HNL-ALPHA"

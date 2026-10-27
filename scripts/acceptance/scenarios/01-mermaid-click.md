@@ -1,6 +1,7 @@
 ---
 id: "01-mermaid-click"
 item: 1
+tier: full
 title: Mermaid 图表点击进源码编辑
 fixtures: [mermaid.md]
 open: mermaid.md

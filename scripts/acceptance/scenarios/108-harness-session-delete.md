@@ -1,6 +1,7 @@
 ---
 id: "108-harness-session-delete"
 item: 108
+tier: full
 title: 会话删除（M406）：活跃会话拒删（harness_session_active 错误行）→ 历史会话行内两步确认删除（取消还原 / 确认删文件）
 open: harness-note.md
 marker: "HNL-ALPHA"

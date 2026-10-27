@@ -1,6 +1,7 @@
 ---
 id: "190-subagent-run-busy"
 item: "8.8"
+tier: full
 title: 子代理 8.8 运行中的后台 run resume ⇒ run_busy
 open: harness-note.md
 marker: "HNL-ALPHA"

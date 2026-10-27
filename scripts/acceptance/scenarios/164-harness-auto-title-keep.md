@@ -1,6 +1,7 @@
 ---
 id: "164-harness-auto-title-keep"
 item: 164
+tier: full
 title: 会话自动命名②：周期重估输出 keep 时标题不变（5 轮周期 + decision=keep 记录）
 open: harness-note.md
 marker: "HNL-ALPHA"

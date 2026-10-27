@@ -1,6 +1,7 @@
 ---
 id: "182-subagent-explicit-write-tool"
 item: "8.2"
+tier: full
 title: 子代理 8.2 显式写工具（声明 vault_patch）
 open: harness-note.md
 marker: "HNL-ALPHA"

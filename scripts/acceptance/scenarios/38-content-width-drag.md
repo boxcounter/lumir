@@ -1,6 +1,7 @@
 ---
 id: "38-content-width-drag"
 item: 38
+tier: full
 title: 栏宽双侧拖拽手柄：拖拽写回 config.json（合并写、不抹其他键）、文档零写盘、重启保持
 fixtures: [keys.md]
 open: keys.md

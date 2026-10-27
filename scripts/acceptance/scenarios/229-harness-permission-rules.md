@@ -1,6 +1,7 @@
 ---
 id: "229-harness-permission-rules"
 item: 229
+tier: full
 title: 权限规则入口与包装器解包（change harness-permission-rules-oct23）：持久放行 / 删规则后重新问 / bash -lc 全只读免问 / 危险包装卡无次级动作（mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

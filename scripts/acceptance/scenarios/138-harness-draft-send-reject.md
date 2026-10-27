@@ -9,6 +9,7 @@
 # vision:false 在发送闸处即被拒（`acquire_turn` 之前），dummy api_key 不触发任何网络请求。
 id: "138-harness-draft-send-reject"
 item: 138
+tier: full
 title: composer 草稿：发送被拒（模型不支持图片）时草稿原样保留（无丢字窗口）
 open: harness-note.md
 marker: "HNL-ALPHA"

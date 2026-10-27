@@ -1,6 +1,7 @@
 ---
 id: "76-harness-usage"
 item: 76
+tier: full
 title: Harness ⑦ 上下文读数：usage → 控制行「ctx% · cache%」双读数（M370 起，分隔符小圆点与 modeline 同款）
 open: harness-note.md
 marker: "HNL-ALPHA"

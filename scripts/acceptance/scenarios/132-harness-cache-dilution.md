@@ -5,6 +5,7 @@
 # 「摊薄回合的气泡里没有本回合行、没有成因句、没有写入行」，同时守住控制行读数不被摊薄改动。
 id: "132-harness-cache-dilution"
 item: 132
+tier: full
 title: Harness 缓存读数②：大块摊薄回合——控制行仍显示会话累计、气泡只剩用量行与命中率行（本回合 / 成因 / 写入行不上屏）
 open: harness-note.md
 marker: "HNL-ALPHA"

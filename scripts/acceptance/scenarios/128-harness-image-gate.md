@@ -8,6 +8,7 @@
 # _dummy api_key 不会触发任何网络请求。
 id: "128-harness-image-gate"
 item: 128
+tier: full
 title: 图片能力闸：模型未声明 vision 时含图消息发送被挡（toast + 卡片标出 + 输入区保留 + 会话不推进）
 open: harness-note.md
 marker: "HNL-ALPHA"

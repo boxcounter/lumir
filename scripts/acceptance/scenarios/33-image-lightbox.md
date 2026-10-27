@@ -1,6 +1,7 @@
 ---
 id: "33-image-lightbox"
 item: 33
+tier: full
 title: 图片双击放大查看（lightbox）：三种引用形态打开遮罩、三条关闭路径、焦点归还、不改写源文件
 fixtures: [lightbox.md, lightbox-fixed.svg, lightbox-percent.svg, lightbox-bitmap.png]
 open: lightbox.md

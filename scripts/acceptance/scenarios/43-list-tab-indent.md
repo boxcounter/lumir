@@ -1,6 +1,7 @@
 ---
 id: "43-list-tab-indent"
 item: 43
+tier: full
 title: 列表项缩进命令的真机链路——经 [keys] 绑到通道可达的 ⌘J / ⌘⇧J：缩进的源码写回（有序列表按新归属重排序号）、到顶 / 非列表 / 非 md 会话无操作、一次撤销还原
 fixtures: [list-indent-bullet.md, list-indent-ordered.md, list-indent-quote.md, list-indent-nested.md, list-indent-paragraph.md, code-outline.js]
 open: list-indent-bullet.md

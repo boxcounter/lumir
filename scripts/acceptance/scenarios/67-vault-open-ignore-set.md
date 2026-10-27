@@ -1,6 +1,7 @@
 ---
 id: "67-vault-open-ignore-set"
 item: 67
+tier: core
 title: 大 vault 打开：hidden 档隐藏 / 其余名字惰性可见，且打开段不冻结界面
 # 界面语言**显式钉为 en**：本场景的 chrome 断言取文案表的 en 列（树头部的 vault 入口 D96、
 # 浮层底部的「新增 vault」入口 D104.2）。套件默认面是 zh（见 README 的「语言面」节），

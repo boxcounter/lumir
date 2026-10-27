@@ -1,6 +1,7 @@
 ---
 id: "74-harness-create-oexcl"
 item: 74
+tier: full
 title: Harness ⑤ vault_create O_EXCL：撞名不覆盖、新名落盘（change add-harness-probe，mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"

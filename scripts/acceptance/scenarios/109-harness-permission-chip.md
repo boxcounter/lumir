@@ -1,6 +1,7 @@
 ---
 id: "109-harness-permission-chip"
 item: 109
+tier: full
 title: 权限 chip（M414）：短名读数 / 三档浮层（全名 + 每档一行释义）/ 档位写回 config（change add-harness-permission-modes）
 open: harness-note.md
 marker: "HNL-ALPHA"

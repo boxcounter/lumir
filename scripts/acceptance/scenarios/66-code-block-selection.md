@@ -1,6 +1,7 @@
 ---
 id: "66-code-block-selection"
 item: 66
+tier: full
 title: 代码块内选区底色可见（块底色 MUST NOT 盖住 drawSelection 自绘的选区）
 steps:
   - name: 造 fixture（场景自建，不动 fixtures 目录）

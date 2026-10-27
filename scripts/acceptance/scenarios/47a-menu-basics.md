@@ -10,6 +10,7 @@
 # 复制完整路径读出**绝对路径**（带 in-run 对照）、在 Finder 中显示（只读弱断言，放在组末）。
 id: "47a-menu-basics"
 item: 47
+tier: full
 title: 文件树右键菜单：文件行 / 目录行项集分流、行空白区命中、Esc 收起、复制完整路径（绝对路径）、在 Finder 中显示（只读弱断言）
 fixtures: [note.md]
 steps:

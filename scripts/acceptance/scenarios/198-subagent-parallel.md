@@ -1,6 +1,7 @@
 ---
 id: "198-subagent-parallel"
 item: "8.16"
+tier: full
 title: 子代理 8.16 同回合并行 + 按序回填（慢段先启动、快段先完成）
 open: harness-note.md
 marker: "HNL-ALPHA"

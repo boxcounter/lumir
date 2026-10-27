@@ -18,6 +18,7 @@
 # 匹配，而 fixture 正文里写着「浮钮」这类人话，裸串断言会恒红 / 恒绿（M667 的 224 现场）。
 id: "224-harness-scroll-lock"
 item: 224
+tier: core
 title: harness 流式输出期间的跟随滚动与回到底部（M644）：上滚后视口不被拽回、浮钮浮现/保持/退场
 open: harness-note.md
 marker: "HNL-ALPHA"

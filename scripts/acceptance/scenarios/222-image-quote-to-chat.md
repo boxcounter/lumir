@@ -17,6 +17,7 @@
 #    `.local/probes/m670-hover-probe.md`。
 id: "222-image-quote-to-chat"
 item: 222
+tier: full
 title: 图片摘录到对话：悬停引用钮 / 跨图选区 / 一次 ⌘Z / svg 栅格化引用
 fixtures: [image-quote-note.md, lightbox-bitmap.png, image-quote-logo.svg]
 open: image-quote-note.md

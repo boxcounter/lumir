@@ -1,6 +1,7 @@
 ---
 id: "45-tab-cycle-keys"
 item: 45
+tier: full
 title: 标签循环键——⌃⇥ / ⌃⇧⇥ 的真机循环语义（末端 / 首端回卷、单标签无操作）＋ ⌘} / ⌘{ 的通道限制登记
 fixtures: [tabs-a.md, tabs-b.md, tabs-long.md]
 seed:

@@ -3,6 +3,7 @@
 # 与不动本能力之前一致：⌥G 不弹跳转输入条、三者都不改编辑器文档、composer 不被列表缩进改写。
 id: "147-harness-composer-family-outside"
 item: 147
+tier: full
 title: composer 族外键（⌥G / ⌃V / Tab）不回退（M447）
 open: harness-note.md
 marker: "HNL-ALPHA"

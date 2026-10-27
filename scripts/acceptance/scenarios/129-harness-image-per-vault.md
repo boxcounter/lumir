@@ -5,6 +5,7 @@
 # 附件目录名因此可写死断言。
 id: "129-harness-image-per-vault"
 item: 129
+tier: full
 title: 贴图附件按 vault 分置：两 vault 各贴各落（attachments/<各自稳定 id>/），互不可见、留存互不污染
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "79-pane-split"
 item: 79
+tier: full
 title: 双栏 pane——⌥S 分栏（新 pane 空态）/ ⌥O 往返切活跃 / ⌥S 上限二无操作 / ⌥W 收起并入 / 跨 pane 打开已开文件是移动
 fixtures: [tabs-a.md, tabs-b.md]
 open: tabs-a.md

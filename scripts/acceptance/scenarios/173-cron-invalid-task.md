@@ -1,6 +1,7 @@
 ---
 id: "173-cron-invalid-task"
 item: 173
+tier: full
 title: 配置非法项只丢弃该项：at=25:00 落 cron_task_invalid、合法任务照常触发（§7.5）
 config:
   harness:

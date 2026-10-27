@@ -1,6 +1,7 @@
 ---
 id: "54-bare-url-cmd-click"
 item: 54
+tier: full
 title: 裸 URL / 链接定义行 / 角括号自动链接的装饰与 ⌘⏎ 打开（M272）
 fixtures: [links-bare.md, links-bare-def.md, links-bare-auto.md]
 open: links-bare.md

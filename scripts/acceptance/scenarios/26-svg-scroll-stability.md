@@ -1,6 +1,7 @@
 ---
 id: "26-svg-scroll-stability"
 item: 26
+tier: full
 title: 倒序滚动经过大尺寸 svg 图：图渲染完整、终态无自发位移（替换区尺寸的会话内一致性，M187）
 fixtures: [svg-scroll.md, svg-scroll-tall.svg]
 open: svg-scroll.md

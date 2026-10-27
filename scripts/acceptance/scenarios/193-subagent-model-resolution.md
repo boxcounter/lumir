@@ -1,6 +1,7 @@
 ---
 id: "193-subagent-model-resolution"
 item: "8.11"
+tier: full
 title: 子代理 8.11 模型解析：调用覆盖生效
 open: harness-note.md
 marker: "HNL-ALPHA"

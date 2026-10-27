@@ -1,6 +1,7 @@
 ---
 id: "48-vault-registry-migration"
 item: 48
+tier: core
 title: 注册表目录更名迁移——预置旧目录 workspaces/ 与注册项，启动后整个目录被原子搬进 vault-registry/、身份不丢、vault 照常恢复打开、迁移记一条诊断事件
 fixtures: [plain.md]
 seed:

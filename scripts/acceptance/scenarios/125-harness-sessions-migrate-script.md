@@ -10,6 +10,7 @@
 # 真实 `~/.config/lumir` 全程不读写。
 id: "125-harness-sessions-migrate-script"
 item: 125
+tier: full
 title: 一次性归位脚本：平铺留存按首行 vault_root 归入 vault 目录，不可归属进 _orphaned，根下零 *.jsonl，可重跑幂等
 open: harness-note.md
 marker: "HNL-ALPHA"

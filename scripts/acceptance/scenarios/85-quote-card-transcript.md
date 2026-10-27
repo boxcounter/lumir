@@ -1,6 +1,7 @@
 ---
 id: "85-quote-card-transcript"
 item: 85
+tier: full
 title: 摘录卡片 ⑤ transcript 同构沉淀（卡片与问题段落平铺、卡片变跳回按钮、无 ×）
 open: harness-quote.md
 marker: "QALPHA"

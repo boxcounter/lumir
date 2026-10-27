@@ -1,6 +1,7 @@
 ---
 id: "91-harness-pane-restore"
 item: 91
+tier: full
 title: harness_pane 随 vault 往返恢复：启动装配出面板（空会话）、切走不泄漏、切回按存储重建
 fixtures: [tabs-a.md]
 seed:

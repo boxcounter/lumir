@@ -1,6 +1,7 @@
 ---
 id: "83-quote-card-serialization"
 item: 83
+tier: full
 title: 摘录卡片 ③ 引用消息序列化结构（file/heading/lines 三属性、转义、协议无编号）
 open: harness-quote-escape.md
 marker: "QESC"

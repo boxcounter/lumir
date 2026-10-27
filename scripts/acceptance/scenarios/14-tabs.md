@@ -1,6 +1,7 @@
 ---
 id: "14-tabs"
 item: 14
+tier: full
 title: 多标签——单击即开标签 / 序号直达 / 循环切换 / 关闭确认 / 外部变更点名后台标签
 fixtures: [tabs-a.md, tabs-b.md, tabs-long.md]
 open: tabs-a.md

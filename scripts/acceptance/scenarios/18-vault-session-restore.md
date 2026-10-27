@@ -1,6 +1,7 @@
 ---
 id: "18-vault-session-restore"
 item: 18
+tier: full
 title: 启动按 last_vault 恢复 vault，并一并恢复它的标签列表与激活项
 fixtures: [tabs-a.md, tabs-b.md]
 seed:

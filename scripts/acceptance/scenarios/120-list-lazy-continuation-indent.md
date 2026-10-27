@@ -1,6 +1,7 @@
 ---
 id: "120-list-lazy-continuation-indent"
 item: 120
+tier: full
 title: 列表末尾退出后的行键入字符落在行首（M421）——Enter 造空项 → 再 Enter 删标记 → 键入字符，源码落在第 1 列、渲染在行首（lazy continuation 不按列表项缩进）
 fixtures: [empty-line-list.md]
 open: empty-line-list.md

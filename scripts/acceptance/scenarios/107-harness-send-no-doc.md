@@ -5,6 +5,7 @@
 # string` 立刻报红。修复后无文档时传空串，后端 parse_context 走默认块（无上下文纯对话成立）。
 id: "107-harness-send-no-doc"
 item: 107
+tier: full
 title: 无文件打开时 harness 发送成功：无上下文纯对话不发 error（context_json 恒为 string）
 config:
   harness:

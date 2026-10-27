@@ -1,6 +1,7 @@
 ---
 id: "101-harness-k2-chip-disabled"
 item: 101
+tier: full
 title: kimi-k2.6 思考程度置灰（M373 合并 chip）：同一条配置链配 k2 系模型，能力按 schema 声明现算
 open: harness-note.md
 marker: "HNL-ALPHA"

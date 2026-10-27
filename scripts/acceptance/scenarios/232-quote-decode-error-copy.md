@@ -11,6 +11,7 @@
 # 「粘贴侧锁定」用例），粘贴写入口与文案本 change 未改，回归归场景 112 / 127。
 id: "232-quote-decode-error-copy"
 item: 232
+tier: full
 title: 引用坏图：解码失败读 D588（不含「剪贴板」）+ 持久状态行、零卡片
 fixtures: [quote-decode-note.md, quote-decode-broken.png]
 open: quote-decode-note.md

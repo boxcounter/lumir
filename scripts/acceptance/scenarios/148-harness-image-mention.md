@@ -13,6 +13,7 @@
 # 留存的**引用形态**逐字节落 JSONL，本场景断言它（`lumir_label` 在场、文本面无标签行、无 base64）。
 id: "148-harness-image-mention"
 item: 148
+tier: full
 title: composer 图片编号与 @ 引用：卡片编号 = 投递标签同源 + 留存文本面无标签 + 恢复后编号一致 + 移除位序重编
 open: harness-note.md
 marker: "HNL-ALPHA"

@@ -1,6 +1,7 @@
 ---
 id: "68-selection-contrast"
 item: 68
+tier: full
 title: 三主题编辑器选区带可辨（含 eink 选中区文字可读）
 steps:
   - name: 造 fixture（场景自建，不动 fixtures 目录）

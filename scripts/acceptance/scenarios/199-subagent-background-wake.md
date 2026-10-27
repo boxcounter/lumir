@@ -1,6 +1,7 @@
 ---
 id: "199-subagent-background-wake"
 item: "8.17"
+tier: full
 title: 子代理 8.17 后台运行 + 完成通知 + 自动唤醒
 open: harness-note.md
 marker: "HNL-ALPHA"

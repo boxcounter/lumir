@@ -16,6 +16,7 @@
 # ⌘S/只读的结构性判据（tests/unit/quick-open.test.ts 与 tests/visual/scenes/quick-open.spec.ts）。
 id: "230a-path-forms"
 item: 655
+tier: full
 title: 按路径快速打开（⌘P）之一：深层路径一次 Enter 落文件 / 冒号文件名整串优先 / path:line 落点不重开 / vault 内零命中
 open: goto-line-long.md
 marker: "JUMP-TARGET-39"

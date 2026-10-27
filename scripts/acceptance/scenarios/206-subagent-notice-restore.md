@@ -1,6 +1,7 @@
 ---
 id: "206-subagent-notice-restore"
 item: "8.23"
+tier: full
 title: 子代理 8.23 已投递未消费的通知：合并窗口内退出 ⇒ 重启重建上屏、不补唤醒；消费后不重复
 open: harness-note.md
 marker: "HNL-ALPHA"

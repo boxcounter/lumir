@@ -1,6 +1,7 @@
 ---
 id: "81-quote-card-create"
 item: 81
+tier: full
 title: 摘录卡片 ① 选区 → 浮动钮 → 卡片入 composer（harness pane 未开先开）
 open: harness-quote.md
 marker: "QALPHA"

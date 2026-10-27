@@ -1,6 +1,7 @@
 ---
 id: "07c-external-reload"
 item: 7
+tier: full
 title: M124 恢复路径之三——外部修改且缓冲干净时自动重载
 fixtures: [plain.md]
 open: plain.md

@@ -1,6 +1,7 @@
 ---
 id: "102-harness-model-dimension"
 item: 102
+tier: full
 title: 合并选择器 model 维度（M373/M381 config-only）：schema models 清单进浮层、选择写回 providers.kimi.model、effort 能力随声明翻转
 open: harness-note.md
 marker: "HNL-ALPHA"

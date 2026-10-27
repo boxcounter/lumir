@@ -1,6 +1,7 @@
 ---
 id: "32-list-filter"
 item: 32
+tier: full
 title: 两处列表浮层的输入筛选（大纲 / vault 切换器）：打字即筛、结果集里的游标与跳转落点、无命中保留浮层、Esc 一步丢弃查询
 fixtures: [list-filter.md]
 open: list-filter.md

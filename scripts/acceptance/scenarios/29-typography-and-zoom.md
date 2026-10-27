@@ -1,6 +1,7 @@
 ---
 id: "29-typography-and-zoom"
 item: 29
+tier: full
 title: 排版与字号步进：配置字号端到端生效、⌘= / ⌘− / ⌘0 / ⌘⇧= 的可见结果、config.json 与源文件逐字节不变
 fixtures: [toc-long.md]
 open: toc-long.md

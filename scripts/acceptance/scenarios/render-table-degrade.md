@@ -1,6 +1,7 @@
 ---
 id: "render-table-degrade"
 item: 11
+tier: core
 title: 表格降级文案带上出错行号与原因（M138）/ 短行补空列不再降级（M142）
 fixtures: [render-table-degrade.md]
 open: render-table-degrade.md

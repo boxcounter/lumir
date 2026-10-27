@@ -14,6 +14,7 @@
 # 不丢内容——这两条是「样式改坏了会红」的可观测终态。
 id: "218-harness-bubble-and-scrollbar"
 item: 218
+tier: full
 title: harness 用户气泡与代码块滚动条（M628）：三主题下消息与代码块同屏上屏、切主题不丢内容、截图证据
 open: harness-note.md
 marker: "HNL-ALPHA"
