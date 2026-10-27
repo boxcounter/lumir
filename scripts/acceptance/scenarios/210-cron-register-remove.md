@@ -84,11 +84,22 @@ steps:
         file: { path: "env:config.json", not: "acc-cron-doomed" }
       - label: 对照组仍在配置里（删除不碰别的任务）
         file: { path: "env:config.json", has: '"id": "acc-cron-keep-control"' }
+      - shot: 03-删除后
+
+  # 删除诊断事件同样是**批量落盘**（logging.rs 的 200ms 静默期）：UI 回执到了不等于这一行已在盘上。
+  # M746 真机实测（2026-10-27）：到上一步时日志只有 9 行、`cron_task_removed` 还在下一批，
+  # 立刻断言会红。等它落盘再断言。
+  - name: 等删除诊断事件落盘（cron_task_removed）
+    do: waitForFile
+    waitForFile:
+      path: "env:logs/*.jsonl"
+      jsonl: { event: cron_task_removed, task: acc-cron-doomed, effect: active }
+    timeoutMs: 20000
+    expect:
       - label: 删除诊断事件：cron_task_removed（运行时确认生效）
         file:
           path: "env:logs/*.jsonl"
           jsonl: { event: cron_task_removed, task: acc-cron-doomed, effect: active }
-      - shot: 03-删除后
 
   - name: 等到点：对照组通知落盘（证明这个时刻确实评估过）
     # 同 207：等日志事件（投递成功才写），不等横幅——横幅的 AX 树里存着上一批同标题的通知。

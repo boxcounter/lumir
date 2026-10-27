@@ -84,6 +84,20 @@ steps:
         file: { path: "env:config.json", has: '/"at": "\d{2}:\d{2}"/' }
       - label: 配置确实变了（与批准前基线对比——「没写」与「写成了原样」不是一回事）
         file: { path: "env:config.json", changedSince: configBefore }
+      - label: 决策终态行结果词在场（D405）
+        ax: { has: "已采纳" }
+      - shot: 02-采纳后
+
+  # 注册诊断事件是**批量落盘**（logging.rs 的 200ms 静默期）：UI 回执到了不等于这一行已在盘上。
+  # M746 真机实测（2026-10-27）：到上一步时日志只有 8 行、`cron_task_registered` 还在下一批，
+  # 立刻断言会红。等它落盘再断言（不是加 sleep——等待条件就是最终要断言的那条记录）。
+  - name: 等注册诊断事件落盘（cron_task_registered）
+    do: waitForFile
+    waitForFile:
+      path: "env:logs/*.jsonl"
+      jsonl: { event: cron_task_registered, task: acc-cron-register, skip_today: "false" }
+    timeoutMs: 20000
+    expect:
       - label: 注册诊断事件：cron_task_registered(skip_today=false)
         file:
           path: "env:logs/*.jsonl"
@@ -92,9 +106,6 @@ steps:
         file:
           path: "env:logs/*.jsonl"
           jsonl: { event: cron_task_registered, task: acc-cron-register, delivery: "notify-then-run", session: "new" }
-      - label: 决策终态行结果词在场（D405）
-        ax: { has: "已采纳" }
-      - shot: 02-采纳后
 
   - name: 等到点（$nextMinute 至少 60s 后到点，30s tick 内投递「到点」通知）
     # 等的是**日志落盘**（cron_notified 是投递成功后才写的事件），不是通知横幅：横幅由
