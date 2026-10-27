@@ -531,17 +531,28 @@ test("标签溢出：活跃标签恒完整可见（键盘直达 / 循环 / 关�
   expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth);
 
   await page.locator(".cm-content").click();
-  /** 每一次「切换动作」之后都要成立的不变量（切换路径由 sequence 生成）。 */
-  const checkpoints: Array<[string, () => Promise<unknown>]> = [
-    ["⌘9 直达第 9 个", async () => page.keyboard.press("Meta+9")],
-    ["⌃⇥ 循环到第 10 个", async () => page.keyboard.press("Control+Tab")],
-    ["⌃⇥ 循环到第 11 个", async () => page.keyboard.press("Control+Tab")],
-    ["⌃⇥ 循环到第 12 个（最右）", async () => page.keyboard.press("Control+Tab")],
-    ["⌘1 回到第 1 个（最左）", async () => page.keyboard.press("Meta+1")],
-    ["⌘5 到中段第 5 个", async () => page.keyboard.press("Meta+5")],
+  /**
+   * 每一次「切换动作」之后都要成立的不变量：**活跃标签身份 + 正文 + 活跃标签完整可见**。
+   * 只判可见（M238 的原口径）时，按键完全无效、始终停在同一个标签上的回归照样全绿——
+   * 真机场景 51 的 `⌘9` / `⌃⇥` / `⌘1` checkpoint 判的正是前两项，这里补上等价判据。
+   */
+  const checkpoints: Array<[string, () => Promise<unknown>, string, number]> = [
+    ["⌘9 直达第 9 个", async () => page.keyboard.press("Meta+9"), "chapter-08-probe.md", 8],
+    ["⌃⇥ 循环到第 10 个", async () => page.keyboard.press("Control+Tab"), "chapter-09-probe.md", 9],
+    ["⌃⇥ 循环到第 11 个", async () => page.keyboard.press("Control+Tab"), "chapter-10-probe.md", 10],
+    ["⌃⇥ 循环到第 12 个（最右）", async () => page.keyboard.press("Control+Tab"), "chapter-11-probe.md", 11],
+    ["⌘1 回到第 1 个（最左）", async () => page.keyboard.press("Meta+1"), "chapter-00-probe.md", 0],
+    ["⌘5 到中段第 5 个", async () => page.keyboard.press("Meta+5"), "chapter-04-probe.md", 4],
   ];
-  for (const [label, act] of checkpoints) {
+  for (const [label, act, expectedTab, expectedIndex] of checkpoints) {
     await act();
+    // 按键真的切换了（两条都是区分度判据：按键无操作 ⇒ 标签名停在上一项、正文也不换）
+    await expect(page.locator(".tab.is-active .tab-name"), `${label}：活跃标签应为 ${expectedTab}`).toHaveText(
+      expectedTab,
+    );
+    await expect(page.locator(".cm-content"), `${label}：正文应换成第 ${expectedIndex} 篇`).toContainText(
+      `第 ${expectedIndex} 篇正文。`,
+    );
     const visible = await activeTabFullyVisible(page);
     expect(visible.ok, `${label}：${visible.detail}`).toBe(true);
   }
