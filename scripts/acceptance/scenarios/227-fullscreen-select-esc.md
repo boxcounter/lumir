@@ -15,13 +15,8 @@ steps:
         ax: { has: "AXTable (Markdown 表格 1)" }
       - shot: 01-终态
 
-  - name: 基线：记录编辑器内容（末尾 unchangedSince 的对照物）
-    do: recordEditor
-    as: before
-    expect:
-      - label: 基线记录成功（正文可读——读不到时 recordEditor 自己会红）
-        editor: { has: "表格全屏场景" }
-
+  # 磁盘基线记在 caret 进表**之前**：它的比较窗口因此也覆盖 clickInNode 那一次真实点击
+  # （编辑器基线搬到了点击之后，理由见下面的采样前置步骤）。
   - name: 基线：记录磁盘文件 sha256/mtime
     do: record
     file: table-fullscreen.md
@@ -38,6 +33,38 @@ steps:
     expect:
       - label: caret 已进表（grid 表仍在）
         ax: { has: "Markdown 表格 1" }
+
+  # **编辑器基线必须记在「表头块钮已浮现」之后**（M769）。`AXTextArea.value` 是渲染态文本：
+  # 表格 widget 里的两个块钮（复制表格 / 放大查看表格）平时 `visibility: hidden`、只在
+  # `.cm-lp-table-slot:hover` 下浮现（src/style.css 的 hover 规则），浮现时作为可见行参与文本
+  # 聚合，同一份文档的 value 因此多一个换行。`clickInNode` 是真实点击，点完指针就停在表格上，
+  # 形态恰在这一步翻转——基线记在它之前，逐字节比较就跨了一次 widget 形态变化（M768 真机复跑
+  # 227 的唯一红项即此：磁盘 sha256 不变、表头行以外的正文逐字节相同；finding
+  # 20261028-worker-rmachine-ctrl-a-scenario-audit-oct28）。
+  #
+  # 所以先等形态到位再采样（状态驱动，不写固定 sleep——浮现有过渡延迟，`waitFor` 首读即成立时
+  # 零开销）。终点是同一形态（Esc 之后指针仍在表上），两侧同形，比较保持逐字节相等、不放宽。
+  # 基线窗口让出的那一段（点击本身有没有改文档）由文档层判据补上：磁盘 sha256 基线仍记在点击
+  # 之前，标签的「（未保存）」后缀在这一步正观测。
+  - name: 采样前置：表头块钮浮现（基线要记在与终点同形的状态）
+    do: waitFor
+    waitFor:
+      has: ["复制表格", "放大查看表格"]
+    timeoutMs: 10000
+    expect:
+      - label: 表头块钮已浮现且恰一组（表格 widget 形态到位）
+        ax: { count: { pattern: "/AXButton \\(复制表格\\)/", exact: 1 } }
+      - label: 标签栏在 AX 树里（下一条负向断言因此不是空判）
+        ax: { has: "关闭 table-fullscreen.md" }
+      - label: 标签没有「（未保存）」后缀（这次点击没改文档）
+        ax: { not: "（未保存）" }
+
+  - name: 基线：记录编辑器内容（末尾 unchangedSince 的对照物）
+    do: recordEditor
+    as: before
+    expect:
+      - label: 基线记录成功（正文可读——读不到时 recordEditor 自己会红）
+        editor: { has: "表格全屏场景" }
 
   - name: 执行 table.toggle-fullscreen（经 [keys] 绑定的 ⌘J）打开遮罩
     do: key
@@ -81,6 +108,10 @@ steps:
 
   - name: 只读：文档与磁盘逐字节不变（ADR 0003 §3）
     expect:
+      # 先判形态、再判内容：逐字节比较的前提是两侧同形（基线记在块钮浮现之后）。
+      # 形态漂移与「文档被改写」在报告里因此可以区分开，不会都收成一句「编辑器文本已变」。
+      - label: 采样形态与基线同形（表头块钮仍在，逐字节比较的前提成立）
+        ax: { count: { pattern: "/AXButton \\(复制表格\\)/", exact: 1 } }
       - label: 编辑器内容与基线逐字节相同
         editor: { unchangedSince: before }
       - label: 磁盘文件 sha256 与基线相同
@@ -112,7 +143,18 @@ change 的 spec 要求：遮罩内已有选区时，既有四条关闭路径（`
   ` 计数恰好 1」钉，防「AX 文本可读 ≠ 元素可见」。
 - **⌘A 是负向步骤**：真机通道里它不落地时，两条断言恒真——因此下一条 Esc 步骤是它的正观测
   （遮罩确实还开着、并且确实能关）。
-- **只读用逐字节比较**（`recordEditor` / `record`），不读布尔口。
+- **只读用逐字节比较**（`recordEditor` / `record`），不读布尔口。比较的两侧必须同形：
+  `AXTextArea.value` 是渲染态文本，表格 widget 的表头块钮（复制表格 / 放大查看表格）只在
+  `.cm-lp-table-slot:hover` 下浮现，浮现时作为可见行参与文本聚合、让同一份文档的 value 多一个
+  换行；`clickInNode` 是真实点击，点完指针就停在表格上，形态恰在 caret 进表那一步翻转。编辑器
+  基线因此记在「块钮已浮现」之后（`waitFor` 等形态到位），终点再以「表头块钮仍在」确认同形。
+  跨形态比较会把 widget 形态变化记成文档变化——M768 真机复跑的唯一红项即此（磁盘 sha256 不变、
+  正文逐字节相同，只有表头行多一个换行，现场见 finding
+  `20261028-worker-rmachine-ctrl-a-scenario-audit-oct28`）。**判定标准没有放宽**：两侧同形之后
+  仍是逐字节相等，字符串里任何一个字节变了都判红。
+- **基线窗口让出的那一段由文档层判据兜住**：编辑器基线搬到点击之后，不再覆盖「clickInNode 有没有
+  改文档」这一小段——磁盘 sha256 基线仍记在点击之前（比较窗口覆盖它），采样前置步再钉「标签在
+  AX 树里（负向断言因此不空判）+ 标签没有『（未保存）』后缀」：点击若改过文档，脏标签判据会红。
 
 ## 已知边界
 
