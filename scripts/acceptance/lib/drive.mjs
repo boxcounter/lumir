@@ -762,14 +762,17 @@ export async function resizeWindowAX(pid, width, height) {
   }
 }
 
-/** key window 读数（M678）：与 `resizeWindowAX` 同一条 AX 通道，读 app 的 **AXFocusedWindow** 并
- *  核对它就是本套件操作的主窗口（`AXWindows[0]`）。
+/** key window 读数（M678；主窗判据 M762）：与 `resizeWindowAX` 同一条 AX 通道，读 app 的
+ *  **AXFocusedWindow** 并核对它就是本套件操作的**主窗**——主窗按 `AXSubrole == AXStandardWindow`
+ *  选（多扇标准窗时按 `AXMain` 消歧，选不出来报 `unknown` + 窗口清单），**不再**用 `AXWindows[0]`
+ *  这个索引假设：多出一扇辅助 `AXDialog` 之后索引会反过来，把「焦点本来就在主窗」读成 false
+ *  （2026-10-28 的 224 两轮 INVALID 即此）。
  *
  *  为什么需要它：`focusWindow click: true` 的合同里有「窗口成为 key window」，而编辑器焦点证明不了
  *  窗口是 key。**但窗口自己的 `AXFocused` 属性在本 app 上恒 false**——M678 真机实测：编辑器有焦点、
  *  滚轮与键盘都可用时仍报 `focused=false main=true`，拿它当判据会把正常跑批判成 INVALID（首轮
  *  224/228 的现场）。`AXFocusedWindow` 是 AX 侧的 key window 读数：同一次探针在可用现场读到
- *  `focusedWindowErr=0 … isFirstWindow=true`。
+ *  `focusedWindowErr=0 … isFirstWindow=true`（`isFirstWindow` 是 M762 之前旧判据的读数，留作历史现场）。
  *
  *  返回 `{ focused: true|false|null, raw }`；**`null` = unknown**（AXFocusedWindow 属性读取失败 /
  *  输出无法解析 / swift 失败），与 `false`（确定读到了聚焦窗口、但不是主窗口）分开记——判定方要求

@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, readAxForScreenPoint, runScenario, screenshotSize, settleEditorless } from "./execute.mjs";
+import { checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, runScenario, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, mainWindowPlan, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { parseKeyWindowState, readAx } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -791,18 +791,21 @@ test("焦点读数（M678）：必须先区分「哪个 AXTextArea 有焦点」�
   assert.equal(readDump(["editor", "composer"]).isEditor, false, "多个 focused 节点一律判「未建立」");
 });
 
-test("正文单击落点（M678）：截图像素 → 窗口局部 → Quartz 的换算，以及两条不可算的边界", () => {
+test("正文单击落点（M678 / M762）：dx/dy 是窗口局部点，换算到屏幕点与证据用的截图像素，以及两条不可算的边界", () => {
   const textarea = { bbox: { x: 100, y: 200, w: 600, h: 500 } };
   const bounds = { x: 8, y: 40, w: 1200, h: 800 };
   const shot = { w: 1152, h: 768 };
 
   const g = contentClickGeometry({ textarea, bounds, shot });
-  assert.deepEqual(g.shotPoint, { x: 140, y: 206 }, "缺省落点 = bbox 原点 + (40,6)（截图像素）");
-  assert.ok(Math.abs(g.point.x - (8 + (140 * 1200) / 1152)) < 1e-9, `x 换算错：${g.point.x}`);
-  assert.ok(Math.abs(g.point.y - (40 + (206 * 800) / 768)) < 1e-9, `y 换算错：${g.point.y}`);
+  // 落点 = 编辑器左缘（点）+ 缺省 (40,6)**点**：100px ÷ 0.96 = 104.1667pt，再加 40。
+  assert.ok(Math.abs(g.point.x - (8 + 100 * (1200 / 1152) + 40)) < 1e-9, `x 换算错：${g.point.x}`);
+  assert.ok(Math.abs(g.point.y - (40 + 200 * (800 / 768) + 6)) < 1e-9, `y 换算错：${g.point.y}`);
+  // 证据行仍按**截图像素**打印（与截图上的落点同一空间）：bbox.x + 40pt×0.96。
+  assert.ok(Math.abs(g.shotPoint.x - (100 + 40 * (1152 / 1200))) < 1e-9, `shotPoint.x 换算错：${g.shotPoint.x}`);
+  assert.ok(Math.abs(g.shotPoint.y - (200 + 6 * (768 / 800))) < 1e-9, `shotPoint.y 换算错：${g.shotPoint.y}`);
 
   const custom = contentClickGeometry({ textarea, bounds, shot, dx: 120, dy: 60 });
-  assert.deepEqual(custom.shotPoint, { x: 220, y: 260 }, "clickEditor 的 dx/dy 原样生效");
+  assert.ok(Math.abs(custom.point.x - (8 + 100 * (1200 / 1152) + 120)) < 1e-9, "clickEditor 的 dx/dy 按点生效");
 
   // 没有编辑器 bbox（文档没开 / modal / 快照退化）：普通 Error，且点明「本动作点的是正文」——
   // 不得退化成点标题栏或点 (0,0)，那是 M670 的旧形态。
@@ -813,6 +816,106 @@ test("正文单击落点（M678）：截图像素 → 窗口局部 → Quartz �
   // 快照退化（缺 window_bounds / 截图尺寸）：InfraError（本场读数不算数）。
   assert.throws(() => contentClickGeometry({ textarea, bounds: null, shot }), (e) => e instanceof InfraError);
   assert.throws(() => contentClickGeometry({ textarea, bounds, shot: null }), (e) => e instanceof InfraError);
+});
+
+test("正文单击落点的密度无关性（M762）：同一份标定 + 同一份物理几何，只换截图密度 ⇒ 屏幕落点逐值相同", () => {
+  // M761 现场：KimiCU 0.6.8 把截图长边从 1152 提到 2048（0.96 → 1.707 像素/点），同一组
+  // 「截图像素」偏移的物理位移随之缩小 1.78×——53 的 dx=110/dy=60 从 (114.6, 62.5)pt 缩到
+  // (64.4, 35.2)pt，落点左移 50.2pt 落到粗体行上方的空行。标定单位必须是**点**才不随上游改
+  // 截图密度而漂：本用例把两代密度的同一份标定并排算一遍，屏幕落点必须逐值相同。
+  const bounds = { x: 8, y: 40, w: 1200, h: 800 };
+  const kx = 2048 / 1152;
+  const ky = 1365 / 768;
+  const box1152 = { x: 340, y: 160, w: 730, h: 600 };
+  const box2048 = { x: 340 * kx, y: 160 * ky, w: 730 * kx, h: 600 * ky };
+  const a = contentClickGeometry({ textarea: { bbox: box1152 }, bounds, shot: { w: 1152, h: 768 }, dx: 115, dy: 62 });
+  const b = contentClickGeometry({ textarea: { bbox: box2048 }, bounds, shot: { w: 2048, h: 1365 }, dx: 115, dy: 62 });
+  assert.ok(Math.abs(a.point.x - b.point.x) < 1e-6, `同一落点在两代密度下必须同值，实际 ${a.point.x} vs ${b.point.x}`);
+  assert.ok(Math.abs(a.point.y - b.point.y) < 1e-6, `同一落点在两代密度下必须同值，实际 ${a.point.y} vs ${b.point.y}`);
+  // 顺带钉住量级：落点 = 编辑器左缘（点）+ 115pt。旧口径在 2048 密度上只走 115÷1.707 = 67.4pt。
+  assert.ok(Math.abs(a.point.x - (8 + 340 * (1200 / 1152) + 115)) < 1e-9, `x 落点错：${a.point.x}`);
+  // 证据行是截图像素：同一物理落点在两代密度下给出不同的像素坐标（换算没被跳过）。
+  assert.ok(Math.abs(a.shotPoint.x - (340 + 115 * (1152 / 1200))) < 1e-9, `1152 证据行错：${a.shotPoint.x}`);
+  assert.ok(Math.abs(b.shotPoint.x - ((2048 / 1152) * 340 + 115 * (2048 / 1200))) < 1e-9, `2048 证据行错：${b.shotPoint.x}`);
+  assert.ok(b.shotPoint.x - a.shotPoint.x > 150, "两代密度的像素坐标必须明显不同（证明换算真的按密度算）");
+});
+
+test("scroll 落点（M762）：`target {x,y}` 是窗口点——同一份标定在两代截图密度下折成同一个物理点", () => {
+  // 224 的现场：`{x:900, y:350}` 在 1152 密度（0.96）落到窗口 (938,365)、正好在 harness pane 里；
+  // 截图像素口径在 2048 密度（1.707）只剩窗口 (527,205)——那是左侧编辑器，滚的是编辑器。
+  const bounds = { x: 8, y: 40, w: 1200, h: 800 };
+  const a = pointToShotPx({ pt: { x: 900, y: 350 }, bounds, shot: { w: 1152, h: 768 } });
+  const b = pointToShotPx({ pt: { x: 900, y: 350 }, bounds, shot: { w: 2048, h: 1365 } });
+  assert.deepEqual(a, { x: 864, y: 336 }, `1152 密度：900×0.96 / 350×0.96，实际 ${JSON.stringify(a)}`);
+  assert.deepEqual(b, { x: 1536, y: 597 }, `2048 密度：900×1.70667 / 350×1.70625，实际 ${JSON.stringify(b)}`);
+  // 关键判据：折回窗口点后两代密度必须同值（取整误差 ≤ 半个像素）。旧口径直接透传 900/350，
+  // 2048 密度下等于窗口 (527,205) —— 差 373pt，整条场景从此换个面滚。
+  assert.ok(Math.abs(a.x / (1152 / 1200) - b.x / (2048 / 1200)) <= 0.5, `x 物理点漂了：${a.x} vs ${b.x}`);
+  assert.ok(Math.abs(a.y / (768 / 800) - b.y / (1365 / 800)) <= 0.5, `y 物理点漂了：${a.y} vs ${b.y}`);
+});
+
+test("clickEditor 的非 real 通道（M762，r1 评审 P2-1）：同一份窗口点标定在两代截图密度下落到同一物理点", async () => {
+  // 53 的原始故障就发生在**这条通道**（KimiCU 坐标点击），而它此前自己算一份 `bbox + dx*scale`：
+  // 把那份公式退回旧式 `bbox + dx` 时，只测 `contentClickGeometry` 的用例照样全绿——防线没落在
+  // 出过事的那条路径上。这里跑**动作本身**（runScenario → case "clickEditor"）：桩 cu 记录真实
+  // 下发的 click 坐标，两代密度各点一次，再断两点都等于「bbox + 窗口点×缩放比」且折回窗口点同值。
+  const clickOnceAt = async (shot) => {
+    const clicks = [];
+    const { text, bbox } = clickEditorDump({ shot });
+    const cu = {
+      state: async () => ({ text, image: null }),
+      click: async (_pid, opts) => {
+        clicks.push(opts);
+        return "ok";
+      },
+    };
+    const { status } = await drive(
+      tmpRoot(`clickeditor-${shot.w}`),
+      { steps: [{ name: "点编辑器", do: "clickEditor", dx: 115, dy: 62 }] },
+      { cu },
+    );
+    assert.equal(status, "PASS", `clickEditor 步骤应成功，实际 ${status}`);
+    assert.equal(clicks.length, 1, `应恰好点一次，实际 ${clicks.length} 次`);
+    return { click: clicks[0], bbox };
+  };
+  const a = await clickOnceAt({ w: 1152, h: 768 });
+  const b = await clickOnceAt({ w: 2048, h: 1365 });
+  const ax = 1152 / 1200;
+  const ay = 768 / 800;
+  const bx = 2048 / 1200;
+  const by = 1365 / 800;
+  // 落点 = 文本框 bbox（该密度的截图像素）+ 窗口点 × 缩放比
+  assert.ok(Math.abs(a.click.x - (a.bbox.x + 115 * ax)) < 1e-6, `1152 密度落点 x 错：${a.click.x}`);
+  assert.ok(Math.abs(a.click.y - (a.bbox.y + 62 * ay)) < 1e-6, `1152 密度落点 y 错：${a.click.y}`);
+  assert.ok(
+    Math.abs(b.click.x - (b.bbox.x + 115 * bx)) < 1e-6,
+    `2048 密度落点 x 错：${b.click.x}（退回 bbox+dx 会给 ${b.bbox.x + 115}）`,
+  );
+  assert.ok(
+    Math.abs(b.click.y - (b.bbox.y + 62 * by)) < 1e-6,
+    `2048 密度落点 y 错：${b.click.y}（退回 bbox+dy 会给 ${b.bbox.y + 62}）`,
+  );
+  // 折回窗口点：两代密度必须同值 = 同一物理落点（KimiCU 的 click 只吃截图像素，这份换算是唯一出口）。
+  // 容差 1pt：两代 dump 的 bbox 各自取整，亚像素差不是判据。
+  assert.ok(Math.abs(a.click.x / ax - b.click.x / bx) < 1, `同一落点在两代密度下漂了：${a.click.x} vs ${b.click.x}`);
+  assert.ok(Math.abs(a.click.y / ay - b.click.y / by) < 1, `同一落点在两代密度下漂了：${a.click.y} vs ${b.click.y}`);
+});
+
+test("像素采样方块（M762）：patch 是窗口点，同一邻域在两代截图密度下覆盖同一物理边长", () => {
+  // 与正文单击同一条纪律（M761 的 64 现场）：patch 原先是**截图像素**，7px 的物理边长从
+  // 7.3pt（1152 密度）缩到 4.1pt（2048 密度），eink 的字形采样因此落进行间、亮度跨度塌到 10。
+  // 采样点与方块边长都属于「物理量」，单位取点；截图像素只在取图那一层出现。
+  const bounds = { x: 8, y: 40, w: 1200, h: 800 };
+  const a = sampleWindowPx({ pt: { x: 500, y: 222 }, patch: 7, bounds, shot: { w: 1152, h: 768 } });
+  const b = sampleWindowPx({ pt: { x: 500, y: 222 }, patch: 7, bounds, shot: { w: 2048, h: 1365 } });
+  assert.deepEqual({ px: a.px, py: a.py }, { px: 480, py: 213 }, `1152 密度的采样像素错：${JSON.stringify(a)}`);
+  assert.deepEqual({ px: b.px, py: b.py }, { px: 853, py: 379 }, `2048 密度的采样像素错：${JSON.stringify(b)}`);
+  assert.equal(a.patchPx, 7, "7pt @0.96 = 6.72px → 7");
+  assert.equal(b.patchPx, 12, "7pt @1.707 = 11.95px → 12");
+  assert.ok(
+    Math.abs(a.patchPx / (1152 / 1200) - b.patchPx / (2048 / 1200)) <= 0.5,
+    `两代密度的物理边长必须相同（取整误差 ≤ 半个像素），实际 ${a.patchPx}px@0.96 vs ${b.patchPx}px@1.707`,
+  );
 });
 
 test("focusWindow click 的重试与判败（M678）：双判据严格为真才通过，坏态与不可读一律判失败", async () => {
@@ -933,7 +1036,7 @@ test("focusWindow click 的重试与判败（M678）：双判据严格为真才�
   assert.equal(missingClicks, 2, `缺 reader 应把重试用满，实际 ${missingClicks}`);
 });
 
-test("key window 读数解析（M678 r1）：true / false / unknown 三态分开，unknown 不归一成 false", () => {
+test("key window 读数解析（M678 r1 / M762）：true / false / unknown 三态分开，unknown 不归一成 false", () => {
   assert.equal(parseKeyWindowState("focusedWindow=true title=Lumir"), true);
   assert.equal(parseKeyWindowState("focusedWindow=false title=Agent"), false, "读到另一个窗口 = 确定不是主窗口");
   assert.equal(
@@ -943,6 +1046,73 @@ test("key window 读数解析（M678 r1）：true / false / unknown 三态分开
   );
   assert.equal(parseKeyWindowState("focusedWindow=unknown err=no-window-value title=Lumir"), null);
   assert.equal(parseKeyWindowState("garbage output"), null, "输出无法解析同样是 unknown");
+  // M762 起原始行带窗口事实（主窗 summary / 聚焦窗 summary / 窗口数）：解析口径不变，
+  // 事实原样留在 raw 里供错误文案与证据复盘（224 的 r1 就是「只有 false、看不出是谁」）。
+  assert.equal(
+    parseKeyWindowState(
+      'focusedWindow=true title=Lumir main=AXStandardWindow "Lumir" @8,40 1200×800 windows=2',
+    ),
+    true,
+    "带窗口事实的成功行照样解析成 true",
+  );
+  assert.equal(
+    parseKeyWindowState(
+      'focusedWindow=false title=Lumir main=AXStandardWindow "Lumir" @8,40 1200×800 focused=AXDialog "Window" @14,46 66×20 windows=2',
+    ),
+    false,
+    "聚焦窗是辅助 AXDialog = 确定不是主窗（多窗口反例），仍是 false 而不是 unknown",
+  );
+  assert.equal(
+    parseKeyWindowState('focusedWindow=unknown reason=没有 AXStandardWindow 主窗 windows=1'),
+    null,
+    "选不出主窗 = unknown（环境项），不得归一成 false 冒充「确定不是主窗」",
+  );
+});
+
+// ---- AX 探针的主窗选择（M762）-------------------------------------------------------------------
+//
+// M761 的 224 两轮 INVALID 都由同一条假设引起：`ax-key-window.swift` 把 `AXWindows[0]` 当主窗。
+// 屏幕上多出 112 那族辅助 `AXDialog "Window"` 之后这个索引假设会反过来——焦点本来就在主窗也
+// 读成 false（整场 INVALID），而 `ax-window.swift` 的写尺寸通道同族（triage §3.4 的 -25200 族）。
+// 判据改按 `AXSubrole == AXStandardWindow` 选主窗；两扇 swift 通道共用**同一段**选窗代码。
+
+const AX_SWIFT_FILES = ["ax-key-window.swift", "ax-window.swift"];
+
+test("主窗选择（M762）：两支 AX 探针共用同一段选窗代码——块逐字相同，防「改一处」漂移", () => {
+  const block = (file) => {
+    const src = fs.readFileSync(path.join(repoRoot(), "scripts/acceptance/lib", file), "utf8");
+    const m = /\/\/ >>> 主窗选择[\s\S]*?\/\/ <<< 主窗选择/.exec(src);
+    assert.ok(m, `${file} 里没有主窗选择块（标记 '// >>> 主窗选择' … '// <<< 主窗选择'）`);
+    return m[0];
+  };
+  const [a, b] = AX_SWIFT_FILES.map(block);
+  assert.equal(a, b, `${AX_SWIFT_FILES.join(" / ")} 的选窗块必须逐字相同（REVIEW.md「同一语义两处真源」条）`);
+  // 反向对照：块里必须真的按 subrole 选窗，而不是又退回索引假设——删掉判据就让这里红。
+  assert.match(a, /AXStandardWindow/, "选窗块必须按 AXSubrole == AXStandardWindow 判主窗");
+  assert.doesNotMatch(a, /windows\[0\]/, "选窗块里不得再出现 AXWindows[0] 的索引假设");
+});
+
+test("主窗选择（M762）：swift 自测覆盖多窗口反例——辅助 AXDialog 排在前 / 抢焦点 / 无标准窗", (t) => {
+  const swift = "/usr/bin/swift";
+  if (!fs.existsSync(swift)) {
+    t.skip("没有 /usr/bin/swift（非 macOS 环境）——真机通道不进 CI，本用例只在开发机跑");
+    return;
+  }
+  // 逐例输出 `SELFTEST PASS|FAIL <名字>：<读数>`；有 FAIL 即非零退出（同时断言退出码与逐例行）。
+  const out = execFileSync(swift, [path.join(repoRoot(), "scripts/acceptance/lib/ax-key-window.swift"), "--self-test"], {
+    encoding: "utf8",
+    timeout: 120_000,
+  });
+  const lines = out.split("\n").filter((l) => l.startsWith("SELFTEST "));
+  const fails = lines.filter((l) => l.startsWith("SELFTEST FAIL"));
+  assert.deepEqual(fails, [], `选窗自测有失败用例：\n${out}`);
+  // 四个必须出现的反例（名字即判据，缺一就是覆盖被删了）：
+  for (const name of ["aux-dialog-first-main-focused", "aux-dialog-focused", "no-standard-window", "two-standards-no-main"]) {
+    assert.ok(
+      lines.some((l) => l.startsWith(`SELFTEST PASS ${name}`)),
+      `缺少反例 ${name}（多窗口选窗的区分度就靠它）：\n${out}`,
+    );
+  }
 });
 
 test("动作失败即停止后续步骤，teardown 仍执行", async () => {
@@ -1153,6 +1323,24 @@ const AX_MAIN_DUMP = `${headerAx()}\n\n${TREE_AX_MAIN}`;
 const FULL_DUMP = `${headerFull()}\n\n${TREE_AX_MAIN}`;
 const AX_DIALOG_DUMP = `${[headerAx({ windowTitle: "Window", elementCount: 18 }), ...WINDOW_DIR_DIALOG_PRIMARY].join("\n")}\n\n${TREE_AX_DIALOG}`;
 
+/** 同一份**物理现场**、只换截图密度的 mode=full dump（M762）：文本框（基准 `@220,300 900×600`）
+ *  与窗口矩形（1200×800pt）不动，截图像素按比例缩放（bbox 取整——真实 dump 就是整数，而解析器
+ *  也只认整数几何）。返回 `{ text, bbox }`：`bbox` 是该密度下文本框的截图像素框，供用例算期望落点。
+ *  用途见 `clickEditor 的非 real 通道` 那条用例：它跑的是动作路径，不吃 `contentClickGeometry`
+ *  的单元输入，因此要一份完整的 dump。 */
+function clickEditorDump({ shot }) {
+  const kx = shot.w / 2048;
+  const ky = shot.h / 1365;
+  const bbox = { x: Math.round(220 * kx), y: Math.round(300 * ky), w: Math.round(900 * kx), h: Math.round(600 * ky) };
+  return {
+    text: FULL_DUMP.replace("- screenshot: 2048×1365 px", `- screenshot: ${shot.w}×${shot.h} px`).replace(
+      "@220,300 900×600",
+      `@${bbox.x},${bbox.y} ${bbox.w}×${bbox.h}`,
+    ),
+    bbox,
+  };
+}
+
 test("窗口矩形（M761）：captured_bounds（mode=full）与 window_bounds（mode=ax）都认，正文里的同形行不算", () => {
   const want = { x: 8, y: 40, w: 1200, h: 800 };
   assert.deepEqual(
@@ -1220,15 +1408,18 @@ test("窗口局部口径的读数（M761）：新 header 直接放行；截图�
   );
 });
 
-test("正文单击落点（M761 新 header）：captured_bounds + 2048×1365 的换算用手算值钉住", () => {
+test("正文单击落点（M761 新 header / M762 点口径）：captured_bounds + 2048×1365 的换算用手算值钉住", () => {
   const bounds = windowBounds(FULL_DUMP);
   const shot = screenshotSize(FULL_DUMP);
   assert.deepEqual(shot, { w: 2048, h: 1365 }, "0.6.8 起截图长边是 2048（写死 1152 会让换算比例算错）");
   const g = contentClickGeometry({ textarea: { bbox: { x: 220, y: 300, w: 1500, h: 900 } }, bounds, shot });
-  assert.deepEqual(g.shotPoint, { x: 260, y: 306 }, "缺省落点 = bbox 原点 + (40,6)，截图像素");
-  // 手算：260 × 1200/2048 = 152.34375 → +8 = 160.34375；306 × 800/1365 ≈ 179.3407 → +40 ≈ 219.3407。
-  assert.equal(g.point.x, 160.34375, `x 换算错：${g.point.x}`);
-  assert.equal(g.point.y, 219.34065934065933, `y 换算错：${g.point.y}`);
+  // 缺省落点 = 编辑器左缘（点）+ (40,6)pt。手算：220 ÷ 1.70667 = 128.906 → +8+40 = 176.906；
+  // 300 ÷ 1.70625 = 175.824 → +40+6 = 221.824。
+  assert.equal(g.point.x, 8 + 220 * (1200 / 2048) + 40, `x 换算错：${g.point.x}`);
+  assert.equal(g.point.y, 40 + 300 * (800 / 1365) + 6, `y 换算错：${g.point.y}`);
+  // 证据行的截图像素：bbox + 40pt×1.70667（往返换算带浮点零头，按 1e-9 比）。
+  assert.ok(Math.abs(g.shotPoint.x - (220 + 40 * (2048 / 1200))) < 1e-9, `证据行 x 错：${g.shotPoint.x}`);
+  assert.ok(Math.abs(g.shotPoint.y - (300 + 6 * (1365 / 800))) < 1e-9, `证据行 y 错：${g.shotPoint.y}`);
 });
 
 test("滚轮兜底（M761）：新 header 算得出落点；读不到几何 / 落点时给原因而不是 null（不静默跳过兜底）", () => {
