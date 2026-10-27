@@ -19,6 +19,13 @@
 //   2 = 参数错（用法 / keycode / flags 不是数值）
 //   3 = 没有「辅助功能」投递权限（`CGPreflightPostEventAccess` 为假）——环境项
 //   4 = CGEventSource / CGEvent 构造失败
+//   5 = 投递后修饰位没有复位（见下）
+//
+// **修饰位必须显式抬起（M767 真机实测的必修项）**：只给字母事件的 down/up 带 `flags` 时，事件源
+// 的修饰位会**一直停在 flags 上**——投完一次 ⌃A 后 `CGEventSource.flagsState(.combinedSessionState)`
+// 仍是 `0x…40000 [control]`，此后所有普通 keystroke 都被当成 ⌃ 组合（composer 里 `z` 变 ⌃z 撤销、
+// 整段文本消失，140 的 ⌃B 步因此假红）。因此每个 chord 结束后对用到的修饰键各投一次 keyUp（flags=[]），
+// 并回读修饰位自检：仍有 shift/control/option/command 残留就退出码 5（通道没把状态交还干净）。
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -73,6 +80,13 @@ if args.count >= 2 && args[1] == "--key" {
     guard let source = CGEventSource(stateID: .hidSystemState) else {
         fail("CGEventSource 创建失败：真键盘事件通道不可用", code: 4)
     }
+    // 修饰位 → 修饰键 keycode（左键）。chord 结束后按这张表把用到的修饰键抬起——只带 flags 的
+    // 字母事件会把事件源修饰位留在 flags 上（见文件头的「修饰位必须显式抬起」段）。
+    let modifierKeys: [(CGEventFlags, CGKeyCode, String)] = [
+        (.maskControl, 59, "control"), (.maskShift, 56, "shift"),
+        (.maskAlternate, 58, "option"), (.maskCommand, 55, "command"),
+    ]
+    let modifierMask: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand]
     for (code, flags) in specs {
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)
@@ -85,6 +99,25 @@ if args.count >= 2 && args[1] == "--key" {
         usleep(8_000)
         up.post(tap: .cghidEventTap)
         usleep(8_000)
+        for (flag, keycode, _) in modifierKeys where flags.contains(flag) {
+            guard let release = CGEvent(keyboardEventSource: source, virtualKey: keycode, keyDown: false) else {
+                fail("修饰键抬起事件构造失败：keycode=\(keycode)", code: 4)
+            }
+            release.flags = []
+            release.post(tap: .cghidEventTap)
+            usleep(8_000)
+        }
+    }
+    // 自检：通道必须把修饰位交还干净，否则后续普通 keystroke 会被当成 chord（真机实测的假红成因）。
+    usleep(50_000)
+    let leftover = CGEventSource.flagsState(.combinedSessionState).intersection(modifierMask)
+    if !leftover.isEmpty {
+        let names = modifierKeys.filter { leftover.contains($0.0) }.map { $0.2 }.joined(separator: "+")
+        fail(
+            "chord 投递后修饰位没有复位（残留：\(names)）——后续按键会被当成 chord，拒绝按「已投递」返回；" +
+                "若此刻确实有人按住修饰键，请松开后重跑本步",
+            code: 5,
+        )
     }
     // 回读行 = 通道自证：JS 侧要求它存在，否则「swift 退出 0 但什么也没投」会被当成成功。
     let desc = specs.map { "keycode=\($0.0) flags=0x\(String($0.1.rawValue, radix: 16))" }.joined(separator: ", ")

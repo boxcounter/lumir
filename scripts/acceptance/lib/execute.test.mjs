@@ -1858,6 +1858,16 @@ test("cgevent chord 错误路径：无权限 / 无回读行 ⇒ InfraError（环
       /不会回落到 KimiCU press_key/.test(e.message),
     "无权限必须抛 InfraError 并写明「不回落」——回落会把「通道没投递」洗成产品假红 / 断言假绿",
   );
+  // swift 退出 5 = chord 投递后修饰位没有复位（M767 真机：只带 flags 的合成 chord 会把事件源
+  // 修饰位留在 flags 上，后续普通按键被当成 ⌃ 组合）。这也是环境 / 通道项，逐条红。
+  assert.throws(
+    () =>
+      injectChordCGEvent("ctrl+a", {
+        run: () => ({ ok: false, stdout: "", error: "chord 投递后修饰位没有复位（残留：control）", status: 5 }),
+      }),
+    (e) => e instanceof InfraError && /swift 退出 5/.test(e.message) && /修饰位没有复位/.test(e.message),
+    "修饰位残留必须抛 InfraError，不能当成「已投递」继续跑",
+  );
   // 退出 0 但没有回读行 = 通道没真的跑完（脚本换了 / 静默 no-op），不能当成「已投递」。
   assert.throws(
     () => injectChordCGEvent("ctrl+a", { run: () => ({ ok: true, stdout: "", error: null, status: 0 }) }),
