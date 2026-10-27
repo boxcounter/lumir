@@ -32,8 +32,10 @@ node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手�
 
 - **`full` 不得被静默收窄**：`--batch full` 与不带 `--batch` 跑的是同一批场景（247 个），
   各档都包含在内。不加 `--batch` 就是全量，这条由 `lib/batches.test.mjs` 的对账用例钉住。
-- **`bundle` 与 `requires: bundle` 一一对应**：标 `tier: bundle` 不写 `requires: bundle`（或反之）
-  由 `--check` 判红——前者会被 `--batch bundle` 静默漏掉，后者会在 dev flavour 下恒 INVALID。
+- **`bundle` 与 `requires: bundle` 一一对应**：两种错配都由 `--check` 判红。只写 `tier: bundle`
+  漏写 `requires: bundle` —— 场景失去 dev flavour 下的 INVALID 保护（runner 按 `requires` 判环境，
+  缺它就会照常跑，产出一串与产品缺陷无法区分的 FAIL）；只写 `requires: bundle` 漏标 `tier: bundle`
+  —— 会被 `--batch bundle` 静默漏掉。
 - **位置参数在批内再收窄**：`--batch core 07` = 核心批里匹配 `07` 前缀的那条；
   `--batch core 47a` 空集（47a 属 full）⇒ 退出码 2 并打印该批可用 id。
   批次取值不会被当成 id 前缀（`--batch core` 里的 `core` 不是筛选词，有专门用例钉住）。

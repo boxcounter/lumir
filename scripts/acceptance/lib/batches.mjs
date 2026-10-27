@@ -12,7 +12,9 @@
 //   full     其余全部场景（含「待下沉」「待拆分」各档）。**`--batch full` 是语义上的全量**：
 //            跑全部场景，与不带 `--batch` 逐条相同。分层 MUST NOT 把默认行为静默收窄
 //   bundle   `requires: bundle` 的通知点击链路（dev flavour 下物理验不到）——两者必须一一对应
-//   evidence 只产出截图 / 读数供人抽审的场景（不因「看着像回归」被当门禁红）
+//   evidence 只产出截图 / 读数供人抽审的场景。「跑完归档、不卡门禁」是审计的目标态、**尚未实现**：
+//            本模块只做筛选，判定与退出码一字未改（evidence 档失败照样让退出码变 1，见 README
+//            「分档只决定跑哪些」）
 //
 // 闭集合而不是自由标签：拼错一个值（`core` 写成 `Core` / `cores`）会让该场景静默退出所属批次，
 // 表现是「批次里悄悄少了一条」，故取值域由本模块单点定义并在 `--check` 里逐场景校验。
@@ -69,7 +71,9 @@ export function summarizeTiers(scenarios) {
  *   - `tier` 必填，取值必须在闭集合内；
  *   - `tier: bundle` 与 `requires: bundle` **一一对应**：bundle 批的场景就是那条「dev flavour
  *     下物理验不到」的通知点击链路，两边写法必须同进同退。漏标 tier 的 bundle 场景会被
- *     `--batch bundle` 静默漏掉；反过来把普通场景标成 bundle，会让它在 dev 跑批里恒 INVALID。
+ *     `--batch bundle` 静默漏掉；只标 tier 而漏写 requires 的场景则失去 dev flavour 下的
+ *     INVALID 保护——runner 按 `requires` 判环境（`scenario.requires === "bundle"`），缺它就会
+ *     照常跑，产出一串与产品缺陷无法区分的 FAIL。
  */
 export function checkTiers(scenarios) {
   const problems = [];
