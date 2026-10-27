@@ -11,6 +11,7 @@
       （事实表见 `design.md` §1，逐条 file:line）
 - [x] 0.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 实跑通过：`✓ change/add-harness-activity-presence`，
       `Totals: 34 passed, 0 failed (34 items)`，退出码 0；`scripts/docs-check.sh` PASS；归档对账门禁 PASS
+      （r1 修订后复跑，读数相同）
 - [ ] 0.4 Alex 节点 1 评审：D1 提示形态 / D2 失败未读归类 / D3 跨 vault 未读是否要做；裁决结果回填
       proposal 的「评审记录」块
 
@@ -22,25 +23,32 @@
       空态快照 `busy == false`（判据落在序列化后的线上形状）
 - [ ] 1.3 `src-tauri/src/harness.rs`：确认 `harness_state` 走同一份 `Runtime::snapshot`，不新增第二条读值路径
 
-## 2. 前端：相位以后端为真源
+## 2. 前端：相位以后端为真源（且只在进入点回填）
 
-- [ ] 2.1 快照恢复：`restoreSnapshot` 按 `busy` 恢复相位（走 `applySendPhase` 唯一写入口），
-      vault 准入判据沿用 `inCurrentVault`
+- [ ] 2.1 快照按用途分档：**进入快照**（面板挂载 / `vaultChanged` / `reloadSession`）才允许改相位与
+      `turnOpen`；**对账快照**（§4.2）只重建内容。`restoreSnapshot` 必须显式带档位参数，
+      MUST NOT 出现「某条路径走了完整恢复却只想重建内容」的形态
 - [ ] 2.2 世代守卫：`phaseEpoch` 随事件推进自增，快照请求记 epoch，响应 epoch 不一致时丢弃相位部分
       （消息 / usage 等照旧应用）
-- [ ] 2.3 三个恢复时点接上：面板挂载、`vaultChanged`、`reloadSession`（会话恢复 / cron 回滚共用）
-- [ ] 2.4 轮次闸门随相位恢复：快照 `busy` 为真时 `turnOpen` 置真，切回后的增量不再被 `GATED_EVENT_TYPES` 丢弃
-- [ ] 2.5 `harness_busy` 拒绝路径按快照校正相位，不留下「看似可发送」的持续假空闲
-- [ ] 2.6 删除 / 改写 `resetView` 里「相位归 idle」那条口径的注释，写明「复位后由快照回填」的次序
-      （注释不得继续描述旧行为）
+- [ ] 2.3 `afterTerminal` 守门（r1 P2-1）：终态置真、`sent` / `auto_turn_started` / `vault_changed` 置假；
+      进入快照的 `busy:true` 仅在它为假时应用，为真时整条丢弃——覆盖「done / error / aborted 之后读到
+      `busy:true` 不得复活 running」这条时序
+- [ ] 2.4 轮次闸门随相位恢复：仅当进入快照把相位拉到 running 时 `turnOpen` 置真（切回后的增量不再被
+      `GATED_EVENT_TYPES` 丢弃）；终态置假之后 MUST NOT 被任何快照或对账路径重开
+- [ ] 2.5 `harness_busy` 拒绝走 `busy_rejected`：无条件把相位拉回 running 并清 `afterTerminal`，
+      不留下「看似可发送」的持续假空闲（也是 2.3 守门挡下新轮时的出口）
+- [ ] 2.6 删除 / 改写 `resetView` 里「相位归 idle」那条口径的注释，写明「复位后由进入快照回填」的次序，
+      并注明「对账快照不回填相位」（注释不得继续描述旧行为）
 
 ## 3. 未读状态机与呈现
 
-- [ ] 3.1 纯函数状态机（`design.md` §3 的转移表）：入参含 `mounted`，出参 `{ phase, unread }`；
-      无 DOM、可零 DOM 单测
-- [ ] 3.2 接线：`done` / `error` / `aborted` 三个终态把 `mountEl !== null` 传进状态机；`attachTo(null)`
+- [ ] 3.1 纯函数状态机（`design.md` §3 的转移表）：入参含 `mounted`，出参 `{ phase, unread, afterTerminal }`；
+      相位逐条委托既有 `reduceSendPhase`（`sent` / `stop_clicked` / `finished` 三个事件），
+      **必须包含 `stop_clicked` 输入**（r1 P2-2：否则 stopping 会有两个持有者）；无 DOM、可零 DOM 单测
+- [ ] 3.2 接线：`done` / `error` / `aborted` 三个终态把 `mountEl !== null` 传进状态机；停止按钮点击
+      经状态机的 `stop_clicked` 输入（不绕过状态机直接调 `applySendPhase`）；`attachTo(null)`
       MUST NOT 清相位、MUST NOT 清未读（收起 ≠ 复位）；`attachTo(mount)` 清未读
-- [ ] 3.3 `vaultChanged` 清未读（作用域口径）；无人值守 cron 与 `notice` 不进入状态机
+- [ ] 3.3 `vaultChanged` 清未读并清 `afterTerminal`（作用域口径）；无人值守 cron 与 `notice` 不进入状态机
 - [ ] 3.4 toggle 钮三态：状态点子元素常驻 DOM，经单一函数施加 `data-activity`；空闲态 `display:none`
       保证零像素漂移
 - [ ] 3.5 可访问性：三态经 `aria-describedby` 指向视觉隐藏的状态文本；终态经 `aria-live="polite"` 播报一次
@@ -51,18 +59,29 @@
 
 ## 4. 在途轮次的重连续与终态对账
 
-- [ ] 4.1 「中途接管」标志：由快照 `busy` 恢复相位时置位，`sent` / 终态后清除
+- [ ] 4.1 「中途接管」标志：由**进入快照**把相位拉到 running 时置位，`sent` / 终态后清除
 - [ ] 4.2 终态到达且标志置位时按后端快照重建渲染面一次（手法同 `cronRunAdopted` 的 `reloadSession`），
-      重建 MUST NOT 违反「强制回底白名单」（终态不在白名单里，视口不因对账被拽回底部）
+      且 MUST 走「只内容」档位：MUST NOT 读该快照的 `busy`、MUST NOT 改相位、MUST NOT 重开 `turnOpen`
+      （r1 P2-1：终态后读到的 `busy:true` 是合法时序）；重建 MUST NOT 违反「强制回底白名单」
+      （终态不在白名单里，视口不因对账被拽回底部）
 - [ ] 4.3 `done` / `error` / `aborted` 三类终态一致处理（重建幂等；无新消息时是空动作）
 
 ## 5. 测试与验收场景（随实现同批）
 
 - [ ] 5.1 `tests/unit/harness-activity-presence.test.ts`：状态机全表（每条转移一条断言）、
-      `opened` 清未读、`aborted` 不置未读、`vault_changed` 清未读、epoch 不一致丢弃快照相位
-- [ ] 5.2 `tests/unit/harness-activity-wiring.test.ts`：源码级结构对账（快照路径调相位恢复、三类终态传
-      `mounted`、`attachTo(null)` 不复位、三态由唯一函数施加）——同一层、同一理由见
-      `tests/unit/harness-cron-click-run.test.ts`
+      `opened` 清未读、`aborted` 不置未读、`vault_changed` 清未读与 `afterTerminal`、epoch 不一致丢弃
+      快照相位
+- [ ] 5.2 `tests/unit/harness-activity-wiring.test.ts`：源码级结构对账（进入快照路径调相位 / 闸门恢复、
+      **对账路径只走内容档位且不读 `busy`**、三类终态传 `mounted`、停止点击经状态机、`attachTo(null)`
+      不复位、三态由唯一函数施加）——同一层、同一理由见 `tests/unit/harness-cron-click-run.test.ts`
+- [ ] 5.2a **r1 P2-1 确定性回归**：`terminal(done|error|aborted, mounted=false)` → `enter_snapshot(busy:true,
+      epoch 一致)` ⇒ 相位仍为 idle、`afterTerminal` 为真、未读按终态种类；反例守卫：`vault_changed` 后
+      同一快照 ⇒ running、`terminal → sent → enter_snapshot(busy:true)` ⇒ running；出口守卫：
+      `terminal → busy_rejected` ⇒ running。每条断言都写明「实现改成无条件回填 / 永不回填时它必红」
+- [ ] 5.2b **r1 P2-2 确定性回归**：`idle + stop_clicked ⇒ idle`、`running + stop_clicked ⇒ stopping`、
+      `stopping + stop_clicked ⇒ stopping`（幂等）、`stopping + terminal ⇒ idle`、
+      `stopping + enter_snapshot(busy:true|false) ⇒ stopping`；并逐条断言相位输出与 `reduceSendPhase`
+      的同事件输出相等（委托而非重写）
 - [ ] 5.3 先红证据：在 master 上跑 252 / 253 留红（当前无状态文本、切回呈空闲），证据落
       `.local/acceptance/<日期>/`，再在实现分支跑绿
 - [ ] 5.4 新增 `scripts/acceptance/scenarios/252-harness-activity-presence.md`：收起期间完成 → 在途 →
