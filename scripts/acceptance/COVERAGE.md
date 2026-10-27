@@ -9,7 +9,7 @@
 - 分档：core 29 / full 193 / bundle 3 / evidence 4（full 批 = 全部 229 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
-文件是既有设计（如 item 7 = `07` / `07b` / `07c` 三条恢复路径），故表里一项一行、行内列出全部场景；
+文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
 同一 item 出现在两行才会判红。`tier` 是场景所属批次（闭集合 core / full / bundle / evidence），
 `node scripts/acceptance/run.mjs --batch <档>` 按它筛；`full` 是语义上的**全量**（含其余各档），
 故 `--batch full` 与不带 `--batch` 跑的是同一批场景。本表是**场景清单**，不是验收结论——每个场景的真实 PASS
