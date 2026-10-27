@@ -159,11 +159,12 @@ SHALL 落 `cron_click_deferred`（与 `cron_click` 共用任务与来源字段�
 - **WHEN** 恢复的点击发起的运行以失败终态结束
 - **THEN** 落一条 `cron_run_finished(ok=false)` 并给人话提示；当日不自动重跑
 
-#### Scenario: 台账写失败不影响投递
+#### Scenario: 台账写失败只影响跨进程点击
 
 - **WHEN** 派发时台账落盘失败
-- **THEN** 通知照常投递、`last_fired` 照写、落一条 warning；该通知随后被点击时按
-  `notice_unknown` 拒绝
+- **THEN** 通知照常投递、`last_fired` 照写、落一条 warning；该通知在**同进程**内被点击时照常由
+  进程内上下文表校验并处置（MUST NOT 因台账写失败被拒）；在**新进程**里被点击时按
+  `notice_unknown` 拒绝（无台账可查）
 
 #### Scenario: 其它环境不声称跨进程能力
 
@@ -250,6 +251,12 @@ SHALL 落 `cron_click_deferred`（与 `cron_click` 共用任务与来源字段�
   的会话快照），进入同一段处置并恢复该次会话；`cron_click.source` 为 `in-process`；MUST NOT 因
   「台账查不到」而拒绝
 
+#### Scenario: 台账写失败后同进程点击照常
+
+- **WHEN** 一条通知的台账条目落盘失败（warning 已记），此后**同一进程内**该通知被点击
+- **THEN** 上下文由投递点登记的进程内上下文表给出，点击照常处置（发起运行或恢复该次会话）；
+  MUST NOT 落 `notice_unknown`，MUST NOT 因台账缺失拒绝
+
 #### Scenario: 两种来源共用同一段处置
 
 - **WHEN** 一条通知在投递它的进程内被点击，另一条在进程退出后被点击
@@ -274,11 +281,12 @@ SHALL 落 `cron_click_deferred`（与 `cron_click` 共用任务与来源字段�
 惯例）；MUST NOT 写入 `config.json`，MUST NOT 写入任何 vault。存档 SHALL 记录每个任务最近一次触发的
 本地日期（`last_fired`）与最近一次运行的会话标识（`session_id`，在场时），并携带 schema 版本号。
 
-存档 SHALL 另记一份**通知台账**（`notices`；只在 macOS 打包实例上写入——唯一消费者是「进程退出后的
-通知点击恢复」，其它平台没有消费者，MUST NOT 写没有消费者的台账）：每条已投递的通知一行——request
+存档 SHALL 另记一份**通知台账**（`notices`；只在 macOS 打包实例上写入——唯一消费者是跨进程点击
+的识别与校验，其它平台没有消费者，MUST NOT 写没有消费者的台账）：每条已投递的通知一行——request
 id、任务 id、通知种类、派发的本地日期、该次运行的会话标识（结果 / 失败通知在场时）。台账 SHALL
-只服务点击的识别与校验，MUST NOT 被当作第二份任务表：它的键是 request id，不含调度要素，也不参与
-派发判定；条目 SHALL 在写入时快照，后续运行 MUST NOT 改写既有条目。
+只服务**跨进程点击**的识别与校验，MUST NOT 被当作第二份任务表：它的键是 request id，不含调度要素，
+也不参与派发判定；条目 SHALL 在写入时快照，后续运行 MUST NOT 改写既有条目。**台账 MUST NOT 成为
+同进程点击的前提**：同进程通道的上下文来自投递点登记的进程内上下文表（见「通知的投递与点击唤起」）。
 
 投递端口 SHALL 返回该条通知的 request id（平台不提供时由本仓显式指定），台账以它为键。台账的写入
 SHALL 分两条路径，各自的原子性判据不同：
@@ -291,7 +299,9 @@ SHALL 分两条路径，各自的原子性判据不同：
   条目缺失」或两者不一致。
 
 台账 SHALL 有界（按派发日期与条数上限裁剪），裁剪 MUST NOT 触碰 `tasks` 段；两条路径的台账写失败
-SHALL 降级为 warning（投递、`last_fired` 与 `session_id` 仍然成立），对应通知随后不可被校验。
+SHALL 降级为 warning（投递、`last_fired` 与 `session_id` 仍然成立）。**写失败的影响范围 SHALL 只限
+跨进程通道**：该通知随后在**新进程**里被点击时不可被校验（无台账可查）；**同进程点击 MUST NOT
+受影响**——它的上下文来自投递点登记的进程内上下文表，MUST NOT 因台账写失败而拒绝或降级。
 
 `last_fired` 的语义 SHALL 是「该任务在这一本地日期不再派发」——它 SHALL 在两个时机写入：① 派发
 成功（通知投递成功，或运行交接被接受）；② 运行期注册引入的新任务在**注册时已过点**时写入当日

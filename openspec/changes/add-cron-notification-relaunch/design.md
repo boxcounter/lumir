@@ -99,7 +99,7 @@ Tauri 的 `.setup(...)`（`lib.rs:212`）就在这条链上执行。因此 setup
 **一起不可用**（旧的一次性等待通道在本 change 里已随平台层替换而删除，不存在「进程内照旧」这条
 退路）。这条降级方向的判据是「应用仍能用、通知仍能投递」，不是「点击仍有第二条路」。
 
-## 4. 通知台账（识别与校验的唯一依据）
+## 4. 通知台账（**跨进程**点击的唯一依据）
 
 **落点**：`cron-state.json` 的同一份存档里新增 `notices` 段——不另开第二个文件（另开就要复制
 一遍唯一写者 / 原子替换 / 读取纪律的合同）。
@@ -134,8 +134,10 @@ Tauri 的 `.setup(...)`（`lib.rs:212`）就在这条链上执行。因此 setup
 自己——台账无从落键。端口 SHALL 改为返回该条通知的 request id（平台不提供时由本仓显式指定 id，
 保证返回值与系统里的请求标识是同一个）；到点与结果 / 失败两条路径都用这个返回值做台账键。
 
-**写失败**：两条路径都降级为 warning（投递仍然成立，`last_fired` 与 `session_id` 照旧成立），该条
-通知随后按「台账查不到」被拒绝——这是可接受的降级方向：宁可拒绝一次点击，也不按猜测执行。
+**写失败**：两条路径都降级为 warning（投递仍然成立，`last_fired` 与 `session_id` 照旧成立）。
+**影响范围只限跨进程通道**：该条通知在新进程里点击时按「台账查不到」被拒绝（`notice_unknown`）——
+这是可接受的降级方向：宁可拒绝一次点击，也不按猜测执行；**同进程点击 MUST NOT 受影响**，它的上下文
+来自投递点登记的进程内上下文表（§5.2），台账缺失不构成拒绝理由。
 
 **有界**：每次写入时裁掉「派发日期早于今天 − 7 天」的条目，并保留最多 32 条（超出按
 `date` + `request_id` 排序丢最旧）。裁剪 MUST NOT 触碰 `tasks` 段。
@@ -247,7 +249,7 @@ not_ready_policy)`。`handle_click` 的数据来源按 `kind` 分开：
 | 界面未就绪 | **保留整份上下文**，`bridge_ready` 后重放 | `cron_click_deferred{task, request_id, source, reason: not_ready}`；真正放弃（保留被同任务新点击覆盖、或进程退出）时补一条 `cron_click(ok=false, error=not_ready)` | 无（用户已经看到窗口） |
 | dirty vault（目标 vault ≠ 当前且有未保存修改） | 走**既有** dirty 前置门（三出口）；未被继续时这次运行不落地，点击本身已被接受 | `cron_click(ok=true, action=run, source=relaunch)` + 运行未落地的回执 `cron_run_finished(ok=false, error=vault_not_open)` | 既有的脏标签守卫浮条 + 一条提示 |
 | 运行失败 | 走既有终态路径，不自动重跑 | `cron_run_finished(ok=false)` | 面板上的失败态 + 提示一次 |
-| 台账写失败 | 投递照常、`last_fired` 照写、warning | 投递路径 `config_warning` | 无（到点通知仍在） |
+| 台账写失败 | 投递照常、`last_fired` 照写、warning；**同进程点击不受影响**，仅跨进程点击被拒 | 投递路径 `config_warning`；跨进程点击落 `notice_unknown` | 无（到点通知仍在） |
 
 **为什么保留 / 放弃要单独一个事件**：`cron_click` 的 `ok` 是「这次点击有没有落地」的终局判据，
 不能同时承载「收到了、还在等界面」。`cron_click_deferred` 与 `cron_click` 共用 `task` 与
