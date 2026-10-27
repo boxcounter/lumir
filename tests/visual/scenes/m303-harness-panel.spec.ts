@@ -21,6 +21,14 @@ const DOC = "# 面板基线笔记\n\n第一段，给上下文 chip 一个视口�
 const DOC_TWO = "# 第二份笔记\n\n切换文档后 chip 必须跟着换读数。\n";
 
 const VAULT: VaultFixture = {
+  entries: [{ path: "harness-note.md", kind: "file", size: DOC.length, mtime_ms: 0 }],
+  files: { "harness-note.md": DOC },
+  links: {},
+};
+
+/** 两份文档的 vault：只给「chip 随文档切换刷新」用——整页基线那两条仍用单文件 VAULT，
+ *  否则左栏多一行会让 `harness-panel-open.png` 这条整页基线无故变红（假回归）。 */
+const VAULT_TWO: VaultFixture = {
   entries: [
     { path: "harness-note.md", kind: "file", size: DOC.length, mtime_ms: 0 },
     { path: "harness-two.md", kind: "file", size: DOC_TWO.length, mtime_ms: 0 },
@@ -255,7 +263,7 @@ test("会话浮层列表滚动条：隐藏档，溢出态下每行 × 不被压�
 });
 
 test("上下文 chip 随文档切换刷新（真机场景 98 的下沉面）", async ({ page }) => {
-  await stubTauri(page, VAULT);
+  await stubTauri(page, VAULT_TWO);
   await stubHarnessState(page);
   await page.goto("/");
 

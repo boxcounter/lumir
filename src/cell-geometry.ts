@@ -7,7 +7,7 @@
 // 正是「坏了一眼就懂」的那类判定，值得一条秒级防线。
 // view 侧只剩一半：落点是否可停靠（`dockable`，要真 DOM 才有坐标）。那一半归 chromium 场景
 //（tests/visual/scenes/m118-cursor-interaction.spec.ts、m168-table-cell-line-end.spec.ts）
-// 与真机套件（scripts/acceptance/scenarios/24-table-cell-ctrl-e-seq.md）。
+// 与真机套件（`24-table-cell-ctrl-e-seq`，M750 退役：判据即本文件的纯函数与上面两条 chromium 场景）。
 //
 // 纪律：本文件不得出现 strip-only 不支持的语法（enum、构造函数参数属性等），否则单测层加载不了。
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";

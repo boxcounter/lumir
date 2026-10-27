@@ -10,14 +10,14 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //      后迁到 modeline），而整页容差 `maxDiffPixelRatio: 0.001`（1200×800 ≈ 960 px）把它整个
 //      吞掉了——`--update` 跑完 15 张基线逐字节零变化、普通模式也照样绿。也就是说：只靠既有
 //      整页场景，指示段与浮层的视觉回归没有任何机器防线（REVIEW.md 「容差吞掉真实变化」条同族）。
-//   2. **真机套件验不了缩进与精确光标**：AX 不暴露缩进，也不暴露选区；13-toc 只能用派生证据
-//      间接判「光标落在标题行尾」。
+//   2. **真机套件验不了缩进与精确光标**：AX 不暴露缩进，也不暴露选区；处置前的 `13-toc` 只能用
+//      派生证据间接判「光标落在标题行尾」。该场景已于 M750 退役——它的语义判据全部落在这里。
 // 因此这里补一条 chromium 场景：浮层元素级截图（只钉浮层自身，容差按元素盒算）+ 直接读
-// CodeMirror 选区（`cmTile.root.view`，与 m131 场景同款）——精确断言「跳转落点 = 标题行尾」，
-// 与 13-toc 的真机口径互补。
+// CodeMirror 选区（`cmTile.root.view`，与 m131 场景同款）——精确断言「跳转落点 = 标题行尾」。
 //
 // 已知边界：键盘注入在这条通道上是可靠的（chromium 直连，不经 KimiCU），所以导航与跳转的
-// 语义在这里判；WKWebView 下的真实手感仍只看 13-toc 的截图与 Alex 的手感项。
+// 语义在这里判；WKWebView 下的真实手感仍归 Alex 的手感项（真机侧只留「⌘⇧O 在 WKWebView 里
+// 被前端截获」这一步，由核心批的键位场景家族覆盖）。
 
 const DOC = `# 第一部分
 第一部分说明段落。
@@ -59,7 +59,8 @@ const LONG_DOC = Array.from({ length: 15 }, (_, index) => {
   ].join("\n");
 }).join("\n");
 
-/** 六层标题各一条：真机场景 13-toc 断言 H1–H6 全覆盖（`toc-outline.md` 只到 H3，`toc-long.md` 只到 H4）。 */
+/** 六层标题各一条：真机场景 13-toc（M750 退役）断言 H1–H6 全覆盖，判据搬到这里
+ *  （原 fixture `toc-outline.md` 只到 H3、`toc-long.md` 只到 H4，都用不上）。 */
 const LEVELS_DOC = [
   "# 一级标题",
   "一级正文。",
@@ -283,8 +284,8 @@ test("H1–H6 全覆盖；frontmatter 里的 # 注释不混进大纲", async ({ 
   await expect(page.locator(".lumir-toc")).toBeHidden();
 
   // frontmatter 边界：YAML 注释行（`# 幽灵标题`）在正文里不存在，也不得成为大纲条目。
-  // 打开 fm 文档时光标落在首部（指示段因此收起——链条为空），入口走 ⌘⇧O，与真机场景
-  // 13-toc 的「frontmatter 边界」一腿同形。
+  // 打开 fm 文档时光标落在首部（指示段因此收起——链条为空），入口走 ⌘⇧O，与退役前的
+  // 真机场景 13-toc「frontmatter 边界」一腿同形。
   await page.locator('.ft-row[title="frontmatter.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("真标题正文。");
   await expect(page.locator(".modeline-section")).toBeHidden();

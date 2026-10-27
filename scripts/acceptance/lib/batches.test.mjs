@@ -139,7 +139,7 @@ test("selectBatch 保持入参顺序（跑批顺序不因分批改变）", () =>
   );
 });
 
-test("真仓库对账：247 个场景的 tier 声明合法，且 full / core / bundle / evidence 各档自洽", async () => {
+test("真仓库对账：全部场景的 tier 声明合法，且 full / core / bundle / evidence 各档自洽", async () => {
   const dir = path.join(repoRoot(), "scripts/acceptance/scenarios");
   const names = (await readdir(dir)).filter((n) => n.endsWith(".md")).sort();
   const all = await Promise.all(names.map((n) => loadScenario(path.join(dir, n))));
