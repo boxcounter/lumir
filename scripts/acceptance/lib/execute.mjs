@@ -13,7 +13,7 @@ import yaml from "js-yaml";
 import { coordsSpace, findNode, nodeName, parseNodes, windowBounds } from "./ax.mjs";
 import { bundleBinary, fixturesDir, listOtherBundleInstances, quiesceStrayBundleInstances, SCENARIO_CONFIG_KEYS, writeWindowState } from "./app.mjs";
 import { encodePng, syntheticScreenshot } from "./png.mjs";
-import { DEFAULT_MIN_DIFF, DEFAULT_PATCH, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
+import { DEFAULT_MIN_DIFF, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
 import {
   clickNode,
   foregroundNote,
@@ -75,8 +75,8 @@ export function focusedRoleReading(nodes, { editor = null } = {}) {
   };
 }
 
-/** 真实正文单击的落点（相对 AXTextArea bbox 的**截图像素**偏移，M678）：`focusWindow click` 与
- *  `clickEditor real` 共用同一份坐标口径。
+/** 真实正文单击的落点（相对 AXTextArea bbox 的**窗口局部点**偏移，M678；M762 改单位）：
+ *  `focusWindow click` 与 `clickEditor real` 共用同一份坐标口径。
  *
  *  **落点在编辑器正文里，绝不在标题栏**——这是本动作合同的核心。标题栏整条是
  *  `data-tauri-drag-region="deep"` 拖拽区（`src/shell.ts:104`），真实单击打在那里会让 WKWebView
@@ -87,7 +87,13 @@ export function focusedRoleReading(nodes, { editor = null } = {}) {
  *
  *  `dx=40` 落在正文行首前的顶部留白（`clickEditor` 多年的缺省落点；`dx=0` 在编辑器左缘的滚动 /
  *  留白带上），`dy=6` 同理。文档以块 widget 开头时这两个偏移仍在 widget 之上的留白里——别把
- *  它们改成会落进渲染块的点（落进块里可能撤下渲染态，那是场景没声明的副作用）。 */
+ *  它们改成会落进渲染块的点（落进块里可能撤下渲染态，那是场景没声明的副作用）。
+ *
+ *  **单位是窗口局部点**（M762）：标定值描述的是「离编辑器左缘 / 顶边多远」，属**物理量**；
+ *  上游改截图密度不该让同一份标定换一个落点。M761 之前这里按**截图像素**加偏移，KimiCU 0.6.8
+ *  把截图长边从 1152 提到 2048（0.96 → 1.707 像素/点）之后，53 的 `dx=110` 从 114.6pt 缩到
+ *  64.4pt（落点左移 50.2pt，点到了粗体行上方的空行）。换算因此分两步：bbox（截图像素）先按
+ *  `窗口宽 ÷ 截图宽` 折成窗口点，再加 dx/dy；证据行仍折算回截图像素打印（与截图同一空间）。 */
 const CONTENT_FOCUS_DX = 40;
 const CONTENT_FOCUS_DY = 6;
 
@@ -1114,14 +1120,24 @@ async function clickWithRetry(cu, pid, x, y, { retries = 3, count, button } = {}
 }
 
 /**
- * 真实正文单击的坐标换算（M678）：`focusWindow click` 与 `clickEditor real` 共用的**唯一**一份。
+ * 真实正文单击的坐标换算（M678；M762 把偏移量的单位定成**窗口局部点**）：
+ * `focusWindow click` 与 `clickEditor real` 共用的**唯一**一份。
  *
- * 两个坐标空间在一处换算：AXTextArea 的 bbox（与 click/scroll 的 `{x,y}` 同空间 = mode=full 的
- * **截图像素**）→ 窗口局部点（按 `窗口矩形 / 截图尺寸` 缩放）→ 加窗口原点 = Quartz 屏幕点
- * （`injectClickWithClickState` 的口径）。截图尺寸与窗口尺寸差一个缩放比，混用会让点击落到别处
- * （README「已知边界」的 doubleClick 条同款陷阱），所以两个读数都从**同一份**快照现取。
+ * 三个坐标空间在一处换算：AXTextArea 的 bbox 是 mode=full 快照的**截图像素**；`dx` / `dy` 是
+ * **窗口局部点**（与 `drag {x,y}` / `textareaEdge` / mode=ax 的 bbox 同一空间）；两者相加之前先
+ * 把 bbox 折成点（`窗口宽 ÷ 截图宽`），最后加窗口原点 = Quartz 屏幕点
+ * （`injectClickWithClickState` 的口径）。
+ *
+ * **为什么偏移量不能是截图像素**（M762 的现场）：截图是窗口的等比缩放，它的密度由上游决定
+ * （KimiCU 0.6.8 把长边 1152 → 2048，0.96 → 1.707 像素/点）。偏移量的语义是「离编辑器左缘多远」，
+ * 属物理量 ⇒ 必须用点。M761 之前用截图像素时，同一份标定在两次上游版本之间换了物理落点（53 的
+ * `dx=110` 从 114.6pt 缩到 64.4pt，落点左移 50.2pt）。截图尺寸与窗口尺寸仍从**同一份**快照现取
+ * （不同快照之间的缩放比会变，混用会让点击落到别处，见 README「已知边界」的 doubleClick 条）。
  * 窗口矩形来自 header 的 `captured_bounds`（mode=full）或 `window_bounds`（mode=ax）——两者都是
  * 屏幕点上的同一件事，见 `ax.mjs` 的 `windowBounds`。
+ *
+ * 返回 `shotPoint`（截图像素，证据行用：与截图上的落点同一空间）、`local`（窗口局部点）、
+ * `point`（Quartz 屏幕点）。
  *
  * 读不到编辑器 bbox = 文档没开（或快照退化）——这是场景/状态问题，普通 Error；
  * 读不到窗口矩形 / 截图尺寸 = 快照退化——环境问题，InfraError（整场 INVALID）。
@@ -1138,10 +1154,14 @@ export function contentClickGeometry({ textarea, bounds, shot, dx = CONTENT_FOCU
       `${label}：读不到窗口矩形（header 的 captured_bounds / window_bounds）或截图尺寸，算不出落点（快照退化）`,
     );
   }
-  const shotPoint = { x: textarea.bbox.x + dx, y: textarea.bbox.y + dy };
+  const local = {
+    x: textarea.bbox.x * (bounds.w / shot.w) + dx,
+    y: textarea.bbox.y * (bounds.h / shot.h) + dy,
+  };
   return {
-    shotPoint,
-    point: { x: bounds.x + (shotPoint.x * bounds.w) / shot.w, y: bounds.y + (shotPoint.y * bounds.h) / shot.h },
+    shotPoint: { x: local.x * (shot.w / bounds.w), y: local.y * (shot.h / bounds.h) },
+    local,
+    point: { x: bounds.x + local.x, y: bounds.y + local.y },
     bounds,
     shot,
   };
@@ -1242,15 +1262,16 @@ export async function establishEditorFocus({
       : last.key?.focused === true
         ? "窗口 AXfocusedWindow=true（key 成立，但编辑器焦点未建立）"
         : last.key
-          ? "窗口 AXfocusedWindow=unknown（AX 读数不可用 / 读取失败，不得当成通过）"
+          ? "窗口 AXfocusedWindow=unknown（AX 读数不可用 / 主窗不可判定，不得当成通过）"
           : "窗口 AXfocusedWindow=未读（没有提供 key 读数通道，不得当成通过）";
   throw new InfraError(
     `${label}：真实正文单击 ${attempts} 次仍未建立「key window + 编辑器焦点」` +
       `（最后一次 focused=${last.reading.roles.join(",") || "无"}，共 ${last.reading.count} 个节点；${keyNote}）。` +
       // 原始读数必须带出来（M761 真机实证）：`ax-key-window.swift` 打的是
-      // `focusedWindow=false err=0 title=<聚焦窗口标题>`，而「主窗口」的判据是 `AXWindows[0]`——
-      // 只写 false 时无法区分「焦点真在别处」与「多了一扇窗把 AXWindows[0] 挤走了」（后者是
-      // 套件自己的选窗假设坏了）。2026-10-28 的 224 两次 INVALID 就卡在这个分不清上。
+      // `focusedWindow=false … main=<主窗> focused=<聚焦窗> windows=…`。M761 时代判据还是
+      // `AXWindows[0]`，只写 false 时无法区分「焦点真在别处」与「多了一扇窗把索引假设打翻」；
+      // M762 起选窗按 `AXSubrole == AXStandardWindow`（探针自己带出两边窗口的身份），读数里
+      // 直接能看出是哪扇窗、场上几扇。
       `原始读数：${last.key?.raw ?? "无"}。` +
       "这个状态下的后续 hover 与键盘注入都不可信——本次运行该场景读数不算数（环境项，非产品缺陷）；" +
       "先把前台让给 Lumir 再复跑。",
@@ -1615,18 +1636,17 @@ export async function runScenario(ctx, scenario) {
           ax,
         );
       }
-      const patch = spec.patch ?? DEFAULT_PATCH;
+      const patch = spec.patch ?? DEFAULT_PATCH_PT;
       const tol = spec.tol ?? DEFAULT_TOL;
       const minDiff = spec.min ?? DEFAULT_MIN_DIFF;
       const img = decodeScreenshot(ax.image);
       try {
-        // 采样点写窗口局部点，这里换算到截图像素（两个读数都来自同一份 AX 快照的 header）。
+        // 采样点与方块边长都是窗口点，换算到截图像素只在这一处（`sampleWindowPx`，M762）。
         const sample = (pt) => {
-          const px = Math.round((pt.x * shot.w) / bounds.w);
-          const py = Math.round((pt.y * shot.h) / bounds.h);
-          const color = dominantColor(img, px, py, patch);
+          const { px, py, patchPx } = sampleWindowPx({ pt, patch, bounds, shot });
+          const color = dominantColor(img, px, py, patchPx);
           if (color === null) throw new Error(`采样点 ${pt.x},${pt.y}（截图像素 ${px},${py}）落在图外`);
-          return { pt, px, py, color, as: pt.as ?? `${pt.x},${pt.y}` };
+          return { pt, px, py, patchPx, color, as: pt.as ?? `${pt.x},${pt.y}` };
         };
         const groups = [
           ...(spec.same ?? []).map((points) => ({ key: "same", points })),
@@ -1648,7 +1668,7 @@ export async function runScenario(ctx, scenario) {
         // 亮度跨度（`contrast`）：判「这一块里真有字形」（选中区里字色若与底色撞上，就是这一条红）。
         for (const point of spec.contrast ?? []) {
           const s = sample(point);
-          const spread = lumaSpread(img, s.px, s.py, patch);
+          const spread = lumaSpread(img, s.px, s.py, s.patchPx);
           if (spread === null) {
             problems.push(`${s.as} @窗口(${point.x},${point.y})：采样点落在图外`);
             continue;
@@ -1658,7 +1678,9 @@ export async function runScenario(ctx, scenario) {
             problems.push(`对比不足：${s.as} 的亮度跨度 ${spread.spread} < ${point.min}（这一块里没有可辨的字形）`);
           }
         }
-        const detail = `换算 ${bounds.w}pt→${shot.w}px / 方块 ${patch}px；${readings.join("；")}`;
+        const detail =
+          `换算 ${bounds.w}pt→${shot.w}px / 方块 ${patch}pt（${sampleWindowPx({ pt: { x: 0, y: 0 }, patch, bounds, shot }).patchPx}px）；` +
+          readings.join("；");
         if (problems.length > 0) return fail(`${label}（${problems.join("；")}）`, detail, ax);
         return pass(label, detail);
       } finally {
@@ -1702,11 +1724,16 @@ export async function runScenario(ctx, scenario) {
       if (x < 0 || y < 0 || x + w > shot.w || y + h > shot.h)
         problems.push(`包围盒 @${x},${y} ${w}×${h} 越出视口 ${shot.w}×${shot.h}`);
       let painted = null;
+      let paintedPatch = null;
       if (problems.length === 0 && spec.painted !== undefined) {
-        const patch = spec.painted.patch ?? DEFAULT_PATCH;
+        // `painted.patch` 与 `pixel.patch` 同一口径：窗口点（M762），这里折成截图像素再进扫描。
+        // 折算是「点 → 像素」，所以要多读一处窗口矩形（与 `pixel` 断言同一条退化判据）。
+        const paintedBounds = windowBounds(ax.text);
+        if (!paintedBounds) return fail(`${label}（AX 快照缺窗口矩形，算不出采样方块的物理边长）`, "", ax);
+        paintedPatch = patchToPx({ patch: spec.painted.patch ?? DEFAULT_PATCH_PT, bounds: paintedBounds, shot });
         const img = decodeScreenshot(ax.image);
         try {
-          painted = maxLumaSpread(img, { x, y, w, h }, patch);
+          painted = maxLumaSpread(img, { x, y, w, h }, paintedPatch);
           if (painted === null) problems.push("包围盒内取不到采样像素（落在图外）");
           else if (painted.spread < spec.painted.min)
             problems.push(
@@ -1719,7 +1746,9 @@ export async function runScenario(ctx, scenario) {
       }
       const detail =
         `包围盒 @${x},${y} ${w}×${h}（视口 ${shot.w}×${shot.h}，宽高下限 ${minW}×${minH}）` +
-        (painted ? `；区域最大亮度跨度 ${painted.spread} @${painted.x},${painted.y}` : "");
+        (painted
+          ? `；区域最大亮度跨度 ${painted.spread} @${painted.x},${painted.y}（采样方块 ${paintedPatch}px）`
+          : "");
       if (problems.length > 0) return fail(`${label}（${problems.join("；")}）`, detail, ax);
       return pass(label, detail);
     }
@@ -3155,8 +3184,8 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "clickEditor": {
       // 编辑器内没有可点节点（AX 里正文节点无 bbox），只能按坐标点：
-      // 取 AXTextArea 的 bbox（full 模式下的坐标即截图像素，与 click x/y 同空间），
-      // 从顶边往下 dy 像素落点，再用 ⌃N 逐行下行定位——比猜行高可靠。
+      // 取 AXTextArea 的 bbox（full 模式下的坐标即截图像素），**从左上角按窗口点偏移**（M762：
+      // `dx` / `dy` 是窗口点，密度无关），再用 ⌃N 逐行下行定位——比猜行高可靠。
       //
       // `real: true`（M669）：同一落点改走 **swift + CGEvent 真实左键单击**（mode 1，与
       // doubleClick / drag 同一条通道）。两个动因：① 真实点击同时把窗口做成 key，KimiCU 的
@@ -3178,8 +3207,9 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         evidence.record({
           kind: "note",
           text:
-            `clickEditor(real)：截图 ${Math.round(c.shotPoint.x)},${Math.round(c.shotPoint.y)} → ` +
-            `屏幕 ${Math.round(c.point.x)},${Math.round(c.point.y)}｜${c.out}`,
+            `clickEditor(real)：窗口局部 ${Math.round(c.local.x)},${Math.round(c.local.y)}` +
+            ` → 截图 ${Math.round(c.shotPoint.x)},${Math.round(c.shotPoint.y)}` +
+            ` → 屏幕 ${Math.round(c.point.x)},${Math.round(c.point.y)}｜${c.out}`,
         });
         await sleep(step.settleMs ?? 500);
         return `真实点击 @截图 ${Math.round(c.shotPoint.x)},${Math.round(c.shotPoint.y)}｜${c.out}`;
@@ -3187,7 +3217,17 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const ax = await readAx(cu, p, { mode: "full" });
       const ta = ax.textarea;
       if (!ta?.bbox) throw new Error("编辑器节点没有 bbox，无法定位点击");
-      return clickWithRetry(cu, p, ta.bbox.x + dx, ta.bbox.y + dy);
+      // KimiCU 的 `click x,y` 是**截图像素**，而 dx/dy 是**窗口点**（M762）：这里把窗口点折成
+      // 截图像素，两个通道（KimiCU 坐标点击 / swift 真实点击）才落到同一个物理点。
+      const bounds = windowBounds(ax.text);
+      const shot = screenshotSize(ax.text);
+      if (!bounds || !shot) {
+        throw new Error(
+          "clickEditor：AX 快照缺窗口矩形（captured_bounds）或截图尺寸，算不出「窗口点 → 截图像素」的换算" +
+            "（dx/dy 的单位是窗口点，不是截图像素）",
+        );
+      }
+      return clickWithRetry(cu, p, ta.bbox.x + dx * (shot.w / bounds.w), ta.bbox.y + dy * (shot.h / bounds.h));
     }
     case "open":
       return openFile(cu, p, step.file, { marker: step.marker });
@@ -3501,7 +3541,8 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
           evidence.record({
             kind: "note",
             text:
-              `focusWindow.click：第 ${attempt} 次真实正文单击 @截图 ` +
+              `focusWindow.click：第 ${attempt} 次真实正文单击 @窗口 ` +
+              `${Math.round(c.local.x)},${Math.round(c.local.y)} → 截图 ` +
               `${Math.round(c.shotPoint.x)},${Math.round(c.shotPoint.y)} → ` +
               `屏幕 ${Math.round(c.point.x)},${Math.round(c.point.y)}｜${c.out}`,
           });
@@ -3522,10 +3563,12 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         kind: "note",
         text:
           `focusWindow.click：焦点已建立（第 ${result.attempt} 次单击）｜focused=${result.reading.roles.join(",")}` +
-          `｜${keyText}｜落点 截图 ${Math.round(last.shotPoint.x)},${Math.round(last.shotPoint.y)}`,
+          `｜${keyText}｜落点 窗口 ${Math.round(last.local.x)},${Math.round(last.local.y)}` +
+          ` → 截图 ${Math.round(last.shotPoint.x)},${Math.round(last.shotPoint.y)}`,
       });
       return (
-        `${note}｜key window + webview 焦点：真实正文单击 @截图 ` +
+        `${note}｜key window + webview 焦点：真实正文单击 @窗口 ` +
+        `${Math.round(last.local.x)},${Math.round(last.local.y)} → 截图 ` +
         `${Math.round(last.shotPoint.x)},${Math.round(last.shotPoint.y)} → 屏幕 ` +
         `${Math.round(last.point.x)},${Math.round(last.point.y)}｜focused=${result.reading.roles.join(",")}` +
         `｜${keyText}（第 ${result.attempt} 次）`
@@ -3701,6 +3744,37 @@ async function readAxWithScreenshot(cu, pid, { retries = 3 } = {}) {
 export function screenshotSize(axText) {
   const m = /screenshot:\s*(\d+)×(\d+)\s*px/.exec(axText);
   return m ? { w: +m[1], h: +m[2] } : null;
+}
+
+/** 采样方块的缺省边长，单位是**窗口点**（M762；`pixel.patch` / `geom.painted.patch` 共用）。
+ *
+ *  与 `pixel.mjs` 的 `DEFAULT_PATCH`（截图像素，底层取色函数的缺省）同名不同单位，故另起一处：
+ *  场景面的 `patch` 描述的是「采样方块在多宽的物理区域里取色」——笔画宽度、行高都是点，方块边长
+ *  也必须是点，否则上游一改截图密度（0.6.8：1152 → 2048），同一份标定的物理面积就缩掉 1.78×
+ *  （64 的 eink 字形采样因此落进行间、亮度跨度从 64 塌到 10）。
+ *
+ *  7pt 就是 1152 时代 7px 的物理尺寸（0.96 px/pt ⇒ 7.3pt）：那一刻的标定语义原样保留，改单位
+ *  不改变当时的读数。 */
+const DEFAULT_PATCH_PT = 7;
+
+/** 采样方块的边长：窗口点 → 截图像素（M762）。两个轴的缩放比只差抗锯齿级的零头，取均值。 */
+function patchToPx({ patch, bounds, shot }) {
+  const scale = (shot.w / bounds.w + shot.h / bounds.h) / 2;
+  return Math.max(1, Math.round(patch * scale));
+}
+
+/** 一处采样窗口（M762）：采样点与方块边长都是**窗口点**，这里唯一一次折成截图像素。
+ *
+ *  为什么集中在一处：`pixel` 断言的三种形态（same / differ / contrast）与 `geom.painted` 的扫描
+ *  都吃「一个点 + 一个方块」，各自的换算若各写一遍，改口径时必然只改到一处（REVIEW.md「同一语义
+ *  两处真源」条）。换算比例从**同一份** AX 快照的 header 现取（`screenshotSize` / `windowBounds`），
+ *  不写死常数——上游改截图长边时这里跟着走。 */
+export function sampleWindowPx({ pt, patch, bounds, shot }) {
+  return {
+    px: Math.round(pt.x * (shot.w / bounds.w)),
+    py: Math.round(pt.y * (shot.h / bounds.h)),
+    patchPx: patchToPx({ patch, bounds, shot }),
+  };
 }
 
 /** scroll 的滚轮兜底方案（M644 / M761）。**不返回 null**：算不出来时给 `{ reason }`，让调用方把
