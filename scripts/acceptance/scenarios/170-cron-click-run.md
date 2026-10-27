@@ -63,7 +63,16 @@ steps:
       - label: 现场确已离开目标 vault（下面「点击把 app 带回目标 vault」判据的前提）
         ax: { has: "vault：lumir-m102-acceptance-b（点击查看全部 vault）" }
 
-  - name: 等「到点」通知横幅出现（到点后 30s tick 内投递；未点击前不运行）
+  # ── 先打开通知中心面板，再等/点（M752）──────────────────────────────────────
+  # 为什么不在**横幅**上点：验收副本使用同一 bundle id 反复跑，通知中心里会累积这个 app 的
+  # 通知；多条时 macOS 把它们渲染成**堆叠组**（AX 里 `..., stacked`），而堆叠组在点击前后的
+  # 重排会让「读到的 AX index」到按下时失效（KimiCU 报 `no action was sent`，M752 现场），
+  # 事件本身也可能在重排瞬间撤下。打开面板后条目是**列表项**（存活到被点掉为止），索引稳定。
+  # 陈旧条目不会被误点：任务 id 带 `$runTag`（本次运行唯一），标题/正文都只匹配本次的那一条。
+  - name: 打开通知中心面板（M620 的同一手法：点菜单栏时钟，幂等）
+    do: openNotificationCenter
+
+  - name: 等「到点」通知条目出现（到点后 30s tick 内投递；未点击前不运行）
     do: waitForNotification
     title: "acc-cron-click-$runTag"
     body: "到点"
@@ -92,10 +101,15 @@ steps:
           path: "env:logs/*.jsonl"
           jsonl: { event: cron_notified, kind: trigger }
 
-  - name: 点击通知横幅本体（系统通知中心 AXPress = 真实点击）
+  - name: 点击通知条目本体（系统通知中心 AXPress = 真实点击）
     do: clickNotification
     title: "acc-cron-click-$runTag"
     body: "到点"
+
+  # 点通知会激活 Lumir 并收起面板；已收起时本动作是空动作（幂等）。留着这一步是为了让后续
+  # 截图 / AX 判据看到的是 Lumir 窗口，而不是面板把窗口盖住的形态。
+  - name: 收起通知中心面板
+    do: closeNotificationCenter
 
   - name: 等点击发起的运行完成（prompt 与 mock 回答出现在交互会话里）
     do: waitFor
