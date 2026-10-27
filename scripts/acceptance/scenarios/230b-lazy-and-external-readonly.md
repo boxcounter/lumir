@@ -42,7 +42,9 @@ steps:
   - name: 等存在探测补帧（索引不含它，直接行由探测命中给出）
     do: waitFor
     waitFor:
-      has: ["按 Enter 打开 dist/quickopen-lazy.md"]
+      # 段边界容错，理由见 230a 的同名注释：直接行是前缀 / 目录 / 文件名三段 flex，
+      # WKWebView 在段之间插一个空格（`按 Enter 打开 dist/ quickopen-lazy.md`）。
+      has: ['/按 Enter 打开\s*dist\/\s*quickopen-lazy\.md/']
     timeoutMs: 5000
   - name: Enter
     do: key
@@ -74,8 +76,10 @@ steps:
     expect:
       - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
         ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: /etc/hosts/" }
-      - label: 直接打开行把「只读」写进动作里（vault 外、读取前判不了存在性）
-        ax: { has: "按 Enter 只读打开 /etc/hosts" }
+      - label: 直接打开行把「只读」写进动作里，且目标就是 /etc/hosts（vault 外、读取前判不了存在性；锚定整行，段边界 `\s*` 容错，见 230a 同名注释）
+        node: { name: "^按 Enter 只读打开\\s*/etc/\\s*hosts$", present: true }
+      - label: 该行的全路径通道（`title` → AX `help`）逐字是 /etc/hosts（零容差：属性不受分段空格影响）
+        ax: { has: '/help="\/etc\/hosts"/' }
       - label: 有直接打开行时 MUST NOT 出现候选空态
         ax: { not: "没有匹配的条目" }
   - name: Enter
@@ -132,8 +136,10 @@ steps:
     expect:
       - label: 路径落进输入框（逐键注入的正观测；AX 的 Value 是回读面）
         ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: /tmp/lumir-655-missing/notes.md/" }
-      - label: Enter 之前给的是**尝试行**（不断言它不存在——读取前判不了）
-        ax: { has: "按 Enter 只读打开 /tmp/lumir-655-missing/notes.md" }
+      - label: Enter 之前给的是**尝试行**（不断言它不存在——读取前判不了存在性；锚定整行，段边界 `\s*` 容错，见 230a 同名注释）
+        node: { name: "^按 Enter 只读打开\\s*/tmp/lumir-655-missing/\\s*notes\\.md$", present: true }
+      - label: 该行的全路径通道（`title` → AX `help`）逐字点名输入串（零容差：属性不受分段空格影响）
+        ax: { has: '/help="\/tmp\/lumir-655-missing\/notes\.md"/' }
       - label: 尝试行在场时 MUST NOT 出现候选空态
         ax: { not: "没有匹配的条目" }
   - name: Enter
@@ -184,6 +190,11 @@ steps:
 - **负例配正向断言**：`not: "vault 外 · 只读"`（惰性文件那条）旁边配「标签读屏名是
   quickopen-lazy.md」；`not: "没有匹配的条目"` 旁边配「直接打开行在场」——单独写负向断言有恒真
   风险。
+- **三处「直接打开行」的断言形态与 230a 同一条**（M755）：段边界 `\s*` 容错的正则（`waitFor`）
+  + 锚定整行的 `node` 断言 + 全路径 `help` 属性零容差判据。理由、现场与「为什么逐字子串恒红」
+  见 230a 正文的同名条目；`/etc/hosts` 与 `/tmp/lumir-655-missing/notes.md` 两处都是
+  「只读尝试行」（D590），因此锚定模式里带 `只读`——**动作措辞本身也是判据**（vault 内路径
+  MUST NOT 出现这两个字）。
 
 ## 覆盖边界（如实登记；三组共用的边界见 230a，本组只列本组相关的）
 

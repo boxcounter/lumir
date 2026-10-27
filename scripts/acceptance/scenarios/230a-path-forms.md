@@ -53,13 +53,18 @@ steps:
   - name: 等结果区给出直接打开行（索引收编后才出现；探针命中也算）
     do: waitFor
     waitFor:
-      has: ["按 Enter 打开 notes/deep/plan.md"]
+      # 段边界容错：直接行是「动作前缀 / 目录 / 文件名」三个 flex 段（`.lumir-qo-{prefix,dirs,name}`），
+      # WKWebView 在段之间会插一个空格（2026-10-27 实测 `按 Enter 打开 notes/deep/ plan.md`），
+      # 逐字串因此恒红。`\s*` 只落在段边界，路径字符本身零容差（见正文「判据为什么这样写」）。
+      has: ['/按 Enter 打开\s*notes\/deep\/\s*plan\.md/']
     timeoutMs: 15000
   - name: Enter 前的结果区
     do: settle
     expect:
-      - label: 直接打开行在场（与 Enter 同一份判决）
-        ax: { has: "按 Enter 打开 notes/deep/plan.md" }
+      - label: 直接打开行在场，且动作文本与目标路径落在同一条行上（锚定整行，不是「两串都在树里」；与 Enter 同一份判决）
+        node: { name: "^按 Enter 打开\\s*notes/deep/\\s*plan\\.md$", present: true }
+      - label: 该行的全路径通道（`title` → AX `help`）逐字是目标路径（零容差：属性不受分段空格影响）
+        ax: { has: '/help="notes\/deep\/plan\.md"/' }
       - label: 有直接打开行时 MUST NOT 出现候选空态
         ax: { not: "没有匹配的条目" }
       - shot: 02-路径输入
@@ -222,6 +227,21 @@ Alex 2026-10-23 的需求原话：「快速便捷地查找、打开文件（类�
 - **直接打开行的断言用动作文本，不用「有内容」**：`按 Enter 打开 <路径>` / `按 Enter 只读打开
   <路径>` 是结果区**判决**的措辞（D589 / D590），落点行是独立的 `第 N 行`（D591）。拿「界面变
   了」当判据挡不住「结果区仍然说没有匹配、Enter 却能打开」这个 M697 的原始缺陷。
+- **直接打开行的判据写成「锚定整行 + 全路径属性」两条，不写逐字子串**（M755，2026-10-27 真机
+  坐实）：该行由 `fillPathText` 拆成 prefix / dirs / name 三段（`src/quick-open.ts` 的
+  `.lumir-qo-{prefix,dirs,name}`，CSS 两段都是 `white-space: nowrap`），WKWebView 把这三段并成
+  一条 `AXStaticText` 时**在段边界插一个空格**——实测 `按 Enter 打开 notes/deep/ plan.md`
+  （`help="notes/deep/plan.md"` 逐字正确）。因此：
+  ① `waitFor` 与动作断言用**段边界 `\s*` 容错的正则**，`\s*` 只落在「前缀 / 目录 / 文件名」之间，
+     路径字符本身零容差（写错路径照样红）；
+  ② 稳态断言用 `node: { name: "^按 Enter 打开\\s*notes/deep/\\s*plan\\.md$", present: true }`
+     ——锚定**同一条行**的动作文本与路径，比原来的「两串都在 AX 树里」更强（REVIEW.md「断言
+     等价于子串」条）；
+  ③ 另配一条 `ax: { has: '/help="notes\/deep\/plan\.md"/' }`：该行的 `title`（W5 全文通道）
+     逐字是路径，**属性不受段边界空格影响**，是零容差的路径判据（`element.title = row.path`，
+     见 `src/quick-open.ts` 的 `fillRows`）。
+  逐字子串为什么恒红：空格是段边界的固有产物，不是折行、也不是偶发——同一形态在 2026-10-26 /
+  2026-10-27 两次跑批里逐字相同。
 - **负例配正向断言**：`ax: { not: "按 Enter 打开" }` 单独写有恒真风险（结果区没渲染这块也成立），
   因此同一步里配 `没有匹配的条目` 在场（D117）——两边一起才说明「这是真的零命中」。
 - **`notes/deep/plan.md` 与 `notes/v1:2.md` 用 `vaultWrite` 现造**：fixture 目录的 .md 由
