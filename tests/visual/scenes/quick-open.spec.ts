@@ -17,7 +17,9 @@ import { externalReads, invokes, stubTauri, type VaultFixture } from "./tauri-st
 //
 // 本场景不覆盖（如实登记）：解析次序的矩阵（整串优先 / 畸形后缀 / 大小写折叠 / 探测兜底）在
 // `tests/unit/quick-open.test.ts`；外部读取的 Rust 侧拒绝路径在 `cargo test`；真机 WKWebView
-// 下 ⌘P 是否被 webview 截获、粘贴与手感的判定在 `scripts/acceptance/scenarios/230-quick-open.md`。
+// 下 ⌘P 是否被 webview 截获、粘贴与手感的判定在真机套件 230 的三组场景
+// （`scripts/acceptance/scenarios/230a-path-forms.md` / `230b-lazy-and-external-readonly.md` /
+// `230c-restart-and-focus-scopes.md`）。
 
 const PLAN_DOC = "# Plan\n\nPLAN-MARKER\n";
 const SPEC_DOC = "# Spec\n\nSPEC-MARKER\n";
