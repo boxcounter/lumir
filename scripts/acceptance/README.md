@@ -8,8 +8,8 @@
 ```bash
 node scripts/acceptance/run.mjs              # 全部场景（= --batch full）
 node scripts/acceptance/run.mjs --batch core # 核心批：每批合并后、Alex 验收前跑这一档
-node scripts/acceptance/run.mjs 01 08        # 按 id 前缀 / item 项号筛选
-node scripts/acceptance/run.mjs --list       # 列出场景（加 --batch 看该批有哪些、各档多少条）
+node scripts/acceptance/run.mjs 01 08        # 按筛选词跑：精确 id → item 项号 → id 前缀（见下）
+node scripts/acceptance/run.mjs --list       # 列出场景（配合 --batch 与筛选词看会跑哪几条）
 node scripts/acceptance/run.mjs --check      # 静态校验场景（不真机，秒级；挡 key 拼错/断言形态错）
 node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手看现场
 ```
@@ -36,11 +36,38 @@ node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手�
   漏写 `requires: bundle` —— 场景失去 dev flavour 下的 INVALID 保护（runner 按 `requires` 判环境，
   缺它就会照常跑，产出一串与产品缺陷无法区分的 FAIL）；只写 `requires: bundle` 漏标 `tier: bundle`
   —— 会被 `--batch bundle` 静默漏掉。
-- **位置参数在批内再收窄**：`--batch core 07` = 核心批里匹配 `07` 前缀的那条；
-  `--batch core 47a` 空集（47a 属 full）⇒ 退出码 2 并打印该批可用 id。
-  批次取值不会被当成 id 前缀（`--batch core` 里的 `core` 不是筛选词，有专门用例钉住）。
+- **位置参数在批内再收窄**：`--batch core 07` = 核心批里筛选词 `07` 命中的那条；
+  `--batch core 47a` 空集（47a 属 full）⇒ 退出码 2 并点名「命中的都不在批内」（`--list` 看该批有哪些）。
+  批次取值不会被当成筛选词（`--batch core` 里的 `core` 不是筛选键，有专门用例钉住）。
 
-`--check` 与 `coverage.mjs --check` 都会打印各档条数（`core 29 / full 211 / bundle 3 / evidence 4`），
+### 位置参数（筛选词）：精确 id → item 项号 → id 前缀
+
+`run.mjs` 之后的位置参数是筛选词，逐词按三级取**第一个有命中的级**（不是并集）：
+
+| 级 | 例子 | 选中 |
+|---|---|---|
+| ① 精确场景 id | `13-toc` | 只有 13-toc |
+| ② item 项号精确相等 | `13` | 只有 item 13 的 13-toc——**不再连跑 13x 组（131–139）** |
+| ③ id 前缀 | `47a` / `230` | 47a 单条 / 230a–c 全组 |
+
+为什么不是并集（M754 现场）：旧实现是 `id.startsWith(词) || item === 词` 的并集，`13` 同时命中
+item 13 与所有 13x 前缀场景——按「跑第 13 项」的读法把整个 13x 组多跑一遍，多跑的场景一起进证据
+与退出码，只能人工中止。拆分组照旧便利：`47` 命中 item 级的 47a–47d，`230` 没有 item 命中
+（230a–c 的 item 是 655）而落到前缀级、同样选全组。要取回被高级别挡掉的同前缀场景（如 `231`
+只选 item 231 的两条，`231-quick-open-long-path-width` 的 item 是 702），把它当显式筛选词再给
+一次：`run.mjs 231 231-quick-open-long-path-width`。
+
+**筛选词的解析域是全部场景，再与批次池取交集**：`--batch` 不改变一个词的含义。故
+`--batch core 13` 是空集（13-toc 属 full）并报「命中的都不在批内」，而不是「核心批里以 13 开头的
+场景」——后者会让同一行命令因批次不同而换义，正是要终结的静默换义形态。
+
+**三级全空即退出码 2**（`13x` / `999` / 空串）：不静默跑 0 条，也不退回前缀级放大范围。
+
+**开跑前打印选中清单**：`--list` 与真跑批都先逐词打印命中级（如
+`筛选 13 → item 项号 13：1 个（13-toc）`）再打印最终 id 清单；`--check` 带筛选词时打印同一份
+解析。三处走同一个纯函数（`lib/batches.mjs` 的 `selectScenarios`），不存在「显示一套、执行一套」。
+
+`--check` 与 `coverage.mjs --check` 都会打印各档条数（`core 29 / full 194 / bundle 3 / evidence 4`），
 写新场景后先用它确认档位没写错。分档的数量真源是场景声明本身，这里不抄第二份清单。
 
 **分档只决定「跑哪些」，不改判定与退出码**：`evidence` 档的场景今天仍照常判 PASS/FAIL、失败照样让
@@ -387,7 +414,7 @@ app 进程的定位用**进程组**（`pnpm tauri dev` 以 detached 起，自成
 ```markdown
 ---
 id: "01-mermaid-click"
-item: 1                      # 验收项号（也是 run.mjs 的筛选键；多场景可共用一项）
+item: 1                      # 验收项号（也是 run.mjs 的筛选键：三级里第二级的「item 项号精确相等」；多场景可共用一项）
 title: Mermaid 图表点击进源码编辑
 fixtures: [mermaid.md]       # 场景开始前覆盖进验收 vault 的 fixture
 open: mermaid.md             # 用左栏点击打开的文件
@@ -1396,9 +1423,13 @@ INVALID 为 0 时整项省略（既有小样本头部逐字不变）。`cu.test.
 最小调用、`window_id` / `ax_filter` 的条件写入、「连续三次读取每次都是全树」三面逐字段
 `deepEqual`（漏字段、多写、改名都红；第二、三次只回空 diff 正是要拦的形态），另有一条源码扫描
 钉住 `get_app_state` 只有 `CuClient.state` 一个发出点——新开调用点会绕过这条口径。
-`lib/batches.test.mjs`（M749）钉批次这一层的两道静默失效：`--batch` 的取值被当成 id 前缀
-（批次实际只跑 0 条或跑成全量）、`tier` 拼错 / 漏写让场景悄悄退出所属批次——用 5 条合成场景
-逐档筛一遍（`full` 必须一条不少），再用真实 230 个场景对账「每个场景恰好一个档、四档都非空、
-bundle 批与 `requires: bundle` 逐条相同」。
+`lib/batches.test.mjs`（M749 / M758）钉批次与筛选词这两层的静默失效。批次侧（M749）：
+`--batch` 的取值被当成 id 前缀（批次实际只跑 0 条或跑成全量）、`tier` 拼错 / 漏写让场景悄悄退出
+所属批次——用 5 条合成场景逐档筛一遍（`full` 必须一条不少），再用真实 230 个场景对账「每个场景
+恰好一个档、四档都非空、bundle 批与 `requires: bundle` 逐条相同」。筛选词侧（M758）：三级优先级
+`MATCH_KINDS` 的顺序本身有断言；逐条构造旧口径（并集）会判红的输入——`13` 必须只选 13-toc（真仓
+对账里 13x 组一条都不得被选中）、`47` / `230` 拆分组必须照旧选全组、精确 id 压过 item 与前缀、
+无命中（含空串 / 纯空白）不得放大成前缀或全量、混合词取并集且按场景顺序去重、`--batch` 只做交集
+不改解析级（`--batch core 13` 必须是空的 + `outOfBatch`，不能退回前缀在批内凑数）。
 六组自测经 `check-suite.sh` 进入 quick 与 docs CI；
 `scripts/migrate-harness-sessions.test.mjs` 仍是单独手跑的迁移脚本测试，不在本入口内。

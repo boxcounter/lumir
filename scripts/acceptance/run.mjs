@@ -5,7 +5,7 @@
 //   node scripts/acceptance/run.mjs                 # 跑全部场景（= --batch full）
 //   node scripts/acceptance/run.mjs --batch core    # 只跑核心批（front-matter 的 tier: core）
 //   node scripts/acceptance/run.mjs --batch bundle  # 只跑 requires: bundle 的通知点击链路
-//   node scripts/acceptance/run.mjs 01 08           # 只跑 id 前缀匹配的场景
+//   node scripts/acceptance/run.mjs 01 08           # 只跑筛选词命中的场景（精确 id → item 项号 → id 前缀）
 //   node scripts/acceptance/run.mjs --list          # 列出场景（配合 --batch 看该批有哪些）
 //   node scripts/acceptance/run.mjs --keep-app      # 跑完保留 app（人工接手看现场）
 //   node scripts/acceptance/run.mjs --check         # 静态校验场景（不真机、不建锁）
@@ -55,7 +55,7 @@ import {
 } from "./lib/drive.mjs";
 import { Evidence, appendRunLog, writeSummary } from "./lib/evidence.mjs";
 import { checkScenario, loadScenario, runScenario } from "./lib/execute.mjs";
-import { DEFAULT_BATCH, parseBatchArgs, selectBatch, summarizeTiers, TIERS } from "./lib/batches.mjs";
+import { DEFAULT_BATCH, parseBatchArgs, selectBatch, selectScenarios, summarizeTiers, TIERS } from "./lib/batches.mjs";
 import { checkCoverage } from "./coverage.mjs";
 import { envHome, InfraError, log, mkdirp, repoRoot, resultsRoot, sleep, vaultDir } from "./lib/util.mjs";
 
@@ -136,11 +136,38 @@ async function listScenarios() {
 }
 
 const all = await listScenarios();
-// 批次池（M749）：`--batch` 只决定**从哪里取场景**，不动单个场景的判据。位置参数（id 前缀 /
-// item 项号）在同一批内进一步收窄——两者是「先分批、再筛选」的与关系，与不带 --batch 时相同。
+// 批次池（M749）：`--batch` 只决定**从哪里取场景**，不动单个场景的判据。
 const pool = selectBatch(all, batch);
+// 位置参数（M758）：逐词按「精确 id → item 项号 → id 前缀」取第一个有命中的级（实现见
+// batches.mjs 的 selectScenarios）。解析域是**全量**、再与批次池取交集——`--batch` 不得改变
+// 一个筛选词的含义（否则 `--batch core 13` 会因 13-toc 不在核心批而退回前缀级、静默拉进
+// 130–139）。`--check` / `--list` / 真跑批都走这一次解析，「显示」与「执行」因此同源。
+const selection = selectScenarios(all, filters, pool);
+const selected = selection.selected;
+const MATCH_LABELS = { id: "精确 id", item: "item 项号", prefix: "id 前缀" };
+const filterLine = ({ filter, kind, ids }) =>
+  `筛选 ${filter === "" ? '""' : filter} → ${kind ? MATCH_LABELS[kind] : "无命中"}：${ids.length} 个${ids.length ? `（${ids.join(", ")}）` : ""}`;
+const logFilters = () => {
+  for (const entry of selection.byFilter) log(filterLine(entry));
+};
+if (selection.unmatched.length) {
+  // 筛选词写错（或该 id 已改名）时不能静默跑 0 条、更不能退回前缀把范围放大：真跑批与
+  // `--check` / `--list` 一律退出码 2，与批次参数写错同档（均在碰任何机器资源之前）。
+  for (const entry of selection.byFilter.filter((e) => !e.kind)) log(`✗ ${filterLine(entry)}`);
+  log(
+    `\n筛选词按「精确 id → item 项号 → id 前缀」逐级匹配，一个词至少命中一级；` +
+      `本次筛选域为全量 ${all.length} 个场景，用 --list 查看可用 id。`,
+  );
+  process.exit(2);
+}
 if (args.includes("--check")) {
   // 静态校验：不真机、秒级，写场景时先用它挡掉 key 拼错、断言形态写错这类低级错。
+  // 带筛选词时先报「真跑会跑哪几条」（与跑批同一个 selectScenarios）；校验面仍是全部场景
+  // ——`--check` 判的是制品本身，不因筛选收窄。
+  if (filters.length) {
+    logFilters();
+    log(`筛选后选中 ${selected.length} 个场景：${selected.map((s) => s.id).join(", ") || "（无）"}\n`);
+  }
   const problems = all.flatMap(checkScenario);
   // 覆盖表（M690）：`scripts/acceptance/COVERAGE.md` 由场景 front-matter 生成，这里判它与场景
   // 一致、以及 id / item / title 必填、id 唯一、item 在覆盖表内一项一行（场景间共用 item 合法）。
@@ -164,15 +191,33 @@ if (args.includes("--check")) {
   process.exit(0);
 }
 if (args.includes("--list")) {
-  for (const s of pool) log(`${s.id}\t（验收项 ${s.item}）\t${s.tier}\t${s.title}`);
-  log(`\n批次 ${batch}：${pool.length} 个（全部 ${all.length} 个；--batch ${TIERS.join("|")}）`);
+  if (filters.length) logFilters();
+  for (const s of selected) log(`${s.id}\t（验收项 ${s.item}）\t${s.tier}\t${s.title}`);
+  log(
+    filters.length
+      ? `\n批次 ${batch}：${selected.length} 个（筛选自该批 ${pool.length} 个 / 全部 ${all.length} 个；--batch ${TIERS.join("|")}）`
+      : `\n批次 ${batch}：${pool.length} 个（全部 ${all.length} 个；--batch ${TIERS.join("|")}）`,
+  );
+  // 空交集不是错误（--list 是查询），但要说清「为什么 0 条」：命中但都在批外，与词写错是两回事。
+  if (filters.length && selected.length === 0 && selection.outOfBatch.length) {
+    log(`\n命中的 ${selection.outOfBatch.length} 个都不在批次 ${batch} 内：${selection.outOfBatch.join(", ")}——换批次或去掉 --batch。`);
+  }
   process.exit(0);
 }
-const selected = filters.length ? pool.filter((s) => filters.some((f) => s.id.startsWith(f) || String(s.item) === f)) : pool;
 if (selected.length === 0) {
-  log(`没有匹配的场景（批次 ${batch} 内 ${pool.length} 个；可用：${pool.map((s) => s.id).join(", ")}）`);
+  logFilters();
+  log(
+    selection.outOfBatch.length
+      ? `✗ 没有可跑的场景：筛选命中的 ${selection.outOfBatch.length} 个都不在批次 ${batch} 内` +
+          `（该批 ${pool.length} 个）：${selection.outOfBatch.join(", ")}——换批次或去掉 --batch 再跑`
+      : `没有匹配的场景（批次 ${batch} 内 ${pool.length} 个）；用 --list 查看可用 id`,
+  );
   process.exit(2);
 }
+// 开跑前把最终选中清单打出来（M758）：`13` 究竟是 13-toc 还是 13x、有没有多跑，在第一批动作
+// （抢锁 / 起 app）之前就可见，不必等首个 `▶` 或事后翻 run.log 才发现。
+logFilters();
+log(`本次选中 ${selected.length} 个场景：${selected.map((s) => s.id).join(", ")}`);
 
 /**
  * 验收模式标记（M359）：把 dev 端口的**缺省值显式落进 env**——这是 `vite.config.ts` 判定
