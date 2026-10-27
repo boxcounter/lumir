@@ -541,7 +541,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `typeInNode` | `target: {role, name\|any, nth}`（与 `clickInNode` 同一解析）、`text`（非空字符串）、`retries` | **素材注入：composer（M498）/ 原生输入框（M507）**：composer 用 KimiCU `type_text` 不带 index（当前焦点注入）整串**追加到目标末尾**；`AXTextField` / `AXComboBox` 用 `lib/cgevent-key.swift` 的真实 Unicode keyDown/keyUp，避免 `type_text` 触发失焦取消。回读重试保持 M143 口径（目标串出现 N→N+1；目标字节完全未变才重试 ≤3 次；partial/duplicated 直接判败给诊断，不在残段后重注）。**原生输入框适用面（M507）**：target 解析与回读（`node.value`）对 AXTextField（搜索框 / 树内联重命名框 / 新建文件·子目录名框）、AXComboBox（两处列表筛选框）、AXTextArea（拒绝原因等多行 textarea）一视同仁——M504 归因的「逐字符 `press_key` 对输入框丢键」（'e' 本机确定性丢失）在这些目标上改走本动作（场景 31/32/47/52/73）。`target.name` 要写**注入前与注入后两个状态都能命中**的交替正则（空框 = 读屏名如 `查找` / `新建文件的名称`，**非空 = 只剩 `= "值"`**，见「真机 AX 读不到非空值输入框的读屏名」条），如 `查找\|limit`。**通道是 M498 探针 1–7 毙掉其余三条后的唯一幸存者**：press_key 逐键对 composer 丢键（'e' 确定性丢失，M497）、press_key `cmd+v` 本机 8/9 不落地、`type_text` 带 index 点节点 bbox 中心不保留 caret（长单行落正文中段）；不带 index 的 `type_text` 4/4 落地、无点击。**语义 = 追加到末尾，不是在 caret 处键入**：caret 由键盘导航定位、落点即判据的步骤（141/154 的 ⌃B/⌃F 后落字）不适用、留在 `do: keys`（该形态现无可靠通道，finding 已报）；其余注入时 caret 本就在末尾的场景（空 composer 首问、发送后复问）与旧 `do: keys` 逐字等价。**软断行之后的注入不适用（M518 真机实测，2026-10-14）**：`text` 里含软断行块（`composerObserver` 从 DOM 回灌的模型与 DOM 已分叉）时，type_text 的 AX 注入落点错位、文本被折进上一块（117/118/154 十行折成五块、第二行与第一行同行拼接），三场景已改走 `do: keys`——「追加到末尾」只在目标内容**没有**软断行块时才与逐键键入等价。**何时不迁——AXPress 插卡语境（M502 回退）**：卡片钮是 AXPress，插卡后 `type_text` 无 index 的真实投递与 AX `(focused)` 标记可背离（标记在 composer、盲注却落进编辑器，82/83/85 三场景实证），而带 index 的注入又不进 composer 模型（后续读模型状态的步骤穿帮）；该语境的素材注入若**素材串无 'e'**（press_key 确定性丢 'e'，M497）即可保留 `do: keys`（82/83/85 的三个素材步即此，各自附 `editor.unchangedSince` 守卫）。前置：注入时 composer 须持 DOM 焦点（各自的 clickInNode / 发送后焦点 retained 建立），焦点在别处会漏进焦点元素——回读判未落地 + 场景侧 `editor.unchangedSince` 守卫。**attempt-1 焦点守卫（M501，M500 归因的落地）**：注入前解析目标节点，无 `(focused)` 标记时先点目标（AX 索引点击）再注——AXPress 插卡等动作后 AX 的 focused 标记与 type_text 无 index 走的「当前焦点」投递可能背离。焦点已在目标时零开销零行为变化（只读标记，不多点一下）；守卫动作与重试均落证据。**该守卫的适用边界（M502 改口）**：它只在本就迁到 `typeInNode` 的步骤里兜底，防不住 AXPress 插卡语境这一族（真机复跑实证仍漏注入编辑器——故 82/83/85 已回退 `do: keys`，见上「何时不迁」）；该语境的终防线是场景侧 `editor.unchangedSince` 守卫，不是这条焦点校验。**AX 注入改 DOM 但 composer 模型不可见**：composer 模型的内容输入走 keydown 路径，type_text 的 AX 注入不进模型——后续读**模型状态**的步骤（`@` 钮插入、按模型组装的留存）会穿帮（M498 三跑实证：模型把段落当空、引用插到段落首成「Image 1note-」）。**post-menu（原生菜单交互后）且后续读模型状态的步骤没有可靠套件通道**（M498 在 148 note- 步三通道全试：键盘注入 post-menu 死亡（M456）、type_text 模型不可见、剪贴板+原生菜单 Paste 文本在产品 paste 管线本可插入（模型一致）但两张卡片时 composer 达 max-height 滚动、右键 dy 落点命中卡片元信息行链接区开出 Look Up/Copy Link 菜单）——此类步骤留在 `do: keys` 并在场景内注释登记（148 note- 步即此先例，自 M454 从未转绿）。`target.name` 要写**注入前与注入后两个状态都能命中**的交替正则（composer 空 = 占位读屏名「问点什么…」，有内容 = 可访问名即内容），如 `问点什么\|qrefmark`；解析在每次回读时重做（AX index 是快照域的）。**注意 name 是裸正则源码、不带 `/…/` 包裹**（与 `clickInNode` 的 `target.name` 同口径；`/…/` 是 `ax.has` 断言的 matcher 约定，两套别混）。`gapMs` / `keys` 与本动作互斥（迁移残留，`--check` 挡） |
 | `type` | `text`（非空字符串）、`clear`、`retries` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区）；回读 + 有限重试与 `keys` **同一口径**：只在编辑器字节完全未变时重试（≤3），partial landing 直接报错不重试（判定边界见「已知边界」）。`text` 漏写在 `--check` 阶段即报（M379；此前会注入 `undefined`、连报 3 次未落地才暴露） |
 | `clipboardRead` | — | 读**系统剪贴板**（M244）：固定 `osascript -e 'the clipboard'`，不接受命令与参数——套件刻意不引入通用 shell 通道（这条口径见 `38-content-width-drag.md` 的登记），只开这一个可断言的读数出口。返回命令 stdout 并做**行尾归一**（`\r\n` / `\r` → `\n`，再去掉一个尾换行）——AppleScript 把粘贴板文本按经典 Mac 行尾（CR）返回，不归一的话多行内容的 `exact` 断言必然假红（app 侧写的是 LF；M277 实测）；命令失败即**报错**（不把「读不到」当空）。日常断言用 `clipboard` 断言形态，本动作用于把读数写进证据 |
-| `sleep` | `ms` | 等待 |
+| `sleep` | `ms` | 等待。只用于两类口径：①外部写入后留一拍（≥1s，见「`do: settle` 的真实语义」节）；②负向判据的**有界观察窗**（定时任务类场景见「cron 场景的等待口径」节）。不要拿它猜异步事件的时长 |
 | `record` | `as`、`file` | 记下文件 sha256/mtime，供 `changedSince`/`unchangedSince`/`mtimeNewerThan` 比较。`file` **支持 glob**（与 file 断言同源：取匹配文件里 mtime 最新那一份——诊断日志这类「文件名由 app 决定」的产物要用它）；**目标不存在即报错**，不把基线记成 null（null 基线在 `mtimeNewerThan` 那边会退化成「0 基线」的假绿，M272 补） |
 | `recordEditor` | `as` | 记下编辑器文本，供 `editor.unchangedSince` 做**逐字节**比较 |
 | `vaultWrite` / `vaultAppend` | `file`、`content` | 从外部改写验收 vault（模拟外部修改） |
@@ -610,6 +610,40 @@ not: ["AXProgressIndicator"] }`）；`settle` 只在「判据明确不依赖任�
 | 未打开 vault 的空态 | 树 pane 的空态说明行（D5）+ 打开入口，且 `ax.textarea` 在位 | `last_vault` 失效 / 无 `last_vault`；**只有** `requireVault: false` 才认 |
 
 第二行的判据是**正**观测（引导文案必须真的在 AX 里），不是「编辑器读不到就当就绪」——REVIEW.md「读不到当成空」条禁的是后者。`editor.*` 类断言仍严格：`AXTextArea` 不可读一律 FAIL，不会在空转的 `""` 上下结论。
+
+### cron 场景的等待口径：正向等事件、负向留窗口（M746）
+
+定时任务类场景（169 / 174 / 207 / 210 / 213 …）的等待二分，不再按「`$nextMinute` 至少 +60s +
+30s tick + 投递」估一个固定时长去 `sleep`：
+
+- **正向（等某个事件发生）**：等 `cron_notified` 这类「投递成功后才写」的日志事件，用
+  `do: waitForFile` + `jsonl: { event, task, kind }`——判据与随后的 `file` 断言同源（见动作表
+  `waitForFile` 条）。`timeoutMs` 要覆盖最坏时序：`$nextMinute` 最远 = 写入时刻 +120s（恰好写在
+  分钟边界之后），加 30s tick 与投递，到点类等待写 `180000`。
+- **负向（证明某事没有发生）**：没有可等的锚点——「没发生」正是期望态，`waitForFile` 的
+  `count: 0` 会在第一次读取就成立（等于没等）。负向判据保留一段**有界观察窗**：`do: sleep` +
+  显式毫秒数 + 一行「这个窗口覆盖哪条路径」的注释，窗口结束再断言。窗口按要覆盖的路径定，
+  不按事件总时长估。
+- **窗口大小的口径**：同一次评估内的回归（本该只投通知却发起运行：handoff 与投递在同一个 tick
+  的同一轮 `evaluate` 里，`cron_run_started` 秒级落盘）给 5s；单个触发源的去重（焦点触发：
+  合并 200ms + 投递 + 日志批量落盘 200ms）给 3s；要跨定时器 tick 的（重启后补触发 / 定时器
+  是否补投）给 ≥30s（174 用 40s）。
+
+**174 重启后那一段为什么不能事件化（M746 核实的机制）**：当日去重命中时 `cron::plan` 返回
+`Plan::Idle`，`dispatch` 不为它落任何事件（`src-tauri/src/lib.rs`）——「正确地什么都没做」在
+磁盘上没有正向见证，只能留窗口。207 / 210 的**到点**等待在 M616 起就已用 `waitForFile`（等
+`cron_notified` 落盘）。
+
+**诊断事件的断言也要等它落盘（M746 真机实测，2026-10-27）**：`cron_task_registered` /
+`cron_task_removed` 这类由工具调用产出的事件同样是**批量落盘**（`logging.rs` 的 200ms 静默期）。
+UI 回执（「定时任务已注册。」/「任务已删除。」）出现时，那一行可能还在缓冲区里——207 / 210 原来
+在这条回执后**立即**断言日志，真机上两场都因此判红（当日现场：断言时日志 8 / 9 行，目标行在下一批）。
+口径：凡「等下一条日志证据」的地方一律先 `do: waitForFile` 再断言（等待条件就是最终要断言的
+那条 JSONL 记录，`timeoutMs` 20s 足够），不要用 `sleep` 补拍。
+
+**别反向优化**：`sleep` → `waitForFile` 的方向是「等真正要断言的那件事」，不是「把时长改短省
+时间」——169 的旧 `sleep 125000` 最坏可到 ~150s（`$nextMinute` 最远 +120s，再加 30s tick），
+短于最坏时序，本身就是一条随写入时刻漂移的假 FAIL。
 
 ### 断言（每个 `expect` 条目一条记录）
 
@@ -1091,6 +1125,17 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
 - **编辑器不可读 ≠ 文档为空**：modal（⌘/ 键位面板、对话框）打开期间 AX 快照里**没有 AXTextArea**，
   此时 `editor.*` 一律记 FAIL，`recordEditor` 直接报错——否则负向断言与逐字节比较会在 `"" === ""`
   上空转假绿（r2 评审实证）。断言需要读文档时，基线要在 modal 打开前记录、关闭后比较。
+- **`get_app_state` 的缺省是增量 diff，套件必须显式取全树（M751）**：KimiCU 新版把 `get_app_state`
+  的缺省行为改成「返回与上一次快照的增量 diff」，对应开关是 `disable_diff`（工具 schema 原文
+  "Return the full tree instead of the default session diff"）。只给 pid/mode 时**第二次读取拿到
+  的是一份空 diff**，而空 diff 与「这个 app 真的没有节点」在 markdown 文本上无法区分：`settle`
+  （连续两次快照逐字节一致）会在第二次就判「一致」、`waitFor` 轮询与 `ax.has` / `ax.not` 断言则
+  对着空树判红/假绿——REVIEW.md「读不到当成空」条的同族形态，且更隐蔽（不是读不到，是读到了
+  「没变化」）。因此 `lib/cu.mjs` 的 `CuClient.state` **每次**请求都带 `disable_diff: true`，无条件
+  取全树、不做「第二次才补」；`get_app_state` 也只有这一个发出点。回归测试 `lib/cu.test.mjs` 断言
+  的是实际写到 MCP stdio 上的 `tools/call` 帧：删掉该字段、或改动 pid / mode / `window_id` /
+  `ax_filter` 的既有形态都会判红。手工排查真机读数时同样带 `disable_diff: true` 重观察（KimiCU
+  自己的建议也是「diff 基线失效后这样重观察」）。
 - **AX 快照可能退化**：`get_app_state` 偶尔只返回菜单栏（`truncated: [..., cycle]`）。这通常是
   KimiCU 后台服务进了坏状态，表现为**全局**退化（Finder、别的 app 一起坏）。此时全套会一起报
   「前端未就绪」，处理办法是**重注册 KimiCU 服务**（`/Applications/KimiCU.app/Contents/MacOS/kimi-cu install`），不是改场景；服务龄期 >1 天或 CPU 时间十几小时时先看一眼（`ps -Ao pid,etime,time,command | grep -i kimi-cu`），老化服务也会污染注入的修饰键状态（press_key 字母全大写而系统级修饰键读数干净）。退化的树**没有 `window_bounds`**，
@@ -1276,7 +1321,7 @@ bash scripts/acceptance/check-suite.sh
 ```
 
 它依次覆盖 JS 语法、全部场景静态校验、覆盖表一致性，以及 `lib/execute.test.mjs`、
-`lib/app.test.mjs`、`lib/evidence.test.mjs`、`coverage.test.mjs` 四组 `node:test` 自测。
+`lib/app.test.mjs`、`lib/cu.test.mjs`、`lib/evidence.test.mjs`、`coverage.test.mjs` 五组 `node:test` 自测。
 需要单文件迭代时仍可直接 `node --test <文件>`。
 
 纯 `node:test`、零新增依赖、不起真机（file 类断言与零断言兜底都不读 app / KimiCU，ctx 桩化即可）。
@@ -1297,5 +1342,11 @@ composer」「只剩 AXWebArea 焦点」两份坏态必须判失败；「编辑�
 产品 id、产物 = 别的 id 都必须红）。`evidence.test.mjs`（M745）钉证据索引头部的三态计数：
 INVALID（本次运行无效）不得并进 FAIL——拿一份「2 PASS / 1 FAIL / 1 INVALID」的输入，头部必须写
 `FAIL 1`（旧口径 `status !== "PASS"` 在这份输入上写 `FAIL 2`），跨 run 合并后的累计行同样三态；
-INVALID 为 0 时整项省略（既有小样本头部逐字不变）。四组自测经 `check-suite.sh` 进入 quick 与 docs CI；
+INVALID 为 0 时整项省略（既有小样本头部逐字不变）。`cu.test.mjs`（M751）钉 `get_app_state` 的取树
+口径：KimiCU 新版缺省回增量 diff，`CuClient.state` 每次请求都必须带 `disable_diff: true`——用例
+读的是实际写到 MCP stdio 上的 `tools/call` 帧（假 server 把 `name` / `arguments` 原样回显），
+最小调用、`window_id` / `ax_filter` 的条件写入、「连续三次读取每次都是全树」三面逐字段
+`deepEqual`（漏字段、多写、改名都红；第二、三次只回空 diff 正是要拦的形态），另有一条源码扫描
+钉住 `get_app_state` 只有 `CuClient.state` 一个发出点——新开调用点会绕过这条口径。
+五组自测经 `check-suite.sh` 进入 quick 与 docs CI；
 `scripts/migrate-harness-sessions.test.mjs` 仍是单独手跑的迁移脚本测试，不在本入口内。
