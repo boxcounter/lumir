@@ -118,6 +118,12 @@ LUMIR_ACCEPTANCE_BUNDLE="$PWD/src-tauri/target/debug/bundle/macos/Lumir.app/Cont
 UN 通知授权会直接返回 denied（启动日志 `通知权限被拒绝`）——横幅根本不出现，场景在
 `waitForNotification` 就红，形态与「点击回调坏掉」无法区分。
 
+**同一台机器上可能同时存在多份同 id 副本时（M752）**：`build-bundle.mjs` 支持 opt-in 的
+`LUMIR_ACCEPTANCE_BUNDLE_ID=<独立 id>`。默认不设，产物仍是 `com.lumir.app.acceptance`（套件行为
+一字不变）；设了就用该 id 构建——用于「手工验证 / 人肉点击」这类场合，避免点击被另一份同 id 副本
+接走（M619/M622 的路由问题）。该 id 是**通知授权身份**，必须固定不要每次变（换 id 等于换身份，系统
+要重新授权一次，需人工允许）；并且**同一份 `.app` 产物会被覆盖**，跑套件前请用默认 id 重建。
+
 **独立 bundle id 是通知点击落点的根治（M622）**：usernoted / LaunchServices 按 **bundle id**
 解析点击目标。验收副本若与产品同 id（`com.lumir.app`），点击会被解析到安装版的注册 URL，
 2026-10-21 11:44 / 11:46 的 170/171 真机复跑里点击仍拉起 `/Applications/Lumir.app`（M619）——

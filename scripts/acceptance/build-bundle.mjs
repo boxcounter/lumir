@@ -16,6 +16,14 @@
 // 用法：
 //   node scripts/acceptance/build-bundle.mjs
 //
+// **通知身份隔离（M752，opt-in）**：设 `LUMIR_ACCEPTANCE_BUNDLE_ID=<独立 id>` 时用该 id 构建。
+// 用途是「手工验证/人肉点击」这类「同机可能同时存在多份同 id 副本」的场合——同 bundle id 的两份
+// 副本会让点击被另一份接走（M619/M622 的路由问题）。**默认不设该变量，产物 id 仍是
+// com.lumir.app.acceptance，套件行为一字不变。** 该 id 必须是**固定值**：换 id 等于换一个通知
+// 授权身份，系统要重新授权一次（由 Alex 人工允许），因此不要每次运行都改。
+// 注意 `.app` 产物路径不随 id 变化（同一份 Lumir.app 被覆盖）——用隔离 id 跑完手工验证后，
+// 要跑套件（170/171/213）请用默认 id 重建。
+//
 // 产物：<CARGO_TARGET_DIR | src-tauri/target>/debug/bundle/macos/<productName>.app
 // 之后按 README「实例 flavour」用 LUMIR_ACCEPTANCE_BUNDLE 指向它跑 170 / 171 / 213。
 //
@@ -27,7 +35,12 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { ACCEPTANCE_BUNDLE_ID, assertAcceptanceBundleIdentity } from "./lib/app.mjs";
+import {
+  ACCEPTANCE_BUNDLE_ID,
+  assertAcceptanceBundleIdentity,
+  productBundleId,
+  readBundleId,
+} from "./lib/app.mjs";
 import { log, repoRoot } from "./lib/util.mjs";
 
 function run(cmd, args) {
@@ -41,10 +54,24 @@ function fail(message) {
 }
 
 const root = repoRoot();
+// 通知身份隔离（M752，opt-in）：默认用验收 id；设了 LUMIR_ACCEPTANCE_BUNDLE_ID 就用它。
+const overrideBundleId = (process.env.LUMIR_ACCEPTANCE_BUNDLE_ID ?? "").trim();
+const bundleId = overrideBundleId === "" ? ACCEPTANCE_BUNDLE_ID : overrideBundleId;
 const confPath = path.join(root, "src-tauri", "tauri.conf.json");
 const conf = JSON.parse(readFileSync(confPath, "utf8"));
 const productName = conf.productName;
 if (!productName) fail(`${confPath} 缺 productName，无法定位 .app 产物`);
+if (overrideBundleId !== "") {
+  if (overrideBundleId === conf.identifier) {
+    fail(
+      `LUMIR_ACCEPTANCE_BUNDLE_ID 不得等于产品 id（${conf.identifier}）：` +
+        "点击会按该 id 被 LaunchServices 解析到安装版（M619 的根因）",
+    );
+  }
+  if (/\s/.test(overrideBundleId) || !/^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9.-]+$/.test(overrideBundleId)) {
+    fail(`LUMIR_ACCEPTANCE_BUNDLE_ID 形状非法：${JSON.stringify(overrideBundleId)}（要 reverse-DNS 形态、不含空白）`);
+  }
+}
 
 if (!existsSync(path.join(root, "node_modules", ".bin", "tauri"))) {
   fail(`worktree 缺 node_modules（${path.join(root, "node_modules")}）：先 pnpm install --frozen-lockfile`);
@@ -68,7 +95,7 @@ try {
     "--bundles",
     "app",
     "--config",
-    JSON.stringify({ identifier: ACCEPTANCE_BUNDLE_ID }),
+    JSON.stringify({ identifier: bundleId }),
   ]);
   run("codesign", ["--force", "--deep", "--sign", "-", appPath]);
 } catch (e) {
@@ -77,7 +104,18 @@ try {
 
 let identity;
 try {
-  identity = assertAcceptanceBundleIdentity({ appPath });
+  if (overrideBundleId === "") {
+    // 默认路径：与套件预检同一份断言（单一实现）。
+    identity = assertAcceptanceBundleIdentity({ appPath });
+  } else {
+    // 隔离 id：`assertAcceptanceBundleIdentity` 只认标准验收 id，这里就地核两件事——
+    // 产物 id 等于本次期望、且不等于产品 id。其余口径（授权按 id 记账）由 README 说明。
+    const actual = readBundleId(appPath);
+    const productId = productBundleId();
+    if (actual === productId) fail(`产物 id 仍是产品 id（${productId}）：--config 覆盖没生效`);
+    if (actual !== bundleId) fail(`产物 id 是 ${actual}，与本次构建期望的 ${bundleId} 不一致`);
+    identity = { appPath, bundleId: actual, productBundleId: productId };
+  }
 } catch (e) {
   fail(e.message);
 }
@@ -85,5 +123,11 @@ try {
 log("");
 log(`产物：${appPath}`);
 log(`bundle id：${identity.bundleId}（产品 id ${identity.productBundleId}——身份已隔离）`);
+if (overrideBundleId !== "") {
+  log("");
+  log(`注意：本次用的是**隔离 id**（LUMIR_ACCEPTANCE_BUNDLE_ID=${overrideBundleId}）。`);
+  log("· 该 id 的通知授权是空的：首次启动时会弹系统授权，需要 Alex 人工允许（见 README「实例 flavour」）；");
+  log("· 同一份 .app 产物被覆盖了：要跑套件（170/171/213）请用默认 id 重建（不设该变量）。");
+}
 log("下一步（首次以新 id 发通知前需要系统授权，见 README「实例 flavour」）：");
 log(`  LUMIR_ACCEPTANCE_BUNDLE="${binaryPath}" node scripts/acceptance/run.mjs 170 171 213`);
