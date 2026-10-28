@@ -124,6 +124,36 @@ UN 通知授权会直接返回 denied（启动日志 `通知权限被拒绝`）�
 接走（M619/M622 的路由问题）。该 id 是**通知授权身份**，必须固定不要每次变（换 id 等于换身份，系统
 要重新授权一次，需人工允许）；并且**同一份 `.app` 产物会被覆盖**，跑套件前请用默认 id 重建。
 
+**验收隔离是 fail-closed 的包装，不是事后探测**（change add-cron-notification-relaunch §8.2）：
+构建脚本把真二进制改名为 `Contents/MacOS/lumir-bin`，并在 `CFBundleExecutable` 的位置装一份
+`#!/bin/sh` 包装。包装在 `exec` 真二进制**之前**从固定路径的 token
+（`/tmp/lumir-acceptance-isolate`，套件每次拉起前写入本次 run 的 `env/`）读隔离根，导出隔离的
+`XDG_CONFIG_HOME` **与** `HOME`（缺 `XDG` 时 `config.rs` 会回落 `$HOME/.config`，两个都要）。
+隔离包装与上面的 opt-in 隔离 id 互不冲突：包装无条件装在产物上，id 只决定 Info.plist 的身份。
+
+为什么必须是包装：**被 LaunchServices 重新拉起的进程不继承套件的环境变量**——用户点通知时系统
+拉起的新进程只看得到 launchd 的默认环境，`open --env XDG_CONFIG_HOME=…` 覆盖不到它。token 缺失或
+不在 `*/acceptance/*/env` 形状上时包装**拒绝启动**（退出码 78），绝不回落真实 `~/.config`。
+
+`LUMIR_ACCEPTANCE_BUNDLE` 的两种写法（`.app` 根 / `.app` 内 `Contents/MacOS/lumir`）都受支持：
+套件在**唯一归一点** `bundleEntryPath`（`lib/app.mjs`）把它们折算成入口路径，再由 `binaryPaths`
+把「同目录下 `lumir` 与 `lumir-bin` 两个可执行名」一并算成本副本——初次 launch 的 pid 等待、收尸、
+退出与重新附着因此共用同一输入口径，不会出现「传 `.app` 根就找不到进程」。
+
+静态前置门（`lib/app.mjs` 的 `assertBundleIsolation`）在**任何一次拉起之前**跑：核
+`CFBundleExecutable` 指向包装脚本、脚本导出两个变量、token 等于本次 run 的 `envHome()`。不成立即
+判 INVALID 且不发起拉起——拉起之后再断言目录只能发现污染，不能防污染。
+
+配套的场景动作（`scripts/acceptance/scenarios/252-cron-click-after-exit.md` 用）：
+
+| 动作 | 做什么 | 边界 |
+|---|---|---|
+| `do: quitApp` | **正常退出**（AppleEvent quit，等价用户 ⌘Q），等进程消失 | 只用于 bundle flavour；退出被 dirty 守卫挡住即 FAIL（套件不代为丢弃更改） |
+| `do: attachRelaunched` | 点击通知后按验收 bundle id 等**新进程**出现，核二进制路径与本副本、bundle id 是验收 id，并把它登记为本次跑批的实例 | 只用于 bundle flavour；超时说明点击没有落到本副本 |
+| `do: cronStateEdit` | 改 `cron-state.json` 的现场：`notice_date_yesterday`（跨天）/ `notice_drop`（台账外 id）/ `task_session`（任务最新会话 ≠ 通知快照，`sessionId: "$otherVaultSession"` 取磁盘上一场真实会话） | 必须在应用**退出时**做；只认这三个具名编辑，不做通用 patch |
+| `do: cronTaskEdit` | 从 `config.json` 里删掉一条 cron 任务（`cronTaskEdit: { drop: <id> }`） | 同样必须在应用退出时做（守护线程只在启动装载 / 工具触发的重载时读配置） |
+| `do: realConfigStat` | 真实 `~/.config/lumir` 的只读 stat 基线 / 终态比较（inode / size / mtime） | 只作正向证据，不是防线；差异归环境项（INVALID） |
+
 **独立 bundle id 是通知点击落点的根治（M622）**：usernoted / LaunchServices 按 **bundle id**
 解析点击目标。验收副本若与产品同 id（`com.lumir.app`），点击会被解析到安装版的注册 URL，
 2026-10-21 11:44 / 11:46 的 170/171 真机复跑里点击仍拉起 `/Applications/Lumir.app`（M619）——

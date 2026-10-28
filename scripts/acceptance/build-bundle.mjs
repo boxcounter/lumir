@@ -27,17 +27,29 @@
 // 产物：<CARGO_TARGET_DIR | src-tauri/target>/debug/bundle/macos/<productName>.app
 // 之后按 README「实例 flavour」用 LUMIR_ACCEPTANCE_BUNDLE 指向它跑 170 / 171 / 213。
 //
+// **隔离包装（change add-cron-notification-relaunch §8.2，fail-closed）**：构建完把真二进制改名为
+// `lumir-bin`、在 `CFBundleExecutable`（`Contents/MacOS/lumir`）上放一份 shell 包装脚本。脚本在
+// `exec` 真二进制**之前**导出隔离的 `XDG_CONFIG_HOME` 与 `HOME`——两者都要，缺 `XDG` 时
+// `config.rs` 会回落 `$HOME/.config`。
+//
+// 为什么必须是包装而不是环境变量：**被 LaunchServices 重新拉起的进程不继承套件的环境变量**
+// （用户点通知时系统拉起的新进程只看得到 launchd 的默认环境）。隔离根因此从固定路径的 token
+// 文件（`/tmp/lumir-acceptance-isolate`，套件每次拉起前写入本次 run 的 `env/`）读取；token 缺失
+// 或路径不在 `*/acceptance/*/env` 形状上时脚本**拒绝启动**（退出码 78），绝不回落真实配置。
+// 判据与静态前置门在 `lib/app.mjs` 的 `writeBundleIsolation` / `assertBundleIsolation`。
+//
 // **首次授权是人肉 checkpoint**：新 bundle id 在系统里的通知权限是空的，第一次启动请求授权时
 // 需要有人（Alex）在系统设置 > 通知里给验收副本打开权限，否则含通知的场景必红。详见 README。
 //
 // 这是重 cargo 构建：按 tower 纪律先持 /tmp/lumir-cargo-build.lock（`mkdir` 判持有，退出码 0 =
 // 持有），跑完释放；跨 worktree 共享主仓 target 见 REVIEW.md「并行 worktree 的 target 纪律」。
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   ACCEPTANCE_BUNDLE_ID,
   assertAcceptanceBundleIdentity,
+  BUNDLE_ISOLATION_TOKEN,
   productBundleId,
   readBundleId,
 } from "./lib/app.mjs";
@@ -51,6 +63,50 @@ function run(cmd, args) {
 function fail(message) {
   log(`构建失败：${message}`);
   process.exit(1);
+}
+
+/**
+ * 把真二进制改成 `lumir-bin`，并在 `CFBundleExecutable` 的位置装隔离包装脚本。
+ *
+ * 幂等：重复构建时 `Contents/MacOS/lumir` 已经是包装（tauri 未重建 bundle）就先拆掉再装。
+ * 脚本内容与静态前置门的判据一一对应（`lib/app.mjs` 的 `assertBundleIsolation`）。
+ */
+function installIsolationWrapper(executablePath) {
+  const dir = path.dirname(executablePath);
+  const realBinary = path.join(dir, "lumir-bin");
+  const current = readFileSync(executablePath, "utf8");
+  if (current.startsWith("#!/bin/sh")) {
+    // 已经是包装：真二进制留在 lumir-bin 里，内容会被本次构建覆盖，直接复用结构。
+    log("检测到已有隔离包装：保留结构，重写脚本");
+  } else {
+    rmSync(realBinary, { force: true });
+    renameSync(executablePath, realBinary);
+    chmodSync(realBinary, 0o755);
+  }
+  const script = `#!/bin/sh
+# Lumir 验收实例的 fail-closed 隔离包装（change add-cron-notification-relaunch §8.2）。
+# 被 LaunchServices 拉起的进程不继承套件的环境变量：隔离只能在这里、在任何 Lumir 代码
+# 运行之前建立。隔离根来自固定路径的 token 文件（套件每次拉起前写入本次 run 的 env）；
+# token 缺失 / 不合法即拒绝启动，绝不回落真实 ~/.config。
+set -eu
+ISO_TOKEN="${BUNDLE_ISOLATION_TOKEN}"
+iso="$(cat "$ISO_TOKEN" 2>/dev/null || true)"
+case "\${iso}" in
+  */acceptance/*/env) ;;
+  *)
+    echo "lumir-acceptance: 隔离根缺失或非法（$ISO_TOKEN）：拒绝启动" >&2
+    exit 78
+    ;;
+esac
+XDG_CONFIG_HOME="\${iso}"
+HOME="\${iso}/home"
+export XDG_CONFIG_HOME
+export HOME
+mkdir -p "\${HOME}"
+exec "$(dirname "$0")/lumir-bin" "$@"
+`;
+  writeFileSync(executablePath, script, "utf8");
+  chmodSync(executablePath, 0o755);
 }
 
 const root = repoRoot();
@@ -97,6 +153,8 @@ try {
     "--config",
     JSON.stringify({ identifier: bundleId }),
   ]);
+  installIsolationWrapper(binaryPath);
+  // 签名在改动之后：换过 bundle 内容再签，否则 UN 授权会把这份副本当成未签名身份（M636）。
   run("codesign", ["--force", "--deep", "--sign", "-", appPath]);
 } catch (e) {
   fail(e.message);
@@ -118,6 +176,21 @@ try {
   }
 } catch (e) {
   fail(e.message);
+}
+
+// 包装装好了才算可用的验收产物：`CFBundleExecutable` 指向脚本、脚本两个变量都在、exec 真二进制。
+const installedScript = readFileSync(binaryPath, "utf8");
+if (!installedScript.startsWith("#!/bin/sh")) fail(`隔离包装的开头不是 #!/bin/sh（${binaryPath}）`);
+for (const needle of [BUNDLE_ISOLATION_TOKEN, "exec "]) {
+  if (!installedScript.includes(needle)) fail(`隔离包装缺「${needle}」（${binaryPath}）`);
+}
+// 逐变量精确匹配赋值：`XDG_CONFIG_HOME=` 里含有子串 `HOME=`，用 `includes("HOME=")` 会让
+// 「缺 HOME」的脚本混过这里（那条路径会悄悄回落到真实 `$HOME/.config`）。判断与拉起前的静态
+// 前置门（lib/app.mjs 的 assertBundleIsolation）同口径。
+for (const name of ["XDG_CONFIG_HOME", "HOME"]) {
+  if (!new RegExp(`(^|[\\s;])(export\\s+)?${name}=`, "m").test(installedScript)) {
+    fail(`隔离包装没有为 ${name} 赋值（${binaryPath}）`);
+  }
 }
 
 log("");

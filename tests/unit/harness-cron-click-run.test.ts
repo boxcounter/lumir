@@ -38,6 +38,17 @@ function functionBodyOf(source: string, name: string): string {
 
 const HANDLE_CRON_RUN = functionBodyOf(MAIN_SOURCE, "handleCronRun");
 const BEGIN_CRON_RUN = functionBodyOf(PANEL_SOURCE, "beginCronRun");
+// `handleCronOpenSession` 的参数是对象类型字面量，`functionBodyOf` 的括号配对会把它当函数体
+// 提前收尾——这里按「函数声明行 → 行首 `}`」切（本文件的函数体都不含行首单独成行的 `}`）。
+function topLevelFunctionBodyOf(source: string, name: string): string {
+  const start = source.search(new RegExp(`async function ${name}\\(`));
+  if (start === -1) throw new Error(`源码里找不到 async function ${name}(`);
+  const end = source.indexOf("\n}\n", start);
+  if (end === -1) throw new Error(`function ${name} 的收尾行（行首 }）找不到`);
+  return source.slice(start, end + 3);
+}
+
+const HANDLE_CRON_OPEN_SESSION = topLevelFunctionBodyOf(MAIN_SOURCE, "handleCronOpenSession");
 
 // ── 装配层：交互槽位的切屏发生在后端运行被请求之前 ─────────────────────────
 
@@ -231,5 +242,23 @@ test("handleCronRun：先完成目标 vault 的交接再切面板屏（面板切
   assert.ok(
     vault < adopt,
     "vault 交接必须排在 beginCronRun 之前：切 vault 会重载面板的 vault 作用域，先切屏再换 vault 会把这次运行的渲染面丢掉",
+  );
+});
+
+// ── 进程退出后的点击（change add-cron-notification-relaunch tasks §3.6）─────────────
+
+test("handleCronOpenSession：恢复点击也走既有 vault 打开链路（dirty 前置门的三出口可直接用）", () => {
+  // 恢复点击与前端的 `cron:run` 是两条事件，但**打开目标 vault 必须只有一条链路**：
+  // `ensureCronVault` → `switchToVault`（内部含 dirty 三出口）。少了这一步，跨进程恢复会在
+  // 「目标 vault 还没打开」时直接去 resume 会话，会话恢复静默失败。
+  const guard = HANDLE_CRON_OPEN_SESSION.search(/await ensureCronVault\(payload\.vault\)/);
+  assert.notEqual(guard, -1, "handleCronOpenSession 必须先 ensureCronVault（dirty 门与打开链路的唯一入口）");
+  const resume = HANDLE_CRON_OPEN_SESSION.search(/await invoke\("harness_resume_session"/);
+  assert.notEqual(resume, -1, "handleCronOpenSession 必须仍经 harness_resume_session 恢复会话");
+  assert.ok(guard < resume, "vault 打开必须排在恢复会话之前——否则会话恢复发生在错误的 vault 上");
+  assert.match(
+    HANDLE_CRON_OPEN_SESSION,
+    /errorText\(error\)/,
+    "失败必须按既有错误码上屏（MUST NOT 新造第二套文案）",
   );
 });

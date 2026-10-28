@@ -7,11 +7,20 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { appendFile, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
 import { coordsSpace, findNode, nodeName, parseNodes, windowBounds } from "./ax.mjs";
-import { bundleBinary, fixturesDir, listOtherBundleInstances, quiesceStrayBundleInstances, SCENARIO_CONFIG_KEYS, writeWindowState } from "./app.mjs";
+import {
+  attachRelaunchedBundle,
+  bundleBinary,
+  fixturesDir,
+  listOtherBundleInstances,
+  quitBundleApp,
+  quiesceStrayBundleInstances,
+  SCENARIO_CONFIG_KEYS,
+  writeWindowState,
+} from "./app.mjs";
 import { encodePng, syntheticScreenshot } from "./png.mjs";
 import { DEFAULT_MIN_DIFF, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
 import {
@@ -43,6 +52,97 @@ import {
 } from "./drive.mjs";
 import { envHome, envRelPath, InfraError, mkdirp, readText, repoRoot, secondVaultDir, sleep, vaultDir } from "./util.mjs";
 
+/** 真实用户 HOME（不依赖隔离的 `envHome()`）。 */
+function homeDir() {
+  return process.env.HOME ?? os.homedir();
+}
+
+/** 只读 stat 一棵目录（仅一层：dir 本身 + 直接子项）；缺失即 `absent`。
+ *  导出只为自测（`execute.test.mjs` 的 `realConfigStat` 判据用例）。 */
+export async function readOnlyStatTree(dir) {
+  try {
+    const info = await stat(dir);
+    const entries = {};
+    for (const name of await readdir(dir)) {
+      try {
+        const child = await stat(path.join(dir, name));
+        entries[name] = {
+          ino: child.ino,
+          size: child.size,
+          mtimeMs: child.mtimeMs,
+          isDir: child.isDirectory(),
+        };
+      } catch {
+        // 子项在两次 stat 之间消失：记成不存在，比较时如实报差异。
+        entries[name] = { missing: true };
+      }
+    }
+    return { absent: false, dir: { ino: info.ino, mtimeMs: info.mtimeMs }, entries };
+  } catch (e) {
+    if (e.code === "ENOENT") return { absent: true, dir: null, entries: {} };
+    throw new InfraError(`无法只读 stat 真实配置目录（环境项）：${e.message}`);
+  }
+}
+
+/** 两份快照的差异（空数组 = 完全一致）。导出只为自测。 */
+export function diffStatTrees(before, after) {
+  const diffs = [];
+  if (before.absent !== after.absent) {
+    diffs.push(before.absent ? "目录从无到有" : "目录消失了");
+    return diffs;
+  }
+  if (before.absent) return diffs;
+  if (before.dir.ino !== after.dir.ino) diffs.push(`dir inode ${before.dir.ino} → ${after.dir.ino}`);
+  if (before.dir.mtimeMs !== after.dir.mtimeMs) {
+    diffs.push(`dir mtime ${before.dir.mtimeMs} → ${after.dir.mtimeMs}`);
+  }
+  for (const name of Object.keys(before.entries)) {
+    const a = before.entries[name];
+    const b = after.entries[name];
+    if (!b) {
+      diffs.push(`${name} 消失了`);
+      continue;
+    }
+    for (const key of ["ino", "size", "mtimeMs"]) {
+      if (a[key] !== b[key]) diffs.push(`${name}.${key} ${a[key]} → ${b[key]}`);
+    }
+  }
+  for (const name of Object.keys(after.entries)) {
+    if (!before.entries[name]) diffs.push(`${name} 新增`);
+  }
+  return diffs;
+}
+
+/**
+ * 与本条任务当前记录**不同**的一个真实会话 id（判据 9 的现场：`tasks.<task>.session_id`
+ * 被改成另一场真实会话，而通知快照指向它自己那场）。
+ *
+ * 只从磁盘上真实存在的会话文件里挑：编一个不存在的 id 也能让「读最新会话」的实现判红，但那样
+ * 分不清「读错了会话」与「会话恢复失败」——判据要的是前者。
+ */
+async function otherVaultSessionId(current) {
+  const root = path.join(envHome(), "lumir", "harness", "sessions");
+  let vaults = [];
+  try {
+    vaults = await readdir(root, { withFileTypes: true });
+  } catch {
+    throw new StepError(`没有会话目录（${root}）：先让任务真跑一次再改状态`);
+  }
+  const ids = [];
+  for (const vault of vaults) {
+    if (!vault.isDirectory()) continue;
+    const dir = path.join(root, vault.name);
+    for (const entry of await readdir(dir)) {
+      if (entry.endsWith(".jsonl")) ids.push(entry.slice(0, -".jsonl".length));
+    }
+  }
+  const picked = ids.find((id) => id !== current);
+  if (!picked) {
+    throw new StepError(`找不到与本条记录不同的真实会话（当前 ${current ?? "无"}，磁盘 ${ids.length} 个）`);
+  }
+  return picked;
+}
+
 /** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
 export const ACTIONS = new Set([
   "settle", "waitFor", "sleep", "key", "keys", "type", "typeInNode", "click", "clickNodeText", "clickInNode", "clickEditor",
@@ -50,6 +150,9 @@ export const ACTIONS = new Set([
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
   "clipboardImage", "clipboardText", "note", "migrateHarnessSessions", "invalidate", "envWrite", "mockFill",
   "waitForNotification", "clickNotification", "openNotificationCenter", "closeNotificationCenter",
+  // 退出后点击（change add-cron-notification-relaunch）：正常退出 + 按 bundle id 重新附着 +
+  // 改 cron-state.json 的现场（跨天 / 台账外 id / 快照会话三条判据都要它）。
+  "quitApp", "attachRelaunched", "cronStateEdit", "cronTaskEdit", "realConfigStat",
   // `waitForFile`（M616）：轮询**磁盘事实**直到成立——「等日志里出现某个事件」这类判据此前只能
   // 靠 `sleep` 猜时长，或借通知横幅（M616 之前横幅会被**更早一次 run 的同标题通知**满足；M617
   // 给通知等待加了新鲜度基线，横幅不再有这个缺口，但「等某个日志事件」仍应直接读那份日志）。
@@ -121,6 +224,9 @@ function isPlainTable(v) {
 const FILE_JUDGE_KEYS = [
   "exists", "changedSince", "unchangedSince", "mtimeUnchangedSince", "mtimeNewerThan", "has", "not", "count",
   "jsonl",
+  // 结构化比对（change add-cron-notification-relaunch r1 P2-2）：绑定台账条目与 `tasks` 段
+  // 的会话标识并**逐字**比较——`has` 只能证明「文件里某处有 session_id」。
+  "cronNoticeSession",
 ];
 
 /** 只可能出自「以为在写正则」的转义序列（M556）：转义元字符，或 `\d` / `\w` / `\s` 这类字符组。
@@ -2011,6 +2117,53 @@ export async function runScenario(ctx, scenario) {
               reason: `（${lines.length} 行里没有一行同时满足 ${JSON.stringify(want)}）`,
             };
           }
+          case "cronNoticeSession": {
+            // 台账条目与 `tasks` 段的**逐字**一致性（change add-cron-notification-relaunch
+            // §4 结果 / 失败路径；r1 P2-2）：`has` 只能证明「文件里某处有 session_id」，即使
+            // `notices.<id>.session_id = A`、`tasks.<task>.session_id = B` 也照样通过。这条判据
+            // 绑定**同一条通知**（task + kind）与**同一个任务**，要求值逐字相等。
+            const specNotice = spec.cronNoticeSession;
+            if (content === undefined && contentErr === undefined) await readContent();
+            if (contentErr) return { ok: false, reason: contentErr };
+            let state;
+            try {
+              state = JSON.parse(content);
+            } catch (e) {
+              return { ok: false, reason: `（cron-state.json 不是合法 JSON：${e.message}）` };
+            }
+            const entries = Object.entries(state.notices ?? {}).filter(
+              ([, notice]) =>
+                notice?.task === specNotice.task && notice?.kind === specNotice.kind,
+            );
+            if (entries.length === 0) {
+              return {
+                ok: false,
+                reason: `（台账里没有 task=${specNotice.task} kind=${specNotice.kind} 的条目）`,
+              };
+            }
+            const taskSession = state.tasks?.[specNotice.task]?.session_id;
+            if (typeof taskSession !== "string" || taskSession === "") {
+              return {
+                ok: false,
+                reason: `（tasks.${specNotice.task}.session_id 缺失或为空：${JSON.stringify(taskSession)}）`,
+              };
+            }
+            const mismatched = entries.filter(([, notice]) => notice.session_id !== taskSession);
+            return mismatched.length === 0
+              ? {
+                  ok: true,
+                  detail:
+                    `台账 ${entries.map(([id]) => id).join(",")} 的 session_id = ` +
+                    `tasks.${specNotice.task}.session_id = ${taskSession}`,
+                }
+              : {
+                  ok: false,
+                  reason:
+                    `（会话快照不一致：${mismatched
+                      .map(([id, notice]) => `${id}=${JSON.stringify(notice.session_id)}`)
+                      .join("、")} vs tasks.${specNotice.task}.session_id=${JSON.stringify(taskSession)}）`,
+                };
+          }
           case "has":
           case "not": {
             // has / not
@@ -3358,6 +3511,141 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // 用掉即清：下一次 clickNotification 不该沿用一条早已翻篇的基线。
       delete vars[NOTIFICATION_FRESHNESS_KEY];
       return node.raw;
+    }
+    // 正常退出应用（change add-cron-notification-relaunch §8.2 判据 1 的前置）：走 app 自己的
+    // 退出路径（AppleEvent quit），不是 SIGTERM——「应用退出后点击通知」要的正是这条路径。
+    // 退出被挡住（含 dirty 守卫）即判 FAIL：那是异常边界，套件不代为丢弃更改。
+    case "quitApp": {
+      if (!bundleBinary()) {
+        throw new InfraError("quitApp 只适用于打包实例（先设 LUMIR_ACCEPTANCE_BUNDLE 构建 bundle）。");
+      }
+      const out = await quitBundleApp();
+      // 记下退出前的 pid：`attachRelaunched` 据此确认「等到的是一个**新**进程」。
+      vars.cronQuitPid = out.pid;
+      evidence.record({
+        kind: "note",
+        text: `正常退出应用：pid ${out.pid}（AppleEvent quit 后进程已消失）`,
+      });
+      return String(out.pid);
+    }
+    // 点击通知后**按验收 bundle id 重新附着**到被系统拉起的新进程：校验二进制路径是本副本、
+    // bundle id 是验收 id，并把新 pid 登记为本次跑批自己的实例（收尾时 stopApp 才收得对）。
+    case "attachRelaunched": {
+      if (!bundleBinary()) {
+        throw new InfraError(
+          "attachRelaunched 只适用于打包实例（点击通知只会拉起 .app 形式的实例）。",
+        );
+      }
+      const previousPid = vars.cronQuitPid ?? null;
+      const out = await attachRelaunchedBundle({ previousPid });
+      vars.cronRelaunchPid = out.pid;
+      evidence.record({
+        kind: "note",
+        text: `重新附着到被系统拉起的实例：pid ${out.pid}（上一实例 pid ${previousPid ?? "无"}；二进制路径与 bundle id 已核）`,
+      });
+      return String(out.pid);
+    }
+    // 改 `cron-state.json` 的现场（design §8.2 判据 7 / 8 / 9）：跨天、台账外 request id、
+    // 「任务最新会话 ≠ 通知快照会话」三条判据都需要在**退出后、点击前**改状态文件。
+    // 只认三个具名编辑，不做通用 JSON patch——通用 patch 等于把断言细节散进场景文本。
+    case "cronStateEdit": {
+      const edit = step.cronStateEdit;
+      if (edit === undefined) throw new StepError("cronStateEdit 步骤缺 cronStateEdit 说明");
+      const file = path.join(envHome(), "lumir", "cron-state.json");
+      const state = JSON.parse(await readText(file));
+      const notices = state.notices ?? {};
+      const ids = Object.keys(notices);
+      if (ids.length === 0) throw new StepError("cron-state.json 里没有台账条目，无法执行该编辑");
+      let detail = "";
+      if (edit === "notice_date_yesterday") {
+        const target = process.env.LUMIR_ACCEPTANCE_YESTERDAY ?? "";
+        const yesterday =
+          target !== ""
+            ? target
+            : new Date(Date.now() - 24 * 60 * 60 * 1000).toLocaleDateString("sv-SE");
+        for (const id of ids) notices[id].date = yesterday;
+        detail = `把 ${ids.length} 条台账的派发日期改成 ${yesterday}`;
+      } else if (edit === "notice_drop") {
+        state.notices = {};
+        detail = `删掉全部 ${ids.length} 条台账条目（模拟「台账外 request id」）`;
+      } else if (edit === "task_session") {
+        const target = step.task;
+        if (!target) throw new StepError("cronStateEdit: task_session 需要 step.task");
+        const current = state.tasks?.[target]?.session_id ?? null;
+        const sessionId =
+          step.sessionId === "$otherVaultSession"
+            ? await otherVaultSessionId(current)
+            : step.sessionId;
+        if (!sessionId) throw new StepError("cronStateEdit: task_session 需要 step.sessionId");
+        state.tasks = state.tasks ?? {};
+        state.tasks[target] = { ...(state.tasks[target] ?? {}), session_id: sessionId };
+        detail = `把 tasks.${target}.session_id 改成 ${sessionId}（与通知快照不同）`;
+      } else {
+        throw new StepError(`未知的 cronStateEdit：${edit}`);
+      }
+      await writeFile(file, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+      evidence.record({ kind: "note", text: `cronStateEdit(${edit})：${detail}（${file}）` });
+      return detail;
+    }
+    // 从 config.json 里删掉一条 cron 任务（design §8.2 判据 6：点击已删除任务的通知）。
+    // 必须在应用**退出时**做：运守护线程只在启动装载与工具触发的重载时读配置，运行期改文件
+    // 不会生效，删任务与点击之间的因果也就断了。
+    case "cronTaskEdit": {
+      const drop = step.cronTaskEdit?.drop;
+      if (!drop) throw new StepError("cronTaskEdit 需要 cronTaskEdit.drop（任务 id）");
+      const file = path.join(envHome(), "lumir", "config.json");
+      const config = JSON.parse(await readText(file));
+      const tasks = config.cron?.tasks ?? [];
+      const next = tasks.filter((task) => task.id !== drop);
+      if (next.length === tasks.length) throw new StepError(`config.json 里没有任务 ${drop}`);
+      config.cron.tasks = next;
+      await writeFile(file, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+      evidence.record({
+        kind: "note",
+        text: `cronTaskEdit：从 config.json 删掉任务 ${drop}（剩 ${next.length} 条）`,
+      });
+      return drop;
+    }
+    // 真实配置目录的只读 stat 基线 / 终态比较（design §8.2「拉起后的正向验证」；r1 P2-1）。
+    //
+    // **这不是防线**（防线是包装脚本 + 拉起前的静态前置门），而是「没写过」的正向证据：新进程
+    // 如果真回落到 `~/.config/lumir`，mtime / size / inode 至少有一项会动。只做 stat 与
+    // readdir，不读文件内容、不写、不备份——真实配置目录**只读**。
+    case "realConfigStat": {
+      const phase = step.realConfigStat;
+      if (phase !== "baseline" && phase !== "compare") {
+        throw new StepError("realConfigStat 只接受 baseline / compare");
+      }
+      const dir = path.join(homeDir(), ".config", "lumir");
+      const snapshot = await readOnlyStatTree(dir);
+      if (phase === "baseline") {
+        vars.realConfigStat = snapshot;
+        evidence.record({
+          kind: "note",
+          text: `真实配置目录只读 stat 基线：${snapshot.absent ? "目录不存在" : `${Object.keys(snapshot.entries).length} 个条目`}（dir ino ${snapshot.dir?.ino ?? "—"}）`,
+        });
+        return snapshot.absent ? "absent" : String(Object.keys(snapshot.entries).length);
+      }
+      const base = vars.realConfigStat;
+      if (!base) throw new StepError("realConfigStat: compare 之前没有 baseline");
+      const changed = diffStatTrees(base, snapshot);
+      evidence.record({
+        kind: "assert",
+        ok: changed.length === 0,
+        label: "真实 ~/.config/lumir 的只读 stat 前后无变化（mtime / size / inode）",
+        detail:
+          changed.length === 0
+            ? `与基线一致（${Object.keys(snapshot.entries).length} 个条目）`
+            : changed.slice(0, 8).join("；"),
+      });
+      if (changed.length > 0) {
+        // 归环境项（INVALID）：design §8.2 把这项定位为「正向验证」，出现变化说明隔离没成立
+        // 或真实配置被动过——那是环境问题，不是「某个行为不对」，因此不用 StepError（FAIL）。
+        throw new InfraError(
+          `真实配置目录被改动（拉起的实例应只写隔离 env）：${changed.slice(0, 8).join("；")}`,
+        );
+      }
+      return "unchanged";
     }
     // 显式「本次运行无效」（change add-cron-runtime-daemon §7.7）：某个步骤在当前环境下无法
     // 客观判定时，用它把整场标 INVALID（退出码 2）——**不伪造 PASS**。`reason` 写进证据与

@@ -4,11 +4,18 @@
 // 跑法（与 execute.test.mjs 同例，经 scripts/acceptance/check-suite.sh 接入 quick 与 docs CI）：
 //   node --test scripts/acceptance/lib/app.test.mjs
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
   assertAcceptanceBundleIdentity,
+  assertBundleIsolation,
+  BUNDLE_EXEC_NAMES,
   bundleAppPath,
+  bundleEntryPath,
+  findBundleAppPid,
   listLumirInstances,
   parseElapsedSeconds,
   readBundleId,
@@ -97,6 +104,70 @@ test("listLumirInstances：只认 .app/Contents/MacOS/lumir 与 target/debug/lum
     list[2].startedAt >= before - dayElapsed - 1_000 && list[2].startedAt <= before - dayElapsed + 1_000,
     "带天数前缀的 etime 也必须解析（1-02:03:04 = 1 天 2 小时 3 分 4 秒）",
   );
+});
+
+test("listLumirInstances：隔离包装 exec 之后的 `lumir-bin` 现场也算本副本的 bundle 实例（P1-1）", () => {
+  // change add-cron-notification-relaunch §8.2：`CFBundleExecutable` 是包装脚本 `lumir`，它
+  // exec 的是 `lumir-bin`。进程活着的绝大多时间里 `ps` 的 command 与 comm 都是 `lumir-bin`——
+  // 只认 `lumir` 的扫描会让套件在「首次 launch 等 pid」一步空转到超时（170/171/213/252 全红）。
+  const psRows = [
+    "  201 00:00:03 /tmp/wt/Lumir.app/Contents/MacOS/lumir-bin",
+    "  202 00:00:02 /tmp/wt/Lumir.app/Contents/MacOS/lumir",
+    "  203 00:00:01 sh -c tail -f /tmp/wt/Lumir.app/Contents/MacOS/lumir-bin",
+    "  204 00:00:01 /tmp/wt/Lumir.app/Contents/MacOS/lumir-bin-helper",
+  ].join("\n");
+  const comm = {
+    201: "/tmp/wt/Lumir.app/Contents/MacOS/lumir-bin",
+    202: "/tmp/wt/Lumir.app/Contents/MacOS/lumir",
+    203: "/bin/sh",
+    204: "/tmp/wt/Lumir.app/Contents/MacOS/lumir-bin-helper",
+  };
+  const exec = (_cmd, args) => {
+    if (args[0] === "-axo") return psRows;
+    if (args[0] === "-o" && args[1] === "comm=") return comm[Number(args.at(-1))] ?? "";
+    throw new Error(`unexpected ps args: ${JSON.stringify(args)}`);
+  };
+  assert.deepEqual(
+    listLumirInstances(exec).map((i) => [i.pid, i.kind]),
+    [
+      [201, "bundle"],
+      [202, "bundle"],
+    ],
+    "包装 exec 后的 lumir-bin 与包装瞬间的 lumir 都是本副本；命令行提到路径的 shell 与名字相近的进程都不算",
+  );
+  // 常量是单一来源：扫描判据里出现的就是这两个名字。
+  assert.deepEqual(BUNDLE_EXEC_NAMES, ["lumir", "lumir-bin"]);
+});
+
+test("findBundleAppPid：按入口路径找得到 exec 之后的真二进制进程（同一份名字常量）", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "lumir-acceptance-pid-"));
+  const appPath = path.join(root, "Lumir.app");
+  const macos = path.join(appPath, "Contents", "MacOS");
+  mkdirSync(macos, { recursive: true });
+  const entry = path.join(macos, "lumir");
+  writeFileSync(entry, "#!/bin/sh\nexec ...\n");
+  writeFileSync(path.join(macos, "lumir-bin"), "binary");
+
+  const psRows = [
+    `  301 00:00:05 ${path.join(macos, "lumir-bin")}`,
+    "  302 00:00:05 /Applications/Lumir.app/Contents/MacOS/lumir-bin",
+  ].join("\n");
+  const comm = {
+    301: path.join(macos, "lumir-bin"),
+    302: "/Applications/Lumir.app/Contents/MacOS/lumir-bin",
+  };
+  const exec = (_cmd, args) => {
+    if (args[0] === "-axo") return psRows;
+    if (args[0] === "-o" && args[1] === "comm=") return comm[Number(args.at(-1))] ?? "";
+    throw new Error(`unexpected ps args: ${JSON.stringify(args)}`);
+  };
+  assert.equal(
+    findBundleAppPid(entry, exec),
+    301,
+    "`bundleBinary()` 给的是入口路径，实际进程是 lumir-bin——精确匹配必须跨这两个名字",
+  );
+  // 安装版（另一个 .app）不能被认成本副本。
+  assert.equal(findBundleAppPid(entry, exec), 301);
 });
 
 test("straysInClickWindow：只挑点击窗口内新起、且不是本次跑批自己的 bundle 实例", () => {
@@ -271,4 +342,167 @@ test("stopApp：bundle 已退出仍撤销本副本 LaunchServices 记录", async
   assert.deepEqual(kills, [[-43, "SIGTERM"]]);
   assert.equal(unregistered.length, 1);
   assert.deepEqual(unregistered[0][1], ["-u", "/tmp/Lumir.app"]);
+});
+
+// ── 隔离包装的静态前置门（change add-cron-notification-relaunch task 5.2）─────────────
+//
+// 判据是「拉起**之前**能不能证明隔离成立」：包装脚本在 exec 真二进制之前导出 XDG_CONFIG_HOME
+// 与 HOME，隔离根来自 token 文件，token 必须等于本次 run 的 env。三条各有一个必须判红的反例
+// （脚本缺 HOME / token 指别处 / 入口还是真二进制），否则这道门只是形式。
+
+/** 造一份「已正确包装」的最小 .app：Info.plist + 包装脚本 + 真二进制占位。 */
+function wrappedBundle({ script, execName = "lumir", tokenFile } = {}) {
+  const root = mkdtempSync(path.join(tmpdir(), "lumir-acceptance-isolation-"));
+  const appPath = path.join(root, "Lumir.app");
+  const macos = path.join(appPath, "Contents", "MacOS");
+  mkdirSync(macos, { recursive: true });
+  writeFileSync(
+    path.join(appPath, "Contents", "Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.lumir.app.acceptance</string>
+<key>CFBundleExecutable</key><string>${execName}</string>
+</dict></plist>`,
+  );
+  writeFileSync(
+    path.join(macos, execName),
+    script ??
+      `#!/bin/sh
+set -eu
+iso="$(cat ${tokenFile} 2>/dev/null || true)"
+XDG_CONFIG_HOME="\${iso}"
+HOME="\${iso}/home"
+export XDG_CONFIG_HOME
+export HOME
+exec "$(dirname "$0")/lumir-bin" "$@"
+`,
+  );
+  return { root, appPath };
+}
+
+test("assertBundleIsolation：包装齐备 + token 指向本次 run 的 env ⇒ 通过", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "lumir-acceptance-isolation-env-"));
+  const tokenFile = path.join(root, "isolate");
+  const env = path.join(root, "acceptance", "2026-10-28", "env");
+  const { appPath } = wrappedBundle({ root, tokenFile });
+  writeFileSync(tokenFile, `${env}\n`);
+  const out = await assertBundleIsolation({ appPath, env, tokenFile });
+  assert.equal(out.execName, "lumir");
+});
+
+test("assertBundleIsolation：入口还是真二进制 ⇒ 拒跑（隔离根本没建立）", async () => {
+  const { root, appPath } = wrappedBundle({ script: "\u0007ELF-binary-placeholder" });
+  const tokenFile = path.join(root, "isolate");
+  writeFileSync(tokenFile, path.join(root, "env"));
+  await assert.rejects(
+    () => assertBundleIsolation({ appPath, env: path.join(root, "env"), tokenFile }),
+    /不是隔离包装脚本/,
+  );
+});
+
+test("assertBundleIsolation：脚本缺 HOME ⇒ 拒跑（缺 XDG 时会回落 $HOME/.config）", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "lumir-acceptance-isolation-nohome-"));
+  const tokenFile = path.join(root, "isolate");
+  const { appPath } = wrappedBundle({
+    tokenFile,
+    script: `#!/bin/sh
+XDG_CONFIG_HOME="$ISO"
+exec "$(dirname "$0")/lumir-bin" "$@"
+`,
+  });
+  writeFileSync(tokenFile, path.join(root, "env"));
+  await assert.rejects(
+    () => assertBundleIsolation({ appPath, env: path.join(root, "env"), tokenFile }),
+    /没有导出 HOME/,
+  );
+});
+
+test("assertBundleIsolation：token 指向别的目录 ⇒ 拒跑（跨进程点击会读错目录）", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "lumir-acceptance-isolation-other-"));
+  const tokenFile = path.join(root, "isolate");
+  const { appPath } = wrappedBundle({ tokenFile });
+  writeFileSync(tokenFile, path.join(root, "some-other-env"));
+  await assert.rejects(
+    () => assertBundleIsolation({ appPath, env: path.join(root, "env"), tokenFile }),
+    /与本次 run 的配置目录/,
+  );
+});
+
+test("assertBundleIsolation：token 缺失 ⇒ 拒跑（不回落真实配置）", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "lumir-acceptance-isolation-missing-"));
+  const missingToken = path.join(root, "missing-token");
+  const { appPath } = wrappedBundle({ tokenFile: missingToken });
+  await assert.rejects(
+    () => assertBundleIsolation({ appPath, env: path.join(root, "env"), tokenFile: missingToken }),
+    /隔离 token.*缺失/,
+  );
+});
+
+// ── `.app` 根输入的归一（r1-2 P2-1）────────────────────────────────────────────────────
+//
+// `LUMIR_ACCEPTANCE_BUNDLE` 有两种合法写法（`.app` 根 / `.app` 内二进制，`bundleAppPath` 与
+// 上面的单测都声明了这一点）。按进程找 pid 只能按可执行路径匹配，因此两种写法必须在**唯一
+// 归一点**折算成 `Contents/MacOS/lumir`——漏了它，传 `.app` 根会组出 `.<app>/lumir-bin` 这种
+// 不存在的字面：初次 launch 等 pid 超时、收尾也收不到。
+
+/** 造一棵真实存在的 `.app` 骨架：入口脚本 + exec 的真二进制。 */
+function fakeBundleApp(prefix) {
+  const root = mkdtempSync(path.join(tmpdir(), prefix));
+  const appPath = path.join(root, "Lumir.app");
+  const macos = path.join(appPath, "Contents", "MacOS");
+  mkdirSync(macos, { recursive: true });
+  writeFileSync(path.join(macos, "lumir"), "#!/bin/sh\nexec lumir-bin\n");
+  writeFileSync(path.join(macos, "lumir-bin"), "binary");
+  return { root, appPath, entry: path.join(macos, "lumir"), real: path.join(macos, "lumir-bin") };
+}
+
+/** `ps` 现场只含一条本副本的实例：command 与 comm 都是 exec 之后的 `lumir-bin`。 */
+function psWithRealBinary(realPath, pid = 301) {
+  const psRows = [`  ${pid} 00:00:07 ${realPath}`].join("\n");
+  return (_cmd, args) => {
+    if (args[0] === "-axo") return psRows;
+    if (args[0] === "-o" && args[1] === "comm=") return realPath;
+    throw new Error(`unexpected ps args: ${JSON.stringify(args)}`);
+  };
+}
+
+test("bundleEntryPath：`.app` 根与 `.app` 内二进制折算成同一个入口路径", () => {
+  const { appPath, entry } = fakeBundleApp("lumir-bundle-entry-");
+  assert.equal(bundleEntryPath(appPath), entry, ".app 根 → Contents/MacOS/lumir");
+  assert.equal(bundleEntryPath(entry), entry, "已经是入口路径时原样返回（幂等）");
+  assert.equal(bundleEntryPath(null), null);
+});
+
+test("findBundleAppPid：`.app` 根输入也能发现 exec 之后的 lumir-bin 进程（初次 launch 用的就是这个入口）", () => {
+  const { appPath, real } = fakeBundleApp("lumir-bundle-root-pid-");
+  const exec = psWithRealBinary(real);
+  // 初次 launch（`waitForBundlePid`）→ `findBundleAppPid`：传的是 `bundleBinary()` 的原值，
+  // 也就是 `.app` 根这种受支持写法。r1-2 的现场就是这里返回 null。
+  assert.equal(findBundleAppPid(appPath, exec), 301, "`.app` 根必须归一后匹配到 lumir-bin");
+  assert.equal(findBundleAppPid(bundleEntryPath(appPath), exec), 301, "入口路径同样匹配");
+});
+
+test("stopApp：handle.binary 是 `.app` 根时按同一归一点收到 exec 之后的进程（收尾不漏判）", async () => {
+  const { appPath, real } = fakeBundleApp("lumir-bundle-root-stop-");
+  const exec = psWithRealBinary(real);
+  const killed = [];
+  const handle = {
+    flavour: "bundle",
+    appPath,
+    // 旧形态：调用方直接把 `.app` 根放进 handle.binary（launchApp 现在存归一后的入口，
+    // 但收尾仍必须容忍两种写法——同一归一点在 `binaryPaths` 里）。
+    binary: appPath,
+    child: { pid: 424_242 },
+  };
+  await stopApp(handle, {
+    findBundlePid: (binPath) => findBundleAppPid(binPath, exec),
+    kill: (pid, signal) => {
+      killed.push([pid, signal]);
+      return true;
+    },
+    wait: async () => true,
+    unregister: () => {},
+  });
+  assert.deepEqual(killed[0], [301, "SIGTERM"], "收尸的目标必须是 ps 里那条 lumir-bin 进程");
 });

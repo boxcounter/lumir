@@ -273,8 +273,10 @@ test("cronNoticeText：登记过的 code 按文案表插值，未登记 / 缺席
  *  失去正文（前端取不到键 ⇒ 回落 `message` ⇒ 空串不上屏）。两侧逐字对齐由本用例钉住。 */
 test("cron:notice 的 code 两侧对齐：Rust 发出的每个 code 都登记了文案，反之亦然", () => {
   const rust = readFileSync(path.join(root, "src-tauri/src/cron.rs"), "utf8");
+  // 两族 code 都扫：投递失败（`cron_notify_*`）与点击被拒（`cron_click_*`，change
+  // add-cron-notification-relaunch）。
   const emitted = new Set(
-    [...rust.matchAll(/"(cron_notify_[a-z_]+)"/g)].map((match) => match[1]),
+    [...rust.matchAll(/"(cron_(?:notify|click)_[a-z_]+)"/g)].map((match) => match[1]),
   );
   assert.ok(emitted.size >= 2, `Rust 侧扫到的 code 数量异常：${[...emitted].join(",")}`);
   for (const code of emitted) {

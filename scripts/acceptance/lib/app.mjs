@@ -27,6 +27,20 @@ import { envHome, envRelPath, exists, InfraError, log, mkdirp, readText, repoRoo
  */
 export const ACCEPTANCE_BUNDLE_ID = "com.lumir.app.acceptance";
 
+/**
+ * 打包实例在 `Contents/MacOS/` 下的两个可执行名（change add-cron-notification-relaunch §8.2 的
+ * fail-closed 包装）：`CFBundleExecutable` 仍然是入口名 `lumir`，但它是**包装脚本**，`exec`
+ * 之后真正跑的是 `lumir-bin`。
+ *
+ * 因此 `ps` 的 `command` / `comm` 在进程生命周期里会看到**两种**名字：包装 exec 之前的几毫秒是
+ * `lumir`，之后一直是 `lumir-bin`。扫描（`listLumirInstances`）、按路径精确匹配
+ * （`findBundleAppPid`）与 comm 判据都必须接受这两个名字——只认其中一个会让套件在
+ * 「首次 launch 等 pid」这一步直接空转到超时（170/171/213/252 全红）。
+ */
+export const BUNDLE_ENTRY_NAME = "lumir";
+export const BUNDLE_REAL_NAME = "lumir-bin";
+export const BUNDLE_EXEC_NAMES = [BUNDLE_ENTRY_NAME, BUNDLE_REAL_NAME];
+
 /** LaunchServices 注册表工具（M619）：打包实例经 `open` 启动会登记进 LS 数据库，收尾时按本副本
  *  路径撤销这条记录——只撤销指定路径，同 bundle id 的其他副本不受影响（实测两副本同 bundle id
  *  时 `-u B` 后 A 的记录仍在）。不撤销的话，worktree 里的副本会以验收 id 的身份留在 LS 数据库里，
@@ -1184,6 +1198,11 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
     // 每次起实例都核一遍身份（M622）：预检已经拦过一次，这里保证「实际被拉起的这份 .app」就是
     // 带验收 id 的那份——不留「预检过了、但环境变量中途指向别的产物」的缝。
     assertAcceptanceBundleIdentity({ appPath });
+    // 隔离前置门（change add-cron-notification-relaunch §8.2）：先写本次 run 的隔离根，再核
+    // 包装脚本与 token 一致——**任何一次 LaunchServices 拉起之前**必须成立，否则判 INVALID
+    // 且不发起拉起（拉起之后再查等于已经碰过真实配置）。
+    await writeBundleIsolation();
+    await assertBundleIsolation({ appPath });
     const launchDir = path.join(envHome(), "bundle-launch");
     await rm(launchDir, { recursive: true, force: true });
     await mkdirp(launchDir);
@@ -1288,7 +1307,9 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
     await ready;
     // 打包模式：app 由 launchd 拉起（不是 open 的子进程），按**本次跑批自己的二进制路径**精确定位；
     // dev 模式的进程组里还有 pnpm/vite/cargo，需要等到组内出现 `target/debug/lumir`。
-    pid = bundle ? await waitForBundlePid(bundle, 30_000) : await waitForPid(child.pid, 30_000);
+    pid = bundle
+      ? await waitForBundlePid(bundleEntryPath(bundle), 30_000)
+      : await waitForPid(child.pid, 30_000);
     // 记下本次跑批自己的打包实例 pid（M622）：游离实例的归属按 pid 认，路径不足以区分同路径的第二份副本。
     if (bundle) ownBundlePid = pid;
   } catch (e) {
@@ -1301,7 +1322,7 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
       /* 组已不在 */
     }
     if (bundle) {
-      const strayPid = findBundleAppPid(bundle);
+      const strayPid = findBundleAppPid(bundleEntryPath(bundle));
       if (strayPid !== null) {
         try {
           process.kill(strayPid, "SIGTERM");
@@ -1317,7 +1338,9 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
     pid,
     flavour: bundle ? "bundle" : "dev",
     appPath,
-    binary: bundle,
+    // 归一点之后的入口路径：`stopApp` / `findBundleAppPid` / 点击窗口的实例归属都用这一个口径
+    // （`.app` 根输入在这里就折算掉，不留到收尾再去猜）。
+    binary: bundle ? bundleEntryPath(bundle) : null,
     launchLog,
     stopLogPump: () => {
       stopPump = true;
@@ -1359,10 +1382,12 @@ export function parseElapsedSeconds(text) {
  * 「同一语义两处真源」条）。
  *
  * 两类目标都按「这个进程自己就是要跑的那个二进制」判定，不做宽松子串匹配：
- *   - `bundle`：命令行以 `<某个>.app/Contents/MacOS/lumir` 结尾（安装版 / 套件自己的打包实例）；
+ *   - `bundle`：命令行以 `<某个>.app/Contents/MacOS/lumir` 或 `…/lumir-bin` 结尾（安装版 /
+ *     套件自己的打包实例；后者是隔离包装 `exec` 之后的真二进制，见 `BUNDLE_EXEC_NAMES`）；
  *   - `dev`：命令行以 `target/debug/lumir` 结尾（残留的开发实例）。
- * 再叠一条「可执行文件名必须是 `lumir`」（`ps -o comm=` 的 basename）——命令行里**提到**这个
- * 路径的进程不算实例（watchdog shell / `pkill -f …` 这类）。
+ * 再叠一条「可执行文件名必须是这个实例的可执行名」（`ps -o comm=` 的 basename：bundle 认
+ * `lumir` / `lumir-bin` 两个名字，dev 只认 `lumir`）——命令行里**提到**路径的进程不算实例
+ * （watchdog shell / `pkill -f …` 这类）。
  *
  * `startedAt` 由 `etime` 反推（毫秒；秒级精度），供清退时判「是不是本次点击拉起的」。
  * `exec` 可注入（自测用）：签名同 `spawnSyncText(cmd, args)`，返回 stdout 文本。
@@ -1371,12 +1396,13 @@ export function listLumirInstances(exec = spawnSyncText) {
   const rows = exec("/bin/ps", ["-axo", "pid=,etime=,command="]).split("\n");
   const now = Date.now();
   const out = [];
+  const bundleName = new RegExp(`\\.app/Contents/MacOS/(?:${BUNDLE_EXEC_NAMES.join("|")})$`);
   for (const row of rows) {
     const m = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(row);
     if (!m) continue;
     const pid = Number(m[1]);
     const cmd = m[3].trim();
-    const isBundle = /\.app\/Contents\/MacOS\/lumir$/.test(cmd);
+    const isBundle = bundleName.test(cmd);
     const isDev = /(?:^|[\s/])target\/debug\/lumir$/.test(cmd);
     if (!isBundle && !isDev) continue;
     let comm = "";
@@ -1385,7 +1411,10 @@ export function listLumirInstances(exec = spawnSyncText) {
     } catch {
       continue; // 进程在这一瞬退出了
     }
-    if (comm.split("/").pop() !== "lumir") continue;
+    // comm 的 basename 必须就是这个实例的可执行名：bundle 认包装入口与 exec 后的真二进制两个
+    // 名字（同一份常量，见 BUNDLE_EXEC_NAMES），dev 仍只认 `lumir`。
+    const allowed = isBundle ? BUNDLE_EXEC_NAMES : [BUNDLE_ENTRY_NAME];
+    if (!allowed.includes(comm.split("/").pop())) continue;
     const elapsed = parseElapsedSeconds(m[2]);
     out.push({
       pid,
@@ -1397,24 +1426,43 @@ export function listLumirInstances(exec = spawnSyncText) {
   return out;
 }
 
-/** `binPath` 的两种字面（原样 / realpath）——`open` 经 launchd 启动时 `ps` 里可能是
- *  canonicalize 后的路径（macOS 的 `/tmp` → `/private/tmp`）。 */
+/**
+ * 本副本实例在 `ps` 里可能出现的**全部**字面路径。
+ *
+ * 两个维度的组合：① 名字——包装入口（`lumir`）与 exec 之后的真二进制（`lumir-bin`）都算本副本
+ * （同一份 `BUNDLE_EXEC_NAMES` 常量）；② 路径——`open` 经 launchd 启动时 `ps` 里可能是
+ * canonicalize 后的路径（macOS 的 `/tmp` → `/private/tmp`）。
+ *
+ * 只收同一个 `Contents/MacOS/` 目录下的这两个名字：结构上碰不到安装版（路径不同），也不做
+ * 宽松子串匹配（watchdog shell 里「提到」路径的进程不算实例）。
+ */
 function binaryPaths(binPath) {
   const set = new Set();
-  if (!binPath) return set;
-  set.add(path.resolve(binPath));
-  try {
-    set.add(realpathSync(binPath));
-  } catch {
-    /* 路径已不在：按字面匹配 */
+  // 先经唯一归一点：`.app` 根与 `.app` 内二进制是同一份输入的两种写法，这里之后只有入口路径。
+  const entry = bundleEntryPath(binPath);
+  if (!entry) return set;
+  const resolved = entry;
+  const dir = path.dirname(resolved);
+  const names = new Set([path.basename(resolved), ...BUNDLE_EXEC_NAMES]);
+  for (const name of names) {
+    const candidate = path.join(dir, name);
+    set.add(candidate);
+    try {
+      set.add(realpathSync(candidate));
+    } catch {
+      /* 路径已不在：按字面匹配 */
+    }
   }
   return set;
 }
 
-/** 按**精确二进制路径**找本次跑批的打包实例 pid；找不到返回 null。 */
-export function findBundleAppPid(binPath) {
+/** 按**精确二进制路径**找本次跑批的打包实例 pid；找不到返回 null。
+ *
+ * `binPath` 可以是入口（`…/Contents/MacOS/lumir`）——`binaryPaths` 会把同目录下的真二进制名
+ * （`lumir-bin`）一并算成本副本，包装 exec 之后的进程因此照样认得出。`exec` 可注入（自测用）。 */
+export function findBundleAppPid(binPath, exec = spawnSyncText) {
   const wanted = binaryPaths(binPath);
-  const hits = listLumirInstances().filter((i) => i.kind === "bundle" && wanted.has(i.cmd));
+  const hits = listLumirInstances(exec).filter((i) => i.kind === "bundle" && wanted.has(i.cmd));
   if (hits.length === 0) return null;
   hits.sort((a, b) => b.pid - a.pid);
   return hits[0].pid;
@@ -1651,6 +1699,221 @@ export async function cuSeesApp(cu, pid, { retries = 20, bundleId = acceptanceBu
     await sleep(500);
   }
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// 退出后的通知点击（change add-cron-notification-relaunch §8.2）的验收隔离
+// ---------------------------------------------------------------------------
+
+/**
+ * 隔离根的 token 文件（固定路径）：包装脚本从它读本次 run 的隔离根。
+ *
+ * 为什么必须走 token 而不是环境变量：**被 LaunchServices 重新拉起的进程不继承套件的环境
+ * 变量**。`open --env XDG_CONFIG_HOME=…` 只覆盖「套件自己发起的那一次启动」，用户点通知后
+ * 系统拉起的新进程只看得到 launchd 的默认环境。token 文件是唯一在两条拉起路径上都成立的
+ * 传递方式。
+ */
+export const BUNDLE_ISOLATION_TOKEN = "/tmp/lumir-acceptance-isolate";
+
+/** 包装脚本的两个变量出口（静态前置门逐条核这两个赋值）。 */
+export const BUNDLE_ISOLATION_VARS = ["XDG_CONFIG_HOME", "HOME"];
+
+/**
+ * 写入本次 run 的隔离根（token 内容 = `envHome()`）。
+ *
+ * 幂等：每次（含 `do: restart`）拉起之前都写一次，避免上一轮别的场景留下的旧路径把隔离带到
+ * 别处。
+ */
+export async function writeBundleIsolation({ env = envHome(), tokenFile = BUNDLE_ISOLATION_TOKEN } = {}) {
+  await writeFile(tokenFile, `${env}\n`, "utf8");
+  await mkdirp(path.join(env, "home"));
+  return tokenFile;
+}
+
+/**
+ * **静态前置门**（任何一次 LaunchServices 拉起之前跑）：不成立即判 INVALID 且**不发起拉起**。
+ *
+ * 判据三件（design §8.2「静态前置门」）：
+ *   1. `Contents/Info.plist` 的 `CFBundleExecutable` 指向**包装脚本**（不是真二进制）；
+ *   2. 包装脚本在 `exec` 之前导出 `XDG_CONFIG_HOME` 与 `HOME`，且隔离根来自 token 文件——
+ *      缺 token / token 非法时**失败关闭**（拒绝启动），绝不回落真实 `~/.config`；
+ *   3. token 内容等于本次 run 的 `envHome()`。
+ *
+ * 为什么必须前置：拉起之后再检查目录等于「已经碰过真实配置」——`logging::init`、vault 恢复与
+ * cron 装载都跑在进程启动的前几百毫秒里，事后断言只能发现污染，不能防污染。
+ */
+export async function assertBundleIsolation({
+  appPath = bundleAppPath(),
+  env = envHome(),
+  tokenFile = BUNDLE_ISOLATION_TOKEN,
+  exec = spawnSyncText,
+} = {}) {
+  if (!appPath) return null;
+  const execName = readBundleExecutable(appPath, exec);
+  if (!execName) {
+    throw new InfraError(`${appPath} 的 Info.plist 没有 CFBundleExecutable：无法确认启动入口。`);
+  }
+  const scriptPath = path.join(appPath, "Contents", "MacOS", execName);
+  let script;
+  try {
+    script = await readText(scriptPath);
+  } catch {
+    throw new InfraError(
+      `打包实例的启动入口 ${scriptPath} 不可读：构建产物没装隔离包装（重跑 node scripts/acceptance/build-bundle.mjs）。`,
+    );
+  }
+  if (!script.startsWith("#!/bin/sh")) {
+    throw new InfraError(
+      `打包实例的启动入口不是隔离包装脚本（${scriptPath} 的开头不是 #!/bin/sh）：被系统拉起的进程会回落真实 ~/.config。` +
+        "重跑 node scripts/acceptance/build-bundle.mjs 重建。",
+    );
+  }
+  for (const name of BUNDLE_ISOLATION_VARS) {
+    // 逐变量精确匹配赋值（`XDG_CONFIG_HOME=` 里含有子串 `HOME=`，直接 `includes` 会让「缺 HOME」
+    // 的脚本混过这道门——那条路径正是会悄悄回落到真实 `$HOME/.config` 的形态）。
+    const assignment = new RegExp(`(^|[\\s;])(export\\s+)?${name}=`, "m");
+    if (!assignment.test(script)) {
+      throw new InfraError(
+        `隔离包装脚本没有导出 ${name}（${scriptPath}）：拉起后的进程会读 / 写真实配置。重建 bundle。`,
+      );
+    }
+  }
+  if (!script.includes(tokenFile)) {
+    throw new InfraError(
+      `隔离包装脚本不读 token（${tokenFile}）：无法确认它用的是本次 run 的隔离根。重建 bundle。`,
+    );
+  }
+  if (!script.includes("exec ")) {
+    throw new InfraError(`隔离包装脚本没有 exec 真二进制（${scriptPath}）：拉起的不是 Lumir 本体。`);
+  }
+  let token = "";
+  try {
+    token = (await readText(tokenFile)).trim();
+  } catch {
+    throw new InfraError(
+      `隔离 token（${tokenFile}）缺失：先写 token 再拉起（writeBundleIsolation），否则系统拉起的实例没有隔离根。`,
+    );
+  }
+  if (token !== env) {
+    throw new InfraError(
+      `隔离 token 指向 ${token || "(空)"}，与本次 run 的配置目录 ${env} 不一致：跨进程点击会读错目录。`,
+    );
+  }
+  return { appPath, execName, scriptPath, tokenFile };
+}
+
+/** `Contents/Info.plist` 的 `CFBundleExecutable`（读不到返回空串）。 */
+function readBundleExecutable(appPath, exec = spawnSyncText) {
+  const plist = path.join(appPath, "Contents", "Info.plist");
+  return exec("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleExecutable", plist])?.trim() ?? "";
+}
+
+/**
+ * **唯一归一点**：把 `LUMIR_ACCEPTANCE_BUNDLE` 的两种合法形态（`.app` 根 / `.app` 内二进制）
+ * 折算成**入口可执行路径**（`Contents/MacOS/lumir`，即 `CFBundleExecutable` 的位置）。
+ *
+ * 为什么必须有这一层：`bundleAppPath()` 明确接受 `.app` 根（并有单测声明它是合法输入），而按
+ * 进程找 pid 只能按可执行路径匹配。少了归一，传 `.app` 根会组出 `.<app>/lumir-bin` 这种不存在的
+ * 字面——初次 launch 等 pid 超时、收尾也收不到（r1-2 P2-1 的现场）。
+ *
+ * 收尸 / 退出 / 重新附着 / 扫描**全部**经这里或经 [`binaryPaths`]（它也先归一）拿到同一个输入口径。
+ */
+export function bundleEntryPath(binPath = bundleBinary()) {
+  if (!binPath) return null;
+  const resolved = path.resolve(binPath);
+  if (resolved.endsWith(".app")) {
+    return path.join(resolved, "Contents", "MacOS", BUNDLE_ENTRY_NAME);
+  }
+  return resolved;
+}
+
+/** 让「本次跑批自己的实例」跟上新 pid（被系统拉起的进程换了 pid）。 */
+export function rememberOwnBundleInstance(pid) {
+  ownBundlePid = pid;
+}
+
+/** 实例已退出（或交给系统）：清掉 pid 归属，避免后续扫描把它当成「自己」。 */
+export function clearOwnBundleInstance() {
+  ownBundlePid = null;
+}
+
+/**
+ * **正常退出**应用（不是 SIGTERM）：AppleEvent「quit」走 app 自己的退出路径
+ * （`RunEvent::Exit` → 日志刷盘、点击保留的收尾），与用户 ⌘Q 等价。
+ *
+ * 与 `stopApp` 的分工：`stopApp` 是**收尸**（跑批结束、进程可能已经不听命令）；这里是场景
+ * 步骤要的「像用户那样退出」，因此必须走正常路径——SIGTERM 会让 `RunEvent::Exit` 的前半段
+ * 走另一条路（应用被杀时 test 里看不到 flush）。
+ */
+export async function quitBundleApp({
+  appPath = bundleAppPath(),
+  bundleId = acceptanceBundleId(),
+  timeoutMs = 20_000,
+  exec = spawnSyncText,
+  findPid = findBundleAppPid,
+  wait = waitForProcessExit,
+} = {}) {
+  if (!appPath) {
+    throw new InfraError("quitApp 只适用于打包实例：先设 LUMIR_ACCEPTANCE_BUNDLE 构建并启动 bundle。");
+  }
+  const entry = bundleEntryPath(appPath);
+  const pid = findPid(entry);
+  if (pid === null) {
+    throw new InfraError(`quitApp：场上没有本副本的实例（${entry}），无法执行正常退出。`);
+  }
+  if (!bundleId) {
+    throw new InfraError("quitApp：读不到验收 bundle id（构建产物 Info.plist 不可读）。");
+  }
+  exec("/usr/bin/osascript", ["-e", `tell application id "${bundleId}" to quit`]);
+  // pid 消失即退出成功；仍在场说明退出被挡住（dirty 守卫 / 系统拒绝），按异常边界停手。
+  const exited = await wait(() => findPid(entry) === null, { timeoutMs });
+  if (!exited) {
+    throw new InfraError(
+      `quitApp：app 在 ${timeoutMs}ms 内没有退出（可能被未保存修改挡住）——按异常边界停手，不代为丢弃更改。`,
+    );
+  }
+  clearOwnBundleInstance();
+  return { pid };
+}
+
+/**
+ * **按验收 bundle id 重新附着**到被系统拉起的新进程（design §8.2 判据 1 的前置）。
+ *
+ * 附着校验两件（task 5.3）：二进制路径必须是本副本（`findBundleAppPid` 按 `.app` 内的入口
+ * 路径精确匹配，安装版路径不同，结构上碰不到）与 `CFBundleIdentifier` 必须是验收 id
+ * （`assertAcceptanceBundleIdentity` 在起跑预检已经核过产物，这里再核一次防「拉起的是别的
+ * 副本」）。返回新 pid，并把它登记为「本次跑批自己的实例」——收尾时 `stopApp` 才收得对它。
+ */
+export async function attachRelaunchedBundle({
+  appPath = bundleAppPath(),
+  previousPid = null,
+  timeoutMs = 60_000,
+  everyMs = 200,
+  sleepFn = sleep,
+  now = Date.now,
+  findPid = findBundleAppPid,
+  assertIdentity = assertAcceptanceBundleIdentity,
+} = {}) {
+  if (!appPath) {
+    throw new InfraError("attachRelaunched 只适用于打包实例：先设 LUMIR_ACCEPTANCE_BUNDLE。");
+  }
+  assertIdentity({ appPath });
+  const entry = bundleEntryPath(appPath);
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    const pid = findPid(entry);
+    if (pid !== null && pid !== previousPid) {
+      rememberOwnBundleInstance(pid);
+      return { pid };
+    }
+    if (now() >= deadline) {
+      throw new Error(
+        `attachRelaunched：${timeoutMs}ms 内没有等到新进程（本副本 ${entry}；上一实例 pid ${previousPid ?? "无"}）。` +
+          "点击通知后系统应拉起新实例——没有新进程说明点击没有落到本副本（或点击根本没发生）。",
+      );
+    }
+    await sleepFn(everyMs);
+  }
 }
 
 /** 护栏：验收 vault（含第二个）与配置目录都不得指向用户真实资产。 */

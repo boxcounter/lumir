@@ -2386,6 +2386,19 @@ const COPY_TABLE = {
   D870: { zh: "处理中", en: "Working" },
   D871: { zh: "有新的回复", en: "New reply" },
   D872: { zh: "有失败结果", en: "Failed result" },
+  // D873 / D874：进程退出后的通知点击被拒的两条人话提示（change
+  // add-cron-notification-relaunch §5.3；取号接 master 上 D872 的末位）。消费点
+  // `src/copy.ts` 的 `cronNoticeText`（Rust 侧在 `cron.rs` 的 `ClickRejection::notice_code`
+  // 只发 code，MUST NOT 持有可见文案）。`notice_unknown`（台账外 request id）刻意没有条目：
+  // 旧版本遗留 / 被裁剪的通知被点属正常噪声，弹一条提示只会吵人。
+  D873: {
+    zh: "这条提醒对应的任务已删除",
+    en: "The task for this reminder has been deleted",
+  },
+  D874: {
+    zh: "这条提醒已过期，今天到点会再提醒",
+    en: "This reminder has expired — you'll be reminded again when it's due today",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -2546,4 +2559,8 @@ export const CRON_NOTICE_COPY: Record<string, CopyKey> = {
   // 身份未被系统认可（签名）与其它成因分成两条——见 D553 / D554 的设计意图列。
   cron_notify_delivery_failed_identity: "D553",
   cron_notify_delivery_failed: "D554",
+  // 进程退出后的通知点击被拒（change add-cron-notification-relaunch）：发出点是
+  // `src-tauri/src/cron.rs` 的 `ClickRejection::notice_code`，`params` 为空。
+  cron_click_task_deleted: "D873",
+  cron_click_notice_stale: "D874",
 };

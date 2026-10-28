@@ -117,13 +117,16 @@ steps:
       has: ["CRON-PROBE-CLICK", "cron 验收回答：任务已完成。"]
     timeoutMs: 40000
     expect:
-      - label: 点击链路被处理（cron_click ok=true, action=run）
+      - label: 点击链路被处理（cron_click ok=true, action=run, source=in-process）
         file:
           path: "env:logs/*.jsonl"
-          # 字段序无关（M612）：serde_json 按字母序落盘（action→event→ok→task），写死顺序的正则
-          # 永不命中。逐字段断言，别回到「按序列化顺序拼正则」的写法。
+          # 字段序无关（M612）：serde_json 按字母序落盘（action→event→ok→source→task），写死顺序
+          # 的正则永不命中。逐字段断言，别回到「按序列化顺序拼正则」的写法。
           # `task` 逐字段严格相等（`findJsonlRecord`）：带 `$runTag` 等于判「本次运行的那个任务」。
-          jsonl: { event: cron_click, task: acc-cron-click-$runTag, ok: "true", action: run }
+          # `source`（change add-cron-notification-relaunch）：macOS 打包实例的点击统一经常驻
+          # delegate 进来，但这条通知是**本进程**投递的 ⇒ 上下文来自进程内上下文表，来源必须是
+          # `in-process`（跨进程恢复的判据见场景 252）。
+          jsonl: { event: cron_click, task: acc-cron-click-$runTag, ok: "true", action: run, source: in-process }
       - label: 点击后运行已发起（不是到点自动运行）
         file:
           path: "env:logs/*.jsonl"

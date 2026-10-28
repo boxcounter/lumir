@@ -15,6 +15,7 @@ pub mod harness;
 pub mod index;
 pub mod link_graph;
 pub mod logging;
+pub mod notify;
 pub mod reading_position;
 pub mod ready;
 pub mod recovery;
@@ -80,6 +81,25 @@ pub fn run() {
     // cron 守护的通道：发送端交给 `CronRuntime`（app state），接收端在 setup 尾部交给
     // `lumir-cron` 线程。通道先建、线程后起——任何一次 poke 在消费端就位前只是排队。
     let (cron_tx, cron_rx) = std::sync::mpsc::channel();
+    // 通知平台层（change add-cron-notification-relaunch §3）：delegate 必须在这个入口装，
+    // 也就是**应用完成启动之前**（Apple 合同：否则「导致应用被启动的通知」响应会丢）。
+    // 安装路径零 IO、零跨进程查询（ADR 0002 第 6 条）；失败只降级为 warning——MUST NOT 阻断
+    // 启动与投递。macOS 上点击接收只有 delegate 一条通道，装不上时点击（进程内与跨进程）
+    // 一起不可用，不声称存在第二条路。
+    if let Err(error) = notify::install_delegate() {
+        // **不能在这里落日志**：`logging::global()` 的首次初始化会同步解析配置目录并读配置
+        // 文件，而这一段是 design §3 的「安装路径零 IO」区间（ADR 0002 第 6 条冷启动）。
+        // 先把话存起来，由 `lumir-cron` 线程在 `logging::init()` 之后补落。
+        defer_startup_warning(format!("通知 delegate 未能安装，点击接收不可用：{error}"));
+    }
+    // 平台层收到响应后的唤醒通道：只做一次 mpsc 发送（`didReceive` 跑在主线程 run loop 上，
+    // 那里不能做 IO 或等待）。注册在这里而不是线程里，覆盖「响应早于守护线程启动」的窗口。
+    {
+        let wake_tx = cron_tx.clone();
+        notify::set_waker(Box::new(move || {
+            let _ = wake_tx.send(CronMessage::DrainClicks);
+        }));
+    }
     tauri::Builder::default()
         // 外链打开（M144）：插件注册后 `app.opener()` 可用（Rust 侧调用不经 ACL）。
         // `open_js_links_on_click(false)`：插件默认会往 webview 注入一段脚本，把
@@ -305,6 +325,9 @@ pub fn run() {
             // 兜住「最后一次缩放之后、防抖窗口内就退出」这一条路径（macOS Cmd+Q 经
             // applicationWillTerminate 到达本臂，见 window_state 模块头）。
             tauri::RunEvent::Exit => {
+                // 仍保留的点击（界面未就绪）在退出前按 `not_ready` 收尾：保留只活在进程内，
+                // 进程走了就再没有重放的机会（§6「进程退出即丢弃」）。
+                app.state::<CronRuntime>().send(CronMessage::FlushNotReady);
                 logging::flush();
                 window_state::flush();
             }
@@ -956,17 +979,21 @@ struct CronRuntimeInner {
     last_focus_poke: Option<Instant>,
 }
 
-/// 投给守护线程的五类消息。
+/// 投给守护线程的四类消息。
 enum CronMessage {
     /// 拉取兜底的一次评估（带触发源）。
     Poke(cron::Trigger),
     /// 运行终态回执。
     RunResult(CronRunResult),
-    /// 用户点击了一条通知（`tap`）：按该任务的触达策略聚焦 / 打开会话 / 发起运行。
-    Click { task: String },
-    /// 前端接线层就绪：重放接线层未就绪期间被保留的点击（M752——通知点掉之后系统不会再给
-    /// 第二次点击，丢弃等于把用户意图丢掉），随后补一次启动评估。
+    /// 平台层收到了通知响应（只有 request id）：取走进程内缓冲里的响应并按接收判据处置。
+    ///
+    /// 载荷刻意只有 id——任务 / 种类 / 快照会话由守护线程按 request id 从**进程内上下文表**或
+    /// **台账**取回（§5.2：两条通道交出同一形状，MUST NOT 把入口简化成「只传任务 id」）。
+    DrainClicks,
+    /// 前端接线层已就绪：重放「界面未就绪时保留」的点击，并补一次启动触发。
     BridgeReady,
+    /// 进程即将退出：把仍保留的点击按 `not_ready` 收尾（尽力而为，见 `flush_pending_click`）。
+    FlushNotReady,
     /// 任务表可能变了：重读配置并替换任务集（change add-cron-conversational-registration
     /// design §3.1）。**载荷为空**——配置是唯一真源，带任务载荷等于在进程里放第二份任务表。
     /// `ack` 是一次性回执：工具侧 `recv_timeout` 等它，把「已生效 / 未确认」如实写进回执。
@@ -997,15 +1024,14 @@ impl CronRuntime {
         }
     }
 
-    /// 前端接线层就绪（`cron_bridge_ready` 命令）：置位、重放未就绪期间保留的点击，并投一次
-    /// 启动触发，补跑启动早期因「监听器不在场」被延后的无人值守运行。
+    /// 前端接线层就绪（`cron_bridge_ready` 命令）：置位并投一次 `BridgeReady`（重放保留的点击
+    /// + 补跑启动早期因「监听器不在场」被延后的无人值守运行）。
     fn mark_bridge_ready(&self) {
         use std::sync::atomic::Ordering;
         if self.bridge_ready.swap(true, Ordering::SeqCst) {
             return;
         }
         self.send(CronMessage::BridgeReady);
-        self.poke(cron::Trigger::Startup);
     }
 
     fn is_bridge_ready(&self) -> bool {
@@ -1249,6 +1275,7 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
         delivery_retry: std::collections::HashMap::new(),
         cached_vault: None,
         notify_failures: cron::NotifyFailureStreak::default(),
+        in_process: std::collections::VecDeque::new(),
         pending_click: cron::DeferredClick::default(),
     };
     // 通知权限（design §4.3）：**有有效任务时**检查一次；未决定申请一次；被拒落一条 warning
@@ -1256,17 +1283,22 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
     if !runner.tasks.is_empty() {
         ensure_notification_permission();
     }
+    // 启动期攒下的告警（装 delegate 失败这类）：**在这里**落，不在 `run()` 入口落——
+    // 那时 logging 还没初始化，落一条 warning 会带进配置 IO（r1 P2-3）。
+    flush_startup_warnings();
+    // 启动期缓冲的响应（delegate 可能在 setup / 线程启动之前就回调）：装载完成后按到达顺序
+    // 取走处理。这是「无主响应落点」的唯一消费者（§5「为什么先缓冲」）。
+    runner.drain_platform_responses();
     loop {
         match rx.recv_timeout(cron::TICK) {
             Ok(CronMessage::Poke(trigger)) => runner.evaluate(trigger),
             Ok(CronMessage::RunResult(result)) => runner.finish(result),
-            Ok(CronMessage::Click { task }) => runner.handle_click(&task),
-            // 接线层就绪：先重放未就绪期间保留的点击，再补一次启动评估（两条都是就绪之后
-            // 才有意义的工作，顺序固定——保留的点击是用户在等的那件事）。
+            Ok(CronMessage::DrainClicks) => runner.drain_platform_responses(),
             Ok(CronMessage::BridgeReady) => {
                 runner.replay_pending_click();
                 runner.evaluate(cron::Trigger::Startup);
             }
+            Ok(CronMessage::FlushNotReady) => runner.flush_pending_click(),
             Ok(CronMessage::Reload { ack }) => runner.reload(ack),
             Err(RecvTimeoutError::Timeout) => runner.evaluate(cron::Trigger::Timer),
             Err(RecvTimeoutError::Disconnected) => return,
@@ -1275,10 +1307,13 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
 }
 
 /// 一次通知点击的去重状态（repeat-click 幂等）：日期 + 该次运行回执带回的会话 id。
-struct ClickState {
-    date: String,
-    session_id: Option<String>,
-}
+type ClickState = cron::ClickedNotice;
+
+/// 进程内上下文表的上限：投递点登记的「这条通知是发给谁的」。
+///
+/// 点击只可能落在最近几条通知上（更早的要么被系统清掉，要么走跨进程台账），因此表必须有界——
+/// 无界就等于给每一条历史通知留一份内存。
+const IN_PROCESS_CLICKS: usize = 64;
 
 /// 守护线程的执行侧：判定（`cron::plan`）之外的全部副作用都在这里——投通知、发交接事件、
 /// 写去重状态、落诊断事件。
@@ -1312,9 +1347,16 @@ struct CronRunner {
     /// 通知投递的连续失败计数（M635）：达阈值那一次在 app 内给一条可见提示。判据与上屏文案
     /// 的阈值都在 `cron.rs`（[`cron::NotifyFailureStreak`]），这里只做记账与派发。
     notify_failures: cron::NotifyFailureStreak,
-    /// 接线层未就绪期间被保留的点击（M752）：`cron:run` 监听器不在场时发出去的交接会被静默
-    /// 丢弃，而通知一经点掉系统不会再给第二次点击——所以点击必须先保留、就绪后重放，
-    /// 不能像无人值守派发那样按 `not_ready` 延后（那条路径下一次评估还会再来，这条不会）。
+    /// **进程内上下文表**（§5.2）：投递成功那一刻构造的整份点击上下文，按 request id 可取。
+    ///
+    /// 所有平台的进程内通道都从这里取上下文，**不读台账**——因此台账写失败不影响同进程点击。
+    /// 有界（[`IN_PROCESS_CLICKS`]）：点击只可能落在最近几条通知上。
+    in_process: std::collections::VecDeque<cron::ClickContext>,
+    /// 接线层未就绪期间被保留的点击（M752 的 `DeferredClick`；`cron:run` 监听器不在场时发出去的
+    /// 交接会被静默丢弃，而通知一经点掉系统不会再给第二次点击——所以点击必须先保留、就绪后重放）。
+    ///
+    /// 本 change 起存**整份已校验上下文**（§6）：重放要恢复「被点那条」的会话，只留任务 id 会让
+    /// 重放退化成「按最新会话重算」。同任务后到者覆盖前者、总数有上限（[`cron::DeferredClick`]）。
     pending_click: cron::DeferredClick,
 }
 
@@ -1498,11 +1540,20 @@ impl CronRunner {
                 if !self.delivery_ready(&task.id, &now.date) {
                     return;
                 }
-                match deliver_notification(&self.app, &task.id, "trigger") {
-                    Ok(()) => {
+                match deliver_notification(&self.app, &task.id, cron::NoticeKind::Trigger) {
+                    Ok(request_id) => {
                         self.delivery_retry.remove(&task.id);
                         self.notify_failures.record_success();
                         logging::cron_notified(&task.id, "trigger", trigger.as_str());
+                        // 台账条目与 `last_fired` 在**同一次**原子替换里落盘（§4）：登记只改内存，
+                        // 落盘由紧随其后的 `mark_fired` 完成。
+                        self.register_notice(
+                            &request_id,
+                            &task.id,
+                            cron::NoticeKind::Trigger,
+                            None,
+                            &now.date,
+                        );
                         self.mark_fired(&task.id, &now.date);
                     }
                     Err(error) => {
@@ -1581,18 +1632,35 @@ impl CronRunner {
         if result.session_id.is_some() {
             self.state
                 .set_session(&run.task, result.session_id.as_deref());
-            self.persist_state();
         }
         // 终态的唯一产出点（design §6.1 / §11）：成功与否只来自这次回执。
         logging::cron_run_finished(&run.task, result.ok, result.error.as_deref());
         // `run-then-notify` 的结果通知在终态之后（design §5.2）；通知通道未就绪时这次投递
         // 失败，但不改变终态判定，也不触发重跑（当日已写 last_fired）。
+        let mut persisted = false;
         if run.delivery == config::DeliveryPolicy::RunThenNotify {
-            let kind = if result.ok { "result" } else { "failure" };
+            let kind = if result.ok {
+                cron::NoticeKind::Result
+            } else {
+                cron::NoticeKind::Failure
+            };
             match deliver_notification(&self.app, &run.task, kind) {
-                Ok(()) => {
+                Ok(request_id) => {
                     self.notify_failures.record_success();
-                    logging::cron_notified(&run.task, kind, run.trigger.as_str());
+                    logging::cron_notified(&run.task, kind.as_str(), run.trigger.as_str());
+                    // 结果 / 失败通知的原子性判据不同（§4）：这条路径不写 `last_fired`，因此
+                    // 台账条目与**当时的完整状态**在同一次原子替换里落盘——条目的会话快照来自
+                    // 本次回执（与同次落盘里 `tasks.<task>.session_id` 同一个值）。
+                    let now = cron::LocalNow::now();
+                    self.register_notice(
+                        &request_id,
+                        &run.task,
+                        kind,
+                        result.session_id.as_deref(),
+                        &now.date,
+                    );
+                    self.persist_state();
+                    persisted = true;
                 }
                 // 单次失败不进 cron 日志（M637：`deliver_notification` 不再逐次打 warning，
                 // 底层 NSError 经 `log` 桥落 `dependency_log`）；这里只记账，达阈值那一次
@@ -1600,160 +1668,344 @@ impl CronRunner {
                 Err(error) => self.note_notify_failure(&run.task, &error),
             }
         }
+        // 会话标识仍要落盘（消费者的另一半是 `dedicated` 的续写）：通知没投出去时单写它，
+        // 投出去时已随台账那次完整状态一起写过了。
+        if !persisted && result.session_id.is_some() {
+            self.persist_state();
+        }
     }
 
-    /// 通知点击（design §4.5 / §5.1 / §5.2）：落点由 [`cron::plan_click`] 判定（纯函数），
-    /// 这里只执行副作用。`notify-then-run` 点击发起运行（同日重复点击只打开已有会话）；
-    /// `run-then-notify` 点击恢复该次运行的会话、不重跑。任一步失败落 `cron_click(ok=false)`
-    /// 并给人话提示（MUST NOT 静默）。
+    /// 投递点登记的**唯一**构造函数（§5.2）：一份上下文同时进进程内上下文表与台账。
     ///
-    /// **接线层未就绪时保留点击**（M752，`ClickPlan::Defer`）：`app.emit` 在 JS 监听器不在场
-    /// 时返回 Ok 却无人接收，而通知一经点掉系统不会再给第二次点击——按失败落地等于把用户的
-    /// 意图丢掉。保留的点击由 [`Self::replay_pending_click`] 在 `cron_bridge_ready` 之后重放。
-    fn handle_click(&mut self, task_id: &str) {
+    /// 两处 MUST NOT 各自重新推导——两处不一致就等于两个真源。台账只在 macOS 打包实例写入
+    /// （唯一消费者是跨进程点击，其它平台没有消费者）。
+    fn register_notice(
+        &mut self,
+        request_id: &str,
+        task: &str,
+        kind: cron::NoticeKind,
+        session_id: Option<&str>,
+        date: &str,
+    ) {
+        let context = cron::ClickContext::from_delivery(request_id, task, kind, session_id, date);
+        while self.in_process.len() >= IN_PROCESS_CLICKS {
+            self.in_process.pop_front();
+        }
+        if notice_ledger_enabled() {
+            self.state.record_notice(request_id, context.notice(), date);
+        }
+        self.in_process.push_back(context);
+    }
+
+    /// 取走平台层的待处理响应并按接收判据处置（§5 的恢复流水线）。
+    ///
+    /// 平台层只交 request id 与**已归一化**的动作：非 `tap` 的响应在这里按防御口径落一条
+    /// warning 后丢弃（不进处置，也就不会有 `cron_click`）。
+    fn drain_platform_responses(&mut self) {
+        let (responses, dropped) = notify::take_responses();
+        // 缓冲溢出在回调里只记账（那里做配置 IO 会破坏「回调只入队 + 唤醒」），在这里补落。
+        for request_id in dropped {
+            logging::config_warning(
+                "cron",
+                &format!("通知响应的待处理缓冲已满，已丢弃最早的一条：{request_id}"),
+            );
+        }
+        for response in responses {
+            if response.action != cron::NoticeAction::Tap {
+                logging::config_warning(
+                    "cron",
+                    &format!(
+                        "忽略非 tap 的通知动作（{}）：{}",
+                        action_label(&response.action),
+                        response.request_id
+                    ),
+                );
+                continue;
+            }
+            self.handle_click_request(&response.request_id);
+        }
+    }
+
+    /// 一条响应 → 已校验点击上下文 → 处置。两条通道只在这里分叉一次。
+    fn handle_click_request(&mut self, request_id: &str) {
+        let now = cron::LocalNow::now();
+        let live: Vec<String> = self
+            .tasks
+            .iter()
+            .map(|scheduled| scheduled.task.id.clone())
+            .collect();
+        let in_process = self
+            .in_process
+            .iter()
+            .rev()
+            .find(|context| context.request_id == request_id)
+            .cloned();
+        let input = cron::AcceptInput {
+            request_id,
+            in_process: in_process.as_ref(),
+            state: &self.state,
+            live_tasks: &live,
+            today: &now.date,
+        };
+        // 诊断需要「拒绝时能拿到什么」：命中来源时的任务与种类，缺失时只有 request id。
+        let resolved = cron::resolve_context(&input);
+        match cron::accept_click(&input) {
+            Ok((context, source)) => self.handle_click(&context, source, not_ready_policy()),
+            Err(rejection) => {
+                let (task, action, source) = match &resolved {
+                    Some((context, source)) => {
+                        (context.task.clone(), action_label_of(context.kind), *source)
+                    }
+                    None => (String::new(), "none", cron::ClickSource::Relaunch),
+                };
+                logging::cron_click(&task, false, action, source, Some(rejection.as_str()));
+                // `notice_unknown` 不上屏（旧版本遗留 / 被裁剪的通知属正常噪声）。
+                if let Some(code) = rejection.notice_code() {
+                    notice_code(&self.app, code, serde_json::json!({}));
+                }
+            }
+        }
+    }
+
+    /// 通知点击处置（design §4.5 / §5.1 / §5.2）：两个入口（进程内 / 跨进程恢复）交出**同一份**
+    /// 已校验上下文，来源与「未就绪时保留还是退回」只是附加参数。
+    ///
+    /// `notify-then-run` 点击发起运行（同日重复点击只打开已有会话）；`run-then-notify` 点击恢复
+    /// **上下文快照里那条**运行的会话、不重跑。任一步失败落 `cron_click(ok=false)` 并给人话提示
+    /// （MUST NOT 静默）。
+    fn handle_click(
+        &mut self,
+        context: &cron::ClickContext,
+        source: cron::ClickSource,
+        policy: cron::NotReadyPolicy,
+    ) {
+        let action = action_label_of(context.kind);
         let Some(scheduled) = self
             .tasks
             .iter()
-            .find(|scheduled| scheduled.task.id == task_id)
+            .find(|scheduled| scheduled.task.id == context.task)
             .cloned()
         else {
-            logging::cron_click(task_id, false, "run", Some("task_unknown"));
+            // 判据 3 已在接收时挡过一次；这里防的是「接受之后任务被删」（重放 / 重载竞态）。
+            logging::cron_click(&context.task, false, action, source, Some("task_unknown"));
+            notice_code(&self.app, "cron_click_task_deleted", serde_json::json!({}));
             return;
         };
         let task = scheduled.task;
+        // 前端接线层未就绪（webview 的监听器不在场）：`app.emit` 会返回 Ok 但无人接收，运行会
+        // 空挂到 stale 回收、点击去重也永远等不到回执。按通道策略处置——macOS 上用户手里没有
+        // 第二次点击的机会（响应已被 delegate 收走），所以保留整份上下文等接线层就绪后重放。
+        //
+        // **这一步排在聚焦之前**：系统拉起应用后的第一轮 drain 可能早于窗口就绪，先聚焦会把
+        // 「还没有窗口」误判成 `focus_failed`，把这次点击（用户只有一次）丢掉。
+        if !self.app.state::<CronRuntime>().is_bridge_ready() {
+            match policy {
+                cron::NotReadyPolicy::Defer => {
+                    self.defer_click(context.clone(), source);
+                }
+                cron::NotReadyPolicy::Reject => {
+                    logging::cron_click(&task.id, false, action, source, Some("not_ready"));
+                    notice(&self.app, "界面尚未就绪，请稍后重试");
+                }
+            }
+            return;
+        }
         if !focus_main_window(&self.app) {
-            logging::cron_click(&task.id, false, "run", Some("focus_failed"));
+            logging::cron_click(&task.id, false, action, source, Some("focus_failed"));
             notice(&self.app, "无法唤起 Lumir 窗口，请从程序坞打开后重试");
             return;
         }
         let now = cron::LocalNow::now();
-        // 判据的四个输入全部是这一刻的运行时事实；点击去重按**本地日期**过滤（跨日重新允许）。
+        // 判据的输入全部是这一刻的运行时事实；点击去重按**本地日期**过滤（跨日重新允许）。
+        // 通知种类决定「按今天跑没跑判」还是「按上下文快照恢复」（§5.2）：快照来自被点的那条
+        // 通知，MUST NOT 换成任务的 `session_id`（最新一次运行）。
         let clicked_today = self
             .clicked_today
             .get(&task.id)
             .filter(|clicked| clicked.date == now.date)
             .map(|clicked| clicked.session_id.clone());
-        let state_session = self.state.session_id(&task.id).map(str::to_string);
-        let state_session_today = state_session
-            .as_deref()
-            .filter(|session_id| session_started_today(session_id, &now))
+        let state_session_today = self
+            .state
+            .session_id(&task.id)
+            .filter(|session_id| cron::session_started_today(session_id, &now))
             .map(str::to_string);
         let plan = cron::plan_click(&cron::ClickInput {
             delivery: task.delivery,
+            kind: context.kind,
+            session_snapshot: context.session_id.as_deref(),
+            inflight: self.inflight.values().any(|run| run.task == task.id),
             bridge_ready: self.app.state::<CronRuntime>().is_bridge_ready(),
             clicked_today: clicked_today
                 .as_ref()
                 .map(|session_id| session_id.as_deref()),
             state_session_today: state_session_today.as_deref(),
-            state_session: state_session.as_deref(),
         });
         match plan {
-            cron::ClickPlan::Defer => self.pending_click.defer(&task.id),
+            // 理论上不可达：未就绪已在上面按平台策略处置过。留一条兜底，宁可保留也不丢。
+            cron::ClickPlan::Defer => self.defer_click(context.clone(), source),
             cron::ClickPlan::FocusOnly => {
-                // 第一次点击的运行还没有回执：只聚焦，不产生第二次运行。
-                logging::cron_click(&task.id, true, "run", None);
+                // 首次点击的运行还没有回执 / 并发点击的后到者：只聚焦，不产生第二次运行。
+                logging::cron_click(&task.id, true, action, source, None);
             }
             cron::ClickPlan::OpenSession(session_id) => {
-                // 同日再点只打开已有会话（design §4.6）；进程重启后靠去重状态里的会话补这条
-                // 判据时，这里顺手把点击去重记成「今日已点击且已有会话」。
-                self.clicked_today.insert(
-                    task.id.clone(),
-                    ClickState {
-                        date: now.date.clone(),
-                        session_id: Some(session_id.clone()),
-                    },
-                );
-                self.open_session(&task, &session_id);
+                // 同日再点只打开已有会话（design §4.6）。到点通知顺手把点击去重记成「今日已点击
+                // 且已有会话」——进程重启后靠的就是这条判据；结果 / 失败通知不写它（它们回答的是
+                // 「打开哪条会话」，与「今天跑没跑」无关）。
+                if context.kind == cron::NoticeKind::Trigger {
+                    self.clicked_today.insert(
+                        task.id.clone(),
+                        ClickState {
+                            date: now.date.clone(),
+                            session_id: Some(session_id.clone()),
+                        },
+                    );
+                }
+                self.open_session(&task, &session_id, source, action);
             }
             cron::ClickPlan::Reject(reason) => {
-                let action = if task.delivery == config::DeliveryPolicy::NotifyThenRun {
-                    "run"
-                } else {
-                    "open-session"
-                };
-                logging::cron_click(&task.id, false, action, Some(reason));
-                if task.delivery == config::DeliveryPolicy::RunThenNotify {
+                logging::cron_click(&task.id, false, action, source, Some(reason));
+                if reason == "session_missing" {
                     notice(&self.app, &format!("任务 {} 还没有可恢复的会话", task.id));
                 }
             }
-            cron::ClickPlan::Run => {
-                self.clicked_today.insert(
-                    task.id.clone(),
-                    ClickState {
-                        date: now.date.clone(),
-                        session_id: None,
+            cron::ClickPlan::Run => self.start_click_run(&task, source),
+        }
+    }
+
+    /// 到点通知的点击：在交互会话槽位发起一次运行（同日幂等已由 [`cron::plan_click`] 判过）。
+    fn start_click_run(&mut self, task: &config::CronTask, source: cron::ClickSource) {
+        let now = cron::LocalNow::now();
+        self.clicked_today.insert(
+            task.id.clone(),
+            ClickState {
+                date: now.date.clone(),
+                session_id: None,
+            },
+        );
+        let run_id = cron::new_run_id();
+        // 与定时派发同一个纯函数合成点：点击运行的差异只落在契约值上
+        // （`Interactive` 槽位 + 交互批准），不在载荷形状或接线层分叉。
+        let payload = cron::handoff(&cron::HandoffInput {
+            task,
+            run_id: &run_id,
+            trigger: cron::Trigger::Click,
+            vault: &task.vault,
+            loop_max: self.loop_max,
+            session_id: match task.session {
+                config::SessionShape::Dedicated => self.state.session_id(&task.id),
+                config::SessionShape::New => None,
+            },
+        });
+        match self.app.emit(CRON_RUN_EVENT, payload) {
+            Ok(()) => {
+                // 点击运行也登记在途：回执（含失败）因此走同一条 finish 路径更新会话 id
+                // 与 cron_run_finished，不会变成「未知 run_id」被丢弃。
+                self.inflight.insert(
+                    run_id,
+                    InflightRun {
+                        task: task.id.clone(),
+                        delivery: task.delivery,
+                        trigger: cron::Trigger::Click,
+                        started: Instant::now(),
                     },
                 );
-                let run_id = cron::new_run_id();
-                // 与定时派发同一个纯函数合成点：点击运行的差异只落在契约值上
-                // （`Interactive` 槽位 + 交互批准），不在载荷形状或接线层分叉。
-                let payload = cron::handoff(&cron::HandoffInput {
-                    task: &task,
-                    run_id: &run_id,
-                    trigger: cron::Trigger::Click,
-                    vault: &task.vault,
-                    loop_max: self.loop_max,
-                    session_id: match task.session {
-                        config::SessionShape::Dedicated => self.state.session_id(&task.id),
-                        config::SessionShape::New => None,
-                    },
-                });
-                match self.app.emit(CRON_RUN_EVENT, payload) {
-                    Ok(()) => {
-                        // 点击运行也登记在途：回执（含失败）因此走同一条 finish 路径更新会话 id
-                        // 与 cron_run_finished，不会变成「未知 run_id」被丢弃。
-                        self.inflight.insert(
-                            run_id,
-                            InflightRun {
-                                task: task.id.clone(),
-                                delivery: task.delivery,
-                                trigger: cron::Trigger::Click,
-                                started: Instant::now(),
-                            },
-                        );
-                        logging::cron_click(&task.id, true, "run", None);
-                    }
-                    Err(error) => {
-                        // emit 本身失败（窗口 / 事件系统不可用）：刚插入的点击去重必须撤回，
-                        // 否则当日再点会命中「session_id = None ⇒ 只聚焦」分支，永远无法重试。
-                        self.clicked_today.remove(&task.id);
-                        logging::cron_click(&task.id, false, "run", Some("emit_failed"));
-                        notice(
-                            &self.app,
-                            &format!("任务 {} 的运行未能发起（{error}），请手动打开会话", task.id),
-                        );
-                    }
-                }
+                logging::cron_click(&task.id, true, "run", source, None);
             }
+            Err(error) => {
+                // emit 本身失败（窗口 / 事件系统不可用）：刚插入的点击去重必须撤回，
+                // 否则当日再点会命中「session_id = None ⇒ 只聚焦」分支，永远无法重试。
+                self.clicked_today.remove(&task.id);
+                logging::cron_click(&task.id, false, "run", source, Some("emit_failed"));
+                notice(
+                    &self.app,
+                    &format!("任务 {} 的运行未能发起（{error}），请手动打开会话", task.id),
+                );
+            }
+        }
+    }
+
+    /// 界面未就绪时保留整份上下文（§6）：同任务后到者覆盖前者、总数有上限
+    /// （[`cron::DeferredClick`]）；被覆盖 / 被顶出的那条补一条
+    /// `cron_click(ok=false, error=not_ready)`（它的点击确实没能落地，不该静默消失）。
+    fn defer_click(&mut self, context: cron::ClickContext, source: cron::ClickSource) {
+        logging::cron_click_deferred(
+            &context.task,
+            &context.request_id,
+            source.as_str(),
+            "not_ready",
+        );
+        for (dropped, dropped_source) in self.pending_click.defer(context, source) {
+            logging::cron_click(
+                &dropped.task,
+                false,
+                action_label_of(dropped.kind),
+                dropped_source,
+                Some("not_ready"),
+            );
         }
     }
 
     /// 重放接线层未就绪期间保留的点击（M752）：`cron_bridge_ready` 之后调用一次。
-    /// 就绪之后仍然不能落地（理论上不可达：本函数只在该消息上调用）时按失败落地并提示，
-    /// 不留一条永远不执行的保留态。
+    ///
+    /// 保留的是**整份已校验上下文**，因此重放不需要（也不允许）按最新会话重算。就绪之后仍然
+    /// 不能落地时按失败落地并提示，不留一条永远不执行的保留态。
     fn replay_pending_click(&mut self) {
-        let Some(task) = self.pending_click.take() else {
+        let pending = self.pending_click.take_all();
+        if pending.is_empty() {
             return;
-        };
+        }
         if !self.app.state::<CronRuntime>().is_bridge_ready() {
-            logging::cron_click(&task, false, "run", Some("not_ready"));
+            for (context, source) in pending {
+                logging::cron_click(
+                    &context.task,
+                    false,
+                    action_label_of(context.kind),
+                    source,
+                    Some("not_ready"),
+                );
+            }
             notice(&self.app, "界面尚未就绪，请稍后重试");
             return;
         }
-        self.handle_click(&task);
+        for (context, source) in pending {
+            self.handle_click(&context, source, cron::NotReadyPolicy::Reject);
+        }
+    }
+
+    /// 进程退出时仍保留的点击：补 `not_ready` 收尾（尽力而为——退出路径上日志可能来不及落盘，
+    /// 但那是「进程已经退出」的必然边界，不是遗漏）。
+    fn flush_pending_click(&mut self) {
+        for (context, source) in self.pending_click.take_all() {
+            logging::cron_click(
+                &context.task,
+                false,
+                action_label_of(context.kind),
+                source,
+                Some("not_ready"),
+            );
+        }
     }
 
     /// 「恢复该次运行的会话」：前端确保目标 vault 已打开后经既有恢复链路打开它。
-    fn open_session(&self, task: &config::CronTask, session_id: &str) {
+    ///
+    /// `session_id` 来自**点击上下文的快照**（`run-then-notify` 的结果 / 失败通知）——MUST NOT
+    /// 换成任务的最新会话：同一任务可以有多条通知，各自持有不同的会话。
+    fn open_session(
+        &self,
+        task: &config::CronTask,
+        session_id: &str,
+        source: cron::ClickSource,
+        action: &str,
+    ) {
         let payload = serde_json::json!({
             "task": task.id,
             "vault": task.vault,
             "session_id": session_id,
         });
         match self.app.emit(CRON_OPEN_SESSION_EVENT, payload) {
-            Ok(()) => logging::cron_click(&task.id, true, "open-session", None),
+            Ok(()) => logging::cron_click(&task.id, true, action, source, None),
             Err(error) => {
-                logging::cron_click(&task.id, false, "open-session", Some("emit_failed"));
+                logging::cron_click(&task.id, false, action, source, Some("emit_failed"));
                 notice(
                     &self.app,
                     &format!("无法打开任务 {} 的会话（{error}）", task.id),
@@ -1860,64 +2112,63 @@ fn current_vault_root(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// 通知投递端口（design §4.4 / §9）：标题 = 任务 id，正文只用通用文案（到点 / 已完成 /
 /// 运行失败）。文案 MUST NOT 含 prompt、文档内容或绝对路径——通知会出现在锁屏与通知中心。
 ///
-/// 三平台统一走 notify-rust 直连（M620 macOS / M625 全平台）：错误能真实上抛，design §5.4
-/// 「投递失败不写 last_fired，下一次评估重试」因此才成立。M620 前的投递封装把失败吞成恒 Ok
-/// （`show()` 无条件返回 Ok），而底层阻塞投递在冷启动最初约 0.5s 内会直接返回
-/// `MainThreadNotRunning`——主线程 `CFRunLoop` 还没进入等待，请求根本没发出去。于是「投递成功」
-/// 是假的：`cron_notified` 与 `last_fired` 照写，这次提醒永久丢失（M620 真机探针：进程内阻塞
-/// 投递 t≈0.37s 返回 `MainThreadNotRunning`、t≈0.57s 起 accepted；同期 usernoted 零请求记录）。
+/// **返回该条通知的 request id**（§4「投递端口契约」）：台账与进程内上下文表都以它为键，
+/// 因此 id 必须在这里定下、由调用方拿到——id 只活在函数内部的话，台账无从落键。
 ///
-/// **macOS 打包实例**走 UNUserNotificationCenter（M608，点击回调可用）：启动窗口内按短间隔重试
-/// 到被接受（见 [`show_notification_with_startup_retry`]），投递后按请求 id 自查系统是否真的
-/// 放进了通知中心（见 [`notification_is_delivered`]）。**dev flavour** 走 mac-notification-sys
-/// 的 legacy 投递——UN 在无 bundle 的裸二进制里会 abort，而 dev 的通知点击回调本就是已知失效的
+/// **macOS 打包实例**走本仓自持的 UN 平台层（[`notify`]）：启动窗口内按短间隔重试到被接受，
+/// 投递后按请求 id 自查系统是否真的放进了通知中心。**dev flavour** 走 mac-notification-sys 的
+/// legacy 投递——UN 在无 bundle 的裸二进制里会 abort，而 dev 的通知点击回调本就是已知失效的
 /// 通道边界（套件按 `requires: bundle` 标 INVALID），只要投递可用即可。
 ///
 /// **非 macOS** 由 notify-rust 自身的平台后端投递（Linux XDG / Windows WinRT），错误同样原样
-/// 上抛；点击等待与 macOS 同一路径（见 [`spawn_notification_click_waiter`]）。
+/// 上抛；点击等待由投递点登记的逐条闭包接收（[`spawn_notification_click_waiter`]）——那里的
+/// 平台 id 是 `u32`，因此本仓同时给出一个自己的 request id（进程内上下文表的键就是它）。
 ///
-/// **成功判据 = 系统确认（M620，macOS）**：`show()` 的 Ok 只说明请求被本地接受，本函数随后用
-/// [`notification_is_delivered`] 查通知中心的已投递列表；查不到就同 id 重投一次，两次都查不到
-/// 即返回 Err（不写 `cron_notified` / `last_fired`）。`cron_notified` 因此代表「系统确认已送达」，
-/// 而不是「我方以为发了」。
+/// **成功判据 = 系统确认（M620，macOS）**：投递请求被接受只说明请求发出去了，本函数随后用
+/// [`notify::macos::delivered_ids`] 查通知中心的已投递列表；查不到就同 id 重投一次，两次都查
+/// 不到即返回 Err（不写 `cron_notified` / `last_fired`）。`cron_notified` 因此代表「系统确认已
+/// 送达」，而不是「我方以为发了」。
 ///
 /// **本函数不落日志**（M637）：失败的重试节奏与日志量归调用方——`Plan::Notify` 有退避与当日
 /// 上限，只落第一次失败与当日放弃两条 warning；在这里逐次打 warning 会让那个上限失效。
-fn deliver_notification(app: &tauri::AppHandle, task: &str, kind: &str) -> Result<(), String> {
+fn deliver_notification(
+    app: &tauri::AppHandle,
+    task: &str,
+    kind: cron::NoticeKind,
+) -> Result<String, String> {
     let body = match kind {
-        "result" => "已完成",
-        "failure" => "运行失败",
-        _ => "到点",
+        cron::NoticeKind::Result => "已完成",
+        cron::NoticeKind::Failure => "运行失败",
+        cron::NoticeKind::Trigger => "到点",
     };
+    // 请求 id 在整次投递（含自查失败后的重投）内保持不变：macOS 按请求 id 替换同一条通知，
+    // 重投不会在通知中心留下第二条（usernoted 日志：`Adding new request, remove notifications
+    // similar to: <同一 req>`）。时间戳只用来让不同次投递彼此区分。
+    //
+    // **一次时钟读数派生两个 id**（r1 P2-4）：macOS 用可读形态的 request id；非 macOS 的
+    // 平台标识是 `u32`，对外返回的就是它的十进制形态——返回值与系统里的标识逐字相同。
+    let millis = cron::notify_millis();
+    #[cfg(target_os = "macos")]
+    let request_id = cron::notification_request_id(task, kind, millis);
+    #[cfg(not(target_os = "macos"))]
+    let request_id = cron::platform_request_id(millis);
     #[cfg(target_os = "macos")]
     {
+        // macOS 上点击接收只有 delegate 一条通道（没有逐条等待），这个句柄只在非 macOS 的
+        // 分支里被用到。
+        let _ = app;
         if tauri::is_dev() {
-            return deliver_notification_dev(task, body);
+            deliver_notification_dev(task, body)?;
+            return Ok(request_id);
         }
-        // 请求 id 在整次投递（含自查失败后的重投）内保持不变：macOS 按请求 id 替换同一条通知，
-        // 重投不会在通知中心留下第二条（usernoted 日志：`Adding new request, remove
-        // notifications similar to: <同一 req>`）。时间戳只用来让不同次投递彼此区分。
-        let request_id = format!(
-            "lumir-cron-{task}-{kind}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_millis())
-                .unwrap_or_default()
-        );
         let mut last_error = String::new();
         for _attempt in 0..NOTIFY_DELIVERY_ATTEMPTS {
-            let mut notification = notify_rust::Notification::new();
-            notification
-                .id(request_id.as_str())
-                .summary(task)
-                .body(body);
-            match show_notification_with_startup_retry(&notification) {
-                Ok(handle) => {
+            match deliver_with_startup_retry(&request_id, task, body) {
+                Ok(()) => {
                     if notification_is_delivered(&request_id, NOTIFY_DELIVERY_VERIFY) {
-                        spawn_notification_click_waiter(app, task, handle);
-                        return Ok(());
+                        return Ok(request_id);
                     }
-                    // 自查没查到：这次不算投递成立。句柄丢掉（解登记响应通道），同 id 重投。
+                    // 自查没查到：这次不算投递成立。同 id 重投（系统按 id 替换，不留第二条）。
                     last_error = "投递后自查：通知中心里查不到该请求".to_string();
                 }
                 Err(error) => last_error = error,
@@ -1933,20 +2184,55 @@ fn deliver_notification(app: &tauri::AppHandle, task: &str, kind: &str) -> Resul
     }
     #[cfg(not(target_os = "macos"))]
     {
+        // 平台 id 与上面那个 request id **同源**（同一份 `millis`）：`request_id` 就是它的
+        // 十进制形态，因此「返回的 id」与「系统里的通知 id」是同一个值。
+        let platform_id = cron::platform_notification_id(millis);
         let handle = notify_rust::Notification::new()
+            .id(platform_id)
             .summary(task)
             .body(body)
             .show()
             .map_err(|error| error.to_string())?;
-        spawn_notification_click_waiter(app, task, handle);
-        Ok(())
+        spawn_notification_click_waiter(app, &request_id, handle);
+        Ok(request_id)
     }
+}
+
+/// 台账开关（§4 / tasks 2.1）：唯一消费者是**跨进程点击**——只有 macOS 打包实例有这条通道，
+/// 其它环境写台账就是写没有消费者的数据。
+fn notice_ledger_enabled() -> bool {
+    cfg!(target_os = "macos") && !tauri::is_dev()
 }
 
 /// 进程启动时刻：冷启动窗口的判据（见 [`NOTIFY_STARTUP_RETRY`]）。`run()` 在入口处记录。
 static PROCESS_STARTED: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
-/// 冷启动窗口的重试预算（M620）：启动最初约 0.5s 内阻塞投递会被本地拒绝，窗口比实测值留足
+/// 启动早期不能落日志的告警（change add-cron-notification-relaunch r1 P2-3）。
+///
+/// `logging::global()` 的首次初始化会同步解析配置目录并读配置文件；在 `run()` 入口的
+/// 「装 delegate、零 IO」区间里落 warning 等于把配置 IO 带进冷启动路径（design §3 / ADR 0002
+/// 第 6 条）。因此这类话先存这里，由 `lumir-cron` 线程在 `logging::init()` 之后补落。
+static STARTUP_WARNINGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn defer_startup_warning(message: String) {
+    STARTUP_WARNINGS
+        .lock()
+        .expect("startup warnings poisoned")
+        .push(message);
+}
+
+/// 补落启动期攒下的告警（守护线程装载完成后调用一次；logging 此时已初始化）。
+fn flush_startup_warnings() {
+    let pending: Vec<String> = {
+        let mut warnings = STARTUP_WARNINGS.lock().expect("startup warnings poisoned");
+        std::mem::take(&mut *warnings)
+    };
+    for message in pending {
+        logging::config_warning("cron", &message);
+    }
+}
+
+/// 冷启动窗口的重试预算（M620）：启动最初约 0.5s 内投递可能被本地拒绝，窗口比实测值留足
 /// 余量（慢盘 / 冷启动更慢的机器）；只在窗口内重试，之后的失败原样上抛。
 const NOTIFY_STARTUP_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -1969,22 +2255,19 @@ const NOTIFY_DELIVERY_VERIFY_INTERVAL: std::time::Duration = std::time::Duration
 
 /// 投递一条 UN 通知，冷启动窗口内失败即重试（M620）。
 ///
-/// `mac-usernotifications` 的阻塞投递（`notify-rust` 的 `show()`）在 `CFRunLoop.main` 尚未
-/// 进入等待时返回 `MainThreadNotRunning`，请求不会发给 usernoted；这是启动最初半秒的必经阶段，
-/// 重试到主线程进入事件循环即被接受。窗口之外的失败（权限被拒 / 投递后端错误）不再重试——按
-/// design §5.4 交给下一次评估。
+/// M620 的现场是启动最初约 0.5s 内投递被本地拒绝（请求根本没发出去），重试到主线程事件循环
+/// 进入等待即被接受。窗口之外的失败（权限被拒 / 投递后端错误）不再重试——按 design §5.4 交给
+/// 下一次评估。
 #[cfg(target_os = "macos")]
-fn show_notification_with_startup_retry(
-    notification: &notify_rust::Notification,
-) -> Result<notify_rust::NotificationHandle, String> {
+fn deliver_with_startup_retry(request_id: &str, title: &str, body: &str) -> Result<(), String> {
     let started = *PROCESS_STARTED.get_or_init(Instant::now);
     let deadline = started + NOTIFY_STARTUP_RETRY;
     loop {
-        match notification.show() {
-            Ok(handle) => return Ok(handle),
+        match notify::macos::deliver(request_id, title, body) {
+            Ok(()) => return Ok(()),
             Err(error) => {
                 if Instant::now() >= deadline {
-                    return Err(error.to_string());
+                    return Err(error);
                 }
                 std::thread::sleep(NOTIFY_STARTUP_RETRY_INTERVAL);
             }
@@ -1994,22 +2277,16 @@ fn show_notification_with_startup_retry(
 
 /// 投递后自查（M620）：系统确认这条请求**已经在通知中心里**才算这次投递成立。
 ///
-/// 为什么 `show()` 的 Ok 不够：它只证明请求被本地接受。M620 的 finding 里，投递封装把
-/// 「本地拒绝」吞成 Ok，usernoted 从未收到请求；即使请求发出，也只有 `getDeliveredNotificationIds`
-/// 能回答「系统真的把它放进了通知中心」。这条查询就是 `UNUserNotificationCenter` 的
-/// `getDeliveredNotificationsWithCompletionHandler`（mac-usernotifications 0.3.1 暴露，
-/// 与投递走同一份底层依赖）。
+/// 为什么「请求被接受」不够：它只证明请求发出去了。只有已投递列表能回答「系统真的把它放进了
+/// 通知中心」——`getDeliveredNotifications` 的读数就是它（[`notify::macos::delivered_ids`]）。
 ///
 /// 带宽：`budget` 内每 [`NOTIFY_DELIVERY_VERIFY_INTERVAL`] 查一次；超时返回 false，由调用方
-/// 决定重投（同请求 id）还是判失败。注意这是一次跨进程往返，主线程被长任务占住时它也跟着等
-/// ——调用点只在 `lumir-cron` 线程上、且投递本身是低频动作，代价可接受。
+/// 决定重投（同请求 id）还是判失败。调用点只在 `lumir-cron` 线程上、且投递是低频动作。
 #[cfg(target_os = "macos")]
 fn notification_is_delivered(request_id: &str, budget: std::time::Duration) -> bool {
     let deadline = Instant::now() + budget;
     loop {
-        let delivered = mac_usernotifications::block_on(
-            mac_usernotifications::get_delivered_notification_ids(),
-        );
+        let delivered = notify::macos::delivered_ids();
         if delivered.iter().any(|id| id == request_id) {
             return true;
         }
@@ -2020,25 +2297,26 @@ fn notification_is_delivered(request_id: &str, budget: std::time::Duration) -> b
     }
 }
 
-/// 点击等待（M620 macOS / M625 全平台）：**每条通知在投递成功后**注册一个响应等待线程，
-/// `tap`（点通知本体）投一个 `CronMessage::Click` 给 `lumir-cron` 线程——判定与副作用仍在
-/// 那条线程上，与 design §13「点击上报的平台口径」的分工一致。
+/// 点击等待（非 macOS）：**每条通知在投递成功后**注册一个响应等待线程，`tap`（点通知本体）
+/// 投一个 `CronMessage::DrainClicks` 给 `lumir-cron` 线程——判定与副作用仍在`lumir-cron` 上，
+/// 平台层只负责把「哪条通知被点了」送进来。
 ///
-/// **为什么逐条通知登记**：点击响应与具体的投递请求绑定（平台按请求 id 路由），
-/// `NotificationHandle::wait_for_response` 消费的就是这条通知的句柄；不存在一条全局监听能覆盖
-/// 所有通知。投递成功即主线程 run loop 已进入等待（macOS），登记紧随其后。
+/// **为什么逐条登记**：点击响应与具体的投递请求绑定（平台按请求 id 路由），不存在一条全局
+/// 监听能覆盖所有通知。macOS 打包实例不再走这条路——它的接收只有常驻 delegate 一条通道
+/// （`notify::macos`），本函数只服务 Linux / Windows。
 ///
 /// 非 `tap` 动作（当前无动作按钮，属防御）落 warning，不静默吞掉；关闭 / 过期不产生事件。
 ///
 /// **订阅线程起不来不影响这次投递的成败**（通知已经在系统通知中心）：只落一条 warning——
 /// 把「点击订阅失败」当投递失败会让 cron 重投一条已经在场的通知。
+#[cfg(not(target_os = "macos"))]
 fn spawn_notification_click_waiter(
     app: &tauri::AppHandle,
-    task: &str,
+    request_id: &str,
     handle: notify_rust::NotificationHandle,
 ) {
     let app = app.clone();
-    let task = task.to_string();
+    let request_id = request_id.to_string();
     let spawned = std::thread::Builder::new()
         .name("lumir-notify-click".to_string())
         .spawn(move || {
@@ -2046,20 +2324,50 @@ fn spawn_notification_click_waiter(
                 handle.wait_for_response(move |response: &notify_rust::NotificationResponse| {
                     match response {
                         notify_rust::NotificationResponse::Default => {
-                            app.state::<CronRuntime>().send(CronMessage::Click { task });
+                            notify::report_response(request_id.clone(), cron::NoticeAction::Tap);
                         }
                         notify_rust::NotificationResponse::Action(action) => {
-                            logging::config_warning(
-                                "cron",
-                                &format!("忽略非 tap 的通知动作：{action}"),
-                            )
+                            notify::report_response(
+                                request_id.clone(),
+                                cron::NoticeAction::Custom(action.clone()),
+                            );
                         }
                         _ => {}
                     }
                 });
+            // 等待线程在 `wait_for_response` 返回后立刻结束；`app` 只用来保活到这一刻
+            // （事件循环退出时 `AppHandle` 已不可用，这里不发任何东西）。
+            let _ = &app;
         });
     if let Err(error) = spawned {
         logging::config_warning("cron", &format!("通知点击等待线程启动失败：{error}"));
+    }
+}
+fn not_ready_policy() -> cron::NotReadyPolicy {
+    #[cfg(target_os = "macos")]
+    {
+        cron::NotReadyPolicy::Defer
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        cron::NotReadyPolicy::Reject
+    }
+}
+
+/// 点击动作的诊断标签（`cron_click.action` 的闭集合）。
+fn action_label_of(kind: cron::NoticeKind) -> &'static str {
+    match kind {
+        cron::NoticeKind::Trigger => "run",
+        cron::NoticeKind::Result | cron::NoticeKind::Failure => "open-session",
+    }
+}
+
+/// 非 `tap` 动作的诊断标签（只进 warning，不进 `cron_click`）。
+fn action_label(action: &cron::NoticeAction) -> &str {
+    match action {
+        cron::NoticeAction::Tap => "tap",
+        cron::NoticeAction::Dismiss => "dismiss",
+        cron::NoticeAction::Custom(identifier) => identifier,
     }
 }
 
@@ -2140,16 +2448,14 @@ fn ensure_notification_permission() -> cron::NotifyPermission {
 /// 设置」这条引导不同；读不到状态时不排除用户拒绝的可能，因此走 `Denied` 档。
 #[cfg(target_os = "macos")]
 fn probe_notification_permission() -> cron::NotifyPermission {
-    use mac_usernotifications::AuthorizationStatus;
-    let permission = match notify_rust::request_auth_blocking() {
+    use notify::macos::Authorization;
+    let permission = match notify::macos::request_authorization() {
         Ok(true) => cron::NotifyPermission::Granted,
-        Ok(false) => match notify_rust::get_notification_settings_blocking() {
-            Ok(settings) => match settings.authorization_status {
-                AuthorizationStatus::NotDetermined => cron::NotifyPermission::Unrecognized,
-                // 申请说没授权、设置说已授权（Provisional / Ephemeral / Authorized）：两头矛盾，
-                // 按「送不出去」的一般档处理，不编原因。
-                _ => cron::NotifyPermission::Denied,
-            },
+        Ok(false) => match notify::macos::authorization() {
+            Ok(Authorization::NotDetermined) => cron::NotifyPermission::Unrecognized,
+            // 申请说没授权、设置说已授权（Provisional / Ephemeral / Authorized）：两头矛盾，
+            // 按「送不出去」的一般档处理，不编原因。
+            Ok(_) => cron::NotifyPermission::Denied,
             Err(error) => {
                 logging::config_warning(
                     "cron",
@@ -2195,24 +2501,6 @@ fn focus_main_window(app: &tauri::AppHandle) -> bool {
     // 未最小化时 unminimize 可能报错（平台差异）：它只是尽力而为，成败判据落在 set_focus。
     let _ = window.unminimize();
     window.set_focus().is_ok()
-}
-
-/// 会话 id 是否属于今天（`s<unix_millis>-<suffix>` 的格式由 `jsonl::new_session_id` 唯一产出）：
-/// 进程重启后 `clicked_today` 丢了，靠它把「今天已经跑过」与「昨天留下的 session_id」分开。
-fn session_started_today(session_id: &str, now: &cron::LocalNow) -> bool {
-    use chrono::TimeZone;
-    let millis = session_id
-        .strip_prefix('s')
-        .and_then(|rest| rest.split('-').next())
-        .and_then(|value| value.parse::<i64>().ok());
-    let Some(millis) = millis else {
-        return false;
-    };
-    chrono::Local
-        .timestamp_millis_opt(millis)
-        .single()
-        .map(|moment| moment.date_naive().to_string() == now.date)
-        .unwrap_or(false)
 }
 
 /// 人话提示（点击链路失败时的可见反馈）：前端监听 `cron:notice` 并上屏。
@@ -2404,6 +2692,85 @@ mod cron_runtime_tests {
             in_file("/commands.rs:").len(),
             1,
             "commands.rs 只允许 open_vault 提交点产出 vault-open 触发：{hits:?}"
+        );
+    }
+
+    /// delegate 安装点在 `run()` 入口、**先于** Builder 与窗口创建（change
+    /// add-cron-notification-relaunch tasks 1.2 / 1.7）：Apple 合同要求 delegate 在应用完成启动
+    /// 之前装好，否则「导致应用被启动的通知」响应会丢。装在 `.setup` 里也不够稳（这里按「越早
+    /// 越好」取 `run()` 入口）——位置一挪，跨进程点击就静默失效，所以用结构断言钉住顺序。
+    #[test]
+    fn delegate_is_installed_before_the_app_is_built() {
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src")
+                .join("lib.rs"),
+        )
+        .expect("lib.rs 可读");
+        let run_start = text.find("pub fn run()").expect("run() 在场");
+        let install = text[run_start..]
+            .find("notify::install_delegate()")
+            .expect("run() 里必须装 delegate");
+        let builder = text[run_start..]
+            .find("tauri::Builder::default()")
+            .expect("run() 里必然构建 Builder");
+        assert!(
+            install < builder,
+            "delegate 必须在应用构建（窗口创建）之前安装：install@{install} vs builder@{builder}"
+        );
+    }
+
+    /// 安装段零配置 IO（r1 P2-3）：`run()` 在 Builder（窗口创建）之前 MUST NOT 落任何日志——
+    /// `logging::global()` 首次初始化会同步解析配置目录并读 `config.json`，那是冷启动合同里的
+    /// 「安装路径零 IO」区间。delegate 安装失败因此只 `defer_startup_warning`，由守护线程补落。
+    #[test]
+    fn the_install_segment_logs_nothing_before_the_app_is_built() {
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src")
+                .join("lib.rs"),
+        )
+        .expect("lib.rs 可读");
+        let run_start = text.find("pub fn run()").expect("run() 在场");
+        let builder = text[run_start..]
+            .find("tauri::Builder::default()")
+            .expect("run() 里必然构建 Builder");
+        let segment = &text[run_start..run_start + builder];
+        let logging_calls: Vec<&str> = segment
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.starts_with("//"))
+            .filter(|line| line.contains("logging::"))
+            .collect();
+        assert!(
+            logging_calls.is_empty(),
+            "安装段不允许落日志（会把配置 IO 带进冷启动路径）：{logging_calls:?}"
+        );
+    }
+
+    /// 自持平台层的投递只有一个生产点（change add-cron-notification-relaunch tasks 1.4 / 1.7）：
+    /// 台账要以 request id 落键，因此投递必须经 `deliver_notification`（它返回 id）。绕过它直接
+    /// 调平台层就等于投递了一条「没有台账、也没进进程内上下文表」的通知——点击链路直接断。
+    #[test]
+    fn platform_delivery_has_a_single_production_point() {
+        if !cfg!(target_os = "macos") {
+            return;
+        }
+        let needle = concat!("notify::macos::", "deliver(");
+        let mut hits = Vec::new();
+        collect_source_hits(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            needle,
+            &mut hits,
+        );
+        assert_eq!(
+            hits.len(),
+            1,
+            "平台层投递只允许在 deliver_with_startup_retry 一处发生，实际命中：{hits:?}"
+        );
+        assert!(
+            hits[0].contains("/lib.rs:"),
+            "唯一的投递点应在 lib.rs 的启动重试包装里：{hits:?}"
         );
     }
 

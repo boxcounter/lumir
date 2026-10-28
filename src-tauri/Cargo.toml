@@ -78,35 +78,18 @@ image = { version = "0.25", default-features = false, features = ["png", "webp"]
 # viewBox→位图最长边夹 4096、产物只出位图（MUST NOT 原样存 SVG）。
 resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts", "raster-images"] }
 # 系统通知（change add-cron-runtime-daemon §4）：cron 的「到点 / 已完成 / 运行失败」投递与
-# 点击唤起。三平台统一走 notify-rust 直连：投递点是 `lumir-cron` 线程、点击等待在进程侧，都是
-# Rust 侧调用而不经 webview——capabilities 因此零增量（与 opener / rfd 同一取舍先例）。
+# 点击唤起。**macOS 打包实例自 change add-cron-notification-relaunch 起由本仓自持**
+# （`src-tauri/src/notify/`）：delegate 必须在应用完成启动之前装、并持有强引用到进程退出，
+# 而依赖库把 delegate 与响应映射都藏在 `pub(crate)` 里且懒装——「应用退出期间投递的通知被点击」
+# 在它那里没有接收方。因此这里的 notify-rust **只承担 Linux / Windows**：
+# 投递点是 `lumir-cron` 线程、点击等待在进程侧，都是 Rust 侧调用而不经 webview——capabilities
+# 因此零增量（与 opener / rfd 同一取舍先例）。
 #
 # **为什么直连而不是通知插件**（M620 / M625）：插件的投递把结果吞成恒 Ok（`show()` 无条件
 # 返回 Ok，底层错误被丢弃），「投递成功」是假的——`cron_notified` 与 `last_fired` 照写，提醒
 # 却可能没发出去。直连后错误能真实上抛（design §5.4「投递失败不写 last_fired，下一次评估重试」
-# 因此才成立）；点击等待由本仓按每条通知登记（lib.rs 的 `spawn_notification_click_waiter`），
-# 三平台同一条路径。
-#
-# **macOS 的 UN 后端（`preview-macos-un`，M608）**：macOS 26 上 legacy NSUserNotificationCenter
-# （默认后端，mac-notification-sys 0.6.15）的 `didActivateNotification` 到不了 app——横幅投递
-# 与点击系统侧都确认，进程内零回调，点击链路整条失效（探针证据：
-# `.local/probes/m608-cron-notification-click/`）。notify-rust 4.18.0 起提供
-# UNUserNotificationCenter 后端，由该 feature 选择，版本因此钉死 4.18.2（当前锁文件值）。
-# 该 feature 只激活 macOS target 下的可选依赖，在 Linux / Windows 上是 no-op——两地的投递后端
-# 由 notify-rust 自己按 target 选择（Linux zbus/dbus、Windows winrt-notification）。
-#
-# **dev flavour 例外**：UN 要求进程有 bundle 身份；dev 的裸二进制（`target/debug/lumir`，无 bundle）
-# 第一次投递会直接 abort（M608 真机探针：`Abort trap: 6`，崩溃点在 `set_application` 之后）。
-# 该分支在 lib.rs 的 `deliver_notification` 里按 `tauri::is_dev()` 运行期分流：dev 直接走
-# mac-notification-sys 的 legacy 投递（与修复前行为一致——投递可用；点击回调本就是已知失效的
-# dev 通道边界，套件按 `requires: bundle` 标 INVALID），打包实例才走 UN + 点击回调。
-# 不用 cargo feature 分流：tauri CLI 打包时传的是 `--features tauri/custom-protocol`（依赖自身的
-# feature），本仓自定义 feature 不会被它激活（M608 实测：门控后打包产物落回 legacy 后端）。
-#
-# 代价：macOS 上多出 mac-usernotifications / futures-timer 两个传递依赖；UN 要求 app 有代码签名
-# （打包实例补一次 ad-hoc 签名即可），且授权状态要单独请求（见 lib.rs
-# `ensure_notification_permission`）。
-notify-rust = { version = "=4.18.2", features = ["preview-macos-un"] }
+# 因此才成立）；点击等待由本仓按每条通知登记，非 macOS 平台同一条路径。
+notify-rust = { version = "=4.18.2" }
 # vault watch（add-vault-workspace）：notify 8 稳定线（9.x 仍是 rc）。
 notify = "8"
 # 目录选择器：rfd 纯 Rust 原生 dialog，不需要 tauri-plugin-dialog 的
@@ -155,12 +138,36 @@ ignore = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# 投递后自查（M620）：读通知中心的已投递列表（`getDeliveredNotificationIds`），把
-# `cron_notified` 的语义从「请求被接受」升级为「系统确认已送达」。这是 notify-rust 的
-# 传递依赖（同一份 =0.3.1），升为直接依赖零新增编译重量。
-mac-usernotifications = "=0.3.1"
+# macOS 打包实例的通知平台层（change add-cron-notification-relaunch §2 方案 A）：delegate 安装与
+# 保活、投递、投递后自查、授权查询 / 申请全部由 `src-tauri/src/notify/macos.rs` 自持。
+#
+# 四个都是**已在锁文件里**的 crate（objc2 / objc2-foundation / block2 经 tauri，
+# objc2-user-notifications 经 tauri 的 objc2-ui-kit 链），升为直接依赖零新增版本、零新增编译
+# 重量；同时删掉 `mac-usernotifications 0.3.1`（自持后 macOS 上不再有调用点，留着就是假开关，
+# AGENTS.md「变更默认直接切断」）。
+#
+# feature 集按本仓**实际用到的类**开（objc2-foundation 默认档之外按类名挑，避免把无关框架面
+# 编进来）：`NSBundle`（bundle 身份检查）、`NSString` / `NSArray`（投递与自查的参数）、
+# `NSError`（失败原因）、`NSSet` / `NSDictionary` / `NSDate` / `NSValue` / `NSCalendar` / `NSSet`
+# 是 `objc2-user-notifications` 的 feature 声明要求拉进来的依赖类。
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSString",
+    "NSArray",
+    "NSError",
+    "NSBundle",
+    "NSDictionary",
+    "NSDate",
+    "NSValue",
+    "NSSet",
+    "NSCalendar",
+    "NSObject",
+] }
+objc2-user-notifications = "0.3"
+block2 = "0.6"
 # dev flavour 的 legacy 投递（M608）：UN 在无 bundle 进程里 abort，dev 用它保持「能投递」。
-# 与 notify-rust 用的同一版本（后者默认后端就是它），不引入新 crate。
+# 打包实例已不再经过它（自持的 UN 实现只服务打包实例），它只服务 dev flavour。
 mac-notification-sys = "=0.6.15"
 
 [features]
