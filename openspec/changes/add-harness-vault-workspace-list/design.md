@@ -202,11 +202,18 @@ Alex 已批准的 `vault_list`；实现与文档 MUST NOT 把两者混称。
 
 1. 新会话的 `session_open` 里 system 含「===== 工作区 =====」段与验收 vault 的绝对路径，清单有
    `workspace` 条目（exists / 非零 bytes / 模板路径）。
-2. fixture 让模型先 `cli_run("pwd")`：工具结果里出现验收 vault 绝对路径（不是 `/`）。
-3. 接着 `vault_list()`：默认层只出现直接子项；递归调用的结果里有嵌套 sibling，hidden 档条目
-   不出现、lazy 子树出一行但不展开；再 `vault_read` 读到列表里看到的那份 sibling，证明
-   「列表 → 读」链路在真栈成立。
-4. 不出现任何批准卡（`vault_list` 与 `pwd` 都免闸）。
+2. fixture 的工具顺序（与 `fixtures/harness-mock-workspace.json` 逐条对应）：默认
+   `vault_list()` → 递归 `vault_list(path: "wsl-vault", recursive: true)` → `vault_read`
+   → `cli_run("pwd")` → `cli_run("cat", ["wsl-vault/keep.md"])`。
+3. 递归 `vault_list` 的结果里有嵌套 sibling（`wsl-vault/notes/deep.md`）与惰性目录行
+   （`wsl-vault/node_modules`）；hidden 档条目（`.DS_Store`）与惰性子树内的文件不出现；随后
+   `vault_read` 读到那份 sibling——「列表 → 读」链路在真栈成立。
+4. `pwd` 的 stdout 不是 `/`；相对路径 `cat` 读到 vault 内文件（与路径拼写无关的 cwd 证据）。
+5. 不出现任何批准卡（`vault_list` / `vault_read` / `pwd` / `cat` 都免闸）。
+
+**默认一层不在真机判据内**：两次 `vault_list` 的输出落在同一份会话留存里，现有 `file` 断言无法
+把「第一次默认调用的结果」与「第二次递归调用的结果」分开，因此 254 MUST NOT 声称验证了默认一层；
+该断言只由 `tools.rs` 的 `vault_list_lists_one_layer_by_default` 覆盖。
 
 真实 provider 的遵从度（是否真的不再 `pwd` / 广域 `find`）按判据 6 由交接所述「评审 proposal 并查看
 相关文件」场景抽样复验，不进机器判据。

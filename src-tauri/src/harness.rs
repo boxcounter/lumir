@@ -21,7 +21,7 @@
 //!   与 vault → 会话映射
 //! - [`context`]：系统上下文装配（固定身份段 + AGENTS.md 三层 + Skill 索引）与 Skill 双根发现
 //! - [`llm`]：provider 预设表、OpenAI Responses API client（reqwest blocking + SSE）、mock provider
-//! - [`tools`]：恰好 8 个工具的定义与执行
+//! - [`tools`]：9 件 vault 操作工具（+ 编排 / 调度工具）的定义与执行
 //! - [`permissions`]：五层判定管线（deny > vault 内写重定向 > 危险黑名单 > allow > 三档模式
 //!   默认分层）与 cli_run 命令分类
 //! - [`permission_cache`]：会话内批准缓存（design §6：「采纳且本会话不再问」的免问索引）

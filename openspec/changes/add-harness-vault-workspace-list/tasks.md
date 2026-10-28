@@ -58,8 +58,8 @@
 ## 6. 验收与门禁
 
 - [x] 6.1 真机场景 `scripts/acceptance/scenarios/254-harness-vault-workspace-list.md` + fixture：
-      system 工作区段与清单条目、`pwd` 返回验收 vault、`vault_list` 一层结果 + ignore 生效 +
-      `vault_read` 读到 sibling、全程无批准卡
+      system 工作区段与清单条目、`pwd` 不返回 `/`、递归 `vault_list` 的嵌套 sibling 与 hidden /
+      lazy 语义、`vault_read` 读到 sibling、全程无批准卡（默认一层与分页只由单测覆盖，见 design §7）
 - [x] 6.2 `node scripts/acceptance/coverage.mjs` 重生成 `COVERAGE.md`，`--check` 通过
 - [x] 6.3 回扫既有验收场景的闸期望与工具计数（`231` / `75` / `110` / `111` / `151` / `212` /
       `229` 等含权限或提示词断言的场景），确认本 change 不改变它们的期望；改到的补理由
@@ -100,3 +100,15 @@
       惰性可见语义矛盾的旧描述）。
 - [x] P2-2 矩阵补齐：`vault_list` 的 auto-allow 改成三档循环专测
       （`vault_list_auto_allows_in_all_modes`），补 deny 规则仍优先的边界断言。
+
+## r2 返修（2026-10-28，reviewer 结论 p2-3items / fix-then-merge）
+
+- [x] P2-1 活代码计数最后一处：`harness.rs` 模块地图「恰好 8 个工具」→「9 件 vault 操作工具
+      （+ 编排 / 调度工具）的定义与执行」；再扫「8 个 / 八件 / 恰好 8 / 8 tools」等变体无残留。
+- [x] P2-2 delta 不再写「`task` 指定另一个 vault」：子运行继承**发起时的当前 vault**（`task` 无
+      `vault` 参数，跨 vault 委派不在本契约内，若要另走影响面升级与裁决）；requirement 正文点明
+      子运行（发起时父会话 vault）与定时运行（任务配置目标 vault）各自的当前 vault 来源。
+- [x] P2-3 design §7 的真机条目按 fixture 实际顺序（默认 list → 递归 list → read → pwd → cat）
+      重写，并明确默认一层不在真机判据内（两次 `vault_list` 输出落同一份会话留存，现有 `file`
+      断言无法区分），只由 `vault_list_lists_one_layer_by_default` 覆盖；254 边界段的
+      `session.set_tool_policy` 校正为 `runtime.set_tool_policy`，tasks 6.1 的表述同步收窄。

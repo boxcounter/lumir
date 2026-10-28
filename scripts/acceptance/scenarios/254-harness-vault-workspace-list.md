@@ -130,8 +130,11 @@ steps:
   （`harness::subagents::tests::subagent_workspace_root_reaches_system_and_cli_run_cwd` 经
   `start_task` → 子运行循环 → `cli_run`；`harness::run::tests::
   cron_run_workspace_root_reaches_system_and_cli_run_cwd` 经 `cron::handoff` →
-  `Runtime::isolated` → `session.set_tool_policy` → `turn::run_turn_for`）；本场景不覆盖这两条运行
-  路径，MUST NOT 据此声称子代理 / cron 已在真机验证。
-- **`vault_list` 分页 / 过滤 / 排序 / 三档放行**由单测钉住（`vault_list_paginates_stably` /
-  `vault_list_recursive_and_path_glob` / `vault_list_lists_one_layer_by_default` /
-  `vault_list_auto_allows_in_all_modes`）；本场景的小目录不会触发 `truncated`，不断言分页。
+  `Runtime::isolated` → `runtime.set_tool_policy` → `turn::run_turn_for`）；本场景不覆盖这两条
+  运行路径，MUST NOT 据此声称子代理 / cron 已在真机验证。子运行继承**发起时的当前 vault**
+  （`task` 没有 `vault` 参数，跨 vault 委派不在本契约内）。
+- **`vault_list` 分页 / 过滤 / 排序 / 默认一层 / 三档放行**由单测钉住
+  （`vault_list_paginates_stably` / `vault_list_recursive_and_path_glob` /
+  `vault_list_lists_one_layer_by_default` / `vault_list_auto_allows_in_all_modes`）。本场景的两次
+  `vault_list` 输出落在同一份会话留存里，现有 `file` 断言**无法区分默认调用与递归调用的结果**，
+  因此默认一层与分页都不在本场景的判据内；本场景的小目录也不会触发 `truncated`。

@@ -88,7 +88,7 @@
 
 系统 SHALL 为**每次** `cli_run` 子进程单独设置工作目录为当前 vault 根，并同步该子进程的环境变量 `PWD` 为同一目录；MUST NOT 用 `set_current_dir` 一类调用改动 Lumir 主进程的全局 cwd。工作目录 MUST 逐次显式设置（不依赖上一次调用或进程启动时的残留状态），因此同一进程内 vault A 与 vault B 的运行各自落在自己的根上。工具参数 MUST NOT 提供可由模型填写的任意 `cwd`；vault 之外的目标仍以绝对路径在 argv 中表达。
 
-工作目录只决定子进程从哪里启动：命令分类、危险黑名单、allow / deny 规则与模式默认分层 MUST NOT 因它改变（判定仍只看 argv 与写目标的 vault 内判定）。子代理运行与无人值守定时运行遵守同一合同——它们的 `cli_run` 落在各自的当前 vault，与父会话或上一次运行无关。
+工作目录只决定子进程从哪里启动：命令分类、危险黑名单、allow / deny 规则与模式默认分层 MUST NOT 因它改变（判定仍只看 argv 与写目标的 vault 内判定）。子代理运行与无人值守定时运行遵守同一合同——`cli_run` 落在**该次运行的**当前 vault（子运行 = 发起时的父会话 vault；定时运行 = 任务配置的目标 vault），与上一次调用或进程启动目录无关。
 
 #### Scenario: pwd 返回当前 vault
 
@@ -102,8 +102,9 @@
 
 #### Scenario: 子代理运行的 cwd
 
-- **WHEN** 子代理定义声明了 `cli_run`，父会话在 vault A，子运行在 vault B 上发起（`task` 指定 B 的 vault）
-- **THEN** 子运行里的 `pwd` 返回 B，不是 A
+- **WHEN** 子代理定义声明了 `cli_run`，父会话在 vault A，模型在 A 的会话里发起子运行
+- **THEN** 子运行里的 `pwd` 返回 A——子运行继承**发起时的当前 vault**（与父会话同一个根）；跨 vault
+  委派不在本契约内（`task` 没有 `vault` 参数），MUST NOT 据此推断存在跨 vault 能力
 
 #### Scenario: 权限判定不因 cwd 改变
 
