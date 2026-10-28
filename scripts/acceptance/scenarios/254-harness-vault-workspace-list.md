@@ -12,6 +12,11 @@ marker: "HNL-ALPHA"
 # - `cli_run("pwd")` 不再返回 `/`，`cli_run("cat", ["wsl-vault/keep.md"])` 用相对路径读到 vault 内
 #   文件（子进程 cwd 就是当前 vault 的强证据，且与路径拼写无关）；
 # - 全程没有批准卡（`vault_list` / `vault_read` / `pwd` / `cat` 都免闸）。
+#
+# 工具结果在留存里的形态是**转义字符串**（`turn.rs` 把结果 `serde_json::to_string` 后放进
+# `function_call_output.output`）：结果原文的 `"` 落到 JSONL 字节是 `\"`，原文的 `\n`（反斜杠 + n）
+# 变成 `\\n`。工具结果类断言 MUST 按转义形态写——按未转义片段写会恒不命中（M777 现场：列表项形状与
+# cat 两条假红、pwd 负向假绿）。同一份文件里 `session_open` 是顶层对象（引号不转义），两类断言不能互抄。
 config:
   harness:
     provider: mock
@@ -81,10 +86,12 @@ steps:
           has: '/\{(?=[^}]*"source":"workspace")(?=[^}]*"exists":true)(?=[^}]*"bytes":[1-9][0-9]*)[^}]*\}/'
       - label: vault_list 递归结果里有嵌套 sibling（工具真执行了）
         file: { path: "env:harness/sessions/*/*.jsonl", has: "wsl-vault/notes/deep.md" }
+      # 工具结果在留存里是转义字符串（见文件头）：条目对象原文 `{"kind":…,"path":…}` 落到
+      # JSONL 字节是 `{\"kind\":…,\"path\":…}`。整段连写仍钉住「只有 kind / path 两个字段、无别名」。
       - label: 列表项形状是 {kind, path}（目录类型在场——lazy 目录出一行）
         file:
           path: "env:harness/sessions/*/*.jsonl"
-          has: '{"kind":"directory","path":"wsl-vault/node_modules"}'
+          has: '{\"kind\":\"directory\",\"path\":\"wsl-vault/node_modules\"}'
       - label: hidden 档条目（.DS_Store）不出现在任何一页
         file:
           path: "env:harness/sessions/*/*.jsonl"
@@ -95,12 +102,20 @@ steps:
           count: { pattern: '/wsl-vault\/node_modules\/ignored\.js/', exact: 0 }
       - label: 列表 → 读取链路走通（deep.md 正文进入工具结果）
         file: { path: "env:harness/sessions/*/*.jsonl", has: "WSL-DEEP nested" }
+      # pwd 的 stdout 原文是 `"/\n"`（这里的 `\n` 是 JSON 文本里的两字符），转义后落到 JSONL 字节
+      # 是 `\"stdout\":\"/\\n\"`。按未转义形态写（旧写法）在转义文本上恒不命中 = 该负向断言恒绿。
       - label: pwd 不再返回 /（stdout 恰为根目录的形态不出现）
         file:
           path: "env:harness/sessions/*/*.jsonl"
-          count: { pattern: '/"stdout":"\/\\n"/', exact: 0 }
+          count: { pattern: '\"stdout\":\"/\\n\"', exact: 0 }
+      - label: pwd 的 stdout 也不是无换行的根目录（同一回归的另一形态）
+        file:
+          path: "env:harness/sessions/*/*.jsonl"
+          count: { pattern: '\"stdout\":\"/\"', exact: 0 }
+      # 钉到 stdout 的完整值（含 `cat` 打出的行尾换行，即上方 `content: |` 的收尾换行），比只钉前缀
+      # 更能证明「读到的正是这份 sibling」——多一个字节都不成立。
       - label: 相对路径 cat 读到 vault 内文件（子进程 cwd 就是当前 vault）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '"stdout":"WSL-KEEP' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '\"stdout\":\"WSL-KEEP sibling\\n\"' }
       - label: 全程没有批准卡（读工具与只读白名单命令都免闸）
         ax: { not: "要运行这条命令吗？" }
       - shot: 01-工作区与列表
