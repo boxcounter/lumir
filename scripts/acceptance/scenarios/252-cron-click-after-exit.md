@@ -323,8 +323,9 @@ prompt）。「读最新会话」的实现会命中后一条 `ax: { not: … }`�
 `node scripts/acceptance/build-bundle.mjs` 把真二进制改名为 `lumir-bin`，并在
 `CFBundleExecutable` 的位置装一份 shell 包装；包装从固定路径的 token
 （`/tmp/lumir-acceptance-isolate`，套件每次拉起前写入本次 run 的 `env/`）读隔离根，`exec` 之前
-导出 `XDG_CONFIG_HOME` 与 `HOME`。token 缺失或不在 `*/acceptance/*/env` 形状上时包装**拒绝启动**
-（退出码 78），绝不回落真实 `~/.config`。
+导出 `XDG_CONFIG_HOME` 与 `HOME`。token 缺失 / 不可读，或内容不是验收布局（`…/acceptance/env`
+与 `…/acceptance/<run>/env` 两种放行，其余路径 fail-closed）时包装**拒绝启动**（退出码 78，
+原因写 stderr），绝不回落真实 `~/.config`。
 
 静态前置门在**任何一次拉起之前**跑（`app.mjs` 的 `assertBundleIsolation`）：核 `CFBundleExecutable`
 指向包装、脚本导出两个变量、token 等于本次 run 的 `envHome()`。不成立即判 INVALID 且不发起拉起
