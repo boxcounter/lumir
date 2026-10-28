@@ -1,7 +1,15 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test as baseTest, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
 import { readFileSync } from "node:fs";
-import { stubTauri, openedUrls, openedPaths, noteResolves, logEvents, fileText } from "./tauri-stub";
+import {
+  stubTauri,
+  openedUrls,
+  openedPaths,
+  noteResolves,
+  logEvents,
+  fileText,
+  guardPageChannel,
+} from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 import { classifyLinkTarget } from "../../../src/preview/links";
 
@@ -47,8 +55,20 @@ const MARKS = [
   EXT, INT, EXT, // 表格：标准外链、标准内链、cell 内裸 URL
 ];
 
+/**
+ * 页面场景统一经通道守卫跑（M793）：浏览器偶发把页面 target 收掉（CDP `session closed`）时，
+ * 换一个新页面把**整个场景**重跑一遍并落 annotation 留痕；产品断言失败（含场景自身 throw）
+ * 一律不重跑。现场与判据见 `tauri-stub.ts` 末节「页面通道守卫」与 tests/visual/README.md。
+ * 纯函数场景（下面那条分类矩阵）不碰页面，仍走 `baseTest`。
+ */
+const pageTest = (name: string, body: (page: Page) => Promise<void>): void => {
+  baseTest(name, async ({ page }, testInfo) => {
+    await guardPageChannel(page, body, { testInfo });
+  });
+};
+
 /** 形态分类是纯函数：直接钉住整张矩阵，不依赖渲染。 */
-test("链接形态分类：外链 / 应用内 / 资产 / 锚点 / 不可用", () => {
+baseTest("链接形态分类：外链 / 应用内 / 资产 / 锚点 / 不可用", () => {
   // 白名单内的 scheme = 外链（大小写不敏感，尖括号与反斜杠转义解码）
   expect(classifyLinkTarget("https://example.invalid/a")).toEqual({
     kind: "external",
@@ -128,7 +148,7 @@ async function setCursor(page: Page, pos: number): Promise<void> {
   }, pos);
 }
 
-test("全部形态都装饰：标记语义正确，白名单外 scheme 保持原文，文档逐字节不变", async ({ page }) => {
+pageTest("全部形态都装饰：标记语义正确，白名单外 scheme 保持原文，文档逐字节不变", async (page) => {
   await open(page);
 
   // 18 条链接都渲染成 title + 标记，标记按文档顺序与类别一一对应
@@ -162,7 +182,7 @@ test("全部形态都装饰：标记语义正确，白名单外 scheme 保持原
   await expectScreenshot(page, "render-link.png");
 });
 
-test("字面 URL 三种形态：裸 URL / 定义行 / 角括号自动链接各自装饰为外链", async ({ page }) => {
+pageTest("字面 URL 三种形态：裸 URL / 定义行 / 角括号自动链接各自装饰为外链", async (page) => {
   await open(page);
 
   // 形态 2：裸 URL 文本本身仍在场（它就是原文，没有可隐藏的源码），装饰是链接样式 + 尾标
@@ -192,7 +212,7 @@ test("字面 URL 三种形态：裸 URL / 定义行 / 角括号自动链接各�
   await expectScreenshot(page, "render-link-bare-url.png");
 });
 
-test("不装饰的面：无 scheme 字面 / 白名单外 scheme / frontmatter 里的 URL 一律原文", async ({ page }) => {
+pageTest("不装饰的面：无 scheme 字面 / 白名单外 scheme / frontmatter 里的 URL 一律原文", async (page) => {
   await open(page);
   const rendered = await page.locator(".cm-content").innerText();
 
@@ -214,7 +234,7 @@ test("不装饰的面：无 scheme 字面 / 白名单外 scheme / frontmatter �
   expect(await page.locator(".cm-lp-link", { hasText: "in-fm" })).toHaveCount(0);
 });
 
-test("表格 cell 内的链接与裸 URL 照常渲染，表格仍是 grid", async ({ page }) => {
+pageTest("表格 cell 内的链接与裸 URL 照常渲染，表格仍是 grid", async (page) => {
   // spec delta 的「表格 cell 内的链接」场景 + M272 的 D4 推荐项（cell 内的裸 URL 同口径）。
   // 反例（链接标题里出现**未转义**管道符）不需要断言：那种写法会把行切成两个 cell，
   // lezer 至此不再产出 Link 节点，该处自然保持原文；表格自身还会因为 cell 数多于表头
@@ -242,7 +262,7 @@ test("表格 cell 内的链接与裸 URL 照常渲染，表格仍是 grid", asyn
   expect(await readDocument(page)).toBe(links);
 });
 
-test("光标落在链接上显露源码，离开即恢复渲染", async ({ page }) => {
+pageTest("光标落在链接上显露源码，离开即恢复渲染", async (page) => {
   await open(page);
   const first = page.locator(".cm-lp-link").first();
   await expect(first).toBeVisible();
@@ -268,7 +288,7 @@ test("光标落在链接上显露源码，离开即恢复渲染", async ({ page 
   expect(await readDocument(page)).toBe(links);
 });
 
-test("光标落在裸 URL / 定义行上撤下装饰（D6），离开即恢复", async ({ page }) => {
+pageTest("光标落在裸 URL / 定义行上撤下装饰（D6），离开即恢复", async (page) => {
   await open(page);
   const bareStart = links.indexOf(BARE);
 
@@ -290,7 +310,7 @@ test("光标落在裸 URL / 定义行上撤下装饰（D6），离开即恢复",
   expect(await readDocument(page)).toBe(links);
 });
 
-test("光标落在裸 URL 末位后继续键入：字符落在 URL 之后，无死区（design §9 未决项的实测）", async ({ page }) => {
+pageTest("光标落在裸 URL 末位后继续键入：字符落在 URL 之后，无死区（design §9 未决项的实测）", async (page) => {
   await open(page);
   const bareEnd = links.indexOf(BARE) + BARE.length;
 
@@ -305,7 +325,7 @@ test("光标落在裸 URL 末位后继续键入：字符落在 URL 之后，无�
   expect(doc.length).toBe(links.length + 1);
 });
 
-test("光标停在链接起点也开得动（文档首字符即外链 / 即裸 URL）", async ({ page }) => {
+pageTest("光标停在链接起点也开得动（文档首字符即外链 / 即裸 URL）", async (page) => {
   // 真实情形：打开一份首行就是链接的笔记，选区复位到 0——恰好是链接的起点。
   // 这条路曾经断在 `resolveInner(pos, 0)` 上：起点处它给的是父节点（Paragraph /
   // Document）而不是 Link，⌘⏎ 静默无反应（无声失败最坏）。M272 给字面 URL 用了同款两侧试起点。
@@ -323,7 +343,7 @@ test("光标停在链接起点也开得动（文档首字符即外链 / 即裸 U
   await expect.poll(async () => openedUrls(page)).toEqual(["https://example.invalid/bare-start"]);
 });
 
-test("⌘⏎ 与 ⌘-Click 打开外链：目标取自正文，非链接处无操作", async ({ page }) => {
+pageTest("⌘⏎ 与 ⌘-Click 打开外链：目标取自正文，非链接处无操作", async (page) => {
   await open(page);
   const start = links.indexOf("[示例站点]");
 
@@ -357,7 +377,7 @@ test("⌘⏎ 与 ⌘-Click 打开外链：目标取自正文，非链接处无�
   expect(await openedUrls(page)).toEqual([SITE, MAIL, WRAPPED]);
 });
 
-test("字面 URL 的激活：⌘⏎ 与 ⌘-Click 各自可单独触发（键盘 / 鼠标两条路径）", async ({ page }) => {
+pageTest("字面 URL 的激活：⌘⏎ 与 ⌘-Click 各自可单独触发（键盘 / 鼠标两条路径）", async (page) => {
   await open(page);
 
   // 键盘路径（⌘⏎）：裸 URL
@@ -398,7 +418,7 @@ test("字面 URL 的激活：⌘⏎ 与 ⌘-Click 各自可单独触发（键盘
   expect(await readDocument(page)).toBe(links);
 });
 
-test("定义行的前缀不是链接本体：光标在 `[homepage]: ` 上 ⌘⏎ 无操作，移到 URL 上才生效", async ({ page }) => {
+pageTest("定义行的前缀不是链接本体：光标在 `[homepage]: ` 上 ⌘⏎ 无操作，移到 URL 上才生效", async (page) => {
   // 装饰面与激活面的**判据差异**（真机场景 54 第一版栽在这里，换算到本层钉住）：
   // 装饰的显露范围是整条定义行（含前缀），而激活要求**光标落在 `URL` 区间内**。
   // 打开这个文件时选区复位到 0 —— 0 在前缀里，⌘⏎ 因此**不该**打开任何东西。
@@ -424,7 +444,7 @@ test("定义行的前缀不是链接本体：光标在 `[homepage]: ` 上 ⌘⏎
   expect(await readDocument(page)).toBe(doc);
 });
 
-test("相对路径 md 链接：⌘⏎ 走应用内跳转，打开目标笔记", async ({ page }) => {
+pageTest("相对路径 md 链接：⌘⏎ 走应用内跳转，打开目标笔记", async (page) => {
   const doc = "[指南](docs/guide.md)\n\n正文段落。\n";
   await openDoc(page, "guides.md", doc, {
     entries: [
@@ -454,7 +474,7 @@ test("相对路径 md 链接：⌘⏎ 走应用内跳转，打开目标笔记", 
   ]);
 });
 
-test("相对路径 md 解析不到：只提示、不创建文件", async ({ page }) => {
+pageTest("相对路径 md 解析不到：只提示、不创建文件", async (page) => {
   const doc = "[不存在的笔记](missing.md)\n\n正文段落。\n";
   await openDoc(page, "source.md", doc);
   await expect(page.locator(".cm-lp-link-mark")).toHaveText([INT]);
@@ -472,7 +492,7 @@ test("相对路径 md 解析不到：只提示、不创建文件", async ({ page
   ]);
 });
 
-test("纯锚点：装饰为 →，激活只给「暂不支持锚点跳转」提示", async ({ page }) => {
+pageTest("纯锚点：装饰为 →，激活只给「暂不支持锚点跳转」提示", async (page) => {
   const doc = "[去标题](#小节)\n\n正文段落。\n";
   await openDoc(page, "anchor.md", doc);
   await expect(page.locator(".cm-lp-link-mark")).toHaveText([INT]);
@@ -489,7 +509,7 @@ test("纯锚点：装饰为 →，激活只给「暂不支持锚点跳转」提�
   ]);
 });
 
-test("白名单外 scheme：不装饰也不激活，无副作用", async ({ page }) => {
+pageTest("白名单外 scheme：不装饰也不激活，无副作用", async (page) => {
   const doc = "[别开我](javascript:alert(1))\n\n正文段落。\n";
   await openDoc(page, "blocked.md", doc);
   // 保持原文：没有链接 mark，也没有标记
@@ -509,7 +529,7 @@ test("白名单外 scheme：不装饰也不激活，无副作用", async ({ page
   expect(await readDocument(page)).toBe(doc);
 });
 
-test("相对路径非 md：⌘⏎ 交系统默认应用；被拒时给提示", async ({ page }) => {
+pageTest("相对路径非 md：⌘⏎ 交系统默认应用；被拒时给提示", async (page) => {
   const doc = "[说明书](docs/manual.pdf)\n\n正文段落。\n";
   await openDoc(page, "asset.md", doc, {
     entries: [
@@ -531,7 +551,7 @@ test("相对路径非 md：⌘⏎ 交系统默认应用；被拒时给提示", a
   expect(await page.locator(".lumir-toast")).toHaveCount(0);
 });
 
-test("相对路径非 md 被拒（越出 vault / 不存在）：透传人话提示", async ({ page }) => {
+pageTest("相对路径非 md 被拒（越出 vault / 不存在）：透传人话提示", async (page) => {
   const doc = "[越界](../outside.pdf)\n\n正文段落。\n";
   await openDoc(page, "asset.md", doc, {
     failures: {
@@ -550,4 +570,64 @@ test("相对路径非 md 被拒（越出 vault / 不存在）：透传人话提�
   ).toBeVisible();
   // 打开失败不改文档，也不落在原地不动装作成功
   expect(await readDocument(page)).toBe(doc);
+});
+
+// ---------------------------------------------------------------------------
+// 通道守卫自身的回归（M793）：证明「页面 target 死亡」与「产品判据不成立」被分开处理——
+// 前者换新页面重跑、后者一次都不重跑。两条判据都是确定性的（不依赖浏览器偶发行为）。
+// 判据与现场见 tauri-stub.ts 末节「页面通道守卫」。
+// ---------------------------------------------------------------------------
+
+baseTest("通道守卫：页面 target 死亡时换新页面重跑整个场景", async ({ page }, testInfo) => {
+  const logLines: string[] = [];
+  let attempts = 0;
+  await guardPageChannel(
+    page,
+    async (p) => {
+      attempts += 1;
+      // 第 1 次尝试造现场：把页面关掉，此后的 CDP 调用一律得到 `Target page, context or
+      // browser has been closed`（与远端现场同类——页面没了，而不是判据比出了差异）。
+      if (attempts === 1) await p.close();
+      // 场景在**每次**尝试里都跑：换页面后照常跑完，说明重跑不削减判据
+      expect(await p.evaluate(() => 1), "场景在新页面上照常跑完").toBe(1);
+    },
+    { testInfo, log: (line) => logLines.push(line) },
+  );
+  expect(attempts, "通道死亡 → 换一个新页面重跑整个场景").toBe(2);
+  expect(logLines.join("\n")).toContain("页面通道死亡（第 1 次尝试）");
+  expect(logLines.join("\n")).toContain("换新页面后场景通过");
+});
+
+baseTest("通道守卫：产品断言失败一律不重跑，原错误原样上报", async ({ page }, testInfo) => {
+  let attempts = 0;
+  const failure = await guardPageChannel(
+    page,
+    async () => {
+      attempts += 1;
+      expect(await page.evaluate(() => "产品实际读数"), "产品判据不成立").toBe("产品期望读数");
+    },
+    { testInfo, log: () => {} },
+  ).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  expect(attempts, "产品判据失败 MUST NOT 触发通道重跑").toBe(1);
+  expect(String(failure)).toContain("产品判据不成立");
+});
+
+baseTest("通道守卫：连续死亡用尽尝试次数时，报的是通道问题而不是产品 FAIL", async ({ page }, testInfo) => {
+  // 传输层签名固定不变（与远端现场同一文本），守卫每次都会判成通道死亡 → 用尽 attempts 后
+  // 必须如实说「不是产品判据失败」，否则下一次真出现时又会被读成产品回归。
+  const failure = await guardPageChannel(
+    page,
+    async () => {
+      throw new Error("Protocol error (Runtime.callFunctionOn): Internal server error, session closed.");
+    },
+    { testInfo, attempts: 2, log: () => {} },
+  ).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  expect(String(failure)).toContain("不是产品判据失败");
+  expect(String(failure)).toContain("session closed");
 });

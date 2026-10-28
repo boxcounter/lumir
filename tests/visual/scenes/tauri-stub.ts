@@ -1,5 +1,5 @@
 import { expect } from "@playwright/test";
-import type { Page } from "@playwright/test";
+import type { Page, TestInfo } from "@playwright/test";
 import type { ConfigSnapshot } from "../../../src/bindings/ConfigSnapshot";
 import type { HarnessProviderConfig } from "../../../src/bindings/HarnessProviderConfig";
 import { setLanguageRoot } from "../../../src/copy";
@@ -1188,3 +1188,111 @@ export const DEMO_VAULT: VaultFixture = {
     LICENSE: "MIT License\n\nPermission is hereby granted, free of charge.\n",
   },
 };
+
+// ---------------------------------------------------------------------------
+// 页面通道守卫（M793）：把「浏览器把页面 target 收掉了」与「产品判据不成立」分开
+//
+// 现场：远端 visual 反复在 `render-link.spec.ts` 的**末行计数断言**上红，错误是
+// `Protocol error (Runtime.callFunctionOn): Internal server error, session closed.`。它是
+// CDP 传输层的「这个页面 target 没了」，不是断言比出了差异——同一场景里排在它前面的产品
+// 证据（`openedPaths` 命中的目标、`openedUrls` / `noteResolves` 空数组）全部已成立。
+// 三处排查结论（都不支持「外部应用被真的打开、把页面顶掉」）：
+//   1. chromium 里没有 Tauri 后端，`link_open_path` 由本文件的桩路由——只记账、直接 resolve
+//      null，不可能落到宿主 `open`；
+//   2. `src/` 里没有 `window.open` / `location.href =` / `location.assign` 任何一处，
+//      产品这条链路没有把页面导航或弹窗顶掉的能力；
+//   3. 现象与机器无关：本地完整 gate visual 的日志里同样出现过（`.local/probes/`
+//      2026-10-24 / 2026-10-26 两份），且近 40 次远端 visual run 里 14 次同签名，
+//      逐个核对过的受害用例全部落在 `render-link.spec.ts:195` 与 `:512` 上（这 14 次里
+//      9 次该 run 仍全绿——CI 的 `retries: 1` 救回来了）。
+//
+// 口径（与 tests/visual/README.md「页面 target 死亡」节同源）：通道死亡 = 传输层签名，
+// 与产品断言失败**互斥**。据此：
+//   - 通道死亡 → 换一个**新页面**重跑整个场景（缺省 3 次尝试），每次死亡打一行日志 + 落一条
+//     annotation，让「通道死了几次」在报告里可数，而不是伪装成产品 FAIL；
+//   - 产品断言失败 / 场景自身 throw → 立即原样抛出，**绝不重跑**。
+// 重跑不削弱判据：每次尝试都跑完整场景与全部产品断言，产品真坏了必然照样红。
+// ---------------------------------------------------------------------------
+
+/** 页面 target 死亡的传输层签名（产品断言产不出这些文本）。 */
+const CHANNEL_DEATH = [
+  /session closed/i,
+  /Target page, context or browser has been closed/i,
+  /Target crashed/i,
+  /Target closed/i,
+  /Page has been closed/i,
+  /browser has been disconnected/i,
+];
+
+/** 这个错误是不是「页面 target 没了」（而不是产品判据不成立）。只用在本模块的守卫里——
+ *  别的 spec 通过 `guardPageChannel` 得到同一判据，不要各写一份签名表（REVIEW.md
+ *  「同一语义两处真源」条）。 */
+function isChannelDeath(error: unknown): boolean {
+  const text = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
+  return CHANNEL_DEATH.some((pattern) => pattern.test(text));
+}
+
+export interface ChannelGuardOptions {
+  /** 最多尝试次数（含首发），缺省 3。 */
+  attempts?: number;
+  /** `test` 回执的 testInfo：每次通道死亡落一条 annotation（报告里可数），不传则只打日志。 */
+  testInfo?: TestInfo;
+  /** 日志出口，缺省 `console.log`（守卫自身的回归借用它收集，免得污染报告输出）。 */
+  log?: (line: string) => void;
+}
+
+/** 换一个新页面接着跑：同一 context 的新页（承载 baseURL / viewport，场景自己的 `stubTauri`
+ *  与 `goto("/")` 会重装一遍，因此不需要在这里复制任何 `use` 配置）。 */
+async function reopenPage(page: Page): Promise<Page> {
+  try {
+    return await page.context().newPage();
+  } catch {
+    // 连 context 都没了（浏览器进程退出）：把原页面交回去，下一轮的首个 CDP 调用会再次被
+    // 判定为通道死亡，最后由「连续死亡」分支如实上报成通道问题。
+    return page;
+  }
+}
+
+/**
+ * 跑一个页面场景；**只在通道死亡时**换新页面重跑（见文件末的「页面通道守卫」节）。
+ *
+ * @returns 无返回值：通过即通过，失败即抛（产品失败原样抛，通道连续死亡抛带 `cause` 的
+ *          通道错误——后者的文案明说「这不是产品判据失败」）。
+ */
+export async function guardPageChannel(
+  page: Page,
+  body: (page: Page) => Promise<void>,
+  options: ChannelGuardOptions = {},
+): Promise<void> {
+  const maxAttempts = options.attempts ?? 3;
+  const log = options.log ?? ((line: string) => console.log(line));
+  const deaths: string[] = [];
+  let current = page;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await body(current);
+    } catch (error) {
+      // 产品失败（含 Playwright 断言不符、场景自己的 throw）：一次都不重跑。
+      if (!isChannelDeath(error)) throw error;
+      const firstLine = error instanceof Error ? error.message.split("\n")[0]! : String(error);
+      // 带上「死的是哪个页面」——`page.url()` 走本地缓存，页面没了也读得到。
+      const detail = `${firstLine}（页面：${current.url()}）`;
+      deaths.push(detail);
+      log(`[visual] 页面通道死亡（第 ${attempt} 次尝试）：${detail}`);
+      options.testInfo?.annotations.push({ type: "page-channel-death", description: detail });
+      if (attempt >= maxAttempts) {
+        throw new Error(
+          `页面通道连续 ${deaths.length} 次死亡，场景未能跑完（不是产品判据失败）：${detail}`,
+          { cause: error },
+        );
+      }
+      current = await reopenPage(current);
+      continue;
+    }
+    if (deaths.length > 0) {
+      log(`[visual] 换新页面后场景通过（第 ${attempt} 次尝试；此前通道死亡 ${deaths.length} 次）`);
+      options.testInfo?.annotations.push({ type: "page-channel-retried", description: `第 ${attempt} 次尝试通过` });
+    }
+    return;
+  }
+}

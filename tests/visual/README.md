@@ -92,6 +92,49 @@ CSS 动画（CodeMirror 光标闪烁）在截图时冻结，保证逐帧确定�
 真机（WKWebView）的拖选另有判据通道（M650 的 `.local/probes/` 探针；验收场景 227 明确把
 「拖选看得见选中带」排除在套件通道之外），本目录的场景只覆盖引擎层。
 
+### 页面 target 死亡（CDP `session closed`）的口径：通道问题不进产品判据
+
+**症状**：某个断言上红，错误是
+`Protocol error (Runtime.callFunctionOn): Internal server error, session closed.`，
+`Received: undefined`，且用例总耗时只有 0.3–0.7s（不是 5s 断言窗口被耗尽）。含义是**浏览器把这个
+页面 target 收掉了**，断言从来没有比出差异——它与「产品判据不成立」是两个不同的失败。
+
+**排查结论**（M793，2026-10-28）：不是「外部应用被真的打开、把页面顶掉」。
+
+- chromium 里没有 Tauri 后端，`link_open_path` / `open_external_url` 全由 `scenes/tauri-stub.ts`
+  路由——只记账、直接 resolve，落不到宿主 `open`；
+- `src/` 里没有 `window.open` / `location.href =` / `location.assign`，产品侧没有把页面导航或弹窗
+  顶掉的能力；
+- 现场里排在被红的那条断言**之前**的产品证据全部已成立（`openedPaths` 命中目标、
+  `openedUrls` / `noteResolves` 读到空数组）——产品行为是对的，之后页面才消失。
+
+**它是长期 flake，不是本文件独有的偶发**：近 40 次远端 visual run 里 14 次出现同一签名，
+逐个核对过的受害用例全部落在 `scenes/render-link.spec.ts` 的 `:195` 与 `:512`（同一用例内的
+致命断言位置还会漂，例如 `:195` 有时死在 `.cm-lp-frontmatter` 的计数上）；这 14 次里有 9 次
+该 run 仍然全绿——CI 的 `retries: 1` 把这一次救了回来。本机完整 gate visual 的日志里同样出现过
+（`.local/probes/test-health-2026-10-26-gate-visual.log`、
+`.local/probes/m687-semantic-release-snap/gate-visual-1.log`）。所以「本地全绿」不构成反证：
+单跑该 spec 360 次（`--repeat-each=20`）与全量 879 条各一次都复现不出来，同一次全量跑里
+浏览器 RSS 稳定在 200–560 MB（无单调增长）。**根因未坐实**（浏览器为何收掉 target），
+这里处理的是它的**判据归属**，不是假装它不存在。
+
+**口径**：通道死亡 = 传输层签名（`session closed` / `Target … has been closed` / `Target crashed` /
+`browser has been disconnected`），与产品断言失败互斥（产品断言产不出这些文本）。据此：
+
+1. 页面场景统一经 `guardPageChannel`（`scenes/tauri-stub.ts` 末节）跑，写法是
+   `pageTest("<标题>", async (page) => { … })`。命中通道死亡时**换一个新页面把整个场景重跑**
+   （缺省 3 次尝试），每次死亡打一行 `[visual] 页面通道死亡（第 N 次尝试）…` 并落
+   `page-channel-death` annotation；重试成功落 `page-channel-retried`。报告里出现这两条
+   annotation 时，读法是「通道死了几次」，不是「产品回归」。
+2. **产品断言失败 / 场景自身 throw 一律不重跑**，原错误原样上报（`scenes/render-link.spec.ts`
+   末尾有三条确定性回归钉住这两条分支）。重跑不削弱判据：每次尝试都跑完整场景与全部产品
+   断言，产品真坏了必然照样红。
+3. 报告定位：`pageTest` 注册的用例共用注册行位置（Playwright 按声明栈取 `file:line`），
+   在列表 / HTML 报告里按 **标题** 定位，不要再按 `render-link.spec.ts:<行号>` 引用这些用例。
+4. 别的 spec 出现同一签名时照此采用（把 `test(` 换成 `pageTest(`），不要靠 skip、放宽断言或
+   抬容差换绿；若 `page-channel-death` 密度上升，按通道问题排查（同一次 run 里连续命中说明
+   机器侧状态没恢复，那一次不算产品 FAIL，也不该用 rerun 掩盖）。
+
 ## 目录结构
 
 ```
