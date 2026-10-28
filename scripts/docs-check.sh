@@ -24,8 +24,8 @@
 #      在 scripts/backlog-check.mjs，本脚本调它——规则出处是 Alex 2026-10-24 裁决与
 #      docs/process/openspec-workflow.md「backlog 出口的机器判据」节）
 #   8. 验收套件语法与自测：scripts/acceptance 入口与 lib/*.mjs 逐文件 `node --check`，并执行
-#      check-suite.sh 清单内的 node:test 自测（当前七组）。第 6 / 8 条统一走
-#      scripts/acceptance/check-suite.sh；不起 app、不占端口、不碰验收 vault。
+#      check-suite.sh 清单内的 node:test 自测（清单真源是该脚本本身，这里不抄组数——抄一次漂一次）。
+#      第 6 / 8 条统一走 scripts/acceptance/check-suite.sh；不起 app、不占端口、不碰验收 vault。
 # 输出：失败时逐条打印问题（CI 上同时是 ::error:: 注解）并以 1 退出。
 #
 # 注意：OpenSpec 的 **结构 / 制品完整性** 校验不在这里——权威实现是 `openspec validate --all
