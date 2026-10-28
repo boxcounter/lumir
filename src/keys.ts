@@ -92,10 +92,11 @@
 // 的 `markdown()` 默认 `addKeymap: true`，把一份 `markdownKeymap` 以 `Prec.high` 装进了编辑器
 //（`Enter` → `insertNewlineContinueMarkup` 续写列表 / 引用标记、`Backspace` → 删除标记），
 // 而 `editor.ts` 的 `markdownConfig` 没关它。M272 又在内核里加了**唯一一处**本应用自己的
-// `keymap.of`（`Enter` → 先委派上游、未命中才 `insertNewlineAndIndent`，`Prec.highest`）。
+// `keymap.of`（`Enter` → 先委派上游、未命中才 `insertNewlineAndIndent`，`Prec.highest`）；
+// 裸 marker 行的 `Backspace` 也在这一处先于上游接管，未命中才落回上游 / 原生删除。
 // 两处都**不在本表内**（`Enter` 与 `Backspace` 至今不是表内 token）：本表仍是唯一的**可重绑 /
 // 可展示**键位面，`Enter` 因此不进 `[keys]`、不进键位面板——这是 D1a 知情接受的代价，
-// 不是漏登记（理由见 `editor.ts` 的 autoIndentKeymap 注释与 change 的 design §1.3）。
+// 不是漏登记（理由见 `editor.ts` 的内核 keymap 注释与 change 的 design §1.3）。
 //
 // M242：表新增两条**有默认绑定**的全局标签命令（`⌘}` → `tab.next`、`⌘{` → `tab.prev`，change
 // tab-cycle-keys 的 D1/D2/D3 裁决）。零新命令 id——与 M149 的 `tab.next` / `tab.prev` 逐字同语义，

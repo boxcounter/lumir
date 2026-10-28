@@ -8,7 +8,7 @@ import type { ViewUpdate } from "@codemirror/view";
 export type ScrollSnapshot = ReturnType<EditorView["scrollSnapshot"]>;
 import { history, redo, undo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { DEFAULT_AUTO_INDENT, enterWithAutoIndent, swallowDuplicateMarkerInput, swallowNativeListBeforeInput } from "./enter-indent";
+import { backspaceBareMarkerLine, DEFAULT_AUTO_INDENT, enterWithAutoIndent } from "./enter-indent";
 // M447：词 / 字素簇扫描与 kill 槽的**共用**实现（两侧只有一份）住在叶子模块 src/quote-card.ts
 // ——composer 侧的模块图必须能进零 DOM 单测，而本模块的 import 图里有参数属性，两侧不能直接互
 // import（同 src/enter-indent.ts / src/list-indent.ts 的模块头所述）。
@@ -1750,30 +1750,20 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   }
 
   function modeExtensions(mode: EditorMode, path: string | undefined, editable: boolean): Extension[] {
-    // `Enter` 的自动缩进键位（change enter-auto-indent）：命令体在 `src/enter-indent.ts`
-    //（单独模块的理由见那里），这里只装它。判定与优先级的设计说明在同名注释块上方。
-    const autoIndentKeymap = Prec.highest(
-      keymap.of([{
-        key: "Enter",
-        run: (view) => enterWithAutoIndent(view, mode, autoIndent),
-      }]),
+    // 编辑器内核键位：Enter 走自动缩进 / markup 续行；裸 marker 行的 Backspace 先于上游
+    // 删除命令接管。命令体在 `src/enter-indent.ts`（单独模块的理由见那里），这里只装配。
+    const markupKeymap = Prec.highest(
+      keymap.of([
+        {
+          key: "Enter",
+          run: (view) => enterWithAutoIndent(view, mode, autoIndent),
+        },
+        {
+          key: "Backspace",
+          run: (view) => mode === "md" && backspaceBareMarkerLine(view),
+        },
+      ]),
     );
-    // M461② + M529②：md 模式在 DOM 输入入口拒收 WebKit 原生自动列表——beforeinput 层
-    // 拦 insertOrderedList / insertUnorderedList（M461②，组合期重复插入 marker 的命令形态，
-    // 探针证据 .local/probes/m461-probe/readings.md）；inputHandler 层拦裸 DOM 变更形态的
-    // 重复 marker 读回（M529② 逃逸形态：smart-list 把下一序号作为裸 DOM 文本插入，探针证据
-    // .local/probes/m529-probe/readings.md；M753 起落点判据是整个「行首 marker 区域」而不是
-    // 内容起点——marker 被 ListLayout 的 widget 整段替换，裸插入会落在该区之内，见
-    // src/enter-indent.ts）。英文直输两条通道都无事件，拦截对英文路径零影响；编辑器的列表
-    // 语义只有裸 marker 行特判 + 上游续行 + TAB 缩进一条合法路径。判定本体在
-    // src/enter-indent.ts（可单测），这里只做装配。
-    const nativeListGuard =
-      mode === "md"
-        ? [
-            EditorView.domEventHandlers({ beforeinput: swallowNativeListBeforeInput }),
-            EditorView.inputHandler.of(swallowDuplicateMarkerInput),
-          ]
-        : [];
     // md 走 lezer markdown 解析器（高亮规则维持 M1 以来口径不动）；
     // code 按扩展名选 legacy-modes StreamLanguage（M120），未知扩展纯文本不着色。
     const highlight: Extension[] = mode === "md"
@@ -1943,10 +1933,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           livePreview(previewContext),
           endMarker,
           mdGutterCompartment.of(mdGutterExtensions()),
-          autoIndentKeymap,
-          ...nativeListGuard,
+          markupKeymap,
         ]
-      : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), autoIndentKeymap];
+      : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), markupKeymap];
   }
 
   /** md 的 gutter 扩展：**在场判据的唯一来源**（REVIEW.md 「同一语义两处真源」条——别处 MUST NOT 自行判断）。

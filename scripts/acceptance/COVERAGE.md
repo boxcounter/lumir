@@ -171,11 +171,11 @@
 | 150 | `150-harness-composer-line-start-and-caret-geometry` | composer 卡片后空行：⌃B 落前一行行末 + ⌃A 回行首（M457） | full |
 | 151 | `151-harness-approval-reason` | 批准卡判定依据行（M459）：危险黑名单 / 模式默认分层 / deny 规则原文三类拦截各说得出理由（mock provider） | full |
 | 152 | `152-harness-transcript-link-and-time` | harness transcript：裸 URL 在段落与表格里上屏为链接、恢复重放的消息带时间读数 | full |
-| 153 | `153-ordered-list-auto-mode` | 列表自动模式三态（M461）——「1. + 空格」进入列表编辑、Enter 续行、空项 Enter 退出；IME 组合期不重复的英文路径对照 | full |
+| 153 | `153-ordered-list-auto-mode` | 列表自动模式（M461）——进入列表编辑、Enter 续行 / 空项退出、裸 marker 第一次 Backspace 删除 | full |
 | 154 | `154-harness-composer-prev-line-end` | composer 末段空行行首 ⌃B 落上一行行末（M465，HC4 第 1 条） | full |
 | 155 | `155-harness-ctxpop-tokens` | Harness 气泡读数：上下文已用/上限 tokens（k/m 单位）+ 会话命中率（只百分比）；本回合 / 写入行不渲染；空会话无假读数 | full |
 | 156 | `156-harness-composer-ime-composition-freeze` | composer IME 组合期结构冻结（M527，HC5）：第二行中文组合不折回第一行——手动复验 | evidence |
-| 158 | `158-ordered-list-enter-no-duplicate-marker` | 有序列表行末 Enter 单 marker（M529）——真实列表项续行只出一个新序号、无「2. 3.」重复形态 | full |
+| 158 | `158-ordered-list-enter-no-duplicate-marker` | 有序列表行末 Enter——单项与末项都只产生一个字面下一序号 | full |
 | 159 | `159-filetree-drag-move` | 文件树拖拽移动——拖文件入目录、拖目录入目录、撞名拒绝三态（人话提示 / 源不变 / 目标不变）、拖入自身子树与文件行均不可落、拖到 vault 名行 / 列表尾部空白落根 | core |
 | 163 | `163-harness-auto-title-first-turn`<br>`163b-harness-quote-first-title` | 会话自动命名①：首轮完成后生成标题（标题栏 + 历史浮层行名 + JSONL decision=initial）<br>会话自动命名②：quote 首条消息 → 命名事件 → 标题栏与已开历史浮层行同步改名 | full<br>full |
 | 164 | `164-harness-auto-title-keep` | 会话自动命名②：周期重估输出 keep 时标题不变（5 轮周期 + decision=keep 记录） | full |

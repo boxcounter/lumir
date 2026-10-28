@@ -2,7 +2,7 @@
 id: "153-ordered-list-auto-mode"
 item: 153
 tier: full
-title: 列表自动模式三态（M461）——「1. + 空格」进入列表编辑、Enter 续行、空项 Enter 退出；IME 组合期不重复的英文路径对照
+title: 列表自动模式（M461）——进入列表编辑、Enter 续行 / 空项退出、裸 marker 第一次 Backspace 删除
 fixtures: [ordered-list-auto.md]
 open: ordered-list-auto.md
 marker: "列表自动模式探针"
@@ -27,8 +27,7 @@ steps:
   # DOM 读回把随后键入的 "alpha" 算成下一行插入——落盘成 「1. \nalpha」（marker 与内容分处两行，
   # Enter 永不续行），三步全链路红（证据 .local/acceptance/2026-10-16/153-ordered-list-auto-mode/）。
   # 因此 alpha 改走**不点击的通道**：可打印 do: keys 逐键直发 press_key（无 bbox 中心点击、不动
-  # caret），空格已把 caret 留在 marker 之后，逐键 insertText 经 CM 读回落在同一行（M529 探针在
-  # 「2. 」后键入 x 读回 CM-DOC "…2. x" 同形实证，.local/probes/m529-probe/readings.md）。
+  # caret），空格已把 caret 留在 marker 之后，逐键 insertText 经 CM 读回落在同一行。
   # 回读判据：value 里 "alpha" 基线 0 次 → 恰 1 次（widget 只替换 marker，内容字面在场）。
   # 空格那一键若丢（盲发通道无回读）则 widget 不触发、「1. alpha」不成列表项——下游断言如实红，
   # 不为它配重试（重试会把空格重复插入，反而制造「1.  alpha」这类脏文本）。
@@ -58,7 +57,7 @@ steps:
     expect:
       - label: 续行成立：「2. 」被自动写出（旧行为下 Enter 只是裸换行，「2. 」必不出现）
         file: { path: ordered-list-auto.md, has: '/1\. alpha\n2\. /' }
-      - label: 无重复 marker（组合期缺陷的英文路径对照：同一行只出现一次「1. 」）
+      - label: 无重复 marker——正常续行的同一行只出现一次「1. 」
         file: { path: ordered-list-auto.md, not: '/1\. 1\. /' }
       - shot: 续行态-2.行在场
 
@@ -93,6 +92,41 @@ steps:
       - label: 「2. 」回来（一次 Enter 退出 = 一次撤销步；若退出是两步事务，一次撤销回不到带 marker 的形态）
         file: { path: ordered-list-auto.md, has: '/1\. alpha\n2\. /' }
       - shot: 撤销后-marker回来
+
+  # ── 用例 4（Backspace）：截图同款的段落后裸空标记，第一次退格即删标记。
+  # 必须另造 fixture：前面的「1. alpha」会让后续「2. 」成为真列表空项，上游会按既有行为
+  # 把 marker 替换成空格，不能拿它来验裸行分派。
+  - name: 造一份段落后紧邻裸 marker 的探针文档
+    do: vaultWrite
+    file: ordered-list-bare-backspace-probe.md
+    content: "普通段落\n1. \n"
+  - name: 打开裸 marker 探针文档
+    do: open
+    file: ordered-list-bare-backspace-probe.md
+    marker: "普通段落"
+  - name: 建立焦点并移到裸 marker 内容起点
+    do: clickEditor
+    expect:
+      - label: 焦点落在编辑器正文里
+        ax: { focused: "AXTextArea" }
+  - name: 光标移到下一行行尾（即「1. 」之后）
+    do: keys
+    keys: ["ctrl+n", "ctrl+e"]
+  - name: 在裸「1. 」后按一次 Backspace
+    do: key
+    key: "backspace"
+  - name: 落盘
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 落盘后核对第一次退格即生效
+    do: sleep
+    ms: 1200
+    expect:
+      - label: 裸 marker 被删去（第一次 Backspace 被空吞时「1. 」仍在，必红）
+        file: { path: ordered-list-bare-backspace-probe.md, not: '/\n1\. /' }
+      - label: 行保留为结尾空行、不新增行且不残留空格
+        file: { path: ordered-list-bare-backspace-probe.md, has: '/普通段落\n\n$/' }
+      - shot: 退格后-裸marker一次删除
 ---
 
 # 153 · 列表自动模式三态（M461）
@@ -105,14 +139,6 @@ lazy continuation，树驱动的渲染与续行都不认它。本 change 按文�
 - **进入态**的判据由用例 1 的续行结果间接钉死：只有「1. 」行被认作列表项，
   Enter 才会续出「2. 」（旧行为是裸换行）。渲染观感（marker widget、悬挂缩进）归
   截图证据与 Alex 手感，与套件「不做手感判定」分工一致。
-- **IME 组合期不重复**（Alex 报告的第二缺陷：中文输入法输入字符时多出「1. 」）的
-  判据：修复落在 DOM 入口拒收 WebKit 原生自动列表（insertOrderedList 族
-  beforeinput），英文路径直输照绿（本场景用例 1 的落盘断言：续出 `/1\. alpha\n2\. /`、
-  无重复 marker `/1\. 1\. /` 为负）+ chromium 视觉层
-  有派发事件的接线断言。真机组合态无法用合成键盘复现（合成事件不进 TSM，
-  探针证据 .local/probes/m461-probe/readings.md），**真 IME 复验留 dogfood**——若
-  Alex 的中文输入法仍复现重复，按「裸 DOM 变更路径」另立项（本拦截不兜该形态，
-  已登记为已知边界）。
 - **注入通道为什么拆成这三步**（M461 后本场景的标定过期点，2026-10-16 重取）：M461 起「1. 」行
   在光标驻留时按列表项渲染、marker 被 widget 替换，AXTextArea.value 把它序列化成带换行的 widget
   文本——单步注入「1. alpha」按出现次数回读必红（2026-10-13：出现 0 次而落盘正确）。但拆步有个

@@ -64,23 +64,18 @@ export function listLineInfo(tree: Tree, doc: Text, line: Line): ListLineInfo {
   return { offset, item: node, first, rendered: first || (body && offset > 0) };
 }
 
-/** 行首列表 marker 的文本级解析结果（M461 起的两处消费者共用）。
+/** 行首列表 marker 的文本级解析结果。
  *
- *  消费者一：**裸 marker 行**（文本模式特判，M461）——行首是合法列表标记、标记后只有空白到
- *  行尾（空项）或带内容但语法树不接管（lazy continuation），且语法树未把它认作列表项首行。
- *  典型形态 `para\n1. `：空列表项按 CommonMark 不能打断段落，行被解析进段落，既有渲染与
- *  Enter 续行都不认它；Alex 2026-10-12 dogfood 裁决：该行在光标驻留时按列表项渲染、
- *  Enter 按列表语义分派（实现见 src/enter-indent.ts 与 ListLayout.build 的裸行分支）。
- *  `bareListMarkerLine` 在这一份之上加树侧排除：判定是 `listLineInfo` 的**补集**而非替代，
- *  语法树已认作项首行（真列表，含空行后的 `1. `、`- `、引用内 `> 1. `、列表自身的空续项）
- *  一律不看——那些形态既有渲染与 M399 退出行为已覆盖，同语义不得两处抢（REVIEW.md
- *  「同一语义两处真源」条）。排除面：setext 标题下线（`para\n- ` 的 `- `，与 Obsidian
- *  同口径交给标题语义）、围栏 / 缩进代码块、HTMLBlock、表格——那些上下文里 marker 形文本
- *  不是列表。
- *
- *  消费者二：**任意行首已有 marker 的行**（M529② / M753 的 DOM 读回判据）——那里的问题不是
- *  「这行算不算列表」，而是「这一行的行首 marker 占着哪段区间」，带内容的行（`2. 乙项`）
- *  同样适用，故本接口只描述区间，不带「空项 / 真列表」这类语义。 */
+ *  裸 marker 行是合法列表标记位于行首、标记后只有空白到行尾（空项）或带内容但语法树不接管
+ * （lazy continuation），且语法树未把它认作列表项首行的形态。典型形态 `para\n1. `：空列表项
+ *  按 CommonMark 不能打断段落，行被解析进段落，既有渲染与 Enter 续行都不认它；Alex
+ *  2026-10-12 dogfood 裁决：该行在光标驻留时按列表项渲染、Enter 按列表语义分派（实现见
+ *  src/enter-indent.ts 与 ListLayout.build 的裸行分支）。`bareListMarkerLine` 在这一份之上
+ *  加树侧排除：判定是 `listLineInfo` 的**补集**而非替代，语法树已认作项首行（真列表，含
+ *  空行后的 `1. `、`- `、引用内 `> 1. `、列表自身的空续项）一律不看——那些形态既有渲染与
+ *  M399 退出行为已覆盖，同语义不得两处抢（REVIEW.md「同一语义两处真源」条）。排除面：
+ *  setext 标题下线（`para\n- ` 的 `- `，与 Obsidian 同口径交给标题语义）、围栏 / 缩进代码块、
+ *  HTMLBlock、表格——那些上下文里 marker 形文本不是列表。 */
 export interface ListMarkerText {
   /** marker 起点（绝对位，= 行首 + 前缀宽）。 */
   readonly markerFrom: number;
@@ -102,11 +97,8 @@ export interface ListMarkerText {
 const BARE_MARKER_RE = /^((?:>[ \t]*)*)([ \t]*)((\d{1,9})([.)])|([-+*]))([ \t]+)(.*)$/;
 
 /** 从任意文本起点解析「行首列表 marker」：可选引用前缀 + 行首缩进 + 一个合法列表标记 +
- *  其后空白。`bareListMarkerLine`（渲染 / Enter 特判）与 `src/enter-indent.ts` 的「DOM
- *  读回入口的重复 marker 判定」（M529② / M753）共用这一份——同语义不得两处真源
- *  （REVIEW.md『同一语义两处真源』条）。`from` 是文本在文档里的起点（行首时 = `line.from`；
- *  判「marker 之后是否紧跟另一个 marker」时用切片起点 0 再自行换算）。
- *  纯文本形态级：不读语法树，围栏 / 表格 / 标题等上下文由调用方各自排除。 */
+ *  其后空白。`from` 是文本在文档里的起点（行首时 = `line.from`）。纯文本形态级：不读语法树，
+ *  围栏 / 表格 / 标题等上下文由调用方各自排除。 */
 export function markerTextAt(text: string, from = 0): ListMarkerText | null {
   const m = BARE_MARKER_RE.exec(text);
   if (!m) return null;
@@ -125,20 +117,6 @@ export function markerTextAt(text: string, from = 0): ListMarkerText | null {
     delimiter: ordered ? m[5] : "",
     prefix,
   };
-}
-
-/** `text` 是否**以**一个列表 marker token 开头（`markerTextAt` 同一份 BARE_MARKER_RE：
- *  可选引用前缀 + 行首缩进 + `\d{1,9}[.)]` / `-` `+` `*` + 后随空白）。
- *
- *  左边界就是文本起点，理由有两条：①DOM 读回的插入文本就是浏览器塞进 contenteditable
- *  的那一段，序号只能是它的开头，没有「夹在中间」的合法形态；②`\d{1,9}` 后必须紧跟
- *  `.` / `)`，从第二位起截出的九位子串因此认不出来——`1234567890. `（十位，非法 marker）
- *  MUST NOT 被当成 token（M753 r1 P2 的误吞现场）。
- *
- *  用途：`src/enter-indent.ts` 重复 marker 判定的粗筛。语法 MUST 与本文件的 `markerTextAt`
- *  同源（REVIEW.md『同一语义两处真源』条）——另写一条等价正则就是 P2 的成因。 */
-export function markerTokenAtStart(text: string): boolean {
-  return markerTextAt(text) !== null;
 }
 
 /** 裸 marker 行判定：null = 不是（含语法树已接管的全部形态）。纯函数，只读树与行文本。 */
