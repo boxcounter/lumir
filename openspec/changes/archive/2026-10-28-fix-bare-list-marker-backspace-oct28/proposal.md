@@ -27,3 +27,13 @@
 - 影响的 specs：editor-live-preview。
 - 影响的代码/系统：裸 marker 行命令分派、编辑器内核 Backspace keymap、单测 / 视觉测试与真机场景 153。
 - 关联约束：显式编辑动作可改写文档；渲染事件本身仍遵守不改写源文件铁律。
+
+## 节点 2：归档放行
+
+机器 + 独立评审放行，五要件如下：
+
+1. 节点 1 已批准：Alex 2026-10-28「修复」；实现期未扩 scope。
+2. 独立 reviewer verdict **clean/merge**，绑定实现 tip `6a510a78262fc4966b05f233e82aeefaf52759e7`，无 P1 / P2；证据 `.local/reviews/list-marker-oct28/reviewer.md`。
+3. 实现与验证 tasks 全部完成，仅本归档任务在执行。
+4. `GATE RESULT: 15/15 PASS（SKIP 0）` exit 0；最终 quick `GATE RESULT: 13/13 PASS（SKIP 0）` exit 0；真机 153 / 158 2/2 PASS exit 0，证据 `.local/acceptance/2026-10-28/summary.md`。
+5. `node scripts/openspec-archive-check.mjs` PASS；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 37/37 PASS；归档跟踪队列本 change 唯一条目。
