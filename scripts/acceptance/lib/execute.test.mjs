@@ -22,7 +22,7 @@ import test from "node:test";
 
 import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, runScenario, runTag, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
-import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, StepError } from "./drive.mjs";
+import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
 
 /** 临时根（每个用例一份，跑完不清也无妨——全在 `os.tmpdir()` 下）。 */
@@ -1423,10 +1423,19 @@ test("全库场景静态校验通过（--check 的真实通道）", () => {
 // 两类合法终态（未打开空态 / 空 vault 引导层）走 settleEditorless，它原先同样比整份 AX 原文，
 // 会被每次读取都变的 `AX snapshot_id` 拖满 15s。修法是共用 drive.mjs 的 `snapshotBody`（单一
 // 真源），用例必须证明两条路径都改了——只改 settle() 时这里必红。
+//
+// M786 起等待**不吃真实墙钟**（与 settle() 同一口径）：旧用例拿真实 600ms 预算断言 `reads >= 2`，
+// 成立条件是「首读耗时 < 600ms」——那是机器速度，不是被测事实；满载时首读被拖过预算就只读 1 次、
+// 自测假红（finding
+// `20261028-worker-stabilize-acceptance-se-bug-settleeditorless-m785-drive-mjs.md`）。注入假时钟后
+// 「预算内读到第几轮」= ceil(预算 / 采样间隔)，与负载无关。
 
-/** 无编辑器节点的快照（两类合法终态的形态：窗口 + 树 / 空态文案，没有 AXTextArea）。 */
-function editorlessAx({ snapshotId, nodeLine = '- [5] AXStaticText = "打开一个目录作为 vault"' }) {
-  return [
+/** 合成快照：两类无编辑器终态（窗口 + 树 / 空态文案，没有 AXTextArea）的形态。
+ *
+ *  `editor: true` 是同一份界面加上 `AXTextArea`——只给「采样间隔是同一份常量」的对照用例用：
+ *  `settle()` 要先过编辑器门才会返回。 */
+function settleAx({ snapshotId, nodeLine = '- [5] AXStaticText = "打开一个目录作为 vault"', editor = false }) {
+  const lines = [
     `AX snapshot_id=${snapshotId}. Pass this ID with index-based actions; it is separate from the screenshot_id and diff revision.`,
     "# Lumir App State",
     "",
@@ -1439,56 +1448,150 @@ function editorlessAx({ snapshotId, nodeLine = '- [5] AXStaticText = "打开一�
     '  - [1] AXWindow "Lumir" @0,0 1200×800',
     "    - [2] AXScrollArea @0,0 1200×800",
     nodeLine,
-    "```",
-  ].join("\n");
+  ];
+  if (editor) lines.push('      - [9] AXTextArea = "# doc\\nbody" @0,0 1100×700');
+  lines.push("```");
+  return lines.join("\n");
 }
 
-/** 循环返回文本的假 cu（读到底再从头开始——保证 id 每次读都换，旧口径的整份比较永远不成立）。 */
-function fakeStateCu(texts) {
+/** 循环返回文本的假 cu（读到底再从头开始——保证 id 每次读都换，旧口径的整份比较永远不成立）。
+ *  `texts` 也可以是 `(第几次读取) => 文本` 的工厂（构造「每读一次都变」的抖动现场）；`maxReads`
+ *  是防挂死的上限：等待路径若不再按注入的时钟收口（超时语义失效 / 误用墙钟），用例会拿到一条明确
+ *  的失败，而不是把门禁卡死在一条用例上（与 drive.test.mjs 的 `fakeCu` 同一口径）。 */
+function fakeStateCu(texts, { maxReads = 20 } = {}) {
   let i = 0;
   const reads = [];
   return {
     reads,
     state: async () => {
       reads.push(i);
-      const text = texts[i % texts.length];
+      if (reads.length > maxReads) {
+        throw new Error(`假 CU 已被读 ${reads.length} 次（上限 ${maxReads}）：settleEditorless 没有按注入的时钟收口`);
+      }
+      const text = typeof texts === "function" ? texts(i) : texts[i % texts.length];
       i += 1;
       return { text, image: null };
     },
   };
 }
 
-test("settleEditorless：正文相同、快照 id 每次变 ⇒ 稳定返回且不落 note（M759 正例）", async () => {
-  const cu = fakeStateCu([editorlessAx({ snapshotId: "AAAA" }), editorlessAx({ snapshotId: "BBBB" })]);
+/** 假时钟（与 drive.test.mjs 的 `fakeClock` 同形态的**测试替身**）：`now()` 只在 `sleepFn` 被调用时
+ *  前进，读取一律零耗时——虚拟耗时只随采样节奏走，「预算内读到第几轮」于是只由采样节奏决定。
+ *  `sleeps` 记录每次采样间隔：既证明等待路径用的是注入的 `sleepFn`（不是墙钟旁路），也让用例能断言
+ *  两条等待路径取的是**同一份** `SETTLE_SAMPLE_MS`（不是各自硬编码的 700）。共享的是产品常量，
+ *  不是这个替身——替身搬进产品模块只会让测试件变成导出面。 */
+function fakeClock() {
+  let nowMs = 0;
+  const sleeps = [];
+  return {
+    sleeps,
+    now: () => nowMs,
+    sleepFn: async (ms) => {
+      sleeps.push(ms);
+      nowMs += ms;
+    },
+  };
+}
+
+test("settleEditorless：正文相同、快照 id 每次变 ⇒ 第二次读取即稳定返回、不落 note（M759 正例）", async () => {
+  // id 每次都换（工厂而非两条预置文本）：旧口径比整份原文时永远等不到「连续两次一致」。
+  const clock = fakeClock();
+  const cu = fakeStateCu((i) => settleAx({ snapshotId: `SNAPSHOT-${i}` }));
   const notes = [];
-  const ax = await settleEditorless(cu, 0, { record: (r) => notes.push(r) });
-  assert.equal(cu.reads.length, 2, `正文相同时应在第二次读取就返回，实际读了 ${cu.reads.length} 次`);
+  const ax = await settleEditorless(cu, 0, { record: (r) => notes.push(r) }, { now: clock.now, sleepFn: clock.sleepFn });
+  assert.equal(cu.reads.length, 2, `首读只做基线、不参与比较：第二次读取就该返回，实际读了 ${cu.reads.length} 次`);
+  assert.deepEqual(clock.sleeps, [SETTLE_SAMPLE_MS], "提前返回：只付一次采样间隔（共享常量），不等满预算");
   assert.equal(notes.length, 0, `稳定收敛不得落 note，实际：${JSON.stringify(notes)}`);
-  assert.match(ax.text, /AX snapshot_id=BBBB/, "返回的仍是原始快照（证据 dump 看原文）");
+  assert.match(ax.text, /AX snapshot_id=SNAPSHOT-1/, "返回的是第二次读取那份（证据 dump 与 ax.has 断言看原文）");
   assert.equal(ax.textarea, null, "本用例构造的是无编辑器终态：判据确实走的是 settleEditorless");
 });
 
 test("settleEditorless：正文抖动 ⇒ 超时落 note 并返回末次读取（反例，不静默判稳）", async () => {
-  const cu = fakeStateCu([
-    editorlessAx({ snapshotId: "AAAA", nodeLine: '- [5] AXStaticText = "打开一个目录作为 vault"' }),
-    editorlessAx({ snapshotId: "BBBB", nodeLine: '- [5] AXStaticText = "这个 vault 还没有打开的文件"' }),
-  ]);
+  const clock = fakeClock();
+  const cu = fakeStateCu((i) =>
+    settleAx({
+      snapshotId: `J-${i}`,
+      nodeLine:
+        i % 2
+          ? '- [5] AXStaticText = "打开一个目录作为 vault"'
+          : '- [5] AXStaticText = "这个 vault 还没有打开的文件"',
+    }),
+  );
   const notes = [];
-  const ax = await settleEditorless(cu, 0, { record: (r) => notes.push(r) }, { timeoutMs: 600 });
+  const ax = await settleEditorless(cu, 0, { record: (r) => notes.push(r) }, {
+    timeoutMs: 600,
+    now: clock.now,
+    sleepFn: clock.sleepFn,
+  });
   assert.equal(notes.length, 1, `超时只落一条 note，实际：${JSON.stringify(notes)}`);
   assert.match(notes[0].text, /do: settle：界面（本步无编辑器节点）/, "note 应按 settle 动作的既有前缀落证据");
   assert.match(notes[0].text, /没有连续两次一致的 AX 快照正文/, "note 应说清比较的是快照正文");
-  assert.match(notes[0].text, /600ms/, "note 的时长应取本次超时（自测放开的 timeoutMs），不写死 15s");
-  assert.match(ax.text, /AX snapshot_id=BBBB/, "超时兜底返回的是末次读取");
-  assert.ok(cu.reads.length >= 2, `要读到两次才可能发现不一致，实际读了 ${cu.reads.length} 次`);
+  assert.match(notes[0].text, /在 600ms 内没有/, "note 的时长应取本次超时（自测放开的 timeoutMs），不写死 15s");
+  assert.match(ax.text, /AX snapshot_id=J-1/, "超时兜底返回的是末次读取");
+  assert.equal(cu.reads.length, 2, `首读 + 一拍复读（旧用例的 >=2 判的是机器速度，这里判采样节奏），实际读了 ${cu.reads.length} 次`);
+  const elapsed = clock.sleeps.reduce((a, b) => a + b, 0);
+  assert.ok(elapsed >= 600, `超时要等满预算再收口（虚拟耗时 ${elapsed}ms）`);
+  assert.ok(elapsed <= 600 + clock.sleeps[0], `超时不得超出预算一个采样间隔（虚拟耗时 ${elapsed}ms）`);
+});
+
+test("settleEditorless：正文抖动 + 预算跨两个采样间隔 ⇒ 读满预算才收口（不与一拍混同）", async () => {
+  // 区分度：上一条（600ms 预算 = 不足一拍）判不出「用预算收口」与「抖一次就放弃」。预算给到两拍时，
+  // 误实现会在 700ms 就退出（只读 2 次），正确实现读到 1400ms（3 次）。
+  const clock = fakeClock();
+  const cu = fakeStateCu((i) => settleAx({ snapshotId: `D-${i}`, nodeLine: `- [5] AXStaticText = "第 ${i} 次读取"` }));
+  const notes = [];
+  await settleEditorless(cu, 0, { record: (r) => notes.push(r) }, {
+    timeoutMs: SETTLE_SAMPLE_MS * 2,
+    now: clock.now,
+    sleepFn: clock.sleepFn,
+  });
+  assert.deepEqual(clock.sleeps, [SETTLE_SAMPLE_MS, SETTLE_SAMPLE_MS], "两拍都不跳步，间隔取共享常量");
+  assert.equal(cu.reads.length, 3, `首读 + 两拍复读，实际读了 ${cu.reads.length} 次`);
+  assert.equal(notes.length, 1, "抖动到预算耗尽仍要落 note");
+});
+
+test("settleEditorless：不注入 now/sleepFn ⇒ 走真实墙钟，预算已用完就返回首读（生产默认路径）", async () => {
+  // 生产调用点不传注入（settleAction 直接调它），所以必须证明默认值真的在。预算 0 是**免费**的证明
+  // 形态：`now` 若被误设成常量，循环条件永远成立、假 CU 的读上限会抛错；`sleepFn` 若被调用，读取次数
+  // 会变成 2。真实采样一拍是 700ms，不在这里付——端到端付那一拍的是下面动作级用例。
+  const cu = fakeStateCu((i) => settleAx({ snapshotId: `W-${i}` }));
+  const notes = [];
+  const ax = await settleEditorless(cu, 0, { record: (r) => notes.push(r) }, { timeoutMs: 0 });
+  assert.equal(cu.reads.length, 1, "预算为 0：首读之后不再采样（默认 sleepFn 没被调用）");
+  assert.equal(notes.length, 1, "兜底 note 仍要落（超时语义一字不变）");
+  assert.match(notes[0].text, /在 0ms 内没有/, "note 的时长取本次预算（`/0ms/` 会误匹配 15000ms，锚住上下文）");
+  assert.match(ax.text, /AX snapshot_id=W-0/, "兜底返回首读那份（= 最后一次读取）");
+});
+
+test("settle 与 settleEditorless：采样间隔是同一份常量（不在两处各写一个 700）", async () => {
+  // 两条等待路径是同一份判据的两个入口；间隔各写一份时，改一处就漂（REVIEW.md「同一语义两处真源」条）。
+  // settle() 的行为用例在 drive.test.mjs（编辑器门 / 正反例），这里只钉「两者取同一个值」。
+  const settledClock = fakeClock();
+  const settled = await settle(fakeStateCu((i) => settleAx({ snapshotId: `S-${i}`, editor: true })), 0, {
+    timeoutMs: 5000,
+    now: settledClock.now,
+    sleepFn: settledClock.sleepFn,
+  });
+  assert.deepEqual(settledClock.sleeps, [SETTLE_SAMPLE_MS], "settle() 的采样间隔取共享常量");
+  assert.ok(settled.textarea, "编辑器门成立才会返回（本用例构造的是有编辑器现场）");
+
+  const editorlessClock = fakeClock();
+  await settleEditorless(fakeStateCu((i) => settleAx({ snapshotId: `N-${i}` })), 0, { record: () => {} }, {
+    now: editorlessClock.now,
+    sleepFn: editorlessClock.sleepFn,
+  });
+  assert.deepEqual(editorlessClock.sleeps, [SETTLE_SAMPLE_MS], "settleEditorless() 的采样间隔取共享常量");
 });
 
 test("do: settle（动作级）：无编辑器终态 + 快照 id 每次变 ⇒ PASS 且证据里没有 settle 超时 note", async () => {
   // 接线验证：settleAction 先探一次 AX，没有 AXTextArea 就交 settleEditorless。场景侧看不出用的是
   // 哪条实现，因此用「证据里没有 `do: settle：` 开头的那条 note」+ PASS 判它真的复用了新口径。
+  // 本用例是**生产默认路径**的唯一端到端覆盖（settleAction 不导出、注入通道到不了它）：真实墙钟 +
+  // 一拍真实采样（约 700ms）。它不会因负载假红——预算是 15s，首读之后只等一拍；M786 修掉的是直接
+  // 调 settleEditorless 的用例（那边预算只有 600ms，首读被拖过预算就假红）。
   const root = tmpRoot("settle-editorless-action");
   useTmpEnv(root);
-  const cu = fakeStateCu([editorlessAx({ snapshotId: "AAAA" }), editorlessAx({ snapshotId: "BBBB" })]);
+  const cu = fakeStateCu((i) => settleAx({ snapshotId: `A-${i}` }));
   const ctx = stubCtx(root, { cu });
   const { status } = await runScenario(ctx, {
     id: "settle-editorless",
