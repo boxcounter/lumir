@@ -903,7 +903,10 @@ fn vault_list(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
         Ok(input) => input,
         Err(output) => return output,
     };
-    let raw = input.path.as_deref().unwrap_or("").trim();
+    // `path` 按原字符串解释，**不 trim**（r4 同族）：macOS 文件名允许首尾空格，工具自己返回的
+    // 条目 `path` 必须能原样作为下一次调用的 `path`（round-trip）；trim 会把「 spaced dir /x.md」
+    // 指向另一个不存在的名字，静默换义。合法路径里不可能出现的空段与 `.` 段仍在下面清理。
+    let raw = input.path.as_deref().unwrap_or("");
     // 绝对路径单独给码：工作区段已给出 vault 根，转换是机械的；接受两种写法会把路径歧义带进新
     // 工具的结果面（`path` 一律 vault 相对）。
     if raw.starts_with('/') {
@@ -987,7 +990,10 @@ fn vault_list(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
         })
         .collect();
     lines.sort_by(|a, b| a.0.cmp(&b.0));
-    if let Some(cursor) = input.cursor.as_deref().map(str::trim) {
+    // cursor = 工具自己返回的原始 `path`，**MUST NOT 做空白规范化**（r4）：macOS 文件名允许首尾
+    // 空格，`trim` 会把 `a.md ` 改写成 `a.md`，使该条目再次满足 `>` 条件而重复返回；根目录下
+    // 以空格开头的路径则会被跳过。这里只按原字符串判空 / 非空并做严格大于过滤。
+    if let Some(cursor) = input.cursor.as_deref() {
         if !cursor.is_empty() {
             lines.retain(|(path, _)| path.as_str() > cursor);
         }
@@ -1785,6 +1791,91 @@ mod tests {
             ]
         );
         assert_eq!(pages, 3);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `cursor` 不做空白规范化（change add-harness-vault-workspace-list r4）：macOS 文件名允许
+    /// 首尾空格，工具返回的 `next_cursor` 就是原始 `path`，续读必须原样接受它。旧实现 `trim`
+    /// 后比较会在两种形态上破坏「无重复无遗漏」：
+    /// - 尾随空格（`a.md ` → 比较值 `a.md`）⇒ 该条目仍 `>` 游标，被重复返回；
+    /// - 前导空格（` b.md` → 比较值 `b.md`）⇒ 该条目不再 `>` 游标，被跳过。
+    #[test]
+    fn vault_list_cursor_keeps_path_whitespace() {
+        let (root, _policy) = fixture_vault("list-cursor-space");
+        for name in [" b.md", "a.md ", "c.md"] {
+            std::fs::write(root.join(name), "x\n").unwrap();
+        }
+        let defaults = crate::config::VaultConfig::default();
+        let policy = IgnorePolicy::load(&root, &[".gitignore".to_string()], &defaults.ignore);
+        let ctx = ctx(&root, &policy, &[]);
+
+        // 逐页（limit = 1）收集：三页拼起来恰为码点序全集，无重复无遗漏。
+        let mut collected: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = None;
+        for page in 0..3 {
+            let mut args = serde_json::json!({"limit": 1});
+            if let Some(cursor) = &cursor {
+                args["cursor"] = serde_json::json!(cursor);
+            }
+            let out = vault_list(&args, &ctx);
+            assert!(out.succeeded(), "第 {page} 页失败：{out:?}");
+            let entries = out.value["entries"].as_array().unwrap();
+            assert_eq!(entries.len(), 1, "第 {page} 页：{out:?}");
+            collected.push(entries[0]["path"].as_str().unwrap().to_string());
+            let truncated = out.value["truncated"].as_bool().unwrap();
+            let next = out.value.get("next_cursor").and_then(|v| v.as_str());
+            if page < 2 {
+                assert!(truncated, "第 {page} 页应还有下一页：{out:?}");
+                // 游标逐字节保留原始 path（含空格）。
+                assert_eq!(next, Some(collected[page].as_str()), "{out:?}");
+                cursor = next.map(str::to_string);
+            } else {
+                assert!(!truncated, "末页不应再截断：{out:?}");
+                assert!(next.is_none(), "{out:?}");
+            }
+        }
+        assert_eq!(collected, vec![" b.md", "a.md ", "c.md"]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `path` 与 `cursor` 同一口径（change add-harness-vault-workspace-list r4）：按原字符串解释，
+    /// 不做空白规范化。工具返回的条目 `path` 必须能原样传回——含首尾空格的目录名因此可达；去掉
+    /// 空格的名字是**另一个**名字，应如实报 `fs_not_found` 而不是静默换义。
+    #[test]
+    fn vault_list_path_keeps_whitespace_round_trip() {
+        let (root, _policy) = fixture_vault("list-path-space");
+        std::fs::create_dir_all(root.join(" spaced dir ")).unwrap();
+        std::fs::write(root.join(" spaced dir /x.md"), "x\n").unwrap();
+        let defaults = crate::config::VaultConfig::default();
+        let policy = IgnorePolicy::load(&root, &[".gitignore".to_string()], &defaults.ignore);
+        let ctx = ctx(&root, &policy, &[]);
+
+        // 列根：目录条目逐字节带空格。
+        let out = vault_list(&serde_json::json!({}), &ctx);
+        let dir_path = out.value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["path"].as_str().unwrap())
+            .find(|path| path.contains("spaced"))
+            .expect("根下应有带空格的目录")
+            .to_string();
+        assert_eq!(dir_path, " spaced dir ");
+
+        // 原样传回 ⇒ 列出它的子项（round-trip）。
+        let out = vault_list(&serde_json::json!({"path": dir_path}), &ctx);
+        assert!(out.succeeded(), "{out:?}");
+        let paths: Vec<&str> = out.value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(paths, vec![" spaced dir /x.md"]);
+
+        // 去掉空格的名字不是同一个目录：如实报不存在（不静默换成另一个目录）。
+        let out = vault_list(&serde_json::json!({"path": "spaced dir"}), &ctx);
+        assert_eq!(out.value["code"], "fs_not_found", "{out:?}");
         std::fs::remove_dir_all(&root).ok();
     }
 

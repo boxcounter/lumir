@@ -129,9 +129,16 @@ vault_list(
 
 - 只收 / 只返 vault 相对路径（`/` 分隔）。绝对路径**拒绝**并提示改用相对路径（此时模型已从工作区
   段知道根，转换是机械的；接受绝对路径会把「两种路径混用」的歧义带进新工具）。
+- `path` 与 `cursor` 都按**原字符串**解释，MUST NOT 做空白规范化：工具返回的条目 `path` 必须能
+  原样作为下一次调用的 `path` 或 `cursor`（macOS 文件名允许首尾空格）。只清理真实路径里不可能出现
+  的空段与 `.` 段。`vault_list_path_keeps_whitespace_round_trip` 钉 round-trip；去掉空格的名字是
+  另一个名字，如实报 `fs_not_found`，MUST NOT 静默换义。
 - 排序按 `path` 码点升序（Rust `str` 序，确定性、不做大小写折叠）。
-- 分页无状态：`next_cursor` = 本页最后一条的 `path`，`cursor` 只返回严格大于它的条目。磁盘在翻页
-  之间变化时按字典序「续读」仍然成立（新增 / 删除不会造成重复或跳过已返回区间的语义混乱）。
+- 分页无状态：`next_cursor` = 本页最后一条的 `path`（**原始字符串**，逐字节可回传），`cursor` 只
+  返回严格大于它的条目。磁盘在翻页之间变化时按字典序「续读」仍然成立（新增 / 删除不会造成重复或
+  跳过已返回区间的语义混乱）。`cursor` MUST NOT 做空白规范化（不 trim）：macOS 文件名允许首尾空格，
+  `trim` 会把 `a.md ` 改成 `a.md` 而让该条目重复返回，也会让根目录下以空格开头的路径被跳过——这条
+  由 `vault_list_cursor_keeps_path_whitespace` 钉住。
 - `limit` 的夹取发生在**接收之后**：工具 schema 只声明 `type: integer`（没有 `minimum`），负数与 0
   都是合法调用，实现 SHALL 按**有符号整数**接收、在转成无符号索引前 clamp 到 `1..=1000`；负数
   MUST NOT 在参数反序列化阶段被拒（否则 `-1` 会变成 `tool_args_invalid`，与「小于 1 按 1」互相
@@ -200,6 +207,8 @@ Alex 已批准的 `vault_list`；实现与文档 MUST NOT 把两者混称。
 | 工具 | `TOOL_NAMES.len() == 9`、`definitions()` 与名字表同源、`vault_list` schema 的 required / properties | `tools.rs` 单测 |
 | 工具 | 默认一层 / 递归 / glob / 排序 / 分页三页拼接完整 / truncated 与 next_cursor 配对 / hidden 不出现 / lazy 不展开 / 越界与非法目标 / 不含正文与元数据 | `tools.rs` 单测 |
 | 工具 | `limit` 边界：`-1` / `0` 按 1（不落参数错误）、`1001` 按上限 1000，且从 cursor 续读仍稳定 | `tools.rs` 单测 `vault_list_limit_is_clamped_not_rejected` |
+| 工具 | `cursor` 原样续读：首尾空格路径（`" b.md"` / `"a.md "`）下 `limit:1` 逐页收集无重复无遗漏，`next_cursor` 逐字节保留 | `tools.rs` 单测 `vault_list_cursor_keeps_path_whitespace` |
+| 工具 | `path` 原样解释：返回的含首尾空格目录 path 可原样传回并列子项；去掉空格的名字报 `fs_not_found` | `tools.rs` 单测 `vault_list_path_keeps_whitespace_round_trip` |
 | 权限 | `vault_list` 三档均 auto-allow（不产批准卡、不产依据），deny 规则仍优先 | `permissions.rs` 单测 `vault_list_auto_allows_in_all_modes` |
 | 文档 | 工具计数、固定段清单、ADR 与 spec 无「8 件 vault 操作工具」残留 | 人工 + `docs-check` |
 

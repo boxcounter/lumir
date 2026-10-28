@@ -123,3 +123,22 @@
   分页稳定不变）。
 - [x] 工具 schema 的 `limit` 描述补「小于 1 按 1」；design §5.1 记下「接收后再夹取」的实现约束与
   §7 的测试表条目。
+
+## r4 返修（2026-10-28，reviewer 结论 p2-1items / fix-then-merge）
+
+- [x] `cursor` 去掉 `str::trim`：只按原字符串判空 / 非空并做严格大于过滤。macOS 文件名允许首尾
+  空格，工具返回的 `next_cursor` 必须逐字节可回传——`trim` 会让尾随空格条目重复返回、让根目录下
+  前导空格条目被跳过（review 反例）。
+- [x] 新增必红回归 `vault_list_cursor_keeps_path_whitespace`：根下 `" b.md"` / `"a.md "` / `"c.md"`，
+  `limit: 1` 逐页收集三页拼接恰为码点序全集、`next_cursor` 逐字节等于原始 path。**已实测**：临时
+  恢复旧 `trim` 时该用例失败（第 1 页后只剩 `c.md`），恢复修复后全绿。
+- [x] design §5.1 记下「cursor 不做空白规范化」的约束与反例，§7 测试表补对应行；r3 的 `limit`
+  边界测试保持通过（无回退）。
+
+## r4 返修补记：`path` 与 `cursor` 同族（同一轮，review 只点了 cursor）
+
+- [x] `path` 也去掉 `trim()`：否则工具返回的「 spaced dir 」这类目录名无法原样传回（会静默换成
+  另一个名字）。现在 `path` / `cursor` 都按原字符串解释，只清理真实路径里不可能出现的空段与 `.` 段。
+- [x] 新增 `vault_list_path_keeps_whitespace_round_trip`：列根取回带空格的目录 path → 原样传回列出
+  子项；去掉空格的名字报 `fs_not_found`（不静默换义）。**已实测**：临时恢复 `trim` 时该用例失败。
+- [x] design §5.1 把 `path` / `cursor` 的原样语义写成同一条约束，§7 测试表补对应行。
