@@ -1937,7 +1937,9 @@ mod tests {
             value["approval_policy"]["kind"], "reject_unavailable",
             "无人值守运行不得把批准策略写成交互：{value}"
         );
-        assert_eq!(value["tool_policy"]["allow"].as_array().unwrap().len(), 8);
+        // 9 件 vault 操作工具（change add-harness-vault-workspace-list 起含 `vault_list`）：
+        // 交接契约把整套 vault 工具授予 cron 运行，且 MUST NOT 含 `task`。
+        assert_eq!(value["tool_policy"]["allow"].as_array().unwrap().len(), 9);
         assert!(
             !value["tool_policy"]["allow"]
                 .as_array()

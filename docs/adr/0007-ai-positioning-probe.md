@@ -2,7 +2,7 @@
 
 - 状态: accepted
 - 日期: 2026-10-02
-- 修订: 2026-10-18（Decision 7 拆为「vault 操作工具 8 + 编排工具 1」，`task` 入册；Revisit 第三分支据此消费）；2026-10-20（Decision 7 第二次扩张为「8 + 1 + 3」，三件调度工具入册；Revisit 第三分支再次消费）
+- 修订: 2026-10-18（Decision 7 拆为「vault 操作工具 8 + 编排工具 1」，`task` 入册；Revisit 第三分支据此消费）；2026-10-20（Decision 7 第二次扩张为「8 + 1 + 3」，三件调度工具入册；Revisit 第三分支再次消费）；2026-10-28（Decision 7 第三次修订：`vault_list` 入册为「9 + 1 + 3」，工具判据由「读操作不建 vault 工具」改为「核心领域的稳定动作优先结构化工具」，并兑现 2026-10-09 的 vault 根路径定向为完整工作区合同；Revisit 第三分支第三次消费）
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
 ## Context
@@ -41,32 +41,68 @@
    - ADR 0004 M2（agent 集成）维持 deferred：本探针不等于恢复 M2，只是 AI 方向上的一个使用探针。
    - ADR 0005 与 PRODUCT-CONCEPT.md 仍是未来定位决策的输入而非必须恢复的前提（前者留在仓库；后者已按 Alex 裁决于 2026-10-06 从仓库删除，master a99a913，内容可用 `git show 545dd65:PRODUCT-CONCEPT.md` 从 git 历史取回，本 ADR 引用均指该历史版本）。
    - ADR 0006 的 Revisit 条款由本 ADR 消费；0006 其余内容（当前阶段定位 = Emacs keybinding PKM、视觉基线等）继续有效。
-7. **工具集边界原则（2026-10-09 Alex 裁决，2026-10-18 与 2026-10-20 两次修订；工具清单治理的
-   canonical 口径）。**
-   - **工具集分三类，清单记为 8 + 1 + 3**：**vault 操作工具** 8 件（`vault_read` /
-     `vault_search` / `vault_patch` / `vault_create` / `vault_move` / `vault_delete` /
-     `skill_load` / `cli_run`）、**编排工具** 1 件（`task`）与**调度工具** 3 件
+7. **工具集边界原则（2026-10-09 Alex 裁决，2026-10-18 / 2026-10-20 / 2026-10-28 三次修订；
+   工具清单治理的 canonical 口径）。**
+   - **工具集分三类，清单记为 9 + 1 + 3**：**vault 操作工具** 9 件（`vault_read` /
+     `vault_search` / `vault_list` / `vault_patch` / `vault_create` / `vault_move` /
+     `vault_delete` / `skill_load` / `cli_run`）、**编排工具** 1 件（`task`）与**调度工具** 3 件
      （`cron_task_create` / `cron_task_list` / `cron_task_remove`）。三类不在同一判据下讨论
-     （以下三段是 vault 操作工具的口径，第四段是编排工具、第五段是调度工具的口径）。
-   - **「写且需防护才有 vault 工具」**：vault 工具存在的理由是写入需要防护层（批准预览 diff、vault 根禁锢、可恢复），工具是防护的载体、不是 shell 的替代品。**读操作不建 vault 工具**——读走 `cli_run` 只读白名单（首版清单见 change `add-harness-permission-modes` 的 design §3.1），不因「shell 不熟 / 图方便」另立只读工具（`vault_list` 这类必要性低的工具即被本条挡下）。
+     （以下依次是：vault 工具判据、`vault_list` 入册、mkdir、工作区合同、编排工具、调度工具、用途）。
+   - **「核心领域的稳定动作优先结构化工具」**（2026-10-28 修订，取代原「写且需防护才有 vault
+     工具 / 读操作不建 vault 工具」）：harness tools 是模型面向 vault 的**领域 API**，不是写防护
+     的载体也不是 shell 的替代品。它们承担四件事——意图表达（用领域语义说「列目录」而不是让模型
+     翻译成 `ls` / `find`）、范围约束（结果不越出 vault）、领域语义（与文件树、搜索共用同一套忽略
+     / 可见性 / 惰性规则）与有界结果（显式截断与 continuation）。判据是**动作是否属于「定位 →
+     阅读/搜索 → 修改/综合」核心任务链的稳定一步、且对任意 vault 同一语义**；是则应提供结构化
+     工具，缺它不会消除复杂度，只会把复杂度转嫁给模型每次用 CLI 重新翻译。通用计算、外部能力
+     （联网、git、脚本）与低频操作仍走 `cli_run`；写操作另须经过防护层（批准预览 diff、vault 根
+     禁锢、可恢复）。工具数量不是目标，也不扩张成整套 shell 替代品——`vault_stat` / `vault_count`
+     / `vault_head` 等只读工具族明确不做。
+   - **`vault_list` 入册（2026-10-27 Alex 裁决，原话「好。我没有异议了，我们可以开始落实它了」）**：
+     目录 / 路径发现是核心任务链的入口，此前只有通用 CLI 一条通道（现场实证：模型用 `pwd`、`ls
+     /Users`、广域 `find` 探测 vault 根与 sibling 文件）。它只做 vault 内目录导航：默认一层、
+     递归与路径过滤显式选择、稳定排序、有界分页（`limit` / `cursor` / `truncated` /
+     `next_cursor`）、只收只返 vault 相对路径、只返 `path` 与条目类型（不返正文、不堆元数据）。
+     不与 `vault_search` 合并成「空 query 隐式列文件」——目录导航与正文搜索的输入、结果与分页
+     语义不同。
    - **mkdir 不建工具**：目录创建由 `vault_create` 自动创建缺失父目录（`mkdir -p` 语义）吸收；`cli_run mkdir` 写目标在 vault 内者由权限闸门改道 `vault_create`（同 change design §4.2 的 suggested_tool 映射）。
-   - **vault 根路径定向**：vault 绝对根路径注入会话上下文（system 上下文），使「定位 vault 根 / 摸清工作目录」这类需求不再经 `cli_run`（`pwd` / `find <HOME>` 形态；M404 survey 里 3/9 即此类）。
+   - **工作区合同 = vault 根路径定向的兑现（2026-10-28 修订，取代 2026-10-09 那款只注入根路径的
+     写法）**：每个 harness run（主会话、子代理、cron 无人值守运行）绑定一个**当前 vault**，三层
+     语义共用同一个根：
+     - **上下文**：system 注入该 vault 的绝对根路径，并写明两种路径的用法边界——`vault_*` 工具
+       只用 vault 相对路径；`cli_run` 从该目录启动，其相对路径因此就是 vault 内路径，外部目标
+       用绝对路径。目的是让「定位 vault 根 / 摸清工作目录」不再经 `cli_run`（`pwd` / `find
+       <HOME>` 形态；M404 survey 里 3/9 即此类）。
+     - **执行**：每次 `cli_run` 子进程**单独**设 `current_dir` 为当前 vault 并同步 `PWD`；
+       MUST NOT 用 `set_current_dir` 改主进程全局 cwd（多 vault、子代理、后台运行互不污染）。
+       不增加模型可填的 `cwd` 参数。
+     - **判定**：权限层用**同一个根**解释相对写目标——不含 `..` 的相对路径即 vault 内目标
+       （含根目录下尚不存在的文件），不再靠「目标 / 父目录是否存在」猜 cwd 归属；绝对路径
+       containment、`..` 逃逸与符号链接防护保持。
+     主会话、子代理、cron 与多 vault 切换遵守同一合同；**不保留继承主进程 cwd 的兼容层**（该
+     行为不稳定且无可指名消费者）。
    - **编排工具（`task`）不操作 vault**：它只把任务委派给子代理，自身不读、不写、不移动 vault 内容，
-     因此**不参与**上面「写且需防护才有」的判据，也不属于「读操作走 `cli_run`」的收窄面——它不是
-     shell 的替代品，也不是一个 vault 工具。它的能力边界由子代理定义的工具白名单表达：缺省只读
-     三件，`task` 不在可授予集合内（深度 1 由此表达，不维护运行时深度计数）；子代理内每一次
-     vault 操作仍走被授予的 vault 操作工具与同一套权限 / 批准闸。`task` 是否注册受
-     `[harness.subagents].enabled` 控制（kill switch），关闭后编排工具退场、交互路径回到
-     8 + 3 件。
+     因此**不参与**上面 vault 工具的判据——它不是 shell 的替代品，也不是一个 vault 工具。它的能力
+     边界由子代理定义的工具白名单表达：缺省只读三件（`vault_read` / `vault_search` /
+     `skill_load`），`vault_list` 属可授予的只读工具（定义显式声明即可见），`task` 不在可授予
+     集合内（深度 1 由此表达，不维护运行时深度计数）；子代理内每一次 vault 操作仍走被授予的
+     vault 操作工具与同一套权限 / 批准闸。`task` 是否注册受 `[harness.subagents].enabled` 控制
+     （kill switch），关闭后编排工具退场、交互路径回到 9 + 3 件。
    - **调度工具（`cron_task_*`）不操作 vault**：它们只经配置写通道读写配置目录里的
      `[cron].tasks`（读—改—写同锁 + 原子替换）并投递一条运行期重载，不读、不写、不移动 vault
-     内容，因此同样**不参与**「写且需防护才有」的判据，也不属于「读操作走 `cli_run`」的收窄面。
-     能力边界由注册面表达：三件工具只在**交互发送路径**（`tool_policy` 为 `None`）注册；无人值守
-     的定时运行（交接契约 `allow = TOOL_NAMES`）与子运行（定义白名单以 `TOOL_NAMES` 为界）都看
-     不见它们——定时运行不能给自己排新任务，子代理也不能。**这是工具清单的第二次扩张**，2026-10-20
-     按 Decision 2 与 Revisit 条件经 Alex 显式裁决（change `add-cron-conversational-registration`
-     节点 1「全按推荐。」）。
-   - 用途：后续任何「要不要加一个 vault 工具」的讨论先过上面三条——读操作、无需防护层、可由既有工具语义吸收者一律不加工具；新增**编排工具**（第二类）或**调度工具**（第三类）同样按 Decision 2 与 Revisit 条件经 Alex 显式裁决——`task` 即 2026-10-18 按该口径裁决的第一件（change `add-harness-subagents` 节点 1）；三件调度工具即 2026-10-20 按同一口径裁决的第二组（change `add-cron-conversational-registration` 节点 1）。
+     内容，因此同样**不参与**上面 vault 工具的判据。能力边界由注册面表达：三件工具只在**交互发送
+     路径**（`tool_policy` 为 `None`）注册；无人值守的定时运行（交接契约 `allow = TOOL_NAMES`）
+     与子运行（定义白名单以 `TOOL_NAMES` 为界）都看不见它们——定时运行不能给自己排新任务，子代理
+     也不能。**这是工具清单的第二次扩张**，2026-10-20 按 Decision 2 与 Revisit 条件经 Alex 显式
+     裁决（change `add-cron-conversational-registration` 节点 1「全按推荐。」）。
+   - 用途：后续任何「要不要加一个 vault 工具」的讨论先过上面那款判据——**核心任务链上的稳定动作
+     且对任意 vault 同一语义 ⇒ 建；通用计算 / 外部能力 / 低频操作 ⇒ `cli_run`；写操作另经防护层；
+     能由既有工具语义吸收者（如 mkdir 之于 `vault_create`）一律不加**。新增**编排工具**（第二类）
+     或**调度工具**（第三类）同样按 Decision 2 与 Revisit 条件经 Alex 显式裁决——`task` 即
+     2026-10-18 按该口径裁决的第一件（change `add-harness-subagents` 节点 1）；三件调度工具即
+     2026-10-20 按同一口径裁决的第二组（change `add-cron-conversational-registration` 节点 1）；
+     `vault_list` 即 2026-10-27 按修订后判据裁决的第一件（change
+     `add-harness-vault-workspace-list`）。
 
 ## Consequences
 
@@ -99,3 +135,9 @@
     change `add-cron-conversational-registration` 节点 1 经 Alex「全按推荐。」裁决通过；本 ADR
     Decision 7 同日修订为「8 件 vault 操作 + 1 件编排 + 3 件调度」。该修订同属本 Revisit 分支的
     正常消费，不是新的扩张授权。
+  - **已命中并消费（2026-10-27）**：探测能力清单第三次扩张——vault 内目录 / 路径发现需要
+    `vault_list`，且「读操作不建 vault 工具」的旧判据被「核心领域的稳定动作优先结构化工具」取代；
+    Alex 在另一会话裁决「好。我没有异议了，我们可以开始落实它了」，change
+    `add-harness-vault-workspace-list` 落实。同一次修订把 2026-10-09 的 vault 根路径定向兑现为
+    完整工作区合同（system 绝对根 + `cli_run` 独立 cwd + 权限相对路径同一根）。该修订同属本
+    Revisit 分支的正常消费，不是新的扩张授权。

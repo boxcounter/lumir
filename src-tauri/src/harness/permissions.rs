@@ -99,9 +99,18 @@ impl Verdict {
 
 /// 读类工具：默认 allow（三档一致）。
 ///
+/// `vault_list`（change add-harness-vault-workspace-list）：目录 / 路径发现是读操作，无副作用，
+/// 因此落在读类——三档直接放行、不进批准闸。
+///
 /// `cron_task_list` 是读类（change add-cron-conversational-registration design §6.1）：它读的是配置
 /// 与去重状态、不是 vault——但「读类默认放行」依赖的是「没有副作用」，不依赖被读对象的类型。
-const READ_TOOLS: [&str; 4] = ["vault_read", "vault_search", "skill_load", "cron_task_list"];
+const READ_TOOLS: [&str; 5] = [
+    "vault_read",
+    "vault_search",
+    "vault_list",
+    "skill_load",
+    "cron_task_list",
+];
 
 /// 判定一次工具调用（design §1 的五层管线）。
 ///
@@ -1774,14 +1783,17 @@ fn overwrite_or_create(root: &Path, targets: &[String]) -> &'static str {
     }
 }
 
-/// 单个写目标 → vault 相对路径（design §4.1 的 out-of-vault / in-vault 判定）。
+/// 单个写目标 → vault 相对路径（design §4.1 的 out-of-vault / in-vault 判定；change
+/// `add-harness-vault-workspace-list` design §4 改为「词法规则 + symlink 否决」）。
 ///
 /// - `..` 逃逸一律不重定向（词法阶段就拒）。
-/// - 绝对路径：词法规范化后必须落在 vault 根之下（根的前缀比较走 canonicalize 后的根）。
-/// - 相对路径：不以 `/` 起首、也不以 `..` 起首（上面已挡），且**存在性佐证**——目标已在 vault
-///   内，或父目录在 vault 内存在。佐证是必要的：cli_run 进程的 cwd 是 app 进程工作目录、不是
-///   vault 根（`tools.rs` 现行 spawn 不设 `current_dir`），没有佐证就会把 `build.sh` 这类显然
-///   指向 vault 外的相对路径误伤。
+/// - 绝对路径：必须解析到 vault 根之下（已存在的祖先 canonicalize 后比较，拼回尚不存在的尾段）。
+/// - 相对路径：**无条件**视为 vault 内目标。`cli_run` 子进程的工作目录就是当前 vault
+///   （`tools.rs` 每次 spawn 设 `current_dir`），所以「不含 `..` 的相对路径」与「vault 内路径」
+///   是同一件事——**包括根目录下尚不存在的新文件**。MUST NOT 再以「目标 / 父目录是否存在」作为
+///   归属佐证：cwd 不再是主进程目录，存在性不再携带归属信息（旧实现靠它猜 cwd）。
+/// - symlink 否决：目标自身（不存在时取最近的已存在祖先）canonicalize 后必须仍在根内，否则
+///   不重定向（真实落点在 vault 外，按绝对路径逃逸同档处理）。
 fn vault_relative(root: &Path, target: &str) -> Option<String> {
     let target = target.trim();
     if target.is_empty() {
@@ -1799,34 +1811,39 @@ fn vault_relative(root: &Path, target: &str) -> Option<String> {
     if normalized.as_os_str().is_empty() {
         return None;
     }
+    let absolute = if path.is_absolute() {
+        normalized.clone()
+    } else {
+        root.join(&normalized)
+    };
+    // 逃逸 / symlink 否决的单一判定：解析结果的根内相对段（None ⇒ 不在 vault 内）。
+    let inside = resolve_inside(&root_canon, &absolute)?;
     if path.is_absolute() {
-        let rel = normalized.strip_prefix(&root_canon).ok()?;
-        let rel = rel.to_string_lossy().replace('\\', "/");
+        let rel = inside.to_string_lossy().replace('\\', "/");
         return (!rel.is_empty()).then_some(rel);
     }
     let rel = normalized.to_string_lossy().replace('\\', "/");
-    if rel.is_empty() {
-        return None;
+    (!rel.is_empty()).then_some(rel)
+}
+
+/// `target` 解析到 `root_canon` 之下时的根内相对路径：把**最近的已存在祖先** canonicalize，
+/// 再把尚不存在的尾段拼回去。目标自身存在时就是它的 canonicalize 结果——因此指向根外的
+/// 符号链接（目标自身或路径上的祖先）在这里落 `None`，与绝对路径逃逸同一处理。
+fn resolve_inside(root_canon: &Path, target: &Path) -> Option<std::path::PathBuf> {
+    let mut suffix: Vec<std::ffi::OsString> = Vec::new();
+    let mut probe = target.to_path_buf();
+    loop {
+        if let Ok(canon) = probe.canonicalize() {
+            let mut full = canon;
+            for segment in suffix.iter().rev() {
+                full.push(segment);
+            }
+            return full.strip_prefix(root_canon).ok().map(Path::to_path_buf);
+        }
+        let name = probe.file_name()?.to_os_string();
+        suffix.push(name);
+        probe = probe.parent()?.to_path_buf();
     }
-    let absolute = root.join(&normalized);
-    if std::fs::symlink_metadata(&absolute).is_ok() {
-        // 存在（或悬空链接）：canonicalize 得出来就要求仍在 vault 内（符号链接逃逸挡在重定向前）。
-        return match absolute.canonicalize() {
-            Ok(canon) if !canon.starts_with(&root_canon) => None,
-            _ => Some(rel),
-        };
-    }
-    // 不存在：父目录在 vault 内存在 ⇒ 视为 vault 内新建目标（`mkdir` / `touch` 常见形态）。
-    let parent = normalized.parent()?;
-    if parent.as_os_str().is_empty() {
-        return None;
-    }
-    let parent_abs = root.join(parent);
-    let parent_canon = parent_abs.canonicalize().ok()?;
-    if !parent_canon.starts_with(&root_canon) || !parent_canon.is_dir() {
-        return None;
-    }
-    Some(rel)
 }
 
 /// 词法规范化：去掉 `.` 段与重复分隔符（**不**解析 `..`——它在判定入口就被拒）。
@@ -2197,9 +2214,11 @@ mod tests {
             mode: PermissionMode::ReadOnly,
             ..judge(&root, None)
         };
-        // 读类：三档一致放行。
+        // 读类：三档一致放行。`vault_list` 自 change add-harness-vault-workspace-list 起属读类
+        // （目录发现无副作用），任何档都不进批准闸。
         assert_eq!(decide(&p, "vault_read", "a.md", &j), Decision::Allow);
         assert_eq!(decide(&p, "vault_search", "q", &j), Decision::Allow);
+        assert_eq!(decide(&p, "vault_list", "notes", &j), Decision::Allow);
         assert_eq!(decide(&p, "skill_load", "demo", &j), Decision::Allow);
         // 写工具：**Ask 而非 Deny**（Alex 2026-10-09 裁决：read_only = Always Ask，design §2 修订）。
         for tool in ["vault_patch", "vault_create", "vault_move", "vault_delete"] {
@@ -2980,18 +2999,23 @@ mod tests {
             ),
             Decision::Ask
         );
-        // 相对路径、vault 内不存在、父目录也不存在 ⇒ 判定不确定不重定向（宁漏勿错）。
+        // 相对路径、vault 内不存在、父目录也不存在 ⇒ **仍重定向**（change
+        // add-harness-vault-workspace-list）：`cli_run` 的 cwd 就是 vault，根目录下的相对路径
+        // 与 vault 内路径是同一件事，不再靠「父目录是否存在」猜归属。根下新文件 ⇒ `vault_create`。
         let cli = argv(&["touch", "build.sh"]);
-        assert_eq!(
-            decide(
-                &p,
-                "cli_run",
-                "touch build.sh",
-                &judge(&root, Some(cli.clone()))
-            ),
-            Decision::Ask
-        );
-        // 相对路径指向 vault 内已存在目录下的新文件 ⇒ 重定向（父目录存在性佐证）。
+        match decide(
+            &p,
+            "cli_run",
+            "touch build.sh",
+            &judge(&root, Some(cli.clone())),
+        ) {
+            Decision::Redirect(redirect) => {
+                assert_eq!(redirect.targets, vec!["build.sh"]);
+                assert_eq!(redirect.suggested_tool, Some("vault_create"));
+            }
+            other => panic!("根目录相对新文件应重定向，得到 {other:?}"),
+        }
+        // 相对路径指向 vault 内已存在目录下的新文件 ⇒ 重定向。
         let cli = argv(&["touch", "notes/new.md"]);
         match decide(
             &p,
@@ -3044,6 +3068,56 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// 相对写目标的归属判定（change add-harness-vault-workspace-list design §4）：词法规则无条件
+    /// 成立（相对且不含 `..` ⇒ vault 内，含根下新文件），symlink 否决只做安全收口。
+    #[test]
+    fn vault_relative_uses_lexical_rule_with_symlink_veto() {
+        let root = fixture_root("vault-relative");
+        // 相对：不存在也算 vault 内（根下新文件是旧实现漏掉的那一格）。
+        assert_eq!(vault_relative(&root, "a.md"), Some("a.md".to_string()));
+        assert_eq!(
+            vault_relative(&root, "notes/new.md"),
+            Some("notes/new.md".to_string())
+        );
+        assert_eq!(
+            vault_relative(&root, "notes/a.md"),
+            Some("notes/a.md".to_string())
+        );
+        // `..` 逃逸与根外绝对路径：不重定向。
+        assert_eq!(vault_relative(&root, "../escape.md"), None);
+        assert_eq!(vault_relative(&root, "notes/../../escape.md"), None);
+        assert_eq!(vault_relative(&root, "/etc/hosts"), None);
+        // 根自身 / 空路径：不是写目标。
+        assert_eq!(vault_relative(&root, "."), None);
+        assert_eq!(vault_relative(&root, "  "), None);
+        // 根内绝对路径（含尚不存在的尾段）⇒ 相对载荷。
+        let absolute = root.join("notes/a.md");
+        assert_eq!(
+            vault_relative(&root, &absolute.display().to_string()),
+            Some("notes/a.md".to_string())
+        );
+        let absolute_new = root.join("newdir/x.md");
+        assert_eq!(
+            vault_relative(&root, &absolute_new.display().to_string()),
+            Some("newdir/x.md".to_string())
+        );
+        // symlink 否决：目标自身指向根外、以及路径上的祖先指向根外，都不重定向。
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/etc/hosts", root.join("outside-link.md")).unwrap();
+            assert_eq!(vault_relative(&root, "outside-link.md"), None);
+            std::os::unix::fs::symlink("/tmp", root.join("outside-dir")).unwrap();
+            assert_eq!(vault_relative(&root, "outside-dir/new.md"), None);
+            // 指向**根内**的符号链接不算逃逸：归属仍成立。
+            std::os::unix::fs::symlink(root.join("notes"), root.join("inner-dir")).unwrap();
+            assert_eq!(
+                vault_relative(&root, "inner-dir/new.md"),
+                Some("inner-dir/new.md".to_string())
+            );
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     /// 重定向在**任何档**都成立（裁决点 6 落 A）——full_access 也不例外；且用户 allow 规则
     /// 绕不过它（第 2 层在 allow 之前）。
     #[test]
@@ -3067,6 +3141,25 @@ mod tests {
                 ),
                 "{mode:?}"
             );
+        }
+        // 根目录下尚不存在的新文件（旧实现的存在性佐证会把它漏成普通写，full_access 下即放行）。
+        let cli = argv(&["touch", "root-new.md"]);
+        for mode in [
+            PermissionMode::ReadOnly,
+            PermissionMode::VaultWrite,
+            PermissionMode::FullAccess,
+        ] {
+            let j = Judge {
+                mode,
+                ..judge(&root, Some(cli.clone()))
+            };
+            match decide(&p, "cli_run", "touch root-new.md", &j) {
+                Decision::Redirect(redirect) => {
+                    assert_eq!(redirect.targets, vec!["root-new.md"], "{mode:?}");
+                    assert_eq!(redirect.suggested_tool, Some("vault_create"), "{mode:?}");
+                }
+                other => panic!("{mode:?} 下根目录新文件应重定向，得到 {other:?}"),
+            }
         }
         std::fs::remove_dir_all(&root).ok();
     }

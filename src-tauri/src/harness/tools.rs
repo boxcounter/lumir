@@ -26,6 +26,9 @@
 //! shell 解析一份完整 PATH、缓存并注入子进程，让裸命令（如装在 `~/.local/bin` 的 CLI）无需
 //! `zsh -lc` 包裹即可被找到；解析失败回退继承 app 的 PATH。它只影响「能否找到命令」，
 //! MUST NOT 影响「命令是否被放行」——权限判定照旧只看 argv（`permissions.rs`）。
+//!
+//! cli_run 子进程的工作目录（change add-harness-vault-workspace-list）：每次 spawn 单独设
+//! `current_dir` 为当前 vault 并同步 `PWD`，不改主进程 cwd、不提供模型可填的 `cwd` 参数。
 
 use std::io::Read;
 use std::path::{Component, Path};
@@ -116,10 +119,13 @@ impl ToolOutput {
     }
 }
 
-/// 8 个工具的名字表（恰好清单；execute 的 match 以此为准）。
-pub const TOOL_NAMES: [&str; 8] = [
+/// 9 个 vault 操作工具的名字表（恰好清单；execute 的 match 以此为准）。
+/// `vault_list` 自 change `add-harness-vault-workspace-list` 起入册（ADR 0007 Decision 7 第三次
+/// 修订）：目录 / 路径发现是核心任务链的入口，不是「读操作所以不建工具」的收窄面。
+pub const TOOL_NAMES: [&str; 9] = [
     "vault_read",
     "vault_search",
+    "vault_list",
     "vault_patch",
     "vault_create",
     "vault_move",
@@ -129,7 +135,7 @@ pub const TOOL_NAMES: [&str; 8] = [
 ];
 
 /// 3 件调度工具的名字表（change add-cron-conversational-registration design §2.1）：**只在交互
-/// 发送路径注册**（`run::SessionContext::tool_definitions`）。`TOOL_NAMES` 保持 8 件不变——cron
+/// 发送路径注册**（`run::SessionContext::tool_definitions`）。`TOOL_NAMES` 保持 9 件不变——cron
 /// 交接的工具白名单与子运行定义白名单都以它为界，三件调度工具因此拿不到无人值守运行与子运行。
 pub const CRON_TOOL_NAMES: [&str; 3] = ["cron_task_create", "cron_task_list", "cron_task_remove"];
 
@@ -162,6 +168,21 @@ pub fn definitions() -> Vec<serde_json::Value> {
                     "path_glob": {"type": "string", "description": "可选路径过滤，* 匹配任意字符（含 /），? 匹配单个字符"}
                 },
                 "required": ["query"]
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "name": "vault_list",
+            "description": "列出 vault 内目录内容（目录 / 路径发现）。默认只列一层；recursive 才下钻。返回 path 与 kind=file|directory，按 path 升序分页（limit / cursor / truncated / next_cursor）。不返回文件内容。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "vault 相对目录，缺省 vault 根"},
+                    "recursive": {"type": "boolean", "description": "true = 递归下钻；缺省只列一层"},
+                    "path_glob": {"type": "string", "description": "可选路径过滤，* 匹配任意字符（含 /），? 匹配单个字符"},
+                    "limit": {"type": "integer", "description": "本页最多条数（缺省 200，上限 1000）"},
+                    "cursor": {"type": "string", "description": "上一页返回的 next_cursor"}
+                }
             }
         }),
         serde_json::json!({
@@ -402,6 +423,15 @@ pub fn permission_subject(name: &str, args: &serde_json::Value) -> String {
             .or_else(|| args.get("query").and_then(|v| v.as_str()))
             .unwrap_or("")
             .to_string(),
+        // vault_list（change add-harness-vault-workspace-list）：与 vault_search 同口径——有
+        // path_glob 时它是限制面，否则取目录 path（根目录 = 空串）。只读工具，主体串只服务
+        // deny 规则的定位。
+        "vault_list" => args
+            .get("path_glob")
+            .and_then(|v| v.as_str())
+            .or_else(|| args.get("path").and_then(|v| v.as_str()))
+            .unwrap_or("")
+            .to_string(),
         "cron_task_create" | "cron_task_remove" => {
             let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
             let at = args.get("at").and_then(|v| v.as_str()).unwrap_or("");
@@ -445,12 +475,13 @@ pub fn execute_with_revision(
     match name {
         "vault_read" => vault_read(args, ctx),
         "vault_search" => vault_search(args, ctx),
+        "vault_list" => vault_list(args, ctx),
         "vault_patch" => vault_patch(args, ctx, revision),
         "vault_create" => vault_create(args, ctx),
         "vault_move" => vault_move(args, ctx),
         "vault_delete" => vault_delete(args, ctx),
         "skill_load" => skill_load(args, ctx),
-        "cli_run" => cli_run(args),
+        "cli_run" => cli_run(args, ctx),
         // 调度工具（change add-cron-conversational-registration）：执行侧只做参数 → 草稿的
         // 映射与回执整形，校验 / 落盘 / 重载都在端口实现里（`cron.rs` + `lib.rs`）。
         "cron_task_create" => cron_task_create(args, ctx),
@@ -839,6 +870,147 @@ fn snippet(line: &str) -> String {
     }
 }
 
+#[derive(Deserialize)]
+struct ListArgs {
+    path: Option<String>,
+    recursive: Option<bool>,
+    path_glob: Option<String>,
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+
+/// 单页条数的缺省 / 上限（change add-harness-vault-workspace-list design §5.1）：有界输出是合同
+/// 的一部分——整棵 vault 树 MUST NOT 一次灌进上下文。
+const LIST_DEFAULT_LIMIT: usize = 200;
+const LIST_MAX_LIMIT: usize = 1000;
+
+/// 目录 / 路径发现（change add-harness-vault-workspace-list design §5）。
+///
+/// 枚举直接复用 [`fs_io::scan_workspace`]：它已经实现了「全类型递归枚举、hidden 丢弃、lazy 行、
+/// 用户规则与 path 排序」，并在递归途中逐层登记嵌套 `.gitignore`。自写子树遍历要么重读祖先规则、
+/// 要么漏规则，两种都会造出第二套目录语义（REVIEW.md「同一语义两处真源」条）。
+///
+/// 本函数只做三件过滤：目录前缀（一层 / 递归）、`path_glob`、`cursor` 续读；返回条目只含
+/// `path` 与 `kind`——不返回正文、大小或时间（有界、可预期、不让模型把结果当 `find` 用）。
+fn vault_list(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+    let input = match parse_args::<ListArgs>(args) {
+        Ok(input) => input,
+        Err(output) => return output,
+    };
+    let raw = input.path.as_deref().unwrap_or("").trim();
+    // 绝对路径单独给码：工作区段已给出 vault 根，转换是机械的；接受两种写法会把路径歧义带进新
+    // 工具的结果面（`path` 一律 vault 相对）。
+    if raw.starts_with('/') {
+        return ToolOutput::err(
+            "list_path_absolute",
+            format!("path 必须是 vault 相对路径（不要以 / 开头）：{raw}；vault 根见 system 的工作区段。"),
+        );
+    }
+    // 词法清理：去掉空段与 `.` 段（`./notes`、`notes//` 与 `notes` 等价）。`..` 段保留，
+    // 交给 `resolve_in_vault` 按逃逸拒绝——清理层 MUST NOT 让逃逸消失。
+    let dir_rel = raw
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+    let dir_rel = dir_rel.as_str();
+    // 目录校验：空 = vault 根（`resolve_in_vault` 对空串按非法路径处理，这里单独走根）；非空走与
+    // 所有读取路径同源的 vault 内解析（逃逸 / 不存在 / 符号链接逃逸都由它兜）。
+    if dir_rel.is_empty() {
+        match ctx.root.canonicalize() {
+            Ok(root) if root.is_dir() => {}
+            Ok(_) => {
+                return ToolOutput::err(
+                    "fs_root_not_dir",
+                    format!("vault 根不是目录：{}", ctx.root.display()),
+                )
+            }
+            Err(e) => {
+                return ToolOutput::err(
+                    "fs_root_invalid",
+                    format!("无法解析 vault 根 {}：{e}", ctx.root.display()),
+                )
+            }
+        }
+    } else {
+        let resolved = match fs_io::resolve_in_vault(ctx.root, dir_rel) {
+            Ok(path) => path,
+            Err(e) => return ToolOutput::from_command_error(&e),
+        };
+        if !resolved.is_dir() {
+            return ToolOutput::err("list_not_a_directory", format!("{dir_rel} 不是目录"));
+        }
+    }
+    let scanned = match fs_io::scan_workspace(ctx.root, ctx.policy) {
+        Ok(entries) => entries,
+        Err(e) => return ToolOutput::from_command_error(&e),
+    };
+    let recursive = input.recursive.unwrap_or(false);
+    let prefix = if dir_rel.is_empty() {
+        String::new()
+    } else {
+        format!("{dir_rel}/")
+    };
+    // 按 path 码点升序——`scan_workspace` 已排序，这里显式再排一次：排序是本工具的契约，不把
+    // 「上游碰巧排过序」当保证（上游排序口径变化不该静默改写分页顺序）。
+    let mut lines: Vec<(String, &'static str)> = scanned
+        .iter()
+        .filter_map(|entry| {
+            let rel = entry.path.as_str();
+            let tail = if prefix.is_empty() {
+                rel
+            } else {
+                rel.strip_prefix(&prefix)?
+            };
+            if tail.is_empty() {
+                return None; // 目录自身不是它的条目
+            }
+            if !recursive && tail.contains('/') {
+                return None; // 默认只列一层
+            }
+            if let Some(glob) = &input.path_glob {
+                if !glob_match(glob, rel) {
+                    return None;
+                }
+            }
+            let kind = match entry.kind {
+                fs_io::FsEntryKind::Dir => "directory",
+                fs_io::FsEntryKind::File => "file",
+            };
+            Some((rel.to_string(), kind))
+        })
+        .collect();
+    lines.sort_by(|a, b| a.0.cmp(&b.0));
+    if let Some(cursor) = input.cursor.as_deref().map(str::trim) {
+        if !cursor.is_empty() {
+            lines.retain(|(path, _)| path.as_str() > cursor);
+        }
+    }
+    let limit = input
+        .limit
+        .unwrap_or(LIST_DEFAULT_LIMIT)
+        .clamp(1, LIST_MAX_LIMIT);
+    let truncated = lines.len() > limit;
+    lines.truncate(limit);
+    let next_cursor = truncated
+        .then(|| lines.last().map(|(path, _)| path.clone()))
+        .flatten();
+    let entries: Vec<serde_json::Value> = lines
+        .iter()
+        .map(|(path, kind)| serde_json::json!({"path": path, "kind": kind}))
+        .collect();
+    let mut value = serde_json::json!({
+        "path": dir_rel,
+        "entries": entries,
+        "truncated": truncated,
+    });
+    // 契约：只有还有下一页时才出现 next_cursor（`truncated: false` 时缺席，不是 null）。
+    if let Some(cursor) = next_cursor {
+        value["next_cursor"] = serde_json::json!(cursor);
+    }
+    ToolOutput::ok(value)
+}
+
 /// 朴素 glob：`*` 匹配任意字符序列（含 `/`），`?` 匹配单个字符。star 回溯迭代实现。
 fn glob_match(pattern: &str, text: &str) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
@@ -1209,7 +1381,7 @@ fn merge_paths(resolved: Option<&str>, inherited: Option<&str>) -> Option<String
     Some(segments.join(":"))
 }
 
-fn cli_run(args: &serde_json::Value) -> ToolOutput {
+fn cli_run(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
     let input = match parse_args::<CliArgs>(args) {
         Ok(input) => input,
         Err(output) => return output,
@@ -1221,7 +1393,13 @@ fn cli_run(args: &serde_json::Value) -> ToolOutput {
     command
         .args(&input.args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // 工作区合同（change add-harness-vault-workspace-list design §3）：每个子进程**单独**以当前
+        // vault 为工作目录，并同步 PWD——「相对路径 = vault 内路径」这条事实在子进程里成立，
+        // `pwd` 因此返回当前 vault。刻意不用 `std::env::set_current_dir`：主进程 cwd 是全局状态，
+        // 多 vault / 子代理 / 后台运行会互相污染。也不给模型可填的 `cwd` 参数（外部目标用绝对路径）。
+        .current_dir(ctx.root)
+        .env("PWD", ctx.root);
     // 注入型环境变量的防御性清空（change readonly-allowlist-tightening-oct23 取值 D3）：
     // `RIPGREP_CONFIG_PATH` 能给 rg 注入 `--pre`、`LESSOPEN` / `LESSCLOSE` 能让 less 执行
     // 过滤器、`GREP_OPTIONS` 能给 grep 塞旗标。这些变量由 app 进程继承、模型不能设置，
@@ -1423,6 +1601,323 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0]["path"], "docs/b.txt");
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `vault_list` 默认只列一层、按码点排序（change add-harness-vault-workspace-list design §5）。
+    ///
+    /// 用户规则命中的文件是**惰性可见**（与文件树同口径，出现在结果里），hidden 档命中的条目不出现
+    /// ——这两条都是复用 fs-io 分类的直接后果，不是本工具的第二套规则。
+    #[test]
+    fn vault_list_lists_one_layer_by_default() {
+        let (root, _policy) = fixture_vault("list-one-layer");
+        std::fs::create_dir_all(root.join("notes/2026")).unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join("a.md"), "A\n").unwrap();
+        std::fs::write(root.join("notes/b.md"), "B\n").unwrap();
+        std::fs::write(root.join("notes/2026/c.md"), "C\n").unwrap();
+        std::fs::write(root.join("ignored.log"), "x\n").unwrap();
+        std::fs::write(root.join(".git/HEAD"), "ref: x\n").unwrap();
+        std::fs::write(root.join(".gitignore"), "ignored.log\n").unwrap();
+        let defaults = crate::config::VaultConfig::default();
+        let policy = IgnorePolicy::load(&root, &[".gitignore".to_string()], &defaults.ignore);
+        let ctx = ctx(&root, &policy, &[]);
+
+        let out = vault_list(&serde_json::json!({}), &ctx);
+        assert!(out.succeeded(), "{out:?}");
+        let entries = out.value["entries"].as_array().unwrap();
+        let paths: Vec<&str> = entries
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            paths,
+            vec![".gitignore", "a.md", "ignored.log", "notes"],
+            "{out:?}"
+        );
+        // 一条一层：嵌套条目不出现在根列表里。
+        assert!(!paths.iter().any(|p| p.contains("notes/b.md")));
+        // hidden 档（`.git`）不出现。
+        assert!(!paths.iter().any(|p| p.starts_with(".git/")), "{paths:?}");
+        // kind 两值：目录 / 文件。
+        let notes = entries.iter().find(|e| e["path"] == "notes").unwrap();
+        assert_eq!(notes["kind"], "directory");
+        let a = entries.iter().find(|e| e["path"] == "a.md").unwrap();
+        assert_eq!(a["kind"], "file");
+        assert_eq!(out.value["truncated"], false);
+        assert!(out.value.get("next_cursor").is_none(), "{out:?}");
+        // 注册表入口同一条实现（名字 → 函数的接线不是「只在单测里存在」的第二条路径）。
+        let via_registry = execute("vault_list", &serde_json::json!({}), &ctx);
+        assert!(via_registry.succeeded(), "{via_registry:?}");
+        assert_eq!(
+            via_registry.value["entries"].as_array().unwrap().len(),
+            entries.len()
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 递归下钻与 `path_glob` 过滤（与 `vault_search` 同一 glob 写法）。
+    #[test]
+    fn vault_list_recursive_and_path_glob() {
+        let (root, _policy) = fixture_vault("list-recursive");
+        std::fs::create_dir_all(root.join("notes/2026")).unwrap();
+        std::fs::write(root.join("notes/b.md"), "B\n").unwrap();
+        std::fs::write(root.join("notes/2026/c.md"), "C\n").unwrap();
+        std::fs::write(root.join("notes/2026/d.txt"), "D\n").unwrap();
+        let defaults = crate::config::VaultConfig::default();
+        let policy = IgnorePolicy::load(&root, &[".gitignore".to_string()], &defaults.ignore);
+        let ctx = ctx(&root, &policy, &[]);
+
+        let out = vault_list(
+            &serde_json::json!({"path": "notes", "recursive": true}),
+            &ctx,
+        );
+        let paths: Vec<&str> = out.value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                "notes/2026",
+                "notes/2026/c.md",
+                "notes/2026/d.txt",
+                "notes/b.md"
+            ]
+        );
+        // 不带 recursive 时同一目录只返回一层。
+        let out = vault_list(&serde_json::json!({"path": "notes"}), &ctx);
+        let paths: Vec<&str> = out.value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(paths, vec!["notes/2026", "notes/b.md"]);
+        // 词法清理：`./notes`、`notes//` 与 `notes` 等价（不因写法差异返回空页）。
+        for spelling in ["notes", "./notes", "notes/", "notes//"] {
+            let out = vault_list(&serde_json::json!({"path": spelling}), &ctx);
+            let paths: Vec<&str> = out.value["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e["path"].as_str().unwrap())
+                .collect();
+            assert_eq!(paths, vec!["notes/2026", "notes/b.md"], "{spelling}");
+        }
+        // glob 只看路径（`*` 跨 `/`，与 vault_search 同口径）。
+        let out = vault_list(
+            &serde_json::json!({"path": "notes", "recursive": true, "path_glob": "*.md"}),
+            &ctx,
+        );
+        let paths: Vec<&str> = out.value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(paths, vec!["notes/2026/c.md", "notes/b.md"]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 分页无状态且稳定：三页拼起来恰为全集，`truncated` / `next_cursor` 严格配对。
+    #[test]
+    fn vault_list_paginates_stably() {
+        let (root, policy) = fixture_vault("list-pages");
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        for index in 1..=5 {
+            std::fs::write(root.join(format!("pages/p{index}.md")), "x\n").unwrap();
+        }
+        let ctx = ctx(&root, &policy, &[]);
+        let mut collected: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut pages = 0;
+        loop {
+            let mut args = serde_json::json!({"path": "pages", "limit": 2});
+            if let Some(cursor) = &cursor {
+                args["cursor"] = serde_json::json!(cursor);
+            }
+            let out = vault_list(&args, &ctx);
+            assert!(out.succeeded(), "{out:?}");
+            pages += 1;
+            assert!(pages <= 5, "翻页未收敛：{out:?}");
+            let entries = out.value["entries"].as_array().unwrap();
+            collected.extend(
+                entries
+                    .iter()
+                    .map(|e| e["path"].as_str().unwrap().to_string()),
+            );
+            let truncated = out.value["truncated"].as_bool().unwrap();
+            match out.value.get("next_cursor").and_then(|v| v.as_str()) {
+                Some(next) => {
+                    assert!(truncated, "只有还有下一页时才带 next_cursor：{out:?}");
+                    assert_eq!(
+                        Some(next.to_string()),
+                        entries
+                            .last()
+                            .map(|e| e["path"].as_str().unwrap().to_string())
+                    );
+                    cursor = Some(next.to_string());
+                }
+                None => {
+                    assert!(!truncated, "truncated 必须与 next_cursor 配对：{out:?}");
+                    break;
+                }
+            }
+        }
+        assert_eq!(
+            collected,
+            vec![
+                "pages/p1.md",
+                "pages/p2.md",
+                "pages/p3.md",
+                "pages/p4.md",
+                "pages/p5.md"
+            ]
+        );
+        assert_eq!(pages, 3);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// hidden 档不出现、lazy 档出现为一行且不下钻（与文件树 / vault_search 同一套分类）。
+    #[test]
+    fn vault_list_respects_hidden_and_lazy() {
+        let (root, _policy) = fixture_vault("list-hidden-lazy");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git/HEAD"), "ref: x\n").unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "x\n").unwrap();
+        std::fs::write(root.join("a.md"), "A\n").unwrap();
+        let defaults = crate::config::VaultConfig::default();
+        let policy = IgnorePolicy::load(&root, &[".gitignore".to_string()], &defaults.ignore);
+        let ctx = ctx(&root, &policy, &[]);
+
+        let out = vault_list(&serde_json::json!({"recursive": true}), &ctx);
+        let paths: Vec<&str> = out.value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        assert!(paths.contains(&"a.md"), "{paths:?}");
+        assert!(
+            paths.contains(&"node_modules"),
+            "lazy 目录出一行：{paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p.starts_with(".git")),
+            "hidden 档不出现：{paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p.starts_with("node_modules/")),
+            "lazy 子树不展开（recursive 也不展开）：{paths:?}"
+        );
+        // 显式列出惰性目录本身同样为空（与 vault_search 不搜惰性条目同口径）：这是**决定**，
+        // 不是漏实现——惰性语义是「不枚举」，不因调用方点名而改变。
+        let out = vault_list(
+            &serde_json::json!({"path": "node_modules", "recursive": true}),
+            &ctx,
+        );
+        assert!(out.succeeded(), "{out:?}");
+        assert_eq!(out.value["entries"].as_array().unwrap().len(), 0, "{out:?}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 越界 / 非法目标各自有可区分错误码；不返回 vault 外任何条目。
+    #[test]
+    fn vault_list_rejects_out_of_vault_targets() {
+        let (root, policy) = fixture_vault("list-reject");
+        std::fs::write(root.join("a.md"), "A\n").unwrap();
+        let ctx = ctx(&root, &policy, &[]);
+        let escape = vault_list(&serde_json::json!({"path": "../outside"}), &ctx);
+        assert_eq!(escape.value["code"], "fs_path_escape", "{escape:?}");
+        let absolute = vault_list(&serde_json::json!({"path": "/etc"}), &ctx);
+        assert_eq!(absolute.value["code"], "list_path_absolute", "{absolute:?}");
+        let missing = vault_list(&serde_json::json!({"path": "missing"}), &ctx);
+        assert_eq!(missing.value["code"], "fs_not_found", "{missing:?}");
+        let not_dir = vault_list(&serde_json::json!({"path": "a.md"}), &ctx);
+        assert_eq!(not_dir.value["code"], "list_not_a_directory", "{not_dir:?}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 结果只含 `path` 与 `kind`：不返回正文、大小、时间（不把 vault_list 变成 find 的 JSON 翻版）。
+    #[test]
+    fn vault_list_returns_only_path_and_kind() {
+        let (root, policy) = fixture_vault("list-shape");
+        std::fs::write(root.join("big.md"), "内容".repeat(2000)).unwrap();
+        let ctx = ctx(&root, &policy, &[]);
+        let out = vault_list(&serde_json::json!({}), &ctx);
+        assert!(out.succeeded(), "{out:?}");
+        for entry in out.value["entries"].as_array().unwrap() {
+            let keys: Vec<&str> = entry
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            let mut keys = keys;
+            keys.sort_unstable();
+            assert_eq!(keys, vec!["kind", "path"], "{entry}");
+        }
+        let serialized = serde_json::to_string(&out.value).unwrap();
+        assert!(!serialized.contains("内容"), "{serialized}");
+        assert!(!serialized.contains("\"size\"") && !serialized.contains("mtime"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `cli_run` 的工作区合同（change add-harness-vault-workspace-list design §3）：子进程从当前
+    /// vault 启动、`PWD` 同步、主进程 cwd 不变。
+    #[test]
+    fn cli_run_uses_vault_as_working_directory() {
+        let (root, policy) = fixture_vault("cli-cwd");
+        let ctx = ctx(&root, &policy, &[]);
+        let before = std::env::current_dir().unwrap();
+        let out = cli_run(&serde_json::json!({"command": "pwd"}), &ctx);
+        assert!(out.succeeded(), "{out:?}");
+        let printed = out.value["stdout"].as_str().unwrap().trim().to_string();
+        assert_eq!(
+            Path::new(&printed).canonicalize().unwrap(),
+            root.canonicalize().unwrap(),
+            "pwd 必须返回当前 vault（不是 /、不是主进程 cwd）"
+        );
+        // PWD 与真实工作目录一致（子进程看到的环境不撒谎）。
+        let out = cli_run(
+            &serde_json::json!({"command": "printenv", "args": ["PWD"]}),
+            &ctx,
+        );
+        assert!(out.succeeded(), "{out:?}");
+        assert_eq!(
+            out.value["stdout"].as_str().unwrap().trim(),
+            root.display().to_string()
+        );
+        assert_eq!(
+            std::env::current_dir().unwrap(),
+            before,
+            "主进程 cwd MUST NOT 被 cli_run 改动"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A/B 两个 vault 各落自己的根（每次 spawn 独立设置，不依赖上次调用）。
+    #[test]
+    fn cli_run_roots_follow_current_vault() {
+        let (root_a, policy_a) = fixture_vault("cli-cwd-a");
+        let (root_b, policy_b) = fixture_vault("cli-cwd-b");
+        let before = std::env::current_dir().unwrap();
+        for (root, policy) in [(&root_a, &policy_a), (&root_b, &policy_b)] {
+            let ctx = ctx(root, policy, &[]);
+            let out = cli_run(&serde_json::json!({"command": "pwd"}), &ctx);
+            assert!(out.succeeded(), "{out:?}");
+            let printed = out.value["stdout"].as_str().unwrap().trim().to_string();
+            assert_eq!(
+                Path::new(&printed).canonicalize().unwrap(),
+                root.canonicalize().unwrap()
+            );
+        }
+        assert_eq!(std::env::current_dir().unwrap(), before);
+        std::fs::remove_dir_all(&root_a).ok();
+        std::fs::remove_dir_all(&root_b).ok();
     }
 
     #[test]
@@ -1635,10 +2130,10 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// 工具集扩为 8：名字表、definitions 与 execute 注册表同源（清单外一律 tool_unknown）。
+    /// 工具集扩为 9：名字表、definitions 与 execute 注册表同源（清单外一律 tool_unknown）。
     #[test]
-    fn tool_registry_has_eight_tools() {
-        assert_eq!(TOOL_NAMES.len(), 8);
+    fn tool_registry_has_nine_tools() {
+        assert_eq!(TOOL_NAMES.len(), 9);
         let defined: Vec<String> = definitions()
             .iter()
             .map(|tool| tool["name"].as_str().unwrap().to_string())
@@ -1652,6 +2147,26 @@ mod tests {
         assert_eq!(
             cli["parameters"]["required"],
             serde_json::json!(["command", "purpose"])
+        );
+        // vault_list（change add-harness-vault-workspace-list）：参数面恰好五项、无必填项。
+        let list = definitions()
+            .into_iter()
+            .find(|tool| tool["name"] == "vault_list")
+            .unwrap();
+        let mut properties: Vec<&str> = list["parameters"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        properties.sort_unstable();
+        assert_eq!(
+            properties,
+            vec!["cursor", "limit", "path", "path_glob", "recursive"]
+        );
+        assert!(
+            list["parameters"].get("required").is_none(),
+            "vault_list 全部参数可选：{list}"
         );
         assert_eq!(
             permission_subject(
@@ -2103,12 +2618,21 @@ mod tests {
 
     #[test]
     fn cli_runs_argv_without_shell() {
-        let out = cli_run(&serde_json::json!({"command": "echo", "args": ["hi"]}));
+        let (root, policy) = fixture_vault("cli-argv");
+        let ctx = ctx(&root, &policy, &[]);
+        let out = cli_run(
+            &serde_json::json!({"command": "echo", "args": ["hi"]}),
+            &ctx,
+        );
         assert!(out.succeeded(), "{out:?}");
         assert_eq!(out.value["stdout"].as_str().unwrap().trim(), "hi");
-        let out = cli_run(&serde_json::json!({"command": "definitely-not-a-real-cmd-xyz"}));
+        let out = cli_run(
+            &serde_json::json!({"command": "definitely-not-a-real-cmd-xyz"}),
+            &ctx,
+        );
         assert!(!out.succeeded());
         assert_eq!(out.value["code"], "cli_spawn_failed");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

@@ -48,7 +48,7 @@ max_turns: 8
 |---|---|---|---|---|
 | `name` | 是 | 非空、无空白、不含 `/`、≤64 字符 | — | 身份、委派参数、诊断 |
 | `description` | 是 | 非空（首尾空白去掉后非空） | — | 自动委派的匹配依据；注入 `task` 工具描述 |
-| `tools` | 否 | 8 件 vault 操作工具名的子集；`task` 非法 | 只读三件 | 子运行的工具白名单 |
+| `tools` | 否 | 9 件 vault 操作工具名的子集；`task` 非法 | 只读三件 | 子运行的工具白名单 |
 | `model` | 否 | `inherit` 或当前 provider `models[]` 里的 id | `inherit` | 模型选择（见 design §11 的解析序） |
 | `max_turns` | 否 | 正整数 | `[harness.subagents].max_turns` | 轮次闸；超过配置值则夹取 |
 | `max_tokens` | 否 | 正整数 | `[harness.subagents].max_tokens` | token 闸；超过配置值则夹取 |
@@ -57,7 +57,9 @@ max_turns: 8
 
 - `tools: []` 合法：零工具子运行（纯推理 / 判断）。
 - 缺省工具集是**只读三件**：`vault_read` / `vault_search` / `skill_load`。写类工具与 `cli_run`
-  必须显式声明（能力边界见 §9）。
+  必须显式声明（能力边界见 §9）；`vault_list`（目录 / 路径发现，change
+  `add-harness-vault-workspace-list` 起在册）同样属可显式声明的只读工具——缺省集不含它，
+  声明后才可见。
 - 三个 `max_*` 字段是「用户意图」，`[harness.subagents]` 的对应键同时是缺省值与上限；冲突取小，
   装载期夹取并产一条点名 warning。
 
@@ -141,9 +143,10 @@ max_turns: 8
 
 ## 9. 能力边界
 
-- 工具集是 **8 件 vault 操作工具**的任意子集：`vault_read` / `vault_search` / `vault_patch` /
-  `vault_create` / `vault_move` / `vault_delete` / `skill_load` / `cli_run`。缺省只读三件只是
-  **缺省收紧**，不是能力天花板：声明写类工具或 `cli_run` 后照常可见。
+- 工具集是 **9 件 vault 操作工具**的任意子集：`vault_read` / `vault_search` / `vault_list` /
+  `vault_patch` / `vault_create` / `vault_move` / `vault_delete` / `skill_load` / `cli_run`。
+  缺省只读三件只是 **缺省收紧**，不是能力天花板：声明写类工具、`cli_run` 或 `vault_list` 后照常
+  可见。
 - 工具是否可见（定义白名单）与是否放行（权限管线）是两道独立的闸：声明后仍走用户选定的权限档
   与同一套判定；落到 ask 的调用弹批准卡给用户。
 - **无 web 工具**：这是 harness 本体的能力边界（主会话同样没有），不是子代理被额外削减。联网

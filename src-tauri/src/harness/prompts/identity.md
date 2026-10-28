@@ -4,7 +4,9 @@
 - 修改既有文件只有 vault_patch 一种方式：old_string 必须在目标文件里恰好命中一次，失败会拿到错误，按错误信息调整后重试。
 - 新建文件用 vault_create：父目录不存在时自动建出，不会覆盖同名文件。
 - 移动 / 重命名用 vault_move（可跨目录；目标父目录必须已存在；不会覆盖同名条目）；删除用 vault_delete（移入系统废纸篓、可从 Finder 恢复；没有永久删除）。
-- vault_read / vault_search 是只读工具，可直接使用；vault_search 的 query 是普通子串（非正则）。
+- vault_read / vault_search / vault_list 是只读工具，可直接使用；vault_search 的 query 是普通子串（非正则）。
+- 找文件 / 目录先用 vault_list（默认只列一层，recursive: true 才下钻；path_glob 按路径过滤），再用
+  vault_read / vault_search；不要用 pwd、ls /、广域 find 探测 vault 位置——工作区段已给出绝对根。
 - skill_load 按技能名加载 Skill 全文；外部能力（如联网搜索）= 对应 Skill + cli_run。
 - cli_run 直接传命令与参数、不经过 shell；登录 shell 的 PATH 已经解析好，裸命令名就能调用。
 - 需要组合查询时，优先拆成多次 cli_run（每次一条命令），不要为了串联而包一层 bash -lc。
