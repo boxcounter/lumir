@@ -41,29 +41,33 @@ steps:
         ax: { has: "/cli_redirected_to_vault_tool/" }
       # 工具结果在留存里是**字符串化 JSON**（M783 的口径见 scripts/acceptance/README.md 的 `file` 行）：
       # 按解析后的字段判（`jsonlOutput`），不写字节层的转义。改道的载荷（含 `suggested_tool`）在
-      # ToolOutput 里是**嵌在 `message` 字符串中的 JSON 文本**、不是嵌套对象，而 `jsonlOutput` 的字段
-      # 判据是深度相等、不下探字符串 ⇒ 载荷与固定标记整段逐字钉在 `message` 上（旧的
-      # `/suggested_tool.{0,12}vault_move/` 只证明这两个串在文件里相隔不超过 12 字符：既不限定工具、
-      # 也不限定同一条结果，`vault_movex` 之类同样命中）。**mv 的写目标是两侧各一个**
-      # （源 `harness-note.md` 被移除、目标 `harness-renamed.md` 被写入），故载荷的 `targets` 是两项、
-      # 人话说明里按 `、` 并列——M784 真机首跑按单目标写判红，读数即此。
+      # ToolOutput 里是**嵌在 `message` 字符串中的 JSON 文本**、不是嵌套对象 ⇒ 用 `message#json`
+      # （M784 的窄域二次解析：把这个键名的来源字段 `message` 里可解析成对象的花括号块取出来，按
+      # 字段子集 / 深度相等匹配）。旧的 `/suggested_tool.{0,12}vault_move/` 只证明这两个串在文件里
+      # 相隔不超过 12 字符：既不限定工具、也不限定同一条结果，`vault_movex` 之类同样命中。
+      # **mv 的写目标是两侧各一个**（源 `harness-note.md` 被移除、目标 `harness-renamed.md` 被写入），
+      # 故载荷的 `targets` 是两项——M784 真机首跑按单目标写判红，读数即此。
+      # 固定标记单独判**字节层**：它是纯 ASCII 哨兵（`<<<LUMIR_REDIRECT_VAULT_TOOL>>>`），不含引号 /
+      # 换行，落到 JSONL 文本里不做任何转义 ⇒ 子串判据在这里是精确的，M777 那类「跨转义假红」不适用。
+      # 载荷字段走下面的 `message#json`（解析后按值判）。
+      - label: JSONL 记下固定标记（模型据此改工具的唯一线索）
+        file: { path: "env:harness/sessions/*/*.jsonl", has: "/LUMIR_REDIRECT_VAULT_TOOL/" }
       - label: JSONL 里那条 cli_run 结果是改道（同一结果对象：ok=false + 改道错误码）
         file:
           path: "env:harness/sessions/*/*.jsonl"
           jsonlOutput:
             tool: cli_run
             has: { ok: false, code: cli_redirected_to_vault_tool }
-      - label: 回送模型的那条 message 逐字 = 人话说明 + 固定标记 + 载荷（targets 两侧、suggested_tool = vault_move）
+      - label: 回送模型的 message 里的载荷按字段判（reason / targets 两侧 / suggested_tool = vault_move）
         file:
           path: "env:harness/sessions/*/*.jsonl"
           jsonlOutput:
             tool: cli_run
             has:
-              message: |-
-                写目标在 vault 内（harness-note.md、harness-renamed.md），已被闸门改道：请改用 vault 工具完成 vault 内写操作，不要经 cli_run 写 vault。可用工具：vault_patch（局部替换）/ vault_create（新建，自动建父目录）/ vault_move（移动 / 重命名）/ vault_delete（删除）。建议改用 vault_move。
-                <<<LUMIR_REDIRECT_VAULT_TOOL>>>
-                {"reason":"write_target_in_vault","targets":["harness-note.md","harness-renamed.md"],"suggested_tool":"vault_move"}
-                <<<END_LUMIR_REDIRECT_VAULT_TOOL>>>
+              "message#json":
+                reason: write_target_in_vault
+                targets: [harness-note.md, harness-renamed.md]
+                suggested_tool: vault_move
       - label: vault_move 执行成功——新路径在场
         file: { path: harness-renamed.md, exists: true }
       - label: vault_move 执行成功——原路径已不在
@@ -145,14 +149,16 @@ change `add-harness-permission-modes` 的验收面（tasks 6.7 的后两条）�
   **JSONL 侧按解析后的字段判（M784）**：工具结果在留存里是字符串化 JSON（`function_call_output.output`，
   两层编码，见 `scripts/acceptance/README.md` 的 `file` 行），字节层的引号是 `\\\"`；断言走
   `file.jsonlOutput`、限定 `tool: cli_run`，落在**同一条结果对象**上（`ok=false` + 改道错误码）。
-  **载荷够不到字段层**：`jsonlOutput` 只解析两层——`suggested_tool` 的 JSON 是**嵌在 `message` 字符串里
-  的文本**（`Redirect::message` 把人话说明 + 固定标记 + 载荷拼成一个字符串），深度相等的字段判据不下探
-  字符串 ⇒ 判据改为**逐字钉整条 `message`**（人话说明 + 两个固定标记 + 载荷，`suggested_tool` / `targets`
-  / `reason` 三个字段值随之一并钉住），比旧的 `/suggested_tool.{0,12}vault_move/` 强：旧写法只证明这两
-  个串在文件里相隔不超过 12 字符，既不限定工具、也不限定同一条结果，`vault_movex` 之类同样命中。
-  代价是 `Redirect::message` 的措辞改动会让本场景判红——那是**模型可见的契约文案**，红是提醒同步场景，
-  不是产品回归。历史（不变）：首跑用 `/"suggested_tool":"vault_move"/` 判红是断言口径错（转义层），
-  不是产品缺陷。
+  **载荷走 `message#json` 的窄域二次解析**：`suggested_tool` 的 JSON 是**嵌在 `message` 字符串里的
+  文本**（`Redirect::message` 把人话说明 + 固定标记 + 载荷拼成一个字符串），深度相等的字段判据不下探
+  字符串 ⇒ 用 `message#json` 把 `message` 里可解析成对象的花括号块取出来，按 `reason` / `targets` /
+  `suggested_tool` 三个字段值（子集语义）判——比旧的 `/suggested_tool.{0,12}vault_move/` 强：旧写法
+  只证明这两个串在文件里相隔不超过 12 字符，既不限定工具、也不限定同一条结果，`vault_movex` 之类同样
+  命中。**不再逐字钉整段文案**：文案措辞改动不再影响本场景（这正是 `message#json` 存在的理由——长文案
+  进场景会成为第二真源）。固定标记 `<<<LUMIR_REDIRECT_VAULT_TOOL>>>` 仍单独判字节层：它是纯 ASCII
+  哨兵、不含引号 / 换行，落进 JSONL 不做任何转义，子串判据在那里是精确的。历史（不变）：首跑用
+  `/"suggested_tool":"vault_move"/` 判红是断言口径错（转义层），不是产品缺陷；M784 首轮迁移曾用
+  「逐字钉整段 message」过渡，`message#json` 落地后改为字段级。
 - **`mv` 的写目标是两侧各一个**：`write_targets` 把 `mv` 的源与目标都算作被写的一侧（源被移除、目标
   被写入），故载荷是 `targets: ["harness-note.md", "harness-renamed.md"]`、人话说明里按 `、` 并列。
   M784 迁移时先按「只有目标」写过期望值，真机首跑判红——红因是期望值写错了产品事实，不是产品缺陷

@@ -502,6 +502,161 @@ test("file.jsonlOutput 静态校验：未知键 / 方向不唯一 / 空期望 / 
   assert.ok(errs({ hsa: { a: 1 } }).some((p) => p.includes("未知键 hsa")), "拼错键名应报 problem（否则静默不判）");
 });
 
+/** 重定向工具结果的真实形态（`permissions.rs` 的 `Redirect::message()`）：结构化载荷是 `message`
+ *  字符串里的一段 JSON 文本，字段判据够不到——`message#json` 就是给它开的窄门（M784）。 */
+function redirectOutput({ targets = ["harness-note.md", "harness-renamed.md"], suggested = "vault_move" } = {}) {
+  const payload = JSON.stringify({ reason: "write_target_in_vault", targets, ...(suggested ? { suggested_tool: suggested } : {}) });
+  return {
+    ok: false,
+    code: "cli_redirected_to_vault_tool",
+    message: `写目标在 vault 内（${targets.join("、")}），已被闸门改道。\n<<<LUMIR_REDIRECT_VAULT_TOOL>>>\n${payload}\n<<<END_LUMIR_REDIRECT_VAULT_TOOL>>>`,
+  };
+}
+
+test("file.jsonlOutput：message#json 只对精确键名二次解析，普通 message 仍逐字比较", async () => {
+  const root = tmpRoot("jsonl-output-embedded-key");
+  useTmpEnv(root);
+  const out = redirectOutput();
+  const line = sessionRequestLine(toolPair("mv1", "cli_run", out));
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "窄域键名 vs 普通 message",
+        expect: [
+          {
+            label: "载荷字段命中（message#json）",
+            file: {
+              path: "s.jsonl",
+              jsonlOutput: { tool: "cli_run", has: { code: "cli_redirected_to_vault_tool", "message#json": { reason: "write_target_in_vault", suggested_tool: "vault_move" } } },
+            },
+          },
+          // 窄域：写错一个字符就是普通字段名，结果对象上没有这个键 ⇒ 恒不命中（不许被当成通配）。
+          {
+            label: "键名差一个字符（必须红）",
+            file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#jsonx": { suggested_tool: "vault_move" } } } },
+          },
+          // 普通 `message` 的语义不变：仍按整段字符串逐字相等比（这里是真实文案 ⇒ 绿）。
+          { label: "普通 message 逐字相等", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { message: out.message } } } },
+          {
+            label: "普通 message 差一个字符（必须红）",
+            file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { message: out.message.replace("vault_move", "vault_movex") } } },
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "两条必须红的判据要真的红（窄域键名 / 普通 message 逐字）");
+  assert.deepEqual(records.map((r) => r.ok), [true, false, true, false], `期望 [PASS, FAIL, PASS, FAIL]，实际：${JSON.stringify(records)}`);
+});
+
+test("file.jsonlOutput：message 整段就是 JSON 时 message#json 同样成立（纯 JSON 与「人话 + 载荷」同一套判据）", async () => {
+  const root = tmpRoot("jsonl-output-embedded-pure");
+  useTmpEnv(root);
+  const payload = { reason: "write_target_in_vault", targets: ["a.md"], suggested_tool: "vault_create" };
+  const line = sessionRequestLine(toolPair("c1", "cli_run", { code: "cli_redirected_to_vault_tool", message: JSON.stringify(payload), ok: false }));
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "整段即 JSON",
+        expect: [
+          { label: "整段 JSON 命中", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { suggested_tool: "vault_create" } } } } },
+          { label: "值不同（必须红）", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { suggested_tool: "vault_move" } } } } },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "第二条必须红（区分度）");
+  assert.deepEqual(records.map((r) => r.ok), [true, false], `期望 [PASS, FAIL]，实际：${JSON.stringify(records)}`);
+});
+
+test("file.jsonlOutput：message#json 的 targets 判顺序与完整值（换序 / 少一项 / 多一项都红）", async () => {
+  const root = tmpRoot("jsonl-output-embedded-targets");
+  useTmpEnv(root);
+  const line = sessionRequestLine(toolPair("mv1", "cli_run", redirectOutput()));
+  const expect = (targets) => ({
+    file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { targets } } } },
+  });
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "数组按值相等判（顺序 + 元素个数 + 每个元素）",
+        expect: [
+          { label: "两侧、原序", ...expect(["harness-note.md", "harness-renamed.md"]) },
+          { label: "换序（必须红）", ...expect(["harness-renamed.md", "harness-note.md"]) },
+          { label: "少一项（必须红）", ...expect(["harness-note.md"]) },
+          { label: "多一项（必须红）", ...expect(["harness-note.md", "harness-renamed.md", "extra.md"]) },
+          { label: "元素值差一个字符（必须红）", ...expect(["harness-note.md", "harness-renamed.md "]) },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "换序 / 少项 / 多项 / 值不同都必须红——否则 targets 判据没有区分度");
+  assert.deepEqual(records.map((r) => r.ok), [true, false, false, false, false], `期望 [PASS, FAIL×4]，实际：${JSON.stringify(records)}`);
+});
+
+test("file.jsonlOutput：message#json 的坏现场（取不出 JSON 对象 / message 非字符串）has 与 not 都 FAIL", async () => {
+  const cases = [
+    { name: "message 里没有花括号块", value: "已被改道：请改用 vault 工具完成这次写操作", want: /没有可解析成 JSON 对象的片段/ },
+    { name: "花括号块不是合法 JSON", value: '已被改道：{"reason":} 完成', want: /没有可解析成 JSON 对象的片段/ },
+    { name: "message 不是字符串", value: 42, want: /message 不是字符串/ },
+  ];
+  for (const c of cases) {
+    const root = tmpRoot(`jsonl-output-embedded-bad-${cases.indexOf(c)}`);
+    useTmpEnv(root);
+    const line = sessionRequestLine(toolPair("c1", "cli_run", { code: "cli_redirected_to_vault_tool", message: c.value, ok: false }));
+    const { status, records } = await drive(root, {
+      steps: [
+        { name: "写坏现场", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+        {
+          name: c.name,
+          expect: [
+            { label: c.name, file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { suggested_tool: "vault_move" } } } } },
+            { label: `${c.name}（负向同样要红）`, file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", not: { "message#json": { suggested_tool: "vault_move" } } } } },
+          ],
+        },
+      ],
+    });
+    assert.equal(status, "FAIL", `${c.name}：解析不出来就必须红，实际记录：${JSON.stringify(records)}`);
+    assert.deepEqual(records.map((r) => r.ok), [false, false], `${c.name}：has 与 not 都要 FAIL（负向不许在坏现场上恒绿）`);
+    for (const r of records) assert.match(r.label, c.want, `${c.name}：红因应点明二次解析失败，实际：${r.label}`);
+  }
+});
+
+test("file.jsonlOutput：没有结果带 message 时 message#json 的 has 与 not 都 FAIL（不许空过）", async () => {
+  const root = tmpRoot("jsonl-output-embedded-absent");
+  useTmpEnv(root);
+  const line = sessionRequestLine(toolPair("c1", "cli_run", { command: "echo", ok: true, stdout: "HNE-ALLOWED\n" }));
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "没有 message 载体",
+        expect: [
+          { label: "正向无载体", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { suggested_tool: "vault_move" } } } } },
+          { label: "负向无载体（必须红）", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", not: { "message#json": { suggested_tool: "vault_move" } } } } },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "一条带 message 的结果都没有时，负向断言没有可判的输入，必须判红（REVIEW.md「读不到当成空」条）");
+  assert.deepEqual(records.map((r) => r.ok), [false, false], `期望两条都 FAIL，实际：${JSON.stringify(records)}`);
+  for (const r of records) assert.match(r.label, /没有任何对象带 message/, "红因应点明「没有 message 载体」");
+});
+
+test("file.jsonlOutput 静态校验：message#json 的期望值必须是非空对象", () => {
+  const errs = (spec) =>
+    checkScenario({ id: "jsonl-embedded-check", item: 0, steps: [{ name: "校验", expect: [{ file: { path: "s.jsonl", jsonlOutput: spec } }] }] });
+  assert.deepEqual(errs({ tool: "cli_run", has: { "message#json": { suggested_tool: "vault_move" } } }), [], "合法形态不该报 problem");
+  assert.deepEqual(errs({ has: { wrapper: { "message#json": { a: 1 } } } }), [], "任意层级的 message#json 都合法（匹配器逐层下探）");
+  assert.ok(errs({ has: { "message#json": ["vault_move"] } }).some((p) => p.includes("message#json")), "数组期望值应报 problem");
+  assert.ok(errs({ has: { "message#json": {} } }).some((p) => p.includes("message#json")), "空对象期望值应报 problem");
+  assert.ok(errs({ has: { "message#json": null } }).some((p) => p.includes("message#json")), "null 期望值应报 problem");
+  assert.ok(errs({ not: { wrapper: { "message#json": "vault_move" } } }).some((p) => p.includes("wrapper.message#json")), "嵌套层级的坏形状也要报 problem（红因给字段路径）");
+});
+
 test("file.has / file.jsonl 与 file.jsonlOutput 的分工：手写未转义片段在字节层不命中", async () => {
   const root = tmpRoot("jsonl-output-vs-has");
   useTmpEnv(root);

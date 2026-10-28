@@ -877,6 +877,11 @@ export function checkScenario(scenario) {
               const bad = jsonlOutputShapeProblem(shape);
               if (bad)
                 push(`${at} expect[${j}] file.jsonlOutput 的 ${bad} 需要标量 / 非空数组 / 非空对象（null 与空容器只可能出自写错）`);
+              // `message#json`（M784）的窄域口径：只认这一个精确键名，值是「解析后的字段表」——
+              // 必须非空对象。写成数组 / 标量时运行期恒不命中：正向假红、负向恒绿。
+              const badEmbedded = embeddedJsonProblem(shape);
+              if (badEmbedded)
+                push(`${at} expect[${j}] file.jsonlOutput 的 ${badEmbedded} 需要非空对象（message#json 的期望值是「解析后的字段表」）`);
             }
           }
         }
@@ -1166,8 +1171,12 @@ function jsonValueEquals(a, b) {
  *
  *  为什么要下探：`vault_list` 的条目在 `entries[]` 数组里、`cli_run` 的读数在根对象上——同一个判据
  *  形态要覆盖两种位置。**字段是子集语义**：`has: { kind: directory, path: … }` 只要求这两个字段
- *  按值在场，不要求对象只有这两个字段（不把序列化形状钉进判据）。 */
-export function findToolResultMatch(value, want) {
+ *  按值在场，不要求对象只有这两个字段（不把序列化形状钉进判据）。
+ *
+ *  `problems`（可选）：`message#json` 的二次解析在**有 `message` 的结果**上取不出可解析的 JSON 对象
+ *  （不是字符串 / 里面没有平衡的花括号块 / 块不合法）时收进这里，由调用方显式 FAIL——静默跳过会让
+ *  正向假红、负向恒绿（REVIEW.md「读不到当成空」条）。 */
+export function findToolResultMatch(value, want, problems = null) {
   const walk = (node, at) => {
     if (Array.isArray(node)) {
       for (const [i, item] of node.entries()) {
@@ -1177,9 +1186,7 @@ export function findToolResultMatch(value, want) {
       return null;
     }
     if (isPlainTable(node)) {
-      if (Object.keys(want).every((k) => k in node && jsonValueEquals(node[k], want[k]))) {
-        return at === "" ? "(根对象)" : at;
-      }
+      if (objectFieldsMatch(node, want, problems)) return at === "" ? "(根对象)" : at;
       for (const [k, child] of Object.entries(node)) {
         const hit = walk(child, at === "" ? k : `${at}.${k}`);
         if (hit !== null) return hit;
@@ -1188,6 +1195,106 @@ export function findToolResultMatch(value, want) {
     return null;
   };
   return walk(value, "");
+}
+
+/** 内层字符串二次解析的**唯一**触发键（M784）。`has/not` 里字段名精确等于它时，把候选对象的
+ *  `message`（字符串）里**每一段可解析成 JSON 对象的花括号块**取出来，按字段子集 / 深度相等匹配
+ *  （任一段满足即命中；`message` 是「人话 + 固定标记 + 载荷」的一整段文本时，载荷就是其中一段）。
+ *
+ *  为什么需要它：`Redirect::message()` 这类工具结果把结构化载荷（`suggested_tool` / `targets` /
+ *  `reason`）拼进 `message` **字符串**，字段判据（深度相等、不下探字符串）够不到，只能整段逐字钉
+ *  ——那会把模型可见的文案复制进场景当第二真源（REVIEW.md「同一语义两处真源」条）。
+ *
+ *  为什么只认这一个精确键名：通用的 `<字段>#json` 后缀会让**任意**字符串字段变成「可解析对象」，
+ *  判据语义随字段名漂移，写错一个字符还不报错。窄到一行、一个字段名，写错就是普通字段名——
+ *  正向恒不命中（静态校验另见 `embeddedJsonProblem`）。普通 `message` 的逐字语义完全不变。 */
+const EMBEDDED_JSON_KEY = "message#json";
+
+/** 判据里是否带了 `message#json`（任意层级）。方向无关：`has` 与 `not` 都要过「有载体才可判」的门
+ *  ——没有一条结果带 `message` 时，负向断言会在空输入上恒绿。 */
+function wantsEmbeddedJson(want) {
+  if (Array.isArray(want)) return want.some(wantsEmbeddedJson);
+  if (!isPlainTable(want)) return false;
+  return Object.keys(want).some((k) => k === EMBEDDED_JSON_KEY || wantsEmbeddedJson(want[k]));
+}
+
+/** 工具结果（任意层级）里是否**有** `message` 字段——`message#json` 的可判载体。 */
+function hasMessageField(node) {
+  if (Array.isArray(node)) return node.some(hasMessageField);
+  if (!isPlainTable(node)) return false;
+  if ("message" in node) return true;
+  return Object.values(node).some(hasMessageField);
+}
+
+/** 一个对象是否满足 `want` 的全部字段（子集语义）。`message#json` 走二次解析分支：对象**没有**
+ *  `message` ⇒ 非候选、不命中（子集语义：缺字段不算命中）；有但类型不对 / 里面取不出一段可解析的
+ *  JSON 对象 ⇒ 记 `problems`，由调用方判 FAIL——不静默当成「不含」。 */
+function objectFieldsMatch(node, want, problems) {
+  return Object.keys(want).every((k) => {
+    if (k !== EMBEDDED_JSON_KEY) return k in node && jsonValueEquals(node[k], want[k]);
+    if (!("message" in node)) return false;
+    const raw = node.message;
+    if (typeof raw !== "string") {
+      problems?.push(`message 不是字符串（${JSON.stringify(raw)}），无法按 message#json 解析`);
+      return false;
+    }
+    const objects = embeddedJsonObjects(raw);
+    if (objects.length === 0) {
+      problems?.push(`message 里没有可解析成 JSON 对象的片段（前 120 字符：${JSON.stringify(raw.slice(0, 120))}）`);
+      return false;
+    }
+    const sub = want[k];
+    if (!isPlainTable(sub) || Object.keys(sub).length === 0) {
+      problems?.push("message#json 的期望值需要非空对象");
+      return false;
+    }
+    // 期望侧只判一层：在解析出的对象上按字段子集 / 深度相等比；**任一段**内嵌对象满足即命中
+    // （`message` 可能是「人话 + 标记 + 载荷」，载荷只是其中一段花括号块）。
+    return objects.some((parsed) => Object.keys(sub).every((f) => f in parsed && jsonValueEquals(parsed[f], sub[f])));
+  });
+}
+
+/** 从一段文本里取出**所有**花括号平衡、且能解析成 JSON 对象的片段（字符串感知：引号内的 `{` / `}`
+ *  不算括号，转义引号也不收尾）。
+ *
+ *  为什么不做「整段 `JSON.parse`」：`Redirect::message()` 的实际形态是「人话说明 + 固定标记 + 载荷
+ *  JSON + 结束标记」的**一整段文本**，载荷只占其中一段——整段 parse 永远失败。纯 JSON 的 message
+ *  同样被这条规则覆盖（整段就是一个平衡块）。字符串感知那一层是必须的：载荷里的值含 `"}` / `"\\"`
+ *  这类字节时，裸数括号会把块切错。 */
+function embeddedJsonObjects(text) {
+  const found = [];
+  for (let start = text.indexOf("{"); start !== -1; start = text.indexOf("{", start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === "{") depth += 1;
+      else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            const parsed = JSON.parse(text.slice(start, i + 1));
+            if (isPlainTable(parsed)) found.push(parsed);
+          } catch {
+            // 这一段不是合法 JSON：继续找下一个起点（人话里出现花括号不罕见，不当作现场坏了）。
+          }
+          break;
+        }
+      }
+    }
+  }
+  return found;
 }
 
 /**
@@ -1277,6 +1384,30 @@ export function collectToolOutputs(content) {
     outputs.push({ where: rec.where, at: rec.at, callId: rec.callId, tool: toolByCall.get(rec.callId) ?? null, value });
   }
   return { outputs, problems };
+}
+
+/** `message#json` 期望值的静态检查（M784）：任意层级的 `message#json` 都必须是**非空对象**（要匹配
+ *  的字段表）。返回第一个不合规的字段路径（null = 通过）——值写成数组 / 标量 / null 时，运行期
+ *  恒不命中：正向假红、负向恒绿。 */
+function embeddedJsonProblem(value, at = "") {
+  if (Array.isArray(value)) {
+    for (const [i, item] of value.entries()) {
+      const bad = embeddedJsonProblem(item, `${at}[${i}]`);
+      if (bad) return bad;
+    }
+    return null;
+  }
+  if (!isPlainTable(value)) return null;
+  for (const [k, v] of Object.entries(value)) {
+    const here = at === "" ? k : `${at}.${k}`;
+    if (k === EMBEDDED_JSON_KEY) {
+      if (!isPlainTable(v) || Object.keys(v).length === 0) return here;
+      continue;
+    }
+    const bad = embeddedJsonProblem(v, here);
+    if (bad) return bad;
+  }
+  return null;
 }
 
 /** `jsonlOutput.has/not` 的期望值形状检查：只收标量 / 非空数组 / 非空对象（逐层同规则），返回第一个
@@ -2371,10 +2502,24 @@ export async function runScenario(ctx, scenario) {
                 reason: `（jsonlOutput 需要 has 或 not，且判据是非空对象；实际 direction=${direction}，值 ${JSON.stringify(wantShape)}）`,
               };
             }
+            // `message#json`（M784）：先过「有载体才可判」的门——没有一条结果带 `message` 时，负向
+            // 断言会在空输入上恒绿（REVIEW.md「读不到当成空」条）；二次解析失败一律显式 FAIL。
+            if (wantsEmbeddedJson(wantShape) && !scoped.some((o) => hasMessageField(o.value))) {
+              return {
+                ok: false,
+                reason: `（${scoped.length} 条 ${specOut.tool ?? ""} 工具结果里没有任何对象带 message 字段——message#json 无从判定）`,
+              };
+            }
+            const matchProblems = [];
             const matches = [];
             for (const out of scoped) {
-              const at = findToolResultMatch(out.value, wantShape);
+              const at = findToolResultMatch(out.value, wantShape, matchProblems);
               if (at !== null) matches.push({ out, at });
+            }
+            if (matchProblems.length > 0) {
+              const shown = matchProblems.slice(0, 3).join("；");
+              const more = matchProblems.length > 3 ? `；另有 ${matchProblems.length - 3} 处` : "";
+              return { ok: false, reason: `（message#json 二次解析失败：${shown}${more}）` };
             }
             const who = (m) => `${m.out.where} ${m.out.at} 的 ${m.out.tool}(${m.out.callId}) ${m.at}`;
             if (direction === "has") {
