@@ -12,7 +12,7 @@
         ▼
 validate --all --strict + CI 门禁 + 独立 reviewer clean/merge ──► 提交 PR ──► 【节点 2：归档放行】
                                                                               │ 五要件齐
-openspec archive（并入 living spec） ◄────────────────────────────────────────┘
+scripts/openspec-archive.mjs <id>（并入 living spec + 修链） ◄────────────────┘
         │
         ▼
 归档后强制完成：提交归档结果 → `--archived` 审计 PASS + 记录（不 PASS 不算完成）
@@ -51,15 +51,17 @@ openspec archive（并入 living spec） ◄────────────
 
 **归档后的强制完成步骤**（不属于五要件，而是归档本身的收尾；缺一步归档不算完成）：
 
-1. 执行 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，living spec 并入 `openspec/specs/`。纯目录移动（delta 与 living 逐字相同）时记下输出 `Specs already in sync; no files changed`（1.12.0 原文）。
+1. 执行 `node scripts/openspec-archive.mjs <change-id>`：包装器内调 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`（living spec 并入 `openspec/specs/`），随后做归档链接修复并自跑相对链接门禁（规则见下节）。纯目录移动（delta 与 living 逐字相同）时记下输出 `Specs already in sync; no files changed`（1.12.0 原文）。
 2. **提交归档结果**：把归档目录（`openspec/changes/archive/<日期>-<change-id>/`）与并入后的 living spec（`openspec/specs/**`）一起提交。`--archived` 不是读工作区 diff——它用 `git log --diff-filter=A` 定位归档目录 `proposal.md` 的首次加入提交，再读该提交与其父提交的 living spec（`scripts/openspec-archive-check.mjs:489-493`、`:510-518`）；**未提交时它必然 FAIL**「无法在 git 历史里定位…归档提交」。
 3. **归档提交后**跑 `node scripts/openspec-archive-check.mjs --archived <change-id>`，必须输出 `PASS`（用归档提交的前后快照核对 delta 的每个段落都完整落进了归档后的 living spec，无静默丢段）。
 4. `--archived` 不 PASS ⇒ **归档不算完成**：按脚本指出的缺失段落从归档提交的前后快照恢复并提交补回，复跑审计至 PASS；不得用「已归档」或「历史归档」搪塞。批次收尾宣称完成前，本批每一次归档的 `--archived` 都必须 PASS——这是归档期唯一的丢段判据，归档前要件 5 证不到这一段。
 
+**归档链接修复（包装器写侧最小修复，2026-10-28）**：`openspec archive` 把 change 目录移进 `openspec/changes/archive/<日期>-<change-id>/`（深一层）却不重写制品内的相对链接——活跃期按 `../../../docs/…` 写的链接归档后落到 `openspec/docs/…`，`scripts/openspec-links.sh` 判红（现场 M787：归档 `add-harness-activity-presence` 后 3 条不可达，只能手工改深一层再提交）。`scripts/openspec-archive.mjs` 归档后只做一条修复：对归档目录下每份 `*.md` 的每条 markdown 相对链接，**当前目标不可达且前加一层 `../` 后可达**才把目标改成 `../<原目标>`；当前可达（change 内部相对链接、已修过一次的链接）不动，要加两层才可达或目标本就不存在的**不修**——那种真死链仍由 links 判据判红，包装器不遮蔽。**读侧不豁免**：findings 里的方案②（让 links 判据对 `changes/archive/**` 按少一层的基准解析）被否，那会让真死链假绿、判据失去意义。外链 / 纯锚点 / 行内代码跨度 / 围栏代码块 / 非路径占位词不进判据（口径与 links 判据逐条一致）。`openspec archive` MUST 走本包装器；包装器最后自跑 `scripts/openspec-links.sh`，红即非零退出（archive 失败、定位不到归档目录同样非零）。历史归档件**不做批量重写**：既有归档按 `../../../../` 正确深度写、判据全绿，作者起草时照活跃期深度写相对链接即可，不必预判归档后的深度。
+
 **归档记录要求（分两段写，写进 change 的 `proposal.md` 节点 2 块，沿用既有惯例）**：
 
 - **归档前**：五要件各自的事实与指针——节点 1 批准依据；reviewer 的 verdict、评审时 tip 与评审文件路径；tasks 完成数或放弃理由位置；门禁输出行与证据目录绝对路径（`.local/...`）；要件 5 的三项读数（archive-check 门禁模式、`validate --all --strict`、队列条目唯一）。
-- **归档后**：在同一块追加（或在该 change 的归档跟踪条目里给指针）归档提交的 hash、`openspec archive` 的实际输出（纯目录移动记 `Specs already in sync; no files changed`）与 `--archived <change-id>` 的 PASS 读数及时间。
+- **归档后**：在同一块追加（或在该 change 的归档跟踪条目里给指针）归档提交的 hash、包装器（`openspec archive`）的实际输出（纯目录移动记 `Specs already in sync; no files changed`）、包装器的修链读数（`归档后修链 N 处` 与逐条 `from → to`）与 `--archived <change-id>` 的 PASS 读数及时间。
 - 属有序链的写清链位置与前一环；命中例外、经 Alex 裁决后才归档的抄录原话与日期，机器放行的写「机器 + 独立评审放行（本节要件）」并列出关键读数——两种记录都不得只写「通过」。
 
 **首批适用现场**：权限链 `harness-permission-rules-oct23` → `readonly-allowlist-tightening-oct23` → `rg-zip-flags-dangerous-oct24`（同一 `harness` 权限 requirement 的三段 delta，后一环以前一环归档后的 living 为基线），以及共用该段 requirement 的 `add-cron-conversational-registration`（排在 `harness-permission-rules-oct23` 之后）。这条链**不再逐个走人肉节点 2**：每环按五要件放行，链序与链内例外裁决一次完成（见下节）。
@@ -134,7 +136,7 @@ node scripts/openspec-archive-check.mjs --archived <change-id>
 3. **提案 PR**：提交并在 PR 描述中 @ Alex 请求节点 1 评审。未通过则按批注修订，保持 change 不进入实现。
 4. **实现**：按 `tasks.md` 逐项实现并勾选（`- [x]`）。发现 proposal 意图需要变更时，停下：更新 proposal 并重新走节点 1，不静默扩 scope。**修复类 PR（收掉某个既有 backlog 条目）MUST 同批删除 `docs/backlog.md` 对应条目，reviewer 合并前核对本批 diff 是否带删除**——不把删除留给下一批清理。
 5. **归档放行**：tasks 全部勾选（或标注放弃原因）后，同一 PR 在 `docs/backlog.md` 的归档跟踪队列落一条记录（判据见「批次收尾 checklist（归档跟踪）」下的「归档队列的机器判据」——缺条目 / 重复条目会让 docs-check 报红），逐条核对「节点 2 五要件」并把记录写进 proposal 的节点 2 块；五要件齐即由 tower 归档，命中「必须找 Alex 的例外类别」才送裁。
-6. **归档与归档后审计**：五要件齐（例外项另经 Alex 裁决）后执行 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，living spec 自动并入 `openspec/specs/`；**提交归档结果**（归档目录 + living spec），再按上文「归档后的强制完成步骤」跑 `node scripts/openspec-archive-check.mjs --archived <change-id>` 并取得 `PASS`、把归档提交 hash 与两次读数记进归档记录——**归档提交后审计不 PASS 不算归档完成**。
+6. **归档与归档后审计**：五要件齐（例外项另经 Alex 裁决）后执行 `node scripts/openspec-archive.mjs <change-id>`（包装器内调 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，living spec 自动并入 `openspec/specs/`，随后修归档链接并自跑相对链接门禁——不要绕过包装器直接调 CLI）；**提交归档结果**（归档目录 + living spec + 修链改动），再按上文「归档后的强制完成步骤」跑 `node scripts/openspec-archive-check.mjs --archived <change-id>` 并取得 `PASS`、把归档提交 hash 与两次读数记进归档记录——**归档提交后审计不 PASS 不算归档完成**。
 
 ## 批次收尾 checklist（归档跟踪）
 

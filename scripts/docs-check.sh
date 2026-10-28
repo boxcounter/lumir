@@ -10,7 +10,10 @@
 #      - 状态值合法（合法集合见下），与「deferred 必带全角括号注解」**两条分别校验**
 #        （adr-lifecycle.md 的 `deferred` 一节定稿口径：裸 deferred 非法）
 #   2. docs/adr/README.md 索引与 ADR 文件双向一致
-#   3. openspec/**/*.md 内相对链接的可达性（实现在 scripts/openspec-links.sh，本脚本调它）
+#   3. openspec/**/*.md 内相对链接的可达性（实现在 scripts/openspec-links.sh，本脚本调它）。
+#      归档加深一层目录造成的死链由写侧包装器 scripts/openspec-archive.mjs 在 archive 时就地最小修复
+#      （只改「当前不可达且前加一层 ../ 可达」的目标，判红/判绿仍归 links 判据）；包装器的 fixture 自测
+#      `node --test scripts/openspec-archive.test.mjs` 也挂在本脚本里跑。
 #   4. OpenSpec 归档对账：活跃 change 的 MODIFIED delta 是否静默删掉了 living spec 的段落
 #      （实现在 scripts/openspec-archive-check.mjs，本脚本调它——`openspec archive` 对 MODIFIED 是
 #      整块替换，delta 少抄的段落在归档时静默消失，validate 与链接检查都看不见）
@@ -122,6 +125,19 @@ if ! bash scripts/openspec-links.sh; then
   fail=1
 fi
 
+# --- 归档链接修复包装器的自测（实现见 scripts/openspec-archive.mjs / .test.mjs） ---
+# 包装器是 `openspec archive` 的唯一入口（docs/process/openspec-workflow.md「归档后的强制完成步骤」）：
+# 归档后按「当前不可达且前加一层 ../ 可达」最小修复相对链接，其它一律不动。判据自身的区分度测试
+# 与 openspec-archive-check.test.mjs 同址同跑法，挂本脚本 ⇒ 本地 gate.sh quick 与 CI 的
+# docs-check.yml 同时继承（REVIEW.md「同一语义两处真源」条）。
+if ! command -v node >/dev/null 2>&1; then
+  echo "::error::未找到 node，归档修链包装器自测无法运行（环境要求见 README.md）"
+  fail=1
+elif ! node --test scripts/openspec-archive.test.mjs; then
+  echo "::error::归档修链包装器自测失败（node --test scripts/openspec-archive.test.mjs）"
+  fail=1
+fi
+
 # --- OpenSpec 归档对账（实现见 scripts/openspec-archive-check.mjs） ---
 # 挂本脚本而不是 gate.sh：本脚本是 docs-check.yml 与 gate.sh quick 共用的唯一制品门禁入口，
 # 挂这里两边同时继承（REVIEW.md「同一语义两处真源」条）。该脚本的门禁模式同时判两件事：
@@ -151,4 +167,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达 + 归档对账无静默丢段 + 归档队列齐备 + 验收场景契约与覆盖表一致 + backlog 出口合规 + 验收套件语法与自测通过）"
+echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达（含归档修链包装器自测）+ 归档对账无静默丢段 + 归档队列齐备 + 验收场景契约与覆盖表一致 + backlog 出口合规 + 验收套件语法与自测通过）"
