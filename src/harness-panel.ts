@@ -9128,15 +9128,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         dispatchActivity({ type: "auto_turn_started" });
         return;
       case "done": {
-        // 「中途接管」的轮次在终态到达时对账一次渲染面（design §5）：切走期间的正文分片在
-        // 事件过滤时就丢了，本轮的流式泡可能缺开头——用后端留存把它换成完整回答。
+        // 两类「按后端快照重建内容」的理由，合并成**一次**请求：
+        // ① 中途接管的轮次（design §5）：切走期间的正文分片在事件过滤时就丢了，本轮的流式泡
+        //    可能缺开头——用留存把它换成完整回答；
+        // ② cron 点击运行收尾（M612）：本次运行的 prompt / 回答以留存面板为单一真源（专用会话
+        //    的历史也回屏），不把「这一轮的面板态」当作会话的全部内容。
         const takeover = midTakeover;
+        const adopted = cronRunAdopted;
+        cronRunAdopted = false;
         finalizeStreamingMessage();
         dispatchActivity({ type: "terminal", kind: "done", mounted: mountEl !== null });
-        if (takeover) fetchSnapshot("content");
-        // cron 点击运行收尾（M612）：按后端快照重载一次——本次运行的 prompt / 回答以留存面板为
-        // 单一真源（专用会话的历史也回屏），不把「这一轮的面板态」当作会话的全部内容。
-        if (cronRunAdopted) reloadSession();
+        // 两条都走**只内容**档位（tasks 2.1 / 4.2）：MUST NOT 复用 `reloadSession`——它内部的
+        // `resetView` 以 `vault_changed` 结算，会把刚刚这一步 terminal 产生的未读吃掉
+        // （r1 P1-2 的现场：点击 cron → 收起面板 → 完成，指示退回空闲而不是「有新的回复」）。
+        if (takeover || adopted) fetchSnapshot("content");
         return;
       }
       case "aborted": {
@@ -9461,6 +9466,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     } else {
       // 终态对账：把残缺的流式泡换成留存里的**完整**消息（design §5）。只清渲染面——
       // 跟随态、相位、轮次闸门与未读一概不动（tasks 4.2 的 MUST NOT 三条）。
+      //
+      // **世代守卫同样管内容**（不只是相位）：内容重建是「清面 + 按快照重放」，如果请求发出
+      // 之后用户已经开始了新一轮（`sent` 推进了 `phaseEpoch`，并把新消息乐观上屏了），这份
+      // 回包已经过期——落地时会把那条新消息清掉，直到下一条事件才补回来。丢弃整条。
+      if (epochAtRequest !== phaseEpoch) return;
       clearTranscriptSurface();
     }
     const messages = Array.isArray(state.messages) ? state.messages : [];
@@ -9817,12 +9827,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       .catch(
         (e: unknown) => {
           // `harness_busy` 的处置（tasks 2.4 / r2 P2-1）：拒绝**不是**在途证据——能发出并被拒
-          // 只可能落在后端「终态已发、尚未释放」的窗口（或本地假空闲）。因此只上错误行 + 重取
-          // 一次进入快照，相位由 `in_flight` 决定；MUST NOT 在这里直接改相位（删掉的
-          // `busy_rejected` 不许以别的名字回来）。
+          // 只可能落在后端「终态已发、尚未释放」的窗口（或本地假空闲）。因此只上错误行 + 读一次
+          // **相位**，相位由 `in_flight` 决定；MUST NOT 在这里直接改相位（删掉的 `busy_rejected`
+          // 不许以别的名字回来）。
+          //
+          // 读相位走 `fetchActivitySnapshot`（只读通道）而**不是**进入档 `fetchSnapshot`：这条
+          // 重取发生在一个**已有内容**的 transcript 上，事前没有 `resetView` / 清渲染面——进入档
+          // 的 `renderSnapshotMessages` 是逐条 append（不清空），会把历史消息再上屏一遍，末尾的
+          // `follow.jumpToBottom()` 还会把正在阅读的视口拽回底部（r1 P1-1 的现场）。
           if (errorCodeOf(e) === "harness_busy") {
             appendError(t("D347", { reason: errorMessage(e) }));
-            fetchSnapshot();
+            fetchActivitySnapshot();
             return;
           }
           // 其余失败（线程起不来 / 参数被拒 / …）：这一轮没有起来，本地收口回 idle。
@@ -10153,9 +10168,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return true;
   }
 
-  /** 按后端当前会话重取快照并重建渲染面（M612）：cron 点击运行发起失败时的回滚通道——
+  /** 按后端当前会话重取快照并重建渲染面（M612）：cron 点击运行**发起失败**时的回滚通道——
    *  `beginCronRun` 的乐观切屏必须撤回，面板回到后端真实会话，不留下一条没发出去的 prompt。
-   *  不切 vault（与 `vaultChanged` 的区别：无 vault 作用域变化，只换渲染面）。 */
+   *  不切 vault（与 `vaultChanged` 的区别：无 vault 作用域变化，只换渲染面）。
+   *
+   *  **只用于回滚**：它经 `resetView` 结算（`vault_changed` 清相位与未读），而运行**正常结束**
+   *  时要保留该轮产生的未读——那条路径走只内容档位（`handleEvent` 的 `done` 分支直接
+   *  `fetchSnapshot("content")`，r1 P1-2）。 */
   function reloadSession(): void {
     cronRunAdopted = false;
     resetView();

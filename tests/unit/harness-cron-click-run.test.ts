@@ -96,13 +96,23 @@ test("beginCronRun：清渲染面 + prompt 上屏 + 开轮次闸门与发送相�
   assert.match(BEGIN_CRON_RUN, /cronRunAdopted = true/, "切屏态必须登记，收尾时据此重载快照");
 });
 
-test("done 收尾：cron 切屏态下按后端快照重载（专用会话历史回屏，面板回到单一真源）", () => {
+test("done 收尾：cron 切屏态下按后端快照只重建内容（专用会话历史回屏，未读存活）", () => {
   const doneStart = PANEL_SOURCE.search(/case "done":/);
   assert.notEqual(doneStart, -1, "handleEvent 里找不到 done 分支");
   const doneEnd = PANEL_SOURCE.indexOf('case "aborted":', doneStart);
   assert.notEqual(doneEnd, -1, "done 分支之后找不到 aborted 分支（解析口径已过期）");
   const doneBody = PANEL_SOURCE.slice(doneStart, doneEnd);
-  assert.match(doneBody, /if \(cronRunAdopted\) reloadSession\(\);/, "done 后必须按 cronRunAdopted 重载快照");
+  // 重载仍在（专用会话历史回屏、面板回到单一真源），但口径自 change
+  // add-harness-activity-presence r1 P1-2 起改为**只内容档位**：`reloadSession` 经 `resetView`
+  // 以 `vault_changed` 结算，会把本轮刚产生的未读吃掉（点击 cron → 收起 → 完成，指示退回空闲）。
+  assert.match(doneBody, /const adopted = cronRunAdopted;/, "done 必须在派发前记住 cron 切屏态");
+  assert.match(
+    doneBody,
+    /if \(takeover \|\| adopted\) fetchSnapshot\("content"\)/,
+    "done 后必须按 cronRunAdopted 重建内容（与中途接管对账合并成一次只内容档快照）",
+  );
+  // 本仓钉的 @types/node 档没有声明 `assert.doesNotMatch`（运行时存在、类型面缺）。
+  assert.equal(/reloadSession\(\)/.test(doneBody), false, "MUST NOT 复用会清未读的会话复位路径");
 });
 
 // ── 目标 vault 的打开交接（M752：同一点击链路上另行发现的合同内交接缺陷） ──────────

@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const PANEL_SOURCE = readFileSync(new URL("../../src/harness-panel.ts", import.meta.url), "utf8");
+const MAIN_SOURCE = readFileSync(new URL("../../src/main.ts", import.meta.url), "utf8");
 const ACTIVITY_SOURCE = readFileSync(new URL("../../src/harness-activity.ts", import.meta.url), "utf8");
 const PANEL_CSS = readFileSync(new URL("../../src/harness-panel.css", import.meta.url), "utf8");
 
@@ -129,6 +130,16 @@ test("恢复会话也是进入时点：只读相位、不重放内容", () => {
   assert.match(functionBodyOf(PANEL_SOURCE, "restoreSnapshot"), /parseSnapshot\(json\)/, "全量恢复同一份解析");
 });
 
+test("对账档位必须带世代守卫：请求之后已开始新一轮 ⇒ 整条丢弃", () => {
+  // 内容重建 = 清面 + 重放。请求发出后若用户已开始新一轮（`sent` 推进 epoch、新消息乐观上屏），
+  // 这份回包落地会把那条新消息清掉——相位有守卫，内容也必须有一道。
+  const contentBranch = RESTORE.slice(RESTORE.indexOf('} else {'));
+  const guard = contentBranch.search(/if \(epochAtRequest !== phaseEpoch\) return;/);
+  assert.notEqual(guard, -1, "内容档必须在清面前丢弃过期回包");
+  const clear = contentBranch.search(/clearTranscriptSurface\(\)/);
+  assert.ok(guard < clear, "守卫必须排在清渲染面**之前**（清完再判就晚了）");
+});
+
 test("对账档位：清渲染面 + 不拽视口；进入档位才强制回底", () => {
   // 对账要把残缺的流式泡换成完整消息 ⇒ 必须先清渲染面（否则 renderSnapshotMessages 只是追加，
   // 屏幕上会出现两份）。它 MUST NOT 走 `resetView`（那会顺手改相位 / 未读 / 跟随态）。
@@ -188,26 +199,39 @@ test("三类终态都经状态机、都把 mounted 传进去（未读只在收�
   );
 });
 
-test("终态对账：只在「中途接管」的那一轮做，且走内容档位", () => {
+test("终态对账：只在「中途接管」/ cron 收尾时做，且走内容档位", () => {
   const takeoverReads = [...HANDLE.matchAll(/const takeover = midTakeover;/g)];
   assert.equal(takeoverReads.length, 3, "三类终态都要在派发前记住接管标志（派发会清它）");
-  for (const kind of ["done", "error", "aborted"]) {
+  for (const kind of ["error", "aborted"]) {
     const block = switchCaseOf(HANDLE, kind);
     assert.match(block, /if \(takeover\) fetchSnapshot\("content"\)/, `${kind} 分支的对账必须走内容档位`);
   }
-  // 反向：对账档 MUST NOT 出现在别处（心跳 / 挂载都必须走进入档）。
-  const contentCalls = [...PANEL_SOURCE.matchAll(/fetchSnapshot\("content"\)/g)];
-  assert.equal(contentCalls.length, 3, `内容档调用只允许出现在三条终态对账里（实际 ${contentCalls.length} 条）`);
+  // done 分支：两条理由（中途接管 / cron 点击运行收尾）合并成**一次**内容档请求。
+  const done = switchCaseOf(HANDLE, "done");
+  assert.match(done, /const adopted = cronRunAdopted;/, "done 必须在派发前记住 cron 切屏态");
+  assert.match(done, /if \(takeover \|\| adopted\) fetchSnapshot\("content"\)/, "两种理由合并成一次内容重建");
+  // r1 P1-2：cron 收尾 MUST NOT 复用 reloadSession——它经 resetView 以 `vault_changed` 结算，
+  // 会把刚产生的未读吃掉（点击 cron → 收起 → 完成，指示退回空闲）。
+  assertNoMatch(done, /reloadSession\(\)/, "cron 收尾不得走会清未读的会话复位路径");
+  // 反向：对账档 MUST NOT 出现在别处（心跳 / 挂载 / 回滚都必须走进入档）。判据只数**调用**，
+  // 注释里点到这个名字不算（`reloadSession` 的注释就是这样提到它的）。
+  const contentCalls = stripComments(PANEL_SOURCE).match(/fetchSnapshot\("content"\)/g) ?? [];
+  assert.equal(contentCalls.length, 3, `内容档调用只允许出现在 done / error / aborted 三条终态里（实际 ${contentCalls.length} 处）`);
+  // 回滚路径仍在：装配层的点击运行发起失败必须以 reloadSession 撤回乐观切屏。
+  assert.match(MAIN_SOURCE, /harnessPanel\.reloadSession\(\)/, "发起失败的回滚通道仍须存在（reloadSession）");
 });
 
 // ── 4. 发送 / 停止 / 拒绝：三条口径 ───────────────────────────────────────
 
-test("harness_busy：只上错误行 + 重取一次进入快照，MUST NOT 直接改相位", () => {
+test("harness_busy：只上错误行 + 读一次相位（只读通道），MUST NOT 直接改相位", () => {
   const busyBranchStart = SEND.indexOf('if (errorCodeOf(e) === "harness_busy")');
   assert.notEqual(busyBranchStart, -1, "send 的 catch 必须有 harness_busy 的专属处置");
   const branch = SEND.slice(busyBranchStart, SEND.indexOf("return;", busyBranchStart));
   assert.match(branch, /appendError\(/, "拒绝要如实上错误行");
-  assert.match(branch, /fetchSnapshot\(\)/, "拒绝的处置是再问一次权威（快照），不是本地猜");
+  // r1 P1-1：这条重取发生在**已有内容**的 transcript 上（事前没有 resetView / 清渲染面），
+  // 走进入档会把历史消息逐条 append 第二遍、并强制回底。只读相位通道没有这两个副作用。
+  assert.match(branch, /fetchActivitySnapshot\(\)/, "拒绝的处置是再问一次权威的**相位**，不是本地猜");
+  assertNoMatch(branch, /fetchSnapshot\(/, "MUST NOT 走进入档全量恢复（会重复消息 + 强制回底）");
   assertNoMatch(branch, /applySendPhase|dispatchActivity/, "拒绝不得作为在途证据：这里 MUST NOT 改相位（r2 删掉的 busy_rejected 不许以别的名字回来）");
 });
 
