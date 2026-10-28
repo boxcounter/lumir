@@ -91,12 +91,18 @@ export function snapshotBody(text) {
     .join("\n");
 }
 
+/** 「连续两次快照正文一致」类等待的采样间隔（M786）：`settle()`（本文件）与 `settleEditorless()`
+ *  （execute.mjs）是同一份判据的两个入口，`execute.mjs` 从这里 import——两处各写一个 700 会在下一次
+ *  调等待节奏时只改到一处，真机上的等待时长与自测断言的采样节奏随即脱节（REVIEW.md「同一语义两处
+ *  真源」条）。改这个值等于改所有 `do: settle` 步骤的真机等待节奏，不是纯测试参数。 */
+export const SETTLE_SAMPLE_MS = 700;
+
 /** 等界面稳定：连续两次 AX **快照正文**一致（产物 id 行除外，见 `snapshotBody`），且编辑器节点已就位。
  *
  *  `now` / `sleepFn` 只为自测注入（生产调用点不传）：判据与超时语义不变（deadline = 起点 + `timeoutMs`，
- *  每轮采样间隔 700ms）。注入它们是为了让「预算内读到第几轮」能按采样节奏算，而不是靠机器跑得快——
- *  M779 满载跑 gate 时，旧用例吃真实 800ms 预算，首读被并发负载拖过 100ms 就只读到 1 次、自测假红
- *  （finding `20261028-worker-fix-harness-activity-re-bug-acceptance-settle.md`）。 */
+ *  每轮采样间隔 `SETTLE_SAMPLE_MS`）。注入它们是为了让「预算内读到第几轮」能按采样节奏算，而不是靠
+ *  机器跑得快——M779 满载跑 gate 时，旧用例吃真实 800ms 预算，首读被并发负载拖过 100ms 就只读到 1 次、
+ *  自测假红（finding `20261028-worker-fix-harness-activity-re-bug-acceptance-settle.md`）。 */
 export async function settle(cu, pid, { timeoutMs = 30_000, now = Date.now, sleepFn = sleep } = {}) {
   const deadline = now() + timeoutMs;
   let prev = null;
@@ -104,7 +110,7 @@ export async function settle(cu, pid, { timeoutMs = 30_000, now = Date.now, slee
     const ax = await readAx(cu, pid);
     if (prev && snapshotBody(prev.text) === snapshotBody(ax.text) && ax.textarea) return ax;
     prev = ax;
-    await sleepFn(700);
+    await sleepFn(SETTLE_SAMPLE_MS);
   }
   throw new StepError(`界面在 ${timeoutMs}ms 内未稳定`);
 }

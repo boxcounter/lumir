@@ -43,6 +43,7 @@ import {
   resizeWindowAX,
   screenWorkArea,
   settle,
+  SETTLE_SAMPLE_MS,
   snapshotBody,
   StepError,
   tryForeground,
@@ -1709,7 +1710,7 @@ function requireFrontmostForChords(pid, chords) {
   );
 }
 
-/** `do: settle` 的等待上限（M249）。15s 是「两次一致」的宽裕上界（每拍 700ms），同时给
+/** `do: settle` 的等待上限（M249）。15s 是「两次一致」的宽裕上界（每拍 `SETTLE_SAMPLE_MS`），同时给
  *  「界面一直不收敛」这种异常收一个可预期的代价——到点走兜底，不无限等。 */
 const SETTLE_TIMEOUT_MS = 15_000;
 
@@ -2682,16 +2683,24 @@ async function settleAction(cu, pid, evidence) {
  * 两种终态（都是正观测，见 waitAppReady）：已装载 vault 但一个标签都没有（D107 引导层盖住
  * 正文，M163 起的启动常态）、未打开 vault 的空态。两者里 `AXTextArea` 都不存在，`drive.mjs`
  * 的 `settle()` 的编辑器门因此永远不成立。等待口径与它一致（连续两次 AX **快照正文**相同，
- * 产物 id 行除外——与 `settle()` 共用 `drive.mjs` 的 `snapshotBody`，避免下次只改一处），
- * 只是不带编辑器门；超时同样只落 note、不抛错。
+ * 产物 id 行除外——与 `settle()` 共用 `drive.mjs` 的 `snapshotBody` 与采样间隔
+ * `SETTLE_SAMPLE_MS`，避免下次只改一处），只是不带编辑器门；超时同样只落 note、不抛错。
  *
- * `timeoutMs` 只为自测放开（execute.test.mjs 用短超时构造必红的正文抖动现场），生产路径
- * 一律取 `SETTLE_TIMEOUT_MS`。 */
-export async function settleEditorless(cu, pid, evidence, { timeoutMs = SETTLE_TIMEOUT_MS } = {}) {
-  const deadline = Date.now() + timeoutMs;
+ * `timeoutMs` / `now` / `sleepFn` 只为自测放开（execute.test.mjs 用短预算构造必超时的正文抖动
+ * 现场），生产路径一律取 `SETTLE_TIMEOUT_MS` 与真实墙钟。注入 `now` / `sleepFn` 与 `settle()`
+ * 同一口径（M786）：吃真实墙钟的自测把「预算内读到第几轮」判成了机器速度——满载时首读被拖过
+ * 预算就只读 1 次、自测假红（finding
+ * `20261028-worker-stabilize-acceptance-se-bug-settleeditorless-m785-drive-mjs.md`）。 */
+export async function settleEditorless(
+  cu,
+  pid,
+  evidence,
+  { timeoutMs = SETTLE_TIMEOUT_MS, now = Date.now, sleepFn = sleep } = {},
+) {
+  const deadline = now() + timeoutMs;
   let prev = await readAx(cu, pid);
-  while (Date.now() < deadline) {
-    await sleep(700);
+  while (now() < deadline) {
+    await sleepFn(SETTLE_SAMPLE_MS);
     const ax = await readAx(cu, pid);
     if (snapshotBody(prev.text) === snapshotBody(ax.text)) return ax;
     prev = ax;
