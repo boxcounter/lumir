@@ -863,13 +863,20 @@ export function checkScenario(scenario) {
           }
           if (specOut.tool !== undefined && (typeof specOut.tool !== "string" || specOut.tool === ""))
             push(`${at} expect[${j}] file.jsonlOutput.tool 需要非空字符串（工具名，如 vault_list / cli_run）`);
-          const shape = specOut.has ?? specOut.not;
-          if (shape !== undefined && (!isPlainTable(shape) || Object.keys(shape).length === 0)) {
-            push(`${at} expect[${j}] file.jsonlOutput.${specOut.has !== undefined ? "has" : "not"} 需要非空对象（要匹配的字段）`);
-          } else if (shape !== undefined) {
-            const bad = jsonlOutputShapeProblem(shape);
-            if (bad)
-              push(`${at} expect[${j}] file.jsonlOutput 的 ${bad} 需要标量 / 非空数组 / 非空对象（null 与空容器只可能出自写错）`);
+          // 方向按「键是否**写过**」选，判定形状取该方向的**实际值**——MUST NOT 用 `has ?? not`
+          // 合并：`has: null`（YAML 里空值 `has:` 的常态）与没写 `has` 都是「键不在场」之外的两种
+          // 事实，`??` 会把前者吞成 undefined 从而跳过下面的形状校验（r1 P1-1：静态放行、判定期
+          // `Object.keys(null)` 抛 TypeError）。
+          const direction = specOut.has !== undefined ? "has" : "not";
+          if (shapes === 1) {
+            const shape = specOut[direction];
+            if (!isPlainTable(shape) || Object.keys(shape).length === 0) {
+              push(`${at} expect[${j}] file.jsonlOutput.${direction} 需要非空对象（要匹配的字段），实际 ${JSON.stringify(shape)}`);
+            } else {
+              const bad = jsonlOutputShapeProblem(shape);
+              if (bad)
+                push(`${at} expect[${j}] file.jsonlOutput 的 ${bad} 需要标量 / 非空数组 / 非空对象（null 与空容器只可能出自写错）`);
+            }
           }
         }
       }
@@ -2350,8 +2357,19 @@ export async function runScenario(ctx, scenario) {
                     : `（没有 ${specOut.tool} 的工具结果——无法判定；在场的工具：${toolCount(outputs)}）`,
               };
             }
-            const wantShape = specOut.has ?? specOut.not;
-            const direction = specOut.has !== undefined ? "has" : "not";
+            // 方向按「键是否**写过**」选（`has: null` 也算写过），形状取该方向的**实际值**：这里
+            // MUST NOT 用 `has ?? not` 合并两个方向——`null` 会被 `??` 吞成 undefined，后续
+            // `Object.keys(null)` 抛 TypeError（r1 P1-1）。真机跑批不重跑静态校验，所以运行期
+            // 也必须自己判一次形状：非空对象之外的形态一律显式 FAIL（`has: 42` 这类在
+            // `Object.keys(42) === []` 上会退化成「匹配一切」的假绿）。
+            const direction = specOut.has !== undefined ? "has" : specOut.not !== undefined ? "not" : null;
+            const wantShape = direction === null ? undefined : specOut[direction];
+            if (direction === null || !isPlainTable(wantShape) || Object.keys(wantShape).length === 0) {
+              return {
+                ok: false,
+                reason: `（jsonlOutput 需要 has 或 not，且判据是非空对象；实际 direction=${direction}，值 ${JSON.stringify(wantShape)}）`,
+              };
+            }
             const matches = [];
             for (const out of scoped) {
               const at = findToolResultMatch(out.value, wantShape);

@@ -447,6 +447,33 @@ test("file.jsonlOutput：工具名限定遇到配不上 function_call 的输出�
   assert.match(records[0].label, /配不上 function_call/, "红因应点明归属无法判定");
 });
 
+test("file.jsonlOutput：顶层 has / not 写成 null（YAML 空值）或非法形状时运行期显式 FAIL，不抛 TypeError", async () => {
+  const root = tmpRoot("jsonl-output-null-shape");
+  useTmpEnv(root);
+  const line = sessionRequestLine(toolPair("c1", "cli_run", { command: "cat", ok: true, stdout: "KEEP\n" }));
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "空判据与非法形状",
+        expect: [
+          // r1 P1-1：`has: null` 曾被 `has ?? not` 合并成 undefined，判定期 `Object.keys(null)` 抛
+          // TypeError——真机跑批不重跑静态校验，运行期必须自己判形状并显式 FAIL。
+          { label: "has: null", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: null } } },
+          { label: "not: null", file: { path: "s.jsonl", jsonlOutput: { not: null } } },
+          // `Object.keys(42) === []` 会让子集匹配在空键集上退化成「匹配一切」——同一道运行期守卫挡住。
+          { label: "has: 42（形状非法，必须红而不是匹配一切）", file: { path: "s.jsonl", jsonlOutput: { has: 42 } } },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "三条都必须判红（TypeError 会中断整场而不是落一条 FAIL 记录）");
+  assert.deepEqual(records.map((r) => r.ok), [false, false, false], `期望三条都 FAIL，实际：${JSON.stringify(records)}`);
+  for (const r of records) {
+    assert.match(r.label, /jsonlOutput 需要 has 或 not/, `红因应点明判据形态，实际：${r.label}`);
+  }
+});
+
 test("file.jsonlOutput 静态校验：未知键 / 方向不唯一 / 空期望 / null 值 / tool 非字符串都报 problem", () => {
   const errs = (spec) =>
     checkScenario({ id: "jsonl-output-check", item: 0, steps: [{ name: "校验", expect: [{ file: { path: "s.jsonl", jsonlOutput: spec } }] }] });
@@ -458,7 +485,18 @@ test("file.jsonlOutput 静态校验：未知键 / 方向不唯一 / 空期望 / 
   );
   assert.ok(errs({ tool: "cli_run" }).some((p) => p.includes("恰取一种判据")), "只写 tool 应报 problem（没有判据）");
   assert.ok(errs({ has: {} }).some((p) => p.includes("需要非空对象")), "空 has 应报 problem");
-  assert.ok(errs({ has: { stdout: null } }).some((p) => p.includes("file.jsonlOutput 的 stdout")), "null 期望值应报 problem");
+  // 顶层 `has:` / `not:` 的空写法在 YAML 里就是 null（r1 P1-1）：它必须与「没写过这个键」区分开，
+  // 不许被 `has ?? not` 吞成 undefined 而跳过形状校验。
+  assert.ok(
+    errs({ has: null }).some((p) => p.includes("file.jsonlOutput.has 需要非空对象")),
+    "顶层 has: null 应报 problem（`has ?? not` 会把 null 吞成 undefined 而静默放行）",
+  );
+  assert.ok(
+    errs({ not: null }).some((p) => p.includes("file.jsonlOutput.not 需要非空对象")),
+    "顶层 not: null 应报 problem（对照方向：not 的 null 同样不算判据）",
+  );
+  // 嵌套 null 仍是另一条口径：它落在字段值上，报的是字段路径而不是方向名。
+  assert.ok(errs({ has: { stdout: null } }).some((p) => p.includes("file.jsonlOutput 的 stdout")), "嵌套 null 期望值应报 problem");
   assert.ok(errs({ has: { entries: [] } }).some((p) => p.includes("entries")), "空数组期望值应报 problem");
   assert.ok(errs({ tool: 42, has: { a: 1 } }).some((p) => p.includes("tool 需要非空字符串")), "非字符串 tool 应报 problem");
   assert.ok(errs({ hsa: { a: 1 } }).some((p) => p.includes("未知键 hsa")), "拼错键名应报 problem（否则静默不判）");
