@@ -377,7 +377,27 @@ test('裸 marker 行 Enter 两态：非 1 起号续行、空项退出、单步�
   expect(await readDocument(page)).toBe('ordinary paragraph\n1. first\n2. \n');
 });
 
-test('setext 下线与 beforeinput 拒收名单的接线（M461）', async ({ page }) => {
+test('裸 marker 行第一次 Backspace 即删标记，真列表对照与撤销不变', async ({ page }) => {
+  const bareText = 'ordinary paragraph\n1. \n';
+  await openBare(page, bareText);
+  await page.locator('.cm-line').nth(1).click();
+  await page.keyboard.press('End');
+  await expect(page.locator('.cm-lp-bare')).toHaveCount(1);
+  await page.keyboard.press('Backspace');
+  expect(await readDocument(page), '第一次 Backspace MUST 删除裸 marker，不得空吞').toBe('ordinary paragraph\n\n');
+  await page.waitForTimeout(600);
+  await page.keyboard.press('Meta+z');
+  expect(await readDocument(page), '一次撤销恢复删除前').toBe(bareText);
+
+  const realListText = 'ordinary paragraph\n\n1. \n';
+  await openBare(page, realListText);
+  await page.locator('.cm-line').nth(2).click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Backspace');
+  expect(await readDocument(page), '真列表仍走上游删除，第一次 Backspace 即生效').toBe('ordinary paragraph\n\n\n');
+});
+
+test('setext 下线不进入裸行编辑态（M461）', async ({ page }) => {
   // `- ` 紧接段落是 setext 标题下线（Obsidian 同口径）——MUST NOT 进裸行编辑态。
   await openBare(page, 'para\n- \n');
   await page.locator('.cm-line').nth(1).click();
@@ -387,17 +407,5 @@ test('setext 下线与 beforeinput 拒收名单的接线（M461）', async ({ pa
   await page.locator('.cm-line').nth(1).click();
   await expect(page.locator('.cm-lp-bare')).toHaveCount(1);
   await expect(page.locator('.cm-lp-bare .cm-lp-list-marker')).toHaveText('–');
-  // beforeinput 拒收名单的接线：insertOrderedList 被 preventDefault（可观测），
-  // insertText 放行——派发合成事件、回读事件对象上的 defaultPrevented。
-  const prevented = await page.evaluate(() => {
-    const content = document.querySelector('.cm-content')!;
-    const blocked = new InputEvent('beforeinput', { inputType: 'insertOrderedList', bubbles: true, cancelable: true });
-    content.dispatchEvent(blocked);
-    const allowed = new InputEvent('beforeinput', { inputType: 'insertText', bubbles: true, cancelable: true });
-    content.dispatchEvent(allowed);
-    return { blocked: blocked.defaultPrevented, allowed: allowed.defaultPrevented };
-  });
-  expect(prevented.blocked, 'insertOrderedList MUST 被 preventDefault').toBe(true);
-  expect(prevented.allowed, 'insertText MUST 放行').toBe(false);
   expect(await readDocument(page)).toBe('para\n+ \n');
 });

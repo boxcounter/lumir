@@ -67,7 +67,6 @@
 ## 待真机验收（未收口；场景清单与 item 编号见 COVERAGE.md）
 
 - `02-math-click`（item 2）→ 下一动作：真机判定「公式后 ⌃B 是否 1–2 次」（AX 不暴露光标 / 选区）。
-- `153-ordered-list-auto-mode`（item 153）→ 下一动作：留 dogfood 批次真机跑列表自动模式三态 + IME 组合期不重复；裸 DOM 变更形态不兜。
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 - `M455 收尾复跑`（138/140/144/145 与 hover 族 76/87/131/132/133/134）→ 下一动作：真机复跑并登记读数（145 的 `mod+z` 同族观察留给 change 属主裁）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
