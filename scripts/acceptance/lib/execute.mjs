@@ -1238,7 +1238,7 @@ function objectFieldsMatch(node, want, problems) {
       problems?.push(`message 不是字符串（${JSON.stringify(raw)}），无法按 message#json 解析`);
       return false;
     }
-    const objects = embeddedJsonObjects(raw);
+    const objects = scanEmbeddedJson(raw).objects;
     if (objects.length === 0) {
       problems?.push(`message 里没有可解析成 JSON 对象的片段（前 120 字符：${JSON.stringify(raw.slice(0, 120))}）`);
       return false;
@@ -1254,47 +1254,70 @@ function objectFieldsMatch(node, want, problems) {
   });
 }
 
-/** 从一段文本里取出**所有**花括号平衡、且能解析成 JSON 对象的片段（字符串感知：引号内的 `{` / `}`
- *  不算括号，转义引号也不收尾）。
+/** 取出 `message` 里的候选 JSON 对象：**单趟**扫描切成花括号平衡的区块（字符串感知），只对**最外层**
+ *  区块做 `JSON.parse`，再把解析出的对象连同它的嵌套对象一起作为候选。
  *
- *  为什么不做「整段 `JSON.parse`」：`Redirect::message()` 的实际形态是「人话说明 + 固定标记 + 载荷
- *  JSON + 结束标记」的**一整段文本**，载荷只占其中一段——整段 parse 永远失败。纯 JSON 的 message
- *  同样被这条规则覆盖（整段就是一个平衡块）。字符串感知那一层是必须的：载荷里的值含 `"}` / `"\\"`
- *  这类字节时，裸数括号会把块切错。 */
-function embeddedJsonObjects(text) {
-  const found = [];
-  for (let start = text.indexOf("{"); start !== -1; start = text.indexOf("{", start + 1)) {
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i];
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (ch === "\\") escaped = true;
-        else if (ch === '"') inString = false;
-        continue;
-      }
-      if (ch === '"') {
-        inString = true;
-        continue;
-      }
-      if (ch === "{") depth += 1;
-      else if (ch === "}") {
-        depth -= 1;
-        if (depth === 0) {
-          try {
-            const parsed = JSON.parse(text.slice(start, i + 1));
-            if (isPlainTable(parsed)) found.push(parsed);
-          } catch {
-            // 这一段不是合法 JSON：继续找下一个起点（人话里出现花括号不罕见，不当作现场坏了）。
-          }
-          break;
-        }
-      }
+ *  为什么只解析最外层：旧实现从每一个 `{` 重扫后缀，连续 n 个未闭合 `{` 是 O(n²)（评审 P2-1 现场：
+ *  20k 个 `{` 约 430ms，而「花括号不平衡」正是本功能承诺要判红的输入）。改成「字符串 / 转义状态 +
+ *  未闭合起点栈」后每个字符只看一次；解析成本是**最外层区块长度之和**（≤ 文本长度），内层对象靠
+ *  `collectJsonObjects` 从外层结果里递归收集——嵌套对象的候选集合与旧实现等价，代价只有一趟遍历。
+ *
+ *  返回 `{ objects, parsed }`：`objects` = 候选对象（外层解析结果 + 其全部嵌套对象）；`parsed` = 实际
+ *  调用 `JSON.parse` 的次数，供复杂度回归断言（连续未闭合 `{` 必须是 **0** 次、且不随 n 增长）。
+ *
+ *  语义边界（与「逐起点重扫」的旧实现不同，且是刻意的）：
+ *  - 无配对的 `}` 忽略（栈空时不动），扫描继续向后；
+ *  - 花括号不平衡的尾段不产出候选，但**前面**的完整区块照旧解析——「坏 JSON 之后继续找」；
+ *  - **外层区块解析失败时不再向内找**：那一整段本身已畸形，内层碎片不可信（fail-closed，调用方按
+ *    「取不出 JSON 对象」显式 FAIL）。旧实现会试内层起点，代价是 O(n²)。
+ *
+ *  字符串感知那一层是必须的：载荷的值里可能含 `"}"` / `"\\"`，裸数括号会把块切错。 */
+export function scanEmbeddedJson(text) {
+  const spans = [];
+  const stack = [];
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") stack.push(i);
+    else if (ch === "}") {
+      if (stack.length === 0) continue; // 未配对的 `}`：不是任何区块的边界，忽略后继续扫
+      const start = stack.pop();
+      if (stack.length === 0) spans.push([start, i + 1]); // 只有最外层配对块进候选区
     }
   }
-  return found;
+  const objects = [];
+  let parsed = 0;
+  for (const [start, end] of spans) {
+    parsed += 1;
+    let value;
+    try {
+      value = JSON.parse(text.slice(start, end));
+    } catch {
+      continue; // 该区块不是合法 JSON：跳过它，后面的区块照旧解析
+    }
+    collectJsonObjects(value, objects);
+  }
+  return { objects, parsed };
+}
+
+/** 把一个解析结果里**所有**对象（任意层级、数组下探）收进 `out`——嵌套 / 数组里的对象因此不必各自
+ *  再 parse 一次（见 `scanEmbeddedJson` 的成本口径）。 */
+function collectJsonObjects(value, out) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectJsonObjects(item, out);
+    return;
+  }
+  if (!isPlainTable(value)) return;
+  out.push(value);
+  for (const child of Object.values(value)) collectJsonObjects(child, out);
 }
 
 /**

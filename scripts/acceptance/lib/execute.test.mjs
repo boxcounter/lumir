@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, runScenario, runTag, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -655,6 +655,109 @@ test("file.jsonlOutput 静态校验：message#json 的期望值必须是非空�
   assert.ok(errs({ has: { "message#json": {} } }).some((p) => p.includes("message#json")), "空对象期望值应报 problem");
   assert.ok(errs({ has: { "message#json": null } }).some((p) => p.includes("message#json")), "null 期望值应报 problem");
   assert.ok(errs({ not: { wrapper: { "message#json": "vault_move" } } }).some((p) => p.includes("wrapper.message#json")), "嵌套层级的坏形状也要报 problem（红因给字段路径）");
+});
+
+test("message#json 的扫描是单趟：连续未闭合 { 不做 JSON.parse，嵌套配对块只解析最外层", () => {
+  // 评审 P2-1 现场：旧实现从每个 `{` 重扫后缀，20k 个未闭合 `{` 是 O(n²)（约 430ms）。
+  const unclosed = scanEmbeddedJson("{".repeat(20000));
+  assert.deepEqual(unclosed.objects, [], "未闭合 `{` 不产出候选");
+  assert.equal(unclosed.parsed, 0, "连续 20k 个未闭合 `{` 的 parse 次数必须是 0");
+  assert.equal(scanEmbeddedJson("{".repeat(200000)).parsed, 0, "parse 次数不随未闭合 `{` 的数量增长（200k 仍是 0）");
+  // 嵌套配对块：外层一次 parse，内层对象靠递归收集——若内层各自 parse，总量又回到 O(n²) 量级。
+  const nested = scanEmbeddedJson("{".repeat(5000) + "}".repeat(5000));
+  assert.equal(nested.parsed, 1, "嵌套配对块只解析最外层一次");
+  assert.deepEqual(nested.objects, [], "这段不是合法 JSON，不产出候选");
+  // 正常形态（人话 + 一段载荷）：一次解析。
+  assert.equal(scanEmbeddedJson('已被闸门改道：{"suggested_tool":"vault_move"} 完成').parsed, 1);
+});
+
+test("message#json：嵌套对象与数组里的对象都能命中（外层解析后递归收集，不靠内层再 parse）", async () => {
+  const root = tmpRoot("jsonl-output-embedded-nested");
+  useTmpEnv(root);
+  const message = `改道 ${JSON.stringify({ list: [{ targets: ["a.md"] }], outer: { payload: { suggested_tool: "vault_move" } } })}`;
+  const line = sessionRequestLine(toolPair("c1", "cli_run", { code: "cli_redirected_to_vault_tool", message, ok: false }));
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "嵌套层级",
+        expect: [
+          { label: "嵌套对象里的字段", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { suggested_tool: "vault_move" } } } } },
+          { label: "数组里的对象字段", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { targets: ["a.md"] } } } } },
+          { label: "值不同（必须红）", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { suggested_tool: "vault_movex" } } } } },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "第三条必须红（区分度）");
+  assert.deepEqual(records.map((r) => r.ok), [true, true, false], `期望 [PASS, PASS, FAIL]，实际：${JSON.stringify(records)}`);
+});
+
+test("message#json：字符串内的花括号 / 转义引号不算边界，未配对的 } 忽略后继续扫", async () => {
+  const root = tmpRoot("jsonl-output-embedded-braces");
+  useTmpEnv(root);
+  // 载荷的值里含 `}` / `{` 与转义引号；前缀里还有一个未配对的 `}`（栈空，必须忽略）。
+  const payload = { note: '} { "q" \\ 尾', suggested_tool: "vault_move" };
+  const message = `改道 } 完成 ${JSON.stringify(payload)} 结束`;
+  const line = sessionRequestLine(toolPair("c1", "cli_run", { code: "cli_redirected_to_vault_tool", message, ok: false }));
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "字符串内括号",
+        expect: [
+          { label: "字符串里的括号不影响切块", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { suggested_tool: "vault_move" } } } } },
+          { label: "连字符串值一起判（逐字）", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { note: payload.note } } } } },
+          { label: "值差一个字符（必须红）", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { note: `${payload.note}x` } } } } },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "第三条必须红");
+  assert.deepEqual(records.map((r) => r.ok), [true, true, false], `期望 [PASS, PASS, FAIL]，实际：${JSON.stringify(records)}`);
+});
+
+test("message#json：坏区块跳过、后面的区块照旧解析（坏 JSON 后继续寻找）", async () => {
+  const root = tmpRoot("jsonl-output-embedded-bad-then-good");
+  useTmpEnv(root);
+  const message = '首个 {"bad": } 载荷 {"suggested_tool":"vault_move"} 结束';
+  const line = sessionRequestLine(toolPair("c1", "cli_run", { code: "cli_redirected_to_vault_tool", message, ok: false }));
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "坏块在前、好块在后",
+        expect: [
+          { label: "后面的区块仍被解析", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { suggested_tool: "vault_move" } } } } },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "PASS", `坏区块不该挡住后面的好区块，实际：${JSON.stringify(records)}`);
+});
+
+test("message#json：外层区块畸形时不再向内找（单趟扫描的边界，fail-closed 双向红）", async () => {
+  const root = tmpRoot("jsonl-output-embedded-bad-outer");
+  useTmpEnv(root);
+  // 外层 `{ … }` 不是合法 JSON，内层那个对象旧实现会命中；新实现按「该区域整体畸形」处理——
+  // 这是单趟扫描刻意的语义收窄（见 scanEmbeddedJson 的注释），两个方向都必须显式 FAIL 而不是静默。
+  const message = '改道 { 说明 {"suggested_tool":"vault_move"}} 结束';
+  const line = sessionRequestLine(toolPair("c1", "cli_run", { code: "cli_redirected_to_vault_tool", message, ok: false }));
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "外层畸形",
+        expect: [
+          { label: "正向", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { "message#json": { suggested_tool: "vault_move" } } } } },
+          { label: "负向同样要红", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", not: { "message#json": { suggested_tool: "vault_move" } } } } },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "外层畸形 ⇒ 取不出对象 ⇒ 两个方向都 FAIL（不静默当成「不含」）");
+  assert.deepEqual(records.map((r) => r.ok), [false, false], `期望两条都 FAIL，实际：${JSON.stringify(records)}`);
+  for (const r of records) assert.match(r.label, /没有可解析成 JSON 对象的片段/, "红因应点明取不出对象");
 });
 
 test("file.has / file.jsonl 与 file.jsonlOutput 的分工：手写未转义片段在字节层不命中", async () => {
