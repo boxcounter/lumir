@@ -67,10 +67,10 @@
 ## 待真机验收（未收口；场景清单与 item 编号见 COVERAGE.md）
 
 - `02-math-click`（item 2）→ 下一动作：真机判定「公式后 ⌃B 是否 1–2 次」（AX 不暴露光标 / 选区）。
-- `153-ordered-list-auto-mode`（item 153）→ 下一动作：留 dogfood 批次真机跑列表自动模式三态 + IME 组合期不重复；裸 DOM 变更形态不兜。
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 - `M455 收尾复跑`（138/140/144/145 与 hover 族 76/87/131/132/133/134）→ 下一动作：真机复跑并登记读数（145 的 `mod+z` 同族观察留给 change 属主裁）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
+- **`fix-bare-list-marker-backspace-oct28`**（2026-10-28）：节点 1 已裁；独立 reviewer clean/merge（`6a510a78`）；visual 15/15、quick 13/13、真机 153 / 158 2/2 均 exit 0；delta = editor-live-preview 1 条 ADDED；五要件齐待归档。
 - **`improve-keybindings-lookup-oct24`**（M715）：delta = keymap-commands 1 条 MODIFIED（键位面板行模型）+ 3 条 ADDED（查找/捕获/详情、非自指入口、命令元数据与字形单一来源），节点 2 走人肉；实现批附带新增真机场景 235 / 236 / 237（查询 / 捕获 / 键盘）与 m133 视觉场景重写——**像素基线待 Alex 过目后重截**（未经过目不得 `--update`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`overlay-width-contract-oct24`**（M702，34/37）：节点 1 追认材料已备（D1–D5 落地 + 证据 + 否决回改面，见 proposal）；真机 231/232 PASS（5 + 11 断言，`.local/acceptance/2026-10-24-m711/`）；残留：0.3 / 0.4 待 Alex 追认、9.1 归档期执行；delta = ui-design-system 1 条 ADDED，归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`fix-escape-overlay-close-oct24`**（M718，收尾中）：节点 1 已裁（Alex 2026-10-24「采纳你的提案。」，D1 裁 B）；先红后绿——238 红跑（master，Esc 后 AX `element_count: 1`、`ps` 空输出、浮层重建后 0 个 focused 节点）→ 绿跑 PASS（38 断言，`.local/acceptance/2026-10-24/238-escape-overlay-close/RED-before-fix/` 与同目录的 `GREEN-after-fix/`）；239 退出反例 PASS（①②③，含 dirty 文档 Esc 不弹提示）。delta = `keymap-commands` 1 条 ADDED + `harness` 1 条 MODIFIED（节点 2 走人肉）；残留：5.4 全量真机批与 6.x 门禁按本次收尾输出填写；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
