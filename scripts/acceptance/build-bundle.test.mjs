@@ -17,6 +17,11 @@
 // 生成的文件按 shebang 直接拉起；`exec` 的目标换成记录用桩，自测绝不启动 Lumir。每条拒绝用例
 // 都钉死三件事——退出码 78、stderr 给出原因、不是 shell 崩溃，故两条旧错误分别必红。
 //
+// **时序纪律（M790）**：`writeBundleIsolation` 是 async 的，必须 await 完再拉起包装——`spawnSync`
+// 会阻塞整个事件循环，漏 await 就等于让线程池的落盘与 spawn 赛跑。macOS 上写这个小文件常抢在
+// spawn 之前完成（本机因此假绿），Linux（docs CI）上 iso 为空、放行用例整条判红。三处调用统一走
+// `prepareIsolation`（await + 同步回读），另有确定性竞态回归与源码守卫钉住这条纪律（本文件末尾）。
+//
 // 跑法（与 execute.test.mjs 同例，经 scripts/acceptance/check-suite.sh 接入 quick 与 docs CI）：
 //   node --test scripts/acceptance/build-bundle.test.mjs
 //
@@ -97,6 +102,35 @@ function writeToken(bundle, content) {
   writeFileSync(bundle.tokenFile, content.endsWith("\n") ? content : `${content}\n`, "utf8");
 }
 
+/**
+ * 拉起包装的**唯一**隔离前置：`writeBundleIsolation` 必须 await 完，token 必须已经落盘（M790）。
+ *
+ * 为什么漏一个 await 就是缺陷：`runWrapper` 用的 `spawnSync` 会阻塞整个事件循环，libuv 的写入
+ * 回调在它返回之前排不进来——不 await 等于把「token 落盘」交给线程池与 spawn 的赛跑。macOS 上
+ * 写这个小文件常抢在 spawn 之前完成（本机因此假绿），Linux（docs CI）上则 token 还没写完包装就
+ * 起了，iso 为空、整条放行用例判红。
+ *
+ * 这里的同步回读不是重复劳动：它把「await 之后、拉起之前」这个时点钉死，读到的内容就是包装
+ * 将要读到的（两步之间没有任何事件循环机会）。缺了 await 时它要么 ENOENT、要么读到空串。
+ */
+async function prepareIsolation(bundle, envHome) {
+  await writeBundleIsolation({ env: envHome, tokenFile: bundle.tokenFile });
+  assert.ok(existsSync(bundle.tokenFile), "拉起包装之前 token 不存在：writeBundleIsolation 少了 await");
+  assert.equal(
+    readFileSync(bundle.tokenFile, "utf8").trim(),
+    envHome,
+    "拉起包装之前 token 内容不是本次隔离根：writeBundleIsolation 没 await 完就开始拉起（spawnSync 会阻塞事件循环抢跑）",
+  );
+}
+
+/** 删掉 `writeBundleIsolation` 预建的隔离 HOME：留着的话「包装自己建出 HOME」的断言就没有判别力
+ * （REVIEW.md「假绿：断言看着有覆盖」条）。必须在 `prepareIsolation` 之后调用——它自己也是 async 的，
+ * 提前删会被它的 mkdirp 补回来。 */
+function dropIsolationHome(envHome) {
+  rmSync(path.join(envHome, "home"), { recursive: true, force: true });
+  assert.equal(existsSync(path.join(envHome, "home")), false, "隔离 HOME 必须缺席，包装建出它才是包装的功劳");
+}
+
 /** 放行布局：两种 locale 下都要把隔离根交给真二进制，且参数原样传过去。 */
 function assertPasses(bundle, envHome, label) {
   for (const { label: envLabel, env } of ENVS) {
@@ -130,15 +164,14 @@ function assertRejected(bundle, { needle, label }) {
   }
 }
 
-test("标准布局 `<repo>/.local/acceptance/env` 放行（M781 缺陷 1 的回归）", () => {
+test("标准布局 `<repo>/.local/acceptance/env` 放行（M781 缺陷 1 的回归）", async () => {
   const bundle = makeBundle("standard");
   try {
     install(bundle);
     // envHome() 的真实形状：resultsRoot 是 `…/acceptance/<日期>`，env 与 acceptance 只隔一层。
     const envHome = path.join(bundle.dir, ".local", "acceptance", "env");
-    writeBundleIsolation({ env: envHome, tokenFile: bundle.tokenFile });
-    // 让 HOME 由包装自己建（writeBundleIsolation 预建过一份，删掉才能证明包装的 mkdir 生效）。
-    rmSync(path.join(envHome, "home"), { recursive: true, force: true });
+    await prepareIsolation(bundle, envHome);
+    dropIsolationHome(envHome);
 
     assertPasses(bundle, envHome, "标准布局");
     assert.ok(existsSync(path.join(envHome, "home")), "包装要自己建出隔离 HOME");
@@ -147,13 +180,13 @@ test("标准布局 `<repo>/.local/acceptance/env` 放行（M781 缺陷 1 的回�
   }
 });
 
-test("带 run 一级布局 `<repo>/.local/acceptance/<run>/env` 也放行（LUMIR_ACCEPTANCE_RESULTS 多指一层）", () => {
+test("带 run 一级布局 `<repo>/.local/acceptance/<run>/env` 也放行（LUMIR_ACCEPTANCE_RESULTS 多指一层）", async () => {
   const bundle = makeBundle("run-level");
   try {
     install(bundle);
     const envHome = path.join(bundle.dir, ".local", "acceptance", "2026-10-28-m777-bundle", "env");
-    writeBundleIsolation({ env: envHome, tokenFile: bundle.tokenFile });
-    rmSync(path.join(envHome, "home"), { recursive: true, force: true });
+    await prepareIsolation(bundle, envHome);
+    dropIsolationHome(envHome);
 
     assertPasses(bundle, envHome, "带 run 布局");
     assert.ok(existsSync(path.join(envHome, "home")), "包装要自己建出隔离 HOME");
@@ -249,7 +282,7 @@ test("拉起前的静态前置门接受真实生成的包装（build 产物 ↔ 
   try {
     install(bundle);
     const envHome = path.join(bundle.dir, ".local", "acceptance", "env");
-    writeBundleIsolation({ env: envHome, tokenFile: bundle.tokenFile });
+    await prepareIsolation(bundle, envHome);
     const info = await assertBundleIsolation({
       appPath: bundle.appPath,
       env: envHome,
@@ -262,5 +295,62 @@ test("拉起前的静态前置门接受真实生成的包装（build 产物 ↔ 
     assert.equal(info.tokenFile, bundle.tokenFile);
   } finally {
     bundle.cleanup();
+  }
+});
+
+test("竞态回归：没 await 的写入赶不上 spawnSync，await 之后同一 token 必然放行（M790）", async () => {
+  const bundle = makeBundle("race");
+  try {
+    install(bundle);
+    const envHome = path.join(bundle.dir, ".local", "acceptance", "env");
+    const { env } = ENVS[0];
+
+    // 旧形态的**确定性**复现：这次写入只在事件循环上完成（定时器回调里才落盘）。`spawnSync` 会
+    // 阻塞整个事件循环，回调在它返回之前不可能执行——所以这条判据与平台快慢无关。真实的
+    // `fs.writeFile` 走 libuv 线程池，落盘（C 侧）可能与 spawn 并行，macOS 上常侥幸抢在前面把
+    // 缺陷藏成假绿；这里把「回调必须排到」这一点放大成必然，旧形态在任何机器上都拿不到 token。
+    const pending = new Promise((resolve) => {
+      setTimeout(() => {
+        writeFileSync(bundle.tokenFile, `${envHome}\n`, "utf8");
+        resolve();
+      }, 0);
+    });
+    const before = runWrapper(bundle, [], env);
+    assert.equal(
+      before.status,
+      78,
+      `写入未落盘时包装必须拒绝启动，实际 ${before.status}（stderr：${before.stderr.trim()}）——` +
+        "放行说明这条复现没有制造出竞态，判据没有输入",
+    );
+    assert.match(before.stderr, /隔离 token 缺失或不可读/, "拒绝原因要是 token 缺失，不能是别的失败");
+    assert.equal(existsSync(bundle.recorderFile), false, "写入未落盘时不得 exec 真二进制");
+
+    // 正控：等写入真的完成（await）后，同一份产物、同一 token 路径必须放行——上一条的 78 因此
+    // 只能归因于时序，而不是 token 路径 / 布局判据不对。
+    await pending;
+    const after = runWrapper(bundle, [], env);
+    assert.equal(after.status, 0, `await 之后应放行，实际 ${after.status}（stderr：${after.stderr.trim()}）`);
+    assert.match(readFileSync(bundle.recorderFile, "utf8"), /ARGC=0/, "放行时真二进制应被 exec（本条无参数调用）");
+  } finally {
+    bundle.cleanup();
+  }
+});
+
+test("守卫：本文件每处 writeBundleIsolation 调用都带 await（漏掉即 M790 竞态）", () => {
+  // 静态守卫而不是又一条运行时用例：竞态在 macOS 上不可见（见上一条注释），新加调用点漏 await
+  // 在本地仍会绿，只有 docs CI 的 Linux 会红。扫自己这份源码，把「必须 await」钉成机器判据
+  // （同族做法：lib/batches.test.mjs 对 run.mjs 的调用点数做源码断言）。
+  const src = readFileSync(new URL("./build-bundle.test.mjs", import.meta.url), "utf8");
+  const callSites = src
+    .split("\n")
+    .map((line, n) => ({ line, n: n + 1 }))
+    .filter(({ line }) => !line.trimStart().startsWith("//") && /\bwriteBundleIsolation\s*\(/.test(line));
+  assert.ok(callSites.length > 0, "一处调用都扫不到：守卫失去输入（正则或文件名漂了也照样绿）");
+  for (const { line, n } of callSites) {
+    assert.match(
+      line,
+      /\bawait\s+writeBundleIsolation\s*\(/,
+      `第 ${n} 行没有 await：spawnSync 会阻塞事件循环，token 可能还没落盘包装就起了（M790）：${line.trim()}`,
+    );
   }
 });
