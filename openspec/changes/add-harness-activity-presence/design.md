@@ -262,10 +262,15 @@ type ActivityEvent =
 
 - 三态 SHALL 在 toggle 钮上可读：`aria-pressed` 承载开合（既有），状态经 `aria-describedby` 指向一段
   视觉隐藏的状态文本（「处理中」/「有新的回复」/「有失败结果」，空闲时该文本为空）。
+- **M779 修订（2026-10-28，真机实证）**：`aria-describedby` 指向的隐藏文本**不构成可判定载体**——WKWebView
+  把钮当叶子节点，钮内文本不进 AX 树，`aria-describedby` 只映射成 AXDescription 而 AX dump 不打印它。状态词
+  因此**同时**写进钮的 `title`（AX `help`，dump 里可读），写点仍只有 `applyActivityBadge` 一处；空闲态的
+  `title` 逐字等于既有 `D327`（零漂移）。
 - **不单靠颜色**：形状差异是主要判据（WCAG 1.4.1）。
 - 终态到达时可经 `aria-live="polite"` 播报一次（只播终态，不播分片）；在途开始不播报（用户刚按下发送，
   他知道）。
-- 真机验收的判据因此可落在 AX 上（见 §10）：6px 的点在 AX 里不可见，但状态文本可断言。
+- 真机验收的判据落在 AX 的 `title` / `help` 通道（见 §10）：6px 的点在 AX 里不可见，状态词经 `help` 可断言。
+  该钮在面板展开时不在场上（退让条款），三态的真机判据 SHALL 取收起态。
 
 ## 10. 测试设计
 
@@ -334,8 +339,11 @@ type ActivityEvent =
 - **委托而非重写**：逐条断言 `activity` 对 `stop_clicked` / `sent` / `finished` 的相位返回值与
   `reduceSendPhase` 的对应输出相等——两个实现分叉时必红。
 
-**先红后绿**：252 / 253 在 master 上必红（当前没有状态文本、且切回后呈空闲）——实现前先在 master 跑一次
-留证，再在实现后跑绿，读数落 `.local/acceptance/`。
+**先红后绿**（M779 修订，按实际发生的事记）：红跑是 M777 在 master `9232ab3a`（含本 change 合并）上取的，
+252 / 253 两条判红（三态文本不在 AX；253 切回后空会话 + 假空闲）；绿跑是 M779 修复分支的 252 34/0、
+253 29/0。实现**之前**的那次红没有做（真机统一等 Alex 时段，见 tasks 5.3），所以这对红绿证明的是根因修复
+前后的判别力，MUST NOT 被读成「实现前的红」；两跑的判据文本在 M779 修正过载体（收起态、AXCheckBox）。
+读数落 `.local/acceptance/2026-10-28-m777-dev/`（红）与 `.local/acceptance/2026-10-28-m779/`（绿）。
 
 **必红的机器判据候选**（单测层）：把 `resetView` 里「相位归 idle」且「快照不回填」的组合写成断言——
 恢复逻辑一旦被删，相位会停在 idle，断言必红。

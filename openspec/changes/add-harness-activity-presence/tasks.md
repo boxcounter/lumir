@@ -71,7 +71,9 @@
 - [x] 3.3 `vaultChanged` 清未读（作用域口径）；无人值守 cron 与 `notice` 不进入状态机
 - [x] 3.4 toggle 钮三态：状态点子元素常驻 DOM，经单一函数施加 `data-activity`；空闲态 `display:none`
       保证零像素漂移
-- [x] 3.5 可访问性：三态经 `aria-describedby` 指向视觉隐藏的状态文本；终态经 `aria-live="polite"` 播报一次
+- [x] 3.5 可访问性：三态经 `aria-describedby` 指向视觉隐藏的状态文本；终态经 `aria-live="polite"` 播报一次；
+      三态文案同时写进 toggle 的 `title`（M779 真机定位：WKWebView 把钮当叶子节点，钮内文本与 `aria-describedby`
+      在 AX dump 里读不到，`title`——AX `help`——是唯一可判定通道；写点仍只有 `applyActivityBadge` 一处）
 - [x] 3.6 文案：`src/copy-data.ts` 增状态文案 zh/en 双档（处理中 / 有新的回复 / 有失败结果），
       随 `onRelabel` 重绘；不新增中文字面量（`tests/unit/copy.test.ts` 迁移门禁）
 - [x] 3.7 样式：`src/harness-panel.css` 状态点（6×6、锚在钮内右下、三态形状、三主题、无动画）；
@@ -108,10 +110,13 @@
       `running + stop_clicked ⇒ stopping`、`stopping + stop_clicked ⇒ stopping`（幂等）、
       `stopping + terminal ⇒ idle`、`stopping + enter_snapshot(inFlight:true|false) ⇒ stopping`；
       并逐条断言相位输出与 `reduceSendPhase` 的同事件输出相等（委托而非重写）
-- [ ] 5.3 先红证据：在 master 上跑 252 / 253 留红（当前无状态文本、切回呈空闲），证据落
-      `.local/acceptance/<日期>/`，再在实现分支跑绿 —— **未做：tower 明确本批真机统一等 Alex
-      方便时跑**（不是放弃）。出口条件：Alex 时段内先跑 master 留红、再跑本分支留绿，两条证据
-      指针补进本项与完工报告；在此之前节点 2 的「真机证据」要件按缺口处理，不得归档
+- [x] 5.3 先红证据：红跑 = M777 在 master `9232ab3a`（含本 change 合并）跑 252 / 253，两条判红，观测面正是
+      「无状态文本 / 切回呈空闲」——证据
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-28-m777-dev/252-harness-activity-presence/`
+      与 `.../253-harness-vault-activity/`；绿跑 = M779 修复分支，252 34/0、253 29/0（证据根
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-28-m779/`）。口径边界（不夸大）：两跑的
+      252 / 253 判据文本不同（M779 把在途判据移到收起态、角色改 AXCheckBox），这对红绿证明的是「根因修复前后
+      判据由红转绿」，MUST NOT 被读成「实现前的红」——实现前那次红始终未跑，见下方「真机批（M777）」记录
 - [x] 5.4 新增 `scripts/acceptance/scenarios/252-harness-activity-presence.md`：收起期间完成 → 在途 →
       未读 → 打开面板后状态文本消失、回答在场；失败轮次点亮失败档；停止不点亮
 - [x] 5.5 新增 `scripts/acceptance/scenarios/253-harness-vault-activity.md`：跨 vault 往返仍在途 → 切回后
@@ -130,16 +135,21 @@
 - [x] 6.3 `scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行与退出码）
 - [x] 6.4 `scripts/gate.sh visual` 全绿：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0
       （`visual-regression` 604s，`isolation-runs` 1s；动过 `src/harness-panel.css`，本地整页像素层已跑）
-- [ ] 6.5 真机跑 252 / 253，证据落 `.local/acceptance/<日期>/` —— **未做**（同上：等 Alex 时段，
-      与 5.3 同一次执行）。场景与 mock fixture 已随本批入库，静态校验 `run.mjs --check` 通过
+- [x] 6.5 真机跑 252 / 253（M779 批，2026-10-28）：252 PASS 34/0、253 PASS 29/0；另连带 125 PASS 16/0、
+      165 PASS 10/0（存量会话旧拼写归属的既有场景）——证据根
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-28-m779/`（summary.md / results.json
+      与各场景 steps.md、shots/、ax/）。170 未运行（不在本 change 的验收面）
 - [x] 6.6 `bash scripts/docs-check.sh` PASS
 
 ## 7. 收尾
 
 - [x] 7.1 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条记录（五要件状态如实写）
-- [ ] 7.2 节点 2：独立 reviewer clean/merge + 五要件齐后由 tower 归档；命中例外类别才送 Alex
+- [x] 7.2 节点 2：五要件齐（逐条事实与指针见 proposal「节点 2 记录（归档前）」块）——M779 独立评审
+      clean / merge、真机 252 / 253 / 125 / 165 全绿、quick 13/13 与 visual 15/15、归档对账门禁与
+      `validate --all --strict` PASS；未命中例外类别，由 M787 执行归档；归档后读数见 proposal 同块
 
-## 真机批（2026-10-28 自动窗口，M777）——**未通过，不得归档**
+## 真机批（2026-10-28 自动窗口，M777）——**当轮未通过**（历史记录：该轮判红是 M779 的先红证据，
+缺口已由下方 M779 批闭合）
 
 环境：主仓 master `9232ab3a`（含本 change 合并），dev flavour（`pnpm tauri dev`）、隔离
 `XDG_CONFIG_HOME`、合成 vault、端口 1430、`caffeinate -dimsu`；起跑前安装版实例已按
@@ -185,3 +195,49 @@
   3. 253 的空会话 + 假空闲是**产品面**，与 AX 面无关（发送钮是真实 AXButton，停止→发送的翻转
      是行为读数）。判据不依赖上文那条不可复核的后端读数：无论该轮当时仍在途还是已结束，切回后
      都不该呈现为一个空白新会话。修好前本 change 的核心承诺在真机不成立。
+
+## 真机返修批（2026-10-28，M779）——**PASS，上文证据缺口已闭合**
+
+**根因（定位结论：不在前端快照消费侧）**：同一个 vault 被后端当成两个会话桶——启动恢复用配置里的
+`/tmp/lumir-m102-acceptance`（原始拼写）打开，vault 列表用注册表里的
+`/private/tmp/lumir-m102-acceptance`（规范化拼写）切回；harness 会话表按根路径字符串分桶
+（`VaultScope::key()`，M312 设计不改），切回时 `harness_state` 命中不了原会话、返回
+`StateSnapshot::empty`，面板如实渲染「空闲空会话」，而那一轮其实在旧桶里跑完（M777 现场 JSONL 的
+`VAULT-A/B/C` 三片即此）。252 的判红另有两条承载面原因：三态文案只写进 `aria-describedby` 指向的隐藏
+span（WKWebView 把钮当叶子节点 ⇒ 钮内文本不进 AX 树，dump 也不打印 AXDescription），以及场景把 toggle
+角色写死 `AXButton`（实测 `AXCheckBox`）。
+
+**修复（tower 裁决 A，依据见 `.tower/comms/missions/M779-fix-harness-activity-real-vault-restore.md`
+的 Notes）**：
+
+- `src-tauri/src/commands.rs`：新增 `canonical_vault_root`，`prepare_vault_open` 一进来就归一——启动恢复 /
+  列表切换 / cron 目标三条来路因此同一把键、同一个根字符串；规范化失败拒绝打开并如实报错。
+- `src-tauri/src/harness.rs`：会话归属判据改比**目录身份**（`session_belongs_to_scope`：逐字相等快速通过，
+  否则两侧 `canonicalize` 后比，取不到身份不认）；存量 JSONL 不改写、不改分桶。
+- `src/harness-panel.ts`：三态文案同时写进 toggle 的 `title`（AX `help`），写点仍只有 `applyActivityBadge`
+  一处；空闲态 `title` 逐字等于既有 `D327`（零漂移）。
+- 252 / 253 判据按真机可观测面修正：角色改 `AXCheckBox`；在途判据移到收起态；「打开即清算」从展开态的
+  恒真负向断言改成收起后可观测的判据。
+- 回归：`src-tauri/tests/workspace_scenarios.rs`（两种拼写同一根 + 注册表路径一致）、
+  `src-tauri/tests/harness_runtime.rs`（归一前两把键、归一后同一会话读回）、`src-tauri/src/harness.rs`
+  的归属判据六形态单测、`tests/visual/scenes/m756-harness-activity-presence.spec.ts`（A→B→A 往返，桩带
+  真后端的 vault 键——旧桩缺该键使 `inCurrentVault` 准入分支从未被覆盖）、
+  `tests/unit/harness-activity-wiring.test.ts`（title 载体的单一写点）。
+
+**证据**：
+
+- 真机（M779，2026-10-28）：252 PASS 34/0、253 PASS 29/0、125 PASS 16/0、165 PASS 10/0——
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-28-m779/`（`summary.md` /
+  `results.json` / 各场景 `steps.md`、`shots/`、`ax/`）。125 / 165 是刻意预置 `/tmp` 原始拼写旧会话的
+  场景，用来验证归属判据没把存量会话判成孤儿。
+- 门禁：`scripts/gate.sh quick`（tip `dbbed73a`）`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0；
+  `scripts/gate.sh visual` 由独立 reviewer 在最终 tip 空载复跑 `GATE RESULT: 15/15 PASS（SKIP 0）`，
+  退出码 0（`visual-regression` 896 passed / 1 skipped，578s）。worker 自跑那一轮因并行真机批满载判
+  `GATE RESULT: 14/15 PASS（SKIP 0）`（唯一红是 `acceptance-suite` 的 settle 自测），如实留痕，以
+  reviewer 空载复跑为准。
+- 评审：`.tower/comms/reviews/review-feat-fix-harness-activity-real-vault-restore-reviewer-fix-harness-activity-r1.md`
+  （`status: clean` / `merge: merge`，`reviewed_commit: dbbed73a`；合并 tip `71d38148` 是同一批提交的
+  rebase，四条提交 `git patch-id --stable` 实测逐一相同）。
+- 规格对账：`bash scripts/docs-check.sh` PASS（退出码 0，含归档对账门禁 / 归档队列 / backlog 出口）；
+  `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 36 passed, 0 failed (36 items)`，
+  退出码 0（归档前读数；归档后复跑读数见 proposal「节点 2 记录」块）。
