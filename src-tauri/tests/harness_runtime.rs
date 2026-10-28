@@ -416,11 +416,12 @@ fn tool_loop_roundtrip_with_fixture_file() {
         file.session_open
     );
     // 装配清单在场，「vault 根 AGENTS.md / AGENTS.local.md 均不存在」如实记 exists:false。
-    // 八个来源 = identity / quote_reference / path_reference / cron_reference / 三层 AGENTS /
-    // skill_index（path_reference 由 change harness-path-link 追加在摘录段之后，cron_reference
-    // 由 change add-cron-conversational-registration 追加在路径纪律之后）。
+    // 九个来源 = identity / workspace / quote_reference / path_reference / cron_reference /
+    // 三层 AGENTS / skill_index（path_reference 由 change harness-path-link 追加在摘录段之后，
+    // cron_reference 由 change add-cron-conversational-registration 追加在路径纪律之后，
+    // workspace 由 change add-harness-vault-workspace-list 插在身份段之后）。
     let assembly = file.session_open["assembly"].as_array().unwrap();
-    assert_eq!(assembly.len(), 8, "{assembly:?}");
+    assert_eq!(assembly.len(), 9, "{assembly:?}");
     assert!(
         assembly
             .iter()

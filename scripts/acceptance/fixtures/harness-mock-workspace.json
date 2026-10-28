@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "先看 vault 根目录。",
+      "tool_calls": [
+        {
+          "id": "call_wsl_list_root",
+          "name": "vault_list",
+          "arguments": "{}"
+        }
+      ]
+    },
+    {
+      "text": "再递归看 wsl-vault 这一支。",
+      "tool_calls": [
+        {
+          "id": "call_wsl_list_recursive",
+          "name": "vault_list",
+          "arguments": "{\"path\":\"wsl-vault\",\"recursive\":true}"
+        }
+      ]
+    },
+    {
+      "text": "读列表里看到的 sibling 文件。",
+      "tool_calls": [
+        {
+          "id": "call_wsl_read",
+          "name": "vault_read",
+          "arguments": "{\"path\":\"wsl-vault/notes/deep.md\"}"
+        }
+      ]
+    },
+    {
+      "text": "确认命令行工作目录。",
+      "tool_calls": [
+        {
+          "id": "call_wsl_pwd",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"pwd\",\"purpose\":\"确认命令行的工作目录就是当前 vault\"}"
+        }
+      ]
+    },
+    {
+      "text": "用相对路径读 Vault 内文件，验证 cwd。",
+      "tool_calls": [
+        {
+          "id": "call_wsl_cat",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"cat\",\"args\":[\"wsl-vault/keep.md\"],\"purpose\":\"用相对路径读 vault 内文件，验证子进程工作目录\"}"
+        }
+      ]
+    },
+    {
+      "text": "WSL-DONE 工作区与列表验收完成。"
+    }
+  ]
+}

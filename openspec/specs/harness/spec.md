@@ -6,10 +6,10 @@
 唤起时的编辑器上下文注入（当前路径 +
 视口行范围，发送前可核对）；AGENTS.md 三层（user-wide `~/.agents/AGENTS.md` + vault 根 +
 vault 根 `AGENTS.local.md` 本地覆盖层）与 Skill
-双根（user-wide + vault-wide）的自动装配；Rust core 的工具循环与固定工具集（8 件 vault 操作工具：
-`vault_read` / `vault_search` / `vault_patch` / `vault_create` / `vault_move` / `vault_delete` /
-`skill_load` / `cli_run`，另加 2 类不操作 vault 的工具：1 件编排工具 `task` 与 3 件调度工具
-`cron_task_create` / `cron_task_list` / `cron_task_remove`）；
+双根（user-wide + vault-wide）的自动装配；Rust core 的工具循环与固定工具集（9 件 vault 操作工具：
+`vault_read` / `vault_search` / `vault_list` / `vault_patch` / `vault_create` / `vault_move` /
+`vault_delete` / `skill_load` / `cli_run`，另加 2 类不操作 vault 的工具：1 件编排工具 `task` 与
+3 件调度工具 `cron_task_create` / `cron_task_list` / `cron_task_remove`）；
 两层权限规则（allow / deny）之上的**三档权限模式**（`read_only` /
 `vault_write` / `full_access`）与五层判定管线（deny 规则 > vault 内写重定向 > 危险黑名单 > allow
 规则 > 模式默认分层），以及写类 / CLI 的批准闸（含 cli_run 用途句与会话内「采纳且本会话不再问」
@@ -2581,7 +2581,7 @@ capability，不进入本契约。
 
 #### Scenario: 工具白名单被执行
 
-- **WHEN** 一次运行的契约声明 `tool_policy.allow` 为 8 件 vault 操作工具（cron 交接的形状），且
+- **WHEN** 一次运行的契约声明 `tool_policy.allow` 为 9 件 vault 操作工具（cron 交接的形状），且
   `[harness.subagents].enabled = true`
 - **THEN** 该运行的模型请求只包含白名单内的工具定义，`task` MUST NOT 出现；同一配置下的交互发送
   （没有交接契约）仍注册 `task`

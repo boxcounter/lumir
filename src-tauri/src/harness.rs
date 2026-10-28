@@ -21,7 +21,7 @@
 //!   与 vault → 会话映射
 //! - [`context`]：系统上下文装配（固定身份段 + AGENTS.md 三层 + Skill 索引）与 Skill 双根发现
 //! - [`llm`]：provider 预设表、OpenAI Responses API client（reqwest blocking + SSE）、mock provider
-//! - [`tools`]：恰好 8 个工具的定义与执行
+//! - [`tools`]：9 件 vault 操作工具（+ 编排 / 调度工具）的定义与执行
 //! - [`permissions`]：五层判定管线（deny > vault 内写重定向 > 危险黑名单 > allow > 三档模式
 //!   默认分层）与 cli_run 命令分类
 //! - [`permission_cache`]：会话内批准缓存（design §6：「采纳且本会话不再问」的免问索引）
@@ -377,7 +377,7 @@ impl Runtime {
     ///
     /// **顺序即正确性**：先撤销白名单、再放 busy。反过来的话，两步之间同 vault 的新一轮可以
     /// `acquire_turn` 成功（busy 已清）并读到上一轮遗留的策略，把交互回合错误过滤成 cron 的
-    /// 8 件工具。结束的回合不再需要策略；新的 cron 回合会在拿到 busy 后自行覆写。
+    /// 9 件工具。结束的回合不再需要策略；新的 cron 回合会在拿到 busy 后自行覆写。
     pub fn release_turn(&self, scope: &VaultScope) {
         {
             let mut policies = self

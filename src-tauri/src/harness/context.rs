@@ -1,4 +1,4 @@
-//! 系统上下文装配（design §5、§12）：固定身份段 + AGENTS.md 三层 + Skill 索引。
+//! 系统上下文装配（design §5、§12）：固定身份段 + 工作区段 + AGENTS.md 三层 + Skill 索引。
 //!
 //! - 固定身份段：v1 不做 persona 系统（裁决点 7），固定朴素身份 + 工具使用纪律。正文真源是
 //!   同目录的 `prompts/identity.md`；摘录回指纪律在同目录 `prompts/quote-reference.md`，路径
@@ -6,6 +6,9 @@
 //!   `prompts/cron-reference.md`——四段都是编译期嵌入的 Markdown（change
 //!   `harness-prompt-files` / `harness-path-link` / `add-cron-conversational-registration`），
 //!   改文案直接改文件。
+//! - 工作区段（change `add-harness-vault-workspace-list`）：模板 `prompts/workspace-reference.md`
+//!   编译期嵌入、运行期代入当前 vault 的绝对根——主会话 / 子代理 / cron 三条装配路径共用同一份
+//!   工作区事实（根路径与相对 / 绝对路径的边界）。
 //! - AGENTS.md 三层：user-wide（`~/.agents/AGENTS.md`）、vault 根（`<vault>/AGENTS.md`）、
 //!   vault 根本地覆盖层（`<vault>/AGENTS.local.md`，change `harness-agents-local-md`）；
 //!   文件不存在**静默跳过**（常态）；嵌套子目录级是 Non-goal。
@@ -55,6 +58,16 @@ const PATH_REFERENCE_PATH: &str = "src-tauri/src/harness/prompts/path-reference.
 const CRON_REFERENCE: &str = include_str!("prompts/cron-reference.md");
 /// 装配清单 cron_reference 条目的来源路径（仓内相对路径，供审计反查）。
 const CRON_REFERENCE_PATH: &str = "src-tauri/src/harness/prompts/cron-reference.md";
+
+/// 工作区段的正文模板（change add-harness-vault-workspace-list design §2）：`{{VAULT_ROOT}}` 在
+/// 装配时替换为当前 vault 的绝对根，其余正文固定。它与前四段不同：注入文本**按设计**
+/// 不与模板文件逐字节相等（根路径是运行期事实），所以装配清单的 `bytes` 记代入后的字节数，
+/// 「文件与注入文本一致」的断言 MUST NOT 覆盖它。
+const WORKSPACE_REFERENCE: &str = include_str!("prompts/workspace-reference.md");
+/// 装配清单 workspace 条目的来源路径（仓内相对路径，供审计反查）。
+const WORKSPACE_REFERENCE_PATH: &str = "src-tauri/src/harness/prompts/workspace-reference.md";
+/// 工作区模板里的根路径占位符（唯一的运行期代入点）。
+const VAULT_ROOT_PLACEHOLDER: &str = "{{VAULT_ROOT}}";
 
 /// 装配清单的一个来源项（`session_open.assembly` 的元素，design §2）：每个来源的
 /// 路径与**当时是否存在**。「不存在」本身是装配事实的一部分——旧实现静默跳过，
@@ -162,6 +175,19 @@ fn assemble_with_identity(
     if delegation {
         push_section(&mut out, "委托运行约束", DELEGATION_CONSTRAINTS);
     }
+    // 工作区段（change add-harness-vault-workspace-list design §2）：紧跟身份段（与子运行的委托
+    // 约束）——模型先知道「我在哪个 vault、怎么写路径」，再看「怎么回指 / 怎么写引用」。三条装配
+    // 路径（交互 / 子代理 / cron）都经过这里，因此同一份绝对根事实一处注入、三处生效。
+    let workspace = workspace_section(vault_root);
+    push_section(&mut out, "工作区", &workspace);
+    manifest.push(AssemblySource {
+        source: "workspace",
+        path: Some(WORKSPACE_REFERENCE_PATH.to_string()),
+        exists: true,
+        // 代入后的字节数（与模板文件不等是设计，见常量注释）。
+        bytes: workspace.len() as u64,
+        skills: None,
+    });
     push_section(&mut out, "引用摘录的回指纪律", quote_reference);
     manifest.push(AssemblySource::fixed(
         "quote_reference",
@@ -256,6 +282,18 @@ fn assemble_with_identity(
 
 fn push_section(out: &mut String, title: &str, body: &str) {
     out.push_str(&format!("\n\n===== {title} =====\n{body}"));
+}
+
+/// 工作区段的注入文本：模板 trim 后代入绝对根（`display` 形态——不经 `~` 展开、不缩短）。
+///
+/// 根取 [`assemble_system`] 收到的 `vault_root`，与 `cli_run` 的 `current_dir`、权限层的相对目标
+/// 解析同源（caller 传的都是 `VaultScope.root`）。占位符缺失时按「未代入」原样注入：这是模板
+/// 被改坏的信号，不该静默吞掉（`fixed_segments_are_sourced_from_prompt_files` 之外的用例会钉住
+/// 注入结果含真实根）。
+fn workspace_section(vault_root: &Path) -> String {
+    WORKSPACE_REFERENCE
+        .trim_end()
+        .replace(VAULT_ROOT_PLACEHOLDER, &vault_root.display().to_string())
 }
 
 /// user-wide AGENTS.md 路径（`~/.agents/AGENTS.md`）。HOME 取环境变量，取不到返回不存在路径。
@@ -595,6 +633,20 @@ mod tests {
         assert!(system.contains("vault rules"), "{system}");
         assert!(system.contains("- x: xd"), "{system}");
         assert!(system.contains("Lumir 的内置助手"), "{system}");
+        // 工作区段（change add-harness-vault-workspace-list）：绝对根 + 路径边界，排在身份段之后。
+        assert!(system.contains("===== 工作区 ====="), "{system}");
+        assert!(
+            system.contains(&format!("Vault 绝对根路径：{}", vault.display())),
+            "{system}"
+        );
+        assert!(
+            system.contains("cli_run 的每次子进程都从这个目录启动"),
+            "{system}"
+        );
+        assert!(
+            system.contains("vault_* 工具只接受与返回 vault 相对路径"),
+            "{system}"
+        );
         // 摘录回指纪律是固定段（不依赖 vault 内容，M343）：协议无编号、按内容/出处回指。
         assert!(system.contains("<quote file=\"…\""), "{system}");
         assert!(system.contains("不要使用编号"), "{system}");
@@ -611,10 +663,28 @@ mod tests {
         assert!(system.contains("定时任务"), "{system}");
         assert!(system.contains("cron_task_create"), "{system}");
         assert!(system.contains("不许用 cli_run 手搓系统级调度"), "{system}");
-        // 装配清单：八个来源全在场，三层 AGENTS 指令文件各记路径与存在与否，skill_index 记数量。
+        // 装配清单：九个来源全在场，三层 AGENTS 指令文件各记路径与存在与否，skill_index 记数量。
         let manifest = &assembled.manifest;
-        assert_eq!(manifest.len(), 8, "{manifest:?}");
+        assert_eq!(manifest.len(), 9, "{manifest:?}");
         let by_source = |s: &str| manifest.iter().find(|m| m.source == s).unwrap();
+        // 工作区段（change add-harness-vault-workspace-list）：模板的仓内相对路径 + 代入后字节数
+        // （与模板文件不等是设计，见 workspace_section 的注释）。
+        let workspace = by_source("workspace");
+        assert!(workspace.exists, "{workspace:?}");
+        assert_eq!(
+            workspace.path.as_deref(),
+            Some(WORKSPACE_REFERENCE_PATH),
+            "{workspace:?}"
+        );
+        let expected_workspace = WORKSPACE_REFERENCE
+            .trim_end()
+            .replace(VAULT_ROOT_PLACEHOLDER, &vault.display().to_string());
+        assert_eq!(workspace.bytes, expected_workspace.len() as u64);
+        assert_ne!(
+            workspace.bytes,
+            WORKSPACE_REFERENCE.trim_end().len() as u64,
+            "代入后应比模板长（根路径非空），否则说明占位符没被替换"
+        );
         // 固定段（change `harness-prompt-files`）：path 指向仓内来源文件，bytes 为注入
         // （trim 后）文本的字节数。
         let identity = by_source("identity");
@@ -674,7 +744,7 @@ mod tests {
         assert!(skills.exists && skills.bytes > 0, "{skills:?}");
 
         // 换到「空 HOME」+ 无 AGENTS.md / 无 skills 的 vault：三层与索引静默跳过，
-        // 只剩 identity + 摘录回指纪律 + 路径引用纪律三个固定段；清单如实记 exists:false。
+        // 只剩 identity + 工作区 + 摘录回指纪律 + 路径引用纪律几个固定段；清单如实记 exists:false。
         let home3 = tmpdir("home3");
         std::env::set_var("HOME", &home3);
         let vault3 = tmpdir("vault3");
@@ -685,21 +755,21 @@ mod tests {
         assert!(system.contains("引用摘录的纪律"), "{system}");
         assert!(system.contains("路径引用的纪律"), "{system}");
         assert!(system.contains("定时任务"), "{system}");
-        assert_eq!(assembled.manifest.len(), 8);
+        assert_eq!(assembled.manifest.len(), 9);
         assert!(
-            !assembled.manifest[4].exists,
+            !assembled.manifest[5].exists,
             "user-wide 缺失须记 exists:false"
         );
         assert!(
-            !assembled.manifest[5].exists,
+            !assembled.manifest[6].exists,
             "vault 根缺失须记 exists:false"
         );
         assert!(
-            !assembled.manifest[6].exists,
+            !assembled.manifest[7].exists,
             "本地覆盖层缺失须记 exists:false"
         );
-        assert_eq!(assembled.manifest[7].skills, Some(0));
-        assert!(!assembled.manifest[7].exists);
+        assert_eq!(assembled.manifest[8].skills, Some(0));
+        assert!(!assembled.manifest[8].exists);
     }
 
     /// 三层齐备（change `harness-agents-local-md` design §4-1）：三份文件内容都在文本中、
@@ -730,7 +800,7 @@ mod tests {
         let local_at = system.find("local override rules").unwrap();
         assert!(root_at < local_at, "{system}");
 
-        assert_eq!(assembled.manifest.len(), 8, "{:?}", assembled.manifest);
+        assert_eq!(assembled.manifest.len(), 9, "{:?}", assembled.manifest);
         let local = assembled
             .manifest
             .iter()
@@ -762,7 +832,7 @@ mod tests {
         assert!(system.contains("user rules"), "{system}");
         assert!(system.contains("vault rules"), "{system}");
         assert!(!system.contains("本机本地覆盖层"), "{system}");
-        assert_eq!(assembled.manifest.len(), 8);
+        assert_eq!(assembled.manifest.len(), 9);
         let local = assembled
             .manifest
             .iter()
@@ -789,6 +859,10 @@ mod tests {
     /// 变更沿革：change `harness-permission-rules-oct23` A4 在 identity.md 的工具纪律段补了三句
     /// （cli_run 直传 argv / 组合查询优先拆开 / 确需 shell 时才用 bash -lc），identity 段因此
     /// 1525 → 1917 字节、指纹随之更新（QUOTE_REFERENCE 未动）。
+    ///
+    /// change `add-harness-vault-workspace-list` 2.3：identity.md 的只读工具句改为
+    /// `vault_read / vault_search / vault_list`，并补「找文件先用 vault_list…不用 pwd / ls / 广域
+    /// find 探测」两句——identity 段 1917 → 2181 字节，指纹再次更新（QUOTE_REFERENCE 未动）。
     #[test]
     fn fixed_segments_keep_migrated_bytes() {
         let identity = IDENTITY.trim_end();
@@ -800,7 +874,7 @@ mod tests {
                 fnv1a64(quote.as_bytes()),
                 quote.len(),
             ),
-            (0x6005fdbeab15629c, 1917, 0x05cba54b785b843b, 1170),
+            (0x0ac63947ad031685, 2181, 0x5cba54b785b843b, 1170),
         );
     }
 
@@ -827,10 +901,10 @@ mod tests {
     }
 
     /// 固定段顺序与拼接格式（顺序是代码逻辑，change `harness-prompt-files`）：空环境里装配
-    /// 结果恰好是 identity + 摘录回指纪律 + 路径引用纪律三节（change `harness-path-link` 把
-    /// 路径段追加在摘录段之后），路径段之后是定时任务段（change
-    /// add-cron-conversational-registration）——不随 `prompts/` 目录内容 / 枚举顺序变化，且
-    /// 文件尾换行不进入注入文本（输出不以换行结尾）。
+    /// 结果恰好是 identity + 工作区 + 摘录回指纪律 + 路径引用纪律几节（change
+    /// `add-harness-vault-workspace-list` 把工作区段插在身份段之后），路径段之后是定时任务段
+    /// （change add-cron-conversational-registration）——不随 `prompts/` 目录内容 / 枚举顺序变化，
+    /// 且文件尾换行不进入注入文本（输出不以换行结尾）。
     #[test]
     fn assemble_system_fixed_prefix_is_identity_then_quote_reference() {
         let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -839,13 +913,101 @@ mod tests {
         let _guard = EnvGuard::new(&home);
         let assembled = assemble_system(&vault);
         let expected = format!(
-            "{}\n\n===== 引用摘录的回指纪律 =====\n{}\n\n===== 路径引用的纪律 =====\n{}\n\n===== 定时任务 =====\n{}",
+            "{}\n\n===== 工作区 =====\n{}\n\n===== 引用摘录的回指纪律 =====\n{}\n\n===== 路径引用的纪律 =====\n{}\n\n===== 定时任务 =====\n{}",
             IDENTITY.trim_end(),
+            workspace_section(&vault),
             QUOTE_REFERENCE.trim_end(),
             PATH_REFERENCE.trim_end(),
             CRON_REFERENCE.trim_end()
         );
         assert_eq!(assembled.text, expected);
         assert!(!assembled.text.ends_with('\n'));
+    }
+
+    /// 工作区段的三条装配路径（change add-harness-vault-workspace-list design §2）：
+    /// 交互与子代理**都**注入绝对根——子代理的定义正文替换身份段，但不替换环境事实。
+    #[test]
+    fn workspace_section_reaches_interactive_and_subagent_assembly() {
+        let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tmpdir("home-ws");
+        let vault_a = tmpdir("vault-ws-a");
+        let _guard = EnvGuard::new(&home);
+
+        let interactive = assemble_system(&vault_a);
+        let expected_root = format!("Vault 绝对根路径：{}", vault_a.display());
+        assert!(
+            interactive.text.contains(&expected_root),
+            "{}",
+            interactive.text
+        );
+
+        let subagent = assemble_system_for_subagent(&vault_a, "子代理定义正文");
+        assert!(
+            subagent.text.starts_with("子代理定义正文"),
+            "{}",
+            subagent.text
+        );
+        assert!(
+            subagent.text.contains(&expected_root),
+            "子运行也必须拿到同一个绝对根：{}",
+            subagent.text
+        );
+        // 委托约束排在工作区之前（机制级约束先于环境事实），工作区排在引用纪律之前。
+        let delegation_at = subagent.text.find("委托运行约束").unwrap();
+        let workspace_at = subagent.text.find("===== 工作区 =====").unwrap();
+        let quote_at = subagent.text.find("引用摘录的回指纪律").unwrap();
+        assert!(delegation_at < workspace_at && workspace_at < quote_at);
+        let entry = subagent
+            .manifest
+            .iter()
+            .find(|source| source.source == "workspace")
+            .expect("子运行装配清单同样要有 workspace 条目");
+        assert!(entry.exists && entry.bytes > 0, "{entry:?}");
+        assert_eq!(entry.path.as_deref(), Some(WORKSPACE_REFERENCE_PATH));
+    }
+
+    /// 多 vault 互不串根：同一进程内两次装配各自只含自己的绝对根。
+    #[test]
+    fn workspace_section_is_per_vault() {
+        let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tmpdir("home-ws-ab");
+        let vault_a = tmpdir("vault-ws-ab-a");
+        let vault_b = tmpdir("vault-ws-ab-b");
+        let _guard = EnvGuard::new(&home);
+
+        let a = assemble_system(&vault_a).text;
+        let b = assemble_system(&vault_b).text;
+        assert!(a.contains(&format!("Vault 绝对根路径：{}", vault_a.display())));
+        assert!(!a.contains(&format!("Vault 绝对根路径：{}", vault_b.display())));
+        assert!(b.contains(&format!("Vault 绝对根路径：{}", vault_b.display())));
+        assert!(!b.contains(&format!("Vault 绝对根路径：{}", vault_a.display())));
+    }
+
+    /// 工作区模板本身：占位符在场（装配的代入点不漂），且模板不含硬编码根路径。
+    #[test]
+    fn workspace_template_keeps_placeholder() {
+        assert!(
+            WORKSPACE_REFERENCE.contains(VAULT_ROOT_PLACEHOLDER),
+            "{WORKSPACE_REFERENCE}"
+        );
+        // 三条边界必须都在模板里（缺一条就不是「工作区事实」而是普通提示）。
+        assert!(WORKSPACE_REFERENCE.contains("vault_* 工具只接受与返回 vault 相对路径"));
+        assert!(WORKSPACE_REFERENCE.contains("cli_run 的每次子进程都从这个目录启动"));
+        assert!(WORKSPACE_REFERENCE.contains("vault 之外的目标在"));
+    }
+
+    /// 首选工具链的**指引在场**（change add-harness-vault-workspace-list 2.3 / 判据 3）：身份段
+    /// 必须写明「找文件 / 目录先 `vault_list`」与「不用 `pwd` / `ls /` / 广域 `find` 探测」。
+    /// 真实模型的遵从度是抽样观察，机器能钉的只有「指引在不在」——指引不在时模型没有任何理由
+    /// 改变行为，这一条因此是判据 3 的前置条件。
+    #[test]
+    fn identity_prompt_prefers_vault_list_for_discovery() {
+        assert!(IDENTITY.contains("vault_list"), "{IDENTITY}");
+        assert!(
+            IDENTITY.contains("找文件 / 目录先用 vault_list"),
+            "{IDENTITY}"
+        );
+        assert!(IDENTITY.contains("不要用 pwd"), "{IDENTITY}");
+        assert!(IDENTITY.contains("广域 find"), "{IDENTITY}");
     }
 }

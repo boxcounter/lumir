@@ -566,7 +566,7 @@ pub fn handoff(input: &HandoffInput<'_>) -> Handoff {
                     key: input.run_id.to_string(),
                 }
             },
-            // cron 运行与交互路径同权：全部 8 件 vault 操作工具（编排工具 `task` 不在
+            // cron 运行与交互路径同权：全部 9 件 vault 操作工具（编排工具 `task` 不在
             // `TOOL_NAMES` 里，cron 也不是委派的父回合）。这份白名单是**被执行**的契约值：
             // `SessionContext` 构造时按它过滤工具定义（M602），`subagents.enabled` 打开也不会
             // 把 `task` 带进无人值守运行。
@@ -1937,7 +1937,9 @@ mod tests {
             value["approval_policy"]["kind"], "reject_unavailable",
             "无人值守运行不得把批准策略写成交互：{value}"
         );
-        assert_eq!(value["tool_policy"]["allow"].as_array().unwrap().len(), 8);
+        // 9 件 vault 操作工具（change add-harness-vault-workspace-list 起含 `vault_list`）：
+        // 交接契约把整套 vault 工具授予 cron 运行，且 MUST NOT 含 `task`。
+        assert_eq!(value["tool_policy"]["allow"].as_array().unwrap().len(), 9);
         assert!(
             !value["tool_policy"]["allow"]
                 .as_array()

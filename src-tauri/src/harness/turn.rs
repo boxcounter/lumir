@@ -937,7 +937,7 @@ impl StreamSink for TurnStreamSink<'_> {
 /// 克隆即可）。档位在**会话侧**（M362），这里读一次——本轮内不再变（切档位影响其后发出的消息）。
 ///
 /// 工具定义走 [`RunContext::tool_definitions`]：交互上下文 = 当前注册表；子运行 = 定义白名单。
-/// 这是回抽唯一改变交互路径**数据面**的点（其余是调用面），无子代理定义时与既有 8 件清单
+/// 这是回抽唯一改变交互路径**数据面**的点（其余是调用面），无子代理定义时与既有 9 件清单
 /// 深度相等（单测钉死）。
 fn build_request<C: RunContext>(ctx: &mut C) -> llm::Request {
     let (system, input, effort) = ctx

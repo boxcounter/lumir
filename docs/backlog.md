@@ -3,6 +3,7 @@
 
 ## 待 Alex 裁决（`#decide`，一行一题）
 
+- **子代理缺省工具集是否加入 `vault_list`**（M772）：`DEFAULT_TOOLS` 仍是只读三件（`vault_read` / `vault_search` / `skill_load`），`vault_list` 目前只能由定义显式声明授予——缺省 `explore` 因此不能列目录（其描述里「按路径枚举」名不副实）。→ 下一动作：Alex 裁是否把缺省集扩到四件（同批改 `src-tauri/src/harness/agents.rs` 的 `DEFAULT_TOOLS` 与内建 `explore` 的 `tools`，同步 harness-subagents spec）。
 - **「末尾之后」空段落 / 卡片两子档的呈现**（M457/M473）：末尾空段落是否渲染成可键入的空行、卡片两子档的模型语义——口径草案见 `docs/specs/harness-composer.md` 的 HC3，需 Alex 定表现。
 - **「未保存新文档」是否提供创建入口**（M416）：当前无路径产生「无路径、可编辑」文档；做不做、做成什么形态，待 Alex 定义。
 
