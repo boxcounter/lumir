@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, runScenario, runTag, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, runScenario, runTag, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -2129,4 +2129,112 @@ test("do: clickNotification（动作级）：非「未发送动作」的错误�
   });
   assert.equal(bad.status, "FAIL", "无法证明「动作未发送」时必须判 FAIL，不得重试掩盖");
   assert.equal(clicks, 1, "这类错误只允许点一次（可能已生效）");
+});
+
+// ── 台账会话快照的结构化比对（change add-cron-notification-relaunch r1 P2-2）─────────
+
+test("file.cronNoticeSession：同一条通知与同一个任务逐字相同才 PASS", async () => {
+  const root = tmpRoot("cron-notice-session-ok");
+  useTmpEnv(root);
+  // 真实落盘形状：serde_json pretty（字段字母序），台账条目与 tasks 段同一个会话。
+  const state = {
+    version: 1,
+    tasks: { "acc-cron-run": { last_fired: "2026-10-28", session_id: "s1761000000000-abcd" } },
+    notices: {
+      "lumir-cron-acc-cron-run-result-1761000000000": {
+        task: "acc-cron-run",
+        kind: "result",
+        date: "2026-10-28",
+        session_id: "s1761000000000-abcd",
+      },
+    },
+  };
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写 cron-state.json", do: "envWrite", file: "cron-state.json", content: JSON.stringify(state, null, 2) },
+      {
+        name: "台账与 tasks 逐字一致",
+        expect: [
+          {
+            label: "会话快照一致",
+            file: { path: "env:cron-state.json", cronNoticeSession: { task: "acc-cron-run", kind: "result" } },
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "PASS", `一致时应通过，实际：${JSON.stringify(records)}`);
+});
+
+test("file.cronNoticeSession：台账 A、tasks B 必须 FAIL（has 写法在这里会假绿）", async () => {
+  const root = tmpRoot("cron-notice-session-mismatch");
+  useTmpEnv(root);
+  const state = {
+    version: 1,
+    tasks: { "acc-cron-run": { last_fired: "2026-10-28", session_id: "s1761000000000-bbbb" } },
+    notices: {
+      "lumir-cron-acc-cron-run-result-1761000000000": {
+        task: "acc-cron-run",
+        kind: "result",
+        date: "2026-10-28",
+        session_id: "s1761000000000-aaaa",
+      },
+    },
+  };
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写 cron-state.json", do: "envWrite", file: "cron-state.json", content: JSON.stringify(state, null, 2) },
+      {
+        name: "两处不一致",
+        expect: [
+          {
+            label: "会话快照不一致",
+            file: { path: "env:cron-state.json", cronNoticeSession: { task: "acc-cron-run", kind: "result" } },
+          },
+          // 反向对照：旧的 has 写法在同一个文件上照样「通过」——它不判任何值。
+          { label: "has 写法没有区分度", file: { path: "env:cron-state.json", has: '"session_id"' } },
+        ],
+      },
+    ],
+  });
+  // FAIL 记录的 label 会被判据理由改写成「<label>（<reason>）」，按前缀找。
+  const mismatch = records.find((r) => r.label.startsWith("会话快照不一致"));
+  const weak = records.find((r) => r.label === "has 写法没有区分度");
+  assert.ok(mismatch && !mismatch.ok, `A≠B 必须判红，实际：${JSON.stringify(records)}`);
+  assert.match(mismatch.label, /会话快照不一致：.*aaaa.*bbb/, "FAIL 的理由要点明两处不一致");
+  assert.equal(weak?.ok, true, "对照：has 判据在这个现场是真绿——正是它测不出问题的原因");
+  assert.equal(status, "FAIL", "一条判据红 ⇒ 场景判红");
+});
+
+// ── 真实配置目录的只读 stat 比较（r1 P2-1）────────────────────────────────────────────
+
+test("realConfigStat：基线 / 终态一致时零差异，任一项变化（size / inode / mtime）都能判出", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lumir-real-config-"));
+  const dir = path.join(root, ".config", "lumir");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "config.json"), "{}");
+
+  const baseline = await readOnlyStatTree(dir);
+  assert.equal(baseline.absent, false);
+  assert.deepEqual(diffStatTrees(baseline, await readOnlyStatTree(dir)), [], "没动过就没有差异");
+
+  // size / mtime 变化
+  fs.writeFileSync(path.join(dir, "config.json"), '{"ui":{}}');
+  const afterWrite = await readOnlyStatTree(dir);
+  assert.ok(diffStatTrees(baseline, afterWrite).length > 0, "写文件必须判出差异");
+
+  // 新增条目
+  fs.writeFileSync(path.join(dir, "cron-state.json"), "{}");
+  assert.ok(
+    diffStatTrees(baseline, await readOnlyStatTree(dir)).some((d) => d.includes("cron-state.json")),
+    "新出现的文件要判出来（那正是「回落到真实配置」的形态）",
+  );
+
+  // 目录缺失 → absent，与「有内容」互相判红
+  assert.deepEqual(diffStatTrees({ absent: true, dir: null, entries: {} }, { absent: true, dir: null, entries: {} }), []);
+  fs.rmSync(dir, { recursive: true, force: true });
+  assert.ok(
+    diffStatTrees(baseline, await readOnlyStatTree(dir)).length > 0,
+    "目录从有到无同样要判红",
+  );
 });

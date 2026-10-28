@@ -111,8 +111,15 @@ pub enum LogEventName {
     /// prompt 与路径属隐私边界之外）。
     CronNotified,
     /// 通知点击的处理完成（含失败）：`action` 取 `run`（发起运行）/ `open-session`（恢复会话），
-    /// `ok` 取 `true` / `false`，失败时另带 `error` 错误码。
+    /// `ok` 取 `true` / `false`，失败时另带 `error` 错误码；`source` 取 `in-process` /
+    /// `relaunch`（change add-cron-notification-relaunch §5.3：来源只区分诊断，不影响处置）。
     CronClick,
+    /// 恢复的点击被**保留**待重放（界面未就绪）：`request_id` + 来源 + 闭集合 `reason`。
+    ///
+    /// 为什么与 `cron_click` 分开：`cron_click.ok` 是「这次点击有没有落地」的终局判据，不能
+    /// 同时承载「收到了、还在等界面」。两个事件合起来才能把「点了没反应」在日志里区分成
+    /// 「没收到 / 收到了在等 / 收到了但失败」。
+    CronClickDeferred,
     /// 运行交接被前端接受：`session` 取 `new` / `dedicated`，`model` 只有显式覆盖时才在场。
     CronRunStarted,
     /// 运行到达终态（含失败 / 中止）。**成功与失败只在这里产出**——由 `cron_run_result`
@@ -202,6 +209,7 @@ impl LogEventName {
             Self::AttachmentNaming => "attachment_naming",
             Self::CronNotified => "cron_notified",
             Self::CronClick => "cron_click",
+            Self::CronClickDeferred => "cron_click_deferred",
             Self::CronRunStarted => "cron_run_started",
             Self::CronRunFinished => "cron_run_finished",
             Self::CronRunSkipped => "cron_run_skipped",
@@ -271,7 +279,8 @@ impl LogEventName {
             // 小词表；通知正文（通用文案）与 prompt / 路径都不进日志。
             Self::CronNotified => &["task", "kind", "trigger"],
             // 点击只记结局（动作 + 成功与否 + 分类后的错误码），不记点击坐标或通知内容。
-            Self::CronClick => &["task", "ok", "action", "error"],
+            Self::CronClick => &["task", "ok", "action", "error", "source"],
+            Self::CronClickDeferred => &["task", "request_id", "source", "reason"],
             // 运行交接：会话形态与可选的模型覆盖（模型 id 是配置值，不是文档内容）。
             Self::CronRunStarted => &["task", "trigger", "session", "model"],
             // **终态唯一产出点**：`ok` + 可选错误码；不得再加「是否成功」的派生字段，
@@ -976,20 +985,51 @@ fn cron_notified_to(sink: &Sink, task: &str, kind: &str, trigger: &str) {
 }
 
 /// Rust 侧埋点：通知点击的处理完成（含失败）。`action` = `run` / `open-session`，
-/// `error` 只在失败时在场（分类后的错误码）。
-pub fn cron_click(task: &str, ok: bool, action: &str, error: Option<&str>) {
-    cron_click_to(global(), task, ok, action, error);
+/// `source` = `in-process` / `relaunch`，`error` 只在失败时在场（分类后的错误码）。
+pub fn cron_click(
+    task: &str,
+    ok: bool,
+    action: &str,
+    source: crate::cron::ClickSource,
+    error: Option<&str>,
+) {
+    cron_click_to(global(), task, ok, action, source, error);
 }
 
-fn cron_click_to(sink: &Sink, task: &str, ok: bool, action: &str, error: Option<&str>) {
+fn cron_click_to(
+    sink: &Sink,
+    task: &str,
+    ok: bool,
+    action: &str,
+    source: crate::cron::ClickSource,
+    error: Option<&str>,
+) {
     let mut event = Event::new(LogEventName::CronClick)
         .field("task", task)
         .field("ok", ok.to_string())
-        .field("action", action);
+        .field("action", action)
+        .field("source", source.as_str());
     if let Some(error) = error {
         event = event.field("error", error);
     }
     emit(sink, event);
+}
+
+/// Rust 侧埋点：恢复的点击被保留待重放（界面未就绪）。`reason` 目前只有 `not_ready`
+/// （闭集合；`request_id` 用来分辨「哪条通知被保留了」）。
+pub fn cron_click_deferred(task: &str, request_id: &str, source: &str, reason: &str) {
+    cron_click_deferred_to(global(), task, request_id, source, reason);
+}
+
+fn cron_click_deferred_to(sink: &Sink, task: &str, request_id: &str, source: &str, reason: &str) {
+    emit(
+        sink,
+        Event::new(LogEventName::CronClickDeferred)
+            .field("task", task)
+            .field("request_id", request_id)
+            .field("source", source)
+            .field("reason", reason),
+    );
 }
 
 /// Rust 侧埋点：运行交接被前端接受。`session` = `new` / `dedicated`，`model` 只有显式覆盖
@@ -1540,8 +1580,23 @@ mod tests {
         let dir = TempDir::new();
         let sink = sink(dir.path(), LogLevel::Info);
         cron_notified_to(&sink, "task-a", "trigger", "timer");
-        cron_click_to(&sink, "task-a", true, "run", None);
-        cron_click_to(&sink, "task-a", false, "open-session", Some("session_gone"));
+        cron_click_to(
+            &sink,
+            "task-a",
+            true,
+            "run",
+            crate::cron::ClickSource::InProcess,
+            None,
+        );
+        cron_click_to(
+            &sink,
+            "task-a",
+            false,
+            "open-session",
+            crate::cron::ClickSource::Relaunch,
+            Some("session_gone"),
+        );
+        cron_click_deferred_to(&sink, "task-a", "req-1", "relaunch", "not_ready");
         cron_run_started_to(&sink, "task-a", "focus", "dedicated", Some("model-1"));
         cron_run_finished_to(&sink, "task-a", true, None);
         cron_run_finished_to(&sink, "task-a", false, Some("approval_required"));
@@ -1551,7 +1606,7 @@ mod tests {
         sink.flush();
 
         let lines = read_lines(dir.path());
-        assert_eq!(lines.len(), 9);
+        assert_eq!(lines.len(), 10);
         assert_eq!(lines[0]["event"], "cron_notified");
         assert_eq!(lines[0]["level"], "info");
         assert_eq!(lines[0]["task"], "task-a");
@@ -1560,26 +1615,33 @@ mod tests {
         assert_eq!(lines[1]["event"], "cron_click");
         assert_eq!(lines[1]["ok"], "true");
         assert_eq!(lines[1]["action"], "run");
+        assert_eq!(lines[1]["source"], "in-process");
         assert!(lines[1].get("error").is_none(), "成功点击不带 error");
         assert_eq!(lines[2]["ok"], "false");
         assert_eq!(lines[2]["action"], "open-session");
+        assert_eq!(lines[2]["source"], "relaunch");
         assert_eq!(lines[2]["error"], "session_gone");
-        assert_eq!(lines[3]["event"], "cron_run_started");
-        assert_eq!(lines[3]["session"], "dedicated");
-        assert_eq!(lines[3]["model"], "model-1");
-        assert_eq!(lines[4]["event"], "cron_run_finished");
-        assert_eq!(lines[4]["ok"], "true");
-        assert!(lines[4].get("error").is_none());
-        assert_eq!(lines[5]["ok"], "false");
-        assert_eq!(lines[5]["error"], "approval_required");
-        assert_eq!(lines[6]["event"], "cron_run_skipped");
-        assert_eq!(lines[6]["level"], "warn");
-        assert_eq!(lines[6]["reason"], "vault_not_current");
-        assert_eq!(lines[7]["event"], "cron_task_invalid");
+        assert_eq!(lines[3]["event"], "cron_click_deferred");
+        assert_eq!(lines[3]["level"], "info");
+        assert_eq!(lines[3]["request_id"], "req-1");
+        assert_eq!(lines[3]["source"], "relaunch");
+        assert_eq!(lines[3]["reason"], "not_ready");
+        assert_eq!(lines[4]["event"], "cron_run_started");
+        assert_eq!(lines[4]["session"], "dedicated");
+        assert_eq!(lines[4]["model"], "model-1");
+        assert_eq!(lines[5]["event"], "cron_run_finished");
+        assert_eq!(lines[5]["ok"], "true");
+        assert!(lines[5].get("error").is_none());
+        assert_eq!(lines[6]["ok"], "false");
+        assert_eq!(lines[6]["error"], "approval_required");
+        assert_eq!(lines[7]["event"], "cron_run_skipped");
         assert_eq!(lines[7]["level"], "warn");
-        assert_eq!(lines[7]["field"], "at");
-        assert_eq!(lines[8]["event"], "config_warning");
-        assert_eq!(lines[8]["source"], "cron-state");
+        assert_eq!(lines[7]["reason"], "vault_not_current");
+        assert_eq!(lines[8]["event"], "cron_task_invalid");
+        assert_eq!(lines[8]["level"], "warn");
+        assert_eq!(lines[8]["field"], "at");
+        assert_eq!(lines[9]["event"], "config_warning");
+        assert_eq!(lines[9]["source"], "cron-state");
     }
 
     /// 反向输入：cron 事件的字段面是机制化的白名单——塞 prompt（任务载荷属隐私边界之外）

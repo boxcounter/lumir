@@ -57,6 +57,17 @@ steps:
         file:
           path: "env:logs/*.jsonl"
           jsonl: { event: cron_notified, kind: result }
+      # 台账回归（change add-cron-notification-relaunch §4）：结果通知投递成功后，台账条目与当时
+      # 的完整状态**同一次原子落盘**——条目在场、带那次运行的会话快照，`tasks` 段也记着同一个
+      # 会话（跨进程点击据此恢复）。
+      #
+      # 判据是**结构化比对**（r1 P2-2），不是「文件里出现过某个字段」：绑定同一条通知
+      # （task + kind）与同一个任务，逐字比较两处 `session_id`。`has` 写法在
+      # `notices.<id>.session_id = A` 而 `tasks.<task>.session_id = B` 时照样通过，等于没判。
+      - label: 台账条目的会话快照与 tasks 段逐字相同（同一条通知 ↔ 同一个任务）
+        file:
+          path: "env:cron-state.json"
+          cronNoticeSession: { task: acc-cron-run, kind: result }
 
   - name: 点击结果通知横幅（系统通知中心 AXPress = 真实点击）
     do: clickNotification
@@ -69,11 +80,12 @@ steps:
       has: ["CRON-PROBE-RUNTHEN"]
     timeoutMs: 30000
     expect:
-      - label: 点击链路被处理（cron_click ok=true, action=open-session）
+      - label: 点击链路被处理（cron_click ok=true, action=open-session, source=in-process）
         file:
           path: "env:logs/*.jsonl"
-          # 字段序无关（M612）：serde_json 按字母序落盘（action→event→ok→task）。
-          jsonl: { event: cron_click, task: acc-cron-run, ok: "true", action: open-session }
+          # 字段序无关（M612）：serde_json 按字母序落盘（action→event→ok→source→task）。
+          # 这条通知由本进程投递 ⇒ 来源是 `in-process`（进程退出后的恢复见场景 252）。
+          jsonl: { event: cron_click, task: acc-cron-run, ok: "true", action: open-session, source: in-process }
       - label: 点击不重跑（全程 cron_run_started 恰好一条）
         file:
           path: "env:logs/*.jsonl"
@@ -109,5 +121,7 @@ steps:
 
 ## 已知边界
 
-- 结果通知的正文只有「已完成 / 运行失败」（design §5.2），不含 prompt 与会话 id；点击恢复靠
-  `extra` 里的 `session_id`，其读取链路由 Rust 侧实现覆盖，本场景只判用户面后果（会话被恢复）。
+- 结果通知的正文只有「已完成 / 运行失败」（design §5.2），不含 prompt 与会话 id。点击恢复靠的是
+  **点击上下文的会话快照**：进程内点击取投递点登记的那份，进程退出后取 `cron-state.json` 的
+  `notices.<request id>.session_id`（change add-cron-notification-relaunch §5.2）——两者都不读
+  任务的最新会话。本场景判用户面后果（会话被恢复、不重跑），台账的一致性由上面的结构化判据判。

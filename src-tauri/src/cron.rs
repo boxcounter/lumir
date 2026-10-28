@@ -324,6 +324,10 @@ pub fn plan(input: &PlanInput) -> Plan {
 pub enum ClickPlan {
     /// 前端接线层未就绪：**保留**这次点击，就绪后再执行。通知一经点掉，系统不会再给第二次
     /// 点击，这里丢弃等于把「点击即意图」丢掉（M752）。
+    ///
+    /// planner 只报「未就绪」这个事实；**保留还是退回**由接线层按平台定
+    /// （[`NotReadyPolicy`]：macOS 的响应已被 delegate 收走 ⇒ 一律保留；非 macOS 的逐条等待
+    /// 通道维持既有的「退回 + 提示」）。
     Defer,
     /// 在交互会话槽位发起运行。
     Run,
@@ -338,6 +342,16 @@ pub enum ClickPlan {
 /// [`plan_click`] 的输入：点击那一刻的全部运行时事实（全部注入，不读全局状态）。
 pub struct ClickInput<'a> {
     pub delivery: DeliveryPolicy,
+    /// 被点的那条通知的种类（change add-cron-notification-relaunch §5.2）：到点通知按「今天跑
+    /// 没跑」判，结果 / 失败通知按 [`Self::session_snapshot`] 判。
+    pub kind: NoticeKind,
+    /// 该条通知的**上下文快照会话**（结果 / 失败通知在场；到点通知恒 `None`）。
+    ///
+    /// 这是「点的是哪条通知」的唯一答案：MUST NOT 用任务的 `tasks.<task>.session_id`（最新一次
+    /// 运行）顶替——同一任务可以有多条通知，各自持有不同的会话。
+    pub session_snapshot: Option<&'a str>,
+    /// 该任务是否已有在途运行（同一任务同一时刻至多一个）：并发点击时后到者只聚焦。
+    pub inflight: bool,
     /// 前端接线层是否已就绪（`cron:run` 监听器已在场）：未就绪时 `app.emit` 返回 Ok 但事件
     /// 无人接收，任何点击都不能当成已落地。
     pub bridge_ready: bool,
@@ -346,8 +360,6 @@ pub struct ClickInput<'a> {
     /// 去重状态里的会话 id，且该会话是**今天**开始的：进程重启后 `clicked_today` 会丢，
     /// 用它补「今天已经跑过」这一道判据。
     pub state_session_today: Option<&'a str>,
-    /// 去重状态里的会话 id（`run-then-notify` 的结果通知点击用它恢复会话）。
-    pub state_session: Option<&'a str>,
 }
 
 /// 点击的落点判定：纯函数，接线层只执行。
@@ -362,40 +374,78 @@ pub fn plan_click(input: &ClickInput<'_>) -> ClickPlan {
     if !input.bridge_ready {
         return ClickPlan::Defer;
     }
-    match input.delivery {
-        DeliveryPolicy::NotifyThenRun => {
+    // `silent-run` 没有通知可点（不会走到这里，防御）。
+    if input.delivery == DeliveryPolicy::SilentRun {
+        return ClickPlan::Reject("no_notification");
+    }
+    match input.kind {
+        NoticeKind::Trigger => {
             if let Some(clicked) = input.clicked_today {
                 return match clicked {
                     Some(session_id) => ClickPlan::OpenSession(session_id.to_string()),
+                    // 首次点击的运行还没有回执：只聚焦，不产生第二次运行。
                     None => ClickPlan::FocusOnly,
                 };
+            }
+            // 去重记录丢了（进程重启）但仍有在途运行：并发点击的后到者同样只聚焦。
+            if input.inflight {
+                return ClickPlan::FocusOnly;
             }
             if let Some(session_id) = input.state_session_today {
                 return ClickPlan::OpenSession(session_id.to_string());
             }
             ClickPlan::Run
         }
-        DeliveryPolicy::RunThenNotify => match input.state_session {
+        // 结果 / 失败通知：**只用上下文快照**（`state_session_today` 回答不了这个问题）。
+        NoticeKind::Result | NoticeKind::Failure => match input.session_snapshot {
             Some(session_id) => ClickPlan::OpenSession(session_id.to_string()),
             None => ClickPlan::Reject("session_missing"),
         },
-        DeliveryPolicy::SilentRun => ClickPlan::Reject("no_notification"),
     }
 }
 
-/// 接线层未就绪期间被保留的点击（最多一条）：通知点掉后系统不会再给一次点击，丢弃等于把
-/// 用户意图丢掉；后到的点击覆盖先到的（用户点的永远是最后那条）。
+/// 接线层未就绪期间被保留的点击：通知点掉后系统不会再给一次点击，丢弃等于把用户意图丢掉
+/// （M752）；本 change 起存的是**整份已校验上下文**——重放要恢复「被点那条」的会话，只留任务 id
+/// 会让重放退化成「按最新会话重算」（§6）。
+///
+/// 有界（[`Self::LIMIT`] 条）：同一任务后到者覆盖前者（用户点的永远是最后那条），不同任务各留
+/// 一条，超出丢最旧。进程退出即丢弃（进程内，不落盘）。
 #[derive(Debug, Default)]
-pub struct DeferredClick(Option<String>);
+pub struct DeferredClick(Vec<(ClickContext, ClickSource)>);
 
 impl DeferredClick {
-    pub fn defer(&mut self, task: &str) {
-        self.0 = Some(task.to_string());
+    /// 保留上限（design §6）：不同任务各一条。
+    pub const LIMIT: usize = 4;
+
+    /// 保留一次点击。被顶掉（同任务覆盖 / 超出上限）的条目**返回**给调用方补
+    /// `cron_click(ok=false, error=not_ready)`——那次点击确实没能落地，不该静默消失。
+    pub fn defer(
+        &mut self,
+        context: ClickContext,
+        source: ClickSource,
+    ) -> Vec<(ClickContext, ClickSource)> {
+        let mut dropped = Vec::new();
+        if let Some(index) = self
+            .0
+            .iter()
+            .position(|(deferred, _)| deferred.task == context.task)
+        {
+            dropped.push(self.0.remove(index));
+        }
+        while self.0.len() >= Self::LIMIT {
+            dropped.push(self.0.remove(0));
+        }
+        self.0.push((context, source));
+        dropped
     }
 
-    /// 取走待执行的点击（一次性：重放之后不再保留）。
-    pub fn take(&mut self) -> Option<String> {
-        self.0.take()
+    /// 取走全部待执行的点击（一次性：重放之后不再保留）。
+    pub fn take_all(&mut self) -> Vec<(ClickContext, ClickSource)> {
+        std::mem::take(&mut self.0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -896,6 +946,10 @@ pub struct CronTaskRecord {
 pub struct CronState {
     pub version: u32,
     pub tasks: BTreeMap<String, CronTaskRecord>,
+    /// 通知台账（change add-cron-notification-relaunch §4）：request id → 派发快照。
+    /// 只在 macOS 打包实例写入；`#[serde(default)]` 让旧文件读进来就是空台账（不做迁移）。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub notices: BTreeMap<String, NoticeRecord>,
 }
 
 impl Default for CronState {
@@ -903,6 +957,7 @@ impl Default for CronState {
         Self {
             version: STATE_VERSION,
             tasks: BTreeMap::new(),
+            notices: BTreeMap::new(),
         }
     }
 }
@@ -934,6 +989,46 @@ impl CronState {
         self.tasks
             .get(task)
             .and_then(|record| record.session_id.as_deref())
+    }
+
+    /// 台账条目（跨进程点击的唯一依据）：`None` = 本机没有这条通知的记录。
+    pub fn notice(&self, request_id: &str) -> Option<&NoticeRecord> {
+        self.notices.get(request_id)
+    }
+
+    /// 写一条台账条目（写入即快照）并做有界裁剪。
+    ///
+    /// **原子性由调用方负责**：两条写入路径都要求这一次 `save_state` 里同时含本条目与该路径的
+    /// 去重事实（到点通知 = `last_fired`；结果 / 失败通知 = 当时的完整状态）。因此本函数只改
+    /// 内存，落盘一律由调用方紧接着的那次 [`save_state`] 完成。
+    pub fn record_notice(&mut self, request_id: &str, record: NoticeRecord, today: &str) {
+        self.notices.insert(request_id.to_string(), record);
+        self.prune_notices(today);
+    }
+
+    /// 台账有界（§4）：先按保留窗口裁，再按条数上限裁；顺序键是「派发日期 + request id」。
+    /// MUST NOT 触碰 `tasks` 段。
+    fn prune_notices(&mut self, today: &str) {
+        if let Ok(today_date) = chrono::NaiveDate::parse_from_str(today, "%Y-%m-%d") {
+            let cutoff = (today_date - chrono::Duration::days(NOTICE_LEDGER_KEEP_DAYS)).to_string();
+            self.notices.retain(|_, record| record.date >= cutoff);
+        }
+        while self.notices.len() > NOTICE_LEDGER_MAX {
+            let oldest = self
+                .notices
+                .iter()
+                .min_by(|left, right| {
+                    (left.1.date.as_str(), left.0.as_str())
+                        .cmp(&(right.1.date.as_str(), right.0.as_str()))
+                })
+                .map(|(request_id, _)| request_id.clone());
+            match oldest {
+                Some(request_id) => {
+                    self.notices.remove(&request_id);
+                }
+                None => break,
+            }
+        }
     }
 }
 
@@ -1006,6 +1101,37 @@ pub fn save_state(path: &Path, state: &CronState) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|error| format!("无法落盘 {}：{error}", path.display()))
 }
 
+/// 一次通知的时钟读数（毫秒）：**request id 与平台 id 的唯一共同来源**。
+///
+/// 两个 id 必须同源（tasks 1.4「返回值与系统里的请求标识是同一个」）：分两次取时钟会得到两个
+/// 不同的数，非 macOS 上「返回的 request id」就与系统里的通知 id 对不上——点击响应按平台 id
+/// 路由，等于把上下文表与系统脱钩。
+pub fn notify_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0)
+}
+
+/// 台账与上下文用的 request id（macOS / 诊断可读形态）：`lumir-cron-{task}-{kind}-{millis}`。
+///
+/// 形状只是给人看的线索，**不被解析**（任务 id 允许含 `-`）：识别一律查台账 / 上下文表。
+pub fn notification_request_id(task: &str, kind: NoticeKind, millis: u128) -> String {
+    format!("lumir-cron-{task}-{}-{millis}", kind.as_str())
+}
+
+/// 非 macOS 的平台通知 id（notify-rust 的跨平台 API 是 `u32`），与 [`notification_request_id`]
+/// **同一份 `millis`**。低位截断足够区分「不同次投递」，也更贴合平台的 id 语义。
+pub fn platform_notification_id(millis: u128) -> u32 {
+    (millis % u32::MAX as u128) as u32
+}
+
+/// 非 macOS 上对外的 request id：**平台 id 的十进制形态**——返回值与系统里的标识逐字相同
+/// （`notify_rust::Notification::id(platform_notification_id(millis))`）。
+pub fn platform_request_id(millis: u128) -> String {
+    platform_notification_id(millis).to_string()
+}
+
 /// 运行交接的 `run_id`：进程内自增序号 + 毫秒时间戳 + 随机段（日志里可读、进程内唯一）。
 pub fn new_run_id() -> String {
     static SEQ: AtomicU32 = AtomicU32::new(0);
@@ -1015,6 +1141,280 @@ pub fn new_run_id() -> String {
         .unwrap_or(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     format!("{millis:x}-{seq:x}-{:04x}", rand::random::<u16>())
+}
+
+// ---------------------------------------------------------------------------
+// 通知台账 / 点击上下文 / 接收判据（change add-cron-notification-relaunch）
+// ---------------------------------------------------------------------------
+//
+// 本段全部是**纯函数与纯状态**（ADR 0002 第 7 条）：点击「是否被接受、接受后做什么」在进
+// 副作用之前就已决定，副作用（聚焦窗口、emit、运行交接、写盘）全在 `lib.rs` 的接线层。
+// 两条接收通道（进程内 / 跨进程）只在这里分叉一次，之后共用同一份 [`ClickContext`]。
+
+/// 台账保留窗口（天）：派发日期早于「今天 − 该值」的条目在每次写入时裁掉（§4「有界」）。
+pub const NOTICE_LEDGER_KEEP_DAYS: i64 = 7;
+
+/// 台账条数上限：超出按「派发日期 + request id」排序丢最旧。
+pub const NOTICE_LEDGER_MAX: usize = 32;
+
+/// 一条已投递通知的种类（与 `cron_notified.kind` 同一词表，也是通知正文的分档依据）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NoticeKind {
+    /// `notify-then-run` 的「到点」通知：点击 = 发起运行。
+    Trigger,
+    /// `run-then-notify` 成功终态后的「已完成」通知：点击 = 恢复该次运行的会话。
+    Result,
+    /// `run-then-notify` 失败终态后的「运行失败」通知：同上（恢复，不重跑）。
+    Failure,
+}
+
+impl NoticeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NoticeKind::Trigger => "trigger",
+            NoticeKind::Result => "result",
+            NoticeKind::Failure => "failure",
+        }
+    }
+}
+
+/// 台账条目：写入即快照，后续运行 MUST NOT 改写既有条目。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoticeRecord {
+    /// 任务 id（原样存储，不做切分或解析——任务 id 允许含 `-`）。
+    pub task: String,
+    pub kind: NoticeKind,
+    /// 派发的本地日期（`YYYY-MM-DD`）：跨天点击的判据。
+    pub date: String,
+    /// 该次运行的会话标识（结果 / 失败通知在场；到点通知没有）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+/// 已校验的点击上下文（§5.2）：两个入口交出**同一形状**，处置层只按它分叉。
+///
+/// 结构上刻意不持有「任务最新会话」之类可回读的位置：结果 / 失败通知的会话只来自
+/// `session_id`（投递点那一次构造的快照），因此「读最新会话」的实现无法从这份结构里取到值。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClickContext {
+    /// 台账的键（进程内通道为投递时生成的 id）；诊断与去重都用它。
+    pub request_id: String,
+    /// 任务 id（已校验仍在当前任务集）。
+    pub task: String,
+    /// 通知种类——决定「发起运行」还是「恢复会话」。
+    pub kind: NoticeKind,
+    /// 该条通知的**快照**会话标识（到点通知为 `None`）。
+    pub session_id: Option<String>,
+    /// 派发本地日期（跨进程通道已校验等于今天）。
+    pub date: String,
+}
+
+impl ClickContext {
+    /// 从台账条目构造上下文（跨进程通道）。
+    pub fn from_notice(request_id: &str, notice: &NoticeRecord) -> Self {
+        Self {
+            request_id: request_id.to_string(),
+            task: notice.task.clone(),
+            kind: notice.kind,
+            session_id: notice.session_id.clone(),
+            date: notice.date.clone(),
+        }
+    }
+
+    /// 从投递点那一次构造直接生成上下文（进程内通道）：与台账条目同源同形——两条通道的差别
+    /// 只在「从哪里取回这份上下文」，不在形状。
+    pub fn from_delivery(
+        request_id: &str,
+        task: &str,
+        kind: NoticeKind,
+        session_id: Option<&str>,
+        date: &str,
+    ) -> Self {
+        Self {
+            request_id: request_id.to_string(),
+            task: task.to_string(),
+            kind,
+            session_id: session_id.map(str::to_string),
+            date: date.to_string(),
+        }
+    }
+
+    /// 该上下文的台账条目形态（写入点与进程内表登记共用这一份构造）。
+    pub fn notice(&self) -> NoticeRecord {
+        NoticeRecord {
+            task: self.task.clone(),
+            kind: self.kind,
+            date: self.date.clone(),
+            session_id: self.session_id.clone(),
+        }
+    }
+}
+
+/// 点击的来源（`cron_click.source` 的闭集合）：只影响诊断，不影响处置。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickSource {
+    /// 投递它的进程内被点击（所有平台；上下文来自进程内上下文表）。
+    InProcess,
+    /// 投递它的进程已退出，系统拉起新进程后点击（仅 macOS 打包实例；上下文来自台账）。
+    Relaunch,
+}
+
+impl ClickSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ClickSource::InProcess => "in-process",
+            ClickSource::Relaunch => "relaunch",
+        }
+    }
+}
+
+/// 已校验点击被拒的分类原因（`cron_click.error` 的闭集合，三条互不合并）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickRejection {
+    /// 台账里没有该 request id（旧版本遗留 / 已被裁剪 / 台账写失败）：不上屏提示。
+    NoticeUnknown,
+    /// 台账里的任务已被删除。
+    TaskUnknown,
+    /// 派发日期不是今天（跨天点击）。
+    NoticeStale,
+}
+
+impl ClickRejection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ClickRejection::NoticeUnknown => "notice_unknown",
+            ClickRejection::TaskUnknown => "task_unknown",
+            ClickRejection::NoticeStale => "notice_stale",
+        }
+    }
+
+    /// 用户可见提示的文案 code（`CRON_NOTICE_COPY` 的键）。
+    ///
+    /// `notice_unknown` 刻意没有提示：旧版本遗留 / 被裁剪的通知被点属正常噪声，弹一条
+    /// 「这条提醒不认识」只会吵人。
+    pub fn notice_code(self) -> Option<&'static str> {
+        match self {
+            ClickRejection::NoticeUnknown => None,
+            ClickRejection::TaskUnknown => Some("cron_click_task_deleted"),
+            ClickRejection::NoticeStale => Some("cron_click_notice_stale"),
+        }
+    }
+}
+
+/// [`accept_click`] 的输入：两条通道各自的上下文来源 + 两条共用判据的运行时事实。
+pub struct AcceptInput<'a> {
+    pub request_id: &'a str,
+    /// **进程内上下文表**命中项（所有平台；`None` = 本进程没有投递过这条通知）。
+    /// 命中即证明来源成立，因此进程内通道**不读** `state`（台账写失败不影响它）。
+    pub in_process: Option<&'a ClickContext>,
+    /// **通知台账**（仅 macOS 打包实例有内容；其它平台恒空）。
+    pub state: &'a CronState,
+    /// 当前任务集的 id 集合。
+    pub live_tasks: &'a [String],
+    /// 今天的本地日期（`YYYY-MM-DD`）。
+    pub today: &'a str,
+}
+
+/// 接收判据（§5.1）：四条全过才算「被接受的点击」，否则按分类原因拒绝。
+///
+/// 判据 1（动作归一化为 `tap`）由平台层在进入本函数之前完成（[`normalize_action`]）：
+/// 非 `tap` 的响应根本不进处置，也就不会走到这里。
+pub fn accept_click(
+    input: &AcceptInput<'_>,
+) -> Result<(ClickContext, ClickSource), ClickRejection> {
+    let (context, source) = resolve_context(input).ok_or(ClickRejection::NoticeUnknown)?;
+    if !input.live_tasks.iter().any(|id| id == &context.task) {
+        return Err(ClickRejection::TaskUnknown);
+    }
+    if context.date != input.today {
+        return Err(ClickRejection::NoticeStale);
+    }
+    Ok((context, source))
+}
+
+/// 判据 2（上下文来源）单独一步：命中即给出上下文与来源，判据 3 / 4 由 [`accept_click`] 接着判。
+///
+/// 拆出来的唯一用途是**诊断**：被拒绝时调用方仍想知道「这条通知是发给哪个任务、什么种类」——
+/// `notice_unknown` 连上下文都没有，那条日志的 task 只能是空串。
+pub fn resolve_context(input: &AcceptInput<'_>) -> Option<(ClickContext, ClickSource)> {
+    match input.in_process {
+        // 进程内通道：命中即证明这条通知是本进程投递的——**不读台账**。
+        Some(context) => Some((context.clone(), ClickSource::InProcess)),
+        // 跨进程通道：按 request id 反查台账。
+        None => input.state.notice(input.request_id).map(|notice| {
+            (
+                ClickContext::from_notice(input.request_id, notice),
+                ClickSource::Relaunch,
+            )
+        }),
+    }
+}
+
+/// 通知动作（§3 第 3 条）：平台层把系统的动作标识归一化到这份内部词表。
+///
+/// 补这一层的原因是自持平台层删掉了 `mac-usernotifications` + `notify-rust` 的转换层：
+/// 若把系统原始字符串直接交给 `Tap` 判据，**所有正文点击都会被当成非 tap 忽略**（本 change
+/// 要修的跨进程点击首当其冲）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoticeAction {
+    /// 点通知本体（系统默认动作）。
+    Tap,
+    /// 用户关掉通知（系统 dismiss 动作）。
+    Dismiss,
+    /// 自定义动作按钮（本仓没有动作按钮，属防御）。
+    Custom(String),
+}
+
+/// 系统默认动作标识（Apple 的常量值）：点通知正文时报上来的就是它。
+pub const UN_DEFAULT_ACTION_IDENTIFIER: &str = "com.apple.UNNotificationDefaultActionIdentifier";
+
+/// 系统 dismiss 动作标识。
+pub const UN_DISMISS_ACTION_IDENTIFIER: &str = "com.apple.UNNotificationDismissActionIdentifier";
+
+/// 动作标识 → 内部词表（**唯一**归一化点）。
+pub fn normalize_action(identifier: &str) -> NoticeAction {
+    if identifier == UN_DEFAULT_ACTION_IDENTIFIER {
+        return NoticeAction::Tap;
+    }
+    if identifier == UN_DISMISS_ACTION_IDENTIFIER {
+        return NoticeAction::Dismiss;
+    }
+    NoticeAction::Custom(identifier.to_string())
+}
+
+/// 界面未就绪时的策略（`handle_click` 的附加参数，§5.1 的「未就绪时保留还是退回」）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotReadyPolicy {
+    /// 保留整份上下文，接线层就绪后重放（macOS：用户手里没有第二次点击的机会）。
+    Defer,
+    /// 立即退回 `not_ready` 并提示（非 macOS 的逐条等待通道，既有语义）。
+    Reject,
+}
+
+/// 同日点击记录（`clicked_today` 的值）：日期 + 该次运行回执带回的会话。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClickedNotice {
+    pub date: String,
+    pub session_id: Option<String>,
+}
+
+/// 会话 id 是否属于今天（`s<unix_millis>-<suffix>` 的格式由 `jsonl::new_session_id` 唯一产出）：
+/// 进程重启后 `clicked_today` 丢了，靠它把「今天已经跑过」与「昨天留下的 session_id」分开。
+pub fn session_started_today(session_id: &str, now: &LocalNow) -> bool {
+    use chrono::TimeZone;
+    let millis = session_id
+        .strip_prefix('s')
+        .and_then(|rest| rest.split('-').next())
+        .and_then(|value| value.parse::<i64>().ok());
+    let Some(millis) = millis else {
+        return false;
+    };
+    chrono::Local
+        .timestamp_millis_opt(millis)
+        .single()
+        .map(|moment| moment.date_naive().to_string() == now.date)
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -2673,10 +3073,15 @@ mod tests {
     fn click_input<'a>(delivery: DeliveryPolicy) -> ClickInput<'a> {
         ClickInput {
             delivery,
+            kind: match delivery {
+                DeliveryPolicy::RunThenNotify => NoticeKind::Result,
+                _ => NoticeKind::Trigger,
+            },
+            session_snapshot: None,
+            inflight: false,
             bridge_ready: true,
             clicked_today: None,
             state_session_today: None,
-            state_session: None,
         }
     }
 
@@ -2730,7 +3135,6 @@ mod tests {
         // 进程重启丢了 `clicked_today`：今日开始的会话才作「今天已跑过」的判据。
         let input = ClickInput {
             state_session_today: None,
-            state_session: Some("s-yesterday"),
             ..click_input(DeliveryPolicy::NotifyThenRun)
         };
         assert_eq!(
@@ -2741,7 +3145,6 @@ mod tests {
 
         let today = ClickInput {
             state_session_today: Some("s-today"),
-            state_session: Some("s-today"),
             ..click_input(DeliveryPolicy::NotifyThenRun)
         };
         assert_eq!(
@@ -2753,8 +3156,10 @@ mod tests {
 
     #[test]
     fn result_and_silent_notifications_land_on_their_own_actions() {
+        // 结果通知的会话来自**点击上下文的快照**（change add-cron-notification-relaunch
+        // §5.2）：tasks 段里的最新会话在这条路径上不参与判定。
         let result = ClickInput {
-            state_session: Some("s-run"),
+            session_snapshot: Some("s-run"),
             ..click_input(DeliveryPolicy::RunThenNotify)
         };
         assert_eq!(
@@ -2781,14 +3186,488 @@ mod tests {
     #[test]
     fn deferred_click_keeps_only_the_latest_and_is_one_shot() {
         let mut deferred = DeferredClick::default();
-        assert_eq!(deferred.take(), None);
-        deferred.defer("first");
-        deferred.defer("second");
+        assert!(deferred.is_empty());
+        let first = crate::cron::ClickContext {
+            request_id: "req-1".to_string(),
+            task: "task-a".to_string(),
+            kind: NoticeKind::Trigger,
+            session_id: None,
+            date: "2026-10-28".to_string(),
+        };
+        let second = crate::cron::ClickContext {
+            request_id: "req-2".to_string(),
+            ..first.clone()
+        };
+        assert!(deferred.defer(first, ClickSource::Relaunch).is_empty());
+        let replaced = deferred.defer(second, ClickSource::Relaunch);
         assert_eq!(
-            deferred.take().as_deref(),
-            Some("second"),
+            replaced
+                .iter()
+                .map(|(context, _)| context.request_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["req-1"],
+            "同任务后到者覆盖先到者，被顶掉的那条交回调用方补 not_ready"
+        );
+        let taken = deferred.take_all();
+        assert_eq!(taken.len(), 1);
+        assert_eq!(
+            taken[0].0.request_id, "req-2",
             "后到的点击覆盖先到的：用户点的永远是最后那条"
         );
-        assert_eq!(deferred.take(), None, "重放是一次性的，不得重复执行");
+        assert!(
+            deferred.take_all().is_empty(),
+            "重放是一次性的，不得重复执行"
+        );
+    }
+
+    /// 保留是**整份上下文**（r1 合同）：重放要恢复被点那条通知的会话，只留任务 id 会让重放
+    /// 退化成「按最新会话重算」。
+    #[test]
+    fn deferred_click_keeps_the_whole_context() {
+        let mut deferred = DeferredClick::default();
+        let context = crate::cron::ClickContext {
+            request_id: "req-9".to_string(),
+            task: "task-a".to_string(),
+            kind: NoticeKind::Result,
+            session_id: Some("sess-snapshot".to_string()),
+            date: "2026-10-28".to_string(),
+        };
+        deferred.defer(context.clone(), ClickSource::Relaunch);
+        let taken = deferred.take_all();
+        assert_eq!(taken[0].0, context, "整份上下文逐字段保留");
+        assert_eq!(
+            taken[0].1,
+            ClickSource::Relaunch,
+            "来源也一起保留（诊断用）"
+        );
+    }
+}
+
+#[cfg(test)]
+mod click_tests {
+    use super::*;
+
+    fn task_ids(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    fn click_input(delivery: DeliveryPolicy) -> ClickInput<'static> {
+        ClickInput {
+            delivery,
+            kind: match delivery {
+                DeliveryPolicy::RunThenNotify => NoticeKind::Result,
+                _ => NoticeKind::Trigger,
+            },
+            session_snapshot: None,
+            inflight: false,
+            bridge_ready: true,
+            clicked_today: None,
+            state_session_today: None,
+        }
+    }
+
+    fn notice(task: &str, kind: NoticeKind, date: &str, session: Option<&str>) -> NoticeRecord {
+        NoticeRecord {
+            task: task.to_string(),
+            kind,
+            date: date.to_string(),
+            session_id: session.map(str::to_string),
+        }
+    }
+
+    fn context(
+        request_id: &str,
+        task: &str,
+        kind: NoticeKind,
+        session: Option<&str>,
+    ) -> ClickContext {
+        ClickContext::from_delivery(request_id, task, kind, session, "2026-10-28")
+    }
+
+    // ---- 台账 ----
+
+    /// 台账条目写入即快照；旧文件（无 `notices` 段）读进来是空台账，不做迁移。
+    #[test]
+    fn notice_ledger_reads_old_state_as_empty_and_round_trips() {
+        let old = r#"{"version":1,"tasks":{"a":{"last_fired":"2026-10-27"}}}"#;
+        let state: CronState = serde_json::from_str(old).expect("旧存档仍可读");
+        assert!(state.notices.is_empty(), "旧文件不迁移，读成空台账");
+        assert_eq!(state.last_fired("a"), Some("2026-10-27"));
+
+        let mut state = state;
+        state.record_notice(
+            "req-1",
+            notice("a", NoticeKind::Result, "2026-10-28", Some("s1-x")),
+            "2026-10-28",
+        );
+        let text = serde_json::to_string(&state).expect("可序列化");
+        let parsed: CronState = serde_json::from_str(&text).expect("往返可读");
+        assert_eq!(parsed, state);
+        assert_eq!(
+            parsed.notice("req-1").map(|record| record.kind),
+            Some(NoticeKind::Result)
+        );
+    }
+
+    /// 有界裁剪：先按保留窗口，再按条数上限；`tasks` 段逐字不变。
+    #[test]
+    fn notice_ledger_prunes_without_touching_tasks() {
+        let mut state = CronState::default();
+        state.mark_fired("a", "2026-10-28");
+        state.set_session("a", Some("s9-x"));
+        state.record_notice(
+            "old",
+            notice("a", NoticeKind::Trigger, "2026-10-20", None),
+            "2026-10-20",
+        );
+        state.record_notice(
+            "keep",
+            notice("a", NoticeKind::Trigger, "2026-10-22", None),
+            "2026-10-28",
+        );
+        assert!(state.notice("old").is_none(), "早于今天 − 7 天的条目被裁掉");
+        assert!(state.notice("keep").is_some());
+        assert_eq!(state.last_fired("a"), Some("2026-10-28"));
+        assert_eq!(state.session_id("a"), Some("s9-x"));
+
+        // 条数上限：塞满后最旧的先走。
+        let mut state = CronState::default();
+        for index in 0..(NOTICE_LEDGER_MAX + 5) {
+            state.record_notice(
+                &format!("req-{index:02}"),
+                notice("a", NoticeKind::Trigger, "2026-10-28", None),
+                "2026-10-28",
+            );
+        }
+        assert_eq!(state.notices.len(), NOTICE_LEDGER_MAX);
+        assert!(state.notice("req-00").is_none());
+        assert!(state
+            .notice(&format!("req-{:02}", NOTICE_LEDGER_MAX + 4))
+            .is_some());
+    }
+
+    /// 同一任务的多条条目各自独立：后写的不改写既有条目的快照会话。
+    #[test]
+    fn ledger_entries_are_snapshots() {
+        let mut state = CronState::default();
+        state.record_notice(
+            "req-a",
+            notice("a", NoticeKind::Result, "2026-10-28", Some("sess-a")),
+            "2026-10-28",
+        );
+        state.record_notice(
+            "req-b",
+            notice("a", NoticeKind::Result, "2026-10-28", Some("sess-b")),
+            "2026-10-28",
+        );
+        assert_eq!(
+            state
+                .notice("req-a")
+                .and_then(|record| record.session_id.as_deref()),
+            Some("sess-a")
+        );
+        assert_eq!(
+            state
+                .notice("req-b")
+                .and_then(|record| record.session_id.as_deref()),
+            Some("sess-b")
+        );
+    }
+
+    // ---- 通知 id 的同源性（r1 P2-4） ----
+
+    /// 非 macOS 的 request id 必须就是系统里的通知 id（平台 id 的十进制形态），且两者由**同一次**
+    /// 时钟读数派生。分两次取时钟的实现（一个字符串 id + 另一个 u32）在这里必红。
+    #[test]
+    fn platform_request_id_is_the_platform_id() {
+        let millis = 1_790_000_000_123_u128;
+        // 十进制形态：小数值原样，大数值按平台 id 的低位截断——判据是「与平台 id 同一个值」，
+        // 不是某个写死的字面量。
+        assert_eq!(platform_request_id(12_345), "12345");
+        assert_eq!(
+            platform_request_id(millis),
+            platform_notification_id(millis).to_string(),
+            "返回值必须与系统里的请求标识逐字相同"
+        );
+        assert_eq!(
+            platform_request_id(millis).parse::<u32>(),
+            Ok(platform_notification_id(millis)),
+            "返回的 id 反过来解析出来仍是系统里那个 id"
+        );
+        assert_ne!(
+            platform_notification_id(millis),
+            platform_notification_id(millis + 1),
+            "不同次投递要拿到不同 id（否则系统会按 id 替换掉上一条）"
+        );
+        // macOS 的 request id 形状仍带任务 / 种类 / 毫秒，供诊断阅读；它不被解析。
+        assert_eq!(
+            notification_request_id("task-a", NoticeKind::Trigger, millis),
+            "lumir-cron-task-a-trigger-1790000000123"
+        );
+        assert_eq!(
+            notification_request_id("acc-cron-click-run", NoticeKind::Result, millis),
+            "lumir-cron-acc-cron-click-run-result-1790000000123",
+            "任务 id 含 `-` 时形状仍只是线索"
+        );
+    }
+
+    // ---- 动作归一化 ----
+
+    /// 系统默认动作标识必须归一为 `Tap`：把原始字符串直接交给 `Tap` 判据的实现（只认内部字面量
+    /// 的实现）在这条上必红——本 change 要修的正文点击就走在它上面。
+    #[test]
+    fn system_default_action_normalizes_to_tap() {
+        assert_eq!(
+            normalize_action(UN_DEFAULT_ACTION_IDENTIFIER),
+            NoticeAction::Tap
+        );
+        assert_eq!(
+            normalize_action(UN_DISMISS_ACTION_IDENTIFIER),
+            NoticeAction::Dismiss
+        );
+        assert_eq!(
+            normalize_action("com.lumir.custom"),
+            NoticeAction::Custom("com.lumir.custom".to_string())
+        );
+        // 原始系统标识不能直接当内部动作：它既不是 `"tap"`，也不该被当成 Tap 之外的处置路径。
+        assert_ne!(UN_DEFAULT_ACTION_IDENTIFIER, "tap");
+    }
+
+    // ---- 接收判据真值表 ----
+
+    #[test]
+    fn accept_click_in_process_channel_ignores_the_ledger() {
+        let state = CronState::default(); // 台账为空 / 写失败的同形
+        let in_process = context("req-1", "task-a", NoticeKind::Result, Some("sess-a"));
+        let live = task_ids(&["task-a"]);
+        let (accepted, source) = accept_click(&AcceptInput {
+            request_id: "req-1",
+            in_process: Some(&in_process),
+            state: &state,
+            live_tasks: &live,
+            today: "2026-10-28",
+        })
+        .expect("进程内命中即接受：台账为空不构成拒绝理由");
+        assert_eq!(source, ClickSource::InProcess);
+        assert_eq!(accepted.session_id.as_deref(), Some("sess-a"));
+    }
+
+    #[test]
+    fn accept_click_relaunch_channel_uses_the_ledger() {
+        let mut state = CronState::default();
+        state.record_notice(
+            "req-2",
+            notice("task-a", NoticeKind::Trigger, "2026-10-28", None),
+            "2026-10-28",
+        );
+        let live = task_ids(&["task-a"]);
+        let (accepted, source) = accept_click(&AcceptInput {
+            request_id: "req-2",
+            in_process: None,
+            state: &state,
+            live_tasks: &live,
+            today: "2026-10-28",
+        })
+        .expect("台账命中即接受");
+        assert_eq!(source, ClickSource::Relaunch);
+        assert_eq!(accepted.kind, NoticeKind::Trigger);
+        assert_eq!(accepted.session_id, None);
+
+        // 台账外 request id：拒绝，且不上屏提示。
+        let rejected = accept_click(&AcceptInput {
+            request_id: "req-2",
+            in_process: None,
+            state: &CronState::default(),
+            live_tasks: &live,
+            today: "2026-10-28",
+        })
+        .expect_err("台账里没有该 request id");
+        assert_eq!(rejected, ClickRejection::NoticeUnknown);
+        assert_eq!(rejected.notice_code(), None);
+    }
+
+    #[test]
+    fn accept_click_rejects_deleted_task_and_stale_notice() {
+        let mut state = CronState::default();
+        state.record_notice(
+            "req-3",
+            notice("task-a", NoticeKind::Trigger, "2026-10-28", None),
+            "2026-10-28",
+        );
+        let live = task_ids(&["task-b"]);
+        assert_eq!(
+            accept_click(&AcceptInput {
+                request_id: "req-3",
+                in_process: None,
+                state: &state,
+                live_tasks: &live,
+                today: "2026-10-28",
+            })
+            .expect_err("任务已被删除"),
+            ClickRejection::TaskUnknown
+        );
+
+        // 任务在、日期不是今天：跨天点击拒绝（两条通道同一判据）。
+        let in_process = context("req-4", "task-b", NoticeKind::Trigger, None);
+        let live = task_ids(&["task-b"]);
+        assert_eq!(
+            accept_click(&AcceptInput {
+                request_id: "req-4",
+                in_process: Some(&in_process),
+                state: &state,
+                live_tasks: &live,
+                today: "2026-10-29",
+            })
+            .expect_err("派发日期不是今天"),
+            ClickRejection::NoticeStale
+        );
+
+        // 三条拒绝码各有各的用户提示，不合并。
+        assert_eq!(
+            ClickRejection::TaskUnknown.notice_code(),
+            Some("cron_click_task_deleted")
+        );
+        assert_eq!(
+            ClickRejection::NoticeStale.notice_code(),
+            Some("cron_click_notice_stale")
+        );
+        assert_eq!(ClickRejection::NoticeUnknown.as_str(), "notice_unknown");
+    }
+
+    /// 任务 id 允许含 `-`：识别全靠台账 / 上下文，不解析 request id 的字符串形状。
+    #[test]
+    fn accept_click_does_not_parse_the_request_id() {
+        let mut state = CronState::default();
+        let request_id = "lumir-cron-acc-cron-click-run-trigger-1700000000000";
+        state.record_notice(
+            request_id,
+            notice(
+                "acc-cron-click-run",
+                NoticeKind::Trigger,
+                "2026-10-28",
+                None,
+            ),
+            "2026-10-28",
+        );
+        let live = task_ids(&["acc-cron-click-run"]);
+        let (accepted, _) = accept_click(&AcceptInput {
+            request_id,
+            in_process: None,
+            state: &state,
+            live_tasks: &live,
+            today: "2026-10-28",
+        })
+        .expect("含 `-` 的任务 id 照样识别");
+        assert_eq!(accepted.task, "acc-cron-click-run");
+    }
+
+    // ---- 上下文与处置计划 ----
+
+    #[test]
+    fn click_context_round_trips_through_the_ledger_shape() {
+        let ctx = ClickContext::from_delivery(
+            "req-5",
+            "task-a",
+            NoticeKind::Failure,
+            Some("sess-5"),
+            "2026-10-28",
+        );
+        let from_ledger = ClickContext::from_notice("req-5", &ctx.notice());
+        assert_eq!(from_ledger, ctx, "两条通道交出同一形状");
+    }
+
+    /// **区分度用例**（design §5.2 可达性说明）：处置层必须用上下文快照，而不是任务的最新会话。
+    #[test]
+    fn click_plan_opens_the_snapshot_session_not_the_latest_one() {
+        // **区分度用例**（design §5.2）：结果 / 失败通知的会话只来自点击上下文的快照。
+        // 判据是「给处置层的输入里根本没有『任务最新会话』这个位置」——`ClickInput` 没有
+        // 那个字段，`state_session_today` 只服务到点通知的重启后判据。把实现改成读最新会话，
+        // 这条用例就没有任何输入能让它返回 `sess-latest`，因此必然判红。
+        let snapshot = ClickInput {
+            kind: NoticeKind::Result,
+            session_snapshot: Some("sess-snapshot"),
+            ..click_input(DeliveryPolicy::RunThenNotify)
+        };
+        assert_eq!(
+            plan_click(&snapshot),
+            ClickPlan::OpenSession("sess-snapshot".to_string())
+        );
+
+        // 同一任务两条条目各持不同快照：点哪条开哪条。
+        for (request_id, expected) in [("req-6", "sess-first"), ("req-7", "sess-second")] {
+            let _ = request_id;
+            let entry = ClickInput {
+                kind: NoticeKind::Failure,
+                session_snapshot: Some(expected),
+                ..click_input(DeliveryPolicy::RunThenNotify)
+            };
+            assert_eq!(
+                plan_click(&entry),
+                ClickPlan::OpenSession(expected.to_string()),
+                "每次恢复的都是被点那条条目快照里的会话"
+            );
+        }
+
+        // 到点通知没有快照会话：这条路径上 `session_snapshot` 不参与判定（由「今天跑没跑」判）。
+        let trigger = ClickInput {
+            kind: NoticeKind::Trigger,
+            session_snapshot: None,
+            ..click_input(DeliveryPolicy::NotifyThenRun)
+        };
+        assert_eq!(plan_click(&trigger), ClickPlan::Run);
+    }
+
+    #[test]
+    fn click_plan_covers_trigger_idempotency() {
+        // 到点通知按「今天跑没跑」判：`clicked_today` 的两种形态（有 / 无会话）+ 在途 + 昨日记录。
+        let running = ClickInput {
+            clicked_today: Some(None),
+            ..click_input(DeliveryPolicy::NotifyThenRun)
+        };
+        assert_eq!(
+            plan_click(&running),
+            ClickPlan::FocusOnly,
+            "回执未到：只聚焦"
+        );
+
+        let done = ClickInput {
+            clicked_today: Some(Some("sess-today")),
+            ..click_input(DeliveryPolicy::NotifyThenRun)
+        };
+        assert_eq!(
+            plan_click(&done),
+            ClickPlan::OpenSession("sess-today".to_string()),
+            "当日已跑过：只打开那条会话，不重跑"
+        );
+
+        let inflight = ClickInput {
+            inflight: true,
+            ..click_input(DeliveryPolicy::NotifyThenRun)
+        };
+        assert_eq!(
+            plan_click(&inflight),
+            ClickPlan::FocusOnly,
+            "进程重启丢了去重记录但有在途运行：并发点击的后到者只聚焦"
+        );
+
+        assert_eq!(
+            plan_click(&click_input(DeliveryPolicy::NotifyThenRun)),
+            ClickPlan::Run,
+            "全新点击：发起运行"
+        );
+
+        // 结果 / 失败通知没有快照会话 ⇒ 拒绝（不是「读最新会话」再试一次）。
+        let missing = ClickInput {
+            kind: NoticeKind::Failure,
+            session_snapshot: None,
+            ..click_input(DeliveryPolicy::RunThenNotify)
+        };
+        assert_eq!(plan_click(&missing), ClickPlan::Reject("session_missing"));
+
+        // silent-run 没有通知可点。
+        assert_eq!(
+            plan_click(&click_input(DeliveryPolicy::SilentRun)),
+            ClickPlan::Reject("no_notification")
+        );
     }
 }
