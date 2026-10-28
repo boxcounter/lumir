@@ -37,3 +37,5 @@
 3. 实现与验证 tasks 全部完成，仅本归档任务在执行。
 4. `GATE RESULT: 15/15 PASS（SKIP 0）` exit 0；最终 quick `GATE RESULT: 13/13 PASS（SKIP 0）` exit 0；真机 153 / 158 2/2 PASS exit 0，证据 `.local/acceptance/2026-10-28/summary.md`。
 5. `node scripts/openspec-archive-check.mjs` PASS；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 37/37 PASS；归档跟踪队列本 change 唯一条目。
+
+归档后：归档提交 `2c321117`；包装器输出 `1 added / Specs updated successfully`，归档后修链 0 处、相对链接 PASS；`node scripts/openspec-archive-check.mjs --archived fix-bare-list-marker-backspace-oct28` 于 2026-10-28 输出 PASS。
