@@ -17,4 +17,4 @@
 - [x] 3.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（36/36）。
 - [x] 3.2 `scripts/gate.sh visual` 通过（`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0），相关单测与 acceptance 静态检查通过。
 - [x] 3.3 真机场景 153 / 158 PASS（2/2，exit 0），证据落 `.local/acceptance/2026-10-28/`（Alex 2026-10-28 后续已开放机器窗口，与 Backspace 修复同批复跑）。
-- [ ] 3.4 独立 reviewer clean/merge 后按五要件归档，并完成归档后审计。
+- [x] 3.4 独立 reviewer clean/merge 后按五要件归档，并完成归档后审计（归档提交 `82df3660`，`--archived` PASS）。
