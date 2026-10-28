@@ -60,7 +60,7 @@
 
 ## 节点 2 记录（归档前，2026-10-28，M787）
 
-口径见 [openspec-workflow.md](../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
 
 1. **方案已批准**：节点 1 于 2026-10-28 通过（Alex 原话见上方「评审记录」）。实现期没有静默扩 scope：
    r1–r4 均为评审指出的自有缺陷返修；真机返修批 M777 → M779 的根因修复由 tower 裁决 A 放行（mission
@@ -146,7 +146,7 @@
 ### 为什么现在做
 
 - 这是 dogfood 现场直接提出的交互缺口，当前 spec 无条款覆盖，属于新行为——按 ADR 0004 与
-  [openspec-workflow.md](../../../docs/process/openspec-workflow.md) 走节点 1。
+  [openspec-workflow.md](../../../../docs/process/openspec-workflow.md) 走节点 1。
 - 症状二的修复成本集中在「把后端唯一真值接进来」，越晚做，越多前端路径会继续复制「本地相位即真相」
   的假设（现有 `beginCronRun` 的忙判定、`send()` 的前置闸都是这条假设的消费者）。
 

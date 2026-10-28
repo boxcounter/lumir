@@ -239,7 +239,7 @@ type ActivityEvent =
 
 ## 8. 视觉保真合同
 
-> 本节按 [openspec-workflow.md](../../../docs/process/openspec-workflow.md)「有原型时的设计合同」的精神
+> 本节按 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「有原型时的设计合同」的精神
 > 写死可对账口径；本 change 无原型稿，形态由文字合同 + 并排截图裁决（`--update` 产生的任何基线仍归
 > Alex 人肉过目）。**D1 是视觉裁决点**：下列取值是实现建议，Alex 可以改形态而不影响行为条款。
 
