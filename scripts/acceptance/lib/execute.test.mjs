@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, runScenario, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, runScenario, runTag, sampleWindowPx, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -1980,4 +1980,153 @@ test("`do: key` + channel 的运行期守卫（M768）：写错的形态在真�
   });
   assert.equal(typo.status, "FAIL");
   assert.match(typo.records[0].detail ?? "", /只支持 "cgevent"/);
+});
+
+// ── `$runTag`（M752）：跨运行唯一的占位符 ────────────────────────────────────
+//
+// 现场：场景 170 的 cron 任务 `id` **就是系统通知标题**。id 固定时，**上一次运行**留在通知
+// 中心里的同标题通知会满足 `waitForNotification` 的新鲜度基线，被当成这次投递的横幅（随后
+// 「等 `cron_notified` 落盘」必然超时）。三条判据：同次恒定、跨次不重复、占位符在 `config:`
+// 与 `steps:` 上替换成同一个值。
+
+test("runTag：同一次运行内恒定，且符合 cron 任务 id 的口径（非空、无空白）", () => {
+  const first = runTag();
+  assert.equal(runTag(), first, "同一进程内必须恒定：config: 与 steps: 靠它拿到同一个值");
+  assert.equal(first.trim(), first, "不得带首尾空白");
+  assert.match(first, /^[a-z0-9]+$/i, "只含字母数字（无空白 / 无 `/`）：可直接做 cron 任务的 id");
+});
+
+test("runTag：跨运行不重复（新进程拿到不同的记号）", () => {
+  const moduleUrl = new URL("./execute.mjs", import.meta.url).href;
+  const script = `import(${JSON.stringify(moduleUrl)}).then((m) => process.stdout.write(m.runTag()));`;
+  const other = execFileSync(process.execPath, ["-e", script], { encoding: "utf8" });
+  assert.match(other, /^[a-z0-9]+$/i, `新进程的记号口径应与本次一致，实际：${JSON.stringify(other)}`);
+  assert.notEqual(other, runTag(), "跨运行必须不同：否则上一次运行的通知会满足新鲜度基线");
+});
+
+test("$runTag 占位符：config 的 cron 任务 id 与 steps 的字段拿到同一个值，且不残留字面量", async () => {
+  const root = tmpRoot("runtag-substitute");
+  const file = path.join(root, "runtag.md");
+  fs.writeFileSync(
+    file,
+    [
+      '---\nid: "runtag"',
+      "item: 0",
+      "title: 占位符替换",
+      "config:",
+      "  cron:",
+      "    tasks:",
+      '      - id: "acc-$runTag"',
+      '        vault: "$vault"',
+      '        at: "$nextMinute"',
+      '        prompt: "占位符替换自测"',
+      "steps:",
+      "  - name: 一步",
+      "    do: waitFor",
+      "    waitFor:",
+      '      has: ["acc-$runTag"]',
+      "    title: acc-$runTag",
+      "---",
+      "",
+    ].join("\n"),
+  );
+  const scenario = await loadScenario(file);
+  const expected = runTag();
+  assert.equal(scenario.config.cron.tasks[0].id, `acc-${expected}`, "config: 块必须替换");
+  assert.equal(scenario.steps[0].title, `acc-${expected}`, "steps 的字段必须替换成同一个值");
+  assert.deepEqual(scenario.steps[0].waitFor.has, [`acc-${expected}`], "嵌套数组里的占位符同样要替换");
+  assert.equal(
+    JSON.stringify(scenario).includes("$runTag"),
+    false,
+    "整个 front-matter 不得残留占位符字面量",
+  );
+});
+
+// ── `clickNotification` 的失效索引重试（M752） ───────────────────────────────
+//
+// 现场：横幅读到的 AX index 在按下时已失效（堆叠组重排），KimiCU **拒发**并说明「动作未发送」。
+// 这类失败重读再点即可；判据必须只认「未发送动作」那一族——**只报索引不匹配**的错误可能已经
+// 生效，重试会变成两次点击。
+
+const STALE_INDEX_ERROR =
+  "click 失败：error: AX target index 6 no longer matches its observed AX path — " +
+  "call get_app_state with AX text again before using this index; no action was sent";
+
+test("isStaleIndexError：只认「索引失效 + 动作未发送」，其余一律不重试", () => {
+  assert.equal(isStaleIndexError(new Error(STALE_INDEX_ERROR)), true, "现场原文必须判真（可重试）");
+  assert.equal(
+    isStaleIndexError(new Error("click 失败：error: AX target index 6 no longer matches its observed AX path")),
+    false,
+    "缺「动作未发送」证据时不得重试：它可能已经生效，重试就是两次点击",
+  );
+  assert.equal(
+    isStaleIndexError(new Error("click 失败：error: position out of bounds")),
+    false,
+    "坐标类错误与快照无关，重试无意义",
+  );
+});
+
+test("do: clickNotification（动作级）：索引失效被拒发后重读再点一次，证据留痕", async (t) => {
+  try {
+    execFileSync("/usr/bin/pgrep", ["-x", "NotificationCenter"], { encoding: "utf8" });
+  } catch {
+    t.skip("NotificationCenter 不在场（无桌面环境）：本用例只验动作接线，跳过");
+    return;
+  }
+  const root = tmpRoot("notify-click-retry");
+  useTmpEnv(root);
+  const entry = "- [6] AXGroup (Lumir, acc-cron-click-tag, 到点, stacked) actions=[AXPress, Show Details, Clear All]";
+  const tree = ["# Notification Center App State", "```text", '- [0] AXApplication "Notification Center"', entry, "```"].join("\n");
+  let clicks = 0;
+  const ctx = stubCtx(root);
+  ctx.cu = {
+    state: async () => ({ text: tree, image: null }),
+    click: async () => {
+      clicks += 1;
+      if (clicks === 1) throw new Error(STALE_INDEX_ERROR);
+      return { json: { ok: true }, text: "ok" };
+    },
+  };
+  const ok = await runScenario(ctx, {
+    id: "notify-click-retry",
+    item: 0,
+    title: "点击重试",
+    file: path.join(root, "notify-click-retry.md"),
+    steps: [{ name: "点通知", do: "clickNotification", title: "acc-cron-click-tag", body: "到点" }],
+  });
+  assert.equal(ok.status, "PASS", `拒发后重读再点应 PASS，实际：${JSON.stringify(ctx.evidence.records)}`);
+  assert.equal(clicks, 2, "第一次拒发（未发送动作）后必须重读再点一次");
+  const notes = ctx.evidence.records.filter((r) => r.kind === "note").map((r) => r.text).join("\n");
+  assert.match(notes, /索引已失效.*重读通知中心后重试/, `证据里要留痕重试原因，实际：${notes}`);
+});
+
+test("do: clickNotification（动作级）：非「未发送动作」的错误不重试，直接判 FAIL", async (t) => {
+  try {
+    execFileSync("/usr/bin/pgrep", ["-x", "NotificationCenter"], { encoding: "utf8" });
+  } catch {
+    t.skip("NotificationCenter 不在场（无桌面环境）：本用例只验动作接线，跳过");
+    return;
+  }
+  const root = tmpRoot("notify-click-hardfail");
+  useTmpEnv(root);
+  const entry = "- [6] AXGroup (Lumir, acc-cron-click-tag, 到点, stacked) actions=[AXPress, Show Details, Clear All]";
+  const tree = ["# Notification Center App State", "```text", '- [0] AXApplication "Notification Center"', entry, "```"].join("\n");
+  let clicks = 0;
+  const ctx = stubCtx(root);
+  ctx.cu = {
+    state: async () => ({ text: tree, image: null }),
+    click: async () => {
+      clicks += 1;
+      throw new Error("click 失败：error: AX target index 6 no longer matches its observed AX path");
+    },
+  };
+  const bad = await runScenario(ctx, {
+    id: "notify-click-hardfail",
+    item: 0,
+    title: "点击不重试",
+    file: path.join(root, "notify-click-hardfail.md"),
+    steps: [{ name: "点通知", do: "clickNotification", title: "acc-cron-click-tag", body: "到点" }],
+  });
+  assert.equal(bad.status, "FAIL", "无法证明「动作未发送」时必须判 FAIL，不得重试掩盖");
+  assert.equal(clicks, 1, "这类错误只允许点一次（可能已生效）");
 });

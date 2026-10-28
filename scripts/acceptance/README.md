@@ -118,6 +118,12 @@ LUMIR_ACCEPTANCE_BUNDLE="$PWD/src-tauri/target/debug/bundle/macos/Lumir.app/Cont
 UN 通知授权会直接返回 denied（启动日志 `通知权限被拒绝`）——横幅根本不出现，场景在
 `waitForNotification` 就红，形态与「点击回调坏掉」无法区分。
 
+**同一台机器上可能同时存在多份同 id 副本时（M752）**：`build-bundle.mjs` 支持 opt-in 的
+`LUMIR_ACCEPTANCE_BUNDLE_ID=<独立 id>`。默认不设，产物仍是 `com.lumir.app.acceptance`（套件行为
+一字不变）；设了就用该 id 构建——用于「手工验证 / 人肉点击」这类场合，避免点击被另一份同 id 副本
+接走（M619/M622 的路由问题）。该 id 是**通知授权身份**，必须固定不要每次变（换 id 等于换身份，系统
+要重新授权一次，需人工允许）；并且**同一份 `.app` 产物会被覆盖**，跑套件前请用默认 id 重建。
+
 **独立 bundle id 是通知点击落点的根治（M622）**：usernoted / LaunchServices 按 **bundle id**
 解析点击目标。验收副本若与产品同 id（`com.lumir.app`），点击会被解析到安装版的注册 URL，
 2026-10-21 11:44 / 11:46 的 170/171 真机复跑里点击仍拉起 `/Applications/Lumir.app`（M619）——
@@ -804,7 +810,10 @@ AX 照样暴露浮层项、报的还是**未裁的完整包围盒**（证据 `.l
 占位符对整个 front-matter 生效（不止 expect）：`config:` 块里同样可写。M304 新增 `$fixtures`
 （套件 fixtures 目录的绝对路径）——**只读引用** fixture 原文（如 harness mock 脚本）用它，
 不要为引用而 `fixtures:` 拷进 vault：拷进去的非 `.md` 文件 resetVault 不清（M296 已知缺口），
-会串红别的场景的「vault 里无 json/tmp 产物」类断言（场景 28/65 实证）。
+会串红别的场景的「vault 里无 json/tmp 产物」类断言（场景 28/65 实证）。**M752 新增 `$runTag`**
+（每次运行唯一的短记号，进程内恒定、无空白）：给「同一场景反复跑时不能与上一次重名」的场合用
+——典型是 cron 任务的 `id`，而它同时就是**系统通知标题**；写死 `id` 时，上一次运行留在通知中心
+里的同标题通知会满足 `waitForNotification` 的新鲜度基线，被当成这次投递的横幅（场景 170 的现场）。
 
 匹配值：字符串按**子串**；`/.../` 包起来按正则。注意**正则一律带 `m` flag**（`lib/execute.mjs` 的 `matcher()`），
 所以 `^`/`$` 是**行**边界而不是字符串边界：要断言「文档末尾」得写 `(?![\\s\\S])`（负向先行断言后面没有字符）。
@@ -878,6 +887,19 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
 侦测进程消失，原 2s / 0.5s 上界与 SIGKILL 兜底不变。
 
 ## 已知边界（写清楚，别当成 bug 去追）
+
+- **cron 通知点击在当前 macOS 构建上不可自动驱动（M752，macOS 26.6.2 / 25G83，2026-10-28 实测）**：
+  `notify-then-run` 的通知是**瞬时**的——usernoted 有 `Delivering` + `Presenting` 记录，但它
+  **不驻留在通知中心列表里**（面板开着时列表始终没有该条目，`scroll` 报 `already at end`；
+  面板收起时它会以右上角横幅/气泡出现，几秒后消失）；条目在 AX 里**没有几何**（`ax` 与 `full`
+  快照都 `bbox: null`，只有窗口级 `window_bounds`），而 KimiCU 对条目发 `AXPress` 只等价于
+  **Dismiss**（错误文本写明「未发送动作」，条目随即消失、usernoted 无用户响应、app 侧无
+  `cron_click`）。三条任一条都足以让场景 170 / 171 的 `clickNotification` 判红，且与产品行为无关。
+  **因此**：这两条场景的**点击段**按人工验证处理（发布前由人在屏幕前、一次投递当场点，窗口只有
+  几秒，**经第三方中转不可行**）；机器段（投递发生、标题 = 本次唯一任务 id、`cron_notified` 落盘、
+  「未点击前零运行」、点击前 app 停在非目标 vault）仍由套件自动判定。判据不得为此放宽——把
+  「点不到」写成 PASS 等于放弃「click = intent」这条唯一判据。要恢复自动化，先确认系统侧能给出
+  「条目常驻 + 可点坐标」或「AXPress = 打开」，再改 `clickNotification` 的实现，而不是改断言。
 
 - **跑批环境会在场景中段整页重载（M359 已闭环）**：同机别的 agent 在自己的 worktree 里 checkout /
   构建时写 `.html` / `tsconfig.json`，验收实例的前端会在**同一个 Rust 进程**里整页重启，把正在跑的

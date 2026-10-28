@@ -869,6 +869,22 @@ export function checkScenario(scenario) {
 }
 
 /**
+ * 本次运行唯一的短记号（**同一进程内恒定**）：给「跨运行不能重名」的场景用——典型是 cron
+ * 任务的 `id`，而它同时就是系统通知的标题（M752 的现场：上一次运行留在通知中心里的同标题
+ * 通知会满足 `waitForNotification` 的新鲜度基线，被当成这次投递的横幅，随后的「等
+ * `cron_notified` 落盘」必然超时）。
+ *
+ * 形状 = `<base36 时间戳><base36 pid>`：无空白、无 `/`，可直接做 cron 任务的 `id`
+ * （配置校验只要求非空且不含空白）；进程内取一次，于是同一次运行的 `config:` 与 `steps:`
+ * 拿到**同一个值**（占位符对整个 front-matter 生效，见 `loadScenario`）。
+ */
+const RUN_TAG = `${Date.now().toString(36)}${process.pid.toString(36)}`;
+
+export function runTag() {
+  return RUN_TAG;
+}
+
+/**
  * `$appName` / `$appVersion` 占位替换（M236）：期望值里要引用「当前构建的产品名 / 版本号」时
  * 写占位符，加载时从本仓 src-tauri/tauri.conf.json 读真值代入——场景 MUST NOT 硬编码一份
  * 版本号副本（真源唯一，REVIEW.md 「同一语义两处真源」条），版本 bump 后场景跟着真源走。
@@ -892,6 +908,9 @@ async function appMetaTokens() {
     // 在 launchApp 里先被读一遍，运行期才写的模板会让干净 env 直接 INVALID），再由
     // `do: mockFill` 就地替换占位；仓库里的 fixture 原文不被改写（场景可重复跑）。
     $env: path.join(envHome(), "lumir"),
+    // 本次运行唯一的记号（M752）：cron 任务的 `id` 就是系统通知标题，跨运行必须不同——
+    // 否则上一次运行留在通知中心里的同标题通知会让「新鲜度基线」失效（见 [`runTag`]）。
+    $runTag: runTag(),
   };
 }
 
@@ -2388,6 +2407,19 @@ async function toggleNotificationCenter(cu, { want, evidence, action }) {
  */
 const NOTIFICATION_FRESHNESS_KEY = "__notificationFreshness";
 
+/** 点击通知横幅的「重读再点」上限（M752）：读树到按下之间横幅会重排（堆叠组尤其明显），
+ *  KimiCU 对失效索引**拒发**（错误文本自己就要求先 `get_app_state` 重读）。上限 3 次：
+ *  每次重试前都重新定位同 title/body 的条目，定位不到照旧判 FAIL——不伪造成功。 */
+const CLICK_NOTIFICATION_ATTEMPTS = 3;
+
+/** KimiCU 的「索引已失效、动作**未发送**」错误（M752）：**只有**这一类可以安全重读重试。
+ *  判据要求错误文本同时给出两件事——索引失效 + 动作没发出去；缺后者的错误（例如只报索引
+ *  不匹配）可能已经生效，重试会变成两次点击，一律原样抛给调用方判 FAIL。 */
+export function isStaleIndexError(error) {
+  const text = String(error?.message ?? error);
+  return /AX target index/i.test(text) && /no action was sent/i.test(text);
+}
+
 /**
  * 通知条目的定位判据（M617 抽成单一实现）：`AXGroup` 的 `raw` 同时含标题与正文。
  *
@@ -3259,20 +3291,44 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
           : "clickNotification 前没有同一 title/body 的 waitForNotification：按当前在场的匹配条目点击" +
             "（新旧不可辨——同签名条目在 AX 里逐字相同）",
       });
-      const { pid: ncPid, node } = await findNotificationNode(cu, {
-        ...spec,
-        evidence,
-        action: "clickNotification",
-        baseline: reuse ? reuse.baseline : null,
-        fallbackToExisting: true,
-      });
+      const findClickTarget = () =>
+        findNotificationNode(cu, {
+          ...spec,
+          evidence,
+          action: "clickNotification",
+          baseline: reuse ? reuse.baseline : null,
+          fallbackToExisting: true,
+        });
+      let found = await findClickTarget();
+      const { pid: ncPid } = found;
       // 点击窗口起点先记下：M619 的游离实例清退只认「这个时刻之后新起的」`.app` 实例——跑批
       // 开始时 M478 起跑自检已确认场上零实例，因此点击窗口内新起的只可能是这次点击拉起的。
       // 点击**前**若场上已有别的 bundle 实例（用户在跑批期间自己打开了 Lumir），归因前提不成立：
       // 不清退，只记证据交人判断——硬约束是绝不误伤用户实例。
       const preexisting = bundleBinary() ? listOtherBundleInstances() : [];
       const clickStartedAt = Date.now();
-      const out = await cu.click(ncPid, { index: node.index });
+      // 「读树 → 按下」是一对快照相关动作：横幅只在屏上数秒，**堆叠组**还会在点击前后重排，
+      // 读到的 index 到按下时可能已失效——KimiCU 此时**拒发**并在错误里说明「动作未发送」
+      // （M752 现场）。这类失败可以安全地重读再点：每轮重新定位同一 title/body 的条目，
+      // 定位不到照旧判 FAIL。判据只认「未发送动作」那一族（见 [`isStaleIndexError`]）。
+      let node = found.node;
+      let out;
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          out = await cu.click(ncPid, { index: node.index });
+          break;
+        } catch (error) {
+          if (!isStaleIndexError(error) || attempt >= CLICK_NOTIFICATION_ATTEMPTS) throw error;
+          evidence.record({
+            kind: "note",
+            text:
+              `clickNotification 第 ${attempt} 次按下的索引已失效（KimiCU 未发送动作，横幅重排）：` +
+              "重读通知中心后重试",
+          });
+          found = await findClickTarget();
+          node = found.node;
+        }
+      }
       evidence.record({
         kind: "note",
         text: `点击通知横幅 AXPress：${node.raw}（KimiCU 自报 ${JSON.stringify(out.json ?? out.text).slice(0, 200)}）`,

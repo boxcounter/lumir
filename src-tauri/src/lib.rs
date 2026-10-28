@@ -956,7 +956,7 @@ struct CronRuntimeInner {
     last_focus_poke: Option<Instant>,
 }
 
-/// 投给守护线程的四类消息。
+/// 投给守护线程的五类消息。
 enum CronMessage {
     /// 拉取兜底的一次评估（带触发源）。
     Poke(cron::Trigger),
@@ -964,6 +964,9 @@ enum CronMessage {
     RunResult(CronRunResult),
     /// 用户点击了一条通知（`tap`）：按该任务的触达策略聚焦 / 打开会话 / 发起运行。
     Click { task: String },
+    /// 前端接线层就绪：重放接线层未就绪期间被保留的点击（M752——通知点掉之后系统不会再给
+    /// 第二次点击，丢弃等于把用户意图丢掉），随后补一次启动评估。
+    BridgeReady,
     /// 任务表可能变了：重读配置并替换任务集（change add-cron-conversational-registration
     /// design §3.1）。**载荷为空**——配置是唯一真源，带任务载荷等于在进程里放第二份任务表。
     /// `ack` 是一次性回执：工具侧 `recv_timeout` 等它，把「已生效 / 未确认」如实写进回执。
@@ -994,13 +997,14 @@ impl CronRuntime {
         }
     }
 
-    /// 前端接线层就绪（`cron_bridge_ready` 命令）：置位并投一次启动触发，补跑启动早期因
-    /// 「监听器不在场」被延后的无人值守运行。
+    /// 前端接线层就绪（`cron_bridge_ready` 命令）：置位、重放未就绪期间保留的点击，并投一次
+    /// 启动触发，补跑启动早期因「监听器不在场」被延后的无人值守运行。
     fn mark_bridge_ready(&self) {
         use std::sync::atomic::Ordering;
         if self.bridge_ready.swap(true, Ordering::SeqCst) {
             return;
         }
+        self.send(CronMessage::BridgeReady);
         self.poke(cron::Trigger::Startup);
     }
 
@@ -1245,6 +1249,7 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
         delivery_retry: std::collections::HashMap::new(),
         cached_vault: None,
         notify_failures: cron::NotifyFailureStreak::default(),
+        pending_click: cron::DeferredClick::default(),
     };
     // 通知权限（design §4.3）：**有有效任务时**检查一次；未决定申请一次；被拒落一条 warning
     // 且不反复申请。空表不检查——运行期注册引入的任务由重载补检（design §3.3 第 6 步）。
@@ -1256,6 +1261,12 @@ fn cron_loop(app: &tauri::AppHandle, rx: Receiver<CronMessage>) {
             Ok(CronMessage::Poke(trigger)) => runner.evaluate(trigger),
             Ok(CronMessage::RunResult(result)) => runner.finish(result),
             Ok(CronMessage::Click { task }) => runner.handle_click(&task),
+            // 接线层就绪：先重放未就绪期间保留的点击，再补一次启动评估（两条都是就绪之后
+            // 才有意义的工作，顺序固定——保留的点击是用户在等的那件事）。
+            Ok(CronMessage::BridgeReady) => {
+                runner.replay_pending_click();
+                runner.evaluate(cron::Trigger::Startup);
+            }
             Ok(CronMessage::Reload { ack }) => runner.reload(ack),
             Err(RecvTimeoutError::Timeout) => runner.evaluate(cron::Trigger::Timer),
             Err(RecvTimeoutError::Disconnected) => return,
@@ -1301,6 +1312,10 @@ struct CronRunner {
     /// 通知投递的连续失败计数（M635）：达阈值那一次在 app 内给一条可见提示。判据与上屏文案
     /// 的阈值都在 `cron.rs`（[`cron::NotifyFailureStreak`]），这里只做记账与派发。
     notify_failures: cron::NotifyFailureStreak,
+    /// 接线层未就绪期间被保留的点击（M752）：`cron:run` 监听器不在场时发出去的交接会被静默
+    /// 丢弃，而通知一经点掉系统不会再给第二次点击——所以点击必须先保留、就绪后重放，
+    /// 不能像无人值守派发那样按 `not_ready` 延后（那条路径下一次评估还会再来，这条不会）。
+    pending_click: cron::DeferredClick,
 }
 
 impl CronRunner {
@@ -1587,9 +1602,14 @@ impl CronRunner {
         }
     }
 
-    /// 通知点击（design §4.5 / §5.1 / §5.2）：`notify-then-run` 点击发起运行（同日重复点击
-    /// 只打开已有会话）；`run-then-notify` 点击恢复该次运行的会话、不重跑。任一步失败落
-    /// `cron_click(ok=false)` 并给人话提示（MUST NOT 静默）。
+    /// 通知点击（design §4.5 / §5.1 / §5.2）：落点由 [`cron::plan_click`] 判定（纯函数），
+    /// 这里只执行副作用。`notify-then-run` 点击发起运行（同日重复点击只打开已有会话）；
+    /// `run-then-notify` 点击恢复该次运行的会话、不重跑。任一步失败落 `cron_click(ok=false)`
+    /// 并给人话提示（MUST NOT 静默）。
+    ///
+    /// **接线层未就绪时保留点击**（M752，`ClickPlan::Defer`）：`app.emit` 在 JS 监听器不在场
+    /// 时返回 Ok 却无人接收，而通知一经点掉系统不会再给第二次点击——按失败落地等于把用户的
+    /// 意图丢掉。保留的点击由 [`Self::replay_pending_click`] 在 `cron_bridge_ready` 之后重放。
     fn handle_click(&mut self, task_id: &str) {
         let Some(scheduled) = self
             .tasks
@@ -1607,38 +1627,56 @@ impl CronRunner {
             return;
         }
         let now = cron::LocalNow::now();
-        // 前端接线层未就绪时 `app.emit` 会返回 Ok 但无人接收（webview 的监听器不在场），
-        // 运行会空挂到 stale 回收、点击去重也永远等不到回执。此时不进入派发：
-        // 不插入 `clicked_today`，用户稍后重试能真正发起。
-        if !self.app.state::<CronRuntime>().is_bridge_ready() {
-            let action = if task.delivery == config::DeliveryPolicy::NotifyThenRun {
-                "run"
-            } else {
-                "open-session"
-            };
-            logging::cron_click(&task.id, false, action, Some("not_ready"));
-            notice(&self.app, "界面尚未就绪，请稍后重试");
-            return;
-        }
-        match task.delivery {
-            config::DeliveryPolicy::NotifyThenRun => {
-                let clicked = self
-                    .clicked_today
-                    .get(&task.id)
-                    .filter(|clicked| clicked.date == now.date);
-                if let Some(clicked) = clicked {
-                    // 同日重复点击（design §4.6）：只聚焦并打开已有会话，不重复运行。
-                    match clicked.session_id.clone() {
-                        Some(session_id) => {
-                            self.open_session(&task, &session_id);
-                        }
-                        None => {
-                            // 第一次点击的运行还没有回执：只聚焦，不产生第二次运行。
-                            logging::cron_click(&task.id, true, "run", None);
-                        }
-                    }
-                    return;
+        // 判据的四个输入全部是这一刻的运行时事实；点击去重按**本地日期**过滤（跨日重新允许）。
+        let clicked_today = self
+            .clicked_today
+            .get(&task.id)
+            .filter(|clicked| clicked.date == now.date)
+            .map(|clicked| clicked.session_id.clone());
+        let state_session = self.state.session_id(&task.id).map(str::to_string);
+        let state_session_today = state_session
+            .as_deref()
+            .filter(|session_id| session_started_today(session_id, &now))
+            .map(str::to_string);
+        let plan = cron::plan_click(&cron::ClickInput {
+            delivery: task.delivery,
+            bridge_ready: self.app.state::<CronRuntime>().is_bridge_ready(),
+            clicked_today: clicked_today
+                .as_ref()
+                .map(|session_id| session_id.as_deref()),
+            state_session_today: state_session_today.as_deref(),
+            state_session: state_session.as_deref(),
+        });
+        match plan {
+            cron::ClickPlan::Defer => self.pending_click.defer(&task.id),
+            cron::ClickPlan::FocusOnly => {
+                // 第一次点击的运行还没有回执：只聚焦，不产生第二次运行。
+                logging::cron_click(&task.id, true, "run", None);
+            }
+            cron::ClickPlan::OpenSession(session_id) => {
+                // 同日再点只打开已有会话（design §4.6）；进程重启后靠去重状态里的会话补这条
+                // 判据时，这里顺手把点击去重记成「今日已点击且已有会话」。
+                self.clicked_today.insert(
+                    task.id.clone(),
+                    ClickState {
+                        date: now.date.clone(),
+                        session_id: Some(session_id.clone()),
+                    },
+                );
+                self.open_session(&task, &session_id);
+            }
+            cron::ClickPlan::Reject(reason) => {
+                let action = if task.delivery == config::DeliveryPolicy::NotifyThenRun {
+                    "run"
+                } else {
+                    "open-session"
+                };
+                logging::cron_click(&task.id, false, action, Some(reason));
+                if task.delivery == config::DeliveryPolicy::RunThenNotify {
+                    notice(&self.app, &format!("任务 {} 还没有可恢复的会话", task.id));
                 }
+            }
+            cron::ClickPlan::Run => {
                 self.clicked_today.insert(
                     task.id.clone(),
                     ClickState {
@@ -1646,20 +1684,6 @@ impl CronRunner {
                         session_id: None,
                     },
                 );
-                // 进程重启后 clicked_today 会丢：用去重状态里的 session_id 补一道同日判据——
-                // 该会话是今天开始的 ⇒ 今天已经跑过，只打开、不重复运行（design §4.6）。
-                if let Some(session_id) = self
-                    .state
-                    .session_id(&task.id)
-                    .filter(|session_id| session_started_today(session_id, &now))
-                    .map(str::to_string)
-                {
-                    if let Some(clicked) = self.clicked_today.get_mut(&task.id) {
-                        clicked.session_id = Some(session_id.clone());
-                    }
-                    self.open_session(&task, &session_id);
-                    return;
-                }
                 let run_id = cron::new_run_id();
                 // 与定时派发同一个纯函数合成点：点击运行的差异只落在契约值上
                 // （`Interactive` 槽位 + 交互批准），不在载荷形状或接线层分叉。
@@ -1701,22 +1725,22 @@ impl CronRunner {
                     }
                 }
             }
-            config::DeliveryPolicy::RunThenNotify => match self
-                .state
-                .session_id(&task.id)
-                .map(str::to_string)
-            {
-                Some(session_id) => self.open_session(&task, &session_id),
-                None => {
-                    logging::cron_click(&task.id, false, "open-session", Some("session_missing"));
-                    notice(&self.app, &format!("任务 {} 还没有可恢复的会话", task.id));
-                }
-            },
-            // `silent-run` 没有通知可点（不会走到这里）。
-            config::DeliveryPolicy::SilentRun => {
-                logging::cron_click(&task.id, false, "open-session", Some("no_notification"));
-            }
         }
+    }
+
+    /// 重放接线层未就绪期间保留的点击（M752）：`cron_bridge_ready` 之后调用一次。
+    /// 就绪之后仍然不能落地（理论上不可达：本函数只在该消息上调用）时按失败落地并提示，
+    /// 不留一条永远不执行的保留态。
+    fn replay_pending_click(&mut self) {
+        let Some(task) = self.pending_click.take() else {
+            return;
+        };
+        if !self.app.state::<CronRuntime>().is_bridge_ready() {
+            logging::cron_click(&task, false, "run", Some("not_ready"));
+            notice(&self.app, "界面尚未就绪，请稍后重试");
+            return;
+        }
+        self.handle_click(&task);
     }
 
     /// 「恢复该次运行的会话」：前端确保目标 vault 已打开后经既有恢复链路打开它。
