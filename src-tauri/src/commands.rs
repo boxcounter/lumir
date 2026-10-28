@@ -457,12 +457,31 @@ pub enum PreparedOpen {
     Ready(Box<PreparedVaultOpen>),
 }
 
+/// vault 根的唯一拼写（M779，2026-10-28 裁决 A：`prepare_vault_open` 统一采用规范化根）。
+///
+/// 为什么必须在**打开入口**归一一次，而不是各调用点各猜：harness 会话表按**根路径字符串**
+/// 分桶（`VaultScope::key()`，M312 的既有设计不改），同一个目录的两种拼写因此是两个会话。
+/// 现场（253 真机复跑）：启动恢复拿配置里的 `/tmp/...` 打开、vault 列表拿注册表里的
+/// `/private/tmp/...` 切回，切回时 `harness_state` 命中不了原来那个会话，返回
+/// `StateSnapshot::empty` —— 面板呈假空闲、历史消失，而那一轮其实还在旧桶里跑。
+///
+/// 归一后三种入口（启动恢复 / 列表切换 / 定时任务目标）打开同一目录得到同一个根：
+/// `VaultState.root`、`harness_state.vault`、召回用的 `session_open.vault_root` 与注册表
+/// `VaultWorkspace.path` 逐字同源（注册表本就存规范化路径，见 `vault_registry`）。
+pub fn canonical_vault_root(root: &std::path::Path) -> Result<PathBuf, CommandError> {
+    root.canonicalize()
+        .map_err(|_| CommandError::new("workspace_path", "无法规范化 vault 路径"))
+}
+
 /// 打开 vault 的第一阶段实现（见 [`PreparedVaultOpen`]）。
 pub fn prepare_vault_open(
     app: &tauri::AppHandle,
     root: PathBuf,
     force_new: bool,
 ) -> Result<PreparedOpen, CommandError> {
+    // 根先归一（见 [`canonical_vault_root`]）：后面的 remap 门、注册表身份、`VaultState.root`、
+    // 会话分桶键全部吃这一个值——「同一 vault 一种拼写」是本函数的不变量，不是调用方的义务。
+    let root = canonical_vault_root(&root)?;
     // 已注册路径直接打开，不受 remap 门影响（M121 修复：幽灵注册项曾拦停
     // 已注册 vault）。门判定只读——reconcile_vault 对未注册路径有注册 side effect，
     // 不能用来探测「目标未注册」。

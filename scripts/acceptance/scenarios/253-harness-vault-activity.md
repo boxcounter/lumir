@@ -85,8 +85,10 @@ steps:
     expect:
       - label: 切回后指示仍是「处理中」——不呈假空闲（本场景的核心判据）
         ax: { has: "处理中" }
+      # 角色是 AXCheckBox 而不是 AXButton：带 `aria-pressed` 的 button 在 WKWebView 的 AX 树里
+      # 映射成复选框（场景 86 的实证与注释同口径）。读屏名仍是 D327「对话面板」。
       - label: 标题栏 toggle 钮在场上（面板仍是收起的）
-        node: { role: AXButton, name: "对话面板", present: true }
+        node: { role: AXCheckBox, name: "对话面板", present: true }
       - shot: 02-切回仍在途
 
   - name: 打开面板：发送钮必须是停止态（不是「看似可发送」的空闲）

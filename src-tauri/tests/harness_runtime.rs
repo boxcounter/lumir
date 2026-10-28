@@ -1045,6 +1045,78 @@ fn context_overflow_retries_once_after_compact() {
         .any(|m| m.text.as_deref() == Some("重试成功。")));
 }
 
+/// M779（2026-10-28 裁决 A）：同一 vault 的两种路径拼写必须落**同一个会话桶**。
+///
+/// 上面那条跨 vault 用例判的是「不同的根 = 不同的会话」；本条判它的镜像：同一个目录的两种
+/// 拼写（真目录 / 指向它的符号链接，等价于 macOS 的 `/tmp` → `/private/tmp`）**不归一化**
+/// 时就是两个桶——切回时 `harness_state` 读到 `StateSnapshot::empty`，面板呈假空闲（253 的
+/// 真机现场）。归一化（`commands::canonical_vault_root`，打开入口的唯一口径）之后两把键
+/// 相同，会话读得回来。
+#[test]
+fn two_spellings_of_one_vault_share_a_session() {
+    let f = Fixture::new("spelling");
+    let runtime = f.runtime();
+    let config = mock_config();
+
+    let real = f.vault();
+    let link = f.root.join("vault-link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let scope_of = |root: PathBuf| VaultScope {
+        root,
+        policy: IgnorePolicy::load(
+            &f.vault(),
+            &[".gitignore".to_string()],
+            &lumir_lib::config::VaultConfig::default().ignore,
+        ),
+        vault_id: VAULT_ID.to_string(),
+    };
+
+    // 缺陷的机制本身：两根不归一化 ⇒ 两把键 ⇒ 两个会话桶（M312「同一 vault 的两种路径拼写
+    // 仍各成一个会话」）。这一行是「归一必须在打开入口做一次」的理由，不许以别名兜底。
+    let raw_real = scope_of(real.clone());
+    let raw_link = scope_of(link.clone());
+    assert_ne!(
+        raw_real.key(),
+        raw_link.key(),
+        "不归一化时两种拼写各成一把键——这正是切回读到空快照的机制"
+    );
+    assert!(runtime.snapshot(&raw_link, &config).messages.is_empty());
+
+    // 归一化（`prepare_vault_open` 的口径）之后：两种拼写同一个根。
+    let canon_real = lumir_lib::commands::canonical_vault_root(&real).unwrap();
+    let canon_link = lumir_lib::commands::canonical_vault_root(&link).unwrap();
+    assert_eq!(canon_real, canon_link);
+
+    // 在 real 拼写下跑一轮，从 link 拼写（归一化后）读快照：同一份会话、同一个标识。
+    let scope = scope_of(canon_real);
+    runtime.acquire_turn(&scope, &mock_config()).unwrap();
+    let sink = CollectSink::default();
+    let mut client =
+        MockClient::from_str(r#"{"responses": [{"text": "同一会话的回答"}]}"#, "spell").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &scope,
+        &config,
+        "拼写问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&scope);
+
+    let snap = runtime.snapshot(&scope_of(canon_link.clone()), &config);
+    assert_eq!(
+        snap.vault,
+        canon_link.display().to_string(),
+        "快照的 vault 标识就是归一后的根（前端据此做准入）"
+    );
+    assert_eq!(
+        snap.messages.len(),
+        2,
+        "切回（另一种拼写）读回同一份会话，不是空态"
+    );
+    assert!(!snap.in_flight, "收口后不在途");
+}
+
 #[test]
 fn vault_scoping_switch_restore_and_reset() {
     let f = Fixture::new("scoping");

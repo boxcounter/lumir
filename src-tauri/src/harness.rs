@@ -814,11 +814,28 @@ impl Runtime {
     }
 }
 
-/// 会话留存归属当前 vault 的判据（恢复与列举共用一处——同一语义两处真源会漂，
-/// REVIEW.md 「同一语义两处真源」条）：首行 `session_open.vault_root` 必须逐字等于当前 scope 的键
-/// （vault 根路径）。
+/// 会话留存归属当前 vault 的判据（恢复 / 列举 / 删除共用一处——同一语义两处真源会漂，
+/// REVIEW.md 「同一语义两处真源」条）。
+///
+/// 判据比的是**目录身份**，不是路径字符串的某种写法（M779，2026-10-28 裁决 A）：
+/// - 逐字相等直接通过——绝大多数文件的路径，零额外系统调用；
+/// - 否则两侧都 `canonicalize` 后再比：打开入口已把根统一成规范化路径，而存量文件可能记着
+///   另一种拼写（macOS `/tmp` → `/private/tmp` 这类软链）。逐字比较会把用户已有的会话判成
+///   「属于另一个 vault」——列举里消失、恢复被拒，那是不可逆的用户数据损失；
+/// - 规范化失败（目录已删 / 权限）才不认：两侧都取不到身份时没有理由放行。
+///
+/// 会话表仍按根字符串分桶（M312 的既有设计不改），存量 JSONL 一律不改写。
 fn session_belongs_to_scope(open: &serde_json::Value, scope: &VaultScope) -> bool {
-    open["vault_root"].as_str() == Some(scope.key().as_str())
+    let Some(recorded) = open["vault_root"].as_str() else {
+        return false;
+    };
+    if recorded == scope.key() {
+        return true;
+    }
+    match (std::fs::canonicalize(recorded), scope.root.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 /// 发送闸判据（change harness-composer-image-paste design §6；能力语义的**唯一**产出点——
@@ -2055,6 +2072,86 @@ mod tests {
     /// 会话轮次的 `llm_request`（时间读数归属走查的素材）。
     fn conversation_request(messages: Vec<serde_json::Value>) -> serde_json::Value {
         serde_json::json!({"kind": "llm_request", "request": {"system": "S", "messages": messages}})
+    }
+
+    /// M779（2026-10-28 裁决 A）：存量会话的 `vault_root` 记着另一种拼写时，仍归属当前 vault。
+    ///
+    /// 现场：打开入口把根统一成规范化路径之后，升级前写下的 `/tmp/...` 会与现在的
+    /// `/private/tmp/...` 逐字不等。逐字判据会把用户已有的会话判成「属于另一个 vault」——
+    /// 列举里消失、恢复被拒。判据因此比目录身份；不同目录、目录已删、缺字段一律不认。
+    #[test]
+    fn session_belongs_to_scope_compares_directory_identity() {
+        let root = std::env::temp_dir().join(format!(
+            "lumir-m779-attribution-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let link = root.join("vault-link");
+        std::os::unix::fs::symlink(&vault, &link).unwrap();
+
+        // 两侧都规范化的 scope（打开入口的产出）与记着原始拼写的旧文件。
+        let canonical = vault.canonicalize().unwrap();
+        let scope = VaultScope {
+            root: canonical.clone(),
+            policy: IgnorePolicy::load(
+                &canonical,
+                &[".gitignore".to_string()],
+                &crate::config::VaultConfig::default().ignore,
+            ),
+            vault_id: "vault-attribution".to_string(),
+        };
+        let recorded = |value: serde_json::Value| serde_json::json!({ "vault_root": value });
+
+        // ① 逐字相等（同一拼写）：通过。
+        assert!(session_belongs_to_scope(
+            &recorded(serde_json::json!(scope.key())),
+            &scope
+        ));
+        // ② 另一条拼写（软链 / 未规范化的临时路径）：规范化后同一目录 ⇒ 通过。
+        assert!(session_belongs_to_scope(
+            &recorded(serde_json::json!(link.display().to_string())),
+            &scope
+        ));
+        assert!(session_belongs_to_scope(
+            &recorded(serde_json::json!(vault.display().to_string())),
+            &scope
+        ));
+        // ③ 未规范化的 scope（单测 / 内部调用可能这样构造）与其中一种拼写的记录：也通过
+        //    ——两侧都规范化，任何一侧是原始拼写都不影响判断。
+        let raw_scope = VaultScope {
+            root: vault.clone(),
+            policy: scope.policy.clone(),
+            vault_id: scope.vault_id.clone(),
+        };
+        assert!(session_belongs_to_scope(
+            &recorded(serde_json::json!(link.display().to_string())),
+            &raw_scope
+        ));
+        // ④ 另一个目录：不认。
+        let other = root.join("other-vault");
+        std::fs::create_dir_all(&other).unwrap();
+        assert!(!session_belongs_to_scope(
+            &recorded(serde_json::json!(other.display().to_string())),
+            &scope
+        ));
+        // ⑤ 目录已删（规范化失败）：不认——没有身份可比时不放行。
+        let gone = root.join("gone-vault");
+        std::fs::create_dir_all(&gone).unwrap();
+        std::fs::remove_dir_all(&gone).unwrap();
+        assert!(!session_belongs_to_scope(
+            &recorded(serde_json::json!(gone.display().to_string())),
+            &scope
+        ));
+        // ⑥ 缺字段 / 非字符串：不认（旧坏文件不得冒充归属）。
+        assert!(!session_belongs_to_scope(&serde_json::json!({}), &scope));
+        assert!(!session_belongs_to_scope(
+            &recorded(serde_json::json!(42)),
+            &scope
+        ));
+
+        std::fs::remove_dir_all(&root).ok();
     }
 
     /// M662（change quote-pipeline-consistency-oct24）：会话名的回落口径，跨层同一份 fixture——
