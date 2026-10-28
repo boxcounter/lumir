@@ -181,7 +181,7 @@ pub fn definitions() -> Vec<serde_json::Value> {
                     "path": {"type": "string", "description": "vault 相对目录，缺省 vault 根"},
                     "recursive": {"type": "boolean", "description": "true = 递归下钻；缺省只列一层"},
                     "path_glob": {"type": "string", "description": "可选路径过滤，* 匹配任意字符（含 /），? 匹配单个字符"},
-                    "limit": {"type": "integer", "description": "本页最多条数（缺省 200，上限 1000）"},
+                    "limit": {"type": "integer", "description": "本页最多条数（缺省 200，上限 1000；小于 1 按 1）"},
                     "cursor": {"type": "string", "description": "上一页返回的 next_cursor"}
                 }
             }
@@ -877,7 +877,11 @@ struct ListArgs {
     path: Option<String>,
     recursive: Option<bool>,
     path_glob: Option<String>,
-    limit: Option<usize>,
+    /// **有符号**接收（change add-harness-vault-workspace-list r3）：工具 schema 只声明
+    /// `type: integer`、没有 `minimum`，所以 `limit: -1` 是合法调用，必须走到下面的 clamp
+    /// （「小于 1 按 1」）。用 `usize` 会在 Serde 阶段就把负数打成 `tool_args_invalid`，
+    /// 与已批准的 delta 冲突。
+    limit: Option<i64>,
     cursor: Option<String>,
 }
 
@@ -988,10 +992,12 @@ fn vault_list(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
             lines.retain(|(path, _)| path.as_str() > cursor);
         }
     }
+    // 有符号 clamp 后再转 usize：负数 / 0 与超过上限的值都落到合同区间（r3）。转换只发生在
+    // clamp 之后，`as usize` 因此恒为安全值（1..=LIST_MAX_LIMIT）。
     let limit = input
         .limit
-        .unwrap_or(LIST_DEFAULT_LIMIT)
-        .clamp(1, LIST_MAX_LIMIT);
+        .unwrap_or(LIST_DEFAULT_LIMIT as i64)
+        .clamp(1, LIST_MAX_LIMIT as i64) as usize;
     let truncated = lines.len() > limit;
     lines.truncate(limit);
     let next_cursor = truncated
@@ -1779,6 +1785,53 @@ mod tests {
             ]
         );
         assert_eq!(pages, 3);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `limit` 的边界夹取（change add-harness-vault-workspace-list r3）：工具 schema 只声明
+    /// `type: integer`，负数与 0 都是合法调用，必须按「小于 1 按 1」返回一页，MUST NOT 被
+    /// Serde 反序列化提前拒掉；超过上限按 1000。三种边界都是必红断言（旧实现用 `usize`
+    /// 接收，`-1` 会直接落 `tool_args_invalid`）。
+    #[test]
+    fn vault_list_limit_is_clamped_not_rejected() {
+        let (root, policy) = fixture_vault("list-limit");
+        std::fs::create_dir_all(root.join("batch")).unwrap();
+        for index in 1..=1005 {
+            std::fs::write(root.join(format!("batch/p{index:04}.md")), "x\n").unwrap();
+        }
+        let ctx = ctx(&root, &policy, &[]);
+
+        // 负数 / 0：按 1 返回一页（不是参数错误）。
+        for limit in [-1i64, 0] {
+            let out = vault_list(&serde_json::json!({"path": "batch", "limit": limit}), &ctx);
+            assert!(out.succeeded(), "limit={limit} 不得被参数校验拒绝：{out:?}");
+            let entries = out.value["entries"].as_array().unwrap();
+            assert_eq!(entries.len(), 1, "limit={limit} 应按 1：{out:?}");
+            assert_eq!(entries[0]["path"], "batch/p0001.md");
+            assert_eq!(out.value["truncated"], true);
+            assert_eq!(out.value["next_cursor"], "batch/p0001.md");
+        }
+
+        // 超过上限：按 1000（不是 1001）。
+        let out = vault_list(&serde_json::json!({"path": "batch", "limit": 1001}), &ctx);
+        assert!(out.succeeded(), "{out:?}");
+        let entries = out.value["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), LIST_MAX_LIMIT, "{out:?}");
+        assert_eq!(entries[0]["path"], "batch/p0001.md");
+        assert_eq!(out.value["truncated"], true);
+        assert_eq!(out.value["next_cursor"], "batch/p1000.md");
+
+        // 分页稳定：从 cursor 续读到剩余 5 条，无重复无遗漏。
+        let out = vault_list(
+            &serde_json::json!({"path": "batch", "limit": 1001, "cursor": "batch/p1000.md"}),
+            &ctx,
+        );
+        let entries = out.value["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 5, "{out:?}");
+        assert_eq!(entries[0]["path"], "batch/p1001.md");
+        assert_eq!(entries[4]["path"], "batch/p1005.md");
+        assert_eq!(out.value["truncated"], false);
+        assert!(out.value.get("next_cursor").is_none(), "{out:?}");
         std::fs::remove_dir_all(&root).ok();
     }
 

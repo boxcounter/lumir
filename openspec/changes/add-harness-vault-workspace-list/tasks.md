@@ -112,3 +112,14 @@
       重写，并明确默认一层不在真机判据内（两次 `vault_list` 输出落同一份会话留存，现有 `file`
       断言无法区分），只由 `vault_list_lists_one_layer_by_default` 覆盖；254 边界段的
       `session.set_tool_policy` 校正为 `runtime.set_tool_policy`，tasks 6.1 的表述同步收窄。
+
+## r3 返修（2026-10-28，reviewer 结论 p2-1items / fix-then-merge）
+
+- [x] `limit` 参数改按**有符号整数**（`Option<i64>`）接收，在转 `usize` 之前 clamp 到 `1..=1000`：
+  schema 只声明 `type: integer`，`limit: -1` 是合法调用，MUST NOT 被 Serde 提前打成
+  `tool_args_invalid`（与 delta「小于 1 按 1」冲突）。
+- [x] 新增必红断言 `vault_list_limit_is_clamped_not_rejected`：`-1` / `0` 各按 1 返回一页且
+  `truncated` / `next_cursor` 正确；`1001` 按上限 1000（1005 个条目下恰返回 1000 + 续读 5 条，
+  分页稳定不变）。
+- [x] 工具 schema 的 `limit` 描述补「小于 1 按 1」；design §5.1 记下「接收后再夹取」的实现约束与
+  §7 的测试表条目。

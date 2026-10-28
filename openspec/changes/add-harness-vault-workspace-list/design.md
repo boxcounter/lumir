@@ -132,6 +132,10 @@ vault_list(
 - 排序按 `path` 码点升序（Rust `str` 序，确定性、不做大小写折叠）。
 - 分页无状态：`next_cursor` = 本页最后一条的 `path`，`cursor` 只返回严格大于它的条目。磁盘在翻页
   之间变化时按字典序「续读」仍然成立（新增 / 删除不会造成重复或跳过已返回区间的语义混乱）。
+- `limit` 的夹取发生在**接收之后**：工具 schema 只声明 `type: integer`（没有 `minimum`），负数与 0
+  都是合法调用，实现 SHALL 按**有符号整数**接收、在转成无符号索引前 clamp 到 `1..=1000`；负数
+  MUST NOT 在参数反序列化阶段被拒（否则 `-1` 会变成 `tool_args_invalid`，与「小于 1 按 1」互相
+  矛盾）。这条由 `vault_list_limit_is_clamped_not_rejected` 钉住（-1 / 0 / 1001 三档）。
 - 缺省一层：`recursive=false` 时只返回 `dir_rel` 的直接子项（`path` 前缀匹配后不再含 `/`）。
 
 ### 5.2 复用 fs-io 而不是新写一套目录语义
@@ -195,6 +199,7 @@ Alex 已批准的 `vault_list`；实现与文档 MUST NOT 把两者混称。
 | 判定 | `..`、根外绝对路径、根外 symlink 不重定向；根内绝对路径重定向且 targets 为相对 | `permissions.rs` 单测 |
 | 工具 | `TOOL_NAMES.len() == 9`、`definitions()` 与名字表同源、`vault_list` schema 的 required / properties | `tools.rs` 单测 |
 | 工具 | 默认一层 / 递归 / glob / 排序 / 分页三页拼接完整 / truncated 与 next_cursor 配对 / hidden 不出现 / lazy 不展开 / 越界与非法目标 / 不含正文与元数据 | `tools.rs` 单测 |
+| 工具 | `limit` 边界：`-1` / `0` 按 1（不落参数错误）、`1001` 按上限 1000，且从 cursor 续读仍稳定 | `tools.rs` 单测 `vault_list_limit_is_clamped_not_rejected` |
 | 权限 | `vault_list` 三档均 auto-allow（不产批准卡、不产依据），deny 规则仍优先 | `permissions.rs` 单测 `vault_list_auto_allows_in_all_modes` |
 | 文档 | 工具计数、固定段清单、ADR 与 spec 无「8 件 vault 操作工具」残留 | 人工 + `docs-check` |
 
