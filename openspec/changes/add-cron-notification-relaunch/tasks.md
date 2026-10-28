@@ -100,7 +100,32 @@
 
 - [x] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 6.2 `scripts/gate.sh quick` 全绿（含 docs-check 与 bindings-drift）
-- [ ] 6.3 冷启动读数不退化（delegate 安装不进测量路径）：对照 `docs/specs/` 的性能测量方法学复跑
-- [ ] 6.4 bundle 真机：`node scripts/acceptance/run.mjs 252` PASS，证据落 `.local/acceptance/<日期>/252-cron-click-after-exit/`
-- [ ] 6.5 真机复跑 169 / 170 / 171 / 213，确认进程内点击链路零回归
+- [x] 6.3 冷启动读数不退化（delegate 安装不进测量路径）：对照 `docs/specs/` 的性能测量方法学复跑
+      —— 2026-10-28 本机复跑：release 构建（`cargo build --release --features custom-protocol`）
+      + `node scripts/perf/cold-start.mjs`（20 样本 + 1 warmup，隔离 `XDG_CONFIG_HOME`）：
+      **median 175.65ms / p95 181.57ms / max 184.72ms**，对照合同值 <300ms 未退化；
+      读数落 `.local/perf/cold-start.json`。**未做**旧构建 A/B（本机无历史基线；相对回归门禁
+      由 CI 的滚动基线承担，spec「相对回归门禁」条）。
+- [ ] 6.4 bundle 真机：`node scripts/acceptance/run.mjs 252` PASS —— **未通过（两层阻塞，均非产品缺陷）**：
+      ① 验收 bundle 的隔离包装自身有缺陷（见 finding
+      `.tower/comms/findings/20261028-worker-automated-acceptance-ev-bug-bundle-case-env-set-u-bundle-invalid.md`）：
+      `build-bundle.mjs:95` 的 `case` 模式 `*/acceptance/*/env` 与套件实际隔离根（`…/acceptance/env`，
+      少一级）不匹配，**任何一次拉起都被拒**；拒绝分支 `:97` 的 `$ISO_TOKEN` 紧跟全角括号，在
+      `set -u` 下 unbound 崩溃（exit 127）。现场 `.local/acceptance/2026-10-28-m777-bundle/`（两条
+      场景 INVALID，场景段 0.0s）。
+      ② 用「把证据目录嵌到 `…/acceptance/<run>/run`」的布局绕开①的模式（隔离语义不变）后，app
+      能起来，但**通知授权被拒**：启动日志 `通知权限申请失败（… UNErrorDomain error 1.）`，
+      到点通知从未投递 ⇒ 252 在第一步 `waitForNotification` 就超时（180s），点击段一步都没走到。
+      现场 `.local/acceptance/2026-10-28-m777-bundle2/`（启动 1.1s / 就绪 6.1s / 场景 210.6s，判红）。
+      授权是 README「首次通知授权是人肉 checkpoint」那一档，需要 Alex 在系统设置里给验收副本开权限。
+      ③ 即便授权到位，点击段在当前 macOS 构建上仍不可自动驱动（README「cron 通知点击在当前 macOS
+      构建上不可自动驱动」条，M752）——判据不得为此放宽。
+- [ ] 6.5 真机复跑 169 / 170 / 171 / 213，确认进程内点击链路零回归 —— **部分完成**：
+      `169-cron-notify-trigger` **PASS**（场景段 123.7s：到点投递、未点击零运行 / 零模型请求、
+      `cron-state.json` 记录当日首次触发；`.local/acceptance/2026-10-28-m777-dev/`）；
+      `170` **按任务显式跳过**（人工点击段，不尝试自动点击）；
+      `213` **FAIL**（冷启动通知未出现，根因同 6.4 ②：`UNErrorDomain error 1` 授权被拒；通知中心
+      AX 树里只有一条无关的提醒条目）；
+      `171` **未跑**（其判据依赖结果通知的点击，与 6.4 ③ 同一边界，跑了也只能复现同一环境阻塞）。
 - [ ] 6.6 在 `proposal.md` 的节点 2 块记录归档前五要件读数（实现完成后执行，此处仅为提醒）
+      —— **未执行：本轮不具备归档条件**（6.4 / 6.5 未通过），不写节点 2 放行记录。

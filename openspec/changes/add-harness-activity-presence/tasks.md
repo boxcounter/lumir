@@ -138,3 +138,45 @@
 
 - [x] 7.1 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条记录（五要件状态如实写）
 - [ ] 7.2 节点 2：独立 reviewer clean/merge + 五要件齐后由 tower 归档；命中例外类别才送 Alex
+
+## 真机批（2026-10-28 自动窗口，M777）——**未通过，不得归档**
+
+环境：主仓 master `9232ab3a`（含本 change 合并），dev flavour（`pnpm tauri dev`）、隔离
+`XDG_CONFIG_HOME`、合成 vault、端口 1430、`caffeinate -dimsu`；起跑前安装版实例已按
+`scripts/acceptance/README.md`「安装版实例」条正常退出（空闲 ≥10 分钟 + 无未保存标记 + ⌘Q）。
+其余场景（254 / 169 / cron 类）同批跑的记录见另两份 change 的 tasks。
+
+证据根：`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-28-m777-dev/`
+
+- **5.3 先红证据：未做**。旧构建红跑只在「本分支绿跑成立」时才有放行意义；本轮绿跑没有成立，
+  先红不构成任何归档依据，故未另起一次旧 commit 构建（省一次全量重编）。要补时以
+  `4976ae7d`（本 change 合并前一个 master tip）为基线。
+- **6.5 真机 252 / 253：FAIL（两条都判红，253 复跑一次结论相同）**
+  - `252-harness-activity-presence`（场景段 68.4s）：
+    PASS —— pane 出现、空闲态无状态文本、发送后发送钮切「停止」（面板内**在途**承载体）。
+    FAIL ① `ax.has "处理中"`（在途那一刻，停止钮在、状态文本不在 AX 里）；
+    FAIL ② `node { role: AXButton, name: "对话面板" }`——该钮的 AX 角色实测是 **AXCheckBox**
+    （`Value: 0`，`aria-pressed` 家族），场景写死了 AXButton；
+    FAIL ③ 随后等「有新的回复」60s 超时（`do` 动作失败 ⇒ 后续步骤跳过，未读两档与停止档
+    本轮**未取得任何观测**）。
+  - `253-harness-vault-activity`（场景段 68–70s，两跑一致）：
+    PASS —— 切到 B 时面板无 A 的在途态、装载完成即可断言。
+    FAIL ① 切回 A 后 `ax.has "处理中"` 不存在；FAIL ② 打开面板后发送钮呈「发送」（＝假空闲），
+    「停止」不在；FAIL ③ 等 `VAULT-C 第三片。` 60s 超时（面板已打开）。
+    **后端证据（复跑时取的会话留存，已另存到
+    `.local/acceptance/2026-10-28-m777-253-rerun/env-snapshot/`）**：
+    `harness/sessions/acc-a/s1793159456614-olm8x7.jsonl` 里 `llm_request` @03:50:56 →
+    `llm_response` @03:51:12，全文含 `VAULT-A/B/C` 三片 ⇒ **该轮后端确实跑完了**；前端切回后
+    既没回填在途相位、也没把消息铺回渲染面（面板与 composer 均为空）。
+    这是本 change 要修的症状本身，真机上**未生效**。
+- **诊断（供下一轮定位，未改动任何代码）**
+  1. AX 面：三态的状态文本由 `src/harness-panel.ts:6829` 写进 `aria-describedby` 指向的
+     clip 隐藏 span（`.lumir-hp-toggle-status`，`src/harness-panel.css:120`），KimiCU 的 AX dump
+     不暴露描述属性——`处理中` / `有新的回复` / `有失败结果` 在 252 / 253 的全部 dump 里零命中。
+     场景头部的「已知首跑风险（AX 面）」正是这条；要么改判据载体（toggle 的可读描述 / 截图 +
+     送钮两态），要么让实现把状态挂到能进 AX 的属性上。**改哪一侧都不在本任务授权内**
+     （任务约束：只执行不修改 `scripts/acceptance`）。
+  2. 角色映射：toggle 实测 `AXCheckBox`，场景的 `node: { role: AXButton }` 恒红——属场景面
+     （同族登记见 `scripts/acceptance/README.md`「`aria-haspopup` 的钮在 AX 里不是 AXButton」）。
+  3. 253 的相位/内容不恢复是**产品面**，与 AX 面无关（发送钮是真实 AXButton，停止→发送的翻转
+     是行为读数）。修好前本 change 的核心承诺在真机不成立。
