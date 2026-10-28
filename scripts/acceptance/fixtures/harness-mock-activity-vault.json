@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "VAULT-A 第一片。VAULT-B 第二片。VAULT-C 第三片。",
+      "chunks": ["VAULT-A 第一片。", "VAULT-B 第二片。", "VAULT-C 第三片。"],
+      "chunk_delay_ms": 8000,
+      "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 30 }
+    },
+    {
+      "text": "VAULT2-A 第一片。VAULT2-B 第二片。VAULT2-C 第三片。",
+      "chunks": ["VAULT2-A 第一片。", "VAULT2-B 第二片。", "VAULT2-C 第三片。"],
+      "chunk_delay_ms": 8000
+    },
+    {
+      "text": "VAULT3-A 第一片。VAULT3-B 第二片。",
+      "chunks": ["VAULT3-A 第一片。", "VAULT3-B 第二片。"],
+      "chunk_delay_ms": 8000
+    }
+  ]
+}

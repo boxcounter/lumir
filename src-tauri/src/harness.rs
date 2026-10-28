@@ -319,7 +319,7 @@ impl Runtime {
             }
         }
         let session = ensure_session(&mut sessions, self, scope, config)?;
-        session.set_busy(true);
+        session.begin_turn();
         // 新一轮复位上一轮的停止请求（中断标志不带进新轮；M348）。
         session.clear_abort();
         Ok(())
@@ -393,7 +393,7 @@ impl Runtime {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         if let Some(s) = sessions.get_mut(&scope.key()) {
-            s.set_busy(false);
+            s.end_turn();
         }
     }
 
@@ -2827,6 +2827,72 @@ mod tests {
             (0, 0, 0),
             "全部许可归还后闸应回到空闲"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 协议读在 `Finishing` 上仍为占用（change add-harness-activity-presence tasks 1.5）：
+    /// 「终态已发、尚未释放」的窗口里，第二个 `send` 与 `new_session` 照旧被 `harness_busy`
+    /// 拒绝——协议语义逐字不变，变的只是**呈现读**（`in_flight` 已为假）。
+    ///
+    /// 区分度：把 `is_busy()` 实现成 `in_flight()`（两读合一）时本用例必红，而那正是 r2 P2-1
+    /// 要防的形态——窗口里放行第二个 `send` 会让同一会话上跑两轮。
+    #[test]
+    fn finishing_window_still_rejects_protocol_calls() {
+        let _xdg = xdg_test_lock();
+        let root = std::env::temp_dir().join(format!(
+            "lumir-finishing-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-finishing".to_string(),
+        };
+        let config = config::test_mock(Some("/tmp/fixture.json"));
+        let runtime = Runtime::default();
+
+        runtime.acquire_turn(&scope, &config).unwrap();
+        // 终态已发、尚未释放：会话停在 Finishing（`release_turn` 还没跑）。
+        runtime
+            .with_session(&scope, |session| session.finish_turn())
+            .unwrap();
+        assert_eq!(
+            runtime
+                .with_session(&scope, |session| session.turn_phase())
+                .unwrap(),
+            session::TurnPhase::Finishing
+        );
+        assert!(
+            !runtime.snapshot(&scope, &config).in_flight,
+            "呈现读：不在途"
+        );
+        assert!(runtime.session_busy(&scope), "协议读：仍占用");
+
+        // 第二次 send 被拒（语义与升级前逐字相同）。
+        let error = runtime
+            .acquire_turn(&scope, &config)
+            .expect_err("Finishing 窗口里的第二个 send 必须被拒");
+        assert_eq!(error.code, "harness_busy");
+        // 新会话同样被拒。
+        let error = runtime
+            .new_session(&scope)
+            .expect_err("Finishing 窗口里的 new_session 必须被拒");
+        assert_eq!(error.code, "harness_busy");
+
+        // 释放之后才是真正可发送（窗口结束）。
+        runtime.release_turn(&scope);
+        assert!(!runtime.session_busy(&scope));
+        runtime.acquire_turn(&scope, &config).unwrap();
+
         let _ = std::fs::remove_dir_all(&root);
     }
 }

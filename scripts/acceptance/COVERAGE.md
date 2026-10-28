@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：230
-- 验收项（不同 item 编号）：209
-- 分档：core 29 / full 194 / bundle 3 / evidence 4（full 批 = 全部 230 个，含其余各档）
+- 场景：232
+- 验收项（不同 item 编号）：210
+- 分档：core 29 / full 196 / bundle 3 / evidence 4（full 批 = 全部 232 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -227,3 +227,4 @@
 | 655 | `230a-path-forms`<br>`230b-lazy-and-external-readonly`<br>`230c-restart-and-focus-scopes` | 按路径快速打开（⌘P）之一：深层路径一次 Enter 落文件 / 冒号文件名整串优先 / path:line 落点不重开 / vault 内零命中<br>按路径快速打开（⌘P）之二：索引外惰性文件按精确路径打开 / vault 外只读打开（⌘S 不写盘、键入不生效）/ 外部路径不存在按找不到处置<br>按路径快速打开（⌘P）之三：重启后 vault 外标签不回来、vault 内标签照常恢复、文件树与 harness composer 焦点下同样命中 | full<br>full<br>full |
 | 702 | `231-quick-open-long-path-width`<br>`232-harness-ctxpop-width` | 快速打开浮层宽度：长路径下输入面按 26em 展开、路径全文仍在 AX 里<br>Context 气泡：长读数 hover 翻出、三段内容齐全且确实绘制（P 档 34em 上限；宽度数字归 chromium 矩阵） | full<br>full |
 | 703 | `234-harness-table-horizontal-scroll` | harness 对话宽表：固有宽铺开、横向滚轮在表格区域执行、滚动前后截图（几何归 chromium 矩阵） | full |
+| 704 | `252-harness-activity-presence`<br>`253-harness-vault-activity` | harness 面板的活动在场：收起期间的在途 / 未读提示，打开面板即清算，停止不点亮<br>harness 跨 vault 往返的在途准确：切回仍在途不呈空闲、续渲染并对账；完成后往返指示空闲 | full<br>full |

@@ -68,8 +68,10 @@ test("handleCronRun：只有真正切屏成功才在失败时回滚（忙时未�
   );
 });
 
-test("beginCronRun：忙时（sendPhase !== idle）不切屏，在途轮次不受影响", () => {
-  const guard = BEGIN_CRON_RUN.search(/if \(sendPhase !== "idle"\) return false;/);
+test("beginCronRun：忙时（活动相位非 idle）不切屏，在途轮次不受影响", () => {
+  // 相位自 change add-harness-activity-presence 起由活动状态机持有（`activity.phase`）：
+  // 判据语义不变（忙 ⇒ 不切屏、返回 false），只是读的字段换成了状态机的唯一持有者。
+  const guard = BEGIN_CRON_RUN.search(/if \(activity\.phase !== "idle"\) return false;/);
   assert.notEqual(guard, -1, "beginCronRun 必须先判忙：交互槽位在途 ⇒ 后端必 busy，乐观切屏注定被回滚");
   const reset = BEGIN_CRON_RUN.search(/resetView\(\)/);
   assert.notEqual(reset, -1, "beginCronRun 正常路径必须清渲染面");
@@ -83,11 +85,13 @@ test("beginCronRun：忙时（sendPhase !== idle）不切屏，在途轮次不�
 test("beginCronRun：清渲染面 + prompt 上屏 + 开轮次闸门与发送相位", () => {
   assert.match(BEGIN_CRON_RUN, /resetView\(\)/, "切屏必须先清空上一段会话的渲染面");
   assert.match(BEGIN_CRON_RUN, /appendUserMessage\(/, "prompt 必须作为本轮用户消息上屏");
-  assert.match(BEGIN_CRON_RUN, /turnOpen = true/, "轮次闸门必须打开（否则正文分片被当作迟到产出丢弃）");
+  // 闸门与相位由**同一个**接线层函数施加（change add-harness-activity-presence tasks 2.5：
+  // 分散写会出现「相位收口了、闸门还开着」的半收口）：`dispatchActivity({ type: "sent" })`
+  // 一次完成「相位入 running + turnOpen = true」，判据因此钉这条单一写入口。
   assert.match(
     BEGIN_CRON_RUN,
-    /applySendPhase\(reduceSendPhase\(sendPhase, \{ type: "sent" \}\)\)/,
-    "发送相位必须入 running（发送钮 = 停止态，进程内不允许再叠一轮）",
+    /dispatchActivity\(\{ type: "sent" \}\)/,
+    "轮次闸门与发送相位必须由状态机一并施加（否则正文分片被当作迟到产出丢弃、或半收口复活）",
   );
   assert.match(BEGIN_CRON_RUN, /cronRunAdopted = true/, "切屏态必须登记，收尾时据此重载快照");
 });

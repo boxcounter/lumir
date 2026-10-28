@@ -2379,6 +2379,13 @@ const COPY_TABLE = {
   D867: { zh: "保存未生效：需要修正以下问题", en: "Nothing was saved: fix these first" },
   D868: { zh: "读取设置失败，保存已禁用", en: "Couldn't load settings; saving is disabled" },
   D869: { zh: "设置面读取失败", en: "Couldn't load the settings surface" },
+  // D870–D872：标题栏 harness toggle 钮的活动状态描述（change add-harness-activity-presence
+  // 任务 3.6）。三态经 `aria-describedby` 指向视觉隐藏的状态文本 —— 6px 的状态点在 AX 里
+  // 不可见，三态必须同时可读（spec「视觉与主题」：不单靠颜色承载语义）。空闲态该文本为空串，
+  // 不占条目。
+  D870: { zh: "处理中", en: "Working" },
+  D871: { zh: "有新的回复", en: "New reply" },
+  D872: { zh: "有失败结果", en: "Failed result" },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
