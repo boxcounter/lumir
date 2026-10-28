@@ -1,5 +1,6 @@
-//! 工具集（design §4）：**8 件 vault 操作工具 + 1 件编排工具 + 3 件调度工具**——vault_read /
-//! vault_search / vault_patch / vault_create / vault_move / vault_delete / skill_load / cli_run，
+//! 工具集（design §4）：**9 件 vault 操作工具 + 1 件编排工具 + 3 件调度工具**——vault_read /
+//! vault_search / vault_list / vault_patch / vault_create / vault_move / vault_delete / skill_load /
+//! cli_run，
 //! 外加 `task`（子代理委派；change add-harness-subagents，ADR 0007 Decision 7 的「编排工具」一类）
 //! 与 `cron_task_create` / `cron_task_list` / `cron_task_remove`（change
 //! add-cron-conversational-registration，ADR 0007 Decision 7 的「调度工具」一类）。
@@ -323,7 +324,8 @@ pub fn cron_definitions() -> Vec<serde_json::Value> {
     ]
 }
 
-/// 第 9 件工具 `task` 的定义（change add-harness-subagents design §5.1）：工具集与三闸值不在
+/// 编排工具 `task` 的定义（change add-harness-subagents design §5.1；它在 9 件 vault 工具之后追加，
+/// 是交互注册表的第 10 件）：工具集与三闸值不在
 /// 调用参数里（它们是定义字段）；`model` / `background` 是仅有的两个调用级覆盖项。
 ///
 /// 可用子代理清单来自 [`AgentCatalog::listing`]（名字 + 描述），MUST NOT 截断；超容量时由装载
@@ -2280,7 +2282,7 @@ mod tests {
         }
     }
 
-    /// 三件调度工具的名字表与定义同源；`definitions()` 的 8 件清单不掺它们
+    /// 三件调度工具的名字表与定义同源；`definitions()` 的 9 件清单不掺它们
     /// （cron 交接 / 子运行的白名单都以 `TOOL_NAMES` 为界）。
     #[test]
     fn cron_tool_definitions_match_the_name_table() {
@@ -2300,7 +2302,7 @@ mod tests {
             );
             assert!(
                 !definitions().iter().any(|tool| tool["name"] == name),
-                "{name} 不在 8 件 vault 定义里"
+                "{name} 不在 9 件 vault 定义里"
             );
         }
         // `create` 的三个必填参数与 design §2.3 一致。

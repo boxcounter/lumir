@@ -2215,7 +2215,8 @@ mod tests {
             ..judge(&root, None)
         };
         // 读类：三档一致放行。`vault_list` 自 change add-harness-vault-workspace-list 起属读类
-        // （目录发现无副作用），任何档都不进批准闸。
+        // （目录发现无副作用），任何档都不进批准闸；它的三档矩阵另有专测
+        // （`vault_list_auto_allows_in_all_modes`），这里只钉只读档这一格。
         assert_eq!(decide(&p, "vault_read", "a.md", &j), Decision::Allow);
         assert_eq!(decide(&p, "vault_search", "q", &j), Decision::Allow);
         assert_eq!(decide(&p, "vault_list", "notes", &j), Decision::Allow);
@@ -2243,6 +2244,41 @@ mod tests {
         for tool in ["vault_patch", "vault_create", "vault_move", "vault_delete"] {
             assert_ne!(decide(&p, tool, "notes/a.md", &j), Decision::Deny, "{tool}");
         }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `vault_list` 是读类工具：**三档**都直接放行，且不产判定依据（自动放行的层没有「被拦下」的
+    /// 界面面）。change add-harness-vault-workspace-list design §7 的「三档 auto-allow」判据落点。
+    #[test]
+    fn vault_list_auto_allows_in_all_modes() {
+        let root = fixture_root("vault-list-modes");
+        let p = HarnessPermissions::default();
+        let subject = super::super::tools::permission_subject(
+            "vault_list",
+            &serde_json::json!({"path": "notes", "path_glob": "*.md"}),
+        );
+        assert_eq!(subject, "*.md", "主体串取 path_glob（有则）");
+        for mode in [
+            PermissionMode::ReadOnly,
+            PermissionMode::VaultWrite,
+            PermissionMode::FullAccess,
+        ] {
+            for subject in ["notes", "*.md", ""] {
+                let j = Judge {
+                    mode,
+                    ..judge(&root, None)
+                };
+                let verdict = super::decide(&p, "vault_list", subject, &j);
+                assert_eq!(verdict.decision, Decision::Allow, "{mode:?} {subject:?}");
+                assert!(verdict.reason.is_none(), "自动放行不产依据：{mode:?}");
+            }
+        }
+        // 读类不是「不可拒绝」：deny 规则仍优先（第 1 层先于模式层）。
+        let p = perms(&[], &["vault_list(secret*)"]);
+        assert_eq!(
+            super::decide(&p, "vault_list", "secret/notes", &judge(&root, None)).decision,
+            Decision::Deny
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 

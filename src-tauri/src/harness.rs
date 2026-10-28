@@ -377,7 +377,7 @@ impl Runtime {
     ///
     /// **顺序即正确性**：先撤销白名单、再放 busy。反过来的话，两步之间同 vault 的新一轮可以
     /// `acquire_turn` 成功（busy 已清）并读到上一轮遗留的策略，把交互回合错误过滤成 cron 的
-    /// 8 件工具。结束的回合不再需要策略；新的 cron 回合会在拿到 busy 后自行覆写。
+    /// 9 件工具。结束的回合不再需要策略；新的 cron 回合会在拿到 busy 后自行覆写。
     pub fn release_turn(&self, scope: &VaultScope) {
         {
             let mut policies = self

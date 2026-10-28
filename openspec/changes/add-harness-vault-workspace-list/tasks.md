@@ -83,3 +83,20 @@
 - `scripts/docs-check.sh` PASS（ADR 结构 + OpenSpec 链接 + 归档对账 + 验收契约与覆盖表 + backlog 出口）。
 - 待办：6.5–6.7 属**排期 / 他人阶段**——真机批按 tower「真机不提前做」的口径等待窗口；抽样复验依赖
   真机；独立评审与归档审计由 reviewer / tower 执行。
+
+## r1 返修（2026-10-28，reviewer 结论 p2-2items / fix-then-merge）
+
+- [x] P2-1 工具计数补全：`openspec/specs/cron/spec.md` 的 8 → 9；living
+      `openspec/specs/harness/spec.md` 的「工具白名单被执行」场景 8 → 9（review 未点到的同源一处）；
+      `tools.rs` / `cron.rs` / `run.rs` / `turn.rs` / `harness.rs` 的活代码计数注释清扫；`task` 的
+      「第 9 件」序数改为点名（它在 9 件 vault 工具之后追加注册）。
+- [x] P2-2 真实运行链测试：cron（`run.rs` 的
+      `cron_run_workspace_root_reaches_system_and_cli_run_cwd`，经交接契约 → `Runtime::isolated`
+      → `set_tool_policy` → `turn::run_turn_for`）与子运行（`subagents.rs` 的
+      `subagent_workspace_root_reaches_system_and_cli_run_cwd`，经 `start_task` → 子运行循环）——
+      system root 与 `cli_run` cwd 两条判据都不直接构造 `ToolContext`。
+- [x] P2-2 覆盖声明收窄：254 场景的边界段改为点名上述两条单测，并明说本场景不覆盖子代理 / cron 的
+      真机路径；design §7 的测试表与真机条目同步（含删掉「`.gitignore` 命中的文件不出现」这句与
+      惰性可见语义矛盾的旧描述）。
+- [x] P2-2 矩阵补齐：`vault_list` 的 auto-allow 改成三档循环专测
+      （`vault_list_auto_allows_in_all_modes`），补 deny 规则仍优先的边界断言。

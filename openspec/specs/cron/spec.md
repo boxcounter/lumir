@@ -523,7 +523,7 @@ SHALL 不需要改机制代码；`remove` + `create` 即「改一条任务」的
 
 #### Scenario: 调度工具只在交互路径可用
 
-- **WHEN** 无人值守运行（cron 交接的 `tool_policy` 只含 8 件 vault 工具）或子运行请求模型工具定义，
+- **WHEN** 无人值守运行（cron 交接的 `tool_policy` 只含 9 件 vault 工具）或子运行请求模型工具定义，
   且交互会话同时存在
 - **THEN** 前两者的模型请求里 MUST NOT 出现这三件工具；交互发送路径的请求里有它们
 

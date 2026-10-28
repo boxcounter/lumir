@@ -4781,6 +4781,64 @@ mod tests {
         );
     }
 
+    /// 子运行的工作区事实（change add-harness-vault-workspace-list）：走**真实运行链**
+    /// （`start_task` → 子运行循环 → `cli_run` 执行），不直接构造 `ToolContext`。
+    ///
+    /// 判据：子运行 system 含当前 vault 的绝对根（定义正文替换身份段，但不替换环境事实）；
+    /// 子运行里 `cli_run("pwd")` 的 stdout 是该 vault（cwd 来自子运行的上下文根，不是父进程
+    /// 目录）。工具结果取子会话 input 里的 `function_call_output`——那是模型实际收到的字节。
+    #[test]
+    fn subagent_workspace_root_reaches_system_and_cli_run_cwd() {
+        let f = Fixture::new(
+            "workspace-root",
+            r#"{"responses":[
+                {"text":"先确认工作目录。","tool_calls":[{"id":"c-ws","name":"cli_run","arguments":"{\"command\":\"pwd\",\"purpose\":\"确认子运行的工作目录\"}"}]},
+                {"text":"子结论：工作目录已确认。"}
+            ]}"#,
+            |_| {},
+        );
+        f.write_agent(
+            "pwder.md",
+            "---\nname: pwder\ndescription: 工作区探针\ntools: [cli_run]\n---\n\n你是工作区探针子代理。\n",
+        );
+        let hub = f.hub();
+        let out = f.run_task_with(&hub, args("pwder", "确认你的工作目录"));
+        assert_eq!(out["status"], "completed", "{out}");
+
+        let registry = hub.inner.registry.lock().unwrap();
+        let retained = registry.retained.values().next().expect("应保留子会话");
+        let system = retained.session.system();
+        assert!(system.contains("===== 工作区 ====="), "{system}");
+        assert!(
+            system.contains(&format!("Vault 绝对根路径：{}", f.scope.root.display())),
+            "子运行 system 必须含当前 vault 绝对根：{system}"
+        );
+        assert!(
+            !system.contains("Lumir 的内置助手"),
+            "定义正文替换固定身份段：{system}"
+        );
+
+        // 取子会话 input 里的 `function_call_output`：那是模型实际收到的工具结果字节
+        //（外层是 JSON 数组，内层 `output` 是字符串——直接读字段，避免二次转义干扰断言）。
+        let pwd_output = retained
+            .session
+            .input()
+            .iter()
+            .filter_map(|item| item.get("output").and_then(|value| value.as_str()))
+            .find(|text| text.contains("\"command\":\"pwd\""))
+            .expect("子运行 input 里应有一条 cli_run(pwd) 结果")
+            .to_string();
+        // `PWD` 显式同步为上下文根，`pwd`（逻辑模式）逐字节回显它——断言直接比 display 形态。
+        assert!(
+            pwd_output.contains(&format!("\"stdout\":\"{}\\n\"", f.scope.root.display())),
+            "子运行的 pwd 必须逐字节等于当前 vault 根：{pwd_output}"
+        );
+        assert!(
+            !pwd_output.contains("\"stdout\":\"/\\n\""),
+            "子运行的 pwd 不得返回 /：{pwd_output}"
+        );
+    }
+
     /// mock 游标：每个 run 领到互不重叠的区间（design §18）；父续写条目落在所有区间之后。
     #[test]
     fn mock_regions_are_reserved_per_run() {

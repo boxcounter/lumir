@@ -2581,7 +2581,7 @@ capability，不进入本契约。
 
 #### Scenario: 工具白名单被执行
 
-- **WHEN** 一次运行的契约声明 `tool_policy.allow` 为 8 件 vault 操作工具（cron 交接的形状），且
+- **WHEN** 一次运行的契约声明 `tool_policy.allow` 为 9 件 vault 操作工具（cron 交接的形状），且
   `[harness.subagents].enabled = true`
 - **THEN** 该运行的模型请求只包含白名单内的工具定义，`task` MUST NOT 出现；同一配置下的交互发送
   （没有交接契约）仍注册 `task`

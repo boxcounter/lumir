@@ -124,9 +124,14 @@ steps:
 
 - **模型遵从度不做机器断言**：真实模型是否真的「先 `vault_list`、不再 `pwd` / 广域 `find`」属抽样
   观察（判据 6），mock provider 代表不了它；本场景钉的是能力与装配在场。
-- **多 vault / 子代理 / cron 的 root 归属**由单测钉住（`cli_run_roots_follow_current_vault`、
-  `workspace_section_is_per_vault`、`workspace_section_reaches_interactive_and_subagent_assembly`）
-  ——真机场景只跑单 vault 交互路径，重复一遍不增加判据。
-- **`vault_list` 分页 / 过滤 / 排序**由单测钉住（`vault_list_paginates_stably` /
-  `vault_list_recursive_and_path_glob` / `vault_list_lists_one_layer_by_default`）；本场景的小目录
-  不会触发 `truncated`，不断言分页。
+- **多 vault 切换的 root 归属**由单测钉住（`cli_run_roots_follow_current_vault` 两个 root 各跑一次
+  `pwd`、`workspace_section_is_per_vault` 两次装配互不串根）；本真机场景只跑单 vault 交互路径。
+- **子代理与 cron 的 system root / `cli_run` cwd** 由两条走**真实运行链**的单测钉住
+  （`harness::subagents::tests::subagent_workspace_root_reaches_system_and_cli_run_cwd` 经
+  `start_task` → 子运行循环 → `cli_run`；`harness::run::tests::
+  cron_run_workspace_root_reaches_system_and_cli_run_cwd` 经 `cron::handoff` →
+  `Runtime::isolated` → `session.set_tool_policy` → `turn::run_turn_for`）；本场景不覆盖这两条运行
+  路径，MUST NOT 据此声称子代理 / cron 已在真机验证。
+- **`vault_list` 分页 / 过滤 / 排序 / 三档放行**由单测钉住（`vault_list_paginates_stably` /
+  `vault_list_recursive_and_path_glob` / `vault_list_lists_one_layer_by_default` /
+  `vault_list_auto_allows_in_all_modes`）；本场景的小目录不会触发 `truncated`，不断言分页。

@@ -68,7 +68,7 @@ pub enum SessionTarget {
 }
 
 /// 工具白名单：运行契约的一部分（change add-harness-subagents design §2.1）。
-/// `SessionContext` 构造时按它过滤工具定义——cron 交接声明 8 件 vault 工具，因此无人值守
+/// `SessionContext` 构造时按它过滤工具定义——cron 交接声明 9 件 vault 工具，因此无人值守
 /// 运行看不见 `task`；交互路径没有交接契约（`None`），暴露完整注册表。子运行另按定义
 /// `tools` 字段过滤（`subagents::ChildContext`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,8 +256,8 @@ pub trait RunContext {
     fn sink(&self) -> &dyn EventSink;
 
     /// 本回合的工具定义快照。交互上下文 = 当前注册表（`task` 的注册与清单注入由
-    /// §2/§3 的 agents + task 工具提供；`[harness.subagents].enabled=false` 时不得出现第 9 件）；
-    /// 有运行契约的槽位再按 `RunSpec.tool_policy` 过滤（cron 的 8 件白名单因此不含 `task`）。
+    /// §2/§3 的 agents + task 工具提供；`[harness.subagents].enabled=false` 时不得出现 `task`）；
+    /// 有运行契约的槽位再按 `RunSpec.tool_policy` 过滤（cron 的 9 件白名单因此不含 `task`）。
     fn tool_definitions(&self) -> Vec<serde_json::Value>;
 
     /// 权限判定（含会话内批准缓存命中）。调用侧只给工具名、主体串与参数；判定层序在
@@ -817,9 +817,9 @@ impl RunContext for SessionContext<'_> {
     }
 }
 
-/// 工具定义的 kill switch（`[harness.subagents].enabled`）：关闭时第 9 件 `task` 不注册。
+/// 工具定义的 kill switch（`[harness.subagents].enabled`）：关闭时编排工具 `task` 不注册。
 ///
-/// 第 9 件由 [`tools::definitions_with_subagents`] 按定义快照注册（`gate_tool_definitions`
+/// `task` 由 [`tools::definitions_with_subagents`] 按定义快照追加（`gate_tool_definitions`
 /// 是**唯一**的关闭点——交互上下文与将来的子运行上下文都从这里取快照）。定义名是跨层契约
 /// （`task` 工具名），MUST NOT 在别处再写一份过滤。
 fn gate_tool_definitions(
@@ -877,7 +877,7 @@ mod tests {
         }
     }
 
-    /// `enabled=false` 时工具清单与既有 8 件基线**深度相等**（change design §2.2 的回归锚）：
+    /// `enabled=false` 时工具清单与既有 9 件基线**深度相等**（change design §2.2 的回归锚）：
     /// 回抽改变的唯一数据面是「工具定义来自上下文」，关闭子代理时必须逐字节回到旧清单。
     /// 区分度：`gate_tool_definitions` 不删除 `task` 时本用例在合成定义上必 FAIL（见下一条）。
     #[test]
@@ -908,12 +908,12 @@ mod tests {
         runtime.acquire_turn(&scope, &config).unwrap();
         let sink = NullSink;
         let ctx = SessionContext::new(&sink, &runtime, &scope, &config);
-        // 交互路径 = 8 件 vault 工具（逐字节不变）+ 3 件调度工具（子代理关闭时 `task` 缺席）。
+        // 交互路径 = 9 件 vault 工具（逐字节不变）+ 3 件调度工具（子代理关闭时 `task` 缺席）。
         let definitions = ctx.tool_definitions();
         assert_eq!(
             definitions[..tools::definitions().len()],
             tools::definitions()[..],
-            "enabled=false 时 8 件 vault 清单必须逐字节不变"
+            "enabled=false 时 9 件 vault 清单必须逐字节不变"
         );
         assert_eq!(
             definitions.len(),
@@ -937,7 +937,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// enabled=true 时第 9 件 `task` 注册，描述里带定义快照的清单（内建 `explore` 恒在场，
+    /// enabled=true 时编排工具 `task` 追加注册，描述里带定义快照的清单（内建 `explore` 恒在场，
     /// vault 级定义同回合可见）。
     #[test]
     fn enabled_subagents_register_task_with_the_catalog() {
@@ -992,11 +992,11 @@ mod tests {
     }
 
     /// 运行契约的工具白名单是**唯一真源**（change add-harness-subagents design §2.1）：
-    /// cron 交接声明 `tool_policy.allow` = 8 件 vault 工具（不含 `task`），即使
+    /// cron 交接声明 `tool_policy.allow` = 9 件 vault 工具（不含 `task`），即使
     /// `[harness.subagents].enabled=true`，`SessionContext::tool_definitions` 也不得暴露 `task`。
     ///
-    /// 区分度：同配置下交互路径（无契约，见上一条用例）会注册第 9 件——去掉白名单过滤后本
-    /// 用例必 FAIL。断言直接取 `cron::handoff` 产出的契约值，而不是在测试里另抄一份 8 件表。
+    /// 区分度：同配置下交互路径（无契约，见上一条用例）会注册 `task`——去掉白名单过滤后本
+    /// 用例必 FAIL。断言直接取 `cron::handoff` 产出的契约值，而不是在测试里另抄一份 9 件表。
     #[test]
     fn cron_tool_policy_hides_task_even_when_subagents_enabled() {
         let root = std::env::temp_dir().join(format!("lumir-run-policy-{}", std::process::id()));
@@ -1047,7 +1047,7 @@ mod tests {
         assert_eq!(
             definitions,
             tools::definitions(),
-            "cron 契约的 8 件白名单必须与既有 vault 工具清单深度相等"
+            "cron 契约的 9 件白名单必须与既有 vault 工具清单深度相等"
         );
         assert!(
             !definitions.iter().any(|defined| defined["name"] == "task"),
@@ -1070,6 +1070,119 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// cron 无人值守运行的工作区事实（change add-harness-vault-workspace-list）：走**真实运行链**
+    /// ——cron 交接契约（`cron::handoff`）→ `Runtime::isolated()`（生产同一构造）→
+    /// `set_tool_policy` → `turn::run_turn_for`（同一循环入口，`SessionContext` 内部按
+    /// `ctx.vault_root()` 建 `ToolContext`）→ 工具执行。不直接构造 `ToolContext`。
+    ///
+    /// 判据：system 含该 vault 的绝对根（工作区段）；`cli_run("pwd")` 的 stdout 是该 vault。
+    #[test]
+    fn cron_run_workspace_root_reaches_system_and_cli_run_cwd() {
+        struct Collect(std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>);
+        impl crate::harness::events::EventSink for Collect {
+            fn emit(&self, payload: serde_json::Value) {
+                self.0.lock().unwrap().push(payload);
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "lumir-run-cron-workspace-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let _xdg = crate::harness::xdg_test_lock();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-cron-workspace".to_string(),
+        };
+        let config = crate::config::test_mock(Some("/tmp/fixture.json"));
+
+        // 交接契约取真实值（工具白名单不另抄一份）：cron 的无人值守槽位就是这条 spec。
+        let task = crate::config::CronTask {
+            id: "task-ws".to_string(),
+            vault: vault.display().to_string(),
+            at: "21:00".to_string(),
+            days: crate::config::CronWeekday::ALL.to_vec(),
+            prompt: "确认工作目录".to_string(),
+            delivery: crate::config::DeliveryPolicy::RunThenNotify,
+            session: crate::config::SessionShape::New,
+            model: None,
+        };
+        let handoff = crate::cron::handoff(&crate::cron::HandoffInput {
+            task: &task,
+            run_id: "run-ws",
+            trigger: crate::cron::Trigger::Timer,
+            vault: &task.vault,
+            loop_max: 3,
+            session_id: None,
+        });
+
+        let runtime = Runtime::isolated();
+        runtime.acquire_turn(&scope, &config).unwrap();
+        runtime.set_tool_policy(&scope, handoff.spec.tool_policy);
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = Collect(events.clone());
+        let script = r#"{"responses":[
+            {"text":"先确认工作目录。","tool_calls":[{"id":"c-ws","name":"cli_run","arguments":"{\"command\":\"pwd\",\"purpose\":\"确认无人值守运行的工作目录\"}"}]},
+            {"text":"完成。"}
+        ]}"#;
+        let mut client =
+            crate::harness::llm::MockClient::from_str(script, "cron-workspace").unwrap();
+        crate::harness::turn::run_turn_for(
+            &sink,
+            &runtime,
+            &scope,
+            &config,
+            "跑一次".to_string(),
+            None,
+            &mut client,
+        );
+
+        let system = runtime
+            .with_session(&scope, |session| session.system().to_string())
+            .expect("cron 运行应建出会话");
+        assert!(system.contains("===== 工作区 ====="), "{system}");
+        assert!(
+            system.contains(&format!("Vault 绝对根路径：{}", vault.display())),
+            "cron 的 system 必须含当前 vault 绝对根：{system}"
+        );
+
+        let snapshot = runtime.snapshot(&scope, &config);
+        let pwd_output = snapshot
+            .messages
+            .iter()
+            .filter(|message| message.role == "tool")
+            .filter_map(|message| message.text.as_deref())
+            .find(|text| text.contains("\"command\":\"pwd\""))
+            .expect("cron 运行里应有一条 cli_run(pwd) 工具行")
+            .to_string();
+        // 子进程的 `PWD` 被显式同步为上下文根，`pwd`（逻辑模式）逐字节回显它——因此断言可以
+        // 直接比 display 形态：cwd 与注入的绝对根是同一个字符串，不靠后缀猜测。
+        assert!(
+            pwd_output.contains(&format!("\"stdout\":\"{}\\n\"", vault.display())),
+            "cron 的 pwd 必须逐字节等于当前 vault 根：{pwd_output}"
+        );
+        assert!(
+            !pwd_output.contains("\"stdout\":\"/\\n\""),
+            "cron 的 pwd 不得返回 /：{pwd_output}"
+        );
+
+        runtime.release_turn(&scope);
+        let _ = events;
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// 契约也承载「子集」：白名单之外的注册表条目一律不暴露（模型看不见未声明的工具）。
     #[test]
     fn tool_policy_filters_arbitrary_subsets() {
@@ -1081,7 +1194,7 @@ mod tests {
         assert_eq!(filtered[0]["name"], "vault_read");
     }
 
-    /// kill switch 对第 9 件真的生效：合成的 `task` 定义在关闭时被移除、打开时保留。
+    /// kill switch 对 `task` 真的生效：合成的 `task` 定义在关闭时被移除、打开时保留。
     #[test]
     fn disabled_subagents_drop_the_task_definition() {
         let task = serde_json::json!({"type": "function", "name": "task"});

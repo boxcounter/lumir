@@ -189,11 +189,13 @@ Alex 已批准的 `vault_list`；实现与文档 MUST NOT 把两者混称。
 | 上下文 | 固定段顺序断言（identity → workspace → quote → path → cron → AGENTS → skills） | `context.rs` 单测 |
 | 执行 | `cli_run("pwd")` 输出 == 测试 vault 绝对路径；调用前后主进程 `current_dir()` 相等 | `tools.rs` 单测 |
 | 执行 | 两个测试 vault 各跑一次 `pwd`，各自返回自己的根 | `tools.rs` 单测 |
+| 执行（真实链） | cron 无人值守运行：`cron::handoff` → `Runtime::isolated` → `set_tool_policy` → `turn::run_turn_for` → `cli_run`；system 含绝对根、`pwd` stdout 逐字节等于该根 | `run.rs` 单测 `cron_run_workspace_root_reaches_system_and_cli_run_cwd` |
+| 执行（真实链） | 子运行：`start_task` → 子运行循环 → `cli_run`；子会话 system 含同一绝对根、`function_call_output` 里的 stdout 逐字节等于该根 | `subagents.rs` 单测 `subagent_workspace_root_reaches_system_and_cli_run_cwd` |
 | 判定 | 相对根目录新文件 / 嵌套新文件 / 既有文件在 `vault_write` 与 `full_access` 都 `Redirect` | `permissions.rs` 单测 |
 | 判定 | `..`、根外绝对路径、根外 symlink 不重定向；根内绝对路径重定向且 targets 为相对 | `permissions.rs` 单测 |
 | 工具 | `TOOL_NAMES.len() == 9`、`definitions()` 与名字表同源、`vault_list` schema 的 required / properties | `tools.rs` 单测 |
 | 工具 | 默认一层 / 递归 / glob / 排序 / 分页三页拼接完整 / truncated 与 next_cursor 配对 / hidden 不出现 / lazy 不展开 / 越界与非法目标 / 不含正文与元数据 | `tools.rs` 单测 |
-| 权限 | `vault_list` 三档均 auto-allow（不产批准卡、不产依据） | `permissions.rs` 单测 |
+| 权限 | `vault_list` 三档均 auto-allow（不产批准卡、不产依据），deny 规则仍优先 | `permissions.rs` 单测 `vault_list_auto_allows_in_all_modes` |
 | 文档 | 工具计数、固定段清单、ADR 与 spec 无「8 件 vault 操作工具」残留 | 人工 + `docs-check` |
 
 真机场景（`scripts/acceptance/scenarios/254-harness-vault-workspace-list.md`，mock provider）：
@@ -201,8 +203,9 @@ Alex 已批准的 `vault_list`；实现与文档 MUST NOT 把两者混称。
 1. 新会话的 `session_open` 里 system 含「===== 工作区 =====」段与验收 vault 的绝对路径，清单有
    `workspace` 条目（exists / 非零 bytes / 模板路径）。
 2. fixture 让模型先 `cli_run("pwd")`：工具结果里出现验收 vault 绝对路径（不是 `/`）。
-3. 接着 `vault_list()`：结果里出现场景预置的一层条目，**不含**嵌套条目与 `.gitignore` 命中的文件；
-   再 `vault_read` 读到 sibling 文件，证明「列表 → 读」链路在真栈成立。
+3. 接着 `vault_list()`：默认层只出现直接子项；递归调用的结果里有嵌套 sibling，hidden 档条目
+   不出现、lazy 子树出一行但不展开；再 `vault_read` 读到列表里看到的那份 sibling，证明
+   「列表 → 读」链路在真栈成立。
 4. 不出现任何批准卡（`vault_list` 与 `pwd` 都免闸）。
 
 真实 provider 的遵从度（是否真的不再 `pwd` / 广域 `find`）按判据 6 由交接所述「评审 proposal 并查看
