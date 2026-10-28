@@ -213,7 +213,7 @@
 
 ## Impact
 
-- 影响的 specs：`harness`（1 条 ADDED requirement）。
+- 影响的 specs：`harness`（2 条 ADDED requirements）。
 - 影响的代码 / 系统（概览，不写实现细节）：
   - Rust：`src-tauri/src/harness/session.rs`（`busy` 升级为三态轮次状态机 + 快照 `in_flight` 与空态
     一致性）、`src-tauri/src/harness.rs`（`acquire_turn` / `release_turn` 的写点改接三态）、
