@@ -349,6 +349,34 @@ test("stopApp：bundle 已退出仍撤销本副本 LaunchServices 记录", async
 // 判据是「拉起**之前**能不能证明隔离成立」：包装脚本在 exec 真二进制之前导出 XDG_CONFIG_HOME
 // 与 HOME，隔离根来自 token 文件，token 必须等于本次 run 的 env。三条各有一个必须判红的反例
 // （脚本缺 HOME / token 指别处 / 入口还是真二进制），否则这道门只是形式。
+//
+// 这里每个用例都经 `assertBundleIsolation` 的 `exec` 注入缝读 `CFBundleExecutable`：
+// 默认实现真跑 `/usr/libexec/PlistBuddy`，而 Linux CI 上没有这个二进制（spawnSync ENOENT），
+// 只在本机 macOS 绿——本地假绿、远端 docs-check 红。注入缝是生产代码既有的参数（app.mjs 的
+// `assertBundleIsolation({ exec })`），不是为测试新开的口子。
+
+/**
+ * 读 `CFBundleExecutable` 的 `exec` 桩：断言生产代码仍在读**本 .app 的 Info.plist**，
+ * 并把 fixture 里写进 plist 的入口名原样交回，平台工具一次都不真跑。
+ *
+ * `calls` 记调用次数，供用例断言「走的是这条缝」——桩没被调用时纯返回值断言仍可能过。
+ */
+function plistBuddyStub(appPath, execName) {
+  const plist = path.join(appPath, "Contents", "Info.plist");
+  const calls = [];
+  const exec = (cmd, args) => {
+    calls.push([cmd, args]);
+    assert.equal(cmd, "/usr/libexec/PlistBuddy", "生产代码必须仍经由 PlistBuddy 读 Info.plist");
+    assert.deepEqual(
+      args,
+      ["-c", "Print :CFBundleExecutable", plist],
+      "读的必须是本 fixture 的 Contents/Info.plist，且只取 CFBundleExecutable",
+    );
+    return `${execName}\n`;
+  };
+  exec.calls = calls;
+  return exec;
+}
 
 /** 造一份「已正确包装」的最小 .app：Info.plist + 包装脚本 + 真二进制占位。 */
 function wrappedBundle({ script, execName = "lumir", tokenFile } = {}) {
@@ -378,25 +406,26 @@ export HOME
 exec "$(dirname "$0")/lumir-bin" "$@"
 `,
   );
-  return { root, appPath };
+  return { root, appPath, exec: plistBuddyStub(appPath, execName) };
 }
 
 test("assertBundleIsolation：包装齐备 + token 指向本次 run 的 env ⇒ 通过", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "lumir-acceptance-isolation-env-"));
   const tokenFile = path.join(root, "isolate");
   const env = path.join(root, "acceptance", "2026-10-28", "env");
-  const { appPath } = wrappedBundle({ root, tokenFile });
+  const { appPath, exec } = wrappedBundle({ root, tokenFile });
   writeFileSync(tokenFile, `${env}\n`);
-  const out = await assertBundleIsolation({ appPath, env, tokenFile });
+  const out = await assertBundleIsolation({ appPath, env, tokenFile, exec });
   assert.equal(out.execName, "lumir");
+  assert.equal(exec.calls.length, 1, "CFBundleExecutable 恰经注入的 exec 读一次——没读到就说明这道门没读 plist");
 });
 
 test("assertBundleIsolation：入口还是真二进制 ⇒ 拒跑（隔离根本没建立）", async () => {
-  const { root, appPath } = wrappedBundle({ script: "\u0007ELF-binary-placeholder" });
+  const { root, appPath, exec } = wrappedBundle({ script: "\u0007ELF-binary-placeholder" });
   const tokenFile = path.join(root, "isolate");
   writeFileSync(tokenFile, path.join(root, "env"));
   await assert.rejects(
-    () => assertBundleIsolation({ appPath, env: path.join(root, "env"), tokenFile }),
+    () => assertBundleIsolation({ appPath, env: path.join(root, "env"), tokenFile, exec }),
     /不是隔离包装脚本/,
   );
 });
@@ -404,7 +433,7 @@ test("assertBundleIsolation：入口还是真二进制 ⇒ 拒跑（隔离根本
 test("assertBundleIsolation：脚本缺 HOME ⇒ 拒跑（缺 XDG 时会回落 $HOME/.config）", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "lumir-acceptance-isolation-nohome-"));
   const tokenFile = path.join(root, "isolate");
-  const { appPath } = wrappedBundle({
+  const { appPath, exec } = wrappedBundle({
     tokenFile,
     script: `#!/bin/sh
 XDG_CONFIG_HOME="$ISO"
@@ -413,7 +442,7 @@ exec "$(dirname "$0")/lumir-bin" "$@"
   });
   writeFileSync(tokenFile, path.join(root, "env"));
   await assert.rejects(
-    () => assertBundleIsolation({ appPath, env: path.join(root, "env"), tokenFile }),
+    () => assertBundleIsolation({ appPath, env: path.join(root, "env"), tokenFile, exec }),
     /没有导出 HOME/,
   );
 });
@@ -421,10 +450,10 @@ exec "$(dirname "$0")/lumir-bin" "$@"
 test("assertBundleIsolation：token 指向别的目录 ⇒ 拒跑（跨进程点击会读错目录）", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "lumir-acceptance-isolation-other-"));
   const tokenFile = path.join(root, "isolate");
-  const { appPath } = wrappedBundle({ tokenFile });
+  const { appPath, exec } = wrappedBundle({ tokenFile });
   writeFileSync(tokenFile, path.join(root, "some-other-env"));
   await assert.rejects(
-    () => assertBundleIsolation({ appPath, env: path.join(root, "env"), tokenFile }),
+    () => assertBundleIsolation({ appPath, env: path.join(root, "env"), tokenFile, exec }),
     /与本次 run 的配置目录/,
   );
 });
@@ -432,9 +461,9 @@ test("assertBundleIsolation：token 指向别的目录 ⇒ 拒跑（跨进程点
 test("assertBundleIsolation：token 缺失 ⇒ 拒跑（不回落真实配置）", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "lumir-acceptance-isolation-missing-"));
   const missingToken = path.join(root, "missing-token");
-  const { appPath } = wrappedBundle({ tokenFile: missingToken });
+  const { appPath, exec } = wrappedBundle({ tokenFile: missingToken });
   await assert.rejects(
-    () => assertBundleIsolation({ appPath, env: path.join(root, "env"), tokenFile: missingToken }),
+    () => assertBundleIsolation({ appPath, env: path.join(root, "env"), tokenFile: missingToken, exec }),
     /隔离 token.*缺失/,
   );
 });
