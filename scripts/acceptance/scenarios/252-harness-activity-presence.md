@@ -129,7 +129,10 @@ steps:
   # ── 轮次二：错误终态在收起期间到达 → 未读「失败」档 ─────────────────────
   - name: 第二轮提问（这一轮的终态是错误）
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|act" }
+    # 目标解析必须覆盖**注入文本本身**：composer 一旦有内容，AX 名就回落成正文值
+    #（空态时才读得到 `aria-label` 的占位句）。`typeInNode` 打完要按同一解析口径复读目标，
+    # 名字串里没有本次文本时，那一次复读会「目标消失」——这是解析口径问题，不是产品缺陷。
+    target: { role: AXTextArea, name: "问点什么|fail" }
     text: "fail"
   - name: 发送
     do: key
@@ -164,7 +167,7 @@ steps:
   # ── 轮次三：主动停止 → 不产生未读（D2）─────────────────────────────────
   - name: 第三轮提问（这一轮会被主动停止）
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|act" }
+    target: { role: AXTextArea, name: "问点什么|stop" } # 覆盖注入文本（见轮次二的注释）
     text: "stop"
   - name: 发送
     do: key
