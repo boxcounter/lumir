@@ -25,7 +25,9 @@
 #      已收口…）仍留条目、活项缺下一动作 / 关闭条件、同一 finding 指针重复、finding 指针不存在、
 #      记录在案无 canonical 指针 / 复核口径、全文超 80 行 ⇒ FAIL；条目年龄只进报告不判红（实现
 #      在 scripts/backlog-check.mjs，本脚本调它——规则出处是 Alex 2026-10-24 裁决与
-#      docs/process/openspec-workflow.md「backlog 出口的机器判据」节）
+#      docs/process/openspec-workflow.md「backlog 出口的机器判据」节）；判据的区分度测试
+#      `node --test scripts/backlog-check.test.mjs` 同样挂在本脚本里跑（M789 补挂——此前该测试
+#      只出现在注释里、全仓无执行者，判据与测试脱钩不会让任何门禁变红）。
 #   8. 验收套件语法与自测：scripts/acceptance 入口与 lib/*.mjs 逐文件 `node --check`，并执行
 #      check-suite.sh 清单内的 node:test 自测（清单真源是该脚本本身，这里不抄组数——抄一次漂一次）。
 #      第 6 / 8 条统一走 scripts/acceptance/check-suite.sh；不起 app、不占端口、不碰验收 vault。
@@ -154,6 +156,12 @@ else
   if ! node scripts/backlog-check.mjs; then
     fail=1
   fi
+  # backlog 判据的区分度测试（M789）：与 openspec 两处自测同址同跑法——判据实现改了测试没跟上、
+  # 或测试自身腐烂，都在这里判红。此前该测试全仓无执行者，只出现在注释里。
+  if ! node --test scripts/backlog-check.test.mjs; then
+    echo "::error::backlog 出口门禁自测失败（node --test scripts/backlog-check.test.mjs）"
+    fail=1
+  fi
   # 验收套件契约（第 6 / 8 条）：语法、全部场景静态校验、覆盖表与套件自测共用唯一入口，
   # 本地 gate.sh quick 的 acceptance-suite 门调同一份（REVIEW.md「同一语义两处真源」条）。
   if ! bash scripts/acceptance/check-suite.sh; then
@@ -167,4 +175,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达（含归档修链包装器自测）+ 归档对账无静默丢段 + 归档队列齐备 + 验收场景契约与覆盖表一致 + backlog 出口合规 + 验收套件语法与自测通过）"
+echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达（含归档修链包装器自测）+ 归档对账无静默丢段 + 归档队列齐备 + 验收场景契约与覆盖表一致 + backlog 出口合规（含判据自测）+ 验收套件语法与自测通过）"

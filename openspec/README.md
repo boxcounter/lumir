@@ -41,7 +41,14 @@ npx --yes @fission-ai/openspec@1.12.0 list
 npx --yes @fission-ai/openspec@1.12.0 list --specs
 
 # 归档已完成的 change（并入 living spec 并移入 changes/archive/）
-npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes
+# 唯一入口是包装器：内部调 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，
+# 随后修「归档把目录移深一层」造成的相对链接死链，最后自跑真门禁 scripts/openspec-links.sh
+# （判红/判绿只认门禁退出码，红即非零退出、真死链不遮蔽）。不要绕过包装器直接调 CLI。
+# 额外参数原样转给 openspec archive。
+node scripts/openspec-archive.mjs <change-id> [额外参数…]
+
+# 归档后审计（归档提交之后跑，须 PASS；完成步骤见 docs/process/openspec-workflow.md）
+node scripts/openspec-archive-check.mjs --archived <change-id>
 ```
 
 不将 CLI 写入 package.json 依赖：OpenSpec 引入的是工作流约定而非运行时依赖，CLI 仅以 `npx` 按需调用（若 OpenSpec 停止维护，proposal/specs/tasks/archive 约定原样保留，见 ADR 0004 Consequences）。

@@ -18,8 +18,16 @@ on:
       - "scripts/acceptance/check-syntax.sh"
       - "scripts/acceptance/check-suite.sh"
       - "scripts/docs-check.sh"
-      # backlog 出口门禁（M692）：判据实现自身的改动同样要触发 docs-check。
+      # backlog 出口门禁（M692）：判据实现与判据自测自身的改动同样要触发 docs-check。
       - "scripts/backlog-check.mjs"
+      - "scripts/backlog-check.test.mjs"
+      # openspec 判据实现：链接可达性、归档对账、归档修链包装器及其中两处 node:test 自测。
+      # 只改这些判据实现的 PR 也必须触发本 job，否则判据退化可以无门禁合入（M789）。
+      - "scripts/openspec-links.sh"
+      - "scripts/openspec-archive-check.mjs"
+      - "scripts/openspec-archive-check.test.mjs"
+      - "scripts/openspec-archive.mjs"
+      - "scripts/openspec-archive.test.mjs"
       - ".github/workflows/docs-check.yml"
   push:
     branches: [master]
@@ -34,6 +42,12 @@ on:
       - "scripts/acceptance/check-suite.sh"
       - "scripts/docs-check.sh"
       - "scripts/backlog-check.mjs"
+      - "scripts/backlog-check.test.mjs"
+      - "scripts/openspec-links.sh"
+      - "scripts/openspec-archive-check.mjs"
+      - "scripts/openspec-archive-check.test.mjs"
+      - "scripts/openspec-archive.mjs"
+      - "scripts/openspec-archive.test.mjs"
       - ".github/workflows/docs-check.yml"
 
 permissions:
@@ -75,7 +89,8 @@ jobs:
       # backlog 出口门禁（M692，实现 scripts/backlog-check.mjs：待修 / 已立项 / 待真机验收区出现完成标记仍留条目、活项缺下一动作 /
       # 关闭条件、同一 finding 指针重复、finding 指针不存在、记录在案无 canonical 指针 / 复核口径、
       # 全文超 80 行 ⇒ 报红；条目年龄只进报告。无 ratchet、无既有豁免；口径见
-      # docs/process/openspec-workflow.md「backlog 出口的机器判据」），以及验收套件语法与自测
+      # docs/process/openspec-workflow.md「backlog 出口的机器判据」；其判据自测
+      # `node --test scripts/backlog-check.test.mjs` 同跑、失败即报红（M789）），以及验收套件语法与自测
       # （组数不在此写死：清单的真源是 check-suite.sh 本身）。
       # 验收部分统一走 scripts/acceptance/check-suite.sh，与本地 gate.sh quick 的 acceptance-suite
       # 门共用；不起 app、不占端口、不碰验收 vault。八条都随本步继承。
