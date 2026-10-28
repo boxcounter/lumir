@@ -20,6 +20,13 @@ on:
       - "scripts/docs-check.sh"
       # backlog 出口门禁（M692）：判据实现自身的改动同样要触发 docs-check。
       - "scripts/backlog-check.mjs"
+      # openspec 判据实现：链接可达性、归档对账、归档修链包装器及其中两处 node:test 自测。
+      # 只改这些判据实现的 PR 也必须触发本 job，否则判据退化可以无门禁合入（M789）。
+      - "scripts/openspec-links.sh"
+      - "scripts/openspec-archive-check.mjs"
+      - "scripts/openspec-archive-check.test.mjs"
+      - "scripts/openspec-archive.mjs"
+      - "scripts/openspec-archive.test.mjs"
       - ".github/workflows/docs-check.yml"
   push:
     branches: [master]
@@ -34,6 +41,11 @@ on:
       - "scripts/acceptance/check-suite.sh"
       - "scripts/docs-check.sh"
       - "scripts/backlog-check.mjs"
+      - "scripts/openspec-links.sh"
+      - "scripts/openspec-archive-check.mjs"
+      - "scripts/openspec-archive-check.test.mjs"
+      - "scripts/openspec-archive.mjs"
+      - "scripts/openspec-archive.test.mjs"
       - ".github/workflows/docs-check.yml"
 
 permissions:
