@@ -9562,11 +9562,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /**
    * 快照请求（挂载 / 切 vault / 中途接管终态对账共用）。
    *
-   * 两道世代守卫分工不同：`snapshotSeq` 保证只有最新一次请求的结果被应用（防旧响应覆盖新
-   * 响应；`resetView` 换代时也推进它，因此上一代视图在途的回包一律作废）；`phaseEpoch` 保证
-   * 快照不把「发送前发出、发送后才回来」的状态打回去（防快照与事件互相打架，design §4）。
-   * 两道都会让**只内容档整条丢弃**（epoch 不符或 seq 过期），否则清面 + 重放会把请求之后乐观
-   * 上屏的新消息清掉；进入档只把相位那半丢掉，内容与读数照旧应用。
+   * 两道守卫的**过期处置按档位分开**（design §4）：
+   *
+   * - `snapshotSeq` 过期（含 `resetView` 视图换代推进它）：**enter / content 两档均整条作废**——
+   *   响应根本不会进入 `restoreSnapshot`（连 `parseSnapshot` 都不执行），因此不存在「进入档在
+   *   seq 过期时仍应用内容」的形态。
+   * - `phaseEpoch` 不符：**enter 档只丢相位**（`applyEnterSnapshot` 不应用 `in_flight` 与闸门，
+   *   messages / usage 等照旧应用——它是「补内容」的路径，迟到内容最多让读数旧一拍）；
+   *   **content 档整条丢弃**（它是「清面 + 重放」，落地会清掉请求之后乐观上屏的新消息）。
    */
   function fetchSnapshot(mode: "enter" | "content" = "enter"): void {
     const seq = (snapshotSeq += 1);
