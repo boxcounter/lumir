@@ -46,10 +46,25 @@ steps:
         file: { path: harness-note.md, unchangedSince: before }
       - label: rm 没有真跑——mtime 未推进
         file: { path: harness-note.md, mtimeUnchangedSince: before }
-      - label: JSONL 记下 deny 拒绝（permission_denied + 主体串，随 function_call_output 回送模型）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"call_id":"call_d1".*permission_denied.*rm harness-note\.md.*$/' }
-      - label: JSONL 记下 echo 执行（allow 的结果 stdout，随 function_call_output 回送模型）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"call_id":"call_a1".*HNE-ALLOWED.*$/' }
+      # 工具结果在留存里是**字符串化 JSON**（M783 的口径见 scripts/acceptance/README.md 的 `file` 行）：
+      # 按解析后的字段判（`jsonlOutput`），不写字节层的转义。判据落在**同一条结果对象**上——旧的
+      # `/^.*"call_id":"call_d1".*permission_denied.*rm harness-note\.md.*$/` 只证明这些片段在同一行里
+      # 出现过（call_id 来自 function_call 项、错误串来自 output 里），不证明它们是同一个结果的字段。
+      - label: JSONL 里那条 cli_run 结果整条是 deny 拒绝（ok=false + permission_denied + 命中规则 + 主体串）
+        file:
+          path: "env:harness/sessions/*/*.jsonl"
+          jsonlOutput:
+            tool: cli_run
+            has:
+              ok: false
+              code: permission_denied
+              message: "命中 deny 规则 cli(rm *)：权限规则拒绝了 cli_run（rm harness-note.md）"
+      - label: JSONL 里那条 echo 的 cli_run 结果整条是执行成功（ok=true + 命令/参数 + stdout 原文）
+        file:
+          path: "env:harness/sessions/*/*.jsonl"
+          jsonlOutput:
+            tool: cli_run
+            has: { ok: true, command: echo, args: [HNE-ALLOWED], exit_code: 0, stdout: "HNE-ALLOWED\n" }
 
   - name: 展开工具清单（M351 起 ≥2 行的轮次终态折叠为一行摘要钮，步骤行 hidden 不进 AX）
     do: click
@@ -70,3 +85,14 @@ cli_run：rm（同时命中 cli(*) 与 cli(rm *)）与 echo（只命中 cli(*)�
 M351（change harness-pane-visual-fidelity）起 ≥2 行的工具清单在轮次终态折叠为一行摘要钮
 （D387「{count} 个工具调用 · 全部完成」），折叠态步骤行 `hidden` 不进 AX 树——因此工具行
 断言必须先点摘要钮展开（单工具轮次不折叠，场景 71/72/77 的断言不受此影响）。
+
+JSONL 侧的两条判据（M784）按**解析后的工具结果字段**判（`file.jsonlOutput`，限定 `tool: cli_run`），
+不写字节层的转义：工具结果在留存里是字符串化 JSON（两层编码，见 `scripts/acceptance/README.md`
+的 `file` 行），旧的 `/^.*"call_id":"call_d1".*permission_denied.*rm harness-note\.md.*$/` 只证明这些
+片段在**同一行**里出现过——`call_id` 来自 `function_call` 项、错误串来自 `function_call_output.output`
+的内层字符串，两者同行不证明它们是同一个结果的字段。现在的判据要求**同一条结果对象**同时满足：
+拒绝那条 = `{ok: false, code: permission_denied, message: 命中 deny 规则 cli(rm *)…（rm harness-note.md）}`
+（错误码、命中的规则原文、主体串一起钉），放行那条 = `{ok: true, command: echo, args: [HNE-ALLOWED],
+exit_code: 0, stdout: "HNE-ALLOWED\n"}`（命令 / 参数 / 退出码 / stdout 原文一起钉，工具名经 `call_id`
+配对到 `function_call.name`）。`message` 逐字相等意味着 `denied_message` 的措辞改动会让本场景判红——
+那是模型可见的契约文案，红是提醒同步场景，不是产品回归。
