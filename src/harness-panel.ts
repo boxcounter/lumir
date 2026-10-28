@@ -5724,9 +5724,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   // ── 长驻文案施加（onRelabel 的重跑路径：全部从已存状态重取，不重放旧字符串）──
   function applyLabels(): void {
-    // toggle 钮面是图标（D326 已退场）——可读身份只剩悬停提示 / 读屏名（D327）与
-    // 面板容器读屏名，二者共用一句。
-    toggleButton.title = t("D327");
+    // toggle 钮面是图标（D326 已退场）——可读身份只剩读屏名（D327）与面板容器读屏名，
+    // 二者共用一句。悬停提示（`title`）**不在这里写**：它随三态追加状态词，唯一写点是
+    // `applyActivityBadge`（本函数末尾会调它一次，所以换语言后提示一并重取）。
     toggleButton.setAttribute("aria-label", t("D327"));
     panel.setAttribute("aria-label", t("D327"));
     seg.setAttribute("aria-label", t("D375"));
@@ -6810,11 +6810,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /**
    * 标题栏 toggle 钮的三态施加（change add-harness-activity-presence §3 / 任务 3.4）：
-   * 状态点与可读状态文本的**唯一写点**——`data-activity` 由这一个函数施加，别处只读它。
+   * 状态点、状态文本与悬停提示的**唯一写点**——`data-activity` 由这一个函数施加，别处只读它。
    *
    * 三态 = 空闲 / 在途 / 有未读结果；未读再按终态种类分「回复」与「失败」两档形状
    * （形状承载语义、颜色只做增强，eink 因此自然成立）。相位优先：在途时即便有残留未读也
    * 只报在途——用户此刻要看的是「还在跑」。
+   *
+   * **三处承载、同一写入点**（真机 252 首跑的教训）：
+   * - `data-activity` → 状态点的形状（CSS 的唯一输入）；
+   * - `activityStatus`（`aria-describedby` 指向的视觉隐藏文本）→ 读屏描述与
+   *   `aria-live="polite"` 播报；
+   * - `title`（悬停提示）→ **AX 通道上唯一读得到的那个**。WKWebView 把 `<button>` 当叶子
+   *   节点，嵌在钮内的状态文本不进 AX 树；`aria-describedby` 只进 AXDescription，KimiCU 的
+   *   dump 不打印（它打印的是 `help=`，来源就是 `title`）。因此状态同时写进悬停提示——对拿
+   *   鼠标的人也是唯一能看到的一句说明（6px 的点只有形状没有文字）。
    */
   function applyActivityBadge(): void {
     const kind: "idle" | "inflight" | "reply" | "failure" =
@@ -6826,8 +6835,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             ? "failure"
             : "idle";
     toggleButton.dataset.activity = kind;
-    activityStatus.textContent =
-      kind === "inflight" ? t("D870") : kind === "reply" ? t("D871") : kind === "failure" ? t("D872") : "";
+    const status = kind === "inflight" ? t("D870") : kind === "reply" ? t("D871") : kind === "failure" ? t("D872") : "";
+    activityStatus.textContent = status;
+    // 空闲态悬停提示逐字等于 D327（既有口径逐字节不变）；有态时在同一句后追加状态词。
+    toggleButton.title = status === "" ? t("D327") : `${t("D327")} · ${status}`;
   }
 
   /** 阶段行施加（applySendPhase 的 running 分支调用）。stopping 相位第一时间换 D400

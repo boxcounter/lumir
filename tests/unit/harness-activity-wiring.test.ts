@@ -309,6 +309,26 @@ test("状态点与状态文本：常驻 DOM + 可访问描述指向视觉隐藏�
   assert.match(PANEL_SOURCE, /setAttribute\("aria-describedby", activityStatus\.id\)/, "钮的描述指向状态文本");
 });
 
+// 真机 252 首跑（2026-10-28）：三态的可读承载只有 `title` 进得了 AX 树——WKWebView 把
+// `<button>` 当叶子节点，嵌在钮内的状态文本不暴露；`aria-describedby` 只进 AXDescription，
+// 而 AX dump 打印的是 `help=`（来源就是 `title`）。因此状态同时写进悬停提示，且写点唯一。
+test("悬停提示承载三态：title 只在 applyActivityBadge 写（AX 通道上唯一读得到的）", () => {
+  const writes = [...PANEL_SOURCE.matchAll(/toggleButton\.title\s*=/g)];
+  assert.equal(writes.length, 1, `toggle 的 title 只能有一个写点（实际 ${writes.length} 处）`);
+  assert.ok(
+    (writes[0].index ?? -1) >= PANEL_SOURCE.indexOf(BADGE),
+    "写点必须落在 applyActivityBadge 里（三态与状态文本同源施加）",
+  );
+  assert.match(BADGE, /toggleButton\.title/, "三态文案必须同时落到悬停提示");
+  assert.match(BADGE, /t\("D327"\)/, "空闲文案逐字复用 D327（既有口径不新增文案编号）");
+  // 换语言重取文案时不得自己写 title——那会把状态词抹掉（单一写出点）。
+  assertNoMatch(
+    functionBodyOf(PANEL_SOURCE, "applyLabels"),
+    /toggleButton\.title\s*=/,
+    "applyLabels 不得写 title：重取文案会把状态词覆盖成纯 D327",
+  );
+});
+
 test("样式：空闲态不产生上屏像素、无动画、三态形状可辨", () => {
   const idleAt = PANEL_CSS.indexOf('[data-activity="idle"]');
   assert.notEqual(idleAt, -1, "空闲态必须有专门条款");

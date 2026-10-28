@@ -15,10 +15,15 @@ marker: "HNL-ALPHA"
 # ③ 带片间隔的流（主动停止）。片间隔 6000ms = 「流式进行中」的可观测窗口（与不可中断的
 # `delay_ms` 分工见 llm.rs 模块头）。
 #
-# **已知首跑风险（AX 面）**：三态的可读承载是 toggle 钮 `aria-describedby` 指向的视觉隐藏状态
-# 文本（spec「视觉与主题」：不单靠颜色）。若本机 AX dump 不暴露 clip 隐藏的文本节点，下面几条
-# `ax: { has: "处理中" }` 会假红——届时按套件 README 的 AX 判据改判为 toggle 钮的描述属性，或降为
-# shot + 送钮两态判据。首跑按 FAIL 项决定改场景还是改实现，不得直接标 PASS。
+# **AX 承载（首跑已定案，2026-10-28）**：三态的可读承载不能只靠 toggle 钮 `aria-describedby`
+# 指向的视觉隐藏文本——WKWebView 把 `<button>` 当叶子节点，嵌在钮内的文本不进 AX 树，
+# `aria-describedby` 也只进 AXDescription（dump 不打印）。承载因此同时写了钮的 `title`
+#（dump 里的 `help=`）：有态时是「对话面板 · 处理中 / 有新的回复 / 有失败结果」，空闲时逐字等于
+# D327。下面几条 `ax: { has: … }` 判的就是它——判据没变（三态必须可读），换的只是那条通道。
+#
+# **面板展开时 toggle 不在场上**（双 pane 退让条款，`setChromeRetreat`）：此时状态文本读不到，
+# 在途的承载体是面板里的停止钮。所以「处理中」只在**收起态**判（那正是它的唯一承载体），
+# 展开态只判停止钮。
 config:
   harness:
     provider: mock
@@ -48,7 +53,7 @@ steps:
     do: key
     key: enter
 
-  - name: 在途：停止钮与「处理中」同时成立
+  - name: 在途：面板里的停止钮成立
     do: waitFor
     waitFor:
       has: ["/AXButton \\(停止\\)/"]
@@ -56,8 +61,8 @@ steps:
     expect:
       - label: 发送钮切停止态（面板内的在途承载体）
         ax: { has: "/AXButton \\(停止\\)/" }
-      - label: 标题栏状态文本为「处理中」（D870；收起后它是唯一承载体）
-        ax: { has: "处理中" }
+      # 「处理中」不在这里判：面板展开时 toggle 按退让条款不在场上，那句状态文本此刻读不到
+      # （判它等于判一个不存在的节点）。它在下一步的收起态判——那里才是它的唯一承载体。
       - shot: 02-在途
 
   - name: 收起面板——活动提示的整个意义所在
@@ -69,8 +74,10 @@ steps:
     expect:
       - label: 面板已收起（分隔条不在 AX 里）
         ax: { not: "分隔条" }
+      # 角色是 AXCheckBox 而不是 AXButton：带 `aria-pressed` 的 button 在 WKWebView 的 AX 树里
+      # 映射成复选框（场景 86 早已实证并写在它的注释里）。读屏名仍是 D327「对话面板」。
       - label: toggle 钮重新在场上（收起态的承载体）
-        node: { role: AXButton, name: "对话面板", present: true }
+        node: { role: AXCheckBox, name: "对话面板", present: true }
       - label: 收起不复活空闲——状态文本仍是「处理中」
         ax: { has: "处理中" }
       - shot: 03-收起仍在途
@@ -90,22 +97,42 @@ steps:
         ax: { not: "分隔条" }
       - shot: 04-未读回复
 
-  - name: 重新打开面板：未读立即清算，回答完整在场
+  - name: 重新打开面板：回答完整在场
     do: keys
     keys: ["cmd+shift+a"]
     expect:
-      - label: 未读标记已清算（打开即已读）
-        ax: { not: "有新的回复" }
+      # 未读清算不在这里判：面板展开时 toggle 不在场上，「读不到」不等于「已清算」
+      #（REVIEW.md「读不到当成空」条）。清算在下一步收起后判——那里承载在场。
       - label: 回答正文在 transcript 里
         ax: { has: "ACT-A 第一片。" }
       - label: 末片也上屏（收起期间产生的增量没有丢）
         ax: { has: "ACT-C 第三片。" }
       - shot: 05-打开即已读
 
+  - name: 再收起一次：打开即清算（承载只在收起态读得到）
+    do: keys
+    keys: ["cmd+shift+a"]
+    expect:
+      - label: 未读已随打开清算——收起后指示回到空闲（不是「有新的回复」）
+        ax: { not: "有新的回复" }
+      - label: 也不残留「处理中」（相位已随终态收口）
+        ax: { not: "处理中" }
+      - shot: 05b-清算后收起态
+
+  - name: 重新打开（轮次二在面板里发起）
+    do: keys
+    keys: ["cmd+shift+a"]
+    expect:
+      - label: 面板回到场上
+        ax: { has: "分隔条" }
+
   # ── 轮次二：错误终态在收起期间到达 → 未读「失败」档 ─────────────────────
   - name: 第二轮提问（这一轮的终态是错误）
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|act" }
+    # 目标解析必须覆盖**注入文本本身**：composer 一旦有内容，AX 名就回落成正文值
+    #（空态时才读得到 `aria-label` 的占位句）。`typeInNode` 打完要按同一解析口径复读目标，
+    # 名字串里没有本次文本时，那一次复读会「目标消失」——这是解析口径问题，不是产品缺陷。
+    target: { role: AXTextArea, name: "问点什么|fail" }
     text: "fail"
   - name: 发送
     do: key
@@ -131,8 +158,8 @@ steps:
     do: keys
     keys: ["cmd+shift+a"]
     expect:
-      - label: 打开即清算
-        ax: { not: "有失败结果" }
+      # 失败档的清算是**可观测的**：不在这里判（展开态承载不在场），而由轮次三末尾那条
+      # 「失败档同样不点亮」判——若这次打开没清算，aborted 不清未读（D2），失败点会留到那里。
       - label: 错误终态如实上错误行（D348，正文是后端 message）
         ax: { has: "ACT-FAIL" }
       - shot: 07-失败档已清算
@@ -140,7 +167,7 @@ steps:
   # ── 轮次三：主动停止 → 不产生未读（D2）─────────────────────────────────
   - name: 第三轮提问（这一轮会被主动停止）
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|act" }
+    target: { role: AXTextArea, name: "问点什么|stop" } # 覆盖注入文本（见轮次二的注释）
     text: "stop"
   - name: 发送
     do: key
@@ -160,7 +187,9 @@ steps:
   - name: 等中断收口
     do: waitFor
     waitFor:
-      has: ["已停止"]
+      # 「已停止」是 transcript 里的标注——收起时面板已摘出 DOM，AX 里读不到它（旧写法在这里
+      # 恒红，属于「判一个不在场的节点」）。收起态的收口判据是承载退场：`处理中` 消失即
+      # aborted 终态已处理；标注本身由下一步打开面板后判。
       not: ["处理中"]
     timeoutMs: 30000
     expect:

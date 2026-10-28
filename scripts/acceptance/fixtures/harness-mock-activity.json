@@ -19,7 +19,8 @@
       "error": {
         "code": "llm_upstream",
         "message": "ACT-FAIL 上游失败"
-      }
+      },
+      "delay_ms": 1500
     },
     {
       "text": "ACT-STOP-A 第一片。ACT-STOP-B 第二片。",

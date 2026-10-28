@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { stubTauri, type VaultFixture, type VaultListRow } from "./tauri-stub";
 
 // M756：harness 活动在场（change add-harness-activity-presence）的**结构**场景。
 //
@@ -12,8 +12,10 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //   2. **三态结构**：在途 = 空心环 / 未读回复 = 实心点 / 未读失败 = 实心点 + 外环——形状差异
 //      可判（不单靠颜色），且点**锚在 toggle 钮的矩形内**；
 //   3. **收起 ≠ 复位**：面板收起期间在途态与未读态都保留（活动提示的整个意义所在）；
-//   4. **可访问性**：`aria-describedby` 指向视觉隐藏的 `aria-live="polite"` 状态文本，
-//      文案取自 deck（D870 / D871 / D872）。
+//   4. **可访问性**：三态既要可读也要能在 AX 上判——`aria-describedby` 指向视觉隐藏的
+//      `aria-live="polite"` 状态文本（读屏描述与播报），同一条文案还写进 toggle 的 `title`
+//      （唯一进 AX 树的那条通道：WKWebView 把 button 当叶子，钮内文本不暴露；真机场景
+//      252/253 的 `ax.has "处理中"` 判的就是它）。文案取自 deck（D870 / D871 / D872）。
 //
 // r1 的两条 P1 各有行为回归（旧实现在这里必红，逐条实测过）：
 //   5. `harness_busy` 的重取**不得重放内容、不得拽走视口**（P1-1：进入档会把历史 append 第二遍）；
@@ -167,6 +169,10 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   expect(describedBy).toBeTruthy();
   expect(await status.getAttribute("id")).toBe(describedBy);
   expect(await status.getAttribute("aria-live")).toBe("polite");
+  // 悬停提示是三态的 **AX 可读**承载（252 首跑定案）：WKWebView 把 button 当叶子节点，
+  // 嵌在钮内的状态文本不进 AX 树、`aria-describedby` 只进 AXDescription（dump 不打印），
+  // 只有 `title`（dump 的 help=）读得到。空闲态逐字等于 D327（既有口径不变）。
+  await expect(toggle).toHaveAttribute("title", "对话面板");
 
   // ── ② 在途：相位推进（面板展开时 toggle 按退让条款隐藏，三态的**可见**形态在收起态判）──
   await toggle.click();
@@ -176,6 +182,7 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   await page.locator(".lumir-hp-send").click();
   await expect(toggle).toHaveAttribute("data-activity", "inflight");
   await expect(status).toHaveText("处理中"); // D870
+  await expect(toggle).toHaveAttribute("title", "对话面板 · 处理中"); // AX 通道上的同一句话
   // 展开态：送钮自己就是「停止」态（钮面 glyph 已换），与标题栏的状态点同一份相位。
   await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "停止");
 
@@ -217,6 +224,7 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   expect(Number.parseFloat(reply.borderTopWidth)).toBe(0); // 无环 = 实心点
   expect(reply.boxShadow).toBe("none"); // 无外环 = 与失败档可分
   await expect(status).toHaveText("有新的回复"); // D871
+  await expect(toggle).toHaveAttribute("title", "对话面板 · 有新的回复");
 
   // ── ④ 打开面板即已读：未读清算、点回到零上屏 ────────────────────────────
   await page.keyboard.press("Meta+Shift+A");
@@ -224,6 +232,7 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   await expect(toggle).toHaveAttribute("data-activity", "idle");
   await expect(dot).toBeHidden();
   await expect(status).toHaveText("");
+  await expect(toggle).toHaveAttribute("title", "对话面板"); // 空闲回到 D327 逐字
 
   // ── ⑤ 失败档：实心点 + 外环（与回复档同样不单靠颜色）────────────────────
   await composer.fill("这一轮会失败");
@@ -237,6 +246,7 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   expect(failure.background).not.toBe("rgba(0, 0, 0, 0)"); // 实心
   expect(failure.boxShadow).toContain("rgb("); // 1px 外环
   await expect(status).toHaveText("有失败结果"); // D872
+  await expect(toggle).toHaveAttribute("title", "对话面板 · 有失败结果");
 
   // ── ⑥ 用户主动停止不产生未读（D2）──────────────────────────────────────
   await page.keyboard.press("Meta+Shift+A"); // 打开 = 已读清算
@@ -442,4 +452,146 @@ test("视图换代作废在途快照：新建会话后旧内容回包不得回�
   await page.waitForTimeout(900);
   await expect(messages).toHaveCount(0);
   await expect(page.locator(".lumir-hp-transcript")).not.toContainText("OLD-1 旧会话提问");
+});
+
+// ── 跨 vault 往返：切回仍在途的 vault ⇒ 内容与相位都按进入快照恢复 ────────────────
+//
+// 真机现场（253 复跑 FAIL）：在 A 发问 → 收起面板 → 切到 B → 切回 A，面板看上去空闲、
+// 可以发新消息，而该轮其实还在跑（后端 JSONL 里三片都在）。面板此刻的相位与内容**只能**
+// 来自切回时那次进入快照——`harness_state` 的 `in_flight` + `messages`。
+//
+// 本节与上面几条的分工：上面判的是「收起的快照 / 拒绝的重取」在**同一个 vault** 内的口径，
+// 本节判的是**换了一代视图之后**那条进入快照：`resetView` 已经把面板清空，唯一的输入是
+// 回包。桩因此必须带上真后端的 `vault` 键（会话标识 = vault 根路径）——缺了它
+// `parseSnapshot` 的 `inCurrentVault` 判据（M312）永远走「payloadVault 不是字符串」的
+// 宽容支，整条准入分支在桩里就是死代码（REVIEW.md「假绿」条的同族）。
+const VAULT_A_ROOT = "/tmp/lumir-m756-activity-vault";
+const VAULT_B_ROOT = "/tmp/lumir-m756-activity-vault-b";
+
+/** 注册表两行：A 在前、B 在后（行序即浮层行序，前端不重排）。 */
+const ROUND_TRIP_REGISTRY: VaultListRow[] = [
+  { id: "fixture-vault", path: VAULT_A_ROOT, name: "activity-vault", available: true, last_opened_at: 1757000002000, tab_count: 0 },
+  { id: "vault-b", path: VAULT_B_ROOT, name: "activity-vault-b", available: true, last_opened_at: 1757000001000, tab_count: 0 },
+];
+
+// 桩的 fixture 走 init script 序列化（`JSON.stringify`），因此 A→B→A 两跳必须用**无回指的副本**：
+// 互相引用 `switchTo` 会造出环，`stubTauri` 在第一行就抛 TypeError。
+const VAULT_A_BASE: VaultFixture & { root: string } = {
+  ...VAULT,
+  root: VAULT_A_ROOT,
+  vaults: ROUND_TRIP_REGISTRY,
+};
+
+const VAULT_B_BASE: VaultFixture & { root: string } = {
+  root: VAULT_B_ROOT,
+  vault_id: "vault-b",
+  entries: [{ path: "b-note.md", kind: "file", size: 16, mtime_ms: 0 }],
+  files: { "b-note.md": "# B 笔记\n\n另一个 vault。\n" },
+  vaults: ROUND_TRIP_REGISTRY,
+};
+
+/** 首装载的 A：它的 `switchTo` 是 B（B 的副本不带 `switchTo`）。 */
+const VAULT_A_FIXTURE: VaultFixture & { root: string } = {
+  ...VAULT_A_BASE,
+  switchTo: { ...VAULT_B_BASE },
+};
+
+/** 切到 B 之后 `current` 换成的 B 副本：它的 `switchTo` 是 A（A 的副本不带 `switchTo`）。 */
+VAULT_A_FIXTURE.switchTo!.switchTo = { ...VAULT_A_BASE };
+
+/** 按「当前 vault 根」应答 `harness_state` 的快照桩（键集合与 Rust `StateSnapshot` 同形，
+ *  含本 change 的 `in_flight` 与 M312 的 `vault`）。`__root` 跟随 `vault_open*` 的回包走，
+ *  与真后端「会话按 vault 分桶、切走切回读到同一份」同构。 */
+async function stubPerVaultState(
+  page: Page,
+  byRoot: Record<string, { messages: Array<{ role: string; text: string }>; inFlight: boolean }>,
+): Promise<void> {
+  await page.addInitScript((config: typeof byRoot) => {
+    const w = window as unknown as Record<string, any>;
+    const internals = w.__TAURI_INTERNALS__;
+    const origInvoke = internals.invoke;
+    w.__root = Object.keys(config)[0];
+    w.__harnessEventHandlerIds = [] as number[];
+    w.__harnessStateCalls = 0;
+    const snapshotFor = (root: string) => {
+      const entry = config[root] ?? { messages: [], inFlight: false };
+      return JSON.stringify({
+        vault: root,
+        messages: entry.messages.map((m) => ({ role: m.role, text: m.text, ts: 1759912345 })),
+        usage: { ctx_pct: 0, cache_pct_session: 0, has_usage: false },
+        in_flight: entry.inFlight,
+        pending_approvals: [],
+        warn_ctx_pct: 85,
+        thinking: { level: "high", supported: true },
+      });
+    };
+    internals.invoke = async (cmd: string, args: any) => {
+      if (cmd === "harness_state") {
+        w.__harnessStateCalls += 1;
+        return snapshotFor(w.__root);
+      }
+      if (cmd === "harness_send" || cmd === "harness_abort" || cmd === "harness_new_session") {
+        return null;
+      }
+      if (cmd === "plugin:event|listen" && args.event === "harness:event") {
+        w.__harnessEventHandlerIds.push(args.handler ?? 0);
+      }
+      const result = await origInvoke(cmd, args);
+      if ((cmd === "vault_open" || cmd === "vault_open_path") && result?.root) w.__root = result.root;
+      return result;
+    };
+    w.__fireHarnessEvent = (payload: unknown) => {
+      for (const id of w.__harnessEventHandlerIds) {
+        internals.runCallback(id, { event: "harness:event", id, payload });
+      }
+    };
+  }, byRoot);
+}
+
+test("跨 vault 往返：切回仍在途的 vault 恢复内容与停止态（不呈假空闲）", async ({ page }) => {
+  const A_MESSAGES = [
+    { role: "user", text: "VLT-1 切走之前的提问" },
+    { role: "assistant", text: "VLT-2 切走之前的第一片。" },
+  ];
+  await stubTauri(page, VAULT_A_FIXTURE);
+  await stubPerVaultState(page, {
+    [VAULT_A_ROOT]: { messages: A_MESSAGES, inFlight: true },
+    [VAULT_B_ROOT]: { messages: [], inFlight: false },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="activity-note.md"]').click();
+
+  const toggle = page.locator(".lumir-hp-toggle");
+  const messages = page.locator(".lumir-hp-msg");
+  // 基准：同 vault 的进入快照（挂载那次）本来就能恢复内容与相位——本节要判的是
+  // 「换了一代视图之后」那一次，基准不成立时下面的红不能算在往返上。
+  await expect(toggle).toHaveAttribute("data-activity", "inflight");
+  await toggle.click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await expect(messages).toHaveCount(2);
+  await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "停止");
+
+  // 收起：与 dogfood 现场一致（切 vault 时面板不在屏幕上）。
+  await page.keyboard.press("Meta+Shift+A");
+  await expect(page.locator(".lumir-harness")).toBeHidden();
+
+  // 切到 B：B 的会话是空闲的，指示不点亮（活动指示只呈现当前 vault 的活动）。
+  await page.locator(".ft-vault").click();
+  await page.locator(".vault-row").nth(1).click();
+  await expect(page.locator(".ft-vault-name")).toHaveText("lumir-m756-activity-vault-b");
+  await expect(toggle).toHaveAttribute("data-activity", "idle");
+
+  // 切回 A：这一轮仍在跑——相位只能来自进入快照的 in_flight。
+  await page.locator(".ft-vault").click();
+  await page.locator(".vault-row").nth(0).click();
+  await expect(page.locator(".ft-vault-name")).toHaveText("lumir-m756-activity-vault");
+  await expect(toggle).toHaveAttribute("data-activity", "inflight");
+  await expect(page.locator(".lumir-hp-toggle-status")).toHaveText("处理中");
+
+  // 打开面板：内容按快照铺开（不是空 transcript），送钮是停止态（不是「看似可发送」）。
+  await page.keyboard.press("Meta+Shift+A");
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await expect(messages).toHaveCount(2);
+  await expect(messages.filter({ hasText: "VLT-1 切走之前的提问" })).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "停止");
 });

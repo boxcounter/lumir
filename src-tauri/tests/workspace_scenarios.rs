@@ -71,6 +71,41 @@ fn scenario_reconcile_reuses_persisted_vault_identity() {
     assert_eq!(v.path, path);
 }
 
+/// M779（2026-10-28 裁决 A）：同一目录的两种路径拼写必须归一到**同一个 vault 根**。
+///
+/// 现场（253 真机复跑）：启动恢复拿配置里的 `/tmp/lumir-...` 打开、vault 列表拿注册表里的
+/// `/private/tmp/lumir-...` 切回；harness 会话表按根路径字符串分桶（`VaultScope::key()`，
+/// M312 的既有设计不改），切回因此读到 `StateSnapshot::empty` —— 面板呈假空闲、历史消失，
+/// 而那一轮其实还在旧桶里跑。归一在打开入口（`prepare_vault_open`）做一次：注册表路径、
+/// `VaultState.root` 与会话分桶键三者同源，三种入口不再各拼一种。
+#[test]
+fn scenario_vault_root_uses_one_canonical_spelling() {
+    let f = Fixture::new();
+    let real = f.vault("spell-vault");
+    let link = f.root.join("spell-link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let via_real = commands::canonical_vault_root(std::path::Path::new(&real)).unwrap();
+    let via_link = commands::canonical_vault_root(std::path::Path::new(&link)).unwrap();
+    assert_eq!(
+        via_real, via_link,
+        "同一目录的两种拼写必须归一到同一个根（否则会话按两个桶走）"
+    );
+
+    // 注册表（vault 列表行 `path` 的来源）与它就是同一个字符串：列表切换不再换拼写。
+    let ws = reconcile_vault(std::path::Path::new(&link)).unwrap();
+    assert_eq!(ws.path, via_link.display().to_string());
+
+    // 提交之后 `VaultState.root` 就是它（`vault_open` / `vault_open_path` / 启动恢复共用
+    // `commit_vault_open`）：harness 的 `VaultScope::key()` 因此与注册表路径同一把键。
+    let state = commands::VaultState::default();
+    assert!(commands::commit_vault_open(
+        &state,
+        prepared_open(&via_link.display().to_string())
+    ));
+    assert_eq!(state.root_and_policy().unwrap().0, via_link);
+}
+
 #[test]
 fn scenario_remap_preserves_identity_and_updates_last_vault() {
     let f = Fixture::new();
