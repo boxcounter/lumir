@@ -208,6 +208,32 @@ impl From<Vec<super::attachments::DeliveryPart>> for DeliveryInput {
     }
 }
 
+/// 终态发射的唯一出口（change add-harness-activity-presence §4 / design §4）。
+///
+/// 次序是合同的一半：**先**把会话的轮次状态推进到 `Finishing`（呈现读 `in_flight` 在这一刻
+/// 由真转假、协议读 `is_busy` 仍为真），**再**发事件。反过来的话，面板收到终态后回读快照会
+/// 看到「在途」，那正是本 change 要收掉的假在途（design §12 第一条风险）。
+///
+/// 全部终态发射点经本函数或 [`emit_terminal_on`]：`Session::finish_turn` 是唯一的状态写点，
+/// 漏一处就是假在途（design §1 F15 的 10 个位点 / 11 条语句）。
+fn emit_terminal<C: RunContext>(ctx: &mut C, payload: serde_json::Value) {
+    let _ = ctx.with_session(|session| session.finish_turn());
+    ctx.sink().emit(payload);
+}
+
+/// [`emit_terminal`] 的无上下文形态：这三处在 `SessionContext` 之外收口——交互回合的配置级
+/// 失败（ctx 还没建）、交互回合的 panic 收口（ctx 已随 `catch_unwind` 结束）、自动唤醒回合的
+/// 两处（同一个理由）。状态写点仍是 `Session::finish_turn`，与上下文路径同源。
+fn emit_terminal_on(
+    runtime: &Runtime,
+    scope: &VaultScope,
+    sink: &dyn EventSink,
+    payload: serde_json::Value,
+) {
+    let _ = runtime.with_session(scope, |session| session.finish_turn());
+    sink.emit(payload);
+}
+
 /// run_turn 的 tauri 入口（command 层 spawn 在 `lumir-harness-llm` 专线程上跑）。
 ///
 /// panic 收口（r1 P2-3）：线程中途 panic 若不收口，busy 标志永久残留、
@@ -256,7 +282,7 @@ pub fn run_turn(
         Ok(client) => client,
         Err(e) => {
             // 配置级失败（mock fixture 缺失 / api_key 未配）：错误事件即终态。
-            sink.emit(events::error(&e.code, &e.message));
+            emit_terminal_on(&runtime, &scope, &sink, events::error(&e.code, &e.message));
             runtime.release_turn(&scope);
             return;
         }
@@ -274,10 +300,15 @@ pub fn run_turn(
     }))
     .is_err();
     if panicked {
-        sink.emit(events::error(
-            "harness_internal_error",
-            "对话线程发生内部错误，本轮已终止；请重试，必要时开新会话",
-        ));
+        emit_terminal_on(
+            &runtime,
+            &scope,
+            &sink,
+            events::error(
+                "harness_internal_error",
+                "对话线程发生内部错误，本轮已终止；请重试，必要时开新会话",
+            ),
+        );
     }
     if let Some(len) = client.mock_script_len() {
         // 会话游标 = 本客户端自己弹出的条数 + 子运行经 `skip` 跳过的条数（design §18）：
@@ -439,7 +470,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
             // 留存口径：user 消息不进 sidecar——它逐字节在下一条 llm_request.messages 里。
         });
         if let Err(e) = enqueue {
-            ctx.sink().emit(events::error(&e.code, &e.message));
+            emit_terminal(ctx, events::error(&e.code, &e.message));
             return None;
         }
     }
@@ -570,7 +601,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
                         continue;
                     }
                     Err(e) => {
-                        ctx.sink().emit(events::error(&e.code, &e.message));
+                        emit_terminal(ctx, events::error(&e.code, &e.message));
                         return None;
                     }
                 }
@@ -578,7 +609,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
             let error_payload = llm_error_payload(&error);
             ctx.persist(error_payload);
             // SSE 事件形态**不变**（前端只读 code/message）：wire 面诊断字段只进留存。
-            ctx.sink().emit(events::error(&error.code, &error.message));
+            emit_terminal(ctx, events::error(&error.code, &error.message));
             return None;
         }
 
@@ -637,10 +668,13 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
         }
 
         if output.is_empty_response() {
-            ctx.sink().emit(events::error(
-                "harness_empty_response",
-                "模型返回了空响应（无文本也无工具调用），本轮已停止",
-            ));
+            emit_terminal(
+                ctx,
+                events::error(
+                    "harness_empty_response",
+                    "模型返回了空响应（无文本也无工具调用），本轮已停止",
+                ),
+            );
             return None;
         }
 
@@ -696,7 +730,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
             return None;
         }
     }
-    ctx.sink().emit(events::done());
+    emit_terminal(ctx, events::done());
     // 自动唤醒回合不是用户发言：不触发会话自动命名（标题素材需要真实问答）。
     if preloaded.is_some() {
         return None;
@@ -864,8 +898,8 @@ fn abort_turn<C: RunContext>(ctx: &mut C, panel_base: usize, output: &llm::TurnO
         s.jsonl().record(&payload);
     });
     match stop_reason {
-        Some(reason) => ctx.sink().emit(events::error(reason.code, &reason.message)),
-        None => ctx.sink().emit(events::aborted()),
+        Some(reason) => emit_terminal(ctx, events::error(reason.code, &reason.message)),
+        None => emit_terminal(ctx, events::aborted()),
     }
 }
 
@@ -1689,7 +1723,12 @@ pub(crate) fn run_auto_turn_acquired(
     let mut client = match llm::client_at(&config, &scope.vault_id, mock_start, None) {
         Ok(client) => client,
         Err(error) => {
-            sink.emit(events::error(&error.code, &error.message));
+            emit_terminal_on(
+                &runtime,
+                &scope,
+                sink.as_ref(),
+                events::error(&error.code, &error.message),
+            );
             runtime.release_turn(&scope);
             return false;
         }
@@ -1711,10 +1750,12 @@ pub(crate) fn run_auto_turn_acquired(
     }))
     .is_err();
     if panicked {
-        sink.emit(events::error(
-            "harness_internal_error",
-            "自动回合发生内部错误，本轮已终止",
-        ));
+        emit_terminal_on(
+            &runtime,
+            &scope,
+            sink.as_ref(),
+            events::error("harness_internal_error", "自动回合发生内部错误，本轮已终止"),
+        );
     }
     if let Some(len) = client.mock_script_len() {
         // 与交互回合同一条游标算法（见 `run_turn` 同段注释）：`skip` 已记进 external_consumed，
@@ -2602,5 +2643,384 @@ mod tests {
         assert_eq!(ordered.len(), 2);
         assert_eq!(ordered[0].1["call_index"], serde_json::json!(0));
         assert_eq!(ordered[1].1["call_index"], serde_json::json!(1));
+    }
+
+    // ── 终态窗口：三态轮次状态机的第一类回归（change add-harness-activity-presence
+    // tasks 1.4 / 1.5）────────────────────────────────────────────────────────────
+    //
+    // 判据是**「终态已发、尚未释放」这一刻**的两个读口：协议读 `is_busy()` 仍为真（在途
+    // 拒绝语义不变），呈现读 `in_flight()` 已为假（面板就地收口）。`PhaseProbe` 在事件发射
+    // 的**当场**读会话状态，因此不需要定时等待，也不受 `release_turn` 时机影响。
+    //
+    // 覆盖边界（不是漏项）：交互回合的**配置级 error**（`run_turn` 的 `llm::client_at` 失败）
+    // 与**两条 panic 收口**（交互 `run_turn` / 自动回合 `run_auto_turn_acquired`）在现有测试面
+    // 上不可驱动——前者要 `tauri::AppHandle`，后者要给生产入口注入一个会 panic 的 `LlmClient`
+    // （那等于为测试在生产代码开缝）。这三处与已驱动路径共用**同一对发射入口**
+    // （`emit_terminal_on` / `emit_terminal`），因此由「自动回合配置级 error 走真实入口」＋
+    // `terminal_emit_helper_marks_finishing`（同一入口的行为用例）＋
+    // `terminal_events_only_go_through_helpers`（源码断言，tasks 1.5）三者拼成覆盖。
+
+    /// 事件发射当场读会话两个读口的探针（判据不需要等待、与 release 时机无关）。
+    struct PhaseProbe {
+        runtime: Runtime,
+        scope: VaultScope,
+        seen: std::sync::Mutex<Vec<(String, bool, bool)>>,
+    }
+
+    impl PhaseProbe {
+        fn new(runtime: &Runtime, scope: &VaultScope) -> Self {
+            Self {
+                runtime: runtime.clone(),
+                scope: scope.clone(),
+                seen: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        /// 本 sink 观察到的终态读数（事件种类 + `is_busy` + `in_flight`）。
+        fn terminals(&self) -> Vec<(String, bool, bool)> {
+            self.seen.lock().unwrap().clone()
+        }
+    }
+
+    impl EventSink for PhaseProbe {
+        fn emit(&self, payload: serde_json::Value) {
+            let kind = payload["type"].as_str().unwrap_or("?");
+            if !matches!(kind, "done" | "error" | "aborted") {
+                return;
+            }
+            let (busy, in_flight) = self
+                .runtime
+                .with_session(&self.scope, |session| {
+                    (session.is_busy(), session.in_flight())
+                })
+                .expect("终态发射时会话仍在（释放发生在之后）");
+            self.seen
+                .lock()
+                .unwrap()
+                .push((kind.to_string(), busy, in_flight));
+        }
+    }
+
+    /// 临时 vault + 独立 XDG 的测试台（与上方 M353 用例同一条纪律：绝不写真实 `~/.config`）。
+    struct TurnBench {
+        root: std::path::PathBuf,
+        scope: VaultScope,
+        config: crate::config::HarnessConfig,
+        runtime: Runtime,
+        prev_xdg: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl TurnBench {
+        /// `fixture` 写进临时目录；`None` = 不给 mock 指 fixture（配置级失败路径）。
+        fn new(tag: &str, fixture: Option<&str>) -> Self {
+            let lock = crate::harness::xdg_test_lock();
+            let root = std::env::temp_dir().join(format!(
+                "lumir-activity-{tag}-{}-{:016x}",
+                std::process::id(),
+                rand::random::<u64>()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            let vault = root.join("vault");
+            std::fs::create_dir_all(&vault).unwrap();
+            let prev_xdg = std::env::var_os("XDG_CONFIG_HOME");
+            std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+            let scope = VaultScope {
+                root: vault.clone(),
+                policy: {
+                    let defaults = crate::config::VaultConfig::default();
+                    IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+                },
+                vault_id: format!("vault-activity-{tag}"),
+            };
+            let config = match fixture {
+                Some(script) => {
+                    let path = root.join("fixture.json");
+                    std::fs::write(&path, script).unwrap();
+                    crate::config::test_mock(Some(path.to_str().unwrap()))
+                }
+                None => crate::config::test_mock(Some("/tmp/lumir-activity-absent.json")),
+            };
+            Self {
+                root,
+                scope,
+                config,
+                runtime: Runtime::default(),
+                prev_xdg,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for TurnBench {
+        fn drop(&mut self) {
+            match &self.prev_xdg {
+                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// 断言探针只看到一个终态，且那一刻是 `Finishing`：协议读仍为真、呈现读已为假。
+    fn assert_single_finishing_terminal(probe: &PhaseProbe, kind: &str) {
+        let seen = probe.terminals();
+        assert_eq!(
+            seen.iter()
+                .map(|(kind, ..)| kind.as_str())
+                .collect::<Vec<_>>(),
+            vec![kind],
+            "本轮应恰好发一条 {kind} 终态"
+        );
+        let (_, busy, in_flight) = seen[0].clone();
+        assert!(
+            busy,
+            "{kind} 发射当场协议读必须仍为占用（在途拒绝语义不变）"
+        );
+        assert!(
+            !in_flight,
+            "{kind} 发射当场呈现读必须已是「不在途」——这正是「终态已发、尚未释放」窗口"
+        );
+    }
+
+    /// 普通回合正常 `done`：终态当场的窗口 + 释放前后的两个读口。
+    #[test]
+    fn terminal_window_normal_done() {
+        let bench = TurnBench::new("done", Some(r#"{"responses": [{"text": "好了。"}]}"#));
+        let probe = PhaseProbe::new(&bench.runtime, &bench.scope);
+        bench
+            .runtime
+            .acquire_turn(&bench.scope, &bench.config)
+            .unwrap();
+        assert!(
+            bench
+                .runtime
+                .with_session(&bench.scope, |s| (s.is_busy(), s.in_flight()))
+                .unwrap()
+                == (true, true),
+            "acquire 后必须是在途"
+        );
+        let mut client =
+            llm::MockClient::from_str(r#"{"responses": [{"text": "好了。"}]}"#, "activity-done")
+                .unwrap();
+        run_turn_for(
+            &probe,
+            &bench.runtime,
+            &bench.scope,
+            &bench.config,
+            "问".to_string(),
+            None,
+            &mut client,
+        );
+        assert_single_finishing_terminal(&probe, "done");
+        // 尚未 release：协议读仍占用、呈现读已不在途，快照与面板看到的一致。
+        assert!(bench
+            .runtime
+            .with_session(&bench.scope, |s| s.is_busy())
+            .unwrap());
+        assert!(
+            !bench
+                .runtime
+                .snapshot(&bench.scope, &bench.config)
+                .in_flight
+        );
+        bench.runtime.release_turn(&bench.scope);
+        assert!(!bench
+            .runtime
+            .with_session(&bench.scope, |s| s.is_busy())
+            .unwrap());
+        // 新轮：Finishing → Idle → Running 之后呈现读回到真（三态不是单向的闸门）。
+        bench
+            .runtime
+            .acquire_turn(&bench.scope, &bench.config)
+            .unwrap();
+        assert!(
+            bench
+                .runtime
+                .snapshot(&bench.scope, &bench.config)
+                .in_flight
+        );
+    }
+
+    /// 空响应：错误终态同样经同一出口（`harness_empty_response`）。
+    #[test]
+    fn terminal_window_empty_response() {
+        let script = r#"{"responses": [{}]}"#;
+        let bench = TurnBench::new("empty", Some(script));
+        let probe = PhaseProbe::new(&bench.runtime, &bench.scope);
+        bench
+            .runtime
+            .acquire_turn(&bench.scope, &bench.config)
+            .unwrap();
+        let mut client = llm::MockClient::from_str(script, "activity-empty").unwrap();
+        run_turn_for(
+            &probe,
+            &bench.runtime,
+            &bench.scope,
+            &bench.config,
+            "问".to_string(),
+            None,
+            &mut client,
+        );
+        assert_single_finishing_terminal(&probe, "error");
+    }
+
+    /// LLM 错误：错误终态同样经同一出口。
+    #[test]
+    fn terminal_window_llm_error() {
+        let script =
+            r#"{"responses": [{"error": {"code": "llm_upstream", "message": "上游炸了"}}]}"#;
+        let bench = TurnBench::new("llm-error", Some(script));
+        let probe = PhaseProbe::new(&bench.runtime, &bench.scope);
+        bench
+            .runtime
+            .acquire_turn(&bench.scope, &bench.config)
+            .unwrap();
+        let mut client = llm::MockClient::from_str(script, "activity-llm-error").unwrap();
+        run_turn_for(
+            &probe,
+            &bench.runtime,
+            &bench.scope,
+            &bench.config,
+            "问".to_string(),
+            None,
+            &mut client,
+        );
+        assert_single_finishing_terminal(&probe, "error");
+    }
+
+    /// 用户停止：`aborted` 终态（`abort_turn` 的两个分支里无程序性原因的那一支）。
+    #[test]
+    fn terminal_window_aborted() {
+        let script = r#"{"responses": [{"text": "写到一半。"}]}"#;
+        let bench = TurnBench::new("aborted", Some(script));
+        let probe = PhaseProbe::new(&bench.runtime, &bench.scope);
+        bench
+            .runtime
+            .acquire_turn(&bench.scope, &bench.config)
+            .unwrap();
+        // acquire 会清中断标志（新一轮不继承上一轮的停止请求），因此停止请求打在 acquire 之后。
+        bench
+            .runtime
+            .with_session(&bench.scope, |s| s.request_abort())
+            .unwrap();
+        let mut client = llm::MockClient::from_str(script, "activity-aborted").unwrap();
+        run_turn_for(
+            &probe,
+            &bench.runtime,
+            &bench.scope,
+            &bench.config,
+            "问".to_string(),
+            None,
+            &mut client,
+        );
+        assert_single_finishing_terminal(&probe, "aborted");
+    }
+
+    /// 自动唤醒回合的**配置级失败**：走真实入口 `run_auto_turn_acquired`（r3 现场：静态清单
+    /// 声称覆盖全部，实际漏了自动回合的两条路径）。
+    ///
+    /// 这里 `client_at` 会失败（mock provider 的 fixture 路径不存在），因此不进 `run_turn_core`
+    /// ——这正是 `turn.rs:1692` 那条发射语句的现场：面板已在 `auto_turn_started` 置 running，
+    /// 而 `:1729` 才释放，窗口与普通回合同形。
+    #[test]
+    fn terminal_window_auto_turn_config_error() {
+        let bench = TurnBench::new("auto-config", None);
+        bench
+            .runtime
+            .acquire_turn(&bench.scope, &bench.config)
+            .unwrap();
+        // 探针既是本回合的事件出口，又负责在发射当场读会话状态。
+        let probe_arc = std::sync::Arc::new(PhaseProbe::new(&bench.runtime, &bench.scope));
+        let ok = run_auto_turn_acquired(
+            bench.runtime.clone(),
+            bench.scope.clone(),
+            bench.config.clone(),
+            probe_arc.clone(),
+            "通知文本".to_string(),
+        );
+        assert!(!ok, "配置级失败返回 false");
+        let seen = probe_arc.terminals();
+        assert_eq!(
+            seen.iter()
+                .map(|(kind, ..)| kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["error"],
+            "自动回合的配置级失败也要发错误终态"
+        );
+        assert!(seen[0].1, "窗口内协议读仍为占用");
+        assert!(!seen[0].2, "窗口内呈现读必须已不在途（不该停在处理中）");
+    }
+
+    /// 同一对发射入口的行为用例（补上不可驱动的三条 panic / 配置级路径的语义覆盖）：
+    /// `emit_terminal_on` 先置 `Finishing` 再发事件，因此探针读到的是「不在途 + 仍占用」。
+    /// `emit_terminal`（上下文形态）由上面四条真实回合路径覆盖。
+    #[test]
+    fn terminal_emit_helper_marks_finishing() {
+        let bench = TurnBench::new("helper", None);
+        let probe = PhaseProbe::new(&bench.runtime, &bench.scope);
+        bench
+            .runtime
+            .acquire_turn(&bench.scope, &bench.config)
+            .unwrap();
+        emit_terminal_on(
+            &bench.runtime,
+            &bench.scope,
+            &probe,
+            events::error("harness_internal_error", "模拟 panic 收口"),
+        );
+        assert_single_finishing_terminal(&probe, "error");
+    }
+
+    /// 源码级静态兜底（tasks 1.5）：`turn.rs` 里的终态事件**只**经两个 helper 发出——别处出现
+    /// 裸 `emit(events::done()/error(/aborted()` 即红。
+    ///
+    /// **只作静态兜底，不能替代上面的逐路径行为用例**（r3 现场：清单声称完整、实际漏掉两条
+    /// 自动回合路径，静态断言抓不到漏项——它只抓「绕过 helper」这一种写法）。
+    #[test]
+    fn terminal_events_only_go_through_helpers() {
+        let source = include_str!("turn.rs");
+        // 判据是**裸发射的调用形态** `.emit(events::<终态>(`：本用例里的字符串字面量不含前导点，
+        // 因此不会被自己的夹具命中（REVIEW.md「断言等价于子串」条：先确认判据有区分度）。
+        for (line_no, line) in source.lines().enumerate() {
+            let raw = line.find(".emit(events::").is_some()
+                && ["events::done(", "events::aborted(", "events::error("]
+                    .iter()
+                    .any(|kind| line.contains(kind));
+            if !raw {
+                continue;
+            }
+            assert!(
+                line.contains("emit_terminal"),
+                "终态事件必须经 emit_terminal / emit_terminal_on 发出，第 {} 行是裸发射：{line}",
+                line_no + 1
+            );
+        }
+        // 发射点总数（F15 的 10 个位点 / 11 条语句）：上面的循环只抓「绕过 helper」，抓不到
+        // 「整条语句被误删」，因此把两类调用的条数分别钉住——交互回合 7 条走
+        // `emit_terminal`，配置级 / panic / 自动回合 4 条走 `emit_terminal_on`。
+        fn calls_of(source: &str, name: &str) -> usize {
+            let needle = format!("{name}(");
+            source
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//") && !line.contains("fn "))
+                .map(|line| line.matches(&needle).count())
+                .sum()
+        }
+        // 只数生产代码：本测试模块里也有一次 helper 调用（不得算进发射点口径）。
+        let production = source
+            .split("\n#[cfg(test)]\nmod tests {")
+            .next()
+            .unwrap_or(source);
+        assert_eq!(
+            calls_of(production, "emit_terminal"),
+            7,
+            "交互回合的终态发射语句数变了（预期 7：入队失败 / 压缩重试 / LLM / 空响应 / done / 中止两条）"
+        );
+        assert_eq!(
+            calls_of(production, "emit_terminal_on"),
+            4,
+            "无上下文的终态发射语句数变了（预期 4：交互的配置级与 panic、自动回合的配置级与 panic）"
+        );
     }
 }

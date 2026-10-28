@@ -68,8 +68,10 @@ test("handleCronRun：只有真正切屏成功才在失败时回滚（忙时未�
   );
 });
 
-test("beginCronRun：忙时（sendPhase !== idle）不切屏，在途轮次不受影响", () => {
-  const guard = BEGIN_CRON_RUN.search(/if \(sendPhase !== "idle"\) return false;/);
+test("beginCronRun：忙时（活动相位非 idle）不切屏，在途轮次不受影响", () => {
+  // 相位自 change add-harness-activity-presence 起由活动状态机持有（`activity.phase`）：
+  // 判据语义不变（忙 ⇒ 不切屏、返回 false），只是读的字段换成了状态机的唯一持有者。
+  const guard = BEGIN_CRON_RUN.search(/if \(activity\.phase !== "idle"\) return false;/);
   assert.notEqual(guard, -1, "beginCronRun 必须先判忙：交互槽位在途 ⇒ 后端必 busy，乐观切屏注定被回滚");
   const reset = BEGIN_CRON_RUN.search(/resetView\(\)/);
   assert.notEqual(reset, -1, "beginCronRun 正常路径必须清渲染面");
@@ -83,22 +85,34 @@ test("beginCronRun：忙时（sendPhase !== idle）不切屏，在途轮次不�
 test("beginCronRun：清渲染面 + prompt 上屏 + 开轮次闸门与发送相位", () => {
   assert.match(BEGIN_CRON_RUN, /resetView\(\)/, "切屏必须先清空上一段会话的渲染面");
   assert.match(BEGIN_CRON_RUN, /appendUserMessage\(/, "prompt 必须作为本轮用户消息上屏");
-  assert.match(BEGIN_CRON_RUN, /turnOpen = true/, "轮次闸门必须打开（否则正文分片被当作迟到产出丢弃）");
+  // 闸门与相位由**同一个**接线层函数施加（change add-harness-activity-presence tasks 2.5：
+  // 分散写会出现「相位收口了、闸门还开着」的半收口）：`dispatchActivity({ type: "sent" })`
+  // 一次完成「相位入 running + turnOpen = true」，判据因此钉这条单一写入口。
   assert.match(
     BEGIN_CRON_RUN,
-    /applySendPhase\(reduceSendPhase\(sendPhase, \{ type: "sent" \}\)\)/,
-    "发送相位必须入 running（发送钮 = 停止态，进程内不允许再叠一轮）",
+    /dispatchActivity\(\{ type: "sent" \}\)/,
+    "轮次闸门与发送相位必须由状态机一并施加（否则正文分片被当作迟到产出丢弃、或半收口复活）",
   );
   assert.match(BEGIN_CRON_RUN, /cronRunAdopted = true/, "切屏态必须登记，收尾时据此重载快照");
 });
 
-test("done 收尾：cron 切屏态下按后端快照重载（专用会话历史回屏，面板回到单一真源）", () => {
+test("done 收尾：cron 切屏态下按后端快照只重建内容（专用会话历史回屏，未读存活）", () => {
   const doneStart = PANEL_SOURCE.search(/case "done":/);
   assert.notEqual(doneStart, -1, "handleEvent 里找不到 done 分支");
   const doneEnd = PANEL_SOURCE.indexOf('case "aborted":', doneStart);
   assert.notEqual(doneEnd, -1, "done 分支之后找不到 aborted 分支（解析口径已过期）");
   const doneBody = PANEL_SOURCE.slice(doneStart, doneEnd);
-  assert.match(doneBody, /if \(cronRunAdopted\) reloadSession\(\);/, "done 后必须按 cronRunAdopted 重载快照");
+  // 重载仍在（专用会话历史回屏、面板回到单一真源），但口径自 change
+  // add-harness-activity-presence r1 P1-2 起改为**只内容档位**：`reloadSession` 经 `resetView`
+  // 以 `vault_changed` 结算，会把本轮刚产生的未读吃掉（点击 cron → 收起 → 完成，指示退回空闲）。
+  assert.match(doneBody, /const adopted = cronRunAdopted;/, "done 必须在派发前记住 cron 切屏态");
+  assert.match(
+    doneBody,
+    /if \(takeover \|\| adopted\) fetchSnapshot\("content"\)/,
+    "done 后必须按 cronRunAdopted 重建内容（与中途接管对账合并成一次只内容档快照）",
+  );
+  // 本仓钉的 @types/node 档没有声明 `assert.doesNotMatch`（运行时存在、类型面缺）。
+  assert.equal(/reloadSession\(\)/.test(doneBody), false, "MUST NOT 复用会清未读的会话复位路径");
 });
 
 // ── 目标 vault 的打开交接（M752：同一点击链路上另行发现的合同内交接缺陷） ──────────

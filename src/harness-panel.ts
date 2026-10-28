@@ -114,6 +114,8 @@ import {
 } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createHarnessDraftStore } from "./harness-draft";
+import { enterSnapshotApplies, INITIAL_ACTIVITY, reduceActivity } from "./harness-activity";
+import type { ActivityEvent, ActivityState } from "./harness-activity";
 import { createFollowController } from "./harness-scroll-lock";
 import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import type { FollowState } from "./harness-scroll-lock";
@@ -252,12 +254,13 @@ export interface HarnessPanelHandle {
   /** cron 点击发起运行的面板切屏（M612，场景 170）：清渲染面、把本次 prompt 作为用户消息
    *  上屏、立刻打开轮次闸门与发送相位。装配层 MUST 在 `harness_cron_run` **之前**调用——
    *  后端不为 cron 回合发 `sent` / `auto_turn_started`，晚开闸门会把先到的正文分片丢掉。
-   *  返回 `true` = 本次确实切了屏（失败回滚启用）；`false` = 交互轮次在途（sendPhase 非 idle），
+   *  返回 `true` = 本次确实切了屏（失败回滚启用）；`false` = 交互轮次在途（活动相位非 idle），
    *  此时后端必 busy 拒单、乐观切屏注定被回滚，故**不动渲染面**（M612 r1 P2-1：先清屏再回滚
    *  会把在途轮次的流式泡清掉、关掉轮次闸门，后续分片被当迟到产出丢弃）。 */
   beginCronRun(prompt: string): boolean;
-  /** 按后端当前会话重取快照重建渲染面（M612）：cron 点击运行发起失败时撤回乐观切屏，
-   *  面板回到后端真实会话。不切 vault。 */
+  /** 按后端当前会话重取快照重建渲染面（M612）：**只用于 cron 点击运行发起失败时**撤回乐观
+   *  切屏，面板回到后端真实会话。不切 vault。运行**正常结束**的收尾不走这条（它经 `resetView`
+   *  以 `vault_changed` 结算，会清掉该轮刚产生的未读）——那条走只内容档位，见 `done` 分支。 */
   reloadSession(): void;
   /**
    * 下发**可点的 vault 文件路径集**（change harness-path-link）：装载 vault 时一次、watch
@@ -3028,6 +3031,9 @@ function buildCodeBlock(code: string, info: string): HTMLElement {
 /** SVG 命名空间（模块无 innerHTML 的渲染纪律：全部图标经 DOM API 内联构建）。 */
 const SVG_NS = "http://www.w3.org/2000/svg";
 
+/** 面板实例序号：`aria-describedby` 要指向**唯一** id，面板在测试里可以造多份。 */
+let panelSeq = 0;
+
 /** 四角框图标元素：字形与画笔属性取 `src/preview/block-trigger.ts` 的唯一一份
  *  （`CORNERS_ICON_SVG`），本模块用 DOM API 建——渲染纪律是本模块零 innerHTML 赋值
  *  （全部内容经 DOM API + textContent 注入），不是另画一个图标。 */
@@ -3878,8 +3884,27 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const toggleSparkPath = document.createElementNS(SVG_NS, "path");
   toggleSparkPath.setAttribute("d", "M8 1.5 9.6 6.4 14.5 8 9.6 9.6 8 14.5 6.4 9.6 1.5 8l4.9-1.6z");
   toggleSpark.append(toggleSparkPath);
-  toggleButton.append(toggleSpark);
+  // 活动状态点（change add-harness-activity-presence D1）：常驻 DOM、锚在钮内右下角，
+  // 空闲态由 CSS（`[data-activity="idle"]` 下的 `display:none`）不产生任何上屏像素——
+  // 既有整页基线因此零漂移，三态的「在场」由结构断言守卫（design §2 零漂移）。
+  const toggleDot = document.createElement("span");
+  toggleDot.className = "lumir-hp-toggle-dot";
+  toggleDot.setAttribute("aria-hidden", "true");
+  toggleButton.append(toggleSpark, toggleDot);
   shell.titlebar.append(toggleButton);
+  // 状态的可读承载（spec「可访问性」）：钮的可访问描述经 `aria-describedby` 指向这段**视觉
+  // 隐藏**的状态文本——6px 的点在 AX 里不可见，三态必须同时可读（不单靠颜色）。
+  // 终态到达经 `aria-live="polite"` 播报一次；在途开始不播报（用户刚按下发送，他知道）。
+  const activityStatus = document.createElement("span");
+  activityStatus.className = "lumir-hp-toggle-status";
+  activityStatus.id = `lumir-hp-activity-status-${(panelSeq += 1)}`;
+  activityStatus.setAttribute("aria-live", "polite");
+  toggleButton.setAttribute("aria-describedby", activityStatus.id);
+  // 挂**钮内**（不是标题栏的同级节点）：标题栏的子节点集合是骨架合同的一部分
+  // （`m149-tabs` / `restyle-skeleton` 断言空态只有 traffic 区 + 动作钮两枚可见子节点），
+  // 多一枚同级节点会把「零漂移」变成「标题栏多了一个孩子」。绝对定位 + clip 隐藏 ⇒ 不占版面、
+  // 不上屏，也不进 `offsetParent` 那类可见性判据。
+  toggleButton.append(activityStatus);
 
   // ── DOM：标题栏 harness 段（.lumir-hp-seg，HP1，Alex 点子 1）────────────────
   // 面板不再有头部栏：会话身份（名下拉）与新建会话钮上移进标题栏，与编辑器 pane 的标签段
@@ -4284,9 +4309,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // ── 状态 ─────────────────────────────────────────────────────────────────
   /** 面板挂载的 pane 槽（null = 收起/未开）。pane 在场与否由装配层管，面板只记录挂在哪。 */
   let mountEl: HTMLElement | null = null;
-  /** 发送钮两态状态机的当前相位（M347）：idle = 可发送（busy=false 的既有读法），
-   *  running = 处理中（钮面停止态），stopping = 停止已请求、等终态。 */
-  let sendPhase: SendPhase = "idle";
+  /** 活动状态（change add-harness-activity-presence §3）：相位 + 未读由 `src/harness-activity.ts`
+   *  的纯函数模型产出——**本项目内禁止就地写相位**，一切跃迁经 `dispatchActivity`。
+   *  相位的定义仍是 M347 的两态机（idle / running / stopping），模型逐条委托 `reduceSendPhase`。 */
+  let activity: ActivityState = INITIAL_ACTIVITY;
+  /** 相位世代（design §4）：任何**经事件**推进的相位变化 +1；发起快照请求时记下当时的
+   *  epoch，响应 epoch 不一致时**按档位分开**——进入档只丢相位（消息 / usage 照旧应用），
+   *  只内容档整条丢弃（清面 + 重放会清掉请求之后乐观上屏的新消息）。它防「请求在发送前发出、
+   *  响应在发送后回来」，与 `snapshotSeq`（防旧响应覆盖新响应；**视图换代也推进它**，防上一代
+   *  视图的回包回填到新视图）分工不同。 */
+  let phaseEpoch = 0;
+  /** 「中途接管」标志（design §5）：进入快照把相位拉到 running 时置位——切走期间的正文分片
+   *  在事件过滤时就丢了，因此该轮终态到达时要按后端快照对账一次渲染面，把残缺的流式泡换成
+   *  留存里的完整消息。`sent` / 终态 / 进入快照报不在途都清它。 */
+  let midTakeover = false;
   let stageWaiting = true; // 阶段指示：首个 text_chunk 到达前 = 「等待响应」，之后 = 「生成中」。
   /** 停止钩子（M348 对接面）：处理中点击发送钮（= 停止态）时调用。面板创建即接上真实
    *  handler（调 harness_abort，中断语义 = 「不再继续」，收口等后端 aborted 终态事件）；
@@ -4294,9 +4330,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let stopHandler: (() => void) | null = () => {
     harnessAbort().catch((e: unknown) => {
       // harness_not_running = 轮次刚好结束的竞态（终态事件随后就到）；其余错误如实上错误行。
-      // 两种情形都经 finished 收口回 idle——后端既说「没有在途轮次」，idle 就是真值相位。
+      // 两种情形都走本地收口回 idle——后端既说「没有在途轮次」，idle 就是真值相位。
       appendError(t("D348", { message: errorMessage(e) }));
-      applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
+      dispatchActivity({ type: "local_finish" });
     });
   };
   /** ctx% 读数（usage 事件 / 快照同源消费；null = 尚无读数，读数件整体隐藏）。 */
@@ -4500,7 +4536,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
   /** 快照请求的世代号：只应用**最新一次**请求的结果。挂载那一次拉取与切 vault 的那一次可能
    *  同时在飞——迟到的旧响应会把已经清空的 transcript 又灌回旧 vault 的消息，或把同一份
-   *  消息追加两遍（两条都是可见的错乱）。 */
+   *  消息追加两遍（两条都是可见的错乱）。
+   *  `resetView`（视图换代：新建会话 / 切 vault / cron 切屏 / 恢复会话）也推进它：上一代视图的
+   *  在途回包一律作废，落地不得回填进新视图（相位在 idle → idle 的复位里不推进，epoch 挡不住）。 */
   let snapshotSeq = 0;
 
   // ── 混排 composer 状态（M343；消息摘录卡片见 change harness-message-excerpt；
@@ -5706,7 +5744,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     rebuildPermPopIfOpen();
     applyUsage();
     // 发送钮 / 阶段指示按当前相位重取文案（running 时钮面是「停止」、进度条阶段行重渲）。
-    applySendPhase(sendPhase);
+    applySendPhase(activity.phase);
+    // 活动状态文案（处理中 / 有新的回复 / 有失败结果）随语言重绘：可访问名与状态文本
+    // 同源（change add-harness-activity-presence 任务 3.6）。
+    applyActivityBadge();
     // 待决批准项是交互中的 UI（不是历史记录）：随语言重渲按钮与标题，输入框内容保留。
     for (const pending of pendingApprovals.values()) relabelApproval(pending);
     // 已决策的终态记录同口径：结果词 / 原因句 / 详情摘要重取文案（正文性质的时间戳由
@@ -6702,9 +6743,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 发送钮相位施加：机器算出的每个新相位经这一处落 DOM（glyph 显隐 / 可读名 / 可点性 /
    *  进度条显隐），不第二处写按钮。running = 可点（点击 = 停止）；stopping = 禁用（连点幂等）。
    *  M351 图标化：钮面是两枚 SVG glyph（↑ 发送 / ■ 停止），D329/D378 落 title 与 aria-label
-   *  ——textContent 赋值会抹掉 glyph 子节点，可读名不能再走钮面文本。 */
+   *  ——textContent 赋值会抹掉 glyph 子节点，可读名不能再走钮面文本。
+   *  `next` 由 [`dispatchActivity`] 从活动模型取出：本函数只落 DOM，MUST NOT 反写相位。 */
   function applySendPhase(next: SendPhase): void {
-    sendPhase = next;
     const running = next !== "idle";
     sendButton.classList.toggle("is-busy", running);
     const label = running ? t("D378") : t("D329");
@@ -6718,20 +6759,91 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (running) applyStage();
   }
 
+  /**
+   * 活动状态的**唯一写入口**（change add-harness-activity-presence §3）：相位与未读都由
+   * `reduceActivity` 产出，这里只做三件事——推进相位世代、按跃迁落 DOM、维护与相位同源的
+   * 轮次闸门（`turnOpen`）与「中途接管」标志。
+   *
+   * 为什么闸门与标志也挂在这里（tasks 2.5「接线层单一函数施加」）：它们与相位是同一份真值
+   * 的三个投影，分散在事件处理器里各写一次，就会出现「相位收口了、闸门还开着」这种半收口
+   *  ——终态之后迟到的分片会重新进消息流（M374 的「复活」现场）。
+   */
+  function dispatchActivity(event: ActivityEvent): void {
+    const prev = activity;
+    activity = reduceActivity(activity, event);
+    const phaseChanged = activity.phase !== prev.phase;
+    // 世代只由**事件**推进：进入快照是快照自身的回填，不是新事件，不能作废自己这一代。
+    if (phaseChanged && event.type !== "enter_snapshot") phaseEpoch += 1;
+    switch (event.type) {
+      case "sent":
+      case "auto_turn_started":
+        turnOpen = true;
+        midTakeover = false;
+        break;
+      case "terminal":
+        turnOpen = false;
+        midTakeover = false;
+        break;
+      case "enter_snapshot":
+        // 判据与模型同源（`enterSnapshotApplies`）：被丢弃的快照 MUST NOT 碰闸门与标志。
+        if (enterSnapshotApplies(prev, event)) {
+          turnOpen = event.inFlight;
+          midTakeover = event.inFlight;
+        }
+        break;
+      case "local_finish":
+      case "vault_changed":
+        // 这两条都不代表「一轮内容的结束」，但它们之后不会再有本轮的增量：闸门必须收口，
+        // 否则迟到的分片会重新进消息流（M374「复活」现场）。接管标志一并清——那一轮已经
+        // 不在本视图的作用域里（切 vault）或根本没起来（发送未被受理）。
+        turnOpen = false;
+        midTakeover = false;
+        break;
+      default:
+        break;
+    }
+    if (phaseChanged) applySendPhase(activity.phase);
+    // 三态里「在途」由相位派生、「未读」由 unread 派生：**任一变都要重施加**，只盯 unread
+    // 会让在途永远点不亮（m756 场景首跑现场：面板里已是「等待响应」，钮上仍 data-activity=idle）。
+    if (phaseChanged || activity.unread !== prev.unread) applyActivityBadge();
+  }
+
+  /**
+   * 标题栏 toggle 钮的三态施加（change add-harness-activity-presence §3 / 任务 3.4）：
+   * 状态点与可读状态文本的**唯一写点**——`data-activity` 由这一个函数施加，别处只读它。
+   *
+   * 三态 = 空闲 / 在途 / 有未读结果；未读再按终态种类分「回复」与「失败」两档形状
+   * （形状承载语义、颜色只做增强，eink 因此自然成立）。相位优先：在途时即便有残留未读也
+   * 只报在途——用户此刻要看的是「还在跑」。
+   */
+  function applyActivityBadge(): void {
+    const kind: "idle" | "inflight" | "reply" | "failure" =
+      activity.phase !== "idle"
+        ? "inflight"
+        : activity.unread === "reply"
+          ? "reply"
+          : activity.unread === "failure"
+            ? "failure"
+            : "idle";
+    toggleButton.dataset.activity = kind;
+    activityStatus.textContent =
+      kind === "inflight" ? t("D870") : kind === "reply" ? t("D871") : kind === "failure" ? t("D872") : "";
+  }
+
   /** 阶段行施加（applySendPhase 的 running 分支调用）。stopping 相位第一时间换 D400
    *  「正在停止…」——停止反馈的即时性由前端这半承担（后端收口前，状态不再停在
    *  「等待响应 / 正在生成回复」的误读上，M374）；running 态维持两档：首个 chunk 前
    *  「等待响应」，之后「正在生成回复」。 */
   function applyStage(): void {
     stageLine.textContent =
-      sendPhase === "stopping" ? t("D400") : stageWaiting ? t("D381") : t("D382");
+      activity.phase === "stopping" ? t("D400") : stageWaiting ? t("D381") : t("D382");
   }
 
   sendButton.addEventListener("click", () => {
-    if (sendPhase !== "running") return;
+    if (activity.phase !== "running") return;
     // 停止路径：状态机先行（running → stopping，挡连点），再调停止钩子——M348 接通 Rust
-    // abort 前，钩子是 null，点击只走状态机直到本轮 finished 回 idle。
-    applySendPhase(reduceSendPhase(sendPhase, { type: "stop-clicked" }));
+    // abort 前，钩子是 null，点击只走状态机直到本轮终态回 idle。
+    dispatchActivity({ type: "stop_clicked" });
     stopHandler?.();
   });
 
@@ -8822,7 +8934,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 阶段指示推进：首个 chunk 到达 = 模型开始生成（「等待响应」→「生成中」）。
         if (stageWaiting) {
           stageWaiting = false;
-          if (sendPhase !== "idle") applyStage();
+          if (activity.phase !== "idle") applyStage();
         }
         scheduleFlush();
         return;
@@ -9014,27 +9126,35 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       case "auto_turn_started":
         // 自动回合（design §12.6）：没有用户发送动作，面板必须自己打开轮次闸门与处理中相位，
         // 否则随后的 text_chunk 会被当成「已结束轮次的迟到产出」丢弃；`done` 照常收口。
-        turnOpen = true;
+        // 闸门与相位都由状态机施加（`sent` 的同一条转移——自动回合与用户回合在「有没有新
+        // 内容要看」上等价）。
         stageWaiting = true;
-        if (sendPhase !== "running") {
-          applySendPhase(reduceSendPhase(sendPhase, { type: "sent" }));
-        }
+        dispatchActivity({ type: "auto_turn_started" });
         return;
-      case "done":
-        turnOpen = false;
+      case "done": {
+        // 两类「按后端快照重建内容」的理由，合并成**一次**请求：
+        // ① 中途接管的轮次（design §5）：切走期间的正文分片在事件过滤时就丢了，本轮的流式泡
+        //    可能缺开头——用留存把它换成完整回答；
+        // ② cron 点击运行收尾（M612）：本次运行的 prompt / 回答以留存面板为单一真源（专用会话
+        //    的历史也回屏），不把「这一轮的面板态」当作会话的全部内容。
+        const takeover = midTakeover;
+        const adopted = cronRunAdopted;
+        cronRunAdopted = false;
         finalizeStreamingMessage();
-        applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
-        // cron 点击运行收尾（M612）：按后端快照重载一次——本次运行的 prompt / 回答以留存面板为
-        // 单一真源（专用会话的历史也回屏），不把「这一轮的面板态」当作会话的全部内容。
-        if (cronRunAdopted) reloadSession();
+        dispatchActivity({ type: "terminal", kind: "done", mounted: mountEl !== null });
+        // 两条都走**只内容**档位（tasks 2.1 / 4.2）：MUST NOT 复用 `reloadSession`——它内部的
+        // `resetView` 以 `vault_changed` 结算，会把刚刚这一步 terminal 产生的未读吃掉
+        // （r1 P1-2 的现场：点击 cron → 收起面板 → 完成，指示退回空闲而不是「有新的回复」）。
+        if (takeover || adopted) fetchSnapshot("content");
         return;
+      }
       case "aborted": {
-        turnOpen = false;
         // 中断不是 done（turn.rs 的 abort 收口直接返回，不再发 done）：点击运行的切屏态在此
         // 清掉，避免下一次无关回合的 done 误触发快照重载。
         cronRunAdopted = false;
+        const takeover = midTakeover;
         // 本轮被用户停止（M348）：中断语义是「不再继续」——已流式产出保留（上面的
-        // text_chunk 已落进流式泡），标注「已停止」，经 finished 收口回 idle，
+        // text_chunk 已落进流式泡），标注「已停止」，收口回 idle，
         // composer 立即可开新一轮。无产出（停止在首个 chunk 前）时补一条「Agent ·
         // 已停止」标记消息——被取消的轮次在消息流里显式封闭，不再读作「一个没有得到
         // 处理的问题」（M374；标记是 live 面：快照侧无对应留存记录，重载后不重建）。
@@ -9071,17 +9191,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         }
         pendingApprovals.clear();
         settledAwaitingDone = null;
-        applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
+        // `aborted` 不产生未读（D2：停止是用户自己按的，提醒他只是复述他刚做的事）。
+        dispatchActivity({ type: "terminal", kind: "aborted", mounted: mountEl !== null });
+        if (takeover) fetchSnapshot("content");
         return;
       }
-      case "error":
-        turnOpen = false;
+      case "error": {
         // 同 aborted：错误轮次不发 done，切屏态在此清掉（不再等一次不会来的 done）。
         cronRunAdopted = false;
+        const takeover = midTakeover;
         finalizeStreamingMessage();
-        applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
+        dispatchActivity({ type: "terminal", kind: "error", mounted: mountEl !== null });
+        if (takeover) fetchSnapshot("content");
         appendError(t("D348", { message: typeof event.message === "string" ? event.message : event.code }));
         return;
+      }
       default:
         // 类型层穷尽性闸门：全部 case 覆盖完时 `event` 收窄为 `never`；联合新增 type 而这里
         // 漏补 case，收窄不到 `never`，调用处 tsc 报 TS2345——不再是一次静默忽略的事件。
@@ -9306,18 +9430,59 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     block.rows.push(row);
   }
 
-  function restoreSnapshot(json: string): void {
+  /**
+   * 快照的宽容解析 + 准入（M312）：非对象 / 解析失败 / 标识与当前 vault 不符的一律返回
+   * `null`。**快照的两条读路（全量恢复 / 只读相位）共用这一份**——解析与准入写两遍就会
+   * 分叉，而「旧 vault 的快照不得上屏」正是 M312 的现场。
+   */
+  function parseSnapshot(json: string): Record<string, unknown> | null {
     let snapshot: unknown;
     try {
       snapshot = JSON.parse(json);
     } catch {
-      return;
+      return null;
     }
-    if (typeof snapshot !== "object" || snapshot === null) return;
+    if (typeof snapshot !== "object" || snapshot === null) return null;
     const state = snapshot as Record<string, unknown>;
     // 快照准入（M312）：标识与当前 vault 不符的一律丢弃（例如切走之后才回来的那份——
     // 它的消息属于旧 vault）。判据与事件过滤同一条（inCurrentVault）。
-    if (!inCurrentVault(state.vault, currentVault)) return;
+    if (!inCurrentVault(state.vault, currentVault)) return null;
+    return state;
+  }
+
+  /**
+   * 快照恢复（change add-harness-activity-presence tasks 2.1）——**两档显式分开**：
+   *
+   * - `enter`（进入快照）：面板挂载 / `vaultChanged` / `reloadSession`（发起失败回滚）用。
+   *   除内容与读数外，还按快照的 `in_flight` 回填相位与轮次闸门（`applyEnterSnapshot`）。
+   * - `content`（只内容快照）：中途接管轮次的终态对账 + cron 点击运行收尾（`done` 里合并成一次
+   *   请求）用。**只重建内容**——MUST NOT 读 `in_flight`、MUST NOT 改相位、MUST NOT 重开
+   *   `turnOpen`、MUST NOT 走会清未读的 `reloadSession`（实现评审 r1 P1-2）。
+   *
+   * 档位没有默认值：调用点必须显式选一档，杜绝「走了完整恢复却只想重建内容」的形态。
+   * 世代守卫按档位分开：**进入档只丢相位**（`epochAtRequest !== phaseEpoch` ⇒ 不应用 `in_flight`
+   * 与闸门，消息 / usage 等照旧应用）；**只内容档整条丢弃**（清面 + 重放会清掉请求之后乐观上屏
+   * 的新消息）。
+   */
+  function restoreSnapshot(json: string, mode: "enter" | "content", epochAtRequest: number): void {
+    const state = parseSnapshot(json);
+    if (state === null) return;
+    // 相位回填只属于进入档位（tasks 2.1 / 2.3）：对账快照（`content`）连 `in_flight` 都不读。
+    // 进入档的世代守卫**只作用于相位**（`applyEnterSnapshot` 内部按 epoch 丢弃）：迟到的内容最多
+    // 让消息 / 读数旧一拍，而把相位按旧读数打回去才是真错——两条通道的取舍不同，因此两档的过期
+    // 处置也不同（只内容档才是整条丢弃）。
+    if (mode === "enter") {
+      applyEnterSnapshot(state.in_flight, epochAtRequest);
+    } else {
+      // 终态对账：把残缺的流式泡换成留存里的**完整**消息（design §5）。只清渲染面——
+      // 跟随态、相位、轮次闸门与未读一概不动（tasks 4.2 的 MUST NOT 三条）。
+      //
+      // **世代守卫同样管内容**（不只是相位）：内容重建是「清面 + 按快照重放」，如果请求发出
+      // 之后用户已经开始了新一轮（`sent` 推进了 `phaseEpoch`，并把新消息乐观上屏了），这份
+      // 回包已经过期——落地时会把那条新消息清掉，直到下一条事件才补回来。丢弃整条。
+      if (epochAtRequest !== phaseEpoch) return;
+      clearTranscriptSurface();
+    }
     const messages = Array.isArray(state.messages) ? state.messages : [];
     renderSnapshotMessages(messages);
     // ctx% 读数与警示阈值随快照恢复（webview 重载后读数不断源；缺键 = 缺省 85 / 无读数）。
@@ -9384,31 +9549,93 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     applyTaskReadings(state);
     applySessionName();
     syncEmptyHint();
-    follow.jumpToBottom(); // 分流表 #15：快照重建收尾必须看到末尾（既有语义）
+    if (mode === "enter") {
+      // 分流表 #15：进入快照收尾必须看到末尾（白名单动作，既有语义）。
+      follow.jumpToBottom();
+    } else {
+      // 对账**不是**白名单动作（终态不在白名单里）：按既有跟随态决定滚动位——following
+      // 才排一次写底，detached 只点亮未读、MUST NOT 把正在阅读的视口拽回底部（design §5）。
+      follow.contentGrew();
+    }
   }
 
-  /** 快照请求（挂载 / 切 vault 共用）：世代号保证只有最新一次请求的结果被应用。 */
-  function fetchSnapshot(): void {
+  /**
+   * 快照请求（挂载 / 切 vault / 中途接管终态对账共用）。
+   *
+   * 两道守卫的**过期处置按档位分开**（design §4）：
+   *
+   * - `snapshotSeq` 过期（含 `resetView` 视图换代推进它）：**enter / content 两档均整条作废**——
+   *   响应根本不会进入 `restoreSnapshot`（连 `parseSnapshot` 都不执行），因此不存在「进入档在
+   *   seq 过期时仍应用内容」的形态。
+   * - `phaseEpoch` 不符：**enter 档只丢相位**（`applyEnterSnapshot` 不应用 `in_flight` 与闸门，
+   *   messages / usage 等照旧应用——它是「补内容」的路径，迟到内容最多让读数旧一拍）；
+   *   **content 档整条丢弃**（它是「清面 + 重放」，落地会清掉请求之后乐观上屏的新消息）。
+   */
+  function fetchSnapshot(mode: "enter" | "content" = "enter"): void {
     const seq = (snapshotSeq += 1);
+    const epoch = phaseEpoch;
     void harnessState()
       .then((json) => {
-        if (seq === snapshotSeq) restoreSnapshot(json);
+        if (seq === snapshotSeq) restoreSnapshot(json, mode, epoch);
       })
       .catch(() => {});
   }
 
+  /**
+   * 恢复会话时点的相位回填（spec 的第三个进入时点：装载 / 切回 vault / 恢复会话）。
+   *
+   * 内容由 `harness_resume_session` 的回执铺开（再走一遍内容重放会把刚铺好的 transcript 追加
+   * 第二份），因此这里只取快照的**相位部分**——判据、世代守卫与状态机全部复用同一份
+   * `applyEnterSnapshot` / `enterSnapshotApplies`，不另立第二套。
+   */
+  function fetchActivitySnapshot(): void {
+    const seq = (snapshotSeq += 1);
+    const epoch = phaseEpoch;
+    void harnessState()
+      .then((json) => {
+        if (seq !== snapshotSeq) return;
+        const state = parseSnapshot(json);
+        if (state === null) return;
+        applyEnterSnapshot(state.in_flight, epoch);
+      })
+      .catch(() => {});
+  }
+
+  /**
+   * 进入快照的相位回填（tasks 2.3）：`in_flight` 是唯一的权威答案。
+   *
+   * - `true` ⇒ 相位 running + 轮次闸门置真 + 置「中途接管」标志（切回一个仍在跑的轮次，
+   *   后续增量必须继续上屏，终态时还要对账内容）；
+   * - `false` ⇒ 相位 idle + 闸门关闭 + 清标志。**这就是「未观察到的终态」的收口**：后端说
+   *   已经不在跑了，界面就地收口，不再等一个永远不会到达的事件（切走期间终态被 vault 过滤
+   *   的那条反例）。
+   *
+   * 缺键 = 旧后端（或桩）：整条不应用，退化成既有的事件驱动两态，不伪造在途（design §12）。
+   * 闸门与标志的写点仍在 `dispatchActivity` 里（判据与模型同源 `enterSnapshotApplies`）。
+   */
+  function applyEnterSnapshot(rawInFlight: unknown, epochAtRequest: number): void {
+    if (typeof rawInFlight !== "boolean") return;
+    dispatchActivity({
+      type: "enter_snapshot",
+      inFlight: rawInFlight,
+      epochAtRequest,
+      epoch: phaseEpoch,
+    });
+  }
+
   /** 清空渲染面与本地流式态（「新会话」与「切 vault」共用：两者都是「换了一个会话」）。
    *  会话真源在 Rust，这里清的是**渲染面**与只属于上一段会话的本地态。 */
-  function resetView(): void {
+  /**
+   * 渲染面清空（DOM + 本地流式态 + 会话视图态）。**`resetView` 与终态对账（`content` 档位）
+   * 共用这一份**：两处都要求「DOM 与流式态归零」，但**跟随态 / 活动状态 / 会话身份 / 读数**
+   * 的口径不同（换会话 = 复位；对账 = 一概不动），那几样因此留在调用方各自决定——
+   * 复制一份清空逻辑就会出现「对账顺手把相位或未读也清了」的反向缺陷（tasks 4.2）。
+   */
+  function clearTranscriptSurface(): void {
     // 内容换代 = 全屏遮罩里的快照已不存在（spec「内容换代时遮罩自动关闭」）：显式经既有遮罩
     // 关闭入口（`document` 径，交还焦点），MUST NOT 让遮罩停在一份已不存在的消息上。
     deps.blocks?.close();
     transcript.replaceChildren();
-    // 引用失败的输入区状态行属于上一段输入（M662）：换会话即清（卡片上的留痕随卡片一起消失）。
-    applyQuoteFailureNotice(null);
-    // M644：视图复位 = 换了一个会话，跟随态回 following、清未读、写底（快照 / 恢复路径随后
-    // 各自再「强制」一次，白名单动作不靠这一句兜底）。
-    follow.reset();
     pendingApprovals.clear();
     decidedApprovals.clear();
     // 任务区是**会话**的视图：换会话即清空（终态 run 的「本次会话摘要」不跨会话）。
@@ -9429,7 +9656,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     sealedToolBlocks = [];
     streamingText = "";
     chunkBuffer = "";
-    turnOpen = false;
+    // 轮次闸门不在这里写：本函数末尾的 `dispatchActivity({ type: "vault_changed" })` 是它的
+    // 唯一写入口（tasks 2.5：闸门与相位同源收口，分散写会出现「相位收口了、闸门还开着」）。
     activeTools = null;
     settledAwaitingDone = null;
     lastAssistantEl = null;
@@ -9440,14 +9668,32 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     thinkingDirty = false;
     pendingThinkCreates = [];
     pendingSegSeq = null;
+  }
+
+  function resetView(): void {
+    // **视图换代 ⇒ 所有在途快照作废**（推进 `snapshotSeq`）：`resetView` 之后到达的回包属于
+    // 上一代视图，落地时会把旧会话的 messages 重放进刚清空的渲染面。新建会话是这条交错最容易
+    // 命中的入口——它成功之后只有 `resetView`，相位是 idle → idle（`phaseEpoch` 不推进），
+    // 于是旧回包能同时通过 seq 与 epoch 两道守卫（实现评审 r1 P1 的现场）。相位世代只覆盖
+    // 「同一视图里开始了新一轮」，会话换代由这里作废（切 vault / cron 切屏 / 恢复会话同理）。
+    snapshotSeq += 1;
+    clearTranscriptSurface();
+    // 引用失败的输入区状态行属于上一段输入（M662）：换会话即清（卡片上的留痕随卡片一起消失）。
+    applyQuoteFailureNotice(null);
+    // M644：视图复位 = 换了一个会话，跟随态回 following、清未读、写底（快照 / 恢复路径随后
+    // 各自再「强制」一次，白名单动作不靠这一句兜底）。
+    follow.reset();
     // 会话名随会话作废：未发消息前显示「新会话」，首条消息后再按口径重算。标题也随会话
     // 作废（新会话不继承；快照 / 恢复路径随后会灌入各自的标题）。
     firstUserText = null;
     sessionTitle = null;
     applySessionName();
-    // 相位一并经 finished 收口回 idle：旧会话那一轮的 done 事件可能永远到不了这里（切 vault
-    //  后被过滤，见 handleEvent）——不复位的话新会话的发送钮会被一个等不到的「处理中」锁死。
-    applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
+    // 视图复位：相位收口回 idle、未读清空，且 **MUST NOT** 就此判定「没有在途」——旧会话
+    // 那一轮的终态可能永远到不了这里（切 vault 后被 handleEvent 的 vault 过滤丢掉），而真正的
+    // 在途真相只有一个：随后那次**进入快照**的 `in_flight`（`applyEnterSnapshot` 回填相位与
+    // 轮次闸门）。对账快照（`content` 档位）不回填相位；「终态已发、尚未释放」的窗口由后端
+    // 报不在途（`Finishing`），前端不必也不许用本地终态记忆去猜。
+    dispatchActivity({ type: "vault_changed" });
     stageWaiting = true;
     // ctx% 读数归无（新 vault 会话的快照会随后带到它自己的读数）。M443：cache 侧五个读数
     // 一并不留——新逻辑会话的累计归零，旧值残留会让控制行/气泡显示上一会话的数。M526：
@@ -9538,7 +9784,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   // ── 发送与新会话 ─────────────────────────────────────────────────────────
   function send(): void {
-    if (sendPhase !== "idle") return;
+    if (activity.phase !== "idle") return;
     normalize();
     const blocks = readBlocksFromDom();
     // 重新发送即解除上一回能力闸的错误态（若再被拒，catch 里按名重新标出）。
@@ -9588,8 +9834,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 相位入 running（两态发送钮切停止态）+ 阶段指示回「等待响应」——进度条与阶段行随相位显形；
     // 轮次闸门随 sent 打开（M374：终态后迟到的内容事件在此之前一律丢弃）。
     stageWaiting = true;
-    turnOpen = true;
-    applySendPhase(reduceSendPhase(sendPhase, { type: "sent" }));
+    dispatchActivity({ type: "sent" });
     // 无文档上下文时传空串（不是 null）：后端 harness_send 的 context_json 恒为 string，
     // parse_context 对空串返回默认块——传 null 会被参数反序列化拒掉（M398，bug「不打开任何
     // 文件时发送报 invalid type: null」）。
@@ -9602,8 +9847,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       })
       .catch(
         (e: unknown) => {
-          turnOpen = false;
-          applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
+          // `harness_busy` 的处置（tasks 2.4 / r2 P2-1）：拒绝**不是**在途证据——能发出并被拒
+          // 只可能落在后端「终态已发、尚未释放」的窗口（或本地假空闲）。因此只上错误行 + 读一次
+          // **相位**，相位由 `in_flight` 决定；MUST NOT 在这里直接改相位（删掉的 `busy_rejected`
+          // 不许以别的名字回来）。
+          //
+          // 读相位走 `fetchActivitySnapshot`（只读通道）而**不是**进入档 `fetchSnapshot`：这条
+          // 重取发生在一个**已有内容**的 transcript 上，事前没有 `resetView` / 清渲染面——进入档
+          // 的 `renderSnapshotMessages` 是逐条 append（不清空），会把历史消息再上屏一遍，末尾的
+          // `follow.jumpToBottom()` 还会把正在阅读的视口拽回底部（r1 P1-1 的现场）。
+          if (errorCodeOf(e) === "harness_busy") {
+            appendError(t("D347", { reason: errorMessage(e) }));
+            fetchActivitySnapshot();
+            return;
+          }
+          // 其余失败（线程起不来 / 参数被拒 / …）：这一轮没有起来，本地收口回 idle。
+          dispatchActivity({ type: "local_finish" });
           // 发送闸拒绝（harness_image_unsupported，design §6）：会话不推进——撤下刚沉淀的
           // 用户消息、composer 原样恢复（输入区内容保留）、toast 人话错误、图片卡片标错误态
           // （前端不另立能力判定，只认后端这一个 code）。
@@ -9639,7 +9898,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 发送钮的点击路由：空闲相位（= 钮面「发送」）走 send()；running 相位（= 钮面「停止」）
   // 的停止路径在控制行段落（applySendPhase 附近），同一颗钮两态两个处理器按相位分派。
   sendButton.addEventListener("click", () => {
-    if (sendPhase === "idle") send();
+    if (activity.phase === "idle") send();
   });
   // Enter 发送 / ⇧Enter 换行（D328 占位同款口径）；IME 组合期不接管（Enter 在组合期是
   // 「确认候选」）。双防线：浏览器自报的 event.isComposing（Chromium 可靠）+ 自跟踪状态机
@@ -9909,30 +10168,34 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 与发送相位立刻置为运行中。运行终态（done）后按后端快照重载一次——专用会话（dedicated）
   // 的历史因此回到面板，面板内容最终仍以后端为单一真源。
   //
-  // **忙判定先行**（M612 r1 P2-1）：交互轮次在途（sendPhase 非 idle）时后端 `acquire_turn`
+  // **忙判定先行**（M612 r1 P2-1）：交互轮次在途（活动相位非 idle）时后端 `acquire_turn`
   // 必然 busy 拒单，乐观切屏注定被回滚；而 `resetView` 会把握手轮次的流式泡清空、`turnOpen`
   // 关掉，随后 catch 里的快照回滚又只取到中段——在途轮次后续分片被 M374 闸门当迟到产出丢弃。
   // 这种点击什么都不该动渲染面：返回 false，装配层据此跳过失败回滚。
   function beginCronRun(prompt: string): boolean {
-    if (sendPhase !== "idle") return false;
-    // 在途快照作废（seq 与 fetchSnapshot 同一条纪律）：切 vault 那一次快照可能还没回来，
-    // 迟到的响应会把它的消息追加进刚清空的渲染面（与乐观上屏的 prompt 重复 / 串台）。
-    snapshotSeq += 1;
+    if (activity.phase !== "idle") return false;
+    // 在途快照随视图换代一并作废（`resetView` 推进 `snapshotSeq`，单一入口）：切 vault 那一次
+    // 快照可能还没回来，迟到的响应会把它的消息追加进刚清空的渲染面（与乐观上屏的 prompt
+    // 重复 / 串台）。
     resetView();
     const blocks: ComposerBlock[] = [{ kind: "paragraph", text: prompt }];
     appendUserMessage(blocks, prompt, Date.now());
     firstUserText = firstUserTextOf(blocks);
     applySessionName();
     stageWaiting = true;
-    turnOpen = true;
-    applySendPhase(reduceSendPhase(sendPhase, { type: "sent" }));
+    // 点击发起的 cron 运行走交互槽位：按普通轮次呈现（spec「点击发起的 cron 运行按普通轮次」）。
+    dispatchActivity({ type: "sent" });
     cronRunAdopted = true;
     return true;
   }
 
-  /** 按后端当前会话重取快照并重建渲染面（M612）：cron 点击运行发起失败时的回滚通道——
+  /** 按后端当前会话重取快照并重建渲染面（M612）：cron 点击运行**发起失败**时的回滚通道——
    *  `beginCronRun` 的乐观切屏必须撤回，面板回到后端真实会话，不留下一条没发出去的 prompt。
-   *  不切 vault（与 `vaultChanged` 的区别：无 vault 作用域变化，只换渲染面）。 */
+   *  不切 vault（与 `vaultChanged` 的区别：无 vault 作用域变化，只换渲染面）。
+   *
+   *  **只用于回滚**：它经 `resetView` 结算（`vault_changed` 清相位与未读），而运行**正常结束**
+   *  时要保留该轮产生的未读——那条路径走只内容档位（`handleEvent` 的 `done` 分支直接
+   *  `fetchSnapshot("content")`，r1 P1-2）。 */
   function reloadSession(): void {
     cronRunAdopted = false;
     resetView();
@@ -10145,6 +10408,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 恢复出的会话若带子运行分桶（M589 的恢复重算），任务区的用量区要跟着出来——
         // 恢复命令只回放消息，不含读数快照（M590 真机场景 192：恢复后用量区整块缺席）。
         refreshTaskState();
+        // 相位（spec「恢复会话」也是进入时点之一）：`resetView` 只做视图复位，真相取自
+        // 快照的 `in_flight`——协议上恢复会被在途轮次挡住（`harness_busy`），所以这里通常
+        // 读回空闲；但读口存在，将来放宽协议时不必再改这条路径。
+        fetchActivitySnapshot();
       })
       .catch((e: unknown) => appendError(t("D348", { message: errorText(e) })));
   }
@@ -10210,6 +10477,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       // `deps.togglePane`（账本收 pane + 焦点归还），就地处理器与兜底都调这一条。
       registerEscapeLayer("harness-panel", closeHarnessPanel);
       refreshChip();
+      // 打开面板 = 已读清算（spec「重新打开面板 SHALL 清除未读」——已读的唯一入口）。
+      // 相位不动：收起 ≠ 复位，正是「收起期间活动仍在」的另一半。
+      dispatchActivity({ type: "opened" });
       // M644：重新打开面板 = 白名单动作（D5）——强制回底并恢复跟随。同时覆盖「隐藏期间
       // 布局读数不可信」的现场（元素摘下时 clientHeight 为 0）；挂载后的真实尺寸由
       // ResizeObserver 再补一次贴底。

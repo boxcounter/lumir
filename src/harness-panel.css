@@ -62,6 +62,68 @@
   color: var(--accent-fill-text);
 }
 
+/* ── 活动状态点（change add-harness-activity-presence D1）─────────────────────────
+   toggle 钮右下角的一枚 6×6 点，表达「收起期间这一轮还在跑 / 有未读结果」。
+   - **零漂移**：节点常驻 DOM，空闲态 `display:none` 不产生任何上屏像素——既有整页基线
+     因此不更新（design §2）；三态的「在场」由结构断言守卫，不指望整页像素（6px 远小于
+     1200×800×0.001 的容差预算）。
+   - **形状载语义，颜色只做增强**：在途 = 空心环、未读回复 = 实心点、未读失败 = 实心点 + 外环
+     ——eink 下三色俱为 #000，形状仍是唯一判据（WCAG 1.4.1，spec「不单靠颜色」）。
+   - **无动画**：发送钮已有脉冲环，标题栏再动是阅读时的持续噪声，且省掉
+     `prefers-reduced-motion` 的分支（design §2 的三条理由）。
+   定位：点锚在钮内右下角（距右缘 / 下缘各 `--sp-2` = 4px），不越出钮盒、不与 14px 火花
+   图标重叠——取 token 而非写死 5px：间距档最近的两档是 4px / 6px，4px 让点更贴角、离图标更远。 */
+.lumir-hp-toggle {
+  position: relative;
+}
+.lumir-hp-toggle-dot {
+  position: absolute;
+  right: var(--sp-2);
+  bottom: var(--sp-2);
+  width: var(--sp-3);
+  height: var(--sp-3);
+  border-radius: var(--r-pill);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+/* 空闲：不产生任何上屏像素（这一条就是「零漂移」的机制本身）。 */
+.lumir-hp-toggle[data-activity="idle"] .lumir-hp-toggle-dot,
+.lumir-hp-toggle:not([data-activity]) .lumir-hp-toggle-dot {
+  display: none;
+}
+/* 在途：空心环（1.5px 描边，与钮面同色——弱化，不抢阅读）。 */
+.lumir-hp-toggle[data-activity="inflight"] .lumir-hp-toggle-dot {
+  border: 1.5px solid currentColor;
+}
+/* 未读回复：实心圆点，强调色。 */
+.lumir-hp-toggle[data-activity="reply"] .lumir-hp-toggle-dot {
+  background: var(--accent);
+}
+/* 未读失败：实心圆点 + 1px 外环（外环用 offset 表达，不撑大钮盒）。 */
+.lumir-hp-toggle[data-activity="failure"] .lumir-hp-toggle-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger);
+}
+/* eink：--accent / --danger 恒 #000，三态靠形状区分（上面三条形状条款已足够），这里只把
+   「在途」的描边提实——e-ink 的中间调靠抖动，6px 面积上的抖动会糊（design §8）。 */
+:root[data-theme="eink"] .lumir-hp-toggle[data-activity="inflight"] .lumir-hp-toggle-dot {
+  border-color: var(--text);
+}
+
+/* 状态文本的视觉隐藏（`aria-describedby` 的目标）：仍是可读文本，只是不占版面——
+   `display:none` 会让读屏取不到，因此用 clip 的常规手法。 */
+.lumir-hp-toggle-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ── 面板本体：pane 内容件（HP1，change move-harness-to-pane-chat-frame）——装配层在
    harness pane 分栏时把面板挂进该 pane 的挂载元素，宽高分层由挂载槽（.editor-pane）管，
    这里只吃满；与文档 pane 的分隔由 pane 分隔条承担（左缘 hairline 保留）。dock 列的

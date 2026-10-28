@@ -854,6 +854,9 @@
 | D867 | 作者 | 作者 | 保存未生效：需要修正以下问题 | Nothing was saved: fix these first | 保存被后端拒绝时通用错误横幅的标题（`harness.provider` / 命名目标 / 文件级这些没有专属控件的字段错误在这里逐条列出，r1 P2-4）。消费点 src/settings-panel.ts 的 renderBanner。 |
 | D868 | 作者 | 作者 | 读取设置失败，保存已禁用 | Couldn't load settings; saving is disabled | `settings_get` 失败时的状态行（快照为空，不能按「加载中」显示）。消费点 src/settings-panel.ts 的 renderFooter。 |
 | D869 | 作者 | 作者 | 设置面读取失败 | Couldn't load the settings surface | `settings_get` 失败时顶部横幅的标题，正文是真实错误（r1 P2-4：不得停在 loading 文案）。消费点 src/settings-panel.ts 的 renderBanner。 |
+| D870 | 作者 | 作者 | 处理中 | Working | 标题栏 harness toggle 钮的活动状态描述之一（change add-harness-activity-presence 任务 3.6）：面板收起时那一轮仍在跑。经 `aria-describedby` 指向视觉隐藏的状态文本，6px 状态点在 AX 里不可见、三态必须同时可读。空闲态该文本为空串。消费点 src/harness-panel.ts 的 applyActivityBadge。 |
+| D871 | 作者 | 作者 | 有新的回复 | New reply | 同上（未读档一）：面板不在屏幕上期间正常结束了一轮。形状 = 实心圆点，颜色只做增强。消费点 src/harness-panel.ts 的 applyActivityBadge。 |
+| D872 | 作者 | 作者 | 有失败结果 | Failed result | 同上（未读档二）：面板不在屏幕上期间收到错误终态。形状 = 实心圆点 + 外环，与「有新的回复」不单靠颜色可辨；用户主动停止（`aborted`）不产生本档。消费点 src/harness-panel.ts 的 applyActivityBadge。 |
 ## 编号沿革
 
 **编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D694**（change improve-keybindings-lookup-oct24 的键位速查 D593–D694：71 条命令的人类标签 + 面板 UI（标题 / 查询 / 捕获 / 计数 / 作用域 / 条件 / 空态 / 详情 / 提示），接 M700 的 D592 末位。M700 的 quick-open 结果区与 Enter 同源 D589–D592：直接打开行（vault 内 / vault 外只读）/ 落点行标记 / 折叠多命中的两段式提示（接 D588 末位；change quick-open-file-oct23 的「结果区与 Enter 的判决同源」）。M686 的引用路径解码失败文案 D588：`attachment_decode_failed` 在引用语境读「无法解码这张图片」，粘贴语境仍读 D438（接 D587 末位；change fix-quote-decode-error-copy-oct24）。M662 的 quote 链路一致性修复 D585–D587：引用路径格式不支持的措辞 / 未引用留痕 / 引用卡片的含图派生读数（接 D584 末位）。change quick-open-file-oct23 的 M655 文案 D570–D583：浮层读屏名 / 占位 / 用法行 / 找不到 / 目录 / 命中总数 / 超上限 / modeline 只读段 / 标签的只读图标与读屏名 / 外部不支持文件类 / 打开失败 / 未装载 vault + ⌘P 绑定来由；r1 评审补齐 D584 = 外部只读会话的「编辑尝试一次性提示」（同上裁决 ③ 的兑现，接 D583 末位）。change harness-permission-rules-oct23 的权限规则文案 D564–D569：持久规则次级动作 / 带粒度的会话记忆 / 浮层规则段标题 / 删除钮读屏名 + 两条写回错误兜底（接 M646 的 D563 末位）。M644 的 harness「回到底部」浮钮两条可访问名 D555–D556；M646 的 vault 列表移除文案 D557–D563：行尾移除钮读屏名 / 行内确认句 / 确认钮 / 已移除提示 / 撤销钮 + 后端两条错误的人话（接 M644 的 D556 末位）。M635 的通知送不出去文案 D551–D554：D551–D552 是注册回执的两档成因，D553–D554 是投递连续失败 toast 的两档；D548–D550 是 change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
@@ -1004,6 +1007,7 @@
 - **D698–D865** — `src/settings-panel.ts`（设置面板：骨架 / provider 增删改 / 删除确认 / 高级区 / 自动化四行 / 内联命名目标与一行生效说明 / 底部状态机与横幅）+ `src/harness-panel.ts`（D859–D862：chip 空态与「去设置」）+ `src/command-meta.ts` / `src/keys.ts`（D864–D865：`app.settings-open` 的标签与键位来由）。同一批把 D402–D404 的措辞从「去 config.json」改为「去设置面板」并补 vision 指引。
 - **D462** — `src/copy-data.ts` `ERROR_COPY`（`window_background_failed`，M525 窗口底色跟随主题）；失败只走 console 降级、永不上屏，条目只满足 error-text / deck 双机械门禁
 - **D463–D466** — `src/harness-panel.ts`（`ctxPopRows` / `usageReadings`，M526 ctx/cache 气泡 tokens 读数 + 无上限降级）+ `src/copy-data.ts`；Rust 侧 `UsageSnapshot` 补绝对值字段（`input_tokens` / `cached_tokens[_session]` / `context_window`）。M533 起 D463 / D464 是气泡里仅存的 tokens 行，D465 改形为只出百分比，D466 退场
+- **D870–D872** — `src/harness-panel.ts` 的 `applyActivityBadge`（change add-harness-activity-presence）：标题栏 harness toggle 钮三态的可读状态文本「处理中 / 有新的回复 / 有失败结果」，经 `aria-describedby` 指向视觉隐藏的 `aria-live="polite"` 文本；空闲态为空串，不占条目。状态点本身是纯样式（`src/harness-panel.css` 的 `.lumir-hp-toggle-dot`，形状承载语义），不上屏文案
 
 **不进编号的条目与其缘由**：
 

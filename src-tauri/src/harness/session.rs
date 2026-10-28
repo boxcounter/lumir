@@ -376,6 +376,7 @@ impl StateSnapshot {
             auto_wake: AutoWakeSnapshot::default(),
             subrun_usage: BTreeMap::new(),
             warn_ctx_pct,
+            in_flight: false,
             thinking: ThinkingState {
                 level: ThinkingEffort::default(),
                 supported: thinking_supported,
@@ -405,6 +406,11 @@ pub struct StateSnapshot {
     pub vault: String,
     pub messages: Vec<PanelMessage>,
     pub usage: UsageSnapshot,
+    /// 呈现读：当前 vault 的会话是否**真的**有轮次在跑（change add-harness-activity-presence
+    /// §4）。「终态已发、尚未释放」窗口里为 **false**——面板据此就地收口，MUST NOT 复活。
+    /// 键恒在场（空态同形 `false`）；协议位 `busy` **不进快照**（它与界面状态在这个窗口里
+    /// 恰好相反，同名会把下一位读者引向同一个错误）。
+    pub in_flight: bool,
     /// 当前挂起的批准请求，按 ask 时间排序（change add-harness-subagents design §8.3：
     /// 并行时多个子运行可以同时等批准）。空表即「无待批」——单槽 `pending_approval`
     /// 字段已随本次迁移删除（快照字段一次迁净，不留旧键）。
@@ -532,6 +538,27 @@ pub struct StopReason {
     pub message: String,
 }
 
+/// 会话级轮次状态（change add-harness-activity-presence §4）。
+///
+/// 它把今天的一位 `busy` 拆成「轮次在跑」与「终态已发、会话尚未释放」两档——前端靠本地
+/// 记忆分不出这两者（design §4 的两条反例：终态在离开期间被事件过滤、终态后释放前的发送
+/// 被拒），所以真值只能在这里。
+///
+/// 两个读口由**同一个状态**派生，MUST NOT 各存一份：
+/// - 协议读 [`Session::is_busy`]（`phase != Idle`）：语义逐字等于升级前的 `busy`，
+///   六个既有读点（`acquire_turn` / `new_session` / `request_abort` / `session_busy` /
+///   子运行 `parent_busy` 与唤醒合并 / 标题任务）不受影响；
+/// - 呈现读 [`Session::in_flight`]（仅 `Running`）：进 `harness_state` 快照的 `in_flight`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnPhase {
+    /// 没有轮次。
+    Idle,
+    /// 轮次在跑、终态未发。
+    Running,
+    /// 终态已发、`release_turn` 尚未执行：协议上仍占用，界面已不在途。
+    Finishing,
+}
+
 /// 一个 vault 的会话。
 pub struct Session {
     root: PathBuf,
@@ -546,7 +573,9 @@ pub struct Session {
     usage: UsageSnapshot,
     /// 本逻辑会话的缓存计数累计（M443；随 [`Session::rotate`] 清零，见 [`CacheTotals`]）。
     cache_totals: CacheTotals,
-    busy: bool,
+    /// 会话级轮次状态（change add-harness-activity-presence §4）：协议读 [`Session::is_busy`]
+    /// 与呈现读 [`Session::in_flight`] 由它**同一份**派生，MUST NOT 各存一份。
+    turn_phase: TurnPhase,
     /// 挂起的批准请求列表（change add-harness-subagents design §8.3：父会话自己的调用与
     /// 子运行透传的请求共用一个列表，按 ask 时间排序——并行时可以有多个同时在等）。
     pending: Vec<ApprovalRequest>,
@@ -626,7 +655,7 @@ impl Session {
             panel: Vec::new(),
             usage: UsageSnapshot::default(),
             cache_totals: CacheTotals::default(),
-            busy: false,
+            turn_phase: TurnPhase::Idle,
             pending: Vec::new(),
             abort_requested: false,
             stop_reason: None,
@@ -754,12 +783,46 @@ impl Session {
         self.title_cursor = cursor;
     }
 
+    /// 协议读（`is_busy`）：轮次占用会话即真——`Running` 与 `Finishing` 都为真。
+    ///
+    /// 定义是 `phase != Idle`，因此与升级前的一位 `busy` **语义逐字相同**；
+    /// 六个既有读点（在途拒绝发送 / 新会话、请求停止、会话忙探测、子运行的
+    /// `parent_busy` 与唤醒合并、标题任务）一律不改。
     pub fn is_busy(&self) -> bool {
-        self.busy
+        self.turn_phase != TurnPhase::Idle
     }
 
-    pub fn set_busy(&mut self, busy: bool) {
-        self.busy = busy;
+    /// 呈现读（`in_flight`）：只有「轮次在跑、终态未发」为真。
+    ///
+    /// 「终态已发、尚未释放」窗口（`Finishing`）在这里为**假**——界面据它就地收口，
+    /// 不必猜终态事件是否还在路上（design §4）。
+    pub fn in_flight(&self) -> bool {
+        self.turn_phase == TurnPhase::Running
+    }
+
+    /// 轮次状态（测试与诊断用；协议读者只接触上面两个读口）。
+    pub fn turn_phase(&self) -> TurnPhase {
+        self.turn_phase
+    }
+
+    /// 开新一轮（`acquire_turn` 在忙判定通过之后调用）：`Idle → Running`。
+    pub fn begin_turn(&mut self) {
+        self.turn_phase = TurnPhase::Running;
+    }
+
+    /// 终态已发（终态发射 helper 在发事件**之前**调用）：`Running → Finishing`。
+    ///
+    /// 幂等：已经是 `Finishing` / `Idle` 时不动——终态路径可能重复收口（评审 r1 的
+    /// 「终态之后再来终态不残留」），但它绝不能把一个 `Idle` 会话拉回占用态。
+    pub fn finish_turn(&mut self) {
+        if self.turn_phase == TurnPhase::Running {
+            self.turn_phase = TurnPhase::Finishing;
+        }
+    }
+
+    /// 释放会话（`release_turn`）：任意状态 → `Idle`（保持该函数今天的幂等语义）。
+    pub fn end_turn(&mut self) {
+        self.turn_phase = TurnPhase::Idle;
     }
 
     pub fn input(&self) -> &[serde_json::Value] {
@@ -852,6 +915,7 @@ impl Session {
                 .unwrap_or_default(),
             subrun_usage: self.subrun_usage.clone(),
             warn_ctx_pct,
+            in_flight: self.in_flight(),
             thinking: ThinkingState {
                 level: self.thinking_effort,
                 supported: thinking_supported,
@@ -1647,5 +1711,102 @@ mod tests {
         assert_eq!(bucket.writes, 3);
         assert_eq!(bucket.samples, 2);
         assert_eq!(bucket.segments, 2);
+    }
+
+    // ── 轮次状态机（change add-harness-activity-presence tasks 1.1 / 1.4）───────────────
+    //
+    // 两个读口由**同一个** `TurnPhase` 派生：协议读 `is_busy()`（`phase != Idle`，六个既有
+    // 读点的语义逐字不变）与呈现读 `in_flight()`（仅 `Running`）。三条用例分别对「两读各存
+    // 一份」「Finishing 被当成 Idle」「Finishing 被当成在途」三种错误实现有区分度。
+
+    /// 三态转移：`Idle → Running → Finishing → Idle`，且每态两个读口的取值如下表。
+    ///
+    /// 区分度：把 `in_flight()` 实现成 `is_busy()` 的别名（不区分 Finishing）时中间一行必红；
+    /// 把 `is_busy()` 实现成 `in_flight()` 的别名时第 3 行必红——那正是 r2 P2-1 的现场
+    /// （终态后、释放前的发送会被误判为可发送）。
+    #[test]
+    fn turn_phase_derives_both_reads() {
+        let mut session = test_session();
+        assert_eq!(session.turn_phase(), TurnPhase::Idle);
+        assert!(!session.is_busy());
+        assert!(!session.in_flight());
+
+        session.begin_turn();
+        assert_eq!(session.turn_phase(), TurnPhase::Running);
+        assert!(session.is_busy(), "Running：协议读为占用");
+        assert!(session.in_flight(), "Running：呈现读为在途");
+
+        session.finish_turn();
+        assert_eq!(session.turn_phase(), TurnPhase::Finishing);
+        assert!(
+            session.is_busy(),
+            "Finishing：协议读仍为占用（在途拒绝语义不变）"
+        );
+        assert!(
+            !session.in_flight(),
+            "Finishing：呈现读已不在途——窗口由后端一等状态承担"
+        );
+
+        session.end_turn();
+        assert_eq!(session.turn_phase(), TurnPhase::Idle);
+        assert!(!session.is_busy());
+        assert!(!session.in_flight());
+    }
+
+    /// 幂等与不复活：`finish_turn` 只在 `Running` 上前移（重复终态不残留、也不把 Idle 拉回
+    /// 占用）；`end_turn` 任意态都回 Idle（`release_turn` 今天的幂等语义）。
+    #[test]
+    fn turn_phase_transitions_are_idempotent() {
+        let mut session = test_session();
+        // 终态收口之后的重复终态：停在 Finishing，不回落也不二次推进。
+        session.begin_turn();
+        session.finish_turn();
+        session.finish_turn();
+        assert_eq!(session.turn_phase(), TurnPhase::Finishing);
+        // Idle 上的终态收口（事件缺口 / 迟到终态）不得把会话拉回占用态。
+        session.end_turn();
+        session.finish_turn();
+        assert_eq!(
+            session.turn_phase(),
+            TurnPhase::Idle,
+            "Idle + 终态不得变占用"
+        );
+        // release 幂等：任意态都回 Idle。
+        session.begin_turn();
+        session.end_turn();
+        session.end_turn();
+        assert!(!session.is_busy());
+    }
+
+    /// 快照的呈现读：三态各自取值，键恒在场（面板读的是 JSON 键，不是 Rust 字段）。
+    ///
+    /// 区分度：把 `in_flight` 写成 `busy` 的别名时中间一行必红；空态快照漏键时最后一段必红
+    /// （面板对缺键的宽容读法会退化成「事件驱动的两态」，即本次改动等于没生效）。
+    #[test]
+    fn snapshot_reports_in_flight_per_phase() {
+        let mut session = test_session();
+        let idle = serde_json::to_value(session.snapshot(85.0, true)).unwrap();
+        assert_eq!(idle["in_flight"], serde_json::json!(false), "Idle：不在途");
+        assert!(idle.get("busy").is_none(), "协议位 MUST NOT 进快照：{idle}");
+
+        session.begin_turn();
+        let running = serde_json::to_value(session.snapshot(85.0, true)).unwrap();
+        assert_eq!(
+            running["in_flight"],
+            serde_json::json!(true),
+            "Running：在途"
+        );
+
+        session.finish_turn();
+        let finishing = serde_json::to_value(session.snapshot(85.0, true)).unwrap();
+        assert_eq!(
+            finishing["in_flight"],
+            serde_json::json!(false),
+            "Finishing：终态已发、尚未释放，呈现读为不在途"
+        );
+
+        // 空态快照同形：键恒在场且为 false（面板据此收口，不必区分「旧后端缺键」与「空会话」）。
+        let empty = serde_json::to_value(StateSnapshot::empty("vault-a", 85.0, true)).unwrap();
+        assert_eq!(empty["in_flight"], serde_json::json!(false));
     }
 }

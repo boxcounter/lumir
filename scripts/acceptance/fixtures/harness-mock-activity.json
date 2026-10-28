@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "ACT-A 第一片。ACT-B 第二片。ACT-C 第三片。",
+      "chunks": [
+        "ACT-A 第一片。",
+        "ACT-B 第二片。",
+        "ACT-C 第三片。"
+      ],
+      "chunk_delay_ms": 6000,
+      "usage": {
+        "input_tokens": 1200,
+        "cached_tokens": 300,
+        "output_tokens": 30
+      }
+    },
+    {
+      "error": {
+        "code": "llm_upstream",
+        "message": "ACT-FAIL 上游失败"
+      }
+    },
+    {
+      "text": "ACT-STOP-A 第一片。ACT-STOP-B 第二片。",
+      "chunks": [
+        "ACT-STOP-A 第一片。",
+        "ACT-STOP-B 第二片。"
+      ],
+      "chunk_delay_ms": 6000
+    }
+  ]
+}
