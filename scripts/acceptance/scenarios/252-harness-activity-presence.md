@@ -187,7 +187,9 @@ steps:
   - name: 等中断收口
     do: waitFor
     waitFor:
-      has: ["已停止"]
+      # 「已停止」是 transcript 里的标注——收起时面板已摘出 DOM，AX 里读不到它（旧写法在这里
+      # 恒红，属于「判一个不在场的节点」）。收起态的收口判据是承载退场：`处理中` 消失即
+      # aborted 终态已处理；标注本身由下一步打开面板后判。
       not: ["处理中"]
     timeoutMs: 30000
     expect:
