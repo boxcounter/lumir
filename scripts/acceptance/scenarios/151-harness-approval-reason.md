@@ -82,8 +82,19 @@ steps:
         ax: { not: "要运行这条命令吗？" }
       - label: 拒绝对话的细分状态与错误码在场
         ax: { has: "denied · permission_denied" }
-      - label: JSONL 记下 deny 拒绝（规则原文随 function_call_output 回送模型）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"call_id":"call_deny1".*命中 deny 规则 cli\(npm run deploy\*\).*$/' }
+      # 工具结果在留存里是**字符串化 JSON**（M783 的口径见 scripts/acceptance/README.md 的 `file` 行）：
+      # 按解析后的字段判（`jsonlOutput`），不写字节层的转义。判据落在**同一条结果对象**上——旧的
+      # `/^.*"call_id":"call_deny1".*命中 deny 规则 ….*$/` 只证明这些片段在同一行里出现过，不证明
+      # 规则原文是这条 deploy 调用自己的结果（同行可能混着别的项）。
+      - label: JSONL 里那条 deploy 的 cli_run 结果整条是 deny 拒绝（ok=false + permission_denied + 规则原文 + 主体）
+        file:
+          path: "env:harness/sessions/*/*.jsonl"
+          jsonlOutput:
+            tool: cli_run
+            has:
+              ok: false
+              code: permission_denied
+              message: "命中 deny 规则 cli(npm run deploy*)：权限规则拒绝了 cli_run（npm run deploy）"
       - label: 两条被拒的 cli_run 都落在「已拒绝」终态（拒绝 = 未执行；正文里没有它们的 stdout）
         ax: { count: { pattern: "/cli_run .* 已拒绝/", exact: 2 } }
       - shot: 03-deny规则原文
@@ -132,6 +143,14 @@ M459（change add-approval-decision-reason）：Alex 2026-10-12 在 `vault_write
   必须到达（若 C 段真挂起在闸上，那句答复永远不来 ⇒ `waitFor` 超时判 FAIL）。
 - **两条依据句的互斥断言**：A 段同时断言「当前为 保险库写入 档」**不在** AX 里——防「依据行
   取错层级 / 两段文案串场」这类静默错挂（只断言目标句在场会漏掉串场）。
+- **JSONL 侧的 deny 判据按解析后的字段判（M784）**：工具结果在留存里是字符串化 JSON
+  （`function_call_output.output`，两层编码，见 `scripts/acceptance/README.md` 的 `file` 行），断言走
+  `file.jsonlOutput`、限定 `tool: cli_run`，要求**同一条结果对象**同时满足
+  `{ok: false, code: permission_denied, message: 命中 deny 规则 cli(npm run deploy*)…（npm run deploy）}`
+  ——错误码、命中的规则原文、主体串一起钉。旧的 `/^.*"call_id":"call_deny1".*命中 deny 规则 ….*$/`
+  只证明这些片段在同一行里出现过（`call_id` 来自 `function_call` 项、规则原文来自 `output` 的内层
+  字符串），不证明规则原文是这条 deploy 调用自己的结果；`message` 逐字相等意味着 `denied_message`
+  的措辞改动会让本场景判红——那是模型可见的契约文案，红是提醒同步场景，不是产品回归。
 - **规则原文的位置与长度口径**：deny 文案把 `命中 deny 规则 {rule}` 放在**句首（领读）**，其后才是
   「权限规则拒绝了 {tool}（{subject}）」——工具行是**单行省略号**行（截断只落这一格），句末的规则名在
   窄面板下会被整段吞掉（M459 实测 482px 下不可见），领读才保证规则原文落在可见头部（口径修正的来历见

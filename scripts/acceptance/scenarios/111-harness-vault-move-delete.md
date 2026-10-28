@@ -39,11 +39,31 @@ steps:
     expect:
       - label: cli_run 没执行而是被改道（错误码 cli_redirected_to_vault_tool 是改道的固定标记）
         ax: { has: "/cli_redirected_to_vault_tool/" }
-      - label: JSONL 记下固定标记载荷（模型据此改工具的唯一线索）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: "/LUMIR_REDIRECT_VAULT_TOOL/" }
-      - label: 改道建议落到 vault_move（payload 的 suggested_tool 字段；JSONL 里内层载荷的引号被
-          转义（\\"），故用 .{0,12} 跨过转义再匹配值）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '/suggested_tool.{0,12}vault_move/' }
+      # 工具结果在留存里是**字符串化 JSON**（M783 的口径见 scripts/acceptance/README.md 的 `file` 行）：
+      # 按解析后的字段判（`jsonlOutput`），不写字节层的转义。改道的载荷（含 `suggested_tool`）在
+      # ToolOutput 里是**嵌在 `message` 字符串中的 JSON 文本**、不是嵌套对象，而 `jsonlOutput` 的字段
+      # 判据是深度相等、不下探字符串 ⇒ 载荷与固定标记整段逐字钉在 `message` 上（旧的
+      # `/suggested_tool.{0,12}vault_move/` 只证明这两个串在文件里相隔不超过 12 字符：既不限定工具、
+      # 也不限定同一条结果，`vault_movex` 之类同样命中）。**mv 的写目标是两侧各一个**
+      # （源 `harness-note.md` 被移除、目标 `harness-renamed.md` 被写入），故载荷的 `targets` 是两项、
+      # 人话说明里按 `、` 并列——M784 真机首跑按单目标写判红，读数即此。
+      - label: JSONL 里那条 cli_run 结果是改道（同一结果对象：ok=false + 改道错误码）
+        file:
+          path: "env:harness/sessions/*/*.jsonl"
+          jsonlOutput:
+            tool: cli_run
+            has: { ok: false, code: cli_redirected_to_vault_tool }
+      - label: 回送模型的那条 message 逐字 = 人话说明 + 固定标记 + 载荷（targets 两侧、suggested_tool = vault_move）
+        file:
+          path: "env:harness/sessions/*/*.jsonl"
+          jsonlOutput:
+            tool: cli_run
+            has:
+              message: |-
+                写目标在 vault 内（harness-note.md、harness-renamed.md），已被闸门改道：请改用 vault 工具完成 vault 内写操作，不要经 cli_run 写 vault。可用工具：vault_patch（局部替换）/ vault_create（新建，自动建父目录）/ vault_move（移动 / 重命名）/ vault_delete（删除）。建议改用 vault_move。
+                <<<LUMIR_REDIRECT_VAULT_TOOL>>>
+                {"reason":"write_target_in_vault","targets":["harness-note.md","harness-renamed.md"],"suggested_tool":"vault_move"}
+                <<<END_LUMIR_REDIRECT_VAULT_TOOL>>>
       - label: vault_move 执行成功——新路径在场
         file: { path: harness-renamed.md, exists: true }
       - label: vault_move 执行成功——原路径已不在
@@ -122,9 +142,21 @@ change `add-harness-permission-modes` 的验收面（tasks 6.7 的后两条）�
 - **改道的两条证据**：错误码进模型可见的工具结果（面板工具行的失败尾注含 `cli_redirected_to_vault_tool`）
   与 JSONL 留存的固定标记载荷（`LUMIR_REDIRECT_VAULT_TOOL` + `suggested_tool` 的值 = `vault_move`）。
   两者一起才能证明「改道发生了，且模型拿到了建议工具」。
-  **载荷的引号在 JSONL 里是转义形态**（ToolOutput 的 message 被套在 wire 的字符串里，内层 JSON 的
-  `"` 写作 `\"` ⇒ 文件字节是 `\\\"`），故断言用 `/suggested_tool.{0,12}vault_move/` 跨过转义匹配——
-  首跑用 `/"suggested_tool":"vault_move"/` 判红，是断言口径错，不是产品缺陷。
+  **JSONL 侧按解析后的字段判（M784）**：工具结果在留存里是字符串化 JSON（`function_call_output.output`，
+  两层编码，见 `scripts/acceptance/README.md` 的 `file` 行），字节层的引号是 `\\\"`；断言走
+  `file.jsonlOutput`、限定 `tool: cli_run`，落在**同一条结果对象**上（`ok=false` + 改道错误码）。
+  **载荷够不到字段层**：`jsonlOutput` 只解析两层——`suggested_tool` 的 JSON 是**嵌在 `message` 字符串里
+  的文本**（`Redirect::message` 把人话说明 + 固定标记 + 载荷拼成一个字符串），深度相等的字段判据不下探
+  字符串 ⇒ 判据改为**逐字钉整条 `message`**（人话说明 + 两个固定标记 + 载荷，`suggested_tool` / `targets`
+  / `reason` 三个字段值随之一并钉住），比旧的 `/suggested_tool.{0,12}vault_move/` 强：旧写法只证明这两
+  个串在文件里相隔不超过 12 字符，既不限定工具、也不限定同一条结果，`vault_movex` 之类同样命中。
+  代价是 `Redirect::message` 的措辞改动会让本场景判红——那是**模型可见的契约文案**，红是提醒同步场景，
+  不是产品回归。历史（不变）：首跑用 `/"suggested_tool":"vault_move"/` 判红是断言口径错（转义层），
+  不是产品缺陷。
+- **`mv` 的写目标是两侧各一个**：`write_targets` 把 `mv` 的源与目标都算作被写的一侧（源被移除、目标
+  被写入），故载荷是 `targets: ["harness-note.md", "harness-renamed.md"]`、人话说明里按 `、` 并列。
+  M784 迁移时先按「只有目标」写过期望值，真机首跑判红——红因是期望值写错了产品事实，不是产品缺陷
+  （同一形态的教训见下方「工具行断言」条的 M743 现场）。
 - **「mv 没有真的跑」的正观测是文件仍在**：`harness-renamed.md` 在场且含 `HNL-ALPHA`（vault_move
   是 rename 语义，内容逐字节随行）；`harness-note.md` 已不在（被移动而非复制）。
 - **工具行的断言全在行内时点取**（首跑实证的时序）：折叠（一行摘要钮）只在**同一块 ≥2 行**时发生
