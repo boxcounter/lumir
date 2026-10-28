@@ -49,8 +49,10 @@
 - [x] 2.3 进入快照按 `in_flight` 应用：`true` ⇒ running + `turnOpen` 置真 + 置「中途接管」标志；
       `false` ⇒ idle + 关 `turnOpen` + 清接管标志（**收口**——覆盖「离开期间终态被过滤」）；
       **删除终态记忆（原 `afterTerminal`）**：前端不保存任何轮次观察史
-- [x] 2.4 `harness_busy` 拒绝的处置（r2 P2-1）：只上错误行 + 触发一次进入快照并按 2.3 应用；
-      **MUST NOT 直接改相位**（删除原 `busy_rejected`），拒绝不得作为在途证据
+- [x] 2.4 `harness_busy` 拒绝的处置（r2 P2-1）：只上错误行 + 走**只读相位通道**
+      （`fetchActivitySnapshot`：按 `in_flight` 应用 2.3 的相位与闸门，**不重放内容**）；
+      **MUST NOT 直接改相位**（删除原 `busy_rejected`），拒绝不得作为在途证据，也 MUST NOT 用
+      进入档全量恢复（已有内容的 transcript 会重复上屏、并强制回底——实现评审 r1 P1-1）
 - [x] 2.5 终态置假之后 `turnOpen` MUST NOT 被任何快照或对账路径重开（接线层单一函数施加）
 - [x] 2.6 删除 / 改写 `resetView` 里「相位归 idle」那条口径的注释，写明「复位后由进入快照的 `in_flight`
       回填」的次序，并注明「对账快照不回填相位」「终态已发、尚未释放的窗口由后端报不在途」（注释不得继续
@@ -76,9 +78,12 @@
 ## 4. 在途轮次的重连续与终态对账
 
 - [x] 4.1 「中途接管」标志：由**进入快照**把相位拉到 running 时置位，`sent` / 终态后清除
-- [x] 4.2 终态到达且标志置位时按后端快照重建渲染面一次（手法同 `cronRunAdopted` 的 `reloadSession`），
-      且 MUST 走「只内容」档位：MUST NOT 读该快照的 `in_flight`、MUST NOT 改相位、MUST NOT 重开
-      `turnOpen`；重建 MUST NOT 违反「强制回底白名单」（终态不在白名单里，视口不因对账被拽回底部）
+- [x] 4.2 终态到达且标志置位时按后端快照重建渲染面一次（**只内容档位** `fetchSnapshot("content")`，
+      与 `cronRunAdopted` 的收尾合并成同一次请求）：MUST NOT 读该快照的 `in_flight`、MUST NOT 改相位、
+      MUST NOT 重开 `turnOpen`、MUST NOT 走会清未读的 `reloadSession`（实现评审 r1 P1-2）；
+      重建 MUST NOT 违反「强制回底白名单」（终态不在白名单里，视口不因对账被拽回底部）；
+      视图换代（`resetView`）MUST 作废在途快照（推进 `snapshotSeq`），否则新建会话会把旧会话消息
+      重放进新视图（实现评审 r1 P1）
 - [x] 4.3 `done` / `error` / `aborted` 三类终态一致处理（重建幂等；无新消息时是空动作）
 
 ## 5. 测试与验收场景（随实现同批）

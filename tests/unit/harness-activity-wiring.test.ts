@@ -268,6 +268,20 @@ test("attachTo(mount)：打开面板经状态机的 opened（已读清算的唯�
   assert.match(ATTACH, /dispatchActivity\(\{ type: "opened" \}\)/, "挂载即已读");
 });
 
+test("resetView：视图换代作废所有在途快照（推进 snapshotSeq）", () => {
+  // 新建会话 / 切 vault / cron 切屏都只经 resetView 换代。相位在 idle → idle 的复位里不推进
+  // epoch，所以在途的**只内容**回包能同时通过 seq 与 epoch 两道守卫，把旧会话消息重放进新视图
+  // （实现评审 r1 P1 的现场）。作废判据因此落在 resetView 里，且必须排在清渲染面之前。
+  const reset = functionBodyOf(PANEL_SOURCE, "resetView");
+  const bump = reset.search(/snapshotSeq \+= 1/);
+  assert.notEqual(bump, -1, "视图换代必须推进 snapshotSeq（作废在途快照）");
+  const clear = reset.search(/clearTranscriptSurface\(\)/);
+  assert.ok(bump < clear, "作废必须排在清渲染面之前（先清再作废，回包仍有窗口落到新视图）");
+  // 单一入口：beginCronRun 不再自己记一次（它走 resetView）。
+  const begin = functionBodyOf(PANEL_SOURCE, "beginCronRun");
+  assertNoMatch(begin, /snapshotSeq \+= 1/, "换代作废只有一个入口（resetView），别处不重复推进");
+});
+
 test("resetView：视图复位经 vault_changed（相位收口 + 未读清空），背面写明回填次序", () => {
   const reset = functionBodyOf(PANEL_SOURCE, "resetView");
   assert.match(reset, /dispatchActivity\(\{ type: "vault_changed" \}\)/, "复位必须经状态机");

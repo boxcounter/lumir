@@ -18,7 +18,9 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // r1 的两条 P1 各有行为回归（旧实现在这里必红，逐条实测过）：
 //   5. `harness_busy` 的重取**不得重放内容、不得拽走视口**（P1-1：进入档会把历史 append 第二遍）；
 //   6. 点击 cron 在收起期间完成时**未读必须存活**、内容只重建一次（P1-2：`reloadSession` 的
-//      `vault_changed` 会把刚产生的未读吃掉）。
+//      `vault_changed` 会把刚产生的未读吃掉）；
+//   7. 只内容回包**在途时视图换代**（新建同 vault 会话）⇒ 旧回包作废，新会话仍为空（复审 P1：
+//      相位 idle → idle 不推进 epoch，只有 `resetView` 推进 `snapshotSeq` 才拦得住）。
 
 const DOC = "# 活动在场笔记\n\n第一段，给面板一个可开的文档。\n";
 
@@ -87,6 +89,7 @@ async function stubHarnessActivity(page: Page, options: ActivityStubOptions = {}
         return null;
       }
       if (cmd === "harness_abort") return null;
+      if (cmd === "harness_new_session") return null;
       if (cmd === "harness_cron_run") {
         cronStarted = true;
         return null;
@@ -401,4 +404,42 @@ test("只内容档快照的世代守卫：回包落地不得清掉请求之后�
   await page.waitForTimeout(900);
   await expect(messages).toHaveCount(3);
   await expect(messages.filter({ hasText: "NEW-TURN 新的一轮" })).toHaveCount(1);
+});
+
+// ── 实现评审 r1 P1：视图换代必须作废在途内容快照（新建同 vault 会话）────────────
+//
+// 现场：中途接管的「只内容档」回包在途时，用户新建同 vault 会话成功（空视图）。旧实现只在
+// `fetchSnapshot` 发起时推进 `snapshotSeq`，相位世代又只在相位真的变化时推进——终态后复位是
+// idle → idle，两道守卫都放行，于是旧回包清掉新会话的空渲染面、把**旧会话**的消息重放进去。
+// 修复后 `resetView`（视图换代）统一推进 `snapshotSeq`，在途回包整条丢弃。
+test("视图换代作废在途快照：新建会话后旧内容回包不得回填", async ({ page }) => {
+  const history = [
+    { role: "user", text: "OLD-1 旧会话提问" },
+    { role: "assistant", text: "OLD-2 旧会话回答" },
+  ];
+  await stubTauri(page, VAULT);
+  await stubHarnessActivity(page, {
+    messages: history,
+    inFlight: true, // 进入快照报在途 ⇒ 终态时发起只内容档对账
+    stateDelayFromCall: { fromCall: 2, ms: 700 },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="activity-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  const messages = page.locator(".lumir-hp-msg");
+  await expect(messages).toHaveCount(2);
+
+  // 终态 ⇒ 只内容档回包发出（被延迟 700ms）。
+  await fire(page, { type: "done" });
+  await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "发送");
+
+  // 回包在途时新建会话（同 vault）：视图换代。
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect(messages).toHaveCount(0);
+
+  // 等旧回包落地：MUST NOT 回填旧会话内容（旧实现会回到 2 条）。
+  await page.waitForTimeout(900);
+  await expect(messages).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-transcript")).not.toContainText("OLD-1 旧会话提问");
 });

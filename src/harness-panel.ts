@@ -258,8 +258,9 @@ export interface HarnessPanelHandle {
    *  此时后端必 busy 拒单、乐观切屏注定被回滚，故**不动渲染面**（M612 r1 P2-1：先清屏再回滚
    *  会把在途轮次的流式泡清掉、关掉轮次闸门，后续分片被当迟到产出丢弃）。 */
   beginCronRun(prompt: string): boolean;
-  /** 按后端当前会话重取快照重建渲染面（M612）：cron 点击运行发起失败时撤回乐观切屏，
-   *  面板回到后端真实会话。不切 vault。 */
+  /** 按后端当前会话重取快照重建渲染面（M612）：**只用于 cron 点击运行发起失败时**撤回乐观
+   *  切屏，面板回到后端真实会话。不切 vault。运行**正常结束**的收尾不走这条（它经 `resetView`
+   *  以 `vault_changed` 结算，会清掉该轮刚产生的未读）——那条走只内容档位，见 `done` 分支。 */
   reloadSession(): void;
   /**
    * 下发**可点的 vault 文件路径集**（change harness-path-link）：装载 vault 时一次、watch
@@ -4313,9 +4314,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  相位的定义仍是 M347 的两态机（idle / running / stopping），模型逐条委托 `reduceSendPhase`。 */
   let activity: ActivityState = INITIAL_ACTIVITY;
   /** 相位世代（design §4）：任何**经事件**推进的相位变化 +1；发起快照请求时记下当时的
-   *  epoch，响应的 epoch 不一致就丢弃相位部分（消息 / usage 照旧应用）。它防「请求在发送前
-   *  发出、响应在发送后回来」把刚起的 running 打回 idle，与 `snapshotSeq`（防旧响应覆盖
-   *  新响应）分工不同。 */
+   *  epoch，响应 epoch 不一致就**整条丢弃**（进入档连内容一起丢——重放会打回旧视图；只内容档
+   *  同样整条丢——清面 + 重放会清掉请求之后乐观上屏的新消息）。它防「请求在发送前发出、
+   *  响应在发送后回来」，与 `snapshotSeq`（防旧响应覆盖新响应；**视图换代也推进它**，防上一代
+   *  视图的回包回填到新视图）分工不同。 */
   let phaseEpoch = 0;
   /** 「中途接管」标志（design §5）：进入快照把相位拉到 running 时置位——切走期间的正文分片
    *  在事件过滤时就丢了，因此该轮终态到达时要按后端快照对账一次渲染面，把残缺的流式泡换成
@@ -9427,17 +9429,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /**
-   * 快照恢复（change add-harness-activity-presence tasks 2.1）——**两档显式分开**：
-   *
-   * - `enter`（进入快照）：面板挂载 / `vaultChanged` / `reloadSession` 用。除内容与读数外，
-   *   还按快照的 `in_flight` 回填相位与轮次闸门（`applyEnterSnapshot`）。
-   * - `content`（对账快照）：中途接管轮次的终态对账用。**只重建内容**——MUST NOT 读
-   *   `in_flight`、MUST NOT 改相位、MUST NOT 重开 `turnOpen`（r1 P2-1 的现场：对账走完整恢复
-   *   会把快照相位顺带回填，把刚收口的终态又"复活"成在途）。
-   *
-   * 档位没有默认值：调用点必须显式选一档，杜绝「走了完整恢复却只想重建内容」的形态。
-   */
-  /**
    * 快照的宽容解析 + 准入（M312）：非对象 / 解析失败 / 标识与当前 vault 不符的一律返回
    * `null`。**快照的两条读路（全量恢复 / 只读相位）共用这一份**——解析与准入写两遍就会
    * 分叉，而「旧 vault 的快照不得上屏」正是 M312 的现场。
@@ -9457,6 +9448,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return state;
   }
 
+  /**
+   * 快照恢复（change add-harness-activity-presence tasks 2.1）——**两档显式分开**：
+   *
+   * - `enter`（进入快照）：面板挂载 / `vaultChanged` / `reloadSession`（发起失败回滚）用。
+   *   除内容与读数外，还按快照的 `in_flight` 回填相位与轮次闸门（`applyEnterSnapshot`）。
+   * - `content`（只内容快照）：中途接管轮次的终态对账 + cron 点击运行收尾（`done` 里合并成一次
+   *   请求）用。**只重建内容**——MUST NOT 读 `in_flight`、MUST NOT 改相位、MUST NOT 重开
+   *   `turnOpen`、MUST NOT 走会清未读的 `reloadSession`（实现评审 r1 P1-2）。
+   *
+   * 档位没有默认值：调用点必须显式选一档，杜绝「走了完整恢复却只想重建内容」的形态。
+   * 两档都受世代守卫约束：`epochAtRequest !== phaseEpoch` 时**整条丢弃**（进入档重放会打回旧
+   * 视图，只内容档清面 + 重放会清掉请求之后乐观上屏的新消息）。
+   */
   function restoreSnapshot(json: string, mode: "enter" | "content", epochAtRequest: number): void {
     const state = parseSnapshot(json);
     if (state === null) return;
@@ -9553,8 +9557,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * 快照请求（挂载 / 切 vault / 中途接管终态对账共用）。
    *
    * 两道世代守卫分工不同：`snapshotSeq` 保证只有最新一次请求的结果被应用（防旧响应覆盖新
-   * 响应）；`phaseEpoch` 保证相位不被「发送前发出、发送后才回来」的那份快照打回去（防快照
-   * 与事件互相打架，design §4）。对账档位虽然不碰相位，epoch 仍照记——它只是不读。
+   * 响应；`resetView` 换代时也推进它，因此上一代视图在途的回包一律作废）；`phaseEpoch` 保证
+   * 快照不把「发送前发出、发送后才回来」的状态打回去（防快照与事件互相打架，design §4）。
+   * 两道对**内容档同样生效**：epoch 不符时整条丢弃（不只是不读相位），否则清面 + 重放会把
+   * 请求之后乐观上屏的新消息清掉。
    */
   function fetchSnapshot(mode: "enter" | "content" = "enter"): void {
     const seq = (snapshotSeq += 1);
@@ -9656,6 +9662,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   function resetView(): void {
+    // **视图换代 ⇒ 所有在途快照作废**（推进 `snapshotSeq`）：`resetView` 之后到达的回包属于
+    // 上一代视图，落地时会把旧会话的 messages 重放进刚清空的渲染面。新建会话是这条交错最容易
+    // 命中的入口——它成功之后只有 `resetView`，相位是 idle → idle（`phaseEpoch` 不推进），
+    // 于是旧回包能同时通过 seq 与 epoch 两道守卫（实现评审 r1 P1 的现场）。相位世代只覆盖
+    // 「同一视图里开始了新一轮」，会话换代由这里作废（切 vault / cron 切屏 / 恢复会话同理）。
+    snapshotSeq += 1;
     clearTranscriptSurface();
     // 引用失败的输入区状态行属于上一段输入（M662）：换会话即清（卡片上的留痕随卡片一起消失）。
     applyQuoteFailureNotice(null);
@@ -10153,9 +10165,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 这种点击什么都不该动渲染面：返回 false，装配层据此跳过失败回滚。
   function beginCronRun(prompt: string): boolean {
     if (activity.phase !== "idle") return false;
-    // 在途快照作废（seq 与 fetchSnapshot 同一条纪律）：切 vault 那一次快照可能还没回来，
-    // 迟到的响应会把它的消息追加进刚清空的渲染面（与乐观上屏的 prompt 重复 / 串台）。
-    snapshotSeq += 1;
+    // 在途快照随视图换代一并作废（`resetView` 推进 `snapshotSeq`，单一入口）：切 vault 那一次
+    // 快照可能还没回来，迟到的响应会把它的消息追加进刚清空的渲染面（与乐观上屏的 prompt
+    // 重复 / 串台）。
     resetView();
     const blocks: ComposerBlock[] = [{ kind: "paragraph", text: prompt }];
     appendUserMessage(blocks, prompt, Date.now());
