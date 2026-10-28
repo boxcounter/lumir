@@ -145,7 +145,9 @@ test("enter_snapshot(inFlight=false)：相位收口 idle（离开期间终态被
   });
 });
 
-test("enter_snapshot：epoch 不一致 ⇒ 整条丢弃（响应来自发送之前）", () => {
+test("enter_snapshot：epoch 不一致 ⇒ 模型不应用该事件（相位不动，响应来自发送之前）", () => {
+  // 纯模型只管相位 / 未读：这里断言的是「不应用」；接线层的过期处置按档位分开——进入档只丢相位
+  // （消息 / 读数照旧应用），只内容档整条丢弃（见 design §4 与 `restoreSnapshot` 的注释）。
   const stale: ActivityEvent = { type: "enter_snapshot", inFlight: false, epochAtRequest: 1, epoch: 2 };
   const state = { phase: "running" as const, unread: null };
   assert.equal(reduceActivity(state, stale), state, "旧世代快照不得把刚起的 running 打回 idle");

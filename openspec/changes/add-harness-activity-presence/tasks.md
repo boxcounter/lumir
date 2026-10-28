@@ -44,8 +44,10 @@
 - [x] 2.1 快照按用途分档：**进入快照**（面板挂载 / `vaultChanged` / `reloadSession`）才允许改相位与
       `turnOpen`；**对账快照**（§4.2）只重建内容。`restoreSnapshot` 必须显式带档位参数，
       MUST NOT 出现「某条路径走了完整恢复却只想重建内容」的形态
-- [x] 2.2 世代守卫：`phaseEpoch` 随事件推进自增，快照请求记 epoch，响应 epoch 不一致时丢弃相位部分
-      （消息 / usage 等照旧应用）
+- [x] 2.2 世代守卫：`phaseEpoch` 随事件推进自增，快照请求记 epoch；响应 epoch 不一致时**按档位分开**——
+      **进入档只丢弃相位部分**（不应用 `in_flight`，消息 / usage 等照旧应用）；**只内容档整条丢弃**
+      （清面 + 重放会把请求之后乐观上屏的新消息清掉，实现评审 r1 的追加项）。另：`resetView` 视图换代
+      推进 `snapshotSeq`，作废上一代视图的全部在途快照
 - [x] 2.3 进入快照按 `in_flight` 应用：`true` ⇒ running + `turnOpen` 置真 + 置「中途接管」标志；
       `false` ⇒ idle + 关 `turnOpen` + 清接管标志（**收口**——覆盖「离开期间终态被过滤」）；
       **删除终态记忆（原 `afterTerminal`）**：前端不保存任何轮次观察史
@@ -89,10 +91,12 @@
 ## 5. 测试与验收场景（随实现同批）
 
 - [x] 5.1 `tests/unit/harness-activity-presence.test.ts`：状态机全表（每条转移一条断言）、
-      `opened` 清未读、`aborted` 不置未读、`vault_changed` 清未读、epoch 不一致丢弃快照相位
+      `opened` 清未读、`aborted` 不置未读、`vault_changed` 清未读、epoch 不一致时模型不应用该进入快照
+      （相位不动；消息 / 读数的过期处置属接线层，按档位分开——见 2.2）
 - [x] 5.2 `tests/unit/harness-activity-wiring.test.ts`：源码级结构对账（进入快照路径按 `in_flight` 调
       相位 / 闸门恢复、**对账路径只走内容档位且不读 `in_flight`**、三类终态传 `mounted`、停止点击经
-      状态机、`harness_busy` 只触发快照重取不直接改相位、`attachTo(null)` 不复位、三态由唯一函数施加）
+      状态机、`harness_busy` 只走只读相位通道不直接改相位、`attachTo(null)` 不复位、三态由唯一函数施加、
+      只内容档的世代守卫与视图换代作废（`resetView` 推进 `snapshotSeq`））
       ——同一层、同一理由见 `tests/unit/harness-cron-click-run.test.ts`
 - [x] 5.2a **r2 / r3 P2-1 第二类回归 + 新轮/旧轮交错矩阵**（纯模型层，与 §1.4 的后端第一类回归成对）：
       按 `design.md` §10 的 11 行矩阵逐行断言（旧轮已观察终态后快照报不在途 ⇒ 不复活；离开期间终态被

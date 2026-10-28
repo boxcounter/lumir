@@ -4314,8 +4314,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  相位的定义仍是 M347 的两态机（idle / running / stopping），模型逐条委托 `reduceSendPhase`。 */
   let activity: ActivityState = INITIAL_ACTIVITY;
   /** 相位世代（design §4）：任何**经事件**推进的相位变化 +1；发起快照请求时记下当时的
-   *  epoch，响应 epoch 不一致就**整条丢弃**（进入档连内容一起丢——重放会打回旧视图；只内容档
-   *  同样整条丢——清面 + 重放会清掉请求之后乐观上屏的新消息）。它防「请求在发送前发出、
+   *  epoch，响应 epoch 不一致时**按档位分开**——进入档只丢相位（消息 / usage 照旧应用），
+   *  只内容档整条丢弃（清面 + 重放会清掉请求之后乐观上屏的新消息）。它防「请求在发送前发出、
    *  响应在发送后回来」，与 `snapshotSeq`（防旧响应覆盖新响应；**视图换代也推进它**，防上一代
    *  视图的回包回填到新视图）分工不同。 */
   let phaseEpoch = 0;
@@ -4536,7 +4536,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
   /** 快照请求的世代号：只应用**最新一次**请求的结果。挂载那一次拉取与切 vault 的那一次可能
    *  同时在飞——迟到的旧响应会把已经清空的 transcript 又灌回旧 vault 的消息，或把同一份
-   *  消息追加两遍（两条都是可见的错乱）。 */
+   *  消息追加两遍（两条都是可见的错乱）。
+   *  `resetView`（视图换代：新建会话 / 切 vault / cron 切屏 / 恢复会话）也推进它：上一代视图的
+   *  在途回包一律作废，落地不得回填进新视图（相位在 idle → idle 的复位里不推进，epoch 挡不住）。 */
   let snapshotSeq = 0;
 
   // ── 混排 composer 状态（M343；消息摘录卡片见 change harness-message-excerpt；
@@ -9458,13 +9460,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *   `turnOpen`、MUST NOT 走会清未读的 `reloadSession`（实现评审 r1 P1-2）。
    *
    * 档位没有默认值：调用点必须显式选一档，杜绝「走了完整恢复却只想重建内容」的形态。
-   * 两档都受世代守卫约束：`epochAtRequest !== phaseEpoch` 时**整条丢弃**（进入档重放会打回旧
-   * 视图，只内容档清面 + 重放会清掉请求之后乐观上屏的新消息）。
+   * 世代守卫按档位分开：**进入档只丢相位**（`epochAtRequest !== phaseEpoch` ⇒ 不应用 `in_flight`
+   * 与闸门，消息 / usage 等照旧应用）；**只内容档整条丢弃**（清面 + 重放会清掉请求之后乐观上屏
+   * 的新消息）。
    */
   function restoreSnapshot(json: string, mode: "enter" | "content", epochAtRequest: number): void {
     const state = parseSnapshot(json);
     if (state === null) return;
     // 相位回填只属于进入档位（tasks 2.1 / 2.3）：对账快照（`content`）连 `in_flight` 都不读。
+    // 进入档的世代守卫**只作用于相位**（`applyEnterSnapshot` 内部按 epoch 丢弃）：迟到的内容最多
+    // 让消息 / 读数旧一拍，而把相位按旧读数打回去才是真错——两条通道的取舍不同，因此两档的过期
+    // 处置也不同（只内容档才是整条丢弃）。
     if (mode === "enter") {
       applyEnterSnapshot(state.in_flight, epochAtRequest);
     } else {
@@ -9559,8 +9565,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * 两道世代守卫分工不同：`snapshotSeq` 保证只有最新一次请求的结果被应用（防旧响应覆盖新
    * 响应；`resetView` 换代时也推进它，因此上一代视图在途的回包一律作废）；`phaseEpoch` 保证
    * 快照不把「发送前发出、发送后才回来」的状态打回去（防快照与事件互相打架，design §4）。
-   * 两道对**内容档同样生效**：epoch 不符时整条丢弃（不只是不读相位），否则清面 + 重放会把
-   * 请求之后乐观上屏的新消息清掉。
+   * 两道都会让**只内容档整条丢弃**（epoch 不符或 seq 过期），否则清面 + 重放会把请求之后乐观
+   * 上屏的新消息清掉；进入档只把相位那半丢掉，内容与读数照旧应用。
    */
   function fetchSnapshot(mode: "enter" | "content" = "enter"): void {
     const seq = (snapshotSeq += 1);
