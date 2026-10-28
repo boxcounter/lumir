@@ -142,3 +142,32 @@
 - [x] 新增 `vault_list_path_keeps_whitespace_round_trip`：列根取回带空格的目录 path → 原样传回列出
   子项；去掉空格的名字报 `fs_not_found`（不静默换义）。**已实测**：临时恢复 `trim` 时该用例失败。
 - [x] design §5.1 把 `path` / `cursor` 的原样语义写成同一条约束，§7 测试表补对应行。
+
+## 真机批（2026-10-28 自动窗口，M777）——**6.5 判红、6.6 未验证，不得归档**
+
+环境：主仓 master `9232ab3a`，dev flavour、隔离 `XDG_CONFIG_HOME`、合成 vault、端口 1430、
+`caffeinate -dimsu`；mock provider（`$fixtures/harness-mock-workspace.json`）。
+
+- **6.5 真机 254：FAIL（两跑一致，均为断言形态问题，不是产品缺陷）**
+  - 证据：`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-28-m777-dev/254-harness-vault-workspace-list/`
+    与复跑 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-28-m777-254-rerun/`
+    （会话留存另存于该目录的 `env-snapshot/`）。场景段 5.2s，17 条记录 15 PASS / 2 FAIL。
+  - PASS：`session_open` 首行在场；工作区段标题 / 绝对根行 / `cli_run` 从该目录启动三句；
+    装配清单 `workspace` 条目（仓内相对路径 + `exists:true` + 字节数）；`vault_list` 递归结果含
+    `wsl-vault/notes/deep.md`；`.DS_Store` 0 命中（hidden 不出）；`node_modules/ignored.js` 0 命中
+    （lazy 不展开）；`vault_read` 读到 deep.md 正文；`pwd` 的 `stdout` 非 `/`；全程无批准卡。
+  - FAIL ① `file.has '{"kind":"directory","path":"wsl-vault/node_modules"}'`；
+    FAIL ② `file.has '"stdout":"WSL-KEEP'`。
+  - **根因（已在会话留存里逐条核对）**：`file.has` 读的是**原始 JSONL 文本**，工具结果在
+    `llm_response` 的字符串字段里是**转义形态**（`\"kind\":\"directory\",\"path\":\"wsl-vault/node_modules\"`、
+    `\"stdout\":\"WSL-KEEP sibling`），断言写的是未转义片段，因此恒不命中。产品侧输出本身正确：
+    同一份留存里 `\"kind\":\"directory\",\"path\":\"wsl-vault/node_modules` 在场、
+    `\"stdout\":\"/tmp/lumir-m102-acceptance` 两次（pwd）、`\"stdout\":\"WSL-KEEP sibling` 一次（相对路径 cat）。
+  - 结论：**场景判据需要改成与转义形态一致**（或改用不嵌引号的子串，如只断言
+    `wsl-vault/node_modules` 与 `stdout\":\"WSL-KEEP`）；按本任务约束（只执行不修改
+    `scripts/acceptance`）未在批内改动，交回 tower 排期。
+- **6.6 真实 provider 抽样：未验证**。隔离配置里没有真实 provider 凭据（套件只写占位 key），
+  真实凭据只存在于用户真实配置 / 秘密文件里——按信息卫生纪律不读取，故本轮无法做真实模型的
+  「评审 proposal 并查看相关文件」抽样。可机器判定的能力面（工作区段、`vault_list`、`pwd` / 相对
+  `cat`）已由 254 的 PASS 项覆盖。
+- **6.7 独立评审 + 节点 2 记录**：未执行（阻塞于上面的红项与未验证项）。
