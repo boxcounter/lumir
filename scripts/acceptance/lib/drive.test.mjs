@@ -19,9 +19,12 @@
 // 后也可单跑）：
 //   node --test scripts/acceptance/lib/drive.test.mjs
 //
-// 纪律：全部用假 `cu.state` 与假 swift（`run` 注入），不起真机、不碰 KimiCU / 验收 vault。负例子用
-// 短 `timeoutMs`（settle 的采样间隔是 700ms，800ms 恰好能读到两次再超时）与假 `sleepFn` 保证整个
-// 文件是秒级。
+// 纪律：全部用假 `cu.state` 与假 swift（`run` 注入），不起真机、不碰 KimiCU / 验收 vault。
+// settle 的用例还注入**假时钟**（`now` / `sleepFn`，见 `fakeClock`）：虚拟时间只在 settle 自己的
+// 采样间隔上前进、读取零耗时，于是「预算内读到第几轮」只由采样节奏决定。旧形态吃真实墙钟
+// （`timeoutMs: 800`）时，第二次读取要成立得首读耗时 <100ms——M779 并行真机 + 全量视觉满载跑
+// gate，首读被拖过这 100ms、只读 1 次就判「未稳定」，`acceptance-suite` 假红而空载同命令全绿
+// （finding `20261028-worker-fix-harness-activity-re-bug-acceptance-settle.md`）。
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -68,17 +71,45 @@ function axText({
   return lines.join("\n");
 }
 
-/** 假 `CuClient`：按顺序返回给定文本，用完之后重复最后一份（并记录读取次数）。 */
-function fakeCu(texts) {
+/** 假 `CuClient`：按顺序返回给定文本，用完之后重复最后一份；`texts` 也可以给 `(第几次读取) => 文本`
+ *  的工厂（构造「每次读都变」的现场用）。`maxReads` 是防挂死的上限：settle 若不再按注入的时钟收口
+ *  （超时语义失效 / 用回墙钟），用例会拿到一条明确的失败，而不是把 gate 卡死在一条用例上。 */
+function fakeCu(texts, { maxReads = 20 } = {}) {
   let i = 0;
   const reads = [];
   return {
     reads,
     state: async (pid, { mode } = {}) => {
       reads.push({ pid, mode });
-      const text = texts[Math.min(i, texts.length - 1)];
+      if (reads.length > maxReads) {
+        throw new Error(`假 CU 已被读 ${reads.length} 次（上限 ${maxReads}）：settle 没有按注入的时钟收口`);
+      }
+      const text = typeof texts === "function" ? texts(i) : texts[Math.min(i, texts.length - 1)];
       i += 1;
       return { text, image: null };
+    },
+  };
+}
+
+/** 假时钟（M779 的假红修法，finding
+ *  `20261028-worker-fix-harness-activity-re-bug-acceptance-settle.md`）：`now()` 只在 `sleepFn` 被
+ *  调用时前进，读取一律零耗时。
+ *
+ *  为什么必须这样：settle 的循环是「读 → 比较 → sleep(采样间隔) → 再查预算」，吃真实墙钟时
+ *  「800ms 内读到两次」隐含「首读耗时 <100ms」——那是机器速度，不是被测事实。满载时首读被拖过
+ *  这 100ms 就只读 1 次（M779 现场：该用例自身耗时 824ms、断言 `实际只读了 1 次`，空载同命令全绿）。
+ *  虚拟时间只随 settle 自己的采样节奏前进后，「预算内读到第几轮」= ceil(预算 / 采样间隔)，与负载
+ *  无关。`sleeps` 记录每次采样间隔：既证明 settle 用的是注入的 `sleepFn`（不是墙钟旁路），也让用例
+ *  能断言「提前返回」与「超时收口」的耗时口径。 */
+function fakeClock() {
+  let nowMs = 0;
+  const sleeps = [];
+  return {
+    sleeps,
+    now: () => nowMs,
+    sleepFn: async (ms) => {
+      sleeps.push(ms);
+      nowMs += ms;
     },
   };
 }
@@ -106,62 +137,62 @@ test("snapshotBody：只剥行首的产物 id 两行，其余正文逐字节保�
   assert.ok(snapshotBody(inBody).includes('"AX snapshot_id=keep-me"'), "行内出现的同名字样不得被剥掉");
 });
 
-test("settle：正文相同、snapshot_id / screenshot_id 每次读都变 ⇒ 快速稳定，返回的仍是原始快照", async () => {
-  const cu = fakeCu([
-    axText({ snapshotId: "AAAA", screenshotId: "1111" }),
-    axText({ snapshotId: "BBBB", screenshotId: "2222" }),
-    axText({ snapshotId: "CCCC", screenshotId: "3333" }),
-  ]);
-  const ax = await settle(cu, 0, { timeoutMs: 2000 });
-  assert.ok(cu.reads.length <= 3, `应在 ≤3 次读取内稳定，实际读了 ${cu.reads.length} 次`);
+test("settle：正文相同、snapshot_id / screenshot_id 每次读都变 ⇒ 第二次读取即稳定，返回的仍是原始快照", async () => {
+  // id 每次都换（工厂而非两条预置文本）：旧口径比整份原文时永远等不到「连续两次一致」而超时，
+  // 本用例因此是 M759 修法的必红现场。
+  const clock = fakeClock();
+  const cu = fakeCu((i) => axText({ snapshotId: `SNAPSHOT-${i}`, screenshotId: `screenshot-${i}` }));
+  const ax = await settle(cu, 0, { timeoutMs: 5000, now: clock.now, sleepFn: clock.sleepFn });
+  assert.equal(cu.reads.length, 2, "首读只做基线、不参与比较：第二次读取就该稳定返回（旧实现单读即返回时本断言必红）");
+  assert.equal(clock.sleeps.length, 1, "提前返回：只付一次采样间隔，不等满预算");
   assert.ok(cu.reads.every((r) => r.mode === "ax"), "settle 走 mode=ax：mock 读到的模式应与生产一致");
-  assert.match(ax.text, /AX snapshot_id=/, "返回值是原始快照：证据 dump / ax.has 断言继续看原文");
+  assert.match(ax.text, /AX snapshot_id=SNAPSHOT-1/, "返回值是原始快照（第二次读取那份）：证据 dump / ax.has 断言继续看原文");
   assert.ok(ax.textarea, "编辑器节点仍由原文解析出来");
 });
 
-test("settle：节点行每次读都变 ⇒ 仍判未稳定（剥的是产物 id，不是界面状态）", async () => {
-  const cu = fakeCu([
-    axText({ snapshotId: "AAAA", nodeLine: '- [8] AXStaticText = "Lumir 0.10.0" @10,10 100×20' }),
-    axText({ snapshotId: "BBBB", nodeLine: '- [8] AXStaticText = "Lumir 0.10.1" @10,10 100×20' }),
-  ]);
+test("settle：节点行每次读都变 ⇒ 进入比较轮后仍判未稳定（剥的是产物 id，不是界面状态）", async () => {
+  const clock = fakeClock();
+  const cu = fakeCu((i) => axText({ snapshotId: `S-${i}`, nodeLine: `- [8] AXStaticText = "Lumir 0.10.${i}" @10,10 100×20` }));
   await assert.rejects(
-    settle(cu, 0, { timeoutMs: 800 }),
-    (e) => e instanceof StepError && /未稳定/.test(e.message),
-    "节点行变化必须判未稳定（否则断言被放宽成恒真）",
+    settle(cu, 0, { timeoutMs: 2000, now: clock.now, sleepFn: clock.sleepFn }),
+    (e) => e instanceof StepError && /未稳定/.test(e.message) && /2000ms/.test(e.message),
+    "节点行变化必须判未稳定（否则断言被放宽成恒真）；超时消息要带本次预算",
   );
-  assert.ok(cu.reads.length >= 2, `要到第二次读取才可能发现不一致，实际只读了 ${cu.reads.length} 次`);
+  assert.ok(cu.reads.length >= 2, `首读之后必须再比一次，实际只读了 ${cu.reads.length} 次`);
+  const elapsed = clock.sleeps.reduce((a, b) => a + b, 0);
+  assert.ok(elapsed >= 2000, `超时要等满预算再收口（虚拟耗时 ${elapsed}ms）`);
+  assert.ok(elapsed <= 2000 + clock.sleeps[0], `超时不得超出预算一个采样间隔（虚拟耗时 ${elapsed}ms）`);
 });
 
 test("settle：element_count / truncated 变化 ⇒ 仍判未稳定（header 事实仍参与逐字节比较）", async () => {
-  const countCu = fakeCu([
-    axText({ snapshotId: "AAAA", elementCount: 4 }),
-    axText({ snapshotId: "BBBB", elementCount: 5 }),
-  ]);
+  const countClock = fakeClock();
+  const countCu = fakeCu((i) => axText({ snapshotId: `C-${i}`, elementCount: 4 + i }));
   await assert.rejects(
-    settle(countCu, 0, { timeoutMs: 800 }),
-    (e) => e instanceof StepError,
+    settle(countCu, 0, { timeoutMs: 2000, now: countClock.now, sleepFn: countClock.sleepFn }),
+    (e) => e instanceof StepError && /未稳定/.test(e.message),
     "element_count 变化必须判未稳定",
   );
 
-  const truncatedCu = fakeCu([
-    axText({ snapshotId: "AAAA", truncated: "false" }),
-    axText({ snapshotId: "BBBB", truncated: "true [closed_menu]" }),
-  ]);
+  const truncatedClock = fakeClock();
+  const truncatedCu = fakeCu((i) =>
+    axText({ snapshotId: `T-${i}`, truncated: i % 2 ? "true [closed_menu]" : "false" }),
+  );
   await assert.rejects(
-    settle(truncatedCu, 0, { timeoutMs: 800 }),
-    (e) => e instanceof StepError,
+    settle(truncatedCu, 0, { timeoutMs: 2000, now: truncatedClock.now, sleepFn: truncatedClock.sleepFn }),
+    (e) => e instanceof StepError && /未稳定/.test(e.message),
     "truncated 变化必须判未稳定",
   );
 });
 
-test("settle：正文恒定但 AX 里没有 AXTextArea ⇒ 编辑器门不放宽，仍判未稳定", async () => {
-  const cu = fakeCu([axText({ snapshotId: "AAAA", editor: false }), axText({ snapshotId: "BBBB", editor: false })]);
+test("settle：正文恒定但 AX 里没有 AXTextArea ⇒ 编辑器门不放宽，按超时合同收口", async () => {
+  const clock = fakeClock();
+  const cu = fakeCu([axText({ snapshotId: "AAAA", editor: false })]);
   await assert.rejects(
-    settle(cu, 0, { timeoutMs: 800 }),
-    (e) => e instanceof StepError && /未稳定/.test(e.message),
+    settle(cu, 0, { timeoutMs: 2000, now: clock.now, sleepFn: clock.sleepFn }),
+    (e) => e instanceof StepError && /未稳定/.test(e.message) && /2000ms/.test(e.message),
     "无编辑器节点时 settle 不得因正文一致就返回（编辑器门是既有合同）",
   );
-  assert.ok(cu.reads.length >= 2, "编辑器门不成立时要继续轮询，实际只读了一次");
+  assert.ok(cu.reads.length >= 2, `编辑器门不成立时要继续轮询，实际只读了 ${cu.reads.length} 次`);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

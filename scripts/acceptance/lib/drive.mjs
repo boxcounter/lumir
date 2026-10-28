@@ -91,15 +91,20 @@ export function snapshotBody(text) {
     .join("\n");
 }
 
-/** 等界面稳定：连续两次 AX **快照正文**一致（产物 id 行除外，见 `snapshotBody`），且编辑器节点已就位。 */
-export async function settle(cu, pid, { timeoutMs = 30_000 } = {}) {
-  const deadline = Date.now() + timeoutMs;
+/** 等界面稳定：连续两次 AX **快照正文**一致（产物 id 行除外，见 `snapshotBody`），且编辑器节点已就位。
+ *
+ *  `now` / `sleepFn` 只为自测注入（生产调用点不传）：判据与超时语义不变（deadline = 起点 + `timeoutMs`，
+ *  每轮采样间隔 700ms）。注入它们是为了让「预算内读到第几轮」能按采样节奏算，而不是靠机器跑得快——
+ *  M779 满载跑 gate 时，旧用例吃真实 800ms 预算，首读被并发负载拖过 100ms 就只读到 1 次、自测假红
+ *  （finding `20261028-worker-fix-harness-activity-re-bug-acceptance-settle.md`）。 */
+export async function settle(cu, pid, { timeoutMs = 30_000, now = Date.now, sleepFn = sleep } = {}) {
+  const deadline = now() + timeoutMs;
   let prev = null;
-  while (Date.now() < deadline) {
+  while (now() < deadline) {
     const ax = await readAx(cu, pid);
     if (prev && snapshotBody(prev.text) === snapshotBody(ax.text) && ax.textarea) return ax;
     prev = ax;
-    await sleep(700);
+    await sleepFn(700);
   }
   throw new StepError(`界面在 ${timeoutMs}ms 内未稳定`);
 }
