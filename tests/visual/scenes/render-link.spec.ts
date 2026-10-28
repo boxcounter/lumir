@@ -9,6 +9,7 @@ import {
   logEvents,
   fileText,
   guardPageChannel,
+  invokes,
 } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 import { classifyLinkTarget } from "../../../src/preview/links";
@@ -551,23 +552,37 @@ pageTest("相对路径非 md：⌘⏎ 交系统默认应用；被拒时给提示
   expect(await page.locator(".lumir-toast")).toHaveCount(0);
 });
 
-pageTest("相对路径非 md 被拒（越出 vault / 不存在）：透传人话提示", async (page) => {
+pageTest("相对路径非 md 被拒（越出 vault / 不存在）：按真后端信封上屏人话文案，不走缺参回落", async (page) => {
   const doc = "[越界](../outside.pdf)\n\n正文段落。\n";
+  // 失败注入按真后端信封**逐字段**给（M794）：`link_open_path` 拒绝越界目标时返回
+  // `CommandError::new("link_path_rejected", format!("打不开这个目标：{target}——它不在 vault 内"))
+  //  .param("target", target)`（src-tauri/src/commands.rs 的两个构造点都带 `params.target`）。
+  // 前端 `errorText`（src/copy.ts）按 code 取 D83「打不开这个目标：{target}」——成因按 D6(a)
+  // 只留在 message（日志面），不进上屏句。缺 params 会落进它的「缺参回落 message」分支，
+  // 上屏的就成了 message 原文，那句真机上不会出现（M793 现场：控制台 `lumir: 错误文案缺参`）。
+  const message = "打不开这个目标：../outside.pdf——它不在 vault 内";
+  // 「没走缺参回落」的判据是控制台没有那条线索：`errorText` 是缺参兜底的唯一实现，
+  // 它接住缺参时一定 `console.warn`（src/copy.ts），场景侧只在旁边收集。
+  const warns: string[] = [];
+  page.on("console", (msg) => {
+    if (msg.type() === "warning") warns.push(msg.text());
+  });
   await openDoc(page, "asset.md", doc, {
     failures: {
-      link_open_path: {
-        code: "link_path_rejected",
-        message: "打不开这个目标：../outside.pdf——它不在 vault 内",
-      },
+      link_open_path: { code: "link_path_rejected", message, params: { target: "../outside.pdf" } },
     },
   });
   await expect(page.locator(".cm-lp-link-mark")).toHaveText([EXT]);
 
   await setCursor(page, 0);
   await page.keyboard.press("Meta+Enter");
-  await expect(
-    page.locator(".lumir-toast", { hasText: "打不开这个目标：../outside.pdf——它不在 vault 内" }),
-  ).toBeVisible();
+  // 人话文案仍逐字钉住，钉的对象是**真后端信封实际渲染出的那一句**：用 `toHaveText` 精确匹配，
+  // 不用 `hasText`——回落文本以这句为前缀，子串口径分不出「按模板上屏」与「回落 message」
+  //（REVIEW.md「断言等价于子串」条）。
+  await expect(page.locator(".lumir-toast")).toHaveText("打不开这个目标：../outside.pdf");
+  expect(warns.filter((line) => line.includes("错误文案缺参")), "缺参回落会在控制台留线索").toEqual([]);
+  // 拒绝发生在后端：请求真的发出去过（调用记录在场），不是前端自己拦下的
+  expect(await invokes(page)).toContain("link_open_path");
   // 打开失败不改文档，也不落在原地不动装作成功
   expect(await readDocument(page)).toBe(doc);
 });

@@ -106,7 +106,17 @@ export interface VaultFixture {
   notice?: string | null;
   root?: string;
   vault_id?: string;
-  failures?: Record<string, { code: string; message: string }>;
+  /**
+   * 通用失败注入：`invoke` 层按命令名统一拦截，命中即抛这份信封**原样**（该命令的 handler
+   * 不执行，因此 handler 里的参数记录不落账；`__invokes` 仍逐条记命令名）。
+   *
+   * `params` 与真后端 `CommandError` 信封同形（M794）：前端 `errorText` 按 `code` 查文案表并
+   * 插值参数。造现场时 MUST 按 Rust 构造点的信封**逐字段**给——只给 code / message 会落进
+   * `errorText` 的「缺参回落 message」分支，场景便钉住一句真机上不会上屏的文本（M793 现场：
+   * 控制台出现 `lumir: 错误文案缺参（…）`）。省略 `params` 只在「文案表里没有这个 code」或
+   * 「模板无占位符」时无害。
+   */
+  failures?: Record<string, { code: string; message: string; params?: Record<string, unknown> }>;
   /** `vault_list` 桩：注册表内容（缺省按当前 fixture 派生**一条**「当前 vault」行——
    *  单 vault 下浮层仍要出现，见 change task 3.1）。 */
   vaults?: VaultListRow[];
@@ -867,6 +877,8 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         // failures 为持续性注入：同一 command 的每次调用都抛（markdown-combo 的
         // 多附件读取失败用例依赖此语义）。恢复动作的端到端走通改用 __externalWrite
         // / __externalDelete 自然路径（见 save-recovery.spec）。
+        // 信封**整份**抛出（含 `params`，M794）：真后端的 CommandError 也带 params，前端按 code
+        // 查文案插参；拆字段重建会让 params 丢掉，上屏随即退化成 message 原文。
         if (current?.failures?.[cmd]) throw current.failures[cmd];
         const handler = handlers[cmd];
         if (!handler) throw { code: "unknown_command", message: `未知命令：${cmd}` };
