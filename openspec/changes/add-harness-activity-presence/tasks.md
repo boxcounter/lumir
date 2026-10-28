@@ -163,12 +163,16 @@
     PASS —— 切到 B 时面板无 A 的在途态、装载完成即可断言。
     FAIL ① 切回 A 后 `ax.has "处理中"` 不存在；FAIL ② 打开面板后发送钮呈「发送」（＝假空闲），
     「停止」不在；FAIL ③ 等 `VAULT-C 第三片。` 60s 超时（面板已打开）。
-    **后端证据（复跑时取的会话留存，已另存到
-    `.local/acceptance/2026-10-28-m777-253-rerun/env-snapshot/`）**：
-    `harness/sessions/acc-a/s1793159456614-olm8x7.jsonl` 里 `llm_request` @03:50:56 →
-    `llm_response` @03:51:12，全文含 `VAULT-A/B/C` 三片 ⇒ **该轮后端确实跑完了**；前端切回后
-    既没回填在途相位、也没把消息铺回渲染面（面板与 composer 均为空）。
-    这是本 change 要修的症状本身，真机上**未生效**。
+    **「后端已完成该轮」：当时观察到，当前不可独立复核（原卷已丢失）**。复跑期间直接在套件的
+    活动隔离目录读到 `env/lumir/harness/sessions/acc-a/s1793159456614-olm8x7.jsonl`：
+    `llm_request` @03:50:56 → `llm_response` @03:51:12、全文含 `VAULT-A/B/C` 三片。但随后的
+    bundle 跑批在拷贝**之前**就把该目录重置了，`…-253-rerun/env-snapshot/` 因此是空目录；已按
+    文件名与 session id 全量检索 `.local/`，无任何副本——**这条读数不能再按指针复核，不得当作
+    已落盘的证据引用**。要重新取得它：重跑 253，并在任何后续跑批之前把
+    `env/lumir/harness/sessions/` 整体拷到该场景目录下。
+    可复核的部分只有 `steps.md` 与 `ax/` dump：切回后发送钮是 `AXButton (发送)`、composer 与
+    transcript 全空（两跑一致）。据此能确定的是**「切回后呈空会话 + 假空闲」这一症状成立**；
+    「该轮后端是否仍在跑 / 已跑完」需要重跑取证后才能定论。
 - **诊断（供下一轮定位，未改动任何代码）**
   1. AX 面：三态的状态文本由 `src/harness-panel.ts:6829` 写进 `aria-describedby` 指向的
      clip 隐藏 span（`.lumir-hp-toggle-status`，`src/harness-panel.css:120`），KimiCU 的 AX dump
@@ -178,5 +182,6 @@
      （任务约束：只执行不修改 `scripts/acceptance`）。
   2. 角色映射：toggle 实测 `AXCheckBox`，场景的 `node: { role: AXButton }` 恒红——属场景面
      （同族登记见 `scripts/acceptance/README.md`「`aria-haspopup` 的钮在 AX 里不是 AXButton」）。
-  3. 253 的相位/内容不恢复是**产品面**，与 AX 面无关（发送钮是真实 AXButton，停止→发送的翻转
-     是行为读数）。修好前本 change 的核心承诺在真机不成立。
+  3. 253 的空会话 + 假空闲是**产品面**，与 AX 面无关（发送钮是真实 AXButton，停止→发送的翻转
+     是行为读数）。判据不依赖上文那条不可复核的后端读数：无论该轮当时仍在途还是已结束，切回后
+     都不该呈现为一个空白新会话。修好前本 change 的核心承诺在真机不成立。
