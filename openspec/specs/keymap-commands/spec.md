@@ -638,7 +638,7 @@ vault 内资产的路径校验同理 MUST 在 Rust 侧（`link_open_path`）：�
 #### Scenario: 资产目标越出 vault 被拒
 
 - **WHEN** 对 `[越界](../outside.pdf)` 按下 `⌘⏎`（归一后越出 vault 根）
-- **THEN** 后端拒绝并返回 `link_path_rejected` 错误信封，前端 toast 展示「打不开这个目标：…——它不在 vault 内」；MUST NOT 有任何文件被系统打开
+- **THEN** 后端拒绝并返回 `link_path_rejected` 错误信封（带 `params.target`），前端 toast 展示「打不开这个目标：../outside.pdf」（成因措辞只在日志 `message` 里，不上屏）；MUST NOT 有任何文件被系统打开
 
 #### Scenario: 纯锚点只给提示
 
