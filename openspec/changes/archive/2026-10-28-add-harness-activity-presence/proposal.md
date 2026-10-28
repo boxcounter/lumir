@@ -43,7 +43,71 @@
 > 结算，会把该轮刚产生的未读清掉（`reloadSession` 保留给点击运行**发起失败**的回滚）。
 > 同一轮追加：**内容档快照补世代守卫**（请求之后已开始新一轮 ⇒ 整条丢弃），否则回包落地会把
 > 请求之后乐观上屏的新消息清掉。三处各配一条行为回归（旧实现必红），见 m756 场景。
-> 节点 2（归档评审）：实现完成后填写。
+> **r5 修订（2026-10-28，真机返修批 M777 → M779）**：M777 真机批判红（252：三态文本不在 AX、toggle
+> 角色实测 AXCheckBox；253：切回后空会话 + 假空闲）。M779 定位根因**不在前端快照消费侧**：同一个 vault
+> 被后端当成两个会话桶——启动恢复拿配置里的 `/tmp/…` 打开、vault 列表拿注册表里的 `/private/tmp/…`
+> 切回，而 harness 会话表按根路径字符串分桶（M312 的既有设计不改），切回时 `harness_state` 命中不了原
+> 会话，返回空快照，面板如实渲染「空闲空会话」。修复（tower 裁决 A，见 mission M779 Notes）：打开入口
+> `prepare_vault_open` 统一规范化根；会话归属判据改比**目录身份**（逐字相等快速通过，否则两侧规范化后比，
+> 取不到身份不认），存量 JSONL 不改写、不改分桶；三态文案同时写进 toggle 的 `title`（WKWebView 下 `title`
+> 映射 AX `help`，是自动化通道唯一可读的载体）；252 / 253 的判据载体按真机可观测面修正（角色 AXCheckBox、
+> 在途判据移到收起态）。delta 因此补一条 ADDED requirement「vault 根拼写统一与会话归属的目录身份判据」，
+> 并把可访问性载体、本能力在展开态不在场两条写准（依据：Alex 在归档 mission 上下文里要求把同一 vault 根
+> 与存量会话目录身份写入 living spec）。M779 独立评审 clean / merge（评审绑 `dbbed73a`，合并 tip
+> `71d38148` 为同内容 rebase——四条提交 `git patch-id` 逐一相同）；真机 252 34/0、253 29/0、125 16/0、
+> 165 10/0。
+> 节点 2（归档评审）：五要件记录见下「节点 2 记录（归档前）」块。
+
+## 节点 2 记录（归档前，2026-10-28，M787）
+
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-10-28 通过（Alex 原话见上方「评审记录」）。实现期没有静默扩 scope：
+   r1–r4 均为评审指出的自有缺陷返修；真机返修批 M777 → M779 的根因修复由 tower 裁决 A 放行（mission
+   `M779-fix-harness-activity-real-vault-restore` 的 Notes：`prepare_vault_open` 统一采用规范化
+   `workspace.path`；批准 `session_belongs_to_scope` 的目录身份判据，不改 M312 的会话表设计），随后 M779
+   独立评审 clean / merge。把该不变量补进 delta 的依据是 Alex 在归档 mission（M787）上下文里的要求：
+   「worker 建议把同一 vault 根与存量会话目录身份写入 living spec」。
+2. **独立 reviewer clean / merge**：`reviewer-fix-harness-activity-real-vault-restore-oct28` 判
+   `status: clean` / `merge: merge`，评审时 tip `dbbed73a`，评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.tower/comms/reviews/review-feat-fix-harness-activity-real-vault-restore-reviewer-fix-harness-activity-r1.md`。
+   合并 tip 是 `71d38148`（merge commit `43b20474`）：分支在评审后 rebase 到新 master，四条提交
+   （`994ad81f`→`d94f00ad`、`61c5619f`→`02f7d879`、`a7f06b20`→`075b3da2`、`dbbed73a`→`71d38148`）实测
+   `git patch-id --stable` 逐一相同 ⇒ 评审绑定的内容与合并内容一致，不是「评审后又改代码」。
+3. **tasks 完成**：全部勾选，无放弃项。5.3 / 6.5 在项内写明证据指针与口径边界（红跑取 M777、绿跑取
+   M779，明写「不等于实现前的红」；实现前那次红始终未跑）。
+4. **门禁与真机证据**：quick `GATE RESULT: 13/13 PASS（SKIP 0）`（退出码 0，tip `dbbed73a`）；
+   visual `GATE RESULT: 15/15 PASS（SKIP 0）`（退出码 0，独立 reviewer 在最终 tip 空载复跑；worker 自跑
+   那轮 14/15，唯一红是并行满载下的 `acceptance-suite` settle 自测，已如实留痕）；真机 252 PASS 34/0、
+   253 PASS 29/0、125 PASS 16/0、165 PASS 10/0，证据根
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-28-m779/`；先红对照为
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-28-m777-dev/`（252 / 253 判红）。
+   动过 `src/harness-panel.css`，本地整页像素层已随上述 visual 档跑过。
+5. **规格对账（归档前读数）**：`bash scripts/docs-check.sh` PASS（退出码 0，含
+   `scripts/openspec-archive-check.mjs` 门禁模式 / 归档队列齐备 / backlog 出口合规）；
+   `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 36 passed, 0 failed
+   (36 items)`，退出码 0；归档跟踪队列有且仅有一条本 change 条目（`docs/backlog.md`）。
+
+## 节点 2 记录（归档后）
+
+- **归档提交**：`555cb40b4c9b5e133af03203647ea7c9901a1204`（归档目录 + 并入后的 living spec + backlog
+  核销同提交）。
+- **`openspec archive` 实际输出**（2026-10-28，`npx --yes @fission-ai/openspec@1.12.0 archive
+  add-harness-activity-presence --yes`，退出码 0）：「Change 'add-harness-activity-presence' archived as
+  '2026-10-28-add-harness-activity-presence'.」/「Specs updated successfully.」/「+ 2 added」——两条 ADDED
+  requirement 并入 `openspec/specs/harness/spec.md`；本 change 非纯目录移动，故输出不是
+  `Specs already in sync; no files changed`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived add-harness-activity-presence`，
+  2026-10-28T04:50Z，退出码 0）：「openspec-archive-check: PASS（
+  openspec/changes/archive/2026-10-28-add-harness-activity-presence：0 条 MODIFIED，对比 0 段；人工恢复
+  0 段，声明认领 0 段）」。口径说明（不夸大）：该审计只对照 MODIFIED 段，本 change 的增量是 2 条 ADDED，
+  因此这一行的 PASS 不证明新增段落的内容落点——后者另行核对：`openspec/specs/harness/spec.md` 第 2781 行
+  「面板收起与跨 vault 的活动在场」、第 2927 行「vault 根拼写统一与会话归属的目录身份判据」。
+- **归档后处理**：归档目录深一层使三处相对链接（`design.md` §8 一处、`proposal.md` 两处）指向失效，
+  `docs-check` 初次判 FAIL；已改为 `../../../../docs/process/openspec-workflow.md`，复跑
+  `docs-check: PASS`（退出码 0），修正含在归档提交里。
+- **归档后 `validate --all --strict`**：`Totals: 35 passed, 0 failed (35 items)`，退出码 0（归档后读数；
+  归档前为 36 items——减少的一项就是这个已归档 change）。
 
 ## Why
 
@@ -99,7 +163,7 @@
 ### 为什么现在做
 
 - 这是 dogfood 现场直接提出的交互缺口，当前 spec 无条款覆盖，属于新行为——按 ADR 0004 与
-  [openspec-workflow.md](../../../docs/process/openspec-workflow.md) 走节点 1。
+  [openspec-workflow.md](../../../../docs/process/openspec-workflow.md) 走节点 1。
 - 症状二的修复成本集中在「把后端唯一真值接进来」，越晚做，越多前端路径会继续复制「本地相位即真相」
   的假设（现有 `beginCronRun` 的忙判定、`send()` 的前置闸都是这条假设的消费者）。
 
@@ -149,7 +213,7 @@
 
 ## Impact
 
-- 影响的 specs：`harness`（1 条 ADDED requirement）。
+- 影响的 specs：`harness`（2 条 ADDED requirements）。
 - 影响的代码 / 系统（概览，不写实现细节）：
   - Rust：`src-tauri/src/harness/session.rs`（`busy` 升级为三态轮次状态机 + 快照 `in_flight` 与空态
     一致性）、`src-tauri/src/harness.rs`（`acquire_turn` / `release_turn` 的写点改接三态）、

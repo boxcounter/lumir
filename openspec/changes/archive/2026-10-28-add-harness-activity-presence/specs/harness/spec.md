@@ -4,8 +4,11 @@
 
 harness 面板的活动状态 MUST NOT 只存在于面板内部。标题栏 harness toggle 钮（`harness.toggle` 的可见入口）
 SHALL 在面板收起时同样呈现**当前 vault 会话**的活动，三态可辨：空闲 / 在途 / 有未读结果；三态 SHALL 同时
-在钮的可访问描述上可读（MUST NOT 只靠颜色承载语义）。活动提示 MUST NOT 自动展开面板、MUST NOT 抢焦点、
-MUST NOT 切换 vault、MUST NOT 触发系统通知，也 MUST NOT 引入新的全局键位。
+在钮的可访问描述上可读（MUST NOT 只靠颜色承载语义）：状态词 SHALL 同时写进该钮的 `title`——WKWebView 把钮
+当叶子节点，钮内文本不进 AX 树、`aria-describedby` 指向的隐藏文本在自动化通道里读不到，`title`（AX `help`）
+是三态可判定读数的唯一载体。该钮挂在标题栏且面板展开时不在场上（既有退让条款），因此三态的在场判据 SHALL
+取收起态（面板展开期间的读数由面板内既有的发送钮 / 阶段行承载）。活动提示 MUST NOT 自动展开面板、MUST NOT
+抢焦点、MUST NOT 切换 vault、MUST NOT 触发系统通知，也 MUST NOT 引入新的全局键位。
 
 **在途**的判据 SHALL 只有一个：后端当前 vault 会话的轮次状态。后端 SHALL 把「轮次在跑」与「终态已发、
 会话尚未释放」区分成两个状态，`harness_state` 快照 SHALL 携带**呈现读** `in_flight`——它只在「轮次在跑、
@@ -142,3 +145,49 @@ MUST NOT 使用数字计数，MUST NOT 为同一会话累计多条未读。
 - **WHEN** 会话空闲且面板收起
 - **THEN** toggle 钮的上屏像素与本次改动前逐像素相同（既有整页基线不更新）；三态的「在场」由结构断言守卫，
   MUST NOT 依赖整页像素容差（6px 级元素落在容差预算之内，像素对比对它没有区分度）
+
+### Requirement: vault 根拼写统一与会话归属的目录身份判据
+
+同一 vault 目录在所有打开入口 SHALL 只有**一种**根拼写：打开入口的公共函数（`prepare_vault_open`——启动
+恢复、vault 列表切换、cron 目标三条来路都汇入此处）SHALL 先把请求根规范化为唯一的规范化路径，并以这一个
+值作为 `VaultState.root`、harness 会话分桶键、`session_open.vault_root` 与 vault 注册表
+`VaultWorkspace.path` 的共同取值；MUST NOT 由各调用方各自决定拼写。规范化失败（目录不存在 / 无权访问）
+SHALL 拒绝打开并如实报错，MUST NOT 退回原始拼写继续打开。
+
+归一之后，**同一目录 SHALL 只有一个 harness 会话桶**（会话表仍按归一后的根路径字符串分桶，该既有设计
+不变；本条款只约束根的唯一来源，MUST NOT 引入第二份分桶键）：切走再切回同一目录 MUST 命中同一个会话，
+`harness_state` MUST NOT 因根拼写差异返回空快照，界面 MUST NOT 因此呈现「空闲空会话」。
+
+会话文件对 vault 的归属判据 SHALL 仍是首行 `session_open.vault_root`（判据字段不变；`sessions/<vault 稳定
+id>/` 目录仍只作组织维度，MUST NOT 成为归属判据的第二真源）。比较口径 SHALL 是**目录身份**：记录值与当前
+根逐字相等直接通过，否则两侧规范化后按同一目录判定；任一侧取不到身份（`vault_root` 缺失 / 非字符串 /
+目录已删 / 无权访问）SHALL NOT 归属——MUST NOT 以「无法比较」当作相等放行。因此升级前写入的另一种拼写
+（例如 macOS 上 `/tmp` 与 `/private/tmp` 是同一目录的两种写法）MUST 仍归属当前 vault：列举 SHALL 在场、
+恢复 SHALL 可打开、删除入口按同一判据处理，MUST NOT 把它们判成别的 vault 的会话或孤儿。存量 JSONL 的写法
+MUST NOT 被改写（`vault_root` 保持原样），也 MUST NOT 重新分桶；仓内一次性归位脚本的归属口径与本条同源
+（先规范化再查注册表）。
+
+#### Scenario: 两种拼写打开同一目录命中同一个会话桶
+
+- **WHEN** 启动恢复用配置里的一种拼写（如 `/tmp/<vault>`）打开某 vault，随后从 vault 列表用注册表里的
+  另一种拼写（如 `/private/tmp/<vault>`）切回同一目录，该会话此时有在途轮次
+- **THEN** 两次打开得到的根逐字相同（均为规范化路径）；切回时 `harness_state` 命中同一个会话并返回其真实
+  内容与在途读数，MUST NOT 返回空快照、MUST NOT 呈现空闲空会话、MUST NOT 出现第二个会话桶
+
+#### Scenario: 存量会话不因拼写差异被判成孤儿
+
+- **WHEN** 升级前写入的会话文件首行 `session_open.vault_root` 记着另一种拼写（同一目录），当前会话按规范化
+  根运行
+- **THEN** 该会话在列举里在场、可恢复、可删除；文件内容逐字节不变（`vault_root` 不改写）；归属结论只由其
+  首行 `vault_root` 的目录身份决定，会话目录位置不构成归属判据
+
+#### Scenario: 取不到目录身份不归属
+
+- **WHEN** 某会话文件首行 `vault_root` 缺失 / 非字符串，或该目录已删 / 无权访问导致无法判定同一目录
+- **THEN** 该文件不被判为当前 vault 的会话（不出现在列举、恢复入口不读它），MUST NOT 以「无法比较当作
+  相等」放行
+
+#### Scenario: 根不可规范化时拒绝打开
+
+- **WHEN** 请求打开的 vault 根目录不存在或无权访问（规范化失败）
+- **THEN** 打开动作 SHALL 失败并如实报错（工作区路径错误），MUST NOT 以原始拼写继续打开
