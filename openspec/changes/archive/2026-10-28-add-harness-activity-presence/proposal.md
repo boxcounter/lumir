@@ -90,7 +90,24 @@
 
 ## 节点 2 记录（归档后）
 
-待归档提交后填写（归档提交 hash、`openspec archive` 实际输出、`--archived` 审计读数与时间）。
+- **归档提交**：`555cb40b4c9b5e133af03203647ea7c9901a1204`（归档目录 + 并入后的 living spec + backlog
+  核销同提交）。
+- **`openspec archive` 实际输出**（2026-10-28，`npx --yes @fission-ai/openspec@1.12.0 archive
+  add-harness-activity-presence --yes`，退出码 0）：「Change 'add-harness-activity-presence' archived as
+  '2026-10-28-add-harness-activity-presence'.」/「Specs updated successfully.」/「+ 2 added」——两条 ADDED
+  requirement 并入 `openspec/specs/harness/spec.md`；本 change 非纯目录移动，故输出不是
+  `Specs already in sync; no files changed`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived add-harness-activity-presence`，
+  2026-10-28T04:50Z，退出码 0）：「openspec-archive-check: PASS（
+  openspec/changes/archive/2026-10-28-add-harness-activity-presence：0 条 MODIFIED，对比 0 段；人工恢复
+  0 段，声明认领 0 段）」。口径说明（不夸大）：该审计只对照 MODIFIED 段，本 change 的增量是 2 条 ADDED，
+  因此这一行的 PASS 不证明新增段落的内容落点——后者另行核对：`openspec/specs/harness/spec.md` 第 2781 行
+  「面板收起与跨 vault 的活动在场」、第 2927 行「vault 根拼写统一与会话归属的目录身份判据」。
+- **归档后处理**：归档目录深一层使三处相对链接（`design.md` §8 一处、`proposal.md` 两处）指向失效，
+  `docs-check` 初次判 FAIL；已改为 `../../../../docs/process/openspec-workflow.md`，复跑
+  `docs-check: PASS`（退出码 0），修正含在归档提交里。
+- **归档后 `validate --all --strict`**：`Totals: 35 passed, 0 failed (35 items)`，退出码 0（归档后读数；
+  归档前为 36 items——减少的一项就是这个已归档 change）。
 
 ## Why
 
