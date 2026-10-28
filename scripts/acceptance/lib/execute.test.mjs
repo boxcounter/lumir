@@ -247,6 +247,284 @@ test("file.jsonl 静态校验：空表 / 非标量值 / 非 JSONL 解析输入�
   );
 });
 
+/** 会话留存里工具结果的两层形态：外层是 `llm_request` 行，`messages[]` 里
+ *  `function_call_output.output` 是**字符串化 JSON**（M783；`turn.rs` 把工具结果再序列化一次）。 */
+function sessionRequestLine(messages) {
+  return JSON.stringify({ payload: { kind: "llm_request", request: { messages } }, ts: 1780000000000 });
+}
+
+/** 一对 `function_call` + `function_call_output`（工具名只在 call 上，输出项靠 call_id 配对）。
+ *  `output` 传对象 = 按真实形态再序列化一次；传字符串 = 原样落盘（构造坏 JSON 现场用）。 */
+function toolPair(callId, name, output) {
+  return [
+    { arguments: "{}", call_id: callId, name, type: "function_call" },
+    { call_id: callId, output: typeof output === "string" ? output : JSON.stringify(output), type: "function_call_output" },
+  ];
+}
+
+test("file.jsonlOutput：解析后按字段判，条目在数组里也能命中（工具名经 call_id 配对）", async () => {
+  const root = tmpRoot("jsonl-output-nested");
+  useTmpEnv(root);
+  const line = sessionRequestLine(
+    toolPair("c1", "vault_list", {
+      entries: [{ kind: "file", path: "keep.md" }, { kind: "directory", path: "node_modules" }],
+      ok: true,
+    }),
+  );
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "解析后判字段",
+        expect: [
+          { label: "目录条目", file: { path: "s.jsonl", jsonlOutput: { tool: "vault_list", has: { kind: "directory", path: "node_modules" } } } },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "PASS", `嵌套数组里的条目应命中，实际：${JSON.stringify(records)}`);
+  assert.match(records[0].detail ?? "", /entries\[1\]/, "证据里应给出命中位置（entries[1]）");
+});
+
+test("file.jsonlOutput：字段值逐字比较——行尾换行多一个字节都不成立（完整 stdout 口径）", async () => {
+  const root = tmpRoot("jsonl-output-exact");
+  useTmpEnv(root);
+  const line = sessionRequestLine(toolPair("cat", "cli_run", { command: "cat", ok: true, stdout: "KEEP sibling\n" }));
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "完整 stdout 与去尾换行两种写法",
+        expect: [
+          {
+            label: "完整 stdout",
+            file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { command: "cat", stdout: "KEEP sibling\n" } } },
+          },
+          {
+            label: "少了行尾换行（必须红）",
+            file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { stdout: "KEEP sibling" } } },
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "第二条少一个字节必须判红，否则「完整 stdout」没有区分度");
+  assert.deepEqual(records.map((r) => r.ok), [true, false], `期望 [PASS, FAIL]，实际：${JSON.stringify(records)}`);
+});
+
+test("file.jsonlOutput：限定工具名才有区分度——同片段在别的工具结果里不算命中", async () => {
+  const root = tmpRoot("jsonl-output-tool-scope");
+  useTmpEnv(root);
+  const line = sessionRequestLine([
+    ...toolPair("l1", "vault_list", { entries: [{ kind: "file", path: "note.md" }] }),
+    ...toolPair("r1", "vault_read", { content: "note.md", path: "note.md" }),
+  ]);
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "换工具名就不再命中",
+        expect: [
+          { label: "vault_read 命中", file: { path: "s.jsonl", jsonlOutput: { tool: "vault_read", has: { path: "note.md" } } } },
+          { label: "cli_run 无结果（必须红）", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: { path: "note.md" } } } },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "工具名限定不生效时第二条会恒绿——这是「同片段在别的工具结果里」的假绿形态");
+  assert.deepEqual(records.map((r) => r.ok), [true, false], `期望 [PASS, FAIL]，实际：${JSON.stringify(records)}`);
+  assert.match(records[1].label, /没有 cli_run 的工具结果/, "红因应点明「没有该工具的结果」而不是「字段不符」");
+});
+
+test("file.jsonlOutput：同一工具多次调用的结果互不冒充（负向必须真的读到递归那次）", async () => {
+  const root = tmpRoot("jsonl-output-two-calls");
+  useTmpEnv(root);
+  const line = sessionRequestLine([
+    ...toolPair("root", "vault_list", { entries: [{ kind: "file", path: "note.md" }] }),
+    ...toolPair("rec", "vault_list", { entries: [{ kind: "file", path: "notes/deep.md" }], path: "notes" }),
+  ]);
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "默认调用与递归调用互不冒充",
+        expect: [
+          { label: "递归结果在场", file: { path: "s.jsonl", jsonlOutput: { tool: "vault_list", has: { path: "notes/deep.md" } } } },
+          {
+            label: "反向要说它含（必须红＝证明真的读到了递归那次）",
+            file: { path: "s.jsonl", jsonlOutput: { tool: "vault_list", not: { path: "notes/deep.md" } } },
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "负向那条必须红——若它绿，说明只看了一次调用（旧口径的覆盖假象）");
+  assert.deepEqual(records.map((r) => r.ok), [true, false], `期望 [PASS, FAIL]，实际：${JSON.stringify(records)}`);
+  assert.match(records[0].detail ?? "", /\(rec\)/, "正向命中的证据应指出出自哪次调用");
+});
+
+test("file.jsonlOutput：没有工具结果的现场，not 必须 FAIL（不许在空输入上恒绿）", async () => {
+  const root = tmpRoot("jsonl-output-empty");
+  useTmpEnv(root);
+  const line = JSON.stringify({ payload: { kind: "session_open", session_id: "s1" }, ts: 1 });
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "只有 session_open 的留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "负向断言无输入",
+        expect: [{ label: "不该恒绿", file: { path: "s.jsonl", jsonlOutput: { not: { stdout: "/" } } } }],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "一条工具结果都没有时，负向断言没有可判的输入，必须判红（REVIEW.md「读不到当成空」条）");
+  assert.match(records[0].label, /没有任何可解析的工具结果/, "红因应点明「没有工具结果」");
+});
+
+test("file.jsonlOutput：坏 JSON / 缺 output / 类型错误一律显式 FAIL（不静默跳过）", async () => {
+  const cases = [
+    { name: "坏 JSON 行", content: '{"payload":{broken\n', want: /不是合法 JSON/ },
+    {
+      name: "output 缺失",
+      content: `${sessionRequestLine([{ call_id: "c1", type: "function_call_output" }])}\n`,
+      want: /缺 output 或不是字符串/,
+    },
+    {
+      name: "output 不是字符串",
+      content: `${sessionRequestLine([{ call_id: "c1", output: { stdout: "/" }, type: "function_call_output" }])}\n`,
+      want: /缺 output 或不是字符串/,
+    },
+    {
+      name: "内层不是合法 JSON",
+      content: `${sessionRequestLine(toolPair("c1", "cli_run", '{"stdout":"/\\n"'))}\n`,
+      want: /的 output 不是合法 JSON/,
+    },
+    {
+      name: "内层不是对象",
+      content: `${sessionRequestLine(toolPair("c1", "cli_run", '"/"'))}\n`,
+      want: /的 output 不是 JSON 对象/,
+    },
+    {
+      name: "输出项缺 call_id",
+      content: `${sessionRequestLine([{ output: '{"stdout":"/"}', type: "function_call_output" }])}\n`,
+      want: /缺 call_id/,
+    },
+  ];
+  for (const c of cases) {
+    const root = tmpRoot(`jsonl-output-bad-${cases.indexOf(c)}`);
+    useTmpEnv(root);
+    const { status, records } = await drive(root, {
+      steps: [
+        { name: "写坏现场", do: "vaultWrite", file: "s.jsonl", content: c.content },
+        {
+          name: c.name,
+          expect: [
+            { label: c.name, file: { path: "s.jsonl", jsonlOutput: { has: { stdout: "/" } } } },
+            { label: `${c.name}（负向同样要红）`, file: { path: "s.jsonl", jsonlOutput: { not: { stdout: "/x" } } } },
+          ],
+        },
+      ],
+    });
+    assert.equal(status, "FAIL", `${c.name}：坏现场必须判红，实际记录：${JSON.stringify(records)}`);
+    for (const r of records) assert.match(r.label, c.want, `${c.name}：红因应可定位，实际：${r.label}`);
+  }
+});
+
+test("file.jsonlOutput：工具名限定遇到配不上 function_call 的输出时显式 FAIL（不静默排除）", async () => {
+  const root = tmpRoot("jsonl-output-orphan");
+  useTmpEnv(root);
+  // 只有输出项、没有配对的 function_call：无法判定工具归属，按工具名限定断言时不能默默跳过它。
+  const line = sessionRequestLine([{ call_id: "orphan", output: '{"stdout":"/"}', type: "function_call_output" }]);
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "孤立输出", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "按工具名限定",
+        expect: [{ label: "配不上 call", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", not: { stdout: "/" } } } }],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "归属不明时按工具名限定的负向断言必须红（否则一行坏数据就能藏起命中）");
+  assert.match(records[0].label, /配不上 function_call/, "红因应点明归属无法判定");
+});
+
+test("file.jsonlOutput：顶层 has / not 写成 null（YAML 空值）或非法形状时运行期显式 FAIL，不抛 TypeError", async () => {
+  const root = tmpRoot("jsonl-output-null-shape");
+  useTmpEnv(root);
+  const line = sessionRequestLine(toolPair("c1", "cli_run", { command: "cat", ok: true, stdout: "KEEP\n" }));
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "空判据与非法形状",
+        expect: [
+          // r1 P1-1：`has: null` 曾被 `has ?? not` 合并成 undefined，判定期 `Object.keys(null)` 抛
+          // TypeError——真机跑批不重跑静态校验，运行期必须自己判形状并显式 FAIL。
+          { label: "has: null", file: { path: "s.jsonl", jsonlOutput: { tool: "cli_run", has: null } } },
+          { label: "not: null", file: { path: "s.jsonl", jsonlOutput: { not: null } } },
+          // `Object.keys(42) === []` 会让子集匹配在空键集上退化成「匹配一切」——同一道运行期守卫挡住。
+          { label: "has: 42（形状非法，必须红而不是匹配一切）", file: { path: "s.jsonl", jsonlOutput: { has: 42 } } },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "三条都必须判红（TypeError 会中断整场而不是落一条 FAIL 记录）");
+  assert.deepEqual(records.map((r) => r.ok), [false, false, false], `期望三条都 FAIL，实际：${JSON.stringify(records)}`);
+  for (const r of records) {
+    assert.match(r.label, /jsonlOutput 需要 has 或 not/, `红因应点明判据形态，实际：${r.label}`);
+  }
+});
+
+test("file.jsonlOutput 静态校验：未知键 / 方向不唯一 / 空期望 / null 值 / tool 非字符串都报 problem", () => {
+  const errs = (spec) =>
+    checkScenario({ id: "jsonl-output-check", item: 0, steps: [{ name: "校验", expect: [{ file: { path: "s.jsonl", jsonlOutput: spec } }] }] });
+  assert.deepEqual(errs({ tool: "cli_run", has: { stdout: "/" } }), [], "合法形态不该报 problem");
+  assert.ok(errs({}).some((p) => p.includes("需要 { tool?, has | not }")), "空对象应报 problem");
+  assert.ok(
+    errs({ has: { a: 1 }, not: { b: 2 } }).some((p) => p.includes("恰取一种判据")),
+    "同时写 has / not 应报 problem（方向不唯一）",
+  );
+  assert.ok(errs({ tool: "cli_run" }).some((p) => p.includes("恰取一种判据")), "只写 tool 应报 problem（没有判据）");
+  assert.ok(errs({ has: {} }).some((p) => p.includes("需要非空对象")), "空 has 应报 problem");
+  // 顶层 `has:` / `not:` 的空写法在 YAML 里就是 null（r1 P1-1）：它必须与「没写过这个键」区分开，
+  // 不许被 `has ?? not` 吞成 undefined 而跳过形状校验。
+  assert.ok(
+    errs({ has: null }).some((p) => p.includes("file.jsonlOutput.has 需要非空对象")),
+    "顶层 has: null 应报 problem（`has ?? not` 会把 null 吞成 undefined 而静默放行）",
+  );
+  assert.ok(
+    errs({ not: null }).some((p) => p.includes("file.jsonlOutput.not 需要非空对象")),
+    "顶层 not: null 应报 problem（对照方向：not 的 null 同样不算判据）",
+  );
+  // 嵌套 null 仍是另一条口径：它落在字段值上，报的是字段路径而不是方向名。
+  assert.ok(errs({ has: { stdout: null } }).some((p) => p.includes("file.jsonlOutput 的 stdout")), "嵌套 null 期望值应报 problem");
+  assert.ok(errs({ has: { entries: [] } }).some((p) => p.includes("entries")), "空数组期望值应报 problem");
+  assert.ok(errs({ tool: 42, has: { a: 1 } }).some((p) => p.includes("tool 需要非空字符串")), "非字符串 tool 应报 problem");
+  assert.ok(errs({ hsa: { a: 1 } }).some((p) => p.includes("未知键 hsa")), "拼错键名应报 problem（否则静默不判）");
+});
+
+test("file.has / file.jsonl 与 file.jsonlOutput 的分工：手写未转义片段在字节层不命中", async () => {
+  const root = tmpRoot("jsonl-output-vs-has");
+  useTmpEnv(root);
+  const line = sessionRequestLine(toolPair("rec", "vault_list", { entries: [{ kind: "file", path: "notes/deep.md" }] }));
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "写会话留存", do: "vaultWrite", file: "s.jsonl", content: `${line}\n` },
+      {
+        name: "字节层 vs 解析层",
+        expect: [
+          // M777 现场：按未转义形态写在字节层恒不命中（假红），这一条钉住「为什么需要 jsonlOutput」。
+          { label: "字节层手写未转义片段（必须红）", file: { path: "s.jsonl", has: '{"path":"notes/deep.md"}' } },
+          { label: "解析层同语义", file: { path: "s.jsonl", jsonlOutput: { tool: "vault_list", has: { path: "notes/deep.md" } } } },
+          // 行顶层字段仍归 file.jsonl（不动既有语义；`kind` 在行的 `payload` 里，够不到）。
+          { label: "行顶层字段归 file.jsonl", file: { path: "s.jsonl", jsonl: { ts: 1780000000000 } } },
+        ],
+      },
+    ],
+  });
+  assert.equal(status, "FAIL", "字节层那条必须红——它绿就说明转义层不存在，本判据的前提要重查");
+  assert.deepEqual(records.map((r) => r.ok), [false, true, true], `期望 [FAIL, PASS, PASS]，实际：${JSON.stringify(records)}`);
+});
+
 test("ax / file 的 has·not 写数组即报 problem（数组只有 waitFor.has 支持）", () => {
   const errs = (expect) => checkScenario({ id: "array-has", item: 0, steps: [{ name: "校验", expect: [expect] }] });
   assert.ok(

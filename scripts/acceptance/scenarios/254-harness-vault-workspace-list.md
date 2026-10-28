@@ -5,7 +5,7 @@ tier: full
 title: harness 工作区与 vault_list：system 绝对根 / cli_run cwd / 列表到读取链路（mock provider）
 open: harness-note.md
 marker: "HNL-ALPHA"
-# 判据全部落在会话留存（`session_open.system` / `assembly` / 工具输出 JSON）与 AX 树上：
+# 判据全部落在会话留存（`session_open.system` / `assembly` / 工具输出）与 AX 树上：
 # - 工作区段在场且含 vault 绝对根（system 层）；
 # - `vault_list` 真执行：递归层级的 sibling 文件出现在结果里，hidden 档不出现、lazy 子树不展开；
 # - `vault_read` 读到列表里看到的 sibling（列表 → 读取链路）；
@@ -13,10 +13,14 @@ marker: "HNL-ALPHA"
 #   文件（子进程 cwd 就是当前 vault 的强证据，且与路径拼写无关）；
 # - 全程没有批准卡（`vault_list` / `vault_read` / `pwd` / `cat` 都免闸）。
 #
-# 工具结果在留存里的形态是**转义字符串**（`turn.rs` 把结果 `serde_json::to_string` 后放进
-# `function_call_output.output`）：结果原文的 `"` 落到 JSONL 字节是 `\"`，原文的 `\n`（反斜杠 + n）
-# 变成 `\\n`。工具结果类断言 MUST 按转义形态写——按未转义片段写会恒不命中（M777 现场：列表项形状与
-# cat 两条假红、pwd 负向假绿）。同一份文件里 `session_open` 是顶层对象（引号不转义），两类断言不能互抄。
+# 留存里有**两种编码形态**，两类断言不要互抄：
+# - `session_open` 的 system / assembly 与行顶层字段是普通 JSON 对象，`file.has` 直接对字节判子串；
+# - 工具结果在 `llm_request.request.messages[]` 的 `function_call_output.output` 里，是**字符串化的
+#   JSON**（`turn.rs` 把结果 `serde_json::to_string` 后放进该字段）——原文的 `"` 落到字节是 `\"`、
+#   原文的 `\n`（反斜杠 + n 两字符）是 `\\n`。这类断言 MUST 用 `file.jsonlOutput`（逐行解析、
+#   再把 `output` 解析一层，按字段值判），不要手写转义：M777 现场三条手写断言全错（列表项形状与
+#   cat 两条恒假红、pwd 负向恒绿），根因就是这层转义；`jsonlOutput` 的 `tool` 还经 `call_id` 把
+#   结果绑到具体工具（输出项自身不带工具名），两次 `vault_list` 的结果因此也能分辨。
 config:
   harness:
     provider: mock
@@ -84,38 +88,70 @@ steps:
         file:
           path: "env:harness/sessions/*/*.jsonl"
           has: '/\{(?=[^}]*"source":"workspace")(?=[^}]*"exists":true)(?=[^}]*"bytes":[1-9][0-9]*)[^}]*\}/'
+      # 以下九条判工具结果（见文件头：`output` 是字符串化 JSON，走解析后的判据，不写转义）。
       - label: vault_list 递归结果里有嵌套 sibling（工具真执行了）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: "wsl-vault/notes/deep.md" }
-      # 工具结果在留存里是转义字符串（见文件头）：条目对象原文 `{"kind":…,"path":…}` 落到
-      # JSONL 字节是 `{\"kind\":…,\"path\":…}`。整段连写仍钉住「只有 kind / path 两个字段、无别名」。
+        file:
+          path: "env:harness/sessions/*/*.jsonl"
+          jsonlOutput:
+            tool: vault_list
+            has: { path: wsl-vault/notes/deep.md }
+      # 条目是 {kind, path} 两个字段的子集语义：这两个值同时在场才算这一行（不是「串在文件里出现过」）。
       - label: 列表项形状是 {kind, path}（目录类型在场——lazy 目录出一行）
         file:
           path: "env:harness/sessions/*/*.jsonl"
-          has: '{\"kind\":\"directory\",\"path\":\"wsl-vault/node_modules\"}'
+          jsonlOutput:
+            tool: vault_list
+            has: { kind: directory, path: wsl-vault/node_modules }
       - label: hidden 档条目（.DS_Store）不出现在任何一页
         file:
           path: "env:harness/sessions/*/*.jsonl"
-          count: { pattern: '/wsl-vault\/\.DS_Store/', exact: 0 }
+          jsonlOutput:
+            tool: vault_list
+            not: { path: wsl-vault/.DS_Store }
       - label: lazy 子树不展开（node_modules 下的文件不出现）
         file:
           path: "env:harness/sessions/*/*.jsonl"
-          count: { pattern: '/wsl-vault\/node_modules\/ignored\.js/', exact: 0 }
-      - label: 列表 → 读取链路走通（deep.md 正文进入工具结果）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: "WSL-DEEP nested" }
-      # pwd 的 stdout 原文是 `"/\n"`（这里的 `\n` 是 JSON 文本里的两字符），转义后落到 JSONL 字节
-      # 是 `\"stdout\":\"/\\n\"`。按未转义形态写（旧写法）在转义文本上恒不命中 = 该负向断言恒绿。
+          jsonlOutput:
+            tool: vault_list
+            not: { path: wsl-vault/node_modules/ignored.js }
+      # 读回的就是列表里看到的那份 sibling：path 与 content 逐字相等（content 不含尾换行——**vault_read
+      # 逐行切分后 join，文件尾换行不产生空行**，tools.rs 的 vault_read）。
+      - label: 列表 → 读取链路走通（读回的是列表里看到的那份 sibling）
+        file:
+          path: "env:harness/sessions/*/*.jsonl"
+          jsonlOutput:
+            tool: vault_read
+            has: { path: wsl-vault/notes/deep.md, content: WSL-DEEP nested }
+      # pwd 的 stdout 原文是 `"/\n"`（JSON 文本里的两字符 `\n` 是**真换行**）——解析后是 "/" + 换行。
+      # 两个形态都判：只要任一 cli_run 的 stdout 恰为根目录（有/无换行）就红；并额外要求 pwd 这次
+      # 调用真的成功（exit_code=0），否则「stdout 不含 /」在命令根本没跑时也会恒绿。
+      - label: pwd 这次调用真的成功（不只是「stdout 里没有 /」）
+        file:
+          path: "env:harness/sessions/*/*.jsonl"
+          jsonlOutput:
+            tool: cli_run
+            has: { command: pwd, exit_code: 0, ok: true }
       - label: pwd 不再返回 /（stdout 恰为根目录的形态不出现）
         file:
           path: "env:harness/sessions/*/*.jsonl"
-          count: { pattern: '\"stdout\":\"/\\n\"', exact: 0 }
+          jsonlOutput:
+            tool: cli_run
+            not: { stdout: "/\n" }
       - label: pwd 的 stdout 也不是无换行的根目录（同一回归的另一形态）
         file:
           path: "env:harness/sessions/*/*.jsonl"
-          count: { pattern: '\"stdout\":\"/\"', exact: 0 }
+          jsonlOutput:
+            tool: cli_run
+            not: { stdout: "/" }
       # 钉到 stdout 的完整值（含 `cat` 打出的行尾换行，即上方 `content: |` 的收尾换行），比只钉前缀
-      # 更能证明「读到的正是这份 sibling」——多一个字节都不成立。
+      # 更能证明「读到的正是这份 sibling」——多一个字节都不成立；`command` / `args` 一起钉，把判据
+      # 绑到 cat 那一次调用上（同场景还有 pwd 也是 cli_run）。
       - label: 相对路径 cat 读到 vault 内文件（子进程 cwd 就是当前 vault）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '\"stdout\":\"WSL-KEEP sibling\\n\"' }
+        file:
+          path: "env:harness/sessions/*/*.jsonl"
+          jsonlOutput:
+            tool: cli_run
+            has: { command: cat, args: [wsl-vault/keep.md], stdout: "WSL-KEEP sibling\n" }
       - label: 全程没有批准卡（读工具与只读白名单命令都免闸）
         ax: { not: "要运行这条命令吗？" }
       - shot: 01-工作区与列表
@@ -129,11 +165,13 @@ steps:
    「`vault_*` 用相对路径 / `cli_run` 从该目录启动 / vault 外目标用绝对路径」；装配清单多一条
    `workspace`（模板仓内相对路径 + `exists:true` + 代入后字节数）。判据取自 `session_open`
    首行，不是面板文案。
-2. **执行层**：`cli_run("pwd")` 不再是 `/`；`cli_run("cat", ["wsl-vault/keep.md"])` 用**相对路径**
-   读到 vault 内文件——后者是与路径拼写无关的强证据（cwd 若不是 vault，`cat` 必然找不到文件）。
+2. **执行层**：`cli_run("pwd")` 调用成功（`exit_code: 0`）且不再返回 `/`（有 / 无换行两种形态都判
+   不出现）；`cli_run("cat", ["wsl-vault/keep.md"])` 用**相对路径**读到 vault 内文件——后者是与路径
+   拼写无关的强证据（cwd 若不是 vault，`cat` 必然找不到文件），判据钉到完整 `stdout`（含行尾换行）。
 3. **工具层**：`vault_list` 的递归结果里有嵌套 sibling；hidden 档（`.DS_Store`）不出现；lazy 子树
-   （`node_modules`）出一行但不展开；列表项只有 `path` / `kind`；随后 `vault_read` 读到列表里看到
-   的那份 sibling，证明「列表 → 读取」这条链路在真栈成立。
+   （`node_modules`）出一行但不展开；条目带 `path` / `kind` 两字段（值逐字匹配）；随后 `vault_read`
+   读到列表里看到的那份 sibling，证明「列表 → 读取」这条链路在真栈成立。工具结果类判据全部按
+   **解析后**的字段判（`file.jsonlOutput`），不写 JSONL 的转义层。
 
 ## 边界（如实登记）
 
@@ -151,5 +189,7 @@ steps:
 - **`vault_list` 分页 / 过滤 / 排序 / 默认一层 / 三档放行**由单测钉住
   （`vault_list_paginates_stably` / `vault_list_recursive_and_path_glob` /
   `vault_list_lists_one_layer_by_default` / `vault_list_auto_allows_in_all_modes`）。本场景的两次
-  `vault_list` 输出落在同一份会话留存里，现有 `file` 断言**无法区分默认调用与递归调用的结果**，
-  因此默认一层与分页都不在本场景的判据内；本场景的小目录也不会触发 `truncated`。
+  `vault_list` 输出落在同一份会话留存里：`jsonlOutput` 的 `has` 能钉住「某个条目出现在某个工具的某次
+  结果里」（条目值唯一时据此归属调用），但判据形态没有「按调用参数选择那次结果」的能力——默认调用
+  的结果没有可用于挑选的区分字段，因此**默认一层**与分页都不在本场景的判据内；本场景的小目录也不会
+  触发 `truncated`。

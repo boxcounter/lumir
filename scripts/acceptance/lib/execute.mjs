@@ -224,6 +224,9 @@ function isPlainTable(v) {
 const FILE_JUDGE_KEYS = [
   "exists", "changedSince", "unchangedSince", "mtimeUnchangedSince", "mtimeNewerThan", "has", "not", "count",
   "jsonl",
+  // 会话留存里的**工具结果**（M783）：`messages[]` 中 `type=function_call_output` 的 `output` 是
+  // 字符串化 JSON，按解析后的字段判——手写转义层的子串断言写错即静默（M777 现场三条全错）。
+  "jsonlOutput",
   // 结构化比对（change add-cron-notification-relaunch r1 P2-2）：绑定台账条目与 `tasks` 段
   // 的会话标识并**逐字**比较——`has` 只能证明「文件里某处有 session_id」。
   "cronNoticeSession",
@@ -841,6 +844,42 @@ export function checkScenario(scenario) {
               push(`${at} expect[${j}] file.jsonl.${k} 需要标量（字符串 / 数值 / 布尔），实际 ${JSON.stringify(v)}`);
           }
       }
+      else if (kinds[0] === "file" && exp.file.jsonlOutput !== undefined) {
+        // 工具结果两层 JSON 的判据（M783）：形状写错不会报错——`has` 恒不命中（假红）、`not` 恒成立
+        // （假绿），故在这里逐键挡掉：只收 `tool?` + `has | not` 恰一种，期望值只收标量 / 非空
+        // 数组 / 非空对象（`null` 是 YAML 空值的常态，比较时永远不等）。
+        const specOut = exp.file.jsonlOutput;
+        if (!isPlainTable(specOut) || Object.keys(specOut).length === 0)
+          push(`${at} expect[${j}] file.jsonlOutput 需要 { tool?, has | not }`);
+        else {
+          const shapes = [specOut.has !== undefined, specOut.not !== undefined].filter(Boolean).length;
+          if (shapes !== 1)
+            push(
+              `${at} expect[${j}] file.jsonlOutput 需要恰取一种判据：has（要求存在）或 not（要求不存在），实际 ${JSON.stringify(Object.keys(specOut))}`,
+            );
+          for (const k of Object.keys(specOut)) {
+            if (!["tool", "has", "not"].includes(k))
+              push(`${at} expect[${j}] file.jsonlOutput 未知键 ${k}（拼错即静默不判，允许：tool / has / not）`);
+          }
+          if (specOut.tool !== undefined && (typeof specOut.tool !== "string" || specOut.tool === ""))
+            push(`${at} expect[${j}] file.jsonlOutput.tool 需要非空字符串（工具名，如 vault_list / cli_run）`);
+          // 方向按「键是否**写过**」选，判定形状取该方向的**实际值**——MUST NOT 用 `has ?? not`
+          // 合并：`has: null`（YAML 里空值 `has:` 的常态）与没写 `has` 都是「键不在场」之外的两种
+          // 事实，`??` 会把前者吞成 undefined 从而跳过下面的形状校验（r1 P1-1：静态放行、判定期
+          // `Object.keys(null)` 抛 TypeError）。
+          const direction = specOut.has !== undefined ? "has" : "not";
+          if (shapes === 1) {
+            const shape = specOut[direction];
+            if (!isPlainTable(shape) || Object.keys(shape).length === 0) {
+              push(`${at} expect[${j}] file.jsonlOutput.${direction} 需要非空对象（要匹配的字段），实际 ${JSON.stringify(shape)}`);
+            } else {
+              const bad = jsonlOutputShapeProblem(shape);
+              if (bad)
+                push(`${at} expect[${j}] file.jsonlOutput 的 ${bad} 需要标量 / 非空数组 / 非空对象（null 与空容器只可能出自写错）`);
+            }
+          }
+        }
+      }
       else if (
         (kinds[0] === "ax" || kinds[0] === "file") &&
         ["has", "not"].some((k) => Array.isArray(exp[kinds[0]]?.[k]))
@@ -1103,6 +1142,166 @@ export function findJsonlRecord(content, want) {
     if (fields.every((field) => field in record && asText(record[field]) === asText(want[field]))) return line;
   }
   return null;
+}
+
+/** JSON 值的深度相等（`jsonlOutput` 的字段比较用）：对象比全部键、数组比全部元素、标量严格相等。
+ *  不用 `JSON.stringify` 比对——键序随序列化来源变化，那样会把「值相同、键序不同」判成不等。 */
+function jsonValueEquals(a, b) {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((item, i) => jsonValueEquals(item, b[i]));
+  }
+  if (isPlainTable(a) && isPlainTable(b)) {
+    const keys = Object.keys(a);
+    if (keys.length !== Object.keys(b).length) return false;
+    return keys.every((k) => k in b && jsonValueEquals(a[k], b[k]));
+  }
+  return false;
+}
+
+/** 在解析后的工具结果里找**任意层级**的一个对象，使 `want` 的每个字段都在场且值深度相等；返回命中
+ *  位置的路径（`entries[2]` / `(根对象)`，供证据读），没命中返回 null。
+ *
+ *  为什么要下探：`vault_list` 的条目在 `entries[]` 数组里、`cli_run` 的读数在根对象上——同一个判据
+ *  形态要覆盖两种位置。**字段是子集语义**：`has: { kind: directory, path: … }` 只要求这两个字段
+ *  按值在场，不要求对象只有这两个字段（不把序列化形状钉进判据）。 */
+export function findToolResultMatch(value, want) {
+  const walk = (node, at) => {
+    if (Array.isArray(node)) {
+      for (const [i, item] of node.entries()) {
+        const hit = walk(item, `${at}[${i}]`);
+        if (hit !== null) return hit;
+      }
+      return null;
+    }
+    if (isPlainTable(node)) {
+      if (Object.keys(want).every((k) => k in node && jsonValueEquals(node[k], want[k]))) {
+        return at === "" ? "(根对象)" : at;
+      }
+      for (const [k, child] of Object.entries(node)) {
+        const hit = walk(child, at === "" ? k : `${at}.${k}`);
+        if (hit !== null) return hit;
+      }
+    }
+    return null;
+  };
+  return walk(value, "");
+}
+
+/**
+ * 会话留存里的**工具结果**（M783）：`llm_request.request.messages[]` 中 `type: "function_call_output"`
+ * 的 `output` 是**字符串化的 JSON**——`turn.rs` 把工具结果 `serde_json::to_string` 后放进该字段
+ * （design §2 的 wire 形态），原文的 `"` 落到 JSONL 字节是 `\"`、原文的 `\n`（反斜杠 + n 两字符）
+ * 是 `\\n`。于是工具结果在留存里是**两层 JSON**：外层是行对象（`session_open` 这类，引号不转义），
+ * 内层 `output` 字符串再 parse 一次才是工具结果对象。
+ *
+ * 为什么需要专用入口：`file.has` / `file.count` 只认字节（手写转义写错不报错：正向恒假红、负向
+ * 恒绿——M777 现场三条断言全错），`file.jsonl` 只比较**行顶层**字段（够不到 `messages[].output`）。
+ *
+ * 口径（窄域）：只认 `payload.kind === "llm_request"` 的行、只看其 `request.messages[]`；输出项自身
+ * **不带工具名**，`tool` 经 `call_id` 配对同文件里的 `function_call.name`（同一份留存里
+ * `llm_request` 的历史是累积的，同一结果会在后续多行重复出现——按 `call_id` + 原文去重）。
+ *
+ * **形态不对一律收进 `problems`，由调用方显式判 FAIL**：与 `findJsonlRecord` 的「坏行不参与匹配」
+ * 语义相反——工具结果文件里出现坏行 / 缺 `output` / 类型错误，就是现场坏了，静默跳过会让正向
+ * 假红、负向恒绿（REVIEW.md「读不到当成空」条）。
+ */
+export function collectToolOutputs(content) {
+  const problems = [];
+  const toolByCall = new Map();
+  const raw = [];
+  for (const [index, line] of content.split("\n").entries()) {
+    if (line.trim() === "") continue;
+    const where = `第 ${index + 1} 行`;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch (e) {
+      problems.push(`${where}不是合法 JSON（${e.message}）`);
+      continue;
+    }
+    if (!isPlainTable(record)) {
+      problems.push(`${where}不是 JSON 对象`);
+      continue;
+    }
+    const payload = record.payload;
+    if (!isPlainTable(payload) || payload.kind !== "llm_request") continue;
+    const messages = payload.request?.messages;
+    if (!Array.isArray(messages)) {
+      problems.push(`${where}是 llm_request，但 payload.request.messages 不是数组`);
+      continue;
+    }
+    for (const [n, item] of messages.entries()) {
+      const at = `messages[${n}]`;
+      if (!isPlainTable(item)) {
+        problems.push(`${where} ${at} 不是对象`);
+        continue;
+      }
+      if (item.type === "function_call") {
+        if (typeof item.call_id !== "string" || item.call_id === "") problems.push(`${where} ${at} 的 function_call 缺 call_id`);
+        else if (typeof item.name !== "string" || item.name === "")
+          problems.push(`${where} ${at} 的 function_call（${item.call_id}）缺 name`);
+        else toolByCall.set(item.call_id, item.name);
+      } else if (item.type === "function_call_output") {
+        raw.push({ where, at, callId: item.call_id, output: item.output });
+      }
+    }
+  }
+  const outputs = [];
+  const seen = new Set();
+  for (const rec of raw) {
+    if (typeof rec.callId !== "string" || rec.callId === "") {
+      problems.push(`${rec.where} ${rec.at} 的 function_call_output 缺 call_id（无法判定工具归属）`);
+      continue;
+    }
+    const dedupeKey = `${rec.callId}\u0000${typeof rec.output === "string" ? rec.output : ""}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    if (typeof rec.output !== "string") {
+      problems.push(`${rec.where} ${rec.at} 的 function_call_output（${rec.callId}）缺 output 或不是字符串：${JSON.stringify(rec.output)}`);
+      continue;
+    }
+    let value;
+    try {
+      value = JSON.parse(rec.output);
+    } catch (e) {
+      problems.push(`${rec.where} ${rec.at} 的 function_call_output（${rec.callId}）的 output 不是合法 JSON（${e.message}）`);
+      continue;
+    }
+    if (!isPlainTable(value)) {
+      problems.push(`${rec.where} ${rec.at} 的 function_call_output（${rec.callId}）的 output 不是 JSON 对象`);
+      continue;
+    }
+    outputs.push({ where: rec.where, at: rec.at, callId: rec.callId, tool: toolByCall.get(rec.callId) ?? null, value });
+  }
+  return { outputs, problems };
+}
+
+/** `jsonlOutput.has/not` 的期望值形状检查：只收标量 / 非空数组 / 非空对象（逐层同规则），返回第一个
+ *  不合规的字段路径（null = 通过）。`null`（YAML 空值）与空容器只可能出自写错，而它们会让判据
+ *  恒不命中 / 恒成立——这条是「写错即静默」的静态防线（与 `file.jsonl` 的标量口径同源）。 */
+function jsonlOutputShapeProblem(value, at = "") {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return null;
+  const here = at === "" ? "(根)" : at;
+  if (Array.isArray(value)) {
+    if (value.length === 0) return here;
+    for (const [i, item] of value.entries()) {
+      const bad = jsonlOutputShapeProblem(item, `${at}[${i}]`);
+      if (bad) return bad;
+    }
+    return null;
+  }
+  if (isPlainTable(value)) {
+    const keys = Object.keys(value);
+    if (keys.length === 0) return here;
+    for (const k of keys) {
+      const bad = jsonlOutputShapeProblem(value[k], at === "" ? k : `${at}.${k}`);
+      if (bad) return bad;
+    }
+    return null;
+  }
+  return here;
 }
 
 /** 一处文本里 `pattern` 出现的次数（M507 的 chord `verify` 用）。**与 `matcher` 同一口径**：
@@ -2116,6 +2315,78 @@ export async function runScenario(ctx, scenario) {
               ok: false,
               reason: `（${lines.length} 行里没有一行同时满足 ${JSON.stringify(want)}）`,
             };
+          }
+          case "jsonlOutput": {
+            // 工具结果的**解析后**判据（M783）：`messages[]` 里 `type=function_call_output` 的 `output`
+            // 是字符串化 JSON（见 `collectToolOutputs` 的注释），按解析后的对象判、不再手写转义。
+            //
+            // 判据形态 `{ tool?, has | not }` 恰取一种方向：`has` = 存在一条（可限定工具名的）结果
+            // 里有个对象满足全部字段；`not` = 一条都没有。**解析不出东西一律 FAIL**——包括坏 JSON、
+            // 缺 output、类型错误，以及「一条工具结果都没有」：负向断言在没有输入的现场上是恒绿的
+            // （REVIEW.md「读不到当成空」条），不能算成立。
+            const specOut = spec.jsonlOutput;
+            if (content === undefined && contentErr === undefined) await readContent();
+            if (contentErr) return { ok: false, reason: contentErr };
+            const { outputs, problems } = collectToolOutputs(content);
+            if (problems.length > 0) {
+              const shown = problems.slice(0, 3).join("；");
+              const more = problems.length > 3 ? `；另有 ${problems.length - 3} 处` : "";
+              return { ok: false, reason: `（工具结果解析失败：${shown}${more}）` };
+            }
+            const toolCount = (list) => [...new Set(list.map((o) => o.tool ?? "(未配对)"))].sort().join(", ") || "无";
+            if (specOut.tool !== undefined) {
+              const t = specOut.tool;
+              const orphans = outputs.filter((o) => o.tool === null);
+              if (orphans.length > 0) {
+                return {
+                  ok: false,
+                  reason: `（${orphans.length} 条工具结果的 call_id 配不上 function_call（${orphans
+                    .slice(0, 3)
+                    .map((o) => o.callId)
+                    .join(", ")}），无法判定是否属于 ${t}）`,
+                };
+              }
+            }
+            const scoped = specOut.tool === undefined ? outputs : outputs.filter((o) => o.tool === specOut.tool);
+            if (scoped.length === 0) {
+              return {
+                ok: false,
+                reason:
+                  specOut.tool === undefined
+                    ? "（文件里没有任何可解析的工具结果：messages[] 里没有 type=function_call_output 的项）"
+                    : `（没有 ${specOut.tool} 的工具结果——无法判定；在场的工具：${toolCount(outputs)}）`,
+              };
+            }
+            // 方向按「键是否**写过**」选（`has: null` 也算写过），形状取该方向的**实际值**：这里
+            // MUST NOT 用 `has ?? not` 合并两个方向——`null` 会被 `??` 吞成 undefined，后续
+            // `Object.keys(null)` 抛 TypeError（r1 P1-1）。真机跑批不重跑静态校验，所以运行期
+            // 也必须自己判一次形状：非空对象之外的形态一律显式 FAIL（`has: 42` 这类在
+            // `Object.keys(42) === []` 上会退化成「匹配一切」的假绿）。
+            const direction = specOut.has !== undefined ? "has" : specOut.not !== undefined ? "not" : null;
+            const wantShape = direction === null ? undefined : specOut[direction];
+            if (direction === null || !isPlainTable(wantShape) || Object.keys(wantShape).length === 0) {
+              return {
+                ok: false,
+                reason: `（jsonlOutput 需要 has 或 not，且判据是非空对象；实际 direction=${direction}，值 ${JSON.stringify(wantShape)}）`,
+              };
+            }
+            const matches = [];
+            for (const out of scoped) {
+              const at = findToolResultMatch(out.value, wantShape);
+              if (at !== null) matches.push({ out, at });
+            }
+            const who = (m) => `${m.out.where} ${m.out.at} 的 ${m.out.tool}(${m.out.callId}) ${m.at}`;
+            if (direction === "has") {
+              return matches.length > 0
+                ? { ok: true, detail: `${who(matches[0])} 命中 ${JSON.stringify(wantShape)}` }
+                : {
+                    ok: false,
+                    reason: `（${scoped.length} 条工具结果里没有任何对象同时满足 ${JSON.stringify(wantShape)}；在场的工具：${toolCount(scoped)}）`,
+                  };
+            }
+            return matches.length === 0
+              ? { ok: true, detail: `${scoped.length} 条工具结果均不含 ${JSON.stringify(wantShape)}` }
+              : { ok: false, reason: `（期望不含 ${JSON.stringify(wantShape)}，实际命中 ${matches.length} 处：${who(matches[0])}）` };
           }
           case "cronNoticeSession": {
             // 台账条目与 `tasks` 段的**逐字**一致性（change add-cron-notification-relaunch
