@@ -68,9 +68,11 @@
       （动过视觉面才跑 `visual`——本 change 不动 `src/**`，预期 SKIP）
 - [x] 6.5 真机跑 254 场景取 PASS 证据（落 `.local/acceptance/`）——M777 首跑红（断言转义形态），
       M780 / M783 各复跑一次均 PASS，证据登记见文末「6.5 证据登记（M801）」
-- [ ] 6.6 真实 provider 用原始「评审 proposal 并查看相关文件」场景抽样复验：无 `pwd` / 广域 `find`
-      探测，`vault_list` 被首选（抽样观察，不进机器判据）——**按 Alex 2026-10-29 指令暂缓**，
-      停止点与现场见文末「6.6 停止记录（M801）」
+- [x] 6.6 真实 provider 用原始「评审 proposal 并查看相关文件」场景抽样复验：无 `pwd` / 广域 `find`
+      探测，`vault_list` 被首选（抽样观察，不进机器判据）——**已执行**（M804，2026-10-29）：
+      硬判据（无 `pwd` / 无广域 `find`）由抽样 1 闭合；`vault_list` 首选半条本轮未被触发（引用是
+      显式路径），补压该半条的第二次抽样被 provider 月度额度挡住——如实记录，不按已验证声称。
+      两次现场见文末「6.6 真实 provider 抽样（M804）」；M801 的暂缓停止点保留在下节作历史现场
 - [ ] 6.7 独立评审（reviewer clean / merge 且绑定 tip）+ 按五要件填 proposal 的节点 2 记录
 
 ## 实现批证据（2026-10-28，worker 自验）
@@ -217,3 +219,40 @@
   文档或设置控件。
 - 结论：判据 6 的真实 provider 侧仍**未闭环**；M801 不据此声称节点 2 完成，6.6 需等 Alex 重新放行
   真机窗口后重跑（场景与判据已定，命令见 design §7 的真机段）。
+
+## 6.6 真实 provider 抽样（M804，2026-10-29）——**已执行，硬判据闭合，`vault_list` 首选半条未触发**
+
+- 性质：真实 provider（`kimi` / `k3.1-pro` / thinking `high`）单窗口两次抽样；**未读取 / 未复制任何
+  凭据**（app 自读真实配置，测试者全程未打开 `config.json`）；真实 vault 只读、未打开任何文档。
+- 被测构建：wt-804（base master `7614bfee` + spawn 快照 `0ce1abab`）dev flavour；`CARGO_TARGET_DIR`
+  共享主仓 warm target，构建前 `touch src-tauri/src/harness/prompts/*.md` 触发重编
+  （`Compiling lumir v0.11.1`，6.00s）；私有副本 `/tmp/m804-lumir`，
+  sha256 `756993e1eb02cf275fbd4c8a1fb715c5831bf3f316a756c17b4cb67981ea96a0`。
+- **description 边界句在被测构建里**（两条独立读数）：① 二进制字节：`LC_ALL=C grep -ac` 对
+  「可见性与文件树同源」「hidden 条目不出现」「lazy 子树只出一行不展开」
+  「不返回大小、修改时间、权限」「多目标路径或 vault 外路径时用 cli_run」各命中 1；
+  ② `cargo test --lib vault_list_description_keeps_boundaries` → `1 passed`；
+  ③ 运行期：两次会话的 `llm_request.request.system` 都含「===== 工作区 =====」标题、合成 vault 绝对根行、
+  `cli_run` 从根启动句、identity 的「先用 vault_list」与「不要用 pwd、ls /、广域 find」两句
+  （抽取脚本判据全 true）。读数见 `.local/reviews/vault-list-real-provider-oct29/binary-description-check.txt`。
+- 环境：合成 vault `/private/tmp/m804-sample-vault`（`docs/proposal.md` 引用 `docs/design.md`、
+  `specs/spec.md`、`notes/edge-cases.md`，另有 `src/export-draft.ts`）；权限档 `Vault Write`
+  （vault 写自动放行、shell 需批准）——两次抽样都未触发批准卡，因为模型一次 `cli_run` 也没有调用。
+- 抽样 1（原始场景，不点名任何工具）：提示词「评审 docs/proposal.md 这份 proposal，并查看它引用的
+  相关文件，给出主要问题。」。工具序列 `vault_read(docs/proposal.md)` →
+  `vault_read(specs/spec.md)` + `vault_read(docs/design.md)` + `vault_read(notes/edge-cases.md)` → 终答 1049 字。
+  **`pwd` 0 次、`ls` 0 次、`find` 0 次、`cli_run` 0 次**——原现场那套
+  「`pwd` → `ls /Users` → 广域 `find`」没有复现。`vault_list` 0 次：proposal 的引用都是显式相对路径，
+  模型不需要目录枚举，因此「sibling 发现首选 `vault_list`」这半条在本样本**未被触发**（不是未首选）。
+- 抽样 2（补压上面那半条，另起一问、另开会话，不是同一问的重试）：提示词「评审 docs/proposal.md 这份
+  proposal，把它引用的相关文件以及同目录下其余材料都找出来逐个过一遍，给出主要问题。」。
+  结果 **未取得数据**：首个请求即返回 `harness_http_error`——provider 月度额度耗尽
+  （原文「You've reached your monthly usage limit for this billing cycle…」），零工具调用。
+  按「单次失败也保留、不反复试到绿」停手，未再尝试；会话留存原样保留。
+- 判据结论：验收判据 6 的**可机器/可观测部分**（无 `pwd`、无广域 `find`、无根目录探测）＝ **PASS**
+  （抽样 1）；`vault_list` 首选＝**本轮未观测**（抽样 1 无需枚举，抽样 2 被额度挡住）——
+  该半条按「抽样观察、不进机器判据」如实记为未触发，**不声称已验证**。
+- 证据指针（主仓、git 外）：`.local/reviews/vault-list-real-provider-oct29/`
+  （`run-notes.md` 现场登记、`binary-description-check.txt`、`sample1/`、`sample2/`）。
+  会话留存 `~/.config/lumir/harness/sessions/vault-m804real-1/`（两份 JSONL）与临时注册项
+  `~/.config/lumir/vault-registry/vault-m804real-1.json` 按 tower 2026-10-29 指令**保留**作审计。
