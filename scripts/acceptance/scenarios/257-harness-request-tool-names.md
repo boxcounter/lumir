@@ -20,7 +20,6 @@ steps:
       tools: [vault_read, vault_search]
       ---
       你是只读调研子代理。只做探索与综合，不修改文件。
-      
 
   - name: ⌘⇧A 打开 harness pane
     do: keys
