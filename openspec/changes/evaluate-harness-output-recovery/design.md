@@ -503,7 +503,7 @@ token 比值 = `median(treatment tokens) / median(control tokens)`，比值口�
 | C4 | CAS 冲突（直接构造过期 revision） | 整条 message 相等，含路径与下一步 | 是 |
 | C5 | `vault_read` offset 越界 | 整条 message 相等，含 `1–{total}` | 是 |
 | C6 | `vault_list` 非目录 | 整条 message 相等 | 是 |
-| C7 | 静态对账 | 「有下一步模板的 code 集合」==「工具实际产出的 code 集合」（双向）；新增 code 未登记即失败 | 静态对账元判据（两版同跑，不要求红绿方向） |
+| C7 | 静态对账 | 「有下一步模板的 code 集合」==「候选声明的 5 类码清单」（双向）；且 5 类码各自在三个工具的代码路径上都有产出点；表与清单任一不一致即失败 | 静态对账元判据（两版同跑，不要求红绿方向） |
 | C8 | 信封不变 | 失败结果恰好含 `ok` / `code` / `message` 三键，无新增必填字段 | 否（identity 守门，两版均绿） |
 | C9 | 无正文回显 | message 不包含文件正文片段；长度 ≤ 400 | 否（identity 守门，两版均绿） |
 
@@ -512,9 +512,9 @@ token 比值 = `median(treatment tokens) / median(control tokens)`，比值口�
 - **候选行为断言·收益侧**（C1–C6）：先在 control 上红（control 的 message 不含下一步与命中行号），
   再在 treatment 上绿；红侧读数必须留存。
 - **identity / 守门断言**（C8、C9）：在 control 与 treatment 上**均须绿**，不要求红侧证据。
-- **静态对账元判据**（C7）：两版以同一份模板表与实现集合运行，记录双向比对输出；失败即判实现
-  不完整或表已过期，判据无效、实验不得开跑。它不针对单个实现版本，MUST NOT 要求红 / 绿方向，
-  也 MUST NOT 被并入前两类。
+- **静态对账元判据**（C7）：两版以同一份模板表与声明清单运行，记录双向比对输出，并核对清单内
+  每个 code 都有产出点；失败即判实现不完整或表已过期，判据无效、实验不得开跑。它不针对单个
+  实现版本，MUST NOT 要求红 / 绿方向，也 MUST NOT 被并入前两类。
 
 ### 5.5 真实 provider 任务族、指标与判据
 
