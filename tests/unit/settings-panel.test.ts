@@ -306,31 +306,31 @@ test("buildPatch：Key 清除 = 删键（不是写空串）", () => {
   });
 });
 
-test("buildPatch：删除当前使用项 → 带 active_after；删除被命名引用项 → 带重定向（follow / 指定）", () => {
+test("buildPatch：删除当前使用项 + 草稿把命名指到它（真实确认流程）→ active_after 在 delete，命名改写走 naming 编辑", () => {
   const base = snapshot({
     providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
   });
   const draft = createDraft(base);
-  // 引用面以**当前草稿**为准（P1-3 r1）：用户已把两个命名目标显式指到 kimi-work。
+  // 用户先把两个命名目标显式指到 kimi-work，再删它：保护块按当前草稿出现（P1-3 r1）。
   draft.naming.session = { provider: "kimi-work", model: "k3-256k" };
   draft.naming.attachment = { provider: "kimi-work", model: "k3-256k" };
-  findProvider(draft, "kimi-work")!.removed = true;
   draft.remove = {
     index: 0,
     activeAfter: "deepseek",
     sessionAfter: "follow",
     attachmentAfter: "deepseek",
   };
+  applyDraftDelete(draft);
   const patch = buildPatch(draft, base, base.revision!);
+  // 盘上没写过这两个命名引用（baseline 为 null）：delete 编辑只需补 active，命名改写由同一笔的
+  // naming 编辑落盘——两者同一笔原子保存，不会留下悬空引用。
   assert.deepEqual(patch.providers, [
-    {
-      action: "delete",
-      id: "kimi-work",
-      active_after: "deepseek",
-      session_naming_after: { kind: "follow_active" },
-      attachment_naming_after: { kind: "provider", value: "deepseek" },
-    },
+    { action: "delete", id: "kimi-work", active_after: "deepseek" },
   ]);
+  assert.deepEqual(patch.naming, {
+    session: { provider: { kind: "reset" } },
+    attachment: { provider: { kind: "set", value: "deepseek" } },
+  });
 });
 
 test("buildPatch：删除最后一个 provider → 不带 active_after（后端删键），mock 不算可替代候选", () => {
@@ -346,6 +346,122 @@ test("buildPatch：删除最后一个 provider → 不带 active_after（后端�
   assert.deepEqual(patch.providers, [{ action: "delete", id: "kimi-work" }]);
   assert.deepEqual(patch.active_provider, { kind: "reset" });
   assert.deepEqual(deleteCandidates(draft, "kimi-work"), []);
+});
+
+// ── 真实流程（确认删除 → 保存）的 delete 编辑形状（M811） ──────────────
+//
+// 界面上删除的唯一入口是 `applyDraftDelete`：确认时它先把草稿的 active / 命名目标改到替代项。
+// 若 delete 编辑再按**最终草稿**判引用面，就会丢掉 `active_after`——后端锁内仍看到文件里的
+// 旧引用而整笔拒绝（「provider "kimi" 是当前使用项，删除前必须选择替代 provider」）。下面五条
+// 都从快照出发、走确认侧再构造 patch，不用「手工摆 removed = true」的草稿态。
+
+test("buildPatch：删除当前使用项（真实确认流程）→ delete 编辑仍带 active_after", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+  });
+  const draft = createDraft(base);
+  draft.remove = { index: 0, activeAfter: "deepseek", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  // 确认删除后草稿的当前使用已切到替代项（徽标按草稿走），文件里仍是 kimi-work。
+  assert.equal(draft.active, "deepseek");
+  const patch = buildPatch(draft, base, base.revision!);
+  assert.deepEqual(patch.providers, [
+    { action: "delete", id: "kimi-work", active_after: "deepseek" },
+  ]);
+  assert.deepEqual(patch.active_provider, { kind: "set", value: "deepseek" });
+});
+
+test("buildPatch：连续删除当前项与另一项（一笔保存）→ 替代目标取最终的幸存项", () => {
+  const base = snapshot({
+    providers: [
+      provider("kimi-work"),
+      provider("deepseek", { preset: "deepseek" }),
+      provider("local-lab", { preset: "generic" }),
+    ],
+  });
+  const draft = createDraft(base);
+  draft.remove = { index: 0, activeAfter: "deepseek", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  draft.remove = {
+    index: draft.providers.indexOf(findProvider(draft, "deepseek")!),
+    activeAfter: "local-lab",
+    sessionAfter: "follow",
+    attachmentAfter: "follow",
+  };
+  applyDraftDelete(draft);
+  assert.equal(draft.active, "local-lab");
+  const patch = buildPatch(draft, base, base.revision!);
+  // 中间项 deepseek 也在本笔删除清单里，不能当替代目标；后端只在处理第一条时看到文件里的
+  // 旧 active，所以 active_after 取最终的幸存项。
+  assert.deepEqual(patch.providers, [
+    { action: "delete", id: "kimi-work", active_after: "local-lab" },
+    { action: "delete", id: "deepseek" },
+  ]);
+  assert.deepEqual(patch.active_provider, { kind: "set", value: "local-lab" });
+});
+
+test("buildPatch：连续删除到空清单（真实确认流程）→ 不带 active_after，当前使用键删键", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+  });
+  const draft = createDraft(base);
+  draft.remove = { index: 0, activeAfter: "deepseek", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  draft.remove = {
+    index: draft.providers.indexOf(findProvider(draft, "deepseek")!),
+    activeAfter: "",
+    sessionAfter: "follow",
+    attachmentAfter: "follow",
+  };
+  applyDraftDelete(draft);
+  assert.equal(draft.active, null);
+  const patch = buildPatch(draft, base, base.revision!);
+  assert.deepEqual(patch.providers, [
+    { action: "delete", id: "kimi-work" },
+    { action: "delete", id: "deepseek" },
+  ]);
+  assert.deepEqual(patch.active_provider, { kind: "reset" });
+});
+
+test("buildPatch：删掉当前项后再「还原此页默认」→ delete 仍带替代目标（否则删保护挡住整笔）", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+  });
+  const draft = createDraft(base);
+  draft.remove = { index: 0, activeAfter: "deepseek", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  // 页级还原把 active 清成 null（Reset）——删除本身仍需要一个合法替代目标才能过删保护，
+  // 随后同一笔的 Reset 再把键删掉。
+  pageResetDraft(draft, { auto_compact: true, session_naming: true, attachment_naming: true, subagents: true });
+  assert.equal(draft.active, null);
+  const patch = buildPatch(draft, base, base.revision!);
+  assert.deepEqual(patch.providers[0], { action: "delete", id: "kimi-work", active_after: "deepseek" });
+  assert.deepEqual(patch.active_provider, { kind: "reset" });
+});
+
+test("buildPatch：命名目标指向被删项（真实确认流程）→ delete 编辑带重定向", () => {
+  const base = snapshot({
+    providers: [provider("kimi-work"), provider("deepseek", { preset: "deepseek" })],
+  });
+  base.naming.session.override_provider = "kimi-work";
+  base.naming.session.override_model = "k3-256k";
+  const draft = createDraft(base);
+  draft.remove = { index: 0, activeAfter: "deepseek", sessionAfter: "follow", attachmentAfter: "follow" };
+  applyDraftDelete(draft);
+  const patch = buildPatch(draft, base, base.revision!);
+  assert.deepEqual(patch.providers, [
+    {
+      action: "delete",
+      id: "kimi-work",
+      active_after: "deepseek",
+      session_naming_after: { kind: "follow_active" },
+    },
+  ]);
+  // 同一笔还要把草稿里的跟随状态与旧 model 覆盖写回：delete 编辑清掉盘上引用，naming 编辑落新值。
+  assert.deepEqual(patch.naming?.session, {
+    provider: { kind: "reset" },
+    model: { kind: "reset" },
+  });
 });
 
 // ── 删除确认的草稿改写（active / 命名目标） ────────────────────────────
@@ -829,14 +945,16 @@ test("draftReferences：引用面读当前草稿（先切 active / 命名再删�
     attachment_naming: true,
   });
   // 删除计划据此带替代目标，而不是按打开时的快照静默 follow / 首个候选。
-  findProvider(draft, "deepseek")!.removed = true;
   draft.remove = { index: 1, activeAfter: "kimi-work", sessionAfter: "follow", attachmentAfter: "kimi-work" };
-  assert.deepEqual(buildPatch(draft, base, base.revision!).providers[0], {
-    action: "delete",
-    id: "deepseek",
-    active_after: "kimi-work",
-    session_naming_after: { kind: "follow_active" },
-    attachment_naming_after: { kind: "provider", value: "kimi-work" },
+  applyDraftDelete(draft);
+  const patch = buildPatch(draft, base, base.revision!);
+  // 盘上引用面没指向 deepseek（引用是草稿里刚切的）：delete 编辑不带替代目标，换目标由同一笔的
+  // active / naming 编辑落盘。文件里原本 active 就是 kimi-work，因此 active 编辑也是空的。
+  assert.deepEqual(patch.providers, [{ action: "delete", id: "deepseek" }]);
+  assert.equal(patch.active_provider, undefined);
+  assert.deepEqual(patch.naming, {
+    session: { provider: { kind: "reset" } },
+    attachment: { provider: { kind: "set", value: "kimi-work" } },
   });
 });
 

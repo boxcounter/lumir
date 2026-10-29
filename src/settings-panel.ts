@@ -616,7 +616,9 @@ function providerUpdate(provider: DraftProvider): ProviderEdit | null {
 }
 
 /** 当前**草稿**的引用面（P1-3 r1）：删除保护块与删除计划的默认值都必须看用户此刻的 active /
- *  命名选择，而不是打开面板时的快照（用户可能先切了 active / 命名目标再删）。 */
+ *  命名选择，而不是打开面板时的快照（用户可能先切了 active / 命名目标再删）。
+ *  **只用于显示与确认默认值**：保存时 delete 编辑要补的替代目标按盘上引用面判（见
+ *  `fileReferences`）——确认删除会先把草稿的引用改到替代项，按这里判会丢掉编辑字段。 */
 export function draftReferences(draft: Draft, id: string): ProviderReferences {
   return {
     active: draft.active === id,
@@ -625,21 +627,35 @@ export function draftReferences(draft: Draft, id: string): ProviderReferences {
   };
 }
 
-function providerDelete(provider: DraftProvider, draft: Draft, providerIndex: number): ProviderEdit {
+/** 删除编辑要补的替代目标按**盘上**的引用面给（`baseline` = 打开面板 / 上次保存成功时的快照；
+ *  保存走 revision CAS，文件不会在打开后被改掉而这里仍按旧值算）。不能用当前草稿：确认删除时
+ *  `applyDraftDelete` 已经把 draft.active / 命名目标改到替代项，再按草稿判会让「删的正是当前
+ *  使用项」这条编辑丢掉 `active_after`，后端锁内仍看到文件里的旧引用而整笔拒绝（M811；命名
+ *  引用同形态，delete 编辑会丢掉重定向）。替代目标本身取自**最终草稿**：链式删除时中间项也在
+ *  本笔删除清单里、不能当替代目标，最终落点才是最后的幸存项。 */
+function fileReferences(draft: Draft, id: string): ProviderReferences {
+  return {
+    active: draft.baseline.active === id,
+    session_naming: draft.baseline.naming.session.provider === id,
+    attachment_naming: draft.baseline.naming.attachment.provider === id,
+  };
+}
+
+function providerDelete(provider: DraftProvider, draft: Draft): ProviderEdit {
   const candidates = deleteCandidates(draft, provider.id);
-  // 删除计划按**草稿下标**认领（id 可能重复，见 `DraftDeleteForm`）。
-  const plan = draft.remove?.index === providerIndex ? draft.remove : null;
-  const refs = draftReferences(draft, provider.id);
+  const refs = fileReferences(draft, provider.id);
   const edit: Extract<ProviderEdit, { action: "delete" }> = { action: "delete", id: provider.id };
-  if (refs.active && candidates.length > 0) {
-    edit.active_after =
-      plan !== null && candidates.includes(plan.activeAfter) ? plan.activeAfter : candidates[0]!;
+  if (refs.active) {
+    // 页级「还原此页默认」会把 active 清成 null（它随后用 active_provider 的 Reset 删键），
+    // 但删除本身仍需要一个合法替代目标才能过删保护——回落到候选首项。
+    const target = candidates.includes(draft.active ?? "") ? draft.active : (candidates[0] ?? null);
+    if (target !== null) edit.active_after = target;
   }
   if (refs.session_naming) {
-    edit.session_naming_after = retargetOf(plan?.sessionAfter ?? "follow", candidates);
+    edit.session_naming_after = retargetOf(draft.naming.session.provider ?? "follow", candidates);
   }
   if (refs.attachment_naming) {
-    edit.attachment_naming_after = retargetOf(plan?.attachmentAfter ?? "follow", candidates);
+    edit.attachment_naming_after = retargetOf(draft.naming.attachment.provider ?? "follow", candidates);
   }
   return edit;
 }
@@ -666,7 +682,7 @@ export function planProviderEdits(draft: Draft): ProviderEditsPlan {
   draft.providers.forEach((provider, providerIndex) => {
     if (provider.removed) {
       // 从未落盘的新增项被删掉 = 草稿里的一次撤销，不是文件的 delete（后端会报 not_found）。
-      if (!provider.added) edits.push(providerDelete(provider, draft, providerIndex));
+      if (!provider.added) edits.push(providerDelete(provider, draft));
       return;
     }
     if (provider.added) {
