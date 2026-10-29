@@ -130,4 +130,3 @@ cwd 与 prompt 解决的不是同一件事：cwd 决定 `cli_run` 在哪里执�
 5. **规格对账无丢段（归档前读数）**：`scripts/docs-check.sh` 内含 `scripts/openspec-archive-check.mjs`
    门禁模式（PASS）；`validate --all --strict` 见要件 4；归档跟踪队列在 `docs/backlog.md` 有且仅有
    一条 `add-harness-vault-workspace-list` 条目。
-
