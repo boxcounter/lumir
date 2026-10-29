@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：235
-- 验收项（不同 item 编号）：212
-- 分档：core 29 / full 198 / bundle 4 / evidence 4（full 批 = 全部 235 个，含其余各档）
+- 场景：236
+- 验收项（不同 item 编号）：213
+- 分档：core 29 / full 199 / bundle 4 / evidence 4（full 批 = 全部 236 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -220,6 +220,7 @@
 | 251 | `251-settings-panel-legacy-preset-migration` | 设置面板：旧格式 provider（无 preset）首次启动补齐迁移，二次启动不再写盘（mtime 不变） | full |
 | 252 | `49-vault-switch-feedback` | vault 切换的即时反馈（浮层收起 / 装载指示起止）与切换器浮层的完整可读 | full |
 | 254 | `254-harness-vault-workspace-list` | harness 工作区与 vault_list：system 绝对根 / cli_run cwd / 列表到读取链路（mock provider） | full |
+| 255 | `255-list-caret-navigation-oct29` | 列表行首的水平导航——→ 与 ⌃F 都一次到正文起点、反向对称，落点以「键入字符的落位」为判据（M795；光标高度归手感项） | full |
 | 256 | `256-settings-cancel-close-oct29` | 设置面板：底栏「取消」= 关闭（干净直关、脏草稿先确认、确认放弃后关闭且文件逐字节不变） | full |
 | 423 | `121-harness-message-excerpt` | harness 消息摘录 ① transcript 选区 → 浮动钮 → 卡片入 composer（+ 序列化结构 / 视口 skip / transcript 同构） | full |
 | 531 | `160-quote-button-viewport-clamp` | 摘录浮动钮落点钳制：选区并集盒越出挂载容器（长行）时钮仍在视口内 | full |

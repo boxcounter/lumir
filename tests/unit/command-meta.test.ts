@@ -161,8 +161,10 @@ test("when 不变量：when ⇔ whenKey ⇔ whenShortKey，两个键都在文案
     assert.ok(COPY[binding.whenShortKey as keyof typeof COPY].zh.trim() !== "");
     assert.ok(COPY[binding.whenShortKey as keyof typeof COPY].en.trim() !== "");
   }
-  // 默认表里带 when 的只有五条 widget 键——count 是判据的一部分，防止「全都补上 when」稀释。
-  assert.equal(KEY_BINDINGS.filter((binding) => binding.when !== undefined).length, 5);
+  // 默认表里带 when 的只有三条 widget 键（Home / End / Escape）——count 是判据的一部分，
+  // 防止「全都补上 when」稀释。←/→ 自 M795 起改绑水平移动命令（容器焦点分支在命令实现里
+  // 分派，见 src/keys.ts 的 KEY_BINDINGS 与 KEYLESS_COMMAND_IDS）。
+  assert.equal(KEY_BINDINGS.filter((binding) => binding.when !== undefined).length, 3);
 });
 
 test("作用域文案：三档都有上屏名与一句解释", () => {

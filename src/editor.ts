@@ -51,12 +51,14 @@ import { cellClamp, cellContentEdge } from "./cell-geometry";
 import type { CellClamp } from "./cell-geometry";
 import { listIndentChange } from "./list-indent";
 import type { ListIndentDirection } from "./list-indent";
+import { listHiddenRangeAt } from "./preview/lists";
 import { createInvokeAttachmentProvider, codeLanguageOfPath, collectImageRefs, fileClassOfPath, isEditablePath } from "./preview/attachments";
 import type { AttachmentProvider, ImageQuoteHandler, ImageRef } from "./preview/attachments";
 import { bindingHighlight } from "./code-identifiers";
 import { remapPathAfterRename } from "./tree";
 import { LANGUAGES, TOKEN_GROUPS, tokenClassOf } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
+import { isWidgetKeyTarget } from "./keys";
 import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_CODE_MODE_LINE_WRAP, DEFAULT_LINE_WRAP, codeBindingTheme, codeTokenTheme, wrapSpec } from "./preview/theme";
 import type { WrapSettings } from "./preview/theme";
 import { DEFAULT_FONT_SIZE, applyTypography as writeTypography, nextFontSize, textScaleRatio } from "./typography";
@@ -474,6 +476,14 @@ function caretAssoc(view: EditorView, pos: number, preferred: -1 | 1): -1 | 1 {
 /** 水平移动的落点（不含选区形态处理）：扩选命令与 ⌃F/⌃B 共用同一原子块/数学公式口径。 */
 function horizontalTarget(view: EditorView, from: SelectionRange, forward: boolean): number {
   let head = view.moveByChar(from, forward).head;
+  // 列表 marker 的隐藏源码区间是一个原子步（合同 docs/specs/editor-caret.md 的 C6、
+  // docs/specs/lists.md 的 L5）：`moveByChar` 按文档位置逐字符走，隐藏的 `1. ` 会被
+  // 走成 3 个不可见的落点——Ctrl+F 从行首要按 3 次才进正文，Ctrl+B 从正文起点要按 3 次
+  // 才回到行首（Alex 2026-10-29 报告）。落点落在区间内部时钳到可见一侧的边界：这一步既是
+  // 「跨过 marker」也是「停在可见行首 / 正文起点」。判定本体在 lists.ts（与渲染共用一份），
+  // 这里只做钳制——不改文档、不改 marker 的渲染态。
+  const snapped = listHiddenRangeAt(view.state, head, forward);
+  if (snapped !== null) head = snapped;
   const span = mathSpanCrossed(view.state, from.head, head, forward);
   if (span !== null) {
     // 字素簇步进走共用核（src/quote-card.ts）——取 ±64 字符窗口避免大文档整篇 sliceString
@@ -2267,10 +2277,20 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   // 统一键位层（keys.ts）的编辑器侧命令实现：每条只读 view 当前状态并自行 dispatch。
   // 全部返回 void——命中即已消费，分发器统一吞掉默认行为（命中但无事可做，例如历史
   // 为空的 ⌘Z，也必须吞掉，否则原生 contenteditable 撤销会插手 CM 管理的文档）。
+  //
+  // 轨道 D 的 widget 命令（M132）：实现在 livePreview.ts，在此与内核命令同一个记录里
+  // 装配——统一表的每条绑定都必须有归属实现，分组只表达「谁提供实现」。取成局部常量是为了
+  // 让 cursor 命令能按焦点分派到其中两条（M795，见各自条目）。
+  const widget = widgetCommands(view);
+  /** 块级横滚容器的焦点分支：容器自身持焦、且这次按键是 ←/→ 时，归容器的横向滚动。
+   *  只认方向键——⌃F / ⌃B 与箭头共用同一条命令，但容器持焦时的 ⌃F/⌃B 仍按既有语义移光标
+   *  （M795 只改方向键的可见行为，MUST NOT 顺带改 Emacs 键的语义）。 */
+  const widgetScrollEvent = (event: KeyboardEvent | undefined): boolean =>
+    event !== undefined &&
+    (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+    isWidgetKeyTarget(event);
   const commands: Record<EditorCommandId, CommandRunner> = {
-    // 轨道 D 的 widget 命令（M132）：实现在 livePreview.ts，在此与内核命令同一个记录里
-    // 装配——统一表的每条绑定都必须有归属实现，分组只表达「谁提供实现」。
-    ...widgetCommands(view),
+    ...widget,
     // 块级复制（M277，change block-copy-affordance 的裁决点 5）：命中判据取自语法树与表格
     // 模型（livePreview 的 blockCopyTarget，MUST NOT 读 DOM），复制动作经装配层注入的口子
     // ——内容切片、剪贴板写入与 toast 全在装配层（`src/main.ts`），这里只做「命中哪一块」。
@@ -2293,10 +2313,21 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     "editor.cursor-down": () => {
       moveCaretVertically(view, true);
     },
-    "editor.cursor-forward": () => {
+    "editor.cursor-forward": (event) => {
+      // 块级横滚容器自身持焦时，→ 归容器的横向滚动（M795）：←/→ 与 ⌃F/⌃B 共用这条命令，
+      // 而一个 token 只能有一条绑定，容器分支只能在这里按焦点分派（判据与 Home/End 的
+      // `when` 共用 keys.ts 的 isWidgetKeyTarget）。
+      if (widgetScrollEvent(event)) {
+        widget["editor.widget-scroll-right"](event);
+        return;
+      }
       moveCaretHorizontally(view, true);
     },
-    "editor.cursor-backward": () => {
+    "editor.cursor-backward": (event) => {
+      if (widgetScrollEvent(event)) {
+        widget["editor.widget-scroll-left"](event);
+        return;
+      }
       moveCaretHorizontally(view, false);
     },
     "editor.line-start": () => {

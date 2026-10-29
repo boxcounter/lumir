@@ -71,7 +71,11 @@ interface CaretReading {
 interface ViewHandle {
   state: {
     selection: { main: { head: number; from: number; to: number } };
-    doc: { length: number; lineAt(pos: number): { from: number; to: number; number: number } };
+    doc: {
+      length: number;
+      lineAt(pos: number): { from: number; to: number; number: number };
+      line(number: number): { from: number; to: number; number: number };
+    };
   };
   domAtPos(pos: number): { node: Node; offset: number };
   dispatch(spec: unknown): void;
@@ -444,8 +448,7 @@ test.describe("m647 光标几何（C1）与指针入口（C2）", () => {
   });
 });
 
-test.describe("m647 光标样式（D2 改裁：2026-10-24 恢复闪烁）", () => {
-  for (const theme of ["light", "dark", "eink"] as const) {
+test.describe("m647 光标样式（D2 改裁：2026-10-24 恢复闪烁）", () => {  for (const theme of ["light", "dark", "eink"] as const) {
     test(`光标计算样式 × ${theme}：2px 实心 --text、-1px 居中、1.2s 闪烁；未聚焦时不显示`, async ({ page }) => {
       await openDoc(page, { doc: FM_DOC, theme });
       await page.evaluate(() => {
@@ -526,4 +529,220 @@ test.describe("m647 光标样式（D2 改裁：2026-10-24 恢复闪烁）", () =
       expect(["none", "absent"], "未聚焦时 .cm-cursor 不可见").toContain(blurred);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// M795（Alex 2026-10-29 报告）：列表行的光标几何
+// ---------------------------------------------------------------------------
+//
+// 缺陷：同一个列表行里，光标停在序号之前（marker 隐藏区间的边界）时高 22.94px，停在正文里只有
+// 18px。根因是 CM 对「落在 inline replace 区间内/边界」的位置直接采用 widget 自己的
+// `getClientRects()`（13.5px 字号的 marker span），而不是所在文本行的行盒。
+//
+// 本块判的是 C1 在**列表行**上的同一条不变量：光标矩形高度 = 该行**正文文本**的行盒（±1px）。
+// 读数与前面的 frontmatter 用例同口径（`.cm-cursor-primary` vs 文本 Range 矩形），但行盒取
+// 「正文文本节点」而不是整行 Range——整行 Range 在列表行上会把 marker 自己的盒子算进第一段
+// rect（那正是缺陷值），用它当基准等于让断言和缺陷同源。
+//
+// 定位用**文档行号**（fixture 在 Node 侧就能数出来），正文起点由 DOM 文本节点反查
+// （`posAtDOM`）——不复用 `lists.ts` 的隐藏区间判定，断言与实现不同源。
+//
+// 区分度对照（修前必红）：marker 盒高 MUST 比正文行盒高 ≥ 2px（15px 正文下实测 22.94 vs 18），
+// 修前光标高度就等于 marker 盒高。
+
+const LIST_DOC = [
+  "# 列表光标几何（合成 fixture）",
+  "",
+  "1. 有序列表正文 alpha",
+  "- 无序列表正文 bravo",
+  "- [ ] 任务项正文 charlie",
+  "",
+  "10. 两位编号正文 delta",
+  "",
+  "> - 引用内列表正文 echo",
+  "",
+  "- 父项正文 foxtrot",
+  "  - 子项正文 golf",
+  "    - 第三层正文 hotel",
+  "",
+  "- ",
+  "",
+  "3. 空项之后的有序项 india",
+  "",
+  "正文段落对照。",
+  "",
+].join("\n");
+
+/** fixture 的行号（1 基）——Node 侧按行切分得到，与渲染无关。 */
+function lineNumberOf(needle: string): number {
+  const lines = LIST_DOC.split("\n");
+  const index = lines.findIndex((line) => line.includes(needle));
+  expect(index, `fixture 里找不到 ${JSON.stringify(needle)}`).toBeGreaterThanOrEqual(0);
+  return index + 1;
+}
+
+type Box = { top: number; left: number; width: number; height: number };
+
+interface ListLineReading {
+  /** 行首（可见行首 = marker 隐藏区间的左边界）。 */
+  lineFrom: number;
+  /** 正文起点（隐藏区间右边界 = 正文第一个字符的文档位置）；空项行 = 行尾。 */
+  contentFrom: number;
+  head: number;
+  caret: Box | null;
+  /** 正文文本节点的行盒（首个字符的 Range rect）。 */
+  textBox: Box | null;
+  /** marker widget 自身的盒子（区分度对照用）。 */
+  markerBox: Box | null;
+  /** 空项行（本行没有正文文本节点）。 */
+  empty: boolean;
+  /** 该行的可见文本（诊断用）。 */
+  text: string;
+}
+
+async function readListLine(page: Page, lineNumber: number): Promise<ListLineReading> {
+  return page.evaluate((n) => {
+    const view = (window as unknown as { __m647View: () => ViewHandle & {
+      posAtDOM(node: Node, offset?: number): number;
+      domAtPos(pos: number): { node: Node; offset: number };
+    } }).__m647View();
+    const line = view.state.doc.line(n);
+    const at = view.domAtPos(line.from);
+    let node: Node | null = at.node;
+    if (node && node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+    const lineEl = node instanceof Element ? node.closest(".cm-line") : null;
+    if (!lineEl) throw new Error(`第 ${n} 行没有对应的 .cm-line（场景装置坏了）`);
+    const marker = lineEl.querySelector<HTMLElement>(".cm-lp-list-marker");
+    const walker = document.createTreeWalker(lineEl, NodeFilter.SHOW_TEXT);
+    // 本文件已 import `Text`（@codemirror/state 的文档模型），DOM 的全局 `Text` 类型被同名遮蔽；
+    // 正文文本节点按结构取 `data`（与 src/preview/lists.ts 的 `DomTextNode` 同口径）。
+    let body: (Node & { data: string }) | null = null;
+    for (let item = walker.nextNode(); item; item = walker.nextNode()) {
+      const text = item as unknown as Node & { data: string };
+      if (!text.data.trim()) continue;
+      if (marker && marker.contains(item)) continue;
+      body = text;
+      break;
+    }
+    const contentFrom = body ? view.posAtDOM(body, 0) : line.to;
+    const sel = view.state.selection.main;
+    const cursorEl = document.querySelector<HTMLElement>(".cm-cursor-primary");
+    const caret = cursorEl ? cursorEl.getBoundingClientRect() : null;
+    let textBox: Box | null = null;
+    if (body) {
+      const range = document.createRange();
+      range.setStart(body, 0);
+      range.setEnd(body, Math.min(1, body.data.length));
+      const rect = range.getBoundingClientRect();
+      if (rect.height > 0) textBox = { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
+    }
+    const markerRect = marker ? marker.getBoundingClientRect() : null;
+    return {
+      lineFrom: line.from,
+      contentFrom,
+      head: sel.head,
+      caret: caret ? { top: caret.top, left: caret.left, width: caret.width, height: caret.height } : null,
+      textBox,
+      markerBox: markerRect
+        ? { top: markerRect.top, left: markerRect.left, width: markerRect.width, height: markerRect.height }
+        : null,
+      empty: body === null,
+      text: lineEl.textContent ?? "",
+    };
+  }, lineNumber);
+}
+
+async function caretAt(page: Page, pos: number): Promise<void> {
+  await page.evaluate((p) => {
+    const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+    view.focus();
+    view.dispatch({ selection: { anchor: p } });
+  }, pos);
+  await page.waitForTimeout(60);
+}
+
+/** 一行列表的四个光标入口 × C1：可见行首 / 隐藏区间内部 / 正文起点 / 正文第 2 字。 */
+async function expectListCaretHeights(page: Page, lineNumber: number, label: string): Promise<void> {
+  const base = await readListLine(page, lineNumber);
+  expect(base.markerBox, `${label}：第 ${lineNumber} 行（${JSON.stringify(base.text)}）应有 marker widget`).not.toBeNull();
+  if (base.empty) {
+    await caretAt(page, base.lineFrom);
+    const reading = await readListLine(page, lineNumber);
+    expect(reading.head, `${label}：落点必须真的落到行首`).toBe(base.lineFrom);
+    expect(reading.caret, `${label}：空项行没有画出来的光标矩形（读不到 ≠ 通过）`).not.toBeNull();
+    expect(
+      Math.abs(reading.caret!.height - reading.markerBox!.height),
+      `${label}：空项行光标高度 ${reading.caret!.height} MUST NOT 等于 marker 盒高 ${reading.markerBox!.height}（C1：取行盒不取 widget 盒）`,
+    ).toBeGreaterThan(1);
+    return;
+  }
+  const positions = [base.lineFrom, base.contentFrom - 1, base.contentFrom, base.contentFrom + 1];
+  for (const pos of positions) {
+    await caretAt(page, pos);
+    const reading = await readListLine(page, lineNumber);
+    expect(reading.head, `${label}：落点必须真的落到 ${pos}`).toBe(pos);
+    expect(reading.caret, `${label} @${pos - reading.lineFrom}：没有画出来的光标矩形（读不到 ≠ 通过）`).not.toBeNull();
+    expect(reading.textBox, `${label} @${pos - reading.lineFrom}：正文文本行盒读不到（读不到 ≠ 通过）`).not.toBeNull();
+    expect(
+      Math.abs(reading.caret!.height - reading.textBox!.height),
+      `${label} @${pos - reading.lineFrom}：光标高度 ${reading.caret!.height} MUST 等于正文行盒 ${reading.textBox!.height}（C1，±1px）`,
+    ).toBeLessThanOrEqual(1);
+    expect(
+      reading.markerBox!.height - reading.textBox!.height,
+      `${label}：区分度——marker 盒高 ${reading.markerBox!.height} MUST 高于正文行盒 ${reading.textBox!.height} ≥ 2px（否则本断言在常量高度上空转）`,
+    ).toBeGreaterThanOrEqual(2);
+  }
+}
+
+test.describe("M795 列表行光标几何（C1）", () => {
+  for (const theme of ["light", "dark", "eink"] as const) {
+    test(`列表行光标高度 = 正文行盒 × ${theme}（列表类型 × 嵌套 × marker 宽度 × 四个光标入口）`, async ({ page }) => {
+      await openDoc(page, { doc: LIST_DOC, theme, ready: "有序列表正文 alpha" });
+      // 组扫描是异步的（16ms 批次）：等 8 个 marker 全部上屏再量，否则新开的 ol 组可能还是
+      // 字面文本（那时「正文起点」会读成整行起点，断言在错误的输入上跑）。
+      await expect.poll(() => page.locator(".cm-lp-list-marker").count(), { timeout: 5000 }).toBeGreaterThanOrEqual(8);
+      for (const needle of [
+        "有序列表正文 alpha",
+        "无序列表正文 bravo",
+        "任务项正文 charlie",
+        "两位编号正文 delta",
+        "引用内列表正文 echo",
+        "父项正文 foxtrot",
+        "子项正文 golf",
+        "第三层正文 hotel",
+        "空项之后的有序项 india",
+      ]) {
+        await expectListCaretHeights(page, lineNumberOf(needle), `${theme} / ${needle}`);
+      }
+    });
+  }
+
+  test("32px 字号：列表行光标高度随行盒放大（不是 15px 常量）", async ({ page }) => {
+    await openDoc(page, { doc: LIST_DOC, fontSize: 32, ready: "有序列表正文 alpha" });
+    await expect.poll(() => page.locator(".cm-lp-list-marker").count(), { timeout: 5000 }).toBeGreaterThanOrEqual(8);
+    for (const needle of ["有序列表正文 alpha", "子项正文 golf"]) {
+      await expectListCaretHeights(page, lineNumberOf(needle), `32px / ${needle}`);
+    }
+    const reading = await readListLine(page, lineNumberOf("有序列表正文 alpha"));
+    expect(reading.caret!.height, "32px 字号下光标高度必须随行盒放大").toBeGreaterThan(30);
+  });
+
+  test("空项行（`- `）：光标高度跟随正文行盒，不取 marker 盒高", async ({ page }) => {
+    await openDoc(page, { doc: LIST_DOC, ready: "有序列表正文 alpha" });
+    await expect.poll(() => page.locator(".cm-lp-list-marker").count(), { timeout: 5000 }).toBeGreaterThanOrEqual(8);
+    // 空项行 = fixture 里唯一一行文本只有 marker（`- `）的行：按行号定位，不靠文本匹配。
+    const emptyAt = LIST_DOC.split("\n").findIndex((line) => line.trim() === "-");
+    const emptyNumber = emptyAt + 1;
+    await expectListCaretHeights(page, emptyNumber, "空项行");
+    const reading = await readListLine(page, emptyNumber);
+    expect(reading.empty, "空项行必须真的没有正文文本（否则本用例测的不是空项）").toBe(true);
+    const bodyLine = await readListLine(page, lineNumberOf("无序列表正文 bravo"));
+    await caretAt(page, reading.lineFrom);
+    const after = await readListLine(page, emptyNumber);
+    expect(after.head, "光标必须落在空项行行首（否则量的是别处）").toBe(reading.lineFrom);
+    expect(
+      Math.abs(after.caret!.height - bodyLine.textBox!.height),
+      `空项行光标高度 ${after.caret!.height} MUST 等于正文行盒 ${bodyLine.textBox!.height}（±1px）`,
+    ).toBeLessThanOrEqual(1);
+  });
 });

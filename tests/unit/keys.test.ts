@@ -145,12 +145,29 @@ test("KEY_BINDINGS：⌘1–9 与 TAB_GOTO_IDS 按序号逐一对应，标签族
     "tab.prev",
     "⌘{ 应绑定 tab.prev（与 ⌃⇧⇥ 同命令）",
   );
-  // widget 焦点键都在表里，且都带 when 条件（否则会吞掉文本编辑里的同名键）
+  // widget 焦点键：仍直接绑在表里的（Home / End / Escape）都带 when 条件——否则会吞掉文本
+  // 编辑里的同名键。←/→ 自 M795 起改由水平移动命令承接（见下一条断言），容器滚动作为该命令
+  // 的焦点分支存在，因此这两条实现登记在 KEYLESS_COMMAND_IDS（由命令实现按 isWidgetKeyTarget
+  // 分派调用，不是孤儿）。
   for (const command of WIDGET_COMMAND_IDS) {
     const binding = KEY_BINDINGS.find((item) => item.command === command);
+    if (command === "editor.widget-scroll-left" || command === "editor.widget-scroll-right") {
+      assert.equal(binding, undefined, `${command} 不应再有直接绑定（←/→ 归水平移动命令）`);
+      assert.ok(KEYLESS_COMMAND_IDS.includes(command), `${command} 应登记在默认不绑键清单里`);
+      continue;
+    }
     assert.ok(binding !== undefined, `缺少 ${command} 的绑定`);
     assert.equal(binding.scope, "editor");
     assert.ok(binding.when !== undefined, `${command} 缺少 when 命中条件`);
+  }
+  // M795：←/→ 与 ⌃F/⌃B 同一条命令（同一份硬化原语），作用域随命令派生为 text；不带 when
+  // （容器焦点分支在命令实现里分派，绑定层一条 token 只有一条命令）。
+  assert.equal(KEY_BINDINGS.find((item) => item.key === "ArrowRight")?.command, "editor.cursor-forward");
+  assert.equal(KEY_BINDINGS.find((item) => item.key === "ArrowLeft")?.command, "editor.cursor-backward");
+  for (const key of ["ArrowLeft", "ArrowRight"]) {
+    const binding = KEY_BINDINGS.find((item) => item.key === key);
+    assert.equal(binding?.scope, "text", `${key} 的作用域随命令派生为 text（与 ↑↓ 同族）`);
+    assert.equal(binding?.when, undefined, `${key} 不带 when：容器焦点分支在命令实现里分派`);
   }
 });
 
@@ -401,26 +418,46 @@ test("Keymap：when 条件不满足时不消费（widget 键不吞文本编辑�
   const { runtime, runs } = recordingRuntime();
   new Keymap().attach(host.target, runtime, { isEditorEvent: () => true });
 
-  // 焦点在编辑器文本里：事件目标根本不在容器内
-  const inText = keyEvent({ key: "ArrowLeft", target: new FakeElement(false) });
+  // 焦点在编辑器文本里：事件目标根本不在容器内（Home 是仍由 when 限定的 widget 键）
+  const inText = keyEvent({ key: "Home", target: new FakeElement(false) });
   host.fire(inText);
   assert.equal(inText.defaultPrevented, false);
   assert.deepEqual(runs, []);
 
   // M180 收紧的那一格：光标落在块内文本（事件目标在容器内，但活动元素是编辑器内容区）
-  const insideContainerText = keyEvent({ key: "ArrowLeft", target: new FakeElement(true, false) });
+  const insideContainerText = keyEvent({ key: "Home", target: new FakeElement(true, false) });
   host.fire(insideContainerText);
-  assert.equal(insideContainerText.defaultPrevented, false, "容器没持有焦点时不消费，方向键归 caret");
+  assert.equal(insideContainerText.defaultPrevented, false, "容器没持有焦点时不消费，Home 归 caret");
   assert.deepEqual(runs, []);
 
   // 容器自身持有焦点：命中
-  const inWidget = keyEvent({ key: "ArrowLeft", target: new FakeElement(true) });
+  const inWidget = keyEvent({ key: "Home", target: new FakeElement(true) });
   host.fire(inWidget);
   assert.equal(inWidget.defaultPrevented, true);
-  assert.deepEqual(runs, ["editor.widget-scroll-left"]);
+  assert.deepEqual(runs, ["editor.widget-scroll-home"]);
 
   assert.equal(BLOCK_SCROLL_CLASS, "cm-lp-block-scroll");
   assert.equal(TABLE_SCROLL_CLASS, "cm-lp-table-scroll", "表格容器保留原 class（既有选择器与断言按它定位）");
+});
+
+test("Keymap：←/→ 一律分发到水平移动命令（M795）——容器焦点分支不在绑定层", () => {
+  globalThis.Element = FakeElement as unknown as typeof Element;
+  const host = fakeWindow();
+  const { runtime, runs } = recordingRuntime();
+  new Keymap().attach(host.target, runtime, { isEditorEvent: () => true });
+
+  // 文本里：命中、消费、走硬化导航命令。
+  const inText = keyEvent({ key: "ArrowRight", target: new FakeElement(false) });
+  host.fire(inText);
+  assert.equal(inText.defaultPrevented, true, "文本里的 → 必须由本层消费（不再留给原生路径）");
+  assert.deepEqual(runs, ["editor.cursor-forward"]);
+
+  // 容器持焦：绑定的**命令仍是** cursor-forward——「滚容器还是移光标」由命令实现按
+  // isWidgetKeyTarget 分派（绑定层一条 token 只能有一条命令，这里断言的正是这条分派边界）。
+  const inWidget = keyEvent({ key: "ArrowLeft", target: new FakeElement(true) });
+  host.fire(inWidget);
+  assert.equal(inWidget.defaultPrevented, true);
+  assert.deepEqual(runs, ["editor.cursor-forward", "editor.cursor-backward"]);
 });
 
 test("Keymap：已消费事件让路、IME 组合期与 229 不接管、无关键不动 pending", () => {

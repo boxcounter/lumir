@@ -143,6 +143,62 @@ export function bareListMarkerLine(tree: Tree, doc: Text, line: Line): ListMarke
   return marker;
 }
 
+/** 一行的列表渲染判定，以及随之被 replace 掉的源码区间。
+ *
+ *  `ListLayout.build()` 与水平移动（`src/editor.ts` 的 `horizontalTarget` 经
+ *  `listHiddenRangeAt`）、几何（`ListMarker.coordsAt`）共用这一份判定：藏了哪段源码、
+ *  为什么藏，只有这里写一次（REVIEW.md 「同一语义两处真源」条）。纯函数，只读树与行文本。
+ *
+ *  `editing` 只对裸 marker 行有意义（合同 docs/specs/lists.md 的 B1：判据选区与该行相接
+ *  才按列表项首行渲染）；真列表项（`info.rendered && info.item`）恒按列表行渲染，不看它。 */
+export interface ListLineRender {
+  /** 按真实列表项渲染的那一份判定；null = 不是项首行 / 真续行。 */
+  readonly info: ListLineInfo | null;
+  /** 裸 marker 行的编辑态判定（M461）；null = 不是裸行、或不在编辑态。 */
+  readonly bare: ListMarkerText | null;
+  /** 被 replace 掉的源码区间（marker + 尾随空白、或续行行首缩进）；null = 本行不隐藏源码。 */
+  readonly hidden: { readonly from: number; readonly to: number } | null;
+}
+
+export function listLineRender(tree: Tree, doc: Text, line: Line, editing: boolean): ListLineRender {
+  const info = listLineInfo(tree, doc, line);
+  if (info.rendered && info.item) {
+    const mark = info.item.getChild("ListMark");
+    if (info.first && mark) {
+      const task = info.item.getChild("Task")?.getChild("TaskMarker");
+      let end = task?.to ?? mark.to;
+      while (end < line.to && /[ \t]/.test(doc.sliceString(end, end + 1))) end++;
+      return { info, bare: null, hidden: { from: line.from, to: end } };
+    }
+    if (info.offset > 0) return { info, bare: null, hidden: { from: line.from, to: line.from + info.offset } };
+    return { info, bare: null, hidden: null };
+  }
+  if (editing) {
+    const bare = bareListMarkerLine(tree, doc, line);
+    if (bare) return { info: null, bare, hidden: { from: line.from, to: bare.contentFrom } };
+  }
+  return { info: null, bare: null, hidden: null };
+}
+
+/** 判据选区是否与行范围相接（含端点）——裸 marker 行的编辑态门控（B1）。
+ *  `ListLayout.build()` 与水平移动的原子步判定共用这一份（与 `revealSelection` 同一选区口径，
+ *  按压窗口内取快照：M259 / M461）。 */
+export function lineTouchesSelection(state: EditorState, line: Line): boolean {
+  return revealSelection(state).ranges.some((r) => r.from <= line.to && r.to >= line.from);
+}
+
+/** 水平移动落在列表隐藏区间内部时的钳制落点（合同 docs/specs/editor-caret.md 的 C6：
+ *  隐藏源码区间是一个原子步）。`pos` 严格落在区间内部才钳制——与 CM `atomicRanges` 的
+ *  `skipAtomicRanges` 同口径（`from < pos < to`）：边界位本身是可见的停靠点，不移动。
+ *  返回 null = 不在任何隐藏区间内，调用方保留原落点。 */
+export function listHiddenRangeAt(state: EditorState, pos: number, forward: boolean): number | null {
+  const doc = state.doc;
+  const line = doc.lineAt(pos);
+  const hidden = listLineRender(syntaxTree(state), doc, line, lineTouchesSelection(state, line)).hidden;
+  if (!hidden || pos <= hidden.from || pos >= hidden.to) return null;
+  return forward ? hidden.to : hidden.from;
+}
+
 /** ol 复合多级编号（定稿 direction-c/index.html:250-270 的 counter 拼接）：L1 `1.`、
  *  L2 `1.1`、L3 `1.5.1`——只有第一层带尾点。`prefix` 是父项的复合编号（仅当父列表
  *  也是 ol；父列表是 ul 时链条断开，本项从自己起编号）。父编号深层不带尾点，
@@ -183,6 +239,21 @@ class ListMarker extends WidgetType {
     this.depth = depth;
   }
   eq(other: ListMarker) { return this.label === other.label && this.task === other.task && this.depth === other.depth; }
+  /** 光标矩形（合同 docs/specs/editor-caret.md 的 C1）：纵向 MUST 等于同一行**正文文本**的
+   *  行盒，MUST NOT 取 marker 自己的盒子。
+   *
+   *  为什么需要覆盖：marker 是 13.5px 的 inline-flex widget，它的 `getClientRects()` 高度
+   *  是自身字号 × 行高（15px 正文下 22.94px），而正文位置的光标取的是文本盒（18px）——
+   *  同一行里「序号前 vs 正文处」光标一高一矮（Alex 2026-10-29 报告）。CM 的
+   *  `coordsInWidget` 会优先采用 widget 自己给的矩形，所以几何只能在这里对齐到行盒。
+   *  横向仍取 marker 的边：`pos > 0` 取右缘（源码终点），否则取左缘（可见行首）。 */
+  coordsAt(dom: HTMLElement, pos: number, side: number) {
+    const rect = dom.getBoundingClientRect();
+    const box = bodyTextBox(dom);
+    if (box === null) return null;
+    const x = pos > 0 ? rect.right : rect.left;
+    return { left: x, right: x, top: box.top, bottom: box.bottom };
+  }
   toDOM() {
     const span = document.createElement("span");
     span.className = `cm-lp-list-marker cm-lp-list-marker-d${Math.min(Math.max(this.depth, 1), 3)}`;
@@ -199,6 +270,86 @@ class ListMarker extends WidgetType {
     return span;
   }
 }
+
+/** DOM 文本节点的结构形态。本文件的 `Node` 已被 CM 语法树节点类型占用（模块头部的
+ *  `type Node = ...`），DOM 全局同名类型被遮蔽——这里只按用到的字段做结构判别，
+ *  避免与树节点类型纠缠。 */
+interface DomTextNode {
+  readonly data: string;
+}
+
+/** 文本节点在行盒里的纵向范围（C1 的「行盒」口径：文本 Range 的 rect，不含行 padding）。
+ *  与 tests/visual/scenes/m647-caret-geometry.spec.ts 的读数同一口径——场景侧量文本 Range，
+ *  这里量同一个东西，断言才有区分度。 */
+function textBoxOf(node: DomTextNode): { top: number; bottom: number } | null {
+  const range = document.createRange();
+  range.selectNodeContents(node as unknown as HTMLElement);
+  for (const rect of Array.from(range.getClientRects())) {
+    if (rect.height > 0) return { top: rect.top, bottom: rect.bottom };
+  }
+  return null;
+}
+
+/** marker 所在行里正文文本的行盒：优先取 marker **之后**的第一段非空文本（光标从 marker 边界
+ *  移到正文起点时高度必须一致），本行没有正文时（空项 `1. ` / 任务项）退到相邻行测**高度**，
+ *  再按本行的内容盒居中——同一字体度量下两行行盒等高，垂直位置取本行的。 */
+function bodyTextBox(dom: HTMLElement): { top: number; bottom: number } | null {
+  const line = dom.closest(".cm-line");
+  if (!line) return null;
+  const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+  let fallback: { top: number; bottom: number } | null = null;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node as unknown as DomTextNode;
+    if (!text.data.trim()) continue;
+    // marker widget 自己的文本（`1.` / `–`）在 dom 内部：它的字号是 13.5px，量它会得到
+    // marker 的盒高，正是本条要避开的那个值。
+    if (dom.contains(text as unknown as HTMLElement)) continue;
+    const box = textBoxOf(text);
+    if (box === null) continue;
+    if (dom.compareDocumentPosition(text as unknown as HTMLElement) & globalThis.Node.DOCUMENT_POSITION_FOLLOWING) return box;
+    fallback ??= box;
+  }
+  if (fallback !== null) return fallback;
+  // 空项：本行没有正文文本，行盒高度取相邻可见行的文本盒，纵向按本行内容盒居中
+  // （line-height 的半行距在文本盒上下均分）。
+  const height = siblingTextBoxHeight(line);
+  if (height === null) return null;
+  const rect = line.getBoundingClientRect();
+  const style = getComputedStyle(line);
+  const padTop = parseFloat(style.paddingTop || "0");
+  const padBottom = parseFloat(style.paddingBottom || "0");
+  const top = rect.top + padTop;
+  const content = rect.height - padTop - padBottom;
+  return { top: top + (content - height) / 2, bottom: top + (content + height) / 2 };
+}
+
+/** 相邻行（同字体度量）文本盒的高度；找不到时 null。
+ *  空项行两侧常常也是空行（`- ` 前后各一个空行），所以向两侧**逐行外扩**找到第一段正文——
+ *  同一字体度量下行盒等高，取最近的那一行就是本行的行盒高度。 */
+function siblingTextBoxHeight(line: Element): number | null {
+  let before: Element | null = line.previousElementSibling;
+  let after: Element | null = line.nextElementSibling;
+  for (let step = 0; step < 20 && (before !== null || after !== null); step++) {
+    for (const sibling of [before, after]) {
+      if (!(sibling instanceof HTMLElement) || !sibling.classList.contains("cm-line")) continue;
+      const walker = document.createTreeWalker(sibling, NodeFilter.SHOW_TEXT);
+      const marker = sibling.querySelector(".cm-lp-list-marker");
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const text = node as unknown as DomTextNode;
+        if (!text.data.trim()) continue;
+        // marker 自己的文本按逐级递减的标记字号（12.5–13.5px）排，量它会得到标记的盒高
+        // ——正是本条要避开的那个值。取相邻行的**正文**文本。
+        if (marker !== null && marker.contains(node)) continue;
+        const box = textBoxOf(text);
+        if (box !== null) return box.bottom - box.top;
+      }
+    }
+    before = before?.previousElementSibling ?? null;
+    after = after?.nextElementSibling ?? null;
+  }
+  return null;
+}
+
 
 const measured = StateEffect.define<readonly number[]>();
 const metadataReady = StateEffect.define<null>();
@@ -443,19 +594,20 @@ class ListLayout {
     // 与行范围**相接即算**（含端点）——光标在行首（marker 之前）也算驻留：与 M110
     // 行级显露同取向，空 caret 落在行首时该行必须已进入编辑态，否则作者看不到
     // 自己刚敲入的标记被如何接管。光标在上一行行尾（= 本行行首 - 1）不满足
-    // `r.to >= line.from`，不会误触发。
-    const cursorOnLine = (line: Line): boolean =>
-      revealSelection(view.state).ranges.some((r) => r.from <= line.to && r.to >= line.from);
+    // `r.to >= line.from`，不会误触发。判定本体在 lineTouchesSelection（与水平移动
+    // 的原子步共用一份）。
+    const cursorOnLine = (line: Line): boolean => lineTouchesSelection(view.state, line);
     for (const range of view.visibleRanges) {
       let line = doc.lineAt(range.from);
       while (line.from <= range.to) {
         if (!seen.has(line.from)) {
           seen.add(line.from);
-          const info = listLineInfo(this.tree, doc, line);
+          const render = listLineRender(this.tree, doc, line, this.units !== null && cursorOnLine(line));
+          const info = render.info;
           // lazy continuation 行（`info.rendered === false` 的项内段落行）按顶层段落渲染：
           // 不加 `cm-lp-list-line`、不施加 `--lp-list-body`，字符与光标落在行首
           // （合同 docs/specs/lists.md 的 L1；判定与光标位置无关，L3）。
-          if (info.rendered && info.item) {
+          if (info && info.item) {
             const mark = info.item.getChild("ListMark");
             const group = this.group(info.item.parent!, view.state);
             if (!group || !this.units) {
@@ -469,10 +621,8 @@ class ListLayout {
               class: `cm-lp-list-line${info.first ? " cm-lp-list-first" : ""}`,
               attributes: { style: `--lp-list-body:${group.body * unit}px;--lp-list-marker:${group.width * unit}px` },
             }).range(line.from));
-            if (info.first && mark) {
+            if (render.hidden && info.first && mark) {
               const task = info.item.getChild("Task")?.getChild("TaskMarker");
-              let end = task?.to ?? mark.to;
-              while (end < line.to && /[ \t]/.test(doc.sliceString(end, end + 1))) end++;
               const label = doc.sliceString(mark.from, mark.to);
               // 显示标记：ol 取组扫描算好的复合编号（扫描保证覆盖本项；陈旧组顶
               // 渲染期间取不到时退回源码字面数字，重扫 publish 后归位），ul 按深度
@@ -480,28 +630,26 @@ class ListLayout {
               const display = /^\d/.test(label)
                 ? group.labels.get(info.item.from) ?? label
                 : bulletGlyph(group.depth);
-              decorations.push(Decoration.replace({ widget: new ListMarker(display, task ? doc.sliceString(task.from, task.to) : null, group.depth) }).range(line.from, end));
-            } else if (info.offset > 0) {
+              decorations.push(Decoration.replace({ widget: new ListMarker(display, task ? doc.sliceString(task.from, task.to) : null, group.depth) }).range(render.hidden.from, render.hidden.to));
+            } else if (render.hidden) {
               // 真续行：吞掉行首源码空白，文本落到项正文起点（L2）。
-              decorations.push(Decoration.replace({}).range(line.from, line.from + info.offset));
+              decorations.push(Decoration.replace({}).range(render.hidden.from, render.hidden.to));
             }
-          } else if (this.units && cursorOnLine(line)) {
+          } else if (render.bare && this.units) {
             // 裸 marker 行的列表编辑态（M461，合同 docs/specs/lists.md 的 B1/B2）：
             // 光标驻留时按列表项首行渲染——藏源码标记（含引用前缀，与真实引用内
             // 列表的 replace 落点同口径）、上 widget、悬挂缩进按字面标记宽 + 前缀列
             // 算；光标离开即回到字面文本（门控是渲染层事件，不改文档，L4 照旧）。
-            const bare = bareListMarkerLine(this.tree, doc, line);
-            if (bare) {
-              const unit = this.units[0];
-              const label = bare.ordered ? bare.marker : bulletGlyph(1);
-              const width = label.length + 1;
-              const body = (bare.markerFrom - line.from) + width;
-              decorations.push(Decoration.line({
-                class: "cm-lp-list-line cm-lp-list-first cm-lp-bare",
-                attributes: { style: `--lp-list-body:${body * unit}px;--lp-list-marker:${width * unit}px` },
-              }).range(line.from));
-              decorations.push(Decoration.replace({ widget: new ListMarker(label, null, 1) }).range(line.from, bare.contentFrom));
-            }
+            const bare = render.bare;
+            const unit = this.units[0];
+            const label = bare.ordered ? bare.marker : bulletGlyph(1);
+            const width = label.length + 1;
+            const body = (bare.markerFrom - line.from) + width;
+            decorations.push(Decoration.line({
+              class: "cm-lp-list-line cm-lp-list-first cm-lp-bare",
+              attributes: { style: `--lp-list-body:${body * unit}px;--lp-list-marker:${width * unit}px` },
+            }).range(line.from));
+            decorations.push(Decoration.replace({ widget: new ListMarker(label, null, 1) }).range(line.from, bare.contentFrom));
           }
         }
         if (line.number === doc.lines) break;

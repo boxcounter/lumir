@@ -49,6 +49,23 @@
 C1–C4 的显露、光标移动与装饰重建 MUST NOT 改写文档：`EditorState.doc` 与磁盘文件在操作前后
 逐字节不变（ADR 0003 §3）。这条是既有铁律在本合同的复述，作为属性测试的公共断言。
 
+## C6 — 水平移动把隐藏的 inline 源码区间当作一个原子步
+
+对**任意** md 文档、任意由 live preview 隐藏的 **inline replace 源码区间**（列表 marker 及其尾随
+空白、续行行首缩进、裸 marker 行的编辑态标记；范围以渲染层同一份判定为准，见
+`docs/specs/lists.md` 的 L5）：
+
+- 水平移动（`←` / `→`、`⌃F` / `⌃B`，及其扩选变体）的落点 SHALL NOT 停在区间**内部**——那里没有
+  可见字形，原生 contenteditable 路径上还会先停在 CM 给不可编辑 widget 插的 `cm-widgetBuffer` 上
+  （同一行要求两次按键才进正文，且 `→` 与 `⌃F` 的可见行为分叉）。
+- 落点落在区间内部时 SHALL 钳到移动方向一侧的可见边界：前进 → 区间右端（正文起点），
+  后退 → 区间左端（可见行首）。两个边界本身是可见停靠点，MUST 保持可达。
+- 由此，从**可见行首**出发：一次 `→` 或 `⌃F` SHALL 恰好落到正文起点，再一次前进**一个字素簇**；
+  反向（正文起点 → 可见行首）对称。这条对列表情形要求：任意列表类型、任意嵌套深度、任意 marker
+  宽度（1–9 位编号 / 任务框）、任意正文字素（含组合字符序列与 emoji ZWJ 序列）。
+- 区间是否隐藏 SHALL 以渲染层同一份判定为准，MUST NOT 在移动层另判一遍（两处真源会漂移）。
+- 本条的移动与钳制 MUST NOT 改写文档（C5 照旧）。
+
 ## 条款的输入分布（属性测试口径）
 
 条款不引用具体案例，测试 fixture 必须扫这些维度：
@@ -61,16 +78,19 @@ C1–C4 的显露、光标移动与装饰重建 MUST NOT 改写文档：`EditorS
 | 主题 | light · dark · eink |
 | 字号 | 15px（出厂）· 32px（配置上限） |
 | 文档位置 | fm 在文档首（唯一合法位置）；长文档滚动到中段后回到篇首；只有 fm 的短文档 |
+| 列表行（C6） | 列表类型：ul（`-` / `*` / `+`）· ol（`1.` / `2)`）· 任务项（`- [ ]` / `- [x]`）；嵌套深度 1–3；marker 宽度 1 位 / 2 位 / 6 位编号与任务框；行形态：项首行 · 真续行（带源码缩进）· 裸 marker 行（编辑态 / 非编辑态）· 引用内列表（`> -`）· 空项行（`- `）；正文字素：ASCII · CJK · emoji ZWJ 组合序列 |
+| 入口（C6） | 可见行首（marker 之前）· 隐藏区间内部（程序化落点）· 正文起点 · 正文第 2 字；`←` / `→` 与 `⌃B` / `⌃F` 两组键各一遍 |
 
 ## 实现落点（条款 ↔ 代码的单向指针）
 
 | 条款 | 落点 |
 |---|---|
-| C1 | `src/editor.ts` 的 `baseTheme`（光标宽度 / 闪烁）；边界光标消除见 C2–C4 |
+| C1 | `src/editor.ts` 的 `baseTheme`（光标宽度 / 闪烁）；边界光标消除见 C2–C4。列表行上的行盒对齐：`src/preview/lists.ts` 的 `ListMarker.coordsAt`（marker 是 13.5px 的 inline-flex widget，CM 默认取它自己的矩形当光标高度） |
 | C2 | `src/preview/replaced-source.ts`（三类块共用的指针入口）；`FrontmatterWidget` 的 mousedown 路由（`src/preview/frontmatter.ts`） |
 | C3 | `firstBodyLineStart` / `normalizeFrontmatterCaret` / `frontmatterCaretSpecs`（`src/preview/frontmatter.ts`）；装载路径 `initialCaretState` / `normalizeInitialCaret`（`src/editor.ts`）；focus 处理器（`src/preview/livePreview.ts`） |
 | C4 | `clampAcrossBlockWidgets`（`src/editor.ts`）与 `frontmatterCaretSpecs` 的垂直移动分支 |
 | C5 | 全链路只 dispatch 选区，不改文档 |
+| C6 | `src/editor.ts` 的 `horizontalTarget`（钳制点）+ `src/preview/lists.ts` 的 `listHiddenRangeAt` / `listLineRender`（区间判定，与渲染共用一份）；键位见 `src/keys.ts` 的 `KEY_BINDINGS`（`←` / `→` 与 `⌃B` / `⌃F` 同一条命令） |
 
 光标视觉的**组件常量**：宽度 2px、以约 1.2s 周期闪烁、三主题同值（eink 同宽同色、同样
 闪烁）。颜色取 `--text`，不新增 token；闪烁直接用 CM 基础主题挂在 `.cm-cursorLayer` 上的
@@ -87,4 +107,6 @@ C1–C4 的显露、光标移动与装饰重建 MUST NOT 改写文档：`EditorS
 |---|---|---|
 | 纯判定矩阵 | `tests/unit/frontmatter-caret.test.ts` | `firstBodyLineStart` 的输入网格；`frontmatterCaretSpecs` 的分流（边界 / 块内 / 块外 × 空 / 非空选区 × 垂直移动 / 普通事务 / 装载事务） |
 | 几何 / 计算样式 | `tests/visual/scenes/m647-caret-geometry.spec.ts` | 光标矩形高度 = 所在可见行行盒 ±1px，且小于 `.cm-lp-frontmatter-outer` 高度（区分度对照）；`borderLeftWidth` = 2px、颜色 = `--text`、`marginLeft` = -1px、`animationName` ∈ {`cm-blink`, `cm-blink2`}、`animationDuration` = 1.2s 且动画运行中；暂停在 0ms / 700ms 时 `opacity` = 1 / 0（亮 / 灭相位） |
-| 真机 | `scripts/acceptance/scenarios/228-caret-visibility.md` | 点击 properties / doc-title 后 properties 撤下、标题让位、文档字节不变；光标高度归手感项（AX 不暴露 caret 几何） |
+| 纯判定（C6） | `tests/unit/list-lazy-continuation.test.ts` | `listLineRender` 的隐藏区间端点矩阵（列表类型 × marker 宽度 × 嵌套 × 引用前缀 × 任务项）；`listHiddenRangeAt` 的钳制与边界不移动；裸行编辑态门控 |
+| 几何 / 按键落点（C1 列表行 + C6） | `tests/visual/scenes/m647-caret-geometry.spec.ts`、`tests/visual/scenes/cursor-motion.spec.ts` | m647：列表行四个光标入口的高度 = 正文文本行盒 ±1px（主题 × 类型 × 嵌套 × marker 宽度，含空项行与 32px 档），marker 盒高比行盒高 ≥ 2px（区分度）；cursor-motion：`←` / `→` 与 `⌃B` / `⌃F` 两组键的行首一次到位、再一次一个字素簇、反向对称、跨行不跳字、文档字节不变 |
+| 真机 | `scripts/acceptance/scenarios/228-caret-visibility.md`、`scripts/acceptance/scenarios/255-list-caret-navigation-oct29.md` | 228：点击 properties / doc-title 后 properties 撤下、标题让位、文档字节不变（光标高度归手感项）；255：列表行上 `→` 与 `⌃F` 的落点一致、文档字节不变（光标高度同样归手感项） |
