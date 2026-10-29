@@ -134,3 +134,21 @@ cwd 与 prompt 解决的不是同一件事：cwd 决定 `cli_run` 在哪里执�
 5. **规格对账无丢段（归档前读数）**：`scripts/docs-check.sh` 内含 `scripts/openspec-archive-check.mjs`
    门禁模式（PASS）；`validate --all --strict` 见要件 4；归档跟踪队列在 `docs/backlog.md` 有且仅有
    一条 `add-harness-vault-workspace-list` 条目。
+
+### 节点 2 归档后记录（2026-10-29 22:44 CST，M804）
+
+- 放行方式：**机器 + 独立评审放行**（五要件齐；未命中「必须找 Alex 的例外类别」）。
+- 归档提交：`f3e22168`（`chore(openspec): 归档 add-harness-vault-workspace-list（M804）`）。
+  该提交同时含 r3 P2-1 的措辞修正——固定段正文计数「这两段正文」→「这三段正文」
+  （identity / quote / workspace 三段），living spec 与归档 delta 两处同步。
+- 包装器 `node scripts/openspec-archive.mjs add-harness-vault-workspace-list` 实际输出：
+  - `Change 'add-harness-vault-workspace-list' archived as '2026-10-29-add-harness-vault-workspace-list'.`
+  - `Applying changes to openspec/specs/harness/spec.md: + 3 added ~ 4 modified`；
+    `openspec/specs/harness-subagents/spec.md: ~ 1 modified`；`Totals: + 3, ~ 5, - 0, → 0`
+  - `归档后修链 0 处（扫过 5 篇 Markdown / 2 条相对链接）`
+  - `openspec-links: PASS（校验 615 条相对链接，全部可达）`
+  - `openspec-archive: PASS（归档完成，仓内相对链接门禁绿）`
+- 归档后审计：`node scripts/openspec-archive-check.mjs --archived add-harness-vault-workspace-list`
+  → `PASS（… 5 条 MODIFIED，对比 98 段；人工恢复 0 段，声明认领 0 段）`，退出码 0（2026-10-29 22:44 CST）。
+- 队列条目：`docs/backlog.md` 的归档跟踪条目随归档移除（与既有归档先例一致）；`--archived` 审计
+  以归档提交 `f3e22168` 为界复核，与工作区后续回填无关。
