@@ -66,9 +66,11 @@
 - [x] 6.4 `cargo test`（`src-tauri`）、`pnpm test`、`openspec validate --all --strict`、
       `node scripts/acceptance/run.mjs --check`、`node scripts/docs-check.sh`、`scripts/gate.sh quick`
       （动过视觉面才跑 `visual`——本 change 不动 `src/**`，预期 SKIP）
-- [ ] 6.5 真机跑 254 场景取 PASS 证据（落 `.local/acceptance/`）
+- [x] 6.5 真机跑 254 场景取 PASS 证据（落 `.local/acceptance/`）——M777 首跑红（断言转义形态），
+      M780 / M783 各复跑一次均 PASS，证据登记见文末「6.5 证据登记（M801）」
 - [ ] 6.6 真实 provider 用原始「评审 proposal 并查看相关文件」场景抽样复验：无 `pwd` / 广域 `find`
-      探测，`vault_list` 被首选（抽样观察，不进机器判据）
+      探测，`vault_list` 被首选（抽样观察，不进机器判据）——**按 Alex 2026-10-29 指令暂缓**，
+      停止点与现场见文末「6.6 停止记录（M801）」
 - [ ] 6.7 独立评审（reviewer clean / merge 且绑定 tip）+ 按五要件填 proposal 的节点 2 记录
 
 ## 实现批证据（2026-10-28，worker 自验）
@@ -171,3 +173,48 @@
   「评审 proposal 并查看相关文件」抽样。可机器判定的能力面（工作区段、`vault_list`、`pwd` / 相对
   `cat`）已由 254 的 PASS 项覆盖。
 - **6.7 独立评审 + 节点 2 记录**：未执行（阻塞于上面的红项与未验证项）。
+
+## 6.5 证据登记（2026-10-29，M801）
+
+- 性质：**登记既有真机证据**，不是本轮新跑；两处指针在写报告前逐一 `ls` 确认存在（REVIEW.md
+  「证据只在终端跑过」条）。M777 的两次 FAIL 已被后续两次全绿取代，红项根因是断言形态（见上节）。
+- 证据 ①：`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-28-m780-254/`
+  —— 254 PASS，18 条断言 0 失败，场景段 7.5s，跑于 2026-10-28T04:04Z；`summary.md` /
+  `254-harness-vault-workspace-list/status.txt`（`PASS`）/ `meta.json` / `run.log` 皆在场。
+- 证据 ②：`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-28-m783-254/`
+  —— 254 PASS，19 条断言 0 失败，跑于 2026-10-28T04:30Z。
+- 环境口径：两次都是 dev flavour（`pnpm tauri dev`）、隔离 `XDG_CONFIG_HOME`、合成验收 vault、
+  mock provider（`$fixtures/harness-mock-workspace.json`）；`run.log` 的 STRAY-SCAN 为 `none`。
+- 覆盖到的判据：会话留存 `session_open` 首行；system 工作区段标题 / 绝对根行 / `cli_run` 从该目录
+  启动；装配清单 `workspace` 条目（模板仓内相对路径 + `exists:true` + 非零字节）；递归 `vault_list`
+  含 `wsl-vault/notes/deep.md`；条目形状 `{kind, path}`（`wsl-vault/node_modules` 作为目录行在场）；
+  hidden（`.DS_Store`）不出现；lazy 子树（`node_modules/ignored.js`）不展开；`vault_read` 读到同一份
+  sibling；`pwd` 调用成功且 stdout 不是 `/`（含 / 不含换行两形态）；相对路径 `cat` 逐字节读到
+  `wsl-vault/keep.md`；全程无批准卡。
+- 判据演进：M780 先把 `file.has` 改成转义形态，M783 换成 `file.jsonlOutput`（逐行解析 `output`
+  后按字段判，`tool` 经 `call_id` 归属）——**M777 的两条红是断言形态问题，不是产品缺陷**。
+- 仍不在本证据内：默认一层 / 分页 / `limit` 夹取 / 三档放行由 `tools.rs` 与 `permissions.rs` 单测
+  覆盖（design §7 边界段）；真实模型遵从度见 6.6。
+
+## 6.6 停止记录（M801，按 Alex 2026-10-29 指令暂缓）
+
+- 停止依据：tower 转达 Alex 指令「立即停止 6.6 等真机验证，不再启动或退出 Lumir 实例；若已在跑，
+  安全停止验收驱动、保留证据并报告停止点」。
+- 已做的准备（都在停止令之前）：用 wt-801 的构建产物起一个 dev 实例（二进制私有副本
+  `.tower/worktrees/wt-801/.m801-lumir`，逐字节确认含新 description；前端由主仓 `vite` 在 1420
+  提供，未改 `src/**`）。**没有读取或复制任何 provider 凭据**——app 自行读取真实配置目录
+  `~/.config/lumir`。
+- 停止点：**没有发出任何真实 provider 请求**。`~/.config/lumir/harness/sessions/vault-51926-2/`
+  里最新会话仍是 2026-10-26（无新文件），因此本轮**没有**模型工具序列可记录，6.6 判据
+  （无 `pwd` / 广域 `find`、`vault_list` 首选）**未验证**。
+- 实例处置：停止令到达后立即安全终止该 dev 实例（后台任务被终止，进程 `pgrep` 已空）、停掉自建的
+  `vite`（1420 已释放）。全程**未操作安装版实例**（pid 57351 一路未被触碰、未退出）。
+- 已发生的共享配置副作用（如实登记）：dev 实例启动时按既有会话恢复了上次打开的 vault（用户真实
+  vault），`~/.config/lumir/vault-sessions/<vault>.json` 与 `reading-positions/<vault>.json` 因此被
+  重写（20:24–20:25）：内容等价、未触碰任何文档正文；两个实例短暂共用同一配置目录。
+- UI 操作面：一次窗口激活、两次 ⌘O（切 vault 浮层始终没有出现），没有输入任何提示词、没有点过任何
+  文档或设置控件。
+- 结论：判据 6 的真实 provider 侧仍**未闭环**；M801 不据此声称节点 2 完成，6.6 需等 Alex 重新放行
+  真机窗口后重跑（场景与判据已定，命令见 design §7 的真机段）。
+
+

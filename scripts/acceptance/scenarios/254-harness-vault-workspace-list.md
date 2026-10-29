@@ -193,3 +193,8 @@ steps:
   结果里」（条目值唯一时据此归属调用），但判据形态没有「按调用参数选择那次结果」的能力——默认调用
   的结果没有可用于挑选的区分字段，因此**默认一层**与分页都不在本场景的判据内；本场景的小目录也不会
   触发 `truncated`。
+- **工具定义（description）不进会话留存**：`session_open` 只记 system / 装配清单 / provider 等
+  （`jsonl.*` 的字段表），模型看到的工具 schema 不在 JSONL 里，本场景因此无从断言 `vault_list`
+  的 description 文本。它的三组边界句由 `tools.rs` 单测 `vault_list_description_keeps_boundaries`
+  钉住；「模型是否照它选工具」属判据 6 的真实 provider 抽样，不在本场景。
+

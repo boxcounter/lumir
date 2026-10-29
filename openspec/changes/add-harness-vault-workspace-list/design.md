@@ -144,6 +144,12 @@ vault_list(
   MUST NOT 在参数反序列化阶段被拒（否则 `-1` 会变成 `tool_args_invalid`，与「小于 1 按 1」互相
   矛盾）。这条由 `vault_list_limit_is_clamped_not_rejected` 钉住（-1 / 0 / 1001 三档）。
 - 缺省一层：`recursive=false` 时只返回 `dir_rel` 的直接子项（`path` 前缀匹配后不再含 `/`）。
+- **description 只写边界，不写能力扩张**（2026-10-29 M801 补）：工具描述 SHALL 说清三件事——
+  ① 可见性与文件树同源（hidden 条目不出现、lazy 子树只出一行不展开；**0 条既可能是空目录，也可能是
+  被忽略规则过滤**）；② 契约不返回正文、大小、修改时间、权限；③ 需要这些元数据、隐藏项、多目标路径
+  或 vault 外路径时改用 `cli_run`。参数面 MUST NOT 随之扩张（不加 `hidden` / 多目标 / 元数据开关）：
+  这些与 ADR 0007 Decision 7 的非目标冲突，属独立产品裁决。描述文本由
+  `vault_list_description_keeps_boundaries` 逐句钉住（删任何一句即红）；schema 与实现行为不变。
 
 ### 5.2 复用 fs-io 而不是新写一套目录语义
 
@@ -210,6 +216,7 @@ Alex 已批准的 `vault_list`；实现与文档 MUST NOT 把两者混称。
 | 工具 | `cursor` 原样续读：首尾空格路径（`" b.md"` / `"a.md "`）下 `limit:1` 逐页收集无重复无遗漏，`next_cursor` 逐字节保留 | `tools.rs` 单测 `vault_list_cursor_keeps_path_whitespace` |
 | 工具 | `path` 原样解释：返回的含首尾空格目录 path 可原样传回并列子项；去掉空格的名字报 `fs_not_found` | `tools.rs` 单测 `vault_list_path_keeps_whitespace_round_trip` |
 | 权限 | `vault_list` 三档均 auto-allow（不产批准卡、不产依据），deny 规则仍优先 | `permissions.rs` 单测 `vault_list_auto_allows_in_all_modes` |
+| 工具（描述） | `vault_list` description 的三组边界句在场（hidden / lazy 由忽略规则决定、0 条歧义；不返回大小 / 修改时间 / 权限；元数据 / 隐藏项 / 多目标 / vault 外路径用 `cli_run`） | `tools.rs` 单测 `vault_list_description_keeps_boundaries`（§5.1） |
 | 文档 | 工具计数、固定段清单、ADR 与 spec 无「8 件 vault 操作工具」残留 | 人工 + `docs-check` |
 
 真机场景（`scripts/acceptance/scenarios/254-harness-vault-workspace-list.md`，mock provider）：
@@ -230,7 +237,8 @@ Alex 已批准的 `vault_list`；实现与文档 MUST NOT 把两者混称。
 该断言只由 `tools.rs` 的 `vault_list_lists_one_layer_by_default` 覆盖。
 
 真实 provider 的遵从度（是否真的不再 `pwd` / 广域 `find`）按判据 6 由交接所述「评审 proposal 并查看
-相关文件」场景抽样复验，不进机器判据。
+相关文件」场景抽样复验，不进机器判据。**2026-10-29 状态：按 Alex 指令暂缓**——停止点与现场登记在
+tasks.md「6.6 停止记录（M801）」，本轮无真实 provider 观察数据。
 
 ## 8. 非目标、残余风险与 follow-up
 
