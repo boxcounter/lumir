@@ -324,18 +324,53 @@ pub fn cron_definitions() -> Vec<serde_json::Value> {
     ]
 }
 
+/// `task` 描述的第一段（能力说明）：沿用 change add-harness-subagents 的现文，语义 MUST NOT 变更
+/// （change add-proactive-subagent-delegation「委派的触发时机」条）。
+pub const TASK_CAPABILITY_SUMMARY: &str = "把任务委派给一个子代理：子代理有独立上下文，只把摘要返回；不能再次委派；需要批准的调用会弹给用户。";
+
+/// `task` 描述的第二段（委派策略段）：**代码内单一常量**，逐字取 change
+/// add-proactive-subagent-delegation design §3.1 的段二（design 里用 Markdown 加粗标记的四条判据
+/// 标签，在这里以纯文本落字——工具描述不渲染 Markdown，加粗标记只会变成字面字符）。
+///
+/// 四条判据的**固定标签**（「匹配就委派」「无匹配就自己做」「按总成本权衡」「独立才并行」）与固定
+/// 锚点句「简单任务也可以派」是跨制品逐字锚点：spec 增量、单测断言（本文件 `mod tests`）与
+/// `docs/specs/subagent-definitions.md` 的抄录同批引用，改文案须同批改三处。
+///
+/// 策略是**给模型的判断指引**，不是机制路由表：系统不解析它、不据它分支、不按它校验调用。机制层
+/// 硬约束只有权限 / 预算 / 深度 / 能力四类；委派时机不在其中——机制 MUST NOT 以任务大小 / 形状 /
+/// 内容为由拒绝或强制一次委派。
+pub const TASK_DELEGATION_POLICY: &str = concat!(
+    "委派时机（按这四条判断要不要调用本工具）：\n",
+    "- 匹配就委派：清单里有 description 与能力都对得上的专用子代理时，直接派给它，不必等用户点名；",
+    "没有专用、但有通用的 general 且任务在它的能力范围内时，派 general——专用优先，",
+    "general 是次选，不是默认选择。\n",
+    "- 无匹配就自己做：专用子代理与 general 都对不上时（整件事、以及能从它拆出来的子任务都算），",
+    "自己做，不要调用本工具——不要拿能力不够的子代理硬扛整件事，系统也不会替你改派。反过来，",
+    "如果能拆出一个 description 与能力都对得上、本身有独立价值的子任务，就只把那段交给它、",
+    "剩下的自己做：例如多份笔记的只读对照交给只读子代理，拿回差异清单后自己写最终文件——",
+    "这是分工，不是兜底。\n",
+    "- 按总成本权衡：委派有固定开销（另起上下文、多一轮摘要），也可能有收益——省下主会话的上下文、",
+    "可并行、可以用专用模型、把大量过程材料关在子运行里（要跨多份文件反复搜索比对、或材料多而",
+    "只需要一份压缩结论时，这笔收益通常更大）。简单任务也可以派：只要这些收益加起来超过开销就值得。",
+    "没有「简单任务一律不派」的硬规矩，也没有「材料不够多不许派」的门槛——你自己按总成本判断。\n",
+    "- 独立才并行：互不依赖的多份调研可以在同一条消息里发多个 task 并行；后一步依赖前一步结果的，",
+    "不要并行。这条是许可不是义务——不要为了并行而并行。",
+);
+
 /// 编排工具 `task` 的定义（change add-harness-subagents design §5.1；它在 9 件 vault 工具之后追加，
 /// 是交互注册表的第 10 件）：工具集与三闸值不在
 /// 调用参数里（它们是定义字段）；`model` / `background` 是仅有的两个调用级覆盖项。
 ///
-/// 可用子代理清单来自 [`AgentCatalog::listing`]（名字 + 描述），MUST NOT 截断；超容量时由装载
-/// 期产 warning + 诊断事件，清单本体照常完整注入。执行入口归 §3（M588），本批次只注册描述。
+/// 描述结构固定为三段、顺序不变（change add-proactive-subagent-delegation design §3.1）：
+/// 能力说明 → 委派策略段 → 生效定义清单。可用子代理清单来自 [`AgentCatalog::listing`]
+/// （名字 + 描述），MUST NOT 截断；超容量时由装载期产 warning + 诊断事件，清单本体照常完整注入。
+/// 执行入口归 §3（M588），本批次只注册描述。
 pub fn task_definition(catalog: &AgentCatalog) -> serde_json::Value {
     serde_json::json!({
         "type": "function",
         "name": "task",
         "description": format!(
-            "把任务委派给一个子代理：子代理有独立上下文，只把摘要返回；不能再次委派；需要批准的调用会弹给用户。可用子代理：\n{}",
+            "{TASK_CAPABILITY_SUMMARY}\n\n{TASK_DELEGATION_POLICY}\n\n可用子代理：\n{}",
             catalog.listing()
         ),
         "parameters": {
@@ -2891,6 +2926,226 @@ mod tests {
         assert!(cut.starts_with("0123456789"));
         assert!(cut.ends_with("0123456789"));
         assert!(cut.chars().count() <= TASK_SUMMARY_LIMIT + "…[截断]…".chars().count());
+    }
+
+    /// 内建定义（explore / general）构成的清单：委派策略断言的固定输入，不依赖磁盘上的定义。
+    fn builtin_catalog(tag: &str) -> crate::harness::agents::AgentCatalog {
+        let root = std::env::temp_dir().join(format!(
+            "lumir-harness-tools-agents-{}-{}",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        crate::harness::agents::AgentCatalog::load_from_roots(
+            &root,
+            None,
+            &crate::config::test_mock(Some("/tmp/fixture.json")),
+        )
+    }
+
+    /// 取策略段里某条判据的正文（从 `- <label>：` 到下一个 `- ` 行之前）。
+    fn policy_bullet<'a>(policy: &'a str, label: &str) -> &'a str {
+        let marker = format!("- {label}：");
+        let start = policy
+            .find(&marker)
+            .unwrap_or_else(|| panic!("策略段缺少判据 {label}：{policy}"));
+        let rest = &policy[start + marker.len()..];
+        match rest.find("\n- ") {
+            Some(end) => &rest[..end],
+            None => rest,
+        }
+    }
+
+    /// `task` 描述的三段结构（change add-proactive-subagent-delegation design §3.1 / tasks 1.1–1.2）：
+    /// 能力说明 → 策略段 → 清单，顺序固定；策略段恰出现一次；清单内容不受策略段影响。
+    #[test]
+    fn task_description_is_capability_then_policy_then_listing() {
+        let catalog = builtin_catalog("order");
+        let description = task_definition(&catalog)["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        assert_eq!(
+            description.matches(TASK_DELEGATION_POLICY).count(),
+            1,
+            "策略段必须恰出现一次"
+        );
+        let policy_at = description.find(TASK_DELEGATION_POLICY).unwrap();
+        assert_eq!(
+            description[..policy_at].trim_end(),
+            TASK_CAPABILITY_SUMMARY,
+            "第一段是能力说明"
+        );
+        let listing_marker = "可用子代理：\n";
+        let listing_at = description.find(listing_marker).unwrap();
+        assert!(
+            listing_at > policy_at + TASK_DELEGATION_POLICY.len(),
+            "清单在策略段之后"
+        );
+        let listing = &description[listing_at + listing_marker.len()..];
+        assert_eq!(listing, catalog.listing(), "清单内容不受策略段影响");
+        for line in listing.lines() {
+            assert!(line.starts_with("- "), "清单逐定义一行：{line}");
+            assert!(
+                line.contains('：'),
+                "清单格式 `- <name>：<description>`：{line}"
+            );
+        }
+    }
+
+    /// 四条判据的固定标签、固定锚点句与各自口径（design §3.1 段二 / §6 单测 1）。标签与锚点句是
+    /// 跨制品逐字锚点，改文案须同批改 spec 增量、本断言与文档抄录。
+    #[test]
+    fn delegation_policy_pins_the_four_labels_and_the_anchor_phrase() {
+        let policy = TASK_DELEGATION_POLICY;
+        for label in ["匹配就委派", "无匹配就自己做", "按总成本权衡", "独立才并行"]
+        {
+            assert!(
+                policy.contains(&format!("- {label}：")),
+                "缺少固定标签 {label}：{policy}"
+            );
+        }
+        assert!(
+            policy.contains("简单任务也可以派"),
+            "固定锚点句必须在场：{policy}"
+        );
+
+        // 判据一：专用优先、general 次选（「专用」在 general 之前，「次选」在场）。
+        let matching = policy_bullet(policy, "匹配就委派");
+        assert!(matching.contains("专用优先"), "{matching}");
+        let dedicated = matching.find("专用").expect("专用在场");
+        let general = matching.find("general").expect("general 在场");
+        assert!(
+            dedicated < general,
+            "「专用」应排在 general 之前：{matching}"
+        );
+        assert!(matching.contains("次选"), "{matching}");
+        for shape in ["跨多份文件", "材料多", "形状适合"] {
+            assert!(
+                !matching.contains(shape),
+                "「匹配就委派」不得含形状门槛 {shape}：{matching}"
+            );
+        }
+
+        // 判据二：无匹配就自己做；拆出匹配且独立可交付的子任务是分工，不是兜底。
+        let no_match = policy_bullet(policy, "无匹配就自己做");
+        assert!(no_match.contains("不要调用本工具"), "{no_match}");
+        assert!(no_match.contains("子任务"), "{no_match}");
+        assert!(no_match.contains("分工"), "{no_match}");
+        assert!(no_match.contains("系统也不会替你改派"), "{no_match}");
+
+        // 判据三：按总成本权衡——形状词只出现在这一条，锚点句在这里。
+        let cost = policy_bullet(policy, "按总成本权衡");
+        assert!(cost.contains("总成本"), "{cost}");
+        assert!(cost.contains("简单任务也可以派"), "{cost}");
+        assert!(cost.contains("跨多份文件"), "{cost}");
+        assert!(cost.contains("材料多"), "{cost}");
+        // 批准文案里那句被禁止的硬规矩只以否定形式（「没有…的硬规矩」）出现一次。
+        assert_eq!(
+            policy.matches("简单任务一律不派").count(),
+            1,
+            "禁令措辞只允许作为被否定的引用出现一次：{policy}"
+        );
+        assert!(cost.contains("没有「简单任务一律不派」的硬规矩"), "{cost}");
+
+        // 判据四：独立才并行是许可不是义务。
+        let parallel = policy_bullet(policy, "独立才并行");
+        assert!(parallel.contains("可以"), "{parallel}");
+        assert!(parallel.contains("不是义务"), "{parallel}");
+        assert!(!policy.contains("必须并行"), "不得把并行写成义务：{policy}");
+        assert!(!policy.contains("总是并行"), "不得把并行写成义务：{policy}");
+
+        // 机制不硬约束委派时机：策略段不得含强制 / 禁止委派的措辞。
+        for banned in ["必须委派", "一律委派", "不得委派", "禁止委派"] {
+            assert!(
+                !policy.contains(banned),
+                "策略不得含义务 / 禁令措辞 {banned}"
+            );
+        }
+    }
+
+    /// 委派策略只有一个居所（design tasks 1.3 / spec「通用提示词不含委派策略」场景）：装配后的
+    /// system prompt 与其它工具定义都不含策略段。正对照先断言 identity 的一条已知工具纪律在场，
+    /// 证明搜的是真装配产物、不是空串上打转（REVIEW.md「读不到当成空」条）。
+    #[test]
+    fn delegation_policy_lives_only_in_the_task_definition() {
+        let root =
+            std::env::temp_dir().join(format!("lumir-harness-tools-prompt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let assembled = crate::harness::context::assemble_system(&root);
+        assert!(
+            assembled
+                .text
+                .contains("vault_read / vault_search / vault_list 是只读工具"),
+            "正对照：identity 的工具纪律应在装配后的 system prompt 里"
+        );
+        for phrase in [
+            TASK_DELEGATION_POLICY,
+            "匹配就委派",
+            "无匹配就自己做",
+            "按总成本权衡",
+            "独立才并行",
+            "简单任务也可以派",
+        ] {
+            assert!(
+                !assembled.text.contains(phrase),
+                "system prompt 不得承载委派策略：{phrase}"
+            );
+        }
+        for definition in definitions() {
+            let description = definition["description"].as_str().unwrap_or("");
+            assert!(
+                !description.contains(TASK_DELEGATION_POLICY)
+                    && !description.contains("匹配就委派"),
+                "策略段只属于 task 定义：{definition}"
+            );
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 机制不硬约束委派时机（design §3.4 / spec「机制不硬约束委派时机」场景）：`task` 的调用参数
+    /// 只有 agent / prompt / description / model / resume / background——没有任务大小、形状、类型
+    /// 或优先级之类的机制闸旋钮；要不要派由模型按策略判断。
+    #[test]
+    fn task_schema_has_no_shape_or_size_gate() {
+        let catalog = builtin_catalog("schema");
+        let definition = task_definition(&catalog);
+        let properties = definition["parameters"]["properties"]
+            .as_object()
+            .expect("properties 是对象");
+        let mut names: Vec<&str> = properties.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            vec![
+                "agent",
+                "background",
+                "description",
+                "model",
+                "prompt",
+                "resume"
+            ]
+        );
+        assert_eq!(
+            definition["parameters"]["required"],
+            serde_json::json!(["agent", "prompt", "description"])
+        );
+        for gate in [
+            "complexity",
+            "size",
+            "shape",
+            "priority",
+            "min_files",
+            "task_type",
+        ] {
+            assert!(
+                !properties.contains_key(gate),
+                "task 参数不得含机制闸 {gate}"
+            );
+        }
     }
 
     /// 受控假 shell：验证「起子进程 → 夹取标记 → 解析」完整链路。真 zsh 会读用户启动文件，
