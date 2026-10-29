@@ -206,7 +206,32 @@ cron 工具；子代理落地后模型不主动 `task`。两次的共同形态�
 
 ## 节点记录
 
-- 节点 1（提案评审）：**待裁决**。本批只提交提案制品（proposal / design / tasks / 两条 spec delta），
-  未改产品代码与 living spec。
-- 节点 2（归档）：实现完成后按五要件填写（reviewer verdict + tip、门禁输出、真机与真实 provider
-  证据指针）。
+- 节点 1（提案评审）：**已通过**（2026-10-29，Alex 裁决「按倾向」批准：策略四条判据的文案、内建
+  full-9 `general`、委派时机按总成本判断且不进机制闸、真实 provider 六格矩阵）。提案批合并
+  `57d9a18b`（`feat/propose-proactive-subagent-delegation-oc`）。实现期无静默扩 scope。
+- 节点 2（归档）：**五要件逐条状态**（2026-10-30，M812 填）
+
+  1. **方案已批准**：见上（节点 1）。
+  2. **独立 reviewer clean / merge**：实现批 `582c720c`（`feat/implement-proactive-subagent-runtime-oct`，
+     M806：策略段 + `explore` 补 `vault_list` + `general`）与验收批 `653be31e`
+     （`feat/add-harness-request-tool-names-oct29`，M807：`tool_names` 场景 257 / 194 / 180 改准）均以
+     clean / merge 结论合并入 master。
+  3. **tasks 完成或有放弃理由**：1.x–4.x 全勾（实现批）；5.x 全勾并附实测记录（见 tasks.md「5.x 实测
+     记录」）；6.1–6.4 已勾；**6.5（归档顺序）与 6.6（独立评审）留给 tower 的本轮收口**——6.5 的前提是
+     `add-harness-vault-workspace-list` 先归档（design §8），6.6 是本轮 M812 需要的独立评审结论。
+  4. **门禁与真机证据**：`bash scripts/gate.sh quick` = `GATE RESULT: 12/12 PASS（SKIP 1）`、退出码 0
+     （M806，2026-10-30；SKIP 1 = `tsc-visual` 依赖未装）；M812 只改 openspec 制品，quick 复跑读数见
+     mission 报告。真机：`180` / `194` / `257` = `.local/acceptance/2026-10-30-m807-mock-3of3/`
+     （PASS 3 / FAIL 0）；`187` / `200` = `.local/acceptance/2026-10-26-runner-efficiency/`
+     （各自 `status.txt` = PASS，最近一次可用读数；M812 未重跑这两条）。**真实 provider 六格**（design §7）：
+     证据 `.local/reviews/proactive-subagent-delegation-oct29/real-provider.md`，模型 deepseek-flash、
+     每格 N=1、存在性判据——**A 判 FAIL（已暴露、未选择）**，E / D 合格（零委派路径），B / F 观测不判红，
+     C 负向通过；两段强制恢复（开关 / `general` 覆盖）均完成并取独立读数。
+  5. **规格对账无丢段**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与
+     `bash scripts/docs-check.sh`（含归档对账门禁）在实现批与本批均通过；归档跟踪队列
+     （`openspec/changes/` 枚举）对应该 change 的条目有且仅有一条。
+
+  > **未收口项**：第 2 条要求评审绑定**当前分支 tip**；本轮证据与 tasks 改动落在 M812 分支，
+  > 需由 tower 安排独立 reviewer 对本分支 tip 出 clean / merge 后才可归档。第 4 条的 A 格 FAIL
+  > 属「②会选择」未达标——按 design §1.1 硬口径 2，**②不达标即本 change 不达标**，需要 Alex 裁决
+  > 是否走 §7.4 的「改一处措辞 → 复跑 A（最多两轮）」；本 mission 不改 `tools.rs`，未自行试绿。
