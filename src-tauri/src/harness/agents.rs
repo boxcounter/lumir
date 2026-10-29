@@ -9,9 +9,9 @@
 //! （[`AgentDefinition::body`]，委派装配时调用）。正文 MUST NOT 进入主会话上下文，也 MUST NOT
 //! 进入 `task` 工具描述。
 //!
-//! **内建 `explore` 走同一条路径**：内置定义的 frontmatter 是一段常量文本，与磁盘文件经同一个
-//! [`parse_definition`] 解析、同一条合并与清单路径处理——不是装载 / 校验 / 清单上的特殊分支。
-//! 用户级 / vault 级同名定义覆盖它（覆盖产 warning，清单只保留生效的一份）。
+//! **内建定义（`explore` / `general`）走同一条路径**：内置定义的 frontmatter 是一段常量文本，与
+//! 磁盘文件经同一个 [`parse_definition`] 解析、同一条合并与清单路径处理——不是装载 / 校验 / 清单上
+//! 的特殊分支。用户级 / vault 级同名定义覆盖它（覆盖产 warning，清单只保留生效的一份）。
 //!
 //! **扫描永不失败**：目录不存在视为空；单个文件不可读 / 解析失败 / 校验不通过都只丢弃该定义并
 //! 产一条点名文件与原因的 warning。
@@ -31,19 +31,26 @@ use super::tools;
 pub const CATALOG_TOKEN_LIMIT: u64 = 15_000;
 /// 本仓无本地 tokenizer，按 `ceil(字符数 ÷ 4)` 粗估（design §4.4）。
 pub const CHARS_PER_TOKEN_ESTIMATE: u64 = 4;
-/// 定义未声明 `tools` 时的缺省工具集（design §4.2「只读三件」）。
+/// 定义未声明 `tools` 时的缺省工具集（design §4.2「只读三件」；change
+/// add-proactive-subagent-delegation 明确**不扩**它——内建 `explore` 的 `vault_list` 是定义显式
+/// 声明，扩缺省集会改变所有既有自定义定义拿到的能力）。
 pub const DEFAULT_TOOLS: [&str; 3] = ["vault_read", "vault_search", "skill_load"];
 /// name 的字符上限（design §4.2）。
 pub const MAX_NAME_CHARS: usize = 64;
 /// 内建定义的名字（面板清单与覆盖规则都按它判）。
 pub const BUILTIN_EXPLORE_NAME: &str = "explore";
+pub const BUILTIN_GENERAL_NAME: &str = "general";
 
 /// 内建 `explore` 的定义文本（frontmatter + 正文）：与磁盘定义走同一个解析器，清单 / 校验 /
 /// 覆盖路径因此没有任何特殊分支。
+///
+/// `tools` 自 change add-proactive-subagent-delegation 起为**只读四件**：`vault_list` 显式声明，
+/// 让描述里的「列目录 / 按路径枚举」有对应工具。缺省集 [`DEFAULT_TOOLS`] 不随之扩张——缺省集是
+/// 「未写 `tools` 的自定义定义」拿到的闭集合，扩它等于给所有既有定义悄悄加一个读能力。
 const BUILTIN_EXPLORE: &str = r#"---
 name: explore
-description: "只读探索：在 vault 里搜索、按路径枚举、读取文件与 skill，产出结论与依据；不改文件、不跑命令。"
-tools: [vault_read, vault_search, skill_load]
+description: "只读探索：在 vault 里列目录、按路径枚举、搜索与读取文件、加载 skill，产出结论与依据；不改文件、不跑命令。"
+tools: [vault_read, vault_search, vault_list, skill_load]
 model: inherit
 ---
 
@@ -55,6 +62,37 @@ model: inherit
 3. 不确定项
 4. 未覆盖范围
 "#;
+
+/// 内建通用执行者 `general` 的定义文本（change add-proactive-subagent-delegation design §4.2）：
+/// 没有专用定义可派时，写类 / 命令类任务的次选。`tools` 是 9 件 vault 操作工具全量——
+/// 只读版与 `explore` 高度重复，没有存在理由。
+///
+/// 边界不变：`task` 与三件 cron 工具不在闭集合内（派生深度仍恰好 1 层，子代理不能再次委派）；
+/// ask 级调用照常透传父会话批准闸并点名 `general`；同名自定义定义可覆盖它（与 `explore` 同规则）。
+const BUILTIN_GENERAL: &str = r#"---
+name: general
+description: "通用执行：按任务说明读写 vault、改文件、跑命令；不预设任务类型，一切由 prompt 决定。"
+tools: [vault_read, vault_search, vault_list, vault_patch, vault_create, vault_move, vault_delete, skill_load, cli_run]
+model: inherit
+---
+
+你是通用执行子代理：按 prompt 里的任务说明完成工作，不预设任务类型。
+
+- 先读后改：修改既有文件前先读清上下文；局部替换用 vault_patch（old_string 必须恰好命中一次）。
+- 写类工具与 cli_run 经父会话的批准闸透传；被拒绝时按拒绝原因调整方案，不要绕道。
+- 不能再次委派（你没有 task 工具）。
+- 结束时直接给结果，不寒暄：
+  1. 结论
+  2. 依据：vault 相对路径 + 关键片段或行号
+  3. 改动清单：每个新建 / 修改 / 移动 / 删除的文件与一句话说明
+  4. 不确定项与未覆盖范围
+"#;
+
+/// 内建定义常量表（名字, 定义文本）：装载时逐个走 [`parse_definition`]，与磁盘定义同一路径。
+const BUILTIN_DEFINITIONS: [(&str, &str); 2] = [
+    (BUILTIN_EXPLORE_NAME, BUILTIN_EXPLORE),
+    (BUILTIN_GENERAL_NAME, BUILTIN_GENERAL),
+];
 
 /// 定义来源（优先级：vault > 用户级 > 内建）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,7 +180,7 @@ impl AgentCatalog {
     /// 生产入口：扫描 `<vault>/.lumir/agents/**/*.md` 与 `<config_dir>/agents/**/*.md`。
     ///
     /// 目录不存在视为空；配置目录无法确定时产一条 warning 并只扫 vault 级。扫描本身永不失败
-    /// （最坏只剩内建 `explore`）。
+    /// （最坏只剩内建定义 `explore` / `general`）。
     pub fn load(vault_root: &Path, config: &HarnessConfig) -> Self {
         let mut warnings = Vec::new();
         let user_root = match crate::config::config_dir() {
@@ -178,18 +216,12 @@ impl AgentCatalog {
 
         // 内建定义：与磁盘定义同一个解析器；解析失败只可能是代码被改坏（常量在本文件内），
         // 仍然按「丢定义 + warning」处理，不 panic。
-        match parse_definition(
-            BUILTIN_EXPLORE,
-            None,
-            AgentSource::Builtin,
-            config,
-            &mut warnings,
-        ) {
-            Ok(definition) => {
-                by_name.insert(definition.name.clone(), definition);
-            }
-            Err(reason) => {
-                warnings.push(format!("内建子代理 {BUILTIN_EXPLORE_NAME} 非法：{reason}"))
+        for (name, text) in BUILTIN_DEFINITIONS {
+            match parse_definition(text, None, AgentSource::Builtin, config, &mut warnings) {
+                Ok(definition) => {
+                    by_name.insert(definition.name.clone(), definition);
+                }
+                Err(reason) => warnings.push(format!("内建子代理 {name} 非法：{reason}")),
             }
         }
 
@@ -834,16 +866,32 @@ mod tests {
             .expect("内建 explore 应恒在场")
     }
 
+    fn general(catalog: &AgentCatalog) -> &AgentDefinition {
+        catalog
+            .get(BUILTIN_GENERAL_NAME)
+            .expect("内建 general 应恒在场")
+    }
+
     #[test]
-    fn missing_directories_leave_only_the_builtin_explore() {
+    fn missing_directories_leave_only_the_builtin_definitions() {
         let fixture = Fixture::new("missing");
         let catalog = fixture.load();
-        assert_eq!(catalog.definitions().len(), 1);
+        let names: Vec<&str> = catalog
+            .definitions()
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect();
+        assert_eq!(names, vec![BUILTIN_EXPLORE_NAME, BUILTIN_GENERAL_NAME]);
         let builtin = explore(&catalog);
         assert_eq!(builtin.source, AgentSource::Builtin);
         assert_eq!(
             builtin.tools,
-            vec!["vault_read", "vault_search", "skill_load"]
+            vec!["vault_read", "vault_search", "vault_list", "skill_load"],
+            "explore 的第四条是定义显式声明，不是缺省集扩张"
+        );
+        assert_eq!(
+            builtin.description,
+            "只读探索：在 vault 里列目录、按路径枚举、搜索与读取文件、加载 skill，产出结论与依据；不改文件、不跑命令。"
         );
         assert_eq!(builtin.model, None);
         assert_eq!(builtin.max_turns, fixture.config.subagents.max_turns);
@@ -856,6 +904,53 @@ mod tests {
             catalog.warnings()
         );
         assert!(!builtin.body().unwrap().trim().is_empty());
+    }
+
+    /// 内建 `general`：工具集恰为闭集合全量 9 件（含写类与 `cli_run`），`task` 与三件 cron 工具
+    /// **不在**其中；`model` 为 inherit、三闸取配置缺省、非后台——普通定义一条，无特殊字段。
+    #[test]
+    fn builtin_general_holds_the_full_nine_tool_set() {
+        let fixture = Fixture::new("general");
+        let catalog = fixture.load();
+        let general = general(&catalog);
+        assert_eq!(general.source, AgentSource::Builtin);
+        assert_eq!(general.tools, tools::TOOL_NAMES.to_vec());
+        for forbidden in tools::CRON_TOOL_NAMES {
+            assert!(
+                !general.tools.iter().any(|tool| tool == forbidden),
+                "general 不得拿到 cron 工具 {forbidden}"
+            );
+        }
+        assert!(!general.tools.iter().any(|tool| tool == "task"));
+        assert_eq!(general.model, None, "model: inherit = None");
+        assert_eq!(general.max_turns, fixture.config.subagents.max_turns);
+        assert_eq!(general.max_tokens, fixture.config.subagents.max_tokens);
+        assert_eq!(general.timeout_secs, fixture.config.subagents.timeout_secs);
+        assert!(!general.background);
+        assert_eq!(
+            general.description,
+            "通用执行：按任务说明读写 vault、改文件、跑命令；不预设任务类型，一切由 prompt 决定。"
+        );
+        let body = general.body().unwrap();
+        assert!(body.contains("不能再次委派"), "{body}");
+        assert!(body.contains("改动清单"), "{body}");
+        assert!(
+            catalog.warnings().is_empty(),
+            "内建定义不应产 warning：{:?}",
+            catalog.warnings()
+        );
+    }
+
+    /// 缺省集钉死三件：`general` 与 `explore` 的额外工具都来自定义显式声明，未声明 `tools` 的
+    /// 自定义定义仍只拿到只读三件（design §4.1 裁决点 3：不扩缺省集）。
+    #[test]
+    fn default_tools_stay_read_only_three() {
+        assert_eq!(DEFAULT_TOOLS, ["vault_read", "vault_search", "skill_load"]);
+        let fixture = Fixture::new("default-tools");
+        fixture.write_vault("plain.md", &definition("plain", "未声明工具"));
+        let catalog = fixture.load();
+        let plain = catalog.get("plain").expect("定义生效");
+        assert_eq!(plain.tools, DEFAULT_TOOLS.to_vec());
     }
 
     #[test]
@@ -903,7 +998,11 @@ mod tests {
         let catalog = fixture.load();
         assert!(catalog.get("lonely").is_none());
         assert!(catalog.get("empty").is_none());
-        assert_eq!(catalog.definitions().len(), 1, "只剩内建 explore");
+        assert_eq!(
+            catalog.definitions().len(),
+            2,
+            "只剩两个内建定义（explore / general）"
+        );
         let joined = catalog.warnings().join("\n");
         assert!(joined.contains("no-name.md"), "{joined}");
         assert!(joined.contains("no-description.md"), "{joined}");
@@ -925,7 +1024,11 @@ mod tests {
             fixture.write_vault(file, &definition(name, "描述"));
         }
         let catalog = fixture.load();
-        assert_eq!(catalog.definitions().len(), 1, "非法 name 全部丢弃");
+        assert_eq!(
+            catalog.definitions().len(),
+            2,
+            "非法 name 全部丢弃，只剩两个内建定义"
+        );
         for file in ["blank.md", "space.md", "slash.md", "long.md"] {
             assert!(
                 catalog
@@ -1127,6 +1230,35 @@ mod tests {
     }
 
     #[test]
+    fn builtin_general_is_overridden_by_a_same_name_definition_with_a_warning() {
+        let fixture = Fixture::new("builtin-general");
+        fixture.write_user(
+            "general.md",
+            "---\nname: general\ndescription: 自定义通用执行\ntools: [vault_read]\n---\n正文\n",
+        );
+        let catalog = fixture.load();
+        let effective: Vec<_> = catalog
+            .definitions()
+            .iter()
+            .filter(|definition| definition.name == BUILTIN_GENERAL_NAME)
+            .collect();
+        assert_eq!(effective.len(), 1, "清单里只出现生效的一份");
+        assert_eq!(effective[0].description, "自定义通用执行");
+        assert_eq!(effective[0].source, AgentSource::User);
+        assert_eq!(effective[0].tools, vec!["vault_read"]);
+        assert!(
+            catalog
+                .warnings()
+                .iter()
+                .any(|warning| warning.contains("内建 general")),
+            "{:?}",
+            catalog.warnings()
+        );
+        // 覆盖只作用于同名的那一份：explore 仍是内建定义。
+        assert_eq!(explore(&catalog).source, AgentSource::Builtin);
+    }
+
+    #[test]
     fn malformed_or_missing_frontmatter_drops_only_that_definition() {
         let fixture = Fixture::new("malformed");
         fixture.write_vault("no-frontmatter.md", "只有正文，没有 frontmatter\n");
@@ -1189,12 +1321,13 @@ mod tests {
         let catalog = fixture.load();
         let listing = catalog.listing();
         assert!(listing.contains("- explore："), "{listing}");
+        assert!(listing.contains("- general：通用执行："), "{listing}");
         assert!(listing.contains("- research：调研任务"), "{listing}");
         assert!(
             !listing.contains("SECRET-BODY"),
             "正文 MUST NOT 进入清单：{listing}"
         );
-        assert_eq!(listing.lines().count(), 2);
+        assert_eq!(listing.lines().count(), 3, "explore / general / research");
     }
 
     #[test]

@@ -37,8 +37,8 @@ steps:
     do: sleep
     ms: 1200
     expect:
-      - label: 内建的 explore 可被委派（工具为只读三件）
-        file: { path: "env:logs/*.jsonl", has: '/"agent":"explore".*"event":"subagent_started".*"tools":"vault_read,vault_search,skill_load"/' }
+      - label: 内建的 explore 可被委派（工具为只读四件）
+        file: { path: "env:logs/*.jsonl", has: '/"agent":"explore".*"event":"subagent_started".*"tools":"vault_read,vault_search,vault_list,skill_load"/' }
 
   - name: 放一个同名自定义定义（覆盖内建）
     do: vaultWrite
@@ -78,6 +78,6 @@ steps:
 
 # 200 —— 8.18 内建 explore 与覆盖
 
-无自定义定义时生效的是内建 `explore`（只读三件）；放同名自定义定义后生效的是自定义定义，
-原内建定义被覆盖。判据：两轮 `subagent_started.tools` 与覆盖 warning。M610 起面板清单区已退场，
-界面读数不再参与断言。
+无自定义定义时生效的是内建 `explore`（只读四件：`vault_read` / `vault_search` / `vault_list` /
+`skill_load`）；放同名自定义定义后生效的是自定义定义，原内建定义被覆盖。判据：两轮
+`subagent_started.tools` 与覆盖 warning。M610 起面板清单区已退场，界面读数不再参与断言。

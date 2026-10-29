@@ -5,22 +5,34 @@
 
 ## 1. 委派策略段（`task` 工具描述）
 
-- [ ] 1.1 在 `src-tauri/src/harness/tools.rs` 加策略段常量（单一居所，文案逐字取 design §3.1 并经 Alex 裁决后的版本），`task_definition` 的组装顺序固定为「能力说明 → 策略段 → 清单」
-- [ ] 1.2 单测：描述以能力说明开头、策略段居中、清单在后；策略段恰出现一次；四个固定标签「匹配就委派」「无匹配就自己做」「按总成本权衡」「独立才并行」与各自判据在场；「匹配就委派」含「专用优先、general 次选」的条件分支（「专用」在 `general` 之前），且不含「跨多份文件 / 材料多 / 形状适合」这类门槛措辞——这些形状词只出现在「按总成本权衡」判据里；「无匹配就自己做」判据里含子任务分工的许可措辞（「子任务」在场，不能只写「一律自己做」）；「按总成本权衡」判据里含「总成本」与「简单任务也可以派」，且不含「简单任务一律不派」这类禁令；描述里不出现「必须并行」这类义务措辞；清单仍是逐定义一行 `- <name>：<description>`
-- [ ] 1.3 单测（反面对照）：装配后的 system prompt 不含策略段措辞；同一条测试先断言 identity 含某条已知工具纪律（正对照，防「空串上打转」）
-- [ ] 1.4 单测：`[harness.subagents].enabled=false` 时 `task` 不在工具定义里，策略段不出现（关停口径沿用 `run::gate_tool_definitions`，不新增第二个关闭点）
-- [ ] 1.5 `docs/specs/subagent-definitions.md` §8「清单注入与容量告警」补一段：注入顺序为能力说明 → 策略段 → 清单，并逐字抄录 design §3.1 的策略段全文（文档与代码同一份文案；四个固定标签不得改写成同义说法）
+> **实现注记（M806）**：工具描述不渲染 Markdown，design §3.1 段二里的加粗标记以纯文本落字——
+> 条文措辞逐字不变；策略段常量为 `tools::TASK_DELEGATION_POLICY`，能力说明为
+> `tools::TASK_CAPABILITY_SUMMARY`。1.4 的关停断言由既有 `run::disabled_subagents_keep_the_eight_tool_baseline`
+> 承担（`task` 未注册即策略段不进任何请求），本批另加「策略段只属于 `task` 定义、其它工具定义不含」
+> 的正反断言。1.6 由既有 `subagents` 参数校验与次数闸用例承担（`agent_not_found` 不占额度、不启动
+> 子运行），本批未新增第二个观测点。
+>
+> **评审 r1 返修（M806）**：新增内建 `general` 使生效定义数由 6 变 7，`187-subagent-catalog-large`
+> 的 `definition_count` 断言 / label / 正文同步为 7（不放宽判据）；全量 grep 过全部场景，其余
+> `definition_count` 与内建计数断言为零，`181` / `182` / `186` 断言的是各自定义的工具集、不受影响。
+> 真机复跑 `187` + `200` 均 PASS（`.local/acceptance/` 证据）。
+
+- [x] 1.1 在 `src-tauri/src/harness/tools.rs` 加策略段常量（单一居所，文案逐字取 design §3.1 并经 Alex 裁决后的版本），`task_definition` 的组装顺序固定为「能力说明 → 策略段 → 清单」
+- [x] 1.2 单测：描述以能力说明开头、策略段居中、清单在后；策略段恰出现一次；四个固定标签「匹配就委派」「无匹配就自己做」「按总成本权衡」「独立才并行」与各自判据在场；「匹配就委派」含「专用优先、general 次选」的条件分支（「专用」在 `general` 之前），且不含「跨多份文件 / 材料多 / 形状适合」这类门槛措辞——这些形状词只出现在「按总成本权衡」判据里；「无匹配就自己做」判据里含子任务分工的许可措辞（「子任务」在场，不能只写「一律自己做」）；「按总成本权衡」判据里含「总成本」与「简单任务也可以派」，且不含「简单任务一律不派」这类禁令；描述里不出现「必须并行」这类义务措辞；清单仍是逐定义一行 `- <name>：<description>`
+- [x] 1.3 单测（反面对照）：装配后的 system prompt 不含策略段措辞；同一条测试先断言 identity 含某条已知工具纪律（正对照，防「空串上打转」）
+- [x] 1.4 单测：`[harness.subagents].enabled=false` 时 `task` 不在工具定义里，策略段不出现（关停口径沿用 `run::gate_tool_definitions`，不新增第二个关闭点）
+- [x] 1.5 `docs/specs/subagent-definitions.md` §8「清单注入与容量告警」补一段：注入顺序为能力说明 → 策略段 → 清单，并逐字抄录 design §3.1 的策略段全文（文档与代码同一份文案；四个固定标签不得改写成同义说法）
 - [ ] 1.6 单测（无自动改派）：`task(agent=<不存在的名字>)` 只回 `agent_not_found` 与可用清单、不启动子运行（无 `subagent_started`、无审计文件）；并断言清单里只有只读 `explore` 时不存在把该调用改写为 `explore` 的路径（观测终态同「不启动子运行」）
 
 ## 2. 内建定义（`explore` 补 `vault_list`；`general` 候选）
 
-- [ ] 2.1 `src-tauri/src/harness/agents.rs` 的 `BUILTIN_EXPLORE`：`tools` 加 `vault_list`（四件）、描述改为「在 vault 里列目录、按路径枚举、搜索与读取文件、加载 skill，产出结论与依据；不改文件、不跑命令。」
-- [ ] 2.2 单测：内建 `explore` 的 `tools` 恰为四件且含 `vault_list`；`DEFAULT_TOOLS` 仍为只读三件（钉住「不扩缺省集」；若 Alex 裁决一并扩，本节改为断言四件并同步 design §9.3 的记录）
-- [ ] 2.3 检查既有断言里写死「explore 只读三件」的位置（`scripts/acceptance/scenarios/200-subagent-explore.md` 等），逐条改准
-- [ ] 2.4 `docs/specs/subagent-definitions.md` §6 的 `explore` 表格与描述同步四件
-- [ ] 2.5 新增 `BUILTIN_GENERAL`（`general` 是本提案的组成候选，节点 1 一并裁决）：通用身份段（按 prompt 完成任务、先读后改、写与命令受批准闸、不能再次委派、结束给结论与改动清单）、`tools` 为 9 件闭集合全量、`model: inherit`、三闸取配置缺省、描述「通用执行：按任务说明读写 vault、改文件、跑命令；不预设任务类型，一切由 prompt 决定」
-- [ ] 2.6 单测：`general` 的 `tools` 恰为 9 件闭集合（含写类与 `cli_run`）、**不含** `task` 与三件 cron 工具；`source = builtin`；同名自定义定义覆盖它并产 warning；`DEFAULT_TOOLS` 仍为三件
-- [ ] 2.7 `docs/specs/subagent-definitions.md` §6 增 `general` 一行（工具集、描述、覆盖规则）
+- [x] 2.1 `src-tauri/src/harness/agents.rs` 的 `BUILTIN_EXPLORE`：`tools` 加 `vault_list`（四件）、描述改为「在 vault 里列目录、按路径枚举、搜索与读取文件、加载 skill，产出结论与依据；不改文件、不跑命令。」
+- [x] 2.2 单测：内建 `explore` 的 `tools` 恰为四件且含 `vault_list`；`DEFAULT_TOOLS` 仍为只读三件（钉住「不扩缺省集」；若 Alex 裁决一并扩，本节改为断言四件并同步 design §9.3 的记录）
+- [x] 2.3 检查既有断言里写死「explore 只读三件」的位置（`scripts/acceptance/scenarios/200-subagent-explore.md` 等），逐条改准
+- [x] 2.4 `docs/specs/subagent-definitions.md` §6 的 `explore` 表格与描述同步四件
+- [x] 2.5 新增 `BUILTIN_GENERAL`（`general` 是本提案的组成候选，节点 1 一并裁决）：通用身份段（按 prompt 完成任务、先读后改、写与命令受批准闸、不能再次委派、结束给结论与改动清单）、`tools` 为 9 件闭集合全量、`model: inherit`、三闸取配置缺省、描述「通用执行：按任务说明读写 vault、改文件、跑命令；不预设任务类型，一切由 prompt 决定」
+- [x] 2.6 单测：`general` 的 `tools` 恰为 9 件闭集合（含写类与 `cli_run`）、**不含** `task` 与三件 cron 工具；`source = builtin`；同名自定义定义覆盖它并产 warning；`DEFAULT_TOOLS` 仍为三件
+- [x] 2.7 `docs/specs/subagent-definitions.md` §6 增 `general` 一行（工具集、描述、覆盖规则）
 
 > **否决 `general` 时**：本提案不进入实现——由 tower 修订提案并重新走节点 1（design §9 的门槛）；
 > 实现者 MUST NOT 按任何清单自行删减现有合同。
@@ -57,9 +69,13 @@
 
 ## 6. 台账、门禁与评审
 
-- [ ] 6.1 删除 `docs/backlog.md` 的 M772 条目「子代理缺省工具集是否加入 `vault_list`」（本 change 承接；若 2.2 按「一并扩缺省集」落地，条目内容与结论一致再删）
-- [ ] 6.2 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过；`bash scripts/docs-check.sh` 通过（含归档对账门禁：delta 无静默丢段）
-- [ ] 6.3 `bash scripts/gate.sh quick` 全绿（改过 Rust 与验收场景；未改样式，不触发视觉档）；照抄 `GATE RESULT` 原文行进报告
+- [x] 6.1 删除 `docs/backlog.md` 的 M772 条目「子代理缺省工具集是否加入 `vault_list`」（本 change 承接；若 2.2 按「一并扩缺省集」落地，条目内容与结论一致再删）
+- [x] 6.2 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过；`bash scripts/docs-check.sh` 通过（含归档对账门禁：delta 无静默丢段）
+- [x] 6.3 `bash scripts/gate.sh quick` 全绿（改过 Rust 与验收场景；未改样式，不触发视觉档）；照抄 `GATE RESULT` 原文行进报告
+
+> 6.3 实测原文（M806，2026-10-30）：`GATE RESULT: 12/12 PASS（SKIP 1）` / `GATE EXIT CODE: 0 (elapsed 148s)`。
+> SKIP 1 = `tsc-visual`（tests/visual 依赖未装）。首轮同提交曾因磁盘写满（可用 233 MiB）触发
+> acceptance-suite / docs-check / openspec-validate 三项 ENOSPC 假红，腾出空间后重跑全绿。
 - [ ] 6.4 完工报告按 design §1.1 的四层判据逐层给证据指针（①③④ 给机器读数与场景 id，②给真实 provider 六格表）；②未达标不得写完成，也不得以 mock / 单测替代
 - [ ] 6.5 归档顺序：本 change 的 delta 以「工具集声明与默认收紧」含 `vault_list` 为前提，MUST 排在该 change 归档之后（design §8）；归档前由 tower 核对 living spec 的闭集合已是 9 件
 - [ ] 6.6 独立评审：非作者 reviewer 结论 clean / merge 且绑定当前 tip；按「节点 2 五要件」把 proposal 的节点 2 记录填齐（任务、delta、门禁、真机、真实 provider 证据、归档队列条目）

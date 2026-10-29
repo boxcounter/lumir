@@ -87,8 +87,8 @@ steps:
     do: sleep
     ms: 1200
     expect:
-      - label: 超阈值落诊断事件（估算值 + 定义数；`definition_count = 6` 即清单未截断——5 个自定义 + 内建 explore 全部在）
-        file: { path: "env:logs/*.jsonl", has: '/"definition_count":"6".*"estimated_tokens":"\d{5}".*"event":"subagent_catalog_large"/' }
+      - label: 超阈值落诊断事件（估算值 + 定义数；`definition_count = 7` 即清单未截断——5 个自定义 + 内建 explore / general 全部在）
+        file: { path: "env:logs/*.jsonl", has: '/"definition_count":"7".*"estimated_tokens":"\d{5}".*"event":"subagent_catalog_large"/' }
       - label: 装载期产一条点名阈值的 warning
         file: { path: "env:logs/*.jsonl", has: "超过 15000 阈值" }
 
@@ -98,5 +98,5 @@ steps:
 
 5 个定义、描述合计约 6.5 万字符（估算 ≈ 16250 token > 15000 阈值）。断言两处：诊断事件
 （`subagent_catalog_large` 带估算值与定义数）与装载 warning。清单未截断由诊断事件的
-`definition_count = 6` 判（截断 = 定义静默消失，正是这条要防的形态）；M610 起面板清单区已退场，
-界面计数读数不再参与断言。
+`definition_count = 7` 判（5 个自定义 + 内建 `explore` / `general`；截断 = 定义静默消失，正是这条要
+防的形态）；M610 起面板清单区已退场，界面计数读数不再参与断言。
