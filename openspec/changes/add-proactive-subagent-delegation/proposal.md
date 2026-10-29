@@ -226,7 +226,10 @@ cron 工具；子代理落地后模型不主动 `task`。两次的共同形态�
      （各自 `status.txt` = PASS，最近一次可用读数；M812 未重跑这两条）。**真实 provider 六格**（design §7）：
      证据 `.local/reviews/proactive-subagent-delegation-oct29/real-provider.md`，模型 deepseek-flash、
      每格 N=1、存在性判据——**A 判 FAIL（已暴露、未选择）**，E / D 合格（零委派路径），B / F 观测不判红，
-     C 负向通过；两段强制恢复（开关 / `general` 覆盖）均完成并取独立读数。
+     C 负向通过；两段强制恢复（开关 / `general` 覆盖）均完成并取独立读数。**A 已按 §7.4 做第一轮
+     措辞修订并复跑一次**（判据一追加「多文件调研优先委派」；复跑派出三个并发 `task(explore)`、子运行
+     全部 completed、主会话 input 198k→111k，但首条 `tool_calls` 仍是 `vault_list`）——A 仍记 FAIL，
+     是否继续第二轮或改动判据属裁决。
   5. **规格对账无丢段**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与
      `bash scripts/docs-check.sh`（含归档对账门禁）在实现批与本批均通过；归档跟踪队列
      （`openspec/changes/` 枚举）对应该 change 的条目有且仅有一条。

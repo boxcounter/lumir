@@ -24,6 +24,12 @@
 - [x] 1.5 `docs/specs/subagent-definitions.md` §8「清单注入与容量告警」补一段：注入顺序为能力说明 → 策略段 → 清单，并逐字抄录 design §3.1 的策略段全文（文档与代码同一份文案；四个固定标签不得改写成同义说法）
 - [ ] 1.6 单测（无自动改派）：`task(agent=<不存在的名字>)` 只回 `agent_not_found` 与可用清单、不启动子运行（无 `subagent_started`、无审计文件）；并断言清单里只有只读 `explore` 时不存在把该调用改写为 `explore` 的路径（观测终态同「不启动子运行」）
 
+- [x] 1.7 **design §7.4 第一轮修订（M812，2026-10-30）**：A 格真实 provider 两轮观测（60 行校准 +
+  1232 行正式）都是「已暴露、未选择」→ 只改一处措辞：判据一「匹配就委派」追加「多文件调研优先
+  委派：要通读多份材料再给汇总时，先交给对得上的子代理，不要先自己用 vault_list / vault_read 把
+  材料全读一遍」。其它三条判据、`general` 定义、identity 与工作区段一字未动；单测同批断言该句
+  在场、点名两个读工具、且只在判据一出现。A 复跑读数见 5.x 记录
+
 ## 2. 内建定义（`explore` 补 `vault_list`；`general` 候选）
 
 - [x] 2.1 `src-tauri/src/harness/agents.rs` 的 `BUILTIN_EXPLORE`：`tools` 加 `vault_list`（四件）、描述改为「在 vault 里列目录、按路径枚举、搜索与读取文件、加载 skill，产出结论与依据；不改文件、不跑命令。」
@@ -88,6 +94,11 @@
 >   tokens / 耗时、D 构造与恢复、E 路径、样本限制、D/E 证据边界照写）。
 > - 5.9 未改任何措辞、未复跑试绿：A 的「改一处措辞」要改 `tools.rs`，超出本 mission scope，
 >   作为处置建议上报（证据文件「A 的会话读数」段）。
+> - **5.x 第一轮修订复跑（M812，2026-10-30，见 1.7）**：同一 A 提问、vault 复位到首次基线、
+>   分支代码构建的 app、deepseek-flash。`tool_names` 13 件含 `task`；`tool_calls` = `vault_list`×2、
+>   `vault_read`×6、**`task`×3（并发，agent=explore，4 件只读白名单，三个 completed）**；主会话
+>   input 111602 / output 8604。**首条 `tool_calls` 仍是 `vault_list`** → 未满足 A 格「首条即 task」
+>   字面判据，A 仍记 FAIL；委派发生是措辞生效的方向性证据，不据此改判。
 > - 5.10 两段恢复都完成并取独立读数：开关→开启且新请求 `tool_names` 含 `task`；覆盖文件已删，
 >   显式派活探针的 `run_open` 记 `agent=general`、`tools` 恰 9 件、`status=completed`。
 
