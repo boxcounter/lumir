@@ -37,28 +37,30 @@
 - [ ] 4.4 三项读数落 `.local/experiments/harness-output-recovery-oct29/retro/`，报告只写
       「机会规模」不写「收益」
 
-## 5. 实现候选（节点 1 通过后另立实现 mission；本 change 不写代码）
+## 5. 实验用 control / treatment（独立实验分支，不合入 master）
 
-- [ ] 5.1 共享中间截断 helper：`truncate_middle(text, head, tail) -> (String, omitted)`；
-      `cli_run` 头尾各 5,000、标记 `…[省略 N 字符]…`；短输出逐字节不变；`task` 摘要复用同一
-      helper 并同步标记文案（可单独回退）
-- [ ] 5.2 `vault_search` 的 `context` 参数：缺省 0、夹取 0–5、窗口裁剪、相邻 / 重叠合并、
+- [ ] 5.1 从当时 master 切独立实验分支 `exp/harness-output-recovery-*`；该分支只服务测量与
+      证据，不合入 master、不进入本 change 的合并面；本 change 的 diff 始终只有 OpenSpec 制品
+- [ ] 5.2 `cli_run` 中间截断 helper + treatment：头尾各 5,000、标记 `…[省略 N 字符]…`、短输出
+      逐字节不变；**`task` 摘要不改任何字节**（预算、头尾比例、标记文案都不动；由 B9 守门）
+- [ ] 5.3 `vault_search` 的 `context` 参数：缺省 0、夹取 0–5、窗口裁剪、相邻 / 重叠合并、
       `blocks` 形状、每行 200 字符、12,000 字符 / 400 行预算、两种截断文案、`context=0` 与
-      control 逐字段同形
-- [ ] 5.3 错误回执模板：`patch_not_found` / `patch_not_unique`（含命中行号，前 20）/ 
+      control 逐字段同形且不出现 `hint`
+- [ ] 5.4 错误回执模板：`patch_not_found` / `patch_not_unique`（含命中行号，前 20）/
       `document_conflict`（含路径）/ `read_out_of_range`（含 1–N）/ `list_not_a_directory`
       （含上级目录指引）；`code` 与信封不变；单条 ≤ 400 字符
-- [ ] 5.4 单测：design §3.4 / §4.4 / §5.4 的全部 fixture 与断言，含「先在 control 上红」的
-      证据记录（A4 / B1 / B2 / B8 / B10-1k / B10-7k / B11 / C8 / C9 为守门绿）
-- [ ] 5.5 mock provider 端到端：搜索 context 的块状结果、头尾截断的标记、错误回执文案各一条
+- [ ] 5.5 单测：design §3.4 / §4.4 / §5.4 的全部 fixture。红侧证据只对**新增能力断言**
+      （A1–A3、A5–A11；B3–B7、B10-19k；C1–C6）；**identity / 守门断言**（A4、A12、B1、B2、
+      B8、B9、B10-1k、B10-7k、B11、C8、C9）在两版上均绿，不要求红侧
+- [ ] 5.6 mock provider 端到端：搜索 context 的块状结果、头尾截断的标记、错误回执文案各一条
       脚本化会话（不依赖真实 provider）
-- [ ] 5.6 工具描述按 design §3.2 / §4.2 更新；描述改动与实现同批，不单独漂移
+- [ ] 5.7 工具描述按 design §3.2 / §4.2 更新；描述改动与 treatment 同批（只在实验分支）
 
 ## 6. 离线判据执行
 
 - [ ] 6.1 三条候选的离线断言全绿；红 / 绿两侧输出落 `.local/experiments/harness-output-recovery-oct29/offline/`
-- [ ] 6.2 记录每条断言的 control 红侧证据（哪一条在 control 上确实失败），缺红侧读数的断言
-      不得进入判据
+- [ ] 6.2 红侧证据只针对**新增能力断言**（在 control 上确实失败）；identity / 守门断言记录
+      两版均绿即可，不要求红侧；缺红侧读数的新增能力断言不得进入判据
 - [ ] 6.3 报告的「离线结论」只写形状合同与 fixture 事实，不写收益
 
 ## 7. 真实 provider 实验（需 provider 与真机窗口）

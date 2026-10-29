@@ -13,8 +13,10 @@ treatment（候选改动）、预注册判据与结论记录。MUST NOT 以「�
 MUST NOT 用一项候选的实验数据推断另一项候选。
 
 评估制品 MUST NOT 直接改变产品行为：候选达到采纳阈值时，实现 SHALL 由后续独立 change 承载；
-候选被拒绝时 SHALL 记录拒绝理由与可重启条件（什么新证据会让它重启）。每个候选的结论 SHALL 是
-`adopt` / `reject` / `undecided` 之一，三者 MUST NOT 互相替代。
+候选被拒绝时 SHALL 记录拒绝理由与可重启条件（什么新证据会让它重启）。为跑实验所需的
+treatment 实现 SHALL 与产品分支隔离（独立实验分支，不合入产品分支），它不构成本评估 change 的
+产品行为变更。每个候选的结论 SHALL 是 `adopt` / `reject` / `undecided` 之一，三者 MUST NOT
+互相替代。
 
 #### Scenario: 三项候选分别裁决
 
@@ -38,26 +40,38 @@ MUST NOT 用一项候选的实验数据推断另一项候选。
 缺省取值下的现状同一性、边界值、预算上限、去重与合并语义、行号语义、省略量精确性、错误回执的
 必需信息。判据 SHALL 断言结构字段或整条模板，MUST NOT 用子串匹配代替结构断言。
 
-每条离线断言 SHALL 先在 control 实现上运行并证明会失败（建立区分度），再在 treatment 上运行并
-通过；红 / 绿两次读数 SHALL 落证据。离线判据通过 SHALL 只表示形状合同成立，MUST NOT 被表述为
-行为收益已验证。
+离线断言 SHALL 分为两类，红 / 绿要求不同：
+
+- **新增能力断言**：断言候选引入的行为。SHALL 先在 control 实现上运行并证明会失败，再在
+  treatment 上运行并通过；红 / 绿两次读数 SHALL 落证据。
+- **identity / 守门断言**：断言缺省值与现状一致，或既有行为未被候选改动（含「另一个工具的输出
+  逐字节不变」）。SHALL 在 control 与 treatment 上**均通过**；MUST NOT 要求红侧证据，也 MUST NOT
+  因为「control 已经是绿的」而把它移出判据。
+
+把 identity / 守门断言写成「必须先红」、或把新增能力断言只做「两版均绿」，都 SHALL 判为判据
+无效。离线判据通过 SHALL 只表示形状合同成立，MUST NOT 被表述为行为收益已验证。
 
 #### Scenario: 缺省取值同一性
 
 - **WHEN** 对同一 vault 状态分别用 control 与 treatment 执行候选的缺省取值
 - **THEN** 两者的结果逐字段一致；出现任何差异都判 FAIL
 
-#### Scenario: 断言先在 control 上红
+#### Scenario: 新增能力断言先在 control 上红
 
-- **WHEN** 新增一条离线断言
+- **WHEN** 新增一条针对候选新行为的断言
 - **THEN** 先在 control 实现上运行并记录失败输出，再在 treatment 上运行并记录通过输出；没有
-  红侧读数的断言 MUST NOT 进入判据
+  红侧读数的新增能力断言 MUST NOT 进入判据
 
-#### Scenario: 防回归断言保持绿
+#### Scenario: identity / 守门断言两版均绿
 
-- **WHEN** 候选的收益侧断言在 treatment 上转为绿
-- **THEN** 同日运行的守门 / 防回归断言在 control 与 treatment 上均保持绿；MUST NOT 为让收益
+- **WHEN** 运行缺省值同一性、既有输出逐字节不变、或防回归类断言
+- **THEN** 这些断言在 control 与 treatment 上均通过，且不要求红侧证据；MUST NOT 为让新增能力
   断言通过而删除守门断言
+
+#### Scenario: 两类断言不得混用
+
+- **WHEN** 一条断言既被登记为「必须先在 control 上红」、又在设计或 task 里被列为「两版均绿」
+- **THEN** 判据无效，必须二选一并同步设计、spec 与 tasks
 
 ### Requirement: 真实 provider 实验预注册
 

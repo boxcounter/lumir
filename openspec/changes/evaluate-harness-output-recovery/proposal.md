@@ -76,7 +76,7 @@
 | 候选 | 现状 | 候选改动 | 预期收益路径 | 可能的损失 |
 |---|---|---|---|---|
 | A 搜索上下文 | 只有命中行 + 200 字符片段 | `context` 0–5，块状结果、合并去重、总预算 | 少追加 `vault_read`；命中语境可直接判断 | 枚举型任务被诱导入大上下文，token 上升 |
-| B 头尾保留 | 每流 10k 字符只留头 | 头 5k + 尾 5k + 精确省略量 | 保住尾部错误 / 结论；与 `task` 摘要的头尾口径一致 | 丢掉原先可见的中段（5k–10k） |
+| B 头尾保留 | 每流 10k 字符只留头 | 头 5k + 尾 5k + 精确省略量 | 保住尾部错误 / 结论；沿用 `task` 摘要已有的头尾口径（不改 `task` 输出） | 丢掉原先可见的中段（5k–10k） |
 | C 错误下一步 | 只报「命中 N 次」等现状 | 回执补下一步 + 命中行号 / 总行数 | 第二次调用成功率上升；少一次试错 | 回执变长；可能鼓励模型照抄建议而不核对 |
 
 三项互不依赖：可以只采纳 B、拒绝 A 与 C；也不存在「一起上线才成立」的组合。
@@ -87,7 +87,8 @@
 - 不发起真实 provider 请求，不做真机验证，不读取或复制真实凭据。
 - 不把 `vault_search` 改成正则、不改 50 条命中上限、不改 200 字符片段上限。
 - 不为 `cli_run` 增加分页、会话续读、PTY 或结构化输出解析。
-- 不改 `task` 的摘要预算（只在统一中间截断实现时同步标记文案，见 design §4.2；该子项可单独回退）。
+- 不改 `task` 摘要的任何字节（预算、头尾比例、标记文案都不动）；统一 `task` 文案属另一个候选，
+  不夹在候选 B 内（见 design §4.2 / B9 守门）。
 - 不新增工具、不改 ADR 0007 的工具清单裁决、不重开 `vault_list` 的取舍。
 - 不以本提案替代节点 2；本 change 的制品不进入 living spec 的 `harness` capability。
 
@@ -95,9 +96,11 @@
 
 - **spec**：新增 `harness-tool-evaluation`（4 条 ADDED requirement）；不修改任何既有 capability 的
   requirement，因此没有 MODIFIED 整块替换的丢段风险。
-- **代码**：本 change 无。实现阶段预计触及 `src-tauri/src/harness/tools.rs`（搜索、`cli_run`、
-  错误回执、共享截断 helper）与 `src-tauri/src/fs_io.rs` 中 `fs_patch_file` 的错误文案；不触及
-  前端、不改 ts-rs 导出面、不改视觉。
+- **代码**：本 change **零产品代码、零实验代码**。为跑实验所需的 control / treatment 放在独立
+  实验分支（`exp/harness-output-recovery-*`），不合入 master、不进入本 change 的合并面；实现
+  阶段预计触及 `src-tauri/src/harness/tools.rs`（搜索、`cli_run`、错误回执）与
+  `src-tauri/src/fs_io.rs` 中 `fs_patch_file` 的错误文案，但只发生在该实验分支。采纳后的产品
+  实现由独立 change 在 master 上重新落地；不触及前端、不改 ts-rs 导出面、不改视觉。
 - **证据**：审阅包落主仓 `.local/reviews/harness-output-recovery-oct29/`（git 外）；后续实验
   原始记录落 `.local/experiments/harness-output-recovery-oct29/`；仓库内只留合成 fixture 与聚合读数。
 - **验收**：本 change 的验收是制品层——`validate --all --strict`、`docs-check` 与审阅包可开；
