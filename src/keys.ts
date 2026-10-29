@@ -508,6 +508,12 @@ export const KEYLESS_COMMAND_IDS: readonly string[] = [
   // M277：块级复制（change block-copy-affordance，裁决点 5）——鼠标入口是块上的 hover 复制钮，
   // 键盘入口默认不占物理组合（同 M180 / M240 先例）。
   "block.copy",
+  // M795：块级横滚容器的左右滚动实现。它们**不是**孤儿：←/→ 的硬化导航命令在「容器自身持焦」
+  // 时按 `isWidgetKeyTarget` 分派到这两条实现（src/editor.ts 的 cursor 命令）。登记在这里是
+  // 因为一个 token 只能有一条绑定——←/→ 的绑定现在指向 caret 命令，而滚动行为作为该命令的
+  // 焦点分支存在，键位面板因此不再为它们单列两行（`[keys]` 重绑 ←/→ 时两者的跟随关系不变）。
+  "editor.widget-scroll-left",
+  "editor.widget-scroll-right",
   // M316：双栏三条容器命令（pane.split / pane.other / pane.close）M319 起**有默认绑定**
   //（⌥S / ⌥O / ⌥W，Alex 节点 1 落槌），故 MUST NOT 登记在本「默认不绑键」清单里——清单与
   // 绑定表无交集由本文件末尾的 typecheck 与 tests/unit/keys.test.ts 的三项对账各守一遍。
@@ -557,13 +563,17 @@ export const BLOCK_SCROLL_CLASS = "cm-lp-block-scroll";
  *  m168 等场景多处），改名只会把这些断言一并拖进来，收益只是名字好听。 */
 export const TABLE_SCROLL_CLASS = "cm-lp-table-scroll";
 
-/** 事件目标是否落在**持有本次按键焦点的**块级横滚容器上。
+/** 事件是否落在**持有本次按键焦点的**块级横滚容器上。
  *
  *  M180 收紧为「容器自身是活动元素」：容器里的文本是编辑器正文（md 可编辑），
  *  「事件目标落在容器内（含其后代）」会把光标落在块内文本时的方向键误判成容器滚动——
- *  caret 路径被吞掉，而 `keymap-commands` 的既有 scenario 明确要求文本中的方向键走原生
- *  路径。收紧后表格与代码块两个容器同判据、同行为。 */
-function isWidgetKeyTarget(event: KeyboardEvent): boolean {
+ *  caret 路径被吞掉，而 `keymap-commands` 的 scenario 明确要求文本中的方向键归 caret。
+ *  收紧后表格与代码块两个容器同判据、同行为。
+ *
+ *  M795：左右方向键改由硬化导航命令承接（见 KEY_BINDINGS 的那两条），「容器持焦时滚容器、
+ *  否则移光标」的分派落在命令实现里（`src/editor.ts` 的 `editor.cursor-backward/forward`）——
+ *  本函数是那条分派与 Home/End 的 `when` 共用的**唯一**判据。 */
+export function isWidgetKeyTarget(event: KeyboardEvent): boolean {
   const target = event.target;
   if (!(target instanceof Element)) return false;
   const container = target.closest(`.${BLOCK_SCROLL_CLASS}`);
@@ -627,6 +637,16 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // ── 编辑器内：水平移动（M110/M111 硬化路径：原子块跨入钳制 + 退化测量回退）
   { key: "Ctrl-f", command: "editor.cursor-forward", scope: scopeOfCommand("editor.cursor-forward"), docKey: "D264" },
   { key: "Ctrl-b", command: "editor.cursor-backward", scope: scopeOfCommand("editor.cursor-backward"), docKey: "D265" },
+  // M795：←/→ 与 ⌃B/⌃F 走**同一条**命令（同一份硬化原语）。原生 contenteditable 路径在列表
+  // marker 的隐藏区间上要逐 DOM 停止位按：CM 在不可编辑 inline widget 两侧各插一个
+  // `cm-widgetBuffer`，每个 buffer 都是原生 caret 的一个停止位——从可见行首按 →，第一次停在
+  // buffer 上（文档位置不动），第二次才进正文。硬化原语按「隐藏的源码区间 = 一个原子步」跨过
+  // （合同 docs/specs/editor-caret.md 的 C6、docs/specs/lists.md 的 L5），方向键与 ⌃F 的
+  // 可见行为因此一致。
+  // 块级横滚容器持焦时，←/→ 仍归容器的横向滚动（M132 / M180 的既有行为）：分派落在命令实现里
+  // （`src/editor.ts` 的 cursor 命令按 isWidgetKeyTarget 路由），因为一个 token 只能有一条绑定。
+  { key: "ArrowRight", command: "editor.cursor-forward", scope: scopeOfCommand("editor.cursor-forward"), docKey: "D264" },
+  { key: "ArrowLeft", command: "editor.cursor-backward", scope: scopeOfCommand("editor.cursor-backward"), docKey: "D265" },
 
   // ── 编辑器内：行首 / 行尾（对称的一对；⌃E 既有，⌃A 本 mission 新增）
   { key: "Ctrl-e", command: "editor.line-end", scope: scopeOfCommand("editor.line-end"), docKey: "D266" },
@@ -703,15 +723,15 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // ── 编辑器内：轨道 D 的**块级横滚容器**焦点键（M132 从 livePreview 手柄收编；M180 从
   // 「表格滚动容器」泛化为「块级横滚容器」：表格容器与围栏 / 缩进代码块的横滚容器共用同一个
   // class，见 BLOCK_SCROLL_CLASS）。
-  // when 把命中限定在「容器自身持有这次按键的焦点」：文本编辑中的 Home / End / 左右方向键 /
-  // Escape 必须照旧走原生 caret 路径，光标落在块内文本时（事件目标在容器内、但活动元素是
-  // 编辑器内容区）也归 caret。
-  { key: "ArrowLeft", command: "editor.widget-scroll-left", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D294" },
-  { key: "ArrowRight", command: "editor.widget-scroll-right", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D295" },
+  // when 把命中限定在「容器自身持有这次按键的焦点」：文本编辑中的 Home / End / Escape 必须
+  // 照旧归 caret，光标落在块内文本时（事件目标在容器内、但活动元素是编辑器内容区）也归 caret。
+  // ←/→ 自 M795 起走上面那两条水平移动绑定（与 ⌃F/⌃B 同一条命令）：一条 token 只能有一条
+  // 绑定，容器滚动因此改由命令实现按 `isWidgetKeyTarget` 分派；`editor.widget-scroll-left/right`
+  // 随之登记进 KEYLESS_COMMAND_IDS（它们仍会被那个分派调用，只是不再由表内绑定直接指向）。
   { key: "Home", command: "editor.widget-scroll-home", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D296" },
   { key: "End", command: "editor.widget-scroll-end", scope: "editor", when: isWidgetKeyTarget, whenKey: "D675", whenShortKey: "D676", docKey: "D297" },
   // Escape 的命中条件多一条「层栈为空」（M718 r3）：有层时让给窗口兜底按打开序关栈顶，
-  // 见 widgetEscapeApplies 的说明；上面四条滚动键仍是单纯 isWidgetKeyTarget。面板里显示的
+  // 见 widgetEscapeApplies 的说明；上面两条滚动键仍是单纯 isWidgetKeyTarget。面板里显示的
   // 条件短徽标 / 全文（D676 / D675）只描述「容器自身持焦」这一半——「有层时让路」不是 widget
   // 自身的条件，而是「这一拍按键归别的层」的保留，读法写进该行的来由 D298。
   { key: "Escape", command: "editor.widget-escape", scope: "editor", when: widgetEscapeApplies, whenKey: "D675", whenShortKey: "D676", docKey: "D298" },

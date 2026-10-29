@@ -71,12 +71,21 @@ test("键位表不变量：M132 新键各归其命令，widget 键一律带 when
   expect(commandOf("Ctrl-e")).toBe("editor.line-end");
 
   // widget 键：文本里同为常用键，必须靠 when 限定事件目标在表格滚动容器内，
-  // 否则会把原生 caret / Home / End 从文本编辑里吞掉
-  for (const key of ["ArrowLeft", "ArrowRight", "Home", "End", "Escape"]) {
+  // 否则会把原生 caret / Home / End 从文本编辑里吞掉。
+  // ←/→ 自 M795 起改绑水平移动命令（与 ⌃B/⌃F 同一条命令）：容器滚动作为该命令的焦点分支
+  // 保留在命令实现里，绑定层因此不带 when、作用域随命令派生为 text（与 ↑↓ 同族）。
+  for (const key of ["Home", "End", "Escape"]) {
     const binding = KEY_BINDINGS.find((b) => normalizeKey(b.key) === normalizeKey(key));
     expect(binding, `${key} 应有绑定`).toBeDefined();
     expect(typeof binding!.when, `${key} 必须带 when 限定`).toBe("function");
     expect(binding!.scope).toBe("editor");
+  }
+  for (const [key, command] of [["ArrowLeft", "editor.cursor-backward"], ["ArrowRight", "editor.cursor-forward"]] as const) {
+    const binding = KEY_BINDINGS.find((b) => normalizeKey(b.key) === normalizeKey(key));
+    expect(binding, `${key} 应有绑定`).toBeDefined();
+    expect(binding!.command, `${key} 走硬化导航命令`).toBe(command);
+    expect(binding!.when, `${key} 不再由 when 限定（容器分支在命令实现里）`).toBeUndefined();
+    expect(binding!.scope).toBe("text");
   }
 
   // 表仍可建（无重复键、每条绑定都有归属实现位）

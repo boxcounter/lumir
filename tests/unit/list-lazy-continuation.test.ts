@@ -22,7 +22,7 @@ import type { EditorView } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import type { MarkdownParser } from "@lezer/markdown";
-import { listLineInfo } from "../../src/preview/lists.ts";
+import { listHiddenRangeAt, listLineInfo, listLineRender } from "../../src/preview/lists.ts";
 import { enterWithAutoIndent } from "../../src/enter-indent.ts";
 import { completeTree } from "./syntax-tree.ts";
 
@@ -144,4 +144,116 @@ test("Alex 现场：列表末尾 Enter 造空项 → 再 Enter 退出 → 键入
   assert.ok(info.item !== null, "该行语法树归属仍是列表项内段落（CommonMark lazy continuation）");
   assert.equal(info.offset, 0, "行首无源码空白（候选 A 的判据前提）");
   assert.equal(info.rendered, false, "L1：渲染按顶层段落——字符与光标出现在行首");
+});
+
+// ---------------------------------------------------------------------------
+// L5 / C6（M795，Alex 2026-10-29 报告）：列表 marker 的隐藏源码区间
+// ---------------------------------------------------------------------------
+//
+// 同一份判定（`listLineRender`）驱动三处：渲染怎么藏（build）、水平移动的一步跨过
+// （`listHiddenRangeAt`，合同 docs/specs/editor-caret.md 的 C6）、以及真机几何场景的预期。
+// 这里测的是**生产那一份**：区间端点必须与渲染层藏的源码逐位一致——多藏或少藏都会让
+// 光标落在「看不见的源码」上（本 mission 的缺陷形态）。
+//
+// 本层测不到的一半是几何（光标矩形的像素高度）：归 tests/visual/scenes/m647-caret-geometry.spec.ts；
+// 按键层的落点归 tests/visual/scenes/cursor-motion.spec.ts。
+
+/** 列表 marker 的输入分布（与渲染层同一组：ul 三种字符 + ol 两种分隔符 + 任务项 + 多级编号）。
+ *  `from` / `to` 是**相对行首**的列号（绝对位由 `line.from` 加上去）。 */
+const HIDDEN_CASES: { doc: string; line: number; from: number; to: number; why: string }[] = [
+  { doc: "- a", line: 1, from: 0, to: 2, why: "ul 单字符 marker + 一个空格" },
+  { doc: "* a", line: 1, from: 0, to: 2, why: "ul `*`" },
+  { doc: "+ a", line: 1, from: 0, to: 2, why: "ul `+`" },
+  { doc: "1. a", line: 1, from: 0, to: 3, why: "ol 一位编号 + 尾点" },
+  { doc: "10. a", line: 1, from: 0, to: 4, why: "ol 两位编号（marker 更宽）" },
+  { doc: "100000. a", line: 1, from: 0, to: 8, why: "ol 六位编号（marker 宽度上限档）" },
+  { doc: "2) a", line: 1, from: 0, to: 3, why: "ol 括号分隔符" },
+  { doc: "- [ ] a", line: 1, from: 0, to: 6, why: "任务项：marker + 任务框 + 空格一起藏" },
+  { doc: "- [x] a", line: 1, from: 0, to: 6, why: "已勾选任务项同形" },
+  { doc: "1.   a", line: 1, from: 0, to: 5, why: "marker 后多个空格一并藏（否则光标会落到不可见空白里）" },
+  { doc: "- a\n  - b", line: 2, from: 0, to: 4, why: "嵌套项：缩进 + 子项 marker 一起藏" },
+  { doc: "- a\n  b", line: 2, from: 0, to: 2, why: "真续行：行首源码缩进整段藏（L2）" },
+  { doc: "> - a", line: 1, from: 0, to: 4, why: "引用内列表：引用前缀 + marker 一起藏" },
+];
+
+test("L5：列表 marker 隐藏区间的端点 = 渲染层实际 replace 掉的源码（列表类型 × marker 宽度 × 嵌套）", () => {
+  for (const c of HIDDEN_CASES) {
+    const text = Text.of(c.doc.split("\n"));
+    const line = text.line(c.line);
+    const render = listLineRender(parser.parse(c.doc), text, line, false);
+    assert.ok(render.hidden !== null, `${JSON.stringify(c.doc)} 第 ${c.line} 行应隐藏源码（${c.why}）`);
+    assert.deepEqual(
+      render.hidden,
+      { from: line.from + c.from, to: line.from + c.to },
+      `${JSON.stringify(c.doc)} 第 ${c.line} 行：${c.why}`,
+    );
+  }
+});
+
+test("L5 反向用例：lazy continuation 行不隐藏任何源码（L1 的渲染在行首，无从藏起）", () => {
+  for (const marker of MARKERS) {
+    const doc = `${marker} alpha\nx`;
+    const text = Text.of(doc.split("\n"));
+    const render = listLineRender(parser.parse(doc), text, text.line(2), false);
+    assert.equal(render.hidden, null, `${JSON.stringify(doc)}：lazy 行按顶层段落渲染，MUST NOT 隐藏行首字符`);
+    assert.equal(render.bare, null, "语法树已接管的项内段落不是裸 marker 行");
+  }
+});
+
+test("L5 门控：裸 marker 行只在判据选区与该行相接时隐藏源码（B1 的编辑态）", () => {
+  const doc = "para\n1. ";
+  const text = Text.of(doc.split("\n"));
+  const line = text.line(2);
+  const off = listLineRender(parser.parse(doc), text, line, false);
+  assert.equal(off.hidden, null, "光标不在该行：仍是字面文本，没有隐藏区间（否则水平移动会跳过看得见的字符）");
+  assert.equal(off.bare, null, "非编辑态不给裸行判定");
+  const on = listLineRender(parser.parse(doc), text, line, true);
+  assert.ok(on.bare !== null, "编辑态给出裸行判定（M461）");
+  assert.deepEqual(on.hidden, { from: line.from, to: line.from + 3 }, "编辑态藏 marker + 空格");
+});
+
+/** 与生产同一份语言配置的 state（`listHiddenRangeAt` 读 `syntaxTree(state)`，必须先过 completeTree）。 */
+function stateAt(doc: string, pos: number): EditorState {
+  return completeTree(EditorState.create({ doc, extensions: MD, selection: EditorSelection.cursor(pos) }));
+}
+
+test("C6：隐藏区间内部的位置钳到可见一侧边界；边界位本身不移动", () => {
+  const doc = "1. aaaaa";
+  const state = stateAt(doc, 0);
+  // 区间 [0, 3)：1 / 2 是「看不见的源码内部」，前进钳到 3（正文起点）、后退钳到 0（可见行首）。
+  for (const pos of [1, 2]) {
+    assert.equal(listHiddenRangeAt(state, pos, true), 3, `前进：${pos} MUST 钳到正文起点`);
+    assert.equal(listHiddenRangeAt(state, pos, false), 0, `后退：${pos} MUST 钳到可见行首`);
+  }
+  // 边界位是可见停靠点：0（可见行首）与 3（正文起点）都在区间外，不钳制。
+  for (const pos of [0, 3, 4]) {
+    assert.equal(listHiddenRangeAt(state, pos, true), null, `边界位 ${pos} 不钳制（前进）`);
+    assert.equal(listHiddenRangeAt(state, pos, false), null, `边界位 ${pos} 不钳制（后退）`);
+  }
+});
+
+test("C6：真续行的行首缩进同为一个原子步；正文首字符起的逐字素移动不受影响", () => {
+  const doc = "- a\n  bcd";
+  const line = Text.of(doc.split("\n")).line(2);
+  const state = stateAt(doc, line.from);
+  assert.equal(listHiddenRangeAt(state, line.from + 1, true), line.from + 2, "缩进内部前进 → 正文起点");
+  assert.equal(listHiddenRangeAt(state, line.from + 1, false), line.from, "缩进内部后退 → 可见行首");
+  for (const pos of [line.from + 2, line.from + 3, line.from + 4]) {
+    assert.equal(listHiddenRangeAt(state, pos, true), null, `正文位置 ${pos - line.from} 不钳制`);
+    assert.equal(listHiddenRangeAt(state, pos, false), null, `正文位置 ${pos - line.from} 不钳制（后退）`);
+  }
+});
+
+test("C6：裸 marker 行的原子步跟随编辑态门控（光标不在该行时逐字符通行）", () => {
+  // `2. ` 起号的空列表项按 CommonMark 不能打断段落（能打断的只有 `1. `）——这才是裸行形态；
+  // `1. abc` 会被解析成真列表，门控不参与。
+  const doc = "para\n2. abc";
+  const line = Text.of(doc.split("\n")).line(2);
+  // 光标在段落行：该行是字面文本（`1. ` 可见），区间内部的位置没有隐藏语义。
+  const away = stateAt(doc, 0);
+  assert.equal(listHiddenRangeAt(away, line.from + 1, true), null, "非编辑态：看不见的源码不存在，不钳制");
+  // 光标在该行行首（B1：行首算驻留）：进入编辑态，marker 藏起来，内部位置一步跨过。
+  const on = stateAt(doc, line.from);
+  assert.equal(listHiddenRangeAt(on, line.from + 1, true), line.from + 3, "编辑态：钳到正文起点");
+  assert.equal(listHiddenRangeAt(on, line.from + 2, false), line.from, "编辑态：钳到可见行首");
 });
