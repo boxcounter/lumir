@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：236
-- 验收项（不同 item 编号）：213
-- 分档：core 29 / full 199 / bundle 4 / evidence 4（full 批 = 全部 236 个，含其余各档）
+- 场景：237
+- 验收项（不同 item 编号）：214
+- 分档：core 29 / full 200 / bundle 4 / evidence 4（full 批 = 全部 237 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -24,7 +24,7 @@
 | 6 | `06-callout-and-width` | Callout 光标行源码显露 / cell 内 $$y$$ / 表格宽度证据 | full |
 | 7 | `07-recovery-paths`<br>`07c-external-reload` | M124 三条恢复路径（冲突双动作 / 另存为 / 外部修改重载）<br>M124 恢复路径之三——外部修改且缓冲干净时自动重载 | core<br>full |
 | 8 | `08c-crash-recovery`<br>`08d-crash-discard` | 崩溃恢复——启动提示双动作与「恢复内容」<br>崩溃恢复——「丢弃备份」动作 | core<br>full |
-| 8.1 | `180-subagent-delegate-discovery` | 子代理 8.1 定义发现与自动委派（mock provider） | core |
+| 8.1 | `180-subagent-delegate-discovery` | 子代理 8.1 委派执行链（fixture 驱动，不证明模型主动选择） | core |
 | 8.2 | `181-subagent-default-tools`<br>`182-subagent-explicit-write-tool` | 子代理 8.2 默认只读三件（未声明 tools）<br>子代理 8.2 显式写工具（声明 vault_patch） | full<br>full |
 | 8.3 | `183-subagent-approval-approve`<br>`184-subagent-approval-reject` | 子代理 8.3 批准透传（采纳 ⇒ 文件删除）<br>子代理 8.3 批准透传（拒绝 ⇒ denied_calls=1、文件未删、子运行继续） | full<br>full |
 | 8.4 | `185-subagent-definition-validation` | 子代理 8.4 定义校验与优先级（坏定义告警、vault 覆盖用户级、同层字典序） | full |
@@ -222,6 +222,7 @@
 | 254 | `254-harness-vault-workspace-list` | harness 工作区与 vault_list：system 绝对根 / cli_run cwd / 列表到读取链路（mock provider） | full |
 | 255 | `255-list-caret-navigation-oct29` | 列表行首的水平导航——→ 与 ⌃F 都一次到正文起点、反向对称，落点以「键入字符的落位」为判据（M795；光标高度归手感项） | full |
 | 256 | `256-settings-cancel-close-oct29` | 设置面板：底栏「取消」= 关闭（干净直关、脏草稿先确认、确认放弃后关闭且文件逐字节不变） | full |
+| 257 | `257-harness-request-tool-names` | 请求暴露面可核对：llm_request.tool_names 启用态含 task、子运行白名单 task 恒缺席 | full |
 | 423 | `121-harness-message-excerpt` | harness 消息摘录 ① transcript 选区 → 浮动钮 → 卡片入 composer（+ 序列化结构 / 视口 skip / transcript 同构） | full |
 | 531 | `160-quote-button-viewport-clamp` | 摘录浮动钮落点钳制：选区并集盒越出挂载容器（长行）时钮仍在视口内 | full |
 | 552 | `161-harness-path-link`<br>`221-harness-path-line-range` | harness 输出里的 vault 路径可点击（新标签 + 行号锚定 + 卡片路径）<br>harness 输出里的行范围路径可点击（:起-止 落到起始行，畸形形态不吞半截） | full<br>full |

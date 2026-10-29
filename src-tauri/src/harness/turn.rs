@@ -971,6 +971,24 @@ fn record_llm_request<C: RunContext>(
     request_bytes: Option<u64>,
 ) {
     let model = client.model().unwrap_or_else(|| llm::active_model(config));
+    ctx.persist(llm_request_payload(config, model, request, request_bytes));
+}
+
+/// `llm_request` 的记录形状（唯一产出点）：交互 / cron / 子运行的请求都从这里落盘，
+/// 因此三个运行面的暴露面都能在同一字段上核对。
+///
+/// `tool_names`（change add-proactive-subagent-delegation design §5）= 本次请求**实际暴露**
+/// 给模型的工具名清单：按 `tools` 数组顺序取 `name`、只取名字（MUST NOT 记录 schema /
+/// 描述 / 参数——`task` 的描述里含用户写的子代理定义，属用户内容）。该键**恒在场**：
+/// 无工具的请求（压缩调用）记 `[]`，`[]` = 「这一请求不带工具」；键缺失 = 「没有记录」
+/// （本 change 之前的旧文件），读取方 MUST NOT 把两者混同（REVIEW.md「读不到当成空」条）。
+/// 去重不做：请求里的定义本就不重名，重复即缺陷，应暴露而不是被静默抹平。
+fn llm_request_payload(
+    config: &HarnessConfig,
+    model: &str,
+    request: &llm::Request,
+    request_bytes: Option<u64>,
+) -> serde_json::Value {
     let mut payload = serde_json::json!({
         "kind": "llm_request",
         "request": {
@@ -987,7 +1005,14 @@ fn record_llm_request<C: RunContext>(
     if let Some(bytes) = request_bytes {
         payload["request_bytes"] = serde_json::json!(bytes);
     }
-    ctx.persist(payload);
+    // 暴露面（与 request_bytes 同级的顶层附加键）：只取名字，沿用请求顺序。
+    let tool_names: Vec<&str> = request
+        .tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    payload["tool_names"] = serde_json::json!(tool_names);
+    payload
 }
 
 /// HTTP 面诊断字段的追加（M463 起）：`http_status` / `raw_body`（已截断，见
@@ -3021,6 +3046,376 @@ mod tests {
             calls_of(production, "emit_terminal_on"),
             4,
             "无上下文的终态发射语句数变了（预期 4：交互的配置级与 panic、自动回合的配置级与 panic）"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // llm_request.tool_names（change add-proactive-subagent-delegation §5 / §6）
+    // -----------------------------------------------------------------------
+
+    /// 带工具定义的请求：名字按传入顺序，另附 schema / 描述——用来证明它们**不**进留存。
+    fn request_with_tools(names: &[&str]) -> llm::Request {
+        llm::Request {
+            system: "SYS".to_string(),
+            input: vec![serde_json::json!({
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "问一句" }],
+            })],
+            tools: names
+                .iter()
+                .map(|name| {
+                    serde_json::json!({
+                        "type": "function",
+                        "name": name,
+                        "description": "描述不该进留存",
+                        "parameters": { "type": "object", "properties": {} },
+                    })
+                })
+                .collect(),
+            effort: thinking::ThinkingEffort::default(),
+        }
+    }
+
+    /// 读取会话留存里的全部 `llm_request` 记录（按文件序）。
+    fn llm_requests(path: &std::path::Path) -> Vec<serde_json::Value> {
+        jsonl::read_session_file(path)
+            .expect("会话留存可读")
+            .records
+            .into_iter()
+            .filter(|record| record["kind"] == "llm_request")
+            .collect()
+    }
+
+    /// 记录里的工具名清单（缺键即 FAIL：恒在场是本 change 的合同）。
+    fn tool_names_of(record: &serde_json::Value) -> Vec<String> {
+        record["tool_names"]
+            .as_array()
+            .unwrap_or_else(|| panic!("llm_request 缺 tool_names：{record}"))
+            .iter()
+            .map(|name| {
+                name.as_str()
+                    .unwrap_or_else(|| panic!("tool_names 元素不是名字：{record}"))
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// `task` 可见的前提是定义清单非空（`definitions_with_subagents` 只在有定义时追加）。
+    fn write_research_agent(vault: &std::path::Path) {
+        let dir = vault.join(".lumir").join("agents");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("research.md"),
+            "---\nname: research\ndescription: 调研任务\n---\n\n你是研究子代理。\n",
+        )
+        .unwrap();
+    }
+
+    /// 顺序与请求一致、元素只有名字、与 `request_bytes` 同级且不在 `request` 里。
+    #[test]
+    fn llm_request_payload_records_tool_names_in_request_order() {
+        let config = crate::config::test_mock(None);
+        let request = request_with_tools(&["vault_patch", "vault_read", "task"]);
+        let payload = llm_request_payload(&config, "model-x", &request, Some(42));
+        assert_eq!(
+            payload["tool_names"],
+            serde_json::json!(["vault_patch", "vault_read", "task"]),
+            "{payload}"
+        );
+        // 只名字：元素是字符串。把整份定义塞进来时这里就是对象——判据因此有区分度。
+        for name in payload["tool_names"].as_array().expect("数组") {
+            assert!(name.is_string(), "tool_names 元素只应是名字：{payload}");
+        }
+        // 顶层（与 request_bytes 同级），不塞进 request——暴露面只有这一处真源。
+        assert_eq!(payload["request_bytes"], serde_json::json!(42));
+        assert!(payload["request"].get("tool_names").is_none(), "{payload}");
+    }
+
+    /// 恒在场：无工具的请求（压缩调用）记 `[]`；`[]` 与「没有记录」在取值上可区分。
+    #[test]
+    fn llm_request_payload_keeps_empty_tool_set_as_empty_array() {
+        let config = crate::config::test_mock(None);
+        let payload = llm_request_payload(&config, "model-x", &request_with_tools(&[]), None);
+        assert!(
+            payload.get("tool_names").is_some(),
+            "无工具的请求也必须带 tool_names 键：{payload}"
+        );
+        assert_eq!(payload["tool_names"], serde_json::json!([]));
+        // 旧文件缺该键 ⇒ get 为 None（不是空数组）：两者 MUST NOT 混同。
+        let legacy = serde_json::json!({
+            "kind": "llm_request",
+            "request": { "system": "SYS", "messages": [] },
+        });
+        assert!(legacy.get("tool_names").is_none());
+    }
+
+    /// 旧文件缺键不判空（design §5.1 / §6.4）：恢复读文件、读数重算、通知陈旧判定三条读取
+    /// 路径都不依赖 `tool_names`；读出后仍无该键，文件逐字节不变。
+    #[test]
+    fn legacy_llm_request_without_tool_names_passes_read_paths_untouched() {
+        let root =
+            std::env::temp_dir().join(format!("lumir-toolnames-legacy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("legacy.jsonl");
+        let notice = format!(
+            "{} wake_batch=b-legacy]",
+            crate::harness::subagents::AUTO_NOTICE_MARKER
+        );
+        let lines = [
+            serde_json::json!({"ts": 1, "payload": {
+                "kind": "session_open", "vault_root": "/tmp/vault", "system": "SYS",
+            }}),
+            serde_json::json!({"ts": 2, "payload": {
+                "kind": "llm_request",
+                "request": {
+                    "provider": "mock",
+                    "model": "model-x",
+                    "system": "SYS",
+                    "messages": [{"role": "user", "content": [{"type": "input_text", "text": notice}]}],
+                    "params": {"thinking": "off"},
+                },
+            }}),
+            serde_json::json!({"ts": 3, "payload": {
+                "kind": "llm_response",
+                "usage": {"input_tokens": 10, "cached_tokens": 2, "output_tokens": 3, "cache_write_tokens": 0},
+            }}),
+        ];
+        let content = lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        std::fs::write(&path, &content).unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let file = jsonl::read_session_file(&path).expect("旧文件可读");
+        for record in file.records.iter().filter(|r| r["kind"] == "llm_request") {
+            assert!(
+                record.get("tool_names").is_none(),
+                "读取不得把缺键合成为空数组：{record}"
+            );
+        }
+        // 恢复素材（messages）照常可读。
+        assert_eq!(
+            file.records[1]["request"]["messages"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        // 读数重算照常（usage 与 tool_names 无关）。
+        let (snapshot, totals) =
+            session::usage_from_records(&file.records, "SYS", 100_000, Default::default());
+        assert_eq!(snapshot.input_tokens, 10, "{snapshot:?}");
+        assert_eq!(totals.input, 10, "{totals:?}");
+        // 通知陈旧判定照常：该通知已进过请求。
+        assert!(crate::harness::subagents::notice_batch_consumed(
+            &file.records,
+            "b-legacy"
+        ));
+        // 读取不改写文件。
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 交互路径按实际请求落 `tool_names`：有定义清单且启用的会话里含 `task`（场景 257 的
+    /// Rust 侧对照）。启用 / 关停两侧共用同一 fixture，同一字段分别取值构成区分度。
+    #[test]
+    fn turn_records_requested_tool_names_with_task_when_subagents_enabled() {
+        let bench = TurnBench::new("toolnames-on", Some(r#"{"responses":[{"text":"答"}]}"#));
+        write_research_agent(&bench.scope.root);
+        bench
+            .runtime
+            .acquire_turn(&bench.scope, &bench.config)
+            .unwrap();
+        let mut client =
+            llm::MockClient::from_str(r#"{"responses":[{"text":"答"}]}"#, "toolnames-on").unwrap();
+        run_turn_for(
+            &NullSink,
+            &bench.runtime,
+            &bench.scope,
+            &bench.config,
+            "问一句".to_string(),
+            None,
+            &mut client,
+        );
+        let path = bench
+            .runtime
+            .with_session(&bench.scope, |session| session.jsonl().path().to_path_buf())
+            .unwrap();
+        bench.runtime.release_turn(&bench.scope);
+
+        let requests = llm_requests(&path);
+        assert_eq!(requests.len(), 1, "{requests:?}");
+        let names = tool_names_of(&requests[0]);
+        assert!(
+            names.contains(&"task".to_string()),
+            "启用时暴露面含 task：{names:?}"
+        );
+        assert!(names.contains(&"vault_read".to_string()), "{names:?}");
+        // 三件调度工具只在交互发送路径追加（与 `SessionContext::tool_definitions` 同源）。
+        assert!(names.contains(&"cron_task_create".to_string()), "{names:?}");
+    }
+
+    /// 同一 fixture、仅 `enabled=false`：`tool_names` 里没有 `task`（与上一条配对）。
+    #[test]
+    fn turn_records_requested_tool_names_without_task_when_subagents_disabled() {
+        let mut bench = TurnBench::new("toolnames-off", Some(r#"{"responses":[{"text":"答"}]}"#));
+        bench.config.subagents.enabled = false;
+        write_research_agent(&bench.scope.root);
+        bench
+            .runtime
+            .acquire_turn(&bench.scope, &bench.config)
+            .unwrap();
+        let mut client =
+            llm::MockClient::from_str(r#"{"responses":[{"text":"答"}]}"#, "toolnames-off").unwrap();
+        run_turn_for(
+            &NullSink,
+            &bench.runtime,
+            &bench.scope,
+            &bench.config,
+            "问一句".to_string(),
+            None,
+            &mut client,
+        );
+        let path = bench
+            .runtime
+            .with_session(&bench.scope, |session| session.jsonl().path().to_path_buf())
+            .unwrap();
+        bench.runtime.release_turn(&bench.scope);
+
+        let requests = llm_requests(&path);
+        assert_eq!(requests.len(), 1, "{requests:?}");
+        let names = tool_names_of(&requests[0]);
+        assert!(
+            !names.contains(&"task".to_string()),
+            "关停时暴露面不得含 task：{names:?}"
+        );
+        // 正对照：清单本身非空、读的是真装配产物（不是空数组上打转）。
+        assert!(names.contains(&"vault_read".to_string()), "{names:?}");
+    }
+
+    /// 交接契约槽位（cron 的运行形态）按实际请求落 `tool_names`：9 件白名单按请求顺序，
+    /// `task` 与三件调度工具都不在暴露面（`RunSpec.tool_policy` 是唯一过滤点）。
+    #[test]
+    fn turn_records_requested_tool_names_for_handoff_slot() {
+        let bench = TurnBench::new("toolnames-cron", Some(r#"{"responses":[{"text":"答"}]}"#));
+        // 定义清单非空时 `task` 会进注册表——契约白名单仍必须把它挡在暴露面之外。
+        write_research_agent(&bench.scope.root);
+        bench
+            .runtime
+            .acquire_turn(&bench.scope, &bench.config)
+            .unwrap();
+        bench.runtime.set_tool_policy(
+            &bench.scope,
+            crate::harness::run::ToolPolicy {
+                allow: tools::TOOL_NAMES
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect(),
+            },
+        );
+        let mut client =
+            llm::MockClient::from_str(r#"{"responses":[{"text":"答"}]}"#, "toolnames-cron")
+                .unwrap();
+        run_turn_for(
+            &NullSink,
+            &bench.runtime,
+            &bench.scope,
+            &bench.config,
+            "定时任务的一句话".to_string(),
+            None,
+            &mut client,
+        );
+        let path = bench
+            .runtime
+            .with_session(&bench.scope, |session| session.jsonl().path().to_path_buf())
+            .unwrap();
+        bench.runtime.release_turn(&bench.scope);
+
+        let requests = llm_requests(&path);
+        assert_eq!(requests.len(), 1, "{requests:?}");
+        let names = tool_names_of(&requests[0]);
+        assert_eq!(
+            names,
+            tools::TOOL_NAMES
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>(),
+            "契约白名单按请求顺序：{names:?}"
+        );
+        assert!(!names.contains(&"task".to_string()), "{names:?}");
+        assert!(
+            !names
+                .iter()
+                .any(|name| tools::CRON_TOOL_NAMES.contains(&name.as_str())),
+            "交接契约槽位不得看见三件调度工具：{names:?}"
+        );
+    }
+
+    /// 子运行审计流水的 `tool_names` 只含定义白名单、`task` 恒缺席（design §5.1 / §6.5）：
+    /// 真实 `start_task` 起一段子运行，读它自己的审计文件——深度 1 层因此在留存上可查。
+    #[test]
+    fn subrun_audit_records_only_whitelisted_tool_names() {
+        let bench = TurnBench::new(
+            "toolnames-subrun",
+            Some(r#"{"responses":[{"text":"子结论"}]}"#),
+        );
+        let dir = bench.scope.root.join(".lumir").join("agents");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("research.md"),
+            "---\nname: research\ndescription: 调研任务\ntools: [vault_read, vault_search]\n---\n\n你是研究子代理。\n",
+        )
+        .unwrap();
+        bench
+            .runtime
+            .acquire_turn(&bench.scope, &bench.config)
+            .unwrap();
+        let token = bench
+            .runtime
+            .with_session(&bench.scope, |session| session.subagent_token())
+            .unwrap();
+        let hub = std::sync::Arc::new(crate::harness::subagents::SubagentHub::new(
+            bench.runtime.clone(),
+            bench.scope.clone(),
+            bench.config.clone(),
+            token,
+        ));
+        hub.set_sink(None);
+        let catalog = crate::harness::agents::AgentCatalog::load(&bench.scope.root, &bench.config);
+        let call = llm::ToolCall {
+            call_id: "call-task".to_string(),
+            name: "task".to_string(),
+            arguments: serde_json::json!({
+                "agent": "research",
+                "prompt": "把 a.md 读一遍",
+                "description": "一句话任务",
+            })
+            .to_string(),
+        };
+        let out = crate::harness::subagents::start_task(&hub, &bench.config, &catalog, &call, None)
+            .result_value();
+        bench.runtime.release_turn(&bench.scope);
+        assert_eq!(out["status"], serde_json::json!("completed"), "{out}");
+        let run_id = out["run_id"].as_str().expect("run_id").to_string();
+        let audit = jsonl::vault_subruns_dir(&bench.scope.vault_id)
+            .unwrap()
+            .join(format!("{run_id}.jsonl"));
+        let text = std::fs::read_to_string(&audit).expect("审计流水可读");
+        let requests: Vec<serde_json::Value> = text
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|envelope| envelope["payload"]["kind"] == "llm_request")
+            .map(|envelope| envelope["payload"].clone())
+            .collect();
+        assert_eq!(requests.len(), 1, "{text}");
+        assert_eq!(
+            tool_names_of(&requests[0]),
+            vec!["vault_read".to_string(), "vault_search".to_string()],
+            "子运行暴露面 = 定义白名单：{text}"
         );
     }
 }

@@ -2,7 +2,7 @@
 id: "180-subagent-delegate-discovery"
 item: "8.1"
 tier: core
-title: 子代理 8.1 定义发现与自动委派（mock provider）
+title: 子代理 8.1 委派执行链（fixture 驱动，不证明模型主动选择）
 open: harness-note.md
 marker: "HNL-ALPHA"
 config:
@@ -77,11 +77,16 @@ steps:
 
 ---
 
-# 180 —— 8.1 定义发现与自动委派
+# 180 —— 8.1 委派执行链（fixture 驱动）
 
-vault 放两个定义（research / reviewer），mock 父响应按 description 直接委派 research。
+vault 放两个定义（research / reviewer），mock 父响应按 fixture 直接发出 `task` 调用。
 判据：父会话拿到摘要并续写（tool 结果回填闭环）、子运行过程不上 transcript、诊断事件与
 留存（subrun sidecar / 审计流水）三处独立事实同时在场。
 
-工具描述里的清单注入由后端 `task_definition` 生成（design §4.4），本场景的可见面证据取其
-后果：模型能按名字委派成功。清单正文不进断言——它是模型上下文，不是界面读数。
+**本场景证明的是执行链，MUST NOT 读成「模型会主动委派」**：`task` 调用来自 fixture 的脚本，
+不是模型的选择。模型是否主动选择由真实 provider 六格验收（design §7）回答；
+「工具有没有暴露给模型」由场景 257 的 `llm_request.tool_names` 与 194 的关停态对照回答。
+本场景的可见面证据只取其后果：按名字委派的一条调用能跑通并闭环。
+
+工具描述里的清单注入由后端 `task_definition` 生成（design §4.4），清单正文不进断言——
+它是模型上下文，不是界面读数。

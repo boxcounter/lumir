@@ -37,7 +37,7 @@ change 内应用，不改 `docs/process/**` 的任何流程文档（是否固化
 
 | 层 | 判据 | 本 change 的证据形态 |
 |---|---|---|
-| ① 能看见 | 启用时工具**实际**暴露给模型，暴露面可复核 | `llm_request.tool_names` 含 `task`（单测 + 场景 255）；`enabled=false` 时不含（场景 194，负向对照） |
+| ① 能看见 | 启用时工具**实际**暴露给模型，暴露面可复核 | `llm_request.tool_names` 含 `task`（单测 + 场景 257）；`enabled=false` 时不含（场景 194，负向对照） |
 | ② 会选择 | **用户不点名工具**时，真实模型按「专用优先 → general 次选 → 都不合适自己做」选择，并按总成本决定简单任务是否委派（不设硬门槛）；合理的只读子任务可单独派 | 真实 provider 六格观测（§7：explore 正向 / general 观测 / 简单只读观测 / 简单写观测 / 整件事无匹配不硬派 / 关闭开关负向） |
 | ③ 能执行 | 选中之后的执行链正确 | 既有 mock 场景（180 等）与 Rust 单测：委派、并行、后台、闸、resume、批准透传 |
 | ④ 可复核 | 事后能从留存区分「未暴露 / 未选择 / 执行失败」 | `tool_names` × `llm_response.tool_calls` × `subagent_rejected` / `subagent_finished.status` 三处读数（§5.2） |
@@ -335,7 +335,7 @@ H1 / H2 都只能由真实 provider 观测（§7），mock 无法证伪任何一
 
 **真机验收（mock provider）**
 
-8. 新增场景 `255-harness-request-tool-names`：`enabled=true` 时父会话的 `llm_request.tool_names`
+8. 新增场景 `257-harness-request-tool-names`（原稿编号 255 已被列表光标导航场景占用）：`enabled=true` 时父会话的 `llm_request.tool_names`
    含 `task`；同一会话的子运行审计文件里不含 `task`；两者都是数组。
 9. `194-subagent-disabled` 增断言：`enabled=false` 时会话 `llm_request.tool_names` **不含** `task`。
    与 8 配对构成区分度——不是只看「有 `task`」，而是同一字段在开关两侧分别取值（REVIEW.md
