@@ -46,20 +46,20 @@
 
 - [ ] 5.1 在已配置真实 provider 的本机 app（`pnpm tauri dev`）打开合成 vault（`/tmp/lumir-m102-acceptance` 或 `/tmp/lumir-probe-proactive-m800`）；全程不读取 / 不复制 / 不手改凭据文件；开工前经**设置面**（设置面板「子代理」总开关）确认并记录 `[harness.subagents].enabled` 的进入时值（预期为开启），它就是 5.10 的恢复目标值；同时做清单前提核对——只列目录（`ls`）合成 vault 的 `.lumir/agents/` 与 `<config_dir>/agents/`，确认没有其它自定义定义（前提不成立则相关格记「未验证」，不得判 PASS）
 - [ ] 5.2 格 A（只读调研，explore 正向；不提子代理名）：`llm_response.tool_calls` 含 `name=task`、`agent=explore`；首条 `llm_request.tool_names` 含 `task`；子运行工具集为 explore 白名单；未委派判 FAIL 并附「为何不派」的会话读数
-- [ ] 5.3 格 E（批量变更，general 观测；仅当 design §9.2 裁决新增）：`notes/drafts/` 下 30 个文件批量重命名 + 移动（纯变更、无调研成分）。**合格三路**：①`task(agent=general)` 承接整件事并在子运行完成；②`task(agent=explore)` 只做只读枚举、重命名 / 移动由主会话做（合理分工）；③不委派、主会话自己完成。**判红仅限**：把含写 / 移动的整件事交给只读代理，或结果不正确
+- [ ] 5.3 格 E（批量变更，general 观测）：`notes/drafts/` 下 30 个文件批量重命名 + 移动（纯变更、无调研成分）。**合格三路**：①`task(agent=general)` 承接整件事并在子运行完成；②`task(agent=explore)` 只做只读枚举、重命名 / 移动由主会话做（合理分工）；③不委派、主会话自己完成。**判红仅限**：把含写 / 移动的整件事交给只读代理，或结果不正确
 - [ ] 5.4 格 B（简单只读，观测）：记录是否 `task`、结果质量、两侧 tokens 与耗时；**不判红**，委派且无收益时记「无收益委派」观察项
 - [ ] 5.5 格 F（简单写，观测）：同上；派给 `general` 并正确完成记合格 + 成本，主会话自己改也记合格 + 成本；只有「派给只读代理做写」或「改错 / 没改」才判红
-- [ ] 5.6 格 D（整件事无匹配：同 A 调研 + 写入 `notes/summary.md`；**仅当 `general` 获准**时，按 design §7.1 在合成 vault 写 `.lumir/agents/general.md` 把 `general` 同名覆盖成只读定义，使清单里没有可写子代理；`general` 未获准则跳过覆盖，直接用只有 `explore` 的默认清单）：三路判据——①**禁止**把整件事派给只读代理（出现 `task` 且 prompt 要求写文件 / 执行命令即判红）；②零 `task` 合格；③只派只读子任务合格（prompt 只含只读诉求、子运行工具集为只读白名单、写由主会话完成）。三路都要求 `tool_names` 含 `task`。覆盖文件（若有）的删除与恢复核实归 5.10，本步不自行善后
+- [ ] 5.6 格 D（整件事无匹配：同 A 调研 + 写入 `notes/summary.md`；按 design §7.1 在合成 vault 写 `.lumir/agents/general.md` 把 `general` 同名覆盖成只读定义，使清单里没有可写子代理）：三路判据——①**禁止**把整件事派给只读代理（出现 `task` 且 prompt 要求写文件 / 执行命令即判红）；②零 `task` 合格；③只派只读子任务合格（prompt 只含只读诉求、子运行工具集为只读白名单、写由主会话完成）。三路都要求 `tool_names` 含 `task`。覆盖文件的删除与恢复核实归 5.10，本步不自行善后
 - [ ] 5.7 格 C（同 A 提问，**经设置面**关闭「子代理」总开关）：`tool_names` 不含 `task`、无 `subagent_started`；关闭后先记一次读数
 - [ ] 5.8 证据落 `.local/reviews/proactive-subagent-delegation-oct29/real-provider.md`：模型 id（取 `llm_request.model`）、提问原文、六格抽取表、每格的委派与否 + 结果质量 + tokens + 耗时、格 D 的清单构造与三路判定、格 E 的子运行 agent / tools / 用量、样本限制（单模型 / 每格 N=1 / 只作存在性判据）；证据只抽字段，不含 `system` / `messages` 原文；格 D 与格 E 必须照写各自的证据边界（见 design §7.2）
 - [ ] 5.9 失败处置按 design §7.4 执行并留痕：A 未委派 / E 硬派或结果错误 / D 硬派才判 FAIL；B / F 不判红（委派与否都记录）；一次只改一处措辞、最多两轮、失败轮次不得删除；两轮仍不达标则停手上报 Alex
-- [ ] 5.10 **强制收尾（无论 5.2–5.9 成功、失败、超时或中止）**：① 经设置面把「子代理」总开关恢复为 5.1 记录的进入时值，并用界面状态或**新发的**请求 `tool_names` 核实含 `task`；② 删除格 D 写下的 `.lumir/agents/general.md` 覆盖文件（成功、失败、超时、中止都删），删除后用下一回合生效清单或新委派的 `subagent_started.tools`（9 件）核实内建 `general` 已恢复；`general` 未获准时改为核实清单只有 `explore`。两段恢复的读数都写进 real-provider.md；不得读 / 备份 / 改凭据文件；任一恢复失败即停手上报，未恢复不得写 PASS
+- [ ] 5.10 **强制收尾（无论 5.2–5.9 成功、失败、超时或中止）**：① 经设置面把「子代理」总开关恢复为 5.1 记录的进入时值，并用界面状态或**新发的**请求 `tool_names` 核实含 `task`；② 删除格 D 写下的 `.lumir/agents/general.md` 覆盖文件（成功、失败、超时、中止都删），删除后用下一回合生效清单或新委派的 `subagent_started.tools`（9 件）核实内建 `general` 已恢复。两段恢复的读数都写进 real-provider.md；不得读 / 备份 / 改凭据文件；任一恢复失败即停手上报，未恢复不得写 PASS
 
 ## 6. 台账、门禁与评审
 
 - [ ] 6.1 删除 `docs/backlog.md` 的 M772 条目「子代理缺省工具集是否加入 `vault_list`」（本 change 承接；若 2.2 按「一并扩缺省集」落地，条目内容与结论一致再删）
 - [ ] 6.2 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过；`bash scripts/docs-check.sh` 通过（含归档对账门禁：delta 无静默丢段）
 - [ ] 6.3 `bash scripts/gate.sh quick` 全绿（改过 Rust 与验收场景；未改样式，不触发视觉档）；照抄 `GATE RESULT` 原文行进报告
-- [ ] 6.4 完工报告按 design §1.1 的四层判据逐层给证据指针（①③④ 给机器读数与场景 id，②给真实 provider 六格表；`general` 未获准则五格）；②未达标不得写完成，也不得以 mock / 单测替代
+- [ ] 6.4 完工报告按 design §1.1 的四层判据逐层给证据指针（①③④ 给机器读数与场景 id，②给真实 provider 六格表）；②未达标不得写完成，也不得以 mock / 单测替代
 - [ ] 6.5 归档顺序：本 change 的 delta 以「工具集声明与默认收紧」含 `vault_list` 为前提，MUST 排在该 change 归档之后（design §8）；归档前由 tower 核对 living spec 的闭集合已是 9 件
 - [ ] 6.6 独立评审：非作者 reviewer 结论 clean / merge 且绑定当前 tip；按「节点 2 五要件」把 proposal 的节点 2 记录填齐（任务、delta、门禁、真机、真实 provider 证据、归档队列条目）
