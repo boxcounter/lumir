@@ -1,0 +1,280 @@
+# Design: 主动委派（工具描述承载时机）、`explore` 补 `vault_list`、`llm_request.tool_names`
+
+- Change ID: `add-proactive-subagent-delegation`
+- 日期: 2026-10-29
+- 角色: Alex Lee（评审 / 裁决），AI agent（起草）
+
+本文的读者是裁决者：不看代码即可判断「为什么改、改成什么、不做什么、怎么验」。
+
+## 1. 问题与结论
+
+子代理机制（change `add-harness-subagents`，2026-10-24 归档）已经把「定义 → 清单注入 → `task` 委派
+→ 子运行 → 摘要回传」整条链落地。留下的缺口是**模型会不会用**与**用了以后能不能在留存里查明**：
+
+1. **`task` 的工具描述只讲能力，不讲时机**，且通用提示词里没有委派指引。模型看到「有个工具能派活」，
+   没有任何判据告诉它「什么样的任务该派、什么样的不该派」。Mock 驱动的验收场景把「派活」写死在
+   fixture 里，执行链绿了，但「模型自己会不会选」从未被测过——这是覆盖面声明超出真实验证的典型形态。
+2. **内建 `explore` 的描述与工具集不一致**：描述说「按路径枚举」，`tools` 里却没有列目录工具
+   （`vault_list` 已入册，但 `explore` 没有声明它）。模型照描述去做会撞上「工具不存在」。
+3. **留存里没有「这次请求暴露了哪些工具」的读数**：`llm_request` 记了 system / messages / 参数 /
+   字节数，唯独不记工具名。于是「工具没暴露（开关关了 / 闸拦了）」与「暴露了但模型没选」在事后
+   完全无法区分——真发现「正式会话没有 `task` 调用」时，排查只能靠猜。
+
+对应三个变更：**策略进工具描述**（新 requirement）、**`explore` 补 `vault_list`**（MODIFIED 定义
+requirement）、**`llm_request.tool_names`**（MODIFIED 留存 requirement）。
+
+### 1.1 能力验收的四层判据（通用，本 change 只应用）
+
+同一类问题已经发生两次（Alex 观察，经 tower 转述，本轮未复跑）：cron 落地后模型用 `cli_run` 手搓
+系统调度而不是用 cron 工具；子代理落地后模型不主动 `task`。共同形态是**能力在场 ≠ 能力被用上**，
+而当时的验收只覆盖了「能力能跑」。据此，本 change 的验收与报告一律按四层判据组织；这一节只在本
+change 内应用，不改 `docs/process/**` 的任何流程文档（是否固化进流程属独立裁决）。
+
+| 层 | 判据 | 本 change 的证据形态 |
+|---|---|---|
+| ① 能看见 | 启用时工具**实际**暴露给模型，暴露面可复核 | `llm_request.tool_names` 含 `task`（单测 + 场景 255）；`enabled=false` 时不含（场景 194，负向对照） |
+| ② 会选择 | **用户不点名工具**时，真实模型在适合的任务上主动选择它，且简单任务不滥用 | 真实 provider 三格观测（§7：多文件调研期望派 / 简单任务期望不派 / 关闭开关负向对照） |
+| ③ 能执行 | 选中之后的执行链正确 | 既有 mock 场景（180 等）与 Rust 单测：委派、并行、后台、闸、resume、批准透传 |
+| ④ 可复核 | 事后能从留存区分「未暴露 / 未选择 / 执行失败」 | `tool_names` × `llm_response.tool_calls` × `subagent_rejected` / `subagent_finished.status` 三处读数（§5.2） |
+
+三条硬口径，写进节点 1 供裁决：
+
+1. **同类能力只补执行测试（③）不算验收完成**——③全绿而②从未观测，正是前两次的失效形态。
+2. **本 change 的真实 provider 验收是②的硬证据**，不是「补充观察」；②不达标即本 change 不达标，
+   不得以 mock / 单测替代（§7.4 的失败处置）。
+3. ①③④可机器判；②只能由真实模型观测，因此样本、模型、时间与限制必须随证据一起记录（§7.3），
+   结论只作存在性判据，不外推成通过率。
+
+## 2. 事实核对（2026-10-29，行号为本次核对时现值，不作为不变事实）
+
+### 已确认（本轮读代码 / 读制品核实）
+
+| # | 事实 | 锚点 |
+|---|---|---|
+| F1 | `task` 描述 = 一句能力说明 + 清单，无任何「何时该用」的判据 | `src-tauri/src/harness/tools.rs:333`（`task_definition`）；描述模板 `tools.rs:337-340` |
+| F2 | 内建 `explore` 的 `tools` 为 `vault_read` / `vault_search` / `skill_load`；描述写「按路径枚举」 | `src-tauri/src/harness/agents.rs:43-57`（`BUILTIN_EXPLORE`），`agents.rs:46` 为 tools 行 |
+| F3 | `vault_list` 已实现并注册（只读、目录/路径发现） | `src-tauri/src/harness/tools.rs:176`；`TOOL_NAMES` 含它（`tools.rs:129`） |
+| F4 | `Request` 携带 `tools: Vec<Value>`（完整 function schema），发送时用到 | `src-tauri/src/harness/llm.rs:420-430`；装配点 `turn.rs:955` |
+| F5 | `llm_request` 留存只写 `provider` / `model` / `system` / `messages` / `params`，可选 `request_bytes`；**没有工具清单** | `src-tauri/src/harness/turn.rs:966-991`（`record_llm_request`） |
+| F6 | `task` 的关闭点唯一：`enabled=false` 时从工具定义里剔除 `task` | `src-tauri/src/harness/run.rs:825-833`（`gate_tool_definitions`） |
+| F7 | 委派执行链的 mock 验收由 fixture 首条响应写死 `task` 调用 | `scripts/acceptance/fixtures/harness-subagent-delegate.json`（`responses[0].tool_calls[0].name = "task"`，`agent = "research"`） |
+| F8 | 该场景与覆盖表把这条 mock 场景称作「自动委派」 | `scripts/acceptance/scenarios/180-subagent-delegate-discovery.md`、`scripts/acceptance/COVERAGE.md:27` |
+| F9 | 压缩调用请求带空工具集（`tools: Vec::new()`），因此「无工具的请求」是真实存在的形态 | `src-tauri/src/harness/turn.rs:1488` |
+| F10 | `explore` 的工具集问题已被记录为待裁条目，并点名「描述里『按路径枚举』名不副实」 | `docs/backlog.md:6`（M772） |
+| F11 | 工具集缺省集（`DEFAULT_TOOLS`）仍是只读三件；`vault_list` 只能由定义显式声明 | `src-tauri/src/harness/agents.rs:35`；`openspec/changes/add-harness-vault-workspace-list/design.md` §8 把「缺省集扩到四件」列为独立裁决 |
+
+### 历史留存证据（交接材料所述，本轮未复跑）
+
+- 正式版 0.11.1 上 `harness.subagents.enabled=true`，任务面板与定义装载面正常。
+- 正式会话里观察到「从未出现 `task` 调用」；同一批排查中，暴露链（注册 → 闸 → 请求）未见断点。
+
+这两条是**输入**而不是本提案的论据：它们说明「需要观测能力与策略指引」，不说明原因。本提案不声称
+已知成因。
+
+### 待验证推断（本提案的验收要检验的假设）
+
+- **H1**：工具描述缺「何时该用」的判据，是模型不主动委派的主要原因。
+- **H2**：把策略放在工具描述里（而不是 identity 提示词里）足以让真实模型在匹配任务上主动委派。
+
+H1 / H2 都只能由真实 provider 观测（§7），mock 无法证伪任何一条。
+
+## 3. 变更点一：把「何时委派」写进 `task` 工具描述
+
+### 3.1 文案草案（逐字待 Alex 裁决）
+
+`task` 描述的结构固定为三段，顺序不变：**能力一句话 → 委派策略段 → 定义清单**。
+
+能力一句话沿用现文（不改语义）：
+
+> 把任务委派给一个子代理：子代理有独立上下文，只把摘要返回；不能再次委派；需要批准的调用会弹给用户。
+
+策略段（新增，代码内单一常量）：
+
+> 委派时机（按这三条判断要不要调用本工具）：
+> - 匹配就委派：任务与某个子代理的 description 相符，且要跨多份文件反复搜索、比对，或过程材料多、
+>   你只需要一份压缩后的结论时，直接把它交给该子代理，不必等用户点名。
+> - 简单任务自己做：读一两个文件、一两次工具调用就能答完的，不要委派——每委派一次都要另起一个
+>   上下文、多一轮摘要，简单任务委派只会更慢更差。
+> - 独立才并行：互不依赖的多份调研可以在同一条消息里发多个 task 并行；后一步依赖前一步结果的，
+>   不要并行。
+>
+> 可用子代理：
+> - explore：只读探索：…
+
+### 3.2 为什么放在工具描述，而不是 identity
+
+- **决策点就近**：工具描述是模型决定「要不要调用它」时读到的文本；identity 是全局纪律，写在里面的
+  委派指引会推广到所有回合、所有任务，包括不需要委派的回合。
+- **避免无条件指令**：Alex 的方向是「优先工具描述而非无条件 identity」。identity 里写「多调研就派
+  活」会在简单任务上也施加压力，与「不为用而用」互相拉扯。
+- **定义可变、策略不变**：清单每回合随定义变化，策略段是常量；两者同一处组装，顺序天然可断言。
+- **可机器判**：描述是纯文本常量，单测能逐条断言三条判据在场、只出现一次、在清单之前（§6）。若写
+  进 identity，断言对象变成整段装配后的 system prompt，判据反而更脆。
+
+已知代价：工具描述在 wire 上位于 `tools` 数组，注意力位置不如 system。这是一条**可测的假设**
+（H2），不是已知结论；§7 的真实验收就是它的检验，失败处置见 §7.4。
+
+### 3.3 与「机制不内置任务类型」的界线
+
+「委托运行（`task` 工具）」条要求「机制 MUST NOT 解析 prompt、MUST NOT 内置任何任务类型、场景名或
+路径知识」。策略段是**给模型的判断指引**，不是机制的路由表：系统不解析它、不据它分支、不按它校验
+调用。本 change 在新 requirement 里把这条界线写成明文（「策略段 SHALL 被表述为给模型的判断指引，
+系统 MUST NOT 解析它」），避免下一次有人把它读成「内置了任务类型」。
+
+策略段不含任何具体场景名（不写「评审 proposal」「整理日志」这类词），只描述任务形状（多文件、
+材料多、可压成摘要、彼此独立）。
+
+## 4. 变更点二：内建 `explore` 补 `vault_list`
+
+- `explore.tools` 由三件变四件：`vault_read` / `vault_search` / `vault_list` / `skill_load`。
+- 描述同步改准：「在 vault 里**列目录**、按路径枚举、搜索与读取文件、加载 skill，产出结论与依据；
+  不改文件、不跑命令。」——「按路径枚举」从空话变成有对应工具的能力。
+- **`DEFAULT_TOOLS` 不动**（仍只读三件）。理由：缺省集是「未写 `tools` 的自定义定义」拿到的闭集合，
+  扩它等于给所有既有自定义定义**悄悄加一个读能力**（行为变了、定义文件没变）；而 `explore` 是内建
+  定义，显式声明第四件就能解决名不副实，不必动缺省。这条列为裁决点（§9.2）——`docs/backlog.md:6`
+  的 M772 条目问的正是「缺省集要不要一起扩」，若 Alex 要一并扩，本 change 内加一行改动即可，不必
+  另立 change。
+- 不改其它工具、不改闭集合（9 件 vault 操作工具）、不改深度（子运行仍无 `task`）、不改权限模型
+  （`vault_list` 是只读工具，已在读类放行面内）。
+
+与主动委派的关系：`explore` 是「多文件调研」这个首场景的默认承载者。描述承诺能列目录而工具做不到，
+模型委派出去的 explore 会在第一步撞墙（「工具不存在」），主动委派的收益被这条不一致吃掉。补
+`vault_list` 是让「匹配就委派」这条策略真的可执行的前提。
+
+## 5. 变更点三：`llm_request.tool_names`
+
+### 5.1 形状与写入点
+
+```jsonc
+{"kind":"llm_request","request":{"provider":"…","model":"…","system":"…","messages":[…],
+ "params":{…}},"request_bytes":12345,"tool_names":["vault_read","vault_search","vault_list",
+ "vault_patch","vault_create","vault_move","vault_delete","skill_load","cli_run","cron_task_create",
+ "cron_task_list","cron_task_remove","task"]}
+```
+
+- **位置**：与 `request_bytes` 同级（`llm_request` 顶层附加字段），不塞进 `request`。
+- **口径**：按请求里 `tools` 数组的顺序取 `name`，只取名字；MUST NOT 记录 schema / description /
+  参数。去重不做（请求里的定义本就不重名，重复即是缺陷，应暴露而不是被静默抹平）。
+- **恒在场**：无工具的请求（压缩调用）记 `[]`。`[]` = 「这一请求不带工具」；键缺失 = 「没有记录」
+  （本 change 之前的旧文件）。两者 MUST NOT 混同——把缺失读成空数组会让「没记」变成「没有」，正是
+  REVIEW.md「读不到当成空」条拦的形态。
+- **写入点唯一**：`record_llm_request`（`turn.rs:966`）是唯一产出点，与发送同点。子运行的请求走
+  同一函数（审计流水），因此子运行的白名单也自动可核——**深度 1 层因此从「靠代码保证」变成
+  「留存上可查」**：子运行的任一 `llm_request.tool_names` 都不含 `task`。
+
+### 5.2 为什么能区分「未暴露」与「未选择」
+
+| 观测 | 结论 |
+|---|---|
+| `tool_names` 不含 `task` | 未暴露：开关关闭 / 定义清单为空 / 闸剔除。此时「没有 `task` 调用」不是模型的决定 |
+| `tool_names` 含 `task`，同轮 `llm_response.tool_calls` 无 `task` | 已暴露、模型没选：策略 / 模型行为问题 |
+| `tool_names` 含 `task`，`llm_response.tool_calls` 有 `task` | 已暴露且已选：主动委派发生 |
+| 已选但结果不成功 | 执行失败：看工具回执的 `ok` / `code`（如 `agent_not_found`、`model_not_configured`）、`subagent_rejected` 的 `reason`、`subagent_finished` 的 `status` / `stopped_by` |
+
+前三行正是本次交接争议点的机器判据：把「正式会话没有 task 调用」拆成「未暴露 / 未选择」两种结论，
+一眼可分；第四行保证「派了但没成」不会被误读成「没派」——四层判据里 ④ 的完整形态（§1.1）。
+
+### 5.3 兼容与隐私边界
+
+- **兼容**：纯追加键。读取侧只有三处碰 `llm_request`——恢复（只读 `system` / `messages`）、读数重算
+  （只按 `kind` 配对 request/response）、通知陈旧判定（只读 `messages`）。都不读新增键，因此**不需要
+  兼容层、不需要迁移、不改写旧文件**（AGENTS.md「变更默认直接切断」：这里根本没有要切断的消费者）。
+- **隐私**：只记工具名（产品常量），不记 schema / 描述。这一点有实际意义——`task` 的描述里含**用户
+  写的子代理定义描述**（vault 文件内容），若把整段描述落进每条 `llm_request`，等于把用户内容复制到
+  留存的高频记录里。名字集合本身会暴露「subagents 是否启用」，这是本地诊断文件、不外发，且正是要
+  观测的东西。
+- **体量**：约 13 个短名字，百字节量级；相对 `request_bytes` 可忽略，不进性能合同（ADR 0002 第 6 条
+  的路径是打开 / 按键 / 渲染，不在请求序列化里）。
+- **不放进 `llm_response`**：暴露面是请求的属性，响应侧没有对应的真源；放两处就是两份真源。
+
+## 6. 机器断言（mock 与单测守什么）
+
+**单测（Rust）**
+
+1. `task` 描述：三条判据的固定措辞逐个在场；策略段恰出现一次；策略段在清单之前；清单格式不变
+   （逐定义一行 `- <name>：<description>`）。
+2. 反面对照：装配后的 system prompt 不含策略段措辞；同时断言 identity 里**确实**含某条已知工具纪律
+   （正对照，证明搜的是真装配产物，不是空串上打转——REVIEW.md「读不到当成空」条）。
+3. `explore`：`tools` 恰为四件且含 `vault_list`；`DEFAULT_TOOLS` 仍为三件（钉住「不扩张缺省集」）。
+4. `llm_request.tool_names`：顺序与请求一致、只有名字（不含 `description` / `parameters` 键）；
+   `tools` 为空时记 `[]` 而非省略；旧记录缺键时读取侧按「没有记录」处理（正反各一例）。
+5. 子运行：审计流水里的 `llm_request.tool_names` 不含 `task`（深度 1 层的留存级断言）。
+
+**真机验收（mock provider）**
+
+6. 新增场景 `255-harness-request-tool-names`：`enabled=true` 时父会话的 `llm_request.tool_names`
+   含 `task`；同一会话的子运行审计文件里不含 `task`；两者都是数组。
+7. `194-subagent-disabled` 增断言：`enabled=false` 时会话 `llm_request.tool_names` **不含** `task`。
+   与 6 配对构成区分度——不是只看「有 `task`」，而是同一字段在开关两侧分别取值（REVIEW.md
+   「断言等价于子串」条：先确认它能红）。
+8. `180-subagent-delegate-discovery` 的标题 / 说明改准：它证明的是**执行链**（fixture 驱动的
+   `task` 调用），MUST NOT 再声称「自动委派」；覆盖表 `COVERAGE.md` 同步重生成。
+
+mock 覆盖率的口径：mock 只证明「暴露面正确」与「执行链正确」。「模型会不会主动选」不进 mock 的
+覆盖面声明（这是本 change 要修的一条既有过度声明）。
+
+## 7. 真实 provider 行为验收（mock 不能替代）
+
+本节是 §1.1 四层判据里**②会选择**的硬证据：②不达标即本 change 不达标。①③④的证据形态见 §1.1 表格
+与 §6。
+
+### 7.1 环境与凭据纪律
+
+- 在**已配置真实 provider 的本机应用**里跑（`pnpm tauri dev`），使用 Alex 既有配置；**不读取、
+  不复制、不落盘**任何凭据文件（`~/.config/lumir/config.json` 等）与其片段。
+- **打开合成 vault**（`/tmp/lumir-m102-acceptance` 或新建 `/tmp/lumir-probe-proactive-<mission>`），
+  任务只引用合成文件，保证会话留存里不出现真实 vault 内容。
+- 证据只**抽取字段**（`tool_names` 数组、`tool_calls` 的 `name` / `agent`、诊断事件行、模型 id），
+  不复制 `system` / `messages` 原文；证据落 `.local/reviews/proactive-subagent-delegation-oct29/`。
+
+### 7.2 三个样本（每格 N=1，同一模型）
+
+| 格 | 提问（合成 vault） | 期望 | 判据 |
+|---|---|---|---|
+| A 多文件调研 | 「通读 `notes/` 下这几份材料，逐份列要点并给一份对照表，最后只给我结论与依据」——**不提子代理名字** | 出现 `task` | 首条 `llm_request.tool_names` 含 `task`（暴露成立）且首条 `llm_response.tool_calls` 含 `name=task`、`agent=explore` |
+| B 简单任务 | 「读 `notes/a.md`，第 3 行是什么」 | 不出现 `task` | 该会话无 `task` 调用；`tool_names` 仍含 `task`（暴露在场，证明是「选择不派」而非「看不见」） |
+| C 负向对照 | 同 A 的提问，`[harness.subagents].enabled=false` | 不出现 `task` | `tool_names` 不含 `task`；无 `subagent_started` 事件 |
+
+B 与 C 是两个不同方向的对照：B 证明策略没有把模型推向无条件委派，C 证明「不委派」也可能是暴露面
+问题——三者合起来才能把 A 的结果解释清楚。
+
+### 7.3 记录内容
+
+模型 id（取 `llm_request.model`，不读配置）、提问原文、开始时间、三格的抽取结果、每格的 `tool_names`
+数组与 `tool_calls` 名字表。落 `.local/reviews/proactive-subagent-delegation-oct29/real-provider.md`。
+
+### 7.4 样本限制与失败处置
+
+- **限制**：单模型、每格 N=1。因此结论是**存在性判据**（「机制可达、策略生效」），不是通过率，也
+  不外推到其它模型 / 其它任务形态。报告必须照写这句，不得表述为「模型会主动委派」。
+- **A 未委派**（已暴露、未选）：判 FAIL，先按 §3.1 改一处措辞（一次只改一处），复跑 A；最多两轮。
+  两轮仍不达标 ⇒ 停手上报 Alex，附两轮的措辞差异与读数——这正好是「是否把指引搬进 identity」的
+  裁决依据（§9.4），不在实现期自行加。
+- **B 委派了**（过度委派）：同样判 FAIL——策略把模型推向了「为用而用」，按同一「一次改一处」口径
+  收紧「简单任务自己做」那条，复跑 B。
+- **不得**：重跑到绿而不记录失败轮次；改 fixture 冒充真实选择；只跑 mock 就宣称验收通过；把
+  `.local` 证据写成「模型行为已达标」而不给三格读数。
+- **C 异常**（`enabled=false` 仍有 `task`）：属缺陷，按 bug 处理，不是验收失败。
+
+## 8. 非目标与残余风险
+
+- 不改 identity / 工作区段 / AGENTS.md 装配的任何措辞（§9.4 是独立裁决）。
+- 不改子代理深度（子运行仍无 `task`）、不改权限模型、不改闭集合、不新增除 `explore` 声明外的工具。
+- 不记录完整工具 schema 或描述（隐私与体量，§5.3）。
+- 不引入按任务类型的路由 / 分类器：策略是文本指引，机制不解析。
+- 残余风险：策略段在 `tools` 数组里，注意力位置弱于 system；若真实模型仍不选，需要提示词层兜底
+  （独立 change）。
+- 残余风险：真实 provider 的单次观测受模型随机性影响；三格设计用 B / C 两个对照提高解释力，但仍
+  不能替代多轮统计——本 change 不声称统计显著性。
+
+## 9. 裁决点（逐条可否决）
+
+1. **策略段文案**（§3.1 逐字）：三条判据的措辞是否可用？特别是「简单任务自己做」是否会被模型读成
+   「尽量别用」——这是与「主动委派」的张力点。
+2. **`DEFAULT_TOOLS` 是否一并扩到四件**：推荐**不动**（只让 `explore` 显式声明）。备选：同批扩到
+   四件——好处是自定义只读定义也能列目录，代价是所有既有定义的行为静默变化。`docs/backlog.md:6`
+   的 M772 条目在此一并收口，实现批删除该条目。
+3. **真实验收的判据与样本量**（§7.2 / §7.4）：三格 × N=1、单模型的**存在性判据**是否够用？是否
+   要求同一格跑 3 次取多数（成本约 3 倍，收益是排除随机性）。
+4. **是否需要 identity 兜底**：推荐本 change 不做，把「真实验收不过时是否搬进 identity」留给 §7.4
+   的失败处置与独立裁决。
