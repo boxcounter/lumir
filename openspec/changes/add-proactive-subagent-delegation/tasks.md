@@ -22,7 +22,7 @@
 - [x] 1.3 单测（反面对照）：装配后的 system prompt 不含策略段措辞；同一条测试先断言 identity 含某条已知工具纪律（正对照，防「空串上打转」）
 - [x] 1.4 单测：`[harness.subagents].enabled=false` 时 `task` 不在工具定义里，策略段不出现（关停口径沿用 `run::gate_tool_definitions`，不新增第二个关闭点）
 - [x] 1.5 `docs/specs/subagent-definitions.md` §8「清单注入与容量告警」补一段：注入顺序为能力说明 → 策略段 → 清单，并逐字抄录 design §3.1 的策略段全文（文档与代码同一份文案；四个固定标签不得改写成同义说法）
-- [ ] 1.6 单测（无自动改派）：`task(agent=<不存在的名字>)` 只回 `agent_not_found` 与可用清单、不启动子运行（无 `subagent_started`、无审计文件）；并断言清单里只有只读 `explore` 时不存在把该调用改写为 `explore` 的路径（观测终态同「不启动子运行」）
+- [ ] 1.6 单测（无自动改派）：`task(agent=<不存在的名字>)` 只回 `agent_not_found` 与可用清单、不启动子运行（无 `subagent_started`、无审计文件）；并断言清单里只有只读 `explore` 时不存在把该调用改写为 `explore` 的路径（观测终态同「不启动子运行」）——**本条未新增用例，理由见 §1 实现注记**：由既有 `subagents` 参数校验与次数闸用例承担（`agent_not_found` 不占额度、不启动子运行），本批未新增第二个观测点
 
 - [x] 1.7 **design §7.4 第一轮修订（M812，2026-10-30）**：A 格真实 provider 两轮观测（60 行校准 +
   1232 行正式）都是「已暴露、未选择」→ 只改一处措辞：判据一「匹配就委派」追加「多文件调研优先
@@ -98,8 +98,9 @@
 > - 5.7 格 C：`tool_names` **12 件、不含 `task`**，0 条 subagent 事件 → 关停生效。
 > - 5.8 证据落 `.local/reviews/proactive-subagent-delegation-oct29/real-provider.md`（六格表、每格
 >   tokens / 耗时、D 构造与恢复、E 路径、样本限制、D/E 证据边界照写）。
-> - 5.9 未改任何措辞、未复跑试绿：A 的「改一处措辞」要改 `tools.rs`，超出本 mission scope，
->   作为处置建议上报（证据文件「A 的会话读数」段）。
+> - 5.9 失败处置按 §7.4 走完两轮（后续两轮 scope 已加入 `tools.rs`）：第一轮措辞复跑仍未满足
+>   「首条即 task」，第二轮收紧后复跑通过；全程只改判据一一处、未改 identity、未反复试到绿
+>   （两轮均一次跑完并留痕，见下面的两轮复跑记录与 1.7 / 1.8）。
 > - **5.x 第一轮修订复跑（M812，2026-10-30，见 1.7）**：同一 A 提问、vault 复位到首次基线、
 >   分支代码构建的 app、deepseek-flash。`tool_names` 13 件含 `task`；`tool_calls` = `vault_list`×2、
 >   `vault_read`×6、**`task`×3（并发，agent=explore，4 件只读白名单，三个 completed）**；主会话
