@@ -1101,3 +1101,84 @@ test("设置面板：清除 Key → 输入替换 → 再清空，仍发 api_key.
   const patch = (await settingsPatches(page))[0]!;
   expect(patch.providers[0].api_key).toEqual({ kind: "clear" });
 });
+
+// ---------------------------------------------------------------------------
+// 10）底栏「取消」= 关闭（M799）：干净直关 / 脏草稿先确认 / 放弃后关闭且不写盘 / 保存中禁用
+//
+// 旧语义是「把草稿恢复成已保存配置、面板留着」，Alex 已否定（它满足不了「放弃修改」的目的，也
+// 与按钮名对不上）。新语义与 × / Escape / 点遮罩同一条 requestClose：放弃一律走关闭，重新打开
+// 时草稿按已保存值重建。这组用例因此必须能区分两种语义——旧实现下第一条断言（面板关闭）就会红。
+// ---------------------------------------------------------------------------
+
+const CANCEL_BUTTON = ".lumir-set-actions .lumir-set-btn:not(.lumir-set-btn-primary)";
+
+test("设置面板：干净草稿点「取消」直接关闭（无确认、不调 settings_apply）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, { snapshot: settingsSnapshot() });
+  const cancel = page.locator(CANCEL_BUTTON);
+  // 名称仍是「取消」：它现在表示关闭对话框，与常见对话框的 Cancel 一致。
+  await expect(cancel).toHaveText("取消");
+  await expect(cancel).toBeEnabled();
+  await expect(page.locator(".lumir-set-status")).toHaveText("没有未保存的修改");
+
+  await cancel.click();
+  await expect(page.locator(".lumir-set-panel")).toBeHidden();
+  // 干净草稿没什么可放弃：不出现两步确认。
+  await expect(page.locator(".lumir-set-discard")).toBeHidden();
+  // 关闭不是保存：settings_apply 一次都没发过。
+  expect(await page.evaluate(() => (window as unknown as { __settingsPatches?: unknown[] }).__settingsPatches ?? [])).toEqual([]);
+  expect(await page.locator("#app").evaluate((node) => (node as HTMLElement).inert)).toBe(false);
+});
+
+test("设置面板：脏草稿点「取消」先给放弃确认；继续编辑保留草稿，确认放弃后关闭且未写盘", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, { snapshot: settingsSnapshot() });
+  const cancel = page.locator(CANCEL_BUTTON);
+  const flag = page.locator('[data-auto-row="auto_compact"] [role="switch"]');
+  await expect(flag).toHaveAttribute("aria-checked", "true");
+
+  await flag.click();
+  await expect(flag).toHaveAttribute("aria-checked", "false");
+  await expect(page.locator(".lumir-set-status")).toHaveText("有未保存的修改");
+
+  // 脏草稿：先确认，不关闭。（旧语义在这里会把开关恢复成已保存值并留在面板里。）
+  await cancel.click();
+  await expect(page.locator(".lumir-set-panel")).toBeVisible();
+  await expect(page.locator(".lumir-set-discard-title")).toHaveText("放弃未保存的修改？");
+  await expect(page.locator(".lumir-set-actions")).toBeHidden();
+
+  // 继续编辑：草稿原样保留（开关仍是关、仍是脏），底栏动作回来。
+  await page.locator(".lumir-set-discard .lumir-set-btn", { hasText: "继续编辑" }).click();
+  await expect(page.locator(".lumir-set-discard")).toBeHidden();
+  await expect(page.locator(".lumir-set-actions")).toBeVisible();
+  await expect(flag).toHaveAttribute("aria-checked", "false");
+  await expect(page.locator(".lumir-set-status")).toHaveText("有未保存的修改");
+
+  // 再来一次并确认放弃：关闭面板，全程没有 settings_apply。
+  await cancel.click();
+  await expect(page.locator(".lumir-set-discard")).toBeVisible();
+  await page.locator(".lumir-set-discard .lumir-set-btn-danger").click();
+  await expect(page.locator(".lumir-set-panel")).toBeHidden();
+  expect(await page.evaluate(() => (window as unknown as { __settingsPatches?: unknown[] }).__settingsPatches ?? [])).toEqual([]);
+
+  // 重新打开：草稿按已保存值重建（开关回到开）——关闭路径真的丢弃了草稿，而不是留着旧草稿。
+  await page.keyboard.press("Meta+Comma");
+  await expect(page.locator(".lumir-set-panel")).toBeVisible();
+  await expect(page.locator(".lumir-set-status")).not.toHaveText("正在读取配置文件…");
+  await expect(page.locator('[data-auto-row="auto_compact"] [role="switch"]')).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator(".lumir-set-status")).toHaveText("没有未保存的修改");
+});
+
+test("设置面板：保存中「取消」禁用（关闭路径也被挡在请求期间之外）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, { snapshot: settingsSnapshot(), apply: "pending" });
+  const cancel = page.locator(CANCEL_BUTTON);
+  await expect(cancel).toBeEnabled();
+
+  await page.locator('[data-auto-row="auto_compact"] [role="switch"]').click();
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator(".lumir-set-status")).toHaveText("保存中…");
+  await expect(cancel).toBeDisabled();
+  await expect(page.locator(".lumir-set-close")).toBeDisabled();
+  await expect(page.locator(".lumir-set-panel")).toBeVisible();
+});
