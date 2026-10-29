@@ -131,7 +131,7 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 ### Requirement: 工具循环
 
-对话运行时 SHALL 支持工具循环：模型返回工具调用时，系统执行对应工具并将结果回送，直至模型不再调用工具或达到循环上限（默认 50，`[harness].loop_max` 可调；出厂值 M367 由 8 上调至 50，上界仍为 64）。达到上限 SHALL 终止循环并在面板给出明确提示。运行时 SHALL 维护会话状态于 Rust core，webview 重载 MUST NOT 丢失会话。工具集 SHALL 为 8 件 vault 操作工具：`vault_read`、`vault_search`、`vault_patch`、`vault_create`、`vault_move`、`vault_delete`、`skill_load`、`cli_run`；另加 2 类不操作 vault 的工具——1 件编排工具 `task`（change `add-harness-subagents`）与 3 件调度工具 `cron_task_create` / `cron_task_list` / `cron_task_remove`（change `add-cron-conversational-registration`）。`task` 属编排工具，是模型按名字委派子代理的入口，其入参与结果契约见 `harness-subagents` capability；子运行的运行上下文 MUST NOT 获得 `task`（派生深度恰好 1 层，实现口径为工具白名单）。3 件调度工具是交互会话注册定时任务的入口，其入参、校验与回执契约见 `cron` capability；它们 SHALL 只在**交互发送路径**注册——无人值守运行（cron 交接的工具白名单只含 8 件 vault 操作工具）与子运行（定义白名单的元素必须是 vault 操作工具）MUST NOT 获得它们。清单外能力扩张须经 Alex 裁决（ADR 0007；`vault_move` / `vault_delete` 的扩张、`task` 与 3 件调度工具的分类均以该 ADR 的修订为口径）。
+对话运行时 SHALL 支持工具循环：模型返回工具调用时，系统执行对应工具并将结果回送，直至模型不再调用工具或达到循环上限（默认 50，`[harness].loop_max` 可调；出厂值 M367 由 8 上调至 50，上界仍为 64）。达到上限 SHALL 终止循环并在面板给出明确提示。运行时 SHALL 维护会话状态于 Rust core，webview 重载 MUST NOT 丢失会话。工具集 SHALL 为 9 件 vault 操作工具：`vault_read`、`vault_search`、`vault_list`、`vault_patch`、`vault_create`、`vault_move`、`vault_delete`、`skill_load`、`cli_run`；另加 2 类不操作 vault 的工具——1 件编排工具 `task`（change `add-harness-subagents`）与 3 件调度工具 `cron_task_create` / `cron_task_list` / `cron_task_remove`（change `add-cron-conversational-registration`）。`task` 属编排工具，是模型按名字委派子代理的入口，其入参与结果契约见 `harness-subagents` capability；子运行的运行上下文 MUST NOT 获得 `task`（派生深度恰好 1 层，实现口径为工具白名单）。3 件调度工具是交互会话注册定时任务的入口，其入参、校验与回执契约见 `cron` capability；它们 SHALL 只在**交互发送路径**注册——无人值守运行（cron 交接的工具白名单只含 9 件 vault 操作工具）与子运行（定义白名单的元素必须是 vault 操作工具）MUST NOT 获得它们。清单外能力扩张须经 Alex 裁决（ADR 0007；`vault_move` / `vault_delete` 的扩张、`vault_list` 的加入、`task` 与 3 件调度工具的分类均以该 ADR 的修订为口径）。
 
 同一条助手消息里的多个 `task` 调用 SHALL 并行执行，非 `task` 调用 SHALL 维持既有逐个执行口径；
 工具结果 SHALL 按原调用顺序回填（并行只影响执行时刻，不改变结果的排列），父请求的 `tool_calls`
@@ -165,14 +165,14 @@ capability。
 
 #### Scenario: 调度工具只在交互路径注册
 
-- **WHEN** 同一份配置下分别取交互发送路径、cron 交接的运行路径（工具白名单为 8 件 vault 操作工具）
+- **WHEN** 同一份配置下分别取交互发送路径、cron 交接的运行路径（工具白名单为 9 件 vault 操作工具）
   与子运行路径的模型工具定义
 - **THEN** 只有交互发送路径的请求含 `cron_task_create` / `cron_task_list` / `cron_task_remove`；
   另外两条路径 MUST NOT 含它们（定时运行不能给自己排任务，子代理不能排任务）
 
 ### Requirement: 权限机制
 
-系统 SHALL 实现两层权限规则：allow / deny（不存在 `ask` 规则表——需要「必须问」的语义由危险黑名单与模式默认分层承担），判定顺序 deny > allow > 默认分层。规则语法 SHALL 支持 tool 级与 tool+模式级（如 `cli(tavily *)` 的命令前缀匹配）；匹配语义 SHALL 为：模式以 `*` 结尾时按**主体串前缀**匹配，星号前是空格时（生成规则的标准形态，如 `cli(git push *)`）另 SHALL 命中「去掉该尾随空格后逐字相等」的主体串——无参数的 `git push` 与带参数的 `git push origin main` 同样命中，词边界 MUST NOT 因此放宽（`git pushx` 不命中）。allow 规则 SHALL 既可手写于配置，也可由批准卡沉淀（生成、去重与作用域口径见「权限规则的持久化与治理」），并 SHALL 在权限浮层中逐条可见、可删。权限规则之外，系统 SHALL 提供**三档权限模式**作为默认分层的档位：`read_only` / `vault_write`（默认）/ `full_access`，逐档语义如下——读类工具（`vault_read` / `vault_search` / `skill_load` / `cron_task_list`）三档均直接放行；`vault_patch` / `vault_create` / `vault_move` 在 `read_only` 档 SHALL 逐个问（Always Ask，2026-10-09 Alex 裁决：该档语义为「读自动放行、一切写逐个问」，模式层 MUST NOT 直接拒绝），在 `vault_write` 与 `full_access` 档 SHALL 自动放行；`vault_delete` 在 `read_only` 与 `vault_write` 档 SHALL 逐个问（Vault Write 档的分界以 Alex 裁决点 1 为口径），在 `full_access` 档 SHALL 自动放行；`cli_run` 只读白名单命令三档均直接放行；`cli_run` 写命令在 `read_only` 与 `vault_write` 档 SHALL 逐个问，在 `full_access` 档 SHALL 自动放行（写目标在 vault 内者除外，见「cli_run 命令分类与 vault 写重定向」）；`cron_task_create` / `cron_task_remove` 在 `read_only` 与 `vault_write` 档 SHALL 逐个问、在 `full_access` 档 SHALL 自动放行（定时任务是持续性开销，批准的一刻是用户唯一能看见「它以后会自己跑」的时机）；危险黑名单命令（rm / shutdown·reboot·halt·poweroff / mkfs 系 / dd / git reset --hard / git clean / shell 包装器类，首版清单；shell 包装器中「受限解包」成立的只读形态除外，口径见「cli_run 命令分类与 vault 写重定向」）**任何档都 SHALL 逐个问**，MUST NOT 自动放行。模式层 SHALL 只在「直接放行」与「逐个问」之间切换，SHALL NOT 产出「拒绝」——拒绝只来自用户 deny 规则。
+系统 SHALL 实现两层权限规则：allow / deny（不存在 `ask` 规则表——需要「必须问」的语义由危险黑名单与模式默认分层承担），判定顺序 deny > allow > 默认分层。规则语法 SHALL 支持 tool 级与 tool+模式级（如 `cli(tavily *)` 的命令前缀匹配）；匹配语义 SHALL 为：模式以 `*` 结尾时按**主体串前缀**匹配，星号前是空格时（生成规则的标准形态，如 `cli(git push *)`）另 SHALL 命中「去掉该尾随空格后逐字相等」的主体串——无参数的 `git push` 与带参数的 `git push origin main` 同样命中，词边界 MUST NOT 因此放宽（`git pushx` 不命中）。allow 规则 SHALL 既可手写于配置，也可由批准卡沉淀（生成、去重与作用域口径见「权限规则的持久化与治理」），并 SHALL 在权限浮层中逐条可见、可删。权限规则之外，系统 SHALL 提供**三档权限模式**作为默认分层的档位：`read_only` / `vault_write`（默认）/ `full_access`，逐档语义如下——读类工具（`vault_read` / `vault_search` / `vault_list` / `skill_load` / `cron_task_list`）三档均直接放行；`vault_patch` / `vault_create` / `vault_move` 在 `read_only` 档 SHALL 逐个问（Always Ask，2026-10-09 Alex 裁决：该档语义为「读自动放行、一切写逐个问」，模式层 MUST NOT 直接拒绝），在 `vault_write` 与 `full_access` 档 SHALL 自动放行；`vault_delete` 在 `read_only` 与 `vault_write` 档 SHALL 逐个问（Vault Write 档的分界以 Alex 裁决点 1 为口径），在 `full_access` 档 SHALL 自动放行；`cli_run` 只读白名单命令三档均直接放行；`cli_run` 写命令在 `read_only` 与 `vault_write` 档 SHALL 逐个问，在 `full_access` 档 SHALL 自动放行（写目标在 vault 内者除外，见「cli_run 命令分类与 vault 写重定向」）；`cron_task_create` / `cron_task_remove` 在 `read_only` 与 `vault_write` 档 SHALL 逐个问、在 `full_access` 档 SHALL 自动放行（定时任务是持续性开销，批准的一刻是用户唯一能看见「它以后会自己跑」的时机）；危险黑名单命令（rm / shutdown·reboot·halt·poweroff / mkfs 系 / dd / git reset --hard / git clean / shell 包装器类，首版清单；shell 包装器中「受限解包」成立的只读形态除外，口径见「cli_run 命令分类与 vault 写重定向」）**任何档都 SHALL 逐个问**，MUST NOT 自动放行。模式层 SHALL 只在「直接放行」与「逐个问」之间切换，SHALL NOT 产出「拒绝」——拒绝只来自用户 deny 规则。
 
 判定总序 SHALL 为：deny 规则 > vault 内写重定向 > 危险黑名单 > allow 规则 > 模式默认分层——前四层模式无关，allow 规则 SHALL 在任何档生效（含 `read_only` 档），模式只替换最底层默认分层。deny 命中 SHALL 直接拒绝并回送模型：拒绝对话 MUST NOT 进入批准闸（不产批准卡、不等待用户决定），且回送的错误 SHALL 带上**命中的规则原文**（如「命中 deny 规则 cli(npm run deploy*)」），使「是哪条规则拦的」不必回配置文件核对；规则原文拼入后若超出工具行摘要的展示长度上限，SHALL 退回不带规则原文的既有文案，MUST NOT 呈现被截断的规则名。ask 档 SHALL 以批准闸呈现：执行前挂起循环，面板显示待批准项（写文档显示 diff 预览，CLI 显示完整命令），Alex 采纳后才执行，拒绝（及可选原因）回送模型；未决批准项 MUST NOT 自动超时通过。`cron_task_create` / `cron_task_remove` 的批准卡 SHALL 呈现该次动作的任务要素——`create`：`at`、`days`、`delivery`、`session`、目标 vault、`prompt` 全文，以及「注册当日是否补触发」；`remove`：任务 `id` 与 `at`。会话内批准缓存（「采纳且本会话不再问」）对这两件工具的主体串 SHALL 由 `id` / `at` / `days` 组成，MUST NOT 包含 `prompt`（主体串会进缓存键与诊断，`prompt` 的私密内容只出现在批准卡与会话留存里）。
 
@@ -1130,7 +1130,7 @@ provider 映射到各家实际 reasoning 参数。档位 SHALL 会话内生效�
 
 间接调用包装器（`sudo` / `xargs` / `find` 的 `-exec` / `-execdir` / `-ok` / `-okdir`，2026-10-10 Alex 裁决「堵」）SHALL 递归提取被包装命令、以其分类为本条调用的分类：`sudo rm` 视同 `rm`（危险），`sudo ls` 视同 `ls`（只读，不得误伤）。被包装命令取不出确定形态（裸 `sudo` / `xargs` 无命令 / `-exec` 子句不完整）SHALL 保守归为危险——任何档都逐个问。递归 MUST NOT 展开到包装器名单之外（不做通用 shell 语义解析），且 MUST 先于 shell 元字符保守规则判定（`sudo bash -c "a;b"` 按被包装命令判，不因外层参数带元字符落「写」被 `full_access` 放行）。
 
-分类为写、且写目标解析进 vault 内的 `cli_run` 调用，**任何权限档都 SHALL 直接拒绝**并回送结构化重定向提示：固定错误码（`cli_redirected_to_vault_tool`）+ 固定标记文本包裹的 JSON 载荷（`reason` / `targets` / `suggested_tool` 字段固定），指明应改用哪个 vault 工具（`vault_patch` / `vault_create` / `vault_move` / `vault_delete`）。`suggested_tool` SHALL 按写动词形态映射（`mv`/`cp`→`vault_move`、`rm`→`vault_delete`、`sed -i`/重定向→`vault_patch`、`touch`/新文件→`vault_create`、`mkdir`→`vault_create`）——`mkdir` 的落点是 `vault_create`：建目录不另立工具，`vault_create` SHALL 自动创建缺失的父目录（`mkdir -p` 语义）。目标是否「在 vault 内」的判定不确定时 SHALL NOT 重定向，回落正常写分类。闸门 MUST NOT 自动把 cli_run 改写成 vault 工具调用——重定向只经回送文本由模型自行改道。
+分类为写、且写目标解析进 vault 内的 `cli_run` 调用，**任何权限档都 SHALL 直接拒绝**并回送结构化重定向提示：固定错误码（`cli_redirected_to_vault_tool`）+ 固定标记文本包裹的 JSON 载荷（`reason` / `targets` / `suggested_tool` 字段固定），指明应改用哪个 vault 工具（`vault_patch` / `vault_create` / `vault_move` / `vault_delete`）。`suggested_tool` SHALL 按写动词形态映射（`mv`/`cp`→`vault_move`、`rm`→`vault_delete`、`sed -i`/重定向→`vault_patch`、`touch`/新文件→`vault_create`、`mkdir`→`vault_create`）——`mkdir` 的落点是 `vault_create`：建目录不另立工具，`vault_create` SHALL 自动创建缺失的父目录（`mkdir -p` 语义）。写目标是否「在 vault 内」的判定 SHALL 与工作区根一致（`cli_run` 子进程的工作目录即当前 vault，见「cli_run 的工作目录（vault 工作区）」）：不含 `..` 的相对写目标一律视为 vault 内目标——**包括根目录下尚不存在的新文件**，MUST NOT 再以「目标或父目录是否存在」作为 vault 归属的佐证（`cli_run` 不再继承主进程 cwd，存在性不再携带归属信息）；绝对路径须词法规范化后落在 vault 根之下才重定向；含 `..` 的路径、以及沿路径上已存在祖先解析到 vault 根之外的符号链接 SHALL NOT 重定向（逃逸防护保持，落回正常写分类）。该判定 SHALL 在**任何**权限档生效，`full_access` 档的 vault 内写同样被重定向。闸门 MUST NOT 自动把 cli_run 改写成 vault 工具调用——重定向只经回送文本由模型自行改道。
 
 #### Scenario: vault 内写被重定向
 
@@ -1888,11 +1888,11 @@ composer 之外（编辑器 / transcript 不被波及）。命令 SHALL 经统�
 
 ### Requirement: 系统提示词固定段来源
 
-系统提示词的两段固定正文——身份段（装配清单来源 id `identity`）与摘录回指纪律（来源 id `quote_reference`）——SHALL 以仓内 Markdown 文件为**唯一**真源：`src-tauri/src/harness/prompts/identity.md` 与 `src-tauri/src/harness/prompts/quote-reference.md`，经编译期嵌入进入程序。文件名与来源 id SHALL 一一对应（`identity` ↔ `identity.md`、`quote_reference` ↔ `quote-reference.md`，仅 `_` ↔ `-` 的命名转换不同），使「id → 文件」与「文件 → id」双向可检索；代码侧 SHALL 同时保留指向来源文件的仓内路径常量。系统 MUST NOT 在运行期从配置目录、vault 或任何外部路径读取这两段正文的覆盖内容，也 MUST NOT 在代码里保留第二份正文副本。
+系统提示词的固定段正文——身份段（装配清单来源 id `identity`）、摘录回指纪律（来源 id `quote_reference`）与工作区段（来源 id `workspace`）——SHALL 以仓内 Markdown 文件为**唯一**真源：`src-tauri/src/harness/prompts/identity.md`、`src-tauri/src/harness/prompts/quote-reference.md` 与 `src-tauri/src/harness/prompts/workspace-reference.md`，经编译期嵌入进入程序。文件名与来源 id SHALL 一一对应（`identity` ↔ `identity.md`、`quote_reference` ↔ `quote-reference.md`，仅 `_` ↔ `-` 的命名转换不同），使「id → 文件」与「文件 → id」双向可检索；代码侧 SHALL 同时保留指向来源文件的仓内路径常量。系统 MUST NOT 在运行期从配置目录、vault 或任何外部路径读取这三段正文的覆盖内容，也 MUST NOT 在代码里保留第二份正文副本。
 
-固定段的注入顺序 SHALL 仍由装配代码决定（identity → quote_reference → AGENTS.md 三层 → Skill 索引），MUST NOT 改为目录枚举顺序或文件名字典序——`prompts/` 目录内新增或重命名其他文件 MUST NOT 改变装配结果。装配处 SHALL 消化来源文件的末尾空白（每段统一 trim 一次，消化文件尾换行与既有字面量的差异），注入文本其余字节 SHALL 与来源文件正文逐字节一致（MUST NOT 重排、重折行、转义改写）；文件尾换行 / 行尾空白 MUST NOT 进入注入文本，固定段与相邻节的拼接格式（`\n\n===== 标题 =====\n` + 正文）SHALL 与改造前逐字节一致。
+固定段的注入顺序 SHALL 仍由装配代码决定（identity → workspace → quote_reference → path_reference → 定时任务 → AGENTS.md 三层 → Skill 索引），MUST NOT 改为目录枚举顺序或文件名字典序——`prompts/` 目录内新增或重命名其他文件 MUST NOT 改变装配结果。装配处 SHALL 消化来源文件的末尾空白（每段统一 trim 一次，消化文件尾换行与既有字面量的差异），注入文本其余字节 SHALL 与来源文件正文逐字节一致（MUST NOT 重排、重折行、转义改写）；文件尾换行 / 行尾空白 MUST NOT 进入注入文本，固定段与相邻节的拼接格式（`\n\n===== 标题 =====\n` + 正文）SHALL 与改造前逐字节一致。
 
-装配清单（`session_open.assembly`，形态见「会话本地留存」）中这两段的条目 SHALL 记录来源文件的**仓内相对路径**（`src-tauri/src/harness/prompts/identity.md` / `src-tauri/src/harness/prompts/quote-reference.md`）：`path` MUST NOT 为 `null`，MUST NOT 为构建机绝对路径（绝对路径会把本机用户名写进会话留存）；`exists` SHALL 恒为 `true`，`bytes` SHALL 为注入（trim 后）文本的字节数。
+工作区段的正文是**模板**：运行期代入当前 vault 的绝对根路径，注入文本因此 MUST NOT 被断言为与模板文件逐字节相等（其余固定段照旧逐字节相等），它的清单条目 `bytes` 取代入后的注入文本字节数。装配清单（`session_open.assembly`，形态见「会话本地留存」）中各固定段的条目 SHALL 记录来源文件的**仓内相对路径**（`src-tauri/src/harness/prompts/identity.md` / `src-tauri/src/harness/prompts/quote-reference.md`）：`path` MUST NOT 为 `null`，MUST NOT 为构建机绝对路径（绝对路径会把本机用户名写进会话留存）；`exists` SHALL 恒为 `true`，`bytes` SHALL 为注入（trim 后）文本的字节数。
 
 #### Scenario: 固定段正文来自仓内文件
 
@@ -1912,7 +1912,7 @@ composer 之外（编辑器 / transcript 不被波及）。命令 SHALL 经统�
 #### Scenario: 装配顺序不随目录内容变化
 
 - **WHEN** `prompts/` 目录内新增或重命名其他文件
-- **THEN** 固定段的注入顺序仍为 identity → quote_reference，装配结果不随目录枚举顺序或文件名字典序变化
+- **THEN** 固定段的注入顺序仍为 identity → workspace → quote_reference（其后是 path_reference、定时任务、AGENTS.md 三层与 Skill 索引），装配结果不随目录枚举顺序或文件名字典序变化
 
 ### Requirement: 输出中的 vault 路径可点击
 
@@ -2969,3 +2969,103 @@ MUST NOT 被改写（`vault_root` 保持原样），也 MUST NOT 重新分桶；
 
 - **WHEN** 请求打开的 vault 根目录不存在或无权访问（规范化失败）
 - **THEN** 打开动作 SHALL 失败并如实报错（工作区路径错误），MUST NOT 以原始拼写继续打开
+
+### Requirement: harness 工作区（vault 绝对根与路径边界）
+
+每个 harness 运行——交互会话、子代理运行、无人值守定时运行——SHALL 绑定一个**当前 vault**，三层语义 SHALL 取同一个 vault 根，MUST NOT 各自推导：上下文层注入绝对根与路径用法边界；执行层让 `cli_run` 子进程以该目录为工作目录；判定层用同一根解释相对写目标。
+
+上下文层：装配系统上下文时 SHALL 注入一段「工作区」，逐字节含该 vault 的**绝对根路径**（`VaultScope.root` 的值，不是占位符、不是 `~` 展开形态），并写明两种路径的用法边界——`vault_*` 工具只接受与返回 vault 相对路径；`cli_run` 子进程从该目录启动，其相对路径因此就是 vault 内路径；vault 之外的目标用绝对路径表达。该段 SHALL 走固定段的既有装配路径：正文来自仓内模板 `src-tauri/src/harness/prompts/workspace-reference.md`，运行期代入根路径；装配清单（`session_open.assembly`）SHALL 记一条来源 `workspace`，`path` 为该模板的仓内相对路径（非 `null`、非绝对路径），`exists` 恒为 `true`，`bytes` 为**代入后**注入文本的字节数（因此与模板文件不逐字节相等）。
+
+该段 SHALL 对主会话、子代理运行、定时运行三条装配路径同时生效——三者走同一个装配函数，MUST NOT 只在交互路径注入。子代理的定义正文替换的是固定身份段，工作区段 MUST NOT 随之消失。
+
+系统 MUST NOT 把 vault 文件清单或目录树整棵注入该段或任何工具结果（有界输出由「目录与路径发现（`vault_list`）」承担）。
+
+#### Scenario: 绝对根注入
+
+- **WHEN** 在路径为 `<vault>` 的 vault 里发起新会话、发起子代理运行或触发一次定时运行
+- **THEN** 该次运行的系统上下文含 `<vault>` 的绝对路径（与 `VaultScope.root` 逐字节一致），并含「`vault_*` 用相对路径 / `cli_run` 从该目录启动 / 外部目标用绝对路径」的边界说明
+- **AND** `session_open.assembly` 有 `workspace` 条目：仓内模板相对路径、`exists: true`、`bytes` 非零且等于注入文本字节数
+
+#### Scenario: 装配顺序固定
+
+- **WHEN** 发起新会话
+- **THEN** 注入顺序为 identity → workspace → quote_reference → path_reference → 定时任务 → AGENTS.md 三层 → Skill 索引；顺序由装配代码决定，MUST NOT 随 `prompts/` 目录内容或文件名排序变化
+
+#### Scenario: 子代理运行替换身份段但保留工作区
+
+- **WHEN** 子代理定义正文非空
+- **THEN** 系统上下文以定义正文替换固定身份段，工作区段仍在场（含同一绝对根）；子运行的装配清单同样有 `workspace` 条目
+
+#### Scenario: 多 vault 各落自己的根
+
+- **WHEN** 先后在 vault A 与 vault B 各发起一次新会话
+- **THEN** A 的运行只含 A 的绝对根、B 的运行只含 B 的绝对根；两次上下文互不出现对方的路径
+
+### Requirement: 目录与路径发现（`vault_list`）
+
+系统 SHALL 提供只读 vault 工具 `vault_list`，承担 vault 内目录导航与路径 / 文件名发现，是「定位 → 阅读 / 搜索 → 修改 / 综合」任务链的入口。参数：`path`（vault 相对目录，缺省为 vault 根）、`recursive`（缺省 `false`，只列一层；`true` 才下钻）、`path_glob`（可选路径过滤，`*` 匹配任意字符序列含 `/`、`?` 匹配单个字符——与 `vault_search` 同一写法）、`limit`（有界条数）、`cursor`（上一页的 `next_cursor`）。返回 `entries`（每项含 `path`（vault 相对、`/` 分隔）与 `kind`（`file` / `directory`））、`truncated`、`next_cursor`（仅 `truncated: true` 时出现）。
+
+排序 SHALL 按 `path` 的码点升序，MUST NOT 依赖文件系统枚举顺序或大小写折叠。分页 SHALL 稳定且无状态：`next_cursor` SHALL 为本页最后一条的 `path`，传入 `cursor` 时只返回严格大于该值的条目；`limit` 缺省取有界默认值、超过上限按上限、小于 1 按 1；`truncated: true` 表示本次仍有未返回条目，`truncated: false` 时 MUST NOT 出现 `next_cursor`。
+
+可见性与分类 SHALL 与文件树、`vault_search` 同一套规则（复用 fs-io 的枚举与忽略实现，MUST NOT 另建目录语义）：`hidden` 档命中者不出现、也不下钻；`lazy` 档或用户规则命中的**条目**照常出现为一行（与文件树的「惰性可见」同口径——用户规则不隐藏文件，只让它不进索引），其子树 MUST NOT 展开（`recursive: true` 也不展开）。`path` SHALL 经 vault 内解析校验（绝对路径被拒并提示改用 vault 相对路径；`..` 逃逸拒绝）；`path` 不存在或不是目录时 SHALL 回送结构化错误。
+
+结果 MUST NOT 含文件正文、大小、修改时间等元数据；MUST NOT 一次返回整棵 vault 树。该工具是只读工具：三档权限均 SHALL 直接放行，且 MUST NOT 进入任何批准闸。
+
+#### Scenario: 默认只列一层
+
+- **WHEN** 模型调用 `vault_list()`（vault 根有 `a.md`、目录 `notes/`，`notes/` 内有 `b.md`）
+- **THEN** `entries` 恰为根下的一层条目（含 `a.md` 与 `notes/`，不含 `notes/b.md`），每项只有 `path` 与 `kind`；`truncated: false` 且无 `next_cursor`
+
+#### Scenario: 递归与路径过滤
+
+- **WHEN** 模型调用 `vault_list(path: "notes", recursive: true)`，同目录下另有 `notes/2026/c.md`
+- **THEN** 结果含 `notes/b.md`、`notes/2026` 与 `notes/2026/c.md`（递归下钻）
+- **AND** 追加 `path_glob: "*.md"` 时只返回以 `.md` 结尾的条目（目录条目同样按自身路径匹配）
+
+#### Scenario: 稳定排序与分页
+
+- **WHEN** 某目录有 5 个条目，模型以 `limit: 2` 连续调用三次（第二、三次带上一页的 `next_cursor`）
+- **THEN** 三页按 `path` 升序拼起来恰为全部 5 条、无重复无遗漏；前两页 `truncated: true` 且带 `next_cursor`，第三页 `truncated: false` 且无 `next_cursor`
+- **AND** 直接以 `cursor` 值为起点重跑得到同一后继分页（分页无服务端状态）
+
+#### Scenario: 忽略规则与惰性目录
+
+- **WHEN** vault 根有 `.DS_Store`（hidden 档）、`.gitignore` 排除 `secret.log`（用户规则），且某目录被 `lazy` 档命中（如 `node_modules`）
+- **THEN** `.DS_Store` 不出现在任何一页（hidden 档不可见）；`secret.log` 出现为一行（用户规则是「惰性可见」——与文件树同口径，不隐藏文件）；`node_modules` 出现为一行但其子孙不出现——即使 `recursive: true`
+
+#### Scenario: 越界与非法目标
+
+- **WHEN** 模型调用 `vault_list(path: "../outside")`、`vault_list(path: "/etc")`、`vault_list(path: "missing")`，或对一个文件调用 `vault_list(path: "a.md")`
+- **THEN** 每次都被拒绝并回送结构化错误（逃逸 / 绝对路径 / 不存在 / 不是目录各自可区分）；MUST NOT 返回 vault 外任何条目
+
+#### Scenario: 只返回路径与类型
+
+- **WHEN** 模型列出一个含大段正文与二进制文件的目录
+- **THEN** 任一 `entries` 项只有 `path` 与 `kind` 两个语义字段；结果里 MUST NOT 出现文件正文、大小或修改时间
+
+### Requirement: cli_run 的工作目录（vault 工作区）
+
+系统 SHALL 为**每次** `cli_run` 子进程单独设置工作目录为当前 vault 根，并同步该子进程的环境变量 `PWD` 为同一目录；MUST NOT 用 `set_current_dir` 一类调用改动 Lumir 主进程的全局 cwd。工作目录 MUST 逐次显式设置（不依赖上一次调用或进程启动时的残留状态），因此同一进程内 vault A 与 vault B 的运行各自落在自己的根上。工具参数 MUST NOT 提供可由模型填写的任意 `cwd`；vault 之外的目标仍以绝对路径在 argv 中表达。
+
+工作目录只决定子进程从哪里启动：命令分类、危险黑名单、allow / deny 规则与模式默认分层 MUST NOT 因它改变（判定仍只看 argv 与写目标的 vault 内判定）。子代理运行与无人值守定时运行遵守同一合同——`cli_run` 落在**该次运行的**当前 vault（子运行 = 发起时的父会话 vault；定时运行 = 任务配置的目标 vault），与上一次调用或进程启动目录无关。
+
+#### Scenario: pwd 返回当前 vault
+
+- **WHEN** 模型在 vault `<vault>` 的会话里调用 `cli_run("pwd", [])`
+- **THEN** 子进程 stdout 为 `<vault>` 的绝对路径（末尾换行可有），不是 `/`、不是 Lumir 主进程的工作目录
+
+#### Scenario: A/B vault 各落自己的根
+
+- **WHEN** 先在 vault A、再在 vault B 的会话里各调用一次 `cli_run("pwd", [])`
+- **THEN** 两次分别返回 A 与 B 的绝对路径；两次调用之间与之后，Lumir 主进程的 `current_dir` 不变
+
+#### Scenario: 子代理运行的 cwd
+
+- **WHEN** 子代理定义声明了 `cli_run`，父会话在 vault A，模型在 A 的会话里发起子运行
+- **THEN** 子运行里的 `pwd` 返回 A——子运行继承**发起时的当前 vault**（与父会话同一个根）；跨 vault
+  委派不在本契约内（`task` 没有 `vault` 参数），MUST NOT 据此推断存在跨 vault 能力
+
+#### Scenario: 权限判定不因 cwd 改变
+
+- **WHEN** `full_access` 档下模型调用 `cli_run("touch", ["notes/new.md"])`（`notes/` 在 vault 内）
+- **THEN** 该调用仍被 vault 内写重定向拦下（不因 `full_access` 或子进程 cwd 放行），回送 `cli_redirected_to_vault_tool` 与 `suggested_tool: vault_create`

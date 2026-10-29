@@ -336,7 +336,7 @@ capability。
 
 ### Requirement: 系统提示词固定段来源
 
-系统提示词的固定段正文——身份段（装配清单来源 id `identity`）、摘录回指纪律（来源 id `quote_reference`）与工作区段（来源 id `workspace`）——SHALL 以仓内 Markdown 文件为**唯一**真源：`src-tauri/src/harness/prompts/identity.md`、`src-tauri/src/harness/prompts/quote-reference.md` 与 `src-tauri/src/harness/prompts/workspace-reference.md`，经编译期嵌入进入程序。文件名与来源 id SHALL 一一对应（`identity` ↔ `identity.md`、`quote_reference` ↔ `quote-reference.md`，仅 `_` ↔ `-` 的命名转换不同），使「id → 文件」与「文件 → id」双向可检索；代码侧 SHALL 同时保留指向来源文件的仓内路径常量。系统 MUST NOT 在运行期从配置目录、vault 或任何外部路径读取这两段正文的覆盖内容，也 MUST NOT 在代码里保留第二份正文副本。
+系统提示词的固定段正文——身份段（装配清单来源 id `identity`）、摘录回指纪律（来源 id `quote_reference`）与工作区段（来源 id `workspace`）——SHALL 以仓内 Markdown 文件为**唯一**真源：`src-tauri/src/harness/prompts/identity.md`、`src-tauri/src/harness/prompts/quote-reference.md` 与 `src-tauri/src/harness/prompts/workspace-reference.md`，经编译期嵌入进入程序。文件名与来源 id SHALL 一一对应（`identity` ↔ `identity.md`、`quote_reference` ↔ `quote-reference.md`，仅 `_` ↔ `-` 的命名转换不同），使「id → 文件」与「文件 → id」双向可检索；代码侧 SHALL 同时保留指向来源文件的仓内路径常量。系统 MUST NOT 在运行期从配置目录、vault 或任何外部路径读取这三段正文的覆盖内容，也 MUST NOT 在代码里保留第二份正文副本。
 
 固定段的注入顺序 SHALL 仍由装配代码决定（identity → workspace → quote_reference → path_reference → 定时任务 → AGENTS.md 三层 → Skill 索引），MUST NOT 改为目录枚举顺序或文件名字典序——`prompts/` 目录内新增或重命名其他文件 MUST NOT 改变装配结果。装配处 SHALL 消化来源文件的末尾空白（每段统一 trim 一次，消化文件尾换行与既有字面量的差异），注入文本其余字节 SHALL 与来源文件正文逐字节一致（MUST NOT 重排、重折行、转义改写）；文件尾换行 / 行尾空白 MUST NOT 进入注入文本，固定段与相邻节的拼接格式（`\n\n===== 标题 =====\n` + 正文）SHALL 与改造前逐字节一致。
 

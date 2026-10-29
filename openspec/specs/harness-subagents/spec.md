@@ -273,11 +273,12 @@ sidecar 重建一条自动化通知并上屏（agent / description / 终态 / `s
 
 ### Requirement: 工具集声明与默认收紧
 
-子运行的工具集 SHALL 来自定义的 `tools` 白名单，闭集合 SHALL 为 8 件 vault 操作工具（`vault_read` /
-`vault_search` / `vault_patch` / `vault_create` / `vault_move` / `vault_delete` / `skill_load` /
-`cli_run`）。`tools` 缺省时 SHALL 为只读三件 `vault_read` / `vault_search` / `skill_load`；写类工具
-与 `cli_run` MUST 由定义显式声明后才可见。未声明的工具 MUST NOT 出现在子运行的工具定义里。
-**缺省收紧只是缺省值，不是能力上限**：`tools` SHALL 接受上述 8 件工具的任意子集（含写类与
+子运行的工具集 SHALL 来自定义的 `tools` 白名单，闭集合 SHALL 为 9 件 vault 操作工具（`vault_read` /
+`vault_search` / `vault_list` / `vault_patch` / `vault_create` / `vault_move` / `vault_delete` / `skill_load` /
+`cli_run`）。`tools` 缺省时 SHALL 为只读三件 `vault_read` / `vault_search` / `skill_load`；`vault_list` 是
+只读工具、**可由定义显式声明授予**（缺省集不变，仍为只读三件；声明的子运行因此能列目录）；写类
+工具与 `cli_run` MUST 由定义显式声明后才可见。未声明的工具 MUST NOT 出现在子运行的工具定义里。
+**缺省收紧只是缺省值，不是能力上限**：`tools` SHALL 接受上述 9 件工具的任意子集（含写类与
 `cli_run`），声明后的可见性不受额外限制。工具集里 MUST NOT 包含 web 类工具——这是 harness 本体的
 能力边界（主会话同样没有 web 工具），MUST NOT 被表述为「子代理被额外削减」；联网检索的现时方式是
 `cli_run` 调用外部 CLI（与主会话同权，受权限管线与批准闸约束）。
