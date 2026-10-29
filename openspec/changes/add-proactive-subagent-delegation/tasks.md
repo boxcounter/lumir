@@ -6,18 +6,21 @@
 ## 1. 委派策略段（`task` 工具描述）
 
 - [ ] 1.1 在 `src-tauri/src/harness/tools.rs` 加策略段常量（单一居所，文案逐字取 design §3.1 并经 Alex 裁决后的版本），`task_definition` 的组装顺序固定为「能力说明 → 策略段 → 清单」
-- [ ] 1.2 单测：描述以能力说明开头、策略段居中、清单在后；策略段恰出现一次；四个固定标签「匹配就委派」「无匹配就自己做」「简单任务自己做」「独立才并行」与各自判据在场；「无匹配就自己做」判据里含子任务分工的许可措辞（「子任务」在场，不能只写「一律自己做」）；描述里不出现「必须并行」这类义务措辞；清单仍是逐定义一行 `- <name>：<description>`
+- [ ] 1.2 单测：描述以能力说明开头、策略段居中、清单在后；策略段恰出现一次；四个固定标签「匹配就委派」「无匹配就自己做」「简单任务自己做」「独立才并行」与各自判据在场；「匹配就委派」含「专用优先、general 次选」的条件分支（「专用」在 `general` 之前）；「无匹配就自己做」判据里含子任务分工的许可措辞（「子任务」在场，不能只写「一律自己做」）；描述里不出现「必须并行」这类义务措辞；清单仍是逐定义一行 `- <name>：<description>`
 - [ ] 1.3 单测（反面对照）：装配后的 system prompt 不含策略段措辞；同一条测试先断言 identity 含某条已知工具纪律（正对照，防「空串上打转」）
 - [ ] 1.4 单测：`[harness.subagents].enabled=false` 时 `task` 不在工具定义里，策略段不出现（关停口径沿用 `run::gate_tool_definitions`，不新增第二个关闭点）
 - [ ] 1.5 `docs/specs/subagent-definitions.md` §8「清单注入与容量告警」补一段：注入顺序为能力说明 → 策略段 → 清单，并逐字抄录 design §3.1 的策略段全文（文档与代码同一份文案；四个固定标签不得改写成同义说法）
 - [ ] 1.6 单测（无自动改派）：`task(agent=<不存在的名字>)` 只回 `agent_not_found` 与可用清单、不启动子运行（无 `subagent_started`、无审计文件）；并断言清单里只有只读 `explore` 时不存在把该调用改写为 `explore` 的路径（观测终态同「不启动子运行」）
 
-## 2. 内建 `explore` 补 `vault_list`
+## 2. 内建定义（`explore` 补 `vault_list`；`general` 候选）
 
 - [ ] 2.1 `src-tauri/src/harness/agents.rs` 的 `BUILTIN_EXPLORE`：`tools` 加 `vault_list`（四件）、描述改为「在 vault 里列目录、按路径枚举、搜索与读取文件、加载 skill，产出结论与依据；不改文件、不跑命令。」
-- [ ] 2.2 单测：内建 `explore` 的 `tools` 恰为四件且含 `vault_list`；`DEFAULT_TOOLS` 仍为只读三件（钉住「不扩缺省集」；若 Alex 裁决一并扩，本节改为断言四件并同步 design 裁决点 2 的记录）
+- [ ] 2.2 单测：内建 `explore` 的 `tools` 恰为四件且含 `vault_list`；`DEFAULT_TOOLS` 仍为只读三件（钉住「不扩缺省集」；若 Alex 裁决一并扩，本节改为断言四件并同步 design §9.3 的记录）
 - [ ] 2.3 检查既有断言里写死「explore 只读三件」的位置（`scripts/acceptance/scenarios/200-subagent-explore.md` 等），逐条改准
 - [ ] 2.4 `docs/specs/subagent-definitions.md` §6 的 `explore` 表格与描述同步四件
+- [ ] 2.5 **（仅当 design §9.2 裁决新增 `general`）** 新增 `BUILTIN_GENERAL`：通用身份段（按 prompt 完成任务、先读后改、写与命令受批准闸、不能再次委派、结束给结论与改动清单）、`tools` 为 9 件闭集合全量、`model: inherit`、三闸取配置缺省、描述「通用执行：按任务说明读写 vault、改文件、跑命令；不预设任务类型，一切由 prompt 决定」。裁决不新增时本项与 2.6 / 2.7 一并标注放弃理由（不删任务项）
+- [ ] 2.6 单测：`general` 的 `tools` 恰为 9 件闭集合（含写类与 `cli_run`）、**不含** `task` 与三件 cron 工具；`source = builtin`；同名自定义定义覆盖它并产 warning；`DEFAULT_TOOLS` 仍为三件
+- [ ] 2.7 `docs/specs/subagent-definitions.md` §6 增 `general` 一行（工具集、描述、覆盖规则）
 
 ## 3. `llm_request.tool_names`
 
@@ -36,20 +39,22 @@
 
 ## 5. 真实 provider 行为验收（按 design §7，不接受 mock 替代）
 
-- [ ] 5.1 在已配置真实 provider 的本机 app（`pnpm tauri dev`）打开合成 vault（`/tmp/lumir-m102-acceptance` 或 `/tmp/lumir-probe-proactive-m800`）；全程不读取 / 不复制 / 不手改凭据文件；开工前经**设置面**（设置面板「子代理」总开关）确认并记录 `[harness.subagents].enabled` 的进入时值（预期为开启），它就是 5.8 的恢复目标值；同时做格 D 的前提核对——只列目录（`ls`）合成 vault 的 `.lumir/agents/` 与 `<config_dir>/agents/`，确认无非内建定义（前提不成立则格 D 记「未验证」，不得判 PASS）
-- [ ] 5.2 格 A（多文件调研，不提子代理名）：记录首条 `llm_request.tool_names`（须含 `task`）与首条 `llm_response.tool_calls`（须有 `name=task`、`agent=explore`）；对照诊断 `subagent_started` / `subagent_finished`
-- [ ] 5.3 格 B（简单单文件问题）：须无 `task` 调用，且 `tool_names` 仍含 `task`（证明是「选择不派」而非「看不见」）
-- [ ] 5.4 格 D（整件事需要写文件、清单里只有只读 `explore`：多文件调研 + 把结论写入 `notes/summary.md`）：三路判据——①**禁止**把整件事派给 `explore`（出现 `task(agent=explore)` 且 prompt 要求写文件 / 执行命令即判红）；②零 `task` 合格（主会话自己读写、写入成功）；③只派只读子任务合格（`task` prompt 只含只读诉求、子运行工具集为 `explore` 白名单、写仍由主会话完成）。三路都要求 `tool_names` 含 `task`（暴露在场）
-- [ ] 5.5 格 C（同 A 提问，**经设置面**关闭「子代理」总开关）：`tool_names` 不含 `task`、无 `subagent_started`；关闭后先记一次读数
-- [ ] 5.6 证据落 `.local/reviews/proactive-subagent-delegation-oct29/real-provider.md`：模型 id（取 `llm_request.model`）、提问原文、四格抽取表、格 D 前提核对结果、格 D 的 `task` 调用（若有）的 agent / description / prompt 摘录与三路判定、样本限制（单模型 / 每格 N=1 / 只作存在性判据）；证据只抽字段，不含 `system` / `messages` 原文；格 D 必须照写「只覆盖这一种形态，不能证明所有不匹配情形，也不度量零 `task` 与只读子任务哪种更多」
-- [ ] 5.7 失败处置按 design §7.4 执行并留痕：一次只改一处措辞、最多两轮、失败轮次不得删除；两轮仍不达标则停手上报 Alex，附两轮措辞差异与读数
-- [ ] 5.8 **强制收尾（无论 5.2–5.7 成功、失败、超时或中止）**：按 design §7.5 经设置面把「子代理」总开关恢复为 5.1 记录的进入时值，并在恢复后用界面状态或**新发的**请求 `tool_names` 核实含 `task`；把「进入时值 / 格 C 关闭后读数 / 恢复动作 / 恢复后核实读数」四行写进 real-provider.md。不得读 / 备份 / 改凭据文件；恢复失败即停手上报，未恢复不得写 PASS
+- [ ] 5.1 在已配置真实 provider 的本机 app（`pnpm tauri dev`）打开合成 vault（`/tmp/lumir-m102-acceptance` 或 `/tmp/lumir-probe-proactive-m800`）；全程不读取 / 不复制 / 不手改凭据文件；开工前经**设置面**（设置面板「子代理」总开关）确认并记录 `[harness.subagents].enabled` 的进入时值（预期为开启），它就是 5.10 的恢复目标值；同时做清单前提核对——只列目录（`ls`）合成 vault 的 `.lumir/agents/` 与 `<config_dir>/agents/`，确认没有其它自定义定义（前提不成立则相关格记「未验证」，不得判 PASS）
+- [ ] 5.2 格 A（只读调研，explore 正向；不提子代理名）：`llm_response.tool_calls` 含 `name=task`、`agent=explore`；首条 `llm_request.tool_names` 含 `task`；子运行工具集为 explore 白名单
+- [ ] 5.3 格 E（写类任务，general 正向；仅当 design §9.2 裁决新增）：多文件调研 + 写入 `notes/summary.md` + 重命名 `notes/old.md` → `llm_response.tool_calls` 含 `name=task`、`agent=general`；`subagent_started` 的 `tools` 为 9 件闭集合；写与重命名在子运行完成，父会话只收摘要
+- [ ] 5.4 格 B（简单只读任务，负向）：须无 `task` 调用，且 `tool_names` 仍含 `task`
+- [ ] 5.5 格 F（简单写任务，负向；`general` 在场）：单文件小改 → 须无 `task`（尤其不派 `general`），父会话自己 `vault_patch` 成功
+- [ ] 5.6 格 D（整件事无匹配：同 A 调研 + 写入 `notes/summary.md`，清单按 design §7.1 构造成只有只读子代理）：三路判据——①**禁止**把整件事派给只读代理（出现 `task` 且 prompt 要求写文件 / 执行命令即判红）；②零 `task` 合格；③只派只读子任务合格（prompt 只含只读诉求、子运行工具集为只读白名单、写由主会话完成）。三路都要求 `tool_names` 含 `task`；跑完删除覆盖文件
+- [ ] 5.7 格 C（同 A 提问，**经设置面**关闭「子代理」总开关）：`tool_names` 不含 `task`、无 `subagent_started`；关闭后先记一次读数
+- [ ] 5.8 证据落 `.local/reviews/proactive-subagent-delegation-oct29/real-provider.md`：模型 id（取 `llm_request.model`）、提问原文、六格抽取表、格 D 的清单构造与三路判定、格 E 的 agent / tools / 用量、样本限制（单模型 / 每格 N=1 / 只作存在性判据）；证据只抽字段，不含 `system` / `messages` 原文；格 D 与格 E 必须照写各自的证据边界（见 design §7.2）
+- [ ] 5.9 失败处置按 design §7.4 执行并留痕：一次只改一处措辞、最多两轮、失败轮次不得删除；两轮仍不达标则停手上报 Alex，附两轮措辞差异与读数
+- [ ] 5.10 **强制收尾（无论 5.2–5.9 成功、失败、超时或中止）**：按 design §7.5 经设置面把「子代理」总开关恢复为 5.1 记录的进入时值，并在恢复后用界面状态或**新发的**请求 `tool_names` 核实含 `task`；把「进入时值 / 格 C 关闭后读数 / 恢复动作 / 恢复后核实读数」四行写进 real-provider.md。不得读 / 备份 / 改凭据文件；恢复失败即停手上报，未恢复不得写 PASS
 
 ## 6. 台账、门禁与评审
 
 - [ ] 6.1 删除 `docs/backlog.md` 的 M772 条目「子代理缺省工具集是否加入 `vault_list`」（本 change 承接；若 2.2 按「一并扩缺省集」落地，条目内容与结论一致再删）
 - [ ] 6.2 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过；`bash scripts/docs-check.sh` 通过（含归档对账门禁：delta 无静默丢段）
 - [ ] 6.3 `bash scripts/gate.sh quick` 全绿（改过 Rust 与验收场景；未改样式，不触发视觉档）；照抄 `GATE RESULT` 原文行进报告
-- [ ] 6.4 完工报告按 design §1.1 的四层判据逐层给证据指针（①③④ 给机器读数与场景 id，②给真实 provider 四格表）；②未达标不得写完成，也不得以 mock / 单测替代
+- [ ] 6.4 完工报告按 design §1.1 的四层判据逐层给证据指针（①③④ 给机器读数与场景 id，②给真实 provider 六格表）；②未达标不得写完成，也不得以 mock / 单测替代
 - [ ] 6.5 归档顺序：本 change 的 delta 以「工具集声明与默认收紧」含 `vault_list` 为前提，MUST 排在该 change 归档之后（design §8）；归档前由 tower 核对 living spec 的闭集合已是 9 件
 - [ ] 6.6 独立评审：非作者 reviewer 结论 clean / merge 且绑定当前 tip；按「节点 2 五要件」把 proposal 的节点 2 记录填齐（任务、delta、门禁、真机、真实 provider 证据、归档队列条目）

@@ -1,14 +1,19 @@
 # harness-subagents 增量规格（change add-proactive-subagent-delegation）
 
-> 起草注记（非规格正文）：本 delta 一条 ADDED（委派触发时机的唯一居所）、一条 MODIFIED（内建
-> `explore` 的工具集补 `vault_list`）。MODIFIED 块按当前 living spec
+> 起草注记（非规格正文）：本 delta 一条 ADDED（委派触发时机的唯一居所）、一条 MODIFIED（内建定义：
+> `explore` 补 `vault_list`、新增 `general`）。MODIFIED 块按当前 living spec
 > （`openspec/specs/harness-subagents/spec.md`）的整条 requirement 复制再改，段落顺序与段数保持
-> 不变，改动只有「内建 `explore`」一段与同名场景的「只读三件 → 只读四件」。
+> 不变，改动为「内建 `explore`」一段的改准、新增「内建 `general`」一段与两个同名场景。
+>
+> **`general` 是待裁候选（design §9.2），不默认已批准**：若节点 1 裁决不新增，本 delta 删除
+> 「内建 `general`」一段与 `general` 场景、以及 ADDED 条里「专用优先、`general` 次选」的分支，
+> 其余（`explore`、策略、`tool_names`）不变。
 >
 > **归档顺序（语义依赖，非 delta 基线依赖）**：`vault_list` 进入「工具集声明与默认收紧」条的闭集合
 > 由 change `add-harness-vault-workspace-list` 的 delta 承担（该 change 已实现、待归档）。本 change
-> 必须在它**之后**归档，否则并入后的 living spec 会出现「`explore` 声明了闭集合外的工具」的自相
-> 矛盾。两 change 改的是不同 requirement，不存在 delta 互相覆盖。
+> 必须在它**之后**归档，否则并入后的 living spec 会出现「`explore` / `general` 声明了闭集合外的
+> 工具」的自相矛盾——`general` 声明 9 件全量，尤其依赖这一条。两 change 改的是不同 requirement，
+> 不存在 delta 互相覆盖。
 
 ## ADDED Requirements
 
@@ -21,9 +26,10 @@
 清单的格式与来源沿用「子代理定义文件」条（每行一个定义），本 requirement 不另定义清单形状。
 
 委派成立 SHALL 需要两个独立条件同时成立：**①任务形状适合委派**（跨多份文件调研 / 比对，或过程材料
-多、只需要一份压缩结论）；**②清单里存在 `description` 与所需能力都匹配的定义**——针对**整件事**，
-或针对能从它**独立拆出的子任务**。整件事与拆出的子任务都不匹配时，模型 SHALL 自己做，MUST NOT 把
-能力不匹配的整件事硬塞给子代理（只读的 `explore` MUST NOT 承接需要写文件或执行命令的整件事）。
+多、只需要一份压缩结论）；**②清单里存在 `description` 与所需能力都匹配的定义**（专用定义或 `general`）
+——针对**整件事**，或针对能从它**独立拆出的子任务**。整件事与拆出的子任务都不匹配时，模型 SHALL 自己
+做，MUST NOT 把能力不匹配的整件事硬塞给子代理（只读的 `explore` MUST NOT 承接需要写文件或执行命令的
+整件事）。
 
 允许且 SHALL 允许**只委派匹配的子任务**：整件事里若有一段能力与描述都对得上、且本身是独立可交付
 单元（只用子代理已声明的工具即可完成），策略段 SHALL 允许只把该子任务交给子代理、其余由主会话
@@ -32,11 +38,12 @@
 策略段 SHALL 至少表达四条判据，四条判据的**固定标签**逐字为「匹配就委派」「无匹配就自己做」
 「简单任务自己做」「独立才并行」（它们是跨制品的固定锚点，MUST NOT 改写成同义说法）：
 
-1. **匹配就委派**：策略段 SHALL 指示模型——任务形状适合委派，且清单里有一个 `description` 与能力
-   都对得上的子代理时，主动委派该子代理（匹配哪个就派哪个），不必等用户点名；
-2. **无匹配就自己做**：策略段 SHALL 指示模型——整件事、以及能从它独立拆出的子任务，在清单里都没有
-   匹配的子代理时，自己做，MUST NOT 调用 `task`，MUST NOT 拿能力不够的子代理硬扛；若能拆出匹配且
-   独立可交付的子任务，SHALL 允许只派那一段、其余自己做；
+1. **匹配就委派**：策略段 SHALL 指示模型——任务形状适合委派时**按顺序选人**：清单里有 `description`
+   与能力都对得上的**专用**定义就派它（匹配哪个派哪个，不必等用户点名）；没有专用、但清单里有
+   `general` 且任务在它的能力范围内，派 `general`——专用优先、`general` 是次选而非默认选择；
+2. **无匹配就自己做**：策略段 SHALL 指示模型——整件事、以及能从它独立拆出的子任务，在清单里既没有
+   匹配的专用定义、也不适合交给 `general` 时，自己做，MUST NOT 调用 `task`，MUST NOT 拿能力不够的
+   子代理硬扛；若能拆出匹配且独立可交付的子任务，SHALL 允许只派那一段、其余自己做；
 3. **简单任务自己做**：策略段 SHALL 指示模型——读一两个文件、一两次工具调用就能答完的任务自己做、
    不委派；委派有固定开销（另起上下文、多一轮摘要），不为用而用；
 4. **独立才并行**：策略段 SHALL 指示模型——互不依赖的多份调研**可以**在同一条消息里发起多个
@@ -66,7 +73,8 @@
 
 - **WHEN** 读取 `task` 工具定义
 - **THEN** 描述含「匹配就委派」「无匹配就自己做」「简单任务自己做」「独立才并行」四个固定标签与
-  各自判据，缺任一即不满足本 requirement；且描述里没有把「独立才并行」写成「必须并行」这类义务措辞
+  各自判据，缺任一即不满足本 requirement；「匹配就委派」判据含「专用优先、`general` 次选」的条件
+  分支；且描述里没有把「独立才并行」写成「必须并行」这类义务措辞
 
 #### Scenario: 无匹配不自动改派
 
@@ -128,6 +136,14 @@ MUST NOT 出现「描述声称能列目录、工具集里却没有列目录工�
 内建定义 SHALL 与磁盘定义走同一条装载、校验与清单注入路径，MUST NOT 形成代码里的特殊分支。
 同名定义 SHALL 以用户级 / vault 级覆盖内建（覆盖时产一条人话 warning，清单里只出现生效的一份）。
 
+系统 SHALL 内置一个通用子代理定义 `general`：`tools` 为闭集合全部 9 件 vault 操作工具
+（`vault_read` / `vault_search` / `vault_list` / `vault_patch` / `vault_create` / `vault_move` /
+`vault_delete` / `skill_load` / `cli_run`），`model` = `inherit`，三闸取 `[harness.subagents]` 缺省，
+描述其用途为「通用执行：按任务说明读写 vault、改文件、跑命令；不预设任务类型，一切由 prompt 决定」。
+`general` MUST NOT 获得 `task` 与三件 cron 工具（闭集合之外，派生深度仍恰好 1 层）；ask 级调用照
+既有批准透传语义执行并点名 `general`；同名定义覆盖与 `explore` 同规则（覆盖产 warning，清单只出现
+一份）。`general` 的存在不改变「子运行工具集来自定义白名单」与「缺省集仍是只读三件」两条口径。
+
 系统 SHALL 把每个生效定义的 `name` 与 `description` 注入 `task` 工具的描述（自动委派的依据）；
 描述合计的估算 token 数（`ceil(字符数 ÷ 4)`）超过 15,000 时 SHALL 产出一条 warning 与
 `subagent_catalog_large` 诊断事件，MUST NOT 截断清单。定义正文 MUST NOT 进入主会话上下文，只在
@@ -148,6 +164,12 @@ MUST NOT 出现「描述声称能列目录、工具集里却没有列目录工�
 - **WHEN** vault 与用户目录里都没有定义 / 另有一个 `name: explore` 的用户级定义
 - **THEN** 前者清单里有内建 `explore`，委派它时工具定义恰为只读四件（`vault_read` / `vault_search` /
   `vault_list` / `skill_load`）；后者生效的是用户定义并产出一条覆盖 warning，清单里 `explore` 只出现一次
+
+#### Scenario: 内建 general 可用且工具集为全量
+
+- **WHEN** 默认清单（无自定义定义）委派 `general`
+- **THEN** 子运行的工具定义恰为 9 件 vault 操作工具（含写类与 `cli_run`），`task` 与 cron 工具不在其中；
+  同名自定义定义可覆盖它并产出一条覆盖 warning
 
 #### Scenario: 非法定义逐条丢弃
 
