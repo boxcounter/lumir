@@ -66,7 +66,11 @@
 
 - [x] 6.1 删除 `docs/backlog.md` 的 M772 条目「子代理缺省工具集是否加入 `vault_list`」（本 change 承接；若 2.2 按「一并扩缺省集」落地，条目内容与结论一致再删）
 - [x] 6.2 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过；`bash scripts/docs-check.sh` 通过（含归档对账门禁：delta 无静默丢段）
-- [ ] 6.3 `bash scripts/gate.sh quick` 全绿（改过 Rust 与验收场景；未改样式，不触发视觉档）；照抄 `GATE RESULT` 原文行进报告
+- [x] 6.3 `bash scripts/gate.sh quick` 全绿（改过 Rust 与验收场景；未改样式，不触发视觉档）；照抄 `GATE RESULT` 原文行进报告
+
+> 6.3 实测原文（M806，2026-10-30）：`GATE RESULT: 12/12 PASS（SKIP 1）` / `GATE EXIT CODE: 0 (elapsed 148s)`。
+> SKIP 1 = `tsc-visual`（tests/visual 依赖未装）。首轮同提交曾因磁盘写满（可用 233 MiB）触发
+> acceptance-suite / docs-check / openspec-validate 三项 ENOSPC 假红，腾出空间后重跑全绿。
 - [ ] 6.4 完工报告按 design §1.1 的四层判据逐层给证据指针（①③④ 给机器读数与场景 id，②给真实 provider 六格表）；②未达标不得写完成，也不得以 mock / 单测替代
 - [ ] 6.5 归档顺序：本 change 的 delta 以「工具集声明与默认收紧」含 `vault_list` 为前提，MUST 排在该 change 归档之后（design §8）；归档前由 tower 核对 living spec 的闭集合已是 9 件
 - [ ] 6.6 独立评审：非作者 reviewer 结论 clean / merge 且绑定当前 tip；按「节点 2 五要件」把 proposal 的节点 2 记录填齐（任务、delta、门禁、真机、真实 provider 证据、归档队列条目）
