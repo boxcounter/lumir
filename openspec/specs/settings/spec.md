@@ -219,6 +219,20 @@ cron 任务与子代理定义里的 `model` 覆盖是软引用：删除 provider
 - **THEN** `harness.providers.kimi-work` 被删除，`harness.provider` 被写为 `deepseek`；
   provider 列表的「当前」徽标移到 `deepseek`；文件里没有指向 `kimi-work` 的引用
 
+#### Scenario: 确认删除后徽标已移到替代项（保存前文件不变）
+
+- **WHEN** 当前使用 `kimi-work`，用户删除它并确认（尚未点「保存」）
+- **THEN** 列表的「当前」徽标**立即**移到替代目标（删除只改草稿），`config.json` 逐字节不变；
+  点「保存」后文件里的 `harness.provider` 才随这笔删除一起写成替代目标——「徽标已切、文件未切」
+  是草稿态的正常表现，MUST NOT 让保存因此被删保护拒绝
+
+#### Scenario: 同一笔里连续删除当前使用项与另一项
+
+- **WHEN** 当前使用 `kimi-work`，列表里还有 `deepseek` 与 `local-lab`；用户先删除 `kimi-work`
+  （替代目标 `deepseek`）、再删除 `deepseek`，然后保存
+- **THEN** 保存成功；`harness.providers` 只剩 `local-lab`，`harness.provider` 为 `local-lab`——
+  替代目标取**最终幸存项**，MUST NOT 指向本笔同样删除的 `deepseek`；文件里没有指向被删 id 的引用
+
 #### Scenario: 删除当前使用项但未选替代目标
 
 - **WHEN** 当前使用 `kimi-work` 且还有另一个 provider，用户删除它但没有选择替代目标

@@ -3250,6 +3250,138 @@ mod tests {
         assert!(value["harness"]["attachment_naming"].get("model").is_none());
     }
 
+    /// 设置面的真实保存形状（M811）：同一笔里 delete 编辑带 `active_after`，另有与之等值的
+    /// `active_provider` 写入。provider 编辑先于 active 应用，两条落的终态必须一致。
+    #[test]
+    fn deleting_active_with_target_and_parallel_active_edit_applies() {
+        let dir = TempDir::new("delete-active-parallel");
+        dir.write(BASE);
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({
+                    "providers": [{"action": "delete", "id": "kimi-work", "active_after": "deepseek"}],
+                    "active_provider": {"kind": "set", "value": "deepseek"}
+                }),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        let value = file_json(&dir);
+        assert_eq!(
+            value["harness"]["provider"],
+            Value::String("deepseek".into())
+        );
+        assert!(value["harness"]["providers"].get("kimi-work").is_none());
+        assert!(outcome
+            .snapshot
+            .providers
+            .iter()
+            .all(|p| p.id != "kimi-work"));
+        // 没有残留诊断（悬空引用会在这里冒出来）。
+        assert!(outcome
+            .snapshot
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "harness_provider_unknown"));
+    }
+
+    /// M811 的现场回归：只有 `active_provider` 的切换**不能满足**删除保护——provider 编辑先于
+    /// active 应用，删除时文件里的 `harness.provider` 仍是被删 id。前端必须把替代目标写进
+    /// delete 编辑自己的 `active_after`（判据方向由 `src/settings-panel.ts` 的 `providerDelete` 守）。
+    #[test]
+    fn active_switch_alone_does_not_satisfy_delete_active_guard() {
+        let dir = TempDir::new("delete-active-order");
+        dir.write(BASE);
+        let before = dir.read();
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({
+                    "providers": [{"action": "delete", "id": "kimi-work"}],
+                    "active_provider": {"kind": "set", "value": "deepseek"}
+                }),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Blocked);
+        assert_eq!(
+            outcome.errors[0].code,
+            "settings_provider_delete_active_requires_target"
+        );
+        assert_eq!(outcome.errors[0].path, "harness.provider");
+        assert_eq!(dir.read(), before, "整笔拒绝，文件逐字节不变");
+    }
+
+    /// 连续删除（一笔保存）：当前使用项的替代目标只能是**最终幸存项**——本笔同样要删掉的中间项
+    /// 不在候选里（`deleted_ids` 排除），后端会判 `settings_active_provider_missing`。
+    #[test]
+    fn consecutive_deletes_in_one_patch_target_the_final_survivor() {
+        let dir = TempDir::new("delete-chain");
+        dir.write(BASE);
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({
+                    "providers": [
+                        {"action": "delete", "id": "kimi-work", "active_after": "local-lab"},
+                        {"action": "delete", "id": "deepseek"}
+                    ],
+                    "active_provider": {"kind": "set", "value": "local-lab"}
+                }),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        let value = file_json(&dir);
+        assert_eq!(
+            value["harness"]["provider"],
+            Value::String("local-lab".into())
+        );
+        let providers = value["harness"]["providers"]
+            .as_object()
+            .expect("providers 是对象");
+        assert!(providers.get("kimi-work").is_none());
+        assert!(providers.get("deepseek").is_none());
+        assert!(providers.get("local-lab").is_some());
+    }
+
+    /// raw active 悬空（指向装载期被忽略的条目）+ 同一笔的 active Reset：两处清理必须并存——
+    /// delete 分支清 raw 键，active 分支的 Reset 不得把它写回来（M811 的「还原此页默认 + 删除」
+    /// 形状）。
+    #[test]
+    fn deleting_raw_active_ignored_entry_with_active_reset_leaves_no_dangling() {
+        let dir = TempDir::new("delete-raw-active-reset");
+        dir.write(
+            r#"{"harness":{"provider":"broken","providers":{
+                "broken":{"preset":"nope"},
+                "deepseek":{"preset":"deepseek","api_key":"test-key-2222","models":[{"id":"ds-chat","effort":false,"vision":false,"window":1024}]}
+            }}}"#,
+        );
+        let outcome = apply(
+            &dir,
+            patch_with(
+                &dir,
+                serde_json::json!({
+                    "providers": [{"action": "delete", "id": "broken"}],
+                    "active_provider": {"kind": "reset"}
+                }),
+            ),
+        );
+        assert_eq!(outcome.status, SettingsApplyStatus::Applied);
+        let value = file_json(&dir);
+        assert!(value["harness"]["providers"].get("broken").is_none());
+        assert!(
+            value["harness"].get("provider").is_none(),
+            "raw active 指向被删条目时必须清除"
+        );
+        assert!(outcome
+            .snapshot
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { diagnostic.code != "harness_provider_unknown" }));
+    }
+
     #[test]
     fn deleting_naming_referenced_provider_requires_retarget() {
         let dir = TempDir::new("delete-naming");

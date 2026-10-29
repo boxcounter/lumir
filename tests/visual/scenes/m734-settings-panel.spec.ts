@@ -453,6 +453,66 @@ test("设置面板：删除当前使用项 + 两个命名引用 → 三块替代
   await panelScreenshot(page, "06-delete-confirm");
 });
 
+/** 取本页发过的 settings_apply patch（桩记在 window.__settingsPatches 上）。 */
+async function appliedPatches(page: Page): Promise<Array<{ providers: Array<Record<string, unknown>>; active_provider?: unknown }>> {
+  return page.evaluate(
+    () => (window as unknown as { __settingsPatches: Array<{ providers: Array<Record<string, unknown>>; active_provider?: unknown }> }).__settingsPatches,
+  );
+}
+
+// M811：确认删除会把草稿的当前使用立刻切到替代项（徽标按草稿走），但文件里的引用只有保存时才
+// 变——delete 编辑必须自己带替代目标，否则后端锁内先执行删除、仍看到文件里的旧 active 而整笔
+// 拒绝（「…是当前使用项，删除前必须选择替代 provider」）。判据落在真正发出去的 patch 形状上。
+test("设置面板：删除当前使用项后保存 → delete 编辑带 active_after（M811）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, {
+    snapshot: settingsSnapshot({
+      providers: [provider("kimi-work", "kimi"), provider("deepseek", "deepseek")],
+      naming: { session: { provider: "kimi-work", model: "k3-256k" } },
+    }),
+  });
+  await page.locator(".lumir-set-danger .lumir-set-btn-danger").click();
+  await page.locator(".lumir-set-delete-card .lumir-set-btn-danger").click();
+  // 徽标按草稿走：确认删除后「当前」已落到替代项。
+  await expect(page.locator('.lumir-set-provider-row[data-provider-id="deepseek"] .lumir-set-current')).toHaveCount(1);
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator(".lumir-set-status")).toContainText("已保存");
+  const patches = await appliedPatches(page);
+  expect(patches).toHaveLength(1);
+  expect(patches[0]!.providers[0]).toMatchObject({
+    action: "delete",
+    id: "kimi-work",
+    active_after: "deepseek",
+    session_naming_after: { kind: "follow_active" },
+  });
+  expect(patches[0]!.active_provider).toEqual({ kind: "set", value: "deepseek" });
+});
+
+test("设置面板：连续删除当前项与另一项后保存 → 替代目标取最终幸存项（M811）", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await openSettings(page, {
+    snapshot: settingsSnapshot({
+      providers: [provider("kimi-work", "kimi"), provider("deepseek", "deepseek"), provider("local-lab", "generic")],
+    }),
+  });
+  await page.locator(".lumir-set-danger .lumir-set-btn-danger").click();
+  await page.locator(".lumir-set-delete-card .lumir-set-btn-danger").click();
+  await page.locator('.lumir-set-provider-row[data-provider-id="deepseek"]').click();
+  await page.locator(".lumir-set-danger .lumir-set-btn-danger").click();
+  await expect(page.locator(".lumir-set-delete-card")).toBeVisible();
+  await page.locator(".lumir-set-delete-card .lumir-set-btn-danger").click();
+  await page.locator(".lumir-set-btn-primary").click();
+  await expect(page.locator(".lumir-set-status")).toContainText("已保存");
+  const patches = await appliedPatches(page);
+  expect(patches).toHaveLength(1);
+  // 中间项 deepseek 也在本笔删除清单里，不能当替代目标。
+  expect(patches[0]!.providers).toEqual([
+    { action: "delete", id: "kimi-work", active_after: "local-lab" },
+    { action: "delete", id: "deepseek" },
+  ]);
+  expect(patches[0]!.active_provider).toEqual({ kind: "set", value: "local-lab" });
+});
+
 // ---------------------------------------------------------------------------
 // 5）自动化：全局行不随 provider 切换重排；命名目标关闭禁用但保留
 // ---------------------------------------------------------------------------
