@@ -73,7 +73,10 @@
       硬判据（无 `pwd` / 无广域 `find`）由抽样 1 闭合；`vault_list` 首选半条本轮未被触发（引用是
       显式路径），补压该半条的第二次抽样被 provider 月度额度挡住——如实记录，不按已验证声称。
       两次现场见文末「6.6 真实 provider 抽样（M804）」；M801 的暂缓停止点保留在下节作历史现场
-- [ ] 6.7 独立评审（reviewer clean / merge 且绑定 tip）+ 按五要件填 proposal 的节点 2 记录
+- [x] 6.7 独立评审（reviewer clean / merge 且绑定 tip）+ 按五要件填 proposal 的节点 2 记录——
+      r2 `reviewer-vault-list-real-provider-oct29-r2` clean / merge（reviewed tip `3a72fbf7`，
+      评审文件 `review-feat-complete-vault-list-real-provider-oct29-…-r1-2.md`）；五要件记录见
+      proposal「节点 2 归档前五要件（2026-10-29）」
 
 ## 实现批证据（2026-10-28，worker 自验）
 

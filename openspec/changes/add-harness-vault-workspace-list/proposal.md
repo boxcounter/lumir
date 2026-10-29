@@ -114,8 +114,12 @@ cwd 与 prompt 解决的不是同一件事：cwd 决定 `cli_run` 在哪里执�
    - description 边界句批：`reviewer-vault-list-guidance-oct29-r2`，`status: clean` / `merge: merge`，
      tip `e23f41a6e71aa6950301a1ee345310b02df592f7`，评审文件
      `.tower/comms/reviews/review-feat-complete-vault-list-guidance-dogfood-oct-reviewer-vault-list-guidance-o-r1-2.md`。
-   - **最终评审（待填，归档前置条件）**：tower 安排的独立 reviewer 绑定本分支最终 tip
-     `<reviewer / verdict / tip / 评审文件>`——本行未填 = 要件 2 未满足。
+   - **最终评审（r2 复审，2026-10-29）**：`reviewer-vault-list-real-provider-oct29-r2`，`status: clean` /
+     `merge: merge`，reviewed tip `3a72fbf7c2754488ae4415c728e69c26dbcea83b`，评审文件
+     `.tower/comms/reviews/review-feat-complete-vault-list-real-provider-oct29-reviewer-vault-list-real-provi-r1-2.md`。
+     该 tip 之后只做了一次换基（`git rebase` 到最新 master `ab975107`）：我两个提交的 patch 逐字节不变
+     ——旧基 `7614bfee..3a72fbf7` 与新基 `ab975107..5aa1f18f` 的 diff sha256 同为
+     `8fc8cde40f6cf47e87d69428e676d472f03f739504f387886fe639e899366848`；归档时分支 tip 为 `5aa1f18f`。
 3. **tasks 完成或有放弃理由**：`openspec/changes/add-harness-vault-workspace-list/tasks.md` 全部勾选；
    真机 6.5 由 M780 / M783 两次 PASS 闭合，真实 provider 6.6 由 M804 抽样闭合（硬判据 PASS，
    `vault_list` 首选半条未触发，见 tasks 6.6 节）；无放弃项。
