@@ -99,3 +99,56 @@ cwd 与 prompt 解决的不是同一件事：cwd 决定 `cli_run` 在哪里执�
   交接材料逐条列出合同、非目标与验收判据；本 change 的 proposal / design / tasks / delta 全部按该
   合同起草，实现期不新增范围。
 - 节点 2（归档）：实现完成后按五要件填写（reviewer verdict + tip、门禁输出、验收证据指针）。
+  **归档前记录（2026-10-29，M804 填写）**见下节；最终独立评审一行留待 tower 安排的 reviewer
+  绑定最终 tip 后填，未填即视为要件 2 未满足、不得归档。
+
+### 节点 2 归档前五要件（2026-10-29）
+
+1. **方案已批准**：节点 1 通过——Alex 2026-10-27 原话「好。我没有异议了，我们可以开始落实它了。」
+   （见文首「裁决留痕」）；实现期无 scope 扩张（6.x 的抽样与文档更新都在已批准合同内）。
+2. **独立 reviewer 结论 clean / merge**：
+   - 实现批：`reviewer-harness-vault-workspace-list-oct28-r6`，`status: clean` / `merge: merge`，
+     tip `f89b83db1326cf09eafb02221f1a10f32f3cf5e0`，评审文件
+     `.tower/comms/reviews/review-feat-harness-vault-workspace-list-oct28-reviewer-harness-vault-workspa-r1-6.md`；
+     前四轮 p2 / fix-then-merge 的返修记录见同目录 `-r1`…`-r1-4`。
+   - description 边界句批：`reviewer-vault-list-guidance-oct29-r2`，`status: clean` / `merge: merge`，
+     tip `e23f41a6e71aa6950301a1ee345310b02df592f7`，评审文件
+     `.tower/comms/reviews/review-feat-complete-vault-list-guidance-dogfood-oct-reviewer-vault-list-guidance-o-r1-2.md`。
+   - **最终评审（r2 复审，2026-10-29）**：`reviewer-vault-list-real-provider-oct29-r2`，`status: clean` /
+     `merge: merge`，reviewed tip `3a72fbf7c2754488ae4415c728e69c26dbcea83b`，评审文件
+     `.tower/comms/reviews/review-feat-complete-vault-list-real-provider-oct29-reviewer-vault-list-real-provi-r1-2.md`。
+     该 tip 之后只做了一次换基（`git rebase` 到最新 master `ab975107`）：我两个提交的 patch 逐字节不变
+     ——旧基 `7614bfee..3a72fbf7` 与新基 `ab975107..5aa1f18f` 的 diff sha256 同为
+     `8fc8cde40f6cf47e87d69428e676d472f03f739504f387886fe639e899366848`；归档时分支 tip 为 `5aa1f18f`。
+3. **tasks 完成或有放弃理由**：`openspec/changes/add-harness-vault-workspace-list/tasks.md` 全部勾选；
+   真机 6.5 由 M780 / M783 两次 PASS 闭合，真实 provider 6.6 由 M804 抽样闭合（硬判据 PASS，
+   `vault_list` 首选半条未触发，见 tasks 6.6 节）；无放弃项。
+4. **要求的门禁与真机证据通过**：
+   - `scripts/gate.sh quick` → `GATE RESULT: 12/12 PASS（SKIP 1）`（退出码 0；SKIP = `tsc-visual`，
+     本 change 不动 `src/**`，视觉门禁不在范围）。
+   - 真机 254：PASS 两次——`.local/acceptance/2026-10-28-m780-254/`、`.local/acceptance/2026-10-28-m783-254/`。
+   - 真实 provider 抽样：`.local/reviews/vault-list-real-provider-oct29/`（`sample1/` 硬判据 PASS、
+     `binary-description-check.txt`、`run-notes.md`）。
+   - 本批文档修订复跑：`openspec validate --all --strict` → `Totals: 35 passed, 0 failed (35 items)`（退出码 0）；
+     `scripts/docs-check.sh` → `docs-check: PASS`（含归档对账、归档队列、验收契约与覆盖表、套件自测 180 pass）。
+5. **规格对账无丢段（归档前读数）**：`scripts/docs-check.sh` 内含 `scripts/openspec-archive-check.mjs`
+   门禁模式（PASS）；`validate --all --strict` 见要件 4；归档跟踪队列在 `docs/backlog.md` 有且仅有
+   一条 `add-harness-vault-workspace-list` 条目。
+
+### 节点 2 归档后记录（2026-10-29 22:44 CST，M804）
+
+- 放行方式：**机器 + 独立评审放行**（五要件齐；未命中「必须找 Alex 的例外类别」）。
+- 归档提交：`f3e22168`（`chore(openspec): 归档 add-harness-vault-workspace-list（M804）`）。
+  该提交同时含 r3 P2-1 的措辞修正——固定段正文计数「这两段正文」→「这三段正文」
+  （identity / quote / workspace 三段），living spec 与归档 delta 两处同步。
+- 包装器 `node scripts/openspec-archive.mjs add-harness-vault-workspace-list` 实际输出：
+  - `Change 'add-harness-vault-workspace-list' archived as '2026-10-29-add-harness-vault-workspace-list'.`
+  - `Applying changes to openspec/specs/harness/spec.md: + 3 added ~ 4 modified`；
+    `openspec/specs/harness-subagents/spec.md: ~ 1 modified`；`Totals: + 3, ~ 5, - 0, → 0`
+  - `归档后修链 0 处（扫过 5 篇 Markdown / 2 条相对链接）`
+  - `openspec-links: PASS（校验 615 条相对链接，全部可达）`
+  - `openspec-archive: PASS（归档完成，仓内相对链接门禁绿）`
+- 归档后审计：`node scripts/openspec-archive-check.mjs --archived add-harness-vault-workspace-list`
+  → `PASS（… 5 条 MODIFIED，对比 98 段；人工恢复 0 段，声明认领 0 段）`，退出码 0（2026-10-29 22:44 CST）。
+- 队列条目：`docs/backlog.md` 的归档跟踪条目随归档移除（与既有归档先例一致）；`--archived` 审计
+  以归档提交 `f3e22168` 为界复核，与工作区后续回填无关。

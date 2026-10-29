@@ -237,8 +237,12 @@ Alex 已批准的 `vault_list`；实现与文档 MUST NOT 把两者混称。
 该断言只由 `tools.rs` 的 `vault_list_lists_one_layer_by_default` 覆盖。
 
 真实 provider 的遵从度（是否真的不再 `pwd` / 广域 `find`）按判据 6 由交接所述「评审 proposal 并查看
-相关文件」场景抽样复验，不进机器判据。**2026-10-29 状态：按 Alex 指令暂缓**——停止点与现场登记在
-tasks.md「6.6 停止记录（M801）」，本轮无真实 provider 观察数据。
+相关文件」场景抽样复验，不进机器判据。**2026-10-29 状态：已在 M804 执行**——抽样 1 的工具序列为
+4 次 `vault_read`（`docs/proposal.md` → `specs/spec.md`、`docs/design.md`、`notes/edge-cases.md`），
+`pwd` / `ls` / `find` / `cli_run` 全 0 次（判据 6 的硬判据 PASS）；`vault_list` 首选半条未被触发
+（引用为显式路径），补压该半条的抽样 2 被 provider 月度额度挡住，零工具调用。现场与保留件见
+`tasks.md` 的「6.6 真实 provider 抽样（M804）」与 `.local/reviews/vault-list-real-provider-oct29/`；
+M801 的暂缓停止点作为历史保留。
 
 ## 8. 非目标、残余风险与 follow-up
 
