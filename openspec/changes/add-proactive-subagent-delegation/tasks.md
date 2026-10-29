@@ -51,7 +51,7 @@
 - [ ] 5.5 格 F（简单写，观测）：同上；派给 `general` 并正确完成记合格 + 成本，主会话自己改也记合格 + 成本；只有「派给只读代理做写」或「改错 / 没改」才判红
 - [ ] 5.6 格 D（整件事无匹配：同 A 调研 + 写入 `notes/summary.md`；按 design §7.1 在合成 vault 写 `.lumir/agents/general.md` 把 `general` 同名覆盖成只读定义，使清单里没有可写子代理）：三路判据——①**禁止**把整件事派给只读代理（出现 `task` 且 prompt 要求写文件 / 执行命令即判红）；②零 `task` 合格；③只派只读子任务合格（prompt 只含只读诉求、子运行工具集为只读白名单、写由主会话完成）。三路都要求 `tool_names` 含 `task`。覆盖文件的删除与恢复核实归 5.10，本步不自行善后
 - [ ] 5.7 格 C（同 A 提问，**经设置面**关闭「子代理」总开关）：`tool_names` 不含 `task`、无 `subagent_started`；关闭后先记一次读数
-- [ ] 5.8 证据落 `.local/reviews/proactive-subagent-delegation-oct29/real-provider.md`：模型 id（取 `llm_request.model`）、提问原文、六格抽取表、每格的委派与否 + 结果质量 + tokens + 耗时、格 D 的清单构造与三路判定、格 E 的子运行 agent / tools / 用量、样本限制（单模型 / 每格 N=1 / 只作存在性判据）；证据只抽字段，不含 `system` / `messages` 原文；格 D 与格 E 必须照写各自的证据边界（见 design §7.2）
+- [ ] 5.8 证据落 `.local/reviews/proactive-subagent-delegation-oct29/real-provider.md`：模型 id（取 `llm_request.model`）、提问原文、六格抽取表、每格的委派与否 + 结果质量 + tokens + 耗时、格 D 的清单构造与三路判定、**格 E 按实际路径记录**（派 `general` 时记其子运行 agent / tools / 用量并声称通用委派；只派只读子段时只记该子运行 agent / tools 与分工、不声称通用委派；零委派时记「无子运行」+ 主会话 tokens / 耗时，不得声称通用委派已证明）、样本限制（单模型 / 每格 N=1 / 只作存在性判据）；证据只抽字段，不含 `system` / `messages` 原文；格 D 与格 E 必须照写各自的证据边界（见 design §7.2）
 - [ ] 5.9 失败处置按 design §7.4 执行并留痕：A 未委派 / E 硬派或结果错误 / D 硬派才判 FAIL；B / F 不判红（委派与否都记录）；一次只改一处措辞、最多两轮、失败轮次不得删除；两轮仍不达标则停手上报 Alex
 - [ ] 5.10 **强制收尾（无论 5.2–5.9 成功、失败、超时或中止）**：① 经设置面把「子代理」总开关恢复为 5.1 记录的进入时值，并用界面状态或**新发的**请求 `tool_names` 核实含 `task`；② 删除格 D 写下的 `.lumir/agents/general.md` 覆盖文件（成功、失败、超时、中止都删），删除后用下一回合生效清单或新委派的 `subagent_started.tools`（9 件）核实内建 `general` 已恢复。两段恢复的读数都写进 real-provider.md；不得读 / 备份 / 改凭据文件；任一恢复失败即停手上报，未恢复不得写 PASS
 
