@@ -122,7 +122,7 @@ cron 工具；子代理落地后模型不主动 `task`。两次的共同形态�
 
 | 层 | 判据 | 本 change 的证据 |
 |---|---|---|
-| ① 能看见 | 启用时工具实际暴露，暴露面可复核 | 单测 + 场景 255（`tool_names` 含 `task`）与 194（关闭时不含） |
+| ① 能看见 | 启用时工具实际暴露，暴露面可复核 | 单测 + 场景 257（`tool_names` 含 `task`）与 194（关闭时不含） |
 | ② 会选择 | 用户不点名，真实模型按「专用优先 → general 次选 → 都不合适自己做」选择，并按总成本决定简单任务是否委派（不设硬门槛）；合理的只读子任务可单独派 | 真实 provider 六格（design §7.2）；这是②的硬证据 |
 | ③ 能执行 | 选中之后的执行链正确 | 既有 mock 场景与 Rust 单测 |
 | ④ 可复核 | 留存能区分「未暴露 / 未选择 / 执行失败」 | `tool_names` × `tool_calls` × `subagent_rejected` / `subagent_finished` |
@@ -165,7 +165,7 @@ cron 工具；子代理落地后模型不主动 `task`。两次的共同形态�
   - `src-tauri/src/harness/agents.rs`：内建 `explore` 的 `tools` 与描述；新增内建 `general`（9 件工具）；
     `DEFAULT_TOOLS` 不动。
   - `src-tauri/src/harness/turn.rs`：`record_llm_request` 追加 `tool_names`（唯一写入点）。
-  - `scripts/acceptance/scenarios/255-*`（新增）、`180-*` / `194-*`（断言与措辞改准）、
+  - `scripts/acceptance/scenarios/257-*`（新增）、`180-*` / `194-*`（断言与措辞改准）、
     `scripts/acceptance/COVERAGE.md`（重生成）。
   - `docs/specs/subagent-definitions.md`：内建 `explore` / `general` 的定义表与工具集、「清单注入」节
     同步策略段（含专用优先 / general 次选的分支）。

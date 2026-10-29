@@ -48,7 +48,7 @@ steps:
       - label: 暴露面按实际请求记录（tool_names 恒在场：负向断言不在「键缺失」上恒绿）
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"tool_names":[' }
       - label: 关停态 tool_names 不含 task（与 257 的启用态在同一字段上对照）
-        file: { path: "env:harness/sessions/*/*.jsonl", count: { pattern: '/"tool_names":\[[^]]*"task"/', exact: 0 } }
+        file: { path: "env:harness/sessions/*/*.jsonl", count: { pattern: '/"tool_names":\[[^\]]*"task"/', exact: 0 } }
       - label: 任务区整块不出现（空态不占位）
         ax: { not: "任务 · 本次会话" }
       - label: 定义文件原样保留（重新启用即恢复）

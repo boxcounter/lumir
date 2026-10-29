@@ -50,7 +50,7 @@ steps:
     do: waitForFile
     waitForFile:
       path: "env:harness/sessions/*/*.jsonl"
-      has: '/"tool_names":\[[^]]*"task"/'
+      has: '/"tool_names":\[[^\]]*"task"/'
     timeoutMs: 20000
 
   - name: 父会话留存：暴露面按实际请求记录、只名字、不在响应侧
@@ -58,7 +58,7 @@ steps:
       - label: 每条会话请求都带 tool_names（恒在场；键缺失 = 没有记录，不是空数组）
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"tool_names":[' }
       - label: 启用态下 tool_names 含 task（按暴露清单判定，不是靠 tool_calls 反推）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '/"tool_names":\[[^]]*"task"/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/"tool_names":\[[^\]]*"task"/' }
       - label: 只记名字——数组元素是纯字符串，无 schema / 描述 / 参数对象
         file: { path: "env:harness/sessions/*/*.jsonl", has: '/"tool_names":\[("[^"]*"(,"[^"]*")*)?\]/' }
       - label: 暴露面只在请求侧（llm_response 行不带 tool_names，无第二份真源）
@@ -69,9 +69,9 @@ steps:
       - label: 子运行审计里同样带 tool_names（同一写入点，无需另写逻辑）
         file: { path: "env:harness/subruns/*/*.jsonl", has: '"tool_names":[' }
       - label: 子运行按定义白名单暴露（声明了 vault_search）
-        file: { path: "env:harness/subruns/*/*.jsonl", has: '/"tool_names":\[[^]]*"vault_search"/' }
+        file: { path: "env:harness/subruns/*/*.jsonl", has: '/"tool_names":\[[^\]]*"vault_search"/' }
       - label: 深度 1 层不暴露 task（tool_names 里 task 恒缺席）
-        file: { path: "env:harness/subruns/*/*.jsonl", count: { pattern: '/"tool_names":\[[^]]*"task"/', exact: 0 } }
+        file: { path: "env:harness/subruns/*/*.jsonl", count: { pattern: '/"tool_names":\[[^\]]*"task"/', exact: 0 } }
       - shot: 01-暴露面
 ---
 
@@ -87,6 +87,11 @@ mock 父响应按 fixture 直接派 research（与 180 同一条执行链，判�
 - 启用态（本场景）：父会话的 `tool_names` 含 `task`；同一会话的子运行审计里 `task` 恒缺席
   （深度 1 层从「靠代码保证」变成「留存上可查」）。
 - 关停态（194）：同一字段不含 `task`，且 `tool_names` 键仍在场（负向断言不在「键缺失」上恒绿）。
+
+**字符类写法（别再回到旧口径）**：数组内匹配一律写 `[^\]]*`，不能写 `[^]]*`——后者在 JS 里
+被解析成「任意字符 + 字面 `]`」，正向恒不命中、负向恒绿。2026-10-30 实测：`[^]]*` 的
+`waitForFile` 轮询 41 次全 false，而同一份留存里 `"tool_names":[…"task"…]` 确实在场
+（REVIEW.md「断言等价于子串」条）。
 
 `tool_names` 不含 `task` 时，「没有 task 调用」不是模型的决定（未暴露）；含 `task` 而无
 `task` 调用时才是「已暴露、模型没选」。真实 provider 下模型是否主动选择属六格验收，不在本场景。

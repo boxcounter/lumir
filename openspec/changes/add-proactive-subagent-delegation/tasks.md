@@ -39,18 +39,18 @@
 
 ## 3. `llm_request.tool_names`
 
-- [ ] 3.1 `src-tauri/src/harness/turn.rs` 的 `record_llm_request` 追加 `tool_names`：按 `request.tools` 顺序取 `name`，只名字，恒在场（空工具集记 `[]`），与 `request_bytes` 同级
-- [ ] 3.2 单测：顺序与请求一致；元素只有名字（不含 `description` / `parameters` 键）；`tools` 为空时是 `[]` 而不是缺键
-- [ ] 3.3 单测（兼容）：旧记录缺 `tool_names` 时，恢复 / 读数重算 / 通知陈旧判定三条读取路径都不把它当空数组，且不改写文件
-- [ ] 3.4 单测：子运行审计流水里的 `llm_request.tool_names` 不含 `task`（深度 1 层的留存级断言）
+- [x] 3.1 `src-tauri/src/harness/turn.rs` 的 `record_llm_request` 追加 `tool_names`：按 `request.tools` 顺序取 `name`，只名字，恒在场（空工具集记 `[]`），与 `request_bytes` 同级
+- [x] 3.2 单测：顺序与请求一致；元素只有名字（不含 `description` / `parameters` 键）；`tools` 为空时是 `[]` 而不是缺键
+- [x] 3.3 单测（兼容）：旧记录缺 `tool_names` 时，恢复 / 读数重算 / 通知陈旧判定三条读取路径都不把它当空数组，且不改写文件
+- [x] 3.4 单测：子运行审计流水里的 `llm_request.tool_names` 不含 `task`（深度 1 层的留存级断言）
 
 ## 4. 验收场景（mock 守执行链与暴露面）
 
-- [ ] 4.1 新增 `scripts/acceptance/scenarios/255-harness-request-tool-names.md`（mock，tier 与既有子代理场景一致）：父会话 `llm_request.tool_names` 含 `task` 且为数组；同一会话子运行审计里的 `tool_names` 不含 `task`
-- [ ] 4.2 `194-subagent-disabled` 增断言：`enabled=false` 时会话 `llm_request.tool_names` 不含 `task`（与 4.1 配对形成区分度；改前先确认该断言在启用态会红）
-- [ ] 4.3 `180-subagent-delegate-discovery` 的标题 / 说明改准为「委派执行链（fixture 驱动）」并显式写明「不证明模型主动选择」；`scripts/acceptance/COVERAGE.md` 重生成
-- [ ] 4.4 `node scripts/acceptance/run.mjs --check` 通过；`--list` 确认 255 在 `full` 批内
-- [ ] 4.5 真机跑 `node scripts/acceptance/run.mjs 180 194 200 255`（core + full 混合按 id 精确筛），逐条 PASS 证据落 `.local/acceptance/2026-10-29/`
+- [x] 4.1 新增 `scripts/acceptance/scenarios/257-harness-request-tool-names.md`（mock，tier 与既有子代理场景一致）：父会话 `llm_request.tool_names` 含 `task` 且为数组；同一会话子运行审计里的 `tool_names` 不含 `task`（原稿编号 255 已被列表光标导航场景占用，改用 257）
+- [x] 4.2 `194-subagent-disabled` 增断言：`enabled=false` 时会话 `llm_request.tool_names` 不含 `task`（与 4.1 配对形成区分度；改前先确认该断言在启用态会红）
+- [x] 4.3 `180-subagent-delegate-discovery` 的标题 / 说明改准为「委派执行链（fixture 驱动）」并显式写明「不证明模型主动选择」；`scripts/acceptance/COVERAGE.md` 重生成
+- [x] 4.4 `node scripts/acceptance/run.mjs --check` 通过；`--list` 确认 257 在 `full` 批内
+- [x] 4.5 真机跑 `node scripts/acceptance/run.mjs 180 194 257`（core + full 混合按 id 精确筛）：**3/3 PASS，退出码 0**（2026-10-30 复跑；套件证据目录在主仓 `.local/acceptance/2026-10-30-m807-mock-3of3/`，含 257 的全部正向断言与两条 `命中 0 行` 负向读数）。此前三次跑批因环境（窗口形态自检读不到 AXWindow）落 `INVALID`，读数作废、按套件语义不判 PASS；另：257 首跑判红暴露过一处断言写法缺陷——`[^]]*` 在 JS 里被解析成「任意字符 + 字面 `]`」，正向恒不命中、负向恒绿，已改 `[^\]]*` 并把反例写进 257 正文（REVIEW.md「断言等价于子串」条）
 
 ## 5. 真实 provider 行为验收（按 design §7，不接受 mock 替代）
 
