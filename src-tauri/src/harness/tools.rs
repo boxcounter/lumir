@@ -174,7 +174,7 @@ pub fn definitions() -> Vec<serde_json::Value> {
         serde_json::json!({
             "type": "function",
             "name": "vault_list",
-            "description": "列出 vault 内目录内容（目录 / 路径发现）。默认只列一层；recursive 才下钻。返回 path 与 kind=file|directory，按 path 升序分页（limit / cursor / truncated / next_cursor）。不返回文件内容。",
+            "description": "列出 vault 内目录内容（目录 / 路径发现）。默认只列一层；recursive 才下钻。返回 path 与 kind=file|directory，按 path 升序分页（limit / cursor / truncated / next_cursor）。可见性与文件树同源：hidden 条目不出现、lazy 子树只出一行不展开（0 条既可能是空目录，也可能是被忽略规则过滤）。不返回正文，也不返回大小、修改时间、权限；需要这些元数据、隐藏项、多目标路径或 vault 外路径时用 cli_run。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -2329,6 +2329,40 @@ mod tests {
         let args = serde_json::json!({"command": "echo", "args": ["hi"], "purpose": "打招呼"});
         assert_eq!(cli_argv(&args), vec!["echo".to_string(), "hi".to_string()]);
         assert_eq!(permission_subject("cli_run", &args), "echo hi");
+    }
+
+    /// `vault_list` 的 description 承担「何时不该用它」的边界（change add-harness-vault-workspace-list
+    /// 的内部证据：10/28 的真实会话里 vault_list 返回 0 条时归因不明，模型随后转去 `cli_run` 取
+    /// 时间戳——见 `.local/reports/harness-tool-principles-oct29/internal-evidence.md` 的 F5）。
+    /// 边界句一旦被删就回到旧描述，工具选择随之退回原状——逐句钉住，缺失时报出是哪一句。能力面
+    /// （参数恰好五项、无必填）由 `tool_registry_has_nine_tools` 钉住，这里只钉文本，不另立一份
+    /// schema 断言。
+    #[test]
+    fn vault_list_description_keeps_boundaries() {
+        let list = definitions()
+            .into_iter()
+            .find(|tool| tool["name"] == "vault_list")
+            .unwrap();
+        let description = list["description"].as_str().unwrap();
+        // design §5.1 的三组边界各句都钉住（删任何一句即红），失败信息点出缺的是哪一组、哪一句。
+        for (group, clause) in [
+            // ① 可见性与文件树同源：hidden 不可见、lazy 不展开、0 条有歧义。
+            ("可见性", "可见性与文件树同源"),
+            ("可见性", "hidden 条目不出现"),
+            ("可见性", "lazy 子树只出一行不展开"),
+            ("可见性", "也可能是被忽略规则过滤"),
+            // ② 契约不返回的东西：正文，以及大小 / 修改时间 / 权限这类元数据。
+            ("不返回", "不返回正文"),
+            ("不返回", "不返回大小、修改时间、权限"),
+            // ③ 越界能力的出口：元数据 / 隐藏项 / 多目标路径 / vault 外路径 → cli_run。
+            ("cli_run 出口", "需要这些元数据、隐藏项"),
+            ("cli_run 出口", "多目标路径或 vault 外路径时用 cli_run"),
+        ] {
+            assert!(
+                description.contains(clause),
+                "vault_list description 缺少「{group}」边界句「{clause}」：{description}"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------
