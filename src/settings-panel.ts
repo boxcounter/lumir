@@ -18,8 +18,9 @@
 //   3. **删除保护**：删除只改草稿；替代目标在删除确认里就位，同一笔 patch 原子落盘。前端算的
 //      引用面只用于**显示**，后端在锁内重新计算（design §4.2）。
 //
-// 可访问性：`role="dialog"` + `aria-modal`、背景 `inert`、焦点圈定与交还、三条关闭路径
-// （Escape / 点遮罩 / 再按 ⌘,）、脏面板两步确认、`role="status"` 的 polite live region。
+// 可访问性：`role="dialog"` + `aria-modal`、背景 `inert`、焦点圈定与交还、四条关闭路径
+// （Escape / 点遮罩 / 再按 ⌘, / 底栏「取消」）、脏面板两步确认、`role="status"` 的 polite live region。
+// 「取消」与另外三条同义（关闭 + 丢弃草稿），MUST NOT 有「恢复已保存配置」这第三条语义。
 
 import { errorText, t, onRelabel } from "./copy";
 import type { CopyKey } from "./copy-data";
@@ -1615,12 +1616,14 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
   }
 
   function renderFooter(): void {
+    // 底栏「取消」是第四条关闭路径（与 × / Escape / 点遮罩同义）：只有保存中禁用。读取中 /
+    // 读取失败也允许关——那时草稿还没有内容，没有什么可丢弃的。
+    cancelButton.disabled = mode === "saving";
     if (snapshot === null) {
       const failed = lastError !== null;
       statusLine.textContent = failed ? t(C.statusLoadFailed) : t(C.statusLoading);
       statusLine.dataset.tone = failed ? "error" : "clean";
       resetPageButton.disabled = true;
-      cancelButton.disabled = true;
       saveButton.disabled = true;
       discardBox.hidden = true;
       actions.hidden = false;
@@ -1631,7 +1634,6 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     statusLine.dataset.tone = status.tone;
     resetPageButton.disabled = locked();
     resetPageButton.hidden = mode === "fileInvalid";
-    cancelButton.disabled = mode === "saving";
     closeButton.disabled = mode === "saving";
     // 冲突态只走横幅里的两个动作（重新载入 / 仍然保存）；底栏的保存按钮用的是打开时的旧
     // revision，再点只会再冲突一次。
@@ -3001,11 +3003,9 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
 
   // ── 事件接线 ────────────────────────────────────────────────────────────
   closeButton.addEventListener("click", () => requestClose());
-  cancelButton.addEventListener("click", () => {
-    if (snapshot === null || mode === "saving") return;
-    resetDraftFrom(snapshot);
-    focusInitial();
-  });
+  // 「取消」= 关闭（放弃草稿）；不是「恢复已保存配置」。语义与 × / Escape / 点遮罩同一条
+  // requestClose：干净直接关、脏先走「放弃未保存的修改？」两步确认、保存中禁用。
+  cancelButton.addEventListener("click", () => requestClose());
   saveButton.addEventListener("click", () => void save(false));
   resetPageButton.addEventListener("click", () => {
     if (draft === null || locked()) return;
