@@ -29,6 +29,12 @@
   委派：要通读多份材料再给汇总时，先交给对得上的子代理，不要先自己用 vault_list / vault_read 把
   材料全读一遍」。其它三条判据、`general` 定义、identity 与工作区段一字未动；单测同批断言该句
   在场、点名两个读工具、且只在判据一出现。A 复跑读数见 5.x 记录
+- [x] 1.8 **design §7.4 第二轮修订（M812，2026-10-30，最后一轮）**：第一轮「多文件调研优先委派」
+  实测仍未满足 A 格「首条 `tool_calls` 即 `task(agent=explore)`」（先自读 6 次后才并发派 3 个
+  explore）。按裁决收紧为「多文件调研第一步就调用 task 交给对得上的子代理，不要先做 vault_list /
+  vault_read」——只改这一句，其它文案与行为不动；docs/specs/subagent-definitions.md 的逐字抄录、
+  design §3.1、单测同批同步（单测加一条「第一轮措辞不得回流」的反向断言）。判定口径不放宽：
+  首条 `tool_calls` 必须是 `task(agent=explore)`。A 复跑读数见 5.x 记录
 
 ## 2. 内建定义（`explore` 补 `vault_list`；`general` 候选）
 
@@ -99,6 +105,11 @@
 >   `vault_read`×6、**`task`×3（并发，agent=explore，4 件只读白名单，三个 completed）**；主会话
 >   input 111602 / output 8604。**首条 `tool_calls` 仍是 `vault_list`** → 未满足 A 格「首条即 task」
 >   字面判据，A 仍记 FAIL；委派发生是措辞生效的方向性证据，不据此改判。
+> - **5.x 第二轮修订复跑（M812，2026-10-30，见 1.8，最后一轮）**：判据一收紧为「多文件调研第一步
+>   就调用 task 交给对得上的子代理，不要先做 vault_list / vault_read」，docs/specs 抄录同批同步。
+>   同题复跑：**首个响应即 `task(agent=explore)`**（子运行 4 件只读白名单，`status=partial` /
+>   `stopped_by=tokens`）；全程 `task`×1、`vault_list`×2、`vault_read`×13、`vault_search`×13；
+>   主会话 input 175059 / output 13195；最终回答 6203 字。**A 通过（字面判据满足，未放宽）。**
 > - 5.10 两段恢复都完成并取独立读数：开关→开启且新请求 `tool_names` 含 `task`；覆盖文件已删，
 >   显式派活探针的 `run_open` 记 `agent=general`、`tools` 恰 9 件、`status=completed`。
 

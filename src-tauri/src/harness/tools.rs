@@ -343,8 +343,8 @@ pub const TASK_DELEGATION_POLICY: &str = concat!(
     "委派时机（按这四条判断要不要调用本工具）：\n",
     "- 匹配就委派：清单里有 description 与能力都对得上的专用子代理时，直接派给它，不必等用户点名；",
     "没有专用、但有通用的 general 且任务在它的能力范围内时，派 general——专用优先，",
-    "general 是次选，不是默认选择。多文件调研优先委派：要通读多份材料再给汇总时，",
-    "先交给对得上的子代理，不要先自己用 vault_list / vault_read 把材料全读一遍。\n",
+    "general 是次选，不是默认选择。多文件调研第一步就调用 task 交给对得上的子代理，",
+    "不要先做 vault_list / vault_read。\n",
     "- 无匹配就自己做：专用子代理与 general 都对不上时（整件事、以及能从它拆出来的子任务都算），",
     "自己做，不要调用本工具——不要拿能力不够的子代理硬扛整件事，系统也不会替你改派。反过来，",
     "如果能拆出一个 description 与能力都对得上、本身有独立价值的子任务，就只把那段交给它、",
@@ -3023,15 +3023,19 @@ mod tests {
             "「专用」应排在 general 之前：{matching}"
         );
         assert!(matching.contains("次选"), "{matching}");
-        // design §7.4 第一轮修订（M812，2026-10-30）：A 格实测「已暴露、未选择」后，只在这一条
-        // 追加一句「多文件调研优先委派」，把「先自己把材料读一遍」这条默认路径点掉。
+        // design §7.4 第二轮修订（M812，2026-10-30，最后一轮）：判据一收紧为「第一步就调用 task」——
+        // 第一轮「优先委派」仍允许先自读，实测首条 tool_calls 仍是 vault_list，故收紧为不许先读。
         assert!(
-            matching.contains("多文件调研优先委派"),
-            "「匹配就委派」须含多文件调研优先委派的措辞：{matching}"
+            matching.contains("多文件调研第一步就调用 task"),
+            "「匹配就委派」须含「第一步就调用 task」的措辞：{matching}"
         );
         assert!(
-            matching.contains("不要先自己"),
-            "该句须明确不要先自行读完全部材料：{matching}"
+            matching.contains("不要先做"),
+            "该句须明确不要先做读操作：{matching}"
+        );
+        assert!(
+            !matching.contains("多文件调研优先委派"),
+            "第一轮的「优先委派」措辞已被第二轮收紧替代，不得回流：{matching}"
         );
         for tool in ["vault_list", "vault_read"] {
             assert!(
