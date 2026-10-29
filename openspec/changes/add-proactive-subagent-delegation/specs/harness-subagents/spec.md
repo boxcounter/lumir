@@ -4,6 +4,11 @@
 > `explore` 的工具集补 `vault_list`）。MODIFIED 块按当前 living spec
 > （`openspec/specs/harness-subagents/spec.md`）的整条 requirement 复制再改，段落顺序与段数保持
 > 不变，改动只有「内建 `explore`」一段与同名场景的「只读三件 → 只读四件」。
+>
+> **归档顺序（语义依赖，非 delta 基线依赖）**：`vault_list` 进入「工具集声明与默认收紧」条的闭集合
+> 由 change `add-harness-vault-workspace-list` 的 delta 承担（该 change 已实现、待归档）。本 change
+> 必须在它**之后**归档，否则并入后的 living spec 会出现「`explore` 声明了闭集合外的工具」的自相
+> 矛盾。两 change 改的是不同 requirement，不存在 delta 互相覆盖。
 
 ## ADDED Requirements
 

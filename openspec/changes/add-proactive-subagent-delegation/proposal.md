@@ -112,6 +112,9 @@ cron 工具；子代理落地后模型不主动 `task`。两次的共同形态�
   - `docs/backlog.md`：删除 M772 条目（本 change 承接）。
 - **不改**：前端、`src/bindings/**`、权限管线、配置 schema、living spec（提案期只写 delta）。
 - **关联约束**：
+  - **归档顺序**：`vault_list` 进入「工具集声明与默认收紧」条的闭集合由 change
+    `add-harness-vault-workspace-list` 承担（已实现、待归档）；本 change MUST 在它之后归档，否则
+    living spec 会自相矛盾（详见 design §8）。
   - ADR 0007 Decision 7：工具闭集合不变（`vault_list` 已入册），本 change 不触发 Revisit。
   - ADR 0002 第 5 条（配置即数据）：不新增配置键。
   - ADR 0002 第 6 条（性能合同）：`tool_names` 只在请求序列化时取名字，不在打开 / 按键 / 渲染路径。
