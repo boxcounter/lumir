@@ -18,10 +18,12 @@
 - [ ] 2.2 单测：内建 `explore` 的 `tools` 恰为四件且含 `vault_list`；`DEFAULT_TOOLS` 仍为只读三件（钉住「不扩缺省集」；若 Alex 裁决一并扩，本节改为断言四件并同步 design §9.3 的记录）
 - [ ] 2.3 检查既有断言里写死「explore 只读三件」的位置（`scripts/acceptance/scenarios/200-subagent-explore.md` 等），逐条改准
 - [ ] 2.4 `docs/specs/subagent-definitions.md` §6 的 `explore` 表格与描述同步四件
-- [ ] 2.5 **（仅当 design §9.2 裁决新增 `general`）** 新增 `BUILTIN_GENERAL`：通用身份段（按 prompt 完成任务、先读后改、写与命令受批准闸、不能再次委派、结束给结论与改动清单）、`tools` 为 9 件闭集合全量、`model: inherit`、三闸取配置缺省、描述「通用执行：按任务说明读写 vault、改文件、跑命令；不预设任务类型，一切由 prompt 决定」。裁决不新增时本项与 2.6 / 2.7 一并标注放弃理由（不删任务项）
+- [ ] 2.5 新增 `BUILTIN_GENERAL`（`general` 是本提案的组成候选，节点 1 一并裁决）：通用身份段（按 prompt 完成任务、先读后改、写与命令受批准闸、不能再次委派、结束给结论与改动清单）、`tools` 为 9 件闭集合全量、`model: inherit`、三闸取配置缺省、描述「通用执行：按任务说明读写 vault、改文件、跑命令；不预设任务类型，一切由 prompt 决定」
 - [ ] 2.6 单测：`general` 的 `tools` 恰为 9 件闭集合（含写类与 `cli_run`）、**不含** `task` 与三件 cron 工具；`source = builtin`；同名自定义定义覆盖它并产 warning；`DEFAULT_TOOLS` 仍为三件
 - [ ] 2.7 `docs/specs/subagent-definitions.md` §6 增 `general` 一行（工具集、描述、覆盖规则）
-- [ ] 2.8 **（仅当 2.5 标注放弃时）** 按 design §9.2.1 的缩减清单逐项同步：spec delta（定义段与场景、条件②、判据 1/2、标签场景）、proposal（追问二留痕、Why、What Changes、Non-goals、四层表与裁决点、Impact）、design（§1 Gap 4、§1.1、§3.1、§4.2、§6、§7.1、§7.2 格 E 与格数、§7.2 的 A/E 分工说明与 E 证据边界、§7.3 的 E 读数、§7.4 的 E 判红与成本观测、§7.5 B 段、§8、§9）、tasks（本节 2.5–2.7、1.2、5.1、5.3、5.6、5.8、5.9、5.10、6.4）与审阅 README；同步后五份制品不得残留 `general` 分支，并按 §9.2.1 的五类检索针 + 逐格对账验收（格号只允许 A/B/F/D/C）
+
+> **否决 `general` 时**：本提案不进入实现——由 tower 修订提案并重新走节点 1（design §9 的门槛）；
+> 实现者 MUST NOT 按任何清单自行删减现有合同。
 
 ## 3. `llm_request.tool_names`
 

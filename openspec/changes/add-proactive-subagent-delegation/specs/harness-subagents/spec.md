@@ -5,12 +5,10 @@
 > （`openspec/specs/harness-subagents/spec.md`）的整条 requirement 复制再改，段落顺序与段数保持
 > 不变，改动为「内建 `explore`」一段的改准、新增「内建 `general`」一段与两个同名场景。
 >
-> **`general` 是待裁候选（design §9.2），不默认已批准**：若节点 1 裁决不新增，按 design §9.2.1 的
-> 缩减清单同步——本 delta 要删的是：① 定义条里「内建 `general`」整段与「内建 general 可用且工具集为
-> 全量」场景；② 本条条件②里的「（专用定义或 `general`）」；③ 判据 1 的「没有专用、但有 `general`…」
-> 分支；④ 判据 2 的「也不适合交给 `general`」；⑤ 标签场景里的「专用优先、`general` 次选」判据；
-> ⑥ 本注记与归档顺序注记里的 `general` 提及。其余（`explore`、四条判据的其余措辞、`tool_names`、
-> 机制硬约束段）不变。
+> **`general` 是节点 1 的组成候选（design §9.2），不默认已批准**：它与本 delta 的其他条款一起裁决。
+> 若节点 1 否决 `general`，**本提案不进入实现**——由 tower 修订 proposal / design / tasks / delta 后
+> 重新走节点 1；实现者 MUST NOT 按清单自行删减本 delta 的条款（「否决后现场缩减」已按 Alex
+> 2026-10-29 裁决废除）。
 >
 > **归档顺序（语义依赖，非 delta 基线依赖）**：`vault_list` 进入「工具集声明与默认收紧」条的闭集合
 > 由 change `add-harness-vault-workspace-list` 的 delta 承担（该 change 已实现、待归档）。本 change
