@@ -746,3 +746,163 @@ test.describe("M795 列表行光标几何（C1）", () => {
     ).toBeLessThanOrEqual(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// M795 r1 P1-1：孤立空列表项（整篇没有一行正文）
+// ---------------------------------------------------------------------------
+//
+// 空项行（`- ` / `1. ` / `- [ ] `）本行没有正文文本，`bodyTextBox` 靠「借相邻行正文文本盒的
+// 高度 + 本行内容盒居中」取行盒。若整篇只有这一行（或 20 行搜索半径内没有正文），旧实现返回
+// null → `coordsAt` 返回 null → CM 回退到 marker 自己的盒子（15px 正文下 22.9375px），
+// 正是本 mission 要消除的取盒方式（C1 对**任意** md 文档成立）。
+//
+// 修法：借不到邻行时，用本行自己的排版（computed font）在离屏容器里量一个真实文本盒。
+// 本块的判据与实现不同源：参考值取自**另一份带正文的文档**的正文文本 Range rect，
+// 以及「20 行搜索半径之外」那一段正文的 Text Range rect。
+
+interface IsolatedCase {
+  name: string;
+  doc: string;
+  /** 带上屏的可见标记（marker widget 的显示文本）。 */
+  ready: string;
+  fontSize?: number;
+}
+
+const ISOLATED_CASES: IsolatedCase[] = [
+  { name: "ul 空项 `- `", doc: "- ", ready: "–" },
+  { name: "ul 空项 + 尾随换行 `- \\n`", doc: "- \n", ready: "–" },
+  { name: "任务空项 `- [ ] `", doc: "- [ ] ", ready: "[ ]" },
+  { name: "ol 空项 `1. `", doc: "1. ", ready: "1." },
+];
+
+/** 打开一份「只有空列表项」的文档并聚焦到行首。 */
+async function openIsolated(page: Page, fixture: IsolatedCase): Promise<void> {
+  await openDoc(page, {
+    doc: fixture.doc,
+    name: "isolated.md",
+    ready: fixture.ready,
+    ...(fixture.fontSize !== undefined ? { fontSize: fixture.fontSize } : {}),
+  });
+  await page.evaluate(() => {
+    const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+    view.focus();
+    view.dispatch({ selection: { anchor: 0 } });
+  });
+  await page.waitForTimeout(80);
+}
+
+/** 参考正文行盒：**另一份文档**里某一行正文文本的首字符 rect 高度（同字体度量）。 */
+async function referenceBodyTextHeight(page: Page, doc: string, needle: string, fontSize?: number): Promise<number> {
+  await openDoc(page, {
+    doc,
+    name: "reference.md",
+    ready: needle,
+    ...(fontSize !== undefined ? { fontSize } : {}),
+  });
+  const height = await page.evaluate((text) => {
+    const line = Array.from(document.querySelectorAll<HTMLElement>(".cm-line")).find((el) =>
+      (el.textContent ?? "").includes(text),
+    );
+    if (!line) throw new Error(`参考文档里找不到 ${JSON.stringify(text)}`);
+    const marker = line.querySelector(".cm-lp-list-marker");
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const body = node as unknown as { data: string };
+      if (!body.data.trim()) continue;
+      if (marker !== null && marker.contains(node)) continue;
+      const range = document.createRange();
+      range.setStart(node, 0);
+      range.setEnd(node, 1);
+      const rect = range.getBoundingClientRect();
+      if (rect.height > 0) return rect.height;
+    }
+    throw new Error(`参考文档的 ${JSON.stringify(text)} 没有正文文本盒`);
+  }, needle);
+  return height;
+}
+
+/** 当前光标 / marker 的几何读数（孤立文档只有第 1 行）。 */
+async function isolatedReading(page: Page): Promise<{ caret: number; marker: number; head: number }> {
+  return page.evaluate(() => {
+    const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+    const cursor = document.querySelector<HTMLElement>(".cm-cursor-primary");
+    const marker = document.querySelector<HTMLElement>(".cm-lp-list-marker");
+    if (!cursor) throw new Error("孤立空项行没有画出光标（读不到 ≠ 通过）");
+    if (!marker) throw new Error("孤立空项行的 marker widget 不在场（场景装置坏了）");
+    return {
+      caret: cursor.getBoundingClientRect().height,
+      marker: marker.getBoundingClientRect().height,
+      head: view.state.selection.main.head,
+    };
+  });
+}
+
+test.describe("M795 r1 孤立空列表项（无任何邻行正文，C1）", () => {
+  for (const fixture of ISOLATED_CASES) {
+    test(`${fixture.name}：光标高度 = 正文行盒（借不到邻行时按本行排版量），不等于 marker 盒高`, async ({ page }) => {
+      // 参考值先行：另开一份 `- 正文` 文档，量正文文本盒（同字体、同字号）。
+      const reference = await referenceBodyTextHeight(page, "- 正文参考", "正文参考");
+      await openIsolated(page, fixture);
+      const reading = await isolatedReading(page);
+      expect(reading.head, "光标必须落在空项行行首").toBe(0);
+      expect(
+        Math.abs(reading.caret - reference),
+        `${fixture.name}：光标高度 ${reading.caret} MUST 等于正文行盒 ${reference}（±1px）——修前回退到 marker 盒高`,
+      ).toBeLessThanOrEqual(1);
+      expect(
+        reading.marker - reading.caret,
+        `${fixture.name}：区分度——marker 盒高 ${reading.marker} MUST 比光标高 ≥ 2px（否则本断言在「取 marker 盒」上也绿）`,
+      ).toBeGreaterThanOrEqual(2);
+    });
+  }
+
+  test("孤立空项 × 32px 字号：兜底量法跟随字号放大（不是 15px 常量）", async ({ page }) => {
+    const reference = await referenceBodyTextHeight(page, "- 正文参考", "正文参考", 32);
+    await openIsolated(page, { name: "ul 空项 × 32px", doc: "- ", ready: "–", fontSize: 32 });
+    const reading = await isolatedReading(page);
+    expect(
+      Math.abs(reading.caret - reference),
+      `32px 孤立空项：光标高度 ${reading.caret} MUST 等于 32px 正文行盒 ${reference}（±1px）`,
+    ).toBeLessThanOrEqual(1);
+    expect(reading.caret, "32px 档光标必须随行盒放大").toBeGreaterThan(30);
+    expect(reading.marker - reading.caret, "区分度：marker 盒高仍高于光标").toBeGreaterThanOrEqual(2);
+  });
+
+  test("20 行搜索半径之外才有正文：光标高度等于那段正文的行盒", async ({ page }) => {
+    // 空项在第 1 行，正文在 26 行之后（超出 20 步搜索半径）——兜底必须落到排版量法上，
+    // 而参考值仍取同一文档里真实正文文本的 rect（不是实现里的常量）。
+    const doc = ["- ", ...Array.from({ length: 25 }, () => ""), "半径之外的正文段落。", ""].join("\n");
+    await openDoc(page, { doc, name: "far.md", ready: "半径之外的正文段落" });
+    await page.waitForTimeout(80);
+    const reference = await page.evaluate((text) => {
+      const line = Array.from(document.querySelectorAll<HTMLElement>(".cm-line")).find((el) =>
+        (el.textContent ?? "").includes(text),
+      );
+      if (!line) throw new Error("远距正文行不在 DOM 里（场景装置坏了）");
+      const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const body = node as unknown as { data: string };
+        if (!body.data.trim()) continue;
+        const range = document.createRange();
+        range.setStart(node, 0);
+        range.setEnd(node, 1);
+        const rect = range.getBoundingClientRect();
+        if (rect.height > 0) return rect.height;
+      }
+      throw new Error("远距正文行没有文本盒");
+    }, "半径之外的正文段落");
+    await page.evaluate(() => {
+      const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
+      view.focus();
+      view.dispatch({ selection: { anchor: 0 } });
+    });
+    await page.waitForTimeout(80);
+    const reading = await isolatedReading(page);
+    expect(reading.head, "光标落在第 1 行空项行首").toBe(0);
+    expect(
+      Math.abs(reading.caret - reference),
+      `搜索半径外：光标高度 ${reading.caret} MUST 等于正文行盒 ${reference}（±1px）`,
+    ).toBeLessThanOrEqual(1);
+    expect(reading.marker - reading.caret, "区分度：marker 盒高仍高于光标 ≥ 2px").toBeGreaterThanOrEqual(2);
+  });
+});

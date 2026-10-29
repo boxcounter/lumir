@@ -310,9 +310,10 @@ function bodyTextBox(dom: HTMLElement): { top: number; bottom: number } | null {
     fallback ??= box;
   }
   if (fallback !== null) return fallback;
-  // 空项：本行没有正文文本，行盒高度取相邻可见行的文本盒，纵向按本行内容盒居中
-  // （line-height 的半行距在文本盒上下均分）。
-  const height = siblingTextBoxHeight(line);
+  // 空项：本行没有正文文本。行盒高度优先借相邻可见行的**正文**文本盒（同一字体度量下两行
+  // 等高）；20 行搜索半径内也没有正文时（整篇只有一行空列表项），退到用本行自己的排版
+  // 量一个真实文本盒——C1 对任意 md 文档成立，MUST NOT 以 marker 盒高回退（M795 r1 P1-1）。
+  const height = siblingTextBoxHeight(line) ?? measuredTextBoxHeight(line);
   if (height === null) return null;
   const rect = line.getBoundingClientRect();
   const style = getComputedStyle(line);
@@ -321,6 +322,50 @@ function bodyTextBox(dom: HTMLElement): { top: number; bottom: number } | null {
   const top = rect.top + padTop;
   const content = rect.height - padTop - padBottom;
   return { top: top + (content - height) / 2, bottom: top + (content + height) / 2 };
+}
+
+/** 正文文本盒高度的**排版兜底**：用本行的 computed 字体（族 / 字号 / 字重 / 字形）在离屏容器里
+ *  量一个真实文本盒。
+ *
+ *  为什么不用字体度量常量或 Canvas：文本盒高度是字体与字号共同决定的（15px 正文字体实测 18px，
+ *  32px 档按比例放大），写死系数会在换字体 / 改字号时与真实行盒分叉；这里量的东西与
+ *  `textBoxOf`（文本 Range 的 rect）是同一种几何，区别只是把文字挪到离屏容器——同一份排版
+ *  取值（`.cm-line` 的 computed style），不引入第二真源。
+ *
+ *  离屏容器挂在 `document.body`（不进编辑器 DOM，CM 的 DOMObserver 看不见），按字体签名缓存：
+ *  主题 / 字号切换产生新签名，旧键留在缓存里也无副作用（条目数以「用户改过几档字号/字体」为界）。 */
+let measureHost: HTMLElement | null = null;
+const textBoxHeightCache = new Map<string, number>();
+
+function measuredTextBoxHeight(line: Element): number | null {
+  const style = getComputedStyle(line);
+  const key = [style.fontFamily, style.fontSize, style.fontWeight, style.fontStyle].join("|");
+  const cached = textBoxHeightCache.get(key);
+  if (cached !== undefined) return cached;
+  if (measureHost === null) {
+    measureHost = document.createElement("div");
+    measureHost.setAttribute("aria-hidden", "true");
+    // visibility:hidden 保留布局（display:none 会量不到矩形），同时不参与命中与读屏。
+    measureHost.style.cssText =
+      "position:absolute;left:-10000px;top:0;visibility:hidden;pointer-events:none;white-space:pre;";
+    document.body.append(measureHost);
+  }
+  const probe = document.createElement("span");
+  probe.style.fontFamily = style.fontFamily;
+  probe.style.fontSize = style.fontSize;
+  probe.style.fontWeight = style.fontWeight;
+  probe.style.fontStyle = style.fontStyle;
+  // 代表串只用拉丁字符：`src/**` 的 CJK 串字面量门禁（tests/unit/copy.test.ts）不豁免；
+  // 文本盒高度取字体度量，与具体字形无关。
+  probe.textContent = "Ag";
+  measureHost.replaceChildren(probe);
+  const range = document.createRange();
+  range.selectNodeContents(probe);
+  const rect = Array.from(range.getClientRects()).find((r) => r.height > 0);
+  probe.remove();
+  if (rect === undefined) return null;
+  textBoxHeightCache.set(key, rect.height);
+  return rect.height;
 }
 
 /** 相邻行（同字体度量）文本盒的高度；找不到时 null。
