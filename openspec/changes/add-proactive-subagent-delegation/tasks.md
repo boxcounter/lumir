@@ -5,11 +5,11 @@
 
 ## 1. 委派策略段（`task` 工具描述）
 
-- [ ] 1.1 在 `src-tauri/src/harness/tools.rs` 加策略段常量（单一居所，文案逐字取 design §3.1 并经 Alex 裁决后的版本），`task_definition` 的组装顺序固定为「能力一句话 → 策略段 → 清单」
-- [ ] 1.2 单测：三条判据的固定措辞逐个在场；策略段恰出现一次；策略段在清单之前；清单仍是逐定义一行 `- <name>：<description>`
+- [ ] 1.1 在 `src-tauri/src/harness/tools.rs` 加策略段常量（单一居所，文案逐字取 design §3.1 并经 Alex 裁决后的版本），`task_definition` 的组装顺序固定为「能力说明 → 策略段 → 清单」
+- [ ] 1.2 单测：描述以能力说明开头、策略段居中、清单在后；策略段恰出现一次；三个固定标签「匹配就委派」「简单任务自己做」「独立才并行」与各自判据在场；描述里不出现「必须并行」这类义务措辞；清单仍是逐定义一行 `- <name>：<description>`
 - [ ] 1.3 单测（反面对照）：装配后的 system prompt 不含策略段措辞；同一条测试先断言 identity 含某条已知工具纪律（正对照，防「空串上打转」）
 - [ ] 1.4 单测：`[harness.subagents].enabled=false` 时 `task` 不在工具定义里，策略段不出现（关停口径沿用 `run::gate_tool_definitions`，不新增第二个关闭点）
-- [ ] 1.5 `docs/specs/subagent-definitions.md` §8「清单注入与容量告警」补一段：注入顺序为策略段在前、清单在后，并抄录策略段全文（文档与代码同一份文案）
+- [ ] 1.5 `docs/specs/subagent-definitions.md` §8「清单注入与容量告警」补一段：注入顺序为能力说明 → 策略段 → 清单，并逐字抄录 design §3.1 的策略段全文（文档与代码同一份文案；三个固定标签不得改写成同义说法）
 
 ## 2. 内建 `explore` 补 `vault_list`
 
@@ -35,12 +35,13 @@
 
 ## 5. 真实 provider 行为验收（按 design §7，不接受 mock 替代）
 
-- [ ] 5.1 在已配置真实 provider 的本机 app（`pnpm tauri dev`）打开合成 vault（`/tmp/lumir-m102-acceptance` 或 `/tmp/lumir-probe-proactive-m800`）；全程不读取 / 不复制凭据文件
+- [ ] 5.1 在已配置真实 provider 的本机 app（`pnpm tauri dev`）打开合成 vault（`/tmp/lumir-m102-acceptance` 或 `/tmp/lumir-probe-proactive-m800`）；全程不读取 / 不复制 / 不手改凭据文件；开工前经**设置面**（设置面板「子代理」总开关）确认并记录 `[harness.subagents].enabled` 的进入时值（预期为开启），它就是 5.7 的恢复目标值
 - [ ] 5.2 格 A（多文件调研，不提子代理名）：记录首条 `llm_request.tool_names`（须含 `task`）与首条 `llm_response.tool_calls`（须有 `name=task`、`agent=explore`）；对照诊断 `subagent_started` / `subagent_finished`
 - [ ] 5.3 格 B（简单单文件问题）：须无 `task` 调用，且 `tool_names` 仍含 `task`（证明是「选择不派」而非「看不见」）
-- [ ] 5.4 格 C（同 A 提问 + `[harness.subagents].enabled=false`）：`tool_names` 不含 `task`、无 `subagent_started`
+- [ ] 5.4 格 C（同 A 提问，**经设置面**关闭「子代理」总开关）：`tool_names` 不含 `task`、无 `subagent_started`；关闭后先记一次读数
 - [ ] 5.5 证据落 `.local/reviews/proactive-subagent-delegation-oct29/real-provider.md`：模型 id（取 `llm_request.model`）、提问原文、三格抽取表、样本限制（单模型 / 每格 N=1 / 只作存在性判据）；证据只抽字段，不含 `system` / `messages` 原文
 - [ ] 5.6 失败处置按 design §7.4 执行并留痕：一次只改一处措辞、最多两轮、失败轮次不得删除；两轮仍不达标则停手上报 Alex，附两轮措辞差异与读数
+- [ ] 5.7 **强制收尾（无论 5.2–5.6 成功、失败、超时或中止）**：按 design §7.5 经设置面把「子代理」总开关恢复为 5.1 记录的进入时值，并在恢复后用界面状态或**新发的**请求 `tool_names` 核实含 `task`；把「进入时值 / 格 C 关闭后读数 / 恢复动作 / 恢复后核实读数」四行写进 real-provider.md。不得读 / 备份 / 改凭据文件；恢复失败即停手上报，未恢复不得写 PASS
 
 ## 6. 台账、门禁与评审
 
