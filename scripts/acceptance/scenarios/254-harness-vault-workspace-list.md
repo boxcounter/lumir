@@ -197,4 +197,3 @@ steps:
   （`jsonl.*` 的字段表），模型看到的工具 schema 不在 JSONL 里，本场景因此无从断言 `vault_list`
   的 description 文本。它的三组边界句由 `tools.rs` 单测 `vault_list_description_keeps_boundaries`
   钉住；「模型是否照它选工具」属判据 6 的真实 provider 抽样，不在本场景。
-

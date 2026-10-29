@@ -2344,16 +2344,23 @@ mod tests {
             .find(|tool| tool["name"] == "vault_list")
             .unwrap();
         let description = list["description"].as_str().unwrap();
-        for clause in [
-            "hidden 条目不出现",
-            "lazy 子树只出一行不展开",
-            "也可能是被忽略规则过滤",
-            "不返回大小、修改时间、权限",
-            "多目标路径或 vault 外路径时用 cli_run",
+        // design §5.1 的三组边界各句都钉住（删任何一句即红），失败信息点出缺的是哪一组、哪一句。
+        for (group, clause) in [
+            // ① 可见性与文件树同源：hidden 不可见、lazy 不展开、0 条有歧义。
+            ("可见性", "可见性与文件树同源"),
+            ("可见性", "hidden 条目不出现"),
+            ("可见性", "lazy 子树只出一行不展开"),
+            ("可见性", "也可能是被忽略规则过滤"),
+            // ② 契约不返回的东西：正文，以及大小 / 修改时间 / 权限这类元数据。
+            ("不返回", "不返回正文"),
+            ("不返回", "不返回大小、修改时间、权限"),
+            // ③ 越界能力的出口：元数据 / 隐藏项 / 多目标路径 / vault 外路径 → cli_run。
+            ("cli_run 出口", "需要这些元数据、隐藏项"),
+            ("cli_run 出口", "多目标路径或 vault 外路径时用 cli_run"),
         ] {
             assert!(
                 description.contains(clause),
-                "vault_list description 缺少边界句「{clause}」：{description}"
+                "vault_list description 缺少「{group}」边界句「{clause}」：{description}"
             );
         }
     }
