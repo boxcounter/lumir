@@ -17,6 +17,17 @@ declare module "node:path" {
 declare module "node:url" {
   export function fileURLToPath(url: string | URL): string;
 }
+declare module "node:zlib" {
+  export function inflateSync(data: Uint8Array): Buffer;
+}
+declare class Buffer extends Uint8Array {
+  static from(data: ArrayLike<number>): Buffer;
+  static alloc(size: number): Buffer;
+  static concat(list: readonly Uint8Array[]): Buffer;
+  readUInt32BE(offset: number): number;
+  toString(encoding?: string, start?: number, end?: number): string;
+  subarray(start?: number, end?: number): Buffer;
+}
 declare var process: {
   cwd(): string;
   env: Record<string, string | undefined>;

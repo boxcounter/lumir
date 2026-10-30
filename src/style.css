@@ -303,6 +303,10 @@ body {
   background: var(--sel);
   color: var(--sel-text);
 }
+.lumir-hp-composer > .lumir-hp-qcard.is-composer-selection-band,
+.lumir-hp-composer > .lumir-hp-qpara.is-composer-selection-band {
+  background-color: var(--sel-band);
+}
 .pane-editor {
   max-width: none;
   min-width: 0;

@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：238
-- 验收项（不同 item 编号）：215
-- 分档：core 29 / full 201 / bundle 4 / evidence 4（full 批 = 全部 238 个，含其余各档）
+- 场景：239
+- 验收项（不同 item 编号）：216
+- 分档：core 29 / full 202 / bundle 4 / evidence 4（full 批 = 全部 239 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -224,6 +224,7 @@
 | 256 | `256-settings-cancel-close-oct29` | 设置面板：底栏「取消」= 关闭（干净直关、脏草稿先确认、确认放弃后关闭且文件逐字节不变） | full |
 | 257 | `257-harness-request-tool-names` | 请求暴露面可核对：llm_request.tool_names 启用态含 task、子运行白名单 task 恒缺席 | full |
 | 258 | `258-settings-provider-delete-active-oct30` | 设置面板：删除当前使用项后保存不再被删保护挡住（替代目标落盘 / 删除到空清单清 harness.provider） | full |
+| 259 | `259-composer-select-all-highlight-oct30` | composer 全选自绘高亮：卡片与段落可见、折叠无残留、Backspace 整删（M815，HC6） | full |
 | 423 | `121-harness-message-excerpt` | harness 消息摘录 ① transcript 选区 → 浮动钮 → 卡片入 composer（+ 序列化结构 / 视口 skip / transcript 同构） | full |
 | 531 | `160-quote-button-viewport-clamp` | 摘录浮动钮落点钳制：选区并集盒越出挂载容器（长行）时钮仍在视口内 | full |
 | 552 | `161-harness-path-link`<br>`221-harness-path-line-range` | harness 输出里的 vault 路径可点击（新标签 + 行号锚定 + 卡片路径）<br>harness 输出里的行范围路径可点击（:起-止 落到起始行，畸形形态不吞半截） | full<br>full |

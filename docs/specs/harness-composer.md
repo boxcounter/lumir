@@ -256,6 +256,12 @@ M627（Alex 2026-10-23：「harness composer 里 CMD + A 没有选中 composer �
 4. **与引擎原生路径的边界**：本条款 MUST NOT 依赖引擎原生 selectAll——混排 contenteditable 里
    它选不到全文（这正是缺陷形态）。`⌘A` 必须由统一键位层分发（Edit 菜单的预置 Select All 因此
    让出加速键，见 keymap-commands 的「⌘A 归文本面」）。
+5. **可见性不变量**（M815）：全选后，每个被选顶层块 MUST 有可见高亮；任意非折叠选区同理，
+   完整命中的卡片与段落由模型选区驱动的自绘块级带补足，局部文本仍由原生文本选区绘制。高亮
+   MUST NOT 越出 composer，MUST NOT 改变 DOM 端点、块结构或可访问语义。选区折叠、移出 composer、
+   失焦或结构编辑使原选区失效后，自绘高亮 MUST 同步清除，MUST NOT 在旧块或新块上残留。
+   判据不是「DOM 覆盖正确」：⌘A 前后每个被选块矩形内 MUST 有像素差，composer 外 MUST 无该差异，
+   折叠后自绘带 MUST 消失。
 
 ## 证伪方式（属性测试口径）
 
@@ -368,6 +374,18 @@ M627（Alex 2026-10-23：「harness composer 里 CMD + A 没有选中 composer �
     只经 `[keys]` 把同一条命令绑到通道可达的键上验命令链路；Edit 菜单 Select All 的点击路径
     套件没有菜单栏驱动动作（场景 215 的覆盖边界已登记），其 Rust 侧只判 id → 载荷映射
     （`menu_command_of` 单测）。
+14. **HC6 可见性属性层（WebKit real-UA + Chromium 对照，M815）**：
+    `tests/visual/scenes/m815-composer-selection-highlight.spec.ts` 按卡片首位 / 中间 / 末位 ×
+    多卡片交错 × 纯文本与软断行分布取样。⌘A 前后逐块截图求像素差：每个被选块矩形内 MUST
+    有差异、composer 外 MUST 无差异、折叠后自绘带 MUST 消失；块矩形前后不变，DOM 端点与
+    Backspace 整删断言保留。模型属性测试扫块类型 × 卡片位置 × 选区方向 × 折叠 / 非折叠，
+    断言完整命中块必画、局部段落不夸大成整段、折叠与移出必清空。反向验证：未修实现上卡片
+    首位用例 WebKit MUST FAIL、Chromium MUST PASS；证据落
+    `.local/reviews/composer-selection-highlight-oct30/before-fix/`。
+15. **HC6 可见性行为层（真实 WKWebView，M815）**：验收场景
+    `scripts/acceptance/scenarios/259-composer-select-all-highlight-oct30.md` 用隔离配置与合成
+    vault，经 `[keys]` 把同一 `editor.select-all` 重绑到可注入键，验自绘高亮、Backspace 整删、
+    折叠后无残留并保存前后截图。物理 ⌘A 注入不在覆盖内，边界与场景 215 相同。
 
 ## 实测依据（M419 现场，2026-10-10）
 
