@@ -44,11 +44,13 @@
 > 1 条相对链接）：本文件 `:11` 的 `../../../docs/process/openspec-workflow.md` →
 > `../../../../docs/process/openspec-workflow.md`；包装器自跑
 > `openspec-links: PASS（校验 616 条相对链接，全部可达）`、`openspec-archive: PASS（归档完成，
-> 仓内相对链接门禁绿）`。归档提交后
+> 仓内相对链接门禁绿）`。归档提交后对**本归档提交 `26392f6f`** 跑
 > `node scripts/openspec-archive-check.mjs --archived fix-composer-selection-highlight-oct30`
 > 输出 `PASS`（1 条 MODIFIED，对比 5 段；人工恢复 0 段，声明认领 0 段），读数时间
-> 2026-10-30T03:10:58Z。同批复跑：`openspec validate --all --strict` 为
-> `Totals: 35 passed, 0 failed`，`scripts/docs-check.sh` 为 `PASS`。`docs/backlog.md` 的归档跟踪
+> 2026-10-30T03:21:07Z；重放前在旧归档提交 `601b444c` 上的同项读数亦为 PASS、时间
+> 2026-10-30T03:10:58Z（该提交已不在分支上，故以重放后的 `26392f6f` 为读数对象）。同批复跑：
+> `openspec validate --all --strict` 为 `Totals: 35 passed, 0 failed`，`scripts/docs-check.sh`
+> 为 `PASS`。`docs/backlog.md` 的归档跟踪
 > 条目已按「核销即删除」随归档提交移除。
 
 ## Why
