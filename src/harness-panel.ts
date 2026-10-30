@@ -379,6 +379,31 @@ function isCardBlock(block: ComposerBlock): block is CardBlock {
   return block.kind === "quote" || block.kind === "msgquote" || block.kind === "image";
 }
 
+export function composerSelectionBandIndexes(
+  blocks: readonly ComposerBlock[],
+  selection: ComposerSelection | null,
+): number[] {
+  if (selection === null) return [];
+  const forward = caretCompare(selection.anchor, selection.focus) <= 0;
+  const start = forward ? selection.anchor : selection.focus;
+  const end = forward ? selection.focus : selection.anchor;
+  if (caretCompare(start, end) === 0) return [];
+  const bands: number[] = [];
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    const startsBeforeBlock = start.block < index || (start.block === index && start.offset <= 0);
+    if (!startsBeforeBlock) continue;
+    if (isCardBlock(block)) {
+      if (end.block > index || (end.block === index && end.offset > 0)) bands.push(index);
+      continue;
+    }
+    const endsAfterBlock =
+      end.block > index || (end.block === index && end.offset > 0 && end.offset >= block.text.length);
+    if (endsAfterBlock) bands.push(index);
+  }
+  return bands;
+}
+
 /**
  * 元素内**文档序第一个文本节点**（M457：卡片边界光标位的落点宿主）。卡片的文本住在
  * `.lumir-hp-qc-ex` / `.lumir-hp-qc-src` / 图片元信息行里，落在**文本节点上**才有 caret 几何
@@ -4993,6 +5018,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (composer.childElementCount === 0) composer.append(createParaEl(""));
     if (caret !== null) setDomCaret(caret);
     updateEmptyClass();
+    syncComposerSelectionHighlight();
   }
 
   /** 一个块 → 一个 composer 子元素。已知块类按各自形态；**未知块类保守保留**——内容以 JSON
@@ -5256,6 +5282,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return { anchor, focus };
   }
 
+  function syncComposerSelectionHighlight(): void {
+    const selection = composer.contains(document.activeElement) ? caretFromDom() : null;
+    const bands = new Set(composerSelectionBandIndexes(readBlocksFromDom(), selection));
+    [...composer.children].forEach((child, index) => {
+      child.classList.toggle("is-composer-selection-band", bands.has(index));
+    });
+  }
+
   /** 一个 DOM 点（节点 + 偏移）→ 模型端点；不在 composer 内返回 null。**DOM→模型的唯一读法**：
    *  `caretFromDom`（选区）与 `caretRangeFromPoint`（几何解算出的点，⌃N/⌃P 的渲染行一步）共用。 */
   function modelCaretAt(node: Node | null, domOffset: number): ComposerCaret | null {
@@ -5370,6 +5404,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     measure.setStart(point.node, point.offset);
     measure.collapse(true);
     scrollCaretIntoView(measure, point.blockEl ?? composer.lastElementChild ?? composer);
+    syncComposerSelectionHighlight();
   }
 
   /** 把模型选区写回 DOM（M447 的扩选族用）：anchor / head 两端都落位、方向保持——`setBaseAndExtent`
@@ -5387,6 +5422,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     measure.setStart(h.node, h.offset);
     measure.collapse(true);
     scrollCaretIntoView(measure, h.blockEl ?? composer.lastElementChild ?? composer);
+    syncComposerSelectionHighlight();
   }
 
   /** 全选（M627）：选区覆盖整个 composer，**含原子卡片**。走 DOM 的 `selectNodeContents`
@@ -5403,6 +5439,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     range.selectNodeContents(composer);
     selection.removeAllRanges();
     selection.addRange(range);
+    syncComposerSelectionHighlight();
   }
 
   // ── composer 侧的文本面命令入口（M447，change composer-emacs-nav design §3.2 / §4） ──
@@ -10146,10 +10183,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     updateEmptyClass();
     markDraft();
   });
-  composer.addEventListener("focus", refreshChip);
+  composer.addEventListener("focus", () => {
+    refreshChip();
+    syncComposerSelectionHighlight();
+  });
+  document.addEventListener("selectionchange", syncComposerSelectionHighlight);
   // 输入区失焦 = 本面板的**离散 flush 主挂点**（change composer-draft-persistence design §4）。
   // 理由见 flushDraft 的注释：切 vault 必经「先离开输入区」，而 vaultChanged 跑在后端切完之后。
-  composer.addEventListener("blur", flushDraft);
+  composer.addEventListener("blur", () => {
+    syncComposerSelectionHighlight();
+    flushDraft();
+  });
 
   // ── 新建会话（harness 段 ＋钮与会话浮层动作项共用一条路径；两个入口一个语义）──
   function startNewSession(): void {
