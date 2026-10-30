@@ -32,6 +32,24 @@
 >
 > 未命中文档列举的五个例外类别（无价值 / 行为裁决未决、无审美手感项、无影响面升级、无评审异常、
 > 无证据缺口），故不另送 Alex。物理 ⌘A 真机注入不在覆盖声明内。
+>
+> **归档记录（归档后）**：归档提交 `26392f6f`（`chore(openspec): 归档
+> fix-composer-selection-highlight-oct30`；分支重放到 master `09d1113d` 后去掉 spawn 快照提交，
+> 归档提交随之重建，hash 以此为实际值）。包装器
+> `node scripts/openspec-archive.mjs fix-composer-selection-highlight-oct30` 实际输出：
+> `Task status: ✓ Complete`；`Specs to update:` `harness: update`（`~ 1 modified`，
+> `Totals: + 0, ~ 1, - 0, → 0`，`Specs updated successfully.`）；
+> `Change 'fix-composer-selection-highlight-oct30' archived as
+> '2026-10-30-fix-composer-selection-highlight-oct30'.`。归档后修链 1 处（扫过 4 篇 Markdown /
+> 1 条相对链接）：本文件 `:11` 的 `../../../docs/process/openspec-workflow.md` →
+> `../../../../docs/process/openspec-workflow.md`；包装器自跑
+> `openspec-links: PASS（校验 616 条相对链接，全部可达）`、`openspec-archive: PASS（归档完成，
+> 仓内相对链接门禁绿）`。归档提交后
+> `node scripts/openspec-archive-check.mjs --archived fix-composer-selection-highlight-oct30`
+> 输出 `PASS`（1 条 MODIFIED，对比 5 段；人工恢复 0 段，声明认领 0 段），读数时间
+> 2026-10-30T03:10:58Z。同批复跑：`openspec validate --all --strict` 为
+> `Totals: 35 passed, 0 failed`，`scripts/docs-check.sh` 为 `PASS`。`docs/backlog.md` 的归档跟踪
+> 条目已按「核销即删除」随归档提交移除。
 
 ## Why
 
