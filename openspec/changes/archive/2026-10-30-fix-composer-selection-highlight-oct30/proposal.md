@@ -8,13 +8,30 @@
 > 节点 1（提案评审）：**通过**（2026-10-30）。Alex 原话：「推荐修复方向：composer 自绘选区高亮，
 > 不再完全依赖引擎原生 ::selection；同时补『选区必须可见』的合同和 WebKit 像素测试。」随后原话：
 > 「好，请你安排」。本实现严格保留调查报告已证实正确的 DOM 端点、块模型与删除语义。
-> 节点 2（归档放行）：实现与机器证据已齐，待独立 reviewer 绑定最终 tip 评审。
-> ①节点 1 已按上述原话批准，实现未扩 scope；②独立 reviewer 待评审；③tasks 12/12 全勾；
-> ④OpenSpec `36 passed, 0 failed`，quick `GATE RESULT: 13/13 PASS（SKIP 0）`（退出码 0），
-> visual `GATE RESULT: 15/15 PASS（SKIP 0）`（退出码 0，`visual-regression` 930 passed），
-> 真机 259 `1/1 PASS`，证据均在 `.local/reviews/composer-selection-highlight-oct30/`；
-> ⑤delta 为 harness 一条 MODIFIED，docs-check / archive-check 与 validate 均 PASS，
-> `docs/backlog.md` 已登记唯一条目。未更新视觉基线，物理 ⌘A 真机注入不在覆盖声明内。
+> 节点 2（归档放行）：**机器 + 独立评审放行**（[openspec-workflow.md](../../../../docs/process/openspec-workflow.md)
+> 「节点 2：归档默认由独立评审 + 机器判据放行」五要件，归档前逐条读数如下）。
+>
+> ①**方案已批准**：节点 1 于 2026-10-30 通过，Alex 原话见上一段；实现期未扩 scope——Non-goals
+> 全部守住（未用 `execCommand("selectAll")`、未加恒定可编辑首块、未改 HC6 端点 / 块模型 /
+> 序列化 / 删除语义、未对正文施加 `user-select: none`、未更新视觉基线）。
+> ②**独立 reviewer clean / merge**：assigned reviewer `reviewer-composer-selection-highlight-oct30-r2`
+> 复评为 `status: clean` / `merge: merge`，绑定 tip `86766467d50b0c394930f89ed10bca7891cc644c`——
+> 正是实现分支合入 master 的 merge `09d1113` 的第二父提交，评审 tip 与合入 tip 一致；评审文件
+> `.tower/comms/reviews/review-feat-implement-composer-selection-highlight-o-reviewer-composer-selection-hi-r1-2.md`。
+> ③**tasks 全勾**：`tasks.md` 12/12 全勾，无放弃项。
+> ④**门禁与真机证据**：quick `GATE RESULT: 13/13 PASS（SKIP 0）`（退出码 0）、visual
+> `GATE RESULT: 15/15 PASS（SKIP 0）`（退出码 0，`visual-regression` 609s，无视觉基线更新）、
+> 真机场景 259 `1/1 PASS`；证据在主仓
+> `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/composer-selection-highlight-oct30/`
+> （`gate-quick-final.log` / `gate-visual-clean.log` / `acceptance-259.log` / `before-fix/`）。
+> ⑤**规格对账（归档前）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（9 份 delta /
+> 9 条 MODIFIED / 123 段无静默丢段，归档队列条目唯一）；`openspec validate --all --strict`
+> 为 `Totals: 36 passed, 0 failed`；`scripts/docs-check.sh` 为 PASS。delta 为 `harness` 一条
+> MODIFIED，整块复制 living 正文再补可见性段落与新场景；`docs/backlog.md` 归档跟踪队列有且仅有
+> 一条本 change 条目。
+>
+> 未命中文档列举的五个例外类别（无价值 / 行为裁决未决、无审美手感项、无影响面升级、无评审异常、
+> 无证据缺口），故不另送 Alex。物理 ⌘A 真机注入不在覆盖声明内。
 
 ## Why
 
