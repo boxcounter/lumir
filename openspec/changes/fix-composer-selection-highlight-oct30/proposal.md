@@ -8,7 +8,13 @@
 > 节点 1（提案评审）：**通过**（2026-10-30）。Alex 原话：「推荐修复方向：composer 自绘选区高亮，
 > 不再完全依赖引擎原生 ::selection；同时补『选区必须可见』的合同和 WebKit 像素测试。」随后原话：
 > 「好，请你安排」。本实现严格保留调查报告已证实正确的 DOM 端点、块模型与删除语义。
-> 节点 2（归档放行）：实现完成后按五要件填写。
+> 节点 2（归档放行）：实现与机器证据已齐，待独立 reviewer 绑定最终 tip 评审。
+> ①节点 1 已按上述原话批准，实现未扩 scope；②独立 reviewer 待评审；③tasks 12/12 全勾；
+> ④OpenSpec `36 passed, 0 failed`，quick `GATE RESULT: 13/13 PASS（SKIP 0）`（退出码 0），
+> visual `GATE RESULT: 15/15 PASS（SKIP 0）`（退出码 0，`visual-regression` 930 passed），
+> 真机 259 `1/1 PASS`，证据均在 `.local/reviews/composer-selection-highlight-oct30/`；
+> ⑤delta 为 harness 一条 MODIFIED，docs-check / archive-check 与 validate 均 PASS，
+> `docs/backlog.md` 已登记唯一条目。未更新视觉基线，物理 ⌘A 真机注入不在覆盖声明内。
 
 ## Why
 

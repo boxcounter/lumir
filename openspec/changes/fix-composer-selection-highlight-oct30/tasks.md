@@ -31,8 +31,8 @@
 
 ## 5. 门禁与交付
 
-- [ ] 5.1 `openspec validate --all --strict`、`scripts/gate.sh quick`、本地 `scripts/gate.sh visual`
+- [x] 5.1 `openspec validate --all --strict`、`scripts/gate.sh quick`、本地 `scripts/gate.sh visual`
       通过；证据落主仓 `.local/reviews/composer-selection-highlight-oct30/`
-- [ ] 5.2 核对无既有视觉基线更新；若出现差异，保存 diff 并上报，不更新基线
-- [ ] 5.3 tasks 全勾后在 `docs/backlog.md` 归档跟踪队列登记唯一条目；提交实现分支并 TowerComplete，
+- [x] 5.2 核对无既有视觉基线更新；若出现差异，保存 diff 并上报，不更新基线
+- [x] 5.3 tasks 全勾后在 `docs/backlog.md` 归档跟踪队列登记唯一条目；提交实现分支并 TowerComplete，
       逐项报告机器断言、门禁原文、真机证据与未覆盖边界
