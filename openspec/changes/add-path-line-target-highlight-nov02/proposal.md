@@ -81,8 +81,8 @@ Alex 2026-11-02 的需求原话（逐字）：
   - 样式：`src/style.css`（`.cm-line-highlight` 与 eink 覆写，复用既有 token）。
 - **关联约束**：性能合同（ADR 0002 §6）——高亮构建在 2000 行上限内实测中位 0.27ms，不突破单帧预算；
   ADR 0002 §6 的「识别在渲染路径上、零 IPC」不变（全部本地装饰）。
-- **测试面**：`tests/unit/harness-path-link.test.ts`（解析 + 编排）、新增 `tests/unit/navigation-highlight.test.ts`
-  （装饰范围 / 上限 / 生命周期纯逻辑）、`tests/visual/scenes/m632-path-line-range-link.spec.ts`（更新：
+- **测试面**：`tests/unit/harness-path-link.test.ts`（解析 + 编排 + 装饰范围 / 上限 / 生命周期纯逻辑，
+  行高亮与它的入口同文件）、`tests/visual/scenes/m632-path-line-range-link.spec.ts`（更新：
   行装饰在场、选区仍折叠、正文不变、三主题可见性）、真机场景 221（更新：点击后高亮出现与消退）。
 
 ## 观测闸三问
