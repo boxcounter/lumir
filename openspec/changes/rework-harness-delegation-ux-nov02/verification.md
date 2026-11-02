@@ -62,6 +62,20 @@
 | P1-5 后台异常切回后消失 / 跨段基线缺失 | `parseSubrunRuns` + `mergeTerminalSubruns` 并入 `subruns`；`mergeLiveSubruns` 以逐 run 汇总为段基线；确认状态跨切 vault 保留 | 单测 `parseSubrunRuns / mergeTerminalSubruns`；视觉跨 vault 场景改为断言待确认行存在、`知道了` 可确认 |
 | P2 文档/卫生 | 文案表末位 D881；`harness_state` 注释补两个键；场景 240 行尾空白 | `git diff --check` 退出码 0 |
 
+## 二轮评审修复（reviewer r2，p1-2items/hold）
+
+| 项 | 修复 | 判别测试（回退修复后实测红） |
+|---|---|---|
+| P1-1 resume 去重误删并行行 | 去重只在 `subagent_started` 判定「run 已存在」时执行，且只收走 **agent 匹配** 的最近未绑定行；progress / step / finished / 快照刷新不再去重 | 视觉「并行交错」：r1 progress 后 r2 未绑定行仍在；r2 无 started 被闸拒时失败结果保留、顺序不变。回退旧逻辑后该测试 1≠2（`r2-old-visual.log`，exit 1） |
+| P1-2 第二次快照读数冻结 / 用时口径 | live 分支始终 `segmentBase + 当前段快照值`，首次与后续 `elapsedMs` 都取当前段；更早段迟到快照保留既有视图 | 单测：第二次快照 rounds 7→8 / calls 12→13、elapsed 500→1500；回退旧 `Math.max` 后该测试红（`r2-old-unit.log`，exit 1） |
+
+二轮 A/B 证据：`.local/reports/m822-delegation-ux-nov02/r2-old-unit.log` / `r2-old-visual.log`。
+
+### 二轮门禁
+
+- quick：`/tmp/m822-gate-quick-r4.log` → `GATE RESULT: 13/13 PASS（SKIP 0）`，`GATE_EXIT=0`。
+- visual：`/tmp/m822-gate-visual4.log` → `GATE RESULT: 15/15 PASS（SKIP 0）`，`GATE_EXIT=0`（939 passed / 1 skipped / 10.1m）。
+
 ## 真机验收
 
 - 场景：`201-subagent-panel-and-stop` / `240-harness-subagent-vault-switch` /

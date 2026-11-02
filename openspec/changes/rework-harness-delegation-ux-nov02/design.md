@@ -58,8 +58,10 @@
   `finished` 的 `duration_ms` 覆盖为最近一段的真实用时（跨段总时长不可由事件推出，不伪造）；
 - `stoppedBy` 在新段开始时复位为 null（上一段的触顶原因不得延续到新段）；
 - 一个 run 在任务区、`task` 行与通知里始终只有一个身份；行详情显示「N 段」。resume 的第二条
-  `tool_call` 仍会在 transcript 里产生一次调用记录，`subagent_started` 绑定既有身份时收走那条
-  未绑定的重复任务行（事件序是 `tool_call started → subagent_started`）。
+  `tool_call` 仍会在 transcript 里产生一次调用记录；**只有** `subagent_started` 判定该 run
+  已存在（resume）时才收走本次那条未绑定且 **agent 匹配** 的调用行。progress / step / finished /
+  快照刷新 MUST NOT 做任何去重——并行新任务（r2）的未绑定行在 r1 刷新时必须原样保留，否则被闸拒
+  的失败结果会消失、调用顺序会被重排。
 
 ### 4.2 跨 vault：快照是 live 状态的唯一真源
 
@@ -83,6 +85,9 @@
 - 逐 run 汇总随 `session_open` 落种子（恢复新文件没有旧 sidecar），压缩跨边界时同样携带；否则
   二次恢复 / 压缩后恢复会让失败与部分结果退回「运行中」。恢复出的在跑 run 由 live 快照刷新为
   live 形态（行内停止、用时、详情），不依赖事件回放。
+- live 快照的 `rounds` / `tool_calls` 是**段内**读数：累计始终是 `segmentBase + 当前段快照值`，
+  连续快照逐次推进，MUST NOT 与累计值取 `Math.max`（第二次合并后读数会冻结）；`elapsedMs`
+  首次与后续都取当前段快照；段号更小的迟到快照保留既有视图、不回退。
 - 「知道了」的确认按 run id 记忆（跨切 vault / 重载保留，集合有上限）；同一 run 确认后不再出现。
 - failed / aborted 的结果信封同样带任务身份（agent / run_id / segment / background / status /
   model / duration / tool_calls / usage），恢复行与 live 行同形（状态词、图标、用量）。

@@ -618,6 +618,51 @@ test("parseSubrunRuns / mergeTerminalSubruns：后台异常切回后仍进控制
     cachedTokens: 40,
     outputTokens: 7,
   });
+  assert.equal(run.elapsedMs, 500, "首次合并的用时取当前段快照（不是上一段 duration）");
+
+  // 同一段的第二次快照：段内值推进，累计必须继续前进（MUST NOT 与累计值取 Math.max）。
+  const second = mergeLiveSubruns(
+    resumed,
+    parseLiveSubruns([
+      {
+        run_id: "r1",
+        agent: "research",
+        description: "后台两段",
+        model: "mock-fast",
+        background: true,
+        segment: 2,
+        rounds: 3,
+        tool_calls: 4,
+        elapsed_ms: 1_500,
+      },
+    ]),
+  );
+  const progressed = second.find((item) => item.runId === "r1")!;
+  assert.equal(progressed.rounds, 8, "上一段 5 + 本段当前 3");
+  assert.equal(progressed.toolCalls, 13, "上一段 9 + 本段当前 4");
+  assert.equal(progressed.elapsedMs, 1_500, "后续快照的用时同样取当前段");
+  assert.equal(progressed.segments, 2);
+
+  // 更早段的迟到快照不应用（段号回退 = 旧回包）。
+  const staleSegment = mergeLiveSubruns(
+    second,
+    parseLiveSubruns([
+      {
+        run_id: "r1",
+        agent: "research",
+        description: "后台两段",
+        model: "mock-fast",
+        background: true,
+        segment: 1,
+        rounds: 9,
+        tool_calls: 9,
+        elapsed_ms: 99_000,
+      },
+    ]),
+  );
+  const untouched = staleSegment.find((item) => item.runId === "r1")!;
+  assert.equal(untouched.rounds, 8);
+  assert.equal(untouched.elapsedMs, 1_500);
 });
 
 test("isLiveSubrun：只有运行中 / 等待批准算在跑", () => {

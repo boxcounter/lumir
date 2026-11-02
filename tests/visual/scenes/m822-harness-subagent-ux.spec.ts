@@ -37,13 +37,19 @@ async function stubHarness(page: Page, initial: StubState = {}): Promise<void> {
     w.__live = seed.live ?? [];
     w.__runs = seed.runs ?? [];
     w.__stops = [] as string[];
+    w.__sent = false;
     internals.invoke = async (cmd: string, args: any) => {
+      if (cmd === "harness_send") {
+        w.__sent = true;
+        return null;
+      }
       if (cmd === "harness_state") {
         return JSON.stringify({
           messages: seed.messages ?? [],
           usage: { ctx_pct: 0, cache_pct_session: 0 },
           pending_approvals: [],
           auto_wake: { chain: 0, max: 3, blocked: null },
+          in_flight: w.__sent,
           subrun_usage: seed.usage ?? null,
           live_subruns: w.__live,
           subrun_runs: w.__runs,
@@ -90,6 +96,14 @@ async function openPane(page: Page): Promise<void> {
   await page.locator('.ft-row[title="harness-note.md"]').click();
   await page.locator(".lumir-hp-toggle").click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
+}
+
+/** 打开轮次闸门：`tool_call` 事件属于被闸门管控的事件（未发送时一律丢弃），
+ *  直接 fire 会被静默吞掉——测试 tool_call 路径必须先真实发送一条消息。 */
+async function startTurn(page: Page): Promise<void> {
+  await page.locator(".lumir-hp-composer").fill("测试提问");
+  await page.locator(".lumir-hp-send").click();
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
 }
 
 function started(runId: string, description: string, background = false): Record<string, unknown> {
@@ -243,6 +257,7 @@ test("resume 段的真实事件序（tool_call started → subagent_started）�
   await stubTauri(page, VAULT);
   await stubHarness(page);
   await openPane(page);
+  await startTurn(page);
 
   const args = '{"agent":"research","description":"两段任务"}';
   const tel = (status: string, summary?: string): Record<string, unknown> => ({
@@ -265,6 +280,38 @@ test("resume 段的真实事件序（tool_call started → subagent_started）�
   await expect(page.locator(".lumir-hp-tool-row.is-task")).toHaveCount(1);
   const row = page.locator(".lumir-hp-taskwrap").first();
   await expect(row).toContainText("运行中");
+});
+
+test("并行交错：r1 progress 不得删 r2 的未绑定行；r2 被闸拒的失败结果保留且不重排", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await openPane(page);
+  await startTurn(page);
+
+  const args = (agent: string, description: string): string =>
+    `{"agent":"${agent}","description":"${description}"}`;
+  // r1：调用行 → 启动（绑定）。
+  await fire(page, { type: "tool_call", name: "task", status: "started", summary: args("research", "甲任务") });
+  await fire(page, started("r1", "甲任务"));
+  // r2：只到调用行（尚未 started，随后会被并发闸拒绝）。
+  await fire(page, { type: "tool_call", name: "task", status: "started", summary: args("beta", "乙任务") });
+  // r1 的 progress 走 refreshTaskRow——MUST NOT 把 r2 的未绑定行当 resume 重复行删掉。
+  await fire(page, {
+    type: "subagent_progress",
+    run_id: "r1",
+    rounds: 2,
+    tool_calls: 3,
+    last_tool: "vault_read",
+    elapsed_ms: 4_000,
+  });
+  await expect(page.locator(".lumir-hp-taskwrap")).toHaveCount(2);
+  // r2 没有 subagent_started：调用结果（被闸拒）必须作为第二行留下，且顺序不变。
+  await fire(page, { type: "tool_call", name: "task", status: "done", summary: "concurrency_limit（并发上限）" });
+  const rows = page.locator(".lumir-hp-taskwrap");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("甲任务");
+  await expect(rows.nth(1)).toContainText("乙任务");
+  await expect(rows.nth(1)).toContainText("concurrency_limit");
 });
 
 test("四态恢复行：completed / partial / failed / aborted 的状态词、图标与用量同形", async ({ page }) => {

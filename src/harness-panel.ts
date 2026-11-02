@@ -3894,17 +3894,46 @@ export function mergeLiveSubruns(
       continue;
     }
     if (isLiveSubrun(old)) {
+      // 更早段的迟到快照不得回退读数（段号小 = 旧回包）：保留 existing 视图。
+      if (fresh.segments < old.segments) {
+        merged.set(fresh.runId, old);
+        continue;
+      }
+      const resumed = fresh.segments > old.segments;
+      // 快照里的 rounds / tool_calls 是**段内**值；累计 = 段基线 + 本段段内值。基线来自
+      // 上一段终态汇总（首次 resume）或本视图已建立的 segmentBase。MUST NOT 与累计值取
+      // Math.max——那会让第二次快照后读数冻结（评审 r2 P1-2）。
+      const base = resumed
+        ? {
+            rounds: old.rounds,
+            toolCalls: old.toolCalls,
+            inputTokens: old.inputTokens,
+            cachedTokens: old.cachedTokens,
+            outputTokens: old.outputTokens,
+          }
+        : (old.segmentBase ?? {
+            rounds: 0,
+            toolCalls: 0,
+            inputTokens: 0,
+            cachedTokens: 0,
+            outputTokens: 0,
+          });
       merged.set(fresh.runId, {
         ...old,
         agent: fresh.agent || old.agent,
         description: fresh.description || old.description,
         model: fresh.model || old.model,
         background: fresh.background,
-        rounds: Math.max(old.rounds, fresh.rounds),
-        toolCalls: Math.max(old.toolCalls, fresh.toolCalls),
+        rounds: base.rounds + fresh.rounds,
+        toolCalls: base.toolCalls + fresh.toolCalls,
         lastTool: fresh.lastTool ?? old.lastTool,
-        elapsedMs: Math.max(old.elapsedMs, fresh.elapsedMs),
-        segments: Math.max(old.segments, fresh.segments),
+        // 用时按当前段快照（首次与后续同口径）：上一段的 duration 不得延续。
+        elapsedMs: fresh.elapsedMs,
+        segments: fresh.segments,
+        segmentBase: resumed ? base : old.segmentBase,
+        inputTokens: base.inputTokens,
+        cachedTokens: base.cachedTokens,
+        outputTokens: base.outputTokens,
       });
       continue;
     }
@@ -3923,6 +3952,8 @@ export function mergeLiveSubruns(
       // 快照里的 live 读数是**段内**值：跨段累计 = 上一段汇总 + 本段已到达的读数。
       rounds: old.rounds + fresh.rounds,
       toolCalls: old.toolCalls + fresh.toolCalls,
+      // 本段用时取快照；上一段的 duration 不得延续（评审 r2 P1-2）。
+      elapsedMs: fresh.elapsedMs,
       segments: Math.max(old.segments + 1, fresh.segments),
       segmentBase: {
         rounds: old.rounds,
@@ -7670,23 +7701,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  （快照恢复 / 事件缺口下也要让历史任务的详情可达）。 */
   function taskRowFor(run: SubrunView): TaskRowEntry {
     const bound = taskRowEntries.find((entry) => entry.runId === run.runId);
-    if (bound !== undefined) {
-      // resume 段：第二段的 `tool_call started` 已经建了一条未绑定的任务行，而同一 run 的
-      // 首个身份已有绑定行。这里收走那条重复行——同一次交办在 transcript 只保留一个身份
-      // （mission：不要再把两段讲成两个子代理）。只删最近一条未绑定行，且只在 run 已绑定
-      // 的分支里发生，因此不会误伤新 run 的调用行。
-      for (let i = taskRowEntries.length - 1; i >= 0; i -= 1) {
-        const entry = taskRowEntries[i];
-        if (entry === undefined || entry.runId !== null || entry.settled) continue;
-        entry.wrap.remove();
-        for (const block of [activeTools, ...sealedToolBlocks]) {
-          if (block !== null) block.rows = block.rows.filter((row) => row !== entry.wrap);
-        }
-        taskRowEntries.splice(i, 1);
-        break;
-      }
-      return bound;
-    }
+    if (bound !== undefined) return bound;
     const match =
       taskRowEntries.find(
         (entry) =>
@@ -7908,6 +7923,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const entry = taskRowFor(run);
     renderTaskToolRow(entry, run);
     renderTaskRowDetail(entry, run);
+  }
+
+  /** resume 去重（只由 `subagent_started` 的「run 已存在」分支调用，评审 r2 P1-1）：
+   *  第二段的 `tool_call started` 会先建一条未绑定任务行；确认这次 started 是同一 run 的
+   *  resume 后，收走**同一执行者**最近的一条未绑定行。MUST NOT 在 progress / step / finished /
+   *  快照刷新里调用——那会误删并行新任务（r2）的调用行。 */
+  function dropResumeDuplicateRow(run: SubrunView): void {
+    for (let i = taskRowEntries.length - 1; i >= 0; i -= 1) {
+      const entry = taskRowEntries[i];
+      if (entry === undefined || entry.runId !== null || entry.settled) continue;
+      if (taskArgsOf(entry.argsSummary).agent !== run.agent) continue;
+      entry.wrap.remove();
+      for (const block of [activeTools, ...sealedToolBlocks]) {
+        if (block !== null) block.rows = block.rows.filter((row) => row !== entry.wrap);
+      }
+      taskRowEntries.splice(i, 1);
+      return;
+    }
   }
 
   function appendToolCall(name: string, status: "started" | "done", summary: string): void {
@@ -9600,7 +9633,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         retitleOpenSessRows(previousShown, sessionNameShown(sessionTitle, firstUserText));
         return;
       }
-      case "subagent_started":
+      case "subagent_started": {
+        // resume 判定必须用**归约前**的视图：已存在同 run = 这是第二段（或更后的段）。
+        const resumed = subruns.some((item) => item.runId === event.run_id);
         subruns = reduceSubruns(subruns, {
           type: "subagent_started",
           run_id: event.run_id,
@@ -9609,12 +9644,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           model: event.model,
           background: event.background === true,
         });
-        {
-          const run = subruns.find((item) => item.runId === event.run_id);
-          if (run !== undefined) refreshTaskRow(run);
+        const run = subruns.find((item) => item.runId === event.run_id);
+        if (run !== undefined) {
+          if (resumed) dropResumeDuplicateRow(run);
+          refreshTaskRow(run);
         }
         renderTaskArea();
         return;
+      }
       case "subagent_progress":
         subruns = reduceSubruns(subruns, {
           type: "subagent_progress",
