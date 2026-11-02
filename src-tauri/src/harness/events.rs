@@ -107,8 +107,17 @@ pub fn reasoning_chunk(text: &str, index: u32) -> serde_json::Value {
 }
 
 /// `{"type":"tool_call","name":"...","status":"started"|"done","summary":"..."}`
-pub fn tool_call(name: &str, status: &str, summary: &str) -> serde_json::Value {
-    serde_json::json!({"type": "tool_call", "name": name, "status": status, "summary": summary})
+/// `call_id` 是本次工具调用的身份（M822）：同一助手消息里同 agent 的多次 `task` 调用靠它
+/// 把 `subagent_started` / `tool_call done` 绑回**本次调用**的行，MUST NOT 靠 agent 名或到达
+/// 顺序猜测（评审 r3 P1-1）。
+pub fn tool_call(name: &str, status: &str, summary: &str, call_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "tool_call",
+        "name": name,
+        "status": status,
+        "summary": summary,
+        "call_id": call_id,
+    })
 }
 
 /// `{"type":"approval_request","id":"...","tool":"...","diff":"...","argv":[...]}`
@@ -217,11 +226,14 @@ pub fn subagent_started(
     max_tokens: u64,
     timeout_secs: u64,
     background: bool,
+    call_id: &str,
 ) -> serde_json::Value {
     serde_json::json!({
         "type": "subagent_started",
         "run_id": run_id,
         "segment": segment,
+        // 触发本次（或本次 resume）启动的调用身份：前端据此把行绑到本次调用（r3 P1-1）。
+        "call_id": call_id,
         "parent_session": parent_session,
         "agent": agent,
         "description": description,
@@ -432,7 +444,7 @@ mod tests {
         let seen = inner.0.clone();
         let sink = ScopedSink::new(&inner, "/tmp/vault-a");
         sink.emit(text_chunk("你好"));
-        sink.emit(tool_call("vault_read", "started", "读 a.md"));
+        sink.emit(tool_call("vault_read", "started", "读 a.md", "call-1"));
         sink.emit(approval_request("ap-1", "vault_patch", Some("@@"), None));
         sink.emit(usage(&UsageSnapshot::default()));
         sink.emit(compact("摘要"));

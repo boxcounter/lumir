@@ -304,6 +304,39 @@
 .lumir-hp-sesspop-list[hidden] {
   display: none;
 }
+/* 会话聚合的按需用量段（M822）：标题一行 + 每个模型桶一行；单桶时不出现模型名列，
+   只显示总量（分组维度只在多模型时才有解释力）。 */
+.lumir-hp-sesspop-usage {
+  padding: var(--sp-1) var(--sp-2) var(--sp-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+.lumir-hp-sesspop-usage-title {
+  margin-bottom: var(--sp-1);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+.lumir-hp-sesspop-usage-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-height: 18px;
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
+.lumir-hp-sesspop-usage-model {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.lumir-hp-sesspop-usage-value {
+  margin-left: auto;
+  flex: none;
+}
 /* 会话行壳（M406）：恢复钮与删除钮是并列兄弟（MUST NOT 钮套钮——WKWebView 把嵌套
    button 当叶子，AX 树不暴露内层，M351 finding）。 */
 .lumir-hp-sesspop-row {
@@ -2198,10 +2231,11 @@
 
 /* ── 子代理任务区（change add-harness-subagents tasks §10，M590；原型 design/prototypes/
    subagents-tasks.html）────────────────────────────────────────────────────────────
-   位置：composer 之上、transcript 之下（面板内常驻段，flex: none）。只列运行中 / 等待批准的
-   run；全部收敛后收敛为一行摘要 + 按模型用量块。纪律：
-   - description 是**唯一可截断字段**；状态词与读数不截断（同 M401「保住终态词」）；
-   - 触顶提示行与 run 行视觉区分（不冒充 run 行）；
+   位置：composer 之上、transcript 之下。M822 起是「只在需要你动手时出现的控制条」：≥2 在跑 /
+   后台 / 待批 / 未确认的后台异常终态才出现；空闲态整块不存在（无完成数汇总、无常驻用量表）。
+   纪律：
+   - description 是**唯一可截断字段**；状态词与用时读数不截断（同 M401「保住终态词」）；
+   - 多行时列表自身滚动（隐藏档滚动条，右缘有常驻动作钮）；
    - eink 降级：色块退成描边 / 无色，语义只靠字形与文字。 */
 .lumir-tp {
   flex: none;
@@ -2211,26 +2245,6 @@
 }
 .lumir-tp[hidden] {
   display: none;
-}
-.lumir-tp-alert {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-3);
-  margin: var(--sp-2) var(--sp-3) 0;
-  padding: var(--sp-2) var(--sp-3);
-  border: 1px solid var(--border);
-  border-radius: var(--r5);
-  background: var(--accent-tint);
-  color: var(--text-2);
-  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
-  line-height: var(--lh-ui);
-}
-.lumir-tp-alert[hidden] {
-  display: none;
-}
-.lumir-tp-alert-text {
-  min-width: 0;
-  flex: 1;
 }
 .lumir-tp-head {
   display: flex;
@@ -2270,15 +2284,18 @@
 .lumir-tp.is-collapsed .lumir-tp-chev {
   transform: rotate(0deg);
 }
-.lumir-tp.is-collapsed .lumir-tp-list,
-.lumir-tp.is-collapsed .lumir-tp-usage {
+.lumir-tp.is-collapsed .lumir-tp-list {
   display: none;
 }
+/* 多待批 / 多行时不挤压 composer（design §19.2 的原承诺）：列表自身滚动。
+   滚动条归隐藏档（tests/unit/scrollbar-registry.test.ts）：行右缘有常驻动作钮。 */
 .lumir-tp-list {
   padding: 0 var(--sp-3) var(--sp-2);
   display: flex;
   flex-direction: column;
   gap: 1px;
+  max-height: min(40vh, 320px);
+  overflow-y: auto;
 }
 .lumir-tp-run {
   border-radius: var(--r5);
@@ -2432,6 +2449,15 @@
 .lumir-tp-mini[hidden] {
   display: none;
 }
+/* 行详情里的单次用量（L2；live 与恢复同一行文案） */
+.lumir-tp-usage-line {
+  margin-top: var(--sp-1);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
+.lumir-tp-usage-line[hidden] {
+  display: none;
+}
 .lumir-tp-decisions {
   display: flex;
   flex-direction: column;
@@ -2476,45 +2502,9 @@
   color: var(--accent);
   font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
 }
-:root[data-theme="eink"] .lumir-tp-alert,
 :root[data-theme="eink"] .lumir-tp-ask-from {
   background: transparent;
   border: 1px solid var(--border);
-}
-/* 按模型用量（全部收敛后；父会话控制行读数不掺这些数字） */
-.lumir-tp-usage {
-  padding: 0 var(--sp-4) var(--sp-3);
-}
-.lumir-tp-usage[hidden] {
-  display: none;
-}
-.lumir-tp-usage h4 {
-  margin: 0 0 var(--sp-2);
-  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
-  font-weight: var(--fw-semibold);
-  letter-spacing: 0.04em;
-  color: var(--text-3);
-}
-.lumir-tp-usage-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-2);
-  min-height: 18px;
-  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
-  color: var(--text-2);
-}
-.lumir-tp-usage-model {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-family: var(--font-mono);
-  color: var(--text);
-}
-.lumir-tp-usage-value {
-  margin-left: auto;
-  flex: none;
-  color: var(--text-3);
 }
 /* 后台完成通知（tasks §10.4）：与用户消息视觉区分（左侧色条 + 标签） */
 .lumir-hp-notice {
@@ -2589,4 +2579,24 @@
 .lumir-hp-task-sum {
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-2);
+}
+/* 运行中行内停止（M822：过程控制不用先展开） */
+.lumir-hp-task-stop {
+  margin-left: var(--sp-2);
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r4);
+  background: none;
+  color: var(--text-2);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  line-height: 18px;
+  cursor: pointer;
+}
+.lumir-hp-task-stop:hover {
+  background: var(--hover);
+}
+.lumir-hp-task-usage {
+  margin-top: var(--sp-1);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
 }

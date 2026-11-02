@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：239
-- 验收项（不同 item 编号）：216
-- 分档：core 29 / full 202 / bundle 4 / evidence 4（full 批 = 全部 239 个，含其余各档）
+- 场景：240
+- 验收项（不同 item 编号）：217
+- 分档：core 29 / full 203 / bundle 4 / evidence 4（full 批 = 全部 240 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -45,6 +45,7 @@
 | 8.21 | `203-subagent-chain-limit`<br>`204-subagent-stopped` | 子代理 8.21 链上限（5）：第 6 条结果不起回合、通知上屏、提示行 +「继续」<br>子代理 8.21 停止自动回合 ⇒ blocked_stopped（后续通知不再唤醒） | full<br>full |
 | 8.22 | `205-subagent-auto-turn-loopmax` | 子代理 8.22 自动回合内触顶 loop_max：按既有提示结束、链计数不变 | full |
 | 8.23 | `206-subagent-notice-restore` | 子代理 8.23 已投递未消费的通知：合并窗口内退出 ⇒ 重启重建上屏、不补唤醒；消费后不重复 | full |
+| 8.24 | `240-harness-subagent-vault-switch` | 子代理跨 vault 往返：切走清行、切回按 live 快照重建（停止可用）、切走期间收尾不复活 | full |
 | 9 | `09-emacs-keys`<br>`09b-keys-config` | Emacs 键位行为 + ⌘Z 真机路径 + ⌘/ 键位面板<br>「keys」配置实操——重绑与解绑 | core<br>full |
 | 10 | `render-markdown`<br>`search-01-find`<br>`search-02-binding` | Markdown 渲染三件套：分隔线 / 代码块着色 / 引用内列表（M138）<br>文件内搜索（⌘F）：panel 出现、匹配计数、上一个/下一个导航、Esc 还原焦点<br>搜索键位可重绑（config.json 的 keys 表） | core<br>full<br>full |
 | 11 | `render-table-degrade` | 表格降级文案带上出错行号与原因（M138）/ 短行补空列不再降级（M142） | core |

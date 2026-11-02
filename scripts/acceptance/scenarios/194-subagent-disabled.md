@@ -49,8 +49,10 @@ steps:
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"tool_names":[' }
       - label: 关停态 tool_names 不含 task（与 257 的启用态在同一字段上对照）
         file: { path: "env:harness/sessions/*/*.jsonl", count: { pattern: '/"tool_names":\[[^\]]*"task"/', exact: 0 } }
-      - label: 任务区整块不出现（空态不占位）
-        ax: { not: "任务 · 本次会话" }
+      - label: 任务控制区整块不出现（空态不占位；判据不能是已退场的汇总文案）
+        ax: { not: "/任务.*个运行中/" }
+      - label: 没有可停止的任务行
+        ax: { not: "停止该任务" }
       - label: 定义文件原样保留（重新启用即恢复）
         file: { path: ".lumir/agents/research.md", has: "关停时保留的定义" }
       - shot: 01-关停态

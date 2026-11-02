@@ -142,8 +142,10 @@ test("未来时间钳进 0 秒档（时钟回拨不产出负数读数）", () =>
 
 const OUTCOME_SWEEP: SessListOutcome[] = [
   { kind: "empty" },
+  { kind: "empty", hasUsage: true },
   { kind: "failed" },
   { kind: "entries", count: 0 },
+  { kind: "entries", count: 0, hasUsage: true },
   { kind: "entries", count: 1 },
   { kind: "entries", count: 3 },
   { kind: "entries", count: 99 },
@@ -168,12 +170,24 @@ test("O5 取数失败：不揭示且有反馈（后端不可用 / 命令未注�
   assert.deepEqual(sessPopDecision({ kind: "failed" }), { visible: false, notify: true });
 });
 
-test("O5 不变量扫掠：visible ⟺ 取数成功且 count>0；visible 与 notify 恒互斥", () => {
+test("O5 按需用量段也是内容：无历史会话但有用量时正常揭示（M822 会话聚合入口）", () => {
+  // 反向验证：若 hasUsage 不参与内容判据，会话浮层在「本会话有子任务用量、尚无历史会话」时
+  // 打不开——会话聚合入口就成了死入口。
+  assert.deepEqual(sessPopDecision({ kind: "empty", hasUsage: true }), { visible: true, notify: false });
+  assert.deepEqual(sessPopDecision({ kind: "entries", count: 0, hasUsage: true }), {
+    visible: true,
+    notify: false,
+  });
+});
+
+test("O5 不变量扫掠：visible ⟺ 取数成功且（count>0 或有用量）；visible 与 notify 恒互斥", () => {
   // 输入分布按「内容体量 × 取数结果」取样（O5 的可证伪表述）：逐点断言不变量本体，
-  // 而不是逐个案例。任一取样点被误判（如 count 0 判 visible）即红。
+  // 而不是逐个案例。任一取样点被误判（如 count 0 且无用量判 visible）即红。
   for (const outcome of OUTCOME_SWEEP) {
     const decision = sessPopDecision(outcome);
-    const nonEmpty = outcome.kind === "entries" && outcome.count > 0;
+    const nonEmpty =
+      outcome.kind !== "failed" &&
+      ((outcome.kind === "entries" && outcome.count > 0) || outcome.hasUsage === true);
     const tag = JSON.stringify(outcome);
     assert.equal(decision.visible, nonEmpty, `visible 判据（${tag}）`);
     assert.equal(decision.notify, !nonEmpty, `notify 判据（${tag}）`);

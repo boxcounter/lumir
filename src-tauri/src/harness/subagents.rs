@@ -72,7 +72,8 @@ struct HubInner {
     sink: Mutex<Option<Arc<dyn EventSink>>>,
     concurrency: ConcurrencyGate,
     registry: Mutex<Registry>,
-    runs: Mutex<HashMap<String, ActiveRun>>,
+    /// 活动表：键序稳定（BTreeMap）——快照的 `live_subruns` 行序因此在多次读取间不抖动。
+    runs: Mutex<BTreeMap<String, ActiveRun>>,
     wake: Mutex<WakeState>,
     wake_tx: Mutex<Option<Sender<WakeEvent>>>,
     /// 本回合起的 run 的停止标志（父回合停止 = 广播；新回合清空）。
@@ -106,14 +107,16 @@ struct RetainedRun {
 }
 
 struct ActiveRun {
-    #[allow(dead_code)]
     agent: String,
-    #[allow(dead_code)]
     description: String,
-    #[allow(dead_code)]
     model: String,
-    #[allow(dead_code)]
     segment: u32,
+    background: bool,
+    /// 本段的进度读数（`on_round` 就地更新；快照 `live_subruns` 的数据源）。
+    rounds: u32,
+    tool_calls: u32,
+    last_tool: Option<String>,
+    elapsed_ms: u64,
     abort: Arc<AtomicBool>,
 }
 
@@ -199,7 +202,7 @@ impl SubagentHub {
                 sink: Mutex::new(None),
                 concurrency: ConcurrencyGate::new(limit),
                 registry: Mutex::new(Registry::default()),
-                runs: Mutex::new(HashMap::new()),
+                runs: Mutex::new(BTreeMap::new()),
                 wake: Mutex::new(WakeState::default()),
                 wake_tx: Mutex::new(None),
                 turn_runs: Mutex::new(Vec::new()),
@@ -305,6 +308,45 @@ impl SubagentHub {
             "apr-{}",
             self.inner.approval_seq.fetch_add(1, Ordering::SeqCst)
         )
+    }
+
+    /// 在跑 run 的进度就地更新（`on_round` 每回合一次）：活动表是快照 `live_subruns` 的唯一
+    /// 数据源，进度因此必须落在这里——切回 vault 时没有事件可回放。
+    fn record_progress(
+        &self,
+        run_id: &str,
+        rounds: u32,
+        tool_calls: u32,
+        last_tool: Option<&str>,
+        elapsed_ms: u64,
+    ) {
+        let mut runs = self.inner.runs.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(run) = runs.get_mut(run_id) {
+            run.rounds = rounds;
+            run.tool_calls = tool_calls;
+            run.last_tool = last_tool.map(str::to_string);
+            run.elapsed_ms = elapsed_ms;
+        }
+    }
+
+    /// 在跑 run 列表（`harness_state.live_subruns`；change rework-harness-delegation-ux-nov02）：
+    /// 只含活动表里的 run——段收尾后整项移除，切走期间收尾的 run 因此不会在切回时复活。
+    pub fn live_snapshot(&self) -> Vec<session::LiveSubrunSnapshot> {
+        let runs = self.inner.runs.lock().unwrap_or_else(|e| e.into_inner());
+        runs.iter()
+            .map(|(run_id, run)| session::LiveSubrunSnapshot {
+                run_id: run_id.clone(),
+                agent: run.agent.clone(),
+                description: run.description.clone(),
+                model: run.model.clone(),
+                background: run.background,
+                segment: run.segment,
+                rounds: run.rounds,
+                tool_calls: run.tool_calls,
+                last_tool: run.last_tool.clone(),
+                elapsed_ms: run.elapsed_ms,
+            })
+            .collect()
     }
 
     /// 自动唤醒状态快照（`harness_state.auto_wake`）。
@@ -655,6 +697,9 @@ impl SubagentHub {
         denials: u32,
         usage: Usage,
         audit: Option<&str>,
+        tool_calls: u32,
+        duration_ms: u64,
+        background: bool,
     ) {
         let _ = self
             .inner
@@ -665,6 +710,23 @@ impl SubagentHub {
                 }
                 parent.record_subrun_usage(model, &usage);
                 parent.mark_subrun_segment(model);
+                // 逐 run 汇总（与 sidecar 同一次调用写入）：恢复后 `task` 行的终态真源。
+                parent.record_subrun_run(session::SubrunRunSnapshot {
+                    run_id: run_id.to_string(),
+                    agent: agent.to_string(),
+                    description: description.to_string(),
+                    model: model.to_string(),
+                    background,
+                    status: status.to_string(),
+                    stopped_by: stopped_by.map(str::to_string),
+                    rounds,
+                    segments: segment,
+                    input_tokens: usage.input_tokens,
+                    cached_tokens: usage.cached_tokens,
+                    output_tokens: usage.output_tokens,
+                    duration_ms,
+                    tool_calls,
+                });
                 parent.jsonl().record(&serde_json::json!({
                     "kind": "subrun",
                     "run_id": run_id,
@@ -672,10 +734,13 @@ impl SubagentHub {
                     "agent": agent,
                     "description": description,
                     "model": model,
+                    "background": background,
                     "status": status,
                     "stopped_by": stopped_by,
                     "rounds": rounds,
                     "denied_calls": denials,
+                    "tool_calls": tool_calls,
+                    "duration_ms": duration_ms,
                     // 四键与 `llm_response.usage` 同形：`cache_write_tokens` 是恢复重算
                     // `writes` 的唯一来源，缺了它 live 分桶表与恢复重算就不可能相等。
                     "usage": {
@@ -1719,6 +1784,11 @@ fn start_task_inner(
                 description: args.description.clone(),
                 model: model.clone(),
                 segment,
+                background,
+                rounds: 0,
+                tool_calls: 0,
+                last_tool: None,
+                elapsed_ms: 0,
                 abort: abort.clone(),
             },
         );
@@ -1743,6 +1813,7 @@ fn start_task_inner(
         definition.max_tokens,
         definition.timeout_secs,
         background,
+        &call.call_id,
     ));
 
     // 子运行线程**自己持有**一份强 Runtime：后台 run 可能比父回合活得久（cron 的父线程
@@ -1762,6 +1833,7 @@ fn start_task_inner(
         runtime: segment_runtime,
         run_id: run_id.clone(),
         segment,
+        call_id: call.call_id.clone(),
         definition,
         description: args.description.clone(),
         prompt: args.prompt,
@@ -1782,7 +1854,7 @@ fn start_task_inner(
     // 必须显式清掉，否则该 run 永久是「运行中」的僵尸（后台分支尤其：父已拿到 running）。
     let cleanup_agent = args.agent.clone();
     if background {
-        let envelope = running_envelope(&args.agent, &run_id, segment, &model, true);
+        let envelope = running_envelope(&args.agent, &run_id, segment, &model, true, &call.call_id);
         match std::thread::Builder::new()
             .name(format!("lumir-subagent-{run_id}"))
             .spawn(move || {
@@ -1918,6 +1990,8 @@ struct SegmentSeed {
     runtime: Runtime,
     run_id: String,
     segment: u32,
+    /// 触发本次启动的 `task` 调用身份（事件 / 信封的身份链，M822）。
+    call_id: String,
     definition: AgentDefinition,
     description: String,
     prompt: String,
@@ -2103,6 +2177,7 @@ fn run_segment(mut seed: SegmentSeed) -> serde_json::Value {
         seed.segment,
         &seed.definition.name,
         seed.background,
+        &seed.call_id,
     );
     // 活动表移除；后台结果的投递与唤醒只对后台 run 发生。
     hub.inner
@@ -2150,6 +2225,7 @@ fn report_envelope(
     segment: u32,
     agent: &str,
     background: bool,
+    call_id: &str,
 ) -> serde_json::Value {
     match &report.outcome {
         super::run::RunOutcome::Completed => serde_json::json!({
@@ -2158,6 +2234,7 @@ fn report_envelope(
             "agent": agent,
             "run_id": run_id,
             "segment": segment,
+            "call_id": call_id,
             "resumable": true,
             "background": background,
             "model": report.model,
@@ -2167,6 +2244,7 @@ fn report_envelope(
             "rounds": report.rounds,
             "denied_calls": report.denials,
             "tool_calls": report.tool_calls,
+            "duration_ms": report.duration_ms,
         }),
         super::run::RunOutcome::Partial { stopped_by } => serde_json::json!({
             "ok": true,
@@ -2174,6 +2252,7 @@ fn report_envelope(
             "agent": agent,
             "run_id": run_id,
             "segment": segment,
+            "call_id": call_id,
             "resumable": true,
             "background": background,
             "stopped_by": stopped_by.as_str(),
@@ -2185,16 +2264,43 @@ fn report_envelope(
             "rounds": report.rounds,
             "denied_calls": report.denials,
             "tool_calls": report.tool_calls,
+            "duration_ms": report.duration_ms,
         }),
         super::run::RunOutcome::Failed { code, message } => serde_json::json!({
             "ok": false,
+            "status": "failed",
+            "agent": agent,
+            "run_id": run_id,
+            "segment": segment,
+            "call_id": call_id,
+            "background": background,
             "code": code,
             "message": message,
+            // 失败 / 中止同样带任务身份与读数（M822）：否则恢复入口认不出任务信封，
+            // 终态与 per-run 用量会退化成通用工具行（评审 P1-4）。
+            "model": report.model,
+            "duration_ms": report.duration_ms,
+            "rounds": report.rounds,
+            "denied_calls": report.denials,
+            "tool_calls": report.tool_calls,
+            "usage": usage_json(report.usage),
         }),
         super::run::RunOutcome::Aborted => serde_json::json!({
             "ok": false,
+            "status": "aborted",
+            "agent": agent,
+            "run_id": run_id,
+            "segment": segment,
+            "call_id": call_id,
+            "background": background,
             "code": "turn_aborted",
             "message": "子运行已停止",
+            "model": report.model,
+            "duration_ms": report.duration_ms,
+            "rounds": report.rounds,
+            "denied_calls": report.denials,
+            "tool_calls": report.tool_calls,
+            "usage": usage_json(report.usage),
         }),
     }
 }
@@ -2233,6 +2339,7 @@ fn running_envelope(
     segment: u32,
     model: &str,
     background: bool,
+    call_id: &str,
 ) -> serde_json::Value {
     serde_json::json!({
         "ok": true,
@@ -2242,6 +2349,7 @@ fn running_envelope(
         "segment": segment,
         "background": background,
         "model": model,
+        "call_id": call_id,
         "note": "后台运行中；完成后结果以自动化通知进入本会话",
     })
 }
@@ -2300,6 +2408,9 @@ fn finish_failed(
         0,
         Usage::default(),
         audit.as_deref(),
+        0,
+        report.duration_ms,
+        seed.background,
     );
     seed.hub.emit_failed_terminal(
         &seed.run_id,
@@ -2327,6 +2438,7 @@ fn finish_failed(
         seed.segment,
         &seed.definition.name,
         seed.background,
+        &seed.call_id,
     )
 }
 
@@ -2413,6 +2525,8 @@ pub(crate) struct ChildContext {
     description: String,
     /// 本段实际使用的模型 id（模型解析后的值；分桶 / 事件 / 信封共用这一份）。
     model: String,
+    /// 后台调用：逐 run 汇总要带上它，切回后才知道哪些异常终态需要「保留到用户确认」。
+    background: bool,
     tool_policy: Vec<String>,
     max_turns: u32,
     max_tokens: u64,
@@ -2473,6 +2587,7 @@ impl ChildContext {
             agent_name: seed.definition.name.clone(),
             description: seed.description.clone(),
             model: seed.model.clone(),
+            background: seed.background,
             tool_policy: seed.definition.tools.clone(),
             max_turns: seed.definition.max_turns,
             max_tokens: seed.definition.max_tokens,
@@ -2633,6 +2748,9 @@ impl ChildContext {
             report.denials,
             usage,
             audit.as_deref(),
+            report.tool_calls.values().sum(),
+            report.duration_ms,
+            self.background,
         );
         if let Some(sink) = &self.parent_sink {
             // 摘要正文（tasks §10.2 的行详情数据源）：设计 §13 的事件表只列 `summary_chars`，
@@ -2882,14 +3000,24 @@ impl RunContext for ChildContext {
     fn on_round(&mut self, round: u32) {
         self.rounds = round;
         let tool_calls: u32 = self.tool_calls.values().sum();
+        let last_tool = self.tool_calls.keys().next().cloned();
+        let elapsed_ms = self.elapsed_running().as_millis() as u64;
+        // 活动表同步进度：切回 vault 时前端只能从快照重建在跑的行（没有事件可回放）。
+        self.hub.record_progress(
+            &self.run_id,
+            round,
+            tool_calls,
+            last_tool.as_deref(),
+            elapsed_ms,
+        );
         if let Some(sink) = &self.parent_sink {
             sink.emit(events::subagent_progress(
                 &self.run_id,
                 self.segment,
                 round,
                 tool_calls,
-                self.tool_calls.keys().next().map(String::as_str),
-                self.elapsed_running().as_millis() as u64,
+                last_tool.as_deref(),
+                elapsed_ms,
             ));
         }
     }
@@ -3506,6 +3634,73 @@ mod tests {
         let out = f.run_task(args("research", "做点什么"));
         assert_eq!(out["ok"], json!(false), "{out}");
         assert_eq!(out["code"], "server_error");
+    }
+
+    /// failed / aborted 信封同样带任务身份与读数（M822，评审 P1-4）：恢复入口据此认出任务行，
+    /// 终态词、段数与 per-run 用量不会退化成通用工具行。
+    #[test]
+    fn failed_and_aborted_envelopes_keep_task_identity() {
+        let f = Fixture::new(
+            "failed-identity",
+            r#"{"responses":[{"error":{"code":"server_error","message":"boom"}}]}"#,
+            |_| {},
+        );
+        f.research("");
+        let out = f.run_task(args("research", "做点什么"));
+        assert_eq!(out["status"], "failed", "{out}");
+        assert_eq!(out["ok"], json!(false));
+        assert_eq!(out["agent"], "research");
+        assert_eq!(out["segment"], 1);
+        assert_eq!(out["background"], json!(false));
+        assert_eq!(out["code"], "server_error");
+        assert!(out["run_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("r-")));
+        assert!(out["model"].as_str().is_some_and(|model| !model.is_empty()));
+        assert!(out["duration_ms"].as_u64().is_some());
+        assert!(out["usage"].is_object());
+        assert!(out["tool_calls"].is_object());
+        drop(f);
+
+        let f = Fixture::new(
+            "aborted-identity",
+            r#"{"responses":[{"text":"慢","delay_ms":3000}]}"#,
+            |_| {},
+        );
+        f.research("");
+        let hub = f.hub();
+        let handle = start_task(
+            &hub,
+            &f.config,
+            &f.catalog(),
+            &f.task_call(args("research", "前台跑")),
+            None,
+        );
+        assert!(f.wait(Duration::from_secs(3), || {
+            !hub.inner
+                .runs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        }));
+        let run_id = hub
+            .inner
+            .runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .next()
+            .cloned()
+            .expect("应有活动 run");
+        assert!(hub.stop_run(&run_id));
+        let out = handle.result_value();
+        assert_eq!(out["status"], "aborted", "{out}");
+        assert_eq!(out["agent"], "research");
+        assert_eq!(out["run_id"], run_id.as_str());
+        assert_eq!(out["code"], "turn_aborted");
+        assert_eq!(out["segment"], 1);
+        assert!(out["usage"].is_object());
+        assert!(out["tool_calls"].is_object());
     }
 
     /// 执行层白名单二次校验：定义只授予 vault_read 时，模型幻觉出的 vault_delete 被拒、

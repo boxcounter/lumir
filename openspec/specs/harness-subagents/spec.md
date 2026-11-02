@@ -156,7 +156,8 @@ SHALL 受会话级并发上限 `max_concurrent` 约束。前台调用 SHALL 阻�
 所有运行 SHALL 共享同一 provider 配额：请求级并发 SHALL 有独立上限（`max_concurrent + 1`，留一个给
 父会话自己的往返），父会话请求优先；provider 返回配额耗尽 / 限流时该段 SHALL 以 `stopped_by=quota`
 收敛，MUST NOT 自动重试或自动更换模型。父回合被停止时 SHALL 广播停止到所有在跑的 run（含本回合起的
-后台 run）；停止单个后台 run 的入口在任务面板，不影响其它 run。
+后台 run）；停止单个后台 run 的入口在任务控制区行与 transcript 的 `task` 行（见「任务面板与子代理
+可见面」），只停该 run，不影响其它 run。
 
 #### Scenario: 同回合并行
 
@@ -197,9 +198,10 @@ SHALL 受会话级并发上限 `max_concurrent` 约束。前台调用 SHALL 阻�
 系统 SHALL 把每个后台 run 的自终结态（completed / partial / failed）作为一条完成通知交付给父会话：
 通知 SHALL 以一条带自动化标记（`auto_notice`）的 user 角色消息写入父会话历史，该消息的**内容**以其
 随后进入的第一条 `llm_request.messages` 为真源，MUST NOT 另写一份并行的完成**内容**记录；transcript
-SHALL 按该标记渲染为与用户消息可区分的自动化通知；任务面板对应行 SHALL 转为终态。收敛为 `aborted`
-的 run SHALL NOT 触发自动唤醒（停止是用户在场的主动动作，会话拆除时也没有可唤醒的会话），其终态仍
-SHALL 在面板与事件中如实反映。前台 `task` 的结果在本回合内回填，MUST NOT 产生通知或唤醒。
+SHALL 按该标记渲染为与用户消息可区分的自动化通知；控制区对应行 SHALL 在收尾后消失（终态与结果由
+transcript 的 `task` 行承载，见「任务面板与子代理可见面」）。收敛为 `aborted` 的 run SHALL NOT 触发
+自动唤醒（停止是用户在场的主动动作，会话拆除时也没有可唤醒的会话），其终态仍 SHALL 在 transcript
+的 `task` 行与事件中如实反映。前台 `task` 的结果在本回合内回填，MUST NOT 产生通知或唤醒。
 
 由于 user 消息只在下一次 LLM 请求发生时才进入留存，系统 SHALL 在通知**收敛入队时**写一条投递
 标记 sidecar（`kind = "notice_delivered"`，字段 `run_ids`、`wake_batch`、`shown_at`），承载「已接纳
@@ -220,9 +222,9 @@ sidecar 重建一条自动化通知并上屏（agent / description / 终态 / `s
 照常生效，MUST NOT 获得任何豁免；它 MUST NOT 改写当前正在进行的回合的上下文。
 
 链式失控闸 SHALL 是确定性规则，MUST NOT 依赖模型自行判断何时停止。每个父会话 SHALL 维护「连续自动
-回合数」：自动回合开始时加一；任何用户回合开始、任务面板「继续」、会话重置 / 恢复 / 切 vault 时清零
-（计数不持久化）。计数达到 `AUTO_WAKE_CHAIN_MAX = 5` 时，父会话快照 SHALL 暴露
-`auto_wake.blocked = "chain_limit"` 并使任务面板出现触顶提示行（不必等下一次通知被拒才提示）。起
+回合数」：自动回合开始时加一；任何用户回合开始、对话流提示行的「继续」、会话重置 / 恢复 / 切 vault
+时清零（计数不持久化）。计数达到 `AUTO_WAKE_CHAIN_MAX = 5` 时，父会话快照 SHALL 暴露
+`auto_wake.blocked = "chain_limit"` 并在对话流追加一条触顶提示行（不必等下一次通知被拒才提示）。起
 自动回合前若计数已达上限，系统 SHALL NOT 起回合：通知照常上屏并写投递标记（恢复后据标记重建显示），
 仍提供「继续」入口（点击等价一次用户发言——计数清零并按当前待处理通知起一个回合）；用户停止自动
 回合 SHALL 视同触顶（`blocked = "stopped"`），后续通知不再唤醒。两个常量（`AUTO_WAKE_CHAIN_MAX`、
@@ -234,7 +236,8 @@ sidecar 重建一条自动化通知并上屏（agent / description / 终态 / `s
 `subagent_notified` 诊断事件 SHALL 带 `wake`（`auto_turn` / `user_turn` / `blocked_chain` /
 `blocked_stopped` / `none_aborted`）、`wake_batch`（同一批合并的通知共享）与 `chain_index`（本次自动
 回合在链中的序号，从 1 起；非自动回合为 0），且在通知**最终处理时**产出一次（被排队 / 合并的 run
-不另产 `queued` 事件）；父会话快照 SHALL 暴露 `auto_wake: {chain, max, blocked}` 供任务面板渲染提示行。
+不另产 `queued` 事件）；父会话快照 SHALL 暴露 `auto_wake: {chain, max, blocked}` 供面板在对话流渲染
+触顶提示行。
 
 #### Scenario: 空闲时自动起回合
 
@@ -252,7 +255,7 @@ sidecar 重建一条自动化通知并上屏（agent / description / 终态 / `s
 
 - **WHEN** 连续五个自动回合已经跑完，第 6 条后台结果收敛
 - **THEN** 不再起自动回合；通知仍作为自动化通知上屏并写投递标记；`subagent_notified.wake = blocked_chain`；
-  任务面板出现触顶提示行与「继续」入口；快照 `auto_wake.blocked = "chain_limit"`
+  对话流出现触顶提示行与「继续」入口；快照 `auto_wake.blocked = "chain_limit"`
 
 #### Scenario: 用户发言清零链计数
 
@@ -274,8 +277,8 @@ sidecar 重建一条自动化通知并上屏（agent / description / 终态 / `s
 
 #### Scenario: 中止不唤醒
 
-- **WHEN** 用户在任务面板上停止一个后台 run
-- **THEN** 该 run 收敛为 `aborted`，面板行转「已停止」，不产生自动回合（`wake = none_aborted`）
+- **WHEN** 用户在控制区行或 transcript 的 `task` 行上停止一个后台 run
+- **THEN** 该 run 收敛为 `aborted`，行转「已停止」，不产生自动回合（`wake = none_aborted`）
 
 #### Scenario: 上屏后退出、恢复仍可见
 
@@ -466,8 +469,8 @@ MUST NOT 自动批准。
 
 子运行的输入历史 SHALL 从空开始（resume 除外），MUST NOT 继承父会话的任何消息；父会话的 LLM 上下文
 MUST NOT 包含子运行的文本、思考或工具调用过程，只包含 `task` 工具结果与后台完成通知。子运行的过程
-SHALL 只进入任务面板的详情视图与诊断事件——**用户可见，但不进上下文**。子运行 MUST NOT 注入编辑器
-上下文；所需路径 SHALL 由 `prompt` 给出。定义正文 MUST NOT 进入主会话上下文。
+SHALL 只进入 transcript `task` 行的展开详情与诊断事件——**用户可见，但不进上下文**。子运行 MUST NOT
+注入编辑器上下文；所需路径 SHALL 由 `prompt` 给出。定义正文 MUST NOT 进入主会话上下文。
 
 #### Scenario: 父历史不进入子运行
 
@@ -484,8 +487,8 @@ SHALL 只进入任务面板的详情视图与诊断事件——**用户可见，
 
 - **WHEN** 子运行执行多轮工具调用
 - **THEN** 父会话 transcript 只出现 `task` 工具行的进行中与终态（agent + description + 摘要）；子运行
-  的步骤与工具行只在任务面板的展开详情里，MUST NOT 出现在 transcript 正文，MUST NOT 进入父会话的
-  LLM 历史
+  的步骤与工具行只在 transcript `task` 行的展开详情里，MUST NOT 出现在 transcript 正文，MUST NOT
+  进入父会话的 LLM 历史
 
 ### Requirement: 子运行用量按模型分桶记账与可重算
 
@@ -623,54 +626,132 @@ SHALL 限制会话级同时运行的 run 数；超出时后台委派回 `concurr
 
 ### Requirement: 任务面板与子代理可见面
 
-系统 SHALL 在 agent 面板内提供任务区（composer 上方），让用户看见本会话的子运行：
+系统 SHALL 把委派的可见面组织为**对话流 + 任务控制区**两处，主对象是一次交办（description +
+agent + 状态 + 结果 + 代价 + 可介入动作），MUST NOT 把运行时记账字段（`rounds`、`segment`、
+`tool_calls`）当作行内主读数：
 
-- 运行中 / 等待批准 / 后台运行的 run SHALL 各占一行，行内 SHALL 至少包含 agent 名、description、
-  状态、轮次与该 run 的模型与 tokens 读数；description 是唯一可截断字段，状态词 MUST NOT 被截断。
-- 行 SHALL 可展开为详情：模型、工具步数与最近一步、用时；运行中的行 SHALL 提供「停止」动作（只停
-  该 run，不影响其它 run）。
-- 任务区 SHALL 只列运行中 / 等待批准的 run。历史任务 MUST NOT 逐行常驻任务区（会与 transcript 的
-  `task` 工具行形成双读数）；全部任务收敛后任务区 SHALL 收敛为一行摘要（本次会话完成 / 部分结果数）
-  与按模型用量入口。每个 run 的详情（步骤、摘要、用量）SHALL 可从 transcript 的 `task` 工具行展开。
-- `auto_wake.blocked` 非空时，任务区 SHALL 出现自动回合触顶提示行（`chain_limit` 与 `stopped` 两种
-  文案），并提供「继续」入口；提示行 SHALL 与 run 行视觉区分，MUST NOT 冒充一个任务。
-- `enabled = false` 或没有任何子运行任务时，任务区 MUST NOT 出现（空态不占位）。
+- transcript 的 `task` 工具行 SHALL 是所有相位的主载体：运行中 SHALL 显示状态词、description、
+  agent、已用时与「停止」动作，完成后 SHALL 就地翻终态（状态词、description、agent、用时），MUST NOT
+  因完成而另起一行或重建行身份。
+- 运行中的 `task` 行 MUST NOT 被工具块折叠隐藏：工具块内 ≥2 行时折叠其余行，运行中的 `task` 行
+  保持可见。
+- composer 上方的任务控制区 SHALL 只在以下情形出现：至少两个 run 同时在跑、存在后台 run、存在
+  等待批准的 run、或存在尚未被用户确认的后台异常终态（partial / failed / stopped）。单个前台 run
+  运行时控制区 MUST NOT 出现。控制区每行 SHALL 含状态词、description、agent、已用时与可执行动作；
+  description 是唯一可截断字段，状态词 MUST NOT 被截断。
+- 控制区行 SHALL 可展开为详情：模型、工具步数与最近一步、用时、该 run 的用量读数与段数；等待批准的
+  行 SHALL 自动展开并显示批准卡（点名发起者 agent 与 description），控制区标题 SHALL 显示待批数量。
+  拒绝后卡片收敛为终态记录，子运行继续。
+- 后台 run 收敛为 partial / failed / stopped 时，控制区 SHALL 保留一行直到用户显式确认（「知道了」），
+  MUST NOT 自动消失；确认后该行移除，同一 run MUST NOT 再次出现。
+- 全部 run 收敛且无待批 / 待确认项时，控制区 MUST NOT 出现；MUST NOT 常驻「本次会话完成数」汇总，
+  MUST NOT 常驻按模型用量表。
+- `rounds` MUST NOT 作为进度读数出现在行内或详情；它只在 `stopped_by = rounds` 时作为触顶原因出现。
+- `auto_wake.blocked` 非空时，系统 SHALL 在对话流追加一条自动化触顶提示（`chain_limit` 与 `stopped`
+  两种文案）并提供「继续」入口；该提示 MUST NOT 出现在任务控制区，MUST NOT 冒充一件交办。
+- 会话级子任务用量 SHALL 只经按需入口（会话浮层里的「本会话子任务用量」段）呈现：只有一个模型桶时
+  SHALL 只显示总量、MUST NOT 出现「按模型」分组；两个及以上桶时才按模型分组。没有用量读数时整段
+  MUST NOT 出现。
+- 切 vault 后，控制区 MUST NOT 残留上一会话的行；切回时仍在跑的 run SHALL 依据父会话快照的 live run
+  列表重建行（含「停止」能力），切走期间已收尾的 run MUST NOT 以运行中形态复活。父会话快照 SHALL
+  暴露该 vault 的在跑 run 列表（`run_id`、agent、description、模型、后台标记、段内轮次与工具调用数、
+  最近工具、已用时）。
+- 同一 `run_id` 的 resume 段 SHALL 合并为同一任务身份：`segments` 逐段累加，`rounds` / `steps` 跨段
+  累计，行 MUST NOT 因新段开始而清空读数或另立一行。
+- 后台完成通知 SHALL 只承载索引信息（agent、description、终态与触顶原因、摘要首行），MUST NOT 指向
+  一个已不存在的面板位置。
+- `enabled = false` 或无任何子运行任务时，控制区 MUST NOT 出现（空态不占位）。
 
 前端 MUST NOT 提供子代理清单区（名字 / description / 工具数 / 模型 / 来源）：该区已按 Alex
 2026-10-19 裁决「彻底去掉，只留任务区」撤销。MUST NOT 提供定义编辑界面。
 
-子运行的批准请求 SHALL 在任务面板中对应 run 的行内呈现，卡片 SHALL 点名发起者（agent 与
-description）；待批时该行 SHALL 自动展开，面板标题 SHALL 显示待批数量。拒绝后卡片 SHALL 收敛为终态
-记录，子运行继续。父会话自己的批准卡 SHALL 保持既有位置（transcript 工具行下，形态不变）。
+子运行过程 SHALL 只出现在 transcript `task` 行的展开详情与诊断事件，MUST NOT 出现在父会话 transcript
+正文，MUST NOT 进入父会话 LLM 历史。
 
-子运行过程 SHALL 只出现在任务面板详情与诊断事件，MUST NOT 出现在父会话 transcript 正文，MUST NOT
-进入父会话 LLM 历史。
+#### Scenario: 单个前台 run 只出现在对话流
+
+- **WHEN** 一个前台 `task` 正在运行，且没有其它在跑 / 待批 / 待确认的 run
+- **THEN** 任务控制区不出现；其 `task` 行显示状态词、description、agent、已用时与「停止」，且工具块
+  折叠不隐藏该行
 
 #### Scenario: 并行运行可见
 
 - **WHEN** 两个 `task` 并行运行
-- **THEN** 任务区出现两行，各自显示 agent、状态与轮次读数；展开任一可见其步骤流水与模型
+- **THEN** 控制区出现两行，各自显示状态词、description、agent 与用时；展开任一可见模型、步数、
+  最近一步与该 run 的用量
 
 #### Scenario: 待批准自动展开
 
 - **WHEN** 一个子运行触发 ask 级调用
-- **THEN** 该行自动展开并显示批准卡（点名 agent 与 description），面板标题显示待批数量
+- **THEN** 该行自动展开并显示批准卡（点名 agent 与 description），控制区标题显示待批数量
 
 #### Scenario: 后台任务常驻
 
 - **WHEN** 父回合结束而一个后台 run 仍在跑
-- **THEN** 任务区仍显示该行（带后台标记）；它收敛后行转终态并在 transcript 追加一条自动化通知
+- **THEN** 控制区仍显示该行（带后台标记）；它收敛为 completed 后行消失，并在 transcript 追加一条
+  自动化通知与终态 `task` 行
 
-#### Scenario: 关停后不出现任务区
+#### Scenario: 后台失败保留到用户确认
 
-- **WHEN** `[harness.subagents].enabled = false`
-- **THEN** 任务区整体不出现，`task` 不在工具定义里
+- **WHEN** 一个后台 run 收敛为 failed / partial / stopped
+- **THEN** 控制区保留该行（状态词 + 触顶原因 + 摘要首行 + 「知道了」），直到用户点击「知道了」，
+  行才移除，且同一 run 不再出现
+
+#### Scenario: 空闲不占位
+
+- **WHEN** 没有在跑、待批或待确认的 run（包括刚完成一次委派、以及重载恢复后的会话）
+- **THEN** 任务控制区不出现；不出现本次会话完成数汇总，也不出现常驻按模型用量表
+
+#### Scenario: resume 段保持同一身份
+
+- **WHEN** 同一 `run_id` 以 `resume` 起第二段
+- **THEN** 任务区仍只有一行；`segments` 为 2，`rounds` / `steps` 为两段累计，详情包含两段摘要与用量；
+  行 MUST NOT 被清空读数或被替换为第二个身份
+
+#### Scenario: 轮次只在触顶时出现
+
+- **WHEN** 一个 run 正常完成（未触顶）
+- **THEN** 行与详情都不显示轮次读数；当 `stopped_by = rounds` 时，详情的原因行显示轮次预算与已完成轮数
+
+#### Scenario: 切 vault 不残留、切回可停止
+
+- **WHEN** 一个 run 在 vault A 运行，用户切到 vault B 再切回 A
+- **THEN** 切到 B 时控制区不含 A 的行；切回 A 时仍在跑的 run 重建为一行并带「停止」；若它在切走
+  期间已收尾，切回后 MUST NOT 显示为运行中（终态由 transcript 的 `task` 行承载）
+
+#### Scenario: 触顶提示在对话流
+
+- **WHEN** `auto_wake.blocked` 非空
+- **THEN** 对话流出现触顶提示行与「继续」按钮，任务控制区不出现该提示；点「继续」后提示就地收敛为
+  结果句
+
+#### Scenario: 会话用量按需查看
+
+- **WHEN** 本会话有子运行用量，用户打开会话浮层
+- **THEN** 浮层顶部出现「本会话子任务用量」段；只有一个模型桶时只显示一行总量（无模型名分组），
+  两个及以上桶时按模型分行
+
+#### Scenario: 后台通知不指向消失的面板
+
+- **WHEN** 一个后台 run 收尾并上屏完成通知
+- **THEN** 通知只含 agent、description、终态（含触顶原因）与摘要首行，不出现「详情见任务面板」；
+  结果与用量从 transcript 的 `task` 行展开
 
 #### Scenario: 历史任务不逐行留在面板
 
 - **WHEN** 一个子运行完成后用户继续对话
-- **THEN** 任务区不再列出该 run（收敛为一行完成数摘要）；它仍可在 transcript 的 `task` 工具行里
-  点开看步骤与摘要
+- **THEN** 控制区不再列出该 run（不出现完成数汇总），它仍可在 transcript 的 `task` 工具行里点开看
+  步骤、摘要与用量
+
+#### Scenario: 关停后不出现任务区
+
+- **WHEN** `[harness.subagents].enabled = false`
+- **THEN** 控制区整体不出现，`task` 不在工具定义里
+
+#### Scenario: 多待批不挤压 composer
+
+- **WHEN** 三个及以上子运行行同时存在（含待批）
+- **THEN** 控制区列表自身滚动（最大高度不超过视口 40% 或 320px 中较小者），composer 始终可见
 
 ### Requirement: 委派的触发时机（`task` 工具描述）
 

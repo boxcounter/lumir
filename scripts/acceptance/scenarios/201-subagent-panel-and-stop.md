@@ -61,12 +61,14 @@ steps:
         ax: { not: '/vault_read\s*harness-note\.md/' }
       - shot: 01-两行运行中
 
-  - name: 展开第一个 run 的行详情（目标限定任务区的行：带读数的按钮，不是 transcript 的 task 行）
+  - name: 展开第一个 run 的行详情（目标限定任务区的行：以 agent 名开头，transcript 行以 task 开头）
     do: click
-    target: { role: AXButton, name: "慢任务甲.*轮" }
+    target: { role: AXButton, name: "^alpha .*慢任务甲" }
     expect:
-      - label: 行详情给出模型 / 轮次与步数读数
-        ax: { has: "/轮 · [0-9]+ 步/" }
+      - label: 行详情给出模型 / 步数 / 用时（轮次只在触顶时作为原因出现）
+        ax: { has: "/步 · 用时 ([0-9]+h[0-9]{2}m|[0-9]+m[0-9]{2}s|[0-9]+s)/" }
+      - label: 行内状态词可见（不只靠图例）
+        ax: { has: "/运行中/" }
       - label: 运行中的行提供「停止」
         ax: { has: '/AXButton \(停止\)/' }
       - shot: 02-行详情
@@ -100,5 +102,6 @@ steps:
 两个前台 run 并行（各自先做一次 `vault_read`，首响应 `delay_ms: 8000` 撑出可见窗口——这个
 窗口里要完成「等两行出现 → 展开行详情 → 截图 → 点停止」，2.5s 时展开 + settle + 截图就已把点击
 推到 run 结束之后，停止路径因此判不出 aborted）。判据：
-任务区标题与两行读数（AX）、子运行工具行不进主 transcript、展开行给出详情与「停止」、
-停止一个只让它自己 `aborted` 而兄弟 run 照常 `completed`。
+控制区标题与两行读数（AX）、子运行工具行不进主 transcript、展开行给出详情与「停止」、
+停止一个只让它自己 `aborted` 而兄弟 run 照常 `completed`。M822 起行读数为「状态词 + 用时」，
+轮次不再当进度读数。

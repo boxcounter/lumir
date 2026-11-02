@@ -778,8 +778,12 @@ fn execute_calls<C: RunContext>(
         if call.name == "task" {
             // 工具行按调用序创建：started 事件在启动时发，done 在收敛时发（`finish_call`）。
             let args_summary = summarize_args(&call.arguments);
-            ctx.sink()
-                .emit(events::tool_call(&call.name, "started", &args_summary));
+            ctx.sink().emit(events::tool_call(
+                &call.name,
+                "started",
+                &args_summary,
+                &call.call_id,
+            ));
             let handle = ctx.orchestrate(call).unwrap_or_else(|| {
                 // 注册表约定：`task` 恒有句柄（含 disabled / 参数非法）；走到这里的上下文
                 // 不认识编排工具（子运行上下文）——按「不可用」如实回送。
@@ -1190,8 +1194,12 @@ fn handle_call<C: RunContext>(
     // 参数摘要：live「started」事件与面板快照（M367 持久化）共用同一份，MUST NOT 各算各的
     // （REVIEW.md 「同一语义两处真源」条：同一语义两处真源）。
     let args_summary = summarize_args(&call.arguments);
-    ctx.sink()
-        .emit(events::tool_call(&call.name, "started", &args_summary));
+    ctx.sink().emit(events::tool_call(
+        &call.name,
+        "started",
+        &args_summary,
+        &call.call_id,
+    ));
     let parsed: Result<serde_json::Value, _> = serde_json::from_str(&call.arguments);
     let args_ok = parsed.is_ok();
     let args = parsed.unwrap_or_default();
@@ -1292,8 +1300,12 @@ fn finish_call<C: RunContext>(
     // 事件 status 只发契约内的 started|done（m303 面板按非 done 即 started 归并——
     // 发细分值会产生永不完结的「正在执行」幻影行）；细分状态放 summary（D344 展示）。
     let result_summary = summarize_result(status, &output);
-    ctx.sink()
-        .emit(events::tool_call(&call.name, "done", &result_summary));
+    ctx.sink().emit(events::tool_call(
+        &call.name,
+        "done",
+        &result_summary,
+        &call.call_id,
+    ));
     // 面板快照持久化 summary（M367）：成功 = 参数摘要（恢复后工具行显示「调用了什么工具、
     // 带了什么参数」）；失败 = 结果摘要（含细分状态与错误码）。修前 summary 恒 None，面板
     // 重载（快照恢复路径）后工具行摘要全丢。

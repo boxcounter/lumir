@@ -58,8 +58,8 @@ steps:
     expect:
       - label: transcript 出现后台完成通知（与用户消息区分）
         ax: { has: "后台任务完成 · research" }
-      - label: 通知带详情指引
-        ax: { has: "详情见任务面板" }
+      - label: 通知不再指向已消失的任务面板（M822：详情在 transcript 的 task 行）
+        ax: { not: "详情见任务面板" }
       - label: 通知以 auto_notice 标记进了模型上下文（llm_request.messages）
         file: { path: "env:harness/sessions/*/*.jsonl", has: "auto_notice" }
       - label: 投递标记落盘（notice_delivered sidecar）

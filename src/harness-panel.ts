@@ -2354,8 +2354,8 @@ export function whenTextOf(
 
 /** 会话浮层取数结果（M442，`harness_list_sessions` 往返的三种终态）。 */
 export type SessListOutcome =
-  | { kind: "entries"; count: number } // 取数成功，清单有 count 条
-  | { kind: "empty" } // 取数成功但清单为空
+  | { kind: "entries"; count: number; hasUsage?: boolean } // 取数成功，清单有 count 条
+  | { kind: "empty"; hasUsage?: boolean } // 取数成功但清单为空
   | { kind: "failed" }; // 取数失败（后端不可用 / 命令未注册 / 读取报错）
 
 /** 会话浮层的揭示决策（O5，合同 docs/specs/overlay-visibility.md）：取数结果 → 揭示与否 +
@@ -2373,8 +2373,11 @@ export interface SessPopDecision {
  * （这正是 M442 现场：浮层先以空盒画出、IPC 往返后因空清单收起 = 「闪现即消失」）。
  */
 export function sessPopDecision(outcome: SessListOutcome): SessPopDecision {
-  const nonEmpty = outcome.kind === "entries" && outcome.count > 0;
-  return { visible: nonEmpty, notify: !nonEmpty };
+  // 内容 = 历史会话行 **或** 按需用量段（M822：会话聚合的入口在这里）；取数失败仍不揭示。
+  const hasContent =
+    outcome.kind !== "failed" &&
+    ((outcome.kind === "entries" && outcome.count > 0) || outcome.hasUsage === true);
+  return { visible: hasContent, notify: !hasContent };
 }
 
 /**
@@ -3427,6 +3430,17 @@ export interface SubrunStep {
   summary: string;
 }
 
+/** 段基线（resume 段累加的基底）：新段开始时把旧视图的累计读数记在这里，段内 progress /
+ *  finished 的读数加回基线——`rounds` / `toolCalls` / 三个 token 字段因此跨段累计，第二段不会
+ *  从 0 重来（审计 finding：同一 run 的两段曾被讲成两个子代理）。 */
+export interface SegmentBase {
+  rounds: number;
+  toolCalls: number;
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+}
+
 /** 面板一行的数据面（`subagent_*` 事件与快照的合并视图；MUST NOT 进 transcript）。 */
 export interface SubrunView {
   runId: string;
@@ -3444,8 +3458,10 @@ export interface SubrunView {
   inputTokens: number;
   cachedTokens: number;
   outputTokens: number;
-  /** 该 run 已收尾的段数（resume 会累加；行详情与用量区的读数）。 */
+  /** 该 run 已开始的段数（resume 每起一段 +1；行详情与用量区的读数）。 */
   segments: number;
+  /** resume 段的累计基线（null = 首段；见 {@link SegmentBase}）。 */
+  segmentBase: SegmentBase | null;
   stoppedBy: string | null;
   deniedCalls: number;
   summaryChars: number;
@@ -3485,6 +3501,8 @@ interface RunRowEls {
   meta: HTMLElement;
   latest: HTMLElement;
   summary: HTMLElement;
+  /** 单次用量行（D876；无真读数时 hidden）。 */
+  usage: HTMLElement;
   actions: HTMLElement;
   decisions: HTMLElement;
   approvals: HTMLElement;
@@ -3493,7 +3511,8 @@ interface RunRowEls {
 }
 
 /** transcript 里一条 `task` 工具行的绑定（design §19.1：历史任务的详情从这里点开）。
- *  行由工具事件创建、由 run 事件更新；两者靠「agent 名 + FIFO」绑定（见 `bindTaskRow`）。 */
+ *  行由工具事件创建、由 run 事件更新；绑定以 **`call_id` 为第一身份**（见 `taskRowFor`），
+ *  agent 名 / FIFO 只兜底没有 `call_id` 的旧事件。行点击展开由 `bindTaskRowToggle` 绑定。 */
 interface TaskRowEntry {
   /** 行 + 详情的外壳（折叠时整体隐藏，随工具块收尾）。 */
   wrap: HTMLElement;
@@ -3508,6 +3527,12 @@ interface TaskRowEntry {
   open: boolean;
   /** 自定义详情渲染（恢复路径用信封 JSON；null = 走 run 视图的默认渲染）。 */
   renderDetail: (() => void) | null;
+  /** 恢复行的原始信封（快照 `subrun_runs` 对账 running → 终态时用它改写）。 */
+  restoredEnvelope: Record<string, unknown> | null;
+  /** 触发本次调用的身份（`tool_call.call_id`）；null = 旧后端 / 恢复出的旧记录。 */
+  callId: string | null;
+  /** 恢复行的 per-run 累计用量（多段合并 / 逐 run 汇总对账后的真值）。 */
+  restoredUsage: { input: number; cached: number; output: number } | null;
 }
 
 /** 任务区消费的事件子集（`HarnessEvent` 的结构子集：单测可构造，不依赖 ipc）。 */
@@ -3541,11 +3566,40 @@ export function isLiveSubrun(run: SubrunView): boolean {
   return run.status === "running" || run.status === "waiting";
 }
 
-/** 事件归约（唯一的状态迁移点）：started 建行；progress / step 就地更新；finished 落终态。
- *  未知 run 的 progress / step / finished 一律忽略——重载后的迟到事件不得凭空造行。 */
+/** 事件归约（唯一的状态迁移点）：started 建行 / resume 段合并；progress / step 就地更新；
+ *  finished 落终态。未知 run 的 progress / step / finished 一律忽略——重载后的迟到事件不得
+ *  凭空造行。 */
 export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): SubrunView[] {
   switch (event.type) {
     case "subagent_started": {
+      const existing = runs.find((run) => run.runId === event.run_id);
+      if (existing !== undefined) {
+        // resume 段：同一 run 的第二段。保留累计读数（记进段基线）、累加段数、回到运行态——
+        // MUST NOT 清空读数或另立一行（审计：两段曾被讲成两个子代理）。
+        return runs.map((run) =>
+          run.runId !== event.run_id
+            ? run
+            : {
+                ...run,
+                agent: event.agent,
+                description: event.description,
+                model: event.model,
+                background: event.background,
+                status: "running",
+                // 上一段的触顶原因不得延续到新段（design §4.1）；读数保留、原因复位。
+                stoppedBy: null,
+                segments: run.segments + 1,
+                segmentBase: {
+                  rounds: run.rounds,
+                  toolCalls: run.toolCalls,
+                  inputTokens: run.inputTokens,
+                  cachedTokens: run.cachedTokens,
+                  outputTokens: run.outputTokens,
+                },
+                approvalIds: [],
+              },
+        );
+      }
       const next = runs.filter((run) => run.runId !== event.run_id);
       next.push({
         runId: event.run_id,
@@ -3563,6 +3617,7 @@ export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): 
         cachedTokens: 0,
         outputTokens: 0,
         segments: 1,
+        segmentBase: null,
         stoppedBy: null,
         deniedCalls: 0,
         summaryChars: 0,
@@ -3576,8 +3631,8 @@ export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): 
         run.runId === event.run_id
           ? {
               ...run,
-              rounds: event.rounds,
-              toolCalls: event.tool_calls,
+              rounds: (run.segmentBase?.rounds ?? 0) + event.rounds,
+              toolCalls: (run.segmentBase?.toolCalls ?? 0) + event.tool_calls,
               lastTool: event.last_tool,
               elapsedMs: event.elapsed_ms,
             }
@@ -3604,15 +3659,14 @@ export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): 
               model: event.model,
               status,
               stoppedBy: event.stopped_by ?? null,
-              rounds: event.rounds,
-              inputTokens: event.input_tokens,
-              cachedTokens: event.cached_tokens,
-              outputTokens: event.output_tokens,
+              rounds: (run.segmentBase?.rounds ?? 0) + event.rounds,
+              inputTokens: (run.segmentBase?.inputTokens ?? 0) + event.input_tokens,
+              cachedTokens: (run.segmentBase?.cachedTokens ?? 0) + event.cached_tokens,
+              outputTokens: (run.segmentBase?.outputTokens ?? 0) + event.output_tokens,
               deniedCalls: event.denied_calls,
               elapsedMs: event.duration_ms,
               summaryChars: event.summary_chars,
               summary: event.summary ?? run.summary,
-              segments: Math.max(1, run.segments),
               approvalIds: [],
             }
           : run,
@@ -3654,36 +3708,345 @@ export function detachRunApproval(
   });
 }
 
-/** 任务区标题（唯一读数出口）：有运行中 / 待批 → 计数段；全部收敛 → 本次会话摘要。
- *  没有运行中行且本次会话没有终态 run 时返回空串（整块不出现，空态不占位）。 */
+/** 后台 run 的异常终态（partial / failed / stopped）且用户尚未确认：控制区保留该行直到
+ *  「知道了」——后台失败不得静默消失。 */
+export function isUnconfirmedFailure(
+  run: SubrunView,
+  acknowledged: ReadonlySet<string>,
+): boolean {
+  return (
+    !isLiveSubrun(run) &&
+    run.background &&
+    (run.status === "partial" || run.status === "failed" || run.status === "stopped") &&
+    !acknowledged.has(run.runId)
+  );
+}
+
+/** 控制区可见集（唯一判据）：≥2 在跑需要合并视图；单个后台 / 待批必须可见；后台异常终态保留到
+ *  用户确认。单个前台 run 不在控制区——它只住在 transcript 的 `task` 行里。 */
+export function taskAreaRuns(
+  runs: readonly SubrunView[],
+  acknowledged: ReadonlySet<string>,
+): SubrunView[] {
+  const liveCount = runs.filter(isLiveSubrun).length;
+  return runs.filter((run) => {
+    if (isLiveSubrun(run)) {
+      return liveCount >= 2 || run.background || run.status === "waiting";
+    }
+    return isUnconfirmedFailure(run, acknowledged);
+  });
+}
+
+/** 任务区标题（唯一读数出口）：输入是**控制区可见集**（调用方先经 {@link taskAreaRuns} 过滤）。
+ *  只数 live 行的运行 / 后台 / 待批计数，外加未确认异常终态数；没有行时返回空串（整块不出现）。 */
 export function taskHeadline(
   runs: readonly SubrunView[],
   lang: Language = currentLanguage(),
 ): string {
-  const live = runs.filter(isLiveSubrun);
   const title = t("D477", undefined, lang);
-  if (live.length > 0) {
-    const waiting = live.filter((run) => run.status === "waiting").length;
-    const background = live.filter((run) => run.status === "running" && run.background).length;
-    const plain = live.length - waiting - background;
-    const parts: string[] = [];
-    if (plain > 0) parts.push(t("D478", { count: plain }, lang));
-    if (background > 0) parts.push(t("D479", { count: background }, lang));
-    let head = title;
-    if (parts.length > 0) head += ` ${parts.join(" · ")}`;
-    if (waiting > 0) head += ` · ${t("D480", { count: waiting }, lang)}`;
-    return head;
+  const live = runs.filter(isLiveSubrun);
+  const attention = runs.length - live.length;
+  const attentionPart =
+    attention > 0 ? t("D877", { count: attention }, lang) : null;
+  if (live.length === 0) {
+    return attentionPart === null ? "" : `${title} · ${attentionPart}`;
   }
-  const done = runs.filter((run) => run.status === "done").length;
-  const partial = runs.filter((run) => run.status === "partial").length;
+  const waiting = live.filter((run) => run.status === "waiting").length;
+  const background = live.filter((run) => run.status === "running" && run.background).length;
+  const plain = live.length - waiting - background;
   const parts: string[] = [];
-  if (done > 0) parts.push(t("D482", { count: done }, lang));
-  if (partial > 0) parts.push(t("D483", { count: partial }, lang));
-  if (parts.length === 0) return "";
-  return `${title} · ${t("D481", { parts: parts.join(" · ") }, lang)}`;
+  if (plain > 0) parts.push(t("D478", { count: plain }, lang));
+  if (background > 0) parts.push(t("D479", { count: background }, lang));
+  let head = title;
+  if (parts.length > 0) head += ` ${parts.join(" · ")}`;
+  if (waiting > 0) head += ` · ${t("D480", { count: waiting }, lang)}`;
+  if (attentionPart !== null) head += ` · ${attentionPart}`;
+  return head;
 }
 
-/** 行状态词（终态词永不截断；`running` 走脉冲点承载，词只作读屏名）。 */
+/** 父会话快照的 live run 列表（`harness_state.live_subruns`）→ 任务行视图。切回 vault 时
+ *  在跑的 run 只能从这份快照重建（事件在切走期间被 vault 过滤丢弃）。 */
+export function parseLiveSubruns(raw: unknown): SubrunView[] {
+  if (!Array.isArray(raw)) return [];
+  const views: SubrunView[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const value = entry as Record<string, unknown>;
+    if (typeof value.run_id !== "string" || value.run_id === "") continue;
+    const number = (key: string): number => {
+      const rawValue = value[key];
+      return typeof rawValue === "number" && Number.isFinite(rawValue) ? rawValue : 0;
+    };
+    const segment = number("segment");
+    views.push({
+      runId: value.run_id,
+      agent: typeof value.agent === "string" ? value.agent : "",
+      description: typeof value.description === "string" ? value.description : "",
+      model: typeof value.model === "string" ? value.model : "",
+      background: value.background === true,
+      status: "running",
+      rounds: number("rounds"),
+      toolCalls: number("tool_calls"),
+      lastTool: typeof value.last_tool === "string" ? value.last_tool : null,
+      steps: [],
+      elapsedMs: number("elapsed_ms"),
+      inputTokens: 0,
+      cachedTokens: 0,
+      outputTokens: 0,
+      segments: segment > 0 ? segment : 1,
+      segmentBase: null,
+      stoppedBy: null,
+      deniedCalls: 0,
+      summaryChars: 0,
+      summary: null,
+      approvalIds: [],
+    });
+  }
+  return views;
+}
+
+/** 快照的逐 run 终态汇总（`harness_state.subrun_runs`）→ 终态视图。恢复行对账与会话切回后的
+ *  「后台异常待确认」都靠它；`running` 记录跳过（终态真源里不应出现在跑的 run）。 */
+export function parseSubrunRuns(raw: unknown): SubrunView[] {
+  if (!Array.isArray(raw)) return [];
+  const views: SubrunView[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const value = entry as Record<string, unknown>;
+    if (typeof value.run_id !== "string" || value.run_id === "") continue;
+    const status = subrunStatusOf(value.status);
+    if (status === null || status === "running" || status === "waiting") continue;
+    const number = (key: string): number => {
+      const rawValue = value[key];
+      return typeof rawValue === "number" && Number.isFinite(rawValue) ? rawValue : 0;
+    };
+    views.push({
+      runId: value.run_id,
+      agent: typeof value.agent === "string" ? value.agent : "",
+      description: typeof value.description === "string" ? value.description : "",
+      model: typeof value.model === "string" ? value.model : "",
+      background: value.background === true,
+      status,
+      rounds: number("rounds"),
+      toolCalls: number("tool_calls"),
+      lastTool: null,
+      steps: [],
+      elapsedMs: number("duration_ms"),
+      inputTokens: number("input_tokens"),
+      cachedTokens: number("cached_tokens"),
+      outputTokens: number("output_tokens"),
+      segments: Math.max(1, number("segments")),
+      segmentBase: null,
+      stoppedBy: typeof value.stopped_by === "string" ? value.stopped_by : null,
+      deniedCalls: 0,
+      summaryChars: 0,
+      summary: null,
+      approvalIds: [],
+    });
+  }
+  return views;
+}
+
+/** 逐 run 终态汇总并入本地视图：已有终态行以汇总的累计读数为准（保留事件带来的 steps /
+ *  摘要）；在跑行不动（它的段基线由 `mergeLiveSubruns` 从这份终态行取）。 */
+export function mergeTerminalSubruns(
+  previous: readonly SubrunView[],
+  terminal: readonly SubrunView[],
+): SubrunView[] {
+  const merged = new Map<string, SubrunView>();
+  for (const run of previous) merged.set(run.runId, run);
+  for (const fresh of terminal) {
+    const old = merged.get(fresh.runId);
+    if (old === undefined) {
+      merged.set(fresh.runId, fresh);
+      continue;
+    }
+    if (isLiveSubrun(old)) continue;
+    merged.set(fresh.runId, {
+      ...old,
+      background: fresh.background,
+      status: fresh.status,
+      stoppedBy: fresh.stoppedBy,
+      rounds: fresh.rounds,
+      toolCalls: fresh.toolCalls,
+      segments: Math.max(old.segments, fresh.segments),
+      inputTokens: fresh.inputTokens,
+      cachedTokens: fresh.cachedTokens,
+      outputTokens: fresh.outputTokens,
+      elapsedMs: fresh.elapsedMs || old.elapsedMs,
+    });
+  }
+  return [...merged.values()];
+}
+
+/** 快照 live 列表与本地视图的合并（`applyTaskReadings` 的唯一入口）：在跑行以快照为权威——
+ *  快照有 → 建行 / 更新读数；快照无 → 立即移除（切走期间收尾的 run 不得以运行中复活）。
+ *  后台异常终态行（待确认）不在 live 列表里，原样保留。 */
+export function mergeLiveSubruns(
+  previous: readonly SubrunView[],
+  live: readonly SubrunView[],
+): SubrunView[] {
+  const liveIds = new Set(live.map((run) => run.runId));
+  const merged = new Map<string, SubrunView>();
+  for (const run of previous) {
+    if (isLiveSubrun(run) && !liveIds.has(run.runId)) continue;
+    if (!isLiveSubrun(run)) merged.set(run.runId, run);
+  }
+  for (const fresh of live) {
+    const old = merged.get(fresh.runId) ?? previous.find((run) => run.runId === fresh.runId);
+    if (old === undefined) {
+      merged.set(fresh.runId, fresh);
+      continue;
+    }
+    if (isLiveSubrun(old)) {
+      // 更早段的迟到快照不得回退读数（段号小 = 旧回包）：保留 existing 视图。
+      if (fresh.segments < old.segments) {
+        merged.set(fresh.runId, old);
+        continue;
+      }
+      const resumed = fresh.segments > old.segments;
+      // 快照里的 rounds / tool_calls 是**段内**值；累计 = 段基线 + 本段段内值。基线来自
+      // 上一段终态汇总（首次 resume）或本视图已建立的 segmentBase。MUST NOT 与累计值取
+      // Math.max——那会让第二次快照后读数冻结（评审 r2 P1-2）。
+      const base = resumed
+        ? {
+            rounds: old.rounds,
+            toolCalls: old.toolCalls,
+            inputTokens: old.inputTokens,
+            cachedTokens: old.cachedTokens,
+            outputTokens: old.outputTokens,
+          }
+        : (old.segmentBase ?? {
+            rounds: 0,
+            toolCalls: 0,
+            inputTokens: 0,
+            cachedTokens: 0,
+            outputTokens: 0,
+          });
+      merged.set(fresh.runId, {
+        ...old,
+        agent: fresh.agent || old.agent,
+        description: fresh.description || old.description,
+        model: fresh.model || old.model,
+        background: fresh.background,
+        rounds: base.rounds + fresh.rounds,
+        toolCalls: base.toolCalls + fresh.toolCalls,
+        lastTool: fresh.lastTool ?? old.lastTool,
+        // 用时按当前段快照（首次与后续同口径）：上一段的 duration 不得延续。
+        elapsedMs: fresh.elapsedMs,
+        segments: fresh.segments,
+        segmentBase: resumed ? base : old.segmentBase,
+        inputTokens: base.inputTokens,
+        cachedTokens: base.cachedTokens,
+        outputTokens: base.outputTokens,
+      });
+      continue;
+    }
+    // 陈旧快照防线：同一段的迟到回包不得把已收尾的 run 复活成「新段」。resume 段的段号必然
+    // 更大，因此只有 fresh.segments 更大时才按 resume 续上。
+    if (fresh.segments <= old.segments) continue;
+    // 上一段已收尾、新段在跑（切走期间发生 resume）：同一身份续上，段数 +1、读数从段基线起。
+    merged.set(fresh.runId, {
+      ...old,
+      agent: fresh.agent || old.agent,
+      description: fresh.description || old.description,
+      model: fresh.model || old.model,
+      background: fresh.background,
+      status: "running",
+      stoppedBy: null,
+      // 快照里的 live 读数是**段内**值：跨段累计 = 上一段汇总 + 本段已到达的读数。
+      rounds: old.rounds + fresh.rounds,
+      toolCalls: old.toolCalls + fresh.toolCalls,
+      // 本段用时取快照；上一段的 duration 不得延续（评审 r2 P1-2）。
+      elapsedMs: fresh.elapsedMs,
+      segments: Math.max(old.segments + 1, fresh.segments),
+      segmentBase: {
+        rounds: old.rounds,
+        toolCalls: old.toolCalls,
+        inputTokens: old.inputTokens,
+        cachedTokens: old.cachedTokens,
+        outputTokens: old.outputTokens,
+      },
+      approvalIds: [],
+    });
+  }
+  return [...merged.values()];
+}
+
+/** 恢复路径的同一 run 多段信封合并（M822 / 评审 r3 P1-2）：恢复后只保留**一个任务身份**，
+ *  段数取最大、rounds / steps / tokens / 用时求和，终态与摘要取最近一段。纯函数，单测直接驱动。 */
+export function mergeRestoredEnvelopes(
+previous: Record<string, unknown>,
+next: Record<string, unknown>,
+): Record<string, unknown> {
+const number = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : 0;
+const prevSegment = number(previous.segment);
+const nextSegment = number(next.segment);
+const latest = nextSegment >= prevSegment ? next : previous;
+const pick = (key: string): unknown =>
+  typeof latest[key] === "string" && (latest[key] as string) !== ""
+    ? latest[key]
+    : previous[key];
+const calls: Record<string, number> = {};
+for (const source of [previous.tool_calls, next.tool_calls]) {
+  if (typeof source !== "object" || source === null) continue;
+  for (const [tool, count] of Object.entries(source as Record<string, unknown>)) {
+    const value = number(count);
+    calls[tool] = (calls[tool] ?? 0) + value;
+  }
+}
+const usageSum = (key: string): number => {
+  const read = (source: unknown): number => {
+    if (typeof source !== "object" || source === null) return 0;
+    return number((source as Record<string, unknown>)[key]);
+  };
+  return read(previous.usage) + read(next.usage);
+};
+return {
+  ...previous,
+  ...latest,
+  agent: pick("agent"),
+  model: pick("model"),
+  segment: Math.max(prevSegment, nextSegment),
+  status: latest.status,
+  stopped_by: latest.stopped_by,
+  ok: latest.ok,
+  code: latest.code,
+  message: latest.message,
+  summary: typeof latest.summary === "string" ? latest.summary : previous.summary,
+  call_id: latest.call_id ?? previous.call_id,
+  rounds: number(previous.rounds) + number(next.rounds),
+  tool_calls: calls,
+  usage: {
+    input_tokens: usageSum("input_tokens"),
+    cached_tokens: usageSum("cached_tokens"),
+    output_tokens: usageSum("output_tokens"),
+  },
+  duration_ms: number(previous.duration_ms) + number(next.duration_ms),
+};
+}
+
+/** 信封里的 per-run 用量（合并后的信封同样适用）。 */
+function envelopeUsageOf(
+envelope: Record<string, unknown>,
+): { input: number; cached: number; output: number } {
+const usage =
+  typeof envelope.usage === "object" && envelope.usage !== null
+    ? (envelope.usage as Record<string, unknown>)
+    : null;
+const read = (key: string): number => {
+  const value = usage?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+};
+return {
+  input: read("input_tokens"),
+  cached: read("cached_tokens"),
+  output: read("output_tokens"),
+};
+}
+
+/** 行状态词（终态词永不截断；running 的脉冲点只承载颜色，词始终可读）。 */
 export function subrunStatusWord(status: SubrunStatus, lang: Language = currentLanguage()): string {
   switch (status) {
     case "running":
@@ -3784,6 +4147,64 @@ export function subrunUsageRows(
   }
   rows.sort((a, b) => a.model.localeCompare(b.model));
   return rows;
+}
+
+/** 会话聚合的呈现形态：单桶不分桶（只给总量，模型名隐去）；≥2 桶才按模型分组。 */
+export interface SubrunUsageSummary {
+  grouped: boolean;
+  rows: SubrunUsageRow[];
+}
+
+export function subrunUsageSummary(
+  usage: unknown,
+  lang: Language = currentLanguage(),
+): SubrunUsageSummary {
+  const rows = subrunUsageRows(usage, lang);
+  if (rows.length <= 1) {
+    return { grouped: false, rows: rows.map((row) => ({ model: "", text: row.text })) };
+  }
+  return { grouped: true, rows };
+}
+
+/** 单次用量读数（transcript `task` 行详情；live 与恢复同一行文案）。全零 = 没有真读数 → 空串
+ *  （不伪造 0）。 */
+export function subrunUsageLine(
+  usage: {
+    inputTokens: number;
+    cachedTokens: number;
+    outputTokens: number;
+  },
+  lang: Language = currentLanguage(),
+): string {
+  const total = usage.inputTokens + usage.cachedTokens + usage.outputTokens;
+  if (total <= 0) return "";
+  return t(
+    "D876",
+    {
+      input: formatTokenCount(usage.inputTokens),
+      cached: formatTokenCount(usage.cachedTokens),
+      output: formatTokenCount(usage.outputTokens),
+    },
+    lang,
+  );
+}
+
+/** 行详情的元信息段（模型 · 步数 · 用时 · 触顶原因）。`rounds` 只在 `stopped_by = rounds`
+ *  时作为原因出现——它是预算词，不是进度读数。 */
+export function subrunDetailMeta(
+  run: SubrunView,
+  lang: Language = currentLanguage(),
+): string[] {
+  const parts: string[] = [];
+  if (run.model !== "") parts.push(t("D495", { model: run.model }, lang));
+  parts.push(t("D875", { steps: run.toolCalls || run.steps.length }, lang));
+  if (run.elapsedMs > 0) parts.push(t("D497", { duration: formatDuration(run.elapsedMs) }, lang));
+  if (run.stoppedBy === "rounds") {
+    parts.push(t("D878", { rounds: run.rounds }, lang));
+  } else if (run.stoppedBy !== null) {
+    parts.push(t("D498", { reason: subrunStoppedByWord(run.stoppedBy, lang) }, lang));
+  }
+  return parts;
 }
 
 /** 后台完成通知的一个 run 行（`notice` 事件的 `runs[]`）。 */
@@ -4247,25 +4668,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return tPlural("D586", count, { n: String(count) });
   }
 
-  // ── 任务区（change add-harness-subagents tasks §10，M590；原型 subagents-tasks.html）──
-  // 位置：composer 之上、transcript 之下。只列运行中 / 等待批准的 run（历史任务在
-  // transcript 的 `task` 工具行里，两处各留一份等于双读数）；全部收敛后收敛为一行摘要 +
-  // 按模型用量块；没有子运行任务时整块不出现（空态不占位）。触顶提示行在任务区顶部，
-  // 视觉与 run 行区分（不冒充 run 行、不参与计数）。
+  // ── 任务控制区（change add-harness-subagents §19；M822 收窄为「只在需要你动手时出现的控制条」）──
+  // 位置：composer 之上、transcript 之下。出现条件唯一由 `taskAreaRuns` 决定：≥2 在跑 / 后台 /
+  // 待批 / 未确认的后台异常终态。单个前台 run 只住在 transcript 的 `task` 行里（行内可停止），
+  // 空闲态整块不出现（无完成数汇总、无常驻用量表）。触顶提示已移入对话流（见 renderWakeNotice）。
   const taskArea = document.createElement("section");
   taskArea.className = "lumir-tp";
   taskArea.hidden = true;
-  const taskAlert = document.createElement("div");
-  taskAlert.className = "lumir-tp-alert";
-  taskAlert.hidden = true;
-  const taskAlertText = document.createElement("span");
-  taskAlertText.className = "lumir-tp-alert-text";
-  const taskAlertButton = document.createElement("button");
-  taskAlertButton.type = "button";
-  taskAlertButton.className = "lumir-tp-mini";
-  taskAlertButton.textContent = t("D491");
-  taskAlertButton.hidden = true;
-  taskAlert.append(taskAlertText, taskAlertButton);
   const taskHead = document.createElement("button");
   taskHead.type = "button";
   taskHead.className = "lumir-tp-head";
@@ -4278,10 +4687,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   taskHead.append(taskTitle, taskChev);
   const taskList = document.createElement("div");
   taskList.className = "lumir-tp-list";
-  const taskUsage = document.createElement("div");
-  taskUsage.className = "lumir-tp-usage";
-  taskUsage.hidden = true;
-  taskArea.append(taskAlert, taskHead, taskList, taskUsage);
+  taskArea.append(taskHead, taskList);
 
   panel.append(transcriptViewport, progress, taskArea, composerArea);
 
@@ -4481,8 +4887,35 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
   const decidedApprovals = new Map<string, DecidedApproval>();
   // ── 子代理任务区状态（tasks §10，M590）────────────────────────────────────
-  /** 本会话可见的 run（按 started 到达序；终态保留在表里供本次会话摘要与用量区）。 */
+  /** 本会话可见的 run（按 started 到达序；终态只保留「后台异常待确认」的那几条）。 */
   let subruns: SubrunView[] = [];
+  /** 已点过「知道了」的后台异常终态（按 runId）。持久化在 webview localStorage：
+   *  跑 id 全局唯一，完整重载 / 切 vault 后不再要求确认（评审 r3 P1-3：MUST NOT 只存在
+   *  进程内）。读取失败按空集处理，不阻断面板。 */
+  const ACK_STORAGE_KEY = "lumir.harness.acknowledged-subruns";
+  const acknowledgedRuns = loadAcknowledgedRuns();
+
+  function loadAcknowledgedRuns(): Set<string> {
+    try {
+      const raw = localStorage.getItem(ACK_STORAGE_KEY);
+      if (raw === null) return new Set();
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return new Set();
+      return new Set(parsed.filter((id): id is string => typeof id === "string" && id !== ""));
+    } catch {
+      return new Set();
+    }
+  }
+
+  function persistAcknowledgedRuns(): void {
+    try {
+      localStorage.setItem(ACK_STORAGE_KEY, JSON.stringify([...acknowledgedRuns]));
+    } catch {
+      // 存储不可用（配额 / 隐私模式）：本次进程内仍然生效，不阻断交互。
+    }
+  }
+  /** 对话流的触顶提示（`auto_wake.blocked` 的宿主；随 transcript 换代清空）。 */
+  let wakeNotice: { el: HTMLElement; text: HTMLElement; button: HTMLButtonElement } | null = null;
   /** 展开中的行（点击行头切换；待批行强制展开——阻塞决策不藏在折叠区里）。 */
   const openRuns = new Set<string>();
   /** 任务区折叠态（标题行仍在；折叠只收列表与用量块）。 */
@@ -7155,6 +7588,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (block !== null) collapseBlock(block);
   }
 
+  /** 折叠块里的行是否必须保持可见：运行中的 `task` 行（其运行态由 refreshTaskRow 就地维护）。 */
+  function isRunningTaskRow(row: HTMLElement): boolean {
+    return (
+      row.classList.contains("lumir-hp-taskwrap") &&
+      row.querySelector(".lumir-hp-tool-row.is-running") !== null
+    );
+  }
+
   /** 单个工具块的折叠收尾（在途块与封板块共用）。 */
   function collapseBlock(block: ToolsBlock): void {
     if (block.rows.length < 2) return;
@@ -7181,9 +7622,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const open = summary.getAttribute("aria-expanded") !== "true";
       summary.setAttribute("aria-expanded", String(open));
       summary.classList.toggle("is-open", open);
-      for (const row of block.rows) row.hidden = !open;
+      for (const row of block.rows) row.hidden = !open && !isRunningTaskRow(row);
     });
-    for (const row of block.rows) row.hidden = true;
+    // 运行中的 `task` 行不被折叠隐藏（M822 C2）：用户视线在对话流里，进程控制不能藏进折叠区；
+    // 终态行随块折叠（结果可点开回看）。
+    for (const row of block.rows) row.hidden = !isRunningTaskRow(row);
     block.el.prepend(summary);
   }
 
@@ -7233,16 +7676,32 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     };
   }
 
-  /** transcript 的 `task` 行（design §12.2 第 2 条 / §19.1）：行内容 = task 徽章 + agent +
-   *  description + 终态词（运行中由脉冲点承载）；状态只由 run 视图驱动。 */
+  /** `task` 行的尾注：状态词（+ 触顶原因）+ 用时。终态词永不截断；rounds 只在原因里出现。 */
+  function taskRowTail(run: SubrunView | null, failure?: string): string {
+    if (run === null) return failure ?? "";
+    const statusWord = subrunStatusWord(run.status);
+    const statusPart =
+      run.stoppedBy !== null && run.status !== "running"
+        ? t("D518", { status: statusWord, reason: subrunStoppedByWord(run.stoppedBy) })
+        : statusWord;
+    return run.elapsedMs > 0
+      ? `${statusPart} · ${formatDuration(run.elapsedMs)}`
+      : statusPart;
+  }
+
+  /** transcript 的 `task` 行（design §12.2 第 2 条 / §19.1；M822 起是运行态主载体）：行内容 =
+   *  task 徽章 + agent + description + 终态尾注；运行中的行带「停止」动作。状态只由 run 视图
+   *  驱动。 */
   function renderTaskToolRow(entry: TaskRowEntry, run: SubrunView | null, failure?: string): void {
+    // live 渲染接管后，点击展开必须走 run 视图的详情；恢复信封的 renderDetail 只属于恢复态。
+    entry.renderDetail = null;
     const args = taskArgsOf(entry.argsSummary);
     entry.row.classList.remove("is-running", "is-done", "is-fail", "is-waiting");
     let icon: HTMLElement;
     let tail: string | undefined;
     if (run !== null) {
       icon = taskIcon(run.status);
-      tail = run.status === "running" ? undefined : subrunStatusWord(run.status);
+      tail = taskRowTail(run);
       entry.row.classList.add(
         run.status === "running"
           ? "is-running"
@@ -7276,24 +7735,39 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       text.append(document.createTextNode(" "), tailEl);
     }
     entry.row.replaceChildren(icon, text);
+    // 运行中的行内停止（过程控制不用先展开）：只停该 run，点击不触发详情开合。
+    if (run !== null && (run.status === "running" || run.status === "waiting")) {
+      const stop = document.createElement("button");
+      stop.type = "button";
+      stop.className = "lumir-hp-task-stop";
+      stop.textContent = t("D490");
+      stop.setAttribute("aria-label", t("D522"));
+      stop.addEventListener("click", (event: MouseEvent) => {
+        event.stopPropagation();
+        harnessSubagentStop(run.runId).catch((e: unknown) =>
+          appendError(t("D348", { message: errorMessage(e) })),
+        );
+      });
+      entry.row.append(stop);
+    }
+    // 所在工具块已折叠：终态行随块隐藏，运行中的行保持可见（M822 C2）。
+    const summary =
+      entry.wrap.closest(".lumir-hp-tools")?.querySelector(".lumir-hp-tool-summary") ?? null;
+    const collapsed = summary !== null && summary.getAttribute("aria-expanded") !== "true";
+    entry.wrap.hidden = collapsed && !(run !== null && isLiveSubrun(run));
   }
 
-  /** `task` 行的展开详情（tasks §10.2：模型、轮次 / 步数、最近一步、用时、摘要、触顶原因）。
-   *  折叠时清空（下次展开重算），不做后台 DOM 维护。 */
+  /** `task` 行的展开详情（M822：模型 · 步数 · 用时 · 触顶原因 / 最近一步 / 摘要 / 单次用量；
+   *  live 与恢复两条路径同一行文案）。折叠时清空（下次展开重算），不做后台 DOM 维护。 */
   function renderTaskRowDetail(entry: TaskRowEntry, run: SubrunView | null): void {
     entry.detail.replaceChildren();
     if (!entry.open || run === null) return;
-    const meta = document.createElement("div");
-    meta.className = "lumir-hp-task-meta";
-    const metaParts: string[] = [];
-    if (run.model !== "") metaParts.push(t("D495", { model: run.model }));
-    metaParts.push(t("D496", { rounds: run.rounds, steps: run.toolCalls || run.steps.length }));
-    if (run.elapsedMs > 0) metaParts.push(t("D497", { duration: formatDuration(run.elapsedMs) }));
-    if (run.stoppedBy !== null) {
-      metaParts.push(t("D498", { reason: subrunStoppedByWord(run.stoppedBy) }));
-    }
-    meta.textContent = metaParts.join(" · ");
-    entry.detail.append(meta);
+    const meta = subrunDetailMeta(run);
+    if (run.segments > 1) meta.push(t("D881", { segments: run.segments }));
+    const metaEl = document.createElement("div");
+    metaEl.className = "lumir-hp-task-meta";
+    metaEl.textContent = meta.join(" · ");
+    entry.detail.append(metaEl);
     const latest = run.steps.length > 0 ? run.steps[run.steps.length - 1] : null;
     if (latest !== null) {
       const line = document.createElement("div");
@@ -7313,11 +7787,28 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       summary.append(label, document.createTextNode(run.summary));
       entry.detail.append(summary);
     }
+    const usage = subrunUsageLine(run);
+    if (usage !== "") {
+      const line = document.createElement("div");
+      line.className = "lumir-hp-task-usage";
+      line.textContent = usage;
+      entry.detail.append(line);
+    }
   }
 
-  /** run → transcript 行绑定（agent 名优先、FIFO 兜底）：没有可绑的行时补一条独立行
-   *  （快照恢复 / 事件缺口下也要让历史任务的详情可达）。 */
-  function taskRowFor(run: SubrunView): TaskRowEntry {
+  /** run → transcript 行绑定（**call_id 第一身份**；agent 名 / FIFO 仅兜底没有 call_id 的
+   *  旧事件）：没有可绑的行时补一条独立行（快照恢复 / 事件缺口下也要让历史任务的详情可达）。 */
+  function taskRowFor(run: SubrunView, callId: string | null): TaskRowEntry {
+    // 调用身份优先（M822 / 评审 r3 P1-1）：成功 started 必须绑**本次调用**的行——同一 agent
+    // 的前一次调用可能已被拒且仍是未绑定行，靠 agent / 到达顺序会绑错。
+    if (callId !== null) {
+      const exact = taskRowEntries.find((entry) => entry.callId === callId && entry.runId === null);
+      if (exact !== undefined) {
+        exact.runId = run.runId;
+        bindTaskRowToggle(exact);
+        return exact;
+      }
+    }
     const bound = taskRowEntries.find((entry) => entry.runId === run.runId);
     if (bound !== undefined) return bound;
     const match =
@@ -7350,6 +7841,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       settled: false,
       open: false,
       renderDetail: null,
+      restoredEnvelope: null,
+      callId: null,
+      restoredUsage: null,
     };
     taskRowEntries.push(entry);
     bindTaskRowToggle(entry);
@@ -7370,21 +7864,36 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
-  /** 恢复出的 `task` 行（历史任务）：行只给 agent + 终态词，详情给模型 / 轮次 / 摘要 / 用量。 */
+  /** 恢复出的 `task` 行（历史任务；M822 起与 live 同一形状）：行给 agent + description + 终态尾注
+   *  （状态词 / 原因 / 用时），详情给模型 / 步数 / 用时 / 触顶原因 / 摘要 / 该 run 的累计用量。 */
   function renderRestoredTaskRow(entry: TaskRowEntry, envelope: Record<string, unknown>): void {
     const statusRaw = typeof envelope.status === "string" ? envelope.status : "";
     const status = subrunStatusOf(statusRaw);
     const agent = typeof envelope.agent === "string" ? envelope.agent : "";
+    const description = taskArgsOf(entry.argsSummary).description;
     const failed = envelope.ok === false || status === "failed" || statusRaw === "";
-    const tail = failed
-      ? typeof envelope.message === "string"
-        ? envelope.message
-        : typeof envelope.code === "string"
-          ? envelope.code
-          : undefined
-      : status === null
-        ? statusRaw
-        : subrunStatusWord(status);
+    const stoppedBy = typeof envelope.stopped_by === "string" ? envelope.stopped_by : null;
+    const duration = typeof envelope.duration_ms === "number" ? envelope.duration_ms : 0;
+    const tailParts: string[] = [];
+    if (failed) {
+      // 终态词永不缺位（C3）：先给状态词，再给失败原因（message / code 可能缺席）。
+      tailParts.push(status !== null ? subrunStatusWord(status) : statusRaw || "failed");
+      const message =
+        typeof envelope.message === "string"
+          ? envelope.message
+          : typeof envelope.code === "string"
+            ? envelope.code
+            : "";
+      if (message !== "") tailParts.push(message);
+    } else if (status !== null) {
+      const word = subrunStatusWord(status);
+      tailParts.push(
+        stoppedBy !== null ? t("D518", { status: word, reason: subrunStoppedByWord(stoppedBy) }) : word,
+      );
+    } else if (statusRaw !== "") {
+      tailParts.push(statusRaw);
+    }
+    if (duration > 0) tailParts.push(formatDuration(duration));
     entry.row.classList.remove("is-running", "is-done", "is-fail", "is-waiting");
     entry.row.classList.add(
       status === "running"
@@ -7404,16 +7913,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     agentEl.className = "lumir-hp-task-agent";
     agentEl.textContent = agent;
     text.append(nameEl, document.createTextNode(" "), agentEl);
-    if (tail !== undefined && tail !== "") {
+    if (description !== "") {
+      const descEl = document.createElement("span");
+      descEl.className = "lumir-hp-tool-args";
+      descEl.textContent = description;
+      text.append(document.createTextNode(" "), descEl);
+    }
+    if (tailParts.length > 0) {
       const tailEl = document.createElement("span");
       tailEl.className = "lumir-hp-tool-out";
-      tailEl.textContent = `· ${tail}`;
+      tailEl.textContent = `· ${tailParts.join(" · ")}`;
       text.append(document.createTextNode(" "), tailEl);
     }
-    entry.row.replaceChildren(
-      failed ? createToolIcon("fail") : status === "running" ? createToolIcon("running") : createToolIcon("done"),
-      text,
-    );
+    // 恢复图标与 live 同一映射（评审 P1-4）：partial → 暂停、failed/stopped → 叉、running → 脉冲、
+    // done → 对勾。未知状态退回叉（不冒充完成）。
+    entry.row.replaceChildren(taskIcon(status ?? "failed"), text);
     entry.renderDetail = () => {
       entry.detail.replaceChildren();
       const meta = document.createElement("div");
@@ -7422,14 +7936,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (typeof envelope.model === "string" && envelope.model !== "") {
         parts.push(t("D495", { model: envelope.model }));
       }
-      const rounds = typeof envelope.rounds === "number" ? envelope.rounds : 0;
-      const steps = typeof envelope.tool_calls === "object" && envelope.tool_calls !== null
-        ? Object.keys(envelope.tool_calls as Record<string, unknown>).length
-        : 0;
-      parts.push(t("D496", { rounds, steps }));
-      if (typeof envelope.stopped_by === "string") {
-        parts.push(t("D498", { reason: subrunStoppedByWord(envelope.stopped_by) }));
+      const toolCalls = envelope.tool_calls;
+      const steps =
+        typeof toolCalls === "object" && toolCalls !== null
+          ? Object.values(toolCalls as Record<string, unknown>).reduce<number>(
+              (sum, value) => sum + (typeof value === "number" ? value : 0),
+              0,
+            )
+          : 0;
+      parts.push(t("D875", { steps }));
+      if (duration > 0) parts.push(t("D497", { duration: formatDuration(duration) }));
+      if (stoppedBy === "rounds") {
+        const rounds = typeof envelope.rounds === "number" ? envelope.rounds : 0;
+        parts.push(t("D878", { rounds }));
+      } else if (stoppedBy !== null) {
+        parts.push(t("D498", { reason: subrunStoppedByWord(stoppedBy) }));
       }
+      const segment = typeof envelope.segment === "number" ? envelope.segment : 0;
+      if (segment > 1) parts.push(t("D881", { segments: segment }));
       meta.textContent = parts.join(" · ");
       entry.detail.append(meta);
       if (typeof envelope.summary === "string" && envelope.summary.trim() !== "") {
@@ -7440,6 +7964,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         label.textContent = `${t("D499")} `;
         summary.append(label, document.createTextNode(envelope.summary));
         entry.detail.append(summary);
+      }
+      const total = entry.restoredUsage;
+      const usageText =
+        total === null
+          ? ""
+          : subrunUsageLine({
+              inputTokens: total.input,
+              cachedTokens: total.cached,
+              outputTokens: total.output,
+            });
+      if (usageText !== "") {
+        const line = document.createElement("div");
+        line.className = "lumir-hp-task-usage";
+        line.textContent = usageText;
+        entry.detail.append(line);
       }
     };
   }
@@ -7472,13 +8011,39 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /** run 事件 → transcript 行的就地更新（行不重排、不因完成顺序换位）。 */
-  function refreshTaskRow(run: SubrunView): void {
-    const entry = taskRowFor(run);
+  function refreshTaskRow(run: SubrunView, callId: string | null = null): void {
+    const entry = taskRowFor(run, callId);
     renderTaskToolRow(entry, run);
     renderTaskRowDetail(entry, run);
   }
 
-  function appendToolCall(name: string, status: "started" | "done", summary: string): void {
+  /** resume 去重（只由 `subagent_started` 的「run 已存在」分支调用，评审 r2 P1-1）：
+   *  第二段的 `tool_call started` 会先建一条未绑定任务行；确认这次 started 是同一 run 的
+   *  resume 后，收走**同一执行者**最近的一条未绑定行。MUST NOT 在 progress / step / finished /
+   *  快照刷新里调用——那会误删并行新任务（r2）的调用行。 */
+  function dropResumeDuplicateRow(run: SubrunView, callId: string | null): void {
+    for (let i = taskRowEntries.length - 1; i >= 0; i -= 1) {
+      const entry = taskRowEntries[i];
+      if (entry === undefined || entry.runId !== null || entry.settled) continue;
+      // 有调用身份就精确匹配；旧后端没有 call_id 时才退回 agent 匹配。
+      if (callId !== null ? entry.callId !== callId : taskArgsOf(entry.argsSummary).agent !== run.agent) {
+        continue;
+      }
+      entry.wrap.remove();
+      for (const block of [activeTools, ...sealedToolBlocks]) {
+        if (block !== null) block.rows = block.rows.filter((row) => row !== entry.wrap);
+      }
+      taskRowEntries.splice(i, 1);
+      return;
+    }
+  }
+
+  function appendToolCall(
+    name: string,
+    status: "started" | "done",
+    summary: string,
+    callId: string | null = null,
+  ): void {
     // `task` 工具行由 run 事件驱动终态（design §12.2 第 2 条：行在调用时创建、之后只就地更新）。
     // 通用 done 配对会把并行多调用的行配错（`block.running` 只有一个），因此单独一条路径。
     if (name === "task") {
@@ -7503,6 +8068,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           settled: false,
           open: false,
           renderDetail: null,
+          restoredEnvelope: null,
+          callId,
+          restoredUsage: null,
         };
         taskRowEntries.push(entry);
         renderTaskToolRow(entry, null);
@@ -7511,7 +8079,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         return;
       }
       // done：只收「没绑到 run」的行（被闸拒 / 参数非法）；已绑定行的终态由 run 事件驱动。
-      const entry = taskRowEntries.find((row) => row.runId === null && !row.settled);
+      // 有调用身份时**只做精确配对**，MUST NOT 退回其它未绑定行：生产按调用序收尾
+      //（r1 done → r2 done → r3 done），r1/r3 的 done 找不到自己的未绑定行时必须 no-op，
+      // 否则会把 r2 的拒绝结果 settle 到 r1 名下（评审 r4 P1-1）。FIFO 兜底只留给确实
+      // 没有 call_id 的旧事件。
+      const entry =
+        callId !== null
+          ? taskRowEntries.find(
+              (row) => row.callId === callId && row.runId === null && !row.settled,
+            )
+          : taskRowEntries.find((row) => row.runId === null && !row.settled);
       if (entry !== undefined) {
         entry.settled = true;
         renderTaskToolRow(entry, null, summary);
@@ -8404,15 +8981,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     el.classList.add(`is-${status}`);
   }
 
-  /** 行读数（tasks §10.1「轮次 · tokens」）：tokens 只在收尾后有真读数——运行中不给假数。 */
-  function runReadText(run: SubrunView): string {
-    const tokens = run.inputTokens + run.outputTokens;
-    if (tokens > 0) {
-      return t("D519", { rounds: run.rounds, tokens: formatTokenCount(tokens) });
-    }
-    return t("D520", { rounds: run.rounds });
-  }
-
   function ensureRunRow(run: SubrunView): RunRowEls {
     const existing = runRowEls.get(run.runId);
     if (existing !== undefined) return existing;
@@ -8446,13 +9014,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const summary = document.createElement("div");
     summary.className = "lumir-tp-sum";
     summary.hidden = true;
+    const usage = document.createElement("div");
+    usage.className = "lumir-tp-usage-line";
+    usage.hidden = true;
     const actions = document.createElement("div");
     actions.className = "lumir-tp-actions";
     const decisions = document.createElement("div");
     decisions.className = "lumir-tp-decisions";
     const approvals = document.createElement("div");
     approvals.className = "lumir-tp-asks";
-    body.append(meta, latest, summary, actions, decisions, approvals);
+    body.append(meta, latest, summary, usage, actions, decisions, approvals);
     el.append(head, body);
     taskList.append(el);
     head.addEventListener("click", () => {
@@ -8473,6 +9044,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       meta,
       latest,
       summary,
+      usage,
       actions,
       decisions,
       approvals,
@@ -8649,6 +9221,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           cachedTokens: 0,
           outputTokens: 0,
           segments: 1,
+          segmentBase: null,
           stoppedBy: null,
           deniedCalls: 0,
           summaryChars: 0,
@@ -8672,29 +9245,29 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     els.desc.textContent = run.description;
     els.desc.title = run.description;
     els.flag.hidden = !run.background;
-    const word = subrunStatusWord(run.status);
-    els.stateWord.textContent = run.status === "waiting" ? word : "";
-    els.stateWord.hidden = run.status !== "waiting";
-    // 运行中的状态由脉冲点承载（行宽有限，优先给 description 与读数）；待批出状态词。
-    els.read.textContent = run.status === "waiting" ? "" : runReadText(run);
-    const expanded = openRuns.has(run.runId) || run.status === "waiting";
+    // 状态词对每个相位都可见（状态不靠图例猜）；用时是 L0 的过程读数。
+    els.stateWord.textContent = subrunStatusWord(run.status);
+    els.stateWord.hidden = false;
+    els.read.textContent = run.elapsedMs > 0 ? formatDuration(run.elapsedMs) : "";
+    els.read.hidden = els.read.textContent === "";
+    const attention = isUnconfirmedFailure(run, acknowledgedRuns);
+    // 待批与待确认异常行自动展开：阻塞决策 / 结果确认都不得藏进折叠区。
+    const expanded = openRuns.has(run.runId) || run.status === "waiting" || attention;
     els.head.setAttribute("aria-expanded", String(expanded));
     els.body.hidden = !expanded;
     if (!expanded) return;
-    const meta: string[] = [];
-    if (run.model !== "") meta.push(t("D495", { model: run.model }));
-    meta.push(t("D496", { rounds: run.rounds, steps: run.toolCalls || run.steps.length }));
-    if (run.elapsedMs > 0) meta.push(t("D497", { duration: formatDuration(run.elapsedMs) }));
-    if (run.stoppedBy !== null) {
-      meta.push(t("D498", { reason: subrunStoppedByWord(run.stoppedBy) }));
-    }
-    els.meta.replaceChildren(
-      ...meta.map((text) => {
-        const span = document.createElement("span");
-        span.textContent = text;
-        return span;
-      }),
-    );
+    const meta = subrunDetailMeta(run);
+    if (run.segments > 1) meta.push(t("D881", { segments: run.segments }));
+    // 分隔符写成文本节点（不是只靠 flex gap）：读屏 / AX 树按空格拼接子节点，没有分隔符时
+    // 「模型 mock 0 步 用时 0s」读不出字段边界（真机 201 现场）。
+    const metaNodes: Node[] = [];
+    meta.forEach((text, index) => {
+      if (index > 0) metaNodes.push(document.createTextNode(" · "));
+      const span = document.createElement("span");
+      span.textContent = text;
+      metaNodes.push(span);
+    });
+    els.meta.replaceChildren(...metaNodes);
     const latestStep = run.steps.length > 0 ? run.steps[run.steps.length - 1] : null;
     const latestText =
       latestStep !== null
@@ -8720,24 +9293,43 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       body.textContent = run.summary;
       els.summary.replaceChildren(label, body);
     }
-    // 停止动作：运行 / 等待批准的行都可停（等待也是在飞；停止后收回它的待批项）。
+    const usageText = subrunUsageLine(run);
+    els.usage.hidden = usageText === "";
+    els.usage.textContent = usageText;
+    // 动作区：在跑可行停；后台异常终态行只有「知道了」（确认后行消失，同一 run 不再出现）。
+    els.actions.replaceChildren();
     const canStop = run.status === "running" || run.status === "waiting";
     if (canStop) {
-      if (els.actions.firstChild === null) {
-        const stop = document.createElement("button");
-        stop.type = "button";
-        stop.className = "lumir-tp-mini";
-        stop.textContent = t("D490");
-        // 读屏名与发送钮（D378，同名「停止」）区分开：真机 AX 选择器靠它定位本钮（M590 r1）。
-        stop.setAttribute("aria-label", t("D522"));
-        stop.addEventListener("click", (event: MouseEvent) => {
-          event.stopPropagation();
-          harnessSubagentStop(run.runId).catch((e: unknown) =>
-            appendError(t("D348", { message: errorMessage(e) })),
-          );
-        });
-        els.actions.append(stop);
-      }
+      const stop = document.createElement("button");
+      stop.type = "button";
+      stop.className = "lumir-tp-mini";
+      stop.textContent = t("D490");
+      // 读屏名与发送钮（D378，同名「停止」）区分开：真机 AX 选择器靠它定位本钮（M590 r1）。
+      stop.setAttribute("aria-label", t("D522"));
+      stop.addEventListener("click", (event: MouseEvent) => {
+        event.stopPropagation();
+        harnessSubagentStop(run.runId).catch((e: unknown) =>
+          appendError(t("D348", { message: errorMessage(e) })),
+        );
+      });
+      els.actions.append(stop);
+      els.actions.hidden = false;
+    } else if (attention) {
+      const dismiss = document.createElement("button");
+      dismiss.type = "button";
+      dismiss.className = "lumir-tp-mini";
+      dismiss.textContent = t("D879");
+      dismiss.addEventListener("click", (event: MouseEvent) => {
+        event.stopPropagation();
+        acknowledgedRuns.add(run.runId);
+        if (acknowledgedRuns.size > 200) {
+          const oldest = acknowledgedRuns.values().next().value;
+          if (typeof oldest === "string") acknowledgedRuns.delete(oldest);
+        }
+        persistAcknowledgedRuns();
+        renderTaskArea();
+      });
+      els.actions.append(dismiss);
       els.actions.hidden = false;
     } else {
       els.actions.hidden = true;
@@ -8777,62 +9369,92 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   function renderTaskArea(): void {
     // 子代理关停由后端保证：`[harness.subagents].enabled = false` 时 `task` 工具不注册，
-    // 也就没有 run 事件与分桶读数——任务区自然不出现，前端不再另读开关。
-    const live = subruns.filter(isLiveSubrun);
-    const headline = taskHeadline(subruns);
-    const alertText = autoWakeAlertText(autoWake.blocked, autoWake.max, wakeContinued);
-    // 用量区是快照读数（恢复后没有 run 事件可回放）：只要 `subrun_usage` 有内容就给它一个
-    // 出口，否则重启恢复后面板整块不出现、分桶读数无处可见（M590 真机场景 192 现场）。
-    const usageRows = live.length === 0 ? subrunUsageRows(subrunUsage) : [];
-    const show = live.length > 0 || headline !== "" || alertText !== null || usageRows.length > 0;
-    taskArea.hidden = !show;
-    if (!show) return;
-    taskAlert.hidden = alertText === null;
-    if (alertText !== null) {
-      taskAlertText.textContent = alertText;
-      // 文案随当前语言现取（构造期语言可能尚未确定——真机 203 现场：按钮停在 en 的 Continue）。
-      taskAlertButton.textContent = t("D491");
-      taskAlertButton.hidden = wakeContinued || autoWake.blocked === null;
+    // 也就没有 run 事件——控制区自然不出现，前端不再另读开关。
+    // 可见集唯一判据在 `taskAreaRuns`：单个前台 run 只住在对话流；后台异常终态保留到确认。
+    const visible = taskAreaRuns(subruns, acknowledgedRuns);
+    const headline = taskHeadline(visible);
+    const show = visible.length > 0;
+    if (!show) {
+      // 空态零占位：连同 DOM 一起收走，不留任何可被下一次渲染遗忘的孤儿行。
+      for (const els of runRowEls.values()) els.el.remove();
+      runRowEls.clear();
+      taskList.replaceChildren();
+      taskArea.hidden = true;
+      return;
     }
+    taskArea.hidden = false;
     taskTitle.textContent = headline;
-    taskHead.hidden = headline === "";
+    taskHead.hidden = false;
     taskHead.setAttribute("aria-expanded", String(!taskCollapsed));
     taskArea.classList.toggle("is-collapsed", taskCollapsed);
-    const liveIds = new Set(live.map((run) => run.runId));
+    const visibleIds = new Set(visible.map((run) => run.runId));
     for (const [runId, els] of runRowEls) {
-      if (liveIds.has(runId)) continue;
+      if (visibleIds.has(runId)) continue;
       els.el.remove();
       runRowEls.delete(runId);
     }
-    for (const run of live) {
+    // 纵深对账（REVIEW.md「同一语义两处真源」条）：DOM 是可见集的派生面。任何不在可见集里的
+    // 行节点一律移除——map 与 DOM 曾经分家（跨 vault 切换只清 map 不删节点），这里兜住未来
+    // 任何新的「只清表不清 DOM」源头。
+    for (const child of [...taskList.children]) {
+      const runId = child instanceof HTMLElement ? child.dataset.run : undefined;
+      if (runId === undefined || !visibleIds.has(runId)) child.remove();
+    }
+    for (const run of visible) {
       const els = ensureRunRow(run);
       updateRunRow(run, els);
     }
-    // 全部收敛后：本次会话摘要之下给按模型用量（父会话控制行读数不掺这些数字）。
-    taskUsage.hidden = usageRows.length === 0;
-    if (usageRows.length > 0) {
-      const title = document.createElement("h4");
-      title.textContent = t("D506");
-      taskUsage.replaceChildren(
-        title,
-        ...usageRows.map((row) => {
-          const line = document.createElement("div");
-          line.className = "lumir-tp-usage-row";
-          const model = document.createElement("span");
-          model.className = "lumir-tp-usage-model";
-          model.textContent = row.model;
-          const value = document.createElement("span");
-          value.className = "lumir-tp-usage-value";
-          value.textContent = row.text;
-          line.append(model, value);
-          return line;
-        }),
-      );
+  }
+
+  /** 恢复行对账（M822）：快照 `subrun_runs` 是逐 run 终态的真源。恢复出的 `task` 行拿到的是
+   *  **启动信封**（后台调用返回时 `status: running`，不是结果）；若该 run 已有终态记录且当前
+   *  不在跑，就地改写为终态、用量取逐 run 汇总——「切走期间收尾」因此不会留下假的运行中行。 */
+  function syncRestoredRunRows(raw: unknown): void {
+    if (!Array.isArray(raw)) return;
+    const records = new Map<string, Record<string, unknown>>();
+    for (const entry of raw) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const value = entry as Record<string, unknown>;
+      const runId = value.run_id;
+      if (typeof runId === "string" && runId !== "") records.set(runId, value);
+    }
+    if (records.size === 0) return;
+    const liveIds = new Set(subruns.filter(isLiveSubrun).map((run) => run.runId));
+    for (const entry of taskRowEntries) {
+      const envelope = entry.restoredEnvelope;
+      if (envelope === null || entry.runId === null) continue;
+      if (envelope.status !== "running") continue;
+      if (liveIds.has(entry.runId)) continue; // 仍在跑：交给 live 事件更新
+      const record = records.get(entry.runId);
+      if (record === undefined) continue; // 旧留存没有逐 run 记录：保持既有行为
+      const number = (key: string): number => {
+        const value = record[key];
+        return typeof value === "number" && Number.isFinite(value) ? value : 0;
+      };
+      // 用量以逐 run 汇总为准（多段求和），不再从信封累加（后者是启动信封，没有 usage）。
+      entry.restoredUsage = {
+        input: number("input_tokens"),
+        cached: number("cached_tokens"),
+        output: number("output_tokens"),
+      };
+      const patched: Record<string, unknown> = {
+        ...envelope,
+        status: typeof record.status === "string" ? record.status : envelope.status,
+        stopped_by: typeof record.stopped_by === "string" ? record.stopped_by : undefined,
+        rounds: number("rounds"),
+        segment: number("segments"),
+        duration_ms: number("duration_ms"),
+        tool_calls: { total: number("tool_calls") },
+        usage: undefined,
+      };
+      entry.restoredEnvelope = patched;
+      renderRestoredTaskRow(entry, patched);
     }
   }
 
   /** 快照里的读数类字段（任务区专用刷新）：只吃 `auto_wake` / `subrun_usage` /
-   *  `pending_approvals`，不重放消息——transcript 的内容由事件与 `restoreSnapshot` 各管一段。 */
+   *  `live_subruns` / `pending_approvals`，不重放消息——transcript 的内容由事件与
+   *  `restoreSnapshot` 各管一段。 */
   function applyTaskReadings(state: Record<string, unknown>): void {
     if (!inCurrentVault(state.vault, currentVault)) return;
     const wake = state.auto_wake;
@@ -8846,13 +9468,27 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (autoWake.blocked !== null) wakeContinued = false;
     }
     subrunUsage = state.subrun_usage ?? null;
+    // 逐 run 终态汇总：先落终态行（后台异常在切回 / 重载后仍以待确认行出现），再合并 live——
+    // live 段的段基线因此能取到上一段的累计读数（评审 P1-5）。
+    if (Array.isArray(state.subrun_runs)) {
+      subruns = mergeTerminalSubruns(subruns, parseSubrunRuns(state.subrun_runs));
+    }
+    // live run 列表：缺键 = 旧后端 / 桩，不应用（不伪造在途，也不静默清空）。
+    if (Array.isArray(state.live_subruns)) {
+      subruns = mergeLiveSubruns(subruns, parseLiveSubruns(state.live_subruns));
+    }
     const approvals = Array.isArray(state.pending_approvals) ? state.pending_approvals : [];
     for (const raw of approvals) {
       const parsed = parseTaskApproval(raw);
       if (parsed === null) continue;
       attachTaskApproval(parsed.source.run_id, parsed.request, parsed.source);
     }
+    syncRestoredRunRows(state.subrun_runs);
+    // 切回 / 重载后仍在跑的 run：恢复行必须换成 live 形态（行内「停止」、用时、展开详情）。
+    // 只修 `subruns` 不刷新 DOM 的话，恢复行永远是启动信封的只读样式（评审 P1-1）。
+    for (const run of subruns.filter(isLiveSubrun)) refreshTaskRow(run);
     renderTaskArea();
+    renderWakeNotice();
   }
 
   /** 批准请求的宽容解析（事件与快照共用）：返回任务区可用的形状（含子运行来源）。 */
@@ -8906,15 +9542,49 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     taskCollapsed = !taskCollapsed;
     renderTaskArea();
   });
-  taskAlertButton.addEventListener("click", () => {
-    harnessSubagentContinue()
-      .then(() => {
-        wakeContinued = true;
-        renderTaskArea();
-        refreshTaskState();
-      })
-      .catch((e: unknown) => appendError(t("D348", { message: errorMessage(e) })));
-  });
+  /** 触顶提示（对话流）：`auto_wake.blocked` 非空时追加一条自动化提示 + 「继续」；点继续后
+   *  就地换成结果句。提示不属于任何一件交办，MUST NOT 出现在控制区（M822）。 */
+  function renderWakeNotice(): void {
+    const text = autoWakeAlertText(autoWake.blocked, autoWake.max, wakeContinued);
+    if (text === null) {
+      if (wakeNotice !== null) {
+        wakeNotice.el.remove();
+        wakeNotice = null;
+      }
+      return;
+    }
+    if (wakeNotice === null || !transcript.contains(wakeNotice.el)) {
+      const el = document.createElement("div");
+      el.className = "lumir-hp-msg lumir-hp-notice lumir-hp-wake";
+      const body = document.createElement("div");
+      body.className = "lumir-hp-notice-body";
+      const textEl = document.createElement("span");
+      textEl.className = "lumir-hp-notice-line";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "lumir-tp-mini";
+      button.textContent = t("D491");
+      button.addEventListener("click", () => {
+        harnessSubagentContinue()
+          .then(() => {
+            wakeContinued = true;
+            renderWakeNotice();
+            renderTaskArea();
+            refreshTaskState();
+          })
+          .catch((e: unknown) => appendError(t("D348", { message: errorMessage(e) })));
+      });
+      body.append(textEl, button);
+      el.append(body);
+      transcript.append(el);
+      wakeNotice = { el, text: textEl, button };
+      syncEmptyHint();
+      follow.contentGrew(); // 分流表口径：自动提示不拽视口
+    }
+    wakeNotice.text.textContent = text;
+    wakeNotice.button.textContent = t("D491");
+    wakeNotice.button.hidden = wakeContinued || autoWake.blocked === null;
+  }
 
   /** 后台完成通知上屏（tasks §10.4）：与用户消息视觉区分（左侧色条 + 标签），多条合并成
    *  一条时逐 run 列一行。正文只来自后端（agent / description / 终态 / 摘要首行），
@@ -8941,10 +9611,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       line.textContent = noticeLineText(run);
       body.append(line);
     }
-    const more = document.createElement("div");
-    more.className = "lumir-hp-notice-more";
-    more.textContent = t("D516");
-    body.append(more);
     el.append(head, body);
     transcript.append(el);
     syncEmptyHint();
@@ -9022,6 +9688,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           typeof event.name === "string" ? event.name : "?",
           event.status === "done" ? "done" : "started",
           typeof event.summary === "string" ? event.summary : "",
+          typeof event.call_id === "string" ? event.call_id : null,
         );
         return;
       case "approval_request":
@@ -9082,7 +9749,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         retitleOpenSessRows(previousShown, sessionNameShown(sessionTitle, firstUserText));
         return;
       }
-      case "subagent_started":
+      case "subagent_started": {
+        // resume 判定必须用**归约前**的视图：已存在同 run = 这是第二段（或更后的段）。
+        const resumed = subruns.some((item) => item.runId === event.run_id);
         subruns = reduceSubruns(subruns, {
           type: "subagent_started",
           run_id: event.run_id,
@@ -9091,12 +9760,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           model: event.model,
           background: event.background === true,
         });
-        {
-          const run = subruns.find((item) => item.runId === event.run_id);
-          if (run !== undefined) refreshTaskRow(run);
+        const run = subruns.find((item) => item.runId === event.run_id);
+        if (run !== undefined) {
+          const callId = typeof event.call_id === "string" ? event.call_id : null;
+          if (resumed) dropResumeDuplicateRow(run, callId);
+          refreshTaskRow(run, callId);
         }
         renderTaskArea();
         return;
+      }
       case "subagent_progress":
         subruns = reduceSubruns(subruns, {
           type: "subagent_progress",
@@ -9389,6 +10061,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (name === "task") {
       const envelope = taskEnvelopeOf(record.text);
       if (envelope !== null) {
+        const runId = typeof envelope.run_id === "string" ? envelope.run_id : "";
+        if (runId !== "") {
+          // 同一 run 的 resume 段在恢复后仍是一个身份：找到既有恢复行，合并信封并就地重渲，
+          // 不再为第二段另建一行（评审 r3 P1-2）。
+          const existing = taskRowEntries.find(
+            (entry) => entry.runId === runId && entry.restoredEnvelope !== null,
+          );
+          if (existing !== undefined && existing.restoredEnvelope !== null) {
+            const merged = mergeRestoredEnvelopes(existing.restoredEnvelope, envelope);
+            existing.restoredEnvelope = merged;
+            existing.restoredUsage = envelopeUsageOf(merged);
+            existing.callId =
+              typeof merged.call_id === "string" ? merged.call_id : existing.callId;
+            renderRestoredTaskRow(existing, merged);
+            return;
+          }
+        }
         const wrap = document.createElement("div");
         wrap.className = "lumir-hp-taskwrap";
         const row = document.createElement("div");
@@ -9402,12 +10091,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           row,
           detail,
           argsSummary: summary,
-          runId: null,
+          runId: typeof envelope.run_id === "string" ? envelope.run_id : null,
           settled: true,
           open: false,
           renderDetail: null,
+          restoredEnvelope: envelope,
+          callId: typeof envelope.call_id === "string" ? envelope.call_id : null,
+          restoredUsage: envelopeUsageOf(envelope),
         };
         bindTaskRowToggle(entry);
+        // 恢复行同样进绑定表：快照 `subrun_runs` 的终态对账按 runId 找到它（M822）。
+        // `settled = true` 使它不参与「未绑定行」的 FIFO 兜底，只按 runId 精确绑定。
+        taskRowEntries.push(entry);
         renderRestoredTaskRow(entry, envelope);
         block.el.append(wrap);
         block.rows.push(wrap);
@@ -9688,12 +10383,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     decidedApprovals.clear();
     // 任务区是**会话**的视图：换会话即清空（终态 run 的「本次会话摘要」不跨会话）。
     subruns = [];
+    // `acknowledgedRuns` 不随会话清空：run id 全局唯一，用户确认过的后台异常不应在切 vault /
+    // 重载后被重新要求确认（「同一 run 不再出现」）。集合按确认顺序淘汰，避免无界增长。
     taskApprovals.clear();
     taskDecidedApprovals.clear();
     taskDecisions.clear();
     openRuns.clear();
     runRowEls.clear();
+    // 行 DOM 是 run 视图的派生面：只清表不删节点会留下永久僵尸行（M819：切 vault 后旧行
+    // 冻结、Stop 不隐藏、点击无效）。表与 DOM 必须同一次收走。
+    taskList.replaceChildren();
     taskRowEntries.length = 0;
+    wakeNotice = null;
     wakeContinued = false;
     autoWake = { chain: 0, max: autoWake.max, blocked: null };
     subrunUsage = null;
@@ -10330,17 +11031,45 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function buildSessList(seq: number): void {
     sessList.replaceChildren();
     sessList.hidden = true;
+    const usage = subrunUsageSummary(subrunUsage);
     harnessListSessions()
       .then((list) => {
         if (seq !== sessPopSeq) return; // 期间已收起 / 又点了一次：这次取数作废
         const entries = sessionEntriesOf(list);
         const decision = sessPopDecision(
-          entries.length === 0 ? { kind: "empty" } : { kind: "entries", count: entries.length },
+          entries.length === 0
+            ? { kind: "empty", hasUsage: usage.rows.length > 0 }
+            : { kind: "entries", count: entries.length, hasUsage: usage.rows.length > 0 },
         );
         if (!decision.visible) {
-          // 空清单：不揭示 + 可感知反馈（D362），不得静默（O5）。
+          // 空清单且无用量：不揭示 + 可感知反馈（D362），不得静默（O5）。
           if (decision.notify) deps.toast(t("D362"));
           return;
+        }
+        // 会话聚合（按需入口，M822）：单桶只给总量（不出现模型名分组），≥2 桶才按模型分行。
+        if (usage.rows.length > 0) {
+          const section = document.createElement("div");
+          section.className = "lumir-hp-sesspop-usage";
+          const title = document.createElement("div");
+          title.className = "lumir-hp-sesspop-usage-title";
+          title.textContent = t("D880");
+          section.append(title);
+          for (const row of usage.rows) {
+            const line = document.createElement("div");
+            line.className = "lumir-hp-sesspop-usage-row";
+            if (usage.grouped) {
+              const model = document.createElement("span");
+              model.className = "lumir-hp-sesspop-usage-model";
+              model.textContent = row.model;
+              line.append(model);
+            }
+            const value = document.createElement("span");
+            value.className = "lumir-hp-sesspop-usage-value";
+            value.textContent = row.text;
+            line.append(value);
+            section.append(line);
+          }
+          sessList.append(section);
         }
         for (const entry of entries) {
           const row = document.createElement("div");

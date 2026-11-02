@@ -49,10 +49,17 @@ interface RegistryEntry {
 const REGISTRY: RegistryEntry[] = [
   {
     tier: "hidden",
-    selectors: [".tabstrip", ".vault-list", ".lumir-hp-sesspop-list", ".lumir-hp-permpop-rules"],
+    selectors: [
+      ".tabstrip",
+      ".vault-list",
+      ".lumir-hp-sesspop-list",
+      ".lumir-hp-permpop-rules",
+      ".lumir-tp-list",
+    ],
     note:
-      "标签栏（M257）+ 右缘 0 留白且逐行有常驻钮的三处浮层列表（M660）。隐藏档的准入判据：" +
-      "容器右缘 12px 内有常驻可交互件——4px 细条仍会盖住 20px 钮的右缘，只有 0px 才彻底解决。",
+      "标签栏（M257）+ 右缘 0 留白且逐行有常驻钮的三处浮层列表（M660）+ 子代理控制区列表" +
+      "（M822：每行右缘有「停止 / 知道了」常驻钮）。隐藏档的准入判据：容器右缘 12px 内有常驻" +
+      "可交互件——4px 细条仍会盖住 20px 钮的右缘，只有 0px 才彻底解决。",
   },
   {
     tier: "thin",
@@ -370,7 +377,7 @@ test("滚动条注册表与源码双向对齐，且各档声明实际成立", ()
   );
 });
 
-test("注册表覆盖盘点出的全部滚动容器（21 个面 = 22 个选择器）", () => {
+test("注册表覆盖盘点出的全部滚动容器（22 个面 = 23 个选择器）", () => {
   const scanned = scrollContainers(realWorld());
   assert.deepEqual(
     [...scanned.keys()].sort(),
@@ -393,6 +400,7 @@ test("注册表覆盖盘点出的全部滚动容器（21 个面 = 22 个选择�
       ".lumir-set-body",
       ".lumir-table-fs-panel",
       ".lumir-toc-list",
+      ".lumir-tp-list",
       ".pane",
       ".tabstrip",
       ".tree-pane",
