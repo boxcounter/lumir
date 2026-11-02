@@ -3511,7 +3511,8 @@ interface RunRowEls {
 }
 
 /** transcript 里一条 `task` 工具行的绑定（design §19.1：历史任务的详情从这里点开）。
- *  行由工具事件创建、由 run 事件更新；两者靠「agent 名 + FIFO」绑定（见 `bindTaskRow`）。 */
+ *  行由工具事件创建、由 run 事件更新；绑定以 **`call_id` 为第一身份**（见 `taskRowFor`），
+ *  agent 名 / FIFO 只兜底没有 `call_id` 的旧事件。行点击展开由 `bindTaskRowToggle` 绑定。 */
 interface TaskRowEntry {
   /** 行 + 详情的外壳（折叠时整体隐藏，随工具块收尾）。 */
   wrap: HTMLElement;
@@ -7795,8 +7796,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
-  /** run → transcript 行绑定（agent 名优先、FIFO 兜底）：没有可绑的行时补一条独立行
-   *  （快照恢复 / 事件缺口下也要让历史任务的详情可达）。 */
+  /** run → transcript 行绑定（**call_id 第一身份**；agent 名 / FIFO 仅兜底没有 call_id 的
+   *  旧事件）：没有可绑的行时补一条独立行（快照恢复 / 事件缺口下也要让历史任务的详情可达）。 */
   function taskRowFor(run: SubrunView, callId: string | null): TaskRowEntry {
     // 调用身份优先（M822 / 评审 r3 P1-1）：成功 started 必须绑**本次调用**的行——同一 agent
     // 的前一次调用可能已被拒且仍是未绑定行，靠 agent / 到达顺序会绑错。
