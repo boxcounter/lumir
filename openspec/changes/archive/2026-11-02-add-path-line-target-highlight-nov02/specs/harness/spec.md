@@ -1,7 +1,7 @@
 # harness 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 MODIFIED，基线是 living spec
-> [openspec/specs/harness/spec.md](../../../../specs/harness/spec.md) 的「输出中的 vault 路径可点击」。
+> [openspec/specs/harness/spec.md](../../../../../specs/harness/spec.md) 的「输出中的 vault 路径可点击」。
 > 改动面只有两处语义：① 带行号的路径点击后增加一次瞬态整行 / 闭区间高亮（`Decoration.line` 行装饰，
 > 约 1.4s 消退），并把它限定在 harness 正文路径链接这一个入口；② 把旧口径「行范围只解析、v1 不选中
 > 也不高亮」改准——不选中仍然成立，不高亮由本 change supersede（旧 change

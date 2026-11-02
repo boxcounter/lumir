@@ -92,3 +92,37 @@ Alex 2026-11-02 的需求原话（逐字）：
   再花时间确认「到底落在哪一行」。
 - **出问题怎么发现**：纯函数单测（范围与上限）、编辑器层单测（计时 / 替换 / 切标签清除）、视觉场景
   （装饰在场、选区折叠、正文逐字节不变、三主题计算样式）、真机场景（WKWebView 下的同一链路）。
+
+## 节点 2 记录（归档前，2026-11-02，M823）
+
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-11-02 通过（Alex 原话「好，请你动手。」，见上方「评审记录」）。
+   批准面（仅 harness 正文路径链接、单行 / 行列高亮整行、范围闭区间、`Decoration` 行装饰、约 1.4s
+   瞬态、重复点击替换、切标签清除、正文 / 撤销栈 / dirty 不变、越界钳制、超大范围性能护栏）在实现中
+   逐条落地；评审两轮的唯一 findings（r1 P1 截图时序、final P2 `lineEnd` 术语）都是本 change 范围内的
+   修正，没有静默扩 scope。
+2. **独立 reviewer clean / merge**：assigned reviewer `reviewer-path-highlight-clean` 判
+   `status: clean` / `merge: merge`，评审时 exact tip `dbe3d5646507ee64ac48c4cef6a0fc048fe3f3a0`；
+   评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.tower/comms/reviews/review-feat-add-path-line-target-highlight-nov02-reviewer-path-highlight-clean-r1.md`。
+   前两轮（`reviewer-path-highlight-early` r1 的 P1 截图时序、`reviewer-path-highlight-final` r1 的 P2
+   `lineEnd` 术语）均已修复并在当前 tip 上复核为已闭合；merge-base = master = `1d08868d`，8 笔提交，
+   diff 为 mission scope 内 15 个文件，不含 `src-tauri/src/harness/prompts/**` 与视觉基线。
+3. **tasks 完成**：`tasks.md` 22/22 全勾（`grep -c '^- \[x\]'` = 22，未勾项 0），无放弃项。
+4. **要求的门禁与真机证据**：动过 `src/style.css` 与 `tests/visual/**`，按 `gate.sh visual` 档取读数 ——
+   `GATE RESULT: 15/15 PASS（SKIP 0）`，`GATE_EXIT=0`（完整日志 `/tmp/lumir-gate-823-visual.log`；
+   visual-regression 613s，套件 936 passed / 1 skipped）；`gate.sh quick` 独立复跑为
+   `GATE RESULT: 13/13 PASS（SKIP 0）`，`GATE_EXIT=0`（日志 `/tmp/lumir-gate-823-quick.log`）。
+   真机场景 221 `1/1 PASS`（18 断言 / 0 失败 / 33.7s，退出码 0），evidence
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-02-m823-221/221-harness-path-line-range/`
+   （`status.txt` = PASS；截图 02 第 39 行整行带底色、03 覆盖 39–48 含两端、04 同区域已消退）。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS ——
+   `扫过 8 份 delta，7 条 MODIFIED，对比 118 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`
+   （退出码 0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 35 passed,
+   0 failed (35 items)`（退出码 0）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0）。
+   归档跟踪队列有且仅有一条本 change 条目（`docs/backlog.md`）。delta 的一条 MODIFIED 是真实增量
+   （living spec 原句为「行范围只解析、v1 不选中也不高亮」，本 change 改准为不选中 + 瞬态高亮）。
+
+未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与
+tip 均无异常、证据无缺口，故不另送 Alex。
