@@ -70,6 +70,11 @@
       `/tmp/lumir-gate-823-visual.log`）：**`GATE RESULT: 15/15 PASS（SKIP 0）`，`GATE_EXIT=0`**
       （后台任务退出码 0）。其中 visual-regression 613s，套件读数 **936 passed / 1 skipped（10.1m）**；
       m632 场景 8/8 含三主题与两条反向验证。**未更新任何视觉基线**
-- [ ] 5.5 真机验收场景 221 复跑（20:00 后窗口）并把证据落 `.local/acceptance/`（不落 worktree）
+- [ ] 5.5 真机验收场景 221 复跑（20:00 后窗口）并把证据落 `.local/acceptance/`（不落 worktree）。
+      独立评审 r1（reviewer-path-highlight-early，P1-1 / fix-then-merge）指出的瞬态截图时序已修：
+      `02` / `03` 的截图改为直接挂在点击步（点击前文件已打开，切换 + 高亮是快路径），不再前置
+      `settle`（其 700ms 采样 + `shot` 固定 600ms 会吃掉 1.4s 窗口的大半）；结构断言移到截图之后，
+      `04` 用 `sleep 2400` 有界观察窗证明消退。复跑时人工确认 02/03 有底色、04 无底色。
+      真机起跑仍被安装版 Lumir（pid 70156）挡住，等 Alex 关闭，未自行启动
 - [x] 5.6 信息卫生清扫：新增 / 改动的文档、fixture、场景对改动面做一次 text 级 grep，
       `/Users/`、`~/.config`、验收 vault 路径等零命中；样例全为合成串

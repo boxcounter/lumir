@@ -61,18 +61,15 @@ steps:
         ax: { not: '/AXButton \(goto-line-long\.md:48-39\)/' }
       - shot: 01-行范围可点性
 
-  - name: 点单行链接（第 39 行）
+  - name: 点行范围链接（新标签打开目标文件；本步只立结构，不抢高亮截图）
     do: click
-    target: { role: AXButton, name: "^goto-line-long\\.md:39$" }
+    target: { role: AXButton, name: "^goto-line-long\\.md:39-48$" }
 
   - name: 等目标文件装载（编辑器出现第 39 行原文）
     do: waitFor
     waitFor:
       has: ["JUMP-TARGET-39"]
     timeoutMs: 15000
-
-  - name: 单行落点与高亮
-    do: settle
     expect:
       - label: '目标文件在**新标签**里且成为前台（AXRadioButton 的 Value: true）'
         ax: { has: '/AXRadioButton \(goto-line-long\.md\) Value: true/' }
@@ -80,37 +77,51 @@ steps:
         ax: { has: '/AXRadioButton \(harness-note\.md\)/' }
       - label: 目标文件正文已装载（编辑器文本里出现第 39 行原文）
         editor: { has: "JUMP-TARGET-39" }
-      - shot: 02-单行高亮（第 39 行居中且整行带底色；底色是否出现由截图判读）
 
-  - name: 点行范围链接（同一文件已打开 → 切到既有标签并高亮 39–48）
+  - name: 点单行链接（文件已打开 → 切到既有标签并高亮第 39 行）；截图紧跟点击、不 settle
+    do: click
+    target: { role: AXButton, name: "^goto-line-long\\.md:39$" }
+    expect:
+      - shot: 02-单行高亮（点击后 ~0.6s 内拍摄；1.4s 瞬态窗口内，第 39 行整行应带底色）
+
+  - name: 单行落点复核（截图之后再做 AX / 文本断言）
+    do: waitFor
+    waitFor:
+      has: ["JUMP-TARGET-39"]
+    timeoutMs: 15000
+    expect:
+      - label: 同一文件只切标签（目标文件仍是前台，不重复开）
+        ax: { has: '/AXRadioButton \(goto-line-long\.md\) Value: true/' }
+      - label: 目标行文本在场
+        editor: { has: "JUMP-TARGET-39" }
+
+  - name: 点行范围链接（同一文件已打开 → 切到既有标签并高亮 39–48）；截图紧跟点击、不 settle
     do: click
     target: { role: AXButton, name: "^goto-line-long\\.md:39-48$" }
+    expect:
+      - shot: 03-行范围高亮（点击后 ~0.6s 内拍摄；39–48 行整段应带底色）
 
-  - name: 等行范围末行进入编辑器视图
+  - name: 行范围落点复核（截图之后再做断言）
     do: waitFor
     waitFor:
       has: ["LAST-LINE-MARKER"]
     timeoutMs: 15000
-
-  - name: 行范围高亮现场
-    do: settle
     expect:
-      - label: 标签数量不变（同一文件不重复开）
+      - label: 同一文件只切标签（仍是同一标签）
         ax: { has: '/AXRadioButton \(goto-line-long\.md\) Value: true/' }
       - label: 目标文件正文仍完整（行范围末行在场）
         editor: { has: "LAST-LINE-MARKER" }
-      - shot: 03-行范围高亮（39–48 行整段带底色；由截图判读）
 
   - name: 等高亮消退（~1.4s 的瞬态；有界观察窗）
     do: sleep
-    ms: 2200
+    ms: 2400
 
   - name: 消退现场
     do: settle
     expect:
+      - shot: 04-高亮消退（39–48 行不再带底色；由截图判读）
       - label: 消退后正文不变（高亮只是装饰，不动文档）
         editor: { has: "JUMP-TARGET-39" }
-      - shot: 04-高亮消退（39–48 行不再带底色；由截图判读）
 ---
 
 # 221-harness-path-line-range —— 带行号路径可点击 + 点击后瞬态行高亮
@@ -124,10 +135,10 @@ steps:
 
 mock provider 把三种形态一次铺开：
 
-1. **单行** `goto-line-long.md:39` → 整段一个可点元素；点击在新标签打开、落到第 39 行（居中），
-   该行整行获得一次瞬态高亮（~1.4s 后退）。
-2. **合法行范围** `goto-line-long.md:39-48` → 同一文件已打开时只切标签；点击后第 39–48 行
-   （闭区间）整段高亮。
+1. **合法行范围** `goto-line-long.md:39-48` → 整段一个可点元素；首次点击在新标签打开、落到第 39 行
+   （居中，结构断言）；文件已打开后再次点击只切标签并给 39–48 行（闭区间）一次瞬态高亮。
+2. **单行** `goto-line-long.md:39` → 文件已打开时点击只切标签、落到第 39 行，该行整行获得一次
+   瞬态高亮（~1.4s 后退）。
 3. **畸形范围** `goto-line-long.md:48-39`（`止 < 起`）→ 只链接路径本身，`:48-39` 留作普通文本
    ——失败模式不是「不可点」而是「吞半截」，判据落在「可点元素的名字里没有这个后缀」上。
 
@@ -138,14 +149,22 @@ mock provider 把三种形态一次铺开：
   它同时钉住了「一个元素、不改写正文」。
 - **畸形形态用 `ax: { not: … }` 作反向判据**：只否定 `AXButton (名字含后缀)` 这一形态，避免把
   正文里作为普通文本出现的同一串误判。正向那半用「路径本身可点」作对照，防「整条都没渲染」的假绿。
-- **高亮与消退落在截图上**：AX 读不到装饰类名与计算样式；`02` / `03` / `04` 三张截图是同一条
-  链路的三拍（单行、行范围、消退后）。消退用一段有界观察窗（`sleep 2200`，README 允许的两类
-  sleep 口径之一），随后只复核正文未被改动。
+- **高亮与消退落在截图上，且截图必须抢在 1.4s 窗口内**：AX 读不到装饰类名与计算样式；`02` / `03` /
+  `04` 三张截图是同一条链路的三拍（单行、行范围、消退后）。**时序是本场景的一条判据**：执行器
+  `settle` 至少等一个 700ms 采样间隔，`shot` 拍摄前又固定 `sleep(600)` 并另做一次 full AX 读——
+  「先 settle 再 shot」的固定等待已约 1300ms，正确实现也极易在拍摄前消退（M823 r1 P1 现场）。
+  因此 `02` / `03` 的截图**直接挂在点击步的 expect 上**（点击前文件已由行范围链接打开，切换 + 高亮
+  是快路径），结构断言放到截图之后的独立步骤；`04` 用一段有界观察窗（`sleep 2400`，README 允许的
+  两类 sleep 口径之一）证明消退，随后只复核正文未被改动。
 
 ## 覆盖边界（如实登记）
 
 - **滚动位置与高亮底色没有机器判据**：`AXTextArea.value` 是整个文档文本，AX 读不到 `scrollTop`、
   选区与装饰类名（CL-1 / CL-2 的同一已知边界）；是否居中、是否带底色由截图人工判读。
+- **`02` / `03` 的「高亮在场」只有截图证据，且依赖拍摄落在 1.4s 窗口内**：这是本场景唯一靠时序
+  保证的判据——截图直接挂在点击步、不做前置 `settle`（理由见上节）。若机器负载导致拍摄仍然错过
+  窗口，图上不会有底色（人工判读看到一次假阴性）：先核步骤耗时与现场负载，不当作产品缺陷。
+  `04` 只证明「拍摄时已无底色」，不能单独证明 `02` / `03` 拍到过。
 - **「不选中 / 正文不变」的机器判据在视觉层**：
   `tests/visual/scenes/m632-path-line-range-link.spec.ts` 在真 CM view 上断言
   `selection.main.empty === true`、正文逐字节不变、`.cm-line-highlight` 的行集合与三主题计算底色；
