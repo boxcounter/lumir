@@ -65,8 +65,9 @@
 - [ ] 5.3 `bash scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行 + 退出码）——首跑唯一 FAIL 是
       本 delta 的相对链接深度（已修，`docs-check` 单独复跑 PASS）；其后两次复跑被**磁盘满**挡住
       （`mktemp: No space left on device`），tower 已核空间回升，待持 cargo 锁复跑
-- [ ] 5.4 `bash scripts/gate.sh visual` / 完整视觉套件（动过 `src/style.css` 与 `tests/visual/**`；
-      照抄 `GATE RESULT` 原文行 + 退出码）——完整套件运行中，读数待回填
+- [x] 5.4 完整视觉套件（`scripts/visual/run.sh`，动过 `src/style.css` 与 `tests/visual/**`）：
+      **936 passed / 1 skipped（10.6m），退出码 0**；m632 场景 8/8 含三主题与两条反向验证。
+      `gate.sh visual` 整档仍随 5.3 的启动快照红，待干净 rebase 后复跑
 - [ ] 5.5 真机验收场景 221 复跑（20:00 后窗口）并把证据落 `.local/acceptance/`（不落 worktree）
 - [x] 5.6 信息卫生清扫：新增 / 改动的文档、fixture、场景对改动面做一次 text 级 grep，
       `/Users/`、`~/.config`、验收 vault 路径等零命中；样例全为合成串
