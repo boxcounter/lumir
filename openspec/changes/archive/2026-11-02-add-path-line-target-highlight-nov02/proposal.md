@@ -1,0 +1,156 @@
+# Proposal: 点击 harness 正文里的带行号路径时，瞬态高亮目标行 / 行范围
+
+- Change ID: add-path-line-target-highlight-nov02
+- 日期: 2026-11-02
+- 角色: Alex Lee（评审/裁决），AI agent（起草）
+
+> 评审记录
+> 节点 1（提案评审）：**通过**（Alex 2026-11-02 原话：「好，请你动手。」）。批准面在需求提出时
+> 一并给定：仅 harness 正文路径链接；单行与行列形态高亮整行、行范围高亮闭区间；用 `Decoration`
+> 行装饰而非选区；约 1.4 秒瞬态，重复点击替换并重置计时，切标签清除；正文 / 撤销栈 / dirty 不变；
+> 越界钳制；超大范围有性能护栏。本 proposal 的 D1–D5 全部落在批准面内，没有新增裁决点。
+> 节点 2 记录待实现完成后回填。
+
+## Why
+
+Alex 2026-11-02 的需求原话（逐字）：
+
+> 「点击 {path}:{line} 家族（包括：{line}:{column} 和 {line-start}-{line-end}），自动高亮那一行或那个范围。」
+
+**现状**：`{path}:{行号}` 家族已经被识别成可点元素（change `harness-path-link` 与已归档的
+`add-path-line-range-links`），点击会把目标行滚进视口并居中。但**跳过去之后没有任何视觉锚点**：
+目标行停在一屏文字中间，用户要靠"刚才想看的到底是哪一行"重新定位。行范围尤其明显——文字承诺是
+「第 120–140 行」，点击后只有光标落在第 120 行，那一段在视觉上与周围无差别。
+
+旧 change `add-path-line-range-links` 的 D1 当时裁成「只落起始行、不选中也不高亮」，理由是不做
+**选区**（选中会把随后的一次键入变成对整段的覆盖）。那个理由只排除了选区这一种实现，没有排除
+瞬态装饰；本 change 正是在不引入选区风险的前提下补上视觉锚点，因此**supersede 旧 D1 的「不高亮」部分**，
+保留「不选中」部分。
+
+**为什么值得做**：带行号后缀的路径引用在 agent 输出里是高频形态（读工具结果、diff 头、grep 上下文
+都是这个形状）。点击之后「看不出来落在哪」会让这个能力每次都要用户再花一次注意力去重新定位；
+瞬态高亮把「落点在哪」从推理变成一眼可见，成本只是一层随时消退的装饰。
+
+## What Changes
+
+逐条对应 `specs/harness/spec.md` 增量（MODIFIED ×1：输出中的 vault 路径可点击）：
+
+1. **行号读数补齐**（解析层）。`lineSuffixAt` 目前把 `:起-止` 的 `止` 算出来就丢掉；本 change 把
+   `lineEnd` 作为解析结果的一部分带出，`PathCandidate` 因此能表达「单行 / 闭区间」两种高亮范围。
+   `止` 的唯一消费者就是高亮——不再是一个算了没用的读数。
+2. **新增独立的编辑器行高亮原语**。`Decoration.line` 的行装饰（不是选区、不是 mark 装饰），
+   带约 1.4 秒的瞬态消退；重复点击替换现有高亮并重置计时；切标签 / 关闭会话立即清除。
+   该原语与 `revealLine`（落点算式）、阅读位置让位窗口 CL-2 完全解耦：它只加装饰，不碰选区、不碰滚动。
+3. **接线只覆盖 harness 正文路径链接**。面板渲染出的正文候选把 `lineEnd` 传给装配层；工具卡片路径、
+   快速打开、文档内 wikilink 锚点跳转与「跳转到行」命令**都不带** `lineEnd`，因此行为逐字不变。
+4. **覆盖单行 / 行列 / 闭区间三种形态**：`:行号` 与 `:行号:列号` 高亮该整行（列号只解析、不参与落点），
+   `:起-止` 高亮 `起`…`止` 闭区间。
+5. **越界钳制与性能护栏**：`起` / `止` 越界时钳到 `1..文档行数`（与 `:行号` 越界同口径）；钳制后
+   范围超过 2000 行时只落点、不画高亮（`MUST NOT` 只画前一段，那会让视觉承诺与范围不符）。
+
+## 起草期取值（均已被节点 1 的批准面覆盖）
+
+| # | 取值 | 理由 | 若选另一侧 |
+|---|---|---|---|
+| D1 | 用 `Decoration.line` 行装饰，**不用选区** | 选区会把随后一次键入变成对目标段的覆盖（旧 change D1 的数据风险判断仍然成立）；行装饰只影响视觉，不参与编辑语义 | 用选区：需要处理「点击后进入编辑态 / 键入是否覆盖」的整条链路，且与「不准备改写」的意图相反 |
+| D2 | 单行与行列形态**高亮整行** | 列号在今天只解析、不参与落点；只高亮某列到行尾的碎片会让人误以为该行有局部语义 | 只高亮列所在位置：需要定义「列之后到哪里」的边界，且与 `:行号` 的形态不一致 |
+| D3 | 行范围高亮**闭区间** | 文字承诺是「第 120–140 行」，两端都属于承诺范围 | 半开区间：第 `止` 行不高亮，与 `:起-止` 的日常读法不符 |
+| D4 | 约 1.4 秒自动消退 + 重复点击替换并重置 | 与既有「摘录跳回高亮」同一族瞬态语言（~1.4s、pending-tint）；用户不需要手动清理 | 常驻高亮：会变成第二套「选中的行」语义，且必须新增清除入口 |
+| D5 | 超大范围（钳制后 > 2000 行）**只落点、不高亮** | 高亮的成本随行数线性增长（实测见 design §5）；2000 行内构建耗时中位数 0.27ms，仍在单帧预算内。视觉上「整段一个色块」对 2000 行以上的范围也没有区分度 | 截断高亮：用户会以为范围只有高亮出来的那一段；分段渲染：为极端形态引入不必要的复杂度 |
+
+## Non-goals
+
+- **不改工具卡片路径的落点 / 高亮**：Read 的 `offset` 仍只落行、不产生高亮；卡片路径不带 `lineEnd`。
+- **不改快速打开、文档内 wikilink、⌥G 跳转**：这些入口与 harness 正文无关，行为逐字不变。
+- **不做常驻高亮 / 手动清除入口**：瞬态消退是唯一生命周期，不新增 UI。
+- **不改选区**：点击后选区仍折叠在起始行行首（`selection.main.empty === true`）。
+- **不改行号 / 行范围后缀的识别规则与落点算式**：畸形形态、空白边界、CL-2 窗口全部沿用现状。
+- **不新增后端命令 / 配置项 / 视觉 token**：配色复用既有 `--pending-tint` 语义与 eink 覆写口径。
+- **不更新像素基线**：新增断言语义是结构 / 计算属性层，整页基线不因一次瞬时装饰而变化。
+
+## Impact
+
+- **影响的 specs**：`harness`（MODIFIED ×1：输出中的 vault 路径可点击）。整块按 living spec 全文
+  抄录后就地改；新增一个高亮段落与若干 scenario，并把「行范围只解析、v1 不选中也不高亮」一句改准。
+- **影响的代码 / 系统**：
+  - 前端解析：`src/harness-path-link.ts`（`lineSuffixAt` 带出 `lineEnd`、`PathCandidate.lineEnd`）。
+  - 前端新模块：`src/navigation-highlight.ts`（行装饰 StateField + 状态效果 + 行数上限常量）。
+  - 编辑器：`src/editor.ts`（基础层装扩展、`EditorHandle.highlightLineRange`、按会话清理与计时器）。
+  - 面板：`src/harness-panel.ts`（候选的 `lineEnd` 透传到目标与打开回调）。
+  - 装配：`src/main.ts`（`PathJumpPlan` 增加可选 `highlight`、`jumpPlanFor` 接线、面板回调签名）。
+  - 样式：`src/style.css`（`.cm-line-highlight` 与 eink 覆写，复用既有 token）。
+- **关联约束**：性能合同（ADR 0002 §6）——高亮构建在 2000 行上限内实测中位 0.27ms，不突破单帧预算；
+  ADR 0002 §6 的「识别在渲染路径上、零 IPC」不变（全部本地装饰）。
+- **测试面**：`tests/unit/harness-path-link.test.ts`（解析 + 编排 + 装饰范围 / 上限 / 生命周期纯逻辑，
+  行高亮与它的入口同文件）、`tests/visual/scenes/m632-path-line-range-link.spec.ts`（更新：
+  行装饰在场、选区仍折叠、正文不变、三主题可见性）、真机场景 221（更新：点击后高亮出现与消退）。
+
+## 观测闸三问
+
+- **怎么知道用户用了它**：高亮是点击的必然结果，dogfood 直接可感知；无埋点。
+- **怎么知道它有效**：点击带行号的路径后，目标行 / 行段立刻带上底色，约 1.4 秒后消失；用户不需要
+  再花时间确认「到底落在哪一行」。
+- **出问题怎么发现**：纯函数单测（范围与上限）、编辑器层单测（计时 / 替换 / 切标签清除）、视觉场景
+  （装饰在场、选区折叠、正文逐字节不变、三主题计算样式）、真机场景（WKWebView 下的同一链路）。
+
+## 节点 2 记录（归档前，2026-11-02，M823）
+
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-11-02 通过（Alex 原话「好，请你动手。」，见上方「评审记录」）。
+   批准面（仅 harness 正文路径链接、单行 / 行列高亮整行、范围闭区间、`Decoration` 行装饰、约 1.4s
+   瞬态、重复点击替换、切标签清除、正文 / 撤销栈 / dirty 不变、越界钳制、超大范围性能护栏）在实现中
+   逐条落地；评审两轮的唯一 findings（r1 P1 截图时序、final P2 `lineEnd` 术语）都是本 change 范围内的
+   修正，没有静默扩 scope。
+2. **独立 reviewer clean / merge**：assigned reviewer `reviewer-path-highlight-clean` 判
+   `status: clean` / `merge: merge`，评审时 exact tip `dbe3d5646507ee64ac48c4cef6a0fc048fe3f3a0`；
+   评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.tower/comms/reviews/review-feat-add-path-line-target-highlight-nov02-reviewer-path-highlight-clean-r1.md`。
+   前两轮（`reviewer-path-highlight-early` r1 的 P1 截图时序、`reviewer-path-highlight-final` r1 的 P2
+   `lineEnd` 术语）均已修复并在当前 tip 上复核为已闭合；merge-base = master = `1d08868d`，8 笔提交，
+   diff 为 mission scope 内 15 个文件，不含 `src-tauri/src/harness/prompts/**` 与视觉基线。
+3. **tasks 完成**：`tasks.md` 22/22 全勾（`grep -c '^- \[x\]'` = 22，未勾项 0），无放弃项。
+4. **要求的门禁与真机证据**：动过 `src/style.css` 与 `tests/visual/**`，按 `gate.sh visual` 档取读数 ——
+   `GATE RESULT: 15/15 PASS（SKIP 0）`，`GATE_EXIT=0`（完整日志 `/tmp/lumir-gate-823-visual.log`；
+   visual-regression 613s，套件 936 passed / 1 skipped）；`gate.sh quick` 独立复跑为
+   `GATE RESULT: 13/13 PASS（SKIP 0）`，`GATE_EXIT=0`（日志 `/tmp/lumir-gate-823-quick.log`）。
+   真机场景 221 `1/1 PASS`（18 断言 / 0 失败 / 33.7s，退出码 0），evidence
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-02-m823-221/221-harness-path-line-range/`
+   （`status.txt` = PASS；截图 02 第 39 行整行带底色、03 覆盖 39–48 含两端、04 同区域已消退）。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS ——
+   `扫过 8 份 delta，7 条 MODIFIED，对比 118 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`
+   （退出码 0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 35 passed,
+   0 failed (35 items)`（退出码 0）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0）。
+   归档跟踪队列有且仅有一条本 change 条目（`docs/backlog.md`）。delta 的一条 MODIFIED 是真实增量
+   （living spec 原句为「行范围只解析、v1 不选中也不高亮」，本 change 改准为不选中 + 瞬态高亮）。
+
+未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与
+tip 均无异常、证据无缺口，故不另送 Alex。
+
+## 节点 2 记录（归档后）
+
+- **归档提交**：`68ac9347a0f53d80a49897ec1662bd19da5e1dbc`（归档目录 + 并入后的 living spec +
+  `docs/backlog.md` 归档队列条目核销同一提交；本条记录本身是其后一笔文档提交）。
+- **`openspec archive` 实际输出**（2026-11-02，`node scripts/openspec-archive.mjs
+  add-path-line-target-highlight-nov02`，包装器内调 `npx --yes @fission-ai/openspec@1.12.0 archive
+  add-path-line-target-highlight-nov02 --yes`，退出码 0）：`Task status: ✓ Complete` / `Specs to
+  update:` `harness: update` / `~ 1 modified` / `Totals: + 0, ~ 1, - 0, → 0` / `Specs updated
+  successfully.` / `Change 'add-path-line-target-highlight-nov02' archived as
+  '2026-11-02-add-path-line-target-highlight-nov02'.`。这一条 MODIFIED 是真实增量（living spec 原句
+  为「行范围只解析、v1 不选中也不高亮」，本 change 改准为不选中 + 瞬态高亮），故输出不是
+  `Specs already in sync; no files changed`。
+- **归档后修链**：`归档后修链 2 处（扫过 4 篇 Markdown / 2 条相对链接）`——
+  `proposal.md:98` 的 `../../../docs/process/openspec-workflow.md` →
+  `../../../../docs/process/openspec-workflow.md`;
+  `specs/harness/spec.md:4` 的 `../../../../specs/harness/spec.md` →
+  `../../../../../specs/harness/spec.md`。包装器末置门禁
+  `openspec-links: PASS（校验 620 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived
+  add-path-line-target-highlight-nov02`，2026-11-02T13:12Z，退出码 0）：`PASS（openspec/changes/archive/
+  2026-11-02-add-path-line-target-highlight-nov02：1 条 MODIFIED，对比 39 段；人工恢复 0 段，声明认领
+  0 段）`——本条 MODIFIED 的段落全部落进归档后的 living spec，无静默丢段。
+- **归档后复跑三读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` →
+  `Totals: 34 passed, 0 failed (34 items)`（退出码 0；归档前 35 items，减少的一项即本 change）；
+  `node scripts/openspec-archive-check.mjs` 门禁模式 → PASS（`扫过 7 份 delta，6 条 MODIFIED，对比 79
+  段，无静默丢段；归档队列 0 项已完成 change 均有唯一条目`）；`bash scripts/docs-check.sh` →
+  `docs-check: PASS`（退出码 0）。

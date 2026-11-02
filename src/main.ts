@@ -1080,6 +1080,7 @@ const editor: EditorHandle = {
     forEachEditor((handle) => handle.setGotoLineGutterVisible(visible)),
   refreshPreview: () => forEachEditor((handle) => handle.refreshPreview()),
   revealLine: (line) => activeEditor().revealLine(line),
+  highlightLineRange: (from, to) => activeEditor().highlightLineRange(from, to),
   jumpToLine: (line) => activeEditor().jumpToLine(line),
   readScrollPosition: () => activeEditor().readScrollPosition(),
   applyLoadedScrollPosition: (position) =>
@@ -3007,6 +3008,10 @@ function jumpPlanFor(
   return {
     open,
     reveal: (at) => handle.revealLine(at),
+    // 瞬态行高亮（change add-path-line-target-highlight-nov02）：只有把 `lineEnd` 交给
+    // `openPathAtLine` 的入口才会走到这里——面板正文路径链接。快速打开 / 外部只读打开 / 工具
+    // 卡片都不传 `lineEnd`，行为逐字不变。
+    highlight: (from, to) => handle.highlightLineRange(from, to),
     duringTransition: (run) => duringViewportTransition(run),
     nextFrame: (run) => requestAnimationFrame(run),
     needsRescroll: () => {
@@ -3036,10 +3041,11 @@ const harnessPanel = createHarnessPanel({  shell,
   // 面板里的 vault 路径点击（change harness-path-link）：唯一打开链路 + **新标签**意图；带行号
   // 时落点走 editor.revealLine（与 TOC 同一算式），整个视口动作经转场窗口守 CL-2。行跳转的
   // plan 由 `jumpPlanFor` 提供——与快速打开**同一份**（M655 的 design §1.2：复核判据一旦分叉，
-  // 两处会给出不同的滚动行为）。
-  openVaultPath: (path, line) => {
+  // 两处会给出不同的滚动行为）。`lineEnd` 只由正文候选带出：单行 / 行列形态等于 `line`，行范围
+  // 形态是闭区间止行 ⇒ 点击后由编辑器给这一段一次瞬态行高亮。
+  openVaultPath: (path, line, lineEnd) => {
     const handle = activeEditor();
-    void openPathAtLine(jumpPlanFor(handle, path, line), path, line);
+    void openPathAtLine(jumpPlanFor(handle, path, line), path, line, lineEnd);
   },
   // 目录路径的落点（change harness-dir-link）：只做左栏定位——展开祖先、滚动、短暂高亮；
   // 不打开文档、不切标签、不创建条目（点击语义的规格在 harness「输出中的 vault 路径可点击」，

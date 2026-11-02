@@ -66,6 +66,7 @@ import { CONTENT_WIDTH_TOKEN, DEFAULT_CONTENT_WIDTH, clampContentWidth } from ".
 import type { TextScaleDirection, TypographySettings } from "./typography";
 import { lumirSearch } from "./search";
 import { quoteFlashExtension } from "./quote-gesture";
+import { NAVIGATION_HIGHLIGHT_MS, lineHighlightExtension, setLineHighlight } from "./navigation-highlight";
 import type { ScrollPosition } from "./scroll-position";
 // 阅读位置 view 侧原语（捕获 / 两个口径的恢复 / 交还焦点 / 视口让位窗口）在
 // src/scroll-position-view.ts：facade 只转发，其余「以 view.focus() 交还焦点」的模块直接用
@@ -1308,6 +1309,13 @@ export interface EditorHandle {
   /** 滚动定位到 1-based 行号并把光标移到行首（wikilink 锚点跳转用）。 */
   revealLine(line: number): void;
   /**
+   * 给一段闭区间行加**瞬态行高亮**（1-based，含两端；越界钳到文档边界；change
+   * add-path-line-target-highlight-nov02）。只加行装饰：不碰选区、不改正文、不进撤销栈，
+   * 约 1.4s 后自动消退；再次调用整块替换并重置计时，切标签 / 关闭会话即清除。
+   * 落点与滚动仍是 `revealLine` 的职责，两者互不替代。
+   */
+  highlightLineRange(from: number, to: number): void;
+  /**
    * 同上，但**先把焦点交还编辑器**再落点（M281，change goto-line-command 的确认路径）：
    * 输入条收起后焦点若还停在浮层（或已落到 body），只 dispatch 选区不会让 caret 可见。
    * 落点与滚动复用同一份实现，调用方 MUST NOT 自己拼「行号 → 位置 → 滚动」的算式。
@@ -1636,6 +1644,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   /** 前台会话。`updateDirty` / `cleanDoc` / `currentPath` 这些原本的实例级单值
    *  一律改从它读，避免「内核以为在改 A、其实 view 显示的是 B」这类静默错配。 */
   let active: EditorSession;
+  /** 导航行高亮（change add-path-line-target-highlight-nov02）的持有者与消退计时器。
+   *  装饰存于各会话自己的 state；`view` 只是当前那一份的显示面，因此计时到点必须按**会话**
+   *  清除（见 clearSessionLineHighlight），否则切标签后会把 null 派发到别的会话上、原会话的
+   *  装饰永久留在 state 里。 */
+  let lineHighlightSession: EditorSession | null = null;
+  let lineHighlightTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * 运行时经 `StateEffect.appendConfig` 追加到 view 上的扩展（当前只有 src/toc.ts
@@ -2140,6 +2154,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // pending-tint 语义的 ~1.4s 瞬态装饰，范围经 setQuoteFlash 效果设置 / 清除——零常驻
         // 装饰。装在模式无关的基础层，md / code 同一条路径。
         quoteFlashExtension,
+        // 导航行高亮（change add-path-line-target-highlight-nov02）：`Decoration.line` 行装饰，
+        // 范围经 setLineHighlight 效果设置 / 清除。同样装在模式无关的基础层，md / code 与只读
+        // 会话都生效；生命周期（计时 / 替换 / 切标签 / 关闭会话）归本模块的会话内核。
+        lineHighlightExtension,
         modeCompartment.of(modeExtensions(mode, path, editable)),
         // 基础层（changeFilter + updateListener）：绑实例闭包，收进模块级共享的 baseCompartment，
         // 由 adoptSession 用目标实例的闭包重配（见 baseExtensions / rebindEffects 的 P1-1 说明）。
@@ -2490,6 +2508,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   /** 激活会话本体：换 state + 恢复该会话的滚动位置 + 同步模式/可编辑性上下文。 */
   function activate(session: EditorSession): void {
     if (session === active) return;
+    // 切标签即离开当前文档：行高亮是「刚才跳到哪」的瞬态提示，装饰存在 state 里，不带它走就
+    // 会在切回时原样复现——在这里先清（change add-path-line-target-highlight-nov02）。
+    clearLineHighlight();
     // 离开前把滚动位置记回前台会话：滚动不在 state 里（只存在于 scrollDOM），
     // 存成 CM 的 scrollSnapshot（位置锚 + 相对偏移），恢复时走同一个 scrollTarget
     // 通道——它由 CM 自己的测量周期落地，不受两份内容高度差与排版变化影响；
@@ -2644,6 +2665,52 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         effects: EditorView.scrollIntoView(pos, { y: "center" }),
       });
     });
+  }
+
+  /** 按**会话**清除行高亮装饰：前台走 dispatch（updateListener 顺手回写 state），后台直接换代
+   *  它的 state（与 reconfigureWrap / reloadSession 的既有分岔同形），已关闭 / 已 reset 的会话
+   *  跳过（state 已作废，派发会落到别人的 state 上）。 */
+  function clearSessionLineHighlight(session: EditorSession): void {
+    if (!sessions.includes(session)) return;
+    if (session === active) {
+      view.dispatch({ effects: setLineHighlight.of(null) });
+      return;
+    }
+    session.state = session.state.update({ effects: setLineHighlight.of(null) }).state;
+  }
+
+  /** 清掉当前行高亮并停表（切标签 / 关闭会话 / reset 用）。 */
+  function clearLineHighlight(): void {
+    if (lineHighlightTimer !== null) {
+      clearTimeout(lineHighlightTimer);
+      lineHighlightTimer = null;
+    }
+    const session = lineHighlightSession;
+    lineHighlightSession = null;
+    if (session !== null) clearSessionLineHighlight(session);
+  }
+
+  /** 给闭区间行加瞬态高亮（`EditorHandle.highlightLineRange` 的实现）。
+   *
+   *  重复点击：先清旧计时器再设新装饰，消退计时从这一次重新起算（装饰本身的整块替换由
+   *  StateField 的值语义保证，不叠加）。效果只带 effects、不带 changes / selection ⇒ 不进
+   *  撤销栈、不触发 docChanged、dirty 不变（spec「高亮不改正文、不进撤销栈、不碰 dirty」）。
+   *  越界钳制与 2000 行上限在 `lineHighlightRanges` 里（行装饰的唯一构造点）。 */
+  function highlightLineRange(from: number, to: number): void {
+    if (lineHighlightTimer !== null) {
+      clearTimeout(lineHighlightTimer);
+      lineHighlightTimer = null;
+    }
+    const previous = lineHighlightSession;
+    if (previous !== null && previous !== active) clearSessionLineHighlight(previous);
+    lineHighlightSession = active;
+    view.dispatch({ effects: setLineHighlight.of({ from, to }) });
+    lineHighlightTimer = setTimeout(() => {
+      lineHighlightTimer = null;
+      const session = lineHighlightSession;
+      lineHighlightSession = null;
+      if (session !== null) clearSessionLineHighlight(session);
+    }, NAVIGATION_HIGHLIGHT_MS);
   }
 
   return {
@@ -2908,6 +2975,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     closeSession(session: EditorSession) {
       const index = sessions.indexOf(session);
       if (index < 0) return;
+      // 关掉的若是持有行高亮的会话，先清装饰与计时器（关闭后它的 state 不再被任何 view 显示，
+      // 但计时器仍会到点——不清会留下一个指向已作废会话的悬挂回调）。
+      if (lineHighlightSession === session) clearLineHighlight();
       sessions.splice(index, 1);
       if (session !== active) return;
       // 关掉的是前台会话：激活右邻，没有右邻则左邻（浏览器 / VS Code 同口径）。
@@ -2957,6 +3027,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       ++readySerial;
       readyPath = undefined;
       readyRequestId = undefined;
+      // 行高亮的装饰随会话作废；计时器与持有者先清，避免悬挂回调指向已丢弃的 state。
+      clearLineHighlight();
       // 全部会话作废，只留一个未命名空文档（vault 切换 / 关闭）。旧会话对象随 GC 回收。
       sessions.length = 0;
       // mtime 缓存按路径索引，vault 换了同 rel 路径指向别的文件——随会话一起作废。
@@ -3047,6 +3119,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     },
     revealLine(line: number) {
       revealLineAt(line);
+    },
+    highlightLineRange(from: number, to: number) {
+      highlightLineRange(from, to);
     },
     jumpToLine(line: number) {
       // goto-line 的确认路径（M281）：**先把焦点交还编辑器再落点**——输入条收起后若焦点还在
