@@ -11,7 +11,7 @@ import { setBackendVault, stubTauri, type VaultFixture } from "./tauri-stub";
 //      （旧实现 = 0 行 ⇒ 红；新实现按 `live_subruns` 重建）。
 //
 // 最后一段判「切走期间收尾」：切回时 `live_subruns` 为空、`subrun_usage` 非空 ⇒ 控制区必须
-// 整块不出现（旧实现会把僵尸行连同用量块一起画出来）。
+// 必须出现待确认行（「知道了」可确认），确认后消失；MUST NOT 残留运行中行。
 
 const A_ROOT = "/tmp/lumir-m822-subagent-vault";
 const B_ROOT = "/tmp/lumir-m822-subagent-vault-b";
@@ -238,7 +238,7 @@ test("切走清 DOM、切回按 live 快照重建；切走期间收尾不复活"
     page.locator('.lumir-tp-run[data-run="r2"]').getByRole("button", { name: "停止该任务" }),
   ).toBeVisible();
 
-  // 切走期间它收尾了：切回时 live 为空、用量桶非空 ⇒ 控制区整块不出现（无僵尸行可画）。
+  // 切走期间它收尾了：切回时 live 为空、逐 run 汇总带后台 failed ⇒ 待确认行出现（不是消失）。
   await setVaultLive(page, A_ROOT, [], USAGE, RUN_R2_FAILED);
   await switchVault(page, "subagent-vault-b", "lumir-m822-subagent-vault-b");
   await expect(page.locator(".lumir-tp-run")).toHaveCount(0);

@@ -328,18 +328,20 @@ test("同 agent 的 r1/r2/r3 交错：call_id 精确绑定，三行顺序与结�
     call_id: callId,
   });
   // r1 成功启动（c1）；r2 只有调用行（c2，随后被并发闸拒绝）；r3 成功启动（c3）且 started 先于 r2 done。
+  const done = (callId: string, summary: string): Record<string, unknown> => ({
+    type: "tool_call",
+    name: "task",
+    status: "done",
+    summary,
+    call_id: callId,
+  });
   await fire(page, call("call-r1", "甲任务"));
   await fire(page, { ...started("r1", "甲任务"), call_id: "call-r1" });
   await fire(page, call("call-r2", "乙任务"));
   await fire(page, call("call-r3", "丙任务"));
   await fire(page, { ...started("r3", "丙任务"), call_id: "call-r3" });
-  await fire(page, {
-    type: "tool_call",
-    name: "task",
-    status: "done",
-    summary: "concurrency_limit（并发上限）",
-    call_id: "call-r2",
-  });
+  // 桩的快照在发送后会重取；让它认得仍在跑的两条 run，避免快照把视图清成「无在跑」。
+  await setLive(page, [liveRow("r1", "甲任务", false), liveRow("r3", "丙任务", false)]);
   await fire(page, {
     type: "subagent_progress",
     run_id: "r3",
@@ -348,15 +350,25 @@ test("同 agent 的 r1/r2/r3 交错：call_id 精确绑定，三行顺序与结�
     last_tool: "vault_read",
     elapsed_ms: 2_000,
   });
+  // 生产顺序：全部启动后按调用序逐个收尾（r1 → r2 → r3）。r1/r3 的 done 是已绑定行的
+  // no-op；r2 的 done 才是它自己的拒绝结果。带 call_id 的 done MUST NOT 回退 FIFO。
+  await fire(page, finished("r1", "completed"));
+  await fire(page, done("call-r1", "ok"));
+  await fire(page, done("call-r2", "concurrency_limit（并发上限）"));
+  await fire(page, finished("r3", "completed"));
+  // 中间判据：finished 必须先让 r3 行翻终态（done(c3) 已绑定行 no-op，不得改回运行中）。
+  await expect(page.locator(".lumir-hp-taskwrap").nth(2)).toContainText("已完成");
+  await fire(page, done("call-r3", "ok"));
 
   const rows = page.locator(".lumir-hp-taskwrap");
   await expect(rows).toHaveCount(3);
   await expect(rows.nth(0)).toContainText("甲任务");
+  await expect(rows.nth(0)).toContainText("已完成");
   await expect(rows.nth(1)).toContainText("乙任务");
   await expect(rows.nth(1)).toContainText("concurrency_limit");
   await expect(rows.nth(1)).not.toContainText("运行中");
   await expect(rows.nth(2)).toContainText("丙任务");
-  await expect(rows.nth(2)).toContainText("运行中");
+  await expect(rows.nth(2)).toContainText("已完成");
   await expect(rows.nth(2)).not.toContainText("concurrency_limit");
 });
 

@@ -131,10 +131,8 @@ steps:
       not: ["AXProgressIndicator"]
     timeoutMs: 90000
     expect:
-      - label: 切走期间收尾的 run 不得以运行中形态复活
+      - label: 切走期间收尾的 run 不得以运行中形态复活（无停止入口）
         ax: { not: '/AXButton \\(停止该任务\\)/' }
-      - label: 控制区不再有该行（无僵尸行、无完成数汇总）
-        ax: { not: "后台长任务" }
       - label: 终态由 transcript 的 task 行承载（启动信封的 running 被快照逐 run 汇总对账）
         ax: { has: "/task research 后台长任务.*已完成/" }
       - label: 后台完成通知照常可见（回放自会话面板记录）

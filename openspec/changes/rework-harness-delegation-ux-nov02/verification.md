@@ -91,6 +91,18 @@
 - quick：`/tmp/m822-gate-quick-r6.log` → `GATE RESULT: 13/13 PASS（SKIP 0）`，`GATE_EXIT=0`。
 - visual：`/tmp/m822-gate-visual5.log` → `GATE RESULT: 15/15 PASS（SKIP 0）`，`GATE_EXIT=0`（943 passed / 1 skipped / 10.2m）。
 
+## 四轮评审修复（reviewer r4，p1-1items/hold）
+
+| 项 | 修复 | 判别测试（回退修复后实测红） |
+|---|---|---|
+| P1-1 done 的 FIFO 兜底 | `tool_call done` 在 `callId !== null` 时只做精确配对，MUST NOT 退回最早未绑定行；FIFO 仅留给确无 call_id 的旧事件 | 视觉「同 agent 的 r1/r2/r3 交错」扩到生产顺序 `r1 done → r2 done → r3 done`：r2 行始终 `concurrency_limit`，r1/r3 各自终态。回退 `??` 兜底后 r1 的 done 抢 settlement，r2 行断言红（`r4-old-done.log`，exit 1） |
+| P2-1 场景 240 全窗矛盾断言 | 删除 `ax: not "后台长任务"`（与 transcript 正断言矛盾），保留「无停止钮」与 transcript 终态正断言 | 静态检查 `run.mjs --check`（240 个场景通过）；视觉场景注释同步为待确认合同 |
+
+### 四轮门禁
+
+- quick：`/tmp/m822-gate-quick-r7.log` → `GATE RESULT: 13/13 PASS（SKIP 0）`，`GATE_EXIT=0`。
+- visual：`/tmp/m822-gate-visual6.log` → `GATE RESULT: 15/15 PASS（SKIP 0）`，`GATE_EXIT=0`（943 passed / 1 skipped / 10.2m）。
+
 ## 真机验收
 
 - 场景：`201-subagent-panel-and-stop` / `240-harness-subagent-vault-switch` /

@@ -63,9 +63,11 @@
   快照刷新 MUST NOT 做任何去重——并行新任务（r2）的未绑定行在 r1 刷新时必须原样保留，否则被闸拒
   的失败结果会消失、调用顺序会被重排。
 - **调用身份 = `call_id`**（M822 / 评审 r3）：`tool_call` 与 `subagent_started` 事件、结果信封都带
-  `call_id`；成功的 started MUST 绑定**本次调用**的行（精确 call_id），`tool_call done` 同样按
-  call_id 配对。同 agent 的 r1 运行 / r2 被拒 / r3 成功启动交错时，三行顺序与结果归属因此不靠
-  agent 名或到达顺序猜测（旧后端缺 call_id 时退回 agent 匹配，仅作兼容）。
+  `call_id`；成功的 started MUST 绑定**本次调用**的行（精确 call_id），`tool_call done` 在带
+  call_id 时**只做精确配对**，MUST NOT 回退 FIFO（已绑定行的 done 是 no-op；生产按 r1→r2→r3
+  收尾时，r1 的 done 不得把 r2 的拒绝结果 settle 到自己的名下）。FIFO 只留给确实没有 call_id 的
+  旧事件。同 agent 的 r1 运行 / r2 被拒 / r3 成功启动交错时，三行顺序与结果归属因此不靠 agent
+  名或到达顺序猜测。
 
 ### 4.2 跨 vault：快照是 live 状态的唯一真源
 

@@ -8078,13 +8078,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         return;
       }
       // done：只收「没绑到 run」的行（被闸拒 / 参数非法）；已绑定行的终态由 run 事件驱动。
-      // 有调用身份时按 call_id 精确配对——绝不能收另一条并行调用的行（r3 P1-1）。
+      // 有调用身份时**只做精确配对**，MUST NOT 退回其它未绑定行：生产按调用序收尾
+      //（r1 done → r2 done → r3 done），r1/r3 的 done 找不到自己的未绑定行时必须 no-op，
+      // 否则会把 r2 的拒绝结果 settle 到 r1 名下（评审 r4 P1-1）。FIFO 兜底只留给确实
+      // 没有 call_id 的旧事件。
       const entry =
-        (callId !== null
+        callId !== null
           ? taskRowEntries.find(
               (row) => row.callId === callId && row.runId === null && !row.settled,
             )
-          : undefined) ?? taskRowEntries.find((row) => row.runId === null && !row.settled);
+          : taskRowEntries.find((row) => row.runId === null && !row.settled);
       if (entry !== undefined) {
         entry.settled = true;
         renderTaskToolRow(entry, null, summary);
