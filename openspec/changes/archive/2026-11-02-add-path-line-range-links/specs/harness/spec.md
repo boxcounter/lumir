@@ -1,7 +1,7 @@
 # harness 增量规格
 
 > 起草注记（非规格正文）：本 delta 两条 MODIFIED，基线是 living spec
-> [openspec/specs/harness/spec.md](../../../../specs/harness/spec.md)。① 「输出中的 vault 路径可点击」
+> [openspec/specs/harness/spec.md](../../../../../specs/harness/spec.md)。① 「输出中的 vault 路径可点击」
 > 增加一种行号后缀形态与它的落点语义（其余识别规则、链接化范围、卡片路径、CL-2 窗口逐字不变）；
 > ② 「路径引用纪律」补一句「引用一段连续行时写 `:起-止`」——否则新形态在真实会话里几乎不会出现。
 > ②属起草倾向（[design.md](../../design.md) §4 的 D3），若 D3 裁「不改提示词」则删除该条 MODIFIED。
