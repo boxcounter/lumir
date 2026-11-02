@@ -45,8 +45,8 @@
 
 - [x] 7.1 回扫既有真机场景期望：201（行读数 / 停止判据）、192（用量入口改会话浮层）、199（删除详情指引）、203 / 204（触顶提示落点）、194 / 198 / 206 保持
 - [x] 7.2 `node --test tests/unit/harness-subagents.test.ts` 通过；tsc（`pnpm exec tsc --noEmit`）通过
-- [ ] 7.3 `scripts/gate.sh quick` 全绿（含 docs-check / bindings-drift / 单测）
-- [ ] 7.4 `scripts/gate.sh visual` 全绿（不更新像素基线）
-- [ ] 7.5 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与 `node scripts/openspec-archive-check.mjs` 门禁模式 PASS
+- [x] 7.3 `scripts/gate.sh quick` 全绿（含 docs-check / bindings-drift / 单测）
+- [x] 7.4 `scripts/gate.sh visual` 全绿（不更新像素基线）
+- [x] 7.5 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与 `node scripts/openspec-archive-check.mjs` 门禁模式 PASS
 - [ ] 7.6 相关真机场景（201 / 240 / 192 / 203）在真机环境执行 PASS；证据落 `.local/acceptance/`（真机时段由 tower 统一协调）
 - [ ] 7.7 信息卫生清扫（改动面无真实 vault 内容）；证据指针可 `ls`

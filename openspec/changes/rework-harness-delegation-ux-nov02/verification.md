@@ -15,17 +15,24 @@
 ### quick
 
 - 命令：`scripts/gate.sh quick`（持 `/tmp/lumir-cargo-build.lock`，结束释放）
-- 日志：`/tmp/m822-gate-quick.log`
-- `GATE RESULT`：（待本轮跑完回填）
-- 退出码：（待回填）
+- 日志：`/tmp/m822-gate-quick3.log`
+- `GATE RESULT: 13/13 PASS（SKIP 0）`
+- 退出码：`GATE_EXIT=0`
+- 备注：rebase 后先暴露并修掉两处门禁问题——`Usage` 字段的冗余 `as u64`（clippy
+  `-D warnings`，提交 `e05ac64f`）与 `cargo fmt` 差异（提交 `b02ec8d6`）。
 
 ### visual
 
 - 命令：`LUMIR_VISUAL_PORT=4188 scripts/gate.sh visual`（4273 被 M823 的 `vite preview` 占用，
   按隔离纪律改用 4188，未动他人进程）
-- 日志：`/tmp/m822-gate-visual.log`
-- `GATE RESULT`：（待本轮跑完回填）
-- 退出码：（待回填）
+- 首轮日志：`/tmp/m822-gate-visual.log`
+- 首轮 `GATE RESULT: 14/15 PASS（SKIP 0）`，`GATE_EXIT=1`；2 条失败均为并发负载下的抖动，
+  单跑复现为绿：
+  - `reading-position.spec.ts:253`（该条在满负载下耗时 4.9m 判红；单跑 `7 passed (14.1s)`）；
+  - `render-link.spec.ts:66`（单跑通过）。
+- 复跑（机器空闲、无其它 gate / 验收实例）：日志 `/tmp/m822-gate-visual2.log`
+- `GATE RESULT: 15/15 PASS（SKIP 0）`
+- 退出码：`GATE_EXIT=0`（详细日志：`935 passed / 1 skipped (12.8m)`）
 
 ## 单元 / 视觉 / OpenSpec
 
