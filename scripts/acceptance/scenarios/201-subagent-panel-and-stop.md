@@ -61,12 +61,12 @@ steps:
         ax: { not: '/vault_read\s*harness-note\.md/' }
       - shot: 01-两行运行中
 
-  - name: 展开第一个 run 的行详情（目标限定任务区的行：带读数的按钮，不是 transcript 的 task 行）
+  - name: 展开第一个 run 的行详情（目标限定任务区的行：以 agent 名开头，transcript 行以 task 开头）
     do: click
-    target: { role: AXButton, name: "慢任务甲.*运行中" }
+    target: { role: AXButton, name: "^alpha .*慢任务甲" }
     expect:
       - label: 行详情给出模型 / 步数 / 用时（轮次只在触顶时作为原因出现）
-        ax: { has: "/步 · 用时 [0-9]+s/" }
+        ax: { has: "/步 · 用时 ([0-9]+h[0-9]{2}m|[0-9]+m[0-9]{2}s|[0-9]+s)/" }
       - label: 行内状态词可见（不只靠图例）
         ax: { has: "/运行中/" }
       - label: 运行中的行提供「停止」

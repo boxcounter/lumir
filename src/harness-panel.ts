@@ -9258,13 +9258,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (!expanded) return;
     const meta = subrunDetailMeta(run);
     if (run.segments > 1) meta.push(t("D881", { segments: run.segments }));
-    els.meta.replaceChildren(
-      ...meta.map((text) => {
-        const span = document.createElement("span");
-        span.textContent = text;
-        return span;
-      }),
-    );
+    // 分隔符写成文本节点（不是只靠 flex gap）：读屏 / AX 树按空格拼接子节点，没有分隔符时
+    // 「模型 mock 0 步 用时 0s」读不出字段边界（真机 201 现场）。
+    const metaNodes: Node[] = [];
+    meta.forEach((text, index) => {
+      if (index > 0) metaNodes.push(document.createTextNode(" · "));
+      const span = document.createElement("span");
+      span.textContent = text;
+      metaNodes.push(span);
+    });
+    els.meta.replaceChildren(...metaNodes);
     const latestStep = run.steps.length > 0 ? run.steps[run.steps.length - 1] : null;
     const latestText =
       latestStep !== null

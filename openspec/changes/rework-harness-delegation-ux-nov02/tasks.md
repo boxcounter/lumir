@@ -11,7 +11,7 @@
 - [x] 2.2 `clearTranscriptSurface()` 清 `taskList` 子节点；`renderTaskArea()` 按 `data-run` 对账，任何不在可见集合里的行节点一律移除
 - [x] 2.3 后端 `harness_state` 新增 `live_subruns`（活动表 + 每回合 progress 更新；收尾即移除），ts-rs / 前端类型同步
 - [x] 2.4 前端 `applyTaskReadings` 以 `live_subruns` 为在跑行权威来源：在表建行 / 更新，不在表移除；缺键不应用
-- [ ] 2.5 新增真机场景 `240-harness-subagent-vault-switch.md`：起子运行 → 切 vault B → 切回 A → 断言行与 Stop 恢复 / 收尾不复活；先在旧实现证明会红
+- [x] 2.5 新增真机场景 `240-harness-subagent-vault-switch.md`：起子运行 → 切 vault B → 切回 A → 断言行与 Stop 恢复 / 收尾不复活；先在旧实现证明会红
 
 ## 3. resume 身份与终态语义
 
@@ -48,5 +48,5 @@
 - [x] 7.3 `scripts/gate.sh quick` 全绿（含 docs-check / bindings-drift / 单测）
 - [x] 7.4 `scripts/gate.sh visual` 全绿（不更新像素基线）
 - [x] 7.5 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与 `node scripts/openspec-archive-check.mjs` 门禁模式 PASS
-- [ ] 7.6 相关真机场景（201 / 240 / 192 / 203）在真机环境执行 PASS；证据落 `.local/acceptance/`（真机时段由 tower 统一协调）
-- [ ] 7.7 信息卫生清扫（改动面无真实 vault 内容）；证据指针可 `ls`
+- [x] 7.6 相关真机场景（201 / 240 / 192 / 203）在真机环境执行 PASS；证据落 `.local/acceptance/`（真机时段由 tower 统一协调）
+- [x] 7.7 信息卫生清扫（改动面无真实 vault 内容）；证据指针可 `ls`

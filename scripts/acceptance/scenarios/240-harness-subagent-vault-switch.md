@@ -59,10 +59,19 @@ steps:
     expect:
       - label: 后台 run 在控制区占一行（带后台标记）
         ax: { has: "/后台长任务/" }
-      - label: 运行中的行提供「停止」（控制区行）
-        ax: { has: '/AXButton \\(停止该任务\\)/' }
       - shot: 01-A-后台运行中
 
+  - name: 展开控制区行（停止在展开区里；控制区行以 agent 名开头，transcript 行以 task 开头）
+    do: click
+    target: { role: AXButton, name: "^research .*后台长任务" }
+  - name: 等展开后的重渲（停止入口出现）
+    do: waitFor
+    waitFor:
+      has: ['/AXButton \(停止该任务\)/']
+    timeoutMs: 10000
+    expect:
+      - label: 运行中的行提供「停止」（控制区行）
+        ax: { has: '/AXButton \(停止该任务\)/' }
   - name: 切到 vault B
     do: click
     target: { any: "点击查看全部 vault" }
@@ -77,7 +86,7 @@ steps:
     timeoutMs: 90000
     expect:
       - label: 切走后 A 的 run 行不再可见（旧实现：僵尸行留在 DOM，快照带回用量时重新可见）
-        ax: { not: '/AXButton \\(停止该任务\\)/' }
+        ax: { not: '/AXButton \(停止该任务\)/' }
       - label: 控制区不出现 A 的后台任务行
         ax: { not: "/后台长任务/" }
       - shot: 02-B-无残留
@@ -97,10 +106,19 @@ steps:
     expect:
       - label: 切回时仍在跑的 run 按快照 live 列表重建行（旧实现：0 行）
         ax: { has: "/后台长任务/" }
-      - label: 重建的行带「停止」（旧实现：没有行，也就没有停止入口）
-        ax: { has: '/AXButton \\(停止该任务\\)/' }
       - shot: 03-A-切回仍在跑
 
+  - name: 展开重建后的行
+    do: click
+    target: { role: AXButton, name: "^research .*后台长任务" }
+  - name: 等重建行的展开重渲（停止入口出现）
+    do: waitFor
+    waitFor:
+      has: ['/AXButton \(停止该任务\)/']
+    timeoutMs: 10000
+    expect:
+      - label: 重建的行带「停止」（旧实现：没有行，也就没有停止入口）
+        ax: { has: '/AXButton \(停止该任务\)/' }
   - name: 再切到 vault B
     do: click
     target: { any: "点击查看全部 vault" }
@@ -132,7 +150,7 @@ steps:
     timeoutMs: 90000
     expect:
       - label: 切走期间收尾的 run 不得以运行中形态复活（无停止入口）
-        ax: { not: '/AXButton \\(停止该任务\\)/' }
+        ax: { not: '/AXButton \(停止该任务\)/' }
       - label: 终态由 transcript 的 task 行承载（启动信封的 running 被快照逐 run 汇总对账）
         ax: { has: "/task research 后台长任务.*已完成/" }
       - label: 后台完成通知照常可见（回放自会话面板记录）

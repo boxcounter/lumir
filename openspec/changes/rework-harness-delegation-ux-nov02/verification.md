@@ -103,9 +103,26 @@
 - quick：`/tmp/m822-gate-quick-r7.log` → `GATE RESULT: 13/13 PASS（SKIP 0）`，`GATE_EXIT=0`。
 - visual：`/tmp/m822-gate-visual6.log` → `GATE RESULT: 15/15 PASS（SKIP 0）`，`GATE_EXIT=0`（943 passed / 1 skipped / 10.2m）。
 
-## 真机验收
+### 最终 tip 门禁（真机修复后）
 
-- 场景：`201-subagent-panel-and-stop` / `240-harness-subagent-vault-switch` /
-  `192-subagent-usage-buckets` / `203-subagent-chain-limit`。
-- 时间：2026-11-02 20:00（tower 统一协调的机器窗口）。
-- 读数：（待跑后回填；证据落 `.local/acceptance/`）
+- quick：`/tmp/m822-gate-quick-r8.log` → `GATE RESULT: 13/13 PASS（SKIP 0）`，`GATE_EXIT=0`。
+- visual：`/tmp/m822-gate-visual7.log` → `GATE RESULT: 15/15 PASS（SKIP 0）`，`GATE_EXIT=0`（943 passed / 1 skipped / 10.1m）。
+
+## 真机验收（2026-11-02，dev flavour，XDG 隔离 + 合成 vault + 端口 1430）
+
+| 场景 | 结果 | 断言 | 耗时 | 证据 |
+|---|---|---|---|---|
+| `201-subagent-panel-and-stop` | PASS | 14 | 30.9s | `.local/acceptance/m822-delegation-ux-20261102/run/201-subagent-panel-and-stop/` |
+| `240-harness-subagent-vault-switch` | PASS | 14 | 64.9s | `.local/acceptance/m822-delegation-ux-20261102/run/240-harness-subagent-vault-switch/` |
+| `192-subagent-usage-buckets` | PASS | 17 | 26.8s | `.local/acceptance/m822-delegation-ux-20261102/run/192-subagent-usage-buckets/` |
+| `203-subagent-chain-limit` | PASS | 11 | 26.2s | `.local/acceptance/m822-delegation-ux-20261102/run/203-subagent-chain-limit/` |
+
+汇总：`.local/acceptance/m822-delegation-ux-20261102/run/summary.md`（4/4 PASS，56 条断言）。
+逐次执行日志（含失败中间轮）：`.local/acceptance/m822-delegation-ux-20261102/logs/`。
+
+真机首跑暴露的**场景问题**（非产品缺陷，已修）：
+- 201 / 240 的展开目标原先用「description + 运行中」，新 transcript task 行也含这两段，
+  点击命中了对话行；改为锚定控制区行（`^alpha …` / `^research …`），并在展开后加 `waitFor`
+  等停止入口出现（AX 快照早于重渲会抢跑）。
+- 控制区行详情的字段分隔原先只靠 flex gap，AX 读成「模型 mock 0 步 用时 0s」；已把 ` · `
+  写成文本节点（读屏边界，201 的详情断言因此可按 `步 · 用时` 判定）。
