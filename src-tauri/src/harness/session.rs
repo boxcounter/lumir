@@ -364,9 +364,8 @@ pub fn subrun_runs_from_records(
             continue;
         };
         let usage = record.get("usage").cloned().unwrap_or_default();
-        let number = |key: &str| -> u64 {
-            usage.get(key).and_then(|value| value.as_u64()).unwrap_or(0)
-        };
+        let number =
+            |key: &str| -> u64 { usage.get(key).and_then(|value| value.as_u64()).unwrap_or(0) };
         let segment = SubrunRunSnapshot {
             run_id: run_id.to_string(),
             agent: record["agent"].as_str().unwrap_or("").to_string(),
@@ -382,8 +381,7 @@ pub fn subrun_runs_from_records(
             duration_ms: record["duration_ms"].as_u64().unwrap_or(0),
             tool_calls: record["tool_calls"].as_u64().unwrap_or(0) as u32,
         };
-        runs
-            .entry(run_id.to_string())
+        runs.entry(run_id.to_string())
             .and_modify(|existing| existing.accumulate(segment.clone()))
             .or_insert(segment);
     }

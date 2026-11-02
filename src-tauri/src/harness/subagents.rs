@@ -2958,8 +2958,13 @@ impl RunContext for ChildContext {
         let last_tool = self.tool_calls.keys().next().cloned();
         let elapsed_ms = self.elapsed_running().as_millis() as u64;
         // 活动表同步进度：切回 vault 时前端只能从快照重建在跑的行（没有事件可回放）。
-        self.hub
-            .record_progress(&self.run_id, round, tool_calls, last_tool.as_deref(), elapsed_ms);
+        self.hub.record_progress(
+            &self.run_id,
+            round,
+            tool_calls,
+            last_tool.as_deref(),
+            elapsed_ms,
+        );
         if let Some(sink) = &self.parent_sink {
             sink.emit(events::subagent_progress(
                 &self.run_id,
