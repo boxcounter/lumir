@@ -1813,6 +1813,7 @@ fn start_task_inner(
         definition.max_tokens,
         definition.timeout_secs,
         background,
+        &call.call_id,
     ));
 
     // 子运行线程**自己持有**一份强 Runtime：后台 run 可能比父回合活得久（cron 的父线程
@@ -1832,6 +1833,7 @@ fn start_task_inner(
         runtime: segment_runtime,
         run_id: run_id.clone(),
         segment,
+        call_id: call.call_id.clone(),
         definition,
         description: args.description.clone(),
         prompt: args.prompt,
@@ -1852,7 +1854,7 @@ fn start_task_inner(
     // 必须显式清掉，否则该 run 永久是「运行中」的僵尸（后台分支尤其：父已拿到 running）。
     let cleanup_agent = args.agent.clone();
     if background {
-        let envelope = running_envelope(&args.agent, &run_id, segment, &model, true);
+        let envelope = running_envelope(&args.agent, &run_id, segment, &model, true, &call.call_id);
         match std::thread::Builder::new()
             .name(format!("lumir-subagent-{run_id}"))
             .spawn(move || {
@@ -1988,6 +1990,8 @@ struct SegmentSeed {
     runtime: Runtime,
     run_id: String,
     segment: u32,
+    /// 触发本次启动的 `task` 调用身份（事件 / 信封的身份链，M822）。
+    call_id: String,
     definition: AgentDefinition,
     description: String,
     prompt: String,
@@ -2173,6 +2177,7 @@ fn run_segment(mut seed: SegmentSeed) -> serde_json::Value {
         seed.segment,
         &seed.definition.name,
         seed.background,
+        &seed.call_id,
     );
     // 活动表移除；后台结果的投递与唤醒只对后台 run 发生。
     hub.inner
@@ -2220,6 +2225,7 @@ fn report_envelope(
     segment: u32,
     agent: &str,
     background: bool,
+    call_id: &str,
 ) -> serde_json::Value {
     match &report.outcome {
         super::run::RunOutcome::Completed => serde_json::json!({
@@ -2228,6 +2234,7 @@ fn report_envelope(
             "agent": agent,
             "run_id": run_id,
             "segment": segment,
+            "call_id": call_id,
             "resumable": true,
             "background": background,
             "model": report.model,
@@ -2245,6 +2252,7 @@ fn report_envelope(
             "agent": agent,
             "run_id": run_id,
             "segment": segment,
+            "call_id": call_id,
             "resumable": true,
             "background": background,
             "stopped_by": stopped_by.as_str(),
@@ -2264,6 +2272,7 @@ fn report_envelope(
             "agent": agent,
             "run_id": run_id,
             "segment": segment,
+            "call_id": call_id,
             "background": background,
             "code": code,
             "message": message,
@@ -2282,6 +2291,7 @@ fn report_envelope(
             "agent": agent,
             "run_id": run_id,
             "segment": segment,
+            "call_id": call_id,
             "background": background,
             "code": "turn_aborted",
             "message": "子运行已停止",
@@ -2329,6 +2339,7 @@ fn running_envelope(
     segment: u32,
     model: &str,
     background: bool,
+    call_id: &str,
 ) -> serde_json::Value {
     serde_json::json!({
         "ok": true,
@@ -2338,6 +2349,7 @@ fn running_envelope(
         "segment": segment,
         "background": background,
         "model": model,
+        "call_id": call_id,
         "note": "后台运行中；完成后结果以自动化通知进入本会话",
     })
 }
@@ -2426,6 +2438,7 @@ fn finish_failed(
         seed.segment,
         &seed.definition.name,
         seed.background,
+        &seed.call_id,
     )
 }
 

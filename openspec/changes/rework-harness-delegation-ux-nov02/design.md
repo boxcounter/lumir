@@ -59,9 +59,13 @@
 - `stoppedBy` 在新段开始时复位为 null（上一段的触顶原因不得延续到新段）；
 - 一个 run 在任务区、`task` 行与通知里始终只有一个身份；行详情显示「N 段」。resume 的第二条
   `tool_call` 仍会在 transcript 里产生一次调用记录；**只有** `subagent_started` 判定该 run
-  已存在（resume）时才收走本次那条未绑定且 **agent 匹配** 的调用行。progress / step / finished /
+  已存在（resume）时才收走本次那条未绑定且 **call_id 匹配** 的调用行。progress / step / finished /
   快照刷新 MUST NOT 做任何去重——并行新任务（r2）的未绑定行在 r1 刷新时必须原样保留，否则被闸拒
   的失败结果会消失、调用顺序会被重排。
+- **调用身份 = `call_id`**（M822 / 评审 r3）：`tool_call` 与 `subagent_started` 事件、结果信封都带
+  `call_id`；成功的 started MUST 绑定**本次调用**的行（精确 call_id），`tool_call done` 同样按
+  call_id 配对。同 agent 的 r1 运行 / r2 被拒 / r3 成功启动交错时，三行顺序与结果归属因此不靠
+  agent 名或到达顺序猜测（旧后端缺 call_id 时退回 agent 匹配，仅作兼容）。
 
 ### 4.2 跨 vault：快照是 live 状态的唯一真源
 
@@ -88,7 +92,11 @@
 - live 快照的 `rounds` / `tool_calls` 是**段内**读数：累计始终是 `segmentBase + 当前段快照值`，
   连续快照逐次推进，MUST NOT 与累计值取 `Math.max`（第二次合并后读数会冻结）；`elapsedMs`
   首次与后续都取当前段快照；段号更小的迟到快照保留既有视图、不回退。
-- 「知道了」的确认按 run id 记忆（跨切 vault / 重载保留，集合有上限）；同一 run 确认后不再出现。
+- 恢复路径按 `run_id` 归并 resume 段：同一 run 的多段工具结果在 transcript 只建一行，段数、rounds、
+  steps、tokens、用时为跨段合计，终态与摘要取最近段；最近段仍在 live 快照时，live 刷新落在同一恢复
+  身份上（不另建第二行）。
+- 「知道了」的确认按 run id 持久化在 webview `localStorage`（`lumir.harness.acknowledged-subruns`，
+  有上限）；完整重载 / 切 vault 后同一 run 不再要求确认。读取失败按空集处理，不阻断面板。
 - failed / aborted 的结果信封同样带任务身份（agent / run_id / segment / background / status /
   model / duration / tool_calls / usage），恢复行与 live 行同形（状态词、图标、用量）。
 - 前端 `applyTaskReadings` 把它作为在跑行的权威来源：在表 = 建行 / 更新；不在表 = 立即移除行（旧
@@ -176,9 +184,12 @@
   「停止」、live 用时、可展开详情）；单前台 run 时控制区不出现也必须满足。
 - **C19 resume 事件序单身份**：完整两段 `tool_call started → subagent_started → … → tool_call done`
   之后，transcript MUST 只有一个任务行；运行中的详情 MUST NOT 带上一段的触顶原因。
+- **C19b 调用身份矩阵**：同 agent 的 r1 运行 / r2 被拒（无 started）/ r3 成功启动且 started 先于
+  r2 done 时，三行 MUST 保持调用顺序；r2 行承载拒绝结果，r3 行承载自己的 started/progress/finished。
+  绑定与 done 配对 MUST 以 `call_id` 为准。
 - **C20 四态恢复同形**：completed / partial / failed / aborted 的恢复行 MUST 显示对应状态词与图标，
   详情 MUST 有该 run 的用量读数；failed / aborted 的信封 MUST 带任务身份。
 - **C21 种子链**：`subrun_runs` 经 `session_open` 种子跨「恢复 → 再恢复」与「压缩 → 恢复」保持
   逐字段相等；二次恢复后的行不得退回「运行中」。
 - **C22 待确认归属**：后台 run 的 partial / failed / stopped 在切走 / 重载后 MUST 仍以待确认行出现，
-  「知道了」后可确认且同一 run 不再出现。
+  「知道了」后可确认且同一 run 不再出现；完整重载后 MUST NOT 再次要求确认（持久化归属见 §4.2）。

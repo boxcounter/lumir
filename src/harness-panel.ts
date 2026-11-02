@@ -3528,6 +3528,10 @@ interface TaskRowEntry {
   renderDetail: (() => void) | null;
   /** 恢复行的原始信封（快照 `subrun_runs` 对账 running → 终态时用它改写）。 */
   restoredEnvelope: Record<string, unknown> | null;
+  /** 触发本次调用的身份（`tool_call.call_id`）；null = 旧后端 / 恢复出的旧记录。 */
+  callId: string | null;
+  /** 恢复行的 per-run 累计用量（多段合并 / 逐 run 汇总对账后的真值）。 */
+  restoredUsage: { input: number; cached: number; output: number } | null;
 }
 
 /** 任务区消费的事件子集（`HarnessEvent` 的结构子集：单测可构造，不依赖 ipc）。 */
@@ -3966,6 +3970,79 @@ export function mergeLiveSubruns(
     });
   }
   return [...merged.values()];
+}
+
+/** 恢复路径的同一 run 多段信封合并（M822 / 评审 r3 P1-2）：恢复后只保留**一个任务身份**，
+ *  段数取最大、rounds / steps / tokens / 用时求和，终态与摘要取最近一段。纯函数，单测直接驱动。 */
+export function mergeRestoredEnvelopes(
+previous: Record<string, unknown>,
+next: Record<string, unknown>,
+): Record<string, unknown> {
+const number = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : 0;
+const prevSegment = number(previous.segment);
+const nextSegment = number(next.segment);
+const latest = nextSegment >= prevSegment ? next : previous;
+const pick = (key: string): unknown =>
+  typeof latest[key] === "string" && (latest[key] as string) !== ""
+    ? latest[key]
+    : previous[key];
+const calls: Record<string, number> = {};
+for (const source of [previous.tool_calls, next.tool_calls]) {
+  if (typeof source !== "object" || source === null) continue;
+  for (const [tool, count] of Object.entries(source as Record<string, unknown>)) {
+    const value = number(count);
+    calls[tool] = (calls[tool] ?? 0) + value;
+  }
+}
+const usageSum = (key: string): number => {
+  const read = (source: unknown): number => {
+    if (typeof source !== "object" || source === null) return 0;
+    return number((source as Record<string, unknown>)[key]);
+  };
+  return read(previous.usage) + read(next.usage);
+};
+return {
+  ...previous,
+  ...latest,
+  agent: pick("agent"),
+  model: pick("model"),
+  segment: Math.max(prevSegment, nextSegment),
+  status: latest.status,
+  stopped_by: latest.stopped_by,
+  ok: latest.ok,
+  code: latest.code,
+  message: latest.message,
+  summary: typeof latest.summary === "string" ? latest.summary : previous.summary,
+  call_id: latest.call_id ?? previous.call_id,
+  rounds: number(previous.rounds) + number(next.rounds),
+  tool_calls: calls,
+  usage: {
+    input_tokens: usageSum("input_tokens"),
+    cached_tokens: usageSum("cached_tokens"),
+    output_tokens: usageSum("output_tokens"),
+  },
+  duration_ms: number(previous.duration_ms) + number(next.duration_ms),
+};
+}
+
+/** 信封里的 per-run 用量（合并后的信封同样适用）。 */
+function envelopeUsageOf(
+envelope: Record<string, unknown>,
+): { input: number; cached: number; output: number } {
+const usage =
+  typeof envelope.usage === "object" && envelope.usage !== null
+    ? (envelope.usage as Record<string, unknown>)
+    : null;
+const read = (key: string): number => {
+  const value = usage?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+};
+return {
+  input: read("input_tokens"),
+  cached: read("cached_tokens"),
+  output: read("output_tokens"),
+};
 }
 
 /** 行状态词（终态词永不截断；running 的脉冲点只承载颜色，词始终可读）。 */
@@ -4811,12 +4888,33 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // ── 子代理任务区状态（tasks §10，M590）────────────────────────────────────
   /** 本会话可见的 run（按 started 到达序；终态只保留「后台异常待确认」的那几条）。 */
   let subruns: SubrunView[] = [];
-  /** 已点过「知道了」的后台异常终态（按 runId；随会话清空）。 */
-  const acknowledgedRuns = new Set<string>();
+  /** 已点过「知道了」的后台异常终态（按 runId）。持久化在 webview localStorage：
+   *  跑 id 全局唯一，完整重载 / 切 vault 后不再要求确认（评审 r3 P1-3：MUST NOT 只存在
+   *  进程内）。读取失败按空集处理，不阻断面板。 */
+  const ACK_STORAGE_KEY = "lumir.harness.acknowledged-subruns";
+  const acknowledgedRuns = loadAcknowledgedRuns();
+
+  function loadAcknowledgedRuns(): Set<string> {
+    try {
+      const raw = localStorage.getItem(ACK_STORAGE_KEY);
+      if (raw === null) return new Set();
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return new Set();
+      return new Set(parsed.filter((id): id is string => typeof id === "string" && id !== ""));
+    } catch {
+      return new Set();
+    }
+  }
+
+  function persistAcknowledgedRuns(): void {
+    try {
+      localStorage.setItem(ACK_STORAGE_KEY, JSON.stringify([...acknowledgedRuns]));
+    } catch {
+      // 存储不可用（配额 / 隐私模式）：本次进程内仍然生效，不阻断交互。
+    }
+  }
   /** 对话流的触顶提示（`auto_wake.blocked` 的宿主；随 transcript 换代清空）。 */
   let wakeNotice: { el: HTMLElement; text: HTMLElement; button: HTMLButtonElement } | null = null;
-  /** 恢复路径的 per-run 用量累计（run_id → 各段合计）：多段信封在重放时累加，详情按 run 读数。 */
-  const restoredRunUsage = new Map<string, { input: number; cached: number; output: number }>();
   /** 展开中的行（点击行头切换；待批行强制展开——阻塞决策不藏在折叠区里）。 */
   const openRuns = new Set<string>();
   /** 任务区折叠态（标题行仍在；折叠只收列表与用量块）。 */
@@ -7699,7 +7797,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /** run → transcript 行绑定（agent 名优先、FIFO 兜底）：没有可绑的行时补一条独立行
    *  （快照恢复 / 事件缺口下也要让历史任务的详情可达）。 */
-  function taskRowFor(run: SubrunView): TaskRowEntry {
+  function taskRowFor(run: SubrunView, callId: string | null): TaskRowEntry {
+    // 调用身份优先（M822 / 评审 r3 P1-1）：成功 started 必须绑**本次调用**的行——同一 agent
+    // 的前一次调用可能已被拒且仍是未绑定行，靠 agent / 到达顺序会绑错。
+    if (callId !== null) {
+      const exact = taskRowEntries.find((entry) => entry.callId === callId && entry.runId === null);
+      if (exact !== undefined) {
+        exact.runId = run.runId;
+        bindTaskRowToggle(exact);
+        return exact;
+      }
+    }
     const bound = taskRowEntries.find((entry) => entry.runId === run.runId);
     if (bound !== undefined) return bound;
     const match =
@@ -7733,6 +7841,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       open: false,
       renderDetail: null,
       restoredEnvelope: null,
+      callId: null,
+      restoredUsage: null,
     };
     taskRowEntries.push(entry);
     bindTaskRowToggle(entry);
@@ -7763,23 +7873,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const failed = envelope.ok === false || status === "failed" || statusRaw === "";
     const stoppedBy = typeof envelope.stopped_by === "string" ? envelope.stopped_by : null;
     const duration = typeof envelope.duration_ms === "number" ? envelope.duration_ms : 0;
-    const runId = typeof envelope.run_id === "string" ? envelope.run_id : "";
-    // per-run 用量：同一 run 的多段信封在重放时累加（详情按 run 读数，与 live 同口径）。
-    const usage = typeof envelope.usage === "object" && envelope.usage !== null
-      ? (envelope.usage as Record<string, unknown>)
-      : null;
-    const num = (key: string): number => {
-      const value = usage?.[key];
-      return typeof value === "number" && Number.isFinite(value) ? value : 0;
-    };
-    if (runId !== "") {
-      const previous = restoredRunUsage.get(runId) ?? { input: 0, cached: 0, output: 0 };
-      restoredRunUsage.set(runId, {
-        input: previous.input + num("input_tokens"),
-        cached: previous.cached + num("cached_tokens"),
-        output: previous.output + num("output_tokens"),
-      });
-    }
     const tailParts: string[] = [];
     if (failed) {
       // 终态词永不缺位（C3）：先给状态词，再给失败原因（message / code 可能缺席）。
@@ -7871,17 +7964,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         summary.append(label, document.createTextNode(envelope.summary));
         entry.detail.append(summary);
       }
-      const total = restoredRunUsage.get(runId);
+      const total = entry.restoredUsage;
       const usageText =
-        total === undefined
+        total === null
           ? ""
-          : subrunUsageLine(
-              {
-                inputTokens: total.input,
-                cachedTokens: total.cached,
-                outputTokens: total.output,
-              },
-            );
+          : subrunUsageLine({
+              inputTokens: total.input,
+              cachedTokens: total.cached,
+              outputTokens: total.output,
+            });
       if (usageText !== "") {
         const line = document.createElement("div");
         line.className = "lumir-hp-task-usage";
@@ -7919,8 +8010,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /** run 事件 → transcript 行的就地更新（行不重排、不因完成顺序换位）。 */
-  function refreshTaskRow(run: SubrunView): void {
-    const entry = taskRowFor(run);
+  function refreshTaskRow(run: SubrunView, callId: string | null = null): void {
+    const entry = taskRowFor(run, callId);
     renderTaskToolRow(entry, run);
     renderTaskRowDetail(entry, run);
   }
@@ -7929,11 +8020,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  第二段的 `tool_call started` 会先建一条未绑定任务行；确认这次 started 是同一 run 的
    *  resume 后，收走**同一执行者**最近的一条未绑定行。MUST NOT 在 progress / step / finished /
    *  快照刷新里调用——那会误删并行新任务（r2）的调用行。 */
-  function dropResumeDuplicateRow(run: SubrunView): void {
+  function dropResumeDuplicateRow(run: SubrunView, callId: string | null): void {
     for (let i = taskRowEntries.length - 1; i >= 0; i -= 1) {
       const entry = taskRowEntries[i];
       if (entry === undefined || entry.runId !== null || entry.settled) continue;
-      if (taskArgsOf(entry.argsSummary).agent !== run.agent) continue;
+      // 有调用身份就精确匹配；旧后端没有 call_id 时才退回 agent 匹配。
+      if (callId !== null ? entry.callId !== callId : taskArgsOf(entry.argsSummary).agent !== run.agent) {
+        continue;
+      }
       entry.wrap.remove();
       for (const block of [activeTools, ...sealedToolBlocks]) {
         if (block !== null) block.rows = block.rows.filter((row) => row !== entry.wrap);
@@ -7943,7 +8037,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
-  function appendToolCall(name: string, status: "started" | "done", summary: string): void {
+  function appendToolCall(
+    name: string,
+    status: "started" | "done",
+    summary: string,
+    callId: string | null = null,
+  ): void {
     // `task` 工具行由 run 事件驱动终态（design §12.2 第 2 条：行在调用时创建、之后只就地更新）。
     // 通用 done 配对会把并行多调用的行配错（`block.running` 只有一个），因此单独一条路径。
     if (name === "task") {
@@ -7969,6 +8068,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           open: false,
           renderDetail: null,
           restoredEnvelope: null,
+          callId,
+          restoredUsage: null,
         };
         taskRowEntries.push(entry);
         renderTaskToolRow(entry, null);
@@ -7977,7 +8078,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         return;
       }
       // done：只收「没绑到 run」的行（被闸拒 / 参数非法）；已绑定行的终态由 run 事件驱动。
-      const entry = taskRowEntries.find((row) => row.runId === null && !row.settled);
+      // 有调用身份时按 call_id 精确配对——绝不能收另一条并行调用的行（r3 P1-1）。
+      const entry =
+        (callId !== null
+          ? taskRowEntries.find(
+              (row) => row.callId === callId && row.runId === null && !row.settled,
+            )
+          : undefined) ?? taskRowEntries.find((row) => row.runId === null && !row.settled);
       if (entry !== undefined) {
         entry.settled = true;
         renderTaskToolRow(entry, null, summary);
@@ -9212,6 +9319,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           const oldest = acknowledgedRuns.values().next().value;
           if (typeof oldest === "string") acknowledgedRuns.delete(oldest);
         }
+        persistAcknowledgedRuns();
         renderTaskArea();
       });
       els.actions.append(dismiss);
@@ -9317,11 +9425,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         return typeof value === "number" && Number.isFinite(value) ? value : 0;
       };
       // 用量以逐 run 汇总为准（多段求和），不再从信封累加（后者是启动信封，没有 usage）。
-      restoredRunUsage.set(entry.runId, {
+      entry.restoredUsage = {
         input: number("input_tokens"),
         cached: number("cached_tokens"),
         output: number("output_tokens"),
-      });
+      };
       const patched: Record<string, unknown> = {
         ...envelope,
         status: typeof record.status === "string" ? record.status : envelope.status,
@@ -9573,6 +9681,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           typeof event.name === "string" ? event.name : "?",
           event.status === "done" ? "done" : "started",
           typeof event.summary === "string" ? event.summary : "",
+          typeof event.call_id === "string" ? event.call_id : null,
         );
         return;
       case "approval_request":
@@ -9646,8 +9755,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         });
         const run = subruns.find((item) => item.runId === event.run_id);
         if (run !== undefined) {
-          if (resumed) dropResumeDuplicateRow(run);
-          refreshTaskRow(run);
+          const callId = typeof event.call_id === "string" ? event.call_id : null;
+          if (resumed) dropResumeDuplicateRow(run, callId);
+          refreshTaskRow(run, callId);
         }
         renderTaskArea();
         return;
@@ -9944,6 +10054,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (name === "task") {
       const envelope = taskEnvelopeOf(record.text);
       if (envelope !== null) {
+        const runId = typeof envelope.run_id === "string" ? envelope.run_id : "";
+        if (runId !== "") {
+          // 同一 run 的 resume 段在恢复后仍是一个身份：找到既有恢复行，合并信封并就地重渲，
+          // 不再为第二段另建一行（评审 r3 P1-2）。
+          const existing = taskRowEntries.find(
+            (entry) => entry.runId === runId && entry.restoredEnvelope !== null,
+          );
+          if (existing !== undefined && existing.restoredEnvelope !== null) {
+            const merged = mergeRestoredEnvelopes(existing.restoredEnvelope, envelope);
+            existing.restoredEnvelope = merged;
+            existing.restoredUsage = envelopeUsageOf(merged);
+            existing.callId =
+              typeof merged.call_id === "string" ? merged.call_id : existing.callId;
+            renderRestoredTaskRow(existing, merged);
+            return;
+          }
+        }
         const wrap = document.createElement("div");
         wrap.className = "lumir-hp-taskwrap";
         const row = document.createElement("div");
@@ -9962,6 +10089,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           open: false,
           renderDetail: null,
           restoredEnvelope: envelope,
+          callId: typeof envelope.call_id === "string" ? envelope.call_id : null,
+          restoredUsage: envelopeUsageOf(envelope),
         };
         bindTaskRowToggle(entry);
         // 恢复行同样进绑定表：快照 `subrun_runs` 的终态对账按 runId 找到它（M822）。
@@ -10258,7 +10387,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 冻结、Stop 不隐藏、点击无效）。表与 DOM 必须同一次收走。
     taskList.replaceChildren();
     taskRowEntries.length = 0;
-    restoredRunUsage.clear();
     wakeNotice = null;
     wakeContinued = false;
     autoWake = { chain: 0, max: autoWake.max, blocked: null };

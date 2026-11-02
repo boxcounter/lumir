@@ -16,6 +16,7 @@ import {
   formatDuration,
   isLiveSubrun,
   mergeLiveSubruns,
+  mergeRestoredEnvelopes,
   mergeTerminalSubruns,
   noticeHeadline,
   noticeLineText,
@@ -663,6 +664,60 @@ test("parseSubrunRuns / mergeTerminalSubruns：后台异常切回后仍进控制
   const untouched = staleSegment.find((item) => item.runId === "r1")!;
   assert.equal(untouched.rounds, 8);
   assert.equal(untouched.elapsedMs, 1_500);
+});
+
+test("mergeRestoredEnvelopes：同一 run 的两段恢复信封合并为一个身份（段数/累计/最近段终态）", () => {
+  const segment1 = {
+    ok: true,
+    status: "partial",
+    agent: "research",
+    run_id: "r1",
+    segment: 1,
+    call_id: "call-a",
+    background: false,
+    model: "mock-fast",
+    stopped_by: "tokens",
+    rounds: 5,
+    duration_ms: 90_000,
+    tool_calls: { vault_read: 7, vault_search: 2 },
+    usage: { input_tokens: 80_000, cached_tokens: 60_000, output_tokens: 2_000 },
+    summary: "第一段摘要",
+  };
+  const segment2 = {
+    ok: true,
+    status: "completed",
+    agent: "research",
+    run_id: "r1",
+    segment: 2,
+    call_id: "call-b",
+    background: false,
+    model: "mock-fast",
+    rounds: 3,
+    duration_ms: 40_000,
+    tool_calls: { vault_read: 1, vault_search: 3 },
+    usage: { input_tokens: 20_000, cached_tokens: 10_000, output_tokens: 1_000 },
+    summary: "第二段摘要",
+  };
+  const merged = mergeRestoredEnvelopes(segment1, segment2);
+  assert.equal(merged.segment, 2, "段数取最近段");
+  assert.equal(merged.status, "completed", "终态取最近段");
+  assert.equal(merged.stopped_by, undefined, "上一段的触顶原因不延续");
+  assert.equal(merged.rounds, 8, "rounds 跨段求和");
+  assert.deepEqual(merged.tool_calls, { vault_read: 8, vault_search: 5 }, "steps 跨段求和");
+  assert.equal(merged.duration_ms, 130_000);
+  assert.deepEqual(merged.usage, {
+    input_tokens: 100_000,
+    cached_tokens: 70_000,
+    output_tokens: 3_000,
+  });
+  assert.equal(merged.summary, "第二段摘要");
+  assert.equal(merged.call_id, "call-b");
+
+  // 反向顺序（旧段迟到）仍以更大的 segment 为最近段。
+  const reversed = mergeRestoredEnvelopes(segment2, segment1);
+  assert.equal(reversed.segment, 2);
+  assert.equal(reversed.status, "completed");
+  assert.equal(reversed.summary, "第二段摘要");
 });
 
 test("isLiveSubrun：只有运行中 / 等待批准算在跑", () => {

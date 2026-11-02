@@ -314,6 +314,223 @@ test("并行交错：r1 progress 不得删 r2 的未绑定行；r2 被闸拒的�
   await expect(rows.nth(1)).toContainText("concurrency_limit");
 });
 
+test("同 agent 的 r1/r2/r3 交错：call_id 精确绑定，三行顺序与结果归属正确", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await openPane(page);
+  await startTurn(page);
+
+  const call = (callId: string, description: string): Record<string, unknown> => ({
+    type: "tool_call",
+    name: "task",
+    status: "started",
+    summary: JSON.stringify({ agent: "research", description }),
+    call_id: callId,
+  });
+  // r1 成功启动（c1）；r2 只有调用行（c2，随后被并发闸拒绝）；r3 成功启动（c3）且 started 先于 r2 done。
+  await fire(page, call("call-r1", "甲任务"));
+  await fire(page, { ...started("r1", "甲任务"), call_id: "call-r1" });
+  await fire(page, call("call-r2", "乙任务"));
+  await fire(page, call("call-r3", "丙任务"));
+  await fire(page, { ...started("r3", "丙任务"), call_id: "call-r3" });
+  await fire(page, {
+    type: "tool_call",
+    name: "task",
+    status: "done",
+    summary: "concurrency_limit（并发上限）",
+    call_id: "call-r2",
+  });
+  await fire(page, {
+    type: "subagent_progress",
+    run_id: "r3",
+    rounds: 1,
+    tool_calls: 2,
+    last_tool: "vault_read",
+    elapsed_ms: 2_000,
+  });
+
+  const rows = page.locator(".lumir-hp-taskwrap");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText("甲任务");
+  await expect(rows.nth(1)).toContainText("乙任务");
+  await expect(rows.nth(1)).toContainText("concurrency_limit");
+  await expect(rows.nth(1)).not.toContainText("运行中");
+  await expect(rows.nth(2)).toContainText("丙任务");
+  await expect(rows.nth(2)).toContainText("运行中");
+  await expect(rows.nth(2)).not.toContainText("concurrency_limit");
+});
+
+test("恢复同一 run 的两段：只有一个身份，段数/累计/最近段终态与用量", async ({ page }) => {
+  const envelope = (
+    segment: number,
+    status: string,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> => ({
+    role: "tool",
+    name: "task",
+    summary: '{"agent":"research","description":"两段恢复"}',
+    text: JSON.stringify({
+      ok: true,
+      status,
+      agent: "research",
+      run_id: "r-restore",
+      segment,
+      call_id: `call-${segment}`,
+      background: false,
+      model: "mock-fast",
+      rounds: segment === 1 ? 5 : 3,
+      stopped_by: segment === 1 ? "tokens" : undefined,
+      duration_ms: segment === 1 ? 90_000 : 40_000,
+      tool_calls: segment === 1 ? { vault_read: 7 } : { vault_read: 1 },
+      usage: {
+        input_tokens: segment === 1 ? 80_000 : 20_000,
+        cached_tokens: segment === 1 ? 60_000 : 10_000,
+        output_tokens: segment === 1 ? 2_000 : 1_000,
+      },
+      summary: segment === 1 ? "第一段摘要" : "第二段摘要",
+      ...extra,
+    }),
+    ts: 1759912345,
+  });
+  await stubTauri(page, VAULT);
+  await stubHarness(page, {
+    messages: [envelope(1, "partial"), envelope(2, "completed")],
+    runs: [
+      {
+        run_id: "r-restore",
+        agent: "research",
+        description: "两段恢复",
+        model: "mock-fast",
+        background: false,
+        status: "completed",
+        rounds: 8,
+        segments: 2,
+        input_tokens: 100_000,
+        cached_tokens: 70_000,
+        output_tokens: 3_000,
+        duration_ms: 130_000,
+        tool_calls: 8,
+      },
+    ],
+  });
+  await openPane(page);
+
+  await expect(page.locator(".lumir-hp-taskwrap")).toHaveCount(1);
+  const row = page.locator(".lumir-hp-taskwrap").first();
+  await expect(row).toContainText("已完成");
+  await expect(row).toContainText("2m10s");
+  await row.click();
+  await expect(row).toContainText("2 段");
+  await expect(row).toContainText("8 步");
+  await expect(row).toContainText("用量：输入 100k（缓存 70k）· 输出 3k");
+  await expect(row).toContainText("第二段摘要");
+});
+
+test("恢复的最近段仍在 live 快照：同一恢复身份刷新为运行形态", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page, {
+    messages: [
+      {
+        role: "tool",
+        name: "task",
+        summary: '{"agent":"research","description":"续跑中"}',
+        text: JSON.stringify({
+          ok: true,
+          status: "partial",
+          agent: "research",
+          run_id: "r-live-resume",
+          segment: 1,
+          call_id: "call-1",
+          model: "mock-fast",
+          rounds: 4,
+          stopped_by: "tokens",
+          duration_ms: 50_000,
+          tool_calls: { vault_read: 5 },
+          usage: { input_tokens: 10_000, cached_tokens: 4_000, output_tokens: 500 },
+        }),
+        ts: 1759912345,
+      },
+    ],
+    runs: [
+      {
+        run_id: "r-live-resume",
+        agent: "research",
+        description: "续跑中",
+        model: "mock-fast",
+        background: false,
+        status: "partial",
+        rounds: 4,
+        segments: 1,
+        input_tokens: 10_000,
+        cached_tokens: 4_000,
+        output_tokens: 500,
+        duration_ms: 50_000,
+        tool_calls: 5,
+      },
+    ],
+    live: [
+      {
+        run_id: "r-live-resume",
+        agent: "research",
+        description: "续跑中",
+        model: "mock-fast",
+        background: false,
+        segment: 2,
+        rounds: 2,
+        tool_calls: 3,
+        last_tool: "vault_read",
+        elapsed_ms: 7_000,
+      },
+    ],
+  });
+  await openPane(page);
+
+  await expect(page.locator(".lumir-tp")).toBeHidden();
+  await expect(page.locator(".lumir-hp-taskwrap")).toHaveCount(1);
+  const row = page.locator(".lumir-hp-taskwrap").first();
+  await expect(row).toContainText("运行中");
+  await expect(row).toContainText("7s");
+  await expect(row.locator(".lumir-hp-task-stop")).toBeVisible();
+  // 点文本区展开（行中心可能落在行内「停止」钮上）。
+  await row.locator(".lumir-hp-tool-text").click();
+  await expect(row).toContainText("8 步");
+  await expect(row).toContainText("2 段");
+});
+
+test("后台异常 → 知道了 → 完整重载后不再要求确认（持久化）", async ({ page }) => {
+  const failed = [
+    {
+      run_id: "r-ack",
+      agent: "research",
+      description: "失败待确认",
+      model: "mock-fast",
+      background: true,
+      status: "failed",
+      rounds: 2,
+      segments: 1,
+      input_tokens: 100,
+      cached_tokens: 0,
+      output_tokens: 10,
+      duration_ms: 900,
+      tool_calls: 2,
+    },
+  ];
+  await stubTauri(page, VAULT);
+  await stubHarness(page, { runs: failed });
+  await openPane(page);
+  await expect(page.locator(".lumir-tp-run")).toHaveCount(1);
+  await page.locator(".lumir-tp-run").getByRole("button", { name: "知道了" }).click();
+  await expect(page.locator(".lumir-tp")).toBeHidden();
+
+  // 完整重载：快照仍带同一条后台异常，但确认事实已持久化，不得再次要求确认。
+  await page.reload();
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await expect(page.locator(".lumir-tp")).toBeHidden();
+  await expect(page.locator(".lumir-tp-run")).toHaveCount(0);
+});
+
 test("四态恢复行：completed / partial / failed / aborted 的状态词、图标与用量同形", async ({ page }) => {
   const record = (
     status: string,

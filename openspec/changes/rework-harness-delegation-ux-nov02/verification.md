@@ -76,6 +76,21 @@
 - quick：`/tmp/m822-gate-quick-r4.log` → `GATE RESULT: 13/13 PASS（SKIP 0）`，`GATE_EXIT=0`。
 - visual：`/tmp/m822-gate-visual4.log` → `GATE RESULT: 15/15 PASS（SKIP 0）`，`GATE_EXIT=0`（939 passed / 1 skipped / 10.1m）。
 
+## 三轮评审修复（reviewer r3，p1-3items/hold）
+
+| 项 | 修复 | 判别测试（回退修复后实测红） |
+|---|---|---|
+| P1-1 同 agent 并行调用归属互换 | `tool_call` / `subagent_started` / 结果信封贯通 `call_id`；started 按 call_id 精确绑定本次调用行，done 按 call_id 配对，resume 去重按 call_id 收走本次重复行；旧后端缺键才退回 agent 匹配 | 视觉「同 agent 的 r1/r2/r3 交错」：三行保持调用顺序，r2 承载 concurrency_limit、r3 承载自己的运行态。回退 call_id 绑定后该测试红（`r3-old-visual.log`） |
+| P1-2 恢复仍按段建第二身份 | `mergeRestoredEnvelopes`：恢复重放时同一 `run_id` 的段合并到既有行；段数/rounds/steps/tokens/用时求和，终态/摘要取最近段；最近段仍 live 时 live 刷新落在同一身份 | 单测 `mergeRestoredEnvelopes`（段数 2、rounds 8、steps 8、用量 100k/70k/3k、终态 completed）；视觉「恢复同一 run 的两段」只 1 行、详情 2 段与合计用量；回退合并后该视觉测试红 |
+| P1-3 确认只存在内存 | 确认按 run id 持久化到 webview `localStorage`（`lumir.harness.acknowledged-subruns`，有上限）；完整重载后不再要求确认 | 视觉「后台异常 → 知道了 → 完整重载」：reload 后控制区不再出现。回退持久化后该测试红 |
+
+三轮 A/B 证据：`.local/reports/m822-delegation-ux-nov02/r3-old-visual.log`（3 条新测试恰好红，8 条既有绿，exit 1）。
+
+### 三轮门禁
+
+- quick：`/tmp/m822-gate-quick-r6.log` → `GATE RESULT: 13/13 PASS（SKIP 0）`，`GATE_EXIT=0`。
+- visual：`/tmp/m822-gate-visual5.log` → `GATE RESULT: 15/15 PASS（SKIP 0）`，`GATE_EXIT=0`（943 passed / 1 skipped / 10.2m）。
+
 ## 真机验收
 
 - 场景：`201-subagent-panel-and-stop` / `240-harness-subagent-vault-switch` /

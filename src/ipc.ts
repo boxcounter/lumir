@@ -485,7 +485,7 @@ export type HarnessEvent = HarnessEventEnvelope &
   (
     | { type: "text_chunk"; text: string }
     | { type: "reasoning_chunk"; text: string; index: number }
-    | { type: "tool_call"; name: string; status: "started" | "done"; summary: string }
+    | { type: "tool_call"; name: string; status: "started" | "done"; summary: string ; call_id: string }
     // approval_request 的 argv 是**数组**（后端 events.rs 发完整 argv 的 JSON 数组；
     // M406 修类型错配——此前这里声明 string，live 渲染成逗号拼接、快照恢复整段丢弃）。
     // purpose 是 M407 契约的可选字段（模型自述的用途句，阅读辅助——卡片展示用，
@@ -526,7 +526,7 @@ export type HarnessEvent = HarnessEventEnvelope &
     // catalog_large 是清单容量告警。
     // **状态 / 终态词以 `subagent_finished` 的 status 为准**（completed / partial / failed /
     // aborted），前端只做词映射，不自行推导成功与否（REVIEW.md「同一语义两处真源」条）。
-    | { type: "subagent_started"; run_id: string; segment: number; agent: string; description: string; model: string; tools: string[]; max_turns: number; max_tokens: number; timeout_secs: number; background: boolean }
+    | { type: "subagent_started"; run_id: string; segment: number; agent: string; description: string; model: string; tools: string[]; max_turns: number; max_tokens: number; timeout_secs: number; background: boolean; call_id: string }
     | { type: "subagent_progress"; run_id: string; segment: number; rounds: number; tool_calls: number; last_tool: string | null; elapsed_ms: number }
     | { type: "subagent_step"; run_id: string; segment: number; tool: string; summary: string }
     | { type: "subagent_finished"; run_id: string; segment: number; agent: string; status: string; stopped_by?: string; rounds: number; model: string; input_tokens: number; cached_tokens: number; output_tokens: number; denied_calls: number; duration_ms: number; summary_chars: number; summary?: string; audit?: string; audit_error?: string }
