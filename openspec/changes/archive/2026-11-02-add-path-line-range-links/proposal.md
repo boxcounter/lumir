@@ -8,7 +8,49 @@
 > 节点 1（提案评审）：**通过**（Alex 2026-10-23 原话：「change 提案都通过」）。四个起草期取值
 > （D1–D4）按下表「倾向与理由」侧落地：行范围只落起始行（不选中、不高亮）、形态严格（畸形整段
 > 不成立）、提示词纪律段补 `:起-止` 一句、工具卡片 Read 的 `offset + limit` 不合成行范围。
-> 节点 2（归档评审）：实现完成后填写。
+> 节点 2（归档放行）：**机器 + 独立评审放行**（[openspec-workflow.md](../../../../docs/process/openspec-workflow.md)
+> 「节点 2：归档默认由独立评审 + 机器判据放行」五要件），逐条事实与证据指针见下「节点 2 记录（归档前）」。
+
+## 节点 2 记录（归档前，2026-11-02，M821）
+
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-10-23 通过（Alex 原话「change 提案都通过」，见上方「评审记录」），
+   四个起草期取值 D1–D4 按提案「倾向与理由」侧落地。实现期没有静默扩 scope：唯一产品改动是
+   `src/harness-path-link.ts` 的后缀正则分叉与「`止 < 起` 整段不成立」判据（落点复用既有
+   `openPathAtLine` / `revealLine`，面板与跳转装配零改动）；`src-tauri` 两个文件（`
+   path-reference.md` 一句话、`context.rs` 三条 `contains` 断言）对应 tasks 3.1 / 3.2，属已批提案内
+   事项，tower 于 2026-10-23 批准 scope-widen（mission M632 Notes：不升级 Alex）。两条 MODIFIED 的
+   增量与 proposal「What Changes」逐条对应，没有新增行为。
+2. **独立 reviewer clean / merge**：assigned reviewer `reviewer-line-range-oct23` 判
+   `status: clean` / `merge: merge`，评审时 tip `4e92d534ab05787362f99a2d9b0719b498296844`；rebase 后
+   `reviewer-line-range-r2-oct23` 复评维持 `clean` / `merge: merge`，tip
+   `f5d059384cc7828e77ed8ad060001a28aead25d8`。评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.tower/comms/reviews/review-feat-path-line-range-links-oct23-reviewer-line-range-oct23-r1.md`
+   与 `/Users/boxcounter/Code/Boxcounter/lumir/.tower/comms/reviews/review-feat-path-line-range-links-oct23-reviewer-line-range-r2-oct23-r1.md`。
+   合并 tip 一致：master 上的合并提交 `bf5ac46f` 第二父提交恰为 `f5d05938`；delta 自实现提交
+   `328562b5` 之后未再改动（`git log -- openspec/changes/add-path-line-range-links/specs/harness/spec.md`
+   只有 `328562b5` 与提案提交 `7e046792`），评审绑定的内容与合入内容同一份。
+3. **tasks 完成**：`tasks.md` 19/19 全勾（`grep -c '^- \[x\]'` = 19，未勾项 0），无放弃项。
+4. **要求的门禁与真机证据**：动过 `tests/visual/scenes/**`（新增 `m632-path-line-range-link.spec.ts`），
+   故按 `scripts/gate.sh visual` 档取读数——`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（tasks 5.3
+   与 M632 完成报告同口径；13 条 = cargo-fmt / cargo-clippy / cargo-test / bindings-drift /
+   schemas-drift / tsc-root / tsc-visual / tsc-unit / unit-tests / docs-check / openspec-validate /
+   isolation-runs / visual-regression，视觉套件 701 passed / 1 skipped）。无视觉基线更新（纯结构 /
+   计算属性断言）。独立 reviewer 复跑同一档为 `GATE RESULT: 12/13 PASS（SKIP 0）`，两条红是与本分支
+   零交集的视觉用例在 4 路并行 gate 负载下的假红，隔离复跑 28/28 全绿——评审未计为分支 finding（见
+   r1 评审文件 checks 末行）。真机场景 221 `1/1 PASS`（10 断言，0 FAIL）：
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-10-24-m711/221-harness-path-line-range/`
+   （`status.txt` = `PASS`，`steps.md` 逐条 PASS 行）。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS——`扫过 8 份
+   delta，8 条 MODIFIED，对比 118 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`（退出码
+   0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 35 passed, 0 failed
+   (35 items)`（退出码 0）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0，含 180 条单测
+   全过）。归档跟踪队列有且仅有一条本 change 条目（`docs/backlog.md`）。delta 两条 MODIFIED 均为真实
+   增量（living spec 此刻没有 `:起-止` 的识别 / 落点段落，`grep` 零命中），不是纯目录移动。
+
+未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与
+tip 均无异常、证据无缺口，故不另送 Alex。
 
 ## Why
 
