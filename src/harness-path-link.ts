@@ -43,6 +43,10 @@ export interface PathCandidate {
   kind: PathTargetKind;
   /** 1-based 行号；无后缀时缺省（目录从不带行号）。`:起-止` 的落点即 `起`。 */
   line?: number;
+  /** 闭区间止行（1-based，含）：`:行号` / `:行号:列号` 等于 `line`，`:起-止` 等于 `止`；
+   *  无行号后缀时缺省。唯一消费者是点击后的瞬态行高亮（change
+   *  add-path-line-target-highlight-nov02）——落点仍只看 `line`。 */
+  lineEnd?: number;
   /** 列号（`:行号:列号` 的第二段）；v1 只解析、不参与落点。 */
   column?: number;
   /** 可点范围（相对传入文本，含行号后缀）。 */
@@ -89,7 +93,10 @@ export function isWellFormedVaultPath(path: string): boolean {
  *  串尾部同样要认 `:行` / `:行:列` / `:起-止`，语义必须与本模块**同一份**（MUST NOT 复制
  *  正则——两种后缀解析一旦分叉，同一串在一个入口能开、另一个入口打不开，属于最难发现的
  *  漂移）。调用方按「把 `at` 对准输入串里某个冒号、要求 `end` 恰好消耗到串尾」使用。 */
-export function lineSuffixAt(text: string, at: number): { line?: number; column?: number; end: number } {
+export function lineSuffixAt(
+  text: string,
+  at: number,
+): { line?: number; column?: number; lineEnd?: number; end: number } {
   LINE_SUFFIX.lastIndex = at;
   const match = LINE_SUFFIX.exec(text);
   if (match === null) return { end: at };
@@ -100,16 +107,18 @@ export function lineSuffixAt(text: string, at: number): { line?: number; column?
   const line = Number(match[1]);
   if (!Number.isInteger(line) || line < 1) return { end: at };
   // `:起-止`：`止 < 起` 使**整个**后缀不成立（MUST NOT 回退成只有 `:起`——半吞会让可点范围
-  // 与文字承诺错位）。`止` 越界不在这里判，落点由 revealLine 的既有钳制处理（design §2.2）。
+  // 与文字承诺错位）。`止` 越界不在这里判，落点与高亮都由 editor 侧的既有钳制 / 行装饰上限处理
+  //（design §2.2）。`lineEnd` 是点击后瞬态行高亮的范围下界：单行 / 行列形态等于 `line`。
   if (match[2] !== undefined) {
     const rangeEnd = Number(match[2]);
     if (rangeEnd < line) return { end: at };
-    return { line, end: at + match[0].length };
+    return { line, lineEnd: rangeEnd, end: at + match[0].length };
   }
   const column = match[3] === undefined ? undefined : Number(match[3]);
   return {
     line,
     column: column !== undefined && Number.isInteger(column) && column >= 1 ? column : undefined,
+    lineEnd: line,
     end: at + match[0].length,
   };
 }
@@ -168,8 +177,8 @@ function resolveRun(
  * 内置忽略名目录、图片/二进制都在调用方那一侧滤掉）。
  *
  * 目录候选的可点范围**不含行号后缀**（目录没有行上下文）：`目录:12` 只链接目录本身；
- * 文件候选的 `:行号` / `:行号:列号` / `:起-止` 三种后缀都归可点范围，落点取后缀里的起始行
- * （`起-止` 的 `止` 不参与落点，见 `lineSuffixAt`）。
+ * 文件候选的 `:行号` / `:行号:列号` / `:起-止` 三种后缀都归可点范围，落点取后缀里的起始行；
+ * `起-止` 的 `止` 只参与点击后的瞬态行高亮，不参与落点（见 `lineSuffixAt`）。
  */
 export function findPathCandidates(text: string, index: PathTargetIndex): PathCandidate[] {
   const out: PathCandidate[] = [];
@@ -190,12 +199,13 @@ export function findPathCandidates(text: string, index: PathTargetIndex): PathCa
       at = end;
       continue;
     }
-    const suffix: { line?: number; column?: number; end: number } =
+    const suffix: { line?: number; column?: number; lineEnd?: number; end: number } =
       hit.kind === "file" ? lineSuffixAt(text, hit.to) : { end: hit.to };
     out.push({
       path: hit.path,
       kind: hit.kind,
       line: suffix.line,
+      lineEnd: suffix.lineEnd,
       column: suffix.column,
       from: hit.from,
       to: suffix.end,
@@ -315,13 +325,23 @@ export interface PathJumpPlan {
   nextFrame(run: () => void): void;
   /** 目标行是否仍不在视口内、且编辑器选区仍停在目标处（用户没动）。 */
   needsRescroll(): boolean;
+  /**
+   * 瞬态行高亮（change add-path-line-target-highlight-nov02）：闭区间行号（1-based，含两端）。
+   * 只有把 `lineEnd` 交给 `openPathAtLine` 的入口才会走到它——快速打开 / 外部只读打开 / 工具
+   * 卡片都不传 `lineEnd`，因此不产生高亮（高亮只服务 harness 正文路径链接）。
+   */
+  highlight?(from: number, to: number): void;
 }
 
 /**
- * 点击一条路径：打开 → 窗口内落点 → 下一帧复核补发一次。
+ * 点击一条路径：打开 → 窗口内落点（+ 可选的瞬态行高亮）→ 下一帧复核补发一次。
  *
  * 两次 reveal 各自单独开窗（首轮的窗在下一帧已经关了）；补发只在**用户没动**时发生，
  * 不跟用户抢选区。无行号时不碰视口。
+ *
+ * `lineEnd` 缺省 = 不产生行高亮（快速打开 / 外部只读打开 / 工具卡片）。带 `lineEnd` 时高亮与
+ * 首轮 reveal 在同一个让位窗口内施加一次：复核补发只重发 reveal，MUST NOT 重设高亮（会重置消退
+ * 计时）。
  *
  * 返回 `plan.open` 的结果（这次打开是否成功）。两个调用方对它的用法不同——harness 侧
  * 不看（点击的反馈由打开链路自己上屏），快速打开要等它才决定是否收起浮层
@@ -331,10 +351,14 @@ export async function openPathAtLine(
   plan: PathJumpPlan,
   path: string,
   line?: number,
+  lineEnd?: number,
 ): Promise<boolean> {
   const opened = await plan.open(path);
   if (!opened || line === undefined) return opened;
-  plan.duringTransition(() => plan.reveal(line));
+  plan.duringTransition(() => {
+    plan.reveal(line);
+    if (lineEnd !== undefined) plan.highlight?.(line, lineEnd);
+  });
   plan.nextFrame(() => {
     if (!plan.needsRescroll()) return;
     plan.duringTransition(() => plan.reveal(line));

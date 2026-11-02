@@ -210,10 +210,12 @@ export interface HarnessPanelDeps {
   toast(text: string): void;
   /**
    * 点击 vault 路径的落点（change harness-path-link）：装配层经既有唯一打开链路以「新标签」
-   * 意图打开，可选 1-based 行号落点。面板不自己开文件、不判文件系统——路径的合法性与落点
-   * 全在装配层与编辑器侧。
+   * 意图打开，可选 1-based 行号落点。`lineEnd` 是正文路径链接的闭区间止行（单行 / 行列形态等于
+   * `line`）：带它时点击后给该区间一次瞬态行高亮（change add-path-line-target-highlight-nov02）；
+   * 工具卡片等其它调用方不传，因此行为不变。面板不自己开文件、不判文件系统——路径的合法性与
+   * 落点全在装配层与编辑器侧。
    */
-  openVaultPath(path: string, line?: number): void;
+  openVaultPath(path: string, line?: number, lineEnd?: number): void;
   /**
    * 渲染期的目录判定（change harness-dir-link）：装配层把它接到文件树的只读查询上，面板
    * 只查表、不持有目录状态。与 `openVaultPath` 并列——目录可点性与左栏定位因此使用同一份
@@ -2846,15 +2848,18 @@ function textOf(doc: string, node: MdSyntaxNode): string {
  *  `isFile` / `isDir` 是**唯一判据**（文件索引 / 文件树目录模型），`openFile` / `revealDir`
  *  是两条互不相同的落点：前者打开文档，后者只在左栏定位。 */
 export interface PathLinkRenderContext extends PathTargetIndex {
-  openFile(path: string, line?: number): void;
+  openFile(path: string, line?: number, lineEnd?: number): void;
   revealDir(path: string): void;
 }
 
-/** 一次点击的目标：路径 + 类型（目录不带行号）。 */
+/** 一次点击的目标：路径 + 类型（目录不带行号）。`lineEnd` 是闭区间止行（单行 / 行列形态等于
+ *  `line`）；只有正文候选带它——工具卡片目标没有行范围，因此点击卡片不产生行高亮
+ *（change add-path-line-target-highlight-nov02）。 */
 interface PathLinkTarget {
   path: string;
   kind: "file" | "dir";
   line?: number;
+  lineEnd?: number;
 }
 
 /** 可点路径元素：button 而非 `<a href>`——不引入 webview 的默认导航与中键点击路径；可聚焦、
@@ -2867,7 +2872,7 @@ function createPathLinkEl(
 ): HTMLElement {
   const activate = (): void => {
     if (target.kind === "dir") ctx.revealDir(target.path);
-    else ctx.openFile(target.path, target.line);
+    else ctx.openFile(target.path, target.line, target.lineEnd);
   };
   const el = document.createElement("button");
   el.type = "button";
@@ -4983,7 +4988,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const pathLinks: PathLinkRenderContext = {
     isFile: (path) => pathLinkPaths.has(path),
     isDir: (path) => deps.isVaultDir(path),
-    openFile: (path, line) => deps.openVaultPath(path, line),
+    openFile: (path, line, lineEnd) => deps.openVaultPath(path, line, lineEnd),
     revealDir: (path) => deps.revealVaultDir(path),
   };
   /** 工具卡片目标 → 类型（文件先、目录后，与候选层的解析顺序同一口径）。结构化参数里的路径

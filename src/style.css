@@ -337,6 +337,16 @@ body {
 :root[data-theme="eink"] .cm-quote-jump-flash {
   background: rgba(0, 0, 0, 0.1);
 }
+/* 导航行高亮（change add-path-line-target-highlight-nov02）：点击 harness 正文里带行号的路径后，
+   目标行 / 行范围（`Decoration.line` 行装饰）叠一层 pending-tint；~1.4s 消退与替换 / 切标签清除
+   由 src/editor.ts 的会话内核收口，这里只管色值。eink 档与摘录跳回高亮同口径转 10% 黑
+   （`--pending-tint` 在该档恒 transparent）。 */
+.cm-line-highlight {
+  background: var(--pending-tint);
+}
+:root[data-theme="eink"] .cm-line-highlight {
+  background: rgba(0, 0, 0, 0.1);
+}
 
 /* ==========================================================================
    骨架（src/shell.ts）：四区网格。
