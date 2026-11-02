@@ -52,6 +52,33 @@
 未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与
 tip 均无异常、证据无缺口，故不另送 Alex。
 
+## 节点 2 记录（归档后）
+
+- **归档提交**：`3639d72967f350ceb002dbc350acb33bfbf229f7`（归档目录 + 并入后的 living spec +
+  `docs/backlog.md` 队列条目核销同一提交；本条记录本身是其后一笔文档提交）。分支 `--onto master`
+  重放后此 hash 由原 `8978d68f` 重建，判据以本值为准。
+- **`openspec archive` 实际输出**（2026-11-02，`node scripts/openspec-archive.mjs
+  add-path-line-range-links`，包装器内调 `npx --yes @fission-ai/openspec@1.12.0 archive
+  add-path-line-range-links --yes`，退出码 0）：`Task status: ✓ Complete` / `Specs to update:`
+  `harness: update` / `~ 2 modified` / `Totals: + 0, ~ 2, - 0, → 0` / `Specs updated successfully.` /
+  `Change 'add-path-line-range-links' archived as '2026-11-02-add-path-line-range-links'.`。两条
+  MODIFIED 是真实增量，故输出不是 `Specs already in sync; no files changed`。另有一句非阻塞警告
+  （proposal 的 Why 段超过 1000 字符）：属归档前既有正文，归档不改写。
+- **归档后修链**：`归档后修链 3 处（扫过 4 篇 Markdown / 4 条相对链接）`——
+  `proposal.md:11` 与 `proposal.md:16` 的 `../../../docs/process/openspec-workflow.md` →
+  `../../../../docs/process/openspec-workflow.md`；`specs/harness/spec.md:4` 的
+  `../../../../specs/harness/spec.md` → `../../../../../specs/harness/spec.md`。包装器末置门禁
+  `openspec-links: PASS（校验 618 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived add-path-line-range-links`，
+  2026-11-02T10:24Z，退出码 0）：`PASS（openspec/changes/archive/2026-11-02-add-path-line-range-links：
+  2 条 MODIFIED，对比 39 段；人工恢复 0 段，声明认领 0 段）`——两条 MODIFIED 的段落全部落进归档后的
+  living spec，无静默丢段。
+- **归档后复跑三读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` →
+  `Totals: 34 passed, 0 failed (34 items)`（退出码 0；归档前 35 items，减少的一项即本 change）；
+  `node scripts/openspec-archive-check.mjs` 门禁模式 → PASS（`扫过 7 份 delta，6 条 MODIFIED，对比 79
+  段，无静默丢段；归档队列 0 项已完成 change 均有唯一条目`）；`bash scripts/docs-check.sh` →
+  `docs-check: PASS`（退出码 0）。
+
 ## Why
 
 Alex 2026-10-23 的需求原话（逐字）：
