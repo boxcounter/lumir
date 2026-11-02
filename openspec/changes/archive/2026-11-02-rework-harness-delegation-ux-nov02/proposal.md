@@ -39,6 +39,28 @@
 - **放行结论**：机器 + 独立评审放行（`docs/process/openspec-workflow.md` 节点 2 五要件），
   未命中必须找 Alex 的例外类别。归档后读数见下方追加段。
 
+## 节点 2 记录（归档后）
+
+- **归档提交**：`8b3467d5dedd6daa35ec90a6343f3a956ba406bc`（归档目录 + 并入后的 living spec +
+  backlog 核销同提交）。
+- **`openspec archive` 实际输出**（2026-11-02，包装器
+  `node scripts/openspec-archive.mjs rework-harness-delegation-ux-nov02`，退出码 0）：
+  「Change 'rework-harness-delegation-ux-nov02' archived as
+  '2026-11-02-rework-harness-delegation-ux-nov02'.」/「Specs updated successfully.」/
+  「Totals: + 0, ~ 4, - 0, → 0」——4 条 MODIFIED 并入 `openspec/specs/harness-subagents/spec.md`，
+  非纯目录移动。
+- **归档后修链**：「归档后修链 0 处（扫过 5 篇 Markdown / 0 条相对链接）」；包装器末步
+  `openspec-links: PASS（校验 618 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived
+  rework-harness-delegation-ux-nov02`，2026-11-02T14:58:44Z，退出码 0）：
+  「openspec-archive-check: PASS（openspec/changes/archive/2026-11-02-rework-harness-delegation-ux-nov02：
+  4 条 MODIFIED，对比 62 段；人工恢复 0 段，声明认领 0 段）」。
+- **归档后对账**：门禁模式 `node scripts/openspec-archive-check.mjs` PASS（扫过 7 份活跃 delta，
+  6 条 MODIFIED，对比 79 段，无静默丢段；归档队列 0 项已完成 change）；`bash scripts/docs-check.sh` →
+  `docs-check: PASS`（退出码 0，含归档对账、队列齐备、backlog 出口合规与验收契约）；
+  `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 34 passed, 0 failed
+  (34 items)`（归档前 35 items，减少的一项即本 change），退出码 0。
+
 ## Why
 
 现设计把运行时的**记账对象**（run、rounds、segment、按模型 token 桶）当成了用户要看的**产品对象**，
