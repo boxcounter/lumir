@@ -66,10 +66,10 @@
       master 5084dcd`，去掉启动快照）后持 cargo 锁复跑，完整日志 `/tmp/lumir-gate-823-quick.log` ——
       **`GATE RESULT: 13/13 PASS（SKIP 0）`，`GATE_EXIT=0`**（后台任务退出码 0）。此前首跑唯一 FAIL
       是本 delta 的相对链接深度（已修）；磁盘满两次中断与启动快照 prompts 字节指纹红均已由 tower 处置
-- [x] 5.4 完整视觉套件（`scripts/visual/run.sh`，动过 `src/style.css` 与 `tests/visual/**`）：
-      **936 passed / 1 skipped（10.6m），退出码 0**；m632 场景 8/8 含三主题与两条反向验证。
-      rebase 只去掉启动快照、前端 diff 逐字不变，故该读数对新 tip 继续有效；`gate.sh visual` 整档
-      未单独重跑（cargo 侧已由 5.3 的 13/13 覆盖）
+- [x] 5.4 `bash scripts/gate.sh visual` 全绿（动过 `src/style.css` 与 `tests/visual/**`；完整日志
+      `/tmp/lumir-gate-823-visual.log`）：**`GATE RESULT: 15/15 PASS（SKIP 0）`，`GATE_EXIT=0`**
+      （后台任务退出码 0）。其中 visual-regression 613s，套件读数 **936 passed / 1 skipped（10.1m）**；
+      m632 场景 8/8 含三主题与两条反向验证。**未更新任何视觉基线**
 - [ ] 5.5 真机验收场景 221 复跑（20:00 后窗口）并把证据落 `.local/acceptance/`（不落 worktree）
 - [x] 5.6 信息卫生清扫：新增 / 改动的文档、fixture、场景对改动面做一次 text 级 grep，
       `/Users/`、`~/.config`、验收 vault 路径等零命中；样例全为合成串
