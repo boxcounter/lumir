@@ -19,6 +19,26 @@
   是否有必要，如果有必要是否有更好的方案？」「整体使用下来，我觉得目前 subagents / tasks 的 UX
   设计逻辑有问题，请你从更高维度更深度地复盘。」
 
+## 节点 2 记录（归档前）
+
+- **1. 节点 1 批准**：Alex Lee，2026-11-02，原话「好，请你动手。」（批准对象见上节）。
+- **2. 独立评审**：`reviewer-delegation-ux-final` 对 exact tip
+  `0dfa906864780220a82c7e11f021c43e7477a87c` 给出 `status: clean` / `merge: merge`，findings 为 none；
+  评审文件 `.tower/comms/reviews/review-feat-rework-harness-delegation-ux-nov02-reviewer-delegation-ux-final-r1.md`
+  （round 1 / seq 992，2026-11-02）。
+- **3. tasks**：30/30 全部勾选（`openspec/changes/rework-harness-delegation-ux-nov02/tasks.md`），无放弃项。
+- **4. 门禁与真机证据**：quick `GATE RESULT: 13/13 PASS（SKIP 0）`、`GATE_EXIT=0`
+  （`/tmp/m822-gate-quick-r8.log`）；visual `GATE RESULT: 15/15 PASS（SKIP 0）`、`GATE_EXIT=0`
+  （`/tmp/m822-gate-visual7.log`，详细日志 943 passed / 1 skipped / 10.1m）；真机 201（14 断言）/
+  240（14）/ 192（17）/ 203（11）全 PASS、合计 56 断言，
+  证据 `.local/acceptance/m822-delegation-ux-20261102/run/summary.md`。
+- **5. 规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` PASS（扫过 8 份 delta，
+  10 条 MODIFIED，对比 141 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目）；
+  `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 35 passed, 0 failed
+  (35 items)`；`bash scripts/docs-check.sh` → `docs-check: PASS`。
+- **放行结论**：机器 + 独立评审放行（`docs/process/openspec-workflow.md` 节点 2 五要件），
+  未命中必须找 Alex 的例外类别。归档后读数见下方追加段。
+
 ## Why
 
 现设计把运行时的**记账对象**（run、rounds、segment、按模型 token 桶）当成了用户要看的**产品对象**，
