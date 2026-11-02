@@ -719,9 +719,9 @@ impl SubagentHub {
                     stopped_by: stopped_by.map(str::to_string),
                     rounds,
                     segments: segment,
-                    input_tokens: usage.input_tokens as u64,
-                    cached_tokens: usage.cached_tokens as u64,
-                    output_tokens: usage.output_tokens as u64,
+                    input_tokens: usage.input_tokens,
+                    cached_tokens: usage.cached_tokens,
+                    output_tokens: usage.output_tokens,
                     duration_ms,
                     tool_calls,
                 });
