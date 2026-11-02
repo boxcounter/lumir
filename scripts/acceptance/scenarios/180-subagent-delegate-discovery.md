@@ -58,8 +58,10 @@ steps:
         ax: { has: "SGA-PARENT-ONE" }
       - label: 子运行过程不进主 transcript（可见面 ≠ 进上下文）
         ax: { not: "SGA-CHILD-ONE 子代理结论" }
-      - label: 子代理清单注入生效（任务区标题显示本次会话的完成计数）
-        ax: { has: "/任务 · 本次会话 1 个已完成/" }
+      - label: 完成后面板零占位（M822：不再常驻「本次会话完成数」汇总）
+        ax: { not: "/任务.*个运行中/" }
+      - label: 终态由 transcript 的 task 行承载（行程身份只有一处）
+        ax: { has: "/task research.*已完成/" }
       - label: 父会话留存里有一段 subrun sidecar（用量同源）
         file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"agent":"research".*"kind":"subrun".*"status":"completed".*$/' }
       - label: 子运行审计流水按 run 独立落盘（run_open 首段）

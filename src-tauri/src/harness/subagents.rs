@@ -72,7 +72,8 @@ struct HubInner {
     sink: Mutex<Option<Arc<dyn EventSink>>>,
     concurrency: ConcurrencyGate,
     registry: Mutex<Registry>,
-    runs: Mutex<HashMap<String, ActiveRun>>,
+    /// 活动表：键序稳定（BTreeMap）——快照的 `live_subruns` 行序因此在多次读取间不抖动。
+    runs: Mutex<BTreeMap<String, ActiveRun>>,
     wake: Mutex<WakeState>,
     wake_tx: Mutex<Option<Sender<WakeEvent>>>,
     /// 本回合起的 run 的停止标志（父回合停止 = 广播；新回合清空）。
@@ -106,14 +107,16 @@ struct RetainedRun {
 }
 
 struct ActiveRun {
-    #[allow(dead_code)]
     agent: String,
-    #[allow(dead_code)]
     description: String,
-    #[allow(dead_code)]
     model: String,
-    #[allow(dead_code)]
     segment: u32,
+    background: bool,
+    /// 本段的进度读数（`on_round` 就地更新；快照 `live_subruns` 的数据源）。
+    rounds: u32,
+    tool_calls: u32,
+    last_tool: Option<String>,
+    elapsed_ms: u64,
     abort: Arc<AtomicBool>,
 }
 
@@ -199,7 +202,7 @@ impl SubagentHub {
                 sink: Mutex::new(None),
                 concurrency: ConcurrencyGate::new(limit),
                 registry: Mutex::new(Registry::default()),
-                runs: Mutex::new(HashMap::new()),
+                runs: Mutex::new(BTreeMap::new()),
                 wake: Mutex::new(WakeState::default()),
                 wake_tx: Mutex::new(None),
                 turn_runs: Mutex::new(Vec::new()),
@@ -305,6 +308,45 @@ impl SubagentHub {
             "apr-{}",
             self.inner.approval_seq.fetch_add(1, Ordering::SeqCst)
         )
+    }
+
+    /// 在跑 run 的进度就地更新（`on_round` 每回合一次）：活动表是快照 `live_subruns` 的唯一
+    /// 数据源，进度因此必须落在这里——切回 vault 时没有事件可回放。
+    fn record_progress(
+        &self,
+        run_id: &str,
+        rounds: u32,
+        tool_calls: u32,
+        last_tool: Option<&str>,
+        elapsed_ms: u64,
+    ) {
+        let mut runs = self.inner.runs.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(run) = runs.get_mut(run_id) {
+            run.rounds = rounds;
+            run.tool_calls = tool_calls;
+            run.last_tool = last_tool.map(str::to_string);
+            run.elapsed_ms = elapsed_ms;
+        }
+    }
+
+    /// 在跑 run 列表（`harness_state.live_subruns`；change rework-harness-delegation-ux-nov02）：
+    /// 只含活动表里的 run——段收尾后整项移除，切走期间收尾的 run 因此不会在切回时复活。
+    pub fn live_snapshot(&self) -> Vec<session::LiveSubrunSnapshot> {
+        let runs = self.inner.runs.lock().unwrap_or_else(|e| e.into_inner());
+        runs.iter()
+            .map(|(run_id, run)| session::LiveSubrunSnapshot {
+                run_id: run_id.clone(),
+                agent: run.agent.clone(),
+                description: run.description.clone(),
+                model: run.model.clone(),
+                background: run.background,
+                segment: run.segment,
+                rounds: run.rounds,
+                tool_calls: run.tool_calls,
+                last_tool: run.last_tool.clone(),
+                elapsed_ms: run.elapsed_ms,
+            })
+            .collect()
     }
 
     /// 自动唤醒状态快照（`harness_state.auto_wake`）。
@@ -655,6 +697,8 @@ impl SubagentHub {
         denials: u32,
         usage: Usage,
         audit: Option<&str>,
+        tool_calls: u32,
+        duration_ms: u64,
     ) {
         let _ = self
             .inner
@@ -665,6 +709,22 @@ impl SubagentHub {
                 }
                 parent.record_subrun_usage(model, &usage);
                 parent.mark_subrun_segment(model);
+                // 逐 run 汇总（与 sidecar 同一次调用写入）：恢复后 `task` 行的终态真源。
+                parent.record_subrun_run(session::SubrunRunSnapshot {
+                    run_id: run_id.to_string(),
+                    agent: agent.to_string(),
+                    description: description.to_string(),
+                    model: model.to_string(),
+                    status: status.to_string(),
+                    stopped_by: stopped_by.map(str::to_string),
+                    rounds,
+                    segments: segment,
+                    input_tokens: usage.input_tokens as u64,
+                    cached_tokens: usage.cached_tokens as u64,
+                    output_tokens: usage.output_tokens as u64,
+                    duration_ms,
+                    tool_calls,
+                });
                 parent.jsonl().record(&serde_json::json!({
                     "kind": "subrun",
                     "run_id": run_id,
@@ -676,6 +736,8 @@ impl SubagentHub {
                     "stopped_by": stopped_by,
                     "rounds": rounds,
                     "denied_calls": denials,
+                    "tool_calls": tool_calls,
+                    "duration_ms": duration_ms,
                     // 四键与 `llm_response.usage` 同形：`cache_write_tokens` 是恢复重算
                     // `writes` 的唯一来源，缺了它 live 分桶表与恢复重算就不可能相等。
                     "usage": {
@@ -1719,6 +1781,11 @@ fn start_task_inner(
                 description: args.description.clone(),
                 model: model.clone(),
                 segment,
+                background,
+                rounds: 0,
+                tool_calls: 0,
+                last_tool: None,
+                elapsed_ms: 0,
                 abort: abort.clone(),
             },
         );
@@ -2167,6 +2234,7 @@ fn report_envelope(
             "rounds": report.rounds,
             "denied_calls": report.denials,
             "tool_calls": report.tool_calls,
+            "duration_ms": report.duration_ms,
         }),
         super::run::RunOutcome::Partial { stopped_by } => serde_json::json!({
             "ok": true,
@@ -2185,6 +2253,7 @@ fn report_envelope(
             "rounds": report.rounds,
             "denied_calls": report.denials,
             "tool_calls": report.tool_calls,
+            "duration_ms": report.duration_ms,
         }),
         super::run::RunOutcome::Failed { code, message } => serde_json::json!({
             "ok": false,
@@ -2300,6 +2369,8 @@ fn finish_failed(
         0,
         Usage::default(),
         audit.as_deref(),
+        0,
+        report.duration_ms,
     );
     seed.hub.emit_failed_terminal(
         &seed.run_id,
@@ -2633,6 +2704,8 @@ impl ChildContext {
             report.denials,
             usage,
             audit.as_deref(),
+            report.tool_calls.values().sum(),
+            report.duration_ms,
         );
         if let Some(sink) = &self.parent_sink {
             // 摘要正文（tasks §10.2 的行详情数据源）：设计 §13 的事件表只列 `summary_chars`，
@@ -2882,14 +2955,19 @@ impl RunContext for ChildContext {
     fn on_round(&mut self, round: u32) {
         self.rounds = round;
         let tool_calls: u32 = self.tool_calls.values().sum();
+        let last_tool = self.tool_calls.keys().next().cloned();
+        let elapsed_ms = self.elapsed_running().as_millis() as u64;
+        // 活动表同步进度：切回 vault 时前端只能从快照重建在跑的行（没有事件可回放）。
+        self.hub
+            .record_progress(&self.run_id, round, tool_calls, last_tool.as_deref(), elapsed_ms);
         if let Some(sink) = &self.parent_sink {
             sink.emit(events::subagent_progress(
                 &self.run_id,
                 self.segment,
                 round,
                 tool_calls,
-                self.tool_calls.keys().next().map(String::as_str),
-                self.elapsed_running().as_millis() as u64,
+                last_tool.as_deref(),
+                elapsed_ms,
             ));
         }
     }

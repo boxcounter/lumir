@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "这件放到后台跑。",
+      "tool_calls": [
+        {
+          "id": "call_vsw",
+          "name": "task",
+          "arguments": "{\"agent\": \"research\", \"prompt\": \"后台长任务\", \"description\": \"后台长任务\", \"background\": true}"
+        }
+      ]
+    },
+    {
+      "text": "SWB-CHILD 后台长任务完成。",
+      "delay_ms": 40000
+    },
+    {
+      "text": "SWB-PARENT 父会话：后台已启动。"
+    },
+    {
+      "text": "SWB-AUTO 后台完成，汇报如下。",
+      "delay_ms": 2000
+    }
+  ],
+  "subrun_span": 1
+}

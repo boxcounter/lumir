@@ -646,6 +646,8 @@ impl Runtime {
             &file.records,
             session::subrun_usage_seed(&file.session_open),
         );
+        // 逐 run 终态汇总（M822）：恢复出的 `task` 行据它对账「启动信封里的 running」。
+        let subrun_runs = session::subrun_runs_from_records(&file.records);
         // 续写新文件：session_open 沿用源文件的装配事实（system 全文 + assembly 清单），
         // provider / model / thinking 记**当前**配置（后续请求实际使用的身份）；
         // opened_from=restore + restored_from=源会话 id（谱系链：这份会话恢复自哪份）。
@@ -725,6 +727,7 @@ impl Runtime {
         new_session.restore_usage(usage_snapshot, cache_totals);
         // 分桶落种与之同源（同一条「live 与留存可推导值一致」纪律）。
         new_session.restore_subrun_usage(subrun_buckets);
+        new_session.restore_subrun_runs(subrun_runs);
         // 重建通知的投递标记复制进新文件（同一批的 run_ids / wake_batch）：这份会话若在
         // 通知进入任何 `llm_request` 之前再次被退出，下一次恢复仍能重建它。
         for notice in &restored_notices {

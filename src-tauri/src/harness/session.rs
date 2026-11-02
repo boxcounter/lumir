@@ -350,6 +350,46 @@ pub fn subrun_usage_from_records(
     buckets
 }
 
+/// 父会话留存的 `subrun` sidecar → 逐 run 汇总（M822）：与 live 侧 `record_subrun_run` 同一
+/// 合并口径，恢复后的 `task` 行终态与 live 一致。
+pub fn subrun_runs_from_records(
+    records: &[serde_json::Value],
+) -> BTreeMap<String, SubrunRunSnapshot> {
+    let mut runs: BTreeMap<String, SubrunRunSnapshot> = BTreeMap::new();
+    for record in records {
+        if record["kind"].as_str() != Some("subrun") {
+            continue;
+        }
+        let Some(run_id) = record["run_id"].as_str().filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        let usage = record.get("usage").cloned().unwrap_or_default();
+        let number = |key: &str| -> u64 {
+            usage.get(key).and_then(|value| value.as_u64()).unwrap_or(0)
+        };
+        let segment = SubrunRunSnapshot {
+            run_id: run_id.to_string(),
+            agent: record["agent"].as_str().unwrap_or("").to_string(),
+            description: record["description"].as_str().unwrap_or("").to_string(),
+            model: record["model"].as_str().unwrap_or("").to_string(),
+            status: record["status"].as_str().unwrap_or("").to_string(),
+            stopped_by: record["stopped_by"].as_str().map(str::to_string),
+            rounds: record["rounds"].as_u64().unwrap_or(0) as u32,
+            segments: record["segment"].as_u64().unwrap_or(0) as u32,
+            input_tokens: number("input_tokens"),
+            cached_tokens: number("cached_tokens"),
+            output_tokens: number("output_tokens"),
+            duration_ms: record["duration_ms"].as_u64().unwrap_or(0),
+            tool_calls: record["tool_calls"].as_u64().unwrap_or(0) as u32,
+        };
+        runs
+            .entry(run_id.to_string())
+            .and_modify(|existing| existing.accumulate(segment.clone()))
+            .or_insert(segment);
+    }
+    runs
+}
+
 /// `session_open.subrun_usage` 的宽容解析（链式恢复 / 压缩边界的种子）：键 = 模型 id，
 /// 值 = [`SubrunUsage`] 的序列化。缺键 / 形状不符 ⇒ 空表（重算只凭记录也能回到正确读数）。
 pub fn subrun_usage_seed(open: &serde_json::Value) -> BTreeMap<String, SubrunUsage> {
@@ -375,6 +415,8 @@ impl StateSnapshot {
             pending_approvals: Vec::new(),
             auto_wake: AutoWakeSnapshot::default(),
             subrun_usage: BTreeMap::new(),
+            live_subruns: Vec::new(),
+            subrun_runs: Vec::new(),
             warn_ctx_pct,
             in_flight: false,
             thinking: ThinkingState {
@@ -419,6 +461,14 @@ pub struct StateSnapshot {
     pub auto_wake: AutoWakeSnapshot,
     /// 子运行用量分桶（design §9.1）：键 = 模型 id。父会话读数不掺这些数字。
     pub subrun_usage: BTreeMap<String, SubrunUsage>,
+    /// 在跑的子运行（change rework-harness-delegation-ux-nov02）：切回 vault 时前端据此重建
+    /// 任务行与「停止」能力。**只含活动表里的 run**——切走期间已收尾的不在表里，因此不会被
+    /// 复活成运行中；前台 run 的读数随每回合 progress 就地更新，段收尾后整项移除。
+    pub live_subruns: Vec<LiveSubrunSnapshot>,
+    /// 已收尾 run 的逐 run 汇总（M822）：恢复出的 `task` 行在启动信封之后收尾时，靠它对账
+    /// 终态（信封里的 `status: running` 是后台调用当时的快照，不是结果）。按 `run_id` 合并
+    /// 多段：rounds / steps / tokens / 段数 / 用时都是求和，status 取最近一段。
+    pub subrun_runs: Vec<SubrunRunSnapshot>,
     /// 上下文用量警示阈值（面板警示条用，缺省 85）。
     pub warn_ctx_pct: f64,
     /// 思考程度档位与 provider 能力（面板思考 chip 的数据源，M362）。
@@ -428,6 +478,64 @@ pub struct StateSnapshot {
     /// 同一读取口径（活会话是内存态的有效标题，恢复 / 列举从留存读）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+}
+
+/// 在跑子运行的一行（`harness_state.live_subruns`，change rework-harness-delegation-ux-nov02）：
+/// 前端切回 vault 时据此重建任务行。只含**活动表**里的 run；`elapsed_ms` 是本段的已运行时长
+/// （resume 段不累计——跨段总时长不可由事件推出，不伪造）。
+#[derive(Debug, Clone, Serialize)]
+pub struct LiveSubrunSnapshot {
+    pub run_id: String,
+    pub agent: String,
+    pub description: String,
+    pub model: String,
+    pub background: bool,
+    /// 这是该 run 的第几段（resume 段 = 2、3…）。
+    pub segment: u32,
+    pub rounds: u32,
+    pub tool_calls: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_tool: Option<String>,
+    pub elapsed_ms: u64,
+}
+
+/// 已收尾子运行的逐 run 汇总（`harness_state.subrun_runs`，change
+/// rework-harness-delegation-ux-nov02）：多段按 `run_id` 合并（rounds / steps / tokens / 段数 /
+/// 用时求和，status 取最近一段）。恢复出的 `task` 行据此把「启动信封里的 running」对账成终态。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SubrunRunSnapshot {
+    pub run_id: String,
+    pub agent: String,
+    pub description: String,
+    pub model: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stopped_by: Option<String>,
+    pub rounds: u32,
+    pub segments: u32,
+    pub input_tokens: u64,
+    pub cached_tokens: u64,
+    pub output_tokens: u64,
+    pub duration_ms: u64,
+    pub tool_calls: u32,
+}
+
+impl SubrunRunSnapshot {
+    /// 段收尾时就地合并（同一 run 的多段累加；status / 模型取最近一段）。
+    pub fn accumulate(&mut self, segment: SubrunRunSnapshot) {
+        self.agent = segment.agent;
+        self.description = segment.description;
+        self.model = segment.model;
+        self.status = segment.status;
+        self.stopped_by = segment.stopped_by;
+        self.rounds = self.rounds.saturating_add(segment.rounds);
+        self.segments = self.segments.max(segment.segments);
+        self.input_tokens = self.input_tokens.saturating_add(segment.input_tokens);
+        self.cached_tokens = self.cached_tokens.saturating_add(segment.cached_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(segment.output_tokens);
+        self.duration_ms = self.duration_ms.saturating_add(segment.duration_ms);
+        self.tool_calls = self.tool_calls.saturating_add(segment.tool_calls);
+    }
 }
 
 /// 面板可见的批准请求摘要（不含通道 sender）。
@@ -613,6 +721,8 @@ pub struct Session {
     subagent_hub: Option<Arc<SubagentHub>>,
     /// 子运行用量分桶（design §9.1）：键 = 模型 id，每段收尾累加一次。
     subrun_usage: BTreeMap<String, SubrunUsage>,
+    /// 逐 run 的终态汇总（M822）：sidecar 写入时就地合并，恢复时由同名字段重算。
+    subrun_runs: BTreeMap<String, SubrunRunSnapshot>,
     jsonl: JsonlWriter,
 }
 
@@ -668,6 +778,7 @@ impl Session {
             subagent_token: next_subagent_token(),
             subagent_hub: None,
             subrun_usage: BTreeMap::new(),
+            subrun_runs: BTreeMap::new(),
             jsonl,
         }
     }
@@ -716,6 +827,19 @@ impl Session {
     /// 与 [`Self::restore_usage`] 同一条纪律——快照 / 累计与留存可推导值一致。
     pub fn restore_subrun_usage(&mut self, buckets: BTreeMap<String, SubrunUsage>) {
         self.subrun_usage = buckets;
+    }
+
+    /// 段收尾的逐 run 汇总（与 `subrun` sidecar 同一次调用写入）：恢复后 `task` 行的终态真源。
+    pub fn record_subrun_run(&mut self, run: SubrunRunSnapshot) {
+        self.subrun_runs
+            .entry(run.run_id.clone())
+            .and_modify(|existing| existing.accumulate(run.clone()))
+            .or_insert(run);
+    }
+
+    /// 恢复 / 链式恢复的逐 run 汇总种子（与分桶重算同一口径）。
+    pub fn restore_subrun_runs(&mut self, runs: BTreeMap<String, SubrunRunSnapshot>) {
+        self.subrun_runs = runs;
     }
 
     pub fn root(&self) -> &PathBuf {
@@ -914,6 +1038,12 @@ impl Session {
                 .map(|hub| hub.wake_snapshot())
                 .unwrap_or_default(),
             subrun_usage: self.subrun_usage.clone(),
+            live_subruns: self
+                .subagent_hub
+                .as_ref()
+                .map(|hub| hub.live_snapshot())
+                .unwrap_or_default(),
+            subrun_runs: self.subrun_runs.values().cloned().collect(),
             warn_ctx_pct,
             in_flight: self.in_flight(),
             thinking: ThinkingState {
@@ -1622,6 +1752,63 @@ mod tests {
             subrun_usage_from_records(&reordered, Default::default()),
             recomputed
         );
+    }
+
+    /// 逐 run 汇总（M822）：多段按 run_id 合并（rounds / steps / tokens / 用时求和，status 取
+    /// 最近一段）；live 写入与留着重算逐字段相等。
+    #[test]
+    fn subrun_runs_merge_segments_and_match_restore() {
+        let records = vec![
+            serde_json::json!({
+                "kind": "subrun", "run_id": "r1", "segment": 1, "agent": "research",
+                "description": "两段任务", "model": "model-a", "status": "partial",
+                "stopped_by": "tokens", "rounds": 5, "denied_calls": 0,
+                "tool_calls": 9, "duration_ms": 1200,
+                "usage": {"input_tokens": 100, "cached_tokens": 40, "output_tokens": 7}
+            }),
+            serde_json::json!({
+                "kind": "subrun", "run_id": "r1", "segment": 2, "agent": "research",
+                "description": "两段任务", "model": "model-a", "status": "completed",
+                "rounds": 2, "denied_calls": 0,
+                "tool_calls": 3, "duration_ms": 800,
+                "usage": {"input_tokens": 50, "cached_tokens": 10, "output_tokens": 3}
+            }),
+            serde_json::json!({"kind": "llm_request"}),
+        ];
+        let recomputed = subrun_runs_from_records(&records);
+        let run = &recomputed["r1"];
+        assert_eq!(run.status, "completed", "status 取最近一段");
+        assert_eq!(run.stopped_by, None, "最近一段没有触顶原因");
+        assert_eq!(run.rounds, 7);
+        assert_eq!(run.segments, 2);
+        assert_eq!(run.tool_calls, 12);
+        assert_eq!(run.duration_ms, 2000);
+        assert_eq!(run.input_tokens, 150);
+        assert_eq!(run.cached_tokens, 50);
+        assert_eq!(run.output_tokens, 10);
+
+        // live 侧同一合并口径：两段 record_subrun_run 的结果与重算相等。
+        let mut live = test_session();
+        for segment in 1..=2u32 {
+            let record = &records[(segment - 1) as usize];
+            let usage = &record["usage"];
+            live.record_subrun_run(SubrunRunSnapshot {
+                run_id: "r1".into(),
+                agent: "research".into(),
+                description: "两段任务".into(),
+                model: "model-a".into(),
+                status: record["status"].as_str().unwrap().into(),
+                stopped_by: record["stopped_by"].as_str().map(str::to_string),
+                rounds: record["rounds"].as_u64().unwrap() as u32,
+                segments: segment,
+                input_tokens: usage["input_tokens"].as_u64().unwrap(),
+                cached_tokens: usage["cached_tokens"].as_u64().unwrap(),
+                output_tokens: usage["output_tokens"].as_u64().unwrap(),
+                duration_ms: record["duration_ms"].as_u64().unwrap(),
+                tool_calls: record["tool_calls"].as_u64().unwrap() as u32,
+            });
+        }
+        assert_eq!(live.subrun_runs.values().next(), Some(run));
     }
 
     /// `subrun` 记录不影响父会话自己的读数（ctx% / cache% 只由父的往返算）。

@@ -415,20 +415,23 @@ body {
    M660（Alex 2026-10-24「vault switch 的滚动条遮挡了移除 vault 按钮」）：细条（4px）仍会压住
    行尾 20px 常驻钮的右缘，因此这三处列表取**隐藏档**而非细条档——vault 切换浮层的
    `.vault-list`、harness 会话浮层的 `.lumir-hp-sesspop-list`、权限规则段的
-   `.lumir-hp-permpop-rules`。三处共同形态 = 容器右缘 0 留白 + 逐行常驻钮（× / 删除），
+   `.lumir-hp-permpop-rules`；M822 起子代理控制区列表 `.lumir-tp-list` 同档（行右缘有
+   「停止 / 知道了」常驻钮）。共同形态 = 容器右缘 0 留白 + 逐行常驻钮（× / 删除 / 停止），
    overlay 条与钮占同一条带（M658 滚动条盘点的 P1 结论）。
    两条声明都要：scrollbar-width 管标准通道，::-webkit-scrollbar 兜 WKWebView 与 chromium 的
    经典滚动条（缺了它，chromium 的经典条仍占布局宽）。配方只有这一份，消费者 MUST NOT 各抄。 */
 .tabstrip,
 .vault-list,
 .lumir-hp-sesspop-list,
-.lumir-hp-permpop-rules {
+.lumir-hp-permpop-rules,
+.lumir-tp-list {
   scrollbar-width: none;
 }
 .tabstrip::-webkit-scrollbar,
 .vault-list::-webkit-scrollbar,
 .lumir-hp-sesspop-list::-webkit-scrollbar,
-.lumir-hp-permpop-rules::-webkit-scrollbar {
+.lumir-hp-permpop-rules::-webkit-scrollbar,
+.lumir-tp-list::-webkit-scrollbar {
   display: none;
 }
 /* author 的 display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .editor-notice） */

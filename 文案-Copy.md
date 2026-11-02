@@ -465,9 +465,6 @@
 | D478 | agent 面板 · 任务区标题计数 | 作者 | {count} 个运行中 | {count} running | M590：前台运行中的 run 计数段（与后台 / 待批段同排）。消费点 `taskHeadline`。 |
 | D479 | agent 面板 · 任务区标题计数 | 作者 | {count} 个后台运行中 | {count} running in background | M590：后台运行中的 run 计数段——后台与前台分开数，避免把「回合已结束还在跑」读成前台阻塞。消费点 `taskHeadline`。 |
 | D480 | agent 面板 · 任务区标题计数 | 作者 | {count} 个等待批准 | {count} awaiting approval | M590（design §19.2）：待批数必须在折叠头可见——把阻塞决策藏在折叠区里是最坏的形态。消费点 `taskHeadline`。 |
-| D481 | agent 面板 · 任务区收敛摘要 | 作者 | 本次会话 {parts} | This session: {parts} | M590（design §19.1）：全部任务收敛后任务区收敛为一行摘要，`{parts}` 由完成数 / 部分结果数两段（D482 / D483）拼成。消费点 `taskHeadline`。 |
-| D482 | agent 面板 · 任务区收敛摘要 | 作者 | {count} 个已完成 | {count} completed | M590：收敛摘要里的完成计数段。消费点 `taskHeadline`。 |
-| D483 | agent 面板 · 任务区收敛摘要 | 作者 | {count} 个部分结果 | {count} partial | M590：收敛摘要里的部分结果计数段。消费点 `taskHeadline`。 |
 | D484 | agent 面板 · 任务行状态词 | 作者 | 运行中 | Running | M590：行状态词（运行中走脉冲点承载，词只在悬停 / 读屏名里出现）。状态词永不截断（同 M401「保住终态词」纪律）。消费点 `subrunStatusWord`。 |
 | D485 | agent 面板 · 任务行状态词 | 作者 | 已完成 | Completed | M590：终态词。消费点 `subrunStatusWord`。 |
 | D486 | agent 面板 · 任务行状态词 | 作者 | 部分结果 | Partial result | M590：触顶返回部分结果的终态词（与完成区分，读的人才知道还有活没干）。消费点 `subrunStatusWord`。 |
@@ -490,15 +487,11 @@
 | D503 | agent 面板 · 触顶原因词 | 作者 | 时间预算 | time budget | M590：`stopped_by = time` 的词。消费点 `subrunStoppedByWord`。 |
 | D504 | agent 面板 · 触顶原因词 | 作者 | 配额不足 | quota exhausted | M590（design §7.3）：`stopped_by = quota` 的词——与接口错误分开（正确反应是等或换模型，不是重试）。消费点 `subrunStoppedByWord`。 |
 | D505 | agent 面板 · 触顶原因词 | 作者 | 接口错误 | API error | M590：`stopped_by = error` 的词。消费点 `subrunStoppedByWord`。 |
-| D506 | agent 面板 · 按模型用量区 | 作者 | 子任务用量（按模型） | Subtask usage (by model) | M590（tasks §10.6 / design §9.1）：子运行用量分桶的区标题。父会话控制行读数不掺这些数字（两处各说各的才不误导）。消费点 `subrunUsageRows` 的渲染。 |
-| D507 | agent 面板 · 按模型用量行 | 作者 | 输入 {input}（缓存 {cached}）· 输出 {output} · {segments} 段 | Input {input} (cached {cached}) · Output {output} · {segments} segments | M590：单个模型桶的读数行（`{input}` / `{cached}` / `{output}` 是格式化后的 token 数，`{segments}` = 段数）。消费点 `subrunUsageRows`。 |
+| D507 | agent 面板 · 会话用量行 | 作者 | 输入 {input}（缓存 {cached}）· 输出 {output} · {segments} 段 | Input {input} (cached {cached}) · Output {output} · {segments} segments | M590 / M822：会话聚合里一个模型桶（或单桶总量）的读数行（`{input}` / `{cached}` / `{output}` 是格式化后的 token 数，`{segments}` = 段数）。消费点 `subrunUsageRows`（经 `subrunUsageSummary` 决定是否分组）。 |
 | D514 | agent 面板 · 后台完成通知 | 作者 | 后台任务完成 · {agent} | Background task finished · {agent} | M590（tasks §10.4 / design §19.3）：单条后台完成通知的头部——与用户消息视觉区分（左侧色条 + 标签）。`{agent}` = 子代理名。消费点 `noticeHeadline`。 |
 | D515 | agent 面板 · 后台完成通知 | 作者 | {count} 个后台任务完成 · 已合并为一条通知 | {count} background tasks finished · merged into one notice | M590（design §19.3）：同一合并窗口 / 同一批次的多条通知合并成一条时的头部。消费点 `noticeHeadline`。 |
-| D516 | agent 面板 · 后台完成通知 | 作者 | 详情见任务面板 | Details in the tasks panel | M590：通知正文末尾的详情指引（通知只给 agent / description / 摘要首行，细节在任务面板与审计流水）。消费点通知渲染。 |
 | D517 | agent 面板 · 子运行批准卡来源行 | 作者 | 来自 {agent}：{description} | From {agent}: {description} | M590（design §19.2）：子运行透传的批准卡点名发起者（卡片跟着发起者走，渲染在该 run 的行内）。父会话自己的批准卡不显示本行。消费点任务面板的批准卡渲染。 |
 | D518 | agent 面板 · 通知行状态 | 作者 | {status}（{reason}） | {status} ({reason}) | M590：通知行里「状态 + 触顶原因」的组合形态（`{status}` = D484–D488，`{reason}` = D501–D505）。独立成条的原因：全角括号不能拼在 TS 字面量里（`src/**` 零 CJK 门禁）。消费点 `noticeLineText`。 |
-| D519 | agent 面板 · 任务行读数 | 作者 | {rounds} 轮 · {tokens} | {rounds} rounds · {tokens} | M590（tasks §10.1「轮次 · tokens」）：收尾后有真 token 读数的行读数形态。消费点 `runReadText`。 |
-| D520 | agent 面板 · 任务行读数 | 作者 | {rounds} 轮 | {rounds} rounds | M590：运行中尚无 token 读数时的行读数形态（不给假数——tokens 只在收尾后可见）。消费点 `runReadText`。 |
 | D522 | agent 面板 · 任务行停止钮读屏名 | 作者 | 停止该任务 | Stop this task | M590 r1：任务行停止钮的 aria-label（可见文本仍是 D490「停止」）。面板里发送钮的读屏名也叫「停止」（D378），两钮同名时真机 AX 选择器无法稳定区分（场景 201 现场：AX 点击未触发 `harness_subagent_stop`）。消费点 `updateRunRow` 的停止钮。 |
 | D523 | agent 面板 · 定时任务批准卡 | 作者 | 时间 | Time | M615（change add-cron-conversational-registration design §6.3）：任务要素块「时间」行的键名，值 = 批准载荷的 `at`。消费点 `renderCronTaskBlock`。 |
 | D524 | agent 面板 · 定时任务批准卡 | 作者 | 星期 | Days | M615：任务要素块「星期」行的键名，值由 D537–D543 按 `days` 顺序拼接。消费点 `renderCronTaskBlock`。 |
@@ -859,6 +852,13 @@
 | D872 | 作者 | 作者 | 有失败结果 | Failed result | 同上（未读档二）：面板不在屏幕上期间收到错误终态。形状 = 实心圆点 + 外环，与「有新的回复」不单靠颜色可辨；用户主动停止（`aborted`）不产生本档。消费点 src/harness-panel.ts 的 applyActivityBadge。 |
 | D873 | cron 通知点击被拒 · 任务已删除 | 作者 | 这条提醒对应的任务已删除 | The task for this reminder has been deleted | change add-cron-notification-relaunch §5.3（Alex 2026-10-28 对裁决点 2 回「按推荐」）：用户点了一条通知，而它对应的任务已从配置删除。**必须上屏**——用户刚主动点了一下，静默看起来像坏了（既有合同「任一步失败 SHALL 给人话反馈」）。`cron:notice` 带 `code = cron_click_task_deleted` 时由 `src/copy.ts` 的 `cronNoticeText` 取列；发出点是 `src-tauri/src/cron.rs` 的 `ClickRejection::notice_code`（Rust 侧只给 code + 空 params）。同一语义对进程内点击与跨进程恢复都生效，不按来源分叉。 |
 | D874 | cron 通知点击被拒 · 提醒已过期 | 作者 | 这条提醒已过期，今天到点会再提醒 | This reminder has expired — you'll be reminded again when it's due today | 同 change §5.1 判据 4（裁决点 1「跨天点击不运行只提示」）：去重与派发全部按**本地日期**记账，跨天补跑会与今天自己那次派发叠加成两次运行，`last_fired` 也会失去「今天跑过没有」的单一判据。`code = cron_click_notice_stale`，消费点与 D873 同。 |
+| D875 | agent 面板 · 任务行详情步数 | 作者 | {steps} 步 | {steps} steps | M822（change rework-harness-delegation-ux-nov02）：行详情的步数段。轮次从读数里退场（预算词不进 L0/L1），步数与用时承担「做了多少」。消费点 `subrunDetailMeta`。 |
+| D876 | agent 面板 · 单次用量行 | 作者 | 用量：输入 {input}（缓存 {cached}）· 输出 {output} | Usage: input {input} (cached {cached}) · output {output} | M822：transcript `task` 行详情里的 per-run 用量（live 与恢复同一行文案）。全零时整行不出现（不伪造 0 读数）。消费点 `subrunUsageLine`。 |
+| D877 | agent 面板 · 控制区标题待查看计数 | 作者 | {count} 个需要你查看 | {count} to review | M822：后台 run 收敛为 partial / failed / stopped 时保留在控制区，标题点名还有几件需要用户查看；点「知道了」后消失。消费点 `taskHeadline`。 |
+| D878 | agent 面板 · 行详情轮次预算原因 | 作者 | 用尽轮次预算（{rounds} 轮） | Round budget exhausted ({rounds} rounds) | M822：`stopped_by = rounds` 时的原因行——轮次只在触顶时作为原因出现（它是预算词，不是进度读数）。其它触顶原因沿用 D498 + D501–D505。消费点 `subrunDetailMeta`。 |
+| D879 | agent 面板 · 后台失败行的确认钮 | 作者 | 知道了 | Got it | M822：后台 run 的 partial / failed / stopped 行保留到用户显式确认（「后台失败保留到用户看见」）；点它就移除该行，同一 run 不再出现。消费点控制区行的确认钮。 |
+| D880 | agent 面板 · 会话浮层用量段标题 | 作者 | 本会话子任务用量 | Subtask usage this session | M822：会话聚合改为按需入口（会话浮层顶部）。单模型桶时只显示一行总量、不出现模型名分组；≥2 桶才按模型分行。消费点会话浮层渲染。 |
+| D881 | agent 面板 · 行详情段数 | 作者 | {segments} 段 | {segments} segments | M822：同一 `run_id` 的 resume 段合并为一行，详情用它说明「这是一次交办的第几段」——两段不再看起来像两个子代理。消费点 `updateRunRow` / `renderTaskRowDetail`。 |
 ## 编号沿革
 
 **编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D874**（D870–D872 是 change add-harness-activity-presence 的 harness toggle 活动状态描述；D873–D874 是本 change 的两条「通知点击被拒」提示：任务已删除 / 提醒已过期，接 D872 末位）（change improve-keybindings-lookup-oct24 的键位速查 D593–D694：71 条命令的人类标签 + 面板 UI（标题 / 查询 / 捕获 / 计数 / 作用域 / 条件 / 空态 / 详情 / 提示），接 M700 的 D592 末位。M700 的 quick-open 结果区与 Enter 同源 D589–D592：直接打开行（vault 内 / vault 外只读）/ 落点行标记 / 折叠多命中的两段式提示（接 D588 末位；change quick-open-file-oct23 的「结果区与 Enter 的判决同源」）。M686 的引用路径解码失败文案 D588：`attachment_decode_failed` 在引用语境读「无法解码这张图片」，粘贴语境仍读 D438（接 D587 末位；change fix-quote-decode-error-copy-oct24）。M662 的 quote 链路一致性修复 D585–D587：引用路径格式不支持的措辞 / 未引用留痕 / 引用卡片的含图派生读数（接 D584 末位）。change quick-open-file-oct23 的 M655 文案 D570–D583：浮层读屏名 / 占位 / 用法行 / 找不到 / 目录 / 命中总数 / 超上限 / modeline 只读段 / 标签的只读图标与读屏名 / 外部不支持文件类 / 打开失败 / 未装载 vault + ⌘P 绑定来由；r1 评审补齐 D584 = 外部只读会话的「编辑尝试一次性提示」（同上裁决 ③ 的兑现，接 D583 末位）。change harness-permission-rules-oct23 的权限规则文案 D564–D569：持久规则次级动作 / 带粒度的会话记忆 / 浮层规则段标题 / 删除钮读屏名 + 两条写回错误兜底（接 M646 的 D563 末位）。M644 的 harness「回到底部」浮钮两条可访问名 D555–D556；M646 的 vault 列表移除文案 D557–D563：行尾移除钮读屏名 / 行内确认句 / 确认钮 / 已移除提示 / 撤销钮 + 后端两条错误的人话（接 M644 的 D556 末位）。M635 的通知送不出去文案 D551–D554：D551–D552 是注册回执的两档成因，D553–D554 是投递连续失败 toast 的两档；D548–D550 是 change add-sidebar-resize-hide-and-root-create 的 ⌘B 键位来由 + 分隔条读屏名 + 宽度写盘失败 toast；D546–D547 是 M629 的图片标签 modeline 读数，D523–D543 是 M615 的定时任务批准卡文案，D544–D545 是 M627 的键位来由，D477–D522 由 M590 子代理任务面板批占用）。
@@ -1023,6 +1023,8 @@
 - 多串格的格内分档由 `Intl` 产出、callout 类型标签等成组条目见 D159–D320 行。
 
 **已退场 / 被替代的条目**（编号停用，见「编号沿革」）：
+
+- **D481 / D482 / D483 / D506 / D516 / D519 / D520（M822，子代理可见面重做）**——常驻「本次会话完成数」汇总（D481–D483）、composer 上方的按模型用量区（D506）与 token/轮次行读数（D519 / D520）随「空闲态零占位、单次用量进详情、会话聚合按需」整体退场；D516「详情见任务面板」指向一个收尾后已经不存在的位置（复盘 D1），一并删除。替代物：D875–D880（详情 / 会话浮层 / 确认钮）与 D507（会话用量行）。
 
 - `图片解码失败：{引用}`（M178）——把「格式不支持 / 被 CSP 拦下 / 渲染为零尺寸」一律说成解码失败，改由 D113 承担（D111 / D112 为同批补登）。
 - 「预览标签不入盘」的表述（D99）——`src/vault-switcher.ts` 入盘过滤与 `EditorSession.preview` 随 change preview-tab-removal 删除，摘要数字 = 全部有路径的标签数。

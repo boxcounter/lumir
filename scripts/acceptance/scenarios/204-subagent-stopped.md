@@ -55,7 +55,7 @@ steps:
       has: ["/你停止了自动回合/"]
     timeoutMs: 60000
     expect:
-      - label: 提示行给停止档文案
+      - label: 对话流提示给停止档文案
         ax: { has: "你停止了自动回合" }
       - label: 停止的自动回合没有产出汇报（没有被唤醒的回复）
         ax: { not: "SGS-AUTO" }

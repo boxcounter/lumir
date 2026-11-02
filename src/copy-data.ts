@@ -1501,14 +1501,15 @@ const COPY_TABLE = {
   // 子代理任务面板（change add-harness-subagents tasks §10，M590）。取号从 D477 起：M593
   // 的 cron 运行契约错误信封先占了 D476（并发分支，避免撞号）；本批是任务区 / 行详情 /
   // 触顶提示 / 按模型用量 / 后台完成通知的可见文案。
-  //   D477–D483 任务区标题与计数（标题由「任务」+ 各计数段拼成；全部收敛后只出完成 / 部分
-  //              结果的本次会话摘要）；
+  //   D477–D480 任务控制区标题与计数（只数控制区可见行；空闲态整块不出现——M822 起不再有
+  //              「本次会话完成数」摘要）；
   //   D484–D488 行状态词（终态词永不截断）；D489「后台」标记；D490–D491 行内动作；
-  //   D492–D494 自动回合触顶提示行的两种文案与「已继续」；
-  //   D495–D500 行详情（模型 / 轮次步数 / 用时 / 触顶原因 / 摘要 / 最近一步）；
+  //   D492–D494 对话流触顶提示的两种文案与「已继续」；
+  //   D495–D500 行详情（模型 / 步数 / 用时 / 触顶原因 / 摘要 / 最近一步；轮次读数已退场，
+  //              只在触顶时由 D878 作为原因出现）；
   //   D501–D505 触顶原因词（stopped_by 的值域，前端只做词映射）；
-  //   D506–D507 按模型用量区；
-  //   D514–D517 后台完成通知（单条 / 合并 / 详情指引 / 点名发起者）。
+  //   D507 会话浮层的按需用量行（单桶只显示总量）；
+  //   D514–D515 / D517 后台完成通知（单条 / 合并 / 点名发起者；D516「详情见任务面板」已退场）。
   D477: {
     zh: "任务",
     en: "Tasks",
@@ -1524,18 +1525,6 @@ const COPY_TABLE = {
   D480: {
     zh: "{count} 个等待批准",
     en: "{count} awaiting approval",
-  },
-  D481: {
-    zh: "本次会话 {parts}",
-    en: "This session: {parts}",
-  },
-  D482: {
-    zh: "{count} 个已完成",
-    en: "{count} completed",
-  },
-  D483: {
-    zh: "{count} 个部分结果",
-    en: "{count} partial",
   },
   D484: {
     zh: "运行中",
@@ -1625,10 +1614,6 @@ const COPY_TABLE = {
     zh: "接口错误",
     en: "API error",
   },
-  D506: {
-    zh: "子任务用量（按模型）",
-    en: "Subtask usage (by model)",
-  },
   D507: {
     zh: "输入 {input}（缓存 {cached}）· 输出 {output} · {segments} 段",
     en: "Input {input} (cached {cached}) · Output {output} · {segments} segments",
@@ -1641,27 +1626,15 @@ const COPY_TABLE = {
     zh: "{count} 个后台任务完成 · 已合并为一条通知",
     en: "{count} background tasks finished · merged into one notice",
   },
-  D516: {
-    zh: "详情见任务面板",
-    en: "Details in the tasks panel",
-  },
   D517: {
     zh: "来自 {agent}：{description}",
     en: "From {agent}: {description}",
   },
-  // D518–D520：任务行读数的两个组合形态（轮次 / 轮次 + tokens）与通知行的状态 + 触顶原因
-  // （原实现把全角括号拼在 TS 字面量里，被 `src/**` 零 CJK 门禁挡下——文案一律走表）。
+  // D518：通知行的状态 + 触顶原因（D519 / D520 两条轮次读数已随 M822 退场；原实现把全角括号
+  // 拼在 TS 字面量里，被 `src/**` 零 CJK 门禁挡下——文案一律走表）。
   D518: {
     zh: "{status}（{reason}）",
     en: "{status} ({reason})",
-  },
-  D519: {
-    zh: "{rounds} 轮 · {tokens}",
-    en: "{rounds} rounds · {tokens}",
-  },
-  D520: {
-    zh: "{rounds} 轮",
-    en: "{rounds} rounds",
   },
   // D522：任务行停止钮的读屏名（可见文本仍是 D490「停止」）。独立成条的原因：面板里发送钮的
   // 读屏名也叫「停止」（D378），两钮同名时真机 AX 选择器无法稳定区分（场景 201 现场：点击落到
@@ -2398,6 +2371,40 @@ const COPY_TABLE = {
   D874: {
     zh: "这条提醒已过期，今天到点会再提醒",
     en: "This reminder has expired — you'll be reminded again when it's due today",
+  },
+  // D875–D881：子代理可见面重做（change rework-harness-delegation-ux-nov02）。取号接 D874
+  // 的末位（D477–D522 是首版任务区条目，其中一部分随本次重做退场，编号不复用）。消费点
+  // 一律在 `src/harness-panel.ts`：D875 / D876 / D878 由 `subrunDetailMeta` / `subrunUsageLine`
+  // 产出（live 与恢复同一行文案），D877 由 `taskHeadline`，D879 是控制区行的确认钮，
+  // D880 是会话浮层的按需用量段标题。
+  D875: {
+    zh: "{steps} 步",
+    en: "{steps} steps",
+  },
+  D876: {
+    zh: "用量：输入 {input}（缓存 {cached}）· 输出 {output}",
+    en: "Usage: input {input} (cached {cached}) · output {output}",
+  },
+  D877: {
+    zh: "{count} 个需要你查看",
+    en: "{count} to review",
+  },
+  D878: {
+    zh: "用尽轮次预算（{rounds} 轮）",
+    en: "Round budget exhausted ({rounds} rounds)",
+  },
+  D879: {
+    zh: "知道了",
+    en: "Got it",
+  },
+  D880: {
+    zh: "本会话子任务用量",
+    en: "Subtask usage this session",
+  },
+  // D881：resume 段的段数读数（行详情；同一 run 的第二个身份问题由它给出可见解释）。
+  D881: {
+    zh: "{segments} 段",
+    en: "{segments} segments",
   },
 } satisfies Record<string, CopyEntry>;
 

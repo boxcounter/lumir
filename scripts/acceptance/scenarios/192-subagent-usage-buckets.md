@@ -57,13 +57,26 @@ steps:
         file: { path: "env:harness/sessions/*/*.jsonl", count: { pattern: '/"kind":"subrun".*"model":"mock-fast"/', exact: 1 } }
       - label: 强模型桶同样独立
         file: { path: "env:harness/sessions/*/*.jsonl", count: { pattern: '/"kind":"subrun".*"model":"mock-strong"/', exact: 1 } }
-      - label: 任务区收敛为摘要 + 按模型用量区
-        ax: { has: "子任务用量（按模型）" }
-      - label: 用量区列出快模型桶
+      - label: 完成后任务控制区整块消失（无「本次会话完成数」汇总，M822 C1）
+        ax: { not: "/任务.*个运行中/" }
+      - label: 不出现常驻按模型用量表（M822：用量改按需查看）
+        ax: { not: "子任务用量（按模型）" }
+
+  - name: 打开会话浮层查看按需用量段
+    do: click
+    target: { role: AXPopUpButton, name: "SUBQ|新会话" }
+    expect:
+      - label: 会话浮层顶部出现「本会话子任务用量」
+        ax: { has: "本会话子任务用量" }
+      - label: 多模型时按模型分行：快模型桶在场
         ax: { has: "mock-fast" }
-      - label: 用量区列出强模型桶
+      - label: 强模型桶也在（≥2 桶才分组）
         ax: { has: "mock-strong" }
-      - shot: 01-按模型分桶
+      - shot: 01-会话用量按模型分桶
+
+  - name: 收起会话浮层
+    do: key
+    key: escape
 
   - name: 等诊断日志落盘（日志写线程按批次刷盘，留一拍再读）
     do: sleep
@@ -107,13 +120,22 @@ steps:
   - name: 恢复历史会话
     do: clickInNode
     target: { name: "SUBQ" }
-  - name: 等用量区按留存重算后出现
+  - name: 等恢复后的会话就位
     do: waitFor
     waitFor:
-      has: ["子任务用量（按模型）"]
+      has: ['/AXButton \(发送\)/']
     timeoutMs: 30000
     expect:
-      - label: 恢复后两个模型桶仍在（重算结果与 live 一致）
+      - label: 恢复后空闲态任务控制区不出现（存量用量不占位）
+        ax: { not: "/任务.*个运行中/" }
+
+  - name: 打开会话浮层查看按需用量段
+    do: click
+    target: { role: AXPopUpButton, name: "SUBQ|新会话" }
+    expect:
+      - label: 恢复后用量段仍在（读数由留存里的 subrun sidecar 重算）
+        ax: { has: "本会话子任务用量" }
+      - label: 恢复后两个模型桶仍在（与 live 相等）
         ax: { has: "mock-fast" }
       - label: 强模型桶也在
         ax: { has: "mock-strong" }
@@ -125,8 +147,8 @@ steps:
 # 192 —— 8.10 用量按模型分桶与恢复
 
 两个并行 run 分别用 `mock-fast` / `mock-strong`。判据：事件、父会话 sidecar（两个模型桶各一条）、
-任务区用量区、以及**重启后面板重建时用量区仍列出两个桶**（读数由留存里的 `subrun` sidecar 重算，
-与 live 相等）。
+会话浮层的按需用量段（M822 起常驻用量区退场，聚合只在按需入口），以及**重启恢复后用量段仍列出
+两个桶**（读数由留存里的 `subrun` sidecar 重算，与 live 相等）。
 
 恢复路径的口径（本场景的实测边界）：应用重启后会自动把最近的会话读回内存，面板据此重建 readonly
 读数——用量区因此出现且两桶都在。`harness_resume_session` 另开新留存文件时把分桶种子写进
