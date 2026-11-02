@@ -647,7 +647,11 @@ impl Runtime {
             session::subrun_usage_seed(&file.session_open),
         );
         // 逐 run 终态汇总（M822）：恢复出的 `task` 行据它对账「启动信封里的 running」。
-        let subrun_runs = session::subrun_runs_from_records(&file.records);
+        // 种子来自源文件首行（链式恢复 / 压缩边界）：新文件没有旧 sidecar 时从种子接上。
+        let subrun_runs = session::subrun_runs_from_records(
+            &file.records,
+            session::subrun_runs_seed(&file.session_open),
+        );
         // 续写新文件：session_open 沿用源文件的装配事实（system 全文 + assembly 清单），
         // provider / model / thinking 记**当前**配置（后续请求实际使用的身份）；
         // opened_from=restore + restored_from=源会话 id（谱系链：这份会话恢复自哪份）。
@@ -675,6 +679,8 @@ impl Runtime {
             "cache_totals": serde_json::to_value(cache_totals).unwrap_or_default(),
             // 子运行分桶种子（链式恢复用）：这份文件再被恢复时，桶从这里的值起算。
             "subrun_usage": serde_json::to_value(&subrun_buckets).unwrap_or_default(),
+            // 逐 run 终态汇总种子（M822）：这份文件再被恢复时，`task` 行的终态真源不断档。
+            "subrun_runs": serde_json::to_value(&subrun_runs).unwrap_or_default(),
         });
         let writer = jsonl::JsonlWriter::create(&new_id, &scope.vault_id, &open_payload)?;
         // 面板视角重建（M398）：灌回的 input 项映射成面板消息，reasoning 明文挂其后的
@@ -1871,6 +1877,7 @@ pub fn harness_new_session(
 /// 键集合是 m303 消费形状的超集：`vault`（会话标识 = vault 根路径，M312）/ `messages[]` /
 /// `usage` / `pending_approvals`（列表，change add-harness-subagents §8.3 起替代单槽
 /// `pending_approval`）/ `auto_wake`（链计数 / 上限 / 触顶原因）/ `subrun_usage`（按模型分桶）/
+/// `live_subruns`（在跑 run 的进度快照，M822）/ `subrun_runs`（已收尾 run 的逐 run 汇总，M822）/
 /// `warn_ctx_pct` / `thinking`（M362：`{level, supported}`）/
 /// `title`（change add-session-auto-naming：有效标题，无标题时缺键——前端回落首条用户消息口径）。
 #[tauri::command(rename_all = "snake_case")]

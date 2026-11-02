@@ -403,6 +403,16 @@ pub struct SessionContext<'a> {
     cron: Option<std::sync::Arc<dyn crate::cron::CronPort>>,
 }
 
+/// 压缩跨边界的子运行种子（M822）：模型桶 + 逐 run 终态汇总。新文件没有旧的 `subrun` sidecar，
+/// 不落种的话压缩后恢复会让后台失败 / 部分结果重新显示成「运行中」。取值与 `rotate` 在同一把
+/// 锁内完成（调用点），后台段收尾的 sidecar 不会插进种子与文件切换之间。
+fn compact_subrun_seeds(session: &session::Session) -> (serde_json::Value, serde_json::Value) {
+    (
+        serde_json::to_value(session.subrun_usage()).unwrap_or_default(),
+        serde_json::to_value(session.subrun_runs()).unwrap_or_default(),
+    )
+}
+
 impl<'a> SessionContext<'a> {
     pub fn new(
         sink: &'a dyn EventSink,
@@ -796,10 +806,11 @@ impl RunContext for SessionContext<'_> {
             // 压缩前的 `subrun` sidecar，桶必须随 `session_open` 落种，否则这份会话再被恢复
             // 时分桶会归零（live 表挂在 Session 对象上不清零，留存不可推导即两套读数）。
             // 取值与 rotate 在同一把锁内完成——后台段收尾的 sidecar 不会插进种子与文件切换之间。
-            let buckets = serde_json::to_value(session.subrun_usage()).unwrap_or_default();
-            session
-                .jsonl()
-                .update_pending_open(|open| open["subrun_usage"] = buckets);
+            let (buckets, runs) = compact_subrun_seeds(session);
+            session.jsonl().update_pending_open(|open| {
+                open["subrun_usage"] = buckets;
+                open["subrun_runs"] = runs;
+            });
             // 继承标题（design D7）：新文件 `session_open` 之后紧接 `inherit` 记录。
             if let Some(title) = &inherited_title {
                 session
@@ -875,6 +886,48 @@ mod tests {
                 None => std::env::remove_var("XDG_CONFIG_HOME"),
             }
         }
+    }
+
+    /// 压缩携带逐 run 终态汇总（M822）：种子写进新文件后，再恢复（文件没有旧 sidecar）
+    /// 必须得到同一份汇总——否则后台失败/部分结果会在压缩后恢复时变回「运行中」。
+    #[test]
+    fn compact_carries_subrun_run_seed() {
+        let writer = jsonl::JsonlWriter::at_path(
+            std::path::PathBuf::from("/tmp/lumir-m822-compact/x.jsonl"),
+            &serde_json::json!({}),
+        );
+        let mut session = session::Session::new(
+            std::path::PathBuf::from("/tmp/lumir-m822-compact"),
+            "sys".into(),
+            Vec::new(),
+            crate::harness::thinking::ThinkingEffort::default(),
+            writer,
+        );
+        session.record_subrun_run(session::SubrunRunSnapshot {
+            run_id: "r1".into(),
+            agent: "research".into(),
+            description: "后台两段".into(),
+            model: "mock-fast".into(),
+            background: true,
+            status: "failed".into(),
+            stopped_by: None,
+            rounds: 3,
+            segments: 1,
+            input_tokens: 10,
+            cached_tokens: 2,
+            output_tokens: 1,
+            duration_ms: 900,
+            tool_calls: 4,
+        });
+        let (_, runs) = compact_subrun_seeds(&session);
+        assert_eq!(runs["r1"]["run_id"], "r1");
+        assert_eq!(runs["r1"]["status"], "failed");
+        assert_eq!(runs["r1"]["background"], true);
+        let restored = session::subrun_runs_from_records(
+            &[],
+            session::subrun_runs_seed(&serde_json::json!({ "subrun_runs": runs })),
+        );
+        assert_eq!(restored, *session.subrun_runs());
     }
 
     /// `enabled=false` 时工具清单与既有 9 件基线**深度相等**（change design §2.2 的回归锚）：

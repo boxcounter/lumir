@@ -141,6 +141,7 @@ const RUN_R2_FAILED = [
     agent: "research",
     description: "切回仍在跑",
     model: "mock-fast",
+    background: true,
     status: "failed",
     stopped_by: null,
     rounds: 4,
@@ -244,11 +245,18 @@ test("切走清 DOM、切回按 live 快照重建；切走期间收尾不复活"
   await switchVault(page, "subagent-vault", "lumir-m822-subagent-vault");
   await page.keyboard.press("Meta+Shift+A");
   await expect(page.locator(".lumir-harness")).toBeVisible();
-  await expect(page.locator(".lumir-tp")).toBeHidden();
-  await expect(page.locator(".lumir-tp-run")).toHaveCount(0);
+  // 切走期间收尾的后台失败必须保留到用户确认（评审 P1-5）：控制区一行、可「知道了」。
+  await expect(page.locator(".lumir-tp")).toBeVisible();
+  await expect(page.locator('.lumir-tp-run[data-run="r2"]')).toContainText("失败");
+  const dismiss = page.locator('.lumir-tp-run[data-run="r2"]').getByRole("button", { name: "知道了" });
+  await expect(dismiss).toBeVisible();
   // 恢复出的 `task` 行按逐 run 汇总对账成终态：不得停在启动信封的「运行中」。
   const taskRow = page.locator(".lumir-hp-taskwrap").first();
   await expect(taskRow).toContainText("失败");
   await expect(taskRow).toContainText("25s");
   await expect(taskRow).not.toContainText("运行中");
+  // 确认后该行不再出现，控制区随之消失（同一 run 不再要求确认）。
+  await dismiss.click();
+  await expect(page.locator(".lumir-tp-run")).toHaveCount(0);
+  await expect(page.locator(".lumir-tp")).toBeHidden();
 });

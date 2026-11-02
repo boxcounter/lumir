@@ -3581,6 +3581,8 @@ export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): 
                 model: event.model,
                 background: event.background,
                 status: "running",
+                // 上一段的触顶原因不得延续到新段（design §4.1）；读数保留、原因复位。
+                stoppedBy: null,
                 segments: run.segments + 1,
                 segmentBase: {
                   rounds: run.rounds,
@@ -3798,6 +3800,80 @@ export function parseLiveSubruns(raw: unknown): SubrunView[] {
   return views;
 }
 
+/** 快照的逐 run 终态汇总（`harness_state.subrun_runs`）→ 终态视图。恢复行对账与会话切回后的
+ *  「后台异常待确认」都靠它；`running` 记录跳过（终态真源里不应出现在跑的 run）。 */
+export function parseSubrunRuns(raw: unknown): SubrunView[] {
+  if (!Array.isArray(raw)) return [];
+  const views: SubrunView[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const value = entry as Record<string, unknown>;
+    if (typeof value.run_id !== "string" || value.run_id === "") continue;
+    const status = subrunStatusOf(value.status);
+    if (status === null || status === "running" || status === "waiting") continue;
+    const number = (key: string): number => {
+      const rawValue = value[key];
+      return typeof rawValue === "number" && Number.isFinite(rawValue) ? rawValue : 0;
+    };
+    views.push({
+      runId: value.run_id,
+      agent: typeof value.agent === "string" ? value.agent : "",
+      description: typeof value.description === "string" ? value.description : "",
+      model: typeof value.model === "string" ? value.model : "",
+      background: value.background === true,
+      status,
+      rounds: number("rounds"),
+      toolCalls: number("tool_calls"),
+      lastTool: null,
+      steps: [],
+      elapsedMs: number("duration_ms"),
+      inputTokens: number("input_tokens"),
+      cachedTokens: number("cached_tokens"),
+      outputTokens: number("output_tokens"),
+      segments: Math.max(1, number("segments")),
+      segmentBase: null,
+      stoppedBy: typeof value.stopped_by === "string" ? value.stopped_by : null,
+      deniedCalls: 0,
+      summaryChars: 0,
+      summary: null,
+      approvalIds: [],
+    });
+  }
+  return views;
+}
+
+/** 逐 run 终态汇总并入本地视图：已有终态行以汇总的累计读数为准（保留事件带来的 steps /
+ *  摘要）；在跑行不动（它的段基线由 `mergeLiveSubruns` 从这份终态行取）。 */
+export function mergeTerminalSubruns(
+  previous: readonly SubrunView[],
+  terminal: readonly SubrunView[],
+): SubrunView[] {
+  const merged = new Map<string, SubrunView>();
+  for (const run of previous) merged.set(run.runId, run);
+  for (const fresh of terminal) {
+    const old = merged.get(fresh.runId);
+    if (old === undefined) {
+      merged.set(fresh.runId, fresh);
+      continue;
+    }
+    if (isLiveSubrun(old)) continue;
+    merged.set(fresh.runId, {
+      ...old,
+      background: fresh.background,
+      status: fresh.status,
+      stoppedBy: fresh.stoppedBy,
+      rounds: fresh.rounds,
+      toolCalls: fresh.toolCalls,
+      segments: Math.max(old.segments, fresh.segments),
+      inputTokens: fresh.inputTokens,
+      cachedTokens: fresh.cachedTokens,
+      outputTokens: fresh.outputTokens,
+      elapsedMs: fresh.elapsedMs || old.elapsedMs,
+    });
+  }
+  return [...merged.values()];
+}
+
 /** 快照 live 列表与本地视图的合并（`applyTaskReadings` 的唯一入口）：在跑行以快照为权威——
  *  快照有 → 建行 / 更新读数；快照无 → 立即移除（切走期间收尾的 run 不得以运行中复活）。
  *  后台异常终态行（待确认）不在 live 列表里，原样保留。 */
@@ -3844,8 +3920,9 @@ export function mergeLiveSubruns(
       background: fresh.background,
       status: "running",
       stoppedBy: null,
-      rounds: old.rounds,
-      toolCalls: old.toolCalls,
+      // 快照里的 live 读数是**段内**值：跨段累计 = 上一段汇总 + 本段已到达的读数。
+      rounds: old.rounds + fresh.rounds,
+      toolCalls: old.toolCalls + fresh.toolCalls,
       segments: Math.max(old.segments + 1, fresh.segments),
       segmentBase: {
         rounds: old.rounds,
@@ -7486,6 +7563,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  task 徽章 + agent + description + 终态尾注；运行中的行带「停止」动作。状态只由 run 视图
    *  驱动。 */
   function renderTaskToolRow(entry: TaskRowEntry, run: SubrunView | null, failure?: string): void {
+    // live 渲染接管后，点击展开必须走 run 视图的详情；恢复信封的 renderDetail 只属于恢复态。
+    entry.renderDetail = null;
     const args = taskArgsOf(entry.argsSummary);
     entry.row.classList.remove("is-running", "is-done", "is-fail", "is-waiting");
     let icon: HTMLElement;
@@ -7591,7 +7670,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  （快照恢复 / 事件缺口下也要让历史任务的详情可达）。 */
   function taskRowFor(run: SubrunView): TaskRowEntry {
     const bound = taskRowEntries.find((entry) => entry.runId === run.runId);
-    if (bound !== undefined) return bound;
+    if (bound !== undefined) {
+      // resume 段：第二段的 `tool_call started` 已经建了一条未绑定的任务行，而同一 run 的
+      // 首个身份已有绑定行。这里收走那条重复行——同一次交办在 transcript 只保留一个身份
+      // （mission：不要再把两段讲成两个子代理）。只删最近一条未绑定行，且只在 run 已绑定
+      // 的分支里发生，因此不会误伤新 run 的调用行。
+      for (let i = taskRowEntries.length - 1; i >= 0; i -= 1) {
+        const entry = taskRowEntries[i];
+        if (entry === undefined || entry.runId !== null || entry.settled) continue;
+        entry.wrap.remove();
+        for (const block of [activeTools, ...sealedToolBlocks]) {
+          if (block !== null) block.rows = block.rows.filter((row) => row !== entry.wrap);
+        }
+        taskRowEntries.splice(i, 1);
+        break;
+      }
+      return bound;
+    }
     const match =
       taskRowEntries.find(
         (entry) =>
@@ -7672,16 +7767,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     const tailParts: string[] = [];
     if (failed) {
+      // 终态词永不缺位（C3）：先给状态词，再给失败原因（message / code 可能缺席）。
+      tailParts.push(status !== null ? subrunStatusWord(status) : statusRaw || "failed");
       const message =
         typeof envelope.message === "string"
           ? envelope.message
           : typeof envelope.code === "string"
             ? envelope.code
             : "";
-      // 失败信封没有 message / code（例如由快照逐 run 汇总对账出来的 failed）：退回状态词，
-      // 不让终态词缺位——终态词永不截断、也不靠图标单独承载。
       if (message !== "") tailParts.push(message);
-      else tailParts.push(status !== null ? subrunStatusWord(status) : statusRaw);
     } else if (status !== null) {
       const word = subrunStatusWord(status);
       tailParts.push(
@@ -7722,10 +7816,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       tailEl.textContent = `· ${tailParts.join(" · ")}`;
       text.append(document.createTextNode(" "), tailEl);
     }
-    entry.row.replaceChildren(
-      failed ? createToolIcon("fail") : status === "running" ? createToolIcon("running") : createToolIcon("done"),
-      text,
-    );
+    // 恢复图标与 live 同一映射（评审 P1-4）：partial → 暂停、failed/stopped → 叉、running → 脉冲、
+    // done → 对勾。未知状态退回叉（不冒充完成）。
+    entry.row.replaceChildren(taskIcon(status ?? "failed"), text);
     entry.renderDetail = () => {
       entry.detail.replaceChildren();
       const meta = document.createElement("div");
@@ -9082,6 +9175,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       dismiss.addEventListener("click", (event: MouseEvent) => {
         event.stopPropagation();
         acknowledgedRuns.add(run.runId);
+        if (acknowledgedRuns.size > 200) {
+          const oldest = acknowledgedRuns.values().next().value;
+          if (typeof oldest === "string") acknowledgedRuns.delete(oldest);
+        }
         renderTaskArea();
       });
       els.actions.append(dismiss);
@@ -9223,6 +9320,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (autoWake.blocked !== null) wakeContinued = false;
     }
     subrunUsage = state.subrun_usage ?? null;
+    // 逐 run 终态汇总：先落终态行（后台异常在切回 / 重载后仍以待确认行出现），再合并 live——
+    // live 段的段基线因此能取到上一段的累计读数（评审 P1-5）。
+    if (Array.isArray(state.subrun_runs)) {
+      subruns = mergeTerminalSubruns(subruns, parseSubrunRuns(state.subrun_runs));
+    }
     // live run 列表：缺键 = 旧后端 / 桩，不应用（不伪造在途，也不静默清空）。
     if (Array.isArray(state.live_subruns)) {
       subruns = mergeLiveSubruns(subruns, parseLiveSubruns(state.live_subruns));
@@ -9234,6 +9336,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       attachTaskApproval(parsed.source.run_id, parsed.request, parsed.source);
     }
     syncRestoredRunRows(state.subrun_runs);
+    // 切回 / 重载后仍在跑的 run：恢复行必须换成 live 形态（行内「停止」、用时、展开详情）。
+    // 只修 `subruns` 不刷新 DOM 的话，恢复行永远是启动信封的只读样式（评审 P1-1）。
+    for (const run of subruns.filter(isLiveSubrun)) refreshTaskRow(run);
     renderTaskArea();
     renderWakeNotice();
   }
@@ -10105,7 +10210,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     decidedApprovals.clear();
     // 任务区是**会话**的视图：换会话即清空（终态 run 的「本次会话摘要」不跨会话）。
     subruns = [];
-    acknowledgedRuns.clear();
+    // `acknowledgedRuns` 不随会话清空：run id 全局唯一，用户确认过的后台异常不应在切 vault /
+    // 重载后被重新要求确认（「同一 run 不再出现」）。集合按确认顺序淘汰，避免无界增长。
     taskApprovals.clear();
     taskDecidedApprovals.clear();
     taskDecisions.clear();

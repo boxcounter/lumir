@@ -16,12 +16,14 @@ import {
   formatDuration,
   isLiveSubrun,
   mergeLiveSubruns,
+  mergeTerminalSubruns,
   noticeHeadline,
   noticeLineText,
   noticeRunsOf,
   parseApprovalSource,
   parseLiveSubruns,
   parseNoticeDisplayText,
+  parseSubrunRuns,
   reduceSubruns,
   subrunDetailMeta,
   subrunStatusOf,
@@ -331,6 +333,7 @@ test("reduceSubruns：同一 run_id 的 resume 段合并为一个身份，rounds
   assert.equal(runs.length, 1, "同一 run 的第二段不得另立一行");
   assert.equal(runs[0]?.segments, 2);
   assert.equal(runs[0]?.status, "running");
+  assert.equal(runs[0]?.stoppedBy, null, "上一段的触顶原因不得延续到新段");
   assert.equal(runs[0]?.rounds, 5, "第二段尚未发进度前保留第一段读数");
   assert.equal(runs[0]?.toolCalls, 12);
   assert.equal(runs[0]?.steps.length, 1);
@@ -529,10 +532,92 @@ test("parseLiveSubruns / mergeLiveSubruns：快照是在跑行的权威来源，
   assert.equal(resumed.length, 1);
   assert.equal(resumed[0]?.status, "running");
   assert.equal(resumed[0]?.segments, 3, "上一段是第 2 段 ⇒ 新段是第 3 段");
-  assert.equal(resumed[0]?.rounds, background[0]!.rounds, "新段读数尚未到达时保留旧累计");
+  assert.equal(
+    resumed[0]?.rounds,
+    background[0]!.rounds + 3,
+    "跨段累计 = 上一段汇总 + 本段已到达的读数",
+  );
   assert.notEqual(resumed[0]?.segmentBase, null);
 
   assert.deepEqual(parseLiveSubruns(null), []);
+});
+
+test("parseSubrunRuns / mergeTerminalSubruns：后台异常切回后仍进控制区；跨段 live 以汇总为基线", () => {
+  const records = parseSubrunRuns([
+    {
+      run_id: "r1",
+      agent: "research",
+      description: "后台两段",
+      model: "mock-fast",
+      background: true,
+      status: "partial",
+      stopped_by: "tokens",
+      rounds: 5,
+      segments: 1,
+      input_tokens: 100,
+      cached_tokens: 40,
+      output_tokens: 7,
+      duration_ms: 1200,
+      tool_calls: 9,
+    },
+    {
+      run_id: "r2",
+      agent: "scribe",
+      description: "前台完成",
+      model: "mock-fast",
+      background: false,
+      status: "completed",
+      rounds: 2,
+      segments: 1,
+      input_tokens: 10,
+      cached_tokens: 0,
+      output_tokens: 2,
+      duration_ms: 900,
+      tool_calls: 3,
+    },
+    { run_id: "bad", status: "running" },
+  ]);
+  assert.deepEqual(records.map((run) => run.runId), ["r1", "r2"], "running 记录跳过、身份缺失丢弃");
+  assert.equal(records[0]?.status, "partial");
+  assert.equal(records[0]?.stoppedBy, "tokens");
+  assert.equal(records[0]?.background, true);
+
+  // 切回后（本地视图为空）后台异常必须进入控制区并保留到确认；前台完成不进。
+  const merged = mergeTerminalSubruns([], records);
+  assert.deepEqual(
+    taskAreaRuns(merged, new Set()).map((run) => run.runId),
+    ["r1"],
+  );
+  assert.deepEqual(taskAreaRuns(merged, new Set(["r1"])), []);
+
+  // 第二段在切走期间 resume：live 段以 r1 的逐 run 汇总为基线累计（rounds / steps / tokens）。
+  const live = parseLiveSubruns([
+    {
+      run_id: "r1",
+      agent: "research",
+      description: "后台两段",
+      model: "mock-fast",
+      background: true,
+      segment: 2,
+      rounds: 2,
+      tool_calls: 3,
+      elapsed_ms: 500,
+    },
+  ]);
+  const resumed = mergeLiveSubruns(merged, live);
+  const run = resumed.find((item) => item.runId === "r1")!;
+  assert.equal(run.status, "running");
+  assert.equal(run.rounds, 7, "第一段 5 轮 + 第二段已到达的 2 轮");
+  assert.equal(run.toolCalls, 12);
+  assert.equal(run.segments, 2);
+  assert.equal(run.inputTokens, 100, "token 基线取上一段汇总（新段尚无收尾读数）");
+  assert.deepEqual(run.segmentBase, {
+    rounds: 5,
+    toolCalls: 9,
+    inputTokens: 100,
+    cachedTokens: 40,
+    outputTokens: 7,
+  });
 });
 
 test("isLiveSubrun：只有运行中 / 等待批准算在跑", () => {

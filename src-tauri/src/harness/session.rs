@@ -354,8 +354,9 @@ pub fn subrun_usage_from_records(
 /// 合并口径，恢复后的 `task` 行终态与 live 一致。
 pub fn subrun_runs_from_records(
     records: &[serde_json::Value],
+    seed: BTreeMap<String, SubrunRunSnapshot>,
 ) -> BTreeMap<String, SubrunRunSnapshot> {
-    let mut runs: BTreeMap<String, SubrunRunSnapshot> = BTreeMap::new();
+    let mut runs = seed;
     for record in records {
         if record["kind"].as_str() != Some("subrun") {
             continue;
@@ -371,6 +372,7 @@ pub fn subrun_runs_from_records(
             agent: record["agent"].as_str().unwrap_or("").to_string(),
             description: record["description"].as_str().unwrap_or("").to_string(),
             model: record["model"].as_str().unwrap_or("").to_string(),
+            background: record["background"].as_bool().unwrap_or(false),
             status: record["status"].as_str().unwrap_or("").to_string(),
             stopped_by: record["stopped_by"].as_str().map(str::to_string),
             rounds: record["rounds"].as_u64().unwrap_or(0) as u32,
@@ -386,6 +388,15 @@ pub fn subrun_runs_from_records(
             .or_insert(segment);
     }
     runs
+}
+
+/// `session_open.subrun_runs` 的宽容解析（链式恢复 / 压缩边界的种子）：键 = run id。
+/// 与 [`subrun_usage_seed`] 同一纪律——缺键 / 形状不符 ⇒ 空表，重算只凭 sidecar 也能回到
+/// 正确读数；种子只补「新文件没有旧 sidecar」的缺口（评审 P1-3）。
+pub fn subrun_runs_seed(open: &serde_json::Value) -> BTreeMap<String, SubrunRunSnapshot> {
+    open.get("subrun_runs")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default()
 }
 
 /// `session_open.subrun_usage` 的宽容解析（链式恢复 / 压缩边界的种子）：键 = 模型 id，
@@ -500,12 +511,16 @@ pub struct LiveSubrunSnapshot {
 /// 已收尾子运行的逐 run 汇总（`harness_state.subrun_runs`，change
 /// rework-harness-delegation-ux-nov02）：多段按 `run_id` 合并（rounds / steps / tokens / 段数 /
 /// 用时求和，status 取最近一段）。恢复出的 `task` 行据此把「启动信封里的 running」对账成终态。
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SubrunRunSnapshot {
     pub run_id: String,
     pub agent: String,
     pub description: String,
     pub model: String,
+    /// 后台 run 的终态行在切回 / 重载后仍要「保留到用户确认」；前台异常只在对话流里。
+    /// 旧种子缺键按 false（前台）解析——宁可少留一行，也不把前台失败误报成后台待确认。
+    #[serde(default)]
+    pub background: bool,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stopped_by: Option<String>,
@@ -524,6 +539,7 @@ impl SubrunRunSnapshot {
         self.agent = segment.agent;
         self.description = segment.description;
         self.model = segment.model;
+        self.background = segment.background;
         self.status = segment.status;
         self.stopped_by = segment.stopped_by;
         self.rounds = self.rounds.saturating_add(segment.rounds);
@@ -819,6 +835,11 @@ impl Session {
     /// 子运行用量分桶表的只读视图。
     pub fn subrun_usage(&self) -> &BTreeMap<String, SubrunUsage> {
         &self.subrun_usage
+    }
+
+    /// 逐 run 终态汇总（压缩 / 恢复开新文件时随 `session_open` 落种）。
+    pub fn subrun_runs(&self) -> &BTreeMap<String, SubrunRunSnapshot> {
+        &self.subrun_runs
     }
 
     /// 恢复路径的分桶落种（design §9.2）：以留存重算值整体换入，其后的段接着它继续累加。
@@ -1759,21 +1780,21 @@ mod tests {
         let records = vec![
             serde_json::json!({
                 "kind": "subrun", "run_id": "r1", "segment": 1, "agent": "research",
-                "description": "两段任务", "model": "model-a", "status": "partial",
+                "description": "两段任务", "model": "model-a", "background": true, "status": "partial",
                 "stopped_by": "tokens", "rounds": 5, "denied_calls": 0,
                 "tool_calls": 9, "duration_ms": 1200,
                 "usage": {"input_tokens": 100, "cached_tokens": 40, "output_tokens": 7}
             }),
             serde_json::json!({
                 "kind": "subrun", "run_id": "r1", "segment": 2, "agent": "research",
-                "description": "两段任务", "model": "model-a", "status": "completed",
+                "description": "两段任务", "model": "model-a", "background": true, "status": "completed",
                 "rounds": 2, "denied_calls": 0,
                 "tool_calls": 3, "duration_ms": 800,
                 "usage": {"input_tokens": 50, "cached_tokens": 10, "output_tokens": 3}
             }),
             serde_json::json!({"kind": "llm_request"}),
         ];
-        let recomputed = subrun_runs_from_records(&records);
+        let recomputed = subrun_runs_from_records(&records, Default::default());
         let run = &recomputed["r1"];
         assert_eq!(run.status, "completed", "status 取最近一段");
         assert_eq!(run.stopped_by, None, "最近一段没有触顶原因");
@@ -1795,6 +1816,7 @@ mod tests {
                 agent: "research".into(),
                 description: "两段任务".into(),
                 model: "model-a".into(),
+                background: true,
                 status: record["status"].as_str().unwrap().into(),
                 stopped_by: record["stopped_by"].as_str().map(str::to_string),
                 rounds: record["rounds"].as_u64().unwrap() as u32,
@@ -1807,6 +1829,47 @@ mod tests {
             });
         }
         assert_eq!(live.subrun_runs.values().next(), Some(run));
+    }
+
+    /// 逐 run 汇总的 session_open 种子（M822）：sidecar → restore（新文件只带种子）→ 再 restore
+    /// 必须得到同一份汇总；压缩边界同一口径。
+    #[test]
+    fn subrun_runs_seed_round_trips_and_chains() {
+        let mut session = test_session();
+        session.record_subrun_run(SubrunRunSnapshot {
+            run_id: "r1".into(),
+            agent: "research".into(),
+            description: "两段任务".into(),
+            model: "model-a".into(),
+            background: true,
+            status: "partial".into(),
+            stopped_by: Some("tokens".into()),
+            rounds: 5,
+            segments: 1,
+            input_tokens: 100,
+            cached_tokens: 40,
+            output_tokens: 7,
+            duration_ms: 1200,
+            tool_calls: 9,
+        });
+        // 第一次恢复：新文件 session_open 带种子，没有旧 sidecar。
+        let open = serde_json::json!({
+            "subrun_runs": serde_json::to_value(session.subrun_runs()).unwrap(),
+        });
+        let seeded = subrun_runs_seed(&open);
+        assert_eq!(seeded, *session.subrun_runs());
+        let restored = subrun_runs_from_records(&[], seeded);
+        assert_eq!(restored, *session.subrun_runs());
+        // 第二次恢复：再序列化一次，仍逐字段相等（链式恢复不断档）。
+        let open2 = serde_json::json!({
+            "subrun_runs": serde_json::to_value(&restored).unwrap(),
+        });
+        assert_eq!(
+            subrun_runs_from_records(&[], subrun_runs_seed(&open2)),
+            restored
+        );
+        // 压缩边界：Session 上的汇总就是 pending open 的种子取值面。
+        assert_eq!(session.subrun_runs().len(), 1);
     }
 
     /// `subrun` 记录不影响父会话自己的读数（ctx% / cache% 只由父的往返算）。

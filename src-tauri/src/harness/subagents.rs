@@ -699,6 +699,7 @@ impl SubagentHub {
         audit: Option<&str>,
         tool_calls: u32,
         duration_ms: u64,
+        background: bool,
     ) {
         let _ = self
             .inner
@@ -715,6 +716,7 @@ impl SubagentHub {
                     agent: agent.to_string(),
                     description: description.to_string(),
                     model: model.to_string(),
+                    background,
                     status: status.to_string(),
                     stopped_by: stopped_by.map(str::to_string),
                     rounds,
@@ -732,6 +734,7 @@ impl SubagentHub {
                     "agent": agent,
                     "description": description,
                     "model": model,
+                    "background": background,
                     "status": status,
                     "stopped_by": stopped_by,
                     "rounds": rounds,
@@ -2257,13 +2260,37 @@ fn report_envelope(
         }),
         super::run::RunOutcome::Failed { code, message } => serde_json::json!({
             "ok": false,
+            "status": "failed",
+            "agent": agent,
+            "run_id": run_id,
+            "segment": segment,
+            "background": background,
             "code": code,
             "message": message,
+            // 失败 / 中止同样带任务身份与读数（M822）：否则恢复入口认不出任务信封，
+            // 终态与 per-run 用量会退化成通用工具行（评审 P1-4）。
+            "model": report.model,
+            "duration_ms": report.duration_ms,
+            "rounds": report.rounds,
+            "denied_calls": report.denials,
+            "tool_calls": report.tool_calls,
+            "usage": usage_json(report.usage),
         }),
         super::run::RunOutcome::Aborted => serde_json::json!({
             "ok": false,
+            "status": "aborted",
+            "agent": agent,
+            "run_id": run_id,
+            "segment": segment,
+            "background": background,
             "code": "turn_aborted",
             "message": "子运行已停止",
+            "model": report.model,
+            "duration_ms": report.duration_ms,
+            "rounds": report.rounds,
+            "denied_calls": report.denials,
+            "tool_calls": report.tool_calls,
+            "usage": usage_json(report.usage),
         }),
     }
 }
@@ -2371,6 +2398,7 @@ fn finish_failed(
         audit.as_deref(),
         0,
         report.duration_ms,
+        seed.background,
     );
     seed.hub.emit_failed_terminal(
         &seed.run_id,
@@ -2484,6 +2512,8 @@ pub(crate) struct ChildContext {
     description: String,
     /// 本段实际使用的模型 id（模型解析后的值；分桶 / 事件 / 信封共用这一份）。
     model: String,
+    /// 后台调用：逐 run 汇总要带上它，切回后才知道哪些异常终态需要「保留到用户确认」。
+    background: bool,
     tool_policy: Vec<String>,
     max_turns: u32,
     max_tokens: u64,
@@ -2544,6 +2574,7 @@ impl ChildContext {
             agent_name: seed.definition.name.clone(),
             description: seed.description.clone(),
             model: seed.model.clone(),
+            background: seed.background,
             tool_policy: seed.definition.tools.clone(),
             max_turns: seed.definition.max_turns,
             max_tokens: seed.definition.max_tokens,
@@ -2706,6 +2737,7 @@ impl ChildContext {
             audit.as_deref(),
             report.tool_calls.values().sum(),
             report.duration_ms,
+            self.background,
         );
         if let Some(sink) = &self.parent_sink {
             // 摘要正文（tasks §10.2 的行详情数据源）：设计 §13 的事件表只列 `summary_chars`，
@@ -3589,6 +3621,73 @@ mod tests {
         let out = f.run_task(args("research", "做点什么"));
         assert_eq!(out["ok"], json!(false), "{out}");
         assert_eq!(out["code"], "server_error");
+    }
+
+    /// failed / aborted 信封同样带任务身份与读数（M822，评审 P1-4）：恢复入口据此认出任务行，
+    /// 终态词、段数与 per-run 用量不会退化成通用工具行。
+    #[test]
+    fn failed_and_aborted_envelopes_keep_task_identity() {
+        let f = Fixture::new(
+            "failed-identity",
+            r#"{"responses":[{"error":{"code":"server_error","message":"boom"}}]}"#,
+            |_| {},
+        );
+        f.research("");
+        let out = f.run_task(args("research", "做点什么"));
+        assert_eq!(out["status"], "failed", "{out}");
+        assert_eq!(out["ok"], json!(false));
+        assert_eq!(out["agent"], "research");
+        assert_eq!(out["segment"], 1);
+        assert_eq!(out["background"], json!(false));
+        assert_eq!(out["code"], "server_error");
+        assert!(out["run_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("r-")));
+        assert!(out["model"].as_str().is_some_and(|model| !model.is_empty()));
+        assert!(out["duration_ms"].as_u64().is_some());
+        assert!(out["usage"].is_object());
+        assert!(out["tool_calls"].is_object());
+        drop(f);
+
+        let f = Fixture::new(
+            "aborted-identity",
+            r#"{"responses":[{"text":"慢","delay_ms":3000}]}"#,
+            |_| {},
+        );
+        f.research("");
+        let hub = f.hub();
+        let handle = start_task(
+            &hub,
+            &f.config,
+            &f.catalog(),
+            &f.task_call(args("research", "前台跑")),
+            None,
+        );
+        assert!(f.wait(Duration::from_secs(3), || {
+            !hub.inner
+                .runs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        }));
+        let run_id = hub
+            .inner
+            .runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .next()
+            .cloned()
+            .expect("应有活动 run");
+        assert!(hub.stop_run(&run_id));
+        let out = handle.result_value();
+        assert_eq!(out["status"], "aborted", "{out}");
+        assert_eq!(out["agent"], "research");
+        assert_eq!(out["run_id"], run_id.as_str());
+        assert_eq!(out["code"], "turn_aborted");
+        assert_eq!(out["segment"], 1);
+        assert!(out["usage"].is_object());
+        assert!(out["tool_calls"].is_object());
     }
 
     /// 执行层白名单二次校验：定义只授予 vault_read 时，模型幻觉出的 vault_delete 被拒、

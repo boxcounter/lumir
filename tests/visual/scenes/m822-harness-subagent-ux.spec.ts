@@ -21,26 +21,39 @@ const VAULT: VaultFixture = {
 };
 
 /** harness 事件注入口 + 快照桩（live_subruns 为空：本场景只走事件路径）。 */
-async function stubHarness(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+interface StubState {
+  messages?: unknown[];
+  live?: unknown[];
+  runs?: unknown[];
+  usage?: unknown;
+}
+
+async function stubHarness(page: Page, initial: StubState = {}): Promise<void> {
+  await page.addInitScript((seed: StubState) => {
     const w = window as unknown as Record<string, any>;
     const internals = w.__TAURI_INTERNALS__;
     const origInvoke = internals.invoke;
     w.__harnessEventHandlerIds = [] as number[];
-    w.__live = [] as unknown[];
+    w.__live = seed.live ?? [];
+    w.__runs = seed.runs ?? [];
+    w.__stops = [] as string[];
     internals.invoke = async (cmd: string, args: any) => {
       if (cmd === "harness_state") {
         return JSON.stringify({
-          messages: [],
+          messages: seed.messages ?? [],
           usage: { ctx_pct: 0, cache_pct_session: 0 },
           pending_approvals: [],
           auto_wake: { chain: 0, max: 3, blocked: null },
-          subrun_usage: null,
+          subrun_usage: seed.usage ?? null,
           live_subruns: w.__live,
+          subrun_runs: w.__runs,
           warn_ctx_pct: 85,
         });
       }
-      if (cmd === "harness_subagent_stop") return true;
+      if (cmd === "harness_subagent_stop") {
+        w.__stops.push(String(args.run_id));
+        return true;
+      }
       if (cmd === "plugin:event|listen" && args.event === "harness:event") {
         w.__harnessEventHandlerIds.push(args.handler ?? 0);
       }
@@ -49,12 +62,13 @@ async function stubHarness(page: Page): Promise<void> {
     w.__setLive = (live: unknown[]) => {
       w.__live = live;
     };
+    w.__stopsOf = () => w.__stops as string[];
     w.__fireHarnessEvent = (payload: unknown) => {
       for (const id of w.__harnessEventHandlerIds) {
         internals.runCallback(id, { event: "harness:event", id, payload });
       }
     };
-  });
+  }, initial);
 }
 
 async function setLive(page: Page, live: Record<string, unknown>[]): Promise<void> {
@@ -181,6 +195,133 @@ test("≥2 并行 run 出现控制区；全部完成后整块消失", async ({ p
   const partialRow = page.locator(".lumir-hp-taskwrap", { hasText: "复核结论" });
   await expect(partialRow).toContainText("部分结果");
   await expect(partialRow).toContainText("token 预算");
+});
+
+test("恢复出的运行中 task 行：单前台不进控制区，但行内有 Stop 与 live 用时", async ({ page }) => {
+  const envelope = JSON.stringify({
+    ok: true,
+    status: "running",
+    agent: "research",
+    run_id: "r-live",
+    segment: 1,
+    background: false,
+    model: "mock-fast",
+  });
+  await stubTauri(page, VAULT);
+  await stubHarness(page, {
+    messages: [
+      { role: "tool", name: "task", summary: '{"agent":"research","description":"切回仍在跑"}', text: envelope, ts: 1759912345 },
+    ],
+    live: [
+      {
+        run_id: "r-live",
+        agent: "research",
+        description: "切回仍在跑",
+        model: "mock-fast",
+        background: false,
+        segment: 1,
+        rounds: 2,
+        tool_calls: 4,
+        last_tool: "vault_read",
+        elapsed_ms: 9_000,
+      },
+    ],
+  });
+  await openPane(page);
+
+  // 单前台 run：控制区不出现；运行态的入口必须落在对话流里的同一行。
+  await expect(page.locator(".lumir-tp")).toBeHidden();
+  const row = page.locator(".lumir-hp-taskwrap").first();
+  await expect(row).toContainText("运行中");
+  await expect(row).toContainText("9s");
+  await expect(row.locator(".lumir-hp-task-stop")).toBeVisible();
+  await row.locator(".lumir-hp-task-stop").click();
+  expect(await page.evaluate(() => (window as any).__stopsOf())).toEqual(["r-live"]);
+});
+
+test("resume 段的真实事件序（tool_call started → subagent_started）只留一个任务身份", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await openPane(page);
+
+  const args = '{"agent":"research","description":"两段任务"}';
+  const tel = (status: string, summary?: string): Record<string, unknown> => ({
+    type: "tool_call",
+    name: "task",
+    status,
+    summary: summary ?? args,
+  });
+  // 段一：调用行 → 启动 → 触顶 → 收尾（已绑定行由 run 事件驱动，done 不再建行）。
+  await fire(page, tel("started"));
+  await fire(page, started("r1", "两段任务"));
+  await fire(page, finished("r1", "partial"));
+  await fire(page, tel("done"));
+  // 段二：resume 调用又建了一条未绑定行，随后 subagent_started 必须收走它。
+  await fire(page, tel("started"));
+  await fire(page, { ...started("r1", "两段任务") });
+  await fire(page, tel("done"));
+
+  await expect(page.locator(".lumir-hp-taskwrap")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-tool-row.is-task")).toHaveCount(1);
+  const row = page.locator(".lumir-hp-taskwrap").first();
+  await expect(row).toContainText("运行中");
+});
+
+test("四态恢复行：completed / partial / failed / aborted 的状态词、图标与用量同形", async ({ page }) => {
+  const record = (
+    status: string,
+    runId: string,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> => ({
+    role: "tool",
+    name: "task",
+    summary: `{"agent":"research","description":"${status} 任务"}`,
+    text: JSON.stringify({
+      ok: status === "completed",
+      status,
+      agent: "research",
+      run_id: runId,
+      segment: 1,
+      background: false,
+      model: "mock-fast",
+      duration_ms: 12_000,
+      rounds: 2,
+      tool_calls: { vault_read: 3 },
+      usage: { input_tokens: 1000, cached_tokens: 400, output_tokens: 50 },
+      code: status === "failed" ? "server_error" : status === "aborted" ? "turn_aborted" : undefined,
+      message: status === "failed" ? "boom" : status === "aborted" ? "子运行已停止" : undefined,
+      ...extra,
+    }),
+    ts: 1759912345,
+  });
+  await stubTauri(page, VAULT);
+  await stubHarness(page, {
+    messages: [
+      record("completed", "r-done"),
+      record("partial", "r-partial"),
+      record("failed", "r-failed"),
+      record("aborted", "r-stopped"),
+    ],
+  });
+  await openPane(page);
+
+  // 四行终态在同一工具块里，恢复时按 ≥2 行折叠；先展开。
+  await page.locator(".lumir-hp-tool-summary").click();
+  const rows = page.locator(".lumir-hp-taskwrap");
+  await expect(rows).toHaveCount(4);
+  await expect(rows.nth(0)).toContainText("已完成");
+  await expect(rows.nth(1)).toContainText("部分结果");
+  await expect(rows.nth(2)).toContainText("失败");
+  await expect(rows.nth(3)).toContainText("已停止");
+  await expect(rows.nth(0).locator(".lumir-hp-tool-row")).toHaveClass(/is-done/);
+  await expect(rows.nth(1).locator(".lumir-hp-tool-row")).toHaveClass(/is-waiting/);
+  await expect(rows.nth(2).locator(".lumir-hp-tool-row")).toHaveClass(/is-fail/);
+  await expect(rows.nth(3).locator(".lumir-hp-tool-row")).toHaveClass(/is-fail/);
+  // 用量详情四态同形（failed / aborted 也有 per-run 读数）。
+  await rows.nth(2).click();
+  await expect(rows.nth(2)).toContainText("用量：输入 1k（缓存 400）· 输出 50");
+  await rows.nth(3).click();
+  await expect(rows.nth(3)).toContainText("用量：输入 1k（缓存 400）· 输出 50");
 });
 
 test("后台失败保留到「知道了」；多行时列表自身滚动", async ({ page }) => {

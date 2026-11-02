@@ -56,7 +56,10 @@
   段内读数**加到基线上**——`rounds` 与 `steps` 因此是跨段累计，而不是第二段从 0 开始；
 - `steps` 继续按到达序累计（沿用最近 20 条上限）；`elapsedMs` 在段内继续由 `progress` 推进，
   `finished` 的 `duration_ms` 覆盖为最近一段的真实用时（跨段总时长不可由事件推出，不伪造）；
-- 一个 run 在任务区、`task` 行与通知里始终只有一个身份；行详情显示「N 段」。
+- `stoppedBy` 在新段开始时复位为 null（上一段的触顶原因不得延续到新段）；
+- 一个 run 在任务区、`task` 行与通知里始终只有一个身份；行详情显示「N 段」。resume 的第二条
+  `tool_call` 仍会在 transcript 里产生一次调用记录，`subagent_started` 绑定既有身份时收走那条
+  未绑定的重复任务行（事件序是 `tool_call started → subagent_started`）。
 
 ### 4.2 跨 vault：快照是 live 状态的唯一真源
 
@@ -72,10 +75,17 @@
   `rounds / tool_calls / last_tool / elapsed_ms`，段收尾后从活动表删除——**已收尾的 run 不在表里**，
   因此「切走期间收尾」的 run 切回后不会复活。
 - `harness_state` 同时新增 `subrun_runs`：逐 run 的终态汇总（`status` / `stopped_by` / `rounds` /
-  `segments` / 三个 token 字段 / `duration_ms` / `tool_calls`，多段求和），由父会话在写 `subrun`
-  sidecar 的同一次调用里落账，恢复时由同一批 sidecar 重算。它是**恢复出的 `task` 行的终态真源**：
-  后台调用的工具结果信封在启动时就写定 `status: running`，切走期间收尾的 run 若只靠信封会永远显示
-  「运行中」；前端在快照落地时用 `subrun_runs` 对该行对账（仍不在 live 列表里 = 已收尾）。
+  `segments` / 三个 token 字段 / `duration_ms` / `tool_calls` / `background`，多段求和），由父会话
+  在写 `subrun` sidecar 的同一次调用里落账，恢复时由同一批 sidecar 重算。它是**恢复出的 `task`
+  行的终态真源**：后台调用的工具结果信封在启动时就写定 `status: running`，切走期间收尾的 run
+  若只靠信封会永远显示「运行中」；前端在快照落地时用 `subrun_runs` 对该行对账（仍不在 live
+  列表里 = 已收尾），并把终态行并入 `subruns` 视图——`background` 的异常终态因此仍以待确认行出现。
+- 逐 run 汇总随 `session_open` 落种子（恢复新文件没有旧 sidecar），压缩跨边界时同样携带；否则
+  二次恢复 / 压缩后恢复会让失败与部分结果退回「运行中」。恢复出的在跑 run 由 live 快照刷新为
+  live 形态（行内停止、用时、详情），不依赖事件回放。
+- 「知道了」的确认按 run id 记忆（跨切 vault / 重载保留，集合有上限）；同一 run 确认后不再出现。
+- failed / aborted 的结果信封同样带任务身份（agent / run_id / segment / background / status /
+  model / duration / tool_calls / usage），恢复行与 live 行同形（状态词、图标、用量）。
 - 前端 `applyTaskReadings` 把它作为在跑行的权威来源：在表 = 建行 / 更新；不在表 = 立即移除行（旧
   vault 的僵尸行随之消失）。缺键（旧后端 / 桩）= 不应用，退化为既有事件驱动，不伪造、不静默清空。
 - `clearTranscriptSurface()` 显式 `taskList.replaceChildren()`；`renderTaskArea()` 追加一道
@@ -157,3 +167,13 @@
   各段求和（脚本可取留存核对）。
 - **C17 恢复行终态对账**：恢复出的 `task` 行若信封为 `running` 而该 run 已有 `subrun_runs` 终态记录、
   且不在 live 列表里，行 MUST 显示终态（状态词 + 原因 + 用时），MUST NOT 停在一个假的「运行中」。
+- **C18 恢复运行行可停止**：恢复出的 `running` 行在 live 快照落地后 MUST 换成 live 形态（行内
+  「停止」、live 用时、可展开详情）；单前台 run 时控制区不出现也必须满足。
+- **C19 resume 事件序单身份**：完整两段 `tool_call started → subagent_started → … → tool_call done`
+  之后，transcript MUST 只有一个任务行；运行中的详情 MUST NOT 带上一段的触顶原因。
+- **C20 四态恢复同形**：completed / partial / failed / aborted 的恢复行 MUST 显示对应状态词与图标，
+  详情 MUST 有该 run 的用量读数；failed / aborted 的信封 MUST 带任务身份。
+- **C21 种子链**：`subrun_runs` 经 `session_open` 种子跨「恢复 → 再恢复」与「压缩 → 恢复」保持
+  逐字段相等；二次恢复后的行不得退回「运行中」。
+- **C22 待确认归属**：后台 run 的 partial / failed / stopped 在切走 / 重载后 MUST 仍以待确认行出现，
+  「知道了」后可确认且同一 run 不再出现。

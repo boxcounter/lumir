@@ -34,7 +34,7 @@ steps:
       name: research
       description: 后台长任务
       ---
-      
+
 
   - name: ⌘⇧A 打开 harness pane
     do: keys
