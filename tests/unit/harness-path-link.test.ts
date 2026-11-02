@@ -147,7 +147,7 @@ test("行范围后缀属于可点范围：落点取起始行，止只进高亮�
   assert.equal(found[0].path, "notes/plan.md");
   assert.equal(found[0].kind, "file");
   assert.equal(found[0].line, 120, "落点取起始行");
-  assert.equal(found[0].lineEnd, 140, "闭区间止行是行高亮的范围下界");
+  assert.equal(found[0].lineEnd, 140, "闭区间止行是行高亮的范围上界（含两端）");
   assert.equal(found[0].column, undefined, "行范围不产列号");
   assert.equal(found[0].text, "notes/plan.md:120-140", "可点范围覆盖整个后缀，展示文本不重写");
   assert.equal(text.slice(found[0].from, found[0].to), "notes/plan.md:120-140");

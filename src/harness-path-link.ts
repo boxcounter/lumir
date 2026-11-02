@@ -16,8 +16,8 @@ const PATH_CHAR = /[\p{L}\p{N}_.\-/]/uy;
 /** 只用于「两端收缩」的中文类字符（路径本身允许它们，因此先试整串再剥）。 */
 const CJK_CHAR = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/uy;
 /** `:行号` / `:行号:列号` / `:起-止`（1-based；列号只解析、不参与落点；行范围的 `止` 既参与
- *  「后缀是否成立」，也是点击后瞬态行高亮的范围下界（`lineEnd`），落点仍取 `起`）。两种第二段
- *  互斥，`起-止:列` 不叠加（design §2.1）。 */
+ *  「后缀是否成立」，也是点击后瞬态行高亮的范围上界（闭区间止行，`lineEnd`），落点仍取 `起`）。
+ *  两种第二段互斥，`起-止:列` 不叠加（design §2.1）。 */
 const LINE_SUFFIX = /:(\d{1,7})(?:-(\d{1,7})|:(\d{1,7}))?/y;
 
 /** run 长度上限：超过即按「极长无断句中文串」处理，不识别（design §2.2 的已知边界）。 */
@@ -109,7 +109,7 @@ export function lineSuffixAt(
   if (!Number.isInteger(line) || line < 1) return { end: at };
   // `:起-止`：`止 < 起` 使**整个**后缀不成立（MUST NOT 回退成只有 `:起`——半吞会让可点范围
   // 与文字承诺错位）。`止` 越界不在这里判，落点与高亮都由 editor 侧的既有钳制 / 行装饰上限处理
-  //（design §2.2）。`lineEnd` 是点击后瞬态行高亮的范围下界：单行 / 行列形态等于 `line`。
+  //（design §2.2）。`lineEnd` 是点击后瞬态行高亮的范围上界（闭区间止行）：单行 / 行列形态等于 `line`。
   if (match[2] !== undefined) {
     const rangeEnd = Number(match[2]);
     if (rangeEnd < line) return { end: at };

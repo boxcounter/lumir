@@ -33,7 +33,7 @@ master）逐一读过原文的位置；行号会漂，实现前以符号名为�
 
 `PathCandidate.lineEnd?` 与 `line` 同源同段，导出给面板。**这是给 `lineEnd` 的第一个消费者**
 （REVIEW.md『值或开关声明了却没有消费者』条）：它不再只是「后缀是否成立」的中间量，而是高亮的
-范围下界。
+范围上界（闭区间止行）。
 
 `lineSuffixAt` 的另一个调用方 `src/quick-open.ts` 的 `splitLineSuffix` 只读 `line` / `end`，新增
 字段对它无行为影响（quick-open 的打开也不带 `lineEnd`，见 §3）。
