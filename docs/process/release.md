@@ -1,8 +1,27 @@
 # 发布（打包）流程与版本口径
 
-Lumir 正式版本的版本口径与打包、交付步骤。口径来自 Alex 裁决（修复批 = patch、特性批 = minor），步骤来自已实操的完整发布——0.7.0 打包（M512，2026-10-14，证据 `.local/releases/release-0.7.0/`）给出基线与交付惯例，0.9.0 / 0.9.1 两次打包补齐打包入口与打包位置（见下段）；并按 0.7.0 实操与 git 历史（bump 提交 `6579b64`）逐条溯源。**本文只写实际验证过的步骤，不引入未验证流程**；下次实操长出新步骤时再加进来。
+Lumir 正式版本的版本口径与打包、交付步骤。口径来自 Alex 裁决（修复批 = patch、特性批 = minor），步骤来自已实操的完整发布——0.7.0 打包（M512，2026-10-14，证据 `.local/releases/release-0.7.0/`）给出基线与交付惯例，0.9.0 / 0.9.1 两次打包补齐打包入口与打包位置（见下段），0.12.0（2026-11-03，证据 `.local/releases/release-0.12.0/`）按旧流程完成、不追溯；并按 0.7.0 实操与 git 历史（bump 提交 `6579b64`）逐条溯源。**本文只写实际验证过的步骤，不引入未验证流程**；下次实操长出新步骤时再加进来。
 
 2026-10-19 起打包入口改为 `scripts/pack-release.sh`（版本闸；闸的两个方向已实测）。闸之外仍是 0.7.0 验证过的 `pnpm tauri build` 原路径；包装层本身已由 0.9.0（主仓 checkout）与 0.9.1（worktree）两次打包实测，均 `PACK RESULT: PASS`（证据 `.local/releases/release-0.9.0/`、`release-0.9.1/`）。
+
+## 简单打包（2026-11-03 起）
+
+**裁决**（Alex，2026-11-03）：从现在起，正式版本的打包只做简单打包——打包只验证「已经验收过的代码」成为「正确、可安装的产物」；视觉回归归功能验收，不在打包环节做。0.12.0 已按旧流程完成，不追溯；此后所有正式版本的打包按本节执行。
+
+**两条职责边界**：
+
+- **功能验收**（打包之前，在功能批里完成）：`bash scripts/gate.sh quick` 全绿；动过视觉相关代码（`src/style.css`、`src/preview/**`、`tests/visual/scenes/**`）的批次按 AGENTS.md「视觉门禁分层」跑 `bash scripts/gate.sh visual`；真机行为项按验收套件（`node scripts/acceptance/run.mjs`）与批次性质执行。这些判据回答「功能对不对 / 有没有回归」，证据留在功能批自己的目录与 CI 记录里。
+- **产物校验**（打包环节）：只回答「这份 dmg 是不是由那个已验收 commit 构建的、能不能装、版本与签名对不对」。判据固定为——版本闸（`scripts/pack-release.sh`）、构建成功、签名闸、DMG 完整性（`hdiutil verify`、payload 结构、版本字段、架构）、sha256 记录；步骤见「打包命令与产物」「产物验证」「交付惯例」。
+
+`scripts/pack-release.sh` 的职责面正是后者：版本闸 → `pnpm tauri build` → 签名闸，功能验收从来不在它的职责内。旧文档把 `gate quick` / `gate visual` 写成打包前置，是把两份职责叠在了打包树上，2026-11-03 起从打包前置中删除（门禁本身不变，仍在功能批里跑）。
+
+**打包树不再重复 quick / visual**：不在打包所在的 checkout 重跑 `bash scripts/gate.sh quick` / `bash scripts/gate.sh visual`，也不把门禁日志作为打包交付物。理由：打包树就是功能验收通过的那份代码，重复执行不增加判定力，只增加等待与证据冗余。
+
+**适用前提（不得绕过功能验收）**：
+
+- 被装进 dmg 的代码已经过功能验收（上条），证据可指认——拿不出已绿的 `GATE RESULT` 行或验收场景 PASS 记录，不得打包。
+- 被装进 dmg 的 commit 的 CI 已全绿：已合并进 master 的看 master push 的 CI，仍在分支上的看该分支 PR 的 CI。CI 红或未跑完，不得打包。
+- 简单打包只减少打包环节的重复执行，不降低上述任何一条；它不构成「先打包、后验收」的通道。
 
 ## 版本口径
 
@@ -36,8 +55,9 @@ bump 提交信息惯例：`chore(release): X.Y.Z——<本批内容>，<MINOR bu
 
 **路径 B：本批改动还在 mission 分支上 → 在 worktree 打包（bump 与打包同一 mission 是主要形态）**
 
-- 条件：分支相对当前 master 的差异面就是本批的交付内容（bump+打包同 mission = 一条 bump 提交；带功能改动 = 已过评审、待合并的那批提交），且 worktree tracked 干净（没有不会进 master 的未提交改动）。bump+打包同 mission 的形态可机检：`git log --oneline master..HEAD` 只有一条 bump 提交，`git diff --stat master..HEAD` 只列版本号四文件、每文件 1 删 1 增（读数 `2 +-`）；master 在分支点之后前进过会破坏这个读数，先 `git rebase master` 再核。满足时 worktree 的 tracked 代码 = 合并后的 master，产物与主仓打包等价。
-- 先例：0.9.1（M618）在 worktree `wt-618` 内跑 `gate quick` 与 `pack-release.sh`（`PACK RESULT: PASS`，证据 `.local/releases/release-0.9.1/`）；0.8.0（M596）的依赖对齐分支更早也是 rebase 到 master 后在 worktree 内构建，该 tip 随后原样合并。
+- 条件：分支相对当前 master 的差异面就是本批的交付内容（bump+打包同 mission = 一条 bump 提交；带功能改动 = 已过评审、待合并的那批提交），且 worktree tracked 干净（没有不会进 master 的未提交改动）。
+- bump+打包同 mission 的形态可机检：`git log --oneline master..HEAD` 只有一条 bump 提交，`git diff --stat master..HEAD` 只列版本号四文件、每文件 1 删 1 增（读数 `2 +-`）；master 在分支点之后前进过会破坏这个读数，先 `git rebase master` 再核。满足时 worktree 的 tracked 代码 = 合并后的 master，产物与主仓打包等价。
+- 先例：0.9.1（M618）在 worktree `wt-618` 内完成 `pack-release.sh` 打包（`PACK RESULT: PASS`，证据 `.local/releases/release-0.9.1/`；该次按旧流程还在打包树跑了 `gate quick`，2026-11-03 起不再重复）；0.8.0（M596）的依赖对齐分支更早也是 rebase 到 master 后在 worktree 内构建，该 tip 随后原样合并。
 - 注意点：
   - worktree 不带 `.gitignore` 忽略的 `node_modules` 与 `src-tauri/target`：先装依赖（或从主仓复制 `node_modules`）；构建目录可 `CARGO_TARGET_DIR=<主仓>/src-tauri/target` 复用增量（0.9.1 因本机磁盘余量如此），代价是共享 target——按 `scripts/acceptance/README.md`「起实例前的环境纪律」的 target 纪律核对本轮确实重编译了 lumir 测试二进制，并独占 cargo 构建位。
   - 版本闸照常生效：它经 `git rev-parse --git-common-dir` 查主仓 `.local`，worktree 缺 `.local` 不会假放行（`scripts/pack-release.sh` 头注释）。
@@ -47,8 +67,7 @@ bump 提交信息惯例：`chore(release): X.Y.Z——<本批内容>，<MINOR bu
 以下前置两条路径都适用：
 
 - 版本号已按上节 bump 并提交。**bump 由机器闸强制**：`scripts/pack-release.sh` 构建前读 `src-tauri/tauri.conf.json` 的 `version`，已有同名证据目录 `.local/releases/release-<version>/` 即拒绝打包并提示先 bump。闸只管「同一版本号不重复交付」；本批该 MINOR 还是 PATCH 仍由 tower 按上节批次性质口径裁决。动机：0.8.0 打包漏 bump（M596，2026-10-19），交付的 dmg 实际含本批新能力却仍标 0.8.0。
-- `bash scripts/gate.sh quick` 全绿，在**打包所在的那个 checkout** 里跑（路径 B 就在 worktree 里跑——门禁要判的正是被装进 dmg 的那棵树）。报告时**照抄 `GATE RESULT` 原文行并附退出码**，不用「X/Y PASS」复述（REVIEW.md「门禁报告口径」条：分母口径含不含 SKIP 只在脚本里定义）。
-- 动过视觉相关代码（`src/style.css`、`src/preview/**`、`tests/visual/scenes/**`）的批次，另跑 `bash scripts/gate.sh visual`（AGENTS.md「视觉门禁分层」）。
+- 「简单打包」节的适用前提成立：功能验收已全绿、被交付 commit 的 CI 已全绿。打包树不重跑 `gate quick` / `gate visual`，门禁日志也不进打包交付证据。
 - cargo 构建位空闲（并行批次纪律见 AGENTS.md；0.7.0 打包前确认无并发 `cargo` / `rustc`）。
 
 ## 打包命令与产物
@@ -77,6 +96,8 @@ bash scripts/pack-release.sh --bundles dmg
 （10-14 那次首跑即成功。重试时闸会重跑一遍；证据目录在交付步骤才创建，重试阶段通常还不存在，闸照常放行。）tauri 另会对 `identifier` 以 `.app` 结尾（`com.lumir.app`）打一条 warning，当前无害。
 
 ## 产物验证
+
+以下判据只回答产物的正确性（由指定已验收 commit 构建、可安装、版本与签名一致），不回答功能是否正确——后者归功能验收，见「简单打包」节。
 
 ### 签名（M637，发布门禁强制）
 
@@ -116,7 +137,8 @@ codesign -dv --verbose=4 "$app" 2>&1 | grep -E '^(Identifier|Info.plist entries|
 
 ## 交付惯例
 
-- 证据目录 = **主仓 checkout** 的 `.local/releases/release-<version>/`（git 外；`.local/` 被 gitignore；worktree 里没有 `.local`，也不该在那里建）。把 dmg 复制一份进该目录，同目录留本次打包的脚本与门禁 / 构建日志（0.7.0 样板：`build.sh`、`gate-quick.log`、`gate-visual.log`、`tauri-build.log`、`dmg-retry.log`）；路径 B 另按「打包前置」在 `index.md` 记明 worktree 打包与相对 master 的差异面。
+- 证据目录 = **主仓 checkout** 的 `.local/releases/release-<version>/`（git 外；`.local/` 被 gitignore；worktree 里没有 `.local`，也不该在那里建）。把 dmg 复制一份进该目录，同目录留本次打包的脚本与产物校验日志（样板：`build.sh`、`tauri-build.log`、`verify.log`；重试过 dmg 时加 `dmg-retry.log`）。**打包树的门禁日志不是必备产物**（2026-11-03 起）：`gate-quick.log` / `gate-visual.log` / `visual-regression.log` 属功能批的验收证据，留在该批自己的证据目录或 CI 记录里；0.12.0 及以前目录中已有的这批日志按旧流程原样存档，不追溯。
+- `index.md` 至少记明：源 commit（版本 bump 后的那个 commit）、打包位置（路径 A / B；路径 B 另记相对 master 的差异面）、版本闸 / 构建 / 签名闸读数、DMG 完整性读数、sha256，以及**功能验收证据的指针**——功能批的 `GATE RESULT` 原文行、对应的 PR / master CI run 链接。打包证据只证明「产物来自这份已验收代码且完整可装」，不复制验收日志。
 - 目录内另有 `smoke.mjs`（发布版启动冒烟脚本，启动 `.app` 里的二进制、用 KimiCU 读 AX 树判定「真渲染 + 版本号上屏 + 非白屏」）。**0.7.0 批次未执行它**——按纪律不启动安装版，以免写入用户真实 `~/.config/lumir`。
 - **sha256 记录惯例**：对交付的 dmg 计算并记录，供 Alex 校验与归档（0.7.0 读数 `8ac0eebe…2976` 已记入交付报告与 HANDOFF）：
 
@@ -133,5 +155,5 @@ codesign -dv --verbose=4 "$app" 2>&1 | grep -E '^(Identifier|Info.plist entries|
 ## 评审节点（Alex）
 
 - Alex 的介入点在**交付**这一步：装上使用（0.7.0 口令为「跑完前两件后打个包，我装上使用」）。
-- 打包本身是机器判定（gate 全绿 + 产物验证读数），不设文档评审节点。
+- 打包本身是机器判定（版本闸 + 构建 + 签名闸 + DMG 完整性 + sha256），不设文档评审节点；视觉回归不在打包环节做，归功能验收（「简单打包」节）。
 - 「是否打包 / 打哪一版」由 Alex 拍板（开工口令触发）；0.7.0 的下一版（0.7.1 patch）即按此等 Alex 口令。
