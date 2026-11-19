@@ -22,6 +22,6 @@
 ## 4. 验证
 
 - [x] 4.1 `scripts/gate.sh quick`（r1 修复提交，`CARGO_TARGET_DIR=/tmp/lumir-m854-target`）：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（日志 `.local/missions/M854/gate-quick-r1.log`；temp target 跑后已删）。
-- [ ] 4.2 `LUMIR_VISUAL_PORT=4393 scripts/gate.sh visual`：实现 tip `c8b94170` 上曾得 `GATE RESULT: 15/15 PASS（SKIP 0）`（929s，未更新基线）；r1 修复（`compositionStarted` guard + IME 回归）后**待重跑**——等 M843 的 visual 槽位结束并经 tower 批准后执行，读数回填此项。
+- [x] 4.2 `LUMIR_VISUAL_PORT=4393 CARGO_TARGET_DIR=/tmp/lumir-m854-target scripts/gate.sh visual`（最终 tip `1278c3d1`）：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；`visual-regression` 940s，全量 **1157 passed / 3 skipped**（含本文件两种引擎各 61 条），**未更新任何基线**。日志 `.local/missions/M854/gate-visual-final.log`；temp target 跑后已删（释放 3.9G）。
 - [x] 4.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`、`bash scripts/docs-check.sh`、`node scripts/acceptance/run.mjs --check` 通过（2026-11-19：`validate --all --strict` → `Totals: 35 passed, 0 failed`；`docs-check: PASS`；`--check` → `场景静态校验通过（240 个）`）。
-- [x] 4.4 r1 修复：闸门 IME guard 改为 `view.compositionStarted`（保留 `event.isComposing`）+ 新增 WebKit 组合期回归；tasks 读数按实际制品改正（61/引擎、122 passed）。r1 提交后 quick 13/13 PASS、目标双引擎 122 passed；visual 待 M843 槽位结束 + tower 批准后重跑（4.2）。真机证据 `.local/acceptance/2026-11-19-m854-266/`；原始日志 `.local/missions/M854/`。提交 TowerComplete 等待 fresh review。
+- [x] 4.4 r1 修复：闸门 IME guard 改为 `view.compositionStarted`（保留 `event.isComposing`）+ 新增 WebKit 组合期回归；tasks 读数按实际制品改正（61/引擎、122 passed）。r1 提交后 quick 13/13 PASS、目标双引擎 122 passed；r2 纯文档；最终 visual 在 `1278c3d1` 上 15/15 PASS（4.2）。真机证据 `.local/acceptance/2026-11-19-m854-266/`；原始日志 `.local/missions/M854/`。提交 TowerComplete 等待 fresh review。
