@@ -135,6 +135,65 @@ CSS 动画（CodeMirror 光标闪烁）在截图时冻结，保证逐帧确定�
    抬容差换绿；若 `page-channel-death` 密度上升，按通道问题排查（同一次 run 里连续命中说明
    机器侧状态没恢复，那一次不算产品 FAIL，也不该用 rerun 掩盖）。
 
+### Unicode / 选区 / 剪贴板对抗场景（M843）
+
+文件：`scenes/text-clipboard-adversarial.spec.ts`（真浏览器）、`../unit/text-unicode-adversarial.test.ts`
+（Node 合同层）。两层共用同一套期望来源：`../unit/editing-oracle-model.ts`（独立模型，不 import
+生产期望），生产面只当适配器。
+
+判据面（合同）：
+
+- **字素删除**：正文 ⌃H / ⌃D 对 9 类簇整簇删除（ZWJ 家庭、国旗、肤色、职业 ZWJ、组合重音、
+  变体选择符、代理对、阿拉伯文附标、希伯来文附标）；原生 Backspace / Delete 的粒度是**引擎
+  行为**，用例按引擎钉住首拍基线，并断言「重复按压最终恰好移除整簇、不越界、不产生孤立代理项、
+  可撤销」。
+- **选区替换**：粘贴替换 `[from,to)` 恰好一次、caret 落在 `from+insert.length`；反向选区、
+  跨行选区、跨 live preview replace 装饰（列表 marker / wikilink / 行内公式 / 粗体）与折叠
+  caret 同权；替换结果必须等于源码区间替换，渲染字形不得进入源码。
+- **剪贴板优先级**：正文 image 文件项 > `text/plain` > `text/uri-list`（CM 默认，不解析 HTML）；
+  composer image 文件项 > `text/plain`（其余一律 `preventDefault`，不消费）；非图片文件项不抢文本；
+  drop 正文支持文本与文本文件、图片文件被 CM 的二进制过滤挡掉，composer drop 只取 `text/plain`。
+- **组合中粘贴**：组合文本恰好提交一次、粘贴恰好追加一次，二者各自是一个撤销步；composer 不触发发送。
+- **历史粒度**：`input.paste` 不参与 CM 的聚簇（只 `input.type` / `delete` 参与），每次粘贴天然
+  一个撤销步；固定 seed 随机序列每拍用 620ms（正文）/ 620ms（composer）屏障隔离历史事件，并带
+  操作直方图（每类操作数 > 0、真实改文档的 paste/undo > 0，禁止空转）。
+
+**合成剪贴板纪律**：一律 `new DataTransfer()` + `new ClipboardEvent("paste", { clipboardData })` /
+`new DragEvent("drop", …)`，不读不写系统剪贴板；图片字节是 69 字节合成 1×1 PNG 魔数。正文图片
+落盘的 `fs_write_attachment` 用 `addInitScript` 包 `__TAURI_INTERNALS__.invoke`（必须排在
+`stubTauri` 之后），composer 走 `harness_write_image` 既有桩。
+
+**引擎基线（2026-11-19 实测，引擎升级会让本表变红）**：
+
+| 簇 | 原生 Backspace 首拍（chromium） | 原生 Backspace 首拍（webkit-realua） | composer ⌃H 首拍（双引擎） |
+|---|---|---|---|
+| 肤色修饰 / ZWJ 家庭 / 国旗 / VS16 / 代理对 | 整簇 | 整簇 | 整簇 |
+| 组合重音（多个 combining mark） | 一个码点 | 整簇 | 一个码点（CM 簇后缀） |
+| 阿拉伯文 / 希伯来文附标 | 一个码点 | 一个码点 | 一个码点（CM 簇后缀） |
+
+已知产品边界（finding 已登记在 `.tower/comms/findings/`——该目录不入 git，指针仅本机可查；
+修复后两层表项应变红，按新行为更新）：
+
+- `.tower/comms/findings/20261119-worker-unicode-clipboard-bug-composer-h-emoji-rtl.md`
+  （composer ⌃H 与正文命令的字素步长不一致）；
+- `.tower/comms/findings/20261119-worker-unicode-clipboard-bug-backspace-rtl.md`
+  （原生 Backspace 对组合标记 / RTL 附标逐码点退）；
+- `.tower/comms/findings/20261119-worker-unicode-clipboard-bug-html-only-cm-dopaste.md`
+  （正文 HTML-only 粘贴且有选区时，CM `doPaste("")` 会删掉选区；用例只在折叠 caret 上断言
+  空操作，不把数据丢失写成合同）。
+
+**IME**：组合中粘贴用 CDP `Input.imeSetComposition`（真引擎事件序），场景在 WebKit 项目内
+`test.skip`；WebKit 的原生 IME 事件序归 `scripts/acceptance` 真机场景，不用合成事件冒充。
+
+单跑（先 `pnpm build`，端口与主会话隔离）：
+
+```bash
+LUMIR_VISUAL_PORT=4388 pnpm --dir tests/visual exec playwright test \
+  scenes/text-clipboard-adversarial.spec.ts --project=chromium
+LUMIR_VISUAL_PORT=4388 pnpm --dir tests/visual exec playwright test \
+  scenes/text-clipboard-adversarial.spec.ts --project=webkit-realua
+```
+
 ## 目录结构
 
 ```
