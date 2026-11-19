@@ -23,5 +23,8 @@
 - [x] 3.3 目标 WebKit（真机同款 UA）场景全绿：37 passed / 1 skipped（composer IME 仅 Chromium）。
 - [x] 3.4 随机 seed 2 / 13 / 29 在移除绕路后全绿（Chromium，见 3.2 的用例清单）。
 - [x] 3.5 OpenSpec validate、docs-check 与完整 `scripts/gate.sh quick` / `visual` 通过并记录 `GATE RESULT` 原文；不更新像素基线。
-  - rebase 到 master 79e8815 后的最终 tip 跑 `LUMIR_VISUAL_PORT=4386 scripts/gate.sh visual`：`GATE RESULT: 14/15 PASS（SKIP 0）`，退出码 1；唯一红项为 spawn 快照自带的 `harness::context::tests::fixed_segments_keep_migrated_bytes`（identity prompt 2173 字节 vs 指纹期待的 2181，同一现场已由 M830 的 finding 登记，本次零 Rust 改动），其余 14 项含 `visual-regression`（756s，全量像素）全 PASS。未更新任何像素基线。
+  - 最终口径：`git rebase --onto master 89e7959b` 只重放本 mission 两个提交（快照提交含 prompts / src-tauri WIP，随 rebase 移除），tip 基座 master `79e8815`。
+  - 新 tip（`fa57af5e` 前的实现提交）跑 `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0。
+  - 同 tip 串行跑 `LUMIR_VISUAL_PORT=4386 scripts/gate.sh visual`：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0（`visual-regression` 780s，含全量像素；未更新任何基线）。
+  - 早先基于快照 tip 的 `fixed_segments_keep_migrated_bytes` 红随快照移除消失——坐实它来自快照自带的 identity prompt（2173 vs 2181 字节），与本 mission 无关；同现场已由 M830 的 finding 登记。
 - [x] 3.6 反向验证：临时摘除闸门后矩阵中列表 / wikilink / 公式 / `**` 格变红（6/6 失败，doc 长度与字形均被改写；恢复后全绿）。
