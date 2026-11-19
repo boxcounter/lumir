@@ -54,14 +54,26 @@
 
 - [x] 5.1 目标双引擎：chromium `28 passed`（`.local/missions/M859/target-chromium.log`）；
       webkit-realua `27 passed + 1 skipped`（IME CDP-only，`.local/missions/M859/target-webkit.log`）；
-      根 tsc 与 `tests/visual` tsc 均通过。
+      根 tsc 与 `tests/visual` tsc 均通过。rebase 后复跑（tip `216b7f84`）：两 project 合计
+      `55 passed + 1 skipped`（`.local/missions/M859/rebase-target-both.log`）。
 - [x] 5.2 `scripts/gate.sh quick` 全绿（`CARGO_TARGET_DIR=/tmp/lumir-m859-target`）：
       `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0；日志 `.local/missions/M859/gate-quick.log`。
+      rebase 后复跑：同一原文行 `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0
+      （`.local/missions/M859/gate-quick-rebase.log`）。首跑因机器级 ENOSPC 失败（`ld: write()
+      failed, errno=28`），现场 `.local/missions/M859/enospc-cargo-test.log`；tower 清掉两份
+      空闲 `/tmp` target 后复跑转绿，产品判据未改。
 - [x] 5.3 `LUMIR_VISUAL_PORT=4396 CARGO_TARGET_DIR=/tmp/lumir-m859-target scripts/gate.sh visual`
       （tower 在 M844 槽位结束后批准，tip `21cd34a2`）：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；
       视觉回归 1180 条（1176 passed / 4 skipped / 0 failed，17.8m）。日志 `.local/missions/M859/gate-visual.log`；
-      不更新任何像素基线。
+      不更新任何像素基线。rebase 后复跑（tip `216b7f84`）：`GATE RESULT: 15/15 PASS（SKIP 0）`，
+      退出码 0；视觉回归 1272 条（1268 passed / 4 skipped，18.2m），日志
+      `.local/missions/M859/gate-visual-rebase.log`；同样未更新基线。
 - [x] 5.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`（35 passed / 0 failed）、
       `bash scripts/docs-check.sh` PASS、`node scripts/acceptance/run.mjs --check` 通过（提交前复跑一次）。
 - [x] 5.5 临时探针 spec / 探针配置已删除（`git status` 无残留）；真机窗口后 `/tmp/lumir-m859-target` 已清理；
       提交 TowerComplete 等待独立 review。
+- [x] 5.6 rebase 到 master `88886e4f`：`scripts/acceptance/COVERAGE.md` 冲突用生成器重建
+      （244 场景 / 221 item，263–267 全在）；`src/editor.ts` 自动合并同时保留 M854/M855 的
+      beforeinput 统一闸门（`SELECTION_DELETE_INPUTS` / `deleteSelectedRanges`）与本节 paste
+      降级闸门；`docs/backlog.md` 仅保留本 change 一条、未恢复 M854 已核销条目。paste 行为
+      无冲突（合并后的 paste 处理器与已审版本逐字一致），267 未复跑。
