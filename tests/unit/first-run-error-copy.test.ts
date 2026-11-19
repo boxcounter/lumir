@@ -500,3 +500,190 @@ test("同一 code 的两条信封：装载期诊断说「已忽略」，保存�
   // 诊断面不受字段错误表影响，仍是装载期措辞。
   assert.equal(errorText(entry, "zh"), COPY.D915.zh);
 });
+
+// ---------------------------------------------------------------------------
+// M865 r1：多构造点 code 的**分支后果**断言（review P1-1）
+//
+// 上一版只判「双语 / 无 CJK / 含可行动关键词」——这组判据发现不了「句子把 A 分支的结局
+// 写给了 B 分支」这类事实错误。这里按 Rust 构造点逐分支断言：
+//   · `must`：该分支真实后果的**不可省略成分**（不是「有中文」「有动词」式的空判据）；
+//   · `mustNot`：只在别的分支成立的结局被误写进这句时的形状。
+// 同一 code 的多个现场 message 都会喂给 `errorText`，证明一条覆盖句同时说清各分支。
+// ---------------------------------------------------------------------------
+
+/** 会话命名 / 图片命名的真实 message（逐字取自 `src-tauri/src/config.rs` 的 sink 调用）。 */
+const SESSION_NAMING_INVALID =
+  '配置项 harness.session_naming.model 的值 "ghost" 不在 provider（kimi-work）的 models 清单内：命名调用已回落为 kimi-work 的生效模型；请在 harness.providers.kimi-work.models 中声明该模型';
+const ATTACHMENT_NAMING_INVALID_VISION =
+  '配置项 harness.attachment_naming.model 的值 "ghost" 未声明 vision 能力；语义命名将不会发起';
+
+test("命名模型不可用：会话命名回退、图片命名原样保留并跳过——两分支的结局分别断言（M865 r1）", () => {
+  const entry = (message: string, path: string) => ({ code: "harness_naming_model_invalid", path, message });
+
+  const zh = errorText(entry(SESSION_NAMING_INVALID, "harness.session_naming.model"), "zh");
+  // 会话分支（config.rs:3960-3984）：回退为该 provider 的生效模型。
+  assert.match(zh, /会话命名[^；。]*生效模型/, `会话命名分支的结局缺失：${zh}`);
+  // 图片分支（config.rs:4034-4110）：覆盖值原样保留、资格不满足即跳过、保留暂存名，不换模型。
+  assert.match(zh, /图片命名[^；。]*(不换模型|跳过)/, `图片命名分支的结局缺失：${zh}`);
+  assert.match(zh, /保留暂存名/, `图片命名必须写「保留暂存名」：${zh}`);
+  // 成因清单必须含 attachment 的「未声明 vision」（config.rs:4087-4092），否则该分支无解释。
+  assert.match(zh, /未声明 vision/, `缺少 vision 成因：${zh}`);
+  // 反向：图片命名不得被写成「回退模型」——那正是会话分支的结局。
+  assert.ok(!/图片命名[^；。]*回退/.test(zh), `图片命名不得写成回落模型：${zh}`);
+
+  // 同一 code 的另一条分支 message 必须得到同一句覆盖文案（不是按 message 各写一句）。
+  assert.equal(errorText(entry(ATTACHMENT_NAMING_INVALID_VISION, "harness.attachment_naming.model"), "zh"), zh);
+
+  const en = errorText(entry(ATTACHMENT_NAMING_INVALID_VISION, "harness.attachment_naming.model"), "en");
+  assert.match(en, /session naming[^;.]*effective model/i, `en 会话分支的结局缺失：${en}`);
+  assert.match(en, /image naming[^;.]*skip/i, `en 图片分支的结局缺失：${en}`);
+  assert.match(en, /temporary name/i, `en 图片分支要保留暂存名：${en}`);
+  assert.ok(!/image naming[^;.]*falls back/i.test(en), `en 图片命名不得写成回落：${en}`);
+});
+
+/** wire_api 的两条构造点：字符串但取值非法（回退默认）与非字符串（整条 provider 忽略）。 */
+const WIRE_API_INVALID_VALUE =
+  '配置项 harness.providers.kimi-work.wire_api 取值 "chat" 非法（可选：responses、chat_completions），已回退为 responses';
+const WIRE_API_NON_STRING =
+  "配置项 harness.providers.kimi-work.wire_api 应为字符串（可选：responses、chat_completions），已忽略该 provider";
+
+test("wire_api 非法：字符串取值回退默认协议、非字符串整条 provider 忽略——两分支都点名（M865 r1）", () => {
+  for (const message of [WIRE_API_INVALID_VALUE, WIRE_API_NON_STRING]) {
+    const entry = { code: "harness_wire_api_invalid", path: "harness.providers.kimi-work.wire_api", message };
+    const zh = errorText(entry, "zh");
+    // 非字符串分支（config.rs:3682-3687）：整条 provider 被忽略——只写「回退默认协议」是错的。
+    assert.match(zh, /不是字符串[^；。]*忽略/, `非字符串分支的结局缺失：${zh}`);
+    // 取值非法分支（config.rs:4145-4154）：回退为预设默认协议。
+    assert.match(zh, /取值非法[^；。]*回退/, `取值非法分支的结局缺失：${zh}`);
+    assert.match(zh, /默认协议/, `取值非法分支要写清落点是默认协议：${zh}`);
+
+    const en = errorText(entry, "en");
+    assert.match(en, /non-string wire_api[^;.]*ignored/i, `en 非字符串分支的结局缺失：${en}`);
+    assert.match(en, /invalid value[^;.]*falls back/i, `en 取值非法分支的结局缺失：${en}`);
+  }
+});
+
+test("当前使用项为空 / 悬空：没有可用 provider 时保持未配置（M865 r1）", () => {
+  const empty = errorText(
+    {
+      code: "harness_provider_empty",
+      path: "harness.provider",
+      message: "配置项 harness.provider 为空，已按未写处理（按已配置的 provider 回退）",
+    },
+    "zh",
+  );
+  // 两个落点都要在：按预设顺序回退（design §2.5 第 2/3 步）与「没有可用 provider 时保持未配置」
+  // （第 4 步，`default_active_provider` 返回空串）。
+  assert.match(empty, /按预设顺序回退/, `缺少回退顺序：${empty}`);
+  assert.match(empty, /没有可用 provider 时保持未配置/, `缺少「无可用 provider」落点：${empty}`);
+
+  const unknown = errorText(
+    {
+      code: "harness_provider_unknown",
+      path: "harness.provider",
+      message: '配置项 harness.provider 取值 "ghost" 不在 harness.providers 表内，已回退为 无可用 provider',
+    },
+    "zh",
+  );
+  // 悬空分支的落点就是 `landing`：可能是具体 provider，也可能是「无可用 provider」。
+  assert.match(unknown, /没有可用 provider 时保持未配置/, `悬空分支缺少「无可用 provider」落点：${unknown}`);
+
+  const en = errorText(
+    {
+      code: "harness_provider_unknown",
+      path: "harness.provider",
+      message: '配置项 harness.provider 取值 "ghost" 不在 harness.providers 表内，已回退为 无可用 provider',
+    },
+    "en",
+  );
+  assert.match(en, /stays unset when none is available/i, `en 悬空分支缺少无可用 provider 落点：${en}`);
+});
+
+test("保存被拒的 base_url 为空：删除键只在预设自带官方地址时是出口（generic 没有）（M865 r1）", () => {
+  const entry = {
+    code: "harness_base_url_empty",
+    path: "harness.providers.kimi-work.base_url",
+    message: '配置项 harness.providers.kimi-work.base_url 为空，已回退为 https://api.moonshot.cn/v1',
+  };
+  const zh = errorText(entry, "zh", FIELD_ERROR_COPY);
+  // 保存现场的真实出口：填写地址；删除键的回退只对自带官方地址的预设成立（generic 没有）。
+  assert.match(zh, /删除该键只在预设自带官方地址时可用/, `删除键的条件没写清：${zh}`);
+  assert.match(zh, /generic 没有官方地址/, `必须点名 generic 例外：${zh}`);
+  // 反向：上一版的无条件出口「删除该键回退到官方地址」不得复现。
+  assert.ok(!/删除该键回退到官方地址/.test(zh), `无条件回退的老说法仍在：${zh}`);
+
+  const en = errorText(entry, "en", FIELD_ERROR_COPY);
+  assert.match(en, /removing the key only helps when the preset has an official URL/i, `en 条件没写清：${en}`);
+  assert.match(en, /generic has none/i);
+});
+
+test("保存被拒的 preset 非法：mock 与 id 的组合分支有独立出口（M865 r1）", () => {
+  const entry = {
+    code: "harness_provider_preset_invalid",
+    path: "harness.providers.mockish.preset",
+    message: '配置项 harness.providers.mockish.preset 为 mock，但 mock 是保留 id（只有 id 为 "mock" 的条目可使用该预设），已忽略该 provider',
+  };
+  const zh = errorText(entry, "zh", FIELD_ERROR_COPY);
+  // 真实分支（config.rs:3626）：preset=mock + id≠mock——出口是改 preset 或改 id 的组合。
+  assert.match(zh, /mock 预设配在了非 mock 的 id 上/, `mock/id 组合分支缺失：${zh}`);
+  assert.match(zh, /mock 只能用于 id=mock/, `mock 的 id 约束没写：${zh}`);
+  assert.match(zh, /改正 preset 或 id/, `出口必须同时允许改 preset 或 id：${zh}`);
+
+  const en = errorText(entry, "en", FIELD_ERROR_COPY);
+  assert.match(en, /mock preset is paired with a non-mock id/i, `en 组合分支缺失：${en}`);
+  assert.match(en, /fix the preset or the id/i);
+});
+
+test("保存被拒的模型 id 缺失：非字符串分支同属本 code（M865 r1）", () => {
+  const nonStringMessage =
+    "配置项 harness.providers.kimi-work.models[0] 缺少 id（或 id 不是字符串），已忽略";
+  const zh = errorText(
+    { code: "harness_model_id_empty", path: "harness.providers.kimi-work.models[0]", message: nonStringMessage },
+    "zh",
+    FIELD_ERROR_COPY,
+  );
+  assert.match(zh, /id 不是字符串/, `非字符串分支缺失：${zh}`);
+  // 装载期诊断档同样要点名该分支（D914）。
+  const diagnosticZh = errorText(
+    { code: "harness_model_id_empty", path: "harness.providers.kimi-work.models[0]", message: nonStringMessage },
+    "zh",
+  );
+  assert.match(diagnosticZh, /不是非空字符串|不是字符串/, `诊断档缺非字符串分支：${diagnosticZh}`);
+  assert.notEqual(zh, diagnosticZh, "两条信封仍是两份措辞");
+});
+
+test("preset 迁移 / 退役模型改写：改写落点按 Rust 实现断言，不写成泛化「等价」（M865 r1）", () => {
+  const preset = errorText(
+    {
+      code: "harness_provider_preset_migrated",
+      path: "harness.providers",
+      message: "配置项 harness.providers 的旧条目已补齐 preset（kimi、deepseek）",
+    },
+    "zh",
+  );
+  // `migrate_provider_presets` 只给 id 为 kimi / deepseek / mock 的条目补同名预设——不是「补为 generic」。
+  assert.match(preset, /kimi、deepseek、mock/, `补预设的 id 清单缺失：${preset}`);
+  assert.ok(!/补为 generic/.test(preset), `不得写成「补为 generic」（实现不补其它 id）：${preset}`);
+
+  const retired = errorText(
+    {
+      code: "harness_model_retired_migrated",
+      path: "harness.providers.kimi.model",
+      message: "配置项 harness.providers.kimi.model 的旧模型名已退役，已自动改写为 k2",
+    },
+    "zh",
+  );
+  // 改写目标是该 provider models 清单首个可用 id（M381），不是「等价模型」。
+  assert.match(retired, /models 清单的首项/, `改写落点没写准：${retired}`);
+  assert.ok(!/等价/.test(retired), `不得声称「等价模型」：${retired}`);
+
+  const en = errorText(
+    {
+      code: "harness_model_retired_migrated",
+      path: "harness.providers.kimi.model",
+      message: "配置项 harness.providers.kimi.model 的旧模型名已退役，已自动改写为 k2",
+    },
+    "en",
+  );
+  assert.match(en, /first entry in that provider's models list/i, `en 改写落点没写准：${en}`);
+});

@@ -32,6 +32,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { COPY, ERROR_COPY, FIELD_ERROR_COPY } from "../../src/copy-data.ts";
+import type { CopyKey } from "../../src/copy-data.ts";
 import { placeholders } from "../../src/copy.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -438,37 +439,79 @@ test("完整性门禁：后端可能产出的 code 集合与 ERROR_COPY 一一�
   assert.deepEqual(stray, [], `FIELD_ERROR_COPY 里这些 code 既没有字段错误构造点、也不是 RejectOnWrite 诊断 code`);
 });
 
-test("完整性门禁：字段错误 / 事件字面量 / 诊断的模板不带占位（三条通道都没有 params）", () => {
+/** 判据本体：给定「code → 文案键」的取值面，返回带占位的条目。主线用真实表调用；
+ *  mutant 用例把它喂一条带占位的假条目——证明这条判据不是恒真（REVIEW.md『断言等价于
+ *  子串』条）。 */
+function placeholderProblems(entries: Readonly<Record<string, CopyKey>>): string[] {
+  const problems: string[] = [];
+  for (const [code, key] of Object.entries(entries)) {
+    const entry = (COPY as Record<string, { zh: string } | undefined>)[key];
+    if (entry === undefined) {
+      problems.push(`${code} → ${key} 不在文案表里`);
+      continue;
+    }
+    const need = placeholders(entry.zh);
+    if (need.length > 0) problems.push(`${code} → ${key} 的模板带占位 ${need.join(" / ")}`);
+  }
+  return problems;
+}
+
+test("完整性门禁：字段错误 / 事件字面量 / 装载期诊断的模板不带占位（按信封分列检查）", () => {
   // 带占位的模板会被 errorText 的缺参兜底打回中文 message——与「没迁移」等价，却看起来像迁了。
-  // 字段错误：`SettingsFieldError` 只有 path / code / message；流式事件：只有 code / message；
-  // 诊断：`ConfigDiagnostic` 只有 code / path / message（键路径在诊断行上单独渲染，不插句子）。
-  // 两栖 `config_parse_failed` 的字段档读 `FIELD_ERROR_COPY`（与 `mapFieldErrors` 传的同一张表）。
+  // **必须按信封分列**：12 个 RejectOnWrite code 同时出现在两条信封上，若只用
+  // `FIELD_ERROR_COPY[code] ?? ERROR_COPY[code]` 取一张模板，装载期诊断档（D902/D904/D906–D910/
+  // D914–D916/D918/D920）根本不会被这条判据检查——它们带占位时门禁仍绿，运行时
+  // `errorText(entry)` 因无 params 回落 Rust message（M865 r1 P2-1 的现场）。
   const commandCodes = new Set(
     SITES.filter((s) => s.field !== true && s.event !== true && s.diag !== true).map((s) => s.code),
   );
   const fieldCodes = new Set(SITES.filter((s) => s.field === true).map((s) => s.code));
   const eventCodes = new Set(SITES.filter((s) => s.event === true).map((s) => s.code));
-  const noParamCodes = new Set(
-    SITES.filter(
-      (s) =>
-        s.field === true ||
-        s.event === true ||
-        // 诊断 code 若同时是 CommandError（有 params 通道），模板归那条通道判。
-        (s.diag === true && !commandCodes.has(s.code) && !fieldCodes.has(s.code) && !eventCodes.has(s.code)),
-    ).map((s) => s.code),
-  );
-  const problems: string[] = [];
-  for (const code of noParamCodes) {
+  const diagnosticCodes = new Set(SITES.filter((s) => s.diag === true).map((s) => s.code));
+
+  // ① 字段错误档：字面量 `field_error(...)` 构造点 ∪ `plan_and_apply` 动态转发的
+  //    RejectOnWrite 诊断 code；取值面是 FIELD_ERROR_COPY（缺省回落 ERROR_COPY）。
+  const fieldEntries: Record<string, CopyKey> = {};
+  for (const code of new Set([...fieldCodes, ...REJECT_ON_WRITE_CODES])) {
     const key = FIELD_ERROR_COPY[code] ?? ERROR_COPY[code];
-    if (key === undefined) continue; // 缺条目由上面的完整性门禁单独判红（log-only 豁免不要求条目）。
-    const need = placeholders(COPY[key].zh);
-    if (need.length > 0) problems.push(`${code} → ${key} 的模板带占位 ${need.join(" / ")}`);
+    if (key !== undefined) fieldEntries[code] = key;
   }
-  assert.deepEqual(problems, [], `字段错误 / 事件字面量 / 诊断模板 MUST NOT 带占位`);
-  // 反向判据：这条判据不能是「三类一条都没进表」的空转。
-  assert.ok(
-    [...noParamCodes].filter((c) => c in ERROR_COPY || c in FIELD_ERROR_COPY).length >= 40,
-    "至少四十条无参通道的 code 已进文案表（否则本条恒真）",
+  // ② 装载期诊断档：诊断 code 一律读 ERROR_COPY（**包括**同 code 的字段错误档已有改道键
+  //    的那 12 个——诊断侧不走 FIELD_ERROR_COPY）。
+  const diagnosticEntries: Record<string, CopyKey> = {};
+  for (const code of diagnosticCodes) {
+    if (commandCodes.has(code)) continue; // 与 CommandError 共用的 code，模板归 params 通道判。
+    const key = ERROR_COPY[code];
+    if (key !== undefined) diagnosticEntries[code] = key;
+  }
+  // ③ 事件字面量档：事件没有 params，模板不带占位。
+  const eventEntries: Record<string, CopyKey> = {};
+  for (const code of eventCodes) {
+    const key = ERROR_COPY[code];
+    if (key !== undefined) eventEntries[code] = key;
+  }
+
+  assert.deepEqual(placeholderProblems(fieldEntries), [], `字段错误模板 MUST NOT 带占位`);
+  assert.deepEqual(placeholderProblems(diagnosticEntries), [], `装载期诊断模板 MUST NOT 带占位`);
+  assert.deepEqual(placeholderProblems(eventEntries), [], `事件字面量模板 MUST NOT 带占位`);
+
+  // 反向判据：三类都真的查到了条目（不是「集合为空所以相等」）。双信封的装载期诊断档尤其要
+  // 非空——这正是 r1 P2-1 指出的漏检面。
+  assert.ok(Object.keys(fieldEntries).length >= 13, `字段错误档只查到 ${Object.keys(fieldEntries).length} 条`);
+  assert.ok(Object.keys(diagnosticEntries).length >= 29, `诊断档只查到 ${Object.keys(diagnosticEntries).length} 条`);
+  assert.ok(Object.keys(eventEntries).length >= 2, `事件档只查到 ${Object.keys(eventEntries).length} 条`);
+  const dualEnvelope = [...diagnosticCodes].filter((code) => REJECT_ON_WRITE_CODES.has(code));
+  assert.ok(dualEnvelope.length >= 12, `双信封诊断 code 只查到 ${dualEnvelope.length} 个`);
+  for (const code of dualEnvelope) {
+    assert.ok(code in diagnosticEntries, `${code} 的装载期诊断档没有被分列检查`);
+  }
+
+  // mutant 反向验证：给装载期档塞一条带占位的条目，判据必须如实报红。用真实带占位的模板
+  // （D174 的 `{rel}`）而不是自造的假 COPY 条目——证明检查走的是与主线同一条取值路径。
+  assert.deepEqual(
+    placeholderProblems({ mutant_loading_diagnostic: "D174" }),
+    ["mutant_loading_diagnostic → D174 的模板带占位 rel"],
+    "装载期条目带占位时判据必须报红（否则本条是恒真的假绿）",
   );
 });
 

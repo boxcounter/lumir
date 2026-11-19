@@ -101,3 +101,41 @@ vault / cron / version / last_vault / 装载失败三类 / `harness.subagents` �
   且要为 56 个 code 摊出上百条 code，Review 面与 Rust 协议面都失控。
 - **只修 en、zh 保留 Rust message**：`errorText` 的取值单位是 code，做不到「同一 code 按语言走
   不同来源」，且会留下「zh 文案不受门禁约束」的暗面。
+
+## D7：多构造点 code 的覆盖句必须写清**每个分支的结局**（r1 P1-1）
+
+同一个 code 在 Rust 侧有多条构造点、且后果不同时（现状 56 个 code 里 23 个如此），一条覆盖句
+MUST 同时说清每个分支的结局与出口，MUST NOT 把 A 分支的结局写给 B 分支。逐 code 复核对账：
+
+| code | 构造点 / 分支 | 真实后果（写进文案） |
+|---|---|---|
+| `harness_provider_empty` / `harness_provider_unknown` | `resolve_active_provider` 的空串 / 悬空分支 | 按预设顺序回退到可用 provider；**没有可用 provider 时保持未配置**（第 4 步的空串落点） |
+| `harness_provider_preset_invalid` | 非字符串 / 闭集合外 / `preset=mock` + `id≠mock` | 三种成因都导致整条 provider 忽略；mock 分支的出口是改 preset **或** id 的组合 |
+| `harness_wire_api_invalid` | `validate_provider_entry`（非字符串）vs `validate_wire_api`（取值非法） | 非字符串 → **整条 provider 被忽略**；取值非法 → 回退为预设默认协议 |
+| `harness_naming_model_invalid` | 会话命名（mock / 不在清单 / 无目标 provider）vs 图片命名（mock / 不在清单 / **未声明 vision** / 无目标） | 会话命名回退为该 provider 的生效模型；图片命名**原样保留覆盖值**、跳过命名、保留暂存名（`settings` 既有合同） |
+| `harness_base_url_empty`（字段错误档） | 预设有 / 没有官方地址 | 删除键的回退只对自带官方地址的预设成立；generic 没有官方地址，必须点名 |
+| `harness_model_id_empty` | 缺键 / 空串 / 非字符串 | 诊断档与保存档都点名「或不是字符串」 |
+| `harness_provider_preset_migrated` | `migrate_provider_presets` | 只给 id 为 kimi / deepseek / mock 的条目补**同名**预设，其它 id 不补——不能写成「补为 generic」 |
+| `harness_model_retired_migrated` | `migrate_retired_kimi_model` | 改写目标是该 provider `models` 清单**首个可用 id**（M381：不内置替补值），不声称「等价模型」 |
+| 其余 47 个 code | 单构造点或同义多模板 | 覆盖句与各构造点逐条比对无收窄（如 `harness_model_invalid` 三型同义、`harness_model_empty` 两落点已并列） |
+
+判据形态：`tests/unit/first-run-error-copy.test.ts` 的 r1 组按分支断言 `must`（该分支真实后果的
+不可省略成分）与 `mustNot`（只在别的分支成立的结局被误写进这句时的形状）。仅判「双语 / 无 CJK /
+含可行动关键词」发现不了这类事实错误，MUST NOT 作为唯一判据。
+
+## D8：无占位门禁按信封分列（r1 P2-1）
+
+12 个 RejectOnWrite code 同时出现在诊断与字段错误两条信封上。若用
+`FIELD_ERROR_COPY[code] ?? ERROR_COPY[code]` 取唯一模板，装载期诊断档（D902/D904/D906–D910/
+D914–D916/D918/D920）根本不会被检查——诊断档带占位时门禁仍绿，运行时 `errorText(entry)` 因
+无 params 回落 Rust message。
+
+判据拆成三档并各自反向计数：
+
+- 字段错误档：`field_error` 字面量构造点 ∪ `config.rs` 的 `REJECT_ON_WRITE_CODES`（动态转发
+  来源），取值面 `FIELD_ERROR_COPY ?? ERROR_COPY`；
+- 装载期诊断档：全部诊断 code 一律取 `ERROR_COPY`（含双信封 code 的诊断侧）；
+- 事件字面量档：`ERROR_COPY`。
+
+mutant 反向验证：给装载期档喂一条带占位的真实模板（`{ mutant_loading_diagnostic: "D174" }`），
+判据必须报红；另在真实表上做过一次负向验证（给 D908 临时加 `{value}` → 装载期档判红）。

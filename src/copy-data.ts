@@ -2516,12 +2516,12 @@ const COPY_TABLE = {
   // MUST NOT 进本表：它们的 path 永远不在设置快照范围内，条目没有消费者（error-text 门禁的
   // `LOG_ONLY_DIAGNOSTIC_CODES` 与真实构造点反向对账）。
   D899: {
-    zh: "配置项 harness.provider 为空，已按未写处理（回退到已配置的 provider）",
-    en: "harness.provider is empty; it is treated as unset and falls back to a configured provider",
+    zh: "配置项 harness.provider 为空，已按未写处理：按预设顺序回退到可用的 provider；没有可用 provider 时保持未配置",
+    en: "harness.provider is empty and is treated as unset: it falls back to an available provider in preset order, and stays unset when none is available",
   },
   D900: {
-    zh: "harness.provider 指向的 provider 不在 harness.providers 表内，已回退到可用的 provider",
-    en: "harness.provider points to a provider that isn't defined in harness.providers; it fell back to an available provider",
+    zh: "harness.provider 指向的 provider 不在 harness.providers 表内：已回退到可用的 provider；没有可用 provider 时保持未配置",
+    en: "harness.provider points to a provider that isn't defined in harness.providers: it fell back to an available provider, and stays unset when none is available",
   },
   D901: {
     zh: "该 provider 条目的形状非法（不是对象、models 不是数组，或字段类型不对），已忽略该 provider：请修正 config.json 后重新载入",
@@ -2536,12 +2536,12 @@ const COPY_TABLE = {
     en: "This provider has no preset and was treated as generic: declare kimi, deepseek, generic or mock explicitly",
   },
   D904: {
-    zh: "preset 不是合法取值，或 mock 预设被用在非 mock 的 id 上，该 provider 已忽略：可选 kimi、deepseek、generic、mock",
-    en: "The preset isn't a valid value, or the mock preset was used with a non-mock id, so this provider was ignored: choose kimi, deepseek, generic or mock",
+    zh: "preset 不是字符串或不是合法取值，或 mock 预设被用在非 mock 的 id 上，该 provider 已忽略：可选 kimi、deepseek、generic、mock",
+    en: "The preset isn't a string or isn't a valid value, or the mock preset is used with a non-mock id, so this provider was ignored: choose kimi, deepseek, generic or mock",
   },
   D905: {
-    zh: "旧 provider 条目缺少 preset，已自动补为 generic：请核对这些条目的协议是否符合预期",
-    en: "Old provider entries without a preset were filled in as generic: check that their protocol is what you expect",
+    zh: "旧 provider 条目缺少 preset：id 为 kimi、deepseek、mock 的条目已自动补上同名预设，请核对这些条目的协议是否符合预期",
+    en: "Old provider entries were missing a preset: entries with the ids kimi, deepseek or mock were given the matching preset automatically; check that their protocol is what you expect",
   },
   D906: {
     zh: "base_url 为空，已回退为预设的官方地址；预设没有官方地址时按未填写处理",
@@ -2552,8 +2552,8 @@ const COPY_TABLE = {
     en: "This OpenAI-compatible provider has an API key or models but no base_url: fill in base_url (this preset has no official URL)",
   },
   D908: {
-    zh: "wire_api 不是合法取值（可选 responses、chat_completions），已回退为预设的默认协议",
-    en: "wire_api isn't a valid value (choices: responses, chat_completions); it fell back to the preset's default",
+    zh: "wire_api 不是字符串时整个 provider 会被忽略；取值非法（可选 responses、chat_completions）时回退为预设的默认协议",
+    en: "A non-string wire_api makes the whole provider ignored; an invalid value (choices: responses, chat_completions) falls back to the preset's default",
   },
   D909: {
     zh: "该预设不支持所选的 wire_api，已回退为预设支持的协议",
@@ -2608,8 +2608,8 @@ const COPY_TABLE = {
     en: "This models entry doesn't declare window, so the context window fell back to a conservative default",
   },
   D922: {
-    zh: "配置里的旧模型名已退役，已自动改写为当前等价模型",
-    en: "The retired model name in the config was automatically rewritten to its current equivalent",
+    zh: "配置里的旧模型名已退役，已自动改写为该 provider models 清单的首项",
+    en: "The retired model name in the config was automatically rewritten to the first entry in that provider's models list",
   },
   D923: {
     zh: "配置里的旧模型名已退役，且 models 清单没有可用的替代项，无法自动改写：请手动改成一个可用模型",
@@ -2620,8 +2620,8 @@ const COPY_TABLE = {
     en: "The naming model override is empty and follows the provider's effective model",
   },
   D925: {
-    zh: "命名模型的覆盖值不可用（mock 没有模型清单、模型不在清单内，或没有目标 provider），命名调用已回退为生效模型",
-    en: "The naming model override is unusable (mock has no model list, the model isn't listed, or no target provider is set); naming falls back to the effective model",
+    zh: "命名模型的覆盖值不可用（mock 没有模型清单、模型不在清单内、未声明 vision，或没有目标 provider）：会话命名回退为该 provider 的生效模型；图片命名不换模型，跳过命名并保留暂存名",
+    en: "The naming model override is unusable (mock has no model list, the model isn't listed, it doesn't declare vision, or no target provider is set): session naming falls back to the provider's effective model, while image naming keeps the override, skips naming and keeps the temporary name",
   },
   D926: {
     zh: "命名目标指向的 provider 不在 harness.providers 表内，已回退为会话当前 provider",
@@ -2638,8 +2638,8 @@ const COPY_TABLE = {
   // 按 D6(a) 拆成两张文案（与 `config_parse_failed` 的 FIELD_ERROR_COPY 先例同形）。
   // 模板同样不带占位：字段错误没有 params 通道，读数就在同一行的控件上。
   D928: {
-    zh: "模型行缺少 id：请填写 id 后再保存",
-    en: "This model row has no id: fill it in before saving",
+    zh: "模型行缺少 id，或 id 不是字符串：请填写 id 后再保存",
+    en: "This model row has no id, or the id isn't a string: fill it in before saving",
   },
   D929: {
     zh: "模型 id 重复：请把重复的行改成唯一 id 后再保存",
@@ -2662,24 +2662,24 @@ const COPY_TABLE = {
     en: "An API key is set but no model is declared: declare at least one model or clear the API key before saving",
   },
   D934: {
-    zh: "wire_api 取值不合法：请选择 responses 或 chat_completions 后再保存",
-    en: "wire_api isn't a valid value: choose responses or chat_completions before saving",
+    zh: "wire_api 不是字符串或取值非法（可选 responses、chat_completions）：请改正后再保存",
+    en: "wire_api isn't a string or isn't a valid value (choices: responses, chat_completions): fix it before saving",
   },
   D935: {
     zh: "所选 wire_api 不受该预设支持：请换一个受支持的协议后再保存",
     en: "The selected wire_api isn't supported by this preset: pick a supported protocol before saving",
   },
   D936: {
-    zh: "base_url 为空：请填写地址，或删除该键回退到官方地址后再保存",
-    en: "base_url is empty: enter a URL, or remove the key to fall back to the official one before saving",
+    zh: "base_url 是空字符串：请填写地址；删除该键只在预设自带官方地址时可用（generic 没有官方地址）",
+    en: "base_url is an empty string: enter a URL. Removing the key only helps when the preset has an official URL (generic has none).",
   },
   D937: {
     zh: "OpenAI 兼容预设需要 base_url：请填写后再保存",
     en: "An OpenAI-compatible provider needs a base_url: fill it in before saving",
   },
   D938: {
-    zh: "preset 取值不合法（可选 kimi、deepseek、generic、mock）：请改正后再保存",
-    en: "The preset isn't valid (choose kimi, deepseek, generic or mock): fix it before saving",
+    zh: "preset 不合法，或 mock 预设配在了非 mock 的 id 上（mock 只能用于 id=mock）：请改正 preset 或 id 后再保存",
+    en: "The preset isn't valid, or the mock preset is paired with a non-mock id (mock only works with id=mock): fix the preset or the id before saving",
   },
   D939: {
     zh: "provider id 不合法（小写字母 / 数字 / - / _，不含点，长度有限）：请改正后再保存",
