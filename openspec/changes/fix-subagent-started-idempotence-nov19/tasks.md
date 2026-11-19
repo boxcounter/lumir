@@ -13,8 +13,9 @@
 
 ## 3. 验证
 
-- [ ] 3.1 目标单测通过：`node --experimental-strip-types --import ./tests/unit/register.mjs --test tests/unit/harness-subagent-event-idempotence.test.ts`；全量单测 `node tests/unit/run.mjs` 全绿。
-- [ ] 3.2 类型门禁：`pnpm exec tsc -p tests/unit/tsconfig.json` 与 `pnpm exec tsc --noEmit` 通过。
-- [ ] 3.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
+- [x] 3.1 目标单测通过：`node --experimental-strip-types --import ./tests/unit/register.mjs --test tests/unit/harness-subagent-event-idempotence.test.ts` 6/6 pass；全量单测 `node tests/unit/run.mjs` 1524 pass / 0 fail。
+- [x] 3.2 类型门禁：`pnpm exec tsc -p tests/unit/tsconfig.json` 与 `pnpm exec tsc --noEmit` 通过。
+- [x] 3.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（`Totals: 35 passed, 0 failed (35 items)`）；`bash scripts/docs-check.sh` PASS。
 - [ ] 3.4 完整门禁 `scripts/gate.sh quick` 通过，`GATE RESULT` 原文行记入 completion report。
-- [ ] 3.5 真机验收：无——纯归约层，无 UI 形态 / 交互手感变化；行渲染行为不变。
+  - 按 M850 指令「完整 quick/cargo 先申请 tower」，已向 tower 申请排期 / 授权；执行与读数在完成后回填。
+- [x] 3.5 真机验收：无——纯归约层，无 UI 形态 / 交互手感变化；行渲染行为不变。

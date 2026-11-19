@@ -6311,10 +6311,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     renderTaskRowDetail(entry, run);
   }
 
-  /** resume 去重（只由 `subagent_started` 的「run 已存在」分支调用，评审 r2 P1-1）：
+  /** resume 去重（只由 `subagent_started` 的「段号更大、构成新段」分支调用，评审 r2 P1-1）：
    *  第二段的 `tool_call started` 会先建一条未绑定任务行；确认这次 started 是同一 run 的
    *  resume 后，收走**同一执行者**最近的一条未绑定行。MUST NOT 在 progress / step / finished /
-   *  快照刷新里调用——那会误删并行新任务（r2）的调用行。 */
+   *  快照刷新里调用——那会误删并行新任务（r2）的调用行；同段重复 / 旧段重放不构成新段，也不得调用。 */
   function dropResumeDuplicateRow(run: SubrunView, callId: string | null): void {
     for (let i = taskRowEntries.length - 1; i >= 0; i -= 1) {
       const entry = taskRowEntries[i];
