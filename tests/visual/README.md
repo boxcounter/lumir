@@ -135,6 +135,78 @@ CSS 动画（CodeMirror 光标闪烁）在截图时冻结，保证逐帧确定�
    抬容差换绿；若 `page-channel-death` 密度上升，按通道问题排查（同一次 run 里连续命中说明
    机器侧状态没恢复，那一次不算产品 FAIL，也不该用 rerun 掩盖）。
 
+### Unicode / 选区 / 剪贴板对抗场景（M843）
+
+文件：`scenes/text-clipboard-adversarial.spec.ts`（真浏览器）、`../unit/text-unicode-adversarial.test.ts`
+（Node 合同层）。两层共用同一套期望来源：`../unit/editing-oracle-model.ts`（独立模型，不 import
+生产期望），生产面只当适配器。
+
+判据面（合同）：
+
+- **字素删除**：正文 ⌃H / ⌃D 对 9 类簇整簇删除（ZWJ 家庭、国旗、肤色、职业 ZWJ、组合重音、
+  变体选择符、代理对、阿拉伯文附标、希伯来文附标）；原生 Backspace / Delete 的粒度是**引擎
+  行为**，用例按引擎钉住首拍基线，并断言「重复按压最终恰好移除整簇、不越界、不产生孤立代理项、
+  可撤销」。
+- **选区替换**：粘贴替换 `[from,to)` 恰好一次、caret 落在 `from+insert.length`；反向选区、
+  跨行选区、跨 live preview replace 装饰（列表 marker / wikilink / 行内公式 / 粗体）与折叠
+  caret 同权；替换结果必须等于源码区间替换，渲染字形不得进入源码。
+- **剪贴板优先级**：正文 image 文件项 > `text/plain`（其次 `text/uri-list`；不解析 HTML）；composer
+  image 文件项 > `text/plain`（其余一律 `preventDefault`，不消费）；非图片文件项不抢文本；
+  drop 正文支持文本与文本文件、图片文件被 CM 的二进制过滤挡掉，composer drop 只取 `text/plain`。
+- **Markdown / HTML**：Markdown 源码放在 `text/plain` 里，正文与 composer 都按**纯文本逐字节
+  消费**（替换选区 / 落在拖放点，不解析 Markdown）；`text/markdown` 显式 MIME（无 text/plain）
+  在正文 caret、composer、两面的 drop 都是安全 no-op；正文**非空选区**的 `text/markdown`-only
+  粘贴当前会删选区（finding；用 `test.fail` 钉住「消费或完全不动」的安全合同，不把数据丢失写成
+  期望）。`text/html`-only 的 drop 在合成事件下双面 no-op、plain 优先；合成 DragEvent 只覆盖
+  产品 JS 处理器，浏览器原生 drag-drop 默认动作不在本通道（HTML-only paste 的删除见 finding）。
+- **组合中粘贴**：组合文本恰好提交一次、粘贴恰好追加一次，二者各自是一个撤销步；composer 不触发发送。
+- **历史粒度**：`input.paste` 不参与 CM 的聚簇（只 `input.type` / `delete` 参与），每次粘贴天然
+  一个撤销步；固定 seed 随机序列每拍用 620ms 屏障隔离历史事件，并带操作直方图（每类操作数 > 0、
+  真实改文档的 paste/undo > 0，禁止空转）。**快速无屏障段**单独存在：A. 非相邻编辑的真实
+  键入 / Backspace / Delete / undo / redo 固定序列，逐步精确到 doc + caret（变更不相邻 ⇒ 历史
+  不聚簇，与两拍间隔无关）；B. 相邻快速键入 + 删除后，undo/redo 只能落在独立模型枚举的可达
+  状态集，并精确断言撤到底 / 重做到顶。两段都没有 `waitForTimeout(≥500ms)`；`expect.poll` 只等
+  DOM observer 微任务落地。
+
+**合成剪贴板纪律**：一律 `new DataTransfer()` + `new ClipboardEvent("paste", { clipboardData })` /
+`new DragEvent("drop", …)`，不读不写系统剪贴板；图片字节是 69 字节合成 1×1 PNG 魔数。正文图片
+落盘的 `fs_write_attachment` 用 `addInitScript` 包 `__TAURI_INTERNALS__.invoke`（必须排在
+`stubTauri` 之后），composer 走 `harness_write_image` 既有桩。
+
+**引擎基线（2026-11-19 实测，引擎升级会让本表变红）**：
+
+| 簇 | 原生 Backspace 首拍（chromium） | 原生 Backspace 首拍（webkit-realua） | composer ⌃H 首拍（双引擎） |
+|---|---|---|---|
+| 肤色修饰 / ZWJ 家庭 / 国旗 / VS16 / 代理对 | 整簇 | 整簇 | 整簇 |
+| 组合重音（多个 combining mark） | 一个码点 | 整簇 | 一个码点（CM 簇后缀） |
+| 阿拉伯文 / 希伯来文附标 | 一个码点 | 一个码点 | 一个码点（CM 簇后缀） |
+
+已知产品边界（finding 已登记在 `.tower/comms/findings/`——该目录不入 git，指针仅本机可查；
+修复后两层表项应变红，按新行为更新）：
+
+- `.tower/comms/findings/20261119-worker-unicode-clipboard-bug-composer-h-emoji-rtl.md`
+  （composer ⌃H 与正文命令的字素步长不一致）；
+- `.tower/comms/findings/20261119-worker-unicode-clipboard-bug-backspace-rtl.md`
+  （原生 Backspace 对组合标记 / RTL 附标逐码点退）；
+- `.tower/comms/findings/20261119-worker-unicode-clipboard-bug-html-only-cm-dopaste.md`
+  （正文 HTML-only 粘贴且有选区时，CM `doPaste("")` 会删掉选区；paste 侧只在折叠 caret 上断言
+  空操作，drop 侧用例断言双面安全 no-op，不把数据丢失写成合同）；
+- `.tower/comms/findings/20261120-worker-unicode-clipboard-bug-text-markdown-only-html-only.md`
+  （正文 `text/markdown`-only 粘贴且有选区时同一缺口；caret/composer/drop 是安全 no-op，
+  选区用例是 `test.fail` 的安全合同）。
+
+**IME**：组合中粘贴用 CDP `Input.imeSetComposition`（真引擎事件序），场景在 WebKit 项目内
+`test.skip`；WebKit 的原生 IME 事件序归 `scripts/acceptance` 真机场景，不用合成事件冒充。
+
+单跑（先 `pnpm build`，端口与主会话隔离）：
+
+```bash
+LUMIR_VISUAL_PORT=4388 pnpm --dir tests/visual exec playwright test \
+  scenes/text-clipboard-adversarial.spec.ts --project=chromium
+LUMIR_VISUAL_PORT=4388 pnpm --dir tests/visual exec playwright test \
+  scenes/text-clipboard-adversarial.spec.ts --project=webkit-realua
+```
+
 ## 目录结构
 
 ```

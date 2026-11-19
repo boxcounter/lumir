@@ -93,11 +93,16 @@ export default defineConfig({
     // **几何差**，而 WebKit 在渲染态表格 cell 端点的键入 / 删除走 DOM 回写、chromium 不走——
     // 同一批断言只有两支各跑一次才分得出「引擎缺陷」与「产品回归」（该文件里 8 条缺陷用例按
     // engine 标 expected failure）。
+    // M843 起 Unicode / 选区 / 剪贴板对抗场景同行：字素删除与选区替换走的是**引擎原生**
+    // 编辑路径（原生 Backspace 的簇粒度在 Chromium 与 WebKit 上实测不同——Chromium 对组合
+    // 标记 / RTL 附标只退一个码元，WebKit 退整簇），clipboard 事件序也归引擎；只在 chromium
+    // 判会把「本机 engine 的边界」当成产品合同。其余粘贴优先级两支同判，IME 组合中粘贴是
+    // CDP-only，场景内自行 skip。
     ...(webkitRealuaPresent
       ? [
           {
             name: "webkit-realua",
-            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts|markdown-editing-stability\.spec\.ts/,
+            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts|markdown-editing-stability\.spec\.ts|text-clipboard-adversarial\.spec\.ts/,
             use: { browserName: "webkit" as const, userAgent: REAL_WEBKIT_UA },
           },
         ]
