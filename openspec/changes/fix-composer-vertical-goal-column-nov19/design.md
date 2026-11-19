@@ -28,6 +28,16 @@
    `goalColumn == null`）。
 4. `⌃P/⌃N` 与 `⇧⌃P/⇧⌃N` 走同一个 `composerVerticalTarget`；前者文档首末行回落行首 / 行尾
    （与 CM `cursorByLine` 同序），后者 anchor 不动、无回落（与 CM `selectByLine` 同序）。
+5. **落点 `assoc` 必须显式给**（CM 的边界语义）：行首 = +1、钳到非空行尾 = -1、行内 = 0。
+   给 0 会被 CM 在非空 range 上按扩选方向自动补侧，head 的 offset 到了目标屏行、`assoc` 仍指
+   来路那一屏——下一次取行又落回上一屏，连续 ⇧⌃N / ⇧⌃P 从第二次起原地不动（r1 review P2-1
+   的双向现场：⇧⌃N 读数 0→70→70→70；⇧⌃P 钳到折行点后 358→358→358）。`bidiLevel` 沿用起点。
+   扩选按 CM `extendSel` 的形态重建：`EditorSelection.range(anchor, target.head,
+   target.goalColumn, target.bidiLevel || undefined, target.assoc)`。
+6. **「同一屏行」判据**：`moveVertically` 在文档末行可能把落点钳到文档末尾而仍留在同一屏行
+   （如 200 字符末屏行 `[140,200]` 的起点按 ⌃N 得到 200）。此时按「该方向无可停靠行」处理：
+   折叠光标回落 `moveToLineBoundary`（行尾 / 行首），扩选取 `moveVertically` 的落点（文档末端），
+   与 CM `cursorByLine` / `selectByLine` 的边界行为一致；否则目标行的字符列会把落点算回起点。
 
 ## 代价
 

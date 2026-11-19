@@ -13,8 +13,16 @@
       长行→短行钳位、连续上下目标列往返、⇧Enter 换行键入后 ⌃P、软折行逐屏行）
 - [x] `scripts/acceptance/scenarios/140-harness-composer-nav-move.md`：保留原正向断言，补负向断言与
       字符列口径说明
+- [x] r1 review P2-1 返修：落点 `assoc` 显式给（行首 +1 / 钳到非空行尾 -1 / 行内 0）、目标 cursor
+      沿用起点 `bidiLevel`、扩选按 CM `extendSel` 形态重建 range（goalColumn + bidiLevel + assoc）；
+      顺带修「`moveVertically` 在末屏行把落点钳到文档末尾但仍属同一屏行」的边界（按无可停靠行走
+      `cursorByLine` / `selectByLine` 的回退）。证据：修前双引擎红（⇧⌃N 0→70→70；⇧⌃P 358→358→358），
+      修后 m831 两支全绿；单测补 2 条 assoc 用例（37/37）
 - [x] 真机复跑 140 PASS（36.8s / 10 步全 PASS），证据落主仓
-      `.local/acceptance/2026-11-19-m834/`；`quick` 11/12 PASS（唯一 FAIL 是 base 快照 prompt WIP 的
-      `fixed_segments_keep_migrated_bytes`，与本 change 无关，已 file finding）、`visual` 14/15 PASS
-      （同一 FAIL；visual-regression 951 passed），未更新像素基线
+      `.local/acceptance/2026-11-19-m834/`；未更新像素基线
+- [x] 最终门禁（r1 修复后的树，`visual` 用 `LUMIR_VISUAL_PORT=4273`；两次 `GATE RESULT` 原文）：
+      `quick` — `GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0；
+      `visual` — `GATE PASS visual-regression 632s`、`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0
+      （visual-regression `960 passed / 2 skipped / 0 failed`；m831 在 chromium 与 webkit-realua 两支
+      都执行，CDP 条在 WebKit 按设计 skip）
 - [x] 提交并 TowerComplete

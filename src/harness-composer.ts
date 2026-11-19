@@ -241,12 +241,17 @@ function extendWord(view: EditorView, forward: boolean): void {
   view.dispatch({ selection: EditorSelection.range(main.anchor, head), scrollIntoView: true, userEvent: "select" });
 }
 
+/** `SelectionRange.assoc` 的运行时值是 0 / ±1，类型是 number；本文件的取行与重建都只认这三档。 */
+function assocOf(range: SelectionRange): -1 | 0 | 1 {
+  return range.assoc < 0 ? -1 : range.assoc > 0 ? 1 : 0;
+}
+
 /** 光标所在**渲染行**（软折行的一屏行）的左右端。`includeWrap` 的 `moveToLineBoundary` 取的是
  *  该屏行的两侧（LTR：左侧 = 屏行行首、右侧 = 下一屏行行首）；`assoc` 参与取行——assoc=-1 且不在
  *  行首时按 `head - 1` 的 y 取行，停在折行点上的光标因此仍算前一屏行行尾（与 `coordsAtPos` 的
  *  画法一致）。空行 / 单屏行时两端重合。 */
-function composerRowBounds(view: EditorView, pos: number, assoc: number): { from: number; to: number } {
-  const axis = EditorSelection.cursor(pos, assoc as -1 | 1);
+function composerRowBounds(view: EditorView, pos: number, assoc: -1 | 0 | 1): { from: number; to: number } {
+  const axis = EditorSelection.cursor(pos, assoc);
   const left = view.moveToLineBoundary(axis, false, true).head;
   const right = view.moveToLineBoundary(axis, true, true).head;
   return { from: Math.min(left, right), to: Math.max(left, right) };
@@ -265,25 +270,38 @@ function composerRowBounds(view: EditorView, pos: number, assoc: number): { from
  *  goal column 用**字符数**携带在 `SelectionRange.goalColumn` 里（CM 只把它当不透明数字传回调用方，
  *  本文件之外没有任何真实消费者；一旦调用 `moveVertically` 就必须先剥掉它，否则会被当成像素）：
  *  连续上下移动越过短行被钳到行尾后，回到长行仍回原列；水平移动 / 键入 / 换行替换选区时自然丢列。
- *  落点被钳在行尾时 assoc = -1（光标画在该屏行行尾，而不是下一屏行行首）。 */
+ *
+ *  **落点的 `assoc` 必须显式给**（CM 的边界语义，不是可选装饰）：行首 = +1（属于该屏行）、钳到
+ *  非空行尾 = -1（属于该屏行行尾，而不是下一屏行行首）、行内其余位置 = 0。给 0 会被 CM 在非空
+ *  range 上按扩选方向自动补侧（向下补 -1、向上补 +1），head 的文档 offset 到了目标屏行、assoc 却
+ *  仍指向来路那一屏——下一次 `composerRowBounds` 按 assoc 取行又落回上一屏，连续 ⇧⌃N / ⇧⌃P 从
+ *  第二次起原地不动（r1 review P2-1 的双向现场）。`bidiLevel` 沿用起点（RTL 段的光标从属侧不因
+ *  竖直移动丢掉）。 */
 function composerVerticalTarget(
   view: EditorView,
   start: SelectionRange,
   forward: boolean,
   lineBoundaryFallback: boolean,
 ): SelectionRange {
+  const startAssoc = assocOf(start);
   const moved = view.moveVertically(EditorSelection.cursor(start.head, start.assoc), forward);
-  if (moved.head === start.head) {
-    return lineBoundaryFallback
-      ? view.moveToLineBoundary(EditorSelection.cursor(start.head, start.assoc), forward)
-      : start;
-  }
-  const startRow = composerRowBounds(view, start.head, start.assoc);
+  const startRow = composerRowBounds(view, start.head, startAssoc);
   const goal = start.goalColumn ?? start.head - startRow.from;
-  const targetRow = composerRowBounds(view, moved.head, moved.assoc);
+  const targetRow = composerRowBounds(view, moved.head, assocOf(moved));
+  // 没有跨出起点所在的屏行 = 该方向已无可停靠行（文档首 / 末行的原地不动，moveVertically 在末行
+  // 会把落点钳到文档末尾、仍留在同一屏行）：折叠光标回落行首 / 行尾（与 CM cursorByLine 同序），
+  // 扩选照 CM selectByLine 取 moveVertically 的落点（即文档末端）。
+  if (targetRow.from === startRow.from && targetRow.to === startRow.to) {
+    if (lineBoundaryFallback) {
+      return view.moveToLineBoundary(EditorSelection.cursor(start.head, start.assoc), forward);
+    }
+    if (moved.head === start.head) return start;
+    return EditorSelection.cursor(moved.head, assocOf(moved), start.bidiLevel ?? undefined, goal);
+  }
   const width = targetRow.to - targetRow.from;
   const column = Math.max(0, Math.min(goal, width));
-  return EditorSelection.cursor(targetRow.from + column, column === width && width > 0 ? -1 : 0, undefined, goal);
+  const assoc = column === 0 ? 1 : column === width && width > 0 ? -1 : 0;
+  return EditorSelection.cursor(targetRow.from + column, assoc, start.bidiLevel ?? undefined, goal);
 }
 
 /** ⌃N / ⌃P：空光标按 `composerVerticalTarget` 走一步；非空选区先折叠（与 CM `cursorByLine` 同序）。
@@ -310,8 +328,17 @@ function extendComposerLine(view: EditorView, forward: boolean): void {
   const main = view.state.selection.main;
   const target = composerVerticalTarget(view, main, forward, false);
   if (target.head === main.head && target.assoc === main.assoc) return;
+  // 与 CM `extendSel` 同形：anchor 不动、head 的 goalColumn / bidiLevel / assoc 全部随目标走。
   view.dispatch({
-    selection: EditorSelection.create([EditorSelection.range(main.anchor, target.head, target.goalColumn ?? undefined)]),
+    selection: EditorSelection.create([
+      EditorSelection.range(
+        main.anchor,
+        target.head,
+        target.goalColumn ?? undefined,
+        target.bidiLevel || undefined,
+        target.assoc,
+      ),
+    ]),
     scrollIntoView: true,
     userEvent: "select",
   });

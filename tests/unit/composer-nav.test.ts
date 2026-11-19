@@ -269,3 +269,37 @@ test("⇧⌃P / ⇧⌃N 扩选同列位且 anchor 不动", () => {
   runComposerCommand(view, "editor.extend-line-down");
   assert.deepEqual(readSelection(view), { anchor: 10, head: 10, goal: 2 });
 });
+
+// ── 落点 assoc / 扩选重建（M834 r1 review P2-1）──────────────────────────────────────
+// 行首 = +1（属于该行）、钳到非空行尾 = -1（属于行尾）、行内 = 0；扩选按 CM extendSel 的形态
+// 把目标 head 的 goalColumn / bidiLevel / assoc 一起重建。assoc 给错会让下一次按 assoc 取行时
+// 落回来路那一行，连续扩选从第二次起原地不动（软折行的现场见 m831 的浏览器用例）。
+function readRange(view: EditorView) {
+  const main = view.state.selection.main;
+  return { anchor: main.anchor, head: main.head, assoc: main.assoc, goal: main.goalColumn ?? null };
+}
+
+test("⌃N / ⌃P 落点 assoc：行首 +1、钳到非空行尾 -1、行内 0", () => {
+  const rowStart = viewWith("abcd\nefghij", 0);
+  runComposerCommand(rowStart, "editor.cursor-down");
+  assert.deepEqual(readRange(rowStart), { anchor: 5, head: 5, assoc: 1, goal: 0 });
+
+  const clamped = viewWith("abcdefghij\nxy", 10);
+  runComposerCommand(clamped, "editor.cursor-down");
+  assert.deepEqual(readRange(clamped), { anchor: 13, head: 13, assoc: -1, goal: 10 });
+
+  const middle = viewWith("abcd\nefghij", 2);
+  runComposerCommand(middle, "editor.cursor-down");
+  assert.deepEqual(readRange(middle), { anchor: 7, head: 7, assoc: 0, goal: 2 });
+});
+
+test("⇧⌃N / ⇧⌃P 重建 range 时带上目标的 assoc 与 goalColumn", () => {
+  const down = viewWith("abcd\nefghij", 0);
+  runComposerCommand(down, "editor.extend-line-down");
+  assert.deepEqual(readRange(down), { anchor: 0, head: 5, assoc: 1, goal: 0 });
+
+  // 向上扩选钳到目标行行尾：assoc=-1（属于目标行行尾，不是下一行行首）
+  const clampedUp = viewWith("xy\nabcdefghij", 12);
+  runComposerCommand(clampedUp, "editor.extend-line-up");
+  assert.deepEqual(readRange(clampedUp), { anchor: 12, head: 2, assoc: -1, goal: 9 });
+});
