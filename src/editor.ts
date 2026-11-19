@@ -703,6 +703,65 @@ function deleteWordBackward(view: EditorView): void {
   killRange(view, backwardWordStart(state, end, limits.from), end, false);
 }
 
+// ---------------------------------------------------------------------------
+// M836：原生跨行删除的回读闸门（合同 docs/specs/lists.md L7）
+// ---------------------------------------------------------------------------
+//
+// 现场（M835 双引擎实测）：裸 Delete / Backspace / ⌘⌫ 在行边界上删除换行时，浏览器会
+// 重建「被吸收行」的 DOM——contenteditable=false 的 replace widget（ListMarker /
+// WikilinkWidget / InlineMathWidget / 链接尾标）被摊平成显示文本，隐藏的源码标记
+// （`**`、`#`、`>`）直接消失；CM 的 tile 映射随 widget 节点一起失效，DOMReader 按
+// 文本回读，于是显示字形（`–`、`x`、`→`）被写进源文档并随 ⌘S 落盘。
+//
+// 判据刻意**不检测 widget、不读 DOM 文本形状**：只读 EditorState——空光标恰在行边界、
+// 被吸收的一侧确有行。命中即 preventDefault + dispatch 显式事务。覆盖面因此与「哪一类
+// replace 装饰」无关（列表、链接、公式、隐藏标记与将来的 widget 同在类内）；纯文本行的
+// 事务结果与原生逐字节相同（删一个换行），不需要按渲染形状分支。
+//
+// 未被接管的按键先到 keymap（本文件的 markupKeymap / 上游 markdownKeymap），所以闸门
+// 的实际命中面是「真的会落到浏览器原生删除」的入口；选区删除与行内删除实测不会被原生
+// 路径改写（M836 探针），不在此接管。forward 行删除变体（deleteSoftLineForward /
+// deleteHardLineForward）在行尾两引擎实测 no-op 且默认键位不可达，同样不收。
+//
+// 词删除变体（⌥⌫ / ⌥⌦）在默认键位表里已绑到应用命令、不落原生；闸门仍收它们，命中时
+// 调用同一应用命令，保证「键位被解绑后仍有确定落点」且两引擎结果一致——两引擎原生的
+// 行首词删除语义本就不同（Chromium 只删换行，WebKit 删前一个词 + 换行）。
+const LINE_MERGE_FORWARD_INPUTS = new Set(["deleteContentForward", "deleteWordForward"]);
+const LINE_MERGE_BACKWARD_INPUTS = new Set([
+  "deleteContentBackward",
+  "deleteWordBackward",
+  "deleteSoftLineBackward",
+  "deleteHardLineBackward",
+]);
+
+/** beforeinput 闸门本体：命中返回 true（事件已消费），否则 false 让原生删除照常发生。 */
+function absorbLineMergeDelete(event: InputEvent, view: EditorView): boolean {
+  const state = view.state;
+  if (state.readOnly || view.composing || event.isComposing) return false;
+  if (state.selection.ranges.length !== 1) return false;
+  const main = state.selection.main;
+  if (!main.empty) return false;
+  const line = state.doc.lineAt(main.head);
+  if (LINE_MERGE_FORWARD_INPUTS.has(event.inputType)) {
+    if (main.head !== line.to || main.head >= state.doc.length) return false;
+    event.preventDefault();
+    if (event.inputType === "deleteWordForward") deleteWordForward(view);
+    else deleteRange(view, main.head, main.head + 1, "delete.char.forward");
+    return true;
+  }
+  if (!LINE_MERGE_BACKWARD_INPUTS.has(event.inputType)) return false;
+  if (main.head !== line.from || main.head <= 0) return false;
+  event.preventDefault();
+  if (event.inputType === "deleteWordBackward") deleteWordBackward(view);
+  else deleteRange(view, main.head - 1, main.head, "delete.char.backward");
+  return true;
+}
+
+/** 只装进 md 模式：code 模式没有 replace 装饰，原生跨行删除无回读风险。 */
+const lineMergeDeleteGate = EditorView.domEventHandlers({
+  beforeinput: (event, view) => absorbLineMergeDelete(event as InputEvent, view),
+});
+
 /** kill 一段：并入 kill 槽后删除。相接判定用「上次 kill 结束后的光标位置 = 本次 kill
  *  的相接端」——连续同向 kill（含 C-k C-k 先杀行内容再杀换行、⌥⌫ ⌥⌫ 连续杀词）因此合并
  *  成一条，与 Emacs 一致。**不变量**：deleteRange 把光标落在 `from`，故槽里记的 `anchor`
@@ -1958,6 +2017,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           endMarker,
           mdGutterCompartment.of(mdGutterExtensions()),
           markupKeymap,
+          // M836：原生跨行删除的回读闸门（见函数组注释；只 md 有 replace 装饰）。
+          lineMergeDeleteGate,
         ]
       : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), markupKeymap];
   }

@@ -363,6 +363,24 @@ export class BodyOracle {
     this.replace(from, end, "");
   }
 
+  /** `⌘⌫`（deleteSoftLine/HardLineBackward）：空光标在行中删到行首；已在行首则删前一个
+   *  换行（把本行并入上一行）。两引擎实测同口径（M836 探针）。 */
+  deleteLineBackward(): void {
+    const from = Math.min(this.anchor, this.head);
+    const to = Math.max(this.anchor, this.head);
+    if (from !== to) {
+      this.replace(from, to, "");
+      return;
+    }
+    const line = lineSpanAt(this.doc, this.head);
+    if (this.head > line.from) {
+      this.replace(line.from, this.head, "");
+      return;
+    }
+    if (line.from === 0) return;
+    this.replace(line.from - 1, line.from, "");
+  }
+
   /** 当前行行首的空白（自动缩进的回落口径：`insertNewlineAndIndent` 在 md 无语法缩进规则时
    *  沿用当前行行首空白）。 */
   private lineIndent(pos: number): string {
@@ -612,26 +630,9 @@ export class BodyOracle {
     this.doc = this.doc.slice(0, line.to) + lines.join("\n");
   }
 
-  /** 折叠 caret 上这个删除动作会不会把两个 marker 行并成一行（`1. ` + `2. x` →
-   *  `1. 2. x`，CommonMark 解析成嵌套列表）。嵌套不在本模型范围，生成器须绕开。 */
-  wouldJoinMarkerLines(forward: boolean): boolean {
-    if (this.anchor !== this.head) return false;
-    const pos = this.head;
-    const here = lineSpanAt(this.doc, pos);
-    const hereText = this.doc.slice(here.from, here.to);
-    if (markerTextAt(hereText, here.from) === null) return false;
-    if (forward) {
-      if (pos !== here.to || here.to === this.doc.length) return false;
-      const next = lineSpanAt(this.doc, here.to + 1);
-      return markerTextAt(this.doc.slice(next.from, next.to), next.from) !== null;
-    }
-    if (pos !== here.from || here.from === 0) return false;
-    const previous = lineSpanAt(this.doc, here.from - 1);
-    return markerTextAt(this.doc.slice(previous.from, previous.to), previous.from) !== null;
-  }
-
   /** 折叠 caret 的 Backspace 会不会删掉空 marker 行的尾随空白（把 `2. ` 变成行尾
-   *  `2.`）——那会进入上游另一套空项分支，不在本模型范围；生成器绕开这种形态。 */
+   *  `2.`）——裸 marker 行的这个位置由 `backspaceBareMarkerLine` 接管（删整段标记，
+   *  与模型的单字素删除不同口径），生成器绕开这种形态。 */
   wouldDropMarkerWhitespace(): boolean {
     if (this.anchor !== this.head) return false;
     const line = lineSpanAt(this.doc, this.head);
@@ -757,6 +758,7 @@ export type BodyOp =
   | { kind: "insert"; text: string }
   | { kind: "deleteBackward" }
   | { kind: "deleteForward" }
+  | { kind: "deleteLineBackward" }
   | { kind: "enter"; at?: number }
   | { kind: "bareBackspace"; at?: number }
   | { kind: "undo" }
@@ -776,6 +778,9 @@ export function applyBodyOp(model: BodyOracle, op: BodyOp): void {
       return;
     case "deleteForward":
       model.deleteForward();
+      return;
+    case "deleteLineBackward":
+      model.deleteLineBackward();
       return;
     case "enter":
       if (op.at !== undefined) model.setSelection(op.at);
@@ -820,6 +825,7 @@ export function bodyCategory(op: BodyOp): BodyCategory {
     case "insert":
     case "deleteBackward":
     case "deleteForward":
+    case "deleteLineBackward":
       return "plain";
     case "enter":
       return "list";
@@ -847,13 +853,13 @@ export function randomBodyOp(rng: Rng, model: BodyOracle): BodyOp {
     for (let index = 0; index < count; index += 1) text += pickOne(rng, BODY_ALPHABET);
     return { kind: "insert", text };
   }
-  if (roll < 0.45) {
-    return model.wouldJoinMarkerLines(false) || model.wouldDropMarkerWhitespace()
-      ? { kind: "insert", text: "d" }
-      : { kind: "deleteBackward" };
+  if (roll < 0.43) {
+    return model.wouldDropMarkerWhitespace() ? { kind: "insert", text: "d" } : { kind: "deleteBackward" };
   }
   if (roll < 0.55) {
-    return model.wouldJoinMarkerLines(true) ? { kind: "insert", text: "f" } : { kind: "deleteForward" };
+    // M836 起行尾 forward Delete 由 beforeinput 闸门接管（删且只删换行），
+    // 与模型的单字素删除同口径，不再绕开「并成嵌套列表」的 marker 邻接格。
+    return { kind: "deleteForward" };
   }
   if (roll < 0.7) {
     const anchor = pickOne(rng, positions);
