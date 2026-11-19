@@ -639,12 +639,16 @@ test("保存 I4：保存中改名——迟到的成功不得写到旧路径，�
   await saving;
   const session = rig.editor.handle.sessionForPath("dir/b.md")!;
   assert.equal(session.dirty, true, "旧路径的保存结果不得清掉新键的 dirty");
-  assert.equal(session.state.doc.toString(), "# A 改");
-  assert.match(
-    rig.toasts.live().at(-1)!.text,
-    /已被外部删除或移动/,
-    "旧路径的写执行时目标已不存在：如实给「另存为新文件」出口，不静默吞掉",
+  assert.equal(session.state.doc.toString(), "# A 改", "迟到应答不得改动缓冲区");
+  // 旧路径的写确实在改名之后才执行（后端按当时的盘面报 fs_not_found），但 M847 判定这次
+  // 应答已不归新键所有：整体丢弃——不弹旧路径的「另存为新文件」等任何提示，也不写盘。
+  assert.deepEqual(
+    rig.disk.attempts.map((attempt) => attempt.path),
+    ["dir/a.md"],
+    "迟到的写到达了后端（证明这条应答路径真的跑了）",
   );
+  assert.equal(rig.disk.writes.length, 0, "旧路径的写没有落盘");
+  assert.deepEqual(rig.toasts.texts(), [], "丢弃的应答不得弹任何提示");
 
   // 新路径的保存用迁移过来的基准（改名不改字节）。
   rig.deck.policy("document_save", "pass");
@@ -686,16 +690,18 @@ test("保存 I4：目录改名（move）期间的在途保存——旧路径结�
 
   rig.deck.release("document_save");
   await saving;
-  assert.equal(
-    rig.editor.handle.sessionForPath("sub2/a.md")!.dirty,
-    true,
-    "旧路径的在途结果不得清新键的 dirty",
+  const sessionA = rig.editor.handle.sessionForPath("sub2/a.md")!;
+  assert.equal(sessionA.dirty, true, "旧路径的在途结果不得清新键的 dirty");
+  assert.equal(sessionA.state.doc.toString(), "# A 改", "迟到应答不得改动缓冲区");
+  // 目录移动后旧路径的写才执行（后端报 fs_not_found）；M847 判定应答失效即整体丢弃，
+  // 不弹旧路径的「另存为新文件」等任何提示，也不写盘。
+  assert.deepEqual(
+    rig.disk.attempts.map((attempt) => attempt.path),
+    ["sub/a.md"],
+    "迟到的写到达了后端（证明这条应答路径真的跑了）",
   );
-  assert.match(
-    rig.toasts.live().at(-1)!.text,
-    /已被外部删除或移动/,
-    "旧路径的写执行时目标已不存在：如实给出口，不静默吞掉",
-  );
+  assert.equal(rig.disk.writes.length, 0, "旧路径的写没有落盘");
+  assert.deepEqual(rig.toasts.texts(), [], "丢弃的应答不得弹任何提示");
 
   // 同一次目录移动里的另一个会话：基准随键迁移，保存落到新路径。
   rig.deck.policy("document_save", "pass");
@@ -707,6 +713,16 @@ test("保存 I4：目录改名（move）期间的在途保存——旧路径结�
   assert.equal(write.expected_revision, "rev:sub/b.md:1", "目录移动后每个会话的基准随键迁移");
   assert.equal(write.content, "# B 改");
   assert.equal(rig.editor.handle.sessionForPath("sub2/b.md")!.dirty, false);
+
+  // 在途保存出发时的会话（现键 sub2/a.md）不被旧 token 挡住：旧保存收尾后仍可立即保存，
+  // 基准是迁移过来的、未被迟到应答污染的那一个。
+  rig.editor.activate("sub2/a.md");
+  await rig.controller.save();
+  const writeA = rig.disk.writes.at(-1)!;
+  assert.equal(writeA.path, "sub2/a.md", "在新键上重新发起保存，落点随键");
+  assert.equal(writeA.expected_revision, "rev:sub/a.md:0", "基准未被旧路径的应答改写");
+  assert.equal(writeA.content, "# A 改");
+  assert.equal(sessionA.dirty, false);
   stopTimers(rig);
 });
 
