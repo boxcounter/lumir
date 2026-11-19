@@ -292,6 +292,124 @@ test("任务行归属：未知终态不造行，迟到 progress 不复活终态�
   expect(await page.locator(".lumir-tp-run").count()).toBe(1);
 });
 
+// ── 父轮次终态 × 子任务终态：同一事件序列的两种到达次序（M845 r1 P2-1）──────────
+// 判据同时落在**父相位（含轮次闸门）与子任务行终态 / 读数**上，且用真实 handleEvent
+// （`__fireHarnessEvent` → `runCallback`）驱动——不是孤立 reducer 之和：
+//   - 子终态 MUST NOT 被当成父终态（父仍在途时不得收口、不得关闸）；
+//   - 父终态 MUST NOT 复活或改写子任务行；
+//   - 两种次序下子行终态读数（tokens / 用时）都必须与 finished 事件一致。
+
+/** 子任务事件的合成形状（字段给全，形状错误不会被宽容解析吞掉）。 */
+function subagentStarted(runId: string, segment = 1, description = "梳理异步生命周期") {
+  return {
+    type: "subagent_started",
+    run_id: runId,
+    segment,
+    agent: "research",
+    description,
+    model: "mock-fast",
+    tools: ["vault_read"],
+    max_turns: 4,
+    max_tokens: 1000,
+    timeout_secs: 30,
+    background: true,
+    call_id: `call-${runId}-${segment}`,
+  };
+}
+
+function subagentFinished(runId: string, readings: { rounds: number; input: number; cached: number; output: number; durationMs: number }) {
+  return {
+    type: "subagent_finished",
+    run_id: runId,
+    segment: 1,
+    agent: "research",
+    status: "failed",
+    rounds: readings.rounds,
+    model: "mock-fast",
+    input_tokens: readings.input,
+    cached_tokens: readings.cached,
+    output_tokens: readings.output,
+    denied_calls: 0,
+    duration_ms: readings.durationMs,
+    summary_chars: 4,
+    summary: "失败",
+  };
+}
+
+/** 子任务行的终态与读数（class = 状态 oracle；usage/meta = 读数 oracle）。 */
+async function expectFailedRunReadings(page: Page, runId: string): Promise<void> {
+  const run = page.locator(`.lumir-tp-run[data-run="${runId}"]`);
+  await expect(run).toHaveClass(/is-failed/);
+  await expect(run).not.toHaveClass(/is-running/);
+  const usage = run.locator(".lumir-tp-usage-line");
+  await expect(usage).toBeVisible();
+  await expect(usage).toContainText("1.2k");
+  await expect(usage).toContainText("300");
+  await expect(usage).toContainText("80");
+  const meta = run.locator(".lumir-tp-meta");
+  await expect(meta).toContainText("mock-fast");
+  await expect(meta).toContainText("4s");
+}
+
+test("主子乱序·父先子后：父终态先到，子任务终态晚到仍落到任务行且不复活父轮次", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await openPanel(page);
+  const toggle = page.locator(".lumir-hp-toggle");
+  const run = page.locator('.lumir-tp-run[data-run="r1"]');
+
+  await send(page, "父先子后");
+  await fire(page, { type: "text_chunk", text: "父正文一。" });
+  await fire(page, subagentStarted("r1"));
+  await expect(run).toHaveClass(/is-running/);
+
+  // 父轮次先收口：相位回 idle、闸门关闭。
+  await fire(page, { type: "done" });
+  await expect(toggle).toHaveAttribute("data-activity", "idle");
+  await fire(page, { type: "text_chunk", text: "父终态后的迟到正文。" });
+  await page.waitForTimeout(80);
+  expect(await agentText(page)).not.toContain("父终态后的迟到正文");
+
+  // 子任务终态晚到：落到同一 run 的行上，读数取自 finished 事件。
+  await fire(page, subagentFinished("r1", { rounds: 3, input: 1200, cached: 300, output: 80, durationMs: 4200 }));
+  await expectFailedRunReadings(page, "r1");
+  // 父相位不得被子终态翻回在途（子终态不是父终态）。
+  await expect(toggle).toHaveAttribute("data-activity", "idle");
+  // 父消息流不得被追加第二条 assistant（子终态不产生父内容）。
+  expect(await assistantCount(page)).toBe(1);
+  expect(await agentText(page)).not.toContain("父终态后的迟到正文");
+});
+
+test("主子乱序·子先父后：子终态先到不收口父轮次，父终态晚到不复活子任务行", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await openPanel(page);
+  const toggle = page.locator(".lumir-hp-toggle");
+  const run = page.locator('.lumir-tp-run[data-run="r1"]');
+
+  await send(page, "子先父后");
+  await fire(page, { type: "text_chunk", text: "父正文前段。" });
+  await fire(page, subagentStarted("r1"));
+  await expect(run).toHaveClass(/is-running/);
+
+  // 子任务先收尾：行落终态与读数，但父轮次仍在途（闸门不得被子终态关掉）。
+  await fire(page, subagentFinished("r1", { rounds: 3, input: 1200, cached: 300, output: 80, durationMs: 4200 }));
+  await expectFailedRunReadings(page, "r1");
+  await expect(toggle).toHaveAttribute("data-activity", "inflight");
+  // 子任务收尾之后父仍在生成：正文必须照常落进同一条父消息。
+  await fire(page, { type: "text_chunk", text: "子任务收尾后父仍在生成。" });
+  await expect.poll(() => agentText(page)).toContain("子任务收尾后父仍在生成。");
+
+  // 父轮次晚到收口：闸门关闭、迟到正文丢弃；子任务行终态与读数不得被父终态改写。
+  await fire(page, { type: "done" });
+  await expect(toggle).toHaveAttribute("data-activity", "idle");
+  await fire(page, { type: "text_chunk", text: "父终态后的迟到正文。" });
+  await page.waitForTimeout(80);
+  expect(await agentText(page)).not.toContain("父终态后的迟到正文");
+  await expectFailedRunReadings(page, "r1");
+  expect(await assistantCount(page)).toBe(1);
+});
+
 test("通知徽标：面板收起时终态点亮未读，点击开启后清算", async ({ page }) => {
   await stubTauri(page, VAULT);
   await stubHarness(page);

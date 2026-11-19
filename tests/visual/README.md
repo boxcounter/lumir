@@ -358,8 +358,10 @@ IPC 时序不同，chromium 绿不代表 WebKit 事件序下同样成立。
 ### 行为场景：异步生命周期（`harness-async-adversarial.spec.ts`）
 
 有些回归不是布局 / 配色，而是**事件时序**：终态之后迟到的分片、停止后 provider 的旧响应、别的
-vault 的事件、未知 run 的终态。这类场景**零像素基线**（不产出 `*-expected.png`），只断言 DOM
-结构与属性，跑在默认 chromium project 里：
+vault 的事件、未知 run 的终态、父轮次终态与子任务终态的交错。这类场景**零像素基线**（不产出
+`*-expected.png`），只断言 DOM 结构与属性，跑在 chromium 与 `webkit-realua` 两个 project 里
+（已列入 `playwright.config.ts` 的 `testMatch`）：父相位 / 轮次闸门与子任务行的归约都走
+webview 的真实事件路径，两个引擎的微任务与 IPC 时序不同，chromium 绿不足以代表 WebKit 序。
 
 - 事件注入走桩自己的通道：`plugin:event|listen` 时记下 handler id，用
   `__TAURI_INTERNALS__.runCallback` 派发 `harness:event`（场景文件内自带，不动 `tauri-stub.ts`）；
