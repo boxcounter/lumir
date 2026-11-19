@@ -1301,30 +1301,34 @@ export function mapFieldErrors(errors: readonly SettingsFieldError[]): FieldErro
   const out = emptyFieldErrors();
   for (const error of errors) {
     const path = error.path;
+    // 上屏文本走 errorText（按 code 取文案表的唯一入口）：后端 field_error 的 message 是
+    // Rust 侧中文原文，直接上屏等于 en 界面透出中文。表里没有该 code、或模板需要字段错误
+    // 不携带的占位参数时，errorText 回落到 message——既有行为不变。
+    const text = errorText(error);
     if (path === "" || path === "providers" || path === "automation" || path === "naming") {
-      out.fileLevel ??= error.message;
+      out.fileLevel ??= text;
       continue;
     }
     if (path === "base_revision") {
-      out.conflict ??= error.message;
+      out.conflict ??= text;
       continue;
     }
     const addPath = ADD_PATH.exec(path);
     if (addPath !== null) {
-      out.addId ??= error.message;
+      out.addId ??= text;
       out.addIdIndex ??= Number(addPath[1]);
       continue;
     }
     if (path === "harness.provider" || path === "active_provider") {
-      out.active ??= error.message;
+      out.active ??= text;
       continue;
     }
     if (path.startsWith("harness.session_naming")) {
-      out.sessionNaming ??= error.message;
+      out.sessionNaming ??= text;
       continue;
     }
     if (path.startsWith("harness.attachment_naming")) {
-      out.attachmentNaming ??= error.message;
+      out.attachmentNaming ??= text;
       continue;
     }
     const model = MODEL_FIELD.exec(path);
@@ -1334,23 +1338,23 @@ export function mapFieldErrors(errors: readonly SettingsFieldError[]): FieldErro
       const field = model[3];
       const rows = (out.models[id] ??= {});
       const row = (rows[index] ??= {});
-      if (field === "id") row.id ??= error.message;
-      else if (field === "window") row.window ??= error.message;
-      else row.other ??= error.message;
+      if (field === "id") row.id ??= text;
+      else if (field === "window") row.window ??= text;
+      else row.other ??= text;
       continue;
     }
     const provider = PROVIDER_FIELD.exec(path);
     if (provider !== null) {
       const id = provider[1]!;
       const field = provider[2];
-      if (field === undefined) out.provider[id] ??= error.message;
-      else if (field === "api_key") out.apiKey[id] ??= error.message;
-      else if (field === "base_url") out.baseUrl[id] ??= error.message;
-      else if (field === "wire_api") out.wireApi[id] ??= error.message;
-      else out.provider[id] ??= error.message;
+      if (field === undefined) out.provider[id] ??= text;
+      else if (field === "api_key") out.apiKey[id] ??= text;
+      else if (field === "base_url") out.baseUrl[id] ??= text;
+      else if (field === "wire_api") out.wireApi[id] ??= text;
+      else out.provider[id] ??= text;
       continue;
     }
-    out.fileLevel ??= error.message;
+    out.fileLevel ??= text;
   }
   return out;
 }

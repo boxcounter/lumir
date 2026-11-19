@@ -4,6 +4,9 @@
 //   ① **code 全覆盖**：从 `src-tauri/src/**` 里扫出全部 `CommandError::new("<code>"` 的 code，
 //      与 `src/copy-data.ts` 的 `ERROR_COPY` 逐一对账——缺一即红（防「新加的错误码在 en 界面下
 //      掉回中文」这类静默半覆盖）。反向也查：`ERROR_COPY` 里不许有扫不到的幽灵 code。
+//      M852 起扫描面同列**设置面板的字段级错误**（`field_error(path, "code", message)` →
+//      `SettingsFieldError`）：它们是同一口径的第二条信封，未迁移的存量由
+//      `UNMIGRATED_FIELD_CODES` 台账登记（新 code 不登记即红）。
 //   ② **参数齐全**：对每个 code 的**每一处**构造点，检查它是否提供了该 code 文案模板里的
 //      **全部**占位名（`t()` 缺参即抛错，前端会回落到中文 `message`）——这是「en 界面下
 //      带参数的 code 真的上屏英文」的唯一机械保证。
@@ -41,8 +44,10 @@ interface Site {
   file: string;
   line: number;
   code: string;
-  /** 该构造点提供的参数键（`.param("x", …)`）。 */
+  /** 该构造点提供的参数键（`.param("x", …)`）。字段错误恒为空。 */
   params: string[];
+  /** `field_error(path, "code", message)` 构造的字段级错误（`SettingsFieldError`）。 */
+  field?: boolean;
 }
 
 /** `CommandError::new(` 之后按括号配平取整段调用（字符串字面量整体跳过）。 */
@@ -104,27 +109,133 @@ function scanSites(): Site[] {
       }
       i = open + text.length + 1;
     }
+    // 设置面板的**字段级错误**（`field_error(path, "code", message)` → `SettingsFieldError`）：
+    // 与 `CommandError` 同属「后端 code = 上屏文案的键」这一口径，只是走另一条信封。
+    // code 是第二个参数（path 可能是字面量也可能是 `format!`），因此按顶层逗号切参数再取。
+    let j = 0;
+    while ((j = src.indexOf("field_error(", j)) >= 0) {
+      const open = j + "field_error".length;
+      const text = callText(src, open);
+      const args = splitTopLevelArgs(text);
+      const code = args.length >= 2 ? /^"([a-z_0-9]+)"$/.exec(args[1])?.[1] : undefined;
+      if (code !== undefined) {
+        // 字段错误没有 params 通道（`SettingsFieldError` 只有 path / code / message）。
+        sites.push({ file: rel, line: src.slice(0, j).split("\n").length, code, params: [], field: true });
+      }
+      j = open + text.length + 1;
+    }
   }
   return sites;
 }
 
+/** 把调用文本按**顶层**逗号切成参数：字符串字面量整体跳过，三种括号各自配平。
+ *  用于 `field_error(path, code, message)` 这种「第 N 个参数才是 code」的构造点。 */
+function splitTopLevelArgs(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === '"') {
+      i += 1;
+      while (text[i] !== '"') {
+        if (text[i] === "\\") i += 1;
+        i += 1;
+      }
+    } else if (c === "(" || c === "[" || c === "{") {
+      depth += 1;
+    } else if (c === ")" || c === "]" || c === "}") {
+      depth -= 1;
+    } else if (c === "," && depth === 0) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out.map((arg) => arg.trim()).filter((arg) => arg.length > 0);
+}
+
+/** 已确认「暂未迁移」的设置面板字段错误 code（M852 只迁了首次安装撞得上的三条 id 校验：
+ *  `settings_provider_id_invalid` / `_reserved_id` / `_id_duplicate`）。
+ *
+ *  这份清单是**债务台账**而不是豁免：新增 `field_error` code 时，要么在 `ERROR_COPY` 里有
+ *  条目，要么在这里登记并由后续 change 收口——不登记即红。留着这十条的理由是它们各自要
+ *  自己的措辞（naming / patch / revision 各有语境），一次改完会把 M852 的评审面摊成十几条。
+ *  未迁移期间它们走 `errorText` 的既有兜底（回落 Rust 侧 message，en 界面下是中文）。 */
+const UNMIGRATED_FIELD_CODES = new Set([
+  "settings_patch_invalid",
+  "settings_naming_target_missing",
+  "settings_naming_model_missing",
+  "settings_unknown_field",
+  "settings_revision_conflict",
+  "settings_provider_preset_immutable",
+  "settings_provider_not_found",
+  "settings_active_provider_missing",
+  "settings_provider_delete_active_requires_target",
+  "settings_provider_delete_referenced",
+]);
+
 const SITES = scanSites();
 
 test("完整性门禁：后端可能产出的 code 集合与 ERROR_COPY 一一对应", () => {
-  const codes = new Set(SITES.map((s) => s.code));
+  const commandSites = SITES.filter((s) => s.field !== true);
+  const fieldSites = SITES.filter((s) => s.field === true);
+  const codes = new Set(commandSites.map((s) => s.code));
+  const fieldCodes = new Set(fieldSites.map((s) => s.code));
   const table = new Set(Object.keys(ERROR_COPY));
   const missing = [...codes].filter((c) => !table.has(c));
-  const ghost = [...table].filter((c) => !codes.has(c));
+  const uncoveredField = [...fieldCodes].filter(
+    (c) => !table.has(c) && !UNMIGRATED_FIELD_CODES.has(c),
+  );
+  const ghost = [...table].filter((c) => !codes.has(c) && !fieldCodes.has(c));
   assert.deepEqual(missing, [], `这些 code 在 ERROR_COPY 里没有条目（en 界面会掉回中文 message）`);
+  assert.deepEqual(
+    uncoveredField,
+    [],
+    `这些字段错误 code 既没有 ERROR_COPY 条目、也不在 UNMIGRATED_FIELD_CODES 台账里`,
+  );
   assert.deepEqual(ghost, [], `ERROR_COPY 里这些 code 在后端扫不到（幽灵条目）`);
   // 反向判据（REVIEW.md 「断言等价于子串」条）：扫描确实扫到了东西，不是「两边都空所以相等」。
   assert.ok(SITES.length >= 90, `构造点扫描异常（${SITES.length} 处）`);
   assert.ok(codes.size >= 45, `code 扫描异常（${codes.size} 个）`);
+  // 字段错误扫描确实命中（否则 uncoveredField 恒空、台账形同没有）。
+  assert.ok(fieldSites.length >= 13, `field_error 构造点扫描异常（${fieldSites.length} 处）`);
+  assert.ok(fieldCodes.size >= 13, `字段错误 code 扫描异常（${fieldCodes.size} 个）`);
+  // 台账不能把已迁掉的 code 留在里面（留着 = 一条无声的假豁免）。
+  const stale = [...UNMIGRATED_FIELD_CODES].filter((c) => table.has(c));
+  assert.deepEqual(stale, [], `这些 code 已进 ERROR_COPY，台账里应删掉`);
+});
+
+test("完整性门禁：字段错误的文案模板不带占位（SettingsFieldError 没有 params 通道）", () => {
+  // 带占位的模板会被 errorText 的缺参兜底打回中文 message——与「没迁移」等价，却看起来像迁了。
+  // 只判**仅由字段错误构造**的 code：`config_parse_failed` 这类两栖 code（CommandError 构造点
+  // 提供 path、字段错误构造点不提供）由报错兜底处理，不在本条范围。
+  const fieldOnly = new Set(
+    SITES.filter((s) => s.field === true)
+      .map((s) => s.code)
+      .filter((code) => !SITES.some((s) => s.field !== true && s.code === code)),
+  );
+  const problems: string[] = [];
+  for (const code of fieldOnly) {
+    const key = ERROR_COPY[code];
+    if (key === undefined) continue;
+    const need = placeholders(COPY[key].zh);
+    if (need.length > 0) problems.push(`${code} → ${key} 的模板带占位 ${need.join(" / ")}`);
+  }
+  assert.deepEqual(problems, [], `字段错误模板 MUST NOT 带占位`);
+  // 反向判据：这条判据不能是「表里一条字段错误都没有」的空转。
+  assert.ok(
+    [...fieldOnly].filter((c) => c in ERROR_COPY).length >= 3,
+    "至少三条仅字段错误的 code 已进 ERROR_COPY（否则本条恒真）",
+  );
 });
 
 test("完整性门禁：每处构造点都提供该 code 文案的全部占位名（缺一个即回落中文）", () => {
+  // 字段错误没有 params 通道（`SettingsFieldError` 只有 path / code / message），它们的
+  // 「模板不带占位」由上面单独一条判据盯，这里只看 `CommandError` 的 `.param(…)` 链。
+  const commandSites = SITES.filter((s) => s.field !== true);
   const problems: string[] = [];
-  for (const site of SITES) {
+  for (const site of commandSites) {
     const key = ERROR_COPY[site.code];
     assert.ok(key !== undefined, `${site.code} 不在 ERROR_COPY 里`);
     const need = placeholders(COPY[key].zh);
@@ -135,7 +246,7 @@ test("完整性门禁：每处构造点都提供该 code 文案的全部占位�
   }
   assert.deepEqual(problems, [], `这些构造点没有给全文案参数 ⇒ en 界面下会回落到中文 message`);
   // 反向判据：确实有一批构造点带参数（否则这条断言恒真）。
-  assert.ok(SITES.filter((s) => s.params.length > 0).length >= 30, "带参数的构造点太少，扫描口径可疑");
+  assert.ok(commandSites.filter((s) => s.params.length > 0).length >= 30, "带参数的构造点太少，扫描口径可疑");
 });
 
 test("errorText()：按 code 渲染并插参；未知 code 与缺参都回落到 message（兜底不可达但存在）", async () => {

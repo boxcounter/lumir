@@ -894,7 +894,11 @@ test("planProviderEdits：Add 的 patch 下标能被定位（后端错误路径 
 });
 
 test("mapFieldErrors：Add 的 id 错误带 patch 下标（不靠「最后一条新增」猜）", () => {
-  const mapped = mapFieldErrors([{ path: "providers[2].id", code: "settings_provider_id_duplicate", message: "已存在" }]);
+  // code 刻意用一个**没有 copy 映射**的占位值：这条用例判的是「错误按 path 归类 + 带 patch
+  // 下标」，不是文案。M852 起 `mapFieldErrors` 的上屏文本走 `errorText`；用
+  // `settings_provider_id_duplicate` 这类已进 ERROR_COPY 的 code 时，上屏文本由文案表给出，
+  // 「message 原样透传」的断言就与该行为冲突。文案面由 `first-run-error-copy.test.ts` 判。
+  const mapped = mapFieldErrors([{ path: "providers[2].id", code: "field_route_probe", message: "已存在" }]);
   assert.equal(mapped.addId, "已存在");
   assert.equal(mapped.addIdIndex, 2);
 });
