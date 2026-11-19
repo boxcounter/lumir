@@ -28,6 +28,6 @@
 - [x] 5.1 目标 Node 单测：`tests/unit/draft-vault-ownership.test.ts` + `tests/unit/harness-draft.test.ts` 全绿
 - [x] 5.2 `tsc --noEmit` 通过
 - [x] 5.3 全量前端单测（`node tests/unit/run.mjs`，1527 例全绿）
-- [ ] 5.4 `cargo test`（目标用例；独立 `CARGO_TARGET_DIR`，cargo 锁由 tower 排期）
-- [ ] 5.5 最终 `gate.sh quick`（tower 排期）
-- [ ] 5.6 `openspec validate --all --strict` 通过
+- [x] 5.4 目标 Rust 用例（独立 `CARGO_TARGET_DIR`，cargo 锁按 `mkdir` 原子获取）：`harness_draft_vault` 6/6 PASS、`harness::draft` 7/7 PASS；完整 `cargo test` 993/993 PASS（证据 `.local/missions/M848/`）
+- [x] 5.5 最终 `gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`、退出码 0（`.local/missions/M848/gate-quick-r2.log`；首个 run 的唯一红是快照 WIP 的 prompt 字节指纹，rebase 去掉快照后转绿）
+- [x] 5.6 `openspec validate --all --strict` 通过（35/35）
