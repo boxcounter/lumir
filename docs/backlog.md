@@ -75,5 +75,3 @@
 
 
 
-- **`fix-webkit-table-cell-editing-nov19`**（M855，15/15）：delta = editor-live-preview 1 条 ADDED（表格 cell 原生键入与单字符删除）；独立 review clean/merge，quick/visual 全绿，rebase 后真机 265 PASS（32 断言）；证据 `.local/missions/M855/`，归档后跑 `--archived` 审计并核销本条。
-- **`fix-html-only-paste-selection-nov19`**（M859，15/15）：节点 1 由 tower 代裁（Alex 整批「类似缺陷主动安排修复」+ 空 `text/plain` 归空操作的裁决）；delta = `clipboard-image-paste` 1 条 MODIFIED（「非图片剪贴板降级」收紧为无可插入文本时严格空操作）+ Purpose 改写，归档时确认 Purpose 段逐字落定；目标双引擎 chromium 28 / webkit-realua 27+1skip、quick `13/13 PASS（SKIP 0）`、visual `15/15 PASS（SKIP 0）`（视觉回归 1176 passed / 4 skipped）；真机 267 红 0/1 → 绿 1/1（21 断言，`.local/missions/M859/267-{red-machine-final,green-machine}.log`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。

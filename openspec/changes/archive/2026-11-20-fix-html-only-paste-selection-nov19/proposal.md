@@ -41,7 +41,7 @@ HTML-only 是空操作——两个输入面语义相反。
   语义直接矛盾；真实剪贴板通常同时带 `text/plain`，触发面窄，但一次触发就是不可感知的丢内容。
 - 现有规格 `clipboard-image-paste` 的「非图片剪贴板降级」只承诺「与本能力存在之前逐字节
   一致」——本现场恰好是该承诺的反例：所谓「默认文本粘贴」在没有文本时不是空操作。条款需要
-  一条可证伪的不变量，而不是对默认行为的转发（[rendering-defect-contract-first.md](../../../docs/process/rendering-defect-contract-first.md)）。
+  一条可证伪的不变量，而不是对默认行为的转发（[rendering-defect-contract-first.md](../../../../docs/process/rendering-defect-contract-first.md)）。
 
 ## What Changes
 
@@ -96,6 +96,6 @@ HTML-only 是空操作——两个输入面语义相反。
   与 composer 既有语义一致。
 - **D2 判据来源**：与 CM 默认粘贴同源——`text/plain` 或 `text/uri-list` 任一非空即视为
   「有可插入文本」。另立一份「哪些 MIME 算文本」的集合会形成第二份真源
-  （[REVIEW.md](../../../REVIEW.md)「同一语义两处真源」条）。
+  （[REVIEW.md](../../../../REVIEW.md)「同一语义两处真源」条）。
 - **D3 作用面**：所有可编辑正文会话（md 与 code）；只读会话不消费事件，保持 CM 自己的只读
   早退语义。
