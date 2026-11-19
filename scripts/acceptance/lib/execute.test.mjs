@@ -1979,7 +1979,7 @@ test("readStableEditor（M864）：连续两拍同一份残读不算稳定，须
   assert.equal(i, 4, `残读×2 → 完整×2 应读 4 次，实际 ${i} 次`);
 });
 
-test("readStableEditor mutant（M864）：只做两拍一致判定（attempts:2）时，同一份残读会被接受", async () => {
+test("readStableEditor mutant（M864）：只做两拍一致判定（attempts:2）时，残读会被当成结论", async () => {
   const clipped = "HNL-ALPHA 第��行";
   let i = 0;
   const got = await readStableEditor(async () => {
