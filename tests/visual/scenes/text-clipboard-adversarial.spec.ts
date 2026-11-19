@@ -2,8 +2,9 @@
 // 剪贴板对抗场景（M843）。
 //
 // 合同与 Node 层（tests/unit/text-unicode-adversarial.test.ts）同源：
-//   - 字素删除：正文命令（⌃H / ⌃D）对 9 类簇整簇删除；原生 Backspace 的粒度是**引擎行为**
-//     （下表按引擎分档钉住），任何路径都不得越界删到相邻文本或留下孤立代理项；
+//   - 字素删除：正文命令（⌃H / ⌃D）与两编辑面的**无修饰物理 Backspace**（M860）对同一张
+//     10 类簇表一次删完整字素簇（组合标记 / 肤色 / ZWJ / RTL 附标 / 变体选择符 / 代理对 /
+//     普通 ASCII），caret 落删除起点、一次 undo 复原；修饰键变体（⌥⌫ / ⌘⌫）保持既有路径；
 //   - 选区替换：粘贴替换源码区间恰好一次、caret 落在 from+insert.length，反向 / 跨行 /
 //     跨 widget 选区同权，一次粘贴一个撤销步；
 //   - 剪贴板优先级：正文 image 文件项 > text/plain（其次 uri-list；不解析 HTML），composer
@@ -20,13 +21,10 @@
 // 期望值来自 ../../unit/editing-oracle-model（独立模型，不 import 生产期望）。IME 用例走
 // CDP `Input.imeSetComposition`（真引擎事件序），WebKit 项目内 skip——合成事件不能冒充原生 IME。
 //
-// 已登记的产品边界（finding 见 tests/visual/README.md 的「Unicode 字素边界」节）：
-//   1. composer 的 ⌃H（`editor.delete-char-backward`）对肤色 / 职业 ZWJ / 组合标记 / RTL 附标
-//      只退一个 CM 簇后缀，正文命令则整簇；
-//   2. 原生 Backspace 对组合标记 / RTL 附标按码点退（Chromium 比 WebKit 更碎）。
-//   两条都用「第一拍基线 + 重复到整簇」钉住。
-// 曾经的第三条边界（正文 HTML-only / text/markdown-only + 非空选区会删源码）已由 M859
-// （change fix-html-only-paste-selection-nov19）修好并转成正向合同，见第十二节。
+// 已登记的产品边界：无。M843 的两条边界（composer ⌃H 只退 CM 簇后缀、原生 Backspace 按
+// 码点退）已由 M860 收敛为统一整簇，见下方第一、三节的统一期望。曾经的第三条边界
+//（正文 HTML-only / text/markdown-only + 非空选区会删源码）已由 M859
+//（change fix-html-only-paste-selection-nov19）修好并转成正向合同，见第十二节。
 
 import { expect, test as baseTest, type Page } from "@playwright/test";
 
@@ -307,6 +305,7 @@ interface ClusterCase {
 }
 
 const CLUSTERS: ClusterCase[] = [
+  { name: "普通 ASCII", prefix: "x", cluster: "a", suffix: "y" },
   { name: "ZWJ 家庭", prefix: "a", cluster: "👨‍👩‍👧‍👦", suffix: "b" },
   { name: "国旗", prefix: "x", cluster: "🇯🇵", suffix: "y" },
   { name: "肤色修饰", prefix: "x", cluster: "👍🏽", suffix: "y" },
@@ -322,100 +321,65 @@ const clusterDoc = (c: ClusterCase) => c.prefix + c.cluster + c.suffix;
 const clusterEnd = (c: ClusterCase) => c.prefix.length + c.cluster.length;
 const removed = (c: ClusterCase) => c.prefix + c.suffix;
 
-/** composer 的 ⌃H 第一拍剩余（CM `deleteCharBackward` 的当前边界；与 Node 层
- * `COMPOSER_BACKWARD_REMAINING` 同表，改动需两处同步）。finding 修复后全表应变空。 */
-const COMPOSER_BACKWARD_REMAINING: Record<string, string> = {
-  "ZWJ 家庭": "",
-  "国旗": "",
-  "肤色修饰": "👍",
-  "职业 ZWJ + 肤色": "👩",
-  "组合重音": "e\u0301",
-  "变体选择符": "",
-  "代理对": "",
-  "阿拉伯文附标": "م",
-  "希伯来文附标": "שָ",
-};
-
 // ---------------------------------------------------------------------------
-// 一、原生 Backspace 的引擎基线（组合标记 / RTL 附标按码点退）
+// 一、物理 Backspace：正文与 composer 一次删完整字素簇（M860，双引擎同判）
 // ---------------------------------------------------------------------------
 
-/** 首次按压后是否整簇删除（2026-11-19 双引擎实测；引擎升级会让本表变红，按实测更新）。 */
-const NATIVE_FIRST_STEP: Record<"chromium" | "webkit", Record<string, "full" | "partial">> = {
-  chromium: { 肤色修饰: "full", 组合重音: "partial", 阿拉伯文附标: "partial", 希伯来文附标: "partial", "ZWJ 家庭": "full" },
-  webkit: { 肤色修饰: "full", 组合重音: "full", 阿拉伯文附标: "partial", 希伯来文附标: "partial", "ZWJ 家庭": "full" },
-};
-
-const NATIVE_CASES = CLUSTERS.filter((c) => c.name in NATIVE_FIRST_STEP.chromium);
-
-pageTest("原生 Backspace：引擎基线（正文 + composer）+ 重复到整簇 + 撤销", async (page, browserName) => {
+pageTest("物理 Backspace：正文 + composer 一次整簇 + caret 落删除起点 + 单步撤销（双引擎）", async (page, browserName) => {
   const engine = browserName === "webkit" ? "webkit" : "chromium";
-  const table = NATIVE_FIRST_STEP[engine];
-  for (const c of NATIVE_CASES) {
+  for (const c of CLUSTERS) {
     const doc = clusterDoc(c);
-    const expectedFull = removed(c);
-    const firstStep = table[c.name]!;
     for (const surface of ["body", "composer"] as const) {
       const open = surface === "body" ? () => openBody(page, "probe.md", doc) : () => openComposer(page, doc, clusterEnd(c));
       const state = surface === "body" ? () => bodyState(page) : () => composerState(page);
       const selector = surface === "body" ? bodySelector : composerSelector;
+      const label = `${engine}/${surface}/${c.name}`;
 
       await open();
-      if (surface === "composer") await page.locator(selector).click();
+      await page.locator(selector).click();
       await (surface === "body" ? setBodySelection(page, clusterEnd(c)) : setComposerSelection(page, clusterEnd(c)));
       await page.keyboard.press("Backspace");
-      await expect.poll(async () => (await state()).doc, { message: `${engine}/${surface}/${c.name}: 第一拍未落地` }).not.toBe(doc);
+      await expect.poll(async () => (await state()).doc, { message: `${label}: 第一拍必须是整簇` }).toBe(removed(c));
       const afterFirst = await state();
+      expect(afterFirst.head, `${label}: caret 落删除起点`).toBe(c.prefix.length);
+      assertNoLoneSurrogates(afterFirst.doc, `${label}: 第一拍`);
 
-      if (firstStep === "full") {
-        expect(afterFirst.doc, `${engine}/${surface}/${c.name}: 引擎基线（整簇）`).toBe(expectedFull);
-      } else {
-        const partial = c.prefix + [...c.cluster].slice(0, -1).join("") + c.suffix;
-        expect(afterFirst.doc, `${engine}/${surface}/${c.name}: 引擎基线（一个码点）`).toBe(partial);
-        expect(afterFirst.doc, `${engine}/${surface}/${c.name}: 部分删除必须与整簇可分`).not.toBe(expectedFull);
-      }
-      assertNoLoneSurrogates(afterFirst.doc, `${engine}/${surface}/${c.name}: 第一拍`);
-
-      // 反复按压：每一步只能吞掉簇的一个真后缀，最终恰好等于 prefix+suffix，不得越界。
-      const firstRest = afterFirst.doc.slice(c.prefix.length, afterFirst.doc.length - c.suffix.length);
-      expect(c.cluster.startsWith(firstRest), `${engine}/${surface}/${c.name}: 第一拍不是簇的前缀删除`).toBe(true);
-      let previousLength = [...c.cluster].length;
-      let guard = 0;
-      while ((await state()).doc !== expectedFull) {
-        guard += 1;
-        expect(guard, `${engine}/${surface}/${c.name}: 重复 Backspace 未收敛`).toBeLessThan(16);
-        const current = (await state()).doc;
-        expect(current.startsWith(c.prefix) && current.endsWith(c.suffix), `${engine}/${surface}/${c.name}: 删到簇外 ${JSON.stringify(current)}`).toBe(true);
-        const rest = current.slice(c.prefix.length, current.length - c.suffix.length);
-        expect(c.cluster.startsWith(rest), `${engine}/${surface}/${c.name}: 中间态必须是簇的前缀（${JSON.stringify(rest)}）`).toBe(true);
-        const restLength = [...rest].length;
-        expect(restLength, `${engine}/${surface}/${c.name}: 每一拍必须严格缩短剩余簇`).toBeLessThan(previousLength);
-        expect(restLength, `${engine}/${surface}/${c.name}: 簇已删尽但未到期望`).toBeGreaterThan(0);
-        previousLength = restLength;
-        await page.keyboard.press("Backspace");
-      }
-      expect((await state()).doc).toBe(expectedFull);
-
-      // 撤销直到原文：中间不可停在与原文不同的状态（历史不得丢步）。
-      let undoGuard = 0;
-      while ((await state()).doc !== doc) {
-        undoGuard += 1;
-        expect(undoGuard, `${engine}/${surface}/${c.name}: 撤销未回到原文`).toBeLessThan(16);
-        await page.waitForTimeout(20);
-        await page.keyboard.press("Meta+z");
-      }
-      expect((await state()).doc).toBe(doc);
+      // 一次 undo 复原整簇（不得留下半步簇）。
       await page.keyboard.press("Meta+z");
-      expect((await state()).doc, `${engine}/${surface}/${c.name}: 多撤一拍不得改变已到顶的文档`).toBe(doc);
+      await expect.poll(async () => (await state()).doc, { message: `${label}: 单步撤销回原文` }).toBe(doc);
+      await page.keyboard.press("Meta+z");
+      expect((await state()).doc, `${label}: 多撤一拍不得改变已到顶的文档`).toBe(doc);
     }
   }
 });
 
+pageTest("code 模式物理 Backspace：折叠 caret 也按字素簇整簇 + 单步撤销（双引擎）", async (page) => {
+  for (const c of CLUSTERS.filter((item) => ["普通 ASCII", "组合重音", "阿拉伯文附标", "ZWJ 家庭"].includes(item.name))) {
+    await openBody(page, "probe.txt", clusterDoc(c));
+    await setBodySelection(page, clusterEnd(c));
+    await page.keyboard.press("Backspace");
+    await expect.poll(async () => (await bodyState(page)).doc, { message: `${c.name}: code 模式整簇` }).toBe(removed(c));
+    assertNoLoneSurrogates((await bodyState(page)).doc, `${c.name}: code 模式`);
+    await page.keyboard.press("Meta+z");
+    await expect.poll(async () => (await bodyState(page)).doc, { message: `${c.name}: code 模式单步撤销` }).toBe(clusterDoc(c));
+  }
+});
+
+pageTest("composer 修饰变体保持既有路径：⌥⌫ 仍是词删除（双引擎）", async (page) => {
+  await openComposer(page, "alpha beta", 10);
+  await page.locator(composerSelector).click();
+  await setComposerSelection(page, 10);
+  await page.keyboard.press("Alt+Backspace");
+  await expect.poll(async () => (await composerState(page)).doc, { message: "⌥⌫ 词删除（不得退化为单簇删除）" }).toBe("alpha ");
+  await page.keyboard.press("Meta+z");
+  await expect.poll(async () => (await composerState(page)).doc).toBe("alpha beta");
+});
+
 // ---------------------------------------------------------------------------
-// 二、正文命令（⌃H / ⌃D）：9 类簇整簇删除（双引擎）
+// 二、正文命令（⌃H / ⌃D）：10 类簇整簇删除（双引擎）
 // ---------------------------------------------------------------------------
 
-pageTest("正文 ⌃H：9 类簇整簇删除 + caret 落删除起点 + 撤销", async (page) => {
+pageTest("正文 ⌃H：10 类簇整簇删除 + caret 落删除起点 + 撤销", async (page) => {
   for (const c of CLUSTERS) {
     await openBody(page, "probe.md", clusterDoc(c));
     await setBodySelection(page, clusterEnd(c));
@@ -427,7 +391,7 @@ pageTest("正文 ⌃H：9 类簇整簇删除 + caret 落删除起点 + 撤销", 
   }
 });
 
-pageTest("正文 ⌃D：9 类簇整簇前删 + 撤销", async (page) => {
+pageTest("正文 ⌃D：10 类簇整簇前删 + 撤销", async (page) => {
   for (const c of CLUSTERS) {
     await openBody(page, "probe.md", clusterDoc(c));
     await setBodySelection(page, c.prefix.length);
@@ -440,10 +404,10 @@ pageTest("正文 ⌃D：9 类簇整簇前删 + 撤销", async (page) => {
 });
 
 // ---------------------------------------------------------------------------
-// 三、composer 命令：⌃D 整簇；⌃H 的当前边界（finding 钉住）+ 重复到整簇 + 附件
+// 三、composer 命令：⌃D / ⌃H 都整簇 + 单步撤销 + 附件不动
 // ---------------------------------------------------------------------------
 
-pageTest("composer ⌃D：9 类簇整簇前删 + 撤销 + 附件不动", async (page) => {
+pageTest("composer ⌃D：10 类簇整簇前删 + 撤销 + 附件不动", async (page) => {
   for (const c of CLUSTERS) {
     await openComposer(page, clusterDoc(c), c.prefix.length, [QUOTE_CARD]);
     await page.locator(composerSelector).click();
@@ -456,40 +420,21 @@ pageTest("composer ⌃D：9 类簇整簇前删 + 撤销 + 附件不动", async (
   }
 });
 
-pageTest("composer ⌃H：5 类部分退（finding）+ 重复到整簇 + 撤销回原文 + 附件不动", async (page) => {
+pageTest("composer ⌃H：10 类簇整簇 + caret 落删除起点 + 单步撤销 + 附件不动", async (page) => {
   for (const c of CLUSTERS) {
-    const remaining = COMPOSER_BACKWARD_REMAINING[c.name]!;
-    expect(remaining.length, `${c.name}: 表项必须是簇的真前缀`).toBeLessThan(c.cluster.length);
     await openComposer(page, clusterDoc(c), clusterEnd(c), [QUOTE_CARD]);
     await page.locator(composerSelector).click();
     await setComposerSelection(page, clusterEnd(c));
     await page.keyboard.press("Control+h");
-    const expectedFirst = c.prefix + remaining + c.suffix;
-    await expect.poll(async () => (await composerState(page)).doc, { message: `${c.name}: ⌃H 第一拍` }).toBe(expectedFirst);
-    if (remaining !== "") {
-      expect(expectedFirst, `${c.name}: 部分删除必须与整簇删除可分`).not.toBe(removed(c));
-    }
+    await expect.poll(async () => (await composerState(page)).doc, { message: `${c.name}: ⌃H 第一拍必须是整簇` }).toBe(removed(c));
+    expect((await composerState(page)).head, `${c.name}: caret 落删除起点`).toBe(c.prefix.length);
+    assertNoLoneSurrogates((await composerState(page)).doc, `${c.name}: ⌃H`);
     await expect(composerTray(page)).toHaveCount(1);
 
-    let guard = 0;
-    while ((await composerState(page)).doc !== removed(c)) {
-      guard += 1;
-      expect(guard, `${c.name}: 重复 ⌃H 未收敛`).toBeLessThan(16);
-      const current = (await composerState(page)).doc;
-      expect(current.startsWith(c.prefix) && current.endsWith(c.suffix), `${c.name}: 删到簇外 ${JSON.stringify(current)}`).toBe(true);
-      expect(c.cluster.includes(current.slice(c.prefix.length, current.length - c.suffix.length)), `${c.name}: 中间态必须是簇的前缀`).toBe(true);
-      await page.keyboard.press("Control+h");
-    }
-    await expect(composerTray(page)).toHaveCount(1, { timeout: 2000 });
-
-    let undoGuard = 0;
-    while ((await composerState(page)).doc !== clusterDoc(c)) {
-      undoGuard += 1;
-      expect(undoGuard, `${c.name}: 撤销未回到原文`).toBeLessThan(16);
-      await page.waitForTimeout(20);
-      await page.keyboard.press("Meta+z");
-    }
-    expect((await composerState(page)).doc).toBe(clusterDoc(c));
+    await page.keyboard.press("Meta+z");
+    await expect.poll(async () => (await composerState(page)).doc, { message: `${c.name}: 单步撤销回原文` }).toBe(clusterDoc(c));
+    await page.keyboard.press("Meta+z");
+    expect((await composerState(page)).doc, `${c.name}: 多撤一拍不得改变已到顶的文档`).toBe(clusterDoc(c));
     await expect(composerTray(page)).toHaveCount(1);
   }
 });
@@ -812,9 +757,9 @@ pageTest("IME 组合中粘贴：组合文本提交一次、粘贴追加一次、
 // 九、固定 seed 随机序列：Unicode 粘贴 / 反向 & 跨行选区 / 快速 undo-redo
 // ---------------------------------------------------------------------------
 
-// 只用「原生 Backspace / Delete 双引擎都整簇」的类：部分删除的 5 类由第三、四节的有向表钉住，
-// 随机序列混入它们会让模型（完整字素）与引擎边界互相污染。
-// 不含空格：行首缩进会让 CM 的 deleteCharBackward 走 indentUnit 分支，与「单字素」模型不同口径。
+// 全表按完整字素簇参与随机序列：M860 后正文 / composer 的无修饰 Backspace 与删除命令都
+// 走同一份 `clusterBackward`，模型（完整字素）与生产面不再有引擎粒度差。
+// 不含空格与行首缩进：随机序列只需要「簇」这一维，缩进单位不是本合同的判据面。
 const SAFE_ALPHABET = ["a", "问", "👨‍👩‍👧‍👦", "🇯🇵", "𠀀", "\n"] as const;
 
 type BrowserOp =

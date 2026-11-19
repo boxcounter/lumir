@@ -27,6 +27,7 @@ import type { Extension, TransactionSpec } from "@codemirror/state";
 import { history, redo, undo } from "@codemirror/commands";
 import type { EditorView } from "@codemirror/view";
 import {
+  absorbComposerGraphemeBackspace,
   composerAttachmentsField,
   composerRedo,
   composerUndo,
@@ -76,12 +77,13 @@ interface FakeView {
   readonly state: EditorState;
 }
 
-function fakeView(initial: EditorState): FakeView {
+function fakeView(initial: EditorState, compositionStarted = false): FakeView {
   let state = initial;
   const handle = {
     get state() {
       return state;
     },
+    compositionStarted,
     dispatch: (spec: TransactionSpec | { state?: EditorState }) => {
       const next = spec as { state?: EditorState };
       state = next.state ?? state.update(spec as TransactionSpec).state;
@@ -247,6 +249,7 @@ interface GraphemeCase {
 }
 
 const GRAPHEME_CASES: GraphemeCase[] = [
+  { name: "普通 ASCII", prefix: "x", cluster: "a", suffix: "y" },
   { name: "ZWJ 家庭", prefix: "a", cluster: "👨‍👩‍👧‍👦", suffix: "b" },
   { name: "国旗（区域指示符对）", prefix: "x", cluster: "🇯🇵", suffix: "y" },
   { name: "肤色修饰", prefix: "x", cluster: "👍🏽", suffix: "y" },
@@ -258,30 +261,15 @@ const GRAPHEME_CASES: GraphemeCase[] = [
   { name: "希伯来文附标", prefix: "A ", cluster: "שָׁ", suffix: " B" },
 ];
 
-/** composer 的 `editor.delete-char-backward` 走 CM 的 `deleteCharBackward`
- *（`findClusterBreak(..., includeExtending=false)` + 只补变体选择符）。它对下面 5 类只退
- * 一个「CM 簇后缀」，不是完整字素簇；正文命令则是整簇。这是 2026-11-19 实测的产品边界，
- * finding 已登记（见 tests/visual/README.md 的「Unicode 字素边界」节）——修复后此表的
- * 非空项应全部变空，本测试随之变红，按修复结果更新。 */
-const COMPOSER_BACKWARD_REMAINING: Record<string, string> = {
-  "ZWJ 家庭": "",
-  "国旗（区域指示符对）": "",
-  "肤色修饰": "👍",
-  "职业 ZWJ + 肤色": "👩",
-  "组合重音（重音 + 下点）": "e\u0301",
-  "变体选择符": "",
-  "代理对（CJK 扩展 B）": "",
-  "阿拉伯文附标": "م",
-  "希伯来文附标": "שָ",
-};
+/** M860：composer 的 `editor.delete-char-backward` 与正文同一份字素步长核
+ *（`quote-card.clusterBackward`）。M843 的「按引擎 / 码点残留」基线已收敛为统一整簇期望——
+ * 两层（Node / 双引擎视觉）都断言第一拍 = 完整删除，不再保留按引擎分档的部分删除表。 */
 
 for (const c of GRAPHEME_CASES) {
   const doc = c.prefix + c.cluster + c.suffix;
   const before = c.prefix.length;
   const after = before + c.cluster.length;
   const deleted = c.prefix + c.suffix;
-  const remaining = COMPOSER_BACKWARD_REMAINING[c.name]!;
-  assert.ok(remaining.length < c.cluster.length, `${c.name}: 表项必须是簇的真前缀`);
 
   test(`字素删除：${c.name}（正文 Ctrl-h / Ctrl-d 整簇 + undo）`, () => {
     assert.equal(graphemeBefore(doc, after), before, `${c.name}: graphemeBefore`);
@@ -298,45 +286,28 @@ for (const c of GRAPHEME_CASES) {
     forward = runBody(forward, undo);
     assert.equal(forward.doc.toString(), doc, `${c.name}: 正文 Ctrl-d undo`);
 
-    assert.notEqual(c.prefix + c.cluster.slice(0, -1) + c.suffix, deleted, `${c.name}: 期望值没有区分度`);
+    // 单码点簇（普通 ASCII）的「整簇」与「一个字符」同义，不存在可区分的部分删除形态。
+    if (c.cluster.length > 1) {
+      assert.notEqual(c.prefix + c.cluster.slice(0, -1) + c.suffix, deleted, `${c.name}: 期望值没有区分度`);
+    }
   });
 
-  test(`字素删除：${c.name}（composer 生产命令：边界 + 重复到整簇 + 附件）`, () => {
-    // 第一拍：CM 命令的当前边界（5 类为部分前缀，4 类为整簇）。
+  test(`字素删除：${c.name}（composer 生产命令 ⌃H 整簇 + 单步撤销 + 附件）`, () => {
     let state = runComposer(composerStateWith(doc, after), "editor.delete-char-backward");
-    const firstStep = c.prefix + remaining + c.suffix;
     assert.deepEqual(
       composerReading(state),
-      { text: firstStep, anchor: c.prefix.length + remaining.length, head: c.prefix.length + remaining.length, cards: [CARD] },
-      `${c.name}: composer 第一拍`,
+      { text: deleted, anchor: before, head: before, cards: [CARD] },
+      `${c.name}: composer ⌃H 第一拍必须是整簇`,
     );
-    if (remaining !== "") {
-      assert.notEqual(firstStep, deleted, `${c.name}: 部分删除必须与整簇删除可分`);
-    }
+    assertNoLoneSurrogates(state.doc.toString(), `${c.name}: composer ⌃H`);
 
-    // 反复按同一命令：每一步只能吞掉簇的一个真后缀，不得越界到 prefix / suffix。
-    let rest = c.cluster;
-    let steps = 1;
-    while (state.doc.toString() !== deleted) {
-      assert.ok(steps < 16, `${c.name}: 重复删除未收敛`);
-      const text = state.doc.toString();
-      assert.ok(text.startsWith(c.prefix) && text.endsWith(c.suffix), `${c.name}: 删到簇外（${JSON.stringify(text)}）`);
-      assert.ok(rest.length > 0, `${c.name}: 簇已删尽但文档未等于期望（${JSON.stringify(text)}）`);
-      rest = rest.slice(0, rest.length - (text.length - c.prefix.length - c.suffix.length));
-      state = runComposer(state, "editor.delete-char-backward");
-      steps += 1;
-    }
-    assert.deepEqual(composerReading(state), { text: deleted, anchor: before, head: before, cards: [CARD] });
-    assertNoLoneSurrogates(state.doc.toString(), `${c.name}: composer 重复删除`);
-
-    // 重复 undo 回到原文（步数由 CM 的 delete 聚簇决定，不预设）。
-    let undoSteps = 0;
-    while (state.doc.toString() !== doc) {
-      assert.ok(undoSteps < 16, `${c.name}: undo 未回到原文`);
-      state = composerUndo(state);
-      undoSteps += 1;
-    }
-    assert.deepEqual(composerReading(state), { text: doc, anchor: after, head: after, cards: [CARD] });
+    // 单个 undo 一步恢复（不得留下半步簇）。
+    state = composerUndo(state);
+    assert.deepEqual(
+      composerReading(state),
+      { text: doc, anchor: after, head: after, cards: [CARD] },
+      `${c.name}: composer ⌃H 单步撤销`,
+    );
   });
 
   test(`字素删除：${c.name}（composer Ctrl-d 整簇 + 附件）`, () => {
@@ -347,21 +318,103 @@ for (const c of GRAPHEME_CASES) {
   });
 }
 
-test("跨面一致性（已登记 finding）：同一 editor.delete-char-backward，正文整簇而 composer 对 5 类只退部分", () => {
+test("跨面一致性：同一 editor.delete-char-backward，正文与 composer 都整簇且单步可撤销", () => {
   for (const c of GRAPHEME_CASES) {
-    const remaining = COMPOSER_BACKWARD_REMAINING[c.name]!;
-    if (remaining === "") continue;
     const doc = c.prefix + c.cluster + c.suffix;
-    const after = c.prefix.length + c.cluster.length;
+    const before = c.prefix.length;
+    const after = before + c.cluster.length;
     const body = deleteBodyBackward(bodyState(doc, after));
     const composer = runComposer(composerStateWith(doc, after), "editor.delete-char-backward");
     assert.equal(body.doc.toString(), c.prefix + c.suffix, `${c.name}: 正文命令必须整簇`);
-    assert.equal(
-      composer.doc.toString(),
-      c.prefix + remaining + c.suffix,
-      `${c.name}: composer 当前边界（修复后本断言应变红，按新行为更新）`,
+    assert.equal(composer.doc.toString(), c.prefix + c.suffix, `${c.name}: composer 命令必须整簇`);
+    assert.equal(composer.doc.toString(), body.doc.toString(), `${c.name}: 跨面逐字节一致`);
+    assert.deepEqual(
+      bodyReading(runBody(body, undo)),
+      { text: doc, anchor: after, head: after },
+      `${c.name}: 正文单步撤销`,
     );
-    assert.notEqual(composer.doc.toString(), body.doc.toString(), `${c.name}: 跨面差异必须被机器看见`);
+    assert.deepEqual(
+      composerReading(composerUndo(composer)),
+      { text: doc, anchor: after, head: after, cards: [CARD] },
+      `${c.name}: composer 单步撤销`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 一之二、composer 物理 Backspace 闸门（M860，beforeinput）
+// ---------------------------------------------------------------------------
+//
+// 生产面：`src/harness-composer.ts` 的 `composerGraphemeBackspace`（装进
+// `composerStateExtensions`）只接管 `deleteContentBackward` 的折叠 caret；修饰键变体以不同
+// inputType 到达、IME 组合期 / 只读 / 非空选区保持既有路径。正文侧同一份判定在
+// `src/editor.ts` 的 `absorbGraphemeBackspace`（Node 层加载不了 editor.ts 的 import 图，
+// 正文判据在双引擎视觉层）。
+
+interface FakeBeforeInput {
+  inputType: string;
+  isComposing?: boolean;
+  prevented: boolean;
+  preventDefault(): void;
+}
+
+function fakeBeforeInput(inputType: string, options: { isComposing?: boolean } = {}): FakeBeforeInput {
+  return {
+    inputType,
+    isComposing: options.isComposing ?? false,
+    prevented: false,
+    preventDefault() {
+      this.prevented = true;
+    },
+  };
+}
+
+test("composer 物理 Backspace：折叠 caret 一次删完整簇 + caret 落删除起点 + 单步撤销 + 附件不动", () => {
+  for (const c of GRAPHEME_CASES) {
+    const doc = c.prefix + c.cluster + c.suffix;
+    const after = c.prefix.length + c.cluster.length;
+    const handle = fakeView(composerStateWith(doc, after));
+    const event = fakeBeforeInput("deleteContentBackward");
+    const consumed = absorbComposerGraphemeBackspace(event as unknown as InputEvent, handle.view);
+    assert.equal(consumed, true, `${c.name}: 闸门必须接管折叠 caret 的 deleteContentBackward`);
+    assert.equal(event.prevented, true, `${c.name}: 必须 preventDefault`);
+    assert.deepEqual(
+      composerReading(handle.state),
+      { text: c.prefix + c.suffix, anchor: c.prefix.length, head: c.prefix.length, cards: [CARD] },
+      `${c.name}: 物理 Backspace 整簇`,
+    );
+    assertNoLoneSurrogates(handle.state.doc.toString(), `${c.name}: composer 物理 Backspace`);
+    assert.deepEqual(
+      composerReading(composerUndo(handle.state)),
+      { text: doc, anchor: after, head: after, cards: [CARD] },
+      `${c.name}: 物理 Backspace 单步撤销`,
+    );
+  }
+});
+
+test("composer 物理 Backspace：非空选区 / 修饰键变体 / IME 组合 / 只读保持既有路径", () => {
+  const withSelection = createComposerState({ text: "abcde", caret: 3, cards: [CARD] }).update({
+    selection: EditorSelection.range(1, 3),
+  }).state;
+  const readOnly = createComposerState({ text: "abcde", caret: 5, cards: [CARD] }, [EditorState.readOnly.of(true)]);
+  const cases: { label: string; state: EditorState; inputType: string; isComposing?: boolean; compositionStarted?: boolean }[] = [
+    { label: "非空选区", state: withSelection, inputType: "deleteContentBackward" },
+    { label: "⌥⌫ 词删除变体", state: composerStateWith("abcde", 5), inputType: "deleteWordBackward" },
+    { label: "⌘⌫ 行删除变体", state: composerStateWith("abcde", 5), inputType: "deleteHardLineBackward" },
+    { label: "行删除软变体", state: composerStateWith("abcde", 5), inputType: "deleteSoftLineBackward" },
+    { label: "forward Delete", state: composerStateWith("abcde", 2), inputType: "deleteContentForward" },
+    { label: "普通键入", state: composerStateWith("abcde", 5), inputType: "insertText" },
+    { label: "组合中（compositionStarted）", state: composerStateWith("abcde", 5), inputType: "deleteContentBackward", compositionStarted: true },
+    { label: "组合中（event.isComposing）", state: composerStateWith("abcde", 5), inputType: "deleteContentBackward", isComposing: true },
+    { label: "只读会话", state: readOnly, inputType: "deleteContentBackward" },
+  ];
+  for (const item of cases) {
+    const handle = fakeView(item.state, item.compositionStarted ?? false);
+    const event = fakeBeforeInput(item.inputType, { isComposing: item.isComposing });
+    const consumed = absorbComposerGraphemeBackspace(event as unknown as InputEvent, handle.view);
+    assert.equal(consumed, false, `${item.label}: 不得被闸门接管`);
+    assert.equal(event.prevented, false, `${item.label}: 不得 preventDefault`);
+    assert.deepEqual(composerReading(handle.state), composerReading(item.state), `${item.label}: 文档 / 选区 / 附件逐字节不变`);
   }
 });
 
@@ -560,10 +613,6 @@ function graphemePositions(text: string): number[] {
   return [...positions].sort((a, b) => a - b);
 }
 
-/** composer 的随机表只用「CM 后退命令也整簇」的类：部分删除的 5 类由上面的有向表钉住，
- * 随机序列里混入它们只会让模型与命令边界互相污染（模型按完整字素，命令按 CM 簇）。 */
-const COMPOSER_SAFE_ALPHABET = ["a", "问", "👨‍👩‍👧‍👦", "🇯🇵", "𠀀", "\n", " "] as const;
-
 function randomText(rng: ReturnType<typeof makeRng>, maxPieces: number, alphabet: readonly string[] = UNICODE_ALPHABET): string {
   const count = 1 + rngInt(rng, maxPieces);
   let text = "";
@@ -730,7 +779,7 @@ test("composer 随机对拍：Unicode 粘贴 / 选区替换 / 历史（固定 se
     let state = composerStateWith(model.text, 2);
     const rng = makeRng((seed >>> 0) ^ 0x2c1b3c6d);
     for (let step = 0; step < RANDOM_STEPS; step += 1) {
-      const op = randomScriptOp(rng, model, COMPOSER_SAFE_ALPHABET);
+      const op = randomScriptOp(rng, model, UNICODE_ALPHABET);
       const before = composerReading(state);
       mock.timers.tick(COMPOSER_BARRIER_MS);
       state = applyComposerScriptOp(state, op);
