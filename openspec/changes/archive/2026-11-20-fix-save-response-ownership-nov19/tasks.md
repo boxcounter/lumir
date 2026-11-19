@@ -32,5 +32,5 @@
 
 ## 3. 归档（批次收尾，本 mission 不执行）
 
-- [ ] 3.1 在 `docs/backlog.md` 落本 change 的归档跟踪条目，并按节点 2 五要件归档（本 mission
-      的 scope 不含 `docs/backlog.md`；条目由 tower 批次收尾补登）。
+- [x] 3.1 在 `docs/backlog.md` 落本 change 的归档跟踪条目，并按节点 2 五要件归档（本 mission
+      的 scope 不含 `docs/backlog.md`；条目与归档提交由 tower 批次收尾完成）。
