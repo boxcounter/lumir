@@ -17,11 +17,11 @@
 - [x] 3.1 `tests/unit/text-unicode-adversarial.test.ts`：删除 `COMPOSER_BACKWARD_REMAINING` 表，composer ⌃H 改为统一整簇 + 单步撤销；新增普通 ASCII 类、跨面一致性用例，以及 composer 物理 Backspace 闸门矩阵（折叠 caret 接管；非空选区 / 词与行删除变体 / IME / 只读不接管）。
 - [x] 3.2 `tests/visual/scenes/text-clipboard-adversarial.spec.ts`：删除按引擎分档的 `NATIVE_FIRST_STEP` 与 composer 残留表，正文 + composer 一次整簇 + 单步撤销；新增 code 模式与 composer `⌥⌫` 词删除两条双引擎用例；`tests/visual/README.md` 的判据面、基线段与已知边界同步。
 - [x] 3.3 新增 `scripts/acceptance/scenarios/268-grapheme-backspace.md`（md 正文物理 Backspace、composer 物理 Backspace、composer ⌃H 三条 witness），`node scripts/acceptance/coverage.mjs` 重新生成 COVERAGE。
-- [ ] 3.4 真机 268 在 tower 串行窗口内执行：先修复前构建判红、再修复后构建判绿（WKWebView 的物理 Backspace 与 ⌃H），读数与证据路径回填本节。
+- [ ] 3.4 真机 268 在 tower 串行窗口内执行：先修复前构建判红、再修复后构建判绿（WKWebView 的物理 Backspace 与 ⌃H），读数与证据路径回填本节。反例判别性已在视觉层先行证实：把 `src/editor.ts` / `src/harness-composer.ts` 退回 master 后重跑新用例，3 条全红（`组合重音: code 模式整簇` / `肤色修饰: ⌃H 第一拍必须是整簇` 等），日志 `.local/missions/M860/mutant-prefix.log`（git 外）。
 
 ## 4. 验证
 
-- [ ] 4.1 Node 层：`node --experimental-strip-types --import ./tests/unit/register.mjs --test tests/unit/text-unicode-adversarial.test.ts` 全绿（含新增闸门矩阵），完整 `node tests/unit/run.mjs` 全绿。
-- [ ] 4.2 目标双引擎：`LUMIR_VISUAL_PORT=4402 pnpm --dir tests/visual exec playwright test scenes/text-clipboard-adversarial.spec.ts --project=chromium --project=webkit-realua` 全绿，读数回填。
-- [ ] 4.3 `scripts/gate.sh quick` 与 `LUMIR_VISUAL_PORT=4402 scripts/gate.sh visual` 全绿（照抄 `GATE RESULT` 原文行与退出码），不更新任何视觉基线。
-- [ ] 4.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`、`bash scripts/docs-check.sh`、`node scripts/acceptance/run.mjs --check` 通过。
+- [x] 4.1 Node 层：`node --experimental-strip-types --import ./tests/unit/register.mjs --test tests/unit/text-unicode-adversarial.test.ts` 59 tests 全绿；完整 `node tests/unit/run.mjs`：tests 1662 / pass 1660 / fail 0 / todo 2（两条 `⚠ 已知缺陷`），退出码 0。
+- [x] 4.2 目标双引擎（`LUMIR_VISUAL_PORT=4402`）：`59 passed (2.4m)`、1 skipped、退出码 0——chromium 30 条 + webkit-realua 29 条（IME 用例按既有纪律在 WebKit 项目 skip）。日志 `.local/missions/M860/target-spec.log`（git 外）。
+- [x] 4.3 quick：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（日志 `.local/missions/M860/gate-quick-rebased.log`）。visual（`LUMIR_VISUAL_PORT=4402 CARGO_TARGET_DIR=/tmp/lumir-m860-target`）：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；`visual-regression` 1070s，全量 **1272 passed / 4 skipped**，**未更新任何视觉基线**（日志 `.local/missions/M860/gate-visual.log`）。
+- [x] 4.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（gate 的 `openspec-validate` PASS；中间一次失败是 MODIFIED 段漏抄既有 scenario 标题，修正后转绿）、`bash scripts/docs-check.sh` PASS、`node scripts/acceptance/run.mjs --check`（245 场景）与 `coverage.mjs --check` 通过。
