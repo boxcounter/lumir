@@ -172,6 +172,71 @@ test("多键 file 断言逐键判：同内容重写 ⇒ sha256 那条绿、mtime
   assert.equal(status, "FAIL", "一条判据红 ⇒ 场景判红（不再被静默吞掉）");
 });
 
+test("file.exact：整篇逐字相等才 PASS；多键时各落一条记录", async () => {
+  const root = tmpRoot("exact-green");
+  useTmpEnv(root);
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "落盘探针", do: "vaultWrite", file: "exact.md", content: "甲项\n乙项\n" },
+      {
+        name: "整篇相等",
+        expect: [{ label: "整篇相等", file: { path: "exact.md", exists: true, exact: "甲项\n乙项\n" } }],
+      },
+    ],
+  });
+  assert.equal(status, "PASS");
+  assert.deepEqual(
+    records.map((r) => `${r.ok ? "PASS" : "FAIL"} ${r.label}`),
+    ["PASS 整篇相等［exists］", "PASS 整篇相等［exact］"],
+    "多键断言逐键判定、各落一条记录",
+  );
+});
+
+test("file.exact：错内容（含只差一个尾换行）判 FAIL，理由带两端字符数", async () => {
+  const root = tmpRoot("exact-red");
+  useTmpEnv(root);
+  const { status, records } = await drive(root, {
+    steps: [
+      { name: "落盘探针", do: "vaultWrite", file: "exact.md", content: "甲项\n" },
+      { name: "少尾换行", expect: [{ label: "逐字比较", file: { path: "exact.md", exact: "甲项" } }] },
+    ],
+  });
+  assert.equal(status, "FAIL");
+  const rec = records.find((r) => r.label.includes("逐字比较") && !r.ok);
+  assert.ok(rec, `应有一条 FAIL 记录，实际：${JSON.stringify(records)}`);
+  assert.match(rec.label, /内容不一致：期望 2 字符，实际 3 字符/, "FAIL 理由要点明两端字符数");
+  assert.match(rec.detail ?? "", /expected="甲项" actual="甲项\\n"/, "detail 带两端原文（JSON 转义）");
+});
+
+test("file.exact：文件缺失 / 目标是目录一律 FAIL（不把读不到当成空）", async () => {
+  const root = tmpRoot("exact-missing");
+  useTmpEnv(root);
+  fs.mkdirSync(path.join(process.env.LUMIR_ACCEPTANCE_VAULT, "adir"), { recursive: true });
+  const missing = await drive(root, {
+    steps: [{ name: "缺失", expect: [{ file: { path: "nope.md", exact: "" } }] }],
+  });
+  assert.equal(missing.status, "FAIL");
+  assert.match(missing.records[0].label, /文件不存在/);
+
+  const dir = await drive(root, {
+    steps: [{ name: "目录", expect: [{ file: { path: "adir", exact: "" } }] }],
+  });
+  assert.equal(dir.status, "FAIL");
+  assert.match(dir.records[0].label, /是目录/);
+});
+
+test("file.exact 静态校验：非字符串（null / 数值 / 表）在 --check 阶段即报 problem", () => {
+  const errs = (spec) =>
+    checkScenario({ id: "exact-check", item: 0, steps: [{ name: "校验", expect: [{ file: { path: "a.md", exact: spec } }] }] });
+  for (const bad of [null, 42, { text: "x" }]) {
+    assert.ok(
+      errs(bad).some((p) => p.includes("file.exact 需要字符串")),
+      `${JSON.stringify(bad)} 应报 file.exact 类型问题，实际：${JSON.stringify(errs(bad))}`,
+    );
+  }
+  assert.deepEqual(errs("甲"), [], "合法字符串不应报问题");
+});
+
 test("file.jsonl：按字段判、与键序无关（serde_json 的字母序现场，M612 场景 170/171 红因）", async () => {
   const root = tmpRoot("jsonl-order-insensitive");
   useTmpEnv(root);
