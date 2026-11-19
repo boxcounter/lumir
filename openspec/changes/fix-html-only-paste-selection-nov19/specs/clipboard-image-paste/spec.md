@@ -24,8 +24,8 @@ toast、不留半截。渲染侧（引用语法的内联显示、占位、lightb
 ——本能力的拦截层 MUST NOT 消费事件、MUST NOT 改变任何现有文本粘贴行为。有非空选区时，插入
 SHALL 恰好替换选区（caret 落在插入文本之后），与键入同权。
 
-两者都取不到非空值时（典型形态：只有 `text/html` 的富剪贴板、只有文件项的剪贴板），可编辑
-正文里的粘贴 SHALL 是**严格空操作**：文档、选区、撤销栈与 dirty MUST 全部不变；MUST NOT 以
+两者都取不到非空值时（典型形态：只有 `text/html` 的富剪贴板、只有文件项的剪贴板、显式空串
+的 `text/plain`），可编辑正文里的粘贴 SHALL 是**严格空操作**：文档、选区、撤销栈与 dirty MUST 全部不变；MUST NOT 以
 空串替换非空选区，MUST NOT 把 HTML 解析或转换成文本插入，MUST NOT 插入任何内容、MUST NOT
 产生 toast 或落盘。折叠 caret 与正 / 反向非空选区同权；md 与 code 会话共用同一条判据。
 

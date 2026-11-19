@@ -8,6 +8,9 @@
 //     跨 widget 选区同权，一次粘贴一个撤销步；
 //   - 剪贴板优先级：正文 image 文件项 > text/plain（其次 uri-list；不解析 HTML），composer
 //     image 文件项 > text/plain（其余一律不消费）；文件类不抢文本；
+//   - 无可插入文本的粘贴（M859，change fix-html-only-paste-selection-nov19）：HTML-only /
+//     text/markdown-only / 只有文件项时，正文粘贴是**严格空操作**——doc / 选区 / 撤销栈 /
+//     dirty 全不变（折叠 caret 与正 / 反向非空选区同权）；只读会话与 code 模式同一判据；
 //   - 组合中粘贴：组合文本恰好提交一次、粘贴恰好追加一次，二者各自可撤销；
 //   - 渲染不污染源码：选区跨过 live preview 的 replace 装饰后，替换结果必须是源码区间替换。
 //
@@ -20,15 +23,16 @@
 // 已登记的产品边界（finding 见 tests/visual/README.md 的「Unicode 字素边界」节）：
 //   1. composer 的 ⌃H（`editor.delete-char-backward`）对肤色 / 职业 ZWJ / 组合标记 / RTL 附标
 //      只退一个 CM 簇后缀，正文命令则整簇；
-//   2. 原生 Backspace 对组合标记 / RTL 附标按码点退（Chromium 比 WebKit 更碎）；
-//   3. 正文在 HTML-only 剪贴板（无 text/plain）且有选区时会删掉选区（CM doPaste("") 的降级）。
-//   前两条用「第一拍基线 + 重复到整簇」钉住；第三条只在折叠 caret 上断言空操作，不把数据丢失
-//   写成合同。
+//   2. 原生 Backspace 对组合标记 / RTL 附标按码点退（Chromium 比 WebKit 更碎）。
+//   两条都用「第一拍基线 + 重复到整簇」钉住。
+// 曾经的第三条边界（正文 HTML-only / text/markdown-only + 非空选区会删源码）已由 M859
+// （change fix-html-only-paste-selection-nov19）修好并转成正向合同，见第十二节。
 
 import { expect, test as baseTest, type Page } from "@playwright/test";
 
 type BrowserName = "chromium" | "firefox" | "webkit";
 import {
+  dirtyReports,
   guardPageChannel,
   harnessImageWrites,
   stubTauri,
@@ -500,7 +504,9 @@ pageTest("正文跨 widget 选区粘贴：源码区间精确替换，渲染字�
   const cases = [
     { name: "跨 list marker 与 wikilink（反向）", anchor: WIDGET_DOC.indexOf("**bold**") + 2, head: 3, text: "P" },
     { name: "跨行多行粘贴", anchor: WIDGET_DOC.indexOf("item"), head: WIDGET_DOC.indexOf("$x$") + 2, text: "月\n火" },
-    { name: "整段选区", anchor: WIDGET_DOC.length, head: 0, text: "" },
+    // 整段反向选区用非空插入：空 text/plain 自 M859 起是「无可插入文本」⇒ 严格空操作
+    // （见第十二节的矩阵），不再用作「粘贴删空全文」的插入值。
+    { name: "整段反向选区", anchor: WIDGET_DOC.length, head: 0, text: "P" },
   ];
   for (const c of cases) {
     await openBody(page, "probe.md", WIDGET_DOC);
@@ -602,7 +608,7 @@ pageTest("正文粘贴优先级：plain 压过 HTML、uri-list 降级、非图�
   await expect.poll(async () => (await bodyState(page)).doc).toBe("alpPLAINha\n");
   expect(await pastedImageWrites(page)).toEqual([]);
 
-  // 只有文件 / 只有 HTML：折叠 caret 上都是空操作（不得改文档；HTML 有选区的删除另见 README 的边界）。
+  // 只有文件 / 只有 HTML：折叠 caret 上都是空操作（不得改文档；有选区的同类判据见第十二节）。
   await openBody(page, "probe.md", "alpha\n");
   await setBodySelection(page, 3);
   await dispatchPaste(page, bodySelector, { file: { name: "a.pdf", type: "application/pdf", text: "PDF" } });
@@ -1178,11 +1184,9 @@ pageTest("快速无屏障：相邻键入+删除后 undo/redo 只落在模型可�
 //   - Markdown 源码以 `text/plain` 粘贴 / 拖放 = **按纯文本逐字节消费**（正文与 composer 同权），
 //     替换选区 / 落在拖放点；不解析 Markdown、不吞选区。
 //   - `text/markdown` 显式 MIME（无 text/plain）：正文 caret、composer、两面的 drop 都是安全
-//     no-op；正文**非空选区**的现状是 CM `doPaste("")` 删除选区（finding，见下方 expected
-//     failure）——不把数据丢失写成期望。
+//     no-op；正文非空选区的严格空操作合同在第十二节（M859 修好后转正，不再用 expected failure）。
 //   - `text/html`（无 text/plain）drop：产品 JS 处理器不消费、不改文档、不动选区。合成 DragEvent
-//     到不了浏览器原生 drag-drop 默认动作，该边界在 README 单列；paste 侧 HTML-only 的删除
-//     仍是既有 finding。
+//     到不了浏览器原生 drag-drop 默认动作，该边界在 README 单列；paste 侧的严格空操作合同在第十二节。
 // ---------------------------------------------------------------------------
 
 const MD_SOURCE = "## 标题\n- 项 **粗** [[link]]\n";
@@ -1254,7 +1258,7 @@ pageTest("Markdown 源码（text/plain）composer 粘贴与 drop：按纯文本�
   await expect(composerTray(page)).toHaveCount(1);
 });
 
-pageTest("text/markdown-only：caret 与 drop 安全 no-op；正文有选区为已知缺陷（expected failure）", async (page) => {
+pageTest("text/markdown-only：正文 caret、正文 drop、composer 粘贴与 drop 都是安全 no-op", async (page) => {
   const doc = "alpha\nbeta\n";
   // 正文 caret：安全 no-op。
   await openBody(page, "probe.md", doc);
@@ -1292,24 +1296,8 @@ pageTest("text/markdown-only：caret 与 drop 安全 no-op；正文有选区为�
   await expect(composerTray(page)).toHaveCount(1);
 });
 
-pageTest("正文 text/markdown-only + 非空选区：不得静默删除（已知缺陷，expected failure）", async (page) => {
-  baseTest.fail(true, "已知缺陷：正文 text/markdown-only + 选区时 CM doPaste(\"\") 删除选区；finding 已登记");
-  const doc = "alpha\nbeta\n";
-  await openBody(page, "probe.md", doc);
-  await page.locator(bodySelector).click();
-  await setBodySelection(page, 2, 8);
-  const prevented = await dispatchPaste(page, bodySelector, { markdown: MD_SOURCE });
-  expect(prevented).toBe(true);
-  await page.waitForTimeout(60);
-  const after = await bodyState(page);
-  const consumed = doc.slice(0, 2) + MD_SOURCE + doc.slice(8);
-  // 安全合同二选一：按 Markdown 源码消费（替换选区）或完全不动（文档与选区都不变）；
-  // 当前实现两者都不是（选区被删），因此本用例是 expected failure。
-  expect(
-    after.doc === consumed || (after.doc === doc && after.anchor === 2 && after.head === 8),
-    `不得静默删除选区：${JSON.stringify(after)}`,
-  ).toBe(true);
-});
+// 原 expected failure「正文 text/markdown-only + 非空选区：不得静默删除」已由 M859 转正：
+// 严格空操作判据（caret / 正向 / 反向）并入第十二节的矩阵，不再是 expected failure。
 
 pageTest("HTML drop：合成事件下双面安全 no-op，plain 优先", async (page) => {
   const doc = "alpha\nbeta\n";
@@ -1349,4 +1337,118 @@ pageTest("HTML drop：合成事件下双面安全 no-op，plain 优先", async (
   await expect.poll(async () => (await composerState(page)).doc).toBe("alPLAINpha");
   expect((await composerState(page)).doc.includes("HTML")).toBe(false);
   await expect(composerTray(page)).toHaveCount(1);
+});
+
+// ---------------------------------------------------------------------------
+// 十二、无可插入文本的粘贴 = 严格空操作（M859，change fix-html-only-paste-selection-nov19）
+//
+// 合同：剪贴板既无 image 文件项、又取不到非空 text/plain / text/uri-list 时（HTML-only /
+// text/markdown-only / 只有文件项 / 空 text/plain），正文粘贴 MUST 是**严格空操作**——doc、选区、撤销栈与
+// dirty 全部不变。修复前 CM 的 `handlers.paste` 以 `doPaste("")` 走 replaceSelection，非空
+// 选区被静默删掉（finding 20261119-worker-unicode-clipboard-bug-html-only-cm-dopaste 与
+// …-bug-text-markdown-only-html-only）。
+// 判据只读「可插文本」这一组与 CM 同源的数据（text/plain / text/uri-list），不解析 HTML。
+// ---------------------------------------------------------------------------
+
+/** 「无可插入文本」四类：HTML-only、text/markdown-only、只有非图片文件项、空的 text/plain。
+ *  空 text/plain 与 CM 的 `getData("text/plain") || getData("text/uri-list")` 同口径（空串按
+ *  「没有文本」处理）——修复前它同样会以 doPaste("") 删掉选区。 */
+const NO_INSERTABLE_TEXT = [
+  { name: "HTML-only", payload: { html: "<b>ONLYHTML</b>" } },
+  { name: "text/markdown-only", payload: { markdown: MD_SOURCE } },
+  { name: "只有非图片文件项", payload: { file: { name: "a.pdf", type: "application/pdf", text: "PDF" } } },
+  { name: "空 text/plain", payload: { text: "" } },
+] as const;
+
+const NO_OP_SELECTIONS = [
+  { name: "折叠 caret", anchor: 5, head: 5 },
+  { name: "正向选区 [2,8)", anchor: 2, head: 8 },
+  { name: "反向选区 [8,2)", anchor: 8, head: 2 },
+] as const;
+
+pageTest("正文无可插入文本的粘贴：四类剪贴板 × 折叠 caret 与正 / 反向选区都是严格空操作", async (page) => {
+  const doc = "alpha beta\n";
+  for (const clip of NO_INSERTABLE_TEXT) {
+    for (const sel of NO_OP_SELECTIONS) {
+      const label = `${clip.name} / ${sel.name}`;
+      await openBody(page, "probe.md", doc);
+      await setBodySelection(page, sel.anchor, sel.head);
+      const prevented = await dispatchPaste(page, bodySelector, clip.payload);
+      expect(prevented, `${label}: 事件被消费`).toBe(true);
+      expect(await bodyState(page), `${label}: doc 与选区逐字不变`).toEqual({
+        doc,
+        anchor: sel.anchor,
+        head: sel.head,
+      });
+      // 撤销栈不变：粘贴没有留下可撤销步 ⇒ ⌘Z 不改变文档、也不复原出被删内容。
+      await page.keyboard.press("Meta+z");
+      await page.waitForTimeout(60);
+      expect(await bodyState(page), `${label}: ⌘Z 不得复原出被删选区`).toEqual({
+        doc,
+        anchor: sel.anchor,
+        head: sel.head,
+      });
+      // 保存面：文档没变 ⇒ dirty 镜像保持 false（保存载荷与打开时逐字相同）。
+      expect((await dirtyReports(page)).at(-1), `${label}: dirty 不翻转`).toBe(false);
+    }
+  }
+});
+
+pageTest("既有粘贴优先级不回归：plain 压过 HTML / uri-list 降级在有选区时仍精确替换", async (page) => {
+  const doc = "alpha beta\n";
+  // text/plain 非空 ⇒ 交回默认粘贴（闸门不拦），plain 压过 HTML。
+  await openBody(page, "probe.md", doc);
+  await setBodySelection(page, 2, 8);
+  await dispatchPaste(page, bodySelector, { text: "PLAIN", html: "<b>HTML</b>" });
+  await expect.poll(async () => (await bodyState(page)).doc).toBe("alPLAINta\n");
+  expect((await bodyState(page)).head).toBe(2 + "PLAIN".length);
+
+  // 无 text/plain、只有 text/uri-list ⇒ CM 仍按既有降级插入 uri-list（有选区时替换）。
+  await openBody(page, "probe.md", doc);
+  await setBodySelection(page, 2, 8);
+  await dispatchPaste(page, bodySelector, { uri: "https://example.invalid/x", html: "<b>HTML</b>" });
+  await expect.poll(async () => (await bodyState(page)).doc).toBe("alhttps://example.invalid/xta\n");
+  expect((await bodyState(page)).doc.includes("HTML")).toBe(false);
+});
+
+pageTest("code 模式同一条降级：HTML-only + 非空选区不删源码", async (page) => {
+  const doc = "alpha beta\n";
+  await openBody(page, "probe.txt", doc);
+  // 前置：非 md 文本是可编辑会话（否则「不删」可能只是没走到被测路径）。
+  await expect(page.locator(bodySelector)).toHaveAttribute("aria-readonly", "false");
+  await setBodySelection(page, 2, 8);
+  const prevented = await dispatchPaste(page, bodySelector, { html: "<b>ONLYHTML</b>" });
+  expect(prevented).toBe(true);
+  expect(await bodyState(page)).toEqual({ doc, anchor: 2, head: 8 });
+});
+
+pageTest("只读会话不拦截：HTML-only + 非空选区文档与选区都不变", async (page) => {
+  const external = "/tmp/lumir-visual/readonly-m859.md";
+  await stubTauri(page, {
+    entries: [{ path: "e.md", kind: "file", size: 4, mtime_ms: 0 }],
+    files: { "e.md": "e\n" },
+    externalFiles: { [external]: "alpha beta\n" },
+    links: {},
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="e.md"]').click();
+  await expect(page.locator(".modeline-path")).toHaveText("e.md");
+  // 走真实入口打开 vault 外文件：⌘P → 绝对路径 → Enter（quick-open 的只读通道）。
+  await page.keyboard.press("Meta+p");
+  await expect(page.locator(".lumir-qo-input")).toBeFocused();
+  await page.keyboard.type(external);
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".modeline-meta")).toContainText("vault 外 · 只读");
+  // 前置：这确实是一个只读会话（readOnly facet 关着），否则下面的「不变」没有意义。
+  const readOnly = await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root
+      .view;
+    return view.state.readOnly === true;
+  });
+  expect(readOnly).toBe(true);
+  await setBodySelection(page, 2, 8);
+  const before = await bodyState(page);
+  await dispatchPaste(page, bodySelector, { html: "<b>ONLYHTML</b>" });
+  expect(await bodyState(page)).toEqual(before);
+  expect((await bodyState(page)).doc).toBe("alpha beta\n");
 });
