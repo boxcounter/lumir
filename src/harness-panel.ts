@@ -2487,9 +2487,12 @@ interface TaskRowEntry {
   restoredUsage: { input: number; cached: number; output: number } | null;
 }
 
-/** 任务区消费的事件子集（`HarnessEvent` 的结构子集：单测可构造，不依赖 ipc）。 */
+/** 任务区消费的事件子集（`HarnessEvent` 的结构子集：单测可构造，不依赖 ipc）。
+ *  `subagent_started.segment` 是 resume 判重的唯一依据（1 起、每段递增）：生产事件必带；
+ *  这里是可选字段，只为让既有纯函数单测能构造不带段号的旧形态——不带段号 = 无判重依据，
+ *  归约层按旧行为 resume（见 {@link isNewSegment}）。 */
 export type SubrunEvent =
-  | { type: "subagent_started"; run_id: string; agent: string; description: string; model: string; background: boolean }
+  | { type: "subagent_started"; run_id: string; segment?: number; agent: string; description: string; model: string; background: boolean }
   | { type: "subagent_progress"; run_id: string; rounds: number; tool_calls: number; last_tool: string | null; elapsed_ms: number }
   | { type: "subagent_step"; run_id: string; tool: string; summary: string }
   | { type: "subagent_finished"; run_id: string; agent: string; status: string; stopped_by?: string; rounds: number; model: string; input_tokens: number; cached_tokens: number; output_tokens: number; denied_calls: number; duration_ms: number; summary_chars: number; summary?: string };
@@ -2518,6 +2521,14 @@ export function isLiveSubrun(run: SubrunView): boolean {
   return run.status === "running" || run.status === "waiting";
 }
 
+/** `subagent_started` 的段号是否构成该 run 的新段（resume 判定的唯一实现：事件接线层与归约层
+ *  共用这一份，避免两处语义分叉）。没有同 run 的视图 = 新 run；有则**只有段号更大**才是新段——
+ *  同段重复 / 旧段重放都返回 false。段号缺失（纯函数单测构造的旧形态）无判重依据，按旧行为视为
+ *  新段。判据与 {@link mergeLiveSubruns} 的陈旧快照防线同口径（段号不增 = 旧回包）。 */
+function isNewSegment(run: SubrunView | undefined, segment: number | undefined): boolean {
+  return run === undefined || segment === undefined || segment > run.segments;
+}
+
 /** 事件归约（唯一的状态迁移点）：started 建行 / resume 段合并；progress / step 就地更新；
  *  finished 落终态。未知 run 的 progress / step / finished 一律忽略——重载后的迟到事件不得
  *  凭空造行。 */
@@ -2525,6 +2536,9 @@ export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): 
   switch (event.type) {
     case "subagent_started": {
       const existing = runs.find((run) => run.runId === event.run_id);
+      // 同段重复 / 旧段的 started：段号不增即不是新段，原样返回——MUST NOT 复活已收尾的 run、
+      //  不加段、不清读数与待批关联（重复投递不得制造非法状态；判重口径见 isNewSegment）。
+      if (!isNewSegment(existing, event.segment)) return [...runs];
       if (existing !== undefined) {
         // resume 段：同一 run 的第二段。保留累计读数（记进段基线）、累加段数、回到运行态——
         // MUST NOT 清空读数或另立一行（审计：两段曾被讲成两个子代理）。
@@ -2540,7 +2554,8 @@ export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): 
                 status: "running",
                 // 上一段的触顶原因不得延续到新段（design §4.1）；读数保留、原因复位。
                 stoppedBy: null,
-                segments: run.segments + 1,
+                // 段数取「现有 + 1」与事件段号的大者（跳段时以事件为准），与快照合并同口径。
+                segments: Math.max(run.segments + 1, event.segment ?? 0),
                 segmentBase: {
                   rounds: run.rounds,
                   toolCalls: run.toolCalls,
@@ -2568,7 +2583,8 @@ export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): 
         inputTokens: 0,
         cachedTokens: 0,
         outputTokens: 0,
-        segments: 1,
+        // 段号以事件为准（与快照恢复 parseLiveSubruns 同口径）：首见即段 N 时不得谎报 1 段。
+        segments: Math.max(1, event.segment ?? 1),
         segmentBase: null,
         stoppedBy: null,
         deniedCalls: 0,
@@ -8028,20 +8044,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         return;
       }
       case "subagent_started": {
-        // resume 判定必须用**归约前**的视图：已存在同 run = 这是第二段（或更后的段）。
-        const resumed = subruns.some((item) => item.runId === event.run_id);
+        // 段号判重只有一处实现（reduceSubruns 的 isNewSegment）：同段重复 / 旧段重放不换出新视图，
+        //  这里据此决定要不要收 resume 的重复任务行 / 刷新行——MUST NOT 自己再判「run 已存在 = resume」。
+        const previous = subruns.find((item) => item.runId === event.run_id);
+        const fresh = isNewSegment(previous, event.segment);
         subruns = reduceSubruns(subruns, {
           type: "subagent_started",
           run_id: event.run_id,
+          segment: event.segment,
           agent: event.agent,
           description: event.description,
           model: event.model,
           background: event.background === true,
         });
         const run = subruns.find((item) => item.runId === event.run_id);
-        if (run !== undefined) {
+        if (run !== undefined && fresh) {
           const callId = typeof event.call_id === "string" ? event.call_id : null;
-          if (resumed) dropResumeDuplicateRow(run, callId);
+          if (previous !== undefined) dropResumeDuplicateRow(run, callId);
           refreshTaskRow(run, callId);
         }
         renderTaskArea();
