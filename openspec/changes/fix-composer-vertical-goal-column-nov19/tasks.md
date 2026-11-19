@@ -20,9 +20,14 @@
       修后 m831 两支全绿；单测补 2 条 assoc 用例（37/37）
 - [x] 真机复跑 140 PASS（36.8s / 10 步全 PASS），证据落主仓
       `.local/acceptance/2026-11-19-m834/`；未更新像素基线
-- [x] 最终门禁（r1 修复后的树，`visual` 用 `LUMIR_VISUAL_PORT=4273`；两次 `GATE RESULT` 原文）：
+- [x] rebase 到 M832 合并后的 master（`73efbdbd`）：唯一冲突 `tests/visual/playwright.config.ts`
+      按并集解决——`…|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts`，
+      两边 WebKit 白名单都不丢；其余文件逐字节未变（生产代码零改动）
+- [x] 最终门禁（rebase 后的 tip，`visual` 用 `LUMIR_VISUAL_PORT=4273`；两次 `GATE RESULT` 原文）：
       `quick` — `GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0；
-      `visual` — `GATE PASS visual-regression 632s`、`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0
-      （visual-regression `960 passed / 2 skipped / 0 failed`；m831 在 chromium 与 webkit-realua 两支
-      都执行，CDP 条在 WebKit 按设计 skip）
+      `visual` — `GATE PASS visual-regression 700s`、`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0
+      （visual-regression `979 passed / 5 skipped / 0 failed`——比 rebase 前的 960/2 多出 M832 的
+      editing-oracle 场景与 seed；m831 在 chromium 与 webkit-realua 两支都执行，CDP 条在 WebKit 按设计 skip）
+- [x] config 相关双引擎目标测试：`m831-…` + `editing-oracle` 两个 scene 在 chromium 与 webkit-realua
+      两支跑，34 passed / 4 skipped（skip = CDP 白名单专属项与 M832 的 test.fixme）
 - [x] 提交并 TowerComplete
