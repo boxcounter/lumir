@@ -4,19 +4,20 @@
 # ⌘S 把损坏结果落盘（finding 20261119-worker-markdown-stability-bug-dom）。
 #
 # 真机 witness（完整矩阵在 tests/visual/scenes/markdown-editing-stability.spec.ts，
-# chromium + webkit 两引擎逐字节判）：本场景只取一条代表格，判真实 WKWebView 的入口与落盘。
+# chromium + webkit 两引擎逐字节判）：本场景取两条代表格（删除 / 键入替换），判真实
+# WKWebView 的入口与落盘。
 # 文档在场景内用 vaultWrite 改写成 M842 的最小现场（`| a | b | / | --- | --- | / | c | d |`）：
 # M854 双引擎探针证明该形态在 WebKit 上删除单字符 cell 会丢空格（`[26,27)` 原生得 `|| d |`，
 # 正确是 `|  | d |`），chromium 同操作正确——这是本场景在真机上的区分度来源。
 #
-# 为什么不用键盘选区：⌃A → → ↓ ⇧→ 在 Playwright 两引擎能造出 `[26,27)`，但真机 WKWebView
-# 的 caret 几何使 ↓/⇧↓ 落点与 Playwright 不同（实测落到 cell 后的空格，删除的是空格而不是
-# 字符，M854 真机首跑 FAIL 现场）；改用真实鼠标双击 cell 的单字符（word selection），落点
-# 由截图一次标定即可重复。
+# 为什么不用键盘 caret 导航：⌃A → → ↓ ⇧→ 在 Playwright 两引擎能造出 `[26,27)`，但真机
+# WKWebView 的 caret 几何使 ↓/⇧↓ 落点与 Playwright 不同（实测落到 cell 后的空格，删除的是
+# 空格而不是字符，M854 真机首跑 FAIL 现场）。改用真实鼠标双击 cell 的单字符（word
+# selection）建立锚点，再 ⇧→ 扩选；落点由截图一次标定即可重复。
 id: "266-selection-delete-widgets"
 item: 266
 tier: full
-title: 非空选区删除 = 源码精确删除——表格单字符 cell 选区、精确落盘、一次撤销（M854）
+title: 非空选区编辑 = 源码精确编辑——表格单字符 cell 的删除与跨 cell 键入替换、精确落盘、一次撤销（M854）
 fixtures: [table-fullscreen.md]
 open: table-fullscreen.md
 marker: "表格全屏场景"
@@ -105,6 +106,65 @@ steps:
         editor: { has: "c" }
       - label: 零额外写盘（sha256 + mtime 双比）
         file: { path: table-fullscreen.md, unchangedSince: 保存基线, mtimeUnchangedSince: 保存基线 }
+
+  # ---------------------------------------------------------------------------
+  # W2：跨 cell 选区直接键入替换（M855 finding：WebKit 吞掉选区前的对齐空白）
+  # 双击 `c` 得到 word selection [26,27)，再 ⇧→ ×3 扩到 [26,31)（`c` + 空格 + 隐藏管道
+  # + 空格 + `d`；真机实测 3 次扩展后的落点，与 Playwright 的 1 char/press 不同）。
+  # 直接键入 `Q`。修复前 WebKit 会按 DOM 形状回写。
+  # ---------------------------------------------------------------------------
+  - name: 双击数据 cell 的单字符（word selection，锚点 26）
+    do: doubleClick
+    target: { x: 384, y: 202 }
+    settleMs: 300
+
+  - name: ⇧→ 三次扩选到跨 cell 选区 [26,31)
+    do: keys
+    keys: ["shift+right", "shift+right", "shift+right"]
+    channel: cgevent
+    gapMs: 200
+
+  # 普通可打印键的 KimiCU 注入对本机编辑器偶发丢键（M854 实测 3 次均未落地），改走
+  # cgevent 真键盘事件的 chord 形态（shift+q → 字面 `Q`），与场景 260 的 cgevent 通道同源。
+  - name: 键入 Q 替换选区（真键盘事件通道）
+    do: key
+    key: "shift+q"
+    channel: cgevent
+    gapMs: 300
+    expect:
+      - label: 替换已落地（数据行只剩 Q）
+        editor: { has: "Q" }
+      - label: 被替换的 c 不在场
+        editor: { not: "c" }
+      - label: 被替换的 d 不在场
+        editor: { not: "d" }
+      - label: 替换未落盘
+        file: { path: table-fullscreen.md, unchangedSince: 保存基线, mtimeUnchangedSince: 保存基线 }
+
+  - name: ⌘S 落盘
+    do: key
+    key: "cmd+s"
+    gapMs: 400
+    expect:
+      - label: 盘上全文 = 选区源码被 Q 精确替换（WebKit 修复前会按 DOM 形状回写）
+        file: { path: table-fullscreen.md, exact: "| a | b |\n| --- | --- |\n| Q |\n", changedSince: 保存基线 }
+      - label: dirty 已收窄
+        ax: { not: "（未保存）" }
+
+  - name: 记录替换后的基线（撤销不得再写盘）
+    do: record
+    file: table-fullscreen.md
+    as: 替换基线
+
+  - name: 一次撤销回替换前
+    do: key
+    key: "cmd+z"
+    gapMs: 300
+    expect:
+      - label: 被替换字符回来
+        editor: { has: "c" }
+      - label: 零额外写盘（sha256 + mtime 双比）
+        file: { path: table-fullscreen.md, unchangedSince: 替换基线, mtimeUnchangedSince: 替换基线 }
 ---
 
 # 266 — 非空选区删除 = 源码精确删除（M854）
@@ -126,10 +186,16 @@ dispatch 一个显式事务（空光标行边界合并沿用 M836 的判据；IM
 ## 真机执行记录
 
 - 2026-11-19，master `594a0eae` + 本 change 实现（dev flavour，`LUMIR_ACCEPTANCE_PORT=4393`）：
-  `PASS`、1/1、场景 26.8s、退出码 0；15 条断言全 PASS，`file.exact` 为
-  `| a | b |\n| --- | --- |\n|  | d |\n`（33 字符逐字一致），一次 `⌘Z` 复原且零额外写盘。
-  证据：`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-19-m854-266/`
+  `PASS`、1/1、场景 21.9s、退出码 0。两条 witness 的逐字节判据：
+  - W1 删除：`file.exact` = `| a | b |\n| --- | --- |\n|  | d |\n`（33 字符逐字一致）；
+  - W2 跨 cell 键入替换：`file.exact` = `| a | b |\n| --- | --- |\n| Q |\n`（30 字符逐字一致）。
+  两条各配一次 `⌘Z` 复原与零额外写盘断言。证据：
+  `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-19-m854-266/`
   （`steps.md` / `run.log` / `shots/01-01-最小表格现场.jpeg`，git 外）。
+- 真机调参过程（如实登记）：普通可打印键的 KimiCU 注入对本机编辑器偶发丢键（`q` 三次均未
+  落地）；改走 cgevent 真键盘事件的 `shift+q` 后稳定。双击 word selection 的宽度在「先删除
+  再撤销」之后会多带一个空格，故 W2 用 ⇧→ ×3 扩选并在真机实测落点定档；shift-click 的扩选
+  能力在 WKWebView 未坐实（首试未形成可编辑选区），已弃用。
 - 同一窗口内的首跑曾被磁盘水位挡住（`磁盘可用 0.13G < 2G`，退出码 2、INVALID），
   按 tower 裁决清盘后复跑；该次运行不是产品失败，保留为环境证据。
 

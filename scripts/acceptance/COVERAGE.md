@@ -227,7 +227,7 @@
 | 262 | `262-native-ime-exploration` | 原生 IME 人工探索矩阵（0.13.0 CM composer；自动段只建现场，native 人工终判） | evidence |
 | 263 | `263-first-run-empty-vault` | 首启空态与空 vault 新建：无 SAMPLE / 错误占位、可见新建入口、默认 .md、保存与重启恢复 | full |
 | 264 | `264-first-run-provider-config` | 首次安装：无 provider 与网络失败的错误行本地化（en 界面、不含内部 URL），以及添加 provider + 模型后保存重启恢复 | full |
-| 266 | `266-selection-delete-widgets` | 非空选区删除 = 源码精确删除——表格单字符 cell 选区、精确落盘、一次撤销（M854） | full |
+| 266 | `266-selection-delete-widgets` | 非空选区编辑 = 源码精确编辑——表格单字符 cell 的删除与跨 cell 键入替换、精确落盘、一次撤销（M854） | full |
 | 423 | `121-harness-message-excerpt` | harness 消息摘录 ① transcript 选区 → 浮动钮 → 卡片入 composer（+ 序列化结构 / 视口 skip / transcript 同构） | full |
 | 531 | `160-quote-button-viewport-clamp` | 摘录浮动钮落点钳制：选区并集盒越出挂载容器（长行）时钮仍在视口内 | full |
 | 552 | `161-harness-path-link`<br>`221-harness-path-line-range` | harness 输出里的 vault 路径可点击（新标签 + 行号锚定 + 卡片路径）<br>harness 输出里的行范围路径可点击（:起-止 落到起始行，畸形形态不吞半截） | full<br>full |

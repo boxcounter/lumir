@@ -655,6 +655,8 @@ interface SelectionDeleteCase {
   doc: string;
   anchor: number;
   head: number;
+  /** 与 keys 二选一：直接键入一段文本替换选区（「选中后打字」，M855 finding 的入口）。 */
+  insert?: string;
   keys: string[];
   expectedDoc: string;
   expectedCaret: number;
@@ -682,6 +684,15 @@ const SELECTION_DELETE_CASES: SelectionDeleteCase[] = [
   { name: "混合列表：终点落在有序项 marker 内部", path: "sel-list-marker.md", doc: SELECTION_MIXED_LIST_DOC, anchor: 2, head: 10, keys: ["Backspace"], expectedDoc: "- . c\n", expectedCaret: 2 },
   // 普通文本选区：闸门接管后字节结果仍与原生相同（语义保持）。
   { name: "普通文本选区：只删选中源码", path: "sel-plain.md", doc: "aa bb cc\n", anchor: 3, head: 6, keys: ["Backspace"], expectedDoc: "aa cc\n", expectedCaret: 3 },
+  // 非空选区上的普通键入替换（M855 finding）：WebKit 原生路径会吞掉选区前的对齐空白。
+  { name: "表格同一 cell 键入替换", path: "sel-ins-cell.md", doc: SELECTION_TABLE_DOC, anchor: 26, head: 27, insert: "Q", keys: [], expectedDoc: "| a | b |\n| --- | --- |\n| Q | d |\n", expectedCaret: 27, table: true },
+  { name: "表格跨 cell 键入替换（M855 形状）", path: "sel-ins-cross.md", doc: SELECTION_TABLE_DOC, anchor: 26, head: 30, insert: "Q", keys: [], expectedDoc: "| a | b |\n| --- | --- |\n| Qd |\n", expectedCaret: 27, table: true },
+  { name: "表格跨 cell 反向选区键入替换", path: "sel-ins-rev.md", doc: SELECTION_TABLE_DOC, anchor: 30, head: 26, insert: "Q", keys: [], expectedDoc: "| a | b |\n| --- | --- |\n| Qd |\n", expectedCaret: 27, table: true },
+  { name: "表格跨行键入替换", path: "sel-ins-row.md", doc: SELECTION_TABLE_DOC, anchor: 2, head: 32, insert: "Q", keys: [], expectedDoc: "| Q|\n", expectedCaret: 3, table: true },
+  { name: "混合列表键入替换", path: "sel-ins-list.md", doc: SELECTION_MIXED_LIST_DOC, anchor: 3, head: 9, insert: "Q", keys: [], expectedDoc: "- aQ1. c\n", expectedCaret: 4 },
+  { name: "普通文本选区键入替换", path: "sel-ins-plain.md", doc: "aa bb cc\n", anchor: 3, head: 6, insert: "Q", keys: [], expectedDoc: "aa Qcc\n", expectedCaret: 4 },
+  { name: "表格跨 cell 键入替换后 undo / redo", path: "sel-ins-undo.md", doc: SELECTION_TABLE_DOC, anchor: 26, head: 30, insert: "Q", keys: [], expectedDoc: "| a | b |\n| --- | --- |\n| Qd |\n", expectedCaret: 27, table: true, undoRedo: true },
+  { name: "表格跨 cell 键入替换后 ⌘S：盘上全文 = 期望文档", path: "sel-ins-save.md", doc: SELECTION_TABLE_DOC, anchor: 26, head: 30, insert: "Q", keys: [], expectedDoc: "| a | b |\n| --- | --- |\n| Qd |\n", expectedCaret: 27, table: true, save: true },
   // undo / redo 与精确落盘。
   { name: "表格跨行删除后 undo 复原、redo 重放", path: "sel-table-undo.md", doc: SELECTION_TABLE_DOC, anchor: 2, head: 32, keys: ["Backspace"], expectedDoc: "| |\n", expectedCaret: 2, table: true, undoRedo: true },
   { name: "表格跨行删除后 ⌘S：盘上全文 = 期望文档", path: "sel-table-save.md", doc: SELECTION_TABLE_DOC, anchor: 2, head: 32, keys: ["Backspace"], expectedDoc: "| |\n", expectedCaret: 2, table: true, save: true },
@@ -695,10 +706,15 @@ for (const c of SELECTION_DELETE_CASES) {
     // 前置（M854 探针口径）：CM state 里的选区与目标源码 range 逐值一致，文档未被触碰。
     // 失败在这里意味着「选区本身错了」，与 DOM 回写是两个不同的缺陷。
     expect(await bodyState(page)).toEqual({ doc: c.doc, anchor: c.anchor, head: c.head });
-    for (const key of c.keys) {
-      await page.keyboard.press(key);
-      // 620ms 屏障：让每一拍成为独立的 CM history 事件（与上面的编辑用例同口径）。
-      await page.waitForTimeout(620);
+    if (c.insert !== undefined) {
+      await page.keyboard.type(c.insert);
+      await page.waitForTimeout(120);
+    } else {
+      for (const key of c.keys) {
+        await page.keyboard.press(key);
+        // 620ms 屏障：让每一拍成为独立的 CM history 事件（与上面的编辑用例同口径）。
+        await page.waitForTimeout(620);
+      }
     }
     await expect
       .poll(async () => bodyState(page), { message: `${c.name}：选区删除结果与期望不符` })

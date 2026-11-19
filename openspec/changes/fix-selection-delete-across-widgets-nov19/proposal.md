@@ -38,14 +38,15 @@ M854 探针（两引擎，程序化选区）坐实：`setCaret` 落到 CM state 
 
 ## What Changes
 
-- `src/editor.ts` 的 beforeinput 闸门从「空光标行边界」扩到**整个删除类别**：`EditorState`
+- `src/editor.ts` 的 beforeinput 闸门从「空光标行边界」扩到**整个选区编辑类别**：`EditorState`
   里有非空选区时，删除类 inputType（`deleteContentBackward/Forward`、词删除、行删除四个变体）
-  一律 `preventDefault` + 按 `state.selection` 的源码字节 dispatch **一个**显式事务；判据只读
-  state，不检测 widget、不读 DOM 文本形状、不按渲染形状猜删除粒度。
+  与普通键入 `insertText`（M855 finding：WebKit 跨 cell 选区键入会吞掉选区前的对齐空白）一律
+  `preventDefault` + 按 `state.selection` 的源码字节 dispatch **一个**显式事务（删除 / 替换）；
+  判据只读 state，不检测 widget、不读 DOM 文本形状、不按渲染形状猜粒度。IME 组合与粘贴不扩。
 - 空光标行边界合并（M836）与 IME / 只读 / 普通单区间选区的字节结果保持不变。
 - 回归：`tests/visual/scenes/markdown-editing-stability.spec.ts` 的 `test.fail` 转正，覆盖
-  表格跨行（正 / 反向 / Delete）、混合列表、marker 内部端点、普通文本、undo/redo 与 `⌘S`
-  精确落盘；新增真机场景 `266-selection-delete-widgets`。
+  表格跨行（正 / 反向 / Delete）、跨 cell 键入替换（M855 finding）、混合列表、marker 内部
+  端点、普通文本、undo/redo 与 `⌘S` 精确落盘；新增真机场景 `266-selection-delete-widgets`。
 - 规格：修改 `editor-live-preview` 的既有 requirement 中已被证伪的「非空选区删除不接管」句，
   并新增「跨渲染隐藏区的非空选区删除」requirement。
 

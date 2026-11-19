@@ -8,13 +8,14 @@
 ## 2. 实现
 
 - [x] 2.1 `src/editor.ts` 的 beforeinput 闸门扩到非空选区：`SELECTION_DELETE_INPUTS`（char / word / line 四个方向变体）+ `deleteSelectedRanges`（单区间走既有 `deleteRange`，多区间按 `state.selection` 生成 changes）；判据只读 state，不检测 widget / 不读 DOM 文本。
+- [x] 2.3 M855 finding 同族并入：非空选区上的普通 `insertText` 走同一闸门，用 `state.replaceSelection(text)` 单事务替换选区源码（不吃选区前对齐空白）；IME 组合、粘贴与拼写替换不扩。
 - [x] 2.2 保持空光标行边界合并（M836）原判据；IME 组合期、只读会话跳过；词删除变体的空光标分支仍调应用命令（kill 槽语义不变）。
 
 ## 3. 回归与真机
 
-- [x] 3.1 `tests/visual/scenes/markdown-editing-stability.spec.ts`：M842 的 `test.fail` describe 转正为 11 条真实用例（表格跨行正 / 反向 / Delete、同行跨 cell、同 cell、混合列表、反向、marker 内部端点、普通文本、undo/redo、`⌘S` 精确落盘），并把表格矩阵里两条选区用例的 `knownDefect` 移除；每条先断言 CM 选区与源码 range 一致。
+- [x] 3.1 `tests/visual/scenes/markdown-editing-stability.spec.ts`：M842 的 `test.fail` describe 转正为真实用例（表格跨行正 / 反向 / Delete、同一行跨 cell、同 cell、混合列表、反向、marker 内部端点、普通文本、`insertText` 替换（含 M855 跨 cell 形状 / 反向 / undo / 精确落盘）、undo/redo、`⌘S` 精确落盘），并把表格矩阵里两条选区用例的 `knownDefect` 移除；每条先断言 CM 选区与源码 range 一致。
 - [x] 3.2 新增 `scripts/acceptance/scenarios/266-selection-delete-widgets.md`（键盘跨行选区 + 鼠标 shift-click 破坏形状、精确落盘、一次撤销），`node scripts/acceptance/coverage.mjs` 重新生成 COVERAGE。
-- [x] 3.3 真机 266 在 tower 串行窗口内执行：`PASS`、1/1、场景 26.8s、退出码 0、15 条断言全 PASS；`file.exact` 逐字命中 `| a | b |\n| --- | --- |\n|  | d |\n`，一次 ⌘Z 复原且零额外写盘。证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-19-m854-266/`（git 外）。同窗口首跑被磁盘水位挡住（run.mjs 判 `磁盘可用 0.13G < 2G`、退出码 2 = INVALID），按 tower 裁决清盘后复跑；该次不作为产品失败。真机 witness 用真实鼠标双击单字符 cell（键盘 ↓/⇧↓ 在真机 caret 几何下落到空格，已如实写进场景注释）。
+- [x] 3.3 真机 266 在 tower 串行窗口内执行：`PASS`、1/1、场景 21.9s、退出码 0。两条 witness 的 `file.exact` 逐字命中：删除 `| a | b |\n| --- | --- |\n|  | d |\n`（33 字符）、跨 cell 键入替换 `| a | b |\n| --- | --- |\n| Q |\n`（30 字符）；各配一次 ⌘Z 复原与零额外写盘。证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-19-m854-266/`（git 外）。同窗口首跑被磁盘水位挡住（run.mjs 判 `磁盘可用 0.13G < 2G`、退出码 2 = INVALID），按 tower 裁决清盘后复跑；该次不作为产品失败。真机 witness 用真实鼠标双击单字符 cell 建立锚点（键盘 caret 导航在真机几何下落到空格，已如实写进场景注释）；普通可打印键的 KimiCU 注入偶发丢键，替换键入改走 cgevent 的 `shift+q`。
 - [x] 3.4 目标双引擎：`markdown-editing-stability.spec.ts` chromium + webkit-realua 各 52 条，`104 passed`（2026-11-19 复跑同值）；WebKit 余 4 条 expected failure 属 finding `...-bug-webkit-cell`（空光标 cell 端点键入 / 删除），不在本 change 的接管面内。
 
 ## 4. 验证

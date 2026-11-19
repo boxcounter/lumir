@@ -6,7 +6,7 @@
 
 接管判据 SHALL 只读 `EditorState`（空光标、恰在行边界、被吸收一侧确有行），MUST NOT 检测 widget 类型、replace 装饰数量或 DOM/AX 的文本形状，也 MUST NOT 按显示字形猜编辑意图（与「DOM/AX 不是文档真源」同源）。因此纯文本行的事务结果 MUST 与原生删除逐字节相同，新增 widget 类型自然落在类内、不需要逐类登记。
 
-一次跨行删除 MUST 是一个撤销步：一次 undo 恢复删除前文档与选区，一次 redo 恢复删除后状态。dirty MUST 继续按当前文档与 `cleanDoc` 逐字比较；显式保存载荷 MUST 逐字等于当前 `EditorState.doc`。行内删除（不跨行）、IME 组合期删除、只读会话与多区间选区 MUST NOT 被本接管改变——实测它们不会重建被吸收行的 DOM；**非空选区删除**改由「跨渲染隐藏区的非空选区删除」接管。跨行删除的专项不变量见 `docs/specs/lists.md` L7；**非空选区删除**的判据以本 requirement 与 `src/editor.ts` 的闸门注释为准（L7 目前仍写着「非空选区不在本条内」，该句在 M854 后已过时，属 docs/specs 的后续同步项，不在本 mission 的写面内）。
+一次跨行删除 MUST 是一个撤销步：一次 undo 恢复删除前文档与选区，一次 redo 恢复删除后状态。dirty MUST 继续按当前文档与 `cleanDoc` 逐字比较；显式保存载荷 MUST 逐字等于当前 `EditorState.doc`。行内删除（不跨行）、IME 组合期删除、只读会话与多区间选区 MUST NOT 被本接管改变——实测它们不会重建被吸收行的 DOM；**非空选区删除**改由「跨渲染隐藏区的非空选区编辑」接管。跨行删除的专项不变量见 `docs/specs/lists.md` L7；**非空选区删除**的判据以本 requirement 与 `src/editor.ts` 的闸门注释为准（L7 目前仍写着「非空选区不在本条内」，该句在 M854 后已过时，属 docs/specs 的后续同步项，不在本 mission 的写面内）。
 
 #### Scenario: 列表 marker 行被吸收
 
@@ -27,17 +27,17 @@
 - **GIVEN** 相邻两行都是无 replace 装饰的普通文本（或 lazy continuation 行）
 - **WHEN** 在行边界执行 Delete / Backspace / `⌘⌫`
 - **THEN** 结果与浏览器原生删除逐字节相同（只少一个换行）
-- **AND** 行内（不跨行）删除与 IME 组合期删除保持既有路径；非空选区删除见「跨渲染隐藏区的非空选区删除」
+- **AND** 行内（不跨行）删除与 IME 组合期删除保持既有路径；非空选区删除见「跨渲染隐藏区的非空选区编辑」
 
 ## ADDED Requirements
 
-### Requirement: 跨渲染隐藏区的非空选区删除
+### Requirement: 跨渲染隐藏区的非空选区编辑
 
-任意删除类输入（Backspace / Delete、词删除、行删除变体）在 `EditorState` 存在**非空选区**时 SHALL NOT 落到浏览器原生编辑路径。编辑器 MUST `preventDefault` 并按 `state.selection` 的源码字节 dispatch 一个显式事务：文档结果 MUST 恰好等于 `doc.slice(0, from) + doc.slice(to)`（多区间时为各区间依次删除），MUST NOT 把 replace 装饰的渲染文本（表格 cell 文本、列表 marker glyph、wikilink label、公式渲染文本）写进文档，MUST NOT 因选区端点落在隐藏区间而拆行、吞管道符或删掉选区之外的源码。
+任意删除类输入（Backspace / Delete、词删除、行删除变体）**与普通键入（`insertText`）**在 `EditorState` 存在**非空选区**时 SHALL NOT 落到浏览器原生编辑路径。编辑器 MUST `preventDefault` 并按 `state.selection` 的源码字节 dispatch 一个显式事务：删除时文档结果 MUST 恰好等于 `doc.slice(0, from) + doc.slice(to)`（多区间时为各区间依次删除）；键入替换时 MUST 恰好等于 `doc.slice(0, from) + text + doc.slice(to)`，光标落在插入文本之后。MUST NOT 把 replace 装饰的渲染文本（表格 cell 文本、列表 marker glyph、wikilink label、公式渲染文本）写进文档，MUST NOT 因选区端点落在隐藏区间而拆行、吞管道符、吃掉选区前的对齐空白或删掉选区之外的源码。IME 组合（`insertCompositionText`）、粘贴（`insertFromPaste`）与拼写替换不在此列，语义保持既有路径。
 
-接管判据 SHALL 只读 `EditorState`（选区非空、删除类 inputType），MUST NOT 检测 widget 类型、replace 装饰数量或 DOM/AX 的文本形状，也 MUST NOT 按渲染形状猜删除粒度；方向（正向 / 反向选区）与输入类型（Delete / Backspace / 词 / 行删除）MUST 不改变合同。普通单区间选区的字节结果 MUST 与原生删除相同；IME 组合期、只读会话与多区间选区 MUST 保持既有语义（只读不生效、组合期交还输入法、多区间按 state 逐区间删除）。
+接管判据 SHALL 只读 `EditorState`（选区非空、删除类 inputType 或 `insertText`），MUST NOT 检测 widget 类型、replace 装饰数量或 DOM/AX 的文本形状，也 MUST NOT 按渲染形状猜删除粒度；方向（正向 / 反向选区）与输入类型（Delete / Backspace / 词 / 行删除）MUST 不改变合同。普通单区间选区的字节结果 MUST 与原生删除 / 键入相同；IME 组合期、只读会话与多区间选区 MUST 保持既有语义（只读不生效、组合期交还输入法、多区间按 state 逐区间编辑）。
 
-一次选区删除 MUST 是一个撤销步：一次 undo 恢复删除前文档（与选区），一次 redo 恢复删除后状态。dirty MUST 按当前文档与 `cleanDoc` 逐字比较；显式保存载荷 MUST 逐字等于当前 `EditorState.doc`。
+一次选区编辑 MUST 是一个撤销步：一次 undo 恢复编辑前文档（与选区），一次 redo 恢复编辑后状态。dirty MUST 按当前文档与 `cleanDoc` 逐字比较；显式保存载荷 MUST 逐字等于当前 `EditorState.doc`。
 
 #### Scenario: 表格跨行选区删除
 
@@ -52,6 +52,13 @@
 - **WHEN** 选区为 `[3,9)`（bullet 内容中间到有序项行首）或 `[2,10)`（终点落在 marker 内部）并按 Backspace
 - **THEN** 文档分别变为 `- a1. c\n` 与 `- . c\n`（源码精确删除，MUST NOT 多出换行或丢空格）
 - **AND** 反向选区（head < anchor）得到同一文档结果与同一落点
+
+#### Scenario: 表格跨 cell 选区键入替换（M855 finding）
+
+- **GIVEN** 文档为 `| a | b |\n| --- | --- |\n| c | d |\n`，数据行选区为 `[26,30)`（`c` + 空格 + 隐藏管道 + 空格）
+- **WHEN** 直接键入 `Q` 替换选区
+- **THEN** 文档变为 `| a | b |\n| --- | --- |\n| Qd |\n`——只替换选区源码，MUST NOT 吃掉选区前的 cell 对齐空白（WebKit 原生路径会得到 `|Qd |`）
+- **AND** 光标落在 `Q` 之后；一次 undo 恢复原文与选区；`⌘S` 的落盘全文等于当前 `EditorState.doc`
 
 #### Scenario: 普通选区、只读与 IME 不受影响
 
