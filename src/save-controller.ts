@@ -217,17 +217,32 @@ function markdownRecoveryName(fromPath: string, suffix: string): string {
   return `${base.replace(/\.(md|markdown)$/i, "")}-恢复${suffix}`; // i18n-exempt: data —— 同上（wikilink 目标名）
 }
 
+/** 一次保存发起时的归属凭据：路径、装载世代与本次在途 token。应答落地时先核对它是否仍是
+ *  该路径的当前持有者（见 owns）——vault 复位 / 重新打开同名路径 / app 内改名都会让旧凭据
+ *  整体失效：旧 revision 不得写进新文档的 CAS 基准，失败提示也不得挂到新文档上（M847）。 */
+interface SaveTicket {
+  path: string;
+  epoch: number;
+  token: number;
+}
+
 export function createSaveController(deps: SaveControllerDeps): SaveController {
   const { editor, toast } = deps;
 
   /** 文件打开世代号：兼作装载事务的 requestId（main 的 openFile 用它丢弃迟到的快照）。
-   *  保存链路**不用**它做失效判据——判据是「目标路径的标签是否还在」（见 saveDocument），
-   *  否则开一个新标签会把另一个标签在途的保存结果误丢。 */
+   *  保存链路**不用**它做失效判据——判据是**路径级装载世代**（`saveEpoch`），否则开一个新标签
+   *  会把另一个标签在途的保存结果误丢（M847）。 */
   let serial = 0;
   /** path → 磁盘 revision（CAS 基准）。不可编辑的文件类（image/binary，不进编辑器）不登记。 */
   const revisions = new Map<string, string | undefined>();
-  /** 在途保存的路径（原先是单文档的 saveInFlight 布尔）。 */
-  const saving = new Set<string>();
+  /** path → 装载世代：这条路径上的**文档换了一份**（vault 复位 / 重新打开 / app 内改名）就推进。
+   *  保存开始时随路径捕获，应答落地时不一致即整体丢弃（见 SaveTicket 与 owns）。 */
+  const saveEpoch = new Map<string, number>();
+  let epochSeq = 0;
+  /** path → 在途保存的租约（原先是路径集合）。旧保存的 finally 只撤自己的 token：同一路径的
+   *  下一份保存已经开始时，迟到应答 MUST NOT 把它的在途标记一并删掉（M847）。 */
+  const saving = new Map<string, SaveTicket>();
+  let saveSeq = 0;
   /** 崩溃备份 debounce 定时器，按路径（M149：逐标签独立，切标签不互相重置）。
    *  它是 dirty 内容目前**唯一**的定时写入者，路径键控因此更要紧：错位的代价从
    *  「写错文件」变成「恢复时给出错路径的内容」。 */
@@ -250,6 +265,41 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
 
   function isDirty(path: string): boolean {
     return sessionOf(path)?.dirty ?? false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 保存应答的归属（M847）
+  // ---------------------------------------------------------------------------
+
+  /** 某路径当前的装载世代（从未登记过的路径按 0 算——能发起保存的路径一定由 noteOpened /
+   *  noteRenamed 登记过世代）。 */
+  function epochOf(path: string): number {
+    return saveEpoch.get(path) ?? 0;
+  }
+
+  /** 让某路径上的旧保存应答整体失效：装载世代推进，并撤下该路径的在途租约，新文档因此可以
+   *  立即开始自己的保存。旧应答的 finally 按 token 判归属，撤不下后来者（见 endSave）。 */
+  function invalidateSaveResponses(path: string): void {
+    saveEpoch.set(path, ++epochSeq);
+    saving.delete(path);
+  }
+
+  /** 占住某路径的在途保存，返回本次保存的归属凭据。 */
+  function beginSave(path: string): SaveTicket {
+    const ticket: SaveTicket = { path, epoch: epochOf(path), token: ++saveSeq };
+    saving.set(path, ticket);
+    return ticket;
+  }
+
+  /** 应答是否仍归本次保存所有：装载世代未变，且该路径的在途租约仍是自己。任一不成立都
+   *  MUST 整体丢弃——不写 revision、不清 dirty、不弹提示（M847 的 finding）。 */
+  function owns(ticket: SaveTicket): boolean {
+    return epochOf(ticket.path) === ticket.epoch && saving.get(ticket.path)?.token === ticket.token;
+  }
+
+  /** 收尾只撤自己的租约（幂等）：token 不匹配说明该路径已被新一代保存接管，MUST NOT 误删。 */
+  function endSave(ticket: SaveTicket): void {
+    if (saving.get(ticket.path)?.token === ticket.token) saving.delete(ticket.path);
   }
 
   function saveErrorMessage(e: unknown): string {
@@ -295,6 +345,10 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  最新的那一份。 */
   function noteRenamed(from: string, to: string): void {
     if (from === to) return;
+    // 改名换的也是「这条路径上的文档」：旧保存的应答（成功 revision 与失败提示）对新键都不再
+    // 成立，两个键的在途租约一并撤下——旧保存不得挡住新键上的下一次保存（M847）。
+    invalidateSaveResponses(from);
+    invalidateSaveResponses(to);
     if (revisions.has(from)) {
       revisions.set(to, revisions.get(from));
       revisions.delete(from);
@@ -408,6 +462,9 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   }
 
   function noteOpened(path: string, revision: string | undefined): void {
+    // 这条路径上的文档换了一份：旧保存在途的应答整体失效（同路径重开时，旧 vault / 旧快照
+    // 的 revision 不得覆盖刚登记的 CAS 基准；见 M847 的 finding）。
+    invalidateSaveResponses(path);
     revisions.set(path, revision);
     cancelBackupTimer(path);
   }
@@ -421,6 +478,9 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       if (session.path !== undefined && session.dirty) forgetBackup(session.path);
     }
     revisions.clear();
+    // vault 复位把每条路径上的文档都换掉了：旧应答的世代与在途租约一并清空。token 全局单调，
+    // 清空后任何旧 finally 都不再匹配，撤不走新 vault 里新保存的标记（M847）。
+    saveEpoch.clear();
     saving.clear();
     for (const timer of timers.values()) window.clearTimeout(timer);
     timers.clear();
@@ -472,12 +532,13 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     if (saving.has(path) || !isDirty(path)) return false;
     const content = contentOf(path);
     if (content === null) return false;
-    saving.add(path);
+    const ticket = beginSave(path);
     try {
       const revision = await documentSave(path, expectedRevision, content);
-      // 目标标签在写入期间被关掉（或 vault 被切走）：结果丢弃——内存里已经没有这份
-      // 文档可以对齐了。**不**用世代号判据：开一个新标签不该让别的标签的在途保存作废。
-      if (sessionOf(path) === undefined) return false;
+      // 应答的归属（M847）：写入期间 vault 被切走、同路径被重新打开或被改名，这次应答都已
+      // 不属于当前文档——整体丢弃（不写 revision、不清 dirty、不弹提示）。MUST NOT 用全局
+      // 世代号判据：开一个新标签不该让别的标签的在途保存作废。
+      if (!owns(ticket) || sessionOf(path) === undefined) return false;
       revisions.set(path, revision);
       if (contentOf(path) === content) {
         editor.markCleanOf(path, content);
@@ -488,6 +549,8 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       toast(t("D236"), [], false, "success");
       return false;
     } catch (e) {
+      // 迟到的失败提示同样不得串到新文档上：归属已失效就只作废这次应答。
+      if (!owns(ticket)) return false;
       if (isCommandError(e) && e.code === "document_conflict") {
         // CAS 失败：重试必败（revision 已变），纯文案会把用户修改锁死在内存——
         // dirtyGuard 与退出守卫又堵死切换/退出，必须给逃生口（M124）。
@@ -499,7 +562,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       }
       return false;
     } finally {
-      saving.delete(path);
+      endSave(ticket);
     }
   }
 
@@ -560,11 +623,14 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     if (saving.has(path) || sessionOf(path) === undefined || saveBaseline(path) === null) return;
     const content = contentOf(path);
     if (content === null) return;
-    saving.add(path);
+    const ticket = beginSave(path);
     try {
       const snapshot = await fsReadSnapshot(path);
-      if (sessionOf(path) === undefined) return;
+      // 覆盖链有两次 await：读基准后与写入后都按归属凭据复查（M847），任一处失效即整体作废，
+      // 旧文档的 revision 不得写进新文档的同名路径。
+      if (!owns(ticket) || sessionOf(path) === undefined) return;
       const revision = await documentSave(path, snapshot.revision, content);
+      if (!owns(ticket) || sessionOf(path) === undefined) return;
       revisions.set(path, revision);
       if (contentOf(path) === content) {
         editor.markCleanOf(path, content);
@@ -574,6 +640,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
         toast(t("D239"), [], false, "success");
       }
     } catch (e) {
+      if (!owns(ticket)) return;
       if (isCommandError(e) && e.code === "document_conflict") {
         showConflictPrompt(path);
       } else if (isCommandError(e) && e.code === "fs_not_found") {
@@ -583,7 +650,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
         toast(saveErrorWithPath(e, path));
       }
     } finally {
-      saving.delete(path);
+      endSave(ticket);
     }
   }
 
