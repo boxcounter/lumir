@@ -68,12 +68,20 @@
       不更新任何像素基线。rebase 后复跑（tip `216b7f84`）：`GATE RESULT: 15/15 PASS（SKIP 0）`，
       退出码 0；视觉回归 1272 条（1268 passed / 4 skipped，18.2m），日志
       `.local/missions/M859/gate-visual-rebase.log`；同样未更新基线。
+      **最终 tip `0a629e98` 的两次读数**：①并发条件下（误与 M865 的 visual 并行）全绿
+      `1268 passed / 4 skipped / 0 failed`，`GATE RESULT: 15/15 PASS（SKIP 0）`，日志
+      `.local/missions/M859/gate-visual-final.log`；②tower 独占授权后复跑同样全绿
+      （`1268 passed / 4 skipped / 0 failed`，17.7m），`GATE RESULT: 15/15 PASS（SKIP 0）`，
+      日志 `.local/missions/M859/gate-visual-exclusive.log`。此前一条 `m734-settings-panel`
+      的 ✘ 经核实来自并行的 M865 日志（误取），隔离复跑该 spec `34 passed / 0 failed`
+      （`.local/missions/M859/m734-isolated.log`）。
 - [x] 5.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`（35 passed / 0 failed）、
       `bash scripts/docs-check.sh` PASS、`node scripts/acceptance/run.mjs --check` 通过（提交前复跑一次）。
 - [x] 5.5 临时探针 spec / 探针配置已删除（`git status` 无残留）；真机窗口后 `/tmp/lumir-m859-target` 已清理；
       提交 TowerComplete 等待独立 review。
-- [x] 5.6 rebase 到 master `88886e4f`：`scripts/acceptance/COVERAGE.md` 冲突用生成器重建
-      （244 场景 / 221 item，263–267 全在）；`src/editor.ts` 自动合并同时保留 M854/M855 的
-      beforeinput 统一闸门（`SELECTION_DELETE_INPUTS` / `deleteSelectedRanges`）与本节 paste
-      降级闸门；`docs/backlog.md` 仅保留本 change 一条、未恢复 M854 已核销条目。paste 行为
-      无冲突（合并后的 paste 处理器与已审版本逐字一致），267 未复跑。
+- [x] 5.6 rebase 到 master：先 `88886e4f`（COVERAGE.md 冲突用生成器重建，244 场景 / 221 item，
+      263–267 全在；editor.ts 自动合并保留 M854/M855 的 beforeinput 统一闸门与本节 paste 降级；
+      backlog 仅本 change 一条、未恢复 M854 已核销条目），随后 master 前进到 `09eb4a7c`
+      （M855 归档）再 rebase 一次——backlog 冲突按「保留 master 的 M855 活跃队列条目 + 本 change
+      条目、不恢复已核销项」解决（80/80 行，上限内），最终 tip `0a629e98`。paste 行为零冲突
+      （合并后的 paste 处理器与已审版本逐字一致），267 未复跑。
