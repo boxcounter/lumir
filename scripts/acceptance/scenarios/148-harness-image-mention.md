@@ -59,16 +59,14 @@ steps:
     do: clipboardImage
     synth: { width: 480, height: 320, seed: 7 }
 
-  - name: 右键 composer 唤出 WebKit 原生菜单（图 A 的输入面）
-    do: click
-    target: { role: AXTextArea, name: "qrefmark", button: right }
-    expect:
-      - label: 原生菜单出现且 Paste 项在场
-        ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
-
-  - name: 点 Paste 贴入图 A（光标处插图片卡片）
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
+  # 粘贴通道（M864）：⌘V 走 cgevent 真键盘事件（M859 真机实测）；原生上下文菜单 Paste 的
+  # AXPress 会静默 no-op（菜单不收起、paste 不触发），不再使用——见 112 的同段注释。
+  # composer 焦点由上面的 clickInNode 建立；贴图判据落在卡片/`@` 钮与后续留存上。
+  - name: ⌘V 贴入图 A（cgevent 真键盘事件；光标处插图片卡片）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
 
   - name: 等图 A 卡片出现（落盘 + 插卡的状态驱动等待）
     do: waitFor
@@ -83,18 +81,14 @@ steps:
     do: clipboardImage
     synth: { width: 300, height: 300, seed: 8 }
 
-  - name: 右键 composer 唤出原生菜单（图 B 的输入面——dy 0.94 落在末尾空段落带；
-      composer 此刻含图 A 卡片，中心点落在卡片上会开出**图片菜单**（Look Up/Copy，无 Paste），
-      M498 首跑实证（ax dump 17 条 AXMenuItem 无 Paste）；同 149 正文②的落点口径）
-    do: click
-    target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp", button: right, dy: 0.94 }
-    expect:
-      - label: 原生菜单出现且 Paste 项在场
-        ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
-
-  - name: 点 Paste 贴入图 B
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
+  # 第二张图：同一 cgevent ⌘V 通道。旧菜单通道要挑「末尾空段落带」的右键落点（dy 0.94，
+  # 中心点会落在图 A 卡片上开出图片菜单）——cgevent 不需要右键，落点由模型 caret 决定：
+  # 产品在第一张卡后补了承接空段落，第二次粘贴因此接在图 A 之后（下方「两张卡片」判据钉住）。
+  - name: ⌘V 贴入图 B（cgevent 真键盘事件）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
 
   - name: 等图 B 卡片出现（两张图片卡片，各带一个 `@` 钮）
     do: waitFor
@@ -112,26 +106,17 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp" }
     dy: 0.94
-  # M498 迁移边界（如实登记，本步自 M454 起从未转绿——三个通道全试过）：
-  #   do:keys 逐键 —— post-menu 键盘注入死亡（M456，focusWindow 也救不回）；
-  #   typeInNode（type_text）—— post-menu 重试带 index 能落 DOM，但 AX 注入不进 composer
-  #     模型（内容输入走 keydown 路径），@ 钮按模型 caret 插入 ⇒ 「Image 1note-」穿帮（3 跑实证）；
-  #   剪贴板 + 原生菜单 Paste 文本 —— 产品 paste 管线本可插入（模型一致），但两张卡片时
-  #     composer 达 max-height 滚动，dy 0.94 的右键落点命中卡片元信息行的链接区，
-  #     开出 Look Up/Copy Link 菜单（1 跑实证）——套件无可靠的「点可见末尾空段落」通道。
-  # 留在 do:keys。**素材串刻意无 'e'**——press_key 确定性丢 'e'（M497/M498 finding），
-  # 该步因 post-menu+模型双边界无替代通道；同判法既有实证：场景 137 的 "draftclear"。
-  # M498 收口跑（tag- 版）实证：'e' 丢失已消除（DOM 落 "tag-"），但 post-menu 键入只到
-  # DOM、composer 模型的 caret 仍钉在段落首（@ 插入成「Image 1tag-」），①② 断言与下游
-  # Escape 收起步同受 M456 影响——残红全部归于已报的 M456/模型边界 finding。
-  # M498 有界收口·重组尝试实证（tag- 挪至首次贴图前，pre-menu）：假设「@ 引用插入其后」
-  # 被证伪——pre-menu 键入不 garble（DOM「qrefmarktag-」同段落），但贴图把模型 caret 带离
-  # tag-，@ 引用落贴图后的承接空段落成**独立 part**（「Image 1」standalone），② 必红。
-  # 结论：② 的区分度形态要求「图先贴、前缀后打、引用即插」，前缀步不可能 pre-menu。
-  # 随机连续丢键段风险已报 finding。
+  # M864 通道变更后的状态（注释改准，动作与断言不动）：
+  #   上面的贴图步已从「原生菜单 Paste」迁到 cgevent ⌘V，本步因此**不再是 post-menu 态**——
+  #   M456 那条「菜单 Paste 之后 CGEvent 逐键注入死亡」的前提消失。本步仍留 `do: keys`
+  #   （可打印逐键，素材串刻意无 'e'——press_key 确定性丢 'e'，M497/M498）；它是否随通道变更
+  #   转绿（模型 caret 是否跟到末尾空段落、@ 引用是否插成 `tag-Image N`）以真机复跑读数为准，
+  #   断言保持原样、不放宽。
+  #   历史（M454–M498，三通道全试过的记录）：菜单 Paste 后 do:keys 注入死亡；typeInNode 的
+  #   AX 注入不进 composer 模型（@ 按模型 caret 插入 ⇒「Image 1note-」）；剪贴板+菜单 Paste
+  #   文本在两张卡片时右键落点命中卡片链接区。这些边界只属于菜单通道，M864 起在役场景不再经过。
   - name: 键入引用前缀 tag-（`keys` 动作走 composer 的键盘注入；`type` 动作会落到第一个
-      `AXTextArea` = 编辑器——本步是 post-menu + 模型一致性双边界，见上注；
-      素材串刻意无 'e'，见上注）
+      `AXTextArea` = 编辑器；素材串刻意无 'e'，见上注）
     do: keys
     keys: ["t", "a", "g", "-"]
     gapMs: 100
@@ -191,7 +176,7 @@ steps:
       - label: ② 留存图片 part 仍是 lumir-attachment:// 引用（不是 data URL）
         file: { path: "env:harness/sessions/acc-img/*.jsonl", has: '/"image_url":"lumir-attachment:\/\/pasted-[0-9a-f]{16}\.webp"/' }
       # M523 收紧：旧口径 `not: '"text":"Image '` 是**子串**判据，用户自己段落恰以 `Image ` 开头
-      # （本轮实际值 = `Image 2Image 1tag-`，见 ① 的 post-menu 通道边界）就被它判红——负断言过宽
+      # （M864 前的实际值 = `Image 2Image 1tag-`，见 ① 的通道边界）就被它判红——负断言过宽
       # 造成的假红，且顺带把「标签行」与「用户段落」区分不开（REVIEW.md 「断言等价于子串」条同族）。新口径只否
       # **恰为 `Image N` 的 text part**（`"text":"Image \d+"` 的闭合引号要求值到数字为止）。
       - label: ② 留存文本面 MUST NOT 出现标签行（恰为 `Image N` 的 text part）
@@ -268,15 +253,11 @@ steps:
   - name: 剪贴板置合成 png C（seed 9）
     do: clipboardImage
     synth: { width: 260, height: 260, seed: 9 }
-  - name: 右键 composer → Paste（图 C）
-    do: click
-    target: { role: AXTextArea, name: "问点什么", button: right }
-    expect:
-      - label: 原生菜单出现且 Paste 项在场
-        ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
-  - name: 贴图 C
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
+  - name: ⌘V 贴入图 C（cgevent 真键盘事件；同一粘贴通道）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
   - name: 等图 C 卡片
     do: waitFor
     waitFor:
@@ -285,16 +266,11 @@ steps:
   - name: 剪贴板置合成 png D（seed 10）
     do: clipboardImage
     synth: { width: 240, height: 240, seed: 10 }
-  - name: 右键 composer → Paste（图 D——dy 0.94 落末尾空段落带，中心点会落在图 C 卡片上
-      开出图片菜单，同图 B 步的 M498 实证）
-    do: click
-    target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp", button: right, dy: 0.94 }
-    expect:
-      - label: 原生菜单出现且 Paste 项在场
-        ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
-  - name: 贴图 D
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
+  - name: ⌘V 贴入图 D（cgevent 真键盘事件；第二张接在图 C 之后，同上面图 B 的承接空段落口径）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
   - name: 等两张卡片
     do: waitFor
     waitFor:
@@ -355,17 +331,21 @@ design §10 的真机验收面 ①②③④（⑤ 引用卡片 / 消息摘录卡
 
 ## 判据为什么这样写
 
-- **Paste 通道**：同 127（M415 探针的 WebKit 原生上下文菜单通道）——合成剪贴板造不出富 paste 事件，
-  原生菜单 Paste 是与真实用户同一条 WebKit 链路。菜单项按键名正则定位不锁索引。
+- **Paste 通道**：`do: key { key: "cmd+v", channel: cgevent }`（M864）——真键盘事件投递真实
+  WebKit paste 事件，M859 真机实测；旧的原生上下文菜单 Paste 通道已弃用（AXPress 到 AXMenuItem
+  会静默 no-op、菜单不收起，且间歇复现；finding
+  `20261120-worker-html-only-paste-improve-cgevent-v-paste-axpress.md`）。贴图判据落在卡片
+  `@` 钮、transcript 编号与留存形态上。
 - **composer 注入用 `do: typeInNode`（M498 迁移；M489 时代是 `do: keys`）**：`do: type` 走
   `typeInEditor`（`lib/drive.mjs`），取 AX 树里**第一个** `AXTextArea`——那是**编辑器**，不是 composer
   （本场景 dump 里编辑器节点在 composer 之前）。素材因此曾漏进文档（M489 前）：`qrefmark` 落进编辑器后，
   下一步右键 `name:"qrefmark"` 被编辑器抢先命中，贴图进了编辑器 ⇒ composer 从没有图片卡片、`@` 钮自然
   不在 AX。M489 起改用「`clickInNode(composer)` + composer 向键盘注入」，M498 起首步（会话名
-  素材，pre-menu）注入动作是 `typeInNode`（type_text 无 index 整串追加——`do: keys` 的 press_key
-  逐键通道对 composer 丢键：'e' 本机确定性丢失，M497 归因）；贴图后的 tag- 步是 post-menu +
-  模型一致性双边界（三通道全试不过，见该步注释），留在 `do: keys`、素材串刻意无 'e'。全程配 `recordEditor` +
-  `editor.unchangedSince` 守卫，把「素材落在 composer、编辑器逐字节未变」钉成断言。
+  素材）注入动作是 `typeInNode`（type_text 无 index 整串追加——`do: keys` 的 press_key
+  逐键通道对 composer 丢键：'e' 本机确定性丢失，M497 归因）；贴图后的 tag- 步留在 `do: keys`、
+  素材串刻意无 'e'（M864 起不再处于 post-menu 态，见该步注释；是否转绿以真机复跑为准）。
+  全程配 `recordEditor` + `editor.unchangedSince` 守卫，把「素材落在 composer、编辑器逐字节未变」
+  钉成断言。
 - **编号读数的两面（如实登记）**：transcript 图片卡 `role="img"` 的可访问名 `图片 {n}：{name}`
   是 AX 稳定形态，用来钉「卡片编号」；composer 态的序号徽标（缩略图角上的裸数字）是图上的视觉读数、
   AX 无稳定形态，**不进机器判据**（归视觉场景 `tests/visual/scenes/m454-...` 与 Alex 手感）。
@@ -375,9 +355,8 @@ design §10 的真机验收面 ①②③④（⑤ 引用卡片 / 消息摘录卡
   同时「标签行 vs 用户段落」也分不开（REVIEW.md 「断言等价于子串」条同族：断言看着有覆盖、实际不判形态）。
   新口径的闭合引号要求值到数字为止：独立标签行 `{"type":"input_text","text":"Image 1"}` 命中、
   `"text":"Image 2Image 1tag-"` 不命中。前缀素材 `tag-`（M498 起；原 `note-` 含 'e'，press_key
-  确定性丢键必红——该步 post-menu+模型双边界无替代通道，素材改无 'e' 判法，同场景 137 的
-  "draftclear"）保留：它仍是 ①「引用插在光标处」的读数（`tag-Image 1`），收紧后的 ② 不再依赖它
-  给负断言做区分。
+  确定性丢键必红——素材改无 'e' 判法，同场景 137 的 "draftclear"）保留：它仍是 ①「引用插在
+  光标处」的读数（`tag-Image 1`），收紧后的 ② 不再依赖它给负断言做区分。
 - **收起 pane 用 `⌘⇧A`、不用「面板内 Escape」（M523 换键；覆盖损失如实登记）**：Escape 的收起
   处理器挂在 **panel 元素**上（`src/harness-panel.ts:6835-6853`），靠 keydown 从**面板内的焦点**
   冒泡上来——焦点移到面板外（点编辑器）这条通道整体失效。M523 真机探针实测「clickEditor 移焦后
@@ -391,7 +370,8 @@ design §10 的真机验收面 ①②③④（⑤ 引用卡片 / 消息摘录卡
   "text":"Image N"}` 标签行、且 `lumir_label` 被剥掉——这一形态**不在磁盘上**（只活在 mock 的
   in-memory `received_inputs`），由 Rust 单测 `expand_image_refs_from` 钉（mock 与真 client 同一条
   函数）。本场景只断言磁盘可读的留存侧（引用形态 + `lumir_label`）。
-- **覆盖边界（如实登记）**：① 的「引用插在**光标处**」这一面仍是红的（post-menu 素材注入只到
-  DOM、不进 composer 模型，`@` 按钮按模型 caret 插入 → 段落头 `Image 1tag-`；M456/M498 边界，
-  修法在产品侧或新注入通道，见 README）；⑤（引用卡片 / 消息摘录卡片零编号回归）在场景 149；
+- **覆盖边界（如实登记）**：① 的「引用插在**光标处**」这一面在 M864 前的读数是红的（post-menu
+  素材注入只到 DOM、不进 composer 模型，`@` 按钮按模型 caret 插入 → 段落头 `Image 1tag-`；
+  M456/M498 边界）。M864 把贴图步迁到 cgevent ⌘V 后本步不再处于 post-menu 态，这一面**待真机
+  复跑重读**，断言未放宽；⑤（引用卡片 / 消息摘录卡片零编号回归）在场景 149；
   composer 态徽标的确切视觉形态归视觉场景与 Alex 过目。

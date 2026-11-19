@@ -51,25 +51,27 @@ steps:
       - label: 首贴笔记装载
         editor: { has: "S2 首贴笔记" }
 
-  - name: 编辑器建立焦点
+  - name: 编辑器建立焦点（paste 前置：真实点击同时把窗口做成 key，cgevent 真键盘事件需要）
     do: clickEditor
+    real: true
 
   - name: 剪贴板置合成 png（seed=11）
     do: clipboardImage
     synth: { width: 400, height: 260, seed: 11 }
 
-  - name: 右键 → 原生菜单 Paste（第一次粘贴）
-    do: click
-    target: { role: AXTextArea, button: right }
-
-  - name: 点 Paste
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
+  # 粘贴通道（M864）：⌘V 走 cgevent 真键盘事件（M859 真机实测）；原生上下文菜单 Paste 的
+  # AXPress 会静默 no-op（菜单不收起、paste 不触发），不再使用——见 112 的同段注释。
+  - name: ⌘V 投递 paste（第一次粘贴，cgevent 真键盘事件）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
 
   - name: 等第一篇插上引用
     do: waitFor
     waitFor:
-      has: ["/!\\[\\[pasted-[0-9a-f]{16}\\.webp\\]\\]/"]
+      # 等 AXImage 而非引用原文（M514）：widget 挂载前占位文本也含 `![[…]]`，按原文等会假绿。
+      has: ["/AXImage[^\\n]*pasted-[0-9a-f]{16}\\.webp/"]
     timeoutMs: 40000
     expect:
       - label: 首贴位置 = notes/（当前笔记同目录）
@@ -84,25 +86,24 @@ steps:
       - label: 再贴笔记装载
         editor: { has: "S2 再贴笔记" }
 
-  - name: 编辑器建立焦点
+  - name: 编辑器建立焦点（同首贴：真实点击建立 key window）
     do: clickEditor
+    real: true
 
   - name: 剪贴板置**同一张**图（同 seed ⇒ 同字节 ⇒ 同内容寻址名）
     do: clipboardImage
     synth: { width: 400, height: 260, seed: 11 }
 
-  - name: 右键 → 原生菜单 Paste（第二次粘贴）
-    do: click
-    target: { role: AXTextArea, button: right }
-
-  - name: 点 Paste
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
+  - name: ⌘V 投递 paste（第二次粘贴，cgevent 真键盘事件）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
 
   - name: 等第二篇也插上引用
     do: waitFor
     waitFor:
-      has: ["/!\\[\\[pasted-[0-9a-f]{16}\\.webp\\]\\]/"]
+      has: ["/AXImage[^\\n]*pasted-[0-9a-f]{16}\\.webp/"]
     timeoutMs: 40000
     expect:
       - label: 全 vault 该哈希名文件仍只有一个（首贴位置 notes/）

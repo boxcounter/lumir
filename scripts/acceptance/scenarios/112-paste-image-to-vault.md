@@ -33,8 +33,9 @@ steps:
       - label: 笔记装载进编辑器
         editor: { has: "S1 粘贴目标" }
 
-  - name: 编辑器建立焦点（WebKit 原生右键菜单的前置：先左键点一次目标）
+  - name: 编辑器建立焦点（paste 前置：真实点击同时把窗口做成 key，cgevent 真键盘事件需要）
     do: clickEditor
+    real: true
     expect:
       - shot: S1-打开笔记
 
@@ -42,16 +43,14 @@ steps:
     do: clipboardImage
     synth: { width: 480, height: 320, seed: 7 }
 
-  - name: 右键唤出 WebKit 原生上下文菜单
-    do: click
-    target: { role: AXTextArea, button: right }
-    expect:
-      - label: 原生菜单出现且 Paste 项在场
-        ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
-
-  - name: 点原生菜单 Paste 完成真实粘贴
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
+  # 粘贴通道（M864）：⌘V 走 cgevent 真键盘事件 → 真实 WKWebView 的 paste 事件（M859 真机实测）。
+  # 原生上下文菜单 Paste 的 AXPress 会静默 no-op（菜单不收起、paste 不触发，finding
+  # 20261120-worker-html-only-paste-improve-cgevent-v-paste-axpress），不再使用。
+  - name: ⌘V 投递 paste（cgevent 真键盘事件；真实 WKWebView 的 paste 事件）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
 
   - name: 等附件落盘并渲染成图片 widget（状态驱动，不用 sleep 猜时长）
     do: waitFor
@@ -108,17 +107,23 @@ steps:
 ## 这个场景验什么
 
 从**真机粘贴**到**落盘 + 引用 + 渲染**的整条链路：md 笔记聚焦 → 剪贴板置一张合成 png →
-WebKit 原生上下文菜单 Paste → 附件落在**当前笔记同目录**、字节是转码后的 WebP 容器、
-文件名是**内容寻址**形态（`pasted-<落盘字节 sha256 前 16 位>.webp`），文档插入 `![[name]]`
-引用且 live preview 渲染出来。
+⌘V（cgevent 真键盘事件，真实 WKWebView 的 paste 事件）→ 附件落在**当前笔记同目录**、
+字节是转码后的 WebP 容器、文件名是**内容寻址**形态（`pasted-<落盘字节 sha256 前 16 位>.webp`），
+文档插入 `![[name]]` 引用且 live preview 渲染出来。
 
 ## 为什么这么驱动
 
-- **粘贴通道**：M345 登记过「⌘V 注入在真机不落地」，M415 探针找到替代通道——对 WKWebView
-  内容区**右键唤出原生上下文菜单**、点其中的 Paste，走的是与真实用户同一段 WebKit paste 链路
-  （finding `20261010-worker-m415-idea-webkit-paste-m415.md`）。因此这里用
-  `click {role: AXTextArea, button: right}` + 点 `AXMenuItem /Paste|粘贴/`，不用 ⌘V。
-  菜单项按**正则**定位不锁索引：M415 实测它的 AX 索引每次快照都可能变。
+- **粘贴通道**：`do: key { key: "cmd+v", channel: cgevent }`（M864 起）。M859 真机实测这条通道
+  **投递了真实 paste 事件**；README 里「⌘V 注入不落地」是 KimiCU `press_key` 通道的结论
+  （M345/M456），不适用于 M767 的 cgevent 通道。旧的「右键唤出原生上下文菜单 → 点 Paste」通道
+  已弃用：M859 实测 AXPress 到 AXMenuItem 会**静默 no-op**（菜单不收起、paste 不触发，且间歇
+  复现），判据容易变成假 FAIL 或假绿（finding
+  `20261120-worker-html-only-paste-improve-cgevent-v-paste-axpress.md`）。
+- **cgevent 的前置**：Lumir 在前台、窗口是 key window、焦点在编辑器——`clickEditor real: true`
+  一次真实点击同时满足后两条（KimiCU 坐标点击会让窗口丢 key，见 README 的 `clickEditor` 条）。
+- **后果断言**：粘贴本身不直接判绿；判据落在**落盘**（glob + WebP 容器 + 内容寻址命名）与
+  **渲染**（`AXImage` 节点）上，下方 `waitFor` 等的是 `AXImage` 而非引用原文（M514：图片 widget
+  挂载前占位文本同样含 `![[…]]`，按原文等会假绿）。
 - **剪贴板置图**：合成 png 经 `osascript` 的 `«class PNGf»`（同一条固定命令纪律，不开通用
   shell 通道），pasteboard 上同时出现 `public.png` 与 `public.tiff`——正是系统截图的形态。
 

@@ -10,7 +10,7 @@
 
 - ★ `#fix` **harness 默认 `wire_api` 切 `chat_completions`**（Alex 2026-10-25 裁）→ 下一动作：`src-tauri/src/config.rs` 的 provider 缺省 `wire_api` 改 `ChatCompletions`；实施项注明支持矩阵（v1 仅 kimi 实现 chat 档，DeepSeek 回落 `responses`，回落告警口径随默认值调整），同步 `openspec/specs/harness/spec.md` / `docs/specs/config-reference.md` 与 `session_open.wire_api` 用例。
 - ★ `#fix` **超限轮 usage 读数**（Alex 2026-10-25 裁）→ 下一动作：错误路径拿得到 usage 时同样 `record_usage` 并 emit `usage`；补一条超限轮读数用例（`src-tauri/src/harness/turn.rs` 成功分支之外）。
-- ★ `#probe` **82/83/85 与场景 148：套件自有 CGEvent 探针**（Alex 2026-10-25 裁，见 `docs/specs/standing-decisions.md`）→ 下一动作：先落一条套件自有 CGEvent **键盘**注入原语（照 `scripts/acceptance/lib/cgevent-click.swift` 的通道形态；M509 的 `cgevent-key.swift` 探针已证可行）并拿 post-menu 态定性；产品 reconcile（P1）不按首批立项，P3 留备选；结论决定「菜单 Paste 之后注入不落地」条的去向。
+- ★ `#probe` **82/83/85：套件自有 CGEvent 探针**（Alex 2026-10-25 裁，见 `docs/specs/standing-decisions.md`）→ 下一动作：CGEvent **键盘**注入原语即 M767/M768 的 `lib/cgevent-key.swift` + `channel: cgevent`（粘贴通道随 M864 迁到它），剩下 82/83/85 的 AXPress 插卡语境用这条原语定性；产品 reconcile（P1）不按首批立项，P3 留备选。
 - ★ `#probe` **vault 切换 perf 端点**（Alex 2026-10-25 裁：用相对回归，见 `docs/specs/standing-decisions.md`）→ 下一动作：按 M283 草案 §6.4（`openspec/changes/archive/2026-09-28-vault-switch-restore-perf/design.md`）加 `vault-switch` 端点（≈2500 项合成 vault + 40 标签会话，记总时长与三段 `phaseMs`），判据沿用 `docs/specs/perf-measurement.md`「相对回归门禁」的既有口径（当次 median vs 滚动基线 median + 逐指标容忍线），不设绝对阈值。
 - ★ `#hygiene` **两处整页基线重建**（Alex 2026-10-25 裁）→ 下一动作：先重截出 diff（M251 菜单左上圆角透底 23px / M281 标签栏·标题栏文字行陈旧），diff 交 Alex 过目后再 `--update`；人肉基线闸不变。
 - ★ `#hygiene` **`CARGO_TARGET_DIR` 防假绿防线**（Alex 2026-10-25 裁，见 `docs/specs/standing-decisions.md`）→ 下一动作：把「测试二进制 mtime 晚于本轮最早源码改动」做成门禁判据（跑前 `touch` 目标源码，或核对 binary mtime 二选一）。
@@ -21,7 +21,6 @@
 - `#fix` **两卡相邻间 IME 组合**（M457，medium）→ 下一动作：设计可编辑行内宿主；边界位只派 `beforeinput`、`Range(composer,N)` 量不出 caret。
 - `#fix` **M457 的 WebKit 探针未入 git**（medium）→ 下一动作：把 `.local/probes/m462-probe/m462-probe.spec.ts` 入库（选 `tests/unit` 或 `tests/visual` 落点并跑通）。
 - `#fix` **click / drag 坐标语义不同**（M490，low）→ 下一动作：README「已知边界」加坐标空间表（哪个动作收截图像素 / 窗口局部点、换算系数）并给 `target: {x,y}` 两种语义改名（`point` / `shotPixel`）；统一换算需先全量统计 `click {x,y}` 用法。
-- `#fix` **菜单 Paste 之后注入不落地**（M456/M498，high）→ 阻塞等 82/83/85 与 148 的 CGEvent 探针结论，不另开修法；134/141/150 同族。
 - `#fix` **lazy continuation 引用块 / 1–3 空格两档未覆盖**（M421，low）→ 下一动作：补这两档覆盖（几何 + 归属两侧）；`docs/specs/lists.md` 已登记为 v1 已知边界。
 - `#fix` **living spec 与实现矛盾无机器防线**（M418，low）→ 下一动作：提议 `docs-check` 增加「现状断言」检查（先例：harness ctx ⓘ 已是 hover 浮层）。
 - `#fix` **decision 回填次序启发式**（M413，low）→ 下一动作：恢复路径改用面板记录的 `decision`（或按 call_id 配对），删 `src-tauri/src/harness.rs` 的 `restored_panel_messages` 里「同工具第 N 次」消费 approval sidecar 的启发式。
