@@ -153,10 +153,14 @@ export interface ErrorEnvelope {
  * 参数；表里没有这个 code 时回落到 `message`（后端的人话，兜底存在但由完整性门禁保证不可达）。
  *
  * `overrides` 是**按调用点分码**的覆盖表（M686，change fix-quote-decode-error-copy-oct24 的
- * design §D4）：同一个后端 code 在不同调用点有语境差异时（引用不是粘贴），调用点只换「code → 键」
- * 这一层，其余仍是同一张 `ERROR_COPY`。它 MUST 只登记该调用点确实要改道的 code；键的解析与下面的
- * 缺参兜底都只有本函数这一份实现（MUST NOT 在调用点再写一份 try/catch 或参数在场判断）。当前
- * 唯一消费者是引用路径的 `quoteImageErrorText`（`attachment_decode_failed` → D588）。
+ * design §D4）：调用点只换「code → 键」这一层，其余仍是同一张 `ERROR_COPY`；键的解析与下面的
+ * 缺参兜底都只有本函数这一份实现（MUST NOT 在调用点再写一份 try/catch 或参数在场判断）。它
+ * MUST 只登记该调用点确实要改道的 code，当前有两类用途：
+ *   - **文案改道**（同一 code 的语境差异）：引用路径的 `quoteImageErrorText` 传
+ *     `QUOTE_ERROR_COPY`（`attachment_decode_failed` → D588，引用不是粘贴）；
+ *   - **参数面改道**（M858：同一个 code 的两条信封参数面不同）：设置面板的 `mapFieldErrors`
+ *     传 `FIELD_ERROR_COPY`（两栖 code `config_parse_failed` → D896——`CommandError` 构造点带
+ *     `path`、读数在 D697，`SettingsFieldError` 没有 params，读 D697 会因缺参回落中文）。
  *
  * 缺参不抛给用户：Rust 侧某个构造点忘了补参数时，`t()` 会因缺参抛错——这里接住并回落到
  * `message`，同时留一条 console 线索（诊断面，不进 UI）。宁可显示一句中文，也不让一次
