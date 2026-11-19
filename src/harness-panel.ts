@@ -2610,8 +2610,9 @@ export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): 
       return next;
     }
     case "subagent_progress":
+      // 终态行迟到的同段 progress：读数只由 finished 定稿，原样返回（终态守卫见 isLiveSubrun）。
       return runs.map((run) =>
-        run.runId !== event.run_id || isStaleSegmentEvent(run, event.segment)
+        run.runId !== event.run_id || isStaleSegmentEvent(run, event.segment) || !isLiveSubrun(run)
           ? run
           : {
               ...run,
@@ -2622,8 +2623,9 @@ export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): 
             },
       );
     case "subagent_step":
+      // 终态行迟到的同段 step：不得往已收尾行追加步骤（终态守卫见 isLiveSubrun）。
       return runs.map((run) =>
-        run.runId !== event.run_id || isStaleSegmentEvent(run, event.segment)
+        run.runId !== event.run_id || isStaleSegmentEvent(run, event.segment) || !isLiveSubrun(run)
           ? run
           : {
               ...run,

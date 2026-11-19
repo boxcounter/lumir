@@ -12,7 +12,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { attachRunApproval, reduceSubruns } from "../../src/harness-panel.ts";
+import { attachRunApproval, isLiveSubrun, reduceSubruns } from "../../src/harness-panel.ts";
 import type { SubrunEvent } from "../../src/harness-panel.ts";
 
 function start(segment: number, runId = "r1"): SubrunEvent {
@@ -298,4 +298,49 @@ test("同段 finished 重复到达仍是幂等（写回同值）", () => {
   assert.equal(after[0]?.status, "done");
   assert.equal(after[0]?.rounds, 2);
   assert.equal(after[0]?.inputTokens, 100);
+});
+
+test("终态后同段 progress / step 迟到：任何终态都不改状态与读数", () => {
+  for (const status of ["completed", "partial", "failed", "aborted"]) {
+    let runs = reduceSubruns([], start(1));
+    runs = reduceSubruns(runs, progress(1, 2, 3));
+    runs = reduceSubruns(runs, step(1, "vault_read"));
+    runs = reduceSubruns(
+      runs,
+      finish({
+        status,
+        rounds: 2,
+        input_tokens: 1_200,
+        cached_tokens: 300,
+        output_tokens: 80,
+        duration_ms: 4_200,
+        summary: "终态",
+      }),
+    );
+    const before = runs[0]!;
+    assert.equal(isLiveSubrun(before), false, `${status} 应落终态`);
+
+    const afterProgress = reduceSubruns(runs, progress(1, 5, 2));
+    assert.deepEqual(afterProgress[0], before, `${status} 后迟到的同段 progress 不得改读数`);
+
+    const afterStep = reduceSubruns(runs, step(1, "late_tool"));
+    assert.deepEqual(afterStep[0], before, `${status} 后迟到的同段 step 不得追加步骤`);
+    assert.equal(afterStep[0]?.lastTool, "vault_read");
+  }
+});
+
+test("等待批准（waiting）仍是 live：同段 progress / step 照常生效", () => {
+  let runs = reduceSubruns([], start(1));
+  runs = attachRunApproval(runs, "r1", "ap-1");
+  assert.equal(runs[0]?.status, "waiting");
+
+  runs = reduceSubruns(runs, progress(1, 4, 5));
+  assert.equal(runs[0]?.status, "waiting");
+  assert.equal(runs[0]?.rounds, 4, "等待批准不是终态，进度照常更新");
+  assert.equal(runs[0]?.toolCalls, 5);
+
+  runs = reduceSubruns(runs, step(1, "vault_search"));
+  assert.equal(runs[0]?.status, "waiting");
+  assert.equal(runs[0]?.lastTool, "vault_search");
+  assert.equal(runs[0]?.steps.length, 1);
 });
