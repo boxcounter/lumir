@@ -57,7 +57,7 @@
       文案——D899/D900（没有可用 provider 时保持未配置）、D904（非字符串 / 闭集合外 / mock+非 mock
       id 三成因）、D905（`migrate_provider_presets` 只给 id 为 kimi/deepseek/mock 的条目补同名预设，
       不是「补为 generic」）、D908（非字符串 → 整条 provider 忽略；取值非法 → 回退默认协议）、D922
-      （退役值改写目标是 `find_map` 找到的**首个可用 id**：跳过非对象 / id 非字符串 / id 为空的项，
+      （退役值改写目标是 `find_map` 找到的**首个可用 id**：跳过非对象 / id 非字符串 / id 为空或纯空白的项，
       不是字面清单首项、也不是「等价模型」）、D925（会话命名回落 vs 图片命名原样保留
       并跳过、含「未声明 vision」成因）、D928（非字符串 id）、D934（wire_api 非字符串分支）、D936
       （删除键只对自带官方地址的预设成立，generic 没有）、D938（mock 与 id 的组合出口）；其余 code 的
@@ -84,3 +84,6 @@
       mustNot =「清单的首项 / 字面首项」，并用上一版错误说法做 must/mustNot 的区分度反证
 - [x] 6.3 相关单测（first-run-error-copy / error-text / copy）+ 完整 quick 复跑；visual 仍等 M859
       槽位，09 基线不动
+- [x] 6.4 r3：D922 的跳过条件从「非空字符串」精确到「**非空白字符串**（含纯空白 id）」——双语补
+      「纯空白 id 也算不可用 / whitespace-only ids count as unusable」，deck 同步；测试加纯空白边界
+      断言与「非空 / non-empty」旧口径的反向区分（旧说法必须被 mustNot 抓住）

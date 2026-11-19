@@ -2608,8 +2608,8 @@ const COPY_TABLE = {
     en: "This models entry doesn't declare window, so the context window fell back to a conservative default",
   },
   D922: {
-    zh: "配置里的旧模型名已退役，已自动改写为该 provider models 清单的首个可用 id（非对象、id 不是非空字符串的项会被跳过）",
-    en: "The retired model name in the config was automatically rewritten to the first usable id in that provider's models list (entries that aren't objects, or whose id isn't a non-empty string, are skipped)",
+    zh: "配置里的旧模型名已退役，已自动改写为该 provider models 清单的首个可用 id（非对象、id 不是非空白字符串的项会被跳过，纯空白 id 也算不可用）",
+    en: "The retired model name in the config was automatically rewritten to the first usable id in that provider's models list (entries that aren't objects, or whose id isn't a non-blank string, are skipped; whitespace-only ids count as unusable)",
   },
   D923: {
     zh: "配置里的旧模型名已退役，且 models 清单没有可用的替代项，无法自动改写：请手动改成一个可用模型",

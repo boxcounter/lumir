@@ -683,24 +683,36 @@ test("退役模型改写：落点是「首个可用 id」，首个非法项会�
   const zh = entry("zh");
   // 落点：首个**可用** id（不是「清单首项」）。
   assert.match(zh, /models 清单的首个可用 id/, `落点没写「可用」：${zh}`);
-  // 跳过规则：非对象 / id 不是非空字符串的项被跳过——这是「首项非法 → 目标是后续项」的唯一解释。
+  // 跳过规则：非对象 / id 不是非空白字符串的项被跳过——这是「首项非法 → 目标是后续项」的唯一解释。
   assert.match(zh, /非对象[^。]*跳过/, `缺「非对象项被跳过」：${zh}`);
-  assert.match(zh, /不是非空字符串/, `缺「id 不是非空字符串」的跳过条件：${zh}`);
+  assert.match(zh, /不是非空白字符串/, `缺「id 不是非空白字符串」的跳过条件：${zh}`);
+  // 纯空白边界（config.rs 先 `str::trim` 再判空）：`{"id":"   "}` 是非空字符串、但会被跳过——
+  // 只写「非空」会把这个分支漏掉，必须点到「纯空白」。
+  assert.match(zh, /纯空白[^。]*(不可用|跳过)/, `缺「纯空白 id 不可用」的边界：${zh}`);
+  assert.ok(!/不是非空字符串/.test(zh), `不得停在「非空」口径（漏纯空白）：${zh}`);
   assert.ok(!/清单的首项|清单首项/.test(zh), `不得写成字面清单首项：${zh}`);
   assert.ok(!/等价/.test(zh), `不得声称「等价模型」：${zh}`);
 
   const en = entry("en");
   assert.match(en, /first usable id in that provider's models list/i, `en 落点没写「usable」：${en}`);
-  assert.match(en, /non-empty string/i, `en 缺跳过条件：${en}`);
+  assert.match(en, /non-blank string/i, `en 缺「non-blank」跳过条件：${en}`);
+  assert.match(en, /whitespace-only ids count as unusable/i, `en 缺纯空白边界：${en}`);
   assert.match(en, /skipped/i, `en 缺跳过规则：${en}`);
+  assert.ok(!/non-empty string/i.test(en), `en 不得停在 non-empty 口径（漏纯空白）：${en}`);
   assert.ok(!/first entry/i.test(en), `en 不得写成 first entry：${en}`);
 
   // 反向判据（REVIEW.md『断言等价于子串』条）：把上一版（错误）的说法喂给同一组谓词必须命中——
-  // 否则上面的 mustNot 恒真，区分不出「首项」与「首个可用项」。
+  // 否则上面的 mustNot 恒真，区分不出「首项」与「首个可用项」、「非空」与「非空白」。
   const mutantZh = "配置里的旧模型名已退役，已自动改写为该 provider models 清单的首项";
   assert.ok(/清单的首项/.test(mutantZh), "负向判据对旧说法必须有区分度");
   assert.ok(!/首个可用 id/.test(mutantZh));
+  const mutantZhNonEmpty = "…（非对象、id 不是非空字符串的项会被跳过）";
+  assert.ok(/不是非空字符串/.test(mutantZhNonEmpty), "「非空」旧口径必须被 mustNot 抓住（纯空白会被漏掉）");
+  assert.ok(!/不是非空白字符串/.test(mutantZhNonEmpty));
   const mutantEn = "The retired model name was rewritten to the first entry in that provider's models list";
   assert.ok(/first entry/i.test(mutantEn), "en 负向判据对旧说法必须有区分度");
   assert.ok(!/first usable id/i.test(mutantEn));
+  const mutantEnNonEmpty = "whose id isn't a non-empty string, are skipped";
+  assert.ok(/non-empty string/i.test(mutantEnNonEmpty), "「non-empty」旧口径必须被 mustNot 抓住（纯空白会被漏掉）");
+  assert.ok(!/non-blank string/i.test(mutantEnNonEmpty));
 });
