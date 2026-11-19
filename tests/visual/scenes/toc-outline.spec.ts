@@ -178,10 +178,12 @@ test("位置指示段：有标题的文件显示当前标题链，无标题 / �
   await expect(page.locator(".cm-content")).toContainText("纯文本文档");
   await expect(page.locator(".modeline-section")).toBeHidden();
 
-  // 空态（无 vault）：SAMPLE 文档有标题，但没有当前文件，指示段同样不显示
+  // 空态（无 vault）：M851 起首屏不再有 SAMPLE 演示文档——正文空、没有当前文件，指示段
+  // 同样不显示（正观测：左栏空态说明行在场，说明这次读取是活的）。
   await stubTauri(page, null);
   await page.goto("/");
-  await expect(page.locator(".cm-content")).toContainText("标题一");
+  await expect(page.locator(".ft-empty")).toContainText("打开一个目录作为 vault");
+  await expect(page.locator(".cm-content")).toBeVisible();
   await expect(page.locator(".modeline-section")).toBeHidden();
 });
 

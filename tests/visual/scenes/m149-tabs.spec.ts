@@ -399,10 +399,14 @@ test("后台标签的外部修改也自动重载，且不抢前台", async ({ pa
 });
 
 test("零标签时 ⌘W 无操作：未命名文档不是标签（reviewer r1 P2-1）", async ({ page }) => {
-  // vault 未装载：编辑器里是启动时的 SAMPLE 演示文档，没有任何标签（标签栏隐藏）。
+  // vault 未装载：M851 起编辑器是空白未命名文档（不再预置 SAMPLE），没有任何标签（标签栏隐藏）。
   await stubTauri(page, null);
   await page.goto("/");
   await expect(page.locator(".tabstrip")).toBeHidden();
+  // 先键入一个字符建立「有内容的未命名文档」现场：空白文档上的逐字节比较没有区分度
+  // （P2-1 的 bug 正是把它静默换成另一份空文档，"" === "" 会假绿）。
+  await page.locator(".cm-content").click();
+  await page.keyboard.type("Z");
   const before = await readDocument(page);
   expect(before.length).toBeGreaterThan(0);
 

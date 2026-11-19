@@ -125,6 +125,9 @@ steps:
 
   - name: 退出重启：vault、标签与正文按会话恢复
     do: restart
+  - name: 等重启恢复的标签与正文落定（就绪门早于恢复段，见 README 的 M516 条）
+    do: waitFor
+    waitFor: { has: ["关闭 note.md", "M851-FIRST-RUN-NOTE"], not: ["这个 vault 还没有打开的文件"] }
     expect:
       - label: vault 自动恢复（last_vault）
         ax: { has: "vault：lumir-m102-acceptance-b（点击查看全部 vault）" }
