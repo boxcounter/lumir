@@ -2056,28 +2056,37 @@ const DIR_SHA256_HINT =
   "是目录：sha256 类判据对目录没有可观测量，请改用 mtimeUnchangedSince / exists";
 
 /** 编辑器文本的**稳定读数**（M864）：KimiCU 的 AX 长值偶发在 UTF-8 字节边界截断
- *  （尾字变 U+FFFD，下一拍又完整；148 真机 run2/run3 的证据：残读在头、在尾都出现过）。
+ *  （尾字变 U+FFFD，下一拍又完整；148 真机 run2/run3/run5/run6 的证据：残读在头、在尾都出现过）。
  *  `recordEditor` 的基线只读一次时，残读会让 `editor.unchangedSince` 的比较直接假红。
  *
- *  口径（与 M143 的重试纪律同族）：**连续两次读数逐字节相同**才算稳定——重读的目的是拿到
- *  稳定读，不是让断言变松。最多 `attempts` 次、每次间隔 `gapMs`；仍不稳定就返回最后一次
- *  读数并带 `stable:false`，调用方 MUST 把「不稳定」写进证据，不得把残读当成结论。
+ *  口径（与 M143 的重试纪律同族）：**连续两次读数逐字节相同且不含 U+FFFD** 才算稳定。
+ *  U+FFFD 是 AX 值截断的判别信号——run6 实测**连续两拍返回同一份残读**，只比「两次一致」
+ *  会把它当稳定值接受，因此残读既不更新 `prev`，也不能成为结论。
+ *
+ *  最多 `attempts` 次、每次间隔 `gapMs`；仍不稳定就返回最后一次读数并带 `stable:false`
+ *  （`unclean:true` 表示出现过残读），调用方 MUST 把「不稳定」写进证据，不得把残读当成结论。
  *
  *  `readOnce` 返回 `{ found, text }`：`found=false` 表示快照里没有 AXTextArea（modal 等），
  *  调用方按「不可读」处理（REVIEW.md「读不到当成空」条），不在这里退化成空串。
  */
-export async function readStableEditor(readOnce, { attempts = 3, gapMs = 120 } = {}) {
+export async function readStableEditor(readOnce, { attempts = 6, gapMs = 200 } = {}) {
   let prev = null;
   let last = null;
+  let unclean = false;
   for (let i = 0; i < attempts; i += 1) {
     if (i > 0) await sleep(gapMs);
     const cur = await readOnce();
-    if (!cur.found) return { ...cur, stable: false };
-    if (prev !== null && prev === cur.text) return { ...cur, stable: true };
-    prev = cur.text;
+    if (!cur.found) return { ...cur, stable: false, unclean };
     last = cur;
+    if (cur.text.includes("\uFFFD")) {
+      unclean = true;
+      prev = null;
+      continue;
+    }
+    if (prev !== null && prev === cur.text) return { ...cur, stable: true, unclean };
+    prev = cur.text;
   }
-  return { ...last, stable: false };
+  return { ...last, stable: false, unclean };
 }
 
 /**
@@ -2379,7 +2388,8 @@ export async function runScenario(ctx, scenario) {
           );
         }
         text = reading.text;
-        if (!reading.stable) stabilityNote = "；读数不稳定（连续两次不一致，取最后一次）";
+        if (!reading.stable)
+          stabilityNote = `；读数不稳定${reading.unclean ? "（AX 残读）" : "（连续两次不一致）"}，取最后一次`;
       } else {
         ax = state.ax ?? (await readAx(cu, ctx.pid));
         state.ax = ax;
@@ -4506,7 +4516,9 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         throw new Error("记录编辑器基线失败：AX 快照里没有 AXTextArea（modal 打开期间常见），基线不能记成空串");
       }
       vars[step.as] = reading.text;
-      return `${reading.text.length} 字节${reading.stable ? "" : "（读数不稳定：连续两次不一致，取最后一次）"}`;
+      return `${reading.text.length} 字节${
+        reading.stable ? "" : `（读数不稳定${reading.unclean ? "：出现过 AX 残读" : ""}，取最后一次）`
+      }`;
     }
     case "vaultRm": {
       const files = step.files ?? [step.file];

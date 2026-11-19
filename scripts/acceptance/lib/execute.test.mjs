@@ -1963,6 +1963,35 @@ test("readStableEditor mutant（M864）：关掉重读（attempts:1）时同一�
   assert.equal(got.stable, false, "单次读数不能自称稳定");
 });
 
+test("readStableEditor（M864）：连续两拍同一份残读不算稳定，须读到完整值", async () => {
+  // run6 真机现场：120ms 间隔的两次读取都返回同一份「第��行」——只比「两次一致」会把它
+  // 当稳定值接受。U+FFFD 是残读的判别信号，残读不更新 prev、也不能成为结论。
+  const clipped = "HNL-ALPHA 第��行";
+  const full = "HNL-ALPHA 第一行";
+  const seq = [clipped, clipped, full, full];
+  let i = 0;
+  const got = await readStableEditor(async () => ({ found: true, text: seq[Math.min(i++, seq.length - 1)] }), {
+    gapMs: 0,
+  });
+  assert.equal(got.text, full, "两拍残读之后必须继续重读到完整值");
+  assert.equal(got.stable, true);
+  assert.equal(got.unclean, true, "过程里出现过残读，证据要能看出来");
+  assert.equal(i, 4, `残读×2 → 完整×2 应读 4 次，实际 ${i} 次`);
+});
+
+test("readStableEditor mutant（M864）：只做两拍一致判定（attempts:2）时，同一份残读会被接受", async () => {
+  const clipped = "HNL-ALPHA 第��行";
+  let i = 0;
+  const got = await readStableEditor(async () => {
+    i += 1;
+    return { found: true, text: clipped };
+  }, { attempts: 2, gapMs: 0 });
+  assert.equal(got.text, clipped, "关掉「残读继续重读」就必须复现 run6 的残读结论——证明该判据承重");
+  assert.equal(got.stable, false, "残读永远不能自称稳定");
+  assert.equal(got.unclean, true);
+  assert.equal(i, 2);
+});
+
 test("recordEditor + editor.unchangedSince（M864）：基线首读残读、随后完整 ⇒ 守卫 PASS（重读接线）", async () => {
   const root = tmpRoot("editor-stable-read");
   useTmpEnv(root);
