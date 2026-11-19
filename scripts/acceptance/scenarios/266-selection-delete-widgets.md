@@ -1,5 +1,5 @@
 ---
-# M854：非空选区删除 = 源码精确删除。M842 发现选区端点落在渲染隐藏区（表格管道 / 分隔行、
+# M854：非空选区编辑 = 源码精确编辑（删除 / 键入替换）。M842 发现选区端点落在渲染隐藏区（表格管道 / 分隔行、
 # 列表 marker）时，Backspace / Delete 走原生路径、CM 的 DOMReader 按渲染结果回写源码，
 # ⌘S 把损坏结果落盘（finding 20261119-worker-markdown-stability-bug-dom）。
 #
@@ -167,7 +167,7 @@ steps:
         file: { path: table-fullscreen.md, unchangedSince: 替换基线, mtimeUnchangedSince: 替换基线 }
 ---
 
-# 266 — 非空选区删除 = 源码精确删除（M854）
+# 266 — 非空选区编辑 = 源码精确编辑（M854）
 
 M842 的双引擎矩阵发现：选区任一端落在渲染隐藏区（表格 cell 间的管道、整行被 replace 覆盖的
 分隔行、列表 marker）时，Backspace / Delete 走浏览器原生路径，CM 的 DOMReader 按渲染结果回写
@@ -178,10 +178,14 @@ dispatch 一个显式事务（空光标行边界合并沿用 M836 的判据；IM
 ## witness
 
 文档在场景内由 `vaultWrite` 改写为 M842 的最小现场（三行单字符 cell 表格）并 `restart`
-重载。**真实鼠标双击**数据 cell 的单字符（`c`）得到 word selection，Backspace 后
-`⌘S` 的 `file.exact` 必须是 `|  | d |\n`。修复前 WebKit 的原生删除按渲染 DOM 回写、把邻接
-空格吞掉（探针实测 `|| d |`），chromium 正确——这是本场景在真机 WKWebView 上的区分度来源。
-一次 `⌘Z` 复原且零额外写盘。
+重载。两条 witness 都先用**真实鼠标双击**数据 cell 的单字符（`c`）建立 word selection 锚点：
+
+1. **删除**：Backspace，`⌘S` 的 `file.exact` 必须是 `|  | d |\n`。修复前 WebKit 的原生
+   删除按渲染 DOM 回写、把邻接空格吞掉（探针实测 `|| d |`），chromium 正确。
+2. **键入替换**（M855 finding）：`⇧→ ×3` 把选区扩到跨 cell 的 `[26,31)`，直接键入 `Q`，
+   `file.exact` 必须是 `| Q |\n`；修复前 WebKit 的原生插入会按 DOM 形状回写。
+
+两条各配一次 `⌘Z` 复原与零额外写盘断言。
 
 ## 真机执行记录
 
@@ -208,4 +212,5 @@ dispatch 一个显式事务（空光标行边界合并沿用 M836 的判据；IM
   改用真实鼠标双击（word selection）；选区本身 AX 读不到，判据落在删除后的精确字节上
   （双击落空会让 `file.exact` 变红，不会假绿）。
 - 新增 fixture 超出本 mission 写面，文档用 `vaultWrite` + `restart` 构造（套件既有动作）。
-- 真机执行记录：待本场景 PASS 后回填（场景 261 的口径：未跑不得记 PASS）。
+- 普通可打印键的 KimiCU 注入对本机编辑器偶发丢键，替换键入改走 cgevent 的 `shift+q`；
+  这是通道选择，不改变判据（落盘仍是逐字节 `file.exact`）。

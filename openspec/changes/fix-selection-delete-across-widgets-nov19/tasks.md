@@ -20,7 +20,7 @@
 
 ## 4. 验证
 
-- [x] 4.1 `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（2026-11-19，tip 见 4.4）。
-- [ ] 4.2 `LUMIR_VISUAL_PORT=4393 scripts/gate.sh visual` 全绿并记录 `GATE RESULT` 原文行；不更新任何像素基线。
+- [x] 4.1 `scripts/gate.sh quick`（最终 tip `c8b94170`）：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0。
+- [x] 4.2 `LUMIR_VISUAL_PORT=4393 scripts/gate.sh visual`（最终 tip `c8b94170`）：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0（`visual-regression` 929s，含全量像素；未更新任何基线）。
 - [x] 4.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`、`bash scripts/docs-check.sh`、`node scripts/acceptance/run.mjs --check` 通过（2026-11-19：`validate --all --strict` → `Totals: 35 passed, 0 failed`；`docs-check: PASS`；`--check` → `场景静态校验通过（240 个）`）。
-- [ ] 4.4 门禁读数与真机证据回填本节，提交 TowerComplete 等待独立 review。
+- [x] 4.4 门禁读数与真机证据已回填本节；实现 tip `c8b94170`（`e6b7acd8` 删除类别 + `c8b94170` insertText 扩展），真机证据 `.local/acceptance/2026-11-19-m854-266/`。提交 TowerComplete 等待独立 review。
