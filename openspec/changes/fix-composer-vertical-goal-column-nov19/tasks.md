@@ -13,5 +13,8 @@
       长行→短行钳位、连续上下目标列往返、⇧Enter 换行键入后 ⌃P、软折行逐屏行）
 - [x] `scripts/acceptance/scenarios/140-harness-composer-nav-move.md`：保留原正向断言，补负向断言与
       字符列口径说明
-- [ ] 真机复跑 140 PASS，证据落主仓 `.local/`；跑相关单测 / `quick` / `visual` 门禁，不更新基线
-- [ ] 提交并 TowerComplete
+- [x] 真机复跑 140 PASS（36.8s / 10 步全 PASS），证据落主仓
+      `.local/acceptance/2026-11-19-m834/`；`quick` 11/12 PASS（唯一 FAIL 是 base 快照 prompt WIP 的
+      `fixed_segments_keep_migrated_bytes`，与本 change 无关，已 file finding）、`visual` 14/15 PASS
+      （同一 FAIL；visual-regression 951 passed），未更新像素基线
+- [x] 提交并 TowerComplete
