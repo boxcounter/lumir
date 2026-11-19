@@ -39,6 +39,12 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
 
+  # M864 真机实证：KimiCU 的 AX 长值读数偶发在 UTF-8 字节边界截断（尾字/首字变 U+FFFD，
+  # 下一拍又完整）。`recordEditor` 基线只读一次，残读会让后续两次 `unchangedSince` 双双假红
+  # ——先 settle 到连续两拍一致再记基线；判据本身不动。
+  - name: 等界面落定再记编辑器基线（避开 AX 长值残读）
+    do: settle
+
   - name: 记编辑器文档基线（素材注入 MUST NOT 漏进文档——注入落错面的通用防线，场景 140 同口径）
     do: recordEditor
     as: doc-before-composer
@@ -52,6 +58,13 @@ steps:
     expect:
       - label: 素材落在 composer（会话名来源）
         ax: { has: "qrefmark" }
+
+  # M864：KimiCU 的 AX 长值读数偶尔在 UTF-8 字节边界截断（首跑现场：尾字「。」读成
+  # U+FFFD×3，下一拍 dump 又完整）——先 settle 到连续两拍一致再判「编辑器逐字节未变」，
+  # 判据不变，避免一次残读造成假红。
+  - name: 等界面落定再判「素材没有漏进编辑器文档」
+    do: settle
+    expect:
       - label: 素材没有漏进编辑器文档（焦点确在 composer，编辑器逐字节未变）
         editor: { unchangedSince: doc-before-composer }
 
@@ -99,13 +112,11 @@ steps:
       - label: 两张图片卡片各自带 `@` 钮（恰好两个）
         ax: { has: "/AXButton \\(插入图片引用\\)/", count: { pattern: "/AXButton \\(插入图片引用\\)/", exact: 2 } }
 
-  - name: 点 composer 把光标落到末尾空段落（避免出现「整段恰是 Image N」的文本，
-      让 ② 的「文本面无标签行」判据有区分度：标签行是**独立** text part；
-      dy 0.94 落末尾空段落带——中心点会落在图 B 卡片上（contenteditable=false），
-      光标/焦点不会进文本（M498 首跑实证）
-    do: clickInNode
-    target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp" }
-    dy: 0.94
+  # M864 真机首跑（2026-11-20）：这里原先用「点末尾空行」重建 DOM 焦点 + 把光标钉到承接空段落
+  # （M456 的菜单粘贴后 window 失焦）。贴图迁到 cgevent 后粘贴不夺焦点、产品在第二张卡后已把
+  # caret 放在承接空段落（真机 dump：composer 仍是 focused 节点）——本步删除。首跑还发现
+  # composer 的 AX 可访问名此时是**文本**（qrefmark）而非卡片名，旧 `pasted-…` 选择器解析不到
+  # 节点；删除本步一并绕开该脆选择器，`tag-` 的落点判据（下一条）不变。
   # M864 通道变更后的状态（注释改准，动作与断言不动）：
   #   上面的贴图步已从「原生菜单 Paste」迁到 cgevent ⌘V，本步因此**不再是 post-menu 态**——
   #   M456 那条「菜单 Paste 之后 CGEvent 逐键注入死亡」的前提消失。本步仍留 `do: keys`
@@ -249,7 +260,7 @@ steps:
   - name: ④ 回 composer 新起一条消息：贴两张图后移除第一张，余图位序重编为 1
       （`@` 钮重启后在 composer 态；composer 此刻为空）
     do: clickInNode
-    target: { role: AXTextArea, name: "问点什么|pasted-" }
+    target: { role: AXTextArea, name: "问点什么|qrefmark|pasted-" }
   - name: 剪贴板置合成 png C（seed 9）
     do: clipboardImage
     synth: { width: 260, height: 260, seed: 9 }
@@ -295,7 +306,7 @@ steps:
   - name: ④ 点余图的 `@` 钮——它的编号应即时重编为 1（无空号）
       （dy 0.94 落文本区，中心点会落在卡片上）
     do: clickInNode
-    target: { role: AXTextArea, name: "问点什么|pasted-" }
+    target: { role: AXTextArea, name: "问点什么|qrefmark|pasted-" }
     dy: 0.94
   - name: 点唯一的 `@` 钮
     do: click
