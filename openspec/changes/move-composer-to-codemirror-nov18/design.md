@@ -60,6 +60,8 @@ caret 是 UTF-16 offset，合法区间 `[0,text.length]`；非法 / 缺席按 `n
 
 store `load()` 读到合法 v1 后立即把转换结果经既有串行 `enqueue` 写回 v2，再把 `written` 基准设为该 v2。load 起始捕获编辑世代；读盘期间用户已编辑时跳过旧迁移写和 `written` 覆盖，保留当前 `pending` / `written`。世代检查与入链在同一个 JS 同步区段；迁移写若已入链，后续编辑写经同一串行链排在其后，保证最终新内容落盘。写回失败走既有 warning / 待写语义，不谎报迁移成功；内存仍可恢复转换后的内容。后续 schedule / load 成功路径只写 v2，绝不双写。
 
+所有 `write()` 在入链时捕获 `editGeneration`，失败回填同时校验 epoch 与该编辑世代。新编辑即使已 `flush()`、暂时清空 `pending`，也使旧写失去待写所有权，后续 flush 不得重新写出旧内容；无新编辑时仍恢复原待写，保留下一次 flush 重试合同。该规则适用于迁移写与普通 v2 写，不按载荷来源特判。
+
 ## 5. 失败恢复与焦点
 
 发送前保存完整 `{text,caret,cards}`。乐观清空只替换 composer state；能力闸拒绝时用这份状态重建新 `EditorState`，再渲染 tray、标图片错误态并对齐草稿。其他失败沿用现有 transcript / 草稿口径。

@@ -200,7 +200,7 @@ test("clear：发送成功后取消待写 + 删除草稿（空载荷），旧内
   }
 });
 
-test("写失败：只降级（warn 一次）+ 内容留待下一次 flush 重试，不谎报已保存", async () => {
+test("写失败且无新编辑：只降级（warn 一次）+ 内容留待下一次 flush 重试，不谎报已保存", async () => {
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
     const { store, rig } = createRig();
@@ -399,5 +399,74 @@ test("迁移写已在途时后续编辑 flush：串行写链保证最终落盘�
   await flushing;
   const current = serializeComposerDraft(MSG2, 4, CARDS);
   assert.deepEqual(rig.writes, [migrated, current]);
+  assert.equal(rig.file, current);
+});
+
+
+test("迁移写在途失败后新写已入链并成功：再次 flush 不得回填旧 v1", async () => {
+  const { store, rig } = createRig();
+  const migrated = serializeComposerDraft("legacy", 2, []);
+  const current = serializeComposerDraft(MSG2, 4, CARDS);
+  rig.file = JSON.stringify({
+    version: 1,
+    blocks: [{ kind: "paragraph", text: "legacy" }],
+    caret: { block: 0, offset: 2 },
+  });
+  let rejectMigration: ((reason: unknown) => void) | undefined;
+  rig.putGate = (draftJson) => draftJson === migrated && rejectMigration === undefined
+    ? new Promise<void>((_resolve, reject) => {
+      rejectMigration = reject;
+    })
+    : undefined;
+
+  const loading = store.load();
+  await flushAwait();
+  assert.ok(rejectMigration !== undefined, "第一步：迁移写已经入链并在途");
+
+  store.schedule(MSG2, 4, CARDS);
+  const flushing = store.flush();
+  await flushAwait();
+  assert.deepEqual(rig.writes, [], "第二步：新输入 flush 已清空 pending 并排入旧写之后");
+
+  rejectMigration!({ code: "harness_draft_write_failed", message: "磁盘只读" });
+  await loading;
+  await flushing;
+  assert.equal(rig.warns.length, 1, "第三步：旧迁移写失败并降级");
+  assert.deepEqual(rig.writes, [current], "第四步：新输入写成功");
+  assert.equal(rig.file, current);
+
+  await store.flush();
+  assert.deepEqual(rig.writes, [current], "第五步：不得再次写出 legacy");
+  assert.equal(rig.file, current);
+});
+
+test("普通旧 v2 写失败时新写已入链：旧内容不得在下一次 flush 复活", async () => {
+  const { store, rig } = createRig();
+  const previous = serializeComposerDraft(MSG, null, CARDS);
+  const current = serializeComposerDraft(MSG2, 4, CARDS);
+  let rejectPrevious: ((reason: unknown) => void) | undefined;
+  rig.putGate = (draftJson) => draftJson === previous && rejectPrevious === undefined
+    ? new Promise<void>((_resolve, reject) => {
+      rejectPrevious = reject;
+    })
+    : undefined;
+
+  store.schedule(MSG, null, CARDS);
+  const previousFlush = store.flush();
+  await flushAwait();
+  assert.ok(rejectPrevious !== undefined, "普通 v2 旧写已在途");
+
+  store.schedule(MSG2, 4, CARDS);
+  const currentFlush = store.flush();
+  await flushAwait();
+  rejectPrevious!({ code: "harness_draft_write_failed", message: "磁盘只读" });
+  await previousFlush;
+  await currentFlush;
+  assert.equal(rig.warns.length, 1);
+  assert.deepEqual(rig.writes, [current], "旧写失败后，新写正常成功");
+  assert.equal(rig.file, current);
+
+  await store.flush();
+  assert.deepEqual(rig.writes, [current], "无待写时不得重新落旧 v2");
   assert.equal(rig.file, current);
 });

@@ -99,9 +99,11 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
   }
 
   /** 写盘：失败只降级（warn）+ 把「这份内容还没落盘」留在待写，**MUST NOT** 谎报已保存
-   *  （`written` 不动，下一次比对照旧认为「盘上没有这份内容」）。两条回填 / 记账都带世代守卫。 */
+   *  （`written` 不动，下一次比对照旧认为「盘上没有这份内容」）。成功记账守作废世代；
+   *  失败回填还必须持有入链时的编辑世代，避免覆盖已入链的新编辑。 */
   function write(draftJson: string): Promise<void> {
     const gen = epoch;
+    const writeEditGeneration = editGeneration;
     return enqueue(async () => {
       try {
         await deps.putDraft(draftJson);
@@ -110,9 +112,9 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
         // 不写」吞掉（盘上其实没有那份）。文件本身由串行链上的那次删除收尾。
         if (gen === epoch) written = draftJson;
       } catch (e) {
-        // 回填**只在期间没有更新的编辑**时发生（`??=`）：在途写失败 MUST NOT 把用户刚打的新
-        // 内容覆盖回旧内容（review r1 的 P2-1）——新内容自带防抖定时器，会自己写走。
-        if (gen === epoch) pending ??= draftJson;
+        // 只有期间没有更新编辑时，这份失败写仍拥有待写槽。新编辑即使已 flush、暂时清空 pending，
+        // 也已递增 editGeneration；旧写不得借 `??=` 回填并在下一次 flush 覆盖新内容。
+        if (gen === epoch && editGeneration === writeEditGeneration) pending ??= draftJson;
         deps.warn(e);
       }
     });
