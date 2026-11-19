@@ -16,5 +16,5 @@
 - [x] 3.1 目标单测：`node --experimental-strip-types --import ./tests/unit/register.mjs --test tests/unit/harness-subagent-event-idempotence.test.ts` → 13/13 pass；全量单测 `node tests/unit/run.mjs` → 1531 pass / 0 fail。
 - [x] 3.2 类型门禁：`pnpm exec tsc --noEmit` 与 `pnpm exec tsc -p tests/unit/tsconfig.json` 均 exit 0。
 - [x] 3.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 35 passed, 0 failed (35 items)`；`bash scripts/docs-check.sh` PASS。
-- [x] 3.4 完整门禁 `CARGO_TARGET_DIR=/tmp/lumir-cargo-target-m857 scripts/gate.sh quick` → `GATE RESULT: 12/12 PASS（SKIP 1）`，退出码 0；SKIP 1 = `tsc-visual`（`tests/visual` 依赖未装）。cargo 锁按 `mkdir` 取得，完成后释放并清理临时 target。
+- [x] 3.4 完整门禁 `CARGO_TARGET_DIR=/tmp/lumir-cargo-target-m857 LUMIR_ACCEPTANCE_PORT=4389 scripts/gate.sh quick`（`tests/visual` 既有依赖已按 `pnpm --dir tests/visual install --ignore-workspace --frozen-lockfile` 安装，未改 lockfile）→ `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0；原始输出 `.local/missions/M857/gate-quick.log`。cargo 锁按 `mkdir` 取得，完成后释放并清理临时 target。
 - [x] 3.5 真机 / 视觉：无——纯归约层与事件接线，无 UI 形态 / 交互手感变化；不新增视觉基线、不跑 visual、不起真机。
