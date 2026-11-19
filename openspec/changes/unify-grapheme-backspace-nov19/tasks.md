@@ -17,7 +17,7 @@
 - [x] 3.1 `tests/unit/text-unicode-adversarial.test.ts`：删除 `COMPOSER_BACKWARD_REMAINING` 表，composer ⌃H 改为统一整簇 + 单步撤销；新增普通 ASCII 类、跨面一致性用例，以及 composer 物理 Backspace 闸门矩阵（折叠 caret 接管；非空选区 / 词与行删除变体 / IME / 只读不接管）。
 - [x] 3.2 `tests/visual/scenes/text-clipboard-adversarial.spec.ts`：删除按引擎分档的 `NATIVE_FIRST_STEP` 与 composer 残留表，正文 + composer 一次整簇 + 单步撤销；新增 code 模式与 composer `⌥⌫` 词删除两条双引擎用例；`tests/visual/README.md` 的判据面、基线段与已知边界同步。
 - [x] 3.3 新增 `scripts/acceptance/scenarios/268-grapheme-backspace.md`（md 正文物理 Backspace、composer 物理 Backspace、composer ⌃H 三条 witness），`node scripts/acceptance/coverage.mjs` 重新生成 COVERAGE。
-- [ ] 3.4 真机 268 在 tower 串行窗口内执行：先修复前构建判红、再修复后构建判绿（WKWebView 的物理 Backspace 与 ⌃H），读数与证据路径回填本节。反例判别性已在视觉层先行证实：把 `src/editor.ts` / `src/harness-composer.ts` 退回 master 后重跑新用例，3 条全红（`组合重音: code 模式整簇` / `肤色修饰: ⌃H 第一拍必须是整簇` 等），日志 `.local/missions/M860/mutant-prefix.log`（git 外）。
+- [ ] 3.4 真机 268 在 tower 串行窗口内执行：先修复前构建判红、再修复后构建判绿（WKWebView 的物理 Backspace 与 ⌃H），读数与证据路径回填本节。反例判别性已在视觉层先行证实：把 `src/editor.ts` / `src/harness-composer.ts` 退回 master 后重跑新用例，3 条全红（`组合重音: code 模式整簇` / `肤色修饰: ⌃H 第一拍必须是整簇` 等），日志 `.local/missions/M860/mutant-prefix.log`（git 外）。**2026-11-20 真机窗口内两次尝试均判 INVALID（非产品判红）**：启动后 AX 读不到主窗（`windows 目录（2 扇）里没有 AXStandardWindow 主窗`）；探针坐实 KimiCU 窗口目录格式已变为无 role 的 `[primary]/[other]`（旧格式带 `AXStandardWindow` / `AXDialog`），套件 `ax.mjs` 的 `WINDOW_DIR_ENTRY_RE` / `mainWindowPlan` 解析为空；本机另见 `ax_window_missing_remote_rendered` 与真实窗 AX 不可读。日志 `.local/missions/M860/acceptance-268.log` / `acceptance-268-r2.log`；finding `20261120-worker-grapheme-backspace-bug-kimicu-ax-invalid` 与 backlog 同名条目。268 的修复后读数待套件选窗修复后复跑。
 
 ## 4. 验证
 

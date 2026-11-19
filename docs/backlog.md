@@ -9,6 +9,8 @@
 
 ## 待修 findings（`#fix` / `#probe` / `#check` / `#hygiene`；★ = 首批六项，无需 Alex 即可立项，按行序执行）
 
+- `#fix` **验收套件 AX 选窗判据与 KimiCU 窗口目录格式脱节**（2026-11-20，high）→ 下一动作：`scripts/acceptance/lib/ax.mjs` 的窗口目录解析 / 选窗改用 `list_windows` 的结构化 window_id（或接受无 role 的 `[primary]/[other]` 并用非零 bbox 排除 0×0 phantom），同步核两处 Swift 选窗前置并补新格式单测；本机所有 AX 场景（含 268）因此 INVALID，finding `20261120-worker-grapheme-backspace-bug-kimicu-ax-invalid`。
+
 - ★ `#fix` **harness 默认 `wire_api` 切 `chat_completions`**（Alex 2026-10-25 裁）→ 下一动作：`src-tauri/src/config.rs` 的 provider 缺省 `wire_api` 改 `ChatCompletions`；实施项注明支持矩阵（v1 仅 kimi 实现 chat 档，DeepSeek 回落 `responses`，回落告警口径随默认值调整），同步 `openspec/specs/harness/spec.md` / `docs/specs/config-reference.md` 与 `session_open.wire_api` 用例。
 - ★ `#fix` **超限轮 usage 读数**（Alex 2026-10-25 裁）→ 下一动作：错误路径拿得到 usage 时同样 `record_usage` 并 emit `usage`；补一条超限轮读数用例（`src-tauri/src/harness/turn.rs` 成功分支之外）。
 - ★ `#probe` **82/83/85：套件自有 CGEvent 探针**（Alex 2026-10-25 裁，见 `docs/specs/standing-decisions.md`）→ 下一动作：CGEvent **键盘**注入原语即 M767/M768 的 `lib/cgevent-key.swift` + `channel: cgevent`（粘贴通道随 M864 迁到它），剩下 82/83/85 的 AXPress 插卡语境用这条原语定性；产品 reconcile（P1）不按首批立项，P3 留备选。
