@@ -56,14 +56,17 @@ slot 首尾的对齐空白当作**块级 padding**，caret 落在 padding 内时
   MUST NOT 跨过隐藏管道符、换行或分隔行。
 - 判据 SHALL 只读 `EditorState`（单折叠光标 + `cellClamp` 的 cell 归属），MUST NOT 读 DOM /
   AX 文本形状、MUST NOT 按字符类型分支。
-- 实现：`src/editor.ts` 的 beforeinput 闸门（`absorbTableCellInput`）——`insertText` 用
-  `event.data` 在 state 光标处显式插入；`deleteContentBackward` / `deleteContentForward` 调
-  应用自身的 `deleteCharBackward` / `deleteCharForward`；命中即 `preventDefault()`。
-  只在 md 模式装配（code 模式没有表格渲染与 replace 装饰）。非空选区、IME 组合期与只读会话
-  不入闸（选区删除归 finding `20261119-worker-markdown-stability-bug-dom` 的通用修复）。
+- 实现：`src/editor.ts` 的统一 beforeinput 闸门 `absorbNativeEdit`（M854 的非空选区
+  insert/delete 事务）中新增**折叠 cell 分支**（M855）——非空选区分支先早退，折叠光标落在
+  grid 表格 cell slot 内时：`insertText` 用 `event.data` 在 state 光标处显式插入；
+  `deleteContentBackward` / `deleteContentForward` 调应用自身的 `deleteCharBackward` /
+  `deleteCharForward`；命中即 `preventDefault()`。两段命中面互斥，IME 组合期统一用
+  `view.compositionStarted` 放行；只在 md 模式装配（code 模式没有表格渲染与 replace 装饰）。
 - 回归：`tests/visual/scenes/markdown-editing-stability.spec.ts` 的表格编辑对抗组把 M842 标
   `knownDefect: webkit` 的四条转正，并补齐数据 cell 首 / 尾缘的键入与双向删除、表头对照组、
-  一次 undo 与 `⌘S` 精确落盘；双引擎（chromium / webkit-realua）各跑一遍。
+  一次 undo 与 `⌘S` 精确落盘。M854 合并后本 spec 的选区删除 / 键入替换用例也全部转正，
+  合并结果**不含任何 expected-failure 标记**（`knownDefect` 机制随之删除）；双引擎
+  （chromium / webkit-realua）各跑一遍。
 - 真机：新增 `scripts/acceptance/scenarios/265-table-cell-webkit-editing.md`（数据 cell 尾缘
   键入 / 首缘 Backspace / 尾缘 Delete / 表头对照，四格均以 `file.exact` 全文 + 撤销不写盘判），
   COVERAGE 随生成脚本更新。
