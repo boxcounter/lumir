@@ -616,7 +616,7 @@ export function clusterBackward(read: TextReader, pos: number, limit: number): n
  *  插进去。因此它 MUST NOT 下沉成逐实例状态，也 MUST NOT 在 composer 侧复制第二份
  *（change composer-emacs-nav 的裁决点 4）。
  *
- *  `anchor` 是相接端的**可比标识**（编辑器传字符位置，composer 传 `块:偏移` 串）——两侧的坐标
+ *  `anchor` 是相接端的**可比标识**（编辑器与 composer 都传字符 offset 串）——两侧的坐标
  *  空间不同，相接判定因此只比这个不透明串，逻辑仍只有一份（`mergeKillText`）。 */
 export interface KillSlotState {
   text: string;

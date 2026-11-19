@@ -323,8 +323,8 @@ export interface HarnessPanelHandle {
    * 到 composer 的模型层动作（移动 / 扩选 / 删除 / kill-yank / 转置）。**命中即消费**——装配层的
    * 分派包装在事件目标落在 composer 内时调它，而分发器命中绑定即 `preventDefault`（命中即吞默认
    * 行为），因此本入口**不返回**「是否消费」；「该处无动作」按**无操作**处理，MUST NOT 放行原生
-   * 路径（放行会让段首 ⌥⌫ 的原生 deleteWordBackward 跨块合并 / 删卡）。命令实现是模型层纯函数
-   * 驱动，不认识「事件目标」。
+   * 路径（放行会让段首 ⌥⌫ 退回引擎原生词删除，绕过共享词法与 kill 槽）。命令实现是 CM
+   * 命令适配，不认识「事件目标」。
    */
   composerCommand(command: CommandId): void;
 }
@@ -4202,7 +4202,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       source.textContent = imageCardMetaText(card.name, dims.width, dims.height);
     });
     if (mode === "composer") {
-      el.contentEditable = "false";
       // 动作区（右上角）：`@`（插入引用）在左、既有 `×`（移除）在右；两钮恒显（裁决点 5 的 A，
       // 与既有 `×` 同口径；design §8）。
       const actions = document.createElement("div");
@@ -4286,7 +4285,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     el.append(bar, main);
     el.title = msgCard ? messageQuoteHoverTitle(card) : cardHoverTitle(card);
     if (mode === "composer") {
-      el.contentEditable = "false";
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "lumir-hp-qc-x";
@@ -8766,13 +8764,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /**
    * 读回当前 vault 的草稿并铺进输入区（装载 vault 后调用；app 启动装载与切 vault 共用这条路）。
    *
-   * 三道守卫：
+   * 两道守卫与光标口径：
    * - **世代**：读盘是一次 IPC 往返，途中又切了一次 vault 时本次结果作废（旧 vault 的草稿
    *   绝不许落到新 vault 的输入区——与快照的 snapshotSeq 同一条纪律）；
    * - **用户已动手**：窗口里用户可能已经开始输入，那就只用「仍是原始空态」时才恢复
    *   （`composerIsPristine`），不覆盖用户刚打的字；
-   * - **光标**：恢复的光标落位只在**输入区持焦**时施加——面板不持焦时那支光标属于别人
-   *   （编辑器 / 树），程序化改选区会把它拽走（M343 起 composer 的选区只在本面板持焦时动）。
+   * - **光标**：caret 写进新的 EditorState；输入区未持焦时 CM 不把它写进 DOM Selection，
+   *   因此不会抢走编辑器 / 树的选区。
    *
    * 无草稿 / 文件损坏 / 版本不符（store 的 `load` 返回 null / 抛出）→ 保持空输入区，不报错、
    * 不伪造内容（spec「草稿损坏时安静回落」）。

@@ -30,7 +30,7 @@ test("v2 往返逐字段无损，包含多行文本、全文 caret 和三类附�
   const raw = serializeComposerDraft(text, 3, cards);
   assert.deepEqual(parseComposerDraft(raw), { version: 2, text, caret: 3, cards });
   assert.equal(DRAFT_VERSION, 2);
-  assert.equal(serializeComposerDraft(text, 3, parseComposerDraft(raw)?.cards ?? []), raw.replace('"caret":3', '"caret":3'));
+  assert.equal(serializeComposerDraft(text, 3, parseComposerDraft(raw)?.cards ?? []), raw);
   assert.equal(raw.includes("data:image"), false);
   assert.equal(/base64/i.test(raw), false);
 });

@@ -9,7 +9,7 @@ const PROVIDERS = standardProviders();
 //
 // 验收场景 145（真机）暴露的缺陷：面板自己的 keydown（挂在 composer 元素上、先于 window 分发器）
 // 把 `mod+y`（⌘Y 与 ⌃Y）一律当就地 redo `preventDefault` 掉，分发器对已消费事件让路
-// （`src/keys.ts:934`）⇒ composer 的 ⌃Y 永远落不到 `yankAtCaret`。修法：就地 redo 收窄到
+// （`src/keys.ts:934`）⇒ composer 的 ⌃Y 永远落不到 `runComposerCommand` 的 `editor.yank` 映射。修法：就地 redo 收窄到
 // meta-only（⌘Y），⌃Y 冒泡给分发器。
 //
 // 判据：编辑器 ⌃K 杀掉整行 → composer ⌃Y → 被杀的文本出现在 composer。缺陷形态下 composer 仍空。

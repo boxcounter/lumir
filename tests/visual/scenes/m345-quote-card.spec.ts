@@ -161,7 +161,7 @@ test("粘贴净化：带 text/html 的粘贴只落纯文本", async ({ page }) =
 });
 
 // M531（fix-quote-button-viewport-clamp）：浮动钮落点钳制的专用 fixture。
-// **不改既有 DOC**：整页基线 m345-harness-quote-card.png 钉着它的正文，加字就会漂基线。
+// **不改既有 DOC**：钳制 fixture 使用独立文档，避免改动其他引用卡场景的正文。
 const CLAMP_LONG_CODE_LINE =
   'const probeAlpha = "alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india-juliett-kilo-lima-mike-november-oscar-papa-quebec-romeo-sierra-tango-uniform-victor-whiskey-xray-yankee-zulu";';
 
