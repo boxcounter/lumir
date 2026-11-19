@@ -2077,11 +2077,18 @@ export async function readStableEditor(readOnce, { attempts = 6, gapMs = 200 } =
   let prev = null;
   let last = null;
   let unclean = false;
+  const samples = [];
   for (let i = 0; i < attempts; i += 1) {
     if (i > 0) await sleep(gapMs);
     const cur = await readOnce();
     if (!cur.found) return { found: false, stable: false, unclean };
     last = cur;
+    samples.push({
+      length: cur.text.length,
+      hasReplacement: cur.text.includes("\uFFFD"),
+      head: cur.text.slice(0, 16),
+      tail: cur.text.slice(-8),
+    });
     if (cur.text.includes("\uFFFD")) {
       unclean = true;
       prev = null;
@@ -2096,6 +2103,7 @@ export async function readStableEditor(readOnce, { attempts = 6, gapMs = 200 } =
     unclean,
     undecidable: true,
     attempts,
+    samples,
     lastSeen: last
       ? { length: last.text.length, hasReplacement: last.text.includes("\uFFFD"), head: last.text.slice(0, 40) }
       : null,
@@ -2406,7 +2414,7 @@ export async function runScenario(ctx, scenario) {
             `${label}：编辑器 AX 读数在 ${reading.attempts} 次重读内没有稳定` +
               `${reading.unclean ? "（含 U+FFFD 残读）" : "（连续不一致）"}——无法判定编辑器是否变化，` +
               "本次运行标 INVALID（不按 PASS/FAIL 判；稍后重跑本场景）。" +
-              `最后读数：${JSON.stringify(reading.lastSeen)}`,
+              `读数千样：${JSON.stringify(reading.samples)}`,
           );
         }
         text = reading.text;
@@ -4548,7 +4556,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
           `记录编辑器基线失败：AX 读数在 ${reading.attempts} 次重读内没有稳定` +
             `${reading.unclean ? "（含 U+FFFD 残读）" : "（连续不一致）"}——基线不可信，拒记；` +
             "本场景标 INVALID（不按产品缺陷判；稍后重跑）。" +
-            `最后读数：${JSON.stringify(reading.lastSeen)}`,
+            `读数千样：${JSON.stringify(reading.samples)}`,
         );
       }
       vars[step.as] = reading.text;
