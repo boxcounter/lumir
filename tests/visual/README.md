@@ -355,6 +355,23 @@ macOS 上真正拦住 Safe Storage 弹窗的是 `--use-mock-keychain`（Apple-on
 该文件整份进 `webkit-realua` 的 `testMatch`（见 `playwright.config.ts`）：两引擎的微任务 /
 IPC 时序不同，chromium 绿不代表 WebKit 事件序下同样成立。
 
+### 行为场景：异步生命周期（`harness-async-adversarial.spec.ts`）
+
+有些回归不是布局 / 配色，而是**事件时序**：终态之后迟到的分片、停止后 provider 的旧响应、别的
+vault 的事件、未知 run 的终态。这类场景**零像素基线**（不产出 `*-expected.png`），只断言 DOM
+结构与属性，跑在默认 chromium project 里：
+
+- 事件注入走桩自己的通道：`plugin:event|listen` 时记下 handler id，用
+  `__TAURI_INTERNALS__.runCallback` 派发 `harness:event`（场景文件内自带，不动 `tauri-stub.ts`）；
+- 每条「不得出现」的断言 MUST 配一条同文本的「必须出现」对照（下一轮发送 / 正确 vault /
+  正确的 run），否则删掉产品防线后断言照样绿（REVIEW.md「断言等价于子串」条）；
+- 面板打开时标题栏 toggle 是隐藏的（`toggleButton.hidden`），收起面板走全局快捷键 ⌘⇧A，
+  不要再按「toggle 可反复点击」写场景；
+- 单条前台 `task` 行不进控制区（`taskAreaRuns`：≥2 在跑 / 后台 / 待批才可见），任务区场景要用
+  `background: true`（终态用 `failed` / `partial` / `stopped` 才保留到用户确认）；
+- macOS 系统通知的点击（`spawn_notification_click_waiter`）只在真机可达，本层只覆盖应用内未读
+  徽标（toggle 的 `data-activity`），系统通知归真机验收套件。
+
 ### 启动是两段式的：`goto` 回来时主模块未必已装载（M645）
 
 change `app-splash-screen` 把入口换成启动层（`src/boot.ts`）：先读配置、画启动面，**之后**才
