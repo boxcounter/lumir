@@ -699,14 +699,18 @@ function deleteWordBackward(view: EditorView): void {
 //     文本为单位，会把选区前的 cell 对齐空白一并吃掉（M855 探针）；IME 组合
 //     （`insertCompositionText`）与粘贴（`insertFromPaste`）不在此列，语义不变；
 //   · 空光标恰在行边界（M836）：被吸收的一侧确有行时删一个换行 / 按词删除。
+//   · 折叠光标落在 grid 表格 cell slot 内（M855）：WebKit 原生键入会把 slot 首尾的对齐
+//     空白当块级 padding（插入点折到块首、吃掉 padding），Backspace / Delete 的 target
+//     range 还会跨过零宽 replace 覆盖的隐藏管道 / 换行 / 分隔行；命中时按 state 位置做
+//     显式事务（键入插入 `event.data`；单字符删除走应用自身的 deleteCharBackward /
+//     deleteCharForward，步长与 ⌃H / ⌃D 同源）。
 // 覆盖面因此与「哪一类 replace 装饰」无关（表格管道、列表 marker、链接、公式、隐藏
 // 标记与将来的 widget 同在类内）；纯文本上的事务结果与原生逐字节相同，不需要按渲染
 // 形状分支。
 //
 // 未被接管的按键先到 keymap（本文件的 markupKeymap / 上游 markdownKeymap），所以闸门
-// 的实际命中面是「真的会落到浏览器原生删除」的入口。空光标的行内删除不在本闸门内
-// （WebKit 在表格 cell 端点的单字符键入 / 删除另见 finding
-// 20261119-worker-markdown-stability-bug-webkit-cell，合同不同、入口是键入）。
+// 的实际命中面是「真的会落到浏览器原生编辑」的入口。空光标的普通行内删除仍走原生
+// （两引擎逐字节一致）；唯一的例外是 grid 表格 cell slot 内（见上一条，M855）。
 // forward 行删除变体（deleteSoftLineForward / deleteHardLineForward）在空光标时两引擎
 // 实测 no-op 且默认键位不可达，不收；带选区时它们与其它删除同属一个合同，收。
 //
@@ -729,6 +733,10 @@ const SELECTION_DELETE_INPUTS = new Set([
   "deleteSoftLineForward",
   "deleteHardLineForward",
 ]);
+
+/** 折叠光标落在 grid 表格 cell slot 内时接管的单字符删除（M855；键入另由 insertText
+ *  分支命中）。 */
+const TABLE_CELL_DELETE_INPUTS = new Set(["deleteContentBackward", "deleteContentForward"]);
 
 /** 非空选区的删除落点：删掉 state 里每个非空区间的**源码字节**，一个事务 = 一条 history
  *  步。单区间走既有 deleteRange（可见侧 assoc + 揭示滚动）；多区间按 state.selection 逐
@@ -782,6 +790,31 @@ function absorbNativeEdit(event: InputEvent, view: EditorView): boolean {
   }
   if (ranges.length !== 1) return false;
   const main = ranges[0];
+  // M855：折叠光标落在 grid 表格 cell slot 内——WebKit 的原生 target range 以可见 DOM
+  // 相邻文本为单位，会把 slot 首尾对齐空白当块级 padding、跨过零宽 replace 覆盖的隐藏
+  // 源码。命中时按 state 位置显式事务；非空选区分支已在上方早退，两段命中面互斥。
+  if (event.inputType === "insertText" || TABLE_CELL_DELETE_INPUTS.has(event.inputType)) {
+    const clamp = cellClamp(state, main.head);
+    if (clamp !== null && clamp.inside) {
+      if (event.inputType === "insertText") {
+        const text = event.data;
+        if (text === null || text === "") return false;
+        event.preventDefault();
+        const head = main.head + text.length;
+        view.dispatch({
+          changes: { from: main.head, insert: text },
+          selection: { anchor: head },
+          scrollIntoView: true,
+          userEvent: "input.type",
+        });
+        return true;
+      }
+      event.preventDefault();
+      if (event.inputType === "deleteContentBackward") deleteCharBackward(view);
+      else deleteCharForward(view);
+      return true;
+    }
+  }
   const line = state.doc.lineAt(main.head);
   if (LINE_MERGE_FORWARD_INPUTS.has(event.inputType)) {
     if (main.head !== line.to || main.head >= state.doc.length) return false;
@@ -2058,7 +2091,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           endMarker,
           mdGutterCompartment.of(mdGutterExtensions()),
           markupKeymap,
-          // M836 / M854：原生删除与键入替换的回读闸门（见函数组注释；只 md 有 replace 装饰）。
+          // M836 / M854 / M855：原生删除与键入的回读闸门（见函数组注释；只 md 有 replace 装饰）。
           nativeEditGate,
         ]
       : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), markupKeymap];
