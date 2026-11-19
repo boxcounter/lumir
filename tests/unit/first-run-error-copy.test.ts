@@ -127,7 +127,7 @@ test("设置面板字段错误：三个 provider id 校验 code 在 en 下都是
     assert.ok(CJK.test(field.message));
   }
   // 英文列与中文列确实不同（不是把英文列抄成中文）。
-  assert.notEqual(COPY.D882.en, COPY.D882.zh);
+  assert.notEqual(COPY.D883.en, COPY.D883.zh);
 });
 
 test("既有契约不回退：带占位但缺参的 code 仍回落后端 message", () => {
