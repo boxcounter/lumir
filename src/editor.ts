@@ -2164,20 +2164,36 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 会话会用源实例的前台会话判据（同一形态的缺陷见 changeFilter / updateListener 的 P1-1）。
       //
       // 拦截判据（spec「粘贴触发与引用插入」）：md 模式 + 可编辑 + 确实有 image/* 文件项。
-      // 任一不成立即 `return false`——默认文本粘贴逐字节不变（降级条款，MUST NOT 消费事件）。
+      // 任一不成立即落到下面的降级闸门——默认文本粘贴逐字节不变（降级条款）。
       // 走 DOM 事件层而不是 keymap 的 ⌘V：⌘V 还有菜单路径（M131 菜单命令事件），事件层两条都罩。
       EditorView.domEventHandlers({
         paste: (event, view) => {
-          if (pasteImagePort === null) return false;
-          const items = event.clipboardData?.items;
-          if (items === undefined || items === null) return false;
-          const index = imagePasteItemIndex(active, items);
-          if (index === null) return false;
-          const blob = items[index].getAsFile();
-          if (blob === null) return false;
-          // 图文同板取图（已定 A）：消费事件，阻止 WebKit 默认的文本粘贴。
+          if (pasteImagePort !== null) {
+            const items = event.clipboardData?.items;
+            if (items !== undefined && items !== null) {
+              const index = imagePasteItemIndex(active, items);
+              const blob = index === null ? null : items[index].getAsFile();
+              if (blob !== null) {
+                // 图文同板取图（已定 A）：消费事件，阻止 WebKit 默认的文本粘贴。
+                event.preventDefault();
+                void pasteImage(view, active, blob);
+                return true;
+              }
+            }
+          }
+          // 降级闸门（change fix-html-only-paste-selection-nov19）：CM 的默认 paste 读
+          // `text/plain || text/uri-list`，**取到空串仍走 replaceSelection**——HTML-only /
+          // 只有文件项的剪贴板会静默删掉非空选区（finding 20261119-…-html-only-cm-dopaste）。
+          // 判据与那条默认语义**同源**（同一组 getData，不另立「哪些 MIME 算文本」的表）：
+          //   · 只读会话 `return false`——CM 的 paste 处理器自己按 readOnly 提前返回，语义不变；
+          //   · plain / uri-list 任一非空 `return false`——默认粘贴逐字节接管；
+          //   · 两者都为空：消费事件并保持**严格空操作**（文档 / 选区 / 撤销栈 / dirty 全不变；
+          //     MUST NOT 解析或转换 HTML）。
+          if (view.state.readOnly) return false;
+          const data = event.clipboardData;
+          if (data === null) return false;
+          if (data.getData("text/plain") !== "" || data.getData("text/uri-list") !== "") return false;
           event.preventDefault();
-          void pasteImage(view, active, blob);
           return true;
         },
       }),

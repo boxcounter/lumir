@@ -153,12 +153,15 @@ CSS 动画（CodeMirror 光标闪烁）在截图时冻结，保证逐帧确定�
 - **剪贴板优先级**：正文 image 文件项 > `text/plain`（其次 `text/uri-list`；不解析 HTML）；composer
   image 文件项 > `text/plain`（其余一律 `preventDefault`，不消费）；非图片文件项不抢文本；
   drop 正文支持文本与文本文件、图片文件被 CM 的二进制过滤挡掉，composer drop 只取 `text/plain`。
+  **无可插入文本的粘贴**（HTML-only / `text/markdown`-only / 只有文件项 / 空 `text/plain`）是**严格空操作**：
+  doc / 选区 / 撤销栈 / dirty 全不变，折叠 caret 与正 / 反向非空选区同权；code 模式同一判据，
+  只读会话不被拦截（M859，change `fix-html-only-paste-selection-nov19`）。
 - **Markdown / HTML**：Markdown 源码放在 `text/plain` 里，正文与 composer 都按**纯文本逐字节
   消费**（替换选区 / 落在拖放点，不解析 Markdown）；`text/markdown` 显式 MIME（无 text/plain）
-  在正文 caret、composer、两面的 drop 都是安全 no-op；正文**非空选区**的 `text/markdown`-only
-  粘贴当前会删选区（finding；用 `test.fail` 钉住「消费或完全不动」的安全合同，不把数据丢失写成
-  期望）。`text/html`-only 的 drop 在合成事件下双面 no-op、plain 优先；合成 DragEvent 只覆盖
-  产品 JS 处理器，浏览器原生 drag-drop 默认动作不在本通道（HTML-only paste 的删除见 finding）。
+  在正文 caret、composer、两面的 drop 都是安全 no-op，正文非空选区同样是严格空操作（M859 把
+  M843 的 expected failure 转正）。`text/html`-only 的 drop 在合成事件下双面 no-op、plain 优先；
+  合成 DragEvent 只覆盖产品 JS 处理器，浏览器原生 drag-drop 默认动作不在本通道；`text/html`-only
+  的 paste 与 `text/markdown`-only 同判（严格空操作）。
 - **组合中粘贴**：组合文本恰好提交一次、粘贴恰好追加一次，二者各自是一个撤销步；composer 不触发发送。
 - **历史粒度**：`input.paste` 不参与 CM 的聚簇（只 `input.type` / `delete` 参与），每次粘贴天然
   一个撤销步；固定 seed 随机序列每拍用 620ms 屏障隔离历史事件，并带操作直方图（每类操作数 > 0、
@@ -187,13 +190,11 @@ CSS 动画（CodeMirror 光标闪烁）在截图时冻结，保证逐帧确定�
 - `.tower/comms/findings/20261119-worker-unicode-clipboard-bug-composer-h-emoji-rtl.md`
   （composer ⌃H 与正文命令的字素步长不一致）；
 - `.tower/comms/findings/20261119-worker-unicode-clipboard-bug-backspace-rtl.md`
-  （原生 Backspace 对组合标记 / RTL 附标逐码点退）；
-- `.tower/comms/findings/20261119-worker-unicode-clipboard-bug-html-only-cm-dopaste.md`
-  （正文 HTML-only 粘贴且有选区时，CM `doPaste("")` 会删掉选区；paste 侧只在折叠 caret 上断言
-  空操作，drop 侧用例断言双面安全 no-op，不把数据丢失写成合同）；
-- `.tower/comms/findings/20261120-worker-unicode-clipboard-bug-text-markdown-only-html-only.md`
-  （正文 `text/markdown`-only 粘贴且有选区时同一缺口；caret/composer/drop 是安全 no-op，
-  选区用例是 `test.fail` 的安全合同）。
+  （原生 Backspace 对组合标记 / RTL 附标逐码点退）。
+
+HTML-only / `text/markdown`-only + 非空选区的删除缺口已由 M859（change
+`fix-html-only-paste-selection-nov19`）修好：从「已知边界」转为第十二节的**严格空操作**合同
+（四类剪贴板 × 折叠 / 正向 / 反向选区，含 code 与只读路径），原来的 `test.fail` 已删除。
 
 **IME**：组合中粘贴用 CDP `Input.imeSetComposition`（真引擎事件序），场景在 WebKit 项目内
 `test.skip`；WebKit 的原生 IME 事件序归 `scripts/acceptance` 真机场景，不用合成事件冒充。
