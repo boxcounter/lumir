@@ -224,6 +224,9 @@ function isPlainTable(v) {
  *  决定 steps.md 里记录的先后，不再决定「谁生效」。 */
 const FILE_JUDGE_KEYS = [
   "exists", "changedSince", "unchangedSince", "mtimeUnchangedSince", "mtimeNewerThan", "has", "not", "count",
+  // 整篇逐字判据（M832）：保存后「盘上内容 = 编辑模型终态」这类判据需要它——`has` 是子串，
+  // 对多余字符 / 顺序错误没有区分度。
+  "exact",
   "jsonl",
   // 会话留存里的**工具结果**（M783）：`messages[]` 中 `type=function_call_output` 的 `output` 是
   // 字符串化 JSON，按解析后的字段判——手写转义层的子串断言写错即静默（M777 现场三条全错）。
@@ -827,6 +830,10 @@ export function checkScenario(scenario) {
       if (kinds.length !== 1) push(`${at} expect[${j}] 应恰好一个断言形态，实际 ${JSON.stringify(kinds)}`);
       else if (!EXPECT_KINDS.has(kinds[0])) push(`${at} expect[${j}] 未知断言 ${kinds[0]}`);
       else if (kinds[0] === "file" && !exp.file.path) push(`${at} expect[${j}] file 断言缺 path`);
+      else if (kinds[0] === "file" && exp.file.exact !== undefined) {
+        if (typeof exp.file.exact !== "string")
+          push(`${at} expect[${j}] file.exact 需要字符串（整篇逐字内容，允许空串），实际 ${JSON.stringify(exp.file.exact)}`);
+      }
       else if (kinds[0] === "file" && exp.file.count !== undefined) {
         const c = exp.file.count;
         if (!isPlainTable(c) || typeof c.pattern !== "string" || !Number.isInteger(c.exact) || c.exact < 0)
@@ -2388,7 +2395,7 @@ export async function runScenario(ctx, scenario) {
       const readContent = async () => {
         if (!info) contentErr = `（文件不存在：${spec.path}）`;
         // 目录没有内容这一说：读了会抛 EISDIR（M324 起路径读数认得目录，这里必须自己挡）。
-        else if (info.isDir) contentErr = `（${spec.path} 是目录：内容类判据 has/not 只对文件成立）`;
+        else if (info.isDir) contentErr = `（${spec.path} 是目录：内容类判据 has/not/exact 只对文件成立）`;
         else content = await readText(file);
       };
       /** 单键判定：成立 → `{ok:true, detail?}`；不成立 → `{ok:false, reason, detail?}`。
@@ -2603,6 +2610,17 @@ export async function runScenario(ctx, scenario) {
                       .map(([id, notice]) => `${id}=${JSON.stringify(notice.session_id)}`)
                       .join("、")} vs tasks.${specNotice.task}.session_id=${JSON.stringify(taskSession)}）`,
                 };
+          }
+          case "exact": {
+            // 整篇逐字比较：缺失 / 目录 / 读失败一律 FAIL（REVIEW.md「读不到当成空」条）。
+            if (content === undefined && contentErr === undefined) await readContent();
+            if (contentErr) return { ok: false, reason: contentErr };
+            if (content === spec.exact) return { ok: true, detail: `${content.length} 字符逐字一致` };
+            return {
+              ok: false,
+              reason: `（内容不一致：期望 ${spec.exact.length} 字符，实际 ${content.length} 字符）`,
+              detail: `expected=${JSON.stringify(spec.exact.slice(0, 200))} actual=${JSON.stringify(content.slice(0, 200))}`,
+            };
           }
           case "has":
           case "not": {
