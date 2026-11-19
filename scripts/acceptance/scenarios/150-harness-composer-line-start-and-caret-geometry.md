@@ -31,6 +31,12 @@ config:
     provider: mock
     fixture: "$fixtures/harness-mock-basic.json"
 steps:
+  # 编辑器基线先记（M864 148 真机实证：pane 打开动画期间 AX 长值连读多次都带 U+FFFD 残读）——
+  # 此时只有编辑器一棵 AX 树、无动画，判据不变。
+  - name: 记编辑器文档基线（打字不得漏进文档——焦点争议的通用防线，场景 100 同口径）
+    do: recordEditor
+    as: doc-before-caret
+
   - name: ⌘⇧A 打开 harness pane（旁侧分栏）
     do: keys
     keys: ["cmd+shift+a"]
@@ -43,10 +49,6 @@ steps:
   - name: 真实鼠标点 composer（contenteditable 的 DOM 焦点靠真实 mousedown 建立）
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
-
-  - name: 记编辑器文档基线（打字不得漏进文档——焦点争议的通用防线，场景 100 同口径）
-    do: recordEditor
-    as: doc-before-caret
 
   - name: 键入合成 marker（小写探针串；typeInNode 粘贴通道原样落地）
     do: typeInNode
