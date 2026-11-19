@@ -2388,8 +2388,15 @@ export async function runScenario(ctx, scenario) {
           );
         }
         text = reading.text;
-        if (!reading.stable)
+        if (!reading.stable) {
           stabilityNote = `；读数不稳定${reading.unclean ? "（AX 残读）" : "（连续两次不一致）"}，取最后一次`;
+        }
+        if (reading.unclean) {
+          evidence.record({
+            kind: "note",
+            text: `editor 断言读数出现 AX 残读（U+FFFD）——已重读到${reading.stable ? "稳定值" : "上限"}（${reading.text.length} 字符）`,
+          });
+        }
       } else {
         ax = state.ax ?? (await readAx(cu, ctx.pid));
         state.ax = ax;
@@ -4516,6 +4523,14 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         throw new Error("记录编辑器基线失败：AX 快照里没有 AXTextArea（modal 打开期间常见），基线不能记成空串");
       }
       vars[step.as] = reading.text;
+      if (!reading.stable) {
+        evidence.record({
+          kind: "note",
+          text:
+            `recordEditor：读数不稳定${reading.unclean ? "（出现过 AX 残读 U+FFFD）" : "（连续两次不一致）"}` +
+            `——基线取最后一次（${reading.text.length} 字符）`,
+        });
+      }
       return `${reading.text.length} 字节${
         reading.stable ? "" : `（读数不稳定${reading.unclean ? "：出现过 AX 残读" : ""}，取最后一次）`
       }`;

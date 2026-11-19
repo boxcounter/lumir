@@ -26,6 +26,13 @@ seed:
   registry:
     - { id: acc-img, path: $vault, lastOpenedAt: 1757000002000 }
 steps:
+  # 编辑器基线先记：此时只有编辑器一棵 AX 树（pane 未开、无动画），长值读数不会被残读污染。
+  # M864 真机 run7：pane 打开过程中记录的基线连读 6 次都带 U+FFFD（残读在动画窗口里持续），
+  # 两次守卫因此拿残读基线判红；挪到 pane 之前，判据不变。
+  - name: 记编辑器文档基线（素材注入 MUST NOT 漏进文档——注入落错面的通用防线，场景 140 同口径）
+    do: recordEditor
+    as: doc-before-composer
+
   - name: ⌘⇧A 打开 harness pane（当前 vault = 预置注册项 acc-img）
     do: keys
     keys: ["cmd+shift+a"]
@@ -38,10 +45,6 @@ steps:
   - name: 真实鼠标点 composer（contenteditable 的 DOM 焦点靠真实 mousedown 建立）
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
-
-  - name: 记编辑器文档基线（素材注入 MUST NOT 漏进文档——注入落错面的通用防线，场景 140 同口径）
-    do: recordEditor
-    as: doc-before-composer
 
   - name: 键入会话名素材（本逻辑会话首条用户消息定名——恢复步按它定位会话行）
       （M498 起 typeInNode 注入 composer；旧 `keys` 逐键注入丢键（'e' 确定性丢失）、
