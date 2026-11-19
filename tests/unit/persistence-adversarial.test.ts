@@ -142,35 +142,23 @@ const flushAwait = async () => {
   await new Promise((resolve) => setImmediate(resolve));
 };
 
-/**
- * 已知产品缺陷：以 Node 的 `todo` 运行——它**真的执行**（证据留在日志里），但失败不拦门禁；
- * 缺陷修复后把本函数调用换成普通 `test` 即可。`reason` 必须带 finding 指针，不接受「以后再说」。
- */
-function knownDefect(name: string, reason: string, body: () => Promise<void>): void {
-  (test as unknown as (n: string, options: { todo: string }, f: () => Promise<void>) => void)(
-    name,
-    { todo: reason },
-    body,
-  );
-}
-
 // ---------------------------------------------------------------------------
-// 草稿 store 的故障夹具：盘按 vault 作用域分文件，写 / 读都经故障闸
+// 草稿 store 的故障夹具：盘按 vault 稳定 id 分文件，写 / 读都经故障闸
 // ---------------------------------------------------------------------------
 
+/** 假后端按**显式 vault id** 分文件（M848 之后的契约）：落点只认调用方在出发点绑定的 id，
+ *  无 id 归属（null）静默 no-op——不存在一个「执行时的当前 vault 作用域」供迟到操作误落。 */
 interface DraftRig {
   store: ReturnType<typeof createHarnessDraftStore>;
   deck: FaultDeck;
   /** vault 稳定 id → 盘上草稿原文（undefined = 没有草稿）。 */
   drafts: Map<string, string>;
-  /** 后端当前作用域（切 vault 改它）。 */
-  scope: string;
-  /** 已执行（含成功清空）的写入，按落点记作用域——跨 vault 判据的观测面。 */
+  /** 已执行（含成功清空）的写入，按**出发时绑定的 vault id** 记落点——跨 vault 判据的观测面。 */
   writes: Array<{ scope: string; value: string }>;
   warns: unknown[];
 }
 
-function createDraftRig(seed: Record<string, string> = {}, initialScope = "vault-a"): DraftRig {
+function createDraftRig(seed: Record<string, string> = {}): DraftRig {
   const deck = createFaultDeck();
   const drafts = new Map<string, string>(Object.entries(seed));
   const writes: DraftRig["writes"] = [];
@@ -178,19 +166,21 @@ function createDraftRig(seed: Record<string, string> = {}, initialScope = "vault
   const rig: DraftRig = {
     deck,
     drafts,
-    scope: initialScope,
     writes,
     warns,
     store: undefined as unknown as DraftRig["store"],
   };
   rig.store = createHarnessDraftStore({
-    getDraft: () =>
-      deck.run("draft_get", {}, () => rig.drafts.get(rig.scope) ?? null, { after: true }),
-    putDraft: (draftJson) =>
-      deck.run("draft_put", { draftJson }, () => {
-        if (draftJson === "") rig.drafts.delete(rig.scope);
-        else rig.drafts.set(rig.scope, draftJson);
-        rig.writes.push({ scope: rig.scope, value: draftJson });
+    getDraft: (vaultId) =>
+      deck.run("draft_get", { vaultId }, () => (vaultId === null ? null : rig.drafts.get(vaultId) ?? null), {
+        after: true,
+      }),
+    putDraft: (draftJson, vaultId) =>
+      deck.run("draft_put", { draftJson, vaultId }, () => {
+        if (vaultId === null) return; // 与 Rust 侧同口径：无 vault 归属的写不落任何文件
+        if (draftJson === "") rig.drafts.delete(vaultId);
+        else rig.drafts.set(vaultId, draftJson);
+        rig.writes.push({ scope: vaultId, value: draftJson });
       }),
     warn: (error) => void rig.warns.push(error),
     debounceMs: 1000,
@@ -214,10 +204,14 @@ test("草稿 I1：延迟读在途时的新编辑不被旧读覆盖（旧读不�
   const rig = createDraftRig({ "vault-a": draft("旧草稿", 2) });
   rig.deck.policy("draft_get", "hold", { after: true });
 
-  const loading = rig.store.load();
+  const loading = rig.store.load("vault-a");
   // 正观测：读确实到了注入点并挂住——否则下面验的就不是「延迟读」。
   await rig.deck.waitFor("draft_get");
-  assert.deepEqual(rig.deck.held("draft_get")[0]!.args, {}, "读没有参数（落点由后端作用域解析）");
+  assert.deepEqual(
+    rig.deck.held("draft_get")[0]!.args,
+    { vaultId: "vault-a" },
+    "读携带出发时绑定的 vault id（落点只认它）",
+  );
 
   rig.store.schedule("新输入", 1, CARDS);
   await rig.store.flush();
@@ -245,12 +239,11 @@ test("草稿 I4：切 vault 时迟到的读整体作废，旧 vault 的内容不
   const rig = createDraftRig({ "vault-a": draft("A 的草稿", 1) });
   rig.deck.policy("draft_get", "hold", { after: true });
 
-  const stale = rig.store.load(); // A 的读，挂住
+  const stale = rig.store.load("vault-a"); // A 的读，挂住
   await rig.deck.waitFor("draft_get");
   rig.deck.policy("draft_get", "pass"); // 只让 A 那次读挂住；后面的装载正常返回
 
-  rig.scope = "vault-b"; // 后端切到 B
-  const fresh = await rig.store.load(); // B 的读立刻返回（无草稿）
+  const fresh = await rig.store.load("vault-b"); // 切到 B：B 的读立刻返回（无草稿）
   assert.equal(fresh, null);
   assert.equal(rig.deck.arrivals("draft_get"), 2, "两次装载都真的读了盘");
 
@@ -268,36 +261,38 @@ test("草稿 I4：切 vault 时迟到的读整体作废，旧 vault 的内容不
   assert.equal(rig.drafts.get("vault-a"), draft("A 的草稿", 1), "旧 vault 的草稿原样保留");
 });
 
-knownDefect(
-  "已知缺陷：草稿在途写的落点按后端「执行时」作用域解析——切 vault 后落地的旧草稿会写进新 vault",
-  "finding .tower/comms/findings/20261119-worker-persistence-faults-bug-vault-scope-vault-vault.md：" +
-    "harness_draft_put 不携带 vault id，后端在执行时解析当前 scope；前端 flush 与 vault_open_path " +
-    "两条 IPC 的执行次序无合同保证。",
-  async () => {
-    const rig = createDraftRig();
-    rig.deck.policy("draft_put", "hold"); // 写已入链、停在执行前
-    rig.store.schedule("A 的草稿", 1, CARDS);
-    const flushing = rig.store.flush();
-    await rig.deck.waitFor("draft_put");
+// finding 20261119-worker-persistence-faults-bug-vault-scope-vault-vault：M848 把归属绑到出发点的
+// vault id 之后，这条从 `todo` 转普通 test（判据与故障交错不变）。
+test("草稿 I4：在途写的落点按出发时的 vault 归属——切 vault 后落地的旧草稿不得写进新 vault", async () => {
+  const rig = createDraftRig();
+  await rig.store.load("vault-a"); // 装载即绑定归属
+  rig.deck.policy("draft_put", "hold"); // 写已入链、停在执行前
+  rig.store.schedule("A 的草稿", 1, CARDS);
+  const flushing = rig.store.flush();
+  await rig.deck.waitFor("draft_put");
+  assert.equal(
+    rig.deck.held("draft_put")[0]!.args.vaultId,
+    "vault-a",
+    "写带着出发时绑定的 vault id 到达后端",
+  );
 
-    rig.scope = "vault-b"; // 后端切到 B 之后，这次写才真正执行
-    await rig.store.load(); // 新 vault 装载：丢弃旧待写 + 读 B 的草稿
-    rig.deck.release("draft_put");
-    await flushing;
+  await rig.store.load("vault-b"); // 后端切到 B 之后，这次写才真正执行；新 vault 装载丢弃旧待写
+  rig.deck.release("draft_put");
+  await flushing;
 
-    // 归属不变量：写只能落在它出发时的 vault（A）。当前产品把落点交给后端执行时解析。
-    assert.deepEqual(
-      rig.writes.map((write) => write.scope),
-      ["vault-a"],
-      "在途写不得因为后端先切了 vault 而落到新 vault 上",
-    );
-    assert.equal(rig.drafts.get("vault-a"), draft("A 的草稿", 1));
-    assert.equal(rig.drafts.get("vault-b"), undefined, "新 vault 的草稿盘不得被旧 vault 的内容写入");
-  },
-);
+  // 归属不变量：写只能落在它出发时的 vault（A）——落点不接受「执行时的当前 vault」。
+  assert.deepEqual(
+    rig.writes.map((write) => write.scope),
+    ["vault-a"],
+    "在途写不得因为后端先切了 vault 而落到新 vault 上",
+  );
+  assert.equal(rig.drafts.get("vault-a"), draft("A 的草稿", 1));
+  assert.equal(rig.drafts.get("vault-b"), undefined, "新 vault 的草稿盘不得被旧 vault 的内容写入");
+});
 
 test("草稿 I3：旧写在途时新写已入链——旧写失败后重试写的是新内容，不复活旧内容", async () => {
   const rig = createDraftRig();
+  await rig.store.load("vault-a");
   rig.deck.policy("draft_put", "hold");
 
   rig.store.schedule("第一版", null, CARDS);
@@ -336,6 +331,7 @@ test("草稿 I3：旧写在途时新写已入链——旧写失败后重试写�
 
 test("草稿 I3：旧写失败且期间无新编辑——内容留待下一次 flush 重试", async () => {
   const rig = createDraftRig();
+  await rig.store.load("vault-a");
   rig.deck.policy("draft_put", "hold");
 
   rig.store.schedule("唯一一版", 1, CARDS);
@@ -354,6 +350,7 @@ test("草稿 I3：旧写失败且期间无新编辑——内容留待下一次 f
 
 test("草稿 I3：写失败后紧接发送清除——删除仍排在写之后，不因失败而跳过", async () => {
   const rig = createDraftRig();
+  await rig.store.load("vault-a");
   rig.deck.policy("draft_put", "hold");
 
   rig.store.schedule("要发出去的内容", null, CARDS);
@@ -384,7 +381,7 @@ test("草稿 I3：写失败后紧接发送清除——删除仍排在写之后�
 
 test("草稿 崩溃恢复：新 store 从盘上读回 text/caret/cards，未编辑不再写盘", async () => {
   const rig = createDraftRig({ "vault-a": draft("崩溃前的字", 3) });
-  const loaded = await rig.store.load();
+  const loaded = await rig.store.load("vault-a");
   assert.deepEqual(loaded, { text: "崩溃前的字", caret: 3, cards: CARDS });
 
   rig.store.schedule("崩溃前的字", 3, CARDS);
@@ -394,11 +391,11 @@ test("草稿 崩溃恢复：新 store 从盘上读回 text/caret/cards，未编�
 
 test("草稿：损坏 / 读失败安静回落 null，随后的编辑仍能正常落盘", async () => {
   const rig = createDraftRig({ "vault-a": "{not json" });
-  assert.equal(await rig.store.load(), null, "损坏 → null（不抛错）");
+  assert.equal(await rig.store.load("vault-a"), null, "损坏 → null（不抛错）");
 
   const readsBefore = rig.deck.arrivals("draft_get");
   rig.deck.policy("draft_get", "fail", { error: commandError("io", "配置目录不可读") });
-  assert.equal(await rig.store.load(), null, "读失败 → null（不阻断装载）");
+  assert.equal(await rig.store.load("vault-a"), null, "读失败 → null（不阻断装载）");
   assert.equal(rig.deck.arrivals("draft_get"), readsBefore + 1, "读失败那次确实到达了注入点");
 
   rig.deck.policy("draft_get", "pass");
@@ -944,12 +941,9 @@ test("崩溃恢复 I4：备份之后磁盘被外部修改——恢复内容按�
   rig.controller.noteVaultReset();
 });
 
-knownDefect(
-  "已知缺陷：旧 vault 的保存应答晚到时，会用旧 revision 覆盖新 vault 同名文档的 CAS 基准",
-  "finding .tower/comms/findings/20261119-worker-persistence-faults-bug-vault-cas.md：" +
-    "saveDocument 只用「路径对应的会话是否还在」判失效，没有 vault / 装载世代判据；相对路径跨 " +
-    "vault 撞名时迟到结果写回 revisions。",
-  async () => {
+// finding 20261119-worker-persistence-faults-bug-vault-cas：M847 按路径装载世代判定保存应答归属之后，
+// 这条从 `todo` 转普通 test（判据与故障交错不变）。
+test("保存 I4：旧 vault 的保存应答晚到——不得覆盖新 vault 同名文档的 CAS 基准", async () => {
   const rig = createSaveRig({ "a.md": "# A" }, { scope: "vault-a" });
   rig.editor.open("a.md", "# A");
   rig.controller.noteOpened("a.md", "rev:a.md:0");
@@ -960,6 +954,7 @@ knownDefect(
   const saving = rig.controller.save();
   await rig.deck.waitFor("document_save");
   assert.equal(rig.disk.writes.length, 1, "写已执行（A 的盘）");
+  assert.equal(rig.disk.writes[0]!.scope, "vault-a", "这次写真的落在 A 的盘上——迟到应答的归属是 A");
 
   // 用户「放弃修改并切换」到 vault-b，并在那里打开同名的 a.md。
   rig.controller.noteVaultReset();
@@ -989,5 +984,4 @@ knownDefect(
   assert.equal(attempted.content, "# B 文档改");
   assert.equal(rig.editor.handle.sessionForPath("a.md")!.dirty, false);
   stopTimers(rig);
-  },
-);
+});
