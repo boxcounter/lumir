@@ -45,8 +45,10 @@
 - [x] 4.2 真机 267 在 tower 串行窗口内**先红后绿**：修复前构建（`master` 的 `src/editor.ts`）
       `结论：0/1 PASS`——W1 文档被改成 `alpbeta`（选区 [3,6) 被删）、Backspace 派生观测得 `albeta`；
       修复后 `结论：1/1 PASS`，21 条断言 0 失败，退出码 0。证据
-      `.local/missions/M859/267-{red,green}-machine.log` 与 `267-{red,green}/`（每个落地实例都
-      `STRAY-SCAN none` 正常退出）。
+      `.local/missions/M859/267-red-machine-final.log`、`267-green-machine.log` 与
+      `267-{red,green}/`（每个落地实例都 `STRAY-SCAN none` 正常退出）。同目录的
+      `267-red-machine.log` / `267-red-machine-r2.log` 是**已弃用的原生菜单通道**旧失败记录
+      （40 行 fixture、W2 假 FAIL），不是最终红色 witness，不得引作红证据。
 
 ## 5. 验证
 

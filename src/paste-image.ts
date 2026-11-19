@@ -77,11 +77,14 @@ export function firstImageFileIndex(items: ArrayLike<{ kind: string; type: strin
 }
 
 /**
- * **拦截判定**（纯判据，DOM 无关——单测直接喂形状）：md 模式且可编辑、且剪贴板含 `image/*`
- * 文件项时返回该项序号；任一不成立返回 null = 不消费事件（默认文本粘贴逐字节不变）。
+ * **图片通道的拦截判定**（纯判据，DOM 无关——单测直接喂形状）：md 模式且可编辑、且剪贴板含
+ * `image/*` 文件项时返回该项序号；任一不成立返回 null = **图片通道**不消费事件。
  *
- * code / text 模式编辑器、只读文档 MUST NOT 触发本能力（spec「只读与非 md 模式不触发」）；
- * 无 `image/*` 的剪贴板（纯文本 / 富文本 / 非图片文件）走降级条款，一律不拦。
+ * code / text 模式编辑器、只读文档 MUST NOT 触发本能力（spec「只读与非 md 模式不触发」）。
+ * 无 `image/*` 的剪贴板（纯文本 / 富文本 / 非图片文件）不归本判据：`src/editor.ts` 的 paste
+ * 降级闸门接管——`text/plain` / `text/uri-list` 任一非空时交回 CM 默认粘贴（逐字节不变），
+ * 两者都为空（HTML-only / text/markdown-only / 只有文件项 / 空 plain）时消费事件并保持**严格
+ * 空操作**（change fix-html-only-paste-selection-nov19）。
  *
  * 入参的形状是本模块自己的最小面（不外引 editor.ts 的 SessionMode——那会形成 editor →
  * paste-image → editor 的类型环）：图片会话的 `mode` 是 `"image"`，第一个条件即为非 md，

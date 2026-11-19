@@ -194,7 +194,7 @@ CSS 动画（CodeMirror 光标闪烁）在截图时冻结，保证逐帧确定�
 
 HTML-only / `text/markdown`-only + 非空选区的删除缺口已由 M859（change
 `fix-html-only-paste-selection-nov19`）修好：从「已知边界」转为第十二节的**严格空操作**合同
-（三类剪贴板 × 折叠 / 正向 / 反向选区，含 code 与只读路径），原来的 `test.fail` 已删除。
+（四类剪贴板 × 折叠 / 正向 / 反向选区，含 code 与只读路径），原来的 `test.fail` 已删除。
 
 **IME**：组合中粘贴用 CDP `Input.imeSetComposition`（真引擎事件序），场景在 WebKit 项目内
 `test.skip`；WebKit 的原生 IME 事件序归 `scripts/acceptance` 真机场景，不用合成事件冒充。
