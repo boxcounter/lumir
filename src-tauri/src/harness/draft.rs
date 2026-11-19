@@ -132,10 +132,7 @@ pub fn harness_draft_get(vault_id: Option<String>) -> Result<Option<String>, Com
 /// 无 vault（`vault_id = None`）→ 静默 `Ok(())`（不落盘、不报错）；写失败 →
 /// `harness_draft_write_failed` 信封，前端降级为人话 warning 且不阻断输入（spec）。
 #[tauri::command(rename_all = "snake_case")]
-pub fn harness_draft_put(
-    vault_id: Option<String>,
-    draft_json: String,
-) -> Result<(), CommandError> {
+pub fn harness_draft_put(vault_id: Option<String>, draft_json: String) -> Result<(), CommandError> {
     put_for(&drafts_dir()?, vault_id.as_deref(), &draft_json)
 }
 

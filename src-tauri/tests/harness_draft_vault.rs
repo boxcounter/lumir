@@ -109,7 +109,11 @@ fn late_write_after_switch_lands_on_its_own_vault() {
     // vault-a 的在途写此刻才执行——旧实现会按当前 scope 写进 b.json。
     put(Some("vault-a"), A_LATE);
 
-    assert_eq!(read(&f.file("vault-b")), Some(B.to_string()), "新 vault 不被旧写污染");
+    assert_eq!(
+        read(&f.file("vault-b")),
+        Some(B.to_string()),
+        "新 vault 不被旧写污染"
+    );
     assert_eq!(
         read(&f.file("vault-a")),
         Some(A_LATE.to_string()),
@@ -157,7 +161,11 @@ fn clear_is_scoped_to_its_own_vault() {
     put(Some("vault-a"), "");
 
     assert!(!f.file("vault-a").exists(), "清除删掉目标文件");
-    assert_eq!(read(&f.file("vault-b")), Some(B.to_string()), "别的 vault 不动");
+    assert_eq!(
+        read(&f.file("vault-b")),
+        Some(B.to_string()),
+        "别的 vault 不动"
+    );
     assert_eq!(get(Some("vault-a")), None);
 }
 
