@@ -56,16 +56,13 @@ steps:
     do: clipboardImage
     synth: { width: 360, height: 200, seed: 17 }
 
-  - name: 右键 composer 唤出原生菜单（Paste 通道，M415 探针口径）
-    do: click
-    target: { role: AXTextArea, name: "draftmark", button: right }
-    expect:
-      - label: 原生菜单出现且 Paste 项在场
-        ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
-
-  - name: 点 Paste 插入图片卡片（贴图落 harness 侧 attachments/<vault 稳定 id>/）
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
+  # 粘贴通道（M864）：⌘V 走 cgevent 真键盘事件（M859 真机实测）；原生上下文菜单 Paste 的
+  # AXPress 会静默 no-op，不再使用——见 112 的同段注释。composer 焦点由上面的 clickInNode 建立。
+  - name: ⌘V 插入图片卡片（贴图落 harness 侧 attachments/<vault 稳定 id>/；cgevent 真键盘事件）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
 
   - name: 等图片卡片落定
     do: waitFor

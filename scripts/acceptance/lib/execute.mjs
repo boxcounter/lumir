@@ -2055,6 +2055,61 @@ async function fileInfo(file) {
 const DIR_SHA256_HINT =
   "是目录：sha256 类判据对目录没有可观测量，请改用 mtimeUnchangedSince / exists";
 
+/** 编辑器文本的**稳定读数**（M864）：KimiCU 的 AX 长值偶发在 UTF-8 字节边界截断
+ *  （尾字变 U+FFFD，下一拍又完整；148 真机 run2/run3/run5/run6 的证据：残读在头、在尾都出现过）。
+ *  `recordEditor` 的基线只读一次时，残读会让 `editor.unchangedSince` 的比较直接假红。
+ *
+ *  口径（与 M143 的重试纪律同族）：**连续两次读数逐字节相同且不含 U+FFFD** 才算稳定。
+ *  U+FFFD 是 AX 值截断的判别信号——run6 实测**连续两拍返回同一份残读**，只比「两次一致」
+ *  会把它当稳定值接受，因此残读既不更新 `prev`，也不能成为结论。
+ *
+ *  返回值（fail-closed）：
+ *  - 稳定：`{ found: true, text, stable: true, unclean }`；
+ *  - **耗尽**（上限内没有两拍一致的干净读数）：`{ stable: false, undecidable: true, ... }`
+ *    ——**不返回 `text`**。调用方 MUST 把这种情况当「不可判定」（InfraError / 整场 INVALID），
+ *    不得拿最后一次残读/抖动值去写基线或判 PASS/FAIL；`lastSeen` 只供证据诊断，不是断言输入。
+ *  - 编辑器节点不可读：`{ found: false, stable: false, unclean }`——调用方按「不可读」处理
+ *    （REVIEW.md「读不到当成空」条），不在这里退化成空串。
+ *
+ *  `readOnce` 返回 `{ found, text }`。默认上限 6 次 × 200ms。
+ */
+export async function readStableEditor(readOnce, { attempts = 6, gapMs = 200 } = {}) {
+  let prev = null;
+  let last = null;
+  let unclean = false;
+  const samples = [];
+  for (let i = 0; i < attempts; i += 1) {
+    if (i > 0) await sleep(gapMs);
+    const cur = await readOnce();
+    if (!cur.found) return { found: false, stable: false, unclean };
+    last = cur;
+    samples.push({
+      length: cur.text.length,
+      hasReplacement: cur.text.includes("\uFFFD"),
+      head: cur.text.slice(0, 16),
+      tail: cur.text.slice(-8),
+    });
+    if (cur.text.includes("\uFFFD")) {
+      unclean = true;
+      prev = null;
+      continue;
+    }
+    if (prev !== null && prev === cur.text) return { found: true, text: cur.text, stable: true, unclean };
+    prev = cur.text;
+  }
+  return {
+    found: Boolean(last?.found),
+    stable: false,
+    unclean,
+    undecidable: true,
+    attempts,
+    samples,
+    lastSeen: last
+      ? { length: last.text.length, hasReplacement: last.text.includes("\uFFFD"), head: last.text.slice(0, 40) }
+      : null,
+  };
+}
+
 /**
  * 跑一个场景。ctx: { cu, app, evidence, resultsRoot, restartApp() }
  * 返回 { status, fails, records }
@@ -2333,31 +2388,70 @@ export async function runScenario(ctx, scenario) {
     }
     if (expect.editor) {
       const spec = expect.editor;
-      const ax = state.ax ?? (await readAx(cu, ctx.pid));
-      state.ax = ax;
-      // 「编辑器节点不在 AX 快照里」≠「文档为空」。modal（键位面板/对话框）打开时 AX 里没有
-      // AXTextArea，若把它当空串，负向断言与逐字节比较会全部空转（实证：09 面板不穿透 "" === ""）。
-      // 因此只要拿不到编辑器节点，editor.* 一律记 FAIL——不许在不可观测的窗口里下结论。
-      if (!ax.textarea) {
-        return fail(
-          `${label}（编辑器节点不可读：AX 快照里没有 AXTextArea——modal 打开期间常见）`,
-          "该断言形态需要读文档内容才能成立；请在编辑器可读时记录基线/断言，或避开 modal 窗口",
-          ax,
-        );
+      // `*Since` 是逐字节比较，读数必须先稳定（M864）：KimiCU 的 AX 长值偶发在 UTF-8 边界
+      // 截断，单次残读会把「没变」判成「变了」（148 真机 run2/run3/run5 现场）。`has` / `not`
+      // 保持单次读——只在比较类判据上做重读，既有语义不变。
+      let ax;
+      let text;
+      let stabilityNote = "";
+      if (spec.unchangedSince !== undefined || spec.changedSince !== undefined) {
+        const reading = await readStableEditor(async () => {
+          const snap = await readAx(cu, ctx.pid);
+          ax = snap;
+          return { found: Boolean(snap.textarea), text: snap.editor ?? "" };
+        });
+        state.ax = ax;
+        if (!reading.found) {
+          return fail(
+            `${label}（编辑器节点不可读：AX 快照里没有 AXTextArea——modal 打开期间常见）`,
+            "该断言形态需要读文档内容才能成立；请在编辑器可读时记录基线/断言，或避开 modal 窗口",
+            ax,
+          );
+        }
+        if (reading.undecidable) {
+          // fail-closed：读数耗尽 = 不可判定，不能拿最后的残读/抖动值判 PASS/FAIL（r1 P1-1）。
+          throw new InfraError(
+            `${label}：编辑器 AX 读数在 ${reading.attempts} 次重读内没有稳定` +
+              `${reading.unclean ? "（含 U+FFFD 残读）" : "（连续不一致）"}——无法判定编辑器是否变化，` +
+              "本次运行标 INVALID（不按 PASS/FAIL 判；稍后重跑本场景）。" +
+              `读数千样：${JSON.stringify(reading.samples)}`,
+          );
+        }
+        text = reading.text;
+        if (reading.unclean) {
+          stabilityNote = "；读数过程中出现过 AX 残读（U+FFFD），已重读到稳定值";
+          evidence.record({
+            kind: "note",
+            text: `editor 断言：读数过程中出现过 AX 残读（U+FFFD），已重读到稳定值（${reading.text.length} 字符）`,
+          });
+        }
+      } else {
+        ax = state.ax ?? (await readAx(cu, ctx.pid));
+        state.ax = ax;
+        // 「编辑器节点不在 AX 快照里」≠「文档为空」。modal（键位面板/对话框）打开时 AX 里没有
+        // AXTextArea，若把它当空串，负向断言与逐字节比较会全部空转（实证：09 面板不穿透 "" === ""）。
+        // 因此只要拿不到编辑器节点，editor.* 一律记 FAIL——不许在不可观测的窗口里下结论。
+        if (!ax.textarea) {
+          return fail(
+            `${label}（编辑器节点不可读：AX 快照里没有 AXTextArea——modal 打开期间常见）`,
+            "该断言形态需要读文档内容才能成立；请在编辑器可读时记录基线/断言，或避开 modal 窗口",
+            ax,
+          );
+        }
+        text = ax.editor ?? "";
       }
-      const text = ax.editor ?? "";
       if (spec.unchangedSince !== undefined) {
         // 逐字节比较：比 not/match 强——负向匹配在「基线里本来就没有该串」时会假 PASS。
         const before = vars[spec.unchangedSince];
         if (before === undefined) return fail(`${label}（未记录编辑器基线 ${spec.unchangedSince}）`);
         return before === text
-          ? pass(label, `${text.length} 字节逐字节一致`)
-          : fail(`${label}（编辑器文本已变）`, `before=${JSON.stringify(before.slice(0, 120))} / now=${JSON.stringify(text.slice(0, 120))}`, state.ax);
+          ? pass(label, `${text.length} 字节逐字节一致${stabilityNote}`)
+          : fail(`${label}（编辑器文本已变${stabilityNote}）`, `before=${JSON.stringify(before.slice(0, 120))} / now=${JSON.stringify(text.slice(0, 120))}`, state.ax);
       }
       if (spec.changedSince !== undefined) {
         const before = vars[spec.changedSince];
         if (before === undefined) return fail(`${label}（未记录编辑器基线 ${spec.changedSince}）`);
-        return before !== text ? pass(label, `${before.length} → ${text.length} 字节`) : fail(`${label}（编辑器文本未变：${before.length} 字节）`, "", state.ax);
+        return before !== text ? pass(label, `${before.length} → ${text.length} 字节${stabilityNote}`) : fail(`${label}（编辑器文本未变：${before.length} 字节${stabilityNote}）`, "", state.ax);
       }
       if (spec.has !== undefined) {
         const m = matcher(spec.has);
@@ -4445,14 +4539,34 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "recordEditor": {
       // 记录编辑器文本，供 editor.unchangedSince 做逐字节比较（负向匹配不够强）。
+      // 读数走 readStableEditor（M864）：AX 长值偶发在 UTF-8 边界截断，单次残读会把基线记坏，
+      // 后续比较直接假红（148 真机 run3 的现场：基线里的「第」读成 U+FFFD）。
       // 编辑器节点不在 AX 快照里时**报错**，不许存成空串基线——否则后面对比 "" === "" 会假绿
       // （实证：⌘/ 面板打开期间 AX 里没有 AXTextArea）。
-      const ax = await readAx(cu, p);
-      if (!ax.textarea) {
+      const reading = await readStableEditor(async () => {
+        const ax = await readAx(cu, p);
+        return { found: Boolean(ax.textarea), text: ax.editor ?? "" };
+      });
+      if (!reading.found) {
         throw new Error("记录编辑器基线失败：AX 快照里没有 AXTextArea（modal 打开期间常见），基线不能记成空串");
       }
-      vars[step.as] = ax.editor ?? "";
-      return `${(ax.editor ?? "").length} 字节`;
+      if (reading.undecidable) {
+        // fail-closed（r1 P1-1）：读数耗尽 = 基线不可信，拒记；整场按 INVALID 报，不写入 vars。
+        throw new InfraError(
+          `记录编辑器基线失败：AX 读数在 ${reading.attempts} 次重读内没有稳定` +
+            `${reading.unclean ? "（含 U+FFFD 残读）" : "（连续不一致）"}——基线不可信，拒记；` +
+            "本场景标 INVALID（不按产品缺陷判；稍后重跑）。" +
+            `读数千样：${JSON.stringify(reading.samples)}`,
+        );
+      }
+      vars[step.as] = reading.text;
+      if (reading.unclean) {
+        evidence.record({
+          kind: "note",
+          text: `recordEditor：读数过程中出现过 AX 残读（U+FFFD），已重读到稳定基线（${reading.text.length} 字符）`,
+        });
+      }
+      return `${reading.text.length} 字节`;
     }
     case "vaultRm": {
       const files = step.files ?? [step.file];

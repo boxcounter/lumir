@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -1934,7 +1934,167 @@ test("do: settle（动作级）：无编辑器终态 + 快照 id 每次变 ⇒ P
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 快照 header 的解析 / 坐标口径 / 多窗口钉主窗（M761；2026-10-27 core 批 53/64/159/224/233 与 112）
+// 编辑器文本的稳定读数（M864）
+//
+// 现场：148 真机 run2/run3/run5 的 `editor.unchangedSince` 假红——KimiCU 的 AX 长值偶发在
+// UTF-8 字节边界截断（尾字/首字变 U+FFFD），下一拍又完整。`recordEditor` 与比较侧都只读一次，
+// 一次残读就把「没变」判成「变了」。修法 = 连续两次干净读数一致才下结论；**耗尽即不可判定**
+// （r1 P1-1：耗尽路径不得把最后一次残读/抖动值交给断言）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 只留一个 AXTextArea 的假快照：value 就是本拍的编辑器读数。 */
+function editorDump(value, snapshotId) {
+  return settleAx({
+    snapshotId,
+    nodeLine: `      - [9] AXTextArea = "${value}" @0,0 1100×700`,
+  });
+}
+
+test("readStableEditor（M864）：一次残读不算结论，连续两次一致才返回稳定值", async () => {
+  const seq = ["HNL-ALPHA 第��行", "HNL-ALPHA 第一行", "HNL-ALPHA 第一行"];
+  let i = 0;
+  const got = await readStableEditor(async () => ({ found: true, text: seq[Math.min(i++, seq.length - 1)] }), {
+    gapMs: 0,
+  });
+  assert.equal(got.text, "HNL-ALPHA 第一行", "残读之后应取到连续两次一致的完整值");
+  assert.equal(got.stable, true);
+  assert.equal(i, 3, `残读→完整→完整 应读 3 次，实际 ${i} 次`);
+});
+
+test("readStableEditor（M864）：连续两拍同一份残读不算稳定，须读到完整值", async () => {
+  // run6 真机现场：120ms 间隔的两次读取都返回同一份「第��行」——只比「两次一致」会把它
+  // 当稳定值接受。U+FFFD 是残读的判别信号，残读不更新 prev、也不能成为结论。
+  const clipped = "HNL-ALPHA 第��行";
+  const full = "HNL-ALPHA 第一行";
+  const seq = [clipped, clipped, full, full];
+  let i = 0;
+  const got = await readStableEditor(async () => ({ found: true, text: seq[Math.min(i++, seq.length - 1)] }), {
+    gapMs: 0,
+  });
+  assert.equal(got.text, full, "两拍残读之后必须继续重读到完整值");
+  assert.equal(got.stable, true);
+  assert.equal(got.unclean, true, "过程里出现过残读，证据要能看出来");
+  assert.equal(i, 4, `残读×2 → 完整×2 应读 4 次，实际 ${i} 次`);
+});
+
+test("readStableEditor mutant（M864）：attempts:1 遇残读 ⇒ 耗尽，不返回可断言的 text", async () => {
+  let i = 0;
+  const got = await readStableEditor(async () => {
+    i += 1;
+    return { found: true, text: "HNL-ALPHA 第��行" };
+  }, { attempts: 1, gapMs: 0 });
+  assert.equal(got.undecidable, true, "耗尽必须显式标不可判定");
+  assert.equal(got.stable, false);
+  assert.equal("text" in got, false, "耗尽不得返回 text——调用方只能走不可判定分支");
+  assert.equal(got.lastSeen?.hasReplacement, true, "诊断信息要能看出残读");
+  assert.equal(i, 1);
+});
+
+test("readStableEditor mutant（M864）：两拍同一份残读也不能当稳定值，耗尽即不可判定", async () => {
+  let i = 0;
+  const got = await readStableEditor(async () => {
+    i += 1;
+    return { found: true, text: "HNL-ALPHA 第��行" };
+  }, { attempts: 2, gapMs: 0 });
+  assert.equal(got.undecidable, true, "两拍一致但含 U+FFFD：仍不可判定（run6 现场）");
+  assert.equal(got.stable, false);
+  assert.equal("text" in got, false);
+  assert.equal(got.unclean, true);
+  assert.equal(i, 2);
+});
+
+test("recordEditor（M864）：读数耗尽 ⇒ InfraError，不写基线、不产生 PASS", async () => {
+  const root = tmpRoot("editor-stable-exhausted-baseline");
+  useTmpEnv(root);
+  const clipped = editorDump("HNL-ALPHA 第��行。", "X");
+  const cu = fakeStateCu(() => clipped, { maxReads: 20 });
+  const ctx = stubCtx(root, { cu });
+  await assert.rejects(
+    runScenario(ctx, {
+      id: "exhausted-baseline",
+      item: 0,
+      title: "耗尽",
+      file: path.join(root, "exhausted-baseline.md"),
+      steps: [{ name: "记基线", do: "recordEditor", as: "base" }],
+    }),
+    (e) => e instanceof InfraError,
+    "读数耗尽必须按环境项（INVALID）报，不得写可信基线",
+  );
+  assert.equal(
+    ctx.evidence.records.filter((r) => r.kind === "assert" && r.ok).length,
+    0,
+    `不得产生 PASS 记录：${JSON.stringify(ctx.evidence.records)}`,
+  );
+  assert.ok(
+    ctx.evidence.records.some((r) => r.label === "[运行环境无效]"),
+    `应落 INVALID 记录：${JSON.stringify(ctx.evidence.records)}`,
+  );
+});
+
+test("editor.unchangedSince（M864）：比较侧读数耗尽 ⇒ InfraError，不判 PASS/FAIL", async () => {
+  const root = tmpRoot("editor-stable-exhausted-compare");
+  useTmpEnv(root);
+  const full = "HNL-ALPHA 第一行。";
+  const clipped = "HNL-ALPHA 第��行。";
+  const seq = [
+    editorDump(full, "A-1"),
+    editorDump(full, "A-2"), // 基线两拍一致 ⇒ 稳定基线
+    ...Array.from({ length: 8 }, (_, i) => editorDump(clipped, `C-${i}`)), // 比较侧持续残读
+  ];
+  const cu = fakeStateCu((i) => seq[Math.min(i, seq.length - 1)]);
+  const ctx = stubCtx(root, { cu });
+  await assert.rejects(
+    runScenario(ctx, {
+      id: "exhausted-compare",
+      item: 0,
+      title: "耗尽",
+      file: path.join(root, "exhausted-compare.md"),
+      steps: [
+        { name: "记基线", do: "recordEditor", as: "base" },
+        { name: "守卫", expect: [{ label: "编辑器未变", editor: { unchangedSince: "base" } }] },
+      ],
+    }),
+    (e) => e instanceof InfraError,
+    "比较侧读数耗尽必须不可判定，不得落 PASS/FAIL",
+  );
+  assert.equal(
+    ctx.evidence.records.filter((r) => r.kind === "assert" && r.label === "编辑器未变").length,
+    0,
+    `不得给该断言落 PASS/FAIL：${JSON.stringify(ctx.evidence.records)}`,
+  );
+});
+
+test("recordEditor + editor.unchangedSince（M864）：基线首读残读、随后完整 ⇒ 守卫 PASS（重读接线）", async () => {
+  const root = tmpRoot("editor-stable-read");
+  useTmpEnv(root);
+  const full = "HNL-ALPHA 第一行。HNL-GAMMA 第三行，不动。";
+  const clipped = "HNL-ALPHA 第��行。HNL-GAMMA 第三行，不动。";
+  const seq = [
+    editorDump(clipped, "B-1"), // 基线第 1 拍：残读
+    editorDump(full, "B-2"), // 基线第 2 拍：完整
+    editorDump(full, "B-3"), // 基线两拍一致 ⇒ 稳定基线
+    editorDump(full, "G-1"), // 守卫第 1 拍
+    editorDump(full, "G-2"), // 守卫两拍一致 ⇒ PASS
+  ];
+  const cu = fakeStateCu((i) => seq[Math.min(i, seq.length - 1)]);
+  const { status, records } = await drive(
+    root,
+    {
+      steps: [
+        { name: "记基线", do: "recordEditor", as: "base" },
+        { name: "守卫", expect: [{ label: "编辑器未变", editor: { unchangedSince: "base" } }] },
+      ],
+    },
+    { cu },
+  );
+  assert.equal(status, "PASS", `残读基线应被重读纠正，实际：${JSON.stringify(records)}`);
+  assert.ok(
+    records.some((r) => r.ok && r.label === "编辑器未变" && /字节逐字节一致/.test(r.detail ?? "")),
+    `守卫应以「逐字节一致」通过，实际：${JSON.stringify(records)}`,
+  );
+});
+
+
 //
 // 上游 KimiCU 0.6.8（2026-10-27 08:54 装、16:44 服务重启）改了两处 header：
 //   ① mode=full 的窗口矩形从 `window_bounds:` 改名为 `captured_bounds:`（含义不变，仍是屏幕点）；

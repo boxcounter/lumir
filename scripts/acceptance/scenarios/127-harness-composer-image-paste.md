@@ -47,18 +47,14 @@ steps:
     do: clipboardText
     text: "txtprobe-plain"
 
-  - name: 右键 composer 唤出 WebKit 原生菜单（Paste 通道，M415 探针口径；
-      composer 此刻为空，可访问名 = D328 占位「问点什么…」）
-    do: click
-    target: { role: AXTextArea, name: "问点什么", button: right }
-    expect:
-      - label: 原生菜单出现且 Paste 项在场
-        ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
-
-  - name: 点 Paste 完成真实文本粘贴（非图片路径逐字节不变：净化成纯文本段落）
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
-
+  # 粘贴通道（M864）：⌘V 走 cgevent 真键盘事件（M859 真机实测）；原生上下文菜单 Paste 的
+  # AXPress 会静默 no-op（菜单不收起、paste 不触发），不再使用——见 112 的同段注释。
+  # composer 的 DOM 焦点由上面的 clickInNode 真实 mousedown 建立（cgevent 的前台由套件兜底）。
+  - name: ⌘V 完成真实文本粘贴（非图片路径逐字节不变：净化成纯文本段落；cgevent 真键盘事件）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
   - name: 等文本落地并断言回归面
     do: waitFor
     waitFor:
@@ -76,16 +72,12 @@ steps:
     do: clipboardImage
     synth: { width: 480, height: 320, seed: 7 }
 
-  - name: 右键 composer 唤出原生菜单（图优先的输入面；composer 值 = 已贴入的文本）
-    do: click
-    target: { role: AXTextArea, name: "txtprobe-plain", button: right }
-    expect:
-      - label: 原生菜单出现且 Paste 项在场
-        ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
-
-  - name: 点 Paste 完成真实图片粘贴（① 图优先：拦截落 harness 侧并插图片卡片）
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
+  # 第二次粘贴（图片）：同一 cgevent ⌘V 通道；composer 此刻已含文本，paste 在模型 caret 处插卡。
+  - name: ⌘V 完成真实图片粘贴（① 图优先：拦截落 harness 侧并插图片卡片；cgevent 真键盘事件）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
 
   - name: 等卡片出现（落盘 + 插卡 + 缩略图 load 后元信息行带宽高的状态驱动等待）
     do: waitFor
@@ -220,7 +212,7 @@ steps:
 design §9 验收面的 ①②③④⑥ 四条（⑤ 能力闸在场景 128，⑦ 两 vault 分置在场景 129——
 各自的配置前提不同，拆场景是刻意的）：
 
-1. **① 粘贴落 harness 侧 + 卡片**：合成 png 经 WebKit 原生菜单 Paste 进 composer →
+1. **① 粘贴落 harness 侧 + 卡片**：合成 png 经 ⌘V（cgevent 真键盘事件）贴进 composer →
    图片卡片出现在 composer（元信息行**从文件名开始**、无 `image ·` 前缀——Alex 2026-10-10
    裁决），字节落 `<隔离配置>/harness/attachments/acc-img/`（acc-img 是本场景预置的注册表
    id——附件目录名 = vault 稳定 id，M433 分层裁决），内容寻址命名（`bytes.nameHash` 钉
@@ -237,8 +229,11 @@ design §9 验收面的 ①②③④⑥ 四条（⑤ 能力闸在场景 128，�
 
 ## 判据为什么这样写
 
-- **Paste 通道**：同 112/116（M415 探针的 WebKit 原生上下文菜单通道）——合成剪贴板造不出
-  富 paste 事件，原生菜单 Paste 是与真实用户同一条 WebKit 链路。菜单项按键名正则定位不锁索引。
+- **Paste 通道**：`do: key { key: "cmd+v", channel: cgevent }`（M864）——真键盘事件投递真实
+  WebKit paste 事件，M859 真机实测（README「原生剪贴板命令」条的通道分档）。旧的原生上下文菜单
+  Paste 通道已弃用：AXPress 到 AXMenuItem 会静默 no-op（菜单不收起、paste 不触发，且间歇复现；
+  finding `20261120-worker-html-only-paste-improve-cgevent-v-paste-axpress.md`）。贴图判据落在
+  **attachments 落盘 + 卡片元信息行**上，不只判「paste 步没报错」。
 - **注册表 id 写死 `acc-img`**：`reconcile_vault` 按规范化路径命中预置注册项即复用它的 id，
   附件目录名因此是场景可预期的确定值（产品自生成的 `vault-<pid>-<n>` 无从预知）。
 - **③ 的附件前置用一条行内正则**：JSONL 一行一事件，`^…$` 行锚 + 附件与问题按序出现，避免被文件里

@@ -33,20 +33,21 @@ steps:
       - label: 笔记装载进编辑器
         editor: { has: "S3 文本粘贴" }
 
-  - name: 编辑器建立焦点
+  - name: 编辑器建立焦点（paste 前置：真实点击同时把窗口做成 key，cgevent 真键盘事件需要）
     do: clickEditor
+    real: true
 
   - name: 剪贴板置纯文本（无 image/* 数据）
     do: clipboardText
     text: "文本粘贴回归标记"
 
-  - name: 右键 → 原生菜单 Paste
-    do: click
-    target: { role: AXTextArea, button: right }
-
-  - name: 点 Paste
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
+  # 粘贴通道（M864）：⌘V 走 cgevent 真键盘事件（M859 真机实测）；原生上下文菜单 Paste 的
+  # AXPress 会静默 no-op，不再使用——见 112 的同段注释。
+  - name: ⌘V 投递 paste（cgevent 真键盘事件；剪贴板无图片项）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
 
   - name: 等文本落地
     do: waitFor
@@ -75,8 +76,12 @@ steps:
 的默认文本粘贴，逐字节与能力存在之前一致（spec「非图片剪贴板降级」）。这条同时挡住「拦截器
 误吞文本粘贴」这类回归——只判「图片能贴上」是判不出这一半的。
 
-## 为什么用右键通道而不是 ⌘V
+## 为什么用 ⌘V（cgevent）而不是原生菜单
 
-与 S1/S2 同一条理由（M345：真机 ⌘V 注入不落地；M415：原生上下文菜单 Paste 是真实通道）。
-文本粘贴在这个通道上是 pasteboard 不含 file 项的那一档（M415 探针第 1 号读数：
-`types=["text/plain"]`，无 file item），正是要验的输入面。
+M415/M416 时代用的「右键唤出原生上下文菜单 → 点 Paste」通道已弃用：M859 真机实测 AXPress
+到 AXMenuItem 会**静默 no-op**（菜单不收起、paste 不触发，且间歇复现；finding
+`20261120-worker-html-only-paste-improve-cgevent-v-paste-axpress.md`）。现在的通道是
+`do: key { key: "cmd+v", channel: cgevent }`——真键盘事件，M859 在编辑器上实测投递了真实
+paste 事件（README「原生剪贴板命令」条的通道分档）。文本粘贴在这个通道上是 pasteboard 不含
+file 项的那一档（M415 探针第 1 号读数：`types=["text/plain"]`，无 file item），正是要验的
+输入面；判据仍落在**文本落地**与**目录零附件**两侧。
