@@ -673,7 +673,7 @@ function deleteWordBackward(view: EditorView): void {
 }
 
 // ---------------------------------------------------------------------------
-// M836：原生跨行删除的回读闸门（合同 docs/specs/lists.md L7）
+// M836 / M854：原生删除与键入替换的回读闸门（合同 docs/specs/lists.md L7）
 // ---------------------------------------------------------------------------
 //
 // 现场（M835 双引擎实测）：裸 Delete / Backspace / ⌘⌫ 在行边界上删除换行时，浏览器会
@@ -682,19 +682,38 @@ function deleteWordBackward(view: EditorView): void {
 // （`**`、`#`、`>`）直接消失；CM 的 tile 映射随 widget 节点一起失效，DOMReader 按
 // 文本回读，于是显示字形（`–`、`x`、`→`）被写进源文档并随 ⌘S 落盘。
 //
-// 判据刻意**不检测 widget、不读 DOM 文本形状**：只读 EditorState——空光标恰在行边界、
-// 被吸收的一侧确有行。命中即 preventDefault + dispatch 显式事务。覆盖面因此与「哪一类
-// replace 装饰」无关（列表、链接、公式、隐藏标记与将来的 widget 同在类内）；纯文本行的
-// 事务结果与原生逐字节相同（删一个换行），不需要按渲染形状分支。
+// M854：M842 在双引擎上推翻了「选区删除不会被原生路径改写」这个前提假设（M836 探针
+// 未覆盖 replace 区间**内部**的端点）。选区任一端落在渲染隐藏区里时，Backspace /
+// Delete 同样落到原生路径，DOMReader 按渲染结果回写源码：表格结构被摧毁、有序列表
+// marker 被吞，⌘S 把损坏结果落盘。M854 探针（chromium + webkit，程序化选区）坐实：
+// state 里的选区与目标源码 range 逐值一致、文档未被触碰；原生删除后两引擎的损坏形状
+// 还各不相同（列表上 chromium 多出换行、WebKit 丢一个空格），而同一 range 的显式事务
+// 两引擎都逐字节等于「删掉该源码 range」。失真因此来自 DOM 回写，不在选区测量。
+//
+// 判据刻意**不检测 widget、不读 DOM 文本形状**：只读 EditorState。三类命中都是
+// preventDefault + dispatch 显式事务：
+//   · 非空选区删除（M854）：删掉的精确等于 state 里选区的源码字节，方向 / 删除粒度都不
+//     改变合同（原生对非空选区的语义本来就是「删掉选区」）；
+//   · 非空选区键入替换（M854 / M855 finding）：`insertText` 覆盖非空选区时按选区的源码
+//     range 做 `replaceSelection(text)`——WebKit 的原生 edit target range 以可见 DOM 相邻
+//     文本为单位，会把选区前的 cell 对齐空白一并吃掉（M855 探针）；IME 组合
+//     （`insertCompositionText`）与粘贴（`insertFromPaste`）不在此列，语义不变；
+//   · 空光标恰在行边界（M836）：被吸收的一侧确有行时删一个换行 / 按词删除。
+// 覆盖面因此与「哪一类 replace 装饰」无关（表格管道、列表 marker、链接、公式、隐藏
+// 标记与将来的 widget 同在类内）；纯文本上的事务结果与原生逐字节相同，不需要按渲染
+// 形状分支。
 //
 // 未被接管的按键先到 keymap（本文件的 markupKeymap / 上游 markdownKeymap），所以闸门
-// 的实际命中面是「真的会落到浏览器原生删除」的入口；选区删除与行内删除实测不会被原生
-// 路径改写（M836 探针），不在此接管。forward 行删除变体（deleteSoftLineForward /
-// deleteHardLineForward）在行尾两引擎实测 no-op 且默认键位不可达，同样不收。
+// 的实际命中面是「真的会落到浏览器原生删除」的入口。空光标的行内删除不在本闸门内
+// （WebKit 在表格 cell 端点的单字符键入 / 删除另见 finding
+// 20261119-worker-markdown-stability-bug-webkit-cell，合同不同、入口是键入）。
+// forward 行删除变体（deleteSoftLineForward / deleteHardLineForward）在空光标时两引擎
+// 实测 no-op 且默认键位不可达，不收；带选区时它们与其它删除同属一个合同，收。
 //
-// 词删除变体（⌥⌫ / ⌥⌦）在默认键位表里已绑到应用命令、不落原生；闸门仍收它们，命中时
-// 调用同一应用命令，保证「键位被解绑后仍有确定落点」且两引擎结果一致——两引擎原生的
-// 行首词删除语义本就不同（Chromium 只删换行，WebKit 删前一个词 + 换行）。
+// 词删除变体（⌥⌫ / ⌥⌦）在默认键位表里已绑到应用命令、不落原生；闸门仍收它们：空光标
+// 命中时调用同一应用命令（杀词 + kill 槽），带选区时与其它删除同走「按选区源码删除」。
+// 这样「键位被解绑后仍有确定落点」且两引擎结果一致——两引擎原生的行首词删除语义本就
+// 不同（Chromium 只删换行，WebKit 删前一个词 + 换行）。
 const LINE_MERGE_FORWARD_INPUTS = new Set(["deleteContentForward", "deleteWordForward"]);
 const LINE_MERGE_BACKWARD_INPUTS = new Set([
   "deleteContentBackward",
@@ -703,13 +722,66 @@ const LINE_MERGE_BACKWARD_INPUTS = new Set([
   "deleteHardLineBackward",
 ]);
 
-/** beforeinput 闸门本体：命中返回 true（事件已消费），否则 false 让原生删除照常发生。 */
-function absorbLineMergeDelete(event: InputEvent, view: EditorView): boolean {
+/** 带选区时能落到原生路径的全部删除类 inputType（含行删除的 forward 变体）。 */
+const SELECTION_DELETE_INPUTS = new Set([
+  ...LINE_MERGE_FORWARD_INPUTS,
+  ...LINE_MERGE_BACKWARD_INPUTS,
+  "deleteSoftLineForward",
+  "deleteHardLineForward",
+]);
+
+/** 非空选区的删除落点：删掉 state 里每个非空区间的**源码字节**，一个事务 = 一条 history
+ *  步。单区间走既有 deleteRange（可见侧 assoc + 揭示滚动）；多区间按 state.selection 逐
+ *  区间生成 changes，空区间原地保留——删除粒度只认 state，不读 DOM 形状（多光标当前未
+ *  启用 `EditorState.allowMultipleSelections`，这里仍按 state 的一般形态处理）。 */
+function deleteSelectedRanges(view: EditorView): void {
   const state = view.state;
-  if (state.readOnly || view.composing || event.isComposing) return false;
-  if (state.selection.ranges.length !== 1) return false;
-  const main = state.selection.main;
-  if (!main.empty) return false;
+  const ranges = state.selection.ranges;
+  if (ranges.length === 1) {
+    deleteRange(view, ranges[0].from, ranges[0].to, "delete.selection");
+    return;
+  }
+  const spec = state.changeByRange((range) =>
+    range.empty
+      ? { range }
+      : { changes: { from: range.from, to: range.to }, range: EditorSelection.cursor(range.from, -1) },
+  );
+  view.dispatch(state.update(spec, { scrollIntoView: true, userEvent: "delete.selection" }));
+}
+
+/** 非空选区的键入替换落点：按 `state.selection` 的源码 range 做 `replaceSelection`，一个事务
+ *  = 一条 history 步、光标落在插入文本之后。`insertText` 的文本来自 beforeinput 的 `data`；
+ *  空串 / 缺失数据交回原生（不猜意图）。 */
+function replaceSelectedRanges(view: EditorView, text: string): void {
+  view.dispatch(view.state.replaceSelection(text), { scrollIntoView: true, userEvent: "input.type" });
+}
+
+/** beforeinput 闸门本体：命中返回 true（事件已消费），否则 false 让原生编辑照常发生。 */
+function absorbNativeEdit(event: InputEvent, view: EditorView): boolean {
+  const state = view.state;
+  // 组合期整段让给 CM：`view.composing` 只在**已有组合改动**后为真（CM 的实现是
+  // `inputState.composing > 0`），而 `compositionstart` 只把计数置 0——「已有非空选区 →
+  // compositionstart → 首个组合改动之前」这段窗口里它仍是 false。`view.compositionStarted`
+  // （`composing >= 0`）覆盖这段窗口，与 M855 的 cell 闸门同一口径；Safari 的组合提交
+  // 可能以 `insertText` 到达（CM 在 beforeinput 里有专门的死键收尾分支），组合期抢走
+  // 事件会绕过 CM 的组合处理。
+  if (state.readOnly || view.compositionStarted || event.isComposing) return false;
+  const ranges = state.selection.ranges;
+  if (ranges.some((range) => !range.empty)) {
+    if (event.inputType === "insertText") {
+      const text = event.data;
+      if (text === null || text === "") return false;
+      event.preventDefault();
+      replaceSelectedRanges(view, text);
+      return true;
+    }
+    if (!SELECTION_DELETE_INPUTS.has(event.inputType)) return false;
+    event.preventDefault();
+    deleteSelectedRanges(view);
+    return true;
+  }
+  if (ranges.length !== 1) return false;
+  const main = ranges[0];
   const line = state.doc.lineAt(main.head);
   if (LINE_MERGE_FORWARD_INPUTS.has(event.inputType)) {
     if (main.head !== line.to || main.head >= state.doc.length) return false;
@@ -726,9 +798,9 @@ function absorbLineMergeDelete(event: InputEvent, view: EditorView): boolean {
   return true;
 }
 
-/** 只装进 md 模式：code 模式没有 replace 装饰，原生跨行删除无回读风险。 */
-const lineMergeDeleteGate = EditorView.domEventHandlers({
-  beforeinput: (event, view) => absorbLineMergeDelete(event as InputEvent, view),
+/** 只装进 md 模式：code 模式没有 replace 装饰，原生删除 / 键入无回读风险。 */
+const nativeEditGate = EditorView.domEventHandlers({
+  beforeinput: (event, view) => absorbNativeEdit(event as InputEvent, view),
 });
 
 /** kill 一段：并入 kill 槽后删除。相接判定用「上次 kill 结束后的光标位置 = 本次 kill
@@ -1986,8 +2058,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           endMarker,
           mdGutterCompartment.of(mdGutterExtensions()),
           markupKeymap,
-          // M836：原生跨行删除的回读闸门（见函数组注释；只 md 有 replace 装饰）。
-          lineMergeDeleteGate,
+          // M836 / M854：原生删除与键入替换的回读闸门（见函数组注释；只 md 有 replace 装饰）。
+          nativeEditGate,
         ]
       : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), markupKeymap];
   }
