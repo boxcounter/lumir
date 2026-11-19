@@ -39,12 +39,6 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
 
-  # M864 真机实证：KimiCU 的 AX 长值读数偶发在 UTF-8 字节边界截断（尾字/首字变 U+FFFD，
-  # 下一拍又完整）。`recordEditor` 基线只读一次，残读会让后续两次 `unchangedSince` 双双假红
-  # ——先 settle 到连续两拍一致再记基线；判据本身不动。
-  - name: 等界面落定再记编辑器基线（避开 AX 长值残读）
-    do: settle
-
   - name: 记编辑器文档基线（素材注入 MUST NOT 漏进文档——注入落错面的通用防线，场景 140 同口径）
     do: recordEditor
     as: doc-before-composer
@@ -58,13 +52,6 @@ steps:
     expect:
       - label: 素材落在 composer（会话名来源）
         ax: { has: "qrefmark" }
-
-  # M864：KimiCU 的 AX 长值读数偶尔在 UTF-8 字节边界截断（首跑现场：尾字「。」读成
-  # U+FFFD×3，下一拍 dump 又完整）——先 settle 到连续两拍一致再判「编辑器逐字节未变」，
-  # 判据不变，避免一次残读造成假红。
-  - name: 等界面落定再判「素材没有漏进编辑器文档」
-    do: settle
-    expect:
       - label: 素材没有漏进编辑器文档（焦点确在 composer，编辑器逐字节未变）
         editor: { unchangedSince: doc-before-composer }
 

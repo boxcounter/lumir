@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -1934,7 +1934,72 @@ test("do: settle（动作级）：无编辑器终态 + 快照 id 每次变 ⇒ P
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 快照 header 的解析 / 坐标口径 / 多窗口钉主窗（M761；2026-10-27 core 批 53/64/159/224/233 与 112）
+// 编辑器文本的稳定读数（M864）
+//
+// 现场：148 真机 run2/run3/run5 的 `editor.unchangedSince` 假红——KimiCU 的 AX 长值偶发在
+// UTF-8 字节边界截断（尾字/首字变 U+FFFD），下一拍又完整。`recordEditor` 与比较侧都只读一次，
+// 一次残读就把「没变」判成「变了」。修法 = 连续两次读数一致才下结论（重读，不是放宽断言）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("readStableEditor（M864）：一次残读不算结论，连续两次一致才返回稳定值", async () => {
+  const seq = ["HNL-ALPHA 第��行", "HNL-ALPHA 第一行", "HNL-ALPHA 第一行"];
+  let i = 0;
+  const got = await readStableEditor(async () => ({ found: true, text: seq[Math.min(i++, seq.length - 1)] }), {
+    gapMs: 0,
+  });
+  assert.equal(got.text, "HNL-ALPHA 第一行", "残读之后应取到连续两次一致的完整值");
+  assert.equal(got.stable, true);
+  assert.equal(i, 3, `残读→完整→完整 应读 3 次，实际 ${i} 次`);
+});
+
+test("readStableEditor mutant（M864）：关掉重读（attempts:1）时同一组残读会直接成为结论", async () => {
+  const seq = ["HNL-ALPHA 第��行", "HNL-ALPHA 第一行"];
+  let i = 0;
+  const got = await readStableEditor(async () => ({ found: true, text: seq[Math.min(i++, 1)] }), {
+    attempts: 1,
+    gapMs: 0,
+  });
+  assert.equal(got.text, "HNL-ALPHA 第��行", "关掉重读就必须复现残读结论——证明重读是承重的，不是装饰");
+  assert.equal(got.stable, false, "单次读数不能自称稳定");
+});
+
+test("recordEditor + editor.unchangedSince（M864）：基线首读残读、随后完整 ⇒ 守卫 PASS（重读接线）", async () => {
+  const root = tmpRoot("editor-stable-read");
+  useTmpEnv(root);
+  const full = "HNL-ALPHA 第一行。HNL-GAMMA 第三行，不动。";
+  const clipped = "HNL-ALPHA 第��行。HNL-GAMMA 第三行，不动。";
+  const editorDump = (value, snapshotId) =>
+    settleAx({
+      snapshotId,
+      // 只留一个 AXTextArea，value 就是本拍的编辑器读数。
+      nodeLine: `      - [9] AXTextArea = "${value}" @0,0 1100×700`,
+    });
+  const seq = [
+    editorDump(clipped, "B-1"), // 基线第 1 拍：残读
+    editorDump(full, "B-2"), // 基线第 2 拍：完整
+    editorDump(full, "B-3"), // 基线两拍一致 ⇒ 稳定基线
+    editorDump(full, "G-1"), // 守卫第 1 拍
+    editorDump(full, "G-2"), // 守卫两拍一致 ⇒ PASS
+  ];
+  const cu = fakeStateCu((i) => seq[Math.min(i, seq.length - 1)]);
+  const { status, records } = await drive(
+    root,
+    {
+      steps: [
+        { name: "记基线", do: "recordEditor", as: "base" },
+        { name: "守卫", expect: [{ label: "编辑器未变", editor: { unchangedSince: "base" } }] },
+      ],
+    },
+    { cu },
+  );
+  assert.equal(status, "PASS", `残读基线应被重读纠正，实际：${JSON.stringify(records)}`);
+  assert.ok(
+    records.some((r) => r.ok && r.label === "编辑器未变" && /字节逐字节一致/.test(r.detail ?? "")),
+    `守卫应以「逐字节一致」通过，实际：${JSON.stringify(records)}`,
+  );
+});
+
+
 //
 // 上游 KimiCU 0.6.8（2026-10-27 08:54 装、16:44 服务重启）改了两处 header：
 //   ① mode=full 的窗口矩形从 `window_bounds:` 改名为 `captured_bounds:`（含义不变，仍是屏幕点）；
