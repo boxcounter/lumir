@@ -17,6 +17,6 @@
 - [x] 3.2 类型门禁：`pnpm exec tsc -p tests/unit/tsconfig.json` 与 `pnpm exec tsc --noEmit` 通过。
 - [x] 3.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（`Totals: 35 passed, 0 failed (35 items)`）；`bash scripts/docs-check.sh` PASS。
 - [x] 3.4 完整门禁 `scripts/gate.sh quick` 通过，`GATE RESULT` 原文行记入 completion report。
-  - `CARGO_TARGET_DIR=/tmp/lumir-m850-target scripts/gate.sh quick` → `GATE RESULT: 12/12 PASS（SKIP 1）`，退出码 0；SKIP 1 = `tsc-visual（tests/visual 依赖未装）`。cargo 锁按 tower 排期在 M848 之后以 `mkdir` 获取，完成后释放并清理临时 target。
-  - rebase 到 master `da9c6cf3`（含 M848 归档）后复跑同值；日志落主仓 `.local/missions/M850/quick-rebased.log`（首跑 `quick.log` 基于旧基座，docs-check 因 M848 已归档 change 被当活跃项判红，rebase 后消失）。
+  - 最终口径（`tests/visual` 既有依赖按 `pnpm --dir tests/visual install --ignore-workspace --frozen-lockfile` 安装，未改依赖 / 锁文件）：`CARGO_TARGET_DIR=/tmp/lumir-m850-target LUMIR_VISUAL_PORT=4387 scripts/gate.sh quick` → `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（`tsc-visual` 已含）。原始日志 `.local/missions/M850/quick-final.log`。
+  - 早先未装 `tests/visual` 依赖时同命令为 `12/12 PASS（SKIP 1）`（`quick-rebased.log`）；cargo 锁按 `mkdir` 协议排队获取，跑完释放并清理临时 target。
 - [x] 3.5 真机验收：无——纯归约层，无 UI 形态 / 交互手感变化；行渲染行为不变。
