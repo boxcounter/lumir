@@ -22,6 +22,14 @@
 
 未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与 tip 均无异常、证据无缺口——机器 + 独立评审放行（本节要件）。
 
+## 节点 2 记录（归档后）
+
+- **归档提交**：`0586a108894b21b02014e1692f0c5669967ce89d`（归档目录 + 并入后的 living spec 同一提交；`docs/backlog.md` 的归档跟踪条目同批核销。本条记录本身是其后一笔文档提交）。
+- **`openspec archive` 实际输出**（2026-11-19，`node scripts/openspec-archive.mjs fix-native-widget-deletion-nov19`，包装器内调 `npx --yes @fission-ai/openspec@1.12.0 archive fix-native-widget-deletion-nov19 --yes`，退出码 0）：`Task status: ✓ Complete` / `Specs to update:` `editor-live-preview: update` / `+ 1 added` / `Totals: + 1, ~ 0, - 0, → 0` / `Specs updated successfully.` / `Change 'fix-native-widget-deletion-nov19' archived as '2026-11-19-fix-native-widget-deletion-nov19'.`；另有非阻塞 warning `Why section should not exceed 1000 characters`。
+- **归档后修链**：`归档后修链 1 处（扫过 3 篇 Markdown / 1 条相对链接）`——`proposal.md:15` 的 `../../../docs/process/openspec-workflow.md` → `../../../../docs/process/openspec-workflow.md`。包装器末置门禁 `openspec-links: PASS（校验 625 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived fix-native-widget-deletion-nov19`，2026-11-19T12:05Z，退出码 0）：`PASS（openspec/changes/archive/2026-11-19-fix-native-widget-deletion-nov19：0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）`——delta 只有 1 条 ADDED，已确认落进 living（`grep -n "跨 replace 装饰的跨行删除" openspec/specs/editor-live-preview/spec.md` → 第 1827 行）。
+- **归档后复跑读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 34 passed, 0 failed (34 items)`（退出码 0；归档前 35 items，减少的一项即本 change）；`node scripts/openspec-archive-check.mjs` 门禁模式 → PASS（`扫过 7 份 delta，6 条 MODIFIED，对比 79 段，无静默丢段；归档队列 0 项已完成 change 均有唯一条目`）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0）。
+
 ## Why
 
 ### 现场
