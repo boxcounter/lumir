@@ -2137,13 +2137,6 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // 与原生 caret 的形态略有差别；`src/table-fullscreen.ts` 的快照拒绝表里那两条选择器
         // 从「纯防御」变成「真拦得住」。
         drawSelection(),
-        // 键位分发在 window 层（keys.ts），但 CM 的 DOM 观察器只为「有插件注册 keydown」的
-        // 事件挂监听，并在把事件交给手柄前 forceFlush 掉尚未读入的 DOM 变更（快速输入 /
-        // 输入法 / 外部注入）。这条空手柄不处理任何键，只为让 keydown 留在观察列表里：
-        // 观察列表此前由本文件自己的 ⌘A 手柄与 livePreview 的 widget 手柄维持，两者先后迁入
-        // 统一键位表（M131 / M132）后，两模式都不再有别的 keydown 手柄——空手柄是唯一让
-        // 「命令读到的是 flush 过的 state」不依赖别的模块恰好注册 keydown 的保证。
-        EditorView.domEventHandlers({ keydown: () => false }),
         EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
         // 文件内搜索（M139）：官方 search 能力 + 本项目的搜索 panel（src/search.ts）。
         // 装在**模式无关**的基础层：md 与 code 两种模式都能查（code 只读，panel 里也没有替换

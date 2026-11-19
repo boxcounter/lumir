@@ -102,6 +102,28 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
 **边界归 C1**：列表行上的光标矩形高度 = 该行正文文本的行盒，这支条款住
 `docs/specs/editor-caret.md` 的 C1（本条只约束导航单位，不另立几何口径）。
 
+## L6 — 列表项内容起点输入的跨层一致性（M830）
+
+**适用范围**：未被用户单字符键位覆盖的默认文本输入路径；空光标位于真列表 / 嵌套项
+`listLineRender.hidden.to`，或裸 marker 行编辑态的内容起点。普通 `insertText` 与 IME 组合提交
+走同一合同，不按列表类型、项序号、字符或 DOM/AX 形状分叉。
+
+- **文档与选区**：提交文本 SHALL 只插入当前空光标或替换当前选区；marker 源码、尾随空白与
+  其他项文本 MUST 逐字节不变。空光标输入后 `selection.main.head` MUST 位于提交文本末尾。
+  例如第 7 个空有序项 `7. ` 输入 `a` 后，源码 MUST 是 `7. a`，不是 `7.a`，也不是吞掉 `a`。
+- **marker 与几何**：渲染稳定后，每个可见列表项 MUST 恰有一个 marker widget；显示 glyph /
+  复合序号、计算样式与正文起点 x MUST 保持输入前同合同。普通输入与组合提交 MUST NOT 造成
+  marker 丢失、重复、样式退化或正文悬挂位置漂移。
+- **DOM/AX 不是文档真源**：marker widget 与正文可在 DOM/AX 中序列化为无空格拼接（源码
+  `7. a` 呈现为 `7.a`）。该形状本身 MUST NOT 作为改写文档、拒收输入或恢复旧吞弃护栏的依据；
+  行为判定的文档真源是 CodeMirror `EditorState.doc`，落盘真源是显式保存载荷 / 文件字节。
+- **历史、dirty 与保存**：一次普通输入或一次组合提交 SHALL 一次 undo 恢复精确输入前文档与
+  选区，一次 redo 恢复精确输入后文档与选区。dirty 继续按当前文档与 `cleanDoc` 逐字比较；
+  显式保存载荷 MUST 逐字等于当前 `EditorState.doc`，保存后以该文档为 dirty 基线。因此保存后
+  undo 到不同文档 MUST 标 dirty，redo 回保存文档 MUST 清除 dirty。
+- **既有编辑行为不动**：本条 MUST NOT 改变 B3 / 上游 / Emacs 的精确 range 删除、裸 marker
+  Enter/Backspace、L5 原子导航或 C1 光标几何；不得新增按 DOM 形状猜测编辑意图的生产分支。
+
 ## 证伪方式（属性测试口径）
 
 对「列表类型 × 嵌套深度 × 与项之间有无空行 × 行首缩进 × 语法树归属」的输入分布逐个取样：
@@ -121,6 +143,13 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
    `tests/visual/scenes/cursor-motion.spec.ts` 用真实按键断言 `←`/`→` 与 `⌃B`/`⌃F` 两组键的
    「一次到位 + 逐字素 + 反向对称 + 跨行不跳字 + 文档字节不变」。反向验证：去掉钳制调用
    （`horizontalTarget` 里的 `listHiddenRangeAt`）后逐条变红，恢复后全绿。
+5. **L6 输入跨层一致性**（chromium，`tests/visual/scenes/lists.spec.ts`）：对连续空有序项分别
+   走真实点击与模型选区，再覆盖 bullet / 嵌套 / 裸 marker / 组合提交代表样本。每路独立读取
+   `EditorState.doc` 与 `selection.main`、逐行 marker 数量和计算样式、各内容起点的
+   行盒左缘 + 计算后 `padding-inline-start`（空项正文 body x）、`document_save` 载荷、
+   DOM `7.a` 与源码 `7. a` 的分层差异。反向验证至少分别破坏输入落点、marker 数量 / 几何和
+   保存 / 历史语义，对应断言 MUST 变红；全部恢复后目标测试 MUST 全绿。真机场景 153 用
+   不点击的注入通道复核连续空项输入、文件精确字节与撤销。
 
 ## 与实现的关系
 

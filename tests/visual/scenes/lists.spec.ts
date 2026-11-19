@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { stubTauri } from './tauri-stub';
+import { stubTauri, dirtyReports, documentWrites, fileText } from './tauri-stub';
 import { copyFresh, readDocument } from './parity-checks';
 import { SCROLL_SETTLE_TIMEOUT } from './poll-budgets';
 import { summarize } from '../../../scripts/perf/lib/stats.mjs';
@@ -409,3 +409,178 @@ test('setext 下线不进入裸行编辑态（M461）', async ({ page }) => {
   await expect(page.locator('.cm-lp-bare .cm-lp-list-marker')).toHaveText('–');
   expect(await readDocument(page)).toBe('para\n+ \n');
 });
+
+
+interface ListInputCase {
+  name: string;
+  before: string;
+  after: string;
+  inserted: string;
+  route: 'click' | 'model';
+  markers: Array<{ line: number; source: string }>;
+  target: number;
+}
+
+interface EditorSnapshot {
+  doc: string;
+  anchor: number;
+  head: number;
+}
+
+const orderedEmpty = Array.from({ length: 7 }, (_, i) => `${i + 1}. `).join('\n') + '\n';
+const listInputCases: ListInputCase[] = [
+  {
+    name: '连续空有序项：真实点击后普通 insertText',
+    before: orderedEmpty,
+    after: orderedEmpty.replace('7. \n', '7. a\n'),
+    inserted: 'a',
+    route: 'click',
+    markers: Array.from({ length: 7 }, (_, i) => ({ line: i + 1, source: `${i + 1}. ` })),
+    target: 6,
+  },
+  {
+    name: '连续空有序项：模型选区后无 keydown 的组合提交',
+    before: orderedEmpty,
+    after: orderedEmpty.replace('7. \n', '7. 甲乙\n'),
+    inserted: '甲乙',
+    route: 'model',
+    markers: Array.from({ length: 7 }, (_, i) => ({ line: i + 1, source: `${i + 1}. ` })),
+    target: 6,
+  },
+  {
+    name: '代表样本：bullet 空项',
+    before: '- \n- \n- \n',
+    after: '- \n- b\n- \n',
+    inserted: 'b',
+    route: 'model',
+    markers: Array.from({ length: 3 }, (_, i) => ({ line: i + 1, source: '- ' })),
+    target: 1,
+  },
+  {
+    name: '代表样本：嵌套空项',
+    before: '1. parent\n   1. \n   2. \n',
+    after: '1. parent\n   1. nested\n   2. \n',
+    inserted: 'nested',
+    route: 'model',
+    markers: [{ line: 1, source: '1. ' }, { line: 2, source: '   1. ' }, { line: 3, source: '   2. ' }],
+    target: 1,
+  },
+  {
+    name: '代表样本：裸 marker 行编辑态',
+    before: 'ordinary paragraph\n1. \n',
+    after: 'ordinary paragraph\n1. bare\n',
+    inserted: 'bare',
+    route: 'model',
+    markers: [{ line: 2, source: '1. ' }],
+    target: 0,
+  },
+];
+
+function listContentPosition(doc: string, marker: { line: number; source: string }): number {
+  const lines = doc.split('\n');
+  let position = 0;
+  for (let i = 0; i < marker.line - 1; i += 1) position += lines[i]!.length + 1;
+  expect(lines[marker.line - 1]?.startsWith(marker.source), `fixture 第 ${marker.line} 行必须以 ${JSON.stringify(marker.source)} 起首`).toBe(true);
+  return position + marker.source.length;
+}
+
+async function editorSnapshot(page: Page): Promise<EditorSnapshot> {
+  return page.locator('.cm-content').evaluate(el => {
+    const view = (el as unknown as { cmTile?: { root: { view: { state: { doc: { toString(): string }; selection: { main: { anchor: number; head: number } } } } } } }).cmTile?.root.view;
+    if (!view) throw new Error('CodeMirror view inspection unavailable');
+    return { doc: view.state.doc.toString(), anchor: view.state.selection.main.anchor, head: view.state.selection.main.head };
+  });
+}
+
+async function setListContentCursor(page: Page, position: number): Promise<void> {
+  await page.locator('.cm-content').evaluate((el, pos) => {
+    const view = (el as unknown as { cmTile: { root: { view: { dispatch(spec: unknown): void; focus(): void } } } }).cmTile.root.view;
+    view.dispatch({ selection: { anchor: pos } });
+    view.focus();
+  }, position);
+}
+
+async function listInputRendering(page: Page, positions: number[]) {
+  return page.locator('.cm-content').evaluate((el, contentPositions) => {
+    const rows = [...el.querySelectorAll<HTMLElement>('.cm-lp-list-line')];
+    if (rows.length !== contentPositions.length) return null;
+    return rows.map((line, index) => {
+      const markers = line.querySelectorAll<HTMLElement>('.cm-lp-list-marker');
+      const marker = markers[0];
+      const style = marker ? getComputedStyle(marker) : null;
+      const lineStyle = getComputedStyle(line);
+      return {
+        markerCount: markers.length,
+        markerText: marker?.textContent ?? null,
+        display: style?.display ?? null,
+        fontSize: style?.fontSize ?? null,
+        color: style?.color ?? null,
+        lineHeight: style?.lineHeight ?? null,
+        linePadding: lineStyle.paddingInlineStart,
+        bodyX: line.getBoundingClientRect().left + parseFloat(lineStyle.paddingInlineStart),
+      };
+    });
+  }, positions);
+}
+
+for (const fixture of listInputCases) {
+  test(`L6 列表内容起点输入：${fixture.name}`, async ({ page }) => {
+    await openBare(page, fixture.before);
+    const positions = fixture.markers.map(marker => listContentPosition(fixture.before, marker));
+    const target = fixture.markers[fixture.target]!;
+    const targetPosition = positions[fixture.target]!;
+    const afterPosition = targetPosition + fixture.inserted.length;
+
+    if (fixture.route === 'click') {
+      await page.locator('.cm-line').nth(target.line - 1).click();
+    } else {
+      await setListContentCursor(page, targetPosition);
+    }
+    await expect(page.locator('.cm-lp-list-line')).toHaveCount(fixture.markers.length);
+    expect(await editorSnapshot(page)).toEqual({ doc: fixture.before, anchor: targetPosition, head: targetPosition });
+    const beforeRendering = await listInputRendering(page, positions);
+    if (beforeRendering === null) throw new Error('List rendering unavailable before input');
+    for (const row of beforeRendering) {
+      expect(row.markerCount).toBe(1);
+      expect(row.bodyX).toBeGreaterThan(0);
+      expect(row.display).not.toBeNull();
+    }
+
+    if (fixture.route === 'click') await page.keyboard.type(fixture.inserted);
+    else await page.keyboard.insertText(fixture.inserted);
+    await expect.poll(() => editorSnapshot(page)).toEqual({ doc: fixture.after, anchor: afterPosition, head: afterPosition });
+    if (fixture.route === 'click') {
+      expect(await page.locator('.cm-line').nth(target.line - 1).textContent()).toBe('7.a');
+      expect((await editorSnapshot(page)).doc.split('\n')[6]).toBe('7. a');
+    }
+    await expect.poll(() => listInputRendering(page, positions)).toEqual(beforeRendering);
+    await expect(page.locator('.modeline-path', { hasText: '（未保存）' })).toBeVisible();
+
+    await page.keyboard.press('Meta+z');
+    await expect.poll(() => editorSnapshot(page)).toEqual({ doc: fixture.before, anchor: targetPosition, head: targetPosition });
+    await expect.poll(() => listInputRendering(page, positions)).toEqual(beforeRendering);
+    await expect.poll(async () => (await dirtyReports(page)).at(-1)).toBe(false);
+
+    await page.keyboard.press('Meta+Shift+z');
+    await expect.poll(() => editorSnapshot(page)).toEqual({ doc: fixture.after, anchor: afterPosition, head: afterPosition });
+    await expect.poll(() => listInputRendering(page, positions)).toEqual(beforeRendering);
+    await expect.poll(async () => (await dirtyReports(page)).at(-1)).toBe(true);
+
+    await page.keyboard.press('Meta+s');
+    await expect(page.locator('.lumir-toast', { hasText: /^✓已保存$/ })).toBeVisible();
+    await expect.poll(() => fileText(page, 'lists.md')).toBe(fixture.after);
+    expect(await documentWrites(page)).toEqual([{ path: 'lists.md', content: fixture.after }]);
+    await expect(page.locator('.modeline-path', { hasText: '（未保存）' })).toHaveCount(0);
+
+    await page.keyboard.press('Meta+z');
+    await expect.poll(() => editorSnapshot(page)).toEqual({ doc: fixture.before, anchor: targetPosition, head: targetPosition });
+    await expect(page.locator('.modeline-path', { hasText: '（未保存）' })).toBeVisible();
+    await expect.poll(async () => (await dirtyReports(page)).at(-1)).toBe(true);
+
+    await page.keyboard.press('Meta+Shift+z');
+    await expect.poll(() => editorSnapshot(page)).toEqual({ doc: fixture.after, anchor: afterPosition, head: afterPosition });
+    await expect(page.locator('.modeline-path', { hasText: '（未保存）' })).toHaveCount(0);
+    await expect.poll(async () => (await dirtyReports(page)).at(-1)).toBe(false);
+    await expect.poll(() => listInputRendering(page, positions)).toEqual(beforeRendering);
+  });
+}
