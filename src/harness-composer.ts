@@ -6,13 +6,12 @@ import {
   Transaction,
 } from "@codemirror/state";
 import type { Extension, TransactionSpec } from "@codemirror/state";
+import type { SelectionRange } from "@codemirror/state";
 import {
   cursorCharBackward,
   cursorCharForward,
-  cursorLineDown,
   cursorLineEnd,
   cursorLineStart,
-  cursorLineUp,
   deleteCharBackward,
   deleteCharForward,
   invertedEffects,
@@ -21,10 +20,8 @@ import {
   redo,
   selectCharBackward,
   selectCharForward,
-  selectLineDown,
   selectLineEnd,
   selectLineStart,
-  selectLineUp,
   undo,
 } from "@codemirror/commands";
 import type { EditorView } from "@codemirror/view";
@@ -244,6 +241,82 @@ function extendWord(view: EditorView, forward: boolean): void {
   view.dispatch({ selection: EditorSelection.range(main.anchor, head), scrollIntoView: true, userEvent: "select" });
 }
 
+/** 光标所在**渲染行**（软折行的一屏行）的左右端。`includeWrap` 的 `moveToLineBoundary` 取的是
+ *  该屏行的两侧（LTR：左侧 = 屏行行首、右侧 = 下一屏行行首）；`assoc` 参与取行——assoc=-1 且不在
+ *  行首时按 `head - 1` 的 y 取行，停在折行点上的光标因此仍算前一屏行行尾（与 `coordsAtPos` 的
+ *  画法一致）。空行 / 单屏行时两端重合。 */
+function composerRowBounds(view: EditorView, pos: number, assoc: number): { from: number; to: number } {
+  const axis = EditorSelection.cursor(pos, assoc as -1 | 1);
+  const left = view.moveToLineBoundary(axis, false, true).head;
+  const right = view.moveToLineBoundary(axis, true, true).head;
+  return { from: Math.min(left, right), to: Math.max(left, right) };
+}
+
+/** ⌃N / ⌃P 一步的目标：**行选交给 CM、列位按行内字符列**。
+ *
+ *  为什么不用 `cursorLineUp` / `cursorLineDown`：CM 的竖直移动把 goal column 当**像素 x**
+ *  （`view.moveVertically` 用 `coordsAtPos` 测光标左缘、落点用 `posAtCoords` 取最近的字符边界）。
+ *  composer 的字体是比例字体（`--font-sans`），两行同一字符列的像素宽并不相等：`mn` 的 18.75px
+ *  在上一行 `yabzcdw` 里离第 3 格（21.53px）比第 2 格（13.81px）更近，于是第 2 列按 ⌃P 落到第 3 列
+ *  （真机 140 现场：期望 `yapbzcdw`、实得 `yabpzcdw`）。本条把列位定义成**行内字符列**（Emacs
+ *  `previous-line` / `next-line` 的 goal column 口径），软折行的行间移动仍由 `moveVertically`
+ *  选行（折行点、视口边界归 CM），落点按字符列在目标屏行里重算。
+ *
+ *  goal column 用**字符数**携带在 `SelectionRange.goalColumn` 里（CM 只把它当不透明数字传回调用方，
+ *  本文件之外没有任何真实消费者；一旦调用 `moveVertically` 就必须先剥掉它，否则会被当成像素）：
+ *  连续上下移动越过短行被钳到行尾后，回到长行仍回原列；水平移动 / 键入 / 换行替换选区时自然丢列。
+ *  落点被钳在行尾时 assoc = -1（光标画在该屏行行尾，而不是下一屏行行首）。 */
+function composerVerticalTarget(
+  view: EditorView,
+  start: SelectionRange,
+  forward: boolean,
+  lineBoundaryFallback: boolean,
+): SelectionRange {
+  const moved = view.moveVertically(EditorSelection.cursor(start.head, start.assoc), forward);
+  if (moved.head === start.head) {
+    return lineBoundaryFallback
+      ? view.moveToLineBoundary(EditorSelection.cursor(start.head, start.assoc), forward)
+      : start;
+  }
+  const startRow = composerRowBounds(view, start.head, start.assoc);
+  const goal = start.goalColumn ?? start.head - startRow.from;
+  const targetRow = composerRowBounds(view, moved.head, moved.assoc);
+  const width = targetRow.to - targetRow.from;
+  const column = Math.max(0, Math.min(goal, width));
+  return EditorSelection.cursor(targetRow.from + column, column === width && width > 0 ? -1 : 0, undefined, goal);
+}
+
+/** ⌃N / ⌃P：空光标按 `composerVerticalTarget` 走一步；非空选区先折叠（与 CM `cursorByLine` 同序）。
+ *  文档首 / 末行的原地不动落到行首 / 行尾（同上）。 */
+function moveComposerLine(view: EditorView, forward: boolean): void {
+  const main = view.state.selection.main;
+  if (!main.empty) {
+    view.dispatch({
+      selection: EditorSelection.cursor(forward ? main.to : main.from),
+      scrollIntoView: true,
+      userEvent: "select",
+    });
+    return;
+  }
+  const target = composerVerticalTarget(view, main, forward, true);
+  if (target.head === main.head && target.assoc === main.assoc) return;
+  // 传 SelectionRange 会被 CM 按单 range 重建并丢掉 goalColumn，须包成 EditorSelection。
+  view.dispatch({ selection: EditorSelection.create([target]), scrollIntoView: true, userEvent: "select" });
+}
+
+/** ⇧⌃N / ⇧⌃P：anchor 不动、head 走同一份 `composerVerticalTarget`（与 CM `selectByLine` 同序——
+ *  扩选没有文档边界回落，原地不动即无动作）。 */
+function extendComposerLine(view: EditorView, forward: boolean): void {
+  const main = view.state.selection.main;
+  const target = composerVerticalTarget(view, main, forward, false);
+  if (target.head === main.head && target.assoc === main.assoc) return;
+  view.dispatch({
+    selection: EditorSelection.create([EditorSelection.range(main.anchor, target.head, target.goalColumn ?? undefined)]),
+    scrollIntoView: true,
+    userEvent: "select",
+  });
+}
+
 export function runComposerCommand(view: EditorView, command: CommandId): void {
   switch (command) {
     case "editor.select-all":
@@ -253,14 +326,14 @@ export function runComposerCommand(view: EditorView, command: CommandId): void {
     case "editor.cursor-backward": cursorCharBackward(view); return;
     case "editor.line-start": cursorLineStart(view); return;
     case "editor.line-end": cursorLineEnd(view); return;
-    case "editor.cursor-down": cursorLineDown(view); return;
-    case "editor.cursor-up": cursorLineUp(view); return;
+    case "editor.cursor-up": moveComposerLine(view, false); return;
+    case "editor.cursor-down": moveComposerLine(view, true); return;
     case "editor.extend-char-forward": selectCharForward(view); return;
     case "editor.extend-char-backward": selectCharBackward(view); return;
     case "editor.extend-line-start": selectLineStart(view); return;
     case "editor.extend-line-end": selectLineEnd(view); return;
-    case "editor.extend-line-down": selectLineDown(view); return;
-    case "editor.extend-line-up": selectLineUp(view); return;
+    case "editor.extend-line-up": extendComposerLine(view, false); return;
+    case "editor.extend-line-down": extendComposerLine(view, true); return;
     case "editor.extend-word-forward": extendWord(view, true); return;
     case "editor.extend-word-backward": extendWord(view, false); return;
     case "editor.delete-char-forward": deleteCharForward(view); return;
