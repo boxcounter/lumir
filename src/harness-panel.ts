@@ -262,8 +262,9 @@ export interface HarnessPanelHandle {
    *  标题栏、按其比分宽设 flexGrow（与 pane 分隔条像素对齐）；hidden 由 attach 状态驱动。 */
   titlebarSegment(): HTMLElement;
   /** 装载新 vault 之后由装配层调用（M312）：把面板的会话作用域切到新 vault——丢掉旧 vault 的
-   *  渲染面与本地态，并按当前 vault 重拉一次 `harness_state`。同一个 vault 重复调用是空操作。 */
-  vaultChanged(root: string): void;
+   *  渲染面与本地态，并按当前 vault 重拉一次 `harness_state`。同一个 vault 重复调用是空操作。
+   *  `vaultId` 是该 vault 的稳定 id（草稿归属：面板把它交给草稿 store 绑定，`null` = 无 vault）。 */
+  vaultChanged(root: string, vaultId: string | null): void;
   /** cron 点击发起运行的面板切屏（M612，场景 170）：清渲染面、把本次 prompt 作为用户消息
    *  上屏、立刻打开轮次闸门与发送相位。装配层 MUST 在 `harness_cron_run` **之前**调用——
    *  后端不为 cron 回合发 `sent` / `auto_turn_started`，晚开闸门会把先到的正文分片丢掉。
@@ -3920,6 +3921,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 当前 vault 根路径（会话作用域基准：事件过滤与快照准入都用它；null = 尚未装载 vault）。
    *  由装配层在每次装载 vault 后经 `vaultChanged` 传入（src/main.ts 的 applyVault）。 */
   let currentVault: string | null = null;
+  /** 当前 vault 的稳定 id（草稿归属；null = 尚未装载 vault）。与 `currentVault` 同一个来源、
+   *  同一次调用传入——草稿读写只认它，晚到的旧操作因此不会落到新 vault（change
+   *  fix-draft-vault-ownership-nov19）。 */
+  let currentVaultId: string | null = null;
   /** 可点 vault 文件路径索引（change harness-path-link）：装配层经 `setPathLinkIndex` 下发，
    *  渲染时同步查询（零 IPC——流式尾块每帧重渲，逐帧 IPC 会闪烁）。空集 = 不链接化（未装载 /
    *  单测）。集合语义（文件 + 非惰性 + 可打开）由装配层按既有索引与打开分类裁定，面板只查表。
@@ -3978,10 +3983,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // ── composer 草稿（change composer-draft-persistence，design §4/§5/§7）──────────────
   /** 防抖写控制器（零 DOM 逻辑在 `src/harness-draft.ts`，这里只接三个口子：读
    *  `harness_draft_get` / 写 `harness_draft_put` / 失败提示走装配层 toast——错误信封按 code
-   *  取 D456，本面板不自造文案）。落点按后端当前 vault scope 解析，前端不持有 vault id。 */
+   *  取 D456，本面板不自造文案）。归属 vault 由 store 在 `load` 时绑定（`currentVaultId`），
+   *  读写都带 id 下发——落点不再取决于后端执行时的当前 scope。 */
   const draft = createHarnessDraftStore({
-    getDraft: () => harnessDraftGet(),
-    putDraft: (draftJson) => harnessDraftPut(draftJson),
+    getDraft: (vaultId) => harnessDraftGet(vaultId),
+    putDraft: (draftJson, vaultId) => harnessDraftPut(vaultId, draftJson),
     warn: (e) => deps.toast(errorText(e)),
   });
   /** 草稿装载世代：读盘在途时又切了一次 vault，旧结果作废（与快照的 snapshotSeq 同口径——
@@ -3998,9 +4004,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *
    *  **为什么 flush 挂点在离开输入区这一类时点、而不是 `vaultChanged` 里**：`vaultChanged`
    *  由装配层在**后端已经切完 vault 之后**调用（`applyVault` 跑在 `vault_open_path` 之后），
-   *  那一刻写入会按**新** vault 解析落点，把旧 vault 的草稿写进新 vault 的文件（跨 vault
-   *  串台）。而「待写存在」蕴含「输入区持焦」——落盘由编辑触发、编辑要求输入区持焦，且任何
-   *  一次离焦都会走本函数写走——于是切 vault 必经的「先离开输入区」就是那个时点。
+   *  那一刻 store 的归属已经绑定到**新** vault（change fix-draft-vault-ownership-nov19：写
+   *  带显式 id，落点只认绑定），旧 vault 的待写会被记到新 vault 名下（跨 vault 串台）。而
+   *  「待写存在」蕴含「输入区持焦」——落盘由编辑触发、编辑要求输入区持焦，且任何一次离焦
+   *  都会走本函数写走——于是切 vault 必经的「先离开输入区」就是那个时点。
    *  `vaultChanged` 里因此只做「丢弃旧 vault 的待写 + 装载新 vault 的草稿」。 */
   function flushDraft(): void {
     void draft.flush();
@@ -8739,16 +8746,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *
    * 本地态的处置口径（写在这里，免得下次再推一遍）：
    * - **composer 草稿换成新 vault 的那一份**（change composer-draft-persistence）：先丢弃
-   *   属于旧 vault 的待写内容，再按**当前 vault**（后端已切完，落点按 scope 解析）读回草稿
-   *   铺进输入区。旧 vault 的待写由**切换前**的 flush 写走（见 `flushDraft` 的调用点）——
-   *   本函数跑在后端切完 vault 之后，此刻再写就会把旧草稿写进新 vault 的文件；
+   *   属于旧 vault 的待写内容，再按 `vaultId` 读回草稿铺进输入区（归属显式，change
+   *   fix-draft-vault-ownership-nov19：落点只认这个 id，不再取决于后端执行时的当前 scope）。
+   *   旧 vault 的待写由**切换前**的 flush 写走（见 `flushDraft` 的调用点）——本函数跑在
+   *   后端切完 vault 之后，此刻的归属已经绑定到新 vault，再 flush 就会把旧草稿记到新 vault 名下；
    * - **上下文 chip 重取**：同上，改指新 vault 的当前文档（此刻多数是「无」）；
    * - 发送相位经 finished 收口回 idle：见 resetView；
    * - 语言 / 主题 / 面板开合状态都不动（它们不属于会话）。
    */
-  function vaultChanged(root: string): void {
-    if (root === currentVault) return; // 同一个 vault 的重复装载（重定位 / 重开）不重置视图
+  function vaultChanged(root: string, vaultId: string | null): void {
+    const sameVault = root === currentVault; // 同一个 vault 的重复装载（重定位 / 重开）不重置视图
     currentVault = root;
+    currentVaultId = vaultId;
+    if (sameVault) return;
     resetView();
     resetComposer();
     refreshChip();
@@ -8777,7 +8787,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    */
   async function restoreDraft(): Promise<void> {
     const seq = (draftSeq += 1);
-    const loaded = await draft.load().catch(() => null);
+    const loaded = await draft.load(currentVaultId).catch(() => null);
     if (seq !== draftSeq || loaded === null || !composerIsPristine()) return;
     resetComposer(loaded);
   }

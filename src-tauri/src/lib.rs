@@ -222,8 +222,9 @@ pub fn run() {
             // 补跑启动早期因监听器不在场而被 `not_ready` 延后的无人值守运行。
             commands::cron_bridge_ready,
             // composer 草稿（change composer-draft-persistence）：按 vault 一份的草稿读写
-            // （落点 harness/drafts/<vault 稳定 id>.json，MUST NOT 触碰 vault；落点按当前
-            // vault scope 解析，前端不传 vault——harness_write_image 同形态）。
+            // （落点 harness/drafts/<vault 稳定 id>.json，MUST NOT 触碰 vault；落点只由调用方
+            // 传入的 vault_id 决定，不读当前 scope——归属在出发时绑定，见 change
+            // fix-draft-vault-ownership-nov19）。
             harness::draft::harness_draft_get,
             harness::draft::harness_draft_put,
             // 窗口底色跟随主题（M525，app-window spec）：applyTheme 的运行期同步通道。

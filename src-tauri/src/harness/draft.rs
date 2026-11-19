@@ -19,6 +19,18 @@
 //! **写失败**：返回 `harness_draft_write_failed` 信封，由前端降级为一条人话 warning
 //! （spec「写失败 SHALL 降级为人话 warning」）——后端若吞掉，前端就无从知道「没保存成」，
 //! 那正是 spec 禁止的「谎报已保存」。写失败 MUST NOT 阻断输入：调用方 catch 后输入区照常。
+//!
+//! **归属由调用方显式绑定**（change fix-draft-vault-ownership-nov19；finding
+//! `20261119-worker-persistence-faults-bug-vault-scope-vault-vault`）：两个命令都收
+//! `vault_id`，落点**只**由传入 id 决定——MUST NOT 读当前打开的 vault（`VaultState`）。
+//! 旧实现按命令**执行时**的当前 scope 解析：切 vault 前发出的在途写若晚于切换落地，就会写进
+//! 新 vault 的文件（跨 vault 串台 + 旧草稿丢失）。绑定之后，迟到写无论何时执行都只落在它
+//! 出发时的 vault。「late write 落在已关闭的 vault」是**正确**归属，不是错位——所以这里
+//! 不按「id ≠ 当前 vault 即拒绝」处理（拒绝会把用户没发出去的字直接丢掉）。
+//!
+//! id 只做**形状**校验（[`jsonl::vault_dir_name`]：`valid_id` 且 ≠ `_orphaned`），不查注册表：
+//! 已关闭 vault 的草稿仍须可读写（上面的 late write 正是这种），而「注册表里没有」与
+//! 「vault 已关闭」在草稿落点上不可区分。`None` = 无 vault（静默 no-op，同既有纪律）。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -106,39 +118,25 @@ pub fn put_for(dir: &Path, vault_id: Option<&str>, draft_json: &str) -> Result<(
     save_to(dir, vault_id, draft_json)
 }
 
-/// 当前 vault 的稳定 id；**无 vault 时 `None`**（`vault_not_open` 在这里不是错误——
-/// 草稿是无副作用 UI 状态，spec：无 vault MUST NOT 报错、MUST NOT 落盘）。
-fn current_vault_id(vault: &crate::commands::VaultState) -> Option<String> {
-    vault
-        .root_policy_and_id()
-        .ok()
-        .map(|(_, _, vault_id)| vault_id)
-}
-
-/// 读当前 vault 的草稿（JSON String 原文；无草稿 / 无 vault → null）。前端解析并还原块序列。
+/// 读 `vault_id` 的草稿（JSON String 原文；无草稿 / 无 vault → null）。前端解析并还原块序列。
 ///
-/// 前端**不传 vault**：落点按当前 `VaultScope.vault_id` 解析（`harness_write_image` 同形态）。
+/// `vault_id` 是**发起方绑定的归属**（前端在装载 / 内容产生时捕获），后端不读当前 scope
+/// ——见模块头「归属由调用方显式绑定」。
 #[tauri::command(rename_all = "snake_case")]
-pub fn harness_draft_get(
-    vault: tauri::State<'_, crate::commands::VaultState>,
-) -> Result<Option<String>, CommandError> {
-    Ok(get_for(&drafts_dir()?, current_vault_id(&vault).as_deref()))
+pub fn harness_draft_get(vault_id: Option<String>) -> Result<Option<String>, CommandError> {
+    Ok(get_for(&drafts_dir()?, vault_id.as_deref()))
 }
 
-/// 写当前 vault 的草稿（`draft_json` 是块模型 JSON 原文；空串 = 清除）。
+/// 写 `vault_id` 的草稿（`draft_json` 是块模型 JSON 原文；空串 = 清除）。
 ///
-/// 无 vault → 静默 `Ok(())`（不落盘、不报错）；写失败 → `harness_draft_write_failed` 信封，
-/// 前端降级为人话 warning 且不阻断输入（spec）。
+/// 无 vault（`vault_id = None`）→ 静默 `Ok(())`（不落盘、不报错）；写失败 →
+/// `harness_draft_write_failed` 信封，前端降级为人话 warning 且不阻断输入（spec）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn harness_draft_put(
-    vault: tauri::State<'_, crate::commands::VaultState>,
+    vault_id: Option<String>,
     draft_json: String,
 ) -> Result<(), CommandError> {
-    put_for(
-        &drafts_dir()?,
-        current_vault_id(&vault).as_deref(),
-        &draft_json,
-    )
+    put_for(&drafts_dir()?, vault_id.as_deref(), &draft_json)
 }
 
 #[cfg(test)]

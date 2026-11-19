@@ -402,6 +402,8 @@ function editorDouble(): HarnessPanelEditor {
 }
 
 const VAULT = "/tmp/lumir-m366-thinking-reset";
+/** 稳定 id（草稿归属；M848）：与根路径同源下发，本文件不涉草稿内容。 */
+const VAULT_ID = "vault-m366-thinking-reset";
 
 // ---------------------------------------------------------------------------
 // 用例：新会话 ⇒ chip 回落默认 High（面文本 + 读屏名 + 浮层勾选三处同步）
@@ -457,7 +459,7 @@ test("新会话：chip 从会话档位（Max）回落默认 High，读屏名与�
 
   try {
     handle.attachTo(mount as unknown as HTMLElement);
-    handle.vaultChanged(VAULT);
+    handle.vaultChanged(VAULT, VAULT_ID);
     await flush();
 
     const effort = (): string =>
