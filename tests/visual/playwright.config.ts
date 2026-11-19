@@ -91,8 +91,9 @@ export default defineConfig({
     // Chromium 专属通道，场景内自行 skip，其余六条两支都跑。
     // M842 起编辑 / 渲染布局稳定性（markdown-editing-stability）同行：判据是光标进出前后的
     // **几何差**，而 WebKit 在渲染态表格 cell 端点的键入 / 删除走 DOM 回写、chromium 不走——
-    // 同一批断言只有两支各跑一次才分得出「引擎缺陷」与「产品回归」（该文件里 8 条缺陷用例按
-    // engine 标 expected failure）。
+    // 同一批断言只有两支各跑一次才分得出「引擎缺陷」与「产品回归」——M842 登记的表格 cell
+    // 端点缺陷已由 M855 修复（4 条转正），选区删除 / 替换缺陷已由 M854 修复；该文件当前没有
+    // expected failure 标记，两支同判用于分辨引擎差异（原生 target range / 事件序不同）。
     // M843 起 Unicode / 选区 / 剪贴板对抗场景同行：字素删除与选区替换走的是**引擎原生**
     // 编辑路径（原生 Backspace 的簇粒度在 Chromium 与 WebKit 上实测不同——Chromium 对组合
     // 标记 / RTL 附标只退一个码元，WebKit 退整簇），clipboard 事件序也归引擎；只在 chromium
