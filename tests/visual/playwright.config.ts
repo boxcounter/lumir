@@ -105,7 +105,7 @@ export default defineConfig({
       ? [
           {
             name: "webkit-realua",
-            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts|markdown-editing-stability\.spec\.ts|text-clipboard-adversarial\.spec\.ts|persistence-adversarial\.spec\.ts/,
+            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts|markdown-editing-stability\.spec\.ts|text-clipboard-adversarial\.spec\.ts|persistence-adversarial\.spec\.ts|harness-async-adversarial\.spec\.ts/,
             use: { browserName: "webkit" as const, userAgent: REAL_WEBKIT_UA },
           },
         ]
