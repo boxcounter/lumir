@@ -4,7 +4,7 @@
 
 - [x] 1.1 读 REVIEW.md 与 finding `20261119-worker-markdown-stability-bug-dom` / `...-bug-webkit-cell`，在真 EditorView 上跑探针：CM 选区与目标源码 range 逐值一致、文档未被触碰；`beforeinput` 为 `deleteContentBackward`、`defaultPrevented=false`；原生删除两引擎损坏形状不同；同一 range 的显式事务两引擎逐字节正确、一次 undo 复原。证据 `.local/reports/m854-probe.md`（git 外）。
 - [x] 1.2 定义合同：非空选区删除只影响 `state.selection` 覆盖的源码字节；方向 / 输入类型不改变结果；一个事务 = 一条 history 步；save 载荷 = 当前 doc。规格 delta 落在 `editor-live-preview`（MODIFIED 既有 requirement 的已证伪句 + ADDED 新 requirement）。
-- [x] 1.3 L7 同步（tower 扩 scope 后）：`docs/specs/lists.md` 的适用范围段与「既有路径不动」两处删掉「非空选区删除不在本条内」的旧口径，改为指向本 change 的统一选区编辑合同；不改 L7 其余条款。
+- [x] 1.3 L7 同步（tower 扩 scope 后）：`docs/specs/lists.md` 的适用范围段与「既有路径不动」两处删掉「非空选区删除不在本条内」的旧口径，改为指向本 change 的统一选区编辑合同；r2 追加：「不接管的变体」里「多区间选区放行原生路径」的旧分派句改为由统一选区编辑合同按 `state.selection` 逐区间处理（与实现 / delta 一致）。除这两处旧口径外不改 L7 其余条款。
 
 ## 2. 实现
 
