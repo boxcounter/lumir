@@ -9,11 +9,11 @@
 //    的任何一个字节、MUST NOT 触发落盘、MUST NOT 把文档标脏，也 MUST NOT 新增 history 步
 //    ——编辑之后无论做多少轮光标 / 选区 / 焦点循环，**一次** undo 仍回到编辑前那一态
 //   （doc 与选区都回，见「编辑后光标 / 选区 / 焦点循环」用例）。
-// C2 **行盒稳定**（active↔inactive）：对渲染态**不显露源码**的行，`.cm-line` 的行盒高度、
-//    行内首段文本的字形 rect 高度与基线（top）在两种状态下逐像素相同（≤0.5px），其后各行的
-//    top 也随之相同。
-// C3 **合法重排有界且只落在本行**：源码显露（标题 `#`、强调 `**`、链接目标、行内公式、裸
-//    marker 行）允许改变**本行**的行盒；其余各行 MUST NOT 自行改变高度，且其 top 位移必须
+// C2 **行盒稳定**（active↔inactive）：对未列入 C3 合法重排的行（含链接与裸 marker 行），
+//    `.cm-line` 的行盒高度、行内首段文本的字形 rect 高度与基线（top）在两种状态下逐像素相同
+//    （≤0.5px），其后各行的 top 也随之相同；链接目标显露与 marker widget 切换只许改变横向排版。
+// C3 **合法重排有界且只落在本行**：源码显露（标题 `#`、强调 `**`、行内公式）允许改变**本行**
+//    的行盒；其余各行 MUST NOT 自行改变高度，且其 top 位移必须
 //    恰好等于本行之前所有获批行的高度变化之和（±0.5px）——「别人跟着跳」只允许是被本行
 //    高度变化推的，不允许是自身重排。
 // C4 **横向几何稳定**：列表 marker 右缘、正文左缘 x、表格各 cell 的 left/width/height 在
@@ -34,8 +34,8 @@
 // ## 容差口径
 //
 // 几何读数全部取亚像素浮点（`getBoundingClientRect`），容差 `TOL = 0.5px`：比一个 CSS 像素
-// 还小——行高 2px 的抖动（link `↗` 标记撑高行盒、裸 marker 行进入列表渲染）在同一次实测里
-// 就是这个量级，能抓住；抗锯齿 / 子像素取整的抖动在 0.1px 量级，不会误报。
+// 还小——link `↗` 标记与裸 marker 行历史上各有 2px 抖动，在同一次实测里就是这个量级，
+// 能抓住；抗锯齿 / 子像素取整的抖动在 0.1px 量级，不会误报。
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, fileText, type VaultFixture } from "./tauri-stub";
 
@@ -284,8 +284,8 @@ interface Probe {
   label: string;
   pos: number;
   allow: number[];
-  /** 该探针 MUST 真实改变本行渲染态（否则它对缺陷没有区分度）。 */
-  expectReflow?: boolean;
+  /** 该探针 MUST 真实改变这一行的渲染态（否则它对缺陷没有区分度）。 */
+  reflowLine?: number;
 }
 
 function probesFor(doc: string): Probe[] {
@@ -305,21 +305,22 @@ function probesFor(doc: string): Probe[] {
     { label: "表格隐藏管道位（行首）", pos: doc.indexOf("| 列甲"), allow: [] },
     { label: "表格分隔行", pos: doc.indexOf("| --- |") + 2, allow: [] },
     // 合法重排项：源码显露，允许本行变化、其余行只跟随位移。
-    { label: "标题行（显露 #）", pos: posOf(doc, "# 一级标题", 3), allow: [line("# 一级标题")], expectReflow: true },
-    { label: "强调（显露 **）", pos: posOf(doc, "加粗文本", 1), allow: [line("加粗文本")], expectReflow: true },
-    { label: "行内公式（显露 $…$）", pos: posOf(doc, "a^2", 2), allow: [line("行内公式")], expectReflow: true },
-    { label: "标准链接（显露 ](target)）", pos: posOf(doc, "链接 [示例]", 5), allow: [line("链接 [示例]")], expectReflow: true },
-    { label: "裸 marker 行（进入列表渲染）", pos: doc.indexOf("para\n1. ") + "para\n".length, allow: [line("para") + 1], expectReflow: true },
+    { label: "标题行（显露 #）", pos: posOf(doc, "# 一级标题", 3), allow: [line("# 一级标题")], reflowLine: line("# 一级标题") },
+    { label: "强调（显露 **）", pos: posOf(doc, "加粗文本", 1), allow: [line("加粗文本")], reflowLine: line("加粗文本") },
+    { label: "行内公式（显露 $…$）", pos: posOf(doc, "a^2", 2), allow: [line("行内公式")], reflowLine: line("行内公式") },
+    // 链接与裸 marker 仍真实切换渲染态，但纵向几何必须稳定。
+    { label: "标准链接（显露 ](target)）", pos: posOf(doc, "链接 [示例]", 5), allow: [], reflowLine: line("链接 [示例]") },
+    { label: "裸 marker 行（进入列表渲染）", pos: doc.indexOf("para\n1. ") + "para\n".length, allow: [], reflowLine: line("para") + 1 },
   ];
 }
 
-/** 重排幅度的观测值（本机实测）：标题 `#` / 强调 `**` / 公式源码只改横向，不改行盒高度；
- *  裸 marker 行与链接行各有 2px 的行盒差（见 finding）。这里不写死绝对值，只看「是否发生」
- *  ——`expectReflow` 探针用文本 rect 的右缘 / 行高是否变化来确认本行真的切换了渲染态。 */
+/** 渲染态切换的区分度：文本右缘 / 行高 / 基线变化，或 marker widget 出现 / 消失均可作证。
+ *  链接与裸 marker 修复后只剩横向变化或 widget 切换，不能再靠历史上的 2px 行高差判绿。 */
 function reflowed(a: LineBox, b: LineBox): boolean {
   if (Math.abs(b.height - a.height) > TOL) return true;
   if (a.textRight !== null && b.textRight !== null && Math.abs(b.textRight - a.textRight) > TOL) return true;
   if (a.baseTop !== null && b.baseTop !== null && Math.abs(b.baseTop - a.baseTop) > TOL) return true;
+  if ((a.markerRight === null) !== (b.markerRight === null)) return true;
   return false;
 }
 
@@ -341,8 +342,8 @@ test("光标进入任意行：非显露行几何逐像素不动，显露行只�
     const active = await readGeometry(page);
     expectStableGeometry(baseline, active, { allow: probe.allow, label: probe.label });
 
-    if (probe.expectReflow) {
-      const index = probe.allow[0];
+    if (probe.reflowLine !== undefined) {
+      const index = probe.reflowLine;
       expect(reflowed(baseline[index], active[index]), `${probe.label}：本行没有切换渲染态（该探针对缺陷没有区分度）`).toBe(true);
     }
 
@@ -363,33 +364,44 @@ test("光标进入任意行：非显露行几何逐像素不动，显露行只�
 // ---------------------------------------------------------------------------
 
 test("光标反复进出 + 焦点进出 12 轮：几何零累积漂移，文档与保存状态不变", async ({ page }) => {
-  const doc = ["第一段。", "", "- 列表项一", "  - 嵌套项", "", "| a | b |", "| --- | --- |", "| c | d |", "", "尾段。"].join("\n");
+  const doc = [
+    "第一段。", "", "- 列表项一", "  - 嵌套项", "",
+    "| a | b |", "| --- | --- |", "| c | d |", "",
+    "链接 [示例](https://example.com)。", "", "para", "1. ", "", "尾段。",
+  ].join("\n");
   await openDoc(page, "cycle.md", doc);
   await expect(page.locator(".cm-lp-table").first()).toBeVisible();
 
   await setCaret(page, 0);
   const baseline = await readGeometry(page);
-  const target = doc.indexOf("- 列表项一") + 2;
-  const cell = doc.indexOf("c | d") + 1;
+  const targets = [
+    doc.indexOf("- 列表项一") + 2,
+    doc.indexOf("c | d") + 1,
+    posOf(doc, "链接 [示例]", 5),
+    doc.indexOf("para\n1. ") + "para\n".length,
+  ];
 
   for (let round = 0; round < 12; round += 1) {
-    const pos = round % 3 === 0 ? target : round % 3 === 1 ? cell : doc.length;
+    const pos = targets[round % targets.length];
     await setCaret(page, pos);
+    expectStableGeometry(baseline, await readGeometry(page), { allow: [], label: `第 ${round + 1} 轮 active` });
     await setCaret(page, 0);
     const restored = await readGeometry(page);
     expectRestored(baseline, restored, `第 ${round + 1} 轮`);
     expect(await bodyState(page).then((s) => s.doc)).toBe(doc);
   }
 
-  // 焦点：失焦再聚焦，几何同样不变（光标位置保持）。
-  await setCaret(page, target);
-  const focused = await readGeometry(page);
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  await page.waitForTimeout(120);
-  const blurred = await readGeometry(page);
-  expectRestored(focused, blurred, "失焦");
-  await setCaret(page, target);
-  expectRestored(focused, await readGeometry(page), "重新聚焦");
+  // 焦点：失焦再聚焦，几何同样不变（光标位置保持）；链接与裸 marker 都必须经过这一条。
+  for (const target of targets) {
+    await setCaret(page, target);
+    const focused = await readGeometry(page);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.waitForTimeout(120);
+    const blurred = await readGeometry(page);
+    expectRestored(focused, blurred, `pos ${target} 失焦`);
+    await setCaret(page, target);
+    expectRestored(focused, await readGeometry(page), `pos ${target} 重新聚焦`);
+  }
 
   expect(await bodyState(page).then((s) => s.doc)).toBe(doc);
   expect(await fileText(page, "cycle.md")).toBe(doc);
@@ -441,17 +453,33 @@ test("编辑后光标 / 选区 / 焦点循环：一次 undo 回到编辑前（�
 // ---------------------------------------------------------------------------
 
 for (const theme of ["light", "eink"] as const) {
-  test(`主题 ${theme}：列表 marker / 正文列与表格 cell 在 active↔inactive 下不漂移`, async ({ page }) => {
-    const doc = ["- 项目一", "- 项目二", "", "| a | b |", "| --- | --- |", "| c | d |", "", "尾段。"].join("\n");
+  test(`主题 ${theme}：列表 / 表格 / 链接 / 裸 marker 在光标与焦点循环下不漂移`, async ({ page }) => {
+    const doc = [
+      "- 项目一", "- 项目二", "", "| a | b |", "| --- | --- |", "| c | d |", "",
+      "链接 [示例](https://example.com)。", "", "para", "1. ", "", "尾段。",
+    ].join("\n");
     await openDoc(page, "theme.md", doc, theme);
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme);
     await expect(page.locator(".cm-lp-table").first()).toBeVisible();
 
     await setCaret(page, 0);
     const baseline = await readGeometry(page);
-    for (const pos of [doc.indexOf("项目二") + 1, doc.indexOf("c | d") + 1]) {
+    const targets = [
+      doc.indexOf("项目二") + 1,
+      doc.indexOf("c | d") + 1,
+      posOf(doc, "链接 [示例]", 5),
+      doc.indexOf("para\n1. ") + "para\n".length,
+    ];
+    for (let round = 0; round < 4; round += 1) {
+      const pos = targets[round];
       await setCaret(page, pos);
-      expectStableGeometry(baseline, await readGeometry(page), { allow: [], label: `${theme} · pos ${pos}` });
+      const focused = await readGeometry(page);
+      expectStableGeometry(baseline, focused, { allow: [], label: `${theme} · pos ${pos}` });
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await page.waitForTimeout(120);
+      expectRestored(focused, await readGeometry(page), `${theme} · pos ${pos} 失焦`);
+      await setCaret(page, pos);
+      expectRestored(focused, await readGeometry(page), `${theme} · pos ${pos} 聚焦`);
       await setCaret(page, 0);
       expectRestored(baseline, await readGeometry(page), `${theme} · pos ${pos} 复原`);
     }
