@@ -30,7 +30,7 @@ node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手�
 
 三条硬口径：
 
-- **`full` 不得被静默收窄**：`--batch full` 与不带 `--batch` 跑的是同一批场景（230 个），
+- **`full` 不得被静默收窄**：`--batch full` 与不带 `--batch` 跑的是同一批场景（全部场景），
   各档都包含在内。不加 `--batch` 就是全量，这条由 `lib/batches.test.mjs` 的对账用例钉住。
 - **`bundle` 与 `requires: bundle` 一一对应**：两种错配都由 `--check` 判红。只写 `tier: bundle`
   漏写 `requires: bundle` —— 场景失去 dev flavour 下的 INVALID 保护（runner 按 `requires` 判环境，
@@ -67,7 +67,7 @@ item 13 与所有 13x 前缀场景——按「跑第 13 项」的读法把整个
 `筛选 13 → item 项号 13：1 个（13-toc）`）再打印最终 id 清单；`--check` 带筛选词时打印同一份
 解析。三处走同一个纯函数（`lib/batches.mjs` 的 `selectScenarios`），不存在「显示一套、执行一套」。
 
-`--check` 与 `coverage.mjs --check` 都会打印各档条数（`core 29 / full 194 / bundle 3 / evidence 4`），
+`--check` 与 `coverage.mjs --check` 都会打印各档条数（以命令输出为准），
 写新场景后先用它确认档位没写错。分档的数量真源是场景声明本身，这里不抄第二份清单。
 
 **分档只决定「跑哪些」，不改判定与退出码**：`evidence` 档的场景今天仍照常判 PASS/FAIL、失败照样让
@@ -1543,9 +1543,28 @@ Enter + ⌘S 保存），期望值来自 `tests/unit/editing-oracle-model.ts` �
 - 随机序列只在 Node / 浏览器层跑；真机不跑随机键序列（marker widget 接管后 `do:type` 不能可靠重定位）。
 - **native WKWebView IME 不可达**：既有通道探针（M461 / M529）已逐条证明 KimiCU / System Events /
   CGEvent / TISSelectInputSource 都直落 `insertText`，进不了 TSM。报告里该边界单列
-  `NATIVE_IME_UNREACHED`，**不并入 PASS**；也不拿合成 CompositionEvent 替代真机判定。
+  `NATIVE_IME_UNREACHED`，**不并入 PASS**；也不拿合成 CompositionEvent 替代真机判定。按变更面
+  选组的人工探索矩阵见下节场景 262。
 - 浏览器层（`tests/visual/scenes/editing-oracle.spec.ts`）的 CDP IME 只证明 Chromium 引擎序；
   WebKit project 跳过该用例，WKWebView 原生候选窗仍归人肉 dogfood。
+
+### 原生 IME 人工探索矩阵（M846，场景 262）
+
+`262-native-ime-exploration`（`tier: evidence`）覆盖 0.13.0 CM composer 的原生 IME 人工探索面。
+它的自动段只建「两行探针 + composer 可聚焦」的现场并做正观测，因此：
+
+- **`run.mjs 262` 的 PASS 只表示前置现场成立，不是 native IME 判定**，不得写进「IME 已验」。
+  原生 TSM / 候选窗 / marked text 仍受上一条通道边界约束，报告里单列 `NATIVE_IME_UNREACHED`。
+- 人工矩阵按变更面选组（G1 候选窗与数字 / 空格 / 鼠标选择、G2 组合删除与 Esc / Enter、G3 行首尾 /
+  软折行 / 空行 / 附件附近、G4 组合中切焦点、G5 撤销 / 重做、G6 组合中粘贴；G0 是共享前置）。
+  **不要求每次全跑**：选组表与每组的前置正观测 / 操作 / 预期 / FAIL 签名以场景正文为唯一真源，
+  这里不复刻。
+- 人工结论只落 `.local/acceptance/<日期>-ime-matrix/ledger.md`（git 外），四态
+  `NATIVE_IME_PASS` / `NATIVE_IME_FAIL` / `NATIVE_IME_BLOCKED` / `NATIVE_IME_NOT_RUN`；未选中的
+  组记 `NOT_RUN`，自动段 PASS 不得转写为其中任何一态。
+- 前置不成立（候选窗不出现、输入法未切换、焦点不在 composer、tray 附件未建立）记 `BLOCKED`，
+  不记产品 FAIL；看到 FAIL 签名后不得再降级成 `BLOCKED`。失败保留现场（不重跑、不退出 app、
+  不切走输入法）的口径见场景正文「失败保留现场」节。
 
 ## 加一个场景
 
@@ -1608,7 +1627,7 @@ INVALID 为 0 时整项省略（既有小样本头部逐字不变）。`cu.test.
 钉住 `get_app_state` 只有 `CuClient.state` 一个发出点——新开调用点会绕过这条口径。
 `lib/batches.test.mjs`（M749 / M758）钉批次与筛选词这两层的静默失效。批次侧（M749）：
 `--batch` 的取值被当成 id 前缀（批次实际只跑 0 条或跑成全量）、`tier` 拼错 / 漏写让场景悄悄退出
-所属批次——用 5 条合成场景逐档筛一遍（`full` 必须一条不少），再用真实 230 个场景对账「每个场景
+所属批次——用 5 条合成场景逐档筛一遍（`full` 必须一条不少），再用真实场景全集对账「每个场景
 恰好一个档、四档都非空、bundle 批与 `requires: bundle` 逐条相同」。筛选词侧（M758）：三级优先级
 `MATCH_KINDS` 的顺序本身有断言；逐条构造旧口径（并集）会判红的输入——`13` 必须只选 13-toc（真仓
 对账里 13x 组一条都不得被选中）、`47` / `230` 拆分组必须照旧选全组、精确 id 压过 item 与前缀、
