@@ -23,6 +23,14 @@
 
 未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与 tip 均无异常、证据无缺口——机器 + 独立评审放行（本节要件）。
 
+## 节点 2 记录（归档后）
+
+- **归档提交**：`1ed3cfbfaa7cffc984ecfceffee42c3721ad4425`（归档目录 + 并入后的 living spec 同一提交；`docs/backlog.md` 的归档跟踪条目同批核销。本条记录本身是其后一笔文档提交）。
+- **`openspec archive` 实际输出**（2026-11-19，`node scripts/openspec-archive.mjs fix-composer-vertical-goal-column-nov19`，包装器内调 `npx --yes @fission-ai/openspec@1.12.0 archive fix-composer-vertical-goal-column-nov19 --yes`，退出码 0）：`Task status: ✓ Complete` / `Specs to update:` `harness: update` / `+ 1 added` / `Totals: + 1, ~ 0, - 0, → 0` / `Specs updated successfully.` / `Change 'fix-composer-vertical-goal-column-nov19' archived as '2026-11-19-fix-composer-vertical-goal-column-nov19'.`。
+- **归档后修链**：`归档后修链 1 处（扫过 4 篇 Markdown / 1 条相对链接）`——`proposal.md:16` 的 `../../../docs/process/openspec-workflow.md` → `../../../../docs/process/openspec-workflow.md`。包装器末置门禁 `openspec-links: PASS（校验 624 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived fix-composer-vertical-goal-column-nov19`，2026-11-19T12:04Z，退出码 0）：`PASS（openspec/changes/archive/2026-11-19-fix-composer-vertical-goal-column-nov19：0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）`——delta 只有 1 条 ADDED，已确认落进 living（`grep -n "composer 竖直移动的同列位口径" openspec/specs/harness/spec.md` → 第 2749 行）。
+- **归档后复跑读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 35 passed, 0 failed (35 items)`（退出码 0；归档前 36 items，减少的一项即本 change）；`node scripts/openspec-archive-check.mjs` 门禁模式 → PASS（`扫过 8 份 delta，6 条 MODIFIED，对比 79 段，无静默丢段；归档队列 0 项已完成 change 均有唯一条目`）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0）。
+
 ## Why
 
 M831（change `move-composer-to-codemirror-nov18`）把 composer 换成 CM6 文本内核，⌃P / ⌃N 直接
