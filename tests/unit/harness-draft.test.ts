@@ -342,3 +342,62 @@ test("迁移写回失败：返回转换内容并 warning，保留待写，后续
   await store.flush();
   assert.deepEqual(rig.writes, [serializeComposerDraft("legacy", 2, [])]);
 });
+
+
+test("迁移读盘期间用户先 flush：旧 v1 不得后写覆盖新输入，written/pending 基准保留", async () => {
+  const { store, rig } = createRig();
+  const legacy = JSON.stringify({
+    version: 1,
+    blocks: [{ kind: "paragraph", text: "legacy" }],
+    caret: { block: 0, offset: 2 },
+  });
+  rig.file = legacy;
+  const gate: { release: (() => void) | undefined } = { release: undefined };
+  rig.getImpl = () => new Promise<string | null>((resolve) => {
+    gate.release = () => resolve(legacy);
+  });
+  const loading = store.load();
+  await flushAwait();
+  assert.ok(gate.release !== undefined, "v1 读盘确实挂起");
+
+  store.schedule(MSG2, 4, CARDS);
+  await store.flush();
+  const current = serializeComposerDraft(MSG2, 4, CARDS);
+  assert.equal(rig.file, current);
+
+  gate.release!();
+  await loading;
+  await store.flush();
+  assert.deepEqual(rig.writes, [current], "读盘前的新编辑使旧迁移写回整体跳过");
+  assert.equal(rig.file, current);
+});
+
+test("迁移写已在途时后续编辑 flush：串行写链保证最终落盘是新内容", async () => {
+  const { store, rig } = createRig();
+  const migrated = serializeComposerDraft("legacy", 2, []);
+  rig.file = JSON.stringify({
+    version: 1,
+    blocks: [{ kind: "paragraph", text: "legacy" }],
+    caret: { block: 0, offset: 2 },
+  });
+  const gate: { release: (() => void) | undefined } = { release: undefined };
+  rig.putGate = (draftJson) => draftJson === migrated
+    ? new Promise<void>((resolve) => void (gate.release = resolve))
+    : undefined;
+
+  const loading = store.load();
+  await flushAwait();
+  assert.ok(gate.release !== undefined, "旧迁移写已经入链并在途");
+
+  store.schedule(MSG2, 4, CARDS);
+  const flushing = store.flush();
+  await flushAwait();
+  assert.deepEqual(rig.writes, [], "迁移写未释放前，新编辑写必须排在后面");
+
+  gate.release!();
+  await loading;
+  await flushing;
+  const current = serializeComposerDraft(MSG2, 4, CARDS);
+  assert.deepEqual(rig.writes, [migrated, current]);
+  assert.equal(rig.file, current);
+});

@@ -4,15 +4,8 @@
 // 必须成立的行为：组合期 Enter 不发送；两种事件序的确认拍都被吞；窗口外 Enter 照常放行
 // （正常发送与 ⇧Enter 换行不被破坏）；确认拍消费后不残留窗口误吞下一次 Enter。
 //
-// HC5 追加（M527，合同 docs/specs/harness-composer.md）：IME 组合期结构冻结的 DOM 替身
-// 用例——组合窗内 normalize 不得折段/改写选区、withModel 不得整面重渲、compositionend
-// 后补账归一。复现现场（Alex 2026-10-16）：第一行有文字 → ⇧Enter 新起第二行 → 第二行
-// 中文组合 → 选中候选后组合文本跳回第一行、第二行消失（根因 = 组合期 childList 变化触发
-// composerObserver → normalize 把含元素子节点的组合块折进前段）。
-//
-// 这一层是零 DOM 环境（tests/unit/README.md）：假时钟外注 now，逐事件序驱动纯函数状态机。
-// HC5 小节自带平台边界 DOM 替身（手法同 tests/unit/harness-thinking-reset.test.ts），
-// 驱动的是仓里那份真 createHarnessPanel。
+// 本文件只覆盖 Enter 确认门纯状态机。组合文本、组合选区与组合中删除归 CM；
+// 真引擎回归在 m831 CDP 场景，Chromium/WebKit adapter 序在 m361 场景。
 
 import { mock, test } from "node:test";
 import assert from "node:assert/strict";

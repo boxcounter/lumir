@@ -74,6 +74,7 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
   /** 装载世代：读盘是异步的，读盘途中再次装载 vault 时本次结果整体作废（同阅读位置的让位
    *  规则）。它守的是**store 内部状态**；装配层渲染侧另有一道世代（面板自己的 draftSeq）。 */
   let loadGen = 0;
+  let editGeneration = 0;
 
   function cancelTimer(): void {
     if (timer === null) return;
@@ -118,6 +119,7 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
   }
 
   function schedule(text: string, caret: number | null, cards: readonly ComposerAttachment[]): void {
+    editGeneration += 1;
     const draftJson = serializeComposerDraft(text, caret, cards);
     // 内容没变就不排期：每次击键都重排定时器等于「一直在防抖窗口里」——用户连续编辑时永远
     // 不落盘。光标变化也算变更（落位要跟着走），但它不与内容分开排期：同一次 schedule 里带上。
@@ -152,6 +154,8 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
     // 留着就会把旧 vault 的草稿写进新 vault 的文件。丢弃——它已由切换前的 flush 写走。
     discard();
     const gen = (loadGen += 1);
+    const loadEpoch = epoch;
+    const loadEditGeneration = editGeneration;
     let text: string | null = null;
     try {
       text = await deps.getDraft();
@@ -160,18 +164,21 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
     }
     if (gen !== loadGen) return null; // 读盘途中又装载了一次：本次结果作废
     if (text === null) {
-      written = null;
+      if (epoch === loadEpoch && editGeneration === loadEditGeneration) written = null;
       return null;
     }
     const parsed = readComposerDraft(text);
     if (parsed === null) {
-      written = null;
+      if (epoch === loadEpoch && editGeneration === loadEditGeneration) written = null;
       return null;
     }
     const { draft, migrated } = parsed;
     const normalized = serializeComposerDraft(draft.text, draft.caret, draft.cards);
-    if (migrated) await write(normalized);
-    else written = normalized;
+    // 检查与 write 入链之间没有 await：新编辑要么让旧迁移写整体跳过，要么排在已入链的写之后。
+    if (epoch === loadEpoch && editGeneration === loadEditGeneration) {
+      if (migrated) await write(normalized);
+      else written = normalized;
+    }
     return { text: draft.text, caret: draft.caret, cards: draft.cards };
   }
 

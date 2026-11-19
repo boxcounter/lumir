@@ -4293,7 +4293,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       remove.textContent = "×";
       el.append(remove);
       // 卡片点击（× 除外）= 跳回来源（quote 走 QC3 注册的编辑器处理器、msgquote 走 transcript
-      // 定位）；mousedown 拦下是为不让 contenteditable=false 的卡片抢走选区/焦点（面板内元素，
+      // 定位）；mousedown 拦下是为不让区外卡片抢走 CM 选区/焦点（面板内元素，
       // 无标题栏拖拽问题——REVIEW.md 「标题栏 preventDefault」条只约束标题栏容器）。
       el.addEventListener("mousedown", (event) => event.preventDefault());
       remove.addEventListener("mousedown", (event) => event.stopPropagation());

@@ -40,7 +40,7 @@ steps:
     expect:
       - shot: 01-起始态
 
-  - name: 真实鼠标点 composer（contenteditable 的 DOM 焦点靠真实 mousedown 建立）
+  - name: 真实鼠标点 composer（CM contentDOM 的 DOM 焦点靠真实 mousedown 建立）
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
 

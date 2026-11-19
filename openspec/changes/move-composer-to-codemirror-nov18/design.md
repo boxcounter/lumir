@@ -58,7 +58,7 @@ caret 是 UTF-16 offset，合法区间 `[0,text.length]`；非法 / 缺席按 `n
 - 卡片 caret 或末尾边界：最近后续可见文本块的拼接起点；没有后续则全文末尾。
 - 非法 caret：null；合法 caret 不得因 cards 抽取而越界。
 
-store `load()` 读到合法 v1 后立即把转换结果经既有串行 `enqueue` 写回 v2，再把 `written` 基准设为该 v2。写回失败走既有 warning / 待写语义，不谎报迁移成功；内存仍可恢复转换后的内容。后续 schedule / load 成功路径只写 v2，绝不双写。
+store `load()` 读到合法 v1 后立即把转换结果经既有串行 `enqueue` 写回 v2，再把 `written` 基准设为该 v2。load 起始捕获编辑世代；读盘期间用户已编辑时跳过旧迁移写和 `written` 覆盖，保留当前 `pending` / `written`。世代检查与入链在同一个 JS 同步区段；迁移写若已入链，后续编辑写经同一串行链排在其后，保证最终新内容落盘。写回失败走既有 warning / 待写语义，不谎报迁移成功；内存仍可恢复转换后的内容。后续 schedule / load 成功路径只写 v2，绝不双写。
 
 ## 5. 失败恢复与焦点
 

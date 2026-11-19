@@ -287,7 +287,7 @@ composer 内容 SHALL 作为当前 vault 的一份草稿自动保存与恢复；
 
 新草稿 SHALL 是 `{version:2,text,caret,cards}`：text 是完整问题，caret 是 `[0,text.length]` 内 UTF-16 offset 或 null，cards 按 tray 顺序逐字段保存。图片只存内容寻址名、源 mime 与可选宽高，MUST NOT 内联 base64；v2 合法往返必须逐字段还原。
 
-现存 v1 是迁移的具体消费者。读到合法 v1 时 SHALL 一次性转换：段落按原顺序以 `\n` 连接，未知块以可见 JSON 文本加入，卡片按相对顺序全部抽入 cards；段落 caret 精确映射，卡片 / 末尾边界映射到最近后续文本块起点，无后续则全文末尾。成功转换后 SHALL 立即经既有串行 store 写回 v2，此后只读 / 只写 v2；MUST NOT 双写、保留旧编辑路径或建立通用迁移平台。损坏 v1 / v2 安静回空；迁移写失败不谎报已保存。
+现存 v1 是迁移的具体消费者。读到合法 v1 时 SHALL 一次性转换：段落按原顺序以 `\n` 连接，未知块以可见 JSON 文本加入，卡片按相对顺序全部抽入 cards；段落 caret 精确映射，卡片 / 末尾边界映射到最近后续文本块起点，无后续则全文末尾。成功转换后 SHALL 立即经既有串行 store 写回 v2，此后只读 / 只写 v2；MUST NOT 双写、保留旧编辑路径或建立通用迁移平台。load 起始 SHALL 捕获编辑世代；读盘期间发生新编辑时 MUST 跳过旧迁移写回及 written 基准覆盖，保留当前 pending / written。迁移写一旦入串行链，后续编辑写 SHALL 排在其后，最终落盘必须是最新输入。损坏 v1 / v2 安静回空；迁移写失败不谎报已保存。
 
 #### Scenario: v2 往返与合法 caret
 
