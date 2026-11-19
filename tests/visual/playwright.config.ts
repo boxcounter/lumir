@@ -106,6 +106,8 @@ export default defineConfig({
     // chromium 的 DOM 行为覆盖真机（WKWebView）。
     // M852 起首次安装的错误文案同行：判据是「en 错误行不含中文 / 不含内部 URL」，而网络失败
     // 那条来自 WKWebView 真机现场（真机 WKWebView 是缺陷现场，Chromium 只是近似）。
+    // M858 补的流式事件字面量码（内部错误 / 空响应）同在此场景：它们只在事件流里出现，
+    // 与 M852 的网络失败同一条上屏路径（appendError），两支各判一次。
     ...(webkitRealuaPresent
       ? [
           {

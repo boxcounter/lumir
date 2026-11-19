@@ -822,10 +822,12 @@ test("设置面板：active / 命名 / 文件级错误有可见出口并计入�
   const banner = page.locator('[data-banner="field-errors"]');
   await expect(banner).toBeVisible();
   await expect(banner).toContainText("harness.provider");
-  await expect(banner).toContainText("替代的当前使用项不可用");
-  await expect(banner).toContainText("文件级校验失败");
-  await expect(page.locator('[data-auto-row="session_naming"] .lumir-set-error-outlet')).toContainText("会话命名的新目标不可用");
-  await expect(page.locator('[data-auto-row="attachment_naming"] .lumir-set-error-outlet')).toContainText("图片命名模型不在清单");
+  // M858：这些 code 已进 ERROR_COPY（D886 / D890），上屏读 deck 中文列而不是后端 message——
+  // 合成 message 与 deck 措辞不同，正好用来区分「迁移生效」与「回落原 message」。
+  await expect(banner).toContainText("当前使用项不可用");
+  await expect(banner).toContainText("设置变更的格式不符合要求");
+  await expect(page.locator('[data-auto-row="session_naming"] .lumir-set-error-outlet')).toContainText("命名指向的 provider 不可用");
+  await expect(page.locator('[data-auto-row="attachment_naming"] .lumir-set-error-outlet')).toContainText("命名模型不可用");
   await expect(page.locator(".lumir-set-status")).toContainText("需要修正（4 项）");
   // 没有绑定到控件的错误：首错焦点落到通用错误横幅（而不是留在保存钮上）。
   await expect(banner).toBeFocused();
@@ -984,7 +986,8 @@ test("设置面板：命名行的后端错误在编辑清错后从持久行里�
   await page.locator(".lumir-set-btn-primary").click();
   const outlet = page.locator('[data-auto-row="session_naming"] .lumir-set-error-outlet');
   await expect(outlet).toHaveCount(1);
-  await expect(outlet).toContainText("会话命名的新目标不可用");
+  // M858：`settings_naming_target_missing` 已进 ERROR_COPY（D894），上屏是 deck 文案。
+  await expect(outlet).toContainText("命名指向的 provider 不可用");
   await expect(page.locator(".lumir-set-status")).toContainText("需要修正");
 
   // 就地编辑（输入框 input 不走整页重绘）：错误出口与「需要修正」计数必须同时消失，

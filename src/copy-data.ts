@@ -2006,6 +2006,8 @@ const COPY_TABLE = {
     en: "Provider ({provider}) is an OpenAI-compatible preset and needs a Base URL before it can send",
   },
   // D697：严格读失败——配置文件不是合法 JSON / 顶层不是对象（设置面的只读态来源）。
+  // `CommandError` 构造点带 `{path}`；设置写通道的 `field_error` 构造点没有 params，字段错误
+  // 这一侧读 D896（`FIELD_ERROR_COPY` 改道，M858）——两档参数面不同，模板不共用。
   D697: {
     zh: "配置文件（{path}）无法解析，请先修正 JSON 后再保存",
     en: "The config file ({path}) cannot be parsed: fix the JSON before saving",
@@ -2435,6 +2437,74 @@ const COPY_TABLE = {
     zh: "provider id 已存在，或与本笔要删除的 id 重名：请换一个 id，或拆成两次保存",
     en: "This provider id already exists, or matches an id being deleted in the same save: use another id, or save in two separate steps",
   },
+  // D886–D895：设置面板其余字段级错误（M858，M852 finding 的收口）。与 D883–D885 同一口径：
+  // `SettingsFieldError` 没有 params，模板一律不带占位——provider id / 模型名 / 字段路径这类
+  // 读数由错误行所在控件（`mapFieldErrors` 按 path 路由）承担，不插进句子。同一 code 在 Rust
+  // 侧有多个 message 模板时取一条覆盖式句子（细节措辞有损失，是 D6(a) 的明账）。
+  // 消费点 `src/settings-panel.ts` 的 `mapFieldErrors`（经 `errorText` 取值）。
+  D886: {
+    zh: "设置变更的格式不符合要求，本次保存已拒绝：请重新载入设置后再修改",
+    en: "This settings change has an invalid format and was rejected: reload the settings and try again",
+  },
+  D887: {
+    zh: "设置变更里有本版本不认识的字段，本次保存已拒绝：请重载 Lumir 后再试",
+    en: "The settings change contains a field this version doesn't recognize, so it was rejected: reload Lumir and try again",
+  },
+  // D888：冲突横幅的标题 / 说明是固定文案（D845 / D846），本条的文本当前**只计算不上屏**
+  //（`mapFieldErrors` 归到 `out.conflict`，渲染读的是固定两键）——存在是为满足 error-text 的
+  // 1:1 对账（与 D462 同一种「永不上屏但必须成对」的条目）；横幅将来若改为展示后端原因即可读它。
+  D888: {
+    zh: "配置文件已在外部修改：请重新载入后再保存，或以本页为准重新应用",
+    en: "The config file was changed outside this window: reload before saving, or apply this page's changes again",
+  },
+  D889: {
+    zh: "这个 provider 不存在，或已被装载期忽略：请重新载入后再编辑",
+    en: "This provider doesn't exist or was ignored while loading: reload and try again",
+  },
+  D890: {
+    zh: "当前使用项不可用：请选择一个有效的 provider（不能是 mock，也不能是正在删除的条目）",
+    en: "The active provider isn't available: choose a valid provider (not mock, and not one being deleted)",
+  },
+  D891: {
+    zh: "预设创建后不可修改：换协议请新增一个 provider，再删除旧的",
+    en: "A preset can't be changed after creation: add a new provider for the other protocol, then delete the old one",
+  },
+  D892: {
+    zh: "这个 provider 正被会话命名或图片命名使用：删除前请选择「跟随当前 provider」或另一个替代目标",
+    en: "This provider is used by session or image naming: before deleting it, choose “Follow the current provider” or another target",
+  },
+  D893: {
+    zh: "这是当前使用的 provider：删除前必须选择一个替代 provider",
+    en: "This is the active provider: choose a replacement before deleting it",
+  },
+  D894: {
+    zh: "命名指向的 provider 不可用：请改选一个有效条目（不能是 mock，也不能是正在删除的条目）",
+    en: "The provider named for naming isn't available: pick a valid entry (not mock, and not one being deleted)",
+  },
+  D895: {
+    zh: "命名模型不可用：请选择目标 provider 模型清单里的模型；清单为空时先补一条",
+    en: "The naming model isn't available: choose a model from the target provider's list, or add one to that list first",
+  },
+  // D896：`config_parse_failed` 的**字段错误档**（M858）。同一个 code 有两条信封：
+  // `CommandError` 构造点带 `path` 参数（读 D697，模板保留 `{path}`），设置写通道的
+  // `field_error` 构造点没有 params、`{path}` 必缺参回落中文 message。两档参数面不同，
+  // 按 D6(a) 的口径拆成两条文案；字段错误档由 `FIELD_ERROR_COPY` 在 `mapFieldErrors`
+  // 调用点取值。不插路径：设置面板页头（D699）已经给出配置文件路径。
+  D896: {
+    zh: "配置文件无法解析：请先修正 JSON 后再保存",
+    en: "The config file can't be parsed: fix the JSON before saving",
+  },
+  // D897–D898：流式 `error` 事件里由 `events::error("<字面量>", …)` 构造的两条 code
+  // （M858，M852 finding 的收口）。事件只有 `{code, message}`、没有 params，模板不带占位。
+  // 消费点 `src/harness-panel.ts` 的 `case "error"`（经 `errorText` 取值，外层套 D348）。
+  D897: {
+    zh: "对话线程发生内部错误，本轮已终止；请重试，必要时开新会话",
+    en: "The conversation hit an internal error and this turn stopped: try again, and start a new session if it keeps happening",
+  },
+  D898: {
+    zh: "模型返回了空响应（没有文本也没有工具调用），本轮已停止；请重试",
+    en: "The model returned an empty response (no text and no tool calls), so this turn stopped: try again",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -2585,8 +2655,39 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   settings_provider_id_invalid: "D883",
   settings_provider_reserved_id: "D884",
   settings_provider_id_duplicate: "D885",
+  // 其余十条字段级错误（M858，M852 finding 的收口）：patch 形状 / 未知字段 / 外部冲突 /
+  // provider 与命名目标的完整性校验。模板同样不带占位（D886–D895 条注）。
+  settings_patch_invalid: "D886",
+  settings_unknown_field: "D887",
+  settings_revision_conflict: "D888",
+  settings_provider_not_found: "D889",
+  settings_active_provider_missing: "D890",
+  settings_provider_preset_immutable: "D891",
+  settings_provider_delete_referenced: "D892",
+  settings_provider_delete_active_requires_target: "D893",
+  settings_naming_target_missing: "D894",
+  settings_naming_model_missing: "D895",
+  // 流式 `error` 事件里的两个字面量 code（M858）：由 `events::error("<code>", …)` 构造，
+  // 不在 `CommandError::new` / `field_error` 的构造面上——error-text 门禁单独扫事件字面量
+  // （模板不带占位：事件没有 params）。消费点 `src/harness-panel.ts` 的 `case "error"`。
+  harness_internal_error: "D897",
+  harness_empty_response: "D898",
   // 窗口底色同步（M525）：只走 console 降级、永不上屏（见 D462 条目注记）。
   window_background_failed: "D462",
+};
+
+/**
+ * 字段错误信封的**两栖 code** 改道表（M858）：同一个 code 在两条信封上参数面不同时，字段
+ * 错误这一侧改读另一条**不带占位**的模板——取值仍然只有 `errorText` 这一份实现，本表只换
+ * 「code → 键」这一层（与 M686 的调用点覆盖表同一机制，见 `src/copy.ts` 的 `errorText`）。
+ *
+ * 当前唯一条目 `config_parse_failed`：`CommandError` 构造点带 `path` 参数（D697 的 `{path}`），
+ * `field_error` 构造点没有 params——若不开这张表，设置面板的读取 / 保存失败在 en 界面下会因
+ * 缺参回落到中文 message（M852 finding 实测）。MUST NOT 往这里加「两条信封都能用同一模板」的
+ * code：那种 code 直接进 `ERROR_COPY`。
+ */
+export const FIELD_ERROR_COPY: Record<string, CopyKey> = {
+  config_parse_failed: "D896",
 };
 
 /**
