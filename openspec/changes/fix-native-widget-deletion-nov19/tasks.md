@@ -14,7 +14,8 @@
 - [x] 2.3 新增有向矩阵：`-` / `+` / `*` / 有序 / 任务 / 嵌套 × wikilink / 行内公式 / 隐藏标记（`**`）× Delete / Backspace / `⌘⌫`，另含普通行与 lazy continuation 对照；每格先断言被吸收行确实渲染 replace 装饰，再与独立模型对拍 doc/选区并验一次 undo。
 - [x] 2.4 新增 `⌘S` 精确落盘用例（盘上全文 = 源文档的精确合并）。
 - [x] 2.5 新增 `scripts/acceptance/scenarios/261-native-widget-deletion.md`（列表 / wikilink / 公式 + 精确落盘 + 撤销），用 `node scripts/acceptance/coverage.mjs` 更新 COVERAGE。
-- [ ] 2.6 真机 261 执行并记录 PASS 证据；M836 期间真机窗口已结束，未跑不得记 PASS。
+- [x] 2.6 真机 261 执行并记录 PASS 证据；M836 期间真机窗口已结束，未跑不得记 PASS。
+  - M839 先修 261 场景的两条 oracle 缺陷（`a84a66ae`，只改场景 md，不改产品代码），随后真机重跑：261 `PASS`、33 断言 / 0 失败、48.5s、exit 0，witness C 的 `file.exact alpha$x$` 逐字节命中（`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-19-widget-oracle-fix/` 的 `summary.md` / `results.json` / `run.log`）。
 
 ## 3. 验证
 

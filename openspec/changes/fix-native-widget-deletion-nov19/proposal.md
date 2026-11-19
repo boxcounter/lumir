@@ -10,6 +10,18 @@
 > 「通用 state-only 修复，不按 DOM / en dash 文本形状猜意图」。本 change 不引入新的产品
 > 行为或裁决点：修复面与合同范围由该要求直接决定，实施按 tower 的 mission 指令执行。
 
+## 节点 2 记录（归档前，2026-11-19，M840）
+
+口径见 [openspec-workflow.md](../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 来源是 Alex 对 M832 缺陷的原始要求「修复合同覆盖整个行为类别」与 M835 只读诊断的双引擎实测结论（见本文开头记录）；tower 在 M836 mission 中据此立项并指定「通用 state-only 修复，不按 DOM / en dash 文本形状猜意图」。本 change 不引入新的产品行为或裁决点，实现期没有静默扩 scope：`git diff --name-only 79e8815d...0facd254` 恰为声明的 9 个文件（`src/editor.ts`、`tests/unit/editing-oracle-model.ts`、`tests/visual/scenes/editing-oracle.spec.ts`、`docs/specs/lists.md`、261 场景 + COVERAGE、本 change 三件），无 `src-tauri`、依赖或像素基线改动。
+2. **独立 reviewer clean / merge**：assigned reviewer `reviewer-native-widget-deletion` 判 `status: clean` / `merge: merge`，评审 tip `0facd2543b742420b65505182f947316eacc6fd9`（`reviewed_commit` 同值），评审文件 `/Users/boxcounter/Code/Boxcounter/lumir/.tower/comms/reviews/review-feat-fix-native-widget-deletion-nov19-reviewer-native-widget-deletio-r1.md`。合并提交 `40b34a2d` 的第二父即 `0facd254`，评审绑定内容与合入内容同一份。
+3. **tasks 完成**：`tasks.md` 16/16 全勾，无放弃项。2.6（真机 261）在 M836 期间因用户真机窗口结束而如实未勾；M839 先修 261 场景的两条 oracle 缺陷（`a84a66ae`，只改场景 md、产品代码零改动），真机重跑 PASS 后按证据勾选（33 断言 / 0 失败 / exit 0）。
+4. **要求的门禁与真机证据**：实现 tip `5a8e5f7b`：`scripts/gate.sh quick` → `GATE RESULT: 13/13 PASS（SKIP 0）` 退出码 0；`LUMIR_VISUAL_PORT=4386 scripts/gate.sh visual` → `GATE RESULT: 15/15 PASS（SKIP 0）` 退出码 0、visual-regression 780s（含全量像素，未更新基线）；读数记于 `tasks.md` 3.5（原始 gate 日志未落 `.local/`）。reviewer 在最终 tip `0facd254` 独立复跑：`pnpm test` 1518 pass / 0 fail；`tests/visual/scenes/editing-oracle.spec.ts` 75 passed / 1 skipped（Chromium 38 + webkit-realua 37，含 seed 2 / 13 / 29）；`node scripts/acceptance/run.mjs --check` 238 场景 PASS。真机 261 `PASS`、33 断言、0 失败、48.5s（`/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-19-widget-oracle-fix/`；列表 / wikilink / 公式三格 + 精确落盘 + 一次撤销，witness C `file.exact alpha$x$` 逐字节命中）。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS（`扫过 8 份 delta，6 条 MODIFIED，对比 79 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`，退出码 0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 35 passed, 0 failed (35 items)`（退出码 0）；`docs/backlog.md` 归档跟踪队列有且仅有一条本 change 条目。delta 为 `editor-live-preview` 1 条 ADDED，是真实增量（`grep` living 无同名 requirement）。
+
+未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与 tip 均无异常、证据无缺口——机器 + 独立评审放行（本节要件）。
+
 ## Why
 
 ### 现场
