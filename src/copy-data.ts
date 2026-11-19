@@ -430,9 +430,14 @@ const COPY_TABLE = {
     zh: "LLM 客户端初始化失败：{reason}",
     en: "Failed to initialize the LLM client: {reason}",
   },
+  // D355 改形（M852）：去掉 `{reason}` 占位。后端 `harness_network_failed` 的 params.reason
+  // 是 reqwest 的 Display（`error sending request for url (http://127.0.0.1:9/v1/chat/completions)`），
+  // 插进模板即把内部 URL 与原始技术串送上屏——两个都不能给用户看（URL 是内部端点，技术串
+  // 不可行动）。诊断面仍有它：`llm_error` 记录与 console 都走后端 message，不随文案表变。
+  // 模板因此不带占位：全部构造点给不出可上屏的 reason。
   D355: {
-    zh: "LLM 请求发送失败：{reason}",
-    en: "Failed to send the LLM request: {reason}",
+    zh: "LLM 请求发送失败：请检查网络连接，并在设置面板核对 provider 的接入配置",
+    en: "Failed to send the LLM request: check the network connection and the provider's settings",
   },
   D356: {
     zh: "没有待处理的批准请求",
@@ -2412,6 +2417,24 @@ const COPY_TABLE = {
     zh: "新建笔记",
     en: "New note",
   },
+  // D883–D885：设置面板 provider id 校验的三条字段级错误（M852，首次安装新建 provider 时
+  // 最常撞上的那批）。取号接 D882（M851 的「新建笔记」）的末位——M851 先合并，本批让号。
+  // 消费点 `src/settings-panel.ts` 的 `mapFieldErrors`
+  //（经 `errorText` 按 code 取值）。**模板一律不带占位**：`SettingsFieldError` 只有
+  // `{path, code, message}`、没有 params，带占位的模板会被 errorText 的缺参兜底打回中文
+  // message。id 本身不插进文案——错误行就渲染在 id 输入框正下方，同一行的读数已给出身份。
+  D883: {
+    zh: "provider id 不合法：只能用小写字母 / 数字 / - / _，首字符必须是字母或数字，至多 32 字符、不含点",
+    en: "Invalid provider id: use lowercase letters, digits, - or _ only; start with a letter or digit; at most 32 characters; no dots",
+  },
+  D884: {
+    zh: "mock 是保留 id，不能新增",
+    en: "mock is a reserved id and cannot be added",
+  },
+  D885: {
+    zh: "provider id 已存在，或与本笔要删除的 id 重名：请换一个 id，或拆成两次保存",
+    en: "This provider id already exists, or matches an id being deleted in the same save: use another id, or save in two separate steps",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -2555,6 +2578,13 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   permission_rule_invalid: "D569",
   open_url_rejected: "D78",
   open_url_failed: "D79",
+  // 设置面板的字段级错误（M852，首次安装建 provider 时最常撞上的三条 id 校验）。
+  // 来源是 `src-tauri/src/settings.rs` 的 `field_error(...)`（`SettingsFieldError`，不是
+  // `CommandError`）——同一张表、同一个 `errorText` 取值口，不另立映射。三条模板都不带占位：
+  // 字段错误不携带 params（理由见 D883–D885 条注）。
+  settings_provider_id_invalid: "D883",
+  settings_provider_reserved_id: "D884",
+  settings_provider_id_duplicate: "D885",
   // 窗口底色同步（M525）：只走 console 降级、永不上屏（见 D462 条目注记）。
   window_background_failed: "D462",
 };

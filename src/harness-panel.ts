@@ -8220,7 +8220,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         finalizeStreamingMessage();
         dispatchActivity({ type: "terminal", kind: "error", mounted: mountEl !== null });
         if (takeover) fetchSnapshot("content");
-        appendError(t("D348", { message: typeof event.message === "string" ? event.message : event.code }));
+        // 上屏走 errorText（按 code 取文案表的唯一入口），不把后端 message 直接当文案：流式
+        // 错误的 message 是 Rust 侧的中文原文（网络失败还带内部 URL 与 reqwest 原始串）。
+        // 事件只有 `{code, message}`、没有 params，因此这里的判据是「code 有文案表条目且模板
+        // 无占位」；带占位的 code（如 harness_http_failed）仍由 errorText 的缺参兜底回落 message。
+        appendError(
+          t("D348", {
+            message: errorText({
+              code: event.code,
+              message: typeof event.message === "string" ? event.message : event.code,
+            }),
+          }),
+        );
         return;
       }
       default:
@@ -8846,7 +8857,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       })
       .catch((e: unknown) => {
         if (errorCodeOf(e) === "harness_busy") {
-          appendError(t("D347", { reason: errorMessage(e) }));
+          appendError(t("D347", { reason: errorText(e) }));
           fetchActivitySnapshot();
           return;
         }
@@ -8866,7 +8877,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           deps.toast(errorText(e));
           return;
         }
-        appendError(t("D347", { reason: errorMessage(e) }));
+        appendError(t("D347", { reason: errorText(e) }));
       });
   }
 
