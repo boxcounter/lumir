@@ -371,6 +371,26 @@ function capabilityOf(snapshot: SettingsSnapshot, preset: ProviderPreset | null)
   };
 }
 
+/** 模型行的装载期诊断文案（视图层唯一入口，M865）：`ModelDraft.diagnostics` 只有 Rust 的
+ *  message，code 在**同一个快照**的 `diagnostics` 里按同一条键路径
+ *  （`harness.providers.<id>.models[<i>]` 及其后代）——与 Rust `model_drafts` 的归属规则同源。
+ *  条数对齐时逐条按 code 取文案表（`errorText`，未登记的 code 自动回落 message）；对齐不上
+ *  （后端换了清单口径 / 单测只给 message）时整行回落原 message：宁可少译，不丢诊断。 */
+export function localizeModelNotes(
+  snapshot: SettingsSnapshot | null,
+  providerId: string,
+  index: number,
+  notes: readonly string[],
+): readonly string[] {
+  if (snapshot === null || notes.length === 0) return notes;
+  const prefix = `harness.providers.${providerId}.models[${index}]`;
+  const entries = snapshot.diagnostics.filter(
+    (entry) => entry.path === prefix || (entry.path !== null && entry.path.startsWith(`${prefix}.`)),
+  );
+  if (entries.length !== notes.length) return notes;
+  return entries.map((entry) => errorText(entry));
+}
+
 /** 快照 → 草稿（打开面板 / 保存成功 / 重新载入后的唯一入口）。 */
 export function createDraft(snapshot: SettingsSnapshot): Draft {
   const providers: DraftProvider[] = snapshot.providers.map((provider) => ({
@@ -1759,7 +1779,10 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
     for (const entry of entries) {
       const item = element("li", "lumir-set-diag-item");
       if (entry.path !== null) item.append(element("span", "lumir-set-diag-path", entry.path));
-      item.append(document.createTextNode(entry.message));
+      // 诊断是第三条后端信封（`ConfigDiagnostic{code, path, message}`）：与 CommandError /
+      // 字段错误同一条「Rust 只发 code + 人话兜底，上屏取文案表」的口径。没有 params 通道，
+      // 模板不带占位；未知 code / 缺参回落 message（`errorText` 的既有兜底）。
+      item.append(document.createTextNode(errorText(entry)));
       list.append(item);
     }
     callout.append(list);
@@ -2001,7 +2024,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       for (const entry of scoped) {
         const line = element("p", "lumir-set-hint");
         line.append(element("span", "lumir-set-diag-path", entry.path ?? ""));
-        line.append(document.createTextNode(entry.message));
+        line.append(document.createTextNode(errorText(entry)));
         note.append(line);
       }
       wrap.append(note);
@@ -2229,7 +2252,9 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
           t(fieldName === "effort" ? C.modelEffort : fieldName === "vision" ? C.modelVision : C.modelWindow),
         );
       if (missing.length > 0) row.append(element("p", "lumir-set-row-note", t(C.modelMissing, { fields: missing.join(" / ") })));
-      for (const note of rowModel.notes) row.append(element("p", "lumir-set-row-note", note));
+      for (const note of localizeModelNotes(snapshot, provider.id, index, rowModel.notes)) {
+        row.append(element("p", "lumir-set-row-note", note));
+      }
       const rowError = errors.models[provider.id]?.[index];
       if (rowError?.id !== undefined) {
         idInput.setAttribute("aria-invalid", "true");

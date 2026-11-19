@@ -10,6 +10,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { COPY } from "../../../src/copy-data";
 
 const DOC = "# 首次安装错误文案\n\n第一段，给上下文 chip 一个视口口径。\n";
 
@@ -216,5 +217,177 @@ test.describe("错误文案覆盖：流式事件字面量码", () => {
     await expect(empty).toContainText(/重试/);
     const text = (await empty.textContent()) ?? "";
     expect(CJK.test(text), `zh 上屏应是中文：${text}`).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M865：设置面板的装载期配置诊断（第三条信封 `ConfigDiagnostic{code, path, message}`）
+//
+// 这一组判的是**真实渲染结果**：诊断列表（`fillDiagnostics`）与被忽略 provider 的条目诊断都
+// 从 Rust 中文 message 改为按 code 取文案表；模型行 notes 按 `harness.providers.<id>.models[<i>]`
+// 前缀从同一快照取回 code。en 档任一诊断行露出中文即缺陷（M858 finding 的现场）。
+// ---------------------------------------------------------------------------
+
+/** 后端 message 的现场（逐字风格取自 `src-tauri/src/config.rs` 的 `sink.warn` / ConfigDiagnostic）。 */
+const DIAG_PRESET_MESSAGE = "配置项 harness.providers 的旧条目已补齐 preset（kimi、legacy）";
+const DIAG_WINDOW_MESSAGE =
+  '配置项 harness.providers.kimi-work.models[0]（id "k3-256k"）的 window 应为 1..=10000000 的整数，已忽略该项';
+
+/** 设置面快照（与 Rust `SettingsSnapshot` 的序列化形状同形；合成数据）。 */
+function diagnosticSettingsSnapshot(): Record<string, unknown> {
+  const models = [
+    {
+      id: "k3-256k",
+      effort: true,
+      vision: true,
+      window: 262144,
+      // 这一行会被装载期丢弃：notes 是 Rust message，code 在 snapshot.diagnostics 里按同一路径给。
+      valid: false,
+      diagnostics: [DIAG_WINDOW_MESSAGE],
+      unknown_keys: [],
+    },
+  ];
+  const namingTarget = {
+    override_provider: null,
+    override_model: null,
+    provider_options: [{ id: "kimi-work", is_active: true, configured: true }],
+    model_options: [{ id: "k3-256k", vision: true, is_effective: true }],
+    resolved: {
+      provider: "kimi-work",
+      model: "k3-256k",
+      follows_active: true,
+      dangling: false,
+      eligible: true,
+      reason: null,
+    },
+  };
+  const flag = { value: true, explicit: false };
+  return {
+    path: "/tmp/lumir-visual/config.json",
+    file: { state: "valid" },
+    revision: "rev-diag",
+    providers: [
+      {
+        id: "kimi-work",
+        preset: "kimi",
+        raw_preset: "kimi",
+        configured: true,
+        status: "ok",
+        api_key: { state: "set", hint: "3f9a" },
+        models,
+        model: "k3-256k",
+        base_url: { kind: "absent" },
+        wire_api: { kind: "absent" },
+        effective: {
+          official_base_url: "https://api.moonshot.cn/v1",
+          base_url: "https://api.moonshot.cn/v1",
+          wire_api: "responses",
+          models: [{ id: "k3-256k", effort: true, vision: true, window: 262144 }],
+        },
+        references: { active: true, session_naming: false, attachment_naming: false },
+        unknown_keys: [],
+      },
+    ],
+    active: "kimi-work",
+    active_explicit: true,
+    automation: {
+      auto_compact: flag,
+      session_naming: flag,
+      attachment_naming: flag,
+      subagents: flag,
+    },
+    naming: { session: namingTarget, attachment: namingTarget },
+    capabilities: {
+      presets: [
+        { preset: "kimi", official_base_url: "https://api.moonshot.cn/v1", supported_wire_apis: ["responses", "chat_completions"], default_wire_api: "responses", requires_api_key: true },
+        { preset: "deepseek", official_base_url: "https://api.deepseek.com", supported_wire_apis: ["responses"], default_wire_api: "responses", requires_api_key: true },
+        { preset: "generic", official_base_url: null, supported_wire_apis: ["chat_completions", "responses"], default_wire_api: "chat_completions", requires_api_key: false },
+        { preset: "mock", official_base_url: null, supported_wire_apis: [], default_wire_api: "responses", requires_api_key: false },
+      ],
+      provider_id_pattern: "^[a-z0-9][a-z0-9_-]{0,31}$",
+      reserved_provider_ids: ["mock"],
+      provider_order: ["kimi", "deepseek", "generic", "mock"],
+      model_window_min: 1,
+      model_window_max: 10000000,
+    },
+    defaults: {
+      auto_compact: true,
+      session_naming_enabled: true,
+      attachment_naming_enabled: true,
+      subagents_enabled: true,
+      model_window: 131072,
+    },
+    diagnostics: [
+      {
+        code: "harness_provider_preset_migrated",
+        path: "harness.providers",
+        severity: "warning",
+        message: DIAG_PRESET_MESSAGE,
+      },
+      {
+        code: "harness_model_window_invalid",
+        path: "harness.providers.kimi-work.models[0]",
+        severity: "reject_on_write",
+        message: DIAG_WINDOW_MESSAGE,
+      },
+    ],
+  };
+}
+
+/** 打开设置面板：`settings_get` 由本文件的 init script 覆写提供（与 m734 同口径）。 */
+async function openDiagnosticSettings(page: Page, language: "en" | "zh"): Promise<void> {
+  await stubTauri(page, { ...VAULT, config: { language } });
+  await page.addInitScript((snapshot) => {
+    const w = window as unknown as Record<string, any>;
+    const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: unknown) => unknown;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: unknown) => {
+      if (cmd === "settings_get") return snapshot;
+      return invoke(cmd, args);
+    };
+  }, diagnosticSettingsSnapshot());
+  await page.goto("/");
+  await page.locator(".modeline-language").waitFor({ state: "visible" });
+  await page.keyboard.press("Meta+Comma");
+  await expect(page.locator(".lumir-set-panel")).toBeVisible();
+  await expect(page.locator(".lumir-set-diag-item").first()).toBeVisible();
+  await expect(page.locator(".lumir-set-row-note").first()).toBeVisible();
+}
+
+test.describe("错误文案覆盖：设置面板装载期诊断", () => {
+  test("en：诊断列表与模型行 notes 都是英文，后端中文 message 不上屏", async ({ page }) => {
+    await openDiagnosticSettings(page, "en");
+
+    // 正观测：后端原文确实是中文（下面的「不含中文」断言才有区分度）。
+    expect(CJK.test(DIAG_PRESET_MESSAGE)).toBe(true);
+    expect(CJK.test(DIAG_WINDOW_MESSAGE)).toBe(true);
+
+    // 诊断列表（两条都在模型接入栏）：按 code 取英文列。
+    const diag = page.locator(".lumir-set-diag");
+    await expect(diag).toContainText(COPY.D905.en);
+    await expect(diag).toContainText(COPY.D920.en);
+    const diagText = (await diag.textContent()) ?? "";
+    expect(CJK.test(diagText), `诊断列表不得含中文：${diagText}`).toBe(false);
+
+    // 模型行 notes：同一份快照的诊断按 path 对齐，Rust message 不上屏。
+    const note = page.locator(".lumir-set-row-note");
+    await expect(note).toContainText(COPY.D920.en);
+    await expect(note).not.toContainText("窗口");
+    const noteText = (await note.textContent()) ?? "";
+    expect(CJK.test(noteText), `模型行 notes 不得含中文：${noteText}`).toBe(false);
+  });
+
+  test("zh：同一现场上屏中文（映射是两档，不是「一律英文」）", async ({ page }) => {
+    await openDiagnosticSettings(page, "zh");
+
+    const diag = page.locator(".lumir-set-diag");
+    await expect(diag).toContainText(COPY.D905.zh);
+    await expect(diag).toContainText(COPY.D920.zh);
+
+    const note = page.locator(".lumir-set-row-note");
+    await expect(note).toContainText(COPY.D920.zh);
+    const noteText = (await note.textContent()) ?? "";
+    expect(CJK.test(noteText), `zh 下模型行 notes 应是中文：${noteText}`).toBe(true);
+    // 后端原文（含读数与 Rust 措辞）不得逐字上屏——诊断文案来自 deck。
+    expect(noteText).not.toContain(DIAG_WINDOW_MESSAGE);
   });
 });

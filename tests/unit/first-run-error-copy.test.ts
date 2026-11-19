@@ -16,7 +16,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { COPY, FIELD_ERROR_COPY } from "../../src/copy-data.ts";
 import { errorText, t } from "../../src/copy.ts";
-import { mapFieldErrors } from "../../src/settings-panel.ts";
+import { localizeModelNotes, mapFieldErrors } from "../../src/settings-panel.ts";
+import type { SettingsSnapshot } from "../../src/bindings/SettingsSnapshot.ts";
 
 /** CJK 统一表意文字（含扩展 A 与兼容区）：en 上屏出现任何一个都算漏译。 */
 const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
@@ -348,4 +349,154 @@ test("流式事件字面量码：内部错误 / 空响应在 en / zh 两档都�
     // 反向判据：后端 message 是中文原文（en 断言的区分度来源）。
     assert.ok(CJK.test(item.message));
   }
+});
+
+// ---------------------------------------------------------------------------
+// M865：设置面板的**装载期配置诊断**（`ConfigDiagnostic{code, path, message}`）——
+// `fillDiagnostics` / 被忽略 provider 的条目诊断 / 模型行 notes 三处此前直出 Rust 中文
+// message，en 界面露中文且不在任何扫描门禁里。
+// ---------------------------------------------------------------------------
+
+/** 设置面可达诊断的现场（Rust message 逐字风格取自 `src-tauri/src/config.rs` 的 `sink.warn`）。
+ *  `expect` / `zhExpect` 是可行动方向的关键词；`value` 是 message 里的读数，文案 MUST NOT 插它。 */
+const DIAGNOSTIC_CASES = [
+  {
+    code: "harness_provider_preset_invalid",
+    path: "harness.providers.legacy.preset",
+    message: '配置项 harness.providers.legacy.preset 取值 "openai" 非法（可选：kimi、deepseek、generic、mock），已忽略该 provider',
+    value: "openai",
+    expect: /preset/i,
+    actionable: /kimi|deepseek|generic|mock/i,
+    zhExpect: /预设|kimi/,
+    key: "D904",
+  },
+  {
+    code: "harness_model_id_duplicate",
+    path: "harness.providers.kimi-work.models[1]",
+    message: '配置项 harness.providers.kimi-work.models[1] 的 id "k3-256k" 重复，已忽略',
+    value: "k3-256k",
+    expect: /id/i,
+    actionable: /unique/i,
+    zhExpect: /重复|唯一的 id/,
+    key: "D915",
+  },
+  {
+    code: "harness_model_window_missing",
+    path: "harness.providers.kimi-work.models[0]",
+    message: '配置项 harness.providers.kimi-work.models[0]（id "k3-256k"）未声明 window，已回退为 131072',
+    value: "131072",
+    expect: /window/i,
+    actionable: /default|conservative/i,
+    zhExpect: /window|默认值/,
+    key: "D921",
+  },
+  {
+    code: "harness_models_empty_when_configured",
+    path: "harness.providers.kimi-work",
+    message: "配置项 harness.providers.kimi-work 已配置 api_key 但没有声明任何模型：请至少声明一个模型，或清除 api_key",
+    value: "kimi-work",
+    expect: /model/i,
+    actionable: /declare|clear/i,
+    zhExpect: /模型|API Key/,
+    key: "D910",
+  },
+  {
+    code: "config_migration_write_failed",
+    path: null,
+    message: "改写后的配置未能落盘（Permission denied (os error 13)），下次启动会再试一次",
+    value: "os error 13",
+    expect: /config/i,
+    actionable: /permission|retry|next launch/i,
+    zhExpect: /写入权限|下次启动/,
+    key: "D927",
+  },
+  {
+    code: "harness_naming_provider_unknown",
+    path: "harness.session_naming.provider",
+    message: '配置项 harness.session_naming.provider 取值 "ghost" 不在 harness.providers 表内，会话命名已回退为会话当前 provider',
+    value: "ghost",
+    expect: /provider/i,
+    actionable: /session/i,
+    zhExpect: /会话|provider/,
+    key: "D926",
+  },
+] as const;
+
+test("配置诊断：设置面可达的 code 在 en / zh 两档都本地化、可行动、不插读数", () => {
+  for (const item of DIAGNOSTIC_CASES) {
+    // 上屏形状就是 `ConfigDiagnostic` 本身（`fillDiagnostics` 把它交给 errorText）。
+    const entry = { code: item.code, path: item.path, severity: "warning", message: item.message };
+
+    const en = errorText(entry, "en");
+    assertNoInternalDetail(en, `${item.code}/en`);
+    assert.match(en, item.expect, `${item.code}/en 要点名对象：${en}`);
+    assert.match(en, item.actionable, `${item.code}/en 要给出可行动方向：${en}`);
+    assert.equal(en, COPY[item.key].en, `${item.code}/en 与 deck 不一致`);
+    assert.ok(!en.includes(item.value), `${item.code}/en 不得插入读数 ${item.value}：${en}`);
+
+    const zh = errorText(entry, "zh");
+    assert.ok(CJK.test(zh), `${item.code}/zh 应是中文（正观测）：${zh}`);
+    assert.match(zh, item.zhExpect, `${item.code}/zh 要给出可行动方向：${zh}`);
+    assert.equal(zh, COPY[item.key].zh, `${item.code}/zh 与 deck 不一致`);
+    assert.ok(!zh.includes(item.value), `${item.code}/zh 不得插入读数 ${item.value}：${zh}`);
+    assert.notEqual(en, zh, `${item.code}：两档必须是两份文案，不是同一句`);
+
+    // 反向判据：后端原文确实是中文（上面的 en 断言有区分度）。
+    assert.ok(CJK.test(item.message), `${item.code}：后端 message 应是中文原文`);
+  }
+});
+
+test("配置诊断：模型行 notes 按同路径诊断的 code 取文案，后端中文 message 不上屏", () => {
+  // `ProviderSettings.models[].diagnostics` 只有 message；code 在同一个快照的 diagnostics 里按
+  // `harness.providers.<id>.models[<i>]` 前缀对齐（与 Rust `model_drafts` 同一归属规则）。
+  const snapshot = {
+    diagnostics: DIAGNOSTIC_CASES.filter((item) => item.path !== null && item.path.includes(".models[")).map(
+      (item) => ({ code: item.code, path: item.path, severity: "warning", message: item.message }),
+    ),
+  } as unknown as SettingsSnapshot;
+  assert.equal(snapshot.diagnostics.length, 2, "fixture 里应有两条模型行诊断");
+
+  const kimiNotes = ["配置项 harness.providers.kimi-work.models[0]（id \"k3-256k\"）未声明 window，已回退为 131072"];
+  assert.deepEqual(localizeModelNotes(snapshot, "kimi-work", 0, kimiNotes), [COPY.D921.zh]);
+
+  // 别的 provider / 别的行不串：没有对应诊断时原样返回（不吞、不借用）。
+  assert.deepEqual(localizeModelNotes(snapshot, "local-lab", 0, ["别的行"]), ["别的行"]);
+  assert.deepEqual(localizeModelNotes(snapshot, "kimi-work", 3, ["没有诊断"]), ["没有诊断"]);
+});
+
+test("配置诊断：未知 code 安全回落 message（前向兼容，MUST NOT 显示空白或裸 code）", () => {
+  const entry = { code: "harness_future_diagnostic", path: "harness.providers.kimi-work", severity: "warning", message: "未来版本的中文诊断" };
+  assert.equal(errorText(entry, "en"), entry.message);
+  assert.equal(errorText(entry, "zh"), entry.message);
+});
+
+test("同一 code 的两条信封：装载期诊断说「已忽略」，保存被拒说「改哪里才能保存」（M865）", () => {
+  const message = '配置项 harness.providers.kimi-work.models[0] 的 id "dup" 重复，已忽略';
+  const entry = {
+    code: "harness_model_id_duplicate",
+    path: "harness.providers.kimi-work.models[0]",
+    severity: "reject_on_write",
+    message,
+  };
+
+  // 诊断面（fillDiagnostics / 忽略条目 / 模型行 notes）：装载期发生了什么。
+  const diagEn = errorText(entry, "en");
+  assert.equal(diagEn, COPY.D915.en);
+  assert.ok(!CJK.test(diagEn));
+  assert.match(diagEn, /ignored/i);
+
+  // 字段错误面（保存被拒）：改哪里才能保存，MUST NOT 说「已忽略」（文件没变）。
+  const fieldEn = errorText(entry, "en", FIELD_ERROR_COPY);
+  assert.equal(fieldEn, COPY.D929.en);
+  assert.ok(!CJK.test(fieldEn));
+  assert.match(fieldEn, /unique id/i);
+  assert.notEqual(diagEn, fieldEn, "两条信封必须是两份措辞");
+
+  // 真实调用点：`mapFieldErrors` 传的就是字段错误表（单测层语言钉在 zh）。
+  const mapped = mapFieldErrors([
+    { path: "harness.providers.kimi-work.models[0].id", code: "harness_model_id_duplicate", message: "模型 id 重复" },
+  ]);
+  assert.equal(mapped.models["kimi-work"]?.[0]?.id, COPY.D929.zh);
+  // 诊断面不受字段错误表影响，仍是装载期措辞。
+  assert.equal(errorText(entry, "zh"), COPY.D915.zh);
 });

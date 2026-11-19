@@ -28,6 +28,7 @@ import {
   keyEditForInput,
   emptyFieldErrors,
   errorCount,
+  localizeModelNotes,
   planProviderEdits,
   findProvider,
   mapFieldErrors,
@@ -771,6 +772,50 @@ test("mapFieldErrors：revision 冲突归到 conflict（横幅两动作的判据
   const mapped = mapFieldErrors(errors([["base_revision", "配置文件已在外部修改"]]));
   assert.equal(mapped.conflict, "配置文件已在外部修改");
   assert.equal(mapped.fileLevel, null);
+});
+
+// ── 模型行诊断（M865：第三条信封 ConfigDiagnostic） ─────────────────────
+
+test("localizeModelNotes：模型行 notes 按同路径诊断的 code 取文案；条数对不上 / 未知 code 回落原 message", () => {
+  const snap = snapshot({
+    providers: [provider("kimi-work", { models: [modelDraft("k3-256k"), modelDraft("bad")] })],
+    diagnostics: [
+      {
+        code: "harness_model_window_missing",
+        path: "harness.providers.kimi-work.models[0]",
+        severity: "warning",
+        message: "配置项 harness.providers.kimi-work.models[0]（id \"k3-256k\"）未声明 window，已回退为 131072",
+      },
+      {
+        code: "harness_model_id_duplicate",
+        path: "harness.providers.kimi-work.models[1].id",
+        severity: "reject_on_write",
+        message: "配置项 harness.providers.kimi-work.models[1] 的 id \"k3-256k\" 重复，已忽略",
+      },
+    ],
+  });
+  // 逐条对齐（含 path 后代）：code → 文案表，Rust 中文 message 不上屏。
+  assert.deepEqual(localizeModelNotes(snap, "kimi-work", 0, ["后端原文一"]), [COPY.D921.zh]);
+  assert.deepEqual(localizeModelNotes(snap, "kimi-work", 1, ["后端原文二"]), [COPY.D915.zh]);
+  assert.notEqual(COPY.D921.zh, "后端原文一");
+  // 条数对不上（后端换了清单口径 / 单测只给 message）→ 整行回落原 message，不吞诊断。
+  assert.deepEqual(localizeModelNotes(snap, "kimi-work", 0, ["a", "b"]), ["a", "b"]);
+  assert.deepEqual(localizeModelNotes(snap, "kimi-work", 2, ["没有这一行"]), ["没有这一行"]);
+  // 未知 code → errorText 的既有兜底（回落 message）。
+  const unknown = snapshot({
+    diagnostics: [
+      {
+        code: "no_such_diagnostic_code",
+        path: "harness.providers.kimi-work.models[0]",
+        severity: "warning",
+        message: "后端人话",
+      },
+    ],
+  });
+  assert.deepEqual(localizeModelNotes(unknown, "kimi-work", 0, ["后端人话"]), ["后端人话"]);
+  // 快照缺失（读取失败态）与空 notes 原样返回。
+  assert.deepEqual(localizeModelNotes(null, "kimi-work", 0, ["x"]), ["x"]);
+  assert.deepEqual(localizeModelNotes(snap, "kimi-work", 0, []), []);
 });
 
 // ── 脏判定 ───────────────────────────────────────────────────────────
