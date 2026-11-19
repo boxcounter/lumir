@@ -89,11 +89,15 @@ export default defineConfig({
     // 字体度量驱动的（CM 的 goal column 走 coordsAtPos / posAtCoords），真机 WKWebView 是缺陷
     // 现场——chromium 与 WebKit 的取整可以不同，必须两支各判一次。该文件里只有 CDP 那一条是
     // Chromium 专属通道，场景内自行 skip，其余六条两支都跑。
+    // M842 起编辑 / 渲染布局稳定性（markdown-editing-stability）同行：判据是光标进出前后的
+    // **几何差**，而 WebKit 在渲染态表格 cell 端点的键入 / 删除走 DOM 回写、chromium 不走——
+    // 同一批断言只有两支各跑一次才分得出「引擎缺陷」与「产品回归」（该文件里 8 条缺陷用例按
+    // engine 标 expected failure）。
     ...(webkitRealuaPresent
       ? [
           {
             name: "webkit-realua",
-            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts/,
+            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts|markdown-editing-stability\.spec\.ts/,
             use: { browserName: "webkit" as const, userAgent: REAL_WEBKIT_UA },
           },
         ]

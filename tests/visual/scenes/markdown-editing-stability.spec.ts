@@ -1,0 +1,632 @@
+// tests/visual/scenes/markdown-editing-stability.spec.ts —— 编辑 / 渲染对抗下的**布局稳定性**（M842）。
+//
+// 用户现场（Alex，2026-11）：同一条 Markdown 行在「光标停在本行」与「光标不在本行」两种状态下
+// 行高不同，整篇内容随光标移动上下跳。本场景把这条手感写成机器判据。
+//
+// ## 合同（本文件钉住的不变量）
+//
+// C1 **导航不改状态**：光标移动 / 选区变化 / 焦点进入离开，MUST NOT 改变 `EditorState.doc`
+//    的任何一个字节、MUST NOT 触发落盘、MUST NOT 把文档标脏。
+// C2 **行盒稳定**（active↔inactive）：对渲染态**不显露源码**的行，`.cm-line` 的行盒高度、
+//    行内首段文本的字形 rect 高度与基线（top）在两种状态下逐像素相同（≤0.5px），其后各行的
+//    top 也随之相同。
+// C3 **合法重排有界且只落在本行**：源码显露（标题 `#`、强调 `**`、链接目标、行内公式、裸
+//    marker 行）允许改变**本行**的行盒；其余各行 MUST NOT 自行改变高度，且其 top 位移必须
+//    恰好等于本行之前所有获批行的高度变化之和（±0.5px）——「别人跟着跳」只允许是被本行
+//    高度变化推的，不允许是自身重排。
+// C4 **横向几何稳定**：列表 marker 右缘、正文左缘 x、表格各 cell 的 left/width/height 在
+//    active↔inactive 之间不变（≤0.5px）。
+// C5 **渲染投影不污染源码**：在渲染态结构里键入 / 删除（表格 cell、列表项、强调、公式、
+//    wikilink），写进文档的必须是**源码字节的编辑结果**——渲染字形（`–` / `◦` / `[x]` /
+//    cell 文本 / KaTeX 字形）MUST NOT 出现在文档里；一次 undo 复原到逐字节相同的旧文；
+//    ⌘S 落盘的全文 = 编辑后的文档。
+//
+// ## 分工（不重复建设）
+//
+// - 期望值模型：`tests/unit/editing-oracle-model.ts`（顶层列表 + 通用文本编辑，M832）；
+//   本文件不新增第二个 markdown 模型，嵌套 / 任务 / 表格这类「生产语义由上游 markdown 包
+//   决定」的形态用**显式期望串**逐案钉住（与 editing-oracle 的 witness 用例同法）。
+// - 真键盘 / 真 view / 真落盘：本文件；纯函数与大样本随机序列仍归 Node 层。
+// - 像素基线：本文件只做结构 / 几何断言，MUST NOT 新增或更新任何截图基线。
+//
+// ## 容差口径
+//
+// 几何读数全部取亚像素浮点（`getBoundingClientRect`），容差 `TOL = 0.5px`：比一个 CSS 像素
+// 还小——行高 2px 的抖动（link `↗` 标记撑高行盒、裸 marker 行进入列表渲染）在同一次实测里
+// 就是这个量级，能抓住；抗锯齿 / 子像素取整的抖动在 0.1px 量级，不会误报。
+import { expect, test, type Page } from "@playwright/test";
+import { stubTauri, fileText, type VaultFixture } from "./tauri-stub";
+
+const TOL = 0.5;
+/** 源码显露允许的最大合法重排幅度：一行最多换一次行（正文行高 ≤ 34px，留 1.5 行余量）。
+ *  超过它就是「重新排版了整个块」，不是显露——按 C3 判红。 */
+const MAX_LEGAL_REFLOW = 52;
+
+// ---------------------------------------------------------------------------
+// 装置
+// ---------------------------------------------------------------------------
+
+function vaultWith(path: string, text: string): VaultFixture {
+  return {
+    entries: [{ path, kind: "file", size: text.length, mtime_ms: 0 }],
+    files: { [path]: text },
+    links: {},
+  };
+}
+
+async function openDoc(page: Page, path: string, doc: string, theme?: "light" | "dark" | "eink"): Promise<void> {
+  const vault = vaultWith(path, doc);
+  await stubTauri(page, theme === undefined ? vault : { ...vault, config: { theme } });
+  await page.goto("/");
+  await page.locator(`.ft-row[title="${path}"]`).click();
+  await expect(page.locator(".modeline-path")).toHaveText(path);
+  await page.waitForTimeout(200);
+}
+
+interface EditorReading {
+  doc: string;
+  anchor: number;
+  head: number;
+}
+
+async function bodyState(page: Page): Promise<EditorReading> {
+  return page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const main = view.state.selection.main;
+    return { doc: view.state.doc.toString(), anchor: main.anchor, head: main.head };
+  });
+}
+
+async function setCaret(page: Page, pos: number, head = pos): Promise<void> {
+  await page.locator(".cm-content").evaluate(
+    (el, range) => {
+      const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+      view.dispatch({ selection: { anchor: range.anchor, head: range.head } });
+      view.focus();
+    },
+    { anchor: pos, head },
+  );
+  await page.waitForTimeout(120);
+}
+
+/** 一行的几何读数（全部 CSS px，未取整的浮点）。
+ *
+ *  - `top` / `height`：`.cm-line` 元素盒（含块内 padding，标题的 padding-top 也在这里）；
+ *  - `baseTop` / `baseHeight`：该行**第一段可见文本**的字形 rect（m647 的「行盒」通道：
+ *    inline 盒 = line-height，不含段落末行 padding）——基线漂移就看它；
+ *  - `textLeft` / `textRight`：该行正文文本（跳过 marker / task widget）的左右缘；
+ *  - `markerRight`：列表 marker widget 的右缘（body 列的基准）；
+ *  - `cells`：表格行内每个 cell 的 left / width / height。
+ */
+interface LineBox {
+  text: string;
+  top: number;
+  height: number;
+  baseTop: number | null;
+  baseHeight: number | null;
+  textLeft: number | null;
+  textRight: number | null;
+  markerRight: number | null;
+  cells: Array<{ left: number; width: number; top: number; height: number }>;
+}
+
+async function readGeometry(page: Page): Promise<LineBox[]> {
+  return page.locator(".cm-content").evaluate((content) => {
+    const lines = [...content.querySelectorAll<HTMLElement>(".cm-line")];
+    return lines.map((line) => {
+        const rect = line.getBoundingClientRect();
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        const textRects: DOMRect[] = [];
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          if (!node.textContent || node.textContent.trim() === "") continue;
+          if ((node.parentElement as Element | null)?.closest(".cm-lp-list-marker")) continue;
+          if ((node.parentElement as Element | null)?.closest(".cm-lp-task-marker")) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          for (const r of Array.from(range.getClientRects())) {
+            if (r.width > 0 && r.height > 0) textRects.push(r);
+          }
+        }
+        const base = textRects.length > 0 ? textRects[0] : null;
+        const marker = line.querySelector<HTMLElement>(".cm-lp-list-marker");
+        const markerRect = marker ? marker.getBoundingClientRect() : null;
+        return {
+          text: line.textContent ?? "",
+          top: rect.top,
+          height: rect.height,
+          baseTop: base ? base.top : null,
+          baseHeight: base ? base.height : null,
+          textLeft: textRects.length > 0 ? Math.min(...textRects.map((r) => r.left)) : null,
+          textRight: textRects.length > 0 ? Math.max(...textRects.map((r) => r.right)) : null,
+          markerRight: markerRect ? markerRect.right : null,
+          cells: [...line.querySelectorAll<HTMLElement>(".cm-lp-table-cell")].map((cell) => {
+            const r = cell.getBoundingClientRect();
+            return { left: r.left, width: r.width, top: r.top, height: r.height };
+          }),
+        };
+    });
+  });
+}
+
+interface StabilityOptions {
+  /** 允许合法重排的行号（源码显露）。未列出的行 MUST NOT 自行改变高度。 */
+  allow: number[];
+  label: string;
+}
+
+/** C2 / C3 / C4：active↔inactive 的几何判据。
+ *
+ *  - 获批行：允许高度变化，但幅度 ≤ {@link MAX_LEGAL_REFLOW}；
+ *  - 其余行：高度、基线、文本左右缘、marker 右缘、cell 矩形逐项 ≤ {@link TOL}；
+ *  - 所有行的 top 位移 MUST 等于「它之前所有获批行的高度变化之和」——内容跟着跳只允许是
+ *    被获批行的高度变化推的。 */
+function expectStableGeometry(before: LineBox[], after: LineBox[], options: StabilityOptions): void {
+  const { allow, label } = options;
+  const allowed = new Set(allow);
+  expect(after.length, `${label}：行数变化（重排越出行边界）`).toBe(before.length);
+  let shift = 0;
+  for (let i = 0; i < before.length; i += 1) {
+    const a = before[i];
+    const b = after[i];
+    const where = `${label} · 第 ${i} 行「${a.text.slice(0, 28)}」`;
+    if (allowed.has(i)) {
+      expect(Math.abs(b.height - a.height), `${where}：获批重排超界`).toBeLessThanOrEqual(MAX_LEGAL_REFLOW);
+    } else {
+      expect(Math.abs(b.height - a.height), `${where}：行盒高度漂移`).toBeLessThanOrEqual(TOL);
+      if (a.baseTop !== null && b.baseTop !== null) {
+        expect(Math.abs(b.baseTop - (a.baseTop + shift)), `${where}：文本基线漂移`).toBeLessThanOrEqual(TOL);
+      }
+      if (a.baseHeight !== null && b.baseHeight !== null) {
+        expect(Math.abs(b.baseHeight - a.baseHeight), `${where}：字形 rect 高度漂移`).toBeLessThanOrEqual(TOL);
+      }
+      if (a.textLeft !== null && b.textLeft !== null) {
+        expect(Math.abs(b.textLeft - a.textLeft), `${where}：正文左缘漂移`).toBeLessThanOrEqual(TOL);
+      }
+      if (a.markerRight !== null && b.markerRight !== null) {
+        expect(Math.abs(b.markerRight - a.markerRight), `${where}：列表 marker 右缘漂移`).toBeLessThanOrEqual(TOL);
+      }
+      expect(b.cells.length, `${where}：cell 数量变化`).toBe(a.cells.length);
+      a.cells.forEach((cell, c) => {
+        const other = b.cells[c];
+        expect(Math.abs(other.left - cell.left), `${where} cell ${c}：left 漂移`).toBeLessThanOrEqual(TOL);
+        expect(Math.abs(other.width - cell.width), `${where} cell ${c}：width 漂移`).toBeLessThanOrEqual(TOL);
+        expect(Math.abs(other.height - cell.height), `${where} cell ${c}：height 漂移`).toBeLessThanOrEqual(TOL);
+      });
+    }
+    // 0 高行（表格分隔行整行被 replace 覆盖）没有布局位置：rect 恒为 0，top 判据对它是空转。
+    if (!(a.height === 0 && b.height === 0)) {
+      expect(Math.abs(b.top - (a.top + shift)), `${where}：top 位移 ≠ 前序获批行的高度变化之和`).toBeLessThanOrEqual(TOL);
+    }
+    shift += b.height - a.height;
+  }
+}
+
+/** 精确复原：再次读回的几何与基线逐项相同（含获批行）。 */
+function expectRestored(baseline: LineBox[], actual: LineBox[], label: string): void {
+  expect(actual.length, `${label}：行数变化`).toBe(baseline.length);
+  for (let i = 0; i < baseline.length; i += 1) {
+    const a = baseline[i];
+    const b = actual[i];
+    const where = `${label} · 第 ${i} 行「${a.text.slice(0, 28)}」`;
+    if (!(a.height === 0 && b.height === 0)) {
+      expect(Math.abs(b.top - a.top), `${where}：top 未复原`).toBeLessThanOrEqual(TOL);
+    }
+    expect(Math.abs(b.height - a.height), `${where}：行盒高度未复原`).toBeLessThanOrEqual(TOL);
+    if (a.baseTop !== null && b.baseTop !== null) {
+      expect(Math.abs(b.baseTop - a.baseTop), `${where}：基线未复原`).toBeLessThanOrEqual(TOL);
+    }
+    if (a.textLeft !== null && b.textLeft !== null) {
+      expect(Math.abs(b.textLeft - a.textLeft), `${where}：正文左缘未复原`).toBeLessThanOrEqual(TOL);
+    }
+    if (a.markerRight !== null && b.markerRight !== null) {
+      expect(Math.abs(b.markerRight - a.markerRight), `${where}：marker 右缘未复原`).toBeLessThanOrEqual(TOL);
+    }
+    expect(b.cells.length, `${where}：cell 数量未复原`).toBe(a.cells.length);
+    a.cells.forEach((cell, c) => {
+      const other = b.cells[c];
+      expect(Math.abs(other.left - cell.left), `${where} cell ${c}：left 未复原`).toBeLessThanOrEqual(TOL);
+      expect(Math.abs(other.width - cell.width), `${where} cell ${c}：width 未复原`).toBeLessThanOrEqual(TOL);
+      expect(Math.abs(other.height - cell.height), `${where} cell ${c}：height 未复原`).toBeLessThanOrEqual(TOL);
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 夹具：一份覆盖代表性行类型的文档
+// ---------------------------------------------------------------------------
+
+const MIXED_DOC = [
+  "引言段落 alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu 结尾。",
+  "",
+  "- 顶级项目一",
+  "- 顶级项目二带一点更长一点的正文以便观察换行行为 alpha bravo charlie delta echo",
+  "",
+  "1. 有序一",
+  "2. 有序二",
+  "",
+  "- [ ] 任务未完成",
+  "- [x] 任务已完成",
+  "",
+  "- 嵌套父项",
+  "  - 嵌套子项",
+  "    - 嵌套孙项",
+  "",
+  "# 一级标题 hello",
+  "",
+  "## 二级标题 world",
+  "",
+  "**加粗文本** 与 *斜体* 与 `行内代码` 混排的一行。",
+  "",
+  "行内公式 $a^2+b^2=c^2$ 与 wikilink [[目标笔记]]。",
+  "",
+  "链接 [示例](https://example.com) 单独一行。",
+  "",
+  "| 列甲 | 列乙 | 列丙 |",
+  "| --- | --- | --- |",
+  "| 甲一 | 乙一 | 丙一 |",
+  "| 甲二 | 乙二 | 丙二 |",
+  "",
+  "para",
+  "1. ",
+  "",
+].join("\n");
+
+const lineIndexOf = (doc: string, needle: string): number => doc.slice(0, doc.indexOf(needle)).split("\n").length - 1;
+const posOf = (doc: string, needle: string, offset = 1): number => doc.indexOf(needle) + offset;
+
+/** 每个探针：把光标停在 `pos`，断言相对「光标停在首行」的几何变化只发生在 `allow` 行。 */
+interface Probe {
+  label: string;
+  pos: number;
+  allow: number[];
+  /** 该探针 MUST 真实改变本行渲染态（否则它对缺陷没有区分度）。 */
+  expectReflow?: boolean;
+}
+
+function probesFor(doc: string): Probe[] {
+  const line = (needle: string) => lineIndexOf(doc, needle);
+  return [
+    // 稳定项：不显露源码，MUST 逐像素不动。
+    { label: "普通段落行内", pos: 20, allow: [] },
+    { label: "长段落行（换行）", pos: posOf(doc, "bravo", 1), allow: [] },
+    { label: "空行", pos: posOf(doc, "\n\n- 顶级项目一", 1), allow: [] },
+    { label: "bullet marker 区", pos: doc.indexOf("- 顶级项目一"), allow: [] },
+    { label: "bullet 内容", pos: doc.indexOf("- 顶级项目一") + 2, allow: [] },
+    { label: "有序 marker 区", pos: doc.indexOf("1. 有序一"), allow: [] },
+    { label: "任务 marker 区", pos: doc.indexOf("- [ ] 任务未完成"), allow: [] },
+    { label: "嵌套 marker 区", pos: doc.indexOf("  - 嵌套子项"), allow: [] },
+    { label: "表头 cell", pos: posOf(doc, "列甲", 0), allow: [] },
+    { label: "表数据 cell", pos: posOf(doc, "甲一", 1), allow: [] },
+    { label: "表格隐藏管道位（行首）", pos: doc.indexOf("| 列甲"), allow: [] },
+    { label: "表格分隔行", pos: doc.indexOf("| --- |") + 2, allow: [] },
+    // 合法重排项：源码显露，允许本行变化、其余行只跟随位移。
+    { label: "标题行（显露 #）", pos: posOf(doc, "# 一级标题", 3), allow: [line("# 一级标题")], expectReflow: true },
+    { label: "强调（显露 **）", pos: posOf(doc, "加粗文本", 1), allow: [line("加粗文本")], expectReflow: true },
+    { label: "行内公式（显露 $…$）", pos: posOf(doc, "a^2", 2), allow: [line("行内公式")], expectReflow: true },
+    { label: "标准链接（显露 ](target)）", pos: posOf(doc, "链接 [示例]", 5), allow: [line("链接 [示例]")], expectReflow: true },
+    { label: "裸 marker 行（进入列表渲染）", pos: doc.indexOf("para\n1. ") + "para\n".length, allow: [line("para") + 1], expectReflow: true },
+  ];
+}
+
+/** 重排幅度的观测值（本机实测）：标题 `#` / 强调 `**` / 公式源码只改横向，不改行盒高度；
+ *  裸 marker 行与链接行各有 2px 的行盒差（见 finding）。这里不写死绝对值，只看「是否发生」
+ *  ——`expectReflow` 探针用文本 rect 的右缘 / 行高是否变化来确认本行真的切换了渲染态。 */
+function reflowed(a: LineBox, b: LineBox): boolean {
+  if (Math.abs(b.height - a.height) > TOL) return true;
+  if (a.textRight !== null && b.textRight !== null && Math.abs(b.textRight - a.textRight) > TOL) return true;
+  if (a.baseTop !== null && b.baseTop !== null && Math.abs(b.baseTop - a.baseTop) > TOL) return true;
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// C1 / C2 / C3 / C4：active↔inactive 几何矩阵（Chromium + WebKit）
+// ---------------------------------------------------------------------------
+
+test("光标进入任意行：非显露行几何逐像素不动，显露行只动本行且复原（含表格与列表）", async ({ page }) => {
+  await openDoc(page, "mixed.md", MIXED_DOC);
+  await expect(page.locator(".cm-lp-table").first()).toBeVisible();
+  const path = "mixed.md";
+
+  await setCaret(page, 0);
+  const baseline = await readGeometry(page);
+  const doc0 = await bodyState(page);
+
+  for (const probe of probesFor(MIXED_DOC)) {
+    await setCaret(page, probe.pos);
+    const active = await readGeometry(page);
+    expectStableGeometry(baseline, active, { allow: probe.allow, label: probe.label });
+
+    if (probe.expectReflow) {
+      const index = probe.allow[0];
+      expect(reflowed(baseline[index], active[index]), `${probe.label}：本行没有切换渲染态（该探针对缺陷没有区分度）`).toBe(true);
+    }
+
+    // 回到非活动态：几何必须精确复原。
+    await setCaret(page, 0);
+    expectRestored(baseline, await readGeometry(page), `${probe.label} · 复原`);
+
+    const state = await bodyState(page);
+    expect(state.doc, `${probe.label}：光标移动改变了文档字节`).toBe(doc0.doc);
+    expect(state.doc).toBe(MIXED_DOC);
+    expect(await fileText(page, path), `${probe.label}：光标移动触发了落盘`).toBe(MIXED_DOC);
+    await expect(page.locator(".modeline-path")).not.toContainText("（未保存）");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// C1 / C3：重复光标循环与焦点切换，无累积漂移
+// ---------------------------------------------------------------------------
+
+test("光标反复进出 + 焦点进出 12 轮：几何零累积漂移，文档与保存状态不变", async ({ page }) => {
+  const doc = ["第一段。", "", "- 列表项一", "  - 嵌套项", "", "| a | b |", "| --- | --- |", "| c | d |", "", "尾段。"].join("\n");
+  await openDoc(page, "cycle.md", doc);
+  await expect(page.locator(".cm-lp-table").first()).toBeVisible();
+
+  await setCaret(page, 0);
+  const baseline = await readGeometry(page);
+  const target = doc.indexOf("- 列表项一") + 2;
+  const cell = doc.indexOf("c | d") + 1;
+
+  for (let round = 0; round < 12; round += 1) {
+    const pos = round % 3 === 0 ? target : round % 3 === 1 ? cell : doc.length;
+    await setCaret(page, pos);
+    await setCaret(page, 0);
+    const restored = await readGeometry(page);
+    expectRestored(baseline, restored, `第 ${round + 1} 轮`);
+    expect(await bodyState(page).then((s) => s.doc)).toBe(doc);
+  }
+
+  // 焦点：失焦再聚焦，几何同样不变（光标位置保持）。
+  await setCaret(page, target);
+  const focused = await readGeometry(page);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.waitForTimeout(120);
+  const blurred = await readGeometry(page);
+  expectRestored(focused, blurred, "失焦");
+  await setCaret(page, target);
+  expectRestored(focused, await readGeometry(page), "重新聚焦");
+
+  expect(await bodyState(page).then((s) => s.doc)).toBe(doc);
+  expect(await fileText(page, "cycle.md")).toBe(doc);
+});
+
+// ---------------------------------------------------------------------------
+// C2 / C4：主题维度（同一内容、同一主题内的稳定性）
+// ---------------------------------------------------------------------------
+
+for (const theme of ["light", "eink"] as const) {
+  test(`主题 ${theme}：列表 marker / 正文列与表格 cell 在 active↔inactive 下不漂移`, async ({ page }) => {
+    const doc = ["- 项目一", "- 项目二", "", "| a | b |", "| --- | --- |", "| c | d |", "", "尾段。"].join("\n");
+    await openDoc(page, "theme.md", doc, theme);
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme);
+    await expect(page.locator(".cm-lp-table").first()).toBeVisible();
+
+    await setCaret(page, 0);
+    const baseline = await readGeometry(page);
+    for (const pos of [doc.indexOf("项目二") + 1, doc.indexOf("c | d") + 1]) {
+      await setCaret(page, pos);
+      expectStableGeometry(baseline, await readGeometry(page), { allow: [], label: `${theme} · pos ${pos}` });
+      await setCaret(page, 0);
+      expectRestored(baseline, await readGeometry(page), `${theme} · pos ${pos} 复原`);
+    }
+    expect(await bodyState(page).then((s) => s.doc)).toBe(doc);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// C5：编辑序列（显式期望串）
+// ---------------------------------------------------------------------------
+
+interface EditCase {
+  name: string;
+  doc: string;
+  anchor: number;
+  head?: number;
+  keys?: string[];
+  type?: string;
+  expectedDoc: string;
+  expectedCaret: number;
+  /** `line` = 编辑只改本行内容（行数不变），顺带断言其余行几何不动；`none` = 结构性编辑
+   *  （增删行），行号会移位，本表不叠几何判据——几何由上面的 active↔inactive 矩阵守。 */
+  geometry: "line" | "none";
+  /** 编辑后按一次 ⌘S，断言盘上全文 = 期望文档。 */
+  save?: boolean;
+  /** 操作顺序：默认先 `keys` 后 `type`；`type-then-keys` 用于「输入一次再 undo」。 */
+  order?: "keys-then-type" | "type-then-keys";
+  /** 已在 WebKit 上确认的产品缺陷（chromium 正确）：按 engine 标 expected failure。 */
+  knownDefect?: { engine: "webkit"; why: string };
+}
+
+async function runEditCase(page: Page, path: string, c: EditCase): Promise<void> {
+  await openDoc(page, path, c.doc);
+  await runEditCaseBody(page, path, c);
+}
+
+/** 已打开文档后的编辑序列本体（表格用例要先断言渲染态在场再进来）。 */
+async function runEditCaseBody(page: Page, path: string, c: EditCase): Promise<void> {
+  await setCaret(page, c.anchor, c.head ?? c.anchor);
+  const lineIndex = c.doc.slice(0, c.anchor).split("\n").length - 1;
+  const before = c.geometry === "line" ? await readGeometry(page) : null;
+  const pressKeys = async (): Promise<void> => {
+    for (const key of c.keys ?? []) {
+      await page.keyboard.press(key);
+      // 620ms 屏障：让每一拍成为独立的 CM history 事件（与 editing-oracle 同口径）。
+      await page.waitForTimeout(620);
+    }
+  };
+  const typeText = async (): Promise<void> => {
+    if (c.type === undefined) return;
+    await page.keyboard.type(c.type);
+    await page.waitForTimeout(120);
+  };
+  if (c.order === "type-then-keys") {
+    await typeText();
+    await pressKeys();
+  } else {
+    await pressKeys();
+    await typeText();
+  }
+  await expect
+    .poll(async () => bodyState(page), { message: `${c.name}：编辑结果与期望不符` })
+    .toEqual({ doc: c.expectedDoc, anchor: c.expectedCaret, head: c.expectedCaret });
+  if (before !== null) {
+    expectStableGeometry(
+      before,
+      await readGeometry(page),
+      { allow: [lineIndex], label: `${c.name} · 行内编辑` },
+    );
+  }
+  if (c.save) {
+    await page.keyboard.press("Meta+s");
+    await expect.poll(async () => fileText(page, path), { message: `${c.name}：⌘S 落盘与文档不一致` }).toBe(c.expectedDoc);
+    await expect(page.locator(".modeline-path")).not.toContainText("（未保存）");
+  }
+}
+
+// 连续 / 嵌套 / 任务 / 混合列表：Enter 的续行与退出、Backspace 的 marker 删除与凸级、
+// Delete / ⌘⌫ 的跨行合并（M836 的「源码逐字节」合同在本表里对嵌套与任务形态复验）。
+const LIST_CASES: EditCase[] = [
+  { name: "连续 bullet：行末 Enter 续写同标记", doc: "- a\n- b\n", anchor: 3, keys: ["Enter"], expectedDoc: "- a\n- \n- b\n", expectedCaret: 6, geometry: "none" },
+  { name: "空列表项 Enter 退出列表（删 marker、不新增行）", doc: "- a\n- \n", anchor: 6, keys: ["Enter"], expectedDoc: "- a\n\n", expectedCaret: 4, geometry: "none" },
+  { name: "有序列表 Enter 续号", doc: "1. a\n2. b\n", anchor: 4, keys: ["Enter"], expectedDoc: "1. a\n2. \n3. b\n", expectedCaret: 8, geometry: "none" },
+  { name: "两位数序号进位：10 → 11", doc: "9. a\n10. b\n", anchor: 4, keys: ["Enter"], expectedDoc: "9. a\n10. \n11. b\n", expectedCaret: 9, geometry: "none" },
+  { name: "嵌套项 Enter 保持缩进层级", doc: "- a\n  - b\n", anchor: 9, keys: ["Enter"], expectedDoc: "- a\n  - b\n  - \n", expectedCaret: 14, geometry: "none" },
+  { name: "任务项 Enter 续写未勾选任务 marker", doc: "- [ ] a\n- [x] b\n", anchor: 7, keys: ["Enter"], expectedDoc: "- [ ] a\n- [ ] \n- [x] b\n", expectedCaret: 14, geometry: "none" },
+  { name: "任务空项 Enter 退出列表", doc: "- [ ] a\n- [ ] \n", anchor: 14, keys: ["Enter"], expectedDoc: "- [ ] a\n\n", expectedCaret: 8, geometry: "none" },
+  { name: "内容起点 Backspace 删 marker", doc: "- item\n", anchor: 2, keys: ["Backspace"], expectedDoc: "item\n", expectedCaret: 0, geometry: "line" },
+  { name: "嵌套内容起点 Backspace 凸出一级", doc: "- a\n  - b\n", anchor: 6, keys: ["Backspace"], expectedDoc: "- a\n- b\n", expectedCaret: 4, geometry: "line" },
+  { name: "行尾 Delete 并入下一 bullet（源码逐字节、无 marker 字形）", doc: "- a\n- b\n", anchor: 3, keys: ["Delete"], expectedDoc: "- a- b\n", expectedCaret: 3, geometry: "none" },
+  { name: "行尾 Delete 并入任务项（不写回 [ ]）", doc: "- a\n- [ ] b\n", anchor: 3, keys: ["Delete"], expectedDoc: "- a- [ ] b\n", expectedCaret: 3, geometry: "none" },
+  { name: "行尾 Delete 并入嵌套项（不写回缩进）", doc: "- a\n  - b\n", anchor: 3, keys: ["Delete"], expectedDoc: "- a  - b\n", expectedCaret: 3, geometry: "none" },
+  { name: "行首 ⌘⌫ 并入上一行（源码逐字节）", doc: "- a\n- b\n", anchor: 4, keys: ["Meta+Backspace"], expectedDoc: "- a- b\n", expectedCaret: 3, geometry: "none" },
+  { name: "Enter 后一次 undo 精确复原", doc: "- a\n- b\n", anchor: 3, keys: ["Enter", "Meta+z"], expectedDoc: "- a\n- b\n", expectedCaret: 3, geometry: "none" },
+  { name: "同一列表内选区删除", doc: "- a\n- b\n", anchor: 2, head: 6, keys: ["Backspace"], expectedDoc: "- b\n", expectedCaret: 2, geometry: "none" },
+  { name: "行内选区删除不碰 marker", doc: "- aaa\n- bbb\n", anchor: 3, head: 5, keys: ["Backspace"], expectedDoc: "- a\n- bbb\n", expectedCaret: 3, geometry: "line" },
+  { name: "编辑后 ⌘S：盘上全文 = 期望文档", doc: "- a\n- b\n", anchor: 3, keys: ["Enter"], type: "z", expectedDoc: "- a\n- z\n- b\n", expectedCaret: 7, geometry: "none", save: true },
+];
+
+for (const c of LIST_CASES) {
+  test(`列表编辑对抗：${c.name}`, async ({ page }) => {
+    await runEditCase(page, "list.md", c);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// C5：表格编辑序列（表头与数据 cell、行内与跨 cell 选区、撤销、落盘）
+// ---------------------------------------------------------------------------
+
+const TABLE_DOC = "| a | b |\n| --- | --- |\n| c | d |\n";
+// 行内偏移：行 1 = 0..8，行 2 = 10..22（分隔行整行被 replace 覆盖），行 3 = 24..32。
+const TABLE_CASES: EditCase[] = [
+  { name: "数据 cell 内输入单字符（源码插入）", doc: TABLE_DOC, anchor: 27, type: "Q", expectedDoc: "| a | b |\n| --- | --- |\n| cQ | d |\n", expectedCaret: 28, geometry: "line", knownDefect: { engine: "webkit", why: "WebKit 上 cell 尾缘输入吃掉后续源空白（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
+  { name: "表头 cell 内输入单字符", doc: TABLE_DOC, anchor: 3, type: "Q", expectedDoc: "| aQ | b |\n| --- | --- |\n| c | d |\n", expectedCaret: 4, geometry: "line" },
+  { name: "cell 内容起点 Backspace：只删前一个源字节（空白），不重写表格", doc: TABLE_DOC, anchor: 26, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n|c | d |\n", expectedCaret: 25, geometry: "line", knownDefect: { engine: "webkit", why: "WebKit 上 cell 首缘 Backspace 摧毁表格结构（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
+  { name: "cell 内容末尾 Delete：只删后一个源字节", doc: TABLE_DOC, anchor: 27, keys: ["Delete"], expectedDoc: "| a | b |\n| --- | --- |\n| c| d |\n", expectedCaret: 27, geometry: "line", knownDefect: { engine: "webkit", why: "WebKit 上 cell 尾缘 Delete 删掉隐藏管道符（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
+  { name: "表头 cell 内容起点 Backspace", doc: TABLE_DOC, anchor: 3, keys: ["Backspace"], expectedDoc: "|  | b |\n| --- | --- |\n| c | d |\n", expectedCaret: 2, geometry: "line" },
+  { name: "第二数据行 cell 内输入（列方向）", doc: TABLE_DOC, anchor: 30, type: "Q", expectedDoc: "| a | b |\n| --- | --- |\n| c | Qd |\n", expectedCaret: 31, geometry: "line" },
+  { name: "同一 cell 内选区删除", doc: TABLE_DOC, anchor: 26, head: 27, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n|  | d |\n", expectedCaret: 26, geometry: "line", knownDefect: { engine: "webkit", why: "WebKit 上 cell 内选区删除按渲染 DOM 回写（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
+  { name: "同一行跨 cell 选区删除（管道符随源码删除）", doc: TABLE_DOC, anchor: 26, head: 30, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n| d |\n", expectedCaret: 26, geometry: "none", knownDefect: { engine: "webkit", why: "WebKit 上跨 cell 选区删除按渲染 DOM 回写（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
+  { name: "输入后一次 undo 精确复原", doc: TABLE_DOC, anchor: 27, type: "Q", keys: ["Meta+z"], order: "type-then-keys", expectedDoc: TABLE_DOC, expectedCaret: 27, geometry: "line" },
+  { name: "编辑后 ⌘S：盘上全文 = 期望文档", doc: TABLE_DOC, anchor: 27, type: "Q", expectedDoc: "| a | b |\n| --- | --- |\n| cQ | d |\n", expectedCaret: 28, geometry: "line", save: true, knownDefect: { engine: "webkit", why: "同「数据 cell 内输入」：WebKit 上落盘的是被吃字符后的文档（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
+];
+
+for (const c of TABLE_CASES) {
+  test(`表格编辑对抗：${c.name}`, async ({ page, browserName }) => {
+    // engine 相关的已知缺陷：断言的是正确合同，只在缺陷引擎上标 expected failure。
+    // 修好后 Playwright 报「expected to fail, but passed」并变红，强制移除标记。
+    if (c.knownDefect !== undefined) test.fail(browserName === c.knownDefect.engine, c.knownDefect.why);
+    await openDoc(page, "table.md", c.doc);
+    await expect(page.locator(".cm-lp-table").first()).toBeVisible();
+    await runEditCaseBody(page, "table.md", c);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// C5：行内构造的代表覆盖（heading / emphasis / code / math / wikilink / link）
+// ---------------------------------------------------------------------------
+
+const INLINE_CASES: EditCase[] = [
+  { name: "标题行内输入：写进源码、# 不重复", doc: "# title\n\nbody\n", anchor: 6, type: "Q", expectedDoc: "# titlQe\n\nbody\n", expectedCaret: 7, geometry: "line" },
+  { name: "标题行末 Enter：只插一个换行", doc: "# title\n\nbody\n", anchor: 7, keys: ["Enter"], expectedDoc: "# title\n\n\nbody\n", expectedCaret: 8, geometry: "none" },
+  { name: "强调内输入：不重复 ** 定界符", doc: "x **bold** y\n", anchor: 11, type: "Q", expectedDoc: "x **bold** Qy\n", expectedCaret: 12, geometry: "line" },
+  { name: "强调内 Backspace：只删一个源字节", doc: "x **bold** y\n", anchor: 11, keys: ["Backspace"], expectedDoc: "x **bold**y\n", expectedCaret: 10, geometry: "line" },
+  { name: "行内代码内输入", doc: "x `code` y\n", anchor: 6, type: "Q", expectedDoc: "x `codQe` y\n", expectedCaret: 7, geometry: "line" },
+  { name: "行内公式旁输入：不写回 KaTeX 字形", doc: "x $a^2$ y\n", anchor: 8, type: "Q", expectedDoc: "x $a^2$ Qy\n", expectedCaret: 9, geometry: "line" },
+  { name: "标准链接目标内输入", doc: "x [lbl](https://e.com) y\n", anchor: 9, type: "Q", expectedDoc: "x [lbl](hQttps://e.com) y\n", expectedCaret: 10, geometry: "line" },
+];
+
+for (const c of INLINE_CASES) {
+  test(`行内构造编辑：${c.name}`, async ({ page }) => {
+    await runEditCase(page, "inline.md", c);
+  });
+}
+
+test("wikilink：在渲染态链接尾部点击后输入，字符按顺序写入源码", async ({ page }) => {
+  const doc = "x [[note]] y\n";
+  await openDoc(page, "wiki.md", doc);
+  const point = await page.evaluate(() => {
+    const line = document.querySelector(".cm-line");
+    if (!line) return null;
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const at = node.textContent?.indexOf("note") ?? -1;
+      if (at < 0) continue;
+      const range = document.createRange();
+      range.setStart(node, at + 4);
+      range.setEnd(node, at + 4);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.right, y: rect.top + rect.height / 2 };
+    }
+    return null;
+  });
+  expect(point, "wikilink 的渲染文本没有可测端点").not.toBeNull();
+  await page.mouse.click(point!.x, point!.y);
+  await page.waitForTimeout(150);
+  await page.keyboard.type("QR");
+  await expect.poll(async () => bodyState(page)).toEqual({ doc: "x [[note]]QR y\n", anchor: 12, head: 12 });
+  expect(await fileText(page, "wiki.md")).toBe(doc);
+});
+
+// ---------------------------------------------------------------------------
+// 已知产品缺陷（expected failure）
+//
+// 断言的是**正确合同**（选区删除 = 删除选中的那段源码，其余字节不动），当前产品未满足；
+// 用 `test.fail` 而不是 skip——修好后 Playwright 报「expected to fail, but passed」并变红，
+// 强制在修复 PR 里移除标记。最小现场与证据见各 describe 的注释。
+// ---------------------------------------------------------------------------
+
+test.describe("已知缺陷：选区删除跨渲染隐藏区（expected failure，修好后自动变红）", () => {
+  // 现场：选区端点落在渲染态隐藏区（表格的 replace 覆盖、列表 marker 的隐藏区间）时，原生删除
+  // 走 DOM 回写，文档被按渲染结果重建。两引擎都复现（损坏形状不同），⌘S 会把损坏结果落盘
+  //（M842 探针：`fileText` 读回的盘上全文 = 损坏后的文本）。`test.fail` 作用域只在本 describe。
+  // finding：20261119-worker-markdown-stability-bug-dom。
+  test.fail(true, "已知缺陷：选区删除跨渲染隐藏区时按 DOM 回写");
+
+  test("表格：从表头 cell 选到数据 cell 后删除，文档 = 选区源码被精确删除", async ({ page }) => {
+    const doc = "| a | b |\n| --- | --- |\n| c | d |\n";
+    await openDoc(page, "table-fail.md", doc);
+    await expect(page.locator(".cm-lp-table").first()).toBeVisible();
+    // 选区 [2, 32)：从表头 cell `a` 起、到数据行最后一个 `|` 止。程序化选区保证两引擎范围一致；
+    // 用户路径（鼠标从表头拖到数据行）实测同样损坏（M842 探针，chromium / webkit 均复现）。
+    await setCaret(page, 2, 32);
+    await page.keyboard.press("Backspace");
+    await page.waitForTimeout(700);
+    const expected = doc.slice(0, 2) + doc.slice(32);
+    expect(expected).toBe("|  |\n");
+    await expect.poll(async () => (await bodyState(page)).doc).toBe(expected);
+  });
+
+  test("列表：从 bullet 内容选到有序项行首后删除，文档 = 选区源码被精确删除", async ({ page }) => {
+    const doc = "- a\n- b\n\n1. c\n";
+    await openDoc(page, "list-fail.md", doc);
+    // 选区 [3, 9)：从第一个列表项内容中间到有序项行首（用户鼠标拖选实测同一结果）。
+    await setCaret(page, 3, 9);
+    await page.keyboard.press("Backspace");
+    await page.waitForTimeout(700);
+    const expected = doc.slice(0, 3) + doc.slice(9);
+    expect(expected).toBe("- a1. c\n");
+    await expect.poll(async () => (await bodyState(page)).doc).toBe(expected);
+  });
+});

@@ -275,6 +275,25 @@ change `app-splash-screen` 把入口换成启动层（`src/boot.ts`）：先读�
   内部有一道「撤下」门（5s 上界）兜底，但它防不住「信号没接上」（安全阀 10s 会把面撤掉），
   判别性判据在 `startup-restore.spec.ts`——见 `expect-screenshot.ts` 的注释。
 
+### 编辑 / 渲染的布局稳定性（`markdown-editing-stability.spec.ts`，M842）
+
+判据是 active↔inactive 的**几何差**，不是「DOM 在不在」：把光标停在本行与停在别处两种状态下，
+逐行读 `.cm-line` 盒高、首段文本的字形 rect 基线、列表 marker 右缘 / 正文左缘、表格 cell 矩形，
+按 0.5px 容差（`TOL`）对拍。四条口径：
+
+- 不显露源码的行：行盒 / 基线 / 横向几何 / 后续行 top 全部逐像素不动；
+- 源码显露（标题 `#`、强调定界符、链接目标、行内公式、裸 marker 行）只允许**本行**重排——其余
+  各行的 top 位移必须恰好等于本行的高度变化之和，离开后精确复原；
+- 光标移动 / 焦点切换本身 MUST NOT 改文档字节、MUST NOT 落盘；
+- 编辑序列（列表 / 表格 / 行内构造的键入、删除、撤销、⌘S）写进文档的必须是**源码字节**的
+  编辑结果——渲染字形（列表 marker `–` / `◦`、`[x]`、表格 cell 文本、KaTeX 字形）MUST NOT
+  被回写，一次 undo 复原到逐字节相同的旧文。
+
+本 spec 不产截图基线（纯结构 / 几何断言）。已知产品缺陷用 `test.fail` 登记（整组用
+`test.describe` + `test.fail(true, …)`，单条引擎相关的用 `test.fail(browserName === …)`）：
+断言写的是**正确合同**，当前必红；修好后 Playwright 报 "expected to fail, but passed" 并变红，
+强制在修复 PR 里移除标记（skip 会让修复无声无息）。finding 指针写在对应注释里。
+
 ## 更新基线
 
 门禁失败且变化为有意（设计演进）：`scripts/visual/run.sh --update`，
