@@ -49,8 +49,8 @@
 - [x] 5.1 目标双引擎：chromium `28 passed`（`.local/missions/M859/target-chromium.log`）；
       webkit-realua `27 passed + 1 skipped`（IME CDP-only，`.local/missions/M859/target-webkit.log`）；
       根 tsc 与 `tests/visual` tsc 均通过。
-- [ ] 5.2 `scripts/gate.sh quick` 全绿（`CARGO_TARGET_DIR=/tmp/lumir-m859-target`），照抄
-      `GATE RESULT` 原文行并附退出码。
+- [x] 5.2 `scripts/gate.sh quick` 全绿（`CARGO_TARGET_DIR=/tmp/lumir-m859-target`）：
+      `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0；日志 `.local/missions/M859/gate-quick.log`。
 - [ ] 5.3 `LUMIR_VISUAL_PORT=4396 scripts/gate.sh visual` 全绿（等 tower 在 M844 槽位结束后批准），
       照抄 `GATE RESULT` 原文行并附退出码；不更新任何像素基线。
 - [x] 5.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`（35 passed / 0 failed）、
