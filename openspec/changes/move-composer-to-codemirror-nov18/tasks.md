@@ -23,6 +23,8 @@
 ## 4. 验证
 
 - [x] 4.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
-- [ ] 4.2 相关单测、`pnpm test`、`pnpm exec tsc --noEmit` 与 `scripts/gate.sh quick` 通过，照抄 `GATE RESULT`。
-- [ ] 4.3 本地 `scripts/gate.sh visual` 通过且不更新基线，照抄 `GATE RESULT`。
+- [x] 4.2 相关单测、`pnpm test`、`pnpm exec tsc --noEmit` 与 `scripts/gate.sh quick` 通过，照抄 `GATE RESULT`。
+  - 最终 tip `7344736d`（= 合并提交 `8814bbf0` 第二父）：`scripts/gate.sh quick` → `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（`.local/missions/move-composer-to-codemirror-nov18/gate-quick.log` 首行为完整 tip）；`pnpm test` 1495 pass / 0 fail（同目录 `unit.log`）；`pnpm exec tsc --noEmit` 在同 tip 的 `visual` 档 `tsc-root` 与 `tsc-visual` / `tsc-unit` 三门均 PASS。
+- [x] 4.3 本地 `scripts/gate.sh visual` 通过且不更新基线，照抄 `GATE RESULT`。
+  - 同 tip：`scripts/gate.sh visual` → `GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；`visual-regression` 624s、946 passed / 1 skipped / 0 failed，未更新任何基线（`.local/missions/move-composer-to-codemirror-nov18/gate-visual.log`）。
 - [x] 4.4 静态验收检查通过；真机由 tower 串行安排，原生 WKWebView IME 证据缺口如实报告。
