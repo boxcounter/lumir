@@ -87,13 +87,19 @@ steps:
       - label: 第二段到位（两段分两行）
         node: { role: AXTextArea, name: 'yabzcdw\n+mn', present: true }
 
+  # M834：列位口径 = **行内字符列**（Emacs previous-line 的 goal column）。composer 是比例字体
+  # （13px SF Pro），CM 的像素 goal column 会把第二段行尾（列 2，18.75px）落到第一段第 3 格
+  # （21.53px 最近）——那就是本步 M831 之后的 FAIL 现场。正负两条都是判据：正向读落点，负向钉住
+  # 像素口径的缺陷签名（`yabpzcdw` = p 落在 b 与 z 之间）。
   - name: ⌃P 上移一行后键入 p
     do: keys
     keys: ["ctrl+p", "p"]
     gapMs: 150
     expect:
-      - label: p 落在第一段同列位——⌃P 的落点读数
+      - label: p 落在第一段同列位（列 2）——⌃P 的落点读数
         ax: { has: "yapbzcdw" }
+      - label: 像素 goal column 的缺陷签名不在场（p 落在列 3）
+        ax: { not: "yabpzcdw" }
 
   - name: ⌃N 下移一行后键入 q
     do: keys
@@ -110,6 +116,8 @@ steps:
 
 ⌃B/⌃F、⌃A/⌃E、⌃N/⌃P 经统一键位表适配到 CM 命令。AX 不暴露 caret offset，因此每个导航动作后键入探针字符，以其精确落点验证移动；导航不得改变文本或产生编辑 history，也不得把输入漏进编辑器文档。
 
+⌃N / ⌃P 的**同列位**是行内**字符列**（M834）：CM 的 `moveVertically` 行选照用，但落点按目标渲染行的字符列重算，不按像素 x 取最近边界——比例字体下两行同一字符列的像素宽不等，像素口径会把列 2 读成列 3。
+
 ## 覆盖边界
 
-视觉行移动由 CM 原语负责。真机只验证命令链路和可观察落点，不再引用已删除的块停靠点或 caret 归一函数。
+渲染行由 CM `moveVertically` 选行（软折行逐屏行移动），列位由 composer 合同 HC1 的字符列口径决定。真机只验证命令链路和可观察落点，不再引用已删除的块停靠点或 caret 归一函数。
