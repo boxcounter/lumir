@@ -19,8 +19,10 @@
 # 本场景不用它。
 #
 # 非空选区的真机通道：键盘（⌃A 到行首 + → / ⇧→）。套件的 CGEvent drag 在 CM 正文造不出
-# 文本选区（README「已知边界」），故用「粘贴后按 Backspace」当**派生的选区观测**：选区若在
-# 粘贴后仍非空，Backspace 删掉 [3,6) 得 `alpbeta`；选区被塌成 caret 则删前一个字符得 `albeta`。
+# 文本选区（README「已知边界」），故用「粘贴后按 Backspace」当**派生的选区观测**，三种读数：
+# ①选区保留 ⇒ 删掉 [3,6) 得 `alpbeta`（绿）；②仅选区塌陷、原文 `alpha beta` 仍在 ⇒ 在偏移 3
+# 删前一个字符 `p` 得 `alha beta`（假绿防线）；③修复前粘贴已把 [3,6) 删成 `alpbeta`，再按
+# Backspace 得 `albeta`（红跑现场）。三种读数与步骤「Backspace」及文末判据边界表逐字一致。
 id: "267-html-only-paste-selection"
 item: 267
 tier: full
@@ -106,7 +108,7 @@ steps:
       - label: 未自动写盘（sha256 + mtime 双比）
         file: { path: notes/p.txt, unchangedSince: 文档基线, mtimeUnchangedSince: 文档基线 }
 
-  - name: Backspace（派生的选区观测：选区仍在 ⇒ 删掉 [3,6) 得 alpbeta；粘贴塌了选区则删前一个字符得 alha beta）
+  - name: Backspace（派生的选区观测：选区保留 ⇒ 删 [3,6) 得 alpbeta；仅塌陷、原文仍在 ⇒ 删前一个字符 p 得 alha beta；修复前已删成 alpbeta 再按 ⇒ albeta）
     do: key
     key: "backspace"
     gapMs: 250
@@ -295,8 +297,10 @@ image 项、无可插文本 ⇒ `preventDefault` 并保持严格空操作（文�
 1. **W1（退化类 ⇒ 空操作）**：code 模式 `alpha beta\n`，⌃A + → ×3 + ⇧→ ×3 选中 `[3,6)`，
    剪贴板置合成 png，**⌘V（cgevent 真键盘事件）** 投递 paste。判据：①文档逐字未变
    （修复前 `[3,6)` 被删，文档变 `alpbeta`）；②没有附件落盘（code 模式不接管图片）；③未自动
-   写盘（sha256 + mtime 双比）；④随后按 Backspace（派生观测：粘贴之后选区仍非空 ⇒ 删掉
-   `[3,6)` 得 `alpbeta`；若选区被塌成 caret ⇒ 删前一个字符得 `albeta` ⇒ 判红，不会假绿）。
+   写盘（sha256 + mtime 双比）；④随后按 Backspace——派生观测的三种读数：①选区保留 ⇒ 删掉
+   `[3,6)` 得 `alpbeta`（绿）；②仅选区塌陷、原文 `alpha beta` 仍在 ⇒ 在偏移 3 删前一个字符
+   `p` 得 `alha beta`（假绿防线）；③修复前粘贴已把 `[3,6)` 删成 `alpbeta`、再按 Backspace 得
+   `albeta`（红跑现场）。
 2. **W2（可插文本不拦）**：md + 纯文本剪贴板 + 同一选区 ⇒ 文本照常替换成 `alpOMEGAbeta`，
    ⌘S 盘上全文逐字等于 `alpOMEGAbeta\n`。闸门若误吞可插文本，`alpOMEGA` 不在场、这条必然判红。
 3. **W3（图片优先不回归）**：md + 仅图片剪贴板 + 同一选区 ⇒ 图片分支优先，引用替换选区、
@@ -315,8 +319,8 @@ image 项、无可插文本 ⇒ `preventDefault` 并保持严格空操作（文�
   不收起，见 `.local/missions/M859/probe-menu-channel.log`），本场景不用它。
 - **选区不可直接断言**（README「光标/选区不可断言」）：非空选区由键盘建立，用「随后按 Backspace
   删掉选区」当派生观测（选区长度 ≠ 1 才能与「塌成 caret 后删前一个字符」区分开；`[3,6)` 是三个
-  字符，满足）。三种读数的对照：修复后选区仍在 ⇒ 删 `[3,6)` 得 `alpbeta`（绿）；粘贴把选区塌成
-  caret ⇒ 删前一个字符得 `alha beta`（假绿防线）；修复前粘贴已删选区 ⇒ Backspace 再删一个字符得
-  `albeta`（红跑现场）。
+  字符，满足）。三种读数与步骤「Backspace」同口径：①选区保留 ⇒ 删 `[3,6)` 得 `alpbeta`（绿）；
+  ②仅选区塌陷、原文 `alpha beta` 仍在 ⇒ 在偏移 3 删前一个字符 `p` 得 `alha beta`（假绿防线）；
+  ③修复前粘贴已把 `[3,6)` 删成 `alpbeta`、再按 Backspace 得 `albeta`（红跑现场）。
 - **先红后绿**：真机窗口内先在修复前构建上跑一遍（W1 的 doc 未变断言应判红），再在修复后构建上
   复跑；未跑不得记 PASS（场景 261 的口径）。
