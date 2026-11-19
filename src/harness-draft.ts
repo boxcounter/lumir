@@ -16,8 +16,8 @@
 // 由后端按当前 scope 解析（前端不持有 id）。两者的键、载荷与 flush 语义都不同，复用会把两套
 // 语义糊在一处（REVIEW.md 「同一语义两处真源」条：同一语义不造两处真源——反过来，不同语义也不该塞进一处）。
 
-import type { ComposerBlock, DraftCaret } from "./quote-card";
-import { parseComposerDraft, serializeComposerDraft } from "./quote-card";
+import type { ComposerAttachment } from "./quote-card";
+import { readComposerDraft, serializeComposerDraft } from "./quote-card";
 
 /**
  * 落盘防抖窗口（ms）：编辑停顿后合并到这一档落盘一次。与标签会话的 `SESSION_WRITE_DEBOUNCE_MS`
@@ -41,7 +41,7 @@ export interface HarnessDraftStoreDeps {
 
 export interface HarnessDraftStore {
   /** composer 内容变化后调用（防抖落盘；与「上次已落盘的内容」相同则不排期）。 */
-  schedule(blocks: readonly ComposerBlock[], caret: DraftCaret | null): void;
+  schedule(text: string, caret: number | null, cards: readonly ComposerAttachment[]): void;
   /** 把待写内容立刻落盘（切 vault 前、面板关闭、窗口失焦 / 退出）。无待写则不写盘。 */
   flush(): Promise<void>;
   /** 丢弃待写内容（装载新 vault 时：旧 vault 的待写已由该次切换前的 flush 写走）。 */
@@ -52,10 +52,11 @@ export interface HarnessDraftStore {
   clear(): Promise<void>;
 }
 
-/** [`HarnessDraftStore.load`] 的返回：块序列 + 恢复用的光标落位。 */
+/** [`HarnessDraftStore.load`] 的返回：v2 文本、附件与全文光标。 */
 export interface ComposerDraftLoaded {
-  blocks: ComposerBlock[];
-  caret: DraftCaret | null;
+  text: string;
+  caret: number | null;
+  cards: ComposerAttachment[];
 }
 
 export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDraftStore {
@@ -116,8 +117,8 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
     });
   }
 
-  function schedule(blocks: readonly ComposerBlock[], caret: DraftCaret | null): void {
-    const draftJson = serializeComposerDraft(blocks, caret);
+  function schedule(text: string, caret: number | null, cards: readonly ComposerAttachment[]): void {
+    const draftJson = serializeComposerDraft(text, caret, cards);
     // 内容没变就不排期：每次击键都重排定时器等于「一直在防抖窗口里」——用户连续编辑时永远
     // 不落盘。光标变化也算变更（落位要跟着走），但它不与内容分开排期：同一次 schedule 里带上。
     if (draftJson === (pending ?? written)) return;
@@ -162,15 +163,16 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
       written = null;
       return null;
     }
-    const draft = parseComposerDraft(text);
-    if (draft === null) {
-      written = null; // 损坏 / 版本不符：盘上那份不可用，下一次落盘直接覆盖它
+    const parsed = readComposerDraft(text);
+    if (parsed === null) {
+      written = null;
       return null;
     }
-    // 比对基准用**本实现的规范序列化**（不是文件原文）：手改过格式 / 换过键序的文件在
-    // 下一次编辑时被规范形态覆写一次，此后「无变更不写」照常生效。
-    written = serializeComposerDraft(draft.blocks, draft.caret);
-    return { blocks: draft.blocks, caret: draft.caret };
+    const { draft, migrated } = parsed;
+    const normalized = serializeComposerDraft(draft.text, draft.caret, draft.cards);
+    if (migrated) await write(normalized);
+    else written = normalized;
+    return { text: draft.text, caret: draft.caret, cards: draft.cards };
   }
 
   async function clear(): Promise<void> {

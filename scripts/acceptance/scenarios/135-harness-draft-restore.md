@@ -16,7 +16,7 @@
 id: "135-harness-draft-restore"
 item: 135
 tier: core
-title: composer 草稿：编辑 + 贴图后重启，输入区按块序还原（图片卡片引用 round-trip、草稿无 base64）
+title: composer 草稿：编辑 + 贴图后重启，输入区按 text/caret/cards 还原（图片卡片引用 round-trip、草稿无 base64）
 open: harness-note.md
 marker: "HNL-ALPHA"
 seed:
@@ -87,8 +87,8 @@ steps:
         file: { path: "env:harness/drafts/acc-draft.json", not: "base64" }
       - label: ③ 草稿不落 vault 的任何角落（MUST NOT 触碰 vault）
         glob: { dir: ".", pattern: "acc-draft\\.json$", exact: 0 }
-      - label: ① 草稿是块模型 JSON（version + blocks 两个顶层键）
-        file: { path: "env:harness/drafts/acc-draft.json", has: '"version":1' }
+      - label: ① 草稿是 v2 JSON（version + text + caret + cards）
+        file: { path: "env:harness/drafts/acc-draft.json", has: '"version":2' }
       - shot: 02-落盘后-composer
 
   - name: 记下草稿文件基线（重启后断言恢复不写盘）
@@ -105,7 +105,7 @@ steps:
       has: ["分隔条", "/AXButton \\(发送\\)/", "draftmark"]
     timeoutMs: 60000
     expect:
-      - label: ① 重启后输入区恢复草稿文本（块序 / 内容一致）
+      - label: ① 重启后输入区恢复草稿文本与附件
         ax: { has: "draftmark" }
       - label: ⑥ 重启后图片卡片按引用名还原（卡片元信息行在场）
         ax: { has: "/pasted-[0-9a-f]{16}\\.webp/" }
@@ -134,8 +134,8 @@ spec「composer 草稿自动保存与恢复」的保存与恢复两条主干：
 
 - **保存**：在输入区编辑（文本 + 一张图片卡片）后，内容作为**当前 vault 的草稿**落
   `<config_dir>/harness/drafts/<vault 稳定 id>.json`（tmp + rename 原子替换）；
-- **恢复**：重启 app 装载同一 vault 后，输入区按相同块序还原该文本与图片卡片；
-- **形态**：草稿存的是块模型 JSON（`version` + `blocks`），图片以**内容寻址引用**在场，
+- **恢复**：重启 app 装载同一 vault 后，输入区还原文本、光标与区外图片附件；
+- **形态**：草稿存 v2 JSON（`version` + `text` + `caret` + `cards`），图片以**内容寻址引用**在场，
   **MUST NOT 内联 base64**；
 - **不碰 vault**：草稿落配置目录，vault 内零新增。
 

@@ -23,11 +23,10 @@
 //     模型指代单张图的唯一把手，故图片块携带 `Image N` 标签与编号（见 `imageOrdinals` /
 //     `imageMentionText` 与该 change 的 spec 增量）。
 //
-// composer 草稿（change composer-draft-persistence）复用本模块作为块模型的**无损存储形态**的
-// 唯一实现点：`serializeComposerDraft` / `parseComposerDraft` 见文件末尾一节（与投递投影分开，
-// 后者有损、不得当存储形态）。
+// composer 草稿复用本模块作为 v2 text / caret / cards 的唯一存储实现点；
+// 现存 v1 blocks 仅在读取时一次性转换，成功后在 store 层立即写回 v2。
 //
-// 本模块是纯数据 + 纯函数（无 DOM、无文案），消费者（composer 混排编辑区、
+// 本模块是纯数据 + 纯函数（无 DOM、无文案），消费者（CM composer 与区外附件 tray、
 // 消息装配、transcript 沉淀）在后续 mission 接线。
 
 import { findClusterBreak } from "@codemirror/state";
@@ -89,6 +88,9 @@ export type ComposerBlock =
   | { readonly kind: "msgquote"; readonly card: MessageQuoteCard }
   | { readonly kind: "image"; readonly card: ImageCard } // harness-composer-image-paste 新增
   | { readonly kind: "paragraph"; readonly text: string };
+
+/** 新 composer 的区外附件；没有段落文本锚点。 */
+export type ComposerAttachment = Extract<ComposerBlock, { kind: "quote" | "msgquote" | "image" }>;
 
 /** `lines` 缺失时的错误文案：这是调用方的责任（取不到行范围就不得生成卡片），不是可降级的态。
  *  开发者向的抛出信息，不进 UI（i18n 取值门禁的 log 类豁免）。 */
@@ -312,44 +314,37 @@ export function serializeQuoteMessage(blocks: readonly ComposerBlock[]): string 
 // ---------------------------------------------------------------------------
 // composer 草稿的 (反)序列化（change composer-draft-persistence design §6）
 //
-// 草稿是**存储形态**，与投递形态（`serializeQuoteMessage` 的面板文本投影）分开：投影是有损的
-// （`headingPath` 不序列化、图片缺省宽高丢），块模型才是 composer 的真模型，天然无损 round-trip。
-// 本段是「块模型 ⟺ 草稿 JSON」的**唯一实现点**（design §2 的单源纪律，REVIEW.md 「同一语义两处真源」条）：
-// Rust 侧只做搬运、不解析内容（`src-tauri/src/harness/draft.rs`）。
+// 草稿是存储形态，与投递投影分开。当前模型是 v2 text / caret / cards；v1 blocks 只在读取时
+// 一次性转换。Rust 侧仍只搬运、不解析内容。
 // ---------------------------------------------------------------------------
 
 /**
- * 草稿 schema 版本（首版即终态）。版本不符按「没有草稿」处理、不尝试解释——草稿零存量，
- * 不存在旧格式消费者，不写迁移分支（REVIEW.md 「变更默认直接切断」条：先问「消费者是谁」）。
+ * 草稿 schema 当前版本。v1 reader 只服务现存草稿的一次性迁移；所有产出均为 v2。
  */
-export const DRAFT_VERSION = 1;
+export const DRAFT_VERSION = 2;
 
-/** 草稿里的光标落位（块下标 + 段内 UTF-16 偏移，与 `ComposerCaret` 同口径）。 */
-export interface DraftCaret {
-  block: number;
-  offset: number;
-}
-
-/** 草稿文件形状（`serializeComposerDraft` 的产物、`parseComposerDraft` 的输入）。 */
 export interface ComposerDraft {
-  version: number;
-  blocks: ComposerBlock[];
-  /** 恢复时把光标放回用户离开时的位置；缺席（旧文件 / 手改）按「光标在末尾」处理。 */
-  caret: DraftCaret | null;
+  version: 2;
+  text: string;
+  /** 全文 UTF-16 偏移；缺席 / 非法时恢复方按全文末尾处理。 */
+  caret: number | null;
+  cards: ComposerAttachment[];
 }
 
-/**
- * 块序列 → 草稿 JSON（存储形态的唯一产出点）。
- *
- * 内容逐字段照录、不做归一化与改写：块模型是单一真源，序列化只是它的投影。图片卡片存的是
- * **内容寻址引用**（`name` + `sourceMime` + 可选宽高），**MUST NOT 内联 base64**——与会话留存
- * 同口径，附件字节在 `attachments/<vault 稳定 id>/` 里不被 GC，恢复后仍可经读回命令取回。
- */
+export interface ParsedComposerDraft {
+  draft: ComposerDraft;
+  /** true = 本次从合法 v1 转换，store 必须立即写回 v2。 */
+  migrated: boolean;
+}
+
+/** v2 草稿 JSON 的唯一产出点。 */
 export function serializeComposerDraft(
-  blocks: readonly ComposerBlock[],
-  caret: DraftCaret | null,
+  text: string,
+  caret: number | null,
+  cards: readonly ComposerAttachment[],
 ): string {
-  const draft: ComposerDraft = { version: DRAFT_VERSION, blocks: [...blocks], caret };
+  const validCaret = caret !== null && Number.isInteger(caret) && caret >= 0 && caret <= text.length ? caret : null;
+  const draft: ComposerDraft = { version: DRAFT_VERSION, text, caret: validCaret, cards: [...cards] };
   return JSON.stringify(draft);
 }
 
@@ -364,18 +359,15 @@ function positiveNumber(value: unknown): number | undefined {
 }
 
 /**
- * 草稿 JSON → 块序列 / 光标。**拿不到合法草稿一律返回 `null`**（空串 / 非 JSON / 版本不符 /
- * `blocks` 非数组 / 任一**已知**块类不成形），调用方据此安静回落到空的单段落输入区——
- * 判据是「是否拿到合法草稿」，不是 `text ?? ""`（REVIEW.md 「读不到当成空」条：读不到与为空不是一回事）。
- *
- * **未知块类保守保留**：`kind` 不在已知集合内的块原样返回（未来的块类落地前也不丢内容，
- * 与既有的「解析未知元素 MUST NOT 静默丢文」同口径）。已知块类则逐个校验到「能被 composer
- * 安全编辑」这一档：不成形 = 整份草稿按损坏处理（半份草稿比没有草稿更危险——它会让发送
- * 路径上的投影函数抛错）。
- *
- * 光标：非法 / 缺席 → `null`（调用方按末尾落位）。
+ * 草稿 JSON → v2 内容。空串 / 非 JSON / 未知版本 / 已知卡片不成形均返回 null；
+ * 合法 v1 的未知块经 `draftUnknownBlockText` 转入文本，不静默丢文。
  */
 export function parseComposerDraft(text: string): ComposerDraft | null {
+  return readComposerDraft(text)?.draft ?? null;
+}
+
+/** 读取 v2，或把合法 v1 转为 v2 并标记立即写回。 */
+export function readComposerDraft(text: string): ParsedComposerDraft | null {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -383,20 +375,92 @@ export function parseComposerDraft(text: string): ComposerDraft | null {
     return null;
   }
   if (!isRecord(value)) return null;
-  if (value.version !== DRAFT_VERSION) return null;
-  const raw = value.blocks;
-  if (!Array.isArray(raw)) return null;
+  if (value.version === 2) {
+    const draft = parseDraftV2(value);
+    return draft === null ? null : { draft, migrated: false };
+  }
+  if (value.version === 1) {
+    const draft = migrateDraftV1(value);
+    return draft === null ? null : { draft, migrated: true };
+  }
+  return null;
+}
+
+function parseDraftV2(value: Record<string, unknown>): ComposerDraft | null {
+  if (typeof value.text !== "string" || !Array.isArray(value.cards)) return null;
+  const cards: ComposerAttachment[] = [];
+  for (const item of value.cards) {
+    const block = parseKnownDraftBlock(item);
+    if (block === null || block.kind === "paragraph") return null;
+    cards.push(block);
+  }
+  const caret = typeof value.caret === "number" && Number.isInteger(value.caret) &&
+      value.caret >= 0 && value.caret <= value.text.length
+    ? value.caret
+    : null;
+  return { version: 2, text: value.text, caret, cards };
+}
+
+function migrateDraftV1(value: Record<string, unknown>): ComposerDraft | null {
+  if (!Array.isArray(value.blocks)) return null;
   const blocks: ComposerBlock[] = [];
-  for (const item of raw) {
+  for (const item of value.blocks) {
     const block = parseDraftBlock(item);
     if (block === null) return null;
     blocks.push(block);
   }
-  return { version: DRAFT_VERSION, blocks, caret: parseDraftCaret(value.caret, blocks.length) };
+  const caret = parseDraftV1Caret(value.caret, blocks.length);
+  const starts = new Map<number, number>();
+  let text = "";
+  let visibleCount = 0;
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    if (block.kind === "quote" || block.kind === "msgquote" || block.kind === "image") continue;
+    const visible = block.kind === "paragraph" ? block.text : draftUnknownBlockText(block);
+    if (visibleCount > 0) text += "\n";
+    starts.set(index, text.length);
+    text += visible;
+    visibleCount += 1;
+  }
+  const cards = blocks.filter((block): block is ComposerAttachment => block.kind !== "paragraph" &&
+    (block.kind === "quote" || block.kind === "msgquote" || block.kind === "image"));
+  let migratedCaret: number | null = null;
+  if (caret !== null) {
+    if (caret.block >= blocks.length) {
+      migratedCaret = text.length;
+    } else {
+      const block = blocks[caret.block];
+      const start = starts.get(caret.block);
+      if (start !== undefined) {
+        const visible = block.kind === "paragraph" ? block.text : draftUnknownBlockText(block);
+        migratedCaret = start + Math.min(caret.offset, visible.length);
+      } else {
+        migratedCaret = text.length;
+        for (let index = caret.block + 1; index < blocks.length; index += 1) {
+          const next = starts.get(index);
+          if (next !== undefined) {
+            migratedCaret = next;
+            break;
+          }
+        }
+      }
+    }
+  }
+  return { version: 2, text, caret: migratedCaret, cards };
 }
 
-/** 单个块：已知块类逐字段校验（不合法 → `null`）；未知块类原样保留。 */
+/** 单个 v1 块：已知块类逐字段校验；未知块类原样保留供迁移成可见文本。 */
 function parseDraftBlock(item: unknown): ComposerBlock | null {
+  if (!isRecord(item) || typeof item.kind !== "string") return null;
+  const known = parseKnownDraftBlock(item);
+  if (known !== null) return known;
+  if (item.kind === "paragraph" || item.kind === "quote" || item.kind === "msgquote" || item.kind === "image") {
+    return null;
+  }
+  return item as unknown as ComposerBlock;
+}
+
+function parseKnownDraftBlock(item: unknown): ComposerBlock | null {
   if (!isRecord(item) || typeof item.kind !== "string") return null;
   const { card } = item;
   switch (item.kind) {
@@ -415,9 +479,7 @@ function parseDraftBlock(item: unknown): ComposerBlock | null {
       return parsed === null ? null : { kind: "image", card: parsed };
     }
     default:
-      // 未知块类：内容原样保留（MUST NOT 静默丢弃）。composer 渲染侧给它一个可见的兜底形态
-      // （见 `draftUnknownBlockText`）。
-      return item as unknown as ComposerBlock;
+      return null;
   }
 }
 
@@ -461,12 +523,12 @@ function parseDraftImageCard(raw: unknown): ImageCard | null {
     : { name, sourceMime, width: w, height: h };
 }
 
-/** 光标落位：块下标越界 / 偏移非负整数不成立 → `null`（调用方按末尾落位）。 */
-function parseDraftCaret(raw: unknown, blockCount: number): DraftCaret | null {
+/** v1 光标：允许块末尾边界；偏移上界在拼接时按目标可见文本钳制。 */
+function parseDraftV1Caret(raw: unknown, blockCount: number): { block: number; offset: number } | null {
   if (!isRecord(raw)) return null;
   const { block, offset } = raw;
   if (!Number.isInteger(block) || !Number.isInteger(offset)) return null;
-  if ((block as number) < 0 || (block as number) >= blockCount || (offset as number) < 0) return null;
+  if ((block as number) < 0 || (block as number) > blockCount || (offset as number) < 0) return null;
   return { block: block as number, offset: offset as number };
 }
 

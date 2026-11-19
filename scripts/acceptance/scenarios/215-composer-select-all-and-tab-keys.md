@@ -1,7 +1,7 @@
 ---
 # M627（Alex 2026-10-23 的三条报告之二、之三）：
 #   ① 「harness composer 里 CMD + A 没有选中 composer 中的全文」——⌘A 归 `text` 作用域后，
-#      composer 内全选必须覆盖全部块（含卡片）。真机通道注入不了 ⌘A（M536 键码级丢弃），因此
+#      composer 内全选只覆盖完整问题文本，不选择或删除附件。真机通道注入不了 ⌘A（M536 键码级丢弃），因此
 #      本场景用 `[keys]` 把**同一条命令**（editor.select-all）绑到通道可达的 ⌘J 上，验
 #      composer 侧命令实现的真机行为；⌘A → 命令这一步（含原生菜单让位）由 chromium 场景
 #      tests/visual/scenes/m627-composer-select-all.spec.ts 与 Rust 单测覆盖（见正文边界）。
@@ -69,7 +69,7 @@ steps:
 
   # 不再用 ⇧Enter 造第二段：chord 注入是盲发（无回读重试），本场景首跑实测整拍丢失、
   # 两段拼成 "alphabeta"（2026-10-23 首跑现场，.local/acceptance/2026-10-23/215-…/ax/）。
-  # 「多块 + 原子卡片」的全选判据在 chromium 的 m627-composer-select-all.spec.ts（含卡片用例）；
+  # 「多行文本 + 区外附件」的全选判据在 chromium 的 m627-composer-select-all.spec.ts（含卡片用例）；
   # 真机这里只验命令链路：同一段里两串文本 → 全选 → 退格清零。
   - name: 继续键入第二段探针串 beta（同一段，追加）
     do: typeInNode
@@ -137,8 +137,7 @@ steps:
 Alex 2026-10-23 的两条报告：
 
 1. **composer ⌘A 全选**：修法是让 ⌘A 真正进统一键位层（Edit 菜单的预置 Select All 让出
-   加速键）+ 把 `editor.select-all` 收进 `text` 作用域（composer 侧由面板的模型层全选，
-   不再依赖引擎原生 selectAll——它在混排 contenteditable 上选不到全文）。
+   加速键）+ 把 `editor.select-all` 收进 `text` 作用域（composer 侧由 CM selection 选择 0 → doc.length，附件 tray 不参与）。
 2. **⌘⇧, / ⌘⇧. 切标签**：两条新绑定指向既有的 `tab.prev` / `tab.next`（零新命令）。
 
 真机判据取**同一条命令**经通道可达键触发的行为：`[keys]` 把 `editor.select-all` 绑到 `⌘J`、
@@ -150,7 +149,7 @@ WKWebView 里的真实行为（全选 → 退格 → composer 清空；切标签
 - **⌘A 的按键链路不在真机验**：KimiCU 的 `press_key` 对 `cmd+a` 是键码级确定性丢弃
   （README「已知边界」的 M536 条，5/5 实测）。判据落在 chromium 的
   `tests/visual/scenes/m627-composer-select-all.spec.ts`（Playwright 按 US 布局自己算字符，
-  走同一条 window keydown 分发器；含卡片 + 段落、全选后键入替换、编辑器面互不串台三条）。
+  走同一条 window keydown 分发器；含多行文本 + 区外附件、全选后键入替换、编辑器面互不串台三条）。
 - **⌘⇧, / ⌘⇧. 的按键链路不在真机验**：`⇧,` / `⇧.` 的字符形态（`<` / `>`）在注入通道给不出
   （与 M242 的 `⌘}` / `⌘{` 同一条 Shift 隐含符号边界）。判据落在 chromium 的
   `tests/visual/scenes/m242-tab-cycle-key-tokens.spec.ts`（`Meta+Shift+Comma` → key `<`）与

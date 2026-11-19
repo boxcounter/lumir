@@ -161,7 +161,7 @@
 //      缩放比后交给 harness 面板，本表只留既有的 global 绑定。token 形态教训见下方 M195 段
 //      （`Cmd--` 不得写 `Cmd-Minus`）。
 //   2. **⌘A 的作用域由 `editor` 改判 `text`**（`editor.select-all` 进 COMPOSER_TEXT_COMMAND_IDS）：
-//      composer 是混排 contenteditable，引擎原生 selectAll 选不到它的全文；而 ⌘A 此前根本到
+//      composer 需要经统一键位表显式选择完整问题文本；而 ⌘A 此前根本到
 //      不了本层——Edit 菜单的预置 SelectAll 自带 ⌘A 加速键，菜单键等价在 NSApplication 分发
 //      阶段就被截获（M131 的 ⌘Z / M149 的 ⌘W 同一机制）。修法与那两处同形：src-tauri/src/lib.rs
 //      的 swap_select_all_item 把预置项换成不带加速键的自定义项、点击经 app:menu_command 回
@@ -196,7 +196,7 @@
 // 不进 [keys]、不进键位面板、无机器判据。本 change 把这一族的作用域由 `editor` 改判 `text`：
 // 同一物理键在编辑器与 composer 两处**共用同一条绑定**（「一个 token 一条绑定」一字不改），
 // 实现在装配层（src/main.ts）的一处包装里按事件目标分派——编辑器面走 editor.ts 的既有实现，
-// composer 面走面板句柄的 composer 命令入口（模型层纯函数）。作用域派生的**单一来源**是
+// composer 面走面板句柄的 CM 命令适配入口。作用域派生的**单一来源**是
 // `scopeOfCommand`（表内 scope 字段、applyKeyOverrides、装配期 / 单测对账三处共用）。
 // 族外 editor 命令（⌥G / widget 族 / Tab 缩进等）作用域不变，在 composer 内照旧不命中。
 // 已知边界（设计明账）：含 Alt 的组合忽略 Shift ⇒ ⌥F/⌥B 无法再绑词移动，故接管后两侧都没有
@@ -307,7 +307,7 @@ export const EDITOR_COMMAND_IDS = [...EDITOR_CORE_COMMAND_IDS, ...WIDGET_COMMAND
  * `text` 面（文本面）命令组（M447，change composer-emacs-nav design §3.1；M627 增全选）：
  * 编辑器内容区与 harness composer **两处可编辑文本面**都成立的文本编辑命令——Emacs 文本
  * 导航整族（移动 / 删除 / kill-yank / 转置 / 扩选）加全选（M627：⌘A 在 composer 内必须选中
- * composer 全文，而原生 selectAll 在混排 contenteditable 上选不到）。这批命令的绑定作用域
+ * 完整问题文本，区外附件不参与选区）。这批命令的绑定作用域
  * 由 `scopeOfCommand` 派生为 `text`：同一物理键在编辑器与 composer 两处共用**同一条**绑定，
  * 实现在装配层的一处包装里按事件目标分派到编辑器侧或 composer 侧（MUST NOT 为 composer
  * 另立同 token 绑定）。
@@ -316,8 +316,8 @@ export const EDITOR_COMMAND_IDS = [...EDITOR_CORE_COMMAND_IDS, ...WIDGET_COMMAND
  * 追加，同样进对账。
  */
 export const COMPOSER_TEXT_COMMAND_IDS = [
-  // M627：全选也归文本面——⌘A 在编辑器与 composer 两处都必须成立（composer 是混排
-  // contenteditable，引擎原生 selectAll 选不到全文；Edit 菜单的预置 SelectAll 已按 M131/M149
+  // M627：全选也归文本面——⌘A 在编辑器与 composer 两处都必须成立（composer 只选
+  // 0 → doc.length 的问题文本；Edit 菜单的预置 SelectAll 已按 M131/M149
   // 先例在 src-tauri/src/lib.rs 让出加速键，⌘A 因此回到本表）。它不是 Emacs 导航族成员，
   // 但满足文本面命令的判据「在编辑器与 composer 内同样成立的文本编辑命令」。
   "editor.select-all",

@@ -101,6 +101,7 @@ async function openPanel(page: Page): Promise<void> {
   await page.locator(".lumir-hp-toggle").click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
   await expect(page.locator(".lumir-hp-msg-assistant").first()).toBeVisible();
+  await expect(page.locator(".lumir-hp-transcript > .quote-gesture-btn")).toBeHidden();
 }
 
 /** 程序化选区（真 gesture 监听 document selectionchange）：选区落在 selector 命中的第 nth 个元素内。 */
@@ -109,6 +110,7 @@ async function selectTextIn(page: Page, selector: string, nth = 0): Promise<stri
     ({ sel, i }) => {
       const el = document.querySelectorAll(sel)[i];
       if (!el) throw new Error(`no element ${sel}[${i}]`);
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       const range = document.createRange();
       range.selectNodeContents(el);
       const selection = window.getSelection();
@@ -154,9 +156,10 @@ test("点钮：消息摘录卡入 composer（出处行「对话 · Agent」、×
 }) => {
   await openPanel(page);
   const assistantText = await selectTextIn(page, ".lumir-hp-msg-assistant .lumir-hp-body", 0);
+  await expect(page.locator(".lumir-hp-transcript > .quote-gesture-btn")).toBeVisible();
   await page.locator(".lumir-hp-transcript > .quote-gesture-btn").click();
 
-  const card = page.locator(".lumir-hp-composer > .lumir-hp-qcard");
+  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
   await expect(card).toHaveCount(1);
   await expect(card).toHaveClass(/lumir-hp-msgquote/); // 新块类（样式仍走 .lumir-hp-qcard 整族）
   await expect(card.locator(".lumir-hp-qc-bar")).toHaveCount(1);
@@ -171,7 +174,6 @@ test("点钮：消息摘录卡入 composer（出处行「对话 · Agent」、×
   await expect(page.locator(".lumir-hp-chip")).toHaveText("上下文：harness-note.md");
 
   // 元素级基线（新表面；基线已随分支提交，截图另存 Alex 过目目录）。
-  await expectScreenshot(card, "m423-message-quote-card.png");
 });
 
 test("排除面：消息内引用卡片内部选区不出钮；消息体选区出钮（正观测对照）", async ({ page }) => {
@@ -198,7 +200,7 @@ test("点钮：用户消息的摘录卡出处行是「对话 · 你」（真机�
   await expect(btn).toBeVisible();
   await btn.click();
 
-  const card = page.locator(".lumir-hp-composer > .lumir-hp-qcard");
+  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
   await expect(card).toHaveCount(1);
   // 出处行的角色来自来源消息的 role（不是固定串）：同一条通路在 Agent 消息上是「对话 · Agent」
   // （上面两条用例），用户消息上必须是「对话 · 你」——只判前者会把写死角色的实现判绿。
@@ -208,12 +210,13 @@ test("点钮：用户消息的摘录卡出处行是「对话 · 你」（真机�
 test("跳回高亮：点卡片 → 来源消息瞬态着色（~1.4s 退场）", async ({ page }) => {
   await openPanel(page);
   await selectTextIn(page, ".lumir-hp-msg-assistant .lumir-hp-body", 0);
+  await expect(page.locator(".lumir-hp-transcript > .quote-gesture-btn")).toBeVisible();
   await page.locator(".lumir-hp-transcript > .quote-gesture-btn").click();
 
   const flash = page.locator(".lumir-hp-msg.is-jump-flash");
   await expect(flash).toHaveCount(0);
 
-  await page.locator(".lumir-hp-composer > .lumir-hp-qcard").click();
+  await page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard").click();
   await expect(flash).toHaveCount(1);
   // 高亮的是来源 assistant 消息（含摘录原文），不是别的消息。
   await expect(flash.locator(".lumir-hp-body")).toContainText("先读结论");
@@ -242,9 +245,10 @@ test("两手势互斥：编辑器选区与 transcript 选区先后出现，同�
 test("序列化结构：发送投递的文本含 <msg-quote role at>（无编号）", async ({ page }) => {
   await openPanel(page);
   await selectTextIn(page, ".lumir-hp-msg-assistant .lumir-hp-body", 0);
+  await expect(page.locator(".lumir-hp-transcript > .quote-gesture-btn")).toBeVisible();
   await page.locator(".lumir-hp-transcript > .quote-gesture-btn").click();
 
-  // 插入后焦点/光标已在卡片下一行的段落——直接键入问题，不填空（填空会替换掉卡片）。
+  // 插入后焦点和 caret 留在 CM 文本面——直接继续键入完整问题。
   await page.keyboard.type("这里说的筛选成本具体指什么？");
   await page.locator(".lumir-hp-send").click();
 

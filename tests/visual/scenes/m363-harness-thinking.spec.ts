@@ -226,7 +226,7 @@ test("思考块：折叠默认（含流式）/ 到达序排列 / 多块按序号
   await openPanel(page);
 
   // 发一条消息开一轮（事件序：reasoning_chunk 先于 text_chunk，M362 保证）。
-  await page.locator(".lumir-hp-composer").fill("想清楚再答");
+  await page.locator(".lumir-hp-composer .cm-content").fill("想清楚再答");
   await page.locator(".lumir-hp-send").click();
 
   // 零噪声：首个事件到达前没有思考块元素（transcript 里此刻只有用户消息）。
@@ -294,7 +294,7 @@ test("无思考的一轮：零噪声——消息只有正文，不渲染思考�
   await stubHarnessThinking(page);
   await openPanel(page);
 
-  await page.locator(".lumir-hp-composer").fill("直接回答");
+  await page.locator(".lumir-hp-composer .cm-content").fill("直接回答");
   await page.locator(".lumir-hp-send").click();
   await fire(page, { type: "text_chunk", text: "没有思考的答复" });
   await fire(page, { type: "done" });

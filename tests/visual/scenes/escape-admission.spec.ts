@@ -76,8 +76,8 @@ async function stubHarness(page: Page, opts: { configWrite?: "ok" | "fail" } = {
 /** 打开文档 + ⌘⇧A 开 harness pane（生产键位路径，不点 toggle 按钮——键位分发器也在被测链上）。 */
 async function openPane(page: Page): Promise<void> {
   await page.locator('.ft-row[title="escape-admission.md"]').click();
-  await expect(page.locator(".cm-content")).toContainText("EADM-ALPHA");
-  await page.locator(".cm-content").click();
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("EADM-ALPHA");
+  await page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content').click();
   await page.keyboard.press("Meta+Shift+A");
   await expect(page.locator(".lumir-harness")).toBeVisible();
   await expect(page.locator(".lumir-hp-perm")).toBeVisible();
@@ -184,17 +184,17 @@ test("effort 提示：Escape 只收提示，焦点与面板状态不变", async 
   const eff = page.locator(".lumir-hp-eff-reading");
   const hint = page.locator(".lumir-hp-effhint");
   await expect(eff).toHaveClass(/is-disabled/);
-  await page.locator(".cm-content").click(); // 焦点回编辑器：提示是 hover 面，不该由它夺焦
+  await page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content').click(); // 焦点回编辑器：提示是 hover 面，不该由它夺焦
   await eff.hover();
   await expect(hint).toBeVisible();
-  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toBeFocused();
 
   await page.keyboard.press("Escape");
   await expect(hint).toBeHidden();
   await expect(page.locator(".lumir-harness")).toBeVisible();
-  await expect(page.locator(".cm-content")).toBeFocused();
-  await page.locator(".cm-content").blur();
-  await expect(page.locator(".cm-content")).not.toBeFocused();
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toBeFocused();
+  await page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content').blur();
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).not.toBeFocused();
 });
 
 test("层栈：两层打开时一次只收栈顶；焦点在 body 且无层时只消费默认行为", async ({ page }) => {
@@ -214,7 +214,7 @@ test("层栈：两层打开时一次只收栈顶；焦点在 body 且无层时�
   await expect(page.locator(".lumir-harness")).toBeHidden();
 
   // 无层 + 焦点在 body：兜底只消费默认行为（缺陷「按 Esc 退出应用」的直接对照面）。
-  await page.locator(".cm-content").click();
+  await page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content').click();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("BODY");
   const reading = await page.evaluate(() => {
@@ -225,7 +225,7 @@ test("层栈：两层打开时一次只收栈顶；焦点在 body 且无层时�
   expect(reading.prevented, "无层时兜底 MUST 消费默认行为（挡原生关窗）").toBe(true);
   expect(reading.active, "消费不等于产品动作：焦点仍在 body，不被移动").toBe("BODY");
   // 文档与面板都没被这一拍改动。
-  await expect(page.locator(".cm-content")).toContainText("EADM-ALPHA");
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("EADM-ALPHA");
   await expect(page.locator(".lumir-harness")).toBeHidden();
 });
 
@@ -234,8 +234,8 @@ test("⌘P 快速打开：修饰键不关层，裸 Escape 收层并把焦点交�
   await stubHarness(page);
   await page.goto("/");
   await page.locator('.ft-row[title="escape-admission.md"]').click();
-  await expect(page.locator(".cm-content")).toContainText("EADM-ALPHA");
-  await page.locator(".cm-content").click();
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("EADM-ALPHA");
+  await page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content').click();
 
   const qo = page.locator(".lumir-qo");
   await page.keyboard.press("Meta+p");
@@ -249,7 +249,7 @@ test("⌘P 快速打开：修饰键不关层，裸 Escape 收层并把焦点交�
   await page.keyboard.press("Escape");
   await expect(qo).toBeHidden();
   // 关闭后焦点交还编辑器（各层既有回还口径；未持焦件被摘除时也不会落到 body）。
-  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toBeFocused();
 });
 
 test("重建保焦：点选一档后重建，焦点仍落在同一语义项（真实点击，不是 DOM focus）", async ({ page }) => {
@@ -309,8 +309,8 @@ test("同一条路由：已被上游消费的 Escape 不关层（组件就地处
 
   // ① 组件就地路径（⌘P 快速打开，它的 keydown 监听）：已消费 → 不关；再按一次（没人消费）→ 关。
   await page.locator('.ft-row[title="escape-admission.md"]').click();
-  await expect(page.locator(".cm-content")).toContainText("EADM-ALPHA");
-  await page.locator(".cm-content").click();
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("EADM-ALPHA");
+  await page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content').click();
   const qo = page.locator(".lumir-qo");
   await page.keyboard.press("Meta+p");
   await expect(qo).toBeVisible();
@@ -321,7 +321,7 @@ test("同一条路由：已被上游消费的 Escape 不关层（组件就地处
   await expect(qo, "没人消费时同一拍才关层（正向对照，证明上一条不是恒真）").toBeHidden();
 
   // ② harness 面板自己的监听（权限浮层）：同一条 `escapeRouter.handle`，语义一致。
-  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toBeFocused();
   await page.keyboard.press("Meta+Shift+A");
   await expect(page.locator(".lumir-harness")).toBeVisible();
   await focusPermItem(page, "full_access");
@@ -379,7 +379,7 @@ test("widget 持焦 + 后开 hover 层：第一拍只收层且焦点不动；无
   await stubHarness(page);
   await page.goto("/");
   await page.locator('.ft-row[title="escape-admission.md"]').click();
-  await expect(page.locator(".cm-content")).toContainText("EADM-ALPHA");
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("EADM-ALPHA");
   await page.keyboard.press("Meta+Shift+A");
   await expect(page.locator(".lumir-harness")).toBeVisible();
 
@@ -418,7 +418,7 @@ test("widget 持焦 + 后开 hover 层：第一拍只收层且焦点不动；无
   await expect(page.locator(".lumir-harness")).toBeHidden();
   await focusWidget();
   await page.keyboard.press("Escape");
-  await expect(page.locator(".cm-content"), "无层时既有归属不变：焦点交还编辑器").toBeFocused();
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content'), "无层时既有归属不变：焦点交还编辑器").toBeFocused();
 });
 
 test("键位面板：已消费的 Escape 不跑级联（面板栈顶 / 后开 hover 栈顶两条反例 + 未消费对照）", async ({ page }) => {
@@ -426,7 +426,7 @@ test("键位面板：已消费的 Escape 不跑级联（面板栈顶 / 后开 ho
   await stubHarness(page);
   await page.goto("/");
   await page.locator('.ft-row[title="escape-admission.md"]').click();
-  await expect(page.locator(".cm-content")).toContainText("EADM-ALPHA");
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("EADM-ALPHA");
   // harness 面板在场，才有「不持焦的 hover 层」可以后开到键位面板之上。
   await page.keyboard.press("Meta+Shift+A");
   await expect(page.locator(".lumir-harness")).toBeVisible();

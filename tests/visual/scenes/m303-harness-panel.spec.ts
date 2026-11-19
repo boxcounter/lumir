@@ -81,7 +81,7 @@ test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", asy
   await page.goto("/");
 
   await page.locator('.ft-row[title="harness-note.md"]').click();
-  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("第一段");
 
   const panel = page.locator(".lumir-harness");
   const toggle = page.locator(".lumir-hp-toggle");
@@ -132,7 +132,7 @@ test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", asy
   await expect(page.locator(".lumir-hp-chip")).toContainText("上下文：harness-note.md · 视口");
   // M370 移位：chip 在 composer 区内部、composerBox 上方（横线之下、composer 之上）。
   await expect(page.locator(".lumir-hp-composer-area > .lumir-hp-chip")).toHaveCount(1);
-  await expect(page.locator(".lumir-hp-composer")).toBeFocused();
+  await expect(page.locator(".lumir-hp-composer .cm-content")).toBeFocused();
   // M351 图标化：钮面是 SVG glyph（↑/■ 两态 [hidden] 切换），文案落 title/aria-label（D329）。
   const send = page.locator(".lumir-hp-send");
   await expect(send).toHaveAttribute("aria-label", "发送");
@@ -183,7 +183,7 @@ test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", asy
   await expect(page.locator(".lumir-hp-seg")).toBeHidden();
   await expect(page.locator(".pane-divider")).toHaveCount(0);
   await expect(page.locator(".tabstrip .tab")).toContainText(["harness-note.md"]);
-  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("第一段");
   await expect(toggle).toBeVisible();
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
 });
@@ -202,7 +202,7 @@ test("会话浮层列表滚动条：隐藏档，溢出态下每行 × 不被压�
   await stubHarnessState(page, many);
   await page.goto("/");
   await page.locator('.ft-row[title="harness-note.md"]').click();
-  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("第一段");
   await page.locator(".lumir-hp-toggle").click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
   await page.locator(".lumir-hp-session").click();
@@ -270,21 +270,21 @@ test("上下文 chip 随文档切换刷新（真机场景 98 的下沉面）", a
   await page.goto("/");
 
   await page.locator('.ft-row[title="harness-note.md"]').click();
-  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("第一段");
   await page.locator(".lumir-hp-toggle").click();
   const chip = page.locator(".lumir-hp-chip");
   await expect(chip).toContainText("harness-note.md · 视口");
 
   // 切到第二份文档：chip 换成新文件（旧现场是「开着文件却停在旧读数 / 无」）
   await page.locator('.ft-row[title="harness-two.md"]').click();
-  await expect(page.locator(".cm-content")).toContainText("切换文档后 chip");
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("切换文档后 chip");
   await expect(chip).toContainText("harness-two.md · 视口");
   // 正反双判：旧文件名不得留在 chip 上（只判新值会被「两个都在」的拼接态骗过）
   await expect(chip).not.toContainText("harness-note.md");
 
   // 切回去同样刷新（不是「只认第一次切换」）
   await page.locator('.ft-row[title="harness-note.md"]').click();
-  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("第一段");
   await expect(chip).toContainText("harness-note.md · 视口");
   await expect(chip).not.toContainText("harness-two.md");
 });
@@ -298,7 +298,7 @@ test("新会话幂等（界面后果）：连续点击后空态仍在、无错�
   await page.goto("/");
 
   await page.locator('.ft-row[title="harness-note.md"]').click();
-  await expect(page.locator(".cm-content")).toContainText("第一段");
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("第一段");
   await page.locator(".lumir-hp-toggle").click();
 
   const empty = page.locator(".lumir-hp-empty");

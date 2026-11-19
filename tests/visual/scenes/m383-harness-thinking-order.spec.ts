@@ -125,7 +125,7 @@ function msgChildClasses(page: Page): Promise<string[]> {
 }
 
 async function sendAndFire(page: Page, events: unknown[]): Promise<void> {
-  await page.locator(".lumir-hp-composer").fill("顺序探针");
+  await page.locator(".lumir-hp-composer .cm-content").fill("顺序探针");
   await page.locator(".lumir-hp-send").click();
   for (const ev of events) {
     await fire(page, ev);

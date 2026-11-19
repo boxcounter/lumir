@@ -178,7 +178,7 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   await toggle.click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
   const composer = page.locator(".lumir-hp-composer");
-  await composer.fill("这一轮要跑一会儿");
+  await composer.locator(".cm-content").fill("这一轮要跑一会儿");
   await page.locator(".lumir-hp-send").click();
   await expect(toggle).toHaveAttribute("data-activity", "inflight");
   await expect(status).toHaveText("处理中"); // D870
@@ -235,7 +235,7 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   await expect(toggle).toHaveAttribute("title", "对话面板"); // 空闲回到 D327 逐字
 
   // ── ⑤ 失败档：实心点 + 外环（与回复档同样不单靠颜色）────────────────────
-  await composer.fill("这一轮会失败");
+  await composer.locator(".cm-content").fill("这一轮会失败");
   await page.locator(".lumir-hp-send").click();
   await expect(toggle).toHaveAttribute("data-activity", "inflight");
   await page.keyboard.press("Meta+Shift+A");
@@ -251,7 +251,7 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
   // ── ⑥ 用户主动停止不产生未读（D2）──────────────────────────────────────
   await page.keyboard.press("Meta+Shift+A"); // 打开 = 已读清算
   await expect(toggle).toHaveAttribute("data-activity", "idle");
-  await composer.fill("这一轮我会主动停止");
+  await composer.locator(".cm-content").fill("这一轮我会主动停止");
   await page.locator(".lumir-hp-send").click();
   await page.locator(".lumir-hp-send").click(); // running 相位 = 停止
   await expect(toggle).toHaveAttribute("data-activity", "inflight");
@@ -287,7 +287,7 @@ test("harness_busy 拒绝：既有消息不重复、回包不拽视口、相位�
   const messages = page.locator(".lumir-hp-msg");
   await expect(messages).toHaveCount(HISTORY.length);
 
-  await page.locator(".lumir-hp-composer").fill("这条会被 busy 拒绝");
+  await page.locator(".lumir-hp-composer .cm-content").fill("这条会被 busy 拒绝");
   await page.locator(".lumir-hp-send").click();
   // 拒绝先上错误行（回包还在 600ms 延迟窗口里）。
   await expect(page.locator(".lumir-hp-error")).toContainText("对话正在处理中");
@@ -406,7 +406,7 @@ test("只内容档快照的世代守卫：回包落地不得清掉请求之后�
   await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "发送");
 
   // 回包在途时开新一轮：新消息乐观上屏。
-  await page.locator(".lumir-hp-composer").fill("NEW-TURN 新的一轮");
+  await page.locator(".lumir-hp-composer .cm-content").fill("NEW-TURN 新的一轮");
   await page.locator(".lumir-hp-send").click();
   await expect(messages).toHaveCount(3);
 

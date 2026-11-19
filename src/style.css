@@ -303,9 +303,39 @@ body {
   background: var(--sel);
   color: var(--sel-text);
 }
-.lumir-hp-composer > .lumir-hp-qcard.is-composer-selection-band,
-.lumir-hp-composer > .lumir-hp-qpara.is-composer-selection-band {
-  background-color: var(--sel-band);
+.lumir-hp-composer-tray {
+  display: contents;
+}
+.lumir-hp-composer-tray:empty {
+  display: none;
+}
+.lumir-hp-composer-tray > .lumir-hp-qcard:first-child {
+  margin-top: 0;
+}
+.lumir-hp-composer:has(.lumir-hp-composer-tray:not(:empty)) > .cm-editor {
+  margin-top: var(--sp-1);
+}
+.lumir-hp-composer > .cm-editor {
+  height: auto;
+  min-height: 22px;
+  font-size: inherit;
+  line-height: inherit;
+}
+.lumir-hp-composer > .cm-editor.cm-focused {
+  outline: none;
+}
+.lumir-hp-composer .cm-scroller {
+  overflow: visible;
+  font-family: inherit;
+  line-height: inherit;
+}
+.lumir-hp-composer .cm-content {
+  padding: 0;
+  line-height: inherit;
+  caret-color: var(--text);
+}
+.lumir-hp-composer .cm-line {
+  padding: 0;
 }
 .pane-editor {
   max-width: none;

@@ -228,11 +228,10 @@ test("§4.1 恢复链路：panelText → parseQuoteMessage → imageOrdinals 与
   assert.deepEqual([...imageOrdinals(restored).values()], [1, 2, 3]);
 });
 
-test("§4.3 composer 快照 round-trip：块序不变 ⇒ 编号自然一致（快照面零改动）", () => {
-  const blocks: ComposerBlock[] = [imageBlock, para("x"), imageBlock];
-  const restored = parseComposerDraft(serializeComposerDraft(blocks, null));
+test("§4.3 草稿 v2 round-trip：附件顺序不变 ⇒ 编号自然一致", () => {
+  const cards = [imageBlock, imageBlock] as const;
+  const restored = parseComposerDraft(serializeComposerDraft("x", null, cards));
   assert.ok(restored !== null);
-  assert.deepEqual([...imageOrdinals(restored.blocks).values()], [1, 2]);
-  // 再投影：label 也随块序重建，与首次发送一致。
-  assert.deepEqual(serializeDelivery(restored.blocks), serializeDelivery(blocks));
+  assert.deepEqual([...imageOrdinals(restored.cards).values()], [1, 2]);
+  assert.deepEqual(serializeDelivery([...restored.cards, para("x")]), serializeDelivery([...cards, para("x")]));
 });

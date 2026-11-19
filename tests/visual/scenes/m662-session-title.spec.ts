@@ -89,7 +89,7 @@ test("会话标题事件：标题栏即时更新，已打开的历史浮层里�
   await expect(sname).toHaveText("新会话");
 
   // 发送一条消息：活态 firstUserText 落值，标题栏显示它的截断形态（前置）。
-  await page.locator(".lumir-hp-composer").fill(QUESTION);
+  await page.locator(".lumir-hp-composer .cm-content").fill(QUESTION);
   await page.locator(".lumir-hp-send").click();
   await expect(sname).toHaveText(QUESTION);
 
