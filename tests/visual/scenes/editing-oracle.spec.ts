@@ -182,6 +182,43 @@ test("保存：⌘S 后磁盘全文 = 模型终态；保存前盘上仍是旧文
   await expect(page.locator(".modeline-path")).not.toContainText("（未保存）");
 });
 
+test("witness 260 整链：⌘A 重写 + 三次 Enter + 第二段 + ⌘S（逐步对拍模型）", async ({ page }) => {
+  await openBody(page, "oracle.md", "seed\n");
+  await setBodyCaret(page, 0);
+  await page.keyboard.press("Meta+a");
+  await page.keyboard.type("- first");
+  const model = new BodyOracle("", 0);
+  applyBodyOp(model, { kind: "insert", text: "- first" });
+  const typed = await bodyState(page);
+  if (typed.doc !== "- first" || typed.doc !== model.doc) fail(0, 0, "insert(- first)", typed, model.reading(), typed);
+
+  const steps: Array<[BodyOp, string]> = [
+    [{ kind: "enter" }, "- first\n- "],
+    [{ kind: "enter" }, "- first\n"],
+    [{ kind: "enter" }, "- first\n\n"],
+    [{ kind: "insert", text: "second" }, "- first\n\nsecond"],
+  ];
+  let step = 1;
+  for (const [op, expected] of steps) {
+    // 620ms 屏障：让每拍是独立的 CM history 事件（本用例只断言 doc/selection，不做 undo）。
+    await page.waitForTimeout(620);
+    const before = await bodyState(page);
+    if (op.kind === "insert") await page.keyboard.type(op.text);
+    else await page.keyboard.press("Enter");
+    applyBodyOp(model, op);
+    const actual = await bodyState(page);
+    if (actual.doc !== expected || actual.doc !== model.doc || actual.head !== model.head) {
+      fail(0, step, describeBodyOp(op), before, model.reading(), actual);
+    }
+    step += 1;
+  }
+
+  await page.waitForTimeout(620);
+  await page.keyboard.press("Meta+s");
+  await expect.poll(async () => fileText(page, "oracle.md")).toBe("- first\n\nsecond");
+  await expect.poll(async () => (await bodyState(page)).doc).toBe("- first\n\nsecond");
+});
+
 for (const seed of SEEDS) {
   test(`正文随机对拍 seed=${seed}：真 view / 真键盘 / 真落盘`, async ({ page }) => {
     const doc = MIXED_DOC;

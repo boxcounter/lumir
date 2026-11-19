@@ -534,6 +534,28 @@ test("正文对拍：一次 undo 撤销结构步（列表 Enter / 裸 marker Bac
   }
 });
 
+test("witness 260 整链对拍：⌘A 重写 → 三次 Enter（续/退出/普通换行）→ 第二段", () => {
+  const model = new BodyOracle("", 0);
+  const adapter = bodyAdapter("", 0);
+  const steps: BodyOp[] = [
+    { kind: "insert", text: "- first" },
+    { kind: "enter" },
+    { kind: "enter" },
+    { kind: "enter" },
+    { kind: "insert", text: "second" },
+  ];
+  // 三次 Enter 覆盖三种真实语义：续空项 → 空项退出（删 marker、留空行）→ 普通空行换行。
+  const expected = ["- first", "- first\n- ", "- first\n", "- first\n\n", "- first\n\nsecond"];
+  for (const [step, op] of steps.entries()) {
+    const before = JSON.stringify(model.reading());
+    applyBodyOp(model, op);
+    adapter.apply(op);
+    assertBodyStep("witness-260", 0, step, op, model, adapter, before, true);
+    assert.equal(model.doc, expected[step], `witness 第 ${step + 1} 拍终态`);
+  }
+  assert.equal(adapter.reading().doc, "- first\n\nsecond", "生产命令同链终态与模型一致");
+});
+
 test("marker 水平导航对拍：隐藏区间是一个原子步（生产 listHiddenRangeAt vs 模型）", () => {
   const docs = ["1. uno\n", "10. text\n", "- item\n", "* item\n", "+ item\n"];
   for (const doc of docs) {

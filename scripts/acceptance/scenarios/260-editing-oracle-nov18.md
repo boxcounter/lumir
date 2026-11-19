@@ -84,19 +84,19 @@ steps:
     key: "return"
     gapMs: 200
 
-  - name: 行尾再 Enter 续出空项（连续空列表的第二拍）
+  - name: 普通空行上再 Enter（只插一个换行，不恢复 marker）
     do: key
     key: "return"
     gapMs: 200
 
-  - name: 键入第二项内容
+  - name: 键入第二段正文
     do: keys
     keys: ["s", "e", "c", "o", "n", "d"]
     gapMs: 120
     expect:
-      - label: 第二项内容已落地（列表续行正常）
+      - label: 第二段正文已落地（列表项、空行、续文三行）
         editor: { has: "second" }
-      - shot: 两行列表终态
+      - shot: 列表项-空行-续文终态
 
   - name: ⌘S 保存（唯一写盘键）
     do: key
@@ -105,8 +105,8 @@ steps:
     expect:
       # 整篇逐字比较：保存链不做文本规范化（前端原样传 doc、Rust 原子写），
       # 因此 `file.exact` 是这条链唯一有区分度的全文判据（M832 新增的 `file.exact`）。
-      - label: 盘上全文 = 模型终态（两行列表、无多余空行）
-        file: { path: list-indent-ordered.md, exact: "- first\n- second", changedSince: 文档基线 }
+      - label: 盘上全文 = 模型终态（`- first`、空行、`second`）
+        file: { path: list-indent-ordered.md, exact: "- first\n\nsecond", changedSince: 文档基线 }
       - label: dirty 已收窄
         ax: { not: "（未保存）" }
 ---
@@ -120,9 +120,10 @@ steps:
    `tests/unit/editing-oracle-model.ts` 的 `bodyHorizontalStep` 给出，不从生产
    `listHiddenRangeAt` 反推。
 2. **连续空列表 Enter + 保存全文**（seed 7）：`- first` → Enter（续空项）→ Enter（空项退出，
-   删 marker 不新增行）→ Enter（再续空项）→ 键入 `second` → ⌘S。期望文档
-   `- first\n- second` 与模型逐字节一致；落盘用 M832 新增的 `file.exact` 做整篇比较——
-   `has` 是子串，对多余空行 / 数量错误没有区分度。
+   删 marker 不新增行）→ Enter（此时 caret 在普通空行，只插一个换行、不恢复 marker）→
+   键入 `second` → ⌘S。三次 Enter 覆盖三种真实语义：**续空项 → 空项退出 → 普通空行换行**；
+   期望文档 `- first\n\nsecond` 与独立模型逐字节一致。落盘用 M832 新增的 `file.exact`
+   做整篇比较——`has` 是子串，对多余空行 / 数量错误没有区分度。
 
 ## 判据边界（如实声明）
 
