@@ -39,10 +39,14 @@
 - [x] 4.1 新增 `scripts/acceptance/scenarios/267-html-only-paste-selection.md`，`node scripts/acceptance/coverage.mjs`
       重新生成 `COVERAGE.md`（240 场景 / 217 item，不手改）。场景设计如实声明边界：套件只有
       `clipboardText` / `clipboardImage` 两条置剪贴板通道，造不出 HTML-only；真机 witness 取同一
-      退化类的另一形态（code 模式 + 仅图片剪贴板 + ⌘A 非空选区，修复前同样删选区），另加 md
-      纯文本替换选区与 md 图片替换选区两条不回归。
-- [ ] 4.2 真机 267 在 tower 串行窗口内执行并把 PASS / 断言数 / 退出码写进证据；**未跑不得记 PASS**
-      （等 tower 串行通知；窗口内先修复前构建取证、再修复后复跑）。
+      退化类的另一形态（code 模式 + 仅图片剪贴板 + 非空选区，修复前同样删选区），另加 md 纯文本
+      替换选区与 md 图片替换选区两条不回归。粘贴通道是 `do: key` 的 **cgevent ⌘V**（真机实测落地；
+      原生上下文菜单 Paste 在本机 AXPress 静默 no-op，已弃用并记录）。
+- [x] 4.2 真机 267 在 tower 串行窗口内**先红后绿**：修复前构建（`master` 的 `src/editor.ts`）
+      `结论：0/1 PASS`——W1 文档被改成 `alpbeta`（选区 [3,6) 被删）、Backspace 派生观测得 `albeta`；
+      修复后 `结论：1/1 PASS`，21 条断言 0 失败，退出码 0。证据
+      `.local/missions/M859/267-{red,green}-machine.log` 与 `267-{red,green}/`（每个落地实例都
+      `STRAY-SCAN none` 正常退出）。
 
 ## 5. 验证
 
