@@ -66,7 +66,7 @@
 //（change harness-message-excerpt：出处行模板 / 失锚 toast / transcript 卡跳回读屏名），
 // 消息摘录手势与跳回在 src/message-quote-gesture.ts；D456 为 composer 草稿保存失败 warning
 //（change composer-draft-persistence：防抖写控制器在 src/harness-draft.ts、落盘在 Rust 的
-// harness::draft、块模型 ⟺ 草稿 JSON 在 src/quote-card.ts——本模块只挂时点：编辑后防抖、
+// harness::draft、text/caret/cards ⟺ 草稿 JSON 在 src/quote-card.ts——本模块只挂时点：编辑后防抖、
 // 输入区失焦 / 面板关闭 / 窗口失焦或退出前 flush、装载 vault 后恢复、发送成功后清除）；
 // M378 起面板内容字号可缩放（--lumir-hp-scale）；M627 起它由**一套字号**驱动——比值来自
 // 编辑器当前字号 ÷ 配置基线，随每条 ⌘+/-/0 同步施加（与内容 pane 一起变，焦点在哪无关；
@@ -78,6 +78,20 @@
 //（前者每次点击现取、后者每次打开现建），天然跟当前语言走。
 
 import { GFM, parser as commonmarkParser } from "@lezer/markdown";
+import { EditorView } from "@codemirror/view";
+import {
+  appendComposerAttachments,
+  composerAttachmentsField,
+  composerBlocks,
+  composerContentOf,
+  composerIsEmpty,
+  createComposerState,
+  insertComposerText,
+  projectComposerDelivery,
+  removeComposerAttachment,
+  runComposerCommand as runCmComposerCommand,
+} from "./harness-composer";
+import type { ComposerContent } from "./harness-composer";
 import { currentLanguage, errorText, formatDate, formatRelative, onRelabel, t, tPlural } from "./copy";
 import type { CopyKey, Language } from "./copy";
 import {
@@ -138,13 +152,10 @@ import type { PathTargetIndex, ToolPathTarget } from "./harness-path-link";
 import {
   createMessageQuoteCard,
   createQuoteCard,
-  draftUnknownBlockText,
   isMessageQuoteCard,
   parseMessageAt,
-  serializeDelivery,
-  serializeQuoteMessage,
 } from "./quote-card";
-import type { ComposerBlock, ImageCard, MessageQuoteCard, QuoteCard } from "./quote-card";
+import type { ComposerAttachment, ComposerBlock, ImageCard, MessageQuoteCard, QuoteCard } from "./quote-card";
 import { blobToBase64, firstImageFileIndex } from "./paste-image";
 import type { QuoteImageOutcome, QuotedImage } from "./quote-image";
 import { createMessageQuoteGesture, MESSAGE_QUOTE_FLASH_MS, resolveMessageQuoteTarget } from "./message-quote-gesture";
@@ -154,7 +165,7 @@ import { BLOCK_TRIGGER_CLASS, CODEBLOCK_FS_TRIGGER_LABEL, CORNERS_ICON_SVG } fro
 import { TABLE_TRIGGER_LABEL } from "./preview/table-trigger";
 import { planCodeBlockOfDocument } from "./preview/code-block-content";
 import type { CodeBlockRender } from "./preview/code-block-content";
-import { clusterBackward, clusterForward, currentKillSlot, imageMentionText, imageOrdinals, mergeKillText, setKillSlot, wordEndForward, wordStartBackward } from "./quote-card";
+import { imageMentionText, imageOrdinals } from "./quote-card";
 import type { CommandId } from "./keys";
 import { mirrorThemeScope, THEME_SCOPE_HOST_CLASS } from "./overlay-scope";
 import type { AppShell } from "./shell";
@@ -275,9 +286,8 @@ export interface HarnessPanelHandle {
    *  （它走 `toggle()`，不经过这颗钮）。 */
   setChromeRetreat(on: boolean): void;
   /**
-   * 摘录卡片入 composer（M343 为 M344/QC3 留的挂载点）：卡片插在光标处（段落中间拆段、
-   * 光标落卡片下一行的问题段落——design §5 装配合同）；面板未开时先经 `deps.togglePane`
-   * 打开再插入并聚焦。卡片数据（含 lines 非空校验）由调用方经 `createQuoteCard` 产出。
+   * 摘录卡片入区外附件 tray：不拆文本、不移动 caret；面板未开时先经 `deps.togglePane`
+   * 打开再插入并聚焦 CM 文本面。卡片数据（含 lines 非空校验）由调用方经 `createQuoteCard` 产出。
    */
   insertQuoteCard(card: QuoteCard): void;
   /**
@@ -313,8 +323,8 @@ export interface HarnessPanelHandle {
    * 到 composer 的模型层动作（移动 / 扩选 / 删除 / kill-yank / 转置）。**命中即消费**——装配层的
    * 分派包装在事件目标落在 composer 内时调它，而分发器命中绑定即 `preventDefault`（命中即吞默认
    * 行为），因此本入口**不返回**「是否消费」；「该处无动作」按**无操作**处理，MUST NOT 放行原生
-   * 路径（放行会让段首 ⌥⌫ 的原生 deleteWordBackward 跨块合并 / 删卡）。命令实现是模型层纯函数
-   * 驱动，不认识「事件目标」。
+   * 路径（放行会让段首 ⌥⌫ 退回引擎原生词删除，绕过共享词法与 kill 槽）。命令实现是 CM
+   * 命令适配，不认识「事件目标」。
    */
   composerCommand(command: CommandId): void;
 }
@@ -335,1070 +345,6 @@ export interface HarnessPanelHandle {
  */
 export function inCurrentVault(payloadVault: unknown, currentVault: string | null): boolean {
   return typeof payloadVault !== "string" || payloadVault === currentVault;
-}
-
-// ---------------------------------------------------------------------------
-// 混排 composer 的纯模型层（M343，change add-harness-quote-cards design §2/§5）。
-// 顶层块只有三类卡片（quote / msgquote / image，原子块）与 paragraph（问题段落，
-// 文本可含 \n 软换行）。DOM 只是这个模型的渲染面：结构性修改先算模型、再整面重渲——
-// 换行与断行后视口的质量合同（HC1 一次 ⇧Enter 恰好一行 × HC2 光标行在视口内）在
-// docs/specs/harness-composer.md：落法是 insertSoftBreakAtCaret（段末 / 卡片前缘落新空
-// 段落块——尾随 \n 不产生行盒）与 caretScrollTop（DOM 侧量读数、纯函数给目标滚动位）。
-// contenteditable 的四个已知 quirk（design §2「不允许侥幸」）因此各有单一收口：
-//   ① 粘贴分派：剪贴板含 image/* 走图片卡片（图优先），其余只经 insertPlainText
-//     进纯文本（change harness-composer-image-paste design §7）；
-//   ② IME 组合态：组合期的跨卡片删除在 beforeinput 被拦下（面板层）；
-//   ③ 撤销栈：自管 blocks 快照（时间聚簇），原生 historyUndo/Redo 显式禁用；
-//   ④ 新块归一化：一切入口（含粘贴多行、浏览器自身造块）都落成 paragraph 块，
-//     裸 div/br 不进数据层（normalize + readBlocks 收口）。
-// 本层纯函数无 DOM 依赖，tests/unit 零 DOM 环境直接驱动（tests/unit/README.md）。
-// ---------------------------------------------------------------------------
-
-/** 光标 / 选区端点：block = 块下标，offset = 段落文本的 UTF-16 偏移（与 DOM Selection
- *  同口径）；端点落在卡片等非文本块时 offset 恒 0（该块前缘）。「卡片后缘」用下一块的
- *  前缘表达。 */
-export interface ComposerCaret {
-  block: number;
-  offset: number;
-}
-
-export interface ComposerSelection {
-  anchor: ComposerCaret;
-  focus: ComposerCaret;
-}
-
-function caretCompare(a: ComposerCaret, b: ComposerCaret): number {
-  return a.block !== b.block ? a.block - b.block : a.offset - b.offset;
-}
-
-/** 混排里的原子卡片块（quote / msgquote / image 三类）——判空 / 拆段 / 删除都按「原子块」整体作用。 */
-type CardBlock =
-  | { readonly kind: "quote"; readonly card: QuoteCard }
-  | { readonly kind: "msgquote"; readonly card: MessageQuoteCard }
-  | { readonly kind: "image"; readonly card: ImageCard };
-
-function isCardBlock(block: ComposerBlock): block is CardBlock {
-  return block.kind === "quote" || block.kind === "msgquote" || block.kind === "image";
-}
-
-export function composerSelectionBandIndexes(
-  blocks: readonly ComposerBlock[],
-  selection: ComposerSelection | null,
-): number[] {
-  if (selection === null) return [];
-  const forward = caretCompare(selection.anchor, selection.focus) <= 0;
-  const start = forward ? selection.anchor : selection.focus;
-  const end = forward ? selection.focus : selection.anchor;
-  if (caretCompare(start, end) === 0) return [];
-  const bands: number[] = [];
-  for (let index = 0; index < blocks.length; index += 1) {
-    const block = blocks[index];
-    const startsBeforeBlock = start.block < index || (start.block === index && start.offset <= 0);
-    if (!startsBeforeBlock) continue;
-    if (isCardBlock(block)) {
-      if (end.block > index || (end.block === index && end.offset > 0)) bands.push(index);
-      continue;
-    }
-    const endsAfterBlock =
-      end.block > index || (end.block === index && end.offset > 0 && end.offset >= block.text.length);
-    if (endsAfterBlock) bands.push(index);
-  }
-  return bands;
-}
-
-/**
- * 元素内**文档序第一个文本节点**（M457：卡片边界光标位的落点宿主）。卡片的文本住在
- * `.lumir-hp-qc-ex` / `.lumir-hp-qc-src` / 图片元信息行里，落在**文本节点上**才有 caret 几何
- * （落在卡片元素上量不到，见 `domCaretTarget` 的说明）。没有文本节点时返回 `null`。
- */
-function firstTextNodeIn(el: Element): Text | null {
-  const walker = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  return walker.nextNode() as Text | null;
-}
-
-/**
- * 光标位是否是「卡片前缘」这一档（= 相邻原子块之间的**边界光标位**，design §3.1）：
- * 块下标指向原子卡片、offset 为 0。三种现场归同一个模型值——相邻两张卡之间、卡片与段落
- * 之间、composer 以卡片开头。
- *
- * 该位置在 DOM 里是**无文本宿主**的块级边界（`Range(composer, N)`），内容型输入到达时
- * 要按「在该处物化一个段落」处理（见 insertPlainTextAtCaret / beforeinput 的拦截）。
- */
-export function isCardFrontCaret(blocks: readonly ComposerBlock[], caret: ComposerCaret): boolean {
-  if (caret.offset !== 0) return false;
-  const target = blocks[caret.block];
-  return target !== undefined && isCardBlock(target);
-}
-
-/** 一次**内容型键入**的键面事实（`boundaryTypingCaret` 的入参，与 KeyboardEvent 解耦——
- *  模型层不认识事件对象，只认识这四个判据）。 */
-export interface ComposerTypingKey {
-  /** `KeyboardEvent.key`（可打印单字符判据 = 长度为 1）。 */
-  readonly key: string;
-  /** ⌘ / ⌃（与面板 keydown 里 `mod` 同口径）。 */
-  readonly mod: boolean;
-  /** ⌥（macOS 的 Alt 层会替换字符，按键归输入区既有的就地路径与统一键位表，不在本判据内）。 */
-  readonly alt: boolean;
-  /** IME 组合期（组合内容走 compositionstart 的物化档）。 */
-  readonly composing: boolean;
-}
-
-/**
- * composer 边界光标位上的**内容型键入**判据（HC3 第 3 条的实现面，M457）：命中返回要物化的
- * 模型位，未命中返回 `null`。
- *
- * 为什么需要它：边界位是**无文本宿主**的位置——卡片是 `contenteditable=false` 的原子块、块级
- * 容器边界又量不出 caret 几何，引擎因此**不派 `beforeinput` / `input`**（WebKit 实测：keydown
- * 到达 composer、`beforeinput` / `input` 都不派、字也不落）。物化若只挂在 `beforeinput` 上，
- * 在「两张相邻卡片之间」这一档永远不可达——那正是 Alex 2026-10-12 报的「两卡之间不能输入」
- * （M450 的模型层语义与单测都是对的，挂点挂到了不派发的事件上）。
- *
- * 判据与既有键入档**同一份锚点**：折叠选区 + 非修饰键 + 可打印单字符 + 非组合期 + 光标是
- * 卡片前缘（`isCardFrontCaret`）。有选区、⌘/⌃/⌥ 组合、Enter/退格/方向键与 IME 进程键（key
- * 长度 > 1）一律不命中，照旧走各自既有路径。
- */
-export function boundaryTypingCaret(
-  blocks: readonly ComposerBlock[],
-  selection: ComposerSelection | null,
-  key: ComposerTypingKey,
-): ComposerCaret | null {
-  if (selection === null) return null;
-  const { anchor, focus } = selection;
-  if (anchor.block !== focus.block || anchor.offset !== focus.offset) return null;
-  if (key.composing || key.mod || key.alt) return null;
-  if (key.key.length !== 1) return null;
-  return isCardFrontCaret(blocks, focus) ? focus : null;
-}
-
-/**
- * 边界光标位的 DOM → 模型归一（design §3.1）：容器元素自身的第 N 个子边界
- * （`Range(composer, N)`）就是「第 N 块的前缘」= `{block: N, offset: 0}`；N 允许等于块数
- * （末尾之后 = composer 的末尾边界），故此值钳在 `[0, blockCount]`。
- *
- * 与 `domCaretTarget` 互为逆运算：写回落在同一个边界上、读回得到同一个模型值——这正是
- * 「卡片前缘的模型位置写得进去、读得出来」的往返对称（今天读回是 null 的那个缺口）。
- */
-export function boundaryCaretAt(containerIndex: number, blockCount: number): ComposerCaret {
-  return { block: Math.max(0, Math.min(containerIndex, blockCount)), offset: 0 };
-}
-
-/** 光标写回 DOM 的落点形态：块级容器边界（`Range(composer, index)`）、段落内字符偏移，或
- *  **卡片内的首个文本位**（无文本宿主的边界位的落点宿主，见 `domCaretTarget`）。 */
-export type DomCaretTarget =
-  | { readonly kind: "boundary"; readonly index: number }
-  | { readonly kind: "text"; readonly index: number; readonly offset: number }
-  | { readonly kind: "cardText"; readonly index: number };
-
-/**
- * 光标位写回 DOM 的落点形态（`setDomCaret` 的唯一判据）：**有文本宿主的相邻位优先**，段落内
- * 落字符偏移、卡片边界位落相邻的文本位；「末尾之后」落**最后一个块**的边界。
- *
- * M457 起卡片边界位（含相邻两张卡片之间、composer 以卡片开头）不再写 `Range(composer, index)`：
- * 那个位置在两个块级盒之间，**量不出 caret 几何**（`getBoundingClientRect()` 全 0，WebKit 与
- * Blink 实测同结果，见 docs/specs/harness-composer.md §实测依据）——画在哪由引擎自行决定，真机
- * 现场就是「⌃B 之后光标落进卡片正文里」（Alex 2026-10-12）。落点因此改成两类**有文本宿主**的
- * 相邻位：
- * - 前一块是段落 → 该段落的**末缘**（文本节点给出几何与行位；段落非空时与边界位同属
- *   `normalizeComposerCaret` 的归一等价类，导航 / 行级命令的口径不变）；
- * - 两侧都没有文本宿主（两卡相邻 / composer 以卡片开头）→ 后一张卡片的**首个文本位**
- *   （DOM 读回按「锚在卡片内」归一为同一个边界位，HC3 第 1 条已声明这一档）。
- *
- * M473：「末尾之后」（`block = 块数`）同样不再写块级容器边界（`Range(composer, 块数)` 的 caret
- * 几何恒 0，画在哪由引擎决定 ⇒ 真机表现为「光标不知道跑哪去了」；⌃E 在末段行末、⌃F 在最后一块
- * 之后都会落到这一档）。**模型值不动**（仍是 `{block: 块数, offset: 0}`），只把写回落**最后一个
- * 块**的边界：
- * - 末块是**非空段落** → 该段的**文本末缘**（`{text, 块数-1, len}`）。它与「末尾之后」是契约已
- *   声明的归一等价表示（M462）⇒ 导航口径不变、读回经 `normalizeComposerCaret` 仍是「末尾之后」；
- * - 末块是**空段落** → 保留块级容器边界。空段落只有 `offset 0` 一个停靠点（前缘即末缘），落到
- *   那里就与「空段落前缘」这一档的写回位重合：两个模型值写回同一个 DOM 位 ⇒ 停靠点序列的
- *   「一步必有位移」（单测性质）判红，且读回会把「末尾之后」折成空段落前缘（编辑语义随之变）；
- * - 末块是**卡片** → 保留块级容器边界。卡片没有「文本末缘」这个宿主（它的后缘就是容器边界），
- *   落到卡片内部文本（`cardText`）会把读回折成**卡片前缘**——那是另一个模型值（内容型键入会物化
- *   到卡片**之前**），与「模型值不动」冲突。
- *
- *   末两档（空段落 / 卡片）都是 0×0 的无几何位或不可测位，可见性**未修**——仍是 **HC3 已知边界**
- *   （登记 docs/specs/harness-composer.md 与 docs/backlog.md）。
- *
- * 抽成纯函数是为了让读写两侧共用同一条规则——`boundaryCaretAt` 是它的逆向，两者的同一性由
- * 单测逐块序全枚举钉住。
- */
-export function domCaretTarget(blocks: readonly ComposerBlock[], caret: ComposerCaret): DomCaretTarget {
-  const index = Math.max(0, Math.min(caret.block, blocks.length));
-  const block = blocks[index];
-  if (block !== undefined && isCardBlock(block)) {
-    const prev = blocks[index - 1];
-    if (prev !== undefined && prev.kind === "paragraph") {
-      return { kind: "text", index: index - 1, offset: prev.text.length };
-    }
-    return { kind: "cardText", index };
-  }
-  if (block === undefined) {
-    const lastIndex = blocks.length - 1;
-    const last = blocks[lastIndex];
-    // 末块是**非空段落**才落它的文本末缘；空段落只有一个停靠点（前缘即末缘），落到那里会与
-    // 「空段落前缘」这一档的写回位重合，把停靠点序列的「一步必有位移」压成原地空走（单测判红）；
-    // 卡片没有文本末缘宿主（它的后缘就是容器边界）。
-    if (last === undefined || isCardBlock(last) || last.text.length === 0) return { kind: "boundary", index };
-    return { kind: "text", index: lastIndex, offset: last.text.length };
-  }
-  return { kind: "text", index, offset: Math.max(0, Math.min(caret.offset, block.text.length)) };
-}
-
-/**
- * 光标处拆段插入**卡片块**（design §5 装配合同 + Alex 2026-10-06 裁决：插入后光标落到卡片
- * 下一行的问题段落——该处已有段落复用、否则新建）：
- * - 光标在段落中间：段落从光标处拆两段，卡片插两段之间，光标落第二段段首；
- * - 光标在段落起始：卡片插在该段落之前，光标落原段落段首；
- * - 光标在段落末尾：卡片插在段落之后，随后补一个空段落承接光标（末尾已有空段落则复用——
- *   空段落末尾即「段落起始」分支，天然复用）；
- * - 光标在卡片（quote / msgquote 两类原子块）前缘：卡片插在其前，其后补空段落承接光标。
- *
- * 两类卡片共用本函数（insertCardAtCaret 是 quote 的薄封装、msgquote 走 insertMessageQuoteCard）：
- * 卡片在混排里的行为（拆段 / 光标落点 / 复用空段落）与卡片种类无关。
- */
-export function insertBlockAtCaret(
-  blocks: readonly ComposerBlock[],
-  caret: ComposerCaret,
-  block: ComposerBlock,
-): { blocks: ComposerBlock[]; caret: ComposerCaret } {
-  const at = Math.max(0, Math.min(caret.block, blocks.length));
-  const target = blocks[at];
-  const emptyPara: ComposerBlock = { kind: "paragraph", text: "" };
-  if (target !== undefined && isCardBlock(target)) {
-    const next: ComposerBlock[] = [...blocks.slice(0, at), block, emptyPara, ...blocks.slice(at)];
-    return { blocks: next, caret: { block: at + 1, offset: 0 } };
-  }
-  const text = target?.kind === "paragraph" ? target.text : "";
-  const offset = target === undefined ? 0 : Math.max(0, Math.min(caret.offset, text.length));
-  if (offset === 0) {
-    // 段落起始 / 空段落 / composer 末尾的空追加：卡片在前，原段落（或新空段落）承接光标。
-    const rest: ComposerBlock[] = target === undefined ? [emptyPara] : blocks.slice(at);
-    const next: ComposerBlock[] = [...blocks.slice(0, at), block, ...rest];
-    return { blocks: next, caret: { block: at + 1, offset: 0 } };
-  }
-  const before = blocks.slice(0, at);
-  const after = blocks.slice(at + 1);
-  if (offset >= text.length) {
-    // 段落末尾（非空）：保留原段落，卡片在后，新空段落承接光标。
-    const next: ComposerBlock[] = [...before, target!, block, emptyPara, ...after];
-    return { blocks: next, caret: { block: at + 2, offset: 0 } };
-  }
-  // 段落中间：拆两段，卡片居中，光标落第二段段首（复用卡片下一行的段落）。
-  const head: ComposerBlock = { kind: "paragraph", text: text.slice(0, offset) };
-  const tail: ComposerBlock = { kind: "paragraph", text: text.slice(offset) };
-  const next = [...before, head, block, tail, ...after];
-  return { blocks: next, caret: { block: at + 2, offset: 0 } };
-}
-
-/** 光标处插入**引用卡片**（insertBlockAtCaret 的薄封装，签名保持 M343 既有消费者不变）。 */
-export function insertCardAtCaret(
-  blocks: readonly ComposerBlock[],
-  caret: ComposerCaret,
-  card: QuoteCard,
-): { blocks: ComposerBlock[]; caret: ComposerCaret } {
-  return insertBlockAtCaret(blocks, caret, { kind: "quote", card });
-}
-
-/** 移除一个块（卡片 × 钮的公共件）：光标落被删块的前一个文本块末尾（无前者则后继块前缘）。
- *  `deleteForwardAtCaret` 的卡片档（⌃D / Delete 在卡片前缘）也走本函数——两处的光标落点是同一条
- *  口径，M473 起共用这一份实现（旧实现在前删那一路各写一份，落点不同）。 */
-export function removeBlockAt(
-  blocks: readonly ComposerBlock[],
-  at: number,
-): { blocks: ComposerBlock[]; caret: ComposerCaret } {
-  const index = Math.max(0, Math.min(at, blocks.length - 1));
-  const next = blocks.filter((_, i) => i !== index);
-  if (next.length === 0) return { blocks: [{ kind: "paragraph", text: "" }], caret: { block: 0, offset: 0 } };
-  // 光标优先贴被删块的前一个块；它在原下标 index-1 处（next 比 blocks 短一个）。
-  const prev = index > 0 ? next[index - 1] : undefined;
-  if (prev !== undefined && prev.kind === "paragraph") {
-    return { blocks: next, caret: { block: index - 1, offset: prev.text.length } };
-  }
-  return { blocks: next, caret: { block: Math.min(index, next.length - 1), offset: 0 } };
-}
-
-/**
- * 在光标处插入纯文本（粘贴净化的唯一数据入口，quirk ①）：\n 拆出新段落块
- * （新块一律是 paragraph——quirk ④ 的模型侧保证），光标落插入文本末尾。
- * 光标在卡片前缘（含相邻两张卡之间）时视为在该处有一个空段落——**卡片原样保留**
- * （design §3.3：旧实现用 `slice(at + 1)` 跳过了 `blocks[at]`，把那张卡片删掉）。
- */
-export function insertPlainTextAtCaret(
-  blocks: readonly ComposerBlock[],
-  caret: ComposerCaret,
-  text: string,
-): { blocks: ComposerBlock[]; caret: ComposerCaret } {
-  const at = Math.max(0, Math.min(caret.block, blocks.length));
-  const target = blocks[at];
-  const isCard = target !== undefined && isCardBlock(target);
-  const current = target?.kind === "paragraph" ? target.text : "";
-  const offset = target?.kind === "paragraph" ? Math.max(0, Math.min(caret.offset, current.length)) : 0;
-  const segments = text.split("\n");
-  const prefix = current.slice(0, offset);
-  const suffix = current.slice(offset);
-  // 首段接前缀、末段接后缀；中间段原样——\n 两侧的内容因此都守恒。
-  const replacements: ComposerBlock[] = segments.map((segment, i) => ({
-    kind: "paragraph",
-    text: (i === 0 ? prefix : "") + segment + (i === segments.length - 1 ? suffix : ""),
-  }));
-  const next = [...blocks.slice(0, at), ...replacements, ...blocks.slice(isCard ? at : at + 1)];
-  const caretBlock = at + replacements.length - 1;
-  const caretOffset = (segments.length === 1 ? prefix.length : 0) + segments[segments.length - 1].length;
-  return { blocks: next, caret: { block: caretBlock, offset: caretOffset } };
-}
-
-/**
- * ⇧Enter 软换行：**一次按键恰好加一行可见行**，光标落在新行的可见位置
- * （不变量 HC1，合同 docs/specs/harness-composer.md）。
- *
- * 三条落法（同一按键路径，model 层一次算出）：
- * - 光标在段落**中间**：段内插 `\n`（不拆块）——内部换行照常产生行盒，光标落换行之后；
- * - 光标在段落**末尾**（含空段落）或**卡片前缘**：在光标处落一个**新的空段落块**，
- *   光标落到它段首。不给段落追加尾随 `\n`：CSS 里尾随换行**不产生行盒**（`white-space:
- *   pre-wrap` 下 "ab\n" 与 "ab" 同高），旧实现因此让第一次 ⇧Enter 零可见变化、要按两次
- *   才看到换行（Alex 2026-10-10 现场）。空段落块有 `min-height: 1em`，一行真实落地；
- * - 光标在**「末尾之后」**（越界位，见下文）：新空段落块追加在**末尾**。
- *
- * 返回的块序列里，光标所在段落**恒不以 `\n` 结尾**——这是「光标在可见行上」的机器判据，
- * 属性测试按块序列 × 光标位置全枚举钉死。
- *
- * 光标位是**越界位**——「末尾之后」`{block: 块数, offset: 0}`（M462）时当作「末块之后」处理
- * （HC1 第 3 条的落点）：它既是 HC4 停靠点序列的末项、HC3 第 2 条点名的合法光标位，
- * 又是**末段**末缘的**归一等价表示**
- * （`normalizeComposerCaret` 把**末段**的非空末缘折到这里——M465 起只有末段档与卡片档还折，
- * 行级命令 ⌃E / ⌃F 落在末段末缘时即此值，并把该值写回 DOM 的**末块边界**——M473 起末块是段落
- * 时落在其文本末缘，真机探针实测选区锚 `#text(<qpara>)@len`；此前是块级容器边界
- * `#composer@块数`、caret 几何为零）。不加这一档，下面的钳制会把 `offset 0`
- * 当成**末段段首**：`\n` 落到末段文本第 0 位 ⇒ 空行出现在当前行**之前**、光标停在文字行行首
- * （Alex 2026-10-12 现场）。落新空段落块取代钳制，同时保证 HC1 第 3 条的落点（新行在该段之后）。
- */
-export function insertSoftBreakAtCaret(
-  blocks: readonly ComposerBlock[],
-  caret: ComposerCaret,
-): { blocks: ComposerBlock[]; caret: ComposerCaret } {
-  if (caret.block >= blocks.length) {
-    // 「末尾之后」：新空段落追加在**末尾**（末块是卡片时同样在末尾——「卡片前缘」是另一个模型位）。
-    const next = [...blocks, { kind: "paragraph", text: "" }] as ComposerBlock[];
-    return { blocks: next, caret: { block: next.length - 1, offset: 0 } };
-  }
-  const at = Math.max(0, Math.min(caret.block, blocks.length - 1));
-  const target = blocks[at];
-  if (target === undefined || target.kind !== "paragraph") {
-    // 卡片前缘（含 composer 以卡片开头、无前段落）：在光标处落一个新空段落——新行就在
-    // 卡片那一行的上方；没有前段落时同样加行，不静默无操作（HC1 对全部光标位置成立）。
-    const next = blocks.slice() as ComposerBlock[];
-    next.splice(at, 0, { kind: "paragraph", text: "" });
-    return { blocks: next, caret: { block: at, offset: 0 } };
-  }
-  const offset = Math.max(0, Math.min(caret.offset, target.text.length));
-  const next = blocks.slice() as ComposerBlock[];
-  if (offset >= target.text.length) {
-    // 段末：新空段落块承接光标（尾随 \n 的形态在这里被取代——见函数头）。
-    next.splice(at + 1, 0, { kind: "paragraph", text: "" });
-    return { blocks: next, caret: { block: at + 1, offset: 0 } };
-  }
-  next[at] = { kind: "paragraph", text: `${target.text.slice(0, offset)}\n${target.text.slice(offset)}` };
-  return { blocks: next, caret: { block: at, offset: offset + 1 } };
-}
-
-/** composer 视口自动滚动的边距（px）：光标行不贴容器边沿，留一点呼吸（HC2）。 */
-export const CARET_SCROLL_MARGIN = 4;
-
-/**
- * 光标行滚进视口的目标 scrollTop（纯函数，不变量 HC2 —— 合同 docs/specs/harness-composer.md）。
- *
- * composer 的 DOM 是**重渲**出来的（renderComposer 之后 setDomCaret 用程序化 Range 落光标），
- * 引擎在选区变化时的 reveal 行为是引擎特性：WKWebView 会 reveal、Blink 不会（见
- * scrollCaretIntoView 的实测记录）。判据抽在这里，DOM 侧只负责量读数、写 scrollTop——
- * 条款（光标行在视口内）因此不依赖某一份引擎实现。
- *
- * 坐标系：`caret.top/bottom` 是光标行在**滚动内容坐标系**里的上下沿
- * （= 视口坐标 − 容器上沿 + view.scrollTop；调用方换算）。判定：
- * - 光标行末带边距仍在可视区内 → 返回原 scrollTop（**同一性**：每次重渲都动视口会抖）；
- * - 越出上沿 → 滚到 `top - margin`；
- * - 越出下沿 → 滚到 `bottom + margin - clientHeight`（光标行贴可视区底边）；
- * - 结果钳在 `[0, scrollHeight - clientHeight]`——内容不足一屏时恒 0，不产出越界滚动位。
- */
-export function caretScrollTop(
-  view: { scrollTop: number; clientHeight: number; scrollHeight: number },
-  caret: { top: number; bottom: number },
-  margin: number = CARET_SCROLL_MARGIN,
-): number {
-  const maxScroll = Math.max(0, view.scrollHeight - view.clientHeight);
-  const clamp = (value: number): number => Math.max(0, Math.min(value, maxScroll));
-  if (caret.top - margin < view.scrollTop) return clamp(caret.top - margin);
-  if (caret.bottom + margin > view.scrollTop + view.clientHeight) {
-    return clamp(caret.bottom + margin - view.clientHeight);
-  }
-  return clamp(view.scrollTop);
-}
-
-/** 删除选区（跨块安全）：区间内的卡片整块移除，两端段落按端点截断保留。 */
-export function deleteSelectionRange(
-  blocks: readonly ComposerBlock[],
-  selection: ComposerSelection,
-): { blocks: ComposerBlock[]; caret: ComposerCaret } {
-  const ordered =
-    caretCompare(selection.anchor, selection.focus) <= 0
-      ? selection
-      : { anchor: selection.focus, focus: selection.anchor };
-  const { anchor, focus } = ordered;
-  if (anchor.block === focus.block) {
-    const target = blocks[anchor.block];
-    if (target === undefined || target.kind !== "paragraph") return { blocks: [...blocks], caret: anchor };
-    const from = Math.min(anchor.offset, focus.offset);
-    const to = Math.max(anchor.offset, focus.offset);
-    const next = blocks.slice() as ComposerBlock[];
-    next[anchor.block] = {
-      kind: "paragraph",
-      text: target.text.slice(0, from) + target.text.slice(to),
-    };
-    return { blocks: next, caret: { block: anchor.block, offset: from } };
-  }
-  const next: ComposerBlock[] = [];
-  for (let i = 0; i < anchor.block; i += 1) next.push(blocks[i]);
-  const head = blocks[anchor.block];
-  if (head?.kind === "paragraph") {
-    next.push({ kind: "paragraph", text: head.text.slice(0, Math.min(anchor.offset, head.text.length)) });
-  }
-  // anchor 与 focus 之间的块（含 anchor 处的卡片、focus 处的卡片）整块移除。
-  const tail = blocks[focus.block];
-  if (tail?.kind === "paragraph") {
-    next.push({ kind: "paragraph", text: tail.text.slice(Math.min(focus.offset, tail.text.length)) });
-  }
-  for (let i = focus.block + 1; i < blocks.length; i += 1) next.push(blocks[i]);
-  const caret: ComposerCaret =
-    head?.kind === "paragraph"
-      ? { block: anchor.block, offset: head.text.slice(0, Math.min(anchor.offset, head.text.length)).length }
-      : { block: anchor.block, offset: 0 };
-  return { blocks: next.length === 0 ? [{ kind: "paragraph", text: "" }] : next, caret };
-}
-
-/** 退格（模型侧，删除按整体作用的卡片语义）：段内删字符；段首遇卡片整块删、遇段落则合并。 */
-export function backspaceAtCaret(
-  blocks: readonly ComposerBlock[],
-  caret: ComposerCaret,
-): { blocks: ComposerBlock[]; caret: ComposerCaret } | null {
-  const at = Math.max(0, Math.min(caret.block, blocks.length - 1));
-  const target = blocks[at];
-  if (target === undefined) return null;
-  if (isCardBlock(target)) {
-    // 光标在卡片前缘（= 上一块之后）：退格作用于**前一块**——前块是卡片则整块删，
-    // 是段落则删其末字符（光标落段落末尾）；块首则无物可删。
-    if (at === 0) return null;
-    const prev = blocks[at - 1];
-    if (isCardBlock(prev)) {
-      const next = blocks.slice() as ComposerBlock[];
-      next.splice(at - 1, 1);
-      return { blocks: next, caret: { block: at - 1, offset: 0 } };
-    }
-    return backspaceAtCaret(blocks, { block: at - 1, offset: prev.text.length });
-  }
-  if (caret.offset > 0) {
-    // 代理对（emoji 等）整体删：偏移落在低代理上时多退一格。
-    let cut = caret.offset - 1;
-    const ch = target.text.charCodeAt(cut);
-    if (ch >= 0xdc00 && ch <= 0xdfff && cut > 0) cut -= 1;
-    const next = blocks.slice() as ComposerBlock[];
-    next[at] = { kind: "paragraph", text: target.text.slice(0, cut) + target.text.slice(caret.offset) };
-    return { blocks: next, caret: { block: at, offset: cut } };
-  }
-  if (at === 0) return null;
-  const prev = blocks[at - 1];
-  const next = blocks.slice() as ComposerBlock[];
-  if (isCardBlock(prev)) {
-    // 卡片按整体作用：整块移除，光标留在当前段落段首。
-    next.splice(at - 1, 1);
-    return { blocks: next, caret: { block: at - 1, offset: 0 } };
-  }
-  const merged = prev.text + target.text;
-  next.splice(at - 1, 2, { kind: "paragraph", text: merged });
-  return { blocks: next, caret: { block: at - 1, offset: prev.text.length } };
-}
-
-/** 前向删除（Delete 键）：光标在卡片前缘 = 整块删该卡片；段内删字符；段末遇段落则合并。
- *
- *  卡片档的落点**与 `removeBlockAt` 完全同口径**（M473，直接复用同一个函数）：光标贴被删块的
- *  前一个文本块末尾（无前者则后继块前缘）。两个函数的模型位因此合成一个真源——`⌃D` / `Delete`
- *  在卡片前缘（M457 起它**画在**前一段落末缘那一行）按一次，光标不再从上一行行尾跳到下一行行首
- *  （旧实现写「被删块的原下标」= 后一块前缘，与同位置的「写回位」那一路落点不同；M465 收紧
- *  `normalizeComposerCaret` 的折叠后暴露，登记 `docs/backlog.md` 的 worker-m465 finding）。 */
-export function deleteForwardAtCaret(
-  blocks: readonly ComposerBlock[],
-  caret: ComposerCaret,
-): { blocks: ComposerBlock[]; caret: ComposerCaret } | null {
-  const at = Math.max(0, Math.min(caret.block, blocks.length - 1));
-  const target = blocks[at];
-  if (target === undefined) return null;
-  if (isCardBlock(target)) return removeBlockAt(blocks, at);
-  if (caret.offset < target.text.length) {
-    let end = caret.offset + 1;
-    const ch = target.text.charCodeAt(caret.offset);
-    if (ch >= 0xd800 && ch <= 0xdbff && end < target.text.length) end += 1;
-    const next = blocks.slice() as ComposerBlock[];
-    next[at] = { kind: "paragraph", text: target.text.slice(0, caret.offset) + target.text.slice(end) };
-    return { blocks: next, caret };
-  }
-  const nxt = blocks[at + 1];
-  if (nxt === undefined) return null;
-  const next = blocks.slice() as ComposerBlock[];
-  if (isCardBlock(nxt)) {
-    next.splice(at + 1, 1);
-    return { blocks: next, caret };
-  }
-  const merged = target.text + nxt.text;
-  next.splice(at, 2, { kind: "paragraph", text: merged });
-  return { blocks: next, caret };
-}
-
-// ---------------------------------------------------------------------------
-// M447（change composer-emacs-nav design §4）：Emacs 文本导航族的模型层——停靠点序列与
-// 同形位归一等价类、移动 / 扩选、词级 kill / kill-line / 转置的纯函数。全部零 DOM。
-// ---------------------------------------------------------------------------
-
-/** 模型端点相等（同一块下标 + 同一偏移）。 */
-function sameCaret(a: ComposerCaret, b: ComposerCaret): boolean {
-  return a.block === b.block && a.offset === b.offset;
-}
-
-/** 模型端点的可比标识（kill 槽的相接端——槽的坐标空间跨编辑器 / composer，故用不透明串）。 */
-function caretKey(caret: ComposerCaret): string {
-  return `${caret.block}:${caret.offset}`;
-}
-
-/**
- * 同形位归一等价类（design §4.1）：段落**非空**末缘（`offset ≥ 文本长度`）只在**写回同一个 DOM
- * 位**时才归一到紧邻后块的前缘——M465 起折叠条件按「落点形态的同一性」收紧，不再只看「相邻」：
- *
- * - **后块是原子卡片**（或没有后块）⇒ 折叠。卡片前缘的写回位就是本段末缘（`domCaretTarget` 的
- *   卡片档：前块是段落 ⇒ `{kind: "text", index: i, offset: len}`），同一位、同一个表示；末段末缘
- *   则归一到「末尾之后」（`{block: 块数, offset: 0}`——M462 已声明这一档即末段末缘的等价表示；
- *   M473 起它的写回位是**末块边界**：末块是段落时落在该段文本末缘，与 `(i, len)` 是同一个 DOM 位）。
- * - **后块是段落**（含 M456 起常驻的末尾空段落）⇒ **不折叠**。两个段落各占自己的行盒
- *   （`.lumir-hp-qpara` 是块级盒），本段末缘在上一行行尾、后块前缘在下一行行首，两个**不同**的
- *   DOM 位。旧实现无条件折叠，把「本段末缘」这个真实停靠点从序列里抹掉：`⌃B` 从后块前缘退一步
- *   落到 `(i, len - 1)`（Alex 2026-10-12 现场：「光标移动到上一行的倒数第二个字符后面，而不是
- *   行末」）。
- *
- * 空段落不归一（它自占一行，只有 `offset 0` 一个停靠点）；MUST NOT 把它折进「末尾之后」——那会让
- * 归一变成非传递关系（`(i, len)`→`(i+1, 0)`、`(i+1, 0)`→`(n, 0)` 而 `(i, len)` 与 `(n, 0)` 不同类），
- * 等价类随即把 `(i, len)` 一并吃掉，正是上面那条缺陷。
- *
- * **实现注记（与 design §4.1「读回处也调它」的偏差）**：`caretFromDom` 的编辑读回**不**调本
- * 函数——编辑动词（退格 / 前删 / 键入分派 / 粘贴）依赖「段落末缘 `(i, len)`」与「后块前缘
- * `(i+1, 0)`」是**两个**不同的模型值（归一后 `backspaceAtCaret` 会把段落末缘的退格当成跨块
- * 合并、`insertPlainTextAtCaret` 会把段末键入插到下一段段首）。本等价类服务的是**导航**
- *（移动 / 扩选命令），在那里它正是避免「原地空走」所需要的。
- */
-export function normalizeComposerCaret(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
-  const block = Math.max(0, Math.min(caret.block, blocks.length));
-  const target = blocks[block];
-  if (target === undefined || isCardBlock(target)) return { block, offset: 0 };
-  const offset = Math.max(0, Math.min(caret.offset, target.text.length));
-  if (target.text.length > 0 && offset >= target.text.length) {
-    const next = blocks[block + 1];
-    if (next === undefined || isCardBlock(next)) return { block: block + 1, offset: 0 };
-    return { block, offset: target.text.length };
-  }
-  return { block, offset };
-}
-
-/**
- * 停靠点序列（归一等价类后的商集，线性有序）：段落块 → 各**码点边界**偏移（代理对整体一步，
- * design §4.2；低位代理不构成独立停靠点）；卡片块 → 前缘 `(i, 0)`（后缘用下一块的前缘表达）；
- * 末尾再补「末尾之后」`(块数, 0)`。
- *
- * 两条不变量（M465 起按**写回 DOM 位**判，见 `normalizeComposerCaret` 与合同 HC4 第 1 条）：
- * 序列线性有序且相邻两点的写回位必不相同（一步必有位移）；序列**不丢点**——每个非末块段落的每个
- * 码点边界都有自己的停靠点（后块是段落时 `(i, len)` 不得被折叠吃掉）。
- */
-export function composerCaretStops(blocks: readonly ComposerBlock[]): ComposerCaret[] {
-  const stops: ComposerCaret[] = [];
-  const push = (caret: ComposerCaret): void => {
-    const norm = normalizeComposerCaret(blocks, caret);
-    const last = stops[stops.length - 1];
-    if (last !== undefined && sameCaret(last, norm)) return;
-    stops.push(norm);
-  };
-  for (let i = 0; i < blocks.length; i += 1) {
-    const block = blocks[i];
-    if (isCardBlock(block)) {
-      push({ block: i, offset: 0 });
-      continue;
-    }
-    const text = block.text;
-    push({ block: i, offset: 0 });
-    let offset = 0;
-    while (offset < text.length) {
-      const code = text.charCodeAt(offset);
-      offset += code >= 0xd800 && code <= 0xdbff && offset + 1 < text.length ? 2 : 1;
-      push({ block: i, offset: Math.min(offset, text.length) });
-    }
-  }
-  push({ block: blocks.length, offset: 0 });
-  return stops;
-}
-
-/** 在停靠点序列上走一步（`delta` = ±1）；到头 / 找不到时返回归一后的原位（无动作）。
- *  「找不到」是病态输入（DOM 读回落在代理对中间）——归一不改它，此处退化为无动作，不猜。 */
-function stepStops(blocks: readonly ComposerBlock[], caret: ComposerCaret, delta: number): ComposerCaret {
-  const stops = composerCaretStops(blocks);
-  const norm = normalizeComposerCaret(blocks, caret);
-  const index = stops.findIndex((stop) => sameCaret(stop, norm));
-  if (index < 0) return norm;
-  const target = index + delta;
-  return target >= 0 && target < stops.length ? stops[target] : norm;
-}
-
-/** ⌃F / ⌃B：停靠点序列上前进 / 后退一步（段内字符步进，原子卡片一步跨过）。 */
-export function moveCharForward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
-  return stepStops(blocks, caret, 1);
-}
-export function moveCharBackward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
-  return stepStops(blocks, caret, -1);
-}
-
-/** 段落的逻辑行（`\n` 为界；`end` 不含 `\n`；空段落 = 一个 `[0,0)` 的空行）。 */
-interface TextLine {
-  readonly start: number;
-  readonly end: number;
-}
-function paragraphLines(text: string): TextLine[] {
-  const lines: TextLine[] = [];
-  let start = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    if (text[i] === "\n") {
-      lines.push({ start, end: i });
-      start = i + 1;
-    }
-  }
-  lines.push({ start, end: text.length });
-  return lines;
-}
-/** offset 所在行的下标（行界归**前**一行：`offset === 行末` 时仍算该行）。 */
-function lineIndexOf(lines: readonly TextLine[], offset: number): number {
-  let index = 0;
-  for (let i = 0; i < lines.length; i += 1) if (lines[i].start <= offset) index = i;
-  return index;
-}
-
-/**
- * 段内命令的**基准光标**：caret 落在段落内时取**原始位**（它带着真实的列位与「光标视觉上在哪一行」），
- * 否则取归一位。消费者：行级命令 ⌃A / ⌃E / ⌃N / ⌃P（M455 / M457）与词步 ⌥F / ⌥B（M473；词步要的
- * 是「光标在不在段落里」，末段档 / 卡片档被折走后同样会早退成「不动」）。
- *
- * 为什么必须分这一档：`normalizeComposerCaret` 在**卡片档 / 末段档**把段落**末缘**折到下一块
- * 前缘（末段折到「末尾之后」），而这两个落点位**没有行语义**（词步则连「落在段落里」都不成立）
- * ——行级命令随即对着那个块算行，一行
- * 都算不出来 ⇒ ⌃A 表现为「按了没反应」（Alex 2026-10-12 现场，真机探针实测段末 (0,11) 按 ⌃A
- * 选区完全不动）。**M465 起「后块是段落」这一档不再折叠**（合同 HC4 第 1 条：折叠只在后块是无
- * 文本宿主前缘时才成立），但卡片档 / 末段档照旧折——分档因此在这两档上仍然承重。
- * 段落内（含末缘）的原始位还带着**真实列位**，这是 ⌃N / ⌃P 同列位步进要的东西（M455 修：
- * 末缘折走后列位随之丢失，⌃P 落到上一行行首而不是同列位）。
- *
- * M455 为 ⌃N / ⌃P 修过同族问题（当时是本函数的一处内联特判），M457 把 ⌃A / ⌃E 一并收进来，
- * M473 再把词步收进来——段内基准**只有这一处实现**（REVIEW.md 「同一语义两处真源」条）。
- *
- * 卡片边界位 / 越界位没有段内语义，仍走归一位（回落到各自的「无动作」判据）。
- */
-function lineBasisCaret(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
-  const raw = blocks[caret.block];
-  if (raw !== undefined && raw.kind === "paragraph") {
-    return { block: caret.block, offset: Math.max(0, Math.min(caret.offset, raw.text.length)) };
-  }
-  return normalizeComposerCaret(blocks, caret);
-}
-
-/** ⌃A：段落内逻辑行行首；已是 / 光标在卡片边界位时不动。 */
-export function moveLineStart(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
-  const basis = lineBasisCaret(blocks, caret);
-  const block = blocks[basis.block];
-  if (block === undefined || block.kind !== "paragraph") return basis;
-  const lines = paragraphLines(block.text);
-  return normalizeComposerCaret(blocks, { block: basis.block, offset: lines[lineIndexOf(lines, basis.offset)].start });
-}
-
-/** ⌃E：段落内逻辑行行尾；已是 / 光标在卡片边界位时不动。 */
-export function moveLineEnd(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
-  const basis = lineBasisCaret(blocks, caret);
-  const block = blocks[basis.block];
-  if (block === undefined || block.kind !== "paragraph") return basis;
-  const lines = paragraphLines(block.text);
-  return normalizeComposerCaret(blocks, { block: basis.block, offset: lines[lineIndexOf(lines, basis.offset)].end });
-}
-
-/** 相邻段落块（delta > 0 向后找、< 0 向前找）；卡片不产生停靠行，被整体跳过。 */
-function adjacentParagraph(
-  blocks: readonly ComposerBlock[],
-  fromBlock: number,
-  delta: number,
-): { index: number; text: string } | null {
-  if (delta > 0) {
-    for (let i = fromBlock + 1; i < blocks.length; i += 1) {
-      const b = blocks[i];
-      if (b.kind === "paragraph") return { index: i, text: b.text };
-    }
-    return null;
-  }
-  for (let i = Math.min(fromBlock, blocks.length) - 1; i >= 0; i -= 1) {
-    const b = blocks[i];
-    if (b.kind === "paragraph") return { index: i, text: b.text };
-  }
-  return null;
-}
-
-/** ⌃N / ⌃P：逻辑行之间移动（同列位，超出目标行长度取行尾）；出段落跨到相邻段落块，无则不动。
- *
- *  基准光标取 `lineBasisCaret`（段落内取原始位、否则取归一位）：段落**末缘**（`offset === 文本
- *  长度`，即光标停在该段最后一行行尾——键入后的常态位置）的原始光标带着真实的列位；而归一在
- *  **卡片档 / 末段档**会把它折到下一块前缘（末段折到「末尾之后」），列位随之丢失。M455 修：
- *  末缘保留原始光标走段内步进，⌃P/⌃N 因此落到相邻行
- *  的**同列位**而不是行首（实测缺陷形态：`yabzcdw` ⇧Enter `mn` 后按 ⌃P 落在第二段行首，应为第一
- *  段第 2 列）。M457 起这一档与 ⌃A / ⌃E 共用同一个 `lineBasisCaret`；M465 起「后块是段落」档不再
- *  折叠，但基准分档对卡片档 / 末段档仍然承重（列位与「光标在不在段落里」两件事都靠它）。 */
-function moveLineVertical(blocks: readonly ComposerBlock[], caret: ComposerCaret, delta: number): ComposerCaret {
-  const norm = lineBasisCaret(blocks, caret);
-  const block = blocks[norm.block];
-  if (block !== undefined && block.kind === "paragraph") {
-    const lines = paragraphLines(block.text);
-    const index = lineIndexOf(lines, norm.offset);
-    const column = norm.offset - lines[index].start;
-    const target = index + delta;
-    if (target >= 0 && target < lines.length) {
-      const line = lines[target];
-      return normalizeComposerCaret(blocks, {
-        block: norm.block,
-        offset: line.start + Math.min(column, line.end - line.start),
-      });
-    }
-    const neighbor = adjacentParagraph(blocks, norm.block, delta);
-    if (neighbor === null) return norm;
-    const nLines = paragraphLines(neighbor.text);
-    const line = delta > 0 ? nLines[0] : nLines[nLines.length - 1];
-    return normalizeComposerCaret(blocks, {
-      block: neighbor.index,
-      offset: line.start + Math.min(column, line.end - line.start),
-    });
-  }
-  // 卡片前缘 / 「末尾之后」：卡片不产生停靠行 ⇒ 直接跳到相邻段落的行首。
-  const neighbor = adjacentParagraph(blocks, norm.block, delta);
-  if (neighbor === null) return norm;
-  const nLines = paragraphLines(neighbor.text);
-  const line = delta > 0 ? nLines[0] : nLines[nLines.length - 1];
-  return normalizeComposerCaret(blocks, { block: neighbor.index, offset: line.start });
-}
-
-export function moveLineDown(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
-  return moveLineVertical(blocks, caret, 1);
-}
-export function moveLineUp(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
-  return moveLineVertical(blocks, caret, -1);
-}
-
-/**
- * ⌃N / ⌃P 的**渲染行**一步是否真的跨了一行（M457，Alex 2026-10-12 裁决「按视觉行、与编辑器正文
- * 对齐」）。
- *
- * 判据：目标位置的行盒上沿相对光标行盒**至少错开半行高**——同一条渲染行上的解算结果（引擎把点
- * 钳回原行、或 x 位那侧没有字符而落到同一行的别处）一律判「没跨」，调用方据此回落到既有的跨段落
- * 行为（超集：段内有相邻渲染行才走渲染行）。行盒以 `Range.getBoundingClientRect()` 为准
- * （`top` 是行盒上沿、`height` 是行高）；量不到行盒（零高：卡片边界位 / 空段落）返回 false。
- */
-export function visualLineStepCrossed(
-  from: { readonly top: number; readonly height: number },
-  to: { readonly top: number; readonly height: number } | null,
-  delta: number,
-): boolean {
-  if (to === null) return false;
-  const lineHeight = Math.max(from.height, to.height);
-  if (!(lineHeight > 0)) return false;
-  const step = to.top - from.top;
-  return delta < 0 ? step <= -lineHeight / 2 : step >= lineHeight / 2;
-}
-
-/** 按词一步（⌥F / ⌥B 的扩选 head 走它）：段落内用与编辑器侧共用的词边界扫描。
- *
- *  **基准光标的档位与行级命令同一份**（M473）：`lineBasisCaret`——caret 所在块是段落就取**原始位**
- *  （段末紧邻卡片 / 末段这两种档位不再折到卡片前缘 / 「末尾之后」），否则取归一位。旧实现第一步过
- *  `normalizeComposerCaret`，那两档被折成**无文本宿主**的落点（卡片块 / 越界位）⇒ `block.kind !==
- *  "paragraph"` 早退 ⇒ 两个方向都「不动」——同一现场下 ⌥B 在段落档回词首、在卡片档不动的不对称
- *  （登记 `docs/backlog.md` 的 worker-m465 r1 finding）；取原始位后两档一致（⌥B 回本段词首、⌥F
- *  无动作），末段档（归一成「末尾之后」）同样随之对齐。
- *
- *  **段-段边界不跨段**（M465 裁决，理由与口径见 docs/specs/harness-composer.md §实测依据 M465 节）：
- *  段末 ⌥F **无动作**（本段已无下一词）、段末 ⌥B **回本段词首**、段首 ⌥B 无动作（停在本段段首）——
- *  与词级 kill 的「段边界处无动作」同口径。落点仍过 `normalizeComposerCaret`（段末 ⌥F 到末段词尾
- *  时写回的是「末尾之后」这一等价表示——M447 口径不变）。 */
-export function moveWordForward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
-  const basis = lineBasisCaret(blocks, caret);
-  const block = blocks[basis.block];
-  if (block === undefined || block.kind !== "paragraph") return basis;
-  const end = wordEndForward((a, b) => block.text.slice(a, b), basis.offset, block.text.length);
-  if (end <= basis.offset) return basis;
-  return normalizeComposerCaret(blocks, { block: basis.block, offset: end });
-}
-export function moveWordBackward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
-  const basis = lineBasisCaret(blocks, caret);
-  const block = blocks[basis.block];
-  if (block === undefined || block.kind !== "paragraph") return basis;
-  const start = wordStartBackward((a, b) => block.text.slice(a, b), basis.offset, 0);
-  if (start >= basis.offset) return basis;
-  return normalizeComposerCaret(blocks, { block: basis.block, offset: start });
-}
-
-/** 编辑动词用的文本目标：段落块 + 段内钳制偏移（`block` 越界时钳到末块、按段末处理）。 */
-function textTargetAt(
-  blocks: readonly ComposerBlock[],
-  caret: ComposerCaret,
-): { index: number; text: string; offset: number } | null {
-  const index = Math.max(0, Math.min(caret.block, blocks.length - 1));
-  const block = blocks[index];
-  if (block === undefined || block.kind !== "paragraph") return null;
-  const offset = caret.block >= blocks.length ? block.text.length : Math.max(0, Math.min(caret.offset, block.text.length));
-  return { index, text: block.text, offset };
-}
-
-/** 一次 kill 的产物：新块序列 + 落点 + 被杀文本 + 被杀区间的两端（供 kill 槽的相接判定）。 */
-export interface ComposerKill {
-  blocks: ComposerBlock[];
-  caret: ComposerCaret;
-  killed: string;
-  from: ComposerCaret;
-  to: ComposerCaret;
-}
-
-function removeTextAt(
-  blocks: readonly ComposerBlock[],
-  index: number,
-  text: string,
-  from: number,
-  to: number,
-  caretOffset: number,
-): ComposerKill {
-  const next = blocks.slice() as ComposerBlock[];
-  next[index] = { kind: "paragraph", text: text.slice(0, from) + text.slice(to) };
-  return {
-    blocks: next,
-    caret: { block: index, offset: caretOffset },
-    killed: text.slice(from, to),
-    from: { block: index, offset: from },
-    to: { block: index, offset: to },
-  };
-}
-
-/** ⌥D：kill 到下一词尾（不跨块——到段边界即停，段边界处无动作）。 */
-export function killWordForward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerKill | null {
-  const target = textTargetAt(blocks, caret);
-  if (target === null) return null;
-  const end = Math.min(wordEndForward((a, b) => target.text.slice(a, b), target.offset, target.text.length), target.text.length);
-  if (end <= target.offset) return null;
-  return removeTextAt(blocks, target.index, target.text, target.offset, end, target.offset);
-}
-
-/** ⌥⌫：kill 到上一词首（不跨块）。 */
-export function killWordBackward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerKill | null {
-  const target = textTargetAt(blocks, caret);
-  if (target === null) return null;
-  const start = Math.max(wordStartBackward((a, b) => target.text.slice(a, b), target.offset, 0), 0);
-  if (start >= target.offset) return null;
-  return removeTextAt(blocks, target.index, target.text, start, target.offset, start);
-}
-
-/** ⌃K：kill 到当前逻辑行行尾；已在行尾则杀掉该行界（段内合并两行）；段落末行行尾无动作（不跨块）。 */
-export function killLineAtCaret(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerKill | null {
-  const target = textTargetAt(blocks, caret);
-  if (target === null) return null;
-  const newline = target.text.indexOf("\n", target.offset);
-  let end: number;
-  if (newline === target.offset) end = target.offset + 1;
-  else if (newline > target.offset) end = newline;
-  else if (target.offset < target.text.length) end = target.text.length;
-  else return null;
-  return removeTextAt(blocks, target.index, target.text, target.offset, end, target.offset);
-}
-
-/** ⌃T：转置光标左右两个字素簇并把光标移到两者之后（与 `src/editor.ts` 的 `transposeChars`
- *  逐条同语义——段首 / 卡片边界处无动作；段尾与编辑器侧同形，转置末两个簇）。 */
-export function transposeCharsAtCaret(
-  blocks: readonly ComposerBlock[],
-  caret: ComposerCaret,
-): { blocks: ComposerBlock[]; caret: ComposerCaret } | null {
-  const target = textTargetAt(blocks, caret);
-  if (target === null) return null;
-  const { index, text, offset: pos } = target;
-  const read = (a: number, b: number): string => text.slice(a, b);
-  const write = (newText: string, caretOffset: number): { blocks: ComposerBlock[]; caret: ComposerCaret } => {
-    const next = blocks.slice() as ComposerBlock[];
-    next[index] = { kind: "paragraph", text: newText };
-    return { blocks: next, caret: { block: index, offset: caretOffset } };
-  };
-  const left = clusterBackward(read, pos, 0);
-  const right = clusterForward(read, pos, text.length);
-  if (left < pos && right > pos) {
-    const a = text.slice(left, pos);
-    const b = text.slice(pos, right);
-    return write(text.slice(0, left) + b + a + text.slice(right), right);
-  }
-  const prev = clusterBackward(read, left, 0);
-  if (prev >= left) return null;
-  const a = text.slice(prev, left);
-  const b = text.slice(left, pos);
-  return write(text.slice(0, prev) + b + a + text.slice(pos), pos);
-}
-
-/** 结构性操作 ⇒ 撤销栈强制独立成步（`withModel` / `undoHistory.push` 的 force 跳过聚簇）。
- *
- * **composer 模型路径上 force=true 的唯一产出点**——结构性操作全部读它：卡片（引用 / 消息摘录 /
- * 图片）的插入与移除、粘贴（文本 / 图片 / 拖入）、`@` 提及插入、拆段（`⇧Enter` 软断行）、删除族
- * （⌃D / ⌃H、裸 Backspace / Delete、两族的选区档）、kill-yank 族（⌥D / ⌥⌫ / ⌃K、⌃Y）、边界光标位
- * 的物化键入、IME 组合物化。MUST NOT 再散落 `true` 字面量（M510 的三处现场：M447/M453 的删除族、
- * M343 起的 ⇧Enter 各自写字面量且写成 false，与 `withModel` 文档「force=true 用于结构性操作
- * （卡片插入/移除、粘贴、**拆段**、退格）」漂移而无人可对账）。条款见
- * openspec/specs/harness/spec.md「混排输入区的撤销栈聚簇与结构操作独立成步」。
- *
- * 判据：一次编辑改的是**结构**（卡片的存在与位置、段落的分合）而非打字流；结构步若与相邻键入
- * 共用一个撤销前态，就会被聚簇早退吞掉、⌘Z 弹回结构操作前的状态。**三处 `false` 豁免**（不读本
- * 常量，就地注释点名）：键入（原生文本编辑的压栈）、字符级编辑（⌃T 转置）、删除族的空转空模型写。
- */
-export const STRUCTURAL_EDIT_FORCE = true;
-
-/** 一步模型编辑的模型步：交给 `withModel` 的模型操作 + force。 */
-export interface ComposerEditStep {
-  readonly op: (current: readonly ComposerBlock[]) => { blocks: ComposerBlock[]; caret: ComposerCaret };
-  readonly force: boolean;
-}
-
-/** 选区删除的模型步（删除族与 kill 族的**选区档**共用）：把当前选区整段删掉。
- *
- * force = `STRUCTURAL_EDIT_FORCE`——删除是结构性操作（选区可跨卡片整块移除），SHALL 独立成一个
- * 撤销步；与 `deleteFamilyStep` 的就地档同款判词（贴图等结构操作后 1s 内的选区删除若被聚簇早退
- * 吞掉，⌘Z 会弹回结构操作前的空态）。返回 null = 无选区或选区折叠（没有要删的选区）。
- */
-export function selectionDeleteStep(sel: ComposerSelection | null): ComposerEditStep | null {
-  if (sel === null || sameCaret(sel.anchor, sel.focus)) return null;
-  return { op: (current) => deleteSelectionRange(current, sel), force: STRUCTURAL_EDIT_FORCE };
-}
-
-/** 删除族（⌃D / ⌃H 与裸 Backspace / Delete）的模型步：交给 `withModel` 的模型操作 + force。
- *
- * force = `STRUCTURAL_EDIT_FORCE`——删除是结构性操作（卡片按整体作用、可整块移除）。三个入口
- * （`runComposerCommand` 的 `deleteAtCaret` 两档、composer 的裸 Backspace/Delete 分支）共用本
- * 函数——force 的判定因此只有一处真源，MUST NOT 各写一份字面量（M447/M453 曾把这三处各自落成
- * false）。选区档与 kill 族的选区档再共用一个 `selectionDeleteStep`。
- *
- * 返回 null = 本拍无模型动作（无选区，或就地删除的空转：段首退格 / 前向删除到末缘）。
- */
-export function deleteFamilyStep(
-  blocks: readonly ComposerBlock[],
-  sel: ComposerSelection | null,
-  op: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => { blocks: ComposerBlock[]; caret: ComposerCaret } | null,
-): ComposerEditStep | null {
-  if (sel === null) return null;
-  const selection = selectionDeleteStep(sel);
-  if (selection !== null) return selection;
-  if (op(blocks, sel.focus) === null) return null;
-  return {
-    op: (current) => op(current, sel.focus) ?? { blocks: [...current], caret: sel.focus },
-    force: STRUCTURAL_EDIT_FORCE,
-  };
-}
-
-/** 拆段（`⇧Enter` 软断行）的模型步：结构性操作，force = `STRUCTURAL_EDIT_FORCE`（`withModel` 的
- *  M343 文档自始即把「拆段」列为 force=true；composer keydown 的 `⇧Enter` 分支原写字面量 false
- *  是漂移，M510 修准）。
- *
- * `readCaret` 是**延迟读取**：落点必须在 `withModel` 的 `normalize()` 之后从 DOM 取（与改动前
- * 的取值时机逐拍一致），故以 thunk 传入而不是先算好再传。取不到选区时落末块末尾之后（同原口径）。
- */
-export function softBreakStep(readCaret: () => ComposerCaret | null): ComposerEditStep {
-  return {
-    op: (blocks) => insertSoftBreakAtCaret(blocks, readCaret() ?? { block: blocks.length - 1, offset: 0 }),
-    force: STRUCTURAL_EDIT_FORCE,
-  };
-}
-
-// ── 撤销栈历史（quirk ③ 的自管核心；导出供单测用假时钟驱动复现链） ──────────
-
-export interface UndoHistory<T> {
-  /** 修改前调用：任何新编辑都先作废旧 redo（先于聚簇早退），再按聚簇/去重决定是否压栈。 */
-  push(snapshot: T, force: boolean): void;
-  /** 撤销：传入当前态、返回要应用的前态（null = 无物可弹）。 */
-  undo(current: T): T | null;
-  /** 重做：传入当前态、返回要应用的后态（null = 无物可重做）。 */
-  redo(current: T): T | null;
-  /** 强制下一拍重新成簇（IME 组合结束：整段组合是一个撤销步）。 */
-  breakCluster(): void;
-  /** 整栈清空（发送 / 切 vault：草稿是新的编辑史）。 */
-  clear(): void;
-  readonly size: number;
-  readonly redoSize: number;
-}
-
-/**
- * 自管撤销栈（浏览器原生 undo 对 DOM 干预不可靠——design §2 quirk ③）。聚簇：clusterMs
- * 内的连续编辑共用一个前态（force 跳过聚簇）；去重：栈顶同态不压（no-op 不产生幽灵步）。
- * 两条正确性纪律（P2-1，快撤销快重打复现链）：
- *   1. redo 的作废**先于**聚簇早退——聚簇跳过的编辑同样是新编辑，旧 redo 不得残留；
- *   2. undo/redo 重置簇计时——撤销后的下一次编辑强制成新簇，永不成「撤销不掉的编辑」。
- */
-export function createUndoHistory<T>(options: {
-  now: () => number;
-  clusterMs?: number;
-  limit?: number;
-  equals?: (a: T, b: T) => boolean;
-}): UndoHistory<T> {
-  const clusterMs = options.clusterMs ?? 1000;
-  const limit = options.limit ?? 100;
-  const equals = options.equals ?? ((a: T, b: T) => JSON.stringify(a) === JSON.stringify(b));
-  let stack: T[] = [];
-  let redoStack: T[] = [];
-  let lastEditAt = 0;
-  return {
-    push(snapshot, force) {
-      redoStack = []; // 纪律 1：任何新编辑先作废旧 redo。
-      const at = options.now();
-      if (!force && at - lastEditAt < clusterMs) {
-        lastEditAt = at;
-        return;
-      }
-      const top = stack[stack.length - 1];
-      if (top !== undefined && equals(top, snapshot)) {
-        lastEditAt = at;
-        return;
-      }
-      stack.push(snapshot);
-      if (stack.length > limit) stack.shift();
-      lastEditAt = at;
-    },
-    undo(current) {
-      const snap = stack.pop();
-      if (snap === undefined) return null;
-      redoStack.push(current);
-      lastEditAt = 0; // 纪律 2：撤销后的下一次编辑强制成新簇。
-      return snap;
-    },
-    redo(current) {
-      const snap = redoStack.pop();
-      if (snap === undefined) return null;
-      stack.push(current);
-      lastEditAt = 0;
-      return snap;
-    },
-    breakCluster() {
-      lastEditAt = 0;
-    },
-    clear() {
-      stack = [];
-      redoStack = [];
-      lastEditAt = 0;
-    },
-    get size() {
-      return stack.length;
-    },
-    get redoSize() {
-      return redoStack.length;
-    },
-  };
 }
 
 /** 重建保焦的「段」：权限档、provider、model、effort（change fix-escape-overlay-close-oct24
@@ -1594,7 +540,7 @@ export function imageDimensionsFromNatural(
 
 // ---------------------------------------------------------------------------
 // composer 控制行的纯模型层（M347）：模型 chip / ctx 读数 / 发送钮两态。
-// 与混排 composer 同一条分层纪律：判据与状态机是纯函数（零 DOM 环境直接驱动，
+// 与 composer 同一条分层纪律：判据与状态机是纯函数（零 DOM 环境直接驱动，
 // tests/unit/harness-panel-control.test.ts），DOM 只是渲染面。
 // ---------------------------------------------------------------------------
 
@@ -4600,17 +3546,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   ctxPop.hidden = true;
   ctxWrap.append(ctxRead, ctxPop);
 
-  // 混排编辑区（M343，change add-harness-quote-cards design §2/§5）：contenteditable div 取代
-  // textarea，全 composer 唯一形态——顶层仅 .lumir-hp-qcard（原子卡片）/ .lumir-hp-qpara
-  // （问题段落）两类块；无卡片时退化为纯文本输入。数据层 = 本文件头部纯模型层的块序列，
-  // 序列化投递走 M342 的 serializeQuoteMessage。M351 起自身不带边框——边框/底色/圆角由
-  // 外层 composer-box 承担（原型 .h-box：focus-within 出强调框）。
+  // 最小 CM6 文本面 + 区外附件 tray。卡片不再参与 DOM Selection、IME 或文本删除。
+  const composerTray = document.createElement("div");
+  composerTray.className = "lumir-hp-composer-tray";
   const composer = document.createElement("div");
   composer.className = "lumir-hp-composer";
-  composer.contentEditable = "true";
-  composer.setAttribute("role", "textbox");
-  composer.setAttribute("aria-multiline", "true");
-  composer.spellcheck = false;
   const ctlSpacer = document.createElement("span");
   ctlSpacer.className = "lumir-hp-ctl-spacer";
   // 发送钮（M351 图标化，原型 .h-send）：26×26 accent 实心，↑ / ■ 两态 glyph 按相位显隐；
@@ -4658,6 +3598,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   quoteNote.className = "lumir-hp-qc-src lumir-hp-quote-note";
   quoteNote.setAttribute("role", "status");
   quoteNote.hidden = true;
+  composer.append(composerTray);
   composerBox.append(composer, ctl);
   composerArea.append(chip, quoteNote, composerBox);
 
@@ -4739,7 +3680,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     follow.jumpToBottom();
     // 钮点击后自身隐藏；隐藏前若持有焦点（键盘 Enter / Chromium 下鼠标点击都会让钮获焦），
     // 把焦点交还 composer——否则焦点落到 body，键盘用户失去键入落点（design §4.3）。
-    if (wasFocused) composer.focus();
+    if (wasFocused) composerView.focus();
   });
 
   // ── 状态 ─────────────────────────────────────────────────────────────────
@@ -5004,29 +3945,35 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  在途回包一律作废，落地不得回填进新视图（相位在 idle → idle 的复位里不推进，epoch 挡不住）。 */
   let snapshotSeq = 0;
 
-  // ── 混排 composer 状态（M343；消息摘录卡片见 change harness-message-excerpt；
-  //    图片卡片见 change harness-composer-image-paste） ──
-  /** 卡片数据寄存：DOM 只负责渲染，卡片数据（单一真源，design §3）经 WeakMap 挂回元素——
-   *  序列化只从模型读，不从 DOM 反推。三类卡片（quote / msgquote / image）共用一个寄存：
-   *  判别走 isMessageQuoteCard（role 字段）与 isImageCard（sourceMime 字段）。 */
+  // ── CM6 composer 状态 ──
   const cardData = new WeakMap<Element, QuoteCard | MessageQuoteCard | ImageCard>();
-  /** 撤销栈（quirk ③：自管 blocks 快照；原生 historyUndo/Redo 在 beforeinput 显式禁用）。
-   *  去重只比 blocks（光标位置不构成新编辑步）。 */
-  interface ComposerSnapshot {
-    blocks: ComposerBlock[];
-    caret: ComposerCaret | null;
-  }
-  const undoHistory = createUndoHistory<ComposerSnapshot>({
-    now: () => Date.now(),
-    equals: (a, b) => JSON.stringify(a.blocks) === JSON.stringify(b.blocks),
-  });
-  /** 归一化的重入闸（normalize 自己改 DOM，触发观察器时不再递归）。 */
-  let normalizing = false;
-  /** IME 组合门状态机（M361 确认拍拦截门；HC5 的组合窗判据复用它，不另建第二份组合状态）。
-   *  声明提前到这里：normalize / withModel 的组合窗闸门（HC5）要读它，早于事件挂点初始化。 */
   let imeGateState = imeKeyGate();
-  /** QC3（M344）注册的卡片跳回处理器；未注册时卡片点击无操作。 */
   let quoteJumpHandler: ((card: QuoteCard) => void) | null = null;
+  let renderedComposerAttachments: readonly ComposerAttachment[] | null = null;
+  const composerViewExtensions = [
+    EditorView.lineWrapping,
+    EditorView.contentAttributes.of({
+      "aria-label": t("D328"),
+      "aria-multiline": "true",
+      spellcheck: "false",
+    }),
+    EditorView.updateListener.of((update) => {
+      const cardsChanged = update.startState.field(composerAttachmentsField)
+        !== update.state.field(composerAttachmentsField);
+      if (cardsChanged) {
+        renderComposerAttachments();
+        refreshChip();
+      }
+      if (update.docChanged || update.selectionSet || cardsChanged) {
+        updateEmptyClass();
+        markDraft();
+      }
+    }),
+  ];
+  const composerView = new EditorView({
+    parent: composer,
+    state: createComposerState({ text: "", caret: 0, cards: [] }, composerViewExtensions),
+  });
 
   // ── composer 草稿（change composer-draft-persistence，design §4/§5/§7）──────────────
   /** 防抖写控制器（零 DOM 逻辑在 `src/harness-draft.ts`，这里只接三个口子：读
@@ -5041,11 +3988,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  store 内部另有一道世代守它自己的状态，这条守的是**渲染**）。 */
   let draftSeq = 0;
 
-  /** 内容变化后把当前块序列 + 光标落位交给防抖控制器（内容没变则不排期）。挂点见
-   *  withModel / undo / redo / input / compositionend——它们是「模型被改」的全部出口。 */
   function markDraft(): void {
-    const sel = caretFromDom();
-    draft.schedule(readBlocksFromDom(), sel === null ? null : sel.focus);
+    const content = composerContentOf(composerView.state);
+    draft.schedule(content.text, content.caret, content.cards);
   }
 
   /** 离散 flush：把待写内容立刻落盘（输入区失焦 / 面板关闭 / 窗口失焦 / 退出）。防抖是主
@@ -5061,14 +4006,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     void draft.flush();
   }
 
-  /** composer 是否还是「刚装载完」的原始空态（一个空段落）。恢复草稿前的**用户已动手**判据：
-   *  读盘是一次 IPC 往返，用户可能在这段窗口里已经开始输入——那就不许用盘上的旧内容覆盖他。 */
   function composerIsPristine(): boolean {
-    return (
-      composer.childElementCount === 1 &&
-      composer.querySelector(".lumir-hp-qcard") === null &&
-      composer.textContent === ""
-    );
+    return composerIsEmpty(composerView.state);
   }
 
   // 窗口级离散 flush（design §4 的「窗口失焦 / 退出」）：面板是长驻单例，这两条监听随构造
@@ -5077,33 +4016,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 它完成（与装配层那条同一条边界，防抖写入是主路径）。
   window.addEventListener("blur", flushDraft);
   window.addEventListener("beforeunload", flushDraft);
-
-  // ── 混排 composer：DOM 层（渲染 / 读模型 / 光标 / 归一化） ──────────────────
-  // 纪律：结构性修改一律「normalize → 读模型 → 纯函数算新模型 → 整面重渲」，typed 文本才
-  // 交给浏览器原生处理（内容始终落在 .qpara 内）。卡片 DOM 只渲染 cardData 里的数据。
-
-  /** 段落块的读取口径：textContent + <br> 记 \n（浏览器原生路径可能留下 br）。 */
-  function paraTextOf(el: Element): string {
-    let out = "";
-    const walk = (node: Node): void => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        out += node.textContent ?? "";
-      } else if (node.nodeName === "BR") {
-        out += "\n";
-      } else {
-        node.childNodes.forEach(walk);
-      }
-    };
-    el.childNodes.forEach(walk);
-    return out;
-  }
-
-  function createParaEl(text: string): HTMLElement {
-    const el = document.createElement("div");
-    el.className = "lumir-hp-qpara";
-    el.textContent = text;
-    return el;
-  }
 
   /** 出处行（文档名 · 最近一级标题；摘录在首个标题之前时仅文档名——裁决点 7）。 */
   function cardSourceText(card: QuoteCard): string {
@@ -5149,7 +4061,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  错误态因此按名记在模型侧，卡片重建（键入触发重渲）后依旧标出；发送成功才清除。 */
   const imageGateErrored = new Set<string>();
   /** 引用失败的张数（quote 卡片对象 → 未引用张数；M662）：与 `imageSourceOf` 同档的人侧
-   *  呈现态——卡片数据模型不存它（design §4.2 的「图片块只有一种形态」不变），整面重渲按
+   *  呈现态——卡片数据模型不存它（design §4.2 的「图片块只有一种形态」不变），tray 重投影按
    *  同一份表重建留痕；草稿 / 会话留存不带它（恢复出的卡片没有「刚刚失败」这回事）。 */
   const quoteImageFailures = new WeakMap<QuoteCard, number>();
 
@@ -5222,9 +4134,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /**
    * 图片卡片的「插入引用」钮（`@` 形态；change composer-image-mention design §4）：点击在**当前
-   * 光标处**插入该图的引用文本 `Image N`（N = 该卡在点击时的编号）——走既有 `insertPlainTextAtCaret`
-   * （段落中间拆两段），插入后光标落插入文本之后。光标不可得按既有口径落 composer 末尾。
-   * 事件处置与既有 × 钮同款（mousedown 拦下，不夺 composer 选区）。
+   * 当前文本选区插入普通 `Image N` 文本（N = 该卡在点击时的编号），不拆段，
+   * 插入后光标落文本之后。事件处置与 × 钮同款，不夺 CM 选区。
    */
   function createImageMentionButton(el: HTMLElement): HTMLButtonElement {
     const at = document.createElement("button");
@@ -5234,26 +4145,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     at.setAttribute("aria-label", t("D457"));
     at.textContent = "@";
     // 让卡片级 mousedown preventDefault 生效（不 stopPropagation）——点 `@` 不夺走 composer 的
-    // 选区/焦点，`caretFromDom()` 因此就是用户点 `@` 之前的光标（design §4 的落点前提）。
+    // 选区/焦点，CM state 因此保留用户点 `@` 之前的文本选区。
     at.addEventListener("mousedown", (event) => event.preventDefault());
     at.addEventListener("click", (event) => {
       event.stopPropagation();
-      const index = [...composer.children].indexOf(el);
-      if (index < 0) return;
-      // 插入落点由 withModel 侧重渲（renderComposer 应用 result.caret）；composer.focus() 后
-      // 显式再落一次光标（与 send 路径同口径：focus 可能归位选区，最后精调）。
-      const landed: { caret: ComposerCaret | null } = { caret: null };
-      withModel((blocks) => {
-        const ordinal = imageOrdinals(blocks).get(index);
-        const sel = caretFromDom();
-        const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
-        if (ordinal === undefined) return { blocks: [...blocks], caret };
-        const result = insertPlainTextAtCaret(blocks, caret, imageMentionText(ordinal));
-        landed.caret = result.caret;
-        return result;
-      }, STRUCTURAL_EDIT_FORCE);
-      composer.focus();
-      if (landed.caret !== null) setDomCaret(landed.caret);
+      const index = Number(el.dataset.attachmentIndex);
+      if (!Number.isInteger(index) || index < 0) return;
+      const ordinal = imageOrdinals(composerBlocks(composerView.state)).get(index);
+      if (ordinal === undefined) return;
+      insertComposerText(composerView, imageMentionText(ordinal), "input.image-mention");
+      composerView.focus();
     });
     return at;
   }
@@ -5301,7 +4202,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       source.textContent = imageCardMetaText(card.name, dims.width, dims.height);
     });
     if (mode === "composer") {
-      el.contentEditable = "false";
       // 动作区（右上角）：`@`（插入引用）在左、既有 `×`（移除）在右；两钮恒显（裁决点 5 的 A，
       // 与既有 `×` 同口径；design §8）。
       const actions = document.createElement("div");
@@ -5315,16 +4215,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       remove.textContent = "×";
       actions.append(remove);
       el.append(actions);
-      // 图片卡无跳回：点击（两钮除外）无操作。mousedown 拦下是不让 contenteditable=false
-      // 的卡片抢走选区/焦点（面板内元素，无标题栏拖拽问题——REVIEW.md 「标题栏 preventDefault」条只约束标题栏）。
+      // 图片卡无跳回：点击（两钮除外）无操作。mousedown 拦下是不让区外卡片抢走 CM 选区/焦点（面板内元素，无标题栏拖拽问题——REVIEW.md 「标题栏 preventDefault」条只约束标题栏）。
       el.addEventListener("mousedown", (event) => event.preventDefault());
       remove.addEventListener("mousedown", (event) => event.stopPropagation());
       remove.addEventListener("click", (event) => {
         event.stopPropagation();
-        const index = [...composer.children].indexOf(el);
-        if (index < 0) return;
-        withModel(() => removeBlockAt(readBlocksFromDom(), index), STRUCTURAL_EDIT_FORCE);
-        composer.focus();
+        const index = Number(el.dataset.attachmentIndex);
+        if (!Number.isInteger(index) || index < 0) return;
+        removeAttachmentAt(index);
+        composerView.focus();
       });
     } else {
       // transcript：同构呈现，无钮、无跳回（只呈现缩略图，spec「发送后同构沉淀」）。可访问名
@@ -5386,7 +4285,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     el.append(bar, main);
     el.title = msgCard ? messageQuoteHoverTitle(card) : cardHoverTitle(card);
     if (mode === "composer") {
-      el.contentEditable = "false";
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "lumir-hp-qc-x";
@@ -5395,16 +4293,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       remove.textContent = "×";
       el.append(remove);
       // 卡片点击（× 除外）= 跳回来源（quote 走 QC3 注册的编辑器处理器、msgquote 走 transcript
-      // 定位）；mousedown 拦下是为不让 contenteditable=false 的卡片抢走选区/焦点（面板内元素，
+      // 定位）；mousedown 拦下是为不让区外卡片抢走 CM 选区/焦点（面板内元素，
       // 无标题栏拖拽问题——REVIEW.md 「标题栏 preventDefault」条只约束标题栏容器）。
       el.addEventListener("mousedown", (event) => event.preventDefault());
       remove.addEventListener("mousedown", (event) => event.stopPropagation());
       remove.addEventListener("click", (event) => {
         event.stopPropagation();
-        const index = [...composer.children].indexOf(el);
-        if (index < 0) return;
-        withModel(() => removeBlockAt(readBlocksFromDom(), index), STRUCTURAL_EDIT_FORCE);
-        composer.focus();
+        const index = Number(el.dataset.attachmentIndex);
+        if (!Number.isInteger(index) || index < 0) return;
+        removeAttachmentAt(index);
+        composerView.focus();
       });
       el.addEventListener("click", jump);
     } else {
@@ -5424,117 +4322,75 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return el;
   }
 
-  /** 当前 composer 内容的模型表示（读取前调用方保证已 normalize）。 */
-  function readBlocksFromDom(): ComposerBlock[] {
-    const blocks: ComposerBlock[] = [];
-    for (const child of composer.children) {
-      if (child.classList.contains("lumir-hp-qcard")) {
-        const card = cardData.get(child);
-        if (card !== undefined) {
-          blocks.push(
-            isImageCard(card)
-              ? { kind: "image", card }
-              : isMessageQuoteCard(card)
-                ? { kind: "msgquote", card }
-                : { kind: "quote", card },
-          );
-        }
-      } else {
-        blocks.push({ kind: "paragraph", text: paraTextOf(child) });
-      }
-    }
-    return blocks.length === 0 ? [{ kind: "paragraph", text: "" }] : blocks;
-  }
-
-  function renderComposer(blocks: readonly ComposerBlock[], caret: ComposerCaret | null): void {
-    composer.replaceChildren();
-    // 编号一次算出（一处真源），随块下标传给卡片工厂：卡片徽标因此与投递标签 / 恢复编号同源。
+  function renderComposerAttachments(): void {
+    const attachments = composerView.state.field(composerAttachmentsField);
+    if (renderedComposerAttachments === attachments) return;
+    renderedComposerAttachments = attachments;
+    const blocks = composerBlocks(composerView.state);
     const ordinals = imageOrdinals(blocks);
-    for (let index = 0; index < blocks.length; index += 1) {
-      composer.append(composerBlockEl(blocks[index], ordinals.get(index) ?? null));
+    composerTray.replaceChildren();
+    for (let index = 0; index < attachments.length; index += 1) {
+      const attachment = attachments[index];
+      const el = createCardEl(attachment.card, "composer", ordinals.get(index) ?? null);
+      el.dataset.attachmentIndex = String(index);
+      composerTray.append(el);
     }
-    if (composer.childElementCount === 0) composer.append(createParaEl(""));
-    if (caret !== null) setDomCaret(caret);
-    updateEmptyClass();
-    syncComposerSelectionHighlight();
-  }
-
-  /** 一个块 → 一个 composer 子元素。已知块类按各自形态；**未知块类保守保留**——内容以 JSON
-   *  原文落回输入区（可编辑、可删），MUST NOT 静默丢弃。今天没有未知块类，这是防御面：草稿
-   *  由更新版本写入、更旧版本读到时的唯一出口（change composer-draft-persistence design §6；
-   *  与 `parseQuoteMessage` 的「不识别即不还原，但 MUST NOT 静默丢文」同口径）。`ordinal` 是
-   *  图片块的派生编号（非图片块 / 未知块传 null，不渲染徽标）。 */
-  function composerBlockEl(block: ComposerBlock, ordinal: number | null): HTMLElement {
-    if (block.kind === "paragraph") return createParaEl(block.text);
-    if (block.kind === "quote" || block.kind === "msgquote" || block.kind === "image") {
-      return createCardEl(block.card, "composer", ordinal);
-    }
-    return createParaEl(draftUnknownBlockText(block));
   }
 
   function updateEmptyClass(): void {
-    const empty =
-      composer.querySelector(".lumir-hp-qcard") === null && composer.textContent.trim() === "";
-    composer.classList.toggle("is-empty", empty);
+    composer.classList.toggle("is-empty", composerView.state.doc.length === 0);
   }
 
-  /**
-   * 引用插入后的**焦点移交**（M671，三条引用入口共用：文本摘录 / 消息摘录 / 图片引用）。
-   *
-   * 合同：卡片进 composer 之后键盘落点 MUST 在输入区——用户「quote 完想直接打字」不该再自己
-   * 点一次 composer。判据是 **DOM 焦点**（`document.activeElement === composer`），不是 AX 的
-   * focused 标记：编辑器正文与 composer 在 AX 里同为 `AXTextArea`，标记分不出两侧
-   *（M500/M502 实证：标记在 composer、盲注仍落进编辑器）。
-   *
-   * 三件事的顺序本身是合同的一部分：
-   *  1. **面板必须在场**才谈得上聚焦：面板原本关着时装配层经 `deps.togglePane()` 现场开 pane
-   *     并**同步**把面板挂进 DOM（`createPaneHandle` → `attachTo`）。不在场就只返回——宁可不
-   *     聚焦，也不把焦点丢给别的元素；此时插入本身照旧落进（长驻内存的）输入区模型。
-   *  2. **先 focus、再写 caret**：`withModel` 的整面重渲不改焦点宿主（`composer` 整块长驻），
-   *     它在重渲时已经写过一次选区；但面板本来就是开着的现场，那一刻焦点还在编辑器里——
-   *     contenteditable 获得焦点的那一拍可能按引擎口径把 caret 归位，模型位因此要**在 focus
-   *     之后**再写一次，保证「光标落在卡片下一行的问题段落」（design §5 的装配合同）在焦点
-   *     移交后仍然成立。
-   *  3. **复核一次**：`focus()` 之后读 `activeElement`；没到位就在下一帧补一次。补的窗口只取
-   *     一帧（装配层刚挂载的那一拍、click 分发尾部的引擎焦点修正都在这一拍内），**不排持续
-   *     重试**——持续重试会跟用户的下一次点击抢焦点。
-   */
-  function focusComposerAfterInsert(caret: ComposerCaret | null): void {
+  function resetComposer(content: ComposerContent = { text: "", caret: 0, cards: [] }): void {
+    composerView.setState(createComposerState(content, composerViewExtensions));
+    renderComposerAttachments();
+    updateEmptyClass();
+  }
+
+  function syncAttachmentProjection(previous: readonly ComposerAttachment[]): void {
+    if (previous === composerView.state.field(composerAttachmentsField)) return;
+    renderComposerAttachments();
+    refreshChip();
+    updateEmptyClass();
+    markDraft();
+  }
+
+  function appendAttachments(cards: readonly ComposerAttachment[]): void {
+    if (cards.length === 0) return;
+    const previous = composerView.state.field(composerAttachmentsField);
+    composerView.dispatch(appendComposerAttachments(cards));
+    syncAttachmentProjection(previous);
+  }
+
+  function removeAttachmentAt(index: number): void {
+    const previous = composerView.state.field(composerAttachmentsField);
+    composerView.dispatch(removeComposerAttachment(index));
+    syncAttachmentProjection(previous);
+  }
+
+  function dispatchComposerCommand(command: CommandId): void {
+    const previous = composerView.state.field(composerAttachmentsField);
+    runCmComposerCommand(composerView, command);
+    syncAttachmentProjection(previous);
+  }
+
+  function focusComposerAfterInsert(): void {
     if (mountEl === null) return;
-    const settle = (): void => {
-      composer.focus();
-      if (caret !== null) setDomCaret(caret);
-    };
-    settle();
-    if (document.activeElement === composer) return;
+    composerView.focus();
+    if (composerView.hasFocus) return;
     requestAnimationFrame(() => {
-      if (document.activeElement === composer) return;
-      settle();
+      if (!composerView.hasFocus && mountEl !== null) composerView.focus();
     });
   }
 
-  // ── 消息摘录：插入流转 / 跳回 / 失锚（change harness-message-excerpt design §5–§6） ──
-
-  /** 消息摘录卡入 composer（走 insertBlockAtCaret 同路，面板未开先开、光标落卡片下一行段落）。 */
   function insertMessageQuoteCard(card: MessageQuoteCard): void {
-    const valid = createMessageQuoteCard(card); // role / 原文非空校验（取不到不得生成卡片）
-    if (mountEl === null) deps.togglePane(); // 装配层开 pane 后焦点已落 composer
-    // 一次新的引用收口上一次引用的失败状态行（spec：读数存活到「下一次引用」——消息摘录也是
-    // 一次引用；r1 P2-1）。
+    const valid = createMessageQuoteCard(card);
+    if (mountEl === null) deps.togglePane();
     applyQuoteFailureNotice(null);
-    const caret = withModel((blocks) => {
-      const sel = caretFromDom();
-      const at = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
-      return insertBlockAtCaret(blocks, at, { kind: "msgquote", card: valid });
-    }, STRUCTURAL_EDIT_FORCE);
-    focusComposerAfterInsert(caret);
+    appendAttachments([{ kind: "msgquote", card: valid }]);
+    focusComposerAfterInsert();
   }
 
-  /** composer 贴图段（change harness-composer-image-paste design §7）：Blob → base64 →
-   *  `harness_write_image`（harness 侧内容寻址落盘，MUST NOT 触碰 vault）→ 光标处插
-   *  图片卡片（insertBlockAtCaret 同路：面板未开先开、拆段、光标落卡片下一行段落）。
-   *  失败一律人话 toast（装配层 deps.toast；落盘链路的 code 族与 vault 附件同一张
-   *  ERROR_COPY 表）、不插卡片、无半截文件。 */
   async function pasteClipboardImage(blob: Blob): Promise<void> {
     try {
       const dataBase64 = await blobToBase64(blob);
@@ -5546,12 +4402,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         height: written.height,
       };
       if (mountEl === null) deps.togglePane();
-      withModel((blocks) => {
-        const sel = caretFromDom();
-        const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
-        return insertBlockAtCaret(blocks, caret, { kind: "image", card });
-      }, STRUCTURAL_EDIT_FORCE);
-      composer.focus();
+      appendAttachments([{ kind: "image", card }]);
+      focusComposerAfterInsert();
     } catch (e) {
       deps.toast(errorText(e));
     }
@@ -5611,592 +4463,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     flashMessage(target);
   }
 
-  /** IME 组合窗判据（HC5）：compositionstart 之后、compositionend + IME_CONFIRM_WINDOW_MS
-   *  之前。确认窗覆盖 WKWebView「compositionend 先于 DOM 落定/确认拍」的时序（与 M361 确认拍
-   *  拦截门同源一扇窗）。normalize 的组合窗冻结用它；整面重渲只冻组合期（imeGateState.composing，
-   *  确认窗内组合已结束、DOM 已落定——合同 HC5 第 2 条的不对称）。 */
-  function imeWindowActive(now: number = Date.now()): boolean {
-    return imeGateState.composing || imeGateState.confirmUntil > now;
-  }
-
-  /**
-   * HC5 补账：组合窗内被 normalize 闸门跳过的归一，在确认窗过期后补跑一次——组合的 DOM 落定
-   * 在 WKWebView 里落在 compositionend 之后（确认拍时序同 M361），过早归一仍会把落定的候选
-   * 文本折错段落。窗内新起的组合由它自己的 compositionend 续期（再排一次补账），这一链到此
-   * 为止（不跟着新组合空转）。
-   *
-   * 到期时确认窗**仍开着**就续排到窗尾：定时器与墙钟不同源（墙钟回退 / 定时器相对墙钟提前
-   * 到期），一次性定时器在那一拍重判窗仍在就把补账静默丢掉，而丢掉的补账没有第二次——游离
-   * 文本永久不折（M560 的间歇红：`'汉语' !== '汉语tail'`）。续排的延时取「窗尾剩余 + 1ms」并
-   * 封顶在 IME_CONFIRM_WINDOW_MS，墙钟大幅回退时也只是每 250ms 重判一次，不空转。
-   */
-  let imeBackfillTimer: number | undefined;
-  function scheduleImeBackfill(wait: number = IME_CONFIRM_WINDOW_MS): void {
-    window.clearTimeout(imeBackfillTimer);
-    imeBackfillTimer = window.setTimeout(() => {
-      imeBackfillTimer = undefined;
-      if (imeGateState.composing) return; // 新组合在途：由它自己的 compositionend 续排
-      if (imeWindowActive()) {
-        const remaining = imeGateState.confirmUntil - Date.now();
-        scheduleImeBackfill(Math.min(IME_CONFIRM_WINDOW_MS, Math.max(1, remaining + 1)));
-        return;
-      }
-      normalize();
-    }, wait);
-  }
-
-  /**
-   * 归一化（quirk ④）：顶层只允许 .qcard / .qpara 两类块——裸文本、<br>、浏览器自造的
-   * div/span 一律折进相邻段落（<br> 记 \n）；收尾保证至少一个段落块。数据层因此永远干净
-   * （「不接受裸 <div>/<br> 进数据层」的正面落实）。光标尽量原位保留。
-   *
-   * HC5 组合窗闸门：IME 组合窗（compositionstart → compositionend + IME_CONFIRM_WINDOW_MS）
-   * 内自造早退——组合期引擎自造的瞬时节点（组合文本宿主、空块维持的 <br>）是 IME 会话的活
-   * 锚点不是脏数据，摘除/折段会销毁锚点（Alex 2026-10-16「候选落字跳回第一行、第二行消失」）。
-   * 被跳过的归一由 compositionend 在确认窗过期后补账（那边注释）。
-   */
-  function normalize(): void {
-    if (normalizing) return;
-    if (imeWindowActive()) return;
-    normalizing = true;
-    try {
-      const domSelection = caretFromDom();
-      const caret = domSelection === null ? null : domSelection.focus;
-      let dirty = false;
-      for (const child of [...composer.children]) {
-        if (child.classList.contains("lumir-hp-qcard")) continue;
-        if (child.classList.contains("lumir-hp-qpara") && child.childElementCount === 0) continue;
-        const text = paraTextOf(child);
-        // 先取相邻引用再摘除（remove 后兄弟指针即失效）。
-        const prev = child.previousElementSibling;
-        const next = child.nextSibling;
-        child.remove();
-        dirty = true;
-        if (prev !== null && prev.classList.contains("lumir-hp-qpara")) {
-          prev.textContent = paraTextOf(prev) + text;
-        } else {
-          composer.insertBefore(createParaEl(text), next);
-        }
-      }
-      // 顶层游离文本节点（浏览器偶发）折进末尾段落。
-      for (const node of [...composer.childNodes]) {
-        if (node.nodeType === Node.TEXT_NODE && (node.textContent ?? "") !== "") {
-          const text = node.textContent ?? "";
-          node.remove();
-          dirty = true;
-          const last = composer.lastElementChild;
-          if (last instanceof HTMLElement && last.classList.contains("lumir-hp-qpara")) {
-            last.textContent = paraTextOf(last) + text;
-          } else {
-            composer.append(createParaEl(text));
-          }
-        }
-      }
-      if (composer.childElementCount === 0) {
-        composer.append(createParaEl(""));
-        dirty = true;
-      }
-      if (dirty && caret !== null) setDomCaret(caret);
-      if (dirty) updateEmptyClass();
-    } finally {
-      normalizing = false;
-    }
-  }
-
-  /** 当前折叠选区的模型光标（无选区 / 非折叠返回 null）。 */
-  function collapsedCaret(): ComposerCaret | null {
-    const sel = caretFromDom();
-    if (sel === null) return null;
-    return sel.anchor.block === sel.focus.block && sel.anchor.offset === sel.focus.offset ? sel.focus : null;
-  }
-
-  /** 把 DOM 选区读成模型端点（选区不在 composer 内返回 null）。 */
-  function caretFromDom(): ComposerSelection | null {
-    const selection = window.getSelection();
-    if (selection === null || selection.rangeCount === 0) return null;
-    const anchor = modelCaretAt(selection.anchorNode, selection.anchorOffset);
-    const focus = modelCaretAt(selection.focusNode, selection.focusOffset);
-    if (anchor === null || focus === null) return null;
-    return { anchor, focus };
-  }
-
-  function syncComposerSelectionHighlight(): void {
-    const selection = composer.contains(document.activeElement) ? caretFromDom() : null;
-    const bands = new Set(composerSelectionBandIndexes(readBlocksFromDom(), selection));
-    [...composer.children].forEach((child, index) => {
-      child.classList.toggle("is-composer-selection-band", bands.has(index));
-    });
-  }
-
-  /** 一个 DOM 点（节点 + 偏移）→ 模型端点；不在 composer 内返回 null。**DOM→模型的唯一读法**：
-   *  `caretFromDom`（选区）与 `caretRangeFromPoint`（几何解算出的点，⌃N/⌃P 的渲染行一步）共用。 */
-  function modelCaretAt(node: Node | null, domOffset: number): ComposerCaret | null {
-    if (node === null) return null;
-    // 选区锚在 composer 元素自身 = 两个顶层块之间的块级边界（`Range(composer, N)`）。
-    // 这是「相邻两张卡之间」在 DOM 里的形态（无文本宿主），归一成第 N 块的前缘
-    // （design §3.1；旧实现爬到 composer 之上即放弃、整体返回 null）。
-    if (node === composer) return boundaryCaretAt(domOffset, composer.children.length);
-    let blockEl = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-    while (blockEl !== null && blockEl.parentElement !== composer) {
-      blockEl = blockEl.parentElement;
-    }
-    if (blockEl === null) return null;
-    const block = [...composer.children].indexOf(blockEl);
-    if (blockEl.classList.contains("lumir-hp-qcard")) return { block, offset: 0 };
-    // 段落内字符偏移：累加目标之前的文本（<br> 记 1）。
-    let chars = 0;
-    let found = false;
-    const walk = (current: Node): void => {
-      if (found) return;
-      if (current === node) {
-        if (current.nodeType === Node.TEXT_NODE) chars += domOffset;
-        else {
-          // 元素内偏移 = 其前 domOffset 个子节点的文本量。
-          for (let i = 0; i < Math.min(domOffset, current.childNodes.length); i += 1) {
-            const kid = current.childNodes[i];
-            chars += kid.nodeType === Node.TEXT_NODE ? (kid.textContent ?? "").length : 1;
-          }
-        }
-        found = true;
-        return;
-      }
-      if (current.nodeType === Node.TEXT_NODE) {
-        chars += current.textContent?.length ?? 0;
-      } else if (current.nodeName === "BR") {
-        chars += 1;
-      } else {
-        current.childNodes.forEach(walk);
-      }
-    };
-    blockEl.childNodes.forEach(walk);
-    return { block, offset: chars };
-  }
-
-  /** 模型光标 → DOM 点（节点 + 偏移；边界档落在 composer 元素上）。`setDomCaret` /
-   *  `setDomSelection` 共用——落点形态见 `domCaretTarget`，与 `boundaryCaretAt` 互为逆运算。 */
-  function domPointOf(caret: ComposerCaret): { node: Node; offset: number; blockEl: Element | null } {
-    if (composer.children.length === 0) composer.append(createParaEl(""));
-    const target = domCaretTarget(readBlocksFromDom(), caret);
-    const blockEl = [...composer.children][target.index] ?? null;
-    if (target.kind === "boundary" || blockEl === null) {
-      return { node: composer, offset: target.kind === "boundary" ? target.index : composer.children.length, blockEl };
-    }
-    if (target.kind === "cardText") {
-      // 卡片内的**首个文本位**（M457）：卡片是 contenteditable=false 的原子块，它的文本住在
-      // `.lumir-hp-qc-ex` 一类子节点里。落在文本位上才有 caret 几何；DOM 读回按「锚在卡片内」
-      // 归一为同一个边界位（`caretFromDom` 的卡片档）。卡片内没有文本节点时回落元素本身
-      // （几何为零的退化形态，卡片生成路径保证原文非空，正常不可达）。
-      return { node: firstTextNodeIn(blockEl) ?? blockEl, offset: 0, blockEl };
-    }
-    const text = paraTextOf(blockEl);
-    if (text.length === 0) return { node: blockEl, offset: 0, blockEl };
-    let node: Node | null = null;
-    let offset = 0;
-    let remaining = target.offset;
-    const walk = (current: Node): void => {
-      if (node !== null) return;
-      if (current.nodeType === Node.TEXT_NODE) {
-        const len = current.textContent?.length ?? 0;
-        if (remaining <= len) {
-          node = current;
-          offset = remaining;
-        } else {
-          remaining -= len;
-        }
-      } else if (current.nodeName === "BR") {
-        if (remaining === 0) {
-          node = blockEl;
-          offset = [...blockEl.childNodes].indexOf(current as ChildNode);
-        } else {
-          remaining -= 1;
-        }
-      } else {
-        current.childNodes.forEach(walk);
-      }
-    };
-    blockEl.childNodes.forEach(walk);
-    if (node === null) {
-      node = blockEl;
-      offset = blockEl.childNodes.length;
-    }
-    return { node, offset, blockEl };
-  }
-
-  /** 把模型光标写回 DOM（折叠光标）：落点形态由 `domCaretTarget` 决定（段落内按字符偏移定位、
-   *  卡片 / 边界位落相邻的文本宿主、末块是卡片时的「末尾之后」落块级容器边界）。 */
-  function setDomCaret(caret: ComposerCaret): void {
-    const point = domPointOf(caret);
-    const selection = window.getSelection();
-    if (selection !== null) {
-      selection.removeAllRanges();
-      const range = document.createRange();
-      range.setStart(point.node, point.offset);
-      range.collapse(true);
-      selection.addRange(range);
-    }
-    // 零高回落的块：边界档（卡片前缘 / 相邻两卡之间）用**后一张卡片**的矩形，
-    // 「末尾之后」（block = 块数）回落**最后一个块**——M473 起它自己就写回末块的边界（末块是
-    // 段落时是文本末缘，blockEl 已非空），这一层只剩「末块是卡片」的子档；不拿 composer 自身的
-    // 矩形当「光标行」（那会让 caretScrollTop 恒判「越出上沿」、每次重渲把视口顶 4px）。
-    const measure = document.createRange();
-    measure.setStart(point.node, point.offset);
-    measure.collapse(true);
-    scrollCaretIntoView(measure, point.blockEl ?? composer.lastElementChild ?? composer);
-    syncComposerSelectionHighlight();
-  }
-
-  /** 把模型选区写回 DOM（M447 的扩选族用）：anchor / head 两端都落位、方向保持——`setBaseAndExtent`
-   *  按文档序自动规范，`extend` 把 head 端与 anchor 端分开（否则后续扩选会从错误的一端继续）。
-   *  滚动位跟 head 端。 */
-  function setDomSelection(anchor: ComposerCaret, head: ComposerCaret): void {
-    const a = domPointOf(anchor);
-    const h = domPointOf(head);
-    const selection = window.getSelection();
-    if (selection !== null) {
-      selection.removeAllRanges();
-      selection.setBaseAndExtent(a.node, a.offset, h.node, h.offset);
-    }
-    const measure = document.createRange();
-    measure.setStart(h.node, h.offset);
-    measure.collapse(true);
-    scrollCaretIntoView(measure, h.blockEl ?? composer.lastElementChild ?? composer);
-    syncComposerSelectionHighlight();
-  }
-
-  /** 全选（M627）：选区覆盖整个 composer，**含原子卡片**。走 DOM 的 `selectNodeContents`
-   *  ——端点落在 composer 自身的两个块级边界上，模型读回即 `{block:0,offset:0}` →
-   *  `{block:块数,offset:0}`（`modelCaretAt` 的 composer 档），与「末尾之后」的模型表示同源；
-   *  随后的删除 / 覆写走既有选区路径（`selectionDeleteStep`）。MUST NOT 用
-   *  `document.execCommand("selectAll")` 或裸原生选区：前者按引擎口径选整页，后者在混排
-   *  contenteditable（含 contenteditable=false 卡片）上选不到全文——这正是 Alex 报告的现象。 */
-  function selectAllComposer(): void {
-    if (composer.children.length === 0) return;
-    const selection = window.getSelection();
-    if (selection === null) return;
-    const range = document.createRange();
-    range.selectNodeContents(composer);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    syncComposerSelectionHighlight();
-  }
-
-  // ── composer 侧的文本面命令入口（M447，change composer-emacs-nav design §3.2 / §4） ──
-  // 装配层的一处分派包装在事件目标落在 composer 内时调 `runComposerCommand`（`text` 作用域
-  // 命令的两个面）。**移动 / 扩选只写选区与滚动位**——MUST NOT 重渲、MUST NOT 压撤销步
-  // （design §6 的质量合同；导航的 DOM 稳定性由验收场景的 MutationObserver 计数钉住）。
-
-  /** 命令 id → composer 侧的模型动作。**命中即消费**：`text` 作用域的命令由分发器在命中时
-   *  `preventDefault`（命中即吞默认行为，命令本身无事可做也不放行原生路径——见 keymap-commands
-   *  增量的「分发」段），因此这里**没有**「是否消费」的返回值；「该处无动作」表现为无操作。
-   *  这条口径是 M453 实现期与 design §3.2 的第一次修订：若把「无动作」放行原生，段首 ⌥⌫ 的
-   *  WKWebView `deleteWordBackward` 会跨块合并 / 删卡，直接违反「词级 kill 不跨块」不变量。 */
-  function runComposerCommand(command: CommandId): void {
-    const blocks = readBlocksFromDom();
-    const sel = caretFromDom();
-    const caret = sel === null ? null : sel.focus;
-    switch (command) {
-      // M627：⌘A 全选——composer 全部块（含卡片）。命中即消费（分发器已 preventDefault），
-      // 不再依赖引擎原生 selectAll（它在混排 contenteditable 上选不到全文）。
-      case "editor.select-all":
-        selectAllComposer();
-        return;
-      case "editor.cursor-forward":
-        navigate(blocks, caret, moveCharForward);
-        return;
-      case "editor.cursor-backward":
-        navigate(blocks, caret, moveCharBackward);
-        return;
-      case "editor.line-start":
-        navigate(blocks, caret, moveLineStart);
-        return;
-      case "editor.line-end":
-        navigate(blocks, caret, moveLineEnd);
-        return;
-      case "editor.cursor-down":
-        navigate(blocks, caret, (b, c) => stepVisualLine(b, c, 1));
-        return;
-      case "editor.cursor-up":
-        navigate(blocks, caret, (b, c) => stepVisualLine(b, c, -1));
-        return;
-      case "editor.extend-char-forward":
-        extendSelection(blocks, sel, moveCharForward);
-        return;
-      case "editor.extend-char-backward":
-        extendSelection(blocks, sel, moveCharBackward);
-        return;
-      case "editor.extend-line-start":
-        extendSelection(blocks, sel, moveLineStart);
-        return;
-      case "editor.extend-line-end":
-        extendSelection(blocks, sel, moveLineEnd);
-        return;
-      case "editor.extend-line-down":
-        extendSelection(blocks, sel, (b, c) => stepVisualLine(b, c, 1));
-        return;
-      case "editor.extend-line-up":
-        extendSelection(blocks, sel, (b, c) => stepVisualLine(b, c, -1));
-        return;
-      case "editor.extend-word-forward":
-        extendSelection(blocks, sel, moveWordForward);
-        return;
-      case "editor.extend-word-backward":
-        extendSelection(blocks, sel, moveWordBackward);
-        return;
-      case "editor.delete-char-forward":
-        deleteAtCaret(blocks, sel, deleteForwardAtCaret);
-        return;
-      case "editor.delete-char-backward":
-        deleteAtCaret(blocks, sel, backspaceAtCaret);
-        return;
-      case "editor.delete-word-forward":
-        killWordAtCaret(blocks, sel, true);
-        return;
-      case "editor.delete-word-backward":
-        killWordAtCaret(blocks, sel, false);
-        return;
-      case "editor.kill-line":
-        killLineAtCaretCommand(blocks, sel);
-        return;
-      case "editor.yank":
-        yankAtCaret(blocks, sel);
-        return;
-      case "editor.transpose-chars":
-        transposeAtCaret(blocks, sel);
-        return;
-      default:
-        return;
-    }
-  }
-
-  /**
-   * ⌃N / ⌃P 的一步（M457，Alex 2026-10-12 裁决「按视觉行、与编辑器正文对齐」）：**渲染行优先**。
-   *
-   * 顺序（超集，模型层一字不改）：
-   * 1. 光标在段落内、且量得到行盒时，按光标的 **x 位 + 相邻行的 y 位**解一个 DOM 位置
-   *    （`document.caretRangeFromPoint`，与编辑器侧 CodeMirror `cursorLineDown/Up` 同口径：
-   *    同 x 位跨一行）——解出来的位置必须落在**同一个段落**里、且**真的跨了一行**
-   *    （`visualLineStepCrossed`）才采信；
-   * 2. 否则回落到模型层的 `moveLineUp` / `moveLineDown`（逻辑行 + 跨相邻段落块，既有行为）。
-   *
-   * 为什么不是「直接在模型层按渲染行算」：软折行的行界只有引擎知道（模型层是零 DOM 的），
-   * 因此渲染行这一步只能问 DOM 几何；模型层的停靠点序列与归一等价类**不受影响**（⌃F/⌃B 不动）。
-   */
-  function stepVisualLine(blocks: readonly ComposerBlock[], caret: ComposerCaret, delta: number): ComposerCaret {
-    const logical = delta < 0 ? moveLineUp(blocks, caret) : moveLineDown(blocks, caret);
-    const block = blocks[caret.block];
-    if (block === undefined || block.kind !== "paragraph") return logical;
-    const api = (document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null })
-      .caretRangeFromPoint;
-    if (typeof api !== "function") return logical;
-    const point = domPointOf(caret);
-    const probe = document.createRange();
-    probe.setStart(point.node, point.offset);
-    probe.collapse(true);
-    const from = probe.getBoundingClientRect();
-    if (!(from.height > 0)) return logical; // 量不到行盒（空段落 / 边界位）：没有渲染行可言
-    const y = delta < 0 ? from.top - from.height / 2 : from.bottom + from.height / 2;
-    const hit = api.call(document, from.left, y);
-    if (hit === null) return logical;
-    const resolved = modelCaretAt(hit.startContainer, hit.startOffset);
-    if (resolved === null || resolved.block !== caret.block) return logical; // 出段落：交给模型层的跨段落行为
-    const to = hit.getBoundingClientRect();
-    if (!visualLineStepCrossed(from, { top: to.top, height: to.height }, delta)) return logical;
-    return resolved;
-  }
-
-  /** 纯移动：只写选区 + 滚动位（不重渲、不压栈）；无动作时不动 DOM。 */
-  function navigate(
-    blocks: readonly ComposerBlock[],
-    caret: ComposerCaret | null,
-    move: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => ComposerCaret,
-  ): void {
-    if (caret === null) return;
-    const from = normalizeComposerCaret(blocks, caret);
-    const next = move(blocks, caret);
-    if (sameCaret(from, next)) return; // 无动作：不动 DOM（含「原地空走」被归一吃掉的那一拍）
-    setDomCaret(next);
-  }
-
-  /** 扩选：anchor 不动、head 走同一套移动纯函数（design §4.4）。 */
-  function extendSelection(
-    blocks: readonly ComposerBlock[],
-    sel: ComposerSelection | null,
-    move: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => ComposerCaret,
-  ): void {
-    if (sel === null) return;
-    const from = normalizeComposerCaret(blocks, sel.focus);
-    const head = move(blocks, sel.focus);
-    if (sameCaret(from, head)) return;
-    setDomSelection(sel.anchor, head);
-  }
-
-  /** ⌃D / ⌃H：接既有 `deleteForwardAtCaret` / `backspaceAtCaret`（有选区先删选区）。删除族的
-   *  force 判定在 `deleteFamilyStep` 里（单一真源，与裸 Backspace/Delete 分支共用）。 */
-  function deleteAtCaret(
-    blocks: readonly ComposerBlock[],
-    sel: ComposerSelection | null,
-    op: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => { blocks: ComposerBlock[]; caret: ComposerCaret } | null,
-  ): void {
-    const step = deleteFamilyStep(blocks, sel, op);
-    if (step === null) return;
-    withModel(step.op, step.force);
-  }
-
-  /** ⌥D / ⌥⌫（含 ⌥Delete 的对称命令）：词级 kill（不跨块），杀掉的文本并入**跨面共用**的
-   *  kill 槽。有选区时按删除族口径先删选区（不并入槽——跨块的任意选区文本提取不在本 change
-   *  的范围，登记为边界）。 */
-  function killWordAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null, forward: boolean): void {
-    if (sel === null) return;
-    const selection = selectionDeleteStep(sel);
-    if (selection !== null) {
-      withModel(selection.op, selection.force);
-      return;
-    }
-    const result = forward ? killWordForward(blocks, sel.focus) : killWordBackward(blocks, sel.focus);
-    if (result === null) return;
-    applyKill(result, forward);
-  }
-
-  /** ⌃K：kill 到逻辑行行尾（不跨块），并入同一 kill 槽。 */
-  function killLineAtCaretCommand(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): void {
-    if (sel === null) return;
-    const selection = selectionDeleteStep(sel);
-    if (selection !== null) {
-      withModel(selection.op, selection.force);
-      return;
-    }
-    const result = killLineAtCaret(blocks, sel.focus);
-    if (result === null) return;
-    applyKill(result, true);
-  }
-
-  /** 把一次 kill 的文本并入跨面共用的 kill 槽（相接判定与编辑器侧共用 `mergeKillText`——
-   *  槽是模块级单例，编辑器与 composer 一致）。kill 是结构性操作，force 走单一真源。 */
-  function applyKill(result: ComposerKill, forward: boolean): void {
-    const from = caretKey(result.from);
-    const to = caretKey(result.to);
-    const merged = mergeKillText(currentKillSlot(), result.killed, forward, forward ? from : to);
-    setKillSlot({ text: merged, forward, anchor: from });
-    withModel(() => ({ blocks: result.blocks, caret: result.caret }), STRUCTURAL_EDIT_FORCE);
-  }
-
-  /** ⌃Y：把 kill 槽内容插入光标处（有选区先删选区；多行经 `insertPlainTextAtCaret` 拆段；
-   *  卡片边界位由它物化段落——卡片不被吞）。yank 是结构性操作（kill-yank 族），force 走单一真源。 */
-  function yankAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): void {
-    const text = currentKillSlot()?.text ?? "";
-    if (text === "" || sel === null) return;
-    const collapsed = sameCaret(sel.anchor, sel.focus);
-    withModel((current) => {
-      const base = collapsed ? { blocks: [...current], caret: sel.focus } : deleteSelectionRange(current, sel);
-      return insertPlainTextAtCaret(base.blocks, base.caret, text);
-    }, STRUCTURAL_EDIT_FORCE);
-  }
-
-  /** ⌃T：转置（段首 / 卡片边界无动作；有选区时不插手——与编辑器侧同口径）。
-   *  force=false 是**豁免**：转置是字符级编辑（不是结构性操作），与相邻键入同簇即可。 */
-  function transposeAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): void {
-    if (sel === null) return;
-    if (!sameCaret(sel.anchor, sel.focus)) return;
-    if (transposeCharsAtCaret(blocks, sel.focus) === null) return;
-    withModel(
-      (current) => transposeCharsAtCaret(current, sel.focus) ?? { blocks: [...current], caret: sel.focus },
-      false,
-    );
-  }
-
-  /**
-   * 把光标行滚进 composer 视口（HC2，合同 docs/specs/harness-composer.md）：光标是程序化
-   * Range 落的，引擎在选区变化时的 reveal 行为是**引擎特性**——WKWebView 会 reveal
-   * （M419 实测：把调用停用后断行后的新行照样在视口里），Blink 不会（chromium 探针：不写
-   * scrollTop 时视口停在滚动上限之前整整一行）。这里给一条**引擎无关的保证**：量光标行读数
-   * → 纯函数 caretScrollTop 算目标 scrollTop → 需要时写回（已在视野内时返回原值，不写回、不抖）。
-   *
-   * 光标行矩形取 Range 包围盒；空段落（断行新落的空行）上 Range 可能量出零高，回落块元素
-   * 矩形（空段落有 min-height:1em，量得到行位）。面板未挂载时两种矩形都是 0，纯函数钳回 0。
-   */
-  function scrollCaretIntoView(range: Range, blockEl: Element): void {
-    const box = composer.getBoundingClientRect();
-    const rangeRect = range.getBoundingClientRect();
-    const rect = rangeRect.height > 0 ? rangeRect : blockEl.getBoundingClientRect();
-    const offsetInContent = composer.scrollTop - box.top;
-    const target = caretScrollTop(
-      {
-        scrollTop: composer.scrollTop,
-        clientHeight: composer.clientHeight,
-        scrollHeight: composer.scrollHeight,
-      },
-      { top: rect.top + offsetInContent, bottom: rect.bottom + offsetInContent },
-    );
-    if (target !== composer.scrollTop) composer.scrollTop = target;
-  }
-
-  // ── 撤销栈（quirk ③：自管快照；原生 undo 显式禁用并登记在 beforeinput 拦截里） ──
-  function snapshot(): ComposerSnapshot {
-    const sel = caretFromDom();
-    return {
-      blocks: readBlocksFromDom(),
-      caret: sel === null ? null : sel.focus,
-    };
-  }
-
-  /**
-   * 模型修改的统一出口：压撤销栈（修改前态；聚簇/去重/redo 作废纪律见 createUndoHistory）
-   * → 算新模型 → 整面重渲。`force` 取值唯一来自 `STRUCTURAL_EDIT_FORCE`（结构性操作：卡片插入/
-   * 移除、粘贴、拆段、删除族与 kill 族）——本文件不再写 force 字面量；`false` 只留给三处豁免：
-   * 键入（原生文本编辑的压栈）、字符级编辑（⌃T 转置）、删除族的空转空模型写（见各自就地注释）。
-   *
-   * 返回重渲后落到 DOM 的那个模型光标（`null` = 写入被下面两条闸门跳过、DOM 未变）——引用插入
-   * 的三条入口靠它把 caret 在**焦点移交之后**再写一次（见 focusComposerAfterInsert）。
-   *
-   * HC5：IME 组合期（compositionstart → compositionend）整面重渲冻结——replaceChildren 会销毁
-   * 组合锚点节点、打断 IME 会话（同 compositionstart 物化注释的理由）。键盘入口在 keydown 已有
-   * 组合期早退，这里防的是鼠标路径（组合期右键粘贴 / 拖入）；被跳过的编辑不补发（组合文本的
-   * 保全优先于一次粘贴，合同 HC5 已知边界）。
-   */
-  function withModel(
-    op: (blocks: readonly ComposerBlock[]) => { blocks: ComposerBlock[]; caret: ComposerCaret },
-    force: boolean,
-  ): ComposerCaret | null {
-    if (imeGateState.composing) return null;
-    normalize();
-    undoHistory.push(snapshot(), force);
-    const result = op(readBlocksFromDom());
-    renderComposer(result.blocks, result.caret);
-    refreshChip();
-    markDraft();
-    return result.caret;
-  }
-
-  function undo(): void {
-    if (imeGateState.composing) return; // HC5：组合期整面重渲冻结（同 withModel）
-    normalize();
-    const snap = undoHistory.undo(snapshot());
-    if (snap === null) return;
-    renderComposer(snap.blocks, snap.caret);
-    refreshChip();
-    markDraft();
-  }
-
-  function redo(): void {
-    if (imeGateState.composing) return; // HC5：组合期整面重渲冻结（同 withModel）
-    const snap = undoHistory.redo(snapshot());
-    if (snap === null) return;
-    renderComposer(snap.blocks, snap.caret);
-    refreshChip();
-    markDraft();
-  }
-
-  /**
-   * 兜底归一化观察器：我们的拦截覆盖了粘贴 / Enter / 删除 / 拖入，但 IME 替换、拼写纠正、
-   * 未来新增路径仍可能自造结构——observer 只负责把漏网的裸块折回 .qpara（数据层不变量
-   * 双保险），不触碰卡片。组合窗内 normalize 自早退（HC5），归一由 compositionend 补账接管。
-   */
-  const composerObserver = new MutationObserver(() => {
-    if (normalizing) return;
-    normalize();
-  });
-  composerObserver.observe(composer, { childList: true, subtree: true });
-
   // ── 长驻文案施加（onRelabel 的重跑路径：全部从已存状态重取，不重放旧字符串）──
   function applyLabels(): void {
     // toggle 钮面是图标（D326 已退场）——可读身份只剩读屏名（D327）与面板容器读屏名，
@@ -6210,7 +4476,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     segNew.setAttribute("aria-label", t("D330"));
     applySessionName();
     composer.dataset.placeholder = t("D328");
-    composer.setAttribute("aria-label", t("D328"));
+    composerView.contentDOM.setAttribute("aria-label", t("D328"));
     emptyHint.textContent = t("D346");
     applyChip();
     applySelChip();
@@ -6311,9 +4577,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
-  /** composer 里当前是否有引用卡片（决定是否跳过视口注入，spec「携带卡片时跳过视口」）。 */
   function composerHasCards(): boolean {
-    return composer.querySelector(".lumir-hp-qcard") !== null;
+    return composerView.state.field(composerAttachmentsField).length > 0;
   }
 
   /** 上下文 chip 刷新（发送前可核对）：打开面板 / 输入框获焦 / 卡片增减 / 发送后重取，
@@ -7213,6 +5478,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
   const overlayResize = new ResizeObserver(() => reclampOpenOverlays());
   overlayResize.observe(panel);
+  panel.addEventListener("scroll", reclampOpenOverlays, { passive: true });
   window.addEventListener("resize", () => reclampOpenOverlays());
 
   /** 发送钮相位施加：机器算出的每个新相位经这一处落 DOM（glyph 显隐 / 可读名 / 可点性 /
@@ -10484,9 +8750,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (root === currentVault) return; // 同一个 vault 的重复装载（重定位 / 重开）不重置视图
     currentVault = root;
     resetView();
-    // 输入区回空态（连带撤销史——新 vault 的草稿是新的编辑史），随后异步换上新 vault 的草稿。
-    undoHistory.clear();
-    renderComposer([{ kind: "paragraph", text: "" }], null);
+    resetComposer();
     refreshChip();
     fetchSnapshot();
     void restoreDraft();
@@ -10500,35 +8764,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /**
    * 读回当前 vault 的草稿并铺进输入区（装载 vault 后调用；app 启动装载与切 vault 共用这条路）。
    *
-   * 三道守卫：
+   * 两道守卫与光标口径：
    * - **世代**：读盘是一次 IPC 往返，途中又切了一次 vault 时本次结果作废（旧 vault 的草稿
    *   绝不许落到新 vault 的输入区——与快照的 snapshotSeq 同一条纪律）；
    * - **用户已动手**：窗口里用户可能已经开始输入，那就只用「仍是原始空态」时才恢复
    *   （`composerIsPristine`），不覆盖用户刚打的字；
-   * - **光标**：恢复的光标落位只在**输入区持焦**时施加——面板不持焦时那支光标属于别人
-   *   （编辑器 / 树），程序化改选区会把它拽走（M343 起 composer 的选区只在本面板持焦时动）。
+   * - **光标**：caret 写进新的 EditorState；输入区未持焦时 CM 不把它写进 DOM Selection，
+   *   因此不会抢走编辑器 / 树的选区。
    *
    * 无草稿 / 文件损坏 / 版本不符（store 的 `load` 返回 null / 抛出）→ 保持空输入区，不报错、
    * 不伪造内容（spec「草稿损坏时安静回落」）。
    */
   async function restoreDraft(): Promise<void> {
     const seq = (draftSeq += 1);
-    let loaded: { blocks: ComposerBlock[]; caret: { block: number; offset: number } | null } | null;
-    try {
-      loaded = await draft.load();
-    } catch {
-      loaded = null;
-    }
-    if (seq !== draftSeq) return; // 读盘途中又切了一次 vault：本次结果作废
-    if (loaded === null || loaded.blocks.length === 0) return;
-    if (!composerIsPristine()) return; // 用户已经动手：不用盘上的旧内容覆盖他
-    undoHistory.clear();
-    renderComposer(loaded.blocks, null);
-    // 光标落位：只在输入区持焦时施加（见函数头第三条守卫）。
-    if (loaded.caret !== null && composer.contains(document.activeElement)) {
-      setDomCaret(loaded.caret);
-    }
-    updateEmptyClass();
+    const loaded = await draft.load().catch(() => null);
+    if (seq !== draftSeq || loaded === null || !composerIsPristine()) return;
+    resetComposer(loaded);
   }
 
   // 后端不可用（纯浏览器预览 / 命令未注册）时按空会话降级——面板本身照常可用，
@@ -10539,114 +8790,55 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // ── 发送与新会话 ─────────────────────────────────────────────────────────
   function send(): void {
     if (activity.phase !== "idle") return;
-    normalize();
-    const blocks = readBlocksFromDom();
-    // 重新发送即解除上一回能力闸的错误态（若再被拒，catch 里按名重新标出）。
+    const content = composerContentOf(composerView.state);
+    const blocks = composerBlocks(composerView.state);
+    const projection = projectComposerDelivery(composerView.state);
+    const { panelText: text, parts } = projection;
+    if (parts.length === 0) return;
     imageGateErrored.clear();
-    // 引用失败的输入区状态行随本条消息发出而收起（它描述的是「这条输入里的引用」；
-    // 留到发送之后就成了上一轮的残影）。卡片上的留痕是卡片自身的一部分，不在此清。
     applyQuoteFailureNotice(null);
-    // 投递投影（change harness-composer-image-paste design §4.2）：parts 与文本面由同一个
-    // 函数产出——parts_json 给后端装配 content 数组，text = 面板/复制源/会话名素材的
-    // 序列化文本（含图片占位元素行）。纯文本消息投影为单 text part，与历史行为逐字节一致。
-    const parts = serializeDelivery(blocks);
-    const text = serializeQuoteMessage(blocks);
-    if (text.trim() === "") return;
-    const hasCards = blocks.some((b) => b.kind !== "paragraph");
-    // 携带卡片 ⇒ 跳过视口注入（spec「携带卡片时跳过视口」）；路径注入恒在。
+    const hasCards = content.cards.length > 0;
     const block = assembleHarnessContext(editor, { skipViewport: hasCards });
     lastChip = block ?? "none";
     applyChip();
-    appendUserMessage(blocks, text, Date.now()); // 上屏打戳（when 的 data-ts）
-    // 会话名：本逻辑会话的首条用户消息定名（未发过时）；卡片与序列化文本不作名。
-    // 乐观上屏——发送闸拒绝（harness_image_unsupported）时须在 catch 里回滚（见下方 prev 保存）。
+    appendUserMessage(blocks, text, Date.now());
     const prevFirstUserText = firstUserText;
     if (firstUserText === null) {
       firstUserText = firstUserTextOf(blocks);
       applySessionName();
     }
-    // 投递成功入队后草稿与撤销史一并归零（新消息是新的编辑史）。**清空动作本身不排期草稿**
-    // （markDraft 只在模型修改出口调用，send 走的 renderComposer 不在其中）——发送成功后才
-    // 真正清草稿（下面 then 里的 `draft.clear()`），被拒 / 失败时草稿保持原样（spec 的核心
-    // 改变之一：MUST NOT 在乐观清空与回滚之间留下「崩溃即丢字」的空草稿窗口）。
-    undoHistory.clear();
-    // 记下发送前光标（M455）：拒发回滚要把输入区**原样**还回来——含光标。乐观清空的
-    // `replaceChildren` 会把 WebKit 里既有的 DOM 选区塌到 composer 元素边界，回滚若用
-    // `renderComposer(blocks, null)` 不落光标，DOM 选区就永远停在边界位（`{block:0,offset:0}`）；
-    // 紧接的 `markDraft()` 会按这个错误的 caret 判「内容变了」，把盘上草稿重写一遍——只有 caret
-    // 字段变（M455 实测：草稿 sha 由 `85da8511` 变 `d6a41e72`，违反 design §9⑤「被拒后草稿文件
-    // 内容不变」）。回滚时把这份光标连同块一起还原，模型态才真正回到发送前。
-    const preSendCaret = caretFromDom()?.focus ?? null;
-    renderComposer([{ kind: "paragraph", text: "" }], null);
-    // 焦点与光标回 composer（M372）：replaceChildren 会把 WebKit 里既有的 DOM 选区塌到
-    // composer 元素边界——视觉上光标跑到输入区最左上角，且后续键入落点不可预期。显式
-    // focus + 把选区放进新的空段落，光标才回到输入区的正常位置。focus 须在重渲之后、
-    // setDomCaret 之前（focus 自身会归位选区，最后再精调一次）。
-    composer.focus();
-    setDomCaret({ block: 0, offset: 0 });
-    updateEmptyClass();
-    // 相位入 running（两态发送钮切停止态）+ 阶段指示回「等待响应」——进度条与阶段行随相位显形；
-    // 轮次闸门随 sent 打开（M374：终态后迟到的内容事件在此之前一律丢弃）。
+    resetComposer();
+    composerView.focus();
     stageWaiting = true;
     dispatchActivity({ type: "sent" });
-    // 无文档上下文时传空串（不是 null）：后端 harness_send 的 context_json 恒为 string，
-    // parse_context 对空串返回默认块——传 null 会被参数反序列化拒掉（M398，bug「不打开任何
-    // 文件时发送报 invalid type: null」）。
     harnessSend(JSON.stringify(parts), block !== null ? serializeHarnessContext(block) : "")
       .then(() => {
-        // 发送被接受（后端已入队）→ 清除草稿（含落盘）：内容已进会话，不再是「未发送的输入」
-        // （spec「发送成功后清除」）。clear 同时取消防抖窗口里那份旧内容的待写——否则它会在
-        // 1s 后把刚发出去的内容又写回盘上；失败只记 warning（不影响「已发送」这个事实）。
         void draft.clear();
       })
-      .catch(
-        (e: unknown) => {
-          // `harness_busy` 的处置（tasks 2.4 / r2 P2-1）：拒绝**不是**在途证据——能发出并被拒
-          // 只可能落在后端「终态已发、尚未释放」的窗口（或本地假空闲）。因此只上错误行 + 读一次
-          // **相位**，相位由 `in_flight` 决定；MUST NOT 在这里直接改相位（删掉的 `busy_rejected`
-          // 不许以别的名字回来）。
-          //
-          // 读相位走 `fetchActivitySnapshot`（只读通道）而**不是**进入档 `fetchSnapshot`：这条
-          // 重取发生在一个**已有内容**的 transcript 上，事前没有 `resetView` / 清渲染面——进入档
-          // 的 `renderSnapshotMessages` 是逐条 append（不清空），会把历史消息再上屏一遍，末尾的
-          // `follow.jumpToBottom()` 还会把正在阅读的视口拽回底部（r1 P1-1 的现场）。
-          if (errorCodeOf(e) === "harness_busy") {
-            appendError(t("D347", { reason: errorMessage(e) }));
-            fetchActivitySnapshot();
-            return;
-          }
-          // 其余失败（线程起不来 / 参数被拒 / …）：这一轮没有起来，本地收口回 idle。
-          dispatchActivity({ type: "local_finish" });
-          // 发送闸拒绝（harness_image_unsupported，design §6）：会话不推进——撤下刚沉淀的
-          // 用户消息、composer 原样恢复（输入区内容保留）、toast 人话错误、图片卡片标错误态
-          // （前端不另立能力判定，只认后端这一个 code）。
-          if (errorCodeOf(e) === "harness_image_unsupported") {
-            const last = transcript.lastElementChild;
-            if (last !== null && last.classList.contains("lumir-hp-msg-user")) last.remove();
-            // 乐观上屏的回滚：会话没推进，会话名也不许留下（否则标题栏像「已发送」）。
-            firstUserText = prevFirstUserText;
-            applySessionName();
-            // 错误态按名记入模型侧（见 imageGateErrored）——renderComposer 重建卡片后依旧标出。
-            for (const block of blocks) {
-              if (block.kind === "image") imageGateErrored.add(block.card.name);
-            }
-            // 连同发送前的光标一起还原（M455）：只还原块会让 DOM 选区停在乐观清空塌下来的
-            // 边界位，下面那次 markDraft() 便按错误 caret 把草稿重写一遍。
-            renderComposer(blocks, preSendCaret);
-            // 被拒 = 内容还在输入区、也还在未发送状态：草稿按回滚后的块重新对齐（与盘上那份
-            // 内容相同时不写盘；若发送前的待写被别的路径清掉过，这一步把它补回来）。光标已还原
-            // ⇒ 内容与 caret 都与盘上一致时这次 schedule 是 no-op，草稿逐字节不变。
-            markDraft();
-            syncEmptyHint();
-            deps.toast(errorText(e));
-            return;
-          }
-          // 其余失败（busy / 线程起不来 / …）：输入区已乐观清空、内容进了 transcript 的那条
-          // 用户消息。草稿**原样保留**（MUST NOT 因一次失败丢掉用户打的字，spec「发送被拒 /
-          // 失败时草稿 SHALL 原样保留」）——它会在下次编辑时被新内容自然覆盖。
+      .catch((e: unknown) => {
+        if (errorCodeOf(e) === "harness_busy") {
           appendError(t("D347", { reason: errorMessage(e) }));
-        },
-      );
+          fetchActivitySnapshot();
+          return;
+        }
+        dispatchActivity({ type: "local_finish" });
+        if (errorCodeOf(e) === "harness_image_unsupported") {
+          const last = transcript.lastElementChild;
+          if (last !== null && last.classList.contains("lumir-hp-msg-user")) last.remove();
+          firstUserText = prevFirstUserText;
+          applySessionName();
+          for (const attachment of content.cards) {
+            if (attachment.kind === "image") imageGateErrored.add(attachment.card.name);
+          }
+          resetComposer(content);
+          markDraft();
+          syncEmptyHint();
+          composerView.focus();
+          deps.toast(errorText(e));
+          return;
+        }
+        appendError(t("D347", { reason: errorMessage(e) }));
+      });
   }
 
   // 发送钮的点击路由：空闲相位（= 钮面「发送」）走 send()；running 相位（= 钮面「停止」）
@@ -10654,191 +8846,44 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   sendButton.addEventListener("click", () => {
     if (activity.phase === "idle") send();
   });
-  // Enter 发送 / ⇧Enter 换行（D328 占位同款口径）；IME 组合期不接管（Enter 在组合期是
-  // 「确认候选」）。双防线：浏览器自报的 event.isComposing（Chromium 可靠）+ 自跟踪状态机
-  // （WKWebView 不可靠——WebKit 先派 compositionend 再派确认 Enter 的 keydown，isComposing
-  // 已是 false，单靠早退会把「选候选」误当发送；状态机口径见 imeGateKeydown）。
-  // 退格 / 前删走模型（卡片按整体作用 + 自管撤销栈的确定性）。
-  // （imeGateState 声明在面板前部 normalizing 旁——HC5 的组合窗闸门要读它。）
   composer.addEventListener("keydown", (event: KeyboardEvent) => {
     if (event.isComposing) {
-      // 浏览器自报组合期（Chromium 序的确认拍落在这里）：同样登记进门——若不登记，
-      // 紧随的 compositionend 会开确认窗，用户想发送的下一拍 Enter 会被误吞。不
-      // preventDefault：确认动作归 IME 原生默认（同既有口径）。
       if (event.key === "Enter") {
         imeGateState = imeGateKeydown(imeGateState, "Enter", Date.now()).gate;
       }
       return;
     }
-    if (imeGateState.composing) return; // 组合期一律不接管（isComposing 漏报时的自跟踪命中）
+    if (imeGateState.composing) return;
     const decision = imeGateKeydown(imeGateState, event.key, Date.now());
     imeGateState = decision.gate;
     if (decision.swallow) {
-      // 候选确认拍：候选已落字，这拍 Enter 只是「选中」——拦下（不发送、不换行、不留段落）。
       event.preventDefault();
       return;
     }
     const mod = event.metaKey || event.ctrlKey;
     if (mod && event.key.toLowerCase() === "z") {
       event.preventDefault();
-      if (event.shiftKey) redo();
-      else undo();
+      dispatchComposerCommand(event.shiftKey ? "editor.redo" : "editor.undo");
       return;
     }
-    // M455：就地 redo 只归 **⌘Y**。⌃Y 是统一键位表里 `text` 作用域的 `editor.yank`
-    //（`Ctrl-y`，keys.ts:585）——若在此 `preventDefault` 吞掉，分发器对已消费事件让路
-    //（keys.ts:934 的 defaultPrevented 早退），composer 的 ⌃Y 永远落不到 `yankAtCaret`，
-    // 而编辑器侧 ⌃K 写进**跨面共用** kill 槽的内容因此插不回来（验收场景 145 实测）。
-    // 收窄到 meta-only 与下方 §5.3a 对 Backspace/Delete 的收窄同形：修饰键不匹配的键
-    // 落到 `if (mod) return;`（不 preventDefault），照常冒泡给分发器。
     if (event.metaKey && event.key.toLowerCase() === "y") {
       event.preventDefault();
-      redo();
+      dispatchComposerCommand("editor.redo");
       return;
     }
     if (mod) return;
-    // M457（HC3 第 3 条）：边界光标位上的**内容型键入**由本层自己走模型。边界位（卡片前缘 /
-    // 两张相邻卡片之间）是无文本宿主的位置——卡片是 contenteditable=false 的原子块、块级容器
-    // 边界量不出 caret 几何，引擎因此**不派 beforeinput / input**（WebKit 实测：keydown 到达
-    // composer、beforeinput 与 input 都不派、字也不落）。挂在 beforeinput 上的物化（下方
-    // §insertText 档）在「两张相邻卡片之间」永远不可达——Alex 2026-10-12 的「两卡之间不能输入」
-    // 即此。判据收在模型层纯函数 `boundaryTypingCaret` 里（折叠选区 + 非修饰 + 可打印单字符 +
-    // 非组合期 + 卡片前缘），命中才 preventDefault + 物化，其余按键照旧走各自路径。
-    const boundaryTyped = boundaryTypingCaret(readBlocksFromDom(), caretFromDom(), {
-      key: event.key,
-      mod,
-      alt: event.altKey,
-      composing: imeGateState.composing,
-    });
-    if (boundaryTyped !== null) {
-      event.preventDefault();
-      withModel((blocks) => insertPlainTextAtCaret(blocks, boundaryTyped, event.key), STRUCTURAL_EDIT_FORCE);
-      return;
-    }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (event.shiftKey) {
-        // ⇧Enter 软断行是结构性操作（拆段），force 走 `softBreakStep` / `STRUCTURAL_EDIT_FORCE`
-        // 的单一真源（M510 之前此处写字面量 false，与 withModel 文档的「拆段」漂移）。
-        const step = softBreakStep(() => caretFromDom()?.focus ?? null);
-        withModel(step.op, step.force);
-      } else {
-        send();
-      }
-      return;
+      if (event.shiftKey) insertComposerText(composerView, "\n", "input.shift-enter");
+      else send();
     }
-    // M447（change composer-emacs-nav §5.3a）：就地路径只处理**不带任何修饰键**的那一拍——
-    // ⌥⌫ / ⌥Delete 让给统一键位表（`text` 作用域）。不收窄则面板的 keydown（挂在 composer 上、
-    // 先于 window 分发器）先 `preventDefault`，而分发器对已消费事件让路（src/keys.ts 的
-    // `defaultPrevented` 早退）⇒ ⌥⌫ 的表内绑定**永远不命中**、退化为逐字符退格（一个「绑了
-    // 没用」的静默失配）。裸 Backspace / Delete 仍是既有模型路径（本能力 MUST NOT 改变它）。
-    if (
-      (event.key === "Backspace" || event.key === "Delete") &&
-      !event.metaKey &&
-      !event.ctrlKey &&
-      !event.altKey
-    ) {
-      const sel = caretFromDom();
-      if (sel === null) return;
-      event.preventDefault();
-      // 裸 Backspace / Delete 与 ⌃D / ⌃H 同走删除族的模型步（`deleteFamilyStep`，force 单一真源）。
-      const step = deleteFamilyStep(
-        readBlocksFromDom(),
-        sel,
-        event.key === "Backspace" ? backspaceAtCaret : deleteForwardAtCaret,
-      );
-      if (step === null) {
-        // 空转（段首退格 / 前向删除到末缘）：既有语义是仍走一次空模型写（归一化重渲、不留半截
-        // 状态）。force=false 是**删除族路径上唯一的豁免**：空转不是编辑，给个 `true` 反而会在
-        // 栈顶造出「撤销了看不出变化」的幽灵撤销步（与栈顶去重同旨）；聚簇照常吞掉这一拍。
-        withModel((blocks) => ({ blocks: [...blocks], caret: sel.focus }), false);
-        return;
-      }
-      withModel(step.op, step.force);
-    }
-  });
-  // beforeinput 收口：原生 undo 显式禁用（撤销栈自管，quirk ③ 的「登记」）；富文本格式化
-  // 与 HTML 粘贴/拖入只走纯文本；组合期（IME）删除若会碰到卡片则拦下（quirk ②）；组合
-  // 开始压一次前态（IME 整段是一个撤销步）；其余结构化输入（insertParagraph 等）全部
-  // 拦截——新块只能经模型层产生，天然归一化为 .qpara（quirk ④）。
-  composer.addEventListener("beforeinput", (event: InputEvent) => {
-    const type = event.inputType;
-    if (type === "historyUndo" || type === "historyRedo") {
-      event.preventDefault();
-      return;
-    }
-    if (type.startsWith("format") || type === "insertLink" || type.startsWith("formatSet")) {
-      event.preventDefault();
-      return;
-    }
-    if (type === "insertFromPaste" || type === "insertFromDrop" || type === "insertParagraph" ||
-        type === "insertLineBreak" || type.startsWith("insertOrderedList") ||
-        type.startsWith("insertUnorderedList")) {
-      event.preventDefault();
-      return;
-    }
-    if (event.isComposing) {
-      if (type.startsWith("delete")) {
-        const selection = window.getSelection();
-        const range = selection !== null && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-        if (range !== null) {
-          for (const card of composer.querySelectorAll(".lumir-hp-qcard")) {
-            if (range.intersectsNode(card)) {
-              event.preventDefault();
-              return;
-            }
-          }
-        }
-      }
-      return;
-    }
-    if (type === "insertText" || type === "insertReplacementText") {
-      // 边界光标位（卡片前缘）上的键入走模型（design §3.2）：物化一个段落把字符写进去，
-      // 与该次输入合成**一个**撤销步。原生路径在这里会让字符落进相邻段落、或自造裸节点。
-      const caret = collapsedCaret();
-      const typed = event.data ?? "";
-      if (caret !== null && typed !== "" && isCardFrontCaret(readBlocksFromDom(), caret)) {
-        event.preventDefault();
-        withModel((blocks) => insertPlainTextAtCaret(blocks, caret, typed), STRUCTURAL_EDIT_FORCE);
-        return;
-      }
-    }
-    if (type === "insertText" || type === "insertReplacementText" ||
-        type === "deleteContentBackward" || type === "deleteContentForward" ||
-        type === "deleteByCut" || type === "deleteWordBackward" || type === "deleteWordForward" ||
-        type === "deleteSoftLineBackward" || type === "deleteSoftLineForward") {
-      // 原生文本编辑：允许落进 .qpara，但压一次撤销前态（聚簇/去重/redo 作废在 history 里）。
-      // force=false 是**豁免**：这是**键入**（打字流），本就该与相邻键入聚合成一个撤销步。
-      undoHistory.push(snapshot(), false);
-      return;
-    }
-    event.preventDefault();
-  });
+  }, true);
   composer.addEventListener("compositionstart", () => {
     imeGateState = imeGateCompositionStart(imeGateState);
-    const caret = collapsedCaret();
-    if (caret !== null && isCardFrontCaret(readBlocksFromDom(), caret)) {
-      // 边界光标位上的 IME（design §3.2）：先物化一个空段落承接组合内容。**此处刻意不整面
-      // 重渲**——withModel 的 replaceChildren 会销毁正要开始组合的目标节点、打断 IME 会话；
-      // 模型侧读法（readBlocksFromDom）随之看到新段落，其余 DOM（含两张卡片）原样不动。
-      undoHistory.push(snapshot(), STRUCTURAL_EDIT_FORCE);
-      composer.insertBefore(createParaEl(""), composer.children[caret.block] ?? null);
-      setDomCaret({ block: caret.block, offset: 0 });
-      return;
-    }
-    undoHistory.push(snapshot(), STRUCTURAL_EDIT_FORCE);
   });
   composer.addEventListener("compositionend", () => {
     imeGateState = imeGateCompositionEnd(imeGateState, Date.now());
-    undoHistory.breakCluster(); // 组合整段是一个撤销步：下一拍编辑强制重新压栈。
-    updateEmptyClass();
-    markDraft(); // IME 落定的字符在此刻才进 DOM（组合期不排期），草稿按最终文本落盘
-    scheduleImeBackfill(); // HC5 补账（到期早于窗尾时续排，见该函数注释）
   });
-  // 粘贴分派（quirk ① + change harness-composer-image-paste design §7）：剪贴板含
-  // `image/*` 文件项 → 图优先（读 Blob → base64 → harness 侧落盘 → 光标处插图片卡片；
-  // 夹带文本 MUST NOT 另行落入输入区）；否则只收 text/plain，多行经模型拆成多个段落块，
-  // 跨块选区先整块删除——纯文本路径与本能力存在之前逐字节一致。
   composer.addEventListener("paste", (event: ClipboardEvent) => {
     event.preventDefault();
     const items = event.clipboardData?.items;
@@ -10851,55 +8896,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }
     }
     const text = event.clipboardData?.getData("text/plain") ?? "";
-    if (text === "") return;
-    withModel((blocks) => {
-      const sel = caretFromDom();
-      if (sel === null) return insertPlainTextAtCaret(blocks, { block: blocks.length - 1, offset: 0 }, text);
-      const collapsed = sel.anchor.block === sel.focus.block && sel.anchor.offset === sel.focus.offset;
-      const base = collapsed ? { blocks: [...blocks], caret: sel.focus } : deleteSelectionRange(blocks, sel);
-      return insertPlainTextAtCaret(base.blocks, base.caret, text);
-    }, STRUCTURAL_EDIT_FORCE);
-  });
-  // 拖入净化（同 quirk ①，只收 text/plain）：落点跟随指针——caretRangeFromPoint 取
-  // 落点光标（WebKit 系；取不到退化 composer 末尾，与 paste 的无选区退化同值）。
+    if (text !== "") insertComposerText(composerView, text);
+  }, true);
   composer.addEventListener("drop", (event: DragEvent) => {
     event.preventDefault();
     const text = event.dataTransfer?.getData("text/plain") ?? "";
     if (text === "") return;
-    let caret: ComposerCaret | null = null;
-    const caretAtPoint = (document as Document & {
-      caretRangeFromPoint?: (x: number, y: number) => Range | null;
-    }).caretRangeFromPoint;
-    if (typeof caretAtPoint === "function") {
-      const range = caretAtPoint.call(document, event.clientX, event.clientY);
-      if (range !== null) {
-        // 拖放天然把光标落在指针处：让选区跟上，复用 caretFromDom 的模型读法。
-        const selection = window.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-        caret = caretFromDom()?.focus ?? null;
-      }
-    }
-    withModel(
-      (blocks) => insertPlainTextAtCaret(blocks, caret ?? { block: blocks.length - 1, offset: 0 }, text),
-      STRUCTURAL_EDIT_FORCE,
-    );
-  });
-  composer.addEventListener("input", () => {
-    updateEmptyClass();
-    markDraft();
-  });
-  composer.addEventListener("focus", () => {
-    refreshChip();
-    syncComposerSelectionHighlight();
-  });
-  document.addEventListener("selectionchange", syncComposerSelectionHighlight);
-  // 输入区失焦 = 本面板的**离散 flush 主挂点**（change composer-draft-persistence design §4）。
-  // 理由见 flushDraft 的注释：切 vault 必经「先离开输入区」，而 vaultChanged 跑在后端切完之后。
-  composer.addEventListener("blur", () => {
-    syncComposerSelectionHighlight();
-    flushDraft();
-  });
+    const pos = composerView.posAtCoords({ x: event.clientX, y: event.clientY });
+    if (pos !== null) composerView.dispatch({ selection: { anchor: pos } });
+    insertComposerText(composerView, text, "input.drop");
+  }, true);
+  composer.addEventListener("focusin", () => refreshChip());
+  composer.addEventListener("focusout", () => flushDraft());
 
   // ── 新建会话（harness 段 ＋钮与会话浮层动作项共用一条路径；两个入口一个语义）──
   function startNewSession(): void {
@@ -11281,7 +9289,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (chipWatchTimer !== null) window.clearInterval(chipWatchTimer);
       chipWatchTimer = window.setInterval(watchActiveSession, 400);
     } else {
-      // 摘出 DOM（元素长驻内存：订阅 / 撤销栈 / 流式态不丢），浮层与刷新表随之收起。
+      // 摘出 DOM（元素长驻内存：订阅 / CM history / 流式态不丢），浮层与刷新表随之收起。
       // 摘之前先把待写的草稿落盘（面板关闭是一个离散 flush 时点，design §4：面板收起后输入区
       // 不在屏幕上，用户不会再「顺手」给它一次防抖机会）——草稿没写走就再也没有第二次机会。
       flushDraft();
@@ -11320,15 +9328,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   applyLabels();
   onRelabel(applyLabels);
   syncEmptyHint();
-  // 初始 composer：一个空段落（placeholder 经 .is-empty 挂上）。
-  renderComposer([{ kind: "paragraph", text: "" }], null);
+  resetComposer();
 
   return {
     toggle: () => deps.togglePane(),
     isOpen: () => mountEl !== null,
     attachTo,
     focusComposer() {
-      composer.focus();
+      composerView.focus();
     },
     titlebarSegment: () => seg,
     // 设置面板关闭后的一次重取（design §8）：chip / 权限 chip 重新读 config_get，不引入
@@ -11347,12 +9354,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       // 一次新的引用收口上一次引用的失败状态行（spec：读数存活到「下一次引用」——文本摘录
       // 也是一次引用；r1 P2-1）。
       applyQuoteFailureNotice(null);
-      const caret = withModel((blocks) => {
-        const sel = caretFromDom();
-        const at = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
-        return insertCardAtCaret(blocks, at, valid);
-      }, STRUCTURAL_EDIT_FORCE);
-      focusComposerAfterInsert(caret);
+      appendAttachments([{ kind: "quote", card: valid }]);
+      focusComposerAfterInsert();
     },
     insertQuoteWithImages(card: QuoteCard | null, outcomes: readonly QuoteImageOutcome[]): void {
       const valid = card === null ? null : createQuoteCard(card);
@@ -11378,25 +9381,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       // 一起活）；没有卡片时挂输入区状态行。两者只出现一处，不重复播报同一次失败。
       if (valid !== null && failed > 0) quoteImageFailures.set(valid, failed);
       applyQuoteFailureNotice(valid === null && failed > 0 ? quoteFailureText(failed) : null);
-      // **一次** withModel = 一个撤销步（⌘Z 一次撤掉整次引用）：卡片 + 图片块在同一个模型步里
-      // 依次落位（每次插入复用 insertBlockAtCaret 的拆段 / 光标落点语义）。
-      const caret = withModel((blocks) => {
-        const sel = caretFromDom();
-        let at: ComposerCaret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
-        let next: ComposerBlock[] = [...blocks];
-        if (valid !== null) {
-          const result = insertCardAtCaret(next, at, valid);
-          next = result.blocks;
-          at = result.caret;
-        }
-        for (const image of images) {
-          const result = insertBlockAtCaret(next, at, { kind: "image", card: image.card });
-          next = result.blocks;
-          at = result.caret;
-        }
-        return { blocks: next, caret: at };
-      }, STRUCTURAL_EDIT_FORCE);
-      focusComposerAfterInsert(caret);
+      const additions: ComposerAttachment[] = valid === null ? [] : [{ kind: "quote", card: valid }];
+      for (const image of images) additions.push({ kind: "image", card: image.card });
+      appendAttachments(additions);
+      focusComposerAfterInsert();
     },
     setQuoteJumpHandler(handler) {
       quoteJumpHandler = handler;
@@ -11408,7 +9396,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       writeTextScale(ratio);
     },
     composerCommand(command: CommandId): void {
-      runComposerCommand(command);
+      dispatchComposerCommand(command);
     },
   };
 }

@@ -1,0 +1,306 @@
+import {
+  EditorSelection,
+  EditorState,
+  StateEffect,
+  StateField,
+  Transaction,
+} from "@codemirror/state";
+import type { Extension, TransactionSpec } from "@codemirror/state";
+import {
+  cursorCharBackward,
+  cursorCharForward,
+  cursorLineDown,
+  cursorLineEnd,
+  cursorLineStart,
+  cursorLineUp,
+  deleteCharBackward,
+  deleteCharForward,
+  invertedEffects,
+  isolateHistory,
+  history,
+  redo,
+  selectCharBackward,
+  selectCharForward,
+  selectLineDown,
+  selectLineEnd,
+  selectLineStart,
+  selectLineUp,
+  undo,
+} from "@codemirror/commands";
+import type { EditorView } from "@codemirror/view";
+import type { CommandId } from "./keys";
+import {
+  clusterBackward,
+  clusterForward,
+  currentKillSlot,
+  mergeKillText,
+  projectDelivery,
+  setKillSlot,
+  wordEndForward,
+  wordStartBackward,
+} from "./quote-card";
+import type { ComposerAttachment, ComposerBlock, DeliveryProjection } from "./quote-card";
+
+export interface ComposerContent {
+  text: string;
+  caret: number | null;
+  cards: readonly ComposerAttachment[];
+}
+
+type AttachmentEdit =
+  | { readonly type: "append"; readonly at: number; readonly cards: readonly ComposerAttachment[] }
+  | { readonly type: "remove"; readonly index: number };
+
+export const composerAttachmentEffect = StateEffect.define<AttachmentEdit>();
+
+export const composerAttachmentsField = StateField.define<readonly ComposerAttachment[]>({
+  create: () => [],
+  update(attachments, tr) {
+    let next = attachments;
+    for (const effect of tr.effects) {
+      if (!effect.is(composerAttachmentEffect)) continue;
+      if (effect.value.type === "append") {
+        const at = Math.max(0, Math.min(effect.value.at, next.length));
+        next = [...next.slice(0, at), ...effect.value.cards, ...next.slice(at)];
+      } else if (effect.value.index >= 0 && effect.value.index < next.length) {
+        next = [...next.slice(0, effect.value.index), ...next.slice(effect.value.index + 1)];
+      }
+    }
+    return next;
+  },
+});
+
+const composerAttachmentInversions = invertedEffects.of((tr) => {
+  const inverse: StateEffect<AttachmentEdit>[] = [];
+  let current = [...tr.startState.field(composerAttachmentsField)];
+  for (const effect of tr.effects) {
+    if (!effect.is(composerAttachmentEffect)) continue;
+    const edit = effect.value;
+    if (edit.type === "append") {
+      const at = Math.max(0, Math.min(edit.at, current.length));
+      for (let index = 0; index < edit.cards.length; index += 1) {
+        inverse.push(composerAttachmentEffect.of({ type: "remove", index: at }));
+      }
+      current = [...current.slice(0, at), ...edit.cards, ...current.slice(at)];
+    } else {
+      const card = current[edit.index];
+      if (card !== undefined) {
+        inverse.push(composerAttachmentEffect.of({ type: "append", at: edit.index, cards: [card] }));
+        current = [...current.slice(0, edit.index), ...current.slice(edit.index + 1)];
+      }
+    }
+  }
+  return inverse.reverse();
+});
+
+export const composerStateExtensions = [history(), composerAttachmentsField, composerAttachmentInversions];
+
+export function createComposerState(content: ComposerContent, extensions: readonly Extension[] = []): EditorState {
+  const caret = content.caret === null
+    ? content.text.length
+    : Math.max(0, Math.min(content.caret, content.text.length));
+  return EditorState.create({
+    doc: content.text,
+    selection: EditorSelection.cursor(caret),
+    extensions: [
+      ...composerStateExtensions,
+      composerAttachmentsField.init(() => content.cards),
+      ...extensions,
+    ],
+  });
+}
+
+export function composerContentOf(state: EditorState): ComposerContent {
+  return {
+    text: state.doc.toString(),
+    caret: state.selection.main.head,
+    cards: state.field(composerAttachmentsField),
+  };
+}
+
+export function composerIsEmpty(state: EditorState): boolean {
+  return state.doc.length === 0 && state.field(composerAttachmentsField).length === 0;
+}
+
+export function appendComposerAttachments(cards: readonly ComposerAttachment[]): TransactionSpec {
+  return {
+    effects: composerAttachmentEffect.of({ type: "append", at: Number.MAX_SAFE_INTEGER, cards }),
+    annotations: isolateHistory.of("full"),
+  };
+}
+
+export function removeComposerAttachment(index: number): TransactionSpec {
+  return {
+    effects: composerAttachmentEffect.of({ type: "remove", index }),
+    annotations: isolateHistory.of("full"),
+  };
+}
+
+export function composerBlocks(state: EditorState): ComposerBlock[] {
+  return [
+    ...state.field(composerAttachmentsField),
+    { kind: "paragraph", text: state.doc.toString() },
+  ];
+}
+
+export function projectComposerDelivery(state: EditorState): DeliveryProjection {
+  return projectDelivery(composerBlocks(state));
+}
+
+function readDoc(state: EditorState, from: number, to: number): string {
+  return state.doc.sliceString(from, to);
+}
+
+function deleteRange(view: EditorView, from: number, to: number, userEvent: string): void {
+  if (from >= to) return;
+  view.dispatch({
+    changes: { from, to },
+    selection: EditorSelection.cursor(from),
+    scrollIntoView: true,
+    userEvent,
+  });
+}
+
+function killRange(view: EditorView, from: number, to: number, forward: boolean): void {
+  if (from >= to) return;
+  const text = view.state.doc.sliceString(from, to);
+  const merged = mergeKillText(currentKillSlot(), text, forward, String(forward ? from : to));
+  setKillSlot({ text: merged, forward, anchor: String(from) });
+  deleteRange(view, from, to, "delete.kill");
+}
+
+function killWord(view: EditorView, forward: boolean): void {
+  const main = view.state.selection.main;
+  if (!main.empty) {
+    killRange(view, main.from, main.to, forward);
+    return;
+  }
+  const end = forward
+    ? wordEndForward((from, to) => readDoc(view.state, from, to), main.head, view.state.doc.length)
+    : wordStartBackward((from, to) => readDoc(view.state, from, to), main.head, 0);
+  if (forward) killRange(view, main.head, end, true);
+  else killRange(view, end, main.head, false);
+}
+
+function killLine(view: EditorView): void {
+  const main = view.state.selection.main;
+  if (!main.empty) {
+    killRange(view, main.from, main.to, true);
+    return;
+  }
+  const line = view.state.doc.lineAt(main.head);
+  if (main.head < line.to) killRange(view, main.head, line.to, true);
+  else if (line.number < view.state.doc.lines) killRange(view, line.to, line.to + 1, true);
+}
+
+function yank(view: EditorView): void {
+  const text = currentKillSlot()?.text ?? "";
+  if (text === "") return;
+  const main = view.state.selection.main;
+  view.dispatch({
+    changes: { from: main.from, to: main.to, insert: text },
+    selection: EditorSelection.cursor(main.from + text.length),
+    scrollIntoView: true,
+    userEvent: "input.yank",
+  });
+}
+
+function transpose(view: EditorView): void {
+  const main = view.state.selection.main;
+  if (!main.empty) return;
+  const line = view.state.doc.lineAt(main.head);
+  const pos = Math.max(line.from, Math.min(main.head, line.to));
+  const left = clusterBackward((from, to) => readDoc(view.state, from, to), pos, line.from);
+  const right = clusterForward((from, to) => readDoc(view.state, from, to), pos, line.to);
+  if (left < pos && right > pos) {
+    const a = view.state.doc.sliceString(left, pos);
+    const b = view.state.doc.sliceString(pos, right);
+    view.dispatch({
+      changes: { from: left, to: right, insert: b + a },
+      selection: EditorSelection.cursor(right),
+      scrollIntoView: true,
+      userEvent: "move.transpose",
+    });
+    return;
+  }
+  const previous = clusterBackward((from, to) => readDoc(view.state, from, to), left, line.from);
+  if (previous >= left) return;
+  const a = view.state.doc.sliceString(previous, left);
+  const b = view.state.doc.sliceString(left, pos);
+  view.dispatch({
+    changes: { from: previous, to: pos, insert: b + a },
+    selection: EditorSelection.cursor(pos),
+    scrollIntoView: true,
+    userEvent: "move.transpose",
+  });
+}
+
+function extendWord(view: EditorView, forward: boolean): void {
+  const main = view.state.selection.main;
+  const head = forward
+    ? wordEndForward((from, to) => readDoc(view.state, from, to), main.head, view.state.doc.length)
+    : wordStartBackward((from, to) => readDoc(view.state, from, to), main.head, 0);
+  if (head === main.head) return;
+  view.dispatch({ selection: EditorSelection.range(main.anchor, head), scrollIntoView: true, userEvent: "select" });
+}
+
+export function runComposerCommand(view: EditorView, command: CommandId): void {
+  switch (command) {
+    case "editor.select-all":
+      view.dispatch({ selection: EditorSelection.range(0, view.state.doc.length), userEvent: "select" });
+      return;
+    case "editor.cursor-forward": cursorCharForward(view); return;
+    case "editor.cursor-backward": cursorCharBackward(view); return;
+    case "editor.line-start": cursorLineStart(view); return;
+    case "editor.line-end": cursorLineEnd(view); return;
+    case "editor.cursor-down": cursorLineDown(view); return;
+    case "editor.cursor-up": cursorLineUp(view); return;
+    case "editor.extend-char-forward": selectCharForward(view); return;
+    case "editor.extend-char-backward": selectCharBackward(view); return;
+    case "editor.extend-line-start": selectLineStart(view); return;
+    case "editor.extend-line-end": selectLineEnd(view); return;
+    case "editor.extend-line-down": selectLineDown(view); return;
+    case "editor.extend-line-up": selectLineUp(view); return;
+    case "editor.extend-word-forward": extendWord(view, true); return;
+    case "editor.extend-word-backward": extendWord(view, false); return;
+    case "editor.delete-char-forward": deleteCharForward(view); return;
+    case "editor.delete-char-backward": deleteCharBackward(view); return;
+    case "editor.delete-word-forward": killWord(view, true); return;
+    case "editor.delete-word-backward": killWord(view, false); return;
+    case "editor.kill-line": killLine(view); return;
+    case "editor.yank": yank(view); return;
+    case "editor.transpose-chars": transpose(view); return;
+    case "editor.undo": undo(view); return;
+    case "editor.redo": redo(view); return;
+    default: return;
+  }
+}
+
+export function insertComposerText(view: EditorView, text: string, userEvent = "input.paste"): void {
+  const main = view.state.selection.main;
+  view.dispatch({
+    changes: { from: main.from, to: main.to, insert: text },
+    selection: EditorSelection.cursor(main.from + text.length),
+    scrollIntoView: true,
+    userEvent,
+  });
+}
+
+export function applyComposerTransaction(
+  state: EditorState,
+  spec: TransactionSpec,
+): EditorState {
+  return state.update(spec).state;
+}
+
+export function composerUndo(state: EditorState): EditorState {
+  let next = state;
+  undo({ state, dispatch: (tr: Transaction) => { next = tr.state; } });
+  return next;
+}
+
+export function composerRedo(state: EditorState): EditorState {
+  let next = state;
+  redo({ state, dispatch: (tr: Transaction) => { next = tr.state; } });
+  return next;
+}

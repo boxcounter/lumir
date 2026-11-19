@@ -62,6 +62,7 @@ class FakeEl {
   readonly classes = new Set<string>();
   readonly dataset: Record<string, string> = {};
   readonly listeners = new Map<string, Array<(event: FakeEvent) => void>>();
+  readonly style: Record<string, string> = {};
 
   hidden = false;
   title = "";
@@ -76,10 +77,15 @@ class FakeEl {
   name = "";
   scrollTop = 0;
   scrollHeight = 0;
+  offsetParent: FakeEl | null = null;
 
   constructor(tagName: string, nodeType = ELEMENT_NODE) {
     this.tagName = tagName;
     this.nodeType = nodeType;
+  }
+
+  get attributes(): Array<{ name: string; value: string }> {
+    return [...this.attrs].map(([name, value]) => ({ name, value }));
   }
 
   get classList() {
@@ -146,12 +152,30 @@ class FakeEl {
     return this.parent;
   }
 
+  get parentNode(): FakeEl | null {
+    return this.parent;
+  }
+
+  get ownerDocument(): unknown {
+    return (globalThis as unknown as { document: unknown }).document;
+  }
+
   append(...incoming: Array<FakeEl | string>): void {
     for (const raw of incoming) {
       const node = typeof raw === "string" ? textNode(raw) : raw;
       node.parent = this;
       this.nodes.push(node);
     }
+  }
+
+  appendChild(node: FakeEl): FakeEl {
+    this.append(node);
+    return node;
+  }
+
+  removeChild(node: FakeEl): FakeEl {
+    node.remove();
+    return node;
   }
 
   prepend(...incoming: Array<FakeEl | string>): void {
@@ -338,8 +362,11 @@ function installFakeDom(): void {
     addEventListener: (): void => {},
     removeEventListener: (): void => {},
     body: new FakeEl("body"),
+    head: new FakeEl("head"),
     documentElement: new FakeEl("html"),
   };
+  (host.document as { defaultView?: unknown }).defaultView = host;
+  host.getComputedStyle = () => ({ getPropertyValue: () => "" });
   host.Node = FakeEl;
   host.getSelection = () => ({
     rangeCount: 0,
@@ -348,8 +375,11 @@ function installFakeDom(): void {
     addRange: (): void => {},
     toString: (): string => "",
   });
-  host.requestAnimationFrame = (cb: (t: number) => void): number =>
-    setTimeout(() => cb(Date.now()), 0) as unknown as number;
+  (host.document as { getSelection?: () => unknown }).getSelection = () => (host.getSelection as () => unknown)();
+  (host.document as { hasFocus?: () => boolean }).hasFocus = () => false;
+  (host.document as { activeElement?: unknown }).activeElement = null;
+  host.requestAnimationFrame = (): number => 0;
+  host.cancelAnimationFrame = (): void => {};
   // composer 的兜底归一化观察器：本用例不驱动 composer 变更，观察器从不回调。
   host.MutationObserver = class {
     observe(): void {}

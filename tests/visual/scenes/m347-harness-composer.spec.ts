@@ -351,7 +351,7 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   await expect(sendBtn).toHaveAttribute("aria-label", "发送");
   await expect(sendGo).toBeVisible();
   await expect(sendStop).toBeHidden();
-  await page.locator(".lumir-hp-composer").fill("这段会触发压缩吗");
+  await page.locator(".lumir-hp-composer .cm-content").fill("这段会触发压缩吗");
   await sendBtn.click(); // 空闲相位 = 发送
   await expect(sendBtn).toHaveAttribute("aria-label", "停止");
   await expect(sendGo).toBeHidden();
@@ -587,7 +587,7 @@ test("ctx hover 泡边界收编：窄面板下完整可见（三主题），不�
   // 开轮窗口，M374 轮次闸门同第一个用例）。**读数刻意取个位百分比**（6% · 5%）：读数件宽必须
   // 与零态「0% · 0%」同宽（47.6px）——本测的窄板复现裕量只有约 8px，双位数读数会把
   // unclamped 左缘推出面板左缘、让复现条件失稳（M526 探针实测：61.2px 宽即断言空转）。
-  await page.locator(".lumir-hp-composer").fill("浮层几何探针");
+  await page.locator(".lumir-hp-composer .cm-content").fill("浮层几何探针");
   await page.locator(".lumir-hp-send").click();
   await page.evaluate(() =>
     (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({
@@ -759,7 +759,7 @@ test("字号是**一套设置**：⌘+/-/0 让编辑器与 harness 面板一起�
   await expect.poll(composerFontPx).toBe(13);
 
   // 焦点在编辑器：结果与焦点无关（M378 的焦点路由已废止）——两个面照样一起变。
-  await page.locator(".cm-content").click();
+  await page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content').click();
   await page.keyboard.press("Meta+=");
   await expect.poll(editorFontPx).toBe(17);
   await expect.poll(composerFontPx).toBeGreaterThan(14);

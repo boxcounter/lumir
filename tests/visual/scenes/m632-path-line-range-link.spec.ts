@@ -91,7 +91,7 @@ async function openPanel(
   await stubHarness(page);
   await page.goto("/");
   await page.locator('.ft-row[title="harness-note.md"]').click();
-  await expect(page.locator(".cm-content")).toContainText("行范围验收笔记");
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("行范围验收笔记");
   await page.locator(".lumir-hp-toggle").click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
 }
@@ -135,7 +135,7 @@ function editorFacts(page: Page): Promise<{
   scrollTop: number;
 }> {
   return page.evaluate(() => {
-    const host = document.querySelector(".cm-content") as unknown as {
+    const host = document.querySelector('.editor-pane:not(:has(.lumir-harness)) .cm-content') as unknown as {
       cmTile: {
         root: {
           view: {
@@ -195,7 +195,7 @@ test("点行范围链接：滚到起始行、闭区间行装饰在场；不选�
   // 对照：先点畸形链接（同一路径、无行落点）——文件打开在篇首，第 120 行不该被滚进视口，
   // 也不该有任何行装饰（没有行号后缀 ⇒ 没有高亮范围）。
   await pathLink(page, "range-note\\.md").click();
-  await expect(page.locator(".cm-content")).toContainText("行范围目标");
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("行范围目标");
   await expect(page.locator(".tab-name")).toHaveText(["harness-note.md", "range-note.md"]);
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("range-note.md");
   expect(await highlightedTexts(page), "畸形形态不产高亮").toEqual([]);
@@ -270,12 +270,12 @@ test("切标签即清除行高亮（切回不残留）", async ({ page }) => {
 
   await page.waitForFunction(
     (target) =>
-      (document.querySelector(".cm-content")?.textContent ?? "").includes(target) &&
+      (document.querySelector('.editor-pane:not(:has(.lumir-harness)) .cm-content')?.textContent ?? "").includes(target) &&
       document.querySelectorAll(".cm-line.cm-line-highlight").length === 0,
     TARGET_LINE_TEXT,
     { timeout: 800, polling: 20 },
   );
-  await expect(page.locator(".cm-content")).toContainText(TARGET_LINE_TEXT);
+  await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText(TARGET_LINE_TEXT);
 });
 
 test("约 1.4s 后自动消退；重复点击重置消退计时", async ({ page }) => {
@@ -304,7 +304,7 @@ test("约 1.4s 后自动消退；重复点击重置消退计时", async ({ page 
 for (const theme of ["light", "dark", "eink"] as const) {
   test(`主题 ${theme}：行高亮底色非透明且区别于普通行`, async ({ page }) => {
     await openPanel(page, { theme });
-    await expect(page.locator(".cm-content")).toContainText("行范围验收笔记");
+    await expect(page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content')).toContainText("行范围验收笔记");
     await expect
       .poll(() => page.evaluate(() => document.documentElement.dataset.theme))
       .toBe(theme);

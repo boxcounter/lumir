@@ -163,7 +163,7 @@ async function probeColor(page: Page, prop: string, token: string): Promise<stri
 
 /** 打开面板 + 发一条消息 + 灌出 ≥3 屏内容（跟随态，停在底部）。 */
 async function primeTranscript(page: Page): Promise<void> {
-  await page.locator(".lumir-hp-composer").fill("先灌一段长内容");
+  await page.locator(".lumir-hp-composer .cm-content").fill("先灌一段长内容");
   await page.locator(".lumir-hp-send").click();
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
   for (let i = 0; i < 8; i += 1) await injectText(page, i * 12, 12);
@@ -233,7 +233,7 @@ test("跟随 / 脱离 / 回底 / 白名单 / 非用户事件 / 不足一屏（de
   await wheelOverTranscript(page, -300);
   m = await readScroll(page);
   expect(m.buttonHidden, "发送前先处于脱离态（本步的前提）").toBe(false);
-  await page.locator(".lumir-hp-composer").fill("白名单动作");
+  await page.locator(".lumir-hp-composer .cm-content").fill("白名单动作");
   await page.locator(".lumir-hp-send").click();
   await frames(page, 3);
   m = await readScroll(page);

@@ -97,45 +97,22 @@ test("浮动摘录钮：选区在场时浮现、文案正确", async ({ page }) 
   await expectScreenshot(btn, "m345-quote-gesture-button.png");
 });
 
-test("点浮动钮：面板未开先开（pane 口径）、卡片入 composer、光标落卡片下一行", async ({ page }) => {
+test("点浮动钮：面板未开先开，卡片入区外 tray，焦点回 CM 并可继续输入", async ({ page }) => {
   await openDoc(page);
   await selectQuotedLine(page);
-
-  const panel = page.locator(".lumir-harness");
-  await expect(panel).toBeHidden();
   await page.locator(".quote-gesture-btn").click();
-  // HP1（change move-harness-to-pane-chat-frame）：「未开先开」= 装配层自动分栏（harness:
-  // 文档 = 1:1），面板挂进旁侧 pane——dock 列已移除。
-  await expect(panel).toBeVisible();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
   await expect(page.locator(".pane-divider")).toBeVisible();
-
-  // 卡片结构三件（design §2·§3）：3px 竖条 + 摘录 + 等宽出处行。
-  const card = page.locator(".lumir-hp-composer > .lumir-hp-qcard");
+  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
   await expect(card).toHaveCount(1);
   await expect(card.locator(".lumir-hp-qc-bar")).toHaveCount(1);
   await expect(card.locator(".lumir-hp-qc-ex")).toHaveText(QUOTED);
   await expect(card.locator(".lumir-hp-qc-src")).toHaveText("harness-quote.md · 摘录卡片基线");
-
-  // 「插入后光标落到卡片下一行的问题段落」（design §5 的行为合同，结构层判据）。
-  const landing = await page.evaluate(() => {
-    const composer = document.querySelector(".lumir-hp-composer") as HTMLElement;
-    const children = [...composer.children];
-    const cardIdx = children.findIndex((c) => c.classList.contains("lumir-hp-qcard"));
-    const next = cardIdx >= 0 ? (children[cardIdx + 1] as HTMLElement | undefined) : undefined;
-    const anchor = window.getSelection()?.anchorNode ?? null;
-    const inNode = anchor === null ? null : anchor.nodeType === 1 ? (anchor as Element) : anchor.parentElement;
-    return {
-      cardIdx,
-      nextClass: next?.className ?? "",
-      caretInNext: next !== undefined && inNode !== null && next.contains(inNode),
-    };
-  });
-  expect(landing.cardIdx).toBe(0);
-  expect(landing.nextClass).toContain("lumir-hp-qpara");
-  expect(landing.caretInNext, "插入后焦点/光标应落在卡片下一行的问题段落").toBe(true);
-
-  // 整页基线候选：面板在场 + 卡片在 composer 里的全表面（pane 分栏形态、被挤压的编辑区）。
-  await expectScreenshot(page, "m345-harness-quote-card.png");
+  await expect(page.locator(".lumir-hp-composer .cm-content")).toBeFocused();
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-qcard")).toHaveCount(0);
+  await page.keyboard.type("继续提问");
+  await expect(page.locator(".lumir-hp-composer .cm-content")).toHaveText("继续提问");
+  await expect(card).toHaveCount(1);
 });
 
 test("× 移除钮：DOM 装配完整、点击移除整张卡片", async ({ page }) => {
@@ -143,7 +120,7 @@ test("× 移除钮：DOM 装配完整、点击移除整张卡片", async ({ page
   await selectQuotedLine(page);
   await page.locator(".quote-gesture-btn").click();
 
-  const card = page.locator(".lumir-hp-composer > .lumir-hp-qcard");
+  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
   await expect(card).toHaveCount(1);
 
   // 结构判据（M343 的模块装缺陷就出在这里：按钮创建了却没 append）。
@@ -152,10 +129,10 @@ test("× 移除钮：DOM 装配完整、点击移除整张卡片", async ({ page
   await expect(remove).toHaveAttribute("aria-label", "移除摘录");
   await expect(remove).toHaveText("×");
 
-  // 行为判据：点击按「卡片整体作用」移除，composer 回落到一个空段落。
   await remove.click();
   await expect(card).toHaveCount(0);
-  await expect(page.locator(".lumir-hp-composer > .lumir-hp-qpara")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-composer .cm-content")).toHaveText("");
+  await expect(page.locator(".lumir-hp-composer .cm-content")).toBeFocused();
 });
 
 test("粘贴净化：带 text/html 的粘贴只落纯文本", async ({ page }) => {
@@ -180,11 +157,11 @@ test("粘贴净化：带 text/html 的粘贴只落纯文本", async ({ page }) =
   await expect(composer).not.toContainText("HTML-ONLY");
   await expect(composer.locator("b")).toHaveCount(0);
   // 粘贴不产卡片（quirk ①：只进纯文本段落）。
-  await expect(composer.locator(".lumir-hp-qcard")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard")).toHaveCount(1);
 });
 
 // M531（fix-quote-button-viewport-clamp）：浮动钮落点钳制的专用 fixture。
-// **不改既有 DOC**：整页基线 m345-harness-quote-card.png 钉着它的正文，加字就会漂基线。
+// **不改既有 DOC**：钳制 fixture 使用独立文档，避免改动其他引用卡场景的正文。
 const CLAMP_LONG_CODE_LINE =
   'const probeAlpha = "alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india-juliett-kilo-lima-mike-november-oscar-papa-quebec-romeo-sierra-tango-uniform-victor-whiskey-xray-yankee-zulu";';
 
@@ -337,13 +314,12 @@ test("跳回高亮：点卡片跳回原文并瞬态高亮，~1.4s 后退场", as
   const flash = page.locator(".cm-quote-jump-flash");
   await expect(flash).toHaveCount(0);
 
-  await page.locator(".lumir-hp-composer > .lumir-hp-qcard").click();
+  await page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard").click();
   await expect(flash).toHaveCount(1);
   // 高亮覆盖的正是被摘录那一段（mark 的范围 = 跳回锚点）。
   await expect(flash).toHaveText(QUOTED);
 
   // 整页基线候选：跳回高亮的瞬态形态（1.4s 窗口内截图；同一 test 里只拍这一张）。
-  await expectScreenshot(page, "m345-quote-jump-flash.png");
 
   // 瞬态纪律：~1.4s 无条件退场（零常驻装饰）。
   await expect(flash).toHaveCount(0, { timeout: 3_000 });

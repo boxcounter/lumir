@@ -101,7 +101,7 @@ async function openPane(page: Page): Promise<void> {
 /** 打开轮次闸门：`tool_call` 事件属于被闸门管控的事件（未发送时一律丢弃），
  *  直接 fire 会被静默吞掉——测试 tool_call 路径必须先真实发送一条消息。 */
 async function startTurn(page: Page): Promise<void> {
-  await page.locator(".lumir-hp-composer").fill("测试提问");
+  await page.locator(".lumir-hp-composer .cm-content").fill("测试提问");
   await page.locator(".lumir-hp-send").click();
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
 }

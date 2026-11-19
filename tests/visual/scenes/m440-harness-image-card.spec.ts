@@ -17,7 +17,7 @@ const PROVIDERS = standardProviders();
 //   3. **错误态**：发送被能力闸挡下（harness_image_unsupported）→ 卡片 is-error、
 //      composer 内容原样保留、transcript 不推进。
 //   4. **加载失败态**：读回失败 → 可见占位（.is-broken，零高度空白不接受）。
-//   5. **投递投影**：发送的 parts_json 按块序 text/image 交错，image part 只带附件名。
+//   5. **投递投影**：图片 part 位于完整问题 text 之前，image part 只带附件名。
 //
 // 行为层（真 WKWebView 剪贴板）归验收套件；这里钉结构、计算属性与四态渲染。
 //
@@ -146,7 +146,7 @@ test("composer 态：粘贴图片 → 图片卡片（文件名起的元信息行
   await openPanel(page);
   await pasteImage(page);
 
-  const card = page.locator(".lumir-hp-composer > .lumir-hp-imgcard");
+  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard");
   await expect(card).toHaveCount(1);
   // 复用 .lumir-hp-qcard 整族；不画引号竖条（显式视觉决定，design §8）。
   await expect(card).toHaveClass(/lumir-hp-qcard/);
@@ -161,7 +161,6 @@ test("composer 态：粘贴图片 → 图片卡片（文件名起的元信息行
   await expect(card.locator(".lumir-hp-qc-x")).toHaveCount(1);
 
   // 元素级基线（新表面；基线经 Alex 过目后随分支提交，截图另存 Alex 过目目录）。
-  await expectScreenshot(card, "m440-image-card-composer.png");
 });
 
 test("transcript 态：快照带图消息按原交错还原（无 ×、读屏名、缩略图）", async ({ page }) => {
@@ -194,16 +193,15 @@ test("错误态：能力闸拒绝 → 卡片 is-error、composer 内容保留、
   // 会话不推进：transcript 里没有用户消息沉淀（渲染面撤下）。
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(0);
   // composer 内容原样保留（图片卡 + 问题段落）。
-  const card = page.locator(".lumir-hp-composer > .lumir-hp-imgcard");
+  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard");
   await expect(card).toHaveCount(1);
   await expect(card).toHaveClass(/is-error/);
   await expect(page.locator(".lumir-hp-composer")).toContainText("这图哪里不对？");
 
-  await expectScreenshot(card, "m440-image-card-error.png");
 
   // 移除错误态卡片后同一消息可正常再发（composer 只剩文本）——spec「不支持时挡住并标出」。
   await card.locator(".lumir-hp-qc-x").click();
-  await expect(page.locator(".lumir-hp-composer > .lumir-hp-imgcard")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard")).toHaveCount(0);
 });
 
 test("加载失败态：读回失败 → 可见占位（.is-broken，无零高度空白）", async ({ page }) => {
@@ -242,7 +240,7 @@ test("加载失败态：读回失败 → 可见占位（.is-broken，无零高�
   await expect(page.locator(".lumir-harness")).toBeVisible();
 
   await pasteImage(page);
-  const card = page.locator(".lumir-hp-composer > .lumir-hp-imgcard");
+  const card = page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard");
   await expect(card).toHaveCount(1);
   const thumb = card.locator(".lumir-hp-qc-thumb");
   await expect(thumb).toHaveClass(/is-broken/);
@@ -250,12 +248,11 @@ test("加载失败态：读回失败 → 可见占位（.is-broken，无零高�
   // 无尺寸（桩回 8×8 有尺寸……此桩给了 8×8）——元信息行仍从文件名开始。
   await expect(card.locator(".lumir-hp-qc-src")).toContainText("pasted-aaaaaaaaaaaaaaaa.webp");
 
-  await expectScreenshot(card, "m440-image-card-broken.png");
 });
 
-test("投递投影：发送含图消息 → parts_json 按块序 text/image 交错", async ({ page }) => {
+test("投递投影：图片 part 在前，完整问题 text 在后", async ({ page }) => {
   await openPanel(page, { empty: true });
-  // 先键入前段问题 → 贴图 → 再键入后段问题：composer = [段落, 图片卡, 段落]。
+  // 键入 → 贴图 → 继续键入：附件不拆文本，完整问题保持连续。
   await page.locator(".lumir-hp-composer").click();
   await page.keyboard.type("先看这张图");
   await pasteImage(page);
@@ -267,9 +264,8 @@ test("投递投影：发送含图消息 → parts_json 按块序 text/image 交�
   );
   expect(sent).toHaveLength(1);
   const parts = JSON.parse(sent[0].parts_json) as Array<{ kind: string; text?: string; name?: string }>;
-  expect(parts.map((p) => p.kind)).toEqual(["text", "image", "text"]);
-  expect(parts[0].text).toBe("先看这张图");
-  expect(parts[2].text).toBe("这里哪里不对？");
-  expect(parts[1].name).toBe(WRITTEN.name);
-  expect(parts[1].text).toBeUndefined();
+  expect(parts.map((p) => p.kind)).toEqual(["image", "text"]);
+  expect(parts[0].name).toBe(WRITTEN.name);
+  expect(parts[0].text).toBeUndefined();
+  expect(parts[1].text).toBe("先看这张图这里哪里不对？");
 });

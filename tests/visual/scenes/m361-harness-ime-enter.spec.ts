@@ -67,67 +67,40 @@ async function stubHarnessIme(page: Page): Promise<void> {
   });
 }
 
-test("IME 组合期 Enter：WebKit 序确认拍不发送 / Chromium 序不残留窗口 / 正常 Enter 发送 / ⇧Enter 换行", async ({
-  page,
-}) => {
+test("IME 确认门：两种事件序不发送，窗口外 Enter 发送，⇧Enter 只换行", async ({ page }) => {
   await stubTauri(page, VAULT);
   await stubHarnessIme(page);
   await page.goto("/");
   await page.locator('.ft-row[title="harness-note.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("第一段");
   await page.locator(".lumir-hp-toggle").click();
-  await expect(page.locator(".lumir-harness")).toBeVisible();
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  await composer.click();
+  const sent = () => page.evaluate(() => (window as unknown as { __sentMessages: unknown[] }).__sentMessages);
 
-  const composer = page.locator(".lumir-hp-composer");
-  const sent = () =>
-    page.evaluate(() => (window as unknown as { __sentMessages: unknown[] }).__sentMessages);
-
-  // ── WebKit 序（WKWebView 实测口径）：compositionend 先于确认 keydown，且
-  //    keydown.isComposing 已是 false——这正是把「选候选」误当发送的缺陷现场。 ──
   await composer.evaluate((el) => {
     el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
     el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
-    const para = el.querySelector(".lumir-hp-qpara");
-    if (para !== null) para.textContent = "你好"; // 候选已落字（insertFromComposition 的产物）
-    el.dispatchEvent(new InputEvent("input", { bubbles: true }));
-    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   });
-  expect(await sent(), "确认拍不得发送").toEqual([]);
-  await expect(composer, "候选文字留在 composer").toContainText("你好");
-  await expect(composer.locator(".lumir-hp-qpara"), "确认拍不留新段落").toHaveCount(1);
-
-  // ── Chromium 序：确认拍 keydown 带 isComposing=true 落在组合期内；其后 compositionend
-  //    不得开确认窗（否则下一拍真发送被误吞）。 ──
+  await page.keyboard.insertText("你好");
   await composer.evaluate((el) => {
-    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
-    el.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, isComposing: true }),
-    );
-    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   });
   expect(await sent()).toEqual([]);
+  await expect(composer).toHaveText("你好");
 
-  // ── 下一拍 Enter = 真发送（两条事件序都不许残留确认窗）。 ──
   await composer.evaluate((el) => {
-    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, isComposing: true }));
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
   });
+  await page.keyboard.press("Enter");
   expect(await sent()).toEqual([{ parts_json: '[{"kind":"text","text":"你好"}]' }]);
-  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
-  await expect(composer, "发送后 composer 归零").not.toContainText("你好");
+  await expect(composer).toHaveText("");
 
-  // ── ⇧Enter = 换行不发送（模型层软换行，合同 docs/specs/harness-composer.md 的 HC1：光标在
-  //    段末时为「新起一行」落一个**新的空段落块**——不是往原段落里追加尾随 \n，尾随换行不产生
-  //    行盒）。M419（change harness-composer-newline-fixes）改的就是这条落法，本用例的旧期望
-  //    （单 qpara 文本 "x\n"）随之作废。 ──
-  await composer.fill("x");
-  await composer.evaluate((el) => {
-    el.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }),
-    );
-  });
-  expect(await sent(), "⇧Enter 不发送").toEqual([{ parts_json: '[{"kind":"text","text":"你好"}]' }]);
-  const paras = composer.locator(".lumir-hp-qpara");
-  await expect(paras, "⇧Enter 在段末落一个新空段落块（HC1）").toHaveCount(2);
-  expect(await paras.nth(0).evaluate((el) => el.textContent), "原段落内容不动").toBe("x");
-  expect(await paras.nth(1).evaluate((el) => el.textContent), "新段落为空（供光标承接）").toBe("");
+  await page.keyboard.type("x");
+  await page.keyboard.press("Shift+Enter");
+  expect(await sent()).toHaveLength(1);
+  await expect(composer).toHaveText("x\n");
+  await expect(composer.locator(".cm-line")).toHaveCount(2);
 });

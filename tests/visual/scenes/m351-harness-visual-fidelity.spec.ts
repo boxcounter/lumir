@@ -114,7 +114,7 @@ test("消息区：who/when meta 行 + 用户气泡计算样式 + agent 平铺", 
   await openPanel(page);
 
   // ── 发送一条 → 用户消息：who 行（你 + 相对时间）+ body 气泡 ──
-  await page.locator(".lumir-hp-composer").fill("这段怎么用？");
+  await page.locator(".lumir-hp-composer .cm-content").fill("这段怎么用？");
   await page.locator(".lumir-hp-send").click();
   const userMsg = page.locator(".lumir-hp-msg-user");
   await expect(userMsg).toHaveCount(1);
@@ -296,7 +296,7 @@ test("composer：圆角卡片容器 + focus-within 强调框 + 图标发送钮",
   // busy 态脉冲环（M356 回继承原型 h-sendpulse）：is-busy 挂 box-shadow 呼吸动画；
   // 环色读计算态 box-shadow（动画全周期颜色恒定为 tint，只有 spread 在动）——
   // 必须是中性灰族（原型浅主题 accent-tint），不是产品蓝 --accent-tint（#eef1fb）。
-  await page.locator(".lumir-hp-composer").fill("触发 busy 态");
+  await page.locator(".lumir-hp-composer .cm-content").fill("触发 busy 态");
   await page.locator(".lumir-hp-send").click();
   await expect(page.locator(".lumir-hp-send")).toHaveClass(/is-busy/);
   const busyStyle = await page.locator(".lumir-hp-send").evaluate((el) => {
@@ -324,17 +324,17 @@ test("发送后焦点回 composer：点击发送钮 → 回答到达后焦点在
   await fire(page, { type: "text_chunk", text: "CARET-ANSWER-01" });
   await fire(page, { type: "done" });
   await expect(page.locator(".lumir-hp-msg-assistant")).toContainText("CARET-ANSWER-01");
-  await expect(composer).toBeFocused();
+  await expect(composer.locator(".cm-content")).toBeFocused();
 
   // 续打字双锁：probe 进 composer，且文档逐字节未变（焦点真的不在编辑器）
-  const before = await page.locator(".cm-content").evaluate(
+  const before = await page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content').evaluate(
     (el) =>
       (el as unknown as { cmTile: { root: { view: { state: { doc: { toString(): string } } } } } }).cmTile.root.view
         .state.doc.toString(),
   );
   await page.keyboard.type("caretback2");
   await expect(composer).toContainText("caretback2");
-  const after = await page.locator(".cm-content").evaluate(
+  const after = await page.locator('.editor-pane:not(:has(.lumir-harness)) .cm-content').evaluate(
     (el) =>
       (el as unknown as { cmTile: { root: { view: { state: { doc: { toString(): string } } } } } }).cmTile.root.view
         .state.doc.toString(),
@@ -349,18 +349,18 @@ test("composer 空态：与首行输入同高（2.1）+ 占位压首行行位（
   // 一行，空态比输入态高出一行、光标掉到占位下方的第二行（Alex 2026-10-07 2.1/2.2）。
   const before = await page.locator(".lumir-hp-composer").evaluate((el) => {
     const s = getComputedStyle(el, "::before");
-    const para = el.querySelector(".lumir-hp-qpara") as HTMLElement | null;
+    const lineHost = el.querySelector(".cm-editor") as HTMLElement | null;
     return {
       position: s.position,
       top: s.top,
       left: s.left,
       content: s.content,
       minHeight: getComputedStyle(el).minHeight,
-      paraOffsetTop: para?.offsetTop ?? null, // 首段顶 = 首行行位（含 padding-top）
+      lineOffsetTop: lineHost?.offsetTop ?? null, // CM 首行宿主顶 = 首行行位（含 padding-top）
     };
   });
   expect(before.position).toBe("absolute");
-  expect(parseFloat(before.top)).toBeCloseTo(before.paraOffsetTop ?? -1, 0); // 占位顶 == 首行行位
+  expect(parseFloat(before.top)).toBeCloseTo(before.lineOffsetTop ?? -1, 0); // 占位顶 == 首行行位
   expect(before.left).toBe("8px");
   expect(before.content).not.toBe("none"); // 空态占位在场
   expect(before.minHeight).toBe("44px"); // 原型 .h-box textarea 的 44px 输入区
@@ -368,10 +368,12 @@ test("composer 空态：与首行输入同高（2.1）+ 占位压首行行位（
   // 2.1：首行输入后 box 高度不跳变（±0.5px；旧实现空态高出约一行 19.5px）。
   const heightOf = async () => (await page.locator(".lumir-hp-composer-box").boundingBox())?.height ?? 0;
   const emptyH = await heightOf();
-  await page.locator(".lumir-hp-composer").fill("这段怎么用？");
+  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.keyboard.type("这段怎么用？");
   const filledH = await heightOf();
   expect(Math.abs(filledH - emptyH)).toBeLessThanOrEqual(0.5);
   // 输入态占位退场（is-empty 摘除）。
+  await expect(page.locator(".lumir-hp-composer")).not.toHaveClass(/is-empty/);
   const afterFill = await page.locator(".lumir-hp-composer").evaluate((el) => {
     const s = getComputedStyle(el, "::before");
     return { content: s.content, isEmpty: el.classList.contains("is-empty") };
@@ -384,7 +386,7 @@ test("工具清单：running/done 行 + ≥2 行折叠摘要可回看", async ({
   await openPanel(page);
 
   // ── 轮次一（单工具）：started = running 脉冲行 → done 翻 ✓ 行；终态后单行保持展开 ──
-  await page.locator(".lumir-hp-composer").fill("读一下笔记");
+  await page.locator(".lumir-hp-composer .cm-content").fill("读一下笔记");
   await page.locator(".lumir-hp-send").click();
   await fire(page, { type: "tool_call", name: "vault_read", status: "started", summary: '{"path":"harness-note.md"}' });
   const tools = page.locator(".lumir-hp-msg-assistant .lumir-hp-tools");
@@ -409,7 +411,7 @@ test("工具清单：running/done 行 + ≥2 行折叠摘要可回看", async ({
   await expect(row).toBeVisible();
 
   // ── 轮次二（两个工具）：终态折叠为摘要钮；点击展开回看、再点收回 ──
-  await page.locator(".lumir-hp-composer").fill("再搜一遍");
+  await page.locator(".lumir-hp-composer .cm-content").fill("再搜一遍");
   await page.locator(".lumir-hp-send").click();
   await fire(page, { type: "tool_call", name: "vault_search", status: "started", summary: '{"query":"笔记"}' });
   await fire(page, { type: "tool_call", name: "vault_search", status: "done", summary: "成功" });

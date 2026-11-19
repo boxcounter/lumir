@@ -16,8 +16,8 @@
 // 由后端按当前 scope 解析（前端不持有 id）。两者的键、载荷与 flush 语义都不同，复用会把两套
 // 语义糊在一处（REVIEW.md 「同一语义两处真源」条：同一语义不造两处真源——反过来，不同语义也不该塞进一处）。
 
-import type { ComposerBlock, DraftCaret } from "./quote-card";
-import { parseComposerDraft, serializeComposerDraft } from "./quote-card";
+import type { ComposerAttachment } from "./quote-card";
+import { readComposerDraft, serializeComposerDraft } from "./quote-card";
 
 /**
  * 落盘防抖窗口（ms）：编辑停顿后合并到这一档落盘一次。与标签会话的 `SESSION_WRITE_DEBOUNCE_MS`
@@ -41,7 +41,7 @@ export interface HarnessDraftStoreDeps {
 
 export interface HarnessDraftStore {
   /** composer 内容变化后调用（防抖落盘；与「上次已落盘的内容」相同则不排期）。 */
-  schedule(blocks: readonly ComposerBlock[], caret: DraftCaret | null): void;
+  schedule(text: string, caret: number | null, cards: readonly ComposerAttachment[]): void;
   /** 把待写内容立刻落盘（切 vault 前、面板关闭、窗口失焦 / 退出）。无待写则不写盘。 */
   flush(): Promise<void>;
   /** 丢弃待写内容（装载新 vault 时：旧 vault 的待写已由该次切换前的 flush 写走）。 */
@@ -52,10 +52,11 @@ export interface HarnessDraftStore {
   clear(): Promise<void>;
 }
 
-/** [`HarnessDraftStore.load`] 的返回：块序列 + 恢复用的光标落位。 */
+/** [`HarnessDraftStore.load`] 的返回：v2 文本、附件与全文光标。 */
 export interface ComposerDraftLoaded {
-  blocks: ComposerBlock[];
-  caret: DraftCaret | null;
+  text: string;
+  caret: number | null;
+  cards: ComposerAttachment[];
 }
 
 export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDraftStore {
@@ -73,6 +74,7 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
   /** 装载世代：读盘是异步的，读盘途中再次装载 vault 时本次结果整体作废（同阅读位置的让位
    *  规则）。它守的是**store 内部状态**；装配层渲染侧另有一道世代（面板自己的 draftSeq）。 */
   let loadGen = 0;
+  let editGeneration = 0;
 
   function cancelTimer(): void {
     if (timer === null) return;
@@ -97,9 +99,11 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
   }
 
   /** 写盘：失败只降级（warn）+ 把「这份内容还没落盘」留在待写，**MUST NOT** 谎报已保存
-   *  （`written` 不动，下一次比对照旧认为「盘上没有这份内容」）。两条回填 / 记账都带世代守卫。 */
+   *  （`written` 不动，下一次比对照旧认为「盘上没有这份内容」）。成功记账守作废世代；
+   *  失败回填还必须持有入链时的编辑世代，避免覆盖已入链的新编辑。 */
   function write(draftJson: string): Promise<void> {
     const gen = epoch;
+    const writeEditGeneration = editGeneration;
     return enqueue(async () => {
       try {
         await deps.putDraft(draftJson);
@@ -108,16 +112,17 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
         // 不写」吞掉（盘上其实没有那份）。文件本身由串行链上的那次删除收尾。
         if (gen === epoch) written = draftJson;
       } catch (e) {
-        // 回填**只在期间没有更新的编辑**时发生（`??=`）：在途写失败 MUST NOT 把用户刚打的新
-        // 内容覆盖回旧内容（review r1 的 P2-1）——新内容自带防抖定时器，会自己写走。
-        if (gen === epoch) pending ??= draftJson;
+        // 只有期间没有更新编辑时，这份失败写仍拥有待写槽。新编辑即使已 flush、暂时清空 pending，
+        // 也已递增 editGeneration；旧写不得借 `??=` 回填并在下一次 flush 覆盖新内容。
+        if (gen === epoch && editGeneration === writeEditGeneration) pending ??= draftJson;
         deps.warn(e);
       }
     });
   }
 
-  function schedule(blocks: readonly ComposerBlock[], caret: DraftCaret | null): void {
-    const draftJson = serializeComposerDraft(blocks, caret);
+  function schedule(text: string, caret: number | null, cards: readonly ComposerAttachment[]): void {
+    editGeneration += 1;
+    const draftJson = serializeComposerDraft(text, caret, cards);
     // 内容没变就不排期：每次击键都重排定时器等于「一直在防抖窗口里」——用户连续编辑时永远
     // 不落盘。光标变化也算变更（落位要跟着走），但它不与内容分开排期：同一次 schedule 里带上。
     if (draftJson === (pending ?? written)) return;
@@ -151,6 +156,8 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
     // 留着就会把旧 vault 的草稿写进新 vault 的文件。丢弃——它已由切换前的 flush 写走。
     discard();
     const gen = (loadGen += 1);
+    const loadEpoch = epoch;
+    const loadEditGeneration = editGeneration;
     let text: string | null = null;
     try {
       text = await deps.getDraft();
@@ -159,18 +166,22 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
     }
     if (gen !== loadGen) return null; // 读盘途中又装载了一次：本次结果作废
     if (text === null) {
-      written = null;
+      if (epoch === loadEpoch && editGeneration === loadEditGeneration) written = null;
       return null;
     }
-    const draft = parseComposerDraft(text);
-    if (draft === null) {
-      written = null; // 损坏 / 版本不符：盘上那份不可用，下一次落盘直接覆盖它
+    const parsed = readComposerDraft(text);
+    if (parsed === null) {
+      if (epoch === loadEpoch && editGeneration === loadEditGeneration) written = null;
       return null;
     }
-    // 比对基准用**本实现的规范序列化**（不是文件原文）：手改过格式 / 换过键序的文件在
-    // 下一次编辑时被规范形态覆写一次，此后「无变更不写」照常生效。
-    written = serializeComposerDraft(draft.blocks, draft.caret);
-    return { blocks: draft.blocks, caret: draft.caret };
+    const { draft, migrated } = parsed;
+    const normalized = serializeComposerDraft(draft.text, draft.caret, draft.cards);
+    // 检查与 write 入链之间没有 await：新编辑要么让旧迁移写整体跳过，要么排在已入链的写之后。
+    if (epoch === loadEpoch && editGeneration === loadEditGeneration) {
+      if (migrated) await write(normalized);
+      else written = normalized;
+    }
+    return { text: draft.text, caret: draft.caret, cards: draft.cards };
   }
 
   async function clear(): Promise<void> {

@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：240
-- 验收项（不同 item 编号）：217
-- 分档：core 29 / full 203 / bundle 4 / evidence 4（full 批 = 全部 240 个，含其余各档）
+- 场景：236
+- 验收项（不同 item 编号）：213
+- 分档：core 29 / full 199 / bundle 4 / evidence 4（full 批 = 全部 236 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -148,22 +148,19 @@
 | 124 | `124-harness-sessions-per-vault` | 会话留存按 vault 分目录：两 vault 各落各目录（目录名 = 注册表 id），浮层只见当前 vault 的会话，根下零平铺 | full |
 | 125 | `125-harness-sessions-migrate-script` | 一次性归位脚本：平铺留存按首行 vault_root 归入 vault 目录，不可归属进 _orphaned，根下零 *.jsonl，可重跑幂等 | full |
 | 126 | `126-window-geometry` | 主窗口尺寸：首启 = 工作区 90% / 二次启动按存档恢复 / 越界存档钳到工作区 / 存档损坏回落且自愈 | core |
-| 127 | `127-harness-composer-image-paste` | composer 贴图：落 harness 侧 attachments/<vault id>/（vault 零新增）+ 图片卡片 + wire 交错引用 + JSONL 无 base64 + 重启恢复 round-trip | core |
+| 127 | `127-harness-composer-image-paste` | composer 贴图：落 harness 侧 attachments/<vault id>/（vault 零新增）+ 图片卡片 + wire 附件前置 + JSONL 无 base64 + 重启恢复 round-trip | core |
 | 128 | `128-harness-image-gate` | 图片能力闸：模型未声明 vision 时含图消息发送被挡（toast + 卡片标出 + 输入区保留 + 会话不推进） | full |
 | 129 | `129-harness-image-per-vault` | 贴图附件按 vault 分置：两 vault 各贴各落（attachments/<各自稳定 id>/），互不可见、留存互不污染 | full |
 | 131 | `131-harness-cache-session` | Harness 缓存读数①：控制行显示会话累计命中率、气泡命中率行同源（单回合值 / 成因句 / 写入行不上屏）、切 vault 回来读数仍在 | full |
 | 132 | `132-harness-cache-dilution` | Harness 缓存读数②：大块摊薄回合——控制行仍显示会话累计、气泡只剩用量行与命中率行（本回合 / 成因 / 写入行不上屏） | full |
 | 133 | `133-harness-cache-write` | Harness 缓存读数③：缓存写入只进留存（本回合 + 按 0 记）、气泡不渲染写入行 | full |
-| 134 | `134-harness-composer-intercard-caret` | composer 两张相邻卡片之间：⌃B 落位 → 键入落在两卡之间 → 一次撤销回到前态（M450，HC3） | full |
-| 135 | `135-harness-draft-restore` | composer 草稿：编辑 + 贴图后重启，输入区按块序还原（图片卡片引用 round-trip、草稿无 base64） | core |
+| 135 | `135-harness-draft-restore` | composer 草稿：编辑 + 贴图后重启，输入区按 text/caret/cards 还原（图片卡片引用 round-trip、草稿无 base64） | core |
 | 136 | `136-harness-draft-vault-scope` | composer 草稿按 vault 各留各的（含切走前 flush 最后一次编辑）+ vault 零写入 | full |
 | 137 | `137-harness-draft-send-clear` | composer 草稿：发送成功后清除（草稿文件被删除、输入区清空） | full |
 | 138 | `138-harness-draft-send-reject` | composer 草稿：发送被拒（模型不支持图片）时草稿原样保留（无丢字窗口） | full |
 | 139 | `139-harness-draft-no-vault` | composer 草稿：无 vault 打开时只在内存工作（不落盘、不报错、不落兜底目录） | full |
 | 140 | `140-harness-composer-nav-move` | composer 内 Emacs 移动族落点：⌃B/⌃F/⌃A/⌃E/⌃N/⌃P（M447） | full |
-| 141 | `141-harness-composer-nav-intercard` | composer 相邻卡片：⌃B 一步跨过 → 探针落在两卡之前（M447） | full |
 | 142 | `142-harness-composer-nav-no-rerender` | composer 导航不是编辑：文本不变、不成撤销步（M447） | full |
-| 143 | `143-harness-composer-nav-delete-family` | composer 删除族按整卡：⌃H / ⌃D 删掉整张卡片（M447） | full |
 | 144 | `144-harness-composer-alt-backspace` | composer ⌥⌫ 是词级删除（面板让位生效）、裸 Backspace 不变（M447） | full |
 | 145 | `145-harness-composer-kill-yank` | kill 槽跨面共用：编辑器 ⌃K → composer ⌃Y（M447） | full |
 | 146 | `146-harness-composer-extend` | composer 扩选族：⌃⇧B 扩选后 ⌃H 删整段选区（anchor 不动，M447） | full |
@@ -175,7 +172,7 @@
 | 153 | `153-ordered-list-auto-mode` | 列表自动模式（M461）——进入列表编辑、Enter 续行 / 空项退出、裸 marker 第一次 Backspace 删除 | full |
 | 154 | `154-harness-composer-prev-line-end` | composer 末段空行行首 ⌃B 落上一行行末（M465，HC4 第 1 条） | full |
 | 155 | `155-harness-ctxpop-tokens` | Harness 气泡读数：上下文已用/上限 tokens（k/m 单位）+ 会话命中率（只百分比）；本回合 / 写入行不渲染；空会话无假读数 | full |
-| 156 | `156-harness-composer-ime-composition-freeze` | composer IME 组合期结构冻结（M527，HC5）：第二行中文组合不折回第一行——手动复验 | evidence |
+| 156 | `156-harness-composer-ime-composition-freeze` | composer IME：CM 持有组合状态，原生 WKWebView 拼音与 Backspace 人工终判 | evidence |
 | 158 | `158-ordered-list-enter-no-duplicate-marker` | 有序列表行末 Enter——单项与末项都只产生一个字面下一序号 | full |
 | 159 | `159-filetree-drag-move` | 文件树拖拽移动——拖文件入目录、拖目录入目录、撞名拒绝三态（人话提示 / 源不变 / 目标不变）、拖入自身子树与文件行均不可落、拖到 vault 名行 / 列表尾部空白落根 | core |
 | 163 | `163-harness-auto-title-first-turn`<br>`163b-harness-quote-first-title` | 会话自动命名①：首轮完成后生成标题（标题栏 + 历史浮层行名 + JSONL decision=initial）<br>会话自动命名②：quote 首条消息 → 命名事件 → 标题栏与已开历史浮层行同步改名 | full<br>full |
@@ -225,7 +222,6 @@
 | 256 | `256-settings-cancel-close-oct29` | 设置面板：底栏「取消」= 关闭（干净直关、脏草稿先确认、确认放弃后关闭且文件逐字节不变） | full |
 | 257 | `257-harness-request-tool-names` | 请求暴露面可核对：llm_request.tool_names 启用态含 task、子运行白名单 task 恒缺席 | full |
 | 258 | `258-settings-provider-delete-active-oct30` | 设置面板：删除当前使用项后保存不再被删保护挡住（替代目标落盘 / 删除到空清单清 harness.provider） | full |
-| 259 | `259-composer-select-all-highlight-oct30` | composer 全选自绘高亮：卡片与段落可见、折叠无残留、Backspace 整删（M815，HC6） | full |
 | 423 | `121-harness-message-excerpt` | harness 消息摘录 ① transcript 选区 → 浮动钮 → 卡片入 composer（+ 序列化结构 / 视口 skip / transcript 同构） | full |
 | 531 | `160-quote-button-viewport-clamp` | 摘录浮动钮落点钳制：选区并集盒越出挂载容器（长行）时钮仍在视口内 | full |
 | 552 | `161-harness-path-link`<br>`221-harness-path-line-range` | harness 输出里的 vault 路径可点击（新标签 + 行号锚定 + 卡片路径）<br>harness 输出里的行范围路径可点击（:起-止 落到起始行，畸形形态不吞半截） | full<br>full |

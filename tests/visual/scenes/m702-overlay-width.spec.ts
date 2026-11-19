@@ -337,7 +337,7 @@ test("ctxpop：长读数把宽度撑过旧定值 224；2.13× 宽 pane 装下长
   await page.goto("/");
   await openHarness(page);
   // usage 只在开轮窗口里被消费：先发一条，再注入 usage（与 m347 同一机制）。
-  await page.locator(".lumir-hp-composer").fill("宽度判据");
+  await page.locator(".lumir-hp-composer .cm-content").fill("宽度判据");
   await page.locator(".lumir-hp-send").click();
   await fireLongUsage(page);
   await hoverCtxReading(page);
@@ -373,7 +373,7 @@ test("ctxpop：2.13× + 320px pane 不越出 pane（O1 的结构前提）", asyn
   await dragDivider(page, 150);
   await expect.poll(() => paneWidth(page)).toBeLessThan(360);
   await scaleToMax(page);
-  await page.locator(".lumir-hp-composer").fill("窄 pane");
+  await page.locator(".lumir-hp-composer .cm-content").fill("窄 pane");
   await page.locator(".lumir-hp-send").click();
   await fireLongUsage(page);
   await hoverCtxReading(page);

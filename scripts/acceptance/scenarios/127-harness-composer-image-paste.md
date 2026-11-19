@@ -3,16 +3,16 @@
 # （design §9 的 ①②③④⑥）：
 #   ① 粘贴 → harness 侧落盘 attachments/<vault 稳定 id>/（vault 零新增）+ composer 图片卡片；
 #   ② 非图片粘贴逐字节回归（纯文本净化，附件目录零新增）；
-#   ③ wire 形态：llm_request 的 user content 按块序 input_text/input_image 交错，
+#   ③ wire 形态：llm_request 的 user content 全部附件在前、完整问题在后，
 #      image_url 是 lumir-attachment:// 引用；
 #   ④ JSONL 无 base64（引用进留存、展开进 wire——展开侧由 Rust 单测 expand_image_refs 钉）；
-#   ⑥ 快照恢复 round-trip：重启后经会话浮层恢复，带图消息按原交错还原。
+#   ⑥ 快照恢复 round-trip：重启后经会话浮层恢复，带图消息按留存顺序还原。
 # ⑤（能力闸）与 ⑦（两 vault 分置）各自另立场景（128 / 129）——⑤ 要 launch 期配置
 # （kimi + vision:false），⑦ 要第二个 vault。
 id: "127-harness-composer-image-paste"
 item: 127
 tier: core
-title: composer 贴图：落 harness 侧 attachments/<vault id>/（vault 零新增）+ 图片卡片 + wire 交错引用 + JSONL 无 base64 + 重启恢复 round-trip
+title: composer 贴图：落 harness 侧 attachments/<vault id>/（vault 零新增）+ 图片卡片 + wire 附件前置 + JSONL 无 base64 + 重启恢复 round-trip
 open: harness-note.md
 marker: "HNL-ALPHA"
 config:
@@ -109,19 +109,19 @@ steps:
         file: { path: ".", mtimeUnchangedSince: vault-root }
       - shot: 01-贴图后-composer卡片
 
-  - name: 焦点回 composer（值 = 卡片元信息行，可访问名随之变成它），键入图片后的问题段
+  - name: 焦点回 CM 文本面，继续键入问题（附件追加不移动 caret）
     do: clickInNode
-    target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp" }
+    target: { role: AXTextArea, name: "txtprobe-plain" }
 
   - name: 键入后段问题
     do: typeInNode
-    target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}|imgmark-b" }
+    target: { role: AXTextArea, name: "txtprobe-plain|imgmark-b" }
     text: "imgmark-b"
     expect:
       - label: 后段文本落地
         ax: { has: "imgmark-b" }
 
-  - name: 发送（composer = [txtprobe-plain 段落, 图片卡片, imgmark-b 段落]）
+  - name: 发送（tray = 图片附件；完整问题 = txtprobe-plainimgmark-b）
     do: key
     key: enter
 
@@ -133,8 +133,8 @@ steps:
     expect:
       - label: 回答渲染（含图消息真实发出、回合完成）
         ax: { has: "验收回答：图片已收到。" }
-      - label: ③ wire 交错：llm_request 的 user content 按块序 input_text / input_image / input_text
-        file: { path: "env:harness/sessions/acc-img/*.jsonl", has: '/^.*"kind":"llm_request".*"text":"txtprobe-plain.*"image_url":"lumir-attachment:\/\/pasted-[0-9a-f]{16}\.webp".*"text":"imgmark-b.*$/' }
+      - label: ③ wire 附件前置：input_image 在完整问题 input_text 之前
+        file: { path: "env:harness/sessions/acc-img/*.jsonl", has: '/^.*"kind":"llm_request".*"image_url":"lumir-attachment:\/\/pasted-[0-9a-f]{16}\.webp".*"text":"txtprobe-plainimgmark-b.*$/' }
       - label: ③ 会话侧记引用形态：image_url 是 lumir-attachment:// 内容寻址名（不是 data URL）
         file: { path: "env:harness/sessions/acc-img/*.jsonl", has: '/"image_url":"lumir-attachment:\/\/pasted-[0-9a-f]{16}\.webp"/' }
       - label: ④ JSONL 无 base64：留存里不得出现 data:image 串
@@ -202,9 +202,9 @@ steps:
     expect:
       - label: ⑥ 恢复后 transcript 重建出源消息的后段文本（只可能来自恢复出来的历史）
         ax: { has: "imgmark-b" }
-      - label: ⑥ 图片卡片按原交错还原（卡片元信息行在 transcript 里；引用名与发送前一致）
+      - label: ⑥ 图片卡片按附件前置投影还原（卡片元信息行在 transcript 里；引用名与发送前一致）
         ax: { has: "/pasted-[0-9a-f]{16}\\.webp/" }
-      - label: ⑥ 交错顺序保持：前段文本与后段文本同屏（imgmark-b 未串到图前）
+      - label: ⑥ 完整问题保持：两段输入在同一文本面，未拆段
         ax: { has: "txtprobe-plain" }
       - shot: 03-恢复后-带图消息
 
@@ -228,8 +228,8 @@ design §9 验收面的 ①②③④⑥ 四条（⑤ 能力闸在场景 128，�
    根 mtime 未推进）。
 2. **② 非图片回归**：同一条 Paste 通道先贴纯文本——净化照常、附件目录零新增；随后贴图，
    两段互不串台（文本段未被冲掉）。
-3. **③④ 投递与留存**：发送「文本 + 图 + 文本」后，JSONL 的 `llm_request` 里 user content
-   **按块序交错**（一条行内正则钉三段顺序），图片是 `lumir-attachment://` **引用**；
+3. **③④ 投递与留存**：发送「完整问题 + 图片附件」后，JSONL 的 `llm_request` 里 user content
+   **附件在前、完整问题在后**（一条行内正则钉顺序），图片是 `lumir-attachment://` **引用**；
    全文**无 `data:image`**（引用进留存、展开进 wire——wire 展开侧由 Rust 单测
    `expand_image_refs_*` 与 mock 的 `received_inputs` 钉，mock 与真 client 同一条函数）。
 4. **⑥ 恢复 round-trip**：重启（内存会话真丢弃）→ 会话浮层恢复 → transcript 重建出
@@ -241,7 +241,7 @@ design §9 验收面的 ①②③④⑥ 四条（⑤ 能力闸在场景 128，�
   富 paste 事件，原生菜单 Paste 是与真实用户同一条 WebKit 链路。菜单项按键名正则定位不锁索引。
 - **注册表 id 写死 `acc-img`**：`reconcile_vault` 按规范化路径命中预置注册项即复用它的 id，
   附件目录名因此是场景可预期的确定值（产品自生成的 `vault-<pid>-<n>` 无从预知）。
-- **③ 的交错用一条行内正则**：JSONL 一行一事件，`^…$` 行锚 + 三段按序出现，避免被文件里
+- **③ 的附件前置用一条行内正则**：JSONL 一行一事件，`^…$` 行锚 + 附件与问题按序出现，避免被文件里
   别的事件满足（套件 README「`^`/`$` 也是跨行保护」节的口径）。
 - **vault 零新增用「贴图前后对比」而不是「根下 glob 绝对 0」（M489 修正）**：`resetVault`（M489
   起收口 M296 缺口）已把根下非 `.md` 产物一并清掉，但绝对 0 仍脆弱——只要隔离链有一处漏，
@@ -255,7 +255,7 @@ design §9 验收面的 ①②③④⑥ 四条（⑤ 能力闸在场景 128，�
   可访问名只有「图片 N：name」，元信息行的 W×H 文本**不进 AX**（实测 dump 只有 `AXImage (图片 1：…)`）。
   该补记因此在真机 AX 面**原理性不可观测**，本场景改在 **composer 卡面**断言「元信息行带宽高」
   （合成图 480×320，贴图步 `waitFor` + `ax.has`），恢复路径的补记语义留在单测
-  `tests/unit/harness-composer.test.ts`。恢复面本身仍由「后段文本 + 引用名 + 交错顺序」三条覆盖。
+  `tests/unit/harness-composer.test.ts`。恢复面本身仍由「完整问题 + 引用名 + 附件前置顺序」三条覆盖。
 - **覆盖边界（如实登记）**：⑤（能力闸的 toast / 卡片错误态 / 会话不推进）在场景 128；
   ⑦（两 vault 分置与互不可见）在场景 129；wire 展开后的 data URL 形态由 Rust 单测钉
   （mock 与真 client 同一条 `expand_image_refs`），真机 JSONL 只承载引用侧。

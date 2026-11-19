@@ -1,8 +1,11 @@
 ---
+# CM6 独占组合文本、组合选区和组合中删除；产品只保留 Enter 候选确认门。
+# Chromium CDP 真引擎回归在 tests/visual/scenes/m831-harness-composer-codemirror.spec.ts。
+# 本场景保留真实 WKWebView 原始拼音动作的人工终判，不把合成事件当原生 IME。
 id: "156-harness-composer-ime-composition-freeze"
 item: 156
 tier: evidence
-title: "composer IME 组合期结构冻结（M527，HC5）：第二行中文组合不折回第一行——手动复验"
+title: "composer IME：CM 持有组合状态，原生 WKWebView 拼音与 Backspace 人工终判"
 open: harness-note.md
 marker: "HNL-ALPHA"
 config:
@@ -10,19 +13,8 @@ config:
     provider: mock
     fixture: "$fixtures/harness-mock-basic.json"
 steps:
-  # M527（Alex 2026-10-16 dogfood）：「输入一行文字，然后 Enter 新起一行后，我使用中文输入法并
-  # 选中一个候选后，输入的内容会回到第一行，原本第二行就消失了」。根因 = composerObserver 被
-  # 组合期的 childList 变化触发 → normalize 跑在组合中途：组合块含元素子节点（组合文本宿主 /
-  # 空块维持的 <br>）被判脏、折进前一段，组合锚点节点被销毁，候选落字跟着错位选区走（合同
-  # docs/specs/harness-composer.md HC5，实测依据 M527 节）。修复 = 组合窗内 normalize 冻结
-  # （composing ‖ 确认窗）+ withModel / undo / redo 组合期冻结 + compositionend 确认窗过期后
-  # 补账归一。
-  #
-  # 覆盖边界（如实登记）：**IME 组合段不可自动化**——合成键进不了 TSM（m461 探针定案），套件
-  # 无 JS 求值通道、合成不出 composition 事件序列；组合窗闸门的回归判据全部落在 DOM 替身单测
-  # （tests/unit/harness-ime-enter.test.ts 的「HC5」小节，反向验证 = 闸门改回直通后该小节全红）。
-  # 本场景的自动化段只钉「两行态在 IME 之前可达」（防修复顺带破坏正常拆行路径），候选确认路径
-  # 由下方「手动复验步骤」节执行（Alex dogfood）。
+  # 自动化段只建立两行文本；机器组合覆盖归 m831 CDP 与 m361 adapter。
+  # 原生 WKWebView 拼音仍需人工终判，且必须先建立并正观测 tray 附件。
   - name: ⌘⇧A 打开 harness pane（旁侧分栏）
     do: keys
     keys: ["cmd+shift+a"]
@@ -33,7 +25,7 @@ steps:
         ax: { has: "问点什么" }
       - shot: 00-面板就位
 
-  - name: 真实鼠标点 composer（contenteditable 的 DOM 焦点靠真实 mousedown 建立）
+  - name: 真实鼠标点 composer（CM contentDOM 的 DOM 焦点靠真实 mousedown 建立）
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
 
@@ -65,60 +57,36 @@ steps:
 
   - name: 记录自动化边界（证据型 note，不卡 PASS/FAIL）
     do: note
-    text: "自动化到此为止：IME 组合段进不了 TSM（m461 定案），候选确认路径由场景正文「手动复验步骤」执行（Alex dogfood）；组合窗闸门的机器判据在 tests/unit/harness-ime-enter.test.ts 的 HC5 小节。"
+    text: "自动化到此为止：原生 IME 组合段进不了 TSM；机器覆盖归 m831 CDP 与 m361 adapter。人工继续前须按正文先建立并正观测至少一张 tray 附件。"
     expect:
       - shot: 02-待手动复验现场
 ---
 
-# 156-harness-composer-ime-composition-freeze —— composer IME 组合期结构冻结（M527，HC5）
+# 156 —— 原生 WKWebView IME 人工终判
 
-## 本场景在验什么
+## 机器已覆盖
 
-Alex 原话：「harness composer 里，当我输入一行文字，然后 Enter 新起一行后，我使用中文输入法并
-选中一个候选后，输入的内容会回到第一行，原本第二行就消失了」。合同条款：
-docs/specs/harness-composer.md 的 **HC5 — IME 组合期结构冻结**（normalize 组合窗冻结 /
-整面重渲组合期冻结 / compositionend 补账归一三条）。本场景是 HC5 的**行为层半自动**落点：
-自动化段钉前置现场（两行态可达），候选确认段是手动复验。
+`m831-harness-composer-codemirror.spec.ts` 通过 Chromium CDP `Input.imeSetComposition` 驱动真实组合，
+覆盖已提交「我」后的单字符与多字符组合、连续 Backspace、空组合取消、候选提交、Enter 确认门、
+附件不变和附件 undo。`m361-harness-ime-enter.spec.ts` 另在 Chromium 与 WebKit 合成事件序上验证
+确认门适配器；两者都不冒充 WKWebView 原生拼音。
 
-## 断言口径与区分度
+## 手动复验步骤
 
-- 自动化段的两条 AX 断言只判「两行态在 IME 之前成立」：`node` 的 `hnl-cjk-a\n+hnl-cjk-b`
-  正观测（M765 起走解析值，与场景 117 同法：`ax.has` 的 `[\r\n]+` 在 0.6.8 的字面 `\n` 原文上
-  命中 0 次，见 README「多行 UI 文本的换行编码」条）+ 同行拼接签名串的负向断言（`ax.not`，签名串
-  本身不含换行，原文与解析值等价）。它对 HC5 的闸门**没有区分度**（英文路径不经过
-  组合窗），区分度全部在 DOM 替身单测（闸门改回直通 ⇒ HC5 小节全红的反向验证已跑，见
-  tests/unit/harness-ime-enter.test.ts 小节头注释）。
-- 自动化段的真实职责是**共改动守卫**：normalize 加了组合窗闸门后，正常拆行 / 键入路径
-  （observer → normalize 的常态 no-op）不得被破坏——若闸门误伤常态路径，本场景第一条断言红。
+前置：自动化段只建立了两行文本，尚未建立附件。
 
-## 手动复验步骤（Alex dogfood，HC5 可观测判据的真机执行）
+1. 在编辑器中选中一段文字并点击「摘录到对话」，正观测编辑区外 tray 至少有一张附件（摘录与 × 可见），记录其内容；若 tray 为空则前置 FAIL，不得继续执行“附件不变”判定。随后把 caret 放回 composer 第二行。
+2. 在第二行已提交「我」，切换中文输入法并组合 `s`。
+3. 组合中按一次 Backspace：只删除组合内容，已提交「我」和第一行必须保留，附件内容与顺序不变。
+4. 再组合多个字符并连续 Backspace：不得吃任何已提交文本；按 Esc 取消后文本回到组合前。
+5. 重新组合并提交候选：候选落在原 caret 所在第二行，第一行和附件不变；确认候选的 Enter 不发送。
+6. 确认窗外再按 Enter：才发送。投递为附件上下文在前、完整多行问题在后。
+7. 用 ⌘Z 撤销一段组合：文本按 CM history 恢复，附件不丢、不复制。
 
-前置：本场景自动化段跑完后的现场（两行探针串在位），或手动重建——composer 键入任意一行 →
-⇧Enter 新起一行。
+任一失败都记录原始拼音、候选动作和 AX/截图，不用合成事件结果替代真机结论。
 
-1. 切换到中文输入法，在**第二行**键入任意拼音（如 `ce shi`），出现候选窗。
-2. **不要移动光标**，直接按数字键或空格选中一个候选。
-3. 判定（全过 = PASS）：
-   - 候选文本落在**第二行**（原组合位置），第一行文本逐字不变；
-   - 第二行（段落）没有消失；
-   - 光标跟在候选文本之后，仍在第二行；
-   - 紧接着按 Enter 发送：消息文本 = 第一行 + 换行 + 第二行（含候选），无串行 / 丢行。
-4. 变体（各做一次）：① 用鼠标点击候选窗选词（不经 Enter）；② 组合中途按 Esc 取消组合——
-   取消后第二行应为空行、第一行不变，不跳行。
+## 覆盖边界
 
-## 覆盖边界（如实登记）
-
-- **候选确认路径无机器判据**：合成键进不了 TSM（m461 探针定案）、套件无 JS 求值通道合成不出
-  composition 事件序列——这是 HC5 行为层的固有缺口，不是本场景漏写。闸门的回归判据落在
-  `tests/unit/harness-ime-enter.test.ts` 的「HC5」小节（三块结构 / 组合文本落段 / 选区不改写 /
-  补账归一，含反向验证）。
-- 真机 WebKit 组合期的**瞬态 DOM 形态**（组合文本宿主、空块 `<br>` 的存续时机）以单测的
-  模拟形态为判据代理；端到端的候选落字路径以本节手动复验为终判。
-- 组合期右键粘贴 / 拖入的 withModel 冻结（HC5 第 2 条）无真机判据（合成不出组合态下的鼠标
-  路径），由 DOM 替身单测的粘贴用例覆盖。
-
-## 环境与副作用
-
-- 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；mock 只回文案、不写 vault。
-  1420 全程不碰（实例走 `LUMIR_ACCEPTANCE_PORT=1430`）。
-- 手动复验段在 Alex 自己的装版实例上执行即可（不经套件）。
+- 真机原始 TSM / Input Method Kit 动作仍需人工执行，本场景自动化段只准备现场。
+- 组合期不再有 normalize、DOM 块映射、自管快照或组合期重渲冻结；旧 HC5 补账断言已退役。
+- 环境沿用隔离验收 vault 与配置目录，不读写真实 vault。

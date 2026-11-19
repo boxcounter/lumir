@@ -159,7 +159,7 @@ for (const theme of THEMES) {
   test(`用户气泡（${theme}）：正文取 --text、对比度 ≥ ${MIN_TEXT_CONTRAST}、与 agent 面可辨`, async ({ page }) => {
     await openPanel(page, theme);
 
-    await page.locator(".lumir-hp-composer").fill("这段怎么用？");
+    await page.locator(".lumir-hp-composer .cm-content").fill("这段怎么用？");
     await page.locator(".lumir-hp-send").click();
     await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
 
@@ -225,7 +225,7 @@ test("代码块横向滚动条：声明 4px + 计算档 thin + 实测占位不�
   await openPanel(page, "light");
   // 先发一条用户消息：内容事件过轮次闸门（turnOpen），否则 text_chunk 被丢弃
   // （src/harness-panel.ts 的 GATED_EVENT_TYPES 段）。
-  await page.locator(".lumir-hp-composer").fill("看一段长代码");
+  await page.locator(".lumir-hp-composer .cm-content").fill("看一段长代码");
   await page.locator(".lumir-hp-send").click();
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
   await fire(page, { type: "text_chunk", text: `看这段代码：\n\n\`\`\`js\n${LONG_LINE}\n\`\`\`\n` });
