@@ -237,7 +237,7 @@ async function seedPanesEnv(panes) {
   const cfgDir = path.join(root, "xdg", "lumir");
   await mkdir(cfgDir, { recursive: true });
   if (panes === 0) {
-    // 空配置：无 last_vault——与 CI runner 的「无历史」现场同语义（SAMPLE 文档常驻态）。
+    // 空配置：无 last_vault——与 CI runner 的「无历史」现场同语义（空白未命名文档常驻态）。
     await writeFile(path.join(cfgDir, "config.json"), `${JSON.stringify({ version: 1, editor: { mode: "md" } }, null, 2)}\n`);
     return path.join(root, "xdg");
   }

@@ -101,11 +101,14 @@ export default defineConfig({
     // M844 起持久化对抗场景同行：保存 / 草稿链路的判据全是**时序**（延迟写、乱序返回、
     // 切换与应答的交错），而两引擎的微任务 / IPC 时序不同；chromium 绿不代表 WebKit 的
     // 事件序下同样成立，因此整份 persistence-adversarial 在两个引擎各跑一遍。
+    // M851 起首屏空态 / 空 vault 新建入口同行：首启面是 0.13.0 对外体验的关键面——移除
+    // SAMPLE 后无伪文档、新建入口可见、无扩展名默认 .md 三条在两引擎各判一次，避免只靠
+    // chromium 的 DOM 行为覆盖真机（WKWebView）。
     ...(webkitRealuaPresent
       ? [
           {
             name: "webkit-realua",
-            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts|markdown-editing-stability\.spec\.ts|text-clipboard-adversarial\.spec\.ts|persistence-adversarial\.spec\.ts|harness-async-adversarial\.spec\.ts/,
+            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts|markdown-editing-stability\.spec\.ts|text-clipboard-adversarial\.spec\.ts|persistence-adversarial\.spec\.ts|harness-async-adversarial\.spec\.ts|first-run-empty-state\.spec\.ts/,
             use: { browserName: "webkit" as const, userAgent: REAL_WEBKIT_UA },
           },
         ]

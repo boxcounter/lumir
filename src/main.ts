@@ -419,8 +419,8 @@ function createPaneHandle(paneId: PaneId, kind: PaneKind): PaneHandle {
   const assembly: PaneAssembly = { mountEl, stripEl, handle, guideEl, tabs: undefined, unsubs: [] };
   paneAssemblies.set(paneId, assembly);
   if (!rootSlot) {
-    // createEditor 的初始会话是 SAMPLE 演示文档（无文件上下文的起步态）——新 pane 从
-    // 未命名空文档起步，不给它复制一份演示文档。
+    // 新 pane 从一份独立的空白未命名文档起步（与 root 同形态）：reset 让它的装载 / 就绪
+    // 记账从零开始，不继承创建期的任何状态（M851 起初始会话本身已不再预置演示内容）。
     editor.reset();
     // 能力同步：配置期值读装配层跟踪，运行期口径（折行 / 排版 / 栏宽）读既有 pane
     //（donor）的只读快照。排版的两个成员各管一半：applyTypography 把 baseFontSize 锚回
@@ -1596,14 +1596,46 @@ notice.className = "editor-notice";
 notice.hidden = true;
 shell.editor.append(notice);
 
-function showNotice(text: string) {
-  notice.textContent = text;
+/** 空 vault 首入态的重绘钩子（语言切换后按当前语言重新取值）：undefined = 当前提示不是空态。 */
+let relabelNotice: (() => void) | undefined;
+
+/** 覆盖层的唯一渲染口：一句提示 + 可选的动作按钮（动作只在空态档出现）。 */
+function renderNotice(text: string, action?: { label: string; run: () => void }): void {
+  notice.replaceChildren();
+  const line = document.createElement("p");
+  line.className = "editor-notice-text";
+  line.textContent = text;
+  notice.append(line);
+  if (action !== undefined) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "editor-notice-action";
+    button.textContent = action.label;
+    button.addEventListener("click", action.run);
+    notice.append(button);
+  }
   notice.hidden = false;
   editor.view.dom.style.display = "none";
   widthDrag.setVisible(false); // 空态 / 覆盖层在：栏宽手柄 MUST NOT 出现（spec「空态无手柄」）
 }
 
+function showNotice(text: string) {
+  relabelNotice = undefined;
+  renderNotice(text);
+}
+
+/** 空 vault 首入态（M851）：引导句 + 可见的「新建笔记」入口。
+ *
+ *  入口复用既有 tree 根命令（与右键根菜单的「新建文件…」同一条 `beginCreate("")` 链路），
+ *  不新开创建通道；按钮就在正文里，不依赖隐藏右键。无扩展名输入由树侧补 `.md`
+ *  （`withDefaultFileExtension`），用户显式写其他扩展名时原样保留。 */
+function showEmptyVaultState(): void {
+  relabelNotice = showEmptyVaultState;
+  renderNotice(t("D107"), { label: t("D882"), run: () => tree.beginCreate("", "file") });
+}
+
 function showEditor() {
+  relabelNotice = undefined;
   notice.hidden = true;
   editor.view.dom.style.display = "";
   widthDrag.setVisible(true);
@@ -1813,10 +1845,6 @@ rootPaneAssembly.tabs = createPaneTabs(1, rootPaneAssembly.handle.editor, rootPa
 // 东西：树头部入口、当前 vault 的打开链路（dirty 前置门 + vault_open_path + 装载）、
 // 会话的 ipc、以及恢复时装载内容的那条既有链路（openFile）。
 // ---------------------------------------------------------------------------
-
-/** 空 vault 首入态的引导（文案 D107）：装载完成而一个标签都没能恢复出来时，正文给一句
- *  指路，不伪造内容（也不残留上一次 vault 的正文——那已被 editor.reset 作废）。 */
-const EMPTY_VAULT_TEXT = (): string => t("D107");
 
 // ---------------------------------------------------------------------------
 // 装载的即时反馈与阶段读数（M252，Alex 真机反馈原话：「切换 vault 时，会卡住几秒。我会愣住，
@@ -2030,14 +2058,14 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   onEmptyVault: () =>
     // 一个标签都没恢复出来时的落点。两种到达方式（M283 起）：
     //   1. 会话里没有任何可用条目（或本来就没有历史）⇒ **空 vault 首入态**：标签栏本来就空
-    //      （没有会话就一个壳都不建），正文给一句 D107 的引导；
+    //      （没有会话就一个壳都不建），正文给 D107 的引导与可见的「新建笔记」入口；
     //   2. 壳建出来了、但激活项与全部退化候选的正文都读不出来（例如会话里只有超过读取上限的
     //      大文件）⇒ 标签栏里确实有标签，**不说「还没有打开的文件」这句假话**，只撤下覆盖层
     //      让标签栏自己说话（每个标签的真实状态在它被点开时由打开链路的既有提示呈现——
     //      那时 `quiet=false`，失败会上屏）。
     editor.sessions().some((session) => session.path !== undefined)
       ? showEditor()
-      : showNotice(EMPTY_VAULT_TEXT()),
+      : showEmptyVaultState(),
   warn: (text) => toast(text),
 });
 
@@ -3706,6 +3734,9 @@ onRelabel(() => {
     if (lastVaultStatus.restore_pending) startup?.setPhase(RESTORING_NOTICE());
     else tree.showEmpty(lastVaultStatus.notice);
   }
+  // 正文空态（空 vault 首入态）的引导句与按钮标签同样是解析过的字符串，切换语言时按当前
+  // 语言重建一次（与树空态同一条 design §5.2 不变量）。
+  relabelNotice?.();
   // 栏宽手柄的读屏名：`createShell` 在挂载时写死（D120），它没有「打开」这个点时重写的机会，
   // 因此必须走重绘注册（design §5.2 的不变量：挂载后无法重写的语言相关文本 MUST NOT 存在）。
   const handleLabel = WIDTH_HANDLE_LABEL();

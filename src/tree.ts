@@ -66,6 +66,20 @@ export function validateEntryName(raw: string, siblings: ReadonlySet<string>): s
 }
 
 /**
+ * 新建文件的**默认扩展名**（M851）：末段名不含 `.` 时按 Markdown 笔记处理，补 `.md`；
+ * 用户显式写了扩展名（`notes.txt`、`archive.tar.gz`）一律原样保留——默认值不是白名单。
+ * 只在 `create-file` 的预检与提交两处使用；改名 / 新建目录不走这条。
+ *
+ * 预检与提交共用本函数：撞名预检因此对着**最终落盘名**判（`note` + 既有 `note.md`
+ * 在输入时就标红，而不是等后端 `fs_already_exists` 回来才报）。
+ */
+export function withDefaultFileExtension(raw: string): string {
+  const name = raw.trim();
+  if (name === "" || name.includes(".")) return name;
+  return `${name}.md`;
+}
+
+/**
  * 改名后的路径 remap（纯函数，M244 的裁决点 5）：路径正好是 `from` 时换成 `to`；落在
  * `from/` 子树下时换成 `to` 下对应位置；其余返回 undefined（不受影响）。
  *
@@ -286,7 +300,7 @@ export interface InlineEditRequest {
   path: string;
   /** 父目录的 vault 相对路径（根为 `""`）；后端按它 + `name` 定位目标。 */
   parentRel: string;
-  /** 已 trim 的末段名。 */
+  /** 已 trim 的末段名（create-file 已按默认扩展名规则补 `.md`，见 withDefaultFileExtension）。 */
   name: string;
 }
 
@@ -999,8 +1013,11 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
 
   function wireEdit(state: InlineEdit, siblings: Set<string>): void {
     const { input, error } = state;
+    // 新建文件按**最终落盘名**预检（默认补 .md 后再判撞名 / 形状）；改名与新建目录用原值。
+    const effectiveName = (raw: string): string =>
+      state.mode === "create-file" ? withDefaultFileExtension(raw) : raw;
     const refresh = (): string | undefined => {
-      const reason = validateName(input.value, siblings);
+      const reason = validateName(effectiveName(input.value), siblings);
       const invalid = reason !== undefined;
       input.classList.toggle("is-invalid", invalid);
       input.setAttribute("aria-invalid", invalid ? "true" : "false");
@@ -1121,7 +1138,11 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     if (state === null || state.submitting) return;
     const reason = state.check();
     if (reason !== undefined) return; // 非法：留在编辑态，行内已经标红
-    const name = state.input.value.trim();
+    // 新建文件：无扩展名输入补默认 `.md`（与预检同一个函数）；显式扩展名原样提交。
+    const name =
+      state.mode === "create-file"
+        ? withDefaultFileExtension(state.input.value)
+        : state.input.value.trim();
     // 同名提交 = 取消（后端会把它判成「目标已存在」，但那是我们自己的文件，不该报错）
     if (state.mode === "rename" && name === state.original) {
       cancelEdit();
