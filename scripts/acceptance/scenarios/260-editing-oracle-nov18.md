@@ -67,15 +67,15 @@ steps:
     key: "cmd+a"
     gapMs: 150
 
-  # 注入配方（M832 r3，照场景 153 的「无点击 + 盲键触发 widget」结论）：
-  # `-` 单独落在行首时已是合法空列表项，widget 立刻接管、AX 把 marker 序列化成「–」——
-  # 因此不能先 type `-`（首轮 r2 实测目标串出现 0 次）。改为先把内容 `first` 作为普通
-  # 文本键入（字面可回读），再把 caret 移到行首、在内容前插 `-`（此时 `-first` 不是列表
-  # 标记、字面可回读），最后盲键空格把 `- first` 触发为 widget；之后 Ctrl+E 回行尾。
-  # 全程不点击 AXTextArea bbox、不重定位。
-  - name: 先键入内容 `first`（普通文本，type 的次数回读可校验）
-    do: type
-    text: "first"
+  # 注入配方（M832 r4，按最终 review P2）：全部文本用**可打印 `do: keys`**（无 click 的
+  # press_key 通道 + 字面回读），不用 `do: type`（type 的 indexed 注入会先点 AXTextArea
+  # bbox 中心，widget 语境下会把 caret 带偏）。`first` 先在普通行内逐键输入；⌃A 到行首后
+  # 再逐键输入 `-`（`-first` 不是列表标记、字面可回读）；最后盲键空格把 `- first` 触发为
+  # widget，⌃E 回行尾。全程不点击、不重定位。
+  - name: 无点击逐键输入 `first`（可打印 keys，字面回读）
+    do: keys
+    keys: ["f", "i", "r", "s", "t"]
+    gapMs: 120
 
   - name: caret 到行首（⌃A，真键盘事件）
     do: key
@@ -83,9 +83,10 @@ steps:
     channel: cgevent
     gapMs: 150
 
-  - name: 在内容前插入 `-`（`-first` 不是列表标记，字面可回读）
-    do: type
-    text: "-"
+  - name: 无点击逐键输入 `-`（`-first` 不是列表标记，字面可回读）
+    do: keys
+    keys: ["-"]
+    gapMs: 120
 
   - name: 盲键补空格触发 widget（此后 AX 不再含字面 `- `）
     do: key
@@ -147,24 +148,27 @@ steps:
    （`1. zuno`），不得停在隐藏源码内部（`1z. uno`）。期望落点由
    `tests/unit/editing-oracle-model.ts` 的 `bodyHorizontalStep` 给出，不从生产
    `listHiddenRangeAt` 反推。
-2. **连续空列表 Enter + 保存全文**（seed 7）：注入按场景 153 的配方（先键入 `first` →
-   ⌃A 到行首 → 插入 `-` → 盲键空格触发 widget → ⌃E 回行尾；全程不点击），随后 Enter（续空项）→ Enter（空项退出，
+2. **连续空列表 Enter + 保存全文**（seed 7）：注入全部走**可打印 `do: keys`**（无点击）：
+   `f/i/r/s/t` → ⌃A（cgevent）到行首 → `-` → 盲键空格触发 widget → ⌃E 回行尾；随后
+   Enter（续空项）→ Enter（空项退出，
    删 marker 不新增行）→ Enter（此时 caret 在普通空行，只插一个换行、不恢复 marker）→
    键入 `second` → ⌘S。三次 Enter 覆盖三种真实语义：**续空项 → 空项退出 → 普通空行换行**；
    期望文档 `- first\n\nsecond` 与独立模型逐字节一致。落盘用 M832 新增的 `file.exact`
    做整篇比较——`has` 是子串，对多余空行 / 数量错误没有区分度。
 
-## 注入口径（M832 r2）
+## 注入口径（M832 r4，最终配方）
 
-- 注入分四步：先 `type "first"`（普通文本，字面可回读）→ ⌃A 到行首 → `type "-"` 插在内容前
-  （`-first` 不是列表标记、字面可回读）→ 盲键空格触发 marker widget → ⌃E 回行尾。全程不点击
-  AXTextArea bbox、不重定位。
-- 为什么不先 `type "-"`：`-` 单独落在行首已是合法空列表项，widget 立刻接管、AX 把 marker
-  序列化成 `–`，目标串 `-` 出现 0 次——两轮真机都因此停在注入步（首轮 `- first` 一步、
-  第二轮 `-` 单独一步），这是注入 oracle 错误，不是产品 FAIL。为什么不单步 `type "- first"`
-  同理：widget 接管后目标串不按字面出现，重试会制造脏文本。
-- 该配方与场景 153 的 M506/M498 结论同源；若 marker widget 的 AX 序列化形态再变，回读判据
-  需按 153 的「失效条件」重取。
+- **全部文本注入走可打印 `do: keys`**：`f/i/r/s/t` 逐键输入 `first`；⌃A（`channel: cgevent`）
+  到行首；`-` 也用 `do: keys ["-"]` 逐键输入；然后盲键空格触发 marker widget；⌃E 回行尾。
+  可打印 keys 是**无 click 的 press_key 通道**（带字面回读与有限重试），不会像 `do: type`
+  那样先点 AXTextArea bbox 中心——widget 接管后那次点击会把 caret 带偏。
+- 为什么 `-` 可以逐键输入：`-` 此时插在既有内容 `first` 之前，形成 `-first`，不是列表标记
+  （marker 后无空白），AX 字面可回读；只有随后盲键补上的空格才让 `- first` 成为列表项并
+  被 widget 接管。相反，`-` 单独落在行首（后无内容）已是合法空列表项，widget 会立刻接管、
+  AX 把 marker 序列化成 `–`，目标串 `-` 出现 0 次——这是前两轮注入失败的原因（首轮
+  `- first` 一步、第二轮 `-` 单独一步），属注入 oracle 错误，不是产品 FAIL。
+- 该配方与场景 153 的 M506/M498 结论同源（无点击通道 + 盲键触发 widget）；若 marker widget
+  的 AX 序列化形态再变，回读判据需按 153 的「失效条件」重取。
 
 ## 判据边界（如实声明）
 
