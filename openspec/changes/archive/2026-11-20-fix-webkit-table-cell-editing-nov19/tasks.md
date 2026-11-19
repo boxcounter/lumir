@@ -5,7 +5,7 @@
 
 ## 1. 诊断（修复前反例）
 
-- [x] 1.1 读 [REVIEW.md](../../../REVIEW.md) 与 finding
+- [x] 1.1 读 [REVIEW.md](../../../../REVIEW.md) 与 finding
       `20261119-worker-markdown-stability-bug-webkit-cell-backspace-delete-dom.md`；
       用 Playwright chromium + webkit（真机同款 UA）探针记录真实事件序 / DOM / 事务与 cell 选区映射。
 - [x] 1.2 区分根因：不是 caret 的 state 映射（点击后 `anchor = 27/26` 与 DOM 选区偏移都正确），
@@ -42,7 +42,7 @@
       键入 / 首缘 Backspace / 尾缘 Delete / 表头对照；四格都用 `file.exact` 判整篇全文，并各配
       一次 `⌘Z` + `unchangedSince` + `mtimeUnchangedSince`）；`node scripts/acceptance/coverage.mjs`
       重建 COVERAGE（rebase 后 243 场景 / 220 项）；`node scripts/acceptance/run.mjs --check 265` PASS。
-- [ ] 3.4 真机 265 在 rebase 后复跑（2026-11-20，`LUMIR_ACCEPTANCE_PORT=4394` /
+- [x] 3.4 真机 265 在 rebase 后复跑（2026-11-20，`LUMIR_ACCEPTANCE_PORT=4394` /
       `CARGO_TARGET_DIR=/tmp/lumir-m855-target`，标准隔离 XDG + 合成 vault）：**PASS 1/1**，
       32 断言 / 0 失败，31.8s，退出码 0；四格 `file.exact` 逐字一致（441 / 439 / 439 / 441），
       三次撤销 `unchangedSince` + `mtimeUnchangedSince` 通过。证据
