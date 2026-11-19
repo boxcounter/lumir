@@ -55,8 +55,11 @@
       根 tsc 与 `tests/visual` tsc 均通过。
 - [x] 5.2 `scripts/gate.sh quick` 全绿（`CARGO_TARGET_DIR=/tmp/lumir-m859-target`）：
       `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0；日志 `.local/missions/M859/gate-quick.log`。
-- [ ] 5.3 `LUMIR_VISUAL_PORT=4396 scripts/gate.sh visual` 全绿（等 tower 在 M844 槽位结束后批准），
-      照抄 `GATE RESULT` 原文行并附退出码；不更新任何像素基线。
+- [x] 5.3 `LUMIR_VISUAL_PORT=4396 CARGO_TARGET_DIR=/tmp/lumir-m859-target scripts/gate.sh visual`
+      （tower 在 M844 槽位结束后批准，tip `21cd34a2`）：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；
+      视觉回归 1180 条（1176 passed / 4 skipped / 0 failed，17.8m）。日志 `.local/missions/M859/gate-visual.log`；
+      不更新任何像素基线。
 - [x] 5.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`（35 passed / 0 failed）、
       `bash scripts/docs-check.sh` PASS、`node scripts/acceptance/run.mjs --check` 通过（提交前复跑一次）。
-- [ ] 5.5 临时探针 spec / 探针配置已删除（`git status` 无残留）；提交 TowerComplete 等待独立 review。
+- [x] 5.5 临时探针 spec / 探针配置已删除（`git status` 无残留）；真机窗口后 `/tmp/lumir-m859-target` 已清理；
+      提交 TowerComplete 等待独立 review。
