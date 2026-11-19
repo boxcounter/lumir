@@ -52,9 +52,8 @@ async function openImage(page: Page, path: string): Promise<void> {
 }
 
 /** 某一张图被读取的次数（D3 的「切回重读一次」判据）。
- *  **按路径**数而不是数全局：启动期的 SAMPLE 演示文档里有一条相对路径图片引用
- *  （`![示例](./assets/shot.png)`），它也会发一次 `fs_read_attachment`——全局计数会把它
- *  算进来（M629 实证：单次打开图片数到 2）。 */
+ *  **按路径**数而不是数全局：判据要的是「这一张图」的读取次数，全局计数会混入同一场景里
+ *  其它图片的读取（M629 实证：单次打开图片数到 2）。 */
 async function readsOf(page: Page, path: string): Promise<number> {
   return (await attachmentReads(page)).filter((entry) => entry === path).length;
 }

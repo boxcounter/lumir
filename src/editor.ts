@@ -99,37 +99,6 @@ import type { PasteImagePort } from "./paste-image";
 // 选区、搜索查询、模式配置都在 state 里跟着走，因此切回来不重新解析、不丢撤销栈。
 // 会话的公共面见 EditorSession / EditorHandle；装配层（src/main.ts）负责标签栏与打开意图。
 
-const SAMPLE = `\ // i18n-exempt: data
----
-title: Lumir live preview 演示
-tags: [demo, m1]
-nested:
-  key: value
----
-
-# 标题一
-
-## 标题二
-
-**加粗** *斜体* ~~删除线~~ \`inline code\`
-
-- 列表项一
-- 列表项二
-
-1. 有序一
-2. 有序二
-
-> 引用块
-
-\`\`\`rust
-fn main() { println!("lumir"); }
-\`\`\`
-
-![[demo.png]]
-
-![示例](./assets/shot.png)
-`;
-
 // 垂直光标移动交给 CM6 处理（M103）：编辑器未装 commands keymap，ArrowUp/Down 与
 // macOS Emacs 风格 Ctrl-P/N 原本全走原生 contenteditable 路径——光标越出视口时
 // 浏览器延迟揭示并与 CM6 视口重建叠加，实测 scrollTop 单次跳 ~388px（整屏突变）。
@@ -2292,9 +2261,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     };
   }
 
-  // 启动时的会话：SAMPLE 演示文档（无文件上下文）。它也是标签栏不显示的那一个——
-  // 「未命名」会话只承载「还没有打开任何文件」这个状态。
-  const initialSession = makeSession(SAMPLE, undefined, initialMode);
+  // 启动时的会话：**空白**未命名文档（无文件上下文）。它也是标签栏不显示的那一个——
+  // 「未命名」会话只承载「还没有打开任何文件」这个状态（M851：不再预置演示文档——
+  // 首屏把内部注解 / 错误占位 / 中英混排的伪文档当正文，既不真实也误导）。
+  const initialSession = makeSession("", undefined, initialMode);
   sessions.push(initialSession);
   active = initialSession;
   const view = new EditorView({ state: active.state, parent });

@@ -210,8 +210,8 @@ const COPY_TABLE = {
     en: 'That folder cannot be used to relocate "{name}"; pick the folder where that vault is now',
   },
   D107: {
-    zh: "这个 vault 还没有打开的文件。在左栏选一个文件开始。",
-    en: "No files opened in this vault yet. Pick one in the left column to start.",
+    zh: "这个 vault 还没有打开的文件。新建一篇笔记开始。",
+    en: "No files opened in this vault yet. Create a note to start.",
   },
   D108: {
     zh: "{n} 个文件已不在这个 vault 里，已跳过",
@@ -2405,6 +2405,12 @@ const COPY_TABLE = {
   D881: {
     zh: "{segments} 段",
     en: "{segments} segments",
+  },
+  // D882：空 vault 首入态正文里的可见新建入口（M851）。与右键根菜单的「新建文件…」（D129）
+  // 走同一条 tree 命令；标签按「笔记」命名，因为无扩展名输入默认落 .md。
+  D882: {
+    zh: "新建笔记",
+    en: "New note",
   },
 } satisfies Record<string, CopyEntry>;
 

@@ -266,7 +266,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     // 场景据此断言 applyTheme 把 CSS token 解析值同步给了后端。桩只记录不解释。
     w.__windowBgCalls = [] as Array<{ r?: number; g?: number; b?: number }>;
     // `fs_read_attachment` 的**按路径**读取记录（M629）：D3 的「切回重读一次」判据要数
-    // 某一张图读了几次——全局计数会被启动期 SAMPLE 演示文档里的相对路径图片引用污染。
+    // 某一张图读了几次——判据按路径取次数，全局计数会混入同场景其它图片的读取。
     w.__attachmentReads = [] as string[];
     // `fs_read_external` 的**按路径**读取记录（M655）：vault 外只读会话的「打开一次 = 读一次」
     // 与「⌘S 无落点」这类次数判据要数它。

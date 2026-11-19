@@ -11,10 +11,13 @@ test("未打开 vault 的空态主界面", async ({ page }) => {
   await page.goto("/");
   const openBtn = page.getByRole("button", { name: "打开 vault" });
   await expect(openBtn).toBeVisible();
-  // 等 CM 首帧内容就绪再截图（.cm-editor 可见 ≠ 首屏文本已绘制）；
-  // 实测 headless 下文本进 DOM 后仍需一个绘制周期，waitForTimeout 兜住这个竞态。
-  // SAMPLE 文档经 live preview 渲染：frontmatter 为 properties 区块，正文为装饰后形态。
-  await expect(page.locator(".cm-content")).toContainText("标题一");
+  // M851：首屏不再预置 SAMPLE 演示文档——初始会话是空白未命名文档，左栏 D5/D6 是唯一
+  // 指引（正观测：空态说明行在场，说明页面已就绪、这次读取是活的）。
+  await expect(page.locator(".ft-empty")).toContainText("打开一个目录作为 vault");
+  await expect(page.locator(".cm-content")).toBeVisible();
+  expect((await page.locator(".cm-content").textContent())?.trim() ?? "").toBe("");
+  await expect(page.locator(".tabstrip")).toBeHidden();
+  // 等 CM 首帧就绪再截图（.cm-editor 可见 ≠ 首帧绘制完成）；headless 下实测仍需一个绘制周期。
   await page.waitForTimeout(400);
   await expectScreenshot(page, "app-main.png");
 });
