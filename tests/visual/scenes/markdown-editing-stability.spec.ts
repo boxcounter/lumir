@@ -6,7 +6,9 @@
 // ## 合同（本文件钉住的不变量）
 //
 // C1 **导航不改状态**：光标移动 / 选区变化 / 焦点进入离开，MUST NOT 改变 `EditorState.doc`
-//    的任何一个字节、MUST NOT 触发落盘、MUST NOT 把文档标脏。
+//    的任何一个字节、MUST NOT 触发落盘、MUST NOT 把文档标脏，也 MUST NOT 新增 history 步
+//    ——编辑之后无论做多少轮光标 / 选区 / 焦点循环，**一次** undo 仍回到编辑前那一态
+//   （doc 与选区都回，见「编辑后光标 / 选区 / 焦点循环」用例）。
 // C2 **行盒稳定**（active↔inactive）：对渲染态**不显露源码**的行，`.cm-line` 的行盒高度、
 //    行内首段文本的字形 rect 高度与基线（top）在两种状态下逐像素相同（≤0.5px），其后各行的
 //    top 也随之相同。
@@ -192,6 +194,7 @@ function expectStableGeometry(before: LineBox[], after: LineBox[], options: Stab
         expect(Math.abs(other.left - cell.left), `${where} cell ${c}：left 漂移`).toBeLessThanOrEqual(TOL);
         expect(Math.abs(other.width - cell.width), `${where} cell ${c}：width 漂移`).toBeLessThanOrEqual(TOL);
         expect(Math.abs(other.height - cell.height), `${where} cell ${c}：height 漂移`).toBeLessThanOrEqual(TOL);
+        expect(Math.abs(other.top - (cell.top + shift)), `${where} cell ${c}：top 漂移`).toBeLessThanOrEqual(TOL);
       });
     }
     // 0 高行（表格分隔行整行被 replace 覆盖）没有布局位置：rect 恒为 0，top 判据对它是空转。
@@ -228,6 +231,7 @@ function expectRestored(baseline: LineBox[], actual: LineBox[], label: string): 
       expect(Math.abs(other.left - cell.left), `${where} cell ${c}：left 未复原`).toBeLessThanOrEqual(TOL);
       expect(Math.abs(other.width - cell.width), `${where} cell ${c}：width 未复原`).toBeLessThanOrEqual(TOL);
       expect(Math.abs(other.height - cell.height), `${where} cell ${c}：height 未复原`).toBeLessThanOrEqual(TOL);
+      expect(Math.abs(other.top - cell.top), `${where} cell ${c}：top 未复原`).toBeLessThanOrEqual(TOL);
     });
   }
 }
@@ -262,7 +266,7 @@ const MIXED_DOC = [
   "",
   "链接 [示例](https://example.com) 单独一行。",
   "",
-  "| 列甲 | 列乙 | 列丙 |",
+  "| 列甲 |  | 列丙 |",
   "| --- | --- | --- |",
   "| 甲一 | 乙一 | 丙一 |",
   "| 甲二 | 乙二 | 丙二 |",
@@ -389,6 +393,47 @@ test("光标反复进出 + 焦点进出 12 轮：几何零累积漂移，文档�
 
   expect(await bodyState(page).then((s) => s.doc)).toBe(doc);
   expect(await fileText(page, "cycle.md")).toBe(doc);
+});
+
+// ---------------------------------------------------------------------------
+// C1（history 半条）：编辑之后的光标 / 选区 / 焦点循环 MUST NOT 新增 history 步
+// ---------------------------------------------------------------------------
+//
+// 判据取「一次 undo 的落点」而不是去读 CM history 的内部结构：编辑一次 → 做若干轮光标、
+// 选区、失焦 / 聚焦 → 按一次 ⌘Z，doc 与选区都必须回到**编辑前**那一态。任何一次导航若被
+// 记进 history，这一按就只退得回导航、退不回编辑；再按一次还会吞掉更早的状态（本用例末尾
+// 用「第二次 undo 文档不变」把这一点也钉住）。
+
+test("编辑后光标 / 选区 / 焦点循环：一次 undo 回到编辑前（导航不新增 history 步）", async ({ page }) => {
+  const doc = "- 列表项一\n- 列表项二\n";
+  await openDoc(page, "history.md", doc);
+  await setCaret(page, 5);
+  await page.keyboard.type("X");
+  await expect.poll(async () => bodyState(page)).toEqual({ doc: "- 列表项X一\n- 列表项二\n", anchor: 6, head: 6 });
+  // 620ms 屏障：让这次编辑自成一拍（与 editing-oracle 的 history 对齐口径相同）。
+  await page.waitForTimeout(620);
+
+  for (let round = 0; round < 4; round += 1) {
+    await setCaret(page, 10);
+    await setCaret(page, 2, 6);
+    await setCaret(page, 0);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.waitForTimeout(80);
+    await setCaret(page, 6);
+  }
+  expect((await bodyState(page)).doc).toBe("- 列表项X一\n- 列表项二\n");
+
+  await page.keyboard.press("Meta+z");
+  await expect
+    .poll(async () => bodyState(page), { message: "一次 undo 没有回到编辑前的 doc 与选区" })
+    .toEqual({ doc, anchor: 5, head: 5 });
+
+  // history 里没有导航留下的假步：再按一次 undo，文档不动（否则是吞掉了更早的状态）。
+  await page.keyboard.press("Meta+z");
+  await page.waitForTimeout(620);
+  expect((await bodyState(page)).doc).toBe(doc);
+  expect(await fileText(page, "history.md")).toBe(doc);
+  await expect(page.locator(".modeline-path")).not.toContainText("（未保存）");
 });
 
 // ---------------------------------------------------------------------------
@@ -549,8 +594,9 @@ for (const c of TABLE_CASES) {
 const INLINE_CASES: EditCase[] = [
   { name: "标题行内输入：写进源码、# 不重复", doc: "# title\n\nbody\n", anchor: 6, type: "Q", expectedDoc: "# titlQe\n\nbody\n", expectedCaret: 7, geometry: "line" },
   { name: "标题行末 Enter：只插一个换行", doc: "# title\n\nbody\n", anchor: 7, keys: ["Enter"], expectedDoc: "# title\n\n\nbody\n", expectedCaret: 8, geometry: "none" },
-  { name: "强调内输入：不重复 ** 定界符", doc: "x **bold** y\n", anchor: 11, type: "Q", expectedDoc: "x **bold** Qy\n", expectedCaret: 12, geometry: "line" },
-  { name: "强调内 Backspace：只删一个源字节", doc: "x **bold** y\n", anchor: 11, keys: ["Backspace"], expectedDoc: "x **bold**y\n", expectedCaret: 10, geometry: "line" },
+  { name: "强调内容中间输入：写进 bold 内容、不重复 **", doc: "x **bold** y\n", anchor: 6, type: "Q", expectedDoc: "x **boQld** y\n", expectedCaret: 7, geometry: "line" },
+  { name: "闭合定界符边界 Backspace：删内容末字、定界符不动", doc: "x **bold** y\n", anchor: 8, keys: ["Backspace"], expectedDoc: "x **bol** y\n", expectedCaret: 7, geometry: "line" },
+  { name: "闭合定界符内 Backspace：只删一个定界符字节", doc: "x **bold** y\n", anchor: 10, keys: ["Backspace"], expectedDoc: "x **bold* y\n", expectedCaret: 9, geometry: "line" },
   { name: "行内代码内输入", doc: "x `code` y\n", anchor: 6, type: "Q", expectedDoc: "x `codQe` y\n", expectedCaret: 7, geometry: "line" },
   { name: "行内公式旁输入：不写回 KaTeX 字形", doc: "x $a^2$ y\n", anchor: 8, type: "Q", expectedDoc: "x $a^2$ Qy\n", expectedCaret: 9, geometry: "line" },
   { name: "标准链接目标内输入", doc: "x [lbl](https://e.com) y\n", anchor: 9, type: "Q", expectedDoc: "x [lbl](hQttps://e.com) y\n", expectedCaret: 10, geometry: "line" },
