@@ -10,7 +10,7 @@
 
 ## 节点 2 记录（归档前，2026-11-19，M840）
 
-口径见 [openspec-workflow.md](../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
 
 1. **方案已批准**：节点 1 于 2026-11-18 通过——Alex 原话「composer 改用统一编辑内核，优先评估 CodeMirror；能从编辑区移出的卡片就移出去。」并授权 tower 不等后续裁决；tower 裁决采用最小 CM6 文本内核 + 编辑区外附件 tray + `EditorState` 内附件 `StateField`（见本文开头记录）。实现期没有静默扩 scope：`git diff --name-only edc5ed6c...7344736d` 全在本文「Impact」声明的 composer / 卡片 / 草稿 / 场景 / spec / 文档面内，Rust 与依赖均未改。
 2. **独立 reviewer clean / merge**：assigned reviewer `reviewer-composer-write-ownership` 判 `status: clean` / `merge: merge`，评审 tip `7344736d75573c08c63bb62fa22fcc18e277a1ec`（`reviewed_commit` 同值），评审文件 `/Users/boxcounter/Code/Boxcounter/lumir/.tower/comms/reviews/review-feat-move-composer-to-codemirror-nov18-reviewer-composer-write-owners-r1.md`。合并提交 `8814bbf0` 的第二父即 `7344736d`，评审绑定内容与合入内容同一份。此前三轮 P1（delta 漏退役消息摘录序列化协议、v1 迁移写回竞态、失败回填竞态）分别以 `519b8289` / `42a943d5` / `7344736d` 修完并复评。
@@ -22,7 +22,7 @@
 
 ## Why
 
-M828 的只读调查证明，持续故障面不是某一个按键，而是浏览器原生 `contenteditable` DOM 与产品自管块模型同时拥有文本、结构和选区。现有实现还要另管 DOM 选区映射、结构归一、块级快照撤销与草稿读回；HC1–HC6 的换行、卡间光标、IME 折段、跨卡删除和全选高亮修复都由这套双重所有权派生。调查原文与证据见 `.tower/comms/inbox/20261118-worker-composer-kernel-k3-tower-survey-summary.md`（本机协议材料）；切换方向也早已写入[原始卡片设计](../archive/2026-10-06-add-harness-quote-cards/design.md)：contenteditable quirks 若 dogfood 证明不可控，应切 CM6。
+M828 的只读调查证明，持续故障面不是某一个按键，而是浏览器原生 `contenteditable` DOM 与产品自管块模型同时拥有文本、结构和选区。现有实现还要另管 DOM 选区映射、结构归一、块级快照撤销与草稿读回；HC1–HC6 的换行、卡间光标、IME 折段、跨卡删除和全选高亮修复都由这套双重所有权派生。调查原文与证据见 `.tower/comms/inbox/20261118-worker-composer-kernel-k3-tower-survey-summary.md`（本机协议材料）；切换方向也早已写入[原始卡片设计](../../archive/2026-10-06-add-harness-quote-cards/design.md)：contenteditable quirks 若 dogfood 证明不可控，应切 CM6。
 
 原始 IME 现场是已提交「我」后组合「s」，Backspace 连已提交文本一起删。M828 用 Chromium CDP 原生组合通道确认了旧实现会把组合中的删除范围交给引擎，且现有测试不覆盖这一拍；Chromium 没复现 WKWebView 的连删，真机 marked-text 范围仍是待验边界，不能把合成测试当原生复现。
 
