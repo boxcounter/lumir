@@ -20,6 +20,14 @@
 
 未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与 tip 均无异常、证据无缺口——机器 + 独立评审放行（本节要件）。
 
+## 节点 2 记录（归档后）
+
+- **归档提交**：`de3b347c3ded320006019918ef0676e3aa8b185a`（归档目录 + 并入后的 living spec 同一提交；`docs/backlog.md` 的归档跟踪条目同批核销。本条记录本身是其后一笔文档提交）。
+- **`openspec archive` 实际输出**（2026-11-19，`node scripts/openspec-archive.mjs move-composer-to-codemirror-nov18`，包装器内调 `npx --yes @fission-ai/openspec@1.12.0 archive move-composer-to-codemirror-nov18 --yes`，退出码 0）：`Task status: ✓ Complete` / `Specs to update:` `harness: update` / `+ 10 added` / `~ 5 modified` / `- 12 removed` / `Totals: + 10, ~ 5, - 12, → 0` / `Specs updated successfully.` / `Change 'move-composer-to-codemirror-nov18' archived as '2026-11-19-move-composer-to-codemirror-nov18'.`；另有非阻塞 warning `Consider splitting changes with more than 10 deltas`。
+- **归档后修链**：`归档后修链 2 处（扫过 4 篇 Markdown / 2 条相对链接）`——`proposal.md:13` 的 `../../../docs/process/openspec-workflow.md` → `../../../../docs/process/openspec-workflow.md`；`proposal.md:25` 的 `../archive/2026-10-06-add-harness-quote-cards/design.md` → `../../archive/2026-10-06-add-harness-quote-cards/design.md`。包装器末置门禁 `openspec-links: PASS（校验 623 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived move-composer-to-codemirror-nov18`，2026-11-19T12:02Z，退出码 0）：`PASS（openspec/changes/archive/2026-11-19-move-composer-to-codemirror-nov18：5 条 MODIFIED，对比 48 段；人工恢复 0 段，声明认领 0 段）`。
+- **归档后复跑读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 36 passed, 0 failed (36 items)`（退出码 0；归档前 37 items，减少的一项即本 change）；`node scripts/openspec-archive-check.mjs` 门禁模式 → PASS（`扫过 9 份 delta，6 条 MODIFIED，对比 79 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0）。
+
 ## Why
 
 M828 的只读调查证明，持续故障面不是某一个按键，而是浏览器原生 `contenteditable` DOM 与产品自管块模型同时拥有文本、结构和选区。现有实现还要另管 DOM 选区映射、结构归一、块级快照撤销与草稿读回；HC1–HC6 的换行、卡间光标、IME 折段、跨卡删除和全选高亮修复都由这套双重所有权派生。调查原文与证据见 `.tower/comms/inbox/20261118-worker-composer-kernel-k3-tower-survey-summary.md`（本机协议材料）；切换方向也早已写入[原始卡片设计](../../archive/2026-10-06-add-harness-quote-cards/design.md)：contenteditable quirks 若 dogfood 证明不可控，应切 CM6。
