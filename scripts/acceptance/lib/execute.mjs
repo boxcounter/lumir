@@ -2063,11 +2063,15 @@ const DIR_SHA256_HINT =
  *  U+FFFD 是 AX 值截断的判别信号——run6 实测**连续两拍返回同一份残读**，只比「两次一致」
  *  会把它当稳定值接受，因此残读既不更新 `prev`，也不能成为结论。
  *
- *  最多 `attempts` 次、每次间隔 `gapMs`；仍不稳定就返回最后一次读数并带 `stable:false`
- *  （`unclean:true` 表示出现过残读），调用方 MUST 把「不稳定」写进证据，不得把残读当成结论。
+ *  返回值（fail-closed）：
+ *  - 稳定：`{ found: true, text, stable: true, unclean }`；
+ *  - **耗尽**（上限内没有两拍一致的干净读数）：`{ stable: false, undecidable: true, ... }`
+ *    ——**不返回 `text`**。调用方 MUST 把这种情况当「不可判定」（InfraError / 整场 INVALID），
+ *    不得拿最后一次残读/抖动值去写基线或判 PASS/FAIL；`lastSeen` 只供证据诊断，不是断言输入。
+ *  - 编辑器节点不可读：`{ found: false, stable: false, unclean }`——调用方按「不可读」处理
+ *    （REVIEW.md「读不到当成空」条），不在这里退化成空串。
  *
- *  `readOnce` 返回 `{ found, text }`：`found=false` 表示快照里没有 AXTextArea（modal 等），
- *  调用方按「不可读」处理（REVIEW.md「读不到当成空」条），不在这里退化成空串。
+ *  `readOnce` 返回 `{ found, text }`。默认上限 6 次 × 200ms。
  */
 export async function readStableEditor(readOnce, { attempts = 6, gapMs = 200 } = {}) {
   let prev = null;
@@ -2076,17 +2080,26 @@ export async function readStableEditor(readOnce, { attempts = 6, gapMs = 200 } =
   for (let i = 0; i < attempts; i += 1) {
     if (i > 0) await sleep(gapMs);
     const cur = await readOnce();
-    if (!cur.found) return { ...cur, stable: false, unclean };
+    if (!cur.found) return { found: false, stable: false, unclean };
     last = cur;
     if (cur.text.includes("\uFFFD")) {
       unclean = true;
       prev = null;
       continue;
     }
-    if (prev !== null && prev === cur.text) return { ...cur, stable: true, unclean };
+    if (prev !== null && prev === cur.text) return { found: true, text: cur.text, stable: true, unclean };
     prev = cur.text;
   }
-  return { ...last, stable: false, unclean };
+  return {
+    found: Boolean(last?.found),
+    stable: false,
+    unclean,
+    undecidable: true,
+    attempts,
+    lastSeen: last
+      ? { length: last.text.length, hasReplacement: last.text.includes("\uFFFD"), head: last.text.slice(0, 40) }
+      : null,
+  };
 }
 
 /**
@@ -2387,14 +2400,21 @@ export async function runScenario(ctx, scenario) {
             ax,
           );
         }
-        text = reading.text;
-        if (!reading.stable) {
-          stabilityNote = `；读数不稳定${reading.unclean ? "（AX 残读）" : "（连续两次不一致）"}，取最后一次`;
+        if (reading.undecidable) {
+          // fail-closed：读数耗尽 = 不可判定，不能拿最后的残读/抖动值判 PASS/FAIL（r1 P1-1）。
+          throw new InfraError(
+            `${label}：编辑器 AX 读数在 ${reading.attempts} 次重读内没有稳定` +
+              `${reading.unclean ? "（含 U+FFFD 残读）" : "（连续不一致）"}——无法判定编辑器是否变化，` +
+              "本次运行标 INVALID（不按 PASS/FAIL 判；稍后重跑本场景）。" +
+              `最后读数：${JSON.stringify(reading.lastSeen)}`,
+          );
         }
+        text = reading.text;
         if (reading.unclean) {
+          stabilityNote = "；读数过程中出现过 AX 残读（U+FFFD），已重读到稳定值";
           evidence.record({
             kind: "note",
-            text: `editor 断言读数出现 AX 残读（U+FFFD）——已重读到${reading.stable ? "稳定值" : "上限"}（${reading.text.length} 字符）`,
+            text: `editor 断言：读数过程中出现过 AX 残读（U+FFFD），已重读到稳定值（${reading.text.length} 字符）`,
           });
         }
       } else {
@@ -4522,18 +4542,23 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       if (!reading.found) {
         throw new Error("记录编辑器基线失败：AX 快照里没有 AXTextArea（modal 打开期间常见），基线不能记成空串");
       }
+      if (reading.undecidable) {
+        // fail-closed（r1 P1-1）：读数耗尽 = 基线不可信，拒记；整场按 INVALID 报，不写入 vars。
+        throw new InfraError(
+          `记录编辑器基线失败：AX 读数在 ${reading.attempts} 次重读内没有稳定` +
+            `${reading.unclean ? "（含 U+FFFD 残读）" : "（连续不一致）"}——基线不可信，拒记；` +
+            "本场景标 INVALID（不按产品缺陷判；稍后重跑）。" +
+            `最后读数：${JSON.stringify(reading.lastSeen)}`,
+        );
+      }
       vars[step.as] = reading.text;
-      if (!reading.stable) {
+      if (reading.unclean) {
         evidence.record({
           kind: "note",
-          text:
-            `recordEditor：读数不稳定${reading.unclean ? "（出现过 AX 残读 U+FFFD）" : "（连续两次不一致）"}` +
-            `——基线取最后一次（${reading.text.length} 字符）`,
+          text: `recordEditor：读数过程中出现过 AX 残读（U+FFFD），已重读到稳定基线（${reading.text.length} 字符）`,
         });
       }
-      return `${reading.text.length} 字节${
-        reading.stable ? "" : `（读数不稳定${reading.unclean ? "：出现过 AX 残读" : ""}，取最后一次）`
-      }`;
+      return `${reading.text.length} 字节`;
     }
     case "vaultRm": {
       const files = step.files ?? [step.file];
