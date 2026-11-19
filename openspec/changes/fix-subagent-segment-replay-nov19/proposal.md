@@ -75,14 +75,15 @@ M850 已把 started 的判据收进 `reduceSubruns`（`isNewSegment`）。本 ch
   忽略（不改状态、不叠读数、不追加步骤、不覆盖摘要 / 触顶原因 / 待批关联）；段号等于活跃段的同段
   事件照旧归约，同段 finished 重复仍幂等；段号更大的乱序事件不在此丢弃（段基线重置另立项）。
 - 新增 requirement「子运行终态后的迟到过程事件不改写读数」：行落终态（done / partial / failed /
-  stopped）后，同段迟到的 `subagent_progress` / `subagent_step` MUST NOT 改变状态、rounds /
-  toolCalls / lastTool / elapsedMs / token 读数与 steps 列表——终态读数只由 `subagent_finished`
-  写入；`running` / `waiting`（含等待批准）仍照常消费过程事件。
+  stopped）后，**同段或未带段号**（旧形态）迟到的 `subagent_progress` / `subagent_step` MUST NOT
+  改变状态、rounds / toolCalls / lastTool / elapsedMs / token 读数与 steps 列表——终态读数只由
+  `subagent_finished` 写入；段号大于活跃段的乱序过程事件保持 base 归约（non-goal，不得丢弃）；
+  `running` / `waiting`（含等待批准）仍照常消费过程事件。
 - 实现：`src/harness-panel.ts` 的 `SubrunEvent` 四类变体增加可选 `segment`（生产必带；可选只为
   让既有纯函数单测构造旧形态）；新增 `isStaleSegmentEvent` 作为旧段判定的唯一实现，progress /
-  step / finished 三个归约分支先过守卫；progress / step 再复用 `isLiveSubrun` 挡掉终态行迟到的
-  同段事件（与 `attachRunApproval` 同一判定）；`handleEvent` 透传 `segment`，`subagent_finished`
-  的旧段重放不执行收尾副作用。
+  step / finished 三个归约分支先过守卫；progress / step 再复用 `isLiveSubrun` 的
+  `isTerminalFrozenEvent` 挡掉终态后**同段 / 无段号**事件（更大段不挡，保持 base 归约）；
+  `handleEvent` 透传 `segment`，`subagent_finished` 的旧段重放不执行收尾副作用。
 - 与 M850 同一口径补齐：`isNewSegment` 保留为 started 的唯一判据；首见即段 N 以事件段号建档。
 - 回归：`tests/unit/harness-subagent-event-idempotence.test.ts` 覆盖 started 的六条既有场景、旧段
   progress / step / finished、当前段正常序列、同段 finished 重复幂等、旧段 finished 在新段收尾后

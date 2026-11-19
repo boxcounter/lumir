@@ -42,9 +42,10 @@
 
 子运行一旦落终态（`subagent_finished` 的 `completed` / `partial` / `failed` / `aborted`），该段的状态与过程读数 SHALL 只由终态事件本身写入。
 
-- 同段迟到的 `subagent_progress` / `subagent_step` MUST 原样忽略：MUST NOT 改变行状态、`rounds`、`toolCalls`、`lastTool`、`elapsedMs`、三个 token 读数与 `steps` 列表；终态行的读数 MUST 与 `subagent_finished` 的汇总一致。
+- **同段**或**未带段号**（旧形态）迟到的 `subagent_progress` / `subagent_step` MUST 原样忽略：MUST NOT 改变行状态、`rounds`、`toolCalls`、`lastTool`、`elapsedMs`、三个 token 读数与 `steps` 列表；终态行的读数 MUST 与 `subagent_finished` 的汇总一致。
+- 段号**大于**该 run 活跃段的终态后过程事件（`started` 尚未到达的乱序）SHALL 保持既有归约行为，MUST NOT 被终态冻结丢弃——「更大段」的归约语义是本 change 的 non-goal，需另立项变更。
 - 进行中的 run（`running` / `waiting`，含等待批准）SHALL 照常消费 progress / step——终态守卫 MUST NOT 误杀在跑段，等待批准不得被视为终态。
-- 旧段事件仍由段号守卫先丢弃；两条守卫互相独立（「是否当前段」与「是否在跑」），任一条命中都必须原样返回。
+- 旧段事件仍由段号守卫先丢弃；两条守卫互相独立（「是否当前段」与「是否终态 + 同段 / 无段号」），任一条命中都必须原样返回。
 - 终态判定 SHALL 复用 `isLiveSubrun`（与批准关联「已收尾不翻回等待」同一判定），MUST NOT 另写一份终态集合。
 
 #### Scenario: 终态后迟到的 progress
@@ -56,6 +57,11 @@
 
 - **WHEN** 一段收尾后又收到同段的 `subagent_step`
 - **THEN** 步骤列表与最后工具保持不变，MUST NOT 追加步骤
+
+#### Scenario: 终态后更大段事件保持既有归约
+
+- **WHEN** 段 1 已收尾、段 2 的 `started` 尚未到达时，收到段号更大的 `subagent_progress` / `subagent_step`
+- **THEN** 事件不被终态冻结丢弃：rounds / toolCalls / elapsedMs 或 steps 按既有 base 归约更新，行状态仍为终态
 
 #### Scenario: 等待批准不是终态
 

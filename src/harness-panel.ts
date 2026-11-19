@@ -2539,14 +2539,23 @@ function isStaleSegmentEvent(run: SubrunView | undefined, segment: number | unde
   return run !== undefined && segment !== undefined && segment < run.segments;
 }
 
+/** 终态行（done / partial / failed / stopped）是否应冻结该过程事件：仅**同段**与**无段号**
+ *  的迟到 progress / step——终态读数只由 finished 定稿。段号**大于**活跃段的乱序过程事件
+ *  不在此列：它是本 change 的 non-goal，SHALL 保持 base 的既有归约行为，MUST NOT 被终态
+ *  冻结丢弃。旧段（更小段号）由 {@link isStaleSegmentEvent} 先挡，这里不重复判更小段。 */
+function isTerminalFrozenEvent(run: SubrunView, segment: number | undefined): boolean {
+  return !isLiveSubrun(run) && (segment === undefined || segment === run.segments);
+}
+
 /** 事件归约（唯一的状态迁移点）：started 建行 / resume 段合并；progress / step 就地更新；
  *  finished 落终态。未知 run 的 progress / step / finished 一律忽略——重载后的迟到事件不得
  *  凭空造行。事件段号小于该 run 活跃段的 progress / step / finished 是旧段重放，同样原样忽略：
  *  MUST NOT 把在跑的新段翻成终态、MUST NOT 以新段基线再叠一份旧段读数（段号判定见
  *  {@link isNewSegment} / {@link isStaleSegmentEvent}）。终态行（done / partial / failed /
- *  stopped）迟到的同段 progress / step 也原样忽略——终态读数只由 finished 写入，否则行读数会
- *  随迟到事件漂移、与 finished 汇总矛盾（终态判定复用 {@link isLiveSubrun}，与
- *  {@link attachRunApproval} 的「已收尾不翻回等待」同一防线）。 */
+ *  stopped）迟到的**同段 / 无段号** progress / step 也原样忽略——终态读数只由 finished 写入，
+ *  否则行读数会随迟到事件漂移、与 finished 汇总矛盾；段号**大于**活跃段的乱序过程事件不在
+ *  终态冻结内，保持 base 归约（终态判定见 {@link isTerminalFrozenEvent}，与
+ *  {@link attachRunApproval} 的「已收尾不翻回等待」同一 isLiveSubrun 口径）。 */
 export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): SubrunView[] {
   switch (event.type) {
     case "subagent_started": {
@@ -2610,9 +2619,12 @@ export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): 
       return next;
     }
     case "subagent_progress":
-      // 终态行迟到的同段 progress：读数只由 finished 定稿，原样返回（终态守卫见 isLiveSubrun）。
+      // 终态行迟到的同段 / 无段号 progress：读数只由 finished 定稿，原样返回；更大段保持 base
+      // 归约（终态冻结口径见 isTerminalFrozenEvent）。
       return runs.map((run) =>
-        run.runId !== event.run_id || isStaleSegmentEvent(run, event.segment) || !isLiveSubrun(run)
+        run.runId !== event.run_id ||
+        isStaleSegmentEvent(run, event.segment) ||
+        isTerminalFrozenEvent(run, event.segment)
           ? run
           : {
               ...run,
@@ -2623,9 +2635,12 @@ export function reduceSubruns(runs: readonly SubrunView[], event: SubrunEvent): 
             },
       );
     case "subagent_step":
-      // 终态行迟到的同段 step：不得往已收尾行追加步骤（终态守卫见 isLiveSubrun）。
+      // 终态行迟到的同段 / 无段号 step：不得往已收尾行追加步骤；更大段保持 base 归约
+      // （终态冻结口径见 isTerminalFrozenEvent）。
       return runs.map((run) =>
-        run.runId !== event.run_id || isStaleSegmentEvent(run, event.segment) || !isLiveSubrun(run)
+        run.runId !== event.run_id ||
+        isStaleSegmentEvent(run, event.segment) ||
+        isTerminalFrozenEvent(run, event.segment)
           ? run
           : {
               ...run,

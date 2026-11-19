@@ -344,3 +344,62 @@ test("等待批准（waiting）仍是 live：同段 progress / step 照常生效
   assert.equal(runs[0]?.lastTool, "vault_search");
   assert.equal(runs[0]?.steps.length, 1);
 });
+
+test("终态后更大段（started 未到）progress / step 保持 base 既有归约", () => {
+  let runs = reduceSubruns([], start(1));
+  runs = reduceSubruns(runs, progress(1, 2, 3));
+  runs = reduceSubruns(
+    runs,
+    finish({
+      rounds: 2,
+      input_tokens: 1_200,
+      cached_tokens: 300,
+      output_tokens: 80,
+      duration_ms: 4_200,
+      summary: "终态",
+    }),
+  );
+  assert.equal(runs[0]?.status, "done");
+
+  const afterProgress = reduceSubruns(runs, progress(2, 5, 2));
+
+  assert.equal(afterProgress[0]?.status, "done", "更大段 progress 不改行状态");
+  assert.equal(afterProgress[0]?.rounds, 5, "更大段 progress 按 base 归约，不是终态冻结");
+  assert.equal(afterProgress[0]?.toolCalls, 2);
+  assert.equal(afterProgress[0]?.elapsedMs, 12_000);
+  assert.equal(afterProgress[0]?.inputTokens, 1_200, "token 读数仍只由 finished 写入");
+
+  const afterStep = reduceSubruns(runs, step(2, "late_tool"));
+
+  assert.equal(afterStep[0]?.status, "done");
+  assert.equal(afterStep[0]?.lastTool, "late_tool", "更大段 step 保持 base 的追加行为");
+  assert.deepEqual(afterStep[0]?.steps.at(-1), { tool: "late_tool", summary: "late_tool 完成" });
+});
+
+test("终态后无段号旧形态 progress / step 仍冻结读数", () => {
+  let runs = reduceSubruns([], start(1));
+  runs = reduceSubruns(runs, progress(1, 2, 3));
+  runs = reduceSubruns(
+    runs,
+    finish({ rounds: 2, input_tokens: 1_200, duration_ms: 4_200, summary: "终态" }),
+  );
+  const before = runs[0]!;
+
+  const afterProgress = reduceSubruns(runs, {
+    type: "subagent_progress",
+    run_id: "r1",
+    rounds: 9,
+    tool_calls: 9,
+    last_tool: "stale_tool",
+    elapsed_ms: 9_000,
+  });
+  assert.deepEqual(afterProgress[0], before, "无段号旧形态不得改写终态读数");
+
+  const afterStep = reduceSubruns(runs, {
+    type: "subagent_step",
+    run_id: "r1",
+    tool: "ghost",
+    summary: "ghost 完成",
+  });
+  assert.deepEqual(afterStep[0], before, "无段号旧形态不得向终态行追加步骤");
+});
