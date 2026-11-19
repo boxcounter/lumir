@@ -40,6 +40,10 @@ steps:
     channel: cgevent
     gapMs: 150
 
+  # 合并行以 `1. ` 开头**仍是合法有序列表项**，marker widget 会再次接管；AX 对它的
+  # 序列化是「marker 段 + 内容段」两行（实测 `1.\nuno2. dos`，YAML 双引号里的 \n 是真换行），
+  # 不是一行字面 `1. uno2. dos`（那是修复前 Chromium 的坏形态）。逐字节判据归 ⌘S 后的
+  # `file.exact`，这里只判「合并落点 + widget 序列化」。
   - name: forward Delete 合并「uno 行 / dos 行」
     do: key
     key: "forwarddelete"
@@ -47,8 +51,8 @@ steps:
     expect:
       - label: 源码逐字节合并（列表 marker 的源 `1. ` / `2. ` 保留、不拆行）
         editor: { not: "–" }
-      - label: 合并行成为普通段落，AX 可见字面 `1. uno2. dos`
-        editor: { has: "1. uno2. dos" }
+      - label: 合并行仍是列表项：marker 与内容按 widget 序列化成两段（`1.` + 换行 + `uno2. dos`）
+        editor: { has: "1.\nuno2. dos" }
 
   - name: ⌘S 落盘（唯一写盘键）
     do: key
@@ -180,15 +184,37 @@ steps:
 
   # witness C：行内公式行被吸收。先重写为两行 `alpha` / `$x$`（$ 是盲键触发 widget），
   # 修复前 Chromium 会把 KaTeX 的 mathml+html 文本写进源码（`alpha\nx\nx\n`）。
-  - name: ⌘A 全选后重写为 alpha
+  #
+  # 全选覆写不能用「alpha 计数 N→N+1」判落地：目标串在旧文档里本就存在，替换后计数不变，
+  # 计数 oracle 会必然判红（M838 现场）。配方：⌘A（真键盘事件）后先键入旧文档里不存在的
+  # 哨兵串 `alphaq`——0→1 是有效计数 oracle，且「旧内容不在场」两条断言证明这是整段覆写
+  # 而非追加；随后盲键 Backspace 删掉哨兵尾字符，用「哨兵消失 + alpha 仍在」两条正向观测
+  # 确认盲键落地（不让盲发环节没有判据）。
+  - name: ⌘A 全选（真键盘事件通道）
     do: key
     key: "cmd+a"
     channel: cgevent
     gapMs: 150
-  - name: 键入 alpha
+  - name: 键入哨兵串 alphaq 覆写选区（可打印 keys，字面回读 0→1）
     do: keys
-    keys: ["a", "l", "p", "h", "a"]
+    keys: ["a", "l", "p", "h", "a", "q"]
     gapMs: 120
+    expect:
+      - label: 哨兵串整段落地（`alphaq` 在旧文档出现 0 次，覆写后恰 1 次）
+        editor: { has: "alphaq" }
+      - label: 旧文档被选区替换（wikilink label 不在场 ⇒ 不是追加）
+        editor: { not: "plain" }
+      - label: 旧文档第二段也不在场
+        editor: { not: "第二段内容" }
+  - name: 盲键 Backspace 删掉哨兵尾字符
+    do: key
+    key: "backspace"
+    gapMs: 150
+    expect:
+      - label: 哨兵串整体消失（盲键落地的独立正观测）
+        editor: { not: "alphaq" }
+      - label: 文档只剩 alpha 前缀行
+        editor: { has: "alpha" }
   - name: Enter 开第二行
     do: key
     key: "return"
@@ -269,7 +295,12 @@ steps:
 
 - **AX 不是 raw doc oracle**：编辑器 AX 文本是渲染后的文本（marker 显示为 `1.`、wikilink
   显示 label、公式显示渲染结果），因此逐字节判据一律落在 `⌘S` 后的**文件**上
-  （`file.exact`）；`editor.has/not` 只做「widget 已接管」的正反向锚点。
-- **未执行**：M836 期间用户真机窗口已结束，本场景未跑；未跑不得记 PASS（COVERAGE 只证明
-  场景已登记，不证明行为通过）。
+  （`file.exact`）；`editor.has/not` 只做「widget 已接管」的正反向锚点。marker widget 的 AX
+  序列化是「marker 段 + 内容段」**两段**（合并后的列表项读作 `1.\nuno2. dos`），断言按这个
+  形态写，不要写回字面 `1. uno2. dos`。
+- **真机执行记录**：2026-11-19 在 master `ee74260`（dev flavour）重跑本场景：33 断言全
+  PASS、退出码 0；三处 `file.exact`（`1. uno2. dos\n` / `alpha[[plain]]\n\n第二段内容。\n` /
+  `alpha$x$`）逐字节命中（证据 `.local/acceptance/2026-11-19-widget-oracle-fix/`，git 外）。
+  M836 期间真机窗口已结束、本场景未跑；本轮修掉当时暴露的两条场景 oracle（列表 AX 序列化、
+  全选覆写的计数 oracle）后重跑，未跑不得记 PASS 的口径不变。
 - **native IME 不在此场景**：组合期删除归浏览器 / CM 的合成处理，不在本合同的接管面内。
