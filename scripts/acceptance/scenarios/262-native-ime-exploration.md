@@ -121,11 +121,12 @@ G0 的共享前置。每组结束时把四态之一写进 `ledger.md` 对应行�
   `NATIVE_IME_BLOCKED`，该组 native 不执行。
 - **记录**：`.local/acceptance/<日期>-ime-matrix/env.md`，ledger 的 G0 行同步写结果。
 
-## 基线复位（G1 / G5 / G6 每个编号 case 前）
+## 基线复位（G1 / G6 每个编号 case 前）
 
-G1、G5、G6 的每个编号 case 都从同一份 G0 基线独立开始，不得沿用上一 case 的候选窗、
-marked text，或已被上一 case 破坏的文本 / 附件状态。每个编号 case 执行前按下面五步复位，
-复位结果就是该 case 的前置正观测：
+G1、G6 的每个编号 case 都从同一份 G0 基线独立开始，不得沿用上一 case 的候选窗、marked text，
+或已被上一 case 破坏的文本 / 附件状态。每个编号 case 执行前按下面五步复位，复位结果就是该
+case 的前置正观测。**G5 不走这套复位**：它直接断言 CM history，任何编辑动作复位都会污染被测
+撤销栈，见 G5 的「重启复位」。
 
 1. **结束组合**：按 Esc，确认候选窗消失、composer 里没有下划线拼音串。
 2. **文本复位**：删除本组上一 case 追加的字符；若上一 case 撤销 / 删除了基线文本，用重做或
@@ -239,26 +240,53 @@ marked text，或已被上一 case 破坏的文本 / 附件状态。每个编号
 ## G5 组合中撤销 / 重做
 
 - **触发面**：CM history、undo / redo 键路、附件 history、`composerAttachmentsField`。
-- **前置正观测**：G0 成立；记录基线文本与附件数量 / 顺序；确认 composer 焦点。
-- **操作**（每个编号 case 前先按「基线复位」执行；case 5 的复位保留 G0 的一张附件。每个 case
-  独立重建组合与提交，不依赖上一 case 的结果）：
-  1. 组合 `ni`（marked text 可见）后直接按 ⌘Z（不先 Esc），记录实际结果。
-  2. 组合 `ni` 后按 Esc 取消，再立即 ⌘Z。
+- **重启复位（每个编号 case 前必须执行）**：G5 直接断言 CM history；用删除、重打、撤销或
+  重做把文本 / 附件「摆回」G0，会往同一个 history 追加条目，复位动作本身就会成为下一个
+  ⌘Z 的目标（review 现场：case 1 之后用复位回基线，case 2 取消组合后 ⌘Z 可能撤销的是复位
+  的删除 / 重键，而不是本 case 的提交）。因此每个编号 case 都用**全新实例 + 全新 composer
+  history** 建立 G0，不得复用上一 case 的实例、history 或 composer state：
+  1. 正常退出当前实例：⌘Q（或应用「退出」菜单），用
+     `ps aux | grep '[t]arget/debug/lumir'` 确认本次 pid 已不在列表里；不用 SIGKILL，
+     不保留旧实例。
+  2. 重跑 `node scripts/acceptance/run.mjs 262 --keep-app`，等自动段 PASS，两行探针
+     `hnl-imx-a` / `hnl-imx-b` 在 composer 中可见；把本次 run 的证据目录抄进该 case 的
+     notes。
+  3. 重新执行 G0 的附件建立：编辑器选中一段文字 → 点「摘录到对话」→ 正观测 tray 出处行与
+     ×；记录附件内容与顺序。
+  4. 真实鼠标点 composer 第二行行尾，确认 `focus-within`；截图记录本次 case 的 G0 基线。
+  5. 重启或附件建立失败 ⇒ 该 case `BLOCKED`，不得用编辑动作凑一个看似相同的基线继续。
+- **本 case 的撤销目标**：全新实例的 history 里已有 runner 打字与 G0 附件两步；为避免 undo
+  落到这些 setup 上，case 1 / 2 在 G0 后先**提交本 case 自有的 sentinel「我」**（组合 `wo`
+  并提交，截图记录「我」在 composer 中），再开始该 case 的动作；case 3 / 4 的候选提交本身
+  就是本 case 的撤销目标；case 5 新加的第二张附件就是目标。**不得**把 runner 打字、G0 附件
+  或复位动作当作被测撤销目标。
+- **前置正观测**：每个 case 的重启复位步骤 1–4 全部成立；case 1 / 2 的 sentinel「我」已提交
+  并截图；该 case 的 run 证据路径、基线截图、附件读数写进 `g5/<case>/notes.md`。
+- **操作**（每个 case 都从本次新建的 G0 开始；case 结束后直接进入下一 case 的重启复位，
+  不靠 ⌘Z / Backspace 回基线）：
+  1. 提交 sentinel `wo`（我）后，组合 `ni`（marked text 可见）并直接按 ⌘Z（不先 Esc），
+     记录实际结果。
+  2. 提交 sentinel `wo`（我）后，组合 `ni` 并按 Esc 取消，再立即按 ⌘Z。
   3. 组合 `ni` 并提交候选，再按 ⌘Z。
   4. 组合 `ni` 并提交候选，按 ⌘Z，再按 ⌘⇧Z（或 ⌘Y）重做；redo 只重做本 case 自己的撤销。
   5. 从编辑器再摘录一段，新加第二张附件后 ⌘Z，再 ⌘⇧Z；before / after 都记录两张附件的顺序。
 - **预期**：
-  - 五个 case 都从同一份 G0 基线独立开始；case 4 的 redo 不依赖 case 3，case 5 的
-    undo / redo 只作用于本 case 新加的那张附件，G0 附件不动、不复制。
-  - 一次 undo 只回退一个编辑步骤；不得一次撤销多步。
-  - 组合期 undo 不得留下残段，不得损坏已提交文本或附件。
-  - 取消组合后的 undo 只撤销组合前最后一次提交，不动更早的基线行。
-  - 提交后的 undo 回到组合前文本；redo 精确恢复，不重复插入。
-  - 附件操作是一步：undo 移除新加的那张、redo 恢复；文本 undo 不得连带改写 tray。
-- **FAIL 签名**：一次 undo 撤销多步、undo 吞掉附件或文本、redo 重复插入、组合期 undo 留下
-  残段或崩溃、case 间状态串扰（上一 case 的撤销 / 重做残留被当成下一 case 的基线）。
-- **记录**：`.local/acceptance/<日期>-ime-matrix/g5/notes.md`，每次复位与每步后记录 composer
-  原文、附件数量与顺序、截图。
+  - 五个 case 各自在全新实例 / 全新 history 中执行，case 之间不共享撤销栈，也不共享
+    composer state。
+  - case 1：⌘Z 的实际结果按产品行为记录；不得发送、不得留下残段、不得改动 G0 附件或两行
+    基线。若撤销的是 sentinel「我」，记录为实际读数，不算 FAIL。
+  - case 2：Esc 取消不产生本 case 的提交；随后的 ⌘Z 必须撤销本 case 的 sentinel「我」，
+    文本回到两行基线，附件与 G0 基线不动。撤销到 G0 附件 / runner 打字 ⇒ FAIL。
+  - case 3 / 4：undo 的目标是本 case 刚提交的候选；undo 回到两行基线，redo 精确恢复，
+    不重复插入；附件不动。
+  - case 5：附件操作是一步；undo 只移除本 case 新加的第二张，G0 附件保留；redo 恢复第二张，
+    顺序与 before 一致。
+  - 任何 case 都不得一次 undo 撤销多步、不得吞掉 G0 附件、不得崩溃。
+- **FAIL 签名**：一次 undo 撤销多步、undo 吞掉 G0 附件或基线文本、redo 重复插入、组合期
+  undo 留下残段或崩溃、undo 目标落到 runner 打字 / G0 附件 / 复位动作（而不是本 case 的
+  sentinel 或候选 / 新加附件）。
+- **记录**：`.local/acceptance/<日期>-ime-matrix/g5/<case>/notes.md`，每个 case 记录本次 run
+  证据路径、重启与 sentinel 截图、每步后 composer 原文、附件数量与顺序、截图。
 
 ## G6 组合中粘贴
 
@@ -309,7 +337,7 @@ marked text，或已被上一 case 破坏的文本 / 附件状态。每个编号
 ├── g2/notes.md + shots/
 ├── g3/<位置>/notes.md + shots/
 ├── g4/<case>/notes.md + shots/
-├── g5/notes.md + shots/
+├── g5/<case>/notes.md + shots/
 └── g6/notes.md + shots/
 ```
 
