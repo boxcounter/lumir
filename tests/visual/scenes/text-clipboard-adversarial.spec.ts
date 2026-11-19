@@ -98,6 +98,8 @@ async function setBodySelection(page: Page, anchor: number, head = anchor): Prom
 
 interface ClipPayload {
   text?: string;
+  /** Markdown 源码的显式 MIME（`text/markdown`）；与 `text`（`text/plain`）互斥设置。 */
+  markdown?: string;
   html?: string;
   uri?: string;
   image?: { type: string; bytes: number[] };
@@ -109,6 +111,7 @@ async function dispatchPaste(page: Page, selector: string, payload: ClipPayload)
   return page.locator(selector).evaluate((el, p) => {
     const dt = new DataTransfer();
     if (p.text !== undefined) dt.setData("text/plain", p.text);
+    if (p.markdown !== undefined) dt.setData("text/markdown", p.markdown);
     if (p.html !== undefined) dt.setData("text/html", p.html);
     if (p.uri !== undefined) dt.setData("text/uri-list", p.uri);
     if (p.image !== undefined) {
@@ -126,26 +129,33 @@ async function dispatchPaste(page: Page, selector: string, payload: ClipPayload)
 interface DropPayload {
   pos: number;
   text?: string;
+  /** Markdown 源码的显式 MIME；与 `text` 互斥设置。 */
+  markdown?: string;
+  html?: string;
   file?: { name: string; type: string; text: string };
 }
 
-/** 合成 drop 事件：落点由 `coordsAtPos(pos)` 给出（与 README「指针选中端点由文本几何给出」同口径）。 */
-async function dispatchDrop(page: Page, selector: string, payload: DropPayload): Promise<void> {
-  await page.locator(selector).evaluate((el, p) => {
+/** 合成 drop 事件：落点由 `coordsAtPos(pos)` 给出（与 README「指针选中端点由文本几何给出」同口径）。
+ *  返回事件是否被产品消费（defaultPrevented）。注意合成事件只走产品 JS 处理器，不触发浏览器
+ *  原生 drag-drop 默认动作——HTML-only 的「原生默认」边界在 README 里单列。 */
+async function dispatchDrop(page: Page, selector: string, payload: DropPayload): Promise<boolean> {
+  return page.locator(selector).evaluate((el, p) => {
     const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
     const coords = view.coordsAtPos(p.pos);
     const dt = new DataTransfer();
     if (p.text !== undefined) dt.setData("text/plain", p.text);
+    if (p.markdown !== undefined) dt.setData("text/markdown", p.markdown);
+    if (p.html !== undefined) dt.setData("text/html", p.html);
     if (p.file !== undefined) dt.items.add(new File([p.file.text], p.file.name, { type: p.file.type }));
-    el.dispatchEvent(
-      new DragEvent("drop", {
-        dataTransfer: dt,
-        bubbles: true,
-        cancelable: true,
-        clientX: coords.left + 1,
-        clientY: (coords.top + coords.bottom) / 2,
-      }),
-    );
+    const event = new DragEvent("drop", {
+      dataTransfer: dt,
+      bubbles: true,
+      cancelable: true,
+      clientX: coords.left + 1,
+      clientY: (coords.top + coords.bottom) / 2,
+    });
+    el.dispatchEvent(event);
+    return event.defaultPrevented;
   }, payload);
 }
 
@@ -1024,4 +1034,319 @@ pageTest("composer 随机对拍 seed=71,73：Unicode 粘贴 / 选区 / 历史 / 
     }
   }
   assertHistogramUsable(histogram, "composer 随机对拍");
+});
+
+// ---------------------------------------------------------------------------
+// 十、快速无屏障序列（P1-1）：真实键入 / 删除 / undo / redo，不插 ≥500ms 屏障
+//
+// 与第九节的分工：第九节用 620ms 屏障把每拍隔成独立历史步，便于逐拍对拍；本节刻意**不设**
+// 时间屏障，直接验证「快速操作下历史仍不丢步、不复活、不越界」。两个子段：
+//   A. 每次编辑的变更区间与上一拍**不相邻**（中间用程序化选区跳开），因此无论两拍间隔多短，
+//      历史都不会聚簇——每拍都是确定的一步，可逐步给出精确 doc/caret 期望（含 undo/redo）。
+//   B. 相邻的快速键入 + 删除（会按 500ms/相邻规则聚簇），用独立模型的「可达状态集合」判定
+//      undo/redo 不会落到集合外，并断言撤到底 / 重做到顶的精确终态。
+// 两段都不含 waitForTimeout(≥500ms)；expect.poll 只等 DOM observer 的微任务落地，不改变
+// 两次按键之间的时序条件。
+// ---------------------------------------------------------------------------
+
+const FAST_DOC = "alpha\nbravo\ncharlie\n";
+
+type FastStep =
+  | { kind: "select"; pos: number; doc: string; head: number }
+  | { kind: "type"; text: string; doc: string; head: number }
+  | { kind: "key"; key: string; doc: string; head: number };
+
+/** 有向精确期望：由操作语义推导，并在 chromium + webkit-realua 实测一致。编辑拍两两不相邻，
+ *  history 不聚簇，因此期望与两拍间隔无关。undo 的 caret = 被撤销事件的起始选区；redo 的
+ *  caret = 该起始选区经逆变换映射后的落点（本表三例均为删除/插入的起点侧）。 */
+const FAST_STEPS: FastStep[] = [
+  { kind: "select", pos: 0, doc: FAST_DOC, head: 0 },
+  { kind: "type", text: "X", doc: "Xalpha\nbravo\ncharlie\n", head: 1 },
+  { kind: "select", pos: 7, doc: "Xalpha\nbravo\ncharlie\n", head: 7 },
+  { kind: "type", text: "Y", doc: "Xalpha\nYbravo\ncharlie\n", head: 8 },
+  { kind: "select", pos: 14, doc: "Xalpha\nYbravo\ncharlie\n", head: 14 },
+  { kind: "type", text: "Z", doc: "Xalpha\nYbravo\nZcharlie\n", head: 15 },
+  { kind: "select", pos: 4, doc: "Xalpha\nYbravo\nZcharlie\n", head: 4 },
+  { kind: "key", key: "Backspace", doc: "Xalha\nYbravo\nZcharlie\n", head: 3 },
+  { kind: "select", pos: 10, doc: "Xalha\nYbravo\nZcharlie\n", head: 10 },
+  { kind: "key", key: "Delete", doc: "Xalha\nYbrao\nZcharlie\n", head: 10 },
+  { kind: "key", key: "Meta+z", doc: "Xalha\nYbravo\nZcharlie\n", head: 10 },
+  { kind: "key", key: "Meta+z", doc: "Xalpha\nYbravo\nZcharlie\n", head: 4 },
+  { kind: "key", key: "Meta+Shift+z", doc: "Xalha\nYbravo\nZcharlie\n", head: 3 },
+  { kind: "key", key: "Meta+Shift+z", doc: "Xalha\nYbrao\nZcharlie\n", head: 10 },
+  { kind: "select", pos: 18, doc: "Xalha\nYbrao\nZcharlie\n", head: 18 },
+  { kind: "type", text: "!", doc: "Xalha\nYbrao\nZcharl!ie\n", head: 19 },
+  { kind: "key", key: "Meta+z", doc: "Xalha\nYbrao\nZcharlie\n", head: 18 },
+  { kind: "key", key: "Meta+Shift+z", doc: "Xalha\nYbrao\nZcharl!ie\n", head: 19 },
+];
+
+pageTest("快速无屏障：真实键入/删除/undo/redo 固定序列（逐步精确 doc + caret）", async (page) => {
+  await openBody(page, "probe.md", FAST_DOC);
+  await page.locator(bodySelector).click();
+  let edits = 0;
+  let undos = 0;
+  let redos = 0;
+  for (const [index, step] of FAST_STEPS.entries()) {
+    if (step.kind === "select") {
+      await setBodySelection(page, step.pos);
+    } else if (step.kind === "type") {
+      await page.keyboard.type(step.text);
+      edits += 1;
+    } else {
+      await page.keyboard.press(step.key);
+      if (step.key === "Meta+z") undos += 1;
+      else if (step.key === "Meta+Shift+z") redos += 1;
+      else edits += 1;
+    }
+    await expect.poll(async () => (await bodyState(page)).doc, { message: `step ${index} ${JSON.stringify(step)}` }).toBe(step.doc);
+    await expect.poll(async () => (await bodyState(page)).head, { message: `step ${index} caret ${JSON.stringify(step)}` }).toBe(step.head);
+  }
+  // 正观测：三类操作都真实发生，且终态与表尾一致。
+  expect(edits, "键入/删除拍数").toBeGreaterThan(0);
+  expect(undos, "undo 拍数").toBeGreaterThan(0);
+  expect(redos, "redo 拍数").toBeGreaterThan(0);
+  const final = await bodyState(page);
+  const last = FAST_STEPS[FAST_STEPS.length - 1]!;
+  expect(final.doc).toBe(last.doc);
+  expect(final.head).toBe(last.head);
+});
+
+pageTest("快速无屏障：相邻键入+删除后 undo/redo 只落在模型可达状态集（终态与历史）", async (page) => {
+  const start = "seed\n";
+  await openBody(page, "probe.md", start);
+  await page.locator(bodySelector).click();
+  await setBodySelection(page, 5);
+
+  // 独立模型枚举每个按键后的可达状态（不假设 history 聚簇粒度）。
+  const model = new BodyOracle(start, 5);
+  const reachable: Array<{ doc: string; head: number }> = [{ doc: model.doc, head: model.head }];
+  for (const ch of "abc") {
+    model.insert(ch);
+    reachable.push({ doc: model.doc, head: model.head });
+  }
+  model.deleteBackward();
+  reachable.push({ doc: model.doc, head: model.head });
+  model.deleteBackward();
+  reachable.push({ doc: model.doc, head: model.head });
+  const final = reachable[reachable.length - 1]!;
+  const keyOf = (r: { doc: string; head: number }) => `${r.doc}\u0000${r.head}`;
+  const allowed = new Set(reachable.map(keyOf));
+
+  // 相邻 + 无任何 ≥500ms 屏障：三拍键入 + 两拍删除。
+  await page.keyboard.type("abc");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => (await bodyState(page)).doc).toBe(final.doc);
+  expect((await bodyState(page)).head).toBe(final.head);
+  expect(allowed.has(keyOf({ doc: (await bodyState(page)).doc, head: (await bodyState(page)).head }))).toBe(true);
+
+  const seen = new Set<string>();
+  let undoPresses = 0;
+  while (!((await bodyState(page)).doc === start && (await bodyState(page)).head === 5)) {
+    expect(undoPresses, "undo 未撤到底").toBeLessThan(10);
+    await page.keyboard.press("Meta+z");
+    undoPresses += 1;
+    const after = await bodyState(page);
+    expect(allowed.has(keyOf(after)), `undo 落在模型状态集外：${JSON.stringify(after)}`).toBe(true);
+    seen.add(keyOf(after));
+  }
+  expect(undoPresses, "undo 拍数").toBeGreaterThan(0);
+
+  let redoPresses = 0;
+  while (!((await bodyState(page)).doc === final.doc && (await bodyState(page)).head === final.head)) {
+    expect(redoPresses, "redo 未重做到顶").toBeLessThan(10);
+    await page.keyboard.press("Meta+Shift+z");
+    redoPresses += 1;
+    const after = await bodyState(page);
+    expect(allowed.has(keyOf(after)), `redo 落在模型状态集外：${JSON.stringify(after)}`).toBe(true);
+    seen.add(keyOf(after));
+  }
+  expect(redoPresses, "redo 拍数").toBeGreaterThan(0);
+  expect(seen.size, "历史全程未经过任何可观测状态").toBeGreaterThan(1);
+  const settled = await bodyState(page);
+  expect({ doc: settled.doc, anchor: settled.anchor, head: settled.head }).toEqual({
+    doc: final.doc,
+    anchor: final.head,
+    head: final.head,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 十一、Markdown / HTML 的 paste 与 drop（P1-2）
+//
+// 合同：
+//   - Markdown 源码以 `text/plain` 粘贴 / 拖放 = **按纯文本逐字节消费**（正文与 composer 同权），
+//     替换选区 / 落在拖放点；不解析 Markdown、不吞选区。
+//   - `text/markdown` 显式 MIME（无 text/plain）：正文 caret、composer、两面的 drop 都是安全
+//     no-op；正文**非空选区**的现状是 CM `doPaste("")` 删除选区（finding，见下方 expected
+//     failure）——不把数据丢失写成期望。
+//   - `text/html`（无 text/plain）drop：产品 JS 处理器不消费、不改文档、不动选区。合成 DragEvent
+//     到不了浏览器原生 drag-drop 默认动作，该边界在 README 单列；paste 侧 HTML-only 的删除
+//     仍是既有 finding。
+// ---------------------------------------------------------------------------
+
+const MD_SOURCE = "## 标题\n- 项 **粗** [[link]]\n";
+
+pageTest("Markdown 源码（text/plain）正文粘贴：caret / 非空选区都按纯文本消费", async (page) => {
+  const doc = "alpha\nbeta\n";
+  // caret
+  await openBody(page, "probe.md", doc);
+  await page.locator(bodySelector).click();
+  await setBodySelection(page, 3);
+  const prevented = await dispatchPaste(page, bodySelector, { text: MD_SOURCE, html: "<b>HTML</b>" });
+  expect(prevented).toBe(true);
+  await expect.poll(async () => (await bodyState(page)).doc).toBe(`alp${MD_SOURCE}ha\nbeta\n`);
+  expect((await bodyState(page)).head).toBe(3 + MD_SOURCE.length);
+  await page.waitForTimeout(620);
+  await page.keyboard.press("Meta+z");
+  await expect.poll(async () => (await bodyState(page)).doc).toBe(doc);
+
+  // 非空选区：精确替换源码区间，不静默删除。
+  await openBody(page, "probe.md", doc);
+  await page.locator(bodySelector).click();
+  await setBodySelection(page, 2, 8);
+  await dispatchPaste(page, bodySelector, { text: MD_SOURCE });
+  await expect.poll(async () => (await bodyState(page)).doc).toBe(`al${MD_SOURCE}ta\n`);
+  expect((await bodyState(page)).head).toBe(2 + MD_SOURCE.length);
+  await page.waitForTimeout(620);
+  await page.keyboard.press("Meta+z");
+  await expect.poll(async () => (await bodyState(page)).doc).toBe(doc);
+  expect({ anchor: (await bodyState(page)).anchor, head: (await bodyState(page)).head }).toEqual({ anchor: 2, head: 8 });
+});
+
+pageTest("Markdown 源码（text/plain）正文 drop：插入一次、原有字节不丢、不吞选区", async (page) => {
+  const doc = "alpha\nbeta\n";
+  await openBody(page, "probe.md", doc);
+  await page.locator(bodySelector).click();
+  await setBodySelection(page, 2, 8);
+  const prevented = await dispatchDrop(page, bodySelector, { pos: 3, text: MD_SOURCE });
+  expect(prevented).toBe(true);
+  const after = await bodyState(page);
+  const at = after.anchor;
+  expect(after.doc).toBe(doc.slice(0, at) + MD_SOURCE + doc.slice(at));
+  expect(after.head).toBe(at + MD_SOURCE.length);
+  expect(after.doc.slice(0, at) + after.doc.slice(at + MD_SOURCE.length), "drop 不得删除原有字节").toBe(doc);
+  expect(at <= doc.indexOf("\n")).toBe(true);
+});
+
+pageTest("Markdown 源码（text/plain）composer 粘贴与 drop：按纯文本消费、附件不动", async (page) => {
+  const doc = "alpha";
+  await openComposer(page, doc, 2, [QUOTE_CARD]);
+  await page.locator(composerSelector).click();
+  await setComposerSelection(page, 2, 4);
+  const preventedPaste = await dispatchPaste(page, composerSelector, { text: MD_SOURCE });
+  expect(preventedPaste).toBe(true);
+  await expect.poll(async () => (await composerState(page)).doc).toBe(`al${MD_SOURCE}a`);
+  expect((await composerState(page)).head).toBe(2 + MD_SOURCE.length);
+  await expect(composerTray(page)).toHaveCount(1);
+  await page.keyboard.press("Meta+z");
+  await expect.poll(async () => (await composerState(page)).doc).toBe(doc);
+
+  await openComposer(page, doc, 2, [QUOTE_CARD]);
+  await page.locator(composerSelector).click();
+  await setComposerSelection(page, 1, 4);
+  const preventedDrop = await dispatchDrop(page, composerSelector, { pos: 2, text: MD_SOURCE });
+  expect(preventedDrop).toBe(true);
+  const after = await composerState(page);
+  const at = after.head - MD_SOURCE.length;
+  expect(after.doc).toBe(doc.slice(0, at) + MD_SOURCE + doc.slice(at));
+  expect(after.doc.slice(0, at) + after.doc.slice(at + MD_SOURCE.length), "drop 不得删除原有字节").toBe(doc);
+  await expect(composerTray(page)).toHaveCount(1);
+});
+
+pageTest("text/markdown-only：caret 与 drop 安全 no-op；正文有选区为已知缺陷（expected failure）", async (page) => {
+  const doc = "alpha\nbeta\n";
+  // 正文 caret：安全 no-op。
+  await openBody(page, "probe.md", doc);
+  await page.locator(bodySelector).click();
+  await setBodySelection(page, 3);
+  const caretPrevented = await dispatchPaste(page, bodySelector, { markdown: MD_SOURCE });
+  expect(caretPrevented).toBe(true);
+  await page.waitForTimeout(60);
+  expect(await bodyState(page)).toEqual({ doc, anchor: 3, head: 3 });
+
+  // 正文 drop：只带 text/markdown 时产品处理器不消费、选区原样保留。
+  await openBody(page, "probe.md", doc);
+  await page.locator(bodySelector).click();
+  await setBodySelection(page, 2, 8);
+  const dropPrevented = await dispatchDrop(page, bodySelector, { pos: 3, markdown: MD_SOURCE });
+  expect(dropPrevented).toBe(false);
+  expect(await bodyState(page)).toEqual({ doc, anchor: 2, head: 8 });
+
+  // composer 粘贴 / drop：只读 text/plain ⇒ 安全 no-op，选区与附件不动。
+  await openComposer(page, "alpha", 2, [QUOTE_CARD]);
+  await page.locator(composerSelector).click();
+  await setComposerSelection(page, 1, 4);
+  const composerPaste = await dispatchPaste(page, composerSelector, { markdown: MD_SOURCE });
+  expect(composerPaste).toBe(true);
+  await page.waitForTimeout(60);
+  expect(await composerState(page)).toEqual({ doc: "alpha", anchor: 1, head: 4 });
+  await expect(composerTray(page)).toHaveCount(1);
+
+  await openComposer(page, "alpha", 2, [QUOTE_CARD]);
+  await page.locator(composerSelector).click();
+  await setComposerSelection(page, 1, 4);
+  const composerDrop = await dispatchDrop(page, composerSelector, { pos: 2, markdown: MD_SOURCE });
+  expect(composerDrop).toBe(true);
+  expect(await composerState(page)).toEqual({ doc: "alpha", anchor: 1, head: 4 });
+  await expect(composerTray(page)).toHaveCount(1);
+});
+
+pageTest("正文 text/markdown-only + 非空选区：不得静默删除（已知缺陷，expected failure）", async (page) => {
+  baseTest.fail(true, "已知缺陷：正文 text/markdown-only + 选区时 CM doPaste(\"\") 删除选区；finding 已登记");
+  const doc = "alpha\nbeta\n";
+  await openBody(page, "probe.md", doc);
+  await page.locator(bodySelector).click();
+  await setBodySelection(page, 2, 8);
+  const prevented = await dispatchPaste(page, bodySelector, { markdown: MD_SOURCE });
+  expect(prevented).toBe(true);
+  await page.waitForTimeout(60);
+  const after = await bodyState(page);
+  const consumed = doc.slice(0, 2) + MD_SOURCE + doc.slice(8);
+  // 安全合同二选一：按 Markdown 源码消费（替换选区）或完全不动（文档与选区都不变）；
+  // 当前实现两者都不是（选区被删），因此本用例是 expected failure。
+  expect(
+    after.doc === consumed || (after.doc === doc && after.anchor === 2 && after.head === 8),
+    `不得静默删除选区：${JSON.stringify(after)}`,
+  ).toBe(true);
+});
+
+pageTest("HTML drop：合成事件下双面安全 no-op，plain 优先", async (page) => {
+  const doc = "alpha\nbeta\n";
+  // 正文 HTML-only：产品处理器不消费；选区原样。
+  await openBody(page, "probe.md", doc);
+  await page.locator(bodySelector).click();
+  await setBodySelection(page, 2, 8);
+  const bodyHtmlOnly = await dispatchDrop(page, bodySelector, { pos: 3, html: "<b>HTML</b>" });
+  expect(bodyHtmlOnly).toBe(false);
+  expect(await bodyState(page)).toEqual({ doc, anchor: 2, head: 8 });
+
+  // 正文 HTML + plain：plain 优先，插入一次，原有字节不丢。
+  await openBody(page, "probe.md", doc);
+  await page.locator(bodySelector).click();
+  await setBodySelection(page, 2, 8);
+  const bodyMixed = await dispatchDrop(page, bodySelector, { pos: 3, text: "PLAIN", html: "<b>HTML</b>" });
+  expect(bodyMixed).toBe(true);
+  const afterMixed = await bodyState(page);
+  const at = afterMixed.anchor;
+  expect(afterMixed.doc).toBe(doc.slice(0, at) + "PLAIN" + doc.slice(at));
+  expect(afterMixed.doc.includes("HTML")).toBe(false);
+
+  // composer HTML-only / HTML + plain。
+  await openComposer(page, "alpha", 2, [QUOTE_CARD]);
+  await page.locator(composerSelector).click();
+  await setComposerSelection(page, 1, 4);
+  const composerHtmlOnly = await dispatchDrop(page, composerSelector, { pos: 2, html: "<b>HTML</b>" });
+  expect(composerHtmlOnly).toBe(true);
+  expect(await composerState(page)).toEqual({ doc: "alpha", anchor: 1, head: 4 });
+  await expect(composerTray(page)).toHaveCount(1);
+
+  await openComposer(page, "alpha", 2, [QUOTE_CARD]);
+  await page.locator(composerSelector).click();
+  await setComposerSelection(page, 1, 4);
+  const composerMixed = await dispatchDrop(page, composerSelector, { pos: 2, text: "PLAIN", html: "<b>HTML</b>" });
+  expect(composerMixed).toBe(true);
+  await expect.poll(async () => (await composerState(page)).doc).toBe("alPLAINpha");
+  expect((await composerState(page)).doc.includes("HTML")).toBe(false);
+  await expect(composerTray(page)).toHaveCount(1);
 });
