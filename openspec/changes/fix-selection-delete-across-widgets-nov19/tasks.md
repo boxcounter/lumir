@@ -21,7 +21,7 @@
 
 ## 4. 验证
 
-- [x] 4.1 `scripts/gate.sh quick`（r1 修复提交，`CARGO_TARGET_DIR=/tmp/lumir-m854-target`）：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（日志 `.local/missions/M854/gate-quick-r1.log`；temp target 跑后已删）。
-- [x] 4.2 `LUMIR_VISUAL_PORT=4393 CARGO_TARGET_DIR=/tmp/lumir-m854-target scripts/gate.sh visual`（最终 tip `1278c3d1`）：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；`visual-regression` 940s，全量 **1157 passed / 3 skipped**（含本文件两种引擎各 61 条），**未更新任何基线**。日志 `.local/missions/M854/gate-visual-final.log`；temp target 跑后已删（释放 3.9G）。
+- [x] 4.1 `scripts/gate.sh quick`（rebase 到 master `27bcfcc9` 后，`CARGO_TARGET_DIR=/tmp/lumir-m854-target`）：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0（日志 `.local/missions/M854/gate-quick-rebased.log`；temp target 跑后已删）。
+- [x] 4.2 `LUMIR_VISUAL_PORT=4393 CARGO_TARGET_DIR=/tmp/lumir-m854-target scripts/gate.sh visual`（rebase 后 r2 提交 `8e4534cb`）：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；`visual-regression` 1083s，全量 **1246 passed / 4 skipped**（含本文件两种引擎各 61 条），**未更新任何基线**。日志 `.local/missions/M854/gate-visual-final-rebased.log`；temp target 跑后已删（释放 4.4G）。
 - [x] 4.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`、`bash scripts/docs-check.sh`、`node scripts/acceptance/run.mjs --check` 通过（2026-11-19：`validate --all --strict` → `Totals: 35 passed, 0 failed`；`docs-check: PASS`；`--check` → `场景静态校验通过（240 个）`）。
-- [x] 4.4 r1 修复：闸门 IME guard 改为 `view.compositionStarted`（保留 `event.isComposing`）+ 新增 WebKit 组合期回归；tasks 读数按实际制品改正（61/引擎、122 passed）。r1 提交后 quick 13/13 PASS、目标双引擎 122 passed；r2 纯文档；最终 visual 在 `1278c3d1` 上 15/15 PASS（4.2）。真机证据 `.local/acceptance/2026-11-19-m854-266/`；原始日志 `.local/missions/M854/`。提交 TowerComplete 等待 fresh review。
+- [x] 4.4 r1 修复：闸门 IME guard 改为 `view.compositionStarted`（保留 `event.isComposing`）+ 新增 WebKit 组合期回归；tasks 读数按实际制品改正（61/引擎、122 passed）。r1 提交后 quick 13/13、目标双引擎 122 passed；r2 纯文档。rebase 到 master `27bcfcc9` 后（提交 `ddc7ce58` → `378703be` → `aba57956` → `b8ec2091` → `98397985` → `8e4534cb`）：目标双引擎 122 passed、quick 13/13、最终 visual 15/15（4.1 / 4.2）。真机证据 `.local/acceptance/2026-11-19-m854-266/`；原始日志 `.local/missions/M854/`。提交 TowerComplete 等待 fresh review。
