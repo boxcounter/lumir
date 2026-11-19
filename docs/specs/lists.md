@@ -7,6 +7,8 @@
 > 列表的**标记外观**（glyph / 复合编号 / 字号档 / 悬挂缩进像素）不在本文件，见
 > `src/preview/lists.ts` 与 `src/preview/theme.ts` 的 `.cm-lp-list-*` 规则；
 > 列表的**解析语义**（CommonMark 归属）不在本文件——本文件只约束**渲染归属**。
+> **L7 是唯一的例外**：它约束「原生删除跨过 replace 装饰边界」时的源码保真；按行为类别
+> 收在此处，是因为列表 marker 是这类 replace 装饰最常见的一格，判据本身不限于列表。
 > 相关 living spec（requirement 层）：`openspec/specs/editor-live-preview/spec.md`
 > 「Markdown 渲染保真」（引用内列表）与 M399 的「空行渲染不变量」。
 
@@ -124,7 +126,7 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
 - **既有编辑行为不动**：本条 MUST NOT 改变 B3 / 上游 / Emacs 的精确 range 删除、裸 marker
   Enter/Backspace、L5 原子导航或 C1 光标几何；不得新增按 DOM 形状猜测编辑意图的生产分支。
 
-## 证伪方式（属性测试口径）
+## 证伪方式（L1–L6 属性测试口径）
 
 对「列表类型 × 嵌套深度 × 与项之间有无空行 × 行首缩进 × 语法树归属」的输入分布逐个取样：
 
@@ -150,6 +152,46 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
    DOM `7.a` 与源码 `7. a` 的分层差异。反向验证至少分别破坏输入落点、marker 数量 / 几何和
    保存 / 历史语义，对应断言 MUST 变红；全部恢复后目标测试 MUST 全绿。真机场景 153 用
    不点击的注入通道复核连续空项输入、文件精确字节与撤销。
+
+## L7 — 跨 replace 装饰的跨行删除（M836）
+
+**适用范围**：所有落到浏览器原生删除路径的**跨行合并**——空光标在行尾按 forward Delete
+（吸收下一行），或在行首按 Backspace / `⌘⌫`（吸收本行）。列表项只是最常见的一格：
+wikilink、行内公式、链接尾标、任务项以及隐藏的源码标记（`**`、`#`、`>`）吸收时同属这一类。
+行内删除（删除范围不跨行）、非空选区删除与组合期（IME）删除不在本条内——实测它们不改写
+被吸收行的 DOM，没有回读风险。
+
+- **只改预期源 range**：一次跨行删除 SHALL 只删除两端之间**那一个换行**；被吸收行的其他
+  源码 MUST 逐字节保留，包括 widget 覆盖的源片段（`[[x]]`、`$x$`、`- `）与隐藏标记
+  （`**`）。MUST NOT 把渲染层显示文本（marker glyph `–` / `◦`、wikilink label、公式渲染
+  文本、链接尾标 `→`）写进文档，MUST NOT 因浏览器重建行 DOM 而拆行或增删换行。
+- **判据只读 EditorState**：接管判据 SHALL 只读 `EditorState`（空光标、行边界、被吸收
+  一侧有行），MUST NOT 检测 widget 类型 / replace 装饰数量 / DOM 或 AX 的文本形状，也
+  MUST NOT 按显示字形猜意图（与 L6「DOM/AX 不是文档真源」同源）。因此新增 widget 类型
+  自然落在类内，不需要逐类登记。
+- **历史、dirty 与保存**：一次跨行删除 MUST 是一个撤销步：一次 undo 恢复删除前文档与
+  选区，一次 redo 恢复删除后状态。dirty 继续按 `cleanDoc` 逐字比较；显式保存载荷 MUST
+  逐字等于当前 `EditorState.doc`。
+- **既有路径不动**：本条 MUST NOT 改变行内删除、非空选区删除、裸 marker 行 Backspace、
+  L5 原子导航、L6 输入合同与 IME 组合（组合期删除仍归浏览器 / CM 的合成处理）。
+  `⌥⌫` / `⌥⌦` 在默认键位表已由应用命令接管；若被解绑，落到原生的词删除变体同样按本条
+  接管的同一口径处理。
+- **不接管的变体（如实登记）**：`deleteSoftLineForward` / `deleteHardLineForward` 在行尾
+  两引擎实测为 no-op，且默认键位表没有绑定——不进入接管集；多区间选区（应用不提供多光标）
+  放行原生路径，由浏览器的单区间删除语义处置。
+
+### 证伪方式
+
+1. **有向矩阵**（chromium + 真机同款 UA 的 WebKit，`tests/visual/scenes/editing-oracle.spec.ts`）：
+   对 `-` / `+` / `*` / 有序 / 任务 / 嵌套与 wikilink、行内公式、隐藏标记（`**`）逐格执行
+   Delete（行尾）、Backspace（行首）、`⌘⌫`（行首），与独立模型对拍 `doc` 与选区，并验
+   一次 undo 复原与 `⌘S` 落盘全文。每格**先断言被吸收行确实渲染了 replace 装饰**（widget
+   不存在时该格对缺陷没有区分度）；普通行与 lazy continuation 作同形对照。
+2. **反向验证**：临时移除闸门（不 dispatch 显式事务、放行原生删除）后，矩阵中的列表 /
+   wikilink / 公式 / `**` 格 MUST 变红（Chromium 写 `–` 并拆行，WebKit 写 `–` 拼接）；
+   恢复后 MUST 全绿。
+3. **真机**：`scripts/acceptance/scenarios/261-native-widget-deletion.md` 用真 WKWebView
+   复核列表 / wikilink / 公式三格与精确落盘、一次撤销；未跑不得记 PASS。
 
 ## 与实现的关系
 

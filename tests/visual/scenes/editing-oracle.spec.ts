@@ -22,7 +22,6 @@ import {
   describeBodyOp,
   formatOracleFailure,
   lineEnds,
-  lineSpanAt,
   makeRng,
   randomBodyOp,
 } from "../../unit/editing-oracle-model";
@@ -233,7 +232,6 @@ for (const seed of SEEDS) {
       // undo / redo 只在上一步是编辑时发：选区事务会先被撤销，浏览器层的选区事件
       // 不在本模型的 history 粒度内（Node 层已用假时钟逐相对拍）。
       if ((op.kind === "undo" || op.kind === "redo") && !lastWasEdit) op = { kind: "insert", text: "u" };
-      if (op.kind === "deleteForward" && deletesDashBulletNewline(model)) op = { kind: "insert", text: "z" };
       const before = await bodyState(page);
       if (op.kind === "insert") {
         await page.locator(".cm-content").evaluate((el, insert) => {
@@ -257,6 +255,8 @@ for (const seed of SEEDS) {
         await page.keyboard.press("Backspace");
       } else if (op.kind === "deleteForward") {
         await page.keyboard.press("Delete");
+      } else if (op.kind === "deleteLineBackward") {
+        await page.keyboard.press("Meta+Backspace");
       } else if (op.kind === "enter") {
         if (op.at !== undefined) await setBodyCaret(page, op.at);
         await page.keyboard.press("Enter");
@@ -280,7 +280,7 @@ for (const seed of SEEDS) {
       if (op.kind === "save") {
         await expect.poll(async () => fileText(page, "oracle.md")).toBe(model.doc);
       }
-      lastWasEdit = op.kind === "insert" || op.kind === "deleteBackward" || op.kind === "deleteForward" || op.kind === "enter" || op.kind === "bareBackspace";
+      lastWasEdit = op.kind === "insert" || op.kind === "deleteBackward" || op.kind === "deleteForward" || op.kind === "deleteLineBackward" || op.kind === "enter" || op.kind === "bareBackspace";
       step += 1;
     }
   });
@@ -430,22 +430,97 @@ test("composer CDP 真引擎 IME：组合中删除 / 取消 / 提交（Chromium�
   expect(model.sends).toBe(0);
 });
 
-/** 已知产品缺陷（M832 真机/浏览器层发现，已单独 TowerFinding 报告）：换行后紧跟 `- `
- *  列表行时，在该换行上按原生 forward Delete 会把渲染层 marker 字形（`–`）写进文档并
- *  拆行（`alpha\n- item` → `alpha\n–\nitem`）。`* ` / `+ ` / 有序 marker 与反向 Backspace
- *  都不复现。生产代码不在本 mission 范围，随机序列绕开这一格；这里留可执行反例。 */
-function deletesDashBulletNewline(model: BodyOracle): boolean {
-  const line = lineSpanAt(model.doc, model.head);
-  if (model.head !== line.to || line.to >= model.doc.length) return false;
-  const next = lineSpanAt(model.doc, line.to + 1);
-  return model.doc.slice(next.from, next.to).startsWith("- ");
+// ---------------------------------------------------------------------------
+// M836：跨 replace 装饰边界的原生删除（有向矩阵）
+//
+// 缺陷（M835 双引擎实测）：裸 Delete / Backspace / ⌘⌫ 在行边界合并两行时，浏览器会把
+// 「被吸收行」的 replace 装饰摊平成显示文本，CM 的 DOMReader 按文本回读——显示字形
+// （列表 marker 的 `–` / `◦`、wikilink 的 label、公式渲染文本）与隐藏源码（`**`）因此
+// 被写进源文档。修复是 beforeinput 的 state-only 闸门（src/editor.ts 的
+// absorbLineMergeDelete）：空光标在行边界时 dispatch 单换行的显式事务。
+//
+// 本矩阵逐个方向覆盖：列表类型（- + * / 有序 / 任务 / 嵌套）、wikilink、行内公式、
+// 隐藏标记（**）、普通行与 lazy 对照，以及 ⌘⌫；每格都先断言 widget 真的渲染出来
+//（否则该格对缺陷没有区分度），再用独立模型对拍 doc/选区，最后验一次 undo 复原。
+// ---------------------------------------------------------------------------
+
+interface BoundaryCase {
+  name: string;
+  doc: string;
+  caret: number;
+  key: string;
+  op: BodyOp;
+  /** 该格必须真实渲染的 replace 装饰（反向锚点：没有它这格证明不了缺陷）。 */
+  widget: string | null;
 }
 
-test.fixme("已知缺陷：`- ` 列表行前的换行上按 Delete 会把 marker 字形写进文档", async ({ page }) => {
+const BOUNDARY_CASES: BoundaryCase[] = [
+  // forward Delete：光标在上一行行尾，被吸收的是下一行。
+  { name: "Delete：bullet marker", doc: "alpha\n- item\n", caret: 5, key: "Delete", op: { kind: "deleteForward" }, widget: ".cm-lp-list-marker" },
+  { name: "Delete：plus marker", doc: "alpha\n+ item\n", caret: 5, key: "Delete", op: { kind: "deleteForward" }, widget: ".cm-lp-list-marker" },
+  { name: "Delete：star marker", doc: "alpha\n* item\n", caret: 5, key: "Delete", op: { kind: "deleteForward" }, widget: ".cm-lp-list-marker" },
+  { name: "Delete：有序 marker", doc: "alpha\n1. item\n", caret: 5, key: "Delete", op: { kind: "deleteForward" }, widget: ".cm-lp-list-marker" },
+  { name: "Delete：任务项", doc: "alpha\n- [ ] item\n", caret: 5, key: "Delete", op: { kind: "deleteForward" }, widget: ".cm-lp-list-marker" },
+  { name: "Delete：嵌套项", doc: "- a\n  - b\n", caret: 3, key: "Delete", op: { kind: "deleteForward" }, widget: ".cm-lp-list-marker" },
+  { name: "Delete：wikilink 行中", doc: "alpha\nb [[x]] c\n", caret: 5, key: "Delete", op: { kind: "deleteForward" }, widget: ".cm-lp-wikilink" },
+  { name: "Delete：行内公式", doc: "alpha\n$x$\n", caret: 5, key: "Delete", op: { kind: "deleteForward" }, widget: ".cm-lp-math-inline" },
+  { name: "Delete：隐藏标记（**）", doc: "alpha\n**bold**\n", caret: 5, key: "Delete", op: { kind: "deleteForward" }, widget: ".cm-lp-strong" },
+  { name: "Delete：普通行对照", doc: "alpha\nplain\n", caret: 5, key: "Delete", op: { kind: "deleteForward" }, widget: null },
+  { name: "Delete：lazy 行对照", doc: "- a\nx\n", caret: 3, key: "Delete", op: { kind: "deleteForward" }, widget: null },
+  // backward Backspace：光标在本行行首，被吸收的是本行。
+  { name: "Backspace：bullet marker", doc: "alpha\n- item\n", caret: 6, key: "Backspace", op: { kind: "deleteBackward" }, widget: ".cm-lp-list-marker" },
+  { name: "Backspace：plus marker", doc: "alpha\n+ item\n", caret: 6, key: "Backspace", op: { kind: "deleteBackward" }, widget: ".cm-lp-list-marker" },
+  { name: "Backspace：star marker", doc: "alpha\n* item\n", caret: 6, key: "Backspace", op: { kind: "deleteBackward" }, widget: ".cm-lp-list-marker" },
+  { name: "Backspace：有序 marker", doc: "alpha\n1. item\n", caret: 6, key: "Backspace", op: { kind: "deleteBackward" }, widget: ".cm-lp-list-marker" },
+  { name: "Backspace：任务项", doc: "alpha\n- [ ] item\n", caret: 6, key: "Backspace", op: { kind: "deleteBackward" }, widget: ".cm-lp-list-marker" },
+  { name: "Backspace：嵌套项", doc: "- a\n  - b\n", caret: 4, key: "Backspace", op: { kind: "deleteBackward" }, widget: ".cm-lp-list-marker" },
+  { name: "Backspace：wikilink 行中", doc: "alpha\nb [[x]] c\n", caret: 6, key: "Backspace", op: { kind: "deleteBackward" }, widget: ".cm-lp-wikilink" },
+  { name: "Backspace：行内公式", doc: "alpha\n$x$\n", caret: 6, key: "Backspace", op: { kind: "deleteBackward" }, widget: ".cm-lp-math-inline" },
+  { name: "Backspace：普通行对照", doc: "alpha\nplain\n", caret: 6, key: "Backspace", op: { kind: "deleteBackward" }, widget: null },
+  { name: "Backspace：lazy 行对照", doc: "- a\nx\n", caret: 4, key: "Backspace", op: { kind: "deleteBackward" }, widget: null },
+  // ⌘⌫（deleteSoft/HardLineBackward）：行首同样合并两行。
+  { name: "⌘⌫：bullet marker", doc: "alpha\n- item\n", caret: 6, key: "Meta+Backspace", op: { kind: "deleteLineBackward" }, widget: ".cm-lp-list-marker" },
+  { name: "⌘⌫：有序 marker", doc: "alpha\n1. item\n", caret: 6, key: "Meta+Backspace", op: { kind: "deleteLineBackward" }, widget: ".cm-lp-list-marker" },
+  { name: "⌘⌫：任务项", doc: "alpha\n- [ ] item\n", caret: 6, key: "Meta+Backspace", op: { kind: "deleteLineBackward" }, widget: ".cm-lp-list-marker" },
+  { name: "⌘⌫：wikilink 行中", doc: "alpha\nb [[x]] c\n", caret: 6, key: "Meta+Backspace", op: { kind: "deleteLineBackward" }, widget: ".cm-lp-wikilink" },
+  { name: "⌘⌫：行内公式", doc: "alpha\n$x$\n", caret: 6, key: "Meta+Backspace", op: { kind: "deleteLineBackward" }, widget: ".cm-lp-math-inline" },
+  { name: "⌘⌫：普通行对照", doc: "alpha\nplain\n", caret: 6, key: "Meta+Backspace", op: { kind: "deleteLineBackward" }, widget: null },
+];
+
+for (const c of BOUNDARY_CASES) {
+  test(`跨 replace 边界删除：${c.name}`, async ({ page }) => {
+    await openBody(page, "oracle.md", c.doc);
+    // 反向锚点：这一格必须真的渲染了被吸收行的 replace 装饰，否则测不到缺陷。
+    const widget = c.widget;
+    if (widget !== null) {
+      await expect.poll(async () => page.locator(widget).count()).toBeGreaterThan(0);
+    }
+    await setBodyCaret(page, c.caret);
+    const model = new BodyOracle(c.doc, c.caret);
+    const before = await bodyState(page);
+    await page.keyboard.press(c.key);
+    applyBodyOp(model, c.op);
+    await expect.poll(async () => (await bodyState(page)).doc).toBe(model.doc);
+    const actual = await bodyState(page);
+    if (actual.anchor !== model.anchor || actual.head !== model.head) {
+      fail(0, 0, c.name, before, model.reading(), actual);
+    }
+    // 闸门的显式事务必须是单步历史：一次 undo 精确恢复删除前文档。
+    await page.waitForTimeout(620);
+    await page.keyboard.press("Meta+z");
+    await expect.poll(async () => (await bodyState(page)).doc).toBe(c.doc);
+  });
+}
+
+test("跨 replace 边界删除后 ⌘S：盘上全文 = 源文档的精确合并", async ({ page }) => {
   const doc = "alpha\n- item\n";
   await openBody(page, "oracle.md", doc);
   await setBodyCaret(page, 5);
   await page.keyboard.press("Delete");
-  await page.waitForTimeout(100);
-  expect((await bodyState(page)).doc).toBe("alpha- item\n");
+  const model = new BodyOracle(doc, 5);
+  applyBodyOp(model, { kind: "deleteForward" });
+  await expect.poll(async () => (await bodyState(page)).doc).toBe("alpha- item\n");
+  await page.keyboard.press("Meta+s");
+  await expect.poll(async () => fileText(page, "oracle.md")).toBe("alpha- item\n");
+  await expect(page.locator(".modeline-path")).not.toContainText("（未保存）");
 });
