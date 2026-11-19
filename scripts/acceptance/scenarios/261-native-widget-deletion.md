@@ -161,7 +161,7 @@ steps:
     gapMs: 400
     expect:
       - label: 盘上全文保留 wikilink 源码（`[[plain]]` 不得被 label 取代）
-        file: { path: links-wiki.md, exact: "alpha[[plain]]\n\n第二段内容。", changedSince: wikilink 基线 }
+        file: { path: links-wiki.md, exact: "alpha[[plain]]\n\n第二段内容。\n", changedSince: wikilink 基线 }
 
   - name: 记录保存后的基线
     do: record
