@@ -6,7 +6,7 @@
 
 接管判据 SHALL 只读 `EditorState`（空光标、恰在行边界、被吸收一侧确有行），MUST NOT 检测 widget 类型、replace 装饰数量或 DOM/AX 的文本形状，也 MUST NOT 按显示字形猜编辑意图（与「DOM/AX 不是文档真源」同源）。因此纯文本行的事务结果 MUST 与原生删除逐字节相同，新增 widget 类型自然落在类内、不需要逐类登记。
 
-一次跨行删除 MUST 是一个撤销步：一次 undo 恢复删除前文档与选区，一次 redo 恢复删除后状态。dirty MUST 继续按当前文档与 `cleanDoc` 逐字比较；显式保存载荷 MUST 逐字等于当前 `EditorState.doc`。行内删除（不跨行）、IME 组合期删除、只读会话与多区间选区 MUST NOT 被本接管改变——实测它们不会重建被吸收行的 DOM；**非空选区删除**改由「跨渲染隐藏区的非空选区编辑」接管。跨行删除的专项不变量见 `docs/specs/lists.md` L7；**非空选区删除**的判据以本 requirement 与 `src/editor.ts` 的闸门注释为准（L7 目前仍写着「非空选区不在本条内」，该句在 M854 后已过时，属 docs/specs 的后续同步项，不在本 mission 的写面内）。
+一次跨行删除 MUST 是一个撤销步：一次 undo 恢复删除前文档与选区，一次 redo 恢复删除后状态。dirty MUST 继续按当前文档与 `cleanDoc` 逐字比较；显式保存载荷 MUST 逐字等于当前 `EditorState.doc`。行内删除（不跨行）、IME 组合期删除、只读会话与多区间选区 MUST NOT 被本接管改变——实测它们不会重建被吸收行的 DOM；**非空选区删除**改由「跨渲染隐藏区的非空选区编辑」接管。跨行删除的专项不变量见 `docs/specs/lists.md` L7；**非空选区删除**与普通键入替换的判据见本 requirement 与 `src/editor.ts` 的闸门注释（L7 的适用范围段已同步指向本条）。
 
 #### Scenario: 列表 marker 行被吸收
 
