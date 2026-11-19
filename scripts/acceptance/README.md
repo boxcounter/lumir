@@ -1090,8 +1090,8 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
   - **WebKit 原生上下文菜单 Paste（M415/M416 起的旧通道）：不可靠，不再用于新场景**。M859 真机实测
     AXPress 到 AXMenuItem **静默 no-op**：菜单不收起、paste 不触发；同一 run 里另有成功的一次 ⇒
     **间歇失效而非全局失效**（finding `20261120-worker-html-only-paste-improve-cgevent-v-paste-axpress.md`）。
-    存量若仍保留这条通道（本批之外：150/168，均未加收起断言；finding
-    `20261120-worker-acceptance-paste-channe-improve-150-168-paste-m864.md`），判据 MUST 同时有 ① paste 的可观测后果
+    **本套件现已没有使用这条通道的场景**（M864 把 112/113/114/116/127/128/129/135/138/148/150/168
+    全部迁到 cgevent）。将来若重新引入，判据 MUST 同时有 ① paste 的可观测后果
     ② `ax: not "/AXMenuItem[^\n]*(Paste|粘贴)/"` 断言菜单已收起——只判「菜单出现」会把 no-op 洗成绿或假 FAIL。
     菜单项按名字正则定位、不锁索引；走 `any:` 而不是 `name:`（`findNode` 的 `name` 把字符串裸传给
     `new RegExp()`，不认 `/…/` 定界符；`any` 才过 `matcher()`）。剪贴板置图仍走 `osascript` 的 `«class PNGf»`。

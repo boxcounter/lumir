@@ -14,11 +14,11 @@
 # 模型层无动作」产生（原生 ⌃A 会回行首）——因此它是绑定生效的**负向签名**，本场景的
 # 「⌃B + 落字」是它的**正向签名**。
 #
-# 【M456 通道阻塞，2026-10-11 实测，如实登记】composer 上的探针串注入在现有配套通道下不可达：
-# 原生菜单 Paste 之后 CGEvent 逐键（`keys` / `key`）确定性死亡；KimiCU `type_text(index)` 在
-# 套件 spawn 的 MCP 会话里也不落地（插件侧直调同 index 立刻落地）。本场景与 134 / 141 同因，
-# 真机读数**待注入通道修复**；模型层判据（`moveLineStart` / `moveLineEnd` 的段末档、写回落点
-# 的文本宿主阶梯）已由单测覆盖（`tests/unit/composer-nav.test.ts`、`tests/unit/harness-composer.test.ts`），
+# 【通道现状，M864，2026-11-20】本场景原先受两条通道问题阻塞：① 原生上下文菜单 Paste 的 AXPress
+# 会静默 no-op（M859）；② 菜单 Paste 交互之后 CGEvent 逐键注入对 composer 确定性死亡（M456）。
+# M864 把贴图步迁到 cgevent ⌘V，② 的前提消失；探针串的两处 ⌘V 也从 KimiCU press_key（cmd+v 有
+# 确定性丢弃族）改走 cgevent。模型层判据（`moveLineStart` / `moveLineEnd` 的段末档、写回落点
+# 的文本宿主阶梯）仍由单测覆盖（`tests/unit/composer-nav.test.ts`、`tests/unit/harness-composer.test.ts`），
 # 「引擎层判不了」的两条（caret 几何、beforeinput 派发）登记在 backlog「待修 findings」的 M457 WebKit 探针条与 finding。
 id: "150-harness-composer-line-start-and-caret-geometry"
 item: 150
@@ -60,16 +60,14 @@ steps:
     do: clipboardImage
     synth: { width: 360, height: 200, seed: 51 }
 
-  - name: 右键 composer 唤出 WebKit 原生菜单（Paste 通道，M415 探针口径）
-    do: click
-    target: { role: AXTextArea, name: "hnl", button: right }
-    expect:
-      - label: 原生菜单出现且 Paste 项在场
-        ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
-
-  - name: 点 Paste 贴图（光标在 marker 段落末尾 ⇒ 图片插其后、并补一个承接光标的空段落）
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
+  # 粘贴通道（M864）：⌘V 走 cgevent 真键盘事件（M859 真机实测）；原生上下文菜单 Paste 的
+  # AXPress 会静默 no-op（菜单不收起、paste 不触发），不再使用——见 112 的同段注释。
+  # composer 焦点由上面的 clickInNode 建立。
+  - name: ⌘V 贴图（cgevent 真键盘事件；光标在 marker 段落末尾 ⇒ 图片插其后、并补一个承接光标的空段落）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
 
   - name: 等图片卡片落定（现场 = [marker 段落, 图片卡, 空段落]，光标在空段落段首）
     do: waitFor
@@ -79,9 +77,9 @@ steps:
     expect:
       - shot: 01-现场-marker段落在图片卡之上-光标在末尾空行
 
-  # M456：原生菜单 Paste 之后 window 的键盘焦点会丢（键盘注入 0/3 落地）。用一次真实鼠标点回到
-  # 末尾空行重建 DOM 焦点（本步不移动光标语义：点的是空段落自身）。
-  - name: 点末尾空行重建 composer 的 DOM 焦点（原生菜单粘贴后 window 失焦，M456 实测）
+  # 点末尾空行把光标钉在该空段落段首（粘贴后 caret 本应已在那里；本步是确定化前置，
+  # 不再承担「菜单粘贴后 window 失焦」的焦点重建职责——M864 起贴图走 cgevent，没有菜单交互）。
+  - name: 点末尾空行（把光标钉在承接空段落段首）
     do: clickInNode
     target: { role: AXTextArea, name: "360×200" }
     dy: 0.97
@@ -89,7 +87,7 @@ steps:
       - label: composer 拿到键盘焦点（AX 里恰一个 focused 的 AXTextArea）
         ax: { focused: "AXTextArea" }
 
-  - name: 抢回窗口前台（原生菜单交互后键盘焦点可能没回 webview——M456 在排查）
+  - name: 抢回窗口前台（cgevent 真键盘事件的前台前提）
     do: focusWindow
     retries: 3
 
@@ -101,11 +99,13 @@ steps:
     do: clipboardText
     text: "xqzk"
 
-  - name: ⌘V 落字（落进哪一格 = 上面那一次 ⌃B 把光标挪到了哪）
+  - name: ⌘V 落字（落进哪一格 = 上面那一次 ⌃B 把光标挪到了哪；cgevent 真键盘事件）
     do: key
     key: cmd+v
+    channel: cgevent
     # M507：chord 副作用回读 verify-retry——⌘V 的直接副作用 = composer 值里多出 "xqzk"（AX 可读，
-    # 丢键时值逐字节不变 ⇒ 未变才重注 ≤3 次）。
+    # 丢键时值逐字节不变 ⇒ 未变才重注 ≤3 次）。M864：通道从 KimiCU press_key 换到 cgevent
+    # （press_key 的 cmd+v 有确定性丢弃族，见 README「原生剪贴板命令」条），verify 语义不变。
     verify: { pattern: "xqzk" }
     expect:
       - label: 探针串**接在 marker 段落末尾**（同一行 ⇒ AX 里 hnl 之后紧邻 xqzk）
@@ -129,9 +129,10 @@ steps:
     do: clipboardText
     text: "yqzk"
 
-  - name: ⌘V 落字（⌃A 生效 ⇒ 字落在**行首**）
+  - name: ⌘V 落字（⌃A 生效 ⇒ 字落在**行首**；cgevent 真键盘事件）
     do: key
     key: cmd+v
+    channel: cgevent
     verify: { pattern: "yqzk" }
     expect:
       - label: 探针串落在 marker 段落**行首**（AX 里 yqzk 在 hnl 之前）
@@ -191,16 +192,20 @@ Alex 原话（2026-10-12）：「希望 Ctrl-A 回到行首」；「当光标在
 - **两条判据都有区分度**：缺陷形态下 ① ⌃B 的写回形态是块级容器边界，字不会接在 hnl 行末（要么
   没落地、要么另起一段落 ⇒ `/hnlxqzk/` 不命中、`/hnl[\s\S]{1,20}xqzk/` 命中）；② ⌃A 在段末无动作
   ⇒ 字接在行末（`/yqzkhnl/` 不命中）。
-- **`focusWindow` / 点末尾空行**：与 134 同一套现场纪律（原生菜单 Paste 之后 window 失焦）。
+- **`focusWindow` / 点末尾空行**：前台与光标确定化的前置——cgevent 的 HID 事件要求 Lumir 在前台；
+  点空段落把 caret 钉在承接空段落段首。M864 起贴图走 cgevent ⌘V，不再有「菜单 Paste 后 window
+  失焦」这层问题。
 
 ## 已知边界（如实登记）
 
-- **注入通道阻塞**（backlog「待修 findings」的「菜单 Paste 之后注入不落地」条 + README 的「原生剪贴板命令」已知边界 + 场景头）：本场景的探针串注入与
-  ⌃B / ⌃A / ⌃N / ⌃P 注入在通道修好前不落地，读数**待复跑**；模型层判据已由单测覆盖
-  （`tests/unit/composer-nav.test.ts` 的段末档与渲染行闸门、`tests/unit/harness-composer.test.ts`
-  的写回落点阶梯），引擎层（caret 几何、`beforeinput` 是否派发、渲染行一步）由 M457 的 WebKit
-  探针判（真实 app + WebKit，读数落 `.local/probes/m457-probe/`，git 外；永久化的回归判据缺位已
-  作为 finding 与 backlog「待修 findings」的 M457 WebKit 探针条登记）。
+- **通道现状（M864）**：原先的「菜单 Paste 之后注入不落地」前提已随贴图步迁到 cgevent ⌘V 消失；
+  两处探针串 ⌘V 也从 KimiCU press_key（cmd+v 确定性丢弃族）改到 cgevent。本场景的 ⌃B / ⌃A /
+  ⌃N / ⌃P 与落字判据**待真机复跑重读**（本批真机代表是 112/127/148，150 未在本轮真机窗口内）；
+  模型层判据仍由单测覆盖（`tests/unit/composer-nav.test.ts` 的段末档与渲染行闸门、
+  `tests/unit/harness-composer.test.ts` 的写回落点阶梯），引擎层（caret 几何、`beforeinput`
+  是否派发、渲染行一步）由 M457 的 WebKit 探针判（真实 app + WebKit，读数落
+  `.local/probes/m457-probe/`，git 外；永久化的回归判据缺位已作为 finding 与 backlog「待修
+  findings」的 M457 WebKit 探针条登记）。
 - **⌃N / ⌃P 渲染行这一步的真机读数本场景只留截图**：AX 不暴露 contenteditable 内的光标位，
   「打字落点」在这里依赖折行点（脆判据），故两步只断言「导航不改文本」+ 截图给 Alex 人眼过目。
 - **⌃N/⌃P 的视觉行口径在 change 的 delta spec 里还没同步**（待归档 change `composer-emacs-nav`

@@ -45,8 +45,9 @@ steps:
       - label: 笔记装载进编辑器
         editor: { has: "语义命名目标" }
 
-  - name: 编辑器建立焦点（WebKit 原生右键菜单的前置）
+  - name: 编辑器建立焦点（paste 前置：真实点击同时把窗口做成 key，cgevent 真键盘事件需要）
     do: clickEditor
+    real: true
     expect:
       - shot: 01-打开笔记
 
@@ -54,16 +55,13 @@ steps:
     do: clipboardImage
     synth: { width: 320, height: 200, seed: 41 }
 
-  - name: 右键唤出 WebKit 原生上下文菜单
-    do: click
-    target: { role: AXTextArea, button: right }
-    expect:
-      - label: 原生菜单出现且 Paste 项在场
-        ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
-
-  - name: 点 Paste 完成真实粘贴（粘贴先落暂存名 + 插引用，命名异步随后）
-    do: click
-    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
+  # 粘贴通道（M864）：⌘V 走 cgevent 真键盘事件（M859 真机实测）；原生上下文菜单 Paste 的
+  # AXPress 会静默 no-op，不再使用——见 112 的同段注释。
+  - name: ⌘V 完成真实粘贴（cgevent 真键盘事件；粘贴先落暂存名 + 插引用，命名异步随后）
+    do: key
+    key: "cmd+v"
+    channel: cgevent
+    gapMs: 500
 
   - name: 等异步命名落定（toast 与渲染出来的引用都要是新语义名）
     do: waitFor
@@ -119,7 +117,9 @@ steps:
 
 ## 为什么这么驱动
 
-- 粘贴通道复用场景 112 的既定通道（WKWebView 原生上下文菜单 Paste，不是 ⌘V 注入）。
+- 粘贴通道：`do: key { key: "cmd+v", channel: cgevent }`（M864 起，与场景 112 同一通道）——
+  真键盘事件投递真实 WebKit paste 事件；旧的原生上下文菜单 Paste 已弃用（AXPress 会静默 no-op，
+  见 README「原生剪贴板命令」条的通道分档）。
 - mock 的 `naming` 队列是**独立**于会话 `responses` 的第三条队列（Rust `MockClient` 的
   `queue_from_str`）：共用一条队列会把既有对话场景的脚本整体错位。
 - `waitFor` 一次读两件事（toast 文案 + AXImage 的引用名）：撤销动作的窗口只有 8 秒，判据
