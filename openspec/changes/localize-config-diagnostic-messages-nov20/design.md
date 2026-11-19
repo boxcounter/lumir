@@ -116,7 +116,7 @@ MUST 同时说清每个分支的结局与出口，MUST NOT 把 A 分支的结局
 | `harness_base_url_empty`（字段错误档） | 预设有 / 没有官方地址 | 删除键的回退只对自带官方地址的预设成立；generic 没有官方地址，必须点名 |
 | `harness_model_id_empty` | 缺键 / 空串 / 非字符串 | 诊断档与保存档都点名「或不是字符串」 |
 | `harness_provider_preset_migrated` | `migrate_provider_presets` | 只给 id 为 kimi / deepseek / mock 的条目补**同名**预设，其它 id 不补——不能写成「补为 generic」 |
-| `harness_model_retired_migrated` | `migrate_retired_kimi_model` | 改写目标是该 provider `models` 清单**首个可用 id**（M381：不内置替补值），不声称「等价模型」 |
+| `harness_model_retired_migrated` | `migrate_retired_kimi_model` 的 `find_map` | 改写目标是该 provider `models` 清单**首个可用 id**（跳过非对象 / id 非字符串 / id 为空的项；M381：不内置替补值）——不是字面清单首项，也不声称「等价模型」 |
 | 其余 47 个 code | 单构造点或同义多模板 | 覆盖句与各构造点逐条比对无收窄（如 `harness_model_invalid` 三型同义、`harness_model_empty` 两落点已并列） |
 
 判据形态：`tests/unit/first-run-error-copy.test.ts` 的 r1 组按分支断言 `must`（该分支真实后果的

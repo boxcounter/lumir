@@ -57,7 +57,8 @@
       文案——D899/D900（没有可用 provider 时保持未配置）、D904（非字符串 / 闭集合外 / mock+非 mock
       id 三成因）、D905（`migrate_provider_presets` 只给 id 为 kimi/deepseek/mock 的条目补同名预设，
       不是「补为 generic」）、D908（非字符串 → 整条 provider 忽略；取值非法 → 回退默认协议）、D922
-      （退役值改写目标是 models 清单首项，不是「等价模型」）、D925（会话命名回落 vs 图片命名原样保留
+      （退役值改写目标是 `find_map` 找到的**首个可用 id**：跳过非对象 / id 非字符串 / id 为空的项，
+      不是字面清单首项、也不是「等价模型」）、D925（会话命名回落 vs 图片命名原样保留
       并跳过、含「未声明 vision」成因）、D928（非字符串 id）、D934（wire_api 非字符串分支）、D936
       （删除键只对自带官方地址的预设成立，generic 没有）、D938（mock 与 id 的组合出口）；其余 code 的
       分支复核对账见设计 D7
@@ -74,3 +75,12 @@
       `scripts/gate.sh quick`（cargo 锁内、`/tmp/lumir-m865-target`、端口 4401）：
       `GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0。visual 按 tower 排期等 M859 槽位释放后复跑；
       09-validation-error 基线仍未更新（待 Alex 过目）
+
+## 6. r2 返修（review P1-1：D922 落点收窄）
+
+- [x] 6.1 D922 双语与 deck 改为「首个可用 id / first usable id」，并写明跳过规则（非对象、id 不是
+      非空字符串的项会被跳过；`config.rs:2253-2265` 的 `find_map`）
+- [x] 6.2 测试改成能区分「首项」与「首个可用项」的语义断言：must =「首个可用 id」+ 两条跳过规则，
+      mustNot =「清单的首项 / 字面首项」，并用上一版错误说法做 must/mustNot 的区分度反证
+- [x] 6.3 相关单测（first-run-error-copy / error-text / copy）+ 完整 quick 复跑；visual 仍等 M859
+      槽位，09 基线不动

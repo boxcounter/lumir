@@ -652,7 +652,7 @@ test("保存被拒的模型 id 缺失：非字符串分支同属本 code（M865 
   assert.notEqual(zh, diagnosticZh, "两条信封仍是两份措辞");
 });
 
-test("preset 迁移 / 退役模型改写：改写落点按 Rust 实现断言，不写成泛化「等价」（M865 r1）", () => {
+test("preset 迁移：只给 kimi / deepseek / mock 补同名预设，不写成「补为 generic」（M865 r1）", () => {
   const preset = errorText(
     {
       code: "harness_provider_preset_migrated",
@@ -664,26 +664,43 @@ test("preset 迁移 / 退役模型改写：改写落点按 Rust 实现断言，�
   // `migrate_provider_presets` 只给 id 为 kimi / deepseek / mock 的条目补同名预设——不是「补为 generic」。
   assert.match(preset, /kimi、deepseek、mock/, `补预设的 id 清单缺失：${preset}`);
   assert.ok(!/补为 generic/.test(preset), `不得写成「补为 generic」（实现不补其它 id）：${preset}`);
+});
 
-  const retired = errorText(
-    {
-      code: "harness_model_retired_migrated",
-      path: "harness.providers.kimi.model",
-      message: "配置项 harness.providers.kimi.model 的旧模型名已退役，已自动改写为 k2",
-    },
-    "zh",
-  );
-  // 改写目标是该 provider models 清单首个可用 id（M381），不是「等价模型」。
-  assert.match(retired, /models 清单的首项/, `改写落点没写准：${retired}`);
-  assert.ok(!/等价/.test(retired), `不得声称「等价模型」：${retired}`);
+test("退役模型改写：落点是「首个可用 id」，首个非法项会被跳过——文案必须说清跳过规则（M865 r2）", () => {
+  // Rust 合同（`config.rs:2253-2265`）：`find_map` 逐项取 `as_object` + `id.as_str` + 非空白，
+  // 跳过非对象 / id 非字符串 / id 为空的项。因此「首项非法、后续项有效」时改写目标是**后续项**，
+  // 不是字面清单首项（r1 的 D922 正是在这条边界上说错，r2 review P1-1）。
+  const entry = (lang: "zh" | "en") =>
+    errorText(
+      {
+        code: "harness_model_retired_migrated",
+        path: "harness.providers.kimi.model",
+        message: "配置项 harness.providers.kimi.model 的旧模型名已退役，已自动改写为 k2",
+      },
+      lang,
+    );
 
-  const en = errorText(
-    {
-      code: "harness_model_retired_migrated",
-      path: "harness.providers.kimi.model",
-      message: "配置项 harness.providers.kimi.model 的旧模型名已退役，已自动改写为 k2",
-    },
-    "en",
-  );
-  assert.match(en, /first entry in that provider's models list/i, `en 改写落点没写准：${en}`);
+  const zh = entry("zh");
+  // 落点：首个**可用** id（不是「清单首项」）。
+  assert.match(zh, /models 清单的首个可用 id/, `落点没写「可用」：${zh}`);
+  // 跳过规则：非对象 / id 不是非空字符串的项被跳过——这是「首项非法 → 目标是后续项」的唯一解释。
+  assert.match(zh, /非对象[^。]*跳过/, `缺「非对象项被跳过」：${zh}`);
+  assert.match(zh, /不是非空字符串/, `缺「id 不是非空字符串」的跳过条件：${zh}`);
+  assert.ok(!/清单的首项|清单首项/.test(zh), `不得写成字面清单首项：${zh}`);
+  assert.ok(!/等价/.test(zh), `不得声称「等价模型」：${zh}`);
+
+  const en = entry("en");
+  assert.match(en, /first usable id in that provider's models list/i, `en 落点没写「usable」：${en}`);
+  assert.match(en, /non-empty string/i, `en 缺跳过条件：${en}`);
+  assert.match(en, /skipped/i, `en 缺跳过规则：${en}`);
+  assert.ok(!/first entry/i.test(en), `en 不得写成 first entry：${en}`);
+
+  // 反向判据（REVIEW.md『断言等价于子串』条）：把上一版（错误）的说法喂给同一组谓词必须命中——
+  // 否则上面的 mustNot 恒真，区分不出「首项」与「首个可用项」。
+  const mutantZh = "配置里的旧模型名已退役，已自动改写为该 provider models 清单的首项";
+  assert.ok(/清单的首项/.test(mutantZh), "负向判据对旧说法必须有区分度");
+  assert.ok(!/首个可用 id/.test(mutantZh));
+  const mutantEn = "The retired model name was rewritten to the first entry in that provider's models list";
+  assert.ok(/first entry/i.test(mutantEn), "en 负向判据对旧说法必须有区分度");
+  assert.ok(!/first usable id/i.test(mutantEn));
 });
