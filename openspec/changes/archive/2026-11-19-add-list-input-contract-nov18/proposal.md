@@ -16,6 +16,14 @@
 
 未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与 tip 均无异常、证据无缺口，故不另送 Alex。
 
+## 节点 2 记录（归档后）
+
+- **归档提交**：`9b47b15fe29ac31db43c6e5577e5ff56ca5f8d38`（归档目录 + 并入后的 living spec 同一提交；`docs/backlog.md` 的归档跟踪条目同批核销，最终 diff 为零。本条记录本身是其后一笔文档提交）。
+- **`openspec archive` 实际输出**（2026-11-19，`node scripts/openspec-archive.mjs add-list-input-contract-nov18`，包装器内调 `npx --yes @fission-ai/openspec@1.12.0 archive add-list-input-contract-nov18 --yes`，退出码 0）：`Task status: ✓ Complete` / `Specs to update:` `editor-live-preview: update` / `+ 1 added` / `Totals: + 1, ~ 0, - 0, → 0` / `Specs updated successfully.` / `Change 'add-list-input-contract-nov18' archived as '2026-11-19-add-list-input-contract-nov18'.`。delta 是真实新增（1 条 ADDED），故输出不是 `Specs already in sync; no files changed`。
+- **归档后修链**：`归档后修链 1 处（扫过 3 篇 Markdown / 1 条相对链接）`——`proposal.md:9` 的 `../../../docs/process/openspec-workflow.md` → `../../../../docs/process/openspec-workflow.md`。包装器末置门禁 `openspec-links: PASS（校验 622 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived add-list-input-contract-nov18`，2026-11-19T10:40Z，退出码 0）：`PASS（openspec/changes/archive/2026-11-19-add-list-input-contract-nov18：0 条 MODIFIED，对比 0 段；人工恢复 0 段，声明认领 0 段）`——delta 只有 1 条 ADDED，无 MODIFIED 段可丢；新增 requirement 已确认落进 living spec（`grep -n "列表内容起点输入的跨层一致性" openspec/specs/editor-live-preview/spec.md` → 第 1797 行）。
+- **归档后复跑读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 37 passed, 0 failed (37 items)`（退出码 0；归档前 38 items，减少的一项即本 change）；`node scripts/openspec-archive-check.mjs` 门禁模式 → PASS（`扫过 10 份 delta，11 条 MODIFIED，对比 127 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0，内含归档包装器自测 10/10、backlog 判据自测 37/37、验收套件自测 184/184）；`bash scripts/gate.sh quick` → `GATE RESULT: 13/13 PASS（SKIP 0）`（退出码 0）。
+
 ## Why
 
 M827 对连续空有序项的分层复现证明：在第 7 项内容起点输入 `a` 后，CodeMirror 文档与保存载荷均为 `7. a`，选区从 27 移到 28，一次撤销可恢复；DOM/AX 中的 `7.a` 是 marker widget 与正文的正常序列化拼接，不是文档缺陷。现有输入路径因此不需要新增护栏，需要的是把这一整类跨层不变量写成可证伪合同，并用回归防止未来再按 DOM/AX 形状吞输入。
