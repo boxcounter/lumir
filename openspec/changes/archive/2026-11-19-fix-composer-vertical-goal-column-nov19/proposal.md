@@ -13,7 +13,7 @@
 
 ## 节点 2 记录（归档前，2026-11-19，M840）
 
-口径见 [openspec-workflow.md](../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
 
 1. **方案已批准**：节点 1 由 Alex 在真机 dogfood 中直接指令（2026-11-19，见本文开头记录的原话与读数：「⌃P 再输入 p，期望 `yapbzcdw`（上一行同列 2），实际 `yabpzcdw\nmn`（列 3）」），并指令「新 findings 直接安排修复，合同先行且不弱化真机断言」。实现期没有静默扩 scope：`git diff --name-only 73efbdbd...5f3f81f9` 恰为声明的 11 个文件，生产代码只动 `src/harness-composer.ts`，其余为单测 / 双引擎场景 / 140 场景 / 合同 / tasks / `playwright.config.ts` 并集；无 `src-tauri`、依赖或像素基线改动。
 2. **独立 reviewer clean / merge**：r1 `reviewer-composer-vertical-column` 判 `status: p2-2items` / `fix-then-merge`（P2-1 软折行边界丢 `assoc`、P2-2 tasks 读数），以 `eb6ab215` 修完后：`reviewer-vertical-final` 在 tip `1c02d8576455452270068648bbe656493506a4c3` 判 `clean` / `merge`；rebase 到 M832 合并后的 master 后，`reviewer-vertical-rebase` 在最终 tip `5f3f81f9c5af8464be24cc059a64a9cdde601cf9` 判 `clean` / `merge`，并以 `git range-diff` 确认生产代码相对上一轮 clean tip 逐字节未变。评审文件 `/Users/boxcounter/Code/Boxcounter/lumir/.tower/comms/reviews/review-feat-fix-composer-vertical-goal-column-nov19-reviewer-vertical-final-r1.md` 与 `…-reviewer-vertical-rebase-r1.md`。合并提交 `79e8815d` 的第二父即 `5f3f81f9`，评审绑定内容与合入内容同一份。
