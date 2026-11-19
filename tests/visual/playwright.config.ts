@@ -85,11 +85,15 @@ export default defineConfig({
     // 证不了 WebKit 序分支）。
     // M668 起 vault 移除后的浮层存续同行：缺陷来自引擎的焦点修复（持焦节点被移除 / 被禁用时
     // 派发 focusout），真机 WKWebView 是缺陷现场，本条必须在真 WebKit 里也判一次。
+    // M834 起 composer 竖直移动的列位同行：判据是「行内字符列」而不是像素 x，而列位漂移正是
+    // 字体度量驱动的（CM 的 goal column 走 coordsAtPos / posAtCoords），真机 WKWebView 是缺陷
+    // 现场——chromium 与 WebKit 的取整可以不同，必须两支各判一次。该文件里只有 CDP 那一条是
+    // Chromium 专属通道，场景内自行 skip，其余六条两支都跑。
     ...(webkitRealuaPresent
       ? [
           {
             name: "webkit-realua",
-            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts/,
+            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts/,
             use: { browserName: "webkit" as const, userAgent: REAL_WEBKIT_UA },
           },
         ]

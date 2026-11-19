@@ -41,6 +41,8 @@ async function setup(page: Page): Promise<void> {
 }
 
 test("Chromium CDP 真引擎组合：Backspace 不吃 committed 文本，取消/提交/Enter 与附件 history", async ({ page }) => {
+  // CDP 是 Chromium 专属通道（本文件随 M834 起进 webkit-realua 常驻白名单，其余六条两支都跑）。
+  test.skip(test.info().project.name !== "chromium", "CDP 会话只在 chromium 提供；WebKit 侧由 m361 场景判组合事件序");
   await setup(page);
   const content = page.locator(".lumir-hp-composer .cm-content");
   const tray = page.locator(".lumir-hp-composer-tray > .lumir-hp-qcard");
