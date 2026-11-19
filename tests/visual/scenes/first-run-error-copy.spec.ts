@@ -153,3 +153,68 @@ test.describe("首次安装错误文案：harness 错误行", () => {
     expect(text, `不得出现 reqwest 原始串：${text}`).not.toMatch(/error sending request/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// M858：流式事件里的**字面量 code**（`events::error("<code>", …)`）——不是 CommandError，
+// 此前不在任何覆盖门禁的扫描面内，en 界面下会掉回 Rust 中文 message。
+// ---------------------------------------------------------------------------
+
+/** `turn.rs` 的两条后端中文原文（`events::error` 的第二个参数，逐字取自构造点）。 */
+const INTERNAL_ERROR_MESSAGE = "对话线程发生内部错误，本轮已终止；请重试，必要时开新会话";
+const EMPTY_RESPONSE_MESSAGE = "模型返回了空响应（无文本也无工具调用），本轮已停止";
+
+test.describe("错误文案覆盖：流式事件字面量码", () => {
+  test("en：内部错误与空响应都上屏英文，且不含后端技术串", async ({ page }) => {
+    await openHarness(page, "en");
+
+    // 正观测：后端原文确实是中文（下面的「不含中文」断言才有区分度）。
+    expect(CJK.test(INTERNAL_ERROR_MESSAGE)).toBe(true);
+    await page.evaluate(
+      (payload) => (window as any).__fireHarnessEvent(payload),
+      { type: "error", code: "harness_internal_error", message: INTERNAL_ERROR_MESSAGE },
+    );
+    const internal = page.locator(".lumir-hp-error");
+    await expect(internal).toHaveCount(1);
+    const internalText = (await internal.textContent()) ?? "";
+    expect(CJK.test(internalText), `错误行不得含中文：${internalText}`).toBe(false);
+    expect(internalText, `要给出可行动方向：${internalText}`).toMatch(/internal error/i);
+    expect(internalText, `要给出可行动方向：${internalText}`).toMatch(/retry|new session/i);
+    expect(internalText, `不得出现 Rust 技术串：${internalText}`).not.toMatch(/panic|stack trace|thread '/i);
+
+    await page.evaluate(
+      (payload) => (window as any).__fireHarnessEvent(payload),
+      { type: "error", code: "harness_empty_response", message: EMPTY_RESPONSE_MESSAGE },
+    );
+    await expect(page.locator(".lumir-hp-error")).toHaveCount(2);
+    const emptyText = (await page.locator(".lumir-hp-error").nth(1).textContent()) ?? "";
+    expect(CJK.test(emptyText), `错误行不得含中文：${emptyText}`).toBe(false);
+    expect(emptyText, `要点名空响应并给出重试方向：${emptyText}`).toMatch(/empty response/i);
+    expect(emptyText, `要点名空响应并给出重试方向：${emptyText}`).toMatch(/try again/i);
+    // 后端原文一个字都不该上屏。
+    await expect(page.locator(".lumir-hp-transcript")).not.toContainText("模型返回了空响应");
+  });
+
+  test("zh：同两条事件上屏中文（映射是两档，不是一律英文）", async ({ page }) => {
+    await openHarness(page, "zh");
+
+    await page.evaluate(
+      (payload) => (window as any).__fireHarnessEvent(payload),
+      { type: "error", code: "harness_internal_error", message: INTERNAL_ERROR_MESSAGE },
+    );
+    const internal = page.locator(".lumir-hp-error");
+    await expect(internal).toHaveCount(1);
+    await expect(internal).toContainText(/内部错误/);
+    await expect(internal).toContainText(/重试/);
+
+    await page.evaluate(
+      (payload) => (window as any).__fireHarnessEvent(payload),
+      { type: "error", code: "harness_empty_response", message: EMPTY_RESPONSE_MESSAGE },
+    );
+    await expect(page.locator(".lumir-hp-error")).toHaveCount(2);
+    const empty = page.locator(".lumir-hp-error").nth(1);
+    await expect(empty).toContainText(/空响应/);
+    await expect(empty).toContainText(/重试/);
+    const text = (await empty.textContent()) ?? "";
+    expect(CJK.test(text), `zh 上屏应是中文：${text}`).toBe(true);
+  });
+});

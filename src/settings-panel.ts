@@ -23,6 +23,7 @@
 // 「取消」与另外三条同义（关闭 + 丢弃草稿），MUST NOT 有「恢复已保存配置」这第三条语义。
 
 import { errorText, t, onRelabel } from "./copy";
+import { FIELD_ERROR_COPY } from "./copy-data";
 import type { CopyKey } from "./copy-data";
 import { escapeDisposition, escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { settingsApply, settingsGet } from "./ipc";
@@ -1304,7 +1305,9 @@ export function mapFieldErrors(errors: readonly SettingsFieldError[]): FieldErro
     // 上屏文本走 errorText（按 code 取文案表的唯一入口）：后端 field_error 的 message 是
     // Rust 侧中文原文，直接上屏等于 en 界面透出中文。表里没有该 code、或模板需要字段错误
     // 不携带的占位参数时，errorText 回落到 message——既有行为不变。
-    const text = errorText(error);
+    // `FIELD_ERROR_COPY` 只登记参数面不同的两栖 code（`config_parse_failed`：CommandError
+    // 构造点带 path、字段错误构造点没有 params）；其余 code 在这张表里查不到，行为不变。
+    const text = errorText(error, undefined, FIELD_ERROR_COPY);
     if (path === "" || path === "providers" || path === "automation" || path === "naming") {
       out.fileLevel ??= text;
       continue;
