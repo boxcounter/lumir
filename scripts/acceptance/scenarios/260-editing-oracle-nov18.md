@@ -67,9 +67,26 @@ steps:
     key: "cmd+a"
     gapMs: 150
 
-  - name: 写入 `- first`
+  # 注入配方（M832 r2，照场景 153）：`-` 后补空格的那一刻整行成为裸 marker 行、marker 被
+  # widget 替换，AXTextArea.value 序列化成「–\nfirst」类形态——单步 `do: type "- first"`
+  # 的目标串回读出现 0 次，注入通道会误判未落地并停止（tower 首轮真机即此，**不是产品 FAIL**）。
+  # 因此拆成：type `-`（无尾空格、字面可回读）→ 盲键空格触发 widget → 无点击 `do: keys`
+  # 逐键输入 `first`（caret 留在空格键位置，不点 bbox、不重定位）。
+  - name: 输入 marker `-`（无尾空格，尚不进入列表态，type 的次数回读可校验）
     do: type
-    text: "- first"
+    text: "-"
+
+  - name: 盲键补空格触发 widget（此后 AX 不再含字面 `- `）
+    do: key
+    key: " "
+
+  - name: 无点击逐键输入 `first`（caret 留在 marker 之后，不点 bbox 不重定位）
+    do: keys
+    keys: ["f", "i", "r", "s", "t"]
+    gapMs: 120
+    expect:
+      - label: 内容字面在场（widget 只替换 marker，`first` 不被吞）
+        editor: { has: "first" }
 
   - name: Enter 续一个空项
     do: key
@@ -119,11 +136,23 @@ steps:
    （`1. zuno`），不得停在隐藏源码内部（`1z. uno`）。期望落点由
    `tests/unit/editing-oracle-model.ts` 的 `bodyHorizontalStep` 给出，不从生产
    `listHiddenRangeAt` 反推。
-2. **连续空列表 Enter + 保存全文**（seed 7）：`- first` → Enter（续空项）→ Enter（空项退出，
+2. **连续空列表 Enter + 保存全文**（seed 7）：注入按场景 153 的配方（`-` → 盲键空格 →
+   无点击逐键 `first`），随后 Enter（续空项）→ Enter（空项退出，
    删 marker 不新增行）→ Enter（此时 caret 在普通空行，只插一个换行、不恢复 marker）→
    键入 `second` → ⌘S。三次 Enter 覆盖三种真实语义：**续空项 → 空项退出 → 普通空行换行**；
    期望文档 `- first\n\nsecond` 与独立模型逐字节一致。落盘用 M832 新增的 `file.exact`
    做整篇比较——`has` 是子串，对多余空行 / 数量错误没有区分度。
+
+## 注入口径（M832 r2）
+
+- `-` 与尾随空格分两步注入：`do: type "-"` 走可回读通道（此时尚未进入列表态、AX 字面可读）；
+  `do: key " "` 是单发盲键（空格一落即触发 marker widget）；内容 `first` 走**无点击**的
+  `do: keys`，caret 留在空格键位置，不点 AXTextArea bbox、不重定位。
+- 为什么不单步 `do: type "- first"`：widget 接管后 AXTextArea.value 把 marker 序列化成
+  `–\n` 类形态，目标串 `- first` 出现 0 次，`type` 的重试会把「未落地」误判成需要重注——
+  首轮真机 FAIL 即此注入 oracle 错误（证据见任务报告里的首轮证据路径），不是产品行为失败。
+- 该配方与场景 153 的 M506/M498 结论同源；若 marker widget 的 AX 序列化形态再变，回读判据
+  需按 153 的「失效条件」重取。
 
 ## 判据边界（如实声明）
 
