@@ -127,6 +127,54 @@ steps:
       - label: 行保留为结尾空行、不新增行且不残留空格
         file: { path: ordered-list-bare-backspace-probe.md, has: '/普通段落\n\n$/' }
       - shot: 退格后-裸marker一次删除
+
+  # ── 用例 5（M830 L6）：连续空有序项内容起点输入、精确落盘与单步撤销。
+  # 独立 fixture，避免前四例的文档与撤销栈参与。widget 接管后不再点击；先点首项建立焦点，
+  # 再用 ctrl+e / ctrl+n 移到第 7 项内容起点，a 走无可点击动作的 keys 通道。
+  - name: 造连续七个空有序项探针文档
+    do: vaultWrite
+    file: ordered-list-content-start-probe.md
+    content: "1. \n2. \n3. \n4. \n5. \n6. \n7. \n"
+  - name: 打开连续空项探针
+    do: open
+    file: ordered-list-content-start-probe.md
+    marker: "7."
+  - name: 点击首项并移到第 7 项内容起点
+    do: clickEditor
+  - name: 保持正文列逐行下移六项
+    do: keys
+    keys: ["ctrl+e", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n"]
+  - name: 在第 7 项内容起点输入 a（无点击通道；AX 的 7.a 不是源码判据）
+    do: keys
+    keys: ["a"]
+    expect:
+      - label: 正文字符在 AX 中落地，marker 与正文可序列化成 7.a
+        editor: { has: '/7\.\s*a/' }
+      - shot: 第7项输入后-DOM拼接不等于源码无空格
+  - name: 落盘连续空项输入
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 精确核对输入后的完整文件字节
+    do: sleep
+    ms: 1200
+    expect:
+      # (?<![\s\S]) 只允许多行模式下的绝对文档起点；结尾 \n$(?![\s\S]) 只允许多行模式的绝对文档终点。
+      # 因而这不是 has 子串判据：任何前缀、后缀、marker 空格丢失或其他项变化都会红。
+      - label: 七项逐字不变，仅第 7 项为「7. a」（含 marker 尾随空格与最终换行）
+        file: { path: ordered-list-content-start-probe.md, has: '/(?<![\s\S])1\. \n2\. \n3\. \n4\. \n5\. \n6\. \n7\. a\n$(?![\s\S])/' }
+  - name: 一次撤销第 7 项输入
+    do: key
+    key: "cmd+z"
+  - name: 落盘撤销结果
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 精确核对一次撤销恢复完整原文
+    do: sleep
+    ms: 1200
+    expect:
+      - label: 一次撤销恢复七个空项原文（含每个 marker 尾随空格与最终换行）
+        file: { path: ordered-list-content-start-probe.md, has: '/(?<![\s\S])1\. \n2\. \n3\. \n4\. \n5\. \n6\. \n7\. \n$(?![\s\S])/' }
+      - shot: 第7项撤销后-完整原文恢复
 ---
 
 # 153 · 列表自动模式三态（M461）
@@ -149,3 +197,14 @@ lazy continuation，树驱动的渲染与续行都不认它。本 change 按文�
   只能单发盲键）→ 可打印 `do: keys ["a","l","p","h","a"]`（press_key 逐键、**无点击不动 caret**，
   读回校验 value 里 "alpha" 0→1 次）」。**失效条件**：widget 的 AX 序列化形态变化（例如内容也
   不再字面在场）或 press_key 丢键族恶化时，回读判据需重取。
+
+
+## M830 增补：内容起点输入不是 `7.a` 源码缺陷
+
+用例 5 固定连续 7 个空有序项，在第 7 项输入 `a`。AX 中 marker widget 与正文可拼接成 `7.a`，
+但文件 MUST 是 `7. a`；判据直接锚定完整文件，不用 AX 文本反推源码。一次撤销并保存后 MUST
+恢复 7 个空项的精确原文。精确选区、每项恰一个 marker、计算样式 / 正文 x、redo 与 dirty 由
+`tests/visual/scenes/lists.spec.ts` 的 L6 场景判定；真机这里负责 WKWebView 输入与文件字节。
+
+注入纪律沿用前四例：建立焦点与定位完成后，`a` 只走 `do: keys`，不再执行任何点击，也不用会
+先点 AXTextArea bbox 中心的 `do: type`，避免把已位于第 7 项内容起点的 caret 挪走。
