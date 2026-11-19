@@ -1121,6 +1121,9 @@ let vaultLoaded = false;
  *  拉取），两者可能同时到达——同一个 vault 的重复响应只装载一次，避免重复走一遍
  *  装载副作用（编辑器整批复位、崩溃备份入口再弹一次）。 */
 let loadedRoot: string | undefined;
+/** 已装载 vault 的稳定 id（change fix-draft-vault-ownership-nov19）：与 `loadedRoot` 同一次
+ *  装载写入，供「重载同一个 vault」的入口（cron 结果通知）向面板补回草稿归属。 */
+let loadedVaultId: string | null = null;
 /** 当前 vault 的显示名（= 目录 basename，M163）：切换器列表的当前项与 dirty
  *  守卫提示都读它。唯一赋值点是 applyVault——侧栏头的 vault 名由 src/tree.ts 的
  *  setVault 用同一个 baseName 派生，本文件不另存一份派生物。 */
@@ -3169,8 +3172,8 @@ async function handleCronOpenSession(payload: { vault: string; session_id: strin
     openHarnessPane();
     // 面板的 `vaultChanged` 对同一 vault 是空操作；先置空再设回，等价于「重新装载该 vault
     // 的会话面」——面板据此按恢复后的后端会话重取快照（不新增面板 API）。
-    harnessPanel.vaultChanged("");
-    harnessPanel.vaultChanged(payload.vault);
+    harnessPanel.vaultChanged("", null);
+    harnessPanel.vaultChanged(payload.vault, loadedVaultId);
   } catch (error) {
     void showToast(harnessPaneMount(), errorText(error));
   }
@@ -3946,6 +3949,7 @@ async function applyVault(
   await readingPositions.onVaultLoaded(vaultId, entries);
   vaultLoaded = true;
   loadedRoot = root;
+  loadedVaultId = vaultId;
   const name = baseName(root);
   vaultName = name;
   // `lumir:vault-ready` = **前端装载完成**（面向就绪管线/测试，全仓无消费者），与后端
@@ -3989,7 +3993,7 @@ async function applyVault(
   // 拉过一次快照——切 vault 后必须让它重拉（并丢掉旧 vault 的渲染面），否则面板上留着上一个
   // vault 的对话。放在这里而不是 applyVault 开头：编辑器与表现层都已对齐到新 vault，面板重拉
   // 时取的上下文 chip 因此是新 vault 的文档（不是旧 vault 残留的那个）。
-  harnessPanel.vaultChanged(root);
+  harnessPanel.vaultChanged(root, vaultId);
   // 残留崩溃备份的恢复入口（M127）：装载完成后才有 vault 上下文可定位备份。
   void save.checkRecovery();
   // 装载后恢复该 vault 的标签列表（M163；M283 起先按存储顺序建壳、内容只装激活项）：异步，

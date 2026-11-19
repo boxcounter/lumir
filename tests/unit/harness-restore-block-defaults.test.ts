@@ -417,6 +417,8 @@ function editorDouble(): HarnessPanelEditor {
 // ---------------------------------------------------------------------------
 
 const VAULT = "/tmp/lumir-m542-restore-defaults";
+/** 稳定 id（草稿归属；M848）：与根路径同源下发，本文件不涉草稿内容。 */
+const VAULT_ID = "vault-m542-restore-defaults";
 
 /** 恢复重建的面板记录（`SessionResumeInfo.messages` 与快照 `messages` 同形；快照恢复与会话
  *  恢复共用同一份项映射）：user 提问 + 带 reasoning 的 assistant 回复 + 两条工具记录。 */
@@ -469,7 +471,7 @@ async function mountPanel(
     openSettings: () => {},
   });
   handle.attachTo(mount as unknown as HTMLElement);
-  handle.vaultChanged(VAULT);
+  handle.vaultChanged(VAULT, VAULT_ID);
   await flush();
   return { mount, titlebar, backend, handle };
 }
@@ -659,10 +661,10 @@ test("内容换代（切 vault / 重载会话）关闭面板来源的全屏遮�
   try {
     const afterMount = closed;
     // 同一 vault 的重复装载（重定位 / 重开）不是换代：面板不动渲染面，遮罩也不该退场。
-    handle.vaultChanged(VAULT);
+    handle.vaultChanged(VAULT, VAULT_ID);
     assert.equal(closed, afterMount, "同一 vault 重复装载不关遮罩");
     // 切 vault = 内容换代。
-    handle.vaultChanged("/tmp/lumir-m634-other-vault");
+    handle.vaultChanged("/tmp/lumir-m634-other-vault", "vault-m634-other");
     assert.equal(closed, afterMount + 1, "切 vault 必须显式关闭面板来源的遮罩");
     // 重载会话（快照重取，如 cron 回滚）= 内容换代。
     handle.reloadSession();
