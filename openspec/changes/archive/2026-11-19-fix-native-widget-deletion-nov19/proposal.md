@@ -12,7 +12,7 @@
 
 ## 节点 2 记录（归档前，2026-11-19，M840）
 
-口径见 [openspec-workflow.md](../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
 
 1. **方案已批准**：节点 1 来源是 Alex 对 M832 缺陷的原始要求「修复合同覆盖整个行为类别」与 M835 只读诊断的双引擎实测结论（见本文开头记录）；tower 在 M836 mission 中据此立项并指定「通用 state-only 修复，不按 DOM / en dash 文本形状猜意图」。本 change 不引入新的产品行为或裁决点，实现期没有静默扩 scope：`git diff --name-only 79e8815d...0facd254` 恰为声明的 9 个文件（`src/editor.ts`、`tests/unit/editing-oracle-model.ts`、`tests/visual/scenes/editing-oracle.spec.ts`、`docs/specs/lists.md`、261 场景 + COVERAGE、本 change 三件），无 `src-tauri`、依赖或像素基线改动。
 2. **独立 reviewer clean / merge**：assigned reviewer `reviewer-native-widget-deletion` 判 `status: clean` / `merge: merge`，评审 tip `0facd2543b742420b65505182f947316eacc6fd9`（`reviewed_commit` 同值），评审文件 `/Users/boxcounter/Code/Boxcounter/lumir/.tower/comms/reviews/review-feat-fix-native-widget-deletion-nov19-reviewer-native-widget-deletio-r1.md`。合并提交 `40b34a2d` 的第二父即 `0facd254`，评审绑定内容与合入内容同一份。
