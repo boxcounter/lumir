@@ -332,6 +332,29 @@ macOS 上真正拦住 Safe Storage 弹窗的是 `--use-mock-keychain`（Apple-on
    （存在性 / 文案 / 可见性），不能指望整页像素——新增元素整体被吞的现场见
    REVIEW.md「容差吞掉真实变化」条（M322 空 pane 引导水印，835px）。
 
+### 故障注入场景的口径（M844）
+
+持久化链路（保存 / 草稿）的判据是**时序**，靠人想象交错顺序写不出可复核的回归。需要造延迟、
+失败、乱序时按下面的口径扩展，不要改 `scenes/tauri-stub.ts` 的公共桩：
+
+1. **包装层叠在桩外**：`stubTauri(page, fixture)` → 领域桩（如草稿按 vault 存盘）→
+   `installFaults(page)`。三者都是 `addInitScript`，按注册顺序执行；最后注册的包装在最外层。
+   `persistence-adversarial.spec.ts` 是完整样例。
+2. **先正观测到达，再断言不变量**：`hold` 之后必须 `expect.poll(held === n)`（或断言
+   `arrivals` / `calls`）确认故障真的命中，否则「结果看起来对」可能是注入点根本没被走到
+   （REVIEW.md「读不到当成空」条的同族）。缺到达一律判红，不得空过。
+3. **两种 hold 语义分开用**：缺省 = **执行前**挡住（写还在磁盘上飞，放行后 body 才看到
+   世界）；`{ after: true }` = body 先执行、**结果延迟交付**（读已发生 / 写已落地，只是应答
+   在路上）。前者造「写与外部改写竞争」，后者造「迟到的结果」。
+4. **失败信封按真 Rust 形状给**：`code + message`，文案表要插值时必须带 `params`（与
+   `tauri-stub.ts` 的 `failures` 通道同口径），否则场景钉住的是真机上不会上屏的文本。
+5. **已知产品缺陷不在场景里放宽**：Node 层用 `node:test` 的 `todo` 钉住可复现的缺陷现场
+   （带 finding 指针，见 `tests/unit/persistence-adversarial.test.ts` 的 `knownDefect`），
+   视觉层只写应当成立的不变量；缺陷修复后把 `todo` 转普通用例，而不是把断言改绿。
+
+该文件整份进 `webkit-realua` 的 `testMatch`（见 `playwright.config.ts`）：两引擎的微任务 /
+IPC 时序不同，chromium 绿不代表 WebKit 事件序下同样成立。
+
 ### 启动是两段式的：`goto` 回来时主模块未必已装载（M645）
 
 change `app-splash-screen` 把入口换成启动层（`src/boot.ts`）：先读配置、画启动面，**之后**才

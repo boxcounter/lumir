@@ -98,11 +98,14 @@ export default defineConfig({
     // 标记 / RTL 附标只退一个码元，WebKit 退整簇），clipboard 事件序也归引擎；只在 chromium
     // 判会把「本机 engine 的边界」当成产品合同。其余粘贴优先级两支同判，IME 组合中粘贴是
     // CDP-only，场景内自行 skip。
+    // M844 起持久化对抗场景同行：保存 / 草稿链路的判据全是**时序**（延迟写、乱序返回、
+    // 切换与应答的交错），而两引擎的微任务 / IPC 时序不同；chromium 绿不代表 WebKit 的
+    // 事件序下同样成立，因此整份 persistence-adversarial 在两个引擎各跑一遍。
     ...(webkitRealuaPresent
       ? [
           {
             name: "webkit-realua",
-            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts|markdown-editing-stability\.spec\.ts|text-clipboard-adversarial\.spec\.ts/,
+            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts|m642-overlay-select-all\.spec\.ts|m668-vault-remove-focus\.spec\.ts|m815-composer-selection-highlight\.spec\.ts|editing-oracle\.spec\.ts|m831-harness-composer-codemirror\.spec\.ts|markdown-editing-stability\.spec\.ts|text-clipboard-adversarial\.spec\.ts|persistence-adversarial\.spec\.ts/,
             use: { browserName: "webkit" as const, userAgent: REAL_WEBKIT_UA },
           },
         ]
