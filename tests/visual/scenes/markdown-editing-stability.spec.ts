@@ -570,8 +570,8 @@ const TABLE_CASES: EditCase[] = [
   { name: "cell 内容末尾 Delete：只删后一个源字节", doc: TABLE_DOC, anchor: 27, keys: ["Delete"], expectedDoc: "| a | b |\n| --- | --- |\n| c| d |\n", expectedCaret: 27, geometry: "line", knownDefect: { engine: "webkit", why: "WebKit 上 cell 尾缘 Delete 删掉隐藏管道符（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
   { name: "表头 cell 内容起点 Backspace", doc: TABLE_DOC, anchor: 3, keys: ["Backspace"], expectedDoc: "|  | b |\n| --- | --- |\n| c | d |\n", expectedCaret: 2, geometry: "line" },
   { name: "第二数据行 cell 内输入（列方向）", doc: TABLE_DOC, anchor: 30, type: "Q", expectedDoc: "| a | b |\n| --- | --- |\n| c | Qd |\n", expectedCaret: 31, geometry: "line" },
-  { name: "同一 cell 内选区删除", doc: TABLE_DOC, anchor: 26, head: 27, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n|  | d |\n", expectedCaret: 26, geometry: "line", knownDefect: { engine: "webkit", why: "WebKit 上 cell 内选区删除按渲染 DOM 回写（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
-  { name: "同一行跨 cell 选区删除（管道符随源码删除）", doc: TABLE_DOC, anchor: 26, head: 30, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n| d |\n", expectedCaret: 26, geometry: "none", knownDefect: { engine: "webkit", why: "WebKit 上跨 cell 选区删除按渲染 DOM 回写（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
+  { name: "同一 cell 内选区删除", doc: TABLE_DOC, anchor: 26, head: 27, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n|  | d |\n", expectedCaret: 26, geometry: "line" },
+  { name: "同一行跨 cell 选区删除（管道符随源码删除）", doc: TABLE_DOC, anchor: 26, head: 30, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n| d |\n", expectedCaret: 26, geometry: "none" },
   { name: "输入后一次 undo 精确复原", doc: TABLE_DOC, anchor: 27, type: "Q", keys: ["Meta+z"], order: "type-then-keys", expectedDoc: TABLE_DOC, expectedCaret: 27, geometry: "line" },
   { name: "编辑后 ⌘S：盘上全文 = 期望文档", doc: TABLE_DOC, anchor: 27, type: "Q", expectedDoc: "| a | b |\n| --- | --- |\n| cQ | d |\n", expectedCaret: 28, geometry: "line", save: true, knownDefect: { engine: "webkit", why: "同「数据 cell 内输入」：WebKit 上落盘的是被吃字符后的文档（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
 ];
@@ -636,43 +636,85 @@ test("wikilink：在渲染态链接尾部点击后输入，字符按顺序写入
 });
 
 // ---------------------------------------------------------------------------
-// 已知产品缺陷（expected failure）
+// C5：选区删除 = 源码精确删除（M854）
 //
-// 断言的是**正确合同**（选区删除 = 删除选中的那段源码，其余字节不动），当前产品未满足；
-// 用 `test.fail` 而不是 skip——修好后 Playwright 报「expected to fail, but passed」并变红，
-// 强制在修复 PR 里移除标记。最小现场与证据见各 describe 的注释。
+// M842 登记的缺陷（20261119-worker-markdown-stability-bug-dom：选区端点落在渲染隐藏区时，
+// 原生删除按 DOM 回写源码，表格结构被摧毁、列表 marker 被吞，⌘S 落盘损坏结果）在本节
+// 转正为正常用例。修复落点是 `src/editor.ts` 的 beforeinput 闸门：非空选区删除一律
+// preventDefault + 按 state 选区的源码字节 dispatch 一个显式事务（普通文本 / IME /
+// readonly 语义不变）。
+//
+// 期望值一律写成**显式源码串**：合同是「只删掉 state 选区覆盖的源码字节」，不是「删掉
+// 看起来选中的渲染文字」。选区用程序化 [anchor, head) 设置，保证两引擎范围一致（用户
+// 鼠标拖选实测同一现场，见 finding）。反向选区（head < anchor）与正向同一期望。
 // ---------------------------------------------------------------------------
 
-test.describe("已知缺陷：选区删除跨渲染隐藏区（expected failure，修好后自动变红）", () => {
-  // 现场：选区端点落在渲染态隐藏区（表格的 replace 覆盖、列表 marker 的隐藏区间）时，原生删除
-  // 走 DOM 回写，文档被按渲染结果重建。两引擎都复现（损坏形状不同），⌘S 会把损坏结果落盘
-  //（M842 探针：`fileText` 读回的盘上全文 = 损坏后的文本）。`test.fail` 作用域只在本 describe。
-  // finding：20261119-worker-markdown-stability-bug-dom。
-  test.fail(true, "已知缺陷：选区删除跨渲染隐藏区时按 DOM 回写");
+interface SelectionDeleteCase {
+  name: string;
+  path: string;
+  doc: string;
+  anchor: number;
+  head: number;
+  keys: string[];
+  expectedDoc: string;
+  expectedCaret: number;
+  /** 渲染态表格用例：先断言表格装饰在场再操作。 */
+  table?: boolean;
+  /** 删除后 ⌘S，断言盘上全文 = 期望文档。 */
+  save?: boolean;
+  /** 删除后 undo 回到原文，再 redo 重放删除。 */
+  undoRedo?: boolean;
+}
 
-  test("表格：从表头 cell 选到数据 cell 后删除，文档 = 选区源码被精确删除", async ({ page }) => {
-    const doc = "| a | b |\n| --- | --- |\n| c | d |\n";
-    await openDoc(page, "table-fail.md", doc);
-    await expect(page.locator(".cm-lp-table").first()).toBeVisible();
-    // 选区 [2, 32)：从表头 cell `a` 起、到数据行最后一个 `|` 止。程序化选区保证两引擎范围一致；
-    // 用户路径（鼠标从表头拖到数据行）实测同样损坏（M842 探针，chromium / webkit 均复现）。
-    await setCaret(page, 2, 32);
-    await page.keyboard.press("Backspace");
-    await page.waitForTimeout(700);
-    const expected = doc.slice(0, 2) + doc.slice(32);
-    expect(expected).toBe("|  |\n");
-    await expect.poll(async () => (await bodyState(page)).doc).toBe(expected);
-  });
+const SELECTION_TABLE_DOC = "| a | b |\n| --- | --- |\n| c | d |\n";
+const SELECTION_MIXED_LIST_DOC = "- a\n- b\n\n1. c\n";
 
-  test("列表：从 bullet 内容选到有序项行首后删除，文档 = 选区源码被精确删除", async ({ page }) => {
-    const doc = "- a\n- b\n\n1. c\n";
-    await openDoc(page, "list-fail.md", doc);
-    // 选区 [3, 9)：从第一个列表项内容中间到有序项行首（用户鼠标拖选实测同一结果）。
-    await setCaret(page, 3, 9);
-    await page.keyboard.press("Backspace");
-    await page.waitForTimeout(700);
-    const expected = doc.slice(0, 3) + doc.slice(9);
-    expect(expected).toBe("- a1. c\n");
-    await expect.poll(async () => (await bodyState(page)).doc).toBe(expected);
+const SELECTION_DELETE_CASES: SelectionDeleteCase[] = [
+  // 表格：跨行（表头 cell → 数据行末管道）、正向 Delete、反向选区、同行跨 cell、同 cell。
+  { name: "表格跨行：表头 cell 到数据行末管道 Backspace", path: "sel-table.md", doc: SELECTION_TABLE_DOC, anchor: 2, head: 32, keys: ["Backspace"], expectedDoc: "| |\n", expectedCaret: 2, table: true },
+  { name: "表格跨行：同一选区 Delete", path: "sel-table-del.md", doc: SELECTION_TABLE_DOC, anchor: 2, head: 32, keys: ["Delete"], expectedDoc: "| |\n", expectedCaret: 2, table: true },
+  { name: "表格跨行：反向选区 [32,2) Backspace", path: "sel-table-rev.md", doc: SELECTION_TABLE_DOC, anchor: 32, head: 2, keys: ["Backspace"], expectedDoc: "| |\n", expectedCaret: 2, table: true },
+  { name: "表格同一行跨 cell：管道符随源码删除", path: "sel-table-row.md", doc: SELECTION_TABLE_DOC, anchor: 26, head: 30, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n| d |\n", expectedCaret: 26, table: true },
+  { name: "表格同一 cell 内选区删除", path: "sel-table-cell.md", doc: SELECTION_TABLE_DOC, anchor: 26, head: 27, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n|  | d |\n", expectedCaret: 26, table: true },
+  // 混合列表：跨块、反向、终点落在有序项 marker 内部。
+  { name: "混合列表：bullet 内容到有序项行首", path: "sel-list.md", doc: SELECTION_MIXED_LIST_DOC, anchor: 3, head: 9, keys: ["Backspace"], expectedDoc: "- a1. c\n", expectedCaret: 3 },
+  { name: "混合列表：反向选区 [9,3) Backspace", path: "sel-list-rev.md", doc: SELECTION_MIXED_LIST_DOC, anchor: 9, head: 3, keys: ["Backspace"], expectedDoc: "- a1. c\n", expectedCaret: 3 },
+  { name: "混合列表：终点落在有序项 marker 内部", path: "sel-list-marker.md", doc: SELECTION_MIXED_LIST_DOC, anchor: 2, head: 10, keys: ["Backspace"], expectedDoc: "- . c\n", expectedCaret: 2 },
+  // 普通文本选区：闸门接管后字节结果仍与原生相同（语义保持）。
+  { name: "普通文本选区：只删选中源码", path: "sel-plain.md", doc: "aa bb cc\n", anchor: 3, head: 6, keys: ["Backspace"], expectedDoc: "aa cc\n", expectedCaret: 3 },
+  // undo / redo 与精确落盘。
+  { name: "表格跨行删除后 undo 复原、redo 重放", path: "sel-table-undo.md", doc: SELECTION_TABLE_DOC, anchor: 2, head: 32, keys: ["Backspace"], expectedDoc: "| |\n", expectedCaret: 2, table: true, undoRedo: true },
+  { name: "表格跨行删除后 ⌘S：盘上全文 = 期望文档", path: "sel-table-save.md", doc: SELECTION_TABLE_DOC, anchor: 2, head: 32, keys: ["Backspace"], expectedDoc: "| |\n", expectedCaret: 2, table: true, save: true },
+];
+
+for (const c of SELECTION_DELETE_CASES) {
+  test(`选区删除：${c.name}`, async ({ page }) => {
+    await openDoc(page, c.path, c.doc);
+    if (c.table === true) await expect(page.locator(".cm-lp-table").first()).toBeVisible();
+    await setCaret(page, c.anchor, c.head);
+    // 前置（M854 探针口径）：CM state 里的选区与目标源码 range 逐值一致，文档未被触碰。
+    // 失败在这里意味着「选区本身错了」，与 DOM 回写是两个不同的缺陷。
+    expect(await bodyState(page)).toEqual({ doc: c.doc, anchor: c.anchor, head: c.head });
+    for (const key of c.keys) {
+      await page.keyboard.press(key);
+      // 620ms 屏障：让每一拍成为独立的 CM history 事件（与上面的编辑用例同口径）。
+      await page.waitForTimeout(620);
+    }
+    await expect
+      .poll(async () => bodyState(page), { message: `${c.name}：选区删除结果与期望不符` })
+      .toEqual({ doc: c.expectedDoc, anchor: c.expectedCaret, head: c.expectedCaret });
+    // 未按 ⌘S 前不得落盘：删除只改编辑器 state，盘上仍是原文。
+    expect(await fileText(page, c.path)).toBe(c.doc);
+    if (c.undoRedo === true) {
+      await page.keyboard.press("Meta+z");
+      await expect.poll(async () => (await bodyState(page)).doc, { message: `${c.name}：undo 未回到原文` }).toBe(c.doc);
+      await page.keyboard.press("Meta+Shift+z");
+      await expect.poll(async () => (await bodyState(page)).doc, { message: `${c.name}：redo 未重放删除` }).toBe(c.expectedDoc);
+    }
+    if (c.save === true) {
+      await page.keyboard.press("Meta+s");
+      await expect.poll(async () => fileText(page, c.path), { message: `${c.name}：⌘S 落盘与文档不一致` }).toBe(c.expectedDoc);
+      await expect(page.locator(".modeline-path")).not.toContainText("（未保存）");
+    }
   });
-});
+}
