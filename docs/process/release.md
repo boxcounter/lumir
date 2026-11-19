@@ -110,7 +110,7 @@ bash scripts/pack-release.sh --bundles dmg
 
 为什么是机器闸而不是人工核对：未签名的 app 打包命令照样退出 0——0.9.2 就是这样交付的，而 macOS 的通知守护进程按**代码签名身份**判定调用方资格，未签名实例的 `requestAuthorization` 与 `addNotificationRequest` 全被拒（M636 定论，证据 `.tower/comms/inbox/20261023-worker-notify-survey-oct23-tower-survey-summary.md`）。闸挡的正是「构建退出 0 但产物没签」这一形态。
 
-ad-hoc 签名只够本机：DR（designated requirement）就是 cdhash，换版即换身份，TCC 授权可能重问一次；对外分发需要 Developer ID + 公证（$99/年），属另行裁决。
+ad-hoc 签名只够本机：DR（designated requirement）就是 cdhash，换版即换身份，TCC 授权可能重问一次；对外分发需要 Developer ID + 公证（$99/年），属另行裁决。对外分发时 Gatekeeper 的实际行为、交付前检查与同事安装指引见「给同事 / 外部体验」节。
 
 `bash scripts/pack-release.sh --bundles dmg` 重打后 tauri 会清掉 `bundle/macos/Lumir.app`（只留 dmg）——此时闸只读挂载 dmg、对 payload 里的同名 app 跑同一组判据（`PACK INFO signature … 改验 dmg payload`），判据不降级。人工复核同理：先把 dmg 挂上（`hdiutil attach -readonly <dmg>`），对 `<挂载点>/Lumir.app` 跑上面的命令。
 
@@ -135,10 +135,58 @@ codesign -dv --verbose=4 "$app" 2>&1 | grep -E '^(Identifier|Info.plist entries|
 - `file <二进制>` → `Mach-O 64-bit executable arm64`，与文件名 `_aarch64` 一致。
 - 版本三处一致：`src-tauri/tauri.conf.json`、`package.json`、`src-tauri/Cargo.toml`。
 
+## 给同事 / 外部体验（Gatekeeper 与 ad-hoc 签名边界）
+
+2026-11-19（M849）对 0.13.0 交付 DMG 做过真实 quarantine 验证：**ad-hoc 签名的产物不能原样发给同事双击即用**——首次打开会被 Gatekeeper 拦下，必须先由使用者显式放行。证据 `.local/reports/first-run-0.13.0/`（逐项读数 `dmg/gatekeeper-summary.txt`，syspolicyd 原始日志 `dmg/syspolicyd-lumir.log`），被测产物 sha256 `b06a599b84da41469d52095de4b263eeb215a6678f59224a15741582a0cd46e7`（与 release index 一致）。
+
+### 本机装得上 ≠ 外部装得上
+
+- 本机打包产物不带 `com.apple.quarantine` 扩展属性（本机创建的文件没有隔离位）；打包机上安装过的同 cdhash 副本此前已被人肉放行。两条叠加：「本机可装可跑」不构成对外分发的证据，签名闸 `PACK PASS` 也只说明 ad-hoc 签名自洽（见「签名」节），不保证 Gatekeeper 放行。
+- 经下载、邮件、AirDrop 等外部路径到达的副本通常带 quarantine 位（是否携带取决于接收程序），macOS 对其按 Gatekeeper 策略判定。ad-hoc 产物是 `Signature=adhoc`、`TeamIdentifier=not set`，既无 Developer ID 也无公证，判定直接拒绝：0.13.0 实测 spctl 两条均 `rejected`（退出码 3），实际启动被 Gatekeeper 终止——进程 24853 被拉起约 8.4s 后终止，launchd 记录 `OS_REASON_EXEC | Gatekeeper policy blocked execution`。
+
+### 交付前的机器检查
+
+对每个准备外发的 dmg 跑下面两条，读数记进该版证据目录（本机自用打包可选；**向外分发的批次必须记**）：
+
+```bash
+dmg=.local/releases/release-<version>/Lumir_<version>_aarch64.dmg
+spctl --assess -vv --type open --context context:primary-signature "$dmg"; echo "EXIT=$?"
+hdiutil attach -readonly -nobrowse "$dmg"   # 挂载点以实际输出为准，下例为 /Volumes/Lumir
+spctl --assess -vv --type execute "/Volumes/Lumir/Lumir.app"; echo "EXIT=$?"
+hdiutil detach "/Volumes/Lumir"
+```
+
+ad-hoc 产物的期望读数是两条都 `rejected`、退出码 3（dmg 另带 `source=no usable signature`）——**这是预期读数，不是打包失败**。0.13.0 实测：未被 quarantine 的原始 dmg 与加了 quarantine 的复制件读数相同，所以打包机上直接跑即可，不必先构造隔离副本。这两条检查的用途：决定本轮交付说明是否必须附下面的放行指引；产物形态变化（例如将来接入 Developer ID + 公证）时，读数变化会立即暴露。本节是交付检查，不改 `scripts/pack-release.sh` 的签名闸。
+
+### 可信同事的最小安装指引
+
+**放行只对来源可信、sha256 一致的 dmg 做。** 收到 dmg 先核两件事：来自 Lumir 维护者的直接交付（当面 / 私有渠道），且本地 sha256 与交付消息里记录的读数逐字符一致；不一致就丢弃并回报，不要继续。
+
+```bash
+shasum -a 256 ~/Downloads/Lumir_<version>_aarch64.dmg
+```
+
+之后：
+
+1. 双击 dmg 挂载，把 `Lumir` 拖进 `Applications`，推出磁盘映像。
+2. 首次打开 `Applications/Lumir.app` 会被 macOS 拦下（提示无法验证开发者）。关闭提示，**不要点「移到废纸篓」**。
+3. 打开 系统设置 → 隐私与安全性，在「安全性」区找到刚被拦下的 Lumir，点「仍要打开」，用密码 / Touch ID 确认。设置里没有这个入口时，回到第 2 步再打开一次 app，然后回设置查看。
+4. 再打开一次 Lumir，系统再弹一次确认，点「打开」。此后正常启动，不需要重复放行。
+
+**不提供 `xattr -d com.apple.quarantine` 这类静默去除隔离位的命令**，也不建议同事使用：放行必须经过系统设置里的显式确认。M849 对测试复制件用过 xattr，是为了在同一份 payload 上继续首启测试，不是对外指引。
+
+### 未验证边界
+
+- 架构：现有产物只有 `aarch64`（Apple Silicon）。Intel Mac 未构建、未验证。
+- 「仍要打开」这条 UI 路径没有在真实外部机器上走通：M849 验证的是 Gatekeeper 拒绝，以及在复制件上移除 quarantine 后的首启；「系统设置 → 仍要打开」的完整点击路径未在第二台机器实测。首次外发按「待现场确认」处理，拿到反馈后回填本节。
+- 只在 macOS 26.6.2（25G83）+ Apple Silicon 上验证；其他 macOS 版本的拦截文案与设置位置可能不同。
+- 本节不改变本机打包签名闸（「签名」节），也不构成公证声明：Developer ID + 公证（$99/年）属另行裁决。
+
 ## 交付惯例
 
 - 证据目录 = **主仓 checkout** 的 `.local/releases/release-<version>/`（git 外；`.local/` 被 gitignore；worktree 里没有 `.local`，也不该在那里建）。把 dmg 复制一份进该目录，同目录留本次打包的脚本与产物校验日志（样板：`build.sh`、`tauri-build.log`、`verify.log`；重试过 dmg 时加 `dmg-retry.log`）。**打包树的门禁日志不是必备产物**（2026-11-03 起）：`gate-quick.log` / `gate-visual.log` / `visual-regression.log` 属功能批的验收证据，留在该批自己的证据目录或 CI 记录里；0.12.0 及以前目录中已有的这批日志按旧流程原样存档，不追溯。
 - `index.md` 至少记明：源 commit（版本 bump 后的那个 commit）、打包位置（路径 A / B；路径 B 另记相对 master 的差异面）、版本闸 / 构建 / 签名闸读数、DMG 完整性读数、sha256，以及**功能验收证据的指针**——功能批的 `GATE RESULT` 原文行、对应的 PR / master CI run 链接。打包证据只证明「产物来自这份已验收代码且完整可装」，不复制验收日志。
+- **向外分发的批次**：`index.md` 另记「给同事 / 外部体验」节的两条 spctl 读数与退出码，并注明交付说明是否随附 sha256 校验与「仍要打开」安装指引。
 - 目录内另有 `smoke.mjs`（发布版启动冒烟脚本，启动 `.app` 里的二进制、用 KimiCU 读 AX 树判定「真渲染 + 版本号上屏 + 非白屏」）。**0.7.0 批次未执行它**——按纪律不启动安装版，以免写入用户真实 `~/.config/lumir`。
 - **sha256 记录惯例**：对交付的 dmg 计算并记录，供 Alex 校验与归档（0.7.0 读数 `8ac0eebe…2976` 已记入交付报告与 HANDOFF）：
 
