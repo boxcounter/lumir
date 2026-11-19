@@ -479,8 +479,6 @@ interface EditCase {
   save?: boolean;
   /** 操作顺序：默认先 `keys` 后 `type`；`type-then-keys` 用于「输入一次再 undo」。 */
   order?: "keys-then-type" | "type-then-keys";
-  /** 已在 WebKit 上确认的产品缺陷（chromium 正确）：按 engine 标 expected failure。 */
-  knownDefect?: { engine: "webkit"; why: string };
 }
 
 async function runEditCase(page: Page, path: string, c: EditCase): Promise<void> {
@@ -563,24 +561,35 @@ for (const c of LIST_CASES) {
 
 const TABLE_DOC = "| a | b |\n| --- | --- |\n| c | d |\n";
 // 行内偏移：行 1 = 0..8，行 2 = 10..22（分隔行整行被 replace 覆盖），行 3 = 24..32。
+// 数据 cell `c` 的 slot = [25,28]（含首尾对齐空白），内容区 = [26,27]；`d` 的 slot = [29,32]。
+//
+// M855：数据 cell 的「内容首/尾缘键入 + 双向单字符删除」在 WebKit 原生路径上会跨过零宽
+// 隐藏管道（Backspace 把删除 range 拉回上一行、Delete 跨进下一 cell、键入吃掉对齐空白），
+// 现由 `src/editor.ts` 的 `nativeEditGate` 折叠 cell 分支按 EditorState 位置接管（与 M854
+// 的非空选区分支同一闸门、命中面互斥）。本组是转正后的合同；表头 cell 是对照组（原生路径
+// 本来就正确，闸门命中后结果必须逐字节相同）。选区删除 / 选区键入替换的用例在下方 C5
+// 「选区删除 = 源码精确删除（M854）」一节，本组不重复。
 const TABLE_CASES: EditCase[] = [
-  { name: "数据 cell 内输入单字符（源码插入）", doc: TABLE_DOC, anchor: 27, type: "Q", expectedDoc: "| a | b |\n| --- | --- |\n| cQ | d |\n", expectedCaret: 28, geometry: "line", knownDefect: { engine: "webkit", why: "WebKit 上 cell 尾缘输入吃掉后续源空白（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
-  { name: "表头 cell 内输入单字符", doc: TABLE_DOC, anchor: 3, type: "Q", expectedDoc: "| aQ | b |\n| --- | --- |\n| c | d |\n", expectedCaret: 4, geometry: "line" },
-  { name: "cell 内容起点 Backspace：只删前一个源字节（空白），不重写表格", doc: TABLE_DOC, anchor: 26, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n|c | d |\n", expectedCaret: 25, geometry: "line", knownDefect: { engine: "webkit", why: "WebKit 上 cell 首缘 Backspace 摧毁表格结构（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
-  { name: "cell 内容末尾 Delete：只删后一个源字节", doc: TABLE_DOC, anchor: 27, keys: ["Delete"], expectedDoc: "| a | b |\n| --- | --- |\n| c| d |\n", expectedCaret: 27, geometry: "line", knownDefect: { engine: "webkit", why: "WebKit 上 cell 尾缘 Delete 删掉隐藏管道符（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
-  { name: "表头 cell 内容起点 Backspace", doc: TABLE_DOC, anchor: 3, keys: ["Backspace"], expectedDoc: "|  | b |\n| --- | --- |\n| c | d |\n", expectedCaret: 2, geometry: "line" },
+  { name: "数据 cell 内容尾缘键入：插入字符、后续源空白不动", doc: TABLE_DOC, anchor: 27, type: "Q", expectedDoc: "| a | b |\n| --- | --- |\n| cQ | d |\n", expectedCaret: 28, geometry: "line" },
+  { name: "数据 cell 内容首缘键入：插入字符、前导空白不动", doc: TABLE_DOC, anchor: 26, type: "Q", expectedDoc: "| a | b |\n| --- | --- |\n| Qc | d |\n", expectedCaret: 27, geometry: "line" },
+  { name: "表头 cell 内容尾缘键入（对照组）", doc: TABLE_DOC, anchor: 3, type: "Q", expectedDoc: "| aQ | b |\n| --- | --- |\n| c | d |\n", expectedCaret: 4, geometry: "line" },
+  { name: "表头 cell 内容首缘键入（对照组）", doc: TABLE_DOC, anchor: 2, type: "Q", expectedDoc: "| Qa | b |\n| --- | --- |\n| c | d |\n", expectedCaret: 3, geometry: "line" },
+  { name: "数据 cell 内容首缘 Backspace：只删前一个源字节（空白），不重写表格", doc: TABLE_DOC, anchor: 26, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n|c | d |\n", expectedCaret: 25, geometry: "line" },
+  { name: "数据 cell 内容尾缘 Delete：只删后一个源字节（空白），不删管道", doc: TABLE_DOC, anchor: 27, keys: ["Delete"], expectedDoc: "| a | b |\n| --- | --- |\n| c| d |\n", expectedCaret: 27, geometry: "line" },
+  { name: "数据 cell 内容尾缘 Backspace：删内容末字", doc: TABLE_DOC, anchor: 27, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n|  | d |\n", expectedCaret: 26, geometry: "line" },
+  { name: "数据 cell 内容首缘 Delete：删内容首字", doc: TABLE_DOC, anchor: 26, keys: ["Delete"], expectedDoc: "| a | b |\n| --- | --- |\n|  | d |\n", expectedCaret: 26, geometry: "line" },
+  { name: "表头 cell 内容尾缘 Delete（对照组）", doc: TABLE_DOC, anchor: 3, keys: ["Delete"], expectedDoc: "| a| b |\n| --- | --- |\n| c | d |\n", expectedCaret: 3, geometry: "line" },
+  { name: "表头 cell 内容首缘 Backspace（对照组）", doc: TABLE_DOC, anchor: 2, keys: ["Backspace"], expectedDoc: "|a | b |\n| --- | --- |\n| c | d |\n", expectedCaret: 1, geometry: "line" },
+  { name: "表头 cell 内容尾缘 Backspace（对照组）", doc: TABLE_DOC, anchor: 3, keys: ["Backspace"], expectedDoc: "|  | b |\n| --- | --- |\n| c | d |\n", expectedCaret: 2, geometry: "line" },
   { name: "第二数据行 cell 内输入（列方向）", doc: TABLE_DOC, anchor: 30, type: "Q", expectedDoc: "| a | b |\n| --- | --- |\n| c | Qd |\n", expectedCaret: 31, geometry: "line" },
-  { name: "同一 cell 内选区删除", doc: TABLE_DOC, anchor: 26, head: 27, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n|  | d |\n", expectedCaret: 26, geometry: "line" },
-  { name: "同一行跨 cell 选区删除（管道符随源码删除）", doc: TABLE_DOC, anchor: 26, head: 30, keys: ["Backspace"], expectedDoc: "| a | b |\n| --- | --- |\n| d |\n", expectedCaret: 26, geometry: "none" },
   { name: "输入后一次 undo 精确复原", doc: TABLE_DOC, anchor: 27, type: "Q", keys: ["Meta+z"], order: "type-then-keys", expectedDoc: TABLE_DOC, expectedCaret: 27, geometry: "line" },
-  { name: "编辑后 ⌘S：盘上全文 = 期望文档", doc: TABLE_DOC, anchor: 27, type: "Q", expectedDoc: "| a | b |\n| --- | --- |\n| cQ | d |\n", expectedCaret: 28, geometry: "line", save: true, knownDefect: { engine: "webkit", why: "同「数据 cell 内输入」：WebKit 上落盘的是被吃字符后的文档（finding 20261119-worker-markdown-stability-bug-webkit-cell）" } },
+  { name: "首缘 Backspace 后一次 undo 精确复原", doc: TABLE_DOC, anchor: 26, keys: ["Backspace", "Meta+z"], expectedDoc: TABLE_DOC, expectedCaret: 26, geometry: "line" },
+  { name: "尾缘 Delete 后一次 undo 精确复原", doc: TABLE_DOC, anchor: 27, keys: ["Delete", "Meta+z"], expectedDoc: TABLE_DOC, expectedCaret: 27, geometry: "line" },
+  { name: "编辑后 ⌘S：盘上全文 = 期望文档", doc: TABLE_DOC, anchor: 27, type: "Q", expectedDoc: "| a | b |\n| --- | --- |\n| cQ | d |\n", expectedCaret: 28, geometry: "line", save: true },
 ];
 
 for (const c of TABLE_CASES) {
-  test(`表格编辑对抗：${c.name}`, async ({ page, browserName }) => {
-    // engine 相关的已知缺陷：断言的是正确合同，只在缺陷引擎上标 expected failure。
-    // 修好后 Playwright 报「expected to fail, but passed」并变红，强制移除标记。
-    if (c.knownDefect !== undefined) test.fail(browserName === c.knownDefect.engine, c.knownDefect.why);
+  test(`表格编辑对抗：${c.name}`, async ({ page }) => {
     await openDoc(page, "table.md", c.doc);
     await expect(page.locator(".cm-lp-table").first()).toBeVisible();
     await runEditCaseBody(page, "table.md", c);
