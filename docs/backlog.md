@@ -75,3 +75,5 @@
 - **`add-cron-notification-relaunch`**（2026-10-28 实现批）：delta = cron / harness 等 4 条 capability 增量，详见 change。节点 1 已裁（Alex 2026-10-28「按推荐」）。真机：169 PASS；213 / 252-cron 未通过——① 验收 bundle 的 fail-closed 隔离包装自身有缺陷（`build-bundle.mjs:95` 的 `case` 模式与套件隔离根不匹配 ⇒ 任何拉起都被拒；拒绝分支 `set -u` 下崩溃），见 finding `20261028-worker-automated-acceptance-ev-bug-bundle-case-env-set-u-bundle-invalid.md`；② 绕开①后通知授权被拒（`UNErrorDomain error 1`），到点通知从未投递；③ 点击段按 README「cron 通知点击在当前 macOS 构建上不可自动驱动」条仍不可自动驱动（170 人工段按任务显式跳过）。冷启动本机读数 median 175.65ms / p95 181.57ms（`.local/perf/cold-start.json`），对照合同 <300ms 未退化。**非 macOS 编译未验证（本机只有 macOS 目标链，见 tasks 同名记录）**。**6.4 / 6.5 未通过前不得归档。**
 
 - **`fix-save-response-ownership-nov19`**（M847）：delta = fs-io 1 条 ADDED（保存应答按路径装载世代与保存凭据隔离）；独立 review clean/merge，quick 13/13 PASS（SKIP 0），真机不伪造故障注入；归档前检查、归档提交与 `--archived` 审计由 tower 批次收尾完成。
+
+- **`fix-draft-vault-ownership-nov19`**（M848）：delta = harness 1 条 MODIFIED（草稿读写绑定出发时 vault id）；独立 review clean/merge，前后端回归与 quick 13/13 PASS（SKIP 0），真机不伪造在途故障；归档提交与 `--archived` 审计由 tower 批次收尾完成。
