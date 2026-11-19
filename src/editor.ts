@@ -759,7 +759,13 @@ function replaceSelectedRanges(view: EditorView, text: string): void {
 /** beforeinput 闸门本体：命中返回 true（事件已消费），否则 false 让原生编辑照常发生。 */
 function absorbNativeEdit(event: InputEvent, view: EditorView): boolean {
   const state = view.state;
-  if (state.readOnly || view.composing || event.isComposing) return false;
+  // 组合期整段让给 CM：`view.composing` 只在**已有组合改动**后为真（CM 的实现是
+  // `inputState.composing > 0`），而 `compositionstart` 只把计数置 0——「已有非空选区 →
+  // compositionstart → 首个组合改动之前」这段窗口里它仍是 false。`view.compositionStarted`
+  // （`composing >= 0`）覆盖这段窗口，与 M855 的 cell 闸门同一口径；Safari 的组合提交
+  // 可能以 `insertText` 到达（CM 在 beforeinput 里有专门的死键收尾分支），组合期抢走
+  // 事件会绕过 CM 的组合处理。
+  if (state.readOnly || view.compositionStarted || event.isComposing) return false;
   const ranges = state.selection.ranges;
   if (ranges.some((range) => !range.empty)) {
     if (event.inputType === "insertText") {

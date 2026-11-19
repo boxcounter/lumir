@@ -734,3 +734,43 @@ for (const c of SELECTION_DELETE_CASES) {
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// IME 组合期（review r1 P1-1）：`compositionstart` 之后、首个组合改动之前，CM 的
+// `view.composing`（`inputState.composing > 0`）仍为 false；选区闸门必须用
+// `view.compositionStarted`（`composing >= 0`）让行，不能把这段窗口里的 `insertText` /
+// `deleteContent*` 当成普通编辑 preventDefault 并 dispatch 事务——Safari 的组合提交可能以
+// `insertText` 到达，抢走事件会绕过 CM 的组合处理。组合结束后普通编辑仍精确、可撤销。
+// ---------------------------------------------------------------------------
+test("IME 组合期：compositionstart 后的 insertText / 删除不被选区闸门消费；结束后编辑精确且可撤销", async ({ page }) => {
+  const doc = "| a | b |\n| --- | --- |\n| c | d |\n";
+  await openDoc(page, "ime-gate.md", doc);
+  await expect(page.locator(".cm-lp-table").first()).toBeVisible();
+  await setCaret(page, 26, 30);
+  const events = await page.locator(".cm-content").evaluate((el) => {
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    const fire = (inputType: string, data: string | null): boolean =>
+      el.dispatchEvent(new InputEvent("beforeinput", { inputType, data, isComposing: false, bubbles: true, cancelable: true }));
+    return { insertConsumed: !fire("insertText", "Q"), deleteConsumed: !fire("deleteContentBackward", null) };
+  });
+  expect(events, "组合期事件被选区闸门 preventDefault（应让给 CM）").toEqual({ insertConsumed: false, deleteConsumed: false });
+  expect(await bodyState(page), "组合期事件未 dispatch 事务，文档与选区原样").toEqual({ doc, anchor: 26, head: 30 });
+  await page.locator(".cm-content").evaluate((el) => {
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+  });
+  // Safari 的 post-composition 100ms 键盘窗口（CM 的 compositionPendingKey）过去后再键入。
+  await page.waitForTimeout(200);
+  await page.keyboard.type("Q");
+  await expect.poll(async () => bodyState(page)).toEqual({ doc: "| a | b |\n| --- | --- |\n| Qd |\n", anchor: 27, head: 27 });
+  await page.keyboard.press("Meta+z");
+  await expect.poll(async () => bodyState(page), { message: "一次 undo 未恢复组合前文档与选区" }).toEqual({ doc, anchor: 26, head: 30 });
+  await page.keyboard.press("Meta+Shift+z");
+  // redo 后 CM 的 history 会把选区映射成 [26,27)（anchor 落在插入点），合同只要求文档
+  // 逐字节复原且光标在插入文本之后——不把 CM 的选区映射细节写成期望。
+  await expect
+    .poll(async () => {
+      const s = await bodyState(page);
+      return { doc: s.doc, head: s.head };
+    }, { message: "redo 未重放编辑" })
+    .toEqual({ doc: "| a | b |\n| --- | --- |\n| Qd |\n", head: 27 });
+});

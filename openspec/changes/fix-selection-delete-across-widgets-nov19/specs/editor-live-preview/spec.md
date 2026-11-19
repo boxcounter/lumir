@@ -35,7 +35,7 @@
 
 任意删除类输入（Backspace / Delete、词删除、行删除变体）**与普通键入（`insertText`）**在 `EditorState` 存在**非空选区**时 SHALL NOT 落到浏览器原生编辑路径。编辑器 MUST `preventDefault` 并按 `state.selection` 的源码字节 dispatch 一个显式事务：删除时文档结果 MUST 恰好等于 `doc.slice(0, from) + doc.slice(to)`（多区间时为各区间依次删除）；键入替换时 MUST 恰好等于 `doc.slice(0, from) + text + doc.slice(to)`，光标落在插入文本之后。MUST NOT 把 replace 装饰的渲染文本（表格 cell 文本、列表 marker glyph、wikilink label、公式渲染文本）写进文档，MUST NOT 因选区端点落在隐藏区间而拆行、吞管道符、吃掉选区前的对齐空白或删掉选区之外的源码。IME 组合（`insertCompositionText`）、粘贴（`insertFromPaste`）与拼写替换不在此列，语义保持既有路径。
 
-接管判据 SHALL 只读 `EditorState`（选区非空、删除类 inputType 或 `insertText`），MUST NOT 检测 widget 类型、replace 装饰数量或 DOM/AX 的文本形状，也 MUST NOT 按渲染形状猜删除粒度；方向（正向 / 反向选区）与输入类型（Delete / Backspace / 词 / 行删除）MUST 不改变合同。普通单区间选区的字节结果 MUST 与原生删除 / 键入相同；IME 组合期、只读会话与多区间选区 MUST 保持既有语义（只读不生效、组合期交还输入法、多区间按 state 逐区间编辑）。
+接管判据 SHALL 只读 `EditorState`（选区非空、删除类 inputType 或 `insertText`），MUST NOT 检测 widget 类型、replace 装饰数量或 DOM/AX 的文本形状，也 MUST NOT 按渲染形状猜删除粒度；**组合期 MUST NOT 被本接管**：从 `compositionstart` 到 `compositionend`（含尚未产生组合改动的窗口，编辑器实现判据为 `view.compositionStarted`）与 `event.isComposing` 为真的输入一律交回编辑器的组合处理；方向（正向 / 反向选区）与输入类型（Delete / Backspace / 词 / 行删除）MUST 不改变合同。普通单区间选区的字节结果 MUST 与原生删除 / 键入相同；IME 组合期、只读会话与多区间选区 MUST 保持既有语义（只读不生效、组合期交还输入法、多区间按 state 逐区间编辑）。
 
 一次选区编辑 MUST 是一个撤销步：一次 undo 恢复编辑前文档（与选区），一次 redo 恢复编辑后状态。dirty MUST 按当前文档与 `cleanDoc` 逐字比较；显式保存载荷 MUST 逐字等于当前 `EditorState.doc`。
 
