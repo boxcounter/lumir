@@ -418,6 +418,19 @@ test("composer 物理 Backspace：非空选区 / 修饰键变体 / IME 组合 / 
   }
 });
 
+test("composer ⌃H：只读会话下折叠 caret 与非空选区都不改文档（直接命令入口）", () => {
+  const readOnly = [EditorState.readOnly.of(true)];
+  const folded = createComposerState({ text: "x👍🏽y", caret: 5, cards: [CARD] }, readOnly);
+  const foldedAfter = runComposer(folded, "editor.delete-char-backward");
+  assert.deepEqual(composerReading(foldedAfter), composerReading(folded), "折叠 caret：只读不得删除");
+
+  const selected = createComposerState({ text: "abcde", caret: 3, cards: [CARD] }, readOnly).update({
+    selection: EditorSelection.range(1, 3),
+  }).state;
+  const selectedAfter = runComposer(selected, "editor.delete-char-backward");
+  assert.deepEqual(composerReading(selectedAfter), composerReading(selected), "非空选区：只读不得删除选区");
+});
+
 // ---------------------------------------------------------------------------
 // 二、选区替换：反向 / 跨行 / 跨源码标记 / RTL / 边界 caret
 // ---------------------------------------------------------------------------

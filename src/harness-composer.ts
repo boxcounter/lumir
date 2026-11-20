@@ -189,8 +189,13 @@ function deleteRange(view: EditorView, from: number, to: number, userEvent: stri
 /** composer 的 `⌃H`：折叠 caret 上删一个整字素簇（`quote-card.clusterBackward`），有选区则
  *  删选区；一次删除 = 一条 history 步。步长与正文 `editor.delete-char-backward` 同源。
  *  MUST NOT 再用 CM 的 `deleteCharBackward`：它按 CM 簇后缀（`includeExtending=false`）退、
- *  且在行首缩进区按缩进单位回退，与正文步长不同（M843 finding，M860 收口）。 */
+ *  且在行首缩进区按缩进单位回退，与正文步长不同（M843 finding，M860 收口）。
+ *
+ *  只读早退沿用旧命令的口径（CM 的 `deleteBy` 在 `state.readOnly` 时直接返回）：命令入口
+ *  自己守一道，不依赖 beforeinput 闸门的只读判定——直接调用 `runComposerCommand` 的路径
+ *  没有闸门（review P2-1）。 */
 function deleteCharBackward(view: EditorView): void {
+  if (view.state.readOnly) return;
   const main = view.state.selection.main;
   if (!main.empty) {
     deleteRange(view, main.from, main.to, "delete.selection");
