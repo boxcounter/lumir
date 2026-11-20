@@ -28,6 +28,8 @@ import {
   keyEditForInput,
   emptyFieldErrors,
   errorCount,
+  fileInvalidBody,
+  fileInvalidReason,
   localizeModelNotes,
   planProviderEdits,
   findProvider,
@@ -41,6 +43,7 @@ import {
   setNamingProviderDraft,
 } from "../../src/settings-panel.ts";
 import type { Draft, DraftPresetCapability } from "../../src/settings-panel.ts";
+import type { FileInvalidState } from "../../src/settings-panel.ts";
 import type { SettingsSnapshot } from "../../src/bindings/SettingsSnapshot.ts";
 import type { ProviderSettings } from "../../src/bindings/ProviderSettings.ts";
 import type { ModelDraft } from "../../src/bindings/ModelDraft.ts";
@@ -816,6 +819,86 @@ test("localizeModelNotes：模型行 notes 按同路径诊断的 code 取文案�
   // 快照缺失（读取失败态）与空 notes 原样返回。
   assert.deepEqual(localizeModelNotes(null, "kimi-work", 0, ["x"]), ["x"]);
   assert.deepEqual(localizeModelNotes(snap, "kimi-work", 0, []), []);
+});
+
+// ── 文件状态横幅（M866）────────────────────────────────────────────
+
+/** 内部串样本：真实构造点里会出现的 os / parser 原文（只许留在 message 里）。 */
+const INTERNAL_OS = "Permission denied (os error 13)";
+const INTERNAL_PARSER = "expected value at line 3 column 7";
+const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
+function invalidFile(overrides: Partial<FileInvalidState> = {}): FileInvalidState {
+  return {
+    state: "invalid",
+    code: "config_invalid_json",
+    message: `配置文件不是合法 JSON：${INTERNAL_PARSER}`,
+    line: 3,
+    column: 7,
+    ...overrides,
+  };
+}
+
+test("fileInvalidReason：按 code 取文案表，zh / en 两档都是可行动句，不露 os / parser 内部串", () => {
+  const parser = invalidFile();
+  assert.equal(fileInvalidReason(parser, "zh"), COPY.D941.zh);
+  assert.equal(fileInvalidReason(parser, "en"), COPY.D941.en);
+  // 两档真的是两份文案（en 列无中文；zh 列不是英文列的复制）。
+  assert.ok(!CJK.test(COPY.D941.en), "en 列含中文");
+  assert.match(COPY.D941.zh, CJK);
+  // 可行动方向在句子里，不是只说「失败了」。
+  assert.match(fileInvalidReason(parser, "zh"), /重新载入/);
+  assert.match(fileInvalidReason(parser, "en"), /reload/);
+  // 内部串不上屏（正向对照见上：文案表条目确实被取到，不是空串）。
+  for (const lang of ["zh", "en"] as const) {
+    const text = fileInvalidReason(parser, lang);
+    assert.ok(!text.includes(INTERNAL_PARSER), `${lang} 露了 parser 内部串`);
+    assert.ok(!text.includes("os error"), `${lang} 露了 os 内部串`);
+  }
+
+  const readFailed = invalidFile({
+    code: "config_read_failed",
+    message: `无法读取配置文件：${INTERNAL_OS}`,
+    line: null,
+    column: null,
+  });
+  assert.equal(fileInvalidReason(readFailed, "zh"), COPY.D940.zh);
+  assert.equal(fileInvalidReason(readFailed, "en"), COPY.D940.en);
+  assert.ok(!fileInvalidReason(readFailed, "en").includes("os error 13"));
+  assert.match(fileInvalidReason(readFailed, "en"), /permission/i);
+
+  const structure = invalidFile({
+    code: "config_invalid_structure",
+    message: 'invalid type: string "15", expected usize',
+    line: null,
+    column: null,
+  });
+  assert.equal(fileInvalidReason(structure, "zh"), COPY.D942.zh);
+  assert.equal(fileInvalidReason(structure, "en"), COPY.D942.en);
+  assert.ok(!fileInvalidReason(structure, "en").includes("invalid type"));
+});
+
+test("fileInvalidBody：有行号套 D850（行号是结构化读数）；未知 code 回落 message，不显示空白 / 裸 code", () => {
+  const withLine = invalidFile();
+  assert.equal(
+    fileInvalidBody(withLine, "zh"),
+    COPY.D850.zh.replace("{line}", "3").replace("{reason}", COPY.D941.zh),
+  );
+  assert.equal(
+    fileInvalidBody(withLine, "en"),
+    COPY.D850.en.replace("{line}", "3").replace("{reason}", COPY.D941.en),
+  );
+  // 无行号（读失败 / 结构不符）只给原因句，不留「第 null 行」这类残形。
+  const noLine = invalidFile({ code: "config_read_failed", line: null, column: null });
+  assert.equal(fileInvalidBody(noLine, "en"), COPY.D940.en);
+  assert.ok(!fileInvalidBody(noLine, "en").includes("null"));
+
+  // 未知 code：安全回落（与 M865 的诊断同口径），而不是空白或裸 code。
+  const unknown = invalidFile({ code: "no_such_file_code", line: null, column: null });
+  assert.equal(fileInvalidReason(unknown, "en"), unknown.message);
+  assert.equal(fileInvalidBody(unknown, "en"), unknown.message);
+  assert.notEqual(fileInvalidReason(unknown, "en"), "");
+  assert.notEqual(fileInvalidReason(unknown, "en"), "no_such_file_code");
 });
 
 // ── 脏判定 ───────────────────────────────────────────────────────────

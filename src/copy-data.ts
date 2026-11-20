@@ -2317,8 +2317,8 @@ const COPY_TABLE = {
   },
   D847: { zh: "重新载入", en: "Reload" },
   D848: { zh: "仍然保存", en: "Save anyway" },
-  D849: { zh: "config.json 无法解析", en: "config.json cannot be parsed" },
-  D850: { zh: "第 {line} 行：{message}", en: "Line {line}: {message}" },
+  D849: { zh: "配置文件无法载入", en: "The config file can't be loaded" },
+  D850: { zh: "第 {line} 行：{reason}", en: "Line {line}: {reason}" },
   D851: {
     zh: "{path} 当前无法按配置读取，生效的是默认配置；先修复该文件再回来保存。字段暂为只读。",
     en: "{path} cannot be read as config right now and the defaults are in effect; fix the file before saving. Fields are read-only for now.",
@@ -2512,9 +2512,10 @@ const COPY_TABLE = {
   // 带占位会被 errorText 的缺参兜底打回 Rust 中文 message。读数由键路径承担（诊断行本来就
   // 把 `path` 渲染在消息旁；模型行 notes 就挂在该行下），值 / 范围 / 内部错误串一律不插进
   // 句子——同一 code 在 Rust 侧有多种 message 模板时取一条覆盖式句子（D6(a) 的明账）。
-  // 只进 console / 诊断日志的 code（editor / ui / keys / log / vault / cron / 装载失败三类）
+  // 只进 console / 诊断日志的 code（editor / ui / keys / log / vault / cron / subagents 整节）
   // MUST NOT 进本表：它们的 path 永远不在设置快照范围内，条目没有消费者（error-text 门禁的
-  // `LOG_ONLY_DIAGNOSTIC_CODES` 与真实构造点反向对账）。
+  // `LOG_ONLY_DIAGNOSTIC_CODES` 与真实构造点反向对账）。装载失败三类同理由导出面消费，另见
+  // D940–D942。
   D899: {
     zh: "配置项 harness.provider 为空，已按未写处理：按预设顺序回退到可用的 provider；没有可用 provider 时保持未配置",
     en: "harness.provider is empty and is treated as unset: it falls back to an available provider in preset order, and stays unset when none is available",
@@ -2684,6 +2685,23 @@ const COPY_TABLE = {
   D939: {
     zh: "provider id 不合法（小写字母 / 数字 / - / _，不含点，长度有限）：请改正后再保存",
     en: "The provider id is invalid (lowercase letters, digits, - and _, no dots, length-limited): fix it before saving",
+  },
+  // D940–D942：配置文件状态信封（M866）——`SettingsFileState::Invalid` 的稳定 `code`。取值与
+  // `config.rs` 的 `failed_snapshot` 同源（同一类装载失败在 console 诊断与设置横幅上是同一个
+  // code，单一来源），消费点是 `src/settings-panel.ts` 的 `fileInvalidBody`（经 `errorText`）。
+  // 模板不带占位：行号由 D850 承担；`message` 里的 `os error` / parser 内部串 MUST NOT 上屏，
+  // 只留可行动方向（检查权限 / 修正语法 / 顶层改对象）。
+  D940: {
+    zh: "配置文件无法读取：请检查该文件是否存在、是否有读取权限，修正后重新载入",
+    en: "The config file couldn't be read: check that it exists and that you have permission to read it, then reload",
+  },
+  D941: {
+    zh: "配置文件不是合法的 JSON：请修正语法后重新载入",
+    en: "The config file isn't valid JSON: fix the syntax and reload",
+  },
+  D942: {
+    zh: "配置文件的顶层必须是 JSON 对象，字段类型须与配置规范一致：请修正后重新载入",
+    en: "The config file must be a JSON object at the top level, with field types matching the configuration schema: fix it and reload",
   },
 } satisfies Record<string, CopyEntry>;
 
@@ -2855,10 +2873,17 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   // 装载期配置诊断（M865，M858 finding 的第三条信封 `ConfigDiagnostic{code, path, message}`）：
   // 设置面板三处直出 message 的渲染口统一改走 `errorText`——`fillDiagnostics`、被忽略 provider
   // 的条目诊断、模型行 notes。只收**设置快照范围**（settings.rs 的 `in_settings_scope`）与
-  // 文件级诊断可达的 code；log-only 的 code（editor / ui / keys / log / vault / cron / 装载
-  // 失败三类 / subagents 整节）不在这里，由 error-text 门禁的 `LOG_ONLY_DIAGNOSTIC_CODES`
-  // 与真实构造点反向对账。模板一律不带占位（诊断没有 params 通道，读数由键路径承担）。
+  // 文件级诊断可达的 code；log-only 的 code（editor / ui / keys / log / vault / cron / subagents
+  // 整节）不在这里，由 error-text 门禁的 `LOG_ONLY_DIAGNOSTIC_CODES` 与真实构造点反向对账。
+  // 模板一律不带占位（诊断没有 params 通道，读数由键路径承担）。
   config_migration_write_failed: "D927",
+  // 配置文件状态信封（M866）：`SettingsFileState::Invalid` 的三个稳定 code，与 `config.rs` 的
+  // `failed_snapshot` 同名同义（同一类装载失败在 console 诊断与设置横幅上是同一个 code）。
+  // 装载失败三类因此从 log-only 豁免转正——设置面板横幅是它们的消费者（见 D940–D942）。
+  // 消费点是 `settings-panel.ts` 的 `fileInvalidBody`（经 `errorText`，模板不带占位）。
+  config_read_failed: "D940",
+  config_invalid_json: "D941",
+  config_invalid_structure: "D942",
   harness_provider_empty: "D899",
   harness_provider_unknown: "D900",
   harness_provider_invalid: "D901",

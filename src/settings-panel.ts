@@ -22,12 +22,14 @@
 // （Escape / 点遮罩 / 再按 ⌘, / 底栏「取消」）、脏面板两步确认、`role="status"` 的 polite live region。
 // 「取消」与另外三条同义（关闭 + 丢弃草稿），MUST NOT 有「恢复已保存配置」这第三条语义。
 
-import { errorText, t, onRelabel } from "./copy";
+import { currentLanguage, errorText, t, onRelabel } from "./copy";
+import type { Language } from "./copy";
 import { FIELD_ERROR_COPY } from "./copy-data";
 import type { CopyKey } from "./copy-data";
 import { escapeDisposition, escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import { settingsApply, settingsGet } from "./ipc";
 import type { SettingsSnapshot } from "./bindings/SettingsSnapshot";
+import type { SettingsFileState } from "./bindings/SettingsFileState";
 import type { SettingsPatch } from "./bindings/SettingsPatch";
 import type { ProviderEdit } from "./bindings/ProviderEdit";
 import type { ProviderPreset } from "./bindings/ProviderPreset";
@@ -389,6 +391,29 @@ export function localizeModelNotes(
   );
   if (entries.length !== notes.length) return notes;
   return entries.map((entry) => errorText(entry));
+}
+
+/** 文件状态横幅里的一档（`SettingsFileState` 的 Invalid 变体）。 */
+export type FileInvalidState = Extract<SettingsFileState, { state: "invalid" }>;
+
+/** 文件状态横幅的**原因**文本（M866）：`message` 是诊断日志内容与未知 code 的兜底，可能含
+ *  `os error` / parser 内部串——按 `code` 取文案表后才上屏（`errorText` 的唯一取值口）。
+ *  未登记的 code 回落 message（与 M865 的诊断同口径：宁可显示后端原文，也不显示空白或裸 code）。 */
+export function fileInvalidReason(
+  file: FileInvalidState,
+  lang: Language = currentLanguage(),
+): string {
+  return errorText(file, lang);
+}
+
+/** 文件状态横幅的正文：有行号时套 D850——行号是结构化读数（不是后端串），由模板承担；
+ *  原因句本身不含行号 / 文件路径 / 内部错误串。 */
+export function fileInvalidBody(
+  file: FileInvalidState,
+  lang: Language = currentLanguage(),
+): string {
+  const reason = fileInvalidReason(file, lang);
+  return file.line === null ? reason : t(C.fileInvalidLine, { line: file.line, reason }, lang);
 }
 
 /** 快照 → 草稿（打开面板 / 保存成功 / 重新载入后的唯一入口）。 */
@@ -1702,15 +1727,7 @@ export function createSettingsPanel(deps: SettingsPanelDeps): SettingsPanelHandl
       const banner = element("div", "lumir-set-banner is-danger");
       banner.dataset.banner = "file";
       banner.append(element("div", "lumir-set-banner-title", t(C.fileInvalidTitle)));
-      banner.append(
-        element(
-          "p",
-          "lumir-set-banner-body",
-          snapshot.file.line !== null
-            ? t(C.fileInvalidLine, { line: snapshot.file.line, message: snapshot.file.message })
-            : snapshot.file.message,
-        ),
-      );
+      banner.append(element("p", "lumir-set-banner-body", fileInvalidBody(snapshot.file)));
       banner.append(element("p", "lumir-set-banner-body", t(C.fileInvalidBody, { path: snapshot.path })));
       bannerSlot.append(banner);
       return;

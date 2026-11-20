@@ -53,7 +53,6 @@
 - `#fix` **lightbox 不随文档代际退出**（M280 残余）→ 下一动作：给 `ImageLightbox` 加关闭口子并接入 `closeDocumentOverlays` 的代际信号（`src/main.ts:1408` 已登记），顺手收编它的重复状态机。
 - `#probe` **长 chain 注入（8–19 chord）可靠性** → 下一动作：跑一轮量落地率与「可点节点」判定边界，结论落 `scripts/acceptance/README.md`「已知边界」。
 - `#fix` **会话浮层快速关→再开重复历史行**（M392）→ 下一动作：复现并定位重复行来源后修，补一条真机判据。
-- `#fix` **`SettingsFileState::Invalid` 横幅直出 Rust 中文 message**（M865，medium）→ 下一动作：`SettingsFileState::Invalid` 补稳定 `code`（读取失败 / JSON 非法 / 顶层非对象三类），面板按 code 取文案表；现状 `message` 含 `format!` 的内部错误串（`os error 13` 一类），en 界面露中文且可能露内部串——需动 Rust 协议，未纳入 M865。
 
 ## 承接残项（长期口径 + 未闭合尾巴）
 
@@ -70,6 +69,7 @@
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 - `M455 收尾复跑`（138/140/144/145 与 hover 族 76/87/131/132/133/134）→ 下一动作：真机复跑并登记读数（145 的 `mod+z` 同族观察留给 change 属主裁）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
+- **`localize-invalid-settings-file-banner-nov20`**（M866）：delta = `settings` 1 条 MODIFIED（设置面的校验与警告呈现）+ `ui-language` 1 条 MODIFIED（Rust 侧错误的文案归属）；`SettingsFileState::Invalid` 复用 `config_read_failed` / `config_invalid_json` / `config_invalid_structure` 三个稳定 code，横幅按 code 取文案表（D940–D942）、未知 code 回落 message；节点 2 待独立 review；像素预期零变化（新增视觉用例只做文本 / 结构断言、不建基线）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`improve-keybindings-lookup-oct24`**（M715）：delta = keymap-commands 1 条 MODIFIED（键位面板行模型）+ 3 条 ADDED（查找/捕获/详情、非自指入口、命令元数据与字形单一来源），节点 2 走人肉；实现批附带新增真机场景 235 / 236 / 237（查询 / 捕获 / 键盘）与 m133 视觉场景重写——**像素基线待 Alex 过目后重截**（未经过目不得 `--update`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`overlay-width-contract-oct24`**（M702，34/37）：节点 1 追认材料已备（D1–D5 落地 + 证据 + 否决回改面，见 proposal）；真机 231/232 PASS（5 + 11 断言，`.local/acceptance/2026-10-24-m711/`）；残留：0.3 / 0.4 待 Alex 追认、9.1 归档期执行；delta = ui-design-system 1 条 ADDED，归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`fix-escape-overlay-close-oct24`**（M718，收尾中）：节点 1 已裁（Alex 2026-10-24「采纳你的提案。」，D1 裁 B）；先红后绿——238 红跑（master，Esc 后 AX `element_count: 1`、`ps` 空输出、浮层重建后 0 个 focused 节点）→ 绿跑 PASS（38 断言，`.local/acceptance/2026-10-24/238-escape-overlay-close/RED-before-fix/` 与同目录的 `GREEN-after-fix/`）；239 退出反例 PASS（①②③，含 dirty 文档 Esc 不弹提示）。delta = `keymap-commands` 1 条 ADDED + `harness` 1 条 MODIFIED（节点 2 走人肉）；残留：5.4 全量真机批与 6.x 门禁按本次收尾输出填写；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
