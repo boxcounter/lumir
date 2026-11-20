@@ -357,6 +357,14 @@ body {
   text-autospace: normal;
   hanging-punctuation: first last;
 }
+/* 链接尾标不做上标抬升：super 会把渲染态行盒撑得比源码显露态高 2px。 */
+.cm-content .cm-lp-link-mark {
+  vertical-align: baseline;
+}
+/* 裸 marker 不是新列表项，进入编辑态时不得带入真实列表首行的 2px 项间距。 */
+.cm-content .cm-line.cm-lp-bare {
+  padding-top: 0;
+}
 /* Chromium currently ignores hanging-punctuation; WKWebView supports it. CM6 retains defaults to preserve cursor alignment. */
 /* 摘录跳回高亮（M344，change add-harness-quote-cards design §5）：借用 pending-tint（find-in-page
    黄语义），~1.4s 消退由 src/quote-gesture.ts 的计时器收口，这里只管色值。eink 档 --pending-tint
