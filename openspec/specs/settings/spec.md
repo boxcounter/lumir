@@ -528,7 +528,12 @@ MUST NOT 直出后端格式化的人话 message。
 `harness.providers.kimi-work.model`）与消息；范围外的 warning（主题、编辑器、vault 等）
 MUST NOT 倒进本面板。命名目标失效的两类后果 MUST NOT 混写：会话命名回落该 provider 的生效
 模型并给 warning；图片命名跳过、保留暂存名、不换模型。整文件回落或文件不可解析时，面板顶部
-SHALL 显示横幅并给出文件路径与解析错误位置；该横幅优先级高于字段级提示。
+SHALL 显示横幅并给出文件路径与解析错误位置；该横幅优先级高于字段级提示。横幅的**上屏文本**
+SHALL 按 `SettingsFileState::Invalid.code` 从文案表渲染（与诊断同口径，取值口仍是
+`ERROR_COPY` + `errorText`）：`message` 是诊断日志内容与未知 `code` 的兜底，MUST NOT 在
+`code` 已知时上屏；行号 SHALL 作为结构化读数给出，MUST NOT 内插 os / parser 内部错误串。
+`code` 的取值与装载期诊断同源（`config_read_failed` / `config_invalid_json` /
+`config_invalid_structure`）；顶层非对象与字段类型不符同归 `config_invalid_structure`。
 
 诊断的**上屏文本** SHALL 与字段错误同口径：由前端按 `ConfigDiagnostic.code` 从文案表渲染，
 MUST NOT 直出后端 message；键路径 SHALL 与文案分列呈现（诊断行上路径独立，文案不内插路径、
@@ -565,6 +570,19 @@ MUST NOT 只用颜色或图标表达。
 - **WHEN** 快照里的诊断带有本版本文案表未登记的 `code`
 - **THEN** 该行回落显示后端 message（MUST NOT 显示空白、裸 code 或别的 code 的文案），
   同屏其它诊断照常本地化
+
+#### Scenario: 配置文件状态横幅按 code 上屏
+
+- **WHEN** 在 `en` 界面下打开设置面板，快照的 `file` 是 `invalid`（读取失败 / JSON 非法 /
+  顶层非对象或结构不符），`message` 带 os / parser 内部串
+- **THEN** 横幅标题与正文都取对应 `code` 的 English 列（`zh` 取中文列），MUST NOT 出现后端
+  中文 message 或内部错误串；JSON 非法时行号仍以结构化读数给出；读取失败与结构不符不给行号
+
+#### Scenario: 未知文件状态 code 安全回落
+
+- **WHEN** 快照的 `file` 带有本版本文案表未登记的 `code`
+- **THEN** 横幅正文回落显示后端 message（MUST NOT 显示空白、裸 code 或别的 code 的文案），
+  标题、路径与只读态照常
 
 #### Scenario: 保存状态可被辅助技术读到
 
