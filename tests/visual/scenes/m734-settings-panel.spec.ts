@@ -19,6 +19,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
 import { expectScreenshot } from "./expect-screenshot";
+import { COPY } from "../../../src/copy-data";
 
 const DOC = "# 设置面板\n\n合成文档，只给面板一个背景。\n";
 
@@ -662,6 +663,7 @@ test("设置面板：外部冲突 → 横幅给「重新载入 / 仍然保存」
 
 test("设置面板：装载期被忽略的条目仍可见、只读、诊断挂在该条目上", async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 800 });
+  const rawMessage = '配置项 harness.providers.legacy.preset 取值 "openai" 非法（可选：kimi、deepseek、generic、mock），已忽略该 provider';
   await openSettings(page, {
     snapshot: settingsSnapshot({
       providers: [
@@ -673,7 +675,7 @@ test("设置面板：装载期被忽略的条目仍可见、只读、诊断挂�
           code: "harness_provider_preset_invalid",
           path: "harness.providers.legacy.preset",
           severity: "warning",
-          message: "预设 \"openai\" 不是合法取值",
+          message: rawMessage,
         },
       ],
     }),
@@ -685,8 +687,10 @@ test("设置面板：装载期被忽略的条目仍可见、只读、诊断挂�
   // 只读：没有 API Key / 模型清单编辑面，只有删除入口。
   await expect(page.locator("#lumir-set-api-key")).toHaveCount(0);
   await expect(page.locator(".lumir-set-models-field")).toHaveCount(0);
+  // M865：诊断行按 code 取文案表（键路径照旧单独渲染），Rust 中文 message 不上屏。
   await expect(page.locator(".lumir-set-ignore-note")).toContainText("harness.providers.legacy.preset");
-  await expect(page.locator(".lumir-set-ignore-note")).toContainText("不是合法取值");
+  await expect(page.locator(".lumir-set-ignore-note")).toContainText(COPY.D904.zh);
+  await expect(page.locator(".lumir-set-ignore-note")).not.toContainText(rawMessage);
   await expect(page.locator(".lumir-set-danger .lumir-set-btn-danger")).toBeVisible();
 });
 

@@ -2505,6 +2505,186 @@ const COPY_TABLE = {
     zh: "模型返回了空响应（没有文本也没有工具调用），本轮已停止；请重试",
     en: "The model returned an empty response (no text and no tool calls), so this turn stopped: try again",
   },
+  // D899–D927：设置面板的**装载期配置诊断**（M865，M858 finding 的第三条信封
+  // `ConfigDiagnostic{code, path, message}`）。消费点是 `src/settings-panel.ts` 的三处直出
+  // message 的渲染口——`fillDiagnostics`、被忽略 provider 的条目诊断、模型行 notes（经
+  // `errorText` 按 code 取值）。**模板一律不带占位**：`ConfigDiagnostic` 没有 params 通道，
+  // 带占位会被 errorText 的缺参兜底打回 Rust 中文 message。读数由键路径承担（诊断行本来就
+  // 把 `path` 渲染在消息旁；模型行 notes 就挂在该行下），值 / 范围 / 内部错误串一律不插进
+  // 句子——同一 code 在 Rust 侧有多种 message 模板时取一条覆盖式句子（D6(a) 的明账）。
+  // 只进 console / 诊断日志的 code（editor / ui / keys / log / vault / cron / 装载失败三类）
+  // MUST NOT 进本表：它们的 path 永远不在设置快照范围内，条目没有消费者（error-text 门禁的
+  // `LOG_ONLY_DIAGNOSTIC_CODES` 与真实构造点反向对账）。
+  D899: {
+    zh: "配置项 harness.provider 为空，已按未写处理：按预设顺序回退到可用的 provider；没有可用 provider 时保持未配置",
+    en: "harness.provider is empty and is treated as unset: it falls back to an available provider in preset order, and stays unset when none is available",
+  },
+  D900: {
+    zh: "harness.provider 指向的 provider 不在 harness.providers 表内：已回退到可用的 provider；没有可用 provider 时保持未配置",
+    en: "harness.provider points to a provider that isn't defined in harness.providers: it fell back to an available provider, and stays unset when none is available",
+  },
+  D901: {
+    zh: "该 provider 条目的形状非法（不是对象、models 不是数组，或字段类型不对），已忽略该 provider：请修正 config.json 后重新载入",
+    en: "This provider entry has an invalid shape (not an object, models isn't a list, or a field has the wrong type), so it was ignored: fix config.json and reload",
+  },
+  D902: {
+    zh: "provider id 非法（只能用小写字母 / 数字 / - / _，不能含点，长度也有限制），该条目已忽略：请改名后重新载入",
+    en: "The provider id is invalid (lowercase letters, digits, - and _ only; no dots; length-limited), so the entry was ignored: rename it and reload",
+  },
+  D903: {
+    zh: "该 provider 没写 preset，已按 generic 处理：请显式声明 kimi、deepseek、generic 或 mock",
+    en: "This provider has no preset and was treated as generic: declare kimi, deepseek, generic or mock explicitly",
+  },
+  D904: {
+    zh: "preset 不是字符串或不是合法取值，或 mock 预设被用在非 mock 的 id 上，该 provider 已忽略：可选 kimi、deepseek、generic、mock",
+    en: "The preset isn't a string or isn't a valid value, or the mock preset is used with a non-mock id, so this provider was ignored: choose kimi, deepseek, generic or mock",
+  },
+  D905: {
+    zh: "旧 provider 条目缺少 preset：id 为 kimi、deepseek、mock 的条目已自动补上同名预设，请核对这些条目的协议是否符合预期",
+    en: "Old provider entries were missing a preset: entries with the ids kimi, deepseek or mock were given the matching preset automatically; check that their protocol is what you expect",
+  },
+  D906: {
+    zh: "base_url 为空，已回退为预设的官方地址；预设没有官方地址时按未填写处理",
+    en: "base_url is empty and fell back to the preset's official URL; when the preset has none, it counts as unset",
+  },
+  D907: {
+    zh: "该条目是 OpenAI 兼容预设且已填写 API Key 或模型：请填写 base_url（该预设没有官方地址）",
+    en: "This OpenAI-compatible provider has an API key or models but no base_url: fill in base_url (this preset has no official URL)",
+  },
+  D908: {
+    zh: "wire_api 不是字符串时整个 provider 会被忽略；取值非法（可选 responses、chat_completions）时回退为预设的默认协议",
+    en: "A non-string wire_api makes the whole provider ignored; an invalid value (choices: responses, chat_completions) falls back to the preset's default",
+  },
+  D909: {
+    zh: "该预设不支持所选的 wire_api，已回退为预设支持的协议",
+    en: "The selected wire_api isn't supported by this preset; it fell back to a supported one",
+  },
+  D910: {
+    zh: "该 provider 已填 API Key 但没有声明任何模型：请至少声明一个模型，或清除 API Key",
+    en: "This provider has an API key but no models: declare at least one model, or clear the API key",
+  },
+  D911: {
+    zh: "model 为空：已按 models 清单首项解析；清单为空时当前没有可用模型",
+    en: "model is empty and resolved to the first entry in models; with an empty list there is no usable model",
+  },
+  D912: {
+    zh: "model 指向的模型不在 models 清单内：上下文窗口按保守值估算，思考与图片能力按不支持处理；请在 models 中声明它或修正 model",
+    en: "The model named by model isn't in the models list: its context window is estimated conservatively and effort / vision count as unsupported; declare it in models or fix model",
+  },
+  D913: {
+    zh: "模型清单的这一项不是对象，已忽略该模型",
+    en: "This models entry isn't an object, so it was ignored",
+  },
+  D914: {
+    zh: "模型清单的这一项缺少 id（或 id 不是非空字符串），已忽略该模型",
+    en: "This models entry has no id (or id isn't a non-empty string), so it was ignored",
+  },
+  D915: {
+    zh: "模型清单里这一项的 id 与另一项重复，已忽略该模型：请改成唯一的 id",
+    en: "This models entry repeats the id of another entry, so it was ignored: give it a unique id",
+  },
+  D916: {
+    zh: "模型清单这一项的 effort 不是布尔值，已忽略该模型",
+    en: "effort in this models entry isn't true / false, so the entry was ignored",
+  },
+  D917: {
+    zh: "模型清单这一项没有声明 effort，已按不支持思考处理；需要时请补 true",
+    en: "This models entry doesn't declare effort, so effort counts as unsupported: add true if the model supports it",
+  },
+  D918: {
+    zh: "模型清单这一项的 vision 不是布尔值，已忽略该模型",
+    en: "vision in this models entry isn't true / false, so the entry was ignored",
+  },
+  D919: {
+    zh: "模型清单这一项没有声明 vision，已按不支持图片处理；需要时请补 true",
+    en: "This models entry doesn't declare vision, so image input counts as unsupported: add true if the model supports it",
+  },
+  D920: {
+    zh: "模型清单这一项的 window 不是合法整数，已忽略该模型",
+    en: "window in this models entry isn't a valid integer, so the entry was ignored",
+  },
+  D921: {
+    zh: "模型清单这一项没有声明 window，上下文窗口已回退为保守默认值",
+    en: "This models entry doesn't declare window, so the context window fell back to a conservative default",
+  },
+  D922: {
+    zh: "配置里的旧模型名已退役，已自动改写为该 provider models 清单的首个可用 id（非对象、id 不是非空白字符串的项会被跳过，纯空白 id 也算不可用）",
+    en: "The retired model name in the config was automatically rewritten to the first usable id in that provider's models list (entries that aren't objects, or whose id isn't a non-blank string, are skipped; whitespace-only ids count as unusable)",
+  },
+  D923: {
+    zh: "配置里的旧模型名已退役，且 models 清单没有可用的替代项，无法自动改写：请手动改成一个可用模型",
+    en: "The retired model name can't be replaced automatically because models lists no usable entry: change it to an available model by hand",
+  },
+  D924: {
+    zh: "命名模型的覆盖值为空，已按「跟随该 provider 的生效模型」处理",
+    en: "The naming model override is empty and follows the provider's effective model",
+  },
+  D925: {
+    zh: "命名模型的覆盖值不可用（mock 没有模型清单、模型不在清单内、未声明 vision，或没有目标 provider）：会话命名回退为该 provider 的生效模型；图片命名不换模型，跳过命名并保留暂存名",
+    en: "The naming model override is unusable (mock has no model list, the model isn't listed, it doesn't declare vision, or no target provider is set): session naming falls back to the provider's effective model, while image naming keeps the override, skips naming and keeps the temporary name",
+  },
+  D926: {
+    zh: "命名目标指向的 provider 不在 harness.providers 表内，已回退为会话当前 provider",
+    en: "The naming target provider isn't defined in harness.providers; it falls back to the session's current provider",
+  },
+  D927: {
+    zh: "改写后的配置未能写回磁盘，下次启动会再试一次；若反复出现，请检查配置文件的写入权限",
+    en: "The rewritten config couldn't be saved and will be retried on next launch; if it keeps happening, check the config file's write permissions",
+  },
+  // D928–D939：同 12 个 code 的**字段错误档**（M865）。`settings.rs` 的 `plan_and_apply` 把
+  // 所有 RejectOnWrite 诊断经 `field_error(path, diagnostic.code, message)` 转成
+  // `SettingsFieldError`——同一个 code 因此在两条信封上出现：装载期的 D899–D927 说的是
+  // 「装载期发生了什么（已忽略）」，保存被拒的这里说的是「改哪里才能保存」。两档语义相反，
+  // 按 D6(a) 拆成两张文案（与 `config_parse_failed` 的 FIELD_ERROR_COPY 先例同形）。
+  // 模板同样不带占位：字段错误没有 params 通道，读数就在同一行的控件上。
+  D928: {
+    zh: "模型行缺少 id，或 id 不是字符串：请填写 id 后再保存",
+    en: "This model row has no id, or the id isn't a string: fill it in before saving",
+  },
+  D929: {
+    zh: "模型 id 重复：请把重复的行改成唯一 id 后再保存",
+    en: "Duplicate model id: give each row a unique id before saving",
+  },
+  D930: {
+    zh: "窗口大小不是合法整数：请改成模型清单允许范围内的整数后再保存",
+    en: "The context window isn't a valid integer: use one within the allowed range before saving",
+  },
+  D931: {
+    zh: "effort 取值不合法：请选择 true 或 false 后再保存",
+    en: "effort isn't valid: choose true or false before saving",
+  },
+  D932: {
+    zh: "vision 取值不合法：请选择 true 或 false 后再保存",
+    en: "vision isn't valid: choose true or false before saving",
+  },
+  D933: {
+    zh: "已填写 API Key 但没有模型：请至少声明一个模型，或清除 API Key 后再保存",
+    en: "An API key is set but no model is declared: declare at least one model or clear the API key before saving",
+  },
+  D934: {
+    zh: "wire_api 不是字符串或取值非法（可选 responses、chat_completions）：请改正后再保存",
+    en: "wire_api isn't a string or isn't a valid value (choices: responses, chat_completions): fix it before saving",
+  },
+  D935: {
+    zh: "所选 wire_api 不受该预设支持：请换一个受支持的协议后再保存",
+    en: "The selected wire_api isn't supported by this preset: pick a supported protocol before saving",
+  },
+  D936: {
+    zh: "base_url 是空字符串：请填写地址；删除该键只在预设自带官方地址时可用（generic 没有官方地址）",
+    en: "base_url is an empty string: enter a URL. Removing the key only helps when the preset has an official URL (generic has none).",
+  },
+  D937: {
+    zh: "OpenAI 兼容预设需要 base_url：请填写后再保存",
+    en: "An OpenAI-compatible provider needs a base_url: fill it in before saving",
+  },
+  D938: {
+    zh: "preset 不合法，或 mock 预设配在了非 mock 的 id 上（mock 只能用于 id=mock）：请改正 preset 或 id 后再保存",
+    en: "The preset isn't valid, or the mock preset is paired with a non-mock id (mock only works with id=mock): fix the preset or the id before saving",
+  },
+  D939: {
+    zh: "provider id 不合法（小写字母 / 数字 / - / _，不含点，长度有限）：请改正后再保存",
+    en: "The provider id is invalid (lowercase letters, digits, - and _, no dots, length-limited): fix it before saving",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -2672,22 +2852,76 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   // （模板不带占位：事件没有 params）。消费点 `src/harness-panel.ts` 的 `case "error"`。
   harness_internal_error: "D897",
   harness_empty_response: "D898",
+  // 装载期配置诊断（M865，M858 finding 的第三条信封 `ConfigDiagnostic{code, path, message}`）：
+  // 设置面板三处直出 message 的渲染口统一改走 `errorText`——`fillDiagnostics`、被忽略 provider
+  // 的条目诊断、模型行 notes。只收**设置快照范围**（settings.rs 的 `in_settings_scope`）与
+  // 文件级诊断可达的 code；log-only 的 code（editor / ui / keys / log / vault / cron / 装载
+  // 失败三类 / subagents 整节）不在这里，由 error-text 门禁的 `LOG_ONLY_DIAGNOSTIC_CODES`
+  // 与真实构造点反向对账。模板一律不带占位（诊断没有 params 通道，读数由键路径承担）。
+  config_migration_write_failed: "D927",
+  harness_provider_empty: "D899",
+  harness_provider_unknown: "D900",
+  harness_provider_invalid: "D901",
+  harness_provider_id_invalid: "D902",
+  harness_provider_preset_missing: "D903",
+  harness_provider_preset_invalid: "D904",
+  harness_provider_preset_migrated: "D905",
+  harness_base_url_empty: "D906",
+  harness_base_url_required: "D907",
+  harness_wire_api_invalid: "D908",
+  harness_wire_api_unsupported: "D909",
+  harness_models_empty_when_configured: "D910",
+  harness_model_empty: "D911",
+  harness_model_not_declared: "D912",
+  harness_model_invalid: "D913",
+  harness_model_id_empty: "D914",
+  harness_model_id_duplicate: "D915",
+  harness_model_effort_invalid: "D916",
+  harness_model_effort_missing: "D917",
+  harness_model_vision_invalid: "D918",
+  harness_model_vision_missing: "D919",
+  harness_model_window_invalid: "D920",
+  harness_model_window_missing: "D921",
+  harness_model_retired_migrated: "D922",
+  harness_model_retired_unreplaceable: "D923",
+  harness_naming_model_empty: "D924",
+  harness_naming_model_invalid: "D925",
+  harness_naming_provider_unknown: "D926",
   // 窗口底色同步（M525）：只走 console 降级、永不上屏（见 D462 条目注记）。
   window_background_failed: "D462",
 };
 
 /**
- * 字段错误信封的**两栖 code** 改道表（M858）：同一个 code 在两条信封上参数面不同时，字段
- * 错误这一侧改读另一条**不带占位**的模板——取值仍然只有 `errorText` 这一份实现，本表只换
+ * 字段错误信封的**两栖 code** 改道表：同一个 code 在两条信封上语义 / 参数面不同时，字段错误
+ * 这一侧改读另一条**不带占位**的模板——取值仍然只有 `errorText` 这一份实现，本表只换
  * 「code → 键」这一层（与 M686 的调用点覆盖表同一机制，见 `src/copy.ts` 的 `errorText`）。
  *
- * 当前唯一条目 `config_parse_failed`：`CommandError` 构造点带 `path` 参数（D697 的 `{path}`），
- * `field_error` 构造点没有 params——若不开这张表，设置面板的读取 / 保存失败在 en 界面下会因
- * 缺参回落到中文 message（M852 finding 实测）。MUST NOT 往这里加「两条信封都能用同一模板」的
- * code：那种 code 直接进 `ERROR_COPY`。
+ * 两类条目：
+ * - `config_parse_failed`（M858）：`CommandError` 构造点带 `path` 参数（D697 的 `{path}`），
+ *   设置写通道的 `field_error` 构造点没有 params——不开这张表，设置面板的读取 / 保存失败在 en
+ *   界面下会因缺参回落到中文 message（M852 finding 实测）。
+ * - `harness_model_*` / `harness_*_invalid` / `harness_wire_api_*` / `harness_base_url_*` 等
+ *   12 个 RejectOnWrite code（M865）：诊断面（D899–D927）说的是「装载期已忽略」，而
+ *   `settings.rs` 的 `plan_and_apply` 把它们经 `field_error(path, diagnostic.code, …)` 转成
+ *   保存被拒的字段错误——同一句话在保存现场是错的（文件没变、什么都没被忽略）。字段错误档读
+ *   D928–D939 的「改哪里才能保存」。
+ *
+ * MUST NOT 往这里加「两条信封都能用同一模板」的 code：那种 code 直接进 `ERROR_COPY`。
  */
 export const FIELD_ERROR_COPY: Record<string, CopyKey> = {
   config_parse_failed: "D896",
+  harness_model_id_empty: "D928",
+  harness_model_id_duplicate: "D929",
+  harness_model_window_invalid: "D930",
+  harness_model_effort_invalid: "D931",
+  harness_model_vision_invalid: "D932",
+  harness_models_empty_when_configured: "D933",
+  harness_wire_api_invalid: "D934",
+  harness_wire_api_unsupported: "D935",
+  harness_base_url_empty: "D936",
+  harness_base_url_required: "D937",
+  harness_provider_preset_invalid: "D938",
+  harness_provider_id_invalid: "D939",
 };
 
 /**
