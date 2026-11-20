@@ -62,9 +62,35 @@ fn invalid_file(code: &str, message: String, line: Option<u32>, column: Option<u
 - **Rust 单测**：四个变体各一条——读失败用「把 config.json 建成目录」造真实 I/O 错误
   （不是 mock），断言 code、message 非空、line / column 的形态。
 - **前端单测**：`fileInvalidReason` / `fileInvalidBody` 的 zh / en 两档、可行动方向（含
-  「重新载入 / reload」）、内部串负向断言（配正观测：文案表条目确实被取到）、未知 code 回落。
-- **视觉场景**：zh（JSON 非法带行号）与 en（读失败带 os 串）各一条，断言横幅标题 / 正文 /
-  路径 / 只读态；不调 `expectScreenshot`——新基线须 Alex 过目（tests/visual/README.md）。
+  「重新载入 / reload」）、内部串负向断言（配正观测：文案表条目确实被取到）、未知 code 回落；
+  D851 的覆盖句语义（两类现场共用、旧全称句必须退场）。
+- **视觉场景**：zh（JSON 非法带行号，整文件无效 → 默认空态）与 en（读失败带 os 串）各一条，
+  外加一条「结构不符但 harness 子树有效 → 面板读数来自文件里的 provider」；断言横幅标题 /
+  正文 / 路径 / 只读态与**实际读数**（不是只查无 CJK）；不调 `expectScreenshot`——新基线须
+  Alex 过目（tests/visual/README.md）。
 - **门禁反向判据**：`LOG_ONLY_DIAGNOSTIC_CODES` 里不再有这三个码；豁免表「必须真实存在构造点、
   不得与 `ERROR_COPY` 并存」两条断言保留，另外新增 `invalid_file` 构造点 / code 数量下限，
   防止扫描退化后覆盖断言恒真。
+
+## D6：D851 的正文覆盖两类 Invalid 现场，而不是一句「全默认」
+
+`SettingsFileState::Invalid` 的四个变体在**生效读数**上分两类：
+
+| 现场 | `effective` | 面板读数 |
+|---|---|---|
+| 读取失败 / JSON 非法 / 顶层非对象 | `None` | 全部默认（空 provider 清单等） |
+| `config_invalid_structure` 且结构错误只在 harness 之外 | harness 子树的 best-effort 结果 | 文件里的 provider / 自动化 / 命名 |
+
+M865 的 D851 写死「生效的是默认配置」，对第二类是事实错误（finding
+`20261120-worker-invalid-settings-banner-improve-d851.md` 的现场）。本 change 把正文改成覆盖句：
+
+> {path} 当前无法按完整配置读取：可用部分按文件内容生效，其余用默认值。先修复该文件再回来保存。字段暂为只读。
+
+- 第一类：没有「可用部分」→ 全部走「其余用默认值」，句子仍为真；
+- 第二类：harness 子树是「可用部分」→ 「按文件内容生效」为真，其余段落（编辑器等）不在设置面板范围内。
+
+**为什么不用一句「部分生效」含糊带过**：覆盖句必须同时给出两个可核对的事实（哪些生效、
+其余是什么），否则用户无法判断面板上的 provider 清单是不是文件里的值。测试也必须核对
+**实际读数**（第二类渲染文件里的 provider 行、第一类渲染默认空态），不能只做「无 CJK /
+无内部串」这类负向断言。
+

@@ -42,21 +42,24 @@ serde 的 `expected value at line 3 column 8` 这类内部串——用户既读�
    MUST NOT 上屏。
 3. **文案**：`ERROR_COPY` 收三个 code，deck 取号 D940–D942（中英双列、无占位、可行动）；
    D849 标题从「config.json 无法解析」改中性「配置文件无法载入」（读失败不再是「解析」问题）；
-   D850 的占位 `{message}` 改 `{reason}`——它承接的是本地化原因句，不是后端 message。
+   D850 的占位 `{message}` 改 `{reason}`——它承接的是本地化原因句，不是后端 message；
+   D851 的正文改为**覆盖两类 Invalid 现场**的句子（「可用部分按文件内容生效，其余用默认值」，
+   保留「先修复该文件再回来保存」与只读指引）——旧句「生效的是默认配置」在
+   `config_invalid_structure` 的 harness best-effort 现场是事实错误（M866 finding）。
 4. **门禁**：`tests/unit/error-text.test.ts` 新增第五条扫描通道（`invalid_file("code", …)`），
    三个码从 `LOG_ONLY_DIAGNOSTIC_CODES` 豁免表转正为 `ERROR_COPY` 条目；保留反向判据
    （豁免项必须真实存在、不得与覆盖并存、扫描量下限）。
 5. **测试**：Rust 四个变体各断言 code / message 不被吞 / line·column 保留；前端单测覆盖
-   zh / en 两档、可行动方向、内部串不上屏、未知 code 回落；视觉场景补 zh（带行号）与
-   en（读失败）两条**结构 / 文本**断言（不新增像素基线）。
+   zh / en 两档、可行动方向、内部串不上屏、未知 code 回落、D851 的覆盖句语义；视觉场景补
+   zh（带行号，整文件无效 → 默认空态）与 en（读失败）两条**结构 / 文本**断言，外加一条
+   **结构不符但 harness 子树有效 → 面板读数是文件里的 provider** 的语义对照（不新增像素基线）。
 
 ## 非目标
 
 - **不改读取 / 校验 / 保存行为**：`snapshot_at` / `apply_at` / `validate_value` 的判定与写盘
-  零改动；只加 code 与展示层取值。
+  零改动；只加 code、展示层取值与 D851 的措辞。
 - **不改 `ConfigDiagnostic` 的 params 通道**：两个信封仍是「没有参数的 code + message」
   形态，模板不带占位。
-- **不改 D851 的既有表述**（「生效的是默认配置」）：那是 M865 的既有口径，本 change 不动。
 - **不重录像素基线**：新增视觉用例只做文本 / 结构断言；现有没有任何场景渲染文件状态横幅，
   基线不受影响（若实测有变化，交 Alex 过目后再更新）。
 

@@ -2320,8 +2320,8 @@ const COPY_TABLE = {
   D849: { zh: "配置文件无法载入", en: "The config file can't be loaded" },
   D850: { zh: "第 {line} 行：{reason}", en: "Line {line}: {reason}" },
   D851: {
-    zh: "{path} 当前无法按配置读取，生效的是默认配置；先修复该文件再回来保存。字段暂为只读。",
-    en: "{path} cannot be read as config right now and the defaults are in effect; fix the file before saving. Fields are read-only for now.",
+    zh: "{path} 当前无法按完整配置读取：可用部分按文件内容生效，其余用默认值。先修复该文件再回来保存。字段暂为只读。",
+    en: "{path} cannot be read as a complete configuration right now: the usable parts take effect from the file and the rest fall back to defaults. Fix the file before saving. Fields are read-only for now.",
   },
   D852: { zh: "配置提示", en: "Config notes" },
   D853: { zh: "设置面板读取失败：{message}", en: "Couldn't load settings: {message}" },

@@ -888,6 +888,14 @@ test("设置面板：配置文件状态横幅按 code 上屏（zh，带行号；
   // 负向断言配正观测：同一屏里路径（D851）确实在，且内部串不在。
   await expect(banner).toContainText("/tmp/lumir-visual/config.json");
   await expect(banner).not.toContainText(internal);
+  // 整文件无效（没有可用部分）：面板读数是默认值（无 provider 的空态），D851 用覆盖句如实说
+  // 「可用部分按文件内容生效，其余用默认值」——既不说「全部默认」，也不说文件值在生效。
+  await expect(page.locator(".lumir-set-empty")).toBeVisible();
+  await expect(page.locator(".lumir-set-provider-row")).toHaveCount(0);
+  await expect(banner).toContainText(
+    COPY.D851.zh.replace("{path}", "/tmp/lumir-visual/config.json"),
+  );
+  await expect(banner).not.toContainText("生效的是默认配置");
   // 只读态：保存禁用、恢复默认按钮隐藏（横幅优先级高于字段级提示）。
   await expect(page.locator(".lumir-set-actions .lumir-set-btn-primary")).toBeDisabled();
   await expect(page.locator(".lumir-set-foot > .lumir-set-btn-ghost")).toBeHidden();
@@ -916,9 +924,50 @@ test("设置面板：读取失败横幅在 en 下是英文、可行动，且不�
   await expect(banner.locator(".lumir-set-banner-title")).toHaveText(COPY.D849.en);
   await expect(banner).toContainText(COPY.D940.en);
   await expect(banner).toContainText("/tmp/lumir-visual/config.json");
+  // en 档的 D851 同样是覆盖句（可用部分按文件内容生效，其余默认），且没有旧的全称断言。
+  await expect(banner).toContainText(
+    COPY.D851.en.replace("{path}", "/tmp/lumir-visual/config.json"),
+  );
+  await expect(banner).not.toContainText("the defaults are in effect");
+  // 读失败没有可用部分：面板读数是默认空态。
+  await expect(page.locator(".lumir-set-empty")).toBeVisible();
   // en 档不出现中文：标题、原因、路径句都取 English 列。
   await expect(banner).not.toContainText(/[\u3400-\u4dbf\u4e00-\u9fff]/);
   await expect(banner).not.toContainText("os error");
+});
+
+test("设置面板：结构不符但 harness 子树有效——覆盖句说「可用部分按文件内容生效」，面板读数是文件里的 provider", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  const internal = 'invalid type: string "15", expected usize';
+  await openSettings(page, {
+    snapshot: settingsSnapshot({
+      file: {
+        state: "invalid",
+        code: "config_invalid_structure",
+        message: `配置文件不是合法 JSON：${internal}`,
+        line: null,
+        column: null,
+      },
+      revision: null,
+      providers: [provider("kimi-work", "kimi")],
+    }),
+  });
+  const banner = page.locator('[data-banner="file"]');
+  await expect(banner).toBeVisible();
+  // 覆盖句在屏（含路径），旧的全称断言不在。
+  await expect(banner).toContainText(
+    COPY.D851.zh.replace("{path}", "/tmp/lumir-visual/config.json"),
+  );
+  await expect(banner).not.toContainText("生效的是默认配置");
+  // 语义核心：面板读数是**文件里的 harness 段**，不是默认空态——provider 行与该当前使用项
+  // 徽标都在场（与 Rust `structural_invalid_file_is_readonly_but_shows_harness_best_effort` 同现场）。
+  await expect(page.locator(".lumir-set-provider-row")).toHaveCount(1);
+  await expect(page.locator(".lumir-set-provider-row").first()).toContainText("kimi-work");
+  await expect(page.locator(".lumir-set-provider-row .lumir-set-current")).toBeVisible();
+  await expect(page.locator(".lumir-set-empty")).toHaveCount(0);
+  // 内部 serde 串不上屏；只读态照旧。
+  await expect(banner).not.toContainText(internal);
+  await expect(page.locator(".lumir-set-actions .lumir-set-btn-primary")).toBeDisabled();
 });
 
 test("设置面板：清 Key 后显示未配置；Base URL / Wire 恢复默认后按钮消失（r1 P2-6）", async ({ page }) => {

@@ -901,6 +901,25 @@ test("fileInvalidBody：有行号套 D850（行号是结构化读数）；未知
   assert.notEqual(fileInvalidReason(unknown, "en"), "no_such_file_code");
 });
 
+test("D851：正文覆盖两类 Invalid 现场（可用部分按文件内容生效 / 其余默认），保留修复与只读指引", () => {
+  // 两类现场共用这一句：
+  //   ① `config_invalid_structure` 且结构错误只在 harness 之外——harness 子树 best-effort
+  //      有效，面板读数是文件内容（Rust `structural_invalid_file_is_readonly_but_shows_harness_best_effort`）；
+  //   ② 读失败 / JSON 非法 / 顶层非对象——没有可用部分，面板读数是默认值。
+  // 因此句子必须同时容纳「部分生效」与「其余默认」，不能写死成「生效的是默认配置」。
+  assert.match(COPY.D851.zh, /可用部分按文件内容生效，其余用默认值/);
+  assert.match(COPY.D851.en, /usable parts take effect from the file/);
+  assert.match(COPY.D851.en, /the rest fall back to defaults/);
+  // 修复指引与只读态保留（用户仍要知道下一步与当前可做什么）。
+  assert.match(COPY.D851.zh, /先修复该文件再回来保存/);
+  assert.match(COPY.D851.zh, /字段暂为只读/);
+  assert.match(COPY.D851.en, /Fix the file before saving/);
+  assert.match(COPY.D851.en, /read-only/);
+  // 旧的全称断言已退场：它在 best-effort 现场是事实错误（M866 finding 的现场）。
+  assert.ok(!COPY.D851.zh.includes("生效的是默认配置"), "旧句会让 best-effort 现场说错事实");
+  assert.ok(!COPY.D851.en.includes("the defaults are in effect"), "旧句会让 best-effort 现场说错事实");
+});
+
 // ── 脏判定 ───────────────────────────────────────────────────────────
 
 test("draftIsDirty：只改草稿的选定 provider 不变脏；任何字段编辑 / 增删 / 开关 / 命名选择都脏", () => {

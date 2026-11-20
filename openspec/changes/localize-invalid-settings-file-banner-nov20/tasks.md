@@ -56,3 +56,20 @@
       `harness::context` 的 prompt 字节测试失败随快照 WIP 一起被 rebase 排除，最终树上 cargo
       测试全绿
 - [x] 4.3 提交后 `TowerComplete` 附逐项对账，等待独立 review
+
+## 5. tower 追加：D851 事实修正（finding `20261120-worker-invalid-settings-banner-improve-d851.md`）
+
+- [x] 5.1 D851 双语改覆盖句——「{path} 当前无法按完整配置读取：可用部分按文件内容生效，
+      其余用默认值。先修复该文件再回来保存。字段暂为只读。」（en 同步），保留修复与只读指引；
+      deck 的设计意图写明两类 Invalid 现场与「不能写死全默认」的理由
+- [x] 5.2 单测补 D851 覆盖句语义：两类现场共用、可行动 / 只读指引在、旧全称句
+      （「生效的是默认配置」/「the defaults are in effect」）必须退场
+- [x] 5.3 视觉语义对照不是「只查无 CJK」：整文件无效（JSON 非法）断言面板是默认空态；
+      结构不符但 harness 子树有效断言面板读数是文件里的 provider 行与当前使用项徽标，
+      两条都断言覆盖句在屏、旧全称句不在
+- [x] 5.4 相关测试 + 完整 `scripts/gate.sh quick` / `visual` 复跑（端口 4403、
+      `/tmp/lumir-m866-target`，日志 `.local/missions/M866/`）：quick `GATE RESULT: 13/13 PASS
+      （SKIP 0）`、退出码 0（`quick-r3.log`）；visual `GATE RESULT: 15/15 PASS（SKIP 0）`、
+      退出码 0（`visual-r2.log`），像素套件 1275 passed / 4 skipped / 0 failed——**基线零变化**；
+      未改读取行为、未起真机
+- [x] 5.5 全绿后提交新 tip 并 `TowerComplete`，等待独立 review
