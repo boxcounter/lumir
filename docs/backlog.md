@@ -75,3 +75,5 @@
 
 
 
+
+- **`stabilize-markdown-line-boxes-nov19`**（M856，9/9）：delta = editor-live-preview 1 条 ADDED（链接与裸 marker 行盒稳定）；独立 review clean/merge，quick 13/13、visual 15/15（SKIP 0），两张基线经 Alex 批准后重录且与审阅 actual 一致；证据 `.local/missions/M856/`，归档后跑 `--archived` 审计并核销本条。
