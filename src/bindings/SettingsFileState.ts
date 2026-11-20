@@ -4,5 +4,10 @@
  * 配置文件的读取状态（design §5）：`Missing` = 首次接入的主路径（按空对象算 revision）；
  * `Invalid` = JSON 不合法 / 顶层不是对象 / 结构解析会触发整文件回落——此时 `revision` 为
  * `None`、保存禁用，`providers` / `automation` 仍尽力从 raw JSON 读出供只读展示。
+ *
+ * `code` 是装载失败类别的稳定标识（M866），取值与 [`config`] 的 `failed_snapshot` 同源
+ * （`config_read_failed` / `config_invalid_json` / `config_invalid_structure`）：同一类失败
+ * 在 console 诊断与设置横幅上是同一个 code，前端按它取文案表上屏。`message` 保留为诊断日志
+ * 内容与未知 code 的兜底，code 已知时 MUST NOT 上屏（可能含 `os error` / parser 内部串）。
  */
-export type SettingsFileState = { "state": "missing" } | { "state": "valid" } | { "state": "invalid", message: string, line: number | null, column: number | null, };
+export type SettingsFileState = { "state": "missing" } | { "state": "valid" } | { "state": "invalid", code: string, message: string, line: number | null, column: number | null, };

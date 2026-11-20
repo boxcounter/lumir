@@ -3,7 +3,7 @@
 // 判据有两条，都是机械的（不靠人读）：
 //   ① **code 全覆盖**：从 `src-tauri/src/**` 里扫出全部上屏 code，与 `src/copy-data.ts` 的
 //      `ERROR_COPY` 逐一对一对账——缺一即红（防「新加的错误码在 en 界面下掉回中文」这类静默
-//      半覆盖）。反向也查：`ERROR_COPY` 里不许有扫不到的幽灵 code。扫描面有四条通道：
+//      半覆盖）。反向也查：`ERROR_COPY` 里不许有扫不到的幽灵 code。扫描面有五条通道：
 //      · `CommandError::new("<code>", …)`（命令错误信封）；
 //      · `field_error(path, "code", message)` → `SettingsFieldError`（设置面板字段错误，
 //        M852 起纳入）；
@@ -11,9 +11,11 @@
 //        盲区，`harness_internal_error` / `harness_empty_response` 因此漏了本地化）；
 //      · `ConfigDiagnostic{code, path, message}`（装载期配置诊断，M865 起纳入）——产出点是
 //        `DiagnosticSink::warn` / `warn_at`（`sink.warn(...)` / `sink.warn_at(...)`）、
-//        `failed_snapshot(path, code, …)` 与 `ConfigDiagnostic { code: "…" }` 字面量。
-//      四条通道都没有 params 的后两条（字段错误 / 事件 / 诊断）走 `ERROR_COPY`（或字段错误
-//      的 `FIELD_ERROR_COPY`），且模板 MUST NOT 带占位（见第一条判据的姊妹测试）。诊断通道
+//        `failed_snapshot(path, code, …)` 与 `ConfigDiagnostic { code: "…" }` 字面量；
+//      · `invalid_file("code", …)` → `SettingsFileState::Invalid`（配置文件状态横幅，
+//        M866 起纳入——此前横幅直出后端 message，en 界面露中文且可能露 os / parser 内部串）。
+//      后四条通道都没有 params（字段错误 / 事件 / 诊断 / 文件状态）走 `ERROR_COPY`（或字段
+//      错误的 `FIELD_ERROR_COPY`），且模板 MUST NOT 带占位（见第一条判据的姊妹测试）。诊断通道
 //      另有一张 **log-only 豁免表**（`LOG_ONLY_DIAGNOSTIC_CODES`）：这些 code 的键路径永远
 //      不在设置快照范围内，只进 console / 诊断日志（`i18n-exempt: log` 口径），不要求文案
 //      条目；反向判据是豁免项必须真实存在构造点（没有静默豁免）。
@@ -145,6 +147,8 @@ interface Site {
   event?: boolean;
   /** `ConfigDiagnostic{code, path, message}` 的产出点（装载期配置诊断，M865）。 */
   diag?: boolean;
+  /** `SettingsFileState::Invalid` 的构造点（配置文件状态信封，M866）：code 是第一个参数。 */
+  fileState?: boolean;
 }
 
 /** `CommandError::new(` 之后按括号配平取整段调用（字符串字面量整体跳过）。 */
@@ -282,6 +286,19 @@ function scanSites(): Site[] {
       }
       d = end + 1;
     }
+    // 配置文件状态信封（M866）：`SettingsFileState::Invalid` 的 code 由 `settings.rs` 的
+    // `invalid_file("code", …)` 唯一出口构造（四个真实变体 / 三个 code）。与字段错误 / 诊断
+    // 同属「后端 code = 上屏文案的键」，只是走第三条信封；没有 params（行号是结构化字段）。
+    let f = 0;
+    while ((f = masked.indexOf("invalid_file(", f)) >= 0) {
+      const open = f + "invalid_file".length;
+      const text = callText(src, open);
+      const code = /^"([a-z_0-9]+)"$/.exec(splitTopLevelArgs(text)[0] ?? "")?.[1];
+      if (code !== undefined) {
+        sites.push({ file: rel, line: src.slice(0, f).split("\n").length, code, params: [], fileState: true });
+      }
+      f = open + text.length + 1;
+    }
   }
   return sites;
 }
@@ -337,13 +354,13 @@ const REJECT_ON_WRITE_CODES = scanRejectOnWriteCodes();
  * 设置面板没有它们的消费者，给它们造文案条目 = 无声的假覆盖（REVIEW.md『值或开关声明了却
  * 没有消费者』）。**反向判据**：本表的每一项都必须在后端有真实构造点、且不得进 `ERROR_COPY`
  * ——豁免是给「扫到了但不上屏」的 code 留的白名单，不是关闭门禁的开关。
+ *
+ * 装载失败三类（`config_read_failed` / `config_invalid_json` / `config_invalid_structure`）
+ * 曾在此表（M865）：M866 给 `SettingsFileState::Invalid` 补了稳定 code 后，设置面板横幅成为
+ * 它们的消费者，三条因此转入 `ERROR_COPY`（D940–D942）——同一个 code 在 console 诊断与横幅
+ * 上是同一句话。
  */
 const LOG_ONLY_DIAGNOSTIC_CODES = new Set([
-  // 装载失败三类：`failed_snapshot` 只产 `ConfigSnapshot`（console），设置面另走
-  // `SettingsFileState::Invalid` 的横幅（不是 ConfigDiagnostic）。
-  "config_read_failed",
-  "config_invalid_json",
-  "config_invalid_structure",
   // editor / ui / keys / log / vault / cron / version / last_vault：设置面范围外的配置 warning。
   "config_last_vault_invalid",
   "config_version_newer",
@@ -374,14 +391,16 @@ const LOG_ONLY_DIAGNOSTIC_CODES = new Set([
 ]);
 
 test("完整性门禁：后端可能产出的 code 集合与 ERROR_COPY 一一对应", () => {
-  const commandSites = SITES.filter((s) => s.field !== true && s.event !== true && s.diag !== true);
+  const commandSites = SITES.filter((s) => s.field !== true && s.event !== true && s.diag !== true && s.fileState !== true);
   const fieldSites = SITES.filter((s) => s.field === true);
   const eventSites = SITES.filter((s) => s.event === true);
   const diagnosticSites = SITES.filter((s) => s.diag === true);
+  const fileSites = SITES.filter((s) => s.fileState === true);
   const codes = new Set(commandSites.map((s) => s.code));
   const fieldCodes = new Set(fieldSites.map((s) => s.code));
   const eventCodes = new Set(eventSites.map((s) => s.code));
   const diagnosticCodes = new Set(diagnosticSites.map((s) => s.code));
+  const fileCodes = new Set(fileSites.map((s) => s.code));
   const table = new Set(Object.keys(ERROR_COPY));
   const missing = [...codes].filter((c) => !table.has(c));
   // 字段错误进 `ERROR_COPY`，或在参数面不同时进 `FIELD_ERROR_COPY`（两栖 code 的字段档）。
@@ -391,8 +410,15 @@ test("完整性门禁：后端可能产出的 code 集合与 ERROR_COPY 一一�
   const uncoveredDiagnostic = [...diagnosticCodes].filter(
     (c) => !table.has(c) && !LOG_ONLY_DIAGNOSTIC_CODES.has(c),
   );
+  // 配置文件状态横幅（M866）：`SettingsFileState::Invalid` 的 code 必须进表（横幅按 code 上屏）。
+  const uncoveredFile = [...fileCodes].filter((c) => !table.has(c));
   const ghost = [...table].filter(
-    (c) => !codes.has(c) && !fieldCodes.has(c) && !eventCodes.has(c) && !diagnosticCodes.has(c),
+    (c) =>
+      !codes.has(c) &&
+      !fieldCodes.has(c) &&
+      !eventCodes.has(c) &&
+      !diagnosticCodes.has(c) &&
+      !fileCodes.has(c),
   );
   assert.deepEqual(missing, [], `这些 code 在 ERROR_COPY 里没有条目（en 界面会掉回中文 message）`);
   assert.deepEqual(
@@ -409,6 +435,11 @@ test("完整性门禁：后端可能产出的 code 集合与 ERROR_COPY 一一�
     uncoveredDiagnostic,
     [],
     `这些诊断 code 既没有 ERROR_COPY 条目、也不在 LOG_ONLY_DIAGNOSTIC_CODES 里`,
+  );
+  assert.deepEqual(
+    uncoveredFile,
+    [],
+    `这些配置文件状态 code 在 ERROR_COPY 里没有条目（横幅在 en 界面会掉回中文 message）`,
   );
   assert.deepEqual(ghost, [], `ERROR_COPY 里这些 code 在后端扫不到（幽灵条目）`);
   // 豁免表的反向判据：每一项都必须真实扫到（不存在的豁免 = 一条静默关掉的判据），且不得同时也是
@@ -429,6 +460,9 @@ test("完整性门禁：后端可能产出的 code 集合与 ERROR_COPY 一一�
   // 诊断通道同理：`sink.warn` 一族是设置面板诊断的唯一生产形态，扫不到就等于没门禁。
   assert.ok(diagnosticSites.length >= 70, `ConfigDiagnostic 构造点扫描异常（${diagnosticSites.length} 处）`);
   assert.ok(diagnosticCodes.size >= 50, `ConfigDiagnostic code 扫描异常（${diagnosticCodes.size} 个）`);
+  // 配置文件状态通道：四个真实构造点 / 三个 code——扫不到就等于横幅重新直出 message。
+  assert.ok(fileSites.length >= 4, `invalid_file 构造点扫描异常（${fileSites.length} 处）`);
+  assert.ok(fileCodes.size >= 3, `配置文件状态 code 扫描异常（${fileCodes.size} 个）`);
   // `FIELD_ERROR_COPY` 不能收没有消费者的 code（没有消费者的条目 = 无声的假豁免）：合法来源
   // 只有两类——字面量 `field_error(...)` 构造点，与 `plan_and_apply` 动态转发的 RejectOnWrite
   // 诊断 code。
@@ -463,11 +497,12 @@ test("完整性门禁：字段错误 / 事件字面量 / 装载期诊断的模�
   // D914–D916/D918/D920）根本不会被这条判据检查——它们带占位时门禁仍绿，运行时
   // `errorText(entry)` 因无 params 回落 Rust message（M865 r1 P2-1 的现场）。
   const commandCodes = new Set(
-    SITES.filter((s) => s.field !== true && s.event !== true && s.diag !== true).map((s) => s.code),
+    SITES.filter((s) => s.field !== true && s.event !== true && s.diag !== true && s.fileState !== true).map((s) => s.code),
   );
   const fieldCodes = new Set(SITES.filter((s) => s.field === true).map((s) => s.code));
   const eventCodes = new Set(SITES.filter((s) => s.event === true).map((s) => s.code));
   const diagnosticCodes = new Set(SITES.filter((s) => s.diag === true).map((s) => s.code));
+  const fileCodes = new Set(SITES.filter((s) => s.fileState === true).map((s) => s.code));
 
   // ① 字段错误档：字面量 `field_error(...)` 构造点 ∪ `plan_and_apply` 动态转发的
   //    RejectOnWrite 诊断 code；取值面是 FIELD_ERROR_COPY（缺省回落 ERROR_COPY）。
@@ -490,16 +525,25 @@ test("完整性门禁：字段错误 / 事件字面量 / 装载期诊断的模�
     const key = ERROR_COPY[code];
     if (key !== undefined) eventEntries[code] = key;
   }
+  // ④ 配置文件状态横幅档（M866）：`SettingsFileState::Invalid` 没有 params 通道，行号由 D850
+  //    承担——模板同样 MUST NOT 带占位（带占位会被 errorText 的缺参兜底打回 Rust message）。
+  const fileEntries: Record<string, CopyKey> = {};
+  for (const code of fileCodes) {
+    const key = ERROR_COPY[code];
+    if (key !== undefined) fileEntries[code] = key;
+  }
 
   assert.deepEqual(placeholderProblems(fieldEntries), [], `字段错误模板 MUST NOT 带占位`);
   assert.deepEqual(placeholderProblems(diagnosticEntries), [], `装载期诊断模板 MUST NOT 带占位`);
   assert.deepEqual(placeholderProblems(eventEntries), [], `事件字面量模板 MUST NOT 带占位`);
+  assert.deepEqual(placeholderProblems(fileEntries), [], `配置文件状态横幅模板 MUST NOT 带占位`);
 
   // 反向判据：三类都真的查到了条目（不是「集合为空所以相等」）。双信封的装载期诊断档尤其要
   // 非空——这正是 r1 P2-1 指出的漏检面。
   assert.ok(Object.keys(fieldEntries).length >= 13, `字段错误档只查到 ${Object.keys(fieldEntries).length} 条`);
   assert.ok(Object.keys(diagnosticEntries).length >= 29, `诊断档只查到 ${Object.keys(diagnosticEntries).length} 条`);
   assert.ok(Object.keys(eventEntries).length >= 2, `事件档只查到 ${Object.keys(eventEntries).length} 条`);
+  assert.ok(Object.keys(fileEntries).length >= 3, `配置文件状态档只查到 ${Object.keys(fileEntries).length} 条`);
   const dualEnvelope = [...diagnosticCodes].filter((code) => REJECT_ON_WRITE_CODES.has(code));
   assert.ok(dualEnvelope.length >= 12, `双信封诊断 code 只查到 ${dualEnvelope.length} 个`);
   for (const code of dualEnvelope) {
@@ -518,11 +562,14 @@ test("完整性门禁：字段错误 / 事件字面量 / 装载期诊断的模�
 /** CJK 统一表意文字（含扩展 A 与兼容区）：en 列出现任何一个都算漏译。 */
 const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
 
-test("诊断通道：设置面可达的 code 都有双语条目（en 列无中文、两列不是同一句）", () => {
+test("诊断 / 配置文件状态通道：设置面可达的 code 都有双语条目（en 列无中文、两列不是同一句）", () => {
   // 完整性门禁只判「有没有条目」；这条判**条目本身是不是真的两档文案**——把英文列抄成中文
   // 或反过来，覆盖计数照样满，但 en 界面仍然露中文。
   const diagnosticCodes = new Set(SITES.filter((s) => s.diag === true).map((s) => s.code));
-  const surface = [...diagnosticCodes].filter((c) => !LOG_ONLY_DIAGNOSTIC_CODES.has(c));
+  const fileCodes = new Set(SITES.filter((s) => s.fileState === true).map((s) => s.code));
+  const surface = [...new Set([...diagnosticCodes, ...fileCodes])].filter(
+    (c) => !LOG_ONLY_DIAGNOSTIC_CODES.has(c),
+  );
   const problems: string[] = [];
   for (const code of surface) {
     const key = ERROR_COPY[code];
@@ -532,14 +579,14 @@ test("诊断通道：设置面可达的 code 都有双语条目（en 列无中�
     if (entry.en === entry.zh) problems.push(`${code} → ${key} 两列同形（en 没有独立文案）`);
     if (!CJK.test(entry.zh)) problems.push(`${code} → ${key} 的中文列不含中文（zh 档写错了）`);
   }
-  assert.deepEqual(problems, [], `这些诊断条目不是双语两档`);
+  assert.deepEqual(problems, [], `这些诊断 / 配置文件状态条目不是双语两档`);
   // 反向判据：设置面可达的诊断 code 确实是两位数（不是扫空了导致上面恒真）。
-  assert.ok(surface.length >= 29, `设置面诊断 code 数量异常（${surface.length}）`);
+  assert.ok(surface.length >= 32, `设置面诊断 / 配置文件状态 code 数量异常（${surface.length}）`);
 });
 
 test("完整性门禁：每处构造点都提供该 code 文案的全部占位名（缺一个即回落中文）", () => {  // 字段错误 / 事件字面量 / 诊断没有 params 通道（`{path, code, message}` / `{code, message}`），
   // 它们的「模板不带占位」由上一条判据盯，这里只看 `CommandError` 的 `.param(…)` 链。
-  const commandSites = SITES.filter((s) => s.field !== true && s.event !== true && s.diag !== true);
+  const commandSites = SITES.filter((s) => s.field !== true && s.event !== true && s.diag !== true && s.fileState !== true);
   const problems: string[] = [];
   for (const site of commandSites) {
     const key = ERROR_COPY[site.code];

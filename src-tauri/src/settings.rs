@@ -40,6 +40,11 @@ use crate::config::{
 /// 配置文件的读取状态（design §5）：`Missing` = 首次接入的主路径（按空对象算 revision）；
 /// `Invalid` = JSON 不合法 / 顶层不是对象 / 结构解析会触发整文件回落——此时 `revision` 为
 /// `None`、保存禁用，`providers` / `automation` 仍尽力从 raw JSON 读出供只读展示。
+///
+/// `code` 是装载失败类别的稳定标识（M866），取值与 [`config`] 的 `failed_snapshot` 同源
+/// （`config_read_failed` / `config_invalid_json` / `config_invalid_structure`）：同一类失败
+/// 在 console 诊断与设置横幅上是同一个 code，前端按它取文案表上屏。`message` 保留为诊断日志
+/// 内容与未知 code 的兜底，code 已知时 MUST NOT 上屏（可能含 `os error` / parser 内部串）。
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(tag = "state", rename_all = "snake_case")]
 #[ts(export, export_to = "../../src/bindings/")]
@@ -47,6 +52,7 @@ pub enum SettingsFileState {
     Missing,
     Valid,
     Invalid {
+        code: String,
         message: String,
         line: Option<u32>,
         column: Option<u32>,
@@ -590,6 +596,24 @@ impl AppliedChanges {
 // 读：快照
 // ---------------------------------------------------------------------------
 
+/// `SettingsFileState::Invalid` 的唯一构造口（M866）：`code` 是稳定标识，`message` 是诊断
+/// 日志内容与未知 code 的兜底。四个真实变体（读失败 / JSON 非法 / 顶层非对象 / 结构不符）
+/// 共用这一个出口；`tests/unit/error-text.test.ts` 按 `invalid_file(` 的**第一个参数**扫描 code，
+/// 新增构造点未登记文案即红。
+fn invalid_file(
+    code: &str,
+    message: String,
+    line: Option<u32>,
+    column: Option<u32>,
+) -> SettingsFileState {
+    SettingsFileState::Invalid {
+        code: code.to_string(),
+        message,
+        line,
+        column,
+    }
+}
+
 /// 读设置面快照（design §5）。只读、不取写锁；调用方传配置文件路径。
 pub fn snapshot_at(path: &Path) -> SettingsSnapshot {
     let path_str = path.display().to_string();
@@ -606,27 +630,30 @@ pub fn snapshot_at(path: &Path) -> SettingsSnapshot {
             revision = Some(revision_of(&value));
         }
         Err(error) => {
-            file = SettingsFileState::Invalid {
-                message: format!("无法读取配置文件：{error}"),
-                line: None,
-                column: None,
-            };
+            file = invalid_file(
+                "config_read_failed",
+                format!("无法读取配置文件：{error}"),
+                None,
+                None,
+            );
         }
         Ok(text) => match serde_json::from_str::<Value>(&text) {
             Err(error) => {
-                file = SettingsFileState::Invalid {
-                    message: format!("配置文件不是合法 JSON：{error}"),
-                    line: Some(error.line() as u32),
-                    column: Some(error.column() as u32),
-                };
+                file = invalid_file(
+                    "config_invalid_json",
+                    format!("配置文件不是合法 JSON：{error}"),
+                    Some(error.line() as u32),
+                    Some(error.column() as u32),
+                );
             }
             Ok(parsed) if !parsed.is_object() => {
                 value = parsed;
-                file = SettingsFileState::Invalid {
-                    message: "配置文件顶层不是 JSON 对象".to_string(),
-                    line: None,
-                    column: None,
-                };
+                file = invalid_file(
+                    "config_invalid_structure",
+                    "配置文件顶层不是 JSON 对象".to_string(),
+                    None,
+                    None,
+                );
             }
             Ok(parsed) => {
                 value = parsed;
@@ -646,11 +673,7 @@ pub fn snapshot_at(path: &Path) -> SettingsSnapshot {
                             effective = Some(config);
                             diagnostics = diags;
                         }
-                        file = SettingsFileState::Invalid {
-                            message,
-                            line: None,
-                            column: None,
-                        };
+                        file = invalid_file("config_invalid_structure", message, None, None);
                     }
                 }
             }
@@ -2731,7 +2754,14 @@ mod tests {
         dir.write("{not json");
         let snapshot = snapshot(&dir);
         match snapshot.file {
-            SettingsFileState::Invalid { line, column, .. } => {
+            SettingsFileState::Invalid {
+                code,
+                message,
+                line,
+                column,
+            } => {
+                assert_eq!(code, "config_invalid_json");
+                assert!(!message.trim().is_empty(), "解析错误不能被吞掉");
                 assert!(line.is_some(), "JSON 语法错误要带上行号");
                 assert!(column.is_some());
             }
@@ -2742,13 +2772,69 @@ mod tests {
     }
 
     #[test]
+    fn top_level_non_object_reports_structure_code() {
+        let dir = TempDir::new("non-object");
+        dir.write("[1, 2, 3]");
+        let snapshot = snapshot(&dir);
+        match snapshot.file {
+            SettingsFileState::Invalid {
+                code,
+                message,
+                line,
+                column,
+            } => {
+                assert_eq!(code, "config_invalid_structure");
+                assert!(message.contains("顶层不是 JSON 对象"));
+                assert_eq!(line, None);
+                assert_eq!(column, None);
+            }
+            other => panic!("期望 Invalid，实际 {other:?}"),
+        }
+        assert_eq!(snapshot.revision, None);
+    }
+
+    #[test]
+    fn unreadable_file_reports_read_failure_code() {
+        let dir = TempDir::new("unreadable");
+        // 把 config.json 建成目录：`read_to_string` 必然失败且不是 NotFound，
+        // 与权限拒绝走同一条分支（`os error` 文案只留在 message 里）。
+        std::fs::create_dir(dir.path()).expect("把 config.json 建成目录");
+        let snapshot = snapshot(&dir);
+        match snapshot.file {
+            SettingsFileState::Invalid {
+                code,
+                message,
+                line,
+                column,
+            } => {
+                assert_eq!(code, "config_read_failed");
+                assert!(
+                    message.contains("无法读取配置文件"),
+                    "读取失败不能被吞掉：{message}"
+                );
+                assert!(!message.contains("不是合法 JSON"), "不能误报成解析失败");
+                assert_eq!(line, None);
+                assert_eq!(column, None);
+            }
+            other => panic!("期望 Invalid，实际 {other:?}"),
+        }
+        assert_eq!(snapshot.revision, None);
+    }
+
+    #[test]
     fn structural_invalid_file_is_readonly_but_shows_harness_best_effort() {
         let dir = TempDir::new("structural");
         dir.write(
             r#"{"editor":{"font_size":"15"},"harness":{"provider":"kimi-work","providers":{"kimi-work":{"preset":"kimi","api_key":"test-key-1111","models":[{"id":"k3-256k","effort":true,"vision":true,"window":262144}]}}}}"#,
         );
         let snapshot = snapshot(&dir);
-        assert!(matches!(snapshot.file, SettingsFileState::Invalid { .. }));
+        match &snapshot.file {
+            SettingsFileState::Invalid { code, message, .. } => {
+                assert_eq!(code, "config_invalid_structure");
+                assert!(!message.trim().is_empty(), "结构错误不能被吞掉");
+            }
+            other => panic!("期望 Invalid，实际 {other:?}"),
+        }
         assert_eq!(snapshot.revision, None);
         assert_eq!(provider_ids(&snapshot), vec!["kimi-work".to_string()]);
         assert_eq!(snapshot.active.as_deref(), Some("kimi-work"));
