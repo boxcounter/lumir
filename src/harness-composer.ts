@@ -12,7 +12,6 @@ import {
   cursorCharForward,
   cursorLineEnd,
   cursorLineStart,
-  deleteCharBackward,
   deleteCharForward,
   invertedEffects,
   isolateHistory,
@@ -24,7 +23,7 @@ import {
   selectLineStart,
   undo,
 } from "@codemirror/commands";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import type { CommandId } from "./keys";
 import {
   clusterBackward,
@@ -90,7 +89,36 @@ const composerAttachmentInversions = invertedEffects.of((tr) => {
   return inverse.reverse();
 });
 
-export const composerStateExtensions = [history(), composerAttachmentsField, composerAttachmentInversions];
+/** composer 的物理 Backspace 闸门（M860）：折叠 caret 上无修饰的 Backspace
+ *  （`deleteContentBackward`）按一个字素簇删除，步长与正文 `⌃H` / `⌃D` 同一份核
+ *  （`quote-card.clusterBackward`）。修饰键变体以不同 inputType 到达（`⌥⌫` =
+ *  `deleteWordBackward`、`⌘⌫` = `deleteHardLineBackward` / `deleteSoftLineBackward`），
+ *  因此「只认 `deleteContentBackward`」就是「只认无修饰 Backspace」，不读键盘修饰位；
+ *  IME 组合期、只读会话与非空选区保持既有路径（非空选区删除归编辑器侧 M854 的选区
+ *  编辑合同；composer 是纯文本，原生删选区逐字节正确）。正文侧同一判定在
+ *  `src/editor.ts` 的 `absorbGraphemeBackspace`（两个编辑面各自的入口，字素步长核只有
+ *  一份——REVIEW.md「同一语义两处真源」条）。 */
+export function absorbComposerGraphemeBackspace(event: InputEvent, view: EditorView): boolean {
+  if (event.inputType !== "deleteContentBackward") return false;
+  const state = view.state;
+  if (state.readOnly || view.compositionStarted || event.isComposing) return false;
+  const ranges = state.selection.ranges;
+  if (ranges.length !== 1 || !ranges[0].empty) return false;
+  event.preventDefault();
+  deleteCharBackward(view);
+  return true;
+}
+
+const composerGraphemeBackspace = EditorView.domEventHandlers({
+  beforeinput: (event, view) => absorbComposerGraphemeBackspace(event as InputEvent, view),
+});
+
+export const composerStateExtensions = [
+  history(),
+  composerAttachmentsField,
+  composerAttachmentInversions,
+  composerGraphemeBackspace,
+];
 
 export function createComposerState(content: ComposerContent, extensions: readonly Extension[] = []): EditorState {
   const caret = content.caret === null
@@ -156,6 +184,26 @@ function deleteRange(view: EditorView, from: number, to: number, userEvent: stri
     scrollIntoView: true,
     userEvent,
   });
+}
+
+/** composer 的 `⌃H`：折叠 caret 上删一个整字素簇（`quote-card.clusterBackward`），有选区则
+ *  删选区；一次删除 = 一条 history 步。步长与正文 `editor.delete-char-backward` 同源。
+ *  MUST NOT 再用 CM 的 `deleteCharBackward`：它按 CM 簇后缀（`includeExtending=false`）退、
+ *  且在行首缩进区按缩进单位回退，与正文步长不同（M843 finding，M860 收口）。
+ *
+ *  只读早退沿用旧命令的口径（CM 的 `deleteBy` 在 `state.readOnly` 时直接返回）：命令入口
+ *  自己守一道，不依赖 beforeinput 闸门的只读判定——直接调用 `runComposerCommand` 的路径
+ *  没有闸门（review P2-1）。 */
+function deleteCharBackward(view: EditorView): void {
+  if (view.state.readOnly) return;
+  const main = view.state.selection.main;
+  if (!main.empty) {
+    deleteRange(view, main.from, main.to, "delete.selection");
+    return;
+  }
+  const start = clusterBackward((from, to) => readDoc(view.state, from, to), main.head, 0);
+  if (start >= main.head) return;
+  deleteRange(view, start, main.head, "delete.char.backward");
 }
 
 function killRange(view: EditorView, from: number, to: number, forward: boolean): void {

@@ -644,6 +644,25 @@ function deleteCharBackward(view: EditorView): void {
   deleteRange(view, prevCluster(state, end, limits.from), end, "delete.char.backward");
 }
 
+/** 无修饰物理 Backspace 的字素步长（M860）：md 与 code 两个编辑面同一份判定。
+ *
+ *  折叠 caret 上的 `deleteContentBackward` 一律按 `prevCluster`（`quote-card.clusterBackward`）
+ *  删一个整簇，与 `⌃H` / `⌃D` 同一份步长核。判据只读 `EditorState` 与 InputEvent 的
+ *  `inputType`：修饰键变体不以本类型到达（`⌥⌫` = `deleteWordBackward`、`⌘⌫` =
+ *  `deleteHardLineBackward` / `deleteSoftLineBackward`），因此「只认 `deleteContentBackward`」
+ *  就是「只认无修饰 Backspace」；IME 组合期、只读会话与非空选区（归 M854 的选区编辑合同）
+ *  保持既有路径。一个事务 = 一条 history 步。 */
+function absorbGraphemeBackspace(event: InputEvent, view: EditorView): boolean {
+  if (event.inputType !== "deleteContentBackward") return false;
+  const state = view.state;
+  if (state.readOnly || view.compositionStarted || event.isComposing) return false;
+  const ranges = state.selection.ranges;
+  if (ranges.length !== 1 || !ranges[0].empty) return false;
+  event.preventDefault();
+  deleteCharBackward(view);
+  return true;
+}
+
 /** Emacs M-d kill-word：kill 到下一个词尾（先跳过非词字符）。 */
 function deleteWordForward(view: EditorView): void {
   const state = view.state;
@@ -699,18 +718,25 @@ function deleteWordBackward(view: EditorView): void {
 //     文本为单位，会把选区前的 cell 对齐空白一并吃掉（M855 探针）；IME 组合
 //     （`insertCompositionText`）与粘贴（`insertFromPaste`）不在此列，语义不变；
 //   · 空光标恰在行边界（M836）：被吸收的一侧确有行时删一个换行 / 按词删除。
-//   · 折叠光标落在 grid 表格 cell slot 内（M855）：WebKit 原生键入会把 slot 首尾的对齐
+//   · 空光标落在 grid 表格 cell slot 内（M855）：WebKit 原生键入会把 slot 首尾的对齐
 //     空白当块级 padding（插入点折到块首、吃掉 padding），Backspace / Delete 的 target
 //     range 还会跨过零宽 replace 覆盖的隐藏管道 / 换行 / 分隔行；命中时按 state 位置做
 //     显式事务（键入插入 `event.data`；单字符删除走应用自身的 deleteCharBackward /
 //     deleteCharForward，步长与 ⌃H / ⌃D 同源）。
+//   · 折叠光标的无修饰 Backspace（M860）：任何位置都按 `prevCluster`
+//     （`quote-card.clusterBackward`）删一个整字素簇，与 ⌃H / ⌃D 同一份步长核——浏览器
+//     原生的码点粒度会把组合标记 / 肤色 / 职业 ZWJ / RTL 附标劈成孤立附标（M843 finding，
+//     Chromium 比 WebKit 更碎）。md 与 code 两个编辑面同判（code 侧见
+//     `codeGraphemeBackspaceGate`）；修饰键变体以不同 inputType 到达、IME 组合期、只读
+//     会话与非空选区保持既有路径。
 // 覆盖面因此与「哪一类 replace 装饰」无关（表格管道、列表 marker、链接、公式、隐藏
 // 标记与将来的 widget 同在类内）；纯文本上的事务结果与原生逐字节相同，不需要按渲染
 // 形状分支。
 //
 // 未被接管的按键先到 keymap（本文件的 markupKeymap / 上游 markdownKeymap），所以闸门
-// 的实际命中面是「真的会落到浏览器原生编辑」的入口。空光标的普通行内删除仍走原生
-// （两引擎逐字节一致）；唯一的例外是 grid 表格 cell slot 内（见上一条，M855）。
+// 的实际命中面是「真的会落到浏览器原生编辑」的入口。空光标的行内前删由 M860 接管
+// （md / code 同判）；forward Delete 仍走原生（两引擎按字素簇），grid 表格 cell slot 内
+// 的删除另见 M855。
 // forward 行删除变体（deleteSoftLineForward / deleteHardLineForward）在空光标时两引擎
 // 实测 no-op 且默认键位不可达，不收；带选区时它们与其它删除同属一个合同，收。
 //
@@ -823,17 +849,26 @@ function absorbNativeEdit(event: InputEvent, view: EditorView): boolean {
     else deleteRange(view, main.head, main.head + 1, "delete.char.forward");
     return true;
   }
-  if (!LINE_MERGE_BACKWARD_INPUTS.has(event.inputType)) return false;
-  if (main.head !== line.from || main.head <= 0) return false;
-  event.preventDefault();
-  if (event.inputType === "deleteWordBackward") deleteWordBackward(view);
-  else deleteRange(view, main.head - 1, main.head, "delete.char.backward");
-  return true;
+  if (LINE_MERGE_BACKWARD_INPUTS.has(event.inputType) && main.head === line.from && main.head > 0) {
+    event.preventDefault();
+    if (event.inputType === "deleteWordBackward") deleteWordBackward(view);
+    else deleteRange(view, main.head - 1, main.head, "delete.char.backward");
+    return true;
+  }
+  // M860：行内（不跨行）折叠光标的无修饰 Backspace——md 与 code 两个编辑面同一份字素步长。
+  return absorbGraphemeBackspace(event, view);
 }
 
 /** 只装进 md 模式：code 模式没有 replace 装饰，原生删除 / 键入无回读风险。 */
 const nativeEditGate = EditorView.domEventHandlers({
   beforeinput: (event, view) => absorbNativeEdit(event as InputEvent, view),
+});
+
+/** code 模式的唯一接管面（M860）：没有 replace 装饰，不需要 M836 / M854 的回读与选区
+ *  闸门；物理 Backspace 的字素粒度仍与 md 同判（无修饰 `deleteContentBackward` + 折叠
+ *  caret，其余交回原生）。 */
+const codeGraphemeBackspaceGate = EditorView.domEventHandlers({
+  beforeinput: (event, view) => absorbGraphemeBackspace(event as InputEvent, view),
 });
 
 /** kill 一段：并入 kill 槽后删除。相接判定用「上次 kill 结束后的光标位置 = 本次 kill
@@ -2094,7 +2129,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           // M836 / M854 / M855：原生删除与键入的回读闸门（见函数组注释；只 md 有 replace 装饰）。
           nativeEditGate,
         ]
-      : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), markupKeymap];
+      : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), markupKeymap, codeGraphemeBackspaceGate];
   }
 
   /** md 的 gutter 扩展：**在场判据的唯一来源**（REVIEW.md 「同一语义两处真源」条——别处 MUST NOT 自行判断）。

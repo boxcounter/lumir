@@ -9,6 +9,8 @@
 
 ## 待修 findings（`#fix` / `#probe` / `#check` / `#hygiene`；★ = 首批六项，无需 Alex 即可立项，按行序执行）
 
+- `#fix` **验收套件 AX 选窗判据与 KimiCU 窗口目录格式脱节**（2026-11-20，high）→ 下一动作：`scripts/acceptance/lib/ax.mjs` 的窗口目录解析 / 选窗改用 `list_windows` 的结构化 window_id（或接受无 role 的 `[primary]/[other]` 并用非零 bbox 排除 0×0 phantom），同步核两处 Swift 选窗前置并补新格式单测；本机所有 AX 场景（含 268）因此 INVALID，finding `20261120-worker-grapheme-backspace-bug-kimicu-ax-invalid`。
+
 - ★ `#fix` **harness 默认 `wire_api` 切 `chat_completions`**（Alex 2026-10-25 裁）→ 下一动作：`src-tauri/src/config.rs` 的 provider 缺省 `wire_api` 改 `ChatCompletions`；实施项注明支持矩阵（v1 仅 kimi 实现 chat 档，DeepSeek 回落 `responses`，回落告警口径随默认值调整），同步 `openspec/specs/harness/spec.md` / `docs/specs/config-reference.md` 与 `session_open.wire_api` 用例。
 - ★ `#fix` **超限轮 usage 读数**（Alex 2026-10-25 裁）→ 下一动作：错误路径拿得到 usage 时同样 `record_usage` 并 emit `usage`；补一条超限轮读数用例（`src-tauri/src/harness/turn.rs` 成功分支之外）。
 - ★ `#probe` **82/83/85：套件自有 CGEvent 探针**（Alex 2026-10-25 裁，见 `docs/specs/standing-decisions.md`）→ 下一动作：CGEvent **键盘**注入原语即 M767/M768 的 `lib/cgevent-key.swift` + `channel: cgevent`（粘贴通道随 M864 迁到它），剩下 82/83/85 的 AXPress 插卡语境用这条原语定性；产品 reconcile（P1）不按首批立项，P3 留备选。
@@ -69,11 +71,8 @@
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 - `M455 收尾复跑`（138/140/144/145 与 hover 族 76/87/131/132/133/134）→ 下一动作：真机复跑并登记读数（145 的 `mod+z` 同族观察留给 change 属主裁）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
+- **`unify-grapheme-backspace-nov19`**（M860）：delta = editor-live-preview 1 条 MODIFIED（跨行删除里被证伪的「行内删除不接管」句）+ 1 条 ADDED（折叠光标的字素步长前删），harness 1 条 MODIFIED（composer 文本导航族纳入物理 Backspace）；节点 2 待独立 reviewer；门禁读数 quick `13/13 PASS（SKIP 0）`、visual `15/15 PASS（SKIP 0）`、目标双引擎 59 passed；真机 268 PASS（2026-11-20 桌面恢复后 r7/r8 连续两跑 `1/1 PASS`、13 断言、退出码 0；证据 `.local/acceptance/2026-11-20/268-grapheme-backspace/`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`improve-keybindings-lookup-oct24`**（M715）：delta = keymap-commands 1 条 MODIFIED（键位面板行模型）+ 3 条 ADDED（查找/捕获/详情、非自指入口、命令元数据与字形单一来源），节点 2 走人肉；实现批附带新增真机场景 235 / 236 / 237（查询 / 捕获 / 键盘）与 m133 视觉场景重写——**像素基线待 Alex 过目后重截**（未经过目不得 `--update`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`overlay-width-contract-oct24`**（M702，34/37）：节点 1 追认材料已备（D1–D5 落地 + 证据 + 否决回改面，见 proposal）；真机 231/232 PASS（5 + 11 断言，`.local/acceptance/2026-10-24-m711/`）；残留：0.3 / 0.4 待 Alex 追认、9.1 归档期执行；delta = ui-design-system 1 条 ADDED，归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`fix-escape-overlay-close-oct24`**（M718，收尾中）：节点 1 已裁（Alex 2026-10-24「采纳你的提案。」，D1 裁 B）；先红后绿——238 红跑（master，Esc 后 AX `element_count: 1`、`ps` 空输出、浮层重建后 0 个 focused 节点）→ 绿跑 PASS（38 断言，`.local/acceptance/2026-10-24/238-escape-overlay-close/RED-before-fix/` 与同目录的 `GREEN-after-fix/`）；239 退出反例 PASS（①②③，含 dirty 文档 Esc 不弹提示）。delta = `keymap-commands` 1 条 ADDED + `harness` 1 条 MODIFIED（节点 2 走人肉）；残留：5.4 全量真机批与 6.x 门禁按本次收尾输出填写；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`add-cron-notification-relaunch`**（2026-10-28 实现批）：delta = cron / harness 等 4 条 capability 增量，详见 change。节点 1 已裁（Alex 2026-10-28「按推荐」）。真机：169 PASS；213 / 252-cron 未通过——① 验收 bundle 的 fail-closed 隔离包装自身有缺陷（`build-bundle.mjs:95` 的 `case` 模式与套件隔离根不匹配 ⇒ 任何拉起都被拒；拒绝分支 `set -u` 下崩溃），见 finding `20261028-worker-automated-acceptance-ev-bug-bundle-case-env-set-u-bundle-invalid.md`；② 绕开①后通知授权被拒（`UNErrorDomain error 1`），到点通知从未投递；③ 点击段按 README「cron 通知点击在当前 macOS 构建上不可自动驱动」条仍不可自动驱动（170 人工段按任务显式跳过）。冷启动本机读数 median 175.65ms / p95 181.57ms（`.local/perf/cold-start.json`），对照合同 <300ms 未退化。**非 macOS 编译未验证（本机只有 macOS 目标链，见 tasks 同名记录）**。**6.4 / 6.5 未通过前不得归档。**
-
-
-
-

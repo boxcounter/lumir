@@ -159,6 +159,9 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
 （吸收下一行），或在行首按 Backspace / `⌘⌫`（吸收本行）。列表项只是最常见的一格：
 wikilink、行内公式、链接尾标、任务项以及隐藏的源码标记（`**`、`#`、`>`）吸收时同属这一类。
 行内删除（删除范围不跨行）与组合期（IME）删除不在本条内——实测它们不改写被吸收行的 DOM。
+其中**折叠光标的无修饰物理 Backspace** 的字素步长另归 `openspec/specs/editor-live-preview` 的
+「折叠光标的字素步长前删」（M860，change `unify-grapheme-backspace-nov19`：md / code 同判，
+按 `quote-card.clusterBackward` 删一个整簇）；本条只约束跨行合并，不重复该口径。
 **非空选区**上的删除与普通键入替换不属于「跨行合并」这一格，由 M854 的统一选区事务接管
 （判据见 `openspec/specs/editor-live-preview` 的「跨渲染隐藏区的非空选区编辑」与 change
 `fix-selection-delete-across-widgets-nov19`；本条不重复）。
@@ -175,8 +178,9 @@ wikilink、行内公式、链接尾标、任务项以及隐藏的源码标记（
   选区，一次 redo 恢复删除后状态。dirty 继续按 `cleanDoc` 逐字比较；显式保存载荷 MUST
   逐字等于当前 `EditorState.doc`。
 - **既有路径不动**：本条 MUST NOT 改变行内删除、裸 marker 行 Backspace、L5 原子导航、
-  L6 输入合同与 IME 组合（组合期删除仍归浏览器 / CM 的合成处理）；非空选区编辑按统一
-  选区事务的合同处理（见上）。
+  L6 输入合同与 IME 组合（组合期删除仍归浏览器 / CM 的合成处理）；行内折叠光标 Backspace
+  的字素步长按「适用范围」的 M860 指针另归 `editor-live-preview`，本条只约束跨行合并；
+  非空选区编辑按统一选区事务的合同处理（见上）。
   `⌥⌫` / `⌥⌦` 在默认键位表已由应用命令接管；若被解绑，落到原生的词删除变体同样按本条
   接管的同一口径处理。
 - **不接管的变体（如实登记）**：`deleteSoftLineForward` / `deleteHardLineForward` 在行尾

@@ -135,7 +135,7 @@ CSS 动画（CodeMirror 光标闪烁）在截图时冻结，保证逐帧确定�
    抬容差换绿；若 `page-channel-death` 密度上升，按通道问题排查（同一次 run 里连续命中说明
    机器侧状态没恢复，那一次不算产品 FAIL，也不该用 rerun 掩盖）。
 
-### Unicode / 选区 / 剪贴板对抗场景（M843）
+### Unicode / 选区 / 剪贴板对抗场景（M843，字素删除由 M860 收敛）
 
 文件：`scenes/text-clipboard-adversarial.spec.ts`（真浏览器）、`../unit/text-unicode-adversarial.test.ts`
 （Node 合同层）。两层共用同一套期望来源：`../unit/editing-oracle-model.ts`（独立模型，不 import
@@ -143,10 +143,12 @@ CSS 动画（CodeMirror 光标闪烁）在截图时冻结，保证逐帧确定�
 
 判据面（合同）：
 
-- **字素删除**：正文 ⌃H / ⌃D 对 9 类簇整簇删除（ZWJ 家庭、国旗、肤色、职业 ZWJ、组合重音、
-  变体选择符、代理对、阿拉伯文附标、希伯来文附标）；原生 Backspace / Delete 的粒度是**引擎
-  行为**，用例按引擎钉住首拍基线，并断言「重复按压最终恰好移除整簇、不越界、不产生孤立代理项、
-  可撤销」。
+- **字素删除**：正文 ⌃H / ⌃D 与**两编辑面的无修饰物理 Backspace**（M860，change
+  `unify-grapheme-backspace-nov19`）对 10 类簇一次删完整字素簇（普通 ASCII、ZWJ 家庭、国旗、
+  肤色、职业 ZWJ、组合重音、变体选择符、代理对、阿拉伯文附标、希伯来文附标），caret 落删除
+  起点、一次 undo 复原；md 与 code 两种正文模式同判。修饰键变体（⌥⌫ 词删除 / ⌘⌫ 行删除）以
+  不同 `inputType` 到达，保持既有路径；IME 组合期、只读会话与非空选区不接管。forward Delete
+  不在接管面内（两引擎原生已按字素簇）。
 - **选区替换**：粘贴替换 `[from,to)` 恰好一次、caret 落在 `from+insert.length`；反向选区、
   跨行选区、跨 live preview replace 装饰（列表 marker / wikilink / 行内公式 / 粗体）与折叠
   caret 同权；替换结果必须等于源码区间替换，渲染字形不得进入源码。
@@ -176,24 +178,16 @@ CSS 动画（CodeMirror 光标闪烁）在截图时冻结，保证逐帧确定�
 落盘的 `fs_write_attachment` 用 `addInitScript` 包 `__TAURI_INTERNALS__.invoke`（必须排在
 `stubTauri` 之后），composer 走 `harness_write_image` 既有桩。
 
-**引擎基线（2026-11-19 实测，引擎升级会让本表变红）**：
+**物理 Backspace 的期望来源（M860）**：两层不再按引擎 / 码点分档，一律断言「首拍 = 整簇、
+caret 落删除起点、一次 undo 复原」。浏览器原生粒度曾是引擎行为（2026-11-19 实测：chromium
+对组合标记与 RTL 附标逐码点、webkit 对 RTL 附标逐码点），M860 的双引擎 `beforeinput` 闸门
+（`src/editor.ts` 的 `absorbGraphemeBackspace` / `src/harness-composer.ts` 的
+`absorbComposerGraphemeBackspace`，步长核同为 `quote-card.clusterBackward`）把两面收敛到
+⌃H / ⌃D 的同一份口径，因此引擎升级不再让这两张表变红。
 
-| 簇 | 原生 Backspace 首拍（chromium） | 原生 Backspace 首拍（webkit-realua） | composer ⌃H 首拍（双引擎） |
-|---|---|---|---|
-| 肤色修饰 / ZWJ 家庭 / 国旗 / VS16 / 代理对 | 整簇 | 整簇 | 整簇 |
-| 组合重音（多个 combining mark） | 一个码点 | 整簇 | 一个码点（CM 簇后缀） |
-| 阿拉伯文 / 希伯来文附标 | 一个码点 | 一个码点 | 一个码点（CM 簇后缀） |
-
-已知产品边界（finding 已登记在 `.tower/comms/findings/`——该目录不入 git，指针仅本机可查；
-修复后两层表项应变红，按新行为更新）：
-
-- `.tower/comms/findings/20261119-worker-unicode-clipboard-bug-composer-h-emoji-rtl.md`
-  （composer ⌃H 与正文命令的字素步长不一致）；
-- `.tower/comms/findings/20261119-worker-unicode-clipboard-bug-backspace-rtl.md`
-  （原生 Backspace 对组合标记 / RTL 附标逐码点退）。
-
-HTML-only / `text/markdown`-only + 非空选区的删除缺口已由 M859（change
-`fix-html-only-paste-selection-nov19`）修好：从「已知边界」转为第十二节的**严格空操作**合同
+已知产品边界：无。M843 登记的两条 finding（composer ⌃H 只退 CM 簇后缀、原生 Backspace 按码点退）
+已由 M860 修好，表项随实现收敛为统一整簇；HTML-only / `text/markdown`-only + 非空选区的删除缺口
+已由 M859（change `fix-html-only-paste-selection-nov19`）修好，转为第十二节的**严格空操作**合同
 （四类剪贴板 × 折叠 / 正向 / 反向选区，含 code 与只读路径），原来的 `test.fail` 已删除。
 
 **IME**：组合中粘贴用 CDP `Input.imeSetComposition`（真引擎事件序），场景在 WebKit 项目内
