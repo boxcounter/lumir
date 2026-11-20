@@ -42,12 +42,17 @@
 - [x] 3.4 `tests/visual/scenes/m734-settings-panel.spec.ts`：zh（JSON 非法带行号）与 en
       （读取失败带 os 串）两条结构 / 文本断言，覆盖标题 / 正文 / 路径 / 只读态 / 无内部串；
       **不新增像素基线**（新基线须 Alex 过目）
-- [ ] 3.5 完整 `scripts/gate.sh quick` 与 `scripts/gate.sh visual`（端口 4403、
-      `/tmp/lumir-m866-target`）；像素若有变化交 Alex 过目，不自行更新
+- [x] 3.5 完整 `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`、退出码 0；
+      `scripts/gate.sh visual`（端口 4403、`/tmp/lumir-m866-target`）：`GATE RESULT: 15/15 PASS
+      （SKIP 0）`、退出码 0，像素套件 1274 passed / 4 skipped / 0 failed——**既有基线零变化**
+      （新增用例只做文本 / 结构断言，不建基线）。日志：`.local/missions/M866/quick-r2.log`
+      与 `visual.log`（git 外）
 
 ## 4. 文档与收尾
 
 - [x] 4.1 `docs/backlog.md`：核销 `SettingsFileState::Invalid` 横幅直出 message 的 `#fix`
-      条目；在归档跟踪队列登记本 change
-- [ ] 4.2 非目标核对：未改读取 / 校验 / 保存行为与配置项语义；未起真机；未改像素基线
-- [ ] 4.3 提交后 `TowerComplete` 附逐项对账，等待独立 review
+      条目；在归档跟踪队列登记本 change（80/80 行，`backlog-check` PASS）
+- [x] 4.2 非目标核对：未改读取 / 校验 / 保存行为与配置项语义；未起真机；未改像素基线；
+      `harness::context` 的 prompt 字节测试失败随快照 WIP 一起被 rebase 排除，最终树上 cargo
+      测试全绿
+- [x] 4.3 提交后 `TowerComplete` 附逐项对账，等待独立 review
