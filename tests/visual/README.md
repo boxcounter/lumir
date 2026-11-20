@@ -343,9 +343,12 @@ macOS 上真正拦住 Safe Storage 弹窗的是 `--use-mock-keychain`（Apple-on
    在路上）。前者造「写与外部改写竞争」，后者造「迟到的结果」。
 4. **失败信封按真 Rust 形状给**：`code + message`，文案表要插值时必须带 `params`（与
    `tauri-stub.ts` 的 `failures` 通道同口径），否则场景钉住的是真机上不会上屏的文本。
-5. **已知产品缺陷不在场景里放宽**：Node 层用 `node:test` 的 `todo` 钉住可复现的缺陷现场
-   （带 finding 指针，见 `tests/unit/persistence-adversarial.test.ts` 的 `knownDefect`），
-   视觉层只写应当成立的不变量；缺陷修复后把 `todo` 转普通用例，而不是把断言改绿。
+5. **已知产品缺陷不在场景里放宽**：视觉层只写应当成立的不变量；缺陷的可复现现场钉在 Node 层
+   （`tests/unit/*.test.ts`，带 finding 指针）。修复落地后把该用例转成**普通强制 test**，不保留
+   「真实执行但不拦门禁」的 `todo`——持久化的两条（保存迟到应答、草稿跨 vault）即按此转正，见
+   `tests/unit/persistence-adversarial.test.ts` 的「保存 I4」「草稿 I4」两条。转正时断言只许
+   原样保留或收紧，MUST NOT 为变绿改弱；并用 mutant 反证确认它真的拦门禁：临时整体回退对应的
+   生产修复（`git show <修复提交>^:<文件> > <文件>`），该 test 必须判红，随后恢复。
 
 该文件整份进 `webkit-realua` 的 `testMatch`（见 `playwright.config.ts`）：两引擎的微任务 /
 IPC 时序不同，chromium 绿不代表 WebKit 事件序下同样成立。
