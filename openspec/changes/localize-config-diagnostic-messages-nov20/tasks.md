@@ -41,8 +41,9 @@
       工程里，双引擎各跑一次）
 - [x] 3.4 完整 `scripts/gate.sh quick` 全绿（13/13 PASS，SKIP 0）；`scripts/gate.sh visual`（端口 4401）
       结构断言全绿，**唯一**差异是 `m734-settings-panel` 的 `09-validation-error` 像素基线
-      （重复 id 的字段错误文案换表，1010 px）——按「基线更新是人肉裁决点」交 Alex 过目，
-      未执行 `--update`（r1 复跑结果见 §5.4）
+      （重复 id 的字段错误文案换表，1010 px）——按「基线更新是人肉裁决点」交 Alex 过目
+      （r1 复跑结果见 §5.4）。**Alex 2026-11-20 已批准**：基线已重录，且与新录结果逐字节一致
+      （sha256 `356ce8b2…`）；仅该 PNG 变化，visual 复跑转 15/15
 
 ## 4. 文档与收尾
 
@@ -82,8 +83,11 @@
       非空字符串的项会被跳过；`config.rs:2253-2265` 的 `find_map`）
 - [x] 6.2 测试改成能区分「首项」与「首个可用项」的语义断言：must =「首个可用 id」+ 两条跳过规则，
       mustNot =「清单的首项 / 字面首项」，并用上一版错误说法做 must/mustNot 的区分度反证
-- [x] 6.3 相关单测（first-run-error-copy / error-text / copy）+ 完整 quick 复跑；visual 仍等 M859
-      槽位，09 基线不动
+- [x] 6.3 相关单测（first-run-error-copy / error-text / copy）+ 完整 quick 复跑；visual 等 M859
+      槽位（后续已跑，见 §6.5）
+- [x] 6.5 视觉槽位释放后跑最终 visual（14/15，唯一 FAIL 为已知 09 基线）；Alex 2026-11-20 批准
+      基线更新 → 先重录并与批准时的 actual 逐字节核对（一致），git status 仅该 PNG；复跑
+      quick/visual 全绿（visual 15/15）
 - [x] 6.4 r3：D922 的跳过条件从「非空字符串」精确到「**非空白字符串**（含纯空白 id）」——双语补
       「纯空白 id 也算不可用 / whitespace-only ids count as unusable」，deck 同步；测试加纯空白边界
       断言与「非空 / non-empty」旧口径的反向区分（旧说法必须被 mustNot 抓住）
