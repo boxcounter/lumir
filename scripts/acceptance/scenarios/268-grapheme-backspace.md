@@ -17,6 +17,11 @@
 #     文档即精确等于粘贴串；随后 ⌘Z 逐级还原。
 #   - composer 的读数按 AX 节点值锚定（`node.name` 是裸正则源）：`^Q$` 只匹配值恰好为 `Q`
 #     的 AXTextArea（编辑器正文不可能是这个值），因此正向断言有区分度、负向不靠跨节点正则。
+#   - **粘贴步用 `do: keys`（单元素）而不是 `do: key`**：`do: key` 的 `gapMs` 不生效（单键步
+#     只在 `do: keys` 的循环里 sleep），而 700ms 是历史分组边界，不是猜时长：CM history 的 `newGroupDelay` 是
+#     500ms，粘贴后 500ms 内的删除会被并进同一条 undo 记录（Node 探针复现：间隔 0ms 时一次
+#     undo 撤到粘贴前、间隔 600ms 时一次 undo 精确复原被删的簇）。本场景要验的是「删除本身
+#     一个撤销步」，所以每次粘贴后等过 500ms 再发删除键。
 id: "268-grapheme-backspace"
 item: 268
 tier: full
@@ -50,10 +55,10 @@ steps:
     text: "xمَy"
 
   - name: ⌘V 粘贴（正文替换全选内容）
-    do: key
-    key: "cmd+v"
+    do: keys
+    keys: ["cmd+v"]
     channel: cgevent
-    gapMs: 400
+    gapMs: 700
     expect:
       - label: 探针串已进正文（base + 附标）
         editor: { has: "xمَy" }
@@ -118,10 +123,10 @@ steps:
     text: "Qمَ"
 
   - name: ⌘V 粘贴进 composer
-    do: key
-    key: "cmd+v"
+    do: keys
+    keys: ["cmd+v"]
     channel: cgevent
-    gapMs: 400
+    gapMs: 700
     expect:
       - label: composer 值逐字节等于探针串
         node: { role: AXTextArea, name: "^Qمَ$", present: true }
@@ -158,10 +163,10 @@ steps:
     text: "Q👩🏽‍🚀W"
 
   - name: ⌘V 粘贴（替换全选）
-    do: key
-    key: "cmd+v"
+    do: keys
+    keys: ["cmd+v"]
     channel: cgevent
-    gapMs: 400
+    gapMs: 700
     expect:
       - label: composer 值逐字节等于 ZWJ 探针串
         node: { role: AXTextArea, name: "^Q👩🏽‍🚀W$", present: true }
@@ -221,5 +226,6 @@ Backspace 完全交给浏览器原生（WKWebView 对阿拉伯文 / 希伯来文
   （composer 此时不在场）。
 - **不落盘**：三条 witness 都只读 AX / 文档内存态，不按 ⌘S；W1 末尾用两拍 ⌘Z 回到 fixture 原文，
   确保本轮不留下 dirty 文档。mock provider、不发消息、不读写用户 vault。
-- **先红后绿**：真机窗口内先在修复前构建上跑一遍（W1 的 `xy` 与 W2 的 `^Q$`、W3 的 `^QW$` 应判红），
-  再在修复后构建上复跑；未跑不得记 PASS（场景 261 的口径）。
+- **先红后绿**：修复前的真机红证据取既有记录（M843 的双引擎实测 finding + M860 视觉层退回 master 的
+  mutant：3 条新用例全红）；本窗口按 tower 裁决未再重建修复前版本。修复后真机读数：r7/r8 连续两跑
+  `1/1 PASS`（13 条断言、退出码 0，证据 `.local/acceptance/2026-11-20/268-grapheme-backspace/`）。

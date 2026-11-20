@@ -17,7 +17,9 @@
 - [x] 3.1 `tests/unit/text-unicode-adversarial.test.ts`：删除 `COMPOSER_BACKWARD_REMAINING` 表，composer ⌃H 改为统一整簇 + 单步撤销；新增普通 ASCII 类、跨面一致性用例，以及 composer 物理 Backspace 闸门矩阵（折叠 caret 接管；非空选区 / 词与行删除变体 / IME / 只读不接管）。
 - [x] 3.2 `tests/visual/scenes/text-clipboard-adversarial.spec.ts`：删除按引擎分档的 `NATIVE_FIRST_STEP` 与 composer 残留表，正文 + composer 一次整簇 + 单步撤销；新增 code 模式与 composer `⌥⌫` 词删除两条双引擎用例；`tests/visual/README.md` 的判据面、基线段与已知边界同步。
 - [x] 3.3 新增 `scripts/acceptance/scenarios/268-grapheme-backspace.md`（md 正文物理 Backspace、composer 物理 Backspace、composer ⌃H 三条 witness），`node scripts/acceptance/coverage.mjs` 重新生成 COVERAGE。
-- [ ] 3.4 真机 268 在 tower 串行窗口内执行：先修复前构建判红、再修复后构建判绿（WKWebView 的物理 Backspace 与 ⌃H），读数与证据路径回填本节。反例判别性已在视觉层先行证实：把 `src/editor.ts` / `src/harness-composer.ts` 退回 master 后重跑新用例，3 条全红（`组合重音: code 模式整簇` / `肤色修饰: ⌃H 第一拍必须是整簇` 等），日志 `.local/missions/M860/mutant-prefix.log`（git 外）。**2026-11-20 真机窗口内三次尝试均判 INVALID（非产品判红）**：启动后 AX 读不到主窗（`windows 目录（2 扇）里没有 AXStandardWindow 主窗`），KimiCU 同实例报 `ax_window_missing_remote_rendered`；逐层探针确认本机当前会话**没有真实桌面合成**——`system_profiler` 报 Color LCD Online，但 `screencapture` 在唤醒前后都只得到 RGB 测试色条（像素直方图四类色块各约 2500 px / 128×83，无任何窗口内容），app 的真实 window_id 在 `list_windows` 可见、AX 却读不到其内容。日志 `.local/missions/M860/acceptance-268.log` / `-r2.log` / `-r3.log`；finding `20261120-worker-grapheme-backspace-bug-kimicu-ax-invalid` 与更正归因的 `20261120-worker-grapheme-backspace-bug-rgb-ax-268`。268 的修复后读数待真实交互桌面复跑，NOT_RUN 不得记 PASS。
+- [x] 3.4 真机 268（2026-11-20，显示器/桌面恢复后执行）：**1/1 PASS，退出码 0**，场景 **13 条断言全过**（r7 25.0s / r8 17.9s 连续两跑）；修复后现场逐条命中：正文物理 Backspace `xمَy → xy`、composer 物理 Backspace `Qمَ → Q`、composer ⌃H `Q👩🏽‍🚀W → QW`，三处一次 undo 均精确复原。证据 `.local/acceptance/2026-11-20/268-grapheme-backspace/`，日志 `.local/missions/M860/acceptance-268-r7.log` / `-r8.log`（git 外）。
+  - r4/r5 首两跑在 W2「⌘Z 复原」判红：Node 探针坐实是 CM history 的 `newGroupDelay`（500ms）把「粘贴 + 紧接的删除」并成一条 undo（间隔 0ms 合、600ms 分），不是产品回归；修复是把三个粘贴步改成 `do: keys`（`do: key` 的 `gapMs` 不生效）并等 700ms 越过分组边界（r6 仍红因为 `do: key` 的 gapMs 未生效，r7 起 PASS）。
+  - 修复前红证据沿用既有记录：M843 finding 的双引擎实测 + 视觉层退回 master 的 mutant（3 条新用例全红，`.local/missions/M860/mutant-prefix.log`）；按 tower 裁决本窗口未重建修复前版本。
 
 ## 4. 验证
 
