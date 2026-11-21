@@ -253,6 +253,8 @@ steps:
         editor: { has: "ALL-GGG" }
       - label: 确认浮条已撤下
         ax: { not: "关闭后修改将丢失" }
+      - label: 停手后焦点回到前台编辑器（review r1 P2-1：确认按钮随浮条移除，MUST NOT 留在 body）
+        ax: { focused: "AXTextArea" }
 
   - name: 再来一次：右键 tabs-b → 「Close All Tabs」
     do: click
@@ -345,6 +347,10 @@ M254（change `tab-strip-context-menu`）新增的标签右键菜单在**真实 
   `ALL-GGG`；这是 chromium 桩给不出的真实文件系统读数。
 - **空态与焦点**：全关完后 `ax: { focused: "AXTextArea" }` 是本场景的**新判据**——批量关闭
   没有标签可归还焦点，产品把焦点交给编辑器（空文档正文）；真机层只有这一条能验。
+- **停手焦点（review r1 P2-1）**：确认浮条的动作钮在答复那一刻随浮条从 DOM 移除，浏览器会把
+  焦点送回 `body`；产品的归还口径是「收尾（全关完或停手）→ 当前前台标签的编辑器正文」。
+  本段在「取消」之后与全关之后各有一条 `ax: { focused: "AXTextArea" }` 判据——真机层只有这两条
+  能判实际焦点归属（chromium 层的四条 `document.activeElement` 回归见 tab-menu.spec.ts）。
 - **多脏形态的构造边界**：运行期只有「打开多个文件后再逐个键入」这一条路能造出多个 dirty
   标签；未命名草稿不是标签（没有路径），批量目标集按 `visibleTabsOf` 口径排除它——
   这一条由单测 `closeAllTargets` 的负向用例钉住，真机不可达（未命名文档 dirty 时打开文件

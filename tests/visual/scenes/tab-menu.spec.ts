@@ -507,6 +507,26 @@ async function openExternalTab(page: Page, path: string): Promise<void> {
   await expect(page.locator(".lumir-qo")).toBeHidden();
 }
 
+/** 真实 `document.activeElement` 归属（review r1 P2-1 的判据）：焦点必须落在目标 pane 的编辑器
+ *  正文上，MUST NOT 是 `BODY`。读 activeElement 而不是只读 locator 的 `toBeFocused`——后者
+ *  的失败信息说不出「焦点掉回 body」这个事实，正是本 finding 要防的假绿。 */
+async function expectEditorActive(page: Page, paneIndex = 0): Promise<void> {
+  const info = await page.evaluate((index) => {
+    const pane = document.querySelectorAll(".editor-pane")[index] ?? null;
+    const active = document.activeElement as HTMLElement | null;
+    return {
+      tag: active?.tagName ?? "null",
+      cls: typeof active?.className === "string" ? active.className : "",
+      isContent: active !== null && active.classList.contains("cm-content"),
+      inPane: pane !== null && active !== null && pane.contains(active),
+    };
+  }, paneIndex);
+  expect(
+    info.isContent && info.inPane,
+    `activeElement 应为第 ${paneIndex} 个 pane 的 .cm-content，实测 ${info.tag}.${info.cls}（inPane=${info.inPane}）`,
+  ).toBe(true);
+}
+
 test("Close All Tabs：全 clean——本 pane 全部标签关闭、回到空态、焦点交还编辑器", async ({ page }) => {
   await stubTauri(page, closeAllVault());
   await page.goto("/");
@@ -555,6 +575,10 @@ test("Close All Tabs：多个 dirty——逐个弹既有确认；取消停手不
   await betaConfirm.getByRole("button", { name: "取消" }).click();
   await expect(page.locator(".tab-name")).toHaveText(["beta.md", "gamma.md"]);
   await expect(page.locator(".tab", { hasText: "beta.md" }).locator(".tab-dirty")).toBeVisible();
+  // review r1 P2-1：确认浮条的动作钮随答复从 DOM 移除，停手后焦点必须回到前台编辑器
+  // （前台是 gamma），MUST NOT 留在 BODY。断言读真实 activeElement，不只数 focusEditor 调用。
+  await expectEditorActive(page);
+  await expect(page.locator(".cm-content")).toContainText("GGG");
 
   // 再来：放弃 beta → 紧接着轮到 gamma（同一时刻只有一条确认，不并排两条）
   await openTabMenu(page, "beta.md");
@@ -569,10 +593,99 @@ test("Close All Tabs：多个 dirty——逐个弹既有确认；取消停手不
   await gammaConfirm.getByRole("button", { name: "保存并关闭" }).click();
 
   await expect(page.locator(".tab")).toHaveCount(0, { timeout: 10000 });
-  await expect(page.locator(".cm-content")).toBeFocused();
+  await expectEditorActive(page);
   // 放弃 ≠ 写盘；保存才落盘
   expect(await fileText(page, "beta.md")).toBe(BETA);
   await expect.poll(() => fileText(page, "gamma.md")).toContain("GGG");
+});
+
+test("Close All Tabs：点掉确认浮条同样停手——焦点回前台编辑器，剩余标签与脏内容不动", async ({ page }) => {
+  await stubTauri(page, closeAllVault());
+  await page.goto("/");
+  await openTabs(page, ["alpha.md", "beta.md", "gamma.md"]);
+
+  await page.locator(".tab-open", { hasText: "beta.md" }).click();
+  await dirty(page, "BBB");
+  await page.locator(".tab-open", { hasText: "gamma.md" }).click();
+  await dirty(page, "GGG");
+
+  // 右键 alpha（clean）→ 它先关掉，停在 beta 的确认上；点浮条本体（不是任何动作钮）= 没答复
+  await openTabMenu(page, "alpha.md");
+  await menuItem(page, "Close All Tabs").click();
+  const confirm = page.locator(".lumir-toast", { hasText: "「beta.md」有未保存修改" });
+  await expect(confirm).toHaveCount(1);
+  await confirm.click();
+  await expect(page.locator(".lumir-toast", { hasText: "关闭后修改将丢失" })).toHaveCount(0);
+
+  await expect(page.locator(".tab-name")).toHaveText(["beta.md", "gamma.md"]);
+  await expect(page.locator(".tab", { hasText: "beta.md" }).locator(".tab-dirty")).toBeVisible();
+  // P2-1 判据：dismiss 与「取消」同一条停手路径，焦点同样必须回到前台编辑器（gamma）
+  await expectEditorActive(page);
+  await expect(page.locator(".cm-content")).toContainText("GGG");
+});
+
+test("Close All Tabs：保存冲突停手——焦点回编辑器、冲突浮条可见、内存修改未丢", async ({ page }) => {
+  const vault = closeAllVault();
+  await stubTauri(page, {
+    ...vault,
+    failures: {
+      document_save: { code: "document_conflict", message: "文件已被外部修改，请先协调冲突" },
+    },
+  });
+  await page.goto("/");
+  await openTabs(page, ["alpha.md", "beta.md"]);
+
+  await page.locator(".tab-open", { hasText: "beta.md" }).click();
+  await dirty(page, "BBB");
+
+  // 右键 alpha（clean）→ 它先关掉，停在 beta 的确认上；选「保存并关闭」而保存报冲突
+  await openTabMenu(page, "alpha.md");
+  await menuItem(page, "Close All Tabs").click();
+  await page
+    .locator(".lumir-toast", { hasText: "「beta.md」有未保存修改" })
+    .getByRole("button", { name: "保存并关闭" })
+    .click();
+
+  // 保存未闭环 ⇒ 该标签不关、批量停手；既有冲突浮条（D41 + 两个出口）在场
+  const conflict = page.locator(".lumir-toast", { hasText: "保存冲突" });
+  await expect(conflict).toHaveCount(1);
+  await expect(conflict.getByRole("button", { name: "强制覆盖保存" })).toBeVisible();
+  await expect(page.locator(".tab-name")).toHaveText(["beta.md"]);
+  await expect(page.locator(".tab", { hasText: "beta.md" }).locator(".tab-dirty")).toBeVisible();
+  await expect(page.locator(".cm-content")).toContainText("BBB");
+  // P2-1 判据：冲突浮条是非模态提示（既有合同：它不夺焦）——焦点回编辑器正文，不是 BODY
+  await expectEditorActive(page);
+});
+
+test("Close All Tabs：写失败停手——焦点回编辑器、错误浮条点名文档、内存修改未丢", async ({ page }) => {
+  const vault = closeAllVault();
+  await stubTauri(page, {
+    ...vault,
+    failures: {
+      document_save: { code: "fs_write_failed", message: "磁盘写入失败" },
+    },
+  });
+  await page.goto("/");
+  await openTabs(page, ["alpha.md", "beta.md"]);
+
+  await page.locator(".tab-open", { hasText: "beta.md" }).click();
+  await dirty(page, "BBB");
+
+  await openTabMenu(page, "alpha.md");
+  await menuItem(page, "Close All Tabs").click();
+  await page
+    .locator(".lumir-toast", { hasText: "「beta.md」有未保存修改" })
+    .getByRole("button", { name: "保存并关闭" })
+    .click();
+
+  const failure = page.locator(".lumir-toast", { hasText: "「beta.md」保存失败" });
+  await expect(failure).toHaveCount(1);
+  await expect(failure).toContainText("磁盘写入失败");
+  await expect(page.locator(".tab-name")).toHaveText(["beta.md"]);
+  await expect(page.locator(".tab", { hasText: "beta.md" }).locator(".tab-dirty")).toBeVisible();
+  await expect(page.locator(".cm-content")).toContainText("BBB");
+  // P2-1 判据：写失败同样停在「保存未闭环」这一格，焦点回编辑器正文
+  await expectEditorActive(page);
 });
 
 test("Close All Tabs：vault 外只读与图片会话沿用既有 closeTab 语义（不弹确认、一次关完）", async ({ page }) => {
@@ -618,6 +731,50 @@ test("Close All Tabs：作用域是右键所在 pane 的标签条——另一个
 
   await expect(strips.nth(1).locator(".tab")).toHaveCount(0);
   await expect(strips.nth(0).locator(".tab-name")).toHaveText(["alpha.md", "beta.md"]);
-  // 右 pane 回到空态：焦点落它自己的正文（空态占位槽仍在场）
-  await expect(page.locator(".editor-pane").nth(1).locator(".cm-content")).toBeFocused();
+  // 右 pane 回到空态：焦点落它自己的正文（空态占位槽仍在场），左 pane 不抢焦点
+  await expectEditorActive(page, 1);
+});
+
+test("Close All Tabs：双 pane 停手——焦点落在右键 pane 的编辑器，另一 pane 不动", async ({ page }) => {
+  await stubTauri(page, closeAllVault({ keys: { F2: "pane.split" } }));
+  await page.goto("/");
+  await openTabs(page, ["alpha.md", "beta.md"]);
+  await configApplied(page);
+  await page.keyboard.press("F2");
+
+  const strips = page.locator(".tabstrip");
+  await page.locator('.ft-row[title="gamma.md"]').click();
+  await page.locator('.ft-row[title="delta.md"]').click();
+  await expect(strips.nth(1).locator(".tab-name")).toHaveText(["gamma.md", "delta.md"]);
+
+  // 把右 pane 的前台 delta 弄脏（右键 gamma → 目标顺序 [gamma(clean), delta(dirty)]）
+  await page.locator(".editor-pane").nth(1).locator(".cm-content").click();
+  await page.keyboard.type("DDD");
+  await expect(strips.nth(1).locator(".tab.is-active .tab-dirty")).toBeVisible();
+
+  await strips.nth(1).locator(".tab", { hasText: "gamma.md" }).click({ button: "right" });
+  await expect(page.locator(".tab-menu:not([hidden])")).toBeVisible();
+  await menuItem(page, "Close All Tabs").click();
+  // gamma（clean）先关掉；停在 delta 的确认上，取消 = 停手
+  await expect(strips.nth(1).locator(".tab-name")).toHaveText(["delta.md"]);
+  await page
+    .locator(".lumir-toast", { hasText: "「delta.md」有未保存修改" })
+    .getByRole("button", { name: "取消" })
+    .click();
+  await expect(strips.nth(1).locator(".tab-name")).toHaveText(["delta.md"]);
+  await expect(strips.nth(0).locator(".tab-name")).toHaveText(["alpha.md", "beta.md"]);
+  // 停手焦点：右键所在 pane 的编辑器正文（delta 的内容），左 pane 不接管
+  await expectEditorActive(page, 1);
+  await expect(page.locator(".editor-pane").nth(1).locator(".cm-content")).toContainText("DDD");
+
+  // 完成路径：再关一次并放弃 → 右 pane 清空，焦点仍在右 pane 的编辑器（空态）
+  await strips.nth(1).locator(".tab", { hasText: "delta.md" }).click({ button: "right" });
+  await menuItem(page, "Close All Tabs").click();
+  await page
+    .locator(".lumir-toast", { hasText: "「delta.md」有未保存修改" })
+    .getByRole("button", { name: "放弃修改并关闭" })
+    .click();
+  await expect(strips.nth(1).locator(".tab")).toHaveCount(0, { timeout: 10000 });
+  await expect(strips.nth(0).locator(".tab-name")).toHaveText(["alpha.md", "beta.md"]);
+  await expectEditorActive(page, 1);
 });

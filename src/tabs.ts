@@ -195,8 +195,9 @@ export interface TabsDeps {
   /** 把焦点交给这个 pane 的编辑器（装配层的 `handle.focusPreservingReadingPosition`，
    *  MUST NOT 裸 `view.focus()`——聚焦不得把阅读位置拽回光标处，见 `src/scroll-position-view.ts`）。
    *
-   *  目前只有一个消费者：「关闭全部标签」批量完成后**一条标签都不剩**，菜单的焦点归还
-   *  （`focusTab` 按路径现查）无处可落——空态下前台是未命名空文档，键盘的落点应当是正文。
+   *  消费者是「关闭全部标签」的批量收尾：**全关完与中途停手都要动一次焦点**——确认浮条的
+   *  动作钮随答复从 DOM 移除，浏览器会把焦点送回 body（review r1 P2-1）；全关完时前台是
+   *  未命名空文档、停手时前台是当前标签，两者的键盘落点都是正文。
    *  注入而不是在模块内够 `editor.view`：交还焦点的口径与实现全仓只有装配层那一份。 */
   focusEditor: () => void;
   /** 让**这条标签条所属的 pane** 成为活跃 pane（装配层的 activatePane）。
@@ -541,10 +542,15 @@ export function createTabs(deps: TabsDeps): TabsHandle {
       // 的批量关闭会让随后的 syncActiveDocument 解到另一个 pane 的前台。
       activatePane();
       void closeEach(closeAllTargets(sessions), resolveClose).then(() => {
-        // 全关完之后没有任何标签可归还焦点（restoreFocus 会落空）：把焦点交给编辑器。
-        // 只在「本 pane 一条可见标签都不剩」时才动焦点——取消 / 保存未闭环而停手时标签还在，
-        // 焦点归用户刚点过的确认浮条，MUST NOT 抢走。
-        if (visibleTabsOf(editor.sessions()).length === 0) focusEditor();
+        // 批量结束（全关完或中途停手）都要归还一次焦点：确认浮条的动作钮在答复那一刻就随
+        // 浮条从 DOM 移除，浏览器会把焦点送回 body（review r1 P2-1 的实测形态）。落点按
+        // 当前前台会话分两种，都在本 pane 内——另一个 pane MUST NOT 接管焦点：
+        //   - 文档会话（含全关完后的未命名空文档）→ 编辑器正文（focusEditor，按 M280 口径
+        //     不改变阅读位置；保存冲突 / 写失败的提示是非模态浮条，既有合同就是「不夺焦」）；
+        //   - 图片会话（编辑器这时是哨兵只读面，聚焦它没有意义）→ 那一条标签的按钮。
+        const active = editor.activeSession();
+        if (isDocSession(active)) focusEditor();
+        else focusTab(active);
       });
       return;
     }

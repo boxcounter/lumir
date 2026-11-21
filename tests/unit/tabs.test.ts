@@ -411,14 +411,17 @@ test("关闭全部标签：多个 dirty——逐个弹既有确认；取消停�
     "复用 M149 的三个出口（保存并关闭 / 放弃修改并关闭 / 取消）",
   );
   assert.equal(rig.toasts[0].sticky, true);
-  assert.equal(rig.focusEditorCalls, 0, "用户还没答复：焦点 MUST NOT 被抢走");
+  assert.equal(rig.focusEditorCalls, 0, "用户还没答复：批量还没收尾，MUST NOT 提前动焦点");
 
   // 出口三「取消」：批量停手，b 与尚未处理的 c 都留下；已关掉的 a 不回滚。
   rig.toasts[0].actions[2].run();
   await flush();
   assert.deepEqual(rig.closed, ["a.md"]);
   assert.deepEqual(rig.editor.sessions, [b, c]);
-  assert.equal(rig.focusEditorCalls, 0, "停手时标签还在，焦点留在用户刚点过的确认浮条上");
+  // 停手也要归还焦点：确认按钮随浮条移除后浏览器会把焦点送回 body（review r1 P2-1）。
+  // 这里只证明「收尾路径调了 focusEditor」——真实 activeElement 的判据在浏览器层
+  // （tests/visual/scenes/tab-menu.spec.ts 的 expectEditorActive）。
+  assert.equal(rig.focusEditorCalls, 1, "停手时焦点交给前台编辑器");
 
   // 再来一次并选「放弃修改并关闭」：b 关掉之后批量继续，c 也走它自己的确认。
   rig.openMenu("b.md");
@@ -433,10 +436,10 @@ test("关闭全部标签：多个 dirty——逐个弹既有确认；取消停�
   assert.deepEqual(rig.closed, ["a.md", "b.md"]);
   assert.equal(rig.toasts.length, 3);
   assert.equal(rig.toasts[2].text, t("D92", { path: "c.md" }));
-  assert.equal(rig.focusEditorCalls, 0);
+  assert.equal(rig.focusEditorCalls, 1, "批量还没收尾：MUST NOT 提前再动一次焦点");
 
   rig.toasts[2].actions[1].run();
   await flush();
   assert.deepEqual(rig.closed, ["a.md", "b.md", "c.md"]);
-  assert.equal(rig.focusEditorCalls, 1);
+  assert.equal(rig.focusEditorCalls, 2, "全关完同样收尾一次（前台是未命名空文档）");
 });
