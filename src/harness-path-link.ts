@@ -104,7 +104,14 @@ export function lineSuffixAt(
   // 后缀之后必须不是 ASCII 路径延续（`a.md:12x` / `a.md:12/5` 不是行号引用）。中文紧跟
   // 行号则是行文（「见 a.md:12 的内容」常写成「见a.md:12的内容」）——中文是候选字符，
   // 不能拿它当「路径还在继续」的判据。`-` 留在拒绝类里，`9-12-15` 因此整段不成立。
-  if (/[A-Za-z0-9_.\-/]/.test(text[at + match[0].length] ?? "")) return { end: at };
+  //
+  // `.` 单独判（句末句号，mission harness-navigation-nov21）：英文行文常写成
+  // 「见 design.md:69.」——句号是**行文标点**，不是路径延续，后缀必须成立（否则链接退化成
+  // `design.md`、点击只开到文件首，行号静默丢失）。只有 `.` 后紧跟数字时才是小数 / 版本号
+  // 的延续（`a.md:12.5`），沿用原来的整段拒绝口径。
+  const trailing = text[at + match[0].length] ?? "";
+  if (trailing !== "" && /[A-Za-z0-9_\-/]/.test(trailing)) return { end: at };
+  if (trailing === "." && /\d/.test(text[at + match[0].length + 1] ?? "")) return { end: at };
   const line = Number(match[1]);
   if (!Number.isInteger(line) || line < 1) return { end: at };
   // `:起-止`：`止 < 起` 使**整个**后缀不成立（MUST NOT 回退成只有 `:起`——半吞会让可点范围

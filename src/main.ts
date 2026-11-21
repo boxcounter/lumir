@@ -848,17 +848,19 @@ function toggleHarnessPane(): void {
 }
 
 /** 打开 harness pane（旁侧 pane；harness:文档默认 1:1）：已有第二 doc pane 时先并标签收拢，
- *  再开 harness pane；焦点落 composer。 */
-function openHarnessPane(): void {
+ *  再开 harness pane。`focusComposer` 缺省 true（显式打开 / toggle 的既有落点：焦点进输入区）；
+ *  cron 结果通知点击传 false——那一步的意图是「看见这次运行的会话」，不是开始输入，正文的
+ *  焦点与阅读位置 MUST NOT 被抢走（mission harness-navigation-nov21）。 */
+function openHarnessPane(focusComposer = true): void {
   // 已有第二 doc pane：其标签并入 root（closeActivePane 的方案 A 口径，不丢标签）。
   if (paneLayout.isSplit() && paneLayout.panes()[1].handle.kind === "doc") {
     closeActivePane();
   }
-  if (paneLayout.isSplit()) return; // 上限二兜底（harness 已在场等防御性情形）
+  if (paneLayout.isSplit()) return; // 上限二兜底（harness 已在场等防御性情形；在场即可见，内容由调用方恢复）
   // 首开默认宽度比只在无存储值时生效（design §7）；拖拽/存储值沿用。
   if (!storedRatioApplied) splitRatio = HARNESS_DEFAULT_DOC_RATIO;
   addPane("harness");
-  harnessPanel.focusComposer();
+  if (focusComposer) harnessPanel.focusComposer();
   syncActiveDocument();
   // 布局变化落盘（harness_pane 位 + 比例； Debounce 在 store 里）。
   switcher.sessionChanged();
@@ -3192,12 +3194,16 @@ async function handleCronRun(payload: CronRunPayload): Promise<void> {
   }
 }
 
-/** 结果通知点击：恢复该次运行的会话（走既有恢复链路；不重新运行）。 */
+/** 结果通知点击：恢复该次运行的会话（走既有恢复链路；不重新运行）。
+ *  焦点口径（mission harness-navigation-nov21）：本路径的落点是「看见这次运行的会话」，
+ *  不是开始输入——`openHarnessPane(false)` 让 pane 在场 / 内容恢复，但正文原焦点与阅读位置
+ *  MUST NOT 被抢走。显式打开 / 切换 harness 的 composer 聚焦行为（`openHarnessPane()` 缺省）
+ *  逐字不变。 */
 async function handleCronOpenSession(payload: { vault: string; session_id: string }): Promise<void> {
   try {
     await ensureCronVault(payload.vault);
     await invoke("harness_resume_session", { session_id: payload.session_id });
-    openHarnessPane();
+    openHarnessPane(false);
     // 面板的 `vaultChanged` 对同一 vault 是空操作；先置空再设回，等价于「重新装载该 vault
     // 的会话面」——面板据此按恢复后的后端会话重取快照（不新增面板 API）。
     harnessPanel.vaultChanged("", null);

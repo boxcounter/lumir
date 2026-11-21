@@ -199,6 +199,47 @@ test("行范围后缀后紧跟 ASCII 路径字符 ⇒ 整段不成立（沿用�
   }
 });
 
+test("句末英文句号是行文标点，不吞行号后缀（mission harness-navigation-nov21）", () => {
+  // 现场形态：agent 行文里写「见 design.md:69.」。`.` 曾被当作路径延续字符 ⇒ 整个
+  // `:69` 后缀被拒 ⇒ 链接退化成 `design.md`、点击只开到文件首（行号静默丢失）。
+  const single = findPathCandidates("见 design.md:69.", fileIndex("design.md"));
+  assert.equal(single.length, 1);
+  assert.equal(single[0].line, 69);
+  assert.equal(single[0].lineEnd, 69);
+  assert.equal(single[0].text, "design.md:69", "句号留在可点范围之外");
+  assert.equal(single[0].to, "见 design.md:69".length);
+
+  const range = findPathCandidates("见 design.md:69-72.", fileIndex("design.md"));
+  assert.equal(range[0].line, 69);
+  assert.equal(range[0].lineEnd, 72, "行范围形态的闭区间止行不回归");
+  assert.equal(range[0].text, "design.md:69-72");
+
+  const column = findPathCandidates("见 design.md:69:5.", fileIndex("design.md"));
+  assert.equal(column[0].line, 69);
+  assert.equal(column[0].column, 5);
+  assert.equal(column[0].text, "design.md:69:5");
+
+  const ellipsis = findPathCandidates("见 design.md:69...", fileIndex("design.md"));
+  assert.equal(ellipsis[0].line, 69);
+  assert.equal(ellipsis[0].text, "design.md:69", "省略号同样只是行文标点");
+});
+
+test("`:` 后缀后的点号只有「点后紧跟数字」才算路径延续", () => {
+  // 反向对照：小数 / 版本号形态（`.5`）仍是路径延续，后缀不成立、可点范围止于路径本身。
+  const decimal = findPathCandidates("版本 a.md:12.5 完", fileIndex("a.md"));
+  assert.equal(decimal.length, 1);
+  assert.equal(decimal[0].line, undefined, "`.5` 是小数 / 版本号的延续，不是句末标点");
+  assert.equal(decimal[0].lineEnd, undefined);
+  assert.equal(decimal[0].text, "a.md");
+
+  // 既有拒绝类逐字不变（回归对照）：字母 / 斜杠 / 下划线 / 连字符仍是路径延续。
+  for (const text of ["a.md:12x", "a.md:12/5", "a.md:12_3", "a.md:12-3"]) {
+    const found = findPathCandidates(text, fileIndex("a.md"));
+    assert.equal(found[0].line, undefined, `${text}：后缀不成立`);
+    assert.equal(found[0].text, "a.md", text);
+  }
+});
+
 test("`-` 两侧含空白时按既有 :行号 口径只吞到第一个数字", () => {
   const found = findPathCandidates("notes/plan.md:12 - 40", fileIndex("notes/plan.md"));
   assert.equal(found.length, 1);
