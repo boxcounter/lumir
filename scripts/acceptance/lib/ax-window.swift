@@ -94,15 +94,45 @@ func axPickMain(_ windows: [AxWindowFacts]) -> (index: Int?, note: String) {
 }
 // <<< 主窗选择
 
+// 用法：
+//   ax-window <pid> <width> <height>           只写尺寸（M236 起的既有调用口径，输出行不变）
+//   ax-window <pid> <width> <height> <x> <y>   先挪到 (x,y) 再写尺寸，最后再校一次位置（副屏放置）
+//   ax-window <pid> --read                     只读主窗的 position / size（副屏放置的前后读数）
+//
+// 坐标是 Quartz 全局屏幕点（与 AX `window_bounds` / `NSScreen` 折算后的坐标系同一空间，见
+// ax-display.swift）。位置与尺寸都写同一扇主窗（`AXSubrole == AXStandardWindow` 选出来的那扇），
+// 不碰其它 app 的窗口：pid 由 runner 从本次 `launchApp` 拿到，是**本跑批自己的实例**。
 let args = CommandLine.arguments
-guard args.count >= 4, let pid = pid_t(args[1]), let w = Double(args[2]), let h = Double(args[3]) else {
-    FileHandle.standardError.write("usage: ax-window <pid> <width> <height>\n".data(using: .utf8)!)
+let readOnly = args.count == 3 && args[2] == "--read"
+
+func usage() -> Never {
+    FileHandle.standardError.write(
+        "usage: ax-window <pid> <width> <height> [x y] | ax-window <pid> --read\n".data(using: .utf8)!
+    )
     exit(2)
 }
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write("ax-window: \(message)\n".data(using: .utf8)!)
     exit(1)
+}
+
+guard args.count >= 2, let pid = pid_t(args[1]) else { usage() }
+var w = 0.0
+var h = 0.0
+var xArg: Double?
+var yArg: Double?
+if !readOnly {
+    guard args.count == 4 || args.count == 6, let width = Double(args[2]), let height = Double(args[3]) else {
+        usage()
+    }
+    w = width
+    h = height
+    if args.count == 6 {
+        guard let x = Double(args[4]), let y = Double(args[5]) else { usage() }
+        xArg = x
+        yArg = y
+    }
 }
 
 let app = AXUIElementCreateApplication(pid)
@@ -122,6 +152,52 @@ guard let mainIndex = pick.index else {
 let win = elements[mainIndex]
 let target = windows[mainIndex].summary
 
+/// 读窗口的 position / size；任一属性读不到回 nil（「读不到」与「0×0」必须分开）。
+func readFrame(_ element: AXUIElement) -> (point: CGPoint, size: CGSize)? {
+    var posRef: CFTypeRef?
+    var sizeRef: CFTypeRef?
+    var point = CGPoint.zero
+    var size = CGSize.zero
+    guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef) == .success,
+          let posValue = posRef, CFGetTypeID(posValue) == AXValueGetTypeID(),
+          AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
+          let sizeValue = sizeRef, CFGetTypeID(sizeValue) == AXValueGetTypeID()
+    else { return nil }
+    AXValueGetValue(posValue as! AXValue, .cgPoint, &point)
+    AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+    return (point, size)
+}
+
+func setPosition(_ element: AXUIElement, _ x: Double, _ y: Double) {
+    var point = CGPoint(x: x, y: y)
+    guard let value = AXValueCreate(.cgPoint, &point) else {
+        fail("AXValueCreate(pos) 失败（被写窗口 \(target)；场上 \(windows.count) 扇：\(listing)）")
+    }
+    let err = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value)
+    guard err == .success else {
+        fail("设 AXPosition \(Int(x)),\(Int(y)) 失败（AXError \(err.rawValue)）：被写窗口 \(target)；场上 \(windows.count) 扇：\(listing)")
+    }
+}
+
+if readOnly {
+    guard let frame = readFrame(win) else {
+        fail("读不到主窗的 AXPosition / AXSize：\(target)；场上 \(windows.count) 扇：\(listing)")
+    }
+    print(
+        "pos=\(Int(frame.point.x)),\(Int(frame.point.y)) " +
+            "size=\(Int(frame.size.width))x\(Int(frame.size.height)) " +
+            "window=\(target) windows=\(windows.count)"
+    )
+    exit(0)
+}
+
+// 顺序：先挪位置 → 再写尺寸 → 最后再校一次位置。先挪位置是为了让窗口管理器在**目标屏**上处理
+// 尺寸（先写大尺寸可能被当前屏钳一次，再挪过去就留下错误的生效值）；尺寸写完后位置可能被
+// 窗口管理器收边，所以最后再写一次目标位置。
+if let x = xArg, let y = yArg {
+    setPosition(win, x, y)
+}
+
 var size = CGSize(width: w, height: h)
 guard let sizeValue = AXValueCreate(.cgSize, &size) else {
     fail("AXValueCreate 失败（被写窗口 \(target)；场上 \(windows.count) 扇：\(listing)）")
@@ -131,11 +207,19 @@ guard setErr == .success else {
     fail("设 AXSize 失败（AXError \(setErr.rawValue)）：被写窗口 \(target)；场上 \(windows.count) 扇：\(listing)")
 }
 
-// 回读生效值（窗口管理器可能钳到最小尺寸——断言要对着真实结果，不是请求值）
-var backRef: CFTypeRef?
-let backErr = AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &backRef)
-var back = CGSize.zero
-if backErr == .success, let v = backRef, CFGetTypeID(v) == AXValueGetTypeID() {
-    AXValueGetValue(v as! AXValue, .cgSize, &back)
+if let x = xArg, let y = yArg {
+    setPosition(win, x, y)
 }
-print("size=\(Int(back.width))x\(Int(back.height)) window=\(target) windows=\(windows.count)")
+
+// 回读生效值（窗口管理器可能钳到最小尺寸 / 收边——断言要对着真实结果，不是请求值）
+guard let back = readFrame(win) else {
+    fail("回读 AXPosition / AXSize 失败：\(target)；场上 \(windows.count) 扇：\(listing)")
+}
+if xArg != nil {
+    print(
+        "size=\(Int(back.size.width))x\(Int(back.size.height)) " +
+            "pos=\(Int(back.point.x)),\(Int(back.point.y)) window=\(target) windows=\(windows.count)"
+    )
+} else {
+    print("size=\(Int(back.size.width))x\(Int(back.size.height)) window=\(target) windows=\(windows.count)")
+}
