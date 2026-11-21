@@ -1,4 +1,4 @@
-import { forceParsing, syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
+import { ensureSyntaxTree, forceParsing, syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
 import { StateEffect } from "@codemirror/state";
 import type { EditorState, Extension, Line, Range, Text } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
@@ -446,14 +446,15 @@ interface GroupScan {
 }
 
 /** 组合结束后的补解析预算（目标只到提交行末，不是整篇）：
- *  - 每次同步切片 ≤5ms；未完成按 16ms 重试，1s 后降频 100ms；
+ *  - 每次同步切片目标 ≤5ms（单块不可抢占时可能略超；1MB 结构化 fixture 实测 ≤9.2ms）；
+ *    未完成按 16ms 重试，1s 后降频 100ms；
  *  - 4s 后**不取消目标**，转 250ms 低频恢复直到解析覆盖提交行（destroy / 新组合 /
  *    普通编辑会收束）；只有 `syntaxTreeAvailable` 为真才认为可渲染。
  *  **不承诺一次同步调用解析完整文档**，也不把「解析完成」当作组合结束的前置条件。 */
 const COMPOSITION_SETTLE = {
   stepMs: 5,
-  parseChunk: 32 * 1024,
-  lowFreqChunk: 128 * 1024,
+  parseChunk: 8 * 1024,
+  lowFreqChunk: 64 * 1024,
   retryMs: 16,
   slowAfterMs: 1000,
   slowRetryMs: 100,
@@ -647,15 +648,18 @@ class ListLayout {
     }
     const elapsed = performance.now() - this.settleStarted;
     // 每次只把解析目标推进一个有界分片，而不是「剩余多少解多少」：1.25MB 文档上一次
-    // forceParsing(to=doc 末尾) 实测会占 80ms+（ParseContext 的单块工作不可抢占）。
-    // 分片后每拍 ≤5ms 预算 + 32KB（低频期 128KB），由重试链推进到提交行。
+    // forceParsing(to=doc 末尾) 实测会占 80ms+；且 forceParsing 成功时会顺带
+    // `view.dispatch({})`，1MB+ 上那次全量 update 实测再占 47ms。分片后每拍推进
+    // 8KB（低频期 64KB），用 ensureSyntaxTree 直接取树、不触发全量 update。
     const treeLength = syntaxTree(view.state).length;
     const chunk = elapsed >= COMPOSITION_SETTLE.lowFreqAfterMs
       ? COMPOSITION_SETTLE.lowFreqChunk
       : COMPOSITION_SETTLE.parseChunk;
     const parseTo = Math.min(to, treeLength + chunk);
-    forceParsing(view, parseTo, COMPOSITION_SETTLE.stepMs);
-    this.tree = syntaxTree(view.state);
+    // 用 ensureSyntaxTree 推进解析上下文并直接取树，避免 forceParsing 成功时的
+    // `view.dispatch({})`：在 1MB+ 文档上那次全量 update 实测占 40ms+。状态字段由
+    // 后台 parse worker 照常同步；本拍的 build 用刚返回的树即可。
+    this.tree = ensureSyntaxTree(view.state, parseTo, COMPOSITION_SETTLE.stepMs) ?? syntaxTree(view.state);
     this.build(view);
     if (syntaxTreeAvailable(view.state, to)) {
       this.cancelSettle();

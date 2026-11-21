@@ -599,7 +599,8 @@ test("正文 IME 大文档：解析未完成时组合结束走有界恢复并最
   const settleSliceMaxMs = settleSlices.length ? Math.max(...settleSlices) : -1;
   // 实际 settleStep 回调切片有界；不是把入口时间冒充解析成本。
   expect(settleSamples.length, `必须采到 settleStep 回调：${JSON.stringify(timerSamples.slice(0, 20))}`).toBeGreaterThan(0);
-  expect(settleSliceMaxMs, JSON.stringify(settleSamples.slice(0, 20))).toBeLessThan(50);
+  // 1MB 结构化 fixture 实测 max 9.2ms；forceParsing 全量 update 旧路径 47ms+。
+  expect(settleSliceMaxMs, JSON.stringify(settleSamples.slice(0, 20))).toBeLessThan(30);
   await info.attach("ime-large-doc-settle", {
     body: JSON.stringify({
       docLen: probe.docLen,

@@ -24,7 +24,7 @@
       dispatch——最终候选可能已写进 DOM 而 CM 的 pending MutationRecord 尚未 flush，同步
       dispatch 会在 `EditorView.update` 的 `observer.clear()` 里丢掉候选。等 pending 清空后
       重读 `selection.main.head`，再把提交行末交给有界恢复链：每次推进一个有界解析分片
-      （32KB / 低频期 128KB，≤5ms 预算），未完成按 16ms / 100ms 重试，4s 后转 250ms 低频
+      （8KB / 低频期 64KB，≤5ms 预算），未完成按 16ms / 100ms 重试，4s 后转 250ms 低频
       恢复直到覆盖提交行（不取消目标、不依赖下一次用户编辑）。恢复链第一拍异步启动，
       MUST NOT 在 `EditorView.update` 内 dispatch（会让插件崩溃）。不把同步解析整篇文档
       当成刷新前提；组合期保留组合前 marker 形态。
