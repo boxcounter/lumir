@@ -134,7 +134,7 @@ md 模式 SHALL 按 [GFM spec §4.10](https://github.github.com/gfm/#tables-exte
 md 模式下的链接判定 SHALL 取自 lezer 语法树（`src/editor.ts` 的 `markdownConfig` = `markdownLanguage` + `GFM`）里的 `URL` 节点，判定面 SHALL 覆盖四种节点形态：
 
 1. **标准链接** `[title](target)`：`Link` 节点的 `URL` 子节点（M144 / M145 落地，本 change 后逐条不变）。
-2. **裸 URL**：正文流里的 `http:` / `https:` / `mailto:` 字面 URL——GFM 的 `Autolink` 扩展把它直接产出为一个 `URL` 节点（父节点既不是 `Link` 也不是 `Image`），段落、列表项与引用块内一视同仁；表格 cell 内同样装饰是裁决点 D4 的推荐项（取备选时按 [proposal.md](../../changes/archive/2026-09-28-bare-url-cmd-click/proposal.md) 的改写指引收窄）。
+2. **裸 URL**：正文流里的 `http:` / `https:` / `mailto:` 字面 URL——GFM 的 `Autolink` 扩展把它直接产出为一个 `URL` 节点（父节点既不是 `Link` 也不是 `Image`），段落、列表项与引用块内一视同仁；表格 cell 内同样装饰是裁决点 D4 的推荐项（取备选时按 `openspec/changes/archive/2026-09-28-bare-url-cmd-click/proposal.md` 的改写指引收窄）。
 3. **链接定义行** `[tag]: url`：`LinkReference` 节点的 `URL` 子节点（`[tag]: ` 前缀是同一节点的 `LinkLabel` 与 `LinkMark`）。
 4. **角括号自动链接** `<https://…>`：`Autolink` 节点的 `URL` 子节点（尖括号是同一节点的两个 `LinkMark`）。判据与形态 2 同一条——这是裁决点 D1 的推荐项，取备选（排除本形态）时本款整条删除。
 
@@ -150,9 +150,11 @@ md 模式下的链接判定 SHALL 取自 lezer 语法树（`src/editor.ts` 的 `
 
 形态 1 的 `title` SHALL 取 `[` 与 `]` 之间的显示文本；`[`、`]` 与 `(target)` 三段源码 SHALL 被装饰隐藏，MUST NOT 出现在渲染态。隐藏与标记 SHALL 只存在于装饰层：`EditorState.doc` 与磁盘文件逐字节不变（ADR 0003 §3 铁律），装饰层的视口增量纪律不变。
 
-**形态 2 / 3 / 4 的装饰形态**：目标区间 SHALL 被标记为链接（`src/preview/theme.ts:611` 的 `.cm-lp-link`，与标准链接的显示文本同一类，零新 token、零新色值），`title` 属性给出解码后的 URL，尾部 SHALL 追加 `↗︎` 标记 widget（与标准链接的外链尾标同一份实现、同一份可见文字）。这三种形态**没有可隐藏的链接源码**（URL 本身就是原文）——MUST NOT 为「看起来像标准链接」而额外隐藏任何字符；唯一的例外是形态 4 的两个尖括号，按标准链接的 `[` / `(` 同款隐藏（尖括号是语法定界符，不是目标的一部分）。形态 3 SHALL 只装饰 URL 部分：`[tag]: ` 前缀属定义行的语法，SHALL 保持原文（整行隐藏是另一个形态，见 [proposal.md](../../changes/archive/2026-09-28-bare-url-cmd-click/proposal.md) 的 Non-goals 与裁决点 D3）。
+**形态 2 / 3 / 4 的装饰形态**：目标区间 SHALL 被标记为链接（`src/preview/theme.ts:611` 的 `.cm-lp-link`，与标准链接的显示文本同一类，零新 token、零新色值），`title` 属性给出解码后的 URL，尾部 SHALL 追加 `↗︎` 标记 widget（与标准链接的外链尾标同一份实现、同一份可见文字）。这三种形态**没有可隐藏的链接源码**（URL 本身就是原文）——MUST NOT 为「看起来像标准链接」而额外隐藏任何字符；唯一的例外是形态 4 的两个尖括号，按标准链接的 `[` / `(` 同款隐藏（尖括号是语法定界符，不是目标的一部分）。形态 3 SHALL 只装饰 URL 部分：`[tag]: ` 前缀属定义行的语法，SHALL 保持原文（整行隐藏是另一个形态，见 `openspec/changes/archive/2026-09-28-bare-url-cmd-click/proposal.md` 的 Non-goals 与裁决点 D3）。
 
 **形态 2 / 3 / 4 的可装饰前提是「节点原文带白名单 scheme」**（`http` / `https` / `mailto`，大小写不敏感）：GFM 的字面 URL 形态里 `www.example.com` 与裸邮箱 `a@b.example.com` **没有 scheme**，`classifyLinkTarget` 会把它们判成 vault 内资产（末段带 `.com` 一类的扩展名），而按资产处理意味着把这两个串当 vault 内相对路径交给 Rust 校验——那是错误的语义。因此这类无 scheme 的字面 URL SHALL 保持原文，MUST NOT 装饰、MUST NOT 产生打开入口（判据是「有没有 scheme」这条硬事实，不是「像不像 URL」的猜测）。
+
+**裸 URL 的文本边界（change `fix-bare-url-cjk-boundary-nov21`）**：形态 2 的 `URL` 节点在 GFM 词法里没有定界符，其路径段 `[^\s<]*` 会把紧跟的中文与全角标点吞进节点。因此链接层 SHALL 把**裸 URL** 的目标区间收窄到**首个 CJK / 全角字符之前**：CJK 字符（Han / 假名 / 谚文等）与全角字符 SHALL 作为正文保留，MUST NOT 进入链接目标、装饰区间、`title` 属性或打开路径。café / 西里尔 / 希腊等其它 Unicode 路径字符 MUST NOT 触发截断——本条不是「裸 URL 仅支持 ASCII」。该收窄 MUST NOT 作用于显式定界语法（形态 3 定义行、形态 4 角括号自动链接）与形态 1 标准链接——那些位置的中文可以是 URL 的一部分。百分号编码的中文路径 / 查询是 ASCII，SHALL 完整保留；收窄只决定「目标到哪结束」，MUST NOT 改写文档、MUST NOT 重新编码 URL。链接层是这条边界的唯一实现点（装饰与激活共用 `literalLinkOfNode`），MUST NOT 在装饰层与激活层各判一次。
 
 **保持原文（不装饰、无打开入口、语法树上下文天然排除——前端 MUST NOT 另写一套上下文判定）的形态**（逐条为不变量）：引用式链接的**引用点** `[text][ref]` / `[ref]`（lezer 不把定义处的 URL 挂到引用点，拿不到目标就不该猜——本 change 只装饰定义行那一侧的 URL）；白名单外 scheme（`javascript:` / `file:` / 应用自定义协议，含 GFM 字面形态能产出的 `xmpp:`）；**大写字面的 scheme**（`HTTPS://…`——GFM 的字面自动链接只认小写 `http://` / `https://` / `mailto:`，那种写法根本不产出 `URL` 节点，因此同样保持原文；这是上游语法树的结论，不是本 change 的收窄，分类实现本身仍是大小写不敏感的，`[x](HTTPS://…)` 照旧可点）；行内代码、围栏代码块与缩进代码块（这些上下文里的节点是 `CodeText` / `InlineCode`，没有 `URL` 节点）；HTML 块与 HTML 注释（同样没有 `URL` 节点）；frontmatter 块（由既有的 frontmatter 剪枝排除——语法树本身不认识 frontmatter，这一条是剪枝顺序的产物，MUST NOT 依赖「语法树会排除它」）。
 
@@ -175,6 +177,16 @@ md 模式下的链接判定 SHALL 取自 lezer 语法树（`src/editor.ts` 的 `
 
 - **WHEN** 打开一份含 `正文里的 https://example.invalid/bare 是裸 URL。` 与 `[homepage]: https://example.invalid/home` 两行的 Markdown
 - **THEN** 第一个 URL 上屏为带链接样式的 `https://example.invalid/bare`（文本本身保持可见，因为它就是原文）并在其后出现 `↗︎`；第二行的 URL 部分同样带链接样式与 `↗︎`，而 `[homepage]: ` 前缀保持原文；两处的 `title` 属性分别是两个解码后的 URL；`EditorState.doc` 与磁盘文件逐字节不变
+
+#### Scenario: 裸 URL 后紧邻中文时中文不进入链接
+
+- **WHEN** 打开一份含 `正文里的 https://example.invalid/abc中文说明 是裸 URL。` 的 Markdown
+- **THEN** `https://example.invalid/abc` 上屏为链接并带 `↗︎` 尾标，紧随的 `中文说明` 作为普通正文保留；该链接的 `title` 与 ⌘⏎ / ⌘-Click 的打开目标都是 ASCII 前缀，光标落在中文内部时 ⌘⏎ MUST NOT 打开该链接；`EditorState.doc` 与磁盘文件逐字节不变。对照：`<https://example.invalid/中文>` 与 `[home]: https://example.invalid/中文` 仍以完整中文目标装饰与打开；百分号编码的 `https://example.invalid/%E4%B8%AD` 完整保留
+
+#### Scenario: 非 CJK Unicode 路径不裁
+
+- **WHEN** 打开一份含 `https://example.invalid/café` 与 `https://example.invalid/путь` 的 Markdown
+- **THEN** 两条裸 URL 都以**完整**路径装饰与打开（`title` / ⌘⏎ / ⌘-Click 目标逐字相同）；边界规则 MUST NOT 把非 CJK 的 Unicode 路径误裁成 ASCII 前缀，也 MUST NOT 被实现成「裸 URL 仅支持 ASCII」
 
 #### Scenario: 角括号自动链接装饰为外链
 

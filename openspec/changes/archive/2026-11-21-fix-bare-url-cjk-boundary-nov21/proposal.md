@@ -4,6 +4,46 @@
 - 日期: 2026-11-21
 - 角色: Alex Lee（评审 / 裁决），AI agent（起草）
 
+> 评审记录
+> 节点 1（提案评审）：**通过**——来源是 Alex 2026-11-21 需求批里的原始需求「裸 URL 后中文字符
+> 误纳入链接」，并以「请你继续」批准推进；本提案按这条原话的最小读法落地，实现期未新增其它
+> 产品行为。
+> 节点 2（归档放行）：**机器 + 独立评审放行**（[openspec-workflow.md](../../../../docs/process/openspec-workflow.md)
+> 「节点 2：归档默认由独立评审 + 机器判据放行」五要件），逐条事实与证据指针见下「节点 2 记录（归档前）」。
+
+## 节点 2 记录（归档前，2026-11-21）
+
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-11-21 通过——Alex 原始需求「裸 URL 后中文字符误纳入链接」+
+   「请你继续」批准推进（见上方「评审记录」）。实现期没有静默扩 scope：唯一产品改动是
+   `src/preview/links.ts` 的 `literalLinkOfNode` 裸 URL 边界与 `literalLinkAt` 拒绝边界之后的位置，
+   对应「What Changes」那一条 MODIFIED；未改 GFM 解析器、未 fork `@lezer/markdown`、未改写源码。
+2. **独立 reviewer clean / merge**：独立 reviewer agent-36 判 `clean/merge`，无 P1 / P2 findings，
+   绑定 integration tip `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/editing-batch-nov21/review-final.md`。
+   当前分支 tip 与该评审 tip 相同；评审结论明记「评审后仅基线、验收场景和光标测试变化，无产品代码
+   增量」，delta 自评审后未再改动。
+3. **tasks 完成**：`tasks.md` 10/10 全勾（`grep -c '^- \[x\]'` = 10，未勾项 0），无放弃项。
+   其中 2.4 记录的两条 `render-link` 整页像素差异属环境级字形差异；本机 CJK 渲染基线后经 Alex
+   「允许」重截（集成批 `b514d015`，含 `render-link-bare-url` / `render-link` 两张），基线更新
+   是人肉裁决点、已获准，不改变本 change 的 delta 与行为。
+4. **要求的门禁与真机证据**：动过 `tests/visual/scenes/**`（新增 `url-cjk-boundary-nov21.spec.ts`），
+   按 `scripts/gate.sh visual` 档取读数——`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0（含整页 /
+   元素像素层，基线为 Alex 已过目的 `b514d015`）。真机场景
+   `269-url-paste-and-cjk-boundary-nov21` 的 A 段 PASS；整场景 18 断言、0 FAIL（`status.txt` =
+   `PASS`），证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/269-url-paste-and-cjk-boundary-nov21/`
+   （`steps.md` / `shots/` / `ax/`）。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS——`扫过
+   15 份 delta，14 条 MODIFIED，对比 275 段，无静默丢段；归档队列 2 项已完成 change 均有唯一条目`
+   （退出码 0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 42
+   passed, 0 failed (42 items)`（退出码 0）。归档跟踪队列有且仅有一条本 change 条目
+   （`docs/backlog.md`）。delta 是 1 条 MODIFIED（整条复制 living 后加「裸 URL 的文本边界」段），
+   是真实增量，不是纯目录移动。
+
+未命中「必须找 Alex 的例外类别」：视觉基线更新已单独获 Alex「允许」，无未决的价值 / 行为裁决、
+无影响面升级、评审结论与 tip 均无异常、证据无缺口，故不另送 Alex。
+
 ## Why
 
 ### 需求来源（Alex 原话，逐字保留）
