@@ -1,6 +1,6 @@
 import { forceParsing, syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
 import { StateEffect } from "@codemirror/state";
-import type { EditorState, Line, Range, Text } from "@codemirror/state";
+import type { EditorState, Extension, Line, Range, Text } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { EDITOR_FONT_FAMILY_TOKEN } from "../typography";
@@ -398,6 +398,7 @@ function siblingTextBoxHeight(line: Element): number | null {
 
 const measured = StateEffect.define<readonly number[]>();
 const metadataReady = StateEffect.define<null>();
+const compositionSettled = StateEffect.define<null>();
 interface GroupScan {
   item: Node | null;
   width: number;
@@ -483,6 +484,7 @@ class ListLayout {
   update(update: ViewUpdate) {
     const tree = syntaxTree(update.state);
     let resized = false;
+    let compositionEnded = false;
     // 裸 marker 行的渲染门控是「判据选区」（reveal-gate，M259 按压快照）——按压窗口
     // 开 / 关本身不改选区，不触发重建会让冻结那一帧的门控判错（M461）。
     let pointerMoved = false;
@@ -490,8 +492,12 @@ class ListLayout {
       if (effect.is(measured)) { this.units = effect.value; resized = true; }
       if (effect.is(metadataReady)) resized = true;
       if (effect.is(pointerPressFrame)) pointerMoved = true;
+      if (effect.is(compositionSettled)) compositionEnded = true;
     }
     if (update.docChanged) {
+      // ViewPlugin 的 decorations provider 不做自动映射；组合期即使跳过 build，已有
+      // line/replace 区间也必须随变更移动，否则后续项的 marker 会暂时覆盖旧坐标。
+      this.decorations = this.decorations.map(update.changes);
       // 编辑不清掉已发布的组：键位经 changes 映射后旧宽度先顶着渲染，stale
       // 驱动后台重扫，只有宽度真变了才 publish 重建（见 schedule）。直接清空
       // 会让每次击键掉装饰 ≥16ms，列表文字左右抖动（桌面验收缺陷）。
@@ -518,7 +524,12 @@ class ListLayout {
     // pass 都 geometryChanged → 每 pass 再排一次 requestMeasure → 测量环路被洪峰
     // 打断（CM 的 "Measure loop restarted more than 5 times"），scrollTarget 的末次
     // 校正跑不完，无 fm 长文档的 ↓ 揭示不足（cursor-motion.spec.ts:84）。
-    if (resized || update.docChanged || tree !== syntaxTree(update.startState) || update.viewportChanged || update.selectionSet || pointerMoved) this.build(update.view);
+    // 组合期保持进入组合前的 DOM 形态。尤其段落后 `- ` 输入首字符时，不能一边让
+    // 输入法持有原始文本节点，一边插入 marker widget；compositionend 再统一重建。
+    if (!update.view.compositionStarted &&
+        (resized || compositionEnded || update.docChanged || tree !== syntaxTree(update.startState) || update.viewportChanged || update.selectionSet || pointerMoved)) {
+      this.build(update.view);
+    }
   }
 
   private schedule() {
@@ -526,6 +537,10 @@ class ListLayout {
     this.timer = setTimeout(() => {
       this.timer = undefined;
       if (this.destroyed) return;
+      if (this.view.compositionStarted) {
+        this.pending = true;
+        return;
+      }
       if (this.scans.size) {
         const deadline = performance.now() + 3;
         let remaining = 512;
@@ -706,4 +721,15 @@ class ListLayout {
   }
 }
 
-export const listDecorations = ViewPlugin.fromClass(ListLayout, { decorations: plugin => plugin.decorations });
+export const listDecorations: Extension = [
+  ViewPlugin.fromClass(ListLayout, { decorations: plugin => plugin.decorations }),
+  EditorView.domEventHandlers({
+    compositionend(_event, view) {
+      // WKWebView 可在 insertFromComposition 后立刻结束组合；此时增量语法树可能还没
+      // 覆盖刚形成的列表。先完成当前文档解析，再用 effect 唤醒冻结期的装饰重建。
+      forceParsing(view, view.state.doc.length, 10);
+      view.dispatch({ effects: compositionSettled.of(null) });
+      return false;
+    },
+  }),
+];

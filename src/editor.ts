@@ -9,6 +9,7 @@ export type ScrollSnapshot = ReturnType<EditorView["scrollSnapshot"]>;
 import { history, redo, undo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { backspaceBareMarkerLine, DEFAULT_AUTO_INDENT, enterWithAutoIndent } from "./enter-indent";
+import { logEvent } from "./diagnostics";
 // M447：词 / 字素簇扫描与 kill 槽的**共用**实现（两侧只有一份）住在叶子模块 src/quote-card.ts
 // ——composer 侧的模块图必须能进零 DOM 单测，而本模块的 import 图里有参数属性，两侧不能直接互
 // import（同 src/enter-indent.ts / src/list-indent.ts 的模块头所述）。
@@ -790,16 +791,55 @@ function replaceSelectedRanges(view: EditorView, text: string): void {
   view.dispatch(view.state.replaceSelection(text), { scrollIntoView: true, userEvent: "input.type" });
 }
 
+const compositionStarts = new WeakMap<EditorView, number>();
+const COMPOSITION_BACKSPACE_INPUTS = new Set(["deleteContentBackward", "deleteCompositionText"]);
+
+function traceIme(event: Event, view: EditorView, phase: string, handled = false): void {
+  if (location.hostname !== "127.0.0.1" || location.port !== "1420") return;
+  const input = event as InputEvent;
+  const main = view.state.selection.main;
+  logEvent("editor_ime", {
+    phase,
+    input_type: input.inputType ?? event.type,
+    event_composing: String(input.isComposing ?? false),
+    cm_composing: String(view.compositionStarted),
+    handled: String(handled || event.defaultPrevented),
+    from: String(main.from),
+    to: String(main.to),
+    start: String(compositionStarts.get(view) ?? -1),
+    doc_len: String(view.state.doc.length),
+    data_len: String(typeof input.data === "string" ? input.data.length : -1),
+    line_count: String(view.contentDOM.querySelectorAll(".cm-line").length),
+    marker_count: String(view.contentDOM.querySelectorAll(".cm-lp-list-marker").length),
+  });
+}
+
+/** 组合中 Backspace 只在即将删空 marked text 时改走显式事务；起点处消费事件、不改文档。 */
+function absorbCompositionBackspace(event: InputEvent, view: EditorView): boolean {
+  if (!COMPOSITION_BACKSPACE_INPUTS.has(event.inputType)) return false;
+  const start = compositionStarts.get(view);
+  const main = view.state.selection.main;
+  if (start === undefined || !main.empty || main.head < start) return false;
+  if (main.head === start) {
+    event.preventDefault();
+    return true;
+  }
+  const from = prevCluster(view.state, main.head, start);
+  if (from !== start) return false;
+  event.preventDefault();
+  deleteRange(view, from, main.head, "input.type.compose");
+  return true;
+}
+
 /** beforeinput 闸门本体：命中返回 true（事件已消费），否则 false 让原生编辑照常发生。 */
 function absorbNativeEdit(event: InputEvent, view: EditorView): boolean {
   const state = view.state;
-  // 组合期整段让给 CM：`view.composing` 只在**已有组合改动**后为真（CM 的实现是
-  // `inputState.composing > 0`），而 `compositionstart` 只把计数置 0——「已有非空选区 →
-  // compositionstart → 首个组合改动之前」这段窗口里它仍是 false。`view.compositionStarted`
-  // （`composing >= 0`）覆盖这段窗口，与 M855 的 cell 闸门同一口径；Safari 的组合提交
-  // 可能以 `insertText` 到达（CM 在 beforeinput 里有专门的死键收尾分支），组合期抢走
-  // 事件会绕过 CM 的组合处理。
-  if (state.readOnly || view.compositionStarted || event.isComposing) return false;
+  // `view.composing` 只在已有组合改动后为真，`view.compositionStarted` 才覆盖
+  // compositionstart 到首个改动之间的窗口。组合期只接管即将删空 marked text 的
+  // Backspace；WKWebView 的 inputType 是 deleteCompositionText，Chromium 是
+  // deleteContentBackward。其余输入仍交回 CM。
+  if (state.readOnly) return false;
+  if (view.compositionStarted || event.isComposing) return absorbCompositionBackspace(event, view);
   const ranges = state.selection.ranges;
   if (ranges.some((range) => !range.empty)) {
     if (event.inputType === "insertText") {
@@ -861,7 +901,30 @@ function absorbNativeEdit(event: InputEvent, view: EditorView): boolean {
 
 /** 只装进 md 模式：code 模式没有 replace 装饰，原生删除 / 键入无回读风险。 */
 const nativeEditGate = EditorView.domEventHandlers({
-  beforeinput: (event, view) => absorbNativeEdit(event as InputEvent, view),
+  compositionstart: (event, view) => {
+    const main = view.state.selection.main;
+    compositionStarts.set(view, Math.min(main.anchor, main.head));
+    traceIme(event, view, "compositionstart");
+    return false;
+  },
+  compositionupdate: (event, view) => {
+    traceIme(event, view, "compositionupdate");
+    return false;
+  },
+  compositionend: (event, view) => {
+    traceIme(event, view, "compositionend");
+    compositionStarts.delete(view);
+    return false;
+  },
+  beforeinput: (event, view) => {
+    const handled = absorbNativeEdit(event as InputEvent, view);
+    traceIme(event, view, "beforeinput", handled);
+    return handled;
+  },
+  input: (event, view) => {
+    traceIme(event, view, "input");
+    return false;
+  },
 });
 
 /** code 模式的唯一接管面（M860）：没有 replace 装饰，不需要 M836 / M854 的回读与选区
@@ -2306,7 +2369,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         //   dirty 自然收窄为 false（不依赖撤销栈位置，见 updateListener）。
         // - 撤销史**逐会话独立**（M149）：history 是 StateField，每个 state 自带一份栈；
         //   切标签走 view.setState，栈跟着 state 走，切回来仍能撤销。
-        history(),
+        history({
+          // compose.start 不与之前的普通输入并组：一次 undo 必须回到这段组合之前，
+          // 而不是连用户刚输入的列表 marker 一起撤掉；后续 compose 仍由 CM 无条件并组。
+          joinToEvent: (tr, adjacent) =>
+            adjacent && tr.annotation(Transaction.userEvent) !== "input.type.compose.start",
+        }),
         // 选区自绘（M285，缺陷修复）：`drawSelection()` 让选区与光标由 CM 自己的 state 画在
         // `.cm-selectionLayer` / `.cm-cursorLayer` 上，**不再走浏览器原生选区**。修的是这么一条
         // 真实缺陷（M273 survey 定位，全量报告 test-results/m277/findings.md）：

@@ -12,7 +12,7 @@
 // 失败读数：seed / step / op / before / expected / actual（模型 helper 统一格式），
 // 同时挂到 Playwright 附件；`LUMIR_ORACLE_SEEDS` 可只复跑指定 seed。
 import { expect, test, type Page } from "@playwright/test";
-import { fileText, stubTauri, type VaultFixture } from "./tauri-stub";
+import { dirtyReports, fileText, stubTauri, type VaultFixture } from "./tauri-stub";
 import { standardProviders } from "./provider-config";
 import {
   BodyOracle,
@@ -164,6 +164,182 @@ test("裸 marker 行 Backspace：一拍删掉 marker（真原生删除路径）"
   await page.waitForTimeout(600);
   await page.keyboard.press("Meta+z");
   await expect.poll(async () => (await bodyState(page)).doc).toBe(BARE_DOC);
+});
+
+test("WebKit 组合删除：deleteCompositionText 在删空时走显式事务，起点再删不改文档", async ({ page }) => {
+  const doc = "词汇\n- s";
+  await openBody(page, "oracle.md", doc);
+  await setBodyCaret(page, doc.length - 1);
+  const events = await page.locator(".cm-content").evaluate((el, sourceLength) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    view.dispatch({ selection: { anchor: sourceLength } });
+    const fire = () => {
+      const event = new InputEvent("beforeinput", {
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      // Chromium 构造器把不认识的 deleteCompositionText 归一成空串；保留 WKWebView 原值。
+      Object.defineProperty(event, "inputType", { value: "deleteCompositionText" });
+      return !el.dispatchEvent(event);
+    };
+    const deleted = fire();
+    const atStart = fire();
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    return { deleted, atStart };
+  }, doc.length);
+  expect(events).toEqual({ deleted: true, atStart: true });
+  expect(await bodyState(page)).toEqual({ doc: "词汇\n- ", anchor: doc.length - 1, head: doc.length - 1 });
+  expect(await page.locator(".cm-line").allTextContents()).toEqual(["词汇", "- "]);
+});
+
+test("IME 组合期间冻结列表装饰，提交后再刷新", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "CDP 只存在于 Chromium；WebKit 原生 IME 由 dev 事件日志复核");
+  const doc = "词汇\n- ";
+  await openBody(page, "oracle.md", doc);
+  await setBodyCaret(page, doc.length);
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0);
+  const cdp = await page.context().newCDPSession(page);
+  const compose = async (text: string) => cdp.send("Input.imeSetComposition", {
+    text,
+    selectionStart: text.length,
+    selectionEnd: text.length,
+  });
+  await compose("s");
+  await expect.poll(async () => (await bodyState(page)).doc).toBe("词汇\n- s");
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0);
+  expect(await page.locator(".cm-line").allTextContents()).toEqual(["词汇", "- s"]);
+
+  await compose("sh");
+  await cdp.send("Input.insertText", { text: "是" });
+  await expect.poll(async () => (await bodyState(page)).doc).toBe("词汇\n- 是");
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
+  const committedLine = await page.locator(".cm-line").nth(1).textContent();
+  expect(committedLine).not.toContain("-");
+  expect(committedLine).toContain("是");
+});
+
+test("IME 非末项组合输入：冻结期间后续 marker 随源码映射，提交后归属不变", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "CDP 只存在于 Chromium；WebKit 原生 IME 由 dev 事件日志复核");
+  const doc = "- \n- next\n- third";
+  await openBody(page, "oracle.md", doc);
+  await expect(page.locator(".cm-lp-list-line")).toHaveCount(3);
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(3);
+  await setBodyCaret(page, 2);
+  const cdp = await page.context().newCDPSession(page);
+  const compose = async (text: string) => cdp.send("Input.imeSetComposition", {
+    text,
+    selectionStart: text.length,
+    selectionEnd: text.length,
+  });
+  const expectRows = async (first: string) => {
+    const rows = page.locator(".cm-lp-list-line");
+    await expect(rows).toHaveCount(3);
+    for (let index = 0; index < 3; index += 1) await expect(rows.nth(index).locator(".cm-lp-list-marker")).toHaveCount(1);
+    await expect(rows.nth(0)).toContainText(first);
+    await expect(rows.nth(1)).toContainText("next");
+    await expect(rows.nth(2)).toContainText("third");
+  };
+
+  await compose("s");
+  await expect.poll(async () => (await bodyState(page)).doc).toBe("- s\n- next\n- third");
+  await expectRows("s");
+  await compose("sh");
+  await cdp.send("Input.insertText", { text: "是" });
+  await expect.poll(async () => (await bodyState(page)).doc).toBe("- 是\n- next\n- third");
+  await expectRows("是");
+});
+
+const IME_LIST_CASES = [
+  { name: "段落后 - 的 setext / 列表切换", doc: "词汇\n- ", lines: ["词汇", "- "] },
+  { name: "真 bullet 空项", doc: "- ", lines: null },
+  { name: "真有序空项", doc: "1. ", lines: null },
+  { name: "嵌套空项", doc: "- parent\n  - ", lines: null },
+  { name: "非 setext 裸 marker", doc: "para\n+ ", lines: null },
+] as const;
+
+for (const fixture of IME_LIST_CASES) {
+  test(`正文 CDP 真引擎 IME：${fixture.name}的组合编辑保真（Chromium）`, async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "CDP 只存在于 Chromium；WebKit 合成事件不能冒充原生 IME");
+    const { doc } = fixture;
+    await openBody(page, "oracle.md", doc);
+    await setBodyCaret(page, doc.length);
+    const cdp = await page.context().newCDPSession(page);
+    const compose = async (text: string) => cdp.send("Input.imeSetComposition", {
+      text,
+      selectionStart: text.length,
+      selectionEnd: text.length,
+    });
+
+    await compose("s");
+    await expect.poll(async () => (await bodyState(page)).doc.includes("s")).toBe(true);
+    const inserted = await bodyState(page);
+
+    await page.keyboard.press("Backspace");
+    await expect.poll(async () => (await bodyState(page)).doc.includes("s")).toBe(false);
+    const deleted = await bodyState(page);
+    // marked text 已空时再退格 MUST 是 no-op，不得吃掉 marker 或前一段正文。
+    await page.keyboard.press("Backspace");
+    const atCompositionStart = await bodyState(page);
+    const lines = await page.locator(".cm-line").allTextContents();
+    expect({ inserted, deleted, atCompositionStart }).toEqual({
+      inserted: { doc: `${doc}s`, anchor: doc.length + 1, head: doc.length + 1 },
+      deleted: { doc, anchor: doc.length, head: doc.length },
+      atCompositionStart: { doc, anchor: doc.length, head: doc.length },
+    });
+    expect(lines).toHaveLength(doc.split("\n").length);
+    expect(lines.every((line) => line.length > 0), "组合删除不得清空相邻行").toBe(true);
+    if (fixture.lines !== null) expect(lines).toEqual(fixture.lines);
+
+    await compose("s👨‍👩‍👧");
+    await page.keyboard.press("Backspace");
+    await expect.poll(async () => (await bodyState(page)).doc).toBe(`${doc}s`);
+    await cdp.send("Input.insertText", { text: "是" });
+    const committed = `${doc}是`;
+    await expect.poll(async () => (await bodyState(page)).doc).toBe(committed);
+    await page.keyboard.press("Meta+s");
+    await expect.poll(async () => fileText(page, "oracle.md")).toBe(committed);
+
+    await page.waitForTimeout(600);
+    await page.keyboard.press("Meta+z");
+    await expect.poll(() => bodyState(page)).toEqual({ doc, anchor: doc.length, head: doc.length });
+  });
+}
+
+test("正文 CDP 真引擎 IME：紧邻普通输入的组合独立撤销，redo 与 dirty 跟随保存基线", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "CDP 只存在于 Chromium；WebKit 合成事件不能冒充原生 IME");
+  await openBody(page, "oracle.md", "词汇\n");
+  await setBodyCaret(page, "词汇\n".length);
+  await page.keyboard.type("- ");
+  const before = "词汇\n- ";
+  await expect.poll(() => bodyState(page)).toEqual({ doc: before, anchor: before.length, head: before.length });
+
+  const cdp = await page.context().newCDPSession(page);
+  const compose = async (text: string) => cdp.send("Input.imeSetComposition", {
+    text,
+    selectionStart: text.length,
+    selectionEnd: text.length,
+  });
+  // 不在普通输入与 compositionstart 之间加历史屏障：组合 MUST 自成一步。
+  await compose("s");
+  await expect.poll(async () => (await bodyState(page)).doc).toBe(`${before}s`);
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => (await bodyState(page)).doc).toBe(before);
+  await compose("sh");
+  await cdp.send("Input.insertText", { text: "是" });
+  const committed = "词汇\n- 是";
+  await expect.poll(() => bodyState(page)).toEqual({ doc: committed, anchor: committed.length, head: committed.length });
+  await page.keyboard.press("Meta+s");
+  await expect.poll(async () => fileText(page, "oracle.md")).toBe(committed);
+  await expect.poll(async () => (await dirtyReports(page)).at(-1)).toBe(false);
+
+  await page.keyboard.press("Meta+z");
+  await expect.poll(() => bodyState(page)).toEqual({ doc: before, anchor: before.length, head: before.length });
+  await expect.poll(async () => (await dirtyReports(page)).at(-1)).toBe(true);
+  await page.keyboard.press("Meta+Shift+z");
+  await expect.poll(() => bodyState(page)).toEqual({ doc: committed, anchor: committed.length, head: committed.length });
+  await expect.poll(async () => (await dirtyReports(page)).at(-1)).toBe(false);
 });
 
 test("保存：⌘S 后磁盘全文 = 模型终态；保存前盘上仍是旧文", async ({ page }) => {
