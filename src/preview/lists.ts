@@ -783,10 +783,6 @@ class ListLayout {
       this.tree = contextTree ?? syntaxTree(view.state);
       const read = readTarget(view, this.tree, to);
       const expectsList = targetExpectsList(view, to);
-      if (contextTree && read.kind === "list") {
-        this.settledTree = contextTree;
-        this.settledTreeDoc = view.state.doc;
-      }
       this.build(view);
       traceSettle(view, "settle_build", this.settleSnapshot(view, { via: contextTree ? "available_context" : "available_state" }));
       if (read.kind === "list") {
