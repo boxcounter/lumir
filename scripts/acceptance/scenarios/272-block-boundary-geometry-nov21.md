@@ -9,13 +9,14 @@ item: 272
 tier: full
 title: 块边界真实按键现场：Enter → bullet → 中文、精确源码与正式 marker（三段几何证据截图）
 steps:
+  # 根目录合成文件：notes 目录默认未展开，等嵌套路径会让 AX 等待永远不可达（首跑 30s 超时）。
   - name: 造独立块边界笔记（词汇后仍保留一行后续文本）
     do: vaultWrite
-    file: notes/block-boundary-geometry.md
+    file: block-boundary-geometry.md
     content: "词汇\n后续"
     expect:
       - label: 起点源码逐字固定
-        file: { path: notes/block-boundary-geometry.md, exact: "词汇\n后续" }
+        file: { path: block-boundary-geometry.md, exact: "词汇\n后续" }
 
   - name: 等 watch 把新笔记刷进树
     do: waitFor
@@ -25,7 +26,7 @@ steps:
 
   - name: 打开块边界笔记
     do: open
-    file: notes/block-boundary-geometry.md
+    file: block-boundary-geometry.md
     marker: "词汇"
     expect:
       - label: 起点两行行文本都在
@@ -35,7 +36,7 @@ steps:
 
   - name: 记录未编辑基线并建立正文焦点
     do: record
-    file: notes/block-boundary-geometry.md
+    file: block-boundary-geometry.md
     as: 块边界基线
 
   - name: 窗口前台 + 编辑器焦点
@@ -98,15 +99,15 @@ steps:
     gapMs: 400
     expect:
       - label: 保存确实改写了本轮文件
-        file: { path: notes/block-boundary-geometry.md, changedSince: 块边界基线 }
+        file: { path: block-boundary-geometry.md, changedSince: 块边界基线 }
       - label: 最终源码逐字等于「词汇 + bullet 中文 + 后续」
-        file: { path: notes/block-boundary-geometry.md, exact: "词汇\n- 中文\n后续" }
+        file: { path: block-boundary-geometry.md, exact: "词汇\n- 中文\n后续" }
       - label: dirty 已清除
         ax: { not: "（未保存）" }
 
   - name: 清理合成笔记
     do: vaultRm
-    file: notes/block-boundary-geometry.md
+    file: block-boundary-geometry.md
 ---
 
 # 272 — 块边界真实按键现场（change `stabilize-block-boundary-geometry-nov21`）
