@@ -248,6 +248,91 @@ test("WebKit 组合删除：deleteCompositionText 在删空时走显式事务，
   await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0);
 });
 
+test("正文 IME：available 但 state 树陈旧时先同步再 build（Chromium）", async ({ page }) => {
+  // 足够长的文档：dispatch 候选后 state 树不会同步解析到末尾，给 context 留出领先窗口。
+  const doc = "para\n\n".repeat(2000) + "词汇\n- ";
+  await openBody(page, "oracle.md", doc);
+  await setBodyCaret(page, doc.length);
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0);
+  const probe = await page.locator(".cm-content").evaluate((el, length) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    // 候选进入 EditorState；parse context 单独推进，state 字段快照仍是旧树。
+    view.dispatch({ changes: { from: length, insert: "是" }, selection: { anchor: length + 1 } });
+    const values = (view.state as { values?: unknown[] }).values ?? [];
+    const lang = values.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as {
+      context: { updateViewport(range: { from: number; to: number }): void; work(timeout: number, upto: number): unknown; isDone(upto: number): boolean; tree: { toString(): string } };
+      tree: { toString(): string };
+    };
+    const docLen = view.state.doc.length;
+    lang.context.updateViewport({ from: 0, to: docLen });
+    lang.context.work(1000, docLen);
+    const contextDone = lang.context.isDone(docLen);
+    const stateNodes = lang.tree.toString();
+    const contextNodes = lang.context.tree.toString();
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    return { contextDone, stateNodes, contextNodes };
+  }, doc.length);
+  expect(probe.contextDone).toBe(true);
+  // 覆盖前提：context 已解析出新列表，state 快照仍是旧的 setext 形态。
+  expect(probe.contextNodes).toContain("BulletList");
+  expect(probe.stateNodes).not.toContain("BulletList");
+  await expect.poll(() => bodyState(page)).toEqual({ doc: `${doc}是`, anchor: doc.length + 1, head: doc.length + 1 });
+  await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
+  await expect(page.locator(".cm-line").last()).toContainText("是");
+});
+
+test("正文 IME：settleStep available 分支不得用旧 state 树（Chromium）", async ({ page }) => {
+  // 直接同步调用 settleStep：compositionend 的 effect dispatch / parse worker 在 Chromium
+  // 上会顺带同步 state，无法稳定复现 WKWebView 的 stale 快照；这里在同一个 available
+  // 分支上做可区分回归（build 后立即读 DOM，不等后续 update 补救）。
+  const doc = "para\n\n".repeat(2000) + "词汇\n- ";
+  await openBody(page, "oracle.md", doc);
+  await setBodyCaret(page, doc.length);
+  await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator(".cm-line").last()).toContainText("-");
+  const probe = await page.locator(".cm-content").evaluate((el, length) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.dispatch({ changes: { from: length, insert: "是" }, selection: { anchor: length + 1 } });
+    const values = (view.state as { values?: unknown[] }).values ?? [];
+    const lang = values.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as {
+      context: { updateViewport(range: { from: number; to: number }): void; work(timeout: number, upto: number): unknown; isDone(upto: number): boolean; tree: { toString(): string } };
+      tree: { toString(): string };
+    };
+    const docLen = view.state.doc.length;
+    lang.context.updateViewport({ from: 0, to: docLen });
+    lang.context.work(1000, docLen);
+    const plugin = ((view as { plugins?: { value?: unknown }[] }).plugins ?? [])
+      .map((entry) => entry.value)
+      .find((value) => value && typeof (value as { settleStep?: unknown }).settleStep === "function") as
+      { settleTo: number | null; settleStarted: number; settleStep(view: unknown): void } | undefined;
+    if (!plugin) throw new Error("ListLayout plugin not found");
+    const stateNodes = lang.tree.toString();
+    const contextNodes = lang.context.tree.toString();
+    plugin.settleTo = docLen;
+    plugin.settleStarted = performance.now();
+    plugin.settleStep(view);
+    const valuesAfter = (view.state as { values?: unknown[] }).values ?? [];
+    const langAfter = valuesAfter.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as
+      { tree: { toString(): string } } | undefined;
+    return {
+      contextDone: lang.context.isDone(docLen),
+      stateNodes,
+      contextNodes,
+      stateNodesAfter: langAfter?.tree.toString() ?? "",
+    };
+  }, doc.length);
+  expect(probe.contextDone).toBe(true);
+  expect(probe.contextNodes).toContain("BulletList");
+  expect(probe.stateNodes).not.toContain("BulletList");
+  // 修复后：forceParsing(0) 同步 state，build 后立即出现 marker，且 state 树已含列表。
+  expect(probe.stateNodesAfter).toContain("BulletList");
+  await expect.poll(() => bodyState(page)).toEqual({ doc: `${doc}是`, anchor: doc.length + 1, head: doc.length + 1 });
+  await expect.poll(async () => page.locator(".cm-lp-list-marker").count()).toBe(1);
+  await expect(page.locator(".cm-line").last()).toContainText("是");
+});
+
 test("IME 组合结束前已有 pending DOM 候选：候选必须进入文档且 marker 恢复（Chromium）", async ({ page }) => {
   const doc = "词汇\n- ";
   await openBody(page, "oracle.md", doc);
@@ -608,8 +693,10 @@ test("正文 IME 大文档：解析未完成时组合结束走有界恢复并最
   const settleSliceMaxMs = settleSlices.length ? Math.max(...settleSlices) : -1;
   // 实际 settleStep 回调切片有界；不是把入口时间冒充解析成本。
   expect(settleSamples.length, `必须采到 settleStep 回调：${JSON.stringify(timerSamples.slice(0, 20))}`).toBeGreaterThan(0);
-  // 1MB 结构化 fixture 实测 max 9.2ms；forceParsing 全量 update 旧路径 47ms+。
-  expect(settleSliceMaxMs, JSON.stringify(settleSamples.slice(0, 20))).toBeLessThan(30);
+  // 1MB 结构化 fixture：parse-only 分片实测 8.9ms；state/context 不同步时的**一次性**
+  // forceParsing(0) 空事务同步实测 40.9ms（只在必要时发生，不是每片成本），故上界取 60ms。
+  expect(settleSlices.some((ms) => ms < 30), "parse-only 分片应低于 30ms").toBe(true);
+  expect(settleSliceMaxMs, JSON.stringify(settleSamples.slice(0, 20))).toBeLessThan(60);
   await info.attach("ime-large-doc-settle", {
     body: JSON.stringify({
       docLen: probe.docLen,
