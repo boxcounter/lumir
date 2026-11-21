@@ -75,13 +75,13 @@ gutter 的既有左键行为一字不动。
 
 ## 5. 反馈与失败
 
-- 成功：`toast(t("D943", { target: text }), [], false, "success")`——与块级复制同一条 toast
+- 成功：`toast(t("D947", { target: text }), [], false, "success")`——与块级复制同一条 toast
   通道、同一个 success tone；`target` 就是写入剪贴板的那串。
 - 失败（`navigator.clipboard.writeText` reject / `navigator.clipboard` 缺失）：`D155`
   「复制失败：{reason}」+ `console.warn` 诊断线索（`i18n-exempt: log`）。MUST NOT 在上屏成功提示，
   MUST NOT 吞掉异常。
 - 无路径：同一失败通道，reason 取 `D207`「无当前文件」；不触碰剪贴板。
-- 文案键：新增 `D943`（成功），失败复用通用 `D155`；两列文案同时进 `src/copy-data.ts` 与
+- 文案键：新增 `D947`（成功），失败复用通用 `D155`；两列文案同时进 `src/copy-data.ts` 与
   `文案-Copy.md`，由 `tests/unit/copy.test.ts` 的漂移门禁钉住。
 
 ## 6. 验证分层
@@ -89,8 +89,8 @@ gutter 的既有左键行为一字不动。
 | 层 | 判据 |
 |---|---|
 | `tests/unit/gutter-copy.test.ts` | `pathLineText` 的拼法：vault 相对、空格 / 中文、vault 外绝对、首行 / 末行、无字面花括号。 |
-| `tests/visual/scenes/gutter-copy-path-line.spec.ts`（chromium） | 真 CM view + 真实右键事件：md / code 首末行、剪贴板逐字、成功 toast、路径含空格 / 中文、vault 外绝对路径、剪贴板拒绝的失败面、`off` 档没有 gutter 时无动作、文档 / 选区 / dirty / 滚动零变化、`contextmenu` 默认行为被阻止。 |
-| `scripts/acceptance/scenarios/705-gutter-copy.md`（真机） | WKWebView 上的同一手势（右键走真实指针坐标）：md / code 首行、剪贴板逐字、成功提示；真机不模拟权限拒绝（该面在 chromium 层以 API 拒绝注入覆盖）。 |
+| `tests/visual/scenes/gutter-copy-path-line.spec.ts`（chromium） | 真 CM view + 真实右键事件：md / code 首末行、剪贴板逐字、成功 toast、路径含空格 / 中文、vault 外绝对路径、剪贴板拒绝的失败面、无路径（关闭最后标签）、frontmatter replace 块与后续正文、软换行源逻辑行号、code dirty + 撤销只撤此前编辑、非首屏滚动快照、`on-demand` 临时 gutter、`off` 档无 gutter、零副作用、`contextmenu` 默认行为被阻止、焦点不移动。 |
+| `scripts/acceptance/scenarios/707-gutter-copy.md`（真机） | WKWebView 上的同一手势（右键走真实指针坐标）：md / code 首行、剪贴板逐字、成功提示；真机不模拟权限拒绝（该面在 chromium 层以 API 拒绝注入覆盖）。 |
 
 ## 7. 风险与边界
 

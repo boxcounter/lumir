@@ -1530,23 +1530,28 @@ async function copyBlockContent(handle: EditorHandle, range: BlockCopyRange): Pr
  * 与块级复制共用同一条剪贴板通道与 toast 机制。`path` 来自会话（vault 内 = vault 相对路径，
  * vault 外 = 绝对路径）；`path` 缺省 = 无当前文件，**不写剪贴板**，走失败反馈而不是编造路径。
  *
- * 成功 = success tone 的 D943，`{target}` 是逐字写入剪贴板的那串（回执与剪贴板同一份）；
+ * 成功 = success tone 的 D947，`{target}` 是逐字写入剪贴板的那串（回执与剪贴板同一份）；
  * 失败（剪贴板不可用 / 权限被拒 / 无路径）给 D155 的 toast 并另记一条 console 线索。MUST NOT
- * 静默，MUST NOT 在写失败时显示成功提示。
+ * 静默，MUST NOT 在写失败时显示成功提示。三条失败路径共用 `reportCopyFailure`——诊断与上屏
+ * 只写一份，避免「补了一处、漏了另一处」（r1 P2-1：无路径分支曾只有 toast、没有诊断）。
  */
+function reportCopyFailure(reason: string, target?: string): void {
+  const what = target === undefined ? "行号位置" : ` ${target}`; // i18n-exempt: log
+  console.warn(`lumir: 复制${what}失败：${reason}`); // i18n-exempt: log
+  toast(t("D155", { reason }));
+}
+
 async function copyPathLine(path: string | undefined, line: number): Promise<void> {
   if (path === undefined) {
-    toast(t("D155", { reason: t("D207") }));
+    reportCopyFailure(t("D207"));
     return;
   }
   const target = pathLineText(path, line);
   try {
     await navigator.clipboard.writeText(target);
-    toast(t("D943", { target }), [], false, "success");
+    toast(t("D947", { target }), [], false, "success");
   } catch (e) {
-    const reason = errorMessage(e);
-    console.warn(`lumir: 复制 ${target} 失败：${reason}`); // i18n-exempt: log
-    toast(t("D155", { reason }));
+    reportCopyFailure(errorMessage(e), target);
   }
 }
 

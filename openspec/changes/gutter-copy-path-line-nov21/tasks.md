@@ -9,7 +9,7 @@
 ## 2. 纯逻辑与文案
 
 - [x] 2.1 新增 `src/gutter-copy.ts`：`GutterCopyPort` + `pathLineText(path, line)`
-- [x] 2.2 `src/copy-data.ts` + `文案-Copy.md` 新增 D943「已复制 {target}」；失败复用 D155、无路径 reason 用 D207
+- [x] 2.2 `src/copy-data.ts` + `文案-Copy.md` 新增 D947「已复制 {target}」；失败复用 D155、无路径 reason 用 D207
 - [x] 2.3 新增 `tests/unit/gutter-copy.test.ts`：相对路径 / 空格 / 中文 / 外部绝对路径 / 首末行 / 无字面花括号
 - [x] 2.4 `pnpm test` 绿（1684 tests / 1684 pass / 0 fail）
 
@@ -22,7 +22,7 @@
 ## 4. 测试
 
 - [x] 4.1 新增 `tests/visual/scenes/gutter-copy-path-line.spec.ts`：md / code 首末行、空格 / 中文路径、vault 外绝对路径、剪贴板拒绝、`on-demand` 临时 gutter、`off` 档无 gutter、零副作用、`contextmenu` 默认行为被阻止、焦点不移动
-- [x] 4.2 新增 `scripts/acceptance/scenarios/705-gutter-copy.md`：真机 WKWebView 的右键链路与剪贴板逐字；覆盖边界（权限拒绝 / 外部路径的坐标校准）写进场景正文
+- [x] 4.2 新增 `scripts/acceptance/scenarios/707-gutter-copy.md`：真机 WKWebView 的右键链路与剪贴板逐字；覆盖边界（权限拒绝 / 外部路径的坐标校准）写进场景正文
 - [x] 4.3 `node scripts/acceptance/coverage.mjs` 重新生成覆盖表；`run.mjs --check` 通过（246 个场景）
 
 ## 5. 验证
@@ -33,3 +33,12 @@
 - [x] 5.4 `node scripts/acceptance/run.mjs --check`（不跑真机）通过
 - [x] 5.5 证据落 `.local/missions/gutter-copy-nov21/`（命令、输出、像素漂移对照）
 - [x] 5.6 改动面 grep 清扫仓库信息卫生（fixture 全为合成内容，无真实 vault 内容 / 真实路径）
+
+## 6. r1 独立评审处置
+
+- [x] 6.1 P2-1：无路径失败与 API 缺失 / 权限拒绝收敛到 `reportCopyFailure`（toast + `console.warn` 各一次）；新增「打开文件 → 关闭最后标签 → 右键」真实用户路径用例（剪贴板哨兵不变、失败 toast 一次、console 一次）
+- [x] 6.2 P2-2：d5113856 的 11 份实际日志原样复制到主仓 `.local/missions/gutter-copy-nov21/evidence/`（sha256 逐文件相同），README 全部证据指针复核可达；r1 日志直接落主仓同一目录
+- [x] 6.3 P2-3：真机场景 705 → 707（避开 Harness 705/706），新增合成 fixture `gutter 空格 中文.md`，剪贴板断言与 COVERAGE 同步为带空格 + 中文的路径
+- [x] 6.4 P3：补 frontmatter replace 块与后续正文、软换行源逻辑行号、code dirty + 撤销只撤此前编辑、非首屏滚动快照回归
+- [x] 6.5 集成编号：D943 → D947（Quick Open 占 D943–D945、Close All 占 D946）；代码 / 注释 / 测试 / deck / OpenSpec 同步
+- [x] 6.6 r1 门禁：根 / 视觉 tsc、单测 1684、gutter spec 11/11、m281 结构 12/12、acceptance --check 246、docs-check、openspec validate 全绿；证据主仓落盘

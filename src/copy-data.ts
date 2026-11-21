@@ -2706,8 +2706,9 @@ const COPY_TABLE = {
   // 行号 gutter 右键复制（change gutter-copy-path-line-nov21）：`target` = 逐字写入剪贴板的
   // `{path}:{line}`（路径口径 = 会话 path：vault 内相对、vault 外绝对；行号 1 基）。成功句
   // 与剪贴板内容因此是同一份值，回执不另拼一次。失败面复用 D155 的通用句；无当前文件时
-  // reason 取 D207。
-  D943: {
+  // reason 取 D207。D943–D945 已由并行分支 Quick Open 占用、D946 由 Close All 占用，
+  // 本 change 按合入顺序顺延取 D947（MUST NOT 复用）。
+  D947: {
     zh: "已复制 {target}",
     en: "Copied {target}",
   },

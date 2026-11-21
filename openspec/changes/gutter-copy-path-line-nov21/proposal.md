@@ -56,7 +56,7 @@ modeline 路径、再数行号、再手打，既慢又易错。行号 gutter 是
 - 影响的 specs：`keymap-commands`
 - 影响的代码/系统：`src/editor.ts`（gutter 右键接线与复制口）、`src/main.ts`（剪贴板写入与
   toast 反馈）、新增 `src/gutter-copy.ts`（拼法与端口类型）、`src/copy-data.ts` +
-  `文案-Copy.md`（成功文案 D943；失败复用 D155）
+  `文案-Copy.md`（成功文案 D947；失败复用 D155）
 - 关联约束：ADR 0003 第 3 条铁律（不改写源文件）——本 change 只读文档；ADR 0002 第 6 条性能
   合同——右键处理只读当前行号与路径、写一次剪贴板，无序遍历全文；ADR 0006 的 Emacs
   keybinding 定位——本 change 不加键位

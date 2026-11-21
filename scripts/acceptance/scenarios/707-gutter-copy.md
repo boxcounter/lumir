@@ -14,21 +14,21 @@
 # chromium 场景以 `Clipboard.writeText` 拒绝注入覆盖；`off` / `on-demand` 档的 gutter 在场合同
 # 由场景 56 与 m281 视觉场景覆盖，本场景只验 `always` 档（唯一能让 gutter 常驻的 md 档）与
 # code 恒常显两态。
-id: "705-gutter-copy"
-item: 705
+id: "707-gutter-copy"
+item: 707
 tier: full
-title: 行号 gutter 右键复制 `{path}:{line}`——md（always / 路径含空格与中文）与 code 首行、vault 外绝对路径、剪贴板逐字、文档零写入
-fixtures: [goto-line-long.md, block-copy.txt]
-open: goto-line-long.md
-marker: "段一"
+title: 行号 gutter 右键复制 `{path}:{line}`——md（always / 合成 fixture 路径含空格与中文）与 code 首行、vault 外绝对路径、剪贴板逐字、文档零写入
+fixtures: ["gutter 空格 中文.md", "block-copy.txt"]
+open: "gutter 空格 中文.md"
+marker: "GUTTER-707-MARKER"
 config:
   markdownLineNumbers: always
 steps:
   - name: 起点：md 文档已打开、gutter 常驻（`always` 档；数字不在 AX，截图是唯一的形态证据）
     do: settle
     expect:
-      - label: 正向锚点——文档可读（fixture 第 2 行）
-        editor: { has: "第 2 行：填充段落" }
+      - label: 正向锚点——文档可读（fixture 首行 marker）
+        editor: { has: "GUTTER-707-MARKER" }
       - label: 起点是干净的（标签读屏名没有「未保存」后缀）
         ax: { not: "（未保存）" }
       - label: 配置已落盘（本场景的 gutter 常驻来自启动口径，不是运行期命令）
@@ -37,7 +37,7 @@ steps:
 
   - name: 记录 md 磁盘基线（后面的零写盘断言比 sha256 + mtime）
     do: record
-    file: goto-line-long.md
+    file: gutter 空格 中文.md
     as: md-baseline
 
   - name: 右键 md gutter 首行（真实指针；坐标口径见文件头）
@@ -45,16 +45,16 @@ steps:
     target: { role: AXTextArea, button: right, dx: -0.015, dy: 0.01 }
     expect:
       - label: 剪贴板是 vault 相对路径 + 1 基行号（无字面花括号）
-        clipboard: { exact: "goto-line-long.md:1" }
+        clipboard: { exact: "gutter 空格 中文.md:1" }
       - label: 成功提示逐字回显复制内容
-        ax: { has: "已复制 goto-line-long.md:1" }
+        ax: { has: "已复制 gutter 空格 中文.md:1" }
       - shot: md-首行复制后
 
   - name: md 零写盘 / 无 dirty
     do: settle
     expect:
       - label: 文档逐字节与 mtime 都不变（右键只读）
-        file: { path: goto-line-long.md, unchangedSince: md-baseline, mtimeUnchangedSince: md-baseline }
+        file: { path: gutter 空格 中文.md, unchangedSince: md-baseline, mtimeUnchangedSince: md-baseline }
       - label: 没有变 dirty
         ax: { not: "（未保存）" }
 

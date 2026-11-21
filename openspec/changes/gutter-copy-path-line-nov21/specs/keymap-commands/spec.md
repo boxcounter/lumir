@@ -63,6 +63,16 @@ MUST NOT 显示成功提示，MUST NOT 静默吞掉失败。成功与失败 MUST
 - **WHEN** 浏览器 / webview 拒绝 `navigator.clipboard.writeText`（权限被拒），用户在行号 gutter 上右键
 - **THEN** 出现失败 toast（含失败原因），MUST NOT 出现成功提示；剪贴板内容不变，文档、选区、dirty 与滚动位置均不变
 
+#### Scenario: replace 块与软换行的源行号
+
+- **WHEN** 文档含 frontmatter 块（块级 replace 覆盖的源行没有可见数字）与一条会折成多个视觉行的长行，分别在 frontmatter 的 gutter 空白处、后续正文的可见行号、长行的行号上右键
+- **THEN** frontmatter 空白处复制该块起始源行号（如 `{path}:1`），后续正文复制实际源行号（如 `{path}:5`），长行复制源逻辑行号（不是视觉行序号）；文档与选区不变
+
+#### Scenario: 右键不产生撤销步，也不动阅读位置
+
+- **WHEN** 在 code 模式文档上先键入一处修改（文档变 dirty），在行号 gutter 上右键复制，随后按一次撤销；或文档已滚到非首屏位置时右键
+- **THEN** 右键前后文档字节与 dirty 状态不变，剪贴板正确；一次撤销只撤销此前那次键入（回到键入前内容与 clean），不撤销右键（右键没有制造历史步）；右键不改变视口，切走再切回时非首屏位置按既有滚动快照恢复（不回篇首）
+
 #### Scenario: `on-demand` 档的临时 gutter 也能复制且不收起输入条
 
 - **WHEN** `ui.markdown_line_numbers = "on-demand"`（默认），打开 md 文档后按 `⌥G` 带出行号 gutter（跳转输入条持焦），在 gutter 第 1 行上右键
@@ -76,4 +86,4 @@ MUST NOT 显示成功提示，MUST NOT 静默吞掉失败。成功与失败 MUST
 #### Scenario: 无路径文档不编造路径
 
 - **WHEN** 文档没有路径（未命名 / 空态）而 gutter 在场，用户在 gutter 上右键
-- **THEN** 不写剪贴板，出现失败反馈；MUST NOT 输出 `undefined:{line}`、`: {line}` 或任何编造的路径
+- **THEN** 不写剪贴板，出现失败反馈与一条 console 诊断线索（`navigator.clipboard` 未被调用）；MUST NOT 输出 `undefined:{line}`、`: {line}` 或任何编造的路径

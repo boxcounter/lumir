@@ -6,7 +6,7 @@
 //   - 零副作用：文档、选区、dirty（modeline 路径段）、滚动位置逐值不变；
 //   - `contextmenu` 的默认行为被消费（window 冒泡段读到 defaultPrevented = true）；
 //   - `off` 档没有 gutter 时没有本手势（剪贴板不变、无成功提示）。
-// 真机 WKWebView 的同一链路归 scripts/acceptance/scenarios/705-gutter-copy.md；权限拒绝无法在
+// 真机 WKWebView 的同一链路归 scripts/acceptance/scenarios/707-gutter-copy.md；权限拒绝无法在
 // 真机稳定造出，故那一面只在本文以 API 拒绝注入覆盖。
 
 import { expect, test, type Page } from "@playwright/test";
@@ -25,13 +25,23 @@ const CODE_DOC = `${CODE_LINES.join("\n")}\n`;
 const EXTERNAL_PATH = "/tmp/lumir-gutter-copy/外部 笔记.md";
 const EXTERNAL_DOC = "# 外部笔记\n\n第一段。\n第二段。\n";
 
+/** frontmatter replace 块 + 后续正文：前 4 行被块级 widget 覆盖（第 5 行起才是可见行号）。 */
+const FM_PATH = "frontmatter 笔记.md";
+const FM_DOC = "---\ntitle: 合成标题\ntags: [probe]\n---\n正文第一行\n正文第二行\n";
+
+/** 软换行：第 3 行是一条会折成多个视觉行的长行，gutter 仍只有源逻辑行号 3。 */
+const WRAP_PATH = "软换行 长行.md";
+const WRAP_DOC = `# 软换行\n\n${"长".repeat(120)}\n\n结尾行。\n`;
+
 const VAULT: VaultFixture = {
   root: "/v",
   entries: [
     { path: MD_PATH, kind: "file", size: MD_DOC.length, mtime_ms: 0 },
     { path: CODE_PATH, kind: "file", size: CODE_DOC.length, mtime_ms: 0 },
+    { path: FM_PATH, kind: "file", size: FM_DOC.length, mtime_ms: 0 },
+    { path: WRAP_PATH, kind: "file", size: WRAP_DOC.length, mtime_ms: 0 },
   ],
-  files: { [MD_PATH]: MD_DOC, [CODE_PATH]: CODE_DOC },
+  files: { [MD_PATH]: MD_DOC, [CODE_PATH]: CODE_DOC, [FM_PATH]: FM_DOC, [WRAP_PATH]: WRAP_DOC },
   externalFiles: { [EXTERNAL_PATH]: EXTERNAL_DOC },
   links: {},
 };
@@ -107,6 +117,61 @@ function contextMenuDefaultPrevented(page: Page): Promise<boolean[]> {
   return page.evaluate(
     () => (window as unknown as { __gutterCtxDefaultPrevented: boolean[] }).__gutterCtxDefaultPrevented,
   );
+}
+
+/** 文档全文（零副作用断言读 CM state，不读渲染出的可见行）。 */
+function docText(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile
+      .root.view;
+    return view.state.doc.toString() as string;
+  });
+}
+
+function scrollTop(page: Page): Promise<number> {
+  return page.locator(".cm-scroller").evaluate((el) => el.scrollTop);
+}
+
+/** 视口顶部那一行的文本——滚动位置的语义判据（与 m149-tabs 的 topVisibleLine 同口径：
+ *  恢复走 CM 的 scrollTarget，比 scrollTop 像素值可靠）。空串 = 读取失败，调用方必须判 FAIL。 */
+function topVisibleLine(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile
+      .root.view;
+    const scroller = document.querySelector(".cm-scroller") as HTMLElement;
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    const scrollerRect = scroller.getBoundingClientRect();
+    const contentRect = content.getBoundingClientRect();
+    const pos = view.posAtCoords({
+      x: contentRect.left + 20,
+      y: Math.max(scrollerRect.top + 2, contentRect.top + 40),
+    });
+    return pos === null ? "" : (view.state.doc.lineAt(pos).text as string);
+  });
+}
+
+/** 视口内**完整可见**的第一个行号元素对应的源行号与点击前的视口顶行。 */
+async function firstVisibleNumber(page: Page): Promise<{ line: number; topBefore: string }> {
+  const topBefore = await topVisibleLine(page);
+  const target = await page.evaluate(() => {
+    const gutter = document.querySelector(".cm-lineNumbers") as HTMLElement;
+    const scroller = document.querySelector(".cm-scroller") as HTMLElement;
+    const viewport = scroller.getBoundingClientRect();
+    const element = [...gutter.querySelectorAll<HTMLElement>(".cm-gutterElement")].find((el) => {
+      const box = el.getBoundingClientRect();
+      return (
+        getComputedStyle(el).visibility !== "hidden" &&
+        box.height > 0 &&
+        box.top > viewport.top + 4 &&
+        box.bottom < viewport.bottom - 4
+      );
+    });
+    return element === undefined ? null : element.textContent ?? "";
+  });
+  if (target === null) throw new Error("视口内没有完整可见的行号元素");
+  const line = Number(target);
+  if (!Number.isInteger(line) || line < 1) throw new Error(`行号元素文本异常：${JSON.stringify(target)}`);
+  return { line, topBefore };
 }
 
 test("md：首行 / 末行右键复制 vault 相对路径与 1 基行号，成功提示逐字回显，零副作用", async ({ page, context }) => {
@@ -215,6 +280,122 @@ test("剪贴板被拒：失败 toast、不显示成功、剪贴板与文档都�
   expect(after.doc).toBe(before.doc);
   expect(after.selection).toEqual(before.selection);
   expect(after.scrollTop).toBe(before.scrollTop);
+});
+
+test("无路径：关闭最后标签后右键，失败 toast 与 console 诊断各一次，剪贴板不变", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await openVaultDoc(page, MD_PATH, { markdown_line_numbers: "always" });
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  await page.locator(".tab-close").click();
+  await expect(page.locator(".tab-open")).toHaveCount(0);
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible(); // 空文档继承 md 模式 + always 档
+  await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
+  await page.evaluate(() => navigator.clipboard.writeText("SENTINEL-NO-PATH"));
+
+  const warnings: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "warning" && message.text().includes("复制")) warnings.push(message.text());
+  });
+
+  await rightClickLine(page, 1);
+  await expect(page.locator(".lumir-toast").filter({ hasText: "复制失败" })).toHaveCount(1);
+  await expect(page.locator(".lumir-toast").filter({ hasText: "已复制" })).toHaveCount(0);
+  expect(await clipboard(page)).toBe("SENTINEL-NO-PATH");
+  await expect.poll(() => warnings.length).toBe(1);
+  expect(warnings[0]).toContain("无当前文件");
+});
+
+test("frontmatter replace 块与后续正文：块首行复制 1，正文复制实际源行号", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await openVaultDoc(page, FM_PATH, { markdown_line_numbers: "always" });
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  const before = await editorFacts(page);
+
+  // frontmatter 是块级 replace，覆盖的源行没有数字；右键 gutter 的空白处按块首源行处理。
+  const gutter = await page.locator(".cm-lineNumbers").boundingBox();
+  expect(gutter).not.toBeNull();
+  await page.mouse.click(gutter!.x + gutter!.width / 2, gutter!.y + 4, { button: "right" });
+  await expect.poll(() => clipboard(page)).toBe(`${FM_PATH}:1`);
+
+  // 后续正文行有可见数字：复制的是真实源行号（frontmatter 占 1–4 行，正文从 5 起）。
+  await rightClickLine(page, 5);
+  await expect.poll(() => clipboard(page)).toBe(`${FM_PATH}:5`);
+
+  const after = await editorFacts(page);
+  expect(after.doc).toBe(before.doc);
+  expect(after.selection).toEqual(before.selection);
+  expect(after.scrollTop).toBe(before.scrollTop);
+});
+
+test("软换行：复制的仍是源逻辑行号，不是视觉行序号", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await openVaultDoc(page, WRAP_PATH, { markdown_line_numbers: "always" });
+  const number = page.locator(".cm-lineNumbers .cm-gutterElement").filter({ hasText: /^3$/ }).first();
+  await expect(number).toBeVisible();
+  const box = await number.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.height).toBeGreaterThan(50); // 长行折成多个视觉行：元素高度明显大于单行
+  expect(await page.locator(".cm-lineNumbers .cm-gutterElement").filter({ hasText: /^3$/ }).count()).toBe(1);
+
+  // 点在高度中段（视觉行之一）也仍归源逻辑行 3。
+  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2, { button: "right" });
+  await expect.poll(() => clipboard(page)).toBe(`${WRAP_PATH}:3`);
+});
+
+test("code dirty：右键不改文档与 dirty；随后一次撤销只撤销此前的编辑", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await openVaultDoc(page, CODE_PATH);
+  await caretAtLine(page, 1);
+  await page.keyboard.type("DIRTY");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
+  const dirtyDoc = await docText(page);
+  expect(dirtyDoc).not.toBe(CODE_DOC);
+
+  await rightClickLine(page, 1);
+  await expect.poll(() => clipboard(page)).toBe(`${CODE_PATH}:1`);
+  expect(await docText(page)).toBe(dirtyDoc);
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
+
+  // 右键不制造历史步：一次撤销回到键入前（若右键派发过事务，这里会先撤掉它）。
+  await page.keyboard.press("Meta+z");
+  await expect.poll(() => docText(page)).toBe(CODE_DOC);
+  await expect(page.locator(".modeline-path")).not.toContainText("未保存");
+});
+
+test("非首屏滚动快照：右键不改视口；切走再切回恢复同一顶行", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await openVaultDoc(page, MD_PATH, { markdown_line_numbers: "always" });
+  await page.locator(".cm-content").click();
+  await expect.poll(() => editorHasFocus(page)).toBe(true);
+  await page.keyboard.press("Control+v");
+  await page.keyboard.press("Control+v");
+  await expect.poll(() => scrollTop(page)).toBeGreaterThan(0);
+  expect(await topVisibleLine(page)).not.toBe(MD_LINES[0]);
+
+  const clicked = await firstVisibleNumber(page);
+  await rightClickLine(page, clicked.line);
+  await expect.poll(() => clipboard(page)).toBe(`${MD_PATH}:${clicked.line}`);
+  expect(await topVisibleLine(page)).toBe(clicked.topBefore); // 右键没有推视口
+  const beforeSwitchScroll = await scrollTop(page);
+
+  await page.locator(`.ft-row[title="${CODE_PATH}"]`).click();
+  await expect(page.locator(".modeline-path")).toHaveText(CODE_PATH);
+  await page.locator(".tab-open").filter({ hasText: MD_PATH }).click();
+  await expect(page.locator(".modeline-path")).toHaveText(MD_PATH);
+
+  // 恢复走 CM 的 scrollTarget（对齐到行边界），顶行允许小幅对齐差；判据是「没有回到首屏、
+  // 且仍在离开时的同一段」。复位到篇首时下面两条都会红（顶行变首行 / scrollTop 归零）。
+  const beforeIndex = MD_LINES.indexOf(clicked.topBefore);
+  await expect
+    .poll(async () => {
+      const text = await topVisibleLine(page);
+      const index = MD_LINES.indexOf(text);
+      return index >= 0 && Math.abs(index - beforeIndex) <= 5;
+    })
+    .toBe(true);
+  const afterScroll = await scrollTop(page);
+  expect(afterScroll).toBeGreaterThan(0);
+  expect(Math.abs(afterScroll - beforeSwitchScroll)).toBeLessThanOrEqual(200);
 });
 
 test("on-demand：跳转输入条带出的临时 gutter 也能右键复制，且输入条不被右键收起", async ({ page, context }) => {
