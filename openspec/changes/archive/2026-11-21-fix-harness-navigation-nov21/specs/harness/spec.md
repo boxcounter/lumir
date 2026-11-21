@@ -1,7 +1,7 @@
 # harness 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 MODIFIED，基线是 living spec
-> [openspec/specs/harness/spec.md](../../../../specs/harness/spec.md) 的「输出中的 vault 路径可点击」。
+> [openspec/specs/harness/spec.md](../../../../../specs/harness/spec.md) 的「输出中的 vault 路径可点击」。
 > 改动面只有一处语义：`:行号` 家族的**句末标点**不再使后缀失效——`路径:69.`（句末句号 / 省略号）
 > 的可点范围仍是整段含后缀，落点 / 高亮照旧；**连续点号段之后仍接路径延续字符**（`.5` / `..5` /
 > `.foo` / `.-3` / `._3` / `./3`）仍按畸形后缀处理。其余段落逐字沿用 living spec。

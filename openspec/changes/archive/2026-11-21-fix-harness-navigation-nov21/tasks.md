@@ -61,7 +61,13 @@
       `harness-navigation-nov21.spec.ts` + `m632-path-line-range-link.spec.ts`（12 passed）
 - [x] 5.4 `bash scripts/docs-check.sh` / `validate --all --strict` / `openspec-archive-check.mjs`
       读数（见下「门禁读数」）
-- [ ] 5.5 真机：场景 269 / 270 由主会话统一跑并回填 PASS 指针（worker 不跑真机）
+- [x] 5.5 真机：场景 269 / 270 由主会话统一跑并回填指针（worker 不跑真机）。
+      269（item 705）PASS（14 断言，0 FAIL）；270（item 706）**未自动通过**（FAIL：等待结果通知
+      横幅超时，通知未投递；评审归因为验收 bundle 副本的签名身份导致通知授权失败），本批不实施
+      bundle 启动修复；Alex 裁决「这个留给我在正式版里测试吧」，转为正式版人工验收 checkpoint，
+      MUST NOT 声称该路径已验证。证据
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/269-harness-path-line-sentence-period/`（PASS）
+      与 `.../270-cron-open-session-keeps-doc-focus/`（FAIL，`steps.md` 记录 waitForNotification 超时）
 
 ### 初版读数（commit 95e3d20a，2026-11-21；r1 复跑见 §7）
 
@@ -94,7 +100,9 @@
 - [x] 6.5 复跑：根 tsc、全量单测、`harness-navigation-nov21` + `m632-path-line-range-link` +
       `quick-open` 相关 Playwright（端口 4284）、docs-check、OpenSpec validate、acceptance
       `--check`（读数见 §7）
-- [ ] 6.6 真机 269 / 270 与完整 gate 由主会话执行（worker 不跑 cargo / 真机）
+- [x] 6.6 真机 269 / 270 与完整 gate 由主会话执行（worker 不跑 cargo / 真机）：完整 gate
+      `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0；269（705）PASS 14 断言；270 未自动通过，
+      经 Alex 裁决转正式版人工验收（见 5.5），本批动作以此收口，不伪称 270 PASS
 
 ## 7. r1 复跑读数（2026-11-21）
 

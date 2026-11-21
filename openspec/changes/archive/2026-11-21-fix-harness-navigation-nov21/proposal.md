@@ -12,6 +12,52 @@
 > `.foo` / `..5` / `.-3` / `._3` / `./3`（改为连续点号段整体判定，spec 同步改准）；P2 `cron:run`
 > 显式发起的 composer 聚焦补回归断言；P3 range + 英文句号的视觉 / 真机 fixture 标点改准。
 > 处置记录与读数见 `tasks.md` §6。
+> 节点 2 例外裁决（2026-11-21）：场景 270（cron 通知点击）未自动通过——验收 bundle 副本的签名
+> 身份导致通知授权失败。Alex 裁决原话「这个留给我在正式版里测试吧」：本批不实施验收 bundle
+> 启动修复，不要求当前批自动跑 270，cron 恢复会话与不抢正文焦点转为**正式版人工验收 checkpoint**
+> （发布后执行）；MUST NOT 声称该路径已验证。
+> 节点 2（归档放行）：经上述 Alex 裁决后由独立评审 + 机器判据放行
+> （[openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」五要件），逐条事实与
+> 证据指针见下「节点 2 记录（归档前）」。
+
+## 节点 2 记录（归档前，2026-11-21）
+
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-11-21 通过——Alex 在需求批逐字提出两条缺陷（`design.md:69`
+   点击行号解析、cron 通知点击不抢正文焦点）并以「请你继续」确认推进（见上方「评审记录」）。
+   实现期没有静默扩 scope：产品改动只有 `src/harness-path-link.ts` 的 `lineSuffixAt` 后置守卫与
+   `src/main.ts` 的 `openHarnessPane(focusComposer = true)` / `handleCronOpenSession` 传 `false`，
+   对应「What Changes」；r1 findings 全在批准面内。**实现期新增的例外是 270 的真机执行障碍**：
+   验收 bundle 副本签名身份导致通知授权失败，Alex 以「这个留给我在正式版里测试吧」裁决本批不修
+   bundle 启动、不要求自动跑 270，转为正式版人工验收 checkpoint。
+2. **独立 reviewer clean / merge**：独立 reviewer agent-35 判 `clean/merge`，并明记 270 未自动
+   通过、Alex 裁决转正式版人工验收、「不得声称该路径已验证」；绑定 integration tip
+   `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/navigation-batch-nov21/review-final.md`。
+   当前分支 tip 与该评审 tip 相同。
+3. **tasks 完成或有放弃理由**：`tasks.md` 26/26 全勾（`grep -c '^- \[x\]'` = 26，未勾项 0）。
+   其中 5.5 / 6.6 的就地记录明确写清：**270 未自动通过（FAIL），不伪称 PASS**；270 不是放弃项，
+   而是经 Alex 裁决转正式版人工验收 checkpoint，当前批以 269（705）PASS 14 断言 + 完整 gate 收口。
+4. **要求的门禁与真机证据**：动过 `tests/visual/scenes/**`（新增
+   `harness-navigation-nov21.spec.ts`），按 `scripts/gate.sh visual` 档取读数——
+   `GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0。真机：`269-harness-path-line-sentence-period`
+   （item 705）PASS（14 断言，0 FAIL，`status.txt` = `PASS`）；
+   `270-cron-open-session-keeps-doc-focus`（item 706）**FAIL**（等待结果通知横幅超时、通知未
+   投递；评审归因为验收 bundle 副本签名身份导致通知授权失败），**未自动通过、未验证**，经 Alex
+   裁决转正式版人工验收 checkpoint。证据
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/269-harness-path-line-sentence-period/`
+   与 `.../270-cron-open-session-keeps-doc-focus/`（`status.txt` / `steps.md` 如实记录 PASS / FAIL）。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS——`扫过
+   9 份 delta，8 条 MODIFIED，对比 147 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`
+   （退出码 0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 36
+   passed, 0 failed (36 items)`（退出码 0）。归档跟踪队列有且仅有一条本 change 条目
+   （`docs/backlog.md`）。delta 是 `harness` 与 `cron` 各 1 条 MODIFIED（整条复制 living 后就地改），
+   是真实增量，不是纯目录移动。
+
+命中「必须找 Alex 的例外类别」中的**证据缺口**（270 无法在自动通道取得 PASS）与**价值 / 行为
+裁决**（是否本批修 bundle、是否要求 270 自动通过）：已由 Alex 裁决「这个留给我在正式版里测试吧」，
+按裁决口径归档；不以「已归档」或「269 PASS」推断 270 已验证。
 
 ## Why
 
