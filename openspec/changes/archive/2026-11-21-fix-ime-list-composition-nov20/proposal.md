@@ -16,6 +16,45 @@
 > 会清掉 CM pending MutationRecord、丢最终候选）、P2（4s 截止后取消恢复链）、P3-1（目标行
 > 提交后未与组合前比较）、P3-2（性能只测事件入口）。本批已把 effect 延到 pending flush 之后、
 > 4s 后转低频恢复、补目标行几何与真实 settle 切片 / 提交到绘制测量；仍需复评。
+> 节点 1 批准推进：该批以「请你继续」批准；最终复核（`review-final-current.md`）判 `clean/merge`，
+> 各轮 P 项全部闭环。
+> 节点 2（归档放行）：**机器 + 独立评审放行**（[openspec-workflow.md](../../../../docs/process/openspec-workflow.md)
+> 「节点 2：归档默认由独立评审 + 机器判据放行」五要件），逐条事实与证据指针见下「节点 2 记录（归档前）」。
+
+## 节点 2 记录（归档前，2026-11-21）
+
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-11-21 通过——Alex 报告生产版中文输入法下列表标记后输入 `s`
+   多出横线、删除后相邻「词汇」行消失，并要求「请你直接处理」；该批以「请你继续」批准推进
+   （见上方「评审记录」）。实现期没有静默扩 scope：接管面收窄到 L6 列表内容起点、恢复链改为
+   有界分片、组合期冻结装饰重建——都是既有「列表内容起点输入的跨层一致性」合同的修复，未新增
+   产品行为；三轮 review 的 P1/P2/P3 处置均在原意图内，未扩到非列表位置。
+2. **独立 reviewer clean / merge**：独立 reviewer agent-34 判 `clean/merge`，无 P1 / P2；明记
+   「旧 settledTree reconciliation P2 已闭环；组合期冻结、SourceShield、insertText 补偿、
+   undo/redo 与 dirty 语义均已审查」，目标单测 17/17、验收驱动 4/4、目标结构视觉 29/29，
+   诊断无残留。绑定 integration tip `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/ime-list-composition-nov21/review-final-current.md`。
+   当前分支 tip 与该评审 tip 相同。
+3. **tasks 完成**：`tasks.md` 17/17 全勾（`grep -c '^- \[x\]'` = 17，未勾项 0），无放弃项。
+   4.2 的最终门禁与 4.3 的独立复核读数已就地补记；4.4 的 Alex 原生 IME 复验（中文候选提交后
+   正式列表符恢复）记在同项。
+4. **要求的门禁与真机证据**：动过 `tests/visual/scenes/**`（含 `editing-oracle.spec.ts` 的
+   IME 组与目标结构视觉 29/29），按 `scripts/gate.sh visual` 档取读数——
+   `GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；未更新像素基线。真机场景
+   `271-ime-list-composition-wkwebview` PASS（19 断言，0 FAIL；`status.txt` = `PASS`），证据
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/271-ime-list-composition-wkwebview/`
+   （`steps.md` / `shots/` / `ax/`）。该场景为合成 IME 序列（≠ 原生 IME），原生终判仍归
+   156 / 262；2026-11-21 Alex 原生中文 IME 复验确认正式列表符恢复，评审文件同记。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS——`扫过
+   12 份 delta，12 条 MODIFIED，对比 213 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`
+   （退出码 0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 39
+   passed, 0 failed (39 items)`（退出码 0）。归档跟踪队列有且仅有一条本 change 条目
+   （`docs/backlog.md`）。delta 是 `editor-live-preview` 的 1 条 MODIFIED（「列表内容起点输入的
+   跨层一致性」整条复制后改，保留既有全部场景），是真实增量，不是纯目录移动。
+
+未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决（Alex 已原生复验并确认行为符合预期）、
+无审美手感项、无影响面升级、评审结论与 tip 均无异常、证据无缺口，故不另送 Alex。
 
 ## Why
 
