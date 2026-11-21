@@ -1245,8 +1245,8 @@ pub fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), Comma
 /// async 运行时的 worker 上，不占 IPC 主线程。网络 / 超时 / 响应状态 / HTML 解析都在
 /// `crate::url_title`；本命令只负责构造带 UA 与超时的 client，并把错误转成既有信封。
 ///
-/// 失败（网络 / 超时 / 非 2xx）返回 `Err`，前端据此保留原始 URL；`Ok(None)` = 请求成功但
-/// 没有可用标题（非 HTML、没有 `<title>`、空标题、超长标题、非 UTF-8）。
+/// 网络 / 读取失败返回 `Err`，前端据此保留原始 URL；`Ok(None)` = 请求到达但**没有可用
+/// 标题**（非 2xx、非精确 HTML media type、没有 `<title>`、空标题、超长标题、非 UTF-8）。
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn fetch_url_title(url: String) -> Result<Option<String>, CommandError> {
     let client = reqwest::blocking::Client::builder()

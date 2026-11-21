@@ -92,13 +92,15 @@ export interface LiteralLink {
 
 const URL_SCHEME = /^([A-Za-z][A-Za-z0-9+.-]*):/;
 // 裸 URL 的文本边界（change fix-bare-url-cjk-boundary-nov21）：GFM 的 `urlRE` 把路径段写成
-// `[^\s<]*`，中文与全角标点会被吞进 `URL` 节点。裸 URL 没有定界符，中文只能按正文处理；
-// 目标在首个非 ASCII 字符前结束。显式语法（角括号 / 定义行）**不裁**——那里的 URL 有定界符，
-// 中文可以是 URL 的一部分。百分号编码的中文路径 / 查询是 ASCII，照旧完整保留。
-const NON_ASCII = /[^\x00-\x7F]/;
+// `[^\s<]*`，CJK / 全角字符会被吞进 `URL` 节点。裸 URL 没有定界符，这类字符只能按正文处理；
+// 目标在首个 **CJK / 全角**字符前结束。**不是**「首个非 ASCII」：café、西里尔、希腊等其它
+// Unicode 路径仍是合法 URL，必须完整保留。显式语法（角括号 / 定义行）**不裁**——那里的 URL
+// 有定界符，CJK 可以是 URL 的一部分。百分号编码的中文路径 / 查询是 ASCII，照旧完整保留。
+const CJK_BOUNDARY =
+  /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|[\u3000-\u303F\uFE30-\uFE6F\uFF00-\uFFEF]/u;
 
 function bareUrlTarget(raw: string): string {
-  const match = NON_ASCII.exec(raw);
+  const match = CJK_BOUNDARY.exec(raw);
   return match === null ? raw : raw.slice(0, match.index);
 }
 // CommonMark 链接目标里的反斜杠转义（§2.4）：`\)` 表示字面 `)`，`\\` 表示 `\`。

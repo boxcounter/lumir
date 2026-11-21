@@ -6,7 +6,7 @@ import type { ViewUpdate } from "@codemirror/view";
 /** 滚动位置快照的类型（`view.scrollSnapshot()` 的产物）。CM 不导出 ScrollTarget 类型，
  *  所以取方法的返回类型而不是手写泛型参数——类型随 CM 版本走，不会漂。 */
 export type ScrollSnapshot = ReturnType<EditorView["scrollSnapshot"]>;
-import { history, redo, undo } from "@codemirror/commands";
+import { history, isolateHistory, redo, undo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { backspaceBareMarkerLine, DEFAULT_AUTO_INDENT, enterWithAutoIndent } from "./enter-indent";
 // M447：词 / 字素簇扫描与 kill 槽的**共用**实现（两侧只有一份）住在叶子模块 src/quote-card.ts
@@ -90,6 +90,7 @@ import {
 import type { PasteImagePort } from "./paste-image";
 import {
   addPendingUrlTitle,
+  clearPendingUrlTitleEffects,
   newPendingUrlTitle,
   pastedHttpUrl,
   pendingUrlTitleField,
@@ -2275,6 +2276,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
                 selection: EditorSelection.cursor(to),
                 scrollIntoView: true,
                 userEvent: "input.paste",
+                // 与随后的标题升级分成两个撤销事件（见 fetchPastedUrlTitle 的同款注记）。
+                annotations: [isolateHistory.of("full")],
                 effects: addPendingUrlTitle.of(pending),
               });
               // 先落地 URL 再异步换标题：网络慢 / 失败时用户看到的仍是原文，不会出现
@@ -2351,7 +2354,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       title = null;
     }
     // 切标签 / 关标签：不往别的文档写（URL 已经落在那份文档里，保持原样即可）。
-    if (active !== session) return;
+    // 响应在 inactive 到达时还必须**撤清那份会话的 pending**——否则这条账会留在后台 state
+    // 里永远不消；只换代它的 state，MUST NOT 对当前前台 view 派发。
+    if (active !== session) {
+      if (isDocSession(session)) {
+        const effects = clearPendingUrlTitleEffects(session.state);
+        if (effects.length > 0) session.state = session.state.update({ effects }).state;
+      }
+      return;
+    }
     const current = pendingUrlTitles(view.state).find((item) => item.id === pending.id);
     if (current === undefined) return;
     const change = urlTitleReplacement(view.state.doc, current, title);
@@ -2362,6 +2373,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     view.dispatch({
       changes: change,
       userEvent: "input.paste",
+      // 第一次撤销只回退这次标题升级，第二次才回退原粘贴——两次都是用户可理解的稳定状态，
+      // 不把异步结果合进粘贴事件（`isolateHistory` 两侧都隔离，避免 500ms 内的历史合并）。
+      annotations: [isolateHistory.of("full")],
       effects: removePendingUrlTitle.of(pending.id),
     });
   }
@@ -2770,7 +2784,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       selection: { anchor: 0 },
       // 模式（含视图层可编辑性）与折行两个 Compartment 一起重配（M180）：装载可能把会话
       // 从 md 换成 code，代码块内容级 class 的有无取决于 mode，只重配模式会留下它。
-      effects: modeAndWrapEffects(mode, path, editable),
+      // 整篇重载同时撤清取标题 pending：旧区间锚在一份已被替换的正文上，没有可升级的语义。
+      effects: [...modeAndWrapEffects(mode, path, editable), ...clearPendingUrlTitleEffects(state)],
       annotations: [trustedLoad.of(true), Transaction.addToHistory.of(false)],
     }).state;
     // C3：初始光标放到 frontmatter 之后的第一条正文行（md 专属；code 模式没有 properties
@@ -2792,6 +2807,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // 图片会话不存快照（M629）：它的 `scroll` 恒 undefined（图片没有「上次读到哪里」），
     // 且哨兵空状态里没有可锚的文档位置——给空文档记一份再「恢复」没有语义。
     if (isDocSession(active)) active.scroll = view.scrollSnapshot();
+    // 切走即取消（change add-url-paste-title-nov21 的 spec 语义）：离开会话时撤清它的取标题
+    // pending。此后即使标题响应在切回之前到达，也没有可升级的区间——切走再切回不会补写。
+    // 放在 `clearLineHighlight` 之后：那条路径可能派发视图事务并经 updateListener 回写
+    // `active.state`，先清会被它用旧 state 覆盖。这里只换代旧会话的 state，不向即将被
+    // 换掉的 view 派发。
+    if (isDocSession(active)) {
+      const effects = clearPendingUrlTitleEffects(active.state);
+      if (effects.length > 0) active.state = active.state.update({ effects }).state;
+    }
     active = session;
     syncProjection();
     readyPath = session.path;
@@ -3124,7 +3148,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           // 滚动复位用直接赋值而非 scrollIntoView 效果：后者带 scrollMargin，文档
           // 溢出视口时会把 pos 0 对齐到视口顶而主动下滚，页首 padding 被顶出画。
           selection: { anchor: 0 },
-          effects: modeAndWrapEffects(mode, path, editable),
+          effects: [...modeAndWrapEffects(mode, path, editable), ...clearPendingUrlTitleEffects(view.state)],
         });
         // 新装载的文档从篇首开始：这里用直接赋值而不是 scrollIntoView 效果（M110 真实
         // 桌面缺陷排查）——后者带 scrollMargin，文档溢出视口时会把 pos 0 对齐到视口顶而

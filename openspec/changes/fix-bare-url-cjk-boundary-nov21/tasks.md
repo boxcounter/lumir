@@ -2,11 +2,12 @@
 
 ## 1. 实现与测试
 
-- [x] 1.1 在 `src/preview/links.ts` 的 `literalLinkOfNode` 加裸 URL 边界：目标在首个非 ASCII
+- [x] 1.1 在 `src/preview/links.ts` 的 `literalLinkOfNode` 加裸 URL 边界：目标在首个 CJK / 全角
       字符前结束；显式形态（`Autolink` / `LinkReference`）不裁；`literalLinkAt` 拒绝边界之后的
       位置。
-- [x] 1.2 先写修前红、修后绿的单测：中文 / 全角标点 / 查询值终止；拉丁 URL 合法字符与百分号
-      编码完整保留；角括号与定义行保留中文；边界之后的位置不命中。
+- [x] 1.2 先写修前红、修后绿的单测：中文 / 假名 / 谚文 / 全角标点 / 全角字母终止；café、
+      西里尔、希腊等非 CJK Unicode 路径与百分号编码完整保留；拉丁 URL 合法字符、角括号与
+      定义行保留；边界之后的位置不命中。
 - [x] 1.3 新增 chromium 视觉场景：装饰区间、`title`、⌘-Click 目标、中文内部 ⌘⏎ 无操作、显式
       语法不裁、`EditorState.doc` 不变；不新增像素基线。
 - [x] 1.4 新增 / 更新真机验收场景（`269-url-paste-and-cjk-boundary-nov21` 的 A 段），并由

@@ -13,6 +13,7 @@ import { syntaxTree } from "@codemirror/language";
 import {
   MAX_URL_TITLE_LENGTH,
   addPendingUrlTitle,
+  clearPendingUrlTitleEffects,
   markdownLinkFor,
   markdownLinkLabel,
   newPendingUrlTitle,
@@ -30,7 +31,8 @@ const MD = [markdown({ base: markdownLanguage, extensions: [GFM] })];
 /** 生成的 `[title](url)` 必须仍是一条标准外链，标签渲染文本逐字等于标题。 */
 function parsedLink(source: string) {
   const state = completeTree(EditorState.create({ doc: source, extensions: MD }));
-  let link: ReturnType<typeof standardLinkParts> = null;
+  type ParsedLink = NonNullable<ReturnType<typeof standardLinkParts>>;
+  let link: ParsedLink | null = null;
   let labelSource = "";
   const kinds = new Set<string>();
   syntaxTree(state).iterate({
@@ -42,10 +44,11 @@ function parsedLink(source: string) {
       if (link !== null && ref.from >= link.labelFrom && ref.to <= link.labelTo) kinds.add(ref.name);
     },
   });
-  assert.ok(link, "生成的文本必须解析出一条标准链接");
+  const resolved = link as ParsedLink | null;
+  assert.ok(resolved, "生成的文本必须解析出一条标准链接");
   // CommonMark 的反斜杠转义集（与 links.ts 的 PUNCT_ESCAPE 同源）：解码后即渲染文本。
   const labelText = labelSource.replace(/\\([!-/:-@[-`{-~])/g, "$1");
-  return { link, labelSource, labelText, kinds };
+  return { link: resolved, labelSource, labelText, kinds };
 }
 
 test("单个 http(s) URL：整段就是 URL 才接管", () => {
@@ -101,6 +104,7 @@ test("生成的链接：目标仍是 URL 原文（括号 / 反斜杠 / 尖括号
     const source = markdownLinkFor(url, "标题");
     assert.ok(source, `${url} 应能生成链接`);
     const { link } = parsedLink(source);
+    assert.ok(link);
     assert.deepEqual(classifyLinkTarget(link.target), { kind: "external", url }, `${url}：目标解码后逐字还原`);
   }
 });
@@ -189,6 +193,25 @@ test("待返回区间随事务映射：区间外插入不丢目标，区间内�
   // 显式移除后不再留账。
   state = state.update({ effects: removePendingUrlTitle.of(7) }).state;
   assert.deepEqual(pendingUrlTitles(state), []);
+});
+
+test("撤账 effects：清空全部 pending；整篇替换后不会再有可升级的区间", () => {
+  let state = EditorState.create({ doc: "URL", extensions: [pendingUrlTitleField] });
+  state = state.update({
+    effects: [
+      addPendingUrlTitle.of({ id: 1, from: 0, to: 3, url: "URL" }),
+      addPendingUrlTitle.of({ id: 2, from: 0, to: 3, url: "URL" }),
+    ],
+  }).state;
+  assert.equal(pendingUrlTitles(state).length, 2);
+
+  const effects = clearPendingUrlTitleEffects(state);
+  state = state.update({
+    changes: { from: 0, to: state.doc.length, insert: "# 重载后的正文\n" },
+    effects,
+  }).state;
+  assert.deepEqual(pendingUrlTitles(state), [], "整篇重载（或切走）必须撤清 pending");
+  assert.equal(state.doc.toString(), "# 重载后的正文\n");
 });
 
 test("pending id 自增：同一文档里多次粘贴互不覆盖", () => {

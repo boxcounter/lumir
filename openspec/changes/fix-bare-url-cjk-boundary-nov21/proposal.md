@@ -31,8 +31,10 @@ GFM 的 `Autolink` 扩展用 `urlRE = /[\w-]+(\.[\w-]+)+(:\d+)?(\/[^\s<]*)?/gy` 
 living spec「标准 Markdown 链接的形态分类与 live preview 渲染」只规定裸 URL 取自 GFM 的
 `Autolink`，**没有**规定中文路径 / 查询的语义。本 change 因此明确一条可执行边界：
 
-- 裸 URL（没有定界符的形态 2）的目标在**首个非 ASCII 字符之前**结束；中文 / 全角标点 / 其它
-  非 ASCII 字符是正文，不进入目标、装饰、`title` 或打开路径。
+- 裸 URL（没有定界符的形态 2）的目标在**首个 CJK / 全角字符之前**结束；CJK 字符（Han / 假名 / 谚文等）
+  与全角字符是正文，不进入目标、装饰、`title` 或打开路径。
+- **其它 Unicode 不裁**：café、西里尔、希腊等非 CJK Unicode 路径仍是合法 URL，完整保留；
+  本 change 不是把裸 URL 收窄成 ASCII-only。
 - **显式 URL 语法不裁**：角括号自动链接 `<https://…/中文>` 与定义行 `[home]: https://…/中文`
   有定界符，中文可以是 URL 的一部分，保持完整目标。
 - **百分号编码的中文是 ASCII**（`%E4%B8%AD`），完整保留；这是中文路径 / 查询的受支持形态。
@@ -47,7 +49,7 @@ living spec「标准 Markdown 链接的形态分类与 live preview 渲染」只
 ## What Changes
 
 1. **`editor-live-preview` 的「标准 Markdown 链接的形态分类与 live preview 渲染」MODIFIED**
-   （整条 requirement 复制后改）：新增「裸 URL 的文本边界」段——目标在首个非 ASCII 字符前结束；
+   （整条 requirement 复制后改）：新增「裸 URL 的文本边界」段——目标在首个 CJK / 全角字符前结束；
    显式语法与百分号编码的例外；边界只在链接层实现一次（装饰与激活共用 `literalLinkOfNode`）。
    新增 scenario「裸 URL 后紧邻中文时中文不进入链接」。
 

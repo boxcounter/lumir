@@ -286,8 +286,9 @@ export function openExternalUrl(url: string): Promise<void> {
  * 取一个 http / https 网页的标题（change add-url-paste-title-nov21）。
  *
  * 网络请求、超时、响应状态与 HTML 解析都在 Rust 侧（`fetch_url_title`）；这里只把
- * 结果原样交给调用方。`null` = 没有可用标题（正常结果，不是异常）；网络失败 / 非 2xx
- * 等由 Rust 返回错误信封，调用方（编辑器）按「保留原始 URL」静默处理。
+ * 结果原样交给调用方。`null` = 请求到达但没有可用标题（非 2xx / 非精确 HTML media type /
+ * 无 `<title>` 等，正常结果不是异常）；网络 / 读取失败由 Rust 返回错误信封，调用方
+ * （编辑器）按「保留原始 URL」静默处理。
  */
 export function fetchUrlTitle(url: string): Promise<string | null> {
   return invoke<string | null>("fetch_url_title", { url });

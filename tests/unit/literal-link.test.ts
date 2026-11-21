@@ -59,9 +59,10 @@ test("裸 URL：命中 URL 节点自身，尾标落在它末尾，露出范围�
 });
 
 // 裸 URL 的**文本边界**（change fix-bare-url-cjk-boundary-nov21）：GFM 的 `urlRE` 路径段是
-// `[^\s<]*`，中文与全角标点会被吞进 `URL` 节点。链接层在首个非 ASCII 字符前截断——裸 URL
-// 后面紧跟的中文是正文，不是链接目标。显式语法（角括号 / 定义行）不裁：那里的 URL 有定界符。
-test("裸 URL 后紧邻中文：目标在首个非 ASCII 字符前结束，中文不参与装饰", () => {
+// `[^\s<]*`，CJK / 全角字符会被吞进 `URL` 节点。链接层在**首个 CJK / 全角字符**前截断——
+// 裸 URL 后面紧跟的这类字符是正文，不是链接目标。显式语法（角括号 / 定义行）不裁：那里的
+// URL 有定界符。**不是**「首个非 ASCII」：café / 西里尔 / 希腊等其它 Unicode 路径必须保留。
+test("裸 URL 后紧邻中文：目标在首个 CJK 字符前结束，中文不参与装饰", () => {
   const doc = "正文 https://example.invalid/abc中文说明 后续\n";
   const link = hit(doc, "https://example.invalid/abc");
   assert.ok(link, "ASCII 前缀仍应入选");
@@ -80,15 +81,35 @@ test("裸 URL 后紧邻中文：目标在首个非 ASCII 字符前结束，中�
   assert.ok(literalLinkAt(stateOf(doc), cut), "ASCII 末位仍算在链接上");
 });
 
-test("裸 URL 后的全角标点同样终止目标（不只看汉字）", () => {
-  const doc = "正文 https://example.invalid/abc，后续\n";
-  const link = hit(doc, "https://example.invalid/abc");
-  assert.ok(link);
-  assert.equal(link.target, "https://example.invalid/abc");
-  assert.equal(link.to, doc.indexOf("，"));
+test("裸 URL 的 CJK / 全角边界矩阵：Han / 假名 / 谚文 / 全角标点 / 全角字母", () => {
+  const prefix = "https://example.invalid/abc";
+  for (const [label, tail] of [
+    ["中文", "中文说明"],
+    ["日文假名", "かなカナ"],
+    ["谚文", "한국어"],
+    ["全角标点", "，后续"],
+    ["全角字母", "ＡＢＣ"],
+  ]) {
+    const doc = `正文 ${prefix}${tail} 后续\n`;
+    const link = hit(doc, prefix);
+    assert.ok(link, `${label}：ASCII 前缀应入选`);
+    assert.equal(link.target, prefix, `${label}：CJK / 全角字符不得进入目标`);
+    assert.equal(link.to, doc.indexOf(tail), `${label}：目标在该字符之前结束`);
+  }
 });
 
-test("裸 URL 的查询 / 路径：ASCII 部分完整保留，首个非 ASCII 字符终止", () => {
+test("裸 URL 的 Unicode 路径：重音拉丁 / 西里尔 / 希腊等非 CJK 字符完整保留", () => {
+  for (const path of ["café", "naïve", "über", "путь", "δοκιμή"]) {
+    const url = `https://example.invalid/${path}`;
+    const doc = `正文 ${url} 后续\n`;
+    const link = hit(doc, url);
+    assert.ok(link, `${path}：合法 Unicode 路径应入选`);
+    assert.equal(link.target, url, `${path}：不得被 CJK 边界误裁`);
+    assert.equal(link.to, doc.indexOf(url) + url.length);
+  }
+});
+
+test("裸 URL 的查询 / 路径：ASCII 部分完整保留，首个 CJK / 全角字符终止", () => {
   // 拉丁合法字符与查询参数（`_ - . / ? = & # %`）逐字保留。
   const latin = "https://example.invalid/a_b-c.d/e?x=1&y=2#frag";
   const latinDoc = `正文 ${latin} 后续\n`;

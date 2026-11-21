@@ -7,13 +7,15 @@
 //! 边界（有意收窄，均可在 tests 里复跑）：
 //! - 只认 http / https；其它 scheme 直接拒绝（与 `open_external_url` 的白名单同源）。
 //! - 只读 2xx；重定向由 reqwest 跟随（默认上限 10 跳）。
-//! - 只读 `text/html` / `application/xhtml+xml`；其它 Content-Type 视为没有标题。
+//! - `Content-Type` 头部必须存在；取第一个 `;` 前的 media type、trim 后**精确等于**
+//!   `text/html` 或 `application/xhtml+xml`。`text/html-anything` 之类的 MIME 前缀伪装
+//!   不接受；缺失头部视为没有标题。
 //! - 正文最多 512 KiB；标题最多 500 个字符（超长视为不可用，不截断）。
 //! - 只解码 UTF-8；Content-Type 显式声明非 UTF-8 的页面视为没有标题（不猜编码、
 //!   不引入 `encoding_rs` 之类的第二个解码器）。
-//! - 不执行 JS、不解析完整 DOM：只在原始 HTML 里找第一处 `<title>`（跳过 HTML 注释），
-//!   解码常见实体、折叠空白。复杂页面（title 在脚本字符串里、属性里含 `>` 等）可能拿不到，
-//!   失败路径本来就是「保留 URL」，不构成数据损坏。
+//! - 不执行 JS、不解析完整 DOM：只在原始 HTML 里找第一处 `<title>`（跳过 HTML 注释与
+//!   `script` / `style` / `textarea` raw-text 元素），解码常见实体、折叠空白。属性里含
+//!   `>` 等更复杂的页面仍可能拿不到；失败路径本来就是「保留 URL」，不构成数据损坏。
 
 use std::io::Read;
 use std::time::Duration;
@@ -39,7 +41,7 @@ pub fn extract_title(html: &str) -> Option<String> {
             search = after;
             continue;
         }
-        if inside_comment(&lower, open) {
+        if inside_comment(&lower, open) || inside_raw_text(&lower, open) {
             search = after;
             continue;
         }
@@ -64,6 +66,31 @@ fn inside_comment(lower: &str, pos: usize) -> bool {
         Some(start) => before[start + 4..].find("-->").is_none(),
         None => false,
     }
+}
+
+/// 位置 `pos` 是否落在 `script` / `style` / `textarea` 的 raw-text 内容里。
+///
+/// 这些元素的内容按纯文本解析，里面出现的 `<title>` 不是文档标题。只做前向扫描：
+/// 找最近一个未闭合的开标签；没有闭合标签即视为仍在元素内。
+fn inside_raw_text(lower: &str, pos: usize) -> bool {
+    ["script", "style", "textarea"].iter().any(|tag| {
+        let open_tag = format!("<{tag}");
+        let before = &lower[..pos];
+        let Some(open) = before.rfind(&open_tag) else {
+            return false;
+        };
+        // 注释里的 `<script>` 不是开标签（例如 `<!-- <style> --> <title>real</title>`）。
+        if inside_comment(lower, open) {
+            return false;
+        }
+        let after_open = &before[open + open_tag.len()..];
+        let boundary = after_open.chars().next();
+        if !matches!(boundary, Some(ch) if ch == '>' || ch == '/' || ch.is_ascii_whitespace()) {
+            return false;
+        }
+        // 该开标签之后、pos 之前没有闭合标签 ⇒ 仍在 raw-text 内。
+        before[open..].find(&format!("</{tag}")).is_none()
+    })
 }
 
 /// 控制字符 → 空格，连续空白折叠成一个空格并 trim（标题里的换行不能把链接拆行）。
@@ -130,17 +157,19 @@ pub fn fetch_title(
     if !response.status().is_success() {
         return Ok(None);
     }
-    if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
-        let content_type = content_type.to_str().unwrap_or("").to_ascii_lowercase();
-        if !content_type.starts_with("text/html")
-            && !content_type.starts_with("application/xhtml+xml")
-        {
+    // 头部必须存在；media type 取第一个 `;` 前、trim 后**精确**匹配，不接受
+    // `text/html-anything` 这类前缀伪装。charset 独立解析（同一头部、`;` 分段）。
+    let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) else {
+        return Ok(None);
+    };
+    let content_type = content_type.to_str().unwrap_or("").to_ascii_lowercase();
+    let media_type = content_type.split(';').next().unwrap_or("").trim();
+    if media_type != "text/html" && media_type != "application/xhtml+xml" {
+        return Ok(None);
+    }
+    if let Some(charset) = charset_of(&content_type) {
+        if charset != "utf-8" && charset != "utf8" {
             return Ok(None);
-        }
-        if let Some(charset) = charset_of(&content_type) {
-            if charset != "utf-8" && charset != "utf8" {
-                return Ok(None);
-            }
         }
     }
     let mut body = Vec::new();
@@ -221,6 +250,37 @@ mod tests {
             Some("真标题".into())
         );
         assert_eq!(extract_title("<titlebar>不是 title</titlebar>"), None);
+        assert_eq!(
+            extract_title("<!-- <style> --> <title>注释外的真标题</title>"),
+            Some("注释外的真标题".into()),
+            "注释里的 raw-text 开标签不得遮蔽后面的真标题"
+        );
+    }
+
+    #[test]
+    fn title_skips_script_style_and_textarea_raw_text() {
+        assert_eq!(
+            extract_title("<script>\"<title>fake</title>\"</script><title>real</title>"),
+            Some("real".into()),
+            "script raw-text 里的 <title> 不是文档标题"
+        );
+        assert_eq!(
+            extract_title("<style>.x{content:'<title>fake</title>'}</style><title>real</title>"),
+            Some("real".into()),
+            "style raw-text 里的 <title> 不是文档标题"
+        );
+        assert_eq!(
+            extract_title("<textarea><title>fake</title></textarea><title>real</title>"),
+            Some("real".into()),
+            "textarea RCDATA 里的 <title> 不是文档标题"
+        );
+        assert_eq!(
+            extract_title("<script><title>fake</title>"),
+            None,
+            "未闭合的 script 里没有可用标题"
+        );
+        // 反向观测：没有 raw-text 的普通页面仍照常取到标题。
+        assert_eq!(extract_title("<title>real</title>"), Some("real".into()));
     }
 
     #[test]
@@ -249,7 +309,7 @@ mod tests {
     /// 一个只服务一次的确定性 HTTP 服务器（127.0.0.1 随机端口，不依赖外网）。
     fn serve_once(
         status: &'static str,
-        content_type: &'static str,
+        content_type: Option<&'static str>,
         body: &'static str,
         delay: Duration,
     ) -> (String, thread::JoinHandle<()>) {
@@ -260,8 +320,11 @@ mod tests {
             let mut buffer = [0u8; 1024];
             let _ = stream.read(&mut buffer);
             thread::sleep(delay);
+            let content_type_header = content_type
+                .map(|value| format!("Content-Type: {value}\r\n"))
+                .unwrap_or_default();
             let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\n{content_type_header}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
             let _ = stream.write_all(response.as_bytes());
@@ -274,7 +337,7 @@ mod tests {
     fn fetch_success_reads_title() {
         let (url, server) = serve_once(
             "200 OK",
-            "text/html; charset=utf-8",
+            Some("text/html; charset=utf-8"),
             "<html><head><title>来自本地服务器</title></head></html>",
             Duration::ZERO,
         );
@@ -295,7 +358,7 @@ mod tests {
                 "<title>编码不可信</title>",
             ),
         ] {
-            let (url, server) = serve_once(status, content_type, body, Duration::ZERO);
+            let (url, server) = serve_once(status, Some(content_type), body, Duration::ZERO);
             let result = fetch_title(&client(Duration::from_secs(2)), &url);
             server.join().expect("server");
             assert_eq!(result, Ok(None), "{status} / {content_type} / {body}");
@@ -303,10 +366,62 @@ mod tests {
     }
 
     #[test]
+    fn fetch_requires_present_exact_html_media_type() {
+        let cases: [(
+            &str,
+            Option<&'static str>,
+            &'static str,
+            Option<&'static str>,
+        ); 6] = [
+            ("缺失头部", None, "<title>x</title>", None),
+            (
+                "text/html 前缀伪装",
+                Some("text/html-anything"),
+                "<title>x</title>",
+                None,
+            ),
+            (
+                "xhtml 前缀伪装",
+                Some("application/xhtml+xml-anything"),
+                "<title>x</title>",
+                None,
+            ),
+            (
+                "精确 text/html",
+                Some("text/html"),
+                "<title>x</title>",
+                Some("x"),
+            ),
+            (
+                "精确 xhtml",
+                Some("application/xhtml+xml"),
+                "<title>x</title>",
+                Some("x"),
+            ),
+            (
+                "media type 前后空白 + 大写",
+                Some(" Text/HTML ; charset=UTF-8"),
+                "<title>x</title>",
+                Some("x"),
+            ),
+        ];
+        for (label, content_type, body, expected) in cases {
+            let (url, server) = serve_once("200 OK", content_type, body, Duration::ZERO);
+            let result = fetch_title(&client(Duration::from_secs(2)), &url);
+            server.join().expect("server");
+            assert_eq!(
+                result,
+                Ok(expected.map(str::to_string)),
+                "{label}：{content_type:?}"
+            );
+        }
+    }
+
+    #[test]
     fn fetch_timeout_is_error() {
         let (url, server) = serve_once(
             "200 OK",
-            "text/html",
+            Some("text/html"),
             "<title>迟到</title>",
             Duration::from_millis(300),
         );

@@ -36,8 +36,9 @@
    - 成功：URL 先落地，异步取标题后原地变为 `[title](url)`；失败 / 超时 / 非 2xx / 非 HTML /
      无标题 / 空标题 / 超长标题一律保留 URL。
    - 标题纯文本转义；空选区 + md + 可编辑 + 整段单个 http(s) URL 才接管。
-2. **Rust 侧新增 `fetch_url_title` command**：5 秒超时、只认 http(s)、只读 2xx、只读 HTML、
-   正文 512 KiB、UTF-8、标题 500 字符；HTML 标题提取是纯函数、可离线单测。
+2. **Rust 侧新增 `fetch_url_title` command**：5 秒超时、只认 http(s)、只读 2xx、`Content-Type`
+   必须存在且 media type 精确为 `text/html` / `application/xhtml+xml`、正文 512 KiB、UTF-8、
+   标题 500 字符；HTML 标题提取是纯函数、可离线单测。
 3. **前端新增 `src/paste-url.ts` 纯判据 + `EditorHandle.setPasteUrlTitlePort`**；装配层
    `src/main.ts` 注入 `ipc.fetchUrlTitle`；异步区间用 `StateField` 随事务映射。
 

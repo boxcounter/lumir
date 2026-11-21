@@ -15,6 +15,8 @@ import { readDocument } from "./parity-checks";
 const ASCII = "https://example.invalid/abc";
 const ANGLE = "https://example.invalid/中文";
 const DEF = "https://example.invalid/中文定义";
+const CAFE = "https://example.invalid/café";
+const CYRILLIC = "https://example.invalid/путь";
 const DOC = [
   "# URL 边界",
   "",
@@ -23,6 +25,8 @@ const DOC = [
   `显式 <${ANGLE}> 与定义行：`,
   "",
   `[home]: ${DEF}`,
+  "",
+  `非 CJK 路径 ${CAFE} 与 ${CYRILLIC} 完整保留。`,
   "",
 ].join("\n");
 
@@ -50,7 +54,7 @@ test("裸 URL 后的中文不进入链接目标 / 装饰；显式语法保留完
   await open(page);
 
   // 三条可点链接：裸 URL（ASCII 前缀）、角括号、定义行。
-  await expect(page.locator(".cm-lp-link")).toHaveCount(3);
+  await expect(page.locator(".cm-lp-link")).toHaveCount(5);
   const links = page.locator(".cm-lp-link");
   const texts = await links.allInnerTexts();
   expect(texts).toContain(ASCII);
@@ -61,6 +65,9 @@ test("裸 URL 后的中文不进入链接目标 / 装饰；显式语法保留完
   // 显式语法：角括号 / 定义行保留完整目标。
   await expect(page.locator(`.cm-lp-link[title="${ANGLE}"]`)).toHaveCount(1);
   await expect(page.locator(`.cm-lp-link[title="${DEF}"]`)).toHaveCount(1);
+  // 非 CJK Unicode 路径不被边界误裁。
+  await expect(page.locator(`.cm-lp-link[title="${CAFE}"]`)).toHaveCount(1);
+  await expect(page.locator(`.cm-lp-link[title="${CYRILLIC}"]`)).toHaveCount(1);
   // 中文说明仍作为正文可见（边界不是把中文吞掉）。
   await expect(page.locator(".cm-content")).toContainText("中文说明");
 

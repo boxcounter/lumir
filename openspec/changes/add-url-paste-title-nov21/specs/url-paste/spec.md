@@ -21,14 +21,25 @@ MUST NOT 让标题变成 HTML 标签、第二条链接、强调、行内代码�
 500 个字符时 SHALL 视为「没有可用标题」并保留 URL。
 
 异步改写 MUST 以「区间里的文本仍是当初粘贴的 URL 原文」为前提：用户在等待期间于区间内编辑、
-撤销粘贴、切换标签或该段文本被替换时，系统 MUST NOT 改写文档；在区间外键入 / 删除时，区间 SHALL
-随事务映射，改写 MUST NOT 落到错的位置。成功改写与首次粘贴都 SHALL 是一次 `input.paste` 事务，
-MUST NOT 绕过 dirty / 撤销栈；失败路径 MUST 只撤账、MUST NOT 派发文档变更。
+撤销粘贴或该段文本被替换时，系统 MUST NOT 改写文档；在区间外键入 / 删除时，区间 SHALL
+随事务映射，改写 MUST NOT 落到错的位置。
 
-取标题 SHALL 只对 http / https 发起，并遵守以下网络边界：总超时 5 秒；只接受 2xx 响应；只读取
-`text/html` / `application/xhtml+xml`；正文最多 512 KiB；只解码 UTF-8（显式声明非 UTF-8 的页面
-视为没有标题）；不执行 JavaScript。任一不满足或网络失败 / 超时 SHALL 走「失败保留 URL」路径，
-MUST NOT 把它变成用户可见的错误提示（粘贴本身已成功）。
+切换标签 SHALL 采用**切走即取消**：离开会话（切换标签 / 关闭标签）时 SHALL 立即撤清该会话的
+取标题 pending，切回 MUST NOT 恢复或补写；标题响应在**非前台**（inactive）到达时 MUST 撤清
+该会话的 pending，且 MUST NOT 对当前前台 view 派发任何事务。整篇重载同样 SHALL 撤清 pending。
+
+成功改写与首次粘贴 SHALL 各自是一次独立的 `input.paste` 事务，MUST NOT 绕过 dirty / 撤销栈；
+第一次撤销 SHALL 只回退标题升级回到 URL，第二次 SHALL 回退原粘贴，回到粘贴前文本。失败路径
+MUST 只撤账、MUST NOT 派发文档变更，也 MUST NOT 多出一次撤销事件。
+
+取标题 SHALL 只对 http / https 发起，并遵守以下网络边界：总超时 5 秒；只接受 2xx 响应；
+`Content-Type` 头部 MUST 存在，取第一个 `;` 前的 media type、trim 后**精确等于** `text/html`
+或 `application/xhtml+xml`（`text/html-anything` 这类前缀伪装不接受），charset 独立解析；正文
+最多 512 KiB；只解码 UTF-8（显式声明非 UTF-8 的页面视为没有标题）；不执行 JavaScript
+（`script` / `style` / `textarea` raw-text 里的 `<title>` 不算文档标题）。任一不满足或网络失败 /
+超时 SHALL 走「失败保留 URL」路径，MUST NOT 把它变成用户可见的错误提示（粘贴本身已成功）。
+网络 / 读取失败 SHALL 返回错误，非 2xx 与无可用标题 SHALL 返回「无标题」——两者在前端都保留
+原始 URL，但语义不得混写。
 
 #### Scenario: 成功取到标题
 
@@ -88,3 +99,15 @@ URL」的粘贴。以下粘贴 MUST NOT 进入取标题通道，SHALL 保持既�
 - **WHEN** 在 code 模式或只读文档里粘贴一个 http(s) URL
 - **THEN** URL 按默认文本粘贴落地（或按只读 / 非 md 的既有规则拒收），MUST NOT 取标题、MUST NOT
   生成链接
+
+#### Scenario: 切走即取消与 inactive 撤账
+
+- **WHEN** 在 A 粘贴 URL 后切到 B；标题响应在 B 前台时到达，随后切回 A
+- **THEN** A 的文档仍是原始 URL，MUST NOT 被升级为 `[title](url)`；B 的文档逐字节不变；A 的
+  pending 在离开 A 时（或响应 inactive 到达时）已撤清，不得无限滞留
+
+#### Scenario: 两次撤销
+
+- **WHEN** 成功把 URL 升级为 `[title](url)` 后连续按两次撤销
+- **THEN** 第一次回到原始 URL，第二次回到粘贴前文本；最终 dirty=false，MUST NOT 留下半截
+  `[` / 重复 URL / 额外撤销事件

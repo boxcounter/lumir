@@ -139,3 +139,13 @@ export function newPendingUrlTitle(from: number, to: number, url: string): Pendi
 export function pendingUrlTitles(state: EditorState): readonly PendingUrlTitle[] {
   return state.field(pendingUrlTitleField);
 }
+
+/**
+ * 撤清当前 state 里全部 pending 的 effects（「切走即取消」/ 整篇重载用）。
+ *
+ * 调用方把它并进自己的事务：前台会话经 `view.dispatch`、后台会话经
+ * `session.state.update({ effects })`——两侧都不碰对方的 view。
+ */
+export function clearPendingUrlTitleEffects(state: EditorState): StateEffect<unknown>[] {
+  return pendingUrlTitles(state).map((pending) => removePendingUrlTitle.of(pending.id));
+}

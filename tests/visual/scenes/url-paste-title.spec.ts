@@ -1,5 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
-import { invokes, stubTauri, urlTitleRequests, type VaultFixture } from "./tauri-stub";
+import {
+  externalWrite,
+  fireFsEvent,
+  invokes,
+  stubTauri,
+  urlTitleRequests,
+  type VaultFixture,
+} from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
 // 粘贴 URL 自动取标题（change add-url-paste-title-nov21）。
@@ -8,8 +15,11 @@ import { readDocument } from "./parity-checks";
 // `fetch_url_title` 走桩的 URL → 标题表，失败 / 延迟由 fixture 注入。判据覆盖：
 //   - 成功：URL 先落地，随后原地换成 `[标题](URL)`；只请求一次、不重复插入；
 //   - 无标题 / 网络错误：文档逐字节保留原始 URL；
-//   - 等待期间在区间内键入：放弃改写，不覆盖用户的编辑；
-//   - 成功替换：不挪动用户在别处的选区；撤销不留下半截 Markdown；
+//   - 等待期间在区间内键入：放弃改写；在区间外键入：映射后仍升级，不覆盖用户输入；
+//   - 成功替换：不挪动用户在别处的选区；两次 undo 精确回到 URL / 粘贴前，最终 dirty=false；
+//   - 失败：只撤账，不多一次 undo；
+//   - 切走再切回、关闭标签、整篇重载：响应不改写其他文档 / 已取消的会话；
+//   - 多次并发粘贴：各自只替换一次；
 //   - 有选区：保留 CM 既有 `pasteURLAsLink` 语义（`[选中文本](URL)`），本能力不抢；
 //   - 非 URL 文本 / 已有 Markdown：默认粘贴逐字节不变，不产生取标题请求。
 //
@@ -18,16 +28,38 @@ import { readDocument } from "./parity-checks";
 const START = "# 粘贴 URL\n\n";
 const URL = "https://example.invalid/article";
 const TITLE = "示例 标题";
+const URL2 = "https://example.invalid/second";
+const TITLE2 = "第二篇";
+const OTHER = "# 另一个文档\n\n另一份内容。\n";
 
-async function open(page: Page, extra: Partial<VaultFixture> = {}): Promise<void> {
+async function openMany(
+  page: Page,
+  files: Record<string, string>,
+  extra: Partial<VaultFixture> = {},
+): Promise<void> {
   await stubTauri(page, {
-    entries: [{ path: "paste.md", kind: "file", size: START.length, mtime_ms: 0 }],
-    files: { "paste.md": START },
+    entries: Object.entries(files).map(([path, content]) => ({
+      path,
+      kind: "file",
+      size: content.length,
+      mtime_ms: 0,
+    })),
+    files,
     ...extra,
   });
   await page.goto("/");
   await page.locator('.ft-row[title="paste.md"]').click();
   await expect(page.locator(".cm-content")).toBeVisible();
+}
+
+async function open(page: Page, extra: Partial<VaultFixture> = {}): Promise<void> {
+  await openMany(page, { "paste.md": START }, extra);
+}
+
+/** 通过标签栏切换（`.tab-open` 是标签的激活钮）。 */
+async function switchTab(page: Page, name: string): Promise<void> {
+  await page.locator(".tab-open", { hasText: name }).click();
+  await expect(page.locator(".tab.is-active .tab-name")).toHaveText(name);
 }
 
 /** 合成一次 text/plain 粘贴。 */
@@ -56,6 +88,11 @@ async function caret(page: Page): Promise<number> {
     if (!tile) throw new Error("CodeMirror view unavailable");
     return tile.root.view.state.selection.main.head;
   });
+}
+
+/** 当前标签的 dirty 点（`.tab-dirty` 只在 dirty 时可见，见 tabs.ts）。 */
+function dirtyDot(page: Page) {
+  return page.locator(".tab.is-active .tab-dirty");
 }
 
 /** 全选正文（经 CM view，不依赖键盘通道的键位映射）。 */
@@ -106,7 +143,7 @@ test("失败：无可用标题 / 网络错误都保留原始 URL，不产生半�
   expect(await readDocument(page)).not.toContain("[");
 });
 
-test("成功替换保留用户选区；撤销不留下半截链接", async ({ page }) => {
+test("成功替换保留选区；两次 undo 精确回 URL / 粘贴前，最终 dirty=false", async ({ page }) => {
   await open(page, { urlTitles: { [URL]: TITLE }, urlTitleDelayMs: 500 });
   await setCursor(page, START.length);
   await pasteText(page, URL);
@@ -116,11 +153,128 @@ test("成功替换保留用户选区；撤销不留下半截链接", async ({ pa
   await expect.poll(async () => readDocument(page)).toBe(`${START}[${TITLE}](${URL})`);
   expect(await caret(page), "替换不得把用户光标挪到链接末尾").toBe(2);
 
-  // 撤销：无论是「先撤标题替换」还是历史分组一次撤掉整次粘贴，都不能留下半截 `[`。
+  // 两次事务都带 isolateHistory：第一次只撤标题升级，第二次撤原粘贴。
   await page.keyboard.press("Meta+z");
-  const undone = await readDocument(page);
-  expect(undone === START || undone === `${START}${URL}`, `撤销后的文档应是粘贴前或仅 URL：${JSON.stringify(undone)}`).toBe(true);
-  expect(undone).not.toContain("[");
+  expect(await readDocument(page), "第一次 undo 只回 URL").toBe(`${START}${URL}`);
+  await page.keyboard.press("Meta+z");
+  expect(await readDocument(page), "第二次 undo 回粘贴前").toBe(START);
+  await expect(dirtyDot(page), "回到 cleanDoc 后 dirty 必须归零").toBeHidden();
+});
+
+test("失败只撤账：一次 undo 回粘贴前，不多一次历史", async ({ page }) => {
+  await open(page, { urlTitles: {} });
+  await setCursor(page, START.length);
+  await pasteText(page, URL);
+  await expect.poll(async () => (await urlTitleRequests(page)).length).toBe(1);
+  await page.waitForTimeout(80);
+  expect(await readDocument(page)).toBe(`${START}${URL}`);
+
+  await page.keyboard.press("Meta+z");
+  expect(await readDocument(page), "失败路径不产生额外 undo 事件").toBe(START);
+  await expect(dirtyDot(page)).toBeHidden();
+});
+
+test("等待期在区间外键入：区间随事务映射，仍升级且不覆盖输入", async ({ page }) => {
+  await open(page, { urlTitles: { [URL]: TITLE }, urlTitleDelayMs: 800 });
+  await setCursor(page, START.length);
+  await pasteText(page, URL);
+
+  // 光标在 URL 之后键入（区间外）。pending 的 `to` 用 assoc -1，不会把新字符吞进 URL。
+  await page.keyboard.type("Z");
+  await expect.poll(async () => readDocument(page)).toBe(`${START}[${TITLE}](${URL})Z`);
+  expect(await readDocument(page), "用户键入的字符必须留在链接之后").toContain(`${URL})Z`);
+});
+
+test("多次并发粘贴：各自只替换一次", async ({ page }) => {
+  await open(page, {
+    urlTitles: { [URL]: TITLE, [URL2]: TITLE2 },
+    urlTitleDelayMs: 600,
+  });
+  await setCursor(page, START.length);
+  await pasteText(page, URL);
+  await pasteText(page, URL2);
+
+  await expect.poll(async () => readDocument(page)).toBe(
+    `${START}[${TITLE}](${URL})[${TITLE2}](${URL2})`,
+  );
+  const doc = await readDocument(page);
+  expect(doc.split(URL).length - 1, "第一条 URL 只出现一次").toBe(1);
+  expect(doc.split(URL2).length - 1, "第二条 URL 只出现一次").toBe(1);
+  expect(doc.split("[").length - 1, "两条链接各生成一次").toBe(2);
+});
+
+test("切走即取消：A 粘贴→切 B→切回 A，响应不升级", async ({ page }) => {
+  await openMany(
+    page,
+    { "paste.md": START, "other.md": OTHER },
+    { urlTitles: { [URL]: TITLE }, urlTitleDelayMs: 800 },
+  );
+  await setCursor(page, START.length);
+  await pasteText(page, URL);
+
+  await page.locator('.ft-row[title="other.md"]').click();
+  await expect(page.locator(".tab")).toHaveCount(2);
+  await switchTab(page, "paste.md");
+  await page.waitForTimeout(1000);
+
+  expect(await readDocument(page), "切走即取消：切回后也不得升级").toBe(`${START}${URL}`);
+  await switchTab(page, "other.md");
+  expect(await readDocument(page), "另一个文档不做任何改写").toBe(OTHER);
+});
+
+test("响应在 inactive 到达：撤账后切回不升级", async ({ page }) => {
+  await openMany(
+    page,
+    { "paste.md": START, "other.md": OTHER },
+    { urlTitles: { [URL]: TITLE }, urlTitleDelayMs: 300 },
+  );
+  await setCursor(page, START.length);
+  await pasteText(page, URL);
+
+  await page.locator('.ft-row[title="other.md"]').click();
+  await expect(page.locator(".tab")).toHaveCount(2);
+  // 让响应在 B 前台时到达（inactive 分支必须只撤 A 的 pending，不碰 B 的 view）。
+  await page.waitForTimeout(600);
+  expect(await readDocument(page), "B 文档在响应期间不得被改写").toBe(OTHER);
+
+  await switchTab(page, "paste.md");
+  expect(await readDocument(page), "inactive 响应到达后，切回 A 也不得升级").toBe(`${START}${URL}`);
+});
+
+test("关闭标签：等待中的响应不写回其他文档", async ({ page }) => {
+  await openMany(
+    page,
+    { "paste.md": START, "other.md": OTHER },
+    { urlTitles: { [URL]: TITLE }, urlTitleDelayMs: 800 },
+  );
+  await page.locator('.ft-row[title="other.md"]').click();
+  await expect(page.locator(".tab")).toHaveCount(2);
+  await switchTab(page, "paste.md");
+  await setCursor(page, START.length);
+  await pasteText(page, URL);
+  await page.keyboard.press("Meta+s");
+  await expect(dirtyDot(page)).toBeHidden();
+
+  await page.locator(".tab", { hasText: "paste.md" }).locator(".tab-close").click();
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await page.waitForTimeout(1000);
+  expect(await readDocument(page), "关闭后的响应不得写进邻居文档").toBe(OTHER);
+});
+
+test("整篇重载：等待中的响应不写回已替换的正文", async ({ page }) => {
+  await open(page, { urlTitles: { [URL]: TITLE }, urlTitleDelayMs: 1200 });
+  await setCursor(page, START.length);
+  await pasteText(page, URL);
+  await page.keyboard.press("Meta+s");
+  await expect(dirtyDot(page)).toBeHidden();
+
+  const reloaded = "# 重载后\n\n新的正文。\n";
+  await externalWrite(page, "paste.md", reloaded);
+  await fireFsEvent(page, [{ kind: "modified", path: "paste.md", entry_kind: "file" }]);
+  await expect.poll(async () => readDocument(page)).toBe(reloaded);
+
+  await page.waitForTimeout(1400);
+  expect(await readDocument(page), "重载后响应不得改写新正文").toBe(reloaded);
 });
 
 test("等待期间在区间内编辑：放弃改写，不覆盖用户输入", async ({ page }) => {

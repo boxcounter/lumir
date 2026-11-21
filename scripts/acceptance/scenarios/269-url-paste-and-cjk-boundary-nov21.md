@@ -62,7 +62,7 @@ steps:
   - name: 造粘贴失败笔记
     do: vaultWrite
     file: notes/url-paste-fail.md
-    content: "# 粘贴失败\n\n"
+    content: "粘贴失败 URL 粘贴目标："
     expect:
       - label: 失败笔记已落盘
         file: { path: notes/url-paste-fail.md, has: "粘贴失败" }
@@ -88,6 +88,12 @@ steps:
     expect:
       - label: 焦点在编辑器正文
         ax: { focused: "AXTextArea" }
+
+  - name: 光标移到行尾（粘贴点固定，file.exact 才有确定终态）
+    do: key
+    key: "ctrl+e"
+    channel: cgevent
+    gapMs: 150
 
   - name: 剪贴板置不可解析域名的 URL（.invalid 保留 TLD，DNS 必失败）
     do: clipboardText
@@ -116,10 +122,8 @@ steps:
     channel: cgevent
     gapMs: 500
     expect:
-      - label: 磁盘源码保留原始 URL
-        file: { path: notes/url-paste-fail.md, has: "https://url-paste-check.invalid/fail" }
-      - label: 磁盘源码没有标题链接结构
-        file: { path: notes/url-paste-fail.md, not: "[" }
+      - label: 磁盘源码逐字等于「前缀 + 原始 URL」
+        file: { path: notes/url-paste-fail.md, exact: "粘贴失败 URL 粘贴目标：https://url-paste-check.invalid/fail" }
 
   # ---------------------------------------------------------------------------
   # C. 取标题成功：本地 dev server 的 `<title>Lumir</title>` → `[Lumir](URL)`
@@ -127,7 +131,7 @@ steps:
   - name: 造粘贴成功笔记
     do: vaultWrite
     file: notes/url-paste-ok.md
-    content: "# 粘贴成功\n\n"
+    content: "粘贴成功 URL 粘贴目标："
     expect:
       - label: 成功笔记已落盘
         file: { path: notes/url-paste-ok.md, has: "粘贴成功" }
@@ -154,6 +158,12 @@ steps:
       - label: 焦点在编辑器正文
         ax: { focused: "AXTextArea" }
 
+  - name: 光标移到行尾（粘贴点固定，file.exact 才有确定终态）
+    do: key
+    key: "ctrl+e"
+    channel: cgevent
+    gapMs: 150
+
   - name: 剪贴板置本应用 dev server 的 URL（确定性本地页面，不依赖外网）
     do: clipboardText
     text: "http://127.0.0.1:1430/"
@@ -179,10 +189,8 @@ steps:
     channel: cgevent
     gapMs: 500
     expect:
-      - label: 磁盘源码是 `[标题](URL)`（标题纯文本，URL 原文）
-        file: { path: notes/url-paste-ok.md, has: "[Lumir](http://127.0.0.1:1430/)" }
-      - label: 成功路径只写一条链接（没有重复插入）
-        file: { path: notes/url-paste-ok.md, not: "[Lumir](http://127.0.0.1:1430/)[Lumir]" }
+      - label: 磁盘源码逐字等于「前缀 + [标题](URL)」
+        file: { path: notes/url-paste-ok.md, exact: "粘贴成功 URL 粘贴目标：[Lumir](http://127.0.0.1:1430/)" }
 
   - name: 清理三份验收笔记
     do: vaultRm
@@ -203,20 +211,22 @@ steps:
 
 两条需求的行为判定下沉到真机 WKWebView：
 
-1. **裸 URL 后的中文**（`fix-bare-url-cjk-boundary-nov21`）：GFM 的 `urlRE` 会把中文吞进
-   `URL` 节点，链接层在首个非 ASCII 字符前截断。真机判据是「`abc中文说明` 不再作为连续串
-   出现」+「中文仍可见」+「磁盘源码不变」——只看 `editor.has("中文说明")` 会在「中文被吞进
-   链接但链接文本仍显示」时也绿。
+1. **裸 URL 后的中文**（`fix-bare-url-cjk-boundary-nov21`）：GFM 的 `urlRE` 会把 CJK / 全角
+   字符吞进 `URL` 节点，链接层在首个 CJK / 全角字符前截断（café / 西里尔等其它 Unicode 不裁）。
+   真机判据是「`abc中文说明` 不再作为连续串出现」+「中文仍可见」+「磁盘源码不变」——只看
+   `editor.has("中文说明")` 会在「中文被吞进链接但链接文本仍显示」时也绿。
 2. **取标题失败**（`add-url-paste-title-nov21`）：`.invalid` 域名的请求必失败；URL 必须先落地、
-   失败后仍逐字留在正文，⌘S 后磁盘不出现 `[` 结构。
+   失败后仍逐字留在正文，⌘S 后磁盘用 `file.exact` 逐字等于「前缀 + URL」。
 3. **取标题成功**：`http://127.0.0.1:1430/` 是套件自己起的 vite dev server，`index.html` 的
    `<title>` 恒为 `Lumir`。真机走完整链路：粘贴 → Rust `fetch_url_title`（reqwest loopback）→
-   异步替换 → ⌘S 落盘 `[Lumir](http://127.0.0.1:1430/)`。这条同时证 Rust command 的注册与
-   前端端口注入在真栈上接通，不只停在 chromium 桩。
+   异步替换 → ⌘S 落盘 `file.exact` 等于「前缀 + `[Lumir](http://127.0.0.1:1430/)`」。这条同时证
+   Rust command 的注册与前端端口注入在真栈上接通，不只停在 chromium 桩。
 
 ## 已知边界
 
 - 成功路径的端口按缺省 `LUMIR_ACCEPTANCE_PORT=1430` 写死；主会话若覆盖端口，需同步改 URL。
 - 真机 AX 读到的是渲染后文本：成功路径的编辑器可能显示 `Lumir↗︎` 而不是源码，所以最终
   判据落在 ⌘S 后的文件源码；`editor.has("Lumir")` 只做「标题已上屏」的锚点。
+- 失败 / 成功笔记都是单行、`ctrl+e` 把光标移到行尾后再粘贴，`file.exact` 的前缀因此固定；
+  MUST NOT 把这两条改回子串断言。
 - 网络失败最长等 5s（Rust 侧 `FETCH_TIMEOUT`），`waitFor` 给 20s 余量。

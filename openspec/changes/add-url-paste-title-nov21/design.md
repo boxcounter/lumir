@@ -33,9 +33,16 @@ DOM paste (text/plain)
   边界外插入的新文本不会被吞进区间；
 - 标题返回时只认当前 state 里的同名 pending，并用 `doc.sliceString(from, to) === url` 再判一次；
 - 区间内编辑 / 撤销粘贴 / 文档重载 → 切片对不上或 pending 不存在 → 只移除 pending，不写文档；
-- 前台会话已切走（`active !== session`）→ 直接放弃，不往别的文档写。
+- **切走即取消**：`activate()` 离开会话时立即把该会话的 pending 撤清（只换代它的 state，
+  不向即将被换掉的 view 派发）；切回不会恢复或补写；
+- 标题响应在非前台（inactive）到达时，撤清 `session.state` 里该会话的 pending，MUST NOT 对
+  当前前台 view 派发；关闭标签时 state 直接丢弃；整篇重载（`loadedState` / 前台装载事务）
+  同样带撤清 effects。
 
 `id` 由模块级自增计数器分配，同一文档里多次粘贴互不覆盖。
+
+首次粘贴与标题升级都带 `isolateHistory.of("full")`：两次事务各自独立进撤销栈，第一次撤销只回
+URL、第二次回粘贴前；失败路径只派发撤账 effect，不产生额外文档事务 / 撤销事件。
 
 ## 4. 接管边界
 
@@ -73,15 +80,17 @@ URL 目标用 `escapeDestination` 转义 `\`、`(`、`)`、`<`、`>`；`links.ts
   同线程语义），不占 IPC 主线程。
 - 网络：复用 `reqwest::blocking`（Cargo.toml 已有，`blocking` + `rustls-tls`），不新增依赖。
   `Client::builder().timeout(5s).user_agent("Lumir/<crate version>")`。
-- 边界：`Url::parse` 后只接受 http / https；非 2xx → `Ok(None)`；Content-Type 不是
-  `text/html` / `application/xhtml+xml` → `Ok(None)`；显式 `charset` 不是 UTF-8 → `Ok(None)`；
-  正文 `take(512 KiB)`；`String::from_utf8_lossy` 后交给纯函数 `extract_title`。
-- `extract_title`：大小写不敏感找 `<title`（标签名边界 + 跳过 HTML 注释），取 `>` 与
-  `</title` 之间；解码 `&amp; &lt; &gt; &quot; &apos; &nbsp;` 与数字实体；控制字符 → 空格、
-  空白折叠；空 / 超 500 字符 → None。
-- 已知边界：不解析完整 DOM、不执行 JS、`<title>` 在脚本字符串 / 属性含 `>` 等复杂页面可能
-  取不到；GBK 等非 UTF-8 页面视为无标题（不猜编码、不引入第二个解码器）。这些都走「保留 URL」，
-  不构成数据损坏。
+- 边界：`Url::parse` 后只接受 http / https；非 2xx → `Ok(None)`；`Content-Type` 头部必须存在，
+  取第一个 `;` 前的 media type、trim 后**精确等于** `text/html` 或 `application/xhtml+xml`
+  （`text/html-anything` 不接受），否则 `Ok(None)`；显式 `charset` 不是 UTF-8 → `Ok(None)`；
+  正文 `take(512 KiB)`；`String::from_utf8_lossy` 后交给纯函数 `extract_title`。网络 / 读取失败
+  是 `Err`，非 2xx / 无可用标题是 `Ok(None)`。
+- `extract_title`：大小写不敏感找 `<title`（标签名边界 + 跳过 HTML 注释与 `script` /
+  `style` / `textarea` raw-text），取 `>` 与 `</title` 之间；解码 `&amp; &lt; &gt; &quot;
+  &apos; &nbsp;` 与数字实体；控制字符 → 空格、空白折叠；空 / 超 500 字符 → None。
+- 已知边界：不解析完整 DOM、不执行 JS；`script` / `style` / `textarea` raw-text 已跳过，
+  但属性里含 `>` 等更复杂的页面仍可能取不到；GBK 等非 UTF-8 页面视为无标题（不猜编码、
+  不引入第二个解码器）。这些都走「保留 URL」，不构成数据损坏。
 
 ## 7. 失败与用户可见面
 
@@ -94,7 +103,8 @@ URL 目标用 `escapeDestination` 转义 `\`、`(`、`)`、`<`、`>`；`links.ts
   区间映射、改写闸门、长度上限。
 - chromium 视觉场景（`tests/visual/scenes/url-paste-title.spec.ts`）：合成 paste、桩的
   `fetch_url_title` 成功 / null / reject / 延迟，验 URL 先落地、成功替换、失败保留、等待期编辑
-  放弃、有选区不接管、非 URL / Markdown 逐字节不变。
+  放弃、区间外映射、两次 undo + dirty、并发粘贴、切走/切回、inactive 响应、关闭标签、整篇
+  重载、有选区不接管、非 URL / Markdown 逐字节不变。
 - Rust 单测（`src-tauri/src/url_title.rs`）：HTML 标题提取 / 实体 / 注释 / 长度 / charset；
   用 `127.0.0.1` 一次性 TCP server 覆盖 200、404、非 HTML、无标题、GBK、超时，全部离线。
 - 真机场景 269 B / C 段：`.invalid` 网络失败保留 URL；loopback dev server 成功取标题并 ⌘S
