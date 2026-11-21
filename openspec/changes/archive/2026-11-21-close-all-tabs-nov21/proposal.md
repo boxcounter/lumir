@@ -14,7 +14,43 @@
 > 已改为「收尾（全关完或停手）统一归还焦点：文档会话→编辑器正文，图片会话→标签按钮」，
 > 并在浏览器层补取消 / dismiss / 保存冲突 / 写失败四条真实 `document.activeElement` 回归。
 > P3-1 修正 delta 里「四条关闭项都锚定右键标签」的表述，Close All 的范围单列。
-> 节点 2（归档评审）：实现完成后填写。
+> 节点 1 批准推进：Alex 需求原话（见上）+「请你继续」；两条菜单元素级基线的更新另经 Alex
+> 「允许」（`985ab07f`）。
+> 节点 2（归档放行）：**机器 + 独立评审放行**（[openspec-workflow.md](../../../../docs/process/openspec-workflow.md)
+> 「节点 2：归档默认由独立评审 + 机器判据放行」五要件），逐条事实与证据指针见下「节点 2 记录（归档前）」。
+
+## 节点 2 记录（归档前，2026-11-21）
+
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-11-21 通过——Alex 需求原话「TAB 右键 Close all tabs（复用逐个
+   dirty 确认）」+「请你继续」批准推进（见上方「评审记录」）；D1–D3 三个行为细节按 proposal 文末
+   的倾向落地。实现期没有静默扩 scope：产品改动只有 `src/tabs.ts` 的第五项 / `closeAllTargets` /
+   批量收尾焦点、`src/copy-data.ts` D946 与 `文案-Copy.md`，对应「What Changes」；r1 评审
+   P2-1/P3-1 的返修（停手归还焦点、范围表述）在既有意图内，未新增产品行为。
+2. **独立 reviewer clean / merge**：独立 reviewer agent-35 判 `clean/merge`，无 P1 / P2 findings，
+   绑定 integration tip `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/navigation-batch-nov21/review-final.md`
+   （明记「两张菜单基线已获 Alex 批准并更新」）。当前分支 tip 与该评审 tip 相同。
+3. **tasks 完成**：`tasks.md` 31/32 勾选——唯一未勾项 8.1 就是**归档命令本身**
+   （`openspec archive close-all-tabs-nov21`），在本批归档成功后补勾；不属放弃项。其余 31 项
+   （含 5.4 真机、6.4 基线、6.6 证据对账）均已勾并就地补证据指针。
+4. **要求的门禁与真机证据**：动过 `tests/visual/scenes/tab-menu.spec.ts` 与两张元素级基线，按
+   `scripts/gate.sh visual` 档取读数——`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0（含像素层；
+   基线 `985ab07f` 经 Alex 过目「允许」）。真机场景 `50-tab-context-menu` PASS（79 断言，0 FAIL；
+   `status.txt` = `PASS`），覆盖 Close / Close Other / Close Right / Close All 四条路径与脏标签
+   取消即停手，证据
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/50-tab-context-menu/`
+   （`steps.md` / `shots/` / `ax/`）。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS——`扫过
+   11 份 delta，11 条 MODIFIED，对比 204 段，无静默丢段；归档队列 0 项已完成 change 均有唯一条目`
+   （退出码 0；本 change 因 8.1 未勾不进入「已完成」面，归档与勾选同一提交，无台账窗口）；
+   `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 38 passed, 0 failed
+   (38 items)`（退出码 0）。delta 是 `multi-tabs` 的 1 条 MODIFIED（「标签的关闭操作」整条复制后
+   改，保留既有全部场景），是真实增量，不是纯目录移动。
+
+未命中「必须找 Alex 的例外类别」：视觉基线更新已单独获 Alex「允许」，无未决的价值 / 行为裁决、
+无影响面升级、评审结论与 tip 均无异常、证据无缺口，故不另送 Alex。
 
 ## Why
 
