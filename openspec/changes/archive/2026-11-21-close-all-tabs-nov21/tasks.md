@@ -57,7 +57,9 @@
 - [x] 5.2 场景注释登记覆盖分工与「未命名 dirty 在真机不可达」的边界（单测负向用例承担）
 - [x] 5.3 `node scripts/acceptance/coverage.mjs` 重生成 `COVERAGE.md`；
       `bash scripts/acceptance/check-suite.sh` 绿
-- [ ] 5.4 真机执行场景 50（主会话统一跑）；证据落 `.local/acceptance/`
+- [x] 5.4 真机执行场景 50（主会话统一跑）；证据落 `.local/acceptance/`：`50-tab-context-menu`
+      PASS（79 断言，0 FAIL），证据
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/50-tab-context-menu/`
 
 ## 6. 门禁与证据
 
@@ -65,9 +67,14 @@
 - [x] 6.2 `node tests/unit/run.mjs` 全绿（读数见完工报告）
 - [x] 6.3 `LUMIR_VISUAL_STRUCTURAL=1 LUMIR_VISUAL_PORT=4285 playwright test scenes/tab-menu.spec.ts`
       18/18 PASS（返修 r1 后；红—绿证据见 `.local/missions/close-all-tabs-nov21/focus-probe-red.log`）
-- [ ] 6.4 像素层：两条菜单元素级基线因多一行而变化，待 Alex 过目后 `--update`（本 mission 不更新基线）
+- [x] 6.4 像素层：两条菜单元素级基线因多一行而变化，Alex 过目并「允许」后已 `--update`
+      （`985ab07f`，`tab-menu` / `tab-menu-close-right-active` 两张）；本 change 不再改基线
 - [x] 6.5 `openspec validate --all --strict` / `bash scripts/docs-check.sh` / `run.mjs --check`
-- [ ] 6.6 证据与完工报告对账后提交（source only），TowerComplete
+- [x] 6.6 证据与完工报告对账后提交（source only），TowerComplete：最终评审
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/navigation-batch-nov21/review-final.md`
+      与真机证据目录
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/50-tab-context-menu/`
+      对账一致；本批由归档会话收口提交
 
 ## 7. 返修 r1
 
@@ -79,5 +86,8 @@
 
 ## 8. 归档（节点 2）
 
-- [ ] 8.1 节点 2 归档评审通过后 `openspec archive close-all-tabs-nov21`
-      （批次收尾执行；本 change 活跃期不改 living spec / backlog）
+- [x] 8.1 节点 2 归档评审通过后 `openspec archive close-all-tabs-nov21`
+      （批次收尾执行；本 change 活跃期不改 living spec / backlog）：2026-11-21 实际执行
+      `node scripts/openspec-archive.mjs close-all-tabs-nov21`，归档为
+      `2026-11-21-close-all-tabs-nov21`；任务的勾选发生在归档命令成功之后（归档输出记
+      `Task status: 31/32 tasks` + `Warning: 1 incomplete task(s)…`，即本条自身）

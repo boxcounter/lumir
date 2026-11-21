@@ -7,7 +7,66 @@
 > 评审记录
 > 节点 1：Alex 2026-11-21 在需求批逐字提出「Cmd+P Cmd+A 全选 + 目录直接子级提示/筛选」，
 > 并以「请你继续」确认推进。实现范围严格限定在需求的两条内，未新增其它产品行为。
-> 节点 2：实现完成后按五要件补记录。
+> 节点 2（归档放行）：**机器 + 独立评审放行**（[openspec-workflow.md](../../../../docs/process/openspec-workflow.md)
+> 「节点 2：归档默认由独立评审 + 机器判据放行」五要件），逐条事实与证据指针见下「节点 2 记录（归档前）」。
+
+## 节点 2 记录（归档前，2026-11-21）
+
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-11-21 通过——Alex 需求原话「Cmd+P Cmd+A 全选 + 目录直接子级
+   提示/筛选」+「请你继续」确认推进（见上方「评审记录」）。实现期没有静默扩 scope：两条需求分别
+   落在 `quick-open` 的 ⌘A 接管与目录语境候选 / 提示上；r1 评审 P2-1/P2-2/P3-1/P3-2 的返修
+   （AX value 判据、MODIFIED 整块、Enter 口径、组合期 ⌘A）都在既有意图内，未新增产品行为。
+2. **独立 reviewer clean / merge**：独立 reviewer agent-35 判 `clean/merge`，无 P1 / P2 findings，
+   明记「keys identity 修复未放宽产品判据」；绑定 integration tip
+   `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/navigation-batch-nov21/review-final.md`。
+   评审时 integration tip 为 `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；归档分支自该 tip 之后
+   仅文档变化（无产品代码增量）。
+3. **tasks 完成**：`tasks.md` 30/30 全勾（`grep -c '^- \[x\]'` = 30，未勾项 0），无放弃项；
+   0.4 / 4.3 / 5.2 已就地补裁决、真机与评审指针。
+4. **要求的门禁与真机证据**：动过 `tests/visual/scenes/quick-open.spec.ts`（该场景无像素基线），
+   按 `scripts/gate.sh visual` 档取读数——`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0。
+   真机场景 `230d-quick-open-select-all-dir-children` PASS（9 断言，0 FAIL；`status.txt` =
+   `PASS`），覆盖 ⌘A 全选后替换键入、目录直接子级提示 / 深层后代不混入、裸目录两段式 Enter，
+   证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/230d-quick-open-select-all-dir-children/`
+   （`steps.md` / `shots/` / `ax/`）。未更新视觉基线。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS——`扫过
+   10 份 delta，10 条 MODIFIED，对比 180 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`
+   （退出码 0）。该读数中的「1 项」来自归档前在**临时工作区补登**的唯一本 change 条目；该条目
+   从未进入任何 git 提交，归档提交对 `docs/backlog.md` 无改动——修订后的准确口径以本段为准。
+   `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 37
+   passed, 0 failed (37 items)`（退出码 0）。delta 是 `quick-open` 的 1 条 ADDED（输入面 ⌘A）+ 2 条 MODIFIED
+   （候选列表与匹配语义、结果区与 Enter 的判决同源），是真实增量，不是纯目录移动。
+
+未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与
+tip 均无异常、证据无缺口，故不另送 Alex。
+
+## 节点 2 记录（归档后，2026-11-21）
+
+- **归档提交**：`d7b5a5b3093219340cf75e6335b5621970434f62`（归档目录 + 并入后的
+  `openspec/specs/quick-open/spec.md`；本提交对 `docs/backlog.md` 无改动——归档前补登的队列条目是
+  临时工作区条目，未进入提交。本段记录本身是其后一笔文档提交，审计仍定位该归档提交）。
+- **`openspec archive` 实际输出**（`node scripts/openspec-archive.mjs
+  fix-quick-open-select-all-directory-children-nov21`，退出码 0）：`Task status: ✓ Complete` /
+  `Specs to update:` / `quick-open: update` / `+ 1 added` / `~ 2 modified` /
+  `Totals: + 1, ~ 2, - 0, → 0` / `Specs updated successfully.` /
+  `Change 'fix-quick-open-select-all-directory-children-nov21' archived as
+  '2026-11-21-fix-quick-open-select-all-directory-children-nov21'.`。
+- **归档后修链**：`归档后修链 2 处（扫过 4 篇 Markdown / 3 条相对链接）`——
+  `proposal.md:10` 与 `proposal.md:15` 的 `../../../docs/process/openspec-workflow.md` →
+  `../../../../docs/process/openspec-workflow.md`。包装器末置门禁
+  `openspec-links: PASS（校验 652 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived
+  fix-quick-open-select-all-directory-children-nov21`，2026-11-21T14:35Z，退出码 0）：
+  `PASS（openspec/changes/archive/2026-11-21-fix-quick-open-select-all-directory-children-nov21：
+  2 条 MODIFIED，对比 33 段；人工恢复 0 段，声明认领 0 段）`——2 条 MODIFIED 的段落全部落进
+  归档后的 living spec，无静默丢段。
+- **归档后复跑读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` →
+  `Totals: 36 passed, 0 failed (36 items)`（退出码 0）；`node scripts/openspec-archive-check.mjs`
+  门禁模式 → PASS（`扫过 9 份 delta，8 条 MODIFIED，对比 147 段，无静默丢段；归档队列 0 项已完成
+  change 均有唯一条目`）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0）。
 
 ## Why
 

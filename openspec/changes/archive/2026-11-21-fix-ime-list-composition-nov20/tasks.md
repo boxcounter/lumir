@@ -66,11 +66,12 @@
       'IME|WebKit 组合删除|正文 CDP'` 实测 20/20 通过（chromium project；`webkit-realua` 因本机
       无 Playwright webkit 构建被跳过）。WebKit 侧证据仍只有合成 `beforeinput` 与 dev 日志，
       不冒充原生 IME。
-- [ ] 4.2 最终 `scripts/gate.sh visual`（含 quick）通过；本分支只跑了目标组，全量门禁与 cargo
-      由主会话协调；不更新像素基线。
-- [ ] 4.3 独立 reviewer 对真实 WKWebView 事件路径、组合期装饰冻结与历史语义做最终复核；
+- [x] 4.2 最终 `scripts/gate.sh visual`（含 quick）通过；本分支只跑了目标组，全量门禁与 cargo
+      由主会话协调；不更新像素基线。读数：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0。
+- [x] 4.3 独立 reviewer 对真实 WKWebView 事件路径、组合期装饰冻结与历史语义做最终复核；
       preliminary review 与第二轮 review（2026-11-21）均为 hold（P1 pending flush / P2 截止后
-      恢复 / P3-1 目标行几何 / P3-2 实际测量），本批处置后需复评。
+      恢复 / P3-1 目标行几何 / P3-2 实际测量），本批处置后需复评。最终复核：
+      `review-final-current.md` 判 `clean/merge`，无 P1/P2，绑定 tip `7d632e03`。
 - [x] 4.4 Alex 自行运行的 dev 实例复验输入与删除；已完成第二轮（删除 / 相邻行消失已消失，
       候选提交后 marker 未恢复）。**2026-11-21 Alex 原生复验：中文候选提交后正式列表符恢复，
       行为符合预期**（insertText 提交、无 compositionend 的路径也已覆盖）；agent 不启动或

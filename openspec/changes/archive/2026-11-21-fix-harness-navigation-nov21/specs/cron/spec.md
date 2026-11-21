@@ -1,7 +1,7 @@
 # cron 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 MODIFIED，基线是 living spec
-> [openspec/specs/cron/spec.md](../../../../specs/cron/spec.md) 的「通知的投递与点击唤起」。
+> [openspec/specs/cron/spec.md](../../../../../specs/cron/spec.md) 的「通知的投递与点击唤起」。
 > 改动面只有一处语义：点击结果通知时的**焦点归属**——pane 展开与会话恢复照旧，但键盘焦点
 > MUST NOT 从正文编辑器移到 harness composer；正文焦点与阅读位置原地保留。
 > 其余段落逐字沿用 living spec。
