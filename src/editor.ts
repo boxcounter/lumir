@@ -1,6 +1,6 @@
 import { Compartment, EditorSelection, EditorState, Prec, StateEffect, Transaction } from "@codemirror/state";
 import type { Extension, SelectionRange, Text } from "@codemirror/state";
-import { EditorView, drawSelection, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
+import { EditorView, ViewPlugin, drawSelection, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
 
 /** 滚动位置快照的类型（`view.scrollSnapshot()` 的产物）。CM 不导出 ScrollTarget 类型，
@@ -806,7 +806,7 @@ function replaceSelectedRanges(view: EditorView, text: string): void {
 const compositionStarts = new WeakMap<EditorView, number>();
 const COMPOSITION_BACKSPACE_INPUTS = new Set(["deleteContentBackward", "deleteCompositionText"]);
 
-function traceIme(event: Event, view: EditorView, phase: string, handled = false): void {
+function traceIme(event: Event, view: EditorView, phase: string, handled = false, via = ""): void {
   if (location.hostname !== "127.0.0.1" || location.port !== "1420") return;
   const input = event as InputEvent;
   const main = view.state.selection.main;
@@ -823,28 +823,68 @@ function traceIme(event: Event, view: EditorView, phase: string, handled = false
     data_len: String(typeof input.data === "string" ? input.data.length : -1),
     line_count: String(view.contentDOM.querySelectorAll(".cm-line").length),
     marker_count: String(view.contentDOM.querySelectorAll(".cm-lp-list-marker").length),
+    // 0 = dispatch 已结束（CM 的延迟 handler）；2 = at target（直接监听）。用于确认时机。
+    event_phase: String(event.eventPhase),
+    ...(via ? { via } : {}),
   });
+}
+
+/** 组合期 Backspace 的纯判定：不改文档、不 preventDefault。
+ *  "noop" = 已在组合起点，只需消费事件；{from,to} = 即将删空 marked text，需要显式事务。 */
+type CompositionBackspace = false | "noop" | { from: number; to: number };
+
+function decideCompositionBackspace(event: InputEvent, view: EditorView): CompositionBackspace {
+  if (!COMPOSITION_BACKSPACE_INPUTS.has(event.inputType)) return false;
+  const start = compositionStarts.get(view);
+  const main = view.state.selection.main;
+  if (start === undefined || !main.empty || main.head < start) return false;
+  if (!listContentStartAt(view.state, start)) return false;
+  if (main.head === start) return "noop";
+  const from = prevCluster(view.state, main.head, start);
+  if (from !== start) return false;
+  return { from, to: main.head };
 }
 
 /** 组合中 Backspace 只在即将删空 marked text 时改走显式事务；起点处消费事件、不改文档。
  *  L6 范围收窄：只有列表内容起点（真列表项 / 裸 marker / 段落后 `- ` 的 setext 候选）才接管；
  *  普通段落、表格、代码块交回原生 IME（P2-1，合同 docs/specs/lists.md L6）。 */
 function absorbCompositionBackspace(event: InputEvent, view: EditorView): boolean {
-  if (!COMPOSITION_BACKSPACE_INPUTS.has(event.inputType)) return false;
-  const start = compositionStarts.get(view);
-  const main = view.state.selection.main;
-  if (start === undefined || !main.empty || main.head < start) return false;
-  if (!listContentStartAt(view.state, start)) return false;
-  if (main.head === start) {
-    event.preventDefault();
-    return true;
-  }
-  const from = prevCluster(view.state, main.head, start);
-  if (from !== start) return false;
+  const decision = decideCompositionBackspace(event, view);
+  if (!decision) return false;
   event.preventDefault();
-  deleteRange(view, from, main.head, "input.type.compose");
+  if (decision !== "noop") deleteRange(view, decision.from, decision.to, "input.type.compose");
   return true;
 }
+
+/** CM 的 InputState.handleEvent 在 `view.updateState != Idle` 时把 runHandlers 推入
+ *  Promise——浏览器默认动作会先于 handler 执行。组合起点的 no-op 只需 preventDefault、
+ *  不需要 dispatch，因此在 contentDOM 捕获相位同步消费；只处理这一种「更新进行中 + 无
+ *  dispatch」的路径，其余事件仍走原 CM handler（idle 时本就同步，不重复执行）。
+ *  已消费的事件记入 WeakSet，CM 的延迟 handler 即使被排到也会跳过，不重复记日志。 */
+const consumedBeforeInput = new WeakSet<Event>();
+
+function viewUpdateIdle(view: EditorView): boolean {
+  return (view as unknown as { updateState?: number }).updateState === 0;
+}
+
+const directBeforeInputGate = ViewPlugin.fromClass(class {
+  private readonly view: EditorView;
+  private readonly onBeforeInput = (event: Event) => {
+    if (event.defaultPrevented || consumedBeforeInput.has(event)) return;
+    if (viewUpdateIdle(this.view)) return; // idle：原 CM handler 同步执行，行为不变
+    if (decideCompositionBackspace(event as InputEvent, this.view) !== "noop") return;
+    event.preventDefault();
+    consumedBeforeInput.add(event);
+    traceIme(event, this.view, "beforeinput", true, "direct");
+  };
+  constructor(view: EditorView) {
+    this.view = view;
+    view.contentDOM.addEventListener("beforeinput", this.onBeforeInput, true);
+  }
+  destroy() {
+    this.view.contentDOM.removeEventListener("beforeinput", this.onBeforeInput, true);
+  }
+});
 
 /** beforeinput 闸门本体：命中返回 true（事件已消费），否则 false 让原生编辑照常发生。 */
 function absorbNativeEdit(event: InputEvent, view: EditorView): boolean {
@@ -932,8 +972,9 @@ const nativeEditGate = EditorView.domEventHandlers({
     return false;
   },
   beforeinput: (event, view) => {
+    if (consumedBeforeInput.has(event)) return true;
     const handled = absorbNativeEdit(event as InputEvent, view);
-    traceIme(event, view, "beforeinput", handled);
+    traceIme(event, view, "beforeinput", handled, "cm");
     return handled;
   },
   input: (event, view) => {
@@ -2230,6 +2271,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           markupKeymap,
           // M836 / M854 / M855：原生删除与键入的回读闸门（见函数组注释；只 md 有 replace 装饰）。
           nativeEditGate,
+          // 组合起点 no-op 的直接捕获：CM 在 updateState != Idle 时延迟 beforeinput handler，
+          // 默认删除会先执行（原生失败现场）。见 directBeforeInputGate 注释。
+          directBeforeInputGate,
         ]
       : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), markupKeymap, codeGraphemeBackspaceGate];
   }

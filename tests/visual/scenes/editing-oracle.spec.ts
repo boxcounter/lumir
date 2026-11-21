@@ -248,6 +248,43 @@ test("WebKit 组合删除：deleteCompositionText 在删空时走显式事务，
   await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0);
 });
 
+test("正文 IME：view 更新中 deleteCompositionText 必须同步 preventDefault（Chromium）", async ({ page }) => {
+  // InputState.handleEvent 在 view.updateState != Idle 时把 runHandlers 推入 Promise，
+  // 浏览器默认动作可能先执行。旧实现的 handler 记录 handled=true 但同一拍
+  // defaultPrevented=false；新实现由 contentDOM 捕获监听同步 preventDefault。
+  const doc = "词汇\n- s\n后续";
+  await openBody(page, "oracle.md", doc);
+  const probe = await page.locator(".cm-content").evaluate((el, caret) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.focus();
+    view.dispatch({ selection: { anchor: caret } });
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    const event = new InputEvent("beforeinput", { bubbles: true, cancelable: true, isComposing: true });
+    Object.defineProperty(event, "inputType", { value: "deleteCompositionText" });
+    view.updateState = 1; // 强制非 idle，复现 CM 的延迟队列
+    let prevented = false;
+    try {
+      prevented = !el.dispatchEvent(event);
+    } finally {
+      view.updateState = 0;
+    }
+    if (!prevented) {
+      // 浏览器默认动作（handler 来不及）：删掉组合文本与 marker 后的空格。
+      view.dispatch({ changes: { from: 4, to: 6 } });
+      view.dispatch({ changes: { from: 4, insert: "是" }, selection: { anchor: 5 } });
+    } else {
+      view.dispatch({ changes: { from: 5, to: 6, insert: "是" }, selection: { anchor: 6 } });
+    }
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    return { prevented, doc: view.state.doc.toString() };
+  }, 5);
+  expect(probe.prevented, "更新中的 deleteCompositionText 必须在同一拍 preventDefault").toBe(true);
+  expect(probe.doc).toBe("词汇\n- 是\n后续");
+  await expect.poll(async () => page.locator(".cm-lp-list-marker").count()).toBe(1);
+  await expect.poll(async () => page.locator(".cm-line").nth(1).textContent()).toBe("–是");
+  await expect(page.locator(".cm-line").nth(2)).toContainText("后续");
+});
+
 test("正文 IME：available 但 state 树陈旧时先同步再 build（Chromium）", async ({ page }) => {
   // 足够长的文档：dispatch 候选后 state 树不会同步解析到末尾，给 context 留出领先窗口。
   const doc = "para\n\n".repeat(2000) + "词汇\n- ";

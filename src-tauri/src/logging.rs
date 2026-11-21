@@ -414,6 +414,8 @@ impl LogEventName {
                 "units",
                 "elapsed",
                 "via",
+                // 事件派发阶段（0 = dispatch 已结束，2 = at target）；用于判别 CM 延迟 handler。
+                "event_phase",
                 // 一次性根因取证：单一 JSON 字段，只含节点名 / 位置 / 长度 / 计数，不含
                 // 正文与路径（长度上限见 MAX_DETAIL_CHARS）。
                 "detail",
