@@ -200,6 +200,10 @@ export const SCENARIO_CONFIG_KEYS = [
   "theme",
   "contentWidth",
   "language",
+  // md 行号 gutter 档位（change gutter-copy-path-line-nov21）：`on-demand` / `always` / `off`，
+  // 落 `[ui].markdown_line_numbers`。传了才写；缺省不写 = 应用出厂 `on-demand`。给「右键复制
+  // 需要 gutter 常驻」这类场景构造启动口径（不与 `editor` 表混用——它属于 `[ui]`）。
+  "markdownLineNumbers",
   "keys",
   "harness",
   // 会话自动命名（change add-session-auto-naming，task 5.2b）：`sessionNaming: { enabled, provider,
@@ -241,6 +245,9 @@ export async function writeConfig({
   contentWidth = undefined,
   // 界面语言（M282，change ui-language-i18n）：与 theme / contentWidth 同形，缺省沿用当前值。
   language = undefined,
+  // md 行号 gutter 档位（change gutter-copy-path-line-nov21）：与 theme / language 同形，
+  // 落 `[ui].markdown_line_numbers`，缺省不写 = 出厂 `on-demand`。
+  markdownLineNumbers = undefined,
   keys = undefined,
   // `[editor]` 表**整表透传**（M379；早期 backlog「验收套件表达力缺口」条，原文见 git 历史，现行口径见 README 的 `configWrite` 条）：snake_case 键原样并入 `editor` 表，写在具名
   // 参数**之前**——具名参数（mode / line_wrap / …）仍然优先，显式值不会被这张表吃掉。
@@ -279,6 +286,7 @@ export async function writeConfig({
   if (theme !== undefined) ui.theme = theme;
   if (contentWidth !== undefined) ui.content_width = contentWidth;
   if (language !== undefined) ui.language = language;
+  if (markdownLineNumbers !== undefined) ui.markdown_line_numbers = markdownLineNumbers;
   if (Object.keys(ui).length > 0) cfg.ui = ui;
   if (keys !== undefined) cfg.keys = keys;
   const h = {};

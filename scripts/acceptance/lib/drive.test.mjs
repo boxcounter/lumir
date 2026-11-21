@@ -1,5 +1,5 @@
-// scripts/acceptance/lib/drive.test.mjs —— `settle()` / `snapshotBody()`（M759）与 AXSize 写通道
-// 有界重试（M764）的自测。
+// scripts/acceptance/lib/drive.test.mjs —— `settle()` / `snapshotBody()`（M759）、AXSize 写通道
+// 有界重试（M764）与 `parseLsappinfoPid()`（前台 pid）的自测。
 //
 // 为什么需要它：M751 让每次 `get_app_state` 都带 `disable_diff: true`（防空 diff 假绿），副作用是
 // KimiCU **每次调用都新建快照**——首行 `AX snapshot_id=<UUID>`（mode=full 另有末行
@@ -28,7 +28,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { settle, snapshotBody, StepError, resizeWindowAX, pinWindowSize } from "./drive.mjs";
+import { settle, snapshotBody, StepError, resizeWindowAX, pinWindowSize, parseLsappinfoPid } from "./drive.mjs";
 import { InfraError } from "./util.mjs";
 
 /** KimiCU 快照首行（逐字取自 2026-10-27 的真机 dump）。 */
@@ -193,6 +193,71 @@ test("settle：正文恒定但 AX 里没有 AXTextArea ⇒ 编辑器门不放宽
     "无编辑器节点时 settle 不得因正文一致就返回（编辑器门是既有合同）",
   );
   assert.ok(cu.reads.length >= 2, `编辑器门不成立时要继续轮询，实际只读了 ${cu.reads.length} 次`);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// lsappinfo 前台 pid 的解析（2026-11-21）
+//
+// 现场：本机 `lsappinfo info -only pid <asn>` 输出 `pid = 85685 !cgsConnection …`（无引号、等号
+// 两侧有空格），而 `frontmostPid()` 旧实现只认 `"pid"=85685` ⇒ 恒 null。焦点读取为 null 后，
+// 六条真机场景的前台判断与后续注入全线失真，且无任何报错。解析因此提成纯函数单独钉住：
+//   - 正例：当前格式（旧实现必红）、旧格式（回归）、空格 / 引号变体、合法元数据尾字段；
+//   - 反例：缺 pid、别的键 / 路径里的数字、非数字、数字后非法后缀、多值歧义（含同一行多字段）。
+// 只判纯函数，不读真机前台——前台是谁随机器状态变，不能当断言输入。
+
+test("parseLsappinfoPid：本机当前格式 `pid = 85685`（无引号 + 等号两侧空格）⇒ 85685（旧实现必红）", () => {
+  const out = [
+    "[ NULL ]  [ NULL ]  ",
+    "    bundleID=[ NULL ] ",
+    "    bundle path=[ NULL ] ",
+    "    executable path=[ NULL ] ",
+    "    pid = 85685 !cgsConnection !signalled type=[ NULL ]  flavor=[ NULL ]  Version=[ NULL ]  Arch=!!none ",
+  ].join("\n");
+  assert.equal(parseLsappinfoPid(out), 85685, "当前格式必须解析出来；旧实现 /\"pid\"=(\\d+)/ 在这里返回 null");
+});
+
+test("parseLsappinfoPid：旧格式 `\"pid\"=85818` 与空格 / 引号变体同样解析", () => {
+  assert.equal(parseLsappinfoPid('"pid"=85818'), 85818, "旧格式是回归基线，不得在修新格式时弄丢");
+  assert.equal(parseLsappinfoPid('"pid" = 85818'), 85818);
+  assert.equal(parseLsappinfoPid("pid=85818"), 85818);
+  assert.equal(parseLsappinfoPid('  "pid"  =  85818  '), 85818, "前导 / 尾随空白不影响");
+  assert.equal(parseLsappinfoPid('"pid"="85818"'), 85818, "值带引号");
+});
+
+test("parseLsappinfoPid：缺失 / 非数字 / 数字后跟字母 ⇒ null（不猜）", () => {
+  assert.equal(parseLsappinfoPid(""), null, "空输出");
+  assert.equal(parseLsappinfoPid("    bundleID=[ NULL ]\n    executable path=[ NULL ]"), null, "没有 pid 行");
+  assert.equal(parseLsappinfoPid("pid = abc"), null, "非数字");
+  assert.equal(parseLsappinfoPid("pid = 85685abc"), null, "数字后紧跟字母不是 pid");
+  assert.equal(parseLsappinfoPid('"pid"='), null, "有键无值");
+  assert.equal(parseLsappinfoPid(undefined), null, "非字符串输入按读不到处理");
+});
+
+test("parseLsappinfoPid：值后必须是行尾或空白——紧贴的 `-` / `\\` / 引号后垃圾 ⇒ null（不取前缀数字）", () => {
+  assert.equal(parseLsappinfoPid("pid = 123-456"), null, "短横线紧贴数字不是元数据分隔");
+  assert.equal(parseLsappinfoPid('pid = 123\\"'), null, "反斜杠 + 引号紧贴数字");
+  assert.equal(parseLsappinfoPid('pid = "123"junk'), null, "带引号的值后紧跟垃圾");
+  assert.equal(parseLsappinfoPid("pid = 123 !cgsConnection !signalled"), 123, "合法元数据以空白分隔，不得一概拒绝");
+  assert.equal(parseLsappinfoPid('pid = "123" !cgsConnection'), 123, "带引号的值同样允许空白后的元数据");
+});
+
+test("parseLsappinfoPid：别的键 / 路径里的数字不得当成 pid", () => {
+  assert.equal(parseLsappinfoPid("ppid = 777\npid = 85685"), 85685, "ppid 不是 pid");
+  assert.equal(parseLsappinfoPid("bundleID = 42\nbundle path=/tmp/pid=99"), null, "非行首键 / 路径片段不算");
+  assert.equal(parseLsappinfoPid("note: pid = 999"), null, "键必须在行首（允许前导空白）");
+  assert.equal(parseLsappinfoPid("xpid=1"), null, "行首但键名不是 pid");
+});
+
+test("parseLsappinfoPid：同一行出现多个 pid 字段——不同值 ⇒ null，相同值去重", () => {
+  assert.equal(parseLsappinfoPid("pid = 111 pid = 222"), null, "同一行的两个不同 pid 是歧义读数（旧实现取第一个 111）");
+  assert.equal(parseLsappinfoPid('pid = 111 "pid" = 222'), null, "引号 / 空格变体同样算歧义");
+  assert.equal(parseLsappinfoPid("pid = 111 pid = 111"), 111, "同一值重复出现去重");
+  assert.equal(parseLsappinfoPid("pid = 111 pid = abc"), null, "同行第二个 pid 字段非法 ⇒ 整份读数不可用");
+});
+
+test("parseLsappinfoPid：多值歧义 ⇒ null；同一值重复出现不算歧义", () => {
+  assert.equal(parseLsappinfoPid('pid = 111\n"pid"=222'), null, "两个不同的 pid 是歧义读数，不得赌第一个");
+  assert.equal(parseLsappinfoPid('pid = 111\n"pid" = 111'), 111, "同一个值重复出现没有歧义");
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

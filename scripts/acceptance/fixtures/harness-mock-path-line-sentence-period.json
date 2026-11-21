@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "句末句号验收：见 path-link-target.md:12. 另见行范围 path-link-target.md:16-18. 以及小数形态 decimal-note.md:3.5 只该链接到文件本身。",
+      "usage": { "input_tokens": 1000, "cached_tokens": 100, "output_tokens": 10 }
+    }
+  ]
+}

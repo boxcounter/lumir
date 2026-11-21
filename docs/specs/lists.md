@@ -79,7 +79,8 @@ L1/L3 的实现 MUST NOT 改写文档源码（ADR 0003 §3 铁律）：上文各
 B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面态两种渲染下，行内
 源码逐字节相同（ADR 0003 §3 铁律同 L4）。Enter 在裸行上的退出（删空标记）与续行
 （插下一序号）、Backspace 在内容起点删除 marker 都是**显式编辑动作**，不属于本条禁止的
-「渲染事件」。
+「渲染事件」。退出时 marker 前的行首缩进是纯空白、随 marker 一并删去（合法 `>` 引用前缀
+保留）；续行复用行首前缀原文（引用 / 缩进），与 `src/enter-indent.ts` 同源。
 
 ### B3 — 内容起点 Backspace 第一次按键即删标记
 
@@ -107,22 +108,52 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
 ## L6 — 列表项内容起点输入的跨层一致性（M830）
 
 **适用范围**：未被用户单字符键位覆盖的默认文本输入路径；空光标位于真列表 / 嵌套项
-`listLineRender.hidden.to`，或裸 marker 行编辑态的内容起点。普通 `insertText` 与 IME 组合提交
-走同一合同，不按列表类型、项序号、字符或 DOM/AX 形状分叉。
+`listLineRender.hidden.to`、裸 marker 行编辑态的内容起点，或段落后 `- ` 触发 setext 与列表
+解析切换时的内容起点。普通 `insertText`、IME 组合更新、组合中删除与组合提交走同一合同，
+不按列表类型、项序号、字符或 DOM/AX 形状分叉。
 
 - **文档与选区**：提交文本 SHALL 只插入当前空光标或替换当前选区；marker 源码、尾随空白与
   其他项文本 MUST 逐字节不变。空光标输入后 `selection.main.head` MUST 位于提交文本末尾。
   例如第 7 个空有序项 `7. ` 输入 `a` 后，源码 MUST 是 `7. a`，不是 `7.a`，也不是吞掉 `a`。
+- **组合中删除的边界**：一次 Backspace SHALL 只删除组合起点之后、光标之前的一个完整字素；
+  marked text 已空时 MUST 是 no-op，MUST NOT 删除 marker、组合前正文或相邻行，也 MUST NOT
+  清空相邻行的渲染文本。组合期判定 SHALL 使用覆盖完整事件窗口的 `view.compositionStarted`，
+  MUST NOT 只信会在组合中删除时错报 false 的 `event.isComposing`；删除类型 SHALL 覆盖
+  Chromium 的 `deleteContentBackward` 与 WKWebView 实测的 `deleteCompositionText`。
+  本闸门 MUST 只在上述列表内容起点接管；普通段落、表格 cell、代码块等非列表位置的组合删除
+  MUST 交回原生 IME，不得按「任意 Markdown 正文」扩大接管面。
+- **组合期装饰稳定**：从 compositionstart 到 compositionend，列表装饰 SHALL 保持组合前的
+  DOM 形态，不得在输入法持有原始文本节点时插入或替换 marker widget；组合结束后 MUST 最终
+  恢复为当前源码对应的形态。到达 compositionend 时若 DOM 已有最终候选而 `EditorState` 尚未
+  更新，MUST 等 CM 的 pending MutationRecord flush 后再唤醒重建，MUST NOT 在事件 handler
+  内同步 dispatch（会清掉 pending 记录、丢候选）。恢复链 SHALL 以有界工作分片推进，解析未
+  覆盖提交行时以有界重试 / 低频重试继续，MUST NOT 把同步解析整篇文档当作刷新前提，也 MUST
+  NOT 在截止后放弃目标或依赖下一次用户编辑。恢复链的树判定 MUST 反映当前源码：旧 parse
+  context 自认已完成时 MUST 用独立对照解析复核（跨拍推进；每拍只设工作预算，不是硬耗时上限，
+  也不设 32KB 之类的长度边界），MUST NOT 凭旧树的 list 判定直接收束，
+  也 MUST NOT 按行文本形态一刀切隐藏 marker（空列表项仍由树决定）。最后一拍重建 MUST 以一次
+  view update 发布到 DOM（插件的装饰集合变化不会自行触发重绘）；MUST NOT 只改插件状态并等
+  下一次用户编辑——解析树已同步、组合 flush 无残留时不会再有 update，旧 marker 会永久残留。
+  单个不可分割的超长解析块受上游解析器限制，属已知边界。段落后 `- ` 的 setext 候选在
+  编辑态 MUST 把 `- ` 以**字面文本的非可编辑原子节点**隔离（MUST NOT 渲染成列表 marker /
+  横线）：WebKit 的 pending composition 删除不可取消（`isBeforeInputEventCancelable` 为
+  false），只有让标记不在可编辑文本流里才能阻止默认删除吞掉它；组合结束按当前树恢复正常
+  形态。段落后 `- ` 变为列表时，组合中 MUST NOT 同时出现原始 marker 与新 widget。
+  候选以 `insertText`（`isComposing:false`）提交而原生 `compositionend` 未到达时，
+  MUST 把这次提交视为组合结束：补一次等价的 end 信号并走既有恢复链，MUST NOT 让
+  组合冻结永久保留 shield；持续拼音（`insertCompositionText` / `isComposing:true`）
+  MUST NOT 触发该补 end。
 - **marker 与几何**：渲染稳定后，每个可见列表项 MUST 恰有一个 marker widget；显示 glyph /
-  复合序号、计算样式与正文起点 x MUST 保持输入前同合同。普通输入与组合提交 MUST NOT 造成
-  marker 丢失、重复、样式退化或正文悬挂位置漂移。
+  复合序号、计算样式与正文起点 x MUST 保持输入前同合同。普通输入、组合更新 / 删除与组合提交
+  MUST NOT 造成 marker 丢失、重复、样式退化或正文悬挂位置漂移。
 - **DOM/AX 不是文档真源**：marker widget 与正文可在 DOM/AX 中序列化为无空格拼接（源码
   `7. a` 呈现为 `7.a`）。该形状本身 MUST NOT 作为改写文档、拒收输入或恢复旧吞弃护栏的依据；
   行为判定的文档真源是 CodeMirror `EditorState.doc`，落盘真源是显式保存载荷 / 文件字节。
-- **历史、dirty 与保存**：一次普通输入或一次组合提交 SHALL 一次 undo 恢复精确输入前文档与
-  选区，一次 redo 恢复精确输入后文档与选区。dirty 继续按当前文档与 `cleanDoc` 逐字比较；
-  显式保存载荷 MUST 逐字等于当前 `EditorState.doc`，保存后以该文档为 dirty 基线。因此保存后
-  undo 到不同文档 MUST 标 dirty，redo 回保存文档 MUST 清除 dirty。
+- **历史、dirty 与保存**：一次普通输入或一段完整组合（含更新、删除与提交）SHALL 一次 undo
+  恢复精确输入前文档与选区，一次 redo 恢复精确输入后文档与选区；`input.type.compose.start`
+  MUST NOT 因紧邻前一笔普通输入而与之并组。dirty 继续按当前文档与
+  `cleanDoc` 逐字比较；显式保存载荷 MUST 逐字等于当前 `EditorState.doc`，保存后以该文档为
+  dirty 基线。因此保存后 undo 到不同文档 MUST 标 dirty，redo 回保存文档 MUST 清除 dirty。
 - **既有编辑行为不动**：本条 MUST NOT 改变 B3 / 上游 / Emacs 的精确 range 删除、裸 marker
   Enter/Backspace、L5 原子导航或 C1 光标几何；不得新增按 DOM 形状猜测编辑意图的生产分支。
 
@@ -150,15 +181,25 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
    `EditorState.doc` 与 `selection.main`、逐行 marker 数量和计算样式、各内容起点的
    行盒左缘 + 计算后 `padding-inline-start`（空项正文 body x）、`document_save` 载荷、
    DOM `7.a` 与源码 `7. a` 的分层差异。反向验证至少分别破坏输入落点、marker 数量 / 几何和
-   保存 / 历史语义，对应断言 MUST 变红；全部恢复后目标测试 MUST 全绿。真机场景 153 用
-   不点击的注入通道复核连续空项输入、文件精确字节与撤销。
+   保存 / 历史语义，对应断言 MUST 变红；全部恢复后目标测试 MUST 全绿。
+   `tests/visual/scenes/editing-oracle.spec.ts` 另用 CDP `Input.imeSetComposition` 驱动真引擎组合，
+   对真 bullet / 有序 / 嵌套 / 裸 marker / 段落后 setext 切换逐项执行「首字符 → 删空 → 起点再退格
+   → 候选提交 → 保存 → 一次撤销」，并断言相邻行 DOM 不清空；主矩阵在提交与 undo/redo 稳定后
+   逐行比较 marker 数量、glyph / 序号、计算样式与正文 x，真列表目标行提交前后逐项比较，
+   setext 新建列表与同文档同字体顶层参考 bullet 逐项数值比较。另以合成 beforeinput 覆盖
+   WKWebView
+   实测的 `deleteCompositionText`、非列表位置不接管、组合中 timer 到期的冻结、取消组合恢复，
+   以及 1MB+ 文档解析未完成时的最终恢复（记录同步切片与总恢复耗时）。判定本体
+   （`listContentStartAt`）由 `tests/unit/list-content-start.test.ts` 用真 lezer 解析器覆盖
+   正反两侧。真机场景 153 用不点击的注入通道复核连续空项输入、文件精确字节与撤销。
 
 ## L7 — 跨 replace 装饰的跨行删除（M836）
 
 **适用范围**：所有落到浏览器原生删除路径的**跨行合并**——空光标在行尾按 forward Delete
 （吸收下一行），或在行首按 Backspace / `⌘⌫`（吸收本行）。列表项只是最常见的一格：
 wikilink、行内公式、链接尾标、任务项以及隐藏的源码标记（`**`、`#`、`>`）吸收时同属这一类。
-行内删除（删除范围不跨行）与组合期（IME）删除不在本条内——实测它们不改写被吸收行的 DOM。
+行内删除（删除范围不跨行）与组合期（IME）删除不在本条内；组合期行内删除归 L6，
+本条只约束非组合的跨行合并，不再沿用「组合删除不改写 DOM」这一已被反例推翻的假设。
 其中**折叠光标的无修饰物理 Backspace** 的字素步长另归 `openspec/specs/editor-live-preview` 的
 「折叠光标的字素步长前删」（M860，change `unify-grapheme-backspace-nov19`：md / code 同判，
 按 `quote-card.clusterBackward` 删一个整簇）；本条只约束跨行合并，不重复该口径。
@@ -177,8 +218,8 @@ wikilink、行内公式、链接尾标、任务项以及隐藏的源码标记（
 - **历史、dirty 与保存**：一次跨行删除 MUST 是一个撤销步：一次 undo 恢复删除前文档与
   选区，一次 redo 恢复删除后状态。dirty 继续按 `cleanDoc` 逐字比较；显式保存载荷 MUST
   逐字等于当前 `EditorState.doc`。
-- **既有路径不动**：本条 MUST NOT 改变行内删除、裸 marker 行 Backspace、L5 原子导航、
-  L6 输入合同与 IME 组合（组合期删除仍归浏览器 / CM 的合成处理）；行内折叠光标 Backspace
+- **既有路径不动**：本条 MUST NOT 改变行内删除、裸 marker 行 Backspace、L5 原子导航或
+  L6 输入合同（组合期行内删除按 L6 的组合起点与最后一字素边界处理）；行内折叠光标 Backspace
   的字素步长按「适用范围」的 M860 指针另归 `editor-live-preview`，本条只约束跨行合并；
   非空选区编辑按统一选区事务的合同处理（见上）。
   `⌥⌫` / `⌥⌦` 在默认键位表已由应用命令接管；若被解绑，落到原生的词删除变体同样按本条

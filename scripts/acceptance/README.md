@@ -225,6 +225,7 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 | 磁盘水位 | `< 2G` 拒绝启动（可选显式绕过，见下） | 真机实例触发 cargo/vite 时 ENOSPC 硬失败（批次四实证） |
 | 同机已有 Lumir 实例 | 检出**安装版**（`*.app/Contents/MacOS/lumir`）或**残留的开发实例**（`target/debug/lumir`）即拒绝启动，消息给出 pid 与清除指引（退出码 2）；挡住之后怎么处理按「被挡住的非在途实例：可代为正常退出」判归属，不要一律 `kill` | 在场的第二个实例会与套件实例共用同一份 AX / 前台归属（bundle flavour 的 bundle id 自 M622 起已独立，但前台 / AX 归属仍是全机共享资源），**静默**改变「前台焦点归谁」这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 「键盘注入丢键」条；2026-10-13 的复跑就是在这样的现场上跑的） |
 | 打包实例身份 | bundle flavour 下从产物 `Contents/Info.plist` 读 `CFBundleIdentifier`，必须等于 `com.lumir.app.acceptance`（≠ 产品 id `com.lumir.app`），否则拒绝启动（退出码 2） | 同 bundle id 的验收副本点通知会被 LaunchServices 解析到安装版（M619 的根因）；漏了构建期 `--config` 的产物在这里就红，不留假绿（见「实例 flavour」） |
+| 副屏放置变量 | `LUMIR_ACCEPTANCE_DISPLAY` 只接受未设 / 空串 / `primary` / `secondary`；其它值退出码 2。`secondary` 在少于 2 块屏时**启动前**退出码 2 | opt-in 的写动作：变量拼错或单屏静默落回主屏，会让人以为副屏生效了（判据见「副屏放置」） |
 | 1420 端口 | 只报告占用情况 | 全机同一时刻只能有一个 `pnpm tauri dev`（vite strictPort 1420）；本套件走独立端口，但仍先看一眼同机负载 |
 | 跑批独占锁 | 需持锁的真跑批先 `mkdir` 抢 `/tmp/lumir-acceptance-rmachine.lock`；已被别人持有时拒绝启动（退出码 2） | 合成 vault 与 dev 端口都是**全机共享**的，光靠人工约定会漏——两条跑批错开启动就能互相 `resetVault`（见下节） |
 | 锁屏 / 息屏 | `ioreg -n Root -d1 \| grep IOConsoleLocked` 为 `Yes` 即拒绝启动（退出码 2）；跑批期间 `caffeinate -dimsu`，合盖状态本身仍会强制息屏 | 锁屏 / 息屏时 macOS 不向后台暴露窗口 AX 内容，一切 AX / 截图通道失效，重注册 KimiCU 也无效——只能等唤醒（M508/M511） |
@@ -318,6 +319,49 @@ LaunchServices、没有启动激活）⇒ **启动零激活**：无人在场的�
   而它今天只是一条 ⚠ 证据）。
 - **不许用「删掉 / 跳过 resize 步」绕这个 flake**：117 一类场景的像素判据以前置几何为前提。耗尽
   的证据在 steps.md 的步骤结果与错误文本里（逐次 `#N` 的 err 与回读），归因不必回真机加探针。
+
+**副屏放置（opt-in，`LUMIR_ACCEPTANCE_DISPLAY=secondary`）**：多显示器时把验收窗口放到
+**当前焦点窗口所在屏之外**的那块屏，让 Alex 在另一块屏继续阅读文档。默认关闭——不设变量时
+一行都不执行，套件行为与之前逐字一致。
+
+```bash
+# 副屏实测 / 边读文档边跑批
+LUMIR_ACCEPTANCE_DISPLAY=secondary node scripts/acceptance/run.mjs 271
+LUMIR_ACCEPTANCE_DISPLAY=secondary node scripts/acceptance/run.mjs --batch core
+```
+
+- **取值是闭集合**：未设 / 空串 / `primary` = 关闭；`secondary` = 启用；其它值在**碰任何机器
+  资源之前**退出码 2（拼错一个字母不能悄悄落回主屏）。
+- **只动本跑批的验收窗口**：pid 来自 `launchApp`，窗口由 `ax-window.swift` 按
+  `AXSubrole == AXStandardWindow` 选主窗；不遍历、不移动任何其它 app 的窗口。检测读数是
+  `lib/ax-display.swift`（NSScreen + 系统焦点窗口的 AX 读数，Cocoa → Quartz 坐标在 Swift 侧
+  折算好），选屏 / 钳位 / 回读判据在 `lib/display.mjs`（纯函数，`lib/display.test.mjs` 钉住）。
+- **时机**：每次 `launchApp`（首启与 `do: restart`）过就绪门、钉完尺寸之后，抢前台之前。保留
+  刚钉好的**生效尺寸**；落点是目标屏 `visibleFrame` 的左上角，尺寸超出可见区时逐维钳到可见区。
+- **目标屏在本次跑批内固定**：第一次放置后沿用 `targetKey`，后续重启即使焦点已变成验收 app
+  自己，也不会把窗口搬回用户屏；拔屏 / 换布局导致目标屏消失时才按当前焦点重选。**固定目标屏
+  不绕过单屏检查**：跑批中拔屏退化成单屏时，即使固定的目标屏仍在清单里，下一场也直接
+  `InfraError`（见下条）。
+- **证据**：每一步的「前台焦点」行会多一段 `副屏放置：目标 #1 "…" …；焦点屏 #0 "…"（app pid，
+  窗口 …）；窗口 x=… → x=…；写入 N 次；校验：回读在目标屏可见区内`；`run.log` 另逐次记
+  `DISPLAY pid=… target=…#… before=… after=… already=…`。启动时先打印屏幕清单与启动焦点屏。
+- **失败不静默**：单屏（`secondary` 需要 ≥2 块屏，**包括跑批中拔屏退化成单屏、即使已固定的
+  目标屏仍在线**）/ 写通道耗尽 / 回读不在目标屏可见区内 / 写入后复核换了屏 ⇒ `InfraError`，
+  该场 INVALID、整轮退出码 2，错误里带屏幕清单、焦点屏、前后 `window_bounds` 与逐次写入读数。
+  启动前的单屏在**拉起之前**就退出，不浪费一次启动。
+- **边界**：
+  - **不等于不抢焦点**：`tryForeground` 照旧在每个场景就绪后把 Lumir 提到前台（`AXRaise` →
+    System Events `set frontmost`）；`doubleClick` / `drag` / `click.modifiers` / CGEvent 滚轮等
+    真实指针通道仍要求窗口在前台 / 是 key window。副屏只决定窗口落在哪块屏，不改变这条纪律。
+  - **126-window-geometry 不移动**：它的判据本体是「启动几何 + 主屏工作区比例」，窗口被挪到
+    别的工作区会让 oracle 失效；该场景在副屏模式下会打一行「跳过」并保持启动位置（与
+    `NO_PIN_WINDOW_SCENARIOS` 同一豁免理由）。`screenWorkArea()` 也仍读**主屏** `visibleFrame`
+    （M437 的口径），几何比例类判据不要与副屏模式混用。
+  - 窗口落在副屏后，`window_bounds` / 像素坐标断言仍按 AX 读数判；**不要**把主屏工作区的绝对值
+    写进场景。目标屏可见区放不下套件钉的 1200×800 时窗口会按目标屏钳小（与主屏放不下的既有 ⚠
+    边界同档），坐标 / 像素类场景按生效值判——要跑这类场景请用能放下 1200×800 的副屏。
+  - 若两块屏 backing scale 不同，移动后 webview 会重新排版一拍，由后续 `settle` 吸收；本机两块屏
+    均为 scale 2，混合 scale 现场未单独验证。
 
 **钉尺寸不许落在启动恢复窗口里**（M516）：钉窗口是**写**——它触发 relayout，而产品的启动
 恢复段就在就绪门之后跑：`applyVault`（`src/main.ts:2769-2840`）先
@@ -656,6 +700,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `settle` | — | **真 settle**（M249）：连续两次 AX **快照正文逐字节一致**才返回（快照产物 id 行除外，见下节），用于纯断言步骤前的稳定。编辑器在位时直接复用 `lib/drive.mjs` 的 `settle()`；「还没打开文件」的两类引导态走同口径的无编辑器门版本。15s 未收敛则退回单次读取并在证据里落一条 note，**不**因此判 FAIL。语义与「外部写入后先留一拍」的口径见下节。**它判的是「界面此刻静止」，不是「异步的活儿干完了」**——要等装载 / 等按键生效请用 `waitFor`（见下条与「已知边界」） |
 | `waitFor` | `waitFor: { has: [...], not: [...] }`（至少一项，非空字符串数组）、`timeoutMs`（缺省 60000） | **轮询一个可观测终态直到成立**（M296）：每轮读一次 AX，全部 `has` 命中且全部 `not` 不命中即返回（成立时把「第几次读取成立 / 耗时」记进证据）；超时**抛错判 FAIL**（不静默放过）。判据形态与 `ax` 断言同源（`matcher()`）。**为什么必须有它**：change `vault-open-ignore-set` 把打开段移出 IPC 主线程之后，装载期间界面保持响应、AX 快照逐字节不变 ⇒ `settle` 会在装载**途中**返回（M296 首跑实测：返回时 AX 里还是旧 vault 的标签栏 + 装载指示在场，于是后面所有断言都对着旧状态判红）。场景里凡是「等某件事发生」的地方都用它，**不要**用 `sleep` 猜时长、也不要用 `settle` 冒充 |
 | `waitForFile` | `waitForFile: { path, has?, jsonl?, count? }`（至少一项判据）、`timeoutMs`（缺省 120000） | **轮询磁盘事实直到成立**（M616）：路径口径与 `file` 断言同源（`env:` / vault 相对 / 绝对 / `*` 取 mtime 最新一份），`has` / `jsonl` / `count` 写多个时**同时成立**才返回；文件不存在 = 未成立（继续轮询，每 500ms 一次）。超时**抛错判 FAIL**，成立时把「第几次读取成立 / 耗时」记进证据。**为什么需要它**：等日志事件（`cron_notified` 这类投递成功后才写的事件）此前只能靠 `sleep` 猜时长，或借 `waitForNotification`——而那时的通知等待还没有新鲜度判据，横幅会被**更早一次 run 的同标题通知**满足（2026-10-20 M616 实测：到点前 56s 就命中了上一批的横幅），拿它当「本次事件已发生」的等待条件会让随后的日志断言抢跑（场景 207/210 的假红现场）。M617 已给通知等待补上新鲜度基线（见 `waitForNotification` 条），但**等日志事件仍应直接读那份日志**：等待与判定同源，判据就是最终要断言的文件内容 |
+| `imeDrive` | `ime: { case, line, timeoutMs? }`（case ∈ `compose` / `delete-empty` / `commit`，line 正整数） | **WKWebView 合成 IME 序列**（change `fix-ime-list-composition-nov20` 收尾）：只在验收实例的 Vite dev server 注入 `scripts/acceptance/driver/ime-driver.mjs` 并开 `/__lumir-ime/*`（`LUMIR_ACCEPTANCE_PORT` + `LUMIR_ACCEPTANCE_IME=1`，`apply:"serve"`）；驱动按真实 WKWebView 日志的 `deleteCompositionText` → `insertFromComposition` → compositionend 序列派发 `isTrusted:false` 的 CompositionEvent/InputEvent，DOM 默认动作用 Range/文本节点执行，报告写 `<envHome>/lumir/acceptance/ime/<case>.jsonl`。**是合成事件，不是原生 IME**：不证明 TSM / 候选窗 / marked text；原生终判仍归 156 / 262。bundle 实例直接 `InfraError`。报告判据（`doc_final` / `marker_*` / `prev_*` / `settle_timeout`）全部来自驱动 |
 | `waitForNotification` | `title`（必填，通知标题 = cron 任务 id）、`body`（可选，通知正文）、`timeoutMs`（缺省 20000）、`fresh`（缺省 true；false = 接受动作开始前已在场的匹配条目，**只给冷启动投递用**） | **等系统通知横幅出现**（change add-cron-runtime-daemon §7.7 的可点击化）：横幅由 `NotificationCenter.app` 渲染，不在 Lumir 的 AX 树 / 窗口截图里，因此本动作按进程名取通知中心的 pid，轮询它自己的 AX 树，命中「`AXGroup` 的 label 同时含 title 与 body」即返回（读取次数与条目原文落证据）。**横幅只在屏上停留数秒**——「先 sleep 再点」必然点空，等待必须由本动作完成。**新鲜度判据（M617）**：动作开始时先快照当前匹配 title/body 的条目作**基线**（条数与原文记入证据），等待期间**只认基线之外新出现的条目**——更早一次 run 投递的同标题条目在通知列表里存活数分钟（M616 实测约 6 分钟后仍被命中，等待因此提前约 56s 返回、随后的日志断言抢跑判红），基线把它挡在外面。同一条任务的新旧通知在 AX 里**逐字相同**（label 只有 `(Lumir, <task>, <body>)`，没有时间戳 / 投递 id），因此判据落在多重集合上：同签名条目比基线**多出来的那条**才算新投递；旧条目恰在同一刻被系统清掉、新条目又同文时这条会等不到——方向安全（超时判 FAIL，不把旧条目当新投递放行）。**M617 真机探针实测过这个保守角落**（2026-10-21 07:38–07:40：基线 1 条旧条目 → 旧条目在等待中过期 → 新投递到达时同签名，等待超时判 FAIL；旧条目全程没有让等待提前返回）；同文替换场景一律改用 `waitForFile` 判 `cron_notified` 落盘。**等日志事件请用 `waitForFile`**（判据就是最终要断言的产物）。超时抛错判 FAIL，错误里附带基线读数与最后一份通知中心 AX 树（DND 抑制时只有菜单栏，可据此区分环境问题）。**`fresh: false`（M620，场景 213）**：冷启动投递发生在套件开始轮询**之前**，条目已经躺在通知中心里——默认基线会把唯一那条当旧条目挡掉、等待必然超时。这一档显式接受已在场的匹配条目，代价是不再区分新旧：用它的场景 MUST 另配一条**本轮才可能成立**的判据（日志按场景重置，如 `cron_notified(trigger=startup)`）来排除上一轮残留条目的假绿；`clickNotification` 不接受该键（点击仍按基线挑新条目） |
 | `clickNotification` | `title`（必填）、`body`（可选）、`timeoutMs`（缺省 20000） | **点通知横幅本体**：同一套定位口径找到条目后，对它发 `AXPress`——与用户点横幅是同一条系统默认动作（会激活通知所属 app）。给「点击通知 → 应用内可断言后果」的链路用（场景 170 的 `cron_click(action=run)`、171 的 `action=open-session`）。**点到哪一条**：紧跟同一 title/body 的 `waitForNotification` 时，沿用它的新鲜度基线，**只点那之后新出现的条目**（点旧通知会被系统路由到已退出的实例，`cron_click` 日志不出现 ⇒ 归因会误指向「点击链路坏掉」）；前面没有对应的等待时按当前在场的匹配条目点（新旧不可辨——同签名条目在 AX 里逐字相同，证据里会记明本次用的是哪种口径）。同一任务的 trigger / result 两档通知标题相同，用 `body`（到点 / 已完成 / 运行失败）区分 |
 | `openNotificationCenter` / `closeNotificationCenter` | 无参数（`expect` 可用） | **切换通知中心面板**（M620）：点菜单栏时钟（Control Center 的 `AXMenuBarItem (Clock)`），幂等——目标态已成立时不点；点完 5s 内验证 NC 的 AX 树里出现 / 消失 `AXWindow`，等不到判 INVALID（环境项）。**开关态竞态（M622）**：面板的开态可能在「读状态」与「点击」之间被别的动作改掉（前一场景的 `clickNotification` 会把面板留在打开态，随后前台切换又可能把它收掉），那一次点击恰好在相反方向上生效——因此最多点两次（每次后 5s 验证、重读状态），收起方向再以 **Escape** 兜底（面板的默认收起键，2026-10-21 实测有效）；两条兜底都写进证据。**为什么需要它**：`NotificationCenter.app` 的 AX 树只在面板打开时才有条目（面板关着只剩菜单栏）。冷启动投递的条目早就在通知中心里、但场景开始时读不到，必须先打开面板再 `waitForNotification`；读完收起，避免遮住后续场景的前台 / 横幅判定 |
@@ -930,6 +975,24 @@ INVALID 为 0 时该项省略。台账判据在 `lib/evidence.test.mjs`。
 restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.md` 表格不变。每场景与整轮合计也写进
 `run.log`，用于判断优化收益落在哪一段。启动后直接走既有就绪门，不再固定等 1.2s；退出按 50ms
 侦测进程消失，原 2s / 0.5s 上界与 SIGKILL 兜底不变。
+
+### WKWebView IME 序列驱动（dev-only）
+
+`imeDrive` 只在含该动作的场景启动时由 `run.mjs` 设 `LUMIR_ACCEPTANCE_IME=1`，`vite.config.ts`
+在 `LUMIR_ACCEPTANCE_PORT` 同时在场时注入驱动并把 `/__lumir-ime/*` 挂到本机 dev server；生产
+`pnpm build` 不经过 `configureServer`，`apply:"serve"` 保证 `dist/` 零驱动标识，普通 1420 dev
+不带 env、端点不存在。
+
+驱动边界：**合成事件 ≠ 原生 IME**。它按真实 WKWebView 日志的删除/提交序列复刻事件，DOM
+默认动作由驱动执行；证明产品 JS 路径在真实 WKWebView 里按该序列工作，不证明原生 TSM、候选窗、
+marked text 下划线或原生按键时序。原生终判仍是 156 / 262 人工矩阵。场景 271 的 PASS 只是机器
+回归门；任务 4.5 已移除临时 `editor_ime` 诊断，本场景判据全部来自驱动 JSONL。**覆盖收窄**：271 判别 deleteCompositionText
+接管与 compositionend 恢复链（M3 变异判红）；组合期冻结分支不在此场景判别（M1 去冻结后仍
+PASS——合成序列里 state 语法树在组合期未跟上 list），冻结承诺归 156 / 262 人工矩阵。
+271 另有 `delete-uncancelable` case：派发 `cancelable:false` 的 pending delete 并模拟浏览器
+默认删除，证明 setext 候选的 `- ` 由非可编辑原子 shield 隔离（原生 WebKit 的该事件不可取消，
+`preventDefault` 无效）。`commit-inserttext` case 覆盖候选以 `insertText` 提交且无
+`compositionend` 的原生路径：产品在 `input insertText` 上补 end，恢复正式 marker。
 
 ## 已知边界（写清楚，别当成 bug 去追）
 

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "CRON-NAV-RESTORED 结果通知恢复的会话内容。",
+      "usage": { "input_tokens": 1000, "cached_tokens": 0, "output_tokens": 10 }
+    }
+  ]
+}

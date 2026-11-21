@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import { validateImeCommand } from "./scripts/acceptance/driver/ime-cases.mjs";
 
 // 验收实例的 watch 忽略面（M359）。
 //
@@ -29,6 +30,99 @@ const ACCEPTANCE_WATCH_IGNORED = [
 // （1420，走 `src-tauri/tauri.conf.json` 的 `pnpm dev`）不经过 runner、不带这个变量 ⇒ 下面的
 // `server` 段与加固前逐字节相同，日常 HMR 行为不变。
 const acceptanceRun = process.env.LUMIR_ACCEPTANCE_PORT !== undefined;
+// IME 自动回归驱动（change fix-ime-list-composition-nov20 收尾）：只有验收实例且场景显式
+// 请求时才装。生产构建不经过 configureServer，`apply: "serve"` 再加一道硬门；普通 dev（1420）
+// 不带 `LUMIR_ACCEPTANCE_IME`，看不到端点与脚本。
+const acceptanceIme = acceptanceRun && process.env.LUMIR_ACCEPTANCE_IME === "1";
+
+function acceptanceImeDriver() {
+  let driverReady = false;
+  let command: unknown = null;
+  let report: { id?: string } | null = null;
+  const json = (res: import("node:http").ServerResponse, status: number, payload: unknown) => {
+    res.statusCode = status;
+    res.setHeader("content-type", "application/json; charset=utf-8");
+    res.setHeader("cache-control", "no-store");
+    res.end(payload === undefined ? "" : JSON.stringify(payload));
+  };
+  const readJson = (req: import("node:http").IncomingMessage) =>
+    new Promise<unknown>((resolve, reject) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => {
+        body += chunk;
+        if (body.length > 1_000_000) reject(new Error("请求体过大"));
+      });
+      req.on("end", () => {
+        try {
+          resolve(body ? JSON.parse(body) : null);
+        } catch (error) {
+          reject(error);
+        }
+      });
+      req.on("error", reject);
+    });
+
+  return {
+    name: "lumir-acceptance-ime",
+    apply: "serve" as const,
+    transformIndexHtml() {
+      return [
+        {
+          tag: "script",
+          attrs: { type: "module", src: "/scripts/acceptance/driver/ime-driver.mjs" },
+          injectTo: "body" as const,
+        },
+      ];
+    },
+    configureServer(server: { middlewares: { use: (path: string, handler: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void) => void } }) {
+      server.middlewares.use("/__lumir-ime", (req, res) => {
+        const url = new URL(req.url ?? "/", "http://127.0.0.1");
+        const pathname = url.pathname;
+        if (req.method === "GET" && pathname === "/ready") return json(res, 200, { ready: driverReady });
+        if (req.method === "POST" && pathname === "/ready") {
+          driverReady = true;
+          return json(res, 204, undefined);
+        }
+        if (req.method === "GET" && pathname === "/command") {
+          return command === null ? (res.statusCode = 204, res.end()) : json(res, 200, command);
+        }
+        if (req.method === "POST" && pathname === "/command") {
+          void readJson(req).then(
+            (payload) => {
+              const problem = validateImeCommand(payload);
+              if (problem) return json(res, 400, { error: problem });
+              command = payload;
+              return json(res, 202, { accepted: true });
+            },
+            (error) => json(res, 400, { error: String(error?.message ?? error) }),
+          );
+          return;
+        }
+        if (req.method === "POST" && pathname === "/report") {
+          void readJson(req).then(
+            (payload) => {
+              if (!payload || typeof payload !== "object" || typeof (payload as { id?: unknown }).id !== "string") {
+                return json(res, 400, { error: "报告需要 id" });
+              }
+              report = payload as { id?: string };
+              return json(res, 204, undefined);
+            },
+            (error) => json(res, 400, { error: String(error?.message ?? error) }),
+          );
+          return;
+        }
+        if (req.method === "GET" && pathname === "/report") {
+          const id = url.searchParams.get("id");
+          if (report && report.id === id) return json(res, 200, report);
+          return json(res, 404, { error: "report not found" });
+        }
+        return json(res, 404, { error: "not found" });
+      });
+      console.log("[vite] 验收 IME 驱动已装入（/__lumir-ime）");
+    },
+  };
+}
 
 if (acceptanceRun) {
   // 正向见证：让「跑批期间一次 reload 都没有」这条**负向**判据有输入——app.log 里看得到忽略面
@@ -43,6 +137,7 @@ if (acceptanceRun) {
 // Tauri 2 约定：固定端口、直连、相对 base（见 tauri.conf.json devUrl/frontendDist）
 export default defineConfig({
   base: "./",
+  plugins: acceptanceIme ? [acceptanceImeDriver()] : [],
   server: {
     port: 1420,
     strictPort: true,

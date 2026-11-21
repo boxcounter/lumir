@@ -283,6 +283,18 @@ export function openExternalUrl(url: string): Promise<void> {
 }
 
 /**
+ * 取一个 http / https 网页的标题（change add-url-paste-title-nov21）。
+ *
+ * 网络请求、超时、响应状态与 HTML 解析都在 Rust 侧（`fetch_url_title`）；这里只把
+ * 结果原样交给调用方。`null` = 请求到达但没有可用标题（非 2xx / 非精确 HTML media type /
+ * 无 `<title>` 等，正常结果不是异常）；网络 / 读取失败由 Rust 返回错误信封，调用方
+ * （编辑器）按「保留原始 URL」静默处理。
+ */
+export function fetchUrlTitle(url: string): Promise<string | null> {
+  return invoke<string | null>("fetch_url_title", { url });
+}
+
+/**
  * 解析相对路径 md 链接（`[x](note.md)`，M145）：目标是**相对当前文件所在目录**的
  * 路径（`./` `..` 归一的语义在 Rust `link_graph`，前端不复制），命中返回 vault
  * 相对路径，解析不到 resolve 为 null——那不是错误，前端只提示、不创建文件。

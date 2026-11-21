@@ -52,6 +52,8 @@ import {
   waitUntil,
 } from "./drive.mjs";
 import { envHome, envRelPath, InfraError, mkdirp, readText, repoRoot, secondVaultDir, sleep, vaultDir } from "./util.mjs";
+import { waitReady, sendCommand, waitReport, writeImeReport } from "./ime-driver.mjs";
+import { IME_CASES, IME_CASE_NAMES } from "../driver/ime-cases.mjs";
 
 /** 真实用户 HOME（不依赖隔离的 `envHome()`）。 */
 function homeDir() {
@@ -158,6 +160,9 @@ export const ACTIONS = new Set([
   // 靠 `sleep` 猜时长，或借通知横幅（M616 之前横幅会被**更早一次 run 的同标题通知**满足；M617
   // 给通知等待加了新鲜度基线，横幅不再有这个缺口，但「等某个日志事件」仍应直接读那份日志）。
   "waitForFile",
+  // WKWebView 合成 IME 序列（change fix-ime-list-composition-nov20 收尾）：只在验收实例的
+  // Vite 注入驱动里跑；报告写隔离 env，由场景用 file.jsonl 断言。
+  "imeDrive",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes", "node"]);
 
@@ -527,6 +532,15 @@ export function checkScenario(scenario) {
   // 写成非表（如列表 / 字符串）时 writeConfig 会把它当普通值铺开，静默丢掉半张表，故在此挡住。
   if (scenario.config?.editor !== undefined && !isPlainTable(scenario.config.editor))
     push(`config.editor 需要对象（[editor] 表，snake_case 键），实际 ${JSON.stringify(scenario.config.editor)}`);
+  // md 行号 gutter 档位（change gutter-copy-path-line-nov21）：闭集合与 Rust 侧
+  // `MarkdownLineNumbers` 同值域；写错会被应用静默回落成 `on-demand`，场景跑在默认档上。
+  if (
+    scenario.config?.markdownLineNumbers !== undefined &&
+    !["on-demand", "always", "off"].includes(scenario.config.markdownLineNumbers)
+  )
+    push(
+      `config.markdownLineNumbers 只能是 on-demand / always / off，实际 ${JSON.stringify(scenario.config.markdownLineNumbers)}`,
+    );
   // `config.cron`（change add-cron-runtime-daemon §7）：`{ tasks: [...] }`，逐项至少带
   // id / vault / at / prompt 四个字段——写错形状会被后端整节回落，场景静默跑在无任务配置上。
   if (scenario.config?.cron !== undefined) {
@@ -561,6 +575,31 @@ export function checkScenario(scenario) {
     const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;
     if (!step.name) push(`${at} 缺少 name`);
     if (step.do !== undefined && !ACTIONS.has(step.do)) push(`${at} 未知动作 do=${step.do}`);
+    if (step.do === "imeDrive") {
+      const spec = step.ime;
+      if (!isPlainTable(spec)) {
+        push(`${at} do=imeDrive 需要 ime 对象 { case, line, timeoutMs? }`);
+      } else {
+        for (const key of Object.keys(spec)) {
+          if (!["case", "line", "timeoutMs"].includes(key)) {
+            push(`${at} do=imeDrive 的 ime.${key} 未知键（拼错即静默不生效，允许：case / line / timeoutMs）`);
+          }
+        }
+        if (!IME_CASE_NAMES.includes(spec.case)) {
+          push(`${at} do=imeDrive 的 ime.case 必须是 ${IME_CASE_NAMES.join(" / ")}，实际 ${JSON.stringify(spec.case)}`);
+        } else {
+          const data = IME_CASES[spec.case];
+          if (typeof data.text !== "string" || data.text === "") push(`${at} ime case ${spec.case} 缺非空 text`);
+          if (spec.case === "commit" && (typeof data.commit !== "string" || data.commit === "")) {
+            push(`${at} ime case commit 缺非空 commit`);
+          }
+        }
+        if (!Number.isInteger(spec.line) || spec.line < 1) push(`${at} do=imeDrive 的 ime.line 需要正整数`);
+        if (spec.timeoutMs !== undefined && (!Number.isFinite(spec.timeoutMs) || spec.timeoutMs <= 0)) {
+          push(`${at} do=imeDrive 的 ime.timeoutMs 需要正数`);
+        }
+      }
+    }
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
     if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
     // `channel`（M767；M768 起 `do: key` 单数同样可写）：真键盘事件通道。这些形态都会**静默失效**，
@@ -1875,24 +1914,79 @@ function requireFrontmostForChords(pid, chords) {
  *  「界面一直不收敛」这种异常收一个可预期的代价——到点走兜底，不无限等。 */
 const SETTLE_TIMEOUT_MS = 15_000;
 
+/** AX 文本里的**状态标记**（不是节点的可读名）：`parseNodes` 的 label 取第一段括号文本，
+ *  没有真 label 的节点（AXTextArea / AXStaticText）会把行尾的 `(focused)` / `(disabled)`
+ *  抓成 label。拿它当身份会让「注入前 focused、注入后失焦」被误判成两个不同节点。 */
+const AX_STATE_MARKERS = new Set(["focused", "disabled"]);
+
+/** 回读目标的**稳定名**：label / help / title 里第一个非空、不是状态标记、且不等于当前值的字段。
+ *
+ *  `= "…"` 形态的文本节点把当前文本也渲染在 title 位上（AXTextArea 的正文、AXTextField 的
+ *  值），拿它当身份会随键入变化——回读按身份重解析时必然落空。value 本身显式排除；三者都没有
+ *  时返回 null，身份只剩 role + 同身份节点里的序号（编辑器 / composer 就是这种形态）。 */
+function keysTargetName(node) {
+  for (const candidate of [node.label, node.help, node.title]) {
+    if (typeof candidate !== "string" || candidate.length === 0) continue;
+    if (candidate === node.value || AX_STATE_MARKERS.has(candidate)) continue;
+    return candidate;
+  }
+  return null;
+}
+
+function keysTargetKind(node) {
+  if (node.role === "AXTextArea") return "editor";
+  if (TEXT_FIELD_ROLES.has(node.role)) return "input";
+  return node.role;
+}
+
+function keysTargetValue(node, kind) {
+  if (kind === "editor" || kind === "input") return node.value ?? "";
+  // 焦点在非文本节点上（按钮 / toast 动作条 / 面板）：键盘落在它身上，注入进不了任何文档文本。
+  // 把它自己也当回读目标，才能把这种情况如实判成「按键未落地」而不是盯错编辑器。
+  return node.title ?? node.label ?? node.value ?? "";
+}
+
 /**
  * keys 动作的回读目标——「键盘往哪儿落」必须可证，否则回读会盯错节点：
  *   1. AX 快照里标了 `(focused)` 的节点（键盘注入就落在它身上）；
  *   2. 没有 focused 标记时退到「可读的文本目标」：编辑器（AXTextArea.value）优先，
  *      其次第一个有可读 value 的原生输入框（WKWebView 的 `<input>`）。
  * 三者都不存在 → 返回 null（该步无可回读目标，保持盲发口径）。
+ *
+ * 返回的 `identity` 是**注入前**捕获的节点身份（role + 稳定名 + 同身份节点里的序号）；
+ * 注入后的复读走 {@link resolveKeysTarget}，不重新按 `focused` 选节点——WKWebView 会把
+ * ARIA combobox 的 `aria-activedescendant` 候选行标成 `(focused)`，而键盘落点仍是输入框
+ * （230d 现场：combobox 的 Value 已完整落地成 `qo-dir`，focused 却在候选 AXStaticText 上，
+ * 旧口径因此判「回读目标变了」，把一次成功输入报成动作失败）。
  */
-function keysTarget(ax) {
+export function keysTarget(ax) {
   const node =
     ax.nodes.find((n) => n.focused) ??
     ax.textarea ??
     ax.nodes.find((n) => TEXT_FIELD_ROLES.has(n.role) && typeof n.value === "string");
   if (!node) return null;
-  if (node.role === "AXTextArea") return { kind: "editor", value: node.value ?? "" };
-  if (TEXT_FIELD_ROLES.has(node.role)) return { kind: "input", value: node.value ?? "" };
-  // 焦点在非文本节点上（按钮 / toast 动作条 / 面板）：键盘落在它身上，注入进不了任何文档文本。
-  // 把它自己也当回读目标，才能把这种情况如实判成「按键未落地」而不是盯错编辑器。
-  return { kind: node.role, value: node.title ?? node.label ?? node.value ?? "" };
+  const kind = keysTargetKind(node);
+  const name = keysTargetName(node);
+  // 序号只在「role + 稳定名」相同的节点之间数：编辑器与 composer 都是 AXTextArea、往往都没有
+  // 可读名，序号是唯一能分开它们的信息（与旧口径一样取树里的先后顺序）。
+  const peers = ax.nodes.filter((n) => n.role === node.role && keysTargetName(n) === name);
+  const nth = Math.max(peers.indexOf(node), 0);
+  return { kind, value: keysTargetValue(node, kind), identity: { kind, role: node.role, name, nth } };
+}
+
+/**
+ * 按注入前捕获的身份重解析回读目标；身份不在快照里时返回 **null**，调用方一律判 FAIL。
+ *
+ * MUST NOT 退回 `keysTarget` 的「focused 优先」口径：那样会把候选行当键盘目标（230d），
+ * 而按身份重解析只回答一个问题——注入前的那个输入框还在不在、它的值现在是什么。
+ * 身份消失（输入面被收起 / 被替换）时没有可观测的落点，不重试、不改盯别的节点。
+ */
+export function resolveKeysTarget(ax, identity) {
+  const peers = ax.nodes.filter((n) => n.role === identity.role && keysTargetName(n) === identity.name);
+  const node = peers[identity.nth] ?? null;
+  if (!node) return null;
+  const kind = keysTargetKind(node);
+  return { kind, value: keysTargetValue(node, kind) };
 }
 
 /**
@@ -3630,11 +3724,15 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const baseline = countOf(baselineValue);
       const max = Math.min(step.retries ?? 3, 3);
       const reread = async () => {
-        const t = keysTarget(await readAx(cu, p));
-        if (!t || t.kind !== target.kind) {
+        // 按注入前捕获的身份重解析（见 keysTarget / resolveKeysTarget）：focused 会在输入后
+        // 从 combobox 挪到 `aria-activedescendant` 候选行，按它重选就会盯错节点（230d 现场）。
+        const t = resolveKeysTarget(await readAx(cu, p), target.identity);
+        if (!t) {
+          const id = target.identity;
           throw new Error(
-            `keys 回读目标在注入过程中变了（期望 ${target.kind}，实际 ${t?.kind ?? "无可读目标"}）——` +
-              "重试会打到别处，不重试，也不在不可观测的窗口里下结论",
+            `keys 回读目标在注入过程中消失（注入前是 ${target.kind}，身份 role=${id.role}` +
+              `${id.name === null ? "" : ` name=${JSON.stringify(id.name)}`} #${id.nth}）——` +
+              "身份不在了就没有可观测的落点：不重试，也不改盯 focused 节点（候选行会把 focused 抢走）",
           );
         }
         return t.value;
@@ -4075,6 +4173,37 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     // 正常退出应用（change add-cron-notification-relaunch §8.2 判据 1 的前置）：走 app 自己的
     // 退出路径（AppleEvent quit），不是 SIGTERM——「应用退出后点击通知」要的正是这条路径。
     // 退出被挡住（含 dirty 守卫）即判 FAIL：那是异常边界，套件不代为丢弃更改。
+    case "imeDrive": {
+      if (bundleBinary()) {
+        throw new InfraError(
+          "do=imeDrive 只在 dev flavour 可用：驱动由验收实例的 Vite dev server 注入，bundle 实例没有该端点。" +
+            "请去掉 LUMIR_ACCEPTANCE_BUNDLE 后复跑。",
+        );
+      }
+      const spec = step.ime ?? {};
+      const data = IME_CASES[spec.case];
+      const caseName = spec.case;
+      const timeoutMs = spec.timeoutMs ?? 20_000;
+      const tag = vars.$runTag ?? runTag();
+      await waitReady(10_000);
+      const id = `${tag}-${caseName}-${Date.now().toString(36)}`;
+      await sendCommand({
+        id,
+        runTag: tag,
+        case: caseName,
+        line: spec.line,
+        text: data.text,
+        commit: data.commit ?? null,
+        timeoutMs,
+      });
+      const report = await waitReport(id, timeoutMs + 4_000);
+      if (report.fatal) {
+        throw new InfraError(`imeDrive ${caseName} fatal（驱动场不成立，不是产品 FAIL）：${report.error}`);
+      }
+      const file = await writeImeReport(caseName, report);
+      evidence.record({ kind: "note", text: `imeDrive ${caseName} 报告：${path.relative(ctx.repoRoot, file)}` });
+      return;
+    }
     case "quitApp": {
       if (!bundleBinary()) {
         throw new InfraError("quitApp 只适用于打包实例（先设 LUMIR_ACCEPTANCE_BUNDLE 构建 bundle）。");
@@ -4311,6 +4440,10 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         // 界面语言（M282）同形沿用：一次 configWrite MUST NOT 抹掉 `ui.language`
         //（本场景的第一步就要把语言设成 zh，后续步骤若抹掉它，语言切换的起点就没了）。
         language: step.language !== undefined ? step.language : cur.ui?.language,
+        // md 行号 gutter 档位（change gutter-copy-path-line-nov21）同形沿用：一次 configWrite
+        // MUST NOT 把前面设过的 `ui.markdown_line_numbers` 抹回出厂 `on-demand`。
+        markdownLineNumbers:
+          step.markdownLineNumbers !== undefined ? step.markdownLineNumbers : cur.ui?.markdown_line_numbers,
         // `[editor]` 表**整表透传**（M379；早期 backlog「验收套件表达力缺口」条，原文见 git 历史，现行口径见 README 的 `configWrite` 条）：当前表整份带过来、`step.editor` 覆盖，
         // 具名参数（autoIndent / 排版三项…）在 writeConfig 里排在这张表之后，显式值仍然优先。
         //

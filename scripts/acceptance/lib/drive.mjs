@@ -328,13 +328,56 @@ export async function openFile(cu, pid, name, { marker, timeoutMs = 60_000 } = {
   );
 }
 
-/** 当前前台 app 的 pid（lsappinfo）；取不到返回 null。 */
+/** `lsappinfo info -only pid <asn>` 的输出 → pid；解析不出 / 多值歧义返回 null。
+ *
+ *  **两种实测格式都要认**（2026-11-21 本机现场）：
+ *    - `pid = 85685`——当前格式：等号两侧有空格，键与值都不带引号，行尾还跟着
+ *      `!cgsConnection` 之类的标记；
+ *    - `"pid"=85685`——旧格式。
+ *  空格 / 引号变体（`pid=…`、`"pid" = …`、值带引号）一并接受。
+ *
+ *  **值的右侧边界**（按 lsappinfo 实际语法）：值是一个十进制整数，其后只允许**行尾**或**空白**
+ *  ——合法输出在 pid 之后用空白分隔 `!cgsConnection` / `!signalled` / `type=[ NULL ]` 这类元数据，
+ *  因此空白必须放行，不能把元数据尾字段一概拒绝。紧贴数字的 `-` / `\` / 字母，或带引号的值后
+ *  紧跟垃圾（`pid = "123"junk`）都不是一个完整的 pid，返回 null。
+ *
+ *  **不宽松到误取别的数字**：键必须独占行首（允许前导空白）且紧邻 `=`——`ppid` / `bundleID` /
+ *  路径里的 `pid=` 都不算。同一行里再出现 pid 字段（`pid = 111 pid = 222`）也纳入比较：不同值
+ *  属于歧义读数，返回 null（不赌第一个），相同值去重。
+ *
+ *  为什么抽成纯函数：旧实现只认 `/"pid"=(\d+)/`，在本机当前格式上恒 null——`frontmostPid()` 因此
+ *  静默失真（前台判断恒「不是 Lumir」，后续注入受污染且无报错）。解析不能只靠真机现场验，
+ *  由 `drive.test.mjs` 钉住正反两向。 */
+export function parseLsappinfoPid(out) {
+  if (typeof out !== "string") return null;
+  const values = new Set();
+  for (const line of out.split("\n")) {
+    // 键必须从行首开始（允许前导空白）：`ppid` / 路径里的 `pid=` / `note: pid=` 都不算。
+    const head = /^[ \t]*"?pid"?[ \t]*=[ \t]*/.exec(line);
+    if (!head) continue;
+    let rest = line.slice(head[0].length);
+    for (;;) {
+      // 值 = 十进制整数（可带引号），右侧必须是行尾或空白（元数据以空白分隔）。
+      const value = /^(?:"(\d+)"|(\d+))(?=$|[ \t])/.exec(rest);
+      if (!value) return null;
+      values.add(Number(value[1] ?? value[2]));
+      rest = rest.slice(value[0].length);
+      // 同一行再出现 pid 字段：继续取值，不同值随后由 values.size 判歧义。
+      const next = /[ \t]"?pid"?[ \t]*=[ \t]*/.exec(rest);
+      if (!next) break;
+      rest = rest.slice(next.index + next[0].length);
+    }
+  }
+  if (values.size !== 1) return null;
+  return values.values().next().value;
+}
+
+/** 当前前台 app 的 pid（lsappinfo）；取不到返回 null。格式解析见 `parseLsappinfoPid`。 */
 export function frontmostPid() {
   try {
     const asn = execFileSync("/usr/bin/lsappinfo", ["front"], { encoding: "utf8" }).trim();
     const out = execFileSync("/usr/bin/lsappinfo", ["info", "-only", "pid", asn], { encoding: "utf8" });
-    const m = /"pid"=(\d+)/.exec(out);
-    return m ? Number(m[1]) : null;
+    return parseLsappinfoPid(out);
   } catch {
     return null;
   }

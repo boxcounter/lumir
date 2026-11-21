@@ -134,7 +134,7 @@ md 模式 SHALL 按 [GFM spec §4.10](https://github.github.com/gfm/#tables-exte
 md 模式下的链接判定 SHALL 取自 lezer 语法树（`src/editor.ts` 的 `markdownConfig` = `markdownLanguage` + `GFM`）里的 `URL` 节点，判定面 SHALL 覆盖四种节点形态：
 
 1. **标准链接** `[title](target)`：`Link` 节点的 `URL` 子节点（M144 / M145 落地，本 change 后逐条不变）。
-2. **裸 URL**：正文流里的 `http:` / `https:` / `mailto:` 字面 URL——GFM 的 `Autolink` 扩展把它直接产出为一个 `URL` 节点（父节点既不是 `Link` 也不是 `Image`），段落、列表项与引用块内一视同仁；表格 cell 内同样装饰是裁决点 D4 的推荐项（取备选时按 [proposal.md](../../changes/archive/2026-09-28-bare-url-cmd-click/proposal.md) 的改写指引收窄）。
+2. **裸 URL**：正文流里的 `http:` / `https:` / `mailto:` 字面 URL——GFM 的 `Autolink` 扩展把它直接产出为一个 `URL` 节点（父节点既不是 `Link` 也不是 `Image`），段落、列表项与引用块内一视同仁；表格 cell 内同样装饰是裁决点 D4 的推荐项（取备选时按 `openspec/changes/archive/2026-09-28-bare-url-cmd-click/proposal.md` 的改写指引收窄）。
 3. **链接定义行** `[tag]: url`：`LinkReference` 节点的 `URL` 子节点（`[tag]: ` 前缀是同一节点的 `LinkLabel` 与 `LinkMark`）。
 4. **角括号自动链接** `<https://…>`：`Autolink` 节点的 `URL` 子节点（尖括号是同一节点的两个 `LinkMark`）。判据与形态 2 同一条——这是裁决点 D1 的推荐项，取备选（排除本形态）时本款整条删除。
 
@@ -150,9 +150,11 @@ md 模式下的链接判定 SHALL 取自 lezer 语法树（`src/editor.ts` 的 `
 
 形态 1 的 `title` SHALL 取 `[` 与 `]` 之间的显示文本；`[`、`]` 与 `(target)` 三段源码 SHALL 被装饰隐藏，MUST NOT 出现在渲染态。隐藏与标记 SHALL 只存在于装饰层：`EditorState.doc` 与磁盘文件逐字节不变（ADR 0003 §3 铁律），装饰层的视口增量纪律不变。
 
-**形态 2 / 3 / 4 的装饰形态**：目标区间 SHALL 被标记为链接（`src/preview/theme.ts:611` 的 `.cm-lp-link`，与标准链接的显示文本同一类，零新 token、零新色值），`title` 属性给出解码后的 URL，尾部 SHALL 追加 `↗︎` 标记 widget（与标准链接的外链尾标同一份实现、同一份可见文字）。这三种形态**没有可隐藏的链接源码**（URL 本身就是原文）——MUST NOT 为「看起来像标准链接」而额外隐藏任何字符；唯一的例外是形态 4 的两个尖括号，按标准链接的 `[` / `(` 同款隐藏（尖括号是语法定界符，不是目标的一部分）。形态 3 SHALL 只装饰 URL 部分：`[tag]: ` 前缀属定义行的语法，SHALL 保持原文（整行隐藏是另一个形态，见 [proposal.md](../../changes/archive/2026-09-28-bare-url-cmd-click/proposal.md) 的 Non-goals 与裁决点 D3）。
+**形态 2 / 3 / 4 的装饰形态**：目标区间 SHALL 被标记为链接（`src/preview/theme.ts:611` 的 `.cm-lp-link`，与标准链接的显示文本同一类，零新 token、零新色值），`title` 属性给出解码后的 URL，尾部 SHALL 追加 `↗︎` 标记 widget（与标准链接的外链尾标同一份实现、同一份可见文字）。这三种形态**没有可隐藏的链接源码**（URL 本身就是原文）——MUST NOT 为「看起来像标准链接」而额外隐藏任何字符；唯一的例外是形态 4 的两个尖括号，按标准链接的 `[` / `(` 同款隐藏（尖括号是语法定界符，不是目标的一部分）。形态 3 SHALL 只装饰 URL 部分：`[tag]: ` 前缀属定义行的语法，SHALL 保持原文（整行隐藏是另一个形态，见 `openspec/changes/archive/2026-09-28-bare-url-cmd-click/proposal.md` 的 Non-goals 与裁决点 D3）。
 
 **形态 2 / 3 / 4 的可装饰前提是「节点原文带白名单 scheme」**（`http` / `https` / `mailto`，大小写不敏感）：GFM 的字面 URL 形态里 `www.example.com` 与裸邮箱 `a@b.example.com` **没有 scheme**，`classifyLinkTarget` 会把它们判成 vault 内资产（末段带 `.com` 一类的扩展名），而按资产处理意味着把这两个串当 vault 内相对路径交给 Rust 校验——那是错误的语义。因此这类无 scheme 的字面 URL SHALL 保持原文，MUST NOT 装饰、MUST NOT 产生打开入口（判据是「有没有 scheme」这条硬事实，不是「像不像 URL」的猜测）。
+
+**裸 URL 的文本边界（change `fix-bare-url-cjk-boundary-nov21`）**：形态 2 的 `URL` 节点在 GFM 词法里没有定界符，其路径段 `[^\s<]*` 会把紧跟的中文与全角标点吞进节点。因此链接层 SHALL 把**裸 URL** 的目标区间收窄到**首个 CJK / 全角字符之前**：CJK 字符（Han / 假名 / 谚文等）与全角字符 SHALL 作为正文保留，MUST NOT 进入链接目标、装饰区间、`title` 属性或打开路径。café / 西里尔 / 希腊等其它 Unicode 路径字符 MUST NOT 触发截断——本条不是「裸 URL 仅支持 ASCII」。该收窄 MUST NOT 作用于显式定界语法（形态 3 定义行、形态 4 角括号自动链接）与形态 1 标准链接——那些位置的中文可以是 URL 的一部分。百分号编码的中文路径 / 查询是 ASCII，SHALL 完整保留；收窄只决定「目标到哪结束」，MUST NOT 改写文档、MUST NOT 重新编码 URL。链接层是这条边界的唯一实现点（装饰与激活共用 `literalLinkOfNode`），MUST NOT 在装饰层与激活层各判一次。
 
 **保持原文（不装饰、无打开入口、语法树上下文天然排除——前端 MUST NOT 另写一套上下文判定）的形态**（逐条为不变量）：引用式链接的**引用点** `[text][ref]` / `[ref]`（lezer 不把定义处的 URL 挂到引用点，拿不到目标就不该猜——本 change 只装饰定义行那一侧的 URL）；白名单外 scheme（`javascript:` / `file:` / 应用自定义协议，含 GFM 字面形态能产出的 `xmpp:`）；**大写字面的 scheme**（`HTTPS://…`——GFM 的字面自动链接只认小写 `http://` / `https://` / `mailto:`，那种写法根本不产出 `URL` 节点，因此同样保持原文；这是上游语法树的结论，不是本 change 的收窄，分类实现本身仍是大小写不敏感的，`[x](HTTPS://…)` 照旧可点）；行内代码、围栏代码块与缩进代码块（这些上下文里的节点是 `CodeText` / `InlineCode`，没有 `URL` 节点）；HTML 块与 HTML 注释（同样没有 `URL` 节点）；frontmatter 块（由既有的 frontmatter 剪枝排除——语法树本身不认识 frontmatter，这一条是剪枝顺序的产物，MUST NOT 依赖「语法树会排除它」）。
 
@@ -175,6 +177,16 @@ md 模式下的链接判定 SHALL 取自 lezer 语法树（`src/editor.ts` 的 `
 
 - **WHEN** 打开一份含 `正文里的 https://example.invalid/bare 是裸 URL。` 与 `[homepage]: https://example.invalid/home` 两行的 Markdown
 - **THEN** 第一个 URL 上屏为带链接样式的 `https://example.invalid/bare`（文本本身保持可见，因为它就是原文）并在其后出现 `↗︎`；第二行的 URL 部分同样带链接样式与 `↗︎`，而 `[homepage]: ` 前缀保持原文；两处的 `title` 属性分别是两个解码后的 URL；`EditorState.doc` 与磁盘文件逐字节不变
+
+#### Scenario: 裸 URL 后紧邻中文时中文不进入链接
+
+- **WHEN** 打开一份含 `正文里的 https://example.invalid/abc中文说明 是裸 URL。` 的 Markdown
+- **THEN** `https://example.invalid/abc` 上屏为链接并带 `↗︎` 尾标，紧随的 `中文说明` 作为普通正文保留；该链接的 `title` 与 ⌘⏎ / ⌘-Click 的打开目标都是 ASCII 前缀，光标落在中文内部时 ⌘⏎ MUST NOT 打开该链接；`EditorState.doc` 与磁盘文件逐字节不变。对照：`<https://example.invalid/中文>` 与 `[home]: https://example.invalid/中文` 仍以完整中文目标装饰与打开；百分号编码的 `https://example.invalid/%E4%B8%AD` 完整保留
+
+#### Scenario: 非 CJK Unicode 路径不裁
+
+- **WHEN** 打开一份含 `https://example.invalid/café` 与 `https://example.invalid/путь` 的 Markdown
+- **THEN** 两条裸 URL 都以**完整**路径装饰与打开（`title` / ⌘⏎ / ⌘-Click 目标逐字相同）；边界规则 MUST NOT 把非 CJK 的 Unicode 路径误裁成 ASCII 前缀，也 MUST NOT 被实现成「裸 URL 仅支持 ASCII」
 
 #### Scenario: 角括号自动链接装饰为外链
 
@@ -1068,16 +1080,19 @@ MUST NOT 在键入路径与文档打开路径上新增解析或测量工作（AD
 ### Requirement: Enter 换行与自动缩进
 
 `Enter` 在可编辑会话中的换行行为 SHALL 按**光标所在的结构上下文**分派，逐条口径如下
-（各条的实测依据与来源见 change 的 `design.md` §1 / §4）：
+（各条的实测依据与来源见 `openspec/changes/archive/2026-09-28-enter-auto-indent/design.md`
+§1 / §4；本次回落收窄的边界与对照见 `openspec/changes/fix-list-enter-indent-nov21/proposal.md`）：
 
 - **md 模式的裸 marker 行**（M461，`para\n1. ` 等语法树不接管形态，判定见「裸 marker 行
   的列表编辑态」requirement）：光标在 marker 之后时，`Enter` 两态分派——**空项**
   （marker 后只有空白）SHALL 删去 marker 与其后空白：该行保留为空行、光标留在删后
-  位置（引用前缀 / 行首缩进保留）、MUST NOT 额外新增行（Obsidian 惯例的退出语义）；
+  位置（合法 `>` 引用前缀保留；行首缩进随 marker 一并删去——纯空白缩进不是结构）、
+  MUST NOT 额外新增行（Obsidian 惯例的退出语义）；
   **有内容** SHALL 插入换行 + 前缀原文 + 下一 marker（有序 = 字面序号 + 1、分隔符
   沿用；无序 = 同标记）。两态 MUST 各为单次事务（一次 Enter = 一次撤销步）。光标在
   marker 之前（行首结构前缀内）时本键 MUST NOT 接管（落回行首 Enter 的默认行为）。
-  该分派在树驱动的续行命令之前检查；只读会话 MUST NOT 产生文档变更。
+  该分派在树驱动的续行命令之前检查；只读会话 MUST NOT 产生文档变更（含真实列表 / 引用的
+  上游续行路径，守卫在命令入口统一生效）。
 - **md 模式的列表项 / 引用内**：`Enter` SHALL 续写同级标记并保持该项的嵌套层级（无序项续标记、
   有序项续下一个序号、引用续 `> `）。这条是**既有行为**（编辑器内核所装 markdown 语言支持包
   自带的键位），本 change MUST NOT 改变它。**例外（M399，Alex 裁决的主流模式）**：空列表项
@@ -1092,8 +1107,16 @@ MUST NOT 在键入路径与文档打开路径上新增解析或测量工作（AD
 - **md 模式的围栏代码块与缩进代码块内**：`Enter` SHALL 插入换行并沿用光标所在行的行首空白。
   MUST NOT 在该上下文里续写列表标记（围栏内的 `- x` 是代码文本，不是列表项）。本 change MUST NOT 为围栏内容引入语法级缩进——围栏内容在编辑器的语法树里没有子语言，本 change 如实登记这条能力
   边界，MUST NOT 假装已覆盖。
-- **md 模式的正文段落**：光标所在行行首无空白时，`Enter` 的呈现 SHALL 与现状一致（平换行，
-  MUST NOT 凭空加缩进）。
+- **md 模式的正文段落与列表续行的回落**（上游续行命令不接管的行：普通段落、行首带空白的段落、
+  setext 下线之后的行）：`Enter` SHALL 平换行，MUST NOT 照抄当前行的行首空白——行首空白在
+  这两类行里不是结构，复制给新行会造出只含空白的行或让新行落在与顶层段落不同的列上。
+  空光标在行首 / 行首空白内时，换行 SHALL 归一到整段空白之前：被下移的内容行保留自己的
+  行首空白、新行为空，MUST NOT 拆出 `" \n prose"` 这类中间态或只含空白的行。光标所在行
+  行首无空白时本行为呈现与既有实现一致（平换行）。
+- **多光标（仅限本 change 的换行回落）**：md 的普通段落 / 代码块换行回落 SHALL 按**每个
+  range** 各自的结构上下文分派（主光标 MUST NOT 决定其他 range 的换行模式）；普通段落与
+  代码行同时选中时，各按自己的规则换行，且为一次事务。列表 / 引用续行与裸 marker 行的混合
+  多光标不在本 change 内（相关实现未改），其行为以既有 requirement / 合同为准。
 
 缩进的写入单位 SHALL 是编辑器内核算法的出厂缩进单位（两个空格），与仓内既有 2 空格惯例一致；
 本 change MUST NOT 为某门语言单设 4 空格。一次 `Enter` SHALL 是一次撤销步（MUST NOT 产生两步撤销）。
@@ -1109,7 +1132,8 @@ MUST NOT 受本键影响（本键的作用面只有本 change 新增的两处，
 
 `Enter` MUST NOT 被登记进统一键位表（`src/keys.ts` 的 `KEY_BINDINGS`）：它的分派点在编辑器内核内
 （由 markdown 语言支持包自带的 `Enter` 键位优先，未命中才自动缩进）。代价如实登记：`Enter` 不进
-`[keys]` 的重绑面、不进键位查看面板——理由与备选见 change 的 `proposal.md` 裁决项 D1 与
+`[keys]` 的重绑面、不进键位查看面板——理由与备选见
+`openspec/changes/archive/2026-09-28-enter-auto-indent/proposal.md` 的裁决项 D1 与同目录
 `design.md` §1.3。本 change MUST NOT 新增命令 id。
 
 `Shift-Enter` MUST NOT 被本 change 改变：它维持现状（裸换行）。因此 code 模式下两个键的行为从此不同
@@ -1119,7 +1143,7 @@ Non-goal。
 #### Scenario: 裸 marker 行空项 Enter 退出（M461，Obsidian 惯例）
 
 - **WHEN** 在裸 marker 行（如段落下一行的 `1. `，语法树不接管形态；光标在 marker 之后）按 `Enter`
-- **THEN** 该行的 marker 与其后空白被删去、引用前缀 / 行首缩进保留、该行保留为空行、光标留在删后位置，文档行数不变（MUST NOT 额外新增行）
+- **THEN** 该行的 marker 与无意义行首缩进被删去、合法 `>` 引用前缀保留、该行保留为空行、光标留在删后位置，文档行数不变（MUST NOT 额外新增行）
 - **AND** 退出是单次事务（一次撤销即回到按键前）
 
 #### Scenario: 裸 marker 行有内容 Enter 续行（M461）
@@ -1148,9 +1172,10 @@ Non-goal。
 
 #### Scenario: md 列表与引用的续行不变
 
-- **WHEN** 在 md 的 `- alpha`（或嵌套的 `  - bravo`、有序的 `2. dos`、`> quoted`）行尾按 `Enter`
+- **WHEN** 在 md 的 `- alpha`（或嵌套的 `  - bravo`、有序的 `2. dos`、`> quoted`）行尾按 `Enter`，
+  或在项内段落续行（`- a\n  text`）、能打断段落的真列表项（`alpha\n  * a`）行尾按 `Enter`
 - **THEN** 续写同级标记并保持层级（无序 → `- `、嵌套 → `  - `、有序 → 下一个序号、引用 → `> `），
-  与本次变更之前逐字节一致
+  与本次变更之前逐字节一致；项内段落续行与真列表项的缩进是结构（项正文列），MUST NOT 被本条削去
 
 #### Scenario: 空列表项上的 Enter 退出列表（M399 裁决）
 
@@ -1164,6 +1189,23 @@ Non-goal。
 
 - **WHEN** 在 md 的普通段落（行首无空白）行尾按 `Enter`
 - **THEN** 新行不带任何缩进——呈现与本次变更之前一致，MUST NOT 凭空加缩进
+
+#### Scenario: 段首 marker 与带缩进的段落行 Enter 不复制行首空白
+
+- **WHEN** 在 `alpha\n  + `（裸空项）、`alpha\n  - `（setext 下线）或 `  prose`（行首带空白的段落）
+  行尾按 `Enter`
+- **THEN** 新行不带任何行首空白：`alpha\n  + ` 的 marker 与缩进一并删去（行变成空行）、
+  其余两例在列 0 插入换行；光标落在新行行首
+- **AND** 围栏与缩进代码块内仍沿用当前行行首空白（代码语义），MUST NOT 被本条牵连
+
+#### Scenario: 行首空白内的 Enter 归一化到空白之前
+
+- **WHEN** 光标在 `  prose` 的行首 / 两个空格之间 / 行首空白末端按 `Enter`
+- **THEN** 文档为 `\n  prose`——换行落在整段空白之前，被下移的内容行保留自己的行首空白，
+  光标落在内容行行首空白之后；MUST NOT 出现 `" \n prose"` 或只含空白的行
+- **AND** 缩进代码块 / 围栏内的行首、缩进内、正文起点、行尾同样按代码块沿用该行行首空白
+- **AND** 多光标同时覆盖普通段落与代码行时，两条 range 各按自己的上下文换行（一次事务），
+  主光标顺序不改变结果
 
 #### Scenario: 关闭自动缩进
 
@@ -1796,11 +1838,13 @@ md 模式下，指针（主键）产生的**非空选区在指针手势结束时
 
 ### Requirement: 列表内容起点输入的跨层一致性
 
-在未被用户单字符键位覆盖的默认文本输入路径，任意列表项内容起点（真列表/嵌套项的 `listLineRender.hidden.to`，或裸 marker 行编辑态的内容起点）SHALL 接受普通 `insertText` 与 IME 组合提交。提交文本 MUST 只插入当前空光标或替换当前选区；marker 源码、尾随空白及其他列表项 MUST 逐字节不变，空光标场景的 `selection.main.head` MUST 落在提交文本末尾。
+在未被用户单字符键位覆盖的默认文本输入路径，任意列表项内容起点（真列表/嵌套项的 `listLineRender.hidden.to`，或裸 marker 行编辑态的内容起点）SHALL 接受普通 `insertText`、IME 组合更新、组合中删除与组合提交。提交文本 MUST 只插入当前空光标或替换当前选区；marker 源码、尾随空白及其他列表项 MUST 逐字节不变，空光标场景的 `selection.main.head` MUST 落在提交文本末尾。
 
-渲染稳定后，每个可见列表项 MUST 恰有一个 marker widget；其显示 glyph/复合序号、计算样式与正文起点 x MUST 保持输入前同合同，输入 MUST NOT 造成 marker 丢失、重复或正文悬挂位置漂移。marker widget 与正文在 DOM/AX 中可序列化为无空格的拼接文本（例如源码 `7. a` 呈现为 `7.a`）；该形状是渲染结果，MUST NOT 被用作改写文档、拒收输入或恢复旧吞弃护栏的依据。专项不变量与证伪口径见 `docs/specs/lists.md` L6。
+渲染稳定后，每个可见列表项 MUST 恰有一个 marker widget；其显示 glyph/复合序号、计算样式与正文起点 x MUST 保持输入前同合同，普通输入、组合更新 / 删除与组合提交 MUST NOT 造成 marker 丢失、重复、相邻行 DOM 清空或正文悬挂位置漂移。marker widget 与正文在 DOM/AX 中可序列化为无空格的拼接文本（例如源码 `7. a` 呈现为 `7.a`）；该形状是渲染结果，MUST NOT 被用作改写文档、拒收输入或恢复旧吞弃护栏的依据。专项不变量与证伪口径见 `docs/specs/lists.md` L6。
 
-单次普通输入或组合提交 SHALL 是一个可撤销编辑：一次 undo 恢复精确输入前文档与选区，一次 redo 恢复精确输入后文档与选区。dirty MUST 继续按当前文档与 `cleanDoc` 逐字比较；显式保存的内容 MUST 逐字等于当前 `EditorState.doc`，保存后该文档成为 dirty 比较基线。本 requirement MUST NOT 改变裸 marker Enter/Backspace、L5 原子导航或 C1 光标几何。
+组合中 Backspace SHALL 只删除组合起点之后、光标之前的一个完整字素；marked text 已空时 MUST 消费事件且不改文档，MUST NOT 删除组合前正文、marker 或相邻行。组合期判定 SHALL 使用覆盖完整组合窗口的 `view.compositionStarted`，MUST NOT 只依赖会在组合中删除时错报 false 的 `event.isComposing`；删除类型 SHALL 覆盖 Chromium 的 `deleteContentBackward` 与 WKWebView 实测的 `deleteCompositionText`。该接管 MUST 只发生在上述列表内容起点（含段落后 `- ` 的 setext 候选）；普通段落、表格 cell、代码块等非列表位置的组合删除 SHALL 交回原生 IME。从 compositionstart 到 compositionend，列表装饰 SHALL 保持组合前的 DOM 形态，不得在输入法持有原始文本节点时插入或替换 marker widget；组合结束后 MUST 最终恢复为当前源码对应形态。到达 compositionend 时若 DOM 已有最终候选而 `EditorState` 尚未更新，MUST 等 CM 的 pending MutationRecord flush 后再唤醒重建，MUST NOT 在事件 handler 内同步 dispatch。恢复链 SHALL 以有界工作分片推进，解析未覆盖提交行时以有界重试 / 低频重试继续，MUST NOT 以同步解析整篇文档作为刷新前提，也 MUST NOT 在截止后放弃目标或依赖下一次用户编辑。
+
+单次普通输入或一段完整组合（含更新、删除与提交）SHALL 是一个可撤销编辑：一次 undo 恢复精确输入前文档与选区，一次 redo 恢复精确输入后文档与选区。`input.type.compose.start` MUST NOT 因与前一笔普通输入时间相邻而并入同一历史事件。dirty MUST 继续按当前文档与 `cleanDoc` 逐字比较；显式保存的内容 MUST 逐字等于当前 `EditorState.doc`，保存后该文档成为 dirty 比较基线。本 requirement MUST NOT 改变裸 marker Enter/Backspace、L5 原子导航或 C1 光标几何。
 
 #### Scenario: 连续空有序项点击后在内容起点输入
 
@@ -1816,6 +1860,20 @@ md 模式下，指针（主键）产生的**非空选区在指针手势结束时
 - **WHEN** 通过无 `keydown` 的 `insertText` 通道提交普通字符或 IME 组合文本
 - **THEN** 仅目标选区被提交文本替换，其他源码逐字不变，选区头落在提交文本末尾
 - **AND** marker 数量、显示样式与正文 x 保持稳定，undo/redo、dirty 和显式保存遵循同一跨层合同
+
+#### Scenario: 真实组合过程中的首字符、删空与候选提交
+
+- **GIVEN** 光标位于真 bullet / 有序 / 嵌套 / 裸 marker 的内容起点，或段落后 `- ` 触发 setext 与列表解析切换的位置
+- **WHEN** 通过浏览器引擎组合输入 `s`，按 Backspace 删空，在组合起点再按一次 Backspace，随后组合输入并提交候选 `是`
+- **THEN** 首字符后只新增 `s`；删空后精确恢复组合前文档与选区；组合起点的额外 Backspace 为 no-op，marker、组合前正文与相邻行源码逐字不变，相邻行 DOM 文本 MUST NOT 被清空
+- **AND** 候选提交后文档只新增 `是`，显式保存载荷逐字等于该文档；一次 undo 恢复完整组合前的文档与选区
+
+#### Scenario: 组合期列表装饰不提前重建
+
+- **GIVEN** 段落后 `- ` 尚未渲染列表 marker，光标位于内容起点并进入 IME 组合
+- **WHEN** 组合文本使 Markdown 解析结果在 setext 与列表之间切换
+- **THEN** 组合期间 marker widget 数量不增加，原始 `- ` 与新 widget MUST NOT 同时出现；组合提交或取消后装饰统一刷新为当前源码对应形态
+- **AND** WKWebView 的 `deleteCompositionText` 在即将删空时与 Chromium 的 `deleteContentBackward` 遵循同一组合起点合同
 
 #### Scenario: 保存后的历史与 dirty 基线一致
 

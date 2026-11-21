@@ -6,7 +6,7 @@ import type { ViewUpdate } from "@codemirror/view";
 /** 滚动位置快照的类型（`view.scrollSnapshot()` 的产物）。CM 不导出 ScrollTarget 类型，
  *  所以取方法的返回类型而不是手写泛型参数——类型随 CM 版本走，不会漂。 */
 export type ScrollSnapshot = ReturnType<EditorView["scrollSnapshot"]>;
-import { history, redo, undo } from "@codemirror/commands";
+import { history, isolateHistory, redo, undo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { backspaceBareMarkerLine, DEFAULT_AUTO_INDENT, enterWithAutoIndent } from "./enter-indent";
 // M447：词 / 字素簇扫描与 kill 槽的**共用**实现（两侧只有一份）住在叶子模块 src/quote-card.ts
@@ -40,6 +40,7 @@ import type { CodeBlockFullscreenPort } from "./preview/block-trigger";
 import type { ImageLightbox } from "./lightbox";
 import type { TableFullscreen } from "./table-fullscreen";
 import type { GotoLinePromptPort } from "./goto-line";
+import type { GutterCopyPort } from "./gutter-copy";
 import type { MarkdownLineNumbers } from "./bindings/MarkdownLineNumbers";
 import { detectFrontmatter, firstBodyLineStart, frontmatterBlockField, normalizeFrontmatterCaret } from "./preview/frontmatter";
 import { trustedLoad } from "./editor-annotations";
@@ -51,7 +52,7 @@ import { cellClamp, cellContentEdge } from "./cell-geometry";
 import type { CellClamp } from "./cell-geometry";
 import { listIndentChange } from "./list-indent";
 import type { ListIndentDirection } from "./list-indent";
-import { listHiddenRangeAt } from "./preview/lists";
+import { listContentStartAt, listHiddenRangeAt } from "./preview/lists";
 import { createInvokeAttachmentProvider, codeLanguageOfPath, collectImageRefs, fileClassOfPath, isEditablePath } from "./preview/attachments";
 import type { AttachmentProvider, ImageQuoteHandler, ImageRef } from "./preview/attachments";
 import { bindingHighlight } from "./code-identifiers";
@@ -88,6 +89,17 @@ import {
   writePastedImage,
 } from "./paste-image";
 import type { PasteImagePort } from "./paste-image";
+import {
+  addPendingUrlTitle,
+  clearPendingUrlTitleEffects,
+  newPendingUrlTitle,
+  pastedHttpUrl,
+  pendingUrlTitleField,
+  pendingUrlTitles,
+  removePendingUrlTitle,
+  urlTitleReplacement,
+} from "./paste-url";
+import type { PasteUrlTitlePort, PendingUrlTitle } from "./paste-url";
 
 // 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
 // md = 高亮 + live preview 装饰层（src/preview/）；code = 仅高亮。
@@ -790,16 +802,38 @@ function replaceSelectedRanges(view: EditorView, text: string): void {
   view.dispatch(view.state.replaceSelection(text), { scrollIntoView: true, userEvent: "input.type" });
 }
 
+const compositionStarts = new WeakMap<EditorView, number>();
+const COMPOSITION_BACKSPACE_INPUTS = new Set(["deleteContentBackward", "deleteCompositionText"]);
+
+/** 组合中 Backspace 只在即将删空 marked text 时改走显式事务；起点处消费事件、不改文档。
+ *  L6 范围收窄：只有列表内容起点（真列表项 / 裸 marker / 段落后 `- ` 的 setext 候选）才接管；
+ *  普通段落、表格、代码块交回原生 IME（P2-1，合同 docs/specs/lists.md L6）。 */
+function absorbCompositionBackspace(event: InputEvent, view: EditorView): boolean {
+  if (!COMPOSITION_BACKSPACE_INPUTS.has(event.inputType)) return false;
+  const start = compositionStarts.get(view);
+  const main = view.state.selection.main;
+  if (start === undefined || !main.empty || main.head < start) return false;
+  if (!listContentStartAt(view.state, start)) return false;
+  if (main.head === start) {
+    event.preventDefault();
+    return true;
+  }
+  const from = prevCluster(view.state, main.head, start);
+  if (from !== start) return false;
+  event.preventDefault();
+  deleteRange(view, from, main.head, "input.type.compose");
+  return true;
+}
+
 /** beforeinput 闸门本体：命中返回 true（事件已消费），否则 false 让原生编辑照常发生。 */
 function absorbNativeEdit(event: InputEvent, view: EditorView): boolean {
   const state = view.state;
-  // 组合期整段让给 CM：`view.composing` 只在**已有组合改动**后为真（CM 的实现是
-  // `inputState.composing > 0`），而 `compositionstart` 只把计数置 0——「已有非空选区 →
-  // compositionstart → 首个组合改动之前」这段窗口里它仍是 false。`view.compositionStarted`
-  // （`composing >= 0`）覆盖这段窗口，与 M855 的 cell 闸门同一口径；Safari 的组合提交
-  // 可能以 `insertText` 到达（CM 在 beforeinput 里有专门的死键收尾分支），组合期抢走
-  // 事件会绕过 CM 的组合处理。
-  if (state.readOnly || view.compositionStarted || event.isComposing) return false;
+  // `view.composing` 只在已有组合改动后为真，`view.compositionStarted` 才覆盖
+  // compositionstart 到首个改动之间的窗口。组合期只接管即将删空 marked text 的
+  // Backspace；WKWebView 的 inputType 是 deleteCompositionText，Chromium 是
+  // deleteContentBackward。其余输入仍交回 CM。
+  if (state.readOnly) return false;
+  if (view.compositionStarted || event.isComposing) return absorbCompositionBackspace(event, view);
   const ranges = state.selection.ranges;
   if (ranges.some((range) => !range.empty)) {
     if (event.inputType === "insertText") {
@@ -861,6 +895,15 @@ function absorbNativeEdit(event: InputEvent, view: EditorView): boolean {
 
 /** 只装进 md 模式：code 模式没有 replace 装饰，原生删除 / 键入无回读风险。 */
 const nativeEditGate = EditorView.domEventHandlers({
+  compositionstart: (_event, view) => {
+    const main = view.state.selection.main;
+    compositionStarts.set(view, Math.min(main.anchor, main.head));
+    return false;
+  },
+  compositionend: (_event, view) => {
+    compositionStarts.delete(view);
+    return false;
+  },
   beforeinput: (event, view) => absorbNativeEdit(event as InputEvent, view),
 });
 
@@ -1456,11 +1499,25 @@ export interface EditorHandle {
    */
   setPasteImagePort(port: PasteImagePort | null): void;
   /**
+   * 注入粘贴 URL 取标题的口令（change add-url-paste-title-nov21）：装配层在 vault 波注册
+   * （`fetchTitle` 走 ipc 的 `fetchUrlTitle`）。未注入时整条能力不启用——URL 按默认文本粘贴
+   * 落地，不产生任何异步改写（与 `setPasteImagePort` 同一形态）。
+   */
+  setPasteUrlTitlePort(port: PasteUrlTitlePort | null): void;
+  /**
    * 注入跳转到行的输入条（M281，change goto-line-command；能力与浮层 DOM 在
    * `src/goto-line.ts`）。命令执行时才读这个口子，注入**不**触发装饰重建（与上面几个
    * 「装饰层构建期读口子」的注入点不同）。未注入时 `editor.goto-line` 无操作。
    */
   setGotoLinePrompt(prompt: GotoLinePromptPort | null): void;
+  /**
+   * 注入行号 gutter 右键复制的出口（change gutter-copy-path-line-nov21）：`copy(path, line)` 由
+   * 装配层写剪贴板并给反馈。未注入时右键不接管（原生菜单照旧，不假装能复制）。
+   *
+   * **只接能力**：本入口 MUST NOT 改变 gutter 的在场判据（唯一来源仍是 `mdGutterExtensions()`），
+   * 也不触发任何重配 / 重建——处理器是 gutter 扩展的一部分，注入后下一次右键即生效。
+   */
+  setGutterCopy(port: GutterCopyPort | null): void;
   /**
    * 设置 md 行号 gutter 的档位（`ui.markdown_line_numbers`，M281 的 D4 二次改判）。装载时喂一次
    * 配置值（`src/main.ts`），**运行期 MUST NOT 回写**——本 change 不提供切换它的命令 / 键位 / UI。
@@ -1770,12 +1827,22 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    *  「装饰层在构建期读口子」的注入点不同（那些要 previewRefresh）。未注入时命令无操作
    *  （纯桩 / 维护性装配：能力没接上就不假装能打开）。 */
   let gotoLinePrompt: GotoLinePromptPort | null = null;
+  /** 行号 gutter 右键复制的出口（change gutter-copy-path-line-nov21）：装配层经
+   *  `setGutterCopy` 注入剪贴板写入与反馈。**DOM 事件处理器执行时才读**，因此注入不需要重建；
+   *  未注入时右键不接管（原生菜单照旧），不假装能复制。 */
+  let gutterCopy: GutterCopyPort | null = null;
   /**
    * 剪贴板图片口令（M416，change paste-clipboard-image）：装配层经 `setPasteImagePort` 注入。
    * **DOM 事件处理器执行时才读**（不是装饰层构建期），因此注入不需要重建；未注入时
    * paste 拦截整条不启用（与 `gotoLinePrompt` 同形态）。
    */
   let pasteImagePort: PasteImagePort | null = null;
+  /**
+   * 粘贴 URL 取标题的口令（change add-url-paste-title-nov21）：装配层经
+   * `setPasteUrlTitlePort` 注入（`fetchTitle` 走 Rust 的 `fetch_url_title`）。
+   * **DOM 事件处理器执行时才读**；未注入时整条能力不启用，默认粘贴逐字节不变。
+   */
+  let pasteUrlTitlePort: PasteUrlTitlePort | null = null;
   /**
    * md 行号 gutter 的档位（`ui.markdown_line_numbers`，change goto-line-command 的 D4 二次改判）：
    * 配置在装载时喂一次（`setMarkdownLineNumbers`），**运行期 MUST NOT 回写**——本 change 不提供
@@ -2116,7 +2183,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // 当前行只由行号底色指出，见 `.cm-activeLineGutter` 规则）。
     // 几何与配色的模式差异全在 md 侧的样式真源（src/preview/theme.ts 的 gutter 段）；
     // 这里的 baseTheme 是两模式共用的落点（col 1 / row 1），md 的 gridRow 由那边覆写。
-    const lineNumberGutter: Extension[] = [lineNumbers(), highlightActiveLineGutter()];
+    const lineNumberGutter = lineNumberGutterExtensions();
     return mode === "md"
       ? [
           ...editability,
@@ -2132,12 +2199,47 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), markupKeymap, codeGraphemeBackspaceGate];
   }
 
+  /** 行号 gutter 的**唯一装配点**（两模式共用）：md 的 `mdGutterExtensions()` 与 code 分支都从这里取，
+   *  因此行号渲染与右键行为不会各装一份。
+   *
+   *  右键复制（change gutter-copy-path-line-nov21）挂在 `lineNumbers` 自己的 `domEventHandlers` 上：
+   *  处理器随 gutter 一起安装 / 卸载，gutter 不在场时它也不存在（md 三档合同因此一字不动）。
+   *  返回 `true` 让 CM 调 `event.preventDefault()`——原生右键菜单不再弹出；本处理器 MUST NOT
+   *  自己再 `preventDefault`，也 MUST NOT `dispatch` / `focus`：右键只读，不改文档、选区、dirty
+   *  与阅读位置。行号取 `BlockInfo` 对应的源文档逻辑行（与 gutter 显示的数字同源）。
+   *
+   *  `active.path` 是路径的唯一来源（vault 内 = vault 相对路径，vault 外 = 绝对路径）；处理器
+   *  在事件发生时读它，不缓存——切标签 / 切 pane 后右键取到的就是当时那一份。 */
+  function lineNumberGutterExtensions(): Extension[] {
+    return [
+      lineNumbers({
+        domEventHandlers: {
+          // 右键的焦点副作用先在 mousedown 截住：`contextmenu` 处理器只能消费右键菜单本身，
+          // 拦不住 mousedown 默认行为带来的焦点转移（编辑器失焦 / `on-demand` 档下跳转输入条
+          // 的 focusout 会把 gutter 卸掉）。只拦辅助键（macOS 的右键 = button 2；Ctrl+左键
+          // 同义），左键的既有 gutter 行为一字不动。返回 true 让 CM 调 `preventDefault`。
+          mousedown: (_editorView, _block, event) => {
+            if (gutterCopy === null) return false;
+            const mouse = event as MouseEvent;
+            return mouse.button === 2 || (mouse.button === 0 && mouse.ctrlKey);
+          },
+          contextmenu: (editorView, block) => {
+            if (gutterCopy === null) return false;
+            gutterCopy.copy(active.path, editorView.state.doc.lineAt(block.from).number);
+            return true;
+          },
+        },
+      }),
+      highlightActiveLineGutter(),
+    ];
+  }
+
   /** md 的 gutter 扩展：**在场判据的唯一来源**（REVIEW.md 「同一语义两处真源」条——别处 MUST NOT 自行判断）。
    *  `always` 恒装、`off` 恒空、`on-demand` 随输入条。`code` 模式不经过这里（恒常显）。 */
   function mdGutterExtensions(): Extension {
     const installed =
       markdownLineNumbers === "always" || (markdownLineNumbers === "on-demand" && gotoGutterVisible);
-    return installed ? [lineNumbers(), highlightActiveLineGutter()] : [];
+    return installed ? lineNumberGutterExtensions() : [];
   }
 
   /** 把 md gutter 的在场状态重配到**全部 md 会话**（照 `reconfigureWrap` 的既有分流：前台
@@ -2167,17 +2269,22 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   }
 
   /**
-   * 会话**基础层**里两条绑实例闭包的扩展（收进 `baseCompartment`，见其声明处的 P1-1 说明）：
+   * 会话**基础层**的扩展（收进 `baseCompartment`，见其声明处的 P1-1 说明）：
+   *   - `pendingUrlTitleField`：粘贴 URL 取标题的待返回区间，随会话 state 走；
    *   - `changeFilter`：读实例级 `currentEditable` 投影，挡住绕过 DOM 输入路径的程序化 dispatch；
    *   - `updateListener`：前台会话 state 回写 + dirty 判定 + `docChangedListeners` 广播
    *     （再加运行时 appendConfig 扩展的收集）。
-   * 两者都绑**创建它的实例**的闭包，因此每次 adopt 都要用目标实例的 `baseExtensions()` 重配一次
+   * 后两者都绑**创建它的实例**的闭包，因此每次 adopt 都要用目标实例的 `baseExtensions()` 重配一次
    * ——否则迁移来的会话在目标 pane 被编辑时，回写会落进源实例前台会话（污染）、自身 state 永不
    * 回写（切标签丢编辑 / ⌘S 写陈旧内容）、dirty 永不置位（退出守卫漏判）。修法只在「谁绑闭包」，
    * 逻辑本身与 M149 起逐字相同。
    */
   function baseExtensions(): Extension[] {
     return [
+      // 粘贴 URL 取标题的待返回区间（change add-url-paste-title-nov21）：StateField 随会话
+      // state 走——切标签后旧请求的区间仍能映射；`setState` 不重建 field，撤销 / 重做也不会
+      // 把「哪个区间还等着标题」这条账丢失。纯规则在 `src/paste-url.ts`，这里只装字段。
+      pendingUrlTitleField,
       // 兜底防线：editability 已按会话 editable 在视图层拒收输入，changeFilter 再挡住任何
       // 绕过 DOM 输入路径的程序化 dispatch（trustedLoad 标记的装载事务除外）——两处同判据。
       // 闭包读的是实例级 currentEditable——切标签时必须同步（syncProjection），否则
@@ -2227,6 +2334,37 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           if (view.state.readOnly) return false;
           const data = event.clipboardData;
           if (data === null) return false;
+          // 粘贴 URL 取标题（change add-url-paste-title-nov21）：只在 **md + 可编辑 + 空选区**
+          // 且整段 plain 恰好是一个 http(s) URL 时接管。有选区时放行——CM 的
+          // `pasteURLAsLink` 已有「选中文本变链接标签」的语义，本能力不抢它。
+          // 图片通道在上方先判；HTML-only / 文件项粘贴不走到这里（plain 为空）。
+          if (
+            pasteUrlTitlePort !== null &&
+            active.mode === "md" &&
+            active.editable &&
+            view.state.selection.main.empty
+          ) {
+            const url = pastedHttpUrl(data.getData("text/plain"));
+            if (url !== null) {
+              event.preventDefault();
+              const range = view.state.selection.main;
+              const to = range.from + url.length;
+              const pending = newPendingUrlTitle(range.from, to, url);
+              view.dispatch({
+                changes: { from: range.from, to: range.to, insert: url },
+                selection: EditorSelection.cursor(to),
+                scrollIntoView: true,
+                userEvent: "input.paste",
+                // 与随后的标题升级分成两个撤销事件（见 fetchPastedUrlTitle 的同款注记）。
+                annotations: [isolateHistory.of("full")],
+                effects: addPendingUrlTitle.of(pending),
+              });
+              // 先落地 URL 再异步换标题：网络慢 / 失败时用户看到的仍是原文，不会出现
+              // 「粘贴后短暂空白 / 吞文本」。失败路径只撤账，文档不再变。
+              void fetchPastedUrlTitle(view, active, pending);
+              return true;
+            }
+          }
           if (data.getData("text/plain") !== "" || data.getData("text/uri-list") !== "") return false;
           event.preventDefault();
           return true;
@@ -2273,6 +2411,54 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     }
   }
 
+  /**
+   * 粘贴 URL 取标题的异步段（change add-url-paste-title-nov21）：URL 已经按普通粘贴落地，
+   * 这里只做「拿到标题后把这段 URL 原地换成 `[标题](URL)`」。
+   *
+   * 不满足任何一个前提就**只撤账、不改文档**：失败 / 超时 / 非 2xx / 无标题 → 保留原始 URL；
+   * 前台会话已换 → 不往别的文档写；用户在区间内编辑过 → `urlTitleReplacement` 切片对不上，
+   * 放弃改写。区间由 StateField 映射，等待期间在别处的键入 / 删除不会让改写落到错的位置。
+   */
+  async function fetchPastedUrlTitle(
+    view: EditorView,
+    session: EditorSession,
+    pending: PendingUrlTitle,
+  ): Promise<void> {
+    const port = pasteUrlTitlePort;
+    if (port === null) return;
+    let title: string | null = null;
+    try {
+      title = await port.fetchTitle(pending.url);
+    } catch {
+      title = null;
+    }
+    // 切标签 / 关标签：不往别的文档写（URL 已经落在那份文档里，保持原样即可）。
+    // 响应在 inactive 到达时还必须**撤清那份会话的 pending**——否则这条账会留在后台 state
+    // 里永远不消；只换代它的 state，MUST NOT 对当前前台 view 派发。
+    if (active !== session) {
+      if (isDocSession(session)) {
+        const effects = clearPendingUrlTitleEffects(session.state);
+        if (effects.length > 0) session.state = session.state.update({ effects }).state;
+      }
+      return;
+    }
+    const current = pendingUrlTitles(view.state).find((item) => item.id === pending.id);
+    if (current === undefined) return;
+    const change = urlTitleReplacement(view.state.doc, current, title);
+    if (change === null) {
+      view.dispatch({ effects: removePendingUrlTitle.of(pending.id) });
+      return;
+    }
+    view.dispatch({
+      changes: change,
+      userEvent: "input.paste",
+      // 第一次撤销只回退这次标题升级，第二次才回退原粘贴——两次都是用户可理解的稳定状态，
+      // 不把异步结果合进粘贴事件（`isolateHistory` 两侧都隔离，避免 500ms 内的历史合并）。
+      annotations: [isolateHistory.of("full")],
+      effects: removePendingUrlTitle.of(pending.id),
+    });
+  }
+
   /** adopt 时的完整换绑效果（M317 P1-1）：模式 / 折行 / **基础层**三处一起重配到本实例的闭包。
    *  mode 扩展闭包里的全屏端口（`paneIdOfHandle` 捕获源 handle）与基础层闭包（`active` /
    *  `currentEditable`）都**逐实例**——只共享 compartment 的定位 token 不够，内容要换成目标实例
@@ -2306,7 +2492,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         //   dirty 自然收窄为 false（不依赖撤销栈位置，见 updateListener）。
         // - 撤销史**逐会话独立**（M149）：history 是 StateField，每个 state 自带一份栈；
         //   切标签走 view.setState，栈跟着 state 走，切回来仍能撤销。
-        history(),
+        history({
+          // compose.start 不与之前的普通输入并组：一次 undo 必须回到这段组合之前，
+          // 而不是连用户刚输入的列表 marker 一起撤掉；后续 compose 仍由 CM 无条件并组。
+          joinToEvent: (tr, adjacent) =>
+            adjacent && tr.annotation(Transaction.userEvent) !== "input.type.compose.start",
+        }),
         // 选区自绘（M285，缺陷修复）：`drawSelection()` 让选区与光标由 CM 自己的 state 画在
         // `.cm-selectionLayer` / `.cm-cursorLayer` 上，**不再走浏览器原生选区**。修的是这么一条
         // 真实缺陷（M273 survey 定位，全量报告 test-results/m277/findings.md）：
@@ -2677,7 +2868,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       selection: { anchor: 0 },
       // 模式（含视图层可编辑性）与折行两个 Compartment 一起重配（M180）：装载可能把会话
       // 从 md 换成 code，代码块内容级 class 的有无取决于 mode，只重配模式会留下它。
-      effects: modeAndWrapEffects(mode, path, editable),
+      // 整篇重载同时撤清取标题 pending：旧区间锚在一份已被替换的正文上，没有可升级的语义。
+      effects: [...modeAndWrapEffects(mode, path, editable), ...clearPendingUrlTitleEffects(state)],
       annotations: [trustedLoad.of(true), Transaction.addToHistory.of(false)],
     }).state;
     // C3：初始光标放到 frontmatter 之后的第一条正文行（md 专属；code 模式没有 properties
@@ -2699,6 +2891,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // 图片会话不存快照（M629）：它的 `scroll` 恒 undefined（图片没有「上次读到哪里」），
     // 且哨兵空状态里没有可锚的文档位置——给空文档记一份再「恢复」没有语义。
     if (isDocSession(active)) active.scroll = view.scrollSnapshot();
+    // 切走即取消（change add-url-paste-title-nov21 的 spec 语义）：离开会话时撤清它的取标题
+    // pending。此后即使标题响应在切回之前到达，也没有可升级的区间——切走再切回不会补写。
+    // 放在 `clearLineHighlight` 之后：那条路径可能派发视图事务并经 updateListener 回写
+    // `active.state`，先清会被它用旧 state 覆盖。这里只换代旧会话的 state，不向即将被
+    // 换掉的 view 派发。
+    if (isDocSession(active)) {
+      const effects = clearPendingUrlTitleEffects(active.state);
+      if (effects.length > 0) active.state = active.state.update({ effects }).state;
+    }
     active = session;
     syncProjection();
     readyPath = session.path;
@@ -3031,7 +3232,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           // 滚动复位用直接赋值而非 scrollIntoView 效果：后者带 scrollMargin，文档
           // 溢出视口时会把 pos 0 对齐到视口顶而主动下滚，页首 padding 被顶出画。
           selection: { anchor: 0 },
-          effects: modeAndWrapEffects(mode, path, editable),
+          effects: [...modeAndWrapEffects(mode, path, editable), ...clearPendingUrlTitleEffects(view.state)],
         });
         // 新装载的文档从篇首开始：这里用直接赋值而不是 scrollIntoView 效果（M110 真实
         // 桌面缺陷排查）——后者带 scrollMargin，文档溢出视口时会把 pos 0 对齐到视口顶而
@@ -3264,10 +3465,19 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // ——与 setGotoLinePrompt 同一形态。
       pasteImagePort = port;
     },
+    setPasteUrlTitlePort(port) {
+      // 同 setPasteImagePort：paste 处理器执行时才读，注入不重建装饰。
+      pasteUrlTitlePort = port;
+    },
     setGotoLinePrompt(next: GotoLinePromptPort | null) {
       // **不**派发 previewRefresh（与上面几个注入点的差别）：这个口子在命令执行时才被读
       // （`editor.goto-line` 的闭包），不参与任何装饰构建，注入不改变已渲染的任何东西。
       gotoLinePrompt = next;
+    },
+    setGutterCopy(port) {
+      // 同 setGotoLinePrompt：右键处理器在 DOM 事件执行时才读这个口子，注入不需要重建 gutter
+      //（重建会扰动滚动 / 阅读位置，见 setMarkdownLineNumbers 的同款理由）。
+      gutterCopy = port;
     },
     setMarkdownLineNumbers(tier: MarkdownLineNumbers) {
       // 档位没变就**什么都不做**：装载时喂的若就是默认档 `on-demand`（最常见的情况），这条路径

@@ -220,6 +220,11 @@ SHALL 落 `cron_click_deferred`（与 `cron_click` 共用任务与来源字段�
 重复点击同一通知 SHALL 幂等：当日该任务已有运行会话时，只聚焦并打开该会话，MUST NOT 重复发起
 运行，MUST NOT 产生重复的模型请求。
 
+点击结果通知（`run-then-notify` / `silent-run` 的终态通知，以及幂等重复点击）时的**键盘焦点** SHALL
+保持在点击前的正文编辑器上：系统 SHALL 展开 harness pane 并恢复该次运行的会话（pane 已存在时同样
+确保可见与内容恢复），但 MUST NOT 把焦点移到 harness composer，MUST NOT 改变正文的阅读位置。显式
+打开 / 切换 harness（`harness.toggle` 等用户主动动作）的 composer 聚焦行为 MUST NOT 受此条影响。
+
 #### Scenario: 到点通知内容
 
 - **WHEN** `notify-then-run` 任务到点，通知被投递
@@ -235,6 +240,13 @@ SHALL 落 `cron_click_deferred`（与 `cron_click` 共用任务与来源字段�
 
 - **WHEN** `run-then-notify` 的结果通知被点击
 - **THEN** 窗口被唤起，该次运行的会话被恢复并可继续对话；不产生第二次运行
+
+#### Scenario: 结果通知点击不抢正文焦点
+
+- **WHEN** 文档编辑器持有键盘焦点时，用户点击 `run-then-notify` 的结果通知（harness pane 关闭或已
+  打开两种状态）
+- **THEN** 窗口被唤起、harness pane 展开 / 保持可见、该次运行的会话恢复并可继续对话；键盘焦点仍在
+  正文编辑器，正文的阅读位置不变；随后的键入落在正文而不是 harness composer
 
 #### Scenario: 默认动作归一化为 tap
 

@@ -31,6 +31,7 @@ import {
   fsRevealInFinder,
   fsTrashEntry,
   fsWriteAttachment,
+  fetchUrlTitle,
   documentSetDirty,
   isCommandError,
   onAttachmentNaming,
@@ -62,6 +63,7 @@ import { createToc, extractHeadings } from "./toc";
 import { createImageLightbox } from "./lightbox";
 import { createTableFullscreen } from "./table-fullscreen";
 import { createGotoLinePrompt } from "./goto-line";
+import { pathLineText } from "./gutter-copy";
 import { createQuickOpen } from "./quick-open";
 import type { ExternalOpenOutcome } from "./quick-open";
 import { createCodeBlockFullscreen } from "./code-block-fullscreen";
@@ -680,6 +682,9 @@ function createPaneTabs(paneId: PaneId, handle: EditorHandle, stripEl: HTMLEleme
     invalidateResolve: () => linkFollow.invalidate(),
     showEditor: () => showEditor(),
     syncActiveDocument: () => syncActiveDocument(),
+    // 「关闭全部标签」把标签全关完后没有标签可归还焦点：交给编辑器（M280 口径：聚焦不得把
+    // 阅读位置拽回光标处，MUST NOT 裸 view.focus()）。
+    focusEditor: () => handle.focusPreservingReadingPosition(),
     // 标签条交互（点标签 / 点关闭钮）先把这个 pane 翻成活跃 pane（M329，bug 1）。调用点在
     // tabs.ts 的交互漏斗里（它的 DOM 监听自己绑），**不是**在这里覆写对外方法——覆写挡不住
     // DOM 点击路径，那正是「点非活跃 pane 的标签不装载内容」的成因。
@@ -848,17 +853,19 @@ function toggleHarnessPane(): void {
 }
 
 /** 打开 harness pane（旁侧 pane；harness:文档默认 1:1）：已有第二 doc pane 时先并标签收拢，
- *  再开 harness pane；焦点落 composer。 */
-function openHarnessPane(): void {
+ *  再开 harness pane。`focusComposer` 缺省 true（显式打开 / toggle 的既有落点：焦点进输入区）；
+ *  cron 结果通知点击传 false——那一步的意图是「看见这次运行的会话」，不是开始输入，正文的
+ *  焦点与阅读位置 MUST NOT 被抢走（mission harness-navigation-nov21）。 */
+function openHarnessPane(focusComposer = true): void {
   // 已有第二 doc pane：其标签并入 root（closeActivePane 的方案 A 口径，不丢标签）。
   if (paneLayout.isSplit() && paneLayout.panes()[1].handle.kind === "doc") {
     closeActivePane();
   }
-  if (paneLayout.isSplit()) return; // 上限二兜底（harness 已在场等防御性情形）
+  if (paneLayout.isSplit()) return; // 上限二兜底（harness 已在场等防御性情形；在场即可见，内容由调用方恢复）
   // 首开默认宽度比只在无存储值时生效（design §7）；拖拽/存储值沿用。
   if (!storedRatioApplied) splitRatio = HARNESS_DEFAULT_DOC_RATIO;
   addPane("harness");
-  harnessPanel.focusComposer();
+  if (focusComposer) harnessPanel.focusComposer();
   syncActiveDocument();
   // 布局变化落盘（harness_pane 位 + 比例； Debounce 在 store 里）。
   switcher.sessionChanged();
@@ -1073,7 +1080,9 @@ const editor: EditorHandle = {
     forEachEditor((handle) => handle.setCodeBlockFullscreen(port)),
   setBlockCopy: (copy) => forEachEditor((handle) => handle.setBlockCopy(copy)),
   setPasteImagePort: (port) => forEachEditor((handle) => handle.setPasteImagePort(port)),
+  setPasteUrlTitlePort: (port) => forEachEditor((handle) => handle.setPasteUrlTitlePort(port)),
   setGotoLinePrompt: (prompt) => forEachEditor((handle) => handle.setGotoLinePrompt(prompt)),
+  setGutterCopy: (port) => forEachEditor((handle) => handle.setGutterCopy(port)),
   setMarkdownLineNumbers: (tier) =>
     forEachEditor((handle) => handle.setMarkdownLineNumbers(tier)),
   setGotoLineGutterVisible: (visible) =>
@@ -1387,6 +1396,15 @@ injectEach((handle) =>
   }),
 );
 
+// 行号 gutter 右键复制 `{path}:{line}`（change gutter-copy-path-line-nov21）：装配层给编辑器两样
+// 它看不到的东西——剪贴板写入与 toast 反馈；编辑器只上报右键落点的源行号与会话路径（路径口径
+// 的唯一来源与 modeline 同一份）。写剪贴板走既有纯前端通道（M244 已实证），零依赖、零后端命令。
+injectEach((handle) =>
+  handle.setGutterCopy({
+    copy: (path, line) => void copyPathLine(path, line),
+  }),
+);
+
 // 剪贴板贴图（M416，change paste-clipboard-image）：口令端口在装配层注册——`write` 走 ipc 的
 // `fsWriteAttachment`（后端转码 + 内容寻址命名 + 全 vault 去重），`toast` 复用下面的既有实现
 // （错误信封按 code 渲染，文案表见 `copy-data.ts` 的 `ERROR_COPY`，本文件不写第二份文案）。
@@ -1410,6 +1428,15 @@ injectEach((handle) =>
     // 把装配层的能力交给编辑器，判据（开关 / 本次写盘）在 `src/paste-image.ts` 的纯函数里。
     semanticNaming: () => semanticNamingEnabled,
     name: (task) => void semanticName(task),
+  }),
+);
+
+// 粘贴 URL 取标题（change add-url-paste-title-nov21）：编辑器只拿一个取标题的口子，网络 /
+// 超时 / 响应状态 / HTML 解析全在 Rust 的 `fetch_url_title`（与 `open_external_url` 同一
+// 信任边界：scheme 校验只在 Rust 一处）。失败由编辑器静默保留原始 URL，不弹 toast。
+injectEach((handle) =>
+  handle.setPasteUrlTitlePort({
+    fetchTitle: (url) => fetchUrlTitle(url),
   }),
 );
 
@@ -1511,6 +1538,36 @@ async function copyBlockContent(handle: EditorHandle, range: BlockCopyRange): Pr
     const reason = errorMessage(e);
     console.warn(`lumir: 复制${noun}失败：${reason}`); // i18n-exempt: log
     toast(COPY_BLOCK_FAILED_TOAST(reason));
+  }
+}
+
+/**
+ * 行号 gutter 右键复制 `{path}:{line}`（change gutter-copy-path-line-nov21）：
+ * 与块级复制共用同一条剪贴板通道与 toast 机制。`path` 来自会话（vault 内 = vault 相对路径，
+ * vault 外 = 绝对路径）；`path` 缺省 = 无当前文件，**不写剪贴板**，走失败反馈而不是编造路径。
+ *
+ * 成功 = success tone 的 D947，`{target}` 是逐字写入剪贴板的那串（回执与剪贴板同一份）；
+ * 失败（剪贴板不可用 / 权限被拒 / 无路径）给 D155 的 toast 并另记一条 console 线索。MUST NOT
+ * 静默，MUST NOT 在写失败时显示成功提示。三条失败路径共用 `reportCopyFailure`——诊断与上屏
+ * 只写一份，避免「补了一处、漏了另一处」（r1 P2-1：无路径分支曾只有 toast、没有诊断）。
+ */
+function reportCopyFailure(reason: string, target?: string): void {
+  const what = target === undefined ? "行号位置" : ` ${target}`; // i18n-exempt: log
+  console.warn(`lumir: 复制${what}失败：${reason}`); // i18n-exempt: log
+  toast(t("D155", { reason }));
+}
+
+async function copyPathLine(path: string | undefined, line: number): Promise<void> {
+  if (path === undefined) {
+    reportCopyFailure(t("D207"));
+    return;
+  }
+  const target = pathLineText(path, line);
+  try {
+    await navigator.clipboard.writeText(target);
+    toast(t("D947", { target }), [], false, "success");
+  } catch (e) {
+    reportCopyFailure(errorMessage(e), target);
   }
 }
 
@@ -3192,12 +3249,16 @@ async function handleCronRun(payload: CronRunPayload): Promise<void> {
   }
 }
 
-/** 结果通知点击：恢复该次运行的会话（走既有恢复链路；不重新运行）。 */
+/** 结果通知点击：恢复该次运行的会话（走既有恢复链路；不重新运行）。
+ *  焦点口径（mission harness-navigation-nov21）：本路径的落点是「看见这次运行的会话」，
+ *  不是开始输入——`openHarnessPane(false)` 让 pane 在场 / 内容恢复，但正文原焦点与阅读位置
+ *  MUST NOT 被抢走。显式打开 / 切换 harness 的 composer 聚焦行为（`openHarnessPane()` 缺省）
+ *  逐字不变。 */
 async function handleCronOpenSession(payload: { vault: string; session_id: string }): Promise<void> {
   try {
     await ensureCronVault(payload.vault);
     await invoke("harness_resume_session", { session_id: payload.session_id });
-    openHarnessPane();
+    openHarnessPane(false);
     // 面板的 `vaultChanged` 对同一 vault 是空操作；先置空再设回，等价于「重新装载该 vault
     // 的会话面」——面板据此按恢复后的后端会话重取快照（不新增面板 API）。
     harnessPanel.vaultChanged("", null);

@@ -196,13 +196,12 @@ test("⌘P：空态不列全量、输入即筛（完整路径子串）、Enter �
   const activeId = await active.getAttribute("id");
   await expect(input).toHaveAttribute("aria-activedescendant", activeId as string);
 
-  // 路径片段：`notes/` 只命中前两条里的一条（子串语义，不是文件名匹配）
+  // 路径片段 + 目录语境：`notes/` 解析到已存在的目录，候选收窄为它的直接子级（本 fixture
+  // 的两条都是直接子级）；Enter 的既有行为不回归——游标在候选上就一次打开
   await page.keyboard.press("Meta+a");
   await page.keyboard.press("Backspace");
   await page.keyboard.type("notes/");
   await expect(items).toHaveText(["notes/plan.md", "notes/spec.md"]);
-
-  // ↓ 到第二条后 Enter：打开**游标那一条**（不是查询串解析结果）
   await page.keyboard.press("ArrowDown");
   await expect(active).toHaveText("notes/spec.md");
   await page.keyboard.press("Enter");
@@ -235,6 +234,20 @@ test("点击候选打开：与键盘同一行、不夺焦（mousedown preventDef
   const items = page.locator(".lumir-qo-item");
   await expect(items).toHaveText(["notes/plan.md", "apps/plan.json"]);
   await items.nth(1).click();
+  await expect(page.locator(".lumir-qo")).toBeHidden();
+  await expect(page.locator(".tab-open")).toHaveText(["plan.json"]);
+  await expect(page.locator(".cm-content")).toContainText("APP-MARKER");
+});
+
+test("非目录查询：↓ 后一次 Enter 打开游标候选（目录语境之外的 Enter 行为不回归）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await openQuickOpen(page);
+  await page.keyboard.type("plan");
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "apps/plan.json"]);
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(".lumir-qo-item.is-active")).toHaveText("apps/plan.json");
+  await page.keyboard.press("Enter");
   await expect(page.locator(".lumir-qo")).toBeHidden();
   await expect(page.locator(".tab-open")).toHaveText(["plan.json"]);
   await expect(page.locator(".cm-content")).toContainText("APP-MARKER");
@@ -625,4 +638,292 @@ test("直接行点击：与 Enter 同一目标（mousedown 不夺焦，点击后
   await page.locator(".lumir-qo-direct").click();
   await expect(page.locator(".lumir-qo")).toBeHidden();
   await expect(page.locator(".tab-open")).toHaveText(["draft.md"]);
+});
+
+// ---------------------------------------------------------------------------
+// 6）⌘A 全选输入框（change fix-quick-open-select-all-directory-children-nov21）
+//
+// 判据纪律：真实按键的选区读数是「用户可见行为」；合成 keydown 的 defaultPrevented 是
+// 「有没有一层显式接管」的结构判据——合成事件没有原生默认行为，只有浮层自己的处理器会
+// preventDefault（REVIEW.md「断言等价于子串」条：先确认修前这条判据确实红）。
+// ---------------------------------------------------------------------------
+
+test("⌘A：输入框内全选输入内容、替换键入不追加；编辑器内 ⌘A 的全选语义不回归", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await page.locator('.ft-row[title="long.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("快速打开落点的填充内容");
+
+  await openQuickOpen(page);
+  const input = page.locator(".lumir-qo-input");
+  await page.keyboard.type("plan");
+  await expect(input).toHaveValue("plan");
+
+  // 结构判据：浮层必须自己接管 ⌘A（修前没有任何一层 preventDefault ⇒ 这条红）
+  const prevented = await page.evaluate(() => {
+    const element = document.querySelector(".lumir-qo-input") as HTMLInputElement;
+    const event = new KeyboardEvent("keydown", {
+      key: "a",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(prevented).toBe(true);
+
+  // 真实按键：选区覆盖整串（不是编辑器文档、不是候选列表）
+  await page.keyboard.press("Meta+a");
+  const selection = await input.evaluate((element) => {
+    const field = element as HTMLInputElement;
+    return { start: field.selectionStart, end: field.selectionEnd, value: field.value };
+  });
+  expect(selection).toEqual({ start: 0, end: "plan".length, value: "plan" });
+
+  // 全选后键入替换整串（追加形态会让 value 变成 `plannotes/`）
+  await page.keyboard.type("notes/");
+  await expect(input).toHaveValue("notes/");
+
+  // 关闭浮层后，编辑器内的 ⌘A 仍是全选整篇（既有 editor.select-all 语义不被本改动改写）
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".lumir-qo")).toBeHidden();
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+a");
+  const docSelection = await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } })
+      .cmTile.root.view;
+    const selection = view.state.selection.main;
+    return { from: selection.from, to: selection.to, length: view.state.doc.length };
+  });
+  expect(docSelection.from).toBe(0);
+  expect(docSelection.to).toBe(docSelection.length);
+});
+
+test("组合期 ⌘A：输入面不消费、不改选区（组合期归输入法）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await openQuickOpen(page);
+  const input = page.locator(".lumir-qo-input");
+  await page.keyboard.type("abc");
+
+  const result = await input.evaluate((element) => {
+    const field = element as HTMLInputElement;
+    field.setSelectionRange(1, 2);
+    const composing = new KeyboardEvent("keydown", {
+      key: "a",
+      metaKey: true,
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    field.dispatchEvent(composing);
+    const legacy = new KeyboardEvent("keydown", {
+      key: "a",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    // 旧口径的「输入法正在处理」信号：keyCode 229（isComposing 之外的第二条早退判据）
+    Object.defineProperty(legacy, "keyCode", { value: 229 });
+    field.dispatchEvent(legacy);
+    return {
+      composingPrevented: composing.defaultPrevented,
+      legacyPrevented: legacy.defaultPrevented,
+      start: field.selectionStart,
+      end: field.selectionEnd,
+      value: field.value,
+    };
+  });
+  // 组合期不 preventDefault、不调用 select()：选区与输入串逐值不变
+  expect(result).toEqual({
+    composingPrevented: false,
+    legacyPrevented: false,
+    start: 1,
+    end: 2,
+    value: "abc",
+  });
+});
+
+test("⌃A：输入面不消费（Emacs 行首 / 原生语义不被浮层截走）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await openQuickOpen(page);
+  const input = page.locator(".lumir-qo-input");
+  await page.keyboard.type("abc");
+
+  const result = await input.evaluate((element) => {
+    const field = element as HTMLInputElement;
+    field.setSelectionRange(1, 3);
+    const event = new KeyboardEvent("keydown", {
+      key: "a",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    field.dispatchEvent(event);
+    return {
+      prevented: event.defaultPrevented,
+      value: field.value,
+      start: field.selectionStart,
+      end: field.selectionEnd,
+    };
+  });
+  // 浮层只认 `Cmd-A`：Ctrl-A 不 preventDefault、不改输入串与选区（原生 / 键位层自己处置）
+  expect(result).toEqual({ prevented: false, value: "abc", start: 1, end: 3 });
+});
+
+// ---------------------------------------------------------------------------
+// 7）目录语境：候选收窄为直接子级（不混入深层后代 / 同前缀兄弟目录）
+// ---------------------------------------------------------------------------
+
+const DEEP_PLAN_DOC = "# Plan\n\nDEEP-DIRECT-PLAN\n";
+const DEEP_SPEC_DOC = "# Spec\n\nDEEP-DIRECT-SPEC\n";
+const DEEP_DESCENDANT_DOC = "# Deep\n\nDEEP-DESCENDANT\n";
+const DEEP_NESTED_DOC = "# Nested\n\nNESTED-DESCENDANT\n";
+const SIBLING_DOC = "# Sibling\n\nSIBLING-PREFIX\n";
+const CN_MEETING_DOC = "# 会议\n\nCN-DIRECT-CHILD\n";
+const CN_ARCHIVE_DOC = "# 归档\n\nCN-DEEP-DESCENDANT\n";
+const CN_COPY_DOC = "# 副本\n\nCN-SIBLING-PREFIX\n";
+
+/** 目录语境的现场：`notes` 有直接子级、深层后代与**同前缀的兄弟目录** `notes-extra`。 */
+const DEEP_VAULT: VaultFixture = {
+  root: "/v",
+  entries: [
+    { path: "notes", kind: "dir", size: 0, mtime_ms: 0 },
+    { path: "notes/plan.md", kind: "file", size: DEEP_PLAN_DOC.length, mtime_ms: 0 },
+    { path: "notes/spec.md", kind: "file", size: DEEP_SPEC_DOC.length, mtime_ms: 0 },
+    { path: "notes/sub", kind: "dir", size: 0, mtime_ms: 0 },
+    { path: "notes/sub/deep.md", kind: "file", size: DEEP_DESCENDANT_DOC.length, mtime_ms: 0 },
+    { path: "notes/sub/nested", kind: "dir", size: 0, mtime_ms: 0 },
+    { path: "notes/sub/nested/even-deeper.md", kind: "file", size: DEEP_NESTED_DOC.length, mtime_ms: 0 },
+    { path: "notes-extra", kind: "dir", size: 0, mtime_ms: 0 },
+    { path: "notes-extra/note.md", kind: "file", size: SIBLING_DOC.length, mtime_ms: 0 },
+    { path: "empty-dir", kind: "dir", size: 0, mtime_ms: 0 },
+    { path: "empty-dir/child", kind: "dir", size: 0, mtime_ms: 0 },
+    { path: "empty-dir/child/grand.md", kind: "file", size: DEEP_NESTED_DOC.length, mtime_ms: 0 },
+    { path: "项目资料", kind: "dir", size: 0, mtime_ms: 0 },
+    { path: "项目资料/2026 年度", kind: "dir", size: 0, mtime_ms: 0 },
+    { path: "项目资料/2026 年度/会议记录", kind: "dir", size: 0, mtime_ms: 0 },
+    {
+      path: "项目资料/2026 年度/会议记录/第一次会议.md",
+      kind: "file",
+      size: CN_MEETING_DOC.length,
+      mtime_ms: 0,
+    },
+    { path: "项目资料/2026 年度/会议记录/归档", kind: "dir", size: 0, mtime_ms: 0 },
+    {
+      path: "项目资料/2026 年度/会议记录/归档/旧会议.md",
+      kind: "file",
+      size: CN_ARCHIVE_DOC.length,
+      mtime_ms: 0,
+    },
+    { path: "项目资料/2026 年度/会议记录-副本", kind: "dir", size: 0, mtime_ms: 0 },
+    {
+      path: "项目资料/2026 年度/会议记录-副本/草稿.md",
+      kind: "file",
+      size: CN_COPY_DOC.length,
+      mtime_ms: 0,
+    },
+  ],
+  files: {
+    "notes/plan.md": DEEP_PLAN_DOC,
+    "notes/spec.md": DEEP_SPEC_DOC,
+    "notes/sub/deep.md": DEEP_DESCENDANT_DOC,
+    "notes/sub/nested/even-deeper.md": DEEP_NESTED_DOC,
+    "notes-extra/note.md": SIBLING_DOC,
+    "empty-dir/child/grand.md": DEEP_NESTED_DOC,
+    "项目资料/2026 年度/会议记录/第一次会议.md": CN_MEETING_DOC,
+    "项目资料/2026 年度/会议记录/归档/旧会议.md": CN_ARCHIVE_DOC,
+    "项目资料/2026 年度/会议记录-副本/草稿.md": CN_COPY_DOC,
+  },
+  links: {},
+};
+
+test("目录输入：候选只列直接子级文件，深层后代与同前缀兄弟目录不混入", async ({ page }) => {
+  await stubTauri(page, DEEP_VAULT);
+  await page.goto("/");
+  await openQuickOpen(page);
+  await page.keyboard.type("notes");
+
+  // 逐条文本断言（不是计数）：深层后代与 `notes-extra` 都是全路径子串匹配会混进来的形态
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "notes/spec.md"]);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("notes 是目录 · 直接子级文件 2 条");
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+  await expect(page.locator(".lumir-qo-empty")).toBeHidden();
+});
+
+test("尾斜杠目录：与裸目录同一份直接子级筛选；Enter 的既有候选打开行为不回归", async ({ page }) => {
+  await stubTauri(page, DEEP_VAULT);
+  await page.goto("/");
+  await openQuickOpen(page);
+  await page.keyboard.type("notes/");
+
+  await expect(page.locator(".lumir-qo-item")).toHaveText(["notes/plan.md", "notes/spec.md"]);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("notes 是目录 · 直接子级文件 2 条");
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+
+  // 尾斜杠只改筛选与提示，不改 Enter：游标候选一次打开（与改动前 `notes/` 的既有行为一致）
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-qo")).toBeHidden();
+  await expect(page.locator(".tab-open")).toHaveText(["plan.md"]);
+  await expect(page.locator(".cm-content")).toContainText("DEEP-DIRECT-PLAN");
+});
+
+test("中文长路径目录：直接子级只列一层，深层与同前缀兄弟目录不混入", async ({ page }) => {
+  await stubTauri(page, DEEP_VAULT);
+  await page.goto("/");
+  await openQuickOpen(page);
+  const dir = "项目资料/2026 年度/会议记录";
+  await page.keyboard.type(dir);
+
+  await expect(page.locator(".lumir-qo-item")).toHaveText([`${dir}/第一次会议.md`]);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText(`${dir} 是目录 · 直接子级文件 1 条`);
+  await expect(page.locator(".lumir-qo-empty")).toBeHidden();
+
+  // 尾斜杠同一语义（目录断言的另一种输入形态）
+  await page.keyboard.press("Meta+a");
+  await page.keyboard.type(`${dir}/`);
+  await expect(page.locator(".lumir-qo-item")).toHaveText([`${dir}/第一次会议.md`]);
+  await expect(page.locator(".lumir-qo-hint")).toHaveText(`${dir} 是目录 · 直接子级文件 1 条`);
+});
+
+test("不存在的目录尾斜杠：不进入目录语境（空态 + 找不到），不凭空造目录提示", async ({ page }) => {
+  await stubTauri(page, DEEP_VAULT);
+  await page.goto("/");
+  await openQuickOpen(page);
+  await page.keyboard.type("ghost/");
+
+  await expect(page.locator(".lumir-qo-item")).toHaveCount(0);
+  await expect(page.locator(".lumir-qo-empty")).toBeVisible();
+  await expect(page.locator(".lumir-qo-empty")).toHaveText("没有匹配的条目");
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("输入路径或文件名；可加 :12 这样的行号后缀");
+
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-qo")).toBeVisible();
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("找不到：ghost/");
+  await expect(page.locator(".tab-open")).toHaveCount(0);
+});
+
+test("目录没有直接子级文件：候选为空、提示如实说明，深层文件不混入", async ({ page }) => {
+  await stubTauri(page, DEEP_VAULT);
+  await page.goto("/");
+  await openQuickOpen(page);
+  await page.keyboard.type("empty-dir");
+
+  await expect(page.locator(".lumir-qo-item")).toHaveCount(0);
+  await expect(page.locator(".lumir-qo-empty")).toBeVisible();
+  await expect(page.locator(".lumir-qo-empty")).toHaveText("没有匹配的条目");
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录 · 没有直接子级文件");
+  // 深层文件 `empty-dir/child/grand.md` 不得被当成直接子级混进来
+  await expect(page.locator(".lumir-qo-direct")).toHaveCount(0);
+
+  // 尾斜杠 + 没有候选：Enter 不打开任何目标，给「是目录」的原因（不是「找不到」）
+  await page.keyboard.press("Meta+a");
+  await page.keyboard.type("empty-dir/");
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录 · 没有直接子级文件");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-qo")).toBeVisible();
+  await expect(page.locator(".lumir-qo-hint")).toHaveText("empty-dir 是目录，不能打开");
+  await expect(page.locator(".tab-open")).toHaveCount(0);
 });

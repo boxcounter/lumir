@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：245
-- 验收项（不同 item 编号）：222
-- 分档：core 29 / full 207 / bundle 4 / evidence 5（full 批 = 全部 245 个，含其余各档）
+- 场景：252
+- 验收项（不同 item 编号）：227
+- 分档：core 29 / full 213 / bundle 5 / evidence 5（full 批 = 全部 252 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -82,7 +82,7 @@
 | 46 | `46-dotfile-jsonc-highlight` | dotfile 与 JSONC 高亮——.gitignore / .gitattributes / x.jsonc 逐字节回读与语言登记，.secret 对照组仍纯文本；三类可编辑（编辑 → 回读 → ⌘S 落盘） | full |
 | 47 | `47a-menu-basics`<br>`47b-rename-validation`<br>`47c-create-and-delete`<br>`47d-dirty-tab-linkage` | 文件树右键菜单：文件行 / 目录行项集分流、行空白区命中、Esc 收起、复制完整路径（绝对路径）、在 Finder 中显示（只读弱断言）<br>树内联重命名与校验：预填 + 获焦、改名落盘与 watcher 收敛、撞名拒绝、忽略集名拒绝、Esc 退出编辑态<br>文件删除与新建：移到废纸篓（文件 / 目录两档确认文案）、目录下新建文件（自动打开）与子目录<br>打开中 dirty 文件的改名联动与删除处置：标签就地换名、未保存内容不丢、两种误报都不出现 | full<br>full<br>full<br>full |
 | 48 | `48-vault-registry-migration` | 注册表目录更名迁移——预置旧目录 workspaces/ 与注册项，启动后整个目录被原子搬进 vault-registry/、身份不丢、vault 照常恢复打开、迁移记一条诊断事件 | core |
-| 50 | `50-tab-context-menu` | 标签右键菜单——Close / Close Other Tabs / Close Tabs to the Right 三条关闭路径，脏标签走既有确认流（取消即停手） | full |
+| 50 | `50-tab-context-menu` | 标签右键菜单——Close / Close Other Tabs / Close Tabs to the Right / Close All Tabs 四条关闭路径，脏标签走既有确认流（取消即停手） | full |
 | 52 | `52-dir-rename-expand` | 目录经树内右键重命名后仍可展开（子孙条目与展开态随目录搬到新路径，改回原名亦然） | full |
 | 53 | `53-bold-click-selection` | 点击粗体不产生幻影选区（M259）——指针按压期间的落点判定不跨布局 | core |
 | 54 | `54-bare-url-cmd-click` | 裸 URL / 链接定义行 / 角括号自动链接的装饰与 ⌘⏎ 打开（M272） | full |
@@ -231,12 +231,17 @@
 | 266 | `266-selection-delete-widgets` | 非空选区编辑 = 源码精确编辑——表格单字符 cell 的删除与跨 cell 键入替换、精确落盘、一次撤销（M854） | full |
 | 267 | `267-html-only-paste-selection` | 无可插入文本的粘贴是严格空操作——code 模式图片剪贴板不删选区、md 文本/图片粘贴不回归（M859） | full |
 | 268 | `268-grapheme-backspace` | 无修饰物理 Backspace 与 composer ⌃H 按字素簇整簇删除（M860） | full |
+| 269 | `269-list-enter-indent`<br>`269-url-paste-and-cjk-boundary-nov21` | 段首 marker / setext 下线后 Enter 的下一行不带无意义行首缩进（修前留 `  ` 空行）<br>粘贴 URL 取标题（成功 / 失败保留）与裸 URL 中文边界（真机） | full<br>full |
+| 271 | `271-ime-list-composition-wkwebview` | 列表行 IME 合成序列：deleteCompositionText 接管 / 候选提交与 marker 恢复（合成事件，非原生 IME） | full |
 | 423 | `121-harness-message-excerpt` | harness 消息摘录 ① transcript 选区 → 浮动钮 → 卡片入 composer（+ 序列化结构 / 视口 skip / transcript 同构） | full |
 | 531 | `160-quote-button-viewport-clamp` | 摘录浮动钮落点钳制：选区并集盒越出挂载容器（长行）时钮仍在视口内 | full |
 | 552 | `161-harness-path-link`<br>`221-harness-path-line-range` | harness 输出里的 vault 路径可点击（新标签 + 行号锚定 + 卡片路径）<br>harness 输出里的行范围路径可点击（:起-止 落到起始行，畸形形态不吞半截） | full<br>full |
 | 553 | `162-harness-dir-link` | harness 输出里的 vault 目录引用可点击（左栏定位） | full |
 | 554 | `168-paste-image-semantic-name` | 贴图后异步语义改名 + 正文引用同步 + toast 撤销（change add-semantic-image-naming） | full |
-| 655 | `230a-path-forms`<br>`230b-lazy-and-external-readonly`<br>`230c-restart-and-focus-scopes` | 按路径快速打开（⌘P）之一：深层路径一次 Enter 落文件 / 冒号文件名整串优先 / path:line 落点不重开 / vault 内零命中<br>按路径快速打开（⌘P）之二：索引外惰性文件按精确路径打开 / vault 外只读打开（⌘S 不写盘、键入不生效）/ 外部路径不存在按找不到处置<br>按路径快速打开（⌘P）之三：重启后 vault 外标签不回来、vault 内标签照常恢复、文件树与 harness composer 焦点下同样命中 | full<br>full<br>full |
+| 655 | `230a-path-forms`<br>`230b-lazy-and-external-readonly`<br>`230c-restart-and-focus-scopes`<br>`230d-quick-open-select-all-dir-children` | 按路径快速打开（⌘P）之一：深层路径一次 Enter 落文件 / 冒号文件名整串优先 / path:line 落点不重开 / vault 内零命中<br>按路径快速打开（⌘P）之二：索引外惰性文件按精确路径打开 / vault 外只读打开（⌘S 不写盘、键入不生效）/ 外部路径不存在按找不到处置<br>按路径快速打开（⌘P）之三：重启后 vault 外标签不回来、vault 内标签照常恢复、文件树与 harness composer 焦点下同样命中<br>按路径快速打开（⌘P）之四：输入框内 ⌘A 全选输入串 / 目录语境只列直接子级文件、深层后代不混入 | full<br>full<br>full<br>full |
 | 702 | `231-quick-open-long-path-width`<br>`232-harness-ctxpop-width` | 快速打开浮层宽度：长路径下输入面按 26em 展开、路径全文仍在 AX 里<br>Context 气泡：长读数 hover 翻出、三段内容齐全且确实绘制（P 档 34em 上限；宽度数字归 chromium 矩阵） | full<br>full |
 | 703 | `234-harness-table-horizontal-scroll` | harness 对话宽表：固有宽铺开、横向滚轮在表格区域执行、滚动前后截图（几何归 chromium 矩阵） | full |
 | 704 | `252-cron-click-after-exit`<br>`252-harness-activity-presence`<br>`253-harness-vault-activity` | 应用退出后点击通知：跨进程恢复、快照会话与四类拒绝（change add-cron-notification-relaunch §8.2）<br>harness 面板的活动在场：收起期间的在途 / 未读提示，打开面板即清算，停止不点亮<br>harness 跨 vault 往返的在途准确：切回仍在途不呈空闲、续渲染并对账；完成后往返指示空闲 | bundle<br>full<br>full |
+| 705 | `269-harness-path-line-sentence-period` | 句末句号不吞行号（path:line. 仍是整段可点并落到目标行） | full |
+| 706 | `270-cron-open-session-keeps-doc-focus` | 点击 cron 结果通知：展开 pane 并恢复会话，正文焦点与输入落点不被抢 | bundle |
+| 707 | `707-gutter-copy` | 行号 gutter 右键复制 `{path}:{line}`——md（always / 合成 fixture 路径含空格与中文）与 code 首行、vault 外绝对路径、剪贴板逐字、文档零写入 | full |

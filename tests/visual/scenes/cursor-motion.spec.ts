@@ -316,7 +316,12 @@ test("列表行首的水平导航：跨行不跳字（上一行行尾 → 下一
   await page.locator('.ft-row[title="nav.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("列表导航");
 
+  // 列表组异步扫描完成后再量正文起点，否则 posAtDOM 会把字面 `- ` 的文本节点当作内容。
+  await expect(
+    page.locator(".cm-lp-list-line").filter({ hasText: "bbbbb" }).locator(".cm-lp-list-marker"),
+  ).toHaveCount(1);
   const line = await navLine(page, "bbbbb");
+  expect(line.contentFrom - line.lineFrom).toBeGreaterThanOrEqual(2);
   // 上一行行尾（`1. aaaaa` 之后）→ 下一行可见行首：落点是行首，不是正文起点——进正文要再按一次。
   await setHead(page, line.lineFrom - 1);
   await page.keyboard.press("ArrowRight");
