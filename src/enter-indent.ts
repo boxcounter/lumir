@@ -14,7 +14,7 @@
 // 表内绑定表达不了「光标在围栏代码块内」这个语法上下文判据，且表内「命中即消费、MUST NOT
 // 放回原生路径」的纪律会与「在列表 / 引用里让位给上游续行」直接冲突（裁决 D1a）。
 //
-// 三条口径（spec「Enter 换行与自动缩进」）：
+// 口径（spec「Enter 换行与自动缩进」）：
 // 0. md 裸 marker 行（M461，`para\n1. ` 等语法树不接管形态，判定在 src/preview/lists.ts
 //    的 bareListMarkerLine）：Enter 两态分派——空项退出（删标记留空行）、有内容续行
 //    （下一序号 / 同标记），先于下条的树驱动续行检查；详细口径见文件尾部的
@@ -29,15 +29,20 @@
 //    （续写、有序重排、引用）与默认配置逐字节一致，仍是同一份上游实现，不是抄来的副本
 //   （REVIEW.md 「同一语义两处真源」条）。该委派在 `autoIndent` 检查**之前**：空项退出是列表语义的一部分，
 //    与缩进开关无关（D5a 的不对称照旧：关掉自动缩进不影响列表 / 引用续行）；
-// 2. 其余上下文：`insertNewlineAndIndent` 自动缩进——有缩进规则的语言取语法缩进
+// 2. md 的散文与列表续行的回落（上游续行命令不接管的行，如 `alpha\n  + `、`alpha\n  - `、
+//    `  prose`）：裸换行。md 没有缩进规则，`insertNewlineAndIndent` 在这种情况下会照抄当前行
+//    行首空白——那对散文与「段首 marker 的下一行」都是无意义缩进（`alpha\n  + ` + Enter 曾留下
+//    两个空格的空行），MUST NOT 再走这条回落；
+// 3. 其余上下文：`insertNewlineAndIndent` 自动缩进——有缩进规则的语言取语法缩进
 //    （`getIndentation`），取不到时它自己回落到「光标所在行的行首空白」（md 围栏与缩进代码块、
 //    toml / yaml / shell 一类无规则的语言都走这条）。本模块**不自己写缩进表**；
-// 3. `auto_indent = false`：md 列表 / 引用之外的上下文不接管（返回 false），按键落回浏览器默认
-//    = 本 change 之前的行为。注意 md 的列表 / 引用续行与本标志无关（它照旧执行，见上）——这是
-//    D5a 的显式不对称，不是漏实现。
+// 4. `auto_indent = false`：code 模式与 md 代码块内的自动缩进不接管（返回 false），按键落回
+//    浏览器默认 = 本 change 之前的行为。md 的列表 / 引用续行与裸行两态在开关检查之前执行，
+//    不受本标志影响——这是 D5a 的显式不对称，不是漏实现。
 
 import type { EditorView } from "@codemirror/view";
-import { insertNewlineAndIndent } from "@codemirror/commands";
+import type { EditorState } from "@codemirror/state";
+import { insertNewline, insertNewlineAndIndent } from "@codemirror/commands";
 import { insertNewlineContinueMarkupCommand } from "@codemirror/lang-markdown";
 import { syntaxTree } from "@codemirror/language";
 import { bareListMarkerLine } from "./preview/lists";
@@ -62,8 +67,8 @@ export const DEFAULT_AUTO_INDENT = true;
  * `Enter` 键位的命令体。返回 true = 已消费（CM 的 keymap 据此不再往下问别的处理器）；
  * 返回 false = 不接管，按键继续走（上游 `markdownKeymap` 或浏览器默认）。
  *
- * `insertNewlineAndIndent` 在只读会话（`state.readOnly`）与「没有可插入的选区」时返回 false，
- * 因此 `Enter` 在只读会话里不产生任何文档变更。
+ * 只读会话里本命令返回 false、不产生任何文档变更：`insertNewlineAndIndent` 自己查只读，
+ * `insertNewline` 不查，故 md 的回落分支显式挡一次（见 `enterWithAutoIndent`）。
  *
  * `Shift-Enter` 收不到本命令：CM 的键位查表在按住 Shift 时只查 `Shift-Enter`
  *（`runHandlers` 的 `modifiers(name, event, !isChar)`，Enter 不是单字符键）——两键的不对称
@@ -77,7 +82,25 @@ export function enterWithAutoIndent(
   if (mode === "md" && enterBareMarkerLine(view)) return true;
   if (mode === "md" && continueMarkupExitEmptyItem(view)) return true;
   if (!autoIndent) return false;
+  // md 的散文 / 列表续行落回裸换行；`insertNewlineAndIndent` 在 md 里取不到缩进规则时会照抄
+  // 当前行行首空白，那对散文与「段首 marker 的下一行」都是无意义缩进（见文件头口径 2）。
+  // 只有围栏 / 缩进代码块保留「沿用当前行行首空白」。`insertNewline` 不查只读，这里自己挡。
+  if (mode === "md" && !inMarkdownCodeBlock(view.state)) {
+    if (view.state.readOnly) return false;
+    return insertNewline(view);
+  }
   return insertNewlineAndIndent(view);
+}
+
+/** 光标是否在 md 的代码块（围栏 / 缩进）内。只在这两个上下文里，`insertNewlineAndIndent`
+ *  的「沿用当前行行首空白」才是代码语义的一部分（`- x` 在围栏内是代码文本，不是列表）。 */
+function inMarkdownCodeBlock(state: EditorState): boolean {
+  const head = state.selection.main.head;
+  for (let node: ReturnType<typeof syntaxTree>["topNode"] | null = syntaxTree(state).resolveInner(head, -1); node; node = node.parent) {
+    if (node.name === "FencedCode" || node.name === "CodeBlock") return true;
+    if (node.name === "Document") break;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,9 +114,11 @@ export function enterWithAutoIndent(
 //
 // 两态口径（tower 告 Alex 的 Obsidian 惯例）：
 // - 空项（marker 后只有空白）Enter = 退出：删 marker 与其后空白，行保留为空行、光标
-//   落在删后位置（引用前缀 / 行首缩进保留）、MUST NOT 新增行；
-// - 有内容 Enter = 续行：插 `\n` + 前缀原文 + 下一 marker（有序 = 字面序号 +1、分隔符
-//   沿用；无序 = 同标记），光标落在新 marker 之后。
+//   落在删后位置（合法 `>` 引用前缀保留，行首缩进随 marker 一起删——纯空白缩进不是结构）、
+//   MUST NOT 新增行；
+// - 有内容 Enter = 续行：插 `\n` + 行首前缀原文 + 下一 marker（有序 = 字面序号 +1、分隔符
+//   沿用；无序 = 同标记），光标落在新 marker 之后。这条与 M461 之前逐字节一致——续行落在
+//   同一结构里，前缀（引用 / 缩进）都有意义，不在本 change 的收窄面内。
 // 两态都是**单次 dispatch**（一次 Enter = 一次撤销步）。光标在 marker 之前（行首结构
 // 前缀内）时不接管——回到行首 Enter 的默认行为（该行之前插空行），与 M399 对真实列表
 // 项的钉固同口径。判定与渲染层同源（REVIEW.md 「同一语义两处真源」条），MUST NOT 在此复写一份。
@@ -108,16 +133,19 @@ export function enterBareMarkerLine(view: EditorView): boolean {
   if (bare === null || head < bare.markerFrom) return false;
   const empty = state.doc.sliceString(bare.contentFrom, line.to).trim() === "";
   if (empty) {
+    // 删到行首缩进之后：引用前缀是行结构（删了会离开引用），缩进只是空白（留着就是
+    // 一行纯空白，违反 src/list-indent.ts 的「纯空白行不写」）。光标落删后位置。
+    const keep = line.from + bare.quote.length;
     view.dispatch(
       state.update({
-        changes: { from: bare.markerFrom, to: line.to },
-        selection: { anchor: bare.markerFrom },
+        changes: { from: keep, to: line.to },
+        selection: { anchor: keep },
       }),
     );
     return true;
   }
   const next = bare.ordered ? `${(bare.number ?? 0) + 1}${bare.delimiter} ` : `${bare.marker} `;
-  const insert = `\n${bare.prefix}${next}`;
+  const insert = `\n${bare.quote}${bare.indent}${next}`;
   view.dispatch(
     state.update({
       changes: { from: head, to: state.selection.main.to, insert },

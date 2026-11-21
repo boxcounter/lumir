@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：245
-- 验收项（不同 item 编号）：222
-- 分档：core 29 / full 207 / bundle 4 / evidence 5（full 批 = 全部 245 个，含其余各档）
+- 场景：246
+- 验收项（不同 item 编号）：223
+- 分档：core 29 / full 208 / bundle 4 / evidence 5（full 批 = 全部 246 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -231,6 +231,7 @@
 | 266 | `266-selection-delete-widgets` | 非空选区编辑 = 源码精确编辑——表格单字符 cell 的删除与跨 cell 键入替换、精确落盘、一次撤销（M854） | full |
 | 267 | `267-html-only-paste-selection` | 无可插入文本的粘贴是严格空操作——code 模式图片剪贴板不删选区、md 文本/图片粘贴不回归（M859） | full |
 | 268 | `268-grapheme-backspace` | 无修饰物理 Backspace 与 composer ⌃H 按字素簇整簇删除（M860） | full |
+| 269 | `269-list-enter-indent` | 段首 marker / setext 下线后 Enter 的下一行不带无意义行首缩进（修前留 `  ` 空行） | full |
 | 423 | `121-harness-message-excerpt` | harness 消息摘录 ① transcript 选区 → 浮动钮 → 卡片入 composer（+ 序列化结构 / 视口 skip / transcript 同构） | full |
 | 531 | `160-quote-button-viewport-clamp` | 摘录浮动钮落点钳制：选区并集盒越出挂载容器（长行）时钮仍在视口内 | full |
 | 552 | `161-harness-path-link`<br>`221-harness-path-line-range` | harness 输出里的 vault 路径可点击（新标签 + 行号锚定 + 卡片路径）<br>harness 输出里的行范围路径可点击（:起-止 落到起始行，畸形形态不吞半截） | full<br>full |

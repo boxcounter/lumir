@@ -139,3 +139,54 @@ test("一次 Enter 是一次撤销步（MUST NOT 产生两步撤销）", async (
 
   await expect.poll(() => readDocument(page)).toBe(JS);
 });
+
+// ---------------------------------------------------------------------------
+// 无意义行首缩进（Alex 2026-11-21 现场：段首输入 `- ` 后，下一行缩进）
+// ---------------------------------------------------------------------------
+//
+// 缺陷：md 散文 / 列表续行落回 `insertNewlineAndIndent` 时，它照抄当前行的行首空白
+// ⇒ `alpha\n  + ` 的下一行是 `  `、`alpha\n  - `（setext 下线）的下一行也是 `  `。
+// 修复只收窄这条回落。下面第二组是**对照**：`- a\n  text`（项内段落续行）与
+// `alpha\n  * a`（`* a` 能打断段落，是真列表项）由上游续行命令接管，缩进是结构的一部分；
+// 代码块 / 引用的缩进同理，逐字节不变。
+
+test("md 散文 / 段首 marker 的回落：新行不带行首空白（矩阵第 7/12 行）", async ({ page }) => {
+  const bareEmpty = "alpha\n  + ";
+  await openFile(page, "indent-bare.md", bareEmpty);
+  await cursorAfter(page, bareEmpty, "+ ");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => readDocument(page)).toBe("alpha\n");
+
+  const setext = "alpha\n  - ";
+  await openFile(page, "indent-setext.md", setext);
+  await cursorAfter(page, setext, "- ");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => readDocument(page)).toBe("alpha\n  - \n");
+
+  const prose = "  prose";
+  await openFile(page, "indent-prose.md", prose);
+  await cursorAfter(page, prose, "prose");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => readDocument(page)).toBe("  prose\n");
+});
+
+test("对照：上游列表续行 / 代码块 / 引用的缩进照旧（矩阵第 6/8 行）", async ({ page }) => {
+  const continuation = "- a\n  text";
+  await openFile(page, "indent-continuation.md", continuation);
+  await cursorAfter(page, continuation, "text");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => readDocument(page)).toBe("- a\n  text\n  ");
+
+  // `  * a` 是能打断段落的真列表项（first=true），走上游续行而非裸行分派。
+  const realList = "alpha\n  * a";
+  await openFile(page, "indent-real-list.md", realList);
+  await cursorAfter(page, realList, "* a");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => readDocument(page)).toBe("alpha\n  * a\n  * ");
+
+  const quote = "> quoted";
+  await openFile(page, "indent-quote.md", quote);
+  await cursorAfter(page, quote, "quoted");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => readDocument(page)).toBe("> quoted\n> ");
+});

@@ -41,7 +41,8 @@ function detect(doc: string, lineNumber: number) {
     ordered: hit.ordered,
     number: hit.number,
     delimiter: hit.delimiter,
-    prefix: hit.prefix,
+    quote: hit.quote,
+    indent: hit.indent,
     content: state.doc.sliceString(hit.contentFrom, line.to),
     // marker 的列（行内偏移），渲染层按它算悬挂缩进。
     markerColumn: hit.markerFrom - line.from,
@@ -102,7 +103,8 @@ test("判定：段落紧邻的空标记行命中（Alex 现场形态 para\\n1. �
   assert.equal(hit.ordered, true);
   assert.equal(hit.number, 1);
   assert.equal(hit.delimiter, ".");
-  assert.equal(hit.prefix, "");
+  assert.equal(hit.quote, "");
+  assert.equal(hit.indent, "");
   assert.equal(hit.content, "");
 });
 
@@ -120,11 +122,13 @@ test("判定：`1)` 分隔符、行首缩进、引用前缀三形态", () => {
   assert.equal(paren.delimiter, ")");
   const indented = detect("para\n  1. ", 2);
   assert.ok(indented);
-  assert.equal(indented.prefix, "  ");
+  assert.equal(indented.quote, "");
+  assert.equal(indented.indent, "  ");
   assert.equal(indented.markerColumn, 2);
   const quoted = detect("> para\n> 1. ", 2);
   assert.ok(quoted, "引用内 lazy 形态应命中");
-  assert.equal(quoted.prefix, "> ");
+  assert.equal(quoted.quote, "> ");
+  assert.equal(quoted.indent, "");
 });
 
 test("判定：语法树已认作列表项首行的形态 MUST NOT 命中（真源唯一，不许两层抢）", () => {
