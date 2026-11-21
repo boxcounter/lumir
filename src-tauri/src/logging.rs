@@ -61,6 +61,19 @@ const MAX_FILES: usize = 10;
 const MAX_BATCH: usize = 256;
 /// 字段值上限（字符）：白名单之外的第二道护栏——防止把正文当诊断字段塞进来。
 const MAX_VALUE_CHARS: usize = 256;
+/// `editor_ime.detail` 的独立上限：一次性根因取证 JSON（只含节点名 / 位置 / 长度 / 计数，
+/// 不含正文与路径）。仍受白名单与长度上限约束；前端在 12K 字符处自截，这里留余量。
+const MAX_DETAIL_CHARS: usize = 16 * 1024;
+
+/// 单个字段的长度上限。`detail` 是 dev-only 结构化取证负载，单独放宽；其余字段沿用
+/// [`MAX_VALUE_CHARS`]。
+fn field_cap(key: &str) -> usize {
+    if key == "detail" {
+        MAX_DETAIL_CHARS
+    } else {
+        MAX_VALUE_CHARS
+    }
+}
 /// 批次静默期：距上一条事件超过此时长即落盘（同时也是单条事件的最大落盘延迟）。
 const FLUSH_INTERVAL: Duration = Duration::from_millis(200);
 /// flush 等待写线程应答的上限。
@@ -401,6 +414,9 @@ impl LogEventName {
                 "units",
                 "elapsed",
                 "via",
+                // 一次性根因取证：单一 JSON 字段，只含节点名 / 位置 / 长度 / 计数，不含
+                // 正文与路径（长度上限见 MAX_DETAIL_CHARS）。
+                "detail",
             ],
         }
     }
@@ -1243,10 +1259,9 @@ fn frontend_event(
                 allowed.join("、")
             )));
         };
-        if value.chars().count() > MAX_VALUE_CHARS {
-            return Err(rejected(format!(
-                "字段 {key} 的值超过 {MAX_VALUE_CHARS} 字符上限"
-            )));
+        let cap = field_cap(&key);
+        if value.chars().count() > cap {
+            return Err(rejected(format!("字段 {key} 的值超过 {cap} 字符上限")));
         }
         normalized.push((slot, value));
     }
@@ -1277,9 +1292,10 @@ fn emit(sink: &Sink, event: Event) {
             );
             return;
         }
-        if value.chars().count() > MAX_VALUE_CHARS {
+        let cap = field_cap(key);
+        if value.chars().count() > cap {
             eprintln!(
-                "lumir: 诊断事件 {} 的字段 {key} 超过 {MAX_VALUE_CHARS} 字符，已丢弃",
+                "lumir: 诊断事件 {} 的字段 {key} 超过 {cap} 字符，已丢弃",
                 event.name.as_str()
             );
             return;

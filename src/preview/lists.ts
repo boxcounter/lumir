@@ -480,7 +480,12 @@ function settleTraceEnabled(): boolean {
   return typeof location !== "undefined" && location.hostname === "127.0.0.1" && location.port === "1420";
 }
 
-function traceSettle(view: EditorView, phase: string, fields: Record<string, string> = {}): void {
+function traceSettle(
+  view: EditorView,
+  phase: string,
+  fields: Record<string, string> = {},
+  detail?: () => string,
+): void {
   if (!settleTraceEnabled()) return;
   const state = view.state;
   const main = state.selection.main;
@@ -493,6 +498,8 @@ function traceSettle(view: EditorView, phase: string, fields: Record<string, str
     head: String(main.head),
     target_line: String(state.doc.lineAt(main.head).number),
     ...fields,
+    // lazy：只有 gate 通过后才构建 JSON；不在 prod / 验收端口付出序列化成本。
+    ...(detail ? { detail: detail() } : {}),
   });
 }
 
@@ -581,6 +588,48 @@ interface ReferenceParse {
   readonly parse: { advance(): Tree | null };
 }
 
+/** 一次性根因取证 detail 的硬上限（字符）。Rust 侧 detail 字段上限 16K，这里留余量。 */
+const FORENSIC_DETAIL_MAX = 12_000;
+
+/** 顶层节点摘要（名称 / 位置），不含正文。 */
+function treeTopNodes(tree: Tree, limit = 24): string[] {
+  const out: string[] = [];
+  for (let node: Node | null = tree.topNode.firstChild; node && out.length < limit; node = node.nextSibling) {
+    out.push(`${node.name}@${node.from}-${node.to}`);
+  }
+  return out;
+}
+
+/** 顶层内容签名：用于判断两份树「内容是否一致」，不用 length 代替。 */
+function treeSignature(tree: Tree): string {
+  return treeTopNodes(tree, 32).join("|");
+}
+
+/** 指定位置 + side 的 resolveInner 链（名称 / 位置）。 */
+function resolveChain(tree: Tree, pos: number, side: 1 | -1, depth = 6): string {
+  const names: string[] = [];
+  for (let node: Node | null = tree.resolveInner(pos, side); node && names.length < depth; node = node.parent) {
+    names.push(`${node.name}@${node.from}-${node.to}`);
+  }
+  return names.join("<");
+}
+
+/** 与目标行区间相交的节点（名称 / 位置），用于区分「位置映射错」与「树里没有该块」。 */
+function nodesInLine(tree: Tree, from: number, to: number, limit = 16): string[] {
+  const out: string[] = [];
+  tree.iterate({
+    from,
+    to,
+    enter(node) {
+      if (out.length < limit) out.push(`${node.name}@${node.from}-${node.to}`);
+    },
+  });
+  return out;
+}
+
+/** 插件实例查找（compositionend 的 DOM handler 需要读 ListLayout 的树 / 装饰）。 */
+const layouts = new WeakMap<EditorView, ListLayout>();
+
 class ListLayout {
   private units: readonly number[] | null = null;
   private observer: MutationObserver;
@@ -640,6 +689,10 @@ class ListLayout {
   private settledTreeTo: number | null = null;
   /** 跨拍推进的独立对照解析（doc / 目标位置变化即重建）。 */
   private referenceParse: ReferenceParse | null = null;
+  /** 取证埋点计数（只影响日志量，不影响行为）。 */
+  private forensicSteps = 0;
+  private forensicFirstBuild = false;
+  private forensicChanges = 0;
   /** 对照解析无法建立 / 推进（无 parser、parser 抛错）：这是异常路径，不是长度边界；
    *  置位后退回原树判定并允许收束，避免 settle 链空转。 */
   private referenceFailed = false;
@@ -648,6 +701,7 @@ class ListLayout {
 
   constructor(view: EditorView) {
     this.view = view;
+    layouts.set(view, this);
     this.tree = syntaxTree(view.state);
     this.observer = new MutationObserver(this.measure);
     this.observer.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "class"] });
@@ -659,6 +713,7 @@ class ListLayout {
   destroy() {
     this.destroyed = true;
     this.referenceParse = null;
+    layouts.delete(this.view);
     clearTimeout(this.timer);
     clearTimeout(this.settleTimer);
     this.observer.disconnect();
@@ -677,12 +732,13 @@ class ListLayout {
       if (effect.is(metadataReady)) resized = true;
       if (effect.is(pointerPressFrame)) pointerMoved = true;
       if (effect.is(compositionSettled)) {
-        settleAt = effect.value;
+        const settlePos = effect.value;
+        settleAt = settlePos;
         traceSettle(update.view, "settle_effect", {
-          settle_to: String(settleAt),
+          settle_to: String(settlePos),
           state_tree_len: String(tree.length),
-          available: String(syntaxTreeAvailable(update.state, Math.min(update.state.doc.length, settleAt))),
-        });
+          available: String(syntaxTreeAvailable(update.state, Math.min(update.state.doc.length, settlePos))),
+        }, () => this.forensicDetail(update.view, Math.min(update.state.doc.length, settlePos)));
       }
     }
     if (update.docChanged) {
@@ -722,6 +778,15 @@ class ListLayout {
         this.referenceParse = null;
         this.referenceFailed = false;
       }
+    }
+    // dev-only 一次性取证：组合期 doc 变更（compositionend 之前）的树/装饰现场。
+    if (!update.view.compositionStarted) this.forensicChanges = 0;
+    else if (update.docChanged && this.forensicChanges < 6) {
+      this.forensicChanges += 1;
+      traceSettle(update.view, "ime_forensic_composition_change", {}, () => this.forensicDetail(
+        update.view,
+        Math.min(update.state.doc.length, update.state.selection.main.head),
+      ));
     }
     // 新组合开始或组合后的普通编辑会改变目标行；旧恢复链就此收束，避免拿过期行末
     // 继续补解析。组合结束那一笔自身常带 docChanged，不能在这里取消（settleAt 已置）。
@@ -779,6 +844,173 @@ class ListLayout {
     };
   }
 
+  /** 一次性根因取证：只读、dev-only、只含节点名 / 位置 / 长度 / 计数，不含正文与路径。
+   *  同一份 JSON 覆盖 state / context / plugin 三棵树、目标行多位置多 side 的 resolve 链、
+   *  同文档对照行、装饰、pending 与解析进度——下一次原生失败一份日志即可判别根因分支。 */
+  forensicDetail(view: EditorView, to: number, extra: Record<string, unknown> = {}): string {
+    const doc = view.state.doc;
+    const pos = Math.max(0, Math.min(to, doc.length));
+    try {
+      const line = doc.lineAt(pos);
+      const values = (view.state as unknown as { values?: unknown[] }).values ?? [];
+      const lang = values.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as
+        { context?: any } | undefined;
+      const context = lang?.context;
+      const stateTree = syntaxTree(view.state);
+      const contextTree = (context?.tree ?? null) as Tree | null;
+      const pluginTree = this.tree;
+      const marker = markerTextAt(line.text, line.from);
+      const main = view.state.selection.main;
+      const chains: Record<string, string> = {};
+      const offsets = [0, 1, 2, Math.max(0, line.length - 1), line.length];
+      for (const [label, tree] of [["s", stateTree], ["c", contextTree], ["p", pluginTree]] as const) {
+        if (!tree) continue;
+        for (const off of offsets) {
+          for (const side of [1, -1] as const) {
+            chains[`${label}:${off}:${side}`] = resolveChain(tree, Math.min(line.to, line.from + off), side);
+          }
+        }
+      }
+      const controls: Array<Record<string, unknown>> = [];
+      let scanned = 0;
+      for (const range of view.visibleRanges) {
+        let cursor = doc.lineAt(range.from);
+        while (cursor.from <= range.to && controls.length < 2 && scanned++ < 400) {
+          if (cursor.number !== line.number) {
+            const info = listLineInfo(stateTree, doc, cursor);
+            if (info.item && info.first) {
+              controls.push({
+                line: cursor.number,
+                from: cursor.from,
+                to: cursor.to,
+                chain: resolveChain(stateTree, Math.min(cursor.from + 2, cursor.to), 1),
+                marker: targetHasMarker(view, cursor.to),
+              });
+            }
+          }
+          if (cursor.number === doc.lines) break;
+          cursor = doc.line(cursor.number + 1);
+        }
+        if (controls.length >= 2) break;
+      }
+      const targetDecorations: string[] = [];
+      this.decorations.between(line.from, line.to, (from, decoTo, value) => {
+        if (targetDecorations.length >= 10) return;
+        const spec = value.spec as { widget?: unknown; class?: unknown } | undefined;
+        const kind = spec?.widget ? "widget" : spec?.class ? "line" : "mark";
+        targetDecorations.push(`${from}-${decoTo}:${kind}`);
+      });
+      const stateSig = treeSignature(stateTree);
+      const contextSig = contextTree ? treeSignature(contextTree) : null;
+      const pluginSig = treeSignature(pluginTree);
+      const payload: Record<string, unknown> = {
+        kind: "ime-forensic",
+        // 结构性取证：不含任何正文文本；dev-only（settleTraceEnabled 的 127.0.0.1:1420 gate）。
+        text_free: true,
+        doc_len: doc.length,
+        to: pos,
+        line: line.number,
+        line_from: line.from,
+        line_to: line.to,
+        line_len: line.length,
+        head: main.head,
+        anchor: main.anchor,
+        sel_ranges: view.state.selection.ranges.length,
+        composing: view.compositionStarted,
+        composing_flag: view.composing,
+        settle_to: this.settleTo,
+        settle_elapsed_ms: this.settleTo === null ? null : Math.round(performance.now() - this.settleStarted),
+        pending_records: (view as unknown as { observer?: { pendingRecords?: () => readonly unknown[] } }).observer?.pendingRecords?.().length ?? -1,
+        markers_total: view.contentDOM.querySelectorAll(".cm-lp-list-marker").length,
+        target_marker: targetHasMarker(view, pos),
+        target_source: marker ? {
+          marker: marker.marker,
+          ordered: marker.ordered,
+          marker_from: marker.markerFrom,
+          marker_to: marker.markerTo,
+          content_from: marker.contentFrom,
+        } : null,
+        lens: { state: stateTree.length, context: contextTree?.length ?? null, plugin: pluginTree.length },
+        same_obj: {
+          state_context: stateTree === contextTree,
+          plugin_state: pluginTree === stateTree,
+          plugin_context: pluginTree === contextTree,
+        },
+        same_sig: {
+          state_context: contextSig === null ? null : stateSig === contextSig,
+          plugin_state: pluginSig === stateSig,
+          plugin_context: contextSig === null ? null : pluginSig === contextSig,
+        },
+        top: { s: treeTopNodes(stateTree), c: contextTree ? treeTopNodes(contextTree) : [], p: treeTopNodes(pluginTree) },
+        target_nodes: {
+          s: nodesInLine(stateTree, line.from, line.to),
+          c: contextTree ? nodesInLine(contextTree, line.from, line.to) : [],
+          p: nodesInLine(pluginTree, line.from, line.to),
+        },
+        chains,
+        decorations: {
+          size: this.decorations.size,
+          target: targetDecorations,
+          pending_layout: this.pending,
+          scans: this.scans.size,
+          groups: this.groups.size,
+          units: this.units !== null,
+        },
+        visible_ranges: view.visibleRanges.slice(0, 8).map((range) => `${range.from}-${range.to}`),
+        viewport: `${view.viewport.from}-${view.viewport.to}`,
+        parser: context ? {
+          tree_len: context.treeLen,
+          done_to: typeof context.isDone === "function" ? context.isDone(pos) : null,
+          done_all: typeof context.isDone === "function" ? context.isDone(doc.length) : null,
+          viewport: context.viewport ? `${context.viewport.from}-${context.viewport.to}` : null,
+          fragments: Array.isArray(context.fragments)
+            ? context.fragments.slice(0, 4).map((fragment: { from: number; to: number }) => `${fragment.from}-${fragment.to}`)
+            : [],
+          skipped: Array.isArray(context.skipped) ? context.skipped.length : null,
+          has_parse: context.parse !== null && context.parse !== undefined,
+        } : null,
+        control_lines: controls,
+        ...extra,
+      };
+      const json = JSON.stringify(payload);
+      if (json.length <= FORENSIC_DETAIL_MAX) return json;
+      return JSON.stringify({
+        kind: "ime-forensic",
+        truncated: true,
+        doc_len: doc.length,
+        to: pos,
+        line: line.number,
+        line_from: line.from,
+        line_to: line.to,
+        lens: payload.lens,
+        same_obj: payload.same_obj,
+        same_sig: payload.same_sig,
+        ...extra,
+      });
+    } catch (error) {
+      // 取证永远不能反过来打断被观测路径。
+      return JSON.stringify({
+        kind: "ime-forensic",
+        error: String((error as { name?: string })?.name ?? "detail_failed"),
+        doc_len: doc.length,
+        to: pos,
+      });
+    }
+  }
+
+  private forensicStepDetail(view: EditorView): (() => string) | undefined {
+    if (this.forensicSteps >= 4) return undefined;
+    this.forensicSteps += 1;
+    const to = Math.min(view.state.doc.length, this.settleTo ?? view.state.selection.main.head);
+    return () => this.forensicDetail(view, to);
+  }
+
+  private firstBuildDetail(view: EditorView, to: number): (() => string) | undefined {
+    if (this.forensicFirstBuild) return undefined;
+    this.forensicFirstBuild = true;
+    return () => this.forensicDetail(view, to);
+  }
+
   /** compositionend 恢复链：只对提交行末做有界补解析与重建。
    *
    *  为什么不在这里同步 `forceParsing(doc.length)`：上游只保证「最多工作 N ms」并返回
@@ -796,16 +1028,21 @@ class ListLayout {
     const at = Math.max(0, Math.min(pos, doc.length));
     this.settleTo = Math.min(doc.length, doc.lineAt(at).to);
     this.settleStarted = performance.now();
+    this.forensicSteps = 0;
+    this.forensicFirstBuild = false;
     if (this.settleTimer !== undefined) {
       clearTimeout(this.settleTimer);
       this.settleTimer = undefined;
     }
-    traceSettle(view, "settle_begin", this.settleSnapshot(view));
+    traceSettle(view, "settle_begin", this.settleSnapshot(view), () => this.forensicDetail(view, this.settleTo ?? at));
     this.settleTimer = setTimeout(() => this.settleStep(view), 0);
   }
 
   private cancelSettle(): void {
-    if (this.settleTo !== null) traceSettle(this.view, "settle_cancel", this.settleSnapshot(this.view));
+    const to = this.settleTo;
+    if (to !== null) {
+      traceSettle(this.view, "settle_cancel", this.settleSnapshot(this.view), () => this.forensicDetail(this.view, to));
+    }
     this.settleTo = null;
     this.referenceParse = null;
     if (this.settleTimer !== undefined) {
@@ -819,7 +1056,8 @@ class ListLayout {
    *  已同步、组合 flush 也没有残留），旧 marker 会永久留在 DOM（2026-11-21 重复跑复现：
    *  三份树都是 setext、settle_build 已跑，DOM 仍停在旧装饰）。这里补一拍 metadataReady
    *  更新，让刚算出的装饰真正上屏。 */
-  private publishSettled(view: EditorView): void {
+  private publishSettled(view: EditorView, to: number): void {
+    traceSettle(view, "settle_done", { settle_to: String(to), via: "publish" }, () => this.forensicDetail(view, to));
     this.cancelSettle();
     view.dispatch({ effects: metadataReady.of(null) });
   }
@@ -929,7 +1167,7 @@ class ListLayout {
       this.settleTimer = undefined;
     }
     if (this.destroyed || this.settleTo === null) return;
-    traceSettle(view, "settle_step", this.settleSnapshot(view, { elapsed: (performance.now() - this.settleStarted).toFixed(1) }));
+    traceSettle(view, "settle_step", this.settleSnapshot(view, { elapsed: (performance.now() - this.settleStarted).toFixed(1) }), this.forensicStepDetail(view));
     // 组合态尚未归位（DOM 事件顺序可能让自定义 handler 先于 CM 的 compositionend
     // observer 运行）：延后一拍重试，不丢目标。真出现新组合时，compositionend 会用
     // 新目标替换本链。
@@ -956,19 +1194,19 @@ class ListLayout {
       }
       const read = readTarget(view, this.tree, to);
       this.build(view);
-      traceSettle(view, "settle_build", this.settleSnapshot(view, { via: contextTree ? "available_context" : "available_state" }));
+      traceSettle(view, "settle_build", this.settleSnapshot(view, { via: contextTree ? "available_context" : "available_state" }), this.firstBuildDetail(view, to));
       if (read.kind === "list") {
         // 只有最终判定与 state 快照分歧（context 领先 / state 落后）时才保留这份树；
         // 两者都 list 时保留陈旧树会阻止后续 reparse 纠正（删除后 marker 残留）。
         this.retainSettledTree(view, to);
-        this.publishSettled(view);
+        this.publishSettled(view, to);
         return;
       }
       if (!expectsList) {
         // 源码形态（空 marker / setext）不期望 marker：收束。treeForSource 已排除「旧树
         // 判 list」这一条；若 state 仍落后于当前源码，保留这份判定给后续非文档更新。
         this.retainSettledTree(view, to);
-        this.publishSettled(view);
+        this.publishSettled(view, to);
         return;
       }
       // 期望 list 但当前树判不成：有界推进一次 parse context，不空 dispatch。
@@ -977,10 +1215,10 @@ class ListLayout {
         this.tree = reparsed;
         const reread = readTarget(view, reparsed, to);
         this.build(view);
-        traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "available_reparse" }));
+        traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "available_reparse" }), this.firstBuildDetail(view, to));
         if (reread.kind === "list") {
           this.retainSettledTree(view, to);
-          this.publishSettled(view);
+          this.publishSettled(view, to);
           return;
         }
       }
@@ -1003,7 +1241,7 @@ class ListLayout {
     // 后台 parse worker 照常同步；本拍的 build 用刚返回的树即可。
     this.tree = ensureSyntaxTree(view.state, parseTo, COMPOSITION_SETTLE.stepMs) ?? syntaxTree(view.state);
     this.build(view);
-    traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "parse", chunk: String(chunk), parse_to: String(parseTo) }));
+    traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "parse", chunk: String(chunk), parse_to: String(parseTo) }), this.firstBuildDetail(view, to));
     if (syntaxTreeAvailable(view.state, to)) {
       // 同 available 分支：优先用 context tree，state 快照只作后续维护。
       const contextTree = ensureSyntaxTree(view.state, to, 0) ?? this.tree;
@@ -1017,15 +1255,15 @@ class ListLayout {
       }
       const read = readTarget(view, this.tree, to);
       this.build(view);
-      traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "parse_done_context" }));
+      traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "parse_done_context" }), this.firstBuildDetail(view, to));
       if (read.kind === "list") {
         this.retainSettledTree(view, to);
-        this.publishSettled(view);
+        this.publishSettled(view, to);
         return;
       }
       if (!expectsList) {
         this.retainSettledTree(view, to);
-        this.publishSettled(view);
+        this.publishSettled(view, to);
         return;
       }
       const reparsed = reparseParseContext(view, to);
@@ -1033,10 +1271,10 @@ class ListLayout {
         this.tree = reparsed;
         const reread = readTarget(view, reparsed, to);
         this.build(view);
-        traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "parse_done_reparse" }));
+        traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "parse_done_reparse" }), this.firstBuildDetail(view, to));
         if (reread.kind === "list") {
           this.retainSettledTree(view, to);
-          this.publishSettled(view);
+          this.publishSettled(view, to);
           return;
         }
       }
@@ -1286,6 +1524,12 @@ export const listDecorations: Extension = [
   EditorView.domEventHandlers({
     compositionend(_event, view) {
       // 不在事件 handler 里同步 dispatch：见 scheduleCompositionSettle 的注释。
+      // dev-only 一次性取证：恢复链启动前的现场（含 state/context/plugin 三棵树）。
+      const layout = layouts.get(view);
+      if (layout) {
+        const head = Math.min(view.state.doc.length, view.state.selection.main.head);
+        traceSettle(view, "ime_forensic_compositionend", {}, () => layout.forensicDetail(view, head));
+      }
       scheduleCompositionSettle(view);
       return false;
     },
