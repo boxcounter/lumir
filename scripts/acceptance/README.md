@@ -945,6 +945,9 @@ marked text 下划线或原生按键时序。原生终判仍是 156 / 262 人工
 回归门；任务 4.5 删除 `editor_ime` 后它仍应 PASS。**覆盖收窄**：271 判别 deleteCompositionText
 接管与 compositionend 恢复链（M3 变异判红）；组合期冻结分支不在此场景判别（M1 去冻结后仍
 PASS——合成序列里 state 语法树在组合期未跟上 list），冻结承诺归 156 / 262 人工矩阵。
+271 另有 `delete-uncancelable` case：派发 `cancelable:false` 的 pending delete 并模拟浏览器
+默认删除，证明 setext 候选的 `- ` 由非可编辑原子 shield 隔离（原生 WebKit 的该事件不可取消，
+`preventDefault` 无效）。
 
 ## 已知边界（写清楚，别当成 bug 去追）
 

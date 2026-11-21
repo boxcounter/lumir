@@ -163,8 +163,31 @@ export interface ListLineRender {
   readonly info: ListLineInfo | null;
   /** 裸 marker 行的编辑态判定（M461）；null = 不是裸行、或不在编辑态。 */
   readonly bare: ListMarkerText | null;
+  /** setext 候选（`- ` 标题下划线）在编辑态的源码隔离 widget：字面文本、非可编辑原子节点。
+   *  null = 不是 setext 候选、或不在编辑态。 */
+  readonly shield: ListMarkerText | null;
   /** 被 replace 掉的源码区间（marker + 尾随空白、或续行行首缩进）；null = 本行不隐藏源码。 */
   readonly hidden: { readonly from: number; readonly to: number } | null;
+}
+
+/** setext 候选的源码隔离判定：行文本是纯 `-` + 空白、树把它判为 SetextHeading2，且本行是
+ *  标题下划线。编辑态下把 `- ` 换成非可编辑原子 widget（字面文本），让原生 pending
+ *  composition 删除无法沿可编辑文本节点吞掉标记。真列表项 / 代码块 / 表格等不在这里。 */
+function setextCandidateShield(tree: Tree, doc: Text, line: Line): ListMarkerText | null {
+  const marker = markerTextAt(line.text, line.from);
+  if (marker === null || marker.marker !== "-" || marker.contentFrom !== line.to) return null;
+  for (let node: Node | null = tree.resolveInner(marker.markerFrom, 1); node; node = node.parent) {
+    const name = node.name;
+    if (name === "SetextHeading2") return marker;
+    if (
+      name === "SetextHeading1" || name.startsWith("ATXHeading") ||
+      name === "FencedCode" || name === "CodeBlock" || name === "HTMLBlock" ||
+      name === "Table" || name === "Document"
+    ) {
+      return null;
+    }
+  }
+  return null;
 }
 
 export function listLineRender(tree: Tree, doc: Text, line: Line, editing: boolean): ListLineRender {
@@ -175,16 +198,18 @@ export function listLineRender(tree: Tree, doc: Text, line: Line, editing: boole
       const task = info.item.getChild("Task")?.getChild("TaskMarker");
       let end = task?.to ?? mark.to;
       while (end < line.to && /[ \t]/.test(doc.sliceString(end, end + 1))) end++;
-      return { info, bare: null, hidden: { from: line.from, to: end } };
+      return { info, bare: null, shield: null, hidden: { from: line.from, to: end } };
     }
-    if (info.offset > 0) return { info, bare: null, hidden: { from: line.from, to: line.from + info.offset } };
-    return { info, bare: null, hidden: null };
+    if (info.offset > 0) return { info, bare: null, shield: null, hidden: { from: line.from, to: line.from + info.offset } };
+    return { info, bare: null, shield: null, hidden: null };
   }
   if (editing) {
+    const shield = setextCandidateShield(tree, doc, line);
+    if (shield) return { info: null, bare: null, shield, hidden: { from: line.from, to: shield.contentFrom } };
     const bare = bareListMarkerLine(tree, doc, line);
-    if (bare) return { info: null, bare, hidden: { from: line.from, to: bare.contentFrom } };
+    if (bare) return { info: null, bare, shield: null, hidden: { from: line.from, to: bare.contentFrom } };
   }
-  return { info: null, bare: null, hidden: null };
+  return { info: null, bare: null, shield: null, hidden: null };
 }
 
 /** 判据选区是否与行范围相接（含端点）——裸 marker 行的编辑态门控（B1）。
@@ -263,6 +288,25 @@ function labelsEqual(a: ReadonlyMap<number, string>, b: ReadonlyMap<number, stri
  *  第三档）。与 theme.ts 的 `.cm-lp-list-marker-d1/-d2/-d3` 是同一组比值的两个写值：
  *  改一处必须改另一处（canvas 测量按它量标记宽度，见下方 measure 的注释）。 */
 const MARKER_FONT_RATIOS = [13.5 / 15, 13 / 15, 12.5 / 15] as const;
+
+/** setext 候选在编辑态的源码隔离 widget：渲染字面 marker 文本（`- `），非可编辑原子节点。
+ *  只用 replace 覆盖，不加列表行 class / 悬挂缩进；组合结束或树变化后由正常 render 接管。 */
+class SourceShield extends WidgetType {
+  readonly text: string;
+  constructor(text: string) {
+    super();
+    this.text = text;
+  }
+  eq(other: SourceShield) { return other.text === this.text; }
+  toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.className = "cm-lp-source-shield";
+    span.contentEditable = "false";
+    span.style.whiteSpace = "pre";
+    span.textContent = this.text;
+    return span;
+  }
+}
 
 class ListMarker extends WidgetType {
   // 显式字段而非参数属性：tests/unit 的 Node 类型剥离（strip-only）不支持参数属性，
@@ -1465,6 +1509,13 @@ class ListLayout {
               attributes: { style: `--lp-list-body:${body * unit}px;--lp-list-marker:${width * unit}px` },
             }).range(line.from));
             decorations.push(Decoration.replace({ widget: new ListMarker(label, null, 1) }).range(line.from, bare.contentFrom));
+          } else if (render.shield) {
+            // setext 候选的编辑态源码隔离：字面 `- ` 换成非可编辑原子 widget。原生 pending
+            // composition 删除无法沿可编辑文本节点吞掉标记；组合结束 / 树变化后正常 render
+            // 接管（真列表项走上面的 marker 分支）。不加上列表行 class / 悬挂缩进。
+            decorations.push(Decoration.replace({
+              widget: new SourceShield(doc.sliceString(line.from, render.shield.contentFrom)),
+            }).range(line.from, render.shield.contentFrom));
           }
         }
         if (line.number === doc.lines) break;

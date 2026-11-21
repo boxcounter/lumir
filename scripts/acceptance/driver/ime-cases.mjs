@@ -6,6 +6,9 @@
 export const IME_CASES = Object.freeze({
   compose: Object.freeze({ text: "s" }),
   "delete-empty": Object.freeze({ text: "s" }),
+  // 不可取消的 pending composition 删除（WKWebView TypingDeletePendingComposition）：
+  // 事件 preventDefault 无效，只能靠 DOM 隔离 widget 阻止默认删除。
+  "delete-uncancelable": Object.freeze({ text: "s" }),
   commit: Object.freeze({ text: "s", commit: "是" }),
 });
 

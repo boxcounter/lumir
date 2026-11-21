@@ -97,10 +97,10 @@ if (!globalThis.__lumirImeDriver) {
     }
   };
 
-  const inputEvent = (type, inputType, data, isComposing) => {
+  const inputEvent = (type, inputType, data, isComposing, cancelable = true) => {
     const event = new InputEvent(type, {
       bubbles: true,
-      cancelable: true,
+      cancelable,
       composed: true,
       data: data ?? null,
       isComposing: Boolean(isComposing),
@@ -137,6 +137,23 @@ if (!globalThis.__lumirImeDriver) {
     range.collapse(true);
     selection.removeAllRanges();
     selection.addRange(range);
+  };
+
+  const hasShield = (view, lineNo) => Boolean(lineElement(view, lineNo)?.querySelector(".cm-lp-source-shield"));
+
+  /** 模拟不可取消 pending delete 的浏览器默认动作：向后删 caret 前的可编辑文本。
+   *  shield 存在时没有可删文本，返回 false（证明原子 widget 阻止了默认删除）。 */
+  const simulatePendingDelete = (view, lineNo) => {
+    const line = lineElement(view, lineNo);
+    if (!line || line.querySelector(".cm-lp-source-shield")) return false;
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    let text = null;
+    while (walker.nextNode()) text = walker.currentNode;
+    if (text && typeof text.nodeValue === "string" && text.nodeValue.endsWith("- ")) {
+      text.nodeValue = text.nodeValue.slice(0, -2);
+      return true;
+    }
+    return false;
   };
 
   const deleteLastGrapheme = (node) => {
@@ -253,6 +270,9 @@ if (!globalThis.__lumirImeDriver) {
       settle_timeout: false,
       parse_pending_at_end: false,
       delete_prevented: null,
+      uncancelable: false,
+      shield_present: false,
+      default_delete_attempted: false,
       commit_prevented: null,
       model_updated_after_commit: false,
       dom_edit: "range",
@@ -297,6 +317,24 @@ if (!globalThis.__lumirImeDriver) {
         deleteLastGrapheme(marked);
         content.dispatchEvent(inputEvent("input", "deleteCompositionText", null, true));
         report.event_sequence.push("input:deleteCompositionText");
+      }
+      content.dispatchEvent(compositionEvent("compositionend"));
+      report.saw_composition_end = true;
+      report.event_sequence.push("compositionend");
+    } else if (cmd.case === "delete-uncancelable") {
+      // WKWebView 的 pending composition 删除不可取消：派发 cancelable:false 的 beforeinput，
+      // 产品 gate 仍会显式删除组合文本；随后由驱动模拟浏览器默认动作（向后删可编辑文本）。
+      const before = inputEvent("beforeinput", "deleteCompositionText", null, true, false);
+      const notPrevented = content.dispatchEvent(before);
+      report.delete_prevented = !notPrevented; // 非 cancelable：恒 false
+      report.uncancelable = true;
+      report.shield_present = hasShield(view, targetLine);
+      report.event_sequence.push("beforeinput:deleteCompositionText");
+      if (notPrevented) {
+        report.default_delete_attempted = simulatePendingDelete(view, targetLine);
+        content.dispatchEvent(inputEvent("input", "deleteCompositionText", null, true));
+        report.event_sequence.push("input:deleteCompositionText");
+        await nextFrame();
       }
       content.dispatchEvent(compositionEvent("compositionend"));
       report.saw_composition_end = true;

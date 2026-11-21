@@ -51,6 +51,24 @@ steps:
           jsonl: { run_tag: "$runTag", case: delete-empty, prev_dom_final: "词汇", marker_composing_peak: 0, marker_peak: 0 }
       - shot: 02-删空后
 
+  - name: 不可取消的 pending delete：浏览器默认动作不得吞掉 setext 候选 marker
+    do: imeDrive
+    ime: { case: delete-uncancelable, line: 2, timeoutMs: 8000 }
+    expect:
+      - label: 事件不可取消（preventDefault 无法阻止默认动作）
+        file:
+          path: "env:acceptance/ime/delete-uncancelable.jsonl"
+          jsonl: { run_tag: "$runTag", case: delete-uncancelable, uncancelable: true, delete_prevented: false }
+      - label: setext 候选由 shield 隔离，默认删除无文本可删
+        file:
+          path: "env:acceptance/ime/delete-uncancelable.jsonl"
+          jsonl: { run_tag: "$runTag", case: delete-uncancelable, shield_present: true, default_delete_attempted: false }
+      - label: 源码保留三行基线，解析已收束
+        file:
+          path: "env:acceptance/ime/delete-uncancelable.jsonl"
+          jsonl: { run_tag: "$runTag", case: delete-uncancelable, doc_final: "词汇\n- \n后续", settle_timeout: false, parse_pending_at_end: false }
+      - shot: 03-不可取消删空
+
   - name: 候选提交“是”：文档只新增候选，目标行 marker 恢复
     do: imeDrive
     ime: { case: commit, line: 2, timeoutMs: 8000 }
@@ -71,7 +89,7 @@ steps:
         file: { path: ime-list-setext.md, unchangedSince: imeBase }
       - label: fixture mtime 未被写盘
         file: { path: ime-list-setext.md, mtimeUnchangedSince: imeBase }
-      - shot: 03-候选提交后
+      - shot: 04-候选提交后
 ---
 
 # 271 —— 列表行 IME 合成序列（WKWebView 事件复刻）
@@ -88,6 +106,12 @@ text / 按键时序。PASS 只表示产品 JS 路径在该序列下正确；原�
 doc 已变为 `- s`，但 state 语法树在组合期尚未跟上 list，`build` 拿不到 list 判定，冻结分支因此
 没有区分度（120ms 组合观察窗与 300ms 收束窗都读不到 marker）。**本场景不证明组合期冻结**；
 组合期不插入 marker 的承诺仍归 156 / 262 真机人工矩阵。
+
+**不可取消的 pending delete**：WebKit 的 `TypingDeletePendingComposition` 不可取消
+（`isBeforeInputEventCancelable` 返回 false），`preventDefault` 无效。本场景新增
+`delete-uncancelable` case：派发 `cancelable:false` 的 beforeinput，再由驱动模拟浏览器默认
+动作（向后删 caret 前的可编辑文本）。setext 候选的 `- ` 由非可编辑原子 shield 隔离，默认
+删除没有可删文本；断言源码保留 `- `、`delete_prevented:false`、`shield_present:true`。
 
 **不写盘**：驱动只改内存 doc；`record` + `file.unchangedSince` / `mtimeUnchangedSince` 钉住
 fixture 未被保存。
