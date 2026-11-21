@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 n=0
-for f in scripts/acceptance/*.mjs scripts/acceptance/lib/*.mjs; do
+for f in scripts/acceptance/*.mjs scripts/acceptance/lib/*.mjs scripts/acceptance/driver/*.mjs; do
   node --check "$f"
   n=$((n + 1))
 done

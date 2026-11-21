@@ -53,6 +53,13 @@
       时钟进入 4s 后的低频分支，断言 250ms 调度、最终恢复且无重复 marker；另测候选提交到两次
       rAF 的绘制路径与真实 settleStep 回调切片。
 
+- [x] 3.5 新增 WKWebView 合成 IME 序列自动回归：验收实例 Vite dev server 仅在
+      `LUMIR_ACCEPTANCE_PORT` + `LUMIR_ACCEPTANCE_IME=1` 时注入
+      `scripts/acceptance/driver/ime-driver.mjs` 与 `/__lumir-ime/*`；runner 新增 `imeDrive`
+      action（封闭 case/参数校验、报告写隔离 env、bundle INVALID），场景 271 覆盖
+      `词汇\n- \n后续` 的 compose / delete-empty / commit。合成事件 ≠ 原生 IME，
+      原生终判仍归 156 / 262。
+
 ## 4. 验证与交付边界
 
 - [x] 4.1 `LUMIR_VISUAL_PORT=4281 scripts/visual/run.sh scenes/editing-oracle.spec.ts --grep
@@ -67,6 +74,9 @@
 - [ ] 4.4 Alex 自行运行的 dev 实例复验输入与删除；已完成第二轮（删除 / 相邻行消失已消失，
       候选提交后 marker 未恢复），最新版（pending flush 后延迟唤醒 + 有界分片 + 低频恢复）
       待复验；agent 不启动或操作 Lumir、不执行真机验收。
+- [x] 4.6 用 runner 真实执行场景 271（自动启动隔离 dev），保存截图 / 报告 / JSONL；
+      并用未修复 mutant 证明对应字段判红、恢复后复绿（证据 `.local/acceptance/` 与
+      `.local/missions/ime-list-composition-nov21/worker/`）。
 - [ ] 4.5 诊断完成后移除临时 `editor_ime` 诊断：前端 `traceIme` 及其 `compositionupdate` /
       `input` 埋点、Rust `LogEventName::EditorIme` 与字段白名单、ts-rs 重导出
       `src/bindings/LogEventName.ts`；随后复跑 tsc、单测、目标视觉组与 bindings 漂移检查。

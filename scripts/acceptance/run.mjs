@@ -592,6 +592,12 @@ async function main() {
     // 2），不按产品判红记（退出码 1）。越过 `runScenario` 之后，异常才是场景自己的事。
     let setupPhase = true;
     try {
+      // IME 合成序列驱动（change fix-ime-list-composition-nov20 收尾）：只有含 imeDrive 的
+      // 场景才让 Vite 注入驱动 / 开 `/__lumir-ime` 端点；其它场景完全无感。变量必须在
+      // launchApp 之前落进 env（`pnpm tauri dev` 原样继承）。
+      const needsIme = [...(scenario.steps ?? []), ...(scenario.teardown ?? [])].some((step) => step.do === "imeDrive");
+      if (needsIme) process.env.LUMIR_ACCEPTANCE_IME = "1";
+      else delete process.env.LUMIR_ACCEPTANCE_IME;
       // 场景声明的实例 flavour（M605）：`requires: bundle` 的通知点击类场景在 dev flavour 下
       // 物理上验不到（点击响应按 `com.apple.Terminal` 路由，本进程收不到）——直接判 INVALID，
       // 不让它跑成一串「cron_click 零条」的产品 FAIL。复跑条件写进证据与提示。

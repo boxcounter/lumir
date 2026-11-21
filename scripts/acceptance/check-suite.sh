@@ -12,6 +12,7 @@ node --test \
   scripts/acceptance/lib/cu.test.mjs \
   scripts/acceptance/lib/drive.test.mjs \
   scripts/acceptance/lib/execute.test.mjs \
+  scripts/acceptance/lib/ime-driver.test.mjs \
   scripts/acceptance/lib/evidence.test.mjs \
   scripts/acceptance/build-bundle.test.mjs \
   scripts/acceptance/coverage.test.mjs

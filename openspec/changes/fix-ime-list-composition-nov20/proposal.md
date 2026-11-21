@@ -56,7 +56,9 @@ Alex 复验。
   timer 到期与取消组合恢复、pending DOM 候选 flush、4s 截止后的低频恢复、解析未完成后的最终
   恢复。主矩阵在提交与 undo/redo 后逐行断言 marker 数量、glyph / 序号、计算样式与正文 x，
   真列表目标行提交前 / 后逐项比较，setext 与同文档同字体顶层参考 bullet 逐项数值比较；
-  Alex 的 dev 复现日志用于确认事件路径，不把 Chromium 结果冒充 WKWebView 行为证据。
+  Alex 的 dev 复现日志用于确认事件路径，不把 Chromium 结果冒充 WKWebView 行为证据。另加
+  验收套件 `imeDrive`（仅验收实例 Vite 注入驱动）按真实 WKWebView 日志序列复刻
+  compose / delete-empty / commit；它证明产品 JS 路径，不替代原生 IME 人工终判。
 
 ## Non-goals
 

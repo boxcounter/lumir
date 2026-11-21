@@ -52,6 +52,8 @@ import {
   waitUntil,
 } from "./drive.mjs";
 import { envHome, envRelPath, InfraError, mkdirp, readText, repoRoot, secondVaultDir, sleep, vaultDir } from "./util.mjs";
+import { waitReady, sendCommand, waitReport, writeImeReport } from "./ime-driver.mjs";
+import { IME_CASES, IME_CASE_NAMES } from "../driver/ime-cases.mjs";
 
 /** 真实用户 HOME（不依赖隔离的 `envHome()`）。 */
 function homeDir() {
@@ -158,6 +160,9 @@ export const ACTIONS = new Set([
   // 靠 `sleep` 猜时长，或借通知横幅（M616 之前横幅会被**更早一次 run 的同标题通知**满足；M617
   // 给通知等待加了新鲜度基线，横幅不再有这个缺口，但「等某个日志事件」仍应直接读那份日志）。
   "waitForFile",
+  // WKWebView 合成 IME 序列（change fix-ime-list-composition-nov20 收尾）：只在验收实例的
+  // Vite 注入驱动里跑；报告写隔离 env，由场景用 file.jsonl 断言。
+  "imeDrive",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes", "node"]);
 
@@ -570,6 +575,31 @@ export function checkScenario(scenario) {
     const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;
     if (!step.name) push(`${at} 缺少 name`);
     if (step.do !== undefined && !ACTIONS.has(step.do)) push(`${at} 未知动作 do=${step.do}`);
+    if (step.do === "imeDrive") {
+      const spec = step.ime;
+      if (!isPlainTable(spec)) {
+        push(`${at} do=imeDrive 需要 ime 对象 { case, line, timeoutMs? }`);
+      } else {
+        for (const key of Object.keys(spec)) {
+          if (!["case", "line", "timeoutMs"].includes(key)) {
+            push(`${at} do=imeDrive 的 ime.${key} 未知键（拼错即静默不生效，允许：case / line / timeoutMs）`);
+          }
+        }
+        if (!IME_CASE_NAMES.includes(spec.case)) {
+          push(`${at} do=imeDrive 的 ime.case 必须是 ${IME_CASE_NAMES.join(" / ")}，实际 ${JSON.stringify(spec.case)}`);
+        } else {
+          const data = IME_CASES[spec.case];
+          if (typeof data.text !== "string" || data.text === "") push(`${at} ime case ${spec.case} 缺非空 text`);
+          if (spec.case === "commit" && (typeof data.commit !== "string" || data.commit === "")) {
+            push(`${at} ime case commit 缺非空 commit`);
+          }
+        }
+        if (!Number.isInteger(spec.line) || spec.line < 1) push(`${at} do=imeDrive 的 ime.line 需要正整数`);
+        if (spec.timeoutMs !== undefined && (!Number.isFinite(spec.timeoutMs) || spec.timeoutMs <= 0)) {
+          push(`${at} do=imeDrive 的 ime.timeoutMs 需要正数`);
+        }
+      }
+    }
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
     if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
     // `channel`（M767；M768 起 `do: key` 单数同样可写）：真键盘事件通道。这些形态都会**静默失效**，
@@ -4084,6 +4114,37 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     // 正常退出应用（change add-cron-notification-relaunch §8.2 判据 1 的前置）：走 app 自己的
     // 退出路径（AppleEvent quit），不是 SIGTERM——「应用退出后点击通知」要的正是这条路径。
     // 退出被挡住（含 dirty 守卫）即判 FAIL：那是异常边界，套件不代为丢弃更改。
+    case "imeDrive": {
+      if (bundleBinary()) {
+        throw new InfraError(
+          "do=imeDrive 只在 dev flavour 可用：驱动由验收实例的 Vite dev server 注入，bundle 实例没有该端点。" +
+            "请去掉 LUMIR_ACCEPTANCE_BUNDLE 后复跑。",
+        );
+      }
+      const spec = step.ime ?? {};
+      const data = IME_CASES[spec.case];
+      const caseName = spec.case;
+      const timeoutMs = spec.timeoutMs ?? 20_000;
+      const tag = vars.$runTag ?? runTag();
+      await waitReady(10_000);
+      const id = `${tag}-${caseName}-${Date.now().toString(36)}`;
+      await sendCommand({
+        id,
+        runTag: tag,
+        case: caseName,
+        line: spec.line,
+        text: data.text,
+        commit: data.commit ?? null,
+        timeoutMs,
+      });
+      const report = await waitReport(id, timeoutMs + 4_000);
+      if (report.fatal) {
+        throw new InfraError(`imeDrive ${caseName} fatal（驱动场不成立，不是产品 FAIL）：${report.error}`);
+      }
+      const file = await writeImeReport(caseName, report);
+      evidence.record({ kind: "note", text: `imeDrive ${caseName} 报告：${path.relative(ctx.repoRoot, file)}` });
+      return;
+    }
     case "quitApp": {
       if (!bundleBinary()) {
         throw new InfraError("quitApp 只适用于打包实例（先设 LUMIR_ACCEPTANCE_BUNDLE 构建 bundle）。");

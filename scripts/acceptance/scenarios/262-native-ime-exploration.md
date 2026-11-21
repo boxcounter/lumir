@@ -63,6 +63,8 @@ steps:
 
 # 262 —— 原生 IME 人工探索矩阵（0.13.0 CM composer）
 
+> 机器回归门是场景 271（`imeDrive` 合成事件序列，证明产品 JS 路径，不冒充原生 IME）；262 仍是原生 TSM / 候选窗的人工终判。
+
 ## 口径（先读这一节）
 
 1. **自动段 PASS 不是 native IME PASS。** `node scripts/acceptance/run.mjs 262` 只建两行探针现场并
