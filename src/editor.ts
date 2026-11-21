@@ -857,14 +857,47 @@ function absorbCompositionBackspace(event: InputEvent, view: EditorView): boolea
 }
 
 /** CM 的 InputState.handleEvent 在 `view.updateState != Idle` 时把 runHandlers 推入
- *  Promise——浏览器默认动作会先于 handler 执行。组合起点的 no-op 只需 preventDefault、
- *  不需要 dispatch，因此在 contentDOM 捕获相位同步消费；只处理这一种「更新进行中 + 无
- *  dispatch」的路径，其余事件仍走原 CM handler（idle 时本就同步，不重复执行）。
- *  已消费的事件记入 WeakSet，CM 的延迟 handler 即使被排到也会跳过，不重复记日志。 */
+ *  Promise——浏览器默认动作会先于 handler 执行。组合期 Backspace 的两种判定都在
+ *  contentDOM 捕获相位同步 consume：
+ *  - noop：只需 preventDefault，立即结束；
+ *  - 显式 delete：同步 preventDefault，微任务里重新校验组合起点 / 选区和目标范围后
+ *    执行唯一事务（不在 update 中 dispatch）。
+ *  已消费事件记入 WeakSet，CM 的延迟 handler 即使被排到也会跳过，不重复执行/记日志。
+ *  idle 时不介入：CM 的 handler 本就同步执行，保持原路径。 */
 const consumedBeforeInput = new WeakSet<Event>();
 
 function viewUpdateIdle(view: EditorView): boolean {
   return (view as unknown as { updateState?: number }).updateState === 0;
+}
+
+/** 同步消费一个 gate 命中事件；noop 立即结束，显式 delete 把唯一事务排到更新结束后。 */
+function consumeDirectBeforeInput(
+  event: Event,
+  view: EditorView,
+  decision: Exclude<CompositionBackspace, false>,
+): void {
+  event.preventDefault();
+  consumedBeforeInput.add(event);
+  if (decision === "noop") {
+    traceIme(event, view, "beforeinput", true, "direct");
+    return;
+  }
+  traceIme(event, view, "beforeinput", true, "direct-deferred");
+  const start = compositionStarts.get(view);
+  const from = decision.from;
+  const to = decision.to;
+  const target = view.state.doc.sliceString(from, to);
+  queueMicrotask(() => {
+    // 更新结束、组合仍在、起点 / 选区和目标文本都未变时才执行；否则留给 compositionend
+    // 恢复链。目标文本比较防止「候选已提交」后误删新内容。
+    if (!view.dom.isConnected || !viewUpdateIdle(view) || !view.compositionStarted) return;
+    if (compositionStarts.get(view) !== start) return;
+    const again = decideCompositionBackspace(event as InputEvent, view);
+    if (again === false || again === "noop") return;
+    if (again.from !== from || again.to !== to) return;
+    if (view.state.doc.sliceString(again.from, again.to) !== target) return;
+    deleteRange(view, again.from, again.to, "input.type.compose");
+  });
 }
 
 const directBeforeInputGate = ViewPlugin.fromClass(class {
@@ -872,10 +905,9 @@ const directBeforeInputGate = ViewPlugin.fromClass(class {
   private readonly onBeforeInput = (event: Event) => {
     if (event.defaultPrevented || consumedBeforeInput.has(event)) return;
     if (viewUpdateIdle(this.view)) return; // idle：原 CM handler 同步执行，行为不变
-    if (decideCompositionBackspace(event as InputEvent, this.view) !== "noop") return;
-    event.preventDefault();
-    consumedBeforeInput.add(event);
-    traceIme(event, this.view, "beforeinput", true, "direct");
+    const decision = decideCompositionBackspace(event as InputEvent, this.view);
+    if (!decision) return;
+    consumeDirectBeforeInput(event, this.view, decision);
   };
   constructor(view: EditorView) {
     this.view = view;

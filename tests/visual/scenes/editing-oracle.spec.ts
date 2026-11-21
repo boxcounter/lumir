@@ -285,6 +285,129 @@ test("正文 IME：view 更新中 deleteCompositionText 必须同步 preventDefa
   await expect(page.locator(".cm-line").nth(2)).toContainText("后续");
 });
 
+test("正文 IME：更新中最后一个字素删除同步阻止默认动作且只删一次（Chromium）", async ({ page }) => {
+  // 与 noop 同一 CM 延迟窗口：最后一字素需要显式事务。捕获相位先同步 preventDefault，
+  // 更新结束后重校验组合起点/选区/目标文本，再只执行一次 deleteRange。
+  const doc = "词汇\n- s\n后续";
+  await openBody(page, "oracle.md", doc);
+  const first = await page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.focus();
+    view.dispatch({ selection: { anchor: 5 } });
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    view.dispatch({ selection: { anchor: 6 } });
+    const event = new InputEvent("beforeinput", { bubbles: true, cancelable: true, isComposing: true });
+    Object.defineProperty(event, "inputType", { value: "deleteContentBackward" });
+    view.updateState = 1;
+    let prevented = false;
+    try {
+      prevented = !el.dispatchEvent(event);
+    } finally {
+      view.updateState = 0;
+    }
+    return { prevented, doc: view.state.doc.toString() };
+  });
+  expect(first.prevented, "更新中的最后一个字素删除必须在同一拍 preventDefault").toBe(true);
+  expect(first.doc, "事件当拍不得删除（唯一事务在更新结束后）").toBe("词汇\n- s\n后续");
+  await page.waitForTimeout(30);
+  expect((await bodyState(page)).doc, "更新后只删一次").toBe("词汇\n- \n后续");
+  const committed = await page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.dispatch({ changes: { from: 5, insert: "是" }, selection: { anchor: 6 } });
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    return view.state.doc.toString();
+  });
+  expect(committed).toBe("词汇\n- 是\n后续");
+  await expect.poll(async () => page.locator(".cm-lp-list-marker").count()).toBe(1);
+  await expect.poll(async () => page.locator(".cm-line").nth(1).textContent()).toBe("–是");
+  await expect(page.locator(".cm-line").nth(2)).toContainText("后续");
+});
+
+test("正文 IME：更新中删除的迟到任务在组合结束后不得误删（Chromium）", async ({ page }) => {
+  const doc = "词汇\n- s\n后续";
+  await openBody(page, "oracle.md", doc);
+  const probe = await page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.focus();
+    view.dispatch({ selection: { anchor: 5 } });
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    view.dispatch({ selection: { anchor: 6 } });
+    const event = new InputEvent("beforeinput", { bubbles: true, cancelable: true, isComposing: true });
+    Object.defineProperty(event, "inputType", { value: "deleteContentBackward" });
+    view.updateState = 1;
+    let prevented = false;
+    try {
+      prevented = !el.dispatchEvent(event);
+    } finally {
+      view.updateState = 0;
+    }
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    return { prevented };
+  });
+  expect(probe.prevented).toBe(true);
+  await page.waitForTimeout(30);
+  expect((await bodyState(page)).doc, "组合已结束：迟到任务不得删除").toBe(doc);
+});
+
+test("正文 IME：更新中删除的迟到任务在选区变化后不得误删（Chromium）", async ({ page }) => {
+  const doc = "词汇\n- s\n后续";
+  await openBody(page, "oracle.md", doc);
+  const probe = await page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.focus();
+    view.dispatch({ selection: { anchor: 5 } });
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    view.dispatch({ selection: { anchor: 6 } });
+    const event = new InputEvent("beforeinput", { bubbles: true, cancelable: true, isComposing: true });
+    Object.defineProperty(event, "inputType", { value: "deleteContentBackward" });
+    view.updateState = 1;
+    let prevented = false;
+    try {
+      prevented = !el.dispatchEvent(event);
+    } finally {
+      view.updateState = 0;
+    }
+    view.dispatch({ selection: { anchor: 0 } });
+    return { prevented };
+  });
+  expect(probe.prevented).toBe(true);
+  await page.waitForTimeout(30);
+  expect((await bodyState(page)).doc, "选区已变化：迟到任务不得删除").toBe(doc);
+});
+
+test("正文 IME：更新中删除的迟到任务在候选已提交后不得误删（Chromium）", async ({ page }) => {
+  const doc = "词汇\n- s\n后续";
+  await openBody(page, "oracle.md", doc);
+  const probe = await page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.focus();
+    view.dispatch({ selection: { anchor: 5 } });
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    view.dispatch({ selection: { anchor: 6 } });
+    const event = new InputEvent("beforeinput", { bubbles: true, cancelable: true, isComposing: true });
+    Object.defineProperty(event, "inputType", { value: "deleteContentBackward" });
+    view.updateState = 1;
+    let prevented = false;
+    try {
+      prevented = !el.dispatchEvent(event);
+    } finally {
+      view.updateState = 0;
+    }
+    // 迟到任务执行前候选已提交：目标区间文本从 s 变为 是，任务必须放弃。
+    view.dispatch({ changes: { from: 5, to: 6, insert: "是" }, selection: { anchor: 6 } });
+    return { prevented };
+  });
+  expect(probe.prevented).toBe(true);
+  await page.waitForTimeout(30);
+  expect((await bodyState(page)).doc, "候选已提交：迟到任务不得删除新内容").toBe("词汇\n- 是\n后续");
+  await page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    return view.state.doc.toString();
+  });
+  await expect.poll(async () => page.locator(".cm-lp-list-marker").count()).toBe(1);
+});
+
 test("正文 IME：available 但 state 树陈旧时先同步再 build（Chromium）", async ({ page }) => {
   // 足够长的文档：dispatch 候选后 state 树不会同步解析到末尾，给 context 留出领先窗口。
   const doc = "para\n\n".repeat(2000) + "词汇\n- ";
