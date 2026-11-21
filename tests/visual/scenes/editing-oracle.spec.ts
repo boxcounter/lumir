@@ -87,6 +87,58 @@ async function setBodyCaret(page: Page, pos: number): Promise<void> {
   }, pos);
 }
 
+interface LineRender {
+  text: string;
+  markerCount: number;
+  markerText: string | null;
+  display: string | null;
+  fontSize: string | null;
+  color: string | null;
+  linePadding: string;
+  lineLeft: number;
+  bodyX: number;
+}
+
+/** 逐行渲染读数：marker 数量 / glyph 或序号 / 计算样式 / 正文 x（口径同 lists.spec.ts 的
+ *  `listInputRendering`）。`text` 单独留在快照里，几何比较时剥掉——组合与提交会改文本，
+ * 但 marker 与悬挂缩进必须按合同稳定。 */
+async function listRenderSnapshot(page: Page): Promise<LineRender[]> {
+  return page.locator(".cm-content").evaluate((el) => [...el.querySelectorAll<HTMLElement>(".cm-line")].map((line) => {
+    const markers = line.querySelectorAll<HTMLElement>(".cm-lp-list-marker");
+    const marker = markers[0] ?? null;
+    const style = marker ? getComputedStyle(marker) : null;
+    const lineStyle = getComputedStyle(line);
+    const lineLeft = line.getBoundingClientRect().left;
+    return {
+      text: line.textContent ?? "",
+      markerCount: markers.length,
+      markerText: marker?.textContent ?? null,
+      display: style?.display ?? null,
+      fontSize: style?.fontSize ?? null,
+      color: style?.color ?? null,
+      linePadding: lineStyle.paddingInlineStart,
+      lineLeft,
+      bodyX: lineLeft + parseFloat(lineStyle.paddingInlineStart),
+    };
+  }));
+}
+
+const renderGeometry = (rows: LineRender[]) => rows.map(({ text: _text, ...rest }) => rest);
+
+/** 等两次连续读数一致再返回：marker 恢复与组宽发布是 16ms 起跳的后台链，
+ *  单拍读到的可能是中间态。 */
+async function settledRenderSnapshot(page: Page, timeoutMs = 3000): Promise<LineRender[]> {
+  const deadline = Date.now() + timeoutMs;
+  let previous = await listRenderSnapshot(page);
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(16);
+    const next = await listRenderSnapshot(page);
+    if (JSON.stringify(renderGeometry(next)) === JSON.stringify(renderGeometry(previous))) return next;
+    previous = next;
+  }
+  return previous;
+}
+
 function fail(seed: number, step: number, op: string, before: EditorReading, expected: EditorReading, actual: EditorReading): never {
   throw new Error(
     formatOracleFailure({
@@ -208,6 +260,7 @@ test("IME 组合期间冻结列表装饰，提交后再刷新", async ({ page, b
   });
   await compose("s");
   await expect.poll(async () => (await bodyState(page)).doc).toBe("词汇\n- s");
+  await page.waitForTimeout(80); // 等过一个后台周期：组合期 timer 到期也不得插入 marker
   await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0);
   expect(await page.locator(".cm-line").allTextContents()).toEqual(["词汇", "- s"]);
 
@@ -252,19 +305,23 @@ test("IME 非末项组合输入：冻结期间后续 marker 随源码映射，�
 });
 
 const IME_LIST_CASES = [
-  { name: "段落后 - 的 setext / 列表切换", doc: "词汇\n- ", lines: ["词汇", "- "] },
-  { name: "真 bullet 空项", doc: "- ", lines: null },
-  { name: "真有序空项", doc: "1. ", lines: null },
-  { name: "嵌套空项", doc: "- parent\n  - ", lines: null },
-  { name: "非 setext 裸 marker", doc: "para\n+ ", lines: null },
+  { name: "段落后 - 的 setext / 列表切换", doc: "词汇\n- ", lines: ["词汇", "- "], marker: "–" },
+  { name: "真 bullet 空项", doc: "- ", lines: null, marker: "–" },
+  { name: "真有序空项", doc: "1. ", lines: null, marker: "1." },
+  { name: "嵌套空项", doc: "- parent\n  - ", lines: null, marker: "◦" },
+  { name: "非 setext 裸 marker", doc: "para\n+ ", lines: null, marker: "–" },
 ] as const;
 
 for (const fixture of IME_LIST_CASES) {
   test(`正文 CDP 真引擎 IME：${fixture.name}的组合编辑保真（Chromium）`, async ({ page, browserName }) => {
     test.skip(browserName !== "chromium", "CDP 只存在于 Chromium；WebKit 合成事件不能冒充原生 IME");
     const { doc } = fixture;
+    const docLines = doc.split("\n");
+    const targetIndex = docLines.length - 1;
     await openBody(page, "oracle.md", doc);
     await setBodyCaret(page, doc.length);
+    await expect.poll(async () => (await listRenderSnapshot(page)).length).toBe(docLines.length);
+    const before = await settledRenderSnapshot(page);
     const cdp = await page.context().newCDPSession(page);
     const compose = async (text: string) => cdp.send("Input.imeSetComposition", {
       text,
@@ -274,38 +331,222 @@ for (const fixture of IME_LIST_CASES) {
 
     await compose("s");
     await expect.poll(async () => (await bodyState(page)).doc.includes("s")).toBe(true);
+    // 等过一个 16ms 后台周期：组合期装饰必须保持组合前形态（timer 到期也不发布）。
+    await page.waitForTimeout(80);
+    const during = await listRenderSnapshot(page);
+    expect(renderGeometry(during)).toEqual(renderGeometry(before));
     const inserted = await bodyState(page);
 
     await page.keyboard.press("Backspace");
     await expect.poll(async () => (await bodyState(page)).doc.includes("s")).toBe(false);
     const deleted = await bodyState(page);
+    expect(renderGeometry(await listRenderSnapshot(page))).toEqual(renderGeometry(before));
     // marked text 已空时再退格 MUST 是 no-op，不得吃掉 marker 或前一段正文。
     await page.keyboard.press("Backspace");
     const atCompositionStart = await bodyState(page);
+    expect(renderGeometry(await listRenderSnapshot(page))).toEqual(renderGeometry(before));
     const lines = await page.locator(".cm-line").allTextContents();
     expect({ inserted, deleted, atCompositionStart }).toEqual({
       inserted: { doc: `${doc}s`, anchor: doc.length + 1, head: doc.length + 1 },
       deleted: { doc, anchor: doc.length, head: doc.length },
       atCompositionStart: { doc, anchor: doc.length, head: doc.length },
     });
-    expect(lines).toHaveLength(doc.split("\n").length);
+    expect(lines).toHaveLength(docLines.length);
     expect(lines.every((line) => line.length > 0), "组合删除不得清空相邻行").toBe(true);
     if (fixture.lines !== null) expect(lines).toEqual(fixture.lines);
 
     await compose("s👨‍👩‍👧");
     await page.keyboard.press("Backspace");
     await expect.poll(async () => (await bodyState(page)).doc).toBe(`${doc}s`);
+    expect(renderGeometry(await listRenderSnapshot(page))).toEqual(renderGeometry(before));
     await cdp.send("Input.insertText", { text: "是" });
     const committed = `${doc}是`;
     await expect.poll(async () => (await bodyState(page)).doc).toBe(committed);
+    await expect.poll(async () => (await listRenderSnapshot(page))[targetIndex].markerText).toBe(fixture.marker);
+    const after = await settledRenderSnapshot(page);
+    expect(after).toHaveLength(docLines.length);
+    // 每行至多一个 marker；目标行必须是合同 glyph/序号，且正文 x 落在行内缩进之后。
+    expect(after.every((row) => row.markerCount <= 1), "marker 不得重复").toBe(true);
+    expect(after[targetIndex].markerCount).toBe(1);
+    expect(after[targetIndex].markerText).toBe(fixture.marker);
+    expect(after[targetIndex].display).not.toBeNull();
+    expect(after[targetIndex].fontSize).not.toBeNull();
+    expect(after[targetIndex].bodyX).toBeGreaterThan(after[targetIndex].lineLeft);
+    // 非目标行（相邻段落 / 父项）的几何与样式逐项不变——文档对但渲染漂移会在这里红。
+    for (let index = 0; index < after.length; index += 1) {
+      if (index === targetIndex) continue;
+      expect(renderGeometry([after[index]])).toEqual(renderGeometry([before[index]]));
+    }
     await page.keyboard.press("Meta+s");
     await expect.poll(async () => fileText(page, "oracle.md")).toBe(committed);
 
     await page.waitForTimeout(600);
     await page.keyboard.press("Meta+z");
     await expect.poll(() => bodyState(page)).toEqual({ doc, anchor: doc.length, head: doc.length });
+    await expect.poll(async () => renderGeometry(await settledRenderSnapshot(page))).toEqual(renderGeometry(before));
+    await page.keyboard.press("Meta+Shift+z");
+    await expect.poll(() => bodyState(page)).toEqual({ doc: committed, anchor: committed.length, head: committed.length });
+    await expect.poll(async () => renderGeometry(await settledRenderSnapshot(page))).toEqual(renderGeometry(after));
   });
 }
+
+const IME_SCOPE_CASES = [
+  { name: "普通段落", doc: "alpha beta", pos: 5 },
+  { name: "围栏代码块内的 marker 形文本", doc: "```\n- alpha\n```", pos: 6 },
+  { name: "表格 cell", doc: "| a | b |\n|---|---|\n| c | d |", pos: 22 },
+] as const;
+
+for (const scope of IME_SCOPE_CASES) {
+  test(`IME 非列表位置不接管组合删除：${scope.name}（Chromium）`, async ({ page }) => {
+    await openBody(page, "oracle.md", scope.doc);
+    await setBodyCaret(page, scope.pos);
+    const result = await page.locator(".cm-content").evaluate((el, pos) => {
+      const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+      el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      // 模拟 marked text：组合起点后插入一个字符，光标到其后。
+      view.dispatch({ changes: { from: pos, insert: "s" }, selection: { anchor: pos + 1 } });
+      const event = new InputEvent("beforeinput", { isComposing: true, bubbles: true, cancelable: true });
+      // Chromium 构造器把不认识的 deleteCompositionText 归一成空串；保留 WKWebView 原值。
+      Object.defineProperty(event, "inputType", { value: "deleteCompositionText" });
+      const prevented = !el.dispatchEvent(event);
+      el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      return { prevented, doc: view.state.doc.toString(), head: view.state.selection.main.head };
+    }, scope.pos);
+    // 旧实现会在这里 preventDefault + 显式事务删掉 marked 字符；L6 收窄后必须交回原生 IME。
+    expect(result.prevented, "非列表位置的组合删除 MUST 交回原生 IME").toBe(false);
+    expect(result.doc).toBe(`${scope.doc.slice(0, scope.pos)}s${scope.doc.slice(scope.pos)}`);
+    expect(result.head).toBe(scope.pos + 1);
+  });
+}
+
+test("IME 组合中后台 timer 到期不发布，组合结束后补回新组 marker（Chromium）", async ({ page }) => {
+  const doc = "- a\n- b";
+  await openBody(page, "oracle.md", doc);
+  await setBodyCaret(page, 2);
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(2);
+  const state = await page.locator(".cm-content").evaluate((el, length) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    // 新起一个独立列表组（ol 与前面的 ul 不同组）：组扫描登记后 16ms timer 会到期；
+    // 紧接着进入组合，让 timer 落在组合窗口内。这一拍不允许发布新组 marker（冻结），
+    // 结束组合后才补。
+    const insert = "\n\n1. c\n2. d";
+    view.dispatch({ changes: { from: length, insert }, selection: { anchor: length + insert.length } });
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    return { doc: view.state.doc.toString(), markers: el.querySelectorAll(".cm-lp-list-marker").length };
+  }, doc.length);
+  expect(state.doc).toBe("- a\n- b\n\n1. c\n2. d");
+  expect(state.markers, "新组尚未扫描发布").toBe(2);
+  await page.waitForTimeout(80); // 后台 timer 在组合窗口内到期
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(2); // 冻结：不得发布新组
+  await expect(page.locator(".cm-lp-list-line")).toHaveCount(2); // 新组尚无 line 装饰
+  await page.locator(".cm-content").evaluate((el) => {
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+  });
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(4);
+  const rows = await settledRenderSnapshot(page);
+  expect(rows.filter((row) => row.markerCount === 1), "组合结束后每组每项恰一个 marker").toHaveLength(4);
+  expect(rows.every((row) => row.markerCount <= 1), "marker 不得重复").toBe(true);
+});
+
+test("IME 取消组合：marked text 撤掉后 compositionend 恢复组合前形态（Chromium）", async ({ page }) => {
+  const doc = "词汇\n- ";
+  await openBody(page, "oracle.md", doc);
+  await setBodyCaret(page, doc.length);
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0);
+  await page.locator(".cm-content").evaluate((el, length) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    view.dispatch({ changes: { from: length, insert: "s" }, selection: { anchor: length + 1 } });
+  }, doc.length);
+  await page.waitForTimeout(80);
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0); // 组合期冻结
+  await page.locator(".cm-content").evaluate((el, length) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    // 取消组合：撤掉模拟 marked text，再结束组合。
+    view.dispatch({ changes: { from: length, to: length + 1 }, selection: { anchor: length } });
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+  }, doc.length);
+  await expect.poll(() => bodyState(page)).toEqual({ doc, anchor: doc.length, head: doc.length });
+  expect(await page.locator(".cm-line").allTextContents()).toEqual(["词汇", "- "]);
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0);
+});
+
+test("正文 IME 大文档：解析未完成时组合结束走有界恢复并最终补回 marker（Chromium）", async ({ page }, info) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(`pageerror: ${String(error)}`));
+  page.on("console", (message) => { if (message.type() === "error") pageErrors.push(`console: ${message.text()}`); });
+  // 先用一个短列表把 ListLayout 的字体测量与 marker 渲染走通，再在它后面拼 >1MB 正文；
+  // 目标行是新出现的末尾 `- s`（没有旧装饰可复用），首拍视口仍在顶部。
+  await openBody(page, "oracle.md", "- a");
+  // 等初始 marker 渲染完成：字体测量（units）是异步 requestMeasure，未就绪时大文档插入会
+  // 让 ListLayout 一直不出 line 装饰，测到的就不是恢复链而是初始化时序。
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
+  await setBodyCaret(page, 3);
+  const probe = await page.locator(".cm-content").evaluate((el, length) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const body = "\n" + "para\n".repeat(250000) + "- ";
+    view.dispatch({ changes: { from: length, insert: body }, selection: { anchor: length + body.length } });
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    // 模拟候选提交：末尾 "- " 变为 "- s"（列表）；组合结束的恢复链要把它渲染出来。
+    const end = view.state.doc.length;
+    view.dispatch({ changes: { from: end, insert: "s" }, selection: { anchor: end + 1 } });
+    const values = (view.state as { values?: unknown[] }).values ?? [];
+    const lang = values.find((value) => value && typeof value === "object" && "context" in value && "tree" in (value as object)) as
+      { tree?: { length: number } } | undefined;
+    const treeBefore = lang?.tree?.length ?? -1;
+    const started = performance.now();
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    const syncMs = performance.now() - started;
+    return {
+      docLen: view.state.doc.length,
+      treeBefore,
+      syncMs,
+      renderedLines: el.querySelectorAll(".cm-line").length,
+    };
+  }, 3);
+  expect(probe.docLen).toBeGreaterThan(1_000_000);
+  // 覆盖前提：组合结束那一拍语法树尚未覆盖提交行（否则本用例测不到「解析未完成」）。
+  expect(probe.treeBefore, "组合结束时语法树 MUST 尚未覆盖提交行").toBeLessThan(probe.docLen);
+  expect(probe.renderedLines, "大文档首拍只渲染视口附近").toBeLessThan(1000);
+  // 把视口滚到末尾；解析与装饰重建由有界恢复链继续推进。
+  await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  const markerStart = Date.now();
+  await expect.poll(async () => (await listRenderSnapshot(page)).at(-1)?.markerCount ?? 0, { timeout: 10000 }).toBe(1);
+  const markerMs = Date.now() - markerStart;
+  expect(probe.syncMs).toBeLessThan(50); // 同步切片有界，不是整篇解析
+  expect(markerMs).toBeLessThan(5000);
+  // 恢复链不得在 EditorView.update 内 dispatch（会让插件崩溃、装饰整段消失）。
+  expect(pageErrors.filter((entry) => /plugin crashed|not allowed while an update/.test(entry))).toEqual([]);
+  const rows = await settledRenderSnapshot(page);
+  expect(rows.every((row) => row.markerCount <= 1)).toBe(true);
+  expect(rows.at(-1)?.markerText).toBe("–");
+  await info.attach("ime-large-doc-settle", {
+    body: JSON.stringify({ docLen: probe.docLen, treeBefore: probe.treeBefore, syncMs: probe.syncMs, markerMs, renderedLines: probe.renderedLines }),
+    contentType: "application/json",
+  });
+});
+
+test("正文 IME 大文档：组合结束只补提交行，不解析整篇（Chromium）", async ({ page }, info) => {
+  await openBody(page, "oracle.md", "- a");
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
+  await setBodyCaret(page, 3);
+  const probe = await page.locator(".cm-content").evaluate((el, length) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    // 组合提交行在文档开头（语法树已覆盖），大正文只追加在它后面。
+    view.dispatch({ changes: { from: length, insert: "\n" + "para\n".repeat(250000) } });
+    view.dispatch({ selection: { anchor: length } });
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    const started = performance.now();
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    const syncMs = performance.now() - started;
+    return { docLen: view.state.doc.length, syncMs, markers: el.querySelectorAll(".cm-lp-list-marker").length };
+  }, 3);
+  expect(probe.docLen).toBeGreaterThan(1_000_000);
+  // 目标只到提交行末；旧实现同步 forceParsing(doc.length, 10) 会在这里耗满 10ms。
+  expect(probe.syncMs).toBeLessThan(8);
+  expect(probe.markers).toBe(1);
+  await info.attach("ime-large-doc-targeted", { body: JSON.stringify(probe), contentType: "application/json" });
+});
 
 test("正文 CDP 真引擎 IME：紧邻普通输入的组合独立撤销，redo 与 dirty 跟随保存基线", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "CDP 只存在于 Chromium；WebKit 合成事件不能冒充原生 IME");

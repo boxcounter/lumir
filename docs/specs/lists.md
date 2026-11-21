@@ -107,8 +107,9 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
 ## L6 — 列表项内容起点输入的跨层一致性（M830）
 
 **适用范围**：未被用户单字符键位覆盖的默认文本输入路径；空光标位于真列表 / 嵌套项
-`listLineRender.hidden.to`，或裸 marker 行编辑态的内容起点。普通 `insertText`、IME 组合更新、
-组合中删除与组合提交走同一合同，不按列表类型、项序号、字符或 DOM/AX 形状分叉。
+`listLineRender.hidden.to`、裸 marker 行编辑态的内容起点，或段落后 `- ` 触发 setext 与列表
+解析切换时的内容起点。普通 `insertText`、IME 组合更新、组合中删除与组合提交走同一合同，
+不按列表类型、项序号、字符或 DOM/AX 形状分叉。
 
 - **文档与选区**：提交文本 SHALL 只插入当前空光标或替换当前选区；marker 源码、尾随空白与
   其他项文本 MUST 逐字节不变。空光标输入后 `selection.main.head` MUST 位于提交文本末尾。
@@ -118,9 +119,13 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
   清空相邻行的渲染文本。组合期判定 SHALL 使用覆盖完整事件窗口的 `view.compositionStarted`，
   MUST NOT 只信会在组合中删除时错报 false 的 `event.isComposing`；删除类型 SHALL 覆盖
   Chromium 的 `deleteContentBackward` 与 WKWebView 实测的 `deleteCompositionText`。
+  本闸门 MUST 只在上述列表内容起点接管；普通段落、表格 cell、代码块等非列表位置的组合删除
+  MUST 交回原生 IME，不得按「任意 Markdown 正文」扩大接管面。
 - **组合期装饰稳定**：从 compositionstart 到 compositionend，列表装饰 SHALL 保持组合前的
-  DOM 形态，不得在输入法持有原始文本节点时插入或替换 marker widget；组合结束后统一重建。
-  段落后 `- ` 变为列表时，组合中 MUST NOT 同时出现原始 marker 与新 widget。
+  DOM 形态，不得在输入法持有原始文本节点时插入或替换 marker widget；组合结束后 MUST 在有界
+  时间内统一重建。解析尚未覆盖提交行时 SHALL 以有界重试继续推进并最终恢复，MUST NOT 把同步
+  解析整篇文档当作刷新前提。段落后 `- ` 变为列表时，组合中 MUST NOT 同时出现原始 marker 与
+  新 widget。
 - **marker 与几何**：渲染稳定后，每个可见列表项 MUST 恰有一个 marker widget；显示 glyph /
   复合序号、计算样式与正文起点 x MUST 保持输入前同合同。普通输入、组合更新 / 删除与组合提交
   MUST NOT 造成 marker 丢失、重复、样式退化或正文悬挂位置漂移。
@@ -162,9 +167,12 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
    保存 / 历史语义，对应断言 MUST 变红；全部恢复后目标测试 MUST 全绿。
    `tests/visual/scenes/editing-oracle.spec.ts` 另用 CDP `Input.imeSetComposition` 驱动真引擎组合，
    对真 bullet / 有序 / 嵌套 / 裸 marker / 段落后 setext 切换逐项执行「首字符 → 删空 → 起点再退格
-   → 候选提交 → 保存 → 一次撤销」，并断言相邻行 DOM 不清空；另以合成 beforeinput 覆盖
-   WKWebView 实测的 `deleteCompositionText`，以真实组合事件断言组合期 marker 数量不增加、
-   提交后才刷新。真机场景 153 用不点击的注入通道复核连续空项输入、文件精确字节与撤销。
+   → 候选提交 → 保存 → 一次撤销」，并断言相邻行 DOM 不清空；主矩阵在提交与 undo/redo 稳定后
+   逐行比较 marker 数量、glyph / 序号、计算样式与正文 x。另以合成 beforeinput 覆盖 WKWebView
+   实测的 `deleteCompositionText`、非列表位置不接管、组合中 timer 到期的冻结、取消组合恢复，
+   以及 1MB+ 文档解析未完成时的最终恢复（记录同步切片与总恢复耗时）。判定本体
+   （`listContentStartAt`）由 `tests/unit/list-content-start.test.ts` 用真 lezer 解析器覆盖
+   正反两侧。真机场景 153 用不点击的注入通道复核连续空项输入、文件精确字节与撤销。
 
 ## L7 — 跨 replace 装饰的跨行删除（M836）
 

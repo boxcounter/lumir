@@ -17,9 +17,14 @@
 
 - [x] 2.1 在 md 编辑器统一 beforeinput 闸门中记录组合源码起点；组合中 Backspace 仅在即将删空时
       以显式事务删除最后一个完整字素，同时接受 `deleteContentBackward` 与
-      `deleteCompositionText`；其余组合内删除交回原生 IME，避免后续候选提交残留。
-- [x] 2.2 组合期冻结 ListLayout 的 DOM 重建与后台发布，compositionend 先 `forceParsing` 补齐当前
-      文档解析、再统一刷新；组合期保留组合前 marker 形态，不让原始 `- ` 与新 widget 同时出现。
+      `deleteCompositionText`；接管面限定为 L6 列表内容起点（真列表项 / 裸 marker / 段落后
+      `- ` 的 setext 候选，复用 `listLineRender` 与 `markerTextAt`），普通段落、表格、代码块
+      交回原生 IME；其余组合内删除同样交回。
+- [x] 2.2 组合期冻结 ListLayout 的 DOM 重建与后台发布；compositionend 只对提交行末做有界补解析
+      （≤5ms 分片，未完成按 16ms / 100ms 重试，4s 截止），解析覆盖后统一刷新。恢复链第一拍
+      异步启动——MUST NOT 在 `EditorView.update` 内 dispatch（`forceParsing` 会把空事务
+      打进正在进行的 update，CM 抛错并让插件崩溃、装饰整段消失）。不把同步解析整篇文档当成
+      刷新前提；组合期保留组合前 marker 形态。
 - [x] 2.3 `history.joinToEvent` 阻止 compose.start 与紧邻普通输入并组；新增无 500ms 屏障的
       真实组合用例，验证一次 undo 回到组合前、redo 回提交后，dirty 随保存基线变化。
 
@@ -27,23 +32,31 @@
 
 - [x] 3.1 用真实 Chromium 组合事件覆盖真 bullet / 有序 / 嵌套 / 裸 marker / 段落后 setext 切换；
       每格验证首字符、删空、组合起点 no-op、家庭 emoji 整簇删除、候选提交、精确保存与一次撤销，
-      且相邻行 DOM 不清空；历史边界用例撤销 joinToEvent 防线后必红（本分支实测：同一用例在 undo
-      断言判红），恢复后绿。
+      且相邻行 DOM 不清空；提交与 undo/redo 稳定后逐行比较 marker 数量、glyph / 序号、计算样式
+      与正文 x；历史边界用例撤销 joinToEvent 防线后必红（本分支实测：同一用例在 undo 断言判红），
+      恢复后绿。
 - [x] 3.2 新增 WKWebView `deleteCompositionText` 合同与组合期装饰冻结用例：删空显式事务、
       起点 no-op、组合中 marker 数量不增加、提交后刷新；Chromium 构造器归一 inputType 的
       测试装置陷阱已用 defineProperty 排除。
 - [x] 3.3 更新 `docs/specs/lists.md` L6 与本 change 的 MODIFIED requirement，保留既有全部场景，
-      清除已被现场反证的原生列表命令归因。
+      清除已被现场反证的原生列表命令归因；明确接管面只限列表内容起点、非列表位置交回原生 IME，
+      以及组合结束后的有界恢复口径。
+- [x] 3.4 新增确定性恢复用例：非列表位置（普通段落 / 围栏代码块 / 表格 cell）不接管；组合中
+      后台 timer 到期不发布、compositionend 后补回新组 marker；取消组合恢复组合前形态；
+      1MB+ 文档解析未完成时组合结束走有界恢复并最终补回 marker（记录同步切片与总恢复耗时，
+      并断言不出现 CodeMirror plugin crash）；另以大文档顶部提交记录同步耗时，证明恢复链
+      只补提交行、不解析整篇。
 
 ## 4. 验证与交付边界
 
 - [x] 4.1 `LUMIR_VISUAL_PORT=4281 scripts/visual/run.sh scenes/editing-oracle.spec.ts --grep
-      'IME|WebKit 组合删除|正文 CDP'` 实测 10/10 通过（chromium project；`webkit-realua` 因本机
+      'IME|WebKit 组合删除|正文 CDP'` 实测 17/17 通过（chromium project；`webkit-realua` 因本机
       无 Playwright webkit 构建被跳过）。WebKit 侧证据仍只有合成 `beforeinput` 与 dev 日志，
       不冒充原生 IME。
 - [ ] 4.2 最终 `scripts/gate.sh visual`（含 quick）通过；本分支只跑了目标组，全量门禁与 cargo
       由主会话协调；不更新像素基线。
-- [ ] 4.3 独立 reviewer 对真实 WKWebView 事件路径、组合期装饰冻结与历史语义做最终复核。
+- [ ] 4.3 独立 reviewer 对真实 WKWebView 事件路径、组合期装饰冻结与历史语义做最终复核；
+      preliminary review（2026-11-21）为 hold（P2-1 / P2-2 / P3-1 / P3-2），本批处置后需复评。
 - [ ] 4.4 Alex 自行运行的 dev 实例复验输入与删除；已完成第二轮（删除 / 相邻行消失已消失，
       候选提交后 marker 未恢复），最新 `forceParsing` 版待复验；agent 不启动或操作 Lumir、
       不执行真机验收。

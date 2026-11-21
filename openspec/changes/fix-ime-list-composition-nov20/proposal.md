@@ -8,6 +8,10 @@
 > 节点 1：Alex 报告生产版 Lumir 在中文输入法下于列表标记后输入 `s` 会多出横线，删除后相邻的
 > 「词汇」行消失，并要求「请你直接处理」。本 change 只修复既有「列表内容起点输入的跨层一致性」
 > 与源码保真合同，不新增产品行为。
+> Preliminary review（2026-11-21）：hold，提出 P2-1（接管面超出 L6 列表内容起点）、P2-2
+> （compositionend 同步解析整篇且忽略返回值）、P3-1（主矩阵缺渲染终态断言）、P3-2（恢复链
+> 缺确定性覆盖）。本批已按建议收窄接管面、改为有界目标解析，并补几何 / 恢复测试；独立复评
+> 与合并放行仍待进行。
 
 ## Why
 
@@ -22,23 +26,29 @@ dev 实例的 `editor_ime` 本地日志同时证明当前工作区代码已加�
 额外横线是组合期间列表 marker widget 提前重建，与输入法仍持有的原始 `- ` 同时存在；删除未接管
 则继续破坏相邻行 DOM。组合期冻结落地后，Alex 第二轮 dev 复验确认删除导致的相邻行消失已修复；
 候选提交后 marker 未恢复——WKWebView 在 `insertFromComposition` 后立即结束组合，增量语法树尚未
-覆盖新形成的列表。`compositionend` 因此先完成当前文档解析，再唤醒冻结期跳过的装饰重建；该版
-仍待 Alex 复验。
+覆盖新形成的列表。`compositionend` 因此只把**提交行末**交给有界恢复链（≤5ms 分片解析，
+未完成按 16ms / 100ms 重试，4s 截止），再唤醒冻结期跳过的装饰重建；不把同步解析整篇文档
+当成刷新前提。该版仍待 Alex 复验。
 
 ## What Changes
 
 - 组合中 Backspace 仅在即将删空 marked text 时改走显式 CodeMirror 事务，以 `compositionstart`
   的源码位置为下界；同时接受 Chromium 的 `deleteContentBackward` 与 WKWebView 的
-  `deleteCompositionText`。组合内尚有剩余文本时交回原生 IME，避免候选提交残留。
-- 组合期冻结列表装饰的 DOM 重建，保留组合前形态；compositionend 先补齐当前文档解析，再统一
-  刷新，避免原始 marker 与新 widget 同时出现。文档源码、列表组映射与后台扫描仍随事务更新。
+  `deleteCompositionText`。接管面限定为 L6 列表内容起点（真列表项 / 裸 marker / 段落后
+  `- ` 的 setext 候选，复用 `listLineRender` 与 `markerTextAt` 判定）；普通段落、表格、
+  代码块等非列表位置的组合删除交回原生 IME。组合内尚有剩余文本时同样交回原生 IME。
+- 组合期冻结列表装饰的 DOM 重建，保留组合前形态；`compositionend` 只对提交行末做有界补解析
+  （分片 + 重试 + 截止），解析覆盖后统一刷新，避免原始 marker 与新 widget 同时出现。文档源码、
+  列表组映射与后台扫描仍随事务更新。
 - `history.joinToEvent` 不再把 `input.type.compose.start` 与紧邻的前一笔普通输入并组；一次 undo
   精确回到组合前，后续组合事务仍由 CodeMirror 并成一步。
 - 扩充 `docs/specs/lists.md` L6 与 editor-live-preview requirement，把组合更新、两种删除类型、
   组合期装饰稳定、相邻行 DOM 保真、历史与保存纳入同一不变量。
 - 用真实 Chromium 组合事件覆盖真 bullet / 有序 / 嵌套 / 裸 marker / 段落后 setext 切换；另以
-  合成 beforeinput 覆盖 WKWebView 实测的 `deleteCompositionText`，并断言组合期 marker 数量不增加、
-  提交后才刷新。Alex 的 dev 复现日志用于确认事件路径，不把 Chromium 结果冒充 WKWebView 行为证据。
+  合成 beforeinput 覆盖 WKWebView 实测的 `deleteCompositionText`、非列表位置不接管、组合中
+  timer 到期与取消组合恢复、解析未完成后的最终恢复。主矩阵在提交与 undo/redo 后逐行断言
+  marker 数量、glyph / 序号、计算样式与正文 x；Alex 的 dev 复现日志用于确认事件路径，不把
+  Chromium 结果冒充 WKWebView 行为证据。
 
 ## Non-goals
 

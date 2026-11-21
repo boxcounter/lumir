@@ -52,7 +52,7 @@ import { cellClamp, cellContentEdge } from "./cell-geometry";
 import type { CellClamp } from "./cell-geometry";
 import { listIndentChange } from "./list-indent";
 import type { ListIndentDirection } from "./list-indent";
-import { listHiddenRangeAt } from "./preview/lists";
+import { listContentStartAt, listHiddenRangeAt } from "./preview/lists";
 import { createInvokeAttachmentProvider, codeLanguageOfPath, collectImageRefs, fileClassOfPath, isEditablePath } from "./preview/attachments";
 import type { AttachmentProvider, ImageQuoteHandler, ImageRef } from "./preview/attachments";
 import { bindingHighlight } from "./code-identifiers";
@@ -814,12 +814,15 @@ function traceIme(event: Event, view: EditorView, phase: string, handled = false
   });
 }
 
-/** 组合中 Backspace 只在即将删空 marked text 时改走显式事务；起点处消费事件、不改文档。 */
+/** 组合中 Backspace 只在即将删空 marked text 时改走显式事务；起点处消费事件、不改文档。
+ *  L6 范围收窄：只有列表内容起点（真列表项 / 裸 marker / 段落后 `- ` 的 setext 候选）才接管；
+ *  普通段落、表格、代码块交回原生 IME（P2-1，合同 docs/specs/lists.md L6）。 */
 function absorbCompositionBackspace(event: InputEvent, view: EditorView): boolean {
   if (!COMPOSITION_BACKSPACE_INPUTS.has(event.inputType)) return false;
   const start = compositionStarts.get(view);
   const main = view.state.selection.main;
   if (start === undefined || !main.empty || main.head < start) return false;
+  if (!listContentStartAt(view.state, start)) return false;
   if (main.head === start) {
     event.preventDefault();
     return true;
