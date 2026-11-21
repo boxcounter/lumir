@@ -222,15 +222,36 @@ test("句末英文句号是行文标点，不吞行号后缀（mission harness-n
   const ellipsis = findPathCandidates("见 design.md:69...", fileIndex("design.md"));
   assert.equal(ellipsis[0].line, 69);
   assert.equal(ellipsis[0].text, "design.md:69", "省略号同样只是行文标点");
+
+  // 点号段后接空白 / 中文 / 串尾都是行文收尾；只有后接路径字符才拒（见下一条反例）。
+  const dotSpace = findPathCandidates("见 design.md:69. 完", fileIndex("design.md"));
+  assert.equal(dotSpace[0].line, 69);
+  assert.equal(dotSpace[0].text, "design.md:69");
+
+  const dotsThenCjk = findPathCandidates("见 design.md:69....的", fileIndex("design.md"));
+  assert.equal(dotsThenCjk[0].line, 69, "中文是行文边界，不是路径延续");
+  assert.equal(dotsThenCjk[0].text, "design.md:69");
 });
 
-test("`:` 后缀后的点号只有「点后紧跟数字」才算路径延续", () => {
-  // 反向对照：小数 / 版本号形态（`.5`）仍是路径延续，后缀不成立、可点范围止于路径本身。
-  const decimal = findPathCandidates("版本 a.md:12.5 完", fileIndex("a.md"));
-  assert.equal(decimal.length, 1);
-  assert.equal(decimal[0].line, undefined, "`.5` 是小数 / 版本号的延续，不是句末标点");
-  assert.equal(decimal[0].lineEnd, undefined);
-  assert.equal(decimal[0].text, "a.md");
+test("连续点号段后仍接路径字符 ⇒ 整个后缀不成立（评审 r1 P1 的误放行面）", () => {
+  // 只把「点后紧跟数字」当拒绝条件会误放行 `.foo` / `..5` / `.-3` / `._3` / `./3`：
+  // 它们都是路径 / 版本号的延续，不是句末标点。判据必须是**连续点号段**之后的第一个字符。
+  for (const suffix of [".5", ".foo", "..5", ".-3", "._3", "./3", "...foo", "....5"]) {
+    const single = findPathCandidates(`a.md:12${suffix}`, fileIndex("a.md"));
+    assert.equal(single[0].line, undefined, `single ${suffix}：后缀不成立`);
+    assert.equal(single[0].lineEnd, undefined, `single ${suffix}：不产高亮范围`);
+    assert.equal(single[0].text, "a.md", `single ${suffix}：可点范围止于路径本身`);
+
+    const range = findPathCandidates(`a.md:12-40${suffix}`, fileIndex("a.md"));
+    assert.equal(range[0].line, undefined, `range ${suffix}：后缀不成立`);
+    assert.equal(range[0].lineEnd, undefined, `range ${suffix}：不产高亮范围`);
+    assert.equal(range[0].text, "a.md", `range ${suffix}：可点范围止于路径本身`);
+
+    const column = findPathCandidates(`a.md:12:5${suffix}`, fileIndex("a.md"));
+    assert.equal(column[0].line, undefined, `column ${suffix}：后缀不成立`);
+    assert.equal(column[0].column, undefined, `column ${suffix}：不产列号`);
+    assert.equal(column[0].text, "a.md", `column ${suffix}：可点范围止于路径本身`);
+  }
 
   // 既有拒绝类逐字不变（回归对照）：字母 / 斜杠 / 下划线 / 连字符仍是路径延续。
   for (const text of ["a.md:12x", "a.md:12/5", "a.md:12_3", "a.md:12-3"]) {

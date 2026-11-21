@@ -107,11 +107,19 @@ export function lineSuffixAt(
   //
   // `.` 单独判（句末句号，mission harness-navigation-nov21）：英文行文常写成
   // 「见 design.md:69.」——句号是**行文标点**，不是路径延续，后缀必须成立（否则链接退化成
-  // `design.md`、点击只开到文件首，行号静默丢失）。只有 `.` 后紧跟数字时才是小数 / 版本号
-  // 的延续（`a.md:12.5`），沿用原来的整段拒绝口径。
+  // `design.md`、点击只开到文件首，行号静默丢失）。
+  //
+  // 连续点号段整体判定（评审 r1 P1）：「句末标点」只可能是**串尾或后接行文**的点号段。
+  // 点号段之后若仍是路径延续字符（字母 / 数字 / `_` / `-` / `/`），就是小数 / 版本号 / 路径
+  // 的延续——`.5` / `..5` / `.foo` / `.-3` / `._3` / `./3` 都必须让**整个**后缀不成立；
+  // 只有点号段后不再接路径字符时（`.` / `...` / `. 中文`）才按行文标点放行。
   const trailing = text[at + match[0].length] ?? "";
   if (trailing !== "" && /[A-Za-z0-9_\-/]/.test(trailing)) return { end: at };
-  if (trailing === "." && /\d/.test(text[at + match[0].length + 1] ?? "")) return { end: at };
+  if (trailing === ".") {
+    let afterDots = at + match[0].length;
+    while ((text[afterDots] ?? "") === ".") afterDots += 1;
+    if (/[A-Za-z0-9_\-/]/.test(text[afterDots] ?? "")) return { end: at };
+  }
   const line = Number(match[1]);
   if (!Number.isInteger(line) || line < 1) return { end: at };
   // `:起-止`：`止 < 起` 使**整个**后缀不成立（MUST NOT 回退成只有 `:起`——半吞会让可点范围

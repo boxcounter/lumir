@@ -56,6 +56,7 @@ async function stubHarness(page: Page, assistantText: string): Promise<void> {
       const w = window as unknown as Record<string, any>;
       const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: unknown) => unknown;
       w.__cronOpenListeners = [] as number[];
+      w.__cronRunListeners = [] as number[];
       w.__restored = false;
       w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
         if (cmd === "harness_state") {
@@ -71,15 +72,22 @@ async function stubHarness(page: Page, assistantText: string): Promise<void> {
           w.__restored = true;
           return { session_id: "restored-session", restored_items: 2, messages: [] };
         }
+        if (cmd === "harness_cron_run") return null;
         if (cmd === "harness_list_sessions") return [];
-        if (cmd === "plugin:event|listen" && args !== null && args.event === "cron:open_session") {
-          (w.__cronOpenListeners as number[]).push(args.handler as number);
+        if (cmd === "plugin:event|listen" && args !== null) {
+          if (args.event === "cron:open_session") (w.__cronOpenListeners as number[]).push(args.handler as number);
+          if (args.event === "cron:run") (w.__cronRunListeners as number[]).push(args.handler as number);
         }
         return invoke(cmd, args);
       };
       w.__fireCronOpenSession = (payload: unknown) => {
         for (const id of w.__cronOpenListeners as number[]) {
           w.__TAURI_INTERNALS__.runCallback(id, { event: "cron:open_session", id, payload });
+        }
+      };
+      w.__fireCronRun = (payload: unknown) => {
+        for (const id of w.__cronRunListeners as number[]) {
+          w.__TAURI_INTERNALS__.runCallback(id, { event: "cron:run", id, payload });
         }
       };
     },
@@ -133,8 +141,13 @@ async function scrollDoc(page: Page, top: number): Promise<void> {
 
 async function waitCronBridge(page: Page): Promise<void> {
   await expect
-    .poll(() => page.evaluate(() => (window as unknown as { __cronOpenListeners: number[] }).__cronOpenListeners.length))
-    .toBeGreaterThan(0);
+    .poll(() =>
+      page.evaluate(() => {
+        const w = window as unknown as { __cronOpenListeners: number[]; __cronRunListeners: number[] };
+        return w.__cronOpenListeners.length > 0 && w.__cronRunListeners.length > 0;
+      }),
+    )
+    .toBe(true);
 }
 
 const pathLink = (page: Page, text: string) =>
@@ -161,7 +174,7 @@ async function waitForHighlightCount(page: Page, expected: number): Promise<void
 test("句末句号不吞行号：链接仍是整段 design.md:69，点击落到第 69 行并高亮", async ({ page }) => {
   await openDoc(
     page,
-    "参考 design.md:69. 另见行范围 design.md:69-72，以及小数形态 decimal.md:12.5 不该被当成行号。",
+    "参考 design.md:69. 另见行范围 design.md:69-72. 以及小数形态 decimal.md:12.5 不该被当成行号。",
   );
   await page.locator(".lumir-hp-toggle").click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
@@ -281,4 +294,36 @@ test("显式打开 harness：composer 仍拿焦点（既有行为不被本修复
   await expect(docContent(page)).toBeFocused();
   await page.locator(".lumir-hp-toggle").click();
   await expect(page.locator(".lumir-hp-composer .cm-content")).toBeFocused();
+});
+
+// ---------------------------------------------------------------------------
+// 5. 回归锚点：cron:run 显式发起仍聚焦 composer（评审 r1 P2）
+// ---------------------------------------------------------------------------
+
+test("cron:run 显式发起：composer 仍拿焦点（缺省 focusComposer = true 的回归）", async ({ page }) => {
+  await openDoc(page, "普通回答");
+  await waitCronBridge(page);
+  await docContent(page).click();
+  await expect(docContent(page)).toBeFocused();
+
+  await page.evaluate((root) => {
+    (window as unknown as { __fireCronRun: (payload: unknown) => void }).__fireCronRun({
+      vault: root,
+      session_target: { kind: "interactive" },
+      prompt: "CRON-RUN-FOCUS 显式发起应聚焦输入区。",
+      origin: { run_id: "run-focus-1" },
+      tool_policy: null,
+      budget: null,
+      approval_policy: null,
+      background: false,
+      trigger: "click",
+      session: "new",
+      session_id: null,
+      model: null,
+    });
+  }, ROOT);
+
+  // 显式发起是用户动作：与新开 pane 同一落点，焦点进输入区（design N4）。
+  await expect(page.locator(".lumir-hp-composer .cm-content")).toBeFocused();
+  await expect(page.locator(".lumir-hp-msg-user .lumir-hp-body")).toContainText("CRON-RUN-FOCUS");
 });
