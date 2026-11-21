@@ -201,8 +201,8 @@ test("settle：正文恒定但 AX 里没有 AXTextArea ⇒ 编辑器门不放宽
 // 现场：本机 `lsappinfo info -only pid <asn>` 输出 `pid = 85685 !cgsConnection …`（无引号、等号
 // 两侧有空格），而 `frontmostPid()` 旧实现只认 `"pid"=85685` ⇒ 恒 null。焦点读取为 null 后，
 // 六条真机场景的前台判断与后续注入全线失真，且无任何报错。解析因此提成纯函数单独钉住：
-//   - 正例：当前格式（旧实现必红）、旧格式（回归）、空格 / 引号变体；
-//   - 反例：缺 pid、别的键 / 路径里的数字、非数字、数字后跟字母、多值歧义。
+//   - 正例：当前格式（旧实现必红）、旧格式（回归）、空格 / 引号变体、合法元数据尾字段；
+//   - 反例：缺 pid、别的键 / 路径里的数字、非数字、数字后非法后缀、多值歧义（含同一行多字段）。
 // 只判纯函数，不读真机前台——前台是谁随机器状态变，不能当断言输入。
 
 test("parseLsappinfoPid：本机当前格式 `pid = 85685`（无引号 + 等号两侧空格）⇒ 85685（旧实现必红）", () => {
@@ -233,11 +233,26 @@ test("parseLsappinfoPid：缺失 / 非数字 / 数字后跟字母 ⇒ null（不
   assert.equal(parseLsappinfoPid(undefined), null, "非字符串输入按读不到处理");
 });
 
+test("parseLsappinfoPid：值后必须是行尾或空白——紧贴的 `-` / `\\` / 引号后垃圾 ⇒ null（不取前缀数字）", () => {
+  assert.equal(parseLsappinfoPid("pid = 123-456"), null, "短横线紧贴数字不是元数据分隔");
+  assert.equal(parseLsappinfoPid('pid = 123\\"'), null, "反斜杠 + 引号紧贴数字");
+  assert.equal(parseLsappinfoPid('pid = "123"junk'), null, "带引号的值后紧跟垃圾");
+  assert.equal(parseLsappinfoPid("pid = 123 !cgsConnection !signalled"), 123, "合法元数据以空白分隔，不得一概拒绝");
+  assert.equal(parseLsappinfoPid('pid = "123" !cgsConnection'), 123, "带引号的值同样允许空白后的元数据");
+});
+
 test("parseLsappinfoPid：别的键 / 路径里的数字不得当成 pid", () => {
   assert.equal(parseLsappinfoPid("ppid = 777\npid = 85685"), 85685, "ppid 不是 pid");
   assert.equal(parseLsappinfoPid("bundleID = 42\nbundle path=/tmp/pid=99"), null, "非行首键 / 路径片段不算");
   assert.equal(parseLsappinfoPid("note: pid = 999"), null, "键必须在行首（允许前导空白）");
   assert.equal(parseLsappinfoPid("xpid=1"), null, "行首但键名不是 pid");
+});
+
+test("parseLsappinfoPid：同一行出现多个 pid 字段——不同值 ⇒ null，相同值去重", () => {
+  assert.equal(parseLsappinfoPid("pid = 111 pid = 222"), null, "同一行的两个不同 pid 是歧义读数（旧实现取第一个 111）");
+  assert.equal(parseLsappinfoPid('pid = 111 "pid" = 222'), null, "引号 / 空格变体同样算歧义");
+  assert.equal(parseLsappinfoPid("pid = 111 pid = 111"), 111, "同一值重复出现去重");
+  assert.equal(parseLsappinfoPid("pid = 111 pid = abc"), null, "同行第二个 pid 字段非法 ⇒ 整份读数不可用");
 });
 
 test("parseLsappinfoPid：多值歧义 ⇒ null；同一值重复出现不算歧义", () => {
