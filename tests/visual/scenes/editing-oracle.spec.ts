@@ -442,6 +442,112 @@ test("正文 IME：parse_done 收束后非文档更新不得复用旧 context �
   await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0);
 });
 
+test("正文 IME：>32KB 文档删空后对照解析跨拍推进并撤掉旧 marker（Chromium）", async ({ page }) => {
+  // 32KB 不是正确性边界：目标位置超过它时，对照解析跨 settle 拍继续推进，最终仍按当前
+  // 源码撤掉旧 list marker；不得把旧树判定 build/publish 成结论。
+  const doc = "para\n\n".repeat(7500) + "词汇\n- s";
+  await openBody(page, "oracle.md", doc);
+  await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
+  const probe = await page.locator(".cm-content").evaluate((el, to) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const findLang = () => {
+      const values = (view.state as { values?: unknown[] }).values ?? [];
+      return values.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as any;
+    };
+    const lang = findLang();
+    if (!lang) throw new Error("language state not found");
+    lang.context.updateViewport({ from: 0, to });
+    if (!lang.context.work(3000, to)) throw new Error("full parse did not finish");
+    const oldTree = lang.context.tree;
+    const oldLen = oldTree.length;
+    if (!String(oldTree).includes("BulletList")) throw new Error("baseline tree is not a list");
+    view.dispatch({ changes: { from: to - 1, to }, selection: { anchor: to - 1 } });
+    const live = findLang();
+    live.context.tree = oldTree;
+    live.context.treeLen = oldLen;
+    live.tree = oldTree;
+    const plugin = ((view as { plugins?: { value?: unknown }[] }).plugins ?? [])
+      .map((entry) => entry.value)
+      .find((value) => value && typeof (value as { settleStep?: unknown }).settleStep === "function") as any;
+    if (!plugin) throw new Error("ListLayout plugin not found");
+    const newLen = view.state.doc.length;
+    const done = live.context.isDone(newLen);
+    plugin.settleTo = newLen;
+    plugin.settleStarted = performance.now();
+    plugin.settleStep(view);
+    return { newLen, done, pending: plugin.referenceParse !== null };
+  }, doc.length);
+  expect(probe.newLen).toBe(45_005);
+  expect(probe.newLen).toBeGreaterThan(32 * 1024);
+  expect(probe.done, "旧 context 必须自认已解析到目标行（失败现场形态）").toBe(true);
+  expect(probe.pending, "首拍对照解析未完成时必须保留 settle 目标").toBe(true);
+  await expect.poll(async () => page.locator(".cm-lp-list-marker").count(), { timeout: 20_000 }).toBe(0);
+  await expect.poll(async () => page.locator(".cm-line").last().textContent()).toBe("- ");
+  await expect.poll(async () => page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    return ((view.plugins ?? []).map((entry: { value?: unknown }) => entry.value)
+      .find((value: any) => value && typeof value.settleStep === "function") as any).settleTo;
+  }), { timeout: 20_000 }).toBeNull();
+  const final = await page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const plugin = ((view as { plugins?: { value?: unknown }[] }).plugins ?? [])
+      .map((entry) => entry.value)
+      .find((value) => value && typeof (value as { settleStep?: unknown }).settleStep === "function") as any;
+    return {
+      tree: String(plugin.tree?.toString?.() ?? ""),
+      settleTo: plugin.settleTo,
+      busy: plugin.referenceParse !== null,
+    };
+  });
+  expect(final.tree).toContain("SetextHeading2");
+  expect(final.tree).not.toContain("BulletList");
+  expect(final.settleTo, "对照解析完成后必须收束").toBeNull();
+  expect(final.busy).toBe(false);
+});
+
+test("正文 IME：>32KB 文档的真正空列表项不得被对照解析误删 marker（Chromium）", async ({ page }) => {
+  // 对照：同样的长前缀 + 真正空列表项。对照树仍判 list，marker 必须保留。
+  const doc = "para\n\n".repeat(7500) + "x\n\n- ";
+  await openBody(page, "oracle.md", doc);
+  await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
+  const probe = await page.locator(".cm-content").evaluate((el, to) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const lang = ((view.state as { values?: unknown[] }).values ?? [])
+      .find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as any;
+    if (!lang) throw new Error("language state not found");
+    lang.context.updateViewport({ from: 0, to });
+    if (!lang.context.work(3000, to)) throw new Error("full parse did not finish");
+    const plugin = ((view as { plugins?: { value?: unknown }[] }).plugins ?? [])
+      .map((entry) => entry.value)
+      .find((value) => value && typeof (value as { settleStep?: unknown }).settleStep === "function") as any;
+    if (!plugin) throw new Error("ListLayout plugin not found");
+    plugin.settleTo = to;
+    plugin.settleStarted = performance.now();
+    plugin.settleStep(view);
+    return { pending: plugin.referenceParse !== null };
+  }, doc.length);
+  expect(probe.pending, "首拍对照解析未完成时必须保留 settle 目标").toBe(true);
+  await expect.poll(async () => page.locator(".cm-lp-list-marker").count(), { timeout: 20_000 }).toBe(1);
+  await expect.poll(async () => page.locator(".cm-line").last().textContent()).toBe("–");
+  await expect.poll(async () => page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    return ((view.plugins ?? []).map((entry: { value?: unknown }) => entry.value)
+      .find((value: any) => value && typeof value.settleStep === "function") as any).settleTo;
+  }), { timeout: 20_000 }).toBeNull();
+  const final = await page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const plugin = ((view as { plugins?: { value?: unknown }[] }).plugins ?? [])
+      .map((entry) => entry.value)
+      .find((value) => value && typeof (value as { settleStep?: unknown }).settleStep === "function") as any;
+    return { tree: String(plugin.tree?.toString?.() ?? ""), settleTo: plugin.settleTo, busy: plugin.referenceParse !== null };
+  });
+  expect(final.tree).toContain("BulletList");
+  expect(final.settleTo).toBeNull();
+  expect(final.busy).toBe(false);
+});
+
 test("IME 组合结束前已有 pending DOM 候选：候选必须进入文档且 marker 恢复（Chromium）", async ({ page }) => {
   const doc = "词汇\n- ";
   await openBody(page, "oracle.md", doc);

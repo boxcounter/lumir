@@ -463,12 +463,11 @@ const COMPOSITION_SETTLE = {
   lowFreqRetryMs: 250,
   /** compositionend 派发时组合标志尚未归位的有界重试次数（8ms 间隔）。 */
   composingRetries: 25,
-  /** 源码形态与旧树判定冲突时，按当前 doc 重建对照树的预算。 */
+  /** 源码形态与旧树判定冲突时，每拍推进对照解析的工作预算。
+   *  这是**工作预算，不是硬耗时上限**：`advance()` 只在返回后才检查 deadline，单个不可
+   *  抢占的解析块可能超出该数字（与 stepMs 同口径）。整份对照解析跨多拍推进，不设长度上限。 */
   referenceParseMs: 8,
 } as const;
-
-/** 对照解析只覆盖目标行之前的 ≤32KB 源码：超过即放弃，保留旧树判定。 */
-const REFERENCE_SOURCE_LIMIT = 32 * 1024;
 
 /** dev-only 诊断：只记状态 / 计数 / 位置，不含正文、路径。gating 与 editor_ime 一致。 */
 function settleTraceEnabled(): boolean {
@@ -560,30 +559,20 @@ class DocStringInput {
   read(from: number, to: number): string { return this.doc.sliceString(from, to); }
 }
 
-/** 源码形态不再期望 list、现有树却仍判 list 时，按当前 doc 重建一份对照树。
+/** 跨拍推进的独立对照解析（按当前 doc 从零解析到目标行末）。
  *
  *  为什么需要从零解析：`reparseParseContext` / `ensureSyntaxTree` 都沿 parse context 走，
  *  而 context 自认已解析到目标位置时 `work()` 不会重解析——旧 list 树会原样返回（WKWebView
- *  删空残留的现场）。这里只做一次有界的独立解析，不读 context 状态。
- *  有界：目标位置超过 32KB 或超过 referenceParseMs 即返回 null，调用方保留原树判定。
- *  不按文本形态一刀切：空列表项仍由树决定，只有对照树也不判 list 才移除 marker。 */
-function referenceTreeForSource(state: EditorState, to: number): Tree | null {
-  if (to > REFERENCE_SOURCE_LIMIT) return null;
-  const parser = state.facet(language)?.parser;
-  if (!parser) return null;
-  let parse: ReturnType<typeof parser.startParse>;
-  try {
-    parse = parser.startParse(new DocStringInput(state.doc), []);
-    parse.stopAt(to);
-  } catch {
-    return null;
-  }
-  const deadline = performance.now() + COMPOSITION_SETTLE.referenceParseMs;
-  for (;;) {
-    const tree = parse.advance();
-    if (tree) return tree;
-    if (performance.now() > deadline) return null;
-  }
+ *  删空残留的现场）。这里不读 context 状态，只按当前 doc 解析。
+ *
+ *  为什么跨拍：对照解析的长度只受文档本身限制，不设 32KB 之类的正确性边界。每拍只推进
+ *  `referenceParseMs` 的工作预算（`advance()` 不可抢占，单块可能超出，见常量注释）；未完成
+ *  时返回 null，调用方保留 settle 目标并与分片/低频恢复一起继续推进。不按文本形态一刀切：
+ *  空列表项仍由树决定，只有对照树也不判 list 才移除 marker。 */
+interface ReferenceParse {
+  readonly doc: Text;
+  readonly to: number;
+  readonly parse: { advance(): Tree | null };
 }
 
 class ListLayout {
@@ -641,6 +630,11 @@ class ListLayout {
   /** 恢复链拿到的 context tree（可能比 state 快照新）；同一 doc 的非 doc 更新沿用它 build。 */
   private settledTree: Tree | null = null;
   private settledTreeDoc: Text | null = null;
+  /** 跨拍推进的独立对照解析（doc / 目标位置变化即重建）。 */
+  private referenceParse: ReferenceParse | null = null;
+  /** 对照解析无法建立 / 推进（无 parser、parser 抛错）：这是异常路径，不是长度边界；
+   *  置位后退回原树判定并允许收束，避免 settle 链空转。 */
+  private referenceFailed = false;
 
   private view: EditorView;
 
@@ -656,6 +650,7 @@ class ListLayout {
 
   destroy() {
     this.destroyed = true;
+    this.referenceParse = null;
     clearTimeout(this.timer);
     clearTimeout(this.settleTimer);
     this.observer.disconnect();
@@ -710,6 +705,8 @@ class ListLayout {
       if (update.docChanged) {
         this.settledTree = null;
         this.settledTreeDoc = null;
+        this.referenceParse = null;
+        this.referenceFailed = false;
       }
     }
     // 新组合开始或组合后的普通编辑会改变目标行；旧恢复链就此收束，避免拿过期行末
@@ -796,6 +793,7 @@ class ListLayout {
   private cancelSettle(): void {
     if (this.settleTo !== null) traceSettle(this.view, "settle_cancel", this.settleSnapshot(this.view));
     this.settleTo = null;
+    this.referenceParse = null;
     if (this.settleTimer !== undefined) {
       clearTimeout(this.settleTimer);
       this.settleTimer = undefined;
@@ -812,21 +810,92 @@ class ListLayout {
     view.dispatch({ effects: metadataReady.of(null) });
   }
 
-  /** 收束用的树：源码不再期望 list 时，旧树（含自认已解析完的 context）判 list 不足以
-   *  决定 marker 去留。先有界推进 context，再按当前 doc 重建对照树；对照树仍判 list 则
-   *  尊重树（真·空列表项）。无冲突时原样返回，不引入额外解析成本。 */
-  private treeForSource(view: EditorView, to: number, expectsList: boolean, candidate: Tree): Tree {
-    if (expectsList || readTarget(view, candidate, to).kind !== "list") return candidate;
-    const advanced = reparseParseContext(view, to);
-    if (advanced && readTarget(view, advanced, to).kind !== "list") return advanced;
-    return referenceTreeForSource(view.state, to) ?? advanced ?? candidate;
+  /** 收束用的树与冲突状态。`unresolved` = 源码已不期望 list，但现有树仍判 list，且对照
+   *  解析尚未覆盖到目标行——调用方 MUST NOT 收束，须保留 settle 目标继续推进（长文档不设
+   *  正确性边界；32KB 之类的长度上限会把旧树判定写回并永久残留 marker）。 */
+  private treeForSource(
+    view: EditorView,
+    to: number,
+    expectsList: boolean,
+    candidate: Tree,
+  ): { tree: Tree; unresolved: boolean } {
+    if (expectsList || readTarget(view, candidate, to).kind !== "list") return { tree: candidate, unresolved: false };
+    // 对照解析已在推进时不再重复推进 context：每拍 5ms 的 work 对旧树没有帮助。
+    const pending = this.referenceParse !== null && this.referenceParse.doc === view.state.doc && this.referenceParse.to === to;
+    const advanced = pending ? null : reparseParseContext(view, to);
+    if (advanced && readTarget(view, advanced, to).kind !== "list") return { tree: advanced, unresolved: false };
+    const reference = this.advanceReferenceTree(view, to);
+    if (reference) return { tree: reference, unresolved: false };
+    // 解析器无法建立 / 推进是异常路径（不是长度边界）：退回原树判定，不空转 settle 链。
+    if (this.referenceFailed) return { tree: advanced ?? candidate, unresolved: false };
+    return { tree: advanced ?? candidate, unresolved: true };
+  }
+
+  /** 推进（必要时新建）对照解析，最多花 `referenceParseMs` 工作预算；未完成返回 null。
+   *  `parse.advance()` 只在返回后检查 deadline——预算是工作上限而非硬耗时上限，单个不可
+   *  抢占的解析块可能超出。整份对照解析跨多拍推进，文档/目标位置变化即重建。 */
+  private advanceReferenceTree(view: EditorView, to: number): Tree | null {
+    if (this.referenceFailed) return null;
+    let state = this.referenceParse;
+    if (!state || state.doc !== view.state.doc || state.to !== to) {
+      const parser = view.state.facet(language)?.parser;
+      if (!parser) {
+        this.referenceFailed = true;
+        return null;
+      }
+      try {
+        const parse = parser.startParse(new DocStringInput(view.state.doc), []);
+        parse.stopAt(to);
+        state = { doc: view.state.doc, to, parse };
+        this.referenceParse = state;
+      } catch {
+        this.referenceFailed = true;
+        return null;
+      }
+    }
+    if (!state) return null;
+    const deadline = performance.now() + COMPOSITION_SETTLE.referenceParseMs;
+    for (;;) {
+      try {
+        const tree = state.parse.advance();
+        if (tree) {
+          this.referenceParse = null;
+          return tree;
+        }
+      } catch {
+        this.referenceParse = null;
+        this.referenceFailed = true;
+        return null;
+      }
+      if (performance.now() > deadline) return null;
+    }
+  }
+
+  /** settle 链的重试间隔（与分片解析分支同一阶梯）。 */
+  private settleRetryDelay(): number {
+    const elapsed = performance.now() - this.settleStarted;
+    return elapsed < COMPOSITION_SETTLE.slowAfterMs
+      ? COMPOSITION_SETTLE.retryMs
+      : elapsed < COMPOSITION_SETTLE.lowFreqAfterMs
+        ? COMPOSITION_SETTLE.slowRetryMs
+        : COMPOSITION_SETTLE.lowFreqRetryMs;
   }
 
   /** 旧树只在「最终判定与 state 树判定不一致」时保留：这是 context 领先 / state 快照落后
    *  的真实分歧，后续非文档更新（metadata / selection）需要沿用它。两者一致时清除——
-   *  否则一次收束留下的旧树会压过之后同步好的 state 树（P2-2 的复用通道）。 */
+   *  否则一次收束留下的旧树会压过之后同步好的 state 树（P2-2 的复用通道）。
+   *
+   *  state 字段树未解析到目标行（`tree.length < to`）时，它对目标行的判定是「未知」而不是
+   *  结论——长文档删空后 state 树常停在中途，若把它的 `none` 当成与对照树一致，就会在
+   *  `publishSettled` 的更新里丢掉刚算出的对照树，旧 marker 再次留下。此时无条件保留。 */
   private retainSettledTree(view: EditorView, to: number): void {
-    const stateRead = readTarget(view, syntaxTree(view.state), to);
+    const stateTree = syntaxTree(view.state);
+    if (stateTree.length < to) {
+      this.settledTree = this.tree;
+      this.settledTreeDoc = view.state.doc;
+      return;
+    }
+    const stateRead = readTarget(view, stateTree, to);
     const settledRead = readTarget(view, this.tree, to);
     if (stateRead.kind === settledRead.kind) {
       this.settledTree = null;
@@ -859,7 +928,15 @@ class ListLayout {
       // marker 恢复的前置。
       const contextTree = ensureSyntaxTree(view.state, to, 0);
       const expectsList = targetExpectsList(view, to);
-      this.tree = this.treeForSource(view, to, expectsList, contextTree ?? syntaxTree(view.state));
+      const resolved = this.treeForSource(view, to, expectsList, contextTree ?? syntaxTree(view.state));
+      this.tree = resolved.tree;
+      if (resolved.unresolved) {
+        // 旧树仍判 list 而源码已不期望 list：对照解析未覆盖到目标行，不得按旧树 build
+        // 并 publishSettled 收束（那会把旧判定写回并永久残留 marker）。
+        traceSettle(view, "settle_wait_reference", this.settleSnapshot(view));
+        this.settleTimer = setTimeout(() => this.settleStep(view), this.settleRetryDelay());
+        return;
+      }
       const read = readTarget(view, this.tree, to);
       this.build(view);
       traceSettle(view, "settle_build", this.settleSnapshot(view, { via: contextTree ? "available_context" : "available_state" }));
@@ -914,7 +991,13 @@ class ListLayout {
       // 同 available 分支：优先用 context tree，state 快照只作后续维护。
       const contextTree = ensureSyntaxTree(view.state, to, 0) ?? this.tree;
       const expectsList = targetExpectsList(view, to);
-      this.tree = this.treeForSource(view, to, expectsList, contextTree);
+      const resolved = this.treeForSource(view, to, expectsList, contextTree);
+      this.tree = resolved.tree;
+      if (resolved.unresolved) {
+        traceSettle(view, "settle_wait_reference", this.settleSnapshot(view));
+        this.settleTimer = setTimeout(() => this.settleStep(view), this.settleRetryDelay());
+        return;
+      }
       const read = readTarget(view, this.tree, to);
       this.build(view);
       traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "parse_done_context" }));
@@ -946,12 +1029,7 @@ class ListLayout {
     }
     // 4s 后转低频恢复而不是取消：解析器可能被中断，目标必须保留到覆盖提交行为止；
     // 每次仍只推进一个有界分片，destroy / 新组合 / 普通编辑会收束本链。
-    const delay = elapsed < COMPOSITION_SETTLE.slowAfterMs
-      ? COMPOSITION_SETTLE.retryMs
-      : elapsed < COMPOSITION_SETTLE.lowFreqAfterMs
-        ? COMPOSITION_SETTLE.slowRetryMs
-        : COMPOSITION_SETTLE.lowFreqRetryMs;
-    this.settleTimer = setTimeout(() => this.settleStep(view), delay);
+    this.settleTimer = setTimeout(() => this.settleStep(view), this.settleRetryDelay());
   }
 
   private schedule() {
