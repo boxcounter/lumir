@@ -55,8 +55,8 @@ Alex 复验。
   合成 beforeinput 覆盖 WKWebView 实测的 `deleteCompositionText`、非列表位置不接管、组合中
   timer 到期与取消组合恢复、pending DOM 候选 flush、4s 截止后的低频恢复、解析未完成后的最终
   恢复。主矩阵在提交与 undo/redo 后逐行断言 marker 数量、glyph / 序号、计算样式与正文 x，
-  真列表目标行提交前 / 后逐项比较；Alex 的 dev 复现日志用于确认事件路径，不把 Chromium 结果
-  冒充 WKWebView 行为证据。
+  真列表目标行提交前 / 后逐项比较，setext 与同文档同字体顶层参考 bullet 逐项数值比较；
+  Alex 的 dev 复现日志用于确认事件路径，不把 Chromium 结果冒充 WKWebView 行为证据。
 
 ## Non-goals
 

@@ -171,7 +171,9 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
    `tests/visual/scenes/editing-oracle.spec.ts` 另用 CDP `Input.imeSetComposition` 驱动真引擎组合，
    对真 bullet / 有序 / 嵌套 / 裸 marker / 段落后 setext 切换逐项执行「首字符 → 删空 → 起点再退格
    → 候选提交 → 保存 → 一次撤销」，并断言相邻行 DOM 不清空；主矩阵在提交与 undo/redo 稳定后
-   逐行比较 marker 数量、glyph / 序号、计算样式与正文 x。另以合成 beforeinput 覆盖 WKWebView
+   逐行比较 marker 数量、glyph / 序号、计算样式与正文 x，真列表目标行提交前后逐项比较，
+   setext 新建列表与同文档同字体顶层参考 bullet 逐项数值比较。另以合成 beforeinput 覆盖
+   WKWebView
    实测的 `deleteCompositionText`、非列表位置不接管、组合中 timer 到期的冻结、取消组合恢复，
    以及 1MB+ 文档解析未完成时的最终恢复（记录同步切片与总恢复耗时）。判定本体
    （`listContentStartAt`）由 `tests/unit/list-content-start.test.ts` 用真 lezer 解析器覆盖

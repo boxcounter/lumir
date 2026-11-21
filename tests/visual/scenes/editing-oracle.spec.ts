@@ -343,11 +343,11 @@ test("IME 非末项组合输入：冻结期间后续 marker 随源码映射，�
 });
 
 const IME_LIST_CASES = [
-  { name: "段落后 - 的 setext / 列表切换", doc: "词汇\n- ", lines: ["词汇", "- "], marker: "–", compareTarget: "setext" },
-  { name: "真 bullet 空项", doc: "- ", lines: null, marker: "–", compareTarget: "before" },
-  { name: "真有序空项", doc: "1. ", lines: null, marker: "1.", compareTarget: "before" },
-  { name: "嵌套空项", doc: "- parent\n  - ", lines: null, marker: "◦", compareTarget: "before" },
-  { name: "非 setext 裸 marker", doc: "para\n+ ", lines: null, marker: "–", compareTarget: "before" },
+  { name: "段落后 - 的 setext / 列表切换", doc: "- ref\n\n词汇\n- ", lines: null, marker: "–", compareTarget: "setext", reference: 0 },
+  { name: "真 bullet 空项", doc: "- ", lines: null, marker: "–", compareTarget: "before", reference: null },
+  { name: "真有序空项", doc: "1. ", lines: null, marker: "1.", compareTarget: "before", reference: null },
+  { name: "嵌套空项", doc: "- parent\n  - ", lines: null, marker: "◦", compareTarget: "before", reference: null },
+  { name: "非 setext 裸 marker", doc: "para\n+ ", lines: null, marker: "–", compareTarget: "before", reference: null },
 ] as const;
 
 for (const fixture of IME_LIST_CASES) {
@@ -390,7 +390,10 @@ for (const fixture of IME_LIST_CASES) {
       atCompositionStart: { doc, anchor: doc.length, head: doc.length },
     });
     expect(lines).toHaveLength(docLines.length);
-    expect(lines.every((line) => line.length > 0), "组合删除不得清空相邻行").toBe(true);
+    // 组合删除不得清空相邻的非空行；源码里的空行仍应为空（setext fixture 有一个分隔空行）。
+    const sourceNonEmpty = docLines.map((line) => line.length > 0);
+    expect(lines.filter((_, index) => sourceNonEmpty[index]).every((line) => line.length > 0), "组合删除不得清空非空行").toBe(true);
+    expect(lines.filter((_, index) => !sourceNonEmpty[index])).toEqual(docLines.filter((line) => line.length === 0));
     if (fixture.lines !== null) expect(lines).toEqual(fixture.lines);
 
     await compose("s👨‍👩‍👧");
@@ -413,18 +416,24 @@ for (const fixture of IME_LIST_CASES) {
       // bodyX 必须逐项与组合前相同（只比较几何，文本随提交变化）。
       expect(renderGeometry([after[targetIndex]])).toEqual(renderGeometry([before[targetIndex]]));
     } else {
-      // setext 候选在组合前按标题语义没有 marker；提交后是顶层 bullet，按显式期望快照比较。
-      expect(renderGeometry([after[targetIndex]])).toEqual([{
+      // setext 候选在组合前按标题语义没有 marker；提交后是顶层 bullet。与同文档、同字体的
+      // 顶层真 bullet（reference 行）逐项比较数值几何——padding / bodyX 不得漂移。
+      expect(fixture.reference).not.toBeNull();
+      const reference = after[fixture.reference!];
+      expect(reference.markerCount).toBe(1);
+      expect(reference.markerText).toBe(fixture.marker);
+      expect(reference.linePadding).not.toBe("0px");
+      expect(reference.bodyX).toBeGreaterThan(reference.lineLeft);
+      expect(after[targetIndex]).toMatchObject({
         markerCount: 1,
-        markerText: "–",
-        display: "inline-flex",
-        fontSize: "13.5px",
-        color: "rgb(169, 167, 155)",
-        linePadding: expect.stringMatching(/^[0-9.]+px$/),
-        lineLeft: before[targetIndex].lineLeft,
-        bodyX: expect.any(Number),
-      }]);
-      expect(after[targetIndex].bodyX).toBeGreaterThan(after[targetIndex].lineLeft);
+        markerText: reference.markerText,
+        display: reference.display,
+        fontSize: reference.fontSize,
+        color: reference.color,
+        linePadding: reference.linePadding,
+        lineLeft: reference.lineLeft,
+        bodyX: reference.bodyX,
+      });
     }
     // 非目标行（相邻段落 / 父项）的几何与样式逐项不变——文档对但渲染漂移会在这里红。
     for (let index = 0; index < after.length; index += 1) {

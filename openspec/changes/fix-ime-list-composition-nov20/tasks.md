@@ -37,7 +37,8 @@
       每格验证首字符、删空、组合起点 no-op、家庭 emoji 整簇删除、候选提交、精确保存与一次撤销，
       且相邻行 DOM 不清空；提交与 undo/redo 稳定后逐行比较 marker 数量、glyph / 序号、计算样式
       与正文 x；真列表目标行提交后与组合前逐项比较 padding / fontSize / color / bodyX，setext
-      用显式期望快照；历史边界用例撤销 joinToEvent 防线后必红（本分支实测：同一用例在 undo
+      与同文档同字体顶层参考 bullet 逐项数值比较（不保留任意 px / 任意数字通配）；历史边界用例
+      撤销 joinToEvent 防线后必红（本分支实测：同一用例在 undo
       断言判红），恢复后绿。
 - [x] 3.2 新增 WKWebView `deleteCompositionText` 合同与组合期装饰冻结用例：删空显式事务、
       起点 no-op、组合中 marker 数量不增加、提交后刷新；Chromium 构造器归一 inputType 的
