@@ -42,3 +42,10 @@
 - [x] 3.6 P3-2：delta 的历史引用改指 `openspec/changes/archive/2026-09-28-enter-auto-indent/`
       的 `proposal.md` D1 与 `design.md` §1 / §1.3 / §4，不再指向本 change 不存在的制品
 - [x] 3.7 新判据对旧实现（97edc72d）反向验证为红：6 组全红，恢复后 37/37 绿
+
+## 4. review r2 文字收口（2026-11-21）
+
+- [x] 4.1 P2-1：delta 的多光标条款收窄到「md 的普通段落 / 代码块换行回落」，明确列表 / 引用
+      续行与裸 marker 行的混合多光标不在本 change 内（相关实现未改）
+- [x] 4.2 P3-1：`enterMarkdownNewline` 的理由改为真实归因——上游本身逐 range 取缩进，本地
+      `changeByRange` 是因为调用方需要在「散文零缩进」与「代码块行首缩进」之间按 range 选模式

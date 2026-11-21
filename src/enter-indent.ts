@@ -109,11 +109,11 @@ export function enterWithAutoIndent(
  *  整段空白之前，空白原样留在下一行行首——不拆开空白、不产生只含空白的行。区别只在「新行
  *  是否带缩进」：散文为空串。
  *
- *  为什么整段在这里重写而不是调 `insertNewlineAndIndent`：那条命令按**主光标**取一次缩进
- *  上下文、对全部 range 应用同一种模式，混合多光标里普通段落与代码行无法各按自己的上下文
- *  换行（review r1 P2-3）。这里逐 range 走同一份 `state.changeByRange`；缩进取值仍交给
- *  编辑器内核的缩进服务（`getIndentation`，取不到时按上游口径回落到行首空白），md 没有子
- *  语言，围栏内容取到的恒是行首空白。
+ *  为什么整段在这里而不是调 `insertNewlineAndIndent`：上游命令本身逐 range 取缩进
+ *  （`getIndentation`），但它只有「自动缩进」一种模式；这里要按 range 在「散文零缩进」与
+ *  「代码块沿用行首空白」之间选模式（review r1 P2-3），所以由本函数统一走一次
+ *  `state.changeByRange` 分派。缩进取值仍交给编辑器内核的缩进服务（`getIndentation`，取不到
+ *  时按上游口径回落到行首空白），md 没有子语言，围栏内容取到的恒是行首空白。
  *
  *  与上游的两个已知差异，都是有意的：
  *  1. 上游的行首空白归一化用**绝对位**切 `line.text`（`line.text.slice(0, from)`），非首行
