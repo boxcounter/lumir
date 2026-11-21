@@ -109,6 +109,7 @@ const docContent = (page: Page) => page.locator('.editor-pane:not(:has(.lumir-ha
 function docFacts(page: Page): Promise<{ inDoc: boolean; inHarness: boolean; line: number; scrollTop: number }> {
   return page.evaluate(() => {
     const host = document.querySelector('.editor-pane:not(:has(.lumir-harness)) .cm-content') as unknown as {
+      contains(other: Node | null): boolean;
       cmTile: {
         root: {
           view: {
