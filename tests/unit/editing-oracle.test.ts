@@ -143,6 +143,44 @@ test("模型自检：裸 marker 行 Backspace 单次删标记；非裸上下文�
   assert.equal(real.doc, "- a\n- ", "模型不接管时必须逐字节不变");
 });
 
+/** 生产 Enter 的最小驱动（与主体对拍装置同形：真 state + 假 view）。 */
+function productionEnter(doc: string, pos: number) {
+  const state = completeTree(EditorState.create({ doc, extensions: MD, selection: EditorSelection.cursor(pos) }));
+  let next = state;
+  const handled = enterWithAutoIndent(
+    { state, dispatch: (tr: { state: EditorState }) => { next = tr.state; } } as unknown as EditorView,
+    "md",
+    true,
+  );
+  return { handled, doc: next.doc.toString(), anchor: next.selection.main.anchor, head: next.selection.main.head };
+}
+
+test("普通 Enter 的回落与独立模型一致：行首空白内 / 末端 / 行尾空白 / 文本中（P3-1）", () => {
+  // 生成器不产出空格（见模型里 BODY_ALPHABET 的注释），这条确定性对拍补上空白形态；
+  // 模型合同：新行不复制行首空白，行首 / 行首空白内归一化到空白之前。
+  const cases: Array<[doc: string, pos: number]> = [
+    ["  prose", 0],
+    ["  prose", 1],
+    ["  prose", 2],
+    ["  prose", 7],
+    ["alpha\n  prose", 8],
+    ["foo   ", 3],
+    ["plain", 2],
+  ];
+  for (const [doc, pos] of cases) {
+    const model = new BodyOracle(doc, pos);
+    model.enter();
+    const expected = model.reading();
+    const actual = productionEnter(doc, pos);
+    assert.equal(actual.handled, true, `doc=${JSON.stringify(doc)} pos=${pos}：生产 Enter 未接管`);
+    assert.deepEqual(
+      { doc: actual.doc, anchor: actual.anchor, head: actual.head },
+      { doc: expected.doc, anchor: expected.anchor, head: expected.head },
+      `doc=${JSON.stringify(doc)} pos=${pos}：生产与独立模型不一致`,
+    );
+  }
+});
+
 test("模型自检：composer 组合中删除只吃 marked 区；取消全等；提交恰好一次且可一次撤销", () => {
   const model = new ComposerOracle({ text: "问题", caret: 2, cards: ["c1"] });
   model.compositionStart();

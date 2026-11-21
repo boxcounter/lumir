@@ -91,11 +91,15 @@ export interface ListMarkerText {
   readonly number: number | null;
   /** 有序：分隔符 `.` / `)`；无序：空串。 */
   readonly delimiter: string;
-  /** 引用前缀 + 行首缩进的原文（续行时原样复用）。 */
-  readonly prefix: string;
+  /** 引用前缀：行首连续的 `>` 与其后至多一个空白（逐层）。行结构，退出 / 续行恒保留。 */
+  readonly quote: string;
+  /** 行首缩进：引用前缀之后、marker 之前的空白。退出时随 marker 删去（纯空白不是结构）；
+   *  续行按原文复用（续行落在同一结构里，缩进有意义）。 */
+  readonly indent: string;
 }
 
-const BARE_MARKER_RE = /^((?:>[ \t]*)*)([ \t]*)((\d{1,9})([.)])|([-+*]))([ \t]+)(.*)$/;
+/** 引用前缀 + 行首缩进（**行首前缀**的分段：`quote` 是行结构，`indent` 是空白）。 */
+const BARE_MARKER_RE = /^((?:>[ \t]?)*)([ \t]*)((\d{1,9})([.)])|([-+*]))([ \t]+)(.*)$/;
 
 /** 从任意文本起点解析「行首列表 marker」：可选引用前缀 + 行首缩进 + 一个合法列表标记 +
  *  其后空白。`from` 是文本在文档里的起点（行首时 = `line.from`）。纯文本形态级：不读语法树，
@@ -103,8 +107,9 @@ const BARE_MARKER_RE = /^((?:>[ \t]*)*)([ \t]*)((\d{1,9})([.)])|([-+*]))([ \t]+)
 export function markerTextAt(text: string, from = 0): ListMarkerText | null {
   const m = BARE_MARKER_RE.exec(text);
   if (!m) return null;
-  const prefix = m[1] + m[2];
-  const markerFrom = from + prefix.length;
+  const quote = m[1];
+  const indent = m[2];
+  const markerFrom = from + quote.length + indent.length;
   const markerTo = markerFrom + m[3].length;
   const ordered = m[4] !== undefined;
   return {
@@ -116,7 +121,8 @@ export function markerTextAt(text: string, from = 0): ListMarkerText | null {
     ordered,
     number: ordered ? Number(m[4]) : null,
     delimiter: ordered ? m[5] : "",
-    prefix,
+    quote,
+    indent,
   };
 }
 

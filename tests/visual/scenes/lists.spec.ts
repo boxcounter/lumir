@@ -584,3 +584,64 @@ for (const fixture of listInputCases) {
     await expect.poll(() => listInputRendering(page, positions)).toEqual(beforeRendering);
   });
 }
+
+// ---------------------------------------------------------------------------
+// 段首 marker 后 Enter：下一行文本左缘 = 顶层段落左缘（Alex 2026-11-21 现场）
+// ---------------------------------------------------------------------------
+// 修复前：`alpha\n  + ` 的空项退出留 `  `、`alpha\n  - `（setext 下线）的回落照抄 `  `
+// ⇒ 在新行键入的字符落在普通段落左边 + 两个空格，而不是顶层段落左缘。
+// 对照（MUST NOT 被本修复改动）：`- a\n  text` 的项内段落续行、`alpha\n  * a` 的真列表项、
+// 代码块与引用——它们的缩进是结构，新行文本落点照旧在各自结构列上。
+
+const INDENT_PARAGRAPH = 'ordinary paragraph';
+
+/** 顶层段落的文本左缘基线（同一编辑器宽度，跨用例可比）。 */
+async function paragraphLeft(page: Page): Promise<number> {
+  await openBare(page, `${INDENT_PARAGRAPH}\n\nsecond paragraph`);
+  const x = await textX(page, INDENT_PARAGRAPH);
+  expect(x, '顶层段落的文本左缘必须取到真值').toBeGreaterThan(0);
+  return x;
+}
+
+/** 在 `before` 的 `needle` 之后放光标、按 Enter、键入见证字符，返回见证字符的文本左缘 x。 */
+async function enterThenType(page: Page, before: string, needle: string, witness: string): Promise<number> {
+  await openBare(page, before);
+  const at = before.indexOf(needle);
+  expect(at, `fixture 里找不到 ${JSON.stringify(needle)}（判据会落空）`).toBeGreaterThanOrEqual(0);
+  await setListContentCursor(page, at + needle.length);
+  await page.keyboard.press('Enter');
+  await page.keyboard.type(witness);
+  return textX(page, witness);
+}
+
+test('段首 marker 后 Enter：下一行按顶层段落渲染（第 7/12 行）', async ({ page }) => {
+  const baseline = await paragraphLeft(page);
+
+  const bareEmpty = await enterThenType(page, `alpha\n  + \n\n${INDENT_PARAGRAPH}`, '+ ', 'zzindentbare');
+  expect(bareEmpty, '裸空项退出后的新行文本必须落到顶层段落左缘').toBeGreaterThan(0);
+  expect(Math.abs(bareEmpty - baseline), '第 7 行：新行 MUST 按顶层段落渲染').toBeLessThanOrEqual(1);
+
+  const setext = await enterThenType(page, `alpha\n  - \n\n${INDENT_PARAGRAPH}`, '- ', 'zzindentsetext');
+  expect(setext, 'setext 下线后的新行文本必须落到顶层段落左缘').toBeGreaterThan(0);
+  expect(Math.abs(setext - baseline), '第 12 行：回落 MUST NOT 照抄行首空白').toBeLessThanOrEqual(1);
+
+  const prose = await enterThenType(page, `  alpha\n\n${INDENT_PARAGRAPH}`, 'alpha', 'zzindentprose');
+  expect(prose, '散文新行文本必须取到真值').toBeGreaterThan(0);
+  expect(Math.abs(prose - baseline), '散文行前导空白 MUST NOT 复制给新行').toBeLessThanOrEqual(1);
+});
+
+test('对照：项内续行 / 真列表 / 代码块 / 引用的缩进不受本修复影响', async ({ page }) => {
+  const baseline = await paragraphLeft(page);
+
+  const continuation = await enterThenType(page, `- a\n  text\n\n${INDENT_PARAGRAPH}`, 'text', 'zzcontinuation');
+  expect(continuation, '项内段落续行仍落在项正文列（上游结构缩进）').toBeGreaterThan(baseline + 4);
+
+  const realList = await enterThenType(page, `alpha\n  * a\n\n${INDENT_PARAGRAPH}`, '* a', 'zzreallist');
+  expect(realList, '真列表项的续行仍落在项正文列').toBeGreaterThan(baseline + 4);
+
+  const fence = await enterThenType(page, '```js\n  beta();\n```\n\n' + INDENT_PARAGRAPH, 'beta();', 'zzfence');
+  expect(fence, '围栏内沿用块内行首空白').toBeGreaterThan(baseline + 4);
+
+  const quote = await enterThenType(page, `> quoted\n\n${INDENT_PARAGRAPH}`, 'quoted', 'zzquote');
+  expect(quote, '引用续行保留 `> ` 前缀，正文在引用内容列').toBeGreaterThan(baseline + 4);
+});

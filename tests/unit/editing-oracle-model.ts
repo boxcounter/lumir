@@ -381,18 +381,32 @@ export class BodyOracle {
     this.replace(line.from - 1, line.from, "");
   }
 
-  /** 当前行行首的空白（自动缩进的回落口径：`insertNewlineAndIndent` 在 md 无语法缩进规则时
-   *  沿用当前行行首空白）。 */
-  private lineIndent(pos: number): string {
-    const line = lineSpanAt(this.doc, pos);
-    const match = /^[ \t]*/.exec(this.doc.slice(line.from, line.to));
-    return match === null ? "" : match[0];
+  /** 非列表行 / setext 邻接行的普通换行（生产与文档的同一合同）：
+   *  - 不把行首空白复制给新行（散文里它不是结构）；
+   *  - 空光标在行首 / 行首空白内时，换行归一到整段空白之前：被下移的内容行保留自己的
+   *    行首空白，新行为空，光标落在内容行行首空白之后（不拆开空白、不产生纯空白行）；
+   *  - 光标右侧的空白并入换行（`foo   |` + Enter → `foo\n`，上游既有处理）。 */
+  private plainEnter(from: number, to: number): void {
+    const line = lineSpanAt(this.doc, this.head);
+    const lineText = this.doc.slice(line.from, line.to);
+    const leading = /^[ \t]*/.exec(lineText)?.[0] ?? "";
+    if (from === to && this.head <= line.from + leading.length) {
+      this.push();
+      this.doc = this.doc.slice(0, line.from) + "\n" + this.doc.slice(line.from);
+      this.anchor = line.from + 1 + leading.length;
+      this.head = this.anchor;
+      return;
+    }
+    let cutTo = to;
+    while (cutTo < line.to && /\s/.test(this.doc[cutTo])) cutTo++;
+    this.replace(from, cutTo, "\n");
   }
 
   /** 顶层列表行 Enter 的两态口径（见文件头与 docs/specs/lists.md 的 B 条）：
    *  - marker 后只有空白 ⇒ 删 marker 与其后空白，该行保留为空行、不新增行；
    *  - marker 后有内容 ⇒ 在光标处插 `\n<下一 marker>`（有序 +1 沿用分隔符，无序同标记）。
-   *  非列表行 ⇒ 普通换行 + 当前行行首空白（自动缩进的回落）。调用位限定在行尾 / 内容位。 */
+   *  非列表行 ⇒ 普通换行（不复制行首空白；行首 / 行首空白内的归一化见 `plainEnter`）。
+   *  调用位限定在行尾 / 内容位。 */
   enter(): void {
     const from = Math.min(this.anchor, this.head);
     const to = Math.max(this.anchor, this.head);
@@ -403,20 +417,7 @@ export class BodyOracle {
     const eolMarkerOnly =
       marker !== null && marker.ordered && marker.contentFrom === marker.markerTo && marker.markerTo === line.to;
     if (eolMarkerOnly && !this.isRealListBlock(line.from)) {
-      const lineText = this.doc.slice(line.from, line.to);
-    // caret 落在行首缩进内（含缩进末端）时，上游把插入点挪到行首、吞掉这段缩进再在
-    // 新行重建同样缩进（`newlineAndIndent` 的 from/leading-whitespace 分支）。净效果：
-    // 在行首缩进之前插一个换行，缩进本身不变（纯空白行同样适用）。
-    const leading = /^[ \t]*/.exec(lineText)?.[0] ?? "";
-    if (this.head <= line.from + leading.length) {
-      this.push();
-      this.doc =
-        this.doc.slice(0, line.from) + "\n" + leading + this.doc.slice(line.from + leading.length);
-      this.anchor = line.from + 1 + leading.length;
-      this.head = this.anchor;
-      return;
-    }
-    this.replace(from, to, `\n${this.lineIndent(this.head)}`);
+      this.plainEnter(from, to);
       return;
     }
     // `para\n- ` 是 setext 标题下线：生产侧的裸行判定把它排除（bareListMarkerLine 的
@@ -503,20 +504,7 @@ export class BodyOracle {
       if (renumber) this.renumberFollowingOrdered(marker.delimiter, (marker.number ?? 0) + 2);
       return;
     }
-    const lineText = this.doc.slice(line.from, line.to);
-    // caret 落在行首缩进内（含缩进末端）时，上游把插入点挪到行首、吞掉这段缩进再在
-    // 新行重建同样缩进（`newlineAndIndent` 的 from/leading-whitespace 分支）。净效果：
-    // 在行首缩进之前插一个换行，缩进本身不变（纯空白行同样适用）。
-    const leading = /^[ \t]*/.exec(lineText)?.[0] ?? "";
-    if (this.head <= line.from + leading.length) {
-      this.push();
-      this.doc =
-        this.doc.slice(0, line.from) + "\n" + leading + this.doc.slice(line.from + leading.length);
-      this.anchor = line.from + 1 + leading.length;
-      this.head = this.anchor;
-      return;
-    }
-    this.replace(from, to, `\n${this.lineIndent(this.head)}`);
+    this.plainEnter(from, to);
   }
 
   /** 当前项所在的列表是不是 loose list（项之间出现过空行）。loose list 的 Enter 在
@@ -839,8 +827,8 @@ export function bodyCategory(op: BodyOp): BodyCategory {
   }
 }
 
-// 刻意不含空格：行首空白会触发 `insertNewlineAndIndent` 的缩进分支（行首 whitespace 的
-// 自动缩进不在模型的「普通换行」口径内）；生成器因此不产出任何带行首空白的行。
+// 生成器刻意不产出空格（不扩大 CommonMark 生成范围）。行首空白的新回落口径由本模型的
+// `plainEnter` 与 `tests/unit/editing-oracle.test.ts` 的确定性对拍直接覆盖，不靠生成器。
 const BODY_ALPHABET = ["a", "b", "Z", "中", "文", "😀", "é", "\n"] as const;
 
 /** 生成**当前状态上合法**的下一步正文操作；所有位置来自模型自己的安全位。 */

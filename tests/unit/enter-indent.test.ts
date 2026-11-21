@@ -271,6 +271,187 @@ test("行首 Enter 的命令层钉固（M399 问题 1）：换行确实发生、
 });
 
 // ---------------------------------------------------------------------------
+// 4.7 无意义行首缩进：段首 marker 的下一行（Alex 2026-11-21 现场）
+// ---------------------------------------------------------------------------
+//
+// 缺陷：md 没有缩进规则，`insertNewlineAndIndent` 在回落里照抄当前行行首空白。散文行与
+// 「段首 marker 行」（`alpha\n  + ` / setext 下线 `alpha\n  - `）因此会写出 `  ` 这种
+// 前导空白的下一行。修复只收窄回落本身（md 的代码块之外不再照抄），不碰上游列表续行：
+// `- a\n  text`（项内段落续行）与 `alpha\n  * a`（`* a` 能打断段落，是真列表项）走的都是
+// 上游 `insertNewlineContinueMarkupCommand`，其缩进是结构的一部分——下面成对钉住。
+
+test("md 散文 / 段首 marker 的回落：不再产生带行首空白的下一行（矩阵第 7/12 行）", () => {
+  const bareEmpty = pressEnterAt("alpha\n  + ", 10, "md", true, MD);
+  assert.equal(bareEmpty.handled, true);
+  assert.equal(bareEmpty.doc, "alpha\n", "裸空项退出：marker 与无意义缩进一并删去");
+  assert.equal(bareEmpty.cursor, 6, "光标落在第 2 行列 0");
+
+  const setext = pressEnterAt("alpha\n  - ", 10, "md", true, MD);
+  assert.equal(setext.doc, "alpha\n  - \n", "setext 下线后的新行 MUST NOT 照抄 `  `");
+  assert.equal(setext.cursor, 11, "光标落在新行列 0");
+
+  const prose = pressEnterAt("  prose", 7, "md", true, MD);
+  assert.equal(prose.doc, "  prose\n", "散文行前导空白是排版空白，MUST NOT 复制给下一行");
+  assert.equal(prose.cursor, 8, "光标落在新行列 0");
+});
+
+test("对照：上游列表续行、代码块与引用的缩进照旧（矩阵第 2/5/6/8 行 + 代码块 + 引用）", () => {
+  // 期望值一律落在「新行源码 + 光标在文档末尾」：缩进是结构的一部分，修的是回落，不是它们。
+  const cases: Array<[label: string, doc: string, expected: string]> = [
+    ["真列表续行", "- a", "- a\n- "],
+    ["空项退出（M399）", "- a\n- ", "- a\n"],
+    ["项内段落续行（上游，结构缩进）", "- a\n  text", "- a\n  text\n  "],
+    ["能打断段落的真列表项（上游，结构缩进）", "alpha\n  * a", "alpha\n  * a\n  * "],
+    ["围栏代码块", "```js\n  beta();", "```js\n  beta();\n  "],
+    ["缩进代码块", "    foo", "    foo\n    "],
+    ["引用续行", "> quoted", "> quoted\n> "],
+  ];
+  for (const [label, doc, expected] of cases) {
+    const result = pressEnterAt(doc, doc.length, "md", true, MD);
+    assert.equal(result.handled, true, `${label}：应接管`);
+    assert.equal(result.doc, expected, `${label}：与修复前逐字节一致`);
+    assert.equal(result.cursor, expected.length, `${label}：一次 Enter 后光标在末尾`);
+  }
+});
+
+test("裸空项退出保留合法 `>` 引用前缀、丢掉纯空白缩进（光标列 = 前缀宽）", () => {
+  const result = pressEnterAt("> para\n>   + ", 13, "md", true, MD);
+  assert.equal(result.handled, true);
+  assert.equal(result.doc, "> para\n> ", "引用前缀保留；引用内的多余缩进是空白，一并删去");
+  assert.equal(result.cursor, 9, "光标落在引用前缀之后（第 2 行列 2）");
+});
+
+test("只读会话里的 md 散文：回落分支 MUST NOT 改文档（统一守卫在入口）", () => {
+  const result = pressEnterAt("alpha\n  - ", 10, "md", true, [...MD, EditorState.readOnly.of(true)]);
+  assert.equal(result.handled, false);
+  assert.equal(result.doc, "alpha\n  - ");
+  assert.equal(result.cursor, 10);
+});
+
+// ---------------------------------------------------------------------------
+// 4.8 review r1：行首空白归一化 / 代码块边界 / 混合多光标 / 统一只读
+// ---------------------------------------------------------------------------
+
+/** 多光标变体：`ranges` 是各光标位，`mainIndex` 指定主光标。 */
+function pressEnterMulti(
+  doc: string,
+  ranges: number[],
+  mainIndex: number,
+): { handled: boolean; doc: string; ranges: number[][]; dispatches: number } {
+  const state = completeTree(EditorState.create({
+    doc,
+    extensions: [...MD, EditorState.allowMultipleSelections.of(true)],
+    selection: EditorSelection.create(ranges.map((pos) => EditorSelection.cursor(pos)), mainIndex),
+  }));
+  let next = state;
+  let dispatches = 0;
+  const view = {
+    state,
+    dispatch: (tr: { state: EditorState }) => {
+      dispatches += 1;
+      next = tr.state;
+    },
+  } as unknown as EditorView;
+  const handled = enterWithAutoIndent(view, "md", true);
+  return {
+    handled,
+    doc: next.doc.toString(),
+    ranges: next.selection.ranges.map((range) => [range.anchor, range.head]),
+    dispatches,
+  };
+}
+
+test("行首空白归一化：行首 / 空白内 / 末端光标都不拆空白、不产生纯空白行（P2-1）", () => {
+  // 基线（上游同形）：换行落到整段空白之前，被下移的内容行保留自己的行首空白，新行为空。
+  for (const pos of [0, 1, 2]) {
+    const result = pressEnterAt("  prose", pos, "md", true, MD);
+    assert.equal(result.handled, true, `pos=${pos}：应接管`);
+    assert.equal(result.doc, "\n  prose", `pos=${pos}：MUST NOT 拆出 " \\n prose" 或纯空白行`);
+    assert.equal(result.cursor, 3, `pos=${pos}：光标落在内容行行首空白之后`);
+  }
+
+  // 行尾空白并入换行（上游 `newlineAndIndent` 的既有处理）。
+  const tail = pressEnterAt("foo   ", 3, "md", true, MD);
+  assert.equal(tail.doc, "foo\n");
+  assert.equal(tail.cursor, 4);
+
+  // 非首行：上游用绝对位切 `line.text`，这里按行相对位归一化，结果与首行同形。
+  const second = pressEnterAt("alpha\n  prose", 8, "md", true, MD);
+  assert.equal(second.doc, "alpha\n\n  prose", "非首行 MUST NOT 拆出 `  \\n  prose`");
+  assert.equal(second.cursor, 9);
+});
+
+test("缩进代码块边界：行首 / 缩进内 / 正文起点 / 行尾都按代码块沿用行首空白（P2-2）", () => {
+  const cases: Array<[pos: number, doc: string, cursor: number]> = [
+    [0, "\n    foo", 5],
+    [2, "\n    foo", 5],
+    [4, "\n    foo", 5],
+    [7, "    foo\n    ", 12],
+  ];
+  for (const [pos, doc, cursor] of cases) {
+    const result = pressEnterAt("    foo", pos, "md", true, MD);
+    assert.equal(result.doc, doc, `pos=${pos}：缩进代码块判定 MUST 覆盖该位置`);
+    assert.equal(result.cursor, cursor, `pos=${pos}：光标列`);
+  }
+
+  // 非首行的缩进代码块：同样按代码块沿用行首空白（且不拆出纯空白行）。
+  const later = pressEnterAt("alpha\n    foo", 8, "md", true, MD);
+  assert.equal(later.doc, "alpha\n\n    foo");
+  assert.equal(later.cursor, 11);
+
+  // 围栏代码块：行首 / 正文起点 / 行尾。
+  const fenceFrom = pressEnterAt("```js\n  code", 6, "md", true, MD);
+  assert.equal(fenceFrom.doc, "```js\n\n  code");
+  assert.equal(fenceFrom.cursor, 9);
+  const fenceContent = pressEnterAt("```js\n  code", 8, "md", true, MD);
+  assert.equal(fenceContent.doc, "```js\n\n  code");
+  assert.equal(fenceContent.cursor, 9);
+  const fenceEnd = pressEnterAt("```js\n  code", 12, "md", true, MD);
+  assert.equal(fenceEnd.doc, "```js\n  code\n  ");
+  assert.equal(fenceEnd.cursor, 15);
+});
+
+test("混合多光标：普通段落与代码行各按自己的上下文换行（P2-3）", () => {
+  // 下标 7 = 第 1 行行尾（普通段落），15 = 围栏内的 `code` 中间。
+  const doc = "  prose\n```\n  code\n```";
+  for (const mainIndex of [0, 1]) {
+    const result = pressEnterMulti(doc, [7, 15], mainIndex);
+    assert.equal(result.handled, true, `mainIndex=${mainIndex}`);
+    assert.equal(result.dispatches, 1, "两条 range MUST 在一次事务里完成");
+    assert.equal(
+      result.doc,
+      "  prose\n\n```\n  c\n  ode\n```",
+      `mainIndex=${mainIndex}：段落不缩进、代码行保留两个空格`,
+    );
+    assert.deepEqual(result.ranges, [[8, 8], [19, 19]], `mainIndex=${mainIndex}：两条光标各自映射`);
+  }
+});
+
+test("只读会话：真实列表 / 引用 / 列表续行也不改文档（统一守卫；base 存量行为）", () => {
+  const cases: Array<[label: string, doc: string, pos: number]> = [
+    ["真实无序列表", "- a", 3],
+    ["引用", "> quoted", 8],
+    ["项内段落续行", "- a\n  text", 10],
+    ["setext 回落", "alpha\n  - ", 10],
+  ];
+  for (const [label, doc, pos] of cases) {
+    const result = pressEnterAt(doc, pos, "md", true, [...MD, EditorState.readOnly.of(true)]);
+    assert.equal(result.handled, false, `${label}：只读会话 MUST NOT 接管`);
+    assert.equal(result.doc, doc, `${label}：文档逐字节不变`);
+    assert.equal(result.cursor, pos, `${label}：选区不变`);
+  }
+});
+
+test("对照：光标夹在字面括号对之间时，上游的括号展开照旧（散文与围栏）", () => {
+  const prose = pressEnterAt("if {}", 4, "md", true, MD);
+  assert.equal(prose.doc, "if {\n\n}");
+  assert.equal(prose.cursor, 5);
+  const fence = pressEnterAt("```\nif {}\n```", 8, "md", true, MD);
+  assert.equal(fence.doc, "```\nif {\n\n}\n```");
+  assert.equal(fence.cursor, 9);
+});
+
+// ---------------------------------------------------------------------------
 // 5. 出厂默认与配置面的对接
 // ---------------------------------------------------------------------------
 
