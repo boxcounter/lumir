@@ -29,22 +29,29 @@
 //    （续写、有序重排、引用）与默认配置逐字节一致，仍是同一份上游实现，不是抄来的副本
 //   （REVIEW.md 「同一语义两处真源」条）。该委派在 `autoIndent` 检查**之前**：空项退出是列表语义的一部分，
 //    与缩进开关无关（D5a 的不对称照旧：关掉自动缩进不影响列表 / 引用续行）；
-// 2. md 的散文与列表续行的回落（上游续行命令不接管的行，如 `alpha\n  + `、`alpha\n  - `、
-//    `  prose`）：裸换行。md 没有缩进规则，`insertNewlineAndIndent` 在这种情况下会照抄当前行
-//    行首空白——那对散文与「段首 marker 的下一行」都是无意义缩进（`alpha\n  + ` + Enter 曾留下
-//    两个空格的空行），MUST NOT 再走这条回落；
-// 3. 其余上下文：`insertNewlineAndIndent` 自动缩进——有缩进规则的语言取语法缩进
-//    （`getIndentation`），取不到时它自己回落到「光标所在行的行首空白」（md 围栏与缩进代码块、
-//    toml / yaml / shell 一类无规则的语言都走这条）。本模块**不自己写缩进表**；
+// 2. md 的换行回落按**行**的上下文分派（每个 range 各判，见 enterMarkdownNewline）：
+//    - 围栏 / 缩进代码块内：沿用当前行行首空白（代码语义）；
+//    - 其外（上游续行命令不接管的散文与列表续行，如 `alpha\n  + `、`alpha\n  - `、`  prose`）：
+//      裸换行。md 没有缩进规则，`insertNewlineAndIndent` 在这种情况下会照抄当前行行首空白——
+//      那对散文与「段首 marker 的下一行」都是无意义缩进（`alpha\n  + ` + Enter 曾留下两个空格
+//      的空行），MUST NOT 再复制。
+//    两条都保留上游的**行首空白归一化**：空光标在行首 / 行首空白内时换行落到整段空白之前，
+//    空白原样留在下一行行首——MUST NOT 拆出 `" \n prose"` 或只含空白的行；
+// 3. 其余上下文（非 md）：`insertNewlineAndIndent` 自动缩进——有缩进规则的语言取语法缩进
+//    （`getIndentation`），取不到时它自己回落到「光标所在行的行首空白」（toml / yaml / shell
+//    一类无规则的语言走这条）。md 代码块整场交给同一命令（见 enterMarkdownNewline）。本模块
+//    **不自己写缩进表**；
 // 4. `auto_indent = false`：code 模式与 md 代码块内的自动缩进不接管（返回 false），按键落回
 //    浏览器默认 = 本 change 之前的行为。md 的列表 / 引用续行与裸行两态在开关检查之前执行，
 //    不受本标志影响——这是 D5a 的显式不对称，不是漏实现。
 
 import type { EditorView } from "@codemirror/view";
+import { EditorSelection } from "@codemirror/state";
 import type { EditorState } from "@codemirror/state";
-import { insertNewline, insertNewlineAndIndent } from "@codemirror/commands";
+import { countColumn } from "@codemirror/state";
+import { insertNewlineAndIndent } from "@codemirror/commands";
 import { insertNewlineContinueMarkupCommand } from "@codemirror/lang-markdown";
-import { syntaxTree } from "@codemirror/language";
+import { IndentContext, getIndentation, indentString, syntaxTree } from "@codemirror/language";
 import { bareListMarkerLine } from "./preview/lists";
 import type { EditorMode } from "./bindings/EditorMode";
 
@@ -67,8 +74,9 @@ export const DEFAULT_AUTO_INDENT = true;
  * `Enter` 键位的命令体。返回 true = 已消费（CM 的 keymap 据此不再往下问别的处理器）；
  * 返回 false = 不接管，按键继续走（上游 `markdownKeymap` 或浏览器默认）。
  *
- * 只读会话里本命令返回 false、不产生任何文档变更：`insertNewlineAndIndent` 自己查只读，
- * `insertNewline` 不查，故 md 的回落分支显式挡一次（见 `enterWithAutoIndent`）。
+ * 只读会话里本命令返回 false、不产生任何文档变更。守卫在入口**统一**做（早于裸行分派与
+ * 上游列表 / 引用委派）：上游 `insertNewlineContinueMarkupCommand` 自己不查 `readOnly`，
+ * 只靠各分支自守会让真实列表 / 引用在只读会话里照旧改文档。
  *
  * `Shift-Enter` 收不到本命令：CM 的键位查表在按住 Shift 时只查 `Shift-Enter`
  *（`runHandlers` 的 `modifiers(name, event, !isChar)`，Enter 不是单字符键）——两键的不对称
@@ -79,26 +87,100 @@ export function enterWithAutoIndent(
   mode: EditorMode,
   autoIndent: boolean,
 ): boolean {
+  const state = view.state;
+  // 统一只读守卫：裸行分派、上游列表 / 引用委派、自动缩进都在此之后。上游续行命令自己不查
+  // `readOnly`（M399 之前只靠键位层不投递，程序化调用会改文档），契约是「只读会话 MUST NOT
+  // 产生任何文档变更」，故在这里挡一次、而不是各分支自守。
+  if (state.readOnly) return false;
   if (mode === "md" && enterBareMarkerLine(view)) return true;
   if (mode === "md" && continueMarkupExitEmptyItem(view)) return true;
   if (!autoIndent) return false;
-  // md 的散文 / 列表续行落回裸换行；`insertNewlineAndIndent` 在 md 里取不到缩进规则时会照抄
-  // 当前行行首空白，那对散文与「段首 marker 的下一行」都是无意义缩进（见文件头口径 2）。
-  // 只有围栏 / 缩进代码块保留「沿用当前行行首空白」。`insertNewline` 不查只读，这里自己挡。
-  if (mode === "md" && !inMarkdownCodeBlock(view.state)) {
-    if (view.state.readOnly) return false;
-    return insertNewline(view);
-  }
-  return insertNewlineAndIndent(view);
+  if (mode !== "md") return insertNewlineAndIndent(view);
+  return enterMarkdownNewline(view);
 }
 
-/** 光标是否在 md 的代码块（围栏 / 缩进）内。只在这两个上下文里，`insertNewlineAndIndent`
- *  的「沿用当前行行首空白」才是代码语义的一部分（`- x` 在围栏内是代码文本，不是列表）。 */
-function inMarkdownCodeBlock(state: EditorState): boolean {
-  const head = state.selection.main.head;
-  for (let node: ReturnType<typeof syntaxTree>["topNode"] | null = syntaxTree(state).resolveInner(head, -1); node; node = node.parent) {
-    if (node.name === "FencedCode" || node.name === "CodeBlock") return true;
-    if (node.name === "Document") break;
+/** md 的换行回落：按**每个 range** 的代码块上下文分派（主光标不能替整个选区选模式）。
+ *
+ *  - 光标在围栏 / 缩进代码块内：沿用当前行行首空白（代码语义）；
+ *  - 其外：裸换行，MUST NOT 把行首空白复制给新行（散文里它不是结构）。
+ *
+ *  两条共用上游 `newlineAndIndent`（`insertNewlineAndIndent` 的实现）的既有处理：光标右侧的
+ *  空白并入删除区间（`foo   |` + Enter → `foo\n`）；光标在行首 / 行首空白内时，换行归一到
+ *  整段空白之前，空白原样留在下一行行首——不拆开空白、不产生只含空白的行。区别只在「新行
+ *  是否带缩进」：散文为空串。
+ *
+ *  为什么整段在这里重写而不是调 `insertNewlineAndIndent`：那条命令按**主光标**取一次缩进
+ *  上下文、对全部 range 应用同一种模式，混合多光标里普通段落与代码行无法各按自己的上下文
+ *  换行（review r1 P2-3）。这里逐 range 走同一份 `state.changeByRange`；缩进取值仍交给
+ *  编辑器内核的缩进服务（`getIndentation`，取不到时按上游口径回落到行首空白），md 没有子
+ *  语言，围栏内容取到的恒是行首空白。
+ *
+ *  与上游的两个已知差异，都是有意的：
+ *  1. 上游的行首空白归一化用**绝对位**切 `line.text`（`line.text.slice(0, from)`），非首行
+ *     永远切到整行、归一化失效，会拆出 `" \n prose"` 或只含空白的行；本实现按行相对位判定，
+ *     各行的归一化行为一致。
+ *  2. 上游在光标夹于 `{}` / `()` / `[]` 之间时展开括号（多插一个换行）；这里复刻它的字面
+ *     括号对分支。树侧 `closedBy` 分支在 md 里不可达（markdown 不为任何节点声明 `closedBy`，
+ *     围栏内容也没有子语言），故不复制。 */
+function enterMarkdownNewline(view: EditorView): boolean {
+  const state = view.state;
+  const changes = state.changeByRange((range) => {
+    const line = state.doc.lineAt(range.from);
+    const leading = /^[ \t]*/.exec(line.text)?.[0] ?? "";
+    const explode =
+      range.empty && range.from > 0 && /(\(\)|\[\]|\{\})/.test(state.sliceDoc(range.from - 1, range.from + 1));
+    // 「本行自己的行首空白」：归一化时原样还给被下移的内容行（不是新行缩进）。
+    const lineIndent = indentString(
+      state,
+      getIndentation(new IndentContext(state, { simulateBreak: range.from }), range.from) ??
+        countColumn(leading, state.tabSize),
+    );
+    // 新行的缩进：代码块沿用行首空白，散文为 0。
+    const indent = inCodeBlockAt(state, range.from) ? lineIndent : "";
+    let from = range.from;
+    let to = range.to;
+    let normalized = false;
+    if (!explode) {
+      while (to < line.to && /\s/.test(line.text[to - line.from])) to++;
+      // 行首空白归一化：空光标在行首 / 行首空白内时，换行落到整段空白之前——被下移的内容
+      // 行带着自己的行首空白（`lineIndent`），新行（光标所在的第一行）为空。不拆开空白、
+      // 不产生只含空白的行；散文里新行也不带缩进（`indent` 为空串）。
+      if (range.empty && from <= line.from + leading.length) {
+        from = line.from;
+        normalized = true;
+      }
+    }
+    // 括号展开 = 光标处插两个换行（上游 `newlineAndIndent` 的 explode 分支；md 的
+    // `cx.lineIndent(line.from, -1)` 恒为 0，故第二段缩进为空）。
+    const insert = normalized ? `\n${lineIndent}` : explode ? `\n${indent}\n` : `\n${indent}`;
+    return {
+      changes: { from, to, insert },
+      range: EditorSelection.cursor(from + 1 + (normalized ? lineIndent.length : indent.length)),
+    };
+  });
+  view.dispatch(state.update(changes, { scrollIntoView: true, userEvent: "input" }));
+  return true;
+}
+
+/** 光标所在**行**是否在 md 的代码块（围栏 / 缩进）内。
+ *
+ *  不能只看 `head` 的左邻：缩进代码块的 `CodeBlock` 从首个非空白字符起算，行首、缩进内部与
+ *  正文起点在 `resolveInner(head, -1)` 下只解析到 `Document`。这里按行取三个锚点——行首
+ *  （右邻，避免把上一行的代码块算进来）、首个非空白字符、行尾（左邻，覆盖空行/围栏边界）——
+ *  任一落在 `FencedCode` / `CodeBlock` 内即算代码块。 */
+function inCodeBlockAt(state: EditorState, head: number): boolean {
+  const line = state.doc.lineAt(head);
+  const lead = line.text.search(/\S/);
+  const probes: Array<[pos: number, side: -1 | 1]> = [
+    [line.from, 1],
+    [line.to, -1],
+  ];
+  if (lead >= 0) probes.push([line.from + lead, 1]);
+  for (const [pos, side] of probes) {
+    for (let node: ReturnType<typeof syntaxTree>["topNode"] | null = syntaxTree(state).resolveInner(pos, side); node; node = node.parent) {
+      if (node.name === "FencedCode" || node.name === "CodeBlock") return true;
+      if (node.name === "Document") break;
+    }
   }
   return false;
 }

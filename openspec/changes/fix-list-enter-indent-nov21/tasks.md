@@ -26,3 +26,19 @@
 - [x] 2.5 `node scripts/acceptance/run.mjs --check` 通过（新增场景 269 + 覆盖表重生成）
 - [ ] 2.6 真机验收场景 269 由主会话统一执行（本任务不自行跑真机；执行记录落
       `.local/acceptance/`）
+
+## 3. review r1 返修（2026-11-21）
+
+- [x] 3.1 P2-1：md 回落保留上游 leading-whitespace 归一化、但不把行首空白复制给新行；
+      行首 / 空白内 / 末端光标与行尾空白一组 doc+selection 断言
+- [x] 3.2 P2-2：代码块判定改为按行取行首（右邻）、首个非空白、行尾（左邻）三处锚点，
+      行首 / 缩进内 / 正文起点 / 行尾一组边界断言（含非首行代码块与围栏）
+- [x] 3.3 P2-3：md 换行改为一次 `state.changeByRange` 按每 range 上下文分派；混合多光标
+      两种 mainIndex 顺序各断言一次（段落不缩进、代码行保留缩进）
+- [x] 3.4 P2-4：只读守卫统一到 `enterWithAutoIndent` 入口（早于裸行与上游委派）；补真实
+      列表 / 引用 / 项内续行只读断言。归因：base 存量行为，不是 97edc72d 的新回归
+- [x] 3.5 P3-1：同步 `tests/unit/editing-oracle-model.ts` 的普通 Enter 合同与注释，加入
+      带行首空白的最小确定性对拍（含非首行）
+- [x] 3.6 P3-2：delta 的历史引用改指 `openspec/changes/archive/2026-09-28-enter-auto-indent/`
+      的 `proposal.md` D1 与 `design.md` §1 / §1.3 / §4，不再指向本 change 不存在的制品
+- [x] 3.7 新判据对旧实现（97edc72d）反向验证为红：6 组全红，恢复后 37/37 绿
