@@ -106,8 +106,8 @@ export function enterWithAutoIndent(
  *
  *  两条共用上游 `newlineAndIndent`（`insertNewlineAndIndent` 的实现）的既有处理：光标右侧的
  *  空白并入删除区间（`foo   |` + Enter → `foo\n`）；光标在行首 / 行首空白内时，换行归一到
- *  整段空白之前，空白原样留在下一行行首——不拆开空白、不产生只含空白的行。区别只在「新行
- *  是否带缩进」：散文为空串。
+ *  整段空白之前，被下移的内容行**逐字节保留自己的行首空白**（Tab 仍是 Tab，不做列宽换算）——
+ *  不拆开空白、不产生只含空白的行。区别只在「新行是否带缩进」：散文为空串。
  *
  *  为什么整段在这里而不是调 `insertNewlineAndIndent`：上游命令本身逐 range 取缩进
  *  （`getIndentation`），但它只有「自动缩进」一种模式；这里要按 range 在「散文零缩进」与
@@ -129,7 +129,9 @@ function enterMarkdownNewline(view: EditorView): boolean {
     const leading = /^[ \t]*/.exec(line.text)?.[0] ?? "";
     const explode =
       range.empty && range.from > 0 && /(\(\)|\[\]|\{\})/.test(state.sliceDoc(range.from - 1, range.from + 1));
-    // 「本行自己的行首空白」：归一化时原样还给被下移的内容行（不是新行缩进）。
+    // 代码块新行的缩进：取编辑器内核的缩进服务，取不到时按上游口径回落到行首空白的列数。
+    // 归一化分支**不用**这份结果——`indentString` 把列数按缩进单位还原成空格，会把被下移
+    // 内容行的 `\t` 改写成等宽空格；该分支必须原样回填 `leading` 原文。
     const lineIndent = indentString(
       state,
       getIndentation(new IndentContext(state, { simulateBreak: range.from }), range.from) ??
@@ -143,8 +145,8 @@ function enterMarkdownNewline(view: EditorView): boolean {
     if (!explode) {
       while (to < line.to && /\s/.test(line.text[to - line.from])) to++;
       // 行首空白归一化：空光标在行首 / 行首空白内时，换行落到整段空白之前——被下移的内容
-      // 行带着自己的行首空白（`lineIndent`），新行（光标所在的第一行）为空。不拆开空白、
-      // 不产生只含空白的行；散文里新行也不带缩进（`indent` 为空串）。
+      // 行带着自己的行首空白原文（`leading`，Tab 不换算成空格），新行（光标所在的第一行）
+      // 为空。不拆开空白、不产生只含空白的行；散文里新行也不带缩进（`indent` 为空串）。
       if (range.empty && from <= line.from + leading.length) {
         from = line.from;
         normalized = true;
@@ -152,10 +154,10 @@ function enterMarkdownNewline(view: EditorView): boolean {
     }
     // 括号展开 = 光标处插两个换行（上游 `newlineAndIndent` 的 explode 分支；md 的
     // `cx.lineIndent(line.from, -1)` 恒为 0，故第二段缩进为空）。
-    const insert = normalized ? `\n${lineIndent}` : explode ? `\n${indent}\n` : `\n${indent}`;
+    const insert = normalized ? `\n${leading}` : explode ? `\n${indent}\n` : `\n${indent}`;
     return {
       changes: { from, to, insert },
-      range: EditorSelection.cursor(from + 1 + (normalized ? lineIndent.length : indent.length)),
+      range: EditorSelection.cursor(from + 1 + (normalized ? leading.length : indent.length)),
     };
   });
   view.dispatch(state.update(changes, { scrollIntoView: true, userEvent: "input" }));
