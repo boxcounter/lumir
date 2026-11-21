@@ -93,7 +93,11 @@ test("边界行为：Cmd+A→ArrowDown 折叠选区并揭示光标，末/首行�
   // P2-1：Cmd+A 全选 → ArrowDown 折叠到文档末尾，滚动跟随、光标可见
   await page.keyboard.press("Meta+a");
   await page.keyboard.press("ArrowDown");
-  await page.waitForTimeout(80);
+  // 平滑滚动在满载套件里可能超过固定 80ms；等到光标实际进入视口，坐标判据本身不变。
+  await expect.poll(async () => {
+    const current = await sample(page);
+    return current.caretBottom <= current.scrollerBottom + 1 && current.caretTop >= current.scrollerTop - 1;
+  }).toBe(true);
   const collapsed = await sample(page);
   expect(collapsed.head).toBe(collapsed.docLength);
   expect(collapsed.scrollTop).toBeGreaterThan(0);
