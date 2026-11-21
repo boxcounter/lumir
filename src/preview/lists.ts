@@ -1,4 +1,4 @@
-import { ensureSyntaxTree, forceParsing, syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
+import { ensureSyntaxTree, forceParsing, language, syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
 import { StateEffect } from "@codemirror/state";
 import type { EditorState, Extension, Line, Range, Text } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
@@ -461,7 +461,14 @@ const COMPOSITION_SETTLE = {
   slowRetryMs: 100,
   lowFreqAfterMs: 4000,
   lowFreqRetryMs: 250,
+  /** compositionend 派发时组合标志尚未归位的有界重试次数（8ms 间隔）。 */
+  composingRetries: 25,
+  /** 源码形态与旧树判定冲突时，按当前 doc 重建对照树的预算。 */
+  referenceParseMs: 8,
 } as const;
+
+/** 对照解析只覆盖目标行之前的 ≤32KB 源码：超过即放弃，保留旧树判定。 */
+const REFERENCE_SOURCE_LIMIT = 32 * 1024;
 
 /** dev-only 诊断：只记状态 / 计数 / 位置，不含正文、路径。gating 与 editor_ime 一致。 */
 function settleTraceEnabled(): boolean {
@@ -541,6 +548,42 @@ function reparseParseContext(view: EditorView, to: number): Tree | null {
     return null;
   }
   return context.tree;
+}
+
+/** 按当前 doc 从零读给 markdown parser 的输入（同 Lezer StringInput 的 chunk 口径）。 */
+class DocStringInput {
+  readonly length: number;
+  readonly lineChunks = false;
+  private readonly doc: Text;
+  constructor(doc: Text) { this.doc = doc; this.length = doc.length; }
+  chunk(pos: number): string { return this.doc.sliceString(pos, Math.min(this.length, pos + 1024)); }
+  read(from: number, to: number): string { return this.doc.sliceString(from, to); }
+}
+
+/** 源码形态不再期望 list、现有树却仍判 list 时，按当前 doc 重建一份对照树。
+ *
+ *  为什么需要从零解析：`reparseParseContext` / `ensureSyntaxTree` 都沿 parse context 走，
+ *  而 context 自认已解析到目标位置时 `work()` 不会重解析——旧 list 树会原样返回（WKWebView
+ *  删空残留的现场）。这里只做一次有界的独立解析，不读 context 状态。
+ *  有界：目标位置超过 32KB 或超过 referenceParseMs 即返回 null，调用方保留原树判定。
+ *  不按文本形态一刀切：空列表项仍由树决定，只有对照树也不判 list 才移除 marker。 */
+function referenceTreeForSource(state: EditorState, to: number): Tree | null {
+  if (to > REFERENCE_SOURCE_LIMIT) return null;
+  const parser = state.facet(language)?.parser;
+  if (!parser) return null;
+  let parse: ReturnType<typeof parser.startParse>;
+  try {
+    parse = parser.startParse(new DocStringInput(state.doc), []);
+    parse.stopAt(to);
+  } catch {
+    return null;
+  }
+  const deadline = performance.now() + COMPOSITION_SETTLE.referenceParseMs;
+  for (;;) {
+    const tree = parse.advance();
+    if (tree) return tree;
+    if (performance.now() > deadline) return null;
+  }
 }
 
 class ListLayout {
@@ -759,6 +802,41 @@ class ListLayout {
     }
   }
 
+  /** 收束时发布最后一拍 build。`settleStep` 由 timer 调用，不在 `EditorView.update()`
+   *  内——只改 `this.decorations` 不会让 CM 重绘插件装饰；若此后没有别的 update（解析树
+   *  已同步、组合 flush 也没有残留），旧 marker 会永久留在 DOM（2026-11-21 重复跑复现：
+   *  三份树都是 setext、settle_build 已跑，DOM 仍停在旧装饰）。这里补一拍 metadataReady
+   *  更新，让刚算出的装饰真正上屏。 */
+  private publishSettled(view: EditorView): void {
+    this.cancelSettle();
+    view.dispatch({ effects: metadataReady.of(null) });
+  }
+
+  /** 收束用的树：源码不再期望 list 时，旧树（含自认已解析完的 context）判 list 不足以
+   *  决定 marker 去留。先有界推进 context，再按当前 doc 重建对照树；对照树仍判 list 则
+   *  尊重树（真·空列表项）。无冲突时原样返回，不引入额外解析成本。 */
+  private treeForSource(view: EditorView, to: number, expectsList: boolean, candidate: Tree): Tree {
+    if (expectsList || readTarget(view, candidate, to).kind !== "list") return candidate;
+    const advanced = reparseParseContext(view, to);
+    if (advanced && readTarget(view, advanced, to).kind !== "list") return advanced;
+    return referenceTreeForSource(view.state, to) ?? advanced ?? candidate;
+  }
+
+  /** 旧树只在「最终判定与 state 树判定不一致」时保留：这是 context 领先 / state 快照落后
+   *  的真实分歧，后续非文档更新（metadata / selection）需要沿用它。两者一致时清除——
+   *  否则一次收束留下的旧树会压过之后同步好的 state 树（P2-2 的复用通道）。 */
+  private retainSettledTree(view: EditorView, to: number): void {
+    const stateRead = readTarget(view, syntaxTree(view.state), to);
+    const settledRead = readTarget(view, this.tree, to);
+    if (stateRead.kind === settledRead.kind) {
+      this.settledTree = null;
+      this.settledTreeDoc = null;
+      return;
+    }
+    this.settledTree = this.tree;
+    this.settledTreeDoc = view.state.doc;
+  }
+
   private settleStep(view: EditorView): void {
     if (this.settleTimer !== undefined) {
       clearTimeout(this.settleTimer);
@@ -780,25 +858,23 @@ class ListLayout {
       // （WKWebView 实测长度相同、target_kind=none）。state 同步只作后续维护，不是
       // marker 恢复的前置。
       const contextTree = ensureSyntaxTree(view.state, to, 0);
-      this.tree = contextTree ?? syntaxTree(view.state);
-      const read = readTarget(view, this.tree, to);
       const expectsList = targetExpectsList(view, to);
+      this.tree = this.treeForSource(view, to, expectsList, contextTree ?? syntaxTree(view.state));
+      const read = readTarget(view, this.tree, to);
       this.build(view);
       traceSettle(view, "settle_build", this.settleSnapshot(view, { via: contextTree ? "available_context" : "available_state" }));
       if (read.kind === "list") {
-        // 只有 state 快照不是 list（真正的 context/state 分歧）时才保留 context 树；
+        // 只有最终判定与 state 快照分歧（context 领先 / state 落后）时才保留这份树；
         // 两者都 list 时保留陈旧树会阻止后续 reparse 纠正（删除后 marker 残留）。
-        const stateRead = readTarget(view, syntaxTree(view.state), to);
-        if (stateRead.kind !== "list") {
-          this.settledTree = this.tree;
-          this.settledTreeDoc = view.state.doc;
-        }
-        this.cancelSettle();
+        this.retainSettledTree(view, to);
+        this.publishSettled(view);
         return;
       }
       if (!expectsList) {
-        // 源码形态（空 marker / setext）不期望 marker：收束。
-        this.cancelSettle();
+        // 源码形态（空 marker / setext）不期望 marker：收束。treeForSource 已排除「旧树
+        // 判 list」这一条；若 state 仍落后于当前源码，保留这份判定给后续非文档更新。
+        this.retainSettledTree(view, to);
+        this.publishSettled(view);
         return;
       }
       // 期望 list 但当前树判不成：有界推进一次 parse context，不空 dispatch。
@@ -806,14 +882,11 @@ class ListLayout {
       if (reparsed) {
         this.tree = reparsed;
         const reread = readTarget(view, reparsed, to);
-        if (reread.kind === "list") {
-          this.settledTree = reparsed;
-          this.settledTreeDoc = view.state.doc;
-        }
         this.build(view);
         traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "available_reparse" }));
         if (reread.kind === "list") {
-          this.cancelSettle();
+          this.retainSettledTree(view, to);
+          this.publishSettled(view);
           return;
         }
       }
@@ -840,40 +913,30 @@ class ListLayout {
     if (syntaxTreeAvailable(view.state, to)) {
       // 同 available 分支：优先用 context tree，state 快照只作后续维护。
       const contextTree = ensureSyntaxTree(view.state, to, 0) ?? this.tree;
-      this.tree = contextTree;
-      const read = readTarget(view, contextTree, to);
       const expectsList = targetExpectsList(view, to);
-      if (read.kind === "list") {
-        this.settledTree = contextTree;
-        this.settledTreeDoc = view.state.doc;
-      }
+      this.tree = this.treeForSource(view, to, expectsList, contextTree);
+      const read = readTarget(view, this.tree, to);
       this.build(view);
       traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "parse_done_context" }));
       if (read.kind === "list") {
-        const stateRead = readTarget(view, syntaxTree(view.state), to);
-        if (stateRead.kind !== "list") {
-          this.settledTree = this.tree;
-          this.settledTreeDoc = view.state.doc;
-        }
-        this.cancelSettle();
+        this.retainSettledTree(view, to);
+        this.publishSettled(view);
         return;
       }
       if (!expectsList) {
-        this.cancelSettle();
+        this.retainSettledTree(view, to);
+        this.publishSettled(view);
         return;
       }
       const reparsed = reparseParseContext(view, to);
       if (reparsed) {
         this.tree = reparsed;
         const reread = readTarget(view, reparsed, to);
-        if (reread.kind === "list") {
-          this.settledTree = reparsed;
-          this.settledTreeDoc = view.state.doc;
-        }
         this.build(view);
         traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "parse_done_reparse" }));
         if (reread.kind === "list") {
-          this.cancelSettle();
+          this.retainSettledTree(view, to);
+          this.publishSettled(view);
           return;
         }
       }
@@ -1109,7 +1172,10 @@ function scheduleCompositionSettle(view: EditorView, attempt = 0): void {
       return;
     }
     if (view.compositionStarted) {
+      // 组合标志由 CM 的 observer 在 compositionend 事件里清除；事件顺序竞态下可能晚于
+      // 本拍。丢掉本拍会让冻结期的旧装饰永久残留（删空后 marker 不回退），因此有界重试。
       traceSettle(view, "settle_skip_composing", { attempt: String(attempt) });
+      if (attempt < COMPOSITION_SETTLE.composingRetries) scheduleCompositionSettle(view, attempt + 1);
       return;
     }
     traceSettle(view, "settle_dispatch", {

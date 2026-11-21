@@ -942,7 +942,9 @@ restart 与显式等待）。旧结果没有该字段时仍可合并；`summary.
 驱动边界：**合成事件 ≠ 原生 IME**。它按真实 WKWebView 日志的删除/提交序列复刻事件，DOM
 默认动作由驱动执行；证明产品 JS 路径在真实 WKWebView 里按该序列工作，不证明原生 TSM、候选窗、
 marked text 下划线或原生按键时序。原生终判仍是 156 / 262 人工矩阵。场景 271 的 PASS 只是机器
-回归门；任务 4.5 删除 `editor_ime` 后它仍应 PASS。
+回归门；任务 4.5 删除 `editor_ime` 后它仍应 PASS。**覆盖收窄**：271 判别 deleteCompositionText
+接管与 compositionend 恢复链（M3 变异判红）；组合期冻结分支不在此场景判别（M1 去冻结后仍
+PASS——合成序列里 state 语法树在组合期未跟上 list），冻结承诺归 156 / 262 人工矩阵。
 
 ## 已知边界（写清楚，别当成 bug 去追）
 

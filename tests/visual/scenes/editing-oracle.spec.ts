@@ -339,6 +339,109 @@ test("正文 IME：settleStep available 分支不得用旧 state 树（Chromium�
   await expect(page.locator(".cm-line").last()).toContainText("是");
 });
 
+test("正文 IME：源码已回 setext 时不得沿用旧 context 树的 list 判定（Chromium）", async ({ page }) => {
+  // 构造删空残留的确定性形态：源码已从 `- s` 变回 setext 的 `- `，但 parse context 仍是
+  // 删除前的 list 树且自认已解析到行末（ensureSyntaxTree 会原样返回它）。settleStep 必须按
+  // 当前 doc 重建对照树，不能凭旧树的 list 判定直接 build + 收束。
+  const doc = "词汇\n- s";
+  await openBody(page, "oracle.md", doc);
+  await setBodyCaret(page, doc.length - 1);
+  await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
+  const probe = await page.locator(".cm-content").evaluate((el, before) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const findLang = () => {
+      const values = (view.state as { values?: unknown[] }).values ?? [];
+      return values.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as any;
+    };
+    const oldTree = findLang()?.tree;
+    if (!oldTree) throw new Error("language state not found");
+    // 组合删除：源码 `词汇\n- s` → `词汇\n- `（setext）。随后把 context/state 一起伪装成
+    // 删除前自认已完成的旧 list 树（WKWebView 失败现场的形态；只用于测试）。
+    view.dispatch({ changes: { from: before - 1, to: before }, selection: { anchor: before - 1 } });
+    const lang = findLang();
+    lang.context.tree = oldTree;
+    lang.context.treeLen = oldTree.length;
+    lang.tree = oldTree;
+    const plugin = ((view as { plugins?: { value?: unknown }[] }).plugins ?? [])
+      .map((entry) => entry.value)
+      .find((value) => value && typeof (value as { settleStep?: unknown }).settleStep === "function") as
+      { settleTo: number | null; settleStarted: number; settleStep(view: unknown): void; tree: any; settledTree: unknown } | undefined;
+    if (!plugin) throw new Error("ListLayout plugin not found");
+    plugin.settleTo = view.state.doc.length;
+    plugin.settleStarted = performance.now();
+    plugin.settleStep(view);
+    return {
+      doc: view.state.doc.toString(),
+      settledNodes: String(plugin.tree.toString()),
+      retained: plugin.settledTree !== null,
+    };
+  }, doc.length);
+  expect(probe.doc).toBe("词汇\n- ");
+  // 不是靠隐藏 marker：settle 采用的树本身必须不再判 list。
+  expect(probe.settledNodes, "settle 后采用的树不得仍是旧 BulletList").not.toContain("BulletList");
+  expect(probe.settledNodes).toContain("SetextHeading2");
+  expect(probe.retained, "对照树与落后 state 分歧时必须保留给后续更新").toBe(true);
+  // 下一拍非文档更新（selection）也不得把旧行重新渲染成 marker。
+  await page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+  });
+  await expect.poll(async () => page.locator(".cm-line").allTextContents()).toEqual(["词汇", "- "]);
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0);
+});
+
+test("正文 IME：parse_done 收束后非文档更新不得复用旧 context 树（Chromium）", async ({ page }) => {
+  // parse_done 在 context/state 都判 list 时不得保留 context 树：否则后续 selection /
+  // metadata 更新会把旧树装回 this.tree，压过已同步的 state 树（P2-2 的复用通道）。
+  const doc = "词汇\n- 是";
+  await openBody(page, "oracle.md", doc);
+  await setBodyCaret(page, doc.length);
+  await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  const probe = await page.locator(".cm-content").evaluate((el, length) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const findLang = () => {
+      const values = (view.state as { values?: unknown[] }).values ?? [];
+      return values.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as any;
+    };
+    const lang = findLang();
+    if (!lang) throw new Error("language state not found");
+    // 让入口的 syntaxTreeAvailable 为 false，settleStep 走「分片解析 → parse_done」分支。
+    lang.context.treeLen = 0;
+    const plugin = ((view as { plugins?: { value?: unknown }[] }).plugins ?? [])
+      .map((entry) => entry.value)
+      .find((value) => value && typeof (value as { settleStep?: unknown }).settleStep === "function") as
+      { settleTo: number | null; settleStarted: number; settleStep(view: unknown): void; tree: any; settledTree: unknown } | undefined;
+    if (!plugin) throw new Error("ListLayout plugin not found");
+    plugin.settleTo = length;
+    plugin.settleStarted = performance.now();
+    plugin.settleStep(view);
+    const settledNodes = String(plugin.tree.toString());
+    const retainedAfterSettle = plugin.settledTree !== null;
+    // 模拟 state 树已同步为 setext（同一长度、同一位置的对照树），再来一次非文档更新。
+    // settleStep 收束时会 dispatch metadataReady（发布装饰），LanguageState 已换对象——必须
+    // 重新取当前 state 的 lang，改旧对象不会影响后续 update。
+    const live = findLang();
+    const setextTree = live.context.parser.parse("词汇\n-  ");
+    live.tree = setextTree;
+    live.context.tree = setextTree;
+    live.context.treeLen = setextTree.length;
+    view.dispatch({ selection: { anchor: length } });
+    return {
+      settledNodes,
+      retainedAfterSettle,
+      pluginNodes: String(plugin.tree.toString()),
+      doc: view.state.doc.toString(),
+    };
+  }, doc.length);
+  expect(probe.doc).toBe("词汇\n- 是");
+  expect(probe.settledNodes).toContain("BulletList");
+  expect(probe.retainedAfterSettle, "context/state 都判定 list 时不得保留 context 树").toBe(false);
+  expect(probe.pluginNodes, "selection 更新后必须取同步后的 state 树").not.toContain("BulletList");
+  await expect.poll(async () => page.locator(".cm-line").allTextContents()).toEqual(["词汇", "- 是"]);
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(0);
+});
+
 test("IME 组合结束前已有 pending DOM 候选：候选必须进入文档且 marker 恢复（Chromium）", async ({ page }) => {
   const doc = "词汇\n- ";
   await openBody(page, "oracle.md", doc);

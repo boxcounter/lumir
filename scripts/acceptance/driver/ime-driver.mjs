@@ -1,9 +1,10 @@
 // WKWebView 合成 IME 序列驱动（只在验收实例的 Vite dev server 注入）。
 //
 // 边界：本文件派发的 CompositionEvent / InputEvent 全部 `isTrusted: false`；DOM 默认动作由
-// 驱动自己用 Range/文本节点执行。它证明产品 JS 路径（nativeEditGate、ListLayout 冻结、
-// scheduleCompositionSettle、有界解析）在真实 WKWebView 里按观测到的序列工作，**不是**原生
-// TSM / 候选窗 / marked text 的替代。原生终判仍归 156 / 262 人工矩阵。
+// 驱动自己用 Range/文本节点执行。它证明产品 JS 路径（nativeEditGate 的 deleteCompositionText
+// 接管、scheduleCompositionSettle 恢复链、有界解析）在真实 WKWebView 里按观测到的序列工作，
+// **不是**原生 TSM / 候选窗 / marked text 的替代。组合期冻结分支不在此序列的区分范围内
+// （M1 去冻结后仍 PASS：组合期 state 语法树未跟上 list），冻结承诺归 156 / 262 人工矩阵。
 //
 // 协议：GET /__lumir-ime/command（runner 下发的单条命令）→ 执行 → POST /__lumir-ime/report。
 // 报告不含真实 vault 内容；fixture 是合成文本。
@@ -11,6 +12,11 @@
 const ENDPOINT = "/__lumir-ime";
 const POLL_MS = 150;
 const RENDER_FRAME_MS = 16;
+// 收束判定的最小观察窗：必须覆盖恢复链 16ms / 100ms / 250ms 三档重试周期里最低的
+// 250ms，留一帧余量。只看「连续两拍稳定」会在 100 / 250ms 的错误重建之前就返回。
+const MIN_SETTLE_WINDOW_MS = 300;
+// 组合期冻结观察窗：至少覆盖 ListLayout 16ms 后台 timer 的发布延迟。
+const COMPOSING_OBSERVE_MS = 120;
 
 if (!globalThis.__lumirImeDriver) {
   globalThis.__lumirImeDriver = true;
@@ -147,6 +153,19 @@ if (!globalThis.__lumirImeDriver) {
     return true;
   };
 
+  /** 组合期逐帧采样目标行 marker：冻结若失效，16ms 后台 timer 发布的 widget 会被这里读到，
+   *  而不是被 compositionend 后的收束掩盖。 */
+  const observeComposing = async (view, lineNo, timeoutMs = COMPOSING_OBSERVE_MS) => {
+    const started = performance.now();
+    let peak = 0;
+    while (performance.now() - started < timeoutMs) {
+      await nextFrame();
+      peak = Math.max(peak, markerCount(view, lineNo));
+      await sleep(RENDER_FRAME_MS);
+    }
+    return peak;
+  };
+
   const waitDoc = async (view, predicate, timeoutMs = 3000) => {
     const deadline = performance.now() + timeoutMs;
     while (performance.now() < deadline) {
@@ -177,7 +196,8 @@ if (!globalThis.__lumirImeDriver) {
         stable = 0;
         lastDoc = reading.doc;
       }
-      if (!view.compositionStarted && stable >= 2 && reading.marker === expectedMarker) {
+      if (!view.compositionStarted && stable >= 2 && reading.marker === expectedMarker &&
+          performance.now() - started >= MIN_SETTLE_WINDOW_MS) {
         return { peak, prevMinLen, prevFinal, nextFinal, settleMs: performance.now() - started, settleTimeout: false };
       }
       await sleep(RENDER_FRAME_MS);
@@ -221,6 +241,7 @@ if (!globalThis.__lumirImeDriver) {
       doc_final: base,
       marker_before: markerCount(view, targetLine),
       marker_during: markerCount(view, targetLine),
+      marker_composing_peak: 0,
       marker_peak: 0,
       marker_final: 0,
       prev_dom_during: lineText(view, targetLine - 1),
@@ -258,6 +279,7 @@ if (!globalThis.__lumirImeDriver) {
     report.doc_during = view.state.doc.toString();
     report.marker_during = markerCount(view, targetLine);
     report.prev_dom_during = lineText(view, targetLine - 1);
+    report.marker_composing_peak = await observeComposing(view, targetLine);
 
     if (cmd.case === "compose") {
       // 取消组合：撤掉 marked text，再结束组合；doc MUST 回到基线。
@@ -306,7 +328,7 @@ if (!globalThis.__lumirImeDriver) {
     const final = sample(view, targetLine, pos);
     report.doc_final = final.doc;
     report.marker_final = final.marker;
-    report.marker_peak = Math.max(report.marker_during, settled.peak, final.marker);
+    report.marker_peak = Math.max(report.marker_during, report.marker_composing_peak, settled.peak, final.marker);
     report.prev_dom_final = settled.prevFinal;
     report.prev_min_len = settled.prevMinLen;
     report.prev_never_empty = settled.prevMinLen > 0;

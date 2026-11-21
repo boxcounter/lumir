@@ -127,8 +127,13 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
   更新，MUST 等 CM 的 pending MutationRecord flush 后再唤醒重建，MUST NOT 在事件 handler
   内同步 dispatch（会清掉 pending 记录、丢候选）。恢复链 SHALL 以有界工作分片推进，解析未
   覆盖提交行时以有界重试 / 低频重试继续，MUST NOT 把同步解析整篇文档当作刷新前提，也 MUST
-  NOT 在截止后放弃目标或依赖下一次用户编辑。单个不可分割的超长解析块受上游解析器限制，
-  属已知边界。段落后 `- ` 变为列表时，组合中 MUST NOT 同时出现原始 marker 与新 widget。
+  NOT 在截止后放弃目标或依赖下一次用户编辑。恢复链的树判定 MUST 反映当前源码：旧 parse
+  context 自认已完成时 MUST 用一次有界对照解析复核，MUST NOT 凭旧树的 list 判定直接收束，
+  也 MUST NOT 按行文本形态一刀切隐藏 marker（空列表项仍由树决定）。最后一拍重建 MUST 以一次
+  view update 发布到 DOM（插件的装饰集合变化不会自行触发重绘）；MUST NOT 只改插件状态并等
+  下一次用户编辑——解析树已同步、组合 flush 无残留时不会再有 update，旧 marker 会永久残留。
+  单个不可分割的超长解析块受上游解析器限制，属已知边界。段落后 `- ` 变为列表时，组合中
+  MUST NOT 同时出现原始 marker 与新 widget。
 - **marker 与几何**：渲染稳定后，每个可见列表项 MUST 恰有一个 marker widget；显示 glyph /
   复合序号、计算样式与正文起点 x MUST 保持输入前同合同。普通输入、组合更新 / 删除与组合提交
   MUST NOT 造成 marker 丢失、重复、样式退化或正文悬挂位置漂移。
