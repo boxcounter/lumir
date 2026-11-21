@@ -316,7 +316,7 @@ test("无筛选词时选中集 = 批次池（返回副本，不改入参），�
   assert.deepEqual(idsOf(selectScenarios(SELECT_SAMPLE, [], corePool).selected), idsOf(corePool));
 });
 
-test("真仓库对账：item 与 id 前缀交叉处按 item 选（13 → 13-toc），47 → 47a–d、230 → 230a–c", async () => {
+test("真仓库对账：item 与 id 前缀交叉处按 item 选（13 → 13-toc），47 → 47a–d、230 → 230a–d", async () => {
   const dir = path.join(repoRoot(), "scripts/acceptance/scenarios");
   const names = (await readdir(dir)).filter((n) => n.endsWith(".md")).sort();
   const all = await Promise.all(names.map((n) => loadScenario(path.join(dir, n))));
@@ -345,7 +345,12 @@ test("真仓库对账：item 与 id 前缀交叉处按 item 选（13 → 13-toc�
   assert.deepEqual(g47, ["47a-menu-basics", "47b-rename-validation", "47c-create-and-delete", "47d-dirty-tab-linkage"]);
 
   const g230 = idsOf(selectScenarios(all, ["230"]).selected);
-  assert.deepEqual(g230, ["230a-path-forms", "230b-lazy-and-external-readonly", "230c-restart-and-focus-scopes"]);
+  assert.deepEqual(g230, [
+    "230a-path-forms",
+    "230b-lazy-and-external-readonly",
+    "230c-restart-and-focus-scopes",
+    "230d-quick-open-select-all-dir-children",
+  ]);
 
   // 前缀级对真仓仍有区分度：47a / 230b 各只选一条。
   assert.deepEqual(idsOf(selectScenarios(all, ["47a"]).selected), ["47a-menu-basics"]);

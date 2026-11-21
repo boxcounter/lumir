@@ -12,11 +12,13 @@ import { test } from "node:test";
 import {
   CANDIDATE_LIMIT,
   classifyVaultPath,
+  directChildIndices,
   lookupVaultPath,
   normalizeQuickOpenInput,
   quickOpenAttempts,
   quickOpenDirectExternalText,
   quickOpenDirectText,
+  quickOpenDirectoryHint,
   resolveQuickOpen,
   resolveQuickOpenSync,
   splitLineSuffix,
@@ -342,6 +344,83 @@ test("判决：目录 ⇒ dir（不打开目录本身）；目录判定排在探
     path: "notes",
   });
   assert.deepEqual(probes, []);
+});
+
+// ---------------------------------------------------------------------------
+// 目录语境（change fix-quick-open-select-all-directory-children-nov21）
+//
+// 判决层带出**目录语境**：结果区据此把候选收窄为直接子级，Enter 与结果区仍消费同一份判决。
+// 尾斜杠只是目录断言——去掉一个斜杠后不是 vault 内目录时，一律退回既有非法 / 找不到口径。
+// ---------------------------------------------------------------------------
+
+test("目录语境：目录判决带出 directory；尾斜杠目录带出 directory 但不改判决", () => {
+  const e = env({ files: ["notes/plan.md", "notes/sub/deep.md"], dirs: ["notes"] });
+  const bare = resolveQuickOpenSync("notes", ROOT, e);
+  assert.deepEqual(bare.verdict, { kind: "dir", path: "notes" });
+  assert.equal(bare.directory, "notes");
+  // 尾斜杠只作目录断言：判决仍是 invalid（Enter 沿用既有候选打开行为），directory 单独带出
+  for (const raw of ["notes/", "/v/notes/", "/V/notes/", "./notes/"]) {
+    const slash = resolveQuickOpenSync(raw, ROOT, e);
+    assert.deepEqual(slash.verdict, { kind: "invalid" }, raw);
+    assert.equal(slash.directory, "notes", raw);
+  }
+});
+
+test("目录语境：尾斜杠不是目录断言时退回既有口径（文件 / 不存在 / 外部 / vault 根）", () => {
+  const e = env({ files: ["notes.md"], dirs: ["notes"] });
+  for (const raw of ["notes.md/", "ghost/", "/tmp/x/", "/v/", "/", "NOTES/", "notes//"]) {
+    const res = resolveQuickOpenSync(raw, ROOT, e);
+    assert.equal(res.verdict.kind, "invalid", raw);
+    assert.equal(res.directory, undefined, raw);
+  }
+});
+
+test("目录语境：尾斜杠目录一次探测都不发（目录判定先于探测）", async () => {
+  const probes: string[] = [];
+  const e = env({ files: ["notes/plan.md"], dirs: ["notes"], present: ["notes/"] }, probes);
+  const res = await resolveQuickOpen("notes/", ROOT, e);
+  assert.deepEqual(res.verdict, { kind: "invalid" });
+  assert.equal(res.directory, "notes");
+  assert.deepEqual(probes, []);
+});
+
+test("目录语境：直接子级只取一层，深层后代与同前缀兄弟目录都不混入", () => {
+  const files = [
+    "notes/plan.md",
+    "notes/sub/deep.md",
+    "notes/sub/nested/even-deeper.md",
+    "notes-extra/note.md",
+    "notes2.md",
+    "notes.md",
+  ];
+  // 边界是 `/` 不是字符串前缀：`notes-extra` / `notes2.md` 都不是 `notes` 的子级
+  assert.deepEqual(directChildIndices(files, "notes"), [0]);
+  // 结果保持索引序（不重排、不打分）
+  assert.deepEqual(directChildIndices(["notes/b.md", "notes/a.md"], "notes"), [0, 1]);
+});
+
+test("目录语境提示：有子级 / 超上限 / 无子级三档", () => {
+  assert.equal(quickOpenDirectoryHint("notes", 0), "notes 是目录 · 没有直接子级文件");
+  assert.equal(quickOpenDirectoryHint("notes", 2), "notes 是目录 · 直接子级文件 2 条");
+  assert.equal(
+    quickOpenDirectoryHint("notes", CANDIDATE_LIMIT + 1),
+    `notes 是目录 · 直接子级文件 ${CANDIDATE_LIMIT + 1} 条，只显示前 ${CANDIDATE_LIMIT} 条`,
+  );
+});
+
+test("目录语境：中文与长路径按同一口径切直接子级", () => {
+  const dir = "项目资料/2026 年度/会议记录";
+  const files = [
+    `${dir}/第一次会议.md`,
+    `${dir}/归档/旧会议.md`,
+    `${dir}/归档/更早/旧会议.md`,
+    `${dir}-副本/草稿.md`,
+  ];
+  assert.deepEqual(directChildIndices(files, dir), [0]);
+  // 目录存在但只有更深文件 / 子目录 ⇒ 直接子级为空（不把深层文件顶上来）
+  assert.deepEqual(directChildIndices([`${dir}/归档/旧会议.md`], dir), []);
+  // 目录名本身为空时不产生候选（vault 根不当目录语境，见 living spec 的根自身口径）
+  assert.deepEqual(directChildIndices(files, ""), []);
 });
 
 test("判决：索引外的惰性文件经探测命中 ⇒ 直接打开（相对 / vault 内绝对两形）", async () => {
