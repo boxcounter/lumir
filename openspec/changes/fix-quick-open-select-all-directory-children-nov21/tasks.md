@@ -37,8 +37,9 @@
       `filterIndices`；候选来源与上限逻辑不变
 - [x] 2.4 提示行：目录语境改用 `quickOpenDirectoryHint`（D943 有子级 / D944 截断 / D945 空目录），
       空态文案与可见性口径不变
-- [x] 2.5 `confirm`：目录语境（含尾斜杠形态）走既有两段式——第一次揭示、第二次打开游标候选；
-      非目录语境的 Enter 分支不改
+- [x] 2.5 `confirm`：裸 `notes`（`verdict.kind === "dir"`）走既有两段式——第一次揭示、第二次打开
+      游标候选；尾斜杠 `notes/`（`invalid` + `directory`）有候选时一次打开、无候选时揭示目录原因；
+      其余 Enter 分支不改
 - [x] 2.6 popover `keydown` 新增 `Cmd-A`：`preventDefault` + `input.select()`；组合期早退、
       其余文本编辑键不拦截
 - [x] 2.7 文案 D943–D945 进 `src/copy-data.ts` 与 `文案-Copy.md`（含取号沿革、消费点映射、末位
@@ -50,20 +51,22 @@
       空目录、三档提示），全量 `pnpm test` 通过（1686 tests / 0 failed；日志
       `.local/missions/quick-open-nov21/unit-final.log`）
 - [x] 3.2 浏览器场景全绿：`LUMIR_VISUAL_PORT=4283 scripts/visual/run.sh scenes/quick-open.spec.ts`
-      → 24 passed（日志 `.local/missions/quick-open-nov21/visual-GREEN-after-fix.log`）。其中
+      → 26 passed（r1 后日志 `.local/missions/quick-open-nov21/visual-r1.log`）。其中
       「目录没有直接子级文件」用例补于绿阶段（D945 分支），目录语境的**红**由同一分支的深层后代 /
       前缀兄弟 / 尾斜杠用例代表（红跑日志已留证）
 - [x] 3.3 既有 `notes/` 场景保持「一次 Enter 打开游标候选」的判据（尾斜杠只改筛选与提示）；
       另补「非目录查询一次 Enter 打开游标候选」与「裸目录 `notes` 两段式」两条，证明两种既有
       Enter 行为都不回归
-- [x] 3.4 根 `tsc --noEmit` 通过（`.local/missions/quick-open-nov21/tsc-run2.log`）
+- [x] 3.4 三份 tsc 通过：根 `tsc --noEmit`、`tests/visual` 的 `tsc --noEmit`、
+      `tsc -p tests/unit/tsconfig.json`（r1 后日志 `tsc-root-r1.log` / `tsc-visual-r1.log` /
+      `tsc-unit-r1.log`）
 - [x] 3.5 不改视觉基线（本 change 只改提示行文本与候选集合，`quick-open` 场景无像素基线）
 
 ## 4. 验收场景（本 worker 不跑真机）
 
 - [x] 4.1 新增 `scripts/acceptance/scenarios/230d-quick-open-select-all-dir-children.md`
       （item 655，与 230a–230c 同组）：⌘A 全选后替换键入、目录直接子级提示 / 深层后代不混入、
-      两段式 Enter
+      裸目录两段式 Enter
 - [x] 4.2 `node scripts/acceptance/coverage.mjs` 重新生成 `COVERAGE.md`（246 个场景 / 222 个
       item；row 655 列出 230d）
 - [ ] 4.3 真机执行 `node scripts/acceptance/run.mjs 230d`（由 tower 在批次收尾统一安排；本 worker
@@ -74,3 +77,24 @@
 - [x] 5.1 提交产品改动到 mission 分支（本 worker 不 push、不操作主仓产品文件 / 主仓 dev 实例 /
       真实 vault）
 - [ ] 5.2 独立 reviewer clean / merge（tower 安排）
+
+## 6. r1 评审处置（review `quick-open-nov21/review-r1.md`）
+
+- [x] 6.1 **P2-1**：230d 的 ⌘A 值判据锚到 AX value 的终止处
+      （`Value: z(?=[ \t]*(?:@|actions=|\(focused\)|$))`；AX dump 的 `Value: …` 后还有 bbox /
+      actions / focused，裸 `$` 会误判红）。在 `scripts/acceptance/lib/execute.test.mjs` 增加
+      matcher 自验：`z` 判绿、`zabc` / `abcz` 判红，并反向证明旧「只判包含」判据对 `zabc` 假绿。
+      `node --test --test-name-pattern 230d scripts/acceptance/lib/execute.test.mjs` PASS；
+      `docs-check` 的验收套件自测 192 passed。
+- [x] 6.2 **P2-2**：delta 新增 MODIFIED「结果区与 Enter 的判决同源（直接打开行）」整块（从 living
+      逐字复制后改）：两段式限定为 `verdict.kind === "dir"` 的裸目录；尾斜杠目录断言沿用候选打开，
+      并补「尾斜杠目录沿用候选打开」场景。`node scripts/openspec-archive-check.mjs --change
+      fix-quick-open-select-all-directory-children-nov21` PASS（2 条 MODIFIED / 33 段 / 无静默丢段）；
+      `validate --all --strict` 35 passed。
+- [x] 6.3 **P3-1**：tasks 2.5 已改为「裸 `notes` 两段式；`notes/` 有候选一次打开、无候选揭示目录
+      原因」。
+- [x] 6.4 **P3-2**：浏览器场景补「组合期 ⌘A 不消费、不改选区（含 keyCode 229）」与「⌃A 不被浮层
+      消费」两条；单测补 `NOTES/`、`notes//` 不进入目录语境与 `/V/notes/` 折叠根前缀进入目录语境。
+- [x] 6.5 r1 后读数：三份 tsc 0；`pnpm test` 1686 passed；quick-open spec 26 passed；
+      `docs-check` PASS；`validate --all --strict` 35 passed；`acceptance --check` 246 场景
+      （230d CHECK PASS）。证据见 `.local/missions/quick-open-nov21/*-r1.log`。

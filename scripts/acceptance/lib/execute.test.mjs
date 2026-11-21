@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -3100,5 +3100,38 @@ test("realConfigStat：基线 / 终态一致时零差异，任一项变化（siz
   assert.ok(
     diffStatTrees(baseline, await readOnlyStatTree(dir)).length > 0,
     "目录从有到无同样要判红",
+  );
+});
+
+// ── matcher：230d 的 ⌘A 值判据必须锚到值末尾（review r1 P2-1）──────────────────────────
+
+test("matcher：230d 的 ⌘A 值判据对 z 判绿，对 zabc / abcz 都判红", async () => {
+  const scenario = await loadScenario(
+    path.join(repoRoot(), "scripts/acceptance/scenarios/230d-quick-open-select-all-dir-children.md"),
+  );
+  const step = scenario.steps?.find((s) => s.name === "⌘A 的行为读数");
+  assert.ok(step, "场景里必须有「⌘A 的行为读数」步骤");
+  const pattern = step.expect?.find((e) => typeof e.ax?.has === "string" && e.ax.has.includes("AXComboBox"))?.ax.has;
+  assert.equal(typeof pattern, "string", "该步骤必须有一条 AXComboBox 的值断言");
+
+  // 真机 AX dump 的节点行形态（Value 之后还有 bbox / actions / focused）；`matcher` 对整份
+  // AX 文本做匹配，所以判据必须锚在 **value 的终止处**，不能只判「包含 Value: z」。
+  const axLine = (value) =>
+    `- [275] AXComboBox (按路径快速打开文件) Value: ${value} @27,655 299×22 actions=[AXPress] (focused)`;
+
+  assert.equal(matcher(pattern).test(axLine("z")), true, "全选成功（Value: z）必须判绿");
+  assert.equal(matcher(pattern).test(axLine("zabc")), false, "全选失败 + 光标在开头（zabc）必须判红");
+  assert.equal(matcher(pattern).test(axLine("abcz")), false, "全选失败 + 光标在末尾（abcz）必须判红");
+
+  // 反向对照（REVIEW「断言等价于子串」）：旧的「只判包含」判据在 zabc 上确实假绿——
+  // 这正是本用例要挡住的形态，不是新判据的空转。
+  const old = "/AXComboBox \\(按路径快速打开文件\\) Value: z/";
+  assert.equal(matcher(old).test(axLine("zabc")), true, "旧判据对 zabc 假绿（证明新判据有区分度）");
+
+  // value 的两种合法终止形态：行尾 / 直接跟 actions，不得被误判红。
+  assert.equal(matcher(pattern).test("- [1] AXComboBox (按路径快速打开文件) Value: z"), true);
+  assert.equal(
+    matcher(pattern).test("- [1] AXComboBox (按路径快速打开文件) Value: z actions=[AXPress]"),
+    true,
   );
 });

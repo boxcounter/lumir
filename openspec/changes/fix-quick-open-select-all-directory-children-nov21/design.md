@@ -123,7 +123,7 @@ rest = path.slice(prefix.length)
    - 同一批用例全绿；补 `directChildIndices` 的纯函数单测（含中文 / 长路径 / 前缀边界）。
    - `tests/visual/scenes/quick-open.spec.ts` 增加「非目录查询一次 Enter 打开游标候选」，
      证明目录语境之外的 Enter 行为不回归。
-   - 证据：`.local/missions/quick-open-nov21/unit-run*.log`、`visual-GREEN-after-fix.log`
-     （24 passed）。
+   - 证据：`.local/missions/quick-open-nov21/unit-final.log`、`visual-r1.log`（26 passed；r1 补了
+     组合期 ⌘A 与 ⌃A 两条）。
 3. **不改视觉基线**：本 change 不新增 / 移动可见元素，只改提示行文本与候选集合；`quick-open`
    场景无像素基线（只有 DOM 断言），无需 `--update`。

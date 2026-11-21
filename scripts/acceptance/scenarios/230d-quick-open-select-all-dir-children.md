@@ -90,7 +90,10 @@ steps:
     do: settle
     expect:
       - label: 输入框的值被整串替换为 `z`（未全选时会得到 `abcz` 或 `zabc`）
-        ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: z/" }
+        # 值必须**到此为止**：`Value: z` 后面只允许 bbox / actions / focused 或行尾（AX dump 里
+        # `Value: …` 的终止形态，见 ax.mjs 的 parseNodes）。不能只判「包含 Value: z」——
+        # 那会把全选失效 + 光标在开头时输入的 `zabc` 判成 PASS（review r1 P2-1）。
+        ax: { has: "/AXComboBox \\(按路径快速打开文件\\) Value: z(?=[ \\t]*(?:@|actions=|\\(focused\\)|$))/" }
       - label: 编辑器文档没有被这次 ⌘A 改动（正文仍是刚打开的文件）
         ax: { has: "DIRECT-CHILD-655-MARKER" }
   - name: 收起输入面

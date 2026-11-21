@@ -359,7 +359,7 @@ test("目录语境：目录判决带出 directory；尾斜杠目录带出 direct
   assert.deepEqual(bare.verdict, { kind: "dir", path: "notes" });
   assert.equal(bare.directory, "notes");
   // 尾斜杠只作目录断言：判决仍是 invalid（Enter 沿用既有候选打开行为），directory 单独带出
-  for (const raw of ["notes/", "/v/notes/", "./notes/"]) {
+  for (const raw of ["notes/", "/v/notes/", "/V/notes/", "./notes/"]) {
     const slash = resolveQuickOpenSync(raw, ROOT, e);
     assert.deepEqual(slash.verdict, { kind: "invalid" }, raw);
     assert.equal(slash.directory, "notes", raw);
@@ -368,7 +368,7 @@ test("目录语境：目录判决带出 directory；尾斜杠目录带出 direct
 
 test("目录语境：尾斜杠不是目录断言时退回既有口径（文件 / 不存在 / 外部 / vault 根）", () => {
   const e = env({ files: ["notes.md"], dirs: ["notes"] });
-  for (const raw of ["notes.md/", "ghost/", "/tmp/x/", "/v/", "/"]) {
+  for (const raw of ["notes.md/", "ghost/", "/tmp/x/", "/v/", "/", "NOTES/", "notes//"]) {
     const res = resolveQuickOpenSync(raw, ROOT, e);
     assert.equal(res.verdict.kind, "invalid", raw);
     assert.equal(res.directory, undefined, raw);

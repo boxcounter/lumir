@@ -700,6 +700,79 @@ test("⌘A：输入框内全选输入内容、替换键入不追加；编辑器�
   expect(docSelection.to).toBe(docSelection.length);
 });
 
+test("组合期 ⌘A：输入面不消费、不改选区（组合期归输入法）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await openQuickOpen(page);
+  const input = page.locator(".lumir-qo-input");
+  await page.keyboard.type("abc");
+
+  const result = await input.evaluate((element) => {
+    const field = element as HTMLInputElement;
+    field.setSelectionRange(1, 2);
+    const composing = new KeyboardEvent("keydown", {
+      key: "a",
+      metaKey: true,
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    field.dispatchEvent(composing);
+    const legacy = new KeyboardEvent("keydown", {
+      key: "a",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    // 旧口径的「输入法正在处理」信号：keyCode 229（isComposing 之外的第二条早退判据）
+    Object.defineProperty(legacy, "keyCode", { value: 229 });
+    field.dispatchEvent(legacy);
+    return {
+      composingPrevented: composing.defaultPrevented,
+      legacyPrevented: legacy.defaultPrevented,
+      start: field.selectionStart,
+      end: field.selectionEnd,
+      value: field.value,
+    };
+  });
+  // 组合期不 preventDefault、不调用 select()：选区与输入串逐值不变
+  expect(result).toEqual({
+    composingPrevented: false,
+    legacyPrevented: false,
+    start: 1,
+    end: 2,
+    value: "abc",
+  });
+});
+
+test("⌃A：输入面不消费（Emacs 行首 / 原生语义不被浮层截走）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await openQuickOpen(page);
+  const input = page.locator(".lumir-qo-input");
+  await page.keyboard.type("abc");
+
+  const result = await input.evaluate((element) => {
+    const field = element as HTMLInputElement;
+    field.setSelectionRange(1, 3);
+    const event = new KeyboardEvent("keydown", {
+      key: "a",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    field.dispatchEvent(event);
+    return {
+      prevented: event.defaultPrevented,
+      value: field.value,
+      start: field.selectionStart,
+      end: field.selectionEnd,
+    };
+  });
+  // 浮层只认 `Cmd-A`：Ctrl-A 不 preventDefault、不改输入串与选区（原生 / 键位层自己处置）
+  expect(result).toEqual({ prevented: false, value: "abc", start: 1, end: 3 });
+});
+
 // ---------------------------------------------------------------------------
 // 7）目录语境：候选收窄为直接子级（不混入深层后代 / 同前缀兄弟目录）
 // ---------------------------------------------------------------------------
