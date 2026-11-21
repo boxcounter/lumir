@@ -9,7 +9,6 @@ export type ScrollSnapshot = ReturnType<EditorView["scrollSnapshot"]>;
 import { history, isolateHistory, redo, undo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { backspaceBareMarkerLine, DEFAULT_AUTO_INDENT, enterWithAutoIndent } from "./enter-indent";
-import { logEvent } from "./diagnostics";
 // M447：词 / 字素簇扫描与 kill 槽的**共用**实现（两侧只有一份）住在叶子模块 src/quote-card.ts
 // ——composer 侧的模块图必须能进零 DOM 单测，而本模块的 import 图里有参数属性，两侧不能直接互
 // import（同 src/enter-indent.ts / src/list-indent.ts 的模块头所述）。
@@ -806,26 +805,6 @@ function replaceSelectedRanges(view: EditorView, text: string): void {
 const compositionStarts = new WeakMap<EditorView, number>();
 const COMPOSITION_BACKSPACE_INPUTS = new Set(["deleteContentBackward", "deleteCompositionText"]);
 
-function traceIme(event: Event, view: EditorView, phase: string, handled = false): void {
-  if (location.hostname !== "127.0.0.1" || location.port !== "1420") return;
-  const input = event as InputEvent;
-  const main = view.state.selection.main;
-  logEvent("editor_ime", {
-    phase,
-    input_type: input.inputType ?? event.type,
-    event_composing: String(input.isComposing ?? false),
-    cm_composing: String(view.compositionStarted),
-    handled: String(handled || event.defaultPrevented),
-    from: String(main.from),
-    to: String(main.to),
-    start: String(compositionStarts.get(view) ?? -1),
-    doc_len: String(view.state.doc.length),
-    data_len: String(typeof input.data === "string" ? input.data.length : -1),
-    line_count: String(view.contentDOM.querySelectorAll(".cm-line").length),
-    marker_count: String(view.contentDOM.querySelectorAll(".cm-lp-list-marker").length),
-  });
-}
-
 /** 组合中 Backspace 只在即将删空 marked text 时改走显式事务；起点处消费事件、不改文档。
  *  L6 范围收窄：只有列表内容起点（真列表项 / 裸 marker / 段落后 `- ` 的 setext 候选）才接管；
  *  普通段落、表格、代码块交回原生 IME（P2-1，合同 docs/specs/lists.md L6）。 */
@@ -916,30 +895,16 @@ function absorbNativeEdit(event: InputEvent, view: EditorView): boolean {
 
 /** 只装进 md 模式：code 模式没有 replace 装饰，原生删除 / 键入无回读风险。 */
 const nativeEditGate = EditorView.domEventHandlers({
-  compositionstart: (event, view) => {
+  compositionstart: (_event, view) => {
     const main = view.state.selection.main;
     compositionStarts.set(view, Math.min(main.anchor, main.head));
-    traceIme(event, view, "compositionstart");
     return false;
   },
-  compositionupdate: (event, view) => {
-    traceIme(event, view, "compositionupdate");
-    return false;
-  },
-  compositionend: (event, view) => {
-    traceIme(event, view, "compositionend");
+  compositionend: (_event, view) => {
     compositionStarts.delete(view);
     return false;
   },
-  beforeinput: (event, view) => {
-    const handled = absorbNativeEdit(event as InputEvent, view);
-    traceIme(event, view, "beforeinput", handled);
-    return handled;
-  },
-  input: (event, view) => {
-    traceIme(event, view, "input");
-    return false;
-  },
+  beforeinput: (event, view) => absorbNativeEdit(event as InputEvent, view),
 });
 
 /** code 模式的唯一接管面（M860）：没有 replace 装饰，不需要 M836 / M854 的回读与选区

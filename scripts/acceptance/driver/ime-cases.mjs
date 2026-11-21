@@ -6,7 +6,13 @@
 export const IME_CASES = Object.freeze({
   compose: Object.freeze({ text: "s" }),
   "delete-empty": Object.freeze({ text: "s" }),
+  // 不可取消的 pending composition 删除（WKWebView TypingDeletePendingComposition）：
+  // 事件 preventDefault 无效，只能靠 DOM 隔离 widget 阻止默认删除。
+  "delete-uncancelable": Object.freeze({ text: "s" }),
   commit: Object.freeze({ text: "s", commit: "是" }),
+  // WKWebView 候选以 insertText 提交且不发 compositionend：产品在 input insertText 上
+  // 补一次 end 信号，走既有 settle 恢复正式 marker。
+  "commit-inserttext": Object.freeze({ text: "s", commit: "是" }),
 });
 
 export const IME_CASE_NAMES = Object.freeze(Object.keys(IME_CASES));

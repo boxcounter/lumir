@@ -71,13 +71,14 @@
 - [ ] 4.3 独立 reviewer 对真实 WKWebView 事件路径、组合期装饰冻结与历史语义做最终复核；
       preliminary review 与第二轮 review（2026-11-21）均为 hold（P1 pending flush / P2 截止后
       恢复 / P3-1 目标行几何 / P3-2 实际测量），本批处置后需复评。
-- [ ] 4.4 Alex 自行运行的 dev 实例复验输入与删除；已完成第二轮（删除 / 相邻行消失已消失，
-      候选提交后 marker 未恢复），最新版（pending flush 后延迟唤醒 + 有界分片 + 低频恢复）
-      待复验；agent 不启动或操作 Lumir、不执行真机验收。
+- [x] 4.4 Alex 自行运行的 dev 实例复验输入与删除；已完成第二轮（删除 / 相邻行消失已消失，
+      候选提交后 marker 未恢复）。**2026-11-21 Alex 原生复验：中文候选提交后正式列表符恢复，
+      行为符合预期**（insertText 提交、无 compositionend 的路径也已覆盖）；agent 不启动或
+      操作 Lumir、不执行真机验收。
 - [x] 4.6 用 runner 真实执行场景 271（自动启动隔离 dev），保存截图 / 报告 / JSONL；
       并用未修复 mutant 证明对应字段判红、恢复后复绿（证据 `.local/acceptance/` 与
       `.local/missions/ime-list-composition-nov21/worker/`）。
-- [ ] 4.5 诊断完成后移除临时 `editor_ime` 诊断：前端 `traceIme` 及其 `compositionupdate` /
-      `input` 埋点、Rust `LogEventName::EditorIme` 与字段白名单、ts-rs 重导出
-      `src/bindings/LogEventName.ts`；随后复跑 tsc、单测、目标视觉组与 bindings 漂移检查。
-      移除前不得归档。
+- [x] 4.5 诊断完成后移除临时 `editor_ime` 诊断：前端 `traceIme` / `traceSettle` /
+      `forensicDetail` 及事件埋点、Rust `LogEventName::EditorIme` 与字段白名单、ts-rs 重导出
+      `src/bindings/LogEventName.ts`；随后复跑 tsc ×3、单测、目标视觉组、271、docs-check、
+      OpenSpec validate 与 cargo test 绑定核对。

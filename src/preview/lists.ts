@@ -4,7 +4,6 @@ import type { EditorState, Extension, Line, Range, Text } from "@codemirror/stat
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { EDITOR_FONT_FAMILY_TOKEN } from "../typography";
-import { logEvent } from "../diagnostics";
 import { pointerPressFrame, revealSelection } from "./reveal-gate";
 import { t } from "../copy";
 
@@ -163,8 +162,31 @@ export interface ListLineRender {
   readonly info: ListLineInfo | null;
   /** 裸 marker 行的编辑态判定（M461）；null = 不是裸行、或不在编辑态。 */
   readonly bare: ListMarkerText | null;
+  /** setext 候选（`- ` 标题下划线）在编辑态的源码隔离 widget：字面文本、非可编辑原子节点。
+   *  null = 不是 setext 候选、或不在编辑态。 */
+  readonly shield: ListMarkerText | null;
   /** 被 replace 掉的源码区间（marker + 尾随空白、或续行行首缩进）；null = 本行不隐藏源码。 */
   readonly hidden: { readonly from: number; readonly to: number } | null;
+}
+
+/** setext 候选的源码隔离判定：行文本是纯 `-` + 空白、树把它判为 SetextHeading2，且本行是
+ *  标题下划线。编辑态下把 `- ` 换成非可编辑原子 widget（字面文本），让原生 pending
+ *  composition 删除无法沿可编辑文本节点吞掉标记。真列表项 / 代码块 / 表格等不在这里。 */
+function setextCandidateShield(tree: Tree, doc: Text, line: Line): ListMarkerText | null {
+  const marker = markerTextAt(line.text, line.from);
+  if (marker === null || marker.marker !== "-" || marker.contentFrom !== line.to) return null;
+  for (let node: Node | null = tree.resolveInner(marker.markerFrom, 1); node; node = node.parent) {
+    const name = node.name;
+    if (name === "SetextHeading2") return marker;
+    if (
+      name === "SetextHeading1" || name.startsWith("ATXHeading") ||
+      name === "FencedCode" || name === "CodeBlock" || name === "HTMLBlock" ||
+      name === "Table" || name === "Document"
+    ) {
+      return null;
+    }
+  }
+  return null;
 }
 
 export function listLineRender(tree: Tree, doc: Text, line: Line, editing: boolean): ListLineRender {
@@ -175,16 +197,18 @@ export function listLineRender(tree: Tree, doc: Text, line: Line, editing: boole
       const task = info.item.getChild("Task")?.getChild("TaskMarker");
       let end = task?.to ?? mark.to;
       while (end < line.to && /[ \t]/.test(doc.sliceString(end, end + 1))) end++;
-      return { info, bare: null, hidden: { from: line.from, to: end } };
+      return { info, bare: null, shield: null, hidden: { from: line.from, to: end } };
     }
-    if (info.offset > 0) return { info, bare: null, hidden: { from: line.from, to: line.from + info.offset } };
-    return { info, bare: null, hidden: null };
+    if (info.offset > 0) return { info, bare: null, shield: null, hidden: { from: line.from, to: line.from + info.offset } };
+    return { info, bare: null, shield: null, hidden: null };
   }
   if (editing) {
+    const shield = setextCandidateShield(tree, doc, line);
+    if (shield) return { info: null, bare: null, shield, hidden: { from: line.from, to: shield.contentFrom } };
     const bare = bareListMarkerLine(tree, doc, line);
-    if (bare) return { info: null, bare, hidden: { from: line.from, to: bare.contentFrom } };
+    if (bare) return { info: null, bare, shield: null, hidden: { from: line.from, to: bare.contentFrom } };
   }
-  return { info: null, bare: null, hidden: null };
+  return { info: null, bare: null, shield: null, hidden: null };
 }
 
 /** 判据选区是否与行范围相接（含端点）——裸 marker 行的编辑态门控（B1）。
@@ -263,6 +287,25 @@ function labelsEqual(a: ReadonlyMap<number, string>, b: ReadonlyMap<number, stri
  *  第三档）。与 theme.ts 的 `.cm-lp-list-marker-d1/-d2/-d3` 是同一组比值的两个写值：
  *  改一处必须改另一处（canvas 测量按它量标记宽度，见下方 measure 的注释）。 */
 const MARKER_FONT_RATIOS = [13.5 / 15, 13 / 15, 12.5 / 15] as const;
+
+/** setext 候选在编辑态的源码隔离 widget：渲染字面 marker 文本（`- `），非可编辑原子节点。
+ *  只用 replace 覆盖，不加列表行 class / 悬挂缩进；组合结束或树变化后由正常 render 接管。 */
+class SourceShield extends WidgetType {
+  readonly text: string;
+  constructor(text: string) {
+    super();
+    this.text = text;
+  }
+  eq(other: SourceShield) { return other.text === this.text; }
+  toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.className = "cm-lp-source-shield";
+    span.contentEditable = "false";
+    span.style.whiteSpace = "pre";
+    span.textContent = this.text;
+    return span;
+  }
+}
 
 class ListMarker extends WidgetType {
   // 显式字段而非参数属性：tests/unit 的 Node 类型剥离（strip-only）不支持参数属性，
@@ -475,27 +518,6 @@ const COMPOSITION_SETTLE = {
   referenceParseMs: 8,
 } as const;
 
-/** dev-only 诊断：只记状态 / 计数 / 位置，不含正文、路径。gating 与 editor_ime 一致。 */
-function settleTraceEnabled(): boolean {
-  return typeof location !== "undefined" && location.hostname === "127.0.0.1" && location.port === "1420";
-}
-
-function traceSettle(view: EditorView, phase: string, fields: Record<string, string> = {}): void {
-  if (!settleTraceEnabled()) return;
-  const state = view.state;
-  const main = state.selection.main;
-  logEvent("editor_ime", {
-    phase,
-    doc_len: String(state.doc.length),
-    line_count: String(view.contentDOM.querySelectorAll(".cm-line").length),
-    marker_count: String(view.contentDOM.querySelectorAll(".cm-lp-list-marker").length),
-    cm_composing: String(view.compositionStarted),
-    head: String(main.head),
-    target_line: String(state.doc.lineAt(main.head).number),
-    ...fields,
-  });
-}
-
 /** 目标行在指定树下的归属与节点链（只记节点名 / 位置，不含正文）。 */
 interface TargetRead {
   kind: string;
@@ -517,19 +539,6 @@ function readTarget(view: EditorView, tree: Tree, to: number): TargetRead {
     first: String(render.info?.first ?? false),
     chain: names.join("<").slice(0, 240),
   };
-}
-
-/** 目标行 DOM 里是否有 marker；目标行不在视口时保持 "?"。 */
-function targetHasMarker(view: EditorView, to: number): string {
-  const line = view.state.doc.lineAt(Math.min(to, view.state.doc.length));
-  try {
-    const dom = view.domAtPos(line.from);
-    let node: ReturnType<typeof view.domAtPos>["node"] | null = dom.node;
-    while (node && !(node instanceof HTMLElement && node.classList.contains("cm-line"))) node = node.parentNode;
-    return String(!!(node as HTMLElement | null)?.querySelector(".cm-lp-list-marker"));
-  } catch {
-    return "?";
-  }
 }
 
 /** 目标行源码里有 marker 且有正文：期望它渲染成 list（用于区分「该出 marker」与「源码形态」）。 */
@@ -678,11 +687,6 @@ class ListLayout {
       if (effect.is(pointerPressFrame)) pointerMoved = true;
       if (effect.is(compositionSettled)) {
         settleAt = effect.value;
-        traceSettle(update.view, "settle_effect", {
-          settle_to: String(settleAt),
-          state_tree_len: String(tree.length),
-          available: String(syntaxTreeAvailable(update.state, Math.min(update.state.doc.length, settleAt))),
-        });
       }
     }
     if (update.docChanged) {
@@ -743,40 +747,7 @@ class ListLayout {
     if (!update.view.compositionStarted &&
         (resized || update.docChanged || tree !== syntaxTree(update.startState) || update.viewportChanged || update.selectionSet || pointerMoved)) {
       this.build(update.view);
-      if (this.settleTo !== null) traceSettle(update.view, "settle_build_update", this.settleSnapshot(update.view));
     }
-  }
-
-  /** 当前 settle 链的快照：只给 dev 诊断用。 */
-  private settleSnapshot(view: EditorView, extra: Record<string, string> = {}): Record<string, string> {
-    if (!settleTraceEnabled()) return {};
-    const to = Math.min(view.state.doc.length, this.settleTo ?? view.state.selection.main.head);
-    const stateTree = syntaxTree(view.state);
-    const contextTree = ensureSyntaxTree(view.state, to, 0);
-    const build = readTarget(view, this.tree, to);
-    const state = readTarget(view, stateTree, to);
-    const context = contextTree ? readTarget(view, contextTree, to) : { kind: "unavailable", first: "false", chain: "" };
-    return {
-      settle_to: String(this.settleTo ?? -1),
-      tree_len: String(this.tree.length),
-      state_tree_len: String(stateTree.length),
-      available: String(syntaxTreeAvailable(view.state, to)),
-      target_kind: build.kind,
-      target_first: build.first,
-      target_chain: build.chain,
-      target_has_marker: targetHasMarker(view, to),
-      context_kind: context.kind,
-      context_first: context.first,
-      context_chain: context.chain,
-      state_kind: state.kind,
-      state_first: state.first,
-      state_chain: state.chain,
-      layout_pending: String(this.pending),
-      scans: String(this.scans.size),
-      groups: String(this.groups.size),
-      units: String(this.units !== null),
-      ...extra,
-    };
   }
 
   /** compositionend 恢复链：只对提交行末做有界补解析与重建。
@@ -800,12 +771,10 @@ class ListLayout {
       clearTimeout(this.settleTimer);
       this.settleTimer = undefined;
     }
-    traceSettle(view, "settle_begin", this.settleSnapshot(view));
     this.settleTimer = setTimeout(() => this.settleStep(view), 0);
   }
 
   private cancelSettle(): void {
-    if (this.settleTo !== null) traceSettle(this.view, "settle_cancel", this.settleSnapshot(this.view));
     this.settleTo = null;
     this.referenceParse = null;
     if (this.settleTimer !== undefined) {
@@ -817,9 +786,9 @@ class ListLayout {
   /** 收束时发布最后一拍 build。`settleStep` 由 timer 调用，不在 `EditorView.update()`
    *  内——只改 `this.decorations` 不会让 CM 重绘插件装饰；若此后没有别的 update（解析树
    *  已同步、组合 flush 也没有残留），旧 marker 会永久留在 DOM（2026-11-21 重复跑复现：
-   *  三份树都是 setext、settle_build 已跑，DOM 仍停在旧装饰）。这里补一拍 metadataReady
+   *  树已正确、build 已跑，DOM 仍停在旧装饰）。这里补一拍 metadataReady
    *  更新，让刚算出的装饰真正上屏。 */
-  private publishSettled(view: EditorView): void {
+  private publishSettled(view: EditorView, to: number): void {
     this.cancelSettle();
     view.dispatch({ effects: metadataReady.of(null) });
   }
@@ -929,20 +898,18 @@ class ListLayout {
       this.settleTimer = undefined;
     }
     if (this.destroyed || this.settleTo === null) return;
-    traceSettle(view, "settle_step", this.settleSnapshot(view, { elapsed: (performance.now() - this.settleStarted).toFixed(1) }));
     // 组合态尚未归位（DOM 事件顺序可能让自定义 handler 先于 CM 的 compositionend
     // observer 运行）：延后一拍重试，不丢目标。真出现新组合时，compositionend 会用
     // 新目标替换本链。
     if (view.compositionStarted) {
-      traceSettle(view, "settle_wait_composing", this.settleSnapshot(view));
       this.settleTimer = setTimeout(() => this.settleStep(view), COMPOSITION_SETTLE.slowRetryMs);
       return;
     }
     const to = Math.min(view.state.doc.length, this.settleTo);
     if (syntaxTreeAvailable(view.state, to)) {
       // 优先用 ensureSyntaxTree 返回的 parse.context.tree：state 字段快照可能内容仍旧
-      // （WKWebView 实测长度相同、target_kind=none）。state 同步只作后续维护，不是
-      // marker 恢复的前置。
+      // （WKWebView 实测长度相同、判定为 none）。state 同步只作后续维护，不是 marker
+      // 恢复的前置。
       const contextTree = ensureSyntaxTree(view.state, to, 0);
       const expectsList = targetExpectsList(view, to);
       const resolved = this.treeForSource(view, to, expectsList, contextTree ?? syntaxTree(view.state));
@@ -950,25 +917,23 @@ class ListLayout {
       if (resolved.unresolved) {
         // 旧树仍判 list 而源码已不期望 list：对照解析未覆盖到目标行，不得按旧树 build
         // 并 publishSettled 收束（那会把旧判定写回并永久残留 marker）。
-        traceSettle(view, "settle_wait_reference", this.settleSnapshot(view));
         this.settleTimer = setTimeout(() => this.settleStep(view), this.settleRetryDelay());
         return;
       }
       const read = readTarget(view, this.tree, to);
       this.build(view);
-      traceSettle(view, "settle_build", this.settleSnapshot(view, { via: contextTree ? "available_context" : "available_state" }));
       if (read.kind === "list") {
         // 只有最终判定与 state 快照分歧（context 领先 / state 落后）时才保留这份树；
         // 两者都 list 时保留陈旧树会阻止后续 reparse 纠正（删除后 marker 残留）。
         this.retainSettledTree(view, to);
-        this.publishSettled(view);
+        this.publishSettled(view, to);
         return;
       }
       if (!expectsList) {
         // 源码形态（空 marker / setext）不期望 marker：收束。treeForSource 已排除「旧树
         // 判 list」这一条；若 state 仍落后于当前源码，保留这份判定给后续非文档更新。
         this.retainSettledTree(view, to);
-        this.publishSettled(view);
+        this.publishSettled(view, to);
         return;
       }
       // 期望 list 但当前树判不成：有界推进一次 parse context，不空 dispatch。
@@ -977,14 +942,12 @@ class ListLayout {
         this.tree = reparsed;
         const reread = readTarget(view, reparsed, to);
         this.build(view);
-        traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "available_reparse" }));
         if (reread.kind === "list") {
           this.retainSettledTree(view, to);
-          this.publishSettled(view);
+          this.publishSettled(view, to);
           return;
         }
       }
-      traceSettle(view, "settle_wait_tree", this.settleSnapshot(view));
       this.settleTimer = setTimeout(() => this.settleStep(view), COMPOSITION_SETTLE.lowFreqRetryMs);
       return;
     }
@@ -1003,7 +966,6 @@ class ListLayout {
     // 后台 parse worker 照常同步；本拍的 build 用刚返回的树即可。
     this.tree = ensureSyntaxTree(view.state, parseTo, COMPOSITION_SETTLE.stepMs) ?? syntaxTree(view.state);
     this.build(view);
-    traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "parse", chunk: String(chunk), parse_to: String(parseTo) }));
     if (syntaxTreeAvailable(view.state, to)) {
       // 同 available 分支：优先用 context tree，state 快照只作后续维护。
       const contextTree = ensureSyntaxTree(view.state, to, 0) ?? this.tree;
@@ -1011,21 +973,19 @@ class ListLayout {
       const resolved = this.treeForSource(view, to, expectsList, contextTree);
       this.tree = resolved.tree;
       if (resolved.unresolved) {
-        traceSettle(view, "settle_wait_reference", this.settleSnapshot(view));
         this.settleTimer = setTimeout(() => this.settleStep(view), this.settleRetryDelay());
         return;
       }
       const read = readTarget(view, this.tree, to);
       this.build(view);
-      traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "parse_done_context" }));
       if (read.kind === "list") {
         this.retainSettledTree(view, to);
-        this.publishSettled(view);
+        this.publishSettled(view, to);
         return;
       }
       if (!expectsList) {
         this.retainSettledTree(view, to);
-        this.publishSettled(view);
+        this.publishSettled(view, to);
         return;
       }
       const reparsed = reparseParseContext(view, to);
@@ -1033,14 +993,12 @@ class ListLayout {
         this.tree = reparsed;
         const reread = readTarget(view, reparsed, to);
         this.build(view);
-        traceSettle(view, "settle_build", this.settleSnapshot(view, { via: "parse_done_reparse" }));
         if (reread.kind === "list") {
           this.retainSettledTree(view, to);
-          this.publishSettled(view);
+          this.publishSettled(view, to);
           return;
         }
       }
-      traceSettle(view, "settle_wait_tree", this.settleSnapshot(view));
       this.settleTimer = setTimeout(() => this.settleStep(view), COMPOSITION_SETTLE.lowFreqRetryMs);
       return;
     }
@@ -1227,6 +1185,13 @@ class ListLayout {
               attributes: { style: `--lp-list-body:${body * unit}px;--lp-list-marker:${width * unit}px` },
             }).range(line.from));
             decorations.push(Decoration.replace({ widget: new ListMarker(label, null, 1) }).range(line.from, bare.contentFrom));
+          } else if (render.shield) {
+            // setext 候选的编辑态源码隔离：字面 `- ` 换成非可编辑原子 widget。原生 pending
+            // composition 删除无法沿可编辑文本节点吞掉标记；组合结束 / 树变化后正常 render
+            // 接管（真列表项走上面的 marker 分支）。不加上列表行 class / 悬挂缩进。
+            decorations.push(Decoration.replace({
+              widget: new SourceShield(doc.sliceString(line.from, render.shield.contentFrom)),
+            }).range(line.from, render.shield.contentFrom));
           }
         }
         if (line.number === doc.lines) break;
@@ -1253,30 +1218,17 @@ function scheduleCompositionSettle(view: EditorView, attempt = 0): void {
     if (!view.dom.isConnected) return;
     const observer = (view as unknown as { observer?: { pendingRecords(): readonly unknown[] } }).observer;
     const pending = observer ? observer.pendingRecords().length : -1;
-    if (attempt < 3 || attempt % 25 === 0 || attempt >= 200) {
-      traceSettle(view, "settle_schedule", {
-        attempt: String(attempt),
-        pending: String(pending),
-        state_tree_len: String(syntaxTree(view.state).length),
-      });
-    }
     if (pending > 0) {
       // 记录还没被 CM flush：继续等。绝不在 pending 记录上 dispatch。
       if (attempt < 200) scheduleCompositionSettle(view, attempt + 1);
-      else traceSettle(view, "settle_giveup", { attempt: String(attempt), pending: String(pending) });
       return;
     }
     if (view.compositionStarted) {
       // 组合标志由 CM 的 observer 在 compositionend 事件里清除；事件顺序竞态下可能晚于
       // 本拍。丢掉本拍会让冻结期的旧装饰永久残留（删空后 marker 不回退），因此有界重试。
-      traceSettle(view, "settle_skip_composing", { attempt: String(attempt) });
       if (attempt < COMPOSITION_SETTLE.composingRetries) scheduleCompositionSettle(view, attempt + 1);
       return;
     }
-    traceSettle(view, "settle_dispatch", {
-      attempt: String(attempt),
-      state_tree_len: String(syntaxTree(view.state).length),
-    });
     view.dispatch({ effects: compositionSettled.of(view.state.selection.main.head) });
   }, attempt === 0 ? 0 : 8));
 }
@@ -1284,6 +1236,19 @@ function scheduleCompositionSettle(view: EditorView, attempt = 0): void {
 export const listDecorations: Extension = [
   ViewPlugin.fromClass(ListLayout, { decorations: plugin => plugin.decorations }),
   EditorView.domEventHandlers({
+    input(event, view) {
+      // WKWebView 候选提交可能走 insertText（isComposing:false）且不发 compositionend。
+      // 提交已发生，补一次 end 信号让 CM 退出组合视图并走既有 settle；持续拼音走
+      // insertCompositionText / isComposing:true，不命中；新组合 start 会重新建立状态。
+      const input = event as InputEvent;
+      if (view.compositionStarted && input.inputType === "insertText" && !input.isComposing) {
+        queueMicrotask(() => {
+          if (!view.dom.isConnected || !view.compositionStarted) return;
+          view.contentDOM.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+        });
+      }
+      return false;
+    },
     compositionend(_event, view) {
       // 不在事件 handler 里同步 dispatch：见 scheduleCompositionSettle 的注释。
       scheduleCompositionSettle(view);

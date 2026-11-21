@@ -174,8 +174,6 @@ pub enum LogEventName {
     /// `ts_unix_ms` 与 `LUMIR_READY` 的 `ts_unix_ms` 同钟，相减即得「窗口上屏 → 启动层首帧」。
     /// **不作 CI 门禁判据**：前端首帧时刻在被测量的端点之外（perf-measurement 的冷启动口径）。
     StartupSurface,
-    /// 开发构建的编辑器 IME 事件序诊断；只含事件类型、组合状态、位置与计数，不含正文。
-    EditorIme,
 }
 
 impl LogEventName {
@@ -228,7 +226,6 @@ impl LogEventName {
             Self::SubagentRejected => "subagent_rejected",
             Self::DependencyLog => "dependency_log",
             Self::StartupSurface => "startup_surface",
-            Self::EditorIme => "editor_ime",
         }
     }
 
@@ -361,47 +358,6 @@ impl LogEventName {
             // 时间戳。**vault 名、路径、文件名、文档内容都不在白名单内**——机制化兜底
             // （spec「载荷无敏感信息」）。
             Self::StartupSurface => &["phase", "reason", "ms", "ts_unix_ms"],
-            Self::EditorIme => &[
-                "phase",
-                "input_type",
-                "event_composing",
-                "cm_composing",
-                "handled",
-                "from",
-                "to",
-                "start",
-                "doc_len",
-                "data_len",
-                "line_count",
-                "marker_count",
-                // settle 链诊断（dev-only）：状态 / 计数 / 位置，不含正文或路径。
-                "head",
-                "target_line",
-                "attempt",
-                "pending",
-                "layout_pending",
-                "settle_to",
-                "tree_len",
-                "state_tree_len",
-                "available",
-                "chunk",
-                "parse_to",
-                "target_kind",
-                "target_first",
-                "target_chain",
-                "target_has_marker",
-                "context_kind",
-                "context_first",
-                "context_chain",
-                "state_kind",
-                "state_first",
-                "state_chain",
-                "scans",
-                "groups",
-                "units",
-                "elapsed",
-                "via",
-            ],
         }
     }
 }
