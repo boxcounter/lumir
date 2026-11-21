@@ -122,10 +122,13 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
   本闸门 MUST 只在上述列表内容起点接管；普通段落、表格 cell、代码块等非列表位置的组合删除
   MUST 交回原生 IME，不得按「任意 Markdown 正文」扩大接管面。
 - **组合期装饰稳定**：从 compositionstart 到 compositionend，列表装饰 SHALL 保持组合前的
-  DOM 形态，不得在输入法持有原始文本节点时插入或替换 marker widget；组合结束后 MUST 在有界
-  时间内统一重建。解析尚未覆盖提交行时 SHALL 以有界重试继续推进并最终恢复，MUST NOT 把同步
-  解析整篇文档当作刷新前提。段落后 `- ` 变为列表时，组合中 MUST NOT 同时出现原始 marker 与
-  新 widget。
+  DOM 形态，不得在输入法持有原始文本节点时插入或替换 marker widget；组合结束后 MUST 最终
+  恢复为当前源码对应的形态。到达 compositionend 时若 DOM 已有最终候选而 `EditorState` 尚未
+  更新，MUST 等 CM 的 pending MutationRecord flush 后再唤醒重建，MUST NOT 在事件 handler
+  内同步 dispatch（会清掉 pending 记录、丢候选）。恢复链 SHALL 以有界工作分片推进，解析未
+  覆盖提交行时以有界重试 / 低频重试继续，MUST NOT 把同步解析整篇文档当作刷新前提，也 MUST
+  NOT 在截止后放弃目标或依赖下一次用户编辑。单个不可分割的超长解析块受上游解析器限制，
+  属已知边界。段落后 `- ` 变为列表时，组合中 MUST NOT 同时出现原始 marker 与新 widget。
 - **marker 与几何**：渲染稳定后，每个可见列表项 MUST 恰有一个 marker widget；显示 glyph /
   复合序号、计算样式与正文起点 x MUST 保持输入前同合同。普通输入、组合更新 / 删除与组合提交
   MUST NOT 造成 marker 丢失、重复、样式退化或正文悬挂位置漂移。

@@ -446,15 +446,19 @@ interface GroupScan {
 }
 
 /** 组合结束后的补解析预算（目标只到提交行末，不是整篇）：
- *  - 每次同步切片 ≤5ms；未完成按 16ms 重试，1s 后降频到 100ms；
- *  - 总截止 4s；到点仍不完整就停下，交给下一次编辑 / 更新重建。
+ *  - 每次同步切片 ≤5ms；未完成按 16ms 重试，1s 后降频 100ms；
+ *  - 4s 后**不取消目标**，转 250ms 低频恢复直到解析覆盖提交行（destroy / 新组合 /
+ *    普通编辑会收束）；只有 `syntaxTreeAvailable` 为真才认为可渲染。
  *  **不承诺一次同步调用解析完整文档**，也不把「解析完成」当作组合结束的前置条件。 */
 const COMPOSITION_SETTLE = {
   stepMs: 5,
+  parseChunk: 32 * 1024,
+  lowFreqChunk: 128 * 1024,
   retryMs: 16,
   slowAfterMs: 1000,
   slowRetryMs: 100,
-  deadlineMs: 4000,
+  lowFreqAfterMs: 4000,
+  lowFreqRetryMs: 250,
 } as const;
 
 class ListLayout {
@@ -642,26 +646,28 @@ class ListLayout {
       return;
     }
     const elapsed = performance.now() - this.settleStarted;
-    if (elapsed >= COMPOSITION_SETTLE.deadlineMs) {
-      // 预算用尽仍不完整：停止轮询（解析器可能被中断）；下一次编辑 / 更新会重新重建。
-      this.cancelSettle();
-      this.tree = syntaxTree(view.state);
-      this.build(view);
-      return;
-    }
-    if (forceParsing(view, to, COMPOSITION_SETTLE.stepMs)) {
-      // forceParsing 成功时已用空事务把新树推回 state；update 里会重建一次，这里再
-      // 重建一次无副作用（build 幂等），保证即便 update 被其他条件跳过也已刷新。
-      this.cancelSettle();
-      this.tree = syntaxTree(view.state);
-      this.build(view);
-      return;
-    }
+    // 每次只把解析目标推进一个有界分片，而不是「剩余多少解多少」：1.25MB 文档上一次
+    // forceParsing(to=doc 末尾) 实测会占 80ms+（ParseContext 的单块工作不可抢占）。
+    // 分片后每拍 ≤5ms 预算 + 32KB（低频期 128KB），由重试链推进到提交行。
+    const treeLength = syntaxTree(view.state).length;
+    const chunk = elapsed >= COMPOSITION_SETTLE.lowFreqAfterMs
+      ? COMPOSITION_SETTLE.lowFreqChunk
+      : COMPOSITION_SETTLE.parseChunk;
+    const parseTo = Math.min(to, treeLength + chunk);
+    forceParsing(view, parseTo, COMPOSITION_SETTLE.stepMs);
     this.tree = syntaxTree(view.state);
     this.build(view);
+    if (syntaxTreeAvailable(view.state, to)) {
+      this.cancelSettle();
+      return;
+    }
+    // 4s 后转低频恢复而不是取消：解析器可能被中断，目标必须保留到覆盖提交行为止；
+    // 每次仍只推进一个有界分片，destroy / 新组合 / 普通编辑会收束本链。
     const delay = elapsed < COMPOSITION_SETTLE.slowAfterMs
       ? COMPOSITION_SETTLE.retryMs
-      : COMPOSITION_SETTLE.slowRetryMs;
+      : elapsed < COMPOSITION_SETTLE.lowFreqAfterMs
+        ? COMPOSITION_SETTLE.slowRetryMs
+        : COMPOSITION_SETTLE.lowFreqRetryMs;
     this.settleTimer = setTimeout(() => this.settleStep(view), delay);
   }
 
@@ -854,14 +860,36 @@ class ListLayout {
   }
 }
 
+const compositionSettleTimers = new WeakMap<EditorView, ReturnType<typeof setTimeout>>();
+
+/** compositionend 后延迟唤醒恢复链：CM 的 pending MutationRecord 可能在事件到达时还没
+ *  flush（最终候选已写进 DOM、doc 尚未更新）。此时同步 `view.dispatch()` 会走
+ *  `EditorView.update()` 的 `observer.clear()`，把 pending 记录丢掉——候选永久丢失。
+ *  因此先等队列清空再 dispatch，并在执行时重读 `selection.main.head`（组合结束时的
+ *  位置在 flush 前后会变）。 */
+function scheduleCompositionSettle(view: EditorView, attempt = 0): void {
+  const previous = compositionSettleTimers.get(view);
+  if (previous !== undefined) clearTimeout(previous);
+  compositionSettleTimers.set(view, setTimeout(() => {
+    compositionSettleTimers.delete(view);
+    if (!view.dom.isConnected) return;
+    const observer = (view as unknown as { observer?: { pendingRecords(): readonly unknown[] } }).observer;
+    if (observer && observer.pendingRecords().length > 0) {
+      // 记录还没被 CM flush：继续等。绝不在 pending 记录上 dispatch。
+      if (attempt < 200) scheduleCompositionSettle(view, attempt + 1);
+      return;
+    }
+    if (view.compositionStarted) return;
+    view.dispatch({ effects: compositionSettled.of(view.state.selection.main.head) });
+  }, attempt === 0 ? 0 : 8));
+}
+
 export const listDecorations: Extension = [
   ViewPlugin.fromClass(ListLayout, { decorations: plugin => plugin.decorations }),
   EditorView.domEventHandlers({
     compositionend(_event, view) {
-      // WKWebView 可在 insertFromComposition 后立刻结束组合；此时增量语法树可能还没
-      // 覆盖刚形成的列表。把提交行末交给有界恢复链（见 beginSettle）：不在这一拍
-      // 同步解析整篇，也不假设「解析已在 10ms 内完成」。
-      view.dispatch({ effects: compositionSettled.of(view.state.selection.main.head) });
+      // 不在事件 handler 里同步 dispatch：见 scheduleCompositionSettle 的注释。
+      scheduleCompositionSettle(view);
       return false;
     },
   }),
