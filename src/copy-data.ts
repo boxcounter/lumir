@@ -2703,6 +2703,24 @@ const COPY_TABLE = {
     zh: "配置文件的顶层必须是 JSON 对象，字段类型须与配置规范一致：请修正后重新载入",
     en: "The config file must be a JSON object at the top level, with field types matching the configuration schema: fix it and reload",
   },
+  // D943–D945：快速打开的**目录语境**提示（change fix-quick-open-select-all-directory-children-nov21）。
+  // 与 D574 的分工：D574 是 Enter 揭示「不能打开目录」的终态原因；这三条是输入期间说明
+  // 「列表已收窄为这个目录的直接子级文件」，让用户看懂候选为什么变少。数量与截断口径与
+  // D575 / D576 同源，只是把「这是目录」写进同一句。
+  D943: {
+    zh: "{path} 是目录 · 直接子级文件 {count} 条",
+    en: "{path} is a folder · {count} direct child files",
+    enOne: "{path} is a folder · {count} direct child file",
+  },
+  D944: {
+    zh: "{path} 是目录 · 直接子级文件 {count} 条，只显示前 {limit} 条",
+    en: "{path} is a folder · {count} direct child files, showing the first {limit}",
+    enOne: "{path} is a folder · {count} direct child file, showing the first {limit}",
+  },
+  D945: {
+    zh: "{path} 是目录 · 没有直接子级文件",
+    en: "{path} is a folder · no direct child files",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
