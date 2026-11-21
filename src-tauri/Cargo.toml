@@ -76,7 +76,7 @@ image = { version = "0.25", default-features = false, features = ["png", "webp"]
 #
 # 安全边界落在 `src-tauri/src/svg_raster.rs`：外部 href 恒拒（不读 file: / http(s) / 相对路径）、
 # viewBox→位图最长边夹 4096、产物只出位图（MUST NOT 原样存 SVG）。
-resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts", "raster-images"] }
+resvg = { version = "0.50", default-features = false, features = ["text", "system-fonts", "raster-images"] }
 # 系统通知（change add-cron-runtime-daemon §4）：cron 的「到点 / 已完成 / 运行失败」投递与
 # 点击唤起。**macOS 打包实例自 change add-cron-notification-relaunch 起由本仓自持**
 # （`src-tauri/src/notify/`）：delegate 必须在应用完成启动之前装、并持有强引用到进程退出，
