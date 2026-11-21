@@ -58,6 +58,7 @@
 - [x] 5.3 P5 场景制品：新增 `272-block-boundary-geometry-nov21`（item 272 / full），真实普通按键
       序列、三段截图、正式 marker 与最终 `file.exact`；`run.mjs --check` PASS（253 个场景），
       COVERAGE 已生成；中文不冒充原生 IME，AX 不声称读取行高 / scroll / 像素。
-      首次真机未执行输入即因 notes 未展开超时，已按 AX 证据改根目录合成文件，后续目标不变
+      首次真机未执行输入即因 notes 未展开超时，已按 AX 证据改根目录合成文件；第二次暴露
+      press_key 不支持 CJK，中文改用当前 caret 的普通 Unicode 剪贴板 + cgevent ⌘V，后续目标不变
 - [ ] 5.4 真机执行 272、独立评审、归档与 CI 由主会话继续；本轮只交付场景制品与静态校验，
       不得把场景存在记成真机 PASS

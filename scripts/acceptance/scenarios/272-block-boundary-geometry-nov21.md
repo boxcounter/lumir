@@ -79,9 +79,16 @@ steps:
       - label: 截图 02 供 Alex 看 `- ` 时的前行间距与 marker 行，不冒充像素测量
         shot: 02-marker空格后
 
-  - name: 第三段现场：普通键入中文（不是原生 IME）
-    do: keys
-    keys: ["中", "文"]
+  # press_key 不接受 CJK；type 的带 index 注入会点击中心并移动 caret。
+  # 用既有 Unicode 剪贴板 + 真键盘 ⌘V 在当前 caret 注入，不点击、不冒充原生 IME。
+  - name: 第三段现场：准备普通 Unicode 中文文本（不是原生 IME）
+    do: clipboardText
+    text: "中文"
+
+  - name: 第三段现场：在当前 caret 粘贴中文
+    do: key
+    key: "cmd+v"
+    channel: cgevent
     gapMs: 200
     expect:
       - label: 正式 bullet marker 已恢复（glyph 为 en dash）
@@ -117,7 +124,8 @@ steps:
 - **269-list-enter-indent** 验证 Enter 后是否留下无意义行首空白；本场景从普通段落的
   `词汇` 行尾开始，覆盖 `Enter → - → 空格 → 中文` 的块边界建立过程。
 - **271-ime-list-composition-wkwebview** 用 `isTrusted:false` 的合成事件复刻 IME 路径；
-  本场景的 `-`、空格与中文都是普通键入，**不声称经过原生 IME / TSM / marked text**。
+  本场景的 `-` 与空格是普通按键，中文经普通 Unicode 剪贴板在当前 caret 粘贴，
+  **不声称经过原生 IME / TSM / marked text**，也不通过点击重新定位插入点。
 - 首帧行高、padding、正文左缘与二次跳动的机器判据在
   `tests/visual/scenes/markdown-editing-stability.spec.ts`。本场景负责真实 WKWebView 的
   按键现场、最终文档和正式 marker，不把 AX 当作行高或滚动位置的测量仪。
