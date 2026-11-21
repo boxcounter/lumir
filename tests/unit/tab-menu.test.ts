@@ -18,8 +18,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  TAB_MENU_CLOSE_ALL,
   TAB_MENU_LABEL,
   TAB_MENU_REVEAL,
+  closeAllTargets,
   closeEach,
   closeOtherTargets,
   closeRightTargets,
@@ -197,17 +199,19 @@ const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 
 // 项集与文案（deck D148–D151 + D322）
 // ---------------------------------------------------------------------------
 
-test("项集：四项、顺序固定、文案逐字（deck D322 + D148–D151）", () => {
+test("项集：五项、顺序固定、文案逐字（deck D322 + D148–D151 + D943）", () => {
   assert.equal(TAB_MENU_LABEL(), "标签操作");
-  // 四项都是**上屏列锁定 en** 的条目（M257 裁决的三条关闭项 + Alex 2026-10-01 裁决的定位项）：
-  // 单测环境的界面语言钉在 zh，而这里四条取到的都是 English 列——这一条断言就是锁列的判据
-  //（中文列只作沿革备查，「在左栏中定位到此文件」MUST NOT 上屏）。
+  // 五项都是**上屏列锁定 en** 的条目（M257 裁决的三条关闭项 + Alex 2026-10-01 裁决的定位项 +
+  // change close-all-tabs-nov21 的同口径新项）：单测环境的界面语言钉在 zh，而这里取到的都是
+  // English 列——这一条断言就是锁列的判据（中文列只作沿革备查，「在左栏中定位到此文件」MUST NOT 上屏）。
   assert.equal(TAB_MENU_REVEAL(), "Reveal in File Tree");
+  assert.equal(TAB_MENU_CLOSE_ALL(), "Close All Tabs");
   assert.deepEqual(tabMenuItems(), [
     { action: "reveal-in-tree", label: "Reveal in File Tree" },
     { action: "close", label: "Close" },
     { action: "close-others", label: "Close Other Tabs" },
     { action: "close-right", label: "Close Tabs to the Right" },
+    { action: "close-all", label: "Close All Tabs" },
   ]);
 });
 
@@ -215,7 +219,7 @@ test("项集：四项、顺序固定、文案逐字（deck D322 + D148–D151）
 // 菜单 DOM 行为
 // ---------------------------------------------------------------------------
 
-test("打开菜单：四项在场、持焦点、游标落首项、皮肤类两处共用", () => {
+test("打开菜单：五项在场、持焦点、游标落首项、皮肤类两处共用", () => {
   const rig = menuRig();
   const target = session("a.md");
   rig.menu.open(target, { x: 40, y: 60 });
@@ -235,9 +239,10 @@ test("打开菜单：四项在场、持焦点、游标落首项、皮肤类两�
     "Close",
     "Close Other Tabs",
     "Close Tabs to the Right",
+    "Close All Tabs",
   ]);
   const items = rig.element.find("ft-menu-item");
-  assert.equal(items.length, 4);
+  assert.equal(items.length, 5);
   assert.equal(items[0].classList.contains("is-active"), true, "打开即把游标放在首项");
   assert.equal(rig.element.getAttribute("aria-activedescendant"), items[0].id);
   // 菜单里 MUST NOT 出现分隔线（标签菜单没有分组）
@@ -261,16 +266,17 @@ test("键盘：↓ / ⌃N 等价前进、↑ / ⌃P 等价回退且钳制，Ente
   // ⌃N 与 ↓ 落点相同：一次 ⌃N 到第二项
   rig.element.fire("keydown", keydown("n", { ctrlKey: true }));
   assert.equal(items[1].classList.contains("is-active"), true);
-  // 越界钳制在末项（M300 起共四项，末项仍是 Close Tabs to the Right）
+  // 越界钳制在末项（change close-all-tabs-nov21 起共五项，末项是 Close All Tabs）
   rig.element.fire("keydown", keydown("n", { ctrlKey: true }));
   rig.element.fire("keydown", keydown("n", { ctrlKey: true }));
   rig.element.fire("keydown", keydown("n", { ctrlKey: true }));
-  assert.equal(items[3].classList.contains("is-active"), true, "末项不再前进");
+  rig.element.fire("keydown", keydown("n", { ctrlKey: true }));
+  assert.equal(items[4].classList.contains("is-active"), true, "末项不再前进");
 
   rig.element.fire("keydown", keydown("Enter"));
   assert.deepEqual(
     rig.selected.map((entry) => entry.action),
-    ["close-right"],
+    ["close-all"],
   );
   // 触发即收起，且请求带的是会话本体（装配层据此现查那一条标签）
   assert.equal(rig.selected[0].session, target);
@@ -348,6 +354,20 @@ test("关闭右侧标签：严格右侧、按打开顺序、目标缺席即空�
   assert.deepEqual(closeRightTargets([a, b, c], a), [b, c]);
   assert.deepEqual(closeRightTargets([a, b, c], c), [], "最右一条没有右侧");
   assert.deepEqual(closeRightTargets([a, b], session("z.md")), []);
+});
+
+test("关闭全部标签：本 pane 的全部可见标签（含右键那一条），按打开顺序、排除未命名草稿", () => {
+  const a = session("a.md");
+  const b = session("b.md");
+  const c = session("c.md");
+  // 未命名草稿不是标签——即使它脏，也 MUST NOT 进目标集（closeTab 的守卫不让它被「关掉」，
+  // 它根本不在标签条上；进了目标集只会让批量动作对着一个空路径停手）。
+  const scratch = session(undefined, { dirty: true });
+  assert.deepEqual(closeAllTargets([scratch, a, b, c]), [a, b, c]);
+  assert.deepEqual(closeAllTargets([a]), [a]);
+  assert.deepEqual(closeAllTargets([scratch]), [], "只有未命名草稿时没有可关的标签");
+  // 目标集合是快照：调用方拿到之后列表变化（别处关掉一条）由 resolveClose 的「已不在」分支吃掉。
+  assert.deepEqual(closeAllTargets([]), []);
 });
 
 // ---------------------------------------------------------------------------

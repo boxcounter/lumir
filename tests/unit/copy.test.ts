@@ -160,9 +160,9 @@ test("占位名：每条目的两列占位名集合逐字相同（个数与顺�
   }
 });
 
-test("上屏列锁定：D149–D151 在 zh 与 en 下上屏的都是 English 列，且 deck 的设计意图列有标记", () => {
+test("上屏列锁定：D149–D151 / D943 在 zh 与 en 下上屏的都是 English 列，且 deck 的设计意图列有标记", () => {
   const rows = parseDeck();
-  for (const key of ["D149", "D150", "D151"] as const) {
+  for (const key of ["D149", "D150", "D151", "D943"] as const) {
     const entry = COPY[key];
     assert.equal(entry.lock, "en", `${key} 必须是上屏列锁定条目`);
     assert.equal(t(key, undefined, "zh"), entry.en, `${key} 在 zh 界面下上屏的必须是锁定列（英文原文）`);

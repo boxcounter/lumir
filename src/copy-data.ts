@@ -2703,6 +2703,14 @@ const COPY_TABLE = {
     zh: "配置文件的顶层必须是 JSON 对象，字段类型须与配置规范一致：请修正后重新载入",
     en: "The config file must be a JSON object at the top level, with field types matching the configuration schema: fix it and reload",
   },
+  // D943：标签右键菜单的「关闭全部标签」（change close-all-tabs-nov21）。与 D149–D151 三条
+  // 关闭项同一口径——**上屏列锁定 en**（M257 的「菜单内语言统一」，中文列只作沿革备查）：
+  // 无论界面语言都取 English 列。菜单项不带对象名，理由同 D149（菜单就是从这一条上开出来的）。
+  D943: {
+    zh: "关闭全部标签",
+    en: "Close All Tabs",
+    lock: "en",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
