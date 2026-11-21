@@ -44,6 +44,28 @@
 未命中「必须找 Alex 的例外类别」：视觉基线更新已单独获 Alex「允许」，无未决的价值 / 行为裁决、
 无影响面升级、评审结论与 tip 均无异常、证据无缺口，故不另送 Alex。
 
+## 节点 2 记录（归档后，2026-11-21）
+
+- **归档提交**：`3e6b66a988ab0bfc044f3264bafb25e3ea70ce2e`（归档目录 + 并入后的
+  `openspec/specs/keymap-commands/spec.md` + `docs/backlog.md` 队列条目核销同一提交；本段记录
+  本身是其后一笔文档提交，审计仍定位该归档提交）。
+- **`openspec archive` 实际输出**（`node scripts/openspec-archive.mjs gutter-copy-path-line-nov21`，
+  退出码 0）：`Task status: ✓ Complete` / `Specs to update:` / `keymap-commands: update` /
+  `+ 1 added` / `Totals: + 1, ~ 0, - 0, → 0` / `Specs updated successfully.` /
+  `Change 'gutter-copy-path-line-nov21' archived as '2026-11-21-gutter-copy-path-line-nov21'.`。
+- **归档后修链**：`归档后修链 2 处（扫过 4 篇 Markdown / 3 条相对链接）`——
+  `proposal.md:11` 与 `proposal.md:16` 的 `../../../docs/process/openspec-workflow.md` →
+  `../../../../docs/process/openspec-workflow.md`。包装器末置门禁
+  `openspec-links: PASS（校验 644 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived
+  gutter-copy-path-line-nov21`，2026-11-21T14:31Z，退出码 0）：
+  `PASS（openspec/changes/archive/2026-11-21-gutter-copy-path-line-nov21：0 条 MODIFIED，对比 0 段；
+  人工恢复 0 段，声明认领 0 段）`——delta 只有 1 条 ADDED，无 MODIFIED 可对账。
+- **归档后复跑读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` →
+  `Totals: 40 passed, 0 failed (40 items)`（退出码 0）；`node scripts/openspec-archive-check.mjs`
+  门禁模式 → PASS（`扫过 13 份 delta，13 条 MODIFIED，对比 239 段，无静默丢段；归档队列 0 项已完成
+  change 均有唯一条目`）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0）。
+
 ## Why
 
 Alex 原始需求（2026-11-21）：「行号 gutter 右键复制 `{path}:{line}`」。
