@@ -527,6 +527,15 @@ export function checkScenario(scenario) {
   // 写成非表（如列表 / 字符串）时 writeConfig 会把它当普通值铺开，静默丢掉半张表，故在此挡住。
   if (scenario.config?.editor !== undefined && !isPlainTable(scenario.config.editor))
     push(`config.editor 需要对象（[editor] 表，snake_case 键），实际 ${JSON.stringify(scenario.config.editor)}`);
+  // md 行号 gutter 档位（change gutter-copy-path-line-nov21）：闭集合与 Rust 侧
+  // `MarkdownLineNumbers` 同值域；写错会被应用静默回落成 `on-demand`，场景跑在默认档上。
+  if (
+    scenario.config?.markdownLineNumbers !== undefined &&
+    !["on-demand", "always", "off"].includes(scenario.config.markdownLineNumbers)
+  )
+    push(
+      `config.markdownLineNumbers 只能是 on-demand / always / off，实际 ${JSON.stringify(scenario.config.markdownLineNumbers)}`,
+    );
   // `config.cron`（change add-cron-runtime-daemon §7）：`{ tasks: [...] }`，逐项至少带
   // id / vault / at / prompt 四个字段——写错形状会被后端整节回落，场景静默跑在无任务配置上。
   if (scenario.config?.cron !== undefined) {
@@ -4311,6 +4320,10 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         // 界面语言（M282）同形沿用：一次 configWrite MUST NOT 抹掉 `ui.language`
         //（本场景的第一步就要把语言设成 zh，后续步骤若抹掉它，语言切换的起点就没了）。
         language: step.language !== undefined ? step.language : cur.ui?.language,
+        // md 行号 gutter 档位（change gutter-copy-path-line-nov21）同形沿用：一次 configWrite
+        // MUST NOT 把前面设过的 `ui.markdown_line_numbers` 抹回出厂 `on-demand`。
+        markdownLineNumbers:
+          step.markdownLineNumbers !== undefined ? step.markdownLineNumbers : cur.ui?.markdown_line_numbers,
         // `[editor]` 表**整表透传**（M379；早期 backlog「验收套件表达力缺口」条，原文见 git 历史，现行口径见 README 的 `configWrite` 条）：当前表整份带过来、`step.editor` 覆盖，
         // 具名参数（autoIndent / 排版三项…）在 writeConfig 里排在这张表之后，显式值仍然优先。
         //

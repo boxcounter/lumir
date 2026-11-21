@@ -40,6 +40,7 @@ import type { CodeBlockFullscreenPort } from "./preview/block-trigger";
 import type { ImageLightbox } from "./lightbox";
 import type { TableFullscreen } from "./table-fullscreen";
 import type { GotoLinePromptPort } from "./goto-line";
+import type { GutterCopyPort } from "./gutter-copy";
 import type { MarkdownLineNumbers } from "./bindings/MarkdownLineNumbers";
 import { detectFrontmatter, firstBodyLineStart, frontmatterBlockField, normalizeFrontmatterCaret } from "./preview/frontmatter";
 import { trustedLoad } from "./editor-annotations";
@@ -1462,6 +1463,14 @@ export interface EditorHandle {
    */
   setGotoLinePrompt(prompt: GotoLinePromptPort | null): void;
   /**
+   * 注入行号 gutter 右键复制的出口（change gutter-copy-path-line-nov21）：`copy(path, line)` 由
+   * 装配层写剪贴板并给反馈。未注入时右键不接管（原生菜单照旧，不假装能复制）。
+   *
+   * **只接能力**：本入口 MUST NOT 改变 gutter 的在场判据（唯一来源仍是 `mdGutterExtensions()`），
+   * 也不触发任何重配 / 重建——处理器是 gutter 扩展的一部分，注入后下一次右键即生效。
+   */
+  setGutterCopy(port: GutterCopyPort | null): void;
+  /**
    * 设置 md 行号 gutter 的档位（`ui.markdown_line_numbers`，M281 的 D4 二次改判）。装载时喂一次
    * 配置值（`src/main.ts`），**运行期 MUST NOT 回写**——本 change 不提供切换它的命令 / 键位 / UI。
    * 立即生效到全部会话（含后台）；`code` 模式不受影响（其 gutter 恒常显）。
@@ -1770,6 +1779,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    *  「装饰层在构建期读口子」的注入点不同（那些要 previewRefresh）。未注入时命令无操作
    *  （纯桩 / 维护性装配：能力没接上就不假装能打开）。 */
   let gotoLinePrompt: GotoLinePromptPort | null = null;
+  /** 行号 gutter 右键复制的出口（change gutter-copy-path-line-nov21）：装配层经
+   *  `setGutterCopy` 注入剪贴板写入与反馈。**DOM 事件处理器执行时才读**，因此注入不需要重建；
+   *  未注入时右键不接管（原生菜单照旧），不假装能复制。 */
+  let gutterCopy: GutterCopyPort | null = null;
   /**
    * 剪贴板图片口令（M416，change paste-clipboard-image）：装配层经 `setPasteImagePort` 注入。
    * **DOM 事件处理器执行时才读**（不是装饰层构建期），因此注入不需要重建；未注入时
@@ -2116,7 +2129,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // 当前行只由行号底色指出，见 `.cm-activeLineGutter` 规则）。
     // 几何与配色的模式差异全在 md 侧的样式真源（src/preview/theme.ts 的 gutter 段）；
     // 这里的 baseTheme 是两模式共用的落点（col 1 / row 1），md 的 gridRow 由那边覆写。
-    const lineNumberGutter: Extension[] = [lineNumbers(), highlightActiveLineGutter()];
+    const lineNumberGutter = lineNumberGutterExtensions();
     return mode === "md"
       ? [
           ...editability,
@@ -2132,12 +2145,47 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), markupKeymap, codeGraphemeBackspaceGate];
   }
 
+  /** 行号 gutter 的**唯一装配点**（两模式共用）：md 的 `mdGutterExtensions()` 与 code 分支都从这里取，
+   *  因此行号渲染与右键行为不会各装一份。
+   *
+   *  右键复制（change gutter-copy-path-line-nov21）挂在 `lineNumbers` 自己的 `domEventHandlers` 上：
+   *  处理器随 gutter 一起安装 / 卸载，gutter 不在场时它也不存在（md 三档合同因此一字不动）。
+   *  返回 `true` 让 CM 调 `event.preventDefault()`——原生右键菜单不再弹出；本处理器 MUST NOT
+   *  自己再 `preventDefault`，也 MUST NOT `dispatch` / `focus`：右键只读，不改文档、选区、dirty
+   *  与阅读位置。行号取 `BlockInfo` 对应的源文档逻辑行（与 gutter 显示的数字同源）。
+   *
+   *  `active.path` 是路径的唯一来源（vault 内 = vault 相对路径，vault 外 = 绝对路径）；处理器
+   *  在事件发生时读它，不缓存——切标签 / 切 pane 后右键取到的就是当时那一份。 */
+  function lineNumberGutterExtensions(): Extension[] {
+    return [
+      lineNumbers({
+        domEventHandlers: {
+          // 右键的焦点副作用先在 mousedown 截住：`contextmenu` 处理器只能消费右键菜单本身，
+          // 拦不住 mousedown 默认行为带来的焦点转移（编辑器失焦 / `on-demand` 档下跳转输入条
+          // 的 focusout 会把 gutter 卸掉）。只拦辅助键（macOS 的右键 = button 2；Ctrl+左键
+          // 同义），左键的既有 gutter 行为一字不动。返回 true 让 CM 调 `preventDefault`。
+          mousedown: (_editorView, _block, event) => {
+            if (gutterCopy === null) return false;
+            const mouse = event as MouseEvent;
+            return mouse.button === 2 || (mouse.button === 0 && mouse.ctrlKey);
+          },
+          contextmenu: (editorView, block) => {
+            if (gutterCopy === null) return false;
+            gutterCopy.copy(active.path, editorView.state.doc.lineAt(block.from).number);
+            return true;
+          },
+        },
+      }),
+      highlightActiveLineGutter(),
+    ];
+  }
+
   /** md 的 gutter 扩展：**在场判据的唯一来源**（REVIEW.md 「同一语义两处真源」条——别处 MUST NOT 自行判断）。
    *  `always` 恒装、`off` 恒空、`on-demand` 随输入条。`code` 模式不经过这里（恒常显）。 */
   function mdGutterExtensions(): Extension {
     const installed =
       markdownLineNumbers === "always" || (markdownLineNumbers === "on-demand" && gotoGutterVisible);
-    return installed ? [lineNumbers(), highlightActiveLineGutter()] : [];
+    return installed ? lineNumberGutterExtensions() : [];
   }
 
   /** 把 md gutter 的在场状态重配到**全部 md 会话**（照 `reconfigureWrap` 的既有分流：前台
@@ -3268,6 +3316,11 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // **不**派发 previewRefresh（与上面几个注入点的差别）：这个口子在命令执行时才被读
       // （`editor.goto-line` 的闭包），不参与任何装饰构建，注入不改变已渲染的任何东西。
       gotoLinePrompt = next;
+    },
+    setGutterCopy(port) {
+      // 同 setGotoLinePrompt：右键处理器在 DOM 事件执行时才读这个口子，注入不需要重建 gutter
+      //（重建会扰动滚动 / 阅读位置，见 setMarkdownLineNumbers 的同款理由）。
+      gutterCopy = port;
     },
     setMarkdownLineNumbers(tier: MarkdownLineNumbers) {
       // 档位没变就**什么都不做**：装载时喂的若就是默认档 `on-demand`（最常见的情况），这条路径

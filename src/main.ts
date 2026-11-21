@@ -62,6 +62,7 @@ import { createToc, extractHeadings } from "./toc";
 import { createImageLightbox } from "./lightbox";
 import { createTableFullscreen } from "./table-fullscreen";
 import { createGotoLinePrompt } from "./goto-line";
+import { pathLineText } from "./gutter-copy";
 import { createQuickOpen } from "./quick-open";
 import type { ExternalOpenOutcome } from "./quick-open";
 import { createCodeBlockFullscreen } from "./code-block-fullscreen";
@@ -1074,6 +1075,7 @@ const editor: EditorHandle = {
   setBlockCopy: (copy) => forEachEditor((handle) => handle.setBlockCopy(copy)),
   setPasteImagePort: (port) => forEachEditor((handle) => handle.setPasteImagePort(port)),
   setGotoLinePrompt: (prompt) => forEachEditor((handle) => handle.setGotoLinePrompt(prompt)),
+  setGutterCopy: (port) => forEachEditor((handle) => handle.setGutterCopy(port)),
   setMarkdownLineNumbers: (tier) =>
     forEachEditor((handle) => handle.setMarkdownLineNumbers(tier)),
   setGotoLineGutterVisible: (visible) =>
@@ -1387,6 +1389,15 @@ injectEach((handle) =>
   }),
 );
 
+// 行号 gutter 右键复制 `{path}:{line}`（change gutter-copy-path-line-nov21）：装配层给编辑器两样
+// 它看不到的东西——剪贴板写入与 toast 反馈；编辑器只上报右键落点的源行号与会话路径（路径口径
+// 的唯一来源与 modeline 同一份）。写剪贴板走既有纯前端通道（M244 已实证），零依赖、零后端命令。
+injectEach((handle) =>
+  handle.setGutterCopy({
+    copy: (path, line) => void copyPathLine(path, line),
+  }),
+);
+
 // 剪贴板贴图（M416，change paste-clipboard-image）：口令端口在装配层注册——`write` 走 ipc 的
 // `fsWriteAttachment`（后端转码 + 内容寻址命名 + 全 vault 去重），`toast` 复用下面的既有实现
 // （错误信封按 code 渲染，文案表见 `copy-data.ts` 的 `ERROR_COPY`，本文件不写第二份文案）。
@@ -1511,6 +1522,31 @@ async function copyBlockContent(handle: EditorHandle, range: BlockCopyRange): Pr
     const reason = errorMessage(e);
     console.warn(`lumir: 复制${noun}失败：${reason}`); // i18n-exempt: log
     toast(COPY_BLOCK_FAILED_TOAST(reason));
+  }
+}
+
+/**
+ * 行号 gutter 右键复制 `{path}:{line}`（change gutter-copy-path-line-nov21）：
+ * 与块级复制共用同一条剪贴板通道与 toast 机制。`path` 来自会话（vault 内 = vault 相对路径，
+ * vault 外 = 绝对路径）；`path` 缺省 = 无当前文件，**不写剪贴板**，走失败反馈而不是编造路径。
+ *
+ * 成功 = success tone 的 D943，`{target}` 是逐字写入剪贴板的那串（回执与剪贴板同一份）；
+ * 失败（剪贴板不可用 / 权限被拒 / 无路径）给 D155 的 toast 并另记一条 console 线索。MUST NOT
+ * 静默，MUST NOT 在写失败时显示成功提示。
+ */
+async function copyPathLine(path: string | undefined, line: number): Promise<void> {
+  if (path === undefined) {
+    toast(t("D155", { reason: t("D207") }));
+    return;
+  }
+  const target = pathLineText(path, line);
+  try {
+    await navigator.clipboard.writeText(target);
+    toast(t("D943", { target }), [], false, "success");
+  } catch (e) {
+    const reason = errorMessage(e);
+    console.warn(`lumir: 复制 ${target} 失败：${reason}`); // i18n-exempt: log
+    toast(t("D155", { reason }));
   }
 }
 

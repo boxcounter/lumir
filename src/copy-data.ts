@@ -2703,6 +2703,14 @@ const COPY_TABLE = {
     zh: "配置文件的顶层必须是 JSON 对象，字段类型须与配置规范一致：请修正后重新载入",
     en: "The config file must be a JSON object at the top level, with field types matching the configuration schema: fix it and reload",
   },
+  // 行号 gutter 右键复制（change gutter-copy-path-line-nov21）：`target` = 逐字写入剪贴板的
+  // `{path}:{line}`（路径口径 = 会话 path：vault 内相对、vault 外绝对；行号 1 基）。成功句
+  // 与剪贴板内容因此是同一份值，回执不另拼一次。失败面复用 D155 的通用句；无当前文件时
+  // reason 取 D207。
+  D943: {
+    zh: "已复制 {target}",
+    en: "Copied {target}",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
