@@ -42,6 +42,33 @@
 未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与
 tip 均无异常、证据无缺口，故不另送 Alex。
 
+## 节点 2 记录（归档后，2026-11-21）
+
+- **归档提交**：`94b5ed6a23552bd64d9ddc2c4b86e9031eafe93d`（归档目录 + 并入后的 living spec +
+  `docs/backlog.md` 队列条目核销同一提交；本段记录本身是其后一笔文档提交，审计仍定位该归档提交）。
+- **`openspec archive` 实际输出**（`node scripts/openspec-archive.mjs add-url-paste-title-nov21`，
+  包装器内调 `npx --yes @fission-ai/openspec@1.12.0 archive add-url-paste-title-nov21 --yes`，
+  退出码 0）：`Task status: ✓ Complete` / `Specs to update:` / `url-paste: create` /
+  `+ 2 added` / `Totals: + 2, ~ 0, - 0, → 0` / `Specs updated successfully.` /
+  `Change 'add-url-paste-title-nov21' archived as '2026-11-21-add-url-paste-title-nov21'.`。
+  新 capability，故不是 `Specs already in sync; no files changed`。
+- **新 capability Purpose**：`openspec/specs/url-paste/spec.md` 的占位
+  `TBD - created by archiving change …` 已手写替换为 capability 用途说明（粘贴 URL 取标题通道、
+  失败保留 URL、接管边界），随后与归档结果同提交。
+- **归档后修链**：`归档后修链 2 处（扫过 4 篇 Markdown / 3 条相对链接）`——
+  `proposal.md:11` 与 `proposal.md:16` 的 `../../../docs/process/openspec-workflow.md` →
+  `../../../../docs/process/openspec-workflow.md`。包装器末置门禁
+  `openspec-links: PASS（校验 642 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived
+  add-url-paste-title-nov21`，2026-11-21T14:29Z，退出码 0）：
+  `INFO url-paste：归档提交前没有 living spec（新建 capability），无基线可对账` /
+  `PASS（openspec/changes/archive/2026-11-21-add-url-paste-title-nov21：0 条 MODIFIED，对比 0 段；
+  人工恢复 0 段，声明认领 0 段）`。
+- **归档后复跑读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` →
+  `Totals: 42 passed, 0 failed (42 items)`（退出码 0）；`node scripts/openspec-archive-check.mjs`
+  门禁模式 → PASS（`扫过 15 份 delta，14 条 MODIFIED，对比 275 段，无静默丢段；归档队列 2 项已完成
+  change 均有唯一条目`）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0）。
+
 ## Why
 
 ### 需求来源（Alex 原话，逐字保留）
