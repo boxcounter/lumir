@@ -7,7 +7,39 @@
 > 评审记录
 > 节点 1：Alex 2026-11-21 在需求批逐字提出「Cmd+P Cmd+A 全选 + 目录直接子级提示/筛选」，
 > 并以「请你继续」确认推进。实现范围严格限定在需求的两条内，未新增其它产品行为。
-> 节点 2：实现完成后按五要件补记录。
+> 节点 2（归档放行）：**机器 + 独立评审放行**（[openspec-workflow.md](../../../../docs/process/openspec-workflow.md)
+> 「节点 2：归档默认由独立评审 + 机器判据放行」五要件），逐条事实与证据指针见下「节点 2 记录（归档前）」。
+
+## 节点 2 记录（归档前，2026-11-21）
+
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-11-21 通过——Alex 需求原话「Cmd+P Cmd+A 全选 + 目录直接子级
+   提示/筛选」+「请你继续」确认推进（见上方「评审记录」）。实现期没有静默扩 scope：两条需求分别
+   落在 `quick-open` 的 ⌘A 接管与目录语境候选 / 提示上；r1 评审 P2-1/P2-2/P3-1/P3-2 的返修
+   （AX value 判据、MODIFIED 整块、Enter 口径、组合期 ⌘A）都在既有意图内，未新增产品行为。
+2. **独立 reviewer clean / merge**：独立 reviewer agent-35 判 `clean/merge`，无 P1 / P2 findings，
+   明记「keys identity 修复未放宽产品判据」；绑定 integration tip
+   `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/navigation-batch-nov21/review-final.md`。
+   当前分支 tip 与该评审 tip 相同。
+3. **tasks 完成**：`tasks.md` 30/30 全勾（`grep -c '^- \[x\]'` = 30，未勾项 0），无放弃项；
+   0.4 / 4.3 / 5.2 已就地补裁决、真机与评审指针。
+4. **要求的门禁与真机证据**：动过 `tests/visual/scenes/quick-open.spec.ts`（该场景无像素基线），
+   按 `scripts/gate.sh visual` 档取读数——`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0。
+   真机场景 `230d-quick-open-select-all-dir-children` PASS（9 断言，0 FAIL；`status.txt` =
+   `PASS`），覆盖 ⌘A 全选后替换键入、目录直接子级提示 / 深层后代不混入、裸目录两段式 Enter，
+   证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/230d-quick-open-select-all-dir-children/`
+   （`steps.md` / `shots/` / `ax/`）。未更新视觉基线。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS——`扫过
+   10 份 delta，10 条 MODIFIED，对比 180 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`
+   （退出码 0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 37
+   passed, 0 failed (37 items)`（退出码 0）。归档跟踪队列有且仅有一条本 change 条目
+   （`docs/backlog.md`）。delta 是 `quick-open` 的 1 条 ADDED（输入面 ⌘A）+ 2 条 MODIFIED
+   （候选列表与匹配语义、结果区与 Enter 的判决同源），是真实增量，不是纯目录移动。
+
+未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与
+tip 均无异常、证据无缺口，故不另送 Alex。
 
 ## Why
 

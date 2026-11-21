@@ -11,7 +11,9 @@
       大小写 / 子目录 / 空目录）
 - [x] 0.3 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与
       `bash scripts/docs-check.sh` 通过
-- [ ] 0.4 节点 1 正式裁决原话与时间回填 proposal 的评审记录（tower / Alex）
+- [x] 0.4 节点 1 正式裁决原话与时间回填 proposal 的评审记录（tower / Alex）：Alex 2026-11-21
+      需求批原话「Cmd+P Cmd+A 全选 + 目录直接子级提示/筛选」+「请你继续」，已回填进 proposal
+      的「评审记录」
 
 ## 1. 先红（改动前的代码）
 
@@ -69,14 +71,17 @@
       裸目录两段式 Enter
 - [x] 4.2 `node scripts/acceptance/coverage.mjs` 重新生成 `COVERAGE.md`（246 个场景 / 222 个
       item；row 655 列出 230d）
-- [ ] 4.3 真机执行 `node scripts/acceptance/run.mjs 230d`（由 tower 在批次收尾统一安排；本 worker
-      无真机时段）
+- [x] 4.3 真机执行 `node scripts/acceptance/run.mjs 230d`（由 tower 在批次收尾统一安排；本 worker
+      无真机时段）：`230d-quick-open-select-all-dir-children` PASS（9 断言，0 FAIL），证据
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/230d-quick-open-select-all-dir-children/`
 
 ## 5. 收尾
 
 - [x] 5.1 提交产品改动到 mission 分支（本 worker 不 push、不操作主仓产品文件 / 主仓 dev 实例 /
       真实 vault）
-- [ ] 5.2 独立 reviewer clean / merge（tower 安排）
+- [x] 5.2 独立 reviewer clean / merge（tower 安排）：独立 reviewer agent-35 判 `clean/merge`，无
+      P1 / P2，绑定 integration tip `7d632e03`；评审文件
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/navigation-batch-nov21/review-final.md`
 
 ## 6. r1 评审处置（review `quick-open-nov21/review-r1.md`）
 
