@@ -44,6 +44,31 @@
 未命中「必须找 Alex 的例外类别」：视觉基线更新已单独获 Alex「允许」，无未决的价值 / 行为裁决、
 无影响面升级、评审结论与 tip 均无异常、证据无缺口，故不另送 Alex。
 
+## 节点 2 记录（归档后，2026-11-21）
+
+- **归档提交**：`7688a17fd60bf3f9db815d96c146b2d2cb7ba2a6`（归档目录 + 并入后的
+  `openspec/specs/editor-live-preview/spec.md` + `docs/backlog.md` 队列条目核销同一提交；本段
+  记录本身是其后一笔文档提交，审计仍定位该归档提交）。
+- **`openspec archive` 实际输出**（`node scripts/openspec-archive.mjs
+  fix-bare-url-cjk-boundary-nov21`，退出码 0）：`Task status: ✓ Complete` /
+  `Specs to update:` / `editor-live-preview: update` / `~ 1 modified` /
+  `Totals: + 0, ~ 1, - 0, → 0` / `Specs updated successfully.` /
+  `Change 'fix-bare-url-cjk-boundary-nov21' archived as '2026-11-21-fix-bare-url-cjk-boundary-nov21'.`
+  另有一句非阻塞警告（proposal 的 Why 段超过 1000 字符）：属归档前既有正文，归档不改写。
+- **归档后修链**：`归档后修链 2 处（扫过 3 篇 Markdown / 3 条相对链接）`——
+  `proposal.md:11` 与 `proposal.md:16` 的 `../../../docs/process/openspec-workflow.md` →
+  `../../../../docs/process/openspec-workflow.md`。包装器末置门禁
+  `openspec-links: PASS（校验 642 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived
+  fix-bare-url-cjk-boundary-nov21`，2026-11-21T14:30Z，退出码 0）：
+  `PASS（openspec/changes/archive/2026-11-21-fix-bare-url-cjk-boundary-nov21：1 条 MODIFIED，
+  对比 36 段；人工恢复 0 段，声明认领 0 段）`——MODIFIED 的段落全部落进归档后的 living spec，
+  无静默丢段。
+- **归档后复跑读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` →
+  `Totals: 41 passed, 0 failed (41 items)`（退出码 0）；`node scripts/openspec-archive-check.mjs`
+  门禁模式 → PASS（`扫过 14 份 delta，13 条 MODIFIED，对比 239 段，无静默丢段；归档队列 1 项已完成
+  change 均有唯一条目`）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0）。
+
 ## Why
 
 ### 需求来源（Alex 原话，逐字保留）
