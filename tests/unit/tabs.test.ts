@@ -66,6 +66,10 @@ class FakeEl {
   id = "";
   hidden = false;
   tabIndex = 0;
+  /** 菜单浮层的定位读数（tabMenu 的 place() 会读它们并写 style.left / top）。 */
+  offsetWidth = 180;
+  offsetHeight = 120;
+  readonly style: Record<string, string> = {};
   /** `renderTabs` 的早退门（M316：标签槽被摘除后不再重绘）；测试里恒为已连接。 */
   isConnected = true;
   scrollLeft = 0;
@@ -112,6 +116,12 @@ class FakeEl {
     return null;
   }
 
+  /** 焦点归还的路径查询（`focusTab` → `tabOpenElement`）：本层不测焦点落点（归浏览器层），
+   *  返回空表让它落空、不误报。 */
+  querySelectorAll(): FakeEl[] {
+    return [];
+  }
+
   getBoundingClientRect() {
     return { left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 };
   }
@@ -119,6 +129,8 @@ class FakeEl {
   focus(): void {
     this.focused = true;
   }
+
+  scrollIntoView(): void {}
 
   /** 深度优先找类名命中的后代（含自身）。 */
   find(className: string): FakeEl[] {
@@ -146,8 +158,21 @@ function session(path: string | undefined, over: Partial<EditorSession> = {}): E
 interface Rig {
   tabs: TabsHandle;
   mount: FakeEl;
+  /** 菜单挂点（标签菜单挂在这里，项元素从这里找）。 */
+  overlay: FakeEl;
   /** 调用序（只记本用例关心的那几条装配回调）。 */
   order: string[];
+  /** 每次 toast 的入参（「关闭全部标签」要用它答复既有确认流）。 */
+  toasts: Array<{
+    text: string;
+    actions: Array<{ label: string; run(): void }>;
+    sticky?: boolean;
+    onDismiss?: () => void;
+  }>;
+  /** 被真正关掉的会话路径（按关闭顺序）。 */
+  closed: string[];
+  /** focusEditor 被调用的次数。 */
+  focusEditorCalls: number;
   editor: {
     sessions: EditorSession[];
     active: EditorSession;
@@ -156,11 +181,18 @@ interface Rig {
   clickTab(path: string): void;
   /** 点某条的关闭钮。 */
   clickClose(path: string): void;
+  /** 右键某条标签（打开菜单）。 */
+  openMenu(path: string): void;
+  /** 菜单项（按文案取）。 */
+  menuItem(label: string): FakeEl;
 }
 
 function createRig(sessions: EditorSession[], active: EditorSession): Rig {
   installFakeDocument();
   const order: string[] = [];
+  const toasts: Rig["toasts"] = [];
+  const closed: string[] = [];
+  const counters = { focusEditor: 0 };
   const editorState = { sessions, active };
   const fakeEditor = {
     sessions: () => editorState.sessions,
@@ -171,22 +203,36 @@ function createRig(sessions: EditorSession[], active: EditorSession): Rig {
     },
     closeSession: (target: EditorSession) => {
       order.push("closeSession");
+      closed.push(target.path as string);
       editorState.sessions = editorState.sessions.filter((entry) => entry !== target);
     },
     view: { requestMeasure: () => {} },
   } as unknown as EditorHandle;
 
   const mount = new FakeEl("nav");
+  const overlay = new FakeEl("div");
   const strip = {
     editor: fakeEditor,
     mount: mount as unknown as HTMLElement,
-    overlayMount: new FakeEl("div") as unknown as HTMLElement,
-    toast: () => void order.push("toast"),
+    overlayMount: overlay as unknown as HTMLElement,
+    toast: (
+      text: string,
+      actions: Array<{ label: string; run(): void }>,
+      sticky?: boolean,
+      onDismiss?: () => void,
+    ) => {
+      order.push("toast");
+      toasts.push({ text, actions, sticky, onDismiss });
+    },
     saveCurrent: async () => {},
     forgetBackup: () => {},
     invalidateResolve: () => {},
     showEditor: () => {},
     syncActiveDocument: () => order.push("syncActiveDocument"),
+    focusEditor: () => {
+      counters.focusEditor += 1;
+      order.push("focusEditor");
+    },
     revealInTree: () => {},
     activatePane: () => order.push("activatePane"),
   } as unknown as TabsDeps;
@@ -202,13 +248,31 @@ function createRig(sessions: EditorSession[], active: EditorSession): Rig {
   return {
     tabs,
     mount,
+    overlay,
     order,
+    toasts,
+    closed,
+    get focusEditorCalls() {
+      return counters.focusEditor;
+    },
     editor: editorState,
     clickTab: (path) => tabEl(path).fire("click"),
     clickClose: (path) => {
       const close = tabEl(path).find("tab-close")[0];
       assert.ok(close, "标签里没有关闭钮");
       close.fire("click", { stopPropagation: () => {} });
+    },
+    openMenu: (path) => {
+      tabEl(path).fire("contextmenu", {
+        clientX: 10,
+        clientY: 20,
+        preventDefault: () => {},
+      });
+    },
+    menuItem: (label) => {
+      const found = overlay.find("ft-menu-item").find((item) => item.textContent === label);
+      assert.ok(found, `菜单里没有「${label}」项`);
+      return found;
     },
   };
 }
@@ -296,4 +360,86 @@ test("vault 外只读标签（M660 #7）：可见侧是 aria-hidden 的锁形图
     "读屏名仍是 D579（{名称}（vault 外只读））",
   );
   assert.equal(tabOf("a.md").find("tab-readonly").length, 0, "vault 内标签没有这枚图标");
+});
+
+// ---------------------------------------------------------------------------
+// 「关闭全部标签」（change close-all-tabs-nov21）
+//
+// 三条性质在这里钉住（端到端落点与真实确认浮条归 tests/visual/scenes/tab-menu.spec.ts）：
+//   ① 目标 = 本 pane 全部可见标签、按打开顺序，动作先从菜单项进到 closeEach；
+//   ② 脏标签走 closeTab 的同一条 sticky 确认（文本 D92、三出口齐全），用户没答复之前
+//      后面的标签一个都不动；取消即停手，已关闭的不回滚；
+//   ③ 全部关完之后焦点交给编辑器（没有标签可归还），中途停手时 MUST NOT 抢焦点。
+// ---------------------------------------------------------------------------
+
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("关闭全部标签：全 clean——按打开顺序关完、焦点交给编辑器", async () => {
+  const a = session("a.md");
+  const b = session("b.md");
+  const c = session("c.md");
+  const rig = createRig([a, b, c], c);
+
+  rig.openMenu("b.md");
+  rig.menuItem("Close All Tabs").fire("click");
+  await flush();
+
+  assert.deepEqual(rig.closed, ["a.md", "b.md", "c.md"], "按打开顺序逐个关，右键那一条也在内");
+  assert.equal(rig.editor.sessions.length, 0);
+  assert.equal(rig.focusEditorCalls, 1, "全关完之后焦点交给编辑器（空态正文）");
+  assert.equal(rig.order[0], "activatePane", "菜单动作是这条标签条的交互 ⇒ 先让该 pane 变活跃");
+  assert.equal(rig.toasts.length, 0, "全 clean 不弹任何确认");
+});
+
+test("关闭全部标签：多个 dirty——逐个弹既有确认；取消停手、已关闭的不回滚；放弃后继续到关完", async () => {
+  const a = session("a.md");
+  const b = session("b.md", { dirty: true });
+  const c = session("c.md", { dirty: true });
+  const rig = createRig([a, b, c], a);
+
+  rig.openMenu("c.md");
+  rig.menuItem("Close All Tabs").fire("click");
+  await flush();
+
+  // 第一个目标的答复落地之前，后面的标签一个都不动；脏标签的确认就是既有那条 D92。
+  assert.deepEqual(rig.closed, ["a.md"], "干净的第一条先关掉（顺序处理，不等后面的确认）");
+  assert.equal(rig.toasts.length, 1, "同一时刻只有一条确认浮条");
+  assert.equal(rig.toasts[0].text, t("D92", { path: "b.md" }));
+  assert.deepEqual(
+    rig.toasts[0].actions.map((action) => action.label),
+    [t("D93.1"), t("D93.2"), t("D93.3")],
+    "复用 M149 的三个出口（保存并关闭 / 放弃修改并关闭 / 取消）",
+  );
+  assert.equal(rig.toasts[0].sticky, true);
+  assert.equal(rig.focusEditorCalls, 0, "用户还没答复：批量还没收尾，MUST NOT 提前动焦点");
+
+  // 出口三「取消」：批量停手，b 与尚未处理的 c 都留下；已关掉的 a 不回滚。
+  rig.toasts[0].actions[2].run();
+  await flush();
+  assert.deepEqual(rig.closed, ["a.md"]);
+  assert.deepEqual(rig.editor.sessions, [b, c]);
+  // 停手也要归还焦点：确认按钮随浮条移除后浏览器会把焦点送回 body（review r1 P2-1）。
+  // 这里只证明「收尾路径调了 focusEditor」——真实 activeElement 的判据在浏览器层
+  // （tests/visual/scenes/tab-menu.spec.ts 的 expectEditorActive）。
+  assert.equal(rig.focusEditorCalls, 1, "停手时焦点交给前台编辑器");
+
+  // 再来一次并选「放弃修改并关闭」：b 关掉之后批量继续，c 也走它自己的确认。
+  rig.openMenu("b.md");
+  rig.menuItem("Close All Tabs").fire("click");
+  await flush();
+  assert.equal(rig.toasts.length, 2);
+  assert.equal(rig.toasts[1].text, t("D92", { path: "b.md" }));
+  rig.toasts[1].actions[1].run();
+  await flush();
+
+  // c 是脏的：批量必须再问它一次，而不是「用户已经答过一次」就静默丢弃。
+  assert.deepEqual(rig.closed, ["a.md", "b.md"]);
+  assert.equal(rig.toasts.length, 3);
+  assert.equal(rig.toasts[2].text, t("D92", { path: "c.md" }));
+  assert.equal(rig.focusEditorCalls, 1, "批量还没收尾：MUST NOT 提前再动一次焦点");
+
+  rig.toasts[2].actions[1].run();
+  await flush();
+  assert.deepEqual(rig.closed, ["a.md", "b.md", "c.md"]);
+  assert.equal(rig.focusEditorCalls, 2, "全关完同样收尾一次（前台是未命名空文档）");
 });

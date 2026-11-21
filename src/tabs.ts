@@ -5,8 +5,9 @@
 // M254（两个 change 同批）：**预览标签机制退场**（change preview-tab-removal，Alex
 // 2026-09-27 反馈「第一个 TAB 名是斜体」）——单击树文件也开正式标签，「可复用标签」的
 // 挑选与 `is-preview` 一并删除，落点意图因此只剩 `"new"`（新开）/ `"current"`（就地替换）。
-// 同批**新增标签的右键菜单**（change tab-strip-context-menu）：三条关闭路径 Close /
-// Close Other Tabs / Close Tabs to the Right，脏标签复用 M149 的 sticky 确认（见
+// 同批**新增标签的右键菜单**（change tab-strip-context-menu）：四条关闭路径 Close /
+// Close Other Tabs / Close Tabs to the Right / Close All Tabs（末条由 change
+// close-all-tabs-nov21 追加），脏标签复用 M149 的 sticky 确认（见
 // closeEach / showCloseConfirm 的说明）。菜单浮层与文件树菜单共用一套皮肤（`style.css` 的
 // `.ft-menu` / `.tab-menu` 选择器对），机制各写各的——理由见该 change 的 design。
 //
@@ -64,15 +65,25 @@ export const TAB_MENU_LABEL = (): string => t("D148");
  *  无论界面语言都取 English 列——`zh` 界面下整条菜单因此都是英文（中文措辞留在
  *  `文案-Copy.md` 的 zh 列作沿革备查）。 */
 export const TAB_MENU_REVEAL = (): string => t("D322");
-/** 菜单三条关闭项（D149–D151）。**上屏英文是 Alex 2026-09-27 的裁决**（M254 菜单初上屏为中文，
+/** 菜单四条关闭项（D149–D151、D946）。**上屏英文是 Alex 2026-09-27 的裁决**（M254 菜单初上屏为中文，
  *  Alex 答复「上屏」给英文）：Close / Close Other Tabs / Close Tabs to the Right 是 Alex 给的
- *  原文、逐字保留。M282 起这三条在文案表里是**上屏列锁定**条目（`lock: "en"`）——无论界面
- *  语言都取 English 列，`zh` 界面下因此仍是英文（MUST NOT 回落到中文列的沿革备查措辞）。 */
+ *  原文、逐字保留（D946 由 change close-all-tabs-nov21 按同一措辞口径追加）。M282 起这些条目在
+ *  文案表里是**上屏列锁定**条目（`lock: "en"`）——无论界面语言都取 English 列，`zh` 界面下因此
+ *  仍是英文（MUST NOT 回落到中文列的沿革备查措辞）。 */
 export const TAB_MENU_CLOSE = (): string => t("D149");
 export const TAB_MENU_CLOSE_OTHERS = (): string => t("D150");
 export const TAB_MENU_CLOSE_RIGHT = (): string => t("D151");
+/** 「关闭全部标签」（D946，change close-all-tabs-nov21）：关闭范围是**本 pane 标签条上的全部
+ *  标签**（右键那一条也在内；另一个 pane 的标签不受影响——每个 pane 一个本模块实例，
+ *  `editor.sessions()` 就是该 pane 的会话表）。 */
+export const TAB_MENU_CLOSE_ALL = (): string => t("D946");
 
-export type TabMenuAction = "reveal-in-tree" | "close" | "close-others" | "close-right";
+export type TabMenuAction =
+  | "reveal-in-tree"
+  | "close"
+  | "close-others"
+  | "close-right"
+  | "close-all";
 
 export interface TabMenuItem {
   action: TabMenuAction;
@@ -82,15 +93,19 @@ export interface TabMenuItem {
 /** 项集（菜单渲染、单测、验收断言三处同源，与文件树菜单的 `menuItemsFor` 同一纪律）。
  *
  *  **定位项在首位**（M300）：标签菜单没有分隔线，顺序因此是唯一的分组表达方式——非破坏性项
- *  在前、三条关闭路径仍是尾部连续的一块。方向与文件树条目菜单一致（`tree-menu.ts` 的项集里
+ *  在前、四条关闭路径仍是尾部连续的一块。方向与文件树条目菜单一致（`tree-menu.ts` 的项集里
  *  `reveal` 排在 `trash` 之前）。副作用：默认游标（首项）从 `Close` 变成定位项，右键后直接
- *  回车不再关标签。 */
+ *  回车不再关标签。
+ *
+ *  **「关闭全部标签」排在关闭块末尾**（change close-all-tabs-nov21）：范围最大的那条放在三条
+ *  有锚点的路径之后，既有四条项的相对顺序因此一个都没动（基线与肌肉记忆不受影响）。 */
 export function tabMenuItems(): TabMenuItem[] {
   return [
     { action: "reveal-in-tree", label: TAB_MENU_REVEAL() },
     { action: "close", label: TAB_MENU_CLOSE() },
     { action: "close-others", label: TAB_MENU_CLOSE_OTHERS() },
     { action: "close-right", label: TAB_MENU_CLOSE_RIGHT() },
+    { action: "close-all", label: TAB_MENU_CLOSE_ALL() },
   ];
 }
 
@@ -120,6 +135,18 @@ export function closeRightTargets(
   const tabs = visibleTabsOf(sessions);
   const index = tabs.indexOf(target);
   return index < 0 ? [] : tabs.slice(index + 1);
+}
+
+/** 「关闭全部标签」的目标：**本 pane 标签条上的全部可见标签**（含右键那一条），按打开顺序。
+ *
+ *  范围由实例决定而不是由右键落在哪一条决定：每个 pane 一个 `createTabs` 实例，
+ *  `sessions` 传进来的就是这个 pane 的会话表——双 pane 时另一个 pane 的标签不在其中，
+ *  「关闭范围与右键所在 pane 的标签组一致」因此是实例边界，不需要额外参数。
+ *  没有路径的会话（未命名草稿）不是标签，与 `visibleTabsOf` 的其他消费者同一口径：
+ *  它们 MUST NOT 进入目标集，否则批量关闭会碰到「关掉即静默清空」的那条路（见 closeTab
+ *  的未命名文档守卫）。 */
+export function closeAllTargets(sessions: readonly EditorSession[]): EditorSession[] {
+  return visibleTabsOf(sessions);
 }
 
 /** 顺序关闭一批标签：**逐个等前一个落地再动下一个**。
@@ -165,6 +192,14 @@ export interface TabsDeps {
   showEditor: () => void;
   /** 前台文档变化后的表现层一次对齐（装配层的 syncActiveDocument）。 */
   syncActiveDocument: () => void;
+  /** 把焦点交给这个 pane 的编辑器（装配层的 `handle.focusPreservingReadingPosition`，
+   *  MUST NOT 裸 `view.focus()`——聚焦不得把阅读位置拽回光标处，见 `src/scroll-position-view.ts`）。
+   *
+   *  消费者是「关闭全部标签」的批量收尾：**全关完与中途停手都要动一次焦点**——确认浮条的
+   *  动作钮随答复从 DOM 移除，浏览器会把焦点送回 body（review r1 P2-1）；全关完时前台是
+   *  未命名空文档、停手时前台是当前标签，两者的键盘落点都是正文。
+   *  注入而不是在模块内够 `editor.view`：交还焦点的口径与实现全仓只有装配层那一份。 */
+  focusEditor: () => void;
   /** 让**这条标签条所属的 pane** 成为活跃 pane（装配层的 activatePane）。
    *
    *  为什么是这里的一等依赖（M329，Alex 2026-10-05 dogfood bug 1）：本模块的每个实例属于
@@ -219,6 +254,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     invalidateResolve,
     showEditor,
     syncActiveDocument,
+    focusEditor,
     activatePane,
     revealInTree,
   } = deps;
@@ -277,7 +313,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         tab.addEventListener("click", () => activateTab(session));
 
         // 标签的右键菜单（M254，change tab-strip-context-menu）：右键**不改上下文**——这里
-        // 不调 activateTab，菜单里的三项都作用于「指针下这一个标签」，与激活项无必然关系
+        // 不调 activateTab，菜单里的三条有锚点的关闭项都作用于「指针下这一个标签」，与激活项无必然关系
         //（与文件树菜单同一条口径：右键即改选中的代价不对称，且「关闭右侧」需要一个不由
         // 激活项决定的锚点）。
         //
@@ -484,10 +520,10 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     syncActiveDocument();
   }
 
-  /** 菜单四项的落点。定位项只把路径交给树（不改前台、不开不关，见 tabMenuItems 的顺序说明）；
-   *  三条关闭路径都经 `resolveClose`：脏标签一律复用 M149 的 sticky 确认，不新造确认 UI。
-   *  「关闭其他 / 右侧」是**批量**——交 closeEach 顺序关，用户取消即停手（停手后剩下的标签
-   *  还在，脏内容一个字节都不动）。 */
+  /** 菜单五项的落点。定位项只把路径交给树（不改前台、不开不关，见 tabMenuItems 的顺序说明）；
+   *  四条关闭路径都经 `resolveClose`：脏标签一律复用 M149 的 sticky 确认，不新造确认 UI。
+   *  「关闭其他 / 右侧 / 全部」是**批量**——交 closeEach 顺序关，用户取消即停手（停手后剩下的
+   *  标签还在，脏内容一个字节都不动；已经关掉的不回滚）。 */
   function runTabMenuAction(action: TabMenuAction, session: EditorSession): void {
     if (action === "reveal-in-tree") {
       // 标签一定有路径（visibleTabsOf 的口径），这条守卫只是把「没有路径的会话」这条路封死——
@@ -500,6 +536,24 @@ export function createTabs(deps: TabsDeps): TabsHandle {
       return;
     }
     const sessions = editor.sessions();
+    if (action === "close-all") {
+      // 与 closeTab 同一条不变量（M329）：菜单动作是这条标签条的交互 ⇒ 该 pane 变活跃。
+      // 批量路径里没有 closeTab 那个漏斗（它们直接调 resolveClose），少了这一步时非活跃 pane
+      // 的批量关闭会让随后的 syncActiveDocument 解到另一个 pane 的前台。
+      activatePane();
+      void closeEach(closeAllTargets(sessions), resolveClose).then(() => {
+        // 批量结束（全关完或中途停手）都要归还一次焦点：确认浮条的动作钮在答复那一刻就随
+        // 浮条从 DOM 移除，浏览器会把焦点送回 body（review r1 P2-1 的实测形态）。落点按
+        // 当前前台会话分两种，都在本 pane 内——另一个 pane MUST NOT 接管焦点：
+        //   - 文档会话（含全关完后的未命名空文档）→ 编辑器正文（focusEditor，按 M280 口径
+        //     不改变阅读位置；保存冲突 / 写失败的提示是非模态浮条，既有合同就是「不夺焦」）；
+        //   - 图片会话（编辑器这时是哨兵只读面，聚焦它没有意义）→ 那一条标签的按钮。
+        const active = editor.activeSession();
+        if (isDocSession(active)) focusEditor();
+        else focusTab(active);
+      });
+      return;
+    }
     const targets =
       action === "close-others"
         ? closeOtherTargets(sessions, session)
@@ -599,7 +653,8 @@ export function createTabs(deps: TabsDeps): TabsHandle {
 //   1. 文件范围：本 mission 的改动面不含 src/tree-menu.ts，抽底层要改它的导出面与类内部，
 //      属另一次改动（跨 mission 的重构不该夹在一个功能 change 里）；
 //   2. 差异不在细节而在**项集来源**：树菜单的项集随条目类型分流（文件 / 目录两套，含分隔线
-//      与破坏性项档），标签菜单是四条固定项（M300 起；此前三条）；菜单渲染、动作派发与作用
+//      与破坏性项档），标签菜单是五条固定项（M300 起此前为四条、更早三条；关闭全部项由
+//      change close-all-tabs-nov21 追加）；菜单渲染、动作派发与作用
 //      元素标记都挂在这个差异上，
 //      能共用的只有「容器 + 定位 + 键盘游标 + 外点关闭」这一层（约 60 行），抽出来的收益小于
 //      两处同时改动带来的回归面（树菜单有它自己的单测与两条元素基线）；

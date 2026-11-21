@@ -680,6 +680,9 @@ function createPaneTabs(paneId: PaneId, handle: EditorHandle, stripEl: HTMLEleme
     invalidateResolve: () => linkFollow.invalidate(),
     showEditor: () => showEditor(),
     syncActiveDocument: () => syncActiveDocument(),
+    // 「关闭全部标签」把标签全关完后没有标签可归还焦点：交给编辑器（M280 口径：聚焦不得把
+    // 阅读位置拽回光标处，MUST NOT 裸 view.focus()）。
+    focusEditor: () => handle.focusPreservingReadingPosition(),
     // 标签条交互（点标签 / 点关闭钮）先把这个 pane 翻成活跃 pane（M329，bug 1）。调用点在
     // tabs.ts 的交互漏斗里（它的 DOM 监听自己绑），**不是**在这里覆写对外方法——覆写挡不住
     // DOM 点击路径，那正是「点非活跃 pane 的标签不装载内容」的成因。
