@@ -5,8 +5,43 @@
 - 角色: Alex Lee（原始缺陷报告、裁决），AI agent（诊断 / 起草 / 实现）
 
 > 评审记录
-> 节点 1：Alex 报告「段首输入 `- ` 后，下一行缩进」，并要求直接处理。本 change 只修
-> `Enter` 在 md 散文 / 列表续行回落里照抄行首空白这一条，不新增产品形态、不改上游续行。
+> 节点 1：Alex 报告「段首输入 `- ` 后，下一行缩进」，并要求直接处理；该批以「请你继续」批准
+> 推进。本 change 只修 `Enter` 在 md 散文 / 列表续行回落里照抄行首空白这一条，不新增产品形态、
+> 不改上游续行。
+> 节点 2（归档放行）：**机器 + 独立评审放行**（[openspec-workflow.md](../../../../docs/process/openspec-workflow.md)
+> 「节点 2：归档默认由独立评审 + 机器判据放行」五要件），逐条事实与证据指针见下「节点 2 记录（归档前）」。
+
+## 节点 2 记录（归档前，2026-11-21）
+
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-11-21 通过——Alex 报告「段首输入 `- ` 后，下一行缩进」并要求
+   直接处理，该批以「请你继续」批准推进（见上方「评审记录」）。实现期没有静默扩 scope：产品改动
+   只有 `src/enter-indent.ts` 的 md 回落收窄与裸行空项删除起点、`src/preview/lists.ts` 的
+   `markerTextAt` 前缀拆成 `quote` / `indent` 两段（仍一处真源），以及 `docs/specs/lists.md` B2
+   的口径同步；r1 / r2 评审返修（P2-1…P2-4、P3-1/P3-2）都是同一条回落的边界与测试覆盖，
+   未新增产品行为。proposal「Non-goals」明确不做的首项续行 / M399 / 渲染层均未动。
+2. **独立 reviewer clean / merge**：独立 reviewer agent-36 判 `clean/merge`，无 P1 / P2 findings；
+   评审对 Tab 行首 P2 的修复（`90e557a3`「行首归一化保留被下移代码行的原始行首空白」）同样判
+   `clean/merge`。绑定 integration tip `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/editing-batch-nov21/review-final.md`。
+   当前分支 tip 与该评审 tip 相同。
+3. **tasks 完成**：`tasks.md` 19/19 全勾（`grep -c '^- \[x\]'` = 19，未勾项 0），无放弃项。
+   2.6 的真机执行由主会话完成，读数与证据指针见下条。
+4. **要求的门禁与真机证据**：动过 `tests/visual/scenes/**`（`m264-enter-auto-indent.spec.ts` /
+   `lists.spec.ts`），按 `scripts/gate.sh visual` 档取读数——`GATE RESULT: 15/15 PASS（SKIP 0）`，
+   退出码 0。真机场景 `269-list-enter-indent` PASS（16 断言，0 FAIL；`status.txt` = `PASS`），
+   证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/269-list-enter-indent/`
+   （`steps.md` / `shots/` / `ax/`）。未更新视觉基线。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS——`扫过
+   13 份 delta，13 条 MODIFIED，对比 239 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`
+   （退出码 0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 40
+   passed, 0 failed (40 items)`（退出码 0）。归档跟踪队列有且仅有一条本 change 条目
+   （`docs/backlog.md`）。delta 是 `editor-live-preview` 的 1 条 MODIFIED（「Enter 换行与自动缩进」
+   整条复制后改），是真实增量，不是纯目录移动。
+
+未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与
+tip 均无异常、证据无缺口，故不另送 Alex。
 
 ## Why
 

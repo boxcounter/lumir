@@ -24,8 +24,9 @@
 - [x] 2.4 `bash scripts/docs-check.sh` 与
       `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 2.5 `node scripts/acceptance/run.mjs --check` 通过（新增场景 269 + 覆盖表重生成）
-- [ ] 2.6 真机验收场景 269 由主会话统一执行（本任务不自行跑真机；执行记录落
-      `.local/acceptance/`）
+- [x] 2.6 真机验收场景 269 由主会话统一执行（本任务不自行跑真机；执行记录落
+      `.local/acceptance/`）：`269-list-enter-indent` PASS（16 断言，0 FAIL），证据
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/269-list-enter-indent/`
 
 ## 3. review r1 返修（2026-11-21）
 
