@@ -1241,26 +1241,41 @@ pub fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), Comma
 
 /// 取一个 http / https 网页的标题（change add-url-paste-title-nov21）。
 ///
-/// 线程语义与 `vault_open_path` 同款：`#[command(async)]` + 同步 body，阻塞式 HTTP 跑在
-/// async 运行时的 worker 上，不占 IPC 主线程。网络 / 超时 / 响应状态 / HTML 解析都在
-/// `crate::url_title`；本命令只负责构造带 UA 与超时的 client，并把错误转成既有信封。
+/// **线程语义**：`async fn` + `spawn_blocking`（先例 `vault_registry.rs` 的 `vault_list`）。
+/// MUST NOT 写成 `#[command(async)]` + 同步 body：那条路径由宏走
+/// `respond_async_serialized` → `async_runtime::spawn`，body 跑在 async 运行时的 worker 上，
+/// 而 `reqwest::blocking` 的 client 会在 debug 构建里自建 shell runtime——在 worker 上 drop 它
+/// 即 `Cannot drop a runtime in a context where blocking is not allowed`（真机 app.log 现场，
+/// fix/url-title-blocking-nov21）。panic 打断的是这个 IPC 任务本身，invoke 永不 settle，标题
+/// 不上屏；即使不 panic，5 秒的阻塞请求也会占住一个 worker。阻塞客户端因此只在
+/// `spawn_blocking` 的线程上构造、使用、销毁。
+///
+/// 网络 / 超时 / 响应状态 / HTML 解析都在 `crate::url_title`；本命令只负责构造带 UA 与超时的
+/// client，并把错误转成既有信封。
 ///
 /// 网络 / 读取失败返回 `Err`，前端据此保留原始 URL；`Ok(None)` = 请求到达但**没有可用
 /// 标题**（非 2xx、非精确 HTML media type、没有 `<title>`、空标题、超长标题、非 UTF-8）。
-#[tauri::command(async, rename_all = "snake_case")]
-pub fn fetch_url_title(url: String) -> Result<Option<String>, CommandError> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(crate::url_title::FETCH_TIMEOUT)
-        .user_agent(format!("Lumir/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| {
-            CommandError::new(
-                "url_title_client_failed",
-                format!("初始化取标题请求失败：{e}"),
-            )
-        })?;
-    crate::url_title::fetch_title(&client, &url)
-        .map_err(|e| CommandError::new("url_title_failed", e))
+#[tauri::command(rename_all = "snake_case")]
+pub async fn fetch_url_title(url: String) -> Result<Option<String>, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(crate::url_title::FETCH_TIMEOUT)
+            .user_agent(format!("Lumir/{}", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|e| {
+                CommandError::new(
+                    "url_title_client_failed",
+                    format!("初始化取标题请求失败：{e}"),
+                )
+            })?;
+        crate::url_title::fetch_title(&client, &url)
+            .map_err(|e| CommandError::new("url_title_failed", e))
+    })
+    .await
+    .map_err(|e| {
+        CommandError::new("url_title_failed", format!("取网页标题失败：{e}"))
+            .param("reason", e.to_string())
+    })?
 }
 
 // ---------------------------------------------------------------------------
@@ -2517,5 +2532,43 @@ mod tests {
             None,
             "惰性**文件**同样 MUST NOT 进链接索引（它是 lazy 守卫的直接判据）"
         );
+    }
+
+    /// 回归（fix/url-title-blocking-nov21）：`fetch_url_title` 的阻塞客户端不得在 async 运行时的
+    /// worker 上构造 / 使用 / 销毁；命令在任意 tokio 运行时任务里都必须 settle（标题 / Err），
+    /// 不得 panic。
+    ///
+    /// 现场：旧实现是 `#[command(async)]` + 同步 body，宏把 body 放进 `async_runtime::spawn` 的
+    /// 任务里（`respond_async_serialized`）；`reqwest::blocking` 的 client 在 debug 构建里自建的
+    /// shell runtime 一旦在 worker 上 drop，就是 tokio `blocking/shutdown.rs` 的
+    /// `Cannot drop a runtime in a context where blocking is not allowed`——panic 打断这个 IPC
+    /// 任务，invoke 永不 settle、标题不上屏（真机 app.log 现场）。
+    ///
+    /// 派发方式照 IPC：任务起在 tauri 的全局运行时上，body 不在测试线程内联执行。成功与错误
+    /// 两条路径都要 settle——只测成功路径的话，「错误路径提前 return、不碰客户端」的半修会漏掉。
+    #[test]
+    fn fetch_url_title_settles_inside_async_runtime() {
+        let (url, server) = crate::url_title::serve_once(
+            "200 OK",
+            Some("text/html; charset=utf-8"),
+            "<html><head><title>本地标题</title></head></html>",
+            std::time::Duration::ZERO,
+        );
+        let result = tauri::async_runtime::block_on(tauri::async_runtime::spawn(async move {
+            fetch_url_title(url).await
+        }))
+        .expect("成功路径不得 panic（阻塞客户端只能在 spawn_blocking 线程上存在）");
+        server.join().expect("server");
+        assert_eq!(
+            result.expect("成功路径必须取到标题"),
+            Some("本地标题".to_string())
+        );
+
+        // 错误路径：非法 scheme 在发请求前就被拒，同样不得在运行时 worker 上碰阻塞客户端。
+        let result = tauri::async_runtime::block_on(tauri::async_runtime::spawn(async move {
+            fetch_url_title("file:///tmp/x".to_string()).await
+        }))
+        .expect("错误路径不得 panic");
+        assert!(result.is_err(), "非 http(s) 必须 settle 成 Err");
     }
 }

@@ -75,9 +75,13 @@ URL 目标用 `escapeDestination` 转义 `\`、`(`、`)`、`<`、`>`；`links.ts
 
 ## 6. Rust `fetch_url_title`
 
-- 命令：`#[tauri::command(async, rename_all = "snake_case")] pub fn fetch_url_title(url: String)
-  -> Result<Option<String>, CommandError>`；同步 body 跑在 async worker 上（与 `vault_open_path`
-  同线程语义），不占 IPC 主线程。
+- 命令：`#[tauri::command(rename_all = "snake_case")] pub async fn fetch_url_title(url: String)
+  -> Result<Option<String>, CommandError>`；阻塞客户端（连同它的构建与销毁）整体放进
+  `tauri::async_runtime::spawn_blocking`（与 `vault_list` 同线程语义）。MUST NOT 写成
+  `#[command(async)]` + 同步 body：那条路径的 body 跑在 async 运行时的 worker 上，
+  `reqwest::blocking` 在 debug 构建里自建的 shell runtime 在 worker 上 drop 即
+  `Cannot drop a runtime in a context where blocking is not allowed`，命令永不返回
+  （fix/url-title-blocking-nov21 的现场与回归）。
 - 网络：复用 `reqwest::blocking`（Cargo.toml 已有，`blocking` + `rustls-tls`），不新增依赖。
   `Client::builder().timeout(5s).user_agent("Lumir/<crate version>")`。
 - 边界：`Url::parse` 后只接受 http / https；非 2xx → `Ok(None)`；`Content-Type` 头部必须存在，
