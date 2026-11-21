@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：248
-- 验收项（不同 item 编号）：224
-- 分档：core 29 / full 209 / bundle 5 / evidence 5（full 批 = 全部 248 个，含其余各档）
+- 场景：249
+- 验收项（不同 item 编号）：225
+- 分档：core 29 / full 210 / bundle 5 / evidence 5（full 批 = 全部 249 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -242,3 +242,4 @@
 | 704 | `252-cron-click-after-exit`<br>`252-harness-activity-presence`<br>`253-harness-vault-activity` | 应用退出后点击通知：跨进程恢复、快照会话与四类拒绝（change add-cron-notification-relaunch §8.2）<br>harness 面板的活动在场：收起期间的在途 / 未读提示，打开面板即清算，停止不点亮<br>harness 跨 vault 往返的在途准确：切回仍在途不呈空闲、续渲染并对账；完成后往返指示空闲 | bundle<br>full<br>full |
 | 705 | `269-harness-path-line-sentence-period` | 句末句号不吞行号（path:line. 仍是整段可点并落到目标行） | full |
 | 706 | `270-cron-open-session-keeps-doc-focus` | 点击 cron 结果通知：展开 pane 并恢复会话，正文焦点与输入落点不被抢 | bundle |
+| 707 | `707-gutter-copy` | 行号 gutter 右键复制 `{path}:{line}`——md（always / 合成 fixture 路径含空格与中文）与 code 首行、vault 外绝对路径、剪贴板逐字、文档零写入 | full |
