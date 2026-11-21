@@ -196,12 +196,59 @@ fn charset_of(content_type: &str) -> Option<String> {
     None
 }
 
+/// 一个只服务一次的确定性 HTTP 服务器（测试专用，`url_title` 与 `commands` 的回归共用）：
+/// 绑定 `127.0.0.1` 随机端口、只 accept 一次，不依赖外网。
+///
+/// accept 是**有界**的（5 秒）：被测命令若在发请求前就失败（例如在运行时上下文里 panic），
+/// 服务器线程必须自己退出，否则 `join()` 永久挂住，回归会以「测试超时」而不是「断言失败」
+/// 收场（fix/url-title-blocking-nov21 的红色探针就踩过这个坑）。
+#[cfg(test)]
+pub(crate) fn serve_once(
+    status: &'static str,
+    content_type: Option<&'static str>,
+    body: &'static str,
+    delay: Duration,
+) -> (String, std::thread::JoinHandle<()>) {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = listener.local_addr().expect("addr");
+    listener.set_nonblocking(true).expect("nonblocking");
+    let handle = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if std::time::Instant::now() >= deadline {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => panic!("accept: {e}"),
+            }
+        };
+        stream.set_nonblocking(false).expect("blocking");
+        let mut buffer = [0u8; 1024];
+        let _ = stream.read(&mut buffer);
+        std::thread::sleep(delay);
+        let content_type_header = content_type
+            .map(|value| format!("Content-Type: {value}\r\n"))
+            .unwrap_or_default();
+        let response = format!(
+            "HTTP/1.1 {status}\r\n{content_type_header}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+        let _ = stream.flush();
+    });
+    (format!("http://{address}/"), handle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::thread;
     use std::time::Duration;
 
     #[test]
@@ -304,33 +351,6 @@ mod tests {
             .user_agent("Lumir/test")
             .build()
             .expect("test client")
-    }
-
-    /// 一个只服务一次的确定性 HTTP 服务器（127.0.0.1 随机端口，不依赖外网）。
-    fn serve_once(
-        status: &'static str,
-        content_type: Option<&'static str>,
-        body: &'static str,
-        delay: Duration,
-    ) -> (String, thread::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let address = listener.local_addr().expect("addr");
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
-            let mut buffer = [0u8; 1024];
-            let _ = stream.read(&mut buffer);
-            thread::sleep(delay);
-            let content_type_header = content_type
-                .map(|value| format!("Content-Type: {value}\r\n"))
-                .unwrap_or_default();
-            let response = format!(
-                "HTTP/1.1 {status}\r\n{content_type_header}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(response.as_bytes());
-            let _ = stream.flush();
-        });
-        (format!("http://{address}/"), handle)
     }
 
     #[test]
