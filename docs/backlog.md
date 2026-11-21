@@ -71,7 +71,6 @@
 - 左栏拖拽（场景 159）→ 下一动作：Alex 手拖复验根落点（M538）。
 - `M455 收尾复跑`（138/140/144/145 与 hover 族 76/87/131/132/133/134）→ 下一动作：真机复跑并登记读数（145 的 `mod+z` 同族观察留给 change 属主裁）。
 ## 归档跟踪队列（oct24 批剩余；口径见 `docs/process/openspec-workflow.md`）
-- **序 1 · `add-url-paste-title-nov21`**（nov21，16/16）：节点 1 待 Alex 评审；delta = 新 capability `url-paste` 的 2 条 ADDED；实现批、视觉场景与真机场景 269 已交付（本地门禁读数见 `.local/missions/url-editing-nov21/`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **序 2 · `fix-bare-url-cjk-boundary-nov21`**（nov21，10/10）：节点 1 待 Alex 评审；delta = `editor-live-preview` 的 1 条 MODIFIED；实现批、视觉场景与真机场景 269 已交付；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`improve-keybindings-lookup-oct24`**（M715）：delta = keymap-commands 1 条 MODIFIED（键位面板行模型）+ 3 条 ADDED（查找/捕获/详情、非自指入口、命令元数据与字形单一来源），节点 2 走人肉；实现批附带新增真机场景 235 / 236 / 237（查询 / 捕获 / 键盘）与 m133 视觉场景重写——**像素基线待 Alex 过目后重截**（未经过目不得 `--update`）；归档前后各跑 `node scripts/openspec-archive-check.mjs`。
 - **`overlay-width-contract-oct24`**（M702，34/37）：节点 1 追认材料已备（D1–D5 落地 + 证据 + 否决回改面，见 proposal）；真机 231/232 PASS（5 + 11 断言，`.local/acceptance/2026-10-24-m711/`）；残留：0.3 / 0.4 待 Alex 追认、9.1 归档期执行；delta = ui-design-system 1 条 ADDED，归档前后各跑 `node scripts/openspec-archive-check.mjs`。

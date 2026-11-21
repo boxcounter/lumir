@@ -4,6 +4,44 @@
 - 日期: 2026-11-21
 - 角色: Alex Lee（评审 / 裁决），AI agent（起草）
 
+> 评审记录
+> 节点 1（提案评审）：**通过**——来源是 Alex 2026-11-21 需求批里的原始需求「贴 URL 自动提取
+> 标题（成功 `[title](url)`，失败保留 URL）」，并以「请你继续」批准推进；本提案按这条原话的
+> 最小读法落地，实现期未新增其它产品行为。
+> 节点 2（归档放行）：**机器 + 独立评审放行**（[openspec-workflow.md](../../../../docs/process/openspec-workflow.md)
+> 「节点 2：归档默认由独立评审 + 机器判据放行」五要件），逐条事实与证据指针见下「节点 2 记录（归档前）」。
+
+## 节点 2 记录（归档前，2026-11-21）
+
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-11-21 通过——Alex 原始需求「贴 URL 自动提取标题（成功
+   `[title](url)`，失败保留 URL）」+「请你继续」批准推进（见上方「评审记录」）。实现期没有静默扩
+   scope：产品增量严格对应「What Changes」三条（`src/paste-url.ts` / `src/editor.ts` /
+   `src/main.ts` / `src/ipc.ts` / `src-tauri/src/url_title.rs` / `commands.rs` / `lib.rs`），
+   另有归档前发现的 `fetch_url_title` 阻塞调用线程语义修复（`ddf91773` 的 `spawn_blocking`），
+   属同一命令的实现缺陷修复、不改行为约定。
+2. **独立 reviewer clean / merge**：独立 reviewer agent-36 判 `clean/merge`，无 P1 / P2 findings，
+   绑定 integration tip `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/editing-batch-nov21/review-final.md`
+   （含「`ddf91773` 的 spawn_blocking 修复」已在评审面内）。当前分支 tip 与该评审 tip 相同。
+3. **tasks 完成**：`tasks.md` 16/16 全勾（`grep -c '^- \[x\]'` = 16，未勾项 0），无放弃项。
+4. **要求的门禁与真机证据**：动过 `tests/visual/scenes/**`（新增 `url-paste-title.spec.ts`），
+   按 `scripts/gate.sh visual` 档取读数——`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0。
+   真机场景 `269-url-paste-and-cjk-boundary-nov21` PASS（18 断言，0 FAIL；`status.txt` = `PASS`），
+   证据 `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-requirements-batch/269-url-paste-and-cjk-boundary-nov21/`
+   （`steps.md` / `shots/` / `ax/`）。解析成功与失败保留 URL 两段均由该场景覆盖；网络失败段用
+   `.invalid` 域名，成功段用本机 loopback server。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS——`扫过
+   15 份 delta，14 条 MODIFIED，对比 275 段，无静默丢段；归档队列 3 项已完成 change 均有唯一条目`
+   （退出码 0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 42
+   passed, 0 failed (42 items)`（退出码 0）。归档跟踪队列有且仅有一条本 change 条目
+   （`docs/backlog.md`）。delta 是**新 capability** `url-paste` 的 2 条 ADDED，不是纯目录移动；
+   归档后须手写 living spec 的 Purpose（`archive` 会写占位 `TBD`）。
+
+未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与
+tip 均无异常、证据无缺口，故不另送 Alex。
+
 ## Why
 
 ### 需求来源（Alex 原话，逐字保留）
