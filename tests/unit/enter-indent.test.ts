@@ -381,6 +381,26 @@ test("行首空白归一化：行首 / 空白内 / 末端光标都不拆空白�
   assert.equal(second.cursor, 9);
 });
 
+test("行首空白归一化：被下移的代码行原样保留自己的 Tab / 混合缩进", () => {
+  // 合同原文（spec「行首空白内的 Enter 归一化到空白之前」）：被下移的内容行**保留自己的
+  // 行首空白**。归一化若用 `indentString` 按 tabSize 回填，`\t` 会变成等宽空格——这里对
+  // 源码逐字节断言，覆盖围栏 / 缩进代码块、光标在行首与 Tab 后、空格+Tab 混合。
+  const cases: Array<[label: string, doc: string, positions: number[], expectedDoc: string, cursor: number]> = [
+    ["缩进代码块 · 纯 Tab", "\tcode", [0, 1], "\n\tcode", 2],
+    ["缩进代码块 · 空格 + Tab", "    \tcode", [0, 4, 5], "\n    \tcode", 6],
+    ["围栏代码块 · 纯 Tab", "```\n\tcode\n```", [4, 5], "```\n\n\tcode\n```", 6],
+    ["围栏代码块 · 空格 + Tab", "```\n  \tcode\n```", [4, 6, 7], "```\n\n  \tcode\n```", 8],
+  ];
+  for (const [label, doc, positions, expectedDoc, cursor] of cases) {
+    for (const pos of positions) {
+      const result = pressEnterAt(doc, pos, "md", true, MD);
+      assert.equal(result.handled, true, `${label} pos=${pos}：应接管`);
+      assert.equal(result.doc, expectedDoc, `${label} pos=${pos}：被下移行 MUST 保留原始行首空白`);
+      assert.equal(result.cursor, cursor, `${label} pos=${pos}：光标落在内容行行首空白之后`);
+    }
+  }
+});
+
 test("缩进代码块边界：行首 / 缩进内 / 正文起点 / 行尾都按代码块沿用行首空白（P2-2）", () => {
   const cases: Array<[pos: number, doc: string, cursor: number]> = [
     [0, "\n    foo", 5],
