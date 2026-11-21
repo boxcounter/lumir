@@ -506,6 +506,98 @@ test("正文 IME：>32KB 文档删空后对照解析跨拍推进并撤掉旧 mar
   expect(final.busy).toBe(false);
 });
 
+test("正文 IME：state 同步覆盖收束目标后非文档更新必须改用当前树（Chromium）", async ({ page }) => {
+  // 长文档：目标行在末尾，20ms 的 state apply 只能解析到中途（state.length < to）→ 收束保留
+  // 只到目标行的截断树。随后把 state/context 同步为覆盖全文的新树并 dispatch selection：
+  // 非文档更新必须重跑 reconciliation，清除保留树并改用 state 树——后续列表行 marker
+  // 只能来自新树（截断树不含它）。
+  const doc = "para\n\n".repeat(7500) + "词汇\n- s\n\n- 后项";
+  await openBody(page, "oracle.md", doc);
+  await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(2);
+  const cut = doc.length - 7;
+  const settled = await page.locator(".cm-content").evaluate((el, position) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const findLang = () => {
+      const values = (view.state as { values?: unknown[] }).values ?? [];
+      return values.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as any;
+    };
+    const lang = findLang();
+    if (!lang) throw new Error("language state not found");
+    lang.context.updateViewport({ from: 0, to: view.state.doc.length });
+    if (!lang.context.work(3000, view.state.doc.length)) throw new Error("full parse did not finish");
+    const oldTree = lang.context.tree;
+    if (!String(oldTree).includes("BulletList")) throw new Error("baseline tree is not a list");
+    view.dispatch({ changes: { from: position, to: position + 1 }, selection: { anchor: position } });
+    const live = findLang();
+    // 模拟现场：state 字段树未覆盖目标行；context 自认已完成且仍是删除前的 list 树。
+    live.tree = live.context.parser.parse("词汇");
+    live.context.tree = oldTree;
+    live.context.treeLen = oldTree.length;
+    const plugin = ((view as { plugins?: { value?: unknown }[] }).plugins ?? [])
+      .map((entry) => entry.value)
+      .find((value) => value && typeof (value as { settleStep?: unknown }).settleStep === "function") as any;
+    if (!plugin) throw new Error("ListLayout plugin not found");
+    const newLen = view.state.doc.length;
+    const to = newLen - 6;
+    plugin.settleTo = to;
+    plugin.settleStarted = performance.now();
+    plugin.settleStep(view);
+    return { newLen, to, stateLen: live.tree.length };
+  }, cut);
+  expect(settled.newLen).toBe(45_011);
+  expect(settled.stateLen).toBeLessThan(settled.to);
+  await expect.poll(async () => page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    return ((view.plugins ?? []).map((entry: { value?: unknown }) => entry.value)
+      .find((value: any) => value && typeof value.settleStep === "function") as any).settleTo;
+  }), { timeout: 20_000 }).toBeNull();
+  const held = await page.locator(".cm-content").evaluate((el, to) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const plugin = ((view.plugins ?? []).map((entry: { value?: unknown }) => entry.value)
+      .find((value: any) => value && typeof value.settleStep === "function") as any);
+    return {
+      retained: plugin.settledTree !== null,
+      treeLen: plugin.tree.length,
+      markers: el.querySelectorAll(".cm-lp-list-marker").length,
+    };
+  }, settled.to);
+  expect(held.retained, "state 未覆盖目标行时必须保留截断的收束树").toBe(true);
+  // 对照解析停在目标行末（可能含行尾换行），但必须短于全文、不含后续列表行。
+  expect(held.treeLen).toBeGreaterThanOrEqual(settled.to);
+  expect(held.treeLen).toBeLessThan(settled.newLen);
+  expect(held.markers, "截断树不含后续列表行：临时失去 marker").toBe(0);
+  const synced = await page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const findLang = () => {
+      const values = (view.state as { values?: unknown[] }).values ?? [];
+      return values.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as any;
+    };
+    const live = findLang();
+    if (!live) throw new Error("language state not found");
+    const fullTree = live.context.parser.parse(view.state.doc.toString());
+    live.tree = fullTree;
+    live.context.tree = fullTree;
+    live.context.treeLen = fullTree.length;
+    view.dispatch({ selection: { anchor: 0 } });
+    const plugin = ((view.plugins ?? []).map((entry: { value?: unknown }) => entry.value)
+      .find((value: any) => value && typeof value.settleStep === "function") as any);
+    return {
+      retained: plugin.settledTree !== null,
+      treeLen: plugin.tree.length,
+      tree: String(plugin.tree.toString()),
+      markers: el.querySelectorAll(".cm-lp-list-marker").length,
+      lastLine: [...el.querySelectorAll(".cm-line")].at(-1)?.textContent ?? "",
+      docLen: view.state.doc.length,
+    };
+  });
+  expect(synced.retained, "state 已覆盖收束目标且判定一致时必须清除保留树").toBe(false);
+  expect(synced.treeLen).toBe(synced.docLen);
+  expect(synced.tree).toContain("BulletList");
+  expect(synced.markers, "后续列表行 marker 必须来自同步后的 state 树").toBe(1);
+  await expect.poll(async () => page.locator(".cm-line").last().textContent()).toBe("–后项");
+});
+
 test("正文 IME：>32KB 文档的真正空列表项不得被对照解析误删 marker（Chromium）", async ({ page }) => {
   // 对照：同样的长前缀 + 真正空列表项。对照树仍判 list，marker 必须保留。
   const doc = "para\n\n".repeat(7500) + "x\n\n- ";

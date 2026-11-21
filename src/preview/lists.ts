@@ -630,6 +630,8 @@ class ListLayout {
   /** 恢复链拿到的 context tree（可能比 state 快照新）；同一 doc 的非 doc 更新沿用它 build。 */
   private settledTree: Tree | null = null;
   private settledTreeDoc: Text | null = null;
+  /** 保留 settledTree 时对应的收束目标（行末）；非文档更新用它重跑 reconciliation。 */
+  private settledTreeTo: number | null = null;
   /** 跨拍推进的独立对照解析（doc / 目标位置变化即重建）。 */
   private referenceParse: ReferenceParse | null = null;
   /** 对照解析无法建立 / 推进（无 parser、parser 抛错）：这是异常路径，不是长度边界；
@@ -699,12 +701,18 @@ class ListLayout {
       this.timer = undefined;
     }
     if (!update.docChanged && this.settledTree !== null && this.settledTreeDoc === update.state.doc) {
+      // 非文档更新也要 reconciliation：state 字段树可能已经同步到收束目标之后。复用前把
+      // 保留树装回 this.tree 并重跑既有的 retainSettledTree 判定——state 已覆盖收束目标且
+      // 判定一致时它会清空保留、改用当前 state 树；仍有分歧才继续保留。
       this.tree = this.settledTree;
+      if (this.settledTreeTo !== null) this.retainSettledTree(update.view, this.settledTreeTo);
+      if (this.settledTree === null) this.tree = tree;
     } else {
       this.tree = tree;
       if (update.docChanged) {
         this.settledTree = null;
         this.settledTreeDoc = null;
+        this.settledTreeTo = null;
         this.referenceParse = null;
         this.referenceFailed = false;
       }
@@ -893,6 +901,7 @@ class ListLayout {
     if (stateTree.length < to) {
       this.settledTree = this.tree;
       this.settledTreeDoc = view.state.doc;
+      this.settledTreeTo = to;
       return;
     }
     const stateRead = readTarget(view, stateTree, to);
@@ -900,10 +909,12 @@ class ListLayout {
     if (stateRead.kind === settledRead.kind) {
       this.settledTree = null;
       this.settledTreeDoc = null;
+      this.settledTreeTo = null;
       return;
     }
     this.settledTree = this.tree;
     this.settledTreeDoc = view.state.doc;
+    this.settledTreeTo = to;
   }
 
   private settleStep(view: EditorView): void {
