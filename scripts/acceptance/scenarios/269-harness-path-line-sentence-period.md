@@ -50,6 +50,13 @@ steps:
       has: ["句末句号验收"]
     timeoutMs: 30000
 
+  - name: 收起左栏（裸路径负向断言只应看 Harness，不应误伤文件树里的同名 fixture）
+    do: key
+    key: "cmd+b"
+    expect:
+      - label: 文件树已退出 AX 树
+        ax: { not: "点击查看全部 vault" }
+
   - name: 句末句号形态的可点性
     do: settle
     expect:
