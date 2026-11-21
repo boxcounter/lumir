@@ -24,7 +24,8 @@
 2. **独立 reviewer clean / merge**：独立 reviewer agent-36 判 `clean/merge`，无 P1 / P2 findings，
    绑定 integration tip `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
    `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/editing-batch-nov21/review-final.md`
-   （含「`ddf91773` 的 spawn_blocking 修复」已在评审面内）。当前分支 tip 与该评审 tip 相同。
+   （含「`ddf91773` 的 spawn_blocking 修复」已在评审面内）。评审时 integration tip 为
+   `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；归档分支自该 tip 之后仅文档变化（无产品代码增量）。
 3. **tasks 完成**：`tasks.md` 16/16 全勾（`grep -c '^- \[x\]'` = 16，未勾项 0），无放弃项。
 4. **要求的门禁与真机证据**：动过 `tests/visual/scenes/**`（新增 `url-paste-title.spec.ts`），
    按 `scripts/gate.sh visual` 档取读数——`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0。

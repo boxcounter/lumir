@@ -35,7 +35,8 @@
    通过、Alex 裁决转正式版人工验收、「不得声称该路径已验证」；绑定 integration tip
    `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
    `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/navigation-batch-nov21/review-final.md`。
-   当前分支 tip 与该评审 tip 相同。
+   评审时 integration tip 为 `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；归档分支自该 tip 之后
+   仅文档变化（无产品代码增量）。
 3. **tasks 完成或有放弃理由**：`tasks.md` 26/26 全勾（`grep -c '^- \[x\]'` = 26，未勾项 0）。
    其中 5.5 / 6.6 的就地记录明确写清：**270 未自动通过（FAIL），不伪称 PASS**；270 不是放弃项，
    而是经 Alex 裁决转正式版人工验收 checkpoint，当前批以 269（705）PASS 14 断言 + 完整 gate 收口。
@@ -50,9 +51,10 @@
    与 `.../270-cron-open-session-keeps-doc-focus/`（`status.txt` / `steps.md` 如实记录 PASS / FAIL）。
 5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS——`扫过
    9 份 delta，8 条 MODIFIED，对比 147 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`
-   （退出码 0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 36
-   passed, 0 failed (36 items)`（退出码 0）。归档跟踪队列有且仅有一条本 change 条目
-   （`docs/backlog.md`）。delta 是 `harness` 与 `cron` 各 1 条 MODIFIED（整条复制 living 后就地改），
+   （退出码 0）。该读数中的「1 项」来自归档前在**临时工作区补登**的唯一本 change 条目；该条目
+   从未进入任何 git 提交，归档提交对 `docs/backlog.md` 无改动——修订后的准确口径以本段为准。
+   `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 36
+   passed, 0 failed (36 items)`（退出码 0）。delta 是 `harness` 与 `cron` 各 1 条 MODIFIED（整条复制 living 后就地改），
    是真实增量，不是纯目录移动。
 
 命中「必须找 Alex 的例外类别」中的**证据缺口**（270 无法在自动通道取得 PASS）与**价值 / 行为
@@ -62,8 +64,9 @@
 ## 节点 2 记录（归档后，2026-11-21）
 
 - **归档提交**：`6c86a7f416d372db015109b4cdbd6c5b9df590be`（归档目录 + 并入后的
-  `openspec/specs/{cron,harness}/spec.md` + `docs/backlog.md` 队列条目核销同一提交；本段记录本身
-  是其后一笔文档提交，审计仍定位该归档提交）。
+  `openspec/specs/{cron,harness}/spec.md`；本提交对 `docs/backlog.md` 无改动——归档前补登的队列
+  条目是临时工作区条目，未进入提交。另含 `add-cron-notification-relaunch` 的 cron delta 基线重放，
+  见下条。本段记录本身是其后一笔文档提交，审计仍定位该归档提交）。
 - **`openspec archive` 实际输出**（`node scripts/openspec-archive.mjs
   fix-harness-navigation-nov21`，退出码 0）：`Task status: ✓ Complete` / `Specs to update:` /
   `cron: update` / `harness: update` / 各 `~ 1 modified` / `Totals: + 0, ~ 2, - 0, → 0` /

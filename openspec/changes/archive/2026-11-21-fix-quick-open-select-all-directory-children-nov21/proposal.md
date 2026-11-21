@@ -22,7 +22,8 @@
    明记「keys identity 修复未放宽产品判据」；绑定 integration tip
    `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
    `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/navigation-batch-nov21/review-final.md`。
-   当前分支 tip 与该评审 tip 相同。
+   评审时 integration tip 为 `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；归档分支自该 tip 之后
+   仅文档变化（无产品代码增量）。
 3. **tasks 完成**：`tasks.md` 30/30 全勾（`grep -c '^- \[x\]'` = 30，未勾项 0），无放弃项；
    0.4 / 4.3 / 5.2 已就地补裁决、真机与评审指针。
 4. **要求的门禁与真机证据**：动过 `tests/visual/scenes/quick-open.spec.ts`（该场景无像素基线），
@@ -33,9 +34,10 @@
    （`steps.md` / `shots/` / `ax/`）。未更新视觉基线。
 5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS——`扫过
    10 份 delta，10 条 MODIFIED，对比 180 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`
-   （退出码 0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 37
-   passed, 0 failed (37 items)`（退出码 0）。归档跟踪队列有且仅有一条本 change 条目
-   （`docs/backlog.md`）。delta 是 `quick-open` 的 1 条 ADDED（输入面 ⌘A）+ 2 条 MODIFIED
+   （退出码 0）。该读数中的「1 项」来自归档前在**临时工作区补登**的唯一本 change 条目；该条目
+   从未进入任何 git 提交，归档提交对 `docs/backlog.md` 无改动——修订后的准确口径以本段为准。
+   `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 37
+   passed, 0 failed (37 items)`（退出码 0）。delta 是 `quick-open` 的 1 条 ADDED（输入面 ⌘A）+ 2 条 MODIFIED
    （候选列表与匹配语义、结果区与 Enter 的判决同源），是真实增量，不是纯目录移动。
 
 未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项、无影响面升级、评审结论与
@@ -44,8 +46,8 @@ tip 均无异常、证据无缺口，故不另送 Alex。
 ## 节点 2 记录（归档后，2026-11-21）
 
 - **归档提交**：`d7b5a5b3093219340cf75e6335b5621970434f62`（归档目录 + 并入后的
-  `openspec/specs/quick-open/spec.md` + `docs/backlog.md` 队列条目核销同一提交；本段记录本身是
-  其后一笔文档提交，审计仍定位该归档提交）。
+  `openspec/specs/quick-open/spec.md`；本提交对 `docs/backlog.md` 无改动——归档前补登的队列条目是
+  临时工作区条目，未进入提交。本段记录本身是其后一笔文档提交，审计仍定位该归档提交）。
 - **`openspec archive` 实际输出**（`node scripts/openspec-archive.mjs
   fix-quick-open-select-all-directory-children-nov21`，退出码 0）：`Task status: ✓ Complete` /
   `Specs to update:` / `quick-open: update` / `+ 1 added` / `~ 2 modified` /

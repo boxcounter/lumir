@@ -31,7 +31,8 @@
 2. **独立 reviewer clean / merge**：独立 reviewer agent-35 判 `clean/merge`，无 P1 / P2 findings，
    绑定 integration tip `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
    `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/navigation-batch-nov21/review-final.md`
-   （明记「两张菜单基线已获 Alex 批准并更新」）。当前分支 tip 与该评审 tip 相同。
+   （明记「两张菜单基线已获 Alex 批准并更新」）。评审时 integration tip 为
+   `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；归档分支自该 tip 之后仅文档变化（无产品代码增量）。
 3. **tasks 完成**：`tasks.md` 31/32 勾选——唯一未勾项 8.1 就是**归档命令本身**
    （`openspec archive close-all-tabs-nov21`），在本批归档成功后补勾；不属放弃项。其余 31 项
    （含 5.4 真机、6.4 基线、6.6 证据对账）均已勾并就地补证据指针。

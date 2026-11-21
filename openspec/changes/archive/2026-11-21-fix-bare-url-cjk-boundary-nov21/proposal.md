@@ -22,7 +22,8 @@
 2. **独立 reviewer clean / merge**：独立 reviewer agent-36 判 `clean/merge`，无 P1 / P2 findings，
    绑定 integration tip `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；评审文件
    `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/editing-batch-nov21/review-final.md`。
-   当前分支 tip 与该评审 tip 相同；评审结论明记「评审后仅基线、验收场景和光标测试变化，无产品代码
+   评审时 integration tip 为 `7d632e03e09fa11aa50f298d43db8d76c33aedc9`；归档分支自该 tip 之后
+   仅文档变化（无产品代码增量）；评审结论明记「评审后仅基线、验收场景和光标测试变化，无产品代码
    增量」，delta 自评审后未再改动。
 3. **tasks 完成**：`tasks.md` 10/10 全勾（`grep -c '^- \[x\]'` = 10，未勾项 0），无放弃项。
    其中 2.4 记录的两条 `render-link` 整页像素差异属环境级字形差异；本机 CJK 渲染基线后经 Alex
