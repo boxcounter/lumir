@@ -61,19 +61,6 @@ const MAX_FILES: usize = 10;
 const MAX_BATCH: usize = 256;
 /// 字段值上限（字符）：白名单之外的第二道护栏——防止把正文当诊断字段塞进来。
 const MAX_VALUE_CHARS: usize = 256;
-/// `editor_ime.detail` 的独立上限：一次性根因取证 JSON（只含节点名 / 位置 / 长度 / 计数，
-/// 不含正文与路径）。仍受白名单与长度上限约束；前端在 12K 字符处自截，这里留余量。
-const MAX_DETAIL_CHARS: usize = 16 * 1024;
-
-/// 单个字段的长度上限。`detail` 是 dev-only 结构化取证负载，单独放宽；其余字段沿用
-/// [`MAX_VALUE_CHARS`]。
-fn field_cap(key: &str) -> usize {
-    if key == "detail" {
-        MAX_DETAIL_CHARS
-    } else {
-        MAX_VALUE_CHARS
-    }
-}
 /// 批次静默期：距上一条事件超过此时长即落盘（同时也是单条事件的最大落盘延迟）。
 const FLUSH_INTERVAL: Duration = Duration::from_millis(200);
 /// flush 等待写线程应答的上限。
@@ -187,8 +174,6 @@ pub enum LogEventName {
     /// `ts_unix_ms` 与 `LUMIR_READY` 的 `ts_unix_ms` 同钟，相减即得「窗口上屏 → 启动层首帧」。
     /// **不作 CI 门禁判据**：前端首帧时刻在被测量的端点之外（perf-measurement 的冷启动口径）。
     StartupSurface,
-    /// 开发构建的编辑器 IME 事件序诊断；只含事件类型、组合状态、位置与计数，不含正文。
-    EditorIme,
 }
 
 impl LogEventName {
@@ -241,7 +226,6 @@ impl LogEventName {
             Self::SubagentRejected => "subagent_rejected",
             Self::DependencyLog => "dependency_log",
             Self::StartupSurface => "startup_surface",
-            Self::EditorIme => "editor_ime",
         }
     }
 
@@ -374,52 +358,6 @@ impl LogEventName {
             // 时间戳。**vault 名、路径、文件名、文档内容都不在白名单内**——机制化兜底
             // （spec「载荷无敏感信息」）。
             Self::StartupSurface => &["phase", "reason", "ms", "ts_unix_ms"],
-            Self::EditorIme => &[
-                "phase",
-                "input_type",
-                "event_composing",
-                "cm_composing",
-                "handled",
-                "from",
-                "to",
-                "start",
-                "doc_len",
-                "data_len",
-                "line_count",
-                "marker_count",
-                // settle 链诊断（dev-only）：状态 / 计数 / 位置，不含正文或路径。
-                "head",
-                "target_line",
-                "attempt",
-                "pending",
-                "layout_pending",
-                "settle_to",
-                "tree_len",
-                "state_tree_len",
-                "available",
-                "chunk",
-                "parse_to",
-                "target_kind",
-                "target_first",
-                "target_chain",
-                "target_has_marker",
-                "context_kind",
-                "context_first",
-                "context_chain",
-                "state_kind",
-                "state_first",
-                "state_chain",
-                "scans",
-                "groups",
-                "units",
-                "elapsed",
-                "via",
-                // 事件派发阶段（0 = dispatch 已结束，2 = at target）；用于判别 CM 延迟 handler。
-                "event_phase",
-                // 一次性根因取证：单一 JSON 字段，只含节点名 / 位置 / 长度 / 计数，不含
-                // 正文与路径（长度上限见 MAX_DETAIL_CHARS）。
-                "detail",
-            ],
         }
     }
 }
@@ -1261,9 +1199,10 @@ fn frontend_event(
                 allowed.join("、")
             )));
         };
-        let cap = field_cap(&key);
-        if value.chars().count() > cap {
-            return Err(rejected(format!("字段 {key} 的值超过 {cap} 字符上限")));
+        if value.chars().count() > MAX_VALUE_CHARS {
+            return Err(rejected(format!(
+                "字段 {key} 的值超过 {MAX_VALUE_CHARS} 字符上限"
+            )));
         }
         normalized.push((slot, value));
     }
@@ -1294,10 +1233,9 @@ fn emit(sink: &Sink, event: Event) {
             );
             return;
         }
-        let cap = field_cap(key);
-        if value.chars().count() > cap {
+        if value.chars().count() > MAX_VALUE_CHARS {
             eprintln!(
-                "lumir: 诊断事件 {} 的字段 {key} 超过 {cap} 字符，已丢弃",
+                "lumir: 诊断事件 {} 的字段 {key} 超过 {MAX_VALUE_CHARS} 字符，已丢弃",
                 event.name.as_str()
             );
             return;

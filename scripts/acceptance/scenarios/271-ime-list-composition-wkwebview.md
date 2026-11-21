@@ -126,5 +126,5 @@ doc 已变为 `- s`，但 state 语法树在组合期尚未跟上 list，`build`
 **不写盘**：驱动只改内存 doc；`record` + `file.unchangedSince` / `mtimeUnchangedSince` 钉住
 fixture 未被保存。
 
-**不依赖 editor_ime trace**：所有判据来自驱动报告的 JSONL；`editor_ime` 若仍在场只作辅助日志，
-任务 4.5 删除后本场景不受影响。
+**不依赖 editor_ime trace**：所有判据来自驱动报告的 JSONL；临时 `editor_ime` 诊断已在
+任务 4.5 移除。
