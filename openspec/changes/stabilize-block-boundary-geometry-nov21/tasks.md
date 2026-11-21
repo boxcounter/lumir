@@ -53,5 +53,10 @@
 
 - [x] 5.1 跑相关单测、根 / 视觉 / 单测三份 tsc、目标结构视觉、性能夹具与 OpenSpec 严格校验；
       命令原文和结果落主仓证据目录
-- [ ] 5.2 P5 真机验收、完整视觉、独立评审、归档与 CI 不在本批执行，由主会话统一继续；不得据此
-      宣称这些层次已覆盖
+- [x] 5.2 主会话完整视觉已 PASS：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；新基线由主会话在
+      Alex 过目后处理，本 worker 未执行 `--update`
+- [x] 5.3 P5 场景制品：新增 `272-block-boundary-geometry-nov21`（item 272 / full），真实普通按键
+      序列、三段截图、正式 marker 与最终 `file.exact`；`run.mjs --check` PASS（253 个场景），
+      COVERAGE 已生成；中文不冒充原生 IME，AX 不声称读取行高 / scroll / 像素
+- [ ] 5.4 真机执行 272、独立评审、归档与 CI 由主会话继续；本轮只交付场景制品与静态校验，
+      不得把场景存在记成真机 PASS
