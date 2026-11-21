@@ -33,8 +33,10 @@ dev 实例的 `editor_ime` 本地日志同时证明当前工作区代码已加�
 覆盖新形成的列表。`compositionend` 因此只把**提交行末**交给有界恢复链（有界分片解析，
 未完成按 16ms / 100ms 重试，4s 后转 250ms 低频恢复直到覆盖提交行），再唤醒冻结期跳过的
 装饰重建；不把同步解析整篇文档当成刷新前提。最终候选可能已写进 DOM 而 CM 的 pending
-MutationRecord 尚未 flush，handler MUST NOT 同步 dispatch，否则候选会被清掉。该版仍待
-Alex 复验。
+MutationRecord 尚未 flush，handler MUST NOT 同步 dispatch，否则候选会被清掉。最终取证还确认
+WKWebView 的 pending composition 删除不可取消，且候选可由 `insertText` 在无原生 compositionend
+时提交；对应防线是原子 SourceShield 与提交后补 end。2026-11-21 Alex 最终原生复验：中文候选提交后
+正式列表符恢复，行为符合预期。
 
 ## What Changes
 
@@ -47,6 +49,9 @@ Alex 复验。
   CM 的 pending MutationRecord flush 后重读 `selection.main.head`，再把提交行末交给有界恢复链
   （分片推进 + 16/100ms 重试，4s 后转 250ms 低频恢复直到覆盖提交行），解析覆盖后统一刷新，
   避免原始 marker 与新 widget 同时出现。文档源码、列表组映射与后台扫描仍随事务更新。
+- setext 候选在编辑态用 `contenteditable=false` 的 SourceShield 隔离 `- ` 与组合文本，因为
+  WKWebView 的 pending composition 删除不可取消，不能依赖 preventDefault；候选以 `insertText`
+  且没有原生 compositionend 时补一次结束事件，复用 CM observer 与恢复链释放正式 marker。
 - `history.joinToEvent` 不再把 `input.type.compose.start` 与紧邻的前一笔普通输入并组；一次 undo
   精确回到组合前，后续组合事务仍由 CodeMirror 并成一步。
 - 扩充 `docs/specs/lists.md` L6 与 editor-live-preview requirement，把组合更新、两种删除类型、
@@ -64,8 +69,8 @@ Alex 复验。
 
 - 不改变列表外观、裸 marker 语义、光标导航、Enter 续行或普通 Backspace 的字素合同。
 - 不按横线、marker glyph、DOM/AX 文本或文件内容猜测编辑意图，不恢复旧 DOM 读回吞弃护栏。
-- agent 不启动或操作生产版 / dev 版 Lumir，不执行真机验收；Playwright WebKit 合成事件不冒充
-  原生 IME。Alex 自行启动的 dev 实例只用于现场复现与本地诊断日志采集。
+- 原生候选窗 / marked text 的最终行为仍由 Alex 人工终判；合成事件与验收驱动不冒充原生 IME。
+  dev 实例只用于合成 fixture 的现场复现、诊断与验收，真实 vault 只读。
 - 不新增依赖，不修改视觉基线。
 
 ## Impact
