@@ -116,6 +116,13 @@ export interface VaultFixture {
    * 控制台出现 `lumir: 错误文案缺参（…）`）。省略 `params` 只在「文案表里没有这个 code」或
    * 「模板无占位符」时无害。
    */
+  /**
+   * `fetch_url_title` 桩（change add-url-paste-title-nov21）：URL → 标题。
+   * 未收录 = `null`（请求成功但没有可用标题），不是错误——失败路径由 `failures` 注入。
+   * `urlTitleDelayMs` 让应答延迟，用于验「等待期间继续键入」的区间映射。
+   */
+  urlTitles?: Record<string, string | null>;
+  urlTitleDelayMs?: number;
   failures?: Record<string, { code: string; message: string; params?: Record<string, unknown> }>;
   /** `vault_list` 桩：注册表内容（缺省按当前 fixture 派生**一条**「当前 vault」行——
    *  单 vault 下浮层仍要出现，见 change task 3.1）。 */
@@ -843,10 +850,20 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
       // 应答：读回 null（无从盘上恢复的草稿）、写入收下（不报错）。
       harness_draft_get: () => null,
       harness_draft_put: () => null,
+      // 粘贴 URL 取标题（change add-url-paste-title-nov21）：记录请求的 URL，按 fixture
+      // 应答标题或 null。延迟是场景造「等待期间编辑」现场的唯一入口。
+      fetch_url_title: async (args) => {
+        (w.__urlTitleRequests as string[]).push(args.url ?? "");
+        const delay = current?.urlTitleDelayMs ?? 0;
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+        return current?.urlTitles?.[args.url ?? ""] ?? null;
+      },
     };
 
     // 文件级操作的调用记录（场景断言参数用；M244）。
     w.__fsMutations = [];
+    // 取标题请求的调用记录（URL 按调用顺序）。
+    w.__urlTitleRequests = [];
 
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: (_event: string, id: number) => callbacks.delete(id),
@@ -1007,6 +1024,13 @@ export async function fsMutations(page: Page): Promise<Array<Record<string, unkn
 /** 全部 invoke 的命令名（按调用顺序）——「筛选 MUST NOT 触发第二次拉取」这类次数判据读它。 */
 export async function invokes(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __invokes: string[] }).__invokes);
+}
+
+/** `fetch_url_title` 收到的 URL（按调用顺序）——「每个粘贴只请求一次」判据读它。 */
+export async function urlTitleRequests(page: Page): Promise<string[]> {
+  return page.evaluate(
+    () => (window as unknown as { __urlTitleRequests: string[] }).__urlTitleRequests,
+  );
 }
 
 /** `fs_read_attachment` 的**按路径**读取记录（M629，按调用顺序）。 */

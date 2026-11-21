@@ -91,6 +91,18 @@ export interface LiteralLink {
 }
 
 const URL_SCHEME = /^([A-Za-z][A-Za-z0-9+.-]*):/;
+// 裸 URL 的文本边界（change fix-bare-url-cjk-boundary-nov21）：GFM 的 `urlRE` 把路径段写成
+// `[^\s<]*`，CJK / 全角字符会被吞进 `URL` 节点。裸 URL 没有定界符，这类字符只能按正文处理；
+// 目标在首个 **CJK / 全角**字符前结束。**不是**「首个非 ASCII」：café、西里尔、希腊等其它
+// Unicode 路径仍是合法 URL，必须完整保留。显式语法（角括号 / 定义行）**不裁**——那里的 URL
+// 有定界符，CJK 可以是 URL 的一部分。百分号编码的中文路径 / 查询是 ASCII，照旧完整保留。
+const CJK_BOUNDARY =
+  /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|[\u3000-\u303F\uFE30-\uFE6F\uFF00-\uFFEF]/u;
+
+function bareUrlTarget(raw: string): string {
+  const match = CJK_BOUNDARY.exec(raw);
+  return match === null ? raw : raw.slice(0, match.index);
+}
 // CommonMark 链接目标里的反斜杠转义（§2.4）：`\)` 表示字面 `)`，`\\` 表示 `\`。
 const PUNCT_ESCAPE = /\\([!-/:-@[-`{-~])/g;
 // 控制字符：目标里混进它说明我们对这条目标的还原不可信（见 classifyLinkTarget）。
@@ -228,10 +240,15 @@ export function literalLinkOfNode(node: SyntaxNode, doc: DocText): LiteralLink |
   for (let n = url.parent; n; n = n.parent) {
     if (n.name === "Link" || n.name === "Image") return null;
   }
-  const target = doc.sliceString(url.from, url.to);
+  const parent = url.parent;
+  // 显式定界语法（角括号 / 定义行）保留完整 URL；只有裸 URL 走文本边界。
+  const explicit = parent !== null && (parent.name === "Autolink" || parent.name === "LinkReference");
+  const raw = doc.sliceString(url.from, url.to);
+  const target = explicit ? raw : bareUrlTarget(raw);
+  if (target === "") return null;
+  const to = url.from + target.length;
   const form = classifyLinkTarget(target);
   if (form.kind !== "external") return null;
-  const parent = url.parent;
   if (parent !== null && parent.name === "Autolink") {
     const angleMarks: { from: number; to: number }[] = [];
     for (let child = parent.firstChild; child; child = child.nextSibling) {
@@ -239,7 +256,7 @@ export function literalLinkOfNode(node: SyntaxNode, doc: DocText): LiteralLink |
     }
     return {
       from: url.from,
-      to: url.to,
+      to,
       target,
       form,
       markAt: parent.to,
@@ -251,12 +268,12 @@ export function literalLinkOfNode(node: SyntaxNode, doc: DocText): LiteralLink |
   const definition = parent !== null && parent.name === "LinkReference" ? parent : null;
   return {
     from: url.from,
-    to: url.to,
+    to,
     target,
     form,
-    markAt: url.to,
+    markAt: to,
     revealFrom: definition === null ? url.from : definition.from,
-    revealTo: definition === null ? url.to : definition.to,
+    revealTo: definition === null ? to : definition.to,
     angleMarks: [],
   };
 }
@@ -276,7 +293,9 @@ export function literalLinkAt(state: EditorState, pos: number): LiteralLink | nu
   const tree = ensureSyntaxTree(state, pos, 25) ?? syntaxTree(state);
   for (const side of [0, 1] as const) {
     const link = literalLinkOfNode(tree.resolveInner(pos, side), state.doc);
-    if (link !== null) return link;
+    // 裸 URL 的 `URL` 节点可能比实际目标长（中文 / 全角标点被 GFM 吞进来）：位置落在边界
+    // 之后时不是链接。显式形态的 `to` 就是节点末端，这一条对它们无影响。
+    if (link !== null && pos >= link.from && pos <= link.to) return link;
   }
   if (pos > 0) {
     const left = literalLinkOfNode(tree.resolveInner(pos - 1, 0), state.doc);

@@ -31,6 +31,7 @@ import {
   fsRevealInFinder,
   fsTrashEntry,
   fsWriteAttachment,
+  fetchUrlTitle,
   documentSetDirty,
   isCommandError,
   onAttachmentNaming,
@@ -1079,6 +1080,7 @@ const editor: EditorHandle = {
     forEachEditor((handle) => handle.setCodeBlockFullscreen(port)),
   setBlockCopy: (copy) => forEachEditor((handle) => handle.setBlockCopy(copy)),
   setPasteImagePort: (port) => forEachEditor((handle) => handle.setPasteImagePort(port)),
+  setPasteUrlTitlePort: (port) => forEachEditor((handle) => handle.setPasteUrlTitlePort(port)),
   setGotoLinePrompt: (prompt) => forEachEditor((handle) => handle.setGotoLinePrompt(prompt)),
   setGutterCopy: (port) => forEachEditor((handle) => handle.setGutterCopy(port)),
   setMarkdownLineNumbers: (tier) =>
@@ -1426,6 +1428,15 @@ injectEach((handle) =>
     // 把装配层的能力交给编辑器，判据（开关 / 本次写盘）在 `src/paste-image.ts` 的纯函数里。
     semanticNaming: () => semanticNamingEnabled,
     name: (task) => void semanticName(task),
+  }),
+);
+
+// 粘贴 URL 取标题（change add-url-paste-title-nov21）：编辑器只拿一个取标题的口子，网络 /
+// 超时 / 响应状态 / HTML 解析全在 Rust 的 `fetch_url_title`（与 `open_external_url` 同一
+// 信任边界：scheme 校验只在 Rust 一处）。失败由编辑器静默保留原始 URL，不弹 toast。
+injectEach((handle) =>
+  handle.setPasteUrlTitlePort({
+    fetchTitle: (url) => fetchUrlTitle(url),
   }),
 );
 

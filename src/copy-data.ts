@@ -2738,6 +2738,17 @@ const COPY_TABLE = {
     zh: "已复制 {target}",
     en: "Copied {target}",
   },
+  // D948–D949：粘贴 URL 取标题（change add-url-paste-title-nov21）。失败路径**不上屏**——
+  // 粘贴本身已成功，取不到标题只保留原始 URL；这两条只为满足「每个 CommandError code 都有
+  // 双语条目」的完整性门禁，以及未来若把失败原因接进诊断时有一份现成文案。
+  D948: {
+    zh: "取网页标题失败",
+    en: "Couldn't fetch the page title",
+  },
+  D949: {
+    zh: "初始化取网页标题请求失败",
+    en: "Couldn't initialize the page title request",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -2881,6 +2892,8 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   permission_rule_invalid: "D569",
   open_url_rejected: "D78",
   open_url_failed: "D79",
+  url_title_failed: "D948",
+  url_title_client_failed: "D949",
   // 设置面板的字段级错误（M852，首次安装建 provider 时最常撞上的三条 id 校验）。
   // 来源是 `src-tauri/src/settings.rs` 的 `field_error(...)`（`SettingsFieldError`，不是
   // `CommandError`）——同一张表、同一个 `errorText` 取值口，不另立映射。三条模板都不带占位：
