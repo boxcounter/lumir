@@ -10,7 +10,7 @@
       `specs/cron/spec.md`；两份 delta 按 living spec 全文抄录后就地改（MODIFIED 整块替换）
 - [x] 0.2 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 与
       `bash scripts/docs-check.sh` 通过（读数见 §5）
-- [ ] 0.3 节点 1 裁决记录回填（由 tower 按 Alex 2026-11-21 原始需求补记；worker 不代填）
+- [x] 0.3 节点 1 裁决记录已回填：Alex 2026-11-21 在需求批提出两条缺陷，并以「请你继续」确认推进
 
 ## 1. 解析修复（`path:line` 句末标点）
 
