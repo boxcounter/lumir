@@ -59,6 +59,37 @@
 裁决**（是否本批修 bundle、是否要求 270 自动通过）：已由 Alex 裁决「这个留给我在正式版里测试吧」，
 按裁决口径归档；不以「已归档」或「269 PASS」推断 270 已验证。
 
+## 节点 2 记录（归档后，2026-11-21）
+
+- **归档提交**：`6c86a7f416d372db015109b4cdbd6c5b9df590be`（归档目录 + 并入后的
+  `openspec/specs/{cron,harness}/spec.md` + `docs/backlog.md` 队列条目核销同一提交；本段记录本身
+  是其后一笔文档提交，审计仍定位该归档提交）。
+- **`openspec archive` 实际输出**（`node scripts/openspec-archive.mjs
+  fix-harness-navigation-nov21`，退出码 0）：`Task status: ✓ Complete` / `Specs to update:` /
+  `cron: update` / `harness: update` / 各 `~ 1 modified` / `Totals: + 0, ~ 2, - 0, → 0` /
+  `Specs updated successfully.` / `Change 'fix-harness-navigation-nov21' archived as
+  '2026-11-21-fix-harness-navigation-nov21'.`。
+- **归档后修链**：`归档后修链 4 处（扫过 5 篇 Markdown / 4 条相对链接）`——
+  `proposal.md:20` / `proposal.md:25` 的 `../../../docs/process/openspec-workflow.md` →
+  `../../../../docs/process/openspec-workflow.md`；`specs/cron/spec.md:4` 与
+  `specs/harness/spec.md:4` 的 `../../../../specs/<cap>/spec.md` →
+  `../../../../../specs/<cap>/spec.md`。包装器末置门禁
+  `openspec-links: PASS（校验 654 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived
+  fix-harness-navigation-nov21`，2026-11-21T14:41Z，退出码 0）：
+  `PASS（openspec/changes/archive/2026-11-21-fix-harness-navigation-nov21：2 条 MODIFIED，对比 68 段；
+  人工恢复 0 段，声明认领 0 段）`——`harness` 与 `cron` 两条 MODIFIED 的段落全部落进归档后的
+  living spec，无静默丢段。
+- **归档引发的活跃 delta 基线重放**：归档后 `docs-check` 报出 `add-cron-notification-relaunch` 的
+  `cron` delta 基于旧 living、缺本 change 新增的「点击结果通知不抢正文焦点」段落与场景（归档该
+  change 时会静默删段）。已按「MODIFIED 整条复制现行 requirement 正文再改」把该段与场景补进其
+  delta（仅文档，未改产品 / 验收启动代码），并入本归档提交；随后 `archive-check` 门禁模式由 1 处
+  静默丢段恢复 PASS。
+- **归档后复跑读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` →
+  `Totals: 35 passed, 0 failed (35 items)`（退出码 0）；`node scripts/openspec-archive-check.mjs`
+  门禁模式 → PASS（`扫过 7 份 delta，6 条 MODIFIED，对比 82 段，无静默丢段；归档队列 0 项已完成
+  change 均有唯一条目`）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0）。
+
 ## Why
 
 Alex 2026-11-21 的原始需求（逐字，两条独立缺陷）：
