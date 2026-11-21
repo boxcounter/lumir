@@ -207,6 +207,25 @@ test("resolveDisplayPlan：单屏抛 InfraError，消息带窗口前后语境与
   );
 });
 
+test("resolveDisplayPlan：单屏 + previousTarget 仍存在 ⇒ 仍抛 InfraError（快路径不得绕过单屏检查，review-r1 P2-1）", () => {
+  // 现场：首启在双屏上选定副屏后拔掉另一块屏，只剩「固定的目标屏」。previousTarget 会命中，
+  // 但已经不存在「另一块屏」——必须 fail-closed，不能返回一份看似合法的放置计划。
+  assert.throws(
+    () =>
+      resolveDisplayPlan({
+        screens: [MAIN],
+        focusScreenIndex: 0,
+        windowBounds: windowOnMain,
+        previousTarget: screenKey(MAIN),
+      }),
+    (e) =>
+      e instanceof InfraError &&
+      /至少 2 块/.test(e.message) &&
+      /x=8 y=40 1200×800/.test(e.message) &&
+      /Built-in Retina Display/.test(e.message),
+  );
+});
+
 test("displayModeFromEnv：闭集合；拼错不静默退回默认", () => {
   assert.equal(displayModeFromEnv({}), null);
   assert.equal(displayModeFromEnv({ [DISPLAY_ENV]: "" }), null);
@@ -319,6 +338,15 @@ test("placeWindowOnDisplay：单屏 ⇒ 任何写入之前就 InfraError，消�
     (e) => e instanceof InfraError && /至少 2 块/.test(e.message) && new RegExp(DISPLAY_ENV).test(e.message),
   );
   assert.equal(h.placeCalls.length, 0, "单屏不得先试写一次再报错");
+});
+
+test("placeWindowOnDisplay：单屏 + previousTarget 仍存在 ⇒ 写入前 InfraError（跑批中拔屏退化，review-r1 P2-1）", async () => {
+  const h = harness({ screens: [MAIN], focus: focusOn(MAIN), reads: [windowOnMain], places: [] });
+  await assert.rejects(
+    () => placeWindowOnDisplay({ pid: 42, previousTarget: screenKey(MAIN), ...h }),
+    (e) => e instanceof InfraError && /至少 2 块/.test(e.message) && new RegExp(DISPLAY_ENV).test(e.message),
+  );
+  assert.equal(h.placeCalls.length, 0, "固定的目标屏仍在线时也不得写入——否则就是静默假成功");
 });
 
 test("placeWindowOnDisplay：已在目标屏可见区内 ⇒ 不写入（幂等路径）", async () => {

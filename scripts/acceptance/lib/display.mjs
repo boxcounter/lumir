@@ -160,6 +160,22 @@ export function focusScreenKey(snapshot) {
 }
 
 /**
+ * 单屏 fail-closed 的唯一判据：所有选屏路径的**共同入口**，包括 `previousTarget` 快路径。
+ *
+ * 为什么抽出来：首启选定副屏后，跑批中拔屏退化成单屏时，固定的目标屏仍可能留在清单里——
+ * 早期实现在 `resolveDisplayPlan` 里先查 `previousTarget`、命中即返回，于是绕过了单屏检查，
+ * 后续 restart 会「成功」返回放置计划（review-r1 P2-1）。返回错误文本，由
+ * `chooseTargetScreen`（返回 `{ error }`）与 `resolveDisplayPlan`（抛 `InfraError`）分别消费。
+ */
+function screenCountError(screens) {
+  if (screens.length >= 2) return null;
+  return (
+    `只检测到 ${screens.length} 块显示器（${describeScreens(screens)}）——副屏放置需要至少 2 块；` +
+    `去掉 ${DISPLAY_ENV}=secondary 可在单屏上照常跑`
+  );
+}
+
+/**
  * 选目标屏的纯判据：
  *   - 少于 2 块屏 ⇒ 返回 error（调用方抛 `InfraError`；单屏不静默落回主屏）；
  *   - 「用户的屏」= 焦点屏；焦点屏不可判定时退到验收窗口当前所在屏，再退到主屏；
@@ -168,13 +184,8 @@ export function focusScreenKey(snapshot) {
  *   - 否则取屏幕清单里第一条非用户屏（`NSScreen.screens` 顺序：主屏在前）。
  */
 export function chooseTargetScreen({ screens, focusScreenIndex = null, windowScreenIndex = null }) {
-  if (screens.length < 2) {
-    return {
-      error:
-        `只检测到 ${screens.length} 块显示器（${describeScreens(screens)}）——副屏放置需要至少 2 块；` +
-        `去掉 ${DISPLAY_ENV}=secondary 可在单屏上照常跑`,
-    };
-  }
+  const countError = screenCountError(screens);
+  if (countError) return { error: countError };
   const valid = (i) => screens.some((s) => s.index === i);
   const fallback = screens.find((s) => s.main) ?? screens[0];
   const userIndex = valid(focusScreenIndex)
@@ -233,12 +244,21 @@ export function placementMatches(bounds, want, tolerance = PLACEMENT_TOLERANCE) 
 
 /**
  * 解析「目标屏 + 放置矩形」：
+ *   - **单屏检查是共同入口**：任何路径（含 `previousTarget` 快路径）先过它。跑批中拔屏退化成
+ *     单屏时，固定的目标屏可能仍在清单里，但已经不存在「另一块屏」——必须抛 `InfraError`，
+ *     不能因为 previousTarget 命中就返回成功（review-r1 P2-1）；
  *   - `previousTarget`（本次跑批已选定的目标屏 key）仍存在 ⇒ 沿用。重启 / 后续场景不因焦点
  *     变化而换屏（否则第一场之后焦点是验收 app 自己，会把窗口搬回用户屏）；
- *   - 否则按 `chooseTargetScreen` 重选；单屏 / 无其它屏 ⇒ 抛 `InfraError`（带完整读数）。
+ *   - 否则按 `chooseTargetScreen` 重选；无其它屏 ⇒ 抛 `InfraError`（带完整读数）。
  * 纯函数：屏幕清单、焦点屏下标、窗口 bounds 都由调用方传入，单测直接构造。
  */
 export function resolveDisplayPlan({ screens, focusScreenIndex, windowBounds, previousTarget }) {
+  const countError = screenCountError(screens);
+  if (countError) {
+    throw new InfraError(
+      `${countError}；验收窗口当前 ${formatBounds(windowBounds)}；检测到：${describeScreens(screens)}`,
+    );
+  }
   let target = screenByKey(screens, previousTarget);
   let reason = "沿用本次跑批已选定的目标显示器";
   if (!target) {

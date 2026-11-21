@@ -339,13 +339,16 @@ LUMIR_ACCEPTANCE_DISPLAY=secondary node scripts/acceptance/run.mjs --batch core
 - **时机**：每次 `launchApp`（首启与 `do: restart`）过就绪门、钉完尺寸之后，抢前台之前。保留
   刚钉好的**生效尺寸**；落点是目标屏 `visibleFrame` 的左上角，尺寸超出可见区时逐维钳到可见区。
 - **目标屏在本次跑批内固定**：第一次放置后沿用 `targetKey`，后续重启即使焦点已变成验收 app
-  自己，也不会把窗口搬回用户屏；拔屏 / 换布局导致目标屏消失时才按当前焦点重选。
+  自己，也不会把窗口搬回用户屏；拔屏 / 换布局导致目标屏消失时才按当前焦点重选。**固定目标屏
+  不绕过单屏检查**：跑批中拔屏退化成单屏时，即使固定的目标屏仍在清单里，下一场也直接
+  `InfraError`（见下条）。
 - **证据**：每一步的「前台焦点」行会多一段 `副屏放置：目标 #1 "…" …；焦点屏 #0 "…"（app pid，
   窗口 …）；窗口 x=… → x=…；写入 N 次；校验：回读在目标屏可见区内`；`run.log` 另逐次记
   `DISPLAY pid=… target=…#… before=… after=… already=…`。启动时先打印屏幕清单与启动焦点屏。
-- **失败不静默**：单屏（`secondary` 需要 ≥2 块屏）/ 写通道耗尽 / 回读不在目标屏可见区内 /
-  写入后复核换了屏 ⇒ `InfraError`，该场 INVALID、整轮退出码 2，错误里带屏幕清单、焦点屏、
-  前后 `window_bounds` 与逐次写入读数。单屏在**启动前**就退出，不浪费一次拉起。
+- **失败不静默**：单屏（`secondary` 需要 ≥2 块屏，**包括跑批中拔屏退化成单屏、即使已固定的
+  目标屏仍在线**）/ 写通道耗尽 / 回读不在目标屏可见区内 / 写入后复核换了屏 ⇒ `InfraError`，
+  该场 INVALID、整轮退出码 2，错误里带屏幕清单、焦点屏、前后 `window_bounds` 与逐次写入读数。
+  启动前的单屏在**拉起之前**就退出，不浪费一次启动。
 - **边界**：
   - **不等于不抢焦点**：`tryForeground` 照旧在每个场景就绪后把 Lumir 提到前台（`AXRaise` →
     System Events `set frontmost`）；`doubleClick` / `drag` / `click.modifiers` / CGEvent 滚轮等
