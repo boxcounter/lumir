@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, screenshotSize, settleEditorless } from "./execute.mjs";
+import { channelSpecProblem, checkScenario, contentClickGeometry, diffStatTrees, establishEditorFocus, focusedRoleReading, isStaleIndexError, KEY_CHANNELS, keyChannel, keysTarget, loadScenario, matcher, notificationBaseline, notificationMatches, pickFreshNotification, planWheelFallback, pointToShotPx, readAxForScreenPoint, readOnlyStatTree, readStableEditor, resolveKeysTarget, runScenario, runTag, sampleWindowPx, scanEmbeddedJson, screenshotSize, settleEditorless } from "./execute.mjs";
 import { coordsSpace, findNode, mainWindowPlan, nodeName, parseNodes, windowBounds, windowDirectory } from "./ax.mjs";
 import { injectChordCGEvent, parseChordSpec, parseKeyWindowState, readAx, SETTLE_SAMPLE_MS, settle, StepError } from "./drive.mjs";
 import { InfraError, repoRoot } from "./util.mjs";
@@ -3134,4 +3134,86 @@ test("matcher：230d 的 ⌘A 值判据对 z 判绿，对 zabc / abcz 都判红"
     matcher(pattern).test("- [1] AXComboBox (按路径快速打开文件) Value: z actions=[AXPress]"),
     true,
   );
+});
+
+// ── keysTarget / resolveKeysTarget：候选行抢走 focused，回读仍钉住注入前的输入框（230d 现场）──
+//
+// 真机现场（`.local/acceptance/**/230d-...`）：combobox 的值已完整落地成 `qo-dir`，而
+// `aria-activedescendant` 候选 AXStaticText 带上了 `(focused)`——旧口径「focused 优先」在注入后
+// 重选节点，读成「回读目标变了（期望 input，实际 AXStaticText）」并把成功输入报成动作失败。
+// 合成 AX 全部取自真机 dump 的节点行形态（标签 / 值 / help / focused 标记同形）。
+
+const keysAx = (lines) => ({ nodes: parseNodes(lines.join("\n")) });
+const KEYS_AX_BEFORE = keysAx([
+  "- [275] AXComboBox (按路径快速打开文件) Value: q @27,655 299×22 actions=[AXPress] (focused)",
+]);
+const KEYS_AX_AFTER = keysAx([
+  "- [300] AXComboBox (按路径快速打开文件) Value: qo-dir @27,681 299×22 actions=[AXPress]",
+  '  - [303] AXStaticText (qo-dir/ 直接子项.md) actions=[AXPress] help="qo-dir/ 直接子项.md" (focused)',
+]);
+const KEYS_AX_BUTTON_ONLY = keysAx(["- [40] AXButton (保存) @10,20 80×24 actions=[AXPress] (focused)"]);
+const KEYS_AX_BUTTON_THEN_INPUT = keysAx([
+  "- [40] AXButton (保存) @10,20 80×24 actions=[AXPress]",
+  "- [275] AXComboBox (按路径快速打开文件) Value: abc @27,655 299×22 actions=[AXPress] (focused)",
+]);
+
+test("keysTarget：combobox 注入后候选行抢走 focused，回读仍按注入前的输入框身份解析", () => {
+  const target = keysTarget(KEYS_AX_BEFORE);
+  assert.equal(target.kind, "input");
+  assert.equal(target.value, "q");
+  assert.deepEqual(target.identity, {
+    kind: "input",
+    role: "AXComboBox",
+    name: "按路径快速打开文件",
+    nth: 0,
+  });
+
+  // 对照：注入后的快照里 focused 已经挪到候选行——旧口径选中的正是它（缺陷形态本身），
+  // 新口径必须仍回到 combobox 并读到已完整落地的值。
+  assert.equal(keysTarget(KEYS_AX_AFTER).kind, "AXStaticText", "对照：focused 优先会盯上候选行");
+  const pinned = resolveKeysTarget(KEYS_AX_AFTER, target.identity);
+  assert.equal(pinned.kind, "input", "回读目标必须是输入框，不是候选行");
+  assert.equal(pinned.value, "qo-dir", "输入框的值已落地，回读要看它");
+});
+
+test("resolveKeysTarget：注入前的输入框真的消失时返回 null（调用方判 FAIL，不改盯别的节点）", () => {
+  const target = keysTarget(KEYS_AX_BEFORE);
+  const gone = keysAx([
+    '  - [303] AXStaticText (qo-dir/ 直接子项.md) actions=[AXPress] help="qo-dir/ 直接子项.md" (focused)',
+  ]);
+  assert.equal(resolveKeysTarget(gone, target.identity), null);
+});
+
+test("resolveKeysTarget：编辑器与 composer 同为 AXTextArea 且都没有可读名时，序号分开两者", () => {
+  // 两行都是正文形态（`= "…"` 的 title 就是当前值，会被身份排除）——若身份不看序号，
+  // composer 上的键入会被回读成编辑器（117/118 的 composer 场景就是这条通道）。
+  const both = keysAx([
+    '- [166] AXTextArea = "EDITOR-BODY" @577,258 1297×1065 actions=[AXPress]',
+    '- [250] AXTextArea = "composer draft" @577,900 790×82 actions=[AXPress] (focused)',
+  ]);
+  const target = keysTarget(both);
+  assert.equal(target.kind, "editor");
+  assert.equal(target.value, "composer draft");
+  assert.equal(target.identity.name, null, "两行都没有可读名（title 就是当前值）");
+  assert.equal(target.identity.nth, 1, "它是同 role 同名的第二个节点（composer）");
+
+  const after = keysAx([
+    '- [166] AXTextArea = "EDITOR-BODY" @577,258 1297×1065 actions=[AXPress]',
+    '- [250] AXTextArea = "composer draft ✓" @577,900 790×82 actions=[AXPress]',
+  ]);
+  const pinned = resolveKeysTarget(after, target.identity);
+  assert.equal(pinned.value, "composer draft ✓", "回读仍是 composer，不是第一个 AXTextArea");
+});
+
+test("resolveKeysTarget：键盘落在按钮上时身份钉住按钮，不因同帧出现输入框而假绿", () => {
+  const target = keysTarget(KEYS_AX_BUTTON_ONLY);
+  assert.equal(target.kind, "AXButton");
+  assert.equal(target.value, "保存");
+
+  // 注入后输入框出现并拿到 focused：按 focused 重选会读到 "abc"，可能把「键盘其实落在按钮上」
+  // 判成落地；按身份重解析必须仍读按钮本身（值未变 ⇒ 调用方按「按键未落地」判败）。
+  assert.equal(keysTarget(KEYS_AX_BUTTON_THEN_INPUT).kind, "input", "对照：focused 优先会改盯输入框");
+  const pinned = resolveKeysTarget(KEYS_AX_BUTTON_THEN_INPUT, target.identity);
+  assert.equal(pinned.kind, "AXButton");
+  assert.equal(pinned.value, "保存");
 });

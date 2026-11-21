@@ -6,9 +6,18 @@
 # 指针事件序与剪贴板权限面只有真机能证。
 #
 # 坐标口径（MUST 保持）：md / code 的行号数字**不在 AX 树里**（场景 56 的已登记边界），因此
-# 右键落点取 `AXTextArea` 的 bbox 按比例偏移：`dx: -0.015` 落在正文列左缘之外约 1.5% 宽处
-# （gutter 的右缘 = 正文列左缘，宽度约 16–24px）；`dy: 0.01` 落在正文顶部留白，对应的源行是
-# 第 1 行。两轴都是比例而不是像素，不随字号 / 行高 / 窗口缩放漂。
+# 右键落点取 `AXTextArea` bbox 的比例偏移（execute.mjs 的 click：px = bbox.x + w*dx）。两模式
+# 的 gutter 落点不同，**不能共用一份系数**：
+#   · md：gutter 贴在正文列左缘。`dx: -0.015` 落在正文列左缘之外约 1.5% 宽处（gutter 宽约
+#     16–24px）；`dy: 0.01` 落在正文顶部留白，对应第 1 行。
+#   · code：gutter 钉在编辑器面板左缘（`src/editor.ts` 的 code grid 里 `.cm-gutters` 是
+#     `justifySelf: start`，md 的 gutter 则在 col 1 里 `justifySelf: end` 贴正文列）。两者之间
+#     隔着整个 col 1 的剩余空白——md 的 -0.015 在 code 模式落进空白，弹 WKWebView 原生菜单
+#     （Look Up / Translate），后续键入被菜单吃掉。1200×800 定窗的实测快照：AXTextArea
+#     @577,72 1297×1251（截图 2048×1365），code gutter 首个行号中心约 (432,145) ⇒
+#     `dx: (432-577)/1297 ≈ -0.112`、`dy: (145-72)/1251 ≈ 0.058`。
+# 两轴都是比例而不是像素，不随字号 / 行高 / 窗口缩放漂（系数依赖定窗的栏宽；套件每场都把窗口
+# 钉回 1200×800，见 README 的「窗口几何的确定性」）。
 #
 # 覆盖边界（如实登记）：剪贴板**权限拒绝**无法在真机稳定造出（系统授权框不可脚本化），那一面由
 # chromium 场景以 `Clipboard.writeText` 拒绝注入覆盖；`off` / `on-demand` 档的 gutter 在场合同
@@ -72,9 +81,9 @@ steps:
     file: block-copy.txt
     as: code-baseline
 
-  - name: 右键 code gutter 首行
+  - name: 右键 code gutter 首行（code 的 gutter 钉在面板左缘，系数与 md 不同——见文件头）
     do: click
-    target: { role: AXTextArea, button: right, dx: -0.015, dy: 0.01 }
+    target: { role: AXTextArea, button: right, dx: -0.112, dy: 0.058 }
     expect:
       - label: 剪贴板是 vault 相对路径 + 第 1 行（与 md 同一口径）
         clipboard: { exact: "block-copy.txt:1" }
@@ -83,6 +92,14 @@ steps:
       - label: code 零写盘
         file: { path: block-copy.txt, unchangedSince: code-baseline, mtimeUnchangedSince: code-baseline }
       - shot: code-首行复制后
+      - label: 没有弹 WKWebView 原生菜单（落进正文外空白时会出现 Look Up / Translate）
+        ax: { not: "/AXMenuItem \\((?:Look Up|Translate)[^)]*\\)/" }
+
+  - name: 原生菜单守卫——落点正确时立刻通过；弹了菜单就停在这里，别让它吃掉后面的键入
+    do: waitFor
+    waitFor:
+      not: ["/AXMenuItem \\((?:Look Up|Translate)[^)]*\\)/"]
+    timeoutMs: 3000
 
   - name: 用快速打开打开 vault 外只读文件（绝对路径口径）
     do: keys
@@ -108,9 +125,9 @@ steps:
         ax: { has: "vault 外 · 只读" }
       - shot: external-起点
 
-  - name: 右键外部只读文档的 gutter 首行
+  - name: 右键外部只读文档的 gutter 首行（外部文件同样是 code 模式，系数同上）
     do: click
-    target: { role: AXTextArea, button: right, dx: -0.015, dy: 0.01 }
+    target: { role: AXTextArea, button: right, dx: -0.112, dy: 0.058 }
     expect:
       - label: 剪贴板是**绝对路径** + 第 1 行（MUST NOT 改写成 vault 相对路径）
         clipboard: { exact: "/etc/hosts:1" }
@@ -119,4 +136,12 @@ steps:
       - label: 外部会话仍只读
         ax: { has: "vault 外 · 只读" }
       - shot: external-首行复制后
+      - label: 没有弹 WKWebView 原生菜单（否则后续 ⌘P / 键入会被菜单吃掉）
+        ax: { not: "/AXMenuItem \\((?:Look Up|Translate)[^)]*\\)/" }
+
+  - name: 原生菜单守卫——弹了菜单就停在这里，不让后续 /etc/hosts 键入被菜单污染
+    do: waitFor
+    waitFor:
+      not: ["/AXMenuItem \\((?:Look Up|Translate)[^)]*\\)/"]
+    timeoutMs: 3000
 ---
