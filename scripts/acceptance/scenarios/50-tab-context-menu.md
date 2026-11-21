@@ -239,8 +239,10 @@ steps:
         ax: { has: "「tabs-b.md」有未保存修改，关闭后修改将丢失" }
       - label: 已成功关闭的 tabs-a 不回滚——标签数 2
         ax: { count: { pattern: "关闭 ", exact: 2 } }
-      - label: 尚未处理的 tabs-long 还在
-        ax: { has: "/AXRadioButton \\(tabs-long\\.md\\)/" }
+      - label: 尚未处理的 tabs-long 还在（D90：脏标签的读屏名带「（未保存）」后缀，按节点身份判）
+        node: { role: AXRadioButton, name: "^tabs-long\\.md（未保存）$", present: true }
+      - label: 同帧的另一个脏目标 tabs-b 也在（剩下的确实是这两条待处理项，不是只数了个数）
+        node: { role: AXRadioButton, name: "^tabs-b\\.md（未保存）$", present: true }
 
   - name: 出口三「取消」——批量停手，两个标签都留下
     do: click
@@ -258,7 +260,8 @@ steps:
 
   - name: 再来一次：右键 tabs-b → 「Close All Tabs」
     do: click
-    target: { role: AXRadioButton, name: "^tabs-b\\.md$", button: right }
+    # tabs-b 此刻是脏的：读屏名走 D90（`tabs-b.md（未保存）`），按干净名定位会找不到节点。
+    target: { role: AXRadioButton, name: "^tabs-b\\.md（未保存）$", button: right }
     expect:
       - label: 菜单在场
         ax: { has: "Close All Tabs" }
@@ -283,6 +286,8 @@ steps:
       - shot: 关闭全部标签之后
       - label: 标签栏清空
         ax: { count: { pattern: "关闭 ", exact: 0 } }
+      - label: Close All 之后 tabs-long 的标签节点已不在（不留同名残留；名字不锚 D90 后缀，干净残留也判红）
+        node: { role: AXRadioButton, name: "tabs-long\\.md", present: false }
       - label: 回到空态：modeline 无当前文件
         ax: { has: "无当前文件" }
       - label: 焦点交还编辑器（空文档正文，不掉回 body）
@@ -343,6 +348,10 @@ M254（change `tab-strip-context-menu`）新增的标签右键菜单在**真实 
 
 - **顺序与停手**：第一段先关掉干净的 tabs-a，再停在 tabs-b 的确认上——标签数 2 与
   「tabs-long 还在」两条同时成立，才说明「已关的不回滚、未处理的不动」。
+  两条「还在」按节点身份判、并容纳 D90 的 `（未保存）` 后缀（这时两个标签都是脏的）；
+  同帧还正观测 tabs-b——只数「关闭」钮分不出剩下的到底是哪两条。
+- **全关之后的负向判据**：空态除标签数 0 之外，另判 tabs-long 的 `AXRadioButton` 节点不在
+  （名字不锚 D90 后缀）——标签数归零但残留一条同名节点的形态同样判红。
 - **放弃 ≠ 写盘 / 保存才落盘**：末两步分别断言 tabs-b 仍是 `DISK-VERSION`、tabs-long 里有
   `ALL-GGG`；这是 chromium 桩给不出的真实文件系统读数。
 - **空态与焦点**：全关完后 `ax: { focused: "AXTextArea" }` 是本场景的**新判据**——批量关闭

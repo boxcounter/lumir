@@ -1914,24 +1914,79 @@ function requireFrontmostForChords(pid, chords) {
  *  「界面一直不收敛」这种异常收一个可预期的代价——到点走兜底，不无限等。 */
 const SETTLE_TIMEOUT_MS = 15_000;
 
+/** AX 文本里的**状态标记**（不是节点的可读名）：`parseNodes` 的 label 取第一段括号文本，
+ *  没有真 label 的节点（AXTextArea / AXStaticText）会把行尾的 `(focused)` / `(disabled)`
+ *  抓成 label。拿它当身份会让「注入前 focused、注入后失焦」被误判成两个不同节点。 */
+const AX_STATE_MARKERS = new Set(["focused", "disabled"]);
+
+/** 回读目标的**稳定名**：label / help / title 里第一个非空、不是状态标记、且不等于当前值的字段。
+ *
+ *  `= "…"` 形态的文本节点把当前文本也渲染在 title 位上（AXTextArea 的正文、AXTextField 的
+ *  值），拿它当身份会随键入变化——回读按身份重解析时必然落空。value 本身显式排除；三者都没有
+ *  时返回 null，身份只剩 role + 同身份节点里的序号（编辑器 / composer 就是这种形态）。 */
+function keysTargetName(node) {
+  for (const candidate of [node.label, node.help, node.title]) {
+    if (typeof candidate !== "string" || candidate.length === 0) continue;
+    if (candidate === node.value || AX_STATE_MARKERS.has(candidate)) continue;
+    return candidate;
+  }
+  return null;
+}
+
+function keysTargetKind(node) {
+  if (node.role === "AXTextArea") return "editor";
+  if (TEXT_FIELD_ROLES.has(node.role)) return "input";
+  return node.role;
+}
+
+function keysTargetValue(node, kind) {
+  if (kind === "editor" || kind === "input") return node.value ?? "";
+  // 焦点在非文本节点上（按钮 / toast 动作条 / 面板）：键盘落在它身上，注入进不了任何文档文本。
+  // 把它自己也当回读目标，才能把这种情况如实判成「按键未落地」而不是盯错编辑器。
+  return node.title ?? node.label ?? node.value ?? "";
+}
+
 /**
  * keys 动作的回读目标——「键盘往哪儿落」必须可证，否则回读会盯错节点：
  *   1. AX 快照里标了 `(focused)` 的节点（键盘注入就落在它身上）；
  *   2. 没有 focused 标记时退到「可读的文本目标」：编辑器（AXTextArea.value）优先，
  *      其次第一个有可读 value 的原生输入框（WKWebView 的 `<input>`）。
  * 三者都不存在 → 返回 null（该步无可回读目标，保持盲发口径）。
+ *
+ * 返回的 `identity` 是**注入前**捕获的节点身份（role + 稳定名 + 同身份节点里的序号）；
+ * 注入后的复读走 {@link resolveKeysTarget}，不重新按 `focused` 选节点——WKWebView 会把
+ * ARIA combobox 的 `aria-activedescendant` 候选行标成 `(focused)`，而键盘落点仍是输入框
+ * （230d 现场：combobox 的 Value 已完整落地成 `qo-dir`，focused 却在候选 AXStaticText 上，
+ * 旧口径因此判「回读目标变了」，把一次成功输入报成动作失败）。
  */
-function keysTarget(ax) {
+export function keysTarget(ax) {
   const node =
     ax.nodes.find((n) => n.focused) ??
     ax.textarea ??
     ax.nodes.find((n) => TEXT_FIELD_ROLES.has(n.role) && typeof n.value === "string");
   if (!node) return null;
-  if (node.role === "AXTextArea") return { kind: "editor", value: node.value ?? "" };
-  if (TEXT_FIELD_ROLES.has(node.role)) return { kind: "input", value: node.value ?? "" };
-  // 焦点在非文本节点上（按钮 / toast 动作条 / 面板）：键盘落在它身上，注入进不了任何文档文本。
-  // 把它自己也当回读目标，才能把这种情况如实判成「按键未落地」而不是盯错编辑器。
-  return { kind: node.role, value: node.title ?? node.label ?? node.value ?? "" };
+  const kind = keysTargetKind(node);
+  const name = keysTargetName(node);
+  // 序号只在「role + 稳定名」相同的节点之间数：编辑器与 composer 都是 AXTextArea、往往都没有
+  // 可读名，序号是唯一能分开它们的信息（与旧口径一样取树里的先后顺序）。
+  const peers = ax.nodes.filter((n) => n.role === node.role && keysTargetName(n) === name);
+  const nth = Math.max(peers.indexOf(node), 0);
+  return { kind, value: keysTargetValue(node, kind), identity: { kind, role: node.role, name, nth } };
+}
+
+/**
+ * 按注入前捕获的身份重解析回读目标；身份不在快照里时返回 **null**，调用方一律判 FAIL。
+ *
+ * MUST NOT 退回 `keysTarget` 的「focused 优先」口径：那样会把候选行当键盘目标（230d），
+ * 而按身份重解析只回答一个问题——注入前的那个输入框还在不在、它的值现在是什么。
+ * 身份消失（输入面被收起 / 被替换）时没有可观测的落点，不重试、不改盯别的节点。
+ */
+export function resolveKeysTarget(ax, identity) {
+  const peers = ax.nodes.filter((n) => n.role === identity.role && keysTargetName(n) === identity.name);
+  const node = peers[identity.nth] ?? null;
+  if (!node) return null;
+  const kind = keysTargetKind(node);
+  return { kind, value: keysTargetValue(node, kind) };
 }
 
 /**
@@ -3669,11 +3724,15 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const baseline = countOf(baselineValue);
       const max = Math.min(step.retries ?? 3, 3);
       const reread = async () => {
-        const t = keysTarget(await readAx(cu, p));
-        if (!t || t.kind !== target.kind) {
+        // 按注入前捕获的身份重解析（见 keysTarget / resolveKeysTarget）：focused 会在输入后
+        // 从 combobox 挪到 `aria-activedescendant` 候选行，按它重选就会盯错节点（230d 现场）。
+        const t = resolveKeysTarget(await readAx(cu, p), target.identity);
+        if (!t) {
+          const id = target.identity;
           throw new Error(
-            `keys 回读目标在注入过程中变了（期望 ${target.kind}，实际 ${t?.kind ?? "无可读目标"}）——` +
-              "重试会打到别处，不重试，也不在不可观测的窗口里下结论",
+            `keys 回读目标在注入过程中消失（注入前是 ${target.kind}，身份 role=${id.role}` +
+              `${id.name === null ? "" : ` name=${JSON.stringify(id.name)}`} #${id.nth}）——` +
+              "身份不在了就没有可观测的落点：不重试，也不改盯 focused 节点（候选行会把 focused 抢走）",
           );
         }
         return t.value;
