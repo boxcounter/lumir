@@ -88,6 +88,16 @@ import {
   writePastedImage,
 } from "./paste-image";
 import type { PasteImagePort } from "./paste-image";
+import {
+  addPendingUrlTitle,
+  newPendingUrlTitle,
+  pastedHttpUrl,
+  pendingUrlTitleField,
+  pendingUrlTitles,
+  removePendingUrlTitle,
+  urlTitleReplacement,
+} from "./paste-url";
+import type { PasteUrlTitlePort, PendingUrlTitle } from "./paste-url";
 
 // 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
 // md = 高亮 + live preview 装饰层（src/preview/）；code = 仅高亮。
@@ -1456,6 +1466,12 @@ export interface EditorHandle {
    */
   setPasteImagePort(port: PasteImagePort | null): void;
   /**
+   * 注入粘贴 URL 取标题的口令（change add-url-paste-title-nov21）：装配层在 vault 波注册
+   * （`fetchTitle` 走 ipc 的 `fetchUrlTitle`）。未注入时整条能力不启用——URL 按默认文本粘贴
+   * 落地，不产生任何异步改写（与 `setPasteImagePort` 同一形态）。
+   */
+  setPasteUrlTitlePort(port: PasteUrlTitlePort | null): void;
+  /**
    * 注入跳转到行的输入条（M281，change goto-line-command；能力与浮层 DOM 在
    * `src/goto-line.ts`）。命令执行时才读这个口子，注入**不**触发装饰重建（与上面几个
    * 「装饰层构建期读口子」的注入点不同）。未注入时 `editor.goto-line` 无操作。
@@ -1776,6 +1792,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    * paste 拦截整条不启用（与 `gotoLinePrompt` 同形态）。
    */
   let pasteImagePort: PasteImagePort | null = null;
+  /**
+   * 粘贴 URL 取标题的口令（change add-url-paste-title-nov21）：装配层经
+   * `setPasteUrlTitlePort` 注入（`fetchTitle` 走 Rust 的 `fetch_url_title`）。
+   * **DOM 事件处理器执行时才读**；未注入时整条能力不启用，默认粘贴逐字节不变。
+   */
+  let pasteUrlTitlePort: PasteUrlTitlePort | null = null;
   /**
    * md 行号 gutter 的档位（`ui.markdown_line_numbers`，change goto-line-command 的 D4 二次改判）：
    * 配置在装载时喂一次（`setMarkdownLineNumbers`），**运行期 MUST NOT 回写**——本 change 不提供
@@ -2167,17 +2189,22 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   }
 
   /**
-   * 会话**基础层**里两条绑实例闭包的扩展（收进 `baseCompartment`，见其声明处的 P1-1 说明）：
+   * 会话**基础层**的扩展（收进 `baseCompartment`，见其声明处的 P1-1 说明）：
+   *   - `pendingUrlTitleField`：粘贴 URL 取标题的待返回区间，随会话 state 走；
    *   - `changeFilter`：读实例级 `currentEditable` 投影，挡住绕过 DOM 输入路径的程序化 dispatch；
    *   - `updateListener`：前台会话 state 回写 + dirty 判定 + `docChangedListeners` 广播
    *     （再加运行时 appendConfig 扩展的收集）。
-   * 两者都绑**创建它的实例**的闭包，因此每次 adopt 都要用目标实例的 `baseExtensions()` 重配一次
+   * 后两者都绑**创建它的实例**的闭包，因此每次 adopt 都要用目标实例的 `baseExtensions()` 重配一次
    * ——否则迁移来的会话在目标 pane 被编辑时，回写会落进源实例前台会话（污染）、自身 state 永不
    * 回写（切标签丢编辑 / ⌘S 写陈旧内容）、dirty 永不置位（退出守卫漏判）。修法只在「谁绑闭包」，
    * 逻辑本身与 M149 起逐字相同。
    */
   function baseExtensions(): Extension[] {
     return [
+      // 粘贴 URL 取标题的待返回区间（change add-url-paste-title-nov21）：StateField 随会话
+      // state 走——切标签后旧请求的区间仍能映射；`setState` 不重建 field，撤销 / 重做也不会
+      // 把「哪个区间还等着标题」这条账丢失。纯规则在 `src/paste-url.ts`，这里只装字段。
+      pendingUrlTitleField,
       // 兜底防线：editability 已按会话 editable 在视图层拒收输入，changeFilter 再挡住任何
       // 绕过 DOM 输入路径的程序化 dispatch（trustedLoad 标记的装载事务除外）——两处同判据。
       // 闭包读的是实例级 currentEditable——切标签时必须同步（syncProjection），否则
@@ -2227,6 +2254,35 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           if (view.state.readOnly) return false;
           const data = event.clipboardData;
           if (data === null) return false;
+          // 粘贴 URL 取标题（change add-url-paste-title-nov21）：只在 **md + 可编辑 + 空选区**
+          // 且整段 plain 恰好是一个 http(s) URL 时接管。有选区时放行——CM 的
+          // `pasteURLAsLink` 已有「选中文本变链接标签」的语义，本能力不抢它。
+          // 图片通道在上方先判；HTML-only / 文件项粘贴不走到这里（plain 为空）。
+          if (
+            pasteUrlTitlePort !== null &&
+            active.mode === "md" &&
+            active.editable &&
+            view.state.selection.main.empty
+          ) {
+            const url = pastedHttpUrl(data.getData("text/plain"));
+            if (url !== null) {
+              event.preventDefault();
+              const range = view.state.selection.main;
+              const to = range.from + url.length;
+              const pending = newPendingUrlTitle(range.from, to, url);
+              view.dispatch({
+                changes: { from: range.from, to: range.to, insert: url },
+                selection: EditorSelection.cursor(to),
+                scrollIntoView: true,
+                userEvent: "input.paste",
+                effects: addPendingUrlTitle.of(pending),
+              });
+              // 先落地 URL 再异步换标题：网络慢 / 失败时用户看到的仍是原文，不会出现
+              // 「粘贴后短暂空白 / 吞文本」。失败路径只撤账，文档不再变。
+              void fetchPastedUrlTitle(view, active, pending);
+              return true;
+            }
+          }
           if (data.getData("text/plain") !== "" || data.getData("text/uri-list") !== "") return false;
           event.preventDefault();
           return true;
@@ -2271,6 +2327,43 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     } catch (error) {
       port.toast(error);
     }
+  }
+
+  /**
+   * 粘贴 URL 取标题的异步段（change add-url-paste-title-nov21）：URL 已经按普通粘贴落地，
+   * 这里只做「拿到标题后把这段 URL 原地换成 `[标题](URL)`」。
+   *
+   * 不满足任何一个前提就**只撤账、不改文档**：失败 / 超时 / 非 2xx / 无标题 → 保留原始 URL；
+   * 前台会话已换 → 不往别的文档写；用户在区间内编辑过 → `urlTitleReplacement` 切片对不上，
+   * 放弃改写。区间由 StateField 映射，等待期间在别处的键入 / 删除不会让改写落到错的位置。
+   */
+  async function fetchPastedUrlTitle(
+    view: EditorView,
+    session: EditorSession,
+    pending: PendingUrlTitle,
+  ): Promise<void> {
+    const port = pasteUrlTitlePort;
+    if (port === null) return;
+    let title: string | null = null;
+    try {
+      title = await port.fetchTitle(pending.url);
+    } catch {
+      title = null;
+    }
+    // 切标签 / 关标签：不往别的文档写（URL 已经落在那份文档里，保持原样即可）。
+    if (active !== session) return;
+    const current = pendingUrlTitles(view.state).find((item) => item.id === pending.id);
+    if (current === undefined) return;
+    const change = urlTitleReplacement(view.state.doc, current, title);
+    if (change === null) {
+      view.dispatch({ effects: removePendingUrlTitle.of(pending.id) });
+      return;
+    }
+    view.dispatch({
+      changes: change,
+      userEvent: "input.paste",
+      effects: removePendingUrlTitle.of(pending.id),
+    });
   }
 
   /** adopt 时的完整换绑效果（M317 P1-1）：模式 / 折行 / **基础层**三处一起重配到本实例的闭包。
@@ -3263,6 +3356,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 口令在 DOM 事件处理器执行时才读（不是装饰层构建期读），注入**不**派发 previewRefresh
       // ——与 setGotoLinePrompt 同一形态。
       pasteImagePort = port;
+    },
+    setPasteUrlTitlePort(port) {
+      // 同 setPasteImagePort：paste 处理器执行时才读，注入不重建装饰。
+      pasteUrlTitlePort = port;
     },
     setGotoLinePrompt(next: GotoLinePromptPort | null) {
       // **不**派发 previewRefresh（与上面几个注入点的差别）：这个口子在命令执行时才被读

@@ -58,6 +58,74 @@ test("裸 URL：命中 URL 节点自身，尾标落在它末尾，露出范围�
   assert.ok(hit(doc, "https://example.invalid/bare", "https://example.invalid/bare".length - 1), "末位前一个字符");
 });
 
+// 裸 URL 的**文本边界**（change fix-bare-url-cjk-boundary-nov21）：GFM 的 `urlRE` 路径段是
+// `[^\s<]*`，中文与全角标点会被吞进 `URL` 节点。链接层在首个非 ASCII 字符前截断——裸 URL
+// 后面紧跟的中文是正文，不是链接目标。显式语法（角括号 / 定义行）不裁：那里的 URL 有定界符。
+test("裸 URL 后紧邻中文：目标在首个非 ASCII 字符前结束，中文不参与装饰", () => {
+  const doc = "正文 https://example.invalid/abc中文说明 后续\n";
+  const link = hit(doc, "https://example.invalid/abc");
+  assert.ok(link, "ASCII 前缀仍应入选");
+  const ascii = "https://example.invalid/abc";
+  const from = doc.indexOf(ascii);
+  const cut = doc.indexOf("中文");
+
+  assert.equal(link.target, ascii, "中文不得进入链接目标");
+  assert.deepEqual(link.form, { kind: "external", url: ascii }, "打开目标同样是 ASCII 前缀");
+  assert.deepEqual([link.from, link.to], [from, cut], "装饰区间止于中文之前");
+  assert.equal(link.markAt, cut, "尾标落在 ASCII 前缀末尾");
+  assert.deepEqual([link.revealFrom, link.revealTo], [from, cut], "显露范围同样不含中文");
+
+  // 区分度：中文内部的位置不再命中；剪切之前的最后一位仍命中（末位口径不变）。
+  assert.equal(literalLinkAt(stateOf(doc), cut + 1), null, "中文字符内部不是链接");
+  assert.ok(literalLinkAt(stateOf(doc), cut), "ASCII 末位仍算在链接上");
+});
+
+test("裸 URL 后的全角标点同样终止目标（不只看汉字）", () => {
+  const doc = "正文 https://example.invalid/abc，后续\n";
+  const link = hit(doc, "https://example.invalid/abc");
+  assert.ok(link);
+  assert.equal(link.target, "https://example.invalid/abc");
+  assert.equal(link.to, doc.indexOf("，"));
+});
+
+test("裸 URL 的查询 / 路径：ASCII 部分完整保留，首个非 ASCII 字符终止", () => {
+  // 拉丁合法字符与查询参数（`_ - . / ? = & # %`）逐字保留。
+  const latin = "https://example.invalid/a_b-c.d/e?x=1&y=2#frag";
+  const latinDoc = `正文 ${latin} 后续\n`;
+  const latinLink = hit(latinDoc, latin);
+  assert.ok(latinLink);
+  assert.equal(latinLink.target, latin, "拉丁 URL 合法字符不得被边界规则误裁");
+
+  // 查询值里的裸中文终止在中文之前；`?q=` 仍属于目标（不发明「把悬空查询也删掉」的规则）。
+  const queryDoc = "正文 https://example.invalid/path?q=中文&x=1 后续\n";
+  const queryLink = hit(queryDoc, "https://example.invalid/path?q=");
+  assert.ok(queryLink);
+  assert.equal(queryLink.target, "https://example.invalid/path?q=");
+  assert.equal(queryLink.to, queryDoc.indexOf("中文"));
+
+  // 百分号编码的中文路径 / 查询是 ASCII，完整保留——这是中文 URL 的受支持形态。
+  const encoded = "https://example.invalid/%E8%B7%AF%E5%BE%84?q=%E4%B8%AD";
+  const encodedDoc = `正文 ${encoded} 后续\n`;
+  const encodedLink = hit(encodedDoc, encoded);
+  assert.ok(encodedLink, "百分号编码的中文 URL 应完整入选");
+  assert.equal(encodedLink.target, encoded);
+});
+
+test("显式 URL 语法不裁：角括号自动链接与定义行保留完整中文目标", () => {
+  // 角括号与定义行是**显式的 URL 定界语法**：这里的中文是 URL 的一部分，不是正文。
+  const angleDoc = "<https://example.invalid/中文>\n";
+  const angle = hit(angleDoc, "https://example.invalid/中文");
+  assert.ok(angle, "角括号自动链接应入选");
+  assert.equal(angle.target, "https://example.invalid/中文");
+  assert.equal(angle.to, angleDoc.indexOf(">"));
+
+  const defDoc = "[home]: https://example.invalid/中文\n";
+  const def = hit(defDoc, "https://example.invalid/中文");
+  assert.ok(def, "定义行 URL 应入选");
+  assert.equal(def.target, "https://example.invalid/中文");
+  assert.equal(def.to, defDoc.indexOf("\n"));
+});
+
 test("三种形态的两个端点都能命中：起点与末位（渲染态下用户认的「在链接上」）", () => {
   // 起点：见下一条（选区复位到 0 的现场）。
   // 末位：`<https://x>|` 里 `>` 那个位置（= URL 节点的 `to`）在渲染态下就是 URL 文本的末尾

@@ -1239,6 +1239,30 @@ pub fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), Comma
     }
 }
 
+/// 取一个 http / https 网页的标题（change add-url-paste-title-nov21）。
+///
+/// 线程语义与 `vault_open_path` 同款：`#[command(async)]` + 同步 body，阻塞式 HTTP 跑在
+/// async 运行时的 worker 上，不占 IPC 主线程。网络 / 超时 / 响应状态 / HTML 解析都在
+/// `crate::url_title`；本命令只负责构造带 UA 与超时的 client，并把错误转成既有信封。
+///
+/// 失败（网络 / 超时 / 非 2xx）返回 `Err`，前端据此保留原始 URL；`Ok(None)` = 请求成功但
+/// 没有可用标题（非 HTML、没有 `<title>`、空标题、超长标题、非 UTF-8）。
+#[tauri::command(async, rename_all = "snake_case")]
+pub fn fetch_url_title(url: String) -> Result<Option<String>, CommandError> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(crate::url_title::FETCH_TIMEOUT)
+        .user_agent(format!("Lumir/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| {
+            CommandError::new(
+                "url_title_client_failed",
+                format!("初始化取标题请求失败：{e}"),
+            )
+        })?;
+    crate::url_title::fetch_title(&client, &url)
+        .map_err(|e| CommandError::new("url_title_failed", e))
+}
+
 // ---------------------------------------------------------------------------
 // 相对路径链接（M145，change add-external-link-open 的形态矩阵补全）
 // ---------------------------------------------------------------------------

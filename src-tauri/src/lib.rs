@@ -20,6 +20,7 @@ pub mod reading_position;
 pub mod ready;
 pub mod recovery;
 pub mod settings;
+pub mod url_title;
 pub mod vault_registry;
 pub mod vault_session;
 pub mod window_chrome;
@@ -146,6 +147,7 @@ pub fn run() {
             commands::document_set_dirty,
             commands::log_event,
             commands::open_external_url,
+            commands::fetch_url_title,
             commands::link_resolve_note,
             commands::link_open_path,
             commands::recovery_backup,
