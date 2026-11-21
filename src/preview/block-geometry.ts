@@ -52,21 +52,47 @@ function firstContentLine(doc: Text, line: Line, fm: GeometryFrontmatter | null)
   return true;
 }
 
+interface BoundaryShape {
+  readonly kind: BlockLineKind;
+  readonly boundary: boolean;
+  readonly headingLevel?: number;
+  readonly chain: readonly Node[];
+}
+
+function classifyBoundary(
+  doc: Text,
+  tree: Tree,
+  line: Line,
+  fm: GeometryFrontmatter | null,
+): BoundaryShape | null {
+  if (fm !== null && line.from >= fm.from && line.to <= fm.to) return null;
+  if (!line.text.trim()) return { kind: "blank", boundary: true, chain: [] };
+  const chain = ancestors(tree, line);
+  if (hasNode(chain, "FencedCode", "CodeBlock", "HTMLBlock", "Table")) {
+    return { kind: "code/table", boundary: true, chain };
+  }
+  const heading = ATX_RE.exec(line.text);
+  if (heading) return { kind: "heading", boundary: true, headingLevel: heading[1].length, chain };
+  if (hasNode(chain, "HorizontalRule")) return { kind: "hr", boundary: true, chain };
+  const marker = MARKER_RE.test(line.text);
+  if (!marker && /^[ \t>]*>/.test(line.text)) return { kind: "quote", boundary: true, chain };
+  if (marker) return { kind: "list-item", boundary: true, chain };
+  if (SETEXT_RE.test(line.text) && line.number > 1 && doc.line(line.number - 1).text.trim()) {
+    return { kind: "text", boundary: true, chain };
+  }
+  return { kind: "text", boundary: false, chain };
+}
+
 function classifyLine(
   doc: Text,
   tree: Tree,
   line: Line,
   fm: GeometryFrontmatter | null,
 ): ClassifiedShape | null {
-  if (fm !== null && line.from >= fm.from && line.to <= fm.to) return null;
-  if (!line.text.trim()) return { kind: "blank", top: 0, bottom: 0, boundary: true };
-  const chain = ancestors(tree, line);
-  if (hasNode(chain, "FencedCode", "CodeBlock", "HTMLBlock", "Table")) {
-    return { kind: "code/table", top: 0, bottom: 0, boundary: true };
-  }
-  const heading = ATX_RE.exec(line.text);
-  if (heading) {
-    const level = heading[1].length;
+  const classified = classifyBoundary(doc, tree, line, fm);
+  if (classified === null) return null;
+  if (classified.kind === "heading") {
+    const level = classified.headingLevel!;
     return {
       kind: "heading",
       top: firstContentLine(doc, line, fm) ? 0 : HEADING_TOP[level - 1],
@@ -75,21 +101,12 @@ function classifyLine(
       boundary: true,
     };
   }
-  if (hasNode(chain, "HorizontalRule")) return { kind: "hr", top: 0, bottom: 0, boundary: true };
-  const marker = MARKER_RE.test(line.text);
-  if (!marker && /^[ \t>]*>/.test(line.text)) return { kind: "quote", top: 0, bottom: 0, boundary: true };
-  if (marker) return { kind: "list-item", top: 2, bottom: 0, boundary: true };
-  if (SETEXT_RE.test(line.text) && line.number > 1 && doc.line(line.number - 1).text.trim()) {
-    return { kind: "text", top: 0, bottom: 0, boundary: true };
-  }
-  const nested = hasNode(chain, "ListItem", "Blockquote");
+  if (classified.kind === "list-item") return { kind: "list-item", top: 2, bottom: 0, boundary: true };
+  if (classified.boundary) return { kind: classified.kind, top: 0, bottom: 0, boundary: true };
   let bottom = 0;
-  if (!nested) {
+  if (!hasNode(classified.chain, "ListItem", "Blockquote")) {
     if (line.number === doc.lines) bottom = 8;
-    else {
-      const next = classifyLine(doc, tree, doc.line(line.number + 1), fm);
-      if (next?.boundary) bottom = 8;
-    }
+    else if (classifyBoundary(doc, tree, doc.line(line.number + 1), fm)?.boundary) bottom = 8;
   }
   return { kind: "text", top: 0, bottom, boundary: false };
 }

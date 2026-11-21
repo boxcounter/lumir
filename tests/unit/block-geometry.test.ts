@@ -128,3 +128,12 @@ test("frontmatter 不参与行装饰；首个内容块扫描跳过 frontmatter �
   const text = Text.of(doc.split("\n"));
   assert.deepEqual(result.get(text.line(5).from), { kind: "heading", top: 0, bottom: 6, headingLevel: 2 });
 });
+
+test("数千行连续正文只取首个可见行：下一行边界检查不递归、不扫描后续全文", () => {
+  const doc = Array.from({ length: 6000 }, (_, index) => `line ${index}`).join("\n");
+  const text = Text.of(doc.split("\n"));
+  const first = text.line(1);
+  const result = lineShapes(text, parser.parse(doc), first.from, first.to, null);
+  assert.equal(result.size, 1);
+  assert.deepEqual(result.get(first.from), { kind: "text", top: 0, bottom: 0 });
+});

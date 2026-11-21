@@ -40,6 +40,15 @@
 - [x] 4.2 不执行任何 `--update`；新场景只生成 actual 并复制到主仓证据目录供 Alex 过目，未经批准
       不在 `tests/visual/baselines/` 留新基线
 
+## 独立评审返修
+
+- [x] R1.1 修复连续正文首行查询的递归 / 二次方缺陷：`classifyBoundary` 只判 kind / boundary，
+      `classifyLine` 才计算 top / bottom；6000 行连续正文只取首行的旧实现红证据为
+      `RangeError: Maximum call stack size exceeded`（`review-p1-red-before-fix.log`）
+- [x] R1.2 修复后目标单测 11/11、全量单测 1736/1736、根 / 单测 / 视觉三份 tsc 全绿，
+      原目标结构视觉 161/161；证据为 `review-p1-green-target.log`、`review-p1-unit-all.log`、
+      `review-p1-tsc-root-unit.log`、`review-p1-tsc-visual.log`、`review-p1-target-structural.log`
+
 ## 验证与后续边界
 
 - [x] 5.1 跑相关单测、根 / 视觉 / 单测三份 tsc、目标结构视觉、性能夹具与 OpenSpec 严格校验；
