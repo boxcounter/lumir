@@ -286,7 +286,7 @@ test("正文 IME：available 但 state 树陈旧时先同步再 build（Chromium
 test("正文 IME：settleStep available 分支不得用旧 state 树（Chromium）", async ({ page }) => {
   // 直接同步调用 settleStep：compositionend 的 effect dispatch / parse worker 在 Chromium
   // 上会顺带同步 state，无法稳定复现 WKWebView 的 stale 快照；这里在同一个 available
-  // 分支上做可区分回归（build 后立即读 DOM，不等后续 update 补救）。
+  // 分支上做可区分回归（context 正确、state 可能仍旧；build/scan 必须用 context 树）。
   const doc = "para\n\n".repeat(2000) + "词汇\n- ";
   await openBody(page, "oracle.md", doc);
   await setBodyCaret(page, doc.length);
@@ -294,40 +294,46 @@ test("正文 IME：settleStep available 分支不得用旧 state 树（Chromium�
   await expect(page.locator(".cm-line").last()).toContainText("-");
   const probe = await page.locator(".cm-content").evaluate((el, length) => {
     const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
-    view.dispatch({ changes: { from: length, insert: "是" }, selection: { anchor: length + 1 } });
-    const values = (view.state as { values?: unknown[] }).values ?? [];
-    const lang = values.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as {
-      context: { updateViewport(range: { from: number; to: number }): void; work(timeout: number, upto: number): unknown; isDone(upto: number): boolean; tree: { toString(): string } };
-      tree: { toString(): string };
+    const findLang = () => {
+      const values = (view.state as { values?: unknown[] }).values ?? [];
+      return values.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as {
+        context: { updateViewport(range: { from: number; to: number }): void; work(timeout: number, upto: number): unknown; isDone(upto: number): boolean; tree: { toString(): string } };
+        tree: { toString(): string };
+      } | undefined;
     };
+    const oldTree = findLang()?.tree;
+    view.dispatch({ changes: { from: length, insert: "是" }, selection: { anchor: length + 1 } });
+    const lang = findLang();
+    if (!lang || !oldTree) throw new Error("language state not found");
     const docLen = view.state.doc.length;
     lang.context.updateViewport({ from: 0, to: docLen });
     lang.context.work(1000, docLen);
+    // 强制制造 state 字段快照落后于 context 的形态（WKWebView 的现场）；只用于测试。
+    lang.tree = oldTree;
     const plugin = ((view as { plugins?: { value?: unknown }[] }).plugins ?? [])
       .map((entry) => entry.value)
       .find((value) => value && typeof (value as { settleStep?: unknown }).settleStep === "function") as
-      { settleTo: number | null; settleStarted: number; settleStep(view: unknown): void } | undefined;
+      { settleTo: number | null; settleStarted: number; settleStep(view: unknown): void; tree: { toString(): string } } | undefined;
     if (!plugin) throw new Error("ListLayout plugin not found");
     const stateNodes = lang.tree.toString();
     const contextNodes = lang.context.tree.toString();
     plugin.settleTo = docLen;
     plugin.settleStarted = performance.now();
     plugin.settleStep(view);
-    const valuesAfter = (view.state as { values?: unknown[] }).values ?? [];
-    const langAfter = valuesAfter.find((value) => value && typeof value === "object" && "context" in value && "tree" in value) as
-      { tree: { toString(): string } } | undefined;
     return {
       contextDone: lang.context.isDone(docLen),
       stateNodes,
       contextNodes,
-      stateNodesAfter: langAfter?.tree.toString() ?? "",
+      contextNodesAfter: lang.context.tree.toString(),
+      pluginTreeAfter: plugin.tree.toString(),
     };
   }, doc.length);
   expect(probe.contextDone).toBe(true);
   expect(probe.contextNodes).toContain("BulletList");
   expect(probe.stateNodes).not.toContain("BulletList");
-  // 修复后：forceParsing(0) 同步 state，build 后立即出现 marker，且 state 树已含列表。
-  expect(probe.stateNodesAfter).toContain("BulletList");
+  // context 树已含列表；build/后续 scan 必须沿用它，不要求 state 快照已同步。
+  expect(probe.contextNodesAfter).toContain("BulletList");
+  expect(probe.pluginTreeAfter, "settleStep 后 ListLayout 必须持有 context 树").toContain("BulletList");
   await expect.poll(() => bodyState(page)).toEqual({ doc: `${doc}是`, anchor: doc.length + 1, head: doc.length + 1 });
   await expect.poll(async () => page.locator(".cm-lp-list-marker").count()).toBe(1);
   await expect(page.locator(".cm-line").last()).toContainText("是");
