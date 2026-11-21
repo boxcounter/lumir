@@ -12,6 +12,7 @@ import type { Extension, Range, Text } from "@codemirror/state";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import { livePreviewTheme } from "./theme";
 import { listDecorations } from "./lists";
+import { blockGeometry } from "./block-geometry";
 import {
   frontmatterBlockField,
   frontmatterCaretSpecs,
@@ -696,6 +697,7 @@ export function livePreview(ctx: PreviewContext) {
     mathBlockDecorations,
     mermaidBlockDecorations,
     mermaidSettleBridge,
+    blockGeometry,
     listDecorations,
     EditorView.blockWrappers.of(tableWrappers),
     EditorView.domEventHandlers({
@@ -1160,8 +1162,6 @@ function collectSyntaxDecorations(
 
       if (name === "Paragraph" && ref.node.parent?.name === "Document") {
         const first = doc.lineAt(ref.from);
-        // 段落末行带 -end 类：间距阶梯的「段落 8」由末行 padding-bottom 承载
-        //（theme.ts 的 .cm-line.cm-lp-paragraph-end；M218 C1）。
         const lastFrom = doc.lineAt(ref.to).from;
         for (const line of lineRanges(view, Math.max(ref.from, vrFrom), Math.min(ref.to, vrTo))) {
           const classes = ["cm-lp-paragraph"];
@@ -1174,31 +1174,7 @@ function collectSyntaxDecorations(
       if (/^ATXHeading[1-6]$/.test(name)) {
         const level = name.slice(-1);
         const headingLine = doc.lineAt(ref.from);
-        // 间距阶梯（M218 C1，定稿出处 index.html:244-245/:344：h1 `24px 0 9px`、
-        // h2 `20px 0 6px`、h3 `16px 0 5px`；h4–h6 由 heading-hierarchy-ramp 补档
-        // 14/5、12/4、10/4——间距阶梯内取值，零块距退场）——替换旧基线的
-        // 魔术数（17.92*2.9 ≈ 52px 是定稿 h2 上距的 2.6 倍，M216 gap 表 §2.3 #1）。
-        // CM 无 margin 折叠：块间实际间距 = 上块 bottom + 下块 top（比定稿折叠值最多
-        // 松一个段落档 8px），逐元素取值按阶梯落地。
-        // 首个内容块的标题上距为 0（定稿 `h1:first-child, h2:first-child { margin-top: 0 }`，
-        // index.html:246）：标题前只有 frontmatter / doc-title 或空行时不上顶。判定只扫
-        // fm 结束到标题之间的空行串（逐行 trim，遇到非空即停）——不切整段前缀字符串
-        //（文档深部的标题会因此付出 O(前缀长) 的代价，违反键入路径约束）。
-        let firstContent = true;
-        for (
-          let n = fm === null ? 1 : doc.lineAt(fm.to).number + 1;
-          n < headingLine.number;
-          n++
-        ) {
-          if (doc.line(n).text.trim()) { firstContent = false; break; }
-        }
-        const top = firstContent
-          ? 0
-          : level === "1" ? 24 : level === "2" ? 20 : level === "3" ? 16 : level === "4" ? 14 : level === "5" ? 12 : 10;
-        const bottom = level === "1" ? 9 : level === "2" ? 6 : level === "3" ? 5 : level === "4" ? 5 : 4;
-        decos.push(
-          Decoration.line({ class: `cm-lp-h${level}`, attributes: { style: `padding-top:${top}px;padding-bottom:${bottom}px` } }).range(headingLine.from),
-        );
+        decos.push(Decoration.line({ class: `cm-lp-h${level}` }).range(headingLine.from));
         // 隐藏开头与结尾的 # 标记串（连同相邻一个空格）——但光标/选区触及该标题行时
         // 显露原文（M297 缺陷修复：此前无条件隐藏，是本仓唯一没有 reveal 判据的隐藏标记，
         // 光标落在标题行上仍看不到 `#`、进不了编辑态，Alex 2026-10-01 实测）。

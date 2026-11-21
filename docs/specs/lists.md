@@ -157,6 +157,29 @@ B1 的进入 / 离开 MUST NOT 改写文档源码：裸行在编辑态与字面�
 - **既有编辑行为不动**：本条 MUST NOT 改变 B3 / 上游 / Emacs 的精确 range 删除、裸 marker
   Enter/Backspace、L5 原子导航或 C1 光标几何；不得新增按 DOM 形状猜测编辑意图的生产分支。
 
+## L8 — 列表项纵向几何与组扫描解耦
+
+**任意**列表项首行（真列表、裸 marker 编辑态、嵌套与任务项），其 2px 上距 SHALL 由源码行形态同步决定，
+MUST NOT 等待列表组扫描、标记宽度测量或光标 / 选区状态。前一正文行与 marker 行之间无空行时，前一行的
+8px 块末下距 SHALL 在 marker 的首字符、尾随空白与首个正文字符各前缀上保持一致；块成立前没有前一正文块
+的空行对照组 MUST 保持空行 0/0 的纵向 padding。
+
+新列表组的横向几何 SHALL 在首个可用帧按与后台扫描相同的显示标记公式估算；对单一项新组，估算的
+`width / body / labels` MUST 与扫描结果逐项相等，嵌套有序列表 SHALL 包含父项复合编号。已有组的宽度增长、
+树未就绪时的标签回退可以异步修正，但这些修正 MUST NOT 写入纵向 padding 或改变行高。IME 组合期 SHALL
+沿用 L6 的冻结与恢复窗口；几何恢复不得提前于 `compositionSettled` 重建列表 DOM。
+
+### 证伪方式
+
+1. `tests/unit/block-geometry.test.ts` 用真 lezer 扫前序行类型、marker 前缀、文档首尾与空行对照，断言
+   块边界单调性、未编辑行逐项稳定和 2px / 8px 取值；`markerTextAt` 命中的普通上下文 MUST 命中同一
+   marker 形态，避免两条文本判据分叉。
+2. `tests/unit/list-group-estimate.test.ts` 对同一文档状态比较新组估算与扫描的 `width / body / labels`，
+   覆盖 ul / ol / 任务项、父 ul 断链与父 ol 复合编号。
+3. `tests/visual/scenes/markdown-editing-stability.spec.ts` 在每帧读取行高、padding、正文左缘与光标矩形，
+   覆盖 `Enter → - → 空格 → 中文`、`+` 族、空行对照和嵌套有序列表。反向恢复「新组等待扫描」或
+   「树决定段落下距」时，对应断言 MUST 变红。
+
 ## 证伪方式（L1–L6 属性测试口径）
 
 对「列表类型 × 嵌套深度 × 与项之间有无空行 × 行首缩进 × 语法树归属」的输入分布逐个取样：

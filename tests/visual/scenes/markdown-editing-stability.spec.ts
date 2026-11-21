@@ -102,8 +102,11 @@ async function setCaret(page: Page, pos: number, head = pos): Promise<void> {
  */
 interface LineBox {
   text: string;
+  className: string;
   top: number;
   height: number;
+  paddingTop: number;
+  paddingBottom: number;
   baseTop: number | null;
   baseHeight: number | null;
   textLeft: number | null;
@@ -133,10 +136,14 @@ async function readGeometry(page: Page): Promise<LineBox[]> {
         const base = textRects.length > 0 ? textRects[0] : null;
         const marker = line.querySelector<HTMLElement>(".cm-lp-list-marker");
         const markerRect = marker ? marker.getBoundingClientRect() : null;
+        const style = getComputedStyle(line);
         return {
           text: line.textContent ?? "",
+          className: line.className,
           top: rect.top,
           height: rect.height,
+          paddingTop: parseFloat(style.paddingTop),
+          paddingBottom: parseFloat(style.paddingBottom),
           baseTop: base ? base.top : null,
           baseHeight: base ? base.height : null,
           textLeft: textRects.length > 0 ? Math.min(...textRects.map((r) => r.left)) : null,
@@ -810,4 +817,202 @@ test("IME 组合期：compositionstart 后的 insertText / 删除不被选区闸
       return { doc: s.doc, head: s.head };
     }, { message: "redo 未重放编辑" })
     .toEqual({ doc: "| a | b |\n| --- | --- |\n| Qd |\n", head: 27 });
+});
+
+// ---------------------------------------------------------------------------
+// L8：块边界纵向几何与新组横向估算的逐帧回归（stabilize-block-boundary-geometry-nov21）
+// ---------------------------------------------------------------------------
+
+interface FrameLine {
+  text: string;
+  className: string;
+  top: number;
+  height: number;
+  paddingTop: number;
+  paddingBottom: number;
+  textLeft: number | null;
+  markerText: string | null;
+}
+
+interface GeometryFrame {
+  doc: string;
+  caretTop: number | null;
+  coordsTop: number | null;
+  lines: FrameLine[];
+}
+
+async function startFrameRecorder(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const host = window as unknown as {
+      __blockFrames?: GeometryFrame[];
+      __blockRecorderStopped?: boolean;
+    };
+    host.__blockFrames = [];
+    host.__blockRecorderStopped = false;
+    const sample = () => {
+      if (host.__blockRecorderStopped) return;
+      const content = document.querySelector<HTMLElement>(".cm-content");
+      if (content) {
+        const view = (content as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+        const cursor = content.querySelector<HTMLElement>(".cm-cursor-primary");
+        const coords = view.coordsAtPos(view.state.selection.main.head) as { top: number } | null;
+        const lines = [...content.querySelectorAll<HTMLElement>(".cm-line")].map((line): FrameLine => {
+          const rect = line.getBoundingClientRect();
+          const style = getComputedStyle(line);
+          const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+          const lefts: number[] = [];
+          while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (!node.textContent?.trim()) continue;
+            if (node.parentElement?.closest(".cm-lp-list-marker")) continue;
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            for (const r of Array.from(range.getClientRects())) if (r.width > 0 && r.height > 0) lefts.push(r.left);
+          }
+          return {
+            text: line.textContent ?? "",
+            className: line.className,
+            top: rect.top,
+            height: rect.height,
+            paddingTop: parseFloat(style.paddingTop),
+            paddingBottom: parseFloat(style.paddingBottom),
+            textLeft: lefts.length ? Math.min(...lefts) : null,
+            markerText: line.querySelector(".cm-lp-list-marker")?.textContent ?? null,
+          };
+        });
+        host.__blockFrames!.push({
+          doc: view.state.doc.toString(),
+          caretTop: cursor?.getBoundingClientRect().top ?? null,
+          coordsTop: coords?.top ?? null,
+          lines,
+        });
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+}
+
+async function stopFrameRecorder(page: Page, label: string): Promise<GeometryFrame[]> {
+  const frames = await page.evaluate(() => {
+    const host = window as unknown as { __blockFrames?: GeometryFrame[]; __blockRecorderStopped?: boolean };
+    host.__blockRecorderStopped = true;
+    return host.__blockFrames ?? [];
+  });
+  await test.info().attach(`${label}-frames.json`, { body: JSON.stringify(frames), contentType: "application/json" });
+  return frames;
+}
+
+async function afterTwoFrames(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+}
+
+function framesFor(frames: GeometryFrame[], doc: string): GeometryFrame[] {
+  const selected = frames.filter((frame) => frame.doc === doc);
+  expect(selected.length, `没有采到 ${JSON.stringify(doc)} 的绘制帧`).toBeGreaterThan(0);
+  return selected;
+}
+
+async function typeSequence(page: Page, steps: readonly { key: string; doc: string }[]): Promise<void> {
+  for (const step of steps) {
+    if (/^[\x00-\x7f]+$/.test(step.key)) await page.keyboard.press(step.key);
+    else await page.keyboard.type(step.key);
+    await expect.poll(async () => (await bodyState(page)).doc).toBe(step.doc);
+    await afterTwoFrames(page);
+  }
+}
+
+for (const c of [
+  { marker: "-", name: "Alex 序列 Enter→-→空格→中文" },
+  { marker: "+", name: "+ 族同判" },
+] as const) {
+  test(`块边界首帧：${c.name}`, async ({ page }) => {
+    const doc = "词汇";
+    await openDoc(page, "boundary-frames.md", doc);
+    await setCaret(page, doc.length);
+    await startFrameRecorder(page);
+    const steps = [
+      { key: "Enter", doc: "词汇\n" },
+      { key: c.marker, doc: `词汇\n${c.marker}` },
+      { key: "Space", doc: `词汇\n${c.marker} ` },
+      { key: "中", doc: `词汇\n${c.marker} 中` },
+      { key: "文", doc: `词汇\n${c.marker} 中文` },
+    ];
+    await typeSequence(page, steps);
+    await page.waitForTimeout(120);
+    const frames = await stopFrameRecorder(page, `boundary-${c.marker === "-" ? "dash" : "plus"}`);
+
+    for (const step of steps) {
+      for (const frame of framesFor(frames, step.doc)) {
+        expect(frame.lines.length).toBe(2);
+        expect(Math.abs(frame.lines[0].height - 33.5), `${step.key}：前一行高度`).toBeLessThanOrEqual(TOL);
+        expect(frame.lines[0].paddingBottom).toBe(8);
+        if (step.doc.includes(`\n${c.marker}`)) {
+          expect(frame.lines[1].paddingTop).toBe(2);
+          expect(Math.abs(frame.lines[1].height - 27.5), `${step.key}：marker 行高度`).toBeLessThanOrEqual(TOL);
+        }
+      }
+    }
+
+    const finalDoc = steps.at(-1)!.doc;
+    const finalFrames = framesFor(frames, finalDoc);
+    const settled = (await readGeometry(page))[1];
+    for (const frame of finalFrames) {
+      expect(frame.lines[1].className).toContain("cm-lp-list-line");
+      expect(frame.lines[1].textLeft).not.toBeNull();
+      expect(Math.abs(frame.lines[1].textLeft! - settled.textLeft!), "首帧正文左缘必须等于终值").toBeLessThanOrEqual(TOL);
+      if (frame.caretTop !== null && frame.coordsTop !== null) {
+        expect(Number.isFinite(frame.caretTop - frame.coordsTop)).toBe(true);
+      }
+    }
+  });
+}
+
+test("块边界首帧：空行起列表对照组不新增前序几何变化", async ({ page }) => {
+  const doc = "词汇\n\n";
+  await openDoc(page, "boundary-control.md", doc);
+  await setCaret(page, doc.length);
+  await startFrameRecorder(page);
+  const steps = [
+    { key: "-", doc: "词汇\n\n-" },
+    { key: "Space", doc: "词汇\n\n- " },
+    { key: "中", doc: "词汇\n\n- 中" },
+  ];
+  await typeSequence(page, steps);
+  const frames = await stopFrameRecorder(page, "boundary-blank-control");
+  for (const step of steps) {
+    for (const frame of framesFor(frames, step.doc)) {
+      expect(frame.lines[0].paddingBottom).toBe(8);
+      expect(frame.lines[1].paddingTop).toBe(0);
+      expect(frame.lines[1].paddingBottom).toBe(0);
+      expect(frame.lines[2].paddingTop).toBe(2);
+    }
+  }
+});
+
+test("块边界首帧：嵌套有序新组立即使用复合编号与最终正文列", async ({ page }) => {
+  const doc = "1. parent\n   ";
+  await openDoc(page, "boundary-nested.md", doc);
+  await setCaret(page, doc.length);
+  await startFrameRecorder(page);
+  const steps = [
+    { key: "1", doc: "1. parent\n   1" },
+    { key: ".", doc: "1. parent\n   1." },
+    { key: "Space", doc: "1. parent\n   1. " },
+    { key: "子", doc: "1. parent\n   1. 子" },
+  ];
+  await typeSequence(page, steps);
+  await page.waitForTimeout(120);
+  const frames = await stopFrameRecorder(page, "boundary-nested-ordered");
+  for (const step of steps.slice(1)) {
+    for (const frame of framesFor(frames, step.doc)) {
+      expect(frame.lines[1].paddingTop).toBe(2);
+      expect(frame.lines[1].className).toContain("cm-lp-list-line");
+      expect(frame.lines[1].markerText).toBe("1.1");
+    }
+  }
+  const settled = (await readGeometry(page))[1];
+  for (const frame of framesFor(frames, steps.at(-1)!.doc)) {
+    expect(Math.abs(frame.lines[1].textLeft! - settled.textLeft!)).toBeLessThanOrEqual(TOL);
+  }
 });

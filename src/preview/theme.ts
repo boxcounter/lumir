@@ -177,9 +177,7 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-h6": { fontSize: "calc(1em * var(--fs-h6) / var(--fs-body))", fontWeight: "650", lineHeight: "var(--lh-ui)" },
 
   // 段落左对齐（M216 gap 表 §2.3 #9：定稿是 ragged right，justify + hyphens 是反向偏差）。
-  // 段落间距走末行 padding（CM 无 margin 折叠模型：间距阶梯的「段落 8」落在段末行，
-  // 类名由 livePreview 按「段落最后一行」加）。
-  ".cm-line.cm-lp-paragraph-end": { paddingBottom: "var(--sp-4)" },
+  // 段落与列表的纵向 padding 唯一写入者是 block-geometry.ts；这里只保留排版与横向几何。
   // frontmatter 的「被选区覆盖」选中态（`cm-lp-frontmatter-selected` 三条样式）随
   // cursor-visibility-oct23 删除：显露判据改为严格重叠后，widget 在选区触及块时就撤下，
   // 选中态不可达（REVIEW.md「值或开关声明了却没有消费者」条）。
@@ -368,10 +366,9 @@ export const livePreviewTheme = EditorView.theme({
   // 生成逻辑在 lists.ts）、标记族 sans（原型 ::before 继承 .doc-body 的正文族）、
   // 字号逐级递减 13.5 / 13 / 12.5（深度 >3 同第三档）。族与三档字号比值与 lists.ts 的
   // canvas 测量是同一组写值的两个落点：改一处必须改另一处（那边注释里互相指向）。
-  // 列表项间距「li 2」（定稿 `li { margin: 2px 0 }`，index.html:249）：CM 无 margin
-  // 折叠，项间 2px 由每个首行的 padding-top 承载（项间与列表上缘都落在 2px）。
+  // 列表项 2px 上距由 block-geometry.ts 同步写入，与组扫描和光标状态无关。
   ".cm-line.cm-lp-list-line": { paddingInlineStart: "var(--lp-list-body)", textIndent: "0" },
-  ".cm-line.cm-lp-list-first": { textIndent: "calc(-1 * var(--lp-list-marker))", paddingTop: "2px" },
+  ".cm-line.cm-lp-list-first": { textIndent: "calc(-1 * var(--lp-list-marker))" },
   ".cm-lp-list-marker": { display: "inline-flex", inlineSize: "var(--lp-list-marker)", boxSizing: "border-box", paddingInlineEnd: "1ch", justifyContent: "flex-end", gap: ".5ch", textIndent: "0", whiteSpace: "pre", color: "var(--text-3)", fontFamily: "var(--editor-font-family)", fontVariantNumeric: "tabular-nums" },
   ".cm-lp-list-marker-d1": { fontSize: "calc(13.5em / 15)" },
   ".cm-lp-list-marker-d2": { fontSize: "calc(13em / 15)" },

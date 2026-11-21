@@ -607,8 +607,8 @@ test("正文 IME：>32KB 文档删空后对照解析跨拍推进并撤掉旧 mar
 test("正文 IME：state 同步覆盖收束目标后非文档更新必须改用当前树（Chromium）", async ({ page }) => {
   // 长文档：目标行在末尾，20ms 的 state apply 只能解析到中途（state.length < to）→ 收束保留
   // 只到目标行的截断树。随后把 state/context 同步为覆盖全文的新树并 dispatch selection：
-  // 非文档更新必须重跑 reconciliation，清除保留树并改用 state 树——后续列表行 marker
-  // 只能来自新树（截断树不含它）。
+  // 非文档更新必须重跑 reconciliation，清除保留树并改用 state 树。单项新组的首帧估算
+  // 可以独立于截断树保留后续 marker，因此树来源改由 retained / treeLen / tree 内容直接判定。
   const doc = "para\n\n".repeat(7500) + "词汇\n- s\n\n- 后项";
   await openBody(page, "oracle.md", doc);
   await page.locator(".cm-scroller").evaluate((el) => { el.scrollTop = el.scrollHeight; });
@@ -657,14 +657,14 @@ test("正文 IME：state 同步覆盖收束目标后非文档更新必须改用�
     return {
       retained: plugin.settledTree !== null,
       treeLen: plugin.tree.length,
-      markers: el.querySelectorAll(".cm-lp-list-marker").length,
+      tree: plugin.tree.toString(),
     };
   }, settled.to);
   expect(held.retained, "state 未覆盖目标行时必须保留截断的收束树").toBe(true);
   // 对照解析停在目标行末（可能含行尾换行），但必须短于全文、不含后续列表行。
   expect(held.treeLen).toBeGreaterThanOrEqual(settled.to);
   expect(held.treeLen).toBeLessThan(settled.newLen);
-  expect(held.markers, "截断树不含后续列表行：临时失去 marker").toBe(0);
+  expect(held.tree, "截断树本身不得含后续列表行").not.toContain("BulletList");
   const synced = await page.locator(".cm-content").evaluate((el) => {
     const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
     const findLang = () => {
