@@ -52,6 +52,30 @@
 未命中「必须找 Alex 的例外类别」：视觉基线更新已单独获 Alex「允许」，无未决的价值 / 行为裁决、
 无影响面升级、评审结论与 tip 均无异常、证据无缺口，故不另送 Alex。
 
+## 节点 2 记录（归档后，2026-11-21）
+
+- **归档提交**：`689598c5579c629f38020099d4f150b1a807e345`（归档目录 + 并入后的
+  `openspec/specs/multi-tabs/spec.md`；8.1 的勾选在本归档命令成功后写入，随同一提交；本段记录
+  本身是其后一笔文档提交，审计仍定位该归档提交）。
+- **`openspec archive` 实际输出**（`node scripts/openspec-archive.mjs close-all-tabs-nov21`，
+  退出码 0）：`Task status: 31/32 tasks` / `Warning: 1 incomplete task(s) found. Continuing due to
+  --yes flag.` / `Specs to update:` / `multi-tabs: update` / `~ 1 modified` /
+  `Totals: + 0, ~ 1, - 0, → 0` / `Specs updated successfully.` /
+  `Change 'close-all-tabs-nov21' archived as '2026-11-21-close-all-tabs-nov21'.`。唯一未勾项即
+  8.1（归档命令本身），归档成功后补勾；归档后 `tasks.md` 32/32。
+- **归档后修链**：`归档后修链 2 处（扫过 3 篇 Markdown / 2 条相对链接）`——
+  `proposal.md:19` 与 `proposal.md:24` 的 `../../../docs/process/openspec-workflow.md` →
+  `../../../../docs/process/openspec-workflow.md`。包装器末置门禁
+  `openspec-links: PASS（校验 650 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived close-all-tabs-nov21`，
+  2026-11-21T14:34Z，退出码 0）：
+  `PASS（openspec/changes/archive/2026-11-21-close-all-tabs-nov21：1 条 MODIFIED，对比 24 段；
+  人工恢复 0 段，声明认领 0 段）`——MODIFIED 的段落全部落进归档后的 living spec，无静默丢段。
+- **归档后复跑读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` →
+  `Totals: 37 passed, 0 failed (37 items)`（退出码 0）；`node scripts/openspec-archive-check.mjs`
+  门禁模式 → PASS（`扫过 10 份 delta，10 条 MODIFIED，对比 180 段，无静默丢段；归档队列 0 项已完成
+  change 均有唯一条目`）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0）。
+
 ## Why
 
 标签右键菜单已有四条项：Reveal in File Tree / Close / Close Other Tabs / Close Tabs to the
