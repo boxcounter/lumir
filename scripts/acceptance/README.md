@@ -225,6 +225,7 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 | 磁盘水位 | `< 2G` 拒绝启动（可选显式绕过，见下） | 真机实例触发 cargo/vite 时 ENOSPC 硬失败（批次四实证） |
 | 同机已有 Lumir 实例 | 检出**安装版**（`*.app/Contents/MacOS/lumir`）或**残留的开发实例**（`target/debug/lumir`）即拒绝启动，消息给出 pid 与清除指引（退出码 2）；挡住之后怎么处理按「被挡住的非在途实例：可代为正常退出」判归属，不要一律 `kill` | 在场的第二个实例会与套件实例共用同一份 AX / 前台归属（bundle flavour 的 bundle id 自 M622 起已独立，但前台 / AX 归属仍是全机共享资源），**静默**改变「前台焦点归谁」这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 「键盘注入丢键」条；2026-10-13 的复跑就是在这样的现场上跑的） |
 | 打包实例身份 | bundle flavour 下从产物 `Contents/Info.plist` 读 `CFBundleIdentifier`，必须等于 `com.lumir.app.acceptance`（≠ 产品 id `com.lumir.app`），否则拒绝启动（退出码 2） | 同 bundle id 的验收副本点通知会被 LaunchServices 解析到安装版（M619 的根因）；漏了构建期 `--config` 的产物在这里就红，不留假绿（见「实例 flavour」） |
+| 副屏放置变量 | `LUMIR_ACCEPTANCE_DISPLAY` 只接受未设 / 空串 / `primary` / `secondary`；其它值退出码 2。`secondary` 在少于 2 块屏时**启动前**退出码 2 | opt-in 的写动作：变量拼错或单屏静默落回主屏，会让人以为副屏生效了（判据见「副屏放置」） |
 | 1420 端口 | 只报告占用情况 | 全机同一时刻只能有一个 `pnpm tauri dev`（vite strictPort 1420）；本套件走独立端口，但仍先看一眼同机负载 |
 | 跑批独占锁 | 需持锁的真跑批先 `mkdir` 抢 `/tmp/lumir-acceptance-rmachine.lock`；已被别人持有时拒绝启动（退出码 2） | 合成 vault 与 dev 端口都是**全机共享**的，光靠人工约定会漏——两条跑批错开启动就能互相 `resetVault`（见下节） |
 | 锁屏 / 息屏 | `ioreg -n Root -d1 \| grep IOConsoleLocked` 为 `Yes` 即拒绝启动（退出码 2）；跑批期间 `caffeinate -dimsu`，合盖状态本身仍会强制息屏 | 锁屏 / 息屏时 macOS 不向后台暴露窗口 AX 内容，一切 AX / 截图通道失效，重注册 KimiCU 也无效——只能等唤醒（M508/M511） |
@@ -318,6 +319,49 @@ LaunchServices、没有启动激活）⇒ **启动零激活**：无人在场的�
   而它今天只是一条 ⚠ 证据）。
 - **不许用「删掉 / 跳过 resize 步」绕这个 flake**：117 一类场景的像素判据以前置几何为前提。耗尽
   的证据在 steps.md 的步骤结果与错误文本里（逐次 `#N` 的 err 与回读），归因不必回真机加探针。
+
+**副屏放置（opt-in，`LUMIR_ACCEPTANCE_DISPLAY=secondary`）**：多显示器时把验收窗口放到
+**当前焦点窗口所在屏之外**的那块屏，让 Alex 在另一块屏继续阅读文档。默认关闭——不设变量时
+一行都不执行，套件行为与之前逐字一致。
+
+```bash
+# 副屏实测 / 边读文档边跑批
+LUMIR_ACCEPTANCE_DISPLAY=secondary node scripts/acceptance/run.mjs 271
+LUMIR_ACCEPTANCE_DISPLAY=secondary node scripts/acceptance/run.mjs --batch core
+```
+
+- **取值是闭集合**：未设 / 空串 / `primary` = 关闭；`secondary` = 启用；其它值在**碰任何机器
+  资源之前**退出码 2（拼错一个字母不能悄悄落回主屏）。
+- **只动本跑批的验收窗口**：pid 来自 `launchApp`，窗口由 `ax-window.swift` 按
+  `AXSubrole == AXStandardWindow` 选主窗；不遍历、不移动任何其它 app 的窗口。检测读数是
+  `lib/ax-display.swift`（NSScreen + 系统焦点窗口的 AX 读数，Cocoa → Quartz 坐标在 Swift 侧
+  折算好），选屏 / 钳位 / 回读判据在 `lib/display.mjs`（纯函数，`lib/display.test.mjs` 钉住）。
+- **时机**：每次 `launchApp`（首启与 `do: restart`）过就绪门、钉完尺寸之后，抢前台之前。保留
+  刚钉好的**生效尺寸**；落点是目标屏 `visibleFrame` 的左上角，尺寸超出可见区时逐维钳到可见区。
+- **目标屏在本次跑批内固定**：第一次放置后沿用 `targetKey`，后续重启即使焦点已变成验收 app
+  自己，也不会把窗口搬回用户屏；拔屏 / 换布局导致目标屏消失时才按当前焦点重选。**固定目标屏
+  不绕过单屏检查**：跑批中拔屏退化成单屏时，即使固定的目标屏仍在清单里，下一场也直接
+  `InfraError`（见下条）。
+- **证据**：每一步的「前台焦点」行会多一段 `副屏放置：目标 #1 "…" …；焦点屏 #0 "…"（app pid，
+  窗口 …）；窗口 x=… → x=…；写入 N 次；校验：回读在目标屏可见区内`；`run.log` 另逐次记
+  `DISPLAY pid=… target=…#… before=… after=… already=…`。启动时先打印屏幕清单与启动焦点屏。
+- **失败不静默**：单屏（`secondary` 需要 ≥2 块屏，**包括跑批中拔屏退化成单屏、即使已固定的
+  目标屏仍在线**）/ 写通道耗尽 / 回读不在目标屏可见区内 / 写入后复核换了屏 ⇒ `InfraError`，
+  该场 INVALID、整轮退出码 2，错误里带屏幕清单、焦点屏、前后 `window_bounds` 与逐次写入读数。
+  启动前的单屏在**拉起之前**就退出，不浪费一次启动。
+- **边界**：
+  - **不等于不抢焦点**：`tryForeground` 照旧在每个场景就绪后把 Lumir 提到前台（`AXRaise` →
+    System Events `set frontmost`）；`doubleClick` / `drag` / `click.modifiers` / CGEvent 滚轮等
+    真实指针通道仍要求窗口在前台 / 是 key window。副屏只决定窗口落在哪块屏，不改变这条纪律。
+  - **126-window-geometry 不移动**：它的判据本体是「启动几何 + 主屏工作区比例」，窗口被挪到
+    别的工作区会让 oracle 失效；该场景在副屏模式下会打一行「跳过」并保持启动位置（与
+    `NO_PIN_WINDOW_SCENARIOS` 同一豁免理由）。`screenWorkArea()` 也仍读**主屏** `visibleFrame`
+    （M437 的口径），几何比例类判据不要与副屏模式混用。
+  - 窗口落在副屏后，`window_bounds` / 像素坐标断言仍按 AX 读数判；**不要**把主屏工作区的绝对值
+    写进场景。目标屏可见区放不下套件钉的 1200×800 时窗口会按目标屏钳小（与主屏放不下的既有 ⚠
+    边界同档），坐标 / 像素类场景按生效值判——要跑这类场景请用能放下 1200×800 的副屏。
+  - 若两块屏 backing scale 不同，移动后 webview 会重新排版一拍，由后续 `settle` 吸收；本机两块屏
+    均为 scale 2，混合 scale 现场未单独验证。
 
 **钉尺寸不许落在启动恢复窗口里**（M516）：钉窗口是**写**——它触发 relayout，而产品的启动
 恢复段就在就绪门之后跑：`applyVault`（`src/main.ts:2769-2840`）先

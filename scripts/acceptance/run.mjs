@@ -9,6 +9,7 @@
 //   node scripts/acceptance/run.mjs --list          # 列出场景（配合 --batch 看该批有哪些）
 //   node scripts/acceptance/run.mjs --keep-app      # 跑完保留 app（人工接手看现场）
 //   node scripts/acceptance/run.mjs --check         # 静态校验场景（不真机、不建锁）
+//   LUMIR_ACCEPTANCE_DISPLAY=secondary node scripts/acceptance/run.mjs …  # 副屏放置（opt-in，见 README）
 //
 // 真跑批先抢 `/tmp/lumir-acceptance-rmachine.lock`：同机已有跑批时拒绝启动，不再靠人工约定串行
 // （显式覆写 `LUMIR_ACCEPTANCE_VAULT` 到别的 vault 则跳过锁，按「各自隔离」并行——见下方 acquireRmachineLock）。
@@ -55,6 +56,16 @@ import {
 } from "./lib/drive.mjs";
 import { Evidence, appendRunLog, writeSummary } from "./lib/evidence.mjs";
 import { checkScenario, loadScenario, runScenario } from "./lib/execute.mjs";
+import {
+  describeScreen,
+  describeScreens,
+  DISPLAY_ENV,
+  displayModeFromEnv,
+  formatBounds,
+  placeWindowOnDisplay,
+  prepareSecondaryDisplay,
+  screenByKey,
+} from "./lib/display.mjs";
 import { DEFAULT_BATCH, parseBatchArgs, selectBatch, selectScenarios, summarizeTiers, TIERS } from "./lib/batches.mjs";
 import { checkCoverage } from "./coverage.mjs";
 import { envHome, InfraError, log, mkdirp, repoRoot, resultsRoot, sleep, vaultDir } from "./lib/util.mjs";
@@ -72,6 +83,19 @@ if (batchArgs.problems.length) {
   process.exit(2);
 }
 const filters = batchArgs.positional;
+
+/**
+ * 副屏放置（opt-in，`LUMIR_ACCEPTANCE_DISPLAY`）的取值校验：闭集合（未设 / 空串 / primary /
+ * secondary），在碰任何机器资源之前退出。写错一个字母不能悄悄回到主屏——那会让人以为副屏生效了
+ * （README「副屏放置」节是口径的 canonical 居所）。
+ */
+let displayMode;
+try {
+  displayMode = displayModeFromEnv();
+} catch (e) {
+  log(`✗ ${e.message}`);
+  process.exit(2);
+}
 const scenariosDir = path.join(repoRoot(), "scripts/acceptance/scenarios");
 
 /**
@@ -526,8 +550,56 @@ function sumPhases(results) {
   return totals;
 }
 
+/**
+ * 副屏放置（opt-in）：每次启动 / restart 的共用入口。`displayState.targetKey` 会在第一次成功
+ * 放置后固定下来——后续启动即使焦点已变成验收 app 自己，也不会把窗口搬回用户所在屏。
+ * 126 等豁免钉尺寸的场景不移动（判据本体是启动几何，见 NO_PIN_WINDOW_SCENARIOS 的注释）。
+ */
+async function placeForSecondary(displayState, pid, pinWindow, scenarioId) {
+  if (!pinWindow) {
+    return `副屏放置：跳过（${scenarioId} 的判据本体是启动几何，套件不移动该场景窗口）`;
+  }
+  const placed = await placeWindowOnDisplay({
+    pid,
+    previousTarget: displayState.targetKey,
+    focusHintKey: displayState.focusHintKey,
+  });
+  displayState.targetKey = placed.targetKey;
+  await appendRunLog(
+    root,
+    `${new Date().toISOString()} DISPLAY pid=${pid} target=#${placed.target.index} "${placed.target.name}" ` +
+      `before=${formatBounds(placed.before)} after=${formatBounds(placed.after)} already=${placed.already}`,
+  );
+  log(`  ${placed.note}`);
+  return placed.note;
+}
+
 async function main() {
   const targets = assertSafeTargets();
+  // 副屏放置（opt-in）：在任何拉起 / 抢锁之前先读一次显示器清单——单屏直接退出（不浪费一次
+  // 启动，也不静默落回主屏）；同时把「启动时用户焦点在哪块屏」记成 hint，之后哪怕验收 app 被
+  // 激活也能回到用户原来的屏（判据见 lib/display.mjs 的 placeWindowOnDisplay）。
+  let displayState = null;
+  if (displayMode === "secondary") {
+    const prepared = prepareSecondaryDisplay();
+    const hint = screenByKey(prepared.snapshot.screens, prepared.focusHintKey);
+    displayState = { targetKey: null, focusHintKey: prepared.focusHintKey };
+    log(`副屏放置：已启用（${DISPLAY_ENV}=secondary）；检测到 ${prepared.snapshot.screens.length} 块显示器`);
+    log(`  ${describeScreens(prepared.snapshot.screens)}`);
+    log(
+      `  启动焦点屏：${hint ? describeScreen(hint) : "不可判定"}` +
+        (prepared.snapshot.focus
+          ? `（${prepared.snapshot.focus.app} pid=${prepared.snapshot.focus.pid}，窗口 x=${prepared.snapshot.focus.bounds.x} y=${prepared.snapshot.focus.bounds.y} ${prepared.snapshot.focus.bounds.w}×${prepared.snapshot.focus.bounds.h}）`
+          : prepared.snapshot.focusError
+            ? `（${prepared.snapshot.focusError}）`
+            : ""),
+    );
+    await appendRunLog(
+      root,
+      `${new Date().toISOString()} DISPLAY secondary screens=${prepared.snapshot.screens.length} ` +
+        `focus=${hint ? `#${hint.index} "${hint.name}"` : "unknown"} target=pending`,
+    );
+  }
   // 锁要在任何动共享资源的动作之前拿（reclaimPort 会杀进程、resetVault 会删文件）。
   if (needsRmachineLock()) {
     await acquireRmachineLock();
@@ -688,12 +760,16 @@ async function main() {
         pinNote = await pinWindowSize(cu, handle.pid, suiteWindowSize());
         log(`  ${pinNote}`);
       }
+      // 副屏放置（opt-in）：钉尺寸之后、抢前台之前挪窗——保留刚钉好的生效尺寸，只换屏。
+      // 豁免钉尺寸的场景（126）同样跳过移动：它的判据本体是「启动几何 + 主屏工作区比例」，
+      // 把窗口挪到别的工作区会让 oracle 失效（理由与 NO_PIN_WINDOW_SCENARIOS 同一份）。
+      const displayNote = displayState ? await placeForSecondary(displayState, handle.pid, pinWindow, scenario.id) : "";
       // tower 纪律：键盘场景先尽力拿前台并如实记录（拿不到不中止——行为断言才是注入是否落地的证据）。
       // 手段与失败原因由 `drive.mjs` 的 foregroundNote 统一成一行（M478）：用了 AXRaise 还是
       // System Events、失败时的 osascript stderr 全落进证据——此前只有「已取得 / 未取得」两个词，
       // 复盘时分不出「激活没投出去」与「投出去了没生效」。
       const fg = await tryForeground(cu, handle.pid);
-      fgNote = [restoreNote, pinNote, foregroundNote(fg)].filter(Boolean).join("\n");
+      fgNote = [restoreNote, pinNote, displayNote, foregroundNote(fg)].filter(Boolean).join("\n");
       log(`  ${foregroundNote(fg)}`);
       const ctx = {
         cu,
@@ -730,8 +806,10 @@ async function main() {
           if (pinWindow) {
             pinNote2 = await pinWindowSize(cu, handle.pid, suiteWindowSize(), { prefix: "重启" });
           }
+          // 重启同样落到本次跑批已选定的副屏（目标屏在第一次放置后固定，见 placeForSecondary）。
+          const displayNote2 = displayState ? await placeForSecondary(displayState, handle.pid, pinWindow, scenario.id) : "";
           const fg2 = await tryForeground(cu, handle.pid);
-          ctx.foregroundNote = [restoreNote2, pinNote2, foregroundNote(fg2, { prefix: "重启前台焦点" })]
+          ctx.foregroundNote = [restoreNote2, pinNote2, displayNote2, foregroundNote(fg2, { prefix: "重启前台焦点" })]
             .filter(Boolean)
             .join("\n");
           ctx.pid = handle.pid;
