@@ -199,6 +199,68 @@ test("行范围后缀后紧跟 ASCII 路径字符 ⇒ 整段不成立（沿用�
   }
 });
 
+test("句末英文句号是行文标点，不吞行号后缀（mission harness-navigation-nov21）", () => {
+  // 现场形态：agent 行文里写「见 design.md:69.」。`.` 曾被当作路径延续字符 ⇒ 整个
+  // `:69` 后缀被拒 ⇒ 链接退化成 `design.md`、点击只开到文件首（行号静默丢失）。
+  const single = findPathCandidates("见 design.md:69.", fileIndex("design.md"));
+  assert.equal(single.length, 1);
+  assert.equal(single[0].line, 69);
+  assert.equal(single[0].lineEnd, 69);
+  assert.equal(single[0].text, "design.md:69", "句号留在可点范围之外");
+  assert.equal(single[0].to, "见 design.md:69".length);
+
+  const range = findPathCandidates("见 design.md:69-72.", fileIndex("design.md"));
+  assert.equal(range[0].line, 69);
+  assert.equal(range[0].lineEnd, 72, "行范围形态的闭区间止行不回归");
+  assert.equal(range[0].text, "design.md:69-72");
+
+  const column = findPathCandidates("见 design.md:69:5.", fileIndex("design.md"));
+  assert.equal(column[0].line, 69);
+  assert.equal(column[0].column, 5);
+  assert.equal(column[0].text, "design.md:69:5");
+
+  const ellipsis = findPathCandidates("见 design.md:69...", fileIndex("design.md"));
+  assert.equal(ellipsis[0].line, 69);
+  assert.equal(ellipsis[0].text, "design.md:69", "省略号同样只是行文标点");
+
+  // 点号段后接空白 / 中文 / 串尾都是行文收尾；只有后接路径字符才拒（见下一条反例）。
+  const dotSpace = findPathCandidates("见 design.md:69. 完", fileIndex("design.md"));
+  assert.equal(dotSpace[0].line, 69);
+  assert.equal(dotSpace[0].text, "design.md:69");
+
+  const dotsThenCjk = findPathCandidates("见 design.md:69....的", fileIndex("design.md"));
+  assert.equal(dotsThenCjk[0].line, 69, "中文是行文边界，不是路径延续");
+  assert.equal(dotsThenCjk[0].text, "design.md:69");
+});
+
+test("连续点号段后仍接路径字符 ⇒ 整个后缀不成立（评审 r1 P1 的误放行面）", () => {
+  // 只把「点后紧跟数字」当拒绝条件会误放行 `.foo` / `..5` / `.-3` / `._3` / `./3`：
+  // 它们都是路径 / 版本号的延续，不是句末标点。判据必须是**连续点号段**之后的第一个字符。
+  for (const suffix of [".5", ".foo", "..5", ".-3", "._3", "./3", "...foo", "....5"]) {
+    const single = findPathCandidates(`a.md:12${suffix}`, fileIndex("a.md"));
+    assert.equal(single[0].line, undefined, `single ${suffix}：后缀不成立`);
+    assert.equal(single[0].lineEnd, undefined, `single ${suffix}：不产高亮范围`);
+    assert.equal(single[0].text, "a.md", `single ${suffix}：可点范围止于路径本身`);
+
+    const range = findPathCandidates(`a.md:12-40${suffix}`, fileIndex("a.md"));
+    assert.equal(range[0].line, undefined, `range ${suffix}：后缀不成立`);
+    assert.equal(range[0].lineEnd, undefined, `range ${suffix}：不产高亮范围`);
+    assert.equal(range[0].text, "a.md", `range ${suffix}：可点范围止于路径本身`);
+
+    const column = findPathCandidates(`a.md:12:5${suffix}`, fileIndex("a.md"));
+    assert.equal(column[0].line, undefined, `column ${suffix}：后缀不成立`);
+    assert.equal(column[0].column, undefined, `column ${suffix}：不产列号`);
+    assert.equal(column[0].text, "a.md", `column ${suffix}：可点范围止于路径本身`);
+  }
+
+  // 既有拒绝类逐字不变（回归对照）：字母 / 斜杠 / 下划线 / 连字符仍是路径延续。
+  for (const text of ["a.md:12x", "a.md:12/5", "a.md:12_3", "a.md:12-3"]) {
+    const found = findPathCandidates(text, fileIndex("a.md"));
+    assert.equal(found[0].line, undefined, `${text}：后缀不成立`);
+    assert.equal(found[0].text, "a.md", text);
+  }
+});
+
 test("`-` 两侧含空白时按既有 :行号 口径只吞到第一个数字", () => {
   const found = findPathCandidates("notes/plan.md:12 - 40", fileIndex("notes/plan.md"));
   assert.equal(found.length, 1);
