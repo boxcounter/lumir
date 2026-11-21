@@ -69,22 +69,26 @@ steps:
           jsonl: { run_tag: "$runTag", case: delete-uncancelable, doc_final: "词汇\n- \n后续", settle_timeout: false, parse_pending_at_end: false }
       - shot: 03-不可取消删空
 
-  - name: 候选提交“是”：文档只新增候选，目标行 marker 恢复
+  - name: 候选以 insertText 提交且无 compositionend：产品补 end 后恢复正式 marker
     do: imeDrive
-    ime: { case: commit, line: 2, timeoutMs: 8000 }
+    ime: { case: commit-inserttext, line: 2, timeoutMs: 8000 }
     expect:
+      - label: 候选经 insertText 提交且没有原生 compositionend
+        file:
+          path: "env:acceptance/ime/commit-inserttext.jsonl"
+          jsonl: { run_tag: "$runTag", case: commit-inserttext, commit_via_insert_text: true, saw_composition_end: false }
       - label: 候选提交后文档为 词汇\\n- 是\\n后续，解析已收束
         file:
-          path: "env:acceptance/ime/commit.jsonl"
-          jsonl: { run_tag: "$runTag", case: commit, doc_final: "词汇\n- 是\n后续", settle_timeout: false, parse_pending_at_end: false }
+          path: "env:acceptance/ime/commit-inserttext.jsonl"
+          jsonl: { run_tag: "$runTag", case: commit-inserttext, doc_final: "词汇\n- 是\n后续", settle_timeout: false, parse_pending_at_end: false }
       - label: 目标行 marker 恢复且不重复，组合期无提前渲染
         file:
-          path: "env:acceptance/ime/commit.jsonl"
-          jsonl: { run_tag: "$runTag", case: commit, marker_composing_peak: 0, marker_final: 1, marker_peak: 1 }
+          path: "env:acceptance/ime/commit-inserttext.jsonl"
+          jsonl: { run_tag: "$runTag", case: commit-inserttext, marker_composing_peak: 0, marker_final: 1, marker_peak: 1 }
       - label: 相邻行 DOM 保持
         file:
-          path: "env:acceptance/ime/commit.jsonl"
-          jsonl: { run_tag: "$runTag", case: commit, prev_dom_final: "词汇", next_dom_final: "后续" }
+          path: "env:acceptance/ime/commit-inserttext.jsonl"
+          jsonl: { run_tag: "$runTag", case: commit-inserttext, prev_dom_final: "词汇", next_dom_final: "后续" }
       - label: fixture 未被写盘
         file: { path: ime-list-setext.md, unchangedSince: imeBase }
       - label: fixture mtime 未被写盘
@@ -106,6 +110,12 @@ text / 按键时序。PASS 只表示产品 JS 路径在该序列下正确；原�
 doc 已变为 `- s`，但 state 语法树在组合期尚未跟上 list，`build` 拿不到 list 判定，冻结分支因此
 没有区分度（120ms 组合观察窗与 300ms 收束窗都读不到 marker）。**本场景不证明组合期冻结**；
 组合期不插入 marker 的承诺仍归 156 / 262 真机人工矩阵。
+
+**insertText 提交（无 compositionend）**：WKWebView 的候选可能以 `insertText`
+（`isComposing:false`）提交且不发 `compositionend`；CM 的 composing 仍为 true，装饰会冻结在
+组合前 shield。产品在 `input insertText` 上补一次 end 信号，走既有 settle，DOM 退出组合
+视图后渲染正式 marker。场景的 commit 步使用 `commit-inserttext` case，并断言
+`saw_composition_end:false`。
 
 **不可取消的 pending delete**：WebKit 的 `TypingDeletePendingComposition` 不可取消
 （`isBeforeInputEventCancelable` 返回 false），`preventDefault` 无效。本场景新增

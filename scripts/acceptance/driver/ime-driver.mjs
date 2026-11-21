@@ -274,6 +274,7 @@ if (!globalThis.__lumirImeDriver) {
       shield_present: false,
       default_delete_attempted: false,
       commit_prevented: null,
+      commit_via_insert_text: false,
       model_updated_after_commit: false,
       dom_edit: "range",
     };
@@ -339,6 +340,21 @@ if (!globalThis.__lumirImeDriver) {
       content.dispatchEvent(compositionEvent("compositionend"));
       report.saw_composition_end = true;
       report.event_sequence.push("compositionend");
+    } else if (cmd.case === "commit-inserttext") {
+      // WKWebView 候选以 insertText（isComposing:false）提交且不发 compositionend；
+      // 产品在 input insertText 上补一次 end 信号。驱动只复刻原生事件，不补 end。
+      const commit = cmd.commit;
+      if (typeof commit !== "string" || commit === "") fatal("commit-inserttext case 缺少候选项文本");
+      const before = inputEvent("beforeinput", "insertText", commit, false);
+      const notPrevented = content.dispatchEvent(before);
+      report.commit_prevented = !notPrevented;
+      report.commit_via_insert_text = true;
+      report.event_sequence.push("beforeinput:insertText");
+      if (notPrevented) {
+        replaceMarkedText(marked, commit);
+        content.dispatchEvent(inputEvent("input", "insertText", commit, false));
+        report.event_sequence.push("input:insertText");
+      }
     } else if (cmd.case === "commit") {
       const commit = cmd.commit;
       if (typeof commit !== "string" || commit === "") fatal("commit case 缺少候选项文本");
@@ -361,7 +377,7 @@ if (!globalThis.__lumirImeDriver) {
       fatal(`未知 case ${cmd.case}`);
     }
 
-    const expectedMarker = cmd.case === "commit" ? 1 : 0;
+    const expectedMarker = cmd.case === "commit" || cmd.case === "commit-inserttext" ? 1 : 0;
     const settled = await waitSettled(view, targetLine, expectedMarker, cmd.timeoutMs);
     const final = sample(view, targetLine, pos);
     report.doc_final = final.doc;

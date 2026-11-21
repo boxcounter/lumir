@@ -33,7 +33,7 @@ const fakeFetch = (handler) => {
 };
 
 test("imeDrive case 数据与命令校验", () => {
-  assert.deepEqual(Object.keys(IME_CASES).sort(), ["commit", "compose", "delete-empty", "delete-uncancelable"]);
+  assert.deepEqual(Object.keys(IME_CASES).sort(), ["commit", "commit-inserttext", "compose", "delete-empty", "delete-uncancelable"]);
   const base = { id: "x", runTag: "t", case: "commit", line: 2, text: "s", commit: "是", timeoutMs: 1000 };
   assert.equal(validateImeCommand(base), null);
   assert.match(validateImeCommand({ ...base, case: "bogus" }), /case/);

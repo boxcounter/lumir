@@ -296,6 +296,56 @@ test("正文 IME：不可取消的 pending delete 不得吞掉 setext 候选的 
   await expect(page.locator(".cm-line").nth(2)).toContainText("后续");
 });
 
+test("正文 IME：insertText 提交且无 compositionend 时解除 shield 冻结（Chromium）", async ({ page }) => {
+  // WKWebView 候选可能以 insertText（isComposing:false）提交且不发 compositionend；
+  // CM 的 composing 仍为 true，update() 的冻结会让 shield 永不释放。input insertText 是
+  // 已提交的证据：补一次 end 信号，走既有 settle，让 DOM 退出组合视图并渲染正式 marker。
+  const doc = "词汇\n- \n后续";
+  await openBody(page, "oracle.md", doc);
+  const probe = await page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.focus();
+    view.dispatch({ selection: { anchor: 5 } });
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    const shieldBefore = el.querySelectorAll(".cm-lp-source-shield").length;
+    // 组合文本 s（insertCompositionText）
+    view.dispatch({ changes: { from: 5, insert: "s" }, selection: { anchor: 6 }, userEvent: "input.type.compose" });
+    const shieldDuring = el.querySelectorAll(".cm-lp-source-shield").length;
+    // 候选以 insertText 提交：beforeinput isComposing:false；随后浏览器默认替换 marked text。
+    const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, data: "是", isComposing: false });
+    Object.defineProperty(before, "inputType", { value: "insertText" });
+    const notPrevented = el.dispatchEvent(before);
+    view.dispatch({ changes: { from: 5, to: 6, insert: "是" }, selection: { anchor: 6 }, userEvent: "input.type.compose" });
+    const input = new InputEvent("input", { bubbles: true, data: "是", isComposing: false });
+    Object.defineProperty(input, "inputType", { value: "insertText" });
+    el.dispatchEvent(input);
+    return {
+      shieldBefore,
+      shieldDuring,
+      notPrevented,
+      composing: view.compositionStarted,
+      doc: view.state.doc.toString(),
+    };
+  });
+  expect(probe.shieldBefore).toBe(1);
+  expect(probe.shieldDuring).toBe(1);
+  expect(probe.notPrevented).toBe(true);
+  expect(probe.composing, "同步读数：补 end 在微任务里").toBe(true);
+  expect(probe.doc).toBe("词汇\n- 是\n后续");
+  await expect.poll(async () => page.locator(".cm-lp-list-marker").count()).toBe(1);
+  await expect.poll(async () => page.locator(".cm-lp-source-shield").count()).toBe(0);
+  await expect.poll(async () => page.locator(".cm-line").nth(1).textContent()).toBe("–是");
+  await expect(page.locator(".cm-line").nth(2)).toContainText("后续");
+  // 真实 compositionend 后续到达：不得重复恢复 / 重复 marker。
+  await page.locator(".cm-content").evaluate((el) => {
+    const view = (el as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    return view.state.doc.toString();
+  });
+  await expect(page.locator(".cm-lp-list-marker")).toHaveCount(1);
+  await expect.poll(async () => page.locator(".cm-line").nth(1).textContent()).toBe("–是");
+});
+
 test("正文 IME：available 但 state 树陈旧时先同步再 build（Chromium）", async ({ page }) => {
   // 足够长的文档：dispatch 候选后 state 树不会同步解析到末尾，给 context 留出领先窗口。
   const doc = "para\n\n".repeat(2000) + "词汇\n- ";

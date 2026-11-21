@@ -947,7 +947,8 @@ marked text 下划线或原生按键时序。原生终判仍是 156 / 262 人工
 PASS——合成序列里 state 语法树在组合期未跟上 list），冻结承诺归 156 / 262 人工矩阵。
 271 另有 `delete-uncancelable` case：派发 `cancelable:false` 的 pending delete 并模拟浏览器
 默认删除，证明 setext 候选的 `- ` 由非可编辑原子 shield 隔离（原生 WebKit 的该事件不可取消，
-`preventDefault` 无效）。
+`preventDefault` 无效）。`commit-inserttext` case 覆盖候选以 `insertText` 提交且无
+`compositionend` 的原生路径：产品在 `input insertText` 上补 end，恢复正式 marker。
 
 ## 已知边界（写清楚，别当成 bug 去追）
 

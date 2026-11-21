@@ -1573,6 +1573,19 @@ function scheduleCompositionSettle(view: EditorView, attempt = 0): void {
 export const listDecorations: Extension = [
   ViewPlugin.fromClass(ListLayout, { decorations: plugin => plugin.decorations }),
   EditorView.domEventHandlers({
+    input(event, view) {
+      // WKWebView 候选提交可能走 insertText（isComposing:false）且不发 compositionend。
+      // 提交已发生，补一次 end 信号让 CM 退出组合视图并走既有 settle；持续拼音走
+      // insertCompositionText / isComposing:true，不命中；新组合 start 会重新建立状态。
+      const input = event as InputEvent;
+      if (view.compositionStarted && input.inputType === "insertText" && !input.isComposing) {
+        queueMicrotask(() => {
+          if (!view.dom.isConnected || !view.compositionStarted) return;
+          view.contentDOM.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+        });
+      }
+      return false;
+    },
     compositionend(_event, view) {
       // 不在事件 handler 里同步 dispatch：见 scheduleCompositionSettle 的注释。
       // dev-only 一次性取证：恢复链启动前的现场（含 state/context/plugin 三棵树）。
