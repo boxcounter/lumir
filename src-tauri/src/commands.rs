@@ -1463,29 +1463,153 @@ pub fn link_graph_resolve(
     inner.graph.resolve_link(from, link)
 }
 
-/// 未创建链接一键创建（spec §4.4，裁决点 I）：当前文件所在目录建空文件
-///
-/// **已知边界**（spec「全类型递归枚举」的已知边界段，实现期在此给出指针）：本命令按确定性路径
-/// 创建空文件、目标已存在则报错，**不做全 vault 搜索**。因此对一个「真实存在于惰性目录、但索引
-/// 里没有」的名字点「创建」会产生一个**重复文件**——这条风险在 change vault-open-ignore-set
-/// 之前就存在（任何未索引的名字都如此），引入用户规则只是把触发面变宽；本 change 不改它
-///（日后若要收，方向是「创建前做一次有界的同名探测」），已登记为后续候选。
+/// 未创建链接一键创建（spec §4.4，裁决点 I）：当前文件所在目录建空文件。
 /// （from 在 vault 根时建于根；target 含 `/` 时按 vault 根相对并补中间目录）。
 /// MUST NOT 覆盖或改写任何既有文件（ADR 0003 §3 铁律）：目标已存在 = 索引过期，
-/// 报 wikilink_target_exists，前端重新解析。
+/// 报 `wikilink_target_exists`，前端重新解析。
+///
+/// **索引外同名探测**（change fix-wikilink-unindexed-duplicate-nov22）：链接解析只看索引，
+/// 而索引按可见性规则建——惰性目录里的同名笔记不在索引里，直接按确定性路径创建会造出
+/// 重复文件（fs-io spec 此前的已知边界）。本命令因此分三段：
+///
+/// 1. 短持锁：取 root / 规则表 / 代际，并跑 `create_target`（词法、路径、unsupported 与
+///    「当前索引已可解析」的校验都留在 resolver 的唯一实现里，不复制语义）；
+/// 2. 无锁有界扫描（[`fs_io::scan_vault_for_wikilink_target`]）+ 临时 [`LinkGraph`] 复用
+///    `resolve_link`：resolved / ambiguous 都算冲突；**完整扫描且零候选**才放行；
+/// 3. 重新短持锁核对 root + generation，再走原有 [`LinkGraph::create_note`]（索引重查与
+///    底层 `O_EXCL` 不变）。
+///
+/// 扫描期间不持锁是要点：同步的 `link_graph_resolve` 也在这把锁上，持锁扫描会把等待转嫁给
+/// IPC 主线程。错误码复用 `wikilink_target_exists` / `wikilink_create_failed`，前端零改动。
+///
+/// **剩余边界**（不做绝对承诺）：外部进程在「探测结束 → 创建」之间往别的目录放同名文件，
+/// 本命令防不住（跨进程竞态）；它只保证自身不再制造重复。超限 / 读不到一律拒绝——「无法
+/// 证明不存在」不等于「不存在」。
 #[tauri::command]
-pub fn wikilink_create(
+pub async fn wikilink_create(
     state: tauri::State<'_, VaultState>,
+    from: String,
+    link: String,
+) -> Result<CreateNoteResult, CommandError> {
+    create_note_guarded(&state, from, link).await
+}
+
+/// 一键创建的两阶段实现（[`wikilink_create`] 只做委托）。
+pub(crate) async fn create_note_guarded(
+    state: &VaultState,
+    from: String,
+    link: String,
+) -> Result<CreateNoteResult, CommandError> {
+    create_note_guarded_with_budget(state, from, link, fs_io::ProbeBudget::default()).await
+}
+
+/// 预算显式传入：生产走 [`fs_io::ProbeBudget::default`]，测试用极小预算覆盖 fail-closed
+/// （不为了测试真的造两万个目录项）。
+async fn create_note_guarded_with_budget(
+    state: &VaultState,
+    from: String,
+    link: String,
+    budget: fs_io::ProbeBudget,
+) -> Result<CreateNoteResult, CommandError> {
+    let (root, policy, generation) = {
+        let inner = state.inner.lock().expect("vault state poisoned");
+        let vault = inner
+            .vault
+            .as_ref()
+            .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))?;
+        inner.graph.create_target(&from, &link)?;
+        (vault.root.clone(), vault.policy.clone(), inner.generation)
+    };
+
+    let probe_root = root.clone();
+    let probe_from = from.clone();
+    let probe_link = link.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        probe_unindexed_duplicate(&probe_root, &policy, &probe_from, &probe_link, budget)
+    })
+    .await
+    .map_err(|e| {
+        CommandError::new(
+            "wikilink_create_failed",
+            format!("同名探测任务异常结束：{e}"),
+        )
+    })??;
+
+    finish_create_in_same_generation(state, &root, generation, &from, &link)
+}
+
+/// 索引外同名探测（`spawn_blocking` 线程内执行，不持 `VaultState` 锁）：有界扫描 →
+/// 临时 [`LinkGraph`] → 复用 `resolve_link`。
+///
+/// 冲突（resolved / ambiguous）优先于「扫描不完整」：已经看到的候选是既成事实，即使扫描
+/// 后来超限也照报；只有「完整扫描且零候选」才返回 Ok。超限 / 读不到按「无法证明不存在」
+/// 拒绝（fail-closed）。临时图用完即弃，MUST NOT 合并进常驻索引——惰性候选是否进索引是
+/// 可见性规则的事，与本探测无关。
+fn probe_unindexed_duplicate(
+    root: &Path,
+    policy: &fs_io::IgnorePolicy,
+    from: &str,
+    link: &str,
+    budget: fs_io::ProbeBudget,
+) -> Result<(), CommandError> {
+    let scan = fs_io::scan_vault_for_wikilink_target(root, policy, budget);
+    let mut graph = LinkGraph::new();
+    for path in &scan.files {
+        // 不读正文：标题锚点只影响 anchor 状态，不影响 resolved / ambiguous 判定。
+        graph.upsert(path, None);
+    }
+    let res = graph.resolve_link(from, link)?;
+    match res.status {
+        link_graph::LinkStatus::Resolved | link_graph::LinkStatus::Ambiguous => {
+            let hit = if res.status == link_graph::LinkStatus::Ambiguous {
+                res.candidates.join("、")
+            } else {
+                res.path.clone().unwrap_or_default()
+            };
+            return Err(CommandError::new(
+                "wikilink_target_exists",
+                format!("索引外已存在同名目标：{hit}（索引可能已过期），已拒绝创建以免重复"),
+            ));
+        }
+        // Unsupported 到不了这里（`create_target` 已拒绝 block_ref）；Unresolved 即零候选。
+        _ => {}
+    }
+    if !scan.complete {
+        return Err(CommandError::new(
+            "wikilink_create_failed",
+            format!(
+                "无法在有限范围内完成同名探测（{}），未创建文件",
+                scan.incomplete_reason.unwrap_or_else(|| "未知原因".into())
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// 探测之后的提交段：同一把锁内核对 vault 仍是探测时那一个（root + generation），
+/// 相符才走原有 [`LinkGraph::create_note`]（它自己重查索引，底层 `O_EXCL` 创建不变）。
+///
+/// 代际不一致 = 探测结果属于旧 vault，MUST 整包丢弃——不许把「旧 vault 里没有同名文件」
+/// 当成「新 vault 里也没有」（`apply_fs_changes` 的同一条先例）。
+fn finish_create_in_same_generation(
+    state: &VaultState,
+    root: &Path,
+    generation: u64,
     from: &str,
     link: &str,
 ) -> Result<CreateNoteResult, CommandError> {
     let mut inner = state.inner.lock().expect("vault state poisoned");
-    let root = inner
+    let same_vault = inner
         .vault
         .as_ref()
-        .map(|vault| vault.root.clone())
-        .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))?;
-    let created = inner.graph.create_note(&root, from, link)?;
+        .is_some_and(|vault| vault.root.as_path() == root && inner.generation == generation);
+    if !same_vault {
+        return Err(CommandError::new(
+            "wikilink_create_failed",
+            "探测期间 vault 已切换，未创建文件",
+        ));
+    }
+    let created = inner.graph.create_note(root, from, link)?;
     Ok(CreateNoteResult { created })
 }
 
@@ -2681,5 +2805,535 @@ mod tests {
         }))
         .expect("错误路径不得 panic");
         assert!(result.is_err(), "非 http(s) 必须 settle 成 Err");
+    }
+
+    // -----------------------------------------------------------------------
+    // wikilink_create：索引外同名目标的防重复探测
+    // （change fix-wikilink-unindexed-duplicate-nov22）
+    // -----------------------------------------------------------------------
+
+    /// 造目录与文件（父目录自动补齐）：测试 vault 的初始状态。
+    fn write_files(vault: &TempVault, files: &[(&str, &str)]) {
+        for (rel, content) in files {
+            let path = vault.path().join(rel);
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).expect("create parent dir");
+            }
+            std::fs::write(path, content).expect("write test file");
+        }
+    }
+
+    /// 全树快照（**不**经忽略集过滤）：冲突拒绝时「零新增 / 既有字节不变」的判据。
+    fn tree_snapshot(root: &Path) -> Vec<(String, Vec<u8>)> {
+        fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
+            for item in std::fs::read_dir(dir).expect("read dir") {
+                let item = item.expect("dir entry");
+                let path = item.path();
+                if item.file_type().expect("file type").is_dir() {
+                    walk(root, &path, out);
+                } else {
+                    let rel = path
+                        .strip_prefix(root)
+                        .expect("inside root")
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    out.push((rel, std::fs::read(&path).expect("read file")));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(root, root, &mut out);
+        out.sort();
+        out
+    }
+
+    /// 按生产语义备好一次打开：索引只收非惰性条目（[`build_graph`]），规则表用给定清单。
+    fn prepared_with_rules(vault: &TempVault, rule_files: &[&str]) -> PreparedVaultOpen {
+        let root = vault.path();
+        let rules: Vec<String> = rule_files.iter().map(|s| s.to_string()).collect();
+        let policy = policy_with_rules(&root, &rules);
+        let entries = fs_io::scan_workspace(&root, &policy).expect("scan test vault");
+        let graph = VaultState::build_graph(&root, &entries);
+        PreparedVaultOpen {
+            root: root.clone(),
+            vault_id: "test-vault".into(),
+            entries,
+            watcher: fs_io::watch(&root, &policy, |_| {}).expect("watch temp vault"),
+            graph,
+            policy,
+        }
+    }
+
+    fn state_with_vault(vault: &TempVault, rule_files: &[&str]) -> VaultState {
+        let state = VaultState::default();
+        assert!(commit_vault_open(
+            &state,
+            prepared_with_rules(vault, rule_files)
+        ));
+        state
+    }
+
+    fn guarded_create(
+        state: &VaultState,
+        from: &str,
+        link: &str,
+        budget: fs_io::ProbeBudget,
+    ) -> Result<CreateNoteResult, CommandError> {
+        tauri::async_runtime::block_on(create_note_guarded_with_budget(
+            state,
+            from.to_string(),
+            link.to_string(),
+            budget,
+        ))
+    }
+
+    fn resolve_in_state(state: &VaultState, from: &str, link: &str) -> LinkResolveResult {
+        state
+            .inner
+            .lock()
+            .expect("vault state poisoned")
+            .graph
+            .resolve_link(from, link)
+            .expect("resolve")
+    }
+
+    fn materialized_in_state(state: &VaultState, dir: &str) -> bool {
+        state
+            .inner
+            .lock()
+            .expect("vault state poisoned")
+            .vault
+            .as_ref()
+            .expect("vault open")
+            .policy
+            .is_materialized(dir)
+    }
+
+    /// 配置 `lazy` 档目录里的同名笔记：拒绝、零新增、索引不变、不登记物化。
+    #[test]
+    fn wikilink_create_rejects_unindexed_duplicate_in_config_lazy_dir() {
+        let vault = TempVault::new("create-lazy-config");
+        write_files(
+            &vault,
+            &[
+                ("Alpha.md", "# Alpha\n"),
+                ("target/Note.md", "# 构建产物里的同名笔记\n"),
+            ],
+        );
+        let state = state_with_vault(&vault, &[]);
+        let before = tree_snapshot(&vault.path());
+
+        let err = guarded_create(
+            &state,
+            "Alpha.md",
+            "[[Note]]",
+            fs_io::ProbeBudget::default(),
+        )
+        .expect_err("配置 lazy 目录里的同名笔记必须被拒绝");
+        assert_eq!(err.code, "wikilink_target_exists");
+        assert_eq!(
+            tree_snapshot(&vault.path()),
+            before,
+            "拒绝时 MUST NOT 新增或改写任何文件"
+        );
+        assert_eq!(
+            resolve_in_state(&state, "Alpha.md", "[[Note]]").status,
+            crate::link_graph::LinkStatus::Unresolved,
+            "拒绝后常驻索引仍不含惰性候选"
+        );
+        assert!(
+            !materialized_in_state(&state, "target"),
+            "探测 MUST NOT 登记物化（按需枚举之外的路径不许改变可见集）"
+        );
+    }
+
+    /// 用户规则惰性目录里的同名笔记：同一拒绝口径。
+    #[test]
+    fn wikilink_create_rejects_unindexed_duplicate_in_user_rule_lazy_dir() {
+        let vault = TempVault::new("create-lazy-user-rule");
+        write_files(
+            &vault,
+            &[
+                ("Alpha.md", "# Alpha\n"),
+                (".gitignore", "drafts/\n"),
+                ("drafts/Note.md", "# 草稿里的同名笔记\n"),
+            ],
+        );
+        let state = state_with_vault(&vault, &[".gitignore"]);
+        let before = tree_snapshot(&vault.path());
+
+        let err = guarded_create(
+            &state,
+            "Alpha.md",
+            "[[Note]]",
+            fs_io::ProbeBudget::default(),
+        )
+        .expect_err("用户规则惰性目录里的同名笔记必须被拒绝");
+        assert_eq!(err.code, "wikilink_target_exists");
+        assert_eq!(tree_snapshot(&vault.path()), before);
+        assert_eq!(
+            resolve_in_state(&state, "Alpha.md", "[[Note]]").status,
+            crate::link_graph::LinkStatus::Unresolved
+        );
+        assert!(!materialized_in_state(&state, "drafts"));
+    }
+
+    /// 多个同名候选：同样只拒绝，不选择、不打开、不创建。
+    #[test]
+    fn wikilink_create_rejects_multiple_unindexed_candidates() {
+        let vault = TempVault::new("create-ambiguous");
+        write_files(
+            &vault,
+            &[
+                ("Alpha.md", "# Alpha\n"),
+                ("target/Note.md", "# 候选一\n"),
+                ("dist/Note.md", "# 候选二\n"),
+            ],
+        );
+        let state = state_with_vault(&vault, &[]);
+        let before = tree_snapshot(&vault.path());
+
+        let err = guarded_create(
+            &state,
+            "Alpha.md",
+            "[[Note]]",
+            fs_io::ProbeBudget::default(),
+        )
+        .expect_err("多个同名候选必须拒绝");
+        assert_eq!(err.code, "wikilink_target_exists");
+        assert_eq!(tree_snapshot(&vault.path()), before);
+        assert!(!vault.path().join("Note.md").exists());
+    }
+
+    /// 大小写折叠 / alias / heading：匹配语义复用既有 resolver，探测不另写一套。
+    #[test]
+    fn wikilink_create_matches_case_alias_and_heading_via_resolver() {
+        let vault = TempVault::new("create-resolver-semantics");
+        write_files(
+            &vault,
+            &[
+                ("Alpha.md", "# Alpha\n"),
+                ("target/Note.md", "# 同名笔记\n"),
+            ],
+        );
+        let state = state_with_vault(&vault, &[]);
+        let before = tree_snapshot(&vault.path());
+        for link in ["[[NOTE]]", "[[Note|别名]]", "[[Note#标题]]"] {
+            match guarded_create(&state, "Alpha.md", link, fs_io::ProbeBudget::default()) {
+                Ok(created) => panic!(
+                    "{link} 必须按既有 resolver 语义拒绝，实际创建了 {}",
+                    created.created
+                ),
+                Err(err) => assert_eq!(err.code, "wikilink_target_exists", "{link}"),
+            }
+        }
+        assert_eq!(tree_snapshot(&vault.path()), before);
+    }
+
+    /// 含 `/` 的目标：别处的路径后缀同名（`target/team/note.md` 对 `[[team/note]]`）也拒绝。
+    #[test]
+    fn wikilink_create_rejects_path_suffix_duplicate() {
+        let vault = TempVault::new("create-path-suffix");
+        write_files(
+            &vault,
+            &[
+                ("Alpha.md", "# Alpha\n"),
+                ("target/team/note.md", "# 后缀同名\n"),
+            ],
+        );
+        let state = state_with_vault(&vault, &[]);
+        let before = tree_snapshot(&vault.path());
+
+        let err = guarded_create(
+            &state,
+            "Alpha.md",
+            "[[team/note]]",
+            fs_io::ProbeBudget::default(),
+        )
+        .expect_err("路径后缀命中的同名笔记必须拒绝");
+        assert_eq!(err.code, "wikilink_target_exists");
+        assert_eq!(tree_snapshot(&vault.path()), before);
+    }
+
+    /// 根下已有 `team/note.md`（在索引里）：沿用既有「索引已可解析」拒绝。
+    #[test]
+    fn wikilink_create_rejects_indexed_root_relative_target() {
+        let vault = TempVault::new("create-indexed-target");
+        write_files(
+            &vault,
+            &[("Alpha.md", "# Alpha\n"), ("team/note.md", "# 已有笔记\n")],
+        );
+        let state = state_with_vault(&vault, &[]);
+        let before = tree_snapshot(&vault.path());
+
+        let err = guarded_create(
+            &state,
+            "Alpha.md",
+            "[[team/note]]",
+            fs_io::ProbeBudget::default(),
+        )
+        .expect_err("索引里已可解析的目标必须拒绝");
+        assert_eq!(err.code, "wikilink_target_exists");
+        assert_eq!(tree_snapshot(&vault.path()), before);
+    }
+
+    /// 完整扫描且真正不存在：照旧创建空文件、补中间目录、创建后可解析。
+    #[test]
+    fn wikilink_create_still_creates_when_fully_absent() {
+        let vault = TempVault::new("create-absent");
+        write_files(
+            &vault,
+            &[("Alpha.md", "# Alpha\n"), ("sub/Gamma.md", "# Gamma\n")],
+        );
+        let state = state_with_vault(&vault, &[]);
+
+        let created = guarded_create(
+            &state,
+            "Alpha.md",
+            "[[新笔记]]",
+            fs_io::ProbeBudget::default(),
+        )
+        .expect("零候选必须照旧创建");
+        assert_eq!(created.created, "新笔记.md");
+        assert_eq!(
+            std::fs::read(vault.path().join("新笔记.md")).expect("created file"),
+            Vec::<u8>::new(),
+            "创建内容必须为空"
+        );
+        assert_eq!(
+            resolve_in_state(&state, "Alpha.md", "[[新笔记]]").status,
+            crate::link_graph::LinkStatus::Resolved,
+            "创建后索引 upsert、重解析 resolved"
+        );
+
+        // 含 `/` 的目标：根相对创建 + 补齐中间目录
+        let created = guarded_create(
+            &state,
+            "Alpha.md",
+            "[[team/note]]",
+            fs_io::ProbeBudget::default(),
+        )
+        .expect("零候选必须照旧创建");
+        assert_eq!(created.created, "team/note.md");
+        assert!(vault.path().join("team/note.md").is_file());
+    }
+
+    /// 极小预算：超限 = 无法证明不存在 ⇒ 拒绝创建（fail-closed），不建文件。
+    #[test]
+    fn wikilink_create_fails_closed_when_probe_budget_exhausted() {
+        let vault = TempVault::new("create-budget");
+        write_files(&vault, &[("Alpha.md", "# Alpha\n")]);
+        let state = state_with_vault(&vault, &[]);
+        let before = tree_snapshot(&vault.path());
+
+        let entry_limited = fs_io::ProbeBudget {
+            max_entries: 0,
+            max_duration: std::time::Duration::from_secs(60),
+        };
+        let err = guarded_create(&state, "Alpha.md", "[[新笔记]]", entry_limited)
+            .expect_err("条目上限必须 fail-closed");
+        assert_eq!(err.code, "wikilink_create_failed");
+        assert_eq!(tree_snapshot(&vault.path()), before);
+
+        let time_limited = fs_io::ProbeBudget {
+            max_entries: 20_000,
+            max_duration: std::time::Duration::ZERO,
+        };
+        let err = guarded_create(&state, "Alpha.md", "[[新笔记]]", time_limited)
+            .expect_err("时长上限必须 fail-closed");
+        assert_eq!(err.code, "wikilink_create_failed");
+        assert_eq!(tree_snapshot(&vault.path()), before);
+    }
+
+    /// 目录读取失败不得被当成「零候选」。
+    #[cfg(unix)]
+    #[test]
+    fn wikilink_create_fails_closed_when_directory_unreadable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let vault = TempVault::new("create-unreadable");
+        write_files(
+            &vault,
+            &[
+                ("Alpha.md", "# Alpha\n"),
+                ("locked/Note.md", "# 读不到的目录\n"),
+            ],
+        );
+        let state = state_with_vault(&vault, &[]);
+        let before = tree_snapshot(&vault.path());
+        let locked = vault.path().join("locked");
+        let original = std::fs::metadata(&locked).expect("metadata").permissions();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
+            .expect("chmod 000");
+        if std::fs::read_dir(&locked).is_ok() {
+            // root 身份下 000 目录照样可读：这条判据在本机不可构造，跳过而不是假红。
+            std::fs::set_permissions(&locked, original).expect("restore mode");
+            return;
+        }
+        let result = guarded_create(
+            &state,
+            "Alpha.md",
+            "[[新笔记]]",
+            fs_io::ProbeBudget::default(),
+        );
+        std::fs::set_permissions(&locked, original).expect("restore mode");
+
+        let err = result.expect_err("目录读取失败必须 fail-closed");
+        assert_eq!(err.code, "wikilink_create_failed");
+        assert_eq!(tree_snapshot(&vault.path()), before, "不得建文件");
+    }
+
+    /// hidden 档子树不是候选来源：`.git/Note.md` 不与 `[[Note]]` 冲突。
+    #[test]
+    fn wikilink_create_ignores_hidden_subtree() {
+        let vault = TempVault::new("create-hidden");
+        write_files(
+            &vault,
+            &[
+                ("Alpha.md", "# Alpha\n"),
+                (".git/Note.md", "# 工具目录\n"),
+                (".DS_Store", "hidden"),
+            ],
+        );
+        let state = state_with_vault(&vault, &[]);
+
+        let created = guarded_create(
+            &state,
+            "Alpha.md",
+            "[[Note]]",
+            fs_io::ProbeBudget::default(),
+        )
+        .expect("hidden 档条目不应构成冲突");
+        assert_eq!(created.created, "Note.md");
+        assert_eq!(
+            std::fs::read_to_string(vault.path().join(".git/Note.md")).expect("read"),
+            "# 工具目录\n",
+            "既有文件零改动"
+        );
+    }
+
+    /// 索引过期：目标文件在提交后落到磁盘（图里没有）——探测发现它，报已有而非覆盖。
+    #[test]
+    fn wikilink_create_rejects_target_planted_after_index_built() {
+        let vault = TempVault::new("create-stale-target");
+        write_files(&vault, &[("Alpha.md", "# Alpha\n")]);
+        let state = state_with_vault(&vault, &[]);
+        let occupied = vault.path().join("Note.md");
+        std::fs::write(&occupied, "既有内容").expect("plant stale file");
+
+        let err = guarded_create(
+            &state,
+            "Alpha.md",
+            "[[Note]]",
+            fs_io::ProbeBudget::default(),
+        )
+        .expect_err("磁盘上已存在的目标必须拒绝");
+        assert_eq!(err.code, "wikilink_target_exists");
+        assert_eq!(
+            std::fs::read_to_string(&occupied).expect("read"),
+            "既有内容",
+            "MUST NOT 覆盖既有文件"
+        );
+    }
+
+    /// 符号链接目录不跟随：链接目标里的同名笔记不构成冲突，也不产生外部访问。
+    #[cfg(unix)]
+    #[test]
+    fn wikilink_create_does_not_follow_symlink_directory() {
+        use std::os::unix::fs::symlink;
+
+        let vault = TempVault::new("create-symlink-dir");
+        let outside = TempVault::new("create-symlink-dir-outside");
+        std::fs::write(outside.path().join("Note.md"), "# 库外\n").expect("write outside");
+        write_files(&vault, &[("Alpha.md", "# Alpha\n")]);
+        symlink(outside.path(), vault.path().join("linkdir")).expect("plant symlink");
+        let state = state_with_vault(&vault, &[]);
+
+        let created = guarded_create(
+            &state,
+            "Alpha.md",
+            "[[Note]]",
+            fs_io::ProbeBudget::default(),
+        )
+        .expect("不跟随的符号链接目录不参与候选");
+        assert_eq!(created.created, "Note.md");
+        assert_eq!(
+            std::fs::read_to_string(outside.path().join("Note.md")).expect("read"),
+            "# 库外\n",
+            "链接目标零改动"
+        );
+    }
+
+    /// 符号链接文件自身可构成冲突（按非目录候选参与匹配）。
+    #[cfg(unix)]
+    #[test]
+    fn wikilink_create_symlink_file_counts_as_conflict() {
+        use std::os::unix::fs::symlink;
+
+        let vault = TempVault::new("create-symlink-file");
+        let outside = TempVault::new("create-symlink-file-outside");
+        std::fs::write(outside.path().join("target.md"), "# 库外\n").expect("write outside");
+        write_files(&vault, &[("Alpha.md", "# Alpha\n")]);
+        symlink(
+            outside.path().join("target.md"),
+            vault.path().join("Note.md"),
+        )
+        .expect("plant symlink");
+        let state = state_with_vault(&vault, &[]);
+        let before = tree_snapshot(&vault.path());
+
+        let err = guarded_create(
+            &state,
+            "Alpha.md",
+            "[[Note]]",
+            fs_io::ProbeBudget::default(),
+        )
+        .expect_err("符号链接文件必须构成冲突");
+        assert_eq!(err.code, "wikilink_target_exists");
+        assert_eq!(tree_snapshot(&vault.path()), before);
+    }
+
+    /// 探测期间 vault 代际变化（同 vault 重开 / 切到不同 vault）：最终对账拒绝，两个根都零误写。
+    #[test]
+    fn wikilink_create_rejects_when_vault_generation_changes() {
+        let a = TempVault::new("create-generation-a");
+        write_files(&a, &[("Alpha.md", "# Alpha\n")]);
+        let b = TempVault::new("create-generation-b");
+        write_files(&b, &[("Alpha.md", "# Beta\n")]);
+
+        let state = state_with_vault(&a, &[]);
+        let before_a = tree_snapshot(&a.path());
+        let (root, generation) = {
+            let inner = state.inner.lock().expect("vault state poisoned");
+            (
+                inner.vault.as_ref().expect("open").root.clone(),
+                inner.generation,
+            )
+        };
+
+        // 同 vault 重开：世代 +1
+        assert!(commit_vault_open(&state, prepared_with_rules(&a, &[])));
+        let err =
+            finish_create_in_same_generation(&state, &root, generation, "Alpha.md", "[[Note]]")
+                .expect_err("世代变化必须拒绝");
+        assert_eq!(err.code, "wikilink_create_failed");
+        assert_eq!(tree_snapshot(&a.path()), before_a, "不得误写");
+
+        // 切到不同 vault：同样拒绝，两个根都零误写
+        let before_b = tree_snapshot(&b.path());
+        let (root, generation) = {
+            let inner = state.inner.lock().expect("vault state poisoned");
+            (
+                inner.vault.as_ref().expect("open").root.clone(),
+                inner.generation,
+            )
+        };
+        assert!(commit_vault_open(&state, prepared_with_rules(&b, &[])));
+        let err =
+            finish_create_in_same_generation(&state, &root, generation, "Alpha.md", "[[Note]]")
+                .expect_err("vault 切换必须拒绝");
+        assert_eq!(err.code, "wikilink_create_failed");
+        assert_eq!(tree_snapshot(&b.path()), before_b, "新 vault 不得误写");
+        assert_eq!(tree_snapshot(&a.path()), before_a, "旧 vault 不得误写");
     }
 }

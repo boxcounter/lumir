@@ -2579,6 +2579,132 @@ pub(crate) fn find_vault_entry_by_name(
         .find(|rel| rel.rsplit('/').next() == Some(name))
 }
 
+/// 一键创建（`wikilink_create`）的同名探测预算：**实现初值，待实测**，不是性能结论。
+///
+/// 两个数一起构成「有界」：命中任一条即视为扫描不完整——不完整 ≠ 不存在，所以调用方
+/// MUST 按「无法证明不存在」拒绝创建（fail-closed）。单次 `read_dir` / `file_type` 系统调用
+/// 本身不可被 deadline 中断，这里只保证「访问条目数与耗时有一档兜底、且不占 IPC 主线程」，
+/// MUST NOT 对外宣称硬实时上限。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ProbeBudget {
+    /// 最多访问的目录项数（文件与目录都计数，含被 `hidden` 档剪掉的条目）。
+    pub(crate) max_entries: usize,
+    /// 最长扫描时长；在每个目录与每个条目处理前检查。
+    pub(crate) max_duration: std::time::Duration,
+}
+
+impl Default for ProbeBudget {
+    fn default() -> Self {
+        Self {
+            max_entries: 20_000,
+            max_duration: std::time::Duration::from_millis(250),
+        }
+    }
+}
+
+/// [`scan_vault_for_wikilink_target`] 的结果。`complete == false` 时 `files` 只是「已看过的
+/// 部分」，`incomplete_reason` 是给诊断 / 错误消息的人话。
+pub(crate) struct ProbeScan {
+    /// 已访问到的文件（vault 相对路径，未排序——临时索引不依赖顺序）。
+    pub(crate) files: Vec<String>,
+    /// 完整扫描了整棵 vault（hidden 档剪掉的子树不算缺口——它们不是候选来源）。
+    pub(crate) complete: bool,
+    pub(crate) incomplete_reason: Option<String>,
+}
+
+/// 一键创建专用的**有界、无副作用**目录项扫描。
+///
+/// 与 [`scan_vault_files`] 的差别正是不能复用的原因：
+/// - **配置 `lazy` 档与用户规则惰性目录都递归**——本探测回答的是「磁盘上有没有同名笔记」，
+///   与可见性正交；漏掉惰性目录就修不到重复创建这个缺陷。
+/// - 只有 `hidden` 档剪枝（整棵不递归）：工具目录的内容不是作者会链接的笔记，体量还可能
+///   无限大；口径仍以 [`IgnorePolicy::hidden_hit`] 为唯一判据，不另造点文件名单。
+/// - 任一目录 / 条目读取失败都标 `complete = false`，**不静默跳过**——「读不到」不能当成
+///   「不存在」。
+/// - 预算兜底（[`ProbeBudget`]）：访问条目数或时长超限即标不完整。
+///
+/// 不读文档正文（标题锚点不影响 resolved / ambiguous 判定）、不读新 `.gitignore`、不登记
+/// materialized、不写任何索引；符号链接不跟随（`file_type()` 不 follow），链接条目本身按
+/// **非目录候选**参与匹配——与 [`scan_workspace`]「symlink 条目按文件列出」同口径。
+pub(crate) fn scan_vault_for_wikilink_target(
+    root: &Path,
+    policy: &IgnorePolicy,
+    budget: ProbeBudget,
+) -> ProbeScan {
+    let started = std::time::Instant::now();
+    let mut files: Vec<String> = Vec::new();
+    let mut visited = 0usize;
+    let mut incomplete_reason: Option<String> = None;
+    let mut stack = vec![root.to_path_buf()];
+    'scan: while let Some(dir) = stack.pop() {
+        if started.elapsed() >= budget.max_duration {
+            incomplete_reason = Some(format!(
+                "扫描超过时长上限 {}ms",
+                budget.max_duration.as_millis()
+            ));
+            break;
+        }
+        let read = match std::fs::read_dir(&dir) {
+            Ok(read) => read,
+            Err(e) => {
+                incomplete_reason = Some(format!("无法读取目录 {}：{e}", dir.display()));
+                break;
+            }
+        };
+        for item in read {
+            if started.elapsed() >= budget.max_duration {
+                incomplete_reason = Some(format!(
+                    "扫描超过时长上限 {}ms",
+                    budget.max_duration.as_millis()
+                ));
+                break 'scan;
+            }
+            let item = match item {
+                Ok(item) => item,
+                Err(e) => {
+                    incomplete_reason =
+                        Some(format!("无法读取目录 {} 下的条目：{e}", dir.display()));
+                    break 'scan;
+                }
+            };
+            visited += 1;
+            if visited > budget.max_entries {
+                incomplete_reason = Some(format!("扫描超过条目上限 {} 个", budget.max_entries));
+                break 'scan;
+            }
+            let file_type = match item.file_type() {
+                Ok(file_type) => file_type,
+                Err(e) => {
+                    incomplete_reason = Some(format!("无法判定条目的类型：{e}"));
+                    break 'scan;
+                }
+            };
+            let path = item.path();
+            let Some(rel) = rel_string(root, &path) else {
+                // 非 UTF-8 / 越界路径不可能被 wikilink 引用，不构成候选，也不算失败。
+                continue;
+            };
+            if file_type.is_dir() {
+                if policy.hidden_hit(&rel, true) {
+                    continue; // hidden 档：整棵剪掉
+                }
+                stack.push(path);
+            } else {
+                if policy.hidden_hit(&rel, false) {
+                    continue; // hidden 档文件同样不是候选
+                }
+                // 常规文件 + 符号链接（不 follow）：都按非目录候选参与名称匹配。
+                files.push(rel);
+            }
+        }
+    }
+    ProbeScan {
+        files,
+        complete: incomplete_reason.is_none(),
+        incomplete_reason,
+    }
+}
+
 /// 附件落盘的写路径（[`write_bytes_atomic`] 的 [`RenameGuard::RejectExisting`] 包装）：撞名按
 /// [`AtomicWriteOutcome::TargetExists`] 收敛，其余失败阶段映射到 `attachment_write_*`。
 /// `pub(crate)`：harness 贴图（`harness::attachments`）复用同一原子写原语（design §5.3）。
@@ -6610,5 +6736,140 @@ mod tests {
         .expect("落盘");
         assert!(!written.path.contains('/'), "无路径文档退 vault 根");
         assert!(v.0.join(&written.path).is_file());
+    }
+
+    // -----------------------------------------------------------------------
+    // 一键创建的有界同名探测（change fix-wikilink-unindexed-duplicate-nov22）
+    // -----------------------------------------------------------------------
+
+    /// 惰性目录（配置档与用户规则）**都递归**；`hidden` 档整棵剪掉；不登记物化。
+    #[test]
+    fn probe_scan_recurses_lazy_and_user_rule_dirs_but_prunes_hidden() {
+        let v = TempVault::new();
+        let r = &v.0;
+        std::fs::create_dir_all(r.join("target/deep")).unwrap();
+        std::fs::write(r.join("target/deep/Note.md"), "# 配置 lazy\n").unwrap();
+        std::fs::create_dir_all(r.join("drafts")).unwrap();
+        std::fs::write(r.join("drafts/Note.md"), "# 用户规则\n").unwrap();
+        std::fs::write(r.join(".gitignore"), "drafts/\n").unwrap();
+        std::fs::create_dir_all(r.join(".git")).unwrap();
+        std::fs::write(r.join(".git/Hidden.md"), "# hidden\n").unwrap();
+        std::fs::write(r.join(".DS_Store"), "x").unwrap();
+        std::fs::write(r.join("Visible.md"), "# 可见\n").unwrap();
+
+        let policy = v.default_policy();
+        let scan = scan_vault_for_wikilink_target(r, &policy, ProbeBudget::default());
+        assert!(scan.complete, "{:?}", scan.incomplete_reason);
+        assert!(scan.files.contains(&"target/deep/Note.md".to_string()));
+        assert!(scan.files.contains(&"drafts/Note.md".to_string()));
+        assert!(scan.files.contains(&"Visible.md".to_string()));
+        assert!(
+            !scan.files.iter().any(|f| f.starts_with(".git/")),
+            "hidden 子树不遍历"
+        );
+        assert!(
+            !scan.files.contains(&".DS_Store".to_string()),
+            "hidden 档文件不是候选"
+        );
+        assert!(!policy.is_materialized("target"), "扫描不登记物化");
+        assert!(!policy.is_materialized("drafts"), "扫描不登记物化");
+    }
+
+    /// 条目上限与时长上限都判不完整（不完整 ≠ 不存在）。
+    #[test]
+    fn probe_scan_flags_entry_budget_and_deadline_exhaustion() {
+        let v = TempVault::new();
+        std::fs::write(v.0.join("a.md"), "a").unwrap();
+        std::fs::write(v.0.join("b.md"), "b").unwrap();
+        let policy = v.policy();
+
+        let scan = scan_vault_for_wikilink_target(
+            &v.0,
+            &policy,
+            ProbeBudget {
+                max_entries: 1,
+                max_duration: std::time::Duration::from_secs(60),
+            },
+        );
+        assert!(!scan.complete);
+        assert!(
+            scan.incomplete_reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("条目上限"),
+            "{:?}",
+            scan.incomplete_reason
+        );
+        assert_eq!(scan.files.len(), 1, "超限后不再收集结果");
+
+        let scan = scan_vault_for_wikilink_target(
+            &v.0,
+            &policy,
+            ProbeBudget {
+                max_entries: 20_000,
+                max_duration: std::time::Duration::ZERO,
+            },
+        );
+        assert!(!scan.complete);
+        assert!(
+            scan.incomplete_reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("时长上限"),
+            "{:?}",
+            scan.incomplete_reason
+        );
+    }
+
+    /// 目录读取失败不得被当成「读到了空目录」。
+    #[cfg(unix)]
+    #[test]
+    fn probe_scan_flags_unreadable_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let v = TempVault::new();
+        std::fs::write(v.0.join("a.md"), "a").unwrap();
+        std::fs::create_dir(v.0.join("locked")).unwrap();
+        std::fs::write(v.0.join("locked/note.md"), "x").unwrap();
+        let locked = v.0.join("locked");
+        let original = std::fs::metadata(&locked).unwrap().permissions();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&locked).is_ok() {
+            // root 身份下 000 目录照样可读：本机构造不出这条判据，跳过而不是假绿。
+            std::fs::set_permissions(&locked, original).unwrap();
+            return;
+        }
+        let scan = scan_vault_for_wikilink_target(&v.0, &v.policy(), ProbeBudget::default());
+        std::fs::set_permissions(&locked, original).unwrap();
+        assert!(!scan.complete, "读不到的目录必须标不完整");
+    }
+
+    /// 符号链接不跟随（目录 / 环都不递归），链接条目自身按非目录候选列出。
+    #[cfg(unix)]
+    #[test]
+    fn probe_scan_does_not_follow_symlinks_and_lists_links_as_files() {
+        use std::os::unix::fs::symlink;
+
+        let v = TempVault::new();
+        let outside = TempVault::new();
+        std::fs::write(outside.0.join("Outside.md"), "x").unwrap();
+        symlink(&outside.0, v.0.join("linkdir")).unwrap();
+        symlink(&v.0, v.0.join("loop")).unwrap();
+        symlink(outside.0.join("Outside.md"), v.0.join("Linked.md")).unwrap();
+        std::fs::write(v.0.join("Note.md"), "x").unwrap();
+
+        let scan = scan_vault_for_wikilink_target(&v.0, &v.policy(), ProbeBudget::default());
+        assert!(scan.complete, "{:?}", scan.incomplete_reason);
+        assert!(scan.files.contains(&"linkdir".to_string()));
+        assert!(scan.files.contains(&"loop".to_string()));
+        assert!(scan.files.contains(&"Linked.md".to_string()));
+        assert!(
+            !scan.files.iter().any(|f| f.starts_with("linkdir/")),
+            "不递归符号链接目录"
+        );
+        assert!(
+            !scan.files.iter().any(|f| f.contains("Outside")),
+            "不读链接目标（vault 外零访问）"
+        );
     }
 }
