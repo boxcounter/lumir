@@ -1513,12 +1513,19 @@ enum AtomicWriteError {
     TargetChanged,
 }
 
-/// 目标文件在某一刻的身份四元组 `(dev, ino, mtime, size)`（M470）。
+/// 目标文件在某一刻的身份五元组 `(dev, ino, mtime, size, mode)`（M470）。
 ///
 /// 用来把「CAS 校验通过」与「rename 落地」之间那段窗口收窄到两次系统调用之间：rename 前
-/// 重取一次快照，与 CAS 时的快照不一致即放弃覆盖。四个字段缺一不可——`dev`/`ino` 抓
+/// 重取一次快照，与 CAS 时的快照不一致即放弃覆盖。五个字段缺一不可——`dev`/`ino` 抓
 /// 「换了一个文件」（外部编辑器常见的 rename-into-place 会换 inode），`mtime`/`size` 抓
-/// 「同一个文件被就地改写」（同 inode）；任取其一都会漏掉另一类改写。
+/// 「同一个文件被就地改写」（同 inode），`mode` 抓「内容 / inode 全不变的外部 `chmod`」；
+/// 任取其一都会漏掉另一类改写。
+///
+/// `mode` 同时是权限保真的来源：`ExpectSnapshot` 的写路径在 rename 前按它给 tmp 设权限，
+/// 既有文档的 permission bits 因此不被 tmp 的 umask 默认值顶掉。设完必须回读确认——
+/// 平台可能「fchmod 返回成功但静默清掉特殊位」（macOS 上 group 不匹配时的 setgid），
+/// 回读不符即按写入失败收敛、不 rename。**只覆盖 permission bits**（`st_mode & 0o7777`），
+/// ACL / xattr / owner 不在本快照与写路径的承诺范围内。
 ///
 /// mtime 取 [`SystemTime`]（macOS 上 APFS 给到纳秒），不用 `mtime_ms` 的毫秒口径——毫秒会
 /// 把「同一毫秒内的两次改写」判成未变。
@@ -1528,6 +1535,8 @@ struct FileStatSnapshot {
     ino: u64,
     mtime: Option<SystemTime>,
     size: u64,
+    /// `st_mode & 0o7777`：只留 permission bits，不含文件类型位。
+    mode: u32,
 }
 
 /// 取目标文件的 [`FileStatSnapshot`]（跟随符号链接：`target` 已经过 [`resolve_in_vault`]）。
@@ -1539,6 +1548,7 @@ fn stat_snapshot(target: &Path) -> std::io::Result<FileStatSnapshot> {
         ino: meta.ino(),
         mtime: meta.modified().ok(),
         size: meta.len(),
+        mode: meta.mode() & 0o7777,
     })
 }
 
@@ -1553,13 +1563,17 @@ enum RenameGuard<'a> {
     /// 返回 [`AtomicWriteError::TargetChanged`]。覆盖窗口只剩「取快照」与「rename」两次系统
     /// 调用之间的距离（微秒级）——零窗口需要平台的原子排他改名（`renameatx_np` 的 swap），
     /// 本批不做。
+    ///
+    /// 同时是权限保真的唯一入口：tmp 在 `sync_all` 前按快照的 `mode` 设权限并回读确认
+    /// （既有文本文档的 permission bits 不因替换丢失，平台静默清特殊位则失败）；另外两个
+    /// 守卫不继承任何权限。
     ExpectSnapshot(&'a FileStatSnapshot),
 }
 
 /// **全仓唯一的原子替换写核心**：同目录 `.lumir-` 临时文件 + `sync_all` + 原子 rename。
 /// 三个写入方共用这一份——`document_save` / [`fs_patch_file`]（文本）与
 /// [`write_attachment`]（二进制附件）——「整文件保存 / 局部 patch / 贴图落盘走同一套写纪律」
-/// 因此是结构性的，不是巧合（REVIEW.md 「同一语义两处真源」条）。四条纪律：
+/// 因此是结构性的，不是巧合（REVIEW.md 「同一语义两处真源」条）。五条纪律：
 /// - **`.lumir-` 标记**：tmp 名形如 `.{name}.lumir-{pid}-{seq}-{rand}`，命中忽略集
 ///   （[`LUMIR_TMP_PATTERNS`]），因此写入过程不在文件树 / watch 流里留下临时条目
 ///   （`fs-io` spec 的「局部 patch 写入」把这层口径称作写盘方的自身标记）；
@@ -1574,6 +1588,14 @@ enum RenameGuard<'a> {
 ///   又恰好相同）。此时换一个新名字重试，MUST NOT 删除它——它不是本次写的半成品，删掉可能
 ///   误删他人在途写入；残留交给枚举路径的超龄 ghost 清扫（[`GHOST_TMP_MAX_AGE`]）。连续
 ///   16 个名字都撞上才是真错误；
+/// - **权限保真**（[`RenameGuard::ExpectSnapshot`] 专属）：tmp 的权限由 umask 决定，直接
+///   rename 会把既有文档的 permission bits 顶掉（0755 脚本存成 0644）。因此 `write_all`
+///   之后、`sync_all` 之前按快照的 `mode` 给 tmp 设权限，并 **`fstat` 回读确认**——
+///   `fchmod` 可能返回成功却静默清掉特殊位（macOS 上 group 不匹配时的 setgid），只认回读
+///   结果；读不到或不符即清理 tmp、按写入失败收敛（MUST NOT 带着错误权限 rename）。只覆盖
+///   permission bits，ACL / xattr 不承诺；
+///   [`RenameGuard::Replace`] / [`RenameGuard::RejectExisting`]（新建文档 / 附件）**不继承**
+///   任何权限——新文件的默认权限仍归 umask；
 /// - **失败即清理 tmp**，不留半截目标文件。
 ///
 /// `guard` 决定 rename 之前的那一刻是否放行（见 [`RenameGuard`]）：每个前置守卫都在
@@ -1617,6 +1639,26 @@ fn create_tmp_file(parent: &Path, name: &str) -> std::io::Result<(PathBuf, std::
     ))
 }
 
+/// 给已打开的 tmp 设置 permission bits 并**回读确认**（[`RenameGuard::ExpectSnapshot`] 的
+/// 权限保真段专用）。
+///
+/// `fchmod` 的返回值不足以证明权限真的设上了：macOS 上非特权进程对「group 不在调用者组
+/// 列表」的 tmp 调 `fchmod(0o2745)` 会**返回成功但静默清掉 setgid**（实际 0745）。只看
+/// 返回值就会把「没保住」报成保存成功，rename 之后目标的可执行 / setgid 语义就丢了。
+/// 因此设完必须 `fstat` 回读比对；读不到或值不符都算失败，调用方据此清理 tmp、MUST NOT
+/// rename。只比对 `st_mode & 0o7777`（permission bits），不承诺 ACL / xattr。
+fn set_permissions_exact(file: &std::fs::File, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    file.set_permissions(std::fs::Permissions::from_mode(mode))?;
+    let actual = file.metadata()?.permissions().mode() & 0o7777;
+    if actual != mode {
+        return Err(std::io::Error::other(format!(
+            "无法精确设置文件权限（期望 {mode:#o}，实际 {actual:#o}）"
+        )));
+    }
+    Ok(())
+}
+
 fn write_bytes_atomic(
     target: &Path,
     bytes: &[u8],
@@ -1632,6 +1674,15 @@ fn write_bytes_atomic(
     if let Err(e) = file.write_all(bytes) {
         let _ = std::fs::remove_file(&tmp);
         return Err(AtomicWriteError::Write(e));
+    }
+    // 权限保真（见纪律第 4 条）：只有既有文本文档的写路径（ExpectSnapshot）继承 mode。
+    // 放在 write_all 之后、sync_all 之前——sync 落的是含权限在内的文件元数据。
+    // `set_permissions_exact` 会回读确认特殊位没有被平台静默清掉，失败一律不 rename。
+    if let RenameGuard::ExpectSnapshot(expected) = &guard {
+        if let Err(e) = set_permissions_exact(&file, expected.mode) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(AtomicWriteError::Write(e));
+        }
     }
     if let Err(e) = file.sync_all() {
         let _ = std::fs::remove_file(&tmp);
@@ -1666,8 +1717,9 @@ fn write_bytes_atomic(
 /// 本批的重构不改变任何上屏字符串）。
 ///
 /// `expected` 是 CAS 收窄用的 [`FileStatSnapshot`]（M470）：`Some` 时 rename 前重取目标
-/// stat 比对，不符即按 `document_conflict` 收敛（与 CAS 校验同一错误码、同一句人话）；
-/// `None` 走无条件替换。
+/// stat 比对，不符即按 `document_conflict` 收敛（与 CAS 校验同一错误码、同一句人话），
+/// 并按快照的 `mode` 继承既有文档的 permission bits；`None` 走无条件替换（新文件权限归
+/// umask，不继承任何 mode）。
 fn write_document_atomic(
     target: &Path,
     content: &str,
@@ -1717,6 +1769,12 @@ fn write_document_atomic(
 /// [`FileStatSnapshot`] 交给写核心，在 rename 前重取比对，不符即走既有 `document_conflict`
 /// 路径。快照取在**读内容之前**——快照若晚于被校验的字节，就会出现「revision 描述旧字节、
 /// 快照描述新文件」的错配，rename 前的比对反而会放行一次覆盖。
+///
+/// **权限保真**：同一份快照的 `mode` 在 tmp 落盘时被继承，既有文档的 Unix permission bits
+/// 因此不因原子替换丢失（0755 脚本保存后仍是 0755）。设完回读确认；平台无法精确保留
+/// （如 macOS 对 group 不匹配的 tmp 静默清掉 setgid）即按写入失败收敛、**不覆盖目标**。
+/// 只覆盖 permission bits，ACL / xattr 不在承诺范围内；新建文件（[`vault_create_file`]
+/// 等）仍按 umask 取默认权限。
 pub fn save_document(
     root: &Path,
     rel: &str,
@@ -1792,7 +1850,9 @@ pub struct PatchEdit {
 /// 文件，调用方拿不到任何冲突信号。现把读内容**之前**取的 [`FileStatSnapshot`] 交给写核心，
 /// rename 前重取比对，不符即走既有 `document_conflict`（错误码与文案都不新增）。快照先于读
 /// 内容：快照若晚于被校验的字节，就会出现「revision 描述旧字节、快照描述新文件」的错配，
-/// rename 前的比对反而会放行一次覆盖。
+/// rename 前的比对反而会放行一次覆盖。同一份快照的 `mode` 也用于继承既有文件的 permission
+/// bits：设完回读确认，平台无法精确保留即按写入失败收敛、不覆盖目标（只覆盖 permission
+/// bits，ACL / xattr 不承诺）。
 ///
 /// 空 `edits`、空 `old_string` 返回 `patch_invalid`（空串没有唯一命中语义，不能滑成「插入」）。
 pub fn fs_patch_file(
@@ -2970,7 +3030,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    /// 无 tempfile 依赖（同 config.rs 的纪律）：在 $TMPDIR **独占新建**唯一目录，Drop 时递归删除。
+    /// 无 tempfile 依赖（同 config.rs 的纪律）：在 `$TMPDIR` **独占新建**唯一目录，Drop 时递归删除。
     /// 目录名带 pid + 序号 + 随机段，且用 `create_dir` 而非 `create_dir_all`：pid 会被系统回收，
     /// crash 残留的旧目录会被 `create_dir_all` 静默复用；撞名即换随机段重试（同
     /// `link_graph.rs` 的 `TempVaultDir`）。
@@ -2979,9 +3039,16 @@ mod tests {
 
     impl TempVault {
         fn new() -> Self {
-            let base = std::env::temp_dir();
+            Self::in_parent(&std::env::temp_dir())
+        }
+
+        /// 在指定父目录下独占新建 vault 目录（命名 / 撞名重试 / Drop 清理同 [`Self::new`]）。
+        /// 跨组用例（setgid 被平台静默清位）用它把 vault 放到 `/tmp`：该目录的 group 可能
+        /// 不属于当前用户，而 `$TMPDIR` 的 group 通常属于——两者形成 group 差，不依赖本机
+        /// 具体 group 名、也不要求 root。
+        fn in_parent(parent: &Path) -> Self {
             for _ in 0..16 {
-                let path = base.join(format!(
+                let path = parent.join(format!(
                     "lumir-fs-test-{}-{}-{:016x}",
                     std::process::id(),
                     SEQ.fetch_add(1, Ordering::Relaxed),
@@ -3610,6 +3677,90 @@ mod tests {
         assert_eq!(err.code, "document_conflict");
     }
 
+    /// 已有文本文档的 Unix permission bits 在保存后保持：0751 可执行脚本保存后 MUST NOT 变成
+    /// tmp 的默认权限 0644（本轮修复的原始缺陷）。
+    #[test]
+    fn document_save_preserves_unix_mode_of_existing_document() {
+        use std::os::unix::fs::PermissionsExt;
+        let v = TempVault::new();
+        let target = v.0.join("deploy.sh");
+        std::fs::write(&target, "#!/bin/sh\necho old\n").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o751)).unwrap();
+        let revision = file_revision(&v.0, "deploy.sh").unwrap();
+        save_document(&v.0, "deploy.sh", &revision, "#!/bin/sh\necho new\n").unwrap();
+        assert_eq!(
+            read_text_file(&v.0, "deploy.sh").unwrap(),
+            "#!/bin/sh\necho new\n"
+        );
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
+            0o751,
+            "保存 MUST 继承既有文档的 permission bits"
+        );
+        assert_no_lumir_tmp(&v.0);
+    }
+
+    /// **特殊位（setgid）保真**：macOS 的 `fchmod` 对「group 不在调用者组列表」的文件会
+    /// **返回成功但静默清掉 setgid**（02745 → 0745）。只看返回值等于把「没保住」报成保存
+    /// 成功，rename 之后目标的可执行 / setgid 语义就丢了。
+    ///
+    /// 构造不硬编码本机 group、不要求 root：原文件在 `$TMPDIR` 的 vault 里创建（group 通常
+    /// 属于当前用户，setgid 可设），chmod 后 rename 进 `/tmp` 下的 vault（该目录 group 可能
+    /// 不属于当前用户，于是写核心创建的 tmp 与原文件 group 不同）。
+    ///
+    /// 断言只接受两种互斥终态：
+    /// - 平台能精确保留 ⇒ `Ok`，内容与 mode（含 setgid）都正确；
+    /// - 平台无法保留 ⇒ `Err`（`document_write_failed`），目标内容与 mode 原样、tmp 清理。
+    ///   旧实现（只看 `set_permissions` 返回值）在第二种情况下报 `Ok` 且 mode 已丢 ⇒ 红。
+    #[test]
+    fn document_save_preserves_setgid_or_fails_without_touching_target() {
+        use std::os::unix::fs::PermissionsExt;
+        let v = TempVault::in_parent(Path::new("/tmp"));
+        let staging = TempVault::new();
+        let staged = staging.0.join("deploy.sh");
+        std::fs::write(&staged, "#!/bin/sh\necho old\n").unwrap();
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o2745)).unwrap();
+        // 输入面必须成立：staging 目录里 setgid 能设上。构造前提失败不是「平台无法保留」，
+        // 静默跳过只会变成假绿。
+        assert_eq!(
+            std::fs::metadata(&staged).unwrap().permissions().mode() & 0o7777,
+            0o2745,
+            "staging 目录里必须能设上 setgid"
+        );
+        let target = v.0.join("deploy.sh");
+        std::fs::rename(&staged, &target).unwrap();
+        let before = std::fs::read(&target).unwrap();
+        let revision = file_revision(&v.0, "deploy.sh").unwrap();
+
+        match save_document(&v.0, "deploy.sh", &revision, "#!/bin/sh\necho new\n") {
+            Ok(_) => {
+                assert_eq!(
+                    read_text_file(&v.0, "deploy.sh").unwrap(),
+                    "#!/bin/sh\necho new\n"
+                );
+                assert_eq!(
+                    std::fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
+                    0o2745,
+                    "报成功就必须精确保留 setgid"
+                );
+            }
+            Err(e) => {
+                assert_eq!(e.code, "document_write_failed", "{e:?}");
+                assert_eq!(
+                    std::fs::read(&target).unwrap(),
+                    before,
+                    "失败 MUST NOT 覆盖目标内容"
+                );
+                assert_eq!(
+                    std::fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
+                    0o2745,
+                    "失败 MUST NOT 改动目标 mode"
+                );
+            }
+        }
+        assert_no_lumir_tmp(&v.0);
+    }
+
     /// 裁决 D1 的落点：可保存面 = 注册表全部文本类（md / 代码扩展 / 未收录扩展 /
     /// 无扩展名），image/binary 类被拒。拒绝清单是 Rust 侧第二份表，与
     /// `src/preview/attachments.ts` 的对账在 tests/unit/registry-drift.test.ts。
@@ -3799,7 +3950,8 @@ mod tests {
     }
 
     /// 反向路径之二：**同 inode 就地改写**——dev/ino 不变，只有 mtime/size 能抓到。这条守住
-    /// 「四字段缺一不可」：丢掉 mtime/size 会漏掉这一类改写。改写取**同长度**内容，让 size
+    /// 「五字段缺一不可」：丢掉 mtime/size 会漏掉这一类改写，丢掉 mode 会漏掉外部 `chmod`
+    /// （见下一条用例）。改写取**同长度**内容，让 size
     /// 保持不变，判据只剩 mtime（macOS/APFS 纳秒精度）。
     #[test]
     fn atomic_write_aborts_when_target_is_rewritten_in_place_between_snapshot_and_rename() {
@@ -3841,6 +3993,49 @@ mod tests {
             "fn main() {}",
             "被换上的内容 MUST NOT 被覆盖"
         );
+    }
+
+    /// 反向路径之三：**外部 `chmod`**——内容、inode 全不变，只有 permission bits 变。mode 既
+    /// 是保存后要继承的东西，也是快照的一部分，因此窗口内的 chmod 与内容改写同样判为
+    /// 「目标已变更」：外部 chmod 的 mode 与内容都 MUST NOT 被本次写入覆盖。
+    #[test]
+    fn atomic_write_aborts_when_target_mode_changes_between_snapshot_and_rename() {
+        use std::os::unix::fs::PermissionsExt;
+        let v = TempVault::with_fixture();
+        let target = v.0.join("note.md");
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let snapshot = stat_snapshot(&target).unwrap();
+        // 模拟窗口内被外部 chmod：内容 / inode 全不变，只有 mode 变
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let err = write_bytes_atomic(
+            &target,
+            b"# overwritten",
+            RenameGuard::ExpectSnapshot(&snapshot),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, AtomicWriteError::TargetChanged),
+            "外部 chmod 应判为目标已变更：{err:?}"
+        );
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
+            0o600,
+            "外部 chmod 的 mode MUST NOT 被覆盖"
+        );
+        assert_no_lumir_tmp(&v.0);
+
+        // 薄壳口径：同一情形在文档写入路径上按既有冲突语义收敛
+        let err = write_document_atomic(&target, "# overwritten", Some(&snapshot)).unwrap_err();
+        assert_eq!(err.code, "document_conflict");
+        assert_eq!(err.message, "文件已被外部修改，请先协调冲突");
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
+            0o600
+        );
+        assert_no_lumir_tmp(&v.0);
     }
 
     // -----------------------------------------------------------------------
@@ -4081,6 +4276,33 @@ mod tests {
         )
         .unwrap();
         assert_eq!(read_text_file(&v.0, "doc.md").unwrap(), "gamma\n");
+    }
+
+    /// 局部 patch 与保存走同一个写核心：已有文件的 Unix permission bits 同样保持
+    /// （0745 文件 patch 后 MUST NOT 被 tmp 的默认权限顶掉）。
+    #[test]
+    fn fs_patch_file_preserves_unix_mode_of_existing_document() {
+        use std::os::unix::fs::PermissionsExt;
+        let v = TempVault::new();
+        let target = v.0.join("tool.sh");
+        std::fs::write(&target, "run --old\n").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o745)).unwrap();
+        let revision = file_revision(&v.0, "tool.sh").unwrap();
+        fs_patch_file(
+            &v.0,
+            &v.policy(),
+            "tool.sh",
+            &[edit("--old", "--new")],
+            &revision,
+        )
+        .unwrap();
+        assert_eq!(read_text_file(&v.0, "tool.sh").unwrap(), "run --new\n");
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
+            0o745,
+            "patch MUST 继承既有文档的 permission bits"
+        );
+        assert_no_lumir_tmp(&v.0);
     }
 
     /// 非 UTF-8 文件拒绝（与读取链路同一个错误码）：命中判定必须先在文本上做。
