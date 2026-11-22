@@ -1,7 +1,8 @@
 # Tasks: stabilize-block-boundary-geometry-nov21
 
 > 节点 1 已由 Alex 于 2026-11-22 明确采纳。顺序：先记录旧实现红证据，再实现；禁止以更新基线代替修复。
-> 本批只执行 P0–P4；真机、完整视觉、归档与 CI 由主会话统一安排。
+> 本 worker 批执行 P0–P4 与独立评审返修；真机、完整视觉、归档由主会话完成（读数见 5.2–5.4），
+> CI 由合并推送后按 AGENTS.md「CI 观察者」条跟进。
 
 ## P0 合同与先红证据
 
@@ -54,11 +55,19 @@
 - [x] 5.1 跑相关单测、根 / 视觉 / 单测三份 tsc、目标结构视觉、性能夹具与 OpenSpec 严格校验；
       命令原文和结果落主仓证据目录
 - [x] 5.2 主会话完整视觉已 PASS：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；新基线由主会话在
-      Alex 过目后处理，本 worker 未执行 `--update`
+      Alex 过目后处理，本 worker 未执行 `--update`。最终 `scripts/gate.sh all` 为
+      `GATE RESULT: 22/22 PASS（SKIP 0）`，退出码 0（含 release 与性能合同，cold-start
+      median 115.26ms / p95 119.52ms，合同 <300ms），读数见
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/block-geometry-nov21/review-final.md`
 - [x] 5.3 P5 场景制品：新增 `272-block-boundary-geometry-nov21`（item 272 / full），真实普通按键
       序列、三段截图、正式 marker 与最终 `file.exact`；`run.mjs --check` PASS（253 个场景），
       COVERAGE 已生成；中文不冒充原生 IME，AX 不声称读取行高 / scroll / 像素。
       首次真机未执行输入即因 notes 未展开超时，已按 AX 证据改根目录合成文件；第二次暴露
       press_key 不支持 CJK，中文改用当前 caret 的普通 Unicode 剪贴板 + cgevent ⌘V，后续目标不变
-- [ ] 5.4 真机执行 272、独立评审、归档与 CI 由主会话继续；本轮只交付场景制品与静态校验，
-      不得把场景存在记成真机 PASS
+- [x] 5.4 真机与独立评审已由主会话完成：`272-block-boundary-geometry-nov21` PASS，15 断言 / 0 FAIL
+      （`status.txt` = `PASS`；`steps.md` / `shots/` / `ax/`），证据
+      `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-block-geometry/272-block-boundary-geometry-nov21/`；
+      独立 reviewer agent-50 判 `clean/merge`，无 P1 / P2，绑定 tip
+      `7a0a9b77d7439a4bfa0e7d052dd994bbb2fe4a7b`（`/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/block-geometry-nov21/review-final.md`）。
+      归档由本回填批执行（节点 2 记录见 proposal）。CI 不属本 worktree 的交付面：按 AGENTS.md
+      「CI 观察者」条，由主会话在合并推送后跟进到每条 workflow 终态。

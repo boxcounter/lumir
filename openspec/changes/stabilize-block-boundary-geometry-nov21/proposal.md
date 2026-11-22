@@ -9,7 +9,43 @@
 > 首帧即为最终纵向几何、异步扫描不得改变行高或光标；接受少量静态几何变化，但新增截图须后续过目。
 > 软换行 R4 单列，不宣称本轮覆盖。实施期计划内部矛盾修正：`para\n---` 按源码算法归为
 > setext 下划线而非 list marker，第二行 `padding-top=0`、新几何 33.5+25.5；不新增特判。
-> 节点 2（归档评审）：实现与证据完成后填写。
+> 节点 2（归档放行）：**机器 + 独立评审放行**（[openspec-workflow.md](../../../docs/process/openspec-workflow.md)
+> 「节点 2：归档默认由独立评审 + 机器判据放行」五要件），逐条事实与证据指针见下「节点 2 记录（归档前）」。
+
+## 节点 2 记录（归档前，2026-11-22）
+
+口径见 [openspec-workflow.md](../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+
+1. **方案已批准**：节点 1 于 2026-11-22 通过——Alex 采纳结构方案（纵向几何由源文本块边界同步决定、
+   首帧即最终纵向几何、异步扫描不得改变行高或光标）并批准 4 张新增静态几何基线（见上方「评审记录」）。
+   实现期没有静默扩 scope：产品增量对应「What Changes」四条（`src/preview/block-geometry.ts` 新入口
+   为纵向 padding 唯一写入者、列表新组首帧横向估算与扫描同式、真 lezer 属性测试与逐帧场景、4 个块
+   边界视觉场景）；实施期唯一的计划内部矛盾修正（`para\n---` 归 setext 下划线）已在节点 1 记录中裁明，
+   不新增特判；R4 软换行、引用间距与 setext 标题渲染按 Non-goals 明确不扩。
+2. **独立 reviewer clean / merge**：独立 reviewer agent-50 判 `clean/merge`，无 P1 / P2 findings，
+   绑定 tip `7a0a9b77d7439a4bfa0e7d052dd994bbb2fe4a7b`；评审文件
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/reviews/block-geometry-nov21/review-final.md`。
+   评审期 P1（长连续正文首行查询递归 ⇒ `RangeError`）已由 `ea76dadc` 闭环并复验；本回填批自该 tip
+   之后只改 proposal / tasks / backlog 三份文档，无产品代码增量。
+3. **tasks 完成**：`tasks.md` 18/18 全勾（`grep -c '^- \[x\]'` = 18，未勾项 0），无放弃项；
+   R4 等边界未扩入本轮，与 5.4 及 proposal Non-goals 一致。
+4. **要求的门禁与真机证据**：动过 `tests/visual/scenes/**`（新增 `block-boundary-geometry.spec.ts`
+   与 4 张基线，均经 Alex 过目批准），按 `scripts/gate.sh all` 取读数——`GATE RESULT: 22/22
+   PASS（SKIP 0）`，退出码 0（含整页 / 元素像素层、release 与性能合同；cold-start median 115.26ms /
+   p95 119.52ms，合同 <300ms）。前端单测 1736/1736，目标结构视觉 161/161，根 / 单测 / 视觉三份 tsc
+   全绿。真机场景 `272-block-boundary-geometry-nov21` PASS（15 断言，0 FAIL；`status.txt` = `PASS`），
+   覆盖 `Enter → - → 空格 → 中文`、正式 marker 与最终源码逐字，证据
+   `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-21-block-geometry/272-block-boundary-geometry-nov21/`
+   （`steps.md` / `shots/` / `ax/`）。场景不冒充原生 IME，AX 不声称读取行高 / scroll / 像素。
+5. **规格对账（归档前读数）**：`node scripts/openspec-archive-check.mjs` 门禁模式 PASS——`扫过
+   8 份 delta，6 条 MODIFIED，对比 82 段，无静默丢段；归档队列 1 项已完成 change 均有唯一条目`
+   （退出码 0）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → `Totals: 36
+   passed, 0 failed (36 items)`（退出码 0）。归档跟踪队列有且仅有一条本 change 条目
+   （`docs/backlog.md`）。delta 是既有 capability `editor-live-preview` 的 1 条 ADDED，不是纯目录
+   移动；living spec 已有 Purpose，无需新建占位。
+
+未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项（4 张基线已过目批准）、
+无影响面升级、评审结论与 tip 均无异常、证据无缺口，故不另送 Alex。
 
 ## Why
 
