@@ -2119,9 +2119,10 @@ fn current_vault_root(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// 因此 id 必须在这里定下、由调用方拿到——id 只活在函数内部的话，台账无从落键。
 ///
 /// **macOS 打包实例**走本仓自持的 UN 平台层（[`notify`]）：启动窗口内按短间隔重试到被接受，
-/// 投递后按请求 id 自查系统是否真的放进了通知中心。**dev flavour** 走 mac-notification-sys 的
-/// legacy 投递——UN 在无 bundle 的裸二进制里会 abort，而 dev 的通知点击回调本就是已知失效的
-/// 通道边界（套件按 `requires: bundle` 标 INVALID），只要投递可用即可。
+/// 投递后按请求 id 自查系统是否真的放进了通知中心。**dev 与无 bundle 的裸二进制**（含 perf
+/// release）走 mac-notification-sys 的 legacy 投递——`custom-protocol` 不代表有 bundle 身份，
+/// UN 在这种进程里会 abort；无 bundle 的通知点击回调是已知失效的通道边界（套件按
+/// `requires: bundle` 标 INVALID），只要投递可用即可。
 ///
 /// **非 macOS** 由 notify-rust 自身的平台后端投递（Linux XDG / Windows WinRT），错误同样原样
 /// 上抛；点击等待由投递点登记的逐条闭包接收（[`spawn_notification_click_waiter`]）——那里的
@@ -2160,7 +2161,7 @@ fn deliver_notification(
         // macOS 上点击接收只有 delegate 一条通道（没有逐条等待），这个句柄只在非 macOS 的
         // 分支里被用到。
         let _ = app;
-        if tauri::is_dev() {
+        if !notify::macos::user_notifications_enabled(tauri::is_dev()) {
             deliver_notification_dev(task, body)?;
             return Ok(request_id);
         }
@@ -2204,7 +2205,14 @@ fn deliver_notification(
 /// 台账开关（§4 / tasks 2.1）：唯一消费者是**跨进程点击**——只有 macOS 打包实例有这条通道，
 /// 其它环境写台账就是写没有消费者的数据。
 fn notice_ledger_enabled() -> bool {
-    cfg!(target_os = "macos") && !tauri::is_dev()
+    #[cfg(target_os = "macos")]
+    {
+        notify::macos::user_notifications_enabled(tauri::is_dev())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
 }
 
 /// 进程启动时刻：冷启动窗口的判据（见 [`NOTIFY_STARTUP_RETRY`]）。`run()` 在入口处记录。
@@ -2374,10 +2382,10 @@ fn action_label(action: &cron::NoticeAction) -> &str {
     }
 }
 
-/// dev flavour 的 legacy 投递（M608）：dev 的裸二进制没有自己的 bundle 身份，legacy 投递要借
-/// 一个已注册的 bundle id 才能上屏，因此归属写成 `com.apple.Terminal`（M608 探针期的既有口径）。
-/// 异步投递、不等待响应——点击响应会路由给 Terminal 的 bundle 身份，dev 下没有可用的点击回调，
-/// 等待只会白挂一个线程。
+/// 无 UN 身份的 legacy 投递（M608）：dev 与 perf 的裸二进制没有自己的 bundle 身份，legacy
+/// 投递要借一个已注册的 bundle id 才能上屏，因此归属写成 `com.apple.Terminal`（M608 探针期的
+/// 既有口径）。异步投递、不等待响应——点击响应会路由给 Terminal 的 bundle 身份，无 bundle
+/// 进程没有可用的点击回调，等待只会白挂一个线程。
 #[cfg(target_os = "macos")]
 fn deliver_notification_dev(task: &str, body: &str) -> Result<(), String> {
     let _ = mac_notification_sys::set_application("com.apple.Terminal");
@@ -2389,7 +2397,7 @@ fn deliver_notification_dev(task: &str, body: &str) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-/// 通知权限快照（macOS 打包实例；dev flavour / 非 macOS 从不写入）。
+/// 通知权限快照（macOS 打包实例；dev / 无 bundle 裸二进制 / 非 macOS 从不写入）。
 ///
 /// 单独一个静态而不是函数内 `static`：投递失败时要用**已探测的**快照选措辞，而那条路径
 /// MUST NOT 触发一次新的申请（见 [`cached_notification_permission`]）。
@@ -2414,9 +2422,9 @@ fn cached_notification_permission() -> Option<cron::NotifyPermission> {
 ///
 /// 只有 macOS 提供可查询的通知授权：打包实例投递走 UNUserNotificationCenter（M608），这里直接
 /// 请求一次——已决定（Allow / Deny）时 `requestAuthorization` 不弹窗、按现状返回，未决定时才弹
-/// 一次。dev flavour 走 legacy 投递，UN 授权在无 bundle 进程里没有意义，直接跳过。非 macOS
-/// （Linux 无权限模型、Windows 无查询 API）同样无需检查：投递失败由调用侧按 design §5.4 交给
-/// 下一次评估。
+/// 一次。dev 与无 bundle 的裸 release 走 legacy 投递，UN 授权在这种进程里没有意义且会
+/// abort，直接跳过。非 macOS（Linux 无权限模型、Windows 无查询 API）同样无需检查：投递失败
+/// 由调用侧按 design §5.4 交给下一次评估。
 ///
 /// **返回值是判据快照，不是新的判断**（M635）：申请只发生在这里一次，结果缓存在
 /// [`NOTIFY_PERMISSION`]；重载回执把它带回去（[`cron::ReloadOutcome::notify_permission`]），
@@ -2431,7 +2439,7 @@ fn cached_notification_permission() -> Option<cron::NotifyPermission> {
 fn ensure_notification_permission() -> cron::NotifyPermission {
     #[cfg(target_os = "macos")]
     {
-        if tauri::is_dev() {
+        if !notify::macos::user_notifications_enabled(tauri::is_dev()) {
             return cron::NotifyPermission::Granted;
         }
         // 诊断文案在探测里落（那里才有 crate 的错误详情），这里只做「一次」与「缓存」。
@@ -2645,6 +2653,18 @@ mod tests {
 #[cfg(test)]
 mod cron_runtime_tests {
     use std::path::Path;
+
+    /// perf 的裸 release 与 cargo 测试二进制都没有 bundle 身份。用 `--release --features
+    /// custom-protocol` 跑本用例时，旧的 `!is_dev` 分流会进入 UN 并 abort；修复后必须直接降级。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bare_binary_permission_check_does_not_probe_un() {
+        assert!(!crate::notify::macos::has_bundle_identity());
+        assert_eq!(
+            super::ensure_notification_permission(),
+            crate::cron::NotifyPermission::Granted
+        );
+    }
 
     /// 终态唯一产出点（change add-cron-runtime-daemon §5.2）：`cron_run_finished` 只允许在
     /// 回执处理一处调用。扫 `src-tauri/src` 下的全部 `.rs` 源码（运行期读盘、不枚举清单），
