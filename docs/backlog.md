@@ -17,7 +17,6 @@
 - ★ `#probe` **vault 切换 perf 端点**（Alex 2026-10-25 裁：用相对回归，见 `docs/specs/standing-decisions.md`）→ 下一动作：按 M283 草案 §6.4（`openspec/changes/archive/2026-09-28-vault-switch-restore-perf/design.md`）加 `vault-switch` 端点（≈2500 项合成 vault + 40 标签会话，记总时长与三段 `phaseMs`），判据沿用 `docs/specs/perf-measurement.md`「相对回归门禁」的既有口径（当次 median vs 滚动基线 median + 逐指标容忍线），不设绝对阈值。
 - ★ `#hygiene` **两处整页基线重建**（Alex 2026-10-25 裁）→ 下一动作：先重截出 diff（M251 菜单左上圆角透底 23px / M281 标签栏·标题栏文字行陈旧），diff 交 Alex 过目后再 `--update`；人肉基线闸不变。
 - ★ `#hygiene` **`CARGO_TARGET_DIR` 防假绿防线**（Alex 2026-10-25 裁，见 `docs/specs/standing-decisions.md`）→ 下一动作：把「测试二进制 mtime 晚于本轮最早源码改动」做成门禁判据（跑前 `touch` 目标源码，或核对 binary mtime 二选一）。
-- `#fix` **配置写入口读—改—写未同锁**（M615，medium）→ 下一动作：`commands::write_last_vault_to` 迁 `config::update_json_atomic`（`write_config_value_to` 已走同锁入口，只剩这一条）。
 - `#fix` **harness usage 六键无消费点**（M533，low）→ 下一动作：核对 `currentUsageReadings` 下游后裁掉六键（`cacheTurn` / `cacheNote` / `cacheWrite` / `cacheWriteSession` / `cachedTokens` / `cachedTokensSession`）与映射、`last*` 转存；Rust 载荷与 JSONL 留存不动。
 - `#fix` **孪生探测助手收敛**（M546 后，low）→ 下一动作：抽共享模块（`probeErrorCode` / 批量存在探测 / 失败重试口径），`reading-position.ts` / `vault-switcher.ts` 改 import；finding `20261016-worker-readpos-improve-reading-position-vault-switcher`。
 - `#fix` **登录 shell PATH 解析失败静默回退**（M466，low）→ 下一动作：回落时发一条 `log_event`（解析超时 / 标记缺失 / 旗标不支持分类）并扩 `src-tauri/src/logging.rs` 白名单，别只留「继承 PATH」的静默降级。
