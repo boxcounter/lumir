@@ -170,6 +170,10 @@ block2 = "0.6"
 # 保持「能投递」。打包实例不经过它（自持的 UN 实现只服务有 bundle 身份的打包实例）。
 mac-notification-sys = "=0.6.15"
 
+[dev-dependencies]
+# 命令运行时回归使用 Tauri mock runtime，避免 macOS Wry EventLoop 的主线程限制。
+tauri = { version = "2", features = ["test"] }
+
 [features]
 # 生产构建开关（Tauri 2 官方模板约定，名称必须恰为 custom-protocol）：
 # tauri build 会带上 `--features tauri/custom-protocol`（依赖自身的 feature），此时

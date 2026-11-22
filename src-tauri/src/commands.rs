@@ -1011,23 +1011,23 @@ pub fn fs_write_attachment(
 /// 图片语义命名（change add-semantic-image-naming，design §3–§5）：粘贴落盘之后的异步尾巴。
 ///
 /// 前端**不 await** 这条命令（粘贴事务早已完成）；结果回来时对账打开中的会话并弹 toast。
-/// 线程语义：`#[command(async)]`（与 `vault_open_path` 同一形态）——body 跑在 async 运行时的
-/// worker 上，不占 IPC 主线程；里面是一次阻塞 HTTP（20 秒超时，见 `llm::naming_client`），
-/// 与既有那条命令同一取舍（不引入第三种线程形态）。
+/// 线程语义与 `fetch_url_title` 相同：`async fn` + `spawn_blocking`。阻塞 HTTP 的 client
+/// （20 秒超时，见 `llm::naming_client`）必须在 blocking 线程上构造、使用、销毁；MUST NOT
+/// 写成 `#[command(async)]` + 同步 body，否则 reqwest blocking client 在 Tokio worker 上
+/// drop 会在 debug 构建里 panic，令 invoke 永不 settle。
 ///
 /// 全部失败都返回 `Ok(NamingOutcome { status: skipped, code: … })`，MUST NOT 让后端错误冒到
 /// 前端弹失败 toast（spec：高频路径静默降级）。配置在**调用时**读一次（= 粘贴时刻的快照，
 /// design §1 的生效时点）。
-#[tauri::command(async, rename_all = "snake_case")]
-pub fn attachment_semantic_name(
+#[tauri::command(rename_all = "snake_case")]
+pub async fn attachment_semantic_name(
     app: tauri::AppHandle,
-    state: tauri::State<'_, VaultState>,
+    _state: tauri::State<'_, VaultState>,
     path: String,
     note_path: Option<String>,
     before: String,
     after: String,
 ) -> Result<crate::attachment_naming::NamingOutcome, CommandError> {
-    use tauri::Emitter;
     let snapshot = match crate::attachment_naming::load_config() {
         Ok(snapshot) => snapshot,
         Err(_) => {
@@ -1038,25 +1038,43 @@ pub fn attachment_semantic_name(
             ));
         }
     };
-    let emit = move |event: &crate::attachment_naming::NamingEcho| {
-        let _ = app.emit("attachment:naming", event);
+    let request = crate::attachment_naming::NamingRequest {
+        path,
+        note_path,
+        before,
+        after,
     };
-    Ok(crate::attachment_naming::run(
-        &state,
-        &snapshot,
-        crate::attachment_naming::NamingRequest {
-            path,
-            note_path,
-            before,
-            after,
-        },
-        &emit,
-    ))
+    Ok(run_attachment_semantic_name(app, snapshot, request).await)
+}
+
+async fn run_attachment_semantic_name<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    snapshot: crate::config::ConfigSnapshot,
+    request: crate::attachment_naming::NamingRequest,
+) -> crate::attachment_naming::NamingOutcome {
+    let outcome_path = request.path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let emit = |event: &crate::attachment_naming::NamingEcho| {
+            let _ = app.emit("attachment:naming", event);
+        };
+        // State 有调用方生命周期，不能捕获进 'static 闭包；AppHandle 在 blocking 线程内
+        // 重新取到的是同一份托管状态。
+        let state = app.state::<VaultState>();
+        crate::attachment_naming::run(&state, &snapshot, request, &emit)
+    })
+    .await
+    .unwrap_or_else(|error| {
+        eprintln!("lumir: 图片语义命名任务异常结束：{error}");
+        crate::attachment_naming::NamingOutcome::skipped(
+            &outcome_path,
+            crate::attachment_naming::CODE_MODEL_FAILED,
+        )
+    })
 }
 
 /// 撤销一次语义改名（design §6）：与改名对称的反向操作。令牌一次性、过期即失效；
 /// 放弃条件命中时返回结构化错误（前端按 code 弹人话 toast——撤销是用户显式动作，MUST NOT
-/// 静默）。线程语义同上。
+/// 静默）。撤销不发起模型请求；既有 `#[command(async)]` 线程语义不变。
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn attachment_semantic_undo(
     app: tauri::AppHandle,
@@ -2078,6 +2096,18 @@ mod tests {
         }
     }
 
+    /// 复原进程级配置环境；断言失败 panic 时也经 Drop 执行。
+    struct XdgGuard(Option<std::ffi::OsString>);
+
+    impl Drop for XdgGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+    }
+
     /// 测试用策略：默认忽略地图（`config::VaultConfig::default()`）+ 给定用户规则清单。
     fn policy_with_rules(root: &Path, rule_files: &[String]) -> fs_io::IgnorePolicy {
         let defaults = config::VaultConfig::default();
@@ -2532,6 +2562,87 @@ mod tests {
             None,
             "惰性**文件**同样 MUST NOT 进链接索引（它是 lazy 守卫的直接判据）"
         );
+    }
+
+    /// 回归（fix/attachment-async-blocking-nov22）：命名命令走真实 reqwest blocking client 时，
+    /// 在 Tokio 运行时任务里必须 settle、不得因 client drop 而 panic。配置、vault 与 HTTP 服务
+    /// 都是本地临时设施，不读用户配置、不连接外网。
+    #[test]
+    fn attachment_semantic_name_settles_inside_async_runtime() {
+        let _xdg = crate::harness::xdg_test_lock();
+        let vault = TempVault::new("attachment-async-vault");
+        let config_root = TempVault::new("attachment-async-config");
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+
+        let bytes = b"attachment-async-regression";
+        let hash16 = fs_io::short_hash(bytes);
+        let name = fs_io::staging_name(&hash16, "webp");
+        let path = format!("notes/{name}");
+        let absolute = vault.path().join(&path);
+        std::fs::create_dir_all(absolute.parent().expect("image parent")).expect("image dir");
+        std::fs::write(&absolute, bytes).expect("stage image");
+
+        let (base_url, server) = crate::url_title::serve_once(
+            "200 OK",
+            Some("text/event-stream"),
+            "event: response.output_text.delta\ndata: {\"delta\":\"Harness Arch\"}\n\nevent: response.completed\ndata: {\"response\":{\"output\":[]}}\n\n",
+            std::time::Duration::ZERO,
+        );
+        let config_dir = config_root.path().join("xdg/lumir");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        std::fs::write(
+            config_dir.join("config.json"),
+            serde_json::json!({
+                "harness": {
+                    "provider": "local",
+                    "attachment_naming": { "enabled": true },
+                    "providers": {
+                        "local": {
+                            "preset": "kimi",
+                            "api_key": "test-key",
+                            "base_url": base_url,
+                            "model": "vision-test",
+                            "models": [{
+                                "id": "vision-test",
+                                "effort": false,
+                                "vision": true,
+                                "window": 262144
+                            }]
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("config");
+        std::env::set_var("XDG_CONFIG_HOME", config_root.path().join("xdg"));
+
+        let app = tauri::test::mock_app();
+        app.manage(committed_state(&vault.path(), &[]));
+        let handle = app.handle().clone();
+        let snapshot = crate::attachment_naming::load_config().expect("test config");
+        let request = crate::attachment_naming::NamingRequest {
+            path: path.clone(),
+            note_path: Some("notes/a.md".to_string()),
+            before: "光标前".to_string(),
+            after: "光标后".to_string(),
+        };
+        let outcome = tauri::async_runtime::block_on(tauri::async_runtime::spawn(async move {
+            run_attachment_semantic_name(handle, snapshot, request).await
+        }))
+        .expect("命名命令不得 panic（阻塞客户端只能在 spawn_blocking 线程上存在）");
+        server.join().expect("server");
+
+        assert_eq!(
+            outcome.status,
+            crate::attachment_naming::NamingStatus::Renamed,
+            "{outcome:?}"
+        );
+        let renamed = vault
+            .path()
+            .join(format!("notes/harness-arch-{}.webp", &hash16[..6]));
+        assert!(renamed.exists(), "成功路径必须完成既有改名语义");
+        assert!(!absolute.exists(), "暂存路径已按既有语义替换");
     }
 
     /// 回归（fix/url-title-blocking-nov21）：`fetch_url_title` 的阻塞客户端不得在 async 运行时的
