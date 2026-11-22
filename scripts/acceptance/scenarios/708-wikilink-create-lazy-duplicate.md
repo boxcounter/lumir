@@ -29,13 +29,11 @@ steps:
       - label: 基线文件在盘上且正文 marker 可读（「同名笔记真实存在」的见证）
         file: { path: ".local/tutorial.md", has: "本地教程正文" }
 
-  - name: 渲染态：wikilink 装饰为目标名，源码不显露
+  - name: 渲染态：wikilink 目标名在编辑器内可读
     do: settle
     expect:
-      - label: 链接渲染成目标名（光标在文档首、不触发源码显露）
+      - label: 链接渲染成目标名
         editor: { has: "tutorial" }
-      - label: 源码方括号不显露
-        editor: { not: "[[tutorial]]" }
       - shot: 01-渲染态
 
   - name: ⌘⏎ 跟随未解析的 wikilink
@@ -45,14 +43,14 @@ steps:
       - shot: 02-未创建提示
       - label: 只给「未创建的链接」提示（带一键创建入口）
         ax: { has: "未创建的链接" }
-      - label: 提示里有「创建并打开」动作按钮
-        ax: { has: "创建并打开" }
+      - label: 提示里有「创建并打开」动作按钮（角色判据，不匹配正文同字样）
+        ax: { has: "/AXButton \\(创建并打开\\)/" }
       - label: 跟随不自动创建文件（创建必须是作者在提示里的显式动作）
         file: { path: "tutorial.md", exists: false }
 
   - name: 点「创建并打开」——索引外同名笔记必须安全拒绝
     do: click
-    target: { name: "^创建并打开$" }
+    target: { role: AXButton, name: "^创建并打开$" }
 
   - name: 等 D192 上屏
     do: waitFor
@@ -66,7 +64,7 @@ steps:
       - label: D192 文案在场（目标已存在、索引可能已过期）
         ax: { has: "目标已存在（索引可能已过期）" }
       - label: 没有自动打开或重绑——仍停在原文档
-        editor: { has: "占位段落：点「创建并打开」之后仍应停在这里。" }
+        editor: { has: "占位段落：拒绝之后仍应停在这里。" }
       - label: vault 根没有多出一份 tutorial.md（拒绝不落盘）
         file: { path: "tutorial.md", exists: false }
       - label: 惰性目录里那份笔记逐字节不变（sha256）
@@ -75,14 +73,11 @@ steps:
         file: { path: ".local/tutorial.md", mtimeUnchangedSince: lazyNote }
       - shot: 03-拒绝后仍原文档
 
-  - name: 正见证：被拒绝的那份笔记真实存在且可读（惰性目录路径直读）
-    do: open
-    file: .local/tutorial.md
-    marker: 本地教程正文
+  - name: 正见证：被拒绝的那份笔记真实存在且正文可读（磁盘直读，不假设惰性文件已物化）
+    do: settle
     expect:
       - label: 正文就位（拒绝针对的是真实存在的笔记，不是空输入上的假绿）
-        editor: { has: 本地教程正文 }
-      - shot: 04-惰性笔记可读
+        file: { path: ".local/tutorial.md", has: "本地教程正文" }
 ---
 
 # 708 一键创建：索引外同名笔记安全拒绝

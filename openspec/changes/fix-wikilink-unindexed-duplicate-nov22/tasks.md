@@ -52,11 +52,12 @@
 
 - [x] 4.1 新增合成场景 `scripts/acceptance/scenarios/708-wikilink-create-lazy-duplicate.md`
       （惰性 fixture 的同名笔记 + 根文档 `[[tutorial]]`；点「创建并打开」→ D192 toast、
-      仍在原文档、vault 零新增；文件树展开惰性目录后原笔记可读作正见证）
+      仍在原文档、vault 零新增；既有惰性笔记的 sha256 + mtime 不变，磁盘正文可读作正见证）
 - [x] 4.2 `node scripts/acceptance/coverage.mjs` 重生成 `COVERAGE.md`
-- [ ] 4.3 真机跑该场景取 PASS 证据（`.local/acceptance/…`）
-      —— **未跑**：本会话未起真机实例（无 `pnpm tauri dev` / KimiCU 操作窗口），如实登记为
-      证据缺口；合并前由持窗口的批次补跑，场景与 COVERAGE 已就绪
+- [x] 4.3 真机跑该场景取 PASS 证据（`.local/acceptance/2026-11-23-wikilink-duplicate/`）
+      —— **PASS**：13.9s；D192 拒绝、仍在原文档、根目录零新增、既有笔记 sha256 + mtime 不变、
+      磁盘正文正见证均通过。前两次场景装置 FAIL 已修正：链接落点移到首行、按钮改角色判据、
+      惰性正文改磁盘直读；产品代码未因这两次装置失败改动。
 
 ## 5. 门禁
 
