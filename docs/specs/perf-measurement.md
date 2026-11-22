@@ -28,6 +28,8 @@
 - CI runner：`macos-15`（Apple Silicon，arm64）。四个数字仅在此环境定义；本地或其他机型的读数不可直接对阈值。
 - 前端构建：release 口径（`pnpm build` 产物 + `cargo build --release`）。
 - Node：>= 22.4（脚本使用内置全局 `WebSocket`，无新增 npm 依赖）。
+- **Lumir app 启动隔离（本地与 CI 同一缺省口径）**：`cold-start.mjs` 与 `memory.mjs` 经 `lib/app-isolation.mjs` 为每次脚本运行创建唯一的临时 `HOME` / `XDG_CONFIG_HOME`，写入固定合成配置（`version=1`、`editor.mode=md`、无 `last_vault`），缺省不创建也不恢复任何 vault。两者不得继承宿主 `~/.config/lumir`、真实 vault 或调用方预设的 `XDG_CONFIG_HOME`；结束后清理临时目录。CI 不再依赖「hosted runner 恰好无历史」这一隐式前提，本地 `gate all` 与独立脚本调用也走同一入口。`memory.mjs` 的显式 `PERF_MEM_PANES=0|1|2` 变体保留，结果仍写独立的 `resident-memory-pane{0,1,2}.json`；1/2 只恢复合成 vault。
+- **不启动 Lumir app 的两项**：keypress 只加载 `dist/` 且使用一次性 Chrome profile；open-file 只读入库的 1 MiB 合成 fixture，均不读取 Lumir 配置或 vault。
 
 ### 采样统计口径
 
@@ -64,6 +66,8 @@
 | `scripts/perf/memory.test.mjs` | 常驻内存污染护栏的纯函数夹具测试（`node --test scripts/perf/memory.test.mjs`） |
 | `scripts/perf/check-thresholds.mjs` | 阈值比较（绝对模式 + 相对回归模式） |
 | `scripts/perf/lib/stats.mjs` | 统计与结果落盘 |
+| `scripts/perf/lib/app-isolation.mjs` | cold-start / memory 共用的每次运行独立 HOME/XDG 与合成配置、可选合成 vault；退出清理 |
+| `scripts/perf/isolation.test.mjs` | Lumir 启动环境黑盒隔离测试：假 app 实际读写配置/vault，宿主 canary 被触碰即红 |
 | `scripts/perf/update-baseline.mjs` | 滚动基线追加与裁剪（仅 master push 调用，判据取 `gate-status.json`；逐指标推进） |
 | `tests/perf/fixtures/markdown-1mb.md` | 1MB Markdown fixture（提交入库） |
 | `tests/perf/fixtures/gen-fixture.mjs` | fixture 确定性再生成器 |
@@ -85,7 +89,7 @@
 
 ### 工具链
 
-- `scripts/perf/cold-start.mjs`：spawn `src-tauri/target/release/lumir`，逐行读 stdout，命中 ready 行后记录两端时间戳并 kill 进程。单次运行 15s 未出现 ready 行记为失败样本并中止该轮。
+- `scripts/perf/cold-start.mjs`：spawn `src-tauri/target/release/lumir`，逐行读 stdout，命中 ready 行后记录两端时间戳并 kill 进程。单次运行 15s 未出现 ready 行记为失败样本并中止该轮。所有 warm-up 与正式样本均显式传入同一份本次运行独立的合成 `HOME` / `XDG_CONFIG_HOME`（无 `last_vault`），结果 meta 记录隔离路径；结束后清理。
 
 ### 采样口径
 
@@ -95,7 +99,7 @@
 
 ### Fixture
 
-- 无。空壳 app 打开固定窗口与内置示例文档。
+- 合成空配置，无 vault、无 `last_vault`。每次脚本运行使用唯一临时 `HOME` / `XDG_CONFIG_HOME`；warm-up 与正式样本共享这份隔离 fixture，但均为全新进程。缺省常驻态为固定窗口 + 空白未命名文档，不得恢复宿主 vault。
 
 ## 2. keypress-to-paint <16ms（headless 注入近似，下界）
 
@@ -186,7 +190,7 @@
 
 ### 工具链
 
-- `scripts/perf/memory.mjs`：spawn release 二进制，等 ready（读 stdout 前缀行），idle 10s 后每 2s 采样一次。每次采样用 `ps -axo pid=,ppid=,rss=,lstart=,comm=` 取全量进程表（`LC_ALL=C` 固定 `lstart` 格式），按「进程归属」的归因规则求 RSS 合计与 helper 集合，并逐样本打印 `[perf] memory helpers i/N (attempt k): <n> webkit [pids]`。每轮结束按「污染护栏」判定；污染则在 1s 退避后整轮重测（重新取基线快照，见「有界重测与失败语义」），最多 2 轮。采样结束后 kill app 主进程并等到进程真正退出（已验证 WebKit XPC 进程随主进程退出；重测前还会等上一轮的 helper pid 消失，超时即判 `stale-helper`）。**任何主机（含 CI runner）上 pid 差集归因都可能被外来 WebKit helper 污染**：本地实测一次 409.7MB、CI 11/122 次 306.7–356.6MB；本地读数绝对值仍只作参考，但「污染」这件事不再假定只发生在本地——护栏在 CI 与本地同一条代码路径上生效。
+- `scripts/perf/memory.mjs`：经共享隔离 helper 准备合成环境后 spawn release 二进制，等 ready（读 stdout 前缀行），idle 10s 后每 2s 采样一次。每次采样用 `ps -axo pid=,ppid=,rss=,lstart=,comm=` 取全量进程表（`LC_ALL=C` 固定 `lstart` 格式），按「进程归属」的归因规则求 RSS 合计与 helper 集合，并逐样本打印 `[perf] memory helpers i/N (attempt k): <n> webkit [pids]`。每轮结束按「污染护栏」判定；污染则在 1s 退避后整轮重测（重新取基线快照，见「有界重测与失败语义」），最多 2 轮。采样结束后 kill app 主进程并等到进程真正退出（已验证 WebKit XPC 进程随主进程退出；重测前还会等上一轮的 helper pid 消失，超时即判 `stale-helper`）。**任何主机（含 CI runner）上 pid 差集归因都可能被外来 WebKit helper 污染**：本地实测一次 409.7MB、CI 11/122 次 306.7–356.6MB；本地读数绝对值仍只作参考，但「污染」这件事不再假定只发生在本地——护栏在 CI 与本地同一条代码路径上生效。
 
 ### 采样口径
 
@@ -194,7 +198,7 @@
 
 ### Fixture
 
-- 无。空壳 app 常驻态 = 打开固定窗口 + 内置示例文档。
+- `scripts/perf/memory.mjs`：缺省等价于 pane0 合成空配置（无 vault、无 `last_vault`），写 `resident-memory.json`；显式 `PERF_MEM_PANES=0|1|2` 保留独立变体结果文件。所有形态均使用每次运行唯一的临时 `HOME` / `XDG_CONFIG_HOME`，panes 1/2 的 `last_vault` 只指向同一临时根下的合成 vault；结束清理，meta 记录 `panes/home/xdgConfigHome`。
 
 ## 5. CI 集成与门禁状态
 
@@ -202,5 +206,5 @@
 - **现阶段（2026-09-05 校准 + 2026-09-18 M174 修正后）**：`thresholds.json` 的 `enforce` 为 `true`，门禁拒合已启用。绝对模式指标超阈即 CI 红（resident-memory 的门禁阈值为 250MB，见 §4）；相对模式指标回退超**该指标容忍线**（默认 40%、`keypress-to-paint` 60%，并随基线窗口实测散布浮动；基线历史不足 `minRuns=5` 时降级为 `::warning::` 不拒合）即 CI 红；任一指标的本次结果文件缺失或不可读亦 CI 红（exit 1，缺数据即红）；基线缺失、薄基线、统计口径迁移只 warning 不拒合。`check-thresholds.mjs` 同时把逐指标判据落盘 `.local/perf/gate-status.json`（随 artifact 上传，可复核每次 run 用的是哪条基线、哪个容忍线）。
 - **基线写回**：`push` 到 master 时，`update-baseline.mjs` 以 `if: always()` 运行（**不再**要求整轮全绿，缘由见「基线更新规则」），按 `gate-status.json` **逐指标**把「判据非 `fail` 且读数可读」的门禁值追加进 `.local/perf/baseline/baseline.json`（裁剪到最近 10 次），再由 `actions/cache/save` 以 `perf-baseline-<run_id>` 为 key 写回。某指标自身拒合、结果缺失或判据缺失时，只有该指标的历史不动（fail-closed：判据文件整体缺失则一条都不推进）。
 - **污染轮的 CI 路径（M723）**：`memory.mjs` 连续两轮污染时以退出码 1 失败、打印 `::error::`（reason=`contaminated`）并写 `resident-memory-contaminated.json` 诊断件，该 step 红；`check-thresholds.mjs` 因 step 失败不阻塞（`if: always()`）仍会运行，读取不到 `resident-memory.json` 即把该项记为 `fail` / `result-missing`——**不是** `over-threshold`，artifact 照常上传（含诊断件，可复核是哪个外来 helper 被计入）。重测成功时 `resident-memory.json` 正常产出，`meta.attempts` 保留被丢弃轮的诊断，CI 日志另有 `::warning::` 标注；门禁的 max 只取被接受轮。判定「结果缺失」而非「超阈」是本护栏的硬要求：否则测量问题会以产品回归的形态出现，导致按超阈去做产品侧处置。
-- **纯函数夹具测试（两个文件，一条命令）**：`node --test scripts/perf/memory.test.mjs scripts/perf/keypress-startup.test.mjs`（零新增依赖，node:test）。前者覆盖 M721 report §2.2 的全部 11 次异常形态、正常 2/3 helper、窗口内新增/退出/换人、有界重测与 contaminated 退出原因，并对每条夹具做反向验证（关掉对应判据后必须变干净、正常夹具注入噪声后必须判红）；后者守 §2「注入起点」的门禁时序——readyState 已 complete 但产品未挂载时不得装 hook、不得发键，app-ready 之后才计时，fail-closed 路径零采样（覆盖见 §2 的机器测试描述）。**已接入两处机器门禁**（M723 收尾接入前者、M737 起同一条命令同时跑两个文件）：`scripts/gate.sh` quick 层的 `perf-fixture-tests`（零依赖、毫秒级，紧邻 `unit-tests`），以及 `.github/workflows/perf.yml` 的 `常驻内存归因护栏夹具测试（node:test，零依赖）` step（在构建与四项测量之前执行，失败即整轮 perf 红；step 名沿用 M723 的叫法，实际运行两个文件，job 名与既有测量步骤不变）。perf workflow 的 `paths` 已含 `scripts/perf/**`、`tests/perf/**` 与 workflow 自身，改 `memory.mjs`、`memory.test.mjs`、`keypress-to-paint.mjs`、`keypress-startup.test.mjs`、`tests/perf/fixtures/**` 或 `perf.yml` 都会触发。
+- **机器夹具测试（三个文件，一条命令）**：`node --test scripts/perf/memory.test.mjs scripts/perf/keypress-startup.test.mjs scripts/perf/isolation.test.mjs`（零新增依赖，node:test）。前两者分别覆盖常驻内存污染护栏（含全部 11 次异常形态、有界重测、反向验证与诊断完整性）和 keypress 注入起点时序。第三者复制实际 perf 入口到临时仓库，用会**真实读取配置、改写配置、读取 `last_vault` 文档并写 vault** 的假 app 黑盒执行 memory/cold-start：宿主 `HOME` / `XDG_CONFIG_HOME` 与 vault 都是带 canary 的临时目录，任何继承或读写都会判红；同时断言合成配置确实被读取、临时目录被清理、pane1 变体仍只访问合成 vault。探测器自身另有反向验证，证明继承宿主环境时必然留下读写痕迹，不是 helper 字符串检查。**已接入两处机器门禁**：`scripts/gate.sh` quick 的 `perf-fixture-tests`，以及 perf workflow 的夹具 step（在构建与四项测量之前执行，失败即整轮 perf 红）。perf workflow 的 `paths` 已含 `scripts/perf/**`、`tests/perf/**` 与 workflow 自身。
 - 触发路径：`src/**`、`src-tauri/**`、`scripts/perf/**`、`tests/perf/**`、workflow 自身的 PR 与 master push，外加 `workflow_dispatch`（手动跑数/验证门禁行为）。

@@ -129,12 +129,14 @@ fi
 # include 里，根 tsc 覆盖不到它）。
 run_gate tsc-unit pnpm exec tsc -p tests/unit/tsconfig.json
 run_gate unit-tests node tests/unit/run.mjs
-# perf 脚本的纯函数夹具层，一条 gate 跑两个文件：
+# perf 脚本的机器夹具层，一条 gate 跑三个文件：
 #   - memory.test.mjs：常驻内存归因污染判定（resident-memory 门禁读数可信度的前提）；
 #   - keypress-startup.test.mjs：keypress-to-paint 的注入起点门禁时序（readyState complete 但产品
-#     未挂载时不得开始采样）。两者坏掉都只能在读数上伪装成产品回归，因此都不该等下一次 perf run
-#     才暴露。node:test 零依赖、毫秒级，放 quick；任一文件失败即整条 gate 红。
-run_gate perf-fixture-tests node --test scripts/perf/memory.test.mjs scripts/perf/keypress-startup.test.mjs
+#     未挂载时不得开始采样）；
+#   - isolation.test.mjs：memory/cold-start 默认启动的黑盒 HOME/XDG/vault 隔离，含旧实现反例。
+# 三者坏掉都只能在读数上伪装成产品回归，因此都不该等下一次 perf run 才暴露。
+# node:test 零依赖，放 quick；任一文件失败即整条 gate 红。
+run_gate perf-fixture-tests node --test scripts/perf/memory.test.mjs scripts/perf/keypress-startup.test.mjs scripts/perf/isolation.test.mjs
 # 验收套件契约层：JS 语法 + 全部场景静态校验 + 覆盖表 + 套件自测。实现唯一一份在
 # scripts/acceptance/check-suite.sh（docs-check / CI 共用同一实现，REVIEW.md「同一语义两处真源」条）。
 # 不起 app、不占端口、不碰验收 vault。

@@ -199,6 +199,10 @@ MUST NOT 插入引用后留下破图、MUST NOT 出现「文档插了引用但�
 新写盘**的图片排一次语义命名。粘贴事务 SHALL 先按「落盘与命名去重」落暂存名并插入引用，在
 keypress-to-paint <16ms 的性能合同内完成；命名 SHALL 是投递之后的异步任务，MUST NOT 在粘贴
 路径上等待模型调用。去重命中（未写盘）、文件已是语义名、开关关闭时 MUST NOT 投递任务。
+命名命令 SHALL 使用 `async fn` + `tauri::async_runtime::spawn_blocking`，使阻塞 HTTP client 的构造、
+使用与销毁都在 blocking 线程上；MUST NOT 用 `#[command(async)]` + 同步 body 让 client 在 Tokio
+worker 上销毁。命令在运行时任务内 SHALL settle 为既有命名或跳过结果，不得因 client drop panic
+而让 invoke 悬挂；20 秒超时、参数、返回值与静默降级契约不变。
 
 命名请求 SHALL 携带：图片字节 + **粘贴时刻**光标前后段落的文本 + 笔记标题；前后段落各有长度
 上限，MUST NOT 携带整篇文档。调用目标 SHALL 由 `harness.attachment_naming` 三键解析：provider

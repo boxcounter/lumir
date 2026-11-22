@@ -1,4 +1,5 @@
 // 常驻内存测量（spec §4）：ready 后 idle 10s，每 2s 采样一次 RSS 合计，共 5 个样本。
+// 本地与 CI 缺省均使用每次运行独立的合成 HOME/XDG（无 last_vault），不得继承宿主配置/vault。
 //
 // 归因口径：app 的 ppid 子孙进程 + 基线差集归因的 com.apple.WebKit.* XPC 进程
 // （WKWebView 的 WebContent/GPU/Networking 由 launchd 托管，ppid=1，不在 ppid 树里，
@@ -28,6 +29,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { repoRoot, resultsDir, sleep, writeResult } from "./lib/stats.mjs";
+import { createAppFixture } from "./lib/app-isolation.mjs";
 
 const execFileP = promisify(execFile);
 const READY_PREFIX = "LUMIR_READY ";
@@ -231,58 +233,6 @@ function formatReasons(reasons) {
     .join(", ");
 }
 
-/** 变体 fixture：隔离配置目录；panes ≥ 1 时另有合成 vault（两份小文档）+ 注册表 + v2 会话。 */
-async function seedPanesEnv(panes) {
-  const root = "/tmp/lumir-perf-panes";
-  const cfgDir = path.join(root, "xdg", "lumir");
-  await mkdir(cfgDir, { recursive: true });
-  if (panes === 0) {
-    // 空配置：无 last_vault——与 CI runner 的「无历史」现场同语义（空白未命名文档常驻态）。
-    await writeFile(path.join(cfgDir, "config.json"), `${JSON.stringify({ version: 1, editor: { mode: "md" } }, null, 2)}\n`);
-    return path.join(root, "xdg");
-  }
-  const vault = path.join(root, "vault");
-  await mkdir(vault, { recursive: true });
-  const alpha = "# Alpha\n\n常驻内存测量的甲文档。\n";
-  const beta = "# Beta\n\n常驻内存测量的乙文档。\n";
-  await writeFile(path.join(vault, "alpha.md"), alpha);
-  await writeFile(path.join(vault, "beta.md"), beta);
-  // /tmp 在 macOS 是 /private/tmp 的符号链接：注册表与 last_vault 都用 realpath 后的路径，
-  // 与 find_by_path 的归一化对齐（scripts/acceptance 同款纪律）。
-  const realVault = realpathSync(vault);
-  await mkdir(path.join(cfgDir, "vault-registry"), { recursive: true });
-  await mkdir(path.join(cfgDir, "vault-sessions"), { recursive: true });
-  await writeFile(
-    path.join(cfgDir, "config.json"),
-    `${JSON.stringify({ version: 1, last_vault: realVault, editor: { mode: "md" } }, null, 2)}\n`
-  );
-  const vaultId = "m320perf";
-  await writeFile(
-    path.join(cfgDir, "vault-registry", `${vaultId}.json`),
-    `${JSON.stringify({ id: vaultId, path: realVault, last_opened_at: Date.now() }, null, 2)}\n`
-  );
-  // v2 会话形状与 src/bindings/VaultSession.ts 对齐（version / panes / harness_pane /
-  // pane_split_ratio / updated_at 五字段；Rust 侧 sanitize 兜底见 vault_session.rs）。
-  const session = {
-    version: 2,
-    panes:
-      panes === 2
-        ? [
-            { tabs: ["alpha.md"], active: "alpha.md" },
-            { tabs: ["beta.md"], active: "beta.md" },
-          ]
-        : [{ tabs: ["alpha.md"], active: "alpha.md" }],
-    harness_pane: false,
-    pane_split_ratio: 0.5,
-    updated_at: Date.now(),
-  };
-  await writeFile(
-    path.join(cfgDir, "vault-sessions", `${vaultId}.json`),
-    `${JSON.stringify(session, null, 2)}\n`
-  );
-  return path.join(root, "xdg");
-}
-
 async function procTable() {
   // LC_ALL=C 固定 lstart 的月份/星期为英文，解析不随宿主 locale 漂移。
   const { stdout } = await execFileP("ps", ["-axo", "pid=,ppid=,rss=,lstart=,comm="], {
@@ -401,7 +351,7 @@ export function summarizeAttempt(a) {
 }
 
 /** 成功结果的 meta（纯函数，便于夹具测试与连续污染诊断共用的摘要形状）。 */
-export function buildMeta({ attempts, acceptedAttempt, panes, xdgConfigHome }) {
+export function buildMeta({ attempts, acceptedAttempt, panes, xdgConfigHome, home }) {
   const accepted = attempts[acceptedAttempt - 1];
   return {
     settleMs: SETTLE_MS,
@@ -414,11 +364,13 @@ export function buildMeta({ attempts, acceptedAttempt, panes, xdgConfigHome }) {
     acceptedAttempt,
     attempts: attempts.map(summarizeAttempt),
     residualRisk: RESIDUAL_RISK,
-    ...(panes === null ? {} : { panes, xdgConfigHome }),
+    panes,
+    xdgConfigHome,
+    home,
     note:
       "RSS 合计（app 子孙 + 基线差集归因的 WebKit XPC），含 shared pages（系统性偏高）；门禁比较值为 max" +
       "；污染轮读数整轮丢弃、不进统计（诊断见 meta.attempts）" +
-      (panes === null ? "" : `；PERF_MEM_PANES=${panes} 变体：隔离 XDG + 合成 vault 经启动恢复落到 ${panes} pane 常驻态`),
+      `；合成隔离 fixture：独立 HOME/XDG，panes=${panes}（0=无 vault，1/2=合成 vault 启动恢复）`,
   };
 }
 
@@ -426,7 +378,7 @@ export function buildMeta({ attempts, acceptedAttempt, panes, xdgConfigHome }) {
  * 连续污染诊断件的内容（纯函数，便于夹具测试形状）。与成功结果的 meta 共用 summarizeAttempt，
  * 因此被丢弃的每一轮都带齐 attributed（全轮并集）与该轮 excludedBaselineWebKit。
  */
-export function buildContaminatedPayload({ metric, attempts, panes, xdgConfigHome, reason, now = new Date() }) {
+export function buildContaminatedPayload({ metric, attempts, panes, xdgConfigHome, home, reason, now = new Date() }) {
   return {
     metric,
     status: "contaminated",
@@ -444,7 +396,9 @@ export function buildContaminatedPayload({ metric, attempts, panes, xdgConfigHom
       intervalMs: INTERVAL_MS,
       contaminationPolicy: CONTAMINATION_POLICY,
       residualRisk: RESIDUAL_RISK,
-      ...(panes === null ? {} : { panes, xdgConfigHome }),
+      panes,
+      xdgConfigHome,
+      home,
     },
   };
 }
@@ -458,17 +412,12 @@ async function writeContaminatedDiagnostic(args) {
 }
 
 async function main() {
-  // M320 双 pane 常驻内存变体（pane-system-split-view 的实测任务）：`PERF_MEM_PANES=0|1|2` 时
-  // 用隔离 XDG_CONFIG_HOME（+ 合成 vault）起 app——0 = 空配置无 vault（与 CI runner 的干净
-  // 现场同语义；裸跑不设本变量会继承用户真实 ~/.config/lumir，恢复真实 vault 还可能往里写
-  // 会话/日志，本机实测一律走隔离变体），1/2 = 经启动恢复（M159/M318 的真实路径）落到
-  // 单 pane / 双 pane 常驻态再采样——1 与 2 只差会话文件的 pane 数，其余 fixture 逐字节
-  // 相同，差值即「第二 pane 常驻」的内存增量。**缺省（未设）行为与此前逐字节一致**：CI 门禁
-  // 的 resident-memory 不受影响；变体结果写独立 metric 文件（resident-memory-pane0/1/2），
-  // 不覆盖门禁读数。
-  const panes = process.env.PERF_MEM_PANES === undefined ? null : Number(process.env.PERF_MEM_PANES);
-  if (panes !== null && panes !== 0 && panes !== 1 && panes !== 2) {
-    console.error(`[perf] PERF_MEM_PANES 只接受 0/1/2（0=无 vault 的 CI 同语义变体），收到 ${JSON.stringify(process.env.PERF_MEM_PANES)}`);
+  // 缺省与 CI 同口径：独立 HOME/XDG + 无 last_vault 的合成空配置，不继承宿主 vault。
+  // 显式 PERF_MEM_PANES=0|1|2 保留原变体及独立结果文件；1/2 使用合成 vault 与启动恢复会话。
+  const explicitPanes = process.env.PERF_MEM_PANES;
+  const panes = explicitPanes === undefined ? 0 : Number(explicitPanes);
+  if (![0, 1, 2].includes(panes)) {
+    console.error(`[perf] PERF_MEM_PANES 只接受 0/1/2（缺省=0，无 vault），收到 ${JSON.stringify(explicitPanes)}`);
     process.exit(2);
   }
   if (!Number.isInteger(SAMPLES) || SAMPLES < 1) {
@@ -480,63 +429,75 @@ async function main() {
     process.exit(2);
   }
   const bin = path.join(repoRoot(), "src-tauri/target/release/lumir");
-  const spawnEnv = panes === null ? process.env : { ...process.env, XDG_CONFIG_HOME: await seedPanesEnv(panes) };
-  const metric = panes === null ? "resident-memory" : `resident-memory-pane${panes}`;
-  // 先删上一轮遗留的门禁结果：本轮若两轮都污染（不写结果），陈旧读数不得让 check-thresholds 假绿。
-  await rm(path.join(resultsDir(), `${metric}.json`), { force: true });
+  const fixture = await createAppFixture({ panes });
+  const spawnEnv = fixture.env;
+  const metric = explicitPanes === undefined ? "resident-memory" : `resident-memory-pane${panes}`;
+  try {
+    // 先删上一轮遗留的门禁结果：本轮若两轮都污染（不写结果），陈旧读数不得让 check-thresholds 假绿。
+    await rm(path.join(resultsDir(), `${metric}.json`), { force: true });
 
-  const attempts = [];
-  let step = nextStep(attempts);
-  while (step.action === "measure") {
-    const previous = attempts[attempts.length - 1];
-    const round = await measureRound({
-      attempt: step.attempt,
-      bin,
-      spawnEnv,
-      previousHelperPids: previous ? previous.helperPidsAtExit : [],
-    });
-    attempts.push(round);
-    console.log(
-      `[perf] memory attempt ${round.attempt}: ` +
-        (round.contaminated ? `${CONTAMINATION_REASON}（${formatReasons(round.reasons)}）` : "clean")
-    );
-    step = nextStep(attempts);
-    if (step.action === "measure") await sleep(RETRY_BACKOFF_MS);
-  }
-
-  const resolved = resolveRun(attempts);
-  if (resolved.status === "ok") {
-    await writeResult({
-      metric,
-      unit: "MB",
-      contract: 200,
-      samples: resolved.samples,
-      meta: buildMeta({ attempts, acceptedAttempt: resolved.acceptedAttempt, panes, xdgConfigHome: spawnEnv.XDG_CONFIG_HOME }),
-    });
-    if (attempts.length > 1) {
+    const attempts = [];
+    let step = nextStep(attempts);
+    while (step.action === "measure") {
+      const previous = attempts[attempts.length - 1];
+      const round = await measureRound({
+        attempt: step.attempt,
+        bin,
+        spawnEnv,
+        previousHelperPids: previous ? previous.helperPidsAtExit : [],
+      });
+      attempts.push(round);
       console.log(
-        `::warning::[perf] ${metric}: 首轮污染已整轮丢弃（${formatReasons(attempts[0].reasons)}），` +
-          `采用第 ${resolved.acceptedAttempt} 轮读数`
+        `[perf] memory attempt ${round.attempt}: ` +
+          (round.contaminated ? `${CONTAMINATION_REASON}（${formatReasons(round.reasons)}）` : "clean")
       );
+      step = nextStep(attempts);
+      if (step.action === "measure") await sleep(RETRY_BACKOFF_MS);
     }
-    return;
-  }
 
-  const diagnostic = await writeContaminatedDiagnostic({
-    metric,
-    attempts,
-    panes,
-    xdgConfigHome: spawnEnv.XDG_CONFIG_HOME,
-    reason: resolved.reason,
-  });
-  console.error(
-    `::error::[perf] ${metric}: ${resolved.reason}——连续 ${attempts.length} 轮污染，已达 ${MAX_ATTEMPTS} 轮上限，不再重试；` +
-      `本轮读数全部丢弃，不写 ${metric}.json（check-thresholds 将报「结果缺失」而非「超阈」）。诊断：${diagnostic}`
-  );
-  for (const a of attempts) {
-    console.error(`[perf] ${metric} attempt ${a.attempt} reasons: ${JSON.stringify(a.reasons)}`);
+    const resolved = resolveRun(attempts);
+    if (resolved.status === "ok") {
+      await writeResult({
+        metric,
+        unit: "MB",
+        contract: 200,
+        samples: resolved.samples,
+        meta: buildMeta({
+          attempts,
+          acceptedAttempt: resolved.acceptedAttempt,
+          panes,
+          xdgConfigHome: spawnEnv.XDG_CONFIG_HOME,
+          home: spawnEnv.HOME,
+        }),
+      });
+      if (attempts.length > 1) {
+        console.log(
+          `::warning::[perf] ${metric}: 首轮污染已整轮丢弃（${formatReasons(attempts[0].reasons)}），` +
+            `采用第 ${resolved.acceptedAttempt} 轮读数`
+        );
+      }
+      return;
+    }
+
+    const diagnostic = await writeContaminatedDiagnostic({
+      metric,
+      attempts,
+      panes,
+      xdgConfigHome: spawnEnv.XDG_CONFIG_HOME,
+      home: spawnEnv.HOME,
+      reason: resolved.reason,
+    });
+    console.error(
+      `::error::[perf] ${metric}: ${resolved.reason}——连续 ${attempts.length} 轮污染，已达 ${MAX_ATTEMPTS} 轮上限，不再重试；` +
+        `本轮读数全部丢弃，不写 ${metric}.json（check-thresholds 将报「结果缺失」而非「超阈」）。诊断：${diagnostic}`
+    );
+    for (const a of attempts) {
+      console.error(`[perf] ${metric} attempt ${a.attempt} reasons: ${JSON.stringify(a.reasons)}`);
+    }
+    process.exitCode = 1;
+  } finally {
+    await fixture.cleanup();
   }
-  process.exitCode = 1;
 }
 
 function isDirectRun() {
