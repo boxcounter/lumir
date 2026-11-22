@@ -528,7 +528,7 @@ pub struct NamingRequest {
     pub after: String,
 }
 
-/// 执行一次命名（生产路径在 command 的线程池 worker 上调用；单测直接驱动）。
+/// 执行一次命名（生产路径在 command 的 blocking 线程上调用；单测直接驱动）。
 ///
 /// `emit` 是回声抑制事件的出口（生产 = `app.emit("attachment:naming", …)`；单测 = 记录器）。
 pub fn run(
