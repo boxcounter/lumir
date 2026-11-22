@@ -47,6 +47,29 @@
 未命中「必须找 Alex 的例外类别」：无未决的价值 / 行为裁决、无审美手感项（4 张基线已过目批准）、
 无影响面升级、评审结论与 tip 均无异常、证据无缺口，故不另送 Alex。
 
+## 节点 2 记录（归档后，2026-11-22）
+
+- **归档提交**：`009e0ea52a24eb69d5af6b3ce3defc98847655af`（归档目录 + 并入后的 living spec +
+  `docs/backlog.md` 队列条目核销同一提交；本段记录本身是其后一笔文档提交，审计仍定位该归档提交）。
+- **`openspec archive` 实际输出**（`node scripts/openspec-archive.mjs stabilize-block-boundary-geometry-nov21`，
+  包装器内调 `npx --yes @fission-ai/openspec@1.12.0 archive stabilize-block-boundary-geometry-nov21 --yes`，
+  退出码 0）：`Task status: ✓ Complete` / `Specs to update:` / `editor-live-preview: update` /
+  `+ 1 added` / `Totals: + 1, ~ 0, - 0, → 0` / `Specs updated successfully.` /
+  `Change 'stabilize-block-boundary-geometry-nov21' archived as '2026-11-22-stabilize-block-boundary-geometry-nov21'.`。
+  delta 是既有 capability 的 1 条 ADDED，故不是 `Specs already in sync; no files changed`。
+- **归档后修链**：`归档后修链 2 处（扫过 3 篇 Markdown / 2 条相对链接）`——`proposal.md:12` 与
+  `proposal.md:17` 的 `../../../docs/process/openspec-workflow.md` →
+  `../../../../docs/process/openspec-workflow.md`。包装器末置门禁
+  `openspec-links: PASS（校验 656 条相对链接，全部可达）`。
+- **归档后审计**（`node scripts/openspec-archive-check.mjs --archived
+  stabilize-block-boundary-geometry-nov21`，2026-11-22T00:12Z，退出码 0）：
+  `PASS（openspec/changes/archive/2026-11-22-stabilize-block-boundary-geometry-nov21：0 条 MODIFIED，
+  对比 0 段；人工恢复 0 段，声明认领 0 段）`。
+- **归档后复跑读数**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` →
+  `Totals: 35 passed, 0 failed (35 items)`（退出码 0）；`node scripts/openspec-archive-check.mjs`
+  门禁模式 → PASS（`扫过 7 份 delta，6 条 MODIFIED，对比 82 段，无静默丢段；归档队列 0 项已完成
+  change 均有唯一条目`）；`bash scripts/docs-check.sh` → `docs-check: PASS`（退出码 0）。
+
 ## Why
 
 段落后输入 `-`、列表 marker 首次成立以及裸 marker 进入编辑态时，行高与光标会随语法解析、列表组扫描
