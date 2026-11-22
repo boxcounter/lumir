@@ -385,7 +385,13 @@ test("buildMeta：成功结果同时保留被丢弃轮的完整摘要与该轮 e
     })),
     excluded: [procDetail(502, "Fri Oct 24 09:00:01 2026", "/System/Library/WebKit/com.apple.WebKit.Networking")],
   });
-  const meta = buildMeta({ attempts: [round1, round2], acceptedAttempt: 2, panes: null, xdgConfigHome: undefined });
+  const meta = buildMeta({
+    attempts: [round1, round2],
+    acceptedAttempt: 2,
+    panes: 0,
+    xdgConfigHome: "/tmp/perf-xdg",
+    home: "/tmp/perf-home",
+  });
 
   assert.equal(meta.attemptsUsed, 2);
   assert.equal(meta.acceptedAttempt, 2);
@@ -415,8 +421,9 @@ test("buildContaminatedPayload：连续污染诊断件两轮各带并集明细�
   const payload = buildContaminatedPayload({
     metric: "resident-memory",
     attempts: [round1, round2],
-    panes: null,
-    xdgConfigHome: undefined,
+    panes: 0,
+    xdgConfigHome: "/tmp/perf-xdg",
+    home: "/tmp/perf-home",
     reason: "contaminated",
     now: new Date("2026-10-24T15:40:00Z"),
   });
