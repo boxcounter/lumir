@@ -166,8 +166,8 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 ] }
 objc2-user-notifications = "0.3"
 block2 = "0.6"
-# dev flavour 的 legacy 投递（M608）：UN 在无 bundle 进程里 abort，dev 用它保持「能投递」。
-# 打包实例已不再经过它（自持的 UN 实现只服务打包实例），它只服务 dev flavour。
+# 无 bundle 进程的 legacy 投递（M608）：UN 在这种进程里 abort，dev 与裸 perf release 用它
+# 保持「能投递」。打包实例不经过它（自持的 UN 实现只服务有 bundle 身份的打包实例）。
 mac-notification-sys = "=0.6.15"
 
 [features]

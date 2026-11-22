@@ -45,6 +45,20 @@ pub enum Authorization {
     Authorized,
 }
 
+/// UN 只服务有 bundle 身份的打包实例。`custom-protocol` 只决定前端资源加载方式：
+/// perf 直接启动的裸 release 二进制同样是非 dev，但没有 bundle 身份。
+pub fn user_notifications_enabled(is_dev: bool) -> bool {
+    user_notifications_enabled_for(is_dev, has_bundle_identity())
+}
+
+fn user_notifications_enabled_for(is_dev: bool, has_bundle_identity: bool) -> bool {
+    !is_dev && has_bundle_identity
+}
+
+pub fn has_bundle_identity() -> bool {
+    NSBundle::mainBundle().bundleIdentifier().is_some()
+}
+
 define_class!(
     /// 常驻 delegate：进程生命周期内一直持有（delegate 属性是 `weak`，谁装谁负责保活）。
     #[unsafe(super(NSObject))]
@@ -103,7 +117,7 @@ pub fn install_delegate() -> Result<(), String> {
         return Ok(());
     }
     // 无 bundle 身份的进程调用 UN 会直接 abort（M608 真机现场）：先查，别赌。
-    if NSBundle::mainBundle().bundleIdentifier().is_none() {
+    if !has_bundle_identity() {
         return Err("进程没有 bundle 身份，通知 delegate 不安装".to_string());
     }
     let delegate = Delegate::new();
@@ -116,6 +130,9 @@ pub fn install_delegate() -> Result<(), String> {
 /// 投递一条通知（标题 = 任务 id，正文 = 通用文案）。成功判据由调用方用
 /// [`delivered_ids`] 自查——本函数只回答「请求被系统接受了吗」。
 pub fn deliver(request_id: &str, title: &str, body: &str) -> Result<(), String> {
+    if !has_bundle_identity() {
+        return Err("进程没有 bundle 身份，无法投递通知".to_string());
+    }
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(title));
     content.setBody(&NSString::from_str(body));
@@ -145,6 +162,9 @@ pub fn deliver(request_id: &str, title: &str, body: &str) -> Result<(), String> 
 ///
 /// 查不到（超时 / 回调失败）返回空表——调用方按「没送达」处理，不把未知当成功。
 pub fn delivered_ids() -> Vec<String> {
+    if !has_bundle_identity() {
+        return Vec::new();
+    }
     let (tx, rx) = mpsc::channel::<Vec<String>>();
     let completion = RcBlock::new(move |list: NonNull<NSArray<UNNotification>>| {
         let ids: Vec<String> = unsafe { list.as_ref() }
@@ -161,6 +181,9 @@ pub fn delivered_ids() -> Vec<String> {
 /// 读当前授权状态（**不弹窗**）：`requestAuthorization` 已在别处做过时用它把「用户拒绝」与
 /// 「系统不认这个身份」分开（M636 定论）。
 pub fn authorization() -> Result<Authorization, String> {
+    if !has_bundle_identity() {
+        return Err("进程没有 bundle 身份，无法读取通知授权状态".to_string());
+    }
     let (tx, rx) = mpsc::channel::<UNAuthorizationStatus>();
     let completion = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
         let status = unsafe { settings.as_ref() }.authorizationStatus();
@@ -183,6 +206,9 @@ pub fn authorization() -> Result<Authorization, String> {
 
 /// 申请一次通知授权（已决定时不弹窗、按现状返回）。
 pub fn request_authorization() -> Result<bool, String> {
+    if !has_bundle_identity() {
+        return Err("进程没有 bundle 身份，无法申请通知授权".to_string());
+    }
     let (tx, rx) = mpsc::channel::<Result<bool, String>>();
     let completion = RcBlock::new(move |granted: objc2::runtime::Bool, error: *mut NSError| {
         let result = match unsafe { error.as_ref() } {
@@ -199,5 +225,30 @@ pub fn request_authorization() -> Result<bool, String> {
     match rx.recv_timeout(CALL_TIMEOUT) {
         Ok(result) => result,
         Err(_) => Err("通知授权申请在 5s 内没有完成回调".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_notifications_require_a_packaged_bundle_identity() {
+        assert!(!user_notifications_enabled_for(true, true));
+        assert!(!user_notifications_enabled_for(true, false));
+        assert!(!user_notifications_enabled_for(false, false));
+        assert!(user_notifications_enabled_for(false, true));
+    }
+
+    /// cargo 的测试二进制与 dev / perf 裸二进制一样没有 bundle 身份。旧实现会在第一个
+    /// `currentNotificationCenter` 抛 ObjC 异常并 abort；本测试因此直接守住全部公开 UN 入口。
+    #[test]
+    fn un_entry_points_fail_closed_without_a_bundle_identity() {
+        assert!(!has_bundle_identity(), "cargo 测试二进制不应有 bundle 身份");
+        assert!(request_authorization().is_err());
+        assert!(authorization().is_err());
+        assert!(deliver("request", "title", "body").is_err());
+        assert!(delivered_ids().is_empty());
+        assert!(install_delegate().is_err());
     }
 }
