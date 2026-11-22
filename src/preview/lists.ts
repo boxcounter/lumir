@@ -9,7 +9,8 @@ import { t } from "../copy";
 
 type Node = ReturnType<typeof syntaxTree>["topNode"];
 type Tree = ReturnType<typeof syntaxTree>;
-interface Group { width: number; body: number; depth: number; labels: ReadonlyMap<number, string> }
+export interface ListGroup { width: number; body: number; depth: number; labels: ReadonlyMap<number, string> }
+type Group = ListGroup;
 const isList = (node: Node) => node.name === "BulletList" || node.name === "OrderedList";
 
 /** 单行的列表归属分析：行首内容列（引用前缀之后）与语法树归属。
@@ -480,8 +481,8 @@ function siblingTextBoxHeight(line: Element): number | null {
 const measured = StateEffect.define<readonly number[]>();
 const metadataReady = StateEffect.define<null>();
 /** 组合结束 → 目标行末（绝对位）。恢复链只补解析到该位置，不碰整篇文档。 */
-const compositionSettled = StateEffect.define<number>();
-interface GroupScan {
+export const compositionSettled = StateEffect.define<number>();
+export interface GroupScan {
   item: Node | null;
   width: number;
   indent: number;
@@ -493,6 +494,102 @@ interface GroupScan {
   index: number;
   /** item.from → 显示编号（ol 组；ul 组恒为空表）。 */
   labels: Map<number, string>;
+}
+
+interface GroupContext {
+  readonly indent: number;
+  readonly depth: number;
+  readonly prefix: string | null;
+}
+
+function parentList(list: Node): Node | null {
+  let parent = list.parent;
+  while (parent && !isList(parent)) parent = parent.parent;
+  return parent;
+}
+
+function groupContext(list: Node, ancestor: Group | null): GroupContext | null {
+  const parent = parentList(list);
+  if (parent !== null && ancestor === null) return null;
+  const parentItem = list.parent;
+  const prefix = parent?.name === "OrderedList" && parentItem && ancestor
+    ? ancestor.labels.get(parentItem.from) ?? null
+    : null;
+  return {
+    indent: (ancestor?.body ?? 0) + (parent ? 2 : 0),
+    depth: ancestor ? ancestor.depth + 1 : 1,
+    prefix,
+  };
+}
+
+function groupItemShape(item: Node, doc: Text, context: GroupContext, index: number) {
+  const mark = item.getChild("ListMark");
+  if (!mark) return null;
+  const source = doc.sliceString(mark.from, mark.to);
+  const task = item.getChild("Task")?.getChild("TaskMarker");
+  const ordered = /^\d/.test(source);
+  const display = ordered ? orderedItemLabel(context.prefix, index) : bulletGlyph(context.depth);
+  return {
+    ordered,
+    display,
+    width: display.length + (task ? 3.5 : 0) + 1,
+  };
+}
+
+function estimatedAncestor(list: Node, doc: Text): Group | null {
+  const parent = parentList(list);
+  const parentItem = list.parent;
+  return parent && parentItem ? estimateGroup(parent, doc, parentItem) : null;
+}
+
+export function estimateGroup(list: Node, doc: Text, item: Node | null = list.firstChild, ancestor?: Group | null): Group | null {
+  if (
+    !item || item.name !== "ListItem" || item.parent?.from !== list.from ||
+    list.firstChild?.from !== item.from || item.nextSibling !== null
+  ) return null;
+  const inherited = ancestor === undefined ? estimatedAncestor(list, doc) : ancestor;
+  const context = groupContext(list, inherited);
+  if (!context) return null;
+  const shape = groupItemShape(item, doc, context, 1);
+  if (!shape) return null;
+  return {
+    width: shape.width,
+    body: context.indent + shape.width,
+    depth: context.depth,
+    labels: shape.ordered ? new Map([[item.from, shape.display]]) : new Map(),
+  };
+}
+
+export function createGroupScan(list: Node, doc: Text, ancestor?: Group | null): GroupScan {
+  const inherited = ancestor === undefined ? estimatedAncestor(list, doc) : ancestor;
+  const context = groupContext(list, inherited);
+  if (!context) throw new Error("Missing ready ancestor list group");
+  return {
+    item: list.firstChild,
+    width: 0,
+    indent: context.indent,
+    depth: context.depth,
+    prefix: context.prefix,
+    index: 0,
+    labels: new Map(),
+  };
+}
+
+export function advanceGroupScan(scan: GroupScan, doc: Text, count: number): void {
+  let remaining = count;
+  while (scan.item && remaining-- > 0) {
+    const item = scan.item;
+    const index = scan.index + 1;
+    const shape = groupItemShape(item, doc, scan, index);
+    if (shape) {
+      if (shape.ordered) {
+        scan.index = index;
+        scan.labels.set(item.from, shape.display);
+      }
+      scan.width = Math.max(scan.width, shape.width);
+    }
+    scan.item = item.nextSibling;
+  }
 }
 
 /** 组合结束后的补解析预算（目标只到提交行末，不是整篇）：
@@ -1021,26 +1118,9 @@ class ListLayout {
         let remaining = 512;
         let published = false;
         for (const [from, scan] of this.scans) {
-          while (scan.item && remaining-- > 0 && performance.now() < deadline) {
-            const item = scan.item;
-            const mark = item.getChild("ListMark");
-            if (mark) {
-              const label = this.view.state.doc.sliceString(mark.from, mark.to);
-              const task = item.getChild("Task")?.getChild("TaskMarker");
-              // 显示标记（定稿列表标记体系，M218 C3）：ol = 复合多级编号（项在组内的
-              // 序号拼父项链，不是源码里的字面数字）；ul = 按深度的 glyph。宽度按**显示
-              // 标记**的字符数预分配（数字在标记的 tabular-nums 下等宽）。
-              let display: string;
-              if (/^\d/.test(label)) {
-                scan.index++;
-                display = orderedItemLabel(scan.prefix, scan.index);
-                scan.labels.set(item.from, display);
-              } else {
-                display = bulletGlyph(scan.depth);
-              }
-              scan.width = Math.max(scan.width, display.length + (task ? 3.5 : 0) + 1);
-            }
-            scan.item = item.nextSibling;
+          while (scan.item && remaining > 0 && performance.now() < deadline) {
+            advanceGroupScan(scan, this.view.state.doc, 1);
+            remaining--;
           }
           if (!scan.item) {
             const next: Group = { width: scan.width, body: scan.indent + scan.width, depth: scan.depth, labels: scan.labels };
@@ -1072,7 +1152,7 @@ class ListLayout {
     return false;
   }
 
-  private group(list: Node, state: EditorState): Group | null {
+  private group(list: Node, state: EditorState, item: Node): Group | null {
     const cached = this.groups.get(list.from);
     if (cached) {
       // 陈旧组先用旧宽度渲染（不掉装饰 = 不抖动），同时登记后台重扫；树不完整
@@ -1083,39 +1163,26 @@ class ListLayout {
     if (!this.complete(list, state)) { this.pending = true; return null; }
     this.pending = true;
     this.enqueue(list, state);
-    return null;
+    // 组合收束 / 保留树期间沿用扫描判定，不让源码形态估算抢跑恢复合同。
+    if (this.settleTo !== null || this.settledTree !== null || this.tree.length < item.to) return null;
+    const parent = parentList(list);
+    const ancestor = parent ? this.groups.get(parent.from) : null;
+    return estimateGroup(list, state.doc, item, ancestor);
   }
 
   /** 登记一个组的宽度扫描；祖先组未就绪或陈旧（嵌套列表）时不登记，返回 false。 */
   private enqueue(list: Node, state: EditorState): boolean {
     if (this.scans.has(list.from)) return true;
-    let parent = list.parent;
-    while (parent && !isList(parent)) parent = parent.parent;
+    const parent = parentList(list);
     // 祖先 cached body 未确认（stale 或重扫已登记未完成）时，用它登记 indent
     // 会让子组在祖先 publish 后错位且不自愈；视为未就绪，pending 保活等下一轮
     // build 重试。两处都要查：stale 在祖先扫描登记时即摘除，而 body 要等扫描
     // 完成才更新——同一轮 build 里祖先行先于子行处理，仅查 stale 会漏。
     const ancestorReady = parent === null || (!this.stale.has(parent.from) && !this.scans.has(parent.from));
-    const ancestor: Group | null = parent ? this.group(parent, state) : null;
-    if ((parent !== null && ancestor === null) || !ancestorReady) { this.pending = true; return false; }
-    // 深度与复合编号前缀（M218 C3）：深度 = 祖先组深度 + 1；编号链只穿过 ol 祖先
-    // ——父列表是 ul 时断链（定稿的 counter 拼接只覆盖 `ol > li > ol` 直系），本项
-    // 从自己起编号。祖先组此刻必已发布（上面的就绪闸），其 labels 覆盖自己的全部
-    // 父项，前缀因此一定取得到（取不到按断链降级，重扫会修正）。
     const parentItem = list.parent;
-    const prefix =
-      parent?.name === "OrderedList" && parentItem && ancestor
-        ? ancestor.labels.get(parentItem.from) ?? null
-        : null;
-    this.scans.set(list.from, {
-      item: list.firstChild,
-      width: 0,
-      indent: (ancestor?.body ?? 0) + (parent ? 2 : 0),
-      depth: ancestor ? ancestor.depth + 1 : 1,
-      prefix,
-      index: 0,
-      labels: new Map(),
-    });
+    const ancestor: Group | null = parent && parentItem ? this.group(parent, state, parentItem) : null;
+    if ((parent !== null && ancestor === null) || !ancestorReady) { this.pending = true; return false; }
+    this.scans.set(list.from, createGroupScan(list, state.doc, ancestor));
     this.pending = true;
     return true;
   }
@@ -1144,7 +1211,7 @@ class ListLayout {
           // （合同 docs/specs/lists.md 的 L1；判定与光标位置无关，L3）。
           if (info && info.item) {
             const mark = info.item.getChild("ListMark");
-            const group = this.group(info.item.parent!, view.state);
+            const group = this.group(info.item.parent!, view.state, info.item);
             if (!group || !this.units) {
               if (line.number === doc.lines) break;
               line = doc.line(line.number + 1);
