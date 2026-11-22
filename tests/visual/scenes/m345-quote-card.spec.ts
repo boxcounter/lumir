@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
+import { GESTURE_SETTLE_MS } from "../../../src/quote-gesture";
 import { expectScreenshot } from "./expect-screenshot";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
 
@@ -96,6 +97,100 @@ test("浮动摘录钮：选区在场时浮现、文案正确", async ({ page }) 
   // 元素级基线：钮的壳 / 尺寸 / 圆角 / 文案（整页容差吞得掉这颗小钮）。
   await expectScreenshot(btn, "m345-quote-gesture-button.png");
 });
+
+const IME_SELECTION_CASES = [
+  { name: "段落", prefix: "" },
+  { name: "无序列表", prefix: "- " },
+  { name: "有序列表", prefix: "3. " },
+  { name: "嵌套列表", prefix: "- parent\n  - " },
+] as const;
+
+for (const fixture of IME_SELECTION_CASES) {
+  test(`IME 组合输入不是摘录选区：${fixture.name}内拼音串、取消候选与候选提交均不浮现按钮`, async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "CDP 只存在于 Chromium；WKWebView 原生 IME 归人工复验");
+    await openDoc(page);
+    await page.evaluate((prefix) => {
+      const view = (document.querySelector(".cm-content") as unknown as {
+        cmTile: { root: { view: any } };
+      }).cmTile.root.view;
+      const end = view.state.doc.length;
+      view.dispatch({ changes: { from: end, insert: prefix }, selection: { anchor: end + prefix.length } });
+      view.focus();
+    }, fixture.prefix);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.imeSetComposition", { text: "s", selectionStart: 0, selectionEnd: 1 });
+    await expect.poll(() => page.evaluate((prefix) => {
+      const view = (document.querySelector(".cm-content") as unknown as {
+        cmTile: { root: { view: any } };
+      }).cmTile.root.view;
+      return {
+        composing: view.compositionStarted,
+        selected: document.getSelection()?.isCollapsed === false,
+        tail: view.state.doc.sliceString(view.state.doc.length - prefix.length - 1),
+      };
+    }, fixture.prefix)).toEqual({ composing: true, selected: true, tail: `${fixture.prefix}s` });
+
+    expect(await page.evaluate(() => {
+      const node = document.getSelection()?.focusNode;
+      if (node?.nodeType !== Node.TEXT_NODE || node.parentElement === null) return false;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const rect = range.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && getComputedStyle(node.parentElement).visibility === "visible";
+    }), "原生 marked text 必须保持可见").toBe(true);
+
+    const authorSelection = page.locator(".cm-editor.cm-focused .cm-selectionLayer .cm-selectionBackground");
+    await expect(page.locator(".cm-editor.cm-focused")).toHaveClass(/cm-ime-composition/);
+    await expect(authorSelection).not.toHaveCount(0);
+    await expect(authorSelection.first()).toBeHidden();
+    await page.waitForTimeout(GESTURE_SETTLE_MS + 150);
+    await expect(page.locator(".quote-gesture-btn")).toBeHidden();
+
+    await cdp.send("Input.imeSetComposition", { text: "", selectionStart: 0, selectionEnd: 0 });
+    await expect.poll(() => page.evaluate(() => {
+      const view = (document.querySelector(".cm-content") as unknown as {
+        cmTile: { root: { view: any } };
+      }).cmTile.root.view;
+      return view.compositionStarted;
+    })).toBe(false);
+    await expect(page.locator(".cm-editor.cm-focused")).not.toHaveClass(/cm-ime-composition/);
+    await selectQuotedLine(page);
+    await expect(authorSelection.first()).toBeVisible();
+    await page.evaluate(() => {
+      const view = (document.querySelector(".cm-content") as unknown as {
+        cmTile: { root: { view: any } };
+      }).cmTile.root.view;
+      view.dispatch({ selection: { anchor: view.state.doc.length } });
+      view.focus();
+    });
+    await page.waitForTimeout(GESTURE_SETTLE_MS + 150);
+    await expect(page.locator(".quote-gesture-btn")).toBeHidden();
+
+    await cdp.send("Input.imeSetComposition", { text: "s", selectionStart: 0, selectionEnd: 1 });
+    await cdp.send("Input.insertText", { text: "是" });
+    await expect.poll(() => page.evaluate((prefix) => {
+      const view = (document.querySelector(".cm-content") as unknown as {
+        cmTile: { root: { view: any } };
+      }).cmTile.root.view;
+      return {
+        composing: view.compositionStarted,
+        tail: view.state.doc.sliceString(view.state.doc.length - prefix.length - 1),
+      };
+    }, fixture.prefix)).toEqual({ composing: false, tail: `${fixture.prefix}是` });
+    await page.waitForTimeout(GESTURE_SETTLE_MS + 150);
+    await expect(page.locator(".quote-gesture-btn")).toBeHidden();
+
+    await expect(page.locator(".cm-editor.cm-focused")).not.toHaveClass(/cm-ime-composition/);
+    await page.evaluate(() => {
+      const view = (document.querySelector(".cm-content") as unknown as {
+        cmTile: { root: { view: any } };
+      }).cmTile.root.view;
+      const end = view.state.doc.length;
+      view.dispatch({ selection: { anchor: end - 1, head: end } });
+    });
+    await expect(authorSelection.first()).toBeVisible();
+  });
+}
 
 test("点浮动钮：面板未开先开，卡片入区外 tray，焦点回 CM 并可继续输入", async ({ page }) => {
   await openDoc(page);

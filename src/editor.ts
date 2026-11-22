@@ -1,6 +1,6 @@
 import { Compartment, EditorSelection, EditorState, Prec, StateEffect, Transaction } from "@codemirror/state";
 import type { Extension, SelectionRange, Text } from "@codemirror/state";
-import { EditorView, drawSelection, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
+import { EditorView, ViewPlugin, drawSelection, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
 
 /** 滚动位置快照的类型（`view.scrollSnapshot()` 的产物）。CM 不导出 ScrollTarget 类型，
@@ -892,6 +892,29 @@ function absorbNativeEdit(event: InputEvent, view: EditorView): boolean {
   // M860：行内（不跨行）折叠光标的无修饰 Backspace——md 与 code 两个编辑面同一份字素步长。
   return absorbGraphemeBackspace(event, view);
 }
+
+const COMPOSITION_SELECTION_CLASS = "cm-ime-composition";
+
+function scheduleCompositionSelection(view: EditorView): void {
+  view.requestMeasure({
+    read: () => view.compositionStarted,
+    write: (composing) => view.dom.classList.toggle(COMPOSITION_SELECTION_CLASS, composing),
+  });
+}
+
+/** 组合范围只交给原生 marked text 呈现；CM 内部选区继续跟踪组合，不为视觉目的改 state。 */
+const compositionSelectionPresentation = [
+  ViewPlugin.fromClass(class {
+    constructor(view: EditorView) { scheduleCompositionSelection(view); }
+    update(update: ViewUpdate) { scheduleCompositionSelection(update.view); }
+  }),
+  EditorView.domEventObservers({
+    compositionstart: (_event, view) => scheduleCompositionSelection(view),
+    compositionupdate: (_event, view) => scheduleCompositionSelection(view),
+    compositionend: (_event, view) => scheduleCompositionSelection(view),
+    blur: (_event, view) => scheduleCompositionSelection(view),
+  }),
+];
 
 /** 只装进 md 模式：code 模式没有 replace 装饰，原生删除 / 键入无回读风险。 */
 const nativeEditGate = EditorView.domEventHandlers({
@@ -2140,6 +2163,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       //     底色 / 字色的规则分工：底色在本文件（CM 自绘那一层），`::selection` 的前景在
       //     `src/style.css`（那里的 eink 值已是黑字，两条规则同值是刻意的一致，不是两处真源）。
       ".cm-selectionBackground": { backgroundColor: "var(--sel-band) !important" },
+      // IME 内部组合范围不是作者选区；只隐藏呈现，不改 CM 跟踪组合所需的 selection state。
+      "&.cm-ime-composition .cm-selectionLayer": { visibility: "hidden" },
       // 光标（change cursor-visibility-oct23 的 D2；2026-10-24 改裁恢复闪烁；合同 docs/specs/editor-caret.md）：
       //   · 宽度 2px 是**组件常量**，三主题同值——eink 没有颜色，线宽是它唯一的强调手段
       //     （tokens 文档规则⑧），2px 落在既有语汇内（1.2–1.6px 强调线宽 / 2px 引用块竖线）。
@@ -2514,6 +2539,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // 与原生 caret 的形态略有差别；`src/table-fullscreen.ts` 的快照拒绝表里那两条选择器
         // 从「纯防御」变成「真拦得住」。
         drawSelection(),
+        compositionSelectionPresentation,
         EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
         // 文件内搜索（M139）：官方 search 能力 + 本项目的搜索 panel（src/search.ts）。
         // 装在**模式无关**的基础层：md 与 code 两种模式都能查（code 只读，panel 里也没有替换

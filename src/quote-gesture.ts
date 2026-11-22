@@ -455,7 +455,9 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
   function currentSelectionRect(): DOMRect | null {
     const view = deps.activeView();
     const selection = document.getSelection();
+    // IME marked text 在 DOM 里也是非空选区；组合未结束不属于用户的摘录手势。
     if (
+      view.compositionStarted ||
       selection === null ||
       selection.isCollapsed ||
       selection.anchorNode === null ||
