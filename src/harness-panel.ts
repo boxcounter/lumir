@@ -158,6 +158,8 @@ import {
 } from "./quote-card";
 import type { ComposerAttachment, ComposerBlock, ImageCard, MessageQuoteCard, QuoteCard } from "./quote-card";
 import { blobToBase64, firstImageFileIndex } from "./paste-image";
+import { ImageThumbCache } from "./image-thumb-cache";
+import type { ImageThumbCacheLimits } from "./image-thumb-cache";
 import type { QuoteImageOutcome, QuotedImage } from "./quote-image";
 import { createMessageQuoteGesture, MESSAGE_QUOTE_FLASH_MS, resolveMessageQuoteTarget } from "./message-quote-gesture";
 import { highlightCode } from "./preview/code";
@@ -242,6 +244,11 @@ export interface HarnessPanelDeps {
   /** 「去设置」的落面（design §8）：打开设置面板（与 ⌘, 同一条命令路径；面板本体、写通道与
    *  焦点交还全在 settings-panel / 装配层，面板不自己实现第二套设置入口）。 */
   openSettings(): void;
+  /**
+   * 缩略图缓存容量（内部资源治理，2026-11-23）：默认 64 MiB / 256 条。生产不配置；
+   * 单测注入小值，用几十字节的合成图驱动「超预算淘汰」而不必造 64MiB 夹具。
+   */
+  imageThumbCacheLimits?: ImageThumbCacheLimits;
 }
 
 export interface HarnessPanelHandle {
@@ -4111,10 +4118,32 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return "sourceMime" in card;
   }
 
-  /** 缩略图 blob URL 缓存（name → URL / null=读回失败）。渲染每次整面重跑（逐键击），
+  /** 当前面板 DOM 里的缩略图名（缓存 active 判据）：只认 panel 子树，不认 `isConnected`——
+   *  面板收起时子树仍持有 `<img>`（重新挂回不重读），按「未连接」淘汰会在重开时整面坏图。
+   *  调用点都在 DOM 更新之后（先清 / 先重建，再 prune），因此子树即「当前仍在场」的准确面。 */
+  function activeImageThumbNames(): ReadonlySet<string> {
+    const names = new Set<string>();
+    for (const thumb of panel.querySelectorAll<HTMLElement>("[data-thumb-name]")) {
+      const name = thumb.dataset.thumbName;
+      if (name !== undefined) names.add(name);
+    }
+    return names;
+  }
+
+  /** 缩略图 blob URL 缓存（有界 LRU，2026-11-23 内部资源治理）：渲染每次整面重跑（逐键击），
    *  读回命令必须只发一次——成功缓存 URL、失败缓存 null（占位 + 每图仅一次的 toast）。
-   *  面板生命周期内不 revoke（卡片移除后 URL 留在缓存，下次贴同一张图直接命中）。 */
-  const imageThumbCache = new Map<string, string | null>();
+   *  与旧 `Map` 的差异：非活跃项超预算时淘汰并 revokeObjectURL（卡片移除 / 切会话 / 切
+   *  vault 不再泄漏字节）；活跃项（当前 DOM 里的缩略图）永不淘汰，单张 50MB 的图正在显示时
+   *  不会被误删。生产初值 64 MiB / 256 条；单测经 `imageThumbCacheLimits` 注小值驱动淘汰。 */
+  const imageThumbCache = new ImageThumbCache({
+    maxBytes: deps.imageThumbCacheLimits?.maxBytes ?? 64 * 1024 * 1024,
+    maxEntries: deps.imageThumbCacheLimits?.maxEntries ?? 256,
+    activeNames: activeImageThumbNames,
+  });
+  /** 缩略图读回的世代：`vaultChanged` 切到新 vault 时递增。读回命令只对**发出时那个 vault**
+   *  有效——旧代结果（成功 / 失败）落地时整条作废，不得建 URL、写缓存、apply 或 toast；
+   *  否则 clear 之后旧图会被重新塞回新 vault 的缓存，失败还会给新 vault 弹旧 vault 的错。 */
+  let imageThumbEpoch = 0;
   /** 引用来源（图片名 → vault 相对路径，change add-image-quote-to-chat design §4.2）：人侧
    *  hover title 专用，面板生命周期内有效；不进卡片数据 / 序列化 / 投递 / 草稿。内容寻址名
    *  相同 = 同字节，同一名字被粘贴与引用各来一次时显示哪个来源都对人不构成误导。 */
@@ -4128,7 +4157,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const quoteImageFailures = new WeakMap<QuoteCard, number>();
 
   /** 图片卡片的缩略图字节加载（harness_read_image → base64 → blob URL，异步）。`onImgLoad`
-   *  在成功挂出的 `<img>` load 后回调（恢复路径补记宽高用，见 createImageCardEl）。 */
+   *  在成功挂出的 `<img>` load 后回调（恢复路径补记宽高用，见 createImageCardEl）。
+   *
+   *  **读回落地的三道复核**（有界缓存的并发 / 生命周期面）：
+   *  1. **读回世代**：切 vault 后旧代结果整条 no-op（`imageThumbEpoch`）；
+   *  2. **同名并发读回**：tray 整面重渲 / 同图重复粘贴时，两张卡可能都在条目落地前各发一次
+   *     读回；后到的结果若直接覆盖条目，`put` 会 revoke 先落地的 URL——而那张 URL 正被另一张
+   *     卡的 `<img>` 使用。故已有 URL 就复用（不重建、不替换），已有 null 才让成功结果覆盖；
+   *  3. **写入即淘汰**：`put` 内部 prune 后条目可能已不在（已摘下的旧缩略图 + 超预算），
+   *     此时按无缓存处理，不让已 revoke 的 URL 挂上屏。 */
   function loadImageThumb(
     name: string,
     thumb: HTMLElement,
@@ -4140,17 +4177,34 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       return;
     }
     thumb.classList.add("is-loading");
+    const epoch = imageThumbEpoch;
     harnessReadImage(name)
       .then((base64: string) => {
+        // 世代检查排在一切副作用之前（createObjectURL / put / apply / toast）。从这里的检查到
+        // 落盘没有 await，JS 单线程下 epoch 不可能在中间变化；若将来在中间引入 await，发现
+        // 过期时若 URL 已创建，MUST 就地 revoke 后再返回。
+        if (epoch !== imageThumbEpoch) return;
+        const raced = imageThumbCache.get(name);
+        if (typeof raced === "string") {
+          applyImageThumb(name, raced, thumb, onImgLoad);
+          return;
+        }
         const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0));
         // 回读 MIME 走注册表派生（`attachmentMimeOfName`，与后端 `mime_of_name` 同一份落盘
         // 扩展名表）——M662 起不再在这里写 `endsWith(".jpg") ? jpeg : webp` 的第二份判定。
-        const url = URL.createObjectURL(new Blob([bytes], { type: attachmentMimeOfName(name) }));
-        imageThumbCache.set(name, url);
-        applyImageThumb(name, url, thumb, onImgLoad);
+        imageThumbCache.put(name, bytes, attachmentMimeOfName(name));
+        // put 内部 prune：刚写入的条目若不属于当前面板（已摘下的旧缩略图）且超预算，会当场
+        // 淘汰——此时拿到的 undefined 按无缓存处理，不让已 revoke 的 URL 继续挂上屏。
+        applyImageThumb(name, imageThumbCache.get(name) ?? null, thumb, onImgLoad);
       })
       .catch((e: unknown) => {
-        imageThumbCache.set(name, null);
+        if (epoch !== imageThumbEpoch) return;
+        const raced = imageThumbCache.get(name);
+        if (typeof raced === "string") {
+          applyImageThumb(name, raced, thumb, onImgLoad);
+          return;
+        }
+        imageThumbCache.putFailure(name);
         applyImageThumb(name, null, thumb, onImgLoad);
         deps.toast(t("D446", { reason: errorMessage(e) }));
       });
@@ -4397,6 +4451,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       el.dataset.attachmentIndex = String(index);
       composerTray.append(el);
     }
+    // tray 是图片缩略图的活跃面：旧卡已随 replaceChildren 离场，重渲后立刻按新 DOM prune
+    //（被移除的卡片若使缓存超预算，其 URL 在这里释放；仍在场的图受 active 保护）。
+    imageThumbCache.prune();
   }
 
   function updateEmptyClass(): void {
@@ -4407,6 +4464,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     composerView.setState(createComposerState(content, composerViewExtensions));
     renderComposerAttachments();
     updateEmptyClass();
+    // `renderComposerAttachments` 在附件引用未变时早退；复位 / 发送清空卡片也必须 prune
+    //（DOM 已是新投影，旧卡的缩略图在这里失去 active 身份）。
+    imageThumbCache.prune();
   }
 
   function syncAttachmentProjection(previous: readonly ComposerAttachment[]): void {
@@ -8735,6 +8795,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 关闭入口（`document` 径，交还焦点），MUST NOT 让遮罩停在一份已不存在的消息上。
     deps.blocks?.close();
     transcript.replaceChildren();
+    // 先清 DOM 再 prune（顺序是判据）：此刻 transcript 里的缩略图已离场，composer 仍在场的
+    // 图片保持 active；会话级淘汰只释放不再显示的非活跃项。
+    imageThumbCache.prune();
     pendingApprovals.clear();
     decidedApprovals.clear();
     // 任务区是**会话**的视图：换会话即清空（终态 run 的「本次会话摘要」不跨会话）。
@@ -8839,8 +8902,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     currentVault = root;
     currentVaultId = vaultId;
     if (sameVault) return;
+    // 旧 vault 的在途读回从这一刻起作废（成功 / 失败落地都整条 no-op）：必须在 resetView /
+    // resetComposer / clear 之前推进——三者会清掉旧 vault 的渲染面与缓存，旧代结果不得
+    // 再写回来。
+    imageThumbEpoch += 1;
     resetView();
     resetComposer();
+    // 旧 vault 的缩略图 URL 不再有任何复用处（内容寻址名只对本 vault 的读回命令有效）：
+    // 先让 composer 换成新 vault 的空投影 / 草稿，再全量释放——顺序保证 clear 时旧图
+    // 已不可能被认成 active（resetComposer 的 prune 之后 DOM 里已没有旧卡）。
+    imageThumbCache.clear();
     refreshChip();
     fetchSnapshot();
     void restoreDraft();
