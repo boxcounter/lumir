@@ -1,8 +1,10 @@
 // 冷启动测量（spec §1）：spawn release 二进制 → stdout 出现 LUMIR_READY 行的 harness wall time。
+// 本地与 CI 缺省均使用每次运行独立的合成 HOME/XDG（无 last_vault），不得继承宿主配置/vault。
 // 辅口径 app 自报 elapsed_ms 一并上报，供归因（进程装载 vs Tauri 初始化）。
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { repoRoot, writeResult } from "./lib/stats.mjs";
+import { createAppFixture } from "./lib/app-isolation.mjs";
 
 const RUNS = Number(process.env.PERF_COLD_START_RUNS ?? 20);
 // warm-up：首轮含 dyld 绑定/TCC 授权等一次性开销，是系统性离群值（实测首轮可达后续轮 5 倍），
@@ -12,10 +14,10 @@ const TIMEOUT_MS = 15_000;
 const BIN = path.join(repoRoot(), "src-tauri/target/release/lumir");
 const READY_PREFIX = "LUMIR_READY ";
 
-function measureOnce() {
+function measureOnce(spawnEnv) {
   return new Promise((resolve, reject) => {
     const t0 = performance.now();
-    const child = spawn(BIN, [], { stdio: ["ignore", "pipe", "inherit"] });
+    const child = spawn(BIN, [], { stdio: ["ignore", "pipe", "inherit"], env: spawnEnv });
     let buf = "";
     let done = false;
 
@@ -53,22 +55,35 @@ function measureOnce() {
   });
 }
 
-for (let i = 0; i < WARMUP_RUNS; i++) {
-  const { wallMs } = await measureOnce();
-  console.log(`[perf] cold-start warm-up ${i + 1}/${WARMUP_RUNS}: wall=${wallMs.toFixed(1)}ms（丢弃，吸收首轮离群值）`);
+const fixture = await createAppFixture({ panes: 0 });
+try {
+  for (let i = 0; i < WARMUP_RUNS; i++) {
+    const { wallMs } = await measureOnce(fixture.env);
+    console.log(`[perf] cold-start warm-up ${i + 1}/${WARMUP_RUNS}: wall=${wallMs.toFixed(1)}ms（丢弃，吸收首轮离群值）`);
+  }
+  const samples = [];
+  const selfReported = [];
+  for (let i = 0; i < RUNS; i++) {
+    const { wallMs, elapsedMs } = await measureOnce(fixture.env);
+    samples.push(wallMs);
+    if (typeof elapsedMs === "number") selfReported.push(elapsedMs);
+    console.log(`[perf] cold-start run ${i + 1}/${RUNS}: wall=${wallMs.toFixed(1)}ms app_elapsed=${elapsedMs?.toFixed(1) ?? "n/a"}ms`);
+  }
+  await writeResult({
+    metric: "cold-start",
+    unit: "ms",
+    contract: 300,
+    samples,
+    meta: {
+      runs: RUNS,
+      warmupRuns: WARMUP_RUNS,
+      appElapsedMsSamples: selfReported,
+      panes: 0,
+      home: fixture.home,
+      xdgConfigHome: fixture.xdgConfigHome,
+      note: "wall time spawn->LUMIR_READY；独立 HOME/XDG + 无 last_vault 合成配置；app_elapsed 为辅口径；warm-up 轮已丢弃",
+    },
+  });
+} finally {
+  await fixture.cleanup();
 }
-const samples = [];
-const selfReported = [];
-for (let i = 0; i < RUNS; i++) {
-  const { wallMs, elapsedMs } = await measureOnce();
-  samples.push(wallMs);
-  if (typeof elapsedMs === "number") selfReported.push(elapsedMs);
-  console.log(`[perf] cold-start run ${i + 1}/${RUNS}: wall=${wallMs.toFixed(1)}ms app_elapsed=${elapsedMs?.toFixed(1) ?? "n/a"}ms`);
-}
-await writeResult({
-  metric: "cold-start",
-  unit: "ms",
-  contract: 300,
-  samples,
-  meta: { runs: RUNS, warmupRuns: WARMUP_RUNS, appElapsedMsSamples: selfReported, note: "wall time spawn->LUMIR_READY; app_elapsed 为辅口径；warm-up 轮已丢弃" },
-});
