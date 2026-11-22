@@ -30,9 +30,8 @@ const mixed = '# Header\n\n> quoted **strong**\n>\n> - first\n>   - nested\n\n<d
 const table = '| key | value |\n| --- | --- |\n' + Array.from({ length: 14000 }, (_, i) => `| row ${i} | **cell ${i}** |`).join('\n');
 for (const [name, doc] of [['mixed', mixed], ['14k-table', table], ['large-mixed', mixed.repeat(2000)]] as const) {
   test(`MarkdownConfig.wrap ${name}`, async ({ page }, info) => {
-    // test 级预算必须罩住内部 poll 的 30s（M311）：默认 30s 与 poll 预算相等时，整批负载下
-    // 测试会先被 test 超时掐掉、poll 连报读数的机会都没有（M303 的 large-mixed 假红现场，
-    // 单 spec 复跑 10/10 PASS）。提到 120s 覆盖全量负载档；metrics 断言不动。
+    // test 级预算必须罩住内部 poll 的 60s（M311）：整批负载下要给 poll 留出报读数的机会
+    //（M303 的 large-mixed 假红现场，单 spec 复跑 10/10 PASS）。test 保持 120s；metrics 断言不动。
     test.setTimeout(120_000);
     const profiler = await page.context().newCDPSession(page);
     await profiler.send('Profiler.enable');
@@ -40,7 +39,7 @@ for (const [name, doc] of [['mixed', mixed], ['14k-table', table], ['large-mixed
     await page.goto(`${origin}/tests/visual/fixtures/markdown-parser/index.html`);
     await page.waitForFunction(() => !!(window as any).experiment);
     await page.evaluate(doc => (window as any).experimentOf().open(doc), doc);
-    await expect.poll(() => page.evaluate(() => (window as any).experimentOf().available()), { timeout: 30000 }).toBe(true);
+    await expect.poll(() => page.evaluate(() => (window as any).experimentOf().available()), { timeout: 60000 }).toBe(true);
     const { profile } = await profiler.send('Profiler.stop');
     await info.attach('cpu-profile', { body: JSON.stringify(profile), contentType: 'application/json' });
     const counts = new Map<number, number>();

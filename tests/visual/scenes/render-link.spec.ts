@@ -231,7 +231,7 @@ pageTest("不装饰的面：无 scheme 字面 / 白名单外 scheme / frontmatte
   // FrontmatterWidget 整块替换，块内的 mark 装饰本来就不渲染——因此这里能证明的是「上屏的
   // 那一份里没有链接」，「不装饰」的真正依据是装饰循环的第一句 `inFrontmatter` 剪枝
   //（在 `name` 分派之前，见 livePreview 的 collectSyntaxDecorations）。
-  expect(await page.locator(".cm-lp-frontmatter")).toHaveCount(1);
+  await expect(page.locator(".cm-lp-frontmatter")).toHaveCount(1);
   expect(await page.locator(".cm-lp-link", { hasText: "in-fm" })).toHaveCount(0);
 });
 

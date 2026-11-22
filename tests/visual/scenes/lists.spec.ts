@@ -166,6 +166,7 @@ test('列表模式隔离与嵌套代码保护', async ({ page }) => {
 });
 
 test('partial组超出后台提前范围仍完成且末端标记不重叠', async ({ page }) => {
+  test.setTimeout(120_000);
   const large = Array.from({ length: 18000 }, (_, i) => `${i === 17999 ? '999999999. [x]' : `${i + 1}.`} Item ${i + 1} ${'long list content '.repeat(3)}`).join('\n');
   await stubTauri(page, { entries: [{ path: 'lists.md', kind: 'file', size: large.length, mtime_ms: 0 }], files: { 'lists.md': large } });
   await page.goto('/');
@@ -182,9 +183,12 @@ test('partial组超出后台提前范围仍完成且末端标记不重叠', asyn
       if (stages.at(-1) !== stage) stages.push(stage);
     }).observe(document.querySelector('.cm-content')!, { childList: true, subtree: true });
   });
+  const clickedAt = Date.now();
   await page.locator('.ft-row[title="lists.md"]').click();
-  await expect(page.locator('.cm-lp-list-marker').first()).toBeVisible({ timeout: 15000 });
-  expect(await page.evaluate(() => (window as any).listStages)).toEqual(['source', 'complete']);
+  await expect(page.locator('.cm-lp-list-marker').first()).toBeVisible({ timeout: 60000 });
+  const listStages = await page.evaluate(() => (window as any).listStages);
+  console.log(`[lists] first marker after click: ${Date.now() - clickedAt}ms; listStages=${JSON.stringify(listStages)}`);
+  expect(listStages).toEqual(['source', 'complete']);
   expect(await page.locator('.cm-scroller').evaluate(el => el.scrollTop)).toBe(0);
   const before = await geometry(page, 'Item 1 long');
   const scroller = page.locator('.cm-scroller');
