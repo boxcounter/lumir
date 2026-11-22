@@ -9,12 +9,12 @@
 > 首帧即为最终纵向几何、异步扫描不得改变行高或光标；接受少量静态几何变化，但新增截图须后续过目。
 > 软换行 R4 单列，不宣称本轮覆盖。实施期计划内部矛盾修正：`para\n---` 按源码算法归为
 > setext 下划线而非 list marker，第二行 `padding-top=0`、新几何 33.5+25.5；不新增特判。
-> 节点 2（归档放行）：**机器 + 独立评审放行**（[openspec-workflow.md](../../../docs/process/openspec-workflow.md)
+> 节点 2（归档放行）：**机器 + 独立评审放行**（[openspec-workflow.md](../../../../docs/process/openspec-workflow.md)
 > 「节点 2：归档默认由独立评审 + 机器判据放行」五要件），逐条事实与证据指针见下「节点 2 记录（归档前）」。
 
 ## 节点 2 记录（归档前，2026-11-22）
 
-口径见 [openspec-workflow.md](../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
+口径见 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「节点 2」，五要件逐条：
 
 1. **方案已批准**：节点 1 于 2026-11-22 通过——Alex 采纳结构方案（纵向几何由源文本块边界同步决定、
    首帧即最终纵向几何、异步扫描不得改变行高或光标）并批准 4 张新增静态几何基线（见上方「评审记录」）。
