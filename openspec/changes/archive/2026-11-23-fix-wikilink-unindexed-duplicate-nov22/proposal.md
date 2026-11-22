@@ -14,7 +14,8 @@
 > 与完整 `docs-check` PASS；`scripts/gate.sh quick` 为 `GATE RESULT: 12/12 PASS（SKIP 1）`、退出码 0；
 > 真机 708 PASS（13.9s），证据 `.local/acceptance/2026-11-23-wikilink-duplicate/`。无产品价值、
 > 审美手感、影响面升级、评审异常或证据缺口例外。
-> 归档记录：归档提交与 `--archived` 审计结果在归档执行后填写。
+> 归档记录：归档提交 `c347c41c`；归档后 `node scripts/openspec-archive-check.mjs --archived
+> fix-wikilink-unindexed-duplicate-nov22` PASS（2 条 MODIFIED，对比 69 段；人工恢复 0 段，声明认领 0 段）。
 
 ## Why
 
