@@ -58,9 +58,13 @@ steps:
       - label: 悬停图片后出现「摘录到对话」钮（D370 文案，与文本选区钮同一份）
         ax: { has: "/AXButton \\(摘录到对话\\)/" }
       - shot: 01-悬停引用钮
-  - name: 点引用钮 → harness pane 未开先开、图片卡片入 composer
+  - name: 点引用钮 → 开始异步入卡
     do: click
     target: { role: AXButton, name: "摘录到对话" }
+  - name: 等位图落盘与 composer 提交（点击只发起点，不能拿瞬时 AX 当异步终态）
+    do: waitFor
+    waitFor:
+      has: [" · 96×32"]
     expect:
       - label: harness pane 自动分栏打开（D368 分隔条在位）
         ax: { has: "分隔条" }
@@ -175,12 +179,18 @@ steps:
       - label: 悬停后出现「摘录到对话」钮（与位图那张同一份文案）
         ax: { has: "/AXButton \\(摘录到对话\\)/" }
       - shot: 07-悬停svg引用钮
-  - name: 点引用钮 → 栅格化后按位图落盘 → 图片卡片入 composer
+  - name: 点引用钮 → 开始 SVG 栅格化与异步入卡
     do: click
     target: { role: AXButton, name: "摘录到对话" }
+  - name: 等 SVG 栅格化、落盘与 composer 提交
+    do: waitFor
+    waitFor:
+      has: [" · 120×60"]
     expect:
+      # 不能只匹配任意 pasted-*.webp：transcript 里还留着第一步的位图卡，异步 SVG 转码尚未
+      # 回包时也能假绿；120×60 只来自本步 SVG 产物，能作为新 composer 卡已提交的正见证。
       - label: composer 出现图片卡片，名字是内容寻址的 webp（栅格化产物——MUST NOT 是 svg 名）
-        ax: { has: "/pasted-[0-9a-f]{16}\\.webp/" }
+        ax: { has: "/pasted-[0-9a-f]{16}\\.webp · 120×60/" }
       - label: 图片卡片带 @ 插入引用钮（与位图引用同一形态）
         ax: { has: "/AXButton \\(插入图片引用\\)/" }
       - label: 成功路径不产失败留痕（D586 状态行不出现——它是持久的，缺席是稳态读数）
