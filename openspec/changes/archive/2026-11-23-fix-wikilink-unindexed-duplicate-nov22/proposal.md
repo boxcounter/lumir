@@ -9,7 +9,12 @@
 > 防重复修复：发现索引外同名目标、或无法在有界扫描内证明「不存在」，一律安全拒绝；不自动打开、
 > 不重绑、不选择某个同名候选；成功创建后的既有「创建并打开」行为不变。授权经本次 mission 下达，
 > 无逐字原话记录；只读方案（含机器测试矩阵与剩余边界）一并作为节点 1 材料。
-> 节点 2（归档评审）：实现完成后填写。
+> 节点 2（归档评审）：**五要件齐，放行归档**（2026-11-23）。独立 reviewer agent-278
+> clean/merge；21/21 tasks 完成且与实现、两份 MODIFIED delta 一致；归档前 `openspec-archive-check`
+> 与完整 `docs-check` PASS；`scripts/gate.sh quick` 为 `GATE RESULT: 12/12 PASS（SKIP 1）`、退出码 0；
+> 真机 708 PASS（13.9s），证据 `.local/acceptance/2026-11-23-wikilink-duplicate/`。无产品价值、
+> 审美手感、影响面升级、评审异常或证据缺口例外。
+> 归档记录：归档提交与 `--archived` 审计结果在归档执行后填写。
 
 ## Why
 
