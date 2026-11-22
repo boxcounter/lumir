@@ -87,6 +87,7 @@ import {
   composerIsEmpty,
   createComposerState,
   insertComposerText,
+  mergeRejectedComposerContent,
   projectComposerDelivery,
   removeComposerAttachment,
   runComposerCommand as runCmComposerCommand,
@@ -3997,6 +3998,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  `resetView`（视图换代：新建会话 / 切 vault / cron 切屏 / 恢复会话）也推进它：上一代视图的
    *  在途回包一律作废，落地不得回填进新视图（相位在 idle → idle 的复位里不推进，epoch 挡不住）。 */
   let snapshotSeq = 0;
+  /** **视图世代**：每次视图换代（`resetView`，切 vault / 新会话 / cron 切屏 / 恢复会话）推进。
+   *  发送的拒绝回包只对**发出时那一代视图**生效——换代之后到达的旧回包属于上一段会话，任何
+   *  相位 / 渲染 / 草稿动作都会打到新视图上（迟到的 A 拒绝会关掉 B 的 `turnOpen`、写进 A 的
+   *  错误行 / toast、把 A 的输入区灌回 B）。与 `snapshotSeq` 分开：后者还被每次快照**请求**
+   *  推进（请求噪声不是视图换代），借用它会把合法的同步拒绝误判成旧代。 */
+  let viewGeneration = 0;
 
   // ── CM6 composer 状态 ──
   const cardData = new WeakMap<Element, QuoteCard | MessageQuoteCard | ImageCard>();
@@ -5757,7 +5764,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     source: string,
     at: number | null,
     form: WhenForm = "live",
-  ): void {
+  ): HTMLElement {
     collapseTools(); // 新用户消息 = 上一轮终态（幂等，无在途块时无操作）
     const el = document.createElement("div");
     el.className = "lumir-hp-msg lumir-hp-msg-user";
@@ -5788,6 +5795,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     lastAssistantEl = null; // 用户消息开新轮：恢复路径的工具记录挂点作废
     syncEmptyHint();
     follow.jumpToBottom(); // 分流表 #1：用户发送 = 白名单动作，新消息必须在眼前
+    // 元素即回滚把手：发送被同步拒绝时只撤这一条（`rollbackRejectedSend`），不碰历史。
+    return el;
   }
 
   // ── 工具调用清单（M351 还原原型屏 4 形态，design §2.4/§3.3；Alex 2026-10-06 裁决）──
@@ -8773,6 +8782,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 于是旧回包能同时通过 seq 与 epoch 两道守卫（实现评审 r1 P1 的现场）。相位世代只覆盖
     // 「同一视图里开始了新一轮」，会话换代由这里作废（切 vault / cron 切屏 / 恢复会话同理）。
     snapshotSeq += 1;
+    // 视图世代（发送拒绝回包的归属判据，见 `viewGeneration` 的注释）：与快照作废同一个换代点。
+    viewGeneration += 1;
     clearTranscriptSurface();
     // 引用失败的输入区状态行属于上一段输入（M662）：换会话即清（卡片上的留痕随卡片一起消失）。
     applyQuoteFailureNotice(null);
@@ -8867,6 +8878,36 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   fetchSnapshot();
 
   // ── 发送与新会话 ─────────────────────────────────────────────────────────
+  /**
+   * 发送未被受理（`harnessSend` 的 Promise reject）时的统一回滚：撤掉本次乐观上屏的
+   * 那一条 user 气泡，把会话名与输入区还原到发送前（spec「发送与写失败保留语义」：拒绝恢复
+   * 发送前的 text / caret / cards 且草稿不变；「模型选择」：provider_missing 保留输入区内容）。
+   *
+   * 只认 `optimistic` 这一个元素，不碰历史。视图已换代（切 vault / 新会话 / cron 切屏，
+   * `resetView` 已把渲染面连同这条气泡收走）时整条跳过——那时该恢复的是新视图，不是
+   * 上一段会话的草稿。调用方另有一道视图世代守卫（`viewGeneration`），这里保留元素判据
+   * 兜住「同代内元素已被别的路径移除」。
+   *
+   * **拒绝回包可能晚于用户的下一条输入**：composer 此时未必是空态。还原不能整份覆盖——
+   * 按 [`mergeRejectedComposerContent`] 的 typeahead 口径合并（原文在前、当前输入在后，
+   * 卡片原在前、当前在后），两边都不丢。`resetComposer` 换 state 不触发 updateListener，
+   * 草稿要靠显式 `markDraft()` 重算；空态且内容相同时 store 的「无变更不写」保证不重写。
+   */
+  function rollbackRejectedSend(
+    optimistic: HTMLElement,
+    previousFirstUserText: string | null,
+    content: ComposerContent,
+  ): void {
+    if (!transcript.contains(optimistic)) return;
+    optimistic.remove();
+    firstUserText = previousFirstUserText;
+    applySessionName();
+    resetComposer(mergeRejectedComposerContent(content, composerContentOf(composerView.state)));
+    markDraft();
+    syncEmptyHint();
+    composerView.focus();
+  }
+
   function send(): void {
     if (activity.phase !== "idle") return;
     const content = composerContentOf(composerView.state);
@@ -8880,7 +8921,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const block = assembleHarnessContext(editor, { skipViewport: hasCards });
     lastChip = block ?? "none";
     applyChip();
-    appendUserMessage(blocks, text, Date.now());
+    // 视图世代在**发出时**定格：拒绝回包只对这一代视图生效（见 `viewGeneration` 注释）。
+    const sendViewGeneration = viewGeneration;
+    const optimistic = appendUserMessage(blocks, text, Date.now());
     const prevFirstUserText = firstUserText;
     if (firstUserText === null) {
       firstUserText = firstUserTextOf(blocks);
@@ -8890,32 +8933,48 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     composerView.focus();
     stageWaiting = true;
     dispatchActivity({ type: "sent" });
+    // 草稿归属在**发出时**定格：成功回执按这份 (vault, 编辑版本) 清，不按回执到达时的 store
+    // 绑定（那时可能已经切了 vault、用户也可能已经在 composer 里继续输入）。
+    const sendDraftVaultId = currentVaultId;
+    const sendDraftEditVersion = draft.editVersion();
     harnessSend(JSON.stringify(parts), block !== null ? serializeHarnessContext(block) : "")
       .then(() => {
-        void draft.clear();
+        // 成功回执按**发送时**的 vault + 编辑版本清草稿：切走之后 A 的草稿仍要清（否则切回 A
+        // 会复活已发送内容）；同视图等待期间的新输入不能被这轮回执取消 / 删除（版本已变 ⇒
+        // store 保留待写与文件）。
+        void draft.clearSent(sendDraftVaultId, sendDraftEditVersion);
       })
       .catch((e: unknown) => {
+        // 视图世代守卫（P1-1）：换代（切 vault / 新会话 / cron 切屏）之后到达的旧回包属于
+        // 上一段会话——**整条 no-op**。否则 A 的拒绝会关掉 B 的轮次闸门（后续分片被当迟到
+        // 产出丢弃）、把 A 的错误行 / toast 写进新视图、把 A 的输入区灌回新 composer。
+        if (viewGeneration !== sendViewGeneration) return;
+        // 走到这里 = 这一轮**没有被后端受理**（同步拒绝：忙 / 缺配置 / 线程起不来 /
+        // 图片能力闸）。已受理之后的失败走 `harness:event` 的 error，不进本分支——
+        // 那条路径的乐观消息是真实的一轮，不在回滚范围内。
+        //
+        // 所有同步拒绝都撤销本次乐观上屏并恢复发送前的输入区（spec「发送与写失败保留语义」：
+        // 拒绝恢复 text / caret / cards 且草稿不变；「模型选择」：provider_missing 保留输入区
+        // 内容）。差别只在相位收口与出口形态。
         if (errorCodeOf(e) === "harness_busy") {
+          // 忙：后端另有一轮在跑，相位只能由快照的 in_flight 权威收口（「这一轮没起来」
+          // ≠「整体空闲」）；错误行照旧保留，让用户知道这次没发出去。
+          rollbackRejectedSend(optimistic, prevFirstUserText, content);
           appendError(t("D347", { reason: errorText(e) }));
           fetchActivitySnapshot();
           return;
         }
         dispatchActivity({ type: "local_finish" });
         if (errorCodeOf(e) === "harness_image_unsupported") {
-          const last = transcript.lastElementChild;
-          if (last !== null && last.classList.contains("lumir-hp-msg-user")) last.remove();
-          firstUserText = prevFirstUserText;
-          applySessionName();
+          // 能力闸：卡片标错误态 + toast（D445），不追加错误行——既有裁决的出口。
           for (const attachment of content.cards) {
             if (attachment.kind === "image") imageGateErrored.add(attachment.card.name);
           }
-          resetComposer(content);
-          markDraft();
-          syncEmptyHint();
-          composerView.focus();
+          rollbackRejectedSend(optimistic, prevFirstUserText, content);
           deps.toast(errorText(e));
           return;
         }
+        rollbackRejectedSend(optimistic, prevFirstUserText, content);
         appendError(t("D347", { reason: errorText(e) }));
       });
   }

@@ -54,6 +54,13 @@ export interface HarnessDraftStore {
   /** 读回**归属 vault** 的草稿（无草稿 / 损坏 → `null`）；`vaultId` 自此成为本 store 的归属
    *  （缺省 / `null` = 无 vault，读写静默 no-op）。内部先丢弃上一 vault 的待写。 */
   load(vaultId?: string | null): Promise<ComposerDraftLoaded | null>;
+  /** **只读编辑版本**（当前 bound vault 的那一份）：`schedule` 每次递增该 vault 的版本（内容 /
+   *  光标 / 卡片变化同权，即使序列化结果相同）；别的 vault 的编辑不影响它。发送时定格，成功
+   *  回执据此判断「发送之后有没有新编辑」——MUST NOT 用文本比较替代（用户可能重打相同的字）。 */
+  editVersion(): number;
+  /** 按**发送时定格的归属**（vault + 该 vault 的编辑版本）清除已发送内容的草稿（成功回执的
+   *  唯一入口；语义与分支见实现注释）。 */
+  clearSent(vaultId: string | null, version: number): Promise<void>;
   /** 清除归属 vault 的草稿（发送成功后）：取消待写 + 删文件。 */
   clear(): Promise<void>;
 }
@@ -84,6 +91,17 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
    *  规则）。它守的是**store 内部状态**；装配层渲染侧另有一道世代（面板自己的 draftSeq）。 */
   let loadGen = 0;
   let editGeneration = 0;
+  /** **每个 vault（含 null）各一份编辑版本**：`schedule` 只递增当前 `boundVaultId` 的那一份。
+   *  成功回执的归属判据用它（发送时定格 `(vault, version)`）——别的 vault 的编辑不推进它的
+   *  版本，所以「在 B 里编辑过、切回 A 未编辑」不会被误判成 A 有新编辑；反过来，A 内发送后
+   *  继续编辑再切走，A 的版本已经前进，回执跨 vault 到达也会被跳过（不删更晚的草稿）。
+   *  全局 `editGeneration` 仍然保留，但它只服务 store 内部的写竞态（`write` / `load` 的
+   *  失败回填判据），不再承担回执归属。 */
+  const vaultEditVersion = new Map<string | null, number>();
+  /** **每个 vault（含 null）最近一次 `schedule` 的序列化内容**：`schedule` 在「无变更不写」
+   *  早退**之前**记录，所以重打相同内容（不排期、无 pending）也留得下。跨 vault 的删除已在
+   *  IPC 途中时，用户在这期间的新内容只能靠它在链尾补写（见 `clearSent` 的 repair）。 */
+  const latestDraft = new Map<string | null, string>();
 
   function cancelTimer(): void {
     if (timer === null) return;
@@ -132,7 +150,13 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
 
   function schedule(text: string, caret: number | null, cards: readonly ComposerAttachment[]): void {
     editGeneration += 1;
+    // 归属编辑版本只推进当前 bound vault 的那一份（发送回执按它判「发送后有没有新编辑」）。
+    // 即使下面的「无变更不写」提前返回也照增：重打相同的字 / 只动 caret 也算用户动过草稿。
+    vaultEditVersion.set(boundVaultId, (vaultEditVersion.get(boundVaultId) ?? 0) + 1);
     const draftJson = serializeComposerDraft(text, caret, cards);
+    // 先记 latest、再允许「无变更不写」早退：重打相同内容不会被排期（没有 pending），但删除
+    // 在途时的链尾补写要能拿到它（MUST NOT 用 `written` 推断——删除会把盘上那份拿掉）。
+    latestDraft.set(boundVaultId, draftJson);
     // 内容没变就不排期：每次击键都重排定时器等于「一直在防抖窗口里」——用户连续编辑时永远
     // 不落盘。光标变化也算变更（落位要跟着走），但它不与内容分开排期：同一次 schedule 里带上。
     if (draftJson === (pending ?? written)) return;
@@ -216,5 +240,95 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
     });
   }
 
-  return { schedule, flush, discard, load, clear };
+  /** 当前 bound vault 的编辑版本（发送时定格；其他 vault 的编辑不影响它）。 */
+  function editVersion(): number {
+    return vaultEditVersion.get(boundVaultId) ?? 0;
+  }
+
+  /**
+   * 按**发送时定格**的归属（vault + 该 vault 的编辑版本）清除已发送内容的草稿——成功回执的
+   * 唯一入口。归属按**目标 vault 自己的版本**判，不按全局计数、也不按调用时的绑定：
+   *
+   * - **目标 vault 的版本 ≠ 发送时版本**（发送后在这个 vault 里又编辑过）：无论当前 bound 是
+   *   不是它，一律跳过——那份草稿是发送之后的输入，不能被这轮回执取消或删除。判据是编辑
+   *   版本，MUST NOT 用文本比较（用户可能重打相同的字）。
+   * - **版本相等且目标就是当前 bound**：沿用 [`clear`]——取消待写、作废在途写、`written`
+   *   归空、串行删除（最常见的立即回执；切回原 vault 未编辑也走这里）。
+   * - **版本相等但目标不是当前 bound**（发送后切了 vault、原 vault 没有再编辑）：走
+   *   [`deleteCrossBoundWithRepair`] 的两阶段防护（执行前复检 + 删除在途期间编辑的链尾补写）。
+   *
+   * 版本按 vault 分账：在 B 里编辑只推进 B 的版本，不会让 A 的已发送草稿被「误判成有新编辑」
+   * 而留下；A 内发送后继续编辑再切走，A 的版本已经前进，跨 vault 的回执同样跳过。
+   */
+  function clearSent(vaultId: string | null, version: number): Promise<void> {
+    if ((vaultEditVersion.get(vaultId) ?? 0) !== version) return Promise.resolve();
+    if (vaultId === boundVaultId) return clear();
+    return deleteCrossBoundWithRepair(vaultId, version);
+  }
+
+  /**
+   * 跨 bound 的删除（目标 vault 不是当前绑定）+ 两阶段防护：
+   *
+   * 1. **执行前复检**：入队到真正执行之间，用户可能已经切回目标 vault 并编辑（版本前进）。
+   *    此时**不发送删除**——文件还在、版本已变，现有 `schedule` / `flush` 负责把它落盘。
+   *    队列里的删除若照发，会删掉「重打相同内容」的那份（无 pending、written 又相等 ⇒
+   *    flush 不会补），这是本条防护要堵的现场。
+   * 2. **删除已发出（IPC 在途）无法撤回**：删除落定后若目标版本又变了，用该 vault 的
+   *    `latestDraft` 在**链尾**补写（不经过 `schedule` 的「无变更不写」，也不因
+   *    `draftJson === written` 跳过）。无论删除成功 / 失败都按版本判断——失败时文件还在，
+   *    补写把最新内容再落一遍；成功时文件已没，补写就是唯一救回路径。
+   *
+   * **不自死锁**：repair 不在删除的 enqueue 回调里 `await`（那会等自己所在的链）；删除的
+   * promise 落定后再排下一次 enqueue。
+   */
+  function deleteCrossBoundWithRepair(vaultId: string | null, version: number): Promise<void> {
+    const deletion = enqueue(async (): Promise<"skipped" | number> => {
+      // 执行前复检：排队期间版本变了就整条跳过（不发送删除，也不修复——交给 schedule）。
+      if ((vaultEditVersion.get(vaultId) ?? 0) !== version) return "skipped";
+      const startedVersion = vaultEditVersion.get(vaultId) ?? 0;
+      try {
+        await deps.putDraft("", vaultId);
+        // 删除已落盘：若此刻目标正是当前 bound（用户切回来了），`written` 必须同步为「盘上
+        // 没有这份」——否则同内容重打会被「无变更不写」吞掉，flush 也不补。
+        if (vaultId === boundVaultId) written = "";
+      } catch (e) {
+        deps.warn(e);
+      }
+      return startedVersion;
+    });
+    return deletion.then((startedVersion) => {
+      if (startedVersion === "skipped") return;
+      // IPC 已发出：删除落定后按目标 vault 的最新版本判断是否需要链尾补写。
+      if ((vaultEditVersion.get(vaultId) ?? 0) === startedVersion) return;
+      const latest = latestDraft.get(vaultId);
+      if (latest === undefined) return;
+      return repairWrite(vaultId, latest);
+    });
+  }
+
+  /**
+   * 链尾补写（删除在途期间的新内容）：直接 enqueue 一次 put，**不经过** `schedule` 的无变更
+   * 判据——删除已经把盘上那份拿掉，`written` 可能仍等于要补的内容，按它跳过就等于丢字。
+   * 目标仍是当前 bound 时同步 `written` / `pending`：补写成功且仍是最新内容 ⇒ 清掉同内容的
+   * 待写（盘上已就位）；失败且内容仍是最新 ⇒ 放回待写让下一次 flush 重试。
+   */
+  function repairWrite(vaultId: string | null, draftJson: string): Promise<void> {
+    return enqueue(async () => {
+      try {
+        await deps.putDraft(draftJson, vaultId);
+        if (vaultId === boundVaultId) {
+          written = draftJson;
+          if (pending === draftJson) {
+            pending = null;
+            cancelTimer();
+          }
+        }
+      } catch (e) {
+        if (vaultId === boundVaultId && latestDraft.get(vaultId) === draftJson) pending ??= draftJson;
+        deps.warn(e);
+      }
+    });
+  }
+
+  return { schedule, flush, discard, load, clear, editVersion, clearSent };
 }

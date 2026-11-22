@@ -147,6 +147,27 @@ export function composerIsEmpty(state: EditorState): boolean {
   return state.doc.length === 0 && state.field(composerAttachmentsField).length === 0;
 }
 
+/**
+ * 发送被同步拒绝、而拒绝回包晚于用户的下一条输入时，输入区的确定性合并（typeahead 口径）：
+ * 原文在前、当前输入在后；caret 按「原文长度 + 当前 caret」偏移（`null` = 末尾）；卡片原在
+ * 前、当前在后。**不丢任何一边**——直接整份覆盖会把用户在等待期间打的字 / 贴的卡静默删掉。
+ *
+ * 输入区仍是发送后的空态（最常见路径）时原样返回 `restored`，逐字段还原（含 caret）不变。
+ * 合并结果只是**内容**；落盘由调用方在 `resetComposer` 之后显式 `markDraft()`（换 state 不触发
+ * updateListener）。
+ */
+export function mergeRejectedComposerContent(
+  restored: ComposerContent,
+  current: ComposerContent,
+): ComposerContent {
+  if (current.text === "" && current.cards.length === 0) return restored;
+  return {
+    text: restored.text + current.text,
+    caret: current.caret === null ? null : restored.text.length + current.caret,
+    cards: [...restored.cards, ...current.cards],
+  };
+}
+
 export function appendComposerAttachments(cards: readonly ComposerAttachment[]): TransactionSpec {
   return {
     effects: composerAttachmentEffect.of({ type: "append", at: Number.MAX_SAFE_INTEGER, cards }),

@@ -223,16 +223,40 @@ test("终态对账：只在「中途接管」/ cron 收尾时做，且走内容�
 
 // ── 4. 发送 / 停止 / 拒绝：三条口径 ───────────────────────────────────────
 
-test("harness_busy：只上错误行 + 读一次相位（只读通道），MUST NOT 直接改相位", () => {
+test("harness_busy：回滚乐观气泡 + 上错误行 + 读一次相位（只读通道），MUST NOT 直接改相位", () => {
   const busyBranchStart = SEND.indexOf('if (errorCodeOf(e) === "harness_busy")');
   assert.notEqual(busyBranchStart, -1, "send 的 catch 必须有 harness_busy 的专属处置");
   const branch = SEND.slice(busyBranchStart, SEND.indexOf("return;", busyBranchStart));
+  // 同步未受理 = 这一轮没起来：乐观上屏的那条 user 气泡必须撤销（M-nov22 起；旧语义留着它就是
+  // 「幽灵消息」），输入区走与其它拒绝同一份回滚。
+  assert.match(branch, /rollbackRejectedSend\(/, "忙拒绝要撤销本次乐观上屏并恢复输入区");
   assert.match(branch, /appendError\(/, "拒绝要如实上错误行");
   // r1 P1-1：这条重取发生在**已有内容**的 transcript 上（事前没有 resetView / 清渲染面），
   // 走进入档会把历史消息逐条 append 第二遍、并强制回底。只读相位通道没有这两个副作用。
   assert.match(branch, /fetchActivitySnapshot\(\)/, "拒绝的处置是再问一次权威的**相位**，不是本地猜");
   assertNoMatch(branch, /fetchSnapshot\(/, "MUST NOT 走进入档全量恢复（会重复消息 + 强制回底）");
   assertNoMatch(branch, /applySendPhase|dispatchActivity/, "拒绝不得作为在途证据：这里 MUST NOT 改相位（r2 删掉的 busy_rejected 不许以别的名字回来）");
+});
+
+test("同步拒绝（非忙 / 非能力闸）：统一回滚 + 本地相位收口 + D347 错误行", () => {
+  // busy 分支之后的三段：local_finish → 能力闸专属出口 → 其余拒绝的统一回滚。
+  const tail = SEND.slice(
+    SEND.indexOf("return;", SEND.indexOf('if (errorCodeOf(e) === "harness_busy")')),
+  );
+  assert.match(tail, /dispatchActivity\(\{ type: "local_finish" \}\)/, "这一轮没起来：相位本地收口");
+  assert.match(
+    tail,
+    /if \(errorCodeOf\(e\) === "harness_image_unsupported"\)/,
+    "能力闸保留专属出口（卡片错误态 + toast，不追加错误行）",
+  );
+  const rollbacks = tail.match(/rollbackRejectedSend\(/g) ?? [];
+  assert.equal(rollbacks.length, 2, "能力闸与其后的一般拒绝都走同一份回滚（各一处）");
+  assert.match(tail, /deps\.toast\(errorText\(e\)\)/, "能力闸的人话出口是 toast");
+  assert.match(
+    tail,
+    /appendError\(t\("D347", \{ reason: errorText\(e\) \}\)\)/,
+    "其余同步拒绝保留 D347 错误行",
+  );
 });
 
 test("停止点击：经状态机的 stop_clicked 输入，不绕过状态机直接改相位", () => {

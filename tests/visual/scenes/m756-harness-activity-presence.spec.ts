@@ -272,6 +272,10 @@ test("活动在场：三态结构 / 点锚在钮内 / 收起不复位 / 空闲�
 // 判据的两个时间点：① 拒绝回包**之后**历史不许重复、相位按 in_flight 收口；② 回包**途中**
 // 手动滚到顶部，回包落地后滚动位必须还在那里（旧实现在这一步会跳到底部）。发送动作本身
 // 会强制回底（分流表 #1 的白名单动作），所以「不拽视口」只能在这个窗口里判，不能在点发送前判。
+//
+// 消息条数（M-nov22 起）：`harness_busy` 是同步未受理 ⇒ 那条乐观上屏的 user 气泡被回滚，
+// 条数回到 HISTORY.length——旧语义（保留乐观气泡 = HISTORY + 1）正是「幽灵消息」缺陷。
+// 输入区同时拿到发送前的文本（可以稍后重发），错误行照旧保留。
 test("harness_busy 拒绝：既有消息不重复、回包不拽视口、相位按 in_flight 收口", async ({ page }) => {
   await stubTauri(page, VAULT);
   await stubHarnessActivity(page, {
@@ -306,8 +310,11 @@ test("harness_busy 拒绝：既有消息不重复、回包不拽视口、相位�
 
   // ① 相位按 in_flight（false）收口：发送钮回到「发送」。
   await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "发送");
-  // ② 历史只上屏一遍：既有 N 条 + 乐观上屏的那条 user 消息（既有语义），绝不是 2N。
-  await expect(messages).toHaveCount(HISTORY.length + 1);
+  // ② 历史只上屏一遍：既有 N 条，绝不 2N；乐观上屏的那条 user 气泡已被回滚（无幽灵消息）。
+  await expect(messages).toHaveCount(HISTORY.length);
+  await expect(page.locator(".lumir-hp-msg-user").filter({ hasText: "这条会被 busy 拒绝" })).toHaveCount(0);
+  // ②b 输入区拿到发送前的内容（可以稍后重发）。
+  await expect(page.locator(".lumir-hp-composer")).toContainText("这条会被 busy 拒绝");
   // ③ 回包不得拽走视口：滚动位保持（容差 2px 吸收字体基线的舍入）。
   const after = await transcript.evaluate((el) => el.scrollTop);
   expect(Math.abs(after - before)).toBeLessThanOrEqual(2);
