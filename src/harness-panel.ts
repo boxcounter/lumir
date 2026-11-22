@@ -307,8 +307,24 @@ export interface HarnessPanelHandle {
    *
    * 失败条目（`ok: false`）**不是**一次静默：有文本卡片时在卡片的出处行留「N 张图片未能引用」
    * （D586），没有卡片时落在输入区的状态行——持久可见，不是 3 秒 toast（Alex 2026-10-24 现场）。
+   *
+   * `viewToken` 是发起方在**开始等待前**取的视图世代（见 [`viewToken`]）：事务里的读 / 写是
+   * 多次 IPC 往返，途中切 vault / 新会话后旧代的成功与失败都不得落到新 composer 或留痕——
+   * 旧代整条作废（附件早已落在原 vault，保留、不补偿写）。
    */
-  insertQuoteWithImages(card: QuoteCard | null, outcomes: readonly QuoteImageOutcome[]): void;
+  insertQuoteWithImages(
+    card: QuoteCard | null,
+    outcomes: readonly QuoteImageOutcome[],
+    viewToken: number,
+  ): void;
+  /**
+   * **视图世代令牌**（跨模块的最小口子）：异步事务（图片摘录）在开始等待前取一次，
+   * 回包落地时用 [`isViewCurrent`] 校验。世代本身是面板 `resetView` 的换代号（切 vault /
+   * 新会话 / cron 切屏 / 恢复会话），调用方 MUST NOT 另造第二套 epoch。
+   */
+  viewToken(): number;
+  /** 令牌仍属于当前视图：旧代回包（成功 / 失败）整条作废，不插卡、不留痕、不弹 toast。 */
+  isViewCurrent(token: number): boolean;
   /**
    * 注册「点击卡片跳回原文」处理器（M343 为 M344/QC3 留的挂载点）：composer 与 transcript
    *  内的卡片点击（× 钮除外）都经它；未注册时点击无操作。失锚三层降级链与跳回高亮由 QC3 实现。
@@ -4012,6 +4028,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  推进（请求噪声不是视图换代），借用它会把合法的同步拒绝误判成旧代。 */
   let viewGeneration = 0;
 
+  /** 令牌是否仍属于当前视图（见 `viewGeneration` 的注释；`viewToken` / `isViewCurrent`
+   *  是给装配层异步事务的**最小**口子——MUST NOT 在调用方另造第二套 epoch）。 */
+  function isViewCurrent(token: number): boolean {
+    return token === viewGeneration;
+  }
+
   // ── CM6 composer 状态 ──
   const cardData = new WeakMap<Element, QuoteCard | MessageQuoteCard | ImageCard>();
   let imeGateState = imeKeyGate();
@@ -4514,9 +4536,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   async function pasteClipboardImage(blob: Blob): Promise<void> {
+    // 视图世代在**发出时**定格：读完字节再落盘是两次等待（blob 读取 + 写命令），回包到达时
+    // 视图可能已经换代（切 vault / 新会话 / cron 切屏 / 恢复会话）。旧代结果整条作废——
+    // MUST NOT 插卡、MUST NOT 弹失败 toast；已落进原 vault 的附件保留（不删除、不补偿写）。
+    const generation = viewGeneration;
     try {
       const dataBase64 = await blobToBase64(blob);
       const written = await harnessWriteImage(dataBase64, blob.type);
+      if (!isViewCurrent(generation)) return;
       const card: ImageCard = {
         name: written.name,
         sourceMime: blob.type,
@@ -4527,6 +4554,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       appendAttachments([{ kind: "image", card }]);
       focusComposerAfterInsert();
     } catch (e) {
+      if (!isViewCurrent(generation)) return;
       deps.toast(errorText(e));
     }
   }
@@ -9566,7 +9594,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       appendAttachments([{ kind: "quote", card: valid }]);
       focusComposerAfterInsert();
     },
-    insertQuoteWithImages(card: QuoteCard | null, outcomes: readonly QuoteImageOutcome[]): void {
+    insertQuoteWithImages(
+      card: QuoteCard | null,
+      outcomes: readonly QuoteImageOutcome[],
+      viewToken: number,
+    ): void {
+      // 旧代回包整条作废（发起方在等待前取的令牌，见 `viewToken`）：事务里的读 / 写是多次
+      // IPC 往返，落地时视图可能已换代——插卡、失败留痕、开面板都属于旧视图，不得污染新
+      // composer。已落进原 vault 的附件保留（不删除、不补偿写）。
+      if (!isViewCurrent(viewToken)) return;
       const valid = card === null ? null : createQuoteCard(card);
       const images: QuotedImage[] = [];
       let failed = 0;
@@ -9598,6 +9634,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     setQuoteJumpHandler(handler) {
       quoteJumpHandler = handler;
     },
+    viewToken(): number {
+      return viewGeneration;
+    },
+    isViewCurrent,
     setStopHandler(handler) {
       stopHandler = handler;
     },

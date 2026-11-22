@@ -536,7 +536,7 @@ test("同图重贴与 tray 重渲：缓存命中，读回与 createObjectURL 都
   const probe = installUrlProbe();
   const { mount, handle, reads } = await mountPanel({ maxBytes: 10_000, maxEntries: 16 });
   try {
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-aaaa.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-aaaa.webp")], handle.viewToken());
     await flush();
     assert.deepEqual(reads, ["pasted-aaaa.webp"], "首贴读回一次");
     assert.equal(probe.created.length, 1, "首贴建一个 blob URL");
@@ -545,7 +545,7 @@ test("同图重贴与 tray 重渲：缓存命中，读回与 createObjectURL 都
     assert.equal(firstUrl, probe.created[0], "缩略图 <img> 用缓存里的 URL");
 
     // 同图再贴一次：tray 整面重渲（两张卡都重建），全部命中缓存。
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-aaaa.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-aaaa.webp")], handle.viewToken());
     await flush();
     assert.deepEqual(reads, ["pasted-aaaa.webp"], "同图重贴不得再读回");
     assert.equal(probe.created.length, 1, "同图重贴不得再建 URL");
@@ -571,7 +571,7 @@ test("并发同图读回：两张卡各读一次，先落地的 URL 被复用、
       return new Promise<string>((resolve) => pending.push(resolve));
     });
     // 一次插入两张同名卡：两张卡在同一帧里各自发现缓存未命中 → 两次读回都在途。
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-race.webp"), imageOutcome("pasted-race.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-race.webp"), imageOutcome("pasted-race.webp")], handle.viewToken());
     await flush();
     assert.equal(reads.length, 2, "两张卡各发一次读回（不做 pending 请求去重）");
     assert.equal(pending.length, 2, "两次读回都在途");
@@ -602,9 +602,9 @@ test("卡片移除：非活跃项超预算被淘汰并 revoke，在场图保留�
   const probe = installUrlProbe();
   const { mount, handle, reads } = await mountPanel({ maxBytes: 1_000, maxEntries: 16 });
   try {
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-aaaa.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-aaaa.webp")], handle.viewToken());
     await flush();
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-bbbb.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-bbbb.webp")], handle.viewToken());
     await flush();
     assert.deepEqual(probe.created, ["blob:lumir-thumb-1", "blob:lumir-thumb-2"], "两张图各建一个 URL");
     assert.equal(probe.revoked.length, 0, "两张都在场：活跃总字节可超预算（1200 > 1000），不淘汰");
@@ -618,7 +618,7 @@ test("卡片移除：非活跃项超预算被淘汰并 revoke，在场图保留�
     assert.deepEqual(reads, ["pasted-aaaa.webp", "pasted-bbbb.webp"], "移除卡片不触发读回");
 
     // 再贴 A：缓存条目已不在 → 必要重读，并建新 URL。
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-aaaa.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-aaaa.webp")], handle.viewToken());
     await flush();
     assert.deepEqual(reads, ["pasted-aaaa.webp", "pasted-bbbb.webp", "pasted-aaaa.webp"], "重贴走重读");
     assert.equal(probe.created.length, 3, "重贴建了新 URL");
@@ -640,7 +640,7 @@ test("切 vault：全量 revoke；旧 vault 的图在新 vault 重贴走重读",
     handle.insertQuoteWithImages(null, [
       imageOutcome("pasted-aaaa.webp"),
       imageOutcome("pasted-bbbb.webp"),
-    ]);
+    ], handle.viewToken());
     await flush();
     assert.equal(probe.created.length, 2, "两张图各建一个 URL");
     const [urlA, urlB] = probe.created;
@@ -651,7 +651,7 @@ test("切 vault：全量 revoke；旧 vault 的图在新 vault 重贴走重读",
     assert.deepEqual(trayImageCards(mount), [], "composer 已换成新 vault 的草稿（空）");
 
     // 新 vault 贴同一张图：条目已随 clear 消失 → 必须重读、重建设 URL。
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-aaaa.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-aaaa.webp")], handle.viewToken());
     await flush();
     assert.equal(reads.length, 3, "新 vault 重贴走重读");
     assert.equal(probe.created.length, 3, "重贴建了新 URL");
@@ -690,7 +690,7 @@ test("切 vault 后旧读回成功落地：旧代整条作废（不建 URL / 不
   const { mount, backend, handle, reads, toasts } = await mountPanel({ maxBytes: 10_000, maxEntries: 16 });
   try {
     const pending = deferImageReads(backend, reads);
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-old-vault.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-old-vault.webp")], handle.viewToken());
     await flush();
     assert.equal(pending.length, 1, "旧 vault 的读回在途");
     assert.equal(probe.created.length, 0, "在途期间没有 blob URL");
@@ -711,7 +711,7 @@ test("切 vault 后旧读回成功落地：旧代整条作废（不建 URL / 不
       reads.push(args.name);
       return IMAGE_B64;
     });
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-old-vault.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-old-vault.webp")], handle.viewToken());
     await flush();
     assert.equal(reads.length, 2, "重贴走重读（旧代未污染 B 的缓存）");
     assert.equal(probe.created.length, 1, "重读后建新 URL");
@@ -727,7 +727,7 @@ test("切 vault 后旧读回失败落地：旧代不得写失败条目 / toast�
   const { mount, backend, handle, reads, toasts } = await mountPanel({ maxBytes: 10_000, maxEntries: 16 });
   try {
     const pending = deferImageReads(backend, reads);
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-old-vault.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-old-vault.webp")], handle.viewToken());
     await flush();
     assert.equal(pending.length, 1, "旧 vault 的读回在途");
 
@@ -744,7 +744,7 @@ test("切 vault 后旧读回失败落地：旧代不得写失败条目 / toast�
       reads.push(args.name);
       return IMAGE_B64;
     });
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-old-vault.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-old-vault.webp")], handle.viewToken());
     await flush();
     assert.equal(reads.length, 2, "重贴走重读（旧代未写失败条目）");
     assert.equal(probe.created.length, 1, "重读成功后建 URL");
@@ -783,7 +783,7 @@ test("会话切换：transcript 图淘汰，composer 仍活跃的图保留（先
     assert.equal(transcriptUrl, probe.created[0], "transcript 缩略图用缓存 URL");
 
     // composer 再放一张 600B 的图：两张都在场，1200 > 1000 也不淘汰。
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-composer.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-composer.webp")], handle.viewToken());
     await flush();
     const composerUrl = thumbUrls(mount)[0];
     assert.equal(probe.created.length, 2, "两张图各建一个 URL");
@@ -817,7 +817,7 @@ test("失败条目：null 不占字节，但条目数有界——非活跃的旧
     handle.insertQuoteWithImages(null, [
       imageOutcome("pasted-fail-1.webp"),
       imageOutcome("pasted-fail-2.webp"),
-    ]);
+    ], handle.viewToken());
     await flush();
     assert.deepEqual(reads, ["pasted-fail-1.webp", "pasted-fail-2.webp"], "两条失败各读一次");
     assert.equal(probe.created.length, 0, "失败路径不建 blob URL");
@@ -827,7 +827,7 @@ test("失败条目：null 不占字节，但条目数有界——非活跃的旧
     // maxEntries=2 → 最旧的 fail-1 被淘汰（null 条目淘汰不产生 revoke）。
     removeCard(mount, 0);
     removeCard(mount, 0);
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-fail-3.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-fail-3.webp")], handle.viewToken());
     await flush();
     assert.deepEqual(
       reads,
@@ -836,7 +836,7 @@ test("失败条目：null 不占字节，但条目数有界——非活跃的旧
     );
 
     // 重贴 fail-1：它已被条目上限淘汰 → 必须重读（缓存若仍命中就不会有第 4 次读）。
-    handle.insertQuoteWithImages(null, [imageOutcome("pasted-fail-1.webp")]);
+    handle.insertQuoteWithImages(null, [imageOutcome("pasted-fail-1.webp")], handle.viewToken());
     await flush();
     assert.deepEqual(
       reads,

@@ -3325,12 +3325,18 @@ async function insertQuotedImages(
   card: QuoteCard | null,
   sources: readonly QuoteImageSource[],
 ): Promise<void> {
+  // 事务起点定格视图世代（面板的 `viewToken` 是唯一判据，不另造 epoch）：读 vault → 写 harness
+  // 存储是多次 IPC 往返，途中切 vault / 换会话后旧代的成功与失败都不得落到新 composer 或留痕。
+  // 逐张失败 toast 也是人侧留痕，一并按同一令牌守。
+  const viewToken = harnessPanel.viewToken();
   const images = await quoteImagesFromVault(
     sources,
-    productionQuoteImagePorts((text) => void showToast(harnessPaneMount(), text)),
+    productionQuoteImagePorts((text) => {
+      if (harnessPanel.isViewCurrent(viewToken)) void showToast(harnessPaneMount(), text);
+    }),
   );
   if (card === null && images.length === 0) return;
-  harnessPanel.insertQuoteWithImages(card, images);
+  harnessPanel.insertQuoteWithImages(card, images, viewToken);
 }
 
 /** 图片上的引用钮（change add-image-quote-to-chat）：装饰层只报「哪个 vault 路径 + 哪条引用原文」，

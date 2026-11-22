@@ -8,11 +8,16 @@
 
 pub mod attachment_naming;
 pub mod commands;
+// 只在测试构建里存在：批次 1 的 IPC 响应性闸门与判据（不引入生产分支）。
+#[cfg(test)]
+mod command_test_gate;
 pub mod config;
 pub mod cron;
 pub mod fs_io;
 pub mod harness;
 pub mod index;
+#[cfg(test)]
+mod ipc_responsiveness_tests;
 pub mod link_graph;
 pub mod logging;
 pub mod notify;

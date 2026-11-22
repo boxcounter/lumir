@@ -1748,26 +1748,57 @@ pub fn with_model_override(
 /// 返回 `{name, width, height}`——前端据此插图片卡片。链路复用 vault 附件的
 /// fs_io 原语（转码 / 寻址 / 原子写 / 50MB 上限判据），落点解析失败（无有效 vault）即
 /// 拒绝落盘 + 人话错误，不留半截。
+///
+/// **线程语义**：`async fn` + `spawn_blocking`。base64 解码、PNG / SVG 转码与原子写是
+/// CPU / IO 重活，放到 blocking pool 才不会占住 IPC dispatcher（轻量命令在转码期间照常
+/// 回包；判据见 `ipc_responsiveness_tests`）。`State` 是借用 guard，不能进 `'static` 闭包：
+/// 入口一次取齐 owned `vault_id`，闭包只碰它——**写操作按发起时的 vault 完成**，调度期间
+/// 切 vault 不改写落点，也 MUST NOT 在闭包里重新读「当前 vault」。
 #[tauri::command(rename_all = "snake_case")]
-pub fn harness_write_image(
+pub async fn harness_write_image(
     vault: tauri::State<'_, crate::commands::VaultState>,
     data_base64: String,
     source_mime: String,
 ) -> Result<attachments::HarnessWrittenImage, CommandError> {
-    let scope = vault_scope(&vault)?;
-    attachments::write_image(&scope.vault_id, &data_base64, &source_mime)
+    let vault_id = vault_scope(&vault)?.vault_id;
+    tauri::async_runtime::spawn_blocking(move || {
+        attachments::write_image(&vault_id, &data_base64, &source_mime)
+    })
+    .await
+    .map_err(|error| {
+        // 只有闭包 panic / 运行时 join 失败到这里；panic 点在原子写的 rename 前后都可能，
+        // 不能报成普通失败（UI 侧读 `attachment_write_unknown` = 结果未知）。
+        CommandError::new(
+            "attachment_write_unknown",
+            format!("保存图片结果未知：{error}"),
+        )
+        .param("reason", error.to_string())
+    })?
 }
 
 /// 读回一张 harness 图片附件的 base64（缩略图渲染用；design §5.4）：落点 =
 /// `attachments/<当前 vault 稳定 id>/`，限 `pasted-<hash16>.<ext>` 形态、限尺寸、
 /// 路径逃逸防护——引用名只在本 vault 目录内唯一，MUST NOT 跨 vault 查找。
+///
+/// **线程语义**：同 [`harness_write_image`]——`async fn` + `spawn_blocking`，读盘与逐字节
+/// base64 编码都在 blocking pool 上；入口取 owned `vault_id`，闭包不碰 `State`。
 #[tauri::command(rename_all = "snake_case")]
-pub fn harness_read_image(
+pub async fn harness_read_image(
     vault: tauri::State<'_, crate::commands::VaultState>,
     name: String,
 ) -> Result<String, CommandError> {
-    let scope = vault_scope(&vault)?;
-    attachments::read_image(&scope.vault_id, &name)
+    let vault_id = vault_scope(&vault)?.vault_id;
+    let failed_name = name.clone();
+    tauri::async_runtime::spawn_blocking(move || attachments::read_image(&vault_id, &name))
+        .await
+        .map_err(|error| {
+            CommandError::new(
+                "harness_image_read_failed",
+                format!("无法读取图片附件：{error}"),
+            )
+            .param("name", failed_name)
+            .param("reason", error.to_string())
+        })?
 }
 
 /// 批准 / 拒绝一个挂起的批准请求。`reason` 为拒绝原因（可选），随工具结果回送模型；

@@ -65,23 +65,33 @@ const EMPTY_STATE = {
 };
 
 /** M440 场景桩：harness_write_image / harness_read_image 合成应答；harness_send 记录
- *  parts_json（rejectGate 时回 harness_image_unsupported 信封）。 */
+ *  parts_json（rejectGate 时回 harness_image_unsupported 信封）。
+ *  `deferWrite` 让写盘回包挂起，由用例手动 resolve / reject——旧代回包现场的唯一入口。 */
 async function stubHarness(
   page: Page,
-  opts: { rejectGate?: boolean; snapshot?: unknown } = {},
+  opts: { rejectGate?: boolean; snapshot?: unknown; deferWrite?: boolean } = {},
 ): Promise<void> {
   await page.addInitScript((providers) => {
     (window as unknown as Record<string, unknown>).__VISUAL_PROVIDERS = providers;
   }, PROVIDERS);
   await page.addInitScript(
-    ({ snapshot, rejectGate, written }) => {
+    ({ snapshot, rejectGate, written, deferWrite }) => {
       const w = window as unknown as Record<string, any>;
       const internals = w.__TAURI_INTERNALS__;
       const origInvoke = internals.invoke;
       w.__sentMessages = [];
+      w.__pendingImageWrites = [] as Array<{
+        resolve: (value: unknown) => void;
+        reject: (error: unknown) => void;
+      }>;
       internals.invoke = async (cmd: string, args: any) => {
         if (cmd === "harness_write_image") {
           if (args.data_base64 === undefined) throw new Error("stub: data_base64 missing");
+          if (deferWrite) {
+            return new Promise((resolve, reject) => {
+              w.__pendingImageWrites.push({ resolve, reject });
+            });
+          }
           return written;
         }
         if (cmd === "harness_read_image") {
@@ -117,13 +127,73 @@ async function stubHarness(
         return result;
       };
     },
-    { snapshot: opts.snapshot ?? STATE, rejectGate: opts.rejectGate ?? false, written: WRITTEN },
+    {
+      snapshot: opts.snapshot ?? STATE,
+      rejectGate: opts.rejectGate ?? false,
+      written: WRITTEN,
+      deferWrite: opts.deferWrite ?? false,
+    },
   );
 }
 
-async function openPanel(page: Page, opts: { rejectGate?: boolean; empty?: boolean } = {}): Promise<void> {
+/** `harness_new_session` 桩（面板标题栏的 ＋ 钮 → `startNewSession` → `resetView`）：本文件
+ *  用它做**视图换代**的唯一动作，验旧代回包的归属。 */
+async function stubNewSession(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    const invoke = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = (cmd: string, args: unknown) =>
+      cmd === "harness_new_session" ? null : invoke(cmd, args);
+  });
+}
+
+/** 挂起的写盘回包数（deferWrite 桩）。 */
+async function pendingWrites(page: Page): Promise<number> {
+  return page.evaluate(
+    () => (window as unknown as { __pendingImageWrites?: unknown[] }).__pendingImageWrites?.length ?? 0,
+  );
+}
+
+/** 放行最早一条挂起的写盘回包（resolve = 成功 / reject = 失败信封）。 */
+async function settlePendingWrite(
+  page: Page,
+  outcome: "resolve" | "reject",
+  value: unknown,
+): Promise<void> {
+  await page.evaluate(
+    ({ outcome, value }) => {
+      const w = window as unknown as Record<string, any>;
+      const next = (w.__pendingImageWrites as Array<{
+        resolve: (v: unknown) => void;
+        reject: (e: unknown) => void;
+      }>).shift();
+      if (next === undefined) throw new Error("没有挂起的写盘回包");
+      if (outcome === "resolve") next.resolve(value);
+      else next.reject(value);
+    },
+    { outcome, value },
+  );
+}
+
+/** 回包续体落地的确定性冲刷：写盘 promise 的续体（插卡 / toast）在下一拍才跑到，负向断言
+ *  必须先等它落地再判。另外——**toast 的「没有」不能用 `toHaveCount(0)`**：那条断言会重试到
+ *  5s，而 toast 3.5s 自动消失，旧代 toast 先出现再消失也能把它喂绿（mutation 实测）；一律用
+ *  一次性 `count()`。 */
+async function flushSettledWrite(page: Page): Promise<void> {
+  await page.waitForTimeout(50);
+}
+
+async function openPanel(
+  page: Page,
+  opts: { rejectGate?: boolean; empty?: boolean; deferWrite?: boolean; session?: boolean } = {},
+): Promise<void> {
   await stubTauri(page, VAULT);
-  await stubHarness(page, { rejectGate: opts.rejectGate, snapshot: opts.empty === true ? EMPTY_STATE : STATE });
+  await stubHarness(page, {
+    rejectGate: opts.rejectGate,
+    snapshot: opts.empty === true ? EMPTY_STATE : STATE,
+    deferWrite: opts.deferWrite,
+  });
+  if (opts.session === true) await stubNewSession(page);
   await page.goto("/");
   await page.locator('.ft-row[title="harness-note.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("第一段");
@@ -268,4 +338,64 @@ test("投递投影：图片 part 在前，完整问题 text 在后", async ({ pa
   expect(parts[0].name).toBe(WRITTEN.name);
   expect(parts[0].text).toBeUndefined();
   expect(parts[1].text).toBe("先看这张图这里哪里不对？");
+});
+
+// ---------------------------------------------------------------------------
+// 旧代回包（批次 1：Harness 图片读写 IPC 响应性）：写盘回包在视图换代之后才落地时，
+// 旧代结果 MUST 整条作废——不插新视图的 composer、弹旧视图的失败 toast 也不行。
+// 每个用例都带一条**同代正向对照**：同一链路在当前代里照常插卡 / 照常 toast，
+// 避免「什么都没发生」的负向断言在链路上空转（REVIEW.md「断言等价于子串」条）。
+// ---------------------------------------------------------------------------
+
+test("旧代回包：换会话后才写盘成功——不插卡；同代写入照常插卡", async ({ page }) => {
+  await openPanel(page, { deferWrite: true, session: true });
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
+
+  await pasteImage(page);
+  await expect.poll(() => pendingWrites(page)).toBe(1);
+  // 视图换代：新会话（resetView 推进 viewGeneration）。transcript 清空 = 换代已落地。
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(0);
+
+  await settlePendingWrite(page, "resolve", WRITTEN);
+  await flushSettledWrite(page);
+  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard")).toHaveCount(0);
+  // toast 的「没有」用一次性 count（`toHaveCount(0)` 会重试到 5s，toast 3.5s 自动消失会喂出假绿）。
+  expect(await page.locator(".lumir-toast").count()).toBe(0);
+
+  // 正向对照：同一条链路在当前代里照常插卡（旧代被丢不是因为链路坏了）。
+  await pasteImage(page);
+  await expect.poll(() => pendingWrites(page)).toBe(1);
+  await settlePendingWrite(page, "resolve", WRITTEN);
+  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard")).toHaveCount(1);
+});
+
+test("旧代回包：换会话后才写盘失败——不弹旧代 toast；同代失败照常 toast", async ({ page }) => {
+  await openPanel(page, { deferWrite: true, session: true });
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
+
+  await pasteImage(page);
+  await expect.poll(() => pendingWrites(page)).toBe(1);
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(0);
+
+  await settlePendingWrite(page, "reject", {
+    code: "attachment_type_unsupported",
+    message: "暂不支持该图片格式",
+    params: { mime: "image/gif" },
+  });
+  await flushSettledWrite(page);
+  // 同 helper 注释：旧代 toast 必须「一次也没出现」，用一次性 count，不用会重试的 toHaveCount。
+  expect(await page.locator(".lumir-toast").count()).toBe(0);
+  await expect(page.locator(".lumir-hp-composer-tray > .lumir-hp-imgcard")).toHaveCount(0);
+
+  // 正向对照：同代失败照常弹 toast（旧代被丢不是因为 toast 链路坏了）。
+  await pasteImage(page);
+  await expect.poll(() => pendingWrites(page)).toBe(1);
+  await settlePendingWrite(page, "reject", {
+    code: "attachment_type_unsupported",
+    message: "暂不支持该图片格式",
+    params: { mime: "image/gif" },
+  });
+  await expect(page.locator(".lumir-toast")).toHaveCount(1);
 });

@@ -100,15 +100,16 @@ const VAULT: VaultFixture = {
   },
 };
 
-/** `harness_state` 的零态桩（与 m303 / m345 同款：不补会停在「未初始化」空壳）。 */
-async function stubHarnessState(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+/** `harness_state` 的零态桩（与 m303 / m345 同款：不补会停在「未初始化」空壳）。
+ *  `messages` 非空时给出可渲染的 transcript——「换会话清空渲染面」用它做换代判据。 */
+async function stubHarnessState(page: Page, messages: unknown[] = []): Promise<void> {
+  await page.addInitScript((seed) => {
     const w = window as unknown as Record<string, any>;
     const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: unknown) => unknown;
     w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: unknown) => {
       if (cmd === "harness_state") {
         return JSON.stringify({
-          messages: [],
+          messages: seed,
           usage: { ctx_pct: 0, cache_pct_session: 0 },
           pending_approval: null,
           warn_ctx_pct: 85,
@@ -116,7 +117,78 @@ async function stubHarnessState(page: Page): Promise<void> {
       }
       return invoke(cmd, args);
     };
+  }, messages);
+}
+
+/** `harness_new_session` 桩（面板标题栏的 ＋ 钮 → `startNewSession` → `resetView`）：本文件
+ *  用它做**视图换代**的唯一动作，验旧代回包的归属。 */
+async function stubNewSession(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    const invoke = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = (cmd: string, args: unknown) =>
+      cmd === "harness_new_session" ? null : invoke(cmd, args);
   });
+}
+
+/** 写盘回包挂起（旧代回包现场）：`harness_write_image` 的应答由用例手动 resolve / reject。 */
+async function deferHarnessImageWrite(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    const invoke = w.__TAURI_INTERNALS__.invoke;
+    w.__pendingImageWrites = [] as Array<{
+      resolve: (value: unknown) => void;
+      reject: (error: unknown) => void;
+    }>;
+    w.__TAURI_INTERNALS__.invoke = (cmd: string, args: unknown) => {
+      if (cmd !== "harness_write_image") return invoke(cmd, args);
+      return new Promise((resolve, reject) => {
+        w.__pendingImageWrites.push({ resolve, reject });
+      });
+    };
+  });
+}
+
+/** 挂起的写盘回包数（deferHarnessImageWrite 桩）。 */
+async function pendingWrites(page: Page): Promise<number> {
+  return page.evaluate(
+    () => (window as unknown as { __pendingImageWrites?: unknown[] }).__pendingImageWrites?.length ?? 0,
+  );
+}
+
+/** 放行最早一条挂起的写盘回包（resolve = 成功 / reject = 失败信封）。 */
+async function settlePendingWrite(
+  page: Page,
+  outcome: "resolve" | "reject",
+  value: unknown,
+): Promise<void> {
+  await page.evaluate(
+    ({ outcome, value }) => {
+      const w = window as unknown as Record<string, any>;
+      const next = (w.__pendingImageWrites as Array<{
+        resolve: (v: unknown) => void;
+        reject: (e: unknown) => void;
+      }>).shift();
+      if (next === undefined) throw new Error("没有挂起的写盘回包");
+      if (outcome === "resolve") next.resolve(value);
+      else next.reject(value);
+    },
+    { outcome, value },
+  );
+}
+
+/** 回包续体落地的确定性冲刷：负向断言（「没有 toast / 状态行 / 卡片」）在「此刻没有」时立即
+ *  通过，而写盘 promise 的续体可能晚一拍才跑到——先等它落地再判（同 m440 的同名助手）。 */
+async function flushSettledWrite(page: Page): Promise<void> {
+  await page.waitForTimeout(50);
+}
+
+/** 图片上的引用钮：DOM click 直接触发（面板已打开时图片可能被分栏挤窄，不依赖悬停几何）。 */
+async function clickQuoteTrigger(page: Page): Promise<void> {
+  await page
+    .locator(".lumir-image-quote-trigger")
+    .first()
+    .evaluate((el) => (el as HTMLElement).click());
 }
 
 async function openDoc(page: Page): Promise<void> {
@@ -463,3 +535,74 @@ test("长图越出可视区：引用钮被钳进编辑器可视区（同一钳�
   expect(geometry.button.right).toBeLessThanOrEqual(geometry.band.right - 4 + 0.5);
 });
 
+
+// ---------------------------------------------------------------------------
+// 旧代回包（批次 1：Harness 图片读写 IPC 响应性）：图片摘录事务里的读 / 写是多次 IPC
+// 往返；回包在视图换代（切 vault / 新会话）之后才落地时，旧代的成功与失败 MUST 整条作废
+// ——不插卡、不留痕、不弹旧代的 toast。每个用例都带一条**同代正向对照**，避免负向断言
+// 在链路上空转（REVIEW.md「断言等价于子串」条）。
+// ---------------------------------------------------------------------------
+
+/** 摘录事务回包挂起前的公共装配：面板已开、transcript 有一条消息（换代判据）。 */
+async function openDocForDeferredQuote(page: Page): Promise<void> {
+  await stubTauri(page, VAULT);
+  await stubHarnessState(page, [{ role: "user", text: "上一轮的问题", ts: 1759000000 }]);
+  await stubNewSession(page);
+  await deferHarnessImageWrite(page);
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-image-quote.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第一段文字");
+  await expect(page.locator(".cm-lp-image img")).toHaveCount(3);
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
+}
+
+test("旧代回包：换会话后才写盘成功——不插图片卡片、无留痕；同代照常插入", async ({ page }) => {
+  await openDocForDeferredQuote(page);
+  await clickQuoteTrigger(page);
+  await expect.poll(() => pendingWrites(page)).toBe(1);
+  // 视图换代：新会话。transcript 清空 = resetView 已落地（世代已推进）。
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(0);
+
+  await settlePendingWrite(page, "resolve", { name: "pasted-633ab12cd34ef567.webp", width: 1, height: 1 });
+  await flushSettledWrite(page);
+  await expect(page.locator(".lumir-hp-composer .lumir-hp-imgcard")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-quote-note")).toBeHidden();
+  // toast 的「没有」用一次性 count：`toHaveCount(0)` 会重试到 5s，toast 3.5s 自动消失会喂出假绿。
+  expect(await page.locator(".lumir-toast").count()).toBe(0);
+
+  // 正向对照：同一条链路在当前代里照常插入（旧代被丢不是因为链路坏了）。
+  await clickQuoteTrigger(page);
+  await expect.poll(() => pendingWrites(page)).toBe(1);
+  await settlePendingWrite(page, "resolve", { name: "pasted-633ab12cd34ef567.webp", width: 1, height: 1 });
+  await expect(page.locator(".lumir-hp-composer .lumir-hp-imgcard")).toHaveCount(1);
+});
+
+test("旧代回包：换会话后才写盘失败——不弹旧代 toast、不留痕；同代失败照常提示", async ({ page }) => {
+  await openDocForDeferredQuote(page);
+  await clickQuoteTrigger(page);
+  await expect.poll(() => pendingWrites(page)).toBe(1);
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(0);
+
+  const decodeFailure = {
+    code: "attachment_decode_failed",
+    message: "无法解码图片",
+    params: { reason: "invalid PNG signature" },
+  };
+  await settlePendingWrite(page, "reject", decodeFailure);
+  await flushSettledWrite(page);
+  expect(await page.locator(".lumir-toast").count()).toBe(0);
+  await expect(page.locator(".lumir-hp-quote-note")).toBeHidden();
+  await expect(page.locator(".lumir-hp-composer .lumir-hp-imgcard")).toHaveCount(0);
+
+  // 正向对照：同代失败照常 toast + 输入区状态行（旧代被丢不是因为失败链路坏了）。
+  await clickQuoteTrigger(page);
+  await expect.poll(() => pendingWrites(page)).toBe(1);
+  await settlePendingWrite(page, "reject", decodeFailure);
+  await expect(page.locator(".lumir-toast", { hasText: "无法解码这张图片" })).toBeVisible();
+  await expect(page.locator(".lumir-hp-quote-note")).toBeVisible();
+  await expect(page.locator(".lumir-hp-quote-note")).toContainText("1 张图片未能引用");
+});

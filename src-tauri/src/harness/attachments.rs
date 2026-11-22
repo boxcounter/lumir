@@ -215,6 +215,10 @@ pub fn write_image(
     data_base64: &str,
     source_mime: &str,
 ) -> Result<HarnessWrittenImage, CommandError> {
+    // 只在测试构建存在的闸门（IPC 响应性判据）：停住整段解码 / 转码 / 落盘，见
+    // `command_test_gate` 的模块注释。未装填时零行为变化。
+    #[cfg(test)]
+    crate::command_test_gate::enter("harness_write_image", vault_id);
     let dir = vault_attachments_dir(vault_id)?;
     write_image_to(&dir, data_base64, source_mime)
 }
@@ -260,6 +264,9 @@ fn read_image_bytes(vault_id: &str, name: &str) -> Result<Vec<u8>, CommandError>
 
 /// `harness_read_image` 的实现体：base64 返回（前端转 blob URL 渲染缩略图）。
 pub fn read_image(vault_id: &str, name: &str) -> Result<String, CommandError> {
+    // 闸门点在真实 `std::fs::read` 之前（同 `write_image`；只在测试构建存在）。
+    #[cfg(test)]
+    crate::command_test_gate::enter("harness_read_image", vault_id);
     Ok(fs_io::base64_encode(&read_image_bytes(vault_id, name)?))
 }
 
