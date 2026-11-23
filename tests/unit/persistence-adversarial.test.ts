@@ -192,7 +192,8 @@ const CARD: ComposerAttachment = {
   kind: "quote",
   card: { file: "synth.md", heading: "H", headingPath: "H", lines: "1-1", text: "摘录" },
 };
-const CARDS = [{ card: CARD, anchor: 0 }];
+const CARDS = [{ id: 1, card: CARD, anchor: 0 }];
+const LOADED_CARDS = CARDS.map(({ card, anchor }) => ({ card, anchor }));
 const draft = (text: string, caret: number | null = null): string => serializeComposerDraft(
   text,
   caret,
@@ -385,7 +386,7 @@ test("草稿 I3：写失败后紧接发送清除——删除仍排在写之后�
 test("草稿 崩溃恢复：新 store 从盘上读回 text/caret/cards，未编辑不再写盘", async () => {
   const rig = createDraftRig({ "vault-a": draft("崩溃前的字", 3) });
   const loaded = await rig.store.load("vault-a");
-  assert.deepEqual(loaded, { text: "崩溃前的字", caret: 3, cards: CARDS });
+  assert.deepEqual(loaded, { text: "崩溃前的字", caret: 3, cards: LOADED_CARDS });
 
   rig.store.schedule("崩溃前的字", 3, CARDS);
   await rig.store.flush();

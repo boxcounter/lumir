@@ -17,7 +17,8 @@ const CARD: ComposerAttachment = {
   kind: "quote",
   card: { file: "synth.md", heading: "H", headingPath: "H", lines: "1-1", text: "摘录" },
 };
-const CARDS = [{ card: CARD, anchor: 0 }];
+const CARDS = [{ id: 1, card: CARD, anchor: 0 }];
+const LOADED_CARDS = CARDS.map(({ card, anchor }) => ({ card, anchor }));
 
 function serializeComposerDraft(text: string, caret: number | null, cards: readonly { card: ComposerAttachment; anchor: number }[]): string {
   return serializeV3(text, caret, cards.map(({ card, anchor }) => ({ card, at: anchor })));
@@ -159,7 +160,7 @@ test("load：读回块序列与光标；无草稿 / 损坏 / 读失败都安静�
   assert.equal(await store.load(), null, "盘上没有草稿");
 
   rig.file = serializeComposerDraft(MSG, 1, CARDS);
-  assert.deepEqual(await store.load(), { text: MSG, caret: 1, cards: CARDS });
+  assert.deepEqual(await store.load(), { text: MSG, caret: 1, cards: LOADED_CARDS });
 
   rig.file = "{not json";
   assert.equal(await store.load(), null, "损坏 → null（不抛错）");
@@ -181,7 +182,7 @@ test("load：读盘途中再次装载 vault，前一次结果作废（不覆盖�
   // 窗口里装载了下一个 vault：第二次 load 先跑完（它的盘上内容是新 vault 的）
   rig.getImpl = async () => serializeComposerDraft(MSG2, null, CARDS);
   const second = await store.load();
-  assert.deepEqual(second, { text: MSG2, caret: null, cards: CARDS });
+  assert.deepEqual(second, { text: MSG2, caret: null, cards: LOADED_CARDS });
   const release = gate.release;
   assert.ok(release !== undefined, "读盘窗口确实挂住了（否则这条断言测的不是让位语义）");
   release();
@@ -327,7 +328,7 @@ test("load：合法 v1 立即串行写回一次 v3，此后同内容 schedule �
     blocks: [{ kind: "paragraph", text: "ab" }, CARD, { kind: "paragraph", text: "cd" }],
     caret: { block: 2, offset: 1 },
   });
-  assert.deepEqual(await store.load(), { text: "ab\ncd", caret: 4, cards: CARDS });
+  assert.deepEqual(await store.load(), { text: "ab\ncd", caret: 4, cards: LOADED_CARDS });
   const migrated = serializeComposerDraft("ab\ncd", 4, CARDS);
   assert.deepEqual(rig.writes, [migrated]);
   store.schedule("ab\ncd", 4, CARDS);

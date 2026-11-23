@@ -14,14 +14,18 @@ import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHarnessDraftStore } from "../../src/harness-draft.ts";
 import type { ComposerAttachment } from "../../src/quote-card.ts";
-import { serializeComposerDraft } from "../../src/quote-card.ts";
+import { serializeComposerDraft as serializeV3 } from "../../src/quote-card.ts";
 
 const MSG = "发送前的问题";
 const MSG2 = "回执迟到期间的新输入";
-const CARDS: ComposerAttachment[] = [{
+const CARDS: readonly { id: number; card: ComposerAttachment; anchor: number }[] = [{ id: 1, card: {
   kind: "quote",
   card: { file: "synth.md", heading: "H", headingPath: "H", lines: "1-1", text: "摘录" },
-}];
+}, anchor: 0 }];
+
+function serializeComposerDraft(text: string, caret: number | null, cards: readonly { id: number; card: ComposerAttachment; anchor: number }[]): string {
+  return serializeV3(text, caret, cards.map(({ card, anchor }) => ({ card, at: anchor })));
+}
 
 interface Call {
   vaultId: string | null;

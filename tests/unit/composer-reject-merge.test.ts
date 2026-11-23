@@ -14,14 +14,16 @@ import { mergeRejectedComposerContent } from "../../src/harness-composer.ts";
 import type { ComposerContent } from "../../src/harness-composer.ts";
 import type { ComposerAttachment } from "../../src/quote-card.ts";
 
-const quoteCard = (text: string): ComposerAttachment => ({
-  kind: "quote",
-  card: { file: "note.md", heading: "", headingPath: "", lines: "1-1", text },
+const quoteCard = (text: string): { id: number; card: ComposerAttachment; anchor: number } => ({
+  id: 1,
+  card: { kind: "quote", card: { file: "note.md", heading: "", headingPath: "", lines: "1-1", text } },
+  anchor: 0,
 });
 
-const imageCard = (name: string): ComposerAttachment => ({
-  kind: "image",
-  card: { name, sourceMime: "image/png" },
+const imageCard = (name: string): { id: number; card: ComposerAttachment; anchor: number } => ({
+  id: 2,
+  card: { kind: "image", card: { name, sourceMime: "image/png" } },
+  anchor: 0,
 });
 
 const restoredContent = (over: Partial<ComposerContent> = {}): ComposerContent => ({
@@ -65,7 +67,7 @@ test("卡片两边都保留：原在前、当前在后，顺序确定", () => {
     { text: "", caret: 0, cards: [imageCard("pasted-0f9a8b7c6d5e4f.webp")] },
   );
   assert.deepEqual(
-    merged.cards.map((attachment) => attachment.kind),
+    merged.cards.map((attachment) => attachment.card.kind),
     ["quote", "image"],
   );
 });
@@ -88,7 +90,7 @@ test("文本与卡片同时有新输入：两段文本与两类卡片都在，�
   assert.equal(merged.text, "原文问题继续");
   assert.equal(merged.caret, "原文问题".length + 2);
   assert.deepEqual(
-    merged.cards.map((attachment) => attachment.kind),
+    merged.cards.map((attachment) => attachment.card.kind),
     ["quote", "image"],
   );
   // 双方内容都在（正向判据）：原文与新输入都是子串。

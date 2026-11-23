@@ -357,7 +357,7 @@ test("provider_missing：撤销幽灵消息，富内容逐字段还原（text / 
   await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard")).toHaveCount(1);
   await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-imgcard")).not.toHaveClass(/is-error/);
   await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget > .lumir-hp-qcard")).toHaveCount(2);
-  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget")).toContainText("第一段用于摘录");
+  await expect(page.locator(".lumir-hp-composer .cm-content .lumir-hp-cwidget .lumir-hp-qc-ex")).toHaveAttribute("data-excerpt", /第一段用于摘录/);
 
   // ③ 幽灵消息不存在：transcript 没有留下一条「看起来发出去了」的用户气泡。
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(0);
