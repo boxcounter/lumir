@@ -167,6 +167,7 @@ test("点钮：消息摘录卡入 composer（出处行「对话 · Agent」、×
   await expect(card.locator(".lumir-hp-qc-src")).toHaveText("对话 · Agent");
   await expect(card.locator(".lumir-hp-qc-x")).toHaveCount(1);
   // hover title：完整摘录 + 绝对时间（本地化短格式，含年份则证明来自 ts）。
+  await card.hover();
   const title = await card.getAttribute("title");
   expect(title ?? "").toContain(assistantText);
 

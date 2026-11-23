@@ -479,7 +479,7 @@ test("resetView 调用点矩阵：切 vault = null；换会话 = 动作发起时
 
 test("新会话 / 恢复：回包迟到时只清发起 vault，且不重建 B 的视图", () => {
   for (const [name, body] of [["startNewSession", NEW_SESSION], ["resumeSession", RESUME]] as const) {
-    const guard = body.indexOf("actionVault !== currentVault || actionToken !== viewGeneration");
+    const guard = body.indexOf("actionToken !== viewGeneration");
     const reset = body.indexOf("activity.reset(actionVault)");
     const view = body.indexOf("resetView({");
     assert.notEqual(guard, -1, `${name} 必须有视图守卫`);

@@ -107,7 +107,7 @@ steps:
 
   - name: 键入后段问题
     do: typeInNode
-    target: { role: AXTextArea, name: "txtprobe-plain|imgmark-b" }
+    target: { role: AXTextArea, name: "txtprobe-plain" }
     text: "imgmark-b"
     expect:
       - label: 后段文本落地
@@ -126,7 +126,7 @@ steps:
       - label: 回答渲染（含图消息真实发出、回合完成）
         ax: { has: "验收回答：图片已收到。" }
       - label: ③ wire 锚点块序：前段 input_text → input_image → 后段 input_text
-        file: { path: "env:harness/sessions/acc-img/*.jsonl", has: '/^.*"kind":"llm_request".*"text":"txtprobe-plain".*"image_url":"lumir-attachment:\/\/pasted-[0-9a-f]{16}\.webp".*"text":"imgmark-b".*$/' }
+        file: { path: "env:harness/sessions/acc-img/*.jsonl", has: '/^.*"kind":"llm_request".*"content":\[{"text":"txtprobe-plain","type":"input_text"},{"image_url":"lumir-attachment:\/\/pasted-[0-9a-f]{16}\.webp","lumir_label":"Image 1","type":"input_image"},{"text":"imgmark-b\\n\\n\[当前编辑器上下文：\\n文件：harness-note.md\]","type":"input_text"}\].*$/' }
       - label: ③ 会话侧记引用形态：image_url 是 lumir-attachment:// 内容寻址名（不是 data URL）
         file: { path: "env:harness/sessions/acc-img/*.jsonl", has: '/"image_url":"lumir-attachment:\/\/pasted-[0-9a-f]{16}\.webp"/' }
       - label: ④ JSONL 无 base64：留存里不得出现 data:image 串
@@ -220,8 +220,9 @@ design §9 验收面的 ①②③④⑥ 四条（⑤ 能力闸在场景 128，�
    根 mtime 未推进）。
 2. **② 非图片回归**：同一条 Paste 通道先贴纯文本——净化照常、附件目录零新增；随后贴图，
    两段互不串台（文本段未被冲掉）。
-3. **③④ 投递与留存**：发送「完整问题 + 图片附件」后，JSONL 的 `llm_request` 里 user content
-   **附件在前、完整问题在后**（一条行内正则钉顺序），图片是 `lumir-attachment://` **引用**；
+3. **③④ 投递与留存**：发送「前段问题 + 图片附件 + 后段问题」后，JSONL 的 `llm_request` 里
+   user content 按**前段文本、图片、后段文本**的精确锚点块序排列（一条行内正则钉三段结构；
+   编辑器上下文只追加在末段文本之后），图片是 `lumir-attachment://` **引用**；
    全文**无 `data:image`**（引用进留存、展开进 wire——wire 展开侧由 Rust 单测
    `expand_image_refs_*` 与 mock 的 `received_inputs` 钉，mock 与真 client 同一条函数）。
 4. **⑥ 恢复 round-trip**：重启（内存会话真丢弃）→ 会话浮层恢复 → transcript 重建出

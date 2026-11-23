@@ -289,7 +289,7 @@ test("跨文字与图片的选区：引用卡片 + 图片块按文档序进入�
   expect(order).toEqual(["quote", "image"]);
   await expect(composer.locator(".cm-line .lumir-hp-qcard")).toHaveCount(0);
   // 引用正文保留图片源码（design §5：不剥离，锚校验要逐字前缀）。
-  await expect(quote.locator(".lumir-hp-qc-ex")).toContainText("![[pic.png]]");
+  await expect(quote.locator(".lumir-hp-qc-ex")).toHaveAttribute("data-excerpt", /!\[\[pic\.png\]\]/);
   await expect(quote.locator(".lumir-hp-qc-src")).toContainText("harness-image-quote.md");
   // M662：摘录里的图片数 = 派生角标（人侧读数；卡片数据模型没有图片字段，见 survey §2.2）。
   await expect(quote.locator(".lumir-hp-qc-src")).toContainText("含 1 张图片");

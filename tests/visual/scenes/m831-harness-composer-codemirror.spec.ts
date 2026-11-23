@@ -106,6 +106,70 @@ test("新会话成功：composer 新建 EditorState，旧文本与 history 不�
   expect((await composerState(page)).doc).toBe("");
 });
 
+test("无 vault 双挂起新会话：迟到回包不得清掉更新后的输入", async ({ page }) => {
+  await stubTauri(page, null);
+  await page.addInitScript((providers) => {
+    const w = window as unknown as Record<string, any>;
+    w.__newSessionResolvers = [];
+    const invoke = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "harness_new_session") return new Promise((resolve) => w.__newSessionResolvers.push(resolve));
+      if (cmd === "harness_state") return JSON.stringify({ messages: [], usage: { ctx_pct: 0, cache_pct_session: 0 }, pending_approval: null, warn_ctx_pct: 85 });
+      const result = await invoke(cmd, args);
+      if (cmd === "config_get" && result?.config) result.config.harness = { provider: "mock", providers, permissions: { allow: [], deny: [] }, loop_max: 8, warn_ctx_pct: 85, auto_compact: true };
+      return result;
+    };
+  }, standardProviders());
+  await page.goto("/");
+  await page.locator(".lumir-hp-toggle").click();
+  await page.locator(".lumir-hp-seg-new").click();
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __newSessionResolvers: unknown[] }).__newSessionResolvers.length)).toBe(2);
+  await page.evaluate(() => (window as unknown as { __newSessionResolvers: Array<(value: null) => void> }).__newSessionResolvers[0](null));
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.keyboard.type("NEWER-INPUT");
+  await page.evaluate(() => (window as unknown as { __newSessionResolvers: Array<(value: null) => void> }).__newSessionResolvers[1](null));
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  expect((await composerState(page)).doc).toBe("NEWER-INPUT");
+});
+
+test("新会话清除同 vault 草稿：落盘删除后 reload 不复活旧输入", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    if (localStorage.getItem("m831-draft") === null) {
+      localStorage.setItem("m831-draft", JSON.stringify({ version: 3, text: "OLD-DRAFT", caret: 9, cards: [] }));
+    }
+    let stored: string | null = localStorage.getItem("m831-draft");
+    w.__draftPuts = [];
+    const invoke = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "harness_draft_get") return stored;
+      if (cmd === "harness_draft_put") {
+        stored = args.draft_json as string;
+        localStorage.setItem("m831-draft", stored);
+        w.__draftPuts.push(stored);
+        return null;
+      }
+      if (cmd === "harness_new_session") return null;
+      if (cmd === "harness_state") return JSON.stringify({ messages: [], usage: { ctx_pct: 0, cache_pct_session: 0 }, pending_approval: null, warn_ctx_pct: 85 });
+      return invoke(cmd, args);
+    };
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="ime.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect.poll(async () => (await composerState(page)).doc).toBe("OLD-DRAFT");
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect.poll(async () => (await composerState(page)).doc).toBe("");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __draftPuts: string[] }).__draftPuts.includes(""))).toBe(true);
+  await page.reload();
+  await page.locator('.ft-row[title="ime.md"]').click();
+  if (await page.locator(".lumir-hp-composer .cm-content").count() === 0) await page.locator(".lumir-hp-toggle").click();
+  await expect.poll(async () => (await composerState(page)).doc).toBe("");
+});
+
 // ── 竖直移动的列位口径（M834）─────────────────────────────────────────────────────────
 // CM 的 cursorLineUp/Down 把 goal column 当**像素 x**；composer 字体是比例字体（13px SF Pro），
 // 两行同一字符列的像素宽不相等 ⇒ 真机 140：第二段行尾（列 2）按 ⌃P 落列 3。合同（HC1）要求

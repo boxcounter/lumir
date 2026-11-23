@@ -4414,7 +4414,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       update(element, attachment, ordinal) {
         if (attachment.card.kind !== "image" || ordinal === null) return;
         const badge = element.querySelector<HTMLElement>(".lumir-hp-qc-ord");
-        badge?.replaceChildren(String(ordinal));
+        if (badge !== null) appendHiddenGlyph(badge, String(ordinal));
         badge?.setAttribute("aria-label", t("D447", { n: String(ordinal), name: attachment.card.card.name }));
       },
       label: (attachments, ordinals) => attachments.map((attachment) => {
@@ -4646,12 +4646,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
+  function appendHiddenGlyph(element: HTMLElement, glyph: string): void {
+    element.dataset.glyph = glyph;
+    const visual = document.createElement("span");
+    visual.hidden = true;
+    visual.setAttribute("aria-hidden", "true");
+    visual.textContent = glyph;
+    element.replaceChildren(visual);
+  }
+
   /** 编号徽标（change composer-image-mention design §8）：缩略图角上的裸编号 `1` / `2`；读屏名与
    *  transcript 卡片的可访问名同一文案（D447 含编号形态）。编号是块序列的派生读数，非卡片字段。 */
   function createImageOrdinalBadge(ordinal: number, name: string): HTMLElement {
     const badge = document.createElement("span");
     badge.className = "lumir-hp-qc-ord";
-    badge.textContent = String(ordinal);
+    appendHiddenGlyph(badge, String(ordinal));
     badge.setAttribute("aria-label", t("D447", { n: String(ordinal), name }));
     return badge;
   }
@@ -4667,7 +4676,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     at.className = "lumir-hp-qc-at";
     at.tabIndex = -1;
     at.setAttribute("aria-label", t("D457"));
-    at.textContent = "@";
+    appendHiddenGlyph(at, "@");
     // 让卡片级 mousedown preventDefault 生效（不 stopPropagation）——点 `@` 不夺走 composer 的
     // 选区/焦点，CM state 因此保留用户点 `@` 之前的文本选区。
     at.addEventListener("mousedown", (event) => event.preventDefault());
@@ -4716,6 +4725,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     main.append(thumb, source);
     el.append(main);
     if (mode === "composer") {
+      appendHiddenGlyph(source, source.textContent ?? imageCardMetaText(card.name, card.width, card.height));
       el.setAttribute("role", "group");
       el.setAttribute("aria-label", imageCardMetaText(card.name, card.width, card.height));
     }
@@ -4740,7 +4750,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       remove.className = "lumir-hp-qc-x";
       remove.tabIndex = -1;
       remove.setAttribute("aria-label", t("D371"));
-      remove.textContent = "×";
+      appendHiddenGlyph(remove, "×");
       actions.append(remove);
       el.append(actions);
       // 图片卡无跳回：点击（两钮除外）无操作。mousedown 拦下是不让区外卡片抢走 CM 选区/焦点（面板内元素，无标题栏拖拽问题——REVIEW.md 「标题栏 preventDefault」条只约束标题栏）。
@@ -4813,17 +4823,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     main.append(excerpt, source);
     el.append(bar, main);
     if (mode === "composer") {
-      el.setAttribute("role", "group");
-      el.setAttribute("aria-label", `${card.text} —— ${sourceText}`);
+      const accessibleSource = source.textContent ?? sourceText;
+      excerpt.setAttribute("role", "presentation");
+      appendHiddenGlyph(source, accessibleSource);
+      el.setAttribute("role", "presentation");
     }
-    el.title = msgCard ? messageQuoteHoverTitle(card) : cardHoverTitle(card);
+    const hoverTitle = msgCard ? messageQuoteHoverTitle(card) : cardHoverTitle(card);
+    if (mode === "transcript") el.title = hoverTitle;
     if (mode === "composer") {
+      el.addEventListener("mouseenter", () => { el.title = hoverTitle; });
+      el.addEventListener("mouseleave", () => { el.removeAttribute("title"); });
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "lumir-hp-qc-x";
       remove.tabIndex = -1;
       remove.setAttribute("aria-label", t("D371"));
-      remove.textContent = "×";
+      appendHiddenGlyph(remove, "×");
       el.append(remove);
       // 卡片点击（× 除外）= 跳回来源（quote 走 QC3 注册的编辑器处理器、msgquote 走 transcript
       // 定位）；mousedown 拦下是为不让区外卡片抢走 CM 选区/焦点（面板内元素，
@@ -10153,16 +10168,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const actionToken = viewGeneration;
     harnessNewSession()
       .then(() => {
-        if (actionVault !== null && (actionVault !== currentVault || actionToken !== viewGeneration)) {
+        if (actionToken !== viewGeneration || (actionVault !== null && actionVault !== currentVault)) {
           // 回包到达前切到了 B：只清 A 的记录（A 从新会话起算），B 的视图 / 在途 / 未读
-          // MUST NOT 被这次回包重建。
-          activity.reset(actionVault);
+          // MUST NOT 被这次回包重建。无 vault 时也必须用视图世代挡住旧回包。
+          if (actionVault !== null) activity.reset(actionVault);
           return;
         }
         // 清空的是**渲染面**：会话真源在 Rust，重置成功后本地视图随之清空；待决批准项随
         // 会话失效，一并撤下（它们的 id 已不属于任何会话）——口径见 resetView 的注释。
         resetView({ clearActivityFor: actionVault });
         resetComposer();
+        void draft.clear();
         // 新逻辑会话：旧会话的 token 与「已提示」标记作废；完整快照是空健康的地板。
         resetPersistenceView();
         fetchPersistenceSnapshot();
@@ -10255,6 +10271,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (!stillCurrent) return;
     resetView({ clearActivityFor: null });
     resetComposer();
+    void draft.clear();
     fetchSnapshot();
   }
 

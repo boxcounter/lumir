@@ -151,9 +151,6 @@ test("空选区 copy 不意外复制整段，视觉摘录由 ::before 保留", a
   const excerpt = page.locator(".lumir-hp-cwidget .lumir-hp-qc-ex");
   await expect(excerpt).toHaveAttribute("data-excerpt", QUOTED);
   expect(await excerpt.evaluate((el) => getComputedStyle(el, "::before").content)).toBe(JSON.stringify(QUOTED));
-  const accessibleName = await page.locator(".lumir-hp-cwidget .lumir-hp-qcard").getAttribute("aria-label");
-  expect(accessibleName).toContain(QUOTED);
-  expect(accessibleName).toContain("inline cards");
   const copied = await page.evaluate(() => {
     const view = (document.querySelector(".lumir-hp-composer .cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
     view.dispatch({ selection: { anchor: 0 } });
@@ -167,6 +164,23 @@ test("空选区 copy 不意外复制整段，视觉摘录由 ::before 保留", a
     el.dispatchEvent(new ClipboardEvent("copy", { bubbles: true, cancelable: true }))
   ));
   expect(nativeFallback).toBe(true);
+});
+
+test("实际 AX 树：textbox value 只含文档，摘录只读一次且动作保留可访问名", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "CDP AX 树只在 chromium 提供");
+  await openComposer(page, { version: 3, text: "AB", caret: 0, cards: [{ card: QUOTE, at: 1 }] });
+  await page.mouse.move(0, 0);
+  const cdp = await page.context().newCDPSession(page);
+  const { nodes } = await cdp.send("Accessibility.getFullAXTree") as { nodes: Array<{ nodeId: string; parentId?: string; role?: { value?: string }; name?: { value?: string }; value?: { value?: string } }> };
+  const composer = nodes.find((node) => node.role?.value === "textbox" && node.name?.value?.includes("问点什么"));
+  expect(composer?.value?.value?.replaceAll("\n", "")).toBe("AB");
+  const subtree = new Set(composer === undefined ? [] : [composer.nodeId]);
+  for (const node of nodes) {
+    if (node.parentId !== undefined && subtree.has(node.parentId)) subtree.add(node.nodeId);
+  }
+  const names = nodes.filter((node) => subtree.has(node.nodeId) && node.role?.value !== "InlineTextBox").map((node) => node.name?.value).filter((name): name is string => typeof name === "string");
+  expect(names.filter((name) => name.includes(QUOTED))).toEqual([QUOTED]);
+  expect(names).toContain("移除摘录");
 });
 
 test("200 字连续输入复用卡片 DOM 且不重复读图", async ({ page }) => {

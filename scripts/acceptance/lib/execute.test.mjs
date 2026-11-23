@@ -3361,6 +3361,19 @@ test("resolveKeysTarget：键盘落在按钮上时身份钉住按钮，不因同
 });
 
 
+test("127 wire oracle：精确三段块序包含末段编辑器上下文，反序必红", async () => {
+  const scenario = await loadScenario(path.join(repoRoot(), "scripts/acceptance/scenarios/127-harness-composer-image-paste.md"));
+  const step = scenario.steps?.find((s) => s.name === "等回合收口（mock 弹一条响应）");
+  const pattern = step?.expect?.find((e) => e.label?.includes("wire 锚点块序"))?.file?.has;
+  assert.equal(typeof pattern, "string");
+  const text = (value) => ({ text: value, type: "input_text" });
+  const image = { image_url: "lumir-attachment://pasted-9902da88ef019a8b.webp", lumir_label: "Image 1", type: "input_image" };
+  const request = (content) => JSON.stringify({ payload: { kind: "llm_request", request: { messages: [{ role: "user", content }] } } });
+  const trailing = text("imgmark-b\n\n[当前编辑器上下文：\n文件：harness-note.md]");
+  assert.equal(matcher(pattern).test(request([text("txtprobe-plain"), image, trailing])), true);
+  assert.equal(matcher(pattern).test(request([text("txtprobe-plain"), trailing, image])), false);
+});
+
 const SCOPED_COMPOSER_DUMP = `
 - [1] AXGroup (composer)
   - [2] AXStaticText = "CW-CARD-A"

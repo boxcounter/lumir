@@ -225,7 +225,8 @@ type AttachmentEdit =
   结构 effect 不提供逆 effect。插入 / 移除仍带 `isolateHistory.of("full")`，各自成为一步 undo；
   插入事务里的 `\n` 与卡在同一步里，一次 undo 全还原、redo 全恢复。
 - **重置 / 草稿恢复 / 切 vault / 新会话 / 会话重载 / 发送成功清空**：新 state、新历史，不跨进程
-  恢复撤销史（现行条款不变）。
+  恢复撤销史（现行条款不变）。新会话与会话重载同时经既有串行 `draft.clear()` 清除当前 bound
+  vault 的盘上草稿；其他 vault 不受影响，清除后的新输入按既有版本与写链保留。
 
 ## 6. 装饰与 widget 生命周期
 
@@ -325,9 +326,11 @@ if cursor < doc.length || blocks.length === 0:
 - **跨卡文本选区**：从卡上方选到卡下方的选区仍是纯文本选区（卡片不在 `state.selection` 里）；
   删除只删文本，卡片保留并按 §4 精确映射。
 - **`⌘A`**：`0 → doc.length`，只选文本（现行 `runComposerCommand` 的 `editor.select-all` 不变）。
-- **视觉摘录与可访问名分工**：composer 摘录正文只写 `data-excerpt`，由 CSS `::before` 的
-  `content: attr(data-excerpt)` 呈现，不写进 contenteditable 的聚合文本；卡片的 `aria-label`
-  仍保留完整摘录与出处。不得为了复制或 AX value 负向断言撤掉视觉摘录。
+- **视觉文本与可访问结构分工**：composer 摘录正文只写 `data-excerpt`，出处、编号与动作 glyph
+  只写 `data-glyph`，均由 CSS pseudo 呈现；原始文本放在 `display:none` 节点，不写进
+  contenteditable 的聚合 value。实际 AX 树的 textbox value 只含文档文字（块分隔换行除外），
+  完整摘录只暴露一个 StaticText 阅读节点；动作的 `aria-label` 保留。不得为了复制或 AX value
+  负向断言撤掉视觉文本，也不得由卡根再次重复朗读摘录。
 - **`⌘C` 应用内 copy event**：composer 的 copy listener 写 `state.sliceDoc(main.from, main.to)`；
   验收用 `copy` 事件读取 `DataTransfer`，逐字节等于选区文本，不含卡片摘录、`×` / `@` 文本、
   占位字符或哨兵。空选区写入 `""`，不得退回整段或卡片文本；`clipboardData === null` 时不
@@ -344,9 +347,9 @@ if cursor < doc.length || blocks.length === 0:
 ## 9. AX（读屏）
 
 - 卡片容器在 `contenteditable` 内、`contenteditable=false`：AX 把它呈现为一段不可编辑内容，
-  不是文本区 value 的一部分。composer 摘录用 `data-excerpt + CSS ::before` 保留视觉呈现，
-  `aria-label` 保留完整摘录与出处；composer 态卡片**不是** `role=button`（transcript 态才是），
-  不可 Tab 到达。
+  不是文本区 value 的一部分。composer 摘录与出处用 data 属性 + CSS pseudo 保留视觉呈现，
+  摘录只暴露一个 StaticText；动作的 `aria-label` 保留。composer 态卡片**不是** `role=button`
+  （transcript 态才是），不可 Tab 到达。
 - **顺序断言必须限定在 composer 子树**，不能用整棵应用 AX 树的跨节点正则：
   - 给验收套件新增 scoped 断言（建议 `ax: { scope: <node locator>, order: [marker, …] }` 或
     「composer 结构节点序列」形态），实现要解析出 composer 节点后只在该子树里判序。

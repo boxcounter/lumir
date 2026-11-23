@@ -25,7 +25,7 @@
 
 附件 SHALL 只经移除钮移除；文本 Backspace / Delete MUST NOT 删卡。粘贴 SHALL 按剪贴板内容分派：含 `image/*` 时走「图片粘贴卡片」且图优先，其余内容只收 `text/plain` 并保留换行。新发送的用户消息 SHALL 按**块序**（文字行与卡片锚点的合并顺序）沉淀；块序即视觉顺序，MUST NOT 再把全部卡片硬编码到完整问题之前。历史已发送消息仍 SHALL 按留存原文交错显示。在卡片锚点处键入或粘贴的内容 SHALL 落在卡片下方。空消息判据 SHALL 仍是「文档为空且卡片为空」；只有空白文本不算消息。空态占位 SHALL 只在文档与卡片都为空时出现，MUST NOT 覆盖卡片。
 
-composer 摘录正文 SHALL 通过 `data-excerpt + CSS ::before` 保留视觉呈现，MUST NOT 因此进入 contenteditable 的聚合文本；卡片 `aria-label` SHALL 保留完整摘录与出处。copy listener SHALL 写入 `state.sliceDoc(main.from, main.to)`；空选区 SHALL 写入 `""`，MUST NOT 复制整段或卡片文本；`clipboardData === null` 时 MUST NOT `preventDefault()`，保留原生回退。
+composer 摘录正文 SHALL 通过 `data-excerpt + CSS ::before` 保留视觉呈现，出处、编号与动作 glyph SHALL 同样以 data 属性 + CSS pseudo 呈现。实际 AX 树的 textbox value SHALL 只含文档文字（块分隔换行除外），完整摘录 SHALL 只暴露一个阅读节点，出处与动作 MUST NOT 混入 value；动作的 `aria-label` SHALL 保留。copy listener SHALL 写入 `state.sliceDoc(main.from, main.to)`；空选区 SHALL 写入 `""`，MUST NOT 复制整段或卡片文本；`clipboardData === null` 时 MUST NOT `preventDefault()`，保留原生回退。
 
 #### Scenario: 添加附件不拆文本且可直接继续输入
 
@@ -99,7 +99,7 @@ composer 摘录正文 SHALL 通过 `data-excerpt + CSS ::before` 保留视觉呈
 
 ### Requirement: CM composer 的单一 history
 
-composer SHALL 使用 CodeMirror history 作为文本与卡片的唯一撤销 / 重做真源，MUST NOT 再维护 DOM / blocks 快照栈。卡片 SHALL 以 `{ id, card, anchor }` 记录：`id` 是会话内稳定身份，`anchor` 是文档中的**精确 UTF-16 偏移**（不要求行首）。卡片添加与移除 SHALL 由专用 StateEffect 更新 StateField；移除按 `id` 定位，MUST NOT 按下标定位；附件结构事务 SHALL 与相邻编辑隔离。composer MUST NOT 在现有 history 上执行 `addToHistory:false` 或 `remote` 的文档变更；装载 / 复位（草稿恢复、切 vault、新会话、会话重载、发送清空）MUST 新建 `EditorState` 重置 history，MUST NOT 用 `state.update({annotations: Transaction.addToHistory.of(false)})` 在旧 state 上打补丁。连续文本输入 SHALL 按 CM history 聚簇；IME 整段 history SHALL 由 CM 管理，MUST NOT 在 compositionstart/end 手工压栈。导航本身 MUST NOT 产生编辑 undo 事件。
+composer SHALL 使用 CodeMirror history 作为文本与卡片的唯一撤销 / 重做真源，MUST NOT 再维护 DOM / blocks 快照栈。卡片 SHALL 以 `{ id, card, anchor }` 记录：`id` 是会话内稳定身份，`anchor` 是文档中的**精确 UTF-16 偏移**（不要求行首）。卡片添加与移除 SHALL 由专用 StateEffect 更新 StateField；移除按 `id` 定位，MUST NOT 按下标定位；附件结构事务 SHALL 与相邻编辑隔离。composer MUST NOT 在现有 history 上执行 `addToHistory:false` 或 `remote` 的文档变更；装载 / 复位（草稿恢复、切 vault、新会话、会话重载、发送清空）MUST 新建 `EditorState` 重置 history；新会话与会话重载 MUST 同时清除当前 bound vault 的盘上草稿，其他 vault 的草稿与复位后的新输入不得受影响，MUST NOT 用 `state.update({annotations: Transaction.addToHistory.of(false)})` 在旧 state 上打补丁。连续文本输入 SHALL 按 CM history 聚簇；IME 整段 history SHALL 由 CM 管理，MUST NOT 在 compositionstart/end 手工压栈。导航本身 MUST NOT 产生编辑 undo 事件。
 
 文本 Backspace / Delete、⌘A、普通输入、粘贴与 IME MUST NOT 发出附件增删 effect，因此不得增删或重排卡片；文本变更引起的 anchor 映射是机械重映射，不属于附件编辑。重置、草稿恢复、切 vault 和发送成功后的空输入 SHALL 是新的编辑史，MUST NOT 撤销回另一 vault 或已发送内容。
 

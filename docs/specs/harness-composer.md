@@ -48,7 +48,8 @@ normalize 或自绘块级选区带。
 4. 现有 composer history 上 MUST NOT 执行 `addToHistory:false` 或 `remote` 的文档变更。事务
    过滤器拒绝这类变更；不得给 sync effect 增加 `mapPos` 来修补旧分支。
 5. 草稿恢复、切 vault、新会话、会话重载、发送清空与拒绝合并后的复位 MUST 新建 `EditorState`，
-   旧 history 不可达。不得用非 history 文档补丁复位。
+   旧 history 不可达。新会话与会话重载 MUST 同时清除当前 bound vault 的盘上草稿，其他 vault
+   的草稿与复位后的新输入不得受影响。不得用非 history 文档补丁复位。
 
 ### HC3 — IME 组合归 CM，插卡 FIFO 与单 pendingSend
 
@@ -82,10 +83,11 @@ CM 独占组合文本、组合选区与组合中删除。实现 MUST NOT 在 com
 5. AX 顺序与负向断言 MUST 限定 composer 子树。scope 缺失、不唯一或不可读一律 FAIL。卡片
    标记不得进入 composer 的 `AXTextArea.value`；编辑器源文档允许包含原始摘录。同一 AXTextArea
    的 value 可按节点内偏移多次匹配，允许其中的文本片段与后续卡片节点交错，且不得重读已消费文本。
-6. composer 摘录正文 MUST 以 `data-excerpt + CSS ::before` 保留视觉呈现，不得因此进入
-   contenteditable 的聚合文本；卡片 `aria-label` MUST 保留完整摘录与出处。卡片容器不得暴露为
-   可编辑控件或按钮，不得进入 Tab 序。既有 × 与 @ 的可读名保留。图片 `alt=""` 与 `aria-hidden`
-   只用于装饰缩略图，编号可读名保留。
+6. composer 摘录正文 MUST 以 `data-excerpt + CSS ::before` 保留视觉呈现，出处、编号与动作 glyph
+   同样以 data 属性 + CSS pseudo 呈现。实际 AX 树的 textbox value MUST 只含文档文字（块分隔换行
+   除外），完整摘录 MUST 只暴露一个阅读节点，出处与动作不得混入 value；动作的 aria-label 保留。
+   卡片容器不得暴露为可编辑控件或按钮，不得进入 Tab 序。图片 `alt=""` 与 `aria-hidden` 只用于
+   装饰缩略图，编号可读名保留。
 
 ### HC5 — 块序投递、编号与拒绝合并
 

@@ -1998,6 +1998,12 @@
 .lumir-hp-cwidget .lumir-hp-qc-ex::before {
   content: attr(data-excerpt);
 }
+.lumir-hp-cwidget .lumir-hp-qc-src::before,
+.lumir-hp-cwidget .lumir-hp-qc-ord::before,
+.lumir-hp-cwidget .lumir-hp-qc-at::before,
+.lumir-hp-cwidget .lumir-hp-qc-x::before {
+  content: attr(data-glyph);
+}
 .lumir-hp-qcard {
   display: flex;
   align-items: stretch;

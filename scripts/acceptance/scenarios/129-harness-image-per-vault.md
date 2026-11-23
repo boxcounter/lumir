@@ -49,13 +49,14 @@ steps:
       has: ["/pasted-[0-9a-f]{16}\\.webp/"]
     timeoutMs: 30000
 
-  - name: 焦点回 composer（图片卡在文本区 widget，文本值仍为空），键入 A 侧提问
+  - name: 焦点回 composer（textbox value 只含文档，空文档沿用占位名），键入 A 侧提问
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
 
   - name: 键入 A 侧标记
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|vaulta-img|pasted-[0-9a-f]{16}\\.webp" }
+    # typeInNode 会跨注入回读同一动态名：覆盖注入前占位名与注入后文档名。
+    target: { role: AXTextArea, name: "问点什么|vaulta-img" }
     text: "vaulta-img"
 
   - name: 发送 A 的含图消息
@@ -142,13 +143,13 @@ steps:
       has: ["/pasted-[0-9a-f]{16}\\.webp/"]
     timeoutMs: 30000
 
-  - name: 焦点回 composer（同 A 侧口径），键入 B 侧提问
+  - name: 焦点回 composer（同 A 侧动态图片元信息口径），键入 B 侧提问
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
 
   - name: 键入 B 侧标记
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|vaultb-img|pasted-[0-9a-f]{16}\\.webp" }
+    target: { role: AXTextArea, name: "问点什么|vaultb-img" }
     text: "vaultb-img"
 
   - name: 发送 B 的含图消息
