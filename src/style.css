@@ -602,6 +602,16 @@ body {
 :root[data-theme="eink"] .tab.is-active {
   border-width: 1.4px;
 }
+/* 标签的短暂导航高亮（change harness-path-link-keep-position-nov23）：一次路径导航命中**已经
+   打开**的标签时，给它一次约 1.4s 的底色反馈（时长复用 `NAVIGATION_HIGHLIGHT_MS`，不新造）。
+   声明排在 `.tab:hover` 与 `.tab.is-active` 之后：三条同特异性（`.tab` + 一个 class / 伪类），
+   后声明者胜——指针停在标签上时闪烁仍可见。底色取 `--sel-band`（三主题各自现行值；light 下
+   `--sel` 与激活标签的 `--content-bg` 过近，MUST NOT 用作本高亮）。只改底色层：字形、字重、
+   文字色、边框与尺寸都不动（闪烁不是激活态，也不是第二种标题形态）；eink 走同一 token，
+   无需额外覆写。 */
+.tab.is-flash {
+  background: var(--sel-band);
+}
 .tab-name {
   flex: 1 1 auto;
   min-width: 0;

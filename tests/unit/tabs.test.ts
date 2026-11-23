@@ -15,11 +15,12 @@
 // 已经是前台会话时（只重绘那条早退分支）同样先激活 pane。
 // 不覆盖什么：真实装载（要真编辑器 + IPC，归 tests/visual 的 m320 与真机场景 79/80）。
 
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { createTabs } from "../../src/tabs.ts";
 import type { TabsDeps, TabsHandle } from "../../src/tabs.ts";
 import type { EditorHandle, EditorSession } from "../../src/editor.ts";
+import { NAVIGATION_HIGHLIGHT_MS } from "../../src/navigation-highlight.ts";
 import { t } from "../../src/copy.ts";
 
 interface FakeEvent {
@@ -443,4 +444,157 @@ test("关闭全部标签：多个 dirty——逐个弹既有确认；取消停�
   await flush();
   assert.deepEqual(rig.closed, ["a.md", "b.md", "c.md"]);
   assert.equal(rig.focusEditorCalls, 2, "全关完同样收尾一次（前台是未命名空文档）");
+});
+
+// ---------------------------------------------------------------------------
+// 标签的短暂导航高亮（change harness-path-link-keep-position-nov23）
+//
+// 判据分三层：① 按**会话对象**记账（不是只在 DOM 上挂 class）——全量重建后同一会话的
+// 新标签仍带 class；② 同一时刻至多一个标签闪烁、重复命中重置计时；③ 生命周期——会话关闭、
+// 计时结束、`dispose()`、计时到点时槽已卸载，都不留 class / 计时器 / 指向已销毁节点的状态。
+// 浏览器层的视觉与几何判据在 `tests/visual/scenes/harness-path-link-keep-position-nov23.spec.ts`；
+// 这一层只判记账与清理（FakeEl 面够用，真实计时用 node:test 的 mock timers 推进）。
+// ---------------------------------------------------------------------------
+
+const tabOf = (rig: Rig, path: string): FakeEl => {
+  const found = rig.mount.children.find((child) => child.dataset.path === path);
+  assert.ok(found, `没有找到路径为 ${path} 的标签元素`);
+  return found;
+};
+
+const flashingPaths = (rig: Rig): string[] =>
+  rig.mount.children.filter((child) => child.classes.has("is-flash")).map((child) => child.dataset.path);
+
+test("flash：立刻给目标标签 is-flash，NAVIGATION_HIGHLIGHT_MS 后消退；其它标签不受影响", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const a = session("a.md");
+    const b = session("b.md");
+    const rig = createRig([a, b], a);
+
+    rig.tabs.flash(b);
+    assert.deepEqual(flashingPaths(rig), ["b.md"], "只有被点的那一条闪");
+    assert.equal(tabOf(rig, "b.md").classes.has("is-active"), false, "闪烁不是激活态");
+
+    mock.timers.tick(NAVIGATION_HIGHLIGHT_MS - 1);
+    assert.deepEqual(flashingPaths(rig), ["b.md"], "计时未到：高亮仍在");
+
+    mock.timers.tick(1);
+    assert.deepEqual(flashingPaths(rig), [], "到点后消退");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("flash：同一标签再次命中重置消退计时，不叠加第二层", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const a = session("a.md");
+    const b = session("b.md");
+    const rig = createRig([a, b], a);
+
+    rig.tabs.flash(b);
+    mock.timers.tick(1000);
+    rig.tabs.flash(b);
+    mock.timers.tick(500);
+    assert.deepEqual(flashingPaths(rig), ["b.md"], "距首次点击已 1.5s，但计时从第二次命中重新起算");
+    mock.timers.tick(NAVIGATION_HIGHLIGHT_MS - 500);
+    assert.deepEqual(flashingPaths(rig), [], "第二次命中后满 1.4s 才消退");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("flash：命中另一个标签时整块换过去（同一时刻至多一个）", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const a = session("a.md");
+    const b = session("b.md");
+    const rig = createRig([a, b], a);
+
+    rig.tabs.flash(a);
+    rig.tabs.flash(b);
+    assert.deepEqual(flashingPaths(rig), ["b.md"], "旧标签的 class 被清掉，只剩新的那一条");
+    mock.timers.tick(NAVIGATION_HIGHLIGHT_MS);
+    assert.deepEqual(flashingPaths(rig), [], "旧计时器不会提前 / 重复清理新状态");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("flash：全量重建时按会话对象重新施加，消退计时继续有效", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const a = session("a.md");
+    const b = session("b.md");
+    const rig = createRig([a, b], a);
+
+    rig.tabs.flash(b);
+    mock.timers.tick(600);
+    // 触发一次全量重建（生产中由 dirty 跃迁 / 同步点调用）：DOM 是新的，状态仍按会话记账。
+    rig.editor.sessions = [a, b];
+    rig.tabs.renderTabs();
+    assert.deepEqual(flashingPaths(rig), ["b.md"], "重建后新 DOM 仍带 is-flash");
+
+    mock.timers.tick(NAVIGATION_HIGHLIGHT_MS - 600);
+    assert.deepEqual(flashingPaths(rig), [], "计时没有被重建重置 / 打断");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("flash：关闭被闪烁的会话立即清理；关闭别的会话不动它", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const a = session("a.md");
+    const b = session("b.md");
+    const rig = createRig([a, b], a);
+
+    rig.tabs.flash(b);
+    rig.clickClose("a.md");
+    assert.deepEqual(flashingPaths(rig), ["b.md"], "关闭其它标签不清闪烁");
+
+    rig.clickClose("b.md");
+    assert.deepEqual(flashingPaths(rig), [], "关闭被闪烁的会话：class 随 DOM 消失");
+    mock.timers.tick(NAVIGATION_HIGHLIGHT_MS);
+    assert.deepEqual(flashingPaths(rig), [], "计时器已清，到点不再有回调可跑");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("dispose：清计时器、清状态、移除残留 class；之后的 renderTabs 不再重新施加", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const a = session("a.md");
+    const rig = createRig([a], a);
+
+    rig.tabs.flash(a);
+    assert.deepEqual(flashingPaths(rig), ["a.md"]);
+    rig.tabs.dispose();
+    assert.deepEqual(flashingPaths(rig), [], "dispose 后不得留 class");
+
+    mock.timers.tick(NAVIGATION_HIGHLIGHT_MS);
+    rig.tabs.renderTabs();
+    assert.deepEqual(flashingPaths(rig), [], "状态已清：重建不得把闪烁带回来");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("计时到点时标签槽已卸载：先清状态再返回，之后的 renderTabs 不得重新施加", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const a = session("a.md");
+    const rig = createRig([a], a);
+
+    rig.tabs.flash(a);
+    // 模拟槽被摘除（DOM 没了），但 dispose 还没跑到——计时回调必须自己把状态清干净。
+    rig.mount.replaceChildren();
+    mock.timers.tick(NAVIGATION_HIGHLIGHT_MS);
+    rig.tabs.renderTabs();
+    assert.deepEqual(flashingPaths(rig), [], "回调只 return 不清状态时，这里会把 class 重新挂上（判红）");
+  } finally {
+    mock.timers.reset();
+  }
 });

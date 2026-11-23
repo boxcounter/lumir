@@ -151,7 +151,7 @@ import { createHarnessPanel } from "./harness-panel";
 import { createVaultActivityStore } from "./harness-activity";
 import { escapeDisposition, installEscapeRouter } from "./escape-router";
 import type { HarnessBlockFullscreenPort } from "./harness-panel";
-import { openPathAtLine } from "./harness-path-link";
+import { linkDisposition, linkFlashesAfterOpen, openPathAtLine } from "./harness-path-link";
 import type { PathJumpPlan } from "./harness-path-link";
 import { duringViewportTransition } from "./scroll-position-view";
 import { createQuoteGesture } from "./quote-gesture";
@@ -460,6 +460,10 @@ function disposePaneHandle(handle: PaneHandle): void {
   if (entry === undefined) return;
   const [paneId, assembly] = entry;
   for (const unsub of assembly.unsubs) unsub();
+  // 标签条的销毁入口在编辑器之前（change harness-path-link-keep-position-nov23）：闪烁的计时器
+  // 与「被闪的是哪个会话」的记账必须随 pane 一起清掉——MUST NOT 依赖「DOM 没了自然就好了」，
+  // 否则计时回调会打到已销毁的节点上。root pane 的槽不归还，这一句对它是防御性的幂等清理。
+  assembly.tabs?.dispose();
   if (handle.kind === "doc") {
     handle.editor.view.destroy();
   } else {
@@ -3367,9 +3371,30 @@ const harnessPanel = createHarnessPanel({  shell,
   // plan 由 `jumpPlanFor` 提供——与快速打开**同一份**（M655 的 design §1.2：复核判据一旦分叉，
   // 两处会给出不同的滚动行为）。`lineEnd` 只由正文候选带出：单行 / 行列形态等于 `line`，行范围
   // 形态是闭区间止行 ⇒ 点击后由编辑器给这一段一次瞬态行高亮。
+  //
+  // 分档（change harness-path-link-keep-position-nov23）：目标已是活跃 pane 的**前台文档**
+  // 且链接**无行号锚**时只闪标签——短路 MUST NOT 调 `openFile` / `openPathAtLine`：即使
+  // `openFile` 对已在前台的文件是 no-op，它仍会经过 `activateSessionInOwnerPane` /
+  // `syncActiveDocument`（收起 goto-line / 快速打开等），这些副作用不属于「点一条路径看它在哪」；
+  // 短路也不碰视口 / 选区 / 文档 / 撤销栈，只写 class 与计时器。其余情形保留既有链路，打开后
+  // 若目标**已打开**再闪一次（未打开的新标签本身即反馈，不闪）。目录链接不走这里（见下方
+  // `revealVaultDir`）。
   openVaultPath: (path, line, lineEnd) => {
+    const existing = editor.sessionForPath(path);
+    const foreground = existing !== undefined && existing === editor.activeSession();
+    // 闪烁落在发起点击的那条标签条上：打开链路可能在 await 期间翻 pane / 重绘，回调里再解一次
+    // 「活跃 pane」会把反馈送到别处（接线口径与 `jumpPlanFor` 捕获 handle 同一条）。
+    const tabs = activeTabs();
+    if (linkDisposition({ exists: existing !== undefined, foreground, line }) === "flash-only") {
+      if (existing !== undefined) tabs.flash(existing);
+      return;
+    }
     const handle = activeEditor();
-    void openPathAtLine(jumpPlanFor(handle, path, line), path, line, lineEnd);
+    const plan = jumpPlanFor(handle, path, line);
+    const flashAfterOpen = linkFlashesAfterOpen(existing !== undefined);
+    void openPathAtLine(plan, path, line, lineEnd).then((opened) => {
+      if (opened && flashAfterOpen && existing !== undefined) tabs.flash(existing);
+    });
   },
   // 目录路径的落点（change harness-dir-link）：只做左栏定位——展开祖先、滚动、短暂高亮；
   // 不打开文档、不切标签、不创建条目（点击语义的规格在 harness「输出中的 vault 路径可点击」，

@@ -17,8 +17,10 @@
 // 定位项排在首位、三条关闭项的相对顺序不变，顺序的理由见 `tabMenuItems`。
 //
 // M151 从 main.ts 抽出（M127 的拆分判据「main.ts 收敛为装配层」的续作）。抽出的判据：
-// 会话模型的读写全在 editor 的会话 API，本模块不持有任何状态，只是「会话列表 → 标签栏
-// DOM + 切换/关闭动作」这一层表现与交互；装配侧注入的入口每一个都只有一个职责，
+// 会话模型的读写全在 editor 的会话 API，本模块不持有任何**会话模型**状态，只是「会话列表 →
+// 标签栏 DOM + 切换/关闭动作」这一层表现与交互；唯一的运行期记账是标签的瞬态导航高亮
+//（`.is-flash`，按会话对象记，见 `flash()` / `dispose()`，change
+// harness-path-link-keep-position-nov23）。装配侧注入的入口每一个都只有一个职责，
 // 且都是本模块看不到的事实：
 //   - saveCurrent：保存链路在 save-controller（关标签前的「保存并关闭」）；
 //   - invalidateResolve：解析缓存的 from 基准随前台文档而变，能力在 link-follow.ts；
@@ -38,6 +40,7 @@ import { isDocSession } from "./session-kind";
 import { TAB_GOTO_IDS, keyToken } from "./keys";
 import { escapeRouter, registerEscapeLayer, unregisterEscapeLayer } from "./escape-router";
 import type { CommandRunner } from "./keys";
+import { NAVIGATION_HIGHLIGHT_MS } from "./navigation-highlight";
 import { baseName } from "./tree";
 import { onRelabel, t } from "./copy";
 
@@ -256,6 +259,14 @@ export interface TabsHandle {
   cycleTab(delta: number): void;
   /** ⌘1–9 的九条命令实现（用 TAB_GOTO_IDS 生成，序号与命令 id 出自同一次遍历）。 */
   gotoCommands(): Record<(typeof TAB_GOTO_IDS)[number], CommandRunner>;
+  /** 给某个会话的标签一次**短暂导航高亮**（change harness-path-link-keep-position-nov23）：
+   *  已打开的路径被再次点开时，标签闪一次告诉用户「它在这里」。按**会话对象**记账——
+   *  全量重建后同一会话的新标签仍带 class；重复命中重置消退计时；同一时刻至多一个标签闪。
+   *  MUST NOT 改激活态 / dirty 点 / 关闭钮 / 读屏名。 */
+  flash(session: EditorSession): void;
+  /** 销毁标签条：清闪烁计时器与状态、移除残留 class。装配层在销毁编辑器**之前**调用
+   *  （见 `disposePaneHandle`）——MUST NOT 依赖「DOM 没了自然就好了」。 */
+  dispose(): void;
 }
 
 export function createTabs(deps: TabsDeps): TabsHandle {
@@ -284,6 +295,41 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     restoreFocus: (session) => focusTab(session),
   });
 
+  // 短暂导航高亮（change harness-path-link-keep-position-nov23）：**按会话对象记账**，不把状态
+  // 只存在 DOM 节点上——`renderTabs` 是全量重建，只挂 class 的话下一次重建就把反馈弄丢。
+  // `tabEls` 是本次渲染出的 DOM 索引（重建时整批替换），class 的施加 / 清除都走它，不做
+  // 选择器查询（路径里可能有引号，也不该让 DOM 结构成为第二真源）。
+  let flashed: EditorSession | null = null;
+  let flashTimer: ReturnType<typeof setTimeout> | null = null;
+  const tabEls = new Map<EditorSession, HTMLElement>();
+
+  function clearFlashTimer(): void {
+    if (flashTimer === null) return;
+    clearTimeout(flashTimer);
+    flashTimer = null;
+  }
+
+  /** 清计时器、清会话记账、摘掉所有残留 class（计时到点 / 会话关闭 / dispose 共用）。 */
+  function clearFlash(): void {
+    clearFlashTimer();
+    flashed = null;
+    for (const tab of tabEls.values()) tab.classList.remove("is-flash");
+  }
+
+  /** 闪烁一次：重复命中先整块清旧状态再施加（同一时刻至多一个标签闪）。时长复用行高亮的
+   *  `NAVIGATION_HIGHLIGHT_MS`（1400ms）——不新造第三个时长值，两者同拍消退。 */
+  function flash(session: EditorSession): void {
+    clearFlash();
+    flashed = session;
+    tabEls.get(session)?.classList.add("is-flash");
+    flashTimer = setTimeout(() => {
+      // 到点先清状态再退出：槽已卸载（DOM 被摘走、dispose 尚未跑到）时也必须把记账清干净，
+      // 否则之后的一次 renderTabs 会把闪烁重新挂上（残留 / 幽灵反馈）。
+      flashTimer = null;
+      clearFlash();
+    }, NAVIGATION_HIGHLIGHT_MS);
+  }
+
   /** 标签栏渲染：从会话列表**全量重建**。标签数量是人的注意力量级（几到十几个），全量重建
    *  比增量 diff 简单，也天然不会漂。空态（没有任何带路径的会话）整条隐藏——它在网格里
    *  不占行高，所以空态布局与多标签之前逐像素一致（整页基线的空态对照因此不需要更新）。
@@ -294,6 +340,9 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     // 不在本 mission 改动面）——对不在场的槽重绘既无意义也可能碰到已销毁的 view。
     if (!mount.isConnected) return;
     const sessions = editor.sessions().filter((session) => session.path !== undefined);
+    // 被闪烁的会话已经不在了（关闭 / 迁走）：立即清计时器与记账，别让它在别的标签上复活。
+    if (flashed !== null && !sessions.includes(flashed)) clearFlash();
+    tabEls.clear();
     const active = editor.activeSession();
     mount.hidden = sessions.length === 0 && deps.keepMountWhenEmpty?.() !== true;
     mount.replaceChildren(
@@ -306,6 +355,9 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         tab.className = "tab";
         tab.dataset.path = path;
         tab.classList.toggle("is-active", isActive);
+        // 闪烁态按会话对象重新施加：`renderTabs` 是全量重建，不能只靠上一次挂上的 class。
+        if (session === flashed) tab.classList.add("is-flash");
+        tabEls.set(session, tab);
         // 整区可点（M238，Alex 2026-09-26 报告）：点标签的**任意区域**都切换，只有 × 除外。
         // 当时的现场是「只有点文件名文字才切换」——动作绑在 `.tab-open` 上，而那个按钮的
         // 盒被 `.tab` 的 `align-items: center` 压成行高、又不覆盖标签的左右内边距，实测
@@ -533,6 +585,9 @@ export function createTabs(deps: TabsDeps): TabsHandle {
   }
 
   function closeTabNow(session: EditorSession): void {
+    // 关掉的若是被闪烁的会话：先清计时器与记账（与 editor 的清行高亮同口径——关闭后它的
+    // state 不再被任何 view 显示，但计时器仍会到点，不清会留下一个指向已作废会话的回调）。
+    if (session === flashed) clearFlash();
     const wasActive = session === editor.activeSession();
     editor.closeSession(session);
     if (wasActive) {
@@ -658,7 +713,19 @@ export function createTabs(deps: TabsDeps): TabsHandle {
   // 都是挂载时写死的长驻文本（design §5.2 的不变量）。renderTabs 是全量重建，天然可重跑。
   onRelabel(renderTabs);
 
-  return { renderTabs, activateTab, closeTab, targetSessionFor, cycleTab, gotoCommands };
+  return {
+    renderTabs,
+    activateTab,
+    closeTab,
+    targetSessionFor,
+    cycleTab,
+    gotoCommands,
+    flash,
+    dispose() {
+      clearFlash();
+      tabEls.clear();
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

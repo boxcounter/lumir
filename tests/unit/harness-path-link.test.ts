@@ -12,12 +12,18 @@ import {
   MAX_CANDIDATE_RUN,
   findPathCandidates,
   isWellFormedVaultPath,
+  linkDisposition,
+  linkFlashesAfterOpen,
   openPathAtLine,
   parseToolArgs,
   splitToolText,
   toolPathTargets,
 } from "../../src/harness-path-link.ts";
-import type { PathJumpPlan, PathTargetIndex } from "../../src/harness-path-link.ts";
+import type {
+  LinkDisposition,
+  PathJumpPlan,
+  PathTargetIndex,
+} from "../../src/harness-path-link.ts";
 import {
   LINE_HIGHLIGHT_CLASS,
   MAX_HIGHLIGHT_LINES,
@@ -771,4 +777,71 @@ test("文档一变更即清除高亮（行装饰不能落在行中，清掉比�
   state = state.update({ changes: { from: 0, insert: "新增首行\n" } }).state;
   assert.deepEqual(highlightedLines(state), [], "编辑后高亮立即清除");
   assert.equal(state.doc.lines, 61, "文档本身仍按编辑变化（清除高亮不影响正文）");
+});
+
+// ---------------------------------------------------------------------------
+// 分档判定（change harness-path-link-keep-position-nov23）
+//
+// 这一层只判「走哪条路 / 打开后是否闪」——打开、落点、闪烁的实现在装配层与 tabs 模块，
+// 对应的浏览器层判据在 `tests/visual/scenes/harness-path-link-keep-position-nov23.spec.ts`。
+// 判据的形状：每条都要有**必须让它 FAIL 的对照**（REVIEW.md『断言等价于子串』条）——
+// 所以「未打开」那几格必须与「已打开」那几格成对出现，不能只写正向。
+// ---------------------------------------------------------------------------
+
+test("分档矩阵：只有「已打开 × 前台 × 无行锚」短路成 flash-only", () => {
+  const cases: Array<{
+    input: { exists: boolean; foreground: boolean; line?: number };
+    expected: LinkDisposition;
+    why: string;
+  }> = [
+    {
+      input: { exists: false, foreground: false, line: undefined },
+      expected: "open-and-maybe-flash",
+      why: "未打开：走既有打开链路，新标签本身即反馈",
+    },
+    {
+      input: { exists: false, foreground: false, line: 39 },
+      expected: "open-and-maybe-flash",
+      why: "未打开 + 行锚：打开后落行",
+    },
+    {
+      input: { exists: true, foreground: true, line: undefined },
+      expected: "flash-only",
+      why: "已打开 + 前台 + 裸路径：只闪标签（本 change 的核心）",
+    },
+    {
+      input: { exists: true, foreground: true, line: 39 },
+      expected: "open-and-maybe-flash",
+      why: "已打开 + 前台 + 行锚：保持既有滚动 + 行高亮",
+    },
+    {
+      input: { exists: true, foreground: false, line: undefined },
+      expected: "open-and-maybe-flash",
+      why: "后台标签：先切过去并恢复自身位置，再闪",
+    },
+    {
+      input: { exists: true, foreground: false, line: 39 },
+      expected: "open-and-maybe-flash",
+      why: "后台标签 + 行锚：同上，再落行",
+    },
+  ];
+  for (const { input, expected, why } of cases) {
+    assert.equal(
+      linkDisposition(input),
+      expected,
+      `${JSON.stringify(input)} → ${expected}（${why}）`,
+    );
+  }
+  // 反向对照：foreground 为真但「不存在」在语义上不成立；判定 MUST NOT 因此短路
+  // （短路分支要拿一个真实会话去 flash，没有会话就没有可闪的对象）。
+  assert.equal(
+    linkDisposition({ exists: false, foreground: true, line: undefined }),
+    "open-and-maybe-flash",
+    "没有已打开会话时 MUST NOT 走 flash-only（没有可闪的标签）",
+  );
+});
+
+test("打开后是否闪：只有已打开才闪，未打开一律不闪", () => {
+  assert.equal(linkFlashesAfterOpen(true), true, "已打开：打开 / 切换成功后闪一次");
+  assert.equal(linkFlashesAfterOpen(false), false, "未打开：新标签本身即反馈，不闪");
 });

@@ -26,6 +26,44 @@ export const MAX_CANDIDATE_RUN = 120;
 /** 可点目标的类型（change harness-dir-link）：文件打开、目录在左栏定位。 */
 export type PathTargetKind = "file" | "dir";
 
+/** 一次路径导航的分档（change harness-path-link-keep-position-nov23）：
+ *  - `"flash-only"`：目标已是活跃 pane 的前台文档、链接无行号锚——**只**给它的标签一次
+ *    短暂导航高亮；MUST NOT 走打开链路（`openFile` / `activate` / `syncActiveDocument` 的
+ *    副作用不属于「看它在哪」）。
+ *  - `"open-and-maybe-flash"`：其余一切情形走既有 `openPathAtLine`；打开后是否闪由
+ *    {@link linkFlashesAfterOpen} 判（只有已打开才闪）。
+ *
+ *  判定留在纯函数层（本模块无 DOM / 无编辑器内核），装配层只做接线；`openPathAtLine`
+ *  本身不改成两种语义（快速打开等其它调用方的「无行号不碰视口」仍然正确）。 */
+export type LinkDisposition = "flash-only" | "open-and-maybe-flash";
+
+export interface LinkRouteInput {
+  /** 目标是否已在任一处打开（`editor.sessionForPath(path)` 命中）。 */
+  exists: boolean;
+  /** 已打开的会话是否就是活跃 pane 的前台文档。 */
+  foreground: boolean;
+  /** 链接的行锚（缺省 = 裸路径）。 */
+  line?: number;
+}
+
+/** 分档判定：只有「已打开 × 前台 × 无行锚」短路成 `flash-only`。
+ *
+ *  `foreground` 为真而 `exists` 为假在语义上不成立（没有会话就没有可闪的标签），判定因此
+ *  以 `exists` 为先——这一格 MUST NOT 短路。 */
+export function linkDisposition(input: LinkRouteInput): LinkDisposition {
+  return input.exists && input.foreground && input.line === undefined
+    ? "flash-only"
+    : "open-and-maybe-flash";
+}
+
+/** 打开 / 切换成功后是否给标签一次闪烁：只有**已打开**才闪。
+ *
+ *  新标签本身即反馈（「它在这儿」不需要再指一次），未打开一律不闪；这条与分档判定分开是
+ *  为了让「走打开链路」和「打开后闪不闪」各自只有一处真源。 */
+export function linkFlashesAfterOpen(exists: boolean): boolean {
+  return exists;
+}
+
 /**
  * 目标存在性索引（判据由调用方提供，本模块不碰文件系统 / 树模型）：
  *  - `isFile`：vault 内可打开的**文件**集（装配层按既有口径过滤图片 / 二进制 / 惰性条目）；
@@ -359,9 +397,10 @@ export interface PathJumpPlan {
  * 首轮 reveal 在同一个让位窗口内施加一次：复核补发只重发 reveal，MUST NOT 重设高亮（会重置消退
  * 计时）。
  *
- * 返回 `plan.open` 的结果（这次打开是否成功）。两个调用方对它的用法不同——harness 侧
- * 不看（点击的反馈由打开链路自己上屏），快速打开要等它才决定是否收起浮层
- *（change quick-open-file-oct23 的 design §4：MUST NOT 在发起打开前就无条件关闭）。
+ * 返回 `plan.open` 的结果（这次打开是否成功）。调用方各自用它做自己的收尾：harness 侧据此
+ * 决定是否闪标签（已打开的才闪，change harness-path-link-keep-position-nov23），快速打开要等
+ * 它才决定是否收起浮层（change quick-open-file-oct23 的 design §4：MUST NOT 在发起打开前就
+ * 无条件关闭）。
  */
 export async function openPathAtLine(
   plan: PathJumpPlan,

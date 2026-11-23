@@ -1897,6 +1897,12 @@ function createPathLinkEl(
   el.className = "lumir-hp-pathlink";
   el.textContent = text;
   el.title = text;
+  // 焦点留在发起点击的 harness composer（change harness-path-link-keep-position-nov23）：路径
+  // 元素是 `<button>`，鼠标按下会先把它聚焦，`click` 阶段的 `preventDefault()` 救不回来。
+  // 因此按钮级拦下 mousedown 的默认行为（不 `stopPropagation`、MUST NOT 挂容器级监听——
+  // REVIEW.md「标题栏 preventDefault」条的同族纪律：容器级 mousedown preventDefault 曾静默
+  // 打断窗口拖拽）。`click` 与 Enter 两条激活路径保持不变。
+  el.addEventListener("mousedown", (event) => event.preventDefault());
   el.addEventListener("click", (event) => {
     event.preventDefault();
     activate();

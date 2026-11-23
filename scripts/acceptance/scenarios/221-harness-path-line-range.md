@@ -10,6 +10,11 @@
 # fixtures 里**全部** .md 的副本，为一条判据给所有场景加一个文件不划算）；第 39 行 =
 # `JUMP-TARGET-39`、第 48 行 = `LAST-LINE-MARKER`，在 48 行文档里开篇一屏看不到、落点后居中
 # ——截图据此可判读。
+#
+# change harness-path-link-keep-position-nov23 追加最后一组：切回原前台文档（harness-note.md）
+# → 点一条**裸路径**（目标已是前台）→ `recordEditor` 基线的 `unchangedSince` 逐字节判「不滚动 /
+# 不重载 / 不动选区」，截图抢在 1.4s 闪烁窗口内；随后不点任何东西直接键入，正文仍逐字节不变、
+# composer 文本变化，证明焦点没有被路径按钮抢走。
 id: "221-harness-path-line-range"
 item: 552
 tier: full
@@ -122,6 +127,46 @@ steps:
       - shot: 04-高亮消退（39–48 行不再带底色；由截图判读）
       - label: 消退后正文不变（高亮只是装饰，不动文档）
         editor: { has: "JUMP-TARGET-39" }
+
+  # ── 裸路径（目标已在前台）：不滚、不重载、不动选区，只闪标签；焦点留在 composer ──
+  # 行锚判据到上一步已全部收尾，这里切回本场景的初始文档作「已是前台」的现场。
+  - name: 切回原前台文档（裸路径的目标；行锚判据已收尾）
+    do: click
+    target: { role: AXRadioButton, name: "^harness-note\\.md$" }
+    expect:
+      - label: 原文档成为前台
+        ax: { has: '/AXRadioButton \\(harness-note\\.md\\) Value: true/' }
+      - label: 基线文档内容在场
+        editor: { has: "HNL-ALPHA" }
+
+  - name: 点 composer 聚焦（裸路径点击后焦点必须仍在这里）
+    do: clickInNode
+    target: { role: AXTextArea, name: "问点什么" }
+
+  - name: 裸路径点击前记录编辑器基线（点击与键入后都拿它逐字节比较）
+    do: recordEditor
+    as: barePathBefore
+    expect:
+      - label: 基线读得到（不是不可读的空串）
+        editor: { has: "HNL-ALPHA" }
+
+  - name: 点裸路径（目标已在前台）——截图紧跟点击、不 settle（1.4s 闪烁窗口内）
+    do: click
+    target: { role: AXButton, name: "^harness-note\\.md$" }
+    expect:
+      - shot: 05-裸路径点击后（~0.6s 内；标签应带闪烁底色，正文与位置不动）
+      - label: 点击后正文逐字节不变（不滚动、不重载、不动选区）
+        editor: { unchangedSince: barePathBefore }
+
+  - name: 焦点证明：不点任何东西，直接键入（焦点应仍在 composer，正文不动）
+    do: keys
+    keys: ["f", "o", "c", "u", "s", "-", "p", "r", "o", "o", "f"]
+    gapMs: 60
+    expect:
+      - label: 键入没有落进正文（逐字节仍与基线相同）
+        editor: { unchangedSince: barePathBefore }
+      - label: 键入进了 harness composer（焦点没有被路径按钮 / 编辑器抢走）
+        ax: { has: "focus-proof" }
 ---
 
 # 221-harness-path-line-range —— 带行号路径可点击 + 点击后瞬态行高亮
@@ -141,6 +186,10 @@ mock provider 把三种形态一次铺开：
    瞬态高亮（~1.4s 后退）。
 3. **畸形范围** `goto-line-long.md:48-39`（`止 < 起`）→ 只链接路径本身，`:48-39` 留作普通文本
    ——失败模式不是「不可点」而是「吞半截」，判据落在「可点元素的名字里没有这个后缀」上。
+4. **裸路径 + 目标已在前台**（change `harness-path-link-keep-position-nov23`）：`harness-note.md`
+   无行号点击 MUST NOT 改变滚动 / 选区 / 正文（`recordEditor` + `unchangedSince` 逐字节判），
+   标签闪一次（`05` 截图）；随后的键入不进正文、进 composer——证明按钮级 `mousedown`
+   `preventDefault()` 把焦点留在了发起点击的输入区。
 
 ## 判据为什么这样写
 
@@ -171,6 +220,20 @@ mock provider 把三种形态一次铺开：
   单测覆盖装饰集的越界钳制、2000 行上限与替换语义。
 - **`止` 越界不报错**（钳到末行）与 `:12 - 40` 带空白形态由单测覆盖，不在真机造现场。
 - **「重复点击重置消退计时」在真机层不可判**（需要毫秒级读数），由视觉场景的计时用例承担。
+- **裸路径的「不滚动」用逐字节基线判，不伪造 AX `scrollTop`**：第 04 步之后的 `recordEditor`
+  基线覆盖整篇文档文本；点击与随后键入各判一次 `unchangedSince`（M864 起读数是稳定读）。
+  AX 读不到滚动位置与选区（同 CL-1 / CL-2 的已知边界），「视口没动」由截图 `05` 与正文逐字节
+  不变共同判读；MUST NOT 用「目标行不出现」这类子串近似冒充滚动判据。
+- **闪烁底色只有截图证据，且依赖 `05` 抢在 1.4s 窗口内**：截图直接挂在点击步的 expect 上
+  （与 `02` / `03` 同一时序口径）；AX 读不到 class / 计算样式。错过窗口按人工判读的假阴性处理
+  （先核步骤耗时），不当作产品缺陷。标签的几何、三主题底色与计时重置由 chromium 场景
+  `harness-path-link-keep-position-nov23.spec.ts` 承担。
+- **按钮级 `mousedown` 的精确判据在 chromium 层**（真实按下 / 松开，断言 `document.activeElement`
+  仍是 composer）：真机 AX 只有 AXPress 通道，产不出 mousedown 序列；本场景用「AXPress 后直接
+  键入、正文不变且 composer 变化」作焦点未被抢走的整链判据。
+- **「闪烁中收 pane」在真机层不可造**：pane 上限两个，harness 在场时文档 pane 只有一个，
+  右 pane 的标签条不可能被闪烁命中（与提案的「跨 pane 分支结构上不可达」同一事实）；`dispose`
+  的生命周期由 `tests/unit/tabs.test.ts` 的 mock-timer 用例钉住。
 - **prompt 遵从度**（路径引用纪律里 `:起-止` 那一句）是抽样观察，不进机器断言——mock provider
   代表不了真实模型的书写习惯。
 - **样例全合成**：文件名与正文标记都是验收用的合成串，不含真实 vault 内容。
