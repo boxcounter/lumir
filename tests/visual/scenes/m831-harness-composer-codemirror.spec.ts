@@ -22,6 +22,7 @@ async function setup(page: Page): Promise<void> {
         return null;
       }
       if (cmd === "harness_state") return JSON.stringify({ messages: [], usage: { ctx_pct: 0, cache_pct_session: 0 }, pending_approval: null, warn_ctx_pct: 85 });
+      if (cmd === "harness_new_session") return null;
       const result = await invoke(cmd, args);
       if (cmd === "config_get" && result?.config) result.config.harness = { provider: "mock", providers, permissions: { allow: [], deny: [] }, loop_max: 8, warn_ctx_pct: 85, auto_compact: true };
       return result;
@@ -95,6 +96,14 @@ test("Chromium CDP 真引擎组合：Backspace 不吃 committed 文本，取消/
   await page.keyboard.press("Enter");
   await expect.poll(() => page.evaluate(() => (window as unknown as { __sentMessages: string[] }).__sentMessages.length)).toBe(1);
   await expect.poll(async () => (await composerState(page)).doc).toBe("");
+});
+
+test("新会话成功：composer 新建 EditorState，旧文本与 history 不可达", async ({ page }) => {
+  await setup(page);
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect.poll(async () => (await composerState(page)).doc).toBe("");
+  await page.keyboard.press("Meta+z");
+  expect((await composerState(page)).doc).toBe("");
 });
 
 // ── 竖直移动的列位口径（M834）─────────────────────────────────────────────────────────

@@ -25,6 +25,8 @@
 
 附件 SHALL 只经移除钮移除；文本 Backspace / Delete MUST NOT 删卡。粘贴 SHALL 按剪贴板内容分派：含 `image/*` 时走「图片粘贴卡片」且图优先，其余内容只收 `text/plain` 并保留换行。新发送的用户消息 SHALL 按**块序**（文字行与卡片锚点的合并顺序）沉淀；块序即视觉顺序，MUST NOT 再把全部卡片硬编码到完整问题之前。历史已发送消息仍 SHALL 按留存原文交错显示。在卡片锚点处键入或粘贴的内容 SHALL 落在卡片下方。空消息判据 SHALL 仍是「文档为空且卡片为空」；只有空白文本不算消息。空态占位 SHALL 只在文档与卡片都为空时出现，MUST NOT 覆盖卡片。
 
+composer 摘录正文 SHALL 通过 `data-excerpt + CSS ::before` 保留视觉呈现，MUST NOT 因此进入 contenteditable 的聚合文本；卡片 `aria-label` SHALL 保留完整摘录与出处。copy listener SHALL 写入 `state.sliceDoc(main.from, main.to)`；空选区 SHALL 写入 `""`，MUST NOT 复制整段或卡片文本；`clipboardData === null` 时 MUST NOT `preventDefault()`，保留原生回退。
+
 #### Scenario: 添加附件不拆文本且可直接继续输入
 
 - **WHEN** 问题文字中已有合法 caret 且位于某行行首（不触发拆行的情形），用户从编辑器、transcript 或剪贴板加入一个附件
@@ -97,7 +99,7 @@
 
 ### Requirement: CM composer 的单一 history
 
-composer SHALL 使用 CodeMirror history 作为文本与卡片的唯一撤销 / 重做真源，MUST NOT 再维护 DOM / blocks 快照栈。卡片 SHALL 以 `{ id, card, anchor }` 记录：`id` 是会话内稳定身份，`anchor` 是文档中的**精确 UTF-16 偏移**（不要求行首）。卡片添加与移除 SHALL 由专用 StateEffect 更新 StateField；移除按 `id` 定位，MUST NOT 按下标定位；附件结构事务 SHALL 与相邻编辑隔离。composer MUST NOT 在现有 history 上执行 `addToHistory:false` 或 `remote` 的文档变更；装载 / 复位（草稿恢复、切 vault、新会话、发送清空）MUST 新建 `EditorState` 重置 history，MUST NOT 用 `state.update({annotations: Transaction.addToHistory.of(false)})` 在旧 state 上打补丁。连续文本输入 SHALL 按 CM history 聚簇；IME 整段 history SHALL 由 CM 管理，MUST NOT 在 compositionstart/end 手工压栈。导航本身 MUST NOT 产生编辑 undo 事件。
+composer SHALL 使用 CodeMirror history 作为文本与卡片的唯一撤销 / 重做真源，MUST NOT 再维护 DOM / blocks 快照栈。卡片 SHALL 以 `{ id, card, anchor }` 记录：`id` 是会话内稳定身份，`anchor` 是文档中的**精确 UTF-16 偏移**（不要求行首）。卡片添加与移除 SHALL 由专用 StateEffect 更新 StateField；移除按 `id` 定位，MUST NOT 按下标定位；附件结构事务 SHALL 与相邻编辑隔离。composer MUST NOT 在现有 history 上执行 `addToHistory:false` 或 `remote` 的文档变更；装载 / 复位（草稿恢复、切 vault、新会话、会话重载、发送清空）MUST 新建 `EditorState` 重置 history，MUST NOT 用 `state.update({annotations: Transaction.addToHistory.of(false)})` 在旧 state 上打补丁。连续文本输入 SHALL 按 CM history 聚簇；IME 整段 history SHALL 由 CM 管理，MUST NOT 在 compositionstart/end 手工压栈。导航本身 MUST NOT 产生编辑 undo 事件。
 
 文本 Backspace / Delete、⌘A、普通输入、粘贴与 IME MUST NOT 发出附件增删 effect，因此不得增删或重排卡片；文本变更引起的 anchor 映射是机械重映射，不属于附件编辑。重置、草稿恢复、切 vault 和发送成功后的空输入 SHALL 是新的编辑史，MUST NOT 撤销回另一 vault 或已发送内容。
 
@@ -382,7 +384,7 @@ composer 的 Emacs 文本导航族 SHALL 经统一键位表 `text` 作用域分�
 
 所有命令只作用于纯文本。字符与视觉行移动、逻辑行首尾和扩选 SHALL 用 CM 移动原语；扩选 anchor 不动。字素簇 / 词边界 SHALL 复用编辑器共享扫描核；⌃D/H 与**折叠光标上的无修饰物理 Backspace** 删除一个字素簇或选区（同一份 `clusterBackward` 步长），⌥D/⌥⌫ 按词 kill，⌃K kill 到逻辑行尾（在行尾则杀行界），⌃Y 插入共享 kill 槽，⌃T 转置相邻字素簇。kill 槽继续跨编辑器 / composer 共用，内容不含卡片。任何文本命令 MUST NOT 添加、移除或重排卡片；anchor 按精确偏移随文档映射（MUST NOT 钳到行首），不属于「重排」。
 
-物理 Backspace SHALL 由 composer 的 `beforeinput` 闸门接管：只认 `deleteContentBackward` 的折叠 caret，按同一份 `clusterBackward` 删一个整字素簇，一次删除 = 一条 history 步（一次 undo 复原）。修饰键变体（`deleteWordBackward` / `deleteHardLineBackward` / `deleteSoftLineBackward`）、IME 组合期、只读会话与非空选区 MUST NOT 被本闸门改变；MUST NOT 在 composer 侧复制第二份字素判定表。
+物理 Backspace / Delete 的 `deleteContentBackward` / `deleteContentForward` SHALL 由 composer 的 `beforeinput` 闸门按统一选区事务合同处理：单区间非空选区 MUST `preventDefault()` 并按 `state.selection` 删除；折叠 caret 上只有 Backspace（`deleteContentBackward`）由本闸门接管，按同一份 `clusterBackward` 删一个整字素簇，forward Delete 交还原生路径。一次删除 = 一条 history 步（一次 undo 复原）。修饰键变体（`deleteWordBackward` / `deleteHardLineBackward` / `deleteSoftLineBackward`）、IME 组合期、只读会话与多区间 MUST NOT 被本闸门改变；MUST NOT 在 composer 侧复制第二份字素判定表。
 
 #### Scenario: 文本移动、扩选与删除不触附件
 

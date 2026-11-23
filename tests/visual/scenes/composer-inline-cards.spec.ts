@@ -146,6 +146,29 @@ test("应用内 copy 事件逐字节只含选区文本，不带卡片、按钮�
   expect(copied).not.toContain("�");
 });
 
+test("空选区 copy 不意外复制整段，视觉摘录由 ::before 保留", async ({ page }) => {
+  await openComposer(page, { version: 3, text: "AB", caret: 0, cards: [{ card: QUOTE, at: 1 }] });
+  const excerpt = page.locator(".lumir-hp-cwidget .lumir-hp-qc-ex");
+  await expect(excerpt).toHaveAttribute("data-excerpt", QUOTED);
+  expect(await excerpt.evaluate((el) => getComputedStyle(el, "::before").content)).toBe(JSON.stringify(QUOTED));
+  const accessibleName = await page.locator(".lumir-hp-cwidget .lumir-hp-qcard").getAttribute("aria-label");
+  expect(accessibleName).toContain(QUOTED);
+  expect(accessibleName).toContain("inline cards");
+  const copied = await page.evaluate(() => {
+    const view = (document.querySelector(".lumir-hp-composer .cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.dispatch({ selection: { anchor: 0 } });
+    const data = new DataTransfer();
+    data.setData("text/plain", "SENTINEL");
+    view.contentDOM.dispatchEvent(new ClipboardEvent("copy", { bubbles: true, cancelable: true, clipboardData: data }));
+    return data.getData("text/plain");
+  });
+  expect(copied).toBe("");
+  const nativeFallback = await page.locator(".lumir-hp-composer .cm-content").evaluate((el) => (
+    el.dispatchEvent(new ClipboardEvent("copy", { bubbles: true, cancelable: true }))
+  ));
+  expect(nativeFallback).toBe(true);
+});
+
 test("200 字连续输入复用卡片 DOM 且不重复读图", async ({ page }) => {
   await openComposer(page);
   await pasteImage(page);

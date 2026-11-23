@@ -10162,6 +10162,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 清空的是**渲染面**：会话真源在 Rust，重置成功后本地视图随之清空；待决批准项随
         // 会话失效，一并撤下（它们的 id 已不属于任何会话）——口径见 resetView 的注释。
         resetView({ clearActivityFor: actionVault });
+        resetComposer();
         // 新逻辑会话：旧会话的 token 与「已提示」标记作废；完整快照是空健康的地板。
         resetPersistenceView();
         fetchPersistenceSnapshot();
@@ -10253,6 +10254,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 同值的 DOM（独立评审 P1-1b：目标非当前时不得有任何 B 的 DOM 写入）。
     if (!stillCurrent) return;
     resetView({ clearActivityFor: null });
+    resetComposer();
     fetchSnapshot();
   }
 

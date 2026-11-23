@@ -199,7 +199,7 @@ undo 上一次历史编辑：doc=RAB，anchor=1   ⇒ 正确应为 anchor=2（R 
 ```
 
 - **禁止**在现有 composer history 上执行 `addToHistory:false` 或 `remote` 的 doc 变更。
-- **装载 / 复位**（草稿恢复、切 vault、新会话、发送清空、面板重建）MUST 通过
+- **装载 / 复位**（草稿恢复、切 vault、新会话、会话重载、发送清空、面板重建）MUST 通过
   `createComposerState` / `EditorState.create` **新建 state**，history 从空开始；MUST NOT 用
   `state.update({ changes, annotations: addToHistory.of(false) })` 在旧 state 上打补丁。
 - 开发 / 测试构建 SHALL 用事务过滤器或断言拒绝这类事务（抛错 / 判红），作为施工纪律的机器
@@ -224,8 +224,8 @@ type AttachmentEdit =
 - **history 可逆性**：唯一由 `composerAnchorsSyncEffect` + `invertedEffects` 承担（§4.2）；
   结构 effect 不提供逆 effect。插入 / 移除仍带 `isolateHistory.of("full")`，各自成为一步 undo；
   插入事务里的 `\n` 与卡在同一步里，一次 undo 全还原、redo 全恢复。
-- **重置 / 草稿恢复 / 切 vault / 发送成功清空**：新 state、新历史，不跨进程恢复撤销史（现行
-  条款不变）。
+- **重置 / 草稿恢复 / 切 vault / 新会话 / 会话重载 / 发送成功清空**：新 state、新历史，不跨进程
+  恢复撤销史（现行条款不变）。
 
 ## 6. 装饰与 widget 生命周期
 
@@ -325,8 +325,13 @@ if cursor < doc.length || blocks.length === 0:
 - **跨卡文本选区**：从卡上方选到卡下方的选区仍是纯文本选区（卡片不在 `state.selection` 里）；
   删除只删文本，卡片保留并按 §4 精确映射。
 - **`⌘A`**：`0 → doc.length`，只选文本（现行 `runComposerCommand` 的 `editor.select-all` 不变）。
-- **`⌘C` 应用内 copy event**：CM 的 copy 处理器写 `state.sliceDoc(from, to)`；验收用 `copy`
-  事件读取 `DataTransfer`，逐字节等于选区文本，不含卡片摘录、`×` / `@` 文本、占位字符或哨兵。
+- **视觉摘录与可访问名分工**：composer 摘录正文只写 `data-excerpt`，由 CSS `::before` 的
+  `content: attr(data-excerpt)` 呈现，不写进 contenteditable 的聚合文本；卡片的 `aria-label`
+  仍保留完整摘录与出处。不得为了复制或 AX value 负向断言撤掉视觉摘录。
+- **`⌘C` 应用内 copy event**：composer 的 copy listener 写 `state.sliceDoc(main.from, main.to)`；
+  验收用 `copy` 事件读取 `DataTransfer`，逐字节等于选区文本，不含卡片摘录、`×` / `@` 文本、
+  占位字符或哨兵。空选区写入 `""`，不得退回整段或卡片文本；`clipboardData === null` 时不
+  `preventDefault()`，保留原生回退。
 - **系统剪贴板外部读取**：套件的剪贴板读取会归一行尾并去掉一个尾换行（`scripts/acceptance/README.md:721`、
   `:851`）。外部粘贴断言 MUST 按平台归一后的文本比较（统一行尾 + 去一个尾换行），**不得**写
   「逐字节」；同时另做负向断言：不含卡片摘录 / `×` / `@` / 哨兵。
@@ -339,14 +344,17 @@ if cursor < doc.length || blocks.length === 0:
 ## 9. AX（读屏）
 
 - 卡片容器在 `contenteditable` 内、`contenteditable=false`：AX 把它呈现为一段不可编辑内容，
-  不是文本区 value 的一部分。卡片内部保留摘录 / 出处文本的可读性；composer 态卡片**不是**
-  `role=button`（transcript 态才是），不可 Tab 到达。
+  不是文本区 value 的一部分。composer 摘录用 `data-excerpt + CSS ::before` 保留视觉呈现，
+  `aria-label` 保留完整摘录与出处；composer 态卡片**不是** `role=button`（transcript 态才是），
+  不可 Tab 到达。
 - **顺序断言必须限定在 composer 子树**，不能用整棵应用 AX 树的跨节点正则：
   - 给验收套件新增 scoped 断言（建议 `ax: { scope: <node locator>, order: [marker, …] }` 或
     「composer 结构节点序列」形态），实现要解析出 composer 节点后只在该子树里判序。
   - 找不到 scope / scope 不唯一 / 子树不可读 → **FAIL**，不得空过（REVIEW.md「读不到当成空」条）。
   - **负控只反转 composer 内的 widget 顺序**，编辑器 fixture 保持不动；同一断言必须判红。若
     对调编辑器原文也能判红，说明断言没有限定子树，方案不成立。
+  - 同一 `AXTextArea` 的 value 按节点内偏移游标匹配；后续卡片节点之后可从该 value 的未消费
+    偏移继续判序，不得把节点当成只能命中一次的位置，也不得重读已消费文本。
 - 同场断言：
   - 卡片标记 MUST NOT 出现在 **composer 的** `AXTextArea.value` 里；
   - **编辑器源文档允许包含原始摘录**（摘录原文本来就在编辑器 AXTextArea.value 中）；负向只限

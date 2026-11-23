@@ -186,12 +186,27 @@ export function scopedAxOrder(nodes, scope, markers) {
   }
   const texts = subtree.map((node) => `${node.role} ${nodeName(node)} ${node.help ?? ""}`.trim());
   let cursor = 0;
+  const offsets = new Map();
   const positions = [];
   for (const marker of markers) {
-    const position = texts.findIndex((text, index) => index >= cursor && text.includes(String(marker)));
+    let position = -1;
+    for (let index = 0; index < texts.length; index += 1) {
+      const revisitableTextArea = subtree[index].role === "AXTextArea" && offsets.has(index);
+      if (index < cursor && !revisitableTextArea) continue;
+      const offset = offsets.get(index) ?? 0;
+      if (texts[index].includes(String(marker), offset)) {
+        position = index;
+        if (subtree[index].role === "AXTextArea") {
+          offsets.set(index, texts[index].indexOf(String(marker), offset) + String(marker).length);
+          cursor = Math.max(cursor, index);
+        } else {
+          cursor = index + 1;
+        }
+        break;
+      }
+    }
     if (position < 0) return { ok: false, error: `composer 子树缺少或乱序 marker ${JSON.stringify(marker)}`, texts, positions };
     positions.push(position);
-    cursor = position + 1;
   }
   const textAreas = subtree.filter((node) => node.role === "AXTextArea");
   if (textAreas.some((node) => node.value === null)) return { ok: false, error: "composer 的 AXTextArea.value 不可读", texts, positions };

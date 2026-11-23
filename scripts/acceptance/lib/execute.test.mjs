@@ -3378,6 +3378,23 @@ test("scoped AX：只在 composer 子树判序，编辑器原文不参与", () =
   assert.deepEqual(checkScenario({ id: "scoped", item: 0, steps: [{ name: "顺序", expect: [{ ax: { scope: { role: "AXGroup", name: "composer" }, order: ["CW-CARD-A", "CW-TEXT-B"] } }] }] }), []);
 });
 
+const SCOPED_MULTI_TEXT_DUMP = `
+- [1] AXGroup (问点什么)
+  - [2] AXStaticText = "QALPHA"
+  - [3] AXStaticText = "QALPHA"
+  - [4] AXTextArea = "CW-TEXT-B\\nCW-TEXT-C"
+  - [5] AXStaticText = "QALPHA"
+- [6] AXTextArea = "编辑器原文"
+`;
+
+test("scoped AX：同一 AXTextArea 的多段文本可与卡片节点交错", () => {
+  const nodes = parseNodes(SCOPED_MULTI_TEXT_DUMP);
+  const reading = scopedAxOrder(nodes, { role: "AXGroup", name: "问点什么" }, ["QALPHA", "QALPHA", "CW-TEXT-B", "QALPHA", "CW-TEXT-C"]);
+  assert.equal(reading.ok, true);
+  const reversed = scopedAxOrder(nodes, { role: "AXGroup", name: "问点什么" }, ["QALPHA", "QALPHA", "CW-TEXT-C", "QALPHA", "CW-TEXT-B"]);
+  assert.equal(reversed.ok, false);
+});
+
 test("scoped AX 负控：只反转 composer 内顺序即判红", () => {
   const nodes = parseNodes(SCOPED_COMPOSER_DUMP);
   const reading = scopedAxOrder(nodes, { role: "AXGroup", name: "composer" }, ["CW-TEXT-B", "CW-CARD-A"]);

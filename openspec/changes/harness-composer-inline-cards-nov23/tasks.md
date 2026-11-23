@@ -67,7 +67,7 @@
       effect 时不重复追加；undo / redo / select.undo / select.redo 事务跳过（否则覆盖精确恢复值）
 - [x] 2.3a **非 history 变更 guard**：开发 / 测试构建用事务过滤器或断言拒绝现有 composer state
       上的 `addToHistory:false` / `remote` doc 变更；装载 / 复位（`restoreDraft` / `resetComposer` /
-      `vaultChanged` / 新会话 / 发送清空）一律 `createComposerState` 新建 state，MUST NOT 用
+      `vaultChanged` / 新会话 / 会话重载 / 发送清空）一律 `createComposerState` 新建 state，MUST NOT 用
       `state.update({annotations: addToHistory.of(false)})`；MUST NOT 给 sync effect 加 `mapPos`
 - [x] 2.4 `invertedEffects` **只为 sync effect** 产出逆 effect（载荷 = `tr.startState` 的完整
       数组）；结构 insert / remove 不再单独提供逆 effect（避免双重应用）；`StateField.update`
@@ -155,7 +155,8 @@
 - [x] 6.1 单测：`⌘A` 只选 `0 → doc.length`；跨卡文本选区删除只删文本、卡片保留、anchor 精确
       映射（不钳行首）
 - [x] 6.2 应用内 copy event：读取 `DataTransfer`，逐字节等于选区文本；不含卡片摘录 / `×` / `@` /
-      占位 / 哨兵
+      占位 / 哨兵；空选区写入 `""`，不复制整段；`clipboardData === null` 保留原生回退；composer
+      摘录由 `data-excerpt + CSS ::before` 保留视觉呈现，`aria-label` 保留摘录与出处
 - [ ] 6.3 真机外部剪贴板：`⌘A` → `⌘C` → 外部粘贴，按平台归一后（统一行尾、去一个尾换行）比较，
       **不得**写「逐字节」；另负向断言无卡片摘录 / `×` / `@` / 占位 / 哨兵（场景 723 已落；真机归主会话）
 - [ ] 6.4 真机：Backspace / Delete 紧邻卡片只删文本，卡片数量与数据不变；删除行界后
@@ -190,8 +191,8 @@
       负控**只反转 composer 内的 widget 顺序**、编辑器 fixture 不动，必须判红；若对调编辑器原文
       也能判红，说明断言没限定子树。同场负向只断言卡片标记不在 **composer 的**
       `AXTextArea.value`；**编辑器源文档允许包含原始摘录**，MUST NOT 写成「任何
-      AXTextArea.value」。卡片不可编辑 / 不可聚焦。套件新断言必须带自测（正向 / 反向 /
-      不可读三档）
+      AXTextArea.value」。卡片不可编辑 / 不可聚焦。同一 AXTextArea 的多段 value 按节点内偏移游标判序，允许与后续卡片节点交错且不得重读
+      已消费文本。套件新断言必须带自测（正向 / 反向 / 不可读三档）
 - [x] 7.4 回扫既有验收场景（逐份判断，受影响的改准，不受的不动）：
       `81` / `83` / `84` / `85` / `117` / `121` / `127` / `128` / `129` / `135` / `136` /
       `137` / `138` / `139` / `140` / `142` / `144` / `145` / `146` / `147` / `148` / `150` /
