@@ -737,9 +737,12 @@ export function harnessState(): Promise<string> {
  * 每项含 `session_id`（`sessions/<vault 稳定 id>/<id>.jsonl` 的文件名，恢复命令的入参）、
  * `first_user_text`（该会话首条用户消息的原始提问段——注入的上下文节已由后端剥除，无则缺省；
  * 截断约 20 字是前端展示规则）、
- * `ts`（首行 `session_open` 信封的 unix 秒，缺则缺省）。服务端已按 vault 过滤、按时间
- * 倒序；宽容解析见 src/harness-panel.ts 的 sessionEntriesOf（同收字符串与数组，防御
- * 桩 / 旧后端）。命令未注册 / 后端不可用时 reject，调用方按「空清单」降级——选择器不
+ * `ts`（首行 `session_open` 信封的 unix 秒，缺则缺省）、
+ * `last_activity_ts`（该文件与其 `restored_from` 祖先链上的最后活动时间——行时间格与清单
+ * 排序的读数，缺则缺省；change rank-harness-sessions-by-last-activity-nov23）。服务端已按
+ * vault 过滤、按 `last_activity_ts` 倒序（同值 session id 倒序、无值最后）；前端只保序、
+ * MUST NOT 重排。宽容解析见 src/harness-panel.ts 的 sessionEntriesOf（同收字符串与数组，
+ * 防御桩 / 旧后端）。命令未注册 / 后端不可用时 reject，调用方按「空清单」降级——选择器不
  * 因此报错。
  */
 export function harnessListSessions(): Promise<SessionSummary[]> {

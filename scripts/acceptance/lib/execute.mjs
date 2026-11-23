@@ -19,6 +19,7 @@ import {
   quitBundleApp,
   quiesceStrayBundleInstances,
   SCENARIO_CONFIG_KEYS,
+  substituteSeedTokens,
   writeWindowState,
 } from "./app.mjs";
 import { encodePng, syntheticScreenshot } from "./png.mjs";
@@ -4907,7 +4908,9 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const rel = envRelPath(step.file, "do=envWrite");
       const target = path.join(envHome(), "lumir", rel);
       await mkdirp(path.dirname(target));
-      await writeFile(target, step.content ?? "");
+      // `$vault` / `$vault2` 记号替换：预置 JSONL 的 `vault_root` 必须是当前验收 vault 的
+      // 真实路径（场景 724 现场）；不含记号的内容逐字不变。
+      await writeFile(target, substituteSeedTokens(step.content ?? ""));
       return target;
     }
     case "vaultAppend": {

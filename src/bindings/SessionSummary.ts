@@ -23,4 +23,11 @@ ts?: number,
  * 会话有效标题（change add-session-auto-naming，design D11）：`jsonl::effective_title`
  * 的读数；无 `session_title` 记录的旧文件为**缺键**（前端回落首条用户消息口径）。
  */
-title?: string, };
+title?: string, 
+/**
+ * 该文件的最后活动时间（change rank-harness-sessions-by-last-activity-nov23，design §2.2）：
+ * 自身与 `session_open.restored_from` 祖先链上 `llm_request` / `llm_response` 信封 ts 的
+ * 最大值；链上没有任何轮次时回落链上最早的首行信封 ts。None = 无任何可信时间——
+ * 排序置后、界面不显示时间格（MUST NOT 用 id 前缀或其它派生值伪造）。
+ */
+last_activity_ts?: number, };

@@ -1280,8 +1280,9 @@ export function firstUserTextOf(blocks: readonly ComposerBlock[]): string | null
   return para.text.replace(/\s+/g, " ").trim();
 }
 
-/** 历史会话清单的一条（`harness_list_sessions` 的宽容提取结果；M395 合同形状
- *  `SessionSummary` = { session_id, first_user_text, ts, title? }，解析只认这四个键）。 */
+/** 历史会话清单的一条（`harness_list_sessions` 的宽容提取结果；合同形状
+ *  `SessionSummary` = { session_id, first_user_text, ts, title?, last_activity_ts? }，
+ *  解析只认这五个键）。 */
 export interface SessionEntry {
   /** `sessions/<vault 稳定 id>/<id>.jsonl` 的文件名（恢复命令的入参）。 */
   sessionId: string;
@@ -1292,18 +1293,23 @@ export interface SessionEntry {
   /** 会话有效标题（change add-session-auto-naming，design D11）：后端 `SessionSummary.title`
    *  的唯一读取口径；null = 无标题记录（旧文件安静回落首条用户消息）。 */
   title: string | null;
+  /** 该文件的最后活动时间（change rank-harness-sessions-by-last-activity-nov23）：
+   *  后端沿 `restored_from` 链算好的 `last_activity_ts`；null = 链上与文件自身都没有可信
+   *  信封 ts（行时间格退回 `ts`，两者皆空则不渲染）。 */
+  lastActivityTs: number | null;
 }
 
 /**
  * `harness_list_sessions` 载荷的宽容解析（M392 + M395 合同 + change add-session-auto-naming 的
- * `title`）：string 先 JSON.parse，非数组 / 坏 JSON → 空清单（桩环境、M395 合并前的旧后端、
- * 读取失败不报错打断浮层）；逐项提取只认四个键——`session_id` 必须是非空字符串（缺 / 空串 /
- * 非字符串的项丢弃，没有 id 就无法恢复，留着也是死项）；`first_user_text` / `title` 缺 / null /
- * 空白串 → null；`ts` 缺 / 非数 / 非正 → null。
+ * `title` + change rank-harness-sessions-by-last-activity-nov23 的 `last_activity_ts`）：string 先
+ * JSON.parse，非数组 / 坏 JSON → 空清单（桩环境、M395 合并前的旧后端、读取失败不报错打断浮层）；
+ * 逐项提取只认五个键——`session_id` 必须是非空字符串（缺 / 空串 / 非字符串的项丢弃，没有 id
+ * 就无法恢复，留着也是死项）；`first_user_text` / `title` 缺 / null / 空白串 → null；
+ * `ts` / `last_activity_ts` 缺 / 非数 / 非正 → null。
  *
- * 排序：合同说服务端已按时间倒序，这里仍按 session_id 字典序降序再排一次——时间序
- * 前缀（s<unix_millis>-…）可排序，字典序与时间序同向，乱序 / 桩环境的渲染序因此不
- * 让给网络序（与 accumulateThinkingBlock 的排序兜底同一条纪律）。
+ * 顺序：**原样保持后端数组序**。排序只在后端 `harness_list_sessions` 一处产生
+ * （`last_activity_ts` 倒序 → 同值 session id 倒序 → 无值最后）；前端 MUST NOT 重排、
+ * MUST NOT 维护第二份排序口径（REVIEW.md「同一语义两处真源」条）。
  */
 export function sessionEntriesOf(payload: unknown): SessionEntry[] {
   let value: unknown = payload;
@@ -1323,14 +1329,17 @@ export function sessionEntriesOf(payload: unknown): SessionEntry[] {
     const text = rec.first_user_text;
     const title = rec.title;
     const ts = rec.ts;
+    const activity = rec.last_activity_ts;
     out.push({
       sessionId: rec.session_id,
       firstUserText: typeof text === "string" && text.trim() !== "" ? text : null,
       ts: typeof ts === "number" && Number.isFinite(ts) && ts > 0 ? ts : null,
       title: typeof title === "string" && title.trim() !== "" ? title : null,
+      lastActivityTs:
+        typeof activity === "number" && Number.isFinite(activity) && activity > 0 ? activity : null,
     });
   }
-  return out.sort((a, b) => (a.sessionId < b.sessionId ? 1 : a.sessionId > b.sessionId ? -1 : 0));
+  return out;
 }
 
 /** 选择器行的时间读数（unix 秒）：同日给相对时间（「5 分钟前」，narrow 与消息 when 行
@@ -10098,10 +10107,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           name.dataset.name = text;
           name.title = rawName ?? text;
           item.append(name);
-          if (entry.ts !== null) {
+          // 行时间格：最后活动时间（change rank-harness-sessions-by-last-activity-nov23）。
+          // 旧载荷 / 桩缺 `last_activity_ts` 时退回文件创建时刻（不改变旧行为）；两者皆空
+          // 则不渲染时间格（不伪造读数）。
+          const whenTs = entry.lastActivityTs ?? entry.ts;
+          if (whenTs !== null) {
             const when = document.createElement("span");
             when.className = "lumir-hp-sesspop-when";
-            when.textContent = sessionWhen(entry.ts, Date.now());
+            when.textContent = sessionWhen(whenTs, Date.now());
             item.append(when);
           }
           item.addEventListener("click", (event) => {

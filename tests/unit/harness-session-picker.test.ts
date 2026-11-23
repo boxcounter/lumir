@@ -1,6 +1,7 @@
 // 会话恢复选择器纯模型层的单测（M392，change reshape-harness-session-recording design §6.1）：
 //   - sessionEntriesOf：harness_list_sessions 载荷的宽容解析（M392 + M395 合同形状
-//     SessionSummary[] = { session_id, first_user_text, ts, title? }）+ 时间倒序兜底；
+//     SessionSummary[] = { session_id, first_user_text, ts, title?, last_activity_ts? }）+
+//     **保持后端数组序**（change rank-harness-sessions-by-last-activity-nov23：排序只在后端一处）；
 //   - truncateSessionName：会话名截断（标题栏会话名与选择器行同一份口径）；
 //   - sessionWhen：行时间读数（同日相对时间、跨天回落短日期）；
 //   - 会话名优先级 sessionNameSource（change add-session-auto-naming：title → firstUserText → D330）。
@@ -26,7 +27,7 @@ import type { SessListOutcome } from "../../src/harness-panel.ts";
 
 // ── 清单解析（任务 1：合同形状 → SessionEntry） ──
 
-test("合同数组原样提取：三项键齐全 → 字段直取", () => {
+test("合同数组原样提取：四项键齐全 → 字段直取", () => {
   const entries = sessionEntriesOf([
     { session_id: "s1759912345678-k3x9ab", first_user_text: "帮我整理这份笔记", ts: 1759912345 },
     { session_id: "s1759912000000-a1b2c3", first_user_text: null, ts: null },
@@ -37,12 +38,14 @@ test("合同数组原样提取：三项键齐全 → 字段直取", () => {
     firstUserText: "帮我整理这份笔记",
     ts: 1759912345,
     title: null,
+    lastActivityTs: null,
   });
   assert.deepEqual(entries[1], {
     sessionId: "s1759912000000-a1b2c3",
     firstUserText: null,
     ts: null,
     title: null,
+    lastActivityTs: null,
   });
 });
 
@@ -86,17 +89,38 @@ test("宽容提取：first_user_text 空白 / 非串 → null；ts 非数 / 非�
   assert.deepEqual(byId.map((e) => e.ts), [null, null, null, 3.5]);
 });
 
-test("时间倒序兜底：乱序 / 升序输入一律按 session_id 字典序降序输出", () => {
-  // 时间序前缀可排序 ⇒ 字典序与时间序同向；渲染序不让给网络序。
-  const entries = sessionEntriesOf([
+test("保持后端数组序：乱序输入 → 输出与输入逐项相等（前端 MUST NOT 重排）", () => {
+  // 单一排序真源在后端（last_activity_ts 倒序 → 同值 session id 倒序 → 无值最后）。
+  // 前端再排一次就会与后端分叉（旧实现按 session_id 字典序降序，这三行会被重排成
+  // s300/s200/s100）——本用例就是那条「必须让它 FAIL」的输入。
+  const input = [
     { session_id: "s100-a", first_user_text: "旧", ts: 100 },
     { session_id: "s300-c", first_user_text: "新", ts: 300 },
     { session_id: "s200-b", first_user_text: "中", ts: 200 },
-  ]);
-  assert.deepEqual(entries.map((e) => e.sessionId), ["s300-c", "s200-b", "s100-a"]);
+  ];
+  const entries = sessionEntriesOf(input);
+  assert.deepEqual(entries.map((e) => e.sessionId), ["s100-a", "s300-c", "s200-b"]);
 });
 
-// ── 会话名截断（任务 1：与标题栏会话名同一口径） ──
+test("last_activity_ts 解析：正数原样、0 / 负数 / 非数 / 缺键 → null", () => {
+  const entries = sessionEntriesOf([
+    { session_id: "a", ts: 100, last_activity_ts: 400 },
+    { session_id: "b", ts: 100, last_activity_ts: 0 },
+    { session_id: "c", ts: 100, last_activity_ts: -5 },
+    { session_id: "d", ts: 100, last_activity_ts: "400" },
+    { session_id: "e", ts: 100 },
+    { session_id: "f", ts: 100, last_activity_ts: null },
+  ]);
+  // 解析保持后端数组序 —— 按输入序逐项断言。
+  assert.deepEqual(
+    entries.map((e) => e.lastActivityTs),
+    [400, null, null, null, null, null],
+  );
+  // 与 ts 同一宽容口径：非数 / 非正一律 null（缺读数不伪造、行时间格由此不渲染）。
+  assert.equal(entries[0].ts, 100);
+});
+
+
 
 test("截断：21 字 → 20 字 + 省略号；恰 20 字原样；CJK / emoji 按 1 字计", () => {
   const cjk21 = "一二三四五六七八九十一二三四五六七八九十野"; // 21 码点
@@ -262,8 +286,8 @@ test("title event updates rows in place（纯模型层：只换名字）", () =>
   // 会话名是唯一被改变的量：首条用户消息原文不动（回落口径随时可回）、清单顺序与标题无关。
   assert.equal(after.firstUserText, before.firstUserText);
   const entries = sessionEntriesOf([
-    { session_id: "s200-b", title: "旧标题", first_user_text: "B", ts: 200 },
     { session_id: "s300-c", title: "新标题", first_user_text: "C", ts: 300 },
+    { session_id: "s200-b", title: "旧标题", first_user_text: "B", ts: 200 },
     { session_id: "s100-a", first_user_text: "A", ts: 100 },
   ]);
   assert.deepEqual(entries.map((entry) => entry.sessionId), ["s300-c", "s200-b", "s100-a"]);

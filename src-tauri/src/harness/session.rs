@@ -670,6 +670,15 @@ pub struct SessionSummary {
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// 该文件的最后活动时间（change rank-harness-sessions-by-last-activity-nov23，design §2.2）：
+    /// 自身与 `session_open.restored_from` 祖先链上 `llm_request` / `llm_response` 信封 ts 的
+    /// 最大值；链上没有任何轮次时回落链上最早的首行信封 ts。None = 无任何可信时间——
+    /// 排序置后、界面不显示时间格（MUST NOT 用 id 前缀或其它派生值伪造）。
+    // ts-rs 默认把 u64 映成 bigint：与 `ts` 同处理（JSON.parse 出来是 number）。
+    #[ts(optional)]
+    #[ts(type = "number")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_activity_ts: Option<u64>,
 }
 
 /// 程序性中止的原因（change add-cron-runtime-daemon §3.5）：`code` 进诊断事件与回执

@@ -7,8 +7,9 @@ open: harness-note.md
 marker: "HNL-ALPHA"
 # mock 只有一条响应且每轮从脚本头重放（场景 104 记过这条重放语义）——两轮回答文案相同，
 # 第二轮的 waitFor 靠「＋新会话 resetView 清空 transcript 后该串重新出现」区分（与场景 106
-# 恢复后第二轮同手法）。会话清单按 session id 倒序（harness.rs list_sessions，id 时间序）：
-# 行 0 = 后建的 deltwo（活跃），行 1 = 先建的 delone（历史）。
+# 恢复后第二轮同手法）。会话清单按最后活动倒序（harness.rs list_sessions，change
+# rank-harness-sessions-by-last-activity-nov23）：行 0 = 后建且活动更晚的 deltwo（活跃），
+# 行 1 = 先建的 delone（历史）；两轮都真实发送过，活动时间与创建时刻同向。
 config:
   harness:
     provider: mock
@@ -104,7 +105,7 @@ steps:
         ax: { count: { pattern: "/AXButton \\(删除该会话\\)/", exact: 2 } }
       - shot: 01-浮层两行
 
-  # ── 第一步：删活跃会话 deltwo（行 0，清单按 id 倒序 = 最新在前）——后端必拒 ────────
+  # ── 第一步：删活跃会话 deltwo（行 0，清单按最后活动倒序 = 最近聊过在前）——后端必拒 ────────
   - name: 点活跃会话行的 ×（行内两步确认的第一段）
     do: click
     target: { role: AXButton, name: "^删除该会话$", nth: 0 }
@@ -208,9 +209,10 @@ M406 给会话浮层的每行加了删除钮（×，D417 读屏名），删除�
 
 ## 断言口径
 
-- **行序钉死**：`harness.rs` 的 `list_sessions` 按 session id 字符串倒序（id 是
-  `s<unix_millis>-<后缀>` 时间序），后建的 deltwo 恒在行 0、delone 恒在行 1——`nth` 锚定
-  的语义因此稳定（不是 DOM 巧合）。
+- **行序钉死**：`harness.rs` 的 `list_sessions` 按最后活动时间倒序（同值按 session id 倒序，
+  无值最后；change rank-harness-sessions-by-last-activity-nov23）。本场景两轮都真实发送过，
+  后建的 deltwo 活动更晚 ⇒ 恒在行 0、delone 恒在行 1——`nth` 锚定的语义因此稳定（不是 DOM
+  巧合）。恢复产生的多行各自独立可删的判据在场景 724（本场景不重复）。
 - **两轮同文案的区分**（mock 重放语义的副作用）：fixture 只有一条响应，两轮回答都是
   「验收回答：上下文已收到。」。第二轮的 waitFor 之所以有区分度，是因为「＋新会话」的
   resetView 把 transcript 清成了空态——该串重新出现只可能是第二轮产出（场景 106 恢复后

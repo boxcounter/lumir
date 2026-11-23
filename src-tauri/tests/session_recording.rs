@@ -2383,3 +2383,567 @@ fn resume_skips_trailing_error_response() {
         "恢复不得回写旧文件"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 会话清单按最后活动排序（change rank-harness-sessions-by-last-activity-nov23）
+// ---------------------------------------------------------------------------
+//
+// 判据口径（change 的 spec delta「会话边界」）：每份 JSONL 一行；行的最后活动时间 =
+// 该文件与它 `session_open.restored_from` 祖先链上 `llm_request` / `llm_response` 信封 ts 的
+// 最大值；链上无轮次时回落链上最早的首行信封 ts；都没有 = None（排最后、不显示时间格）。
+// 下面每条用例都在**旧实现上必红**（旧实现按 session id 倒序、无 last_activity_ts）。
+
+/// 合成一份会话留存：每项是 `(信封 ts, payload)`；`ts == None` 时该行**不带** `ts` 键
+/// （「缺时间」现场）。与 [`write_raw_session`] 并列——后者只覆盖固定形状，本组用例要精确
+/// 控制每条记录的时刻与 kind（sidecar / 失败轮 / 纯环等）。
+fn write_session_lines(
+    dir: &Path,
+    id: &str,
+    lines: &[(Option<u64>, serde_json::Value)],
+) -> PathBuf {
+    let content: Vec<String> = lines
+        .iter()
+        .map(|(ts, payload)| match ts {
+            Some(ts) => serde_json::json!({"ts": ts, "payload": payload}).to_string(),
+            None => serde_json::json!({"payload": payload}).to_string(),
+        })
+        .collect();
+    let path = dir.join(format!("{id}.jsonl"));
+    std::fs::write(&path, format!("{}\n", content.join("\n"))).unwrap();
+    path
+}
+
+/// `session_open`（恢复 / 压缩现场可带 `restored_from`）。
+fn open_payload(
+    id: &str,
+    vault_root: &str,
+    opened_from: &str,
+    restored_from: Option<&str>,
+) -> serde_json::Value {
+    let mut open = serde_json::json!({
+        "kind": "session_open",
+        "session_id": id,
+        "vault_root": vault_root,
+        "opened_from": opened_from,
+        "provider": "mock",
+        "model": "mock-model",
+        "thinking": "high",
+        "system": "S",
+        "assembly": [],
+    });
+    if let Some(source) = restored_from {
+        open["restored_from"] = serde_json::json!(source);
+    }
+    open
+}
+
+/// 一轮真实的 `llm_request`（首条 user 消息是会话名素材）。
+fn request_payload(text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "llm_request",
+        "request": {
+            "system": "S",
+            "messages": [
+                {"role": "user", "content": [{"type": "input_text", "text": text}]}
+            ],
+        },
+    })
+}
+
+/// 一次真实的 `llm_response`。
+fn response_payload(text: &str) -> serde_json::Value {
+    serde_json::json!({"kind": "llm_response", "text": text})
+}
+
+/// 会话清单里的常见查询口：按 session id 找行。
+fn row<'a>(list: &'a [session::SessionSummary], id: &str) -> &'a session::SessionSummary {
+    list.iter()
+        .find(|s| s.session_id == id)
+        .unwrap_or_else(|| panic!("清单里应有 {id}：{list:?}"))
+}
+
+/// 判据 1（创建与活动相反）：排序按最后活动，不按文件创建时刻（= session id 前缀）。
+#[test]
+fn list_sessions_orders_by_last_activity_not_file_creation() {
+    let f = Fixture::new("list-activity-order");
+    let dir = f.sessions_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = f.vault().display().to_string();
+    // A：创建最早（100）、最后活动 400。
+    write_session_lines(
+        &dir,
+        "s100-aaaaaa",
+        &[
+            (Some(100), open_payload("s100-aaaaaa", &root, "new", None)),
+            (Some(390), request_payload("甲会话")),
+            (Some(400), response_payload("甲回答")),
+        ],
+    );
+    // B：创建最晚（200）、最后活动 300。
+    write_session_lines(
+        &dir,
+        "s200-bbbbbb",
+        &[
+            (Some(200), open_payload("s200-bbbbbb", &root, "new", None)),
+            (Some(290), request_payload("乙会话")),
+            (Some(300), response_payload("乙回答")),
+        ],
+    );
+    // C：创建最早（50）、最后活动最晚 600。
+    write_session_lines(
+        &dir,
+        "s50-cccccc",
+        &[
+            (Some(50), open_payload("s50-cccccc", &root, "new", None)),
+            (Some(590), request_payload("丙会话")),
+            (Some(600), response_payload("丙回答")),
+        ],
+    );
+
+    let list = list_sessions(&f.scope()).unwrap();
+    let ids: Vec<&str> = list.iter().map(|s| s.session_id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["s50-cccccc", "s100-aaaaaa", "s200-bbbbbb"],
+        "按最后活动倒序（不按文件创建时刻）：{list:?}"
+    );
+    assert_eq!(row(&list, "s50-cccccc").last_activity_ts, Some(600));
+    assert_eq!(row(&list, "s100-aaaaaa").last_activity_ts, Some(400));
+    assert_eq!(row(&list, "s200-bbbbbb").last_activity_ts, Some(300));
+    // 既有 `ts` 语义不变：仍是本文件创建时刻（不是最后活动）。
+    assert_eq!(row(&list, "s100-aaaaaa").ts, Some(100));
+    assert_eq!(row(&list, "s200-bbbbbb").ts, Some(200));
+}
+
+/// 判据 2（恢复不置顶）：恢复出的新文件没有自己的轮次时，活动时间沿 `restored_from` 链
+/// 继承源文件的 400——不得越过活动更晚的 C（500）；源行与子行同值相邻（新 id 在上）。
+#[test]
+fn restored_file_inherits_chain_activity_and_does_not_pin_top() {
+    let f = Fixture::new("list-restore-inherit");
+    let dir = f.sessions_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = f.vault().display().to_string();
+    write_session_lines(
+        &dir,
+        "s100-aaaaaa",
+        &[
+            (Some(100), open_payload("s100-aaaaaa", &root, "new", None)),
+            (Some(390), request_payload("源会话")),
+            (Some(400), response_payload("源回答")),
+        ],
+    );
+    write_session_lines(
+        &dir,
+        "s50-cccccc",
+        &[
+            (Some(50), open_payload("s50-cccccc", &root, "new", None)),
+            (Some(490), request_payload("更晚的会话")),
+            (Some(500), response_payload("更晚的回答")),
+        ],
+    );
+    // 恢复 A 产生的新文件：创建时刻 700（远晚于 C 的 500），但没有自己的轮次。
+    write_session_lines(
+        &dir,
+        "s700-child1",
+        &[
+            (
+                Some(700),
+                open_payload("s700-child1", &root, "restore", Some("s100-aaaaaa")),
+            ),
+            (
+                Some(700),
+                serde_json::json!({"kind": "session_title", "title": "源会话", "decision": "inherit", "reason": "inherit"}),
+            ),
+        ],
+    );
+
+    let list = list_sessions(&f.scope()).unwrap();
+    let ids: Vec<&str> = list.iter().map(|s| s.session_id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["s50-cccccc", "s700-child1", "s100-aaaaaa"],
+        "恢复行不越过活动更晚的 C；与源行同值相邻（新 id 在上）：{list:?}"
+    );
+    assert_eq!(
+        row(&list, "s700-child1").last_activity_ts,
+        Some(400),
+        "没有自己的轮次 ⇒ 继承源文件的最后活动（不是新文件创建时刻 700）"
+    );
+    assert_eq!(row(&list, "s100-aaaaaa").last_activity_ts, Some(400));
+    assert_eq!(row(&list, "s50-cccccc").last_activity_ts, Some(500));
+}
+
+/// 判据 3（每文件一行）：源 + 恢复子文件 → 恰好两行、精确 id 集；不折叠、不隐藏。
+#[test]
+fn every_session_file_yields_exactly_one_row() {
+    let f = Fixture::new("list-one-row-per-file");
+    let dir = f.sessions_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = f.vault().display().to_string();
+    write_session_lines(
+        &dir,
+        "s100-aaaaaa",
+        &[
+            (Some(100), open_payload("s100-aaaaaa", &root, "new", None)),
+            (Some(400), request_payload("同一段逻辑会话")),
+            (Some(410), response_payload("回答")),
+        ],
+    );
+    write_session_lines(
+        &dir,
+        "s700-child1",
+        &[(
+            Some(700),
+            open_payload("s700-child1", &root, "restore", Some("s100-aaaaaa")),
+        )],
+    );
+
+    let list = list_sessions(&f.scope()).unwrap();
+    assert_eq!(list.len(), 2, "每份 JSONL 恰好一行（不折叠源文件）：{list:?}");
+    let mut ids: Vec<&str> = list.iter().map(|s| s.session_id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["s100-aaaaaa", "s700-child1"], "精确 session id 集");
+}
+
+/// 判据 4（独立操作）：两份文件各自可删；删除源后子文件仍在列、仍可恢复。
+#[test]
+fn source_and_restored_rows_delete_independently() {
+    let f = Fixture::new("list-independent-ops");
+    let dir = f.sessions_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = f.vault().display().to_string();
+    write_session_lines(
+        &dir,
+        "s100-aaaaaa",
+        &[
+            (Some(100), open_payload("s100-aaaaaa", &root, "new", None)),
+            (Some(390), request_payload("源会话")),
+            (Some(400), response_payload("源回答")),
+        ],
+    );
+    // 子文件已续聊过一轮（自己的活动 700）：删除源后它照旧独立存在、可恢复。
+    write_session_lines(
+        &dir,
+        "s700-child1",
+        &[
+            (
+                Some(700),
+                open_payload("s700-child1", &root, "restore", Some("s100-aaaaaa")),
+            ),
+            (Some(790), request_payload("恢复后继续")),
+            (Some(800), response_payload("继续回答")),
+        ],
+    );
+    let runtime = Runtime::default();
+    let config = mock_config();
+
+    runtime.delete_session(&f.scope(), "s100-aaaaaa").unwrap();
+    let list = list_sessions(&f.scope()).unwrap();
+    assert_eq!(
+        list.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+        ["s700-child1"],
+        "删除源只影响源文件，子文件仍列出"
+    );
+
+    // 子文件仍可恢复（删除源不联动改动子文件）。
+    let info = runtime
+        .resume_session(&f.scope(), &config, "s700-child1")
+        .expect("删除源后子文件仍可恢复");
+    assert!(!info.session_id.is_empty());
+    // 恢复的新会话尚未落盘（惰性 writer），列举不受影响。
+    assert_eq!(list_sessions(&f.scope()).unwrap().len(), 1);
+
+    runtime.delete_session(&f.scope(), "s700-child1").unwrap();
+    assert!(list_sessions(&f.scope()).unwrap().is_empty());
+}
+
+/// 判据 5（sidecar 不计入）：只追加 `session_title` / `notice_delivered` / `approval` 的文件
+/// 不因这些记录的时刻而前移——顺序仍由最后一条轮次决定。
+#[test]
+fn sidecar_records_do_not_count_as_activity() {
+    let f = Fixture::new("list-sidecar");
+    let dir = f.sessions_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = f.vault().display().to_string();
+    // A：轮次只到 310，但 sidecar 的 ts 一路到 920——若把 sidecar 计入，A 会排最前。
+    write_session_lines(
+        &dir,
+        "s100-aaaaaa",
+        &[
+            (Some(100), open_payload("s100-aaaaaa", &root, "new", None)),
+            (Some(300), request_payload("甲会话")),
+            (Some(310), response_payload("甲回答")),
+            (
+                Some(900),
+                serde_json::json!({"kind": "session_title", "title": "改名", "decision": "rename", "reason": "drift"}),
+            ),
+            (
+                Some(910),
+                serde_json::json!({"kind": "notice_delivered", "notice_id": "n1"}),
+            ),
+            (
+                Some(920),
+                serde_json::json!({"kind": "approval", "decision": "allow", "call_id": "c1"}),
+            ),
+        ],
+    );
+    // B：轮次到 410，本该排最前。
+    write_session_lines(
+        &dir,
+        "s50-bbbbbb",
+        &[
+            (Some(50), open_payload("s50-bbbbbb", &root, "new", None)),
+            (Some(400), request_payload("乙会话")),
+            (Some(410), response_payload("乙回答")),
+        ],
+    );
+
+    let list = list_sessions(&f.scope()).unwrap();
+    assert_eq!(
+        list.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+        ["s50-bbbbbb", "s100-aaaaaa"],
+        "sidecar 的 ts 不参与活动时间：{list:?}"
+    );
+    assert_eq!(row(&list, "s100-aaaaaa").last_activity_ts, Some(310));
+}
+
+/// 判据 6（失败 / 停止轮计入）：`llm_request` 后跟 `error` / `turn_aborted` 时，活动时间取
+/// 请求 ts（只看 response 的口径会把这一轮判成没有活动）。
+#[test]
+fn failed_and_aborted_turns_count_request_ts() {
+    let f = Fixture::new("list-failed-turn");
+    let dir = f.sessions_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = f.vault().display().to_string();
+    write_session_lines(
+        &dir,
+        "s100-aaaaaa",
+        &[
+            (Some(100), open_payload("s100-aaaaaa", &root, "new", None)),
+            (Some(500), request_payload("失败轮")),
+            (
+                Some(510),
+                serde_json::json!({"kind": "error", "code": "harness_stream_error", "message": "断"}),
+            ),
+        ],
+    );
+    write_session_lines(
+        &dir,
+        "s200-bbbbbb",
+        &[
+            (Some(200), open_payload("s200-bbbbbb", &root, "new", None)),
+            (Some(450), request_payload("被停止轮")),
+            (
+                Some(520),
+                serde_json::json!({"kind": "turn_aborted", "reason": "user"}),
+            ),
+        ],
+    );
+    write_session_lines(
+        &dir,
+        "s50-cccccc",
+        &[
+            (Some(50), open_payload("s50-cccccc", &root, "new", None)),
+            (Some(400), request_payload("正常轮")),
+            (Some(440), response_payload("正常回答")),
+        ],
+    );
+
+    let list = list_sessions(&f.scope()).unwrap();
+    assert_eq!(
+        list.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+        ["s100-aaaaaa", "s200-bbbbbb", "s50-cccccc"],
+        "失败轮 / 停止轮按请求 ts 计入活动时间：{list:?}"
+    );
+    assert_eq!(row(&list, "s100-aaaaaa").last_activity_ts, Some(500));
+    assert_eq!(row(&list, "s200-bbbbbb").last_activity_ts, Some(450));
+}
+
+/// 判据 7（缺时间安静回落）：`session_open` / 轮次信封全部缺 ts → 无值，排最后；
+/// `ts` 同样为 None（不伪造读数）。
+#[test]
+fn missing_timestamps_sort_last_without_fabricated_reading() {
+    let f = Fixture::new("list-missing-ts");
+    let dir = f.sessions_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = f.vault().display().to_string();
+    write_session_lines(
+        &dir,
+        "s900-aaaaaa",
+        &[
+            (None, open_payload("s900-aaaaaa", &root, "new", None)),
+            (None, request_payload("旧文件")),
+            (None, response_payload("旧回答")),
+        ],
+    );
+    write_session_lines(
+        &dir,
+        "s50-bbbbbb",
+        &[
+            (Some(50), open_payload("s50-bbbbbb", &root, "new", None)),
+            (Some(10), request_payload("有时间的会话")),
+        ],
+    );
+
+    let list = list_sessions(&f.scope()).unwrap();
+    assert_eq!(
+        list.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+        ["s50-bbbbbb", "s900-aaaaaa"],
+        "无值者排最后（即使 id 前缀更新）：{list:?}"
+    );
+    let legacy = row(&list, "s900-aaaaaa");
+    assert_eq!(legacy.last_activity_ts, None, "缺时间 = 无值，不伪造");
+    assert_eq!(legacy.ts, None);
+}
+
+/// 判据 8（compact 不沿链）：compact 文件没有 `restored_from`，按自身创建时刻落位、
+/// 不继承源文件的活动时间；同名不合并（两行都在）。
+#[test]
+fn compact_file_does_not_inherit_source_activity() {
+    let f = Fixture::new("list-compact");
+    let dir = f.sessions_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = f.vault().display().to_string();
+    write_session_lines(
+        &dir,
+        "s100-aaaaaa",
+        &[
+            (Some(100), open_payload("s100-aaaaaa", &root, "new", None)),
+            (Some(390), request_payload("压缩前会话")),
+            (Some(400), response_payload("压缩前回答")),
+            (
+                Some(401),
+                serde_json::json!({"kind": "session_title", "title": "同一个名字", "decision": "initial", "reason": "first-turn"}),
+            ),
+        ],
+    );
+    write_session_lines(
+        &dir,
+        "s350-compact",
+        &[
+            (
+                Some(350),
+                serde_json::json!({
+                    "kind": "session_open",
+                    "session_id": "s350-compact",
+                    "vault_root": root,
+                    "opened_from": "compact",
+                    "provider": "mock",
+                    "model": "mock-model",
+                    "thinking": "high",
+                    "system": "S",
+                    "assembly": [],
+                    "compact_summary": "压缩摘要",
+                }),
+            ),
+            (
+                Some(351),
+                serde_json::json!({"kind": "session_title", "title": "同一个名字", "decision": "inherit", "reason": "inherit"}),
+            ),
+        ],
+    );
+
+    let list = list_sessions(&f.scope()).unwrap();
+    assert_eq!(list.len(), 2, "compact 与源各占一行、同名不合并：{list:?}");
+    assert_eq!(
+        list.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+        ["s100-aaaaaa", "s350-compact"],
+        "compact 按自身创建时刻（350）落位，活动时间不继承源的 400：{list:?}"
+    );
+    assert_eq!(
+        row(&list, "s350-compact").last_activity_ts,
+        Some(350),
+        "compact 无 restored_from ⇒ 只有自己这一环"
+    );
+}
+
+/// 判据 9（纯环）：A↔B 互指 `restored_from` → 仍两行、精确 id 集、遍历终止（不挂起）。
+#[test]
+fn pure_restored_from_cycle_terminates_and_keeps_both_rows() {
+    let f = Fixture::new("list-cycle");
+    let dir = f.sessions_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = f.vault().display().to_string();
+    write_session_lines(
+        &dir,
+        "s100-aaaaaa",
+        &[
+            (
+                Some(100),
+                open_payload("s100-aaaaaa", &root, "restore", Some("s50-bbbbbb")),
+            ),
+            (Some(200), request_payload("环上甲")),
+        ],
+    );
+    write_session_lines(
+        &dir,
+        "s50-bbbbbb",
+        &[
+            (
+                Some(50),
+                open_payload("s50-bbbbbb", &root, "restore", Some("s100-aaaaaa")),
+            ),
+            (Some(300), request_payload("环上乙")),
+        ],
+    );
+
+    let list = list_sessions(&f.scope()).unwrap();
+    let mut ids: Vec<&str> = list.iter().map(|s| s.session_id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["s100-aaaaaa", "s50-bbbbbb"], "纯环不丢行、不重复");
+    // 互为祖先 ⇒ 两行的可计算活动时间都是环上最大值 300；不会因「没有链头」而丢行。
+    assert_eq!(row(&list, "s100-aaaaaa").last_activity_ts, Some(300));
+    assert_eq!(row(&list, "s50-bbbbbb").last_activity_ts, Some(300));
+}
+
+/// 判据 10（只读）：列举前后每份文件的字节、mtime 与目录条目数不变（不写盘、不迁移）。
+#[test]
+fn list_sessions_is_read_only() {
+    let f = Fixture::new("list-readonly");
+    let dir = f.sessions_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = f.vault().display().to_string();
+    let a = write_session_lines(
+        &dir,
+        "s100-aaaaaa",
+        &[
+            (Some(100), open_payload("s100-aaaaaa", &root, "new", None)),
+            (Some(390), request_payload("甲")),
+            (Some(400), response_payload("甲答")),
+        ],
+    );
+    let b = write_session_lines(
+        &dir,
+        "s700-child1",
+        &[(
+            Some(700),
+            open_payload("s700-child1", &root, "restore", Some("s100-aaaaaa")),
+        )],
+    );
+    let before: Vec<(Vec<u8>, std::time::SystemTime)> = [&a, &b]
+        .iter()
+        .map(|path| {
+            (
+                std::fs::read(path).unwrap(),
+                std::fs::metadata(path).unwrap().modified().unwrap(),
+            )
+        })
+        .collect();
+    let dir_len = std::fs::read_dir(&dir).unwrap().count();
+
+    let _ = list_sessions(&f.scope()).unwrap();
+
+    for (path, (bytes, mtime)) in [&a, &b].iter().zip(before.iter()) {
+        assert_eq!(&std::fs::read(path).unwrap(), bytes, "列举不得改写留存字节");
+        assert_eq!(
+            &std::fs::metadata(path).unwrap().modified().unwrap(),
+            mtime,
+            "列举不得推进 mtime"
+        );
+    }
+    assert_eq!(
+        std::fs::read_dir(&dir).unwrap().count(),
+        dir_len,
+        "列举不得新增 / 删除目录条目"
+    );
+}

@@ -58,7 +58,7 @@ pub mod title;
 pub mod tools;
 pub mod turn;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, Weak};
@@ -1075,7 +1075,9 @@ fn vision_gate_error(
 /// 列举当前 vault 的留存会话（`harness_list_sessions` 的实现体，change
 /// reshape-harness-session-recording 任务 2.1）：**只扫本 vault 的目录**
 /// `<config_dir>/harness/sessions/<vault 稳定 id>/*.jsonl`，按 [`session_belongs_to_scope`]
-/// （与恢复命令同一 vault 归属口径）过滤，按 session id 时间序前缀倒序返回。
+/// （与恢复命令同一 vault 归属口径）过滤，**每份文件一行**，按最后活动时间倒序返回
+/// （change rank-harness-sessions-by-last-activity-nov23：`last_activity_ts` 倒序 → 同值按
+/// session id 倒序 → 无值最后；排序**只在这一处产生**，前端不再重排）。
 /// 根下平铺的 `*.jsonl`（旧布局残留 / 脚本未跑）**不参与列举**——单一布局，无双读过渡层
 /// （design §5；存量文件的可见证据是目录结构与一次性脚本的输出）。
 ///
@@ -1092,6 +1094,9 @@ pub fn list_sessions(scope: &VaultScope) -> Result<Vec<session::SessionSummary>,
         .param("path", dir.display().to_string())
         .param("reason", e.to_string())
     })?;
+    // 链遍历的节点表（design §3.1）：一份文件一个节点；不建 referenced 集合、不找链头、
+    // 不做异常分量扫描——每份文件各产出一行。
+    let mut nodes: HashMap<String, ListedNode> = HashMap::new();
     let mut summaries = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
@@ -1115,6 +1120,30 @@ pub fn list_sessions(scope: &VaultScope) -> Result<Vec<session::SessionSummary>,
         if !session_belongs_to_scope(&file.session_open, scope) {
             continue;
         }
+        // 本文件自己的活动：llm_request / llm_response 信封 ts 的最大值（sidecar 一律不计入；
+        // design §2.3）。
+        let own_activity = file
+            .records
+            .iter()
+            .zip(file.record_ts.iter())
+            .filter(|(record, _)| {
+                record["kind"] == "llm_request" || record["kind"] == "llm_response"
+            })
+            .filter_map(|(_, ts)| *ts)
+            .max();
+        // 谱系父：`session_open.restored_from`（空串 / 自指按无父处理；design §2.5）。
+        let parent = file.session_open["restored_from"]
+            .as_str()
+            .filter(|parent| !parent.is_empty() && *parent != session_id)
+            .map(str::to_string);
+        nodes.insert(
+            session_id.clone(),
+            ListedNode {
+                parent,
+                own_activity,
+                created: file.first_ts,
+            },
+        );
         summaries.push(session::SessionSummary {
             session_id,
             first_user_text: first_user_text(&file),
@@ -1122,11 +1151,59 @@ pub fn list_sessions(scope: &VaultScope) -> Result<Vec<session::SessionSummary>,
             // 会话名首选源（change add-session-auto-naming）：有效标题的唯一读取口径；旧文件
             // 无 session_title 记录 ⇒ None ⇒ 前端安静回落首条用户消息截断（不迁移、不告警）。
             title: jsonl::effective_title(&file.records),
+            // 下面统一沿链求值（链要收齐全部文件后才能走）。
+            last_activity_ts: None,
         });
     }
-    // session id 是时间序（`s<unix_millis>-<随机后缀>`）：字符串倒序即时间倒序。
-    summaries.sort_by(|a, b| b.session_id.cmp(&a.session_id));
+    for summary in &mut summaries {
+        summary.last_activity_ts = chained_activity_ts(&nodes, &summary.session_id);
+    }
+    // 唯一排序真源（design §3.2）：最后活动倒序 → 同值 session id 倒序 → 无值最后。
+    // `Option` 的 `Ord` 把 `None` 排在 `Some` 之前，降序自然把无值者放末尾。
+    summaries.sort_by(|a, b| {
+        b.last_activity_ts
+            .cmp(&a.last_activity_ts)
+            .then_with(|| b.session_id.cmp(&a.session_id))
+    });
     Ok(summaries)
+}
+
+/// 会话清单链遍历的节点（change rank-harness-sessions-by-last-activity-nov23，design §3.1）：
+/// 一份 JSONL 文件的全部时间素材。
+struct ListedNode {
+    /// `session_open.restored_from`（非空、且 != 自身；否则 None）。
+    parent: Option<String>,
+    /// 本文件内 `llm_request` / `llm_response` 信封 ts 的最大值。
+    own_activity: Option<u64>,
+    /// 首行信封 ts（文件创建时刻）。
+    created: Option<u64>,
+}
+
+/// 该文件与它 `restored_from` 祖先链上的最后活动时间（design §2.2 / §3.2）：
+/// 链上 `llm_request` / `llm_response` 信封 ts 的**最大值**；链上没有轮次时回落链上**最早**的
+/// 首行信封 ts；都没有 = None。`visited` 防环、深度上限 256（异常谱系不挂起）；父缺失 /
+/// 自指即停。用「最早创建」而不是「链根」：线性链上二者相等，遇到环 / 缺失父时仍然有定义，
+/// 不需要根身份与第三遍异常分量算法。
+fn chained_activity_ts(nodes: &HashMap<String, ListedNode>, start: &str) -> Option<u64> {
+    const MAX_DEPTH: usize = 256;
+    let mut visited: HashSet<&str> = HashSet::new();
+    let mut current = Some(start);
+    let mut activity: Option<u64> = None;
+    let mut earliest: Option<u64> = None;
+    while let Some(id) = current {
+        if visited.len() >= MAX_DEPTH || !visited.insert(id) {
+            break;
+        }
+        let Some(node) = nodes.get(id) else { break };
+        if let Some(ts) = node.own_activity {
+            activity = Some(activity.map_or(ts, |best| best.max(ts)));
+        }
+        if let Some(ts) = node.created {
+            earliest = Some(earliest.map_or(ts, |best| best.min(ts)));
+        }
+        current = node.parent.as_deref();
+    }
+    activity.or(earliest)
 }
 
 /// 会话名素材：文件内**第一条** `llm_request` 的首条 user 消息里**第一段提问文本**；
@@ -2369,6 +2446,45 @@ mod tests {
             messages.iter().map(|m| m.ts).collect::<Vec<u64>>(),
             vec![100, 0, 0]
         );
+    }
+
+    /// change rank-harness-sessions-by-last-activity-nov23 §3.2：链遍历的防环、自指与深度上限。
+    #[test]
+    fn chained_activity_ts_guards_cycles_self_refs_and_depth() {
+        let node = |parent: Option<&str>, own: Option<u64>, created: Option<u64>| ListedNode {
+            parent: parent.map(str::to_string),
+            own_activity: own,
+            created,
+        };
+        // 纯环 A↔B：取环上最大活动，遍历终止。
+        let mut nodes = HashMap::new();
+        nodes.insert("a".to_string(), node(Some("b"), Some(10), Some(100)));
+        nodes.insert("b".to_string(), node(Some("a"), Some(20), Some(50)));
+        assert_eq!(chained_activity_ts(&nodes, "a"), Some(20));
+        assert_eq!(chained_activity_ts(&nodes, "missing"), None);
+        // 自指：只算自己（不再沿自身兜一圈）。
+        let mut self_ref = HashMap::new();
+        self_ref.insert("a".to_string(), node(Some("a"), None, Some(100)));
+        assert_eq!(chained_activity_ts(&self_ref, "a"), Some(100));
+        // 深度上限 256：300 环长链从末端起步，只走前 256 环——最早创建 = 44（299-255），
+        // 链根 n0 的 0 取不到。这是兜底上限的存在性判据（线性链通常 1–3 环，不触顶）。
+        let mut deep = HashMap::new();
+        for i in 0..300u64 {
+            let parent = if i == 0 {
+                None
+            } else {
+                Some(format!("n{}", i - 1))
+            };
+            deep.insert(
+                format!("n{i}"),
+                ListedNode {
+                    parent,
+                    own_activity: None,
+                    created: Some(i),
+                },
+            );
+        }
+        assert_eq!(chained_activity_ts(&deep, "n299"), Some(44));
     }
 
     /// 会话轮次的 `llm_request`（时间读数归属走查的素材）。

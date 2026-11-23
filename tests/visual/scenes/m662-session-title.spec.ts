@@ -30,11 +30,16 @@ const QUESTION = "当前会话的首条提问";
 const TITLE = "会话名的标题";
 
 /** 桩：零态快照 + 发送成功 + 两份历史会话（第一份的 first_user_text = QUESTION，可带
- *  `title` 模拟「标题记录已写盘」的存量会话）+ 事件钩子。事件钩子与 m347 同机制（记录
+ *  `title` 模拟「标题记录已写盘」的存量会话）+ 事件钩子。`rows` 给了就原样作为列举载荷
+ *  （新结构断言用它构造「创建早、活动晚」的现场）。事件钩子与 m347 同机制（记录
  *  listen 的 handler id，经 runCallback 送达——stubTauri 的 listen 闭包不可达）。 */
-async function stubHarness(page: Page, listedTitle: string | null = null): Promise<void> {
+async function stubHarness(
+  page: Page,
+  listedTitle: string | null = null,
+  rows?: Record<string, unknown>[],
+): Promise<void> {
   await page.addInitScript(
-    ({ question, title }: { question: string; title: string | null }) => {
+    ({ question, title, rows }: { question: string; title: string | null; rows?: Record<string, unknown>[] }) => {
       const w = window as unknown as Record<string, any>;
       const internals = w.__TAURI_INTERNALS__;
       const invoke = internals.invoke as (cmd: string, args: unknown) => unknown;
@@ -50,15 +55,22 @@ async function stubHarness(page: Page, listedTitle: string | null = null): Promi
         }
         if (cmd === "harness_send") return null;
         if (cmd === "harness_list_sessions") {
+          if (rows !== undefined) return JSON.stringify(rows);
           const current: Record<string, unknown> = {
             session_id: "s1759912345678-k3x9ab",
             first_user_text: question,
             ts: 1759912345,
+            last_activity_ts: 1759912350,
           };
           if (title !== null) current.title = title;
           return JSON.stringify([
             current,
-            { session_id: "s1759912000000-a1b2c3", first_user_text: "旧会话草稿", ts: 1759912000 },
+            {
+              session_id: "s1759912000000-a1b2c3",
+              first_user_text: "旧会话草稿",
+              ts: 1759912000,
+              last_activity_ts: 1759912005,
+            },
           ]);
         }
         if (cmd === "plugin:event|listen" && args.event === "harness:event") {
@@ -72,7 +84,7 @@ async function stubHarness(page: Page, listedTitle: string | null = null): Promi
         }
       };
     },
-    { question: QUESTION, title: listedTitle },
+    { question: QUESTION, title: listedTitle, rows },
   );
 }
 
@@ -135,4 +147,41 @@ test("浮层在标题已存在后打开：行显示标题，不回落到 first_u
   await expect(currentRow).toHaveText(TITLE);
   await expect(currentRow).not.toContainText(QUESTION);
   await expect(currentRow).not.toContainText("<quote");
+});
+
+test("行时间格显示最后活动时间（不是文件创建时刻）；两者皆空不渲染时间格", async ({ page }) => {
+  // change rank-harness-sessions-by-last-activity-nov23：行时间格读数 = 后端算好的
+  // `last_activity_ts`（链上最后活动）；行数据没带该键（旧载荷 / 桩）才退回创建时刻 `ts`。
+  //
+  // 判据用「同时刻对照行」而不是写死本地化文本：第一行创建于 3 天前、最后活动与第二行的
+  // 创建时刻**同一秒**——两行时间格文本必须相等。旧实现读第一行的 `ts`（3 天前）时，两格
+  // 文本必不相等；语言 / 相对时间分档怎么变都不影响这条判据（REVIEW.md「断言等价于子串」）。
+  const now = Date.now();
+  const nowSec = Math.floor(now / 1000);
+  // 4 小时 30 分 30 秒前：分/小时分档的桶边界离得远（两行读取相差毫秒级，不会跨桶）。
+  const activity = nowSec - (4 * 3600 + 30 * 60 + 30);
+  const rows = [
+    { session_id: "s1759912345678-k3x9ab", first_user_text: "创建早活动晚", ts: nowSec - 3 * 86400, last_activity_ts: activity },
+    { session_id: "s1759912000000-a1b2c3", first_user_text: "对照组", ts: activity, last_activity_ts: activity },
+    { session_id: "s1759911000000-d4e5f6", first_user_text: "没有时间的旧会话" },
+  ];
+  await stubTauri(page, VAULT);
+  await stubHarness(page, null, rows);
+  await page.goto("/");
+  await page.locator('.ft-row[title="session-name-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await page.locator(".lumir-hp-session").click();
+  const pop = page.locator(".lumir-hp-sesspop");
+  await expect(pop).toBeVisible();
+  const listed = pop.locator(".lumir-hp-sesspop-row");
+  await expect(listed).toHaveCount(3);
+
+  const firstWhen = listed.nth(0).locator(".lumir-hp-sesspop-when");
+  const controlWhen = listed.nth(1).locator(".lumir-hp-sesspop-when");
+  await expect(firstWhen).toHaveCount(1);
+  await expect(controlWhen).toHaveCount(1);
+  // 第一行的时间格必须来自最后活动（与对照行同时刻 ⇒ 同文本），不是创建时刻。
+  await expect(firstWhen).toHaveText(await controlWhen.textContent() ?? "");
+  // 缺 ts / 缺 last_activity_ts 的旧会话：不渲染时间格（不伪造读数）。
+  await expect(listed.nth(2).locator(".lumir-hp-sesspop-when")).toHaveCount(0);
 });

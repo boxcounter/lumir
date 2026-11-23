@@ -913,6 +913,17 @@ function resolveSeedPath(p) {
   return p;
 }
 
+/** `seed.harnessSessions[].raw` 里的 `$vault` / `$vault2` 记号替换：预置 JSONL 的 `vault_root`
+ *  必须是当前验收 vault 的真实路径（归属判据逐字 / 规范化比较），场景侧不写死 /tmp 路径。
+ *  `$vault2` 先替（否则 `$vault` 会命中它的前缀）。 */
+export function substituteSeedTokens(text) {
+  return text
+    .split("$vault2")
+    .join(resolveSeedPath("$vault2"))
+    .split("$vault")
+    .join(resolveSeedPath("$vault"));
+}
+
 /** 应用场景 frontmatter 的 `seed` 块（注册表 + 旧名注册表 + 会话预置）。
  *
  *  **必须在起 app 之前跑**（run.mjs 在每个场景的 launchApp 之前调用）：app 打开一个未注册
@@ -1068,39 +1079,40 @@ export async function writeHarnessSession({ vaultId, name, vaultRoot = "$vault",
   const sessionId = name.replace(/\.jsonl$/, "");
   const dir = await mkdirp(path.join(envHome(), "lumir", "harness", "sessions", vaultId));
   const content =
-    raw ??
-    [
-      {
-        ts: 1759913000,
-        payload: {
-          kind: "session_open",
-          session_id: sessionId,
-          vault_root: resolveSeedPath(vaultRoot),
-          opened_from: "new",
-          provider: "mock",
-          model: "mock-model",
-          thinking: "high",
-          system: "S",
-          assembly: [],
-        },
-      },
-      {
-        ts: 1759913005,
-        payload: {
-          kind: "llm_request",
-          request: {
-            provider: "mock",
-            model: "mock-model",
-            system: "S",
-            messages: [{ role: "user", content: [{ type: "input_text", text: firstUserText }] }],
-            params: { thinking: "high" },
+    raw !== undefined
+      ? substituteSeedTokens(raw)
+      : [
+          {
+            ts: 1759913000,
+            payload: {
+              kind: "session_open",
+              session_id: sessionId,
+              vault_root: resolveSeedPath(vaultRoot),
+              opened_from: "new",
+              provider: "mock",
+              model: "mock-model",
+              thinking: "high",
+              system: "S",
+              assembly: [],
+            },
           },
-        },
-      },
-      { ts: 1759913006, payload: { kind: "llm_response", text: "旧会话回答。" } },
-    ]
-      .map((line) => JSON.stringify(line))
-      .join("\n") + "\n";
+          {
+            ts: 1759913005,
+            payload: {
+              kind: "llm_request",
+              request: {
+                provider: "mock",
+                model: "mock-model",
+                system: "S",
+                messages: [{ role: "user", content: [{ type: "input_text", text: firstUserText }] }],
+                params: { thinking: "high" },
+              },
+            },
+          },
+          { ts: 1759913006, payload: { kind: "llm_response", text: "旧会话回答。" } },
+        ]
+          .map((line) => JSON.stringify(line))
+          .join("\n") + "\n";
   const file = path.join(dir, name);
   await writeFile(file, content);
   return file;

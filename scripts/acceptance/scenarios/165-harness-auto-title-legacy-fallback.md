@@ -109,6 +109,10 @@ steps:
 
 ## 已知边界
 
+- **行时间格**（change rank-harness-sessions-by-last-activity-nov23）：预置文件带信封 ts，
+  行时间格显示最后活动时间（本文件只有一条问答 ⇒ 与本文件创建时刻同向）。「所有信封都缺 ts
+  ⇒ 不显示时间格」的现场不在本场景（预置文件有 ts），判据在场景 724 与视觉场景 m662 的结构
+  断言。
 - **不告警的严格判据不在本场景**：产品没有把「旧文件无标题」作为任何 UI 提示的通道（设计上
   就不告警），所以这里只能判「文件未变 + 展示回落」，判不了「stderr 没有一行 warning」。
   该面的实现判据在 Rust 单测（`harness::jsonl::tests::effective_title_last_wins` 的
