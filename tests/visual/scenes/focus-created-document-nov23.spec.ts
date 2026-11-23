@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { fsMutations, stubTauri, type VaultFixture } from "./tauri-stub";
 
 // 新建文件打开成功后的焦点落点（change focus-created-document-nov23）的**事件序列**回归。
 //
@@ -96,8 +96,13 @@ async function installRecorder(page: Page): Promise<void> {
       const tidy = cls.trim().split(/\s+/).filter(Boolean).join(".");
       return `${el.tagName.toLowerCase()}${tidy === "" ? "" : `.${tidy}`}`;
     };
+    // 正文编辑器 = 不在 harness 面板里的那个 `.cm-content`（composer 同样是 CM 实例，
+    // 分栏后 `querySelector` 可能先命中它）。
+    const docContent = (): Element | null =>
+      Array.from(document.querySelectorAll(".cm-content")).find((el) => el.closest(".lumir-harness") === null) ??
+      null;
     const snapshot = () => {
-      const content = document.querySelector(".cm-content") as
+      const content = docContent() as
         | (Element & { cmTile?: { root?: { view?: { state?: { doc?: { toString(): string } } } } } })
         | null;
       const doc = content?.cmTile?.root?.view?.state?.doc?.toString() ?? "";
@@ -145,8 +150,15 @@ function readyTime(page: Page, path: string): Promise<number | null> {
  * 判据把随后的获焦标记为手势；应用自己的抢焦不经过 mousedown，仍会被 `gesture: false` 抓住。
  */
 async function userClickIntoEditor(page: Page): Promise<void> {
+  // 就绪门：启动装配完成前 `.cm-content` 还没挂上（分栏后 composer 也可能先命中，按同一条
+  // 「非 harness」判据等正文编辑器）。
+  await page.waitForFunction(() =>
+    Array.from(document.querySelectorAll(".cm-content")).some((el) => el.closest(".lumir-harness") === null),
+  );
   await page.evaluate(() => {
-    const content = document.querySelector(".cm-content") as HTMLElement;
+    const content = Array.from(document.querySelectorAll(".cm-content")).find(
+      (el) => el.closest(".lumir-harness") === null,
+    ) as HTMLElement;
     content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     content.focus();
   });
@@ -162,9 +174,10 @@ type EditorState = {
 
 function editorState(page: Page): Promise<EditorState> {
   return page.evaluate(() => {
-    const content = document.querySelector(".cm-content") as unknown as {
-      cmTile: { root: { view: any } };
-    };
+    // 正文编辑器 = 不在 harness 面板里的那个 `.cm-content`（见记录器同一条判据）。
+    const content = Array.from(document.querySelectorAll(".cm-content")).find(
+      (el) => el.closest(".lumir-harness") === null,
+    ) as unknown as Element & { cmTile: { root: { view: any } } };
     const view = content.cmTile.root.view;
     return {
       head: view.state.selection.main.head as number,
@@ -172,8 +185,22 @@ function editorState(page: Page): Promise<EditorState> {
       scrollTop: Math.round(view.scrollDOM.scrollTop as number),
       hasFocus: view.hasFocus as boolean,
       activeInContent:
-        document.activeElement instanceof Element &&
-        (document.querySelector(".cm-content")?.contains(document.activeElement) ?? false),
+        document.activeElement instanceof Element && content.contains(document.activeElement as Node),
+    };
+  });
+}
+
+/** 标签栏外框（几何判据 tasks 3.6）：聚焦 / 新建都不得让标签栏挪动或改高。 */
+function tabstripRect(page: Page): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  return page.evaluate(() => {
+    const el = document.querySelector(".tabstrip") as HTMLElement | null;
+    if (el === null || el.clientWidth === 0) return null;
+    const rect = el.getBoundingClientRect();
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
     };
   });
 }
@@ -204,6 +231,29 @@ async function failSnapshotFor(page: Page, brokenPath: string): Promise<void> {
       return invoke(cmd, args);
     };
   }, brokenPath);
+}
+
+/** `harness_state` 的零态桩（与 Rust `StateSnapshot::empty` 同形，照 m303 的先例）：不补这条
+ *  桩时 transcript 停在未初始化态——composer 的在场性就不足以证明「真实 harness pane」，
+ *  负例也就退化成对着一个空壳断言。 */
+async function stubHarness(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: unknown) => unknown;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "harness_state") {
+        return JSON.stringify({
+          messages: [],
+          usage: { ctx_pct: 0, cache_pct_session: 0 },
+          pending_approval: null,
+          warn_ctx_pct: 85,
+        });
+      }
+      if (cmd === "harness_list_sessions") return JSON.stringify([]);
+      if (cmd === "harness_new_session") return null;
+      return invoke(cmd, args);
+    };
+  });
 }
 
 async function openOldDoc(page: Page): Promise<void> {
@@ -275,6 +325,8 @@ test("目录下新建文件：装载完成后焦点落正文首行，装载期�
   await page.goto("/");
   await openOldDoc(page);
   const rectBefore = await editorRect(page);
+  const stripBefore = await tabstripRect(page);
+  expect(stripBefore, "有标签时标签栏必须在场（矩形判据的前提）").not.toBeNull();
 
   await beginCreate(page, "docs");
   await submitInlineCreate(page, "note.md");
@@ -289,8 +341,9 @@ test("目录下新建文件：装载完成后焦点落正文首行，装载期�
   expect(state.doc, "新文档是空文件（新建口径）").toBe("");
   expect(state.head, "空文件的正文首行 = 文档起点").toBe(0);
   expect(state.scrollTop, "聚焦不得把视口滚走").toBe(0);
-  // 几何判据（tasks 3.6）：聚焦前后编辑器外框逐值不变（标签栏出现 / 撤下以外的布局不动）
+  // 几何判据（tasks 3.6）：聚焦前后编辑器与标签栏外框逐值不变
   expect(await editorRect(page), "聚焦不得挪动编辑器外框").toEqual(rectBefore);
+  expect(await tabstripRect(page), "聚焦不得改变标签栏几何").toEqual(stripBefore);
 
   // 键入落点（tasks 3.3）：后续按键进入该文档，不落在树 / body
   await page.keyboard.type("FOCUS-MARKER");
@@ -421,6 +474,113 @@ test("打开失败（装载读盘报错）：不聚焦、旧文档仍是前台",
   expect(state.activeInContent, "打开失败时 MUST NOT 聚焦").toBe(false);
   const inContent = (await focusLog(page)).filter((row) => row.inContent);
   expect(inContent, `打开失败路径不得有任何编辑器获焦：${JSON.stringify(inContent)}`).toEqual([]);
+});
+
+test("装载中焦点进入真实 harness composer：激活链不抢焦、新文档不夺焦", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await installRecorder(page);
+  await page.goto("/");
+  await openOldDoc(page);
+
+  // 打开真实 harness pane（分栏 + composer 是真正的 CodeMirror 输入面，不是替身）
+  await page.locator(".lumir-hp-toggle").click();
+  const composer = page.locator(".lumir-hp-composer .cm-content");
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await expect(composer).toBeFocused();
+
+  await beginCreate(page, "docs");
+  await submitInlineCreate(page, "note.md");
+  await expect(page.locator('.tab[data-path="docs/note.md"]')).toHaveCount(0);
+
+  // 装载在途：焦点进入 composer 并开始输入（composer 在右 pane，不被正文「正在打开」覆盖层挡住）
+  await composer.click();
+  await expect(composer).toBeFocused();
+  await page.keyboard.type("draft");
+
+  await expect(page.locator('.tab.is-active')).toHaveAttribute("data-path", "docs/note.md");
+  // 判定那一拍之后：composer 仍持焦、输入未被清掉，正文编辑器从未获焦
+  await page.waitForTimeout(100);
+  await expect(composer).toBeFocused();
+  await expect(composer).toContainText("draft");
+  const state = await editorState(page);
+  expect(state.doc, "新文档已装载（不是「没打开所以没抢」的空转）").toBe("");
+  expect(state.activeInContent, "焦点在仍在场的 composer 上，MUST NOT 拽回").toBe(false);
+  expect(state.hasFocus, "激活链 MUST NOT 聚焦正文编辑器").toBe(false);
+  const inContent = (await focusLog(page)).filter((row) => row.inContent);
+  expect(
+    inContent,
+    `激活链（含 passive 关闭与收尾判定）MUST NOT 让正文编辑器获焦：${JSON.stringify(inContent)}`,
+  ).toEqual([]);
+});
+
+test("未命名 dirty 守卫：openFile 返回 false，不建标签、不聚焦、草稿留在前台", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await installRecorder(page);
+  await page.goto("/");
+
+  // 启动即未命名文档（没有路径、不是标签）：直接键入让它变脏——这条守卫只在「前台没有路径」
+  // 时成立，读盘报错是另一条路径（下面另有独立用例）。
+  // 此时正文被 D107 空态覆盖层（`inset: 0`）盖住，真实鼠标点不进去，用 `userClickIntoEditor`
+  // 的合成手势（同 go-to-line 用例的装配限制）；断言只看提交之后的获焦，因此不影响判据。
+  await expect(page.locator(".tab")).toHaveCount(0);
+  await userClickIntoEditor(page);
+  await expect.poll(async () => (await editorState(page)).activeInContent).toBe(true);
+  await page.keyboard.type("DRAFT-IN-UNNAMED");
+  await expect(page.locator(".cm-content")).toContainText("DRAFT-IN-UNNAMED");
+  const draft = await editorState(page);
+
+  // 根级菜单新建文件：创建照常落盘，但打开被 dirty 守卫拦下（openFile 返回 false）
+  await page.locator(".ft-vault").click({ button: "right" });
+  await expect(page.locator(".ft-menu")).toBeVisible();
+  await page.locator(".ft-menu .ft-menu-item", { hasText: "新建文件…" }).click();
+  await expect(page.locator(".ft-item.is-new .ft-edit")).toBeFocused();
+  const submitT = await page.evaluate(() => performance.now());
+  await submitInlineCreate(page, "guarded.md");
+
+  // 守卫提示上屏（D230 模板 + 动作「切换文件」），文件确实建了，但没有标签被打开
+  await expect(page.locator(".toast-dirty-guard")).toBeVisible();
+  await expect(page.locator(".toast-dirty-guard")).toContainText("当前文档不支持保存");
+  await expect.poll(async () => fsMutations(page)).toEqual([{ cmd: "fs_create_file", path: "guarded.md" }]);
+  await expect(page.locator(".tab")).toHaveCount(0);
+
+  // 草稿原样留在前台、焦点不进编辑器、提交之后没有任何编辑器获焦
+  const state = await editorState(page);
+  expect(state.doc, "守卫拦下时不得替换草稿").toBe(draft.doc);
+  expect(state.activeInContent, "openFile=false 时 MUST NOT 聚焦").toBe(false);
+  const after = (await focusLog(page)).filter((row) => row.inContent && row.t > submitT);
+  expect(after, `openFile=false 之后不得有编辑器获焦：${JSON.stringify(after)}`).toEqual([]);
+});
+
+test("新建子目录：焦点与标签栏 / 编辑器矩形逐值不变", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await installRecorder(page);
+  await page.goto("/");
+  await openOldDoc(page);
+  const rectBefore = await editorRect(page);
+  const stripBefore = await tabstripRect(page);
+  expect(stripBefore, "有标签时标签栏必须在场（矩形判据的前提）").not.toBeNull();
+  const tabCountBefore = await page.locator(".tab").count();
+
+  await openRowMenu(page, "docs", "新建子目录…");
+  await expect(page.locator(".ft-item.is-new .ft-edit")).toBeFocused();
+  const submitT = await page.evaluate(() => performance.now());
+  await page.locator(".ft-item.is-new .ft-edit").fill("sub2");
+  await page.keyboard.press("Enter");
+
+  await expect.poll(async () => fsMutations(page)).toEqual([{ cmd: "fs_create_dir", path: "docs/sub2" }]);
+  // 新建子目录不打开文档、不改前台：标签数 / 前台 / 两个矩形 / 焦点逐值不变
+  await page.waitForTimeout(100);
+  await expect(page.locator(".tab")).toHaveCount(tabCountBefore);
+  await expect(page.locator('.tab.is-active')).toHaveAttribute("data-path", "docs/old.md");
+  expect(await editorRect(page), "新建子目录不得挪动编辑器外框").toEqual(rectBefore);
+  expect(await tabstripRect(page), "新建子目录不得改变标签栏几何").toEqual(stripBefore);
+  const state = await editorState(page);
+  expect(state.activeInContent, "新建子目录 MUST NOT 聚焦编辑器").toBe(false);
+  expect(
+    (await focusLog(page)).filter((row) => row.inContent && row.t > submitT),
+    "新建子目录之后不得有编辑器获焦",
+  ).toEqual([]);
 });
 
 // ---------------------------------------------------------------------------

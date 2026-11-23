@@ -13,8 +13,28 @@
 >   浮层例外：新建文件装载期间用户打开 quick-open / goto-line 时，文档切换仍关闭浮层，但不把
 >   焦点交还旧编辑器；浮层关闭后若没有其他仍在场的焦点目标，焦点落到新文档正文首行；焦点若
 >   已移到 composer、文件树行或编辑器等仍在场目标，仍严格不抢。
-> - `tasks.md` 勾选「F1/F3 批准、F2 修订落制品、F2 追认闸门」三项；全部实现与验证项仍未勾，
->   本 change 尚未进入实现。
+> - **实现已落地**（mission 分支 `feat/focus-created-document-nov23`，实现提交 `8d746878`，
+>   验证制品返修见本块下方「实现与验证状态」）。代码本体、测试与验收场景均已提交；本 change
+>   尚未 merge / 归档，living spec 的改动仍以 delta 留在本目录。
+> - **实现与验证状态（2026-11-23，返修后）**
+>   - 代码：`src/focus-claim.ts`（新，判定纯函数）、`src/main.ts`（create 分支 `claim` + await
+>     + 判定 + `focusPreservingReadingPosition`；`passiveOverlayClose` 沿完整激活链透传）、
+>     `src/tabs.ts`（`DocumentSwitchOptions`）、`src/quick-open.ts`（公开 `close(restoreFocus?)`
+>     与转发）、`src/goto-line.ts` / `src/quick-open.ts`（被动关闭把仍在浮层内的焦点显式
+>     `blur()` 回 `body`，理由见 design §2.2 / §6）。
+>   - 浏览器层（`tests/visual/scenes/focus-created-document-nov23.spec.ts`，14 例全绿）：
+>     三入口（目录行 / 根级 / 空 vault）焦点与 caret / scrollTop；装载中打开 quick-open 与
+>     goto-line（light / dark 各一次，目标路径 `source-ready` 为唯一分界）；**装载中焦点进入
+>     真实 harness composer**；装载中焦点移到仍在场的树行；**未命名 dirty 守卫导致
+>     `openFile=false`**；**新建子目录**焦点与标签栏 / 编辑器矩形逐值不变；快速打开仍交还
+>     编辑器（回归）；树点击既有文件不聚焦（反向）；聚焦前后编辑器与标签栏矩形不变。
+>   - 反向验证（判据有区分度）：旧实现 5 红 3 绿；只保留 `afterLoad` passive → quick-open /
+>     goto-line 必红；去掉 `shouldClaimFocus` → harness composer 负例必红；去掉 `opened`
+>     闸门 → dirty 守卫负例必红；在新建子目录分支注入聚焦 → 子目录负例必红。
+>   - 门禁与真机读数见 `tasks.md` 的「实现与验证状态」块（quick / visual / 真机 47c）。
+>   - **未验项（就地登记，不虚构）**：`restoreFocus` spy（页面侧不可观测，需产品侧测试钩子）、
+>     新建文件的 frontmatter 形态矩阵（该链路文档恒为空文件）、合并节点的 backlog 记录与
+>     独立评审（本 mission 不 merge / 不归档）。
 > - 本 change 只到提案层：living spec 的改动以 delta 留在本目录，归档时并入，不提前改写。
 > - **评审返修（2026-11-23，第二轮）**：① passive 值覆盖完整激活链（激活阶段与装载收尾的每个
 >   `syncActiveDocument` 同步点），不只 `afterLoad`；② quick-open 公开 `close` 签名与包装改为

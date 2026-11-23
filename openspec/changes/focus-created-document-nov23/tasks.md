@@ -1,8 +1,31 @@
 # Tasks: focus-created-document-nov23
 
 > 施工前提：**F1 / F3 已按推荐批准（Alex 2026-11-23）；F2 修订已于 2026-11-23 追认通过
-> （Alex 原话「好，按这个规则处理」）。** 0.1 / 0.2 / 0.3 记录批准、落值与追认闸门；全部
-> 实现与验证项仍未勾，本 change 尚未进入实现。未勾项不删除，放弃的就地写理由。
+> （Alex 原话「好，按这个规则处理」）。** 0.1 / 0.2 / 0.3 记录批准、落值与追认闸门。未勾项
+> 不删除，放弃的就地写理由（见 1.5 / 3.2 / 6.3 / 6.4）。
+>
+> ## 实现与验证状态（2026-11-23）
+>
+> 实现已落地并验证；本 change **未 merge / 未归档**，节点 2 等合并时另行核对。
+>
+> - 实现提交：`8d746878`（mission 分支 `feat/focus-created-document-nov23`）。验证制品返修
+>   （harness composer / dirty 守卫 / 新建子目录 / 标签栏矩形 / 节点状态）单独一次
+>   docs+test 提交，见分支 tip。
+> - 浏览器层：`tests/visual/scenes/focus-created-document-nov23.spec.ts` **14 例全绿**
+>   （含三入口、quick-open / goto-line × light / dark、真实 harness composer、树行、
+>   dirty 守卫、新建子目录、快速打开回归、树点击反向、失败分支）。
+> - 单元层：`tests/unit/focus-claim.test.ts`（判定矩阵）+ 全量 1857/1857。
+> - 反向验证（判据不是恒真，日志在 `.local/missions/focus-created-document-nov23/`）：
+>   旧实现 5 红 3 绿（`red-01`）；只保留 afterLoad passive → 浮层两例必红（`red-02`）；
+>   去掉 `shouldClaimFocus` → harness composer 必红（`red-04`）；去掉 `opened` 闸门 →
+>   dirty 守卫必红（`red-05`）；在新建子目录分支注入聚焦 → 子目录必红（`red-06`）；
+>   去掉收尾判定 → 树行负例必红（`red-03`）。
+> - 门禁（返修后重跑）：`scripts/gate.sh visual` → `GATE RESULT: 15/15 PASS（SKIP 0）`
+>   （visual-regression 1272 passed / 1 intentional skip；基线未更新）。
+> - 真机（返修后重跑）：`47c-create-and-delete` 1/1 PASS / 31.0s / 43 条断言（`ax: { focused:
+>   "AXTextArea" }` + 键入 `focus47c` 读回），证据
+>   `.local/acceptance/2026-11-23-focus-created-document/`。
+> - 未验项：见 1.5 / 3.2 / 6.3 / 6.4 的就地理由。
 
 ## 0. 节点 1 与红线
 
@@ -28,9 +51,11 @@
       harness）：
       - 目录下新建 → 断言 `document.activeElement === view.contentDOM`；旧实现焦点在 `body`，必红
       - `view.state.selection.main.head === firstBodyLineStart(view.state.doc)`；`scrollTop === 0`
-- [x] 1.2 新增「装载中焦点被移到仍在场的目标」负例：给 `fs_read_snapshot` 加延时桩（照
-      `tauri-stub.ts:122-125` / `:867-868` 的 `urlTitleDelayMs` 先例），装载途中点进 harness
-      composer，断言焦点仍在 composer、编辑器选区 / `scrollTop` 未变
+- [x] 1.2 新增「装载中焦点被移到仍在场的目标」负例：给 `fs_read_snapshot` 加延时桩（新增
+      `snapshotDelayMs`，照 `urlTitleDelayMs` 先例），装载途中把焦点移到仍在场的目标，
+      断言焦点不被拽回、编辑器选区 / `scrollTop` 未变。**覆盖两档**：① 真实 harness pane 的
+      composer（⌘⇧A 分栏、点进 composer 并键入，断言激活链零抢焦、输入不被清掉）；② 文件树
+      另一行（目录行）
 - [x] 1.3 新增「装载中打开 quick-open」负例：延时桩生效后发 `⌘P`；从提交起同时监听
       `focusin` 与 `lumir:source-ready`（记录 `detail.path`）。**唯一分界 = 目标路径的
       `lumir:source-ready`**（`detail.path === 创建路径`；该事件在 `reloadSession` 的装载
@@ -99,10 +124,16 @@
       空文件」（spec「新建文件 SHALL 为空文件」），frontmatter 形态在这条路径上不可能出现；
       C3 对 frontmatter 的落点口径由既有的 cursor-visibility 场景覆盖，本 change 不改 caret。
 - [x] 3.3 键入落点：新建后直接键入标记串，断言编辑器正文出现该串、文件树与 `body` 不接收
-- [x] 3.4 失败分支：`openFile` 返回 `false`（未命名 dirty 守卫）时不聚焦、旧文档焦点不变
+- [x] 3.4 失败分支：`openFile` 返回 `false` 时不聚焦、旧文档焦点不变。**覆盖两条真实路径**：
+      ① 未命名 dirty 守卫（启动的未命名文档里键入草稿 → 根级菜单新建 → `save.guard` 拦下：
+      文件照常建、不建标签、草稿留在前台、`.toast-dirty-guard` 上屏、提交后无编辑器获焦）；
+      ② 装载读盘报错（该路径的 `fs_read_snapshot` 抛 `fs_not_found`：不建标签、失败提示上屏、
+      旧文档仍是前台）
 - [x] 3.5 反向矩阵：文件树点击既有文件、新建子目录两种情形焦点逐值不变；快速打开单独按 1.6
-      的回归判据断言「交还编辑器」，MUST NOT 混进「不聚焦」矩阵
-- [x] 3.6 几何：聚焦前后标签栏、编辑器矩形与 `scrollTop` 不变（聚焦不得把视口滚走）
+      的回归判据断言「交还编辑器」，MUST NOT 混进「不聚焦」矩阵。新建子目录用例同时断言
+      标签数 / 前台标签 / 标签栏矩形 / 编辑器矩形逐值不变
+- [x] 3.6 几何：聚焦前后标签栏、编辑器矩形与 `scrollTop` 不变（聚焦不得把视口滚走）。
+      **两处断言**：新建文件（聚焦发生）与新建子目录（不聚焦）各比一次编辑器 + 标签栏矩形
 - [x] 3.7 浮层级联：装载中打开 quick-open / goto-line 的两例（1.3 / 1.4）在 light / dark 各跑
       一次；每次都核对焦点事件序列（激活阶段无 `contentDOM` 获焦），最终 `activeElement`
       只作补充

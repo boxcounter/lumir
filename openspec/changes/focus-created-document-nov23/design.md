@@ -244,3 +244,17 @@ openFile
   目标路径的 `lumir:source-ready`。go-to-line 的键位作用域是 `editor`，装载期间打开它必须先
   由用户把焦点放进编辑器；那次获焦按 `gesture`（mousedown / keydown 200ms 窗口）标记并从
   「应用抢焦」判据里排除，同时单独正向断言（证明标记没有把一切都吞掉）。
+- 记录器与 `editorState` 取「不在 `.lumir-harness` 里的那个 `.cm-content`」：分栏后 composer
+  也是 CodeMirror 实例，`querySelector` 可能先命中它（会读错文档、也把 composer 获焦误判成
+  正文获焦）。
+- 覆盖矩阵（14 例）：三入口（目录行 / 根级 / 空 vault）；装载中打开 quick-open 与 goto-line
+  （light / dark 各一次）；**装载中焦点进入真实 harness composer**（⌘⇧A 分栏 + 点进 composer
+  并键入，断言激活链零抢焦、输入不被清掉、正文从未获焦）；装载中焦点移到仍在场的树行；
+  **未命名 dirty 守卫（`openFile=false`）**——文件照常建、不建标签、草稿留在前台、
+  `.toast-dirty-guard` 上屏、提交后无编辑器获焦；装载读盘报错（`openFile=false` 的第二条
+  路径）；**新建子目录**（标签数 / 前台标签 / 编辑器矩形 / 标签栏矩形 / 焦点逐值不变）；
+  快速打开仍交还编辑器（回归）；树点击既有文件不聚焦（反向）。几何断言同时比编辑器与标签栏
+  矩形（新建文件与新建子目录两处）。
+- 两条守卫各自的反向验证：去掉 `shouldClaimFocus` → harness composer 负例红；去掉 `opened`
+  闸门 → dirty 守卫负例红；在新建子目录分支注入聚焦 → 子目录负例红（日志见
+  `.local/missions/focus-created-document-nov23/red-04/05/06-*.log`）。
