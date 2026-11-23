@@ -1047,7 +1047,7 @@ const AX_WHO_LINE = [
   "```",
 ].join("\n");
 
-const META_TIME = "/^· (刚刚|[0-9]+ ?(秒|分钟|小时)前|昨天)(?![\\s\\S])/";
+const META_TIME = "/^· [0-9]+ ?(秒|分钟|小时)前(?![\\s\\S])/";
 
 test("metaLine：角色与紧邻时间节点成对才 PASS——连续文本正则跨不过节点边界（152 的假 FAIL 形态）", async () => {
   const root = tmpRoot("meta-line-pass");
@@ -1076,9 +1076,14 @@ test("metaLine：角色与紧邻时间节点成对才 PASS——连续文本正�
     false,
     "连续文本正则跨不过节点边界——本场景首跑的两条假 FAIL 即此",
   );
+  // `0秒前` 是 restored 档的合法读数（sessionWhen 在 <1 分钟时产它，不是「刚刚」）——必须绿。
+  const zero = AX_WHO_LINE.replace('        - [211] AXStaticText = "· 3秒前"', '        - [211] AXStaticText = "· 0秒前"');
+  const zeroRun = await drive(root, scenario, { cu: { state: async () => ({ text: zero, image: null }) } });
+  assert.deepEqual(zeroRun.records.map((r) => r.ok), [true, true], "0秒前 是 restored 同日合法读数，必须绿");
+  assert.match(zeroRun.records[0].detail ?? "", /0秒前/, "证据行应写出 0秒前 的成对读数");
 });
 
-test("metaLine 反向：角色缺失 / 时间缺失 / 错配 / 不可读 / 退化快照 / 多消息缺一条 全部判 FAIL", async () => {
+test("metaLine 反向：角色缺失 / 时间缺失 / live 档读数（刚刚·昨天）/ 错配 / 不可读 / 退化快照 / 多消息缺一条 全部判 FAIL", async () => {
   const root = tmpRoot("meta-line-reverse");
   useTmpEnv(root);
   const only = (role) => ({
@@ -1099,6 +1104,15 @@ test("metaLine 反向：角色缺失 / 时间缺失 / 错配 / 不可读 / 退�
   );
   assert.deepEqual(noTime.map((r) => r.ok), [false], "时间缺失必须红");
   assert.match(noTime[0].label, /不匹配时间读数/, "错因要点明相邻节点不是时间读数");
+
+  // live 档专属读数是**错形态**：restored 走 sessionWhen（同日窄相对 / 跨天短日期），不产
+  // 「刚刚」（live 的 <10s 观感）与「昨天」（live 的 >=24h 兜底）——放进来就是判据弱化。
+  for (const wrong of ["· 刚刚", "· 昨天"]) {
+    const text = AX_WHO_LINE.replace('        - [211] AXStaticText = "· 3秒前"', `        - [211] AXStaticText = "${wrong}"`);
+    const recs = await run(text);
+    assert.deepEqual(recs.map((r) => r.ok), [false], `${wrong} 必须红（restored 档不产该读数）`);
+    assert.match(recs[0].label, /不匹配时间读数/, `${wrong} 的错因要点明不匹配恢复档读数`);
+  }
 
   // 错配：时间的位置换成另一个角色节点——相邻，但不是读数。
   const mismatched = await run(AX_WHO_LINE.replace('        - [211] AXStaticText = "· 3秒前"', '        - [211] AXStaticText = "Agent"'));
