@@ -13,7 +13,6 @@ import { DEFAULT_AUTO_INDENT } from "./enter-indent";
 import { DEFAULT_FONT_SIZE } from "./typography";
 import type { TextScaleDirection, TypographySettings } from "./typography";
 import type { EditorMode } from "./bindings/EditorMode";
-import type { MarkdownLineNumbers } from "./bindings/MarkdownLineNumbers";
 import { baseName, createFileTree, isTextOpenKind, linkableVaultPaths, openKind, patchAttachmentPaths, shellPlanOf, vaultAbsolutePath } from "./tree";
 import type { InlineEditRequest, OpenKind } from "./tree";
 import {
@@ -122,6 +121,12 @@ import {
   currentTheme,
   nextTheme,
 } from "./theme";
+import {
+  LINE_NUMBERS_INDICATOR_LABEL,
+  LINE_NUMBERS_SAVE_FAILED_TEXT,
+  currentLineNumbers,
+  nextLineNumbers,
+} from "./line-numbers";
 import {
   currentLanguage,
   errorText,
@@ -281,7 +286,6 @@ const paneAssemblies = new Map<PaneId, PaneAssembly>();
 //（donor）的只读快照现取（运行期步进后的当前值只有实例记账里有）。
 let currentDefaultMode: EditorMode = "md";
 let currentAutoIndent = DEFAULT_AUTO_INDENT;
-let currentMarkdownLineNumbers: MarkdownLineNumbers = "on-demand";
 let currentTypography: TypographySettings = {
   fontFamily: null,
   monoFontFamily: null,
@@ -436,7 +440,9 @@ function createPaneHandle(paneId: PaneId, kind: PaneKind): PaneHandle {
     editor.applyTypography(currentTypography);
     editor.syncRuntimeTypography(donor.typographySettings());
     editor.setContentWidth(donor.contentWidth());
-    editor.setMarkdownLineNumbers(currentMarkdownLineNumbers);
+    // 行号开关是全局运行期口径：新 pane 从**唯一运行真源**（`<html data-line-numbers>`）读
+    // 当前值，与既有 pane 同口径（MUST NOT 读装配层的跟踪变量——那会是第二处真源）。
+    editor.setLineNumbers(currentLineNumbers(document.documentElement) === "on");
     editor.setWikilinkResolver(currentResolver);
   }
   // 能力注入与事件订阅全量重放（注册表口径，见上面几处注册表的注释）。
@@ -1106,8 +1112,7 @@ const editor: EditorHandle = {
   setPasteUrlTitlePort: (port) => forEachEditor((handle) => handle.setPasteUrlTitlePort(port)),
   setGotoLinePrompt: (prompt) => forEachEditor((handle) => handle.setGotoLinePrompt(prompt)),
   setGutterCopy: (port) => forEachEditor((handle) => handle.setGutterCopy(port)),
-  setMarkdownLineNumbers: (tier) =>
-    forEachEditor((handle) => handle.setMarkdownLineNumbers(tier)),
+  setLineNumbers: (on) => forEachEditor((handle) => handle.setLineNumbers(on)),
   setGotoLineGutterVisible: (visible) =>
     forEachEditor((handle) => handle.setGotoLineGutterVisible(visible)),
   refreshPreview: () => forEachEditor((handle) => handle.refreshPreview()),
@@ -1496,9 +1501,8 @@ const gotoLine = createGotoLinePrompt({
   mount: shell.modeline,
   onJump: (line) => editor.jumpToLine(line),
   restoreFocus: () => editor.focusPreservingReadingPosition(),
-  // `on-demand` 档（md 行号 gutter 的默认档，D4 二次改判）下 gutter 随输入条装 / 卸：
-  // 装配层只做「把在场状态转给编辑器」这一件事，安装与卸除的判据在 editor.ts 的
-  // `mdGutterExtensions()`（单一来源）。
+  // `off` 档（行号开关关闭）下 gutter 随输入条临时装 / 卸：装配层只做「把在场状态转给编辑器」
+  // 这一件事，安装与卸除的判据在 editor.ts 的 `gutterExtensions()`（单一来源）。
   onVisibilityChange: (open) => editor.setGotoLineGutterVisible(open),
 });
 injectEach((handle) => handle.setGotoLinePrompt(gotoLine));
@@ -3284,6 +3288,59 @@ function cycleLanguage(): void {
 shell.modelineLanguage.addEventListener("click", cycleLanguage);
 
 // ---------------------------------------------------------------------------
+// 行号全局开关（change global-line-numbers-toggle-nov23）：md 与只读 code 共用一个开关。
+//
+// 真源分层（design §2）：`config.json` 的 `[ui] line_numbers` = **启动真源**，
+// `<html data-line-numbers>` = **运行期唯一生效面**。不引入第三处「当前开关」状态——命令与
+// modeline 钮读的是 data-line-numbers（`src/line-numbers.ts` 的 currentLineNumbers），
+// 编辑器实例态只由 `applyLineNumbers` 经 `editor.setLineNumbers` 写入。
+//
+// applyLineNumbers 是**唯一施加点**（与 applyTheme 同构）：启动装配与运行期切换都经它；
+// MUST NOT 出现第二处写 `data-line-numbers` 的代码（REVIEW.md「同一语义两处真源」条）。
+// src/boot.ts 首帧前**不写**该属性：首帧没有编辑器，行号不可见，多一处写入者只会制造第二个真源。
+// ---------------------------------------------------------------------------
+
+/** 施加行号开关：写 `<html data-line-numbers>` + 把同一值写给全部文档 pane（含后台会话）+
+ *  刷新 modeline 行号钮。`on` 由调用方从闭集合推出（启动装配读配置、切换读当前属性），
+ *  本函数不判非法值。 */
+function applyLineNumbers(on: boolean): void {
+  document.documentElement.dataset.lineNumbers = on ? "on" : "off";
+  editor.setLineNumbers(on);
+  syncLineNumbersIndicator();
+}
+
+/** 刷新 modeline 行号钮（可见文本 = `on` / `off` 读数，悬停提示 / 读屏名走文案表 D974）。
+ *  只在属性已施加后显示（宁可不显示，也不显示一个尚未生效的状态——与主题钮同口径）；
+ *  语言切换后的重绘也走这里（`onRelabel`），它 MUST NOT 重配编辑器。 */
+function syncLineNumbersIndicator(): void {
+  const state = currentLineNumbers(document.documentElement);
+  if (state === null) return;
+  shell.modelineLineNumbers.textContent = state;
+  const label = LINE_NUMBERS_INDICATOR_LABEL(state);
+  shell.modelineLineNumbers.title = label;
+  shell.modelineLineNumbers.setAttribute("aria-label", label);
+  shell.modelineLineNumbers.hidden = false;
+}
+
+/** 切换开关（命令 `view.toggle-line-numbers` 与 modeline 行号钮的**同一条实现路径**，
+ *  与 cycleTheme 同款：不调命令分发器，两处直接调它）。顺序是有意的：先施加（运行期即时
+ *  生效，`data-line-numbers` 与全部 pane 的 gutter 同帧更新），再写回配置——写失败只影响
+ *  持久化，运行期开关**不回滚**，toast 告知重启后回到配置文件里的值，另记一条诊断日志
+ * （与主题 / 语言同一条降级口径）。 */
+function toggleLineNumbers(): void {
+  const next = nextLineNumbers(currentLineNumbers(document.documentElement));
+  applyLineNumbers(next === "on");
+  configSetUiValue("line_numbers", next).catch((e: unknown) => {
+    toast(LINE_NUMBERS_SAVE_FAILED_TEXT(errorMessage(e)));
+    // 诊断出口复用既有的 config_warning（用 source 区分成因），不为一条失败新造事件名。
+    logEvent("config_warning", { source: "line-numbers", message: errorMessage(e) });
+  });
+}
+
+// modeline 行号钮的点击 = 同一条实现路径（click 事件本身不需要被消费，语义全在 toggleLineNumbers 里）。
+shell.modelineLineNumbers.addEventListener("click", toggleLineNumbers);
+
+// ---------------------------------------------------------------------------
 // Harness 对话面板（M303，change add-harness-probe；HP1 归位 pane，change
 // move-harness-to-pane-chat-frame）：面板本体、流式渲染、上下文组装与批准闸都在
 // src/harness-panel.ts（+ src/harness-context.ts / src/harness-panel.css），这里做装配——
@@ -3776,6 +3833,10 @@ const commands: CommandRuntime = {
   // 就是上面的 cycleLanguage（与 modeline 语言钮共用同一条路径，见那段注释）。默认键位 ⌘⇧L 在
   // keys.ts 的 KEY_BINDINGS 里（三条冲突来源的复核与 token 形态见那一条的 docKey 指向的表条目）。
   "view.language-cycle": () => cycleLanguage(),
+  // 行号全局开关（change global-line-numbers-toggle-nov23）：md 与只读 code 共用同一个二元
+  // 开关，命令实现就是上面的 toggleLineNumbers（与 modeline 行号钮共用同一条路径）。
+  // 默认键位 ⌘⇧N 在 keys.ts 的 KEY_BINDINGS 里（三条冲突来源的复核见 D973）。
+  "view.toggle-line-numbers": () => toggleLineNumbers(),
   // 左栏收起 / 展开（M631，change add-sidebar-resize-hide-and-root-create design §2）：一个键
   // 往返切换（默认 ⌘B，冲突核实见表条目 D548，表即文档）。在手状态的收尾顺序与焦点交接见
   // toggleSidebar 的注释；几何在 src/style.css。
@@ -4090,6 +4151,9 @@ onRelabel(() => {
   //（那时 `<html lang>` 还没写，取值落到默认档）——这里按当前主题重写一遍。
   const theme = currentTheme(document.documentElement);
   if (theme !== null) applyTheme(theme);
+  // 行号钮的悬停提示 / 读屏名同理（D974 含 `{state}`，随语言重取）；它只重写文案 / 显隐，
+  // MUST NOT 重配编辑器——指示钮文案与 gutter 在场无关。
+  syncLineNumbersIndicator();
   // 树空态那一行必须**重新取值**而不是重放旧字符串：`RESTORING_NOTICE()` 在显示的那一刻就
   // 解析成了字符串，重放等于把切换前的语言钉死（同族的还有后端透传的 notice，那是真值，原样重放）。
   // 恢复进行中时呈现面是启动态（change app-splash-screen）——阶段行走启动面的重绘，不在这里
@@ -4617,13 +4681,13 @@ consumeConfigSnapshot().then((snapshot) => {
   // 钳制在 applySidebarWidth 里做。**收起状态不在这里施加**：它不跨启动（D2：每次启动都显示
   // 左栏），`.app-shell` 上没有 `is-sidebar-hidden` 即展开态。
   setSidebarWidth(snapshot.config.ui.sidebar_width);
-  // md 行号 gutter 档位（M281 的 D4 二次改判，2026-09-28）：三档 `on-demand`（默认）/ `always`
-  // / `off` 只管 md，code 恒常显。与 `ui.theme` 的**差别**：它没有运行期切换的落点，因此是
-  // **装载时读一次、运行期 MUST NOT 回写**（同 `editor.mode` / `editor.font_size`）——本 change
-  // 不提供切换它的命令 / 键位 / UI。**前端不判非法值**：取值是闭集合，合法性已由 Rust 侧
-  // validate 保证（三档之外 warning + 回落 on-demand，REVIEW.md 「同一语义两处真源」条）。
-  editor.setMarkdownLineNumbers(snapshot.config.ui.markdown_line_numbers);
-  currentMarkdownLineNumbers = snapshot.config.ui.markdown_line_numbers;
+  // 行号全局开关（change global-line-numbers-toggle-nov23）：`[ui] line_numbers` 是**启动真源**，
+  // md 与只读 code 共用同一条口径。装载时经 applyLineNumbers 施加——写 `<html data-line-numbers>`、
+  // 把同一值写给全部文档 pane 的编辑器、刷新 modeline 行号钮；运行期由
+  // `view.toggle-line-numbers`（⌘⇧N）/ modeline 行号钮推进并回写配置文件，两处都走那个
+  // **唯一施加点**。**前端不判非法值**：取值是闭集合（on|off），合法性已由 Rust 侧 validate
+  // 保证（非法值 warning + 回落 off，REVIEW.md 「同一语义两处真源」条）。
+  applyLineNumbers(snapshot.config.ui.line_numbers === "on");
   // 主题（restyle-ui-tokens-v1 的启动真源 + M237 的运行期切换）：`[ui] theme` 是**启动真源**，
   // 装载时经 applyTheme 施加到 `<html data-theme>`——token 层的三组块按这个属性取色，全部着色面
   // 即时跟随。运行期由 `view.theme-cycle`（⌘⇧T）/ modeline 主题钮推进并回写配置文件，因此不存在

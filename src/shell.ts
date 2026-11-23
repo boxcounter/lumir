@@ -69,6 +69,12 @@ export interface AppShell {
   /** modeline 右段的版本号段（M236，D2 备选）：窄窗（<640px）时标题栏退下来的版本号落这里；
    *  常态 hidden。与 modelineMeta 是两个独立元素、各有写入者，MUST NOT 合写。 */
   modelineVersion: HTMLElement;
+  /** modeline 右段的行号指示钮（change global-line-numbers-toggle-nov23，照主题 / 语言钮形态）：
+   *  可见文本 = 当前开关读数（`on` / `off` 逐字，不译文），点击 = 切换（与
+   *  `view.toggle-line-numbers` 是**同一条**实现路径，接线在 src/main.ts）。文案由
+   *  `applyLineNumbers` 的施加点写；初始 hidden——开关还没施加到 `<html data-line-numbers>`
+   *  就永远不显示。排在版本号退让段之后、主题钮之前（主题 / 语言继续占最右）。 */
+  modelineLineNumbers: HTMLButtonElement;
   /** modeline 右段的主题指示钮（M237，change live-theme-switch）：可见文本 = 当前主题名，
    *  点击 = 循环切到下一档（与 `view.theme-cycle` 是**同一条**实现路径，接线在 src/main.ts）。
    *  它同时是「我这是哪个主题」的常驻归因出口（restyle 节点 1 裁决 D3 遗留的那条理由）。
@@ -230,6 +236,15 @@ export function createShell(mount: HTMLElement): AppShell {
   const modelineVersion = document.createElement("span");
   modelineVersion.className = "modeline-version";
   modelineVersion.hidden = true;
+  // 行号指示钮（change global-line-numbers-toggle-nov23）：与主题 / 语言钮同族——可见文本 =
+  // 当前开关读数（`on` / `off` 逐字，即 `[ui] line_numbers` 的配置值，属读数不属文案）、
+  // 点击 = 切换（与 `view.toggle-line-numbers` 是**同一条**实现路径）。文案（悬停提示与读屏名）
+  // 由 src/main.ts 的 applyLineNumbers 写；初始 hidden：开关还没施加就永远不显示。
+  // `on` / `off` 等宽由 CSS 的 `min-width` 覆盖（切换是状态变化，不是布局事件）。
+  const modelineLineNumbers = document.createElement("button");
+  modelineLineNumbers.type = "button";
+  modelineLineNumbers.className = "modeline-line-numbers";
+  modelineLineNumbers.hidden = true;
   // 主题指示钮（M237，change live-theme-switch）：文案（当前主题名）、悬停提示与读屏名由
   // src/main.ts 的 applyTheme 写（它是唯一知道「当前主题是谁」的地方，且是唯一的 data-theme
   // 写入者）；这里只建 DOM 与初始 hidden 态。它排在右段**最末**——主题是模型行里最靠边的
@@ -248,7 +263,7 @@ export function createShell(mount: HTMLElement): AppShell {
   modelineLanguage.hidden = true;
   const right = document.createElement("div");
   right.className = "modeline-right";
-  right.append(modelineMeta, modelineVersion, modelineTheme, modelineLanguage);
+  right.append(modelineMeta, modelineVersion, modelineLineNumbers, modelineTheme, modelineLanguage);
   modeline.append(left, right);
 
   root.append(titlebar, fileTree, sidebarDivider, editor, modeline);
@@ -270,6 +285,7 @@ export function createShell(mount: HTMLElement): AppShell {
     modelineSection,
     modelineMeta,
     modelineVersion,
+    modelineLineNumbers,
     modelineTheme,
     modelineLanguage,
     sidebarDivider,

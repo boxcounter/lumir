@@ -215,11 +215,11 @@ export interface VaultFixture {
      *  口径（与 Rust `DEFAULT_SIDEBAR_WIDTH` 同值）——不传的场景天然跑默认宽度，不会因为桩
      *  扩了形状而变宽。静态区间的越界回落 + warning 归 Rust 侧（cargo test），桩只负责送达。 */
     sidebar_width?: number;
-    /** md 行号 gutter 档位（M281 的 D4 二次改判）：`on-demand` / `always` / `off`（与 Rust
-     *  `MarkdownLineNumbers` 同一闭集合）。缺省 `on-demand` = 出厂口径（与 Rust
-     *  `UiConfig::default()` 同值）——不传的场景天然跑「md 默认无行号、输入条在场时出现」，
+    /** 行号 gutter 的全局开关（change global-line-numbers-toggle-nov23）：`on` / `off`（与
+     *  Rust `LineNumbers` 同一闭集合），md 与只读 code 共用。缺省 `off` = 出厂口径（与 Rust
+     *  `UiConfig::default()` 同值）——不传的场景天然跑「两种模式都没有行号、⌥G 时临时出现」，
      *  不会因为桩扩了形状而变形态。越界值的回落 + warning 归 Rust 侧（cargo test）。 */
-    markdown_line_numbers?: "on-demand" | "always" | "off";
+    line_numbers?: "on" | "off";
     /** 界面语言（M282，change ui-language-i18n）：桩缺省 `zh`（**与产品的出厂默认 `en` 不同**，
      *  理由见 mockConfig 处的注释——既有整页基线是 zh 形态，钉住它才让基线继续作「结构与外观」
      *  的回归面）。场景要验 en 面时从这里给 `"en"`。 */
@@ -594,10 +594,12 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
               // `ui.content_width` 之后，缺键会让 `setSidebarWidth(undefined)` 落回默认值
               //（clampSidebarWidth 对非有限值回落 236），场景便读不到「配置值生效」这一档。
               sidebar_width: current?.config?.sidebar_width ?? 236,
-              // md 行号 gutter 档位（M281 的 D4 二次改判）：缺省 `on-demand` = Rust
-              // `UiConfig::default()` 同值。桩必须带上这个键——启动装配层的读取顺序在
-              // `ui.content_width` 之后，缺键会得到 undefined 而让 md 的 gutter 静默不装。
-              markdown_line_numbers: current?.config?.markdown_line_numbers ?? "on-demand",
+              // 行号全局开关（change global-line-numbers-toggle-nov23）：缺省 `off` = Rust
+              // `UiConfig::default()` 同值。桩必须带上这个键——启动装配层按它调用
+              // `applyLineNumbers`，缺键会让开关永不施加（行号钮永远 hidden）。
+              // **默认变化的后果**：既有整页基线里 code 模式的常驻 gutter 消失（这是 change
+              // 的裁决代价，不是回归），md 侧多一个 off 读数钮——两处都要重截基线（人肉裁决点）。
+              line_numbers: current?.config?.line_numbers ?? "off",
               // 界面语言（M282，change ui-language-i18n）：桩缺省的 **`zh`** 与产品的出厂默认
               // （`en`，Rust `UiConfig::default()`）**不同**，这是有意的——既有整页基线全是
               // `zh` 形态，桩把界面语言钉在 `zh` 才能让这套基线继续作「结构与外观」的回归面

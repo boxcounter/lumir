@@ -11,8 +11,8 @@ import { GOTO_LINE_LABEL, GOTO_LINE_PLACEHOLDER, gotoLineTotalText } from "../..
 //   - `tests/unit/goto-line.test.ts`：`resolveGotoLine` 的输入矩阵与文案常量（纯函数层）。
 //   - `tests/unit/keys.test.ts`：表的不变量与 `[keys]` 重绑（表层）。
 //   - 本场景：**键位链路 + DOM 形态 + 实测几何**——真 CM view + 真实 DOM KeyboardEvent
-//     （`page.keyboard.press("Alt+g")`）→ keys.ts 的分发器 → 命令 → 输入条；以及 md 的
-//     行号 gutter（在场时机随档位，见下方「md 行号 gutter（D4 二次改判的三档）」分节头；
+//     （`page.keyboard.press("Alt+g")`）→ keys.ts 的分发器 → 命令 → 输入条；以及行号 gutter
+//     的全局开关（两档 + 跳转临时档，见下方「行号 gutter 的全局开关」分节头；
 //     正文列仍居中、行号贴正文列左缘、纵向对准、窄窗不被裁）。
 //   - `scripts/acceptance/scenarios/56-goto-line.md`：真机 WKWebView 上的同一链路 + 零写盘。
 //
@@ -383,18 +383,24 @@ test("输入条：[keys] 重绑 ⌃J 生效；切标签收起且不跳转", asyn
 });
 
 // ---------------------------------------------------------------------------
-// md 行号 gutter（D4 二次改判的三档：on-demand 默认 / always / off）
+// 行号 gutter 的全局开关（change global-line-numbers-toggle-nov23：两档 + 跳转临时档）
 // ---------------------------------------------------------------------------
 //
-// 口径与配置链路见 openspec/changes/goto-line-command/ 的 design §5.1 与
+// 口径与配置链路见 openspec/changes/global-line-numbers-toggle-nov23/ 的 design §2 / §4 / §5 与
 // docs/specs/config-reference.md §1.3。本文件的覆盖分工（别与另两层重复，也别留缺口）：
-//   - 在场时机：三档各自的行为 + 输入条四条收起路径（Enter / Escape / ⌃G / focusout）都卸除；
-//   - 几何：贴正文列左缘、正文列居中、窄窗不裁、纵向对准——在 `always` 档下判（常驻形态是
-//     几何压力面）；`on-demand` 档下同一套几何在输入条打开期间成立，故几何用例跑 `always`；
-//   - **开关不跳动**：装 / 卸 gutter 那一瞬正文列几何逐值不变（宽窗与窄窗各一次）；
-//   - 缺号边界（frontmatter 恒缺）与 code 模式形态不变各一条；
-//   - 整页基线两条：`m281-md-gutter.png` 是 **always 档**的常驻形态、`m281-goto-prompt.png`
-//     是 **on-demand 档**输入条打开态（两张都属本 change 的新场景基线）。
+//   - 在场时机：两档各自的行为 + 输入条四条收起路径（Enter / Escape / ⌃G / focusout）都卸除；
+//     两个模式（md / 只读 code）同一开关、同一判据；
+//   - 切换入口：⌘⇧N 与 modeline 行号钮共用同一条实现（属性 / gutter / 钮文本 / 配置回写）；
+//     非编辑器焦点（搜索框 / harness composer）下同样命中（作用域 global）；
+//   - 交叉态两个方向（`on → ⌥G → 切 off`、`off → ⌥G → 切 on`）：`gotoGutterVisible` 的赋值
+//     顺序是这两条成立的前提（design §4.2）；
+//   - 几何：贴正文列左缘、正文列居中、窄窗不裁、纵向对准——在 `on` 档下判（常驻形态是
+//     几何压力面）；**开关不跳动**：md 任意宽度与 code 宽窗的正文列 rect 逐值不变，code 窄窗
+//     允许左移但 MUST NOT 横向滚动 / 裁切行号（design §10.1 的已知边界，不是缺陷）；
+//   - 持久化：`__uiValueWrites` 断言每次切换恰一笔 `{key:"line_numbers"}`；写失败不回滚 +
+//     toast；启动按 `ui.line_numbers` 施加；
+//   - 整页基线两条：`m281-md-gutter.png` 是 **on 档**的常驻形态、`m281-goto-prompt.png`
+//     是 **off 档（默认）**的输入条打开态（两张都属既有场景基线）。
 
 /** 正文列（`.cm-content`）的实测 rect——「开关 gutter 不改变正文列几何」的判据来源。 */
 async function contentBox(page: Page): Promise<Box> {
@@ -406,7 +412,45 @@ function columnShape(box: Box): { left: number; right: number; width: number } {
   return { left: box.left, right: box.right, width: box.width };
 }
 
-test("md 行号 gutter（默认 on-demand）：打开时不在场、输入条在场时装上、四条收起路径都卸除", async ({ page }) => {
+/** `<html data-line-numbers>` 的当前值（未施加 = null）。 */
+function htmlLineNumbers(page: Page): Promise<string | null> {
+  return page.evaluate(() => document.documentElement.dataset.lineNumbers ?? null);
+}
+
+/** 每个 pane 的行号 gutter 数量（双 pane 同步的判据：两栏都要有）。 */
+function gutterCountsPerPane(page: Page): Promise<number[]> {
+  return page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>(".editor-pane")].map(
+      (pane) => pane.querySelectorAll(".cm-lineNumbers").length,
+    ),
+  );
+}
+
+/** `config_set_ui_value` 的写入序列（桩只记录，不解释）。 */
+function uiValueWrites(page: Page): Promise<Array<{ key: string; value: unknown }>> {
+  return page.evaluate(
+    () => ((window as unknown as { __uiValueWrites?: Array<{ key: string; value: unknown }> })
+      .__uiValueWrites ?? []),
+  );
+}
+
+/** 元素的实测 rect（右段位移判据）。 */
+async function rectOf(page: Page, selector: string): Promise<Box | null> {
+  return page.locator(selector).evaluate((el) => {
+    const round = (n: number): number => Math.round(n * 100) / 100;
+    const r = el.getBoundingClientRect();
+    return {
+      left: round(r.left),
+      right: round(r.right),
+      top: round(r.top),
+      bottom: round(r.bottom),
+      width: round(r.width),
+      height: round(r.height),
+    };
+  });
+}
+
+test("md 行号 gutter（默认 off）：打开时不在场、⌥G 临时装上、四条收起路径都卸除", async ({ page }) => {
   await openFile(
     page,
     { "gutter.md": GUTTER_DOC, "assets/pic.svg": IMAGE_SVG },
@@ -415,12 +459,13 @@ test("md 行号 gutter（默认 on-demand）：打开时不在场、输入条在
     IMAGE_SVG,
   );
   await expect(page.locator(".cm-lp-image img")).toHaveCount(1);
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("off");
 
-  // ① 打开文档：没有行号列（默认档的「markdown 默认不显示」）
+  // ① 打开文档：没有行号列（默认 off 的「两种模式都没有 gutter」）
   await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
   await focusLine(page, 3);
 
-  // ② 打开输入条：行号列出现，且行号 = 源文档逻辑行号（与 `always` 档同一套编号）
+  // ② 打开输入条：行号列临时出现，且行号 = 源文档逻辑行号（与 on 档同一套编号）
   await page.keyboard.press("Alt+g");
   await expect(gotoBox(page)).toBeVisible();
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
@@ -450,12 +495,47 @@ test("md 行号 gutter（默认 on-demand）：打开时不在场、输入条在
   await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
 });
 
-test("md 行号 gutter（always 档）：常驻在场，输入条开 / 关不改它在场", async ({ page }) => {
-  await openFile(page, { "gutter.md": GUTTER_DOC }, "gutter.md", {
-    config: { markdown_line_numbers: "always" },
+test("⌘⇧N 与 modeline 钮：md / code 同步切换、属性与钮文本同源、切换即回写", async ({ page }) => {
+  await openFile(page, { "doc.md": GUTTER_DOC, "code.ts": CODE_DOC }, "doc.md");
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("off");
+  expect(await htmlLineNumbers(page)).toBe("off");
+
+  // ① ⌘⇧N 从 off 切到 on：md 的 gutter 立即出现、属性与钮文本同步
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("on");
+  expect(await htmlLineNumbers(page)).toBe("on");
+  expect(await uiValueWrites(page)).toEqual([{ key: "line_numbers", value: "on" }]);
+
+  // ② 同一个开关对 code 同样生效（切到 code 标签，gutter 从第一帧起就在）
+  await page.locator('.ft-row[title="code.ts"]').click();
+  await expect(page.locator(".modeline-path")).toHaveText("code.ts");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  expect((await readGutter(page)).numbers.map((n) => Number(n.text))).toEqual([1, 2, 3]);
+
+  // ③ 再按一次：两种模式同时消失、属性与钮文本回 off、写回同样一笔
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("off");
+  expect(await htmlLineNumbers(page)).toBe("off");
+  expect((await uiValueWrites(page)).at(-1)).toEqual({ key: "line_numbers", value: "off" });
+
+  // ④ modeline 钮是同一条实现路径（点击 = 切换）
+  await page.locator(".modeline-line-numbers").click();
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("on");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  expect((await uiValueWrites(page)).at(-1)).toEqual({ key: "line_numbers", value: "on" });
+});
+
+test("on 档：md 与 code 的 gutter 都常驻，输入条开 / 关不改变在场", async ({ page }) => {
+  await openFile(page, { "gutter.md": GUTTER_DOC, "code.ts": CODE_DOC }, "gutter.md", {
+    config: { line_numbers: "on" },
   });
   // 常驻口径：不按任何命令，打开即可见
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("on");
 
   await focusLine(page, 3);
   await page.keyboard.press("Alt+g");
@@ -463,57 +543,131 @@ test("md 行号 gutter（always 档）：常驻在场，输入条开 / 关不改
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(gotoBox(page)).toBeHidden();
-  // 输入条收起后仍在场（档位固定 ⇒ 与输入条状态无关）
+  // 输入条收起后仍在场（开关固定 ⇒ 与输入条状态无关）
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+
+  await page.locator('.ft-row[title="code.ts"]').click();
+  await expect(page.locator(".modeline-path")).toHaveText("code.ts");
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
 });
 
-test("md 行号 gutter（off 档）：任何时刻都不在场，输入条打开时也没有；跳转照常工作", async ({ page }) => {
-  await openFile(page, { "gutter.md": GUTTER_DOC }, "gutter.md", {
-    config: { markdown_line_numbers: "off" },
-  });
+test("off 档：⌥G 临时带出 gutter（md / code 一致），收起即卸除；跳转照常工作", async ({ page }) => {
+  await openFile(page, { "gutter.md": GUTTER_DOC, "code.ts": CODE_DOC }, "gutter.md");
   await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
 
   await focusLine(page, 3);
   await page.keyboard.press("Alt+g");
   await expect(gotoBox(page)).toBeVisible();
-  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
-
-  // 档位只管可见面，不改命令语义：跳转仍然落在第 9 行行首
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  // 开关只管可见面，不改命令语义：跳转仍然落在第 9 行行首
   await page.keyboard.type("9");
   await page.keyboard.press("Enter");
   expect(await caretLine(page)).toBe(9);
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+
+  // code 同一口径：临时 gutter 出现、Escape 收起即卸除
+  await page.locator('.ft-row[title="code.ts"]').click();
+  await expect(page.locator(".modeline-path")).toHaveText("code.ts");
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Alt+g");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
 });
 
-test("开关不跳动：on-demand 档下装 / 卸 gutter 不改变正文列几何（1200px 与 640px 两档）", async ({ page }) => {
+test("交叉态（两个方向）：`on → ⌥G → 切 off` 收起后才消失；`off → ⌥G → 切 on` 收起后仍常驻", async ({ page }) => {
+  // ① on 档：输入条打开期间切到 off —— 输入条还开着，gutter 必须仍在场
+  await openFile(page, { "doc.md": GUTTER_DOC }, "doc.md", { config: { line_numbers: "on" } });
+  await focusLine(page, 3);
+  const before = await docText(page);
+  await page.keyboard.press("Alt+g");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("off");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible(); // 输入条仍开着 ⇒ 临时在场
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+  expect(await docText(page)).toBe(before);
+
+  // ② off 档：输入条打开期间切到 on —— 收起输入条后 gutter 仍常驻（不因收起而消失）
+  await openFile(page, { "doc.md": GUTTER_DOC }, "doc.md");
+  await focusLine(page, 3);
+  await page.keyboard.press("Alt+g");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("on");
+  await page.keyboard.press("Escape");
+  await expect(gotoBox(page)).toBeHidden();
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+});
+
+test("开关不跳动：md 1200 / 640 切 on / off 正文列 rect 逐值不变", async ({ page }) => {
   await openFile(page, { "long.md": LONG_DOC }, "long.md");
   await focusLine(page, 5);
 
   for (const width of [1200, 640]) {
     await page.setViewportSize({ width, height: 800 });
     await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
-    const before = columnShape(await contentBox(page));
+    const off = columnShape(await contentBox(page));
 
-    await page.keyboard.press("Alt+g");
+    await page.keyboard.press("Meta+Shift+N");
     await expect(page.locator(".cm-lineNumbers")).toBeVisible();
-    const during = columnShape(await contentBox(page));
-    // 装 gutter 的那一瞬：正文列的 left / right / width 逐值不变（判据是实测 rect）
-    expect(during, `${width}px 装 gutter 时正文列动了`).toEqual(before);
+    const on = columnShape(await contentBox(page));
+    // 装上 gutter 的那一瞬：正文列的 left / right / width 逐值不变（判据是实测 rect）
+    expect(on, `${width}px 装 gutter 时正文列动了`).toEqual(off);
 
-    await page.keyboard.press("Escape");
+    await page.keyboard.press("Meta+Shift+N");
     await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
-    const after = columnShape(await contentBox(page));
-    // 卸 gutter 后回到原位
-    expect(after, `${width}px 卸 gutter 后正文列没回原位`).toEqual(before);
+    const backOff = columnShape(await contentBox(page));
+    expect(backOff, `${width}px 卸 gutter 后正文列没回原位`).toEqual(off);
   }
   await page.setViewportSize({ width: 1200, height: 800 });
 });
 
-test("md 行号 gutter 的几何（always 档常驻）：行号 = 源行号、贴正文列左缘、正文列仍居中、窄窗不被裁", async ({ page }) => {
+test("code 的几何让位边界：1200 切 on / off 正文列逐值不变；640 无横滚、行号不裁切", async ({ page }) => {
+  // 短行文档：code 模式默认不折行，长行本身就会撑出横向滚动（那是文档的，不是 gutter 的）。
+  // 本用例判的是「gutter 有没有引入横向滚动」，因此用一份天然不需要横滚的短行文档。
+  const codeDoc = `${Array.from({ length: 20 }, (_, i) => `const v${i + 1} = ${i + 1};`).join("\n")}\n`;
+  await openFile(page, { "code.ts": codeDoc }, "code.ts");
+
+  // 1200px：左侧余量的一半 ≥ gutter 自然宽 ⇒ 关 / 开 gutter 不移动正文
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+  const wideOff = columnShape(await contentBox(page));
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  const wideOn = columnShape(await contentBox(page));
+  expect(wideOn, "1200px 切 on 时 code 正文列动了").toEqual(wideOff);
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+  expect(columnShape(await contentBox(page))).toEqual(wideOff);
+
+  // 640px（窄档）：正文列允许左移一个 gutter 宽，但 MUST NOT 横向滚动、MUST NOT 裁切行号，
+  // 正文从 gutter 右缘起排（design §10.1 的已知边界）。
+  await page.setViewportSize({ width: 640, height: 800 });
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  const narrow = await readGutter(page);
+  const overflow = await page.locator(".cm-scroller").evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(overflow, "code 窄窗出现横向滚动").toBeLessThanOrEqual(1);
+  expect(narrow.gutter).not.toBeNull();
+  expect(narrow.content.left).toBeGreaterThanOrEqual((narrow.gutter?.right ?? Number.POSITIVE_INFINITY) - 0.5);
+  for (const n of narrow.numbers) {
+    expect(n.textLeft).toBeGreaterThanOrEqual(narrow.scroller.left - 0.5);
+    expect(n.textRight).toBeLessThanOrEqual(narrow.content.left + 0.5);
+    expect(n.textRight - n.textLeft).toBeGreaterThan(6);
+  }
+  await page.setViewportSize({ width: 1200, height: 800 });
+});
+
+test("on 档的几何（常驻）：行号 = 源行号、贴正文列左缘、正文列仍居中、窄窗不被裁", async ({ page }) => {
   await openFile(
     page,
     { "gutter.md": GUTTER_DOC, "assets/pic.svg": IMAGE_SVG },
     "gutter.md",
-    { config: { markdown_line_numbers: "always" }, links: IMAGE_LINKS },
+    { config: { line_numbers: "on" }, links: IMAGE_LINKS },
     IMAGE_SVG,
   );
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
@@ -535,7 +689,7 @@ test("md 行号 gutter 的几何（always 档常驻）：行号 = 源行号、�
   //    6 是表格分隔行——widget 内无对应渲染行，恒缺）。
   expect(wide.numbers.map((n) => Number(n.text))).toEqual([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]);
 
-  // ④ 纵向对准（md 的新压力面）：行号元素顶 = 该行行块顶——覆盖标题行 / 表格 widget 的两类行
+  // ④ 纵向对准（md 的压力面）：行号元素顶 = 该行行块顶——覆盖标题行 / 表格 widget 的两类行
   //    （首行与数据行，它们是 widget 内的真行）/ 表格 widget 之后那一段 / 图片行。
   //    配对成功同时证明「行号 = 源行号」（配错行会差一个行块高）。
   for (const lineNumber of [1, 5, 7, 9, 11]) {
@@ -565,9 +719,9 @@ test("md 行号 gutter 的几何（always 档常驻）：行号 = 源行号、�
   await page.setViewportSize({ width: 1200, height: 800 });
 });
 
-test("md gutter 的已知边界：frontmatter 覆盖的源行没有行号（always 档）", async ({ page }) => {
+test("md gutter 的已知边界：frontmatter 覆盖的源行没有行号（on 档）", async ({ page }) => {
   await openFile(page, { "fm.md": FM_DOC }, "fm.md", {
-    config: { markdown_line_numbers: "always" },
+    config: { line_numbers: "on" },
   });
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
   const reading = await readGutter(page);
@@ -580,8 +734,8 @@ test("md gutter 的已知边界：frontmatter 覆盖的源行没有行号（alwa
   }
 });
 
-test("code 模式的 gutter 形态逐值不变（md 的规则与档位 MUST NOT 外溢）", async ({ page }) => {
-  await openFile(page, { "code.ts": CODE_DOC }, "code.ts");
+test("code 模式的 gutter 形态（on 档）：--frame 底、贴列左端、行号 1..3；off 档没有 gutter", async ({ page }) => {
+  await openFile(page, { "code.ts": CODE_DOC }, "code.ts", { config: { line_numbers: "on" } });
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
   const reading = await readGutter(page);
   // code 侧保持既有形态：`--frame` 底（非透明）+ 贴列左端（justify-self: start）+ 行号 1..3。
@@ -591,19 +745,260 @@ test("code 模式的 gutter 形态逐值不变（md 的规则与档位 MUST NOT 
   expect(reading.gutterStyle.borderRightStyle).toBe("none");
   expect(reading.gutter?.left ?? -1).toBeLessThanOrEqual(reading.scroller.left + 0.5);
   expect(reading.numbers.map((n) => Number(n.text))).toEqual([1, 2, 3]);
+
+  // 默认 off 时 code 同样没有 gutter（「code 恒常显」的例外已退场）
+  await openFile(page, { "code.ts": CODE_DOC }, "code.ts");
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+});
+
+test("非编辑器焦点的 ⌘⇧N：搜索框与 harness composer 内同样命中（作用域 global）", async ({ page }) => {
+  await openFile(page, { "doc.md": GUTTER_DOC }, "doc.md");
+
+  // ① 搜索框（⌘F 打开后焦点在输入框里）
+  await page.keyboard.press("Meta+f");
+  await expect(page.locator(".lumir-search-input")).toBeFocused();
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("on");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // ② harness composer（⌘⇧A 打开侧栏后焦点进输入框）
+  await page.keyboard.press("Meta+Shift+A");
+  await expect(page.locator(".lumir-hp-composer .cm-content")).toBeFocused();
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("off");
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+});
+
+test("后台标签同步：切走再切回时后台会话已是新态（不是切回时才补）", async ({ page }) => {
+  await openFile(page, { "a.md": GUTTER_DOC, "b.md": "# Beta\n\nBeta 正文。\n" }, "a.md");
+  // 第二个标签（b.md）留在后台，再回 a.md
+  await page.locator('.ft-row[title="b.md"]').click();
+  await expect(page.locator(".modeline-path")).toHaveText("b.md");
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+  await page.keyboard.press("Meta+1");
+  await expect(page.locator(".modeline-path")).toHaveText("a.md");
+
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  // 切回后台标签：它经 `session.state.update` 重配过，切回即新态
+  await page.keyboard.press("Meta+2");
+  await expect(page.locator(".modeline-path")).toHaveText("b.md");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+});
+
+test("双 pane 同步：两个 pane 的前台会话同时变化", async ({ page }) => {
+  await openFile(
+    page,
+    { "a.md": GUTTER_DOC, "b.md": "# Beta\n\nBeta 正文。\n" },
+    "a.md",
+    { config: { keys: { F2: "pane.split" } } },
+  );
+  await configApplied(page);
+  await page.waitForTimeout(80); // [keys] 覆盖在 config_get 之后才重挂分发器
+
+  // 分栏：新 pane 是空文档；把焦点交给它并从树上打开 b.md
+  await page.keyboard.press("F2");
+  await expect(page.locator(".editor-pane")).toHaveCount(2);
+  const rightPane = page.locator(".editor-pane").nth(1);
+  // 空 pane 的水印层盖在编辑器之上（点击它 = 把焦点交给该 pane 的编辑器，见 src/main.ts 的
+  // pane-empty-guide）；直接点 `.cm-content` 会被它拦住。
+  await rightPane.locator(".pane-empty-guide").click();
+  await page.locator('.ft-row[title="b.md"]').click();
+  await expect(rightPane.locator(".cm-content")).toContainText("Beta 正文");
+  expect(await gutterCountsPerPane(page)).toEqual([0, 0]); // 切换前两个 pane 都没有 gutter
+
+  // 切换：两个 pane 的前台会话同时出现 gutter
+  await page.keyboard.press("Meta+Shift+N");
+  await expect.poll(() => gutterCountsPerPane(page)).toEqual([1, 1]);
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("on");
+
+  // 再切一次：两个 pane 同时消失
+  await page.keyboard.press("Meta+Shift+N");
+  await expect.poll(() => gutterCountsPerPane(page)).toEqual([0, 0]);
+});
+
+test("新 pane 继承当前值：on 时 split 出的新 pane 第一帧即有 gutter", async ({ page }) => {
+  await openFile(page, { "a.md": GUTTER_DOC }, "a.md", { config: { keys: { F2: "pane.split" } } });
+  await configApplied(page);
+  await page.waitForTimeout(80);
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+
+  await page.keyboard.press("F2");
+  await expect(page.locator(".editor-pane")).toHaveCount(2);
+  await expect.poll(() => gutterCountsPerPane(page)).toEqual([1, 1]);
+});
+
+test("写回失败不回滚：gutter 与钮保持新态、toast 说明重启回落、另记诊断日志", async ({ page }) => {
+  await openFile(page, { "doc.md": GUTTER_DOC }, "doc.md", {
+    failures: { config_set_ui_value: { code: "io_error", message: "磁盘只读" } },
+  });
+  const logsBefore = await page.evaluate(
+    () => ((window as unknown as { __invokes?: string[] }).__invokes ?? []).filter((c) => c === "log_event").length,
+  );
+
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("on");
+  expect(await htmlLineNumbers(page)).toBe("on");
+  await expect(page.locator(".lumir-toast").filter({ hasText: "行号已切换" })).toHaveCount(1);
+  await expect(page.locator(".lumir-toast").filter({ hasText: "磁盘只读" })).toHaveCount(1);
+  // 诊断日志各一笔（config_warning 走 `log_event`）——失败不是静默的。
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () => ((window as unknown as { __invokes?: string[] }).__invokes ?? []).filter((c) => c === "log_event").length,
+      ),
+    )
+    .toBeGreaterThan(logsBefore);
+  // 再次切换照常工作
+  await page.keyboard.press("Meta+Shift+N");
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("off");
+});
+
+test("启动按配置施加：ui.line_numbers = on 首帧即有 gutter，off 重新载入后即无", async ({ page }) => {
+  // ① 配置 on：打开文件时 gutter 已在（启动装配经 applyLineNumbers 施加）
+  await openFile(page, { "doc.md": GUTTER_DOC }, "doc.md", { config: { line_numbers: "on" } });
+  await expect(page.locator(".cm-lineNumbers")).toBeVisible();
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("on");
+  expect(await htmlLineNumbers(page)).toBe("on");
+
+  // ② 桩重载（= 重启）后按配置而不是运行期态：这里换成默认 off 再载入一次
+  await openFile(page, { "doc.md": GUTTER_DOC }, "doc.md");
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("off");
+  expect(await htmlLineNumbers(page)).toBe("off");
+});
+
+test("非法值与旧键 warning 进 console（Rust 校验的取证面在 cargo test）", async ({ page }) => {
+  const warnings: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "warning") warnings.push(message.text());
+  });
+  await openFile(page, { "doc.md": GUTTER_DOC }, "doc.md", {
+    config: {
+      warnings: [
+        '配置项 ui.line_numbers 取值 "toggle" 非法（可选：on、off），已回退为 off',
+        "配置项 ui.markdown_line_numbers 已退场，取值被忽略（改用 ui.line_numbers：on / off）",
+      ],
+    },
+  });
+  // 快照的 warnings 逐条上 console（前端只透传；取值回落的判据在 cargo test 的
+  // illegal_ui_line_numbers_warns_and_falls_back_to_off / retired_markdown_… 两条）。
+  // 两条判据取互不重叠的子串：退场 warning 的正文里也提到 `ui.line_numbers`（「改用
+  // ui.line_numbers」），只按键名数会出现 2 —— 那不是重复告警。
+  await expect
+    .poll(() => warnings.filter((text) => text.includes("ui.line_numbers") && text.includes("非法")).length)
+    .toBe(1);
+  await expect.poll(() => warnings.filter((text) => text.includes("已退场")).length).toBe(1);
+  // 回落值是 off：两种模式都没有 gutter
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("off");
+});
+
+test("施加前的行号钮：config_get 失败时保持 hidden（宁可不显示，也不显示未生效状态）", async ({ page }) => {
+  await stubTauri(page, {
+    entries: [{ path: "doc.md", kind: "file", size: GUTTER_DOC.length, mtime_ms: 0 }],
+    files: { "doc.md": GUTTER_DOC },
+    failures: { config_get: { code: "io_error", message: "配置读取失败" } },
+  });
+  await page.goto("/");
+  // 先确认元素**在场**再判 hidden：`toBeHidden` 对不存在的元素同样通过，只判 hidden 会假绿。
+  await expect(page.locator(".modeline-line-numbers")).toHaveCount(1);
+  await expect(page.locator(".modeline-line-numbers")).toBeHidden();
+  expect(await htmlLineNumbers(page)).toBeNull();
+});
+
+test("行号指示钮：三主题形态、on / off 等宽、右段其它元素不位移、520px 不溢出", async ({ page }) => {
+  const shapes: Array<Record<string, string>> = [];
+  for (const theme of ["light", "dark", "eink"] as const) {
+    await openFile(page, { "doc.md": GUTTER_DOC }, "doc.md", { config: { theme } });
+    const shape = await page.locator(".modeline-line-numbers").evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        borderRadius: style.borderRadius,
+        paddingLeft: style.paddingLeft,
+        paddingRight: style.paddingRight,
+        marginLeft: style.marginLeft,
+        borderColor: style.borderColor,
+        backgroundColor: style.backgroundColor,
+      };
+    });
+    shapes.push(shape);
+    if (theme === "eink") {
+      // eink 的 chip 描边化：边框取 `--border`（#000）、底色透明；线宽与内边距不变
+      expect(shape.borderColor).toBe("rgb(0, 0, 0)");
+      expect(shape.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    }
+  }
+  // 三档的字号 / 字重 / 圆角 / 内边距 / 左外边距逐项一致（同一套 pill 规则）
+  for (const shape of shapes.slice(1)) {
+    expect({
+      fontSize: shape.fontSize,
+      fontWeight: shape.fontWeight,
+      borderRadius: shape.borderRadius,
+      paddingLeft: shape.paddingLeft,
+      paddingRight: shape.paddingRight,
+      marginLeft: shape.marginLeft,
+    }).toEqual({
+      fontSize: shapes[0].fontSize,
+      fontWeight: shapes[0].fontWeight,
+      borderRadius: shapes[0].borderRadius,
+      paddingLeft: shapes[0].paddingLeft,
+      paddingRight: shapes[0].paddingRight,
+      marginLeft: shapes[0].marginLeft,
+    });
+  }
+
+  // 1200 / 520 两档：切换 on / off 不移动右段其它元素，钮自身两种读数等宽。
+  await openFile(page, { "doc.md": GUTTER_DOC }, "doc.md");
+  for (const width of [1200, 520]) {
+    await page.setViewportSize({ width, height: 800 });
+    // 版本号退让段随窗口宽度显隐（matchMedia 重排）：先等它到位再取基线 rect，
+    // 否则「before」读到的是重排前的旧布局（那是窗口变化的位移，不是本钮的位移）。
+    if (width === 520) await expect(page.locator(".modeline-version")).toBeVisible();
+    else await expect(page.locator(".modeline-version")).toBeHidden();
+    const selectors = [".modeline-meta", ".modeline-version", ".modeline-theme", ".modeline-language"];
+    const before = await Promise.all(selectors.map((selector) => rectOf(page, selector)));
+    const buttonOff = await rectOf(page, ".modeline-line-numbers");
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("Meta+Shift+N");
+    await expect(page.locator(".modeline-line-numbers")).toHaveText("on");
+    const after = await Promise.all(selectors.map((selector) => rectOf(page, selector)));
+    expect(after, `${width}px 切换后右段其它元素位移了`).toEqual(before);
+    const buttonOn = await rectOf(page, ".modeline-line-numbers");
+    expect(buttonOn?.width, `${width}px 两种读数的钮宽不同`).toBe(buttonOff?.width);
+    // 右缘不越出窗口：五段都在场且不越界
+    for (const selector of [...selectors, ".modeline-line-numbers"]) {
+      const box = await rectOf(page, selector);
+      expect(box, `${width}px 读不到 ${selector}`).not.toBeNull();
+      expect(box!.right).toBeLessThanOrEqual(width);
+    }
+    await expect(page.locator(".modeline-theme")).toBeVisible();
+    await expect(page.locator(".modeline-language")).toBeVisible();
+    // 切回 off，让下一轮的起点一致（本用例的判据是「每次 off → on 的位移」，不是交替态）
+    await page.keyboard.press("Meta+Shift+N");
+    await expect(page.locator(".modeline-line-numbers")).toHaveText("off");
+  }
+  await page.setViewportSize({ width: 1200, height: 800 });
 });
 
 // ---------------------------------------------------------------------------
-// 整页基线（本 change 自己新增的两张场景基线；默认档下既有基线逐张不变，因此这里只留
-// 本 change 引入的两种形态。MUST NOT 顺手动既有基线。）
+// 整页基线（本 change 引入的两种形态：on 档常驻 / off 档的输入条打开态）
 // ---------------------------------------------------------------------------
 
-test("整页基线：always 档的常驻 md 行号 gutter", async ({ page }) => {
+test("整页基线：on 档的常驻 md 行号 gutter", async ({ page }) => {
   await openFile(
     page,
     { "gutter.md": GUTTER_DOC, "assets/pic.svg": IMAGE_SVG },
     "gutter.md",
-    { config: { markdown_line_numbers: "always" }, links: IMAGE_LINKS },
+    { config: { line_numbers: "on" }, links: IMAGE_LINKS },
     IMAGE_SVG,
   );
   await expect(page.locator(".cm-lp-image img")).toHaveCount(1);
@@ -612,7 +1007,7 @@ test("整页基线：always 档的常驻 md 行号 gutter", async ({ page }) => 
   await expectScreenshot(page, "m281-md-gutter.png");
 });
 
-test("整页基线：on-demand 档（默认）的跳转输入条打开态", async ({ page }) => {
+test("整页基线：off 档（默认）的跳转输入条打开态", async ({ page }) => {
   await openFile(
     page,
     { "gutter.md": GUTTER_DOC, "assets/pic.svg": IMAGE_SVG },
@@ -626,7 +1021,7 @@ test("整页基线：on-demand 档（默认）的跳转输入条打开态", asyn
 
   await page.keyboard.press("Alt+g");
   await expect(gotoBox(page)).toBeVisible();
-  // 这一屏同时含两件新东西：浮层输入条（本 change 的交互面）与它带出来的行号列（默认档）。
+  // 这一屏同时含两件东西：浮层输入条（M281 的交互面）与它带出来的行号列（off 档的临时档）。
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
   await expectScreenshot(page, "m281-goto-prompt.png");
 });

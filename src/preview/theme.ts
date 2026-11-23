@@ -424,8 +424,9 @@ export const livePreviewTheme = EditorView.theme({
   },
   [`.cm-scroller.${DOC_TITLE_TOP_CLASS} .cm-lp-end-marker`]: { gridRow: "3" },
 
-  // md 的行号 gutter（M281，change goto-line-command 的 D4 改判 + 2026-09-28 二次改判的三档）——**md 这一侧的几何与
-  // 配色真源在这里**，与 doc-title / end-marker 的 grid 真源同居（上面那段与下方 end-marker 段）：
+  // md 的行号 gutter（M281，change goto-line-command 的 D4 改判；在场判据自 change
+  // global-line-numbers-toggle-nov23 起与 code 共用 `[ui] line_numbers` 一个开关）——**md 这一侧的
+  // 几何与配色真源在这里**，与 doc-title / end-marker 的 grid 真源同居（上面那段与下方 end-marker 段）：
   // - 落点与正文**同行**：base 规则的 `gridRow: "1"`（src/editor.ts 的 baseTheme）在有 doc-title
   //   落点时会把行号整体上移一个标题高度（那时 `.cm-content` 在 row 2，见上面那三条），所以这里
   //   把 row 与 col 一起写；列模板**不为 gutter 改写**（正文列因此仍居中，见 src/editor.ts 的

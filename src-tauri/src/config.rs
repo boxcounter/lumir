@@ -38,8 +38,8 @@
 //! ## ui 表（restyle-ui-tokens-v1，M237 起含运行期切换）
 //!
 //! `{"ui": {"theme": "light" | "dark" | "eink", "content_width": 760,` +
-//! `"sidebar_width": 236, "markdown_line_numbers": "on-demand" | "always" | "off",` +
-//! `"language": "en" | "zh"}}`，默认 `light` / `760` / `236` / `on-demand` / `en`。取值校验照 `editor.mode`
+//! `"sidebar_width": 236, "line_numbers": "on" | "off",` +
+//! `"language": "en" | "zh"}}`，默认 `light` / `760` / `236` / `off` / `en`。取值校验照 `editor.mode`
 //! 模板：表内 `theme` 缺失 → 默认；取值不在表内 → warning + 回落默认（ADR 0002 §5：非法
 //! 配置不导致启动失败）。它与 `editor` 一样是**结构化表**（`RawUiConfig`），不是 keys / log
 //! 那种「整表收成 Value」——因此 `{"ui": "dark"}` 这种表的错形状与表内 `"theme": 2` 同路，
@@ -48,10 +48,11 @@
 //! M237（change live-theme-switch）起它还支持**运行期切换**——前端命令与 modeline 主题钮
 //! 循环三档，切换即经通用合并写 IPC `config_set_ui_value` 回写本字段（`commands.rs`），让启动
 //! 真源跟上运行态。Rust 侧只负责读出来、挡住非法值、以及提供那条写通道；不跟随系统主题。
-//! `markdown_line_numbers`（change goto-line-command 的 D4 二次改判，2026-09-28）与 `theme`
-//! 的**差别在消费方**：它没有运行期切换的落点，因此是**装载时读一次、运行期 MUST NOT 回写**
-//!（与 `editor.mode` / `editor.font_size` 同路）；消费方是前端启动施加处（`src/main.ts` 把它
-//! 喂给 `editor.setMarkdownLineNumbers`）。
+//! `line_numbers`（change global-line-numbers-toggle-nov23，2026-11-23 Alex 裁决）与 `theme`
+//! **同路**：md 与只读 code 共用这一个全局开关（没有「code 恒常显」的例外），启动时读一次
+//! 施加到全部文档 pane，运行期由 `view.toggle-line-numbers`（⌘⇧N）与 modeline 行号钮切换并
+//! 即时回写本字段。已退场的 `markdown_line_numbers` 只保留**检测**：它不被读取为生效值、
+//! 不迁移、不双读，携带非 `null` 值时只发一条启动 warning（AGENTS.md「变更默认直接切断」）。
 //!
 //! `language`（change ui-language-i18n，M282）是界面语言：默认 **`en`**（Alex 2026-09-27 节点 1
 //! 裁决），闭集合 `en` / `zh`。消费方与 `theme` 同形——前端启动施加处 `applyLanguage` 写
@@ -451,12 +452,13 @@ pub struct UiConfig {
     /// 窗口过窄时的「四成」钳制是显示口径（前端做，不回写到本字段）——盘上存的是用户意图值。
     /// 类型不符（`"sidebar_width": "236"`）与 `content_width` 同路：整文件回落。
     pub sidebar_width: f64,
-    /// md 模式行号 gutter 的在场档位（change goto-line-command 的 D4 二次改判，2026-09-28），
-    /// 默认 `on-demand`。**只管 md**：只读 code 模式的行号 gutter 恒常显、不读本键。
-    /// 与 `editor.mode` / `editor.font_size` 同路：**装载时读一次、运行期 MUST NOT 回写**
-    ///（本 change 不提供切换它的命令 / 键位 / UI，因此没有 live 切换的触发源——与 `theme`
-    /// 的差别正在这里，`theme` 有 modeline 主题钮那个落点）。
-    pub markdown_line_numbers: MarkdownLineNumbers,
+    /// 行号 gutter 的全局开关（change global-line-numbers-toggle-nov23，2026-11-23 裁决），
+    /// 默认 `off`。**md 与只读 code 共用这一个开关**：`"on"` 时两种模式的 gutter 都常驻、
+    /// `"off"` 时都没有（`⌥G` 的跳转输入条仍会临时带出 gutter，那是编辑器内核的在场面，
+    /// 不是本键的第三档）。与 `theme` 同路：**启动真源**，运行期由
+    /// `view.toggle-line-numbers`（⌘⇧N）与 modeline 行号钮切换，**切换即经
+    /// `config_set_ui_value` 回写本字段**。取值由 `LineNumbers` 闭集合校验。
+    pub line_numbers: LineNumbers,
     /// 界面语言（change ui-language-i18n，M282）：默认 **`en`**（Alex 2026-09-27 节点 1 裁决
     /// 「我希望产品的默认语言是英文」）。**启动真源**：启动装载时读一次并由前端
     /// `applyLanguage` 施加到 `documentElement.lang`；运行期由 `view.language-cycle`（⌘⇧L）与
@@ -472,7 +474,7 @@ impl Default for UiConfig {
             theme: UiTheme::Light,
             content_width: DEFAULT_CONTENT_WIDTH,
             sidebar_width: DEFAULT_SIDEBAR_WIDTH,
-            markdown_line_numbers: MarkdownLineNumbers::OnDemand,
+            line_numbers: LineNumbers::Off,
             language: UiLanguage::En,
         }
     }
@@ -503,21 +505,16 @@ pub enum UiLanguage {
     Zh,
 }
 
-/// md 模式行号 gutter 的在场档位（change goto-line-command 的 D4 二次改判，2026-09-28）。
-/// 它不切换任何 token，只决定 `lineNumbers()` 在 md 模式何时在场：
-/// `on-demand` = 默认档，md 文档打开时无行号，跳转输入条（`⌥G`）在场时显示、收起后隐藏；
-/// `always` = md 常驻显示行号；
-/// `off` = md 恒不显示行号。
-/// **闭集合**：取值校验在 Rust 侧完成，前端拿到的必是这三档之一，不再判非法（与 `UiTheme`
-/// / `EditorMode` / `LogLevel` 同一形态）。**只管 md**：code 模式的行号恒常显，不读本键。
+/// 行号 gutter 的全局开关（change global-line-numbers-toggle-nov23）：**闭集合**两档，
+/// 取值校验在 Rust 侧完成，前端拿到的必是这两档之一，不再判非法（与 `UiTheme` /
+/// `EditorMode` / `LogLevel` 同一形态）。`on` = md 与只读 code 的 gutter 都常驻；
+/// `off` = 默认档，两种模式打开时都没有 gutter（`⌥G` 的跳转临时 gutter 不归本键管）。
+/// 与 `theme` 同族：运行期可切换、切换即回写（见 `UiConfig::line_numbers` 的注释）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../src/bindings/")]
-pub enum MarkdownLineNumbers {
-    #[serde(rename = "on-demand")]
-    OnDemand,
-    #[serde(rename = "always")]
-    Always,
-    #[serde(rename = "off")]
+pub enum LineNumbers {
+    On,
     Off,
 }
 
@@ -1851,11 +1848,18 @@ struct RawUiConfig {
     /// 侧栏宽度（change add-sidebar-resize-hide-and-root-create）：数值字段，类型不符
     /// （`"sidebar_width": "236"`）在解析期失败 → 整文件回落（与 `content_width` 同型同路）。
     sidebar_width: Option<f64>,
-    /// md 行号 gutter 档位（change goto-line-command 的 D4 二次改判）：取值是闭集合
-    /// （`on-demand` / `always` / `off`），非法值到不了这里——在 `validate()` 里回落 + warning
-    ///（与 `theme` 同路）。类型不符（`"markdown_line_numbers": 2`）在 serde 解析期失败 →
-    /// 整文件回落。
-    markdown_line_numbers: Option<String>,
+    /// 行号 gutter 的全局开关（change global-line-numbers-toggle-nov23）：取值是闭集合
+    /// （`on` / `off`），非法值到不了这里——在 `validate()` 里回落 + warning（与 `theme`
+    /// 同路）。类型不符（`"line_numbers": 2`）在 serde 解析期失败 → 整文件回落。
+    line_numbers: Option<String>,
+    /// **已退场的键**（change global-line-numbers-toggle-nov23）：`ui.markdown_line_numbers`
+    /// 只用于发一条启动 warning——它 MUST NOT 参与 `line_numbers` 的求值、MUST NOT 被回写、
+    /// MUST NOT 作为别名兜底（AGENTS.md「变更默认直接切断」：不迁移、不双读）。
+    ///
+    /// 取值类型收 `serde_json::Value`：旧键写错类型（如数字）也不得拖垮整份配置——它已经不被
+    /// 读取为生效值，没有理由让一个退场键触发整文件回落。显式 `null` 经 `Option<Value>` 折叠
+    /// 为 `None`，与键缺席同义（`null` 不表达「用户配置了一个旧值」）。
+    markdown_line_numbers: Option<serde_json::Value>,
     /// 界面语言（change ui-language-i18n，M282）：取值是闭集合（`en` / `zh`），非法值到不了
     /// 这里——在 `validate()` 里回落 + warning（与 `theme` 同路）。类型不符（`"language": 2`）
     /// 在 serde 解析期失败 → 整文件回落。
@@ -2789,21 +2793,34 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<ConfigDiagnostic>, Vec<CronTaskIs
         }
     }
 
-    // md 行号 gutter 档位（change goto-line-command 的 D4 二次改判，2026-09-28）：取值校验照
-    // `theme` 模板——缺字段回落默认（不告警）、取值不在三档内回落默认 + 人话 warning；
-    // 类型不符到不了这里（解析期整文件回落，见 `RawUiConfig` 的注释）。
-    let mut markdown_line_numbers = defaults.ui.markdown_line_numbers;
-    if let Some(raw_tier) = raw.ui.markdown_line_numbers.as_deref() {
-        match raw_tier {
-            "on-demand" => markdown_line_numbers = MarkdownLineNumbers::OnDemand,
-            "always" => markdown_line_numbers = MarkdownLineNumbers::Always,
-            "off" => markdown_line_numbers = MarkdownLineNumbers::Off,
+    // 行号 gutter 的全局开关（change global-line-numbers-toggle-nov23）：取值校验照 `theme`
+    // 模板——缺字段回落默认（不告警）、取值不在两档内回落默认 + 人话 warning；类型不符到不了
+    // 这里（解析期整文件回落，见 `RawUiConfig` 的注释）。
+    let mut line_numbers = defaults.ui.line_numbers;
+    if let Some(raw_value) = raw.ui.line_numbers.as_deref() {
+        match raw_value {
+            "on" => line_numbers = LineNumbers::On,
+            "off" => line_numbers = LineNumbers::Off,
             other => sink.warn_at(
-                "ui_markdown_line_numbers_invalid",
-                "ui.markdown_line_numbers",
-                format!("配置项 ui.markdown_line_numbers 取值 \"{other}\" 非法（可选：on-demand、always、off），已回退为 on-demand"),
+                "ui_line_numbers_invalid",
+                "ui.line_numbers",
+                format!(
+                    "配置项 ui.line_numbers 取值 \"{other}\" 非法（可选：on、off），已回退为 off"
+                ),
             ),
         }
+    }
+
+    // 已退场的旧键只发一条 warning（AGENTS.md「变更默认直接切断」）：不参与 `line_numbers`
+    // 的求值、不迁移、不双读。条件是 `Some`（非 `null`）——显式 `null` 与键缺席同义、不告警，
+    // 因为 `null` 不表达「用户配置了一个旧值」。
+    if raw.ui.markdown_line_numbers.is_some() {
+        sink.warn_at(
+            "ui_markdown_line_numbers_retired",
+            "ui.markdown_line_numbers",
+            "配置项 ui.markdown_line_numbers 已退场，取值被忽略（改用 ui.line_numbers：on / off）"
+                .to_string(),
+        );
     }
 
     // 界面语言（change ui-language-i18n，M282）：取值校验照 `theme` 模板——缺字段回落默认
@@ -2854,7 +2871,7 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<ConfigDiagnostic>, Vec<CronTaskIs
                 theme,
                 content_width,
                 sidebar_width,
-                markdown_line_numbers,
+                line_numbers,
                 language,
             },
             keys,
@@ -5133,63 +5150,104 @@ mod tests {
     }
 
     #[test]
-    fn missing_markdown_line_numbers_defaults_to_on_demand() {
-        // change goto-line-command 的 D4 二次改判：`ui.markdown_line_numbers` 是**新增**键，
-        // 老配置没有它 ⇒ 默认 `on-demand` 且**不告警**（比照 missing_ui_table_defaults_to_light
-        // 的缺字段口径）。同表其它字段照常解析。
+    fn missing_line_numbers_defaults_to_off() {
+        // change global-line-numbers-toggle-nov23：`ui.line_numbers` 是**新增**键，老配置没有它
+        // ⇒ 默认 `off` 且**不告警**（比照 missing_ui_table_defaults_to_light 的缺字段口径）。
         let f = TempFile::new(r#"{"ui":{"theme":"dark"}}"#);
         let snap = load_from(&f.0);
-        assert_eq!(
-            snap.config.ui.markdown_line_numbers,
-            MarkdownLineNumbers::OnDemand
-        );
+        assert_eq!(snap.config.ui.line_numbers, LineNumbers::Off);
         assert_eq!(snap.config.ui.theme, UiTheme::Dark);
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
     }
 
     #[test]
-    fn ui_markdown_line_numbers_accepts_three_tiers() {
-        // 三档闭集合逐个过一遍（含显式写默认档）；都不产生 warning。
-        for (raw, want) in [
-            ("on-demand", MarkdownLineNumbers::OnDemand),
-            ("always", MarkdownLineNumbers::Always),
-            ("off", MarkdownLineNumbers::Off),
-        ] {
-            let f = TempFile::new(&format!(r#"{{"ui":{{"markdown_line_numbers":"{raw}"}}}}"#));
+    fn ui_line_numbers_accepts_closed_set() {
+        // 两档闭集合逐个过一遍（含显式写出厂档）；都不产生 warning。
+        for (raw, want) in [("on", LineNumbers::On), ("off", LineNumbers::Off)] {
+            let f = TempFile::new(&format!(r#"{{"ui":{{"line_numbers":"{raw}"}}}}"#));
             let snap = load_from(&f.0);
-            assert_eq!(snap.config.ui.markdown_line_numbers, want, "{raw}");
+            assert_eq!(snap.config.ui.line_numbers, want, "{raw}");
             assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
         }
     }
 
     #[test]
-    fn illegal_ui_markdown_line_numbers_warns_and_falls_back_to_on_demand() {
+    fn illegal_ui_line_numbers_warns_and_falls_back_to_off() {
         // 档外值走 warning + 回落默认（比照 illegal_ui_theme_warns_and_falls_back_to_light）；
         // 同一份配置里的合法字段照常生效。
-        let f =
-            TempFile::new(r#"{"ui":{"markdown_line_numbers":"toggle"},"last_vault":"/tmp/vault"}"#);
+        let f = TempFile::new(r#"{"ui":{"line_numbers":"toggle"},"last_vault":"/tmp/vault"}"#);
         let snap = load_from(&f.0);
-        assert_eq!(
-            snap.config.ui.markdown_line_numbers,
-            MarkdownLineNumbers::OnDemand
-        );
+        assert_eq!(snap.config.ui.line_numbers, LineNumbers::Off);
         assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
         assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
         assert!(
-            snap.warnings[0].contains("ui.markdown_line_numbers"),
+            snap.warnings[0].contains("ui.line_numbers"),
             "{:?}",
             snap.warnings
         );
     }
 
     #[test]
-    fn wrong_type_ui_markdown_line_numbers_falls_back_entire_file() {
-        // 表内类型不符（`"markdown_line_numbers": 2`）与 `ui.theme` 同路：`RawUiConfig` 是结构化
-        // 镜像，serde 解析期失败 ⇒ **整文件回落**（含同表的 theme、以及 last_vault）——不发明
-        // 逐字段类型容忍。
+    fn retired_markdown_line_numbers_warns_without_affecting_value() {
+        // 已退场的旧键只发一条 warning，**不参与**生效值（AGENTS.md「变更默认直接切断」：
+        // 不迁移、不双读）。没有新键 ⇒ 仍是默认 `off`；同时给了新键 ⇒ 新键说了算。
+        let bare =
+            TempFile::new(r#"{"ui":{"markdown_line_numbers":"always"},"last_vault":"/tmp/vault"}"#);
+        let snap = load_from(&bare.0);
+        assert_eq!(snap.config.ui.line_numbers, LineNumbers::Off);
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(
+            snap.warnings[0].contains("ui.markdown_line_numbers")
+                && snap.warnings[0].contains("已退场"),
+            "{:?}",
+            snap.warnings
+        );
+
+        let paired = TempFile::new(r#"{"ui":{"markdown_line_numbers":"off","line_numbers":"on"}}"#);
+        let snap = load_from(&paired.0);
+        assert_eq!(snap.config.ui.line_numbers, LineNumbers::On);
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(snap.warnings[0].contains("已退场"), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn explicit_null_markdown_line_numbers_is_same_as_absent() {
+        // 显式 `"markdown_line_numbers": null` 与键缺席同义、MUST NOT 告警（design §3.2）：
+        // `null` 不表达「用户配置了一个旧值」。生效值仍按新键 / 默认求。
+        let bare = TempFile::new(r#"{"ui":{"markdown_line_numbers":null}}"#);
+        let snap = load_from(&bare.0);
+        assert_eq!(snap.config.ui.line_numbers, LineNumbers::Off);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+
+        let paired = TempFile::new(r#"{"ui":{"markdown_line_numbers":null,"line_numbers":"on"}}"#);
+        let snap = load_from(&paired.0);
+        assert_eq!(snap.config.ui.line_numbers, LineNumbers::On);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn wrong_type_retired_markdown_line_numbers_does_not_sink_the_file() {
+        // 退场键写错类型（数字）：只发退场 warning，**不**触发整文件回落——它已经没有生效值，
+        // 没有理由让一个无读者的键拖垮 `last_vault` / `theme` 等真配置（design §3.5）。
         let f = TempFile::new(
             r#"{"last_vault":"/tmp/vault","ui":{"markdown_line_numbers":2,"theme":"dark"}}"#,
         );
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        assert_eq!(snap.config.ui.theme, UiTheme::Dark);
+        assert_eq!(snap.config.ui.line_numbers, LineNumbers::Off);
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(snap.warnings[0].contains("已退场"), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn wrong_type_ui_line_numbers_falls_back_entire_file() {
+        // 表内类型不符（`"line_numbers": 2`）与 `ui.theme` 同路：`RawUiConfig` 是结构化镜像，
+        // serde 解析期失败 ⇒ **整文件回落**（含同表的 theme、以及 last_vault）——不发明逐字段
+        // 类型容忍。
+        let f =
+            TempFile::new(r#"{"last_vault":"/tmp/vault","ui":{"line_numbers":2,"theme":"dark"}}"#);
         let snap = load_from(&f.0);
         assert_eq!(snap.config, AppConfig::default());
         assert_eq!(snap.config.ui.theme, UiTheme::Light);

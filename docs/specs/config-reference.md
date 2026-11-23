@@ -90,7 +90,7 @@ token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定�
 | `ui.theme` | string 枚举 | `"light"` | `"light"` \| `"dark"` \| `"eink"` | 启动装载施加一次（写 `documentElement.dataset.theme`）；运行期由 `view.theme-cycle` / modeline 主题钮切换，**切换即回写本键** | `config.rs:428`、`:2139-2149` |
 | `ui.content_width` | number | `760` | 闭区间 `[760, 1200]`，区间外回落 `760` + warning | 启动时装配一次；运行期由阅读栏拖拽推进，**松手回写本键** | `config.rs:435`、`:2152-2161` |
 | `ui.sidebar_width` | number | `236` | 闭区间 `[180, 480]`，区间外回落 `236` + warning | 启动时装配一次；运行期由左栏分隔条拖拽推进，**松手回写本键**；窗口过窄时的「按窗口四成再钳」是显示口径（前端做、不落盘） | `config.rs:441`、`:2166-2175` |
-| `ui.markdown_line_numbers` | string 枚举 | `"on-demand"` | `"on-demand"` \| `"always"` \| `"off"`，档外回落 `"on-demand"` + warning | **仅启动装载时读一次**（喂给编辑器的 md 行号 gutter 档位）；**运行期不回写、无切换命令** | `config.rs:447`、`:2180-2193` |
+| `ui.line_numbers` | string 枚举 | `"off"` | `"on"` \| `"off"`，档外回落 `"off"` + warning | 启动装载施加一次（写 `documentElement.dataset.lineNumbers`，md 与只读 code 共用）；运行期由 `view.toggle-line-numbers`（⌘⇧N）/ modeline 行号钮切换，**切换即回写本键** | `config.rs` 的 `LineNumbers` / `UiConfig::line_numbers` / `validate` |
 | `ui.language` | string 枚举 | `"en"` | `"en"` \| `"zh"`，档外回落 `"en"` + warning | 启动装载施加一次（写 `documentElement.lang`，文档与预览装饰按它取值）；运行期由 `view.language-cycle` / modeline 语言钮切换，**切换即回写本键** | `config.rs:454`、`:2195-2208` |
 
 `ui.language` 是**界面文案的语言档**（change ui-language-i18n，M282；默认 `en`，Alex 2026-09-27 节点 1 裁决）。
@@ -101,16 +101,20 @@ token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定�
 （`config_set_ui_value("language", …)`），**写通道不校验取值**——手写非法值由下次启动的 `validate()`
 兜（与 `ui.theme` 同款既有边界）。
 
-`ui.markdown_line_numbers` 只管 **md 模式**的行号 gutter 在场时机：`on-demand`（默认）= 打开 md 文档时无行号，
-按 `⌥G`（`editor.goto-line`）打开跳转输入条时行号出现、输入条收起后隐藏；`always` = md 常驻显示行号；
-`off` = md 恒不显示。**code 模式的行号 gutter 恒常显，不读本键**。它没有运行期切换的落点，
-因此是「装载时读一次、运行期 MUST NOT 回写」的瞬态口径（同 `editor.font_size` / `editor.mode`），
-与上面几个**持久偏好**（主题 / 阅读栏宽 / 左栏宽 / 界面语言都有运行期落点，切换或拖拽松手即回写）分属两类。
+`ui.line_numbers` 是行号 gutter 的**全局开关**（change `global-line-numbers-toggle-nov23`，Alex 2026-11-23
+裁决）：md 与只读 code **共用这一个开关**，`"on"` = 两种模式的 gutter 都常驻、`"off"`（默认）= 打开时都没有
+（`⌥G` 的跳转输入条仍会临时带出 gutter，md 与 code 一致；那是编辑器内核的在场面，不是本键的第三档）。
+它与 `ui.theme` 同路：启动真源 + 运行期切换（`view.toggle-line-numbers`（⌘⇧N）/ modeline 行号钮），
+**切换即回写本键**；写失败只 toast + 诊断日志，运行期不回滚（重启回到配置文件值）。
+已退场的 `ui.markdown_line_numbers` **不参与生效值**：携带非 `null` 值时只产生一条「该键已退场」的启动
+warning，显式 `null` 与键缺席同义、不告警（AGENTS.md「变更默认直接切断」：不迁移、不双读）。
 
-`ui` 的这几个键与 `editor.font_size` 的差别是**持久偏好 vs 瞬态口径**：主题、阅读栏宽、左栏宽与界面语言
-是用户显式选择的结果，切换 / 拖拽松手即回写（让下次启动的真源跟上运行态）；字号步进、折行翻转与 md 行号档位是瞬态显示口径，不落盘、
-重启回到配置值。`ui` 是结构化表：表内取值非法 → 回落该字段 + warning；整表错形状（如 `"ui": "dark"`）或表内类型不符
-（如 `"theme": 2`、`"markdown_line_numbers": 2`、`"language": 2`）走整文件回落（见 §2）。
+`ui` 的这几个键与 `editor.font_size` 的差别是**持久偏好 vs 瞬态口径**：主题、阅读栏宽、左栏宽、界面语言与
+行号开关是用户显式选择的结果，切换 / 拖拽松手即回写（让下次启动的真源跟上运行态）；字号步进与折行翻转是
+瞬态显示口径，不落盘、重启回到配置值。`ui` 是结构化表：表内取值非法 → 回落该字段 + warning；整表错形状
+（如 `"ui": "dark"`）或表内类型不符（如 `"theme": 2`、`"line_numbers": 2`、`"language": 2`）走整文件回落
+（见 §2）。退场键 `markdown_line_numbers` 是类型容忍的**唯一例外**：它收成 `serde_json::Value`，写错类型
+（如数字）也不触发整文件回落——它已经没有生效值，没有理由拖垮 `last_vault` 等真配置。
 
 ### 1.4 `[vault]` 表
 
@@ -451,7 +455,7 @@ change 的 [design §9](../../openspec/changes/add-harness-subagents/design.md)�
   只回退该字段到出厂默认 + 一条人话 warning，其余字段照常生效，**不得导致启动失败**（ADR 0002 §5）。
 - **整文件回落**：整份文件不是合法 JSON，或**字段类型不符**（如 `"line_wrap": "yes"`、
   `"font_size": "15"`、`"code_mode_line_wrap": "yes"`、`"auto_indent": "yes"`、`"ui": "dark"`、
-  `"markdown_line_numbers": 2`、`"cron": "daily-log"`、`"cron": {"tasks": "daily-log"}`），
+  `"line_numbers": 2`、`"cron": "daily-log"`、`"cron": {"tasks": "daily-log"}`），
   则整份配置按出厂默认解释 +
   一条 warning（连 `last_vault` 一起丢）。这是既有解析模型的性质（不等同于逐字段回落），单测逐条钉住
   （`config.rs` 的 `wrong_type_*_falls_back_entire_file` 族）。本仓**不提供**「逐字段类型容忍」。
@@ -505,7 +509,9 @@ patch，MUST NOT 用打开时的旧快照整份覆盖。
 - `ui.theme` → 主题切换（`view.theme-cycle` / modeline 主题钮，`src/main.ts:2912` 的 `configSetUiValue`）；
 - `ui.content_width` → 阅读栏宽拖拽松手（`src/main.ts:1529`）；
 - `ui.sidebar_width` → 左栏分隔条拖拽松手（`src/main.ts:1571`）；
-- `ui.language` → 语言切换（`view.language-cycle` / modeline 语言钮，`src/main.ts:2960`）；
+- `ui.language` → 语言切换（`view.language-cycle` / modeline 语言钮，`src/main.ts` 的 `cycleLanguage`）；
+- `ui.line_numbers` → 行号开关切换（`view.toggle-line-numbers` / modeline 行号钮，`src/main.ts` 的
+  `toggleLineNumbers`）；
 - `harness.provider` / `harness.providers.<id>.model` → 合并选择器的 provider / 模型切换（`src/harness-panel.ts` 的 `selectProvider` / `selectModel`；单键合并通道）；
 - `harness.permission_mode` → 权限 chip 切换（`src/harness-panel.ts` 的 `selectPermissionMode`）；
 - `harness.permissions.allow` → 批准卡的「以后都允许」写规则、权限浮层的规则删除（`harness.rs:1787` / `:1816`）；

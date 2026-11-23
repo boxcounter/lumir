@@ -24,6 +24,7 @@ import {
   scopeOfCommand,
 } from "../../src/keys.ts";
 import type { CommandId, CommandRuntime, KeyBinding } from "../../src/keys.ts";
+import { COMMAND_META } from "../../src/command-meta.ts";
 
 // ---------------------------------------------------------------------------
 // token 归一化
@@ -731,6 +732,75 @@ test("主题切换命令可由 [keys] 重绑 / 解绑（默认键位单段无空
   );
   assert.equal(
     unbound.bindings.find((binding) => binding.command === "view.theme-cycle"),
+    undefined,
+    "解绑后该命令在生效表里没有绑定（键位面板据此显示未绑定）",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// change global-line-numbers-toggle-nov23：行号开关命令（⌘⇧N）的 token 形态、作用域、
+// 三来源说明与可重绑 / 解绑（tasks 5.9 的四项专项对账）
+// ---------------------------------------------------------------------------
+
+test("行号开关命令：⌘⇧N 的 token 形态、作用域 global、不在默认不绑键清单里", () => {
+  assert.ok(commandIds.includes("view.toggle-line-numbers"), "view.toggle-line-numbers 不在 COMMAND_IDS");
+  assert.ok(
+    !editorCommandIds.includes("view.toggle-line-numbers"),
+    "落在 editor 组会让作用域派生成 editor；行号开关必须是 global（焦点在左栏 / 搜索框 / 浮层 / composer 里同样要能切）",
+  );
+  // 事件侧与表内必须同 token：真实 ⌘⇧N 事件的 key 是 "N"（Shift 已按下），表内写 `Cmd-Shift-N`
+  // ——这条 equality 是防「表内写 Cmd-Shift-n / Cmd-KeyN 之类永不命中」的那类静默失配。
+  const event = { key: "N", code: "KeyN", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
+  const token = normalizeKey("Cmd-Shift-N");
+  assert.equal(keyToken(event), token, "⌘⇧N 的事件 token 与表内写法必须相等");
+  assert.equal(token, "Cmd-Shift-N");
+  const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === token);
+  assert.equal(binding?.command, "view.toggle-line-numbers");
+  assert.equal(binding?.scope, "global");
+  // 键位面板的「全局」组 = NON_TAB_GLOBAL_COMMAND_IDS；有默认绑定 ⇒ 不在默认不绑键清单里。
+  assert.ok(
+    (NON_TAB_GLOBAL_COMMAND_IDS as readonly string[]).includes("view.toggle-line-numbers"),
+    "不在 NON_TAB_GLOBAL_COMMAND_IDS（面板全局组的成员来源）里",
+  );
+  assert.ok(
+    !KEYLESS_COMMAND_IDS.includes("view.toggle-line-numbers"),
+    "该命令默认有绑定，MUST NOT 登记为默认不绑键",
+  );
+  assert.equal(scopeOfCommand("view.toggle-line-numbers"), "global");
+});
+
+test("行号开关命令：来由说明同时含表内 / muda（原生菜单）/ macOS 三段", () => {
+  const binding = KEY_BINDINGS.find((item) => item.command === "view.toggle-line-numbers");
+  const doc = docTextOf(binding);
+  assert.ok(doc.length > 0, "绑定必须带来由说明（表即文档）");
+  assert.ok(doc.includes("表内"), "缺少「表内」一段");
+  assert.ok(doc.includes("muda") || doc.includes("原生菜单"), "缺少「muda / 原生菜单」一段");
+  assert.ok(doc.includes("macOS"), "缺少「macOS」一段");
+  // 短标签与三来源说明 MUST NOT 共用同一个键（先例 D645 / D311）：短标签只承载 labelKey。
+  const meta = COMMAND_META["view.toggle-line-numbers"];
+  assert.equal(meta.labelKey, "D972");
+  assert.notEqual(binding?.docKey, meta.labelKey, "短标签与绑定来由共用一键会互相拉扯");
+  // 别名进查询语料（不上屏）：任务清单点名的三条。
+  assert.deepEqual(meta.aliases, ["line numbers", "line numbers toggle", "gutter"]);
+});
+
+test("行号开关命令可由 [keys] 重绑 / 解绑（默认键位单段无空白）", () => {
+  assert.ok(!/\s/.test("Cmd-Shift-N"), "默认键位含空白会让用户无法重绑（chord 本版不支持）");
+  // 重绑：⌃; → view.toggle-line-numbers（作用域仍由命令清单派生为 global，不随配置漂移）
+  const rebound = applyKeyOverrides({ "Ctrl-;": "view.toggle-line-numbers" });
+  assert.deepEqual(rebound.warnings, []);
+  const moved = rebound.bindings.find((binding) => normalizeKey(binding.key) === "Ctrl-;");
+  assert.equal(moved?.command, "view.toggle-line-numbers");
+  assert.equal(moved?.scope, "global");
+  // 解绑：⌘⇧N 不再指向任何命令，原键与命令的其他绑定一并消失
+  const unbound = applyKeyOverrides({ "Cmd-Shift-N": null });
+  assert.deepEqual(unbound.warnings, []);
+  assert.equal(
+    unbound.bindings.find((binding) => normalizeKey(binding.key) === "Cmd-Shift-N"),
+    undefined,
+  );
+  assert.equal(
+    unbound.bindings.find((binding) => binding.command === "view.toggle-line-numbers"),
     undefined,
     "解绑后该命令在生效表里没有绑定（键位面板据此显示未绑定）",
   );

@@ -89,7 +89,9 @@ test("md/code mode changes do not rebuild the editor and paint remains observabl
   await expect(editor).toBeVisible();
   await page.locator('.ft-row[title="code.ts"]').click();
   await expect(page.locator(".cm-content")).toContainText("code");
-  await expect(page.locator(".cm-gutters")).toBeVisible();
+  // 模式信号取 md 的 live preview 内容级折行 class 的缺席（行号 gutter 自 change
+  // global-line-numbers-toggle-nov23 起默认 off、两种模式共用，MUST NOT 再当模式信号）。
+  await expect(page.locator(".cm-content")).not.toHaveClass(/cm-lp-codeblock-nowrap/);
   await page.locator('.ft-row[title="a.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("Alpha");
   await expect(editor).toHaveCount(1);

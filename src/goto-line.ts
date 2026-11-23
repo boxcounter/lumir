@@ -63,9 +63,10 @@ export interface GotoLinePromptOptions {
   /** 取消 / 收起时把焦点交还编辑器（`editor.focusPreservingReadingPosition()`，MUST NOT 裸
    *  `view.focus()`——浮层关闭不得改变阅读位置，见 src/scroll-position-view.ts）。 */
   restoreFocus(): void;
-  /** 输入条在场状态发生跃迁时回调（M281 的 D4 二次改判）：`on-demand` 档下 md 的行号 gutter
-   *  随它装 / 卸。只在**跃迁**时调用（打开→收起、收起→打开各一次；重复 open 不重复通知），
-   *  且与「跳转」正交——收起路径（取消 / 失焦 / 会话切换）同样通知。 */
+  /** 输入条在场状态发生跃迁时回调（M281 的 D4 二次改判；change
+   *  global-line-numbers-toggle-nov23 起与持久开关解耦）：`line_numbers = off` 档下行号 gutter
+   *  随它临时装 / 卸（md 与 code 一致）。只在**跃迁**时调用（打开→收起、收起→打开各一次；
+   *  重复 open 不重复通知），且与「跳转」正交——收起路径（取消 / 失焦 / 会话切换）同样通知。 */
   onVisibilityChange?(open: boolean): void;
 }
 

@@ -747,9 +747,13 @@ body {
    「chip/状态」节（micro 字 + semibold + pill 圆角 + 微底），取色全走 token、零新色值。
    边框三主题都占位（基础档用 transparent，见下），eink 的「chip 描边化」（eink 规则⑥）只是
    把它显形（border-color 取 `--border` = eink 的 #000）——线宽与内边距都不变，因此切主题
-   不产生任何位移（主题切换 MUST NOT 引起布局重排）。 */
+   不产生任何位移（主题切换 MUST NOT 引起布局重排）。
+   行号指示钮（change global-line-numbers-toggle-nov23）并入同一套 pill 规则：它是同一族的
+   常驻读数 + 切换入口，`on` / `off` 两种读数等宽（`min-width` 覆盖较长的 `off` + 居中），
+   切换因此是状态变化、不是布局事件——右段其它元素不位移。 */
 .modeline-theme,
-.modeline-language {
+.modeline-language,
+.modeline-line-numbers {
   flex: none;
   margin-left: var(--sp-6);
   padding: 1px var(--sp-4);
@@ -766,18 +770,28 @@ body {
     color var(--dur-ui) var(--ease-standard),
     background var(--dur-ui) var(--ease-standard);
 }
+/* `on` / `off` 等宽：`off` 比 `on` 多一个字符，自然宽排版会让右段其余元素随切换整体位移。
+   宽度按较长读数钉住、文本居中——判据是两种读数下钮 rect 宽相同、其它元素 rect 逐值不变
+   （tests/visual/scenes/modeline.spec.ts）。 */
+.modeline-line-numbers {
+  min-width: 3.2em;
+  text-align: center;
+}
 /* 主题还没施加到 `data-theme` 时钮整体不显示（与标题栏标识块同口径：宁可不显示，也不显示
-   一个尚未生效的主题名）。折叠掉它连右段的 12px 外边距一起收走。 */
+   一个尚未生效的主题名）。折叠掉它连右段的 12px 外边距一起收走。行号钮同理：施加前不显示。 */
 .modeline-theme[hidden],
-.modeline-language[hidden] {
+.modeline-language[hidden],
+.modeline-line-numbers[hidden] {
   display: none;
 }
 .modeline-theme:hover,
-.modeline-language:hover {
+.modeline-language:hover,
+.modeline-line-numbers:hover {
   color: var(--text);
 }
 :root[data-theme="eink"] .modeline-theme,
-:root[data-theme="eink"] .modeline-language {
+:root[data-theme="eink"] .modeline-language,
+:root[data-theme="eink"] .modeline-line-numbers {
   background: transparent;
   border-color: var(--border);
 }

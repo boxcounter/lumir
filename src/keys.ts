@@ -425,6 +425,13 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   // 作用域由本清单派生为 global——焦点在左栏 / 搜索框 / 键位面板 / 浮层里时同样要能切。
   // 它**有**默认绑定（⌘⇧L），因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。
   "view.language-cycle",
+  // change global-line-numbers-toggle-nov23：行号 gutter 的全局开关（md 与只读 code 共用
+  // 同一个开关，能力与施加点在 main.ts 的 applyLineNumbers / toggleLineNumbers）。取 `view.`
+  // 前缀而不是 `editor.`：它改的是**应用运行期**的显示口径（与折行 / 字号 / 主题 / 语言同族），
+  // 作用域由本清单派生为 global——焦点在左栏 / 搜索框 / 浮层 / harness composer 内时同样要能切。
+  // 它**有**默认绑定（⌘⇧N，冲突核实三条独立来源见表条目 D973），因此 MUST NOT 登记进
+  // KEYLESS_COMMAND_IDS。
+  "view.toggle-line-numbers",
   // M631：左栏收起 / 展开（change add-sidebar-resize-hide-and-root-create，Alex 2026-10-23）。
   // 取 `view.` 前缀而不是 `editor.`：它改的是**应用运行期**的骨架显示口径（与折行 / 字号 /
   // 主题 / 语言同族），作用域由本清单派生为 global——焦点在编辑器、文件树、搜索框或 harness
@@ -812,6 +819,10 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // M282：⌘⇧L 循环切换界面语言（change ui-language-i18n 的 D3 裁决）。三条冲突来源的复核写在
   // 表条目 D318 的正文里（表即文档，MUST NOT 在本文件另抄一份）。
   { key: "Cmd-Shift-L", command: "view.language-cycle", scope: "global", docKey: "D318" },
+  // change global-line-numbers-toggle-nov23：⌘⇧N 全局切换行号 gutter（语义取 N = Numbers，
+  // 与 ⌘⇧T（主题）/ ⌘⇧L（语言）/ ⌘⇧O（大纲）/ ⌘⇧A（harness）同族）。三条冲突来源的复核写在
+  // 表条目 D973 的正文里（表即文档，MUST NOT 在本文件另抄一份）；短标签 D972 不承载这段说明。
+  { key: "Cmd-Shift-N", command: "view.toggle-line-numbers", scope: "global", docKey: "D973" },
   // M631：⌘B 收起 / 展开左栏（change add-sidebar-resize-hide-and-root-create，Alex 2026-10-23
   // 需求原话「可以隐藏，需要有快捷键」+ 同日澄清「⌘B 来回一键」）。三条冲突来源的复核写在
   // 表条目 D548 的正文里（表即文档，MUST NOT 在本文件另抄一份）。取 global——焦点在编辑器 /

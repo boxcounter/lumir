@@ -206,11 +206,17 @@ test("窄窗退让（D2 备选）：<640px 版本号退 modeline 右段尾部，
   await expect(page.locator(".modeline-version")).toBeVisible();
   // 逐字断言 textContent（含前导空格形态「 · 9.9.9」），不用 toHaveText 的空白归一化
   expect(await page.locator(".modeline-version").evaluate((el) => el.textContent)).toBe(` · ${VERSION}`);
-  // 拼接形态：modeline 右段整体读作「语法 · 行数 · UTF-8 · 版本号」。
+  // 拼接形态：modeline 右段整体读作「语法 · 行数 · UTF-8 · 版本号 · 行号读数 · 主题 · 语言」。
   // 版本号段按 `VERSION` 常量拼进正则（M238：这里原先是写死的 `0\.0\.0`，版本一 bump 就与
   // 上面的常量分叉成两处真源——REVIEW.md 「同一语义两处真源」条；点号要转义，故用 replace 而不是模板里手写）。
+  // 行号钮（change global-line-numbers-toggle-nov23）插在版本号与主题钮之间：它是 `off` 读数
+  // （默认档），与主题 / 语言两个读数同族。段间允许 `\s*`——它们是相邻的内联元素，可见间距
+  // 由外边距而非空白字符承担（不写死空格形态），但**每一段都必须在场**（只匹配前缀的旧口径
+  // 已不再证明完整拼接）。
   await expect(page.locator(".modeline-right")).toHaveText(
-    new RegExp(`Markdown · \\d+ 行 · UTF-8 · ${VERSION.replaceAll(".", "\\.")}`),
+    new RegExp(
+      `Markdown · \\d+ 行 · UTF-8 · ${VERSION.replaceAll(".", "\\.")}\\s*off\\s*light\\s*zh`,
+    ),
   );
   // 标题栏标识块仍在 traffic 灯区内（只有产品名一段；窄窗下 traffic 占位宽不变）
   const box = (await page.locator(".titlebar-identity").boundingBox())!;

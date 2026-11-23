@@ -2552,6 +2552,23 @@ const COPY_TABLE = {
     zh: "测试脚本已弹尽：请补写 mock fixture 的响应",
     en: "The test script ran out: add more responses to the mock fixture",
   },
+  // D972–D975：行号全局开关（change global-line-numbers-toggle-nov23）。D972 只承载命令的
+  // **短标签**（COMMAND_META.labelKey，键位面板行）；绑定的三来源说明是独立的 D973
+  //（`docKey`），指示钮 D974 含 `{state}`、写失败 toast D975 含 `{reason}`——四键互不复用
+  //（主题命令的 D645 短标签 / D311 绑定来由是分键的既有先例）。`on` / `off` 是读数、不译文。
+  D972: { zh: "切换行号显示", en: "Toggle line numbers" },
+  D973: {
+    zh: "⌘⇧N 全局切换行号 gutter（md 与代码共用同一个开关，切换即写回配置 `[ui] line_numbers`；写失败降级为 toast、运行期不回滚）。取 global——焦点在左栏 / 搜索框 / 浮层 / 对话输入框里时同样要能切。冲突已核（零冲突，三条独立来源）：① 表内——本文件即真源，⌘⇧ 系现有 Cmd-Shift-z（重做）/ Cmd-Shift-o（toc.toggle）/ Cmd-Shift-T / Cmd-Shift-L / Cmd-Shift-A / Cmd-Shift-, / Cmd-Shift-.，⌘⇧N 不在其中；② 原生菜单 accelerator 集合（tauri 的 `Menu::default()` 逐项来自 muda 的 `items/predefined.rs`，清单见文件头 M149 段）不含 ⌘⇧N；③ macOS 系统级——2026-11-23 实机复核 `defaults export com.apple.symbolichotkeys`：key code 45（N）只有条目 19（修饰键 1572864 = ⌘⌥，且 enabled=false），⌘⇧N 零占用。可经 [keys] 重绑 / 解绑",
+    en: "⌘⇧N toggles the line-number gutter globally (markdown and code share one switch; switching writes back the `[ui] line_numbers` config, a failed write degrades to a toast and the runtime value does not roll back). Scope is global — it must also work with focus in the left column, the search box, a popover or the chat composer. Conflicts checked (none, three independent sources): (1) the table is this file; the ⌘⇧ bindings today are Cmd-Shift-z (redo) / Cmd-Shift-o (toc.toggle) / Cmd-Shift-T / Cmd-Shift-L / Cmd-Shift-A / Cmd-Shift-, / Cmd-Shift-. and ⌘⇧N is not among them; (2) the native menu accelerator set (tauri's Menu::default() takes each item from muda's predefined, list in the M149 section of the file header) has no ⌘⇧N; (3) at the macOS system level, a 2026-11-23 check of `defaults export com.apple.symbolichotkeys` shows key code 45 (N) only in entry 19 (modifiers 1572864 = ⌘⌥, enabled=false), so ⌘⇧N is free. Can be rebound / unbound via [keys]",
+  },
+  D974: {
+    zh: "行号：{state}（点击切换）",
+    en: "Line numbers: {state} (click to switch)",
+  },
+  D975: {
+    zh: "行号已切换，但写入配置失败，重启后将回到配置文件里的值（{reason}）",
+    en: "Line numbers switched, but saving the config failed; after a restart it falls back to the value in the config file ({reason})",
+  },
   // D899–D927：设置面板的**装载期配置诊断**（M865，M858 finding 的第三条信封
   // `ConfigDiagnostic{code, path, message}`）。消费点是 `src/settings-panel.ts` 的三处直出
   // message 的渲染口——`fillDiagnostics`、被忽略 provider 的条目诊断、模型行 notes（经

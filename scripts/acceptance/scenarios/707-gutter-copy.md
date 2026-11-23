@@ -20,20 +20,20 @@
 # 钉回 1200×800，见 README 的「窗口几何的确定性」）。
 #
 # 覆盖边界（如实登记）：剪贴板**权限拒绝**无法在真机稳定造出（系统授权框不可脚本化），那一面由
-# chromium 场景以 `Clipboard.writeText` 拒绝注入覆盖；`off` / `on-demand` 档的 gutter 在场合同
-# 由场景 56 与 m281 视觉场景覆盖，本场景只验 `always` 档（唯一能让 gutter 常驻的 md 档）与
-# code 恒常显两态。
+# chromium 场景以 `Clipboard.writeText` 拒绝注入覆盖。change `global-line-numbers-toggle-nov23` 起
+# md 与只读 code 共用 `[ui] line_numbers` 一个开关：本场景的启动口径是 `on`（两模式 gutter 常驻），
+# 尾部再补一轮 `off` + `⌥G` 的临时 gutter 右键（两模式都不常驻时本手势唯一存在的形态）。
 id: "707-gutter-copy"
 item: 707
 tier: full
-title: 行号 gutter 右键复制 `{path}:{line}`——md（always / 合成 fixture 路径含空格与中文）与 code 首行、vault 外绝对路径、剪贴板逐字、文档零写入
+title: 行号 gutter 右键复制 `{path}:{line}`——md（`line_numbers = on` / 合成 fixture 路径含空格与中文）与 code 首行、vault 外绝对路径、`off` + `⌥G` 的临时 gutter、剪贴板逐字、文档零写入
 fixtures: ["gutter 空格 中文.md", "block-copy.txt"]
 open: "gutter 空格 中文.md"
 marker: "GUTTER-707-MARKER"
 config:
-  markdownLineNumbers: always
+  lineNumbers: on
 steps:
-  - name: 起点：md 文档已打开、gutter 常驻（`always` 档；数字不在 AX，截图是唯一的形态证据）
+  - name: 起点：md 文档已打开、gutter 常驻（`line_numbers = on`；数字不在 AX，截图是唯一的形态证据）
     do: settle
     expect:
       - label: 正向锚点——文档可读（fixture 首行 marker）
@@ -41,7 +41,7 @@ steps:
       - label: 起点是干净的（标签读屏名没有「未保存」后缀）
         ax: { not: "（未保存）" }
       - label: 配置已落盘（本场景的 gutter 常驻来自启动口径，不是运行期命令）
-        file: { path: env:config.json, has: "\"markdown_line_numbers\": \"always\"" }
+        file: { path: env:config.json, has: "\"line_numbers\": \"on\"" }
       - shot: md-起点-gutter-常驻
 
   - name: 记录 md 磁盘基线（后面的零写盘断言比 sha256 + mtime）
@@ -67,14 +67,14 @@ steps:
       - label: 没有变 dirty
         ax: { not: "（未保存）" }
 
-  - name: 打开 code 文件（code 模式 gutter 恒常显，不需要任何档位配置）
+  - name: 打开 code 文件（同一开关对 code 生效：`on` 档下 gutter 同样常驻）
     do: open
     file: block-copy.txt
     marker: "纯文本文件"
     expect:
       - label: code 文件已装载到前台
         ax: { has: "纯文本文件" }
-      - shot: code-起点-gutter-恒常显
+      - shot: code-起点-gutter-常驻
 
   - name: 记录 code 磁盘基线
     do: record
@@ -144,4 +144,74 @@ steps:
     waitFor:
       not: ["/AXMenuItem \\((?:Look Up|Translate)[^)]*\\)/"]
     timeoutMs: 3000
+
+  # off 档 + ⌥G 的临时 gutter（change global-line-numbers-toggle-nov23：两模式都不常驻时，
+  # 本手势唯一存在的形态）。切启动口径为 off 并重启——这是启动真源的通道，不是运行期命令。
+  - name: 切到 off 档并重启（启动真源 = config.json 的 [ui] line_numbers）
+    do: configWrite
+    lineNumbers: off
+    expect:
+      - label: 配置已落盘（off）
+        file: { path: env:config.json, has: "\"line_numbers\": \"off\"" }
+
+  - name: 重新打开 md 文档（off 档：gutter 不常驻）
+    do: open
+    file: gutter 空格 中文.md
+    marker: "GUTTER-707-MARKER"
+    expect:
+      - label: 文档已装载
+        editor: { has: "GUTTER-707-MARKER" }
+      - shot: off-md-起点-无-gutter
+
+  - name: ⌥G 打开跳转输入条（临时 gutter 的唯一来源）
+    do: key
+    key: "alt+g"
+    expect:
+      - label: 输入条在场（截图外的唯一在读证据）
+        ax: { has: '/AXTextField = "1"/' }
+      - shot: off-md-临时-gutter
+
+  - name: 右键临时 gutter 首行（md 系数；此时 gutter 由输入条带出）
+    do: click
+    target: { role: AXTextArea, button: right, dx: -0.015, dy: 0.01 }
+    expect:
+      - label: 剪贴板逐字 = 路径 + 第 1 行（临时 gutter 与常驻 gutter 同一口径）
+        clipboard: { exact: "gutter 空格 中文.md:1" }
+      - label: 成功提示逐字回显
+        ax: { has: "已复制 gutter 空格 中文.md:1" }
+      - label: 右键的 mousedown 默认行为被消费 ⇒ 输入条仍开着、gutter 没有被 focusout 卸除
+        ax: { has: '/AXTextField = "1"/' }
+      - shot: off-md-临时-gutter-右键后
+
+  - name: Escape 收起输入条（临时 gutter 随之卸除）
+    do: key
+    key: escape
+    expect:
+      - label: 输入条已收起
+        ax: { not: "AXTextField" }
+
+  - name: 打开 code 文件（off 档：同样不常驻）
+    do: open
+    file: block-copy.txt
+    marker: "纯文本文件"
+    expect:
+      - label: code 文件已装载到前台
+        ax: { has: "纯文本文件" }
+
+  - name: ⌥G 在 code 模式打开输入条（临时 gutter 两模式一致）
+    do: key
+    key: "alt+g"
+    expect:
+      - label: 输入条在场
+        ax: { has: "/AXTextField = \"1\"/" }
+
+  - name: 右键 code 的临时 gutter 首行（code 系数与 md 不同——见文件头）
+    do: click
+    target: { role: AXTextArea, button: right, dx: -0.112, dy: 0.058 }
+    expect:
+      - label: 剪贴板逐字 = 路径 + 第 1 行
+        clipboard: { exact: "block-copy.txt:1" }
+      - label: 成功提示逐字回显
+        ax: { has: "已复制 block-copy.txt:1" }
+      - shot: off-code-临时-gutter-右键后
 ---

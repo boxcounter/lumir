@@ -44,11 +44,13 @@ test("打开 .ts 文件：关键字/字符串/数字 token 着色且编辑器可
   await page.locator('.ft-row[title="util.ts"]').click();
 
   // 可编辑合同（editable-non-md-files）与 code 模式特征：contenteditable 在场、
-  // 无 aria-readonly 只读态、带行号 gutter。M97/M101 的只读合同已随本 change 解除。
+  // 无 aria-readonly 只读态、没有 md 的 live preview 内容级折行 class（code 模式没有装饰层）。
+  // M97/M101 的只读合同已随本 change 解除。行号 gutter 自 change
+  // global-line-numbers-toggle-nov23 起默认 off（md / code 共用），MUST NOT 再当模式信号。
   const content = page.locator(".cm-content");
   await expect(content).toHaveAttribute("contenteditable", "true");
   await expect(content).toHaveAttribute("aria-readonly", "false");
-  await expect(page.locator(".cm-gutters")).toHaveCount(1);
+  await expect(content).not.toHaveClass(/cm-lp-codeblock-nowrap/);
 
   // 高亮 token（expect.poll 等语法树推进）：关键字/字符串/数字分别取主题语义色
   await expect.poll(() => tokenColor(page, "import")).toBe(LIGHT.keyword);

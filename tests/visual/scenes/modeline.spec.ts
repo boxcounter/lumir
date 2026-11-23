@@ -16,7 +16,7 @@ import { stubTauri } from "./tauri-stub";
 
 const DOC = "# Alpha\n\n正文一段。\n\n## Beta\n\n正文二段。";
 
-test("modeline 条带：四段文本逐字钉住 + 元素级基线", async ({ page }) => {
+test("modeline 条带：五段文本逐字钉住 + 元素级基线", async ({ page }) => {
   await stubTauri(page, {
     entries: [{ path: "doc.md", kind: "file", size: DOC.length, mtime_ms: 0 }],
     files: { "doc.md": DOC },
@@ -27,8 +27,11 @@ test("modeline 条带：四段文本逐字钉住 + 元素级基线", async ({ pa
   // 左段：路径 + 大纲指示段（光标落在首个标题上 → 指示段 = 该标题）
   await expect(page.locator(".modeline-path")).toHaveText("doc.md");
   await expect(page.locator(".modeline-section")).toHaveText("Alpha");
-  // 右段：语法 · 行数 · 编码（读取链路落盘文本带结尾换行，CM doc = 7 行）+ 主题指示钮（M237 的常驻归因出口）
+  // 右段：语法 · 行数 · 编码（读取链路落盘文本带结尾换行，CM doc = 7 行）+ 行号指示钮
+  // （change global-line-numbers-toggle-nov23 的常驻归因出口，默认读数为 off）+ 主题指示钮
+  // （M237 的常驻归因出口）。
   await expect(page.locator(".modeline-meta")).toHaveText("Markdown · 7 行 · UTF-8");
+  await expect(page.locator(".modeline-line-numbers")).toHaveText("off");
   await expect(page.locator(".modeline-theme")).toHaveText("light");
 
   await expectScreenshot(page.locator(".modeline"), "modeline-bar.png");

@@ -5,7 +5,8 @@
 //   - 成功 toast 与剪贴板逐字一致；剪贴板拒绝时走失败 toast 且不显示成功；
 //   - 零副作用：文档、选区、dirty（modeline 路径段）、滚动位置逐值不变；
 //   - `contextmenu` 的默认行为被消费（window 冒泡段读到 defaultPrevented = true）；
-//   - `off` 档没有 gutter 时没有本手势（剪贴板不变、无成功提示）。
+//   - 开关关闭（`off`，默认）且输入条未打开时没有本手势（剪贴板不变、无成功提示）；
+//     `off` + `⌥G` 的临时 gutter 仍可复制（`gutter-copy-path-line-nov21` 的临时档口径）。
 // 真机 WKWebView 的同一链路归 scripts/acceptance/scenarios/707-gutter-copy.md；权限拒绝无法在
 // 真机稳定造出，故那一面只在本文以 API 拒绝注入覆盖。
 
@@ -176,7 +177,7 @@ async function firstVisibleNumber(page: Page): Promise<{ line: number; topBefore
 
 test("md：首行 / 末行右键复制 vault 相对路径与 1 基行号，成功提示逐字回显，零副作用", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await openVaultDoc(page, MD_PATH, { markdown_line_numbers: "always" });
+  await openVaultDoc(page, MD_PATH, { line_numbers: "on" });
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
   await caretAtLine(page, 3);
   const before = await editorFacts(page);
@@ -211,7 +212,7 @@ test("md：首行 / 末行右键复制 vault 相对路径与 1 基行号，成�
 
 test("code：首行 / 末行同一口径，剪贴板与成功提示一致", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await openVaultDoc(page, CODE_PATH);
+  await openVaultDoc(page, CODE_PATH, { line_numbers: "on" });
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
   await caretAtLine(page, 2);
   const before = await editorFacts(page);
@@ -231,7 +232,7 @@ test("code：首行 / 末行同一口径，剪贴板与成功提示一致", asyn
 
 test("vault 外只读：复制绝对路径 + 1 基行号，文档仍只读且不产生 dirty", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await stubTauri(page, { ...VAULT, config: { markdown_line_numbers: "always" } });
+  await stubTauri(page, { ...VAULT, config: { line_numbers: "on" } });
   await page.goto("/");
   await expect(page.locator(".ft-row").first()).toBeVisible();
   await configApplied(page);
@@ -256,7 +257,7 @@ test("vault 外只读：复制绝对路径 + 1 基行号，文档仍只读且不
 
 test("剪贴板被拒：失败 toast、不显示成功、剪贴板与文档都不变", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await openVaultDoc(page, MD_PATH, { markdown_line_numbers: "always" });
+  await openVaultDoc(page, MD_PATH, { line_numbers: "on" });
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
   await caretAtLine(page, 2);
   const before = await editorFacts(page);
@@ -284,7 +285,7 @@ test("剪贴板被拒：失败 toast、不显示成功、剪贴板与文档都�
 
 test("无路径：关闭最后标签后右键，失败 toast 与 console 诊断各一次，剪贴板不变", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await openVaultDoc(page, MD_PATH, { markdown_line_numbers: "always" });
+  await openVaultDoc(page, MD_PATH, { line_numbers: "on" });
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
   await page.locator(".tab-close").click();
   await expect(page.locator(".tab-open")).toHaveCount(0);
@@ -307,7 +308,7 @@ test("无路径：关闭最后标签后右键，失败 toast 与 console 诊断�
 
 test("frontmatter replace 块与后续正文：块首行复制 1，正文复制实际源行号", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await openVaultDoc(page, FM_PATH, { markdown_line_numbers: "always" });
+  await openVaultDoc(page, FM_PATH, { line_numbers: "on" });
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
   const before = await editorFacts(page);
 
@@ -329,7 +330,7 @@ test("frontmatter replace 块与后续正文：块首行复制 1，正文复制�
 
 test("软换行：复制的仍是源逻辑行号，不是视觉行序号", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await openVaultDoc(page, WRAP_PATH, { markdown_line_numbers: "always" });
+  await openVaultDoc(page, WRAP_PATH, { line_numbers: "on" });
   const number = page.locator(".cm-lineNumbers .cm-gutterElement").filter({ hasText: /^3$/ }).first();
   await expect(number).toBeVisible();
   const box = await number.boundingBox();
@@ -344,7 +345,7 @@ test("软换行：复制的仍是源逻辑行号，不是视觉行序号", async
 
 test("code dirty：右键不改文档与 dirty；随后一次撤销只撤销此前的编辑", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await openVaultDoc(page, CODE_PATH);
+  await openVaultDoc(page, CODE_PATH, { line_numbers: "on" });
   await caretAtLine(page, 1);
   await page.keyboard.type("DIRTY");
   await expect(page.locator(".modeline-path")).toContainText("未保存");
@@ -364,7 +365,7 @@ test("code dirty：右键不改文档与 dirty；随后一次撤销只撤销此�
 
 test("非首屏滚动快照：右键不改视口；切走再切回恢复同一顶行", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await openVaultDoc(page, MD_PATH, { markdown_line_numbers: "always" });
+  await openVaultDoc(page, MD_PATH, { line_numbers: "on" });
   await page.locator(".cm-content").click();
   await expect.poll(() => editorHasFocus(page)).toBe(true);
   await page.keyboard.press("Control+v");
@@ -398,9 +399,9 @@ test("非首屏滚动快照：右键不改视口；切走再切回恢复同一�
   expect(Math.abs(afterScroll - beforeSwitchScroll)).toBeLessThanOrEqual(200);
 });
 
-test("on-demand：跳转输入条带出的临时 gutter 也能右键复制，且输入条不被右键收起", async ({ page, context }) => {
+test("off 档（默认）：跳转输入条带出的临时 gutter 也能右键复制，且输入条不被右键收起", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await openVaultDoc(page, MD_PATH); // 默认 on-demand：打开时没有 gutter
+  await openVaultDoc(page, MD_PATH); // 默认 off：打开时没有 gutter
   await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
   await page.locator(".cm-content").click();
   await expect.poll(() => editorHasFocus(page)).toBe(true);
@@ -419,9 +420,9 @@ test("on-demand：跳转输入条带出的临时 gutter 也能右键复制，且
   await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
 });
 
-test("off 档没有 gutter：原位置右键不复制、不反馈，gutter 三档合同不动", async ({ page, context }) => {
+test("开关关闭且输入条未打开：没有 gutter、原位置右键不复制不反馈", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await openVaultDoc(page, MD_PATH, { markdown_line_numbers: "off" });
+  await openVaultDoc(page, MD_PATH, { line_numbers: "off" });
   await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
   await page.evaluate(() => navigator.clipboard.writeText("SENTINEL-OFF"));
 

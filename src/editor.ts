@@ -41,7 +41,6 @@ import type { ImageLightbox } from "./lightbox";
 import type { TableFullscreen } from "./table-fullscreen";
 import type { GotoLinePromptPort } from "./goto-line";
 import type { GutterCopyPort } from "./gutter-copy";
-import type { MarkdownLineNumbers } from "./bindings/MarkdownLineNumbers";
 import { detectFrontmatter, firstBodyLineStart, frontmatterBlockField, normalizeFrontmatterCaret } from "./preview/frontmatter";
 import { trustedLoad } from "./editor-annotations";
 import { findMathSpans } from "./preview/math";
@@ -1537,19 +1536,21 @@ export interface EditorHandle {
    * 注入行号 gutter 右键复制的出口（change gutter-copy-path-line-nov21）：`copy(path, line)` 由
    * 装配层写剪贴板并给反馈。未注入时右键不接管（原生菜单照旧，不假装能复制）。
    *
-   * **只接能力**：本入口 MUST NOT 改变 gutter 的在场判据（唯一来源仍是 `mdGutterExtensions()`），
+   * **只接能力**：本入口 MUST NOT 改变 gutter 的在场判据（唯一来源仍是 `gutterExtensions()`），
    * 也不触发任何重配 / 重建——处理器是 gutter 扩展的一部分，注入后下一次右键即生效。
    */
   setGutterCopy(port: GutterCopyPort | null): void;
   /**
-   * 设置 md 行号 gutter 的档位（`ui.markdown_line_numbers`，M281 的 D4 二次改判）。装载时喂一次
-   * 配置值（`src/main.ts`），**运行期 MUST NOT 回写**——本 change 不提供切换它的命令 / 键位 / UI。
-   * 立即生效到全部会话（含后台）；`code` 模式不受影响（其 gutter 恒常显）。
+   * 设置行号 gutter 的全局开关（change global-line-numbers-toggle-nov23；取代 M281 的
+   * `setMarkdownLineNumbers(tier)` 的旧口径）。装配层在启动装载与运行期切换（`applyLineNumbers`）各喂一次；
+   * 一份值管**全部会话、两种模式**（含后台标签）——md 与只读 code 不再各判一套档位。
+   * 值未变时**不派发任何事务**（保留 M281 的启动期零事务守卫，理由见实现处注释）。
    */
-  setMarkdownLineNumbers(tier: MarkdownLineNumbers): void;
+  setLineNumbers(on: boolean): void;
   /**
-   * 同步「跳转输入条是否在场」（M281 的 D4 二次改判）：`on-demand` 档下 md 的行号 gutter 随输入条
-   * 装 / 卸——装配层在浮层 `open` 与每条收起路径上调用它。`always` / `off` 档下这个标志无效果。
+   * 同步「跳转输入条是否在场」（M281 的 D4 二次改判；本 change 起它与持久开关解耦）：
+   * `off` 档下行号 gutter 随输入条装 / 卸——装配层在浮层 `open` 与每条收起路径上调用它。
+   * `on` 档下这个标志无效果（gutter 已常驻）。
    */
   setGotoLineGutterVisible(visible: boolean): void;
   /** 强制重建装饰（解析缓存更新 / watch 增量后调用）。 */
@@ -1703,7 +1704,7 @@ function wrapExtensions(mode: EditorMode, settings: WrapSettings): Extension[] {
  *
  * 内容（mode extensions / 折行 extensions / gutter extensions / 基础层闭包）仍**逐实例**传入：
  * 这些闭包捕获了各实例的 provider / resolver / `active` / `currentEditable` 等，只能在各自的重配点
- * 现取（见 `modeAndWrapEffects` / `reconfigureMdGutter` / `baseExtensions`）。共享的只是定位 token，
+ * 现取（见 `modeAndWrapEffects` / `reconfigureGutter` / `baseExtensions`）。共享的只是定位 token，
  * 不是内容。
  */
 const modeCompartment = new Compartment();
@@ -1711,17 +1712,18 @@ const modeCompartment = new Compartment();
  *  它里面，翻转走一次 reconfigure（与 modeCompartment 并列同形）。 */
 const wrapCompartment = new Compartment();
 /**
- * md 行号 gutter 的 Compartment（M281，change goto-line-command 的 D4 二次改判，
- * 2026-09-28）：**只有 md 分支**引用它（code 的 gutter 恒常显、直接装在 modeExtensions 里，
- * 不进 compartment）。走独立 compartment 而不是 modeCompartment 的理由：`on-demand` 档下
- * 输入条每次开 / 关都要装 / 卸 gutter，而重配 modeCompartment 会连带把 live preview 与
- * 语法高亮的整批装配重建（昂贵的、也是无谓的视口重建）。
+ * 行号 gutter 的 Compartment（M281，change goto-line-command 的 D4 二次改判；change
+ * global-line-numbers-toggle-nov23 起**两个模式共用**这一个安置点）：md 与只读 code 分支
+ * 各引用一次 `gutterCompartment.of(gutterExtensions())`——视图按 mode 二选一，永不并存。
+ * 走独立 compartment 而不是 modeCompartment 的理由：开关切换（或缺省档下输入条开 / 关）
+ * 每次都要装 / 卸 gutter，而重配 modeCompartment 会连带把 live preview 与语法高亮的整批
+ * 装配重建（昂贵的、也是无谓的视口重建）。
  *
  * **实例在扩展树里 MUST NOT 出现两次**——CM 的 `Configuration.resolve` 对同一 compartment
- * 出现两次直接抛 `Duplicate use of compartment in extensions`，因此 `mdGutterExtensions()`
- * 的返回值只会被 md 分支引用一次。
+ * 出现两次直接抛 `Duplicate use of compartment in extensions`，因此 `gutterExtensions()`
+ * 的返回值在每个分支只被引用一次。
  */
-const mdGutterCompartment = new Compartment();
+const gutterCompartment = new Compartment();
 /**
  * **基础层**的 Compartment（M317 r1 评审 P1-1）：`sessionState` 里两条**绑实例闭包**的基础扩展
  * ——`changeFilter`（读实例级 `currentEditable` 投影）与 `updateListener`（`active.state` 回写 /
@@ -1867,17 +1869,17 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    */
   let pasteUrlTitlePort: PasteUrlTitlePort | null = null;
   /**
-   * md 行号 gutter 的档位（`ui.markdown_line_numbers`，change goto-line-command 的 D4 二次改判）：
-   * 配置在装载时喂一次（`setMarkdownLineNumbers`），**运行期 MUST NOT 回写**——本 change 不提供
-   * 切换它的命令 / 键位 / UI（与 `editor.mode` / `editor.font_size` 同路，不像 `theme` 有
-   * modeline 主题钮那个 live 落点）。一份值管全部会话，因此新开 / 新装载的会话从第一帧起就对。
+   * 行号 gutter 的全局开关（`ui.line_numbers`，change global-line-numbers-toggle-nov23）：
+   * 由装配层经 `setLineNumbers` 在启动装载与运行期切换时写入，**一份值管全部会话、两种模式**
+   *（与 `theme` 同族：运行期可切换、切换即回写配置）。gutter 的在场判据只在 `gutterExtensions()`
+   * 里读它一次，各会话的 state 经 compartment 落定，不另存第二份判定。
    */
-  let markdownLineNumbers: MarkdownLineNumbers = "on-demand";
+  let lineNumbersOn = false;
   /**
-   * 跳转输入条是否在场（`on-demand` 档下 gutter 的唯一运行期触发源）：由装配层在浮层的
+   * 跳转输入条是否在场（`off` 档下 gutter 的唯一运行期触发源）：由装配层在浮层的
    * `open` / 收起路径上同步（`setGotoLineGutterVisible`）。它是**实例变量而不是 state 扩展**，
-   * 因为 gutter 的在场判据在 `mdGutterExtensions()` 里被读一次、再经 compartment 落进 state。
-   * `always` / `off` 档下这个标志被忽略。
+   * 因为 gutter 的在场判据在 `gutterExtensions()` 里被读一次、再经 compartment 落进 state。
+   * `on` 档下这个标志被忽略（gutter 已常驻）。
    */
   let gotoGutterVisible = false;
   const readyListeners = new Set<EditorReadyListener>();
@@ -2201,17 +2203,16 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       EditorState.readOnly.of(!editable),
       EditorView.contentAttributes.of({ tabindex: "0", "aria-readonly": String(!editable) }),
     ];
-    // 行号可见面（M281，change goto-line-command）：两个模式都有行号 gutter，**在场时机不同**。
-    // - code：恒常显，直接装（不进 compartment，形态逐值不变）。
-    // - md：档位由 `ui.markdown_line_numbers` 决定（D4 二次改判，2026-09-28）——`always` 恒装、
-    //   `off` 恒空、`on-demand`（默认）随跳转输入条开 / 关。装 / 卸走 `mdGutterCompartment`
-    //   （不重配 modeCompartment，避免连带重建 live preview），见 `mdGutterExtensions`。
+    // 行号可见面（M281，change goto-line-command；change global-line-numbers-toggle-nov23 起
+    // md 与只读 code **共用同一个开关、同一个判据**）：装 / 卸一律走 `gutterCompartment`
+    // （不重配 modeCompartment，避免连带重建 live preview），见 `gutterExtensions`。
+    // `"off"`（默认）时两种模式都没有 gutter；跳转输入条（⌥G）打开期间临时装上（两模式一致），
+    // 收起即卸；`"on"` 时常驻，输入条开 / 关不改变在场。
     // 两个模式装同一套 `lineNumbers()` + `highlightActiveLineGutter()`，**不装**
     // `highlightActiveLine`（正文行的整行底色不在本 change 内；md 阅读视图本就没有它——
     // 当前行只由行号底色指出，见 `.cm-activeLineGutter` 规则）。
     // 几何与配色的模式差异全在 md 侧的样式真源（src/preview/theme.ts 的 gutter 段）；
     // 这里的 baseTheme 是两模式共用的落点（col 1 / row 1），md 的 gridRow 由那边覆写。
-    const lineNumberGutter = lineNumberGutterExtensions();
     return mode === "md"
       ? [
           ...editability,
@@ -2219,19 +2220,19 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           baseTheme,
           livePreview(previewContext),
           endMarker,
-          mdGutterCompartment.of(mdGutterExtensions()),
+          gutterCompartment.of(gutterExtensions()),
           markupKeymap,
           // M836 / M854 / M855：原生删除与键入的回读闸门（见函数组注释；只 md 有 replace 装饰）。
           nativeEditGate,
         ]
-      : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), markupKeymap, codeGraphemeBackspaceGate];
+      : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, gutterCompartment.of(gutterExtensions()), highlightActiveLine(), markupKeymap, codeGraphemeBackspaceGate];
   }
 
-  /** 行号 gutter 的**唯一装配点**（两模式共用）：md 的 `mdGutterExtensions()` 与 code 分支都从这里取，
-   *  因此行号渲染与右键行为不会各装一份。
+  /** 行号 gutter 的**唯一装配点**（两模式共用）：md 与 code 分支都经 `gutterExtensions()`
+   *  从这里取，因此行号渲染与右键行为不会各装一份。
    *
    *  右键复制（change gutter-copy-path-line-nov21）挂在 `lineNumbers` 自己的 `domEventHandlers` 上：
-   *  处理器随 gutter 一起安装 / 卸载，gutter 不在场时它也不存在（md 三档合同因此一字不动）。
+   *  处理器随 gutter 一起安装 / 卸载，gutter 不在场时它也不存在。
    *  返回 `true` 让 CM 调 `event.preventDefault()`——原生右键菜单不再弹出；本处理器 MUST NOT
    *  自己再 `preventDefault`，也 MUST NOT `dispatch` / `focus`：右键只读，不改文档、选区、dirty
    *  与阅读位置。行号取 `BlockInfo` 对应的源文档逻辑行（与 gutter 显示的数字同源）。
@@ -2243,8 +2244,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       lineNumbers({
         domEventHandlers: {
           // 右键的焦点副作用先在 mousedown 截住：`contextmenu` 处理器只能消费右键菜单本身，
-          // 拦不住 mousedown 默认行为带来的焦点转移（编辑器失焦 / `on-demand` 档下跳转输入条
-          // 的 focusout 会把 gutter 卸掉）。只拦辅助键（macOS 的右键 = button 2；Ctrl+左键
+          // 拦不住 mousedown 默认行为带来的焦点转移（编辑器失焦 / `off` 档下跳转输入条
+          // 的 focusout 会把临时 gutter 卸掉）。只拦辅助键（macOS 的右键 = button 2；Ctrl+左键
           // 同义），左键的既有 gutter 行为一字不动。返回 true 让 CM 调 `preventDefault`。
           mousedown: (_editorView, _block, event) => {
             if (gutterCopy === null) return false;
@@ -2262,20 +2263,18 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     ];
   }
 
-  /** md 的 gutter 扩展：**在场判据的唯一来源**（REVIEW.md 「同一语义两处真源」条——别处 MUST NOT 自行判断）。
-   *  `always` 恒装、`off` 恒空、`on-demand` 随输入条。`code` 模式不经过这里（恒常显）。 */
-  function mdGutterExtensions(): Extension {
-    const installed =
-      markdownLineNumbers === "always" || (markdownLineNumbers === "on-demand" && gotoGutterVisible);
-    return installed ? lineNumberGutterExtensions() : [];
+  /** 行号 gutter 的**在场判据的唯一来源**（REVIEW.md「同一语义两处真源」条——别处 MUST NOT
+   *  自行判断）。md 与只读 code 共用它：持久开关 `lineNumbersOn` 常驻，或（`off` 档下）跳转
+   *  输入条打开期间临时在场。收起输入条时 `gotoGutterVisible` 先被置回 false，再重配。 */
+  function gutterExtensions(): Extension {
+    return lineNumbersOn || gotoGutterVisible ? lineNumberGutterExtensions() : [];
   }
 
-  /** 把 md gutter 的在场状态重配到**全部 md 会话**（照 `reconfigureWrap` 的既有分流：前台
-   *  dispatch、后台只换代 state——不做的话切走再切回会看到上一轮装上的 gutter）。 */
-  function reconfigureMdGutter(): void {
+  /** 把 gutter 的在场状态重配到**全部会话**（md 与 code 一视同仁；照 `reconfigureWrap` 的既有
+   *  分流：前台 dispatch、后台只换代 state——漏掉后台会做的话，切走再切回会看到上一轮的 gutter）。 */
+  function reconfigureGutter(): void {
     for (const session of sessions) {
-      if (session.mode !== "md") continue;
-      const effects = mdGutterCompartment.reconfigure(mdGutterExtensions());
+      const effects = gutterCompartment.reconfigure(gutterExtensions());
       if (session === active) view.dispatch({ effects });
       else session.state = session.state.update({ effects }).state;
     }
@@ -3505,27 +3504,31 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     },
     setGutterCopy(port) {
       // 同 setGotoLinePrompt：右键处理器在 DOM 事件执行时才读这个口子，注入不需要重建 gutter
-      //（重建会扰动滚动 / 阅读位置，见 setMarkdownLineNumbers 的同款理由）。
+      //（重建会扰动滚动 / 阅读位置，见 setLineNumbers 的同款理由）。
       gutterCopy = port;
     },
-    setMarkdownLineNumbers(tier: MarkdownLineNumbers) {
-      // 档位没变就**什么都不做**：装载时喂的若就是默认档 `on-demand`（最常见的情况），这条路径
+    setLineNumbers(on: boolean) {
+      // 值没变就**什么都不做**：启动装配喂的若就是默认 `off`（最常见的情况），这条路径
       // MUST NOT 派发任何事务——compartment 的 reconfigure 会让 CM 把 state 标成 reconfigured 并
       // 触发一次全量重测量，那会扰动同一拍里的滚动 / 阅读位置恢复（视觉套件里滚动类用例对这类
       // 扰动敏感：实测 m132 的 ⌥V 翻屏在整轮跑里因一次启动期重测落在中途而读到 scrollTop=8）。
-      if (tier === markdownLineNumbers) return;
-      markdownLineNumbers = tier;
-      // 真正改档位时才重配，并立即生效到全部 md 会话（新建会话在 sessionState 里直接读当前值，
-      // 因此也天然跟上）。`code` 会话不带 mdGutterCompartment，reconfigureMdGutter 跳过它们。
-      reconfigureMdGutter();
+      if (on === lineNumbersOn) return;
+      lineNumbersOn = on;
+      // 真正切换时才重配，并立即生效到**全部会话、两种模式**（新建会话在 sessionState 里直接
+      // 读当前值，因此也天然跟上；后台会话经 `session.state.update` 换新 state）。
+      reconfigureGutter();
     },
     setGotoLineGutterVisible(visible: boolean) {
+      // 赋值 MUST 发生在任何「按常驻开关提前 return」之前：`gotoGutterVisible` 记录的是
+      // 「输入条当前是否开着」，与持久开关无关——顺序写反会让两个交叉态各错一个方向
+      //（`on → ⌥G → 切 off` 会错误卸掉正在用的临时 gutter；`off → ⌥G → 切 on → 收起输入条`
+      // 会错误保留一个已经不存在的输入条对应的标志）。
       if (gotoGutterVisible === visible) return;
       gotoGutterVisible = visible;
-      // `always` / `off` 档下 gutter 的在场与该标志无关 ⇒ 只在 `on-demand` 档才需要重配
+      // `on` 档下 gutter 的在场与这个标志无关 ⇒ 只在 `off` 档才需要重配
       //（避免每次开 / 关输入条都白走一趟 dispatch 与一次 DOM 写入）。
-      if (markdownLineNumbers !== "on-demand") return;
-      reconfigureMdGutter();
+      if (lineNumbersOn) return;
+      reconfigureGutter();
     },
     focusPreservingReadingPosition() {
       // 三段实现（取位置 → 聚焦 → 写回）在 src/scroll-position-view.ts：M280 起它不再是 facade

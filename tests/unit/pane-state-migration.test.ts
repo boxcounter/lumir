@@ -203,7 +203,7 @@ test("实现守卫：四处 Compartment 模块级、基础层进 baseCompartment
   const source = readFileSync(new URL("../../src/editor.ts", import.meta.url), "utf8");
 
   // 1. 四个 compartment 必须**模块级**声明（行首、无缩进）——回退到 createEditor 体内即红。
-  for (const name of ["modeCompartment", "wrapCompartment", "mdGutterCompartment", "baseCompartment"]) {
+  for (const name of ["modeCompartment", "wrapCompartment", "gutterCompartment", "baseCompartment"]) {
     assert.match(
       source,
       new RegExp(`^const ${name} = new Compartment\\(\\);$`, "m"),

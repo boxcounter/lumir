@@ -280,10 +280,11 @@ test("code 模式没有标记；文末光标与全选都不影响显示", async 
   await stub(page);
   await page.goto("/");
 
-  // code 模式（.txt）：没有 live preview 装饰层，也就没有标记
+  // code 模式（.txt）：没有 live preview 装饰层，也就没有标记。模式信号取 modeline 的语言读数
+  // （Markdown / Plain text），MUST NOT 再用行号 gutter——行号开关默认 off、两种模式共用。
   await open(page, NOTE);
   await expect(marker(page)).toHaveCount(0);
-  await expect(page.locator(".cm-lineNumbers").first()).toBeVisible();
+  await expect(page.locator(".modeline-meta")).toContainText("Plain text");
 
   // md 长文：标记在场（在场态由元素本身表达——M238 起滚动容器上不再有在场态 class，
   // 行尺寸口径与标记在场无关，见下面那条不变量用例）；光标落在文档末尾、以及全选时
@@ -544,11 +545,10 @@ async function settleFrames(page: Page, frames = 4): Promise<void> {
 }
 
 interface MarkerReading {
-  /** 当前模式：code 由行号 gutter 表达、md 由 live preview 的内容级折行 class 表达。
-   *  **这条两信号判据在 M281 的 D4 二次改判后保持原样**：默认档 `on-demand` 下 md 打开时
-   *  没有 gutter，因此 `.cm-lineNumbers` 仍等价于「这个 test 跑在 code 模式」。场景不设
-   *  `ui.markdown_line_numbers`，故 `always` / `off` 档不在本文件的覆盖面内；若日后把默认档
-   *  改成 `always`，这里会抛「模式判据不成立」——那是要重新裁决的信号，MUST NOT 预先放宽。 */
+  /** 当前模式：由 md 的 live preview 内容级折行 class 表达（`cm-lp-codeblock-nowrap` 只在
+   *  md 装配，code 模式没有 live preview 装饰层）。**change global-line-numbers-toggle-nov23
+   *  起 MUST NOT 再用 `.cm-lineNumbers` 当模式判据**：行号开关默认 `off`、md 与 code 共用，
+   *  两种模式都可能是「有 gutter」或「没有 gutter」——拿它判模式两端会同时为假。 */
   mode: "md" | "code";
   count: number;
   /** 判据的实测值（不含标记的内容高度 > 可用视口高度）。 */
@@ -566,11 +566,9 @@ async function readMarkerState(page: Page): Promise<MarkerReading> {
       const markers = [...document.querySelectorAll<HTMLElement>(".cm-lp-end-marker")];
       const contentRect = content.getBoundingClientRect();
       const markerRect = markers[0]?.getBoundingClientRect();
-      const code = document.querySelector(".cm-lineNumbers") !== null;
       const preview = content.classList.contains("cm-lp-codeblock-nowrap");
-      if (code === preview) throw new Error(`模式判据不成立：code=${code} preview=${preview}`);
       return {
-        mode: code ? "code" : "md",
+        mode: preview ? "md" : "code",
         count: markers.length,
         criterion: natural > el.clientHeight,
         marker: markerRect

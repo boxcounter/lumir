@@ -98,6 +98,10 @@ export const COMMAND_META: Record<CommandId, CommandMeta> = {
   "view.text-scale-reset": { labelKey: "D644", aliases: ["reset zoom", "reset font"] },
   "view.theme-cycle": { labelKey: "D645", aliases: ["theme", "dark mode", "light mode"] },
   "view.language-cycle": { labelKey: "D646", aliases: ["language", "english", "chinese"] },
+  "view.toggle-line-numbers": {
+    labelKey: "D972",
+    aliases: ["line numbers", "line numbers toggle", "gutter"],
+  },
   "view.toggle-sidebar": { labelKey: "D647", aliases: ["sidebar", "file tree", "hide sidebar"] },
   "harness.toggle": { labelKey: "D648", aliases: ["chat", "agent", "harness"] },
   "pane.split": { labelKey: "D649", aliases: ["split"] },

@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：273
-- 验收项（不同 item 编号）：242
-- 分档：core 30 / full 233 / bundle 5 / evidence 5（full 批 = 全部 273 个，含其余各档）
+- 场景：274
+- 验收项（不同 item 编号）：243
+- 分档：core 30 / full 234 / bundle 5 / evidence 5（full 批 = 全部 274 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -87,7 +87,7 @@
 | 53 | `53-bold-click-selection` | 点击粗体不产生幻影选区（M259）——指针按压期间的落点判定不跨布局 | core |
 | 54 | `54-bare-url-cmd-click` | 裸 URL / 链接定义行 / 角括号自动链接的装饰与 ⌘⏎ 打开（M272） | full |
 | 55 | `55-ui-language-switch` | 界面语言运行期切换：⌘⇧L 切到 en、chrome 文案上屏英文、写回 config.json、重启后首帧即配置语言 | full |
-| 56 | `56-goto-line` | 跳转到行命令的真机链路——⌥G 打开输入条（预填当前行号 + `共 M 行`）、行号列随输入条出现并在收起后隐藏（`on-demand` 默认档）、Enter 落到目标行（落点由 modeline 指示段与预填值双证）、越界静默钳到末行、取消不动光标与文档、[keys] 重绑通道 | full |
+| 56 | `56-goto-line` | 跳转到行命令的真机链路——⌥G 打开输入条（预填当前行号 + `共 M 行`）、行号列随输入条临时出现并在收起后隐藏（`line_numbers = off` 默认档）、Enter 落到目标行（落点由 modeline 指示段与预填值双证）、越界静默钳到末行、取消不动光标与文档、[keys] 重绑通道 | full |
 | 59 | `59-enter-auto-indent` | Enter 换行自动缩进的真机链路——code 模式继承语法缩进、无缩进规则的语言沿用当前行、md 围栏内沿用当前行且不续列表标记、md 列表续行不变、auto_indent=false 回退 | full |
 | 60 | `60-vault-switch-restore` | vault 切换的写盘段反馈与「标签栏当帧齐、正文按需装载」 | full |
 | 61 | `61-block-copy` | 块级复制：表格复制含表头分隔行的源码、代码块复制纯内容（围栏行与语法缩进都不在结果里）、降级表与 code 模式不命中不消费、不改写源文件 | full |
@@ -245,7 +245,7 @@
 | 704 | `252-cron-click-after-exit`<br>`252-harness-activity-presence`<br>`253-harness-vault-activity` | 应用退出后点击通知：跨进程恢复、快照会话与四类拒绝（change add-cron-notification-relaunch §8.2）<br>harness 面板的活动在场：收起期间的在途 / 未读提示，打开面板即清算，停止不点亮<br>harness 跨 vault 往返的在途准确：切回仍在途不呈空闲、续渲染并对账；完成后往返呈未读并在面板在场时清算 | bundle<br>full<br>full |
 | 705 | `269-harness-path-line-sentence-period` | 句末句号不吞行号（path:line. 仍是整段可点并落到目标行） | full |
 | 706 | `270-cron-open-session-keeps-doc-focus` | 点击 cron 结果通知：展开 pane 并恢复会话，正文焦点与输入落点不被抢 | bundle |
-| 707 | `707-gutter-copy` | 行号 gutter 右键复制 `{path}:{line}`——md（always / 合成 fixture 路径含空格与中文）与 code 首行、vault 外绝对路径、剪贴板逐字、文档零写入 | full |
+| 707 | `707-gutter-copy` | 行号 gutter 右键复制 `{path}:{line}`——md（`line_numbers = on` / 合成 fixture 路径含空格与中文）与 code 首行、vault 外绝对路径、`off` + `⌥G` 的临时 gutter、剪贴板逐字、文档零写入 | full |
 | 708 | `708-harness-send-reject-rollback`<br>`708-wikilink-create-lazy-duplicate` | 发送被 provider_missing 拒：幽灵消息撤销、文本与 caret 还原、草稿原样（无 provider 环境）<br>一键创建——索引外同名笔记（用户规则惰性目录）安全拒绝，不造重复 | full<br>full |
 | 709 | `709-persistence-health-healthy`<br>`709b-doc-backup-banner`<br>`709c-doc-banner-save-all`<br>`709d-doc-banner-save-failure`<br>`709e-doc-banner-enum-independent`<br>`709f-doc-banner-restart` | 持久化健康——健康时不打扰（无横幅 / 无状态行 / 无未落盘提示）<br>文档崩溃备份写失败——文档区 sticky 横幅可见且不伪装成保存失败<br>文档备份失败横幅——「全部保存」后内容进 vault、写失败子条件清除、横幅撤下<br>文档备份失败横幅——保存失败时横幅保留，并给出既有保存失败反馈<br>文档备份失败横幅——枚举失败子条件独立保留，保存成功不撤下<br>文档备份失败横幅——重启不凭旧状态弹写失败，再次编辑并等满窗口后重现 | full<br>full<br>full<br>full<br>full<br>full |
 | 710 | `710-harness-retry-network` | 失败轮显式重试（网络失败）：错误行动作 → 点击 → 同一会话重发一次 → 回答上屏、记录只多一对 | core |
@@ -260,3 +260,4 @@
 | 719 | `719-harness-retry-approval` | 重试后的新写工具仍需批准：批准前零副作用、批准卡再现、批准后恰好一次 | full |
 | 720 | `720-harness-retry-image-nonvision` | 含图失败切非 vision 模型：重试被前置闸拒绝（零请求、动作仍在） | full |
 | 721 | `721-harness-vault-unread` | 跨 vault 的活动记录：非当前 vault 的在途 / 未读在切换器行上可读，切过去但面板收起不清未读 | full |
+| 722 | `722-line-numbers-toggle` | 行号全局开关真机链路——默认 off 两模式都无 gutter（右键 oracle 拿不到）、⌘⇧N 与 modeline 指示钮同源切换、on 档两模式可复制、off + ⌥G 的临时 gutter 可复制、切换持久化与重启、后台标签切回已是新态、on → ⌥G → 切 off 的交叉态 | full |
