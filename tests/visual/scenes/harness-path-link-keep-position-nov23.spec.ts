@@ -4,8 +4,14 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // change harness-path-link-keep-position-nov23 的浏览器层判据：
 //
 //   1. **前台裸路径短路**：目标已是活跃 pane 的前台文档、链接不带行号时，点击 MUST NOT 改变
-//      `scrollTop`、选区、正文、状态对象（不重载）、活跃标签与 pane；只给该标签一次
-//      1400ms 的导航高亮（`.tab.is-flash`）。旧实现没有闪烁态，本组在旧实现上必红。
+//      `scrollTop`、选区、正文与 dirty、MUST NOT 触发打开 / 同步链路、MUST NOT 清空撤销栈；
+//      只给该标签一次 1400ms 的导航高亮（`.tab.is-flash`）。旧实现没有闪烁态，本组在旧实现上必红。
+//      **「未触发打开 / 同步链路」的仪器**：① 打开跳转行浮层——`syncActiveDocument` 的第一件事
+//      就是收起它（`openFile` 的 existing-foreground 分支与 `openPathAtLine` 的 `open` 都会经
+//      `syncActiveDocument`）；② 在标签栏上挂 MutationObserver——`syncActiveDocument` 会经
+//      `renderAllTabStrips` 全量重建标签。两条都不成立即证明短路没有走那条链路。
+//      **撤销栈**：页面读不到 CM 的 history depth，因此不伪造深度读数——点击前先键入一个字符
+//      造真实 dirty 与可撤销编辑，点击后真实 `Meta+z` MUST 撤掉它（重载会清空历史，这条必红）。
 //   2. **带行锚保持滚动**：`路径:行号` 仍滚到目标行并给整行高亮，同时闪一次（不得误伤 L1）。
 //   3. **后台标签恢复自身位置**：目标在同一 pane 的后台、离开时停在文档中部 → 点击后切过去、
 //      恢复它自己的滚动位置（不是篇首），并闪一次。
@@ -14,14 +20,19 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //      `preventDefault()`（REVIEW.md「标题栏 preventDefault」条的同族纪律：MUST NOT 挂容器级）。
 //   6. **工具卡片同判定**：裸路径已在前台 → 不滚不动只闪；Read 的 `offset` → 滚到落点行、
 //      **不产生 `.cm-line-highlight`**（既有禁令）、标签照常闪。
-//   7. **闪烁的生命周期**：重复命中重置计时、同一时刻只有一层、全量重建不丢、1.4s 后消退；
-//      关闭含闪烁标签的 pane 不留残留（`TabsHandle.dispose` 的接线在单测里用 spy 钉住，
-//      这里判用户可见面：无残留 class、无页面错误）。
+//   7. **闪烁的生命周期**：重复命中重置计时、同一时刻只有一层、全量重建不丢、1.4s 后消退。
+//      `TabsHandle.dispose()` 的立即清理与计时器撤销由 `tests/unit/tabs.test.ts` 钉住
+//      （含「只摘 class、留状态 / 计时器」的退化实现反证）；`disposePaneHandle` 在
+//      editor destroy 前调用 dispose 是装配层接线、由代码审查确认。**本场景不声称**收 pane /
+//      `pageerror` 覆盖：pane 上限二且 harness 在场时文档 pane 唯一，右 pane 标签被闪烁命中的
+//      现场在现行布局不可达。
 //   8. **反向矩阵**：目录链接不闪、不碰编辑器；同名不同目录各开一个标签，闪烁落在实际目标上。
 //
 // 判据为什么这样写：滚动 / 选区 / 正文读数取自真 CM view（`.cm-content` 的 `cmTile.root.view`，
-// 与 m632 / reading-position 同一口径）；「不重载」用 `EditorState` 对象身份（短路的实现若误走
-// `openFile` 重载，state 会被换掉）而不是「正文看起来一样」这种弱判据。
+// 与 m632 / reading-position 同一口径）。**「不重载」不拿 `EditorState` / `Text` 身份冒充**：
+// 打开跳转行浮层会安装 md 行号 gutter（一次合法的 compartment 重配，同样换 `EditorState`），
+// 身份比较会把合法重配误判成缺陷、又放行「同 Text 的重配」。改用可区分的副作用仪器
+// （goto-line 浮层、标签栏 childList 重建）加真实 undo 行为，三者都直接对应合同条款。
 // 不覆盖：AX 读不到 `scrollTop` 的真机层（归 `scripts/acceptance/scenarios/221-*` 的
 // `recordEditor` + `unchangedSince`）；像素层（闪烁是瞬态，MUST NOT 拍进基线——本场景不含
 // 任何截图断言；三主题用计算属性判 `.tab.is-flash` 的底色来源）。
@@ -120,12 +131,13 @@ async function openTreeFile(page: Page, path: string): Promise<void> {
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText(path.split("/").pop() as string);
 }
 
-/** 真 CM view 的读数 + 文档对象身份（身份用于判「没有重新装载」）。 */
+/** 真 CM view 的读数：选区、正文、滚动位置。**不读 `EditorState` / `Text` 身份**——
+ *  合法的 compartment 重配（如 goto-line 的 gutter）同样替换 state 对象，身份不能区分「重载」
+ *  与「合法重配」；不重载由下面 `expectBarePathShortCircuit` 的副作用仪器 + 真实 undo 判。 */
 async function editorFacts(page: Page): Promise<{
   selection: { empty: boolean; from: number; to: number; head: number };
   doc: string;
   scrollTop: number;
-  sameDoc: boolean;
 }> {
   return page.evaluate(() => {
     const host = document.querySelector('.editor-pane:not(:has(.lumir-harness)) .cm-content') as unknown as {
@@ -142,23 +154,11 @@ async function editorFacts(page: Page): Promise<{
       };
     };
     const view = host.cmTile.root.view;
-    const w = window as unknown as { __keepDoc?: unknown };
-    const sameDoc = w.__keepDoc === view.state.doc;
     return {
       selection: view.state.selection.main,
       doc: view.state.doc.toString(),
       scrollTop: view.scrollDOM.scrollTop,
-      sameDoc,
     };
-  });
-}
-
-async function rememberDoc(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const host = document.querySelector('.editor-pane:not(:has(.lumir-harness)) .cm-content') as unknown as {
-      cmTile: { root: { view: { state: { doc: unknown } } } };
-    };
-    (window as unknown as { __keepDoc?: unknown }).__keepDoc = host.cmTile.root.view.state.doc;
   });
 }
 
@@ -209,40 +209,126 @@ function highlightedTexts(page: Page): Promise<string[]> {
   );
 }
 
-// ---------------------------------------------------------------------------
-// 1. 前台裸路径：不滚、不动选区、不重载，只闪
-// ---------------------------------------------------------------------------
+/** 仪器：记录标签栏的 childList 重建次数与点击前 active 标签的节点身份。
+ *  `syncActiveDocument` 会经 `renderAllTabStrips` → `renderTabs` 全量 `replaceChildren`；
+ *  短路的实现只改 class，节点与子列表都不该动。 */
+async function installTabStripSpy(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __tabSpy?: { node: Element | null; mutations: number; observer: MutationObserver };
+    };
+    const strip = document.querySelector(".tabstrip");
+    if (strip === null) throw new Error("tabstrip missing");
+    const observer = new MutationObserver((records) => {
+      const entry = w.__tabSpy;
+      if (entry === undefined) return;
+      for (const record of records) if (record.type === "childList") entry.mutations += 1;
+    });
+    w.__tabSpy = { node: document.querySelector(".tab.is-active"), mutations: 0, observer };
+    observer.observe(strip, { childList: true });
+  });
+}
 
-test("前台裸路径：scrollTop / 选区 / 正文 / 状态对象逐项不变，只闪标签并在 1.4s 后消退", async ({ page }) => {
-  await openPanel(page, { body: "前台文档见 long-note.md 的中间部分，点它不该挪视口。" });
-  await openTreeFile(page, "long-note.md");
+async function readTabStripSpy(
+  page: Page,
+): Promise<{ childListMutations: number; sameActiveTabNode: boolean }> {
+  return page.evaluate(async () => {
+    const w = window as unknown as {
+      __tabSpy?: { node: Element | null; mutations: number; observer: MutationObserver };
+    };
+    // MutationObserver 的回调在微任务里投递：等一帧再读，别把「尚未投递」当成 0。
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const entry = w.__tabSpy;
+    if (entry === undefined) throw new Error("tab spy missing");
+    entry.observer.disconnect();
+    w.__tabSpy = undefined;
+    return {
+      childListMutations: entry.mutations,
+      sameActiveTabNode: entry.node === document.querySelector(".tab.is-active"),
+    };
+  });
+}
+
+/** 点击前让滚动读数稳定（CM 的滚动锚点在测量周期里微调；goto-line 安装 gutter 也是合法重配）。 */
+async function settleScroll(page: Page): Promise<void> {
+  let previous = Number.NaN;
+  await expect
+    .poll(async () => {
+      const current = (await editorFacts(page)).scrollTop;
+      const settled = current === previous;
+      previous = current;
+      return settled;
+    }, { timeout: 2000, intervals: [50] })
+    .toBe(true);
+}
+
+/**
+ * 前台裸路径短路的整链判据（正文与工具卡片共用同一 `openVaultPath`，两个入口各测一次）：
+ *  - 制造真实 dirty + 一条可撤销编辑；
+ *  - 打开跳转行浮层（`syncActiveDocument` 的第一件事就是收起它）；
+ *  - 点击后仪器全成立：浮层仍在、标签栏无 childList 重建、active 标签节点身份不变；
+ *  - scrollTop / 选区 / 正文 / dirty 逐项不变；
+ *  - 关掉浮层后真实 `Meta+z` 撤掉点击前的键入（撤销栈未被清空；重载会让这条红）。
+ */
+async function expectBarePathShortCircuit(
+  page: Page,
+  click: () => Promise<void>,
+  tabName: string,
+): Promise<void> {
+  const original = await editorFacts(page);
+
+  await docContent(page).click();
+  await page.keyboard.type("x");
+  await expect(page.locator(".tab.is-active .tab-dirty"), "前置：键入使标签变 dirty").toBeVisible();
   await scrollDoc(page, 400);
-  await rememberDoc(page);
-
+  await page.keyboard.press("Alt+g");
+  await expect(page.locator(".lumir-goto"), "前置：跳转行浮层打开").toBeVisible();
+  await settleScroll(page);
   const before = await editorFacts(page);
   expect(before.scrollTop, "前置：已停在文档中部").toBeGreaterThan(0);
-  const activeTabBefore = await page.locator(".tab.is-active .tab-name").textContent();
+  await installTabStripSpy(page);
 
-  await linkExact(page, "long-note.md").click();
+  await click();
 
-  // 闪烁立刻在场（旧实现没有 .tab.is-flash，这一条在旧实现上必红）。
-  expect(await flashingTabs(page), "目标标签立刻闪一次").toEqual(["long-note.md"]);
-  await expect(page.locator(".tab.is-active .tab-name")).toHaveText(activeTabBefore as string);
-  await expect(page.locator(".tab.is-flash"), "闪烁不是第二种激活态：激活 class 仍在").toHaveClass(
-    /is-active/,
-  );
+  expect(await flashingTabs(page), "目标标签立刻闪一次").toEqual([tabName]);
+  // 仪器 1：syncActiveDocument 未运行 ⇒ 它不会收起跳转行浮层。
+  await expect(page.locator(".lumir-goto"), "同步链路未运行：跳转行浮层不被收起").toBeVisible();
+  // 仪器 2：syncActiveDocument 未运行 ⇒ renderAllTabStrips 没有全量重建标签栏。
+  const spy = await readTabStripSpy(page);
+  expect(spy.childListMutations, "同步链路未运行：标签栏无 childList 重建").toBe(0);
+  expect(spy.sameActiveTabNode, "同步链路未运行：active 标签节点未被替换").toBe(true);
 
   const after = await editorFacts(page);
   expect(after.scrollTop, "scrollTop 逐值不变").toBe(before.scrollTop);
   expect(after.selection, "选区 / caret 逐值不变").toEqual(before.selection);
   expect(after.doc, "正文逐字节不变").toBe(before.doc);
-  expect(
-    after.sameDoc,
-    "MUST NOT 重新装载（重载会替换文档 Text；state 对象可因无关重配换代，故判 doc 身份）",
-  ).toBe(true);
+  await expect(page.locator(".tab.is-active .tab-dirty"), "dirty 不变（true→true）").toBeVisible();
+
+  // 真实 undo：撤销栈未被清空（重载会清历史，这条会红）。
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".lumir-goto")).toBeHidden();
+  await page.keyboard.press("Meta+z");
+  await expect
+    .poll(async () => (await editorFacts(page)).doc, { timeout: 2000 })
+    .toBe(original.doc);
+  await expect(page.locator(".tab.is-active .tab-dirty"), "undo 后回到 clean").toBeHidden();
+}
+
+// ---------------------------------------------------------------------------
+// 1. 前台裸路径：不滚、不动选区、不重载，只闪
+// ---------------------------------------------------------------------------
+
+test("前台裸路径：不触发打开/同步链路，位置 / 选区 / 正文 / dirty 不变，撤销仍可用", async ({ page }) => {
+  await openPanel(page, { body: "前台文档见 long-note.md 的中间部分，点它不该挪视口。" });
+  await openTreeFile(page, "long-note.md");
+
+  await expectBarePathShortCircuit(
+    page,
+    () => linkExact(page, "long-note.md").click(),
+    "long-note.md",
+  );
 
   await expectFlashGone(page);
-  // 消退后标签外观回到原样；激活态全程不变。
   expect(await flashingTabs(page)).toEqual([]);
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("long-note.md");
 });
@@ -352,24 +438,20 @@ test("未打开的裸路径：新标签打开并成为前台，MUST NOT 闪", as
 // 5. 工具卡片：同一条判定
 // ---------------------------------------------------------------------------
 
-test("工具卡片裸路径（已在前台）：不滚、不动选区、只闪", async ({ page }) => {
+test("工具卡片裸路径（已在前台）：同一短路——无同步链路副作用、位置 / dirty 不变，撤销仍可用", async ({ page }) => {
   await openPanel(page, {
     body: "卡片里也有一条路径。",
     tool: { name: "vault_read", summary: '{"path":"long-note.md"}' },
   });
   await openTreeFile(page, "long-note.md");
-  await scrollDoc(page, 400);
-  await rememberDoc(page);
-  const before = await editorFacts(page);
 
-  await cardLink(page, "long-note.md").click();
+  await expectBarePathShortCircuit(
+    page,
+    () => cardLink(page, "long-note.md").click(),
+    "long-note.md",
+  );
 
-  expect(await flashingTabs(page)).toEqual(["long-note.md"]);
-  const after = await editorFacts(page);
-  expect(after.scrollTop).toBe(before.scrollTop);
-  expect(after.selection).toEqual(before.selection);
-  expect(after.doc).toBe(before.doc);
-  expect(after.sameDoc, "MUST NOT 重新装载（文档 Text 对象不变）").toBe(true);
+  await expectFlashGone(page);
 });
 
 test("工具卡片 offset：滚到落点行、标签闪、MUST NOT 产生行高亮（既有禁令）", async ({ page }) => {

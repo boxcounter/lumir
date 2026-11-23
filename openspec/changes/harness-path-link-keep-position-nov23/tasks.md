@@ -76,14 +76,19 @@
 - [x] 3.6 确认不改 `font-weight` / `border` / `box-shadow` / 尺寸；不新增 token / 时长 / 动效
 - [x] 3.7 确认没有第二个「标签闪烁」实现（`rg "is-flash|flash\\(" src/`），单一真源
 - [x] 3.8 `TabsHandle` 新增 `dispose(): void`：清计时器、清 `flashed`、移除残留 class
+      - 区分度：`dispose()` 后**不推进计时**即 `renderTabs()`（会话仍在）不得复活 class；
+        `clearTimeout` spy 必须被调用；再以「只摘 class、留状态 / 计时器」的退化实现实测判红
 - [x] 3.9 `src/main.ts` 的 `disposePaneHandle` 在 `handle.editor.view.destroy()` 之前调用
       `assembly.tabs?.dispose()`（或注册进 `assembly.unsubs`）；确认关 pane 与双 pane 收拢都
       走这条路径
 
 ## 4. 几何 / 焦点 / 链接矩阵（chromium）
 
-- [x] 4.1 前台裸路径：`scrollTop`、`selection.main.anchor/head`、正文逐字节、撤销栈深度、dirty
-      逐值不变；`.tab.is-active` 不变；`.is-flash` 立刻在场、1.4s 后有界轮询确认消失
+- [x] 4.1 前台裸路径：`scrollTop`、`selection.main.anchor/head`、正文逐字节、dirty 点逐值不变；
+      **不触发打开 / 同步链路**的仪器成立（跳转行浮层不收起、标签栏无 childList 重建、active
+      tab 节点身份不变）；真实 `Meta+z` 撤掉点击前的键入（撤销栈未清空——页面读不到 history
+      depth，不伪造深度读数）；`.tab.is-active` 不变；`.is-flash` 立刻在场、1.4s 后有界轮询
+      确认消失。正文与工具卡片两个入口各跑一遍。
 - [x] 4.2 焦点：点击后 `document.activeElement` 仍是 harness composer 的 `.cm-content`；随后
       直接键入字符只进 composer
 - [x] 4.3 标签几何：闪烁前后 `getBoundingClientRect()`（宽 / 高 / x）逐值不变；标签栏
@@ -103,8 +108,9 @@
       - 落地形态 = 单测（`tabs.test.ts` 的 dispose / 槽卸载用例 + `main.ts:458` 的接线）；
         **视觉现场在现行布局下不可达**：pane 上限二，harness 在场时文档 pane 只有一个，
         右 pane 的标签条不可能被 harness 路径链接闪烁命中（与 proposal「跨 pane 分支结构上
-        不可达」同一事实）。可达的生命周期面（重建保持 / 关闭会话 / 计时到点）已在
-        `harness-path-link-keep-position-nov23.spec.ts` 覆盖
+        不可达」同一事实）。dispose 用例已改为「不推进计时即重建 + `clearTimeout` spy」，
+        并用只摘 class 的退化实现实测判红；关闭被闪会话同样有独立的 `clearTimeout` 判据。
+        可达的生命周期面（重建保持 / 重复命中 / 计时到点）在 chromium 场景
 - [x] 4.11 截图卫生：所有截图断言前等 1.4s + 一帧，确保闪烁不进入像素基线
 
 ## 5. 真机与既有场景回扫
@@ -170,7 +176,12 @@
 - **OpenSpec**：`validate --all --strict` → `Totals: 37 passed, 0 failed (37 items)`。
 - **docs-check**：PASS（ADR / 链接 / 归档对账 / 验收契约与覆盖表 / 套件语法与自测）。
 - **区分度先验**：实现前新场景在旧实现上红（`目标标签立刻闪一次` 收到 `[]`）；临时摘掉
-  `createPathLinkEl` 的按钮级 mousedown 后，卡片焦点用例红（`Received: inactive`），恢复后绿。
+  `createPathLinkEl` 的按钮级 mousedown 后，卡片焦点用例红（`Received: inactive`）；临时在
+  短路分支加 `syncActiveDocument()` 后，前台裸路径用例在「跳转行浮层不被收起」处红；把
+  `dispose()` 改成只摘 class 后，dispose 用例在「重建不得复活」处红。三次探针均恢复后复跑绿。
+- **评审返修（P2-1 / P2-2）**：不重载判据从 `Text` 身份改为副作用仪器 + 真实 undo；dispose /
+  关闭路径补「不推进计时即重建 + `clearTimeout` spy」；浏览器场景头部删除并不存在的
+  dispose spy / 收 pane / pageerror 覆盖声明。
 - **未跑 / 未覆盖（如实登记）**：全量 `gate.sh quick` / `visual`、真机场景 221、真实 WKWebView
   的手感与像素层——按任务约束留给主会话串行；「闪烁中收 pane」的视觉现场在当前布局不可达
   （见 4.10 注），由单测钉 `dispose()`。

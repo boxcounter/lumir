@@ -543,8 +543,35 @@ test("flash：全量重建时按会话对象重新施加，消退计时继续有
   }
 });
 
-test("flash：关闭被闪烁的会话立即清理；关闭别的会话不动它", () => {
+/** 计时器清理 spy：mock.timers 已接管全局计时器，这里再包一层只做**记账**——
+ *  记录「本测试安排过、随后被 clearTimeout 撤销」的 id，仍把调用转给 mock.timers。
+ *  用它证明关闭 / dispose 是**立即**撤销旧计时器，而不是等 1.4s 到点由回调清场。 */
+function installClearSpy(): { cleared: unknown[]; restore(): void } {
+  const scheduled = new Set<unknown>();
+  const cleared: unknown[] = [];
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+    const id = originalSetTimeout(...args);
+    scheduled.add(id);
+    return id;
+  }) as typeof globalThis.setTimeout;
+  globalThis.clearTimeout = ((id: unknown) => {
+    if (scheduled.delete(id)) cleared.push(id);
+    return (originalClearTimeout as unknown as (value: unknown) => void)(id);
+  }) as typeof globalThis.clearTimeout;
+  return {
+    cleared,
+    restore() {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    },
+  };
+}
+
+test("flash：关闭被闪烁的会话立即清理计时器；关闭别的会话不动它", () => {
   mock.timers.enable({ apis: ["setTimeout"] });
+  const clearSpy = installClearSpy();
   try {
     const a = session("a.md");
     const b = session("b.md");
@@ -556,28 +583,50 @@ test("flash：关闭被闪烁的会话立即清理；关闭别的会话不动它
 
     rig.clickClose("b.md");
     assert.deepEqual(flashingPaths(rig), [], "关闭被闪烁的会话：class 随 DOM 消失");
+    // 关闭路径 MUST 立即撤销旧计时器——不能等 1.4s 后由它自然到点清场。
+    // （class 由 clearFlash 直接摘；若只摘 class 而留计时器，这里没有 clearTimeout 记录。）
+    assert.ok(
+      clearSpy.cleared.length >= 1,
+      "关闭被闪会话时 MUST clearTimeout（旧计时器不得留到 1.4s 后）",
+    );
     mock.timers.tick(NAVIGATION_HIGHLIGHT_MS);
-    assert.deepEqual(flashingPaths(rig), [], "计时器已清，到点不再有回调可跑");
+    rig.tabs.renderTabs();
+    assert.deepEqual(flashingPaths(rig), [], "计时推进后同样不留 class");
   } finally {
+    clearSpy.restore();
     mock.timers.reset();
   }
 });
 
-test("dispose：清计时器、清状态、移除残留 class；之后的 renderTabs 不再重新施加", () => {
+test("dispose：在计时推进前就清 flashed 与旧计时器（只摘 class 的退化实现必红）", () => {
   mock.timers.enable({ apis: ["setTimeout"] });
+  const clearSpy = installClearSpy();
   try {
     const a = session("a.md");
     const rig = createRig([a], a);
 
     rig.tabs.flash(a);
     assert.deepEqual(flashingPaths(rig), ["a.md"]);
+
     rig.tabs.dispose();
     assert.deepEqual(flashingPaths(rig), [], "dispose 后不得留 class");
 
+    // 立即重建、且会话仍在（不是靠「会话已不在」的安全网）：若 dispose 只摘 class 而留下
+    // `flashed`，renderTabs 会把 class 重新挂上——这一格就是退化实现的判红点。
+    rig.tabs.renderTabs();
+    assert.deepEqual(flashingPaths(rig), [], "dispose MUST 立即清 flashed（重建不得复活）");
+
+    // 旧计时器必须已被撤销，而不是等 1.4s 到点后自行清场。
+    assert.ok(
+      clearSpy.cleared.length >= 1,
+      "dispose MUST clearTimeout（旧计时器不得留到 1.4s 后）",
+    );
+
     mock.timers.tick(NAVIGATION_HIGHLIGHT_MS);
     rig.tabs.renderTabs();
-    assert.deepEqual(flashingPaths(rig), [], "状态已清：重建不得把闪烁带回来");
+    assert.deepEqual(flashingPaths(rig), [], "计时推进后同样不留 class");
   } finally {
+    clearSpy.restore();
     mock.timers.reset();
   }
 });

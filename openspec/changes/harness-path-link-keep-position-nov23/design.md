@@ -125,7 +125,7 @@ flash(session: EditorSession): void
 
 | 用例 | 断言 |
 |---|---|
-| 前台裸路径（长文档滚到中部） | `scrollTop` 逐值不变、`selection.main` 逐值不变、正文逐字节不变、撤销栈深度不变、dirty 不变；`.tab.is-flash` 立刻在场；1.4s 后消失；`.tab.is-active` 全程不变 |
+| 前台裸路径（长文档滚到中部） | `scrollTop` / `selection.main` / 正文逐字节 / dirty 点逐值不变；**不触发打开 / 同步链路**的仪器：跳转行浮层不被收起（`syncActiveDocument` 的第一件事）、标签栏无 childList 重建、active 标签节点身份不变；点击前键入的字符可被真实 `Meta+z` 撤掉（撤销栈未清空）；`.tab.is-flash` 立刻在场；1.4s 后消失；`.tab.is-active` 全程不变 |
 | 前台裸路径的焦点 | `document.activeElement` 仍是 harness composer 的 `.cm-content` |
 | 后台标签裸路径 | 切到该标签；`scrollTop` 等于它离开时的快照（不是 0）；闪一次；标签总数不变 |
 | 未打开裸路径 | 新标签打开并前台；无 `.tab.is-flash` |
@@ -136,13 +136,20 @@ flash(session: EditorSession): void
 | 工具卡片路径按钮 mousedown | 同上（卡片入口单独一例） |
 | 重复快速点击同一路径 | 闪烁计时重置、只有一层高亮、无残留 |
 | 标签栏重建 | 闪烁中途触发 `renderTabs`（如另一标签 dirty 变化），新 DOM 仍带 `.is-flash`，计时继续 |
-| 闪烁中收 pane | 双 pane 下闪烁右 pane 的标签 → 收该 pane；无 `.is-flash` 残留、无计时器回调报错、`TabsHandle.dispose()` 被调用且 `flashed = null` |
+| 闪烁中收 pane（视觉现场不可达，单测覆盖） | 现行布局 pane 上限二、harness 在场时文档 pane 唯一 ⇒ 右 pane 的标签不可能被 harness 路径链接闪烁命中。由单测验证：`dispose()` 后**不推进计时**即 `renderTabs()` 不复活 class（`flashed` 已清）、`clearTimeout` 被调用（旧 timer 已撤销）、计时推进后仍无残留；再加「只摘 class、留状态 / 计时器」的退化实现反证 |
 | 目录链接（反向） | 编辑器 `scrollTop` / 选区 / 标签不变；树行高亮照旧；无 `.tab.is-flash` |
 | 同名不同目录（反向） | 两个路径各开一个标签，不做 alias 去重；闪烁落在实际目标的标签上 |
 | 标签几何 | 闪烁前后标签 `getBoundingClientRect()` 逐值不变（宽 / 高 / x） |
 
 时序注意：`.tab.is-flash` 是瞬态，断言「1.4s 后消失」用有界轮询（如 `expect.poll`），不要
 固定 `waitForTimeout` 后一次性读；截图前必须等它消退。
+
+**「不重载」的判据口径**：不比较 `EditorState` / `Text` 对象身份——打开跳转行浮层会安装 md
+行号 gutter，这是一次合法的 compartment 重配，同样会换 `EditorState`；用身份比较既会把合法
+重配误判成缺陷，又放行「保留同一 `Text` 的重配」。页面读不到 CM 的 history depth，因此撤销栈
+**不写深度读数**，改用真实行为：点击前键入一个字符（dirty 转真），点击后 `Meta+z` MUST 撤掉
+它且 dirty 点回到隐藏——重载会清空历史，这条会红。正文与工具卡片两个入口各跑一遍同一组仪器；
+两者共用 `openVaultPath`，没有第二份判定。
 
 ### 3.2 真机（场景 221 扩展）
 
