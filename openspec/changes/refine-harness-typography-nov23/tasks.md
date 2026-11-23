@@ -13,7 +13,8 @@
       living specs，以及表格横滚、流式滚动、composer CodeMirror 与近期活动 / 持久化相关 changes
 - [x] 0.2 将 `refined-rows-720` 的实际 CSS、几何、对比度、三主题×三宽度矩阵、基线影响与真机边界写入
       proposal / design / tasks / spec delta；真机原始结果保留 7/8 PASS，不冒写 8/8
-- [ ] 0.3 Alex 完成节点 1 评审，D1–D7 裁决结果回填 proposal；未通过前不进入实现
+- [x] 0.3 Alex 完成节点 1 评审，D1–D7 裁决结果回填 proposal——Alex 2026-11-24 回复「批准」；
+      采用 `refined-rows-720` 推荐组合；前置未归档前仍不进入实现
 - [x] 0.4 点名并写死 `fix-harness-approval-visibility-nov23` → 本 change →
       `move-harness-progress-to-output-tail-nov23`：阶段色 `--text-3`→`--text-2` 由本 change 承接；
       尾行按 16px gap 重算 margin、按 `16/16/12px` 重算空态绝对定位四边，并以排版后新基线为准
