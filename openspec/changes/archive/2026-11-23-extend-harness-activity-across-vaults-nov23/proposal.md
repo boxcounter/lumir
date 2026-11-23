@@ -177,9 +177,10 @@ D1 与 D2 是真正的产品语义取舍；D3–D6 是防噪声边界。六项�
 
 ## 节点 2（归档放行材料，2026-11-23）
 
-> 状态：**五要件齐，待 merge / 待归档**。本提交只落节点 2 材料（proposal / tasks / backlog），
-> **不 merge、不归档**。最终独立评审结论 **clean / merge**，绑定 tip `bc742356`；tip 之后只有这次
-> docs-only 材料提交，不改实现与规格 delta。
+> 状态：**已归档**（2026-11-23）。实现已合并推送，归档提交 `821091fb`；包装器输出
+> `Totals: + 1, ~ 1, - 0, → 0`，归档后修链 0 处（5 篇 Markdown / 5 条相对链接），相对链接门禁 PASS；
+> `node scripts/openspec-archive-check.mjs --archived extend-harness-activity-across-vaults-nov23`
+> PASS（1 条 MODIFIED / 42 段；人工恢复 0 段，声明认领 0 段）。
 
 1. **节点 1 批准依据**：Alex 2026-11-23 原话「三项推荐。」——本批三项提案（持久化健康状态 / 失败轮次
    显式重试 / 跨 vault 终态未读）一次答复，语义为三项全部按推荐值批准；本 change 的 D1–D6 全部按
@@ -195,8 +196,7 @@ D1 与 D2 是真正的产品语义取舍；D3–D6 是防噪声边界。六项�
      `/Users/boxcounter/.kimi-code/sessions/wd_lumir_97a6261b51e9/session_fb5487b7-c3d6-4a95-8717-2dde1e8c3acc/agents/main/tasks/agent-nbl3au6h/output.log`；
      修复提交 `bc742356`。
    - **最终 clean / merge 的评审文件路径未提供**，本记录不代填。
-3. **tasks 完成数**：`tasks.md` 共 **70** 项，**69** 项已勾；唯一未勾项是 10.4（归档执行本身），
-   就地写明由 tower 执行——merge 与归档未发生前不得勾选，不留空勾。
+3. **tasks 完成数**：`tasks.md` 共 **70** 项，**70/70** 已勾；merge、归档与 `--archived` 审计均已完成，结果见上方状态块。
 4. **要求的门禁与真机证据**（全部落 `.local/`，git 外；worktree 会被清理，指针均为主仓绝对路径）：
    - `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0。日志
      `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/harness-activity-nov23/green/gate-quick-r2.log`。
