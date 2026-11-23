@@ -219,6 +219,40 @@ composer 的 `{text, caret, cards}` 结构，且原消息已在历史里（要�
   主仓 `.local/acceptance/`，不落 worktree。
 - 覆盖声明纪律：tasks 里写「已验」的项必须附场景名 + PASS 计数；拿不出 PASS 指针的写「未验」。
 
+## 节点 2（归档放行材料，2026-11-23）
+
+> 状态：**材料齐，未 merge / 未归档**（merge 与归档由 tower 执行）。五要件逐条如下；
+> `--archived` 审计属归档后动作，不在此列。
+
+1. **节点 1 批准依据**：Alex 2026-11-23 原话「三项推荐。」——本批三项提案一次答复，本 change 的
+   D1–D5 全部按推荐值批准（D5 = 并入本批修恢复折叠缺陷）；实现期范围以本文件「What Changes」
+   为准，无静默扩 scope。
+2. **独立评审**：最终独立评审结论 **clean / merge**，绑定 tip `a9538e90`，无 P1 / P2（2026-11-23）。
+   评审结论由 tower 转达；未提供独立评审文件路径，本记录不代填评审文件路径。`a9538e90` 之后只有
+   本节点 2 的 docs-only 材料提交（proposal / tasks / backlog），不改实现与规格 delta。
+3. **tasks 完成数**：`tasks.md` 共 **84** 项，**80** 项已勾，4 项未勾——1.3 / 1.4 已就地写明
+   **放弃原因**（未在未实现树执行 A 组 RED；替代证据见该两行），12.3 merge 与 12.4 归档为待 tower
+   执行的动作（归档时预期 82/84，仅两项放弃）。
+4. **要求的门禁与真机证据**：
+   - `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0。实现批日志
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/harness-turn-retry-nov23/gates.log`；
+     最终 tip 复跑由 tower 记录为 13/13。
+   - `scripts/gate.sh visual`：`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0；`1237 passed /
+     1 skipped`（同日志；未更新任何视觉基线）。最终 tip 复跑由 tower 记录为 15/15。
+   - 真机 A1–A11：**11/11 PASS**，分三批——首轮 710 / 711 / 714 / 717；复跑 712 / 715 / 716 /
+     718 / 719 / 720；713 单跑。证据目录
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-23-harness-turn-retry/`；
+     runner 日志 `…/.local/missions/harness-turn-retry-nov23/acceptance-{a1-a11,rerun-seven,713-rerun}.log`；
+     逐场景 PASS 断言数见 `tasks.md` 9.11。
+5. **规格对账（归档前读数）**：
+   - `node scripts/openspec-archive-check.mjs --change add-harness-turn-retry-nov23`：**PASS**
+     （1 份 delta，0 条 MODIFIED，对比 0 段，无静默丢段——本 change 只有 ADDED requirement；
+     归档队列：当前 0 项已完成 change 均有唯一条目）。
+   - `validate add-harness-turn-retry-nov23 --strict`：**valid**；`validate --all --strict`：
+     **38 passed / 0 failed**。
+   - 归档跟踪队列：`docs/backlog.md` 有且仅有一条 `add-harness-turn-retry-nov23` 条目
+     （grep count = 1）。
+
 ## 关联材料
 
 - 现状与方案依据：本文件 Why 的证据表（全部为仓内 file:line）；实现期逐条复核。

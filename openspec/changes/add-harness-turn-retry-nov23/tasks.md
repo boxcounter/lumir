@@ -27,18 +27,24 @@
       turn 选择）落 `tests/unit`。MUST NOT 把 DOM 行为塞进 unit 层；RED 判据是「动作不在场 /
       点击无调用 / 快照不重建 / busy 误收口」，不是场景语法错
 - [ ] 1.3 真机侧：先写 A1–A11 场景（design §11.3）并在未实现的当前树上跑一遍 RED——
-      **场景已写且 11/11 真机 PASS**（710–720 + 9 个 fixture；`run.mjs --check` 272 场景 PASS）。
-      **「未实现树上的 RED」未执行**：首次真机批跑在已实现树上（4/11 PASS），其中 718 的 FAIL
-      正是产品缺陷本身（半截正文未标「未完成」，根因与现场见
-      `.local/missions/harness-turn-retry-nov23/triage-r1.md`；修复提交 `c3c3c260`），
-      不是「先红」形态的 RED。RED 判据仍为「重试动作不在场 / 点击无请求 / 新写工具未经批准
-      即执行」，不是场景语法错
+      **放弃原因（节点 2 对账，2026-11-23）**：本 change 是从零实现的新能力，A 组 RED 要求一套已存在的
+      命令 / 动作才能观察到「动作不在场 / 点击无请求」；本批实际执行顺序是「实现完成 → 真机首跑
+      （4/11）」，**未在未实现树上执行 A 组 RED，不伪装为先红**。可替代的先红证据：R 组 16 条新用例
+      中 14 条在「保留新签名、行为退回改动前」的补丁下行为判红（
+      `.local/reviews/harness-proposals/retry-red-rust.log`）；F 组 10/10 在同类补丁下判红
+      （`retry-red-frontend.log`）。真机侧唯一可证伪的行为红是首轮 718 的真实产品 FAIL（同拍半截
+      正文未标「未完成」，现场与根因见 `.local/missions/harness-turn-retry-nov23/triage-r1.md`），
+      由 `c3c3c260` 修复后复跑 PASS。按 `openspec-workflow.md` 节点 2 要件 3「未勾项就地写明放弃
+      理由」处理，不删任务项。RED 判据仍为「重试动作不在场 / 点击无请求 / 新写工具未经批准即执行」，
+      不是场景语法错
 - [ ] 1.4 把三组 RED 证据路径写进实现报告（均落**主仓** `.local/`，不落 worktree）：
       `.local/reviews/harness-proposals/retry-red-{rust,frontend}.log` 与
       `.local/acceptance/<日期>/<场景>/RED-before-fix/`；写不出可 `ls` 的指针按「未跑」处理
-      （rust / frontend 两份已落；**acceptance 的 RED-before-fix 未生成**——首次真机批跑在
-      已实现树上（4/11），不是「未实现树」的 RED；718 的 before-fix 现场已被复跑覆盖，
-      结论落在 `.local/missions/harness-turn-retry-nov23/triage-r1.md`，按「未跑」处理）
+      **放弃原因（节点 2 对账，2026-11-23）**：rust / frontend 两份 RED 日志已落并可 `ls`；
+      **acceptance 的 `RED-before-fix/` 未生成**——原因同 1.3（无「未实现树」的真机 RED 现场），
+      其替代证据是 R / F 两组行为红 + 718 的真实 FAIL→修复 PASS；718 的 before-fix 现场已被复跑
+      覆盖，结论落在 `.local/missions/harness-turn-retry-nov23/triage-r1.md`。按「未跑 / 放弃」
+      如实记录，不以已实现树充数。
 
 ## 2. 补 mock 的测试表达能力（不得以「mock 表达不了」跳过）
 
@@ -276,3 +282,16 @@
       （R：`cargo test` 全绿 + RED 日志；F：10/10；A：11/11，见 9.11）；
       真机证据在主仓 `.local/acceptance/2026-11-23-harness-turn-retry/`，门禁日志在
       `.local/missions/harness-turn-retry-nov23/gates.log`（不落 worktree）。
+
+## 12. 节点 2（归档放行材料，2026-11-23）
+
+- [x] 12.1 节点 2 材料按五要件落齐：`proposal.md` 的「节点 2」块（节点 1 / 独立评审 / tasks 完成数
+      与放弃原因 / 门禁与三批真机证据 / 规格对账三项读数）；`docs/backlog.md` 归档跟踪条目同步
+      五要件状态（有且仅有一条）
+- [x] 12.2 独立 reviewer 评审：结论 **clean / merge**，绑定 tip `a9538e90`，无 P1 / P2（2026-11-23）；
+      评审结论由 tower 转达，未提供独立评审文件路径（不代填）。本节点 2 材料提交为 docs-only，
+      不改实现与规格 delta
+- [ ] 12.3 merge 到 master（由 tower 执行；本批未 merge）
+- [ ] 12.4 归档：`node scripts/openspec-archive.mjs add-harness-turn-retry-nov23` + 归档提交 +
+      `node scripts/openspec-archive-check.mjs --archived add-harness-turn-retry-nov23` PASS
+      （由 tower 在五要件齐后执行；本批未归档）
