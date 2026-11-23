@@ -181,11 +181,13 @@
 - [x] 10.3 `bash scripts/docs-check.sh` 全绿（含归档对账、验收场景契约、backlog 出口）
 - [x] 10.4 `PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH" npx --yes
       @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 10.5 实现 PR 合并时在 `docs/backlog.md` 归档跟踪队列落**有且仅有一条**条目（tasks
-      全勾后 docs-check 会强制）
+- [x] 10.5 实现 PR 合并时在 `docs/backlog.md` 归档跟踪队列落**有且仅有一条**条目（tasks
+      全勾后 docs-check 会强制）。条目已先补（`docs/backlog.md:77`，grep count = 1）；
+      合并时复核
 - [x] 10.6 信息卫生：对改动面做 text 级 grep 清扫（真实 vault 内容 / 人名 / 绝对路径 /
       凭据）；截图与 fixture 用合成数据；诊断日志断言不含正文
-- [ ] 10.7 独立 reviewer 评审：结论 clean / merge，绑定当前 tip；P1 / P2 清零
+- [x] 10.7 独立 reviewer 评审：结论 **clean / merge**，绑定 tip `e74cb727`；P1 / P2
+      清零（2026-11-23 最终独立终审）
 - [ ] 10.8 节点 2 五要件齐后归档：`node scripts/openspec-archive.mjs
       add-persistence-health-status-nov23` → 提交归档结果 → `--archived` 审计 PASS
 

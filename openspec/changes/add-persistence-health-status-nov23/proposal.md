@@ -201,6 +201,38 @@ V5 已按推荐值纳入（2026-11-23）：`recovery_list` 的读失败进入横
 | 非阻塞：V5 下「横幅 = 有未保存内容没有备份」不成立 | 改为「写失败子条件 = dirty 内容未得到备份」；枚举失败独立保留；补 U12 / A5 与场景 |
 | 复审阻塞：首行干净失败连带丢弃本次 payload | gap 按本次 payload 判定：history payload 一律置 gap，annotation 才不置；R6a / R6b 拆例并断言丢失记录未被补回；新增 `history_written` 与未落盘提示（U13） |
 
+## 节点 2（归档放行材料，2026-11-23）
+
+> 状态：**五要件齐，待归档**。未 merge、未 archive；10.8 保持未勾，归档动作由 tower 在合并后执行。
+
+1. **节点 1 批准依据**：Alex 2026-11-23 原话「三项推荐。」——本批三项提案一次答复，V1–V7
+   全部按推荐值批准；范围 / 呈现以本文件「What Changes」为准。
+2. **独立评审**：最终独立终审 **clean / merge**，绑定 tip `e74cb727`（2026-11-23），P1 / P2
+   清零。评审文件：本批终审结论由 tower 转述，未生成独立 `.tower/comms/reviews/` 文件；
+   本 block 以该终审结论为准。
+3. **tasks 完成数**：`tasks.md` **62/63** 已勾；唯一未勾 `10.8`（归档动作本身，留待归档）。
+   无放弃任务；`10.5` 的 backlog 条目已先补并在合并时复核。
+4. **要求的门禁与真机证据**：
+   - `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0；日志
+     `.local/missions/persistence-health-nov23/gate-quick-node2.log`。
+   - `scripts/gate.sh visual`：`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0；
+     `1227 passed / 0 failed / 1 skipped`；日志
+     `.local/missions/persistence-health-nov23/gate-visual-green.log` 与
+     `gate-visual-regression-green.log`。
+   - 真机 709 组：`.local/acceptance/2026-11-23-persistence-health/`，**6/6 PASS**
+     （49 断言 / 0 失败；`summary.md`、`run.log`）。
+   - 视觉基线（Alex 2026-11-23 原话「**批准候选并重截基线**」）：48 张修改（41 条报告失败
+     + 7 张同测试后续）+ 8 张新增，`modified=48 / added=8 / removed=0`；8 张新形态与
+     `health-candidates/` 逐字节相同；前后 hash / delta 在同目录
+     `.local/missions/persistence-health-nov23/`。
+5. **规格对账（归档前读数）**：
+   - `node scripts/openspec-archive-check.mjs --change add-persistence-health-status-nov23`：
+     **PASS**（2 份 delta / 2 条 MODIFIED / 64 段，无静默丢段；归档队列 0 项已完成 change
+     均有唯一条目）。
+   - `validate --all --strict`：**39 passed / 0 failed**（仅 39 条长 requirement INFO）。
+   - 归档跟踪队列：`docs/backlog.md` 有且仅有一条 `add-persistence-health-status-nov23`
+     条目（grep count = 1，行 77）。
+
 ## 关联材料
 
 - 设计细节（两维状态机、事件 / 快照形状、冒泡路径、备选与取舍、验收矩阵）：同目录 `design.md`
