@@ -1722,6 +1722,15 @@ function showEditor() {
 // 自动消隐的浮条不通知——它们没有「被用户点掉」以外的生命周期事件可报。
 type ToastTone = "neutral" | "success";
 
+/** sticky 浮条的可选键盘关闭面（独立评审 P2-2）：只有显式传 `dismissible` 的调用才追加
+ *  原生可聚焦关闭钮与 Escape 处理；不传时 DOM / 行为与旧调用逐字节一致（零基线漂移）。 */
+interface ToastOptions {
+  /** 追加一个原生 `<button>` 关闭钮（Tab 可达；Enter / Space 触发 click）。 */
+  dismissible?: boolean;
+  /** 关闭钮的读屏名（dismissible 时给出；缺省回落到英文 Close）。 */
+  dismissLabel?: string;
+}
+
 /** toast 的归属挂载元素（M420）：提示锚定到**发起它的 pane** 右下角，不跨 pane。
  *
  *  归属判据（收敛在装配层这一处，调用方不各判一次——REVIEW.md 「同一语义两处真源」条）：
@@ -1762,6 +1771,7 @@ function showToast(
   sticky = false,
   tone: ToastTone = "neutral",
   onDismiss?: () => void,
+  options: ToastOptions = {},
 ): HTMLElement {
   if (sticky) {
     for (const el of shell.editor.querySelectorAll<HTMLElement>(".lumir-toast[data-sticky-text]")) {
@@ -1802,6 +1812,33 @@ function showToast(
       action.run();
     });
     el.append(btn);
+  }
+  if (sticky && options.dismissible) {
+    // 原生按钮（不是给 div 加 tabindex）：Tab 可达、Enter / Space 触发 click，读屏名由
+    // aria-label 给出；可见像素是 × glyph。只在显式 dismissible 的 sticky 上追加，旧调用
+    // 不传 options，DOM 与既有基线零变化（独立评审 P2-2）。
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "toast-close";
+    close.setAttribute("aria-label", options.dismissLabel ?? "Close");
+    const glyph = document.createElement("span");
+    glyph.setAttribute("aria-hidden", "true");
+    glyph.textContent = "×";
+    close.append(glyph);
+    close.addEventListener("click", (event) => {
+      // 与动作钮同一条防冒泡：点击关闭钮不得再走浮条本体那条「点掉即关闭」的监听。
+      event.stopPropagation();
+      el.remove();
+      onDismiss?.();
+    });
+    el.append(close);
+    // Escape：焦点在浮条内（关闭钮）时关闭；不劫持页面其他位置的 Escape。
+    el.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      el.remove();
+      onDismiss?.();
+    });
   }
   if (sticky) {
     el.dataset.stickyText = text;
@@ -3202,8 +3239,11 @@ const harnessPanel = createHarnessPanel({  shell,
   //（M420 合同 O4：提示锚定**发起它的 pane**）——toast 产出点单一来源，面板不自建。
   toast: (text) => void showToast(harnessPaneMount(), text),
   // 留存健康的首次 history sticky（change add-persistence-health-status-nov23）：沿用装配层
-  // 的 sticky 浮条（点击关闭只移除本次提示）；面板不自建浮条、不持有静音状态。
-  stickyToast: (text) => void showToast(harnessPaneMount(), text, [], true),
+  // 的 sticky 浮条（点击 / 键盘关闭只移除本次提示）；面板不自建浮条、不持有静音状态。
+  // 独立评审 P2-2：只有这一条无动作 sticky 需要键盘关闭路径，显式传 dismissible —— 其他
+  // 无动作 sticky 不传 options，DOM / 行为保持零变化。
+  stickyToast: (text, options) =>
+    void showToast(harnessPaneMount(), text, [], true, "neutral", undefined, options),
   // 面板里的 vault 路径点击（change harness-path-link）：唯一打开链路 + **新标签**意图；带行号
   // 时落点走 editor.revealLine（与 TOC 同一算式），整个视口动作经转场窗口守 CL-2。行跳转的
   // plan 由 `jumpPlanFor` 提供——与快速打开**同一份**（M655 的 design §1.2：复核判据一旦分叉，

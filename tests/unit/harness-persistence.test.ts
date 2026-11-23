@@ -285,6 +285,24 @@ test("接线：警示块独立类 + role=status，健康时 hidden、无关闭�
   );
 });
 
+test("接线：history sticky 显式开启原生键盘关闭面，旧 sticky 调用不传 options", () => {
+  assert.ok(
+    PANEL_SOURCE.includes(
+      'deps.stickyToast(t("D955"), { dismissible: true, dismissLabel: t("D961") })',
+    ),
+    "只有 history sticky 显式开启关闭钮（其他无动作 sticky 保持旧 DOM）",
+  );
+  assert.ok(
+    MAIN_SOURCE.includes(
+      'showToast(harnessPaneMount(), text, [], true, "neutral", undefined, options)',
+    ),
+    "装配层把 options 透传给共享 sticky 实现",
+  );
+  assert.ok(MAIN_SOURCE.includes("options: ToastOptions = {}"), "options 缺省为空对象（旧调用零变化）");
+  assert.ok(MAIN_SOURCE.includes('close.className = "toast-close"'), "原生关闭钮");
+  assert.ok(MAIN_SOURCE.includes('event.key !== "Escape"'), "关闭钮上的 Escape 路径");
+});
+
 test("接线：横幅订阅同时重绘横幅与标签条；两段各自接 saveAllDirty / checkRecovery（U1 / U12）", () => {
   assert.ok(MAIN_SOURCE.includes("save.onRecoveryFailureChange("));
   assert.match(

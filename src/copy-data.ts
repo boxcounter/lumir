@@ -2801,6 +2801,12 @@ const COPY_TABLE = {
     zh: "（备份失败）",
     en: "(backup failed)",
   },
+  // D961：history sticky 的键盘关闭钮读屏名（独立评审 P2-2：无动作 sticky 需要原生可聚焦
+  // 关闭路径）。只进 aria-label，可见像素是 × glyph。
+  D961: {
+    zh: "关闭提示",
+    en: "Close notification",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

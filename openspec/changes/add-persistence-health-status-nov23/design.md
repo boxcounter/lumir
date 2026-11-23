@@ -277,6 +277,10 @@ save-controller 的 `failedPaths` 与独立的枚举失败条件。前端 MUST N
   - sticky 可点击关闭（沿用既有 sticky 浮条行为）。**关闭只移除本次提示**：MUST NOT 隐藏
     警示块、MUST NOT 清除 `history_gap`、MUST NOT 被视为对未来失败的静音；新逻辑会话可以
     再次触发。
+  - 无动作的 history sticky SHALL 提供**原生可聚焦关闭钮**（`button`，读屏名 D961）与
+    Escape 关闭路径：Tab 可达、Enter / Space 触发 click；MUST NOT 自动抢焦点。只有这条
+    sticky 显式开启关闭面，其他无动作 sticky 不传 `dismissible`，DOM / 行为零变化
+    （独立视觉复核 P2-2）。
   - toast 归属仍在装配层（M423）：面板调用新增的 `stickyToast(text)` 出口，不自建浮条。
 - **新会话动作**：面板在动作完成后 MUST NOT 继续显示旧会话的警示块；实现可在 reset 路径立即
   清除当前会话健康（含 gap），下一次发送建立的新会话从空健康起算。
@@ -354,6 +358,10 @@ failedPaths: Map<path, { at: number, code: "recovery_write_failed" }>
 - **位置**：文档区顶部、标签条之下、正文之上的一条常驻条。两个子条件共用**一条**横幅，
   不按 pane 复制（分栏时不重复报警）。
 - **形态**：sticky、不自动消隐、**不提供关闭 / 忽略按钮**；有动作按钮。
+- **对比度**（独立视觉复核 P2-1）：light 的 `--danger` on `--danger-tint` 实测 4.443:1，
+  低于正常文字 4.5:1 ⇒ 本横幅在 light 下用局部 `--recovery-banner-fg: #b33d32`（实测
+  5.017:1）；dark 保持 `--danger`（半透明底合成后 4.905:1）、eink 保持黑色（21:1）。
+  只作用本横幅，不改编全局 `--danger`；动作钮继承 currentColor，边界与文字同色、≥3:1。
 - **内容**：
   - 写失败子条件：主句「未保存的修改暂时没有备份，关闭应用可能丢失。」；受影响文档数与
     至少一个路径作为次要信息（不列全量；全量只进诊断日志）；不出现「崩溃备份 / 首个」等

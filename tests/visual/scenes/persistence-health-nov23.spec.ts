@@ -1,6 +1,38 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
 
+// WCAG 2.x 相对亮度 / 对比度（独立评审 P2-1：只断言「颜色等于 token」发现不了 4.443:1
+// 的不足；这里按实际计算样式算真实组合的比值）。
+interface Rgba {
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+}
+
+function parseCssColor(value: string): Rgba {
+  const match = value.match(/rgba?\(([^)]+)\)/);
+  if (match === null) throw new Error(`无法解析颜色：${value}`);
+  const parts = match[1]!.split(",").map((part) => Number(part.trim()));
+  return { r: parts[0]!, g: parts[1]!, b: parts[2]!, a: parts[3] ?? 1 };
+}
+
+function relativeLuminance(color: Rgba): number {
+  const channel = (value: number): number => {
+    const c = value / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
+}
+
+function contrastRatio(a: Rgba, b: Rgba): number {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  const hi = Math.max(la, lb);
+  const lo = Math.min(la, lb);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 // 留存健康的视觉结构层（change add-persistence-health-status-nov23，design §7 / §10.3）：
 //
 //   V1 健康态：harness 状态行与文档区横幅均 `hidden`；横幅 `hidden` 时零占位
@@ -11,7 +43,10 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //   V2b en 面：警示块文案取英文列。
 //   V3 `state=ok` + gap 态：显示「此前部分对话记录未能保存…」且 MUST NOT 隐藏；
 //      未落盘时的直白退出风险句按 `history_written` 消退。
-//   V4 横幅三形态：写失败 / 枚举失败 / 两者同时；健康态撤下；V4d en 面。
+//   V4 横幅三形态：写失败 / 枚举失败 / 两者同时；健康态撤下；V4d en 面；V4e
+//      light / dark / eink 的实际 WCAG 对比度（文字 ≥4.5、按钮边界 ≥3）。
+//   V9/V10 history sticky：Tab 到原生关闭钮、Enter / Escape 关闭；不抢焦点；关闭后
+//      警示块与 gap 保留；新会话可再次提示（非静音）。
 //
 // 不新建像素基线：V2–V4 的 `degraded` / gap / 横幅形态按合同属「截图文档先交 Alex 过目再
 // `--update`」的人肉裁决点（design §7 末条），本层只留结构断言，避免用未经裁决的基线把
@@ -206,6 +241,19 @@ async function openPanel(page: Page): Promise<void> {
   await expect(page.locator(".lumir-harness")).toBeVisible();
 }
 
+/** 从当前焦点开始按 Tab，直到焦点落到 sticky 的原生关闭钮上（最多 80 次）。
+ *  不直接 `.focus()`：判据是「Tab 真的能到达」，不是「元素可被脚本聚焦」。 */
+async function tabToToastClose(page: Page): Promise<boolean> {
+  for (let i = 0; i < 80; i++) {
+    await page.keyboard.press("Tab");
+    const reached = await page.evaluate(
+      () => document.activeElement?.classList.contains("toast-close") ?? false,
+    );
+    if (reached) return true;
+  }
+  return false;
+}
+
 /** 警示块形态读数（Alex 2026-11-23 裁决：浅警示底 + 左侧警示边条、正文色、完整换行）。
  *
  *  token 期望值不写死色值：用同页探针按当前主题解析 `--pending-tint` / `--pending` /
@@ -304,30 +352,81 @@ async function persistenceBlockMetrics(page: Page) {
   });
 }
 
-/** 文档区红色横幅的取色（Alex 2026-11-23 裁决：保留强提醒与「全部保存」，仍用 danger 红）。 */
-async function recoveryBannerColors(page: Page) {
+/** 文档区横幅两段的几何（独立评审建议：V4c 补双条件两行几何判据）。 */
+async function recoveryBannerGeometry(page: Page) {
   return page.evaluate(() => {
-    const probe = document.createElement("div");
-    probe.style.cssText =
-      "position:absolute;left:-9999px;top:0;background:var(--danger-tint);color:var(--danger)";
-    document.body.append(probe);
-    const probeStyle = getComputedStyle(probe);
-    const tokens = {
-      dangerTint: probeStyle.backgroundColor,
-      danger: probeStyle.color,
-    };
-    probe.remove();
-    const banner = document.querySelector(".recovery-banner") as HTMLElement | null;
-    const bannerStyle = banner === null ? null : getComputedStyle(banner);
+    const bannerEl = document.querySelector(".recovery-banner") as HTMLElement;
+    const segments = Array.from(
+      bannerEl.querySelectorAll<HTMLElement>(".recovery-banner-segment"),
+    );
+    const rects = segments.map((segment) => {
+      const rect = segment.getBoundingClientRect();
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        left: rect.left,
+        right: rect.right,
+        height: rect.height,
+      };
+    });
+    const bannerRect = bannerEl.getBoundingClientRect();
     return {
-      tokens,
-      banner:
-        bannerStyle === null
-          ? null
-          : {
-              backgroundColor: bannerStyle.backgroundColor,
-              color: bannerStyle.color,
-            },
+      rects,
+      banner: {
+        top: bannerRect.top,
+        bottom: bannerRect.bottom,
+        left: bannerRect.left,
+        right: bannerRect.right,
+      },
+      scrollWidth: bannerEl.scrollWidth,
+      clientWidth: bannerEl.clientWidth,
+      scrollHeight: bannerEl.scrollHeight,
+      clientHeight: bannerEl.clientHeight,
+    };
+  });
+}
+
+/** 文档区横幅的实际前景 / 有效背景 / 按钮边界（独立评审 P2-1）。
+ *
+ *  dark 的 `--danger-tint` 是半透明，必须沿祖先链合成出真实承载色再算对比度；不能只拿
+ *  `background-color` 原文。按钮背景透明，其有效背景 = 横幅的合成色。 */
+async function recoveryBannerContrast(page: Page) {
+  return page.evaluate(() => {
+    const parse = (value: string) => {
+      const match = value.match(/rgba?\(([^)]+)\)/);
+      if (match === null) throw new Error(`无法解析颜色：${value}`);
+      const parts = match[1]!.split(",").map((part) => Number(part.trim()));
+      return { r: parts[0]!, g: parts[1]!, b: parts[2]!, a: parts[3] ?? 1 };
+    };
+    const effectiveBackground = (el: HTMLElement): string => {
+      const layers: Array<{ r: number; g: number; b: number; a: number }> = [];
+      for (let node: HTMLElement | null = el; node !== null; node = node.parentElement) {
+        const color = parse(getComputedStyle(node).backgroundColor);
+        if (color.a > 0) layers.push(color);
+        if (color.a >= 1) break;
+      }
+      let out = { r: 255, g: 255, b: 255 };
+      for (let i = layers.length - 1; i >= 0; i--) {
+        const layer = layers[i]!;
+        out = {
+          r: layer.r * layer.a + out.r * (1 - layer.a),
+          g: layer.g * layer.a + out.g * (1 - layer.a),
+          b: layer.b * layer.a + out.b * (1 - layer.a),
+        };
+      }
+      return `rgb(${Math.round(out.r)}, ${Math.round(out.g)}, ${Math.round(out.b)})`;
+    };
+    const banner = document.querySelector(".recovery-banner") as HTMLElement;
+    const button = banner.querySelector(".recovery-banner-action") as HTMLElement;
+    const bannerStyle = getComputedStyle(banner);
+    const buttonStyle = getComputedStyle(button);
+    return {
+      theme: document.documentElement.dataset.theme ?? null,
+      bannerText: bannerStyle.color,
+      bannerBackground: effectiveBackground(banner),
+      buttonText: buttonStyle.color,
+      buttonBackground: effectiveBackground(button),
+      buttonBorder: buttonStyle.borderTopColor,
     };
   });
 }
@@ -558,11 +657,14 @@ test("V4 横幅：写失败 / 枚举失败 / 两者同时三种形态，健康�
   await expect(banner).not.toContainText("崩溃备份");
   await expect(banner).not.toContainText("首个");
   await expect(banner.getByRole("button", { name: "全部保存" })).toBeVisible();
-  // 红色强提醒保留：仍是 danger 底 / danger 字（Alex 2026-11-23 裁决）。
-  const colors = await recoveryBannerColors(page);
-  expect(colors.banner).not.toBeNull();
-  expect(colors.banner!.backgroundColor).toBe(colors.tokens.dangerTint);
-  expect(colors.banner!.color).toBe(colors.tokens.danger);
+  // 红色强提醒保留：danger 底 + 本横幅的 scoped 深红前景（light 实测 5.017:1）。
+  const colors = await recoveryBannerContrast(page);
+  expect(colors.theme).toBe("light");
+  expect(colors.bannerBackground).toBe("rgb(249, 236, 234)");
+  expect(colors.bannerText).toBe("rgb(179, 61, 50)");
+  expect(
+    contrastRatio(parseCssColor(colors.bannerText), parseCssColor(colors.bannerBackground)),
+  ).toBeGreaterThanOrEqual(4.5);
   // 写失败段不冒充保存失败：vault 内文档未被改写。
   await expect(page.locator(".cm-content").first()).toContainText("X");
 });
@@ -591,6 +693,36 @@ test("V4c 横幅：写失败与枚举失败同时在场（同一横幅两段、�
   await expect(banner).toContainText("无法检查残留备份");
   await expect(banner.getByRole("button", { name: "全部保存" })).toBeVisible();
   await expect(banner.getByRole("button", { name: "重新检查" })).toBeVisible();
+
+  // 双条件几何（独立评审建议）：
+  //   1200 宽：两段并排一行——不重叠、不出界、不溢出；
+  //   900 宽：两段折成两行——第二段从第一段下缘之后开始，横幅不被内容撑破。
+  // 这里不强制 1200 宽就换行（flex-wrap 的语义是「放不下才换」），但两行形态必须有
+  // 可观测的几何判据，不能只查文案与按钮。
+  const wide = await recoveryBannerGeometry(page);
+  expect(wide.rects).toHaveLength(2);
+  expect(Math.abs(wide.rects[0]!.top - wide.rects[1]!.top)).toBeLessThanOrEqual(0.5);
+  expect(wide.rects[1]!.left).toBeGreaterThanOrEqual(wide.rects[0]!.right - 0.5);
+  for (const rect of wide.rects) {
+    expect(rect.bottom).toBeLessThanOrEqual(wide.banner.bottom + 0.5);
+    expect(rect.left).toBeGreaterThanOrEqual(wide.banner.left - 0.5);
+    expect(rect.right).toBeLessThanOrEqual(wide.banner.right + 0.5);
+  }
+  expect(wide.scrollWidth).toBeLessThanOrEqual(wide.clientWidth + 1);
+  expect(wide.scrollHeight).toBeLessThanOrEqual(wide.clientHeight + 1);
+
+  await page.setViewportSize({ width: 900, height: 800 });
+  await page.waitForTimeout(250);
+  const narrow = await recoveryBannerGeometry(page);
+  expect(narrow.rects).toHaveLength(2);
+  expect(narrow.rects[1]!.top).toBeGreaterThanOrEqual(narrow.rects[0]!.bottom - 0.5);
+  for (const rect of narrow.rects) {
+    expect(rect.bottom).toBeLessThanOrEqual(narrow.banner.bottom + 0.5);
+    expect(rect.left).toBeGreaterThanOrEqual(narrow.banner.left - 0.5);
+    expect(rect.right).toBeLessThanOrEqual(narrow.banner.right + 0.5);
+  }
+  expect(narrow.scrollWidth).toBeLessThanOrEqual(narrow.clientWidth + 1);
+  expect(narrow.scrollHeight).toBeLessThanOrEqual(narrow.clientHeight + 1);
 });
 
 test("V4d en：横幅主文案取英文列，仍保留数量 / 路径与「全部保存」", async ({ page }) => {
@@ -607,6 +739,56 @@ test("V4d en：横幅主文案取英文列，仍保留数量 / 路径与「全�
   await expect(banner).toContainText("health-note.md");
   await expect(banner).not.toContainText("crash backups");
   await expect(banner.getByRole("button", { name: "Save all" })).toBeVisible();
+});
+
+// ── P2-1：横幅实际 WCAG 对比度（light / dark / eink） ─────────────────────
+
+async function assertBannerContrast(page: Page, theme: "light" | "dark" | "eink"): Promise<void> {
+  await stubTauri(page, { ...VAULT, config: { theme } });
+  await stubHealth(page, { backupFails: true, listFails: true });
+  await openPanel(page);
+  const banner = page.locator(".recovery-banner");
+  await page.locator(".editor-pane .cm-content").first().click();
+  await page.keyboard.type("C");
+  await expect(banner).toBeVisible({ timeout: 8000 });
+  await expect(banner).toContainText("未保存的修改暂时没有备份");
+  await expect(banner.getByRole("button", { name: "全部保存" })).toBeVisible();
+
+  const colors = await recoveryBannerContrast(page);
+  expect(colors.theme).toBe(theme);
+  const textRatio = contrastRatio(
+    parseCssColor(colors.bannerText),
+    parseCssColor(colors.bannerBackground),
+  );
+  const buttonTextRatio = contrastRatio(
+    parseCssColor(colors.buttonText),
+    parseCssColor(colors.buttonBackground),
+  );
+  const borderRatio = contrastRatio(
+    parseCssColor(colors.buttonBorder),
+    parseCssColor(colors.buttonBackground),
+  );
+  console.log(
+    `[contrast] ${theme}: text=${textRatio.toFixed(3)} buttonText=${buttonTextRatio.toFixed(3)} ` +
+      `border=${borderRatio.toFixed(3)} bg=${colors.bannerBackground} fg=${colors.bannerText}`,
+  );
+  expect(textRatio).toBeGreaterThanOrEqual(4.5);
+  expect(buttonTextRatio).toBeGreaterThanOrEqual(4.5);
+  expect(borderRatio).toBeGreaterThanOrEqual(3);
+}
+
+test("V4e-light 横幅对比度：正文与按钮文字 ≥4.5、按钮边界 ≥3", async ({ page }) => {
+  await assertBannerContrast(page, "light");
+});
+
+test("V4e-dark 横幅对比度：半透明 danger-tint 合成后正文与按钮文字 ≥4.5、边界 ≥3", async ({
+  page,
+}) => {
+  await assertBannerContrast(page, "dark");
+});
+
+test("V4e-eink 横幅对比度：黑字白底 ≥4.5、按钮边界 ≥3", async ({ page }) => {
+  await assertBannerContrast(page, "eink");
 });
 
 // ── P2-5：横幅与 notice 同场几何（notice 的包含块必须是 pane 行盒） ─────────────
@@ -648,6 +830,12 @@ const degradedGap = (token: number) => ({
   detail: "llm_request:write",
   history_written: true,
   history_gap: { present: true, since_ts: 1795000000, detail: "llm_request:write" },
+});
+
+/** 同一缺口现场 + 尚无 history 写入：警示块会追加「现在退出…」短句。 */
+const degradedGapUnwritten = (token: number) => ({
+  ...degradedGap(token),
+  history_written: false,
 });
 
 test("V6 恢复写失败事件先于 Promise 回执：完整快照为地板，告警不得被 reset 抹掉", async ({ page }) => {
@@ -731,4 +919,66 @@ test("V8 空会话快照晚于新 token 事件：旧快照不得清掉已接纳�
   });
   await expect(note).toBeVisible({ timeout: 5000 });
   await expect(note).toContainText("此前部分记录也未能保存");
+});
+
+// ── P2-2：history sticky 的键盘关闭路径 ──────────────────────────────────
+
+test("V9 history sticky：不抢焦点；Tab 到原生关闭钮、Enter 关闭；警示与 gap 保留；新会话可再次提示", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, { sessionToken: 41 });
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+  const toast = page.locator(".lumir-toast[data-sticky-text]");
+  const close = page.locator(".toast-close");
+
+  // 焦点先放在 composer；sticky 出现时不得自动抢焦点（关闭钮只提供 Tab 路径）。
+  await page.locator(".lumir-hp-composer").click();
+  const focusedBefore = await page.evaluate(() => document.activeElement?.className ?? "");
+  await fire(page, degradedGapUnwritten(43));
+  await expect(note).toBeVisible();
+  await expect(toast).toBeVisible();
+  await expect(close).toHaveCount(1);
+  await expect(close).toHaveAttribute("aria-label", "关闭提示");
+  const focusedAfter = await page.evaluate(() => document.activeElement?.className ?? "");
+  expect(focusedAfter).toBe(focusedBefore);
+  expect(focusedAfter).not.toContain("toast-close");
+
+  expect(await tabToToastClose(page), "Tab 必须能到达 sticky 的关闭钮").toBe(true);
+  await page.keyboard.press("Enter");
+  await expect(toast).toHaveCount(0);
+  // 关闭只移除本次提示：常驻警示块与 gap 文案仍在。
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("此前部分记录也未能保存");
+  await expect(note).toContainText("现在退出，这段对话将无法恢复");
+
+  // 关闭不是静音：新逻辑会话的 history 失败仍会给一条新的 sticky。
+  await page.locator(".lumir-hp-seg-new").click();
+  await expect(page.locator(".lumir-hp-sname")).toHaveText("新会话");
+  await fire(page, degradedGapUnwritten(44));
+  await expect(note).toBeVisible();
+  await expect(toast).toBeVisible();
+  await expect(close).toHaveCount(1);
+});
+
+test("V10 history sticky：Escape 在关闭钮上关闭；不抢焦点；警示与 gap 保留", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, { sessionToken: 41 });
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+  const toast = page.locator(".lumir-toast[data-sticky-text]");
+
+  await page.locator(".lumir-hp-composer").click();
+  const focusedBefore = await page.evaluate(() => document.activeElement?.className ?? "");
+  await fire(page, degradedGapUnwritten(43));
+  await expect(toast).toBeVisible();
+  const focusedAfter = await page.evaluate(() => document.activeElement?.className ?? "");
+  expect(focusedAfter).toBe(focusedBefore);
+  expect(focusedAfter).not.toContain("toast-close");
+
+  expect(await tabToToastClose(page), "Tab 必须能到达 sticky 的关闭钮").toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(toast).toHaveCount(0);
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("此前部分记录也未能保存");
+  await expect(note).toContainText("现在退出，这段对话将无法恢复");
 });

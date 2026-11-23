@@ -15,6 +15,9 @@
   「现在退出，这段对话将无法恢复。」。zh / en 同改，文案 deck 同步。
 - **文档红色横幅**：保留强提醒与「全部保存」，主文案改「未保存的修改暂时没有备份，关闭应用
   可能丢失。」；数量 / 路径降为次要信息，避免「崩溃备份 / 首个」等实现术语。
+- **独立视觉复核 P2 修复（2026-11-23）**：light 横幅前景在本横幅内局部加深为 `#b33d32`
+  （实测 5.017:1），不改编全局 `--danger`；history sticky 增加原生可聚焦关闭钮与 Escape，
+  不自动抢焦点；其他无动作 sticky 不传 `dismissible`，DOM / 行为零变化。
 - 该调整只影响本 change 的呈现与文案；告警触发、两维状态机、动作与生命周期不变。本轮未更新
   任何正式视觉基线（基线更新仍是 Alex 的人肉裁决点）。
 
@@ -267,18 +270,27 @@
   曾由本实现引入的 m633 严格 locator 歧义（6 条）已用 `:not([data-persistence-health])`
   精确隔离并转绿。按「基线更新是人肉裁决点」未更新任何基线。
 - 呈现调整（2026-11-23，Alex 同意；见 §0）：
-  - 机器断言先红后绿：`persistence-health-nov23.spec.ts` 12/12（新增 V2b / V4d en 面、
-    警示块颜色 / 左边条 / 正文色 / 完整换行 / 引用行隔离 / 健康态零几何）；m633 10/10；
-    m303 / m345 / m347 / m351 / m423 / m440 / m454 结构层 47/47；`pnpm test` 1805 passed
-    （新增一条 zh/en 逐字文案断言）。
+  - 机器断言先红后绿：`persistence-health-nov23.spec.ts` 17/17（V2b / V4d en 面、警示块
+    颜色 / 左边条 / 正文色 / 完整换行 / 引用行隔离 / 健康态零几何、V4e 三主题实际 WCAG、
+    V9/V10 sticky 键盘关闭）；m633 10/10；m303 / m345 / m347 / m351 / m423 / m440 / m454
+    结构层 47/47；`pnpm test` 1806 passed（新增 zh/en 逐字文案与 sticky 接线断言）。
   - `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0。
-  - 全量视觉复跑（呈现调整后）：`GATE RESULT: 14/15 PASS（SKIP 0）`；`visual-regression`
-    FAIL（`1174 passed / 41 failed / 1 skipped`，13.7m）。41 条与既有清单按
+  - 全量视觉复跑（P2 修复后）：`GATE RESULT: 14/15 PASS（SKIP 0）`；`visual-regression`
+    FAIL（`1179 passed / 41 failed / 1 skipped`，13.9m）。41 条与既有清单按
     `(spec, 行, 标题)` 逐条相同、无新增失败；m303 / m347 / m351 等 composer 场景的失败仍属
     既有基线漂移。其余 14 项 PASS，未更新任何基线。
+  - 独立视觉复核 P2 修复（2026-11-23）：
+    - 横幅实际 WCAG：light `#b33d32` on `#f9ecea` **5.017:1**；dark `--danger` 在合成底
+      `#3b3032` 上 **4.905:1**；eink 黑字白底 **21:1**。文字与按钮边界同值，均 ≥4.5 / ≥3；
+      只改本横幅局部前景，全局 `--danger` 未动。
+    - sticky 键盘：Tab 到原生关闭钮、Enter 关闭、Escape 关闭；出现时不抢焦点；关闭后警示块
+      与 gap 文案仍在；新逻辑会话的 history 失败可再次提示（关闭非静音）。旧无动作 sticky
+      不传 `dismissible`，DOM / 行为零变化。
+    - V4c 双条件几何：1200 宽两段并排一行、900 宽折两行；两段不重叠、不出界，横幅无横向 /
+      纵向溢出。
   - 三种候选按新形态重截（4 张整页 + 4 张元素裁切，连跑两轮 8/8 byte-identical），落在
     主仓 `.local/reviews/pixel-drift-nov23/health-candidates/`，说明页为同目录 `README.md`；
-    仍未批准、未运行 `--update`、未改任何正式基线。
+    独立复核修复后 03 已按新前景重拍。仍未批准、未运行 `--update`、未改任何正式基线。
 
 **已知边界**：`docs-check` 的 `tsc-unit` / `bindings-drift` 在首次 quick 时因「bindings 未
 `git add`」「测试 deps 缺 `stickyToast`」两条已修；重跑见最终门禁日志。`m303-harness-panel`

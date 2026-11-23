@@ -859,9 +859,14 @@ body {
   position: relative;
 }
 /* 崩溃备份失败的文档区 sticky 横幅（change add-persistence-health-status-nov23 design §5.3）：
-   只用既有 token（danger 底 / 文本、border 边、r10 圆角、ui 字级），不引入新色值与阴影。
-   两个子条件共用一条横幅，各自一行文案 + 自己的动作钮；不提供关闭 / 忽略出口。 */
+   只用既有 token（danger 底 / 文本、border 边、r10 圆角、ui 字级），不引入新阴影。
+   两个子条件共用一条横幅，各自一行文案 + 自己的动作钮；不提供关闭 / 忽略出口。
+   前景例外（独立评审 P2-1）：light 下 `--danger` on `--danger-tint` 实测 4.443:1，低于
+   正常文字 4.5:1；只在**本横幅**内把前景微调为 #b33d32（实测 5.017:1），不改编全局
+   `--danger`。dark（4.9:1）/ eink（21:1）保持各自 token 原值。按钮继承 currentColor，
+   边框与文字同色，非文字边界同样 ≥3:1。 */
 .recovery-banner {
+  --recovery-banner-fg: #b33d32;
   flex: none;
   display: flex;
   flex-wrap: wrap;
@@ -869,11 +874,17 @@ body {
   gap: 4px var(--sp-4);
   padding: var(--sp-2) var(--sp-4);
   background: var(--danger-tint);
-  color: var(--danger);
+  color: var(--recovery-banner-fg);
   border-bottom: 1px solid var(--border);
   border-radius: var(--r10);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
+}
+:root[data-theme="dark"] .recovery-banner {
+  --recovery-banner-fg: var(--danger);
+}
+:root[data-theme="eink"] .recovery-banner {
+  --recovery-banner-fg: var(--danger);
 }
 .recovery-banner[hidden] {
   display: none;
@@ -1092,6 +1103,29 @@ body {
   font: inherit;
   padding: var(--sp-1) var(--sp-5);
   border-radius: var(--r5);
+}
+/* sticky 浮条的原生关闭钮（独立评审 P2-2）：Tab 可达，Enter / Space 触发 click，Escape
+   在钮上冒泡到浮条关闭。只由显式 dismissible 的 sticky 追加，既有浮条不渲染它。 */
+.toast-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r4);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--fs-ui);
+  line-height: 1;
+  cursor: pointer;
+}
+.toast-close:hover {
+  background: var(--hover);
+}
+.toast-close:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
 }
 
 .pane {

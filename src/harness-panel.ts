@@ -224,9 +224,13 @@ export interface HarnessPanelDeps {
   toast(text: string): void;
   /** 本逻辑会话首次进入 `severity=history`（含 `annotation→history` 升级）或 `history_gap`
    *  首次 present 时的一条 sticky 提示（change add-persistence-health-status-nov23 design
-   *  §4.7 / V2）。装配层接到既有 sticky 浮条：点击关闭只移除本次提示，不撤状态行、不清缺口、
-   *  不构成静音（面板不持有静音状态，也不写配置）。 */
-  stickyToast(text: string): void;
+   *  §4.7 / V2）。装配层接到既有 sticky 浮条：点击 / 键盘关闭只移除本次提示，不撤警示块、
+   *  不清缺口、不构成静音（面板不持有静音状态，也不写配置）。`options.dismissible` 只给
+   *  这条无动作 sticky 追加原生可聚焦关闭钮（独立评审 P2-2）；不传 options 的旧调用零变化。 */
+  stickyToast(
+    text: string,
+    options?: { dismissible?: boolean; dismissLabel?: string },
+  ): void;
   /**
    * 点击 vault 路径的落点（change harness-path-link）：装配层经既有唯一打开链路以「新标签」
    * 意图打开，可选 1-based 行号落点。`lineEnd` 是正文路径链接的闭区间止行（单行 / 行列形态等于
@@ -3812,7 +3816,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     renderPersistenceLine();
     if (!persistenceStickyDue(view, currentVault, historyStickyShown)) return;
     historyStickyShown.add(currentVault ?? "");
-    deps.stickyToast(t("D955"));
+    deps.stickyToast(t("D955"), { dismissible: true, dismissLabel: t("D961") });
   }
 
   /** 应用一次完整快照的 persistence 读数（快照是重置 / 恢复 / 切回 vault 时的地板）。
