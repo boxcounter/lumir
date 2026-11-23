@@ -255,6 +255,12 @@ test("思考块：折叠默认（含流式）/ 到达序排列 / 多块按序号
   await fire(page, { type: "reasoning_chunk", text: "第二轮的思考。", index: 1 });
   await fire(page, { type: "text_chunk", text: "第二轮正文" });
   await expect(page.locator(".lumir-hp-think")).toHaveCount(2);
+  // 结构落位走 rAF 合帧（src/harness-panel.ts 的 scheduleFlush → flushPendingStructures）：
+  // 两个 fire() 之间已经渲过一帧时，第二个思考块先落位，第二轮正文段还压在下一帧的缓冲里。
+  // 此时上面的 toHaveCount(2) 已满足，直接读 children 会只拿到 4 个子节点
+  //（msgKids[4] === undefined）。读取前必须等这次读取依赖的完整结构到场——两个正文段。
+  const bodies = page.locator(".lumir-hp-msg-assistant .lumir-hp-body");
+  await expect(bodies).toHaveCount(2);
   const msgKids = await page
     .locator(".lumir-hp-msg-assistant")
     .evaluate((el) => [...el.children].map((k) => k.className));
