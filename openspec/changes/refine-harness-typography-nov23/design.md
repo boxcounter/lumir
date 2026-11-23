@@ -95,6 +95,17 @@
 CodeMirror composer 的内部行盒还需要同步，只能在同一 `.lumir-hp-composer` 作用域内完成，且不得改文本
 状态、选区、IME 或键位。
 
+### 2.1 面板表格与全屏快照的作用域边界
+
+13px/1.5 只由 `.lumir-hp-msg-assistant .lumir-hp-body table` 承担，因此只作用于 Harness 面板内的表格。
+全屏深克隆 `<table>` 后脱离这条 body 祖先链，继续由 `.lumir-table-fs-snapshot` 消费
+`--editor-font-size`，默认档为 15px；本 change MUST NOT 给全屏补 13px，也不改变其编辑器缩放语义或
+全屏专属布局。
+
+`.lumir-hp-table th/td` 的横线与 6/10px padding 挂在共享结构类上，会随克隆进入全屏。验收必须拆成两组：
+面板断言 13px/19.5px；全屏断言 `--editor-font-size`、共享横线 / padding、快照内容、固有宽和开关行为。
+报告中的 45 组面板截图不构成全屏候选证据，实施必须单独跑全屏结构场景。
+
 ## 3. 几何与排版合同
 
 ### 3.1 默认 scale=1 的计算值
@@ -107,7 +118,8 @@ CodeMirror composer 的内部行盒还需要同步，只能在同一 `.lumir-hp-
 | 用户气泡 | padding 8px 12px；其余气泡配方不变 |
 | meta 行 | 10.5px；margin-bottom 4px；角色 `--text-2`、时间 `--text-3` |
 | 代码块 | 12.5px / 19.375px；padding 10px 12px；radius 8px |
-| 表格 | 13px / 19.5px；cell padding 6px 10px；仅底边横线 |
+| Harness 面板表格 | 13px / 19.5px；cell padding 6px 10px；仅底边横线 |
+| 全屏表格快照 | 继续 `--editor-font-size`（默认 15px）；既有全屏布局与缩放语义不变；共享横线和 6/10px cell padding |
 | 工具行 | 12px；min-height 28px；height auto |
 | 批准卡 | padding 10px 12px；指定决策段 margin-bottom 8px |
 | 批准按钮 | min-height 32px；padding-inline 12px |
@@ -172,13 +184,14 @@ CodeMirror composer 的内部行盒还需要同步，只能在同一 `.lumir-hp-
 
 1. **非默认 scale**：正文 / composer / 表格 / 代码 / 工具按倍率变化，行高比不变，720px 与固定间距不变。
 2. **空态与运行态**：空态合同与阶段提示 `--text-2`；报告未单独覆盖空态综合图，实施必须补场景图。
-3. **交互回归**：代码复制与全屏、表格全屏、批准采纳 / 拒绝、工具折叠、长次级动作、composer 输入与发送
-   沿用现有场景；不能因换 CSS 改行为断言来换绿。
+3. **交互回归**：代码复制与全屏、批准采纳 / 拒绝、工具折叠、长次级动作、composer 输入与发送沿用现有
+   场景；表格全屏另按 §2.1 拆成面板 13px/19.5px 与全屏 `--editor-font-size` 两组断言，不能用同一个
+   WHEN/THEN 把二者都写成 13px，也不能因换 CSS 改行为断言来换绿。
 
 像素断言必须经 `expectScreenshot`，CI 结构模式只跳过像素、不跳过上述计算属性与几何断言。新增小元素的
 存在性不能只靠像素容差判定。
 
-## 6. 真机八场景与 152 判据修复
+## 6. 真机八场景与 152 前置复用
 
 实施后在真实 WKWebView 复跑：
 
@@ -188,25 +201,46 @@ CodeMirror composer 的内部行盒还需要同步，只能在同一 `.lumir-hp-
 | 97-harness-stream-visible | 流式正文、阶段提示、停止收口；滚动行为不变 |
 | 218-harness-bubble-and-scrollbar | 三主题气泡、正文与代码局部横滚；用户正文 ≥7:1 的截图参照 |
 | 234-harness-table-horizontal-scroll | 横线表、固有宽与真实横向滚轮；末列可达 |
-| 152-harness-transcript-link-and-time | 长链接与恢复消息；角色 / 时间分色；先修 AX 粒度判据 |
+| 152-harness-transcript-link-and-time | 长链接与恢复消息；角色 / 时间分色；消费前置 `metaLine` 判据 |
 | 72-harness-patch-approve | 批准卡、按钮、diff 与采纳行为 |
 | 711-harness-retry-tools | 工具尾注、错误与重试动作 |
 | 719-harness-retry-approval | 批准依据 / 后果、第二次批准与完成态 |
 
-152 的修复只改测试：分别定位角色节点与**同一 who 行内相邻的时间节点**，各自断言文本；禁止再用跨节点
-连续字符串正则。先保存当前两条 FAIL 的证据，再以“删除 / 隐藏时间节点时断言必须 FAIL”做反向验证。
-不得改成只查 `你` / `Agent`，那会让时间缺失也 PASS。最终 summary 必须照抄 runner；若仍有 FAIL，报告
-FAIL 数与退出码，不预写 8/8。
+152 不再由本 change 实现。`test/harness-transcript-time-ax-nov23` 的 `6575e753` 已加入 `metaLine` 执行器、
+相邻节点判定和单测，tip `ede07e8400f30f6418385ea2718847a02afecaf4` 已把恢复档时间集合收窄为
+`N秒前 / N分钟前 / N小时前`（含 `0秒前`），并用「刚刚 / 昨天必须 FAIL」防判据弱化。本 change 只确认该
+tip 已前置或同批合并，再复跑八场景；不得复制或改写第二份 AX 执行器、单测和场景判据。
+
+该分支场景文档明确记录“改断言后的真机复跑尚未执行”，所以前置代码存在不等于真机 PASS。原始调研仍是
+7/8 PASS、退出码 1；最终 summary 必须照抄本次 runner，若仍有 FAIL 就报告 FAIL 数与退出码，不预写 8/8。
 
 真机 AX 不提供可靠 CSS 几何，字号、宽距、scrollWidth 与对比度的机器判定归 Chromium；真机保留行为断言
 和截图证据，不把截图目检包装成自动 PASS。
 
-## 7. 基线影响清单
+## 7. 三项 change 的有序链与承接门禁
+
+顺序固定为 `fix-harness-approval-visibility-nov23` → `refine-harness-typography-nov23` →
+`move-harness-progress-to-output-tail-nov23`，不是可并行施工的三份样式草案。
+
+| 时点 | 硬门禁与承接 |
+|---|---|
+| 本 change 施工前 | `fix-harness-approval-visibility-nov23` 已归档且 `--archived` PASS；152 的 `ede07e84` 已前置或同批合并。未满足不得修改产品或测试代码 |
+| 前置 → 本 change | 前置阶段行 `--text-3` 由本 change 升为 `--text-2`；待批优先级和阶段文案不动。gap 8→16px，transcript padding `8/8/4`→`16/16/12px` |
+| 本 change 落地时 | 空态仍用 `margin:auto`，只改 13px/1.58、`--text-2`、24px padding；不提前执行尾行 change 的绝对定位或移动进度区 |
+| 本 change → 尾行 change | 本 change 已归档且 `--archived` PASS，候选基线经 Alex 批准并落盘；尾行 change 以新的 living spec / CSS / idle 基线为重基线，未满足不得施工 |
+| 尾行颜色与间距 | 继承阶段行 `--text-2`，不得恢复 `--text-3`；若仍取 2px 净间距，margin 从旧 `calc(var(--sp-2) - var(--sp-4))` 改为 `calc(var(--sp-2) - var(--sp-8))` |
+| 尾行空态 | 仅在尾行 change 中改为绝对定位；四边取 `top/right/left:var(--sp-8); bottom:var(--sp-6)`，继承 13px/1.58、`--text-2`、24px padding，不再使用旧 `8/8/4px` 偏移 |
+| 尾行基线 | 其“idle 零漂移”只相对本 change 后的新 idle 基线成立；不得把本 change 的空态 / composer 像素变化误记为尾行回归，也不得借零漂移恢复旧值 |
+
+尾行 change 的 proposal / design / spec delta 在施工前必须回写上述承接值；本 change 不直接修改另一 worktree
+的提案文件，但把这些内容作为其开工硬门禁。
+
+## 8. 基线影响清单
 
 本节是实现期的**候选清单**，不是授权更新。先跑结构与本地全量视觉门禁、生成 actual / candidate，再由
 Alex 逐张过目；批准后才允许统一 `--update`。禁止零碎更新和改容差。
 
-### 7.1 预计变化的既有基线（7 张）
+### 8.1 预计变化的既有基线（7 张）
 
 | 基线（均位于 `tests/visual/baselines/`） | 变化来源 |
 |---|---|
@@ -218,13 +252,13 @@ Alex 逐张过目；批准后才允许统一 `--update`。禁止零碎更新和�
 | `persistence-health-nov23.spec.ts-snapshots/harness-history-gap-written-chromium-darwin.png` | 同上 |
 | `persistence-health-nov23.spec.ts-snapshots/recovery-banner-chromium-darwin.png` | 同一 Harness 整页；横幅本身不变 |
 
-### 7.2 新增候选基线（9 张）
+### 8.2 新增候选基线（9 张）
 
 在 `harness-typography-nov23.spec.ts-snapshots/` 下按
 `harness-typography-{light|dark|eink}-{narrow|wide|ultrawide}-chromium-darwin.png` 命名，共 3×3 张。
 这些文件在提案阶段不存在；只有 Alex 看过九组候选图并批准后才生成正式基线。
 
-### 7.3 不应变化的相邻基线
+### 8.3 不应变化的相邻基线
 
 - `m303…/titlebar-with-harness-toggle-chromium-darwin.png`：标题栏不在作用域。
 - `m347-harness-composer…/m347-ctxpop-cache-metrics-chromium-darwin.png`：浮层排版不变。
@@ -237,11 +271,13 @@ Alex 逐张过目；批准后才允许统一 `--update`。禁止零碎更新和�
 - 其他不含 Harness 的编辑器、文档预览、设置与 chrome 基线全部不应变化。
 
 实施后须核对所有受影响整页基线的时间戳；删除 / 移动元素不在本提案内，因此不得以“容差通过”替代逐张
-核对。若实际差异超出 §7.1 / §7.2，先回写清单并送 Alex，不机械扩大更新面。
+核对。若实际差异超出 §8.1 / §8.2，先回写清单并送 Alex，不机械扩大更新面。
 
-## 8. 非目标与退路
+## 9. 非目标与退路
 
-- 不移动进度区，不重做运行态；另一 change 负责位置与信息架构。
+- 不移动进度区，不重做运行态；后续 `move-harness-progress-to-output-tail-nov23` 负责位置与信息架构。
+- 不改全屏快照的 `--editor-font-size`、编辑器缩放语义或全屏专属布局，不把面板表格 13px 扩散到全屏。
+- 不重复实现 152 的 `metaLine` 执行器、单测或场景判据；只复用指定前置分支。
 - 不改跟随滚动、回到底部、滚动条档位或任何现有局部横滚结构。
 - 不给 pane / composer 设置 720px 上限或固定宽，不居中消息。
 - 不改交互、配置、Rust、文档源文件、留存格式。

@@ -7,6 +7,9 @@
 > 节点状态：本提交只包含提案、设计、任务与 spec delta，不包含产品代码、测试代码或视觉基线。
 > 节点 1（提案评审）待 Alex 裁决。候选像素基线生成后仍须 Alex 逐张过目；未获明确批准前 MUST NOT 执行
 > `--update` / `--update-snapshots`，也不得把候选图转成正式基线。
+>
+> r1 独立评审（绑定 `ac61e836`）判 needs-changes；本次返修拆分面板 / 全屏表格字号合同，补齐三项 change
+> 的有序链，并将 152 的既有 test-only 修复改为前置复用，不重复实现。
 
 ## Why
 
@@ -28,7 +31,9 @@ PNG，并记录计算样式、几何、滚动与对比度；最终候选的实�
   不得写成 8/8。
 - 唯一 FAIL 是 152 的两条时间断言。实际 AX 把角色与时间拆成相邻节点（`你` + `· 3秒前`，`Agent` +
   `· 3秒前`），截图与 AX 都证明读数在场；失败是连续字符串正则与 WKWebView AX 节点粒度不匹配，不是
-  “恢复后没有时间”。本提案把该测试判据修复单列为 test-only 工作，不改产品时间语义。
+  “恢复后没有时间”。既有分支 `test/harness-transcript-time-ax-nov23`（tip
+  `ede07e8400f30f6418385ea2718847a02afecaf4`）已完成 test-only 修复；本 change 只把它作为前置 / 同批
+  依赖复用，不重复实现，也不把该分支尚未执行的真机复跑写成 PASS。
 
 ## What Changes
 
@@ -46,7 +51,11 @@ PNG，并记录计算样式、几何、滚动与对比度；最终候选的实�
      448.5px、748.5px、1048.5px。
 3. **代码与横线表**
    - 代码块保持 12.5px/1.55，padding 改 10/12px、圆角改 `--r8`；局部横滚、细条、复制与全屏行为不变。
-   - 表格改 13px/1.5、cell 6/10px；只留横线，表头用 `--border`、数据行用 `--border-soft`。
+   - **仅 Harness 面板内的表格**改 13px/1.5、cell 6/10px；只留横线，表头用 `--border`、数据行用
+     `--border-soft`。
+   - 全屏快照继续消费 `--editor-font-size`（默认 15px）及其既有缩放语义，不套用面板 13px 字号；全屏专属
+     布局、快照内容、固有宽与开关行为不变。共享 th/td 的横线和 6/10px padding 可随克隆进入全屏，但面板 /
+     全屏断言必须分开。
    - 保留固有宽、cell 单行、局部横滚、嵌套收缩和全屏入口，不改 stacked cards。
 4. **工具与批准决策区**
    - 工具行保持 12px，由固定 24px 高改为 `min-height:28px; height:auto`；参数省略与终态词保护不变。
@@ -62,22 +71,44 @@ PNG，并记录计算样式、几何、滚动与对比度；最终候选的实�
    - 新增三主题 × 三宽度 Chromium 结构 / 计算属性 / 几何矩阵，并为九组各留一张候选 Harness 元素
      像素基线；更新受旧值约束的现有场景。
    - 更新真机验收场景的排版截图与注释，复跑 86 / 97 / 218 / 234 / 152 / 72 / 711 / 719 八场景。
-   - 修复 152 的角色节点 + 相邻时间节点断言，并用“移除时间节点必须 FAIL”做反向验证；最终报告只照抄
-     当次 runner 的真实计数与退出码。
+   - 复用 `test/harness-transcript-time-ax-nov23@ede07e84` 的 152 修复，不改写其 `metaLine` 执行器、单测或
+     场景判据；前置合并后复跑，最终报告只照抄当次 runner 的真实计数与退出码。
 
 所有字号继续乘 `--lumir-hp-scale`，间距、圆角、颜色与阅读宽全部复用现有 token。没有新配置项、新色彩、
 新字号状态或第二份 720px 字面值真源。
 
+## 前置与后续顺序（硬门禁）
+
+三项 change 的顺序固定为：
+
+`fix-harness-approval-visibility-nov23` → `refine-harness-typography-nov23` →
+`move-harness-progress-to-output-tail-nov23`。
+
+- **本 change 施工前**：`fix-harness-approval-visibility-nov23` 必须已归档且 `--archived` 审计 PASS。
+  前置阶段行先保持 `--text-3`；本 change 归档后才升为 `--text-2`。152 分支
+  `test/harness-transcript-time-ax-nov23@ede07e84` 也必须先合并或同批并入施工基线。任一前置未满足，
+  本 change 不得施工。
+- **本 change 落地时**：只改当前位置的阶段行颜色，transcript gap 改为 16px、padding 改为
+  `16px 16px 12px`；空态仍沿用当前 `margin:auto` 居中，不执行后续绝对定位。
+- **尾行 change 施工前**：本 change 必须已归档且 `--archived` 审计 PASS，新视觉基线已经 Alex 批准并落盘。
+  尾行 change 必须以新的 living spec / CSS / 基线重基线，不得恢复 `--text-3`、旧 8px gap 或旧空态配方。
+- **尾行几何承接**：若仍取 2px 尾行净间距，旧 `calc(var(--sp-2) - var(--sp-4))` 必须改为
+  `calc(var(--sp-2) - var(--sp-8))`。空态改为绝对定位时，四边必须随新 transcript padding 写成
+  `top/right/left:var(--sp-8); bottom:var(--sp-6)`，并继承 13px/1.58、`--text-2`、24px padding；
+  不得沿用旧 `8/8/4px` 偏移。其“idle 零漂移”只相对本 change 后的新 idle 基线成立。
+
 ## Non-goals
 
-- **不移动进度区**：进度区位置与信息架构归另一 change；本 change 只把现有阶段提示提到 `--text-2`，不改
-  位置、进度条、动画或运行态交互。
+- **不移动进度区**：进度区位置与信息架构归后续 `move-harness-progress-to-output-tail-nov23`；本 change
+  只把现有阶段提示提到 `--text-2`，不改位置、进度条、动画、空态定位方式或运行态交互。
 - **不重写滚动**：不改 transcript 跟随 / 脱离、回到底部、原生 overlay、代码 / 表格 / diff / argv 的局部
   横滚机制，不新增滚动容器或 `overflow` 轴。
 - **不把 pane 或 composer 固定为 720px**：720px 只作用于 transcript 的直接消息子项；pane 继续随分栏伸缩，
   composer 继续铺满面板可用宽。
 - 不改用户气泡为右对齐或窄气泡，不重改气泡配色；不把正文、代码或表格改成居中阅读列。
 - 不改链接打开、复制、全屏、批准、重试、工具折叠、composer 编辑与发送等现有交互。
+- 不改全屏快照的 `--editor-font-size` 字号真源、缩放语义或全屏专属布局；不把面板 13px 表格字号扩散到全屏。
+- 不重复实现 152 的 `metaLine` 执行器、单测或场景判据；该修复只消费既有前置分支。
 - 不改编辑器 / 文档预览排版、`ui.content_width`、配置 schema、Rust 后端或会话留存格式。
 - 不用全局 `overflow-wrap` 取消表格固有宽，不为 eink 增加更多边框分组，不调整视觉容差。
 
@@ -88,11 +119,11 @@ PNG，并记录计算样式、几何、滚动与对比度；最终候选的实�
   先回写 proposal / design 并送裁，不静默扩 scope。
 - 测试面：新增 `tests/visual/scenes/harness-typography-nov23.spec.ts`；按旧计算样式值更新
   `m351-harness-visual-fidelity.spec.ts` 与必要的表格场景；更新 `scripts/acceptance/scenarios/` 的既有
-  排版相关场景及 152 的 AX 判据。
+  排版相关场景。152 的 AX 执行器与场景修复不在本 change 改动面，只复用前置分支。
 - 像素基线：7 张既有基线预计变化，9 张矩阵基线为新增候选；相邻的标题栏、浮层、引用 / 图片卡和警示块
-  元素基线不应变化。逐张清单与“不应变化”清单见 `design.md` §7。
-- 真机：复跑同一组八场景。152 修复前基线证据保持 7/8 PASS；只有修复断言并实际复跑后才允许记录新的
-  通过数，任何情况下不得预写 8/8。
+  元素基线不应变化。逐张清单与“不应变化”清单见 `design.md` §8。
+- 真机：152 前置分支合并后复跑同一组八场景。原始调研证据保持 7/8 PASS、退出码 1；只有实际复跑后才允许
+  记录新的通过数，任何情况下不得预写 8/8。
 - 关联约束：`typography` 的双内容面共享缩放比；`harness-table-horizontal-scroll-oct24` 的固有宽 / 局部
   横滚；`improve-harness-streaming-scroll` 的阅读位置保护；`ui-design-system` 的 token 与滚动条分档；
   `tests/visual/README.md` 的 Alex 基线过目纪律。
@@ -103,7 +134,8 @@ PNG，并记录计算样式、几何、滚动与对比度；最终候选的实�
 |---|---|---|---|
 | D1 | 是否采用整套 `refined-rows-720` | 整套采用，避免只取 15px 而留下低对比任务文字和全网格表 | 分批采用会延长两套节奏并存，且报告中的几何结论不再对应同一组合 |
 | D2 | 720px 的作用域 | 仅 transcript 直接消息子项，左对齐、非固定宽 | pane / composer 同宽会浪费宽屏操作面；居中会改变稳定阅读起点 |
-| D3 | 表格形态 | 横线表，保留固有宽与局部横滚 | 全网格在 eink 和窄 pane 噪声更高； stacked cards 破坏列比较且违背既有合同 |
+| D3 | 表格形态与全屏边界 | 面板采用横线表 13px/19.5px；全屏保留 `--editor-font-size`（默认 15px）与现有布局，只共享横线和 cell padding；分别断言 | 把全屏也写成 13px 会与实际克隆作用域和编辑器缩放合同冲突；全网格 / stacked cards 不采用 |
 | D4 | 任务型次级文字 | 指定六类与空态提 `--text-2`，时间仍 `--text-3`，对比度 ≥4.5:1 | 全部 meta 提色会抹平信息层级；维持现状最低仅 2.252:1 |
 | D5 | 新矩阵像素基线 | 九组各新增一张 Harness 元素基线，先生成候选、Alex 逐张批准后再生效 | 只做结构断言会漏掉实图观感；直接更新则绕过基线人肉裁决点 |
-| D6 | 152 的处置 | 同批做 test-only 断言修复与反向验证，不改产品时间语义；最终按真实 runner 结果报告 | 不修则最终仍须如实保留 FAIL，不得将“截图可见时间”换算成场景 PASS |
+| D6 | 152 的处置 | 复用 `test/harness-transcript-time-ax-nov23@ede07e84` 前置修复，不重复实现；合并后按真实 runner 结果报告 | 重写会产生第二份 AX 执行器；不把原始调研 7/8 PASS 或前置分支未跑的真机状态改写成 8/8 |
+| D7 | 三项 change 的顺序 | `fix-harness-approval-visibility-nov23` → 本 change → `move-harness-progress-to-output-tail-nov23`；前后置未归档不得施工，后落者按新几何与新基线重算 | 并行施工会恢复旧阶段色、旧 gap 和旧空态偏移，并混淆基线归属 |

@@ -54,10 +54,15 @@ Harness 代码块 SHALL 保持 12.5px/1.55，padding SHALL 为 10/12px，圆角 
 横滚、细条档、复制与全屏入口 MUST NOT 改变；MUST NOT 为本次排版新增滚动容器、改变 overflow 轴或重写
 滚动行为。
 
-Harness 表格 SHALL 以 13px/1.5 呈现，th / td padding SHALL 为 6/10px。表格 SHALL 采用**横线表**：
+Harness **面板内的**表格 SHALL 以 13px/1.5 呈现，th / td padding SHALL 为 6/10px。表格 SHALL 采用**横线表**：
 cell 的上 / 左 / 右边框为 0，只保留 1px 底边；表头底边取 `var(--border)`，数据 cell 底边取
 `var(--border-soft)`，MUST NOT 恢复全网格。表格固有宽、cell 单行、窄表贴合内容、宽表局部横滚、嵌套收缩、
 全屏快照源与关闭路径均沿用「对话表格的固有宽与局部横滚」及既有全屏合同，MUST NOT 改 stacked cards。
+
+全屏快照克隆 `<table>` 后不再位于面板 body 祖先链下，SHALL 继续消费 `.lumir-table-fs-snapshot` 的
+`--editor-font-size`（默认 15px）与既有编辑器缩放语义，MUST NOT 套用面板表格的 13px 字号。全屏专属布局、
+快照内容与开关行为不变；共享 `.lumir-hp-table th/td` 的横线与 6/10px padding 随克隆保留。面板与全屏的
+计算样式断言 MUST 分开，面板证据 MUST NOT 冒充全屏证据。
 
 #### Scenario: 代码块计算样式与局部横滚
 
@@ -66,12 +71,18 @@ cell 的上 / 左 / 右边框为 0，只保留 1px 底边；表头底边取 `var
   每组先满足 `code.scrollWidth > code.clientWidth`，写入 `scrollLeft=120` 后读数 >0；
   transcript 仍无横向溢出
 
-#### Scenario: 横线表而不是全网格
+#### Scenario: 面板横线表而不是全网格
 
-- **WHEN** 在任一主题下查看 Harness 表格与它的全屏快照
+- **WHEN** 在任一主题下查看 Harness 面板内的表格
 - **THEN** 表格计算字号 / 行高为 13px / 19.5px，th / td padding 为 6px 10px；每个 cell 只有 1px 底边，
-  表头与数据行分别消费结构 / 层次 hairline token，不出现上 / 左 / 右网格线；全屏入口仍收 table 本身，
-  打开与关闭行为不变
+  表头与数据行分别消费结构 / 层次 hairline token，不出现上 / 左 / 右网格线
+
+#### Scenario: 全屏快照保留编辑器字号与现有布局
+
+- **WHEN** 从 Harness 面板打开表格全屏快照，分别在默认与非默认编辑器字号下读取快照，再关闭全屏
+- **THEN** 快照继续消费 `--editor-font-size`（默认计算值 15px，非默认档随既有缩放变化），MUST NOT 为 13px；
+  快照内容仍直接来自 table 本身并保持固有宽，共享 cell 只保留横线且 padding 为 6px 10px；全屏专属布局、
+  打开与关闭行为不变，不把面板的 body 作用域字号断言套到快照上
 
 #### Scenario: 窄 pane 宽表只在自身容器横滚
 
@@ -128,6 +139,17 @@ composer 输入 SHALL 以 `calc(var(--fs-body) * var(--lumir-hp-scale, 1))` 与 
 MUST NOT 重做空态信息架构。运行阶段提示 `.lumir-hp-stage` SHALL 取 `--text-2`；其位置、既有不定态进度、
 动画与交互不变，进度区移动明确不属于本 requirement。
 
+有序承接 SHALL 固定为 `fix-harness-approval-visibility-nov23` → 本 change →
+`move-harness-progress-to-output-tail-nov23`。前置审批可见性 change 未归档且 `--archived` 审计未 PASS 时，
+本 change MUST NOT 施工；前置阶段色 `--text-3` 由本 change 改为 `--text-2`。本 change 未归档、审计未 PASS
+且新 idle 基线未经 Alex 批准落盘时，后续尾行 change MUST NOT 施工。后续 change SHALL 继承本 change 的
+阶段 `--text-2`、16px gap、`16px 16px 12px` transcript padding 与空态排版，不得恢复旧值。
+
+后续尾行 change 若仍取 2px 净间距，SHALL 把旧 `calc(var(--sp-2) - var(--sp-4))` 重算为
+`calc(var(--sp-2) - var(--sp-8))`；仅在后续 change 把空态改为绝对定位时，四边 SHALL 按新 transcript
+padding 取 `top/right/left:var(--sp-8); bottom:var(--sp-6)`，并继承 13px/1.58、`--text-2`、24px padding。
+其“idle 零漂移”SHALL 只相对本 change 后的新 idle 基线判定。
+
 #### Scenario: composer 默认计算值与 placeholder 对齐
 
 - **WHEN** composer 为空并随后输入首行文字
@@ -146,6 +168,15 @@ MUST NOT 重做空态信息架构。运行阶段提示 `.lumir-hp-stage` SHALL �
 - **WHEN** 分别查看空会话与工具循环进行中的 Harness
 - **THEN** 空态为 13px/20.54px、`--text-2`、24px padding，现有居中方式不变；阶段提示为 `--text-2`，
   不定态进度与阶段位置、动画和运行行为保持原样
+
+#### Scenario: 后续尾行 change 按本 change 的新几何承接
+
+- **WHEN** 前置审批可见性 change 和本 change 已依次归档且审计 PASS，本 change 的新 idle 基线已获 Alex
+  批准并落盘，随后 `move-harness-progress-to-output-tail-nov23` 开始施工
+- **THEN** 尾行阶段提示继承 `--text-2`，不恢复 `--text-3`；2px 净间距按 16px gap 使用
+  `calc(var(--sp-2) - var(--sp-8))`；空态绝对定位四边使用 `sp-8/sp-8/sp-6/sp-8`，并继承本 change 的
+  13px/1.58、`--text-2`、24px padding；其 idle 对拍使用本 change 后的新基线，不使用旧 8px gap、
+  `8/8/4px` transcript padding 或旧空态配方
 
 ## MODIFIED Requirements
 
