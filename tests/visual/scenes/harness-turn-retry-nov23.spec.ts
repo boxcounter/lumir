@@ -34,6 +34,8 @@ interface RetryStubOptions {
 /**
  * 桩：`harness_state` / `harness_retry` / `harness_send` + 事件注入。
  * `__retryCalls` 是「点击 → 命令」的唯一观测口（恰好一次 / 绑定的 turn）。
+ * `__holdState(true)` 让后续 `harness_state` 挂起，`__releaseState()` 才落地——用来造
+ * 「拒绝回包比新一轮更晚到达」的时序。
  */
 async function stubRetry(page: Page, options: RetryStubOptions = {}): Promise<void> {
   await page.addInitScript((opts: RetryStubOptions) => {
@@ -44,6 +46,8 @@ async function stubRetry(page: Page, options: RetryStubOptions = {}): Promise<vo
     w.__retryCalls = [] as number[];
     w.__stateInFlight = opts.inFlight ?? false;
     w.__stateRetry = opts.retry ?? null;
+    w.__holdState = false;
+    w.__stateResolvers = [] as Array<{ body: string; resolve: (body: string) => void }>;
     const snapshot = () =>
       JSON.stringify({
         messages: (opts.messages ?? []).map((m) => ({
@@ -57,7 +61,15 @@ async function stubRetry(page: Page, options: RetryStubOptions = {}): Promise<vo
         warn_ctx_pct: 85,
       });
     internals.invoke = async (cmd: string, args: any) => {
-      if (cmd === "harness_state") return snapshot();
+      if (cmd === "harness_state") {
+        const body = snapshot();
+        // 快照体在**请求时刻**定格：挂起期间后端视图再变，回包里仍是旧值——
+        // 这正是「旧回包」的现场。
+        if (w.__holdState) {
+          return new Promise<string>((resolve) => w.__stateResolvers.push({ body, resolve }));
+        }
+        return body;
+      }
       if (cmd === "harness_retry") {
         w.__retryCalls.push(args.turn);
         if (opts.reject !== undefined && opts.reject !== null) {
@@ -91,6 +103,14 @@ async function stubRetry(page: Page, options: RetryStubOptions = {}): Promise<vo
       w.__stateInFlight = inFlight;
       w.__stateRetry = retry;
     };
+    w.__holdStateNextSnapshots = () => {
+      w.__holdState = true;
+    };
+    w.__releaseHeldSnapshots = () => {
+      const pending = w.__stateResolvers.splice(0) as typeof w.__stateResolvers;
+      w.__holdState = false;
+      for (const item of pending) item.resolve(item.body);
+    };
     w.__fireHarnessEvent = (payload: unknown) => {
       for (const id of w.__harnessEventHandlerIds) {
         internals.runCallback(id, { event: "harness:event", id, payload });
@@ -112,6 +132,31 @@ async function fire(page: Page, payload: Record<string, unknown>): Promise<void>
       (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent(body),
     payload,
   );
+}
+
+/** 同一拍连发多条事件（一次 `evaluate` = 一个 JS 任务）：两次 `fire` 之间的往返会给 rAF
+ *  一次落地机会，造不出「分片仍在 `chunkBuffer` 里、error 已到」的帧内时序。 */
+async function fireAll(page: Page, payloads: Array<Record<string, unknown>>): Promise<void> {
+  await page.evaluate((bodies) => {
+    const w = window as unknown as { __fireHarnessEvent: (p: unknown) => void };
+    for (const body of bodies) w.__fireHarnessEvent(body);
+  }, payloads);
+}
+
+/** 让后续 `harness_state` 挂起（拒绝回包的轻量快照留在途）。 */
+async function holdNextSnapshots(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    (window as unknown as { __holdStateNextSnapshots?: () => void }).__holdStateNextSnapshots?.(),
+  );
+}
+
+/** 放行挂起的 `harness_state` 回包并清干微任务。 */
+async function releaseHeldSnapshots(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    (window as unknown as { __releaseHeldSnapshots?: () => void }).__releaseHeldSnapshots?.(),
+  );
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await page.waitForTimeout(50);
 }
 
 function retryCalls(page: Page): Promise<number[]> {
@@ -155,10 +200,11 @@ test("F1/F2：error 带 retry 才出现动作；点击恰好一次、立即禁�
   await stubRetry(page);
   await page.goto("/");
   await openPanel(page);
-  // 不可重试错误（缺键）：没有任何动作。
+  // 不可重试错误（缺键）：没有任何动作，也没有「未完成」标记（首字节之前就失败）。
   await fire(page, { type: "error", code: "harness_http_error", message: "HTTP 400" });
   await expect(page.locator(".lumir-hp-error")).toHaveCount(1);
   await expect(page.locator(".lumir-hp-retry-btn")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-incomplete")).toHaveCount(0);
 
   // 可重试错误：错误行内出现唯一动作。
   await fire(page, {
@@ -358,6 +404,84 @@ test("F7：半截正文标「未完成」，重试成功后另起第二条 assis
   await expect(messages.nth(0)).toContainText("PARTIAL-BODY");
   await expect(messages.nth(1)).toContainText("SECOND-ANSWER");
   await expect(page.locator(".lumir-hp-incomplete")).toHaveCount(1);
+});
+
+test("F7（同拍）：text_chunk 与 error 同一拍到达时仍标「未完成」", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubRetry(page, { messages: [{ role: "user", text: "旧问题" }] });
+  await page.goto("/");
+  await openPanel(page);
+  // 同一拍注入：正文还在 rAF 缓冲里（`chunkBuffer`），error 紧跟着到——不等 DOM 落地。
+  // 修复前 `hadBodyText` 只读 `streamingText`，标记被跳过；真机 718 的现场即此形态。
+  await fireAll(page, [
+    { type: "auto_turn_started", chain_index: 0 },
+    { type: "text_chunk", text: "SAME-TICK-PART" },
+    { type: "error", code: "harness_stream_error", message: "断", retry: { turn: 13 } },
+  ]);
+  // 半截正文最终仍要上屏（finalize 会 flush），且带「未完成」标记与重试动作。
+  await expect(page.locator(".lumir-hp-transcript")).toContainText("SAME-TICK-PART");
+  await expect(page.locator(".lumir-hp-incomplete")).toHaveCount(1);
+  await expect(page.locator(".lumir-hp-incomplete")).toHaveText("未完成");
+  await expect(page.locator(".lumir-hp-retry-btn")).toHaveCount(1);
+});
+
+test("F5（延迟快照·终态后）：旧拒绝回包不得复活已失效的重试动作", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubRetry(page, {
+    messages: [{ role: "user", text: "旧问题" }],
+    reject: { code: "harness_thread_failed", message: "无法启动对话线程（桩）" },
+    stateAfterReject: { inFlight: false, retry: { turn: 9 } },
+  });
+  await page.goto("/");
+  await openPanel(page);
+  await fire(page, {
+    type: "error",
+    code: "harness_network_failed",
+    message: "断",
+    retry: { turn: 9 },
+  });
+  // 拒绝后的轻量快照留在途：它的 `retry` 属于旧轮次。
+  await holdNextSnapshots(page);
+  await page.locator(".lumir-hp-retry-btn").click();
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  // 新一轮收尾（终态）——相位世代推进，旧回包此后不得再挂动作。
+  await fire(page, { type: "done" });
+  await expect(page.locator(".lumir-hp-retry-btn")).toHaveCount(0);
+  await releaseHeldSnapshots(page);
+  await expect(page.locator(".lumir-hp-retry-row")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-retry-btn")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "发送");
+});
+
+test("F5（延迟快照·新发送后）：旧回包不得把重试动作挂到新轮次上", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubRetry(page, {
+    messages: [{ role: "user", text: "旧问题" }],
+    reject: { code: "harness_thread_failed", message: "无法启动对话线程（桩）" },
+    stateAfterReject: { inFlight: false, retry: { turn: 9 } },
+  });
+  await page.goto("/");
+  await openPanel(page);
+  await fire(page, {
+    type: "error",
+    code: "harness_network_failed",
+    message: "断",
+    retry: { turn: 9 },
+  });
+  await holdNextSnapshots(page);
+  await page.locator(".lumir-hp-retry-btn").click();
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  // 回到 idle 后用户发出新消息：`sent` 推进相位世代，旧失败动作失效。
+  await fire(page, { type: "done" });
+  await page.locator(".lumir-hp-composer .cm-content").click();
+  await page.keyboard.type("新问题");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "停止");
+  await releaseHeldSnapshots(page);
+  // 新轮次仍在跑，旧回包既不能挂回动作、也不能把它打回 idle。
+  await expect(page.locator(".lumir-hp-retry-row")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-retry-btn")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-send")).toHaveAttribute("aria-label", "停止");
 });
 
 test("F12：含图失败切非 vision 模型 → 重试被拒、人话错误行 + 动作仍在", async ({ page }) => {

@@ -2013,6 +2013,10 @@ mod tests {
     use super::*;
 
     use crate::fs_io::IgnorePolicy;
+    use crate::harness::approval::ApprovalSignal;
+    use crate::harness::run::{ApprovalPolicy, StopReason, UsageDelta};
+    use crate::harness::scheduler::RequestPermit;
+    use crate::harness::title::TitleJob;
 
     fn block_with_selection(text: &str) -> ContextBlock {
         ContextBlock {
@@ -2951,6 +2955,192 @@ mod tests {
             }
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    /// R11 的 `on_round_usage` 探针（change add-harness-turn-retry-nov23）：交互上下文对该钩子
+    /// 是 no-op，**没有副作用可观测**——删掉调用点，任何事件 / 会话断言都照样绿。只有替身能
+    /// 证伪它是否被调用。包装真 `SessionContext`，其余方法原样委托，会话 / 事件 / 权限语义
+    /// 与生产同源（MUST NOT 在替身里重写一套）。
+    struct RoundUsageProbe<'a> {
+        inner: SessionContext<'a>,
+        rounds: Vec<UsageDelta>,
+    }
+
+    impl<'a> RoundUsageProbe<'a> {
+        fn new(
+            sink: &'a dyn EventSink,
+            runtime: &'a Runtime,
+            scope: &'a VaultScope,
+            config: &'a HarnessConfig,
+        ) -> Self {
+            Self {
+                inner: SessionContext::new(sink, runtime, scope, config),
+                rounds: Vec::new(),
+            }
+        }
+    }
+
+    impl RunContext for RoundUsageProbe<'_> {
+        fn with_session<R>(
+            &mut self,
+            f: impl FnOnce(&mut session::Session) -> R,
+        ) -> Result<R, CommandError> {
+            self.inner.with_session(f)
+        }
+
+        fn sink(&self) -> &dyn EventSink {
+            self.inner.sink()
+        }
+
+        fn tool_definitions(&self) -> Vec<serde_json::Value> {
+            self.inner.tool_definitions()
+        }
+
+        fn cron_port(&self) -> Option<std::sync::Arc<dyn crate::cron::CronPort>> {
+            self.inner.cron_port()
+        }
+
+        fn decide(
+            &self,
+            tool: &str,
+            subject: &str,
+            args: &serde_json::Value,
+        ) -> permissions::Verdict {
+            self.inner.decide(tool, subject, args)
+        }
+
+        fn approval(
+            &mut self,
+            request: ApprovalRequest,
+            rx: mpsc::Receiver<ApprovalSignal>,
+        ) -> ApprovalOutcome {
+            self.inner.approval(request, rx)
+        }
+
+        fn approval_policy(&self) -> ApprovalPolicy {
+            self.inner.approval_policy()
+        }
+
+        fn reject_unavailable(&mut self) -> Option<(String, String)> {
+            self.inner.reject_unavailable()
+        }
+
+        fn budget(&self, rounds: u32) -> BudgetVerdict {
+            self.inner.budget(rounds)
+        }
+
+        fn on_budget_exhausted(&mut self, reason: StopReason) {
+            self.inner.on_budget_exhausted(reason)
+        }
+
+        fn persist(&mut self, record: serde_json::Value) {
+            self.inner.persist(record)
+        }
+
+        fn aborted(&self) -> bool {
+            self.inner.aborted()
+        }
+
+        fn vault_root(&self) -> &std::path::Path {
+            self.inner.vault_root()
+        }
+
+        fn ignore_policy(&self) -> &IgnorePolicy {
+            self.inner.ignore_policy()
+        }
+
+        fn remember_approval(&mut self, tool: &str, subject: &str) {
+            self.inner.remember_approval(tool, subject)
+        }
+
+        fn after_turn(&mut self, user_text: &str) -> Option<TitleJob> {
+            self.inner.after_turn(user_text)
+        }
+
+        fn orchestrate(&mut self, call: &llm::ToolCall) -> Option<Box<dyn OrchestrationCall>> {
+            self.inner.orchestrate(call)
+        }
+
+        fn begin_user_turn(&mut self) {
+            self.inner.begin_user_turn()
+        }
+
+        fn request_permit(&self) -> Option<RequestPermit> {
+            self.inner.request_permit()
+        }
+
+        fn note_mock_progress(
+            &mut self,
+            parent_consumed: usize,
+            region_span: usize,
+            script_len: Option<usize>,
+        ) {
+            self.inner
+                .note_mock_progress(parent_consumed, region_span, script_len)
+        }
+
+        fn external_mock_consumed(&self) -> usize {
+            self.inner.external_mock_consumed()
+        }
+
+        fn begin_compacted_session(&mut self, summary: &str) -> Result<(), CommandError> {
+            self.inner.begin_compacted_session(summary)
+        }
+
+        /// 唯一被观测的钩子：每一轮往返的用量。
+        fn on_round_usage(&mut self, usage: &UsageDelta) {
+            self.rounds.push(*usage);
+        }
+    }
+
+    /// R11：空响应路径的 `on_round_usage` 仍被调用（钩子被删 / 挪到空响应判定之后就红），
+    /// 且思考兜底分片先于错误终态。
+    #[test]
+    fn empty_response_still_fires_round_usage_hook() {
+        let script = r#"{"responses": [{
+            "reasoning": {"type":"reasoning","summary":[{"type":"summary_text","text":"想过"}]},
+            "usage": {"input_tokens": 100, "cached_tokens": 10, "output_tokens": 5}
+        }]}"#;
+        let bench = TurnBench::new("empty-usage", Some(script));
+        bench
+            .runtime
+            .acquire_turn(&bench.scope, &bench.config)
+            .unwrap();
+        let sink = Collect::default();
+        let mut client = llm::MockClient::from_str(script, "empty-usage").unwrap();
+        let mut ctx = RoundUsageProbe::new(&sink, &bench.runtime, &bench.scope, &bench.config);
+        let _ = run_turn_core_with_mode(
+            &mut ctx,
+            &bench.config,
+            TurnInput::User {
+                parts: "问题".to_string().into(),
+                context_section: None,
+            },
+            TurnOrigin::Interactive,
+            &mut client,
+        );
+        bench.runtime.release_turn(&bench.scope);
+        assert_eq!(
+            ctx.rounds,
+            vec![UsageDelta {
+                input_tokens: 100,
+                cached_tokens: 10,
+                output_tokens: 5,
+                cache_write_tokens: 0,
+            }],
+            "空响应的 usage 仍要经过 on_round_usage（子运行段预算依赖它）"
+        );
+        let events = sink.0.lock().unwrap().clone();
+        let reasoning_at = events
+            .iter()
+            .position(|event| event["type"] == "reasoning_chunk")
+            .expect("思考兜底必须上屏");
+        let error_at = events
+            .iter()
+            .position(|event| event["type"] == "error")
+            .expect("空响应必须发错误终态");
+        assert!(reasoning_at < error_at, "思考兜底必须先于空响应收口");
+        assert_eq!(events[error_at]["code"], "harness_empty_response");
     }
 
     /// 断言探针只看到一个终态，且那一刻是 `Finishing`：协议读仍为真、呈现读已为假。

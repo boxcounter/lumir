@@ -16,6 +16,7 @@ use lumir_lib::harness::events::EventSink;
 use lumir_lib::harness::jsonl;
 use lumir_lib::harness::llm::{self, LlmClient, MockClient};
 use lumir_lib::harness::session;
+use lumir_lib::harness::thinking::ThinkingEffort;
 use lumir_lib::harness::turn;
 use lumir_lib::harness::{list_sessions, Runtime, VaultScope};
 use std::path::{Path, PathBuf};
@@ -1879,6 +1880,11 @@ fn retry_after_config_switch_keeps_messages_and_records_new_identity() {
     let turn_seq = error_event(&sink)["retry"]["turn"].as_u64().unwrap();
 
     let switched = kimi_chat_config();
+    // 真的切一次思考档位（默认 High → Low）：只切 provider / model 时 `params.thinking`
+    // 两轮同值，断言「与自身相等」没有区分度（评审 r1 P2 的假绿现场）。
+    runtime
+        .set_thinking_effort(&f.scope(), &switched, ThinkingEffort::Low)
+        .expect("会话在场，档位可写");
     let failed = runtime
         .begin_retry(&f.scope(), &switched, turn_seq)
         .expect("切换配置后仍可重试");
@@ -1901,9 +1907,15 @@ fn retry_after_config_switch_keeps_messages_and_records_new_identity() {
     );
     assert_eq!(requests[1]["request"]["provider"], "kimi");
     assert_eq!(requests[1]["request"]["model"], "k3-256k");
+    // 两条请求的档位必须**不同**：首条是建立会话时的默认 High，重试记录切换后的 Low。
+    // 若重试仍按失败时的档位发（或档位写入没接线），这里逐值不等即红。
     assert_eq!(
-        requests[1]["request"]["params"]["thinking"], requests[1]["request"]["params"]["thinking"],
-        "thinking 读数在场"
+        requests[0]["request"]["params"]["thinking"], "high",
+        "失败请求用的是默认档位"
+    );
+    assert_eq!(
+        requests[1]["request"]["params"]["thinking"], "low",
+        "重试记录切换后的新档位"
     );
     // session_open 的方言键仍是建立时的值（mock → responses），不因重试改写。
     let open = file
@@ -2142,8 +2154,25 @@ fn empty_response_is_retryable_and_leaves_no_replay_item() {
         runtime.snapshot(&f.scope(), &config).usage.input_tokens >= 100,
         "空响应的 usage 仍要记账"
     );
-    // 思考兜底分片先于错误收口。
-    assert!(event_types(&sink).contains(&"reasoning_chunk".to_string()));
+    // 思考兜底与错误收口的**先后**：兜底分片必须在 error 之前发出，且带回放项的明文。
+    // 只断言「在场」不判顺序——把兜底挪到空响应判定之后时，这条断言仍然绿（评审 r1 P2）。
+    let events = sink.0.lock().unwrap().clone();
+    let reasoning_at = events
+        .iter()
+        .position(|event| event["type"] == "reasoning_chunk")
+        .expect("思考兜底必须上屏");
+    let error_at = events
+        .iter()
+        .position(|event| event["type"] == "error")
+        .expect("空响应必须发错误终态");
+    assert!(
+        reasoning_at < error_at,
+        "思考兜底必须先于错误收口：reasoning@{reasoning_at} error@{error_at}"
+    );
+    assert_eq!(
+        events[reasoning_at]["text"], "想了很久",
+        "兜底分片带的是回放项的明文"
+    );
     // reasoning 回放项没有进 input。
     let input_len = runtime.with_session(&f.scope(), |s| s.input_len()).unwrap();
     assert_eq!(input_len, 1, "空响应的 reasoning 项不进 input");
@@ -2164,6 +2193,51 @@ fn empty_response_is_retryable_and_leaves_no_replay_item() {
     assert_eq!(
         requests[0]["request"]["messages"], requests[1]["request"]["messages"],
         "空响应重试的 messages 与失败请求相同"
+    );
+}
+
+/// R11（abort 优先于空响应）：停止检查点在空响应判定之前——用户已表态「不再继续」时，
+/// 不得再发 `harness_empty_response` 错误终态（更不得登记可重试失败）。
+#[test]
+fn abort_wins_over_empty_response_terminal() {
+    let f = Fixture::new("retry-empty-abort");
+    let config = mock_config();
+    let runtime = Runtime::default();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(
+        r#"{"responses": [
+            {"usage": {"input_tokens": 7, "cached_tokens": 0, "output_tokens": 0}}
+        ]}"#,
+        "retry-empty-abort",
+    )
+    .unwrap();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    // acquire 会清中断标志：停止请求打在 acquire 之后（与真机「在途点停止」同序）。
+    runtime
+        .with_session(&f.scope(), |session| session.request_abort())
+        .unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let types = event_types(&sink);
+    assert!(
+        types.contains(&"aborted".to_string()),
+        "已停止的轮次应以 aborted 收口：{types:?}"
+    );
+    assert!(
+        !types.contains(&"error".to_string()),
+        "abort 优先于空响应判定，不得再发错误终态：{types:?}"
+    );
+    assert_eq!(
+        runtime.snapshot(&f.scope(), &config).retry,
+        None,
+        "停止不是失败，不登记可重试动作"
     );
 }
 

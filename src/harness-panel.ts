@@ -7004,13 +7004,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /** 重试拒绝后的轻量快照：同一份 `harness_state` 同时读 `in_flight` 与 `retry`——
    *  相位按 `in_flight`，动作按 `retry` 就地更新（不重放消息、不清拒绝错误行）。
-   *  MUST NOT 改造 `fetchActivitySnapshot` 的「只读相位」职责。 */
+   *  MUST NOT 改造 `fetchActivitySnapshot` 的「只读相位」职责。
+   *
+   *  **相位与动作共用同一世代守卫**（design §4.4）：请求发出后若已经开始了新一轮
+   *  （`sent` / `auto_turn_started`）或已到终态（`terminal`），`phaseEpoch` 已推进。这份回包
+   *  的 `retry` 描述的是旧轮次的失败——落地会把已经失效的动作重新挂回新轮次（`applyEnterSnapshot`
+   *  的 epoch 守卫只管相位，挡不住动作）。因此整条丢弃，不只是丢相位。 */
   function fetchRetrySnapshot(): void {
     const seq = (snapshotSeq += 1);
     const epoch = phaseEpoch;
     void harnessState()
       .then((json) => {
         if (seq !== snapshotSeq) return;
+        if (epoch !== phaseEpoch) return;
         const state = parseSnapshot(json);
         if (state === null) return;
         applyEnterSnapshot(state.in_flight, epoch);
@@ -8795,7 +8801,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         const takeover = midTakeover;
         // 失败轮的半截正文（design §9.2）：流式已上屏的内容保留，在终态时标注「未完成」。
         // 只有在**本轮真的产出了正文**时才标注——首字节之前就失败（网络失败）不产生空标记。
-        const hadBodyText = streamingText !== "";
+        // 待 flush 的 `chunkBuffer` 同样算「已产出」：同一拍里 `text_chunk` 与 `error` 先后到达时，
+        // 正文还在 rAF 缓冲里、尚未并入 `streamingText`；只读后者会让 `finalizeStreamingMessage`
+        // 把正文冲上屏却跳过标记（真机 718 的现场）。
+        const hadBodyText = streamingText !== "" || chunkBuffer !== "";
         const el = finalizeStreamingMessage();
         if (el !== null && hadBodyText) attachIncompleteMark(el);
         dispatchActivity({ type: "terminal", kind: "error", mounted: mountEl !== null });
