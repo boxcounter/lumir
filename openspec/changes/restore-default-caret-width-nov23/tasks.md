@@ -96,13 +96,14 @@
 - [x] 6.5 真机 228 PASS；证据指针可 `ls`——PASS 47.8s，证据
       `.local/acceptance/2026-11-23-caret-default/`（summary.md / shots / ax 齐全）
 - [x] 6.6 视觉基线未更新；若确需更新，先送 Alex 过目——逐张像素比对无差异，未触及基线
-- [x] 6.7 `tasks.md` 全部勾选，未勾项就地写放弃理由（未勾项：6.8 / 6.9）——5.1 / 6.5 已在
-      2026-11-23 真机 228 PASS 后补勾
+- [x] 6.7 `tasks.md` 全部勾选或就地写理由（未勾项：6.8）——5.1 / 6.5 已在 2026-11-23 真机
+      228 PASS 后补勾；6.9 已随独立评审 clean/merge 补勾
 - [ ] 6.8 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（队列当前 76
       行、硬上限 80；落条前先核可删的僵尸条目，不为压行数删活条目）——**合并时由 tower 执行**，
       worker 不 merge
-- [ ] 6.9 交独立 reviewer；verdict 绑定当前 tip；归档前逐条核对节点 2 五要件——**tower 职责**，
-      本轮只交 mission 分支
+- [x] 6.9 交独立 reviewer；verdict 绑定当前 tip；归档前逐条核对节点 2 五要件——verdict
+      **clean / merge**（独立 reviewer，非作者），评审 tip `c9fd7d06`；五要件材料见
+      `proposal.md` 的节点 2 块；merge / archive 待 tower 执行
 
 ## 7. 信息卫生
 

@@ -107,7 +107,57 @@
 不需要 ADR：只改一个 capability 的视觉取值，不推翻技术选型、不改分层。2026-10-23 的 2px 曾是
 一次已归档的产品裁决而非架构决策，本 change 以 OpenSpec delta + 改裁记录承接即可。
 
-## 节点 2（归档时填写）
+## 节点 2（归档前材料已齐；merge / archive 待执行）
 
-归档前按五要件记录：节点 1 批准依据、reviewer verdict 与 tip、tasks 完成情况、门禁与真机证据
-指针（`.local/`）、规格对账读数；归档后追加归档提交 hash、包装器输出与 `--archived` PASS 时间。
+> 状态：五要件已满足，**本 change 尚未 merge、未 archive**。实现 PR 合并时由 tower 在
+> `docs/backlog.md` 的归档跟踪队列落唯一一条条目（任务 6.8），随后执行归档；归档后在本块
+> 追加归档提交 hash、包装器输出与 `--archived` PASS 读数。
+
+### 要件 1 — 方案已批准
+
+- 节点 1：Alex 2026-11-23 回话「按推荐」，C1–C3 全部采用推荐值（宽度 1.2px、居中 -0.6px、
+  light / dark / eink 三主题同值），记录见本文件「节点 1 裁决点」与节点状态块。
+- 实现期无静默扩 scope：产品行为未变（只撤宽度 / 居中覆盖，`--text` 颜色与 1.2s 闪烁保留）。
+  唯一改动是**判据读法的实现期校正**——`getComputedStyle` 的 `borderLeftWidth` 在 Chromium
+  DPR=1 下把 1.2px 取整为 `1px`，故 m647 改为「级联声明 = 1.2px + 计算值非 2px」两路；记录见
+  本文件「判据要说准」、design F2a 与 `docs/specs/editor-caret.md` 验证层表格。
+
+### 要件 2 — 独立 reviewer clean / merge
+
+- verdict：**clean / merge**（独立 reviewer，非作者）。
+- 评审 tip：`c9fd7d06`（`fix(editor): restore default caret width across themes`）。
+- 评审记录：结论由 tower 会话转达；本仓 `.tower/comms/reviews/` 截至 2026-11-23 无该 change
+  的 review 文件副本（`.tower/` 不入 git）。评审 tip 之后的改动仅为本节点材料与 tasks 勾选
+  （docs-only，不改实现），实现面仍与评审 tip 一致。
+
+### 要件 3 — tasks 完成或有放弃理由
+
+- `tasks.md` 39/40 勾选。唯一未勾项 6.8（合并时在 `docs/backlog.md` 落归档队列条目）已就地
+  写明理由「合并时由 tower 执行」，属合并时动作而非实现缺口。
+- 6.9（独立评审 + 五要件对账）已随本次材料补勾。
+
+### 要件 4 — 门禁与真机证据通过
+
+- `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0。
+- `scripts/gate.sh visual`：`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；视觉套件
+  1258 passed / 1 skipped / 0 failed，逐张像素比对无差异，基线未更新（无需 `--update`）。
+- 真机 228：`PASS 47.8s`（28 断言 / 0 失败，light + eink）。**228 只作行为 / 观感证据**：
+  它判属性盒显露与恢复、doc-title / 正文点击零写盘，**不读线宽**；「够不够显眼」与 eink
+  残影 / 闪烁观感归 Alex 手感项，不进机器判据（宽度判据在 m647 的计算样式 / CSSOM 读数）。
+- 证据：`.local/missions/caret-default-nov23/`（红绿、margin 探针、2px 变异必红、取整探针、
+  quick / visual 全文、视觉逐条日志）与 `.local/acceptance/2026-11-23-caret-default/`
+  （summary.md、shots、ax）。
+
+### 要件 5 — 规格对账无丢段（归档前读数）
+
+- `node scripts/openspec-archive-check.mjs`（门禁模式）：**PASS**——「扫过 9 份 delta，8 条
+  MODIFIED，对比 119 段，无静默丢段；归档队列 0 项已完成 change 均有唯一条目」。
+- `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict`：`Totals: 37 passed,
+  0 failed (37 items)`。
+- 归档跟踪队列：本 change 尚未合并（任务 6.8 未勾），机器门禁对未完成任务项的 change 不判队列
+  （本轮 `checked = 0`）；合并时由 tower 落唯一一条条目后复跑 docs-check。
+
+### 归档后（待执行）
+
+归档提交 hash、包装器（`openspec archive`）实际输出、修链读数与 `--archived
+restore-default-caret-width-nov23` 的 PASS 时间，待 merge + archive 后追加。
