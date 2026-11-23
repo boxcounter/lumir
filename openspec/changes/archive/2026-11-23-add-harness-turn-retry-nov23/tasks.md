@@ -292,6 +292,5 @@
       评审结论由 tower 转达，未提供独立评审文件路径（不代填）。本节点 2 材料提交为 docs-only，
       不改实现与规格 delta
 - [x] 12.3 merge 到 master（由 tower 执行；提交 `2951ca51` 已合并并推送）
-- [ ] 12.4 归档：`node scripts/openspec-archive.mjs add-harness-turn-retry-nov23` + 归档提交 +
-      `node scripts/openspec-archive-check.mjs --archived add-harness-turn-retry-nov23` PASS
-      （由 tower 在五要件齐后执行；本批未归档）
+- [x] 12.4 归档：归档提交 `9d0ddfbf`；`node scripts/openspec-archive-check.mjs --archived
+      add-harness-turn-retry-nov23` PASS（0 MODIFIED / 0 段，人工恢复 0 段，声明认领 0 段）

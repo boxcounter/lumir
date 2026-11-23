@@ -221,8 +221,10 @@ composer 的 `{text, caret, cards}` 结构，且原消息已在历史里（要�
 
 ## 节点 2（归档放行材料，2026-11-23）
 
-> 状态：**材料齐，未 merge / 未归档**（merge 与归档由 tower 执行）。五要件逐条如下；
-> `--archived` 审计属归档后动作，不在此列。
+> 状态：**已归档**（2026-11-23）。实现已合并推送，归档提交 `9d0ddfbf`；包装器输出
+> `Totals: + 2, ~ 0, - 0, → 0`，归档后修链 0 处（4 篇 Markdown / 0 条相对链接），相对链接门禁 PASS；
+> `node scripts/openspec-archive-check.mjs --archived add-harness-turn-retry-nov23` PASS
+> （0 条 MODIFIED / 0 段；人工恢复 0 段，声明认领 0 段）。
 
 1. **节点 1 批准依据**：Alex 2026-11-23 原话「三项推荐。」——本批三项提案一次答复，本 change 的
    D1–D5 全部按推荐值批准（D5 = 并入本批修恢复折叠缺陷）；实现期范围以本文件「What Changes」
@@ -230,9 +232,9 @@ composer 的 `{text, caret, cards}` 结构，且原消息已在历史里（要�
 2. **独立评审**：最终独立评审结论 **clean / merge**，绑定 tip `a9538e90`，无 P1 / P2（2026-11-23）。
    评审结论由 tower 转达；未提供独立评审文件路径，本记录不代填评审文件路径。`a9538e90` 之后只有
    本节点 2 的 docs-only 材料提交（proposal / tasks / backlog），不改实现与规格 delta。
-3. **tasks 完成数**：`tasks.md` 共 **84** 项，**80** 项已勾，4 项未勾——1.3 / 1.4 已就地写明
-   **放弃原因**（未在未实现树执行 A 组 RED；替代证据见该两行），12.3 merge 与 12.4 归档为待 tower
-   执行的动作（归档时预期 82/84，仅两项放弃）。
+3. **tasks 完成数**：`tasks.md` 共 **84** 项，**82** 项已勾；仅 1.3 / 1.4 未勾且已就地写明
+   **放弃原因**（未在未实现树执行 A 组 RED；替代证据见该两行）。merge、归档与 `--archived`
+   审计均已完成，结果见上方状态块。
 4. **要求的门禁与真机证据**：
    - `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`，exit 0。实现批日志
      `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/harness-turn-retry-nov23/gates.log`；
