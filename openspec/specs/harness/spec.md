@@ -2293,27 +2293,36 @@ MUST NOT 另立第二套表。
 
 ### Requirement: 面板收起与跨 vault 的活动在场
 
-harness 面板的活动状态 MUST NOT 只存在于面板内部。标题栏 harness toggle 钮（`harness.toggle` 的可见入口）
-SHALL 在面板收起时同样呈现**当前 vault 会话**的活动，三态可辨：空闲 / 在途 / 有未读结果；三态 SHALL 同时
-在钮的可访问描述上可读（MUST NOT 只靠颜色承载语义）：状态词 SHALL 同时写进该钮的 `title`——WKWebView 把钮
-当叶子节点，钮内文本不进 AX 树、`aria-describedby` 指向的隐藏文本在自动化通道里读不到，`title`（AX `help`）
-是三态可判定读数的唯一载体。该钮挂在标题栏且面板展开时不在场上（既有退让条款），因此三态的在场判据 SHALL
-取收起态（面板展开期间的读数由面板内既有的发送钮 / 阶段行承载）。活动提示 MUST NOT 自动展开面板、MUST NOT
-抢焦点、MUST NOT 切换 vault、MUST NOT 触发系统通知，也 MUST NOT 引入新的全局键位。
+harness 面板的活动状态 MUST NOT 只存在于面板内部。活动 SHALL 按 vault 根路径记账：标题栏 harness toggle 钮
+（`harness.toggle` 的可见入口）呈现**当前 vault 会话**的活动；vault 切换器浮层的非当前行呈现**该行 vault**
+的活动（行级呈现的完整合同见 `vault-workspace` 的「vault 列表行的活动状态」条）。标题栏三态可辨：空闲 /
+在途 / 有未读结果；三态 SHALL 同时在钮的可访问描述上可读（MUST NOT 只靠颜色承载语义）：状态词 SHALL 同时
+写进该钮的 `title`——WKWebView 把钮当叶子节点，钮内文本不进 AX 树、`aria-describedby` 指向的隐藏文本在
+自动化通道里读不到，`title`（AX `help`）是三态可判定读数的唯一载体。该钮挂在标题栏且面板展开时不在场上
+（既有退让条款），因此三态的在场判据 SHALL 取收起态（面板展开期间的读数由面板内既有的发送钮 / 阶段行
+承载）。活动提示 MUST NOT 自动展开面板、MUST NOT 抢焦点、MUST NOT 切换 vault、MUST NOT 触发系统通知，
+也 MUST NOT 引入新的全局键位；行级标记 MUST NOT 在浮层收起时可见（不得变成常驻角标）。
 
-**在途**的判据 SHALL 只有一个：后端当前 vault 会话的轮次状态。后端 SHALL 把「轮次在跑」与「终态已发、
-会话尚未释放」区分成两个状态，`harness_state` 快照 SHALL 携带**呈现读** `in_flight`——它只在「轮次在跑、
-终态未发」时为真，在「终态已发、尚未释放」窗口里 MUST 为假。用于协议判定（在途拒绝新的发送 / 新会话）
-的**协议读** SHALL 保持今天的语义（终态已发、尚未释放时仍视为占用），两读 MUST 由同一个会话级轮次状态
-派生，MUST NOT 各存一份。该状态 SHALL 覆盖**全部轮次来源**——用户发送、点击发起的 cron 运行、唤醒链的
-自动回合——以及**该轮次的全部终态路径**（正常完成、配置级失败、内部错误 / panic、空响应、用户停止、
-程序性中止）；MUST NOT 只对普通回合成立（自动回合的失败路径同样经历「终态已发、尚未释放」的窗口）。
-面板在装载、切回 vault、恢复会话三个时点 SHALL 按**进入快照**的 `in_flight`
-恢复相位，MUST NOT 因视图复位（切 vault 时的 `resetView`）或事件按 vault 过滤而把一个仍在途的轮次呈现为
-空闲；`in_flight` 为假时 SHALL 就地收口（相位空闲、轮次闸门关闭、清「中途接管」标记），MUST NOT 等一个
-可能永远不会到达的终态事件。前端 MUST NOT 保存终态记忆，也 MUST NOT 把 `harness_busy` 拒绝当作在途证据
-——拒绝只可能来自上述「终态已发、尚未释放」窗口或本地假空闲，处置 SHALL 是重取一次快照并按 `in_flight`
-应用，MUST NOT 直接改相位。
+**在途**的判据 SHALL 只有一个：该 vault 的轮次状态；同一份按 vault 键控的活动记录 SHALL 同时服务标题栏钮
+与切换器行，两处 MUST NOT 各存一份。当前 vault 的呈现读 SHALL 取后端会话的轮次状态。后端 SHALL 把「轮次
+在跑」与「终态已发、会话尚未释放」区分成两个状态，`harness_state` 快照 SHALL 携带**呈现读** `in_flight`
+——它只在「轮次在跑、终态未发」时为真，在「终态已发、尚未释放」窗口里 MUST 为假。用于协议判定（在途拒绝
+新的发送 / 新会话）的**协议读** SHALL 保持今天的语义（终态已发、尚未释放时仍视为占用），两读 MUST 由同
+一个会话级轮次状态派生，MUST NOT 各存一份。该状态 SHALL 覆盖**全部轮次来源**——用户发送、点击发起的 cron
+运行、唤醒链的自动回合——以及**该轮次的全部终态路径**（正常完成、配置级失败、内部错误 / panic、空响应、
+用户停止、程序性中止）；MUST NOT 只对普通回合成立（自动回合的失败路径同样经历「终态已发、尚未释放」的
+窗口）。面板在装载、切回 vault、恢复会话三个时点 SHALL 按**进入快照**的 `in_flight` 恢复相位，MUST NOT
+因视图复位（切 vault 时的 `resetView`）或事件按 vault 过滤而把一个仍在途的轮次呈现为空闲；`in_flight`
+为假时 SHALL 就地收口（相位空闲、轮次闸门关闭、清「中途接管」标记），MUST NOT 等一个可能永远不会到达的
+终态事件。前端 MUST NOT 保存终态记忆，也 MUST NOT 把 `harness_busy` 拒绝当作在途证据——拒绝只可能来自上
+述「终态已发、尚未释放」窗口或本地假空闲，处置 SHALL 是重取一次快照并按 `in_flight` 应用，MUST NOT 直接
+改相位。
+
+非当前 vault 的轮次状态 SHALL 由该 vault 的 `harness:event` 信封派生：轮次开始取本地发送的乐观起点（同步
+拒绝时按发送前的记录回滚）或后端 `auto_turn_started`，轮次结束取该 vault 的 `done` / `error` / `aborted`
+终态。派生理由 SHALL 是 `harness_state` 只服务当前 vault、非当前 vault 没有快照可读；切回该 vault 后的进入
+快照 SHALL 以 `in_flight` 与事件记录对账一次，MUST NOT 让两读长期分叉。事件派生只是同一记录的输入，
+MUST NOT 引入第二张未读表、第二个相位状态机或第二份后端真源。
 
 **停止子态** SHALL 沿用既有两态机的语义：running 下点击停止进入 stopping、重复点击保持 stopping（幂等）、
 终态统一收口回 idle；本能力 MUST NOT 另立第二套相位状态机——相位只有一份投影。
@@ -2327,18 +2336,38 @@ SHALL 在面板收起时同样呈现**当前 vault 会话**的活动，三态可
 完整回答留在 transcript 里。
 
 **未读结果** SHALL 只由轮次终态产生，并按终态种类分档：正常结束 = 有新的回复；错误终态 = 有失败结果；
-用户主动停止（`aborted`）MUST NOT 产生未读。未读只在面板不在屏幕上期间产生；**重新打开面板** SHALL 清除
-未读（已读清算的唯一入口，打开即视为已读）；切换 vault 的复位是视图复位口径，与已读清算分开（见下）。
-MUST NOT 使用数字计数，MUST NOT 为同一会话累计多条未读。
+用户主动停止（`aborted`）MUST NOT 产生未读，也 MUST NOT 清除既有未读。未读只在该 vault 的 transcript
+不在屏幕上期间产生；**已读 = 该 vault 的 transcript 真的在屏幕上**，判据 SHALL 是「该 vault 是当前 vault、
+且 harness pane 对它在场（布局已落定）」——不看窗口焦点、不看应用是否前台。重新打开面板 SHALL 清除当前
+vault 的未读（已读清算的入口之一）；切到一个布局里有 harness pane 的 vault、面板随布局在场时 SHALL 清除
+该 vault 的未读；切过去但面板收起（或目标布局没有 harness pane）MUST NOT 清除，标记保留并转由标题栏钮
+承载。切换 vault 本身是视图复位口径，MUST NOT 被当作已读（见下）。MUST NOT 使用数字计数，MUST NOT 为同一
+vault 累计多条未读。
 
-**作用域与来源**：指示 SHALL 只呈现当前 vault 的会话活动；切换 vault SHALL 复位未读（视图复位口径：
-新 vault 的视图从空闲开始，MUST NOT 把上一 vault 的未读带进来）。无人值守 / 后台 cron 运行（隔离 runtime、
-事件不进当前 transcript）MUST NOT 点亮该指示——它们的完成走 cron 自己的通知通道；点击发起的 cron 运行走
-交互槽位，按普通轮次呈现。后台子代理完成通知（`notice`）不单独产生未读，其未读由所属轮次的终态承担。
+**作用域与来源**：活动记录 SHALL 按 vault 根路径键控，覆盖该 vault 的用户发送、点击发起的 cron 运行与唤
+醒链的自动回合；标题栏钮 SHALL 只呈现当前 vault 的记录，切换器行 SHALL 只呈现**非当前 vault** 的行，当前
+vault 的行 MUST NOT 重复呈现（当前行由标题栏钮承载，避免同一状态两处出现）。切换 vault MUST NOT 清空任一
+vault 的未读；视图复位（新会话 / 恢复历史会话 / cron 点击运行切屏 / cron 发起失败回滚 / cron 通知打开会话）
+SHALL 只清**动作发起时捕获的 vault** 的记录（换会话即换视图）；MUST NOT 按异步回包到达时的当前 vault
+清除——在 A 发起
+新会话 / 恢复、回包到达前切到 B 时，只清 A，B 的记录 MUST NOT 被误清。显式删除 / 重定位 vault 时 SHALL
+按后端实际打开根丢弃该 vault 的记录；实际根不可得时 MUST NOT 改用注册表原值 `path` 猜键，记录 MAY 留到
+重载。系统 MUST NOT 以注册表路径做周期性清理（旧拼写不同会误删当前标题栏仍在用的记录）。未匹配到实际根、
+已无行可显示的内存记录 MAY 留到重载，属非持久化边界：它 MUST NOT 产生任何可见标记，MUST NOT 被当作
+「已读 / 未读」的可见状态。无人值守 / 后台 cron 运行（隔离 runtime、事件不进当前 transcript）MUST NOT
+参与该记录——它们的完成走 cron 自己的通知通道；点击发起的 cron 运行走交互槽位，按普通轮次呈现。后台子
+代理完成通知（`notice`）不单独产生未读，其未读由所属轮次的终态承担。审批等待（`approval_request` 挂起）
+归「在途」档，MUST NOT 单独成为一档未读（它等待处置，不是「已完成、待你看」的结果）。未读水位 MUST NOT 跨应用重启或 webview 重载回放：应用重启后所有
+vault 从空闲开始；webview 重载后未读同样不回放，但当前 vault 的真实在途 SHALL 仍按进入快照的 `in_flight`
+恢复（MUST NOT 因此把在途呈现为空闲），非当前 vault 没有快照、重载后其相位与未读暂时未知，直到该 vault
+的后续事件到达或用户切回它并读快照。
 
 **视觉与主题**：空闲态 MUST NOT 新增任何上屏像素（既有整页基线不因本能力更新）；三态形状 SHALL 承载语义、
-颜色只作增强，eink 主题下 MUST NOT 依赖彩色或中间调区分；MUST NOT 引入常态动画（因此
-`prefers-reduced-motion` 无分支）。状态文案 SHALL 走文案表 zh/en 双档并随界面语言切换重绘。
+颜色只作增强，eink 主题下 MUST NOT 依赖彩色或中间调区分。标题栏钮与切换器行 SHALL 复用同一套形状语言
+（在途 = 空心环、未读回复 = 实心点、未读失败 = 实心点 + 外环）与同一档 6×6 尺寸；行标记 MUST NOT 新增
+文本或计数，状态词 SHALL 只写进该行切换钮的 `title`，行内文本、可访问名与点击定位 MUST NOT 因它改变。
+MUST NOT 引入常态动画（因此 `prefers-reduced-motion` 无分支）。状态文案 SHALL 走文案表 zh/en 双档并随界面
+语言切换重绘（复用既有 D870–D872，不新增 copy key）。
 
 #### Scenario: 收起期间完成一轮并点亮未读
 
@@ -2375,11 +2404,12 @@ MUST NOT 使用数字计数，MUST NOT 为同一会话累计多条未读。
 
 #### Scenario: 离开期间发生的终态由进入快照收口
 
-- **WHEN** 在 vault A 发起一轮、切到 B、该轮在 B 期间结束（事件被 vault 过滤，本地从未观察到终态），
-  随后切回 A（面板仍处于收起态）
-- **THEN** 进入快照的呈现读为「不在途」，面板就地收口（相位空闲、轮次闸门关闭、清接管标记），MUST NOT
-  停在「处理中」等一个不会到达的事件；MUST NOT 为这次未观察到的终态伪造未读档位（跨 vault 完成的未读
-  不在本能力范围内），打开面板后该轮的回答按快照完整呈现
+- **WHEN** 在 vault A 发起一轮、切到 B、该轮在 B 期间结束（vault A 的 transcript 不在屏幕上），随后在 B
+  打开切换器
+- **THEN** A 的行呈「有新的回复」（不是「处理中」；该轮终态已收口）；切到 A（面板仍收起）后标题栏钮呈
+  「有新的回复」，再次打开切换器时 A 行不显示标记（当前行由钮承载）；进入快照的呈现读为「不在途」，
+  面板就地收口（相位空闲、轮次闸门关闭、清接管标记），MUST NOT 停在「处理中」等一个不会到达的事件；
+  打开面板后该轮的回答按快照完整呈现，未读随之清除
 
 #### Scenario: 自动唤醒回合的终态同样收口
 
@@ -2425,6 +2455,106 @@ MUST NOT 使用数字计数，MUST NOT 为同一会话累计多条未读。
 
 - **WHEN** 用户点击 cron 通知发起一次运行（交互槽位），随后收起面板
 - **THEN** 收起期间指示呈在途，运行结束后按普通轮次点亮未读
+
+#### Scenario: cron 发起失败回滚按发起 vault 收口
+
+- **WHEN** 在 vault A 点击 cron 通知发起运行（`beginCronRun` 已复位 A 的视图），请求在途时切到 B，随后
+  运行发起被拒
+- **THEN** 只回滚 A 的记录与视图；B 的记录、transcript、输入区与快照 MUST NOT 被复位或重取；A 的失败
+  提示不写进 B；切回 A 时按快照重建
+
+#### Scenario: cron 通知恢复跨 vault 不操作当前视图
+
+- **WHEN** 点击 vault A 的结果通知恢复会话，`harness_resume_session` 在途时切到 B，随后恢复成功
+- **THEN** 只复位 A 的记录；B MUST NOT 被打开 harness pane、MUST NOT 清未读、MUST NOT 重取快照；A 的
+  恢复内容不渲染进 B，切回 A 时按快照重建
+
+#### Scenario: 非当前 vault 的在途在行上可见
+
+- **WHEN** 在 vault A 发起一轮（处理中），收起面板并切到 B，随后打开切换器
+- **THEN** A 的行呈「处理中」（空心环），当前 vault B 的行不显示任何标记；标记落在 A 行切换钮矩形内，
+  MUST NOT 压住移除钮、MUST NOT 出现数字或第二枚标记
+
+#### Scenario: 切过去但面板收起不清未读
+
+- **WHEN** vault A 有「有新的回复」未读，用户从 B 切到 A，而 A 的存储布局里没有 harness pane（切过去后
+  面板仍是收起态）
+- **THEN** 切换本身 MUST NOT 清除未读；标题栏钮呈「有新的回复」，再次打开切换器时 A 行不显示标记
+  （当前行由钮承载）；随后用户经 `⌘⇧A` 打开面板，未读才清除
+
+#### Scenario: 目标布局有 harness pane 时随在场清算
+
+- **WHEN** vault A 有「有失败结果」未读，用户从 B 切到 A，A 的存储布局里 harness pane 在场
+- **THEN** 布局落定、面板随在场后该未读清除，标题栏钮回到空闲；MUST NOT 在布局落定之前凭切换动作抢先
+  清算（切换窗口内到达的终态按「不在屏幕上」保守记未读，由随后的在场信号校正）
+
+#### Scenario: 审批等待归在途
+
+- **WHEN** vault A 的一轮因工具审批挂起（`approval_request` 等待处置），用户切到 B 并打开切换器
+- **THEN** A 的行呈「处理中」，MUST NOT 呈「有新的回复」或「有失败结果」；该档不引入第四种清算语义
+
+#### Scenario: 停止不清既有未读
+
+- **WHEN** vault A 已有「有新的回复」未读，A 又发起一轮并在终态前被用户主动停止，用户在 `aborted` 到达前
+  切到 B
+- **THEN** A 的行仍呈「有新的回复」，MUST NOT 因这次 `aborted` 清除既有未读、MUST NOT 改呈「有失败结果」
+
+#### Scenario: 停止请求被拒不关掉新轮
+
+- **WHEN** vault A 的一轮在途时用户点击停止并切到 B；停止请求随后被后端拒绝为「没有在途轮次」，而 A 的
+  记录已因终态回到空闲或已开始新的一轮
+- **THEN** 拒绝只收口停止中的那一轮：记录已 idle 或已 running 时 MUST NOT 被改回 idle、MUST NOT 改写
+  新轮的相位；错误行 MUST NOT 写进 B 的视图
+
+#### Scenario: 后台通知不单独点亮
+
+- **WHEN** 后台子代理完成并发出 `notice`，但没有触发自动唤醒回合
+- **THEN** 该 vault 的记录不因 `notice` 产生未读；若 `notice` 触发了自动唤醒回合，未读由该回合的终态按
+  普通轮次产生
+
+#### Scenario: 无人值守 cron 不参与跨 vault 记录
+
+- **WHEN** 一个无人值守 / 定时 cron 运行针对非当前 vault 到点（后端结构上拒绝跨 vault 派发，隔离 runtime
+  也不发面板事件）
+- **THEN** 任何 vault 的行与标题栏钮都不因这次运行改变；其完成提示仍走 cron 既有通知通道
+
+#### Scenario: 浮层收起时行标记不可见
+
+- **WHEN** 某非当前 vault 有未读，用户关闭 vault 切换器
+- **THEN** 行标记随浮层一起消失，MUST NOT 留下常驻角标、树头部标记或数字；再次打开浮层时按该 vault 的
+  当前记录重建标记（不在关闭期间维护常驻 DOM 镜像）
+
+#### Scenario: 新会话回包跨 vault 只清发起 vault
+
+- **WHEN** 在 vault A 发起「新会话」，回包到达前切到 B，回包随后到达
+- **THEN** 只清 A 的记录（A 从新会话起算）；B 的在途与未读记录 MUST NOT 被清、B 的视图 MUST NOT 被这次
+  回包重建；切回 A 时按 A 的会话快照呈现
+
+#### Scenario: 恢复回包跨 vault 只清发起 vault
+
+- **WHEN** 在 vault A 恢复一个历史会话，回包到达前切到 B，回包随后到达
+- **THEN** 只清 A 的记录；B 的记录与视图不受影响；A 恢复后的会话内容按既有恢复路径呈现，MUST NOT 把
+  恢复内容写进 B 的 transcript
+
+#### Scenario: 发送拒绝按发送时 vault 收口
+
+- **WHEN** 在 vault A 发送后立即切到 B，A 的发送随后被同步拒绝（`harness_busy` / 缺配置）
+- **THEN** 只撤销 A 的乐观在途记录（回到发送前状态）；B 的轮次闸门、transcript 与输入区 MUST NOT 被
+  这次拒绝改动；切回 A 后不呈假在途
+
+#### Scenario: 重启与 webview 重载不保留
+
+- **WHEN** 某 vault 有未读时应用退出并重启，或 webview 重载且当前 vault 仍有一轮在后端运行
+- **THEN** 应用重启：所有 vault 从空闲开始，MUST NOT 从磁盘回放未读；webview 重载：未读同样不回放，但
+  当前 vault 的真实在途 SHALL 按进入快照的 `in_flight` 恢复、MUST NOT 呈假空闲；非当前 vault 没有快照，
+  重载后其相位与未读暂时未知，直到该 vault 的后续事件到达或用户切回它并读快照（场景名的「不保留」只指
+  未读水位，不指在途）
+
+#### Scenario: 行标记不改变行的既有口径
+
+- **WHEN** 非当前 vault 行显示「有新的回复」标记，用户输入查询筛选、用 ↑↓ 移动游标或点击该行
+- **THEN** 匹配对象仍是显示名、结果集与游标空间不变、行内文本与可访问名不因标记改变、点击仍按既有
+  切换语义发起切换；标记 MUST NOT 引入第二套键位或改变排序
 
 #### Scenario: 三主题与语言纪律
 
