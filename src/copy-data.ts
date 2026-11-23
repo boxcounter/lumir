@@ -2749,37 +2749,40 @@ const COPY_TABLE = {
     zh: "初始化取网页标题请求失败",
     en: "Couldn't initialize the page title request",
   },
-  // D950–D955：harness 留存健康（change add-persistence-health-status-nov23）。缺口文案优先于
-  // 当前失败文案——`state=ok` + gap 也必须明确「记录缺失」，MUST NOT 呈现为健康。
+  // D950–D955：harness 留存健康（change add-persistence-health-status-nov23；Alex 2026-11-23
+  // 裁定的直白措辞）。缺口文案优先于当前失败文案——`state=ok` + gap 也必须明确「记录缺失」，
+  // MUST NOT 呈现为健康。D954 是「尚无 history 写入」的退出风险短句，只在已有告警时追加。
   D950: {
-    zh: "写入已恢复，但此前部分记录缺失，这段历史可能不完整",
-    en: "Writing has recovered, but earlier records are missing; this history may be incomplete",
+    zh: "此前部分对话记录未能保存；新内容已恢复写入。",
+    en: "Earlier messages couldn't be saved; new content is being written again.",
   },
   D951: {
-    zh: "对话记录写入仍在失败，且此前记录已缺失",
-    en: "Conversation recording is still failing, and earlier records are already missing",
+    zh: "对话暂未保存，此前部分记录也未能保存。请检查磁盘空间或目录权限；恢复后会继续写入。",
+    en: "This conversation isn't saved right now, and earlier messages couldn't be saved either. Check disk space or folder permissions; writing will resume once it recovers.",
   },
   D952: {
-    zh: "对话记录写入失败，这段历史可能不完整",
-    en: "Couldn't write the conversation record; this history may be incomplete",
+    zh: "对话暂未保存。请检查磁盘空间或目录权限；恢复后会继续写入。",
+    en: "This conversation isn't saved right now. Check disk space or folder permissions; writing will resume once it recovers.",
   },
   D953: {
     zh: "部分对话记录写入失败，不影响继续对话",
     en: "Some conversation records couldn't be written; you can keep chatting",
   },
   D954: {
-    zh: "本次会话的新记录尚未落盘，退出后无法恢复",
-    en: "This session's new records haven't been saved yet and can't be recovered after quitting",
+    zh: "现在退出，这段对话将无法恢复。",
+    en: "If you quit now, this conversation can't be recovered.",
   },
   D955: {
-    zh: "对话记录写入失败。若继续对话，这段历史可能无法完整恢复。",
-    en: "Conversation recording failed. If you keep chatting, this history may not be fully recoverable.",
+    zh: "对话暂未保存。若继续对话，这段历史可能无法完整恢复。",
+    en: "This conversation isn't saved right now. If you keep chatting, this history may not be fully recoverable.",
   },
-  // D956–D959：崩溃备份失败的双子条件横幅（change add-persistence-health-status-nov23 §5.3）。
-  // 写失败段给「全部保存」，枚举失败段给「重新检查」；两者可同时在场。
+  // D956–D959：备份失败的双子条件横幅（change add-persistence-health-status-nov23 §5.3；
+  // Alex 2026-11-23 裁决调整主文案）。主句直说「未保存的修改暂时没有备份，关闭应用可能
+  // 丢失」；数量 / 路径降为次要信息，不出现「崩溃备份 / 首个」等实现术语。写失败段给
+  // 「全部保存」，枚举失败段给「重新检查」；两者可同时在场。
   D956: {
-    zh: "无法为 {n} 份未保存的文档写入崩溃备份（首个：{path}）。保存后即不再有丢失风险。",
-    en: "Couldn't write crash backups for unsaved documents: {n} affected (first: {path}). Saving removes the risk of loss.",
+    zh: "未保存的修改暂时没有备份，关闭应用可能丢失。涉及 {n} 份文档（如 {path}）。",
+    en: "Unsaved changes have no backup right now; quitting the app may lose them. {n} documents affected (e.g. {path}).",
   },
   D957: {
     zh: "无法检查残留备份，可能有备份未被提示。",

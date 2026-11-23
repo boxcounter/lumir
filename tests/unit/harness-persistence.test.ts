@@ -108,6 +108,59 @@ test("persistenceText：degraded 无缺口按 severity 分档", () => {
   );
 });
 
+test("persistenceText / 横幅文案：新文案 zh/en 逐字（Alex 2026-11-23 裁决）", () => {
+  // 当前写失败：直说没保存 + 查磁盘 / 权限 + 恢复后继续写。
+  assert.equal(
+    t("D952", undefined, "zh"),
+    "对话暂未保存。请检查磁盘空间或目录权限；恢复后会继续写入。",
+  );
+  assert.equal(
+    t("D952", undefined, "en"),
+    "This conversation isn't saved right now. Check disk space or folder permissions; writing will resume once it recovers.",
+  );
+  // 写入已恢复、历史仍有缺口：先说自己恢复，再说此前缺失。
+  assert.equal(t("D950", undefined, "zh"), "此前部分对话记录未能保存；新内容已恢复写入。");
+  assert.equal(
+    t("D950", undefined, "en"),
+    "Earlier messages couldn't be saved; new content is being written again.",
+  );
+  // 两者同时：当前失败与历史缺口同句，不拆成两条状态行。
+  assert.equal(
+    t("D951", undefined, "zh"),
+    "对话暂未保存，此前部分记录也未能保存。请检查磁盘空间或目录权限；恢复后会继续写入。",
+  );
+  assert.equal(
+    t("D951", undefined, "en"),
+    "This conversation isn't saved right now, and earlier messages couldn't be saved either. Check disk space or folder permissions; writing will resume once it recovers.",
+  );
+  // 尚无 history 写入的退出风险：直白短句，不出现「落盘」等实现术语。
+  assert.equal(t("D954", undefined, "zh"), "现在退出，这段对话将无法恢复。");
+  assert.equal(t("D954", undefined, "en"), "If you quit now, this conversation can't be recovered.");
+  // 首次 history sticky 与警示块同一口径。
+  assert.equal(
+    t("D955", undefined, "zh"),
+    "对话暂未保存。若继续对话，这段历史可能无法完整恢复。",
+  );
+  assert.equal(
+    t("D955", undefined, "en"),
+    "This conversation isn't saved right now. If you keep chatting, this history may not be fully recoverable.",
+  );
+  // 文档横幅：主句先说未保存修改无备份 + 关闭可能丢失；数量 / 路径是次要信息，
+  // 不出现「崩溃备份 / 首个」等实现术语。
+  const bannerZh = t("D956", { n: "2", path: "notes/a.md" }, "zh");
+  assert.equal(
+    bannerZh,
+    "未保存的修改暂时没有备份，关闭应用可能丢失。涉及 2 份文档（如 notes/a.md）。",
+  );
+  assert.ok(!bannerZh.includes("崩溃备份") && !bannerZh.includes("首个"));
+  const bannerEn = t("D956", { n: "2", path: "notes/a.md" }, "en");
+  assert.equal(
+    bannerEn,
+    "Unsaved changes have no backup right now; quitting the app may lose them. 2 documents affected (e.g. notes/a.md).",
+  );
+  assert.ok(!bannerEn.includes("crash backup"));
+});
+
 test("persistenceText：history_written=false + 告警追加未落盘提示；转 true 后该句消失、缺口文案仍在", () => {
   const gapNotWritten = persistenceText({
     state: "ok",
@@ -211,19 +264,24 @@ test("接线：新会话重置、恢复以完整快照为地板，切 vault 只�
   );
 });
 
-test("接线：状态行复用引用失败状态行的类与 role=status，健康时 hidden、无关闭按钮（零新样式）", () => {
-  const declaration = PANEL_SOURCE.slice(
-    PANEL_SOURCE.indexOf("const persistenceNote = document.createElement"),
-    PANEL_SOURCE.indexOf("function persistenceViewOf") === -1
-      ? PANEL_SOURCE.indexOf("composerArea.append(chip, quoteNote, persistenceNote, composerBox);")
-      : PANEL_SOURCE.indexOf("composerArea.append(chip, quoteNote, persistenceNote, composerBox);"),
+test("接线：警示块独立类 + role=status，健康时 hidden、无关闭按钮（不复用引用状态行）", () => {
+  const start = PANEL_SOURCE.indexOf("const persistenceNote = document.createElement");
+  const end = PANEL_SOURCE.indexOf(
+    "composerArea.append(chip, quoteNote, persistenceNote, composerBox);",
   );
-  assert.ok(declaration.includes('className = "lumir-hp-qc-src lumir-hp-quote-note"'));
+  assert.ok(start > 0 && end > start, "找不到 persistenceNote 的创建段");
+  const declaration = PANEL_SOURCE.slice(start, end);
+  assert.ok(declaration.includes('className = "lumir-hp-persist-warning"'));
+  assert.ok(declaration.includes('dataset.persistenceHealth = "true"'));
+  assert.ok(
+    !declaration.includes("lumir-hp-quote-note"),
+    "警示块不复用引用失败状态行的类（后者仍单行省略）",
+  );
   assert.ok(declaration.includes('setAttribute("role", "status")'));
   assert.ok(declaration.includes("hidden = true"), "健康态初始 hidden（零占位）");
   assert.ok(
     !declaration.includes("button") && !declaration.includes("addEventListener"),
-    "状态行不提供关闭按钮（关闭 sticky 不等于静音）",
+    "警示块不提供关闭按钮（关闭 sticky 不等于静音）",
   );
 });
 

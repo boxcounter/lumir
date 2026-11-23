@@ -12,7 +12,8 @@
 
 1. **Harness 会话留存**：写失败不再只进 stderr；会话持有**两个独立维度**的健康——当前写健康
    与 `history_gap`（历史缺口 latch）。面板在 composer 上方持续可见；写入恢复后缺口仍显示，
-   文案明确「写入已恢复但此前记录缺失」；本逻辑会话首次进入 `history` 给一条 sticky 提示。
+   文案明确「此前部分对话记录未能保存；新内容已恢复写入。」；本逻辑会话首次进入 `history`
+   给一条 sticky 提示。
 2. **文档崩溃备份**：写失败与枚举失败不再被 `catch(() => {})` 吞掉；文档区 sticky 横幅用两个
    独立子条件分别表达，写失败给「全部保存」，枚举失败给「重新检查」。
 3. **同根缺陷**：修 `pending_open` 的内存遗忘；但**不承诺部分写后的文件可恢复**——文件可能
@@ -34,7 +35,7 @@
 | `save-controller.ts:324-328` / `:898-907` | 删除备份吞错；枚举失败直接 `return` |
 | `copy-data.ts:377` / `:2845` / `:2848` | `D198`（写失败）与 `D201`（枚举失败）已备好且零消费者：两条 reject 分别被 `backupDirty` / `checkRecovery` 吞掉；`D199` / `D200` 在恢复 / 丢弃动作里已有消费者 |
 | `fs-io` living spec `:423` | 「跳过是显式裁决，MUST NOT 表现为『静默地什么都没有』」 |
-| `harness-panel.ts:3670-3683` | 现成的常驻状态行范式：`quoteNote` + `role="status"`，明写「持久可见，不是 3 秒 toast」 |
+| `harness-panel.ts:3670-3683` | 现成的常驻状态行范式：`quoteNote` + `role="status"`，明写「持久可见，不是 3 秒 toast」——本 change 复用其 `role="status"` 呈现纪律；警示块改用独立类（Alex 2026-11-23 裁决） |
 | `main.ts:1744-1812` | 现成的 sticky 浮条范式：按文案去重、点击关闭、可带动作 |
 | `session.rs:91-93`、`ipc.ts:522-527` | 事件 / 快照同键同值的既有纪律（M534） |
 | `session.rs:452-453` | `StateSnapshot` 只 `Serialize`、不导 ts-rs；加字段不动 bindings |
@@ -55,7 +56,7 @@
 │        ├─ 每次失败 → 诊断日志（kind + 错误分类 + 是否部分写）             │
 │        └─ Session::persistence() → harness_state 快照 `persistence` 键    │
 │                                                                          │
-│ 面板：composer 上方常驻状态行（role="status"）                            │
+│ 面板：composer 上方常驻警示块（role="status"）                          │
 │       + 本逻辑会话首次 history/缺口一条 sticky 提示（关闭不等于静音）       │
 └──────────────────────────────────────────────────────────────────────────┘
 
@@ -87,7 +88,7 @@ save-controller 的 `failedPaths` 与独立的枚举失败条件。前端 MUST N
   - **历史缺口**：`history_gap { present, since_ts, detail }`——这一段会话**已经**缺失恢复所
     依赖的记录。后者是一个 latch。
 - **辅助事实 `history_written`**：本逻辑会话是否已有至少一条 `llm_request` / `llm_response`
-  成功写盘。它不是第三个健康维度，只用于「本次会话的新记录尚未落盘、退出后无法恢复」的风险提示；
+  成功写盘。它不是第三个健康维度，只用于「现在退出，这段对话将无法恢复」的风险提示；
   同一逻辑会话内 `true` 后不回落，rotate 沿用，新逻辑会话重置。
 - **为什么必须分开**：一次成功追加只证明「现在能写」，不能补回已经缺失的记录。把两者合并成一个
   `ok/degraded`，会把「仍然丢了一段历史」洗成健康；这正是评审阻塞 1。
@@ -185,8 +186,8 @@ save-controller 的 `failedPaths` 与独立的枚举失败条件。前端 MUST N
   第一条 history 记录成功后转 `true`，同一逻辑会话内不再回落；rotate 沿用，新逻辑会话重置。
 - `history_gap.present=false`：`since_ts=0`、`detail=""`；`present=true`：`since_ts` 是本段
   首次缺口时间，`detail` 是首次缺口分类。
-- **`state=ok` + `history_gap.present=true` 是合法且必须呈现的状态**：写入已恢复，但此前记录
-  缺失。UI MUST NOT 把它当成健康。
+- **`state=ok` + `history_gap.present=true` 是合法且必须呈现的状态**：新内容已恢复写入，但
+  此前部分对话记录未能保存。UI MUST NOT 把它当成健康。
 - **`state=degraded` + `history_gap.present=false`**：只有当前写失败（通常是 annotation），
   没有恢复性缺口。
 - 事件 `harness:event` 新增 `type: "persistence"`，载荷 = 同一份两维结构 + `type` + 信封
@@ -202,7 +203,7 @@ save-controller 的 `failedPaths` 与独立的枚举失败条件。前端 MUST N
   恢复事件必须发**——它正是「写入恢复、缺口仍在」的状态变化。
 - 旧快照 / 旧后端缺 `persistence` / `history_gap` / `history_written` 键：前端视为 `ok` /
   `present=false` / `history_written=true`（不误报「尚未落盘」），MUST NOT 因缺键显示
-  状态行。
+  警示块。
 - `StateSnapshot::empty` 同样带 `persistence: { state:"ok", …, history_written:false,
   history_gap:{present:false} }`。
 
@@ -256,25 +257,28 @@ save-controller 的 `failedPaths` 与独立的枚举失败条件。前端 MUST N
 
 ### 4.7 UI
 
-- **常驻状态行**：composer 上方、`quoteNote` 之后新增同级元素，复用
-  `lumir-hp-qc-src lumir-hp-quote-note` 类与 `role="status"`——零新样式。
-  - `history_gap.present=true`：显示缺口文案；`state=ok` 时明确说「写入已恢复，但此前部分
-    记录缺失，这段历史可能不完整」；`state=degraded` 时说明「写入仍在失败，且此前记录已
-    缺失」。**MUST NOT 整条消失或回到健康文案。**
-  - `state=degraded` 且无 gap：按 `severity` 显示当前失败文案。
+- **常驻警示块**（Alex 2026-11-23 裁决调整呈现）：composer 上方、`quoteNote` 之后新增同级
+  元素，独立类 `lumir-hp-persist-warning` 与 `role="status"`。形态 = 浅警示色底（`--pending-tint`）
+  + 左侧警示边条（3px `--pending`）+ 正文色（`--text`）+ 完整换行；**不用 danger 红、不改成新
+  面板 / 设置、不复用引用失败状态行的灰色小字**（后者仍单行省略，不受影响）。
+  - `history_gap.present=true`：显示缺口文案；`state=ok` 时明确说「此前部分对话记录未能保存；
+    新内容已恢复写入。」；`state=degraded` 时说明「对话暂未保存，此前部分记录也未能保存」并
+    给出检查磁盘空间 / 目录权限的下一步。**MUST NOT 整条消失或回到健康文案。**
+  - `state=degraded` 且无 gap：按 `severity` 显示当前失败文案；`history` 档为「对话暂未保存。
+    请检查磁盘空间或目录权限；恢复后会继续写入。」
   - `history_written=false` 且存在任何持久化告警（`state=degraded` 或 gap）：文案 MUST
-    额外说明「本次会话的新记录尚未落盘，退出后无法恢复」。`history_written` 转 true 后该句消失；
+    额外说明「现在退出，这段对话将无法恢复。」。`history_written` 转 true 后该句消失；
     gap 文案仍按上一档保留。
   - 无自动消隐计时器，无关闭按钮；`ok` 且无 gap 时 `hidden`。`history_written=false` 本身
-    不构成告警，只在已有告警时追加「尚未落盘」提示。
+    不构成告警，只在已有告警时追加退出风险句。
 - **`history` 首次 sticky**（V2）：触发条件是**本逻辑会话首次进入 `severity=history`**，
   包括先 `annotation` 后升级为 `history`；也包括 `history_gap` 首次 `present=true`。
-  每个逻辑会话只给一条，按文案去重；`annotation` 只亮状态行。
+  每个逻辑会话只给一条，按文案去重；`annotation` 只亮警示块。
   - sticky 可点击关闭（沿用既有 sticky 浮条行为）。**关闭只移除本次提示**：MUST NOT 隐藏
-    状态行、MUST NOT 清除 `history_gap`、MUST NOT 被视为对未来失败的静音；新逻辑会话可以
+    警示块、MUST NOT 清除 `history_gap`、MUST NOT 被视为对未来失败的静音；新逻辑会话可以
     再次触发。
   - toast 归属仍在装配层（M423）：面板调用新增的 `stickyToast(text)` 出口，不自建浮条。
-- **新会话动作**：面板在动作完成后 MUST NOT 继续显示旧会话的状态行；实现可在 reset 路径立即
+- **新会话动作**：面板在动作完成后 MUST NOT 继续显示旧会话的警示块；实现可在 reset 路径立即
   清除当前会话健康（含 gap），下一次发送建立的新会话从空健康起算。
 - **切 vault**：面板按 vault 重拉快照；MUST NOT 在切走时本地清除健康。切回时快照带回该会话
   自身的状态（含 gap）。
@@ -282,7 +286,7 @@ save-controller 的 `failedPaths` 与独立的枚举失败条件。前端 MUST N
   重建；缺键按 `ok` / `present=false` / `history_written=true`。事件到达时就地更新同一
   元素，不重建 transcript、不动滚动 / 焦点。
 - **webview 整页重载**：前端「已提示」标记重置，同一逻辑会话的 sticky 可能再出现一次；
-  状态行以快照为准，不会累积多条。
+  警示块以快照为准，不会累积多条。
 
 ### 4.8 诊断日志
 
@@ -303,12 +307,12 @@ save-controller 的 `failedPaths` 与独立的枚举失败条件。前端 MUST N
   持久化边界不变）。
 - **首行干净失败 + annotation payload**：annotation 丢失不 latch；首行重试成功后当前写
   健康回 `ok`、gap 为 false（annotation 没有独立历史系统）。
-- **尚未任何 history 写盘**时，只要存在持久化告警，状态行必须提示「退出后无法恢复」；
+- **尚未任何 history 写盘**时，只要存在持久化告警，警示块必须提示「现在退出，这段对话将无法恢复」；
   重启后不补报，仍由非持久化边界承担。
 - 既有不可读留存文件的列举静默不纳入本次；本 change 只防止新产生与如实告警。
 - 隔离运行不呈现（§4.5）。
 - 切 vault 不重置健康；app 重启重置（会话表清空）。
-- webview 整页重载会重置前端「已提示」标记，sticky 可能重复一次；状态行不重复累积。
+- webview 整页重载会重置前端「已提示」标记，sticky 可能重复一次；警示块不重复累积。
 
 ## 5. 文档崩溃备份健康
 
@@ -351,8 +355,9 @@ failedPaths: Map<path, { at: number, code: "recovery_write_failed" }>
   不按 pane 复制（分栏时不重复报警）。
 - **形态**：sticky、不自动消隐、**不提供关闭 / 忽略按钮**；有动作按钮。
 - **内容**：
-  - 写失败子条件：受影响文档数 + 首个路径（不列全量；全量只进诊断日志）+ 一句「保存后即不再
-    有丢失风险」；
+  - 写失败子条件：主句「未保存的修改暂时没有备份，关闭应用可能丢失。」；受影响文档数与
+    至少一个路径作为次要信息（不列全量；全量只进诊断日志）；不出现「崩溃备份 / 首个」等
+    实现术语；
   - 枚举失败子条件：一句「无法检查残留备份，可能有备份未被提示」；
   - 两者同时成立：同一横幅内分两段表达，各自带自己的动作。
 - **动作**：写失败子条件 → 「全部保存」= 既有 `saveAllDirty()`；枚举失败子条件 →
@@ -425,26 +430,29 @@ failedPaths: Map<path, { at: number, code: "recovery_write_failed" }>
 7. **无第二事实源**：不在前端按「历史列表少一项」推断写失败，不在文档侧按文件是否存在
    推断备份失败；枚举失败 MUST NOT 被当成「没有残留备份」。
 8. **不阻断**：`record()` 仍 infallible；备份失败不阻断编辑与保存。
-9. **关闭不等于静音**：关闭一次性 sticky 只移除提示，不隐藏状态行、不清缺口、不构成对未来
+9. **关闭不等于静音**：关闭一次性 sticky 只移除提示，不隐藏警示块、不清缺口、不构成对未来
    失败的静音。
-10. **未落盘提示**：`history_written=false` 且存在持久化告警时，状态行必须提示「本次会话的
-    新记录尚未落盘，退出后无法恢复」；`history_written` 只由第一条 history 记录成功写盘转 true，
+10. **退出风险提示**：`history_written=false` 且存在持久化告警时，警示块必须追加「现在退出，
+    这段对话将无法恢复。」；`history_written` 只由第一条 history 记录成功写盘转 true，
     不改变 gap 判定。
 
 ## 7. 视觉与手感
 
 本 change 无交互原型，不新增视觉语言：
 
-- **Harness 状态行**：复用引用失败状态行的类（`lumir-hp-qc-src lumir-hp-quote-note`）与
-  字号 / 颜色 / 行高；不加边框、不加底色、不加图标。健康时 `hidden`，composer 几何与既有
-  基线逐像素一致。缺口文案与当前失败文案共用同一元素，不叠加两条状态行。
+- **Harness 警示块**：独立类 `lumir-hp-persist-warning`（Alex 2026-11-23 裁决）——浅警示底
+  `--pending-tint`、左侧 3px 警示边条 `--pending`、正文色 `--text`、`--fs-meta` 字级、
+  完整换行；不用 danger 红、不加图标 / 关闭钮。健康时 `hidden`，composer 几何与既有基线
+  逐像素一致。缺口文案与当前失败文案共用同一元素，不叠加两条。
+- **引用失败状态行**：保持既有 `lumir-hp-qc-src lumir-hp-quote-note` 的灰色小字、单行省略；
+  警示块的样式 MUST NOT 外溢到它。
 - **文档横幅**：新元素，但只用既有 token——`--danger-tint` 底、`--danger` 文本、`--border`
   边、`--r10` 圆角、`--fs-ui` / `--lh-ui` 字级；与设置面板的 `lumir-set-banner.is-danger`
   同一套颜色语义。不引入新色值、不引入阴影。
 - **标签后缀**：只进读屏名与 `title`，可见像素零变化。
-- **像素基线**：健康态（状态行 / 横幅均 `hidden`）MUST 与既有基线一致，不需要更新；
+- **像素基线**：健康态（警示块 / 横幅均 `hidden`）MUST 与既有基线一致，不需要更新；
   `degraded` / `history_gap` 态新增场景的像素基线须 Alex 过目后再 `--update`（人肉裁决点）。
-- **手感**：横幅出现 / 撤下不做动画；状态行不做自动消隐。均归 Alex 真机手感裁决，
+- **手感**：横幅出现 / 撤下不做动画；警示块不做自动消隐。均归 Alex 真机手感裁决，
   不进机器判据。
 
 ## 8. 备选与取舍
@@ -455,7 +463,7 @@ failedPaths: Map<path, { at: number, code: "recovery_write_failed" }>
 | A-merged | 只用一个 `ok/degraded`，成功即回健康 | 否决：会把「仍然缺一段历史」洗成健康（评审阻塞 1） |
 | B（更小） | 只把 `D198` 接上（文档一条 toast）+ harness 只记日志 | 否决：harness 正是「用户误以为历史已保存」的主场；一次性 toast 不满足「不能只做一次 toast」 |
 | C（更大） | 控制行 chip + hover 浮层 + 标签第二标识 + 设置开关 + 通知中心 | 否决：命中「不要扩成设置中心或通用通知系统」；动 composer 控制行会牵动上下文用量 requirement 与视觉基线 |
-| A3' | harness 状态行放控制行 chip + hover 浮层 | 不推荐：可发现性略强，但要改控制行构成、新气泡定位、可能牵动基线；状态行已足够 |
+| A3' | harness 警示块放控制行 chip + hover 浮层 | 不推荐：可发现性略强，但要改控制行构成、新气泡定位、可能牵动基线；警示块已足够 |
 
 ## 9. 风险
 
@@ -465,7 +473,7 @@ failedPaths: Map<path, { at: number, code: "recovery_write_failed" }>
 | 切 vault 被误当成会话替换、清掉健康 | 切 vault 不碰健康；R4 覆盖 A→B→A 仍显示 A 的缺口 |
 | 首行修了但仍承诺文件可恢复 | 删除绝对承诺；R7 前缀写故障注入；文案只承诺「不丢挂起行 + 如实告警」 |
 | 首行干净失败连带丢掉本次 history payload，却被当作无缺口 | gap 按本次 payload 判定；R6a 断言丢失记录未被后续成功补回；R6b 覆盖 annotation 对照 |
-| 尚未任何 history 落盘时，状态行只报当前失败、不说退出后无法恢复 | `history_written` 辅助事实；U13 断言 false + 告警时出现未落盘提示，true 后消失 |
+| 尚未任何 history 落盘时，警示块只报当前失败、不说退出风险 | `history_written` 辅助事实；U13 断言 false + 告警时出现「现在退出…」短句，true 后消失 |
 | annotation→history 升级拿不到 sticky | 触发条件改为「本逻辑会话首次进入 history」，U7 覆盖 |
 | 枚举失败随 `failedPaths` 清空被撤下 | 两个子条件独立；U12 覆盖保存成功但枚举失败仍在 |
 | 事件出口挂错层，轮次外失败仍不可见 | 出口挂 `Runtime`；R8 覆盖轮次外写点与隔离实例 |
@@ -502,24 +510,24 @@ failedPaths: Map<path, { at: number, code: "recovery_write_failed" }>
 | U1 | `recoveryBackup` reject → 横幅出现且含路径；跨路径累积；某路径成功 → 该条消失；写失败子条件全清且无枚举失败 → 横幅撤下 | `tests/unit/save-controller.test.ts` | 现状吞错，横幅不存在，红 |
 | U2 | 转 clean / 放弃 / 改名 → 该路径写失败态清除 | 同上 | 无失败态，红 |
 | U3 | 存在未恢复的写失败时，MUST NOT 出现「已备份」类成功语义 | 同上 | 无状态，红 |
-| U4 | `persistence` 事件 → 状态行显示、文案按 severity 分档；`ok` 且无 gap → 隐藏 | `tests/unit/harness-panel*.test.ts` | 无事件分支，红 |
+| U4 | `persistence` 事件 → 警示块显示、文案按 severity 分档；`ok` 且无 gap → 隐藏 | `tests/unit/harness-panel*.test.ts` | 无事件分支，红 |
 | U5 | 旧快照缺 `persistence` / `history_gap` / `history_written` 键 → 视为 `ok` / `present=false` / `history_written=true`（不误报「尚未落盘」） | 同上 | 无解析，红 |
 | U6 | 面板重进 / 重载快照 → 两维 + `history_written` 按快照重建 | 同上 | 无重建，红 |
-| U7 | 本逻辑会话首次进入 history（含 `annotation→history`）只给一条 sticky；`annotation` 只亮状态行；重挂载不重复 | 同上 | 无分支，红 |
+| U7 | 本逻辑会话首次进入 history（含 `annotation→history`）只给一条 sticky；`annotation` 只亮警示块；重挂载不重复 | 同上 | 无分支，红 |
 | U8 | 新事件类型不被 IPC 白名单丢弃 | `tests/unit/harness-event-whitelist.test.ts` | 未加白名单分支，红 |
-| U9 | `state=ok` + `history_gap.present=true` → 状态行显示缺口文案，MUST NOT 回到健康态 | `tests/unit/harness-panel*.test.ts` | 无 gap 解析，红 |
+| U9 | `state=ok` + `history_gap.present=true` → 警示块显示缺口文案，MUST NOT 回到健康态 | `tests/unit/harness-panel*.test.ts` | 无 gap 解析，红 |
 | U10 | 切 vault 不清本地状态；切回同一会话显示其 gap；不把 B 的状态串进 A | 同上 | 无分 vault 处理，红 |
-| U11 | 关闭 sticky 只移除提示；状态行仍在、gap 不清；不构成静音；新逻辑会话可再次触发 | 同上 | 无关闭语义，红 |
+| U11 | 关闭 sticky 只移除提示；警示块仍在、gap 不清；不构成静音；新逻辑会话可再次触发 | 同上 | 无关闭语义，红 |
 | U12 | 枚举失败子条件独立：写失败子条件清空后横幅仍在；重新检查成功只清枚举条件 | `tests/unit/save-controller.test.ts` | 单条件实现，红 |
-| U13 | `history_written=false` + 告警 → 状态行出现「本次会话的新记录尚未落盘，退出后无法恢复」；`history_written false→true` 后该句消失、gap 文案仍在 | `tests/unit/harness-panel*.test.ts` | 无字段，红 |
+| U13 | `history_written=false` + 告警 → 警示块出现「现在退出，这段对话将无法恢复。」；`history_written false→true` 后该句消失、gap 文案仍在 | `tests/unit/harness-panel*.test.ts` | 无字段，红 |
 
 ### 10.3 视觉（结构层进 CI，像素层本地）
 
 | # | 判据 |
 |---|---|
-| V1 | 健康态：状态行与横幅均 `hidden`；composer 几何与既有基线一致（守「不打扰」） |
-| V2 | 当前写失败态：状态行可见 + 文案按 severity + `role="status"`；像素基线 Alex 过目后 `--update` |
-| V3 | `state=ok` + gap 态：状态行显示「写入已恢复但此前记录缺失」，MUST NOT 隐藏；像素基线 Alex 过目后 `--update` |
+| V1 | 健康态：警示块与横幅均 `hidden`；composer 几何与既有基线一致（守「不打扰」） |
+| V2 | 当前写失败态：警示块可见 + 文案按 severity + `role="status"`；像素基线 Alex 过目后 `--update` |
+| V3 | `state=ok` + gap 态：警示块显示「此前部分对话记录未能保存；新内容已恢复写入。」，MUST NOT 隐藏；像素基线 Alex 过目后 `--update` |
 | V4 | 横幅：写失败 / 枚举失败 / 两者同时三种形态可见；`hidden` 时零占位、可见时不覆盖正文 |
 
 ### 10.4 真机（WKWebView，本地）
@@ -553,7 +561,7 @@ failedPaths: Map<path, { at: number, code: "recovery_write_failed" }>
 | Rust 运行时 | `harness.rs` / `lib.rs` / `turn.rs` | `Runtime.forward`；`TauriEventSink` 提升可见性；装配 / 隔离实例不装配；切 vault 不动健康 |
 | Rust 日志 | `logging.rs` | `PersistenceWriteFailed` 变体 + `kind` / `code` / `partial` / `path` 白名单 |
 | 前端 IPC | `src/ipc.ts` | 联合加 `persistence`；白名单加分支（`harness-event-whitelist` 会守） |
-| 前端面板 | `src/harness-panel.ts` | 两维状态行；gap 文案优先；`history_written=false` + 告警时的未落盘提示；sticky 首次 history（含 annotation→history）；关闭不等于静音；分 vault 快照 |
+| 前端面板 | `src/harness-panel.ts` | 两维警示块；gap 文案优先；`history_written=false` + 告警时的退出风险句；sticky 首次 history（含 annotation→history）；关闭不等于静音；分 vault 快照 |
 | 前端保存 | `src/save-controller.ts` | `failedPaths`；写失败 / 枚举失败两个独立条件；查询 + 变更通知；`recovery_list` 失败条件 |
 | 前端装配 | `src/main.ts` / `src/tabs.ts` | 横幅 DOM（文档区顶部、全局一条、两段子条件）；`saveAllDirty` / `重新检查`；标签后缀；`stickyToast` 接线 |
 | 文案 | `src/copy-data.ts` + 文案 deck | 新增 D 编号（实现时按 deck 末号续接），zh / en 同批，占位名一致；含「尚未落盘，退出后无法恢复」句 |
@@ -570,13 +578,13 @@ failedPaths: Map<path, { at: number, code: "recovery_write_failed" }>
   持久化边界不变）。
 - **首行干净失败 + annotation payload**：annotation 丢失不 latch；首行重试成功后当前写
   健康回 `ok`、gap 为 false（annotation 没有独立历史系统）。
-- **尚未任何 history 写盘**时，只要存在持久化告警，状态行必须提示「退出后无法恢复」；
+- **尚未任何 history 写盘**时，只要存在持久化告警，警示块必须提示「现在退出，这段对话将无法恢复」；
   重启后不补报，仍由非持久化边界承担。
 - harness 写失败无法在真机稳定注入（A7），由 Rust 单测 + 视觉桩承担。
 - 健康只覆盖单次 write 成功与否，不覆盖 `fsync` / 断电 / 外部删除。
 - 不追溯提示既有不可读留存文件。
 - 隔离运行不呈现健康。
 - 切 vault 不重置健康；app 重启重置（会话表清空）。
-- webview 整页重载会重置前端「已提示」标记，sticky 可能重复一次；状态行不重复累积。
+- webview 整页重载会重置前端「已提示」标记，sticky 可能重复一次；警示块不重复累积。
 - 文档失败态不跨 app 重启、也不跨 webview 整页重载；横幅靠下一次真实失败重现。
 - 横幅顶部常驻条需要调整 `.pane-editor` 的横向 flex 布局；健康态 MUST 零像素漂移。

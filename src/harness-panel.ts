@@ -3369,7 +3369,7 @@ export function persistenceViewOf(raw: unknown): PersistenceView {
   return { state, severity, historyWritten, gap };
 }
 
-/** 状态行文案（缺口优先；`history_written=false` 且存在告警时追加「尚未落盘」）。
+/** 警示块文案（缺口优先；`history_written=false` 且存在告警时追加直白的退出风险句）。
  *  健康（`ok` 且无缺口）返回 null ⇒ 元素 `hidden`。 */
 export function persistenceText(view: PersistenceView): string | null {
   let text: string;
@@ -3779,11 +3779,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   quoteNote.className = "lumir-hp-qc-src lumir-hp-quote-note";
   quoteNote.setAttribute("role", "status");
   quoteNote.hidden = true;
-  // 留存健康的常驻状态行（change add-persistence-health-status-nov23 design §4.7）：复用引用
-  // 失败状态行的类与小字样式（不新增样式面），`role="status"` 让读屏也听到。健康时 hidden、
-  // 不自动消隐、无关闭按钮；缺口文案与当前失败文案共用这一条元素，不叠加两行。
+  // 留存健康的常驻警示块（change add-persistence-health-status-nov23；Alex 2026-11-23 裁决）：
+  // composer 上方的紧凑警示块，独立类（浅警示底 + 左侧警示边条 + 正文色），不复用引用失败
+  // 状态行的小字样式。`role="status"` 让读屏也听到。健康时 hidden、不自动消隐、无关闭按钮；
+  // 缺口文案与当前失败文案共用这一条元素，不叠加两条。
   const persistenceNote = document.createElement("div");
-  persistenceNote.className = "lumir-hp-qc-src lumir-hp-quote-note";
+  persistenceNote.className = "lumir-hp-persist-warning";
   persistenceNote.setAttribute("role", "status");
   persistenceNote.dataset.persistenceHealth = "true";
   persistenceNote.hidden = true;

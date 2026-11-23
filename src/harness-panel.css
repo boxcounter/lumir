@@ -1986,13 +1986,28 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 留存健康状态行（change add-persistence-health-status-nov23）：缺口态两句文案必须完整可读。
-   只覆盖带 data-persistence-health 的这一条；引用失败状态行仍保持单行省略。行高沿用继承值，
-   避免改变单行态（degraded / gap 消退态）的既有像素。 */
-.lumir-hp-qc-src[data-persistence-health="true"] {
+/* 留存健康警示块（change add-persistence-health-status-nov23；Alex 2026-11-23 裁决）：
+   composer 上方的紧凑警示块，代替原先复用引用失败状态行的灰色小字。浅警示色底 + 左侧
+   警示边条取 pending 族（面板已有的常驻警示用色），字色保持正文色——不用 danger 红：
+   留存失败可恢复、不阻断继续对话，红留给文档区「没有备份」的强提醒。完整换行、不截断；
+   独立类，引用失败状态行（.lumir-hp-qc-src）的单行省略形态不受影响。
+   eink：tint 按 token 规则退为 transparent，左侧边条仍以结构线宽承担警示。 */
+.lumir-hp-persist-warning {
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--pending-tint);
+  color: var(--text);
+  border-left: 3px solid var(--pending);
+  border-radius: var(--r4);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  line-height: var(--lh-ui);
+  white-space: normal;
   overflow: visible;
   text-overflow: clip;
-  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.lumir-hp-persist-warning[hidden] {
+  display: none;
 }
 .lumir-hp-qc-x {
   position: absolute;

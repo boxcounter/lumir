@@ -313,7 +313,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   }
 
   // 崩溃备份失败的**唯一事实源**（design §5.1）：写失败按路径键控（值 = 最近失败时刻，
-  // 用于「首个受影响路径」的稳定排序）；枚举失败是独立子条件。只在内存、不写配置、不跨重启。
+  // 用于「最早失败路径」的稳定排序）；枚举失败是独立子条件。只在内存、不写配置、不跨重启。
   const failedBackups = new Map<string, number>();
   /** 路径 → 最近一次备份请求的序号。只有最新请求的应答能改失败集合——同一路径前一次备份
    *  仍在途时后一次可以开始，旧应答（成功或失败）都不能覆盖新状态。 */
@@ -1129,7 +1129,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     showQuitBlocked,
     checkRecovery,
     recoveryFailures: () => ({
-      // 按失败时刻升序：横幅的「首个受影响路径」= 最早失败的那条（稳定、不随 Map 插入顺序）。
+      // 按失败时刻升序：横幅取最早失败的那条作路径示例（稳定、不随 Map 插入顺序）。
       paths: [...failedBackups.entries()].sort((a, b) => a[1] - b[1]).map(([path]) => path),
       listFailed: recoveryListFailed,
     }),

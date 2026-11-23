@@ -117,7 +117,7 @@
 
 写点 MUST 保留挂起的 `session_open` 行，使下一条记录仍先重试写首行。首行或任意记录的部分写 SHALL 置 `history_gap`。系统 MUST NOT 承诺部分写后的文件仍可被完整读取或恢复；已损坏的文件本 change 不修复、不截断、不做原子发布。
 
-`history_written` SHALL 在本逻辑会话第一条 `llm_request` / `llm_response` 成功写盘时转 `true`，同一逻辑会话内不再回落；自动压缩换文件沿用；新逻辑会话重置为 `false`。它 MUST NOT 参与 `history_gap` 判定，只决定「本次会话的新记录尚未落盘」提示是否还在。
+`history_written` SHALL 在本逻辑会话第一条 `llm_request` / `llm_response` 成功写盘时转 `true`，同一逻辑会话内不再回落；自动压缩换文件沿用；新逻辑会话重置为 `false`。它 MUST NOT 参与 `history_gap` 判定，只决定「现在退出，这段对话将无法恢复」这条退出风险句是否还在。
 
 `since_ts`（当前写健康）SHALL 记录本段 `degraded` 首次失败时间，恢复时归零；`history_gap.since_ts` SHALL 记录本段首次缺口时间，新逻辑会话时归零。
 
@@ -125,9 +125,9 @@
 
 事件 SHALL 在以下跃迁时发出：当前写健康 `ok→degraded`、`degraded→ok`、`annotation→history`；历史缺口 `false→true`；`history_written` `false→true`。一次失败 / 成功可同时改变多项，发出一条完整载荷；`degraded→ok` 且缺口仍为 true 的恢复事件 MUST 发出。重复失败不发事件，快照是重挂载 / 重载时的地板。
 
-呈现：`history_gap.present=true` 期间，harness 面板 SHALL 在 composer 上方持续显示一条状态行（`role="status"`），文案 MUST 明确「此前部分记录缺失 / 这段历史可能不完整」；`state=ok` 时 MUST 明确「写入已恢复，但此前记录缺失」。`state=degraded` 且缺口在场时，文案 MUST 同时说明当前写入仍在失败；`state=degraded` 且无缺口时，状态行按 `severity` 显示当前失败。`history_written=false` 且存在任何持久化告警（`state=degraded` 或缺口）时，文案 MUST 额外说明「本次会话的新记录尚未落盘，退出后无法恢复」；`history_written` 转 true 后该句消失，缺口文案仍保留。状态行不自动消隐、不随轮次结束消失、不提供关闭按钮；`state=ok` 且无缺口时 SHALL 隐藏（`history_written=false` 本身不构成告警，只在已有告警时追加提示）。
+呈现：`history_gap.present=true` 期间，harness 面板 SHALL 在 composer 上方持续显示一条警示块（`role="status"`，浅警示色底 + 左侧警示边条、正文色、完整换行，不用红色），文案 MUST 明确「此前部分对话记录未能保存」；`state=ok` 时 MUST 明确「新内容已恢复写入」。`state=degraded` 且缺口在场时，文案 MUST 同时说明当前写入仍未保存（「对话暂未保存」）并给出检查磁盘空间 / 目录权限的下一步；`state=degraded` 且无缺口时，警示块按 `severity` 显示当前失败。`history_written=false` 且存在任何持久化告警（`state=degraded` 或缺口）时，文案 MUST 额外说明「现在退出，这段对话将无法恢复」；`history_written` 转 true 后该句消失，缺口文案仍保留。警示块不自动消隐、不随轮次结束消失、不提供关闭按钮；`state=ok` 且无缺口时 SHALL 隐藏（`history_written=false` 本身不构成告警，只在已有告警时追加退出风险句）。
 
-本逻辑会话首次进入 `severity=history`（包括先 `annotation` 后升级为 `history`）或 `history_gap` 首次 `present=true` 时，SHALL 额外给一条 sticky 提示，每个逻辑会话只一条，按文案去重，面板重挂载不重复。sticky MAY 点击关闭；关闭只移除本次提示，MUST NOT 隐藏状态行、MUST NOT 清除 `history_gap`、MUST NOT 被视为对未来失败的静音。两类呈现 MUST NOT 提供额外的「忽略 / 静音」控件（关闭 sticky 只等于关闭本次提示），MUST NOT 写配置项。
+本逻辑会话首次进入 `severity=history`（包括先 `annotation` 后升级为 `history`）或 `history_gap` 首次 `present=true` 时，SHALL 额外给一条 sticky 提示，每个逻辑会话只一条，按文案去重，面板重挂载不重复。sticky MAY 点击关闭；关闭只移除本次提示，MUST NOT 隐藏警示块、MUST NOT 清除 `history_gap`、MUST NOT 被视为对未来失败的静音。两类呈现 MUST NOT 提供额外的「忽略 / 静音」控件（关闭 sticky 只等于关闭本次提示），MUST NOT 写配置项。
 
 切 vault 只切换当前展示的会话快照，MUST NOT 清除或重置任何会话的健康；切回时 SHALL 显示该会话自身仍 latch 的状态。显式「新会话」SHALL 立即清除当前会话健康（含 `history_gap` 与 `history_written`），面板 MUST NOT 继续显示旧状态；从历史恢复 / app 重启后重新建立会话，从空健康起算。自动压缩开新文件 SHALL 沿用两维与 `history_written`，直到新文件首次成功追加；该成功只把当前写健康转 `ok`，MUST NOT 清除缺口。
 
@@ -138,12 +138,12 @@
 #### Scenario: 当前写失败与恢复
 
 - **WHEN** 一条 `session_title`（sidecar）写入干净失败（未写入任何字节），随后下一次追加成功
-- **THEN** 失败后 `state=degraded`、`severity=annotation`、`history_gap.present=false`；成功后 `state=ok`、`severity=null`、缺口仍为 false；状态行随两次跃迁显示 / 隐藏
+- **THEN** 失败后 `state=degraded`、`severity=annotation`、`history_gap.present=false`；成功后 `state=ok`、`severity=null`、缺口仍为 false；警示块随两次跃迁显示 / 隐藏
 
 #### Scenario: 历史失败后成功恢复写能力，缺口仍在
 
 - **WHEN** 一条 `llm_request` 写入失败；随后恢复可写并完成下一次成功追加
-- **THEN** 失败后 `state=degraded`、`severity=history`、`history_gap.present=true`；成功后 `state=ok`、`severity=null`，但 `history_gap.present` 仍为 true；事件发出 `state=ok` + gap true 的恢复载荷；面板显示「写入已恢复，但此前记录缺失」，MUST NOT 回到健康文案
+- **THEN** 失败后 `state=degraded`、`severity=history`、`history_gap.present=true`；成功后 `state=ok`、`severity=null`，但 `history_gap.present` 仍为 true；事件发出 `state=ok` + gap true 的恢复载荷；面板显示「此前部分对话记录未能保存；新内容已恢复写入。」，MUST NOT 回到健康文案
 
 #### Scenario: 压缩轮换沿用缺口
 
@@ -158,7 +158,7 @@
 #### Scenario: 新会话与恢复重置两维
 
 - **WHEN** 用户显式「新会话」，或从历史恢复产生新会话，或 app 重启后重新建立会话
-- **THEN** 两维与 `history_written` 都从空健康起算（`state=ok`、`history_gap.present=false`、`history_written=false`）；面板 MUST NOT 继续显示旧会话的状态行；旧缺口只留在盘上与日志，app 重启后 MUST NOT 补报旧告警
+- **THEN** 两维与 `history_written` 都从空健康起算（`state=ok`、`history_gap.present=false`、`history_written=false`）；面板 MUST NOT 继续显示旧会话的警示块；旧缺口只留在盘上与日志，app 重启后 MUST NOT 补报旧告警
 
 #### Scenario: 严重度与缺口触发
 
@@ -183,7 +183,7 @@
 #### Scenario: 尚未落盘的风险提示
 
 - **WHEN** `history_written=false` 且存在持久化告警（首行 + `llm_request` 失败后尚无任何 history 记录成功）
-- **THEN** 状态行除缺口文案外 MUST 明确「本次会话的新记录尚未落盘，退出后无法恢复」；随后一条 `llm_request` 成功写盘使 `history_written=true`，该句消失，但缺口文案仍保留
+- **THEN** 警示块除缺口文案外 MUST 明确「现在退出，这段对话将无法恢复」；随后一条 `llm_request` 成功写盘使 `history_written=true`，该句消失，但缺口文案仍保留
 
 #### Scenario: 前缀写入后报错
 
@@ -198,27 +198,27 @@
 #### Scenario: 缺口恢复后的呈现与消退
 
 - **WHEN** 当前写健康回 `ok` 但 `history_gap.present=true`，随后用户开始新会话
-- **THEN** 新会话前状态行持续显示缺口文案（不自动消隐、无关闭按钮），MUST NOT 呈现为健康；新会话后状态行隐藏
+- **THEN** 新会话前警示块持续显示缺口文案（不自动消隐、无关闭按钮），MUST NOT 呈现为健康；新会话后警示块隐藏
 
 #### Scenario: 首次 history 的 sticky 含升级
 
-- **WHEN** 本逻辑会话先发生 `annotation` 失败（只亮状态行），随后升级为 `history` 失败
+- **WHEN** 本逻辑会话先发生 `annotation` 失败（只亮警示块），随后升级为 `history` 失败
 - **THEN** 在进入 `history` 的那一刻给一条 sticky 提示；这是本逻辑会话唯一一条；关闭并重开面板不重复
 
 #### Scenario: 关闭 sticky 不等于静音
 
 - **WHEN** sticky 提示在场，用户点击关闭它
-- **THEN** 只移除本次提示；状态行仍在、`history_gap` 不变、不写配置；新逻辑会话仍可再次触发 sticky
+- **THEN** 只移除本次提示；警示块仍在、`history_gap` 不变、不写配置；新逻辑会话仍可再次触发 sticky
 
 #### Scenario: 旧快照缺键不误报
 
 - **WHEN** 前端收到不含 `persistence` / `history_gap` / `history_written` 键的旧快照
-- **THEN** 视为 `ok` / `present=false` / `history_written=true`：不显示状态行、不弹提示、不误报「尚未落盘」；会话其余内容照常恢复
+- **THEN** 视为 `ok` / `present=false` / `history_written=true`：不显示警示块、不弹提示、不误报「尚未保存」；会话其余内容照常恢复
 
 #### Scenario: 隔离运行不呈现
 
 - **WHEN** 无人值守运行发生留存写失败
-- **THEN** 面板收不到 `persistence` 事件、无状态行；诊断日志有记录；交互会话的健康不受影响
+- **THEN** 面板收不到 `persistence` 事件、无警示块；诊断日志有记录；交互会话的健康不受影响
 
 #### Scenario: 写失败不阻断对话
 

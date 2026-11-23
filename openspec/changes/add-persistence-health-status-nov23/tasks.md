@@ -4,6 +4,20 @@
 > 可按本清单推进。未完成项保持未勾选。实现期若范围 / 行为需求发生变化，停下更新 `proposal.md`
 > 并重走节点 1，不静默扩 scope。
 
+## 0. 设计调整（2026-11-23，Alex 同意）
+
+实现完成后，Alex 于 2026-11-23 同意以下**呈现层**调整（不改 Rust 行为、不改告警的两维语义）：
+
+- **Harness 历史风险**：从灰色元信息小字升级为 composer 上方**紧凑警示块**——浅警示色底 +
+  左侧警示边条、完整换行、正文色，不用红色；不改成新面板 / 设置。文案改直白句：
+  正在写失败 =「对话暂未保存。请检查磁盘空间或目录权限；恢复后会继续写入。」；写入恢复但
+  历史缺失 =「此前部分对话记录未能保存；新内容已恢复写入。」；尚无 history 写入的退出风险 =
+  「现在退出，这段对话将无法恢复。」。zh / en 同改，文案 deck 同步。
+- **文档红色横幅**：保留强提醒与「全部保存」，主文案改「未保存的修改暂时没有备份，关闭应用
+  可能丢失。」；数量 / 路径降为次要信息，避免「崩溃备份 / 首个」等实现术语。
+- 该调整只影响本 change 的呈现与文案；告警触发、两维状态机、动作与生命周期不变。本轮未更新
+  任何正式视觉基线（基线更新仍是 Alex 的人肉裁决点）。
+
 ## 1. 制品（提案期）
 
 - [x] 1.1 `proposal.md`：为什么改、改什么、不做什么；V1–V7 裁决点与推荐值；节点状态块
@@ -46,7 +60,7 @@
       R6b annotation 两例，断言首次 payload 未被补回）、前缀写故障注入、快照 / 事件同键、
       `history_written`、新会话重置与诊断日志；在当前代码上跑出失败，红灯输出存
       `.local/acceptance/` 或 mission 证据目录
-- [x] 4.2 前端 U1–U13（§10.2）：备份写失败横幅、失败态清除、成功语义、状态行分档、
+- [x] 4.2 前端 U1–U13（§10.2）：备份写失败横幅、失败态清除、成功语义、警示块分档、
       旧快照宽容、快照重建、sticky 首次 history（含 `annotation→history`）、IPC 白名单、
       `state=ok` + gap 仍显示、切 vault 不清、sticky 关闭不等于静音、枚举失败独立保留、
       `history_written=false` 的未落盘提示；在当前代码上跑出失败
@@ -87,17 +101,19 @@
 
 - [x] 6.1 `src/ipc.ts`：`HarnessEvent` 联合加 `persistence`；`isHarnessEventType` 白名单加
       分支（`harness-event-whitelist.test.ts` U8 守）
-- [x] 6.2 `src/harness-panel.ts`：composer 上方常驻状态行（复用 `lumir-hp-qc-src` /
-      `lumir-hp-quote-note` / `role="status"`，零新样式）；无告警时 `hidden`
-- [x] 6.3 状态行两维优先级：`history_gap.present=true` 时显示缺口文案（`state=ok` 时明确
-      「写入已恢复，但此前记录缺失」），MUST NOT 回到健康态；`state=degraded` 且无 gap 时按
-      severity 显示当前失败；`history_written=false` + 告警时追加「本次会话的新记录尚未落盘，退出后
-      无法恢复」，true 后该句消失（U4 / U9 / U13）
+- [x] 6.2 `src/harness-panel.ts`：composer 上方常驻警示块（独立类 `lumir-hp-persist-warning`
+      / `role="status"`；Alex 2026-11-23 裁决：浅警示底 + 左侧警示边条 + 正文色 + 完整
+      换行，不复用引用失败状态行的小字样式）；无告警时 `hidden`
+- [x] 6.3 警示块两维优先级：`history_gap.present=true` 时显示缺口文案（`state=ok` 时明确
+      「此前部分对话记录未能保存；新内容已恢复写入。」），MUST NOT 回到健康态；`state=degraded`
+      且无 gap 时按 severity 显示当前失败（history 档「对话暂未保存。请检查磁盘空间或目录权限；
+      恢复后会继续写入。」）；`history_written=false` + 告警时追加「现在退出，这段对话将无法
+      恢复。」，true 后该句消失（U4 / U9 / U13）
 - [x] 6.4 快照 / 事件两路解析同一份两维 + `history_written`（U4 / U6）；缺 `persistence` /
       `history_gap` / `history_written` 键按 `ok` / `present=false` / `history_written=true`（U5）；
       新旧快照都不误报
 - [x] 6.5 sticky：本逻辑会话首次进入 `history`（含 `annotation→history`）一条，按文案去重、
-      重挂载不重复（U7）；sticky 可点击关闭，关闭只移除提示，不隐藏状态行、不清 gap、
+      重挂载不重复（U7）；sticky 可点击关闭，关闭只移除提示，不隐藏警示块、不清 gap、
       不构成静音（U11）；`HarnessPanelDeps` 新增 `stickyToast`，装配层接线到既有 sticky 浮条
 - [x] 6.6 切 vault：按 vault 重拉快照，MUST NOT 本地清除健康；切回显示该会话自身状态（U10）
 - [x] 6.7 文案：`src/copy-data.ts` + 文案 deck 同批新增 D 编号（zh / en 占位名一致）；
@@ -112,8 +128,9 @@
       失败，重新检查成功 MUST NOT 清写失败
 - [x] 7.3 只读查询 + 变更通知接口；装配层不自存第二份失败集合
 - [x] 7.4 `src/main.ts`：文档区顶部 sticky 横幅（全局一条；`role="status"`、无关闭按钮；
-      写失败段 = 条数 + 首个路径 + 「全部保存」；枚举段 = 「无法检查残留备份」+「重新检查」；
-      两段可同时在场）；`hidden` 时零占位
+      写失败段 = 主句「未保存的修改暂时没有备份，关闭应用可能丢失。」+ 数量 / 至少一个路径的
+      次要信息 + 「全部保存」（Alex 2026-11-23 裁决，不用「崩溃备份 / 首个」等实现术语）；
+      枚举段 = 「无法检查残留备份」+「重新检查」；两段可同时在场）；`hidden` 时零占位
 - [x] 7.5 `src/tabs.ts`：受影响路径的 `aria-label` / `title` 追加「（备份失败）」后缀；
       可见像素不变；失败集合变化时触发 `renderTabs`
 - [x] 7.6 V5（已纳入）：`checkRecovery` 的 `recovery_list` 失败进入枚举失败子条件，
@@ -145,7 +162,10 @@
 - [ ] 9.2 本地像素：`scripts/gate.sh visual` 或 `scripts/visual/run.sh` 全量绿；健康态既有
       基线零漂移
 - [ ] 9.3 `degraded` / `state=ok` + gap / 横幅三形态的像素基线：截图先交 Alex 过目，批准后
-      才 `--update`（基线更新是人肉裁决点）
+      才 `--update`（基线更新是人肉裁决点）。2026-11-23 Alex 同意呈现调整（composer 上方
+      紧凑警示块 + 横幅主文案改「未保存的修改暂时没有备份，关闭应用可能丢失。」）后，三种
+      候选已按新形态重截到 `.local/reviews/pixel-drift-nov23/health-candidates/`，仍未批准，
+      未运行 `--update`、未改任何正式基线
 
 ## 10. 门禁与收尾
 
@@ -246,6 +266,19 @@
   的失败清单**逐条相同**；41 张实际截图中 40 张 byte-identical，m303 仅差 6 像素（右下角）。
   曾由本实现引入的 m633 严格 locator 歧义（6 条）已用 `:not([data-persistence-health])`
   精确隔离并转绿。按「基线更新是人肉裁决点」未更新任何基线。
+- 呈现调整（2026-11-23，Alex 同意；见 §0）：
+  - 机器断言先红后绿：`persistence-health-nov23.spec.ts` 12/12（新增 V2b / V4d en 面、
+    警示块颜色 / 左边条 / 正文色 / 完整换行 / 引用行隔离 / 健康态零几何）；m633 10/10；
+    m303 / m345 / m347 / m351 / m423 / m440 / m454 结构层 47/47；`pnpm test` 1805 passed
+    （新增一条 zh/en 逐字文案断言）。
+  - `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0。
+  - 全量视觉复跑（呈现调整后）：`GATE RESULT: 14/15 PASS（SKIP 0）`；`visual-regression`
+    FAIL（`1174 passed / 41 failed / 1 skipped`，13.7m）。41 条与既有清单按
+    `(spec, 行, 标题)` 逐条相同、无新增失败；m303 / m347 / m351 等 composer 场景的失败仍属
+    既有基线漂移。其余 14 项 PASS，未更新任何基线。
+  - 三种候选按新形态重截（4 张整页 + 4 张元素裁切，连跑两轮 8/8 byte-identical），落在
+    主仓 `.local/reviews/pixel-drift-nov23/health-candidates/`，说明页为同目录 `README.md`；
+    仍未批准、未运行 `--update`、未改任何正式基线。
 
 **已知边界**：`docs-check` 的 `tsc-unit` / `bindings-drift` 在首次 quick 时因「bindings 未
 `git add`」「测试 deps 缺 `stickyToast`」两条已修；重跑见最终门禁日志。`m303-harness-panel`

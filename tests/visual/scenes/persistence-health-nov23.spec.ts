@@ -6,9 +6,12 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //   V1 健康态：harness 状态行与文档区横幅均 `hidden`；横幅 `hidden` 时零占位
 //      （`.pane-editor` 的首行布局与无横幅时逐像素一致——像素层的零漂移由既有整页基线承担，
 //      本文件只钉结构判据，不新建像素基线）。
-//   V2 当前写失败态：状态行可见、文案按 severity、`role="status"`。
-//   V3 `state=ok` + gap 态：显示「写入已恢复…」且 MUST NOT 隐藏。
-//   V4 横幅三形态：写失败 / 枚举失败 / 两者同时；健康态撤下。
+//   V2 当前写失败态：composer 上方紧凑警示块可见、文案按 severity、`role="status"`；
+//      浅警示底 + 左边条、正文色、完整换行；引用失败状态行仍是灰色单行省略。
+//   V2b en 面：警示块文案取英文列。
+//   V3 `state=ok` + gap 态：显示「此前部分对话记录未能保存…」且 MUST NOT 隐藏；
+//      未落盘时的直白退出风险句按 `history_written` 消退。
+//   V4 横幅三形态：写失败 / 枚举失败 / 两者同时；健康态撤下；V4d en 面。
 //
 // 不新建像素基线：V2–V4 的 `degraded` / gap / 横幅形态按合同属「截图文档先交 Alex 过目再
 // `--update`」的人肉裁决点（design §7 末条），本层只留结构断言，避免用未经裁决的基线把
@@ -203,6 +206,132 @@ async function openPanel(page: Page): Promise<void> {
   await expect(page.locator(".lumir-harness")).toBeVisible();
 }
 
+/** 警示块形态读数（Alex 2026-11-23 裁决：浅警示底 + 左侧警示边条、正文色、完整换行）。
+ *
+ *  token 期望值不写死色值：用同页探针按当前主题解析 `--pending-tint` / `--pending` /
+ *  `--text` / `--text-3` / `--danger-tint`，断言元素与 token 对得上。引用失败状态行取
+ *  `.lumir-hp-quote-note:not([data-persistence-health])`——它的单行省略形态必须原样保留。 */
+async function persistenceBlockMetrics(page: Page) {
+  return page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.cssText =
+      "position:absolute;left:-9999px;top:0;background:var(--pending-tint);" +
+      "color:var(--text);border-left:3px solid var(--pending)";
+    const dangerProbe = document.createElement("div");
+    dangerProbe.style.cssText =
+      "position:absolute;left:-9999px;top:0;background:var(--danger-tint)";
+    const mutedProbe = document.createElement("div");
+    mutedProbe.style.cssText = "position:absolute;left:-9999px;top:0;color:var(--text-3)";
+    document.body.append(probe, dangerProbe, mutedProbe);
+    const probeStyle = getComputedStyle(probe);
+    const tokens = {
+      pendingTint: probeStyle.backgroundColor,
+      pending: probeStyle.borderLeftColor,
+      text: probeStyle.color,
+      dangerTint: getComputedStyle(dangerProbe).backgroundColor,
+      text3: getComputedStyle(mutedProbe).color,
+    };
+    probe.remove();
+    dangerProbe.remove();
+    mutedProbe.remove();
+
+    const el = document.querySelector("[data-persistence-health]") as HTMLElement | null;
+    const quote = document.querySelector(
+      ".lumir-hp-quote-note:not([data-persistence-health])",
+    ) as HTMLElement | null;
+    const quoteStyle = quote === null ? null : getComputedStyle(quote);
+    if (el === null) {
+      return {
+        tokens,
+        el: null,
+        quote:
+          quoteStyle === null
+            ? null
+            : {
+                whiteSpace: quoteStyle.whiteSpace,
+                textOverflow: quoteStyle.textOverflow,
+                overflow: quoteStyle.overflow,
+                color: quoteStyle.color,
+              },
+      };
+    }
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const lineTops = new Set(
+      Array.from(range.getClientRects(), (r) => Math.round(r.top * 10) / 10),
+    );
+    const composer = document.querySelector(".lumir-hp-composer-box") as HTMLElement | null;
+    return {
+      tokens,
+      el: {
+        className: el.className,
+        hidden: el.hidden,
+        role: el.getAttribute("role"),
+        text: el.textContent ?? "",
+        display: style.display,
+        backgroundColor: style.backgroundColor,
+        color: style.color,
+        borderLeftColor: style.borderLeftColor,
+        borderLeftStyle: style.borderLeftStyle,
+        borderLeftWidth: parseFloat(style.borderLeftWidth),
+        whiteSpace: style.whiteSpace,
+        textOverflow: style.textOverflow,
+        overflow: style.overflow,
+        overflowWrap: style.overflowWrap,
+        fontSize: parseFloat(style.fontSize),
+        width: rect.width,
+        height: rect.height,
+        clientWidth: el.clientWidth,
+        scrollWidth: el.scrollWidth,
+        clientHeight: el.clientHeight,
+        scrollHeight: el.scrollHeight,
+        lines: lineTops.size,
+        bottom: rect.bottom,
+        composerTop: composer?.getBoundingClientRect().top ?? null,
+      },
+      quote:
+        quoteStyle === null
+          ? null
+          : {
+              whiteSpace: quoteStyle.whiteSpace,
+              textOverflow: quoteStyle.textOverflow,
+              overflow: quoteStyle.overflow,
+              color: quoteStyle.color,
+            },
+    };
+  });
+}
+
+/** 文档区红色横幅的取色（Alex 2026-11-23 裁决：保留强提醒与「全部保存」，仍用 danger 红）。 */
+async function recoveryBannerColors(page: Page) {
+  return page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.cssText =
+      "position:absolute;left:-9999px;top:0;background:var(--danger-tint);color:var(--danger)";
+    document.body.append(probe);
+    const probeStyle = getComputedStyle(probe);
+    const tokens = {
+      dangerTint: probeStyle.backgroundColor,
+      danger: probeStyle.color,
+    };
+    probe.remove();
+    const banner = document.querySelector(".recovery-banner") as HTMLElement | null;
+    const bannerStyle = banner === null ? null : getComputedStyle(banner);
+    return {
+      tokens,
+      banner:
+        bannerStyle === null
+          ? null
+          : {
+              backgroundColor: bannerStyle.backgroundColor,
+              color: bannerStyle.color,
+            },
+    };
+  });
+}
+
 // ── V1：健康态不打扰 ──────────────────────────────────────────────────────
 
 test("V1 健康态：状态行与横幅均隐藏、横幅零占位（不新建像素基线）", async ({ page }) => {
@@ -215,6 +344,14 @@ test("V1 健康态：状态行与横幅均隐藏、横幅零占位（不新建�
   await expect(note).toBeHidden();
   await expect(note).toHaveAttribute("role", "status");
   await expect(note).toHaveText("");
+  // 零像素：健康态是 `display:none`，不占布局、不画底色（警示块只在告警时出现）。
+  const hiddenGeometry = await note.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return { display: getComputedStyle(el).display, width: rect.width, height: rect.height };
+  });
+  expect(hiddenGeometry.display).toBe("none");
+  expect(hiddenGeometry.width).toBe(0);
+  expect(hiddenGeometry.height).toBe(0);
 
   const banner = page.locator(".recovery-banner");
   await expect(banner).toHaveCount(1);
@@ -235,7 +372,7 @@ test("V1 健康态：状态行与横幅均隐藏、横幅零占位（不新建�
 
 // ── V2 / V3：状态行两维分档 ───────────────────────────────────────────────
 
-test("V2 当前写失败：状态行可见、文案按 severity、role=status", async ({ page }) => {
+test("V2 当前写失败：composer 上方紧凑警示块（浅警示底 + 左边条 + 正文色 + 完整换行），引用状态行不受影响", async ({ page }) => {
   await stubTauri(page, VAULT);
   await stubHealth(page, {});
   await openPanel(page);
@@ -243,8 +380,39 @@ test("V2 当前写失败：状态行可见、文案按 severity、role=status", 
 
   await fire(page, persistenceEvent({ severity: "history" }));
   await expect(note).toBeVisible();
-  await expect(note).toHaveText("对话记录写入失败，这段历史可能不完整");
+  await expect(note).toHaveText("对话暂未保存。请检查磁盘空间或目录权限；恢复后会继续写入。");
 
+  const block = await persistenceBlockMetrics(page);
+  expect(block.el).not.toBeNull();
+  expect(block.el!.className).toContain("lumir-hp-persist-warning");
+  expect(block.el!.className).not.toContain("lumir-hp-quote-note");
+  expect(block.el!.role).toBe("status");
+  // 浅警示底取 pending 族，不是 danger 红；左侧警示边条同族。
+  expect(block.el!.backgroundColor).toBe(block.tokens.pendingTint);
+  expect(block.el!.backgroundColor).not.toBe(block.tokens.dangerTint);
+  expect(block.el!.borderLeftStyle).toBe("solid");
+  expect(block.el!.borderLeftWidth).toBeGreaterThanOrEqual(2);
+  expect(block.el!.borderLeftColor).toBe(block.tokens.pending);
+  // 正常正文色，不是灰色元信息小字。
+  expect(block.el!.color).toBe(block.tokens.text);
+  expect(block.el!.color).not.toBe(block.tokens.text3);
+  // 完整换行、不截断。
+  expect(block.el!.whiteSpace).toBe("normal");
+  expect(block.el!.textOverflow).not.toBe("ellipsis");
+  expect(block.el!.overflow).not.toBe("hidden");
+  expect(block.el!.scrollWidth).toBeLessThanOrEqual(block.el!.clientWidth + 1);
+  expect(block.el!.scrollHeight).toBeLessThanOrEqual(block.el!.clientHeight + 1);
+  // 位置在 composer 上方，不覆盖输入区。
+  expect(block.el!.width).toBeGreaterThan(0);
+  expect(block.el!.bottom).toBeLessThanOrEqual(block.el!.composerTop! + 1);
+  // 引用失败状态行仍是灰色小字、单行省略——警示块样式不得外溢到它。
+  expect(block.quote).not.toBeNull();
+  expect(block.quote!.whiteSpace).toBe("nowrap");
+  expect(block.quote!.textOverflow).toBe("ellipsis");
+  expect(block.quote!.overflow).toBe("hidden");
+  expect(block.quote!.color).toBe(block.tokens.text3);
+
+  // annotation 只换文案、仍是同一警示块。
   await fire(page, persistenceEvent({ severity: "annotation" }));
   await expect(note).toHaveText("部分对话记录写入失败，不影响继续对话");
 
@@ -261,14 +429,27 @@ test("V2 当前写失败：状态行可见、文案按 severity、role=status", 
     }),
   );
   await expect(note).toBeHidden();
+  const hidden = await persistenceBlockMetrics(page);
+  expect(hidden.el!.display).toBe("none");
+  expect(hidden.el!.width).toBe(0);
+  expect(hidden.el!.height).toBe(0);
 });
 
-test("V3 state=ok + 缺口：显示「写入已恢复但记录缺失」，MUST NOT 回到健康态；未落盘提示按 history_written 消退", async ({ page }) => {
-  await stubTauri(page, VAULT);
+test("V2b en：警示块文案取英文列，与 zh 同一形态", async ({ page }) => {
+  await stubTauri(page, { ...VAULT, config: { language: "en" } });
   await stubHealth(page, {});
   await openPanel(page);
   const note = page.locator("[data-persistence-health]");
 
+  await fire(page, persistenceEvent({ severity: "history" }));
+  await expect(note).toBeVisible();
+  await expect(note).toHaveText(
+    "This conversation isn't saved right now. Check disk space or folder permissions; writing will resume once it recovers.",
+  );
+  await fire(page, persistenceEvent({ severity: "annotation" }));
+  await expect(note).toHaveText(
+    "Some conversation records couldn't be written; you can keep chatting",
+  );
   await fire(
     page,
     persistenceEvent({
@@ -276,47 +457,70 @@ test("V3 state=ok + 缺口：显示「写入已恢复但记录缺失」，MUST N
       severity: null,
       detail: "",
       since_ts: 0,
+      history_written: true,
+      history_gap: { present: true, since_ts: 1795000000, detail: "llm_request:write" },
+    }),
+  );
+  await expect(note).toHaveText(
+    "Earlier messages couldn't be saved; new content is being written again.",
+  );
+  const block = await persistenceBlockMetrics(page);
+  expect(block.el!.backgroundColor).toBe(block.tokens.pendingTint);
+  expect(block.el!.color).toBe(block.tokens.text);
+});
+
+test("V3 state=ok + 缺口：显示「此前记录未能保存」，MUST NOT 回到健康态；未落盘提示按 history_written 消退", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, {});
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+
+  // degraded + 缺口 + 尚未写入：当前失败与缺口同句，另加一句直白的退出风险。
+  await fire(
+    page,
+    persistenceEvent({
+      state: "degraded",
+      severity: "history",
       history_written: false,
       history_gap: { present: true, since_ts: 1795000000, detail: "llm_request:write" },
     }),
   );
   await expect(note).toBeVisible();
-  await expect(note).toContainText("写入已恢复，但此前部分记录缺失");
-  await expect(note).toContainText("本次会话的新记录尚未落盘，退出后无法恢复");
+  await expect(note).toHaveText(
+    "对话暂未保存，此前部分记录也未能保存。请检查磁盘空间或目录权限；恢复后会继续写入。" +
+      " 现在退出，这段对话将无法恢复。",
+  );
 
-  // 缺口态两句话必须完整可见：只对 `data-persistence-health` 这一条允许换行，且容器高度
-  // 随换行增长（任务 9.3 候选 02 的信息可读性回归）。引用失败状态行仍保持单行省略。
-  const gapGeometry = await note.evaluate((el) => {
-    const style = getComputedStyle(el);
-    const rect = el.getBoundingClientRect();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    const lineTops = new Set(Array.from(range.getClientRects(), (r) => Math.round(r.top * 10) / 10));
-    return {
-      whiteSpace: style.whiteSpace,
-      textOverflow: style.textOverflow,
-      overflow: style.overflow,
-      fontSize: parseFloat(style.fontSize),
-      lineHeight: style.lineHeight,
-      height: rect.height,
-      clientHeight: el.clientHeight,
-      scrollHeight: el.scrollHeight,
-      clientWidth: el.clientWidth,
-      scrollWidth: el.scrollWidth,
-      lines: lineTops.size,
-      text: el.textContent ?? "",
-    };
-  });
-  expect(gapGeometry.whiteSpace).toBe("normal");
-  expect(gapGeometry.textOverflow).not.toBe("ellipsis");
-  expect(gapGeometry.lines).toBeGreaterThanOrEqual(2);
-  expect(gapGeometry.scrollWidth).toBeLessThanOrEqual(gapGeometry.clientWidth + 1);
-  expect(gapGeometry.scrollHeight).toBeLessThanOrEqual(gapGeometry.clientHeight + 1);
-  expect(gapGeometry.height).toBeGreaterThanOrEqual(gapGeometry.fontSize * 2.2);
-  expect(gapGeometry.text).toContain("写入已恢复，但此前部分记录缺失");
-  expect(gapGeometry.text).toContain("本次会话的新记录尚未落盘，退出后无法恢复");
+  // 完整换行：长文案必须折行而不是省略号截断，容器随换行增长。
+  const gapGeometry = await persistenceBlockMetrics(page);
+  expect(gapGeometry.el!.whiteSpace).toBe("normal");
+  expect(gapGeometry.el!.textOverflow).not.toBe("ellipsis");
+  expect(gapGeometry.el!.overflow).not.toBe("hidden");
+  expect(gapGeometry.el!.scrollWidth).toBeLessThanOrEqual(gapGeometry.el!.clientWidth + 1);
+  expect(gapGeometry.el!.scrollHeight).toBeLessThanOrEqual(gapGeometry.el!.clientHeight + 1);
+  expect(gapGeometry.el!.lines).toBeGreaterThanOrEqual(2);
+  expect(gapGeometry.el!.height).toBeGreaterThanOrEqual(gapGeometry.el!.fontSize * 2.2);
+  expect(gapGeometry.el!.text).toContain("此前部分记录也未能保存");
+  expect(gapGeometry.el!.text).toContain("现在退出，这段对话将无法恢复");
 
-  // history_written 转 true：未落盘句消失，缺口文案仍在（状态行 MUST NOT 消失）。
+  // history_written 转 true：退出风险句消退，当前失败 + 缺口文案仍在（MUST NOT 消失）。
+  await fire(
+    page,
+    persistenceEvent({
+      state: "degraded",
+      severity: "history",
+      history_written: true,
+      history_gap: { present: true, since_ts: 1795000000, detail: "llm_request:write" },
+    }),
+  );
+  await expect(note).toBeVisible();
+  await expect(note).toHaveText(
+    "对话暂未保存，此前部分记录也未能保存。请检查磁盘空间或目录权限；恢复后会继续写入。",
+  );
+  const gapWritten = await persistenceBlockMetrics(page);
+  expect(gapWritten.el!.text).not.toContain("现在退出");
+
+  // 写入恢复、缺口仍在：换成恢复态短句；比上面的长文案矮，且仍完整可见。
   await fire(
     page,
     persistenceEvent({
@@ -329,9 +533,11 @@ test("V3 state=ok + 缺口：显示「写入已恢复但记录缺失」，MUST N
     }),
   );
   await expect(note).toBeVisible();
-  await expect(note).toHaveText("写入已恢复，但此前部分记录缺失，这段历史可能不完整");
-  const oneLineHeight = await note.evaluate((el) => el.getBoundingClientRect().height);
-  expect(gapGeometry.height).toBeGreaterThan(oneLineHeight + 1);
+  await expect(note).toHaveText("此前部分对话记录未能保存；新内容已恢复写入。");
+  const recovered = await persistenceBlockMetrics(page);
+  expect(recovered.el!.lines).toBe(1);
+  expect(recovered.el!.height).toBeLessThan(gapGeometry.el!.height);
+  expect(recovered.el!.scrollWidth).toBeLessThanOrEqual(recovered.el!.clientWidth + 1);
 });
 
 // ── V4：横幅三形态 ────────────────────────────────────────────────────────
@@ -347,9 +553,16 @@ test("V4 横幅：写失败 / 枚举失败 / 两者同时三种形态，健康�
   await page.locator(".editor-pane .cm-content").first().click();
   await page.keyboard.type("X");
   await expect(banner).toBeVisible({ timeout: 8000 });
-  await expect(banner).toContainText("无法为 1 份未保存的文档写入崩溃备份");
+  await expect(banner).toContainText("未保存的修改暂时没有备份，关闭应用可能丢失");
   await expect(banner).toContainText("health-note.md");
+  await expect(banner).not.toContainText("崩溃备份");
+  await expect(banner).not.toContainText("首个");
   await expect(banner.getByRole("button", { name: "全部保存" })).toBeVisible();
+  // 红色强提醒保留：仍是 danger 底 / danger 字（Alex 2026-11-23 裁决）。
+  const colors = await recoveryBannerColors(page);
+  expect(colors.banner).not.toBeNull();
+  expect(colors.banner!.backgroundColor).toBe(colors.tokens.dangerTint);
+  expect(colors.banner!.color).toBe(colors.tokens.danger);
   // 写失败段不冒充保存失败：vault 内文档未被改写。
   await expect(page.locator(".cm-content").first()).toContainText("X");
 });
@@ -362,7 +575,7 @@ test("V4b 横幅：枚举失败独立在场、带「重新检查」，与写失�
   await expect(banner).toBeVisible();
   await expect(banner).toContainText("无法检查残留备份");
   await expect(banner.getByRole("button", { name: "重新检查" })).toBeVisible();
-  await expect(banner).not.toContainText("无法为");
+  await expect(banner).not.toContainText("未保存的修改暂时没有备份");
 });
 
 test("V4c 横幅：写失败与枚举失败同时在场（同一横幅两段、各自带动作）", async ({ page }) => {
@@ -374,10 +587,26 @@ test("V4c 横幅：写失败与枚举失败同时在场（同一横幅两段、�
   await expect(banner).toContainText("无法检查残留备份");
   await page.locator(".editor-pane .cm-content").first().click();
   await page.keyboard.type("Y");
-  await expect(banner).toContainText("无法为 1 份未保存的文档写入崩溃备份", { timeout: 8000 });
+  await expect(banner).toContainText("未保存的修改暂时没有备份，关闭应用可能丢失", { timeout: 8000 });
   await expect(banner).toContainText("无法检查残留备份");
   await expect(banner.getByRole("button", { name: "全部保存" })).toBeVisible();
   await expect(banner.getByRole("button", { name: "重新检查" })).toBeVisible();
+});
+
+test("V4d en：横幅主文案取英文列，仍保留数量 / 路径与「全部保存」", async ({ page }) => {
+  await stubTauri(page, { ...VAULT, config: { language: "en" } });
+  await stubHealth(page, { backupFails: true, listFails: false });
+  await openPanel(page);
+  const banner = page.locator(".recovery-banner");
+  await expect(banner).toBeHidden();
+  await page.locator(".editor-pane .cm-content").first().click();
+  await page.keyboard.type("Z");
+  await expect(banner).toBeVisible({ timeout: 8000 });
+  await expect(banner).toContainText("Unsaved changes have no backup right now");
+  await expect(banner).toContainText("quitting the app may lose them");
+  await expect(banner).toContainText("health-note.md");
+  await expect(banner).not.toContainText("crash backups");
+  await expect(banner.getByRole("button", { name: "Save all" })).toBeVisible();
 });
 
 // ── P2-5：横幅与 notice 同场几何（notice 的包含块必须是 pane 行盒） ─────────────
@@ -441,7 +670,7 @@ test("V6 恢复写失败事件先于 Promise 回执：完整快照为地板，�
   // 恢复后端的写失败事件先于 Promise 回执到达。
   await fire(page, degradedGap(42));
   await expect(note).toBeVisible();
-  await expect(note).toContainText("写入仍在失败");
+  await expect(note).toContainText("此前部分记录也未能保存");
 
   // 回执落地：完整快照（同一 token / 同一失败）是地板，告警必须仍在。
   await page.evaluate(() => {
@@ -449,7 +678,7 @@ test("V6 恢复写失败事件先于 Promise 回执：完整快照为地板，�
     w.__resolveResume();
   });
   await expect(note).toBeVisible({ timeout: 5000 });
-  await expect(note).toContainText("写入仍在失败");
+  await expect(note).toContainText("此前部分记录也未能保存");
 });
 
 test("V7 新会话后旧会话的迟到事件不复活告警；新会话自己的事件仍可见", async ({ page }) => {
@@ -470,7 +699,7 @@ test("V7 新会话后旧会话的迟到事件不复活告警；新会话自己�
   // 新会话自己的事件（token 43）照常显示。
   await fire(page, degradedGap(43));
   await expect(note).toBeVisible();
-  await expect(note).toContainText("写入仍在失败");
+  await expect(note).toContainText("此前部分记录也未能保存");
 });
 
 test("V8 空会话快照晚于新 token 事件：旧快照不得清掉已接纳的新会话告警", async ({ page }) => {
@@ -501,5 +730,5 @@ test("V8 空会话快照晚于新 token 事件：旧快照不得清掉已接纳�
     w.__resolveNewSessionStates();
   });
   await expect(note).toBeVisible({ timeout: 5000 });
-  await expect(note).toContainText("写入仍在失败");
+  await expect(note).toContainText("此前部分记录也未能保存");
 });
