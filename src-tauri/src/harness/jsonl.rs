@@ -21,6 +21,7 @@
 //! 写失败不阻断对话——留存是记录侧，IO / 序列化失败只打 stderr（不变量 6），
 //! 不反过来弄坏运行时；打开（建文件）失败则走 CommandError（与既有建立纪律同口径）。
 
+use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -241,10 +242,14 @@ pub type PersistenceReporter = Arc<dyn Fn(&PersistenceHealth) + Send + Sync>;
 #[derive(Clone, Default)]
 pub(crate) struct PersistenceTransitions(Arc<Mutex<TransitionState>>);
 
+/// 单条跃迁的 reporter 连续 panic 上限：达到后丢弃该条并记 stderr，继续后续项。
+/// 目的是「永久 panic 不无限重试 / 不递归崩溃」，同时不让毒项堵住队列。
+const MAX_REPORTER_PANICS: usize = 3;
+
 #[derive(Default)]
 struct TransitionState {
     reporter: Option<PersistenceReporter>,
-    pending: Vec<PersistenceHealth>,
+    pending: VecDeque<PersistenceHealth>,
     /// 是否已有 drainer 在发送：同一队列只允许一个发送者（复审 P1：并发 drain 会乱序）。
     draining: bool,
 }
@@ -253,7 +258,7 @@ impl PersistenceTransitions {
     fn with(reporter: Option<PersistenceReporter>) -> Self {
         Self(Arc::new(Mutex::new(TransitionState {
             reporter,
-            pending: Vec::new(),
+            pending: VecDeque::new(),
             draining: false,
         })))
     }
@@ -264,15 +269,20 @@ impl PersistenceTransitions {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .pending
-            .push(health.clone());
+            .push_back(health.clone());
     }
 
     /// 在锁域外发出全部待发跃迁（调用方保证不持有 Session / Writer 锁）。
     ///
     /// **同一队列只有一个 drainer**，且它持续 drain 到队列为空：两个线程并发 flush 时，
-    /// 第二个直接返回，第一个在每次发送后重新取队列，因此事件发送顺序严格等于入队顺序
-    /// （复审 P1：mem::take 后各自锁外发送会让旧快照晚于新快照到达）。锁只用于入队与
-    /// `draining` 标记，emit 始终在锁外。
+    /// 第二个直接返回，第一个在每次发送后重新取队列，因此事件发送顺序严格等于入队顺序。
+    ///
+    /// **panic 恢复**：一次只取一条（不整批 take）；锁只用于入队 / 取件 / `draining` 标记，
+    /// reporter 调用始终在锁外，并用 `catch_unwind` 包住：
+    /// - reporter 瞬时 panic：该条放回**队首**，同一次 flush 内重试，顺序不变；
+    /// - panic 期间新入队的项：仍由当前 drainer 在恢复后继续取，不依赖新的 flush；
+    /// - reporter 永久 panic：同一条连续失败达到 [`MAX_REPORTER_PANICS`] 后丢弃并记 stderr，
+    ///   继续后续项；不会无限重试或把 panic 递归抛出。
     pub(crate) fn flush(&self) {
         {
             let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -281,34 +291,50 @@ impl PersistenceTransitions {
             }
             state.draining = true;
         }
-        let _panic_guard = DrainPanicGuard(self);
+        let mut consecutive_panics = 0usize;
         loop {
-            let (reporter, pending) = {
+            let health = {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-                if state.pending.is_empty() {
-                    // 与「取空」在同一把锁里落标记：producer 不可能在空检查与标记之间入队。
-                    state.draining = false;
-                    return;
+                match state.pending.pop_front() {
+                    Some(health) => health,
+                    None => {
+                        // 与「取空」同一把锁落标记：producer 不可能在空检查与标记之间入队。
+                        state.draining = false;
+                        return;
+                    }
                 }
-                (state.reporter.clone(), std::mem::take(&mut state.pending))
             };
-            if let Some(reporter) = reporter {
-                for health in pending {
-                    reporter(&health);
+            let reporter = {
+                let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+                state.reporter.clone()
+            };
+            let Some(reporter) = reporter else {
+                continue;
+            };
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reporter(&health))) {
+                Ok(()) => consecutive_panics = 0,
+                Err(_) => {
+                    consecutive_panics += 1;
+                    eprintln!(
+                        "lumir: persistence 事件发送 panic（{}，连续第 {} 次）",
+                        health.detail, consecutive_panics
+                    );
+                    if consecutive_panics < MAX_REPORTER_PANICS {
+                        // 未成功交付：放回队首，保持顺序在同一次 flush 内重试。
+                        self.0
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .pending
+                            .push_front(health);
+                    } else {
+                        eprintln!(
+                            "lumir: persistence 事件连续 panic {} 次，丢弃该跃迁（{}）",
+                            MAX_REPORTER_PANICS, health.detail
+                        );
+                        consecutive_panics = 0;
+                    }
                 }
             }
-        }
-    }
-}
-
-/// 发送者 panic 时复位 `draining`（避免队列永久停在「有 drainer」状态）；正常返回由
-/// `flush` 在锁内自行落 false。
-struct DrainPanicGuard<'a>(&'a PersistenceTransitions);
-
-impl Drop for DrainPanicGuard<'_> {
-    fn drop(&mut self) {
-        if std::thread::panicking() {
-            self.0 .0.lock().unwrap_or_else(|e| e.into_inner()).draining = false;
         }
     }
 }
@@ -1817,6 +1843,176 @@ mod tests {
             *seen.lock().unwrap(),
             vec!["A".to_string(), "B".to_string()],
             "事件发送顺序必须与跃迁入队顺序一致（旧 A 不得晚于新 B 发出）"
+        );
+    }
+
+    /// 复审终审 P1：reporter 瞬时 panic 后，已取出的跃迁不能丢；同一次 flush 必须重试并按
+    /// 原顺序交付，无需新的自然写触发。
+    #[test]
+    fn transition_flush_recovers_transient_reporter_panic_without_new_flush() {
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let attempts = Arc::new(Mutex::new(0usize));
+        let reporter_seen = seen.clone();
+        let reporter_attempts = attempts.clone();
+        let reporter: PersistenceReporter = Arc::new(move |health: &PersistenceHealth| {
+            if health.detail == "A" {
+                let first = {
+                    let mut count = reporter_attempts.lock().unwrap_or_else(|e| e.into_inner());
+                    *count += 1;
+                    *count == 1
+                };
+                if first {
+                    panic!("transient reporter panic");
+                }
+            }
+            reporter_seen
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(health.detail.clone());
+        });
+        let transitions = PersistenceTransitions::with(Some(reporter));
+        let a = PersistenceHealth {
+            detail: "A".into(),
+            ..Default::default()
+        };
+        let b = PersistenceHealth {
+            detail: "B".into(),
+            ..Default::default()
+        };
+        transitions.push(&a);
+        transitions.push(&b);
+
+        transitions.flush();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["A".to_string(), "B".to_string()],
+            "瞬时 panic 后必须在同一次 flush 内重试并保持顺序"
+        );
+        assert_eq!(*attempts.lock().unwrap(), 2, "A 应被重试一次");
+
+        // 后续正常写入继续按序交付。
+        let c = PersistenceHealth {
+            detail: "C".into(),
+            ..Default::default()
+        };
+        transitions.push(&c);
+        transitions.flush();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["A".to_string(), "B".to_string(), "C".to_string()]
+        );
+    }
+
+    /// 复审终审 P1：panic 期间新入队、且其 flush 因已有 drainer 而返回的项，必须由当前
+    /// drainer 在 panic 恢复后接管，不得滞留。
+    #[test]
+    fn transition_flush_recovers_items_enqueued_during_panic() {
+        use std::sync::Barrier;
+
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let attempts = Arc::new(Mutex::new(0usize));
+        let reporter_seen = seen.clone();
+        let reporter_entered = entered.clone();
+        let reporter_release = release.clone();
+        let reporter_attempts = attempts.clone();
+        let reporter: PersistenceReporter = Arc::new(move |health: &PersistenceHealth| {
+            if health.detail == "A" {
+                let first = {
+                    let mut count = reporter_attempts.lock().unwrap_or_else(|e| e.into_inner());
+                    *count += 1;
+                    *count == 1
+                };
+                if first {
+                    reporter_entered.wait();
+                    reporter_release.wait();
+                    panic!("panic while a newer item is enqueued");
+                }
+            }
+            reporter_seen
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(health.detail.clone());
+        });
+        let transitions = PersistenceTransitions::with(Some(reporter));
+        let a = PersistenceHealth {
+            detail: "A".into(),
+            ..Default::default()
+        };
+        let b = PersistenceHealth {
+            detail: "B".into(),
+            ..Default::default()
+        };
+        transitions.push(&a);
+        let first = {
+            let queue = transitions.clone();
+            std::thread::spawn(move || queue.flush())
+        };
+        entered.wait(); // A 在 reporter 中阻塞（尚未 panic）
+        transitions.push(&b);
+        transitions.flush(); // 已有 drainer：本次调用立即返回
+        release.wait(); // 让 A panic，进入恢复路径
+        first.join().unwrap();
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["A".to_string(), "B".to_string()],
+            "panic 期间入队且 flush 已返回的 B 必须由恢复路径接管"
+        );
+    }
+
+    /// 复审终审 P1：永久 panic 不得无限重试或递归崩溃；连续失败达到上限后丢弃该条并继续
+    /// 后续项，错误留 stderr；之后正常写入仍可交付。
+    #[test]
+    fn transition_flush_bounds_permanent_reporter_panic_and_keeps_following_items() {
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let attempts = Arc::new(Mutex::new(0usize));
+        let reporter_seen = seen.clone();
+        let reporter_attempts = attempts.clone();
+        let reporter: PersistenceReporter = Arc::new(move |health: &PersistenceHealth| {
+            if health.detail == "A" {
+                *reporter_attempts.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+                panic!("permanent reporter panic");
+            }
+            reporter_seen
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(health.detail.clone());
+        });
+        let transitions = PersistenceTransitions::with(Some(reporter));
+        let a = PersistenceHealth {
+            detail: "A".into(),
+            ..Default::default()
+        };
+        let b = PersistenceHealth {
+            detail: "B".into(),
+            ..Default::default()
+        };
+        transitions.push(&a);
+        transitions.push(&b);
+
+        transitions.flush();
+        let tries = *attempts.lock().unwrap();
+        assert!(
+            (1..=3).contains(&tries),
+            "永久 panic 必须有界重试（实际 {tries} 次）"
+        );
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["B".to_string()],
+            "毒项丢弃后，后续项必须继续交付"
+        );
+
+        let c = PersistenceHealth {
+            detail: "C".into(),
+            ..Default::default()
+        };
+        transitions.push(&c);
+        transitions.flush();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["B".to_string(), "C".to_string()]
         );
     }
 }
