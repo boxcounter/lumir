@@ -32,8 +32,10 @@ PNG，并记录计算样式、几何、滚动与对比度；最终候选的实�
 - 唯一 FAIL 是 152 的两条时间断言。实际 AX 把角色与时间拆成相邻节点（`你` + `· 3秒前`，`Agent` +
   `· 3秒前`），截图与 AX 都证明读数在场；失败是连续字符串正则与 WKWebView AX 节点粒度不匹配，不是
   “恢复后没有时间”。既有分支 `test/harness-transcript-time-ax-nov23`（tip
-  `ede07e8400f30f6418385ea2718847a02afecaf4`）已完成 test-only 修复；本 change 只把它作为前置 / 同批
-  依赖复用，不重复实现，也不把该分支尚未执行的真机复跑写成 PASS。
+  `ede07e8400f30f6418385ea2718847a02afecaf4`）已完成 test-only 修复并合并推送 master：K3 clean/merge，
+  quick `GATE RESULT: 13/13 PASS（SKIP 0）`，最终真机 152 PASS（17.5s，证据
+  `.local/acceptance/2026-11-24-harness-time-ax-final/`），docs CI `45215746792` success。本 change 只复用
+  该前置，不重复实现。
 
 ## What Changes
 
@@ -122,8 +124,9 @@ PNG，并记录计算样式、几何、滚动与对比度；最终候选的实�
   排版相关场景。152 的 AX 执行器与场景修复不在本 change 改动面，只复用前置分支。
 - 像素基线：7 张既有基线预计变化，9 张矩阵基线为新增候选；相邻的标题栏、浮层、引用 / 图片卡和警示块
   元素基线不应变化。逐张清单与“不应变化”清单见 `design.md` §8。
-- 真机：152 前置分支合并后复跑同一组八场景。原始调研证据保持 7/8 PASS、退出码 1；只有实际复跑后才允许
-  记录新的通过数，任何情况下不得预写 8/8。
+- 真机：152 前置修复已合并推送 master，且最终单场景 PASS（17.5s）；排版实施后仍须复跑同一组八场景。
+  原始调研证据保持 7/8 PASS、退出码 1；前置单场景 PASS 不替代本 change 的八场景复验，只有实际复跑后
+  才允许记录新的通过数，任何情况下不得预写 8/8。
 - 关联约束：`typography` 的双内容面共享缩放比；`harness-table-horizontal-scroll-oct24` 的固有宽 / 局部
   横滚；`improve-harness-streaming-scroll` 的阅读位置保护；`ui-design-system` 的 token 与滚动条分档；
   `tests/visual/README.md` 的 Alex 基线过目纪律。
@@ -137,5 +140,5 @@ PNG，并记录计算样式、几何、滚动与对比度；最终候选的实�
 | D3 | 表格形态与全屏边界 | 面板采用横线表 13px/19.5px；全屏保留 `--editor-font-size`（默认 15px）与现有布局，只共享横线和 cell padding；分别断言 | 把全屏也写成 13px 会与实际克隆作用域和编辑器缩放合同冲突；全网格 / stacked cards 不采用 |
 | D4 | 任务型次级文字 | 指定六类与空态提 `--text-2`，时间仍 `--text-3`，对比度 ≥4.5:1 | 全部 meta 提色会抹平信息层级；维持现状最低仅 2.252:1 |
 | D5 | 新矩阵像素基线 | 九组各新增一张 Harness 元素基线，先生成候选、Alex 逐张批准后再生效 | 只做结构断言会漏掉实图观感；直接更新则绕过基线人肉裁决点 |
-| D6 | 152 的处置 | 复用 `test/harness-transcript-time-ax-nov23@ede07e84` 前置修复，不重复实现；合并后按真实 runner 结果报告 | 重写会产生第二份 AX 执行器；不把原始调研 7/8 PASS 或前置分支未跑的真机状态改写成 8/8 |
+| D6 | 152 的处置 | 复用 `test/harness-transcript-time-ax-nov23@ede07e84` 已合并前置修复，不重复实现；最终前置单场景 PASS 已成立，排版实施后按真实八场景 runner 结果报告 | 重写会产生第二份 AX 执行器；不把原始调研 7/8 PASS 或前置 152 单场景 PASS 混写成本 change 八场景 8/8 |
 | D7 | 三项 change 的顺序 | `fix-harness-approval-visibility-nov23` → 本 change → `move-harness-progress-to-output-tail-nov23`；前后置未归档不得施工，后落者按新几何与新基线重算 | 并行施工会恢复旧阶段色、旧 gap 和旧空态偏移，并混淆基线归属 |

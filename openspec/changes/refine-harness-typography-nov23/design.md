@@ -208,11 +208,13 @@ CodeMirror composer 的内部行盒还需要同步，只能在同一 `.lumir-hp-
 
 152 不再由本 change 实现。`test/harness-transcript-time-ax-nov23` 的 `6575e753` 已加入 `metaLine` 执行器、
 相邻节点判定和单测，tip `ede07e8400f30f6418385ea2718847a02afecaf4` 已把恢复档时间集合收窄为
-`N秒前 / N分钟前 / N小时前`（含 `0秒前`），并用「刚刚 / 昨天必须 FAIL」防判据弱化。本 change 只确认该
-tip 已前置或同批合并，再复跑八场景；不得复制或改写第二份 AX 执行器、单测和场景判据。
+`N秒前 / N分钟前 / N小时前`（含 `0秒前`），并用「刚刚 / 昨天必须 FAIL」防判据弱化。本 change 只复用该
+已合并 master 的前置，再复跑八场景；不得复制或改写第二份 AX 执行器、单测和场景判据。
 
-该分支场景文档明确记录“改断言后的真机复跑尚未执行”，所以前置代码存在不等于真机 PASS。原始调研仍是
-7/8 PASS、退出码 1；最终 summary 必须照抄本次 runner，若仍有 FAIL 就报告 FAIL 数与退出码，不预写 8/8。
+该前置已合并推送 master：K3 clean/merge，quick `GATE RESULT: 13/13 PASS（SKIP 0）`，最终真机 152
+PASS（15 断言、17.5s，证据 `.local/acceptance/2026-11-24-harness-time-ax-final/`），docs CI
+`45215746792` success。原始调研仍是 7/8 PASS、退出码 1；前置 152 单场景 PASS 不替代本 change 的八场景
+复跑，最终 summary 必须照抄本次 runner，若仍有 FAIL 就报告 FAIL 数与退出码，不预写 8/8。
 
 真机 AX 不提供可靠 CSS 几何，字号、宽距、scrollWidth 与对比度的机器判定归 Chromium；真机保留行为断言
 和截图证据，不把截图目检包装成自动 PASS。
@@ -224,7 +226,7 @@ tip 已前置或同批合并，再复跑八场景；不得复制或改写第二�
 
 | 时点 | 硬门禁与承接 |
 |---|---|
-| 本 change 施工前 | `fix-harness-approval-visibility-nov23` 已归档且 `--archived` PASS；152 的 `ede07e84` 已前置或同批合并。未满足不得修改产品或测试代码 |
+| 本 change 施工前 | `fix-harness-approval-visibility-nov23` 已归档且 `--archived` PASS；152 的 `ede07e84` 已合并推送 master。未满足不得修改产品或测试代码 |
 | 前置 → 本 change | 前置阶段行 `--text-3` 由本 change 升为 `--text-2`；待批优先级和阶段文案不动。gap 8→16px，transcript padding `8/8/4`→`16/16/12px` |
 | 本 change 落地时 | 空态仍用 `margin:auto`，只改 13px/1.58、`--text-2`、24px padding；不提前执行尾行 change 的绝对定位或移动进度区 |
 | 本 change → 尾行 change | 本 change 已归档且 `--archived` PASS，候选基线经 Alex 批准并落盘；尾行 change 以新的 living spec / CSS / idle 基线为重基线，未满足不得施工 |
