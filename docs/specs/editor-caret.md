@@ -5,8 +5,9 @@
 > [design](../../openspec/changes/cursor-visibility-oct23/design.md) §2 的条款原文落地）。
 > 来历：两条用户痛点——「当点击 frontmatter 时，光标特别高」「光标太细，不容易快速一眼扫到」。
 > 前者是渲染缺陷，按 [渲染缺陷合同先行规则](../process/rendering-defect-contract-first.md)
-> 处置：先定位不变量条款与属性测试，禁止只做案例级补丁；后者是视觉决策（D2：2px 宽度 +
-> 1.2s 闪烁；原裁决 A「2px 常亮」于 2026-10-24 按 Alex 反馈 #6 改判为 B「恢复闪烁」）。
+> 处置：先定位不变量条款与属性测试，禁止只做案例级补丁；后者是视觉决策（宽度取 CM 默认
+> 1.2px、1.2s 闪烁；原裁决 A「2px 常亮」于 2026-10-24 按 Alex 反馈 #6 改判为 B「恢复闪烁」，
+> 2px 宽度于 2026-11-23 被推翻、恢复 CM 默认，见下方「光标视觉」段的三次改裁记录）。
 >
 > 本文件是**不变量条款**的居所。条款不引用具体案例，实现与测试按条款的输入分布扫维度。
 
@@ -85,28 +86,34 @@ C1–C4 的显露、光标移动与装饰重建 MUST NOT 改写文档：`EditorS
 
 | 条款 | 落点 |
 |---|---|
-| C1 | `src/editor.ts` 的 `baseTheme`（光标宽度 / 闪烁）；边界光标消除见 C2–C4。列表行上的行盒对齐：`src/preview/lists.ts` 的 `ListMarker.coordsAt`（marker 是 13.5px 的 inline-flex widget，CM 默认取它自己的矩形当光标高度） |
+| C1 | `src/editor.ts` 的 `baseTheme`（光标颜色 / 闪烁；宽度与居中取 CM 基础主题的默认值，本仓不写）；边界光标消除见 C2–C4。列表行上的行盒对齐：`src/preview/lists.ts` 的 `ListMarker.coordsAt`（marker 是 13.5px 的 inline-flex widget，CM 默认取它自己的矩形当光标高度） |
 | C2 | `src/preview/replaced-source.ts`（三类块共用的指针入口）；`FrontmatterWidget` 的 mousedown 路由（`src/preview/frontmatter.ts`） |
 | C3 | `firstBodyLineStart` / `normalizeFrontmatterCaret` / `frontmatterCaretSpecs`（`src/preview/frontmatter.ts`）；装载路径 `initialCaretState` / `normalizeInitialCaret`（`src/editor.ts`）；focus 处理器（`src/preview/livePreview.ts`） |
 | C4 | `clampAcrossBlockWidgets`（`src/editor.ts`）与 `frontmatterCaretSpecs` 的垂直移动分支 |
 | C5 | 全链路只 dispatch 选区，不改文档 |
 | C6 | `src/editor.ts` 的 `horizontalTarget`（钳制点）+ `src/preview/lists.ts` 的 `listHiddenRangeAt` / `listLineRender`（区间判定，与渲染共用一份）；键位见 `src/keys.ts` 的 `KEY_BINDINGS`（`←` / `→` 与 `⌃B` / `⌃F` 同一条命令） |
 
-光标视觉的**组件常量**：宽度 2px、以约 1.2s 周期闪烁、三主题同值（eink 同宽同色、同样
-闪烁）。颜色取 `--text`，不新增 token；闪烁直接用 CM 基础主题挂在 `.cm-cursorLayer` 上的
-`steps(1) cm-blink 1.2s infinite`（半程 `opacity: 0`，周期取 `EditorView.cursorBlinkRate`
-的默认值），`src/editor.ts` **不写**任何 animation 覆盖——`!important` 会压住 CM 在光标
-移动时写入内联 `animationName` 的相位重启，让光标在「灭」相位移动后要等半程才可见。
-2026-10-24 改裁：原 D2=A「常亮（无闪烁）」被否（Alex 反馈 #6「光标不闪了，也不容易一眼
-扫到」）——闪烁是光标可发现性的核心信号。取值登记与理由见
-[design-tokens-v1.md](design-tokens-v1.md) 的「阴影与 hairline」节。
+光标视觉（**不是**组件常量）：宽度 / 居中取 CodeMirror 基础主题默认值——`border-left: 1.2px`、
+`margin-left: -0.6px`，三主题同值（eink 同为 1.2px；可发现性由闪烁承担，与 1px hairline 的
+0.2px 线宽差不是判据）。`src/editor.ts` **只覆盖颜色**（`borderLeftColor: var(--text)`；CM 默认
+`black` 在 dark 下不可见），MUST NOT 再写 `borderLeft` 或 `marginLeft`——宽度随 CM 版本走，
+本仓不钉值。闪烁直接用 CM 基础主题挂在 `.cm-cursorLayer` 上的 `steps(1) cm-blink 1.2s
+infinite`（半程 `opacity: 0`，周期取 `EditorView.cursorBlinkRate` 的默认值），`src/editor.ts`
+**不写**任何 animation 覆盖——`!important` 会压住 CM 在光标移动时写入内联 `animationName` 的
+相位重启，让光标在「灭」相位移动后要等半程才可见。
+三次改裁：① 2026-10-23（change `cursor-visibility-oct23` 的 D2）因「光标太细」加粗到 2px +
+`-1px` 居中；② 2026-10-24 按 Alex 反馈 #6「光标不闪了，也不容易一眼扫到」恢复约 1.2s 周期
+闪烁（宽度仍 2px，闪烁是光标可发现性的核心信号）；③ 2026-11-23（change
+`restore-default-caret-width-nov23`）**推翻 2px 裁决**——light / dark / eink 统一恢复 CM 默认
+宽度与居中，颜色 `--text` 与闪烁两项增益保留；后续 MUST NOT 以「再粗一点更显眼」为由回改 2px。
+取值登记与理由见 [design-tokens-v1.md](design-tokens-v1.md) 的「阴影与 hairline」节。
 
 ## 属性测试与验证层
 
 | 层 | 位置 | 判据 |
 |---|---|---|
 | 纯判定矩阵 | `tests/unit/frontmatter-caret.test.ts` | `firstBodyLineStart` 的输入网格；`frontmatterCaretSpecs` 的分流（边界 / 块内 / 块外 × 空 / 非空选区 × 垂直移动 / 普通事务 / 装载事务） |
-| 几何 / 计算样式 | `tests/visual/scenes/m647-caret-geometry.spec.ts` | 光标矩形高度 = 所在可见行行盒 ±1px，且小于 `.cm-lp-frontmatter-outer` 高度（区分度对照）；`borderLeftWidth` = 2px、颜色 = `--text`、`marginLeft` = -1px、`animationName` ∈ {`cm-blink`, `cm-blink2`}、`animationDuration` = 1.2s 且动画运行中；暂停在 0ms / 700ms 时 `opacity` = 1 / 0（亮 / 灭相位） |
+| 几何 / 计算样式 | `tests/visual/scenes/m647-caret-geometry.spec.ts` | 光标矩形高度 = 所在可见行行盒 ±1px，且小于 `.cm-lp-frontmatter-outer` 高度（区分度对照）；宽度的级联声明 = CM 基础主题的 `1.2px`（`marginLeft` = -0.6px；计算样式在 Chromium DPR=1 下取整为 `1px`，故渲染读数只钉「非 2px」）、颜色 = `--text`、`animationName` ∈ {`cm-blink`, `cm-blink2`}、`animationDuration` = 1.2s 且动画运行中；暂停在 0ms / 700ms 时 `opacity` = 1 / 0（亮 / 灭相位） |
 | 纯判定（C6） | `tests/unit/list-lazy-continuation.test.ts` | `listLineRender` 的隐藏区间端点矩阵（列表类型 × marker 宽度 × 嵌套 × 引用前缀 × 任务项）；`listHiddenRangeAt` 的钳制与边界不移动；裸行编辑态门控 |
 | 几何 / 按键落点（C1 列表行 + C6） | `tests/visual/scenes/m647-caret-geometry.spec.ts`、`tests/visual/scenes/cursor-motion.spec.ts` | m647：列表行四个光标入口的高度 = 正文文本行盒 ±1px（主题 × 类型 × 嵌套 × marker 宽度，含空项行与 32px 档），marker 盒高比行盒高 ≥ 2px（区分度）；cursor-motion：`←` / `→` 与 `⌃B` / `⌃F` 两组键的行首一次到位、再一次一个字素簇、反向对称、跨行不跳字、文档字节不变 |
 | 真机 | `scripts/acceptance/scenarios/228-caret-visibility.md`、`scripts/acceptance/scenarios/255-list-caret-navigation-oct29.md` | 228：点击 properties / doc-title 后 properties 撤下、标题让位、文档字节不变（光标高度归手感项）；255：列表行上 `→` 与 `⌃F` 的落点一致、文档字节不变（光标高度同样归手感项） |

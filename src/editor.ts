@@ -2165,25 +2165,28 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       ".cm-selectionBackground": { backgroundColor: "var(--sel-band) !important" },
       // IME 内部组合范围不是作者选区；只隐藏呈现，不改 CM 跟踪组合所需的 selection state。
       "&.cm-ime-composition .cm-selectionLayer": { visibility: "hidden" },
-      // 光标（change cursor-visibility-oct23 的 D2；2026-10-24 改裁恢复闪烁；合同 docs/specs/editor-caret.md）：
-      //   · 宽度 2px 是**组件常量**，三主题同值——eink 没有颜色，线宽是它唯一的强调手段
-      //     （tokens 文档规则⑧），2px 落在既有语汇内（1.2–1.6px 强调线宽 / 2px 引用块竖线）。
-      //     颜色仍走 `--text`（三主题都是最高对比档）。宽度 3px、accent 变色、呼吸块光标均在
-      //     提案 D2 里被否，别按「再粗一点更显眼」改回。
-      //   · `marginLeft` 按宽度居中：CM 基础主题的 `-0.6px` 是 1.2px 的居中量，改宽必须同步，
-      //     否则光标相对插入点右偏 0.4px。
+      // 光标（合同 docs/specs/editor-caret.md；三次改裁按时间序记在下面）：
+      //   · 2026-10-23（change cursor-visibility-oct23 的 D2）：Alex 反馈光标太细，应用从「只覆盖
+      //     颜色」改为 2px 宽度 + `-1px` 居中（CM 的 `-0.6px` 是 1.2px 的居中量，两者必须配套）。
+      //   · 2026-10-24：Alex 反馈「光标可见性调地有些过头了——现在光标不闪了，也不容易一眼扫到」⇒
+      //     只恢复闪烁（M654 曾以 `animation: none !important` 取消），宽度仍留 2px。
+      //   · 2026-11-23（change restore-default-caret-width-nov23）：宽度 / 居中一并还给 CM 基础主题
+      //     ——light / dark / eink 三主题同用 `border-left: 1.2px` + `margin-left: -0.6px`，本主题
+      //     只保留颜色覆盖。eink 的可发现性由闪烁承担（1.2px 与 1px hairline 的 0.2px 差不是判据）。
+      //   · 因此 **MUST NOT** 再写 `borderLeft`（宽度 / 样式 / 颜色三合一的简写，写了就等于继续覆盖
+      //     宽度）或 `marginLeft`：宽度与居中的唯一来源是 CM 基础主题，CM 升级跟随升级，不另行钉值。
+      //     **MUST NOT** 以「再粗一点更显眼」为由回改 2px（这是对 2026-10-23 裁决的正式推翻，
+      //     再改须走新裁决并改 requirement 与改裁记录）。颜色仍走 `--text`：CM 默认 `black` 在
+      //     dark 主题下不可见，这是唯一保留的覆盖项。
       //   · 闪烁：用 CM 原生口径（基础主题的 `steps(1) cm-blink 1.2s infinite`；周期由
       //     `EditorView.cursorBlinkRate` facet 写进内联 `animationDuration`，默认 1200ms）。
-      //     M654 曾以 `animation: none !important` 取消闪烁；Alex 2026-10-24 反馈「光标可见性
-      //     调地有些过头了——现在光标不闪了，也不容易一眼扫到」⇒ 改回闪烁。闪烁是光标
-      //     可发现性的核心信号；宽度 / 对比度保留 M654 的增益。eink 同口径：M654 以残影为由
-      //     取消闪烁，本次改裁以「一眼扫到」为先，残影风险登记在 change 的 design §3.5。
-      //   · 因此本主题 **MUST NOT** 覆盖 `.cm-cursorLayer` 的 animation：CM 在光标移动时把
+      //     闪烁是光标可发现性的核心信号；eink 同口径，残影风险归真机 dogfood 手感项。
+      //   · 本主题 **MUST NOT** 覆盖 `.cm-cursorLayer` 的 animation：CM 在光标移动时把
       //     `animationName` 写成元素**内联样式**（`cm-blink` / `cm-blink2` 交替，用于免重排
       //     重启相位），`!important` 会压住这条重启——光标在「灭」相位移动后要等半程才可见。
       //     m647 场景钉住 `animationName = cm-blink*`、`animationDuration = 1.2s` 且动画运行中。
       // 本条此前是「声明了没有消费者」的存量，M285 装上 `drawSelection()` 后才是真的生效路径。
-      ".cm-cursor, .cm-dropCursor": { borderLeft: "2px solid var(--text)", marginLeft: "-1px" },
+      ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
     });
     // 可编辑性随会话标志装进 Compartment（editable-non-md-files）：此前硬绑
     // `mode === "md"`（M101 的只读合同），现在按**文件类**——md 与注册表文本类

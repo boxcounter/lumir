@@ -23,9 +23,11 @@ import { readDocument } from "./parity-checks";
 //   ① 光标高度 MUST 小于被撤下的 `.cm-lp-frontmatter-outer` 高度（修前 = 整块高）；
 //   ② H1 行光标高度 MUST 大于正文行光标高度（证明「等于行盒」不是把光标钉到常量高度）。
 //
-// 光标样式同在本场景（D2 于 2026-10-24 改裁：恢复闪烁）：2px 实心 `--text`、`marginLeft: -1px`、
-// `.cm-cursorLayer` 以 1.2s 周期闪烁（CM 原生 `cm-blink`，亮 / 灭两个相位都实际读过）、
-// 未聚焦时不显示。像素基线不在此处——新场景只建结构断言，截图过目归 Alex。
+// 光标样式同在本场景（2026-11-23 改裁：宽度回退 CM 默认 1.2px / -0.6px，颜色与闪烁保留）：
+// 1.2px 实心 `--text`、`marginLeft: -0.6px`、`.cm-cursorLayer` 以 1.2s 周期闪烁（CM 原生
+// `cm-blink`，亮 / 灭两个相位都实际读过）、未聚焦时不显示。宽度 / 居中的唯一来源是 CM 基础
+// 主题（`border-left: 1.2px` / `margin-left: -0.6px`），本仓只覆盖颜色。像素基线不在此处——
+// 新场景只建结构断言，截图过目归 Alex。
 
 const FM_DOC = [
   "---",
@@ -448,8 +450,8 @@ test.describe("m647 光标几何（C1）与指针入口（C2）", () => {
   });
 });
 
-test.describe("m647 光标样式（D2 改裁：2026-10-24 恢复闪烁）", () => {  for (const theme of ["light", "dark", "eink"] as const) {
-    test(`光标计算样式 × ${theme}：2px 实心 --text、-1px 居中、1.2s 闪烁；未聚焦时不显示`, async ({ page }) => {
+test.describe("m647 光标样式（2026-11-23 宽度回退 CM 默认；2026-10-24 恢复闪烁）", () => {  for (const theme of ["light", "dark", "eink"] as const) {
+    test(`光标计算样式 × ${theme}：1.2px 实心 --text、-0.6px 居中、1.2s 闪烁；未聚焦时不显示`, async ({ page }) => {
       await openDoc(page, { doc: FM_DOC, theme });
       await page.evaluate(() => {
         const view = (window as unknown as { __m647View: () => ViewHandle }).__m647View();
@@ -467,8 +469,37 @@ test.describe("m647 光标样式（D2 改裁：2026-10-24 恢复闪烁）", () =
         probe.remove();
         const cs = getComputedStyle(cursor);
         const layerStyle = getComputedStyle(layer);
+        // 级联里实际匹配光标元素的 `border-left-width` 声明值。计算样式会把亚像素边框宽度
+        // 取整（Chromium DPR=1 下 1.2px → 1px，见 change design.md F2 的实测注记），作者值只能
+        // 从 CSSOM 读；这不是数截图像素，读的是声明本身。
+        const declaredWidths: string[] = [];
+        for (const sheet of Array.from(document.styleSheets)) {
+          let rules: CSSRuleList;
+          try {
+            rules = sheet.cssRules;
+          } catch {
+            continue; // 跨源样式表读不到（CM 与本仓的样式都是同源注入的 <style>，正常情况下走不到）
+          }
+          for (const rule of Array.from(rules)) {
+            if (!(rule instanceof CSSStyleRule)) continue;
+            let matches = false;
+            try {
+              matches = cursor.matches(rule.selectorText);
+            } catch {
+              matches = false;
+            }
+            if (!matches) continue;
+            // 简写里含 `var()` 时 CSSOM 不展开长写（border-left: 2px solid var(--text) 的
+            // border-left-width 读回空串，值挂在 border-left 上），因此长写与简写都要读。
+            const longhand = rule.style.getPropertyValue("border-left-width");
+            const shorthand = rule.style.getPropertyValue("border-left");
+            const declared = longhand || shorthand.trim().split(/\s+/)[0] || "";
+            if (declared) declaredWidths.push(declared);
+          }
+        }
         return {
           width: cs.borderLeftWidth,
+          declaredWidths,
           color: cs.borderLeftColor,
           expectedColor,
           marginLeft: cs.marginLeft,
@@ -482,9 +513,23 @@ test.describe("m647 光标样式（D2 改裁：2026-10-24 恢复闪烁）", () =
           display: cs.display,
         };
       });
-      expect(style.width, "宽度 = 2px（组件常量；改裁未动宽度）").toBe("2px");
-      expect(style.color, "颜色 = --text 的计算值").toBe(style.expectedColor);
-      expect(style.marginLeft, "按 2px 宽度居中（CM 基础主题的 -0.6px 是 1.2px 的居中量）").toBe("-1px");
+      // 权威判据不是截图像素数（DPR / 抗锯齿会让截图上的设备像素落到 1 或 2 个），但也不是
+      // 「计算样式 = 1.2px」：渲染引擎会把亚像素 border-width 取整到整数 CSS 像素——Chromium
+      // DPR=1 下 `1.2px` 读回 `1px`（2026-11-23 实测，change design.md F2 注记）。因此判据分两路：
+      //   ① 级联声明值 = CM 基础主题的 `1.2px`（本仓不写宽度覆盖，声明列表里只有这一条）；
+      //   ② 渲染读数落在 1px / 1.2px 档，且 MUST NOT 是 2px（回粗必红）。
+      expect(
+        style.declaredWidths,
+        "级联里匹配光标的 border-left-width 声明只有 CM 基础主题的 1.2px（本仓已撤掉 2px 覆盖）",
+      ).toEqual(["1.2px"]);
+      expect(
+        ["1px", "1.2px"],
+        "渲染读数 = CM 默认 1.2px 的整数取整（Chromium DPR=1 下 1px；引擎不取整时 1.2px）",
+      ).toContain(style.width);
+      expect(style.width, "反向判据：2px 覆盖一旦回潮，本断言必红（2026-10-23 至 2026-11-23 的实现）").not.toBe("2px");
+      expect(style.color, "颜色 = --text 的计算值（唯一保留的覆盖项）").toBe(style.expectedColor);
+      expect(style.marginLeft, "居中 = -0.6px（CM 基础主题给 1.2px 宽度的配套量）").toBe("-0.6px");
+      expect(style.marginLeft, "反向判据：-1px 是 2px 宽度的居中量，回粗必红").not.toBe("-1px");
       // 闪烁恢复（Alex 2026-10-24 反馈「光标不闪了，也不容易一眼扫到」）：动画名由 CM 的基础主题
       // 或它写入的内联样式给出（`cm-blink` / `cm-blink2` 交替用于重启相位），两者都是「闪烁中」。
       // M654 的 `animation: none !important` 会让这里读回 none —— 这条断言就是那次改裁的判据。

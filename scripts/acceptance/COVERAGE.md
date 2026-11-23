@@ -205,7 +205,7 @@
 | 225 | `225-app-splash-screen` | 启动态：大 vault 冷启的首帧 / 撤下读数，与未打开终态的撤下原因 | full |
 | 226 | `226-vault-remove` | vault 列表移除（M646）：当前项无移除入口 / 行内两步确认 / 只删注册表项 / 8s 撤销 | full |
 | 227 | `227-fullscreen-select-esc` | 全屏遮罩内的选中动作不改变退出路径：遮罩内尝试 ⌘A 之后 Esc 仍关闭、焦点回编辑器、文档与磁盘零写入 | full |
-| 228 | `228-caret-visibility` | 光标可见性——属性盒按下即进 YAML 源码（不再出现贯穿整块的竖线）、doc-title / 正文按下不改文档、光标 2px 且以约 1.2s 周期闪烁（light + eink 截图证据） | evidence |
+| 228 | `228-caret-visibility` | 光标可见性——属性盒按下即进 YAML 源码（不再出现贯穿整块的竖线）、doc-title / 正文按下不改文档、光标为 CM 默认线宽且以约 1.2s 周期闪烁（light + eink 截图证据） | evidence |
 | 229 | `229-harness-permission-rules` | 权限规则入口与包装器解包（change harness-permission-rules-oct23）：持久放行 / 删规则后重新问 / bash -lc 全只读免问 / 危险包装卡无次级动作（mock provider） | full |
 | 231 | `231-harness-readonly-write-forms`<br>`231b-harness-hidden-write-refusal` | 只读白名单收紧：写形态进闸、执行形态在完全访问档仍问（change readonly-allowlist-tightening-oct23，mock provider）<br>hidden 档写入口拒绝（M656 前提）：vault_patch 指名 .git/config 被 fs_name_invalid 拒绝且文件逐字节不变（mock provider） | full<br>full |
 | 232 | `232-quote-decode-error-copy` | 引用坏图：解码失败读 D588（不含「剪贴板」）+ 持久状态行、零卡片 | full |
