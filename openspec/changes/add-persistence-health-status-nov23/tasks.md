@@ -181,28 +181,35 @@
   （重试后文件首行是 `llm_response` 而不是 `session_open`）。
 - 前端先红（HEAD 原码 + 新测试）：`.local/missions/persistence-health-nov23/red-frontend-head.log`
   —— `recoveryFailures` 不是函数（U1–U3 / U12）、面板新导出不存在（宽容解析 / 文案 / sticky）。
-- Rust 后绿：`cargo test --lib` 1051 passed（含 R1–R10）。
-- 前端后绿：`pnpm test` 1794 passed（含 U1–U13 的纯逻辑与接线层）。
+- 独立评审修复（P1-1 / P1-2 / P1-3 / P2-4 / P2-5 + 测试真实性）：
+  - 先红：`red-p1-backup-enum.log`（4 条备份 / 枚举交错全红）、`red-p1p3-p2p5-visual.log`
+    （V5/V6/V7 全红）、`red-p2-lock-partial.log`（sessions 锁内发送探针红）。
+  - 后绿：同批测试全绿；`green-p1p3-p2p5-visual.log` 9/9。
+  - PartialFail sink 改为**真实写入前缀字节**；新增 R7b 首行部分写 → 前缀 + 重试
+    `session_open` 同行的坏行形态断言（不再只返回 `partial:true`）。
+- Rust 后绿：`cargo test --lib` **1053 passed / 1 ignored**（含 R1–R10 + 锁外发送 + R7b）。
+- 前端后绿：`pnpm test` **1801 passed**（含 U1–U13、请求世代、会话归属）。
 - 视觉：`tests/visual/scenes/persistence-health-nov23.spec.ts` 6 条结构断言全绿；未新建 / 未更新
   任何像素基线（degraded 与横幅形态的像素基线属 Alex 人肉过目的 `--update` 裁决点）。
-- 真机：最终提交代码上 `node scripts/acceptance/run.mjs 709` 单轮 **6/6 PASS**（107.8s，
-  `acceptance-709-final-tip.log`；此前同一行为另有一轮 6/6，见 `acceptance-709-final.log`）。
+- 真机：评审修复后 `node scripts/acceptance/run.mjs 709` 单轮 **6/6 PASS**（107.5s，
+  `acceptance-709-postfix.log`；此前的 6/6 见 `acceptance-709-final-tip.log`）。
   证据目录 `.local/acceptance/2026-11-23-persistence-health/`（`red-head/` 是 HEAD 原码上
   709b 的红灯副本）。A7（harness 正面写失败）真机不可达，由 R1–R10 + 视觉桩承担（见 709
   场景正文）。
 - 门禁（照抄原文）：
-  - `gate-quick-final.log`：`GATE RESULT: 13/13 PASS（SKIP 0）`，gate.sh 退出码 0。
-  - `gate-visual-final.log`：`GATE RESULT: 14/15 PASS（SKIP 0）`，gate.sh 退出码 1；
-    唯一 FAIL 是 `visual-regression`（`1162 passed / 47 failed / 1 skipped`，13.7m），
-    47 条全部是既有像素基线漂移（见下条分类证据），本 change 新增的 6 条视觉结构断言
-    在同一批全量里 PASS。管道命令的 shell 退出码取自 `tail`，门禁判定以 `GATE RESULT`
-    与脚本尾部 `[ "$fail" -eq 0 ]` 为准。
+  - `gate-quick-fix2.log`：`GATE RESULT: 13/13 PASS（SKIP 0）`，gate.sh 退出码 0。
+  - `gate-visual-final2.log`：`GATE RESULT: 14/15 PASS（SKIP 0）`，gate.sh 退出码 1；
+    唯一 FAIL 是 `visual-regression`（`1171 passed / 41 failed / 1 skipped`，13.7m）。
+    41 条失败与 HEAD 原码逐条相同，40/41 实际截图 byte-identical、m303 实际图仅差 6 像素
+    （见下条分类证据）；本 change 的 9 条视觉结构断言全量 PASS。管道命令的 shell 退出码
+    取自 `tail`，门禁判定以 `GATE RESULT` 与脚本尾部 `[ "$fail" -eq 0 ]` 为准。
 - 交付提交：mission 分支 `feat/persistence-health-nov23` 的 tip（hash 见完工报告；
   `feat(harness): surface persistence write failures`）。最终完整 visual 跑在提交前的同一份
   代码上；此后只改了本文件的勾选与证据记录。未归档、未 merge、未 push。
-- 视觉基线漂移：`visual-classification.md` —— HEAD 原码复跑同样失败，6 个抽样场景的
-  实际截图与本次实现逐像素相同（diff 0）；最终全量的 47 条失败场景与上一轮**逐条相同**。
-  按「基线更新是人肉裁决点」未更新任何基线。
+- 视觉基线漂移：`visual-classification.md` —— 最终全量 41 条失败与 HEAD 原码跑同一批 spec
+  的失败清单**逐条相同**；41 张实际截图中 40 张 byte-identical，m303 仅差 6 像素（右下角）。
+  曾由本实现引入的 m633 严格 locator 歧义（6 条）已用 `:not([data-persistence-health])`
+  精确隔离并转绿。按「基线更新是人肉裁决点」未更新任何基线。
 
 **已知边界**：`docs-check` 的 `tsc-unit` / `bindings-drift` 在首次 quick 时因「bindings 未
 `git add`」「测试 deps 缺 `stickyToast`」两条已修；重跑见最终门禁日志。`m303-harness-panel`
