@@ -1,6 +1,6 @@
 ---
-id: "722-harness-composer-inline-cards"
-item: 722
+id: "723-harness-composer-inline-cards"
+item: 723
 tier: core
 title: composer 零长度 inline cards：精确块序 + scoped AX + 一步 undo + 纯文本复制 + 草稿 v3
 open: harness-quote.md
@@ -113,7 +113,7 @@ steps:
       - shot: 02-inline-cards-草稿v3
 ---
 
-# 722 —— composer inline cards 真机矩阵
+# 723 —— composer inline cards 真机矩阵
 
 本场景的自动判据限定在 composer 的 `AXGroup（问点什么）` 子树。编辑器源文档本来就有 QALPHA，
 不能用整棵 AX 树做顺序或负向断言。`notInValue` 也只检查 composer 内的 AXTextArea。

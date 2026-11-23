@@ -5,7 +5,7 @@
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
 - 场景：277
-- 验收项（不同 item 编号）：245
+- 验收项（不同 item 编号）：246
 - 分档：core 31 / full 236 / bundle 5 / evidence 5（full 批 = 全部 277 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
@@ -260,6 +260,7 @@
 | 719 | `719-harness-retry-approval` | 重试后的新写工具仍需批准：批准前零副作用、批准卡再现、批准后恰好一次 | full |
 | 720 | `720-harness-retry-image-nonvision` | 含图失败切非 vision 模型：重试被前置闸拒绝（零请求、动作仍在） | full |
 | 721 | `721-harness-vault-unread` | 跨 vault 的活动记录：非当前 vault 的在途 / 未读在切换器行上可读，切过去但面板收起不清未读 | full |
-| 722 | `722-harness-composer-inline-cards`<br>`722-line-numbers-toggle` | composer 零长度 inline cards：精确块序 + scoped AX + 一步 undo + 纯文本复制 + 草稿 v3<br>行号全局开关真机链路——默认 off 两模式都无 gutter（右键 oracle 拿不到）、⌘⇧N 与 modeline 指示钮同源切换、on 档两模式可复制、off + ⌥G 的临时 gutter 可复制、切换持久化与重启、后台标签切回已是新态、on → ⌥G → 切 off 的交叉态 | core<br>full |
+| 722 | `722-line-numbers-toggle` | 行号全局开关真机链路——默认 off 两模式都无 gutter（右键 oracle 拿不到）、⌘⇧N 与 modeline 指示钮同源切换、on 档两模式可复制、off + ⌥G 的临时 gutter 可复制、切换持久化与重启、后台标签切回已是新态、on → ⌥G → 切 off 的交叉态 | full |
+| 723 | `723-harness-composer-inline-cards` | composer 零长度 inline cards：精确块序 + scoped AX + 一步 undo + 纯文本复制 + 草稿 v3 | core |
 | 724 | `724-harness-session-order` | 会话清单按最后活动排序（每文件一行）：恢复不置顶、sidecar 不计入、compact 不沿链、缺时间回落、打开期间不重排 | full |
 | 725 | `725-harness-approval-visibility` | 待批可见性：脱离态下批准卡到达仍有标题栏信号与未读；回底决策后清算；停止撤回无幻影 | full |
