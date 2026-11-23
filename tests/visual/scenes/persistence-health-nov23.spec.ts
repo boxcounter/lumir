@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
+import { expectScreenshot } from "./expect-screenshot";
 
 // WCAG 2.x 相对亮度 / 对比度（独立评审 P2-1：只断言「颜色等于 token」发现不了 4.443:1
 // 的不足；这里按实际计算样式算真实组合的比值）。
@@ -239,6 +240,27 @@ async function openPanel(page: Page): Promise<void> {
   await expect(page.locator(".cm-content")).toContainText("持久化健康");
   await page.locator(".lumir-hp-toggle").click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
+}
+
+/** 像素基线前的稳定等待：字体就绪 + 300ms（与候选采集同一口径）。 */
+async function settleForPixels(page: Page): Promise<void> {
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(300);
+}
+
+/** 拍像素前收起首次 history sticky，并清掉关闭后归还的焦点态——整页基线只反映形态本身，
+ *  不把「点击关闭/焦点回还」的瞬时态钉进基线（候选采集的同一口径）。 */
+async function closeStickyForPixels(page: Page): Promise<void> {
+  const sticky = page.locator(".lumir-toast[data-sticky-text]");
+  if ((await sticky.count()) > 0) {
+    await sticky.first().click();
+    await expect(sticky).toHaveCount(0);
+  }
+  await page.evaluate(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+  });
+  await settleForPixels(page);
 }
 
 /** 从当前焦点开始按 Tab，直到焦点落到 sticky 的原生关闭钮上（最多 80 次）。
@@ -1127,4 +1149,91 @@ test("V13 history sticky：Escape 准入复用 escapeDisposition（组合期 / k
   await expect(page.locator(".lumir-harness")).toBeVisible();
   await expect(note).toBeVisible();
   await expect(note).toContainText("此前部分记录也未能保存");
+});
+
+// ── 已批准形态的像素基线（Alex 2026-11-23 批准候选后转正式断言） ────────────
+
+test("V2p 像素基线：Harness degraded（当前写失败）警示块", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, {});
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+  await fire(page, persistenceEvent({ severity: "history" }));
+  await expect(note).toBeVisible();
+  await expect(note).toHaveText("对话暂未保存。请检查磁盘空间或目录权限；恢复后会继续写入。");
+  await closeStickyForPixels(page);
+  await expectScreenshot(page, "harness-degraded.png");
+  await expectScreenshot(note, "harness-degraded-warning-block.png");
+});
+
+test("V3p 像素基线：state=ok + history gap（尚未写入）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, {});
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+  await fire(
+    page,
+    persistenceEvent({
+      state: "ok",
+      severity: null,
+      detail: "",
+      since_ts: 0,
+      history_written: false,
+      history_gap: { present: true, since_ts: 1795000000, detail: "llm_request:write" },
+    }),
+  );
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("此前部分对话记录未能保存；新内容已恢复写入。");
+  await expect(note).toContainText("现在退出，这段对话将无法恢复。");
+  await closeStickyForPixels(page);
+  await expectScreenshot(page, "harness-history-gap.png");
+  await expectScreenshot(note, "harness-history-gap-warning-block.png");
+});
+
+test("V3bp 像素基线：state=ok + history gap（已恢复写入；02b 同形补充）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, {});
+  await openPanel(page);
+  const note = page.locator("[data-persistence-health]");
+  await fire(
+    page,
+    persistenceEvent({
+      state: "ok",
+      severity: null,
+      detail: "",
+      since_ts: 0,
+      history_written: false,
+      history_gap: { present: true, since_ts: 1795000000, detail: "llm_request:write" },
+    }),
+  );
+  await fire(
+    page,
+    persistenceEvent({
+      state: "ok",
+      severity: null,
+      detail: "",
+      since_ts: 0,
+      history_written: true,
+      history_gap: { present: true, since_ts: 1795000000, detail: "llm_request:write" },
+    }),
+  );
+  await expect(note).toHaveText("此前部分对话记录未能保存；新内容已恢复写入。");
+  await closeStickyForPixels(page);
+  await expectScreenshot(page, "harness-history-gap-written.png");
+  await expectScreenshot(note, "harness-history-gap-written-warning-block.png");
+});
+
+test("V4p 像素基线：文档备份失败横幅", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHealth(page, { backupFails: true, listFails: false });
+  await openPanel(page);
+  const banner = page.locator(".recovery-banner");
+  await page.locator(".editor-pane .cm-content").first().click();
+  await page.keyboard.type("X");
+  await expect(banner).toBeVisible({ timeout: 8000 });
+  await expect(banner).toContainText("未保存的修改暂时没有备份，关闭应用可能丢失");
+  await expect(banner.getByRole("button", { name: "全部保存" })).toBeVisible();
+  await settleForPixels(page);
+  await expectScreenshot(page, "recovery-banner.png");
+  await expectScreenshot(banner, "recovery-banner-element.png");
 });

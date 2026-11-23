@@ -163,19 +163,21 @@
 
 - [x] 9.1 结构层：`tests/visual/scenes/**` 新增 V1–V4 场景；CI 的 `LUMIR_VISUAL_STRUCTURAL=1`
       路径绿
-- [ ] 9.2 本地像素：`scripts/gate.sh visual` 或 `scripts/visual/run.sh` 全量绿；健康态既有
-      基线零漂移
-- [ ] 9.3 `degraded` / `state=ok` + gap / 横幅三形态的像素基线：截图先交 Alex 过目，批准后
-      才 `--update`（基线更新是人肉裁决点）。2026-11-23 Alex 同意呈现调整（composer 上方
-      紧凑警示块 + 横幅主文案改「未保存的修改暂时没有备份，关闭应用可能丢失。」）后，三种
-      候选已按新形态重截到 `.local/reviews/pixel-drift-nov23/health-candidates/`，仍未批准，
-      未运行 `--update`、未改任何正式基线
+- [x] 9.2 本地像素：`scripts/gate.sh visual` 全绿——`GATE RESULT: 15/15 PASS（SKIP 0）`，
+      exit 0；`1227 passed / 0 failed / 1 skipped`。健康态既有基线零漂移：V1 零几何，
+      m303 / m351 的整页 / composer 健康态基线重截后目检无警示块
+- [x] 9.3 `degraded` / `state=ok` + gap / 横幅三形态的像素基线：Alex 2026-11-23 原话
+      「批准候选并重截基线」，已按 `health-candidates/` 最新图转正式像素断言（V2p / V3p /
+      V3bp / V4p，整页 + 元素各 4 张，共 8 张新基线，与候选逐字节相同）；41 条报告失败
+      快照 + 7 张同测试后续快照（首张失败后从未比较）一并重截，共 48 张修改；无其他快照
+      变动（`baseline-delta.txt`：modified=48 / added=8 / removed=0）
 
 ## 10. 门禁与收尾
 
 - [x] 10.1 `scripts/gate.sh quick` 全绿（fmt / clippy / cargo test / bindings 漂移 /
       gen-schemas 漂移 / tsc / 单测 / perf 夹具 / acceptance 契约 / docs-check / validate）
-- [ ] 10.2 `scripts/gate.sh visual` 全绿（本地；CI 绿不代表像素层没回归）
+- [x] 10.2 `scripts/gate.sh visual` 全绿（本地；CI 绿不代表像素层没回归）：
+      `GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0；`1227 passed / 0 failed / 1 skipped`
 - [x] 10.3 `bash scripts/docs-check.sh` 全绿（含归档对账、验收场景契约、backlog 出口）
 - [x] 10.4 `PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH" npx --yes
       @fission-ai/openspec@1.12.0 validate --all --strict` 通过
@@ -190,9 +192,12 @@
 ## 11. 验证（change 的验收动作）
 
 - [x] 11.1 Rust 单测 R1–R10 全绿；前端单测 U1–U13 全绿
-- [ ] 11.2 视觉 V1–V4 结构断言全绿；本地像素层全绿
+- [x] 11.2 视觉 V1–V13 结构 / 可访问性断言 + V2p / V3p / V3bp / V4p 像素断言全绿；
+      本地像素层全绿（`1227 passed / 0 failed / 1 skipped`）
 - [x] 11.3 真机 A1–A6 PASS（A7 由 R1–R10 + 视觉桩承担并写明）
-- [ ] 11.4 门禁 `quick` + `visual` 全绿；`validate --all --strict` + `docs-check` 全绿
+- [x] 11.4 门禁 `quick` + `visual` 全绿；`validate --all --strict` + `docs-check` 全绿：
+      quick `GATE RESULT: 13/13 PASS（SKIP 0）`；visual `GATE RESULT: 15/15 PASS（SKIP 0）`；
+      validate 39 passed / 0 failed；docs-check PASS
 - [x] 11.5 证据齐：`.local/acceptance/**`、`.local/reviews/**`（评审包）、门禁日志路径；
       门禁报告照抄 `GATE RESULT` 原文行并附退出码
 
@@ -277,10 +282,10 @@
     准入）；m633 10/10；m303 / m345 / m347 / m351 / m423 / m440 / m454 结构层 47/47；
     `pnpm test` 1806 passed（新增 zh/en 逐字文案与 sticky 接线断言）。
   - `scripts/gate.sh quick`：`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0。
-  - 全量视觉复跑（P2 复审修复后）：`GATE RESULT: 14/15 PASS（SKIP 0）`；`visual-regression`
-    FAIL（`1182 passed / 41 failed / 1 skipped`，13.9m）。41 条与既有清单按
+  - 基线更新前最后一次全量（P2 复审修复后，历史证据）：`GATE RESULT: 14/15 PASS（SKIP 0）`；
+    `visual-regression` FAIL（`1182 passed / 41 failed / 1 skipped`，13.9m）。41 条与既有清单按
     `(spec, 行, 标题)` 逐条相同、无新增失败；m303 / m347 / m351 等 composer 场景的失败仍属
-    既有基线漂移。其余 14 项 PASS，未更新任何基线。
+    既有基线漂移。
   - 独立视觉复核 P2 修复（2026-11-23）：
     - 横幅实际 WCAG：light `#b33d32` on `#f9ecea` **5.017:1**；dark `--danger` 在合成底
       `#3b3032` 上 **4.905:1**；eink 黑字白底 **21:1**。文字与按钮边界同值，均 ≥4.5 / ≥3；
@@ -293,9 +298,21 @@
       纵向溢出。
   - 三种候选按新形态重截（4 张整页 + 4 张元素裁切，连跑两轮 8/8 byte-identical），落在
     主仓 `.local/reviews/pixel-drift-nov23/health-candidates/`，说明页为同目录 `README.md`；
-    独立复核修复后 03 已按新前景重拍。仍未批准、未运行 `--update`、未改任何正式基线。
+    独立复核修复后 03 已按新前景重拍。
+  - 基线更新（Alex 2026-11-23 原话「批准候选并重截基线」）：
+    - 8 张新形态正式基线（V2p / V3p / V3bp / V4p，整页 + 元素各 4 张）与
+      `health-candidates/` 最新 8 张 **逐字节相同**。
+    - 41 条报告失败快照 + 7 张同测试后续快照（m734 900×700、render-codeblock wrap 2–4、
+      search-panel nomatch、tree-menu trash-active / trash-dir；首张失败后从未被比较）一并
+      重截；`baseline-delta.txt`：**modified=48 / added=8 / removed=0**，无其他快照变动。
+    - 前后 hash 与目标清单：`.local/missions/persistence-health-nov23/baselines-before.sha256`
+      / `baselines-after.sha256` / `baselines-41-targets.txt` / `baseline-delta.txt`。
+    - 健康态：V1 零几何；m303 / m351 健康态基线重截后目检无警示块；新增基线只覆盖
+      degraded / gap / banner 三形态，未新增健康态像素。
+    - 最终全量 visual：`GATE RESULT: 15/15 PASS（SKIP 0）`，exit 0；
+      `1227 passed / 0 failed / 1 skipped`（13.7m）。
 
 **已知边界**：`docs-check` 的 `tsc-unit` / `bindings-drift` 在首次 quick 时因「bindings 未
 `git add`」「测试 deps 缺 `stickyToast`」两条已修；重跑见最终门禁日志。`m303-harness-panel`
-的 2183 像素差在**未改动的 HEAD** 上同样复现（既有基线漂移），按「基线更新是人肉裁决点」
-不更新基线，单列在完工报告。
+的旧 2183 像素差已随 Alex 2026-11-23「批准候选并重截基线」的本次重截消失（该基线在
+48 张修改集内）；全量 visual 已 15/15 全绿。
