@@ -25,7 +25,11 @@
 > - 真机（返修后重跑）：`47c-create-and-delete` 1/1 PASS / 31.0s / 43 条断言（`ax: { focused:
 >   "AXTextArea" }` + 键入 `focus47c` 读回），证据
 >   `.local/acceptance/2026-11-23-focus-created-document/`。
-> - 未验项：见 1.5 / 3.2 / 6.3 / 6.4 的就地理由。
+> - 未验项：见 1.5 / 3.2 / 6.3 的就地理由。
+> - **节点 2**：五要件材料齐（独立评审 clean / merge 绑定 `df1658d8`；门禁 quick 13/13、
+>   visual 15/15 且 1272 passed；真机 47c 43 断言 PASS；archive-check 门禁模式 PASS、
+>   `validate --all --strict` 37/37、归档队列唯一条目）。**merge 与归档待执行**，逐条读数见
+>   `proposal.md` 文末「节点 2」块。
 
 ## 0. 节点 1 与红线
 
@@ -169,10 +173,15 @@
 - [x] 6.2 实现后回改 `design.md` 的行号 / 符号名（若与最终代码不一致）
 - [ ] 6.3 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（队列 76 行、
       硬上限 80；先核可删的僵尸条目，不为压行数删活条目）
-      ——**未做（不变更范围）**：本 mission 只提交 mission 分支，不 merge / 不归档；这条属于
-      合并节点的动作，留给 tower 在合并时执行。
-- [ ] 6.4 交独立 reviewer；verdict 绑定当前 tip；归档前逐条核对节点 2 五要件
-      ——**未做（流程节点）**：独立评审由 tower 在 mission 分支 tip 上派发；worker 不自评。
+      ——**部分完成，剩 merge 时序动作**：队列条目已随节点 2 材料落（`docs/backlog.md` 归档跟踪
+      队列，加行后 77 行 / 上限 80，`grep -c` = 1）；本 mission 不 merge，这条的「合并时」动作
+      留给 tower 在 merge 时执行（条目已就位，无需再补）。
+- [x] 6.4 交独立 reviewer；verdict 绑定当前 tip；归档前逐条核对节点 2 五要件
+      ——本轮两轮评审：r1 判 needs-changes（代码本体无阻塞，阻塞在验证制品）绑定 `8d746878`，
+      verdict `/Users/boxcounter/.kimi-code/sessions/wd_lumir_97a6261b51e9/session_fb5487b7-c3d6-4a95-8717-2dde1e8c3acc/agents/main/tasks/agent-k7ptmn91/output.log`；
+      四项返修后复审 **clean / merge** 绑定 `df1658d8`，verdict
+      `/Users/boxcounter/.kimi-code/sessions/wd_lumir_97a6261b51e9/session_fb5487b7-c3d6-4a95-8717-2dde1e8c3acc/agents/main/tasks/agent-9myars66/output.log`。
+      五要件逐条读数见 `proposal.md` 文末「节点 2」块；merge / 归档待执行。
 
 ## 7. 信息卫生
 

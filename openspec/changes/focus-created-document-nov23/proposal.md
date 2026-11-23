@@ -14,8 +14,10 @@
 >   焦点交还旧编辑器；浮层关闭后若没有其他仍在场的焦点目标，焦点落到新文档正文首行；焦点若
 >   已移到 composer、文件树行或编辑器等仍在场目标，仍严格不抢。
 > - **实现已落地**（mission 分支 `feat/focus-created-document-nov23`，实现提交 `8d746878`，
->   验证制品返修见本块下方「实现与验证状态」）。代码本体、测试与验收场景均已提交；本 change
->   尚未 merge / 归档，living spec 的改动仍以 delta 留在本目录。
+>   验证制品返修提交 `df1658d8`；覆盖读数见本块下方「实现与验证状态」）。代码本体、测试与验收
+>   场景均已提交；本 change 尚未 merge / 归档，living spec 的改动仍以 delta 留在本目录。
+> - **节点 2 材料已备**（2026-11-23，五要件齐）：最终独立评审 **clean / merge** 绑定 tip
+>   `df1658d8`；merge 与归档**待执行**（未发生）。五要件逐条读数见文末「节点 2」块。
 > - **实现与验证状态（2026-11-23，返修后）**
 >   - 代码：`src/focus-claim.ts`（新，判定纯函数）、`src/main.ts`（create 分支 `claim` + await
 >     + 判定 + `focusPreservingReadingPosition`；`passiveOverlayClose` 沿完整激活链透传）、
@@ -163,3 +165,64 @@ F2 的修订值来自 2026-11-23 第二轮评审：原「移走即不聚焦」�
 ## 与 ADR 的关系
 
 不需要 ADR：只改一个 capability 的交互收尾，不改分层、不改技术选型、不引入新机制。
+
+## 节点 2（归档放行材料，2026-11-23）
+
+> 状态：**材料已备、五要件齐；merge 与归档待执行**（本 mission 不 merge / 不归档，归档由 tower
+> 排期执行）。归档执行后在同一块追加归档提交 hash、包装器输出、修链读数与 `--archived` 审计读数。
+
+1. **节点 1 批准依据**：Alex 2026-11-23「按推荐」批准 F1 / F3，同日「好，按这个规则处理」追认
+   F2 修订值（浮层被动关闭、不交还旧编辑器焦点、无其它仍在场目标时焦点落新文档）。批准原文与逐条
+   落值见本文件「节点 1 裁决点」表与节点状态块；实现期范围以本文件「What Changes」与
+   `specs/file-tree/spec.md` 的 delta 为准，**无静默扩 scope**。
+   - 实现期补充（不改行为边界，已记入 design §2.2 / §6）：被动关闭在 `dismiss()` 之后把仍在浮层内
+     的焦点显式 `blur()` 回 `body`——浏览器对 `hidden` 元素的焦点修复晚一帧，晚于收尾判定；不补这
+     一步则 F2 追认值（浮层关闭后焦点落新文档）在真实时序上不可达。该步只在焦点仍属于被关闭浮层
+     时生效，不触碰用户的新焦点。
+2. **独立评审**：最终结论 **clean / merge**，绑定 tip `df1658d8`，无 P1 / P2（2026-11-23）。
+   verdict
+   `/Users/boxcounter/.kimi-code/sessions/wd_lumir_97a6261b51e9/session_fb5487b7-c3d6-4a95-8717-2dde1e8c3acc/agents/main/tasks/agent-9myars66/output.log`。
+   前一轮为 needs-changes（判代码本体无阻塞、阻塞在验证制品：composer / dirty 守卫 / 子目录三项
+   覆盖不实 + 节点状态过期），绑定 `8d746878`，verdict
+   `/Users/boxcounter/.kimi-code/sessions/wd_lumir_97a6261b51e9/session_fb5487b7-c3d6-4a95-8717-2dde1e8c3acc/agents/main/tasks/agent-k7ptmn91/output.log`；
+   四项已逐条闭环并落在 `df1658d8`，同一 reviewer 复审 clean / merge。
+   - 本节点材料以 **docs-only** 提交落地（只改本 change 的 `proposal.md` / `tasks.md` 与
+     `docs/backlog.md`，不动 `src/**` / `tests/**` / `scripts/acceptance/**`），评审覆盖的实现面
+     不变；tip 上因此多出的这一个文档提交不构成新的评审对象。
+3. **tasks 完成数**：`tasks.md` 共 **54** 项，**51/54** 已勾。未勾 3 项就地写明理由（不删任务项、
+   不留空勾）：1.5（`restoreFocus` spy 页面侧不可观测）、3.2（该链路文档恒为空文件）、6.3（队列条目
+   已随本节点落，剩「合并时」这一时序动作，随 merge 待执行）。merge / 归档动作本身不在 tasks 的
+   实施项里，见本块状态行。
+4. **要求的门禁与真机证据**（全部落 `.local/`，git 外；worktree 会被清理，指针均为主仓绝对路径）：
+   - `scripts/gate.sh visual`（含 quick 层 13 项 + 视觉两项；动过 `tests/visual/**`，必须本地跑）：
+     **`GATE RESULT: 15/15 PASS（SKIP 0）`**，exit 0；`visual-regression` 861s、**1272 passed /
+     1 intentional skip**。日志
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/focus-created-document-nov23/gate-visual-02.log`。
+     quick 层逐项：cargo-fmt / clippy / test、bindings-drift、schemas-drift、tsc-root / visual /
+     unit、unit-tests、perf-fixture-tests、acceptance-suite、docs-check、openspec-validate 全 PASS。
+   - `pnpm test`：**1857/1857 PASS**（gate 的 unit-tests 项 PASS；本机直跑读数见
+     `green-08-all-14.log` 同批会话）。本 change 的判定单测在
+     `tests/unit/focus-claim.test.ts`。
+   - 浏览器层：`tests/visual/scenes/focus-created-document-nov23.spec.ts` **14/14 PASS**
+     （`green-08-all-14.log`）；相关视觉 80 passed（`visual-related-02.log`）。
+     先红后绿与五轮反向验证日志同目录：`red-01`（旧实现 5 红 3 绿）、`red-02`（只保留 afterLoad
+     passive）、`red-03`（去掉收尾判定）、`red-04`（去掉 `shouldClaimFocus`）、`red-05`（去掉
+     `opened` 闸门）、`red-06`（子目录分支注入聚焦）。
+   - 真机 `47c-create-and-delete`：**1/1 PASS / 31.0s / 43 条断言**（含 `ax: { focused:
+     "AXTextArea" }` 与键入 `focus47c` 读回）。证据目录
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/acceptance/2026-11-23-focus-created-document/`
+     （`47c-create-and-delete/steps.md`、`shots/`、`ax/`）；runner 日志
+     `/Users/boxcounter/Code/Boxcounter/lumir/.local/missions/focus-created-document-nov23/acceptance-47c-02.log`。
+   - **视觉基线未更新**：`git status tests/visual/baselines` 无改动；焦点是瞬态，本 change 不需要新基线。
+5. **规格对账（归档前读数）**：
+   - `node scripts/openspec-archive-check.mjs --change focus-created-document-nov23`：**PASS**
+     （扫过 1 份 delta，2 条 MODIFIED，对比 23 段，无静默丢段）。
+   - `validate --all --strict`：`Totals: 37 passed, 0 failed (37 items)`。
+   - 归档跟踪队列：`docs/backlog.md` 有且仅有一条本 change 条目（`grep -c` = 1；队列 77 行 /
+     硬上限 80）。按人读规则「tasks 全部勾选（或标注放弃原因）后落一条」已落地；本 change 的
+     tasks 未全勾（3 项带理由），`archive-check` 的「已完成 change 必须有唯一条目」分支因此
+     不触发——这一条的实际判据是上面的 `grep -c` 读数。
+
+**已知边界（不计入上述 PASS 的覆盖面）**：未验项 1.5 / 3.2 的口径见 `tasks.md` 同名条目；
+「装载中焦点被抢 / 装载中打开浮层」的时序反例只在 chromium 层覆盖，真机只验正常路径（分工见
+`design.md` §3.2）。
