@@ -208,8 +208,17 @@
   - 策略：三次立即重试后**不丢弃**，保留队首；单实例延迟重试线程按 20ms 指数退避（封顶
     2s）接管，reporter 恢复后无需自然写入即可交付。永久 panic 不忙转 / 不递归，诊断按
     累计次数节流（前 3 + 每 30 次）。degraded / ok 共用「保留重试」而非丢弃策略。
-- Rust 后绿：`cargo test --lib` **1058 passed / 1 ignored**（含 R1–R10 + 锁外发送 +
-  drain 顺序 + panic 恢复 / 保留 + R7b）。
+- 终审生命周期（第五轮 P1）：
+  - 先红：`red-p1p2-lifecycle.log`——drainer 在途时 retry 误退出（scheduled 被清）、永久
+    panic 强持队列 Arc（销毁强引用后 Weak 仍可 upgrade）。
+  - 后绿：`green-p1p2-lifecycle-tests.log` 两条专项 PASS；全量 `green-p1p2-lifecycle.log`
+    **1060 passed / 1 ignored**。
+  - 策略：retry 退出在同一把锁内同时确认 `pending.is_empty() && !draining`；重试线程睡眠
+    期间只持 `Weak<TransitionState>`，每轮 upgrade 后短暂强持完成一次 drain 再释放；Session /
+    Writer 销毁后 upgrade 失败即退出，队列可释放。未交付告警保留、单 drainer、顺序、
+    锁外 emit、精确重试次数均保持。
+- Rust 后绿：`cargo test --lib` **1060 passed / 1 ignored**（含 R1–R10 + 锁外发送 +
+  drain 顺序 + panic 恢复 / 保留 + 生命周期 + R7b）。
 - 前端后绿：`pnpm test` **1804 passed**（含 U1–U13、请求世代双向交错、保存成功后旧备份
   迟到失败不回标、会话归属、快照 token 准入）。
 - 视觉：`tests/visual/scenes/persistence-health-nov23.spec.ts` 6 条结构断言全绿；未新建 / 未更新
@@ -222,9 +231,9 @@
   709b 的红灯副本）。A7（harness 正面写失败）真机不可达，由 R1–R10 + 视觉桩承担（见 709
   场景正文）。
 - 门禁（照抄原文）：
-  - `gate-quick-panic-retention.log`：`GATE RESULT: 13/13 PASS（SKIP 0）`，gate.sh 退出码 0
-    （终审 panic 保留后的最终代码；`gate-quick-panic.log` / `gate-quick-r3.log` /
-    `gate-quick-fix3.log` 同结果）。
+  - `gate-quick-lifecycle.log`：`GATE RESULT: 13/13 PASS（SKIP 0）`，gate.sh 退出码 0
+    （终审生命周期修复后的最终代码；`gate-quick-panic-retention.log` /
+    `gate-quick-panic.log` / `gate-quick-r3.log` / `gate-quick-fix3.log` 同结果）。
   - `gate-visual-final2.log`：`GATE RESULT: 14/15 PASS（SKIP 0）`，gate.sh 退出码 1；
     唯一 FAIL 是 `visual-regression`（`1171 passed / 41 failed / 1 skipped`，13.7m）。
     41 条失败与 HEAD 原码逐条相同，40/41 实际截图 byte-identical、m303 实际图仅差 6 像素
