@@ -71,9 +71,10 @@
 
 ## 5. 真机与既有场景回扫
 
-- [ ] 5.1 真机场景 228 重跑：属性盒显露 / 恢复、doc-title 与正文点击零写盘、light + eink 截图
-      证据；步骤与断言不变，仅文案改准。**未执行**：本轮 tower 指定的验证范围为「m647 +
-      quick + 完整 visual」；228 的步骤与断言零变化（只改文案），真机重跑归合并后的 dogfood 批次
+- [x] 5.1 真机场景 228 重跑：属性盒显露 / 恢复、doc-title 与正文点击零写盘、light + eink 截图
+      证据；步骤与断言不变，仅文案改准——**PASS 47.8s（28 断言 / 0 失败）**；日志
+      `.local/missions/caret-default-nov23/acceptance-228.log`，证据目录
+      `.local/acceptance/2026-11-23-caret-default/`（worktree 内生成，已复制到主仓同路径）
 - [x] 5.2 回扫所有引用「光标」的既有验收场景（`rg "光标" scripts/acceptance/scenarios/`），
       逐条确认没有把 2px 写成断言；有则改准——实测零命中（无 `2px` / `-1px` 光标断言）
 - [x] 5.3 证据落 `.local/acceptance/<批次>/`（git 外）；用绝对路径 `ls` 确认后再写进报告——
@@ -92,10 +93,11 @@
       ——`GATE RESULT: 13/13 PASS（SKIP 0）`，退出码 0
 - [x] 6.4 `scripts/gate.sh visual` 通过（动过 `tests/visual/scenes/**`，必须本地跑）
       ——`GATE RESULT: 15/15 PASS（SKIP 0）`，退出码 0；视觉套件 1258 passed / 1 skipped
-- [ ] 6.5 真机 228 PASS；证据指针可 `ls`——**未执行**，理由同 5.1（本轮范围不含真机；场景
-      步骤与断言零变化），归合并后 dogfood 批次
+- [x] 6.5 真机 228 PASS；证据指针可 `ls`——PASS 47.8s，证据
+      `.local/acceptance/2026-11-23-caret-default/`（summary.md / shots / ax 齐全）
 - [x] 6.6 视觉基线未更新；若确需更新，先送 Alex 过目——逐张像素比对无差异，未触及基线
-- [x] 6.7 `tasks.md` 全部勾选，未勾项就地写放弃理由（未勾项：5.1 / 6.5 / 6.8 / 6.9）
+- [x] 6.7 `tasks.md` 全部勾选，未勾项就地写放弃理由（未勾项：6.8 / 6.9）——5.1 / 6.5 已在
+      2026-11-23 真机 228 PASS 后补勾
 - [ ] 6.8 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（队列当前 76
       行、硬上限 80；落条前先核可删的僵尸条目，不为压行数删活条目）——**合并时由 tower 执行**，
       worker 不 merge
