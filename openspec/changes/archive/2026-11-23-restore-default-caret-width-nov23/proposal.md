@@ -109,7 +109,7 @@
 
 ## 节点 2（归档前材料已齐；merge / archive 待执行）
 
-> 状态：**已归档**（2026-11-23）。实现已合并推送，归档提交 `bd595ee3`；包装器输出
+> 状态：**已归档**（2026-11-23）。实现已合并推送，归档提交 `546501f7`；包装器输出
 > `Totals: + 0, ~ 1, - 0, → 0`，归档后修链 0 处（4 篇 Markdown / 4 条相对链接），相对链接门禁 PASS；
 > `node scripts/openspec-archive-check.mjs --archived restore-default-caret-width-nov23` PASS
 > （1 条 MODIFIED / 10 段；人工恢复 0 段，声明认领 0 段）。
