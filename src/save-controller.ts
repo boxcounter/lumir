@@ -381,7 +381,9 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  「恢复提示的丢弃动作」另有一条带 toast 的同族函数（discardBackup），别混。 */
   function forgetBackup(path: string): void {
     // 内容已被保存 / 放弃 / 改名：该路径不再有「dirty 内容未得到备份」的风险，
-    // 写失败子条件随之清除（design §5.2）。备份删除失败只作罢——它不改变风险读数。
+    // 写失败子条件随之清除（design §5.2）。同时推进备份请求序号——在途的旧备份应答
+    // 不得在这之后把已 clean 的路径重新标成失败（与 P1-1 同一条请求世代纪律）。
+    beginBackupRequest(path);
     clearBackupFailed(path);
     void recoveryDiscard(path).catch(() => {});
   }

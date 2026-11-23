@@ -1219,3 +1219,37 @@ test("P1-2b 两次枚举在途：旧失败晚于新成功，MUST NOT 重新标�
     "旧枚举的失败应答 MUST NOT 覆盖较新的成功",
   );
 });
+
+test("P1-1c 保存成功后，旧备份的迟到失败不得把已 clean 的路径重新标成失败", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    const calls: Deferred<void>[] = [];
+    rig.backend.handle("recovery_backup", () => {
+      const call = deferred<void>();
+      calls.push(call);
+      return call.promise;
+    });
+    rig.backend.handle("document_save", () => "rev-saved");
+    rig.editor.open("a.md", "# A");
+    rig.controller.noteOpened("a.md", "rev-a");
+    rig.editor.edit("a.md", "# A 改");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.equal(calls.length, 1, "前提：备份在途");
+
+    await rig.controller.save();
+    assert.equal(rig.editor.handle.sessionForPath("a.md")!.dirty, false, "前提：保存成功转 clean");
+
+    calls[0].reject(commandError("recovery_write_failed", "磁盘满"));
+    await flush();
+    assert.deepEqual(
+      rig.controller.recoveryFailures().paths,
+      [],
+      "保存成功已放弃该备份请求；迟到失败 MUST NOT 复活写失败子条件",
+    );
+    stopTimers(rig);
+  } finally {
+    mock.timers.reset();
+  }
+});
