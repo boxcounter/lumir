@@ -234,6 +234,26 @@ fn emit_terminal_on(
     sink.emit(payload);
 }
 
+/// 可重试失败登记（change add-harness-turn-retry-nov23 design §4.1）：仅交互用户轮 / 重试轮、
+/// 且后端分类判可重试时写入 `Session.failed`，返回绑定动作的 `turn`。其余情形返回 `None`
+/// ——error 事件因此不带 `retry` 键。
+fn register_failed<C: RunContext>(
+    ctx: &mut C,
+    allow_retry: bool,
+    user_text: &str,
+    retryable: bool,
+) -> Option<u64> {
+    if !allow_retry || !retryable {
+        return None;
+    }
+    ctx.with_session(|session| {
+        let turn = session.turn_seq();
+        session.record_failed(turn, session.input_len(), user_text.to_string());
+        turn
+    })
+    .ok()
+}
+
 /// run_turn 的 tauri 入口（command 层 spawn 在 `lumir-harness-llm` 专线程上跑）。
 ///
 /// panic 收口（r1 P2-3）：线程中途 panic 若不收口，busy 标志永久残留、
@@ -247,6 +267,49 @@ pub fn run_turn(
     config: HarnessConfig,
     parts: impl Into<DeliveryInput>,
     context_section: Option<String>,
+    origin: TurnOrigin,
+) {
+    run_turn_inner(
+        app,
+        runtime,
+        scope,
+        config,
+        TurnInput::User {
+            parts: parts.into(),
+            context_section,
+        },
+        origin,
+    );
+}
+
+/// 显式重试的线程入口（change add-harness-turn-retry-nov23 design §4.2 第 7 条）：
+/// `begin_retry` 已消费 `failed` 并 `begin_turn`（相位 Running），本函数**MUST NOT** 再调
+/// `acquire_turn`。线程体与发送路径同一份实现（sink / client / catch_unwind / release / title）。
+pub fn run_turn_resume(
+    app: tauri::AppHandle,
+    runtime: Runtime,
+    scope: VaultScope,
+    config: HarnessConfig,
+    user_text: String,
+) {
+    run_turn_inner(
+        app,
+        runtime,
+        scope,
+        config,
+        TurnInput::Resume { user_text },
+        TurnOrigin::Retry,
+    );
+}
+
+/// `run_turn` 与 `run_turn_resume` 共用的线程体。
+fn run_turn_inner(
+    app: tauri::AppHandle,
+    runtime: Runtime,
+    scope: VaultScope,
+    config: HarnessConfig,
+    input: TurnInput,
+    origin: TurnOrigin,
 ) {
     // 事件信封（M312）：每个 harness:event 都带 vault 根路径（= 会话标识），前端据此只渲染
     // 当前 vault 的会话。包装放在本函数——生产路径上唯一的装配点，下面十几处发射点与
@@ -288,6 +351,11 @@ pub fn run_turn(
         }
     };
     let mut title_job = None;
+    // `input` / `origin` 要被 `catch_unwind` 闭包**取得所有权**（循环本体按值消费），而闭包
+    // 不能是 `move`——`sink` / `runtime` / `scope` / `config` / `client` 在其后仍要用。用
+    // 一次性槽位转移：闭包正常或 panic 后槽位都已被取走。
+    let mut input_slot = Some(input);
+    let origin_slot = origin;
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // 调度工具端口（change add-cron-conversational-registration）：交互发送路径注入；
         // 交接契约槽位（cron 定时 / 点击）在 `SessionContext::cron_port` 里仍返回 None。
@@ -296,7 +364,8 @@ pub fn run_turn(
                 .with_cron_port(Some(std::sync::Arc::new(crate::CronToolPort::new(
                     app.clone(),
                 ))));
-        title_job = run_turn_core(&mut ctx, &config, parts, context_section, client.as_mut());
+        let input = input_slot.take().expect("回合输入只消费一次");
+        title_job = run_turn_core_with_mode(&mut ctx, &config, input, origin_slot, client.as_mut());
     }))
     .is_err();
     if panicked {
@@ -367,7 +436,38 @@ pub fn run_turn_for(
     // 「本轮生效规则」，不给测试面留一条不同的判定路径。
     runtime.seed_permissions(&config.permissions);
     let mut ctx = SessionContext::new(sink, runtime, scope, config);
-    let _ = run_turn_core(&mut ctx, config, parts, context_section, client);
+    let _ = run_turn_core_with_mode(
+        &mut ctx,
+        config,
+        TurnInput::User {
+            parts: parts.into(),
+            context_section,
+        },
+        TurnOrigin::Interactive,
+        client,
+    );
+}
+
+/// 显式重试的单测入口（change add-harness-turn-retry-nov23 R4 / R5 / R10 的落点）：
+/// 与生产 [`run_turn_resume`] 同一实现（`TurnInput::Resume` + `TurnOrigin::Retry`），不接
+/// `AppHandle`——调用方已用 [`Runtime::begin_retry`] 完成守卫与 `begin_turn`。
+pub fn run_turn_resume_for(
+    sink: &dyn EventSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    user_text: String,
+    client: &mut dyn LlmClient,
+) {
+    runtime.seed_permissions(&config.permissions);
+    let mut ctx = SessionContext::new(sink, runtime, scope, config);
+    let _ = run_turn_core_with_mode(
+        &mut ctx,
+        config,
+        TurnInput::Resume { user_text },
+        TurnOrigin::Retry,
+        client,
+    );
 }
 
 /// 循环本体（上下文与 client 注入，单测直接驱动）。
@@ -381,28 +481,14 @@ pub fn run_turn_for(
 /// 返回值 = 本轮正常完成后要交给后台线程的命名任务（change add-session-auto-naming，
 /// design D1/D9）：只有走到 `done` 的轮才可能产出它；`aborted` / 错误收尾的轮恒 `None`
 /// （标题素材需要真实问答）。触发判定是纯内存的一次运算，HTTP 调用由调用方起线程。
-fn run_turn_core<C: RunContext>(
-    ctx: &mut C,
-    config: &HarnessConfig,
-    parts: impl Into<DeliveryInput>,
-    context_section: Option<String>,
-    client: &mut dyn LlmClient,
-) -> Option<super::title::TitleJob> {
-    run_turn_core_with_mode(
-        ctx,
-        config,
-        TurnInput::User {
-            parts: parts.into(),
-            context_section,
-        },
-        client,
-    )
-}
-
-/// 回合输入的两种形态（change add-harness-subagents design §12.6）：
+/// 回合输入的三种形态（change add-harness-subagents design §12.6；change
+/// add-harness-turn-retry-nov23 design §5.3 / §8 增加 `Resume`）：
 /// - `User`：普通用户回合——user 消息在这里入队；
 /// - `Preloaded`：自动唤醒回合——完成通知已经由调度器写进会话历史（input + panel），
-///   这里**不再**入队（否则同一条通知会在历史里出现两次）。
+///   这里**不再**入队（否则同一条通知会在历史里出现两次）；
+/// - `Resume`：显式重试——失败的那一次 provider 往返原地续发。`input` 原样复用（不重建
+///   用户消息、不重拼上下文节），只跑工具循环；`user_text` 是失败轮的用户提问原文段，
+///   供重试成功后的会话自动命名。
 pub(crate) enum TurnInput {
     User {
         parts: DeliveryInput,
@@ -412,17 +498,48 @@ pub(crate) enum TurnInput {
         /// 通知文本（标题素材；自动回合不触发自动命名）。
         user_text: String,
     },
+    Resume {
+        user_text: String,
+    },
+}
+
+/// 轮次来源（change add-harness-turn-retry-nov23 design §8）：只有交互用户轮与重试轮允许
+/// 登记可重试失败。**显式枚举**，MUST NOT 用「有没有 completion 回调 / tool_policy」这类
+/// 间接推断——那是第二真源。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnOrigin {
+    /// `harness_send`（交互用户发送）。
+    Interactive,
+    /// `harness_retry`（显式重试）。
+    Retry,
+    /// cron 运行（含交互槽）：失败按运行契约回执，不产生可点动作。
+    Cron,
+    /// 子运行：有自己的引擎与生命周期，父会话不持有它的失败事实。
+    Subrun,
+    /// 自动唤醒回合：没有用户动作，不产生可点动作。
+    AutoWake,
+}
+
+impl TurnOrigin {
+    /// 只有交互用户轮与重试轮允许登记可重试失败。
+    pub fn allows_retry(self) -> bool {
+        matches!(self, TurnOrigin::Interactive | TurnOrigin::Retry)
+    }
 }
 
 pub(crate) fn run_turn_core_with_mode<C: RunContext>(
     ctx: &mut C,
     config: &HarnessConfig,
     input: TurnInput,
+    origin: TurnOrigin,
     client: &mut dyn LlmClient,
 ) -> Option<super::title::TitleJob> {
+    let allow_retry = origin.allows_retry();
     // 用户回合开始：排队中的后台通知必须在 user 消息**之前**并入历史（design §12.6.2），
     // 并取消待起唤醒、清零链计数。自动回合的链计数已在调度器起回合时推进。
+    // 重试回合**不**并入排队通知（design §5.3：重试只补发失败的那次往返，不等待、不并入）。
     let mut preloaded: Option<String> = None;
+    let mut resumed_user_text: Option<String> = None;
     let mut parts: Option<DeliveryInput> = None;
     let mut context_section: Option<String> = None;
     match input {
@@ -435,6 +552,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
             context_section = user_context;
         }
         TurnInput::Preloaded { user_text } => preloaded = Some(user_text),
+        TurnInput::Resume { user_text } => resumed_user_text = Some(user_text),
     }
     // user 消息入队（LLM 侧 + 面板侧 + JSONL + 上下文节记录，压缩重注入用）。
     // 上下文节由调用侧从 ContextBlock **同一次生成**并传入（装配与存储同源，M309）——
@@ -443,7 +561,10 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
     //
     // `turn_user_text`：本轮用户提问的**原文段**（剥掉自动注入的编辑器上下文节）——飘移信号的
     // 判据素材（change add-session-auto-naming，design D5：标题词元 vs 用户消息词元）。
-    let mut turn_user_text = preloaded.clone().unwrap_or_default();
+    let mut turn_user_text = preloaded
+        .clone()
+        .or_else(|| resumed_user_text.clone())
+        .unwrap_or_default();
     if let Some(parts) = parts {
         let context_section_for_session = context_section.clone();
         let enqueue = ctx.with_session(|s| {
@@ -608,8 +729,20 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
             }
             let error_payload = llm_error_payload(&error);
             ctx.persist(error_payload);
-            // SSE 事件形态**不变**（前端只读 code/message）：wire 面诊断字段只进留存。
-            emit_terminal(ctx, events::error(&error.code, &error.message));
+            // 可重试失败登记（change add-harness-turn-retry-nov23）：只有交互用户轮 / 重试轮
+            // 允许；`done` / `aborted` / 不可重试错误不登记（`begin_turn` 已清空旧记录）。
+            let retry_turn = register_failed(
+                ctx,
+                allow_retry,
+                &turn_user_text,
+                llm::error_retryable(&error),
+            );
+            // 事件形态在不可重试时**逐字节不变**（前端只读 code/message）；可重试时多一个
+            // `retry:{turn}` 键。wire 面诊断字段只进留存。
+            emit_terminal(
+                ctx,
+                events::error_with_retry(&error.code, &error.message, retry_turn),
+            );
             return None;
         }
 
@@ -618,8 +751,56 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
         // 本轮 usage 的累计与读数（M443）：入口是 [`session::Session::record_usage`]——先累加
         // 本逻辑会话的计数、再算全部读数并返回快照。返回值同时喂快照（会话状态）与事件两条
         // 通道：同一份算法一处产出，MUST NOT 各算一套（REVIEW.md 「同一语义两处真源」条）。
+        //
+        // 从「输出项入队」拆出来（change add-harness-turn-retry-nov23 design §5.2 的 P1 前提）：
+        // 空响应要在响应项进 `input` / `panel` **之前**判定——否则只带 reasoning 的空响应会先
+        // 留下一个回放项，重试请求因此与失败请求不完全相同，失败响应的思考也会进下一轮历史。
+        // usage 仍照常累计（R11），思考兜底已在上方先于错误收口。
         let turn_usage = output.usage;
         let mut usage_snapshot = None;
+        if let Some(usage) = turn_usage {
+            // 窗口按配置 schema 读取（M373：`providers.<id>.models` 的逐模型声明，未列出
+            // 回落保守默认）——llm.rs 的预设窗口表已退役。
+            let window = config.context_window(&config.provider, llm::active_model(config));
+            usage_snapshot = ctx.with_session(|s| s.record_usage(&usage, window)).ok();
+        }
+        if let Some(snapshot) = usage_snapshot {
+            ctx.sink().emit(events::usage(&snapshot));
+        }
+        ctx.on_assistant_text(&assistant_text);
+        if let Some(usage) = turn_usage {
+            ctx.on_round_usage(&usage.into());
+        }
+        // token / 时间闸的「往返后复查」（design §7.1）：触顶后不再执行本轮的工具调用，
+        // 用已有产出收敛。轮次闸不在此复查——交互路径的 loop_max 语义是「跑完本轮调用、
+        // 下一轮不再发请求」，行为逐字节不变。
+        if let BudgetVerdict::Exhausted(reason) = ctx.budget(rounds as u32) {
+            if reason != super::run::StopReason::Rounds {
+                ctx.on_budget_exhausted(reason);
+                break;
+            }
+        }
+
+        // 空响应终态（前移到响应项入队之前）：整轮失败，不给输入 / 面板留任何回放项。
+        // abort 仍优先于本判定（上方停止检查点已收口）；思考兜底与 usage 也已先行。
+        if output.is_empty_response() {
+            let retry_turn = register_failed(
+                ctx,
+                allow_retry,
+                &turn_user_text,
+                llm::retryable(llm::FailureKind::EmptyResponse, false),
+            );
+            emit_terminal(
+                ctx,
+                events::error_with_retry(
+                    "harness_empty_response",
+                    "模型返回了空响应（无文本也无工具调用），本轮已停止",
+                    retry_turn,
+                ),
+            );
+            return None;
+        }
+
         let _ = ctx.with_session(|s| {
             for item in session::assistant_item(&assistant_text, output.reasoning.as_ref()) {
                 s.push_input(item);
@@ -643,40 +824,7 @@ pub(crate) fn run_turn_core_with_mode<C: RunContext>(
             }
             // 正文 / 思考 / 调用 / 用量已随上面的 llm_response 落盘（wire 口径）——
             // 这里不再各记一份 sidecar（被 wire 覆盖的 kind 全部废弃，防双写）。
-            if let Some(usage) = turn_usage {
-                // 窗口按配置 schema 读取（M373：`providers.<id>.models` 的逐模型声明，未列出
-                // 回落保守默认）——llm.rs 的预设窗口表已退役。
-                let window = config.context_window(&config.provider, llm::active_model(config));
-                usage_snapshot = Some(s.record_usage(&usage, window));
-            }
         });
-        if let Some(snapshot) = usage_snapshot {
-            ctx.sink().emit(events::usage(&snapshot));
-        }
-        ctx.on_assistant_text(&assistant_text);
-        if let Some(usage) = turn_usage {
-            ctx.on_round_usage(&usage.into());
-        }
-        // token / 时间闸的「往返后复查」（design §7.1）：触顶后不再执行本轮的工具调用，
-        // 用已有产出收敛。轮次闸不在此复查——交互路径的 loop_max 语义是「跑完本轮调用、
-        // 下一轮不再发请求」，行为逐字节不变。
-        if let BudgetVerdict::Exhausted(reason) = ctx.budget(rounds as u32) {
-            if reason != super::run::StopReason::Rounds {
-                ctx.on_budget_exhausted(reason);
-                break;
-            }
-        }
-
-        if output.is_empty_response() {
-            emit_terminal(
-                ctx,
-                events::error(
-                    "harness_empty_response",
-                    "模型返回了空响应（无文本也无工具调用），本轮已停止",
-                ),
-            );
-            return None;
-        }
 
         if output.calls.is_empty() {
             // 轮完成：按 design §9 检查自动压缩（越阈值即压缩续聊；失败不阻断）。
@@ -1049,6 +1197,9 @@ fn llm_error_payload(error: &llm::TurnError) -> serde_json::Value {
         "kind": "llm_error",
         "code": error.code,
         "message": error.message,
+        // 稳定内部类别只作诊断素材（change add-harness-turn-retry-nov23 tasks 3.9）：
+        // 不参与恢复重建，也不成为第二判据源（判定只认 `TurnError.kind`）。
+        "failure_kind": error.kind.as_str(),
     });
     append_error_diagnostics(&mut payload, error);
     payload
@@ -1782,6 +1933,8 @@ pub(crate) fn run_auto_turn_acquired(
             &mut ctx,
             &config,
             TurnInput::Preloaded { user_text },
+            // 自动唤醒回合没有用户动作：失败不产生可点动作（design §8）。
+            TurnOrigin::AutoWake,
             client.as_mut(),
         );
     }))
@@ -2507,6 +2660,7 @@ mod tests {
             code: "harness_http_error".into(),
             message: "Your request exceeded k3-256k model token limit: 262144".into(),
             context_overflow: true,
+            kind: llm::FailureKind::HttpNon2xx(400),
             http_status: Some(400),
             raw_body: Some(r#"{"error":{"message":"…"}}"#.into()),
             body_truncated: false,
@@ -3429,5 +3583,73 @@ mod tests {
             vec!["vault_read".to_string(), "vault_search".to_string()],
             "子运行暴露面 = 定义白名单：{text}"
         );
+    }
+
+    /// R12（行为面）：自动唤醒回合（`TurnInput::Preloaded` + `TurnOrigin::AutoWake`）以
+    /// 可重试类错误失败时**不产生**可重试状态，error 事件也不带 `retry`。
+    /// 区分度：把来源传成 Interactive（或退回「有没有 completion」式推断）时本用例必红。
+    #[test]
+    fn auto_turn_failure_does_not_create_retry_state() {
+        let root =
+            std::env::temp_dir().join(format!("lumir-harness-autoturn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let _xdg = crate::harness::xdg_test_lock();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let fixture = root.join("auto.json");
+        std::fs::write(
+            &fixture,
+            r#"{"responses": [{"error": {"code": "harness_network_failed", "message": "断"}}]}"#,
+        )
+        .unwrap();
+        let config = crate::config::test_mock(Some(&fixture.display().to_string()));
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-test-1".to_string(),
+        };
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&scope, &config).unwrap();
+        // 自动回合前置：通知已由调度器写进历史（input + panel）。
+        runtime
+            .with_session(&scope, |session| {
+                session.push_input(serde_json::json!({
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "后台完成通知"}],
+                }));
+            })
+            .unwrap();
+        let sink = Collect::default();
+        let seen = sink.0.clone();
+        assert!(run_auto_turn_acquired(
+            runtime.clone(),
+            scope.clone(),
+            config.clone(),
+            std::sync::Arc::new(sink),
+            "后台完成通知".into(),
+        ));
+        assert!(
+            runtime.snapshot(&scope, &config).retry.is_none(),
+            "自动回合失败不产生可重试状态"
+        );
+        let error = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|event| event["type"] == "error")
+            .cloned()
+            .expect("自动回合必须报错");
+        assert!(
+            error.get("retry").is_none(),
+            "自动回合的 error 事件不带 retry：{error}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -435,9 +435,24 @@ pub fn done() -> serde_json::Value {
     serde_json::json!({"type": "done"})
 }
 
-/// `{"type":"error","code":"...","message":"..."}`
+/// `{"type":"error","code":"...","message":"..."}`；可重试时带 `retry:{"turn":N}`
+/// （change add-harness-turn-retry-nov23 design §6.1）。不可重试时**缺键**（不写 `retry:null`
+/// ——前端把「在场但空」当可重试的形态会被回避）。既有三键不变。
 pub fn error(code: &str, message: &str) -> serde_json::Value {
     serde_json::json!({"type": "error", "code": code, "message": message})
+}
+
+/// [`error`] 的可重试形态：`retry` 只在后端分类给出可重试轮次时在场。
+pub fn error_with_retry(code: &str, message: &str, retry_turn: Option<u64>) -> serde_json::Value {
+    match retry_turn {
+        Some(turn) => serde_json::json!({
+            "type": "error",
+            "code": code,
+            "message": message,
+            "retry": {"turn": turn},
+        }),
+        None => error(code, message),
+    }
 }
 
 /// `{"type":"aborted"}`——本轮被用户停止（design §5：中断是「不再继续」，不是回滚；

@@ -375,6 +375,83 @@ impl Runtime {
         Ok(())
     }
 
+    /// 重试的原子守卫 + 取票（change add-harness-turn-retry-nov23 design §4.2）。
+    ///
+    /// 同一把锁内依次完成：无会话 → 忙 → 无失败 → 世代 / 轮次过期 → **vision 前置闸** →
+    /// `input_len` 二道保险 → 取走 `failed`（消费，防重放）→ `begin_turn()`（推进世代、
+    /// 置 Running、清 abort）。返回失败记录（含 `user_text`）；起线程失败时调用侧用
+    /// [`Self::rollback_retry`] 放回。
+    ///
+    /// vision 闸 MUST 在消费 `failed` **之前**——拒绝时 `failed` 原样保留、零 provider 请求，
+    /// 快照 `retry` 仍在，用户切回支持图片的模型后可再点。能力判据与 `harness_send` 的
+    /// [`image_gate_error`] 同一实现（同一错误码），不另立第二套。
+    pub fn begin_retry(
+        &self,
+        scope: &VaultScope,
+        config: &HarnessConfig,
+        turn: u64,
+    ) -> Result<session::FailedTurn, CommandError> {
+        let mut sessions = self
+            .inner
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(session) = sessions.get_mut(&scope.key()) else {
+            return Err(CommandError::new(
+                "harness_no_session",
+                "当前没有会话，无法重试",
+            ));
+        };
+        if session.is_busy() {
+            return Err(CommandError::new(
+                "harness_busy",
+                "对话正在处理中（或正等待批准），请等本轮结束后再重试",
+            ));
+        }
+        let Some(failed) = session.failed().cloned() else {
+            return Err(CommandError::new(
+                "harness_no_failed_turn",
+                "没有可重试的失败轮次（可能已发送新消息、开了新会话或恢复了历史会话）",
+            ));
+        };
+        if turn != failed.turn || session.turn_seq() != failed.turn {
+            return Err(CommandError::new(
+                "harness_turn_stale",
+                "这次失败已过期（会话已推进到新的轮次），请重新查看最新状态",
+            ));
+        }
+        // vision 前置闸：读失败轮的 input（不是显示面），与发送路径同一判据、同一错误码。
+        if let Some(error) = image_gate_error_for_input(session.input(), config) {
+            return Err(error);
+        }
+        if session.input_len() != failed.input_len {
+            return Err(CommandError::new(
+                "harness_turn_stale",
+                "这次失败已过期（会话历史已变化），请重新查看最新状态",
+            ));
+        }
+        session.take_failed();
+        session.begin_turn();
+        session.clear_abort();
+        Ok(failed)
+    }
+
+    /// 重试线程起不来时的回滚（`harness_retry` 的 `harness_thread_failed` 路径）：
+    /// 放回 `failed`、回滚 `turn_seq`、`end_turn()`——一次瞬时资源失败不得把重试入口也吞掉。
+    /// MUST 只用于「尚未起线程」的失败路径。
+    pub fn rollback_retry(&self, scope: &VaultScope, failed: session::FailedTurn) {
+        let mut sessions = self
+            .inner
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(session) = sessions.get_mut(&scope.key()) {
+            session.rollback_turn_seq(failed.turn);
+            session.restore_failed(failed);
+            session.end_turn();
+        }
+    }
+
     /// 设置当前 vault 会话的思考程度档位（`harness_set_thinking_effort` 的实现体，M362）。
     ///
     /// 会话不存在时**即时建立**（与 [`Self::acquire_turn`] 同一条建立路径）：面板一打开就可能
@@ -670,24 +747,31 @@ impl Runtime {
                 .get(index + 1)
                 .filter(|r| r["kind"] == "llm_response")
             {
-                // 折叠项的戳 = 这条响应的信封 ts（响应落盘时刻）；记录缺 ts 时记 None
-                //（前端不显示时间，不伪造读数）。
-                let at = file.record_ts.get(index + 1).copied().flatten();
-                for item in session::assistant_item(
-                    response["text"].as_str().unwrap_or(""),
-                    response.get("reasoning"),
-                ) {
-                    restored.push(item);
-                    restored_ts.push(at);
-                }
-                if let Some(calls) = response["tool_calls"].as_array() {
-                    for call in calls {
-                        restored.push(session::function_call_item(
-                            call["id"].as_str().unwrap_or(""),
-                            call["name"].as_str().unwrap_or(""),
-                            call["arguments"].as_str().unwrap_or(""),
-                        ));
+                // D5（change add-harness-turn-retry-nov23）：带 `error` 的响应**不折叠**——
+                // 半截正文 / 思考 / 工具调用都不进恢复后的 input 与面板。恢复结果停在失败前
+                // 已完成的最后一项；错误行本身仍是 live 面，不由恢复重建。
+                // 既有成功响应的折叠行为逐字节不变。
+                let failed_response = response.get("error").is_some_and(|error| !error.is_null());
+                if !failed_response {
+                    // 折叠项的戳 = 这条响应的信封 ts（响应落盘时刻）；记录缺 ts 时记 None
+                    //（前端不显示时间，不伪造读数）。
+                    let at = file.record_ts.get(index + 1).copied().flatten();
+                    for item in session::assistant_item(
+                        response["text"].as_str().unwrap_or(""),
+                        response.get("reasoning"),
+                    ) {
+                        restored.push(item);
                         restored_ts.push(at);
+                    }
+                    if let Some(calls) = response["tool_calls"].as_array() {
+                        for call in calls {
+                            restored.push(session::function_call_item(
+                                call["id"].as_str().unwrap_or(""),
+                                call["name"].as_str().unwrap_or(""),
+                                call["arguments"].as_str().unwrap_or(""),
+                            ));
+                            restored_ts.push(at);
+                        }
                     }
                 }
             }
@@ -930,21 +1014,62 @@ fn image_gate_error(
     parts: &[attachments::DeliveryPart],
     config: &HarnessConfig,
 ) -> Option<CommandError> {
-    if !parts.iter().any(|part| part.kind == "image")
-        || config.vision_supported(&config.provider, llm::active_model(config))
-    {
+    let has_image = parts.iter().any(|part| part.kind == "image");
+    vision_gate_error(has_image, config, ImageGateContext::Send)
+}
+
+/// 重试前置闸（change add-harness-turn-retry-nov23 tasks 4.3）：基于失败轮 `input` 里的
+/// `input_image` parts，按**当前** provider / model 走**同一份**能力判据与同一错误码。
+/// 文案用重试语境（指向「切换到支持图片的模型」），MUST NOT 照抄发送路径的「移除图片卡片」句
+/// ——重试没有 composer 卡片可移除。
+fn image_gate_error_for_input(
+    input: &[serde_json::Value],
+    config: &HarnessConfig,
+) -> Option<CommandError> {
+    vision_gate_error(input_has_image(input), config, ImageGateContext::Retry)
+}
+
+/// 失败 `input` 是否含图片 part（只认会话侧引用形态 `input_image`，与 wire 展开前的存储形状
+/// 一致；显示面 cards 不是判据）。
+fn input_has_image(input: &[serde_json::Value]) -> bool {
+    input.iter().any(|item| {
+        item.get("content")
+            .and_then(|content| content.as_array())
+            .is_some_and(|parts| {
+                parts.iter().any(|part| {
+                    part.get("type").and_then(|kind| kind.as_str()) == Some("input_image")
+                })
+            })
+    })
+}
+
+/// vision 闸的语境（只影响文案；判据与错误码同一份）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImageGateContext {
+    /// 发送路径（有 composer 卡片可移除）。
+    Send,
+    /// 重试路径（只指向切换模型）。
+    Retry,
+}
+
+fn vision_gate_error(
+    has_image: bool,
+    config: &HarnessConfig,
+    context: ImageGateContext,
+) -> Option<CommandError> {
+    if !has_image || config.vision_supported(&config.provider, llm::active_model(config)) {
         return None;
     }
     let model = llm::active_model(config).to_string();
-    Some(
-        CommandError::new(
-            "harness_image_unsupported",
-            format!(
-                "当前模型 {model} 不支持图片输入：请移除图片卡片后再发送，或切换到支持图片的模型"
-            ),
-        )
-        .param("model", model),
-    )
+    let message = match context {
+        ImageGateContext::Send => format!(
+            "当前模型 {model} 不支持图片输入：请移除图片卡片后再发送，或切换到支持图片的模型"
+        ),
+        ImageGateContext::Retry => {
+            format!("当前模型 {model} 不支持图片输入：请切换到支持图片的模型后重试")
+        }
+    };
+    Some(CommandError::new("harness_image_unsupported", message).param("model", model))
 }
 
 /// 列举当前 vault 的留存会话（`harness_list_sessions` 的实现体，change
@@ -1532,7 +1657,53 @@ pub fn harness_send(
         // 交互发送没有运行交接契约：注册表原样暴露（`None`）。
         None,
         None,
+        // 交互用户轮：失败允许登记可重试状态（design §8）。
+        turn::TurnOrigin::Interactive,
     )
+}
+
+/// 显式重试（change add-harness-turn-retry-nov23 design §4.2）：在同一个会话、同一个逻辑轮次
+/// 里重新发出失败的那一次 provider 往返。
+///
+/// 原子守卫与取票在 [`Runtime::begin_retry`]（同一把锁内：无会话 / 忙 / 无失败 / 世代过期 /
+/// vision 前置闸 / `input_len` 不符 → 消费 `failed` → `begin_turn`）。线程体与发送路径共用
+/// `turn::run_turn_resume`（sink / client / catch_unwind / release / title 的同一实现），
+/// **MUST NOT** 再调 `acquire_turn`——此时相位已是 Running，二次 acquire 必得 busy。
+///
+/// 线程起不来：`rollback_retry` 放回 `failed`、回滚 `turn_seq`、`end_turn()`，返回
+/// `harness_thread_failed`——用户可再点，这不是自动重试。
+///
+/// 配置级失败（provider 刚被删 / Key 刚被清）：`begin_retry` 已消费旧失败，本设计不自动恢复
+/// （与「配置级失败不提供重试」一致）；错误事件照常上屏，用户修好配置后重新发送。
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_retry(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+    runtime: tauri::State<'_, Runtime>,
+    app: tauri::AppHandle,
+    turn: u64,
+) -> Result<(), CommandError> {
+    let scope = vault_scope(&vault)?;
+    // 配置快照只读一次：vision 前置闸与重试线程 MUST 使用同一份（不在检查后重新 load）。
+    let config = config::load()?.config.harness;
+    let failed = runtime.inner().begin_retry(&scope, &config, turn)?;
+    let runtime_thread = runtime.inner().clone();
+    let runtime_rollback = runtime.inner().clone();
+    let scope_thread = scope.clone();
+    let scope_rollback = scope.clone();
+    let user_text = failed.user_text.clone();
+    if let Err(e) = std::thread::Builder::new()
+        .name("lumir-harness-llm".into())
+        .spawn(move || {
+            turn::run_turn_resume(app, runtime_thread, scope_thread, config, user_text);
+        })
+    {
+        runtime_rollback.rollback_retry(&scope_rollback, failed);
+        return Err(
+            CommandError::new("harness_thread_failed", format!("无法启动对话线程：{e}"))
+                .param("reason", e.to_string()),
+        );
+    }
+    Ok(())
 }
 
 /// 运行发起的**单一实现**（change add-cron-runtime-daemon §3.2 / §3.4）：`harness_send` 与
@@ -1555,6 +1726,7 @@ fn start_turn(
     context_section: Option<String>,
     tool_policy: Option<run::ToolPolicy>,
     completion: Option<Box<dyn FnOnce() + Send>>,
+    origin: turn::TurnOrigin,
 ) -> Result<(), CommandError> {
     runtime.acquire_turn(&scope, &config)?;
     if let Some(policy) = tool_policy {
@@ -1567,7 +1739,15 @@ fn start_turn(
     if let Err(e) = std::thread::Builder::new()
         .name("lumir-harness-llm".into())
         .spawn(move || {
-            turn::run_turn(app, runtime_thread, scope, config, parts, context_section);
+            turn::run_turn(
+                app,
+                runtime_thread,
+                scope,
+                config,
+                parts,
+                context_section,
+                origin,
+            );
             if let Some(completion) = completion {
                 completion();
             }
@@ -1779,6 +1959,8 @@ pub fn harness_cron_run(
         // 定时 / 点击两个槽位共用这一条链路（点击槽也用契约值，不回落交互全量）。
         Some(spec.tool_policy),
         Some(completion),
+        // cron 运行（含交互槽）：失败按运行契约回执，不产生可重试状态（design §8）。
+        turn::TurnOrigin::Cron,
     )?;
     // 交接被接受（acquire 成功、线程已起）才记「运行已开始」——失败路径由前端回执落终态。
     crate::logging::cron_run_started(&log_task, &trigger, shape.as_str(), model.as_deref());
@@ -3368,6 +3550,157 @@ mod tests {
             !contended.load(std::sync::atomic::Ordering::SeqCst),
             "persistence 事件在 sessions 锁内被发送（design §4.5 MUST NOT）"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- change add-harness-turn-retry-nov23：R3 / R16（重试守卫与 vision 前置闸）----
+
+    /// R3 + R16：`begin_retry` 的六道守卫（无会话 / 忙 / 无失败 / 世代过期 / vision 前置闸 /
+    /// input_len 二道保险）与 `rollback_retry` 的回滚。vision 拒绝 MUST 在消费 failed 之前：
+    /// failed 原样保留、input 不动（零 provider 请求由「没有 client」结构性保证——本函数不
+    /// 构造任何 client）。
+    #[test]
+    fn begin_retry_guards_and_vision_preflight() {
+        let _xdg = xdg_test_lock();
+        let root = std::env::temp_dir().join(format!(
+            "lumir-retry-guards-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: {
+                let defaults = crate::config::VaultConfig::default();
+                IgnorePolicy::load(&vault, &[".gitignore".to_string()], &defaults.ignore)
+            },
+            vault_id: "vault-retry-guards".to_string(),
+        };
+        let model_spec = |vision: bool| crate::config::HarnessModelSpec {
+            id: "retry-probe-model".into(),
+            effort: false,
+            vision,
+            window: 262_144,
+        };
+        let mut config = config::test_harness(
+            "kimi",
+            config::test_provider(config::ProviderPreset::Kimi, "sk", &[]),
+        );
+        config.providers.get_mut("kimi").unwrap().model = "retry-probe-model".into();
+        config.providers.get_mut("kimi").unwrap().models = vec![model_spec(false)];
+        let runtime = Runtime::default();
+
+        // ① 无会话。
+        let error = runtime.begin_retry(&scope, &config, 1).unwrap_err();
+        assert_eq!(error.code, "harness_no_session");
+
+        // 建立会话（acquire 会 begin_turn：turn_seq = 1）后释放。
+        runtime.acquire_turn(&scope, &config).unwrap();
+        let turn = runtime.with_session(&scope, |s| s.turn_seq()).unwrap();
+        runtime.release_turn(&scope);
+
+        // ② 无失败。
+        let error = runtime.begin_retry(&scope, &config, turn).unwrap_err();
+        assert_eq!(error.code, "harness_no_failed_turn");
+
+        // 登记一次文本轮失败（input 只有用户消息）。
+        runtime
+            .with_session(&scope, |s| {
+                s.push_input(serde_json::json!({
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "问题"}],
+                }));
+                let turn = s.turn_seq();
+                s.record_failed(turn, s.input_len(), "问题".into());
+            })
+            .unwrap();
+
+        // ③ 世代过期：turn 对不上。
+        let error = runtime.begin_retry(&scope, &config, turn + 7).unwrap_err();
+        assert_eq!(error.code, "harness_turn_stale");
+
+        // ④ 正常放行：消费 failed、begin_turn、相位 Running。
+        let failed = runtime
+            .begin_retry(&scope, &config, turn)
+            .expect("守卫放行");
+        assert_eq!(failed.turn, turn);
+        assert_eq!(failed.user_text, "问题");
+        let phase = runtime.with_session(&scope, |s| s.turn_phase()).unwrap();
+        assert_eq!(phase, session::TurnPhase::Running);
+        assert!(runtime.snapshot(&scope, &config).retry.is_none());
+
+        // ⑤ 起线程失败的回滚：failed 放回、世代回滚、会话回 Idle。
+        runtime.rollback_retry(&scope, failed);
+        assert_eq!(
+            runtime.snapshot(&scope, &config).retry.map(|r| r.turn),
+            Some(turn)
+        );
+        let phase = runtime.with_session(&scope, |s| s.turn_phase()).unwrap();
+        assert_eq!(phase, session::TurnPhase::Idle);
+        let seq = runtime.with_session(&scope, |s| s.turn_seq()).unwrap();
+        assert_eq!(seq, turn, "turn_seq 回滚到失败时的值");
+
+        // ⑥ vision 前置闸：失败 input 含图 + 当前模型未声明 vision ⇒ 拒绝、failed 保留、
+        // input 不动（消费发生在闸之后）。
+        runtime
+            .with_session(&scope, |s| {
+                s.push_input(serde_json::json!({
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "看图"},
+                        {"type": "input_image", "image_url": "lumir-attachment://pasted-x.webp"}
+                    ],
+                }));
+                let turn = s.turn_seq();
+                s.record_failed(turn, s.input_len(), "看图".into());
+            })
+            .unwrap();
+        let input_before = runtime.with_session(&scope, |s| s.input_len()).unwrap();
+        let error = runtime.begin_retry(&scope, &config, turn).unwrap_err();
+        assert_eq!(error.code, "harness_image_unsupported");
+        assert!(
+            error.message.contains("切换到支持图片的模型"),
+            "重试语境文案不得照抄「移除图片卡片」：{}",
+            error.message
+        );
+        assert_eq!(
+            runtime.snapshot(&scope, &config).retry.map(|r| r.turn),
+            Some(turn),
+            "vision 拒绝必须保留 failed"
+        );
+        assert_eq!(
+            runtime.with_session(&scope, |s| s.input_len()).unwrap(),
+            input_before,
+            "vision 拒绝不得动 input"
+        );
+        // 切回支持 vision 的模型后可重试。
+        config.providers.get_mut("kimi").unwrap().models = vec![model_spec(true)];
+        let failed = runtime
+            .begin_retry(&scope, &config, turn)
+            .expect("vision 支持后可重试");
+        runtime.rollback_retry(&scope, failed);
+
+        // ⑦ input_len 二道保险：失败登记后历史又变了 ⇒ 过期。
+        runtime
+            .with_session(&scope, |s| {
+                s.push_input(serde_json::json!({
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "又一条"}],
+                }));
+            })
+            .unwrap();
+        let error = runtime.begin_retry(&scope, &config, turn).unwrap_err();
+        assert_eq!(error.code, "harness_turn_stale");
+
+        // ⑧ 忙优先于无失败：在途轮次上重试请求得 busy。
+        runtime.acquire_turn(&scope, &config).unwrap();
+        let error = runtime.begin_retry(&scope, &config, turn).unwrap_err();
+        assert_eq!(error.code, "harness_busy");
+        runtime.release_turn(&scope);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

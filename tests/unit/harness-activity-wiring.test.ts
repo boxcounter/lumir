@@ -106,10 +106,13 @@ test("restoreSnapshot：in_flight 只在进入档位被读（对账档连读都�
   assert.ok(readsInFlight.length > 0, "进入档位必须读 in_flight");
   const applyCall = RESTORE.indexOf("applyEnterSnapshot(");
   assert.ok(applyCall > guard, "applyEnterSnapshot 必须落在档位守卫之内");
-  // 全文件里 in_flight 的读取点只有三处：restoreSnapshot 的进入分支、applyEnterSnapshot、
-  // 以及恢复会话时点的只读相位取数（`fetchActivitySnapshot`）——对账路径（content 档）不读它。
+  // 全文件里 in_flight 的读取点只有四处：restoreSnapshot 的进入分支、applyEnterSnapshot、
+  // 恢复会话时点的只读相位取数（`fetchActivitySnapshot`），以及重试同步拒绝后的轻量快照
+  // （`fetchRetrySnapshot`，change add-harness-turn-retry-nov23 design §9.1：同一份响应同时读
+  // `in_flight` 与 `retry`，busy 拒绝不本地收口）——对账路径（content 档）不读它。
   const fetchActivity = functionBodyOf(PANEL_SOURCE, "fetchActivitySnapshot");
-  const allowed = [RESTORE, APPLY_ENTER, fetchActivity].map((body) => ({
+  const fetchRetry = functionBodyOf(PANEL_SOURCE, "fetchRetrySnapshot");
+  const allowed = [RESTORE, APPLY_ENTER, fetchActivity, fetchRetry].map((body) => ({
     start: PANEL_SOURCE.indexOf(body),
     end: PANEL_SOURCE.indexOf(body) + body.length,
   }));

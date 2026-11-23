@@ -19,139 +19,141 @@
 
 ## 1. 先红（测试先行，红必须是行为红）
 
-- [ ] 1.1 Rust 侧：先写 R1–R17（断言以 design §11.1 为准），含 R15 双方言真实解析层反例
+- [x] 1.1 Rust 侧：先写 R1–R17（断言以 design §11.1 为准），含 R15 双方言真实解析层反例
       （合成字节流 + 会返回 `io::Error` 的 reader）。新 API 尚无签名时先落最小签名，红必须红在
       断言上（行为不符），MUST NOT 把编译错当先红证据
-- [ ] 1.2 前端侧：先写 F1–F12（design §11.2）。DOM / 快照 / 相位断言落
+- [x] 1.2 前端侧：先写 F1–F12（design §11.2）。DOM / 快照 / 相位断言落
       `tests/visual/scenes/harness-turn-retry-nov23.spec.ts`；可提取的纯函数（事件 → 动作模型 /
       turn 选择）落 `tests/unit`。MUST NOT 把 DOM 行为塞进 unit 层；RED 判据是「动作不在场 /
       点击无调用 / 快照不重建 / busy 误收口」，不是场景语法错
-- [ ] 1.3 真机侧：先写 A1–A11 场景（design §11.3）并在未实现的当前树上跑一遍 RED——
+- [ ] 1.3 真机侧：先写 A1–A11 场景（design §11.3）并在未实现的当前树上跑一遍 RED——（**场景已写**：710–720 + 9 个 fixture，`run.mjs --check` 272 场景 PASS；**真机 RED 未执行**：被 Alex 安装版 Lumir 实例挡住，见 `.local/acceptance/2026-11-23-harness-turn-retry/blocked/BLOCKED.md`）
       RED 判据是「重试动作不在场 / 点击无请求 / 新写工具未经批准即执行」，不是场景语法错
 - [ ] 1.4 把三组 RED 证据路径写进实现报告（均落**主仓** `.local/`，不落 worktree）：
       `.local/reviews/harness-proposals/retry-red-{rust,frontend}.log` 与
       `.local/acceptance/<日期>/<场景>/RED-before-fix/`；写不出可 `ls` 的指针按「未跑」处理
+      （rust / frontend 两份已落；**acceptance 的 RED-before-fix 未生成**——真机被安装版实例挡住，
+      同 1.3 的 BLOCKED 指针，按「未跑」处理）
 
 ## 2. 补 mock 的测试表达能力（不得以「mock 表达不了」跳过）
 
-- [ ] 2.1 `FixtureError` 增加可选 `http_status` 与可选 `kind`（稳定内部类别）
+- [x] 2.1 `FixtureError` 增加可选 `http_status` 与可选 `kind`（稳定内部类别）
       （`src-tauri/src/harness/llm.rs`），映射进 `TurnError` / `HttpNon2xx`；显式 `kind` 优先；
       单测证明 fixture 能表达 `429` / `500` / `400` / transient / permanent，且分类器判定正确
-- [ ] 2.2 fixture 的 error 条目允许同时带 `chunks` / `text`：mock 先按序流出这些分片，再以该 error
+- [x] 2.2 fixture 的 error 条目允许同时带 `chunks` / `text`：mock 先按序流出这些分片，再以该 error
       终态收尾（`TurnOutput` 同时带半截正文与 error）；单测证明「半截正文 + 流中断」可表达
-- [ ] 2.3 落一张「失败类别 × 可表达性 × 覆盖测试」对账表（放 `design.md` §11 或 fixture 模块注释）：
+- [x] 2.3 落一张「失败类别 × 可表达性 × 覆盖测试」对账表（放 `design.md` §11 或 fixture 模块注释）：
       网络失败 / 429 / 5xx / 4xx / 读错误 / 通道断开 / 无终态 EOF / transient 流错误 /
       permanent 流错误 / 空响应 / 半截正文后失败 / 先工具后失败 / 新写工具批准，逐类给出
       单测或验收落点；任何一类 MUST NOT 只写「mock 不可表达，跳过」
-- [ ] 2.4 既有 fixture 向后兼容：不带新键的 fixture 行为逐字节不变；补一条回归单测
-- [ ] 2.5 同步 `llm.rs` 模块头的 fixture 格式文档（`http_status`、可选 `kind`、error + `chunks` /
+- [x] 2.4 既有 fixture 向后兼容：不带新键的 fixture 行为逐字节不变；补一条回归单测
+- [x] 2.5 同步 `llm.rs` 模块头的 fixture 格式文档（`http_status`、可选 `kind`、error + `chunks` /
       `text` 的语义与弹尽口径），避免文档与实现漂移
-- [ ] 2.6 **真实解析层反例（R15）不属于 mock 能力**：直接喂 `parse_sse_reader` /
+- [x] 2.6 **真实解析层反例（R15）不属于 mock 能力**：直接喂 `parse_sse_reader` /
       `parse_chat_sse_reader` 合成字节流，覆盖读错误（`io::Error`）、无哨兵断开（reader panic）、
       无终态 EOF、`server_error` / `invalid_request_error` 两类 `response.failed` 与流内 `error`；
       mock 显式 error 只用于 R4–R14 / A1–A11 的产品流程，MUST NOT 作为流分类的唯一证据
 
 ## 3. 后端：传输归一、失败分类与状态
 
-- [ ] 3.1 真实 SSE 读循环：`pump_sse` 返回可区分结束原因（Terminal / Aborted / Eof / ReadError）；
+- [x] 3.1 真实 SSE 读循环：`pump_sse` 返回可区分结束原因（Terminal / Aborted / Eof / ReadError）；
       读线程正常 EOF 发 `Finished` 哨兵，`io::Error` 发显式 ReadError，无哨兵的断开按 ReadError；
       `sink.aborted()` 仍归 Aborted（不产错误）
-- [ ] 3.2 Responses 的 `terminal_seen` 由 `response.completed` / `response.incomplete` /
+- [x] 3.2 Responses 的 `terminal_seen` 由 `response.completed` / `response.incomplete` /
       `response.failed` 事件名显式置位，MUST NOT 用 usage / error 有无近似；`[DONE]` 不置位。
       Chat 的 `terminal_seen` 由 `[DONE]` / usage 末帧置位
-- [ ] 3.3 Eof 且无终态 → `StreamMissingTerminal`；ReadError → `StreamTransport`；两者保留已收
+- [x] 3.3 Eof 且无终态 → `StreamMissingTerminal`；ReadError → `StreamTransport`；两者保留已收
       正文 / 思考 / 调用，但设置 `output.error`（可见错误）
-- [ ] 3.4 `response.failed` / 流内 `error` 按 `type` / `code` 归一 `StreamReportedTransient` /
+- [x] 3.4 `response.failed` / 流内 `error` 按 `type` / `code` 归一 `StreamReportedTransient` /
       `StreamReportedPermanent`（已知鉴权 / 权限 / 非法请求 / 内容策略 / 额度耗尽为 permanent；
       其余含 `server_error` / 未知为 transient）；原始 code / message 只留诊断；`TurnError` 增加
       `kind`
-- [ ] 3.5 实现后端唯一分类器（输入 `FailureKind` + `context_overflow`；输出可重试 / 不可重试），
+- [x] 3.5 实现后端唯一分类器（输入 `FailureKind` + `context_overflow`；输出可重试 / 不可重试），
       覆写 design §3.3 真值表；R1 绿
-- [ ] 3.6 `Session` 增加 `turn_seq` 与 `failed: Option<FailedTurn>`（仅 `turn` / `input_len` /
+- [x] 3.6 `Session` 增加 `turn_seq` 与 `failed: Option<FailedTurn>`（仅 `turn` / `input_len` /
       `user_text`，字段见 design §4.1）；`begin_turn` 推进世代并清空 `failed`；`reset_session` /
       `resume_session` / 关闭 vault 随会话对象消失；R2 / R17 绿
-- [ ] 3.7 错误终态登记失败：仅交互用户轮与重试轮；记录 `turn` / `input_len` / `user_text`；
+- [x] 3.7 错误终态登记失败：仅交互用户轮与重试轮；记录 `turn` / `input_len` / `user_text`；
       `done` / `aborted` / 不可重试错误清空；R2 / R12 绿
-- [ ] 3.8 `StateSnapshot` 增加可选 `retry`（`skip_serializing_if`），`empty` 同样缺键；R7 绿
-- [ ] 3.9 `events::error` 增加可选 `retry`（仅可重试时在场）；既有三键不变；`llm_error` sidecar
+- [x] 3.8 `StateSnapshot` 增加可选 `retry`（`skip_serializing_if`），`empty` 同样缺键；R7 绿
+- [x] 3.9 `events::error` 增加可选 `retry`（仅可重试时在场）；既有三键不变；`llm_error` sidecar
       可加 `failure_kind` 供诊断（不参与恢复重建）；补形状单测
-- [ ] 3.10 空响应判定前移到响应项入 `input` / `panel` 之前；`record_usage` / `on_round_usage`
+- [x] 3.10 空响应判定前移到响应项入 `input` / `panel` 之前；`record_usage` / `on_round_usage`
       仍照常调用，思考兜底仍先于错误收口，abort 仍优先于空响应判定；R11 绿
-- [ ] 3.11 半截正文「未完成」标记的 live 状态（不进 `panel` / 快照）；R9 绿
-- [ ] 3.12 线程失败 / 配置级失败不得被误登记为可重试轮次；`harness_retry` 起线程失败例外见 4.5
-- [ ] 3.13 为全部 `TurnError` / 终态构造点设置 `kind`：`NetworkSend`、`HttpNon2xx(status)`、
+- [x] 3.11 半截正文「未完成」标记的 live 状态（不进 `panel` / 快照）；R9 绿
+- [x] 3.12 线程失败 / 配置级失败不得被误登记为可重试轮次；`harness_retry` 起线程失败例外见 4.5
+- [x] 3.13 为全部 `TurnError` / 终态构造点设置 `kind`：`NetworkSend`、`HttpNon2xx(status)`、
       `StreamTransport`、`StreamMissingTerminal`、`StreamReported*`；空响应 / 配置 / 附件 / 内部
       错误在 turn 层设置对应 kind；用构造点清单逐处核对，MUST NOT 让 `kind` 落到错误默认值
 
 ## 4. 后端：重试入口与轮次来源
 
-- [ ] 4.1 `TurnInput::Resume { user_text }`：不调 `begin_user_turn`、不入队 user / panel、
+- [x] 4.1 `TurnInput::Resume { user_text }`：不调 `begin_user_turn`、不入队 user / panel、
       不覆盖 `current_context`、`panel_base = panel_len()`、`rounds` / `overflow_retried` 归零；
       不并入排队通知
-- [ ] 4.2 轮次来源显式化（交互用户 / 重试 / cron / 子运行 / 自动回合）；只有前两者允许登记失败；
+- [x] 4.2 轮次来源显式化（交互用户 / 重试 / cron / 子运行 / 自动回合）；只有前两者允许登记失败；
       MUST NOT 用 completion / tool_policy 间接推断
-- [ ] 4.3 **vision 前置闸**：抽 `image_gate_error_for_input`（或等价）复用 `image_gate_error` 的
+- [x] 4.3 **vision 前置闸**：抽 `image_gate_error_for_input`（或等价）复用 `image_gate_error` 的
       同一 `config.vision_supported` 判据与同一错误码；在消费 `failed` 之前检查失败 `input` 的
       image parts；不支持 → `harness_image_unsupported`、failed 保留、不 begin、零请求；
       检查与重试线程使用同一份 config 快照（不在检查后重新 load）；R3 / R16 绿
-- [ ] 4.4 `begin_retry` 原子守卫 + 票据：无会话 / 忙 / 无失败 / 世代过期 / `input_len` 不符的
+- [x] 4.4 `begin_retry` 原子守卫 + 票据：无会话 / 忙 / 无失败 / 世代过期 / `input_len` 不符的
       守卫；校验通过后在同一把锁内消费 `failed`、`begin_turn`、返回票据；R3 绿
-- [ ] 4.5 `harness_retry(turn)` 命令：`begin_retry` → 起 `lumir-harness-llm` 线程跑 Resume；
+- [x] 4.5 `harness_retry(turn)` 命令：`begin_retry` → 起 `lumir-harness-llm` 线程跑 Resume；
       **线程入口 MUST NOT 再调 `acquire_turn`**（相位已 Running，二次 acquire 必得 busy）；
       线程起不来时 failed 放回、`turn_seq` 回滚、`end_turn`、返回 `harness_thread_failed`；
       R3 / R6 绿
-- [ ] 4.6 把 `run_turn` 的线程体与「是否已 acquire」拆开（`TurnStart` 枚举或等价入口），
+- [x] 4.6 把 `run_turn` 的线程体与「是否已 acquire」拆开（`TurnStart` 枚举或等价入口），
       发送 / 重试共用同一份 sink / client / catch_unwind / release / title 实现
-- [ ] 4.7 注册命令到 `src-tauri/src/lib.rs`；`harness_thread_failed` / `harness_turn_stale` /
+- [x] 4.7 注册命令到 `src-tauri/src/lib.rs`；`harness_thread_failed` / `harness_turn_stale` /
       `harness_no_failed_turn` 错误码与文案就位（含稳定流失败码的 copy-data 条目）
-- [ ] 4.8 恢复充分性：重试轮仍在同一 JSONL 追加成对记录，不写 `session_open`；R10 绿
+- [x] 4.8 恢复充分性：重试轮仍在同一 JSONL 追加成对记录，不写 `session_open`；R10 绿
 
 ## 5. 前端：错误行动作与半截正文
 
-- [ ] 5.1 `src/ipc.ts` 增加 `harnessRetry(turn)`，`HarnessEvent` 的 error 增加可选 `retry`，
+- [x] 5.1 `src/ipc.ts` 增加 `harnessRetry(turn)`，`HarnessEvent` 的 error 增加可选 `retry`，
       `harness_state` 注释补 `retry` 读出口
-- [ ] 5.2 `appendError` 支持挂动作容器；同文案去重时就地替换并重绑最新 turn；不同文案照常追加；
+- [x] 5.2 `appendError` 支持挂动作容器；同文案去重时就地替换并重绑最新 turn；不同文案照常追加；
       F1 / F3 绿
-- [ ] 5.3 点击生命周期：立即禁用 + `dispatchActivity({type:"sent"})` + 恰好一次 `harnessRetry`；
+- [x] 5.3 点击生命周期：立即禁用 + `dispatchActivity({type:"sent"})` + 恰好一次 `harnessRetry`；
       开始前补 `collapseTools()` / `lastAssistantEl = null`；F2 绿
-- [ ] 5.4 重试成功 `done` 清动作；再失败可重试重绑新 turn；再失败不可重试动作消失；F3 绿
-- [ ] 5.5 半截正文「未完成」标记（文案走 copy-data，zh / en）；重试成功追加第二条 assistant；
+- [x] 5.4 重试成功 `done` 清动作；再失败可重试重绑新 turn；再失败不可重试动作消失；F3 绿
+- [x] 5.5 半截正文「未完成」标记（文案走 copy-data，zh / en）；重试成功追加第二条 assistant；
       F7 绿
-- [ ] 5.6 新轮次开始（发送 / 重试 / 自动回合）清旧动作；非 idle 点击 no-op；F8 绿
-- [ ] 5.7 文案条目走文案漂移门禁；`aria-label` / `title` 随语言切换重绘；F6 绿
-- [ ] 5.8 **busy 拒绝不本地收口**：`harness_busy` 走同一份 `harness_state` 轻量快照（可新增
+- [x] 5.6 新轮次开始（发送 / 重试 / 自动回合）清旧动作；非 idle 点击 no-op；F8 绿
+- [x] 5.7 文案条目走文案漂移门禁；`aria-label` / `title` 随语言切换重绘；F6 绿
+- [x] 5.8 **busy 拒绝不本地收口**：`harness_busy` 走同一份 `harness_state` 轻量快照（可新增
       `fetchRetrySnapshot`，复用 `applyEnterSnapshot`；不改变既有 `fetchActivitySnapshot` 的职责），
       MUST NOT `local_finish` / 强制 idle / 关 `turnOpen`；同一份快照同时读 `retry` 就地更新动作
       （不重放、不清拒绝错误行）；第一次重试仍流式时第二次 busy，后续分片 / 工具行 / 终态照常；
       F5 / F9 绿
-- [ ] 5.9 stale / no_failed / thread_failed / image_unsupported 同样不本地强制 idle；相位由
+- [x] 5.9 stale / no_failed / thread_failed / image_unsupported 同样不本地强制 idle；相位由
       `in_flight` 快照决定，动作由同一快照 `retry` 就地幂等更新；F5 / F11 / F12 绿
-- [ ] 5.10 vision 拒绝：`harness_image_unsupported` 人话错误行 + 动作仍在 + 零请求；文案用
+- [x] 5.10 vision 拒绝：`harness_image_unsupported` 人话错误行 + 动作仍在 + 零请求；文案用
       重试语境（切换到支持图片的模型），MUST NOT 照抄「移除图片卡片」；F12 绿
 
 ## 6. 前端：快照与世代
 
-- [ ] 6.1 `enter` 快照：消息重放后先移除既有动作行，`retry` 在场则追加恰好一条
+- [x] 6.1 `enter` 快照：消息重放后先移除既有动作行，`retry` 在场则追加恰好一条
       「上一轮未完成 · 重试」动作行；不带 → 不追加；F4 绿
-- [ ] 6.2 `content` 快照：清面重放后同样按 `retry` 幂等重建恰好一条（先移除再追加），
+- [x] 6.2 `content` 快照：清面重放后同样按 `retry` 幂等重建恰好一条（先移除再追加），
       MUST NOT 把「不重复」实现成「不新增」；F4 / F10 绿
-- [ ] 6.3 动作行不进 `panel`、不参与消息计数、不被当 assistant / error 消息
-- [ ] 6.4 `resetView` / `vaultChanged` / `local_finish` 清动作；`snapshotSeq` / `viewGeneration`
+- [x] 6.3 动作行不进 `panel`、不参与消息计数、不被当 assistant / error 消息
+- [x] 6.4 `resetView` / `vaultChanged` / `local_finish` 清动作；`snapshotSeq` / `viewGeneration`
       作废旧回包；F4 / F5 绿
-- [ ] 6.5 重试同步拒绝（busy / stale / no_failed / thread_failed / image_unsupported）→
+- [x] 6.5 重试同步拒绝（busy / stale / no_failed / thread_failed / image_unsupported）→
       错误行 + 轻量快照就地更新 `in_flight` 相位与 `retry` 动作；MUST NOT 本地强制 idle /
       重放内容 / 清掉拒绝错误行；F5 绿
-- [ ] 6.6 中途接管（`midTakeover`）后 error 触发 content 快照：清面重放后恰好一条动作，
+- [x] 6.6 中途接管（`midTakeover`）后 error 触发 content 快照：清面重放后恰好一条动作，
       点击只发一次请求；F10 绿
-- [ ] 6.7 线程启动失败后 failed 已放回：快照 `retry` 在场，动作重建且可再点；F11 绿
+- [x] 6.7 线程启动失败后 failed 已放回：快照 `retry` 在场，动作重建且可再点；F11 绿
 
 ## 7. D5：恢复历史不折叠失败响应（D5 已并入，2026-11-23）
 
-- [ ] 7.1 `resume_session` 折叠锚点响应前判 `response["error"]`；在场则正文 / 思考 / `tool_calls`
+- [x] 7.1 `resume_session` 折叠锚点响应前判 `response["error"]`；在场则正文 / 思考 / `tool_calls`
       整条不折
-- [ ] 7.2 面板映射不产出失败 assistant 消息；`restored_panel_messages` 的输入不再含失败项
-- [ ] 7.3 成功响应折叠逐字节不变；旧文件只读（字节与 mtime 不变）；R13 绿
-- [ ] 7.4 与 `openspec/specs/harness/spec.md` 既有「会话边界」条并读无歧义：新 requirement
+- [x] 7.2 面板映射不产出失败 assistant 消息；`restored_panel_messages` 的输入不再含失败项
+- [x] 7.3 成功响应折叠逐字节不变；旧文件只读（字节与 mtime 不变）；R13 绿
+- [x] 7.4 与 `openspec/specs/harness/spec.md` 既有「会话边界」条并读无歧义：新 requirement
       只加「以响应不带 `error` 为前提」的限定，不复制既有正文
 
 ## 8. 测试矩阵对账（R / F / A）
@@ -204,57 +206,57 @@
 
 ## 9. 真机场景与证据
 
-- [ ] 9.1 新增 `scripts/acceptance/fixtures/harness-mock-retry-network.json`：
+- [x] 9.1 新增 `scripts/acceptance/fixtures/harness-mock-retry-network.json`：
       `[{"error":{"code":"harness_network_failed","message":"…"}},{"text":"RETRY-OK"}]`
-- [ ] 9.2 新增 `harness-mock-retry-http.json`：`[{"error":{"code":"harness_http_error","http_status":500}},{"text":"RETRY-OK"}]`
+- [x] 9.2 新增 `harness-mock-retry-http.json`：`[{"error":{"code":"harness_http_error","http_status":500}},{"text":"RETRY-OK"}]`
       与 429 变体；不写真实 provider 文案 / key / URL
-- [ ] 9.3 新增 `harness-mock-retry-tools.json`：
+- [x] 9.3 新增 `harness-mock-retry-tools.json`：
       `[{"text":"先建","tool_calls":[vault_create]},{"error":…},{"text":"RETRY-OK"}]`；目标路径用合成
       vault 内的一次性文件名，场景注释写明「默认档 `vault_create` 自动放行」与「重试后文件内容 /
       mtime 不变」的判据；若套件无法表达写入计数，用 R5 兜底并在场景注释登记该边界
-- [ ] 9.4 新增 `harness-mock-retry-partial.json`：
+- [x] 9.4 新增 `harness-mock-retry-partial.json`：
       `[{"chunks":["PART-1","PART-2"],"error":{"code":"harness_stream_error","kind":"stream_reported_transient"}},{"text":"RETRY-OK"}]`
-- [ ] 9.5 新增 `harness-mock-retry-empty.json`：`[{},{"text":"RETRY-OK"}]`
-- [ ] 9.6 新增 `harness-mock-retry-nonretryable.json`：
+- [x] 9.5 新增 `harness-mock-retry-empty.json`：`[{},{"text":"RETRY-OK"}]`
+- [x] 9.6 新增 `harness-mock-retry-nonretryable.json`：
       `[{"error":{"code":"harness_http_error","message":"HTTP 400","http_status":400}}]`；
       若要另测 permanent 流错误，R15 的解析层例覆盖，真机可另加一条
-- [ ] 9.7 新增 `harness-mock-retry-approval.json`：
+- [x] 9.7 新增 `harness-mock-retry-approval.json`：
       `[text+tool_call(vault_delete A), error, text+tool_call(vault_delete B), text]`；默认
       `vault_write` 档下 `vault_delete` 需批准；断言批准前零副作用、批准卡出现两次、批准后
       B 恰好删除一次
-- [ ] 9.8 新增 `harness-mock-retry-image-nonvision.json`：含图失败（`input` 带 image part）→
+- [x] 9.8 新增 `harness-mock-retry-image-nonvision.json`：含图失败（`input` 带 image part）→
       切非 vision provider/model 后重试；断言 `harness_image_unsupported`、零请求、动作仍在
-- [ ] 9.9 新增场景 A1–A11（id 按套件当期最大 item 号顺延）；每条场景 front-matter 的 `tier` 与
+- [x] 9.9 新增场景 A1–A11（id 按套件当期最大 item 号顺延）；每条场景 front-matter 的 `tier` 与
       `item` 填准；注释写明「重试按钮存在性」「请求数」「批准前零副作用」的判据
-- [ ] 9.10 `node scripts/acceptance/coverage.mjs` 重生成 `COVERAGE.md`；
+- [x] 9.10 `node scripts/acceptance/coverage.mjs` 重生成 `COVERAGE.md`；
       `node scripts/acceptance/run.mjs --check` 绿
-- [ ] 9.11 真机跑 A1–A11，证据落**主仓** `.local/acceptance/`（截图含失败态、重试后态、
+- [ ] 9.11 真机跑 A1–A11，证据落**主仓** `.local/acceptance/`（**未验**：安装版实例在场，起跑自检退出码 2；现场与复跑命令见 `.local/acceptance/2026-11-23-harness-turn-retry/blocked/`）（截图含失败态、重试后态、
       批准前 / 后；JSONL 计数附文本读数）；未跑前在报告里写「未验」，不得写「已 PASS」
 
 ## 10. 门禁、信息卫生与收尾
 
-- [ ] 10.1 `cargo test`（目标用例 + 全量），显式含 R15 双方言真实解析层反例；先红 / 后绿两组
+- [x] 10.1 `cargo test`（目标用例 + 全量），显式含 R15 双方言真实解析层反例；先红 / 后绿两组
       日志都在
-- [ ] 10.2 `pnpm test`（纯逻辑层）与 `pnpm exec tsc --noEmit`；DOM 断言（F1–F12）在 10.4 的视觉
+- [x] 10.2 `pnpm test`（纯逻辑层）与 `pnpm exec tsc --noEmit`；DOM 断言（F1–F12）在 10.4 的视觉
       门禁里跑，MUST NOT 把 DOM 行为塞进 unit 层
-- [ ] 10.3 `bash scripts/gate.sh quick` 全绿；照抄 `GATE RESULT` 原文行与退出码
-- [ ] 10.4 动过 `src/style.css` / `src/harness-panel.css` / `tests/visual/scenes/**` 时本地跑
+- [x] 10.3 `bash scripts/gate.sh quick` 全绿；照抄 `GATE RESULT` 原文行与退出码
+- [x] 10.4 动过 `src/style.css` / `src/harness-panel.css` / `tests/visual/scenes/**` 时本地跑
       `bash scripts/gate.sh visual`；未动视觉面则在报告里写明「不适用」
-- [ ] 10.5 `bash scripts/docs-check.sh` 与
+- [x] 10.5 `bash scripts/docs-check.sh` 与
       `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 全绿
-- [ ] 10.6 信息卫生：fixture / 场景 / 视觉基线只用合成 vault 内容；对改动面做 text 级 grep 清扫
+- [x] 10.6 信息卫生：fixture / 场景 / 视觉基线只用合成 vault 内容；对改动面做 text 级 grep 清扫
       （真实人名、真实项目 / 目录 / 文件名、真实文档正文、真实 provider key / URL）
-- [ ] 10.7 文案漂移门禁：新增 zh / en 文案编号与 `src/copy-data.ts` 一致；`pnpm test` 的文案用例绿
-- [ ] 10.8 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（一行 gist +
+- [x] 10.7 文案漂移门禁：新增 zh / en 文案编号与 `src/copy-data.ts` 一致；`pnpm test` 的文案用例绿
+- [x] 10.8 实现 PR 合并时在 `docs/backlog.md` 的归档跟踪队列落一条本 change 记录（一行 gist +
       五要件状态；后续归档按 `docs/process/openspec-workflow.md` 执行）
 - [ ] 10.9 覆盖声明对账：本文件所有「已验 / 已覆盖」逐条给场景名 + PASS 计数；拿不出证据的改写
       「未验」；`tasks.md` 勾选状态与证据目录一致
 
 ## 11. 验证（change 层）
 
-- [ ] 11.1 `npx --yes @fission-ai/openspec@1.12.0 validate add-harness-turn-retry-nov23 --strict`
+- [x] 11.1 `npx --yes @fission-ai/openspec@1.12.0 validate add-harness-turn-retry-nov23 --strict`
       与 `validate --all --strict` 通过
-- [ ] 11.2 `bash scripts/docs-check.sh` 通过（其中含 `openspec-archive-check.mjs` 门禁模式与
+- [x] 11.2 `bash scripts/docs-check.sh` 通过（其中含 `openspec-archive-check.mjs` 门禁模式与
       相对链接检查）；本 change 未归档，`--archived` 审计不适用
 - [ ] 11.3 本 change 的验收动作：`design.md` §11 的 R / F / A 矩阵按 §8 对账表逐项 PASS；
       真机证据落主仓 `.local/acceptance/`，门禁日志落主仓 `.local/`（不落 worktree）

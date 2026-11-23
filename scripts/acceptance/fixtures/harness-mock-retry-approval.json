@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "先删 A。",
+      "tool_calls": [
+        { "id": "c1", "name": "vault_delete", "arguments": "{\"path\":\"retry-del-a.md\"}" }
+      ]
+    },
+    { "error": { "code": "harness_network_failed", "message": "删完 A 之后的往返失败（合成）" } },
+    {
+      "text": "再删 B。",
+      "tool_calls": [
+        { "id": "c2", "name": "vault_delete", "arguments": "{\"path\":\"retry-del-b.md\"}" }
+      ]
+    },
+    { "text": "两个都处理完了。" }
+  ]
+}

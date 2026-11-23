@@ -109,6 +109,7 @@ import {
   harnessPermissionRuleRemove,
   harnessReadImage,
   harnessResumeSession,
+  harnessRetry,
   harnessSend,
   harnessSetThinkingEffort,
   harnessState,
@@ -4228,6 +4229,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  其文案——同文案就地滚回视野，不追加堆叠。 */
   let lastErrorEl: HTMLElement | null = null;
   let lastErrorText = "";
+  /** 可重试失败的动作状态（change add-harness-turn-retry-nov23 design §9）：
+   *  - `retryTurn` = 当前动作绑定的轮次（null = 无动作）；
+   *  - `retryTailEl` = 快照重建的尾部动作行（恰好一条；错误行上的动作由 `errorRetryEl` 承担，
+   *    两者由 `setRetryTurn` 统一收口，**同一时刻最多一个可点动作**）；
+   *  - `retryInFlight` = 点击已发出、等待后端回执（防连点）；
+   *  - `errorRetryEl` = 错误行内的动作钮（同文案去重时就地重绑）。 */
+  let retryTurn: number | null = null;
+  let retryTailEl: HTMLElement | null = null;
+  let errorRetryEl: HTMLButtonElement | null = null;
+  let retryInFlight = false;
   /** 当前 vault 根路径（会话作用域基准：事件过滤与快照准入都用它；null = 尚未装载 vault）。
    *  由装配层在每次装载 vault 后经 `vaultChanged` 传入（src/main.ts 的 applyVault）。 */
   let currentVault: string | null = null;
@@ -4879,6 +4890,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 活动状态文案（处理中 / 有新的回复 / 有失败结果）随语言重绘：可访问名与状态文本
     // 同源（change add-harness-activity-presence 任务 3.6）。
     applyActivityBadge();
+    // 重试动作是交互中的 UI（不是历史记录）：可见文字 / 悬停提示 / 读屏名随语言同步重取
+    // （change add-harness-turn-retry-nov23 F6）。
+    relabelRetryActions();
     // 待决批准项是交互中的 UI（不是历史记录）：随语言重渲按钮与标题，输入框内容保留。
     for (const pending of pendingApprovals.values()) relabelApproval(pending);
     // 已决策的终态记录同口径：结果词 / 原因句 / 详情摘要重取文案（正文性质的时间戳由
@@ -5927,6 +5941,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 这两条都不代表「一轮内容的结束」，但它们之后不会再有本轮的增量：闸门必须收口，
         // 否则迟到的分片会重新进消息流（M374「复活」现场）。接管标志一并清——那一轮已经
         // 不在本视图的作用域里（切 vault）或根本没起来（发送未被受理）。
+        // 动作清除（F4 的列出面）：local_finish 是「本轮没起来」的本地收口，旧动作不能留在
+        // 新相位里冒充入口；需要保留时由随后的快照 `retry` 重建（thread_failed / vision 拒绝）。
+        removeRetryActions();
         turnOpen = false;
         midTakeover = false;
         break;
@@ -6848,23 +6865,158 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     follow.contentGrew();
   }
 
-  function appendError(text: string): void {
+  function appendError(text: string, retryTurnValue: number | null = null): void {
     // 同文案去重（design §6）：同一原因的反复报错就地滚回视野，不追加堆叠（Alex 真机
     // 同一错误曾堆 6 条）。元素被 resetView 清掉后引用同步失效（transcript.contains 复核）。
+    // 重试动作随之重绑到**最新** turn（change add-harness-turn-retry-nov23 design §9.1）；
+    // 新 error 不可重试时移除动作。
     if (lastErrorEl !== null && lastErrorText === text && transcript.contains(lastErrorEl)) {
       // 分流表 #7：就地替换、内容高度可能不变——detached 下点亮未读（spec「脱离态下重复错误
       // 不拽走视口」要求未读提示在场），following 下滚到可见；两态都不写滚动位以外的东西。
       follow.contentReplaced();
+      attachErrorRetryAction(lastErrorEl, retryTurnValue);
       return;
     }
     const el = document.createElement("div");
     el.className = "lumir-hp-error";
-    el.textContent = text;
+    // 动作容器与正文分开：正文沿用既有 textContent 路径（避免把文案当 HTML 解释）。
+    const label = document.createElement("span");
+    label.className = "lumir-hp-error-text";
+    label.textContent = text;
+    el.append(label);
     transcript.append(el);
     lastErrorEl = el;
     lastErrorText = text;
+    attachErrorRetryAction(el, retryTurnValue);
     syncEmptyHint();
     follow.contentGrew();
+  }
+
+  // ── 可重试失败的动作（change add-harness-turn-retry-nov23 design §9 / §6.3）──────────
+  //
+  // 动作只服务一个目的：把「失败的那一次 provider 往返」原地再发一次。它有两处挂点——
+  // **live 错误行内**（错误原因之后）与**快照重建的尾部行**（通用文案）——由 `setRetryTurn`
+  // 统一收口，保证同一时刻恰好一条可点动作。动作行不进 `panel`、不参与消息计数、不被当作
+  // assistant / error 消息（纯 DOM 装饰，快照重放后重建）。
+
+  /** 宽容解析 `retry` 载荷：`{turn:number}` 之外一律 null（缺键 = 不提供动作）。 */
+  function retryTurnOf(payload: unknown): number | null {
+    if (typeof payload !== "object" || payload === null) return null;
+    const turn = (payload as Record<string, unknown>).turn;
+    return typeof turn === "number" && Number.isInteger(turn) && turn >= 0 ? turn : null;
+  }
+
+  /** 移除两处挂点上的动作（幂等）。 */
+  function removeRetryActions(): void {
+    retryTurn = null;
+    retryInFlight = false;
+    retryTailEl?.remove();
+    retryTailEl = null;
+    errorRetryEl?.remove();
+    errorRetryEl = null;
+  }
+
+  /** 动作状态施加：`turn` 在场 = 恰好一条动作（`placement` 决定挂点），缺席 = 移除。 */
+  function setRetryTurn(turn: number | null, placement: "error" | "tail"): void {
+    removeRetryActions();
+    if (turn === null) return;
+    retryTurn = turn;
+    if (placement === "error" && lastErrorEl !== null) {
+      attachErrorRetryAction(lastErrorEl, turn);
+    } else {
+      appendRetryTail(turn);
+    }
+  }
+
+  /** 错误行内的动作钮：文案 / 可访问名走文案表，点击后立即禁用（F2）。 */
+  function attachErrorRetryAction(el: HTMLElement, turn: number | null): void {
+    removeRetryActions();
+    if (turn === null) return;
+    retryTurn = turn;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "lumir-hp-retry-btn";
+    btn.textContent = t("D962");
+    btn.title = t("D962");
+    btn.setAttribute("aria-label", t("D962"));
+    btn.addEventListener("click", () => beginRetry(turn));
+    el.append(btn);
+    errorRetryEl = btn;
+  }
+
+  /** 快照重建的尾部动作行（通用文案，不复制原错误行）：enter / content 两档都经这里
+   *  **幂等重建恰好一条**——content 档清面后 MUST 重建，MUST NOT 把「不重复」实现成「不新增」。 */
+  function appendRetryTail(turn: number): void {
+    retryTailEl?.remove();
+    const row = document.createElement("div");
+    row.className = "lumir-hp-retry-row";
+    const label = document.createElement("span");
+    label.className = "lumir-hp-retry-label";
+    label.textContent = t("D963");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "lumir-hp-retry-btn";
+    btn.textContent = t("D962");
+    btn.title = t("D962");
+    btn.setAttribute("aria-label", t("D962"));
+    btn.addEventListener("click", () => beginRetry(turn));
+    row.append(label, btn);
+    transcript.append(row);
+    retryTailEl = row;
+    syncEmptyHint();
+    follow.contentGrew();
+  }
+
+  /** 点击重试（F2 / F5 / F9）：立即禁用 + `sent` 相位 + 恰好一次 `harnessRetry`；开始前补
+   *  发送路径由 `appendUserMessage` 顺带完成的两件事（`collapseTools` / `lastAssistantEl`），
+   *  否则新一轮的思考块 / 工具行会挂到上一轮气泡上。
+   *
+   *  同步拒绝**不本地收口**（busy / stale / no_failed / thread_failed / image_unsupported）：
+   *  错误行照常上屏，相位由快照的在途读数权威决定，动作由同一份轻量快照的
+   *  `retry` 就地幂等更新——不重放内容、不清刚追加的拒绝错误行。 */
+  function beginRetry(turn: number): void {
+    if (activity.phase !== "idle") return;
+    if (retryInFlight) return;
+    retryInFlight = true;
+    for (const btn of [errorRetryEl, retryTailEl?.querySelector<HTMLButtonElement>("button") ?? null]) {
+      if (btn !== null) btn.disabled = true;
+    }
+    collapseTools();
+    lastAssistantEl = null;
+    stageWaiting = true;
+    const generation = viewGeneration;
+    dispatchActivity({ type: "sent" });
+    harnessRetry(turn)
+      .then(() => {
+        retryInFlight = false;
+      })
+      .catch((e: unknown) => {
+        retryInFlight = false;
+        // 视图世代守卫：换代之后到达的旧拒绝回包属于上一段会话，整条 no-op。
+        if (viewGeneration !== generation) return;
+        const code = errorCodeOf(e);
+        const reason =
+          code === "harness_image_unsupported" ? t("D965") : errorText(e);
+        appendError(t("D970", { reason }), null);
+        fetchRetrySnapshot();
+      });
+  }
+
+  /** 重试拒绝后的轻量快照：同一份 `harness_state` 同时读 `in_flight` 与 `retry`——
+   *  相位按 `in_flight`，动作按 `retry` 就地更新（不重放消息、不清拒绝错误行）。
+   *  MUST NOT 改造 `fetchActivitySnapshot` 的「只读相位」职责。 */
+  function fetchRetrySnapshot(): void {
+    const seq = (snapshotSeq += 1);
+    const epoch = phaseEpoch;
+    void harnessState()
+      .then((json) => {
+        if (seq !== snapshotSeq) return;
+        const state = parseSnapshot(json);
+        if (state === null) return;
+        applyEnterSnapshot(state.in_flight, epoch);
+        setRetryTurn(retryTurnOf(state.retry), "tail");
+      })
+      .catch(() => {});
   }
 
   // ── 批准闸 ───────────────────────────────────────────────────────────────
@@ -7564,6 +7716,35 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const mark = document.createElement("span");
     mark.className = "lumir-hp-stopped";
     mark.textContent = t("D383");
+    el.append(mark);
+  }
+
+  /** 失败轮半截正文的「未完成」标记（change add-harness-turn-retry-nov23 design §9.2）：
+   *  与「已停止」同型的 live 面标记，只换文案；不进 panel / 快照 / 恢复。重试成功后的新回答
+   *  另起一条 assistant 消息，MUST NOT 替换或删除这条旧内容。 */
+  /** 重试动作的文案重绘（语言切换路径）：错误行动作与尾部动作行同口径。 */
+  function relabelRetryActions(): void {
+    if (errorRetryEl !== null) {
+      errorRetryEl.textContent = t("D962");
+      errorRetryEl.title = t("D962");
+      errorRetryEl.setAttribute("aria-label", t("D962"));
+    }
+    if (retryTailEl !== null) {
+      const label = retryTailEl.querySelector(".lumir-hp-retry-label");
+      if (label !== null) label.textContent = t("D963");
+      const btn = retryTailEl.querySelector<HTMLButtonElement>(".lumir-hp-retry-btn");
+      if (btn !== null) {
+        btn.textContent = t("D962");
+        btn.title = t("D962");
+        btn.setAttribute("aria-label", t("D962"));
+      }
+    }
+  }
+
+  function attachIncompleteMark(el: HTMLElement): void {
+    const mark = document.createElement("span");
+    mark.className = "lumir-hp-incomplete";
+    mark.textContent = t("D964");
     el.append(mark);
   }
 
@@ -8534,6 +8715,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 否则随后的 text_chunk 会被当成「已结束轮次的迟到产出」丢弃；`done` 照常收口。
         // 闸门与相位都由状态机施加（`sent` 的同一条转移——自动回合与用户回合在「有没有新
         // 内容要看」上等价）。
+        // 自动回合也是「新轮次开始」：旧的重试动作清掉（design §9.1），同一时刻最多一个动作。
+        removeRetryActions();
         stageWaiting = true;
         dispatchActivity({ type: "auto_turn_started" });
         return;
@@ -8547,6 +8730,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         const adopted = cronRunAdopted;
         cronRunAdopted = false;
         finalizeStreamingMessage();
+        // 成功收尾：旧的失败动作失效（可重试失败只活在「最近一次失败仍是当前轮」时）。
+        removeRetryActions();
         dispatchActivity({ type: "terminal", kind: "done", mounted: mountEl !== null });
         // 两条都走**只内容**档位（tasks 2.1 / 4.2）：MUST NOT 复用 `reloadSession`——它内部的
         // `resetView` 以 `vault_changed` 结算，会把刚刚这一步 terminal 产生的未读吃掉
@@ -8559,6 +8744,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 清掉，避免下一次无关回合的 done 误触发快照重载。
         cronRunAdopted = false;
         const takeover = midTakeover;
+        // 停止不是失败：任何残留的重试动作都随这一轮一起失效（begin_turn 已清空后端 failed）。
+        removeRetryActions();
         // 本轮被用户停止（M348）：中断语义是「不再继续」——已流式产出保留（上面的
         // text_chunk 已落进流式泡），标注「已停止」，收口回 idle，
         // composer 立即可开新一轮。无产出（停止在首个 chunk 前）时补一条「Agent ·
@@ -8606,13 +8793,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 同 aborted：错误轮次不发 done，切屏态在此清掉（不再等一次不会来的 done）。
         cronRunAdopted = false;
         const takeover = midTakeover;
-        finalizeStreamingMessage();
+        // 失败轮的半截正文（design §9.2）：流式已上屏的内容保留，在终态时标注「未完成」。
+        // 只有在**本轮真的产出了正文**时才标注——首字节之前就失败（网络失败）不产生空标记。
+        const hadBodyText = streamingText !== "";
+        const el = finalizeStreamingMessage();
+        if (el !== null && hadBodyText) attachIncompleteMark(el);
         dispatchActivity({ type: "terminal", kind: "error", mounted: mountEl !== null });
         if (takeover) fetchSnapshot("content");
         // 上屏走 errorText（按 code 取文案表的唯一入口），不把后端 message 直接当文案：流式
         // 错误的 message 是 Rust 侧的中文原文（网络失败还带内部 URL 与 reqwest 原始串）。
         // 事件只有 `{code, message}`、没有 params，因此这里的判据是「code 有文案表条目且模板
         // 无占位」；带占位的 code（如 harness_http_failed）仍由 errorText 的缺参兜底回落 message。
+        //
+        // 可重试性只读事件里的 `retry` 键（后端唯一分类的产物，design §6.1）；缺键 = 不渲染
+        // 动作，前端 MUST NOT 按 code / 文案自行推断。
         appendError(
           t("D348", {
             message: errorText({
@@ -8620,6 +8814,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
               message: typeof event.message === "string" ? event.message : event.code,
             }),
           }),
+          retryTurnOf(event.retry),
         );
         return;
       }
@@ -8930,6 +9125,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     const messages = Array.isArray(state.messages) ? state.messages : [];
     renderSnapshotMessages(messages);
+    // 可重试失败的动作行（change add-harness-turn-retry-nov23 design §6.3）：**两档都重建**。
+    // enter 档在消息重放后追加；content 档上面已清面，这里同样按快照 `retry` 幂等重建
+    // （先移除既有行再追加，保证恰好一条）——MUST NOT 把「不重复」实现成「不新增」。
+    setRetryTurn(retryTurnOf(state.retry), "tail");
     // ctx% 读数与警示阈值随快照恢复（webview 重载后读数不断源；缺键 = 缺省 85 / 无读数）。
     // M370：cache 读数一并恢复；M443：走与事件路径同一份映射（`usageReadings`）——旧快照
     // （只有退役的 `cache_pct`、没有新键）读到 null ⇒ 回落单读数、气泡缺行，MUST NOT 伪造。
@@ -9121,6 +9320,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     lastAssistantEl = null;
     lastErrorEl = null;
     lastErrorText = "";
+    // 重试动作是渲染面的派生装饰：换会话 / 清面即失效；快照重建路径随后按 `retry` 幂等重建。
+    removeRetryActions();
     thinkingBlocks = [];
     thinkingViews.clear();
     thinkingDirty = false;
@@ -9301,6 +9502,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     resetComposer();
     composerView.focus();
+    // 新轮次开始：旧的重试动作失效（design §9.1）。
+    removeRetryActions();
     stageWaiting = true;
     dispatchActivity({ type: "sent" });
     // 草稿归属在**发出时**定格：成功回执按这份 (vault, 编辑版本) 清，不按回执到达时的 store

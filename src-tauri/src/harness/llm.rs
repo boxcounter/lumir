@@ -43,6 +43,20 @@
 //! }
 //! ```
 //!
+//! **错误条目的三个可选扩展（change add-harness-turn-retry-nov23 tasks 2.1–2.2）**：
+//! - `http_status`（数字）：把「非 2xx」搬进脚本，分类按状态码（408 / 425 / 429 / 5xx
+//!   可重试，其余 4xx 不可重试）；
+//! - `kind`（字符串）：稳定内部类别（`network_send` / `stream_transport` /
+//!   `stream_missing_terminal` / `stream_reported_transient` / `stream_reported_permanent` /
+//!   `empty_response` / `config` / `attachment` / `compact_failed` / `protocol` / `internal`），
+//!   显式值优先于 `http_status` 与 code 简写；未知值落 `internal`（不可重试）；
+//! - error 条目可同时带 `chunks` / `text`：mock 先按序流出这些分片，再以该错误收尾
+//!   （`TurnOutput` 同时带半截正文与 error）——「流式已产出部分正文后失败」的唯一表达形态。
+//!
+//! 不带新键的既有 fixture 行为逐字节不变。**mock 显式错误不构成流分类证据**：读错误 /
+//! 无终态 EOF / `response.failed` 的 transient / permanent 归一必须由 Responses 与 Chat
+//! 两方言的真实解析层反例（合成字节流）钉死。
+//!
 //! 弹尽后再调用 ⇒ `fixture_exhausted` 错误（测试脚本漏写的即露馅）。`text` 未给 `chunks`
 //! 时整体作为一个 chunk。`usage` 缺失则不更新用量（面板保持上一轮读数）。
 //!
@@ -199,17 +213,107 @@ impl TurnOutput {
     }
 }
 
+/// 失败的**稳定内部类别**（change add-harness-turn-retry-nov23 design §3.1）。
+///
+/// 可重试性判定的唯一输入面：传输 / 协议边界把 provider 原始 `code` 归一成本枚举，分类器
+/// （[`retryable`]）只读类别 + `context_overflow`，MUST NOT 读 provider 字面量。`code` /
+/// `message` 仍随错误保留，只作文案与诊断素材。
+///
+/// `HttpNon2xx(u16)` 自带状态码：与 [`TurnError::http_status`] 同源（构造点一处写入），
+/// 分类器因此不依赖「HTTP 面字段是否被另一次赋值改过」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FailureKind {
+    /// 发送失败（连接 / DNS / 超时）。
+    NetworkSend,
+    /// 非 2xx（按状态码分类）。
+    HttpNon2xx(u16),
+    /// SSE 读错误 / 通道意外断开。
+    StreamTransport,
+    /// 协议终态未达而 EOF。
+    StreamMissingTerminal,
+    /// `response.failed` / 流内 `error`，归一为 transient（含 `server_error` 与未知类别）。
+    StreamReportedTransient,
+    /// `response.failed` / 流内 `error`，归一为 permanent（鉴权 / 权限 / 非法请求 / 内容策略 / 额度）。
+    StreamReportedPermanent,
+    /// 无正文、无工具调用。
+    EmptyResponse,
+    /// 配置级失败。
+    Config,
+    /// 附件类失败（缺失 / 损坏 / 能力不支持）。
+    Attachment,
+    /// 压缩本身失败。
+    CompactFailed,
+    /// 内部错误 / 线程失败 / 测试脚本耗尽等。
+    #[default]
+    Internal,
+    /// 协议 / 非法响应。
+    Protocol,
+}
+
+impl FailureKind {
+    /// 稳定内部类别名（诊断 sidecar / 测试断言的字符串形态）。`HttpNon2xx` 的状态码在
+    /// `TurnError.http_status` 里，名字不重复携带。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FailureKind::NetworkSend => "network_send",
+            FailureKind::HttpNon2xx(_) => "http_non_2xx",
+            FailureKind::StreamTransport => "stream_transport",
+            FailureKind::StreamMissingTerminal => "stream_missing_terminal",
+            FailureKind::StreamReportedTransient => "stream_reported_transient",
+            FailureKind::StreamReportedPermanent => "stream_reported_permanent",
+            FailureKind::EmptyResponse => "empty_response",
+            FailureKind::Config => "config",
+            FailureKind::Attachment => "attachment",
+            FailureKind::CompactFailed => "compact_failed",
+            FailureKind::Internal => "internal",
+            FailureKind::Protocol => "protocol",
+        }
+    }
+}
+
+/// 失败可重试性（后端**唯一**分类器；design §3.3 真值表）。
+///
+/// `context_overflow` 优先判否：即使传输层把它包成 5xx / transient 流错误，超限终态也不提供
+/// 手动重试（既有「自动压缩 + 重试一次」已覆盖，再点会连锁开新 JSONL）。
+pub fn retryable(kind: FailureKind, context_overflow: bool) -> bool {
+    if context_overflow {
+        return false;
+    }
+    match kind {
+        FailureKind::NetworkSend
+        | FailureKind::StreamTransport
+        | FailureKind::StreamMissingTerminal
+        | FailureKind::StreamReportedTransient
+        | FailureKind::EmptyResponse => true,
+        FailureKind::HttpNon2xx(status) => {
+            matches!(status, 408 | 425 | 429) || (500..=599).contains(&status)
+        }
+        _ => false,
+    }
+}
+
+/// [`TurnError::kind`] 的可重试性读口（分类器的唯一消费形态）。
+pub fn error_retryable(error: &TurnError) -> bool {
+    retryable(error.kind, error.context_overflow)
+}
+
 /// LLM 调用错误（含上下文超限判定，供自动压缩重试）。
 ///
 /// M463 起带**错误路径可观察性**字段：非 2xx 的 HTTP 错误把状态码 / 原始响应 body
 /// （截断）/ 服务端 request id 一并带出，供 llm_error 记录落盘（诊断「服务端为什么拒」
 /// 时不必再靠猜）。这些字段对网络层失败 / 脚本化错误 / 流内错误恒为空（它们没有 HTTP 面）。
+///
+/// change add-harness-turn-retry-nov23 起带稳定内部类别 [`FailureKind`]：可重试性只看它与
+/// `context_overflow`。缺省 `Internal`（不可重试）——构造点必须显式设置类别，漏设不会
+/// 变成「默认可重试」。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TurnError {
     pub code: String,
     pub message: String,
     /// 命中 provider 预设的上下文超限特征串。
     pub context_overflow: bool,
+    /// 稳定内部失败类别（可重试性判定的唯一输入）。
+    pub kind: FailureKind,
     /// HTTP 状态码（非 2xx 才有）。
     pub http_status: Option<u16>,
     /// 原始响应 body（已按 [`ERROR_BODY_MAX_CHARS`] 截断）。
@@ -221,7 +325,8 @@ pub struct TurnError {
 }
 
 impl TurnError {
-    /// 无 HTTP 面的错误（网络层 / 脚本化 / 流内）：新字段全空。仅控制流用的三元组。
+    /// 无 HTTP 面的错误（网络层 / 脚本化 / 流内）：HTTP 字段全空。类别缺省 `Internal`，
+    /// 需要可重试的构造点用 [`Self::with_kind`] 显式声明。
     pub fn new(
         code: impl Into<String>,
         message: impl Into<String>,
@@ -233,6 +338,12 @@ impl TurnError {
             context_overflow,
             ..Default::default()
         }
+    }
+
+    /// 显式声明稳定类别（构造点的唯一设置方式）。
+    pub fn with_kind(mut self, kind: FailureKind) -> Self {
+        self.kind = kind;
+        self
     }
 }
 
@@ -318,10 +429,27 @@ fn http_error_turn_error(
         context_overflow: is_overflow(preset, &code, &message),
         code,
         message,
+        kind: FailureKind::HttpNon2xx(status),
         http_status: Some(status),
         raw_body: Some(raw_body),
         body_truncated,
         request_id: header_request_id.or_else(|| parse_request_id(text)),
+    }
+}
+
+/// client 边界的 [`CommandError`] → [`FailureKind`]（change add-harness-turn-retry-nov23）。
+///
+/// provider 原始 code 在这里出现一次即止（边界归一）：此后分类器与前端都只读类别。发送失败
+/// （连接 / DNS / 超时）归一为 `NetworkSend`；附件展开失败归一为 `Attachment`；其余留
+/// `Internal`（不可重试）。
+fn client_error_kind(error: &CommandError) -> FailureKind {
+    match error.code.as_str() {
+        "harness_network_failed" => FailureKind::NetworkSend,
+        "harness_image_read_failed" | "harness_image_name_invalid" => FailureKind::Attachment,
+        code if code.starts_with("harness_attachment") || code.starts_with("attachment_") => {
+            FailureKind::Attachment
+        }
+        _ => FailureKind::Internal,
     }
 }
 
@@ -948,11 +1076,14 @@ impl LlmClient for ResponsesClient {
             //（`TurnError::new`）。非 2xx 走 complete_inner 的 Ok(error) 分支，那条带
             // http_status / raw_body / request_id（M463）。
             Err(e) => TurnOutput {
-                error: Some(TurnError::new(
-                    e.code.clone(),
-                    e.message.clone(),
-                    is_overflow(self.preset, &e.code, &e.message),
-                )),
+                error: Some(
+                    TurnError::new(
+                        e.code.clone(),
+                        e.message.clone(),
+                        is_overflow(self.preset, &e.code, &e.message),
+                    )
+                    .with_kind(client_error_kind(&e)),
+                ),
                 ..Default::default()
             },
         }
@@ -1077,6 +1208,30 @@ fn parse_sse(
     ))
 }
 
+/// SSE 读循环的结束原因（change add-harness-turn-retry-nov23 design §3.2）：
+/// 协议终态 / 在途停止 / 正常 EOF / 读错误——四类**必须可区分**。旧实现把读错误与断开都
+/// 静默 `break`、无终态 EOF 按正常完成收尾，截断回答因此静默通过。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamEnd {
+    /// 收到协议终态（Responses 的 `response.*` 终态事件 / Chat 的 `[DONE]` 或 usage 末帧）
+    /// 或 provider 报错帧（`response.failed` / 流内 `error`）。
+    Terminal,
+    /// 用户点了停止（`sink.aborted()`）：不是错误，已产出内容保留。
+    Aborted,
+    /// 读线程正常读到 EOF（收到 `Finished` 哨兵）。
+    Eof,
+    /// 读错误 / 通道在哨兵之前断开（线程 panic 等）。
+    ReadError,
+}
+
+/// 读线程 → 消费端的消息（[`pump_sse`]）。`Finished` 哨兵是「正常 EOF」的唯一判据：
+/// 哨兵之后才允许把断开当 `Eof`，无哨兵的断开按 `ReadError` 处理。
+enum SseItem {
+    Line(String),
+    ReadError,
+    Finished,
+}
+
 /// SSE 分帧的公共读循环（两种方言共用，M562）：读端搬到独立线程、行经有界 channel，
 /// 消费端按 [`ABORT_POLL_INTERVAL`] 小步超时轮询——每次超时都问一次 `sink.aborted()`，
 /// 因此流停滞的静默窗口（provider 思考期数秒到十秒零事件）里点停止，亚秒级被读到即收流。
@@ -1089,47 +1244,79 @@ fn parse_sse(
 /// 每收到一条完整事件（空行分隔）调一次 `handle(event, data)`，返回 `true` 表示终态
 /// （不再读流）。事件名与 payload 的语义归各方言：Responses 用命名事件分流
 ///（[`parse_sse_reader`]），chat 的帧没有事件名、只有裸 `data:`（[`parse_chat_sse_reader`]）。
+///
+/// 结束原因可区分（change add-harness-turn-retry-nov23）：见 [`StreamEnd`]。
 fn pump_sse<R: BufRead + Send + 'static>(
     reader: R,
     sink: &dyn StreamSink,
     mut handle: impl FnMut(&str, &str) -> bool,
-) {
+) -> StreamEnd {
     /// 停止轮询步长：消费端等不到数据时每隔多久问一次 `aborted()`。100ms ≪ 用户可感，
     /// 同时不给正常流量增加可测的开销（有数据时走快路径，从不轮询）。
     const ABORT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
     let mut event = String::new();
     let mut data = String::new();
-    let (tx, rx) = std::sync::mpsc::sync_channel::<std::io::Result<String>>(64);
-    let reader_thread = std::thread::spawn(move || {
-        for line in reader.lines() {
-            // 消费端已收流（终止 / 在途停止）：send 失败即退出，Response 随之 drop。
-            if tx.send(line).is_err() {
-                break;
+    let (tx, rx) = std::sync::mpsc::sync_channel::<SseItem>(64);
+    let _reader_thread = std::thread::spawn(move || {
+        let mut lines = reader.lines();
+        loop {
+            match lines.next() {
+                Some(Ok(line)) => {
+                    // 消费端已收流（终止 / 在途停止）：send 失败即退出，Response 随之 drop。
+                    if tx.send(SseItem::Line(line)).is_err() {
+                        break;
+                    }
+                }
+                Some(Err(_)) => {
+                    // 读错误必须显式交给消费端（旧实现静默 break，截断回答因此当正常完成）。
+                    let _ = tx.send(SseItem::ReadError);
+                    break;
+                }
+                None => {
+                    // 正常 EOF 哨兵：消费端据「有没有收到它」区分 Eof 与无哨兵断开。
+                    let _ = tx.send(SseItem::Finished);
+                    break;
+                }
             }
         }
     });
+    let mut finished = false;
     loop {
         let line = match rx.recv_timeout(ABORT_POLL_INTERVAL) {
-            Ok(line) => match line {
-                Ok(line) => line,
-                Err(_) => break, // 流中断：用已收内容收尾（不当作致命错误）
-            },
+            Ok(SseItem::Line(line)) => line,
+            Ok(SseItem::ReadError) => return StreamEnd::ReadError,
+            Ok(SseItem::Finished) => {
+                // 哨兵之后 channel 随即断开（读线程返回、tx drop）；下一轮 recv 得到
+                // Disconnected，届时按 `finished` 判 Eof。
+                finished = true;
+                continue;
+            }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 // 静默窗口：没有数据可读，正是停下来问「用户是否点了停止」的时候。
                 if sink.aborted() {
-                    break;
+                    return StreamEnd::Aborted;
                 }
                 continue;
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                // 有哨兵 = 正常 EOF；无哨兵 = 读线程异常退出（panic 等）⇒ 读错误。
+                return if finished {
+                    StreamEnd::Eof
+                } else {
+                    StreamEnd::ReadError
+                };
+            }
         };
         if line.is_empty() {
             let terminal = handle(&event, &data);
             event.clear();
             data.clear();
-            if terminal || sink.aborted() {
-                break;
+            if sink.aborted() {
+                return StreamEnd::Aborted;
+            }
+            if terminal {
+                return StreamEnd::Terminal;
             }
             continue;
         }
@@ -1143,35 +1330,64 @@ fn pump_sse<R: BufRead + Send + 'static>(
         }
         // 其余行（注释 / 未知字段）忽略
     }
-    drop(rx);
-    let _ = reader_thread;
+}
+
+/// 流结束后的归一（change add-harness-turn-retry-nov23，design §3.2 第 4 条）：
+/// `ReadError` → `StreamTransport`；`Eof` 且无协议终态 → `StreamMissingTerminal`。
+/// 两者都保留已收正文 / 思考 / 调用，但设置 `output.error`（可见错误）。
+/// `Terminal` / `Aborted` 不动（终止帧自己已带 error / 正常完成；在途停止不是错误）。
+fn apply_stream_end(output: &mut TurnOutput, end: StreamEnd, terminal_seen: bool) {
+    match end {
+        StreamEnd::Terminal | StreamEnd::Aborted => {}
+        StreamEnd::Eof if !terminal_seen => {
+            output.error = Some(
+                TurnError::new(
+                    "harness_stream_incomplete",
+                    "流式响应未正常结束（协议终态事件缺失）",
+                    false,
+                )
+                .with_kind(FailureKind::StreamMissingTerminal),
+            );
+        }
+        StreamEnd::Eof => {}
+        StreamEnd::ReadError => {
+            output.error = Some(
+                TurnError::new(
+                    "harness_stream_interrupted",
+                    "流式响应中断（连接断开或读取失败）",
+                    false,
+                )
+                .with_kind(FailureKind::StreamTransport),
+            );
+        }
+    }
 }
 
 /// Responses 方言的 SSE 读循环（与 transport 解耦：真 client 传响应体，单测传合成字节流），
 /// 协议层行为因此可用字节流直接钉死。
+///
+/// `terminal_seen` 只由 `response.completed` / `response.incomplete` / `response.failed`
+/// 三个**事件名**置位（design §3.2 第 2 条）；`[DONE]` 不是 Responses 终态，单独出现不置位。
 fn parse_sse_reader<R: BufRead + Send + 'static>(
     reader: R,
     preset: &ProtocolPreset,
     sink: &dyn StreamSink,
 ) -> TurnOutput {
     let mut output = TurnOutput::default();
-    pump_sse(reader, sink, |event, data| {
-        dispatch_event(event, data, &mut output, preset, sink);
-        output.error.is_some() || terminal_state(&output)
+    let mut terminal_seen = false;
+    let end = pump_sse(reader, sink, |event, data| {
+        dispatch_event(event, data, &mut output, &mut terminal_seen, preset, sink);
+        terminal_seen
     });
-    // 流结束而无终态事件：不报错，用已收内容（部分厂商截断时无 failed 事件）。
+    apply_stream_end(&mut output, end, terminal_seen);
     output
-}
-
-/// completed/incomplete/failed 已处理标记（用 usage/error 的有无近似终态）。
-fn terminal_state(output: &TurnOutput) -> bool {
-    output.usage.is_some() || output.error.is_some()
 }
 
 fn dispatch_event(
     event: &str,
     data: &str,
     output: &mut TurnOutput,
+    terminal_seen: &mut bool,
     preset: &ProtocolPreset,
     sink: &dyn StreamSink,
 ) {
@@ -1205,14 +1421,15 @@ fn dispatch_event(
             }
         }
         "response.completed" | "response.incomplete" => {
+            *terminal_seen = true;
             if let Some(response) = value.get("response") {
                 collect_final_response(response, output);
             }
         }
         "response.failed" => {
-            let (code, message) = value
-                .get("response")
-                .and_then(|r| r.get("error"))
+            *terminal_seen = true;
+            let provider_error = value.get("response").and_then(|r| r.get("error"));
+            let (code, message) = provider_error
                 .and_then(parse_error_value)
                 .unwrap_or_else(|| {
                     (
@@ -1221,15 +1438,57 @@ fn dispatch_event(
                     )
                 });
             let context_overflow = is_overflow(preset, &code, &message);
-            output.error = Some(TurnError::new(code, message, context_overflow));
+            output.error = Some(
+                TurnError::new(code, message, context_overflow)
+                    .with_kind(reported_failure_kind(provider_error)),
+            );
         }
         "error" => {
-            let (code, message) = parse_error_value(&value)
+            *terminal_seen = true;
+            // 流内 error 帧可能是 `{"error": {...}}`，也可能是错误对象本身（chat 侧同形）。
+            let provider_error = value
+                .get("error")
+                .filter(|e| !e.is_null())
+                .unwrap_or(&value);
+            let (code, message) = parse_error_value(provider_error)
                 .unwrap_or_else(|| ("harness_stream_error".to_string(), "流式错误".to_string()));
             let context_overflow = is_overflow(preset, &code, &message);
-            output.error = Some(TurnError::new(code, message, context_overflow));
+            output.error = Some(
+                TurnError::new(code, message, context_overflow)
+                    .with_kind(reported_failure_kind(Some(provider_error))),
+            );
         }
         _ => {}
+    }
+}
+
+/// `response.failed` / 流内 `error` 的稳定类别归一（design §3.2 第 5 条）：
+/// 已知鉴权 / 权限 / 非法请求 / 内容策略 / 额度耗尽 ⇒ permanent，其余（含 `server_error`
+/// 与未知类别）⇒ transient。**provider 原始 code 只在这里出现一次**，分类器不读它。
+fn reported_failure_kind(error: Option<&serde_json::Value>) -> FailureKind {
+    /// provider 错误体里「重发必然再失败」的稳定标签（`type` 与 `code` 两键都查——两家
+    /// provider 把同一语义放在不同键上）。
+    const PERMANENT: [&str; 6] = [
+        "invalid_request_error",
+        "authentication_error",
+        "permission_error",
+        "not_found_error",
+        "content_policy_violation",
+        "insufficient_quota",
+    ];
+    let Some(error) = error else {
+        return FailureKind::StreamReportedTransient;
+    };
+    let permanent = ["type", "code"].iter().any(|key| {
+        error
+            .get(*key)
+            .and_then(|v| v.as_str())
+            .is_some_and(|label| PERMANENT.contains(&label))
+    });
+    if permanent {
+        FailureKind::StreamReportedPermanent
+    } else {
+        FailureKind::StreamReportedTransient
     }
 }
 
@@ -1424,11 +1683,14 @@ impl LlmClient for ChatCompletionsClient {
             // 网络层失败 / 附件展开失败等**没有 HTTP 面**的错误：wire 面字段全空。
             // 非 2xx 走 complete_inner 的 Ok(error) 分支（复用 http_error_turn_error）。
             Err(e) => TurnOutput {
-                error: Some(TurnError::new(
-                    e.code.clone(),
-                    e.message.clone(),
-                    is_overflow(self.preset, &e.code, &e.message),
-                )),
+                error: Some(
+                    TurnError::new(
+                        e.code.clone(),
+                        e.message.clone(),
+                        is_overflow(self.preset, &e.code, &e.message),
+                    )
+                    .with_kind(client_error_kind(&e)),
+                ),
                 ..Default::default()
             },
         }
@@ -1882,6 +2144,10 @@ struct ChatStreamState {
     calls: Vec<ChatCallAccum>,
     usage: Option<Usage>,
     error: Option<TurnError>,
+    /// 协议终态是否已到（change add-harness-turn-retry-nov23 design §3.2 第 3 条）：
+    /// `[DONE]` 与 usage 末帧显式置位；错误帧同样是协议终态（不再读流）。
+    /// MUST NOT 用 usage / error 的有无近似——`[DONE]` 单独到达也要能区分于 EOF。
+    terminal_seen: bool,
 }
 
 #[derive(Default)]
@@ -1900,6 +2166,7 @@ impl ChatStreamState {
             return false;
         }
         if data == "[DONE]" {
+            self.terminal_seen = true;
             return true;
         }
         let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
@@ -1909,7 +2176,11 @@ impl ChatStreamState {
             let (code, message) = parse_error_value(error)
                 .unwrap_or_else(|| ("harness_stream_error".into(), "流式错误".into()));
             let context_overflow = is_overflow(preset, &code, &message);
-            self.error = Some(TurnError::new(code, message, context_overflow));
+            self.error = Some(
+                TurnError::new(code, message, context_overflow)
+                    .with_kind(reported_failure_kind(Some(error))),
+            );
+            self.terminal_seen = true;
             return true;
         }
         if let Some(choices) = value.get("choices").and_then(|c| c.as_array()) {
@@ -1942,6 +2213,7 @@ impl ChatStreamState {
         // 该轮无读数（与既有「无 usage 不更新 meter」同纪律）。
         if let Some(usage) = value.get("usage").filter(|u| !u.is_null()) {
             self.usage = Some(chat_usage(usage));
+            self.terminal_seen = true;
             return true;
         }
         false
@@ -2011,16 +2283,23 @@ fn parse_chat_sse(
 /// chat 方言的 SSE 读循环（与 transport 解耦，单测传合成字节流）：帧没有事件名，每条
 /// `data:` 是一条完整 JSON（`[DONE]` 为终止哨兵）。在途停止与 Responses 侧同一语义——
 /// `pump_sse` 的轮询收流，**已产出的 text / reasoning 分片保留在返回值里**。
+///
+/// 终态归一与 Responses 侧同一份判定（change add-harness-turn-retry-nov23 design §3.2）：
+/// `[DONE]` / usage 末帧 / 错误帧置 `terminal_seen`；无终态 EOF 归 `StreamMissingTerminal`，
+/// 读错误归 `StreamTransport`，已收正文保留但设置 `output.error`。
 fn parse_chat_sse_reader<R: BufRead + Send + 'static>(
     reader: R,
     preset: &ProtocolPreset,
     sink: &dyn StreamSink,
 ) -> TurnOutput {
     let mut state = ChatStreamState::default();
-    pump_sse(reader, sink, |_event, data| {
+    let end = pump_sse(reader, sink, |_event, data| {
         state.handle(data, preset, sink)
     });
-    state.finish()
+    let terminal_seen = state.terminal_seen;
+    let mut output = state.finish();
+    apply_stream_end(&mut output, end, terminal_seen);
+    output
 }
 
 // ---------------------------------------------------------------------------
@@ -2088,6 +2367,48 @@ struct FixtureError {
     code: String,
     #[serde(default)]
     message: String,
+    /// HTTP 状态位（change add-harness-turn-retry-nov23）：把「非 2xx」搬进脚本，
+    /// 分类按状态码（408 / 425 / 429 / 5xx 可重试，其余 4xx 不可重试）。
+    /// 缺省 = 没有 HTTP 面（网络层 / 流内错误）。
+    #[serde(default)]
+    http_status: Option<u16>,
+    /// 稳定内部类别（`network_send` / `stream_transport` / `stream_missing_terminal` /
+    /// `stream_reported_transient` / `stream_reported_permanent` / `internal` / `protocol` /
+    /// `attachment` / `config` / `compact_failed`）；显式值优先于 `http_status` 与 code 简写。
+    /// **只服务 mock 产品流程**，MUST NOT 作为真实解析层分类证据（R15 用合成字节流）。
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+/// fixture 错误 → 稳定类别（**mock 专用**，change add-harness-turn-retry-nov23 tasks 2.1）：
+/// 显式 `kind` 优先；其次 `http_status`；最后按既有 mock 简写 code 映射（测试专用）。
+/// 真 provider 的分类证据只来自解析层（R15），这里不构成充分证据。
+fn fixture_failure_kind(error: &FixtureError) -> FailureKind {
+    if let Some(kind) = error.kind.as_deref() {
+        match kind {
+            "network_send" => return FailureKind::NetworkSend,
+            "stream_transport" => return FailureKind::StreamTransport,
+            "stream_missing_terminal" => return FailureKind::StreamMissingTerminal,
+            "stream_reported_transient" => return FailureKind::StreamReportedTransient,
+            "stream_reported_permanent" => return FailureKind::StreamReportedPermanent,
+            "empty_response" => return FailureKind::EmptyResponse,
+            "config" => return FailureKind::Config,
+            "attachment" => return FailureKind::Attachment,
+            "compact_failed" => return FailureKind::CompactFailed,
+            "protocol" => return FailureKind::Protocol,
+            "internal" => return FailureKind::Internal,
+            // 未知 kind 落 Internal（不可重试）：脚本笔误不会变成默认可重试。
+            _ => return FailureKind::Internal,
+        }
+    }
+    if let Some(status) = error.http_status {
+        return FailureKind::HttpNon2xx(status);
+    }
+    match error.code.as_str() {
+        "harness_network_failed" => FailureKind::NetworkSend,
+        "harness_stream_error" | "harness_response_failed" => FailureKind::StreamReportedTransient,
+        _ => FailureKind::Internal,
+    }
 }
 
 /// fixture 驱动的确定性 client：每次 `complete` 按序弹一条脚本。
@@ -2363,10 +2684,48 @@ impl LlmClient for MockClient {
         }
         if let Some(error) = entry.error {
             let context_overflow = is_overflow_any(&error.code, &error.message);
-            return TurnOutput {
-                error: Some(TurnError::new(error.code, error.message, context_overflow)),
+            let kind = fixture_failure_kind(&error);
+            // error 条目可同时带 `chunks` / `text`（change add-harness-turn-retry-nov23）：
+            // 先按序流出半截正文，再以该错误收尾——「流式已产出部分正文后失败」的唯一
+            // 可表达形态。不带分片 / 文本的既有 fixture 行为不变（正文为空）。
+            let chunks = if entry.chunks.is_empty() {
+                if entry.text.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![entry.text.clone()]
+                }
+            } else {
+                entry.chunks.clone()
+            };
+            let mut partial = TurnOutput {
+                reasoning: entry.reasoning.as_ref().map(normalize_reasoning_item),
+                calls: entry
+                    .tool_calls
+                    .into_iter()
+                    .map(|c| ToolCall {
+                        call_id: c.id,
+                        name: c.name,
+                        arguments: c.arguments,
+                    })
+                    .collect(),
+                usage: entry.usage.map(|u| Usage {
+                    input_tokens: u.input_tokens,
+                    cached_tokens: u.cached_tokens,
+                    output_tokens: u.output_tokens,
+                    cache_write_tokens: u.cache_write_tokens,
+                }),
                 ..Default::default()
             };
+            for chunk in &chunks {
+                partial.text.push_str(chunk);
+                sink.text_delta(chunk);
+            }
+            partial.error = Some(TurnError {
+                kind,
+                http_status: error.http_status,
+                ..TurnError::new(error.code, error.message, context_overflow)
+            });
+            return partial;
         }
         // 本轮的正文分片序列：给了 `chunks` 按它分片，否则整段文本作一片（空文本则零片）。
         let chunks = if entry.chunks.is_empty() {
@@ -4062,5 +4421,318 @@ data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3}}
         // 翻译不改写留存项（design D3）：源 items 仍是 Responses 形态。
         assert_eq!(items[1]["type"], "reasoning");
         assert_eq!(items[2]["type"], "function_call");
+    }
+
+    // ---- change add-harness-turn-retry-nov23：失败分类与流终态（R1 / R15）----
+
+    /// R1：分类真值表逐行（design §3.3）。判定只读 `FailureKind` + `context_overflow`，
+    /// MUST NOT 读 provider 原始 code——最后两段用同类别 / 不同 code 的两条错误证明。
+    #[test]
+    fn retryable_truth_table_matches_design() {
+        use FailureKind::*;
+        for kind in [
+            NetworkSend,
+            StreamTransport,
+            StreamMissingTerminal,
+            StreamReportedTransient,
+            EmptyResponse,
+        ] {
+            assert!(retryable(kind, false), "{kind:?} 应可重试");
+        }
+        for status in [408, 425, 429, 500, 502, 503, 599] {
+            assert!(
+                retryable(HttpNon2xx(status), false),
+                "HTTP {status} 应可重试"
+            );
+        }
+        for status in [400, 401, 403, 404, 409, 422, 499] {
+            assert!(
+                !retryable(HttpNon2xx(status), false),
+                "HTTP {status} 不应可重试"
+            );
+        }
+        for kind in [
+            StreamReportedPermanent,
+            Config,
+            Attachment,
+            CompactFailed,
+            Internal,
+            Protocol,
+        ] {
+            assert!(!retryable(kind, false), "{kind:?} 不应可重试");
+        }
+        // 超限优先判否：即使类别本身可重试、HTTP 落在 5xx。
+        for kind in [
+            NetworkSend,
+            HttpNon2xx(503),
+            StreamReportedTransient,
+            StreamMissingTerminal,
+            EmptyResponse,
+        ] {
+            assert!(!retryable(kind, true), "{kind:?} + 超限应判否");
+        }
+        // 判定不读 provider 原始 code：同类别、不同 code 的两条错误结果相同。
+        let a = TurnError::new("server_error", "…", false).with_kind(StreamReportedTransient);
+        let b = TurnError::new("some_unknown_code", "…", false).with_kind(StreamReportedTransient);
+        assert_eq!(error_retryable(&a), error_retryable(&b));
+        assert!(error_retryable(&a));
+        // 缺省 kind = Internal（不可重试）：漏设类别不会变成默认可重试。
+        assert!(!error_retryable(&TurnError::new("whatever", "…", false)));
+    }
+
+    /// 读到数据后返回 `io::Error` 的 reader（R15 的「读错误」形态）。
+    struct ErrorAfterBytes {
+        cursor: std::io::Cursor<Vec<u8>>,
+    }
+
+    impl ErrorAfterBytes {
+        fn new(text: &str) -> Self {
+            Self {
+                cursor: std::io::Cursor::new(text.as_bytes().to_vec()),
+            }
+        }
+    }
+
+    impl std::io::Read for ErrorAfterBytes {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.cursor.read(buf)
+        }
+    }
+
+    impl BufRead for ErrorAfterBytes {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            let pos = self.cursor.position() as usize;
+            if pos >= self.cursor.get_ref().len() {
+                return Err(std::io::Error::other("synthetic read error"));
+            }
+            self.cursor.fill_buf()
+        }
+
+        fn consume(&mut self, amt: usize) {
+            self.cursor.consume(amt);
+        }
+    }
+
+    /// 读到数据后 **panic** 的 reader（R15 的「无哨兵断开」形态：读线程异常退出，
+    /// channel 在 `Finished` 哨兵之前断开）。
+    struct PanicAfterBytes {
+        cursor: std::io::Cursor<Vec<u8>>,
+    }
+
+    impl PanicAfterBytes {
+        fn new(text: &str) -> Self {
+            Self {
+                cursor: std::io::Cursor::new(text.as_bytes().to_vec()),
+            }
+        }
+    }
+
+    impl std::io::Read for PanicAfterBytes {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.cursor.read(buf)
+        }
+    }
+
+    impl BufRead for PanicAfterBytes {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            let pos = self.cursor.position() as usize;
+            if pos >= self.cursor.get_ref().len() {
+                panic!("synthetic reader panic");
+            }
+            self.cursor.fill_buf()
+        }
+
+        fn consume(&mut self, amt: usize) {
+            self.cursor.consume(amt);
+        }
+    }
+
+    fn responses_preset() -> &'static ProtocolPreset {
+        protocol_preset(crate::config::ProviderPreset::Deepseek)
+    }
+
+    /// R15（Responses）：读错误 / 无哨兵断开 / 无终态 EOF 都产出稳定流失败类别（不是正常
+    /// 完成），已收正文保留，可重试性正确。
+    #[test]
+    fn responses_stream_failures_normalize_to_stable_kinds() {
+        const DELTAS: &str = "event: response.output_text.delta\ndata: {\"delta\":\"半截\"}\n\n";
+        // (a) 读错误。
+        let out = parse_sse_reader(
+            ErrorAfterBytes::new(DELTAS),
+            responses_preset(),
+            &TestStream::default(),
+        );
+        assert_eq!(out.text, "半截", "已收正文必须保留");
+        let error = out
+            .error
+            .expect("读错误必须产出错误（旧实现静默按已收内容收尾）");
+        assert_eq!(error.kind, FailureKind::StreamTransport);
+        assert!(error_retryable(&error));
+        // (b) 无哨兵断开（读线程 panic）。
+        let out = parse_sse_reader(
+            PanicAfterBytes::new(DELTAS),
+            responses_preset(),
+            &TestStream::default(),
+        );
+        assert_eq!(out.text, "半截");
+        let error = out.error.expect("无哨兵断开必须产出错误");
+        assert_eq!(error.kind, FailureKind::StreamTransport);
+        // (c) EOF 无 response.completed/incomplete/failed。
+        let out = sse_parse(DELTAS);
+        assert_eq!(out.text, "半截");
+        let error = out
+            .error
+            .expect("无终态 EOF 必须产出错误（旧实现当正常完成）");
+        assert_eq!(error.kind, FailureKind::StreamMissingTerminal);
+        assert!(error_retryable(&error));
+        // 对照：`[DONE]` 不是 Responses 终态，单独出现仍判缺终态。
+        let out = sse_parse(&format!("{DELTAS}data: [DONE]\n\n"));
+        assert_eq!(
+            out.error.map(|e| e.kind),
+            Some(FailureKind::StreamMissingTerminal)
+        );
+        // 对照：正常终态仍按正常完成收尾（无错误）。
+        let out = sse_parse(&format!(
+            "{DELTAS}event: response.completed\ndata: {{\"response\":{{\"output\":[],\"usage\":{{\"input_tokens\":1,\"output_tokens\":1}}}}}}\n\n"
+        ));
+        assert!(out.error.is_none(), "{:?}", out.error);
+        assert!(out.usage.is_some());
+    }
+
+    /// R15（Responses）：`response.failed` 的两类归一（server_error → transient、
+    /// invalid_request_error → permanent），原始 code 保留为诊断素材。
+    #[test]
+    fn responses_reported_failures_split_transient_and_permanent() {
+        let parse = |error: &str| {
+            sse_parse(&format!(
+                "event: response.output_text.delta\ndata: {{\"delta\":\"半截\"}}\n\nevent: response.failed\ndata: {{\"response\":{{\"error\":{error}}}}}\n\n"
+            ))
+        };
+        let transient =
+            parse(r#"{"type":"server_error","code":"server_error","message":"服务器开小差"}"#);
+        assert_eq!(transient.text, "半截");
+        let error = transient.error.expect("server_error 必须报错");
+        assert_eq!(error.kind, FailureKind::StreamReportedTransient);
+        assert_eq!(error.code, "server_error", "原始 code 保留为诊断素材");
+        assert!(error_retryable(&error));
+
+        let permanent = parse(
+            r#"{"type":"invalid_request_error","code":"invalid_request_error","message":"参数非法"}"#,
+        );
+        let error = permanent.error.expect("invalid_request_error 必须报错");
+        assert_eq!(error.kind, FailureKind::StreamReportedPermanent);
+        assert!(!error_retryable(&error), "非法请求重发必然再失败");
+    }
+
+    /// R15（Chat）：读错误 / 无哨兵断开 / 无 `[DONE]` 与无 usage 末帧的 EOF 同样是可见错误；
+    /// `[DONE]` 与 usage 末帧仍是正常收尾。
+    #[test]
+    fn chat_stream_failures_normalize_to_stable_kinds() {
+        const DELTA: &str = "data: {\"choices\":[{\"delta\":{\"content\":\"半截\"}}]}\n\n";
+        let parse = |reader: Box<dyn BufRead + Send>| {
+            parse_chat_sse_reader(reader, &KIMI_PRESET, &TestStream::default())
+        };
+        // (a) 读错误。
+        let out = parse(Box::new(ErrorAfterBytes::new(DELTA)));
+        assert_eq!(out.text, "半截");
+        let error = out.error.expect("读错误必须产出错误");
+        assert_eq!(error.kind, FailureKind::StreamTransport);
+        // (b) 无哨兵断开。
+        let out = parse(Box::new(PanicAfterBytes::new(DELTA)));
+        assert_eq!(out.text, "半截");
+        assert_eq!(
+            out.error.map(|e| e.kind),
+            Some(FailureKind::StreamTransport)
+        );
+        // (c) EOF 无 [DONE] / usage。
+        let out = chat_sse_parse_with(DELTA, &TestStream::default());
+        assert_eq!(out.text, "半截");
+        let error = out.error.expect("无终态 EOF 必须产出错误");
+        assert_eq!(error.kind, FailureKind::StreamMissingTerminal);
+        assert!(error_retryable(&error));
+        // 对照：`[DONE]` 正常收尾。
+        let out = chat_sse_parse_with(&format!("{DELTA}data: [DONE]\n\n"), &TestStream::default());
+        assert!(out.error.is_none(), "{:?}", out.error);
+        // 对照：usage 末帧正常收尾（其后只会是 [DONE]）。
+        let out = chat_sse_parse_with(
+            &format!(
+                "{DELTA}data: {{\"usage\":{{\"prompt_tokens\":3,\"completion_tokens\":2}}}}\n\n"
+            ),
+            &TestStream::default(),
+        );
+        assert!(out.error.is_none(), "{:?}", out.error);
+        assert!(out.usage.is_some());
+    }
+
+    /// R15（Chat）：流内 `error` 的两类归一；原始 code 保留。
+    #[test]
+    fn chat_reported_failures_split_transient_and_permanent() {
+        let parse = |body: &str| chat_sse_parse_with(body, &TestStream::default());
+        let transient = parse(
+            "data: {\"error\":{\"type\":\"server_error\",\"code\":\"server_error\",\"message\":\"x\"}}\n\n",
+        );
+        let error = transient.error.expect("server_error 必须报错");
+        assert_eq!(error.kind, FailureKind::StreamReportedTransient);
+        assert!(error_retryable(&error));
+
+        let permanent = parse(
+            "data: {\"error\":{\"type\":\"content_policy_violation\",\"code\":\"content_policy_violation\",\"message\":\"x\"}}\n\n",
+        );
+        let error = permanent.error.expect("内容策略必须报错");
+        assert_eq!(error.kind, FailureKind::StreamReportedPermanent);
+        assert!(!error_retryable(&error));
+    }
+
+    /// 2.1 / 2.2：fixture 能表达 HTTP 状态、显式 kind 与「先流半截再失败」；不带新键的
+    /// 既有 fixture 行为不变（2.4 的回归面）。
+    #[test]
+    fn mock_fixture_expresses_http_kind_and_partial_failure() {
+        let mut client = MockClient::from_str(
+            r#"{"responses": [
+                {"error": {"code": "harness_http_error", "message": "HTTP 429", "http_status": 429}},
+                {"error": {"code": "harness_stream_error", "message": "x", "kind": "stream_reported_permanent"}},
+                {"chunks": ["PART-1", "PART-2"], "error": {"code": "harness_stream_error", "message": "断", "kind": "stream_reported_transient"}},
+                {"error": {"code": "harness_http_error", "message": "HTTP 400", "http_status": 400}}
+            ]}"#,
+            "fixture-shapes",
+        )
+        .unwrap();
+        let sink = TestStream::default();
+        let request = request();
+        let out = client.complete(&request, &sink);
+        let error = out.error.expect("429 条目必须报错");
+        assert_eq!(error.kind, FailureKind::HttpNon2xx(429));
+        assert!(error_retryable(&error));
+        let out = client.complete(&request, &sink);
+        assert_eq!(
+            out.error.map(|e| e.kind),
+            Some(FailureKind::StreamReportedPermanent)
+        );
+        let out = client.complete(&request, &sink);
+        assert_eq!(out.text, "PART-1PART-2", "error 条目先按序流出半截正文");
+        assert_eq!(
+            sink.text(),
+            vec!["PART-1".to_string(), "PART-2".to_string()],
+            "半截正文逐片转发"
+        );
+        assert_eq!(
+            out.error.map(|e| e.kind),
+            Some(FailureKind::StreamReportedTransient)
+        );
+        let out = client.complete(&request, &sink);
+        let error = out.error.expect("400 条目必须报错");
+        assert_eq!(error.kind, FailureKind::HttpNon2xx(400));
+        assert!(!error_retryable(&error));
+        // 既有 fixture（无新键）行为不变：code 简写映射，无半截正文。
+        let mut legacy = MockClient::from_str(
+            r#"{"responses": [{"error": {"code": "fixture_exhausted"}}]}"#,
+            "legacy",
+        )
+        .unwrap();
+        let out = legacy.complete(&request, &TestStream::default());
+        let error = out.error.expect("错误条目仍报错");
+        assert_eq!(error.kind, FailureKind::Internal);
+        assert!(!error_retryable(&error));
+        assert!(out.text.is_empty());
     }
 }

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "先建一份文件。",
+      "tool_calls": [
+        { "id": "c1", "name": "vault_create", "arguments": "{\"path\":\"retry-once.md\",\"content\":\"ONCE\"}" }
+      ]
+    },
+    { "error": { "code": "harness_network_failed", "message": "第二轮往返失败（合成）" } },
+    { "text": "RETRY-OK" }
+  ]
+}

@@ -435,6 +435,7 @@ impl StateSnapshot {
             },
             title: None,
             persistence: PersistenceHealth::default(),
+            retry: None,
         }
     }
 }
@@ -497,6 +498,11 @@ pub struct StateSnapshot {
     /// 六键 + `history_gap` 三键恒在场（`StateSnapshot::empty` 同形）。取值来自会话持有的
     /// `JsonlWriter`（唯一写点与唯一上报点），快照与 `persistence` 事件同吃一份 `Serialize`。
     pub persistence: PersistenceHealth,
+    /// 可重试的失败轮次（change add-harness-turn-retry-nov23 design §6.2）：`{"turn":N}`；
+    /// 无失败 / 不可重试 / 非交互轮次时**缺键**。只暴露轮次标识——错误行是 live 面，快照
+    /// 重建的是尾部通用动作行，不复制 code / message / 半截正文。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry: Option<RetrySnapshot>,
 }
 
 /// 在跑子运行的一行（`harness_state.live_subruns`，change rework-harness-delegation-ux-nov02）：
@@ -695,6 +701,30 @@ pub enum TurnPhase {
     Finishing,
 }
 
+/// 一次仍可重试的失败（change add-harness-turn-retry-nov23 design §4.1）。
+///
+/// 只保留三个字段，各自有消费者：`turn`（动作绑定 + 世代守卫）、`input_len`（廉价二道保险：
+/// 失败到重试之间 `input` 长度变了就说明历史被改过）、`user_text`（重试成功后的会话自动命名
+/// ——「首轮 / 5 轮节奏」不因一次失败而永久跳过）。`code` / `http_status` / `round` /
+/// `tools_executed` 无消费者，不设。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailedTurn {
+    /// 失败时的 `turn_seq`。
+    pub turn: u64,
+    /// 失败时 `session.input` 的长度。
+    pub input_len: usize,
+    /// 本轮用户提问原文段（已剥掉自动注入的编辑器上下文节）。
+    pub user_text: String,
+}
+
+/// `harness_state.retry` 的载荷（change add-harness-turn-retry-nov23 design §6.2）：
+/// 只暴露轮次标识，不暴露 code / message / 半截正文——错误行是 live 面，快照重建的是尾部
+/// 的通用动作行。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RetrySnapshot {
+    pub turn: u64,
+}
+
 /// 一个 vault 的会话。
 pub struct Session {
     root: PathBuf,
@@ -712,6 +742,13 @@ pub struct Session {
     /// 会话级轮次状态（change add-harness-activity-presence §4）：协议读 [`Session::is_busy`]
     /// 与呈现读 [`Session::in_flight`] 由它**同一份**派生，MUST NOT 各存一份。
     turn_phase: TurnPhase,
+    /// 轮次世代（change add-harness-turn-retry-nov23 design §4.1）：每次 `begin_turn` 推进，
+    /// **不落盘、不进 wire**——只用于「这次失败还是不是当前这一轮」的重试守卫。对外只出现在
+    /// `retry.turn` 里做动作绑定，读者无法拿它寻址任何持久化对象。
+    turn_seq: u64,
+    /// 当前仍可重试的最近一次失败（仅交互用户轮 / 重试轮登记）。失败事实是**内存态**：
+    /// 不落 JSONL、不跨重启 / 历史恢复；`begin_turn` 推进世代时清空。
+    failed: Option<FailedTurn>,
     /// 挂起的批准请求列表（change add-harness-subagents design §8.3：父会话自己的调用与
     /// 子运行透传的请求共用一个列表，按 ask 时间排序——并行时可以有多个同时在等）。
     pending: Vec<ApprovalRequest>,
@@ -796,6 +833,8 @@ impl Session {
             usage: UsageSnapshot::default(),
             cache_totals: CacheTotals::default(),
             turn_phase: TurnPhase::Idle,
+            turn_seq: 0,
+            failed: None,
             pending: Vec::new(),
             abort_requested: false,
             stop_reason: None,
@@ -964,9 +1003,13 @@ impl Session {
         self.turn_phase
     }
 
-    /// 开新一轮（`acquire_turn` 在忙判定通过之后调用）：`Idle → Running`。
+    /// 开新一轮（`acquire_turn` / `begin_retry` 在忙判定通过之后调用）：`Idle → Running`。
+    /// 同时推进轮次世代并清空可重试失败（change add-harness-turn-retry-nov23）：任何新轮次
+    /// 开始都让旧的重试动作失效——这是「失败后用户又发新消息 / 开了新会话」的守卫来源。
     pub fn begin_turn(&mut self) {
         self.turn_phase = TurnPhase::Running;
+        self.turn_seq = self.turn_seq.saturating_add(1);
+        self.failed = None;
     }
 
     /// 终态已发（终态发射 helper 在发事件**之前**调用）：`Running → Finishing`。
@@ -982,6 +1025,47 @@ impl Session {
     /// 释放会话（`release_turn`）：任意状态 → `Idle`（保持该函数今天的幂等语义）。
     pub fn end_turn(&mut self) {
         self.turn_phase = TurnPhase::Idle;
+    }
+
+    /// 当前轮次世代（重试守卫与 `retry.turn` 的读数）。
+    pub fn turn_seq(&self) -> u64 {
+        self.turn_seq
+    }
+
+    /// `session.input` 的当前长度（失败登记 / 重试二道保险）。
+    pub fn input_len(&self) -> usize {
+        self.input.len()
+    }
+
+    /// 登记一次仍可重试的失败（仅交互用户轮 / 重试轮；调用点由 `TurnOrigin` 把关）。
+    pub fn record_failed(&mut self, turn: u64, input_len: usize, user_text: String) {
+        self.failed = Some(FailedTurn {
+            turn,
+            input_len,
+            user_text,
+        });
+    }
+
+    /// 当前可重试失败的只读视图（守卫判定用）。
+    pub fn failed(&self) -> Option<&FailedTurn> {
+        self.failed.as_ref()
+    }
+
+    /// 取走失败记录（`begin_retry` 在锁内消费，防重放）。
+    pub fn take_failed(&mut self) -> Option<FailedTurn> {
+        self.failed.take()
+    }
+
+    /// 起线程失败时把失败记录放回（`harness_retry` 的 `harness_thread_failed` 路径）。
+    /// MUST 只用于「尚未起线程」的失败路径——轮次已开始后复活旧失败状态会造出重复动作。
+    pub fn restore_failed(&mut self, failed: FailedTurn) {
+        self.failed = Some(failed);
+    }
+
+    /// 起线程失败时回滚轮次世代（与 [`Self::restore_failed`] 同一路径）：保证
+    /// `failed.turn == turn_seq`，动作行不需要换绑。
+    pub fn rollback_turn_seq(&mut self, turn: u64) {
+        self.turn_seq = turn;
     }
 
     pub fn input(&self) -> &[serde_json::Value] {
@@ -1099,6 +1183,10 @@ impl Session {
             },
             title: self.title.clone(),
             persistence: self.persistence(),
+            retry: self
+                .failed
+                .as_ref()
+                .map(|failed| RetrySnapshot { turn: failed.turn }),
         }
     }
 
@@ -2091,5 +2179,71 @@ mod tests {
         // 空态快照同形：键恒在场且为 false（面板据此收口，不必区分「旧后端缺键」与「空会话」）。
         let empty = serde_json::to_value(StateSnapshot::empty("vault-a", 85.0, true)).unwrap();
         assert_eq!(empty["in_flight"], serde_json::json!(false));
+    }
+
+    // ---- change add-harness-turn-retry-nov23：失败状态生命周期（R2 / R7 / R17）----
+
+    /// R2 / R7：可重试失败在快照里在场；`begin_turn` 推进世代并清空；`done` / `aborted` /
+    /// 不可重试失败由调用侧不登记（这里断言「未登记 = 缺键」的基线）；新会话对象无失败。
+    #[test]
+    fn failed_state_lifecycle_and_snapshot() {
+        let mut session = test_session();
+        // 基线：空态快照缺键。
+        let snapshot = serde_json::to_value(session.snapshot(85.0, true)).unwrap();
+        assert!(
+            snapshot.get("retry").is_none(),
+            "无失败时 retry 必须缺键（不写 null）"
+        );
+        // 开一轮 → 世代推进；登记失败。
+        session.begin_turn();
+        assert_eq!(session.turn_seq(), 1);
+        session.push_input(serde_json::json!({"role":"user","content":[]}));
+        session.record_failed(session.turn_seq(), session.input_len(), "问题".into());
+        session.finish_turn();
+        session.end_turn();
+        let snapshot = serde_json::to_value(session.snapshot(85.0, true)).unwrap();
+        assert_eq!(snapshot["retry"], serde_json::json!({"turn": 1}));
+        assert!(session.failed().is_some());
+        // 读回：take 后为空、restore 放回。
+        let failed = session.take_failed().expect("失败记录在场");
+        assert_eq!(failed.turn, 1);
+        assert_eq!(failed.input_len, 1);
+        assert_eq!(failed.user_text, "问题");
+        assert!(session.failed().is_none());
+        session.restore_failed(failed);
+        assert!(session.failed().is_some());
+        // `begin_turn`（发送 / 重试 / 自动回合）：推进世代并清空失败。
+        session.begin_turn();
+        assert_eq!(session.turn_seq(), 2);
+        assert!(session.failed().is_none(), "新轮次开始必须清空旧失败");
+        let snapshot = serde_json::to_value(session.snapshot(85.0, true)).unwrap();
+        assert!(snapshot.get("retry").is_none());
+        // `rollback_turn_seq` 与 restore 配套：世代退回失败时的值。
+        session.rollback_turn_seq(1);
+        assert_eq!(session.turn_seq(), 1);
+    }
+
+    /// R17：`FailedTurn` 字段收敛为 turn / input_len / user_text（穷尽模式——多一个字段
+    /// 即编译错，不会静默长回来）。
+    #[test]
+    fn failed_turn_has_exactly_three_fields() {
+        let failed = FailedTurn {
+            turn: 7,
+            input_len: 3,
+            user_text: "x".into(),
+        };
+        let FailedTurn {
+            turn,
+            input_len,
+            user_text,
+        } = failed;
+        assert_eq!((turn, input_len, user_text.as_str()), (7, 3, "x"));
+    }
+
+    /// R7：空态快照同形缺键（`StateSnapshot::empty` 不写 `retry:null`）。
+    #[test]
+    fn empty_snapshot_has_no_retry_key() {
+        let empty = serde_json::to_value(StateSnapshot::empty("vault-a", 85.0, true)).unwrap();
+        assert!(empty.get("retry").is_none());
     }
 }

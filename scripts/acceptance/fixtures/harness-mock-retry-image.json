@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "responses": [
+    { "error": { "code": "harness_network_failed", "message": "带图轮失败（合成）" } },
+    { "text": "RETRY-OK" }
+  ]
+}

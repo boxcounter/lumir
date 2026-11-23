@@ -4,9 +4,9 @@
      （挂在 scripts/docs-check.sh 与 node scripts/acceptance/run.mjs --check 上）
      唯一真源 = scripts/acceptance/scenarios/*.md 的 front-matter（id / item / title / tier）。 -->
 
-- 场景：261
-- 验收项（不同 item 编号）：230
-- 分档：core 29 / full 222 / bundle 5 / evidence 5（full 批 = 全部 261 个，含其余各档）
+- 场景：272
+- 验收项（不同 item 编号）：241
+- 分档：core 30 / full 232 / bundle 5 / evidence 5（full 批 = 全部 272 个，含其余各档）
 
 `item` 是验收项号，也是 `node scripts/acceptance/run.mjs <item>` 的筛选键。一个验收项拆成多个场景
 文件是既有设计（如 item 7 = `07` / `07c` 两条恢复路径，`07b` 于 M750 下沉退役），故表里一项一行、行内列出全部场景；
@@ -248,3 +248,14 @@
 | 707 | `707-gutter-copy` | 行号 gutter 右键复制 `{path}:{line}`——md（always / 合成 fixture 路径含空格与中文）与 code 首行、vault 外绝对路径、剪贴板逐字、文档零写入 | full |
 | 708 | `708-harness-send-reject-rollback`<br>`708-wikilink-create-lazy-duplicate` | 发送被 provider_missing 拒：幽灵消息撤销、文本与 caret 还原、草稿原样（无 provider 环境）<br>一键创建——索引外同名笔记（用户规则惰性目录）安全拒绝，不造重复 | full<br>full |
 | 709 | `709-persistence-health-healthy`<br>`709b-doc-backup-banner`<br>`709c-doc-banner-save-all`<br>`709d-doc-banner-save-failure`<br>`709e-doc-banner-enum-independent`<br>`709f-doc-banner-restart` | 持久化健康——健康时不打扰（无横幅 / 无状态行 / 无未落盘提示）<br>文档崩溃备份写失败——文档区 sticky 横幅可见且不伪装成保存失败<br>文档备份失败横幅——「全部保存」后内容进 vault、写失败子条件清除、横幅撤下<br>文档备份失败横幅——保存失败时横幅保留，并给出既有保存失败反馈<br>文档备份失败横幅——枚举失败子条件独立保留，保存成功不撤下<br>文档备份失败横幅——重启不凭旧状态弹写失败，再次编辑并等满窗口后重现 | full<br>full<br>full<br>full<br>full<br>full |
+| 710 | `710-harness-retry-network` | 失败轮显式重试（网络失败）：错误行动作 → 点击 → 同一会话重发一次 → 回答上屏、记录只多一对 | core |
+| 711 | `711-harness-retry-tools` | 失败轮重试不重放已执行工具：文件一份、mtime 不变、工具行一次、记录只多一对 | full |
+| 712 | `712-harness-retry-double-click` | 连点重试只重发一次失败往返（在途窗口内第二次不产生额外请求） | full |
+| 713 | `713-harness-retry-vault-switch` | 切 vault 回来仍可重试（快照 retry 重建动作，其他 vault 不受影响） | full |
+| 714 | `714-harness-retry-new-session` | 新会话清掉可重试状态（动作消失、无残留入口） | full |
+| 715 | `715-harness-retry-nonretryable` | 请求类 4xx 不给重试（错误行在场、无动作、无快照 retry） | full |
+| 716 | `716-harness-retry-http-chain` | HTTP 500 / 429 给重试：连续失败重绑动作，最终一次点击成功 | full |
+| 717 | `717-harness-retry-empty` | 空响应可重试：动作在场、点击成功；失败轮不留回放项 | full |
+| 718 | `718-harness-retry-partial` | 半截正文标「未完成」，重试成功后并列第二条回答 | full |
+| 719 | `719-harness-retry-approval` | 重试后的新写工具仍需批准：批准前零副作用、批准卡再现、批准后恰好一次 | full |
+| 720 | `720-harness-retry-image-nonvision` | 含图失败切非 vision 模型：重试被前置闸拒绝（零请求、动作仍在） | full |

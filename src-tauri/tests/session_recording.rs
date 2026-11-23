@@ -1711,3 +1711,601 @@ fn restored_responses_session_translates_to_chat_messages() {
             .unwrap();
     assert_eq!(serde_json::to_vec(&chat_messages).unwrap(), rebuilt);
 }
+
+// ---------------------------------------------------------------------------
+// change add-harness-turn-retry-nov23：R4 / R4b / R5 / R8 / R9 / R10 / R11 / R12 / R13
+// ---------------------------------------------------------------------------
+
+fn error_event(sink: &CollectSink) -> serde_json::Value {
+    sink.0
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|event| event["type"] == "error")
+        .cloned()
+        .expect("本轮必须有 error 终态事件")
+}
+
+fn event_types(sink: &CollectSink) -> Vec<String> {
+    sink.0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|event| event["type"].as_str().map(str::to_string))
+        .collect()
+}
+
+fn requests_of(file: &jsonl::SessionFile) -> Vec<serde_json::Value> {
+    file.records
+        .iter()
+        .filter(|record| record["kind"] == "llm_request")
+        .cloned()
+        .collect()
+}
+
+fn drive_retry(
+    sink: &CollectSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    user_text: String,
+    client: &mut dyn LlmClient,
+) {
+    turn::run_turn_resume_for(sink, runtime, scope, config, user_text, client);
+}
+
+/// R4：失败请求与重试请求的 `messages` 逐字节相同；`input` 长度 / 用户消息条数不变；
+/// 重试只追加一对记录、不新建 JSONL、不写第二条 `session_open`。
+#[test]
+fn retry_resends_identical_messages_in_same_session() {
+    let f = Fixture::new("retry-identity");
+    let config = mock_config();
+    let runtime = Runtime::default();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(
+        r#"{"responses": [
+            {"error": {"code": "harness_network_failed", "message": "连不上"}},
+            {"text": "RETRY-OK"}
+        ]}"#,
+        "retry-identity",
+    )
+    .unwrap();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "原问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    let error = error_event(&sink);
+    let turn_seq = error["retry"]["turn"]
+        .as_u64()
+        .expect("网络失败必须带 retry.turn");
+    let snapshot = runtime.snapshot(&f.scope(), &config);
+    assert_eq!(
+        snapshot.retry.map(|retry| retry.turn),
+        Some(turn_seq),
+        "快照 retry 与事件同源"
+    );
+    let input_len_before = runtime.with_session(&f.scope(), |s| s.input_len()).unwrap();
+
+    let failed = runtime
+        .begin_retry(&f.scope(), &config, turn_seq)
+        .expect("守卫必须放行");
+    assert_eq!(
+        runtime.snapshot(&f.scope(), &config).retry,
+        None,
+        "begin_retry 消费 failed"
+    );
+    drive_retry(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        failed.user_text,
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    let files = f.session_files();
+    assert_eq!(files.len(), 1, "重试不新建 JSONL 文件");
+    let file = f.read(&files[0]);
+    let opens = file
+        .records
+        .iter()
+        .filter(|record| record["kind"] == "session_open")
+        .count();
+    assert_eq!(opens, 1, "重试不写第二条 session_open");
+    let requests = requests_of(&file);
+    assert_eq!(requests.len(), 2, "失败请求 + 重试请求");
+    assert_eq!(
+        requests[0]["request"]["messages"], requests[1]["request"]["messages"],
+        "重试请求的 messages 必须与失败请求逐字节相同"
+    );
+    let user_messages = requests[1]["request"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["role"] == "user")
+        .count();
+    assert_eq!(user_messages, 1, "用户消息条数不变");
+    let input_len_after = runtime.with_session(&f.scope(), |s| s.input_len()).unwrap();
+    assert_eq!(
+        input_len_after,
+        input_len_before + 1,
+        "失败到重试之间 input 不变；重试成功只追加一条回答"
+    );
+    // 重试成功后正常收尾：done + 回答入 input。
+    assert!(event_types(&sink).contains(&"done".to_string()));
+    let responses = file
+        .records
+        .iter()
+        .filter(|record| record["kind"] == "llm_response")
+        .count();
+    assert_eq!(responses, 2, "llm_request / llm_response 成对");
+}
+
+/// R4b：失败后切换 provider / model（与 wire 方言）再重试：messages 仍逐字节相同，
+/// 新 `llm_request` 记录新 provider / model / thinking，`session_open` 不因重试改写。
+#[test]
+fn retry_after_config_switch_keeps_messages_and_records_new_identity() {
+    let f = Fixture::new("retry-config-switch");
+    let config = mock_config();
+    let runtime = Runtime::default();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(
+        r#"{"responses": [
+            {"error": {"code": "harness_network_failed", "message": "断"}},
+            {"text": "RETRY-OK"}
+        ]}"#,
+        "retry-config-switch",
+    )
+    .unwrap();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "原问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let turn_seq = error_event(&sink)["retry"]["turn"].as_u64().unwrap();
+
+    let switched = kimi_chat_config();
+    let failed = runtime
+        .begin_retry(&f.scope(), &switched, turn_seq)
+        .expect("切换配置后仍可重试");
+    drive_retry(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &switched,
+        failed.user_text,
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    let file = f.read(&f.session_files()[0]);
+    let requests = requests_of(&file);
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0]["request"]["messages"], requests[1]["request"]["messages"],
+        "切换配置不改变 messages"
+    );
+    assert_eq!(requests[1]["request"]["provider"], "kimi");
+    assert_eq!(requests[1]["request"]["model"], "k3-256k");
+    assert_eq!(
+        requests[1]["request"]["params"]["thinking"], requests[1]["request"]["params"]["thinking"],
+        "thinking 读数在场"
+    );
+    // session_open 的方言键仍是建立时的值（mock → responses），不因重试改写。
+    let open = file
+        .records
+        .iter()
+        .find(|record| record["kind"] == "session_open")
+        .unwrap();
+    assert_eq!(open["provider"], "mock");
+    assert_eq!(open["wire_api"], "responses");
+}
+
+/// R5：失败前已执行的工具不重放——目标文件仍只有一份、工具行只一条、记录只多一对。
+#[test]
+fn retry_does_not_replay_completed_tool_calls() {
+    let f = Fixture::new("retry-tools");
+    let f_config = mock_config();
+    let runtime = Runtime::default();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(
+        r#"{"responses": [
+            {"tool_calls": [{"id": "c1", "name": "vault_create",
+              "arguments": "{\"path\":\"made-once.md\",\"content\":\"只写一次\"}"}]},
+            {"error": {"code": "harness_network_failed", "message": "断"}},
+            {"text": "RETRY-OK"}
+        ]}"#,
+        "retry-tools",
+    )
+    .unwrap();
+    runtime.acquire_turn(&f.scope(), &f_config).unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &f_config,
+        "建文件".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let created = f.vault().join("made-once.md");
+    let first_bytes = std::fs::read(&created).expect("工具已执行");
+    let turn_seq = error_event(&sink)["retry"]["turn"].as_u64().unwrap();
+    let tool_rows_before = runtime
+        .snapshot(&f.scope(), &f_config)
+        .messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .count();
+    assert_eq!(tool_rows_before, 1, "失败前恰好一次工具行");
+
+    let failed = runtime
+        .begin_retry(&f.scope(), &f_config, turn_seq)
+        .expect("失败发生在工具执行之后的往返");
+    drive_retry(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &f_config,
+        failed.user_text,
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    assert_eq!(
+        std::fs::read(&created).unwrap(),
+        first_bytes,
+        "工具没有被重放（文件内容不变）"
+    );
+    let snapshot = runtime.snapshot(&f.scope(), &f_config);
+    let tool_rows_after = snapshot
+        .messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .count();
+    assert_eq!(tool_rows_after, 1, "transcript 里工具行只出现一次");
+    let file = f.read(&f.session_files()[0]);
+    let requests = requests_of(&file);
+    assert_eq!(requests.len(), 3, "首轮请求 + 失败请求 + 重试请求");
+    // 重试请求包含失败前已完成的调用项与输出项，顺序不变。
+    let messages = requests[2]["request"]["messages"].as_array().unwrap();
+    let has_call = messages.iter().any(|item| item["type"] == "function_call");
+    let has_output = messages
+        .iter()
+        .any(|item| item["type"] == "function_call_output");
+    assert!(has_call && has_output, "已完成工具项原样保留在 input");
+}
+
+/// R8：上下文超限终态不给重试，也不二次压缩 / 二次轮换文件。
+#[test]
+fn overflow_terminal_is_not_retryable_and_does_not_rotate_twice() {
+    let f = Fixture::new("retry-overflow");
+    let mut config = mock_config();
+    config.auto_compact = false;
+    let runtime = Runtime::default();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(
+        r#"{"responses": [
+            {"error": {"code": "context_length_exceeded", "message": "prompt is too long"}}
+        ]}"#,
+        "retry-overflow",
+    )
+    .unwrap();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "长问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let error = error_event(&sink);
+    assert!(
+        error.get("retry").is_none(),
+        "超限终态必须不带 retry：{error}"
+    );
+    assert!(runtime.snapshot(&f.scope(), &config).retry.is_none());
+    assert_eq!(f.session_files().len(), 1, "不二次轮换文件");
+}
+
+/// R9：失败轮的半截正文已逐片转发但未进入 input / panel；重试成功另起第二条回答，
+/// input 只含后者。
+#[test]
+fn partial_text_stays_live_and_retry_appends_second_answer() {
+    let f = Fixture::new("retry-partial");
+    let config = mock_config();
+    let runtime = Runtime::default();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(
+        r#"{"responses": [
+            {"chunks": ["PART-1", "PART-2"],
+             "error": {"code": "harness_stream_error", "message": "断", "kind": "stream_reported_transient"}},
+            {"text": "SECOND-OK"}
+        ]}"#,
+        "retry-partial",
+    )
+    .unwrap();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    // 分片已转发。
+    let texts: Vec<String> = sink
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| event["type"] == "text_chunk")
+        .map(|event| event["text"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(texts, vec!["PART-1".to_string(), "PART-2".to_string()]);
+    // 半截正文未进入 input / panel。
+    let snapshot = runtime.snapshot(&f.scope(), &config);
+    assert_eq!(snapshot.messages.len(), 1, "失败轮只留用户消息");
+    assert_eq!(snapshot.messages[0].role, "user");
+    let input_after_failure = runtime
+        .with_session(&f.scope(), |s| s.input().to_vec())
+        .unwrap();
+    assert!(
+        input_after_failure
+            .iter()
+            .all(|item| item["role"] != "assistant"),
+        "失败轮正文不进 input"
+    );
+    let turn_seq = error_event(&sink)["retry"]["turn"].as_u64().unwrap();
+    let failed = runtime.begin_retry(&f.scope(), &config, turn_seq).unwrap();
+    drive_retry(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        failed.user_text,
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let snapshot = runtime.snapshot(&f.scope(), &config);
+    let answers: Vec<_> = snapshot
+        .messages
+        .iter()
+        .filter(|message| message.role == "assistant")
+        .collect();
+    assert_eq!(
+        answers.len(),
+        1,
+        "重试成功后的回答作为新的一条（旧半截正文是 live 面）"
+    );
+    assert_eq!(answers[0].text.as_deref(), Some("SECOND-OK"));
+    let input = runtime
+        .with_session(&f.scope(), |s| s.input().to_vec())
+        .unwrap();
+    let assistant_items: Vec<_> = input
+        .iter()
+        .filter(|item| item["role"] == "assistant")
+        .collect();
+    assert_eq!(assistant_items.len(), 1, "input 只含重试成功后的回答");
+}
+
+/// R11：空响应可重试；重试请求 messages 与失败请求相同（reasoning 回放项不进 input）；
+/// usage 照常累计、思考兜底分片仍先于错误收口。
+#[test]
+fn empty_response_is_retryable_and_leaves_no_replay_item() {
+    let f = Fixture::new("retry-empty");
+    let config = mock_config();
+    let runtime = Runtime::default();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(
+        r#"{"responses": [
+            {"reasoning": {"type":"reasoning","summary":[{"type":"summary_text","text":"想了很久"}]},
+             "usage": {"input_tokens": 100, "cached_tokens": 10, "output_tokens": 5}},
+            {"text": "OK-AFTER-EMPTY"}
+        ]}"#,
+        "retry-empty",
+    )
+    .unwrap();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let error = error_event(&sink);
+    assert_eq!(error["code"], "harness_empty_response");
+    let turn_seq = error["retry"]["turn"].as_u64().expect("空响应可重试");
+    // usage 照常累计（R11）。
+    assert!(
+        runtime.snapshot(&f.scope(), &config).usage.input_tokens >= 100,
+        "空响应的 usage 仍要记账"
+    );
+    // 思考兜底分片先于错误收口。
+    assert!(event_types(&sink).contains(&"reasoning_chunk".to_string()));
+    // reasoning 回放项没有进 input。
+    let input_len = runtime.with_session(&f.scope(), |s| s.input_len()).unwrap();
+    assert_eq!(input_len, 1, "空响应的 reasoning 项不进 input");
+
+    let failed = runtime.begin_retry(&f.scope(), &config, turn_seq).unwrap();
+    drive_retry(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        failed.user_text,
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let file = f.read(&f.session_files()[0]);
+    let requests = requests_of(&file);
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0]["request"]["messages"], requests[1]["request"]["messages"],
+        "空响应重试的 messages 与失败请求相同"
+    );
+}
+
+/// R10：重试成功后的会话恢复充分性——一条用户消息 + 一条最终回答，无重复、无半截正文。
+#[test]
+fn retry_session_recovers_to_one_user_and_one_answer() {
+    let f = Fixture::new("retry-recovery");
+    let config = mock_config();
+    let runtime = Runtime::default();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(
+        r#"{"responses": [
+            {"chunks": ["半截"], "error": {"code": "harness_stream_error", "message": "断"}},
+            {"text": "完整回答"}
+        ]}"#,
+        "retry-recovery",
+    )
+    .unwrap();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let turn_seq = error_event(&sink)["retry"]["turn"].as_u64().unwrap();
+    let failed = runtime.begin_retry(&f.scope(), &config, turn_seq).unwrap();
+    drive_retry(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        failed.user_text,
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let info = runtime
+        .resume_session(
+            &f.scope(),
+            &config,
+            &f.session_files()[0].file_stem().unwrap().to_string_lossy(),
+        )
+        .expect("重试后的会话可恢复");
+    let users = info.messages.iter().filter(|m| m.role == "user").count();
+    let answers: Vec<_> = info
+        .messages
+        .iter()
+        .filter(|m| m.role == "assistant")
+        .collect();
+    assert_eq!(users, 1);
+    assert_eq!(answers.len(), 1, "无重复、无半截正文：{:?}", info.messages);
+    assert_eq!(answers[0].text.as_deref(), Some("完整回答"));
+}
+
+/// R12：轮次来源矩阵——cron / 子运行 / 自动回合一律不许登记可重试失败。
+/// （自动回合的端到端行为由 `turn.rs` 单测 `auto_turn_failure_does_not_create_retry_state`
+/// 钉住；这里只钉来源枚举本身，防止「用 completion / tool_policy 间接推断」的第二真源。）
+#[test]
+fn non_interactive_origins_never_allow_retry() {
+    for origin in [
+        turn::TurnOrigin::Cron,
+        turn::TurnOrigin::Subrun,
+        turn::TurnOrigin::AutoWake,
+    ] {
+        assert!(!origin.allows_retry(), "{origin:?} 不许登记重试");
+    }
+    for origin in [turn::TurnOrigin::Interactive, turn::TurnOrigin::Retry] {
+        assert!(origin.allows_retry());
+    }
+}
+
+/// R13（D5）：恢复时带 `error` 的末尾响应不折叠——正文 / 思考 / 工具调用都不进 input 与
+/// 面板；旧文件逐字节不变（只读）。
+#[test]
+fn resume_skips_trailing_error_response() {
+    let f = Fixture::new("retry-d5");
+    let config = mock_config();
+    let runtime = Runtime::default();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(
+        r#"{"responses": [
+            {"chunks": ["半截正文"],
+             "reasoning": {"type":"reasoning","summary":[{"type":"summary_text","text":"半截思考"}]},
+             "tool_calls": [{"id": "c-ghost", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}],
+             "error": {"code": "harness_stream_error", "message": "断"}}
+        ]}"#,
+        "retry-d5",
+    )
+    .unwrap();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    let source = f.session_files()[0].clone();
+    let before_bytes = std::fs::read(&source).unwrap();
+    let before_mtime = std::fs::metadata(&source).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    let info = runtime
+        .resume_session(
+            &f.scope(),
+            &config,
+            &source.file_stem().unwrap().to_string_lossy(),
+        )
+        .expect("恢复成功");
+    assert!(
+        info.messages
+            .iter()
+            .all(|message| message.text.as_deref() != Some("半截正文")),
+        "失败响应的半截正文不进恢复面板：{:?}",
+        info.messages
+    );
+    let input = runtime
+        .with_session(&f.scope(), |session| session.input().to_vec())
+        .unwrap();
+    let texts: Vec<&str> = input
+        .iter()
+        .filter_map(|item| item["content"][0]["text"].as_str())
+        .collect();
+    assert!(!texts.contains(&"半截正文"), "半截正文不进 input");
+    assert!(
+        input.iter().all(|item| item["type"] != "reasoning"),
+        "失败响应的思考回放项不折叠"
+    );
+    assert!(
+        input.iter().all(|item| item["type"] != "function_call"),
+        "失败响应的工具调用不折叠"
+    );
+    // 旧文件只读：字节与 mtime 不变。
+    assert_eq!(std::fs::read(&source).unwrap(), before_bytes);
+    assert_eq!(
+        std::fs::metadata(&source).unwrap().modified().unwrap(),
+        before_mtime,
+        "恢复不得回写旧文件"
+    );
+}

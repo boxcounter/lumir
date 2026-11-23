@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "responses": [
+    { "error": { "code": "harness_http_error", "message": "HTTP 400", "http_status": 400 } }
+  ]
+}

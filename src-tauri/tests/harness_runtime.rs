@@ -3204,3 +3204,153 @@ fn deny_rule_text_reaches_the_tool_result_message() {
         "规则原文随拒绝回送：{text}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// change add-harness-turn-retry-nov23：R14（重试后的新写工具仍需批准）
+// ---------------------------------------------------------------------------
+
+/// R14：失败前一次性批准过一次 `vault_delete A`（未选「本会话不再问」），随后该轮失败；
+/// 重试成功后模型发起**新的** `vault_delete B`。断言：批准前 B 仍在（零副作用）、批准卡
+/// 再次出现（不复用 A 的一次性批准）、批准后 B 恰好删除一次、工具行与记录无重复执行。
+#[test]
+fn retry_requires_fresh_approval_for_new_write_tool() {
+    let f = Fixture::new("retry-approval");
+    f.write("a.md", "旧 A\n");
+    f.write("b.md", "旧 B\n");
+    let config = mock_config();
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "vault_delete", "arguments": "{\"path\":\"a.md\"}"}]},
+        {"error": {"code": "harness_network_failed", "message": "断"}},
+        {"tool_calls": [{"id": "c2", "name": "vault_delete", "arguments": "{\"path\":\"b.md\"}"}]},
+        {"text": "都删好了。"}
+    ]}"#;
+    let client = MockClient::from_str(script, "retry-approval").unwrap();
+    // mock client 的脚本游标必须跨轮继续（重试接着失败请求之后的条目弹），线程间交回。
+    let client_slot = std::sync::Arc::new(std::sync::Mutex::new(client));
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config.clone();
+        let client_slot = client_slot.clone();
+        std::thread::spawn(move || {
+            let mut client = client_slot.lock().unwrap();
+            drive_turn(
+                &sink,
+                &runtime,
+                &scope,
+                &config,
+                "删 A".into(),
+                &mut *client,
+            );
+        })
+    };
+    // 第一次批准（A）：一次性、不记住。
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "第一次 approval_request",
+    );
+    let first = sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .unwrap();
+    assert_eq!(first["tool"], "vault_delete");
+    assert_eq!(first["argv"], serde_json::json!(["a.md"]));
+    let first_id = first["id"].as_str().unwrap().to_string();
+    runtime
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&first_id, true, None, false, false)
+        })
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+    runtime.release_turn(&f.scope());
+    assert!(!f.vault().join("a.md").exists(), "A 已删（一次性批准生效）");
+    assert!(f.vault().join("b.md").exists(), "B 未被触碰");
+    let error = sink
+        .events()
+        .into_iter()
+        .rev()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("error"))
+        .expect("该轮以可重试错误收尾");
+    let turn_seq = error["retry"]["turn"].as_u64().expect("可重试失败带 turn");
+
+    // 重试：新写工具必须重新走批准闸。
+    let failed = runtime.begin_retry(&f.scope(), &config, turn_seq).unwrap();
+    let retry_sink = CollectSink::default();
+    let retry_worker = {
+        let sink = retry_sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config.clone();
+        let client_slot = client_slot.clone();
+        std::thread::spawn(move || {
+            let mut client = client_slot.lock().unwrap();
+            turn::run_turn_resume_for(
+                &sink,
+                &runtime,
+                &scope,
+                &config,
+                failed.user_text,
+                &mut *client,
+            );
+        })
+    };
+    retry_sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "重试后的第二次 approval_request",
+    );
+    let second = retry_sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .unwrap();
+    assert_eq!(second["tool"], "vault_delete");
+    assert_eq!(second["argv"], serde_json::json!(["b.md"]));
+    assert_ne!(
+        second["id"].as_str(),
+        Some(first_id.as_str()),
+        "新的调用必须有自己的批准请求"
+    );
+    // 批准前零副作用。
+    assert!(
+        f.vault().join("b.md").exists(),
+        "批准前 B 必须原样存在（不得复用 A 的一次性批准）"
+    );
+    let second_id = second["id"].as_str().unwrap().to_string();
+    runtime
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&second_id, true, None, false, false)
+        })
+        .unwrap()
+        .unwrap();
+    retry_worker.join().unwrap();
+    runtime.release_turn(&f.scope());
+    assert!(!f.vault().join("b.md").exists(), "批准后 B 恰好删除一次");
+    let snapshot = runtime.snapshot(&f.scope(), &config);
+    let tool_rows = snapshot
+        .messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .count();
+    assert_eq!(tool_rows, 2, "A / B 各一条工具行，无重复执行");
+    let statuses: Vec<_> = snapshot
+        .messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .map(|message| message.status.clone())
+        .collect();
+    assert_eq!(statuses, vec![Some("done".into()), Some("done".into())]);
+}

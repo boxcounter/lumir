@@ -2505,6 +2505,53 @@ const COPY_TABLE = {
     zh: "模型返回了空响应（没有文本也没有工具调用），本轮已停止；请重试",
     en: "The model returned an empty response (no text and no tool calls), so this turn stopped: try again",
   },
+  // D962–D971：失败轮次的显式重试（change add-harness-turn-retry-nov23，design §9）。
+  // D962 / D963 是动作本体（错误行上的次级文本钮 / 快照重建的尾部通用动作行）；D964 是半截
+  // 正文的「未完成」标记（与 D383 的「已停止」同型，只换文案）；D965–D970 是重试命令的同步
+  // 拒绝与两类稳定流失败码——事件只有 {code,message}、没有 params；D970 的 {reason} 由前端在
+  // 调用点用 errorText 的**结果**填入，不是后端 params。
+  D962: {
+    zh: "重试",
+    en: "Retry",
+  },
+  D963: {
+    zh: "上一轮未完成",
+    en: "The previous turn was incomplete",
+  },
+  D964: {
+    zh: "未完成",
+    en: "Incomplete",
+  },
+  // 重试语境的能力闸文案（design §9.1）：重试没有 composer 卡片可移除，MUST NOT 照抄
+  // 发送路径的 D445——只指向「切换到支持图片的模型」。
+  D965: {
+    zh: "当前模型不支持图片输入：请切换到支持图片的模型后重试",
+    en: "The current model doesn't accept images: switch to a model that does, then retry",
+  },
+  D966: {
+    zh: "这次失败已过期（会话已推进到新的轮次），请重新查看最新状态",
+    en: "This failure is stale (the session has moved to a newer turn); check the latest state",
+  },
+  D967: {
+    zh: "没有可重试的失败轮次（可能已发送新消息、开了新会话或恢复了历史会话）",
+    en: "There is no failed turn to retry (a new message, a new session or a restored history may have superseded it)",
+  },
+  D968: {
+    zh: "流式响应未正常结束，本轮已停止；请重试",
+    en: "The streamed response ended unexpectedly and this turn stopped: try again",
+  },
+  D969: {
+    zh: "流式响应中断（连接断开或读取失败），本轮已停止；请重试",
+    en: "The streamed response was interrupted (connection dropped or read failed) and this turn stopped: try again",
+  },
+  D970: {
+    zh: "重试未能发出：{reason}",
+    en: "Retry didn't start: {reason}",
+  },
+  D971: {
+    zh: "测试脚本已弹尽：请补写 mock fixture 的响应",
+    en: "The test script ran out: add more responses to the mock fixture",
+  },
   // D899–D927：设置面板的**装载期配置诊断**（M865，M858 finding 的第三条信封
   // `ConfigDiagnostic{code, path, message}`）。消费点是 `src/settings-panel.ts` 的三处直出
   // message 的渲染口——`fillDiagnostics`、被忽略 provider 的条目诊断、模型行 notes（经
@@ -2976,6 +3023,16 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   // （模板不带占位：事件没有 params）。消费点 `src/harness-panel.ts` 的 `case "error"`。
   harness_internal_error: "D897",
   harness_empty_response: "D898",
+  // 重试命令的同步拒绝（change add-harness-turn-retry-nov23）：人话错误行照常上屏，相位由
+  // `harness_state.in_flight` 收口（不本地强制 idle）。`harness_image_unsupported` 的发送路径
+  // 仍走 D445；重试语境在调用点显式取 D965（重试没有卡片可移除）。
+  harness_turn_stale: "D966",
+  // mock fixture 弹尽（测试脚本错误）：经 TurnError → error 事件上屏；文案面向写 fixture 的人。
+  fixture_exhausted: "D971",
+  harness_no_failed_turn: "D967",
+  // 两类稳定流失败码（事件字面量，模板不带占位）：transport / 协议终态未达。
+  harness_stream_incomplete: "D968",
+  harness_stream_interrupted: "D969",
   // 装载期配置诊断（M865，M858 finding 的第三条信封 `ConfigDiagnostic{code, path, message}`）：
   // 设置面板三处直出 message 的渲染口统一改走 `errorText`——`fillDiagnostics`、被忽略 provider
   // 的条目诊断、模型行 notes。只收**设置快照范围**（settings.rs 的 `in_settings_scope`）与

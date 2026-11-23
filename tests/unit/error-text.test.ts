@@ -234,17 +234,37 @@ function scanSites(): Site[] {
     // `harness_internal_error` / `harness_empty_response` 就是这样漏掉的。动态形态
     // （`events::error(&e.code, …)` / `reason.code`）不在此列：code 来自前两类，已被上面的
     // 构造点扫描覆盖；这里只认第一个参数是裸字符串字面量的调用。
-    let k = 0;
-    while ((k = masked.indexOf("events::error(", k)) >= 0) {
-      const open = k + "events::error".length;
-      const text = callText(src, open);
-      const first = splitTopLevelArgs(text)[0];
-      const code = first !== undefined ? /^"([a-z_0-9]+)"$/.exec(first)?.[1] : undefined;
-      if (code !== undefined) {
-        // 事件载荷只有 `{code, message}`：没有 params 通道（`events.rs` 的 `error`）。
-        sites.push({ file: rel, line: src.slice(0, k).split("\n").length, code, params: [], event: true });
+    // 两个事件构造口都要扫：`error`（既有）与 `error_with_retry`（change
+    // add-harness-turn-retry-nov23 的可重试形态，第一个参数仍是裸字面量 code）。
+    for (const needle of ["events::error(", "events::error_with_retry("]) {
+      let k = 0;
+      while ((k = masked.indexOf(needle, k)) >= 0) {
+        const open = k + needle.length - 1;
+        const text = callText(src, open);
+        const first = splitTopLevelArgs(text)[0];
+        const code = first !== undefined ? /^"([a-z_0-9]+)"$/.exec(first)?.[1] : undefined;
+        if (code !== undefined) {
+          // 事件载荷只有 `{code, message}`：没有 params 通道（`events.rs` 的 `error`）。
+          sites.push({ file: rel, line: src.slice(0, k).split("\n").length, code, params: [], event: true });
+        }
+        k = open + text.length + 1;
       }
-      k = open + text.length + 1;
+    }
+    // `TurnError::new("<code>", …)`：LLM 回合错误的**字面量** code（change
+    // add-harness-turn-retry-nov23 起纳入）。这些错误经 `events::error(&error.code, …)` /
+    // `error_with_retry` 上屏，第一参数是动态的，上面那条事件通道扫不到；字面量只在
+    // `TurnError::new` 的构造点出现一次（`harness_stream_incomplete` / `harness_stream_interrupted`
+    // / `fixture_exhausted`），不纳入就是第三处盲区。
+    let t = 0;
+    while ((t = masked.indexOf("TurnError::new(", t)) >= 0) {
+      const open = t + "TurnError::new".length;
+      const text = callText(src, open);
+      const code = splitTopLevelArgs(text)[0];
+      const literal = code !== undefined ? /^"([a-z_0-9]+)"$/.exec(code)?.[1] : undefined;
+      if (literal !== undefined) {
+        sites.push({ file: rel, line: src.slice(0, t).split("\n").length, code: literal, params: [], event: true });
+      }
+      t = open + text.length + 1;
     }
     // 装载期**配置诊断**（M865）：`ConfigDiagnostic{code, path, message}` 是第三条上屏信封，
     // 三条构造通道——`DiagnosticSink` 的 `sink.warn(...)` / `sink.warn_at(...)`（code 是第一个

@@ -2143,6 +2143,8 @@ fn run_segment(mut seed: SegmentSeed) -> serde_json::Value {
                 parts: super::turn::DeliveryInput::from(prompt),
                 context_section: None,
             },
+            // 子运行不是交互轮：失败不产生可重试状态（design §8）。
+            super::turn::TurnOrigin::Subrun,
             client.as_mut(),
         );
     }))

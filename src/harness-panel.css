@@ -933,11 +933,51 @@
 }
 
 /* ── 中断标注（M348，D383）：被打断的 assistant 消息上的「已停止」徽标 ────────── */
-.lumir-hp-stopped {
+.lumir-hp-stopped,
+/* 失败轮半截正文的「未完成」标记（change add-harness-turn-retry-nov23 design §9.2）：
+   复用「已停止」的几何与字级，只换文案；不新增颜色 / 图标 / 动效。 */
+.lumir-hp-incomplete {
   display: inline-block;
   margin-top: var(--sp-1);
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-3);
+}
+
+/* ── 可重试失败的动作（change add-harness-turn-retry-nov23 design §9.5）────────────
+   错误行内的次级文本钮与快照重建的尾部动作行共用同一视觉件：micro 字号、错误行同档色族
+   （尾部行用次级文本色）、`text-decoration: underline` 表达可点——eink 主题因此不需要
+   另加彩色或描边。不使用浮层 / toast / 独立图标钮。 ─────────────────────────────── */
+.lumir-hp-error .lumir-hp-retry-btn {
+  margin-left: var(--sp-2);
+}
+.lumir-hp-retry-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
+.lumir-hp-retry-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.lumir-hp-retry-btn:hover {
+  color: var(--text);
+}
+.lumir-hp-retry-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.lumir-hp-retry-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
 }
 
 /* ── 思考块（M363，原型屏 9 形态合同）：折叠 = 单行 chevron +「思考过程 · N 秒」

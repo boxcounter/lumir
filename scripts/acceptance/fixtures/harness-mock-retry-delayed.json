@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "responses": [
+    { "error": { "code": "harness_network_failed", "message": "网络抖动（合成）" } },
+    { "text": "RETRY-OK", "delay_ms": 1500 }
+  ]
+}

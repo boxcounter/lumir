@@ -557,7 +557,10 @@ export type HarnessEvent = HarnessEventEnvelope &
     // 自动回合没有用户发送动作，`done` 之前的所有内容事件否则会被轮次闸门丢弃。
     | { type: "auto_turn_started"; chain_index: number }
     | { type: "done" }
-    | { type: "error"; code: string; message: string }
+    // error 的可选 `retry`（change add-harness-turn-retry-nov23 design §6.1）：后端唯一分类
+    // 判可重试时在场（`{turn:N}`），不可重试时**缺键**。前端 MUST NOT 按 code / 文案自行
+    // 判断可重试性——缺键即不渲染动作。
+    | { type: "error"; code: string; message: string; retry?: { turn: number } }
     | { type: "aborted" }
   );
 
@@ -574,6 +577,17 @@ export type HarnessEvent = HarnessEventEnvelope &
  *  触发 `invalid type: null, expected a string`，M398）。 */
 export function harnessSend(parts_json: string, context_json: string): Promise<void> {
   return invoke<void>("harness_send", { parts_json, context_json });
+}
+
+/** 失败轮次的显式重试（change add-harness-turn-retry-nov23 design §4.2）：`turn` 是 error 事件 /
+ *  `harness_state` 快照 `retry.turn` 给出的轮次标识。后端在同一把锁内完成守卫（无会话 / 忙 /
+ *  无失败 / 世代过期 / vision 前置闸 / input_len）后才受理，并在**同一会话**里重发失败的那一次
+ *  provider 往返（不新建会话 / JSONL / 用户消息）。同步拒绝 codes：`harness_busy` /
+ *  `harness_turn_stale` / `harness_no_failed_turn` / `harness_thread_failed` /
+ *  `harness_image_unsupported`——前端对它们**不**本地强制 idle，相位由 `harness_state.in_flight`
+ *  收口（设计 §9.1）。 */
+export function harnessRetry(turn: number): Promise<void> {
+  return invoke<void>("harness_retry", { turn });
 }
 
 /** 落盘一张 composer 粘贴的剪贴板图片（change harness-composer-image-paste design §5）：
@@ -708,6 +722,10 @@ export function harnessSetThinkingEffort(effort: ThinkingEffort): Promise<void> 
  * 思考 chip 按「不伪造读数」口径隐藏）、`title`（change add-session-auto-naming：会话有效
  * 标题；**缺键 = 无标题**——面板回落首条用户消息截断，不伪造）。
  * 后端不可用（纯浏览器预览 / 命令未注册）时 reject，调用方按「空会话」降级。
+ *
+ * 可重试失败（change add-harness-turn-retry-nov23）：`retry` 键（`{turn:N}`）在场 = 当前会话
+ * 有一条可重试的失败轮次；缺席 = 无失败 / 不可重试 / 非交互轮次。只暴露轮次标识——错误行仍是
+ * live 面，快照重建的是尾部通用动作行。
  */
 export function harnessState(): Promise<string> {
   return invoke<string>("harness_state");

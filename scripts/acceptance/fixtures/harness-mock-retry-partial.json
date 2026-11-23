@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "chunks": ["PART-1", "PART-2"],
+      "error": { "code": "harness_stream_error", "message": "流中断（合成）", "kind": "stream_reported_transient" }
+    },
+    { "text": "RETRY-OK" }
+  ]
+}

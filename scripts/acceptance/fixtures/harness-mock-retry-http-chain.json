@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "responses": [
+    { "error": { "code": "harness_http_error", "message": "HTTP 500", "http_status": 500 } },
+    { "error": { "code": "harness_http_error", "message": "HTTP 429", "http_status": 429 } },
+    { "text": "RETRY-OK" }
+  ]
+}
